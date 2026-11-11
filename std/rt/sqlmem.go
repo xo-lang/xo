@@ -47,6 +47,7 @@ type memCol struct {
 	auto    bool
 	def     any
 	index   string // the name of the CREATE INDEX on the column, "" when none
+	decl    string // the type as declared, upper case (decision 0609)
 }
 
 type memTable struct {
@@ -98,16 +99,22 @@ func copyTables(src map[string]*memTable) map[string]*memTable {
 }
 
 func (m *memBackend) Query(q string, args []any) ([]string, [][]any, error) {
+	// a write with RETURNING changes the tables
+	cols, _, rows, err := m.QueryTypes(q, args)
+	return cols, rows, err
+}
+
+// QueryTypes is Query with the result's column types (decision 0609).
+func (m *memBackend) QueryTypes(q string, args []any) ([]string, []Sql_ColumnType, [][]any, error) {
 	m.db.mu.Lock()
 	defer m.db.mu.Unlock()
-	// a write with RETURNING changes the tables
 	work := copyTables(m.db.tables)
-	cols, rows, err := memRun(work, q, args)
+	cols, types, rows, err := memRun(work, q, args)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	m.db.tables = work
-	return cols, rows, nil
+	return cols, types, rows, nil
 }
 
 func (m *memBackend) Exec(q string, args []any) (int64, int64, error) {
@@ -135,13 +142,19 @@ type memTx struct {
 }
 
 func (t *memTx) Query(q string, args []any) ([]string, [][]any, error) {
+	cols, _, rows, err := t.QueryTypes(q, args)
+	return cols, rows, err
+}
+
+// QueryTypes is Query with the result's column types (decision 0609).
+func (t *memTx) QueryTypes(q string, args []any) ([]string, []Sql_ColumnType, [][]any, error) {
 	work := copyTables(t.tables)
-	cols, rows, err := memRun(work, q, args)
+	cols, types, rows, err := memRun(work, q, args)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	t.tables = work
-	return cols, rows, nil
+	return cols, types, rows, nil
 }
 
 func (t *memTx) Exec(q string, args []any) (int64, int64, error) {
@@ -313,6 +326,8 @@ type sqlParser struct {
 	toks     []sqlTok
 	i        int
 	maxParam int64
+	// types is the column types of the SELECT just run (decision 0609)
+	types []Sql_ColumnType
 }
 
 func (p *sqlParser) peek() sqlTok { return p.toks[p.i] }
@@ -877,20 +892,21 @@ func splitStatements(toks []sqlTok) [][]sqlTok {
 
 // memRun runs a statement that returns rows: a SELECT, or a write with
 // RETURNING on tables (a private copy of the map).
-func memRun(tables map[string]*memTable, q string, args []any) ([]string, [][]any, error) {
+func memRun(tables map[string]*memTable, q string, args []any) ([]string, []Sql_ColumnType, [][]any, error) {
 	toks, err := sqlLex(q)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	stmts := splitStatements(toks)
 	if len(stmts) != 1 {
-		return nil, nil, sqlErr(SqlSyntax, "expected one statement")
+		return nil, nil, nil, sqlErr(SqlSyntax, "expected one statement")
 	}
 	p := &sqlParser{toks: stmts[0]}
 	var w memWrite
 	switch {
 	case p.isKw("select"):
-		return memSelect(tables, p, args)
+		cols, rows, err := memSelect(tables, p, args)
+		return cols, p.types, rows, err
 	case p.isKw("insert"):
 		w, err = memInsert(tables, p, args)
 	case p.isKw("update"):
@@ -898,18 +914,18 @@ func memRun(tables map[string]*memTable, q string, args []any) ([]string, [][]an
 	case p.isKw("delete"):
 		w, err = memDelete(tables, p, args)
 	default:
-		return nil, nil, sqlErr(SqlSyntax, "query needs a SELECT statement or a write with RETURNING (use exec for other statements)")
+		return nil, nil, nil, sqlErr(SqlSyntax, "query needs a SELECT statement or a write with RETURNING (use exec for other statements)")
 	}
 	if err == nil && p.peek().k != tEOF {
 		err = p.fail("end of statement")
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if !w.returning {
-		return nil, nil, sqlErr(SqlSyntax, "query needs a SELECT statement or a write with RETURNING (use exec for other statements)")
+		return nil, nil, nil, sqlErr(SqlSyntax, "query needs a SELECT statement or a write with RETURNING (use exec for other statements)")
 	}
-	return w.cols, w.rows, nil
+	return w.cols, w.types, w.rows, nil
 }
 
 // memWrite is the outcome of an INSERT, UPDATE, or DELETE.
@@ -918,6 +934,7 @@ type memWrite struct {
 	returning bool
 	cols      []string
 	rows      [][]any
+	types     []Sql_ColumnType
 }
 
 // memExec runs write statements on tables (a private copy of the map).
@@ -1089,6 +1106,7 @@ func memColDef(p *sqlParser) (memCol, error) {
 	if err != nil {
 		return c, err
 	}
+	c.decl = strings.ToUpper(ty)
 	switch ty {
 	case "int", "integer", "bigint", "smallint", "int64":
 		c.kind = 'i'
@@ -1123,6 +1141,7 @@ func memColDef(p *sqlParser) (memCol, error) {
 			return c, err
 		}
 		c.elem, c.kind = c.kind, 'A'
+		c.decl += "[]"
 	}
 	for {
 		switch {
@@ -1642,7 +1661,7 @@ func memWritten(t *memTable, n, id int64, ret []selItem, hasRet bool, rows [][]a
 	if err != nil {
 		return memWrite{}, err
 	}
-	w.cols, w.rows = cols, out
+	w.cols, w.rows, w.types = cols, out, memSelTypes(t, ret)
 	return w, nil
 }
 
@@ -1721,6 +1740,53 @@ func selCols(t *memTable, items []selItem) ([]string, int) {
 		}
 	}
 	return cols, counts
+}
+
+// memSelTypes is each selected column's type (decision 0609), as the
+// native sel_types: a table column's declared type, NOT NULL and kind;
+// COUNT(*) an Integer that is never null; an expression unknown.
+func memSelTypes(t *memTable, items []selItem) []Sql_ColumnType {
+	var out []Sql_ColumnType
+	for _, it := range items {
+		if it.star {
+			for _, c := range t.cols {
+				out = append(out, memColType(c, c.name))
+			}
+			continue
+		}
+		name := it.alias
+		if name == "" {
+			switch it.e.op {
+			case "col":
+				name = it.e.col
+			case "count":
+				name = "count"
+			default:
+				name = "?column?"
+			}
+		}
+		switch it.e.op {
+		case "col":
+			ct := Sql_ColumnType{F_name: name}
+			for _, c := range t.cols {
+				if c.name == it.e.col {
+					ct = memColType(c, name)
+					break
+				}
+			}
+			out = append(out, ct)
+		case "count":
+			out = append(out, Sql_ColumnType{F_name: name, F_nullable: Some(false), F_kind: "Integer"})
+		default:
+			out = append(out, Sql_ColumnType{F_name: name})
+		}
+	}
+	return out
+}
+
+func memColType(c memCol, name string) Sql_ColumnType {
+	kind := map[byte]string{'i': "Integer", 't': "Text", 'r': "Real", 'b': "Flag", 'T': "At", 'B': "Blob", 'J': "JsonText", 'A': "Array"}[c.kind]
+	return Sql_ColumnType{F_name: name, F_database_type: c.decl, F_nullable: Some(!c.notNull), F_kind: kind}
 }
 
 // memProject evaluates items (without COUNT(*)) on each row of t.
@@ -1906,6 +1972,7 @@ func memSelect(tables map[string]*memTable, p *sqlParser, args []any) ([]string,
 	}
 	// project
 	cols, counts := selCols(t, items)
+	p.types = memSelTypes(t, items)
 	if counts > 0 {
 		if counts != len(items) {
 			return nil, nil, sqlErr(SqlSyntax, "COUNT(*) cannot be mixed with other columns")

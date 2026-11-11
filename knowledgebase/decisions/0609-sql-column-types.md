@@ -69,3 +69,15 @@ table's schema. None of it reaches the caller.
   and a required method would break every existing driver.
 - Exposing pgwire.Field directly: Postgres specific, and it leaves
   sqlite and memory without an answer.
+
+## Progress
+
+- 2026-11-11 (Xo Lang 3): built as decided, on both backends. The Go
+  backend's RegisterSqlDriver backends report types through an optional
+  QueryTypes / QueryTypesTk method, so the SqlBackend interface is
+  unchanged. Postgres matches pgx stdlib on scripts/pg-diff.sh (a types
+  line per SELECT, pgx v5.12.0's type names), including its quirks: an
+  unbounded varchar has length -5 and an unconstrained numeric precision
+  65535, scale 65531. sqlite reports the declared type only, as
+  decided; mattn's ColumnTypeNullable says (true, true) for every
+  column, which std/sql leaves as None since sqlite cannot tell.

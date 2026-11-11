@@ -124,9 +124,10 @@ func Sql_Tx_query_one_as[T any](tk *Task, t Sql_Tx, q string, args List[Sql_SqlV
 type Sql_Rows struct{ s *sqlRowsState }
 
 type sqlRowsState struct {
-	cols []string
-	rows []Sql_Row
-	pos  int
+	cols  []string
+	types []Sql_ColumnType
+	rows  []Sql_Row
+	pos   int
 }
 
 // XoDebug implements Debug.
@@ -138,10 +139,11 @@ func sqlRowsOf(r Result[List[Sql_Row], Sql_SqlErr]) Result[Sql_Rows, Sql_SqlErr]
 	}
 	rows := List_Slice(r.V)
 	var cols []string
+	var types []Sql_ColumnType
 	if len(rows) > 0 {
-		cols = rows[0].cols
+		cols, types = rows[0].cols, rows[0].types
 	}
-	return Ok[Sql_Rows, Sql_SqlErr](Sql_Rows{&sqlRowsState{cols: cols, rows: rows}})
+	return Ok[Sql_Rows, Sql_SqlErr](Sql_Rows{&sqlRowsState{cols: cols, types: types, rows: rows}})
 }
 
 // M_rows is `db.rows(q, args)`.
@@ -156,6 +158,11 @@ func (t Sql_Tx) M_rows(tk *Task, q string, args List[Sql_SqlValue]) Result[Sql_R
 
 // M_columns is `rows.columns()`.
 func (r Sql_Rows) M_columns(*Task) List[string] { return ListOf(r.s.cols...) }
+
+// M_column_types is `rows.column_types()` (decision 0609).
+func (r Sql_Rows) M_column_types(*Task) List[Sql_ColumnType] {
+	return sqlColumnTypes(r.s.cols, r.s.types)
+}
 
 // M_next is `rows.next()`.
 func (r Sql_Rows) M_next(*Task) Result[Option[Sql_Row], Sql_SqlErr] {

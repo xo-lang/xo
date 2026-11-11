@@ -4,7 +4,8 @@
 # (scripts/pgdiff/gopgx, the reference, printing spec/std.md 10.9's
 # mapping of text values) and through std/sql's driver
 # (scripts/pgdiff/xo), against a PostgreSQL server in Docker, outputs
-# compared line by line.
+# compared line by line; each SELECT also prints its column types, pgx
+# stdlib's ColumnType* against Rows.column_types (decision 0609).
 #
 #   scripts/pg-diff.sh XO WORK [IMAGE...]
 #

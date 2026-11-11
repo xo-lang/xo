@@ -53,3 +53,11 @@ test "a transaction commits and rolls back" {
   expect(rows.len()) == 1
   expect(rows[0].int("n")?) == 2
 }
+
+test "column_types are the declared types upper cased, as mattn's ColumnTypeDatabaseTypeName (decision 0609)" {
+  let db = sql.open_driver(os.net, sqlite.driver(os.fs), ":memory:", max_open: 1)?
+  db.exec("CREATE TABLE t (id integer PRIMARY KEY, name varchar(10), x)", [])?
+  let rows = db.rows("SELECT id, name, x, id + 1 AS y FROM t", [])?
+  expect(rows.column_types().map(fn(t) { "${t.name}:${t.database_type}" })) == ["id:INTEGER", "name:VARCHAR(10)", "x:", "y:"]
+  rows.close()
+}

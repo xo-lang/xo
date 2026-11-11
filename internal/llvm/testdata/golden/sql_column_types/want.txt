@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+star: id:SERIAL:notnull:Integer name:VARCHAR:notnull:Text score:DOUBLE:null:Real tags:TEXT[]:null:Array at:TIMESTAMPTZ:null:At data:JSONB:null:JsonText raw:BYTEA:null:Blob ok:BOOLEAN:null:Flag
+alias: who:VARCHAR:notnull:Text score:DOUBLE:null:Real ?column?::?:
+count: count::notnull:Integer
+returning: id:SERIAL:notnull:Integer name:VARCHAR:notnull:Text
+columns: ["who", "score", "?column?"]
+--- stderr

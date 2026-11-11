@@ -65,12 +65,10 @@ fn main(os: Os) ! {
       None => (line, [])
     }
     if line.starts_with("SELECT") {
-      match db.query(stmt, xs) {
-        Ok(rows) => {
-          for r in rows {
-            // Go's Row Debug text: the columns and their values
-            let vals = r.columns().map(fn(c) { r.value(c).or_fault("column") })
-            os.stdio.println("Row{cols: ${r.columns().debug()}, vals: ${vals.debug()}}")
+      match select_lines(db, stmt, xs) {
+        Ok(out) => {
+          for l in out {
+            os.stdio.println(l)
           }
         }
         Err(e) => os.stdio.println(err_line(e))
@@ -82,4 +80,26 @@ fn main(os: Os) ! {
       }
     }
   }
+}
+
+/// A SELECT's column types (decision 0609, as the reference prints pgx
+/// stdlib's) and then each row as Go's Row Debug text; the whole result
+/// first, so an error part way prints the error alone as pgconn's ReadAll.
+fn select_lines(db: sql.Db, stmt: Str, xs: List[sql.SqlValue]) -> List[Str] ! sql.SqlErr uses net.dial {
+  let rows = db.rows(stmt, xs)?
+  defer rows.close()
+  let ts = rows.column_types().map(fn(t) {
+    let len = t.length.map(fn(n) { "${n}" }) ?? "-"
+    let ps = match (t.precision, t.scale) {
+      (Some(p), Some(s)) => "${p},${s}"
+      _ => "-"
+    }
+    "${t.name}:${t.database_type}:${len}:${ps}"
+  })
+  var out = ["types " + ts.join(" ")]
+  while let Some(r) = rows.next()? {
+    let vals = r.columns().map(fn(c) { r.value(c).or_fault("column") })
+    out.push("Row{cols: ${r.columns().debug()}, vals: ${vals.debug()}}")
+  }
+  out
 }

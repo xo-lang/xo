@@ -36,9 +36,11 @@ var (
 	_ func(*Sql_Tx, *Task) Result[Unit, Sql_SqlErr]                                                                                    = (*Sql_Tx).M_commit
 	_ func(*Sql_Tx, *Task) Result[Unit, Sql_SqlErr]                                                                                    = (*Sql_Tx).M_rollback
 	_ func(*Sql_Rows, *Task) List[string]                                                                                              = (*Sql_Rows).M_columns
+	_ func(*Sql_Rows, *Task) List[Sql_ColumnType]                                                                                      = (*Sql_Rows).M_column_types
 	_ func(*Sql_Rows, *Task) Result[Option[Sql_Row], Sql_SqlErr]                                                                       = (*Sql_Rows).M_next
 	_ func(*Sql_Rows, *Task)                                                                                                           = (*Sql_Rows).M_close
 	_ func(*Sql_Row, *Task) List[string]                                                                                               = (*Sql_Row).M_columns
+	_ func(*Sql_Row, *Task) List[Sql_ColumnType]                                                                                       = (*Sql_Row).M_column_types
 	_ func(*Sql_Row, *Task, string) Result[Sql_SqlValue, Sql_SqlErr]                                                                   = (*Sql_Row).M_value
 	_ func(*Sql_Row, *Task, string) Result[bool, Sql_SqlErr]                                                                           = (*Sql_Row).M_is_null
 	_ func(*Sql_Row, *Task, string) Result[int64, Sql_SqlErr]                                                                          = (*Sql_Row).M_int

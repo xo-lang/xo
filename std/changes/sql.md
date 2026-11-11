@@ -1,5 +1,17 @@
 # std/sql changes
 
+## 2026-11-11: feature: Rows.column_types and Row.column_types, Go's ColumnTypes
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit of 2026-11-11 (gap 25), decision 0609
+- Go reference: database/sql ColumnType; pgx v5 stdlib Rows.ColumnType* (v5.12.0's type map); mattn/go-sqlite3 ColumnTypeDatabaseTypeName
+- Test: scripts/pg-diff.sh prints each SELECT's types from pgx stdlib's rules and from std/sql (postgres:17, 46 statements, equal); golden sql_column_types (memory database: arm64, llvm, Go parity); pg_test.xo (OIDs and modifiers); sqlite_test.xo (declared types)
+- Timing: none (a table lookup per column when a result's description arrives)
+- Shipped in: not yet released
+
+ColumnType (name, database_type, length, precision, scale, nullable, kind) from a new defaulted DriverRows.column_types, so existing drivers still compile and give ColumnType{name} per column. Postgres, sqlite and the in memory database fill it on both backends; spec/std.md (std/sql).
+
 ## 2026-11-11: docs: the header says what the module is for
 
 - Kind: docs

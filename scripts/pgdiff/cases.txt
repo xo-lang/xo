@@ -43,3 +43,4 @@ SELECT name FROM t WHERE name = $1 ;; T:tx2
 SELECT pg_typeof($1) AS ty ;; T:x
 SELECT $1::int4 + $2::int4 AS sum ;; I:2147483647 | I:1
 SELECT $1 AS untyped ;; I:5
+SELECT 'x'::varchar(20) AS v, 'ab'::char(5) AS c, 1.5::numeric(10,2) AS n, 'y'::varchar AS vu, 2.5::numeric AS nu, B'101'::varbit(8) AS vb, now()::date AS dt, '{}'::int4[] AS ia, 'z'::name AS nm

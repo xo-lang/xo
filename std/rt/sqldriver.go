@@ -17,6 +17,18 @@ type sqlTaskRunner interface {
 	ExecTk(tk *Task, q string, args []any) (int64, int64, error)
 }
 
+// sqlTypedTaskRunner and sqlTypedRunner report a query's column types
+// too (decision 0609): the Xo driver adapter and the memory database. A
+// backend registered with RegisterSqlDriver without them gives
+// ColumnType{name} per column.
+type sqlTypedTaskRunner interface {
+	QueryTypesTk(tk *Task, q string, args []any) ([]string, []Sql_ColumnType, [][]any, error)
+}
+
+type sqlTypedRunner interface {
+	QueryTypes(q string, args []any) ([]string, []Sql_ColumnType, [][]any, error)
+}
+
 // sqlErrBox carries a driver's SqlErr through a Go error.
 type sqlErrBox struct{ e Sql_SqlErr }
 
@@ -83,6 +95,16 @@ func (b *sqlDriverBackend) give(tk *Task, x sqlIdle) {
 	x.c.M_close(tk)
 }
 
+// driverRowsTypes is the result of a driver's query: its columns, their
+// types (decision 0609; nil when the driver gave none) and every row.
+func driverRowsTypes(tk *Task, r Result[Sql_DriverRows, Sql_SqlErr]) ([]string, []Sql_ColumnType, [][]any, error) {
+	cols, rows, err := driverRows(tk, r)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return cols, List_Slice(r.V.F_column_types), rows, nil
+}
+
 func driverRows(tk *Task, r Result[Sql_DriverRows, Sql_SqlErr]) ([]string, [][]any, error) {
 	if !r.Ok {
 		return nil, nil, &sqlErrBox{r.E}
@@ -120,12 +142,18 @@ func driverUnit(r Result[Unit, Sql_SqlErr]) error {
 }
 
 func (b *sqlDriverBackend) QueryTk(tk *Task, q string, args []any) ([]string, [][]any, error) {
+	cols, _, rows, err := b.QueryTypesTk(tk, q, args)
+	return cols, rows, err
+}
+
+// QueryTypesTk is QueryTk with the driver's column types (decision 0609).
+func (b *sqlDriverBackend) QueryTypesTk(tk *Task, q string, args []any) ([]string, []Sql_ColumnType, [][]any, error) {
 	x, err := b.take(tk)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer b.give(tk, x)
-	return driverRows(tk, x.c.M_query(tk, q, sqlValues(args)))
+	return driverRowsTypes(tk, x.c.M_query(tk, q, sqlValues(args)))
 }
 
 func (b *sqlDriverBackend) ExecTk(tk *Task, q string, args []any) (int64, int64, error) {
@@ -198,7 +226,13 @@ type sqlDriverTx struct {
 }
 
 func (t *sqlDriverTx) QueryTk(tk *Task, q string, args []any) ([]string, [][]any, error) {
-	return driverRows(tk, t.x.c.M_query(tk, q, sqlValues(args)))
+	cols, _, rows, err := t.QueryTypesTk(tk, q, args)
+	return cols, rows, err
+}
+
+// QueryTypesTk is QueryTk with the driver's column types (decision 0609).
+func (t *sqlDriverTx) QueryTypesTk(tk *Task, q string, args []any) ([]string, []Sql_ColumnType, [][]any, error) {
+	return driverRowsTypes(tk, t.x.c.M_query(tk, q, sqlValues(args)))
 }
 
 func (t *sqlDriverTx) ExecTk(tk *Task, q string, args []any) (int64, int64, error) {

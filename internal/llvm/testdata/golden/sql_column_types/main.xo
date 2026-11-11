@@ -1,0 +1,24 @@
+use std/sql
+
+// Rows.column_types and Row.column_types (decision 0609) on the in
+// memory database: a table column's declared type, NOT NULL and kind; an
+// alias keeps its column's type; COUNT(*) an Integer never null; an
+// expression unknown; RETURNING as SELECT.
+fn show(ts: List[sql.ColumnType]) -> Str {
+  ts.map(fn(t) { "${t.name}:${t.database_type}:${t.nullable.map(fn(b) { if b { "null" } else { "notnull" } }) ?? "?"}:${t.kind}" }).join(" ")
+}
+
+fn main(os: Os) ! {
+  let db = sql.memory("create table t (id serial primary key, name varchar(20) not null, score double precision, tags text[], at timestamptz, data jsonb, raw bytea, ok boolean)")?
+  db.exec("insert into t (name, score, ok) values ($1, $2, $3)", [sql.str("a"), sql.float(1.5), sql.SqlValue.Flag(b: true)])?
+  let rows = db.rows("select * from t")?
+  os.stdio.println("star: ${show(rows.column_types())}")
+  rows.close()
+  let r = db.query_one("select name as who, score, id + 1 from t")?
+  os.stdio.println("alias: ${show(r.column_types())}")
+  let c = db.query_one("select count(*) from t")?
+  os.stdio.println("count: ${show(c.column_types())}")
+  let ret = db.query("insert into t (name) values ($1) returning id, name", [sql.str("b")])?
+  os.stdio.println("returning: ${show(ret[0].column_types())}")
+  os.stdio.println("columns: ${r.columns()}")
+}

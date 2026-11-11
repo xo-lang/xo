@@ -3257,6 +3257,7 @@ A result is read as a cursor with `rows` (decision 0479, Go's
 fn (d: Db) rows(q: Str, args: List[SqlValue] = []) -> Rows ! SqlErr uses net.dial
 fn (t: Tx) rows(q: Str, args: List[SqlValue] = []) -> Rows ! SqlErr uses net.dial
 fn (r: Rows) columns() -> List[Str]
+fn (r: Rows) column_types() -> List[ColumnType]   // Go's Rows.ColumnTypes (decision 0609), below
 fn (r: Rows) next() -> Row? ! SqlErr uses net.dial          // None after the last row
 fn (r: Rows) next_as[T: SqlRow]() -> T? ! SqlErr uses net.dial
 fn (r: Rows) close() uses net.dial                          // idempotent
@@ -3299,6 +3300,7 @@ driver implements since decision 0479.
 ```
 struct Row {}
 fn (r: Row) columns() -> List[Str]
+fn (r: Row) column_types() -> List[ColumnType]    // the result's, as Rows.column_types
 fn (r: Row) value(name: Str) -> SqlValue ! SqlErr  // the column's value as read (pgx's Rows.Values)
 fn (r: Row) is_null(name: Str) -> Bool ! SqlErr
 fn (r: Row) int(name: Str) -> Int ! SqlErr       // also str, float, bool, time
@@ -3465,7 +3467,16 @@ interface DriverConn[fx: Effects] {
   fn close(self) uses (net.dial, fx)
   fn is_broken(self) -> Bool                       // dropped from the pool when true
 }
-struct DriverRows[fx: Effects] { columns: List[Str], rows: List[List[SqlValue]], cursor: DriverCursor[fx]? = None }
+struct DriverRows[fx: Effects] { columns: List[Str], rows: List[List[SqlValue]], cursor: DriverCursor[fx]? = None, column_types: List[ColumnType] = [] }
+struct ColumnType {                              // Go's sql.ColumnType (decision 0609)
+  name: Str
+  database_type: Str = ""                        // DatabaseTypeName, upper case; "" when unknown
+  length: Int? = None                            // Length
+  precision: Int? = None                         // DecimalSize
+  scale: Int? = None
+  nullable: Bool? = None                         // None when the driver cannot tell
+  kind: Str = ""                                 // the SqlValue variant the column decodes to; "" when unknown
+}
 interface DriverCursor[fx: Effects] {            // the rest of a result on the connection (decision 0479)
   fn next(self) -> List[SqlValue]? ! SqlErr uses (net.dial, fx)   // None after the last row
   fn rest(self) -> List[List[SqlValue]] ! SqlErr uses (net.dial, fx)
@@ -3475,6 +3486,20 @@ interface DriverCursor[fx: Effects] {            // the rest of a result on the 
 pub fn open_driver[fx: Effects](net: Net, d: Driver[fx], dsn: Str, max_open: Int = 10, max_idle: Int = 2,
                    max_lifetime: Duration = 30m) -> Db[fx] ! SqlErr uses (net.dial, fx)
 ```
+
+**Column types** (decision 0609, Go's `Rows.ColumnTypes`):
+`column_types()` gives each column's `ColumnType` as the driver reports
+it in `DriverRows.column_types`; a driver that leaves it empty gives
+`ColumnType{name}` per column. Postgres reports pgx's stdlib values: the
+type map's name upper case (else the OID in decimal), length for text
+and bytea (`Int.max`), varchar and bpchar (the modifier less 4, `-5`
+for an unbounded varchar as pgx gives it) and varbit, precision and
+scale for numeric, nullable None. sqlite reports the declared type upper
+cased (mattn's `ColumnTypeDatabaseTypeName`, `""` for an expression) and
+nothing else, since a column's values may be of any storage class. The
+in memory database reports a table column's declared type, its `NOT
+NULL` as nullable and its kind; `COUNT(*)` an `Integer` never null. On
+the Go backend a driver bound with `use go` reports none.
 
 - The effect parameter (decision 0534): a driver's operations may perform
   effects beyond `net.dial`, named by its `fx`, and `Db`, `Tx` and `Rows`

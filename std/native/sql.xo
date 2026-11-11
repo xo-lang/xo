@@ -143,7 +143,7 @@ fn (p: Pool) query(q: Str, args: List[sql.SqlValue]) -> List[Row] ! sql.SqlErr u
   }
   give(p, t)
   let rows = all?
-  to_rows(rows.columns, rows.rows)
+  to_rows(rows.columns, rows.column_types, rows.rows)
 }
 
 /// x with its cursor, if any, read to the end into rows (Db.query reads a
@@ -153,13 +153,13 @@ fn drain_rows(x: sql.DriverRows) -> sql.DriverRows ! sql.SqlErr uses net.dial {
     Some(c) => {
       let more = c.rest()?
       if x.rows.is_empty() {
-        return sql.DriverRows{columns: x.columns, rows: more}
+        return sql.DriverRows{columns: x.columns, rows: more, column_types: x.column_types}
       }
       var all = x.rows
       for r in more {
         all.push(r)
       }
-      sql.DriverRows{columns: x.columns, rows: all}
+      sql.DriverRows{columns: x.columns, rows: all, column_types: x.column_types}
     }
     None => x
   }
@@ -228,6 +228,8 @@ struct TxState {
 struct Row {
   cols: List[Str]
   vals: List[sql.SqlValue]
+  /// the result's column types (decision 0609; empty: the driver did not say)
+  types: List[sql.ColumnType] = []
 }
 
 fn null() -> sql.SqlValue { sql.SqlValue.Null }
@@ -290,10 +292,10 @@ fn (d: Db) ready() -> () ! sql.SqlErr {
   }
 }
 
-fn to_rows(cols: List[Str], rows: List[List[sql.SqlValue]]) -> List[Row] {
+fn to_rows(cols: List[Str], types: List[sql.ColumnType], rows: List[List[sql.SqlValue]]) -> List[Row] {
   var out: List[Row] = []
   for r in rows {
-    out.push(Row{cols: cols, vals: r})
+    out.push(Row{cols: cols, vals: r, types: types})
   }
   out
 }
@@ -308,7 +310,7 @@ fn (d: Db) query(q: Str, args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlEr
   // (the outcome as the closure's success value: its writes are kept, and
   // a failed statement made none)
   let res = d.st.with(fn(var st) -> Result[MemRows, sql.SqlErr] { mem_run(st.tables, q, args) })?
-  to_rows(res.cols, res.rows)
+  to_rows(res.cols, res.types, res.rows)
 }
 
 fn (d: Db) query_one(q: Str, args: List[sql.SqlValue] = []) -> Row ! sql.SqlErr uses net.dial {
@@ -425,7 +427,7 @@ fn (t: Tx) query(q: Str, args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlEr
       }
       drain_rows(tc.c.query(q, args)?)
     })?
-    return to_rows(rows.columns, rows.rows)
+    return to_rows(rows.columns, rows.column_types, rows.rows)
   }
   let res = t.st.with(fn(var ts) -> MemRows ! sql.SqlErr {
     if ts.done {
@@ -436,7 +438,7 @@ fn (t: Tx) query(q: Str, args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlEr
     ts.tables = work
     r
   })?
-  to_rows(res.cols, res.rows)
+  to_rows(res.cols, res.types, res.rows)
 }
 
 fn (t: Tx) query_one(q: Str, args: List[sql.SqlValue] = []) -> Row ! sql.SqlErr uses net.dial {
@@ -543,6 +545,7 @@ fn (t: Tx) rollback() -> () ! sql.SqlErr uses net.dial {
 struct Rows[fx: Effects] {
   cols: List[Str]
   st: Mutex[RowsState[fx]]
+  types: List[sql.ColumnType] = []
 }
 
 struct RowsState[fx: Effects] {
@@ -555,8 +558,17 @@ struct RowsState[fx: Effects] {
   done: Bool = false
 }
 
-fn new_rows(cols: List[Str], s: RowsState) -> Rows {
-  Rows{cols: cols, st: Mutex.new(s)}
+fn new_rows(cols: List[Str], types: List[sql.ColumnType], s: RowsState) -> Rows {
+  Rows{cols: cols, st: Mutex.new(s), types: types}
+}
+
+/// types, or `ColumnType{name}` per column when the driver gave none
+/// (decision 0609).
+fn column_types_of(cols: List[Str], types: List[sql.ColumnType]) -> List[sql.ColumnType] {
+  if types.len() == cols.len() {
+    return types
+  }
+  cols.map(fn(c) { sql.ColumnType{name: c} })
 }
 
 /// The end of a cursor: the connection goes back to the pool.
@@ -577,9 +589,9 @@ fn rows_finish(var s: RowsState) {
 fn pool_rows[fx: Effects](p: Pool[fx], t: Taken[fx], x: sql.DriverRows[fx]) -> Rows[fx] uses (net.dial, fx) {
   if x.cursor is None {
     give(p, t)
-    return new_rows(x.columns, RowsState{buf: x.rows, pos: 0})
+    return new_rows(x.columns, x.column_types, RowsState{buf: x.rows, pos: 0})
   }
-  new_rows(x.columns, RowsState{buf: x.rows, pos: 0, cursor: x.cursor, held: Some(t), pool: Some(p)})
+  new_rows(x.columns, x.column_types, RowsState{buf: x.rows, pos: 0, cursor: x.cursor, held: Some(t), pool: Some(p)})
 }
 
 fn (d: Db) rows(q: Str, args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses net.dial {
@@ -599,7 +611,7 @@ fn (d: Db) rows(q: Str, args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses
   // (the outcome as the closure's success value: its writes are kept, and
   // a failed statement made none)
   let res = d.st.with(fn(var st) -> Result[MemRows, sql.SqlErr] { mem_run(st.tables, q, args) })?
-  new_rows(res.cols, RowsState{buf: res.rows, pos: 0})
+  new_rows(res.cols, res.types, RowsState{buf: res.rows, pos: 0})
 }
 
 fn (t: Tx) rows(q: Str, args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses net.dial {
@@ -613,7 +625,7 @@ fn (t: Tx) rows(q: Str, args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses
       }
       tc.c.query(q, args)
     })?
-    return new_rows(x.columns, RowsState{buf: x.rows, pos: 0, cursor: x.cursor})
+    return new_rows(x.columns, x.column_types, RowsState{buf: x.rows, pos: 0, cursor: x.cursor})
   }
   let res = t.st.with(fn(var ts) -> MemRows ! sql.SqlErr {
     if ts.done {
@@ -624,7 +636,7 @@ fn (t: Tx) rows(q: Str, args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses
     ts.tables = work
     r
   })?
-  new_rows(res.cols, RowsState{buf: res.rows, pos: 0})
+  new_rows(res.cols, res.types, RowsState{buf: res.rows, pos: 0})
 }
 
 fn quote_ident(name: Str) -> Str { "\"" + name.replace("\"", "\"\"") + "\"" }
@@ -687,6 +699,8 @@ fn mem_copy[fx: Effects](ins: fn(Str, List[sql.SqlValue]) -> sql.ExecResult ! sq
 
 fn (r: Rows) columns() -> List[Str] { r.cols }
 
+fn (r: Rows) column_types() -> List[sql.ColumnType] { column_types_of(r.cols, r.types) }
+
 fn (r: Rows) next() -> Row? ! sql.SqlErr uses net.dial {
   // the closure always returns Ok: an Err would undo rows_finish (a
   // Mutex.with closure's changes are kept only when it returns Ok)
@@ -697,14 +711,14 @@ fn (r: Rows) next() -> Row? ! sql.SqlErr uses net.dial {
     if s.pos < s.buf.len() {
       let v = s.buf[s.pos]
       s.pos += 1
-      return (Some(Row{cols: r.cols, vals: v}), None)
+      return (Some(Row{cols: r.cols, vals: v, types: r.types}), None)
     }
     match s.cursor {
       Some(c) => {
         match c.next() {
           Ok(o) => {
             match o {
-              Some(v) => (Some(Row{cols: r.cols, vals: v}), None)
+              Some(v) => (Some(Row{cols: r.cols, vals: v, types: r.types}), None)
               None => {
                 rows_finish(s)
                 (None, None)
@@ -782,6 +796,8 @@ fn (t: Tx) each(q: Str, args: List[sql.SqlValue], f: fn(Row) -> () ! sql.SqlErr)
 }
 
 fn (r: Row) columns() -> List[Str] { r.cols }
+
+fn (r: Row) column_types() -> List[sql.ColumnType] { column_types_of(r.cols, r.types) }
 
 fn (r: Row) decode[T: SqlRow]() -> T ! sql.SqlErr { rtsql.sql_decode[T, Row](r) }
 
@@ -1024,6 +1040,9 @@ struct Col {
   def: sql.SqlValue = sql.SqlValue.Null
   /// The elements' kind of a KARR column.
   elem: Int = 0
+  /// The type as declared, upper case ("INTEGER", "VARCHAR", "TEXT[]"):
+  /// ColumnType.database_type (decision 0609).
+  decl: Str = ""
   /// Whether a CREATE INDEX is on the column (its name in the table's
   /// Made.names, so a copy of a Col retains no name).
   has_index: Bool = false
@@ -1375,6 +1394,9 @@ fn (t: Table) index(name: Str) -> Int {
 struct MemRows {
   cols: List[Str]
   rows: List[List[sql.SqlValue]]
+  /// each column's type: a table column's declared type and NOT NULL
+  /// (decision 0609)
+  types: List[sql.ColumnType] = []
 }
 
 // ---------------------------------------------------------------------------
@@ -2064,6 +2086,7 @@ struct Write {
   returning: Bool = false
   cols: List[Str] = []
   rows: List[List[sql.SqlValue]] = []
+  types: List[sql.ColumnType] = []
 }
 
 const QUERY_NEEDS = "query needs a SELECT statement or a write with RETURNING (use exec for other statements)"
@@ -2094,7 +2117,7 @@ fn mem_run(var tables: Map[Str, Table], q: Str, args: List[sql.SqlValue]) -> Mem
   if !w.returning {
     return Err(syntax(QUERY_NEEDS))
   }
-  MemRows{cols: w.cols, rows: w.rows}
+  MemRows{cols: w.cols, rows: w.rows, types: w.types}
 }
 
 /// Runs write statements on tables, leaving them as they were on an error:
@@ -2349,7 +2372,7 @@ fn mem_drop_index(var tables: Map[Str, Table], var p: Parser) -> () ! sql.SqlErr
 fn col_def(var p: Parser) -> Col ! sql.SqlErr {
   let name = p.ident("a column name")?
   let ty = p.ident("a column type")?
-  var c = Col{name: name, kind: 0}
+  var c = Col{name: name, kind: 0, decl: ty.to_upper()}
   match ty {
     "int" | "integer" | "bigint" | "smallint" | "int64" => c.kind = KI
     "serial" | "bigserial" => {
@@ -2378,6 +2401,7 @@ fn col_def(var p: Parser) -> Col ! sql.SqlErr {
   }
   if p.accept_sym("[") {
     p.expect_sym("]")?
+    c.decl = c.decl + "[]"
     c.elem = c.kind
     c.kind = KARR
   }
@@ -2813,7 +2837,7 @@ fn written(t: Table, n: Int, id: Int, ret: List[SelItem], has_ret: Bool, rows: L
     return Write{n: n, id: id}
   }
   let out = project(t, ret, rows, args)?
-  Write{n: n, id: id, returning: true, cols: out.cols, rows: out.rows}
+  Write{n: n, id: id, returning: true, cols: out.cols, rows: out.rows, types: out.types}
 }
 
 /// One item of a SELECT or RETURNING list.
@@ -2904,7 +2928,59 @@ fn project(t: Table, items: List[SelItem], rows: List[List[sql.SqlValue]], args:
     }
     out.push(r)
   }
-  MemRows{cols: cols, rows: out}
+  MemRows{cols: cols, rows: out, types: sel_types(t, items)}
+}
+
+/// Each selected column's type (decision 0609): a table column's declared
+/// type, NOT NULL and kind; COUNT(*) an Integer that is never null; an
+/// expression unknown.
+fn sel_types(t: Table, items: List[SelItem]) -> List[sql.ColumnType] {
+  var out: List[sql.ColumnType] = []
+  for it in items {
+    if it.star {
+      for c in t.cols {
+        out.push(col_type(c, c.name))
+      }
+      continue
+    }
+    let name = if it.alias != "" { it.alias } else {
+      match it.e {
+        Col(n) => n
+        Count => "count"
+        Lit(_) | Param(_) | Bin(_, _, _) | Not(_) | IsNull(_, _) | InList(_, _) | Like(_, _) => "?column?"
+      }
+    }
+    match it.e {
+      Col(n) => {
+        var ct = sql.ColumnType{name: name}
+        for c in t.cols {
+          if c.name == n {
+            ct = col_type(c, name)
+            break
+          }
+        }
+        out.push(ct)
+      }
+      Count => out.push(sql.ColumnType{name: name, nullable: Some(false), kind: "Integer"})
+      Lit(_) | Param(_) | Bin(_, _, _) | Not(_) | IsNull(_, _) | InList(_, _) | Like(_, _) => out.push(sql.ColumnType{name: name})
+    }
+  }
+  out
+}
+
+fn col_type(c: Col, name: Str) -> sql.ColumnType {
+  let kind = match c.kind {
+    1 => "Integer"
+    2 => "Text"
+    3 => "Real"
+    4 => "Flag"
+    5 => "At"
+    6 => "Blob"
+    7 => "JsonText"
+    8 => "Array"
+    _ => ""
+  }
+  sql.ColumnType{name: name, database_type: c.decl, nullable: Some(!c.not_null), kind: kind}
 }
 
 struct OrderKey {
@@ -3128,7 +3204,7 @@ fn mem_select(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) 
     for _ in items {
       out.push(sql.SqlValue.Integer(n: rows.len()))
     }
-    return MemRows{cols: cols, rows: [out]}
+    return MemRows{cols: cols, rows: [out], types: sel_types(t, items)}
   }
   project(t, items, rows, args)
 }

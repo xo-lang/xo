@@ -593,6 +593,7 @@ struct Results {
   oids: List[Int]
   rows: List[List[sql.SqlValue]]
   tag: Str
+  types: List[sql.ColumnType] = []
 }
 
 fn (p: PgConn) collect() -> Results ! sql.SqlErr uses net.dial {
@@ -603,6 +604,7 @@ fn (p: PgConn) collect() -> Results ! sql.SqlErr uses net.dial {
       RowDesc(fs) => {
         res.cols = fs.map(fn(f) { f.name })
         res.oids = fs.map(fn(f) { f.type_oid })
+        res.types = column_types(fs)
         res.rows = []
       }
       DataRow(vals) => {
@@ -744,7 +746,7 @@ fn (p: PgConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.S
   // a ; separated script runs through the simple protocol, whole
   if args.is_empty() && q.contains(";") {
     let r = p.run(q, args)?
-    return sql.DriverRows{columns: r.cols, rows: r.rows}
+    return sql.DriverRows{columns: r.cols, rows: r.rows, column_types: r.types}
   }
   if args.is_empty() {
     // the simple query protocol, as run does (and as a server that only speaks it expects)
@@ -757,7 +759,7 @@ fn (p: PgConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.S
     match p.recv()? {
       RowDesc(fs) => {
         let cur = PgCursor{p: p, oids: fs.map(fn(f) { f.type_oid }), st: Mutex.new(CursorState{done: false})}
-        return sql.DriverRows{columns: fs.map(fn(f) { f.name }), rows: [], cursor: Some(cur)}
+        return sql.DriverRows{columns: fs.map(fn(f) { f.name }), rows: [], cursor: Some(cur), column_types: column_types(fs)}
       }
       Error(f) => {
         if failed.is_none() {
@@ -981,3 +983,84 @@ fn (p: PgConn) close() uses net.dial {
 }
 
 fn (p: PgConn) is_broken() -> Bool { p.broken.get() }
+
+// ---------------------------------------------------------------------------
+// Column types (decision 0609): pgx's stdlib Rows.ColumnType* (v5.12.0)
+
+/// The type OIDs pgx's default type map names (pgtype_default.go), sorted;
+/// PG_TYPE_NAMES holds each one's name, upper case as
+/// ColumnTypeDatabaseTypeName gives it.
+const PG_TYPE_OIDS: List[Int] = [
+  16, 17, 18, 19, 20, 21, 23, 25, 26, 27, 28, 29, 114, 142, 143, 199, 271, 600, 601, 602, 603, 604,
+  628, 629, 650, 651, 700, 701, 705, 718, 719, 774, 829, 869, 1000, 1001, 1002, 1003, 1005, 1007,
+  1009, 1010, 1011, 1012, 1014, 1015, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1027, 1028, 1033,
+  1034, 1040, 1041, 1042, 1043, 1082, 1083, 1114, 1115, 1182, 1183, 1184, 1185, 1186, 1187, 1231,
+  1560, 1561, 1562, 1563, 1700, 2249, 2287, 2950, 2951, 3614, 3643, 3802, 3807, 3904, 3905, 3906,
+  3907, 3908, 3909, 3910, 3911, 3912, 3913, 3926, 3927, 4072, 4073, 4451, 4532, 4533, 4534, 4535,
+  4536, 5069, 6437, 6442,
+]
+
+const PG_TYPE_NAMES: List[Str] = [
+  "BOOL", "BYTEA", "CHAR", "NAME", "INT8", "INT2", "INT4", "TEXT", "OID", "TID", "XID", "CID",
+  "JSON", "XML", "_XML", "_JSON", "_XID8", "POINT", "LSEG", "PATH", "BOX", "POLYGON", "LINE",
+  "_LINE", "CIDR", "_CIDR", "FLOAT4", "FLOAT8", "UNKNOWN", "CIRCLE", "_CIRCLE", "MACADDR8",
+  "MACADDR", "INET", "_BOOL", "_BYTEA", "_CHAR", "_NAME", "_INT2", "_INT4", "_TEXT", "_TID",
+  "_XID", "_CID", "_BPCHAR", "_VARCHAR", "_INT8", "_POINT", "_LSEG", "_PATH", "_BOX", "_FLOAT4",
+  "_FLOAT8", "_POLYGON", "_OID", "ACLITEM", "_ACLITEM", "_MACADDR", "_INET", "BPCHAR", "VARCHAR",
+  "DATE", "TIME", "TIMESTAMP", "_TIMESTAMP", "_DATE", "_TIME", "TIMESTAMPTZ", "_TIMESTAMPTZ",
+  "INTERVAL", "_INTERVAL", "_NUMERIC", "BIT", "_BIT", "VARBIT", "_VARBIT", "NUMERIC", "RECORD",
+  "_RECORD", "UUID", "_UUID", "TSVECTOR", "_TSVECTOR", "JSONB", "_JSONB", "INT4RANGE",
+  "_INT4RANGE", "NUMRANGE", "_NUMRANGE", "TSRANGE", "_TSRANGE", "TSTZRANGE", "_TSTZRANGE",
+  "DATERANGE", "_DATERANGE", "INT8RANGE", "_INT8RANGE", "JSONPATH", "_JSONPATH", "INT4MULTIRANGE",
+  "NUMMULTIRANGE", "TSMULTIRANGE", "TSTZMULTIRANGE", "DATEMULTIRANGE", "INT8MULTIRANGE", "XID8",
+  "OID8", "_OID8",
+]
+
+/// pgx's ColumnTypeDatabaseTypeName: the registered name, else the OID in
+/// decimal.
+fn pg_type_name(oid: Int) -> Str {
+  var lo = 0
+  var hi = PG_TYPE_OIDS.len()
+  while lo < hi {
+    let m = (lo + hi) / 2
+    if PG_TYPE_OIDS[m] < oid {
+      lo = m + 1
+    } else {
+      hi = m
+    }
+  }
+  if lo < PG_TYPE_OIDS.len() && PG_TYPE_OIDS[lo] == oid { PG_TYPE_NAMES[lo] } else { "${oid}" }
+}
+
+/// Each field's ColumnType: pgx's name, length (text and bytea
+/// unbounded as Int.max; varchar and bpchar the modifier less 4; varbit
+/// the modifier), precision and scale of numeric, nullable unknown (pgx
+/// does not report it), and the SqlValue variant decode_text gives.
+pub fn column_types(fs: List[pgwire.Field]) -> List[sql.ColumnType] {
+  fs.map(fn(f) {
+    let oid = f.type_oid
+    let length: Int? = match oid {
+      25 | 17 => Some(Int.max)
+      1043 | 1042 => Some(f.modifier - 4)
+      1562 => Some(f.modifier)
+      _ => None
+    }
+    var precision: Int? = None
+    var scale: Int? = None
+    if oid == 1700 {
+      let m = f.modifier - 4
+      precision = Some((m >> 16) & 0xFFFF)
+      scale = Some(m & 0xFFFF)
+    }
+    let kind = match oid {
+      16 => "Flag"
+      20 | 21 | 23 | 26 => "Integer"
+      700 | 701 => "Real"
+      17 => "Blob"
+      114 | 3802 => "JsonText"
+      1184 | 1114 => "At"
+      _ => if elem_of(oid) >= 0 { "Array" } else { "Text" }
+    }
+    sql.ColumnType{name: f.name, database_type: pg_type_name(oid), length: length, precision: precision, scale: scale, kind: kind}
+  })
+}

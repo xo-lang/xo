@@ -160,6 +160,9 @@ fn (t: Tx) commit() -> () ! SqlErr uses net.dial
 fn (t: Tx) rollback() -> () ! SqlErr uses net.dial
 
 fn (r: Rows) columns() -> List[Str]
+/// Each column's type (Go's Rows.ColumnTypes, decision 0609):
+/// `ColumnType{name}` per column when the driver does not say.
+fn (r: Rows) column_types() -> List[ColumnType]
 /// The next row, None after the last (the connection is then released).
 fn (r: Rows) next() -> Row? ! SqlErr uses net.dial
 /// `next` decoded into `T` (`derive SqlRow`).
@@ -169,6 +172,8 @@ fn (r: Rows) next_as[T: SqlRow]() -> T? ! SqlErr uses net.dial
 fn (r: Rows) close() uses net.dial
 
 fn (r: Row) columns() -> List[Str]
+/// The result's column types, as Rows.column_types.
+fn (r: Row) column_types() -> List[ColumnType]
 /// Decodes the row into a struct with `derive SqlRow`: each field from the
 /// column of the same name (std.md 10.4).
 fn (r: Row) decode[T: SqlRow]() -> T ! SqlErr
@@ -227,6 +232,29 @@ struct DriverRows[fx: Effects] {
   columns: List[Str]
   rows: List[List[SqlValue]]
   cursor: DriverCursor[fx]? = None
+  /// Each column's type, in columns' order (decision 0609); empty when
+  /// the driver does not say, and Rows.column_types gives
+  /// `ColumnType{name}` per column then.
+  column_types: List[ColumnType] = []
+}
+
+/// A result column's type as the driver reports it (Go's
+/// sql.ColumnType, decision 0609).
+struct ColumnType {
+  name: Str
+  /// The database's name for the type, upper case ("INT4", "VARCHAR",
+  /// "NUMERIC"; Go's DatabaseTypeName); "" when unknown.
+  database_type: Str = ""
+  /// Go's Length: varchar(n), bytea and text as Go's drivers report them.
+  length: Int? = None
+  /// Go's DecimalSize.
+  precision: Int? = None
+  scale: Int? = None
+  /// Go's Nullable; None when the driver cannot tell.
+  nullable: Bool? = None
+  /// The SqlValue variant the column decodes to ("Integer", "Text", ...;
+  /// Go's ScanType); "" when unknown.
+  kind: Str = ""
 }
 
 /// The rest of a result still on the connection. The connection is not

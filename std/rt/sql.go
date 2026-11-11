@@ -106,6 +106,9 @@ type sqlTx struct {
 type Sql_Row struct {
 	cols []string
 	vals []any
+	// types is the result's column types (decision 0609; nil: the driver
+	// did not say)
+	types []Sql_ColumnType
 }
 
 // XoDebug implements Debug.
@@ -351,43 +354,67 @@ func withConn[T any](tk *Task, d *sqlDB, f func() Result[T, Sql_SqlErr]) Result[
 	return f()
 }
 
-func sqlRows(cols []string, rows [][]any) List[Sql_Row] {
+func sqlRows(cols []string, types []Sql_ColumnType, rows [][]any) List[Sql_Row] {
 	out := make([]Sql_Row, len(rows))
 	for i, r := range rows {
-		out[i] = Sql_Row{cols: cols, vals: r}
+		out[i] = Sql_Row{cols: cols, vals: r, types: types}
 	}
 	return ListFromSlice(out)
 }
+
+// sqlColumnTypes is types, or ColumnType{name} per column when the driver
+// gave none (decision 0609), as the native column_types_of.
+func sqlColumnTypes(cols []string, types []Sql_ColumnType) List[Sql_ColumnType] {
+	if len(types) == len(cols) {
+		return ListOf(types...)
+	}
+	out := make([]Sql_ColumnType, len(cols))
+	for i, c := range cols {
+		out[i] = Sql_ColumnType{F_name: c}
+	}
+	return ListFromSlice(out)
+}
+
+// M_column_types is `row.column_types()`.
+func (r Sql_Row) M_column_types(*Task) List[Sql_ColumnType] { return sqlColumnTypes(r.cols, r.types) }
 
 type sqlRunner interface {
 	Query(q string, args []any) ([]string, [][]any, error)
 	Exec(q string, args []any) (int64, int64, error)
 }
 
-func runQuery(tk *Task, r sqlRunner, q string, args []any) ([]string, [][]any, error) {
-	if t, ok := r.(sqlTaskRunner); ok {
-		return t.QueryTk(tk, q, args)
+func runQuery(tk *Task, r sqlRunner, q string, args []any) ([]string, []Sql_ColumnType, [][]any, error) {
+	if t, ok := r.(sqlTypedTaskRunner); ok {
+		return t.QueryTypesTk(tk, q, args)
 	}
-	return r.Query(q, args)
+	if t, ok := r.(sqlTaskRunner); ok {
+		cols, rows, err := t.QueryTk(tk, q, args)
+		return cols, nil, rows, err
+	}
+	if t, ok := r.(sqlTypedRunner); ok {
+		return t.QueryTypes(q, args)
+	}
+	cols, rows, err := r.Query(q, args)
+	return cols, nil, rows, err
 }
 
 func sqlQuery(tk *Task, r sqlRunner, q string, args List[Sql_SqlValue]) Result[List[Sql_Row], Sql_SqlErr] {
-	cols, rows, err := runQuery(tk, r, q, sqlArgs(args))
+	cols, types, rows, err := runQuery(tk, r, q, sqlArgs(args))
 	if err != nil {
 		return sqlFailErr[List[Sql_Row]](err)
 	}
-	return Ok[List[Sql_Row], Sql_SqlErr](sqlRows(cols, rows))
+	return Ok[List[Sql_Row], Sql_SqlErr](sqlRows(cols, types, rows))
 }
 
 func sqlQueryOne(tk *Task, r sqlRunner, q string, args List[Sql_SqlValue]) Result[Sql_Row, Sql_SqlErr] {
-	cols, rows, err := runQuery(tk, r, q, sqlArgs(args))
+	cols, types, rows, err := runQuery(tk, r, q, sqlArgs(args))
 	if err != nil {
 		return sqlFailErr[Sql_Row](err)
 	}
 	if len(rows) == 0 {
 		return sqlFail[Sql_Row](sqlTagNoRows)
 	}
-	return Ok[Sql_Row, Sql_SqlErr](Sql_Row{cols: cols, vals: rows[0]})
+	return Ok[Sql_Row, Sql_SqlErr](Sql_Row{cols: cols, vals: rows[0], types: types})
 }
 
 func sqlExec(tk *Task, r sqlRunner, q string, args List[Sql_SqlValue]) Result[Sql_ExecResult, Sql_SqlErr] {

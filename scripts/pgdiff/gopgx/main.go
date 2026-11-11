@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // q is Xo's Debug text of a Str or Bytes (std/rt show.go quote): U+FFFD
@@ -253,6 +254,7 @@ func main() {
 		for _, f := range r.FieldDescriptions {
 			cols = append(cols, q(f.Name))
 		}
+		fmt.Println(colTypes(r.FieldDescriptions))
 		for _, row := range r.Rows {
 			var vals []string
 			for i, v := range row {
@@ -265,4 +267,36 @@ func main() {
 			fmt.Printf("Row{cols: [%s], vals: [%s]}\n", strings.Join(cols, ", "), strings.Join(vals, ", "))
 		}
 	}
+}
+
+var typeMap = pgtype.NewMap()
+
+// colTypes is pgx stdlib's Rows.ColumnType* for each field (decision
+// 0609): ColumnTypeDatabaseTypeName, ColumnTypeLength and
+// ColumnTypePrecisionScale as stdlib/sql.go computes them from the
+// field's OID and modifier. "-" where stdlib says ok = false.
+func colTypes(fs []pgconn.FieldDescription) string {
+	var out []string
+	for _, f := range fs {
+		name := strconv.FormatInt(int64(f.DataTypeOID), 10)
+		if dt, ok := typeMap.TypeForOID(f.DataTypeOID); ok {
+			name = strings.ToUpper(dt.Name)
+		}
+		length := "-"
+		switch f.DataTypeOID {
+		case pgtype.TextOID, pgtype.ByteaOID:
+			length = strconv.FormatInt(math.MaxInt64, 10)
+		case pgtype.VarcharOID, pgtype.BPCharOID:
+			length = strconv.FormatInt(int64(f.TypeModifier-4), 10)
+		case pgtype.VarbitOID:
+			length = strconv.FormatInt(int64(f.TypeModifier), 10)
+		}
+		ps := "-"
+		if f.DataTypeOID == pgtype.NumericOID {
+			mod := f.TypeModifier - 4
+			ps = fmt.Sprintf("%d,%d", (mod>>16)&0xffff, mod&0xffff)
+		}
+		out = append(out, fmt.Sprintf("%s:%s:%s:%s", f.Name, name, length, ps))
+	}
+	return "types " + strings.Join(out, " ")
 }

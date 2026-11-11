@@ -6,6 +6,7 @@
 // pgx against a server in Docker; scripts/pg-diff.sh checks the driver
 // against pgx itself).
 use std/sql
+use native/llrt/pgwire
 
 test "connection strings: what is refused" {
   expect(config("host=x sslmode=disable").err()) == Some(sql.SqlErr.Param(msg: "user is required: no environment is read"))
@@ -324,4 +325,14 @@ test "copy_from stops calling rows once the server refuses the COPY, and returns
     }
     s.cancel()
   }
+}
+
+test "column_types is pgx stdlib's ColumnType* from each field's OID and modifier (decision 0609)" {
+  let f = fn(name: Str, oid: Int, m: Int) -> pgwire.Field { pgwire.Field{name: name, table_oid: 0, column: 0, type_oid: oid, size: -1, modifier: m, format: 0} }
+  let ts = column_types([f("v", 1043, 24), f("c", 1042, 9), f("n", 1700, (10 << 16 | 2) + 4), f("t", 25, -1), f("i", 23, -1), f("a", 1007, -1), f("x", 99999, -1), f("vb", 1562, 8), f("u", 1043, -1)])
+  expect(ts.map(fn(t) { t.database_type })) == ["VARCHAR", "BPCHAR", "NUMERIC", "TEXT", "INT4", "_INT4", "99999", "VARBIT", "VARCHAR"]
+  expect(ts.map(fn(t) { t.length })) == [Some(20), Some(5), None, Some(Int.max), None, None, None, Some(8), Some(-5)]
+  expect((ts[2].precision, ts[2].scale)) == (Some(10), Some(2))
+  expect(ts.map(fn(t) { t.kind })) == ["Text", "Text", "Text", "Text", "Integer", "Array", "Text", "Text", "Text"]
+  expect(ts.all(fn(t) { t.nullable is None })) == true
 }

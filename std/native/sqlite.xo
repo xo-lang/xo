@@ -351,14 +351,16 @@ fn column(st: c3.Sqlite3Stmt, i: Int32) -> sql.SqlValue {
 fn (c: SqliteConn) run(q: Str, args: List[sql.SqlValue]) -> (sql.DriverRows, sql.ExecResult) ! sql.SqlErr uses fs {
   var at = 0
   var cols: List[Str] = []
+  var types: List[sql.ColumnType] = []
   var rows: List[List[sql.SqlValue]] = []
   var res = sql.ExecResult{rows_affected: 0, last_insert_id: 0}
   var seen = false
   while let Some(st) = c.prepare(q, at)? {
     let last = c.prepare_left(q, at)
     cols = []
+    types = []
     rows = []
-    let r = c.step_all(st, if last { args } else { [] }, cols, rows)
+    let r = c.step_all(st, if last { args } else { [] }, cols, types, rows)
     c3.sqlite3_finalize(st)
     r?
     res = sql.ExecResult{rows_affected: c3.sqlite3_changes64(c.db), last_insert_id: c3.sqlite3_last_insert_rowid(c.db)}
@@ -367,7 +369,7 @@ fn (c: SqliteConn) run(q: Str, args: List[sql.SqlValue]) -> (sql.DriverRows, sql
   if !seen && !args.is_empty() {
     return Err(sql.SqlErr.Param(msg: "sqlite: ${args.len()} arguments for a text with no statement"))
   }
-  (sql.DriverRows{columns: cols, rows: rows}, res)
+  (sql.DriverRows{columns: cols, rows: rows, column_types: types}, res)
 }
 
 /// True when nothing but space and comments follows at: the statement
@@ -376,11 +378,16 @@ fn (c: SqliteConn) prepare_left(q: Str, at: Int) -> Bool {
   q[at..q.len()].trim().is_empty()
 }
 
-fn (c: SqliteConn) step_all(st: c3.Sqlite3Stmt, args: List[sql.SqlValue], var cols: List[Str], var rows: List[List[sql.SqlValue]]) -> () ! sql.SqlErr uses fs {
+fn (c: SqliteConn) step_all(st: c3.Sqlite3Stmt, args: List[sql.SqlValue], var cols: List[Str], var types: List[sql.ColumnType], var rows: List[List[sql.SqlValue]]) -> () ! sql.SqlErr uses fs {
   c.bind(st, args)?
   let n = c3.sqlite3_column_count(st)
   for i in 0..Int(n) {
-    cols.push(c3.sqlite3_column_name(st, Int32(i)))
+    let name = c3.sqlite3_column_name(st, Int32(i))
+    cols.push(name)
+    // decision 0609: the declared type upper cased, as mattn/go-sqlite3's
+    // ColumnTypeDatabaseTypeName ("" for an expression); a column's
+    // values may be of any storage class, so kind is unknown
+    types.push(sql.ColumnType{name: name, database_type: c3.sqlite3_column_decltype(st, Int32(i)).to_upper()})
   }
   while {
     let rc = c3.sqlite3_step(st)
