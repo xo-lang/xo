@@ -590,3 +590,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0598](0598-std-textproto.md): Proposed: std/textproto, net/textproto's header and line reader as a public merged module that std/mail, std/multipart and std/smtp share
 - [0599](0599-std-crypto-ecdh.md): Proposed: ECDH key agreement (X25519, P-256, P-384, P-521) in std/crypto with Go's crypto/ecdh semantics and errors, over llrt's existing x25519 and nistec
 - [0600-file-seek.md](0600-file-seek.md): File.seek(offset, Whence) as Go's os.File.Seek, read buffer discarded (Proposed)
+- [0601](0601-std-asn1.md): Proposed: std/asn1, a public DER value tree with Go's encoding/asn1 rules and texts; derive Asn1 later
