@@ -29,6 +29,21 @@ the text of every entry is unchanged).
 - wasm (memory): `fs_read` sizes its buffer from the file's size (a 1.2 MB file took a 3 MB block), a list of 1 MiB or more grows by a quarter instead of doubling, and a large allocation reuses a free block up to two size classes larger before memory grows; the playground's 30-entry REPL session without std's record peaks at 136 MB (169 before), with the record at 87 MB as before (decision 0583 (d)).
 - xo build and xo test (arm64 and amd64 native backends): a function whose result does not fit the registers writes it through an address its caller passes (decision 0564 step 3, relanded), and results past 4,096 words stay in their frame slot. The compiler's own text is 0.59% smaller; aiplatform/v1 (xo-lang/gcp) builds its tests in 0.745 of the wall and 0.644 of the CPU on linux/arm64, and the self build takes 0.4 to 0.7% longer.
 
+## v0.48.2 (2026-11-11)
+
+A fix release of 0.48.1 with one fix: on windows/amd64, a separately
+compiled program that uses concurrency was linked against std's
+single-threaded store. It carries nothing else.
+
+- xo build, run and test (fix, windows/amd64): std's prebuilt store is
+  built twice, with and without concurrency support, and the Mach-O and
+  ELF links take the concurrent one for a program that uses concurrency;
+  the PE link read only the single-threaded one's setting, so once both
+  stores were cached, a concurrent program got it: on 0.46.0 an HTTP and
+  an HTTPS server faulted and two std/sql programs failed to link. The PE
+  link now picks the store as the others do. On an earlier version,
+  `XO_SEPCOMP=0` (or `XO_SEPCOMP_DEFAULT=0`) on windows/amd64 avoids it.
+
 ## v0.48.1 (2026-11-11)
 
 A fix release of 0.48.0 with one fix: a separately compiled program read
