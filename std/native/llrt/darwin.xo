@@ -203,6 +203,10 @@ pub fn pread_at(fd: Int, a: Int, n: Int, off: Int) -> Int { ret(sys_darwin.pread
 pub fn pwrite_at(fd: Int, a: Int, n: Int, off: Int) -> Int { ret(sys_darwin.pwrite(fd, a, raw.io_len(n), off)) }
 
 /// ftruncate(2) of the descriptor fd to size bytes: 0, or -errno.
+/// lseek(2) of fd (whence 0 start, 1 current, 2 end): the new offset or
+/// the negative errno.
+pub fn lseek(fd: Int, off: Int, whence: Int) -> Int { ret(sys_darwin.lseek(fd, off, Int32.wrapping_from(whence))) }
+
 pub fn ftruncate(fd: Int, size: Int) -> Int { ret(Int(sys_darwin.ftruncate(fd, size))) }
 
 /// rename(2) of a to b (as written: "" is no file).

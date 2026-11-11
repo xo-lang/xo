@@ -259,6 +259,7 @@ var (
 	_ func(*File, *Task) Result[Option[string], FsErr]                                                     = (*File).M_read_line
 	_ func(*File, *Task, Bytes) Result[Unit, FsErr]                                                        = (*File).M_write
 	_ func(*File, *Task, int64, Bytes) Result[Unit, FsErr]                                                 = (*File).M_write_at
+	_ func(*File, *Task, int64, Whence) Result[int64, FsErr]                                               = (*File).M_seek
 	_ func(*File, *Task, int64) Result[Unit, FsErr]                                                        = (*File).M_truncate
 	_ func(*File, *Task) Result[FileInfo, FsErr]                                                           = (*File).M_stat
 	_ func(*File, *Task) Result[Unit, FsErr]                                                               = (*File).M_sync

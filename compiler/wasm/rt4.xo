@@ -94,7 +94,7 @@ fn le64(n: Int) -> Bytes {
 
 /// The runtime functions of rt4.xo called with the operands' leaves.
 fn rt4_direct(name: Str) -> Bool {
-  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "fs_read_link" | "fs_open" | "fs_file_closed" | "fs_file_read" | "fs_file_read_at" | "fs_file_read_line" | "fs_file_write" | "fs_file_close" | "fs_raw_mkdir" | "fs_raw_rmdir" | "fs_raw_unlink" | "fs_raw_kind" | "fs_raw_names" | "fs_raw_errno" | "fs_raw_create" | "fs_raw_fail" | "fs_rename" | "fs_remove" | "fs_chtimes" | "fs_symlink" | "fs_copy" | "fs_perm" | "fs_chmod" | "fs_lock" | "fs_lock_shared" | "fs_lock_held" | "fs_unlock" | "fs_case_sensitive" | "any_new" | "any_get" | "any_take" | "tz_table" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
+  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "fs_read_link" | "fs_open" | "fs_file_closed" | "fs_file_read" | "fs_file_read_at" | "fs_file_seek" | "fs_file_read_line" | "fs_file_write" | "fs_file_close" | "fs_raw_mkdir" | "fs_raw_rmdir" | "fs_raw_unlink" | "fs_raw_kind" | "fs_raw_names" | "fs_raw_errno" | "fs_raw_create" | "fs_raw_fail" | "fs_rename" | "fs_remove" | "fs_chtimes" | "fs_symlink" | "fs_copy" | "fs_perm" | "fs_chmod" | "fs_lock" | "fs_lock_shared" | "fs_lock_held" | "fs_unlock" | "fs_case_sensitive" | "any_new" | "any_get" | "any_take" | "tz_table" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
 }
 
 /// The WASI imports of rt4.xo.
@@ -103,6 +103,7 @@ fn rt4_imports() -> Str {
     (import "wasi_snapshot_preview1" "path_open" (func $path_open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
     (import "wasi_snapshot_preview1" "fd_read" (func $fd_read (param i32 i32 i32 i32) (result i32)))
     (import "wasi_snapshot_preview1" "fd_pread" (func $fd_pread (param i32 i32 i32 i64 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "fd_seek" (func $fd_seek (param i32 i64 i32 i32) (result i32)))
     (import "wasi_snapshot_preview1" "fd_close" (func $fd_close (param i32) (result i32)))
     (import "wasi_snapshot_preview1" "path_filestat_get" (func $path_filestat_get (param i32 i32 i32 i32 i32) (result i32)))
     (import "wasi_snapshot_preview1" "fd_readdir" (func $fd_readdir (param i32 i32 i32 i64 i32) (result i32)))
@@ -3017,6 +3018,55 @@ ${tz_fn}
       local.get $s
       local.get $k
       call $str_list1)
+
+    ;; f.seek(offset, whence) (decision 0600; whence 0 start, 1 current, 2
+    ;; end as WASI's): the new offset, or -1 with the status set
+    ;; (fsops.xo file_seek). Current counts from what was read: the read
+    ;; buffer's unread bytes buf[r:w] are subtracted, and the buffer is
+    ;; emptied.
+    (func $fs_file_seek (param $f i32) (param $off i64) (param $wh i64) (param $x i32) (param $xn i32) (result i64)
+      (local $e i32)
+      local.get $wh
+      i64.const 1
+      i64.eq
+      if
+        local.get $off
+        local.get $f
+        i32.load offset=20
+        local.get $f
+        i32.load offset=16
+        i32.sub
+        i64.extend_i32_s
+        i64.sub
+        local.set $off
+      end
+      local.get $f
+      i32.load offset=8
+      local.get $off
+      local.get $wh
+      i32.wrap_i64
+      i32.const 0
+      call $fd_seek
+      local.tee $e
+      if
+        local.get $e
+        local.get $x
+        local.get $xn
+        call $fs_fail
+        drop
+        i64.const -1
+        return
+      end
+      local.get $f
+      i32.const 0
+      i32.store offset=16
+      local.get $f
+      i32.const 0
+      i32.store offset=20
+      i64.const 0
+      global.set $fsst
+      i32.const 0
+      i64.load)
 
     ;; f.read_line(): the next line without its newline (and a carriage
     ;; return before it) in a list of one, the empty list at the end or

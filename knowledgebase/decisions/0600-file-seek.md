@@ -1,7 +1,6 @@
 # 0600: File.seek
 
-Status: Accepted (owner, 2026-11-11 morning, via the lead; proposed by Xo Lang 3, 2026-11-11), for the owner. Built on branch
-lang3-seek while it waits.
+Status: Accepted (owner, 2026-11-11 morning, via the lead; proposed by Xo Lang 3, 2026-11-11).
 
 ## Context
 
@@ -39,9 +38,14 @@ fn (f: File) seek(offset: Int, whence: Whence = Whence.Start) -> Int ! FsErr use
   (where, as in Go and O_APPEND, a write still goes to the end).
 - A closed file: Go's `file already closed` text, as the other methods.
 - MemFs (testing) files keep a position and seek the same way.
-- Layers: lseek on Linux (62 arm64, 8 amd64) and FreeBSD (478), libSystem
-  lseek on macOS, SetFilePointerEx on Windows (already bound), the wasm
-  runtime's fs_file_seek, Go's os.File.Seek on the Go backend.
+- Layers: lseek on Linux (62 arm64 and riscv64, 8 amd64) and FreeBSD
+  (478), libSystem lseek on macOS, SetFilePointerEx on Windows (already
+  bound), WASI fd_seek in the wasm runtime (rt4.xo fs_file_seek; the
+  playground's runtime without files answers ENOSYS), Go's os.File.Seek
+  on the Go backend.
+- MemFs files (tests) keep the position too: after a seek a write-only
+  file's writes go at the position (before, every write appended), and a
+  write moves the position past it (to the end for open_append).
 
 `seek(0, Whence.End)` gives the size from the handle; `stat().size`
 remains the plain way.
@@ -65,3 +69,11 @@ remains the plain way.
   unrepresentable.
 - `io.SeekStart` constants in a separate module: Xo has no io module;
   File's own enum keeps it beside the method.
+
+## Progress
+
+- 2026-11-11 (Xo Lang 3, branch lang3-seek): built on every layer above.
+  Golden file_seek (real files: rewind, Current after a buffered read,
+  End, a negative position, a gap past the end, open_append, open_rw)
+  passes on arm64, llvm, the Go backend and wasm; the prelude corpus test
+  (MemFs) on go, arm64, llvm. Held for the owner's yes.

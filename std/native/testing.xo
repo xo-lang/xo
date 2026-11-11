@@ -143,6 +143,9 @@ struct MemFile {
   append: Bool
   /// made by open_rw: reads see the file's current contents, writes go at off
   rw: Bool
+  /// seek moved a write-only file's position: its writes go at off, not
+  /// at the end (decision 0600)
+  seeked: Bool = false
 }
 
 /// A held MemFs lock: the lock record (memlock_new) and whether it was
@@ -1025,7 +1028,7 @@ fn memfile_write(f: File, data: Bytes) -> () ! FsErr {
 
 fn memfile_write_in(var st: MemState, f: File, data: Bytes) -> () ! FsErr {
   let mf = memfile_state(st, f, true)?
-  if mf.rw {
+  if mf.rw || (mf.seeked && !mf.append) {
     memfile_write_at_in(st, f, mf.off, data)?
     memfs_set_file(st, rt.mem_file_id(f), mf with {off: mf.off + data.len()})
     return Ok(())
@@ -1035,7 +1038,42 @@ fn memfile_write_in(var st: MemState, f: File, data: Bytes) -> () ! FsErr {
   if n.dir {
     n = MemNode{dir: false, data: b"", modified: memfs_now(), name: ""}
   }
-  memfs_put(st, mf.full, n with {data: n.data + data, modified: memfs_now()})
+  let d = n.data + data
+  memfs_put(st, mf.full, n with {data: d, modified: memfs_now()})
+  // the position: past what this handle wrote, or the end for append
+  memfs_set_file(st, rt.mem_file_id(f), mf with {off: if mf.append { d.len() } else { mf.off + data.len() }})
+}
+
+fn memfile_seek(f: File, offset: Int, whence: Whence) -> Int ! FsErr {
+  var st = memfs_load()
+  let r = memfile_seek_in(st, f, offset, whence)
+  memfs_store(st)
+  r
+}
+
+/// File.seek on a MemFs file (decision 0600): reads and writes go on from
+/// the new offset; End counts from the file's current size (the snapshot's
+/// for a file opened for reading).
+fn memfile_seek_in(var st: MemState, f: File, offset: Int, whence: Whence) -> Int ! FsErr {
+  if rt.fs_canceled() {
+    return Err(FsErr.Canceled)
+  }
+  let mf = memfs_hs(st).files.get(rt.mem_file_id(f)) ?? MemFile{full: "", data: b"", off: 0, closed: true, append: false, rw: false}
+  if mf.closed {
+    return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "file already closed"))
+  }
+  let size = if rt.mem_file_writes(f) || mf.rw { (memfs_get(st, mf.full).map(fn(n) { n.data.len() }) ?? 0) } else { mf.data.len() }
+  let base = match whence {
+    Whence.Start => 0
+    Whence.Current => mf.off
+    Whence.End => size
+  }
+  let pos = base + offset
+  if pos < 0 {
+    return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "invalid argument"))
+  }
+  memfs_set_file(st, rt.mem_file_id(f), mf with {off: pos, seeked: true})
+  Ok(pos)
 }
 
 /// A MemFs file has nothing to sync: an open one is Ok.

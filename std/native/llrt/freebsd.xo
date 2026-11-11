@@ -445,6 +445,9 @@ pub fn pread_at(fd: Int, a: Int, n: Int, off: Int) -> Int { rt.sys6(475, fd, a, 
 pub fn pwrite_at(fd: Int, a: Int, n: Int, off: Int) -> Int { rt.sys6(476, fd, a, raw.io_len(n), off, 0, 0) }
 
 /// ftruncate(2) of fd to size bytes.
+/// lseek(2) of fd: the new offset or the negative errno.
+pub fn lseek(fd: Int, off: Int, whence: Int) -> Int { rt.sys6(478, fd, off, whence, 0, 0, 0) }
+
 pub fn ftruncate(fd: Int, size: Int) -> Int { rt.sys6(480, fd, size, 0, 0, 0, 0) }
 
 /// flock(2) of fd.

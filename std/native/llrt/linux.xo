@@ -736,6 +736,10 @@ pub fn pread_at(fd: Int, a: Int, n: Int, off: Int) -> Int { rt.sys6(nrf(67, 17, 
 pub fn pwrite_at(fd: Int, a: Int, n: Int, off: Int) -> Int { rt.sys6(nrf(68, 18, 476), fd, a, raw.io_len(n), off, 0, 0) }
 
 /// ftruncate(2) of the descriptor fd to size bytes: 0, or -errno.
+/// lseek(2) of fd (whence 0 start, 1 current, 2 end): the new offset or
+/// the negative errno.
+pub fn lseek(fd: Int, off: Int, whence: Int) -> Int { rt.sys6(nrf(62, 8, 478), fd, off, whence, 0, 0, 0) }
+
 pub fn ftruncate(fd: Int, size: Int) -> Int { rt.sys6(nrf(46, 77, 480), fd, size, 0, 0, 0, 0) }
 
 /// sched_getaffinity(2) of the calling thread into the n bytes at a: the

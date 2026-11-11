@@ -18,6 +18,7 @@ type memFileH struct {
 	off    int
 	append bool // open_append: write_at is an error
 	rw     bool // open_rw: reads see the file's current contents, writes go at off
+	seeked bool // seek moved a write-only file's position: writes go at off (decision 0600)
 }
 
 // cur is the contents reads use: the file's live ones for open_rw, else the
@@ -70,6 +71,41 @@ func (m *memFileH) write(data Bytes) {
 	}
 	n.data += data
 	n.mod = fs.now()
+	if m.append {
+		m.off = len(n.data)
+	} else {
+		m.off += len(data)
+	}
+}
+
+// seek is File.seek (decision 0600): End counts from the file's current
+// size (the snapshot's for a file opened for reading).
+func (m *memFileH) seek(write bool, offset int64, whence Whence) (int64, bool) {
+	size := len(m.data)
+	if write || m.rw {
+		fs := m.v.fs
+		fs.mu.Lock()
+		if n := fs.get(m.full); n != nil && !n.dir {
+			size = len(n.data)
+		} else {
+			size = 0
+		}
+		fs.mu.Unlock()
+	}
+	var base int64
+	switch whence.Tag { // 1 Start, 2 Current, 3 End
+	case 2:
+		base = int64(m.off)
+	case 3:
+		base = int64(size)
+	}
+	pos := base + offset
+	if pos < 0 {
+		return 0, false
+	}
+	m.off = int(pos)
+	m.seeked = true
+	return pos, true
 }
 
 // node is the file's node, a fresh empty one when it was removed since it

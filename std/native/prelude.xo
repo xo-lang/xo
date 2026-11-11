@@ -4066,6 +4066,26 @@ fn file_write_at(f: File, offset: Int, data: Bytes) -> () ! FsErr {
   }
 }
 
+fn file_seek(f: File, offset: Int, whence: Whence) -> Int ! FsErr {
+  if rt.fs_canceled() {
+    return Err(FsErr.Canceled)
+  }
+  if fsops.file_closed(f.h) {
+    return Err(FsErr.Io(path: f.path, msg: "file already closed"))
+  }
+  let w = match whence {
+    Whence.Start => 0
+    Whence.Current => 1
+    Whence.End => 2
+  }
+  let l = fsops.file_seek(f.h, offset, w, f.path)
+  let st = sysio.status()
+  if st != 0 {
+    return Err(fs_err(st, f.path))
+  }
+  Ok(l[0])
+}
+
 fn file_truncate(f: File, size: Int) -> () ! FsErr {
   file_state(f, true)?
   if size < 0 {

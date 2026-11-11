@@ -840,6 +840,52 @@ test "Fs.open_rw reads and writes one handle without truncating, as Go's OpenFil
   expect(g2.write(b"x").is_err()) == true
 }
 
+test "File.seek moves the position as Go's os.File.Seek (decision 0600)" {
+  os.fs.write("s.txt", b"0123456789")?
+  let r = os.fs.open("s.txt")?
+  expect(r.read(3)?) == Some(b"012")
+  expect(r.seek(0, Whence.Current)?) == 3
+  expect(r.read(2)?) == Some(b"34")
+  expect(r.seek(-2, Whence.End)?) == 8
+  expect(r.read(5)?) == Some(b"89")
+  expect(r.seek(0)?) == 0
+  expect(r.read_line()?) == Some("0123456789")
+  expect(r.seek(4)?) == 4
+  expect(r.seek(-1, Whence.Current)?) == 3
+  expect(r.read(1)?) == Some(b"3")
+  match r.seek(-1) {
+    Err(FsErr.Io(msg: m, ..)) => expect(m) == "invalid argument"
+    other => fault("seek(-1): ${other.is_ok()}")
+  }
+  expect(r.seek(20)?) == 20
+  expect(r.read(1)?) == None
+  expect(r.seek(0, Whence.End)?) == 10
+  r.close()?
+  expect(r.seek(0).is_err()) == true
+  let w = os.fs.create("w.txt")?
+  w.write(b"hello world")?
+  expect(w.seek(0, Whence.Current)?) == 11
+  expect(w.seek(6)?) == 6
+  w.write(b"WORLD")?
+  expect(w.seek(0, Whence.End)?) == 11
+  expect(w.seek(13)?) == 13
+  w.write(b"!")?
+  w.close()?
+  expect(os.fs.read("w.txt")?) == b"hello WORLD\x00\x00!"
+  let a = os.fs.open_append("w.txt")?
+  expect(a.seek(0)?) == 0
+  a.write(b"X")?
+  expect(a.seek(0, Whence.Current)?) == 15
+  a.close()?
+  expect(os.fs.read("w.txt")?) == b"hello WORLD\x00\x00!X"
+  let rw = os.fs.open_rw("w.txt")?
+  expect(rw.seek(6)?) == 6
+  rw.write(b"w")?
+  expect(rw.seek(0)?) == 0
+  expect(rw.read(7)?) == Some(b"hello w")
+  rw.close()?
+}
+
 test "read_dir_entries, walk_entries and walk_dir_entries answer as Go's os.ReadDir and WalkDir with the type and no stat" {
   for d in ["a/b", "a/c"] {
     os.fs.create_dir_all(d)?

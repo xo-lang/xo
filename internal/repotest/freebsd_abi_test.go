@@ -54,6 +54,7 @@ var freebsdCalls = map[string]string{
 	"pread_at":      "pread",
 	"pwrite_at":     "pwrite",
 	"ftruncate":     "ftruncate",
+	"lseek":         "lseek",
 	"flock":         "flock",
 	"dir_list":      "getdirentries",
 }

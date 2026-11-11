@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+read Some(b"012") at 3
+read Some(b"34") end-2 8 read Some(b"89")
+rewind 0 line Some("0123456789")
+at 4 back 3 read Some(b"3")
+negative s.txt: invalid argument
+past 20 read None size 10
+closed true
+written 11 to 6
+end 11 gap 13
+file b"hello WORLD\0\0!"
+append to 0
+append at 15
+file b"hello WORLD\0\0!X"
+rw to 6
+rw rewind 0 read Some(b"hello w")
+--- stderr

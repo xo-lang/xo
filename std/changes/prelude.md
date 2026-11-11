@@ -1,5 +1,21 @@
 # prelude changes
 
+## 2026-11-11: feature: `File.seek(offset, whence)` and `Whence`
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit of 2026-11-11 (bench/results/std-audit-2026-11-11.md, fourth gap), decision 0600
+- Go reference: os.File.Seek, io.SeekStart/SeekCurrent/SeekEnd (go1.26.1)
+- Test: golden file_seek (real files on arm64, llvm, the Go backend, wasm); the prelude corpus "File.seek moves the position" (MemFs on go, arm64, llvm)
+- Shipped in: not yet released
+
+`f.seek(offset, Whence.Start | Current | End)` moves the position and
+returns it from the start, as Go's os.File.Seek: Current counts from what
+the program has read (the read buffer's unread bytes are not past it, and
+the buffer is dropped), End gives the size, a position before the start
+is `invalid argument`. MemFs files keep a position too: a write-only
+file's writes go at it after a seek.
+
 ## 2026-11-10: feature: `os.secrets.dpapi()` (Windows DPAPI) and `Env.local_app_data()`
 
 - Kind: feature

@@ -188,7 +188,7 @@ func (f File) M_write(tk *Task, data Bytes) Result[Unit, FsErr] {
 		return Err[Unit](fsIo(h.path, "file is open for reading"))
 	}
 	if h.mem != nil {
-		if h.rw {
+		if h.rw || (h.mem.seeked && !h.mem.append) {
 			h.mem.writeAt(int64(h.mem.off), data)
 			h.mem.off += len(data)
 		} else {
@@ -779,6 +779,40 @@ func (f File) M_write_at(tk *Task, offset int64, data Bytes) Result[Unit, FsErr]
 		return Err[Unit](mapFsErr(err, h.path))
 	}
 	return Ok[Unit, FsErr](Unit{})
+}
+
+// M_seek is `f.seek(offset, whence)` (decision 0600): Go's os.File.Seek,
+// with Current counted from what was read (the read buffer's unread bytes
+// subtracted) and the buffer reset.
+func (f File) M_seek(tk *Task, offset int64, whence Whence) Result[int64, FsErr] {
+	h := f.h
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	switch {
+	case tk.Canceled():
+		return Err[int64](FsCanceled)
+	case h.closed:
+		return Err[int64](fileClosed(h.path))
+	}
+	if h.mem != nil {
+		pos, ok := h.mem.seek(h.write, offset, whence)
+		if !ok {
+			return Err[int64](fsIo(h.path, "invalid argument"))
+		}
+		return Ok[int64, FsErr](pos)
+	}
+	w := int(whence.Tag) - 1 // Whence tags count from 1: Start, Current, End
+	if h.r != nil && w == 1 {
+		offset -= int64(h.r.Buffered())
+	}
+	pos, err := h.osf.Seek(offset, w)
+	if err != nil {
+		return Err[int64](mapFsErr(err, h.path))
+	}
+	if h.r != nil {
+		h.r.Reset(h.osf)
+	}
+	return Ok[int64, FsErr](pos)
 }
 
 // M_truncate is `f.truncate(size)`: Go's os.File.Truncate.

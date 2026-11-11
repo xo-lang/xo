@@ -1,0 +1,46 @@
+// File.seek on the real file system (decision 0600, Go's os.File.Seek):
+// Current counts from what was read past the read buffer, End gives the
+// size, a negative position is an error, a write past the end leaves a
+// zero gap, open_append still writes at the end, and open_rw reads and
+// writes from the new position.
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-file-seek-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all(name)?
+  let root = base.sub(name)
+  root.write("s.txt", b"0123456789")?
+  let r = root.open("s.txt")?
+  out.println("read ${r.read(3)?.debug()} at ${r.seek(0, Whence.Current)?}")
+  out.println("read ${r.read(2)?.debug()} end-2 ${r.seek(-2, Whence.End)?} read ${r.read(5)?.debug()}")
+  out.println("rewind ${r.seek(0)?} line ${r.read_line()?.debug()}")
+  out.println("at ${r.seek(4)?} back ${r.seek(-1, Whence.Current)?} read ${r.read(1)?.debug()}")
+  match r.seek(-1) {
+    Ok(p) => out.println("negative ok ${p}?")
+    Err(e) => out.println("negative ${e}")
+  }
+  out.println("past ${r.seek(20)?} read ${r.read(1)?.debug()} size ${r.seek(0, Whence.End)?}")
+  r.close()?
+  out.println("closed ${r.seek(0).is_err()}")
+  let w = root.create("w.txt")?
+  w.write(b"hello world")?
+  out.println("written ${w.seek(0, Whence.Current)?} to ${w.seek(6)?}")
+  w.write(b"WORLD")?
+  out.println("end ${w.seek(0, Whence.End)?} gap ${w.seek(13)?}")
+  w.write(b"!")?
+  w.close()?
+  out.println("file ${root.read("w.txt")?.debug()}")
+  let a = root.open_append("w.txt")?
+  out.println("append to ${a.seek(0)?}")
+  a.write(b"X")?
+  out.println("append at ${a.seek(0, Whence.Current)?}")
+  a.close()?
+  out.println("file ${root.read("w.txt")?.debug()}")
+  let rw = root.open_rw("w.txt")?
+  out.println("rw to ${rw.seek(6)?}")
+  rw.write(b"w")?
+  out.println("rw rewind ${rw.seek(0)?} read ${rw.read(7)?.debug()}")
+  rw.close()?
+  base.remove_all(name)?
+}

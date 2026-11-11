@@ -258,6 +258,19 @@ fn pwrite_fd(l: Int, fd: Int, a: Int, n: Int, off: Int) -> Int {
 
 /// ftruncate(2) of fd to size bytes (EINTR retried): 0, or the negative
 /// errno.
+fn lseek_fd(l: Int, fd: Int, off: Int, whence: Int) -> Int {
+  if l == 3 {
+    return windows.lseek(fd, off, whence)
+  }
+  if l == 2 {
+    return darwin.lseek(fd, off, whence)
+  }
+  if l == 4 {
+    return freebsd.lseek(fd, off, whence)
+  }
+  linux.lseek(fd, off, whence)
+}
+
 fn ftruncate_fd(l: Int, fd: Int, size: Int) -> Int {
   if l == 3 {
     return windows.ftruncate(fd, size)
@@ -766,6 +779,37 @@ pub fn file_write_at(f: rt.FsFile, offset: Int, data: Bytes, x: Str) -> Int {
 
 /// `f.truncate(size)` (size >= 0): the status. The position is untouched.
 /// A wasm build has no truncate (status ENOSYS).
+/// `f.seek(offset, whence)` (decision 0600; whence 0 start, 1 current, 2
+/// end): the new offset in a list of one, or the empty list with the
+/// status set. Current counts from what was read: the read buffer's unread
+/// bytes are subtracted, and the buffer is emptied. A wasm build answers
+/// fd_seek in the runtime
+/// (rt4.xo fs_file_seek).
+pub fn file_seek(f: rt.FsFile, offset: Int, whence: Int, x: Str) -> List[Int] {
+  if sysio.layer() == 0 {
+    let p = rt.fs_file_seek(f, offset, whence, x)
+    return if p < 0 { [] } else { [p] }
+  }
+  let l = layer()
+  let a = rt.obj_addr(f)
+  var off = offset
+  let buffered = rt.mem_load(a, F_BUF, 8) != 0
+  if buffered && whence == 1 {
+    off -= rt.mem_load(a, F_W, 8) - rt.mem_load(a, F_R, 8)
+  }
+  let r = lseek_fd(l, rt.mem_load(a, F_FD, 8), off, whence)
+  if r < 0 {
+    fail(l, -r, x)
+    return []
+  }
+  if buffered {
+    rt.mem_store(a, F_R, 0, 8)
+    rt.mem_store(a, F_W, 0, 8)
+  }
+  ok()
+  [r]
+}
+
 pub fn file_truncate(f: rt.FsFile, size: Int, x: Str) -> Int {
   if sysio.layer() == 0 {
     fail(1, 38, x)

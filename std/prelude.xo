@@ -1497,6 +1497,17 @@ fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read
 /// file system, which the temporary file beside path ensures.
 fn write_atomic(fs: Fs, path: Str, data: Bytes) -> () ! FsErr uses fs
 
+/// Where `File.seek` counts from (Go's io.SeekStart, SeekCurrent,
+/// SeekEnd; decision 0600).
+enum Whence {
+  /// From the start of the file.
+  Start
+  /// From the position the program has read or written to.
+  Current
+  /// From the end of the file.
+  End
+}
+
 /// An open file (std.md 3.1, decision 0163). A handle; close it.
 struct File {}
 /// At most max bytes; None at the end.
@@ -1515,6 +1526,15 @@ fn (f: File) write(data: Bytes) -> () ! FsErr uses fs.write
 /// grows, a gap reads as zero bytes); an error on a file from
 /// `open_append`. A wasm build answers "function not implemented".
 fn (f: File) write_at(offset: Int, data: Bytes) -> () ! FsErr uses fs.write
+/// Moves the position to offset counted from whence and returns it from
+/// the start (Go's os.File.Seek, decision 0600): `Current` counts from
+/// what the program has read (buffered bytes not yet returned are not
+/// past it), `seek(0, Whence.End)` is the size. A position before the
+/// start is an error (`invalid argument`); past the end is allowed (a
+/// write there leaves a gap that reads as zero bytes). On a file from
+/// `open_append` a write still goes to the end. A wasm build answers
+/// "function not implemented".
+fn (f: File) seek(offset: Int, whence: Whence = Whence.Start) -> Int ! FsErr uses fs.read
 /// Sets the size of a file made by `create` (Go's os.File.Truncate: shorter
 /// cuts it, longer pads with zero bytes); the position is unchanged. A
 /// wasm build answers "function not implemented".

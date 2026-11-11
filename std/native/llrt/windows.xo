@@ -1051,6 +1051,19 @@ fn file_pos(h: Int) -> Int {
   rt.mem_load(raw.bytes_addr(o), 0, 8)
 }
 
+/// SetFilePointerEx of h by off from whence (0 FILE_BEGIN, 1
+/// FILE_CURRENT, 2 FILE_END, lseek's numbering): the new position, or the
+/// negative errno (EINVAL for a position before the start,
+/// ERROR_NEGATIVE_SEEK).
+pub fn lseek(h: Int, off: Int, whence: Int) -> Int {
+  let o = raw.bytes_buf(8)
+  if keep(o, Int(sys_windows.SetFilePointerEx(h, off, raw.bytes_addr(o), whence))) == 0 {
+    let e = Int(sys_windows.GetLastError())
+    return if e == 131 { -22 } else { -dos_errno(e) }
+  }
+  rt.mem_load(raw.bytes_addr(o), 0, 8)
+}
+
 /// h's position set back to pos (from file_pos; nothing for -1).
 fn file_pos_restore(h: Int, pos: Int) {
   if pos >= 0 {
