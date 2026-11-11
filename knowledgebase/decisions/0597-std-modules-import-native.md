@@ -1,6 +1,7 @@
 # 0597: Merged std modules that need native code: portable intrinsics, split fast paths, public parsers
 
-Status: Proposed (Xo Lang 3, 2026-11-10), for the owner. Asked for by the
+Status: Accepted (owner via lead, 2026-11-10: yes to all three parts;
+proposed by Xo Lang 3 the same day). Asked for by the
 lead (owner's go to write the proposal, 2026-11-10) after decision 0588's
 stage 2 stopped at modules whose implementation imports native code.
 Related: 0588 (one file per std module), 0074 (implementation modules and
@@ -136,7 +137,18 @@ Three parts, one per kind of blocker. Each can be accepted on its own.
   port Go's fast paths (CLAUDE.md, std change logs). It is right only
   where `--ab` shows the rewrite costs nothing, which point 2 measures.
 
-## Open questions for the owner
+## Owner's answers (2026-11-10, via the lead)
+
+Yes to all three: (1) the portable intrinsics list, `rt.cast` only for
+now; (2) rewrite the url, binary, html and regexp fast paths with prelude
+operations, `--ab` each on linux/arm64 host 1, and split into
+M_native.xo only what still pays; (3) a public std/multipart streaming
+reader, and mime's Go generated into package rt. Order of work: (1) with
+the path merge, then (3) multipart and mime, then (2) one module per push
+with its `--ab` row; spec/core.md and spec/std.md change in the same
+pushes.
+
+## Open questions (answered above)
 
 1. Accept point 1 (a list of portable intrinsics, `rt.cast` only for now)?
 2. Accept point 2's order: rewrite where measured free, split the rest?
