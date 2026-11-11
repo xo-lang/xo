@@ -1017,6 +1017,7 @@ test "Image.fill is Go's draw.Draw from a Uniform" {
 		}
 	}
 	o.WriteString("]\n")
+	imageColorModels(&o)
 	o.WriteString(`
 test "Image.floyd_steinberg is Go's draw.FloydSteinberg" {
   for (sn, spix, pal, planes, rc, sp, want) in FS_CASES {
@@ -1034,4 +1035,170 @@ test "Image.floyd_steinberg is Go's draw.FloydSteinberg" {
 }
 `)
 	return o.String()
+}
+
+// imageColorModels writes image/color's models and color types (the
+// rest of decision 0578's color step): every model's Convert of a color,
+// every color type's RGBA(), Palette.Index and Convert, and an image
+// model's Convert, as text lines the Xo test builds the same way.
+func imageColorModels(o *strings.Builder) {
+	r := rand.New(rand.NewSource(578))
+	type c64 = color.RGBA64
+	var colors []c64
+	edge := []int{0, 1, 128, 255, 256, 32768, 65534, 65535}
+	for _, a := range edge {
+		for _, x := range edge {
+			if x <= a {
+				colors = append(colors, c64{uint16(x), uint16(a / 3), uint16(x / 2), uint16(a)})
+			}
+		}
+	}
+	for i := 0; i < 500; i++ {
+		a := r.Intn(65536)
+		if i%5 == 0 {
+			a = 65535
+		}
+		colors = append(colors, c64{uint16(r.Intn(a + 1)), uint16(r.Intn(a + 1)), uint16(r.Intn(a + 1)), uint16(a)})
+	}
+	rgba := func(c color.Color) string {
+		cr, cg, cb, ca := c.RGBA()
+		return fmt.Sprintf("%d %d %d %d", cr, cg, cb, ca)
+	}
+	o.WriteString("/// (r, g, b, a, Go's models: AlphaModel Alpha16Model | RGBAModel | NRGBA64Model | CMYKModel | YCbCrModel | NYCbCrAModel)\nconst MODELS: List[(Int, Int, Int, Int, Str)] = [\n")
+	for _, c := range colors {
+		al := color.AlphaModel.Convert(c).(color.Alpha)
+		al16 := color.Alpha16Model.Convert(c).(color.Alpha16)
+		rg := color.RGBAModel.Convert(c).(color.RGBA)
+		n64 := color.NRGBA64Model.Convert(c).(color.NRGBA64)
+		cm := color.CMYKModel.Convert(c).(color.CMYK)
+		yc := color.YCbCrModel.Convert(c).(color.YCbCr)
+		ny := color.NYCbCrAModel.Convert(c).(color.NYCbCrA)
+		s := fmt.Sprintf("%d %d | %d %d %d %d | %d %d %d %d | %d %d %d %d | %d %d %d | %d %d %d %d", al.A, al16.A, rg.R, rg.G, rg.B, rg.A, n64.R, n64.G, n64.B, n64.A, cm.C, cm.M, cm.Y, cm.K, yc.Y, yc.Cb, yc.Cr, ny.Y, ny.Cb, ny.Cr, ny.A)
+		fmt.Fprintf(o, "  (%d, %d, %d, %d, %s),\n", c.R, c.G, c.B, c.A, xq(s))
+	}
+	o.WriteString("]\n\n/// (a, b, c, d (8 bit), e, f, g, h (16 bit), Go's RGBA() of Gray{a}, Gray16{e}, Alpha{a}, Alpha16{e}, RGBA{a, b, c, d}, RGBA64{e, f, g, h}, NRGBA64{e, f, g, h}, CMYK{a, b, c, d}, YCbCr{a, b, c}, NYCbCrA{a, b, c, d}, `;` between)\nconst TYPES: List[(Int, Int, Int, Int, Int, Int, Int, Int, Str)] = [\n")
+	b8 := []int{0, 1, 127, 128, 254, 255}
+	b16 := []int{0, 1, 255, 256, 32768, 65534, 65535}
+	for i := 0; i < 500; i++ {
+		v8 := func() int {
+			if r.Intn(4) == 0 {
+				return b8[r.Intn(len(b8))]
+			}
+			return r.Intn(256)
+		}
+		v16 := func() int {
+			if r.Intn(4) == 0 {
+				return b16[r.Intn(len(b16))]
+			}
+			return r.Intn(65536)
+		}
+		a, b, c, d := v8(), v8(), v8(), v8()
+		e, f, g, h := v16(), v16(), v16(), v16()
+		parts := []string{
+			rgba(color.Gray{uint8(a)}), rgba(color.Gray16{uint16(e)}), rgba(color.Alpha{uint8(a)}), rgba(color.Alpha16{uint16(e)}),
+			rgba(color.RGBA{uint8(a), uint8(b), uint8(c), uint8(d)}), rgba(color.RGBA64{uint16(e), uint16(f), uint16(g), uint16(h)}),
+			rgba(color.NRGBA64{uint16(e), uint16(f), uint16(g), uint16(h)}), rgba(color.CMYK{uint8(a), uint8(b), uint8(c), uint8(d)}),
+			rgba(color.YCbCr{uint8(a), uint8(b), uint8(c)}), rgba(color.NYCbCrA{color.YCbCr{uint8(a), uint8(b), uint8(c)}, uint8(d)}),
+		}
+		fmt.Fprintf(o, "  (%d, %d, %d, %d, %d, %d, %d, %d, %s),\n", a, b, c, d, e, f, g, h, xq(strings.Join(parts, ";")))
+	}
+	o.WriteString("]\n\n/// (palette as 0xRRGGBBAA, r, g, b, a, Go's Palette.Index, Convert's RGBA() or `nil`)\nconst PALETTES: List[(List[Int], Int, Int, Int, Int, Int, Str)] = [\n")
+	for i := 0; i < 400; i++ {
+		n := r.Intn(7)
+		var pal color.Palette
+		var ints []string
+		for j := 0; j < n; j++ {
+			v := color.NRGBA{uint8(r.Intn(256)), uint8(r.Intn(256)), uint8(r.Intn(256)), uint8([]int{0, 128, 255, 255, r.Intn(256)}[r.Intn(5)])}
+			if j > 0 && r.Intn(5) == 0 {
+				v = pal[r.Intn(j)].(color.NRGBA)
+			}
+			pal = append(pal, v)
+			ints = append(ints, fmt.Sprint(int(v.R)<<24|int(v.G)<<16|int(v.B)<<8|int(v.A)))
+		}
+		c := colors[r.Intn(len(colors))]
+		if n > 0 && r.Intn(4) == 0 {
+			cr, cg, cb, ca := pal[r.Intn(n)].RGBA()
+			c = c64{uint16(cr), uint16(cg), uint16(cb), uint16(ca)}
+		}
+		conv := "nil"
+		if cv := pal.Convert(c); cv != nil {
+			conv = rgba(cv)
+		}
+		idx := 0
+		if n > 0 {
+			idx = pal.Index(c)
+		}
+		fmt.Fprintf(o, "  ([%s], %d, %d, %d, %d, %d, %s),\n", strings.Join(ints, ", "), c.R, c.G, c.B, c.A, idx, xq(conv))
+	}
+	o.WriteString("]\n\n/// (model, r, g, b, a, Go's ColorModel().Convert(c).RGBA() of an image of the model; Paletted's palette is DRAW_PAL)\nconst IMAGE_CONVERT: List[(Str, Int, Int, Int, Int, Str)] = [\n")
+	pal := color.Palette{color.NRGBA{10, 20, 30, 255}, color.NRGBA{200, 100, 50, 128}, color.NRGBA{0, 0, 0, 0}, color.NRGBA{255, 255, 255, 255}}
+	models := []struct {
+		name string
+		m    color.Model
+	}{{"Gray", color.GrayModel}, {"Gray16", color.Gray16Model}, {"Paletted", pal}, {"RGBA", color.RGBAModel}, {"NRGBA", color.NRGBAModel}, {"RGBA64", color.RGBA64Model}, {"NRGBA64", color.NRGBA64Model}, {"CMYK", color.CMYKModel}, {"YCbCr", color.YCbCrModel}}
+	for i := 0; i < 300; i++ {
+		m := models[r.Intn(len(models))]
+		c := colors[r.Intn(len(colors))]
+		fmt.Fprintf(o, "  (%s, %d, %d, %d, %d, %s),\n", xq(m.name), c.R, c.G, c.B, c.A, xq(rgba(m.m.Convert(c))))
+	}
+	o.WriteString("]\n")
+	o.WriteString(`
+fn rgba_text(c: image.Color) -> Str { "${c.r} ${c.g} ${c.b} ${c.a}" }
+
+test "the color models are Go's" {
+  var bad: List[(Int, Int, Int, Int, Str, Str)] = []
+  for (r, g, b, a, want) in MODELS {
+    let c = image.Color{r: r, g: g, b: b, a: a}
+    let (r8, g8, b8, a8) = c.rgba()
+    let (nr, ng, nb, na) = c.nrgba64()
+    let (cc, cm, cy, ck) = c.cmyk()
+    let (y, cb, cr) = c.ycbcr()
+    let (ny, ncb, ncr, nya) = c.nycbcra()
+    let got = "${c.alpha()} ${c.alpha16()} | ${r8} ${g8} ${b8} ${a8} | ${nr} ${ng} ${nb} ${na} | ${cc} ${cm} ${cy} ${ck} | ${y} ${cb} ${cr} | ${ny} ${ncb} ${ncr} ${nya}"
+    if got != want {
+      bad.push((r, g, b, a, got, want))
+    }
+  }
+  expect(bad[0..bad.len().min(10)]) == []
+}
+
+test "the color types' RGBA are Go's" {
+  var bad: List[(Str, Str)] = []
+  for (a, b, c, d, e, f, g, h, want) in TYPES {
+    let got = [image.from_gray(a), image.from_gray16(e), image.from_alpha(a), image.from_alpha16(e), image.from_rgba(a, b, c, d), image.from_rgba64(e, f, g, h), image.from_nrgba64(e, f, g, h), image.from_cmyk(a, b, c, d), image.from_ycbcr(a, b, c), image.from_nycbcra(a, b, c, d)].map(rgba_text).join(";")
+    if got != want {
+      bad.push(("${a} ${b} ${c} ${d} ${e} ${f} ${g} ${h}", got))
+    }
+  }
+  expect(bad[0..bad.len().min(10)]) == []
+}
+
+test "palette_index and palette_convert are Go's Palette" {
+  var bad: List[Str] = []
+  for (pal, r, g, b, a, idx, conv) in PALETTES {
+    let c = image.Color{r: r, g: g, b: b, a: a}
+    let got = (image.palette_index(pal, c), image.palette_convert(pal, c).map(rgba_text) ?? "nil")
+    if got != (idx, conv) {
+      bad.push("${pal} ${rgba_text(c)}: ${got.0} ${got.1}, want ${idx} ${conv}")
+    }
+  }
+  expect(bad[0..bad.len().min(10)]) == []
+}
+
+test "Image.convert is Go's ColorModel().Convert" {
+  var bad: List[Str] = []
+  for (m, r, g, b, a, want) in IMAGE_CONVERT {
+    let im = image.Image{width: 1, height: 1, model: model_of(m), pix: b"", palette: DRAW_PAL}
+    let got = rgba_text(im.convert(image.Color{r: r, g: g, b: b, a: a}))
+    if got != want {
+      bad.push("${m} ${r} ${g} ${b} ${a}: ${got}, want ${want}")
+    }
+  }
+  expect(bad[0..bad.len().min(10)]) == []
+}
+
+test "the named colors are Go's" {
+  expect([image.black(), image.white(), image.transparent(), image.opaque()].map(rgba_text)) == ["0 0 0 65535", "65535 65535 65535 65535", "0 0 0 0", "65535 65535 65535 65535"]
+}
+`)
 }

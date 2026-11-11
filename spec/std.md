@@ -8566,6 +8566,28 @@ fn rgb_to_cmyk(r: Int, g: Int, b: Int) -> (Int, Int, Int, Int)
 fn cmyk_to_rgb(c: Int, m: Int, y: Int, k: Int) -> (Int, Int, Int)
 ```
 
+image/color's types and models over the one `Color` (16 bit premultiplied, Go's `RGBA()`): a constructor per Go color type
+(its `RGBA()`), a method per Go model (its `Convert`, as the type's fields), the named colors, palettes of `0xRRGGBBAA`
+entries, and an image's own model:
+
+```xo
+fn from_gray(y: Int) -> Color                 // color.Gray; also from_gray16, from_alpha, from_alpha16
+fn from_rgba(r: Int, g: Int, b: Int, a: Int) -> Color      // color.RGBA (8 bit); from_rgba64, from_nrgba64
+fn from_cmyk(c: Int, m: Int, y: Int, k: Int) -> Color      // color.CMYK
+fn from_ycbcr(y: Int, cb: Int, cr: Int) -> Color           // color.YCbCr; from_nycbcra(y, cb, cr, a)
+fn (c: Color) alpha() -> Int                  // AlphaModel; alpha16(), gray(), gray16(), nrgba() (0xRRGGBBAA)
+fn (c: Color) rgba() -> (Int, Int, Int, Int)  // RGBAModel; nrgba64(), cmyk() (c, m, y, k)
+fn (c: Color) ycbcr() -> (Int, Int, Int)      // YCbCrModel; nycbcra() (y, cb, cr, a)
+fn black() -> Color                           // color.Black; white(), transparent(), opaque()
+fn palette_index(palette: List[Int], c: Color) -> Int      // Palette.Index
+fn palette_convert(palette: List[Int], c: Color) -> Color? // Palette.Convert (None: Go's nil)
+fn (im: Image) convert(c: Color) -> Color     // im.ColorModel().Convert(c)
+```
+
+A model method truncates as Go's `uint8` and `uint16` conversions do, so a `Color` that is not premultiplied (a channel
+above `a`) converts to Go's bytes too. Checked against Go's `image/color` (testdata/corpus/image: every model of 511
+colors, every type's `RGBA()`, palettes, an image of each model).
+
 The conversions are Go's (`image/color`: RGBToYCbCr and YCbCrToRGB with their clamps, RGBToCMYK, CMYKToRGB); the 8 bit
 functions take and return 0 to 255. Checked against Go's `image/color` (testdata/corpus/image). Later steps of 0578 add the
 draw and scaling parts and make std/png and std/jpeg return an `image.Image`.

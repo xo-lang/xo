@@ -96,3 +96,14 @@ options, in order of recommendation:
 - **`use go` bindings to image/draw**: only the Go backend; the native backends are the default.
 - **A native only library with its own API** (not Go's): contradicts the std rule of following Go's standard library so ports
   of Go code stay mechanical.
+
+## Addendum (2026-11-11, Xo Lang 3): image/color's types and models
+
+The color part of step 1 is complete: a constructor per Go color type
+(`from_gray` to `from_nycbcra`, each its `RGBA()`), a `Color` method per
+Go model (`alpha` to `nycbcra`, each its `Convert`), the named colors as
+functions (`black()` and so on: a struct constant in a declaration file
+does not generate on the Go backend, gotchas/decl-file-struct-const-go-gen.md),
+`palette_index` and `palette_convert` public, and `Image.convert` (an
+image's `ColorModel().Convert`). Checked against Go in the image corpus.
+

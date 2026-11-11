@@ -1,5 +1,17 @@
 # std/image changes
 
+## 2026-11-11: feature: image/color's types and models over Color
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit of 2026-11-11 (bench/results/std-audit-2026-11-11.md, the first gap), decision 0578's color step
+- Go reference: image/color color.go, ycbcr.go (go1.26.1)
+- Test: the image corpus on go, arm64, llvm (MODELS: AlphaModel to NYCbCrAModel of 511 colors; TYPES: each type's RGBA() of 500 inputs; PALETTES: Palette.Index and Convert of 400; IMAGE_CONVERT: ColorModel().Convert of an image of each model; the named colors)
+- Timing: none (per color arithmetic the module already ran)
+- Shipped in: not yet released
+
+from_gray, from_gray16, from_alpha, from_alpha16, from_rgba, from_rgba64, from_nrgba64, from_cmyk, from_ycbcr and from_nycbcra (each Go type's RGBA()); Color.alpha, alpha16, rgba, nrgba64, cmyk, ycbcr and nycbcra (each Go model's Convert); black, white, transparent and opaque; palette_index and palette_convert; Image.convert (ColorModel().Convert). spec/std.md 75.
+
 ## 2026-11-09: feature: std/image Image.scale with BiLinear, CatmullRom and ApproxBiLinear (decision 0578 step 3b, 3c)
 
 - Kind: feature

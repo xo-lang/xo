@@ -73,6 +73,78 @@ fn (c: Color) gray16() -> Int
 /// Go's color.NRGBAModel: 8 bit channels, not premultiplied, as 0xRRGGBBAA.
 fn (c: Color) nrgba() -> Int
 
+/// Go's color.AlphaModel: the 8 bit alpha.
+fn (c: Color) alpha() -> Int
+
+/// Go's color.Alpha16Model: the 16 bit alpha.
+fn (c: Color) alpha16() -> Int
+
+/// Go's color.RGBAModel: 8 bit premultiplied (r, g, b, a).
+fn (c: Color) rgba() -> (Int, Int, Int, Int)
+
+/// Go's color.NRGBA64Model: 16 bit (r, g, b, a), not premultiplied.
+fn (c: Color) nrgba64() -> (Int, Int, Int, Int)
+
+/// Go's color.CMYKModel: (c, m, y, k), alpha ignored.
+fn (c: Color) cmyk() -> (Int, Int, Int, Int)
+
+/// Go's color.YCbCrModel: (y, cb, cr), alpha ignored.
+fn (c: Color) ycbcr() -> (Int, Int, Int)
+
+/// Go's color.NYCbCrAModel: (y, cb, cr, a), the color divided by alpha.
+fn (c: Color) nycbcra() -> (Int, Int, Int, Int)
+
+/// color.Gray{y}.RGBA().
+fn from_gray(y: Int) -> Color
+
+/// color.Gray16{y}.RGBA().
+fn from_gray16(y: Int) -> Color
+
+/// color.Alpha{a}.RGBA().
+fn from_alpha(a: Int) -> Color
+
+/// color.Alpha16{a}.RGBA().
+fn from_alpha16(a: Int) -> Color
+
+/// color.RGBA{r, g, b, a}.RGBA(): 8 bit premultiplied channels.
+fn from_rgba(r: Int, g: Int, b: Int, a: Int) -> Color
+
+/// color.RGBA64{r, g, b, a}.RGBA(): 16 bit premultiplied channels.
+fn from_rgba64(r: Int, g: Int, b: Int, a: Int) -> Color
+
+/// color.NRGBA64{r, g, b, a}.RGBA(): 16 bit channels, not premultiplied.
+fn from_nrgba64(r: Int, g: Int, b: Int, a: Int) -> Color
+
+/// color.CMYK{c, m, y, k}.RGBA().
+fn from_cmyk(c: Int, m: Int, y: Int, k: Int) -> Color
+
+/// color.YCbCr{y, cb, cr}.RGBA().
+fn from_ycbcr(y: Int, cb: Int, cr: Int) -> Color
+
+/// color.NYCbCrA{y, cb, cr, a}.RGBA().
+fn from_nycbcra(y: Int, cb: Int, cr: Int, a: Int) -> Color
+
+/// color.Black (Gray16{0}).
+fn black() -> Color
+
+/// color.White (Gray16{0xffff}).
+fn white() -> Color
+
+/// color.Transparent (Alpha16{0}).
+fn transparent() -> Color
+
+/// color.Opaque (Alpha16{0xffff}).
+fn opaque() -> Color
+
+/// Go's Palette.Index over a palette of 0xRRGGBBAA entries (not
+/// premultiplied): the first entry with the least sum of squared channel
+/// differences; 0 for an empty palette.
+fn palette_index(palette: List[Int], c: Color) -> Int
+
+/// Go's Palette.Convert: the nearest entry's color, None for an empty
+/// palette (Go's nil).
+fn palette_convert(palette: List[Int], c: Color) -> Color?
+
 /// Go's color.RGBToYCbCr over 8 bit channels: (y, cb, cr).
 fn rgb_to_ycbcr(r: Int, g: Int, b: Int) -> (Int, Int, Int)
 
@@ -104,6 +176,11 @@ fn web_safe() -> List[Int]
 /// Go's palette.Plan9: the 256 colors of Plan 9's default palette, as
 /// `0xRRGGBBAA` (alpha 255), in Go's order.
 fn plan9() -> List[Int]
+
+/// Go's im.ColorModel().Convert(c): c as the image's model stores it,
+/// back as a Color (Paletted: the nearest palette entry; YCbCr: Go's
+/// YCbCrModel).
+fn (im: Image) convert(c: Color) -> Color
 
 /// Go's Image.Set for the models that keep their samples in `pix` (not
 /// YCbCr): stores c converted by the model as Go's color model does (Gray,

@@ -29,6 +29,123 @@ fn color_nrgba(c: image.Color) -> Int {
   ((r >> 8) << 24) | ((g >> 8) << 16) | ((b >> 8) << 8) | (c.a >> 8)
 }
 
+fn color_alpha(c: image.Color) -> Int { (c.a >> 8) & 255 }
+
+fn color_alpha16(c: image.Color) -> Int { c.a & 65535 }
+
+fn color_rgba(c: image.Color) -> (Int, Int, Int, Int) { ((c.r >> 8) & 255, (c.g >> 8) & 255, (c.b >> 8) & 255, (c.a >> 8) & 255) }
+
+/// Go's color.NRGBA64Model.
+fn color_nrgba64(c: image.Color) -> (Int, Int, Int, Int) {
+  if c.a == 65535 {
+    return (c.r, c.g, c.b, 65535)
+  }
+  if c.a == 0 {
+    return (0, 0, 0, 0)
+  }
+  // Go's uint16 of a channel above alpha (not a premultiplied color)
+  // keeps the low 16 bits
+  (((c.r * 65535) / c.a) & 65535, ((c.g * 65535) / c.a) & 65535, ((c.b * 65535) / c.a) & 65535, c.a)
+}
+
+fn color_cmyk(c: image.Color) -> (Int, Int, Int, Int) { rgb_to_cmyk(c.r >> 8, c.g >> 8, c.b >> 8) }
+
+fn color_ycbcr(c: image.Color) -> (Int, Int, Int) { rgb_to_ycbcr(c.r >> 8, c.g >> 8, c.b >> 8) }
+
+/// Go's color.NYCbCrAModel: the channels divided by alpha (when not 0),
+/// then RGBToYCbCr.
+fn color_nycbcra(c: image.Color) -> (Int, Int, Int, Int) {
+  var r = c.r
+  var g = c.g
+  var b = c.b
+  if c.a != 0 {
+    r = (r * 65535) / c.a
+    g = (g * 65535) / c.a
+    b = (b * 65535) / c.a
+  }
+  let (y, cb, cr) = rgb_to_ycbcr((r >> 8) & 255, (g >> 8) & 255, (b >> 8) & 255)
+  (y, cb, cr, (c.a >> 8) & 255)
+}
+
+fn from_gray(y: Int) -> image.Color {
+  let v = y * 257
+  image.Color{r: v, g: v, b: v, a: 65535}
+}
+
+fn from_gray16(y: Int) -> image.Color { image.Color{r: y, g: y, b: y, a: 65535} }
+
+fn from_alpha(a: Int) -> image.Color {
+  let v = a * 257
+  image.Color{r: v, g: v, b: v, a: v}
+}
+
+fn from_alpha16(a: Int) -> image.Color { image.Color{r: a, g: a, b: a, a: a} }
+
+fn from_rgba(r: Int, g: Int, b: Int, a: Int) -> image.Color { image.Color{r: r * 257, g: g * 257, b: b * 257, a: a * 257} }
+
+fn from_rgba64(r: Int, g: Int, b: Int, a: Int) -> image.Color { image.Color{r: r, g: g, b: b, a: a} }
+
+/// color.NRGBA64.RGBA(): each channel times alpha over 0xffff.
+fn from_nrgba64(r: Int, g: Int, b: Int, a: Int) -> image.Color { image.Color{r: r * a / 65535, g: g * a / 65535, b: b * a / 65535, a: a} }
+
+/// color.CMYK.RGBA().
+fn from_cmyk(c: Int, m: Int, y: Int, k: Int) -> image.Color {
+  let w = 65535 - k * 257
+  image.Color{r: (65535 - c * 257) * w / 65535, g: (65535 - m * 257) * w / 65535, b: (65535 - y * 257) * w / 65535, a: 65535}
+}
+
+fn from_ycbcr(y: Int, cb: Int, cr: Int) -> image.Color { ycc_color(y, cb, cr) }
+
+/// color.NYCbCrA.RGBA(): YCbCr's channels times alpha (8 bit, times
+/// 0x101) over 0xffff.
+fn from_nycbcra(y: Int, cb: Int, cr: Int, a8: Int) -> image.Color {
+  let c = ycc_color(y, cb, cr)
+  let a = a8 * 257
+  image.Color{r: c.r * a / 65535, g: c.g * a / 65535, b: c.b * a / 65535, a: a}
+}
+
+fn black() -> image.Color { image.Color{r: 0, g: 0, b: 0, a: 65535} }
+
+fn white() -> image.Color { image.Color{r: 65535, g: 65535, b: 65535, a: 65535} }
+
+fn transparent() -> image.Color { image.Color{r: 0, g: 0, b: 0, a: 0} }
+
+fn opaque() -> image.Color { image.Color{r: 65535, g: 65535, b: 65535, a: 65535} }
+
+fn palette_convert(pal: List[Int], c: image.Color) -> image.Color? {
+  if pal.is_empty() {
+    return None
+  }
+  Some(image.from_nrgba(pal[palette_index(pal, c)]))
+}
+
+/// Go's im.ColorModel().Convert(c).RGBA().
+fn image_convert(im: image.Image, c: image.Color) -> image.Color {
+  match im.model {
+    image.Model.Gray => from_gray(color_gray(c))
+    image.Model.Gray16 => from_gray16(color_gray16(c))
+    image.Model.Paletted => palette_convert(im.palette, c) ?? c
+    image.Model.RGBA => {
+      let (r, g, b, a) = color_rgba(c)
+      from_rgba(r, g, b, a)
+    }
+    image.Model.NRGBA => image.from_nrgba(color_nrgba(c))
+    image.Model.RGBA64 => c
+    image.Model.NRGBA64 => {
+      let (r, g, b, a) = color_nrgba64(c)
+      from_nrgba64(r, g, b, a)
+    }
+    image.Model.CMYK => {
+      let (cc, m, y, k) = color_cmyk(c)
+      from_cmyk(cc, m, y, k)
+    }
+    image.Model.YCbCr => {
+      let (y, cb, cr) = color_ycbcr(c)
+      ycc_color(y, cb, cr)
+    }
+  }
+}
+
 /// Go's color.NRGBA.RGBA() of 0xRRGGBBAA.
 fn from_nrgba(v: Int) -> image.Color {
   let a8 = v & 255
@@ -474,7 +591,7 @@ fn image_crop(im: image.Image, r: image.Rect) -> image.Image {
 
 /// Image.to_rgba and to_nrgba: every pixel through at(), then the model of
 /// the result (to_nrgba true for NRGBA).
-fn image_convert(im: image.Image, nrgba: Bool) -> image.Image {
+fn image_convert_all(im: image.Image, nrgba: Bool) -> image.Image {
   var b = BytesBuilder.with_capacity(im.width * im.height * 4)
   for yy in 0..im.height {
     for xx in 0..im.width {
@@ -504,9 +621,9 @@ fn image_convert(im: image.Image, nrgba: Bool) -> image.Image {
   image.Image{width: im.width, height: im.height, model: m, pix: b.freeze(), stride: 0, min_x: im.min_x, min_y: im.min_y}
 }
 
-fn image_to_rgba(im: image.Image) -> image.Image { image_convert(im, false) }
+fn image_to_rgba(im: image.Image) -> image.Image { image_convert_all(im, false) }
 
-fn image_to_nrgba(im: image.Image) -> image.Image { image_convert(im, true) }
+fn image_to_nrgba(im: image.Image) -> image.Image { image_convert_all(im, true) }
 
 fn from_png_model(m: png.Model) -> image.Model {
   match m {
