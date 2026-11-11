@@ -62,3 +62,36 @@ word of digits per multiply-add. What is left in add, mul and sqrt is
 the key round trip of each public call (decision 0311's BigInt key) and
 list allocation: the next experiment is the unpacked form for every
 public operation's operands, measured the same way.
+
+## Second speed change (2026-11-11, std/changes/big.md "BigFloat add, sub, mul and sqrt read mantissa keys in place")
+
+The same bench and host (host 1 exclusive, `xo bench --ab --rounds=10`,
+the 0.48.0 seed's xo), B cross-built from branch lang3-bfspeed2 at
+bd7af0a28 (before the mul change); Xo / Go:
+
+| workload | Go wall | Xo wall | wall (95%) | before | max RSS |
+|---|---|---|---|---|---|
+| none | 0.645 ms | 0.299 ms | 0.463 (0.408 to 0.54) | 0.47 | |
+| add (200,000) | 11.28 ms | 11.72 ms | 1.039 (1.007 to 1.073) | 1.981 | |
+| mul (200,000) | 14.23 ms | 16.89 ms | 1.187 (1.156 to 1.221) | 1.657 | |
+| quo (100,000) | 22.4 ms | 19.2 ms | 0.857 (0.838 to 0.87) | 1.057 | |
+| sqrt (20,000) | 10.41 ms | 13.44 ms | 1.291 (1.268 to 1.314) | 1.735 | |
+| text (20,000) | 36.29 ms | 35.71 ms | 0.984 (0.973 to 0.99) | 0.976 | |
+| parse (20,000) | 19.32 ms | 14.71 ms | 0.761 (0.75 to 0.769) | 0.786 | |
+
+Against the first change's binary (A the first change, B this one, same
+run): add 0.523 (0.506 to 0.538), sqrt 0.761 (0.758 to 0.764). The mul
+change after it (x's limbs read from its key) ran mul 0.69 to 0.62 s on
+the Mac's long version of the bench (10,000,000 steps); its host row is
+the next run of this bench.
+
+What changed (XO_PROF=cpu on a 50x longer copy of the bench, since the
+bench's own runs take about 20 ms): add and sub read both mantissas'
+limbs from their BigInt keys while aligning, so neither is decoded into
+a list; a round up makes (m >> s) + 1 with its trailing zeros dropped
+in one new list; rounding down and dropping trailing zeros shift in
+place; min_prec reads the top limb from the key; sqrt's last multiply
+and its SetMantExp run on the unpacked form with one pack. What is
+left: the key encode of every result (make) and the allocation of each
+product, about a fifth of sqrt; the next experiment is a key-direct
+encode in u_pack (writing the key from the limbs without trim's pops).

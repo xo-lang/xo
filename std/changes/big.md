@@ -1,5 +1,22 @@
 # std/big changes
 
+## 2026-11-11: perf: BigFloat add, sub, mul and sqrt read mantissa keys in place
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/bigfloat-vs-go-2026-11-11.md (add 1.98, sqrt 1.73, mul 1.66 of Go's wall time after the first change) and XO_PROF=cpu profiles: each operand's mantissa decoded from its key into a new list (parts, 22% of add), a shift and an add per round up, a shift per trailing zero strip, min_prec decoding the whole mantissa
+- Go reference: math/big float.go uadd, usub, round, Sqrt, sqrtInverse (go1.26.1)
+- Timing: bench/results/bigfloat-vs-go-2026-11-11.md (third table): add 1.98 to 1.04 of Go, sqrt 1.73 to 1.29, mul 1.66 to 1.19, quo 1.06 to 0.86
+- Test: big, bigfloat and bigrat corpora on go, arm64, llvm
+- Shipped in: not yet released
+
+Add and sub align the two mantissas reading their limbs straight from
+the BigInt keys; mul reads one operand's limbs from its key. A round up
+makes `(m >> s) + 1` with its trailing zeros dropped in one list, and a
+round down shifts in place. `min_prec` reads the top limb from the key.
+`sqrt` multiplies and scales its result on the unpacked form and packs
+once.
+
 ## 2026-11-11: perf: Lehmer's gcd and fewer allocations in BigFloat (Go's fast paths)
 
 - Kind: perf

@@ -262,6 +262,33 @@ fn nat_mul_karatsuba(x: List[Int], y: List[Int]) -> List[Int] {
   nat_add(nat_add(nat_shift_words(z2, 2 * m), nat_shift_words(z1, m)), z0)
 }
 
+/// nat_mul with x a nonnegative BigInt's key (limb i is k[n - i] ^ MIN),
+/// so x is not decoded into a list; past Karatsuba's size it decodes.
+fn key_nat_mul(k: List[Int], y: List[Int]) -> List[Int] {
+  let nx = if k.is_empty() { 0 } else { k[0] }
+  if nx == 0 || y.is_empty() {
+    return []
+  }
+  if nx >= KARATSUBA && y.len() >= KARATSUBA {
+    return nat_mul(parts(big.BigInt{key: k}).1, y)
+  }
+  var z = raw.zero_ints(nx + y.len())
+  let pz = bigmod.addr(z)
+  let py = bigmod.addr(y)
+  let n = y.len()
+  for i in 0..nx {
+    let xi = k[nx - i] ^ MIN
+    if xi == 0 {
+      continue
+    }
+    let row = pz.wrapping_add(8 * i)
+    rt.mem_store(row, 8 * n, bigmod.mac_row(row, py, xi, n), 8)
+  }
+  bigmod.keep(y)
+  trim(z)
+  z
+}
+
 fn nat_mul(x: List[Int], y: List[Int]) -> List[Int] {
   if x.is_empty() || y.is_empty() {
     return []
@@ -419,6 +446,83 @@ fn nat_bit_len(x: List[Int]) -> Int {
     return 0
   }
   (x.len() - 1) * 64 + 64 - x[x.len() - 1].leading_zeros()
+}
+
+/// x >>= s in place (no new list when x is not shared; Go shifts z's
+/// words in place), normalized.
+fn nat_shr_in(var x: List[Int], s: Int) {
+  let words = s / 64
+  let n0 = x.len()
+  if words >= n0 {
+    while x.len() > 0 {
+      let _ = x.pop()
+    }
+    return
+  }
+  let bits = s % 64
+  let n = n0 - words
+  if bits == 0 {
+    if words > 0 {
+      for i in 0..n {
+        x[i] = x[i + words]
+      }
+    }
+  } else {
+    for i in 0..n {
+      let lo = x[i + words]
+      let hi = if i + words + 1 < n0 { x[i + words + 1] } else { 0 }
+      x[i] = lo.shr_logical(bits) | hi.wrapping_shl(64 - bits)
+    }
+  }
+  for _ in 0..words {
+    let _ = x.pop()
+  }
+  trim(x)
+}
+
+/// (x >> s) + 1 with its trailing zeros dropped, in one new list, and the
+/// bit length of (x >> s) + 1 (u_round's round up; x >> s is not 0).
+fn nat_shr_inc_tz(x: List[Int], s: Int) -> (List[Int], Int) {
+  let words = s / 64
+  let bits = s % 64
+  let n = x.len() - words
+  var z = raw.zero_ints(n + 1)
+  var c = 1
+  for i in 0..n {
+    let lo = x[i + words]
+    var w = lo
+    if bits != 0 {
+      let hi = if i + words + 1 < x.len() { x[i + words + 1] } else { 0 }
+      w = lo.shr_logical(bits) | hi.wrapping_shl(64 - bits)
+    }
+    let v = w.wrapping_add(c)
+    c = if c != 0 && v == 0 { 1 } else { 0 }
+    z[i] = v
+  }
+  z[n] = c
+  trim(z)
+  let top = nat_bit_len(z)
+  // the trailing zeros, shifted out in place
+  var k = 0
+  while z[k] == 0 {
+    k += 1
+  }
+  let b = z[k].trailing_zeros()
+  if k > 0 || b > 0 {
+    let m = z.len() - k
+    for i in 0..m {
+      let lo = z[i + k]
+      z[i] = if b == 0 { lo } else {
+        let hi = if i + k + 1 < z.len() { z[i + k + 1] } else { 0 }
+        lo.shr_logical(b) | hi.wrapping_shl(64 - b)
+      }
+    }
+    for _ in 0..k {
+      let _ = z.pop()
+    }
+    trim(z)
+  }
+  (z, top)
 }
 
 /// The trailing zeros of x >> s (0 when that is 0), without the shift.
@@ -1851,11 +1955,17 @@ fn u_special(prec: Int, acc: big.Accuracy, form: Int, neg: Bool) -> UFloat {
 
 fn u_fin(prec: Int, acc: big.Accuracy, neg: Bool, m: List[Int], exp: Int) -> UFloat {
   let tz = nat_trailing_zeros(m)
-  UFloat{form: F_FINITE, neg: neg, m: if tz > 0 { nat_shr(m, tz) } else { m }, exp: exp, prec: prec, acc: acc}
+  var t = m
+  if tz > 0 {
+    nat_shr_in(t, tz)
+  }
+  UFloat{form: F_FINITE, neg: neg, m: t, exp: exp, prec: prec, acc: acc}
 }
 
 fn u_fin_shr(prec: Int, acc: big.Accuracy, neg: Bool, m: List[Int], s: Int, exp: Int) -> UFloat {
-  UFloat{form: F_FINITE, neg: neg, m: nat_shr(m, s + nat_trailing_zeros_from(m, s)), exp: exp, prec: prec, acc: acc}
+  var t = m
+  nat_shr_in(t, s + nat_trailing_zeros_from(m, s))
+  UFloat{form: F_FINITE, neg: neg, m: t, exp: exp, prec: prec, acc: acc}
 }
 
 fn u_of(x: big.BigFloat) -> UFloat {
@@ -1957,8 +2067,21 @@ fn u_round(neg: Bool, m: List[Int], exp: Int, sbit: Int, prec: Int, mode: big.Ro
     }
     return u_fin(prec, make_acc(neg), neg, m, exp)
   }
-  var t = if bits <= prec { nat_shl(m, prec - bits) } else { nat_shr(m, bits - prec) }
   let acc = make_acc(inc != neg)
+  if bits > prec {
+    // the kept bits plus one and their trailing zeros dropped, in one new
+    // list (Go adds 1 to z's words in place); a carry out of the top makes
+    // 2^prec, which is 1 at the next exponent
+    let (t1, top) = nat_shr_inc_tz(m, bits - prec)
+    if top > prec {
+      if exp >= MAX_EXP {
+        return u_special(prec, acc, F_INF, neg)
+      }
+      return UFloat{form: F_FINITE, neg: neg, m: t1, exp: exp + 1, prec: prec, acc: acc}
+    }
+    return UFloat{form: F_FINITE, neg: neg, m: t1, exp: exp, prec: prec, acc: acc}
+  }
+  var t = nat_shl(m, prec - bits)
   var e = exp
   if inc {
     t = nat_add(t, [1])
@@ -2031,7 +2154,8 @@ fn inf(neg: Bool) -> big.BigFloat { f_special(0, ne(), exact(), F_INF, neg) }
 fn bigfloat_prec(x: big.BigFloat) -> Int { x.prec }
 
 fn bigfloat_min_prec(x: big.BigFloat) -> Int {
-  if x.form != F_FINITE { 0 } else { nat_bit_len(f_mant(x)) }
+  // the top limb from the key, without decoding the mantissa
+  if x.form != F_FINITE { 0 } else { bigint_bit_len(x.mant) }
 }
 
 fn bigfloat_mode(x: big.BigFloat) -> big.RoundingMode { x.mode }
@@ -2092,7 +2216,59 @@ fn f_ucmp(x: big.BigFloat, y: big.BigFloat) -> Int {
 
 /// |x| + |y| or |x| - |y| (|x| >= |y|), signed neg, rounded once.
 fn f_uaddsub(neg: Bool, x: big.BigFloat, y: big.BigFloat, sub: Bool, prec: Int, mode: big.RoundingMode) -> big.BigFloat {
-  u_pack(u_uaddsub(neg, u_of(x), u_of(y), sub, prec, mode), mode)
+  // u_uaddsub reading the mantissas' limbs from their keys, so neither is
+  // decoded into a list first (the sum is the one new list before rounding)
+  let ex = x.exp - bigint_bit_len(x.mant)
+  let ey = y.exp - bigint_bit_len(y.mant)
+  let e = imin(ex, ey)
+  let m = key_addsub_shl(x.mant.key, ex - e, y.mant.key, ey - e, sub)
+  if m.is_empty() {
+    return u_pack(u_special(prec, exact(), F_ZERO, false), mode)
+  }
+  u_pack(u_round(neg, m, e + nat_bit_len(m), 0, prec, mode), mode)
+}
+
+/// Limb i of (the magnitude of key k) << s, k a nonnegative BigInt's key
+/// (limb j is k[n - j] ^ MIN, n = k[0]).
+fn key_shl_word(k: List[Int], n: Int, s: Int, i: Int) -> Int {
+  let j = i - s / 64
+  let b = s % 64
+  let lo = if j >= 0 && j < n { k[n - j] ^ MIN } else { 0 }
+  if b == 0 {
+    return lo
+  }
+  let below = if j >= 1 && j - 1 < n { k[n - j + 1] ^ MIN } else { 0 }
+  lo.wrapping_shl(b) | below.shr_logical(64 - b)
+}
+
+/// nat_add_shl or nat_sub_shl (x << sx >= y << sy) of two nonnegative
+/// BigInts' keys, read in place.
+fn key_addsub_shl(kx: List[Int], sx: Int, ky: List[Int], sy: Int, sub: Bool) -> List[Int] {
+  let nx = if kx.is_empty() { 0 } else { kx[0] }
+  let ny = if ky.is_empty() { 0 } else { ky[0] }
+  let lx = if nx == 0 { 0 } else { ((nx - 1) * 64 + 64 - (kx[1] ^ MIN).leading_zeros() + sx + 63) / 64 }
+  let ly = if ny == 0 { 0 } else { ((ny - 1) * 64 + 64 - (ky[1] ^ MIN).leading_zeros() + sy + 63) / 64 }
+  let n = if sub { lx } else { imax(lx, ly) }
+  var z = raw.zero_ints(n + 1)
+  // the add and sub loops apart, so neither branches per word
+  var c = 0
+  if sub {
+    for i in 0..n {
+      let (v, b2) = sub_ww(key_shl_word(kx, nx, sx, i), key_shl_word(ky, ny, sy, i), c)
+      z[i] = v
+      c = b2
+    }
+    c = 0
+  } else {
+    for i in 0..n {
+      let (v, c2) = add_ww(key_shl_word(kx, nx, sx, i), key_shl_word(ky, ny, sy, i), c)
+      z[i] = v
+      c = c2
+    }
+  }
+  z[n] = c
+  trim(z)
+  z
 }
 
 /// Go's Add (Sub with yneg = !y.neg) for a z of precision prec and mode.
@@ -2126,10 +2302,10 @@ fn f_add(x: big.BigFloat, y: big.BigFloat, yneg: Bool, prec: Int, mode: big.Roun
 fn f_mul(x: big.BigFloat, y: big.BigFloat, prec: Int, mode: big.RoundingMode) -> big.BigFloat {
   let neg = x.neg != y.neg
   if x.form == F_FINITE && y.form == F_FINITE {
-    let xm = f_mant(x)
+    // y decoded once; x's limbs read from its key (nat_mul's rows)
     let ym = f_mant(y)
-    let m = nat_mul(xm, ym)
-    return f_round(neg, m, x.exp + y.exp - nat_bit_len(xm) - nat_bit_len(ym) + nat_bit_len(m), 0, prec, mode)
+    let m = key_nat_mul(x.mant.key, ym)
+    return f_round(neg, m, x.exp + y.exp - bigint_bit_len(x.mant) - nat_bit_len(ym) + nat_bit_len(m), 0, prec, mode)
   }
   if (x.form == F_ZERO && y.form == F_INF) || (x.form == F_INF && y.form == F_ZERO) {
     fault("multiplication of zero with infinity")
@@ -2317,13 +2493,14 @@ fn bigfloat_sqrt(x: big.BigFloat, prec: Int) -> big.BigFloat {
   let b = x.exp
   let half = b / 2
   let z = f_with(x, p, x.mode, x.acc, x.neg, b - 2 * half)
-  bigfloat_mul_pow2(f_sqrt_inverse(z), half)
+  f_sqrt_inverse(z, half)
 }
 
 /// Go's sqrtInverse: Newton's iteration on 1/t^2 - x from 1/sqrt(x) as a
 /// Float, doubling the precision each step to z's + 32 bits, then x * t.
-fn f_sqrt_inverse(x: big.BigFloat) -> big.BigFloat {
-  let three = u_of(from_float(3.0, 0))
+fn f_sqrt_inverse(x: big.BigFloat, half: Int) -> big.BigFloat {
+  // 3 as SetFloat64(3) gives it: 0b11, exponent 2, 53 bits, exact
+  let three = UFloat{form: F_FINITE, neg: false, m: [3], exp: 2, prec: 53, acc: exact()}
   let ux = u_of(x)
   let xf = bigfloat_to_float(x).0
   // newFloat sets no precision, so SetFloat64 gives the guess 53 bits
@@ -2346,7 +2523,15 @@ fn f_sqrt_inverse(x: big.BigFloat) -> big.BigFloat {
       sqi = u_special(tp, exact(), u.form, u.neg)
     }
   }
-  f_mul(x, u_pack(sqi, ne()), x.prec, x.mode)
+  // x * t, then (bigfloat_sqrt's) SetMantExp by half, unpacked: one pack
+  if sqi.form == F_FINITE {
+    let r = u_mul(ux, sqi, x.prec, x.mode)
+    if r.form == F_FINITE {
+      return u_pack(u_round(r.neg, r.m, r.exp.wrapping_add(half), 0, r.prec, x.mode), x.mode)
+    }
+    return u_pack(r, x.mode)
+  }
+  bigfloat_mul_pow2(f_mul(x, u_pack(sqi, ne()), x.prec, x.mode), half)
 }
 
 /// u_mul with f_mul's special cases (round to nearest even).
