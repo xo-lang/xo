@@ -587,3 +587,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0595](0595-std-gap-rune-int-time.md): Accepted (owner via lead, 2026-11-10): Rune.max, max_ascii, simple_fold; Int.bit_len, add_carry, sub_borrow; Time unix_micros, unix_nanos, nanosecond, from_unix_micros, from_unix_nanos
 - [0596](0596-test-std-record-near.md): Proposed (Xo Lang 2, 2026-11-10): xo test --std-module edits load std's declaration record keyed without the from-source set, as std_variant_near keys the store (test edit peak 202-233 MB against go test's 106-158 MB)
 - [0597](0597-std-modules-import-native.md): Accepted (owner via lead, 2026-11-10): merged std modules that need native code: a list of portable intrinsics (rt.cast), fast paths split after --ab, shared parsers made public as in Go
+- [0598](0598-std-textproto.md): Proposed: std/textproto, net/textproto's header and line reader as a public merged module that std/mail, std/multipart and std/smtp share
