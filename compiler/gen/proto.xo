@@ -112,7 +112,7 @@ fn (var g: Gen) proto_call_roots() {
     let m = file.module
     // std's Go is pregenerated, but a merged module (decision 0588) is
     // generated with the program, so its own calls root what they compare
-    if m < 0 || g.c.mods[m].is_std && !g.c.mods[m].merged {
+    if m < 0 || g.is_std_mod(m) {
       continue
     }
     for n in decl_nodes(file.ast) {

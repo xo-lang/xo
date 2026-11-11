@@ -1,5 +1,19 @@
 # std/mime changes
 
+## 2026-11-10: internal: std/mime merged, and the Go backend runs the Xo port
+
+- Kind: internal (behavior on the Go backend)
+- Commit: this push
+- Found by: decisions 0588 (one file per module) and 0597 part 3 (one implementation)
+- Go reference: mime (ParseMediaType, FormatMediaType, TypeByExtension, ExtensionsByType) and net/http sniff.go (go1.26.1), unchanged
+- Test: the mime and mimefuzz corpora on go, arm64 and llvm; `xo test --std-module=mime` on native and llvm; TestGoldenGoParity and TestGoldenRun http_form, http_multipart_stream, http_serve_content, http_gzip*
+- Shipped in: not yet released
+
+std/mime.xo holds the bodies (std/native/mime.xo is gone). The Go backend no longer calls Go's mime
+package through hand written std/rt/mime.go: scripts/stdgen generates the Xo port into std/rt
+(std_gen_mime.go, listed in std/rt_hosted.txt), which std/rt's http calls, so every backend runs one
+implementation. Results unchanged on the corpora.
+
 ## 2026-11-04: perf: the content sniffing table is data
 
 - Kind: perf (size)

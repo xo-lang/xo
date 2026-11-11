@@ -660,7 +660,12 @@ fn (var g: Gen) ident(e: Expr, x: Ident) -> Str {
 
 fn (var g: Gen) const_ref(o: Int) -> Str {
   if g.ostd(o) {
-    return g.rt() + g.std_prefix(g.omod(o)) + g.oname(o)
+    let r = g.rt() + g.std_prefix(g.omod(o)) + g.oname(o)
+    if g.rt_hosted(g.omod(o)) && !g.c.is_compile_time(g.c.objs[o].decl_file, g.const_init(o)) {
+      // built at its first read, as gen_const declares it (decision 0597)
+      return "${r}.Get(tk)"
+    }
+    return r
   }
   let r = g.pkg_ref(g.omod(o)) + "C_" + g.oname(o)
   if !g.c.is_compile_time(g.c.objs[o].decl_file, g.const_init(o)) {

@@ -62,6 +62,8 @@ pub struct StdModRec {
   /// std/M.xo, which the record must say, or a build that loads std from
   /// it reads the module as a declaration file (2026-11-10, base64)
   pub merged: Bool = false
+  /// generated into package rt (decision 0597, std/rt_hosted.txt)
+  pub rt_hosted: Bool = false
   pub implements: Str = ""
   pub files: List[StdFileRec] = []
 }
@@ -82,7 +84,7 @@ pub struct StdFileRec {
   pub ranges: List[parser.DeclRange] = []
 }
 
-const EXPORT_VERSION = "xo std export v11 (a module's merged flag, decision 0588)"
+const EXPORT_VERSION = "xo std export v12 (a module's rt_hosted flag, decision 0597)"
 
 /// The std block's records as the checker holds them now.
 pub fn (c: Checker) std_export() -> StdExport {
@@ -115,7 +117,7 @@ pub fn (c: Checker) std_export() -> StdExport {
       ms.push((k, o))
     }
     e.members.push((md.path, ms))
-    var rec = StdModRec{path: md.path, name: md.name, dir: md.dir, is_prelude: md.is_prelude, native: md.native, merged: md.merged, implements: md.implements}
+    var rec = StdModRec{path: md.path, name: md.name, dir: md.dir, is_prelude: md.is_prelude, native: md.native, merged: md.merged, rt_hosted: md.rt_hosted, implements: md.implements}
     for f in md.files {
       let sf = c.files[f]
       var fr = StdFileRec{path: sf.path, iface: sf.iface, sha: crypto.sha256(sf.src).to_hex(), sig: sf.sig, is_test: sf.is_test, ranges: sf.ast.ranges}
@@ -737,6 +739,7 @@ pub fn encode_std_export(e: StdExport) -> Bytes {
     w.bool(rec.is_prelude)
     w.bool(rec.native)
     w.bool(rec.merged)
+    w.bool(rec.rt_hosted)
     w.str(rec.implements)
     w.uv(rec.files.len())
     for fr in rec.files {
@@ -883,6 +886,7 @@ pub fn decode_std_export(d: Bytes) -> Option[StdExport] {
     rec.is_prelude = r.bool()
     rec.native = r.bool()
     rec.merged = r.bool()
+    rec.rt_hosted = r.bool()
     rec.implements = r.str()
     let nf = r.uv()
     for _ in 0..nf {

@@ -164,3 +164,12 @@ pushes.
   merged std/path.xo). std/path merged with it (0588 stage 2): its three
   `rt.cast` views stay. scripts merge tool: a local variable named like
   the module (`path.len()`) keeps its prefix.
+- Part 3, mime (2026-11-10): std/rt_hosted.txt lists merged modules whose
+  Go scripts/stdgen generates into package rt, bodies and all; the
+  checker records it on the module (`rt_hosted`, std export v12),
+  compiler/gen treats such a module as std (calls `rt.Mime_NAME`, a
+  lazy constant `rt.Mime_NAME.Get(tk)`) and std_types emits its functions
+  and constants with those names. A separate file and not a mark in
+  std/merged.txt, so an older xo (a seed) still reads the module as
+  merged. std/mime merged under it; std/rt/mime.go and std_sigs_mime.go
+  removed.

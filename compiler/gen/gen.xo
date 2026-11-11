@@ -237,7 +237,7 @@ fn (var g: Gen) run() -> Program {
   g.proto_free = g.c.go_proto_free
   var main_mod = -1
   for m in g.c.order {
-    if g.c.mods[m].is_std && !g.c.mods[m].merged {
+    if g.is_std_mod(m) {
       continue
     }
     g.pkg_of[m] = g.pkgs.len()
@@ -544,7 +544,7 @@ fn (g: Gen) new_pkg(m: Int) -> Pkg {
 /// The qualifier of module m as seen from the current package ("" for
 /// its own module), importing it (pkgRef).
 fn (var g: Gen) pkg_ref(m: Int) -> Str {
-  if m < 0 || g.c.mods[m].is_std && !g.c.mods[m].merged {
+  if m < 0 || g.is_std_mod(m) {
     return g.rt()
   }
   if m == g.pkgs[g.p].m {
@@ -769,7 +769,15 @@ fn (g: Gen) omod(o: Int) -> Int {
 }
 
 fn (g: Gen) is_std_mod(m: Int) -> Bool {
-  m >= 0 && g.c.mods[m].is_std && !g.c.mods[m].merged
+  m >= 0 && g.c.mods[m].is_std && (!g.c.mods[m].merged || g.rt_hosted(m))
+}
+
+/// Whether module m is merged but generated into package rt, bodies and
+/// all, by scripts/stdgen (decision 0597, std/rt_hosted.txt): std/rt's hand
+/// written Go calls it (its http's media types), so a program's calls of
+/// it go to rt as an unmerged module's do.
+fn (g: Gen) rt_hosted(m: Int) -> Bool {
+  m >= 0 && g.c.mods[m].rt_hosted
 }
 
 fn (g: Gen) is_prelude_mod(m: Int) -> Bool {

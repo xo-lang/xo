@@ -703,6 +703,16 @@ fn (g: Gen) recv_tparams(fo: Int) -> List[Int] {
 /// The Go name of a declared user function or method (funcGoName).
 fn (g: Gen) func_go_name(fo: Int) -> Str {
   let o = g.c.objs[fo]
+  if g.rt_hosted(o.module) {
+    // the names std_call gives a std function (decision 0597)
+    if o.recv < 0 {
+      return g.std_free_prefix(o.module) + g.oname(fo)
+    }
+    if g.method_is_go_method(fo) {
+      return go_method(g.oname(fo))
+    }
+    return "${g.std_prefix(g.omod(o.recv))}${g.oname(o.recv)}_${g.oname(fo)}"
+  }
   if o.recv < 0 {
     return "F_" + g.oname(fo)
   }
@@ -812,7 +822,7 @@ fn (var g: Gen) gen_func_with(fo: Int, sp: SpecReq?) {
   }
   // receiver type parameter names come from the receiver type pattern
   var recv_text = recv
-  if !recv.is_empty() {
+  if !recv.is_empty() && !g.rt_hosted(o.module) {
     let rtps = g.recv_tparams(fo)
     recv_text = replace_first(recv, g.go_type(o.recv_ty), g.oname(o.recv) + g.tparam_use(rtps))
   }
@@ -896,6 +906,15 @@ fn (g: Gen) frame_name(fo: Int) -> Str {
   "${mname}.${g.oname(fo)}"
 }
 
+/// The Go variable of module constant co: C_NAME, or the std name
+/// const_ref reads (Mime_NAME) in a module generated into rt.
+fn (g: Gen) const_go_name(co: Int) -> Str {
+  if g.rt_hosted(g.omod(co)) {
+    return g.std_prefix(g.omod(co)) + g.oname(co)
+  }
+  "C_" + g.oname(co)
+}
+
 /// Whether Go code refers to the task variable tk (usesTask).
 fn uses_task(code: Str) -> Bool {
   let bs = code.bytes()
@@ -919,6 +938,7 @@ fn is_word_byte(c: UInt8) -> Bool {
 
 fn (var g: Gen) gen_const(co: Int) {
   let o = g.c.objs[co]
+  let cn = g.const_go_name(co)
   let d = match g.c.files[o.decl_file].ast.decls[o.decl_idx] {
     ConstDecl(d) => d
     _ => fault("const")
@@ -940,23 +960,23 @@ fn (var g: Gen) gen_const(co: Int) {
     // initializer, a builder that reads the constant through a function
     // would be a Go initialization cycle)
     let gt = g.go_type(o.ty)
-    g.pl("var C_${g.oname(co)} = &${g.rt()}LazyConst[${gt}]{}\n")
+    g.pl("var ${cn} = &${g.rt()}LazyConst[${gt}]{}\n")
     g.pl("func init() {")
-    g.pl("\tC_${g.oname(co)}.F = func(tk *${g.rt()}Task) ${gt} {")
+    g.pl("\t${cn}.F = func(tk *${g.rt()}Task) ${gt} {")
     g.pl("\t_ = tk")
     g.pout(body)
     g.pl("\treturn ${code}\n}\n}\n")
-    g.end_decl(mark, ["C_${g.oname(co)}"])
+    g.end_decl(mark, ["${cn}"])
     return
   }
-  g.pl("var C_${g.oname(co)} = func() ${g.go_type(o.ty)} {")
+  g.pl("var ${cn} = func() ${g.go_type(o.ty)} {")
   if uses_task(body + code) {
     g.pl("\ttk := ${g.rt()}InitTask")
     g.pl("\t_ = tk")
   }
   g.pout(body)
   g.pl("\treturn ${code}\n}()\n")
-  g.end_decl(mark, ["C_${g.oname(co)}"])
+  g.end_decl(mark, ["${cn}"])
 }
 
 /// `xoInvariant` for a struct with an invariant (genInvariant).

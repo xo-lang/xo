@@ -1,0 +1,4 @@
+# merged std modules (std/merged.txt, decision 0588) whose Go scripts/stdgen
+# generates into std/rt, bodies and all, because std/rt's hand written Go
+# calls them (decision 0597)
+std/mime

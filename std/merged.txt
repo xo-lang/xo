@@ -20,3 +20,4 @@ std/grpc
 std/base64
 std/protoparse
 std/path
+std/mime

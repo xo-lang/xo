@@ -91,10 +91,22 @@ func modules(root string) ([]string, error) {
 
 // merged reads std/merged.txt (decision 0588): the std modules merged with
 // their implementation. The Go backend compiles one from its own bodies as
-// an ordinary package, so std/rt holds no types or signature checks for it.
+// an ordinary package, so std/rt holds no types or signature checks for it,
+// except the modules of std/rt_hosted.txt (decision 0597), whose Go,
+// bodies and all, is generated into std/rt because its hand written Go
+// calls them: they are not in the result.
 func merged(root string) map[string]bool {
+	out := stdList(root, "merged.txt")
+	for m := range stdList(root, "rt_hosted.txt") {
+		delete(out, m)
+	}
+	return out
+}
+
+// stdList reads std/name: one `std/M` a line, `#` comments, as M.
+func stdList(root, name string) map[string]bool {
 	out := map[string]bool{}
-	b, err := os.ReadFile(filepath.Join(root, "std", "merged.txt"))
+	b, err := os.ReadFile(filepath.Join(root, "std", name))
 	if err != nil {
 		return out
 	}
@@ -344,6 +356,17 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 				}
 				if id, ok := t.(*ast.Ident); ok {
 					return group(id.Name)
+				}
+			}
+			if d.Name.Name == "init" && d.Body != nil && len(d.Body.List) > 0 {
+				// a lazy constant's builder (gen_const, decision 0597): the
+				// module of the variable it sets
+				if as, ok := d.Body.List[0].(*ast.AssignStmt); ok && len(as.Lhs) == 1 {
+					if se, ok := as.Lhs[0].(*ast.SelectorExpr); ok {
+						if id, ok := se.X.(*ast.Ident); ok {
+							return group(id.Name)
+						}
+					}
 				}
 			}
 			return group(d.Name.Name)

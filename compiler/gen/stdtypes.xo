@@ -61,18 +61,37 @@ pub fn std_types(c: check.Checker) -> Str ! Str {
     // a merged module (decision 0588) is generated as its own package,
     // not into std/rt, even when another std module's implementation
     // loads it (otp's use of std/base32)
-    if md.is_std && !md.native && !md.merged {
+    if md.is_std && !md.native && (!md.merged || md.rt_hosted) {
       mods.push(m)
     }
   }
   for m in mods.sort_by(fn(m: Int) -> Str { c.mods[m].path }) {
     g.pkgs[rp].m = m
     let prelude = c.mods[m].is_prelude
+    let hosted = g.rt_hosted(m)
     for fi in c.mods[m].files {
       g.pkgs[rp].cur = fi
       let file = c.files[fi]
       for (di, d) in file.ast.decls.indexed() {
         let o = if di < file.decl_objs.len() { file.decl_objs[di] } else { -1 }
+        if hosted && o >= 0 {
+          // its bodies too, as a program's module (decision 0597)
+          match d {
+            FnDecl(fd) => {
+              if c.objs[o].kind == check.ObjKind.Func && fd.body != None {
+                g.gen_func(o)
+              }
+              continue
+            }
+            ConstDecl(..) => {
+              if c.objs[o].kind == check.ObjKind.Const {
+                g.gen_const(o)
+              }
+              continue
+            }
+            _ => {}
+          }
+        }
         if o >= 0 && c.objs[o].kind == check.ObjKind.Const && !prelude {
           g.gen_std_const(o)
           continue

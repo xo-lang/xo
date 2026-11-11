@@ -290,3 +290,4 @@ commit (the lead cuts it).
   Mime_detect_content_type).
 - 2026-11-10: `std/path` merged, its `rt.cast` views kept under decision
   0597's portable intrinsics (XO0609 for any other native/rt call).
+- 2026-11-10: `std/mime` merged; its Go is generated into std/rt (std/rt_hosted.txt, decision 0597 part 3).

@@ -265,6 +265,8 @@ pub struct Module {
   pub std_tree: Bool = false
   /// A std module merged with its implementation (decision 0588, std/merged.txt): only its `pub` items export; its other items are private as in a user module.
   pub merged: Bool = false
+  /// A merged module whose Go scripts/stdgen generates into package rt, bodies and all (decision 0597, std/rt_hosted.txt): std/rt's hand written Go calls it, so the Go backend calls it there.
+  pub rt_hosted: Bool = false
   pub is_prelude: Bool = false
   /// Named on the command line (or found under a named directory).
   pub root: Bool = false
