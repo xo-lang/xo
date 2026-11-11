@@ -1514,12 +1514,21 @@ fn konst_value(inst: Inst) -> (Int, Bool) {
 /// The registers defined once in the function, by a constant's mov_imm
 /// or a move of an immediate, and their values.
 fn (g: G) const_defs() -> Map[Int, Int] {
-  var ndefs: Map[Int, Int] = {}
+  // definition counts by register (every register is below g.fp.len()):
+  // a hash map written for every definition was most of const_defs' 1%
+  // of the aiplatform/v1 test build's CPU (Lang 1, 2026-11-11)
+  let nr = g.fp.len()
+  var ndefs: List[Int] = []
+  for _ in 0..nr {
+    ndefs.push(0)
+  }
   var vals: Map[Int, Int] = {}
   for b in g.all_blocks() {
     for inst in g.blocks[b].insts {
       for d in inst.defs {
-        ndefs[d] = (ndefs.get(d) ?? 0) + 1
+        if d >= 0 && d < nr {
+          ndefs[d] += 1
+        }
       }
       let (n, ok) = konst_value(inst)
       if ok {
@@ -1536,7 +1545,7 @@ fn (g: G) const_defs() -> Map[Int, Int] {
   }
   var out: Map[Int, Int] = {}
   for (r, n) in vals {
-    if (ndefs.get(r) ?? 0) == 1 {
+    if r >= 0 && r < nr && ndefs[r] == 1 {
       out[r] = n
     }
   }
@@ -2249,14 +2258,29 @@ fn (var g: G) copy_prop() {
     return
   }
   let entry = blocks[0]
-  var ndef: Map[Int, Int] = {}
-  // each register's defining block and index there
-  var at: Map[Int, (Int, Int)] = {}
+  // each register's definition count and its (last) defining block and
+  // index there, as lists indexed by the register (every register is
+  // below g.fp.len()): two hash maps written for every definition were
+  // most of copy_prop's own time, 1.3% of the aiplatform/v1 test build's
+  // CPU (Lang 1, 2026-11-11)
+  let n = g.fp.len()
+  var ndef: List[Int] = []
+  var atb: List[Int] = []
+  var atk: List[Int] = []
+  for _ in 0..n {
+    ndef.push(0)
+    atb.push(-1)
+    atk.push(-1)
+  }
   for b in blocks {
-    for (k, inst) in g.blocks[b].insts.indexed() {
-      for d in inst.defs {
-        ndef[d] = (ndef.get(d) ?? 0) + 1
-        at[d] = (b, k)
+    let bi = g.blocks[b].insts
+    for k in 0..bi.len() {
+      for d in bi[k].defs {
+        if d >= 0 && d < n {
+          ndef[d] += 1
+          atb[d] = b
+          atk[d] = k
+        }
       }
     }
   }
@@ -2274,9 +2298,9 @@ fn (var g: G) copy_prop() {
       for (j, d) in inst.defs.indexed() {
         let s = inst.srcs[j]
         var drop = false
-        if s.kind == S_REG && s.v != 0 && s.v != d && (ndef.get(d) ?? 0) == 1 && (ndef.get(s.v) ?? 0) == 1 && g.fp[d] == g.fp[s.v] {
-          let (ab, ak) = at.get(s.v) ?? (-1, -1)
-          drop = ab == entry || (ab == b && ak < k)
+        if s.kind == S_REG && s.v > 0 && s.v < n && d >= 0 && d < n && s.v != d && ndef[d] == 1 && ndef[s.v] == 1 && g.fp[d] == g.fp[s.v] {
+          let ab = atb[s.v]
+          drop = ab == entry || (ab == b && atk[s.v] < k)
         }
         if drop {
           same[d] = s.v
@@ -2397,19 +2421,12 @@ fn pure_mnemonic(m: Str) -> Bool {
 fn (var g: G) hoist_invariants() {
   let blocks = g.all_blocks()
   let preds = g.mpreds_all(blocks)
-  // each register's definitions and their blocks
+  // each register's definitions and their blocks, built when a loop
+  // first reaches the hoisting below (most functions have none that
+  // does), each list in place (Lang 1, 2026-11-11)
   var ndef: Map[Int, Int] = {}
   var defb: Map[Int, List[Int]] = {}
-  for b in blocks {
-    for inst in g.blocks[b].insts {
-      for d in inst.defs {
-        ndef[d] = (ndef.get(d) ?? 0) + 1
-        var bs = defb.get(d) ?? []
-        bs.push(b)
-        defb[d] = bs
-      }
-    }
-  }
+  var built = false
   var loops = g.dfs_loops(g.hot[0], preds)
   var sizes: List[Int] = []
   for l in loops {
@@ -2456,6 +2473,17 @@ fn (var g: G) hoist_invariants() {
     }
     if calls {
       continue
+    }
+    if !built {
+      built = true
+      for b in blocks {
+        for inst in g.blocks[b].insts {
+          for d in inst.defs {
+            ndef[d] = (ndef.get(d) ?? 0) + 1
+            defb.update(d, [], fn(var l) { l.push(b) })
+          }
+        }
+      }
     }
     var hoisted: List[Inst] = []
     var outside: Map[Int, Bool] = {}
