@@ -165,7 +165,12 @@ fn (var g: Gen) call(v: Int) {
         g.e("i32.const ${es}")
         g.e("call $rl_new_n")
       } else {
-        g.e("i32.const ${if es > 256 { 1 } else { 4 }}")
+        // `[]`: no room until the first push ($rl_grow takes a full list
+        // of capacity 0 to 4), as native's shared empty list; with room
+        // for 4, each empty list of the playground compiler's tokens
+        // (Token.parts, 4 StrParts: 304 bytes, a 512 byte block) held
+        // about 40 MB of a REPL entry's 212 MB (decision 0583)
+        g.e("i32.const 0")
         g.e("i32.const ${es}")
         g.e("call $rl_new")
       }
