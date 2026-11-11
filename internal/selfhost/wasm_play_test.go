@@ -16,6 +16,11 @@ import (
 // (0.63 of a 1 MB Node worker, gotchas/wasm-browser-stack-locals.md).
 const playStackMB = "0.6"
 
+// playMaxBytes bounds the playground compiler (compiler/wasm built for
+// wasm): 26,180,380 bytes at 2026-11-11 (main after the fault zero fix),
+// with about a fifth of room for the compiler's growth.
+const playMaxBytes = 32_000_000
+
 // playSource is the playground tour's first example (the website's
 // examples/tour/basics), the program every visitor runs first.
 const playSource = `const GREETING = "hello"
@@ -68,6 +73,14 @@ func TestWasmPlaygroundStack(t *testing.T) {
 	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("xo build --backend=wasm compiler/wasm: %v\n%s", err, b)
+	}
+	// the playground's download: nothing else watched the wasm build's size,
+	// and a fault exit change doubled it unseen (22.5 to 44.8 MB, 0ce3d8803,
+	// gotchas/wasm-fault-zero-call-home-fallback.md)
+	if fi, err := os.Stat(xoc); err != nil {
+		t.Fatal(err)
+	} else if fi.Size() > playMaxBytes {
+		t.Fatalf("compiler/wasm built for wasm is %d bytes, over the %d bound (playMaxBytes): the playground downloads it; find what grew (bench/results/xoc-size-2026-11-11.md's method) before raising the bound", fi.Size(), playMaxBytes)
 	}
 	src := filepath.Join(tmp, "src")
 	if err := os.MkdirAll(src, 0o755); err != nil {

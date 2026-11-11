@@ -4165,7 +4165,12 @@ fn (var b: Builder) fault_zero(t: Int) -> Int {
 
 /// zero_val.T for a large struct t, "" for another type.
 fn (var b: Builder) zero_val_name(t: Int) -> Str {
-  if b.tkind(t) != Kind.Struct || b.m.types[t].fields.len() < FAULT_ZERO_FIELDS {
+  // not for wasm: a fault exit's call result is not a zero the wasm
+  // backend writes into a `var` parameter's home, so every large `var`
+  // method's home fell back to copying the value in at entry and out at
+  // each return (the playground compiler doubled, 22.5 to 44.8 MB, at
+  // 0ce3d8803; gotchas/wasm-fault-zero-call-home-fallback.md)
+  if b.wasm || b.tkind(t) != Kind.Struct || b.m.types[t].fields.len() < FAULT_ZERO_FIELDS {
     return ""
   }
   var nw: Map[Int, Int] = {}
