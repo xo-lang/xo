@@ -1,5 +1,18 @@
 # std/jpeg changes
 
+## 2026-11-11: refactor: std/jpeg is one file (decisions 0588, 0597)
+
+- Kind: refactor
+- Commit: this push
+- Found by: decision 0597 (std/native/jpeg.xo imports nothing native)
+- Go reference: none (no behavior change)
+- Test: TestStdCorpora jpeg, jpegenc, jpegfuzz, image on go, arm64, llvm
+- Shipped in: not yet released
+
+std/native/jpeg.xo moved into std/jpeg.xo. The module is generated into
+std/rt (std/rt_hosted.txt), since std/image uses it; the Go twin of
+JpegErr's display (std/rt/jpeg.go) is gone, the port's is used.
+
 ## 2026-11-05: fix: the decode corpora match JpegErr.Encode
 
 - Kind: fix

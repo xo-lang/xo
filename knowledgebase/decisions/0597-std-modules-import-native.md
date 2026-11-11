@@ -252,6 +252,14 @@ pushes.
   rt-hosted; the Go backend compiles them from source, so their Go twins
   (std/rt/bufio.go, the std/term part of std/rt/term.go) are gone, and
   term.color_enabled and term.painter left compiler/ssa/waits.xo's NO_WAIT.
+- std/png, std/jpeg and std/htmlparse (nothing native) (2026-11-11):
+  merged; png and jpeg are rt-hosted, since std/image, generated into
+  std/rt, uses both; htmlparse is not. Their Go twins (only the error
+  displays) are gone. TestStdRuntimeCallsHaveGoLowering now scans a
+  merged module's std/M.xo too, where its rt.* calls moved. std/cbor
+  cannot merge, like std/protobuf (derive Cbor). std/amqp is next: in
+  its own module its wildcard arms over its own enums warn (XO0305) and
+  its tests' effects are checked.
 
 - std/trace and std/metrics (2026-11-11): merged and rt-hosted (std/otlp,
   generated into std/rt, uses both; gotchas/rt-hosted-merged-imports.md).

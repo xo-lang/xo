@@ -39,7 +39,9 @@ func TestStdRuntimeCallsHaveGoLowering(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, "std", l+".xo")); err != nil {
 			t.Fatalf("std/go_compiled.txt: %q is no std module (std/%s.xo): the list's format changed?", l, l)
 		}
-		for _, f := range []string{"std/native/" + l + ".xo", "std/native/" + l + "_test.xo"} {
+		// a merged module's rt.* calls moved with its code into std/M.xo
+		// (std/merged.txt), where they need a Go lowering all the same
+		for _, f := range []string{"std/native/" + l + ".xo", "std/native/" + l + "_test.xo", "std/" + l + ".xo", "std/" + l + "_test.xo"} {
 			if _, err := os.Stat(filepath.Join(root, f)); err == nil {
 				files = append(files, filepath.Join(root, f))
 			}

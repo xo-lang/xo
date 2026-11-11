@@ -1,4 +1,4 @@
-// std/htmlparse (decision 0570). Declaration file; encoding rules are listed at
+// std/htmlparse (decision 0570). Encoding rules are listed at
 // the top of std/prelude.xo. golang.org/x/net/html's tree builder (parse.go,
 // node.go, const.go, foreign.go, doctype.go, render.go and escape.go, BSD
 // license, Copyright 2010 The Go Authors) on the tokens of std/htmltok: the
@@ -8,9 +8,21 @@
 //
 // The tree is an arena: `Tree.nodes` holds every node and a node is its index,
 // -1 standing for Go's nil. Node 0 of a parse is the document.
+//
+// std/htmlparse on the native backends (decision 0570): golang.org/x/net/html's
+// tree builder (parse.go, node.go, const.go, foreign.go, doctype.go, render.go
+// and escape.go), BSD license, Copyright 2010 The Go Authors, on the tokens of
+// std/htmltok. The insertion modes are Go's functions dispatched by number
+// (`call_im`), the open elements and active formatting elements are lists of
+// node indexes (-1 is the scope marker), and an element's tag is compared as
+// text where Go compares atoms (the tokenizer lower cases tag names). Go
+// panics (a stack deeper than 512 elements) latch `Parser.err` and end the
+// parse with that error.
+
+use std/htmltok
 
 /// Go's html.NodeType (without the internal scope marker).
-enum NodeType {
+pub enum NodeType {
   Error
   Text
   Document
@@ -22,10 +34,10 @@ enum NodeType {
 
 /// Go's html.Attribute: `namespace` is "" except for the adjusted foreign
 /// attributes (`xlink`, `xml`, `xmlns`).
-struct Attr {
-  namespace: Str
-  key: Str
-  val: Str
+pub struct Attr {
+  pub namespace: Str
+  pub key: Str
+  pub val: Str
 } derive Eq
 
 /// Go's html.Node: `data` is the tag name of an element (lower case, with the
@@ -33,62 +45,3177 @@ struct Attr {
 /// a doctype (its public and system identifiers are the attributes `public`
 /// and `system`). `namespace` is "" for html, `math` or `svg`. Tree links are
 /// indexes into `Tree.nodes`, -1 for none.
-struct Node {
-  typ: NodeType
-  data: Str
-  namespace: Str
-  attrs: List[Attr]
-  parent: Int
-  first_child: Int
-  last_child: Int
-  prev: Int
-  next: Int
+pub struct Node {
+  pub typ: NodeType
+  pub data: Str
+  pub namespace: Str
+  pub attrs: List[Attr]
+  pub parent: Int
+  pub first_child: Int
+  pub last_child: Int
+  pub prev: Int
+  pub next: Int
 }
 
 /// The result of a parse: the nodes and `root`, the node whose children are the
 /// result (the document, or for a fragment the html element Go's ParseFragment
 /// takes its nodes from).
-struct Tree {
-  nodes: List[Node]
-  root: Int
+pub struct Tree {
+  pub nodes: List[Node]
+  pub root: Int
 }
 
 /// A parse failure: the open elements nest deeper than 512 (Go's error and
 /// panic text), or the tokenizer's buffer limit.
-struct ParseErr {
-  msg: Str
+pub struct ParseErr {
+  pub msg: Str
 }
 
-fn (e: ParseErr) display() -> Str
+pub fn (e: ParseErr) display() -> Str { e.msg }
 
 /// A tree Render refuses: an error node, a void element with children, a
 /// doctype identifier with both quote types.
-struct RenderErr {
-  msg: Str
+pub struct RenderErr {
+  pub msg: Str
 }
 
-fn (e: RenderErr) display() -> Str
+pub fn (e: RenderErr) display() -> Str { e.msg }
 
 /// html.Parse: the document of `text` (UTF-8), scripting enabled.
-fn parse(text: Str) -> Tree ! ParseErr
+pub fn parse(text: Str) -> Tree ! ParseErr { parse_with(text, true) }
+
 /// html.ParseWithOptions with ParseOptionEnableScripting(scripting).
-fn parse_with(text: Str, scripting: Bool) -> Tree ! ParseErr
+pub fn parse_with(text: Str, scripting: Bool) -> Tree ! ParseErr {
+  match parse_tree(text, scripting) {
+    Ok(t) => t
+    Err(m) => return Err(ParseErr{msg: m})
+  }
+}
+
 /// html.ParseFragment: `text` as the inner html of an element of `context_tag`
 /// in `context_namespace` ("", `math` or `svg`); an empty tag parses a
 /// document. The nodes are the children of the result's `root`.
-fn parse_fragment(text: Str, context_namespace: Str, context_tag: Str) -> Tree ! ParseErr
+pub fn parse_fragment(text: Str, context_namespace: Str, context_tag: Str) -> Tree ! ParseErr {
+  parse_fragment_with(text, context_namespace, context_tag, true)
+}
+
 /// html.ParseFragmentWithOptions with the scripting flag.
-fn parse_fragment_with(text: Str, context_namespace: Str, context_tag: Str, scripting: Bool) -> Tree ! ParseErr
+pub fn parse_fragment_with(text: Str, context_namespace: Str, context_tag: Str, scripting: Bool) -> Tree ! ParseErr {
+  if context_tag == "" {
+    return parse_with(text, scripting)
+  }
+  match parse_fragment_tree(text, context_namespace, context_tag, scripting) {
+    Ok(t) => t
+    Err(m) => return Err(ParseErr{msg: m})
+  }
+}
 
 /// html.Render of the whole result: the children of `root` in order.
-fn (t: Tree) render() -> Str ! RenderErr
+pub fn (t: Tree) render() -> Str ! RenderErr {
+  var out = StrBuilder.new()
+  var c = t.nodes[t.root].first_child
+  while c != -1 {
+    let e = render1(t, out, c)
+    if e == PLAINTEXT_ABORT {
+      break
+    }
+    if e != "" {
+      return Err(RenderErr{msg: e})
+    }
+    c = t.nodes[c].next
+  }
+  out.freeze()
+}
+
 /// html.Render of one node (a document renders its children).
-fn (t: Tree) render_node(n: Int) -> Str ! RenderErr
+pub fn (t: Tree) render_node(n: Int) -> Str ! RenderErr {
+  var out = StrBuilder.new()
+  let e = render1(t, out, n)
+  if e != "" && e != PLAINTEXT_ABORT {
+    return Err(RenderErr{msg: e})
+  }
+  out.freeze()
+}
+
 /// The tree in the html5lib tree-construction format Go's tests compare (`| `
 /// lines, two spaces per level, attributes sorted by key, `content` under a
 /// template).
-fn (t: Tree) dump() -> Str
+pub fn (t: Tree) dump() -> Str {
+  var sb: List[Str] = []
+  var c = t.nodes[t.root].first_child
+  while c != -1 {
+    dump_level(t, sb, c, 0)
+    c = t.nodes[c].next
+  }
+  sb.join("")
+}
 
 /// html.EscapeString as x/net's renderer applies it: `&`, `'`, `<`, `>`, `"`
 /// and carriage return as `&amp;`, `&#39;`, `&lt;`, `&gt;`, `&#34;`, `&#13;`.
-fn escape(s: Str) -> Str
+pub fn escape(s: Str) -> Str {
+  var out = StrBuilder.new()
+  escape_into(out, s)
+  out.freeze()
+}
+
+const K_ERROR = 0
+
+const K_TEXT = 1
+
+const K_START = 2
+
+const K_END = 3
+
+const K_COMMENT = 5
+
+const K_DOCTYPE = 6
+
+struct Tok {
+  typ: Int
+  data: Str
+  attrs: List[Attr]
+}
+
+const IM_INITIAL = 0
+
+const IM_BEFORE_HTML = 1
+
+const IM_BEFORE_HEAD = 2
+
+const IM_IN_HEAD = 3
+
+const IM_IN_HEAD_NOSCRIPT = 4
+
+const IM_AFTER_HEAD = 5
+
+const IM_IN_BODY = 6
+
+const IM_TEXT = 7
+
+const IM_IN_TABLE = 8
+
+const IM_IN_TABLE_TEXT = 9
+
+const IM_IN_CAPTION = 10
+
+const IM_IN_COLUMN_GROUP = 11
+
+const IM_IN_TABLE_BODY = 12
+
+const IM_IN_ROW = 13
+
+const IM_IN_CELL = 14
+
+const IM_IN_SELECT = 15
+
+const IM_IN_SELECT_IN_TABLE = 16
+
+const IM_IN_TEMPLATE = 17
+
+const IM_AFTER_BODY = 18
+
+const IM_IN_FRAMESET = 19
+
+const IM_AFTER_FRAMESET = 20
+
+const IM_AFTER_AFTER_BODY = 21
+
+const IM_AFTER_AFTER_FRAMESET = 22
+
+const IM_IGNORE_REMAINING = 23
+
+const IM_NONE = -1
+
+const SCOPE_DEFAULT = 0
+
+const SCOPE_LIST_ITEM = 1
+
+const SCOPE_BUTTON = 2
+
+const SCOPE_TABLE = 3
+
+const SCOPE_TABLE_ROW = 4
+
+const SCOPE_TABLE_BODY = 5
+
+struct Parser {
+  tz: htmltok.Tokenizer
+  tok: Tok
+  has_self_closing: Bool
+  nodes: List[Node]
+  oe: List[Int]
+  /// Active formatting elements; -1 is a scope marker.
+  afe: List[Int]
+  head: Int
+  form: Int
+  scripting: Bool
+  frameset_ok: Bool
+  template_stack: List[Int]
+  im: Int
+  original_im: Int
+  foster_parenting: Bool
+  quirks: Bool
+  fragment: Bool
+  context: Int
+  text_nodes: Map[Int, List[Str]]
+  /// The first internal error (Go panics and recovers it in parse).
+  err: Str
+}
+
+fn new_node(var p: Parser, typ: NodeType, data: Str) -> Int {
+  p.nodes.push(Node{typ: typ, data: data, namespace: "", attrs: [], parent: -1, first_child: -1, last_child: -1, prev: -1, next: -1})
+  p.nodes.len() - 1
+}
+
+/// Node.AppendChild.
+fn append_child(var p: Parser, n: Int, c: Int) {
+  let last = p.nodes[n].last_child
+  if last != -1 {
+    p.nodes[last].next = c
+  } else {
+    p.nodes[n].first_child = c
+  }
+  p.nodes[n].last_child = c
+  p.nodes[c].parent = n
+  p.nodes[c].prev = last
+}
+
+/// Node.InsertBefore (old -1 appends).
+fn insert_before(var p: Parser, n: Int, new_child: Int, old_child: Int) {
+  var prev = -1
+  var next = -1
+  if old_child != -1 {
+    prev = p.nodes[old_child].prev
+    next = old_child
+  } else {
+    prev = p.nodes[n].last_child
+  }
+  if prev != -1 {
+    p.nodes[prev].next = new_child
+  } else {
+    p.nodes[n].first_child = new_child
+  }
+  if next != -1 {
+    p.nodes[next].prev = new_child
+  } else {
+    p.nodes[n].last_child = new_child
+  }
+  p.nodes[new_child].parent = n
+  p.nodes[new_child].prev = prev
+  p.nodes[new_child].next = next
+}
+
+fn remove_child(var p: Parser, n: Int, c: Int) {
+  if p.nodes[n].first_child == c {
+    p.nodes[n].first_child = p.nodes[c].next
+  }
+  if p.nodes[c].next != -1 {
+    let nx = p.nodes[c].next
+    p.nodes[nx].prev = p.nodes[c].prev
+  }
+  if p.nodes[n].last_child == c {
+    p.nodes[n].last_child = p.nodes[c].prev
+  }
+  if p.nodes[c].prev != -1 {
+    let pv = p.nodes[c].prev
+    p.nodes[pv].next = p.nodes[c].next
+  }
+  p.nodes[c].parent = -1
+  p.nodes[c].prev = -1
+  p.nodes[c].next = -1
+}
+
+fn reparent_children(var p: Parser, dst: Int, src: Int) {
+  while true {
+    let child = p.nodes[src].first_child
+    if child == -1 {
+      break
+    }
+    remove_child(p, src, child)
+    append_child(p, dst, child)
+  }
+}
+
+/// Node.clone: type, data and attributes (not the namespace).
+fn clone_node(var p: Parser, n: Int) -> Int {
+  p.nodes.push(Node{typ: p.nodes[n].typ, data: p.nodes[n].data, namespace: "", attrs: p.nodes[n].attrs, parent: -1,
+    first_child: -1, last_child: -1, prev: -1, next: -1})
+  p.nodes.len() - 1
+}
+
+fn stack_top(s: List[Int]) -> Int {
+  if s.len() > 0 {
+    return s[s.len() - 1]
+  }
+  -1
+}
+
+fn stack_index(s: List[Int], n: Int) -> Int {
+  var i = s.len() - 1
+  while i >= 0 {
+    if s[i] == n {
+      return i
+    }
+    i -= 1
+  }
+  -1
+}
+
+fn stack_remove(var s: List[Int], n: Int) {
+  let i = stack_index(s, n)
+  if i == -1 {
+    return
+  }
+  s.remove_at(i)
+}
+
+fn stack_insert(var s: List[Int], i: Int, n: Int) {
+  s.insert(i, n)
+}
+
+fn truncate(var s: List[Int], n: Int) {
+  while s.len() > n {
+    s.pop()
+  }
+}
+
+/// nodeStack.contains: an html element with the tag.
+fn oe_contains(p: Parser, tag: Str) -> Bool {
+  for n in p.oe {
+    if p.nodes[n].data == tag && p.nodes[n].namespace.len() == 0 {
+      return true
+    }
+  }
+  false
+}
+
+fn top(p: Parser) -> Int {
+  let n = stack_top(p.oe)
+  if n != -1 {
+    return n
+  }
+  0
+}
+
+fn is_special_html(name: Str) -> Bool {
+  match name {
+    "address" | "applet" | "area" | "article" | "aside" | "base" | "basefont" | "bgsound" | "blockquote" | "body" | "br" |
+    "button" | "caption" | "center" | "col" | "colgroup" | "dd" | "details" | "dir" | "div" | "dl" | "dt" | "embed" |
+    "fieldset" | "figcaption" | "figure" | "footer" | "form" | "frame" | "frameset" | "h1" | "h2" | "h3" | "h4" | "h5" |
+    "h6" | "head" | "header" | "hgroup" | "hr" | "html" | "iframe" | "img" | "input" | "keygen" | "li" | "link" |
+    "listing" | "main" | "marquee" | "menu" | "meta" | "nav" | "noembed" | "noframes" | "noscript" | "object" | "ol" |
+    "p" | "param" | "plaintext" | "pre" | "script" | "section" | "select" | "source" | "style" | "summary" | "table" |
+    "tbody" | "td" | "template" | "textarea" | "tfoot" | "th" | "thead" | "title" | "tr" | "track" | "ul" | "wbr" |
+    "xmp" => true
+    _ => false
+  }
+}
+
+fn is_special_element(p: Parser, n: Int) -> Bool {
+  let ns = p.nodes[n].namespace
+  let d = p.nodes[n].data
+  if ns == "" || ns == "html" {
+    return is_special_html(d)
+  }
+  if ns == "math" {
+    return d == "mi" || d == "mo" || d == "mn" || d == "ms" || d == "mtext" || d == "annotation-xml"
+  }
+  if ns == "svg" {
+    return d == "foreignObject" || d == "desc" || d == "title"
+  }
+  false
+}
+
+fn default_scope_stops(ns: Str, tag: Str) -> Bool {
+  if ns == "" {
+    return tag == "applet" || tag == "caption" || tag == "html" || tag == "table" || tag == "td" || tag == "th" ||
+      tag == "marquee" || tag == "object" || tag == "template" || tag == "select"
+  }
+  if ns == "math" {
+    return tag == "annotation-xml" || tag == "mi" || tag == "mn" || tag == "mo" || tag == "ms" || tag == "mtext"
+  }
+  if ns == "svg" {
+    return tag == "desc" || tag == "foreignObject" || tag == "title"
+  }
+  false
+}
+
+/// indexOfElementInScope: the index in the open elements of the nearest match, -1 when a scope boundary comes first.
+fn index_in_scope(p: Parser, s: Int, t1: Str, t2: Str = "", t3: Str = "") -> Int {
+  var i = p.oe.len() - 1
+  while i >= 0 {
+    let n = p.oe[i]
+    let tag = p.nodes[n].data
+    let ns = p.nodes[n].namespace
+    if ns == "" {
+      if tag == t1 || (t2 != "" && (tag == t2 || (t3 != "" && tag == t3))) || (t1 == "h1" && t2 == "h2" && is_heading(tag)) {
+        return i
+      }
+      if s == SCOPE_DEFAULT {
+      } else if s == SCOPE_LIST_ITEM {
+        if tag == "ol" || tag == "ul" {
+          return -1
+        }
+      } else if s == SCOPE_BUTTON {
+        if tag == "button" {
+          return -1
+        }
+      } else if s == SCOPE_TABLE {
+        if tag == "html" || tag == "table" || tag == "template" {
+          return -1
+        }
+      } else {
+        fault("html: internal error: indexOfElementInScope unknown scope")
+      }
+    }
+    if s == SCOPE_DEFAULT || s == SCOPE_LIST_ITEM || s == SCOPE_BUTTON {
+      if default_scope_stops(ns, tag) {
+        return -1
+      }
+    }
+    i -= 1
+  }
+  -1
+}
+
+fn element_in_scope(p: Parser, s: Int, t1: Str, t2: Str = "", t3: Str = "") -> Bool { index_in_scope(p, s, t1, t2, t3) != -1 }
+
+fn pop_until(var p: Parser, s: Int, t1: Str, t2: Str = "", t3: Str = "") -> Bool {
+  let i = index_in_scope(p, s, t1, t2, t3)
+  if i != -1 {
+    truncate(p.oe, i)
+    return true
+  }
+  false
+}
+
+fn clear_stack_to_context(var p: Parser, s: Int) {
+  var i = p.oe.len() - 1
+  while i >= 0 {
+    let tag = p.nodes[p.oe[i]].data
+    if s == SCOPE_TABLE {
+      if tag == "html" || tag == "table" || tag == "template" {
+        truncate(p.oe, i + 1)
+        return
+      }
+    } else if s == SCOPE_TABLE_ROW {
+      if tag == "html" || tag == "tr" || tag == "template" {
+        truncate(p.oe, i + 1)
+        return
+      }
+    } else if s == SCOPE_TABLE_BODY {
+      if tag == "html" || tag == "tbody" || tag == "tfoot" || tag == "thead" || tag == "template" {
+        truncate(p.oe, i + 1)
+        return
+      }
+    } else {
+      fault("html: internal error: clearStackToContext unknown scope")
+    }
+    i -= 1
+  }
+}
+
+fn parse_generic_raw_text_element(var p: Parser) {
+  add_element(p)
+  p.original_im = p.im
+  p.im = IM_TEXT
+}
+
+/// generateImpliedEndTags: pops dd, dt, li, optgroup, option, p, rb, rp, rt and rtc, except those named.
+fn generate_implied_end_tags(var p: Parser, except: Str = "") {
+  var i = p.oe.len() - 1
+  while i >= 0 {
+    let n = p.oe[i]
+    if p.nodes[n].typ != NodeType.Element {
+      break
+    }
+    let d = p.nodes[n].data
+    if d == "dd" || d == "dt" || d == "li" || d == "optgroup" || d == "option" || d == "p" || d == "rb" || d == "rp" ||
+        d == "rt" || d == "rtc" {
+      if d == except {
+        break
+      }
+      i -= 1
+      continue
+    }
+    break
+  }
+  truncate(p.oe, i + 1)
+}
+
+fn add_child(var p: Parser, n: Int) {
+  if should_foster_parent(p) {
+    foster_parent(p, n)
+  } else {
+    let t = top(p)
+    append_child(p, t, n)
+  }
+  if p.nodes[n].typ == NodeType.Element {
+    insert_open_element(p, n)
+  }
+}
+
+fn insert_open_element(var p: Parser, n: Int) {
+  p.oe.push(n)
+  if p.oe.len() > 512 && p.err == "" {
+    p.err = "html: open stack of elements exceeds 512 nodes"
+  }
+}
+
+fn should_foster_parent(p: Parser) -> Bool {
+  if p.foster_parenting {
+    let d = p.nodes[top(p)].data
+    if d == "table" || d == "tbody" || d == "tfoot" || d == "thead" || d == "tr" {
+      return true
+    }
+  }
+  false
+}
+
+fn foster_parent(var p: Parser, n: Int) {
+  var table = -1
+  var parent = -1
+  var prev = -1
+  var template = -1
+  var i = p.oe.len() - 1
+  while i >= 0 {
+    if p.nodes[p.oe[i]].data == "table" {
+      table = p.oe[i]
+      break
+    }
+    i -= 1
+  }
+  var j = p.oe.len() - 1
+  while j >= 0 {
+    if p.nodes[p.oe[j]].data == "template" {
+      template = p.oe[j]
+      break
+    }
+    j -= 1
+  }
+  if template != -1 && (table == -1 || j > i) {
+    append_child(p, template, n)
+    return
+  }
+  if table == -1 {
+    parent = p.oe[0]
+  } else {
+    parent = p.nodes[table].parent
+  }
+  if parent == -1 {
+    parent = p.oe[i - 1]
+  }
+  if table != -1 {
+    prev = p.nodes[table].prev
+  } else {
+    prev = p.nodes[parent].last_child
+  }
+  if prev != -1 && p.nodes[prev].typ == NodeType.Text && p.nodes[n].typ == NodeType.Text {
+    append_text(p, prev, p.nodes[n].data)
+    return
+  }
+  insert_before(p, parent, n, table)
+}
+
+fn add_text(var p: Parser, text: Str) {
+  if text == "" {
+    return
+  }
+  if should_foster_parent(p) {
+    let t = new_node(p, NodeType.Text, text)
+    foster_parent(p, t)
+    return
+  }
+  let t = top(p)
+  let n = p.nodes[t].last_child
+  if n != -1 && p.nodes[n].typ == NodeType.Text {
+    append_text(p, n, text)
+    return
+  }
+  let tn = new_node(p, NodeType.Text, text)
+  add_child(p, tn)
+}
+
+fn add_comment(var p: Parser, text: Str) {
+  let c = new_node(p, NodeType.Comment, text)
+  add_child(p, c)
+}
+
+/// appendText: text nodes grow by pieces joined when the parse ends (Go keeps a byte slice per node).
+fn append_text(var p: Parser, n: Int, text: Str) {
+  var pieces: List[Str] = []
+  if let Some(ps) = p.text_nodes.get(n) {
+    pieces = ps
+  } else {
+    pieces = [p.nodes[n].data]
+    p.nodes[n].data = ""
+  }
+  pieces.push(text)
+  p.text_nodes[n] = pieces
+}
+
+fn attr_compare(a: Attr, b: Attr) -> Int {
+  if a.namespace != b.namespace {
+    return if a.namespace < b.namespace { -1 } else { 1 }
+  }
+  if a.key != b.key {
+    return if a.key < b.key { -1 } else { 1 }
+  }
+  if a.val != b.val {
+    return if a.val < b.val { -1 } else { 1 }
+  }
+  0
+}
+
+fn sort_attrs(attrs: List[Attr]) -> List[Attr] {
+  attrs.sort_by(fn(a: Attr) -> Str { "${a.namespace}\u{0}${a.key}\u{0}${a.val}" })
+}
+
+fn add_element(var p: Parser) {
+  let n = new_node(p, NodeType.Element, p.tok.data)
+  p.nodes[n].attrs = p.tok.attrs
+  add_child(p, n)
+}
+
+/// addFormattingElement: Noah's Ark clause (three identical elements at most), then the element joins afe.
+fn add_formatting_element(var p: Parser) {
+  let tag = p.tok.data
+  let attr = sort_attrs(p.tok.attrs)
+  add_element(p)
+  var identical = 0
+  var i = p.afe.len() - 1
+  while i >= 0 {
+    let n = p.afe[i]
+    if n == -1 {
+      break
+    }
+    if p.nodes[n].typ != NodeType.Element {
+      i -= 1
+      continue
+    }
+    if p.nodes[n].namespace.len() != 0 {
+      i -= 1
+      continue
+    }
+    if p.nodes[n].data != tag {
+      i -= 1
+      continue
+    }
+    // the sorted attributes of the earlier element compare with this token's
+    if sort_attrs(p.nodes[n].attrs) != attr {
+      i -= 1
+      continue
+    }
+    identical += 1
+    if identical >= 3 {
+      stack_remove(p.afe, n)
+    }
+    i -= 1
+  }
+  let t = top(p)
+  p.nodes[t].attrs = sort_attrs(p.nodes[t].attrs)
+  p.afe.push(t)
+}
+
+fn clear_active_formatting_elements(var p: Parser) {
+  while true {
+    let n = p.afe[p.afe.len() - 1]
+    truncate(p.afe, p.afe.len() - 1)
+    if p.afe.len() == 0 || n == -1 {
+      return
+    }
+  }
+}
+
+fn reconstruct_active_formatting_elements(var p: Parser) {
+  var n = stack_top(p.afe)
+  if p.afe.len() == 0 {
+    return
+  }
+  if n == -1 || stack_index(p.oe, n) != -1 {
+    return
+  }
+  var i = p.afe.len() - 1
+  while n != -1 && stack_index(p.oe, n) == -1 {
+    if i == 0 {
+      i = -1
+      break
+    }
+    i -= 1
+    n = p.afe[i]
+  }
+  while true {
+    i += 1
+    let clone = clone_node(p, p.afe[i])
+    add_child(p, clone)
+    p.afe[i] = clone
+    if i == p.afe.len() - 1 {
+      break
+    }
+  }
+}
+
+fn acknowledge_self_closing_tag(var p: Parser) { p.has_self_closing = false }
+
+fn set_original_im(var p: Parser) {
+  if p.original_im != IM_NONE && p.err == "" {
+    p.err = "html: bad parser state: originalIM was set twice"
+  }
+  p.original_im = p.im
+}
+
+fn reset_insertion_mode(var p: Parser) {
+  var i = p.oe.len() - 1
+  while i >= 0 {
+    var n = p.oe[i]
+    let last = i == 0
+    if last && p.context != -1 {
+      n = p.context
+    }
+    let d = p.nodes[n].data
+    if d == "td" || d == "th" {
+      p.im = IM_IN_CELL
+    } else if d == "tr" {
+      p.im = IM_IN_ROW
+    } else if d == "tbody" || d == "thead" || d == "tfoot" {
+      p.im = IM_IN_TABLE_BODY
+    } else if d == "caption" {
+      p.im = IM_IN_CAPTION
+    } else if d == "colgroup" {
+      p.im = IM_IN_COLUMN_GROUP
+    } else if d == "table" {
+      p.im = IM_IN_TABLE
+    } else if d == "template" {
+      if p.nodes[n].namespace.len() != 0 {
+        i -= 1
+        continue
+      }
+      p.im = stack_top(p.template_stack)
+    } else if d == "head" {
+      p.im = IM_IN_HEAD
+    } else if d == "body" {
+      p.im = IM_IN_BODY
+    } else if d == "frameset" {
+      p.im = IM_IN_FRAMESET
+    } else if d == "html" {
+      if p.head == -1 {
+        p.im = IM_BEFORE_HEAD
+      } else {
+        p.im = IM_AFTER_HEAD
+      }
+    } else {
+      if last {
+        p.im = IM_IN_BODY
+        return
+      }
+      i -= 1
+      continue
+    }
+    return
+  }
+}
+
+const DOC = 0
+
+const WHITESPACE = " \t\r\n\u{0c}"
+
+fn is_ws_byte(b: UInt8) -> Bool { b == 32 || b == 9 || b == 13 || b == 10 || b == 12 }
+
+fn only_ws(s: Str) -> Str {
+  var sb = StrBuilder.new()
+  for b in s.bytes() {
+    if is_ws_byte(b) {
+      if b == 32 {
+        sb.write(" ")
+      } else if b == 9 {
+        sb.write("\t")
+      } else if b == 13 {
+        sb.write("\r")
+      } else if b == 10 {
+        sb.write("\n")
+      } else {
+        sb.write("\u{0c}")
+      }
+    }
+  }
+  sb.freeze()
+}
+
+fn copy_attributes(var p: Parser, dst: Int, src: List[Attr]) {
+  if src.len() == 0 {
+    return
+  }
+  var seen: Map[Str, Bool] = {}
+  for t in p.nodes[dst].attrs {
+    seen[t.key] = true
+  }
+  for t in src {
+    if seen.get(t.key) == None {
+      p.nodes[dst].attrs.push(t)
+      seen[t.key] = true
+    }
+  }
+}
+
+fn tok_has_attr_hidden(p: Parser) -> Bool {
+  for t in p.tok.attrs {
+    if t.key == "type" && t.val.equal_fold("hidden") {
+      return true
+    }
+  }
+  false
+}
+
+fn pop_oe(var p: Parser) -> Int { p.oe.pop() ?? -1 }
+
+fn add_comment_doc(var p: Parser, doc: Int, text: Str) {
+  let c = new_node(p, NodeType.Comment, text)
+  append_child(p, doc, c)
+}
+
+/// parseDoctype (doctype.go): the doctype node and whether quirks mode applies.
+fn parse_doctype(var p: Parser, str: Str) -> Bool {
+  var s = str
+  var quirks = false
+  var n = new_node(p, NodeType.Doctype, "")
+  var space = s.len()
+  if let Some(i) = s.find_any(WHITESPACE) {
+    space = i
+  }
+  var name = s[0..space]
+  if name != "html" {
+    quirks = true
+  }
+  p.nodes[n].data = name.to_lower()
+  s = s[space..].trim_start_chars(WHITESPACE)
+  if s.len() < 6 {
+    append_child(p, DOC, n)
+    return quirks || s != ""
+  }
+  var key = s[0..6].to_lower()
+  s = s[6..]
+  while key == "public" || key == "system" {
+    s = s.trim_start_chars(WHITESPACE)
+    if s == "" {
+      break
+    }
+    let quote = s[0..1]
+    if quote != "\"" && quote != "'" {
+      break
+    }
+    s = s[1..]
+    var id = ""
+    if let Some(q) = s.find(quote) {
+      id = s[0..q]
+      s = s[q + 1..]
+    } else {
+      id = s
+      s = ""
+    }
+    p.nodes[n].attrs.push(Attr{namespace: "", key: key, val: id})
+    if key == "public" {
+      key = "system"
+    } else {
+      key = ""
+    }
+  }
+  let attrs = p.nodes[n].attrs
+  if key != "" || s != "" {
+    quirks = true
+  } else if attrs.len() > 0 {
+    if attrs[0].key == "public" {
+      let public = attrs[0].val.to_lower()
+      if public == "-//w3o//dtd w3 html strict 3.0//en//" || public == "-/w3d/dtd html 4.0 transitional/en" || public == "html" {
+        quirks = true
+      } else {
+        for q in quirky_ids() {
+          if public.starts_with(q) {
+            quirks = true
+            break
+          }
+        }
+      }
+      if attrs.len() == 1 && (public.starts_with("-//w3c//dtd html 4.01 frameset//") ||
+          public.starts_with("-//w3c//dtd html 4.01 transitional//")) {
+        quirks = true
+      }
+    }
+    let last = attrs[attrs.len() - 1]
+    if last.key == "system" && last.val.equal_fold("http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd") {
+      quirks = true
+    }
+  }
+  append_child(p, DOC, n)
+  quirks
+}
+
+fn is_heading(d: Str) -> Bool { d == "h1" || d == "h2" || d == "h3" || d == "h4" || d == "h5" || d == "h6" }
+
+fn call_im(var p: Parser, im: Int) -> Bool {
+  match im {
+    0 => initial_im(p)
+    1 => before_html_im(p)
+    2 => before_head_im(p)
+    3 => in_head_im(p)
+    4 => in_head_noscript_im(p)
+    5 => after_head_im(p)
+    6 => in_body_im(p)
+    8 => in_table_im(p)
+    7 => text_im(p)
+    10 => in_caption_im(p)
+    11 => in_column_group_im(p)
+    12 => in_table_body_im(p)
+    13 => in_row_im(p)
+    14 => in_cell_im(p)
+    17 => in_template_im(p)
+    18 => after_body_im(p)
+    19 => in_frameset_im(p)
+    20 => after_frameset_im(p)
+    21 => after_after_body_im(p)
+    22 => after_after_frameset_im(p)
+    _ => true
+  }
+}
+
+fn parse_implied_token(var p: Parser, typ: Int, data: Str) {
+  let real = p.tok
+  let sc = p.has_self_closing
+  p.tok = Tok{typ: typ, data: data, attrs: []}
+  p.has_self_closing = false
+  parse_current_token(p)
+  p.tok = real
+  p.has_self_closing = sc
+}
+
+fn initial_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  if t == K_TEXT {
+    p.tok.data = p.tok.data.trim_start_chars(WHITESPACE)
+    if p.tok.data.len() == 0 {
+      return true
+    }
+  } else if t == K_COMMENT {
+    add_comment_doc(p, DOC, p.tok.data)
+    return true
+  } else if t == K_DOCTYPE {
+    p.quirks = parse_doctype(p, p.tok.data)
+    p.im = IM_BEFORE_HTML
+    return true
+  }
+  p.quirks = true
+  p.im = IM_BEFORE_HTML
+  false
+}
+
+fn before_html_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_DOCTYPE {
+    return true
+  } else if t == K_TEXT {
+    p.tok.data = d.trim_start_chars(WHITESPACE)
+    if p.tok.data.len() == 0 {
+      return true
+    }
+  } else if t == K_START {
+    if d == "html" {
+      add_element(p)
+      p.im = IM_BEFORE_HEAD
+      return true
+    }
+  } else if t == K_END {
+    if d == "head" || d == "body" || d == "html" || d == "br" {
+      parse_implied_token(p, K_START, "html")
+      return false
+    }
+    return true
+  } else if t == K_COMMENT {
+    add_comment_doc(p, DOC, d)
+    return true
+  }
+  parse_implied_token(p, K_START, "html")
+  false
+}
+
+fn before_head_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_TEXT {
+    p.tok.data = d.trim_start_chars(WHITESPACE)
+    if p.tok.data.len() == 0 {
+      return true
+    }
+  } else if t == K_START {
+    if d == "head" {
+      add_element(p)
+      p.head = top(p)
+      p.im = IM_IN_HEAD
+      return true
+    } else if d == "html" {
+      return in_body_im(p)
+    }
+  } else if t == K_END {
+    if d == "head" || d == "body" || d == "html" || d == "br" {
+      parse_implied_token(p, K_START, "head")
+      return false
+    }
+    return true
+  } else if t == K_COMMENT {
+    add_comment(p, d)
+    return true
+  } else if t == K_DOCTYPE {
+    return true
+  }
+  parse_implied_token(p, K_START, "head")
+  false
+}
+
+fn close_template_end(var p: Parser) {
+  generate_implied_end_tags(p)
+  var i = p.oe.len() - 1
+  while i >= 0 {
+    let n = p.oe[i]
+    if p.nodes[n].namespace.len() == 0 && p.nodes[n].data == "template" {
+      truncate(p.oe, i)
+      break
+    }
+    i -= 1
+  }
+  clear_active_formatting_elements(p)
+  truncate(p.template_stack, p.template_stack.len() - 1)
+  reset_insertion_mode(p)
+}
+
+fn in_head_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_TEXT {
+    let s = d.trim_start_chars(WHITESPACE)
+    if s.len() < d.len() {
+      add_text(p, d[0..d.len() - s.len()])
+      if s == "" {
+        return true
+      }
+      p.tok.data = s
+    }
+  } else if t == K_START {
+    match d {
+      "html" => {
+        return in_body_im(p)
+      }
+      "base" | "basefont" | "bgsound" | "link" | "meta" => {
+        add_element(p)
+        pop_oe(p)
+        acknowledge_self_closing_tag(p)
+        return true
+      }
+      "noscript" => {
+        if p.scripting {
+          parse_generic_raw_text_element(p)
+          return true
+        }
+        add_element(p)
+        p.im = IM_IN_HEAD_NOSCRIPT
+        p.tz.next_is_not_raw_text()
+        return true
+      }
+      "script" | "title" => {
+        add_element(p)
+        set_original_im(p)
+        p.im = IM_TEXT
+        return true
+      }
+      "noframes" | "style" => {
+        parse_generic_raw_text_element(p)
+        return true
+      }
+      "head" => {
+        return true
+      }
+      "template" => {
+        for e in p.oe {
+          if p.nodes[e].namespace.len() != 0 {
+            p.im = IM_IGNORE_REMAINING
+            return true
+          }
+        }
+        add_element(p)
+        p.afe.push(-1)
+        p.frameset_ok = false
+        p.im = IM_IN_TEMPLATE
+        p.template_stack.push(IM_IN_TEMPLATE)
+        return true
+      }
+      _ => {}
+    }
+  } else if t == K_END {
+    match d {
+      "head" => {
+        pop_oe(p)
+        p.im = IM_AFTER_HEAD
+        return true
+      }
+      "body" | "html" | "br" => {
+        parse_implied_token(p, K_END, "head")
+        return false
+      }
+      "template" => {
+        if !oe_contains(p, "template") {
+          return true
+        }
+        close_template_end(p)
+        return true
+      }
+      _ => {
+        return true
+      }
+    }
+  } else if t == K_COMMENT {
+    add_comment(p, d)
+    return true
+  } else if t == K_DOCTYPE {
+    return true
+  }
+  parse_implied_token(p, K_END, "head")
+  false
+}
+
+fn in_head_noscript_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_DOCTYPE {
+    return true
+  } else if t == K_START {
+    match d {
+      "html" => {
+        return in_body_im(p)
+      }
+      "basefont" | "bgsound" | "link" | "meta" | "noframes" | "style" => {
+        return in_head_im(p)
+      }
+      "head" => {
+        return true
+      }
+      "noscript" => {
+        p.tz.next_is_not_raw_text()
+        return true
+      }
+      _ => {}
+    }
+  } else if t == K_END {
+    if d != "noscript" && d != "br" {
+      return true
+    }
+  } else if t == K_TEXT {
+    let s = d.trim_start_chars(WHITESPACE)
+    if s.len() == 0 {
+      return in_head_im(p)
+    }
+  } else if t == K_COMMENT {
+    return in_head_im(p)
+  }
+  pop_oe(p)
+  if p.nodes[top(p)].data != "head" && p.err == "" {
+    p.err = "html: the new current node will be a head element."
+  }
+  p.im = IM_IN_HEAD
+  p.tok.data == "noscript"
+}
+
+fn after_head_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_TEXT {
+    let s = d.trim_start_chars(WHITESPACE)
+    if s.len() < d.len() {
+      add_text(p, d[0..d.len() - s.len()])
+      if s == "" {
+        return true
+      }
+      p.tok.data = s
+    }
+  } else if t == K_START {
+    match d {
+      "html" => {
+        return in_body_im(p)
+      }
+      "body" => {
+        add_element(p)
+        p.frameset_ok = false
+        p.im = IM_IN_BODY
+        return true
+      }
+      "frameset" => {
+        add_element(p)
+        p.im = IM_IN_FRAMESET
+        return true
+      }
+      "base" | "basefont" | "bgsound" | "link" | "meta" | "noframes" | "script" | "style" | "template" | "title" => {
+        insert_open_element(p, p.head)
+        let r = in_head_im(p)
+        stack_remove(p.oe, p.head)
+        return r
+      }
+      "head" => {
+        return true
+      }
+      _ => {}
+    }
+  } else if t == K_END {
+    match d {
+      "body" | "html" | "br" => {}
+      "template" => {
+        return in_head_im(p)
+      }
+      _ => {
+        return true
+      }
+    }
+  } else if t == K_COMMENT {
+    add_comment(p, d)
+    return true
+  } else if t == K_DOCTYPE {
+    return true
+  }
+  parse_implied_token(p, K_START, "body")
+  p.frameset_ok = true
+  if p.tok.typ == K_ERROR {
+    return true
+  }
+  false
+}
+
+fn strip_leading_newline(d: Str) -> Str {
+  var s = d
+  if s.starts_with("\r") {
+    s = s[1..]
+  }
+  if s.starts_with("\n") {
+    s = s[1..]
+  }
+  s
+}
+
+fn li_dd_loop(var p: Parser, a: Str, b: Str) {
+  var i = p.oe.len() - 1
+  while i >= 0 {
+    let node = p.oe[i]
+    let nd = p.nodes[node].data
+    if nd == a || nd == b {
+      truncate(p.oe, i)
+    } else if nd == "address" || nd == "div" || nd == "p" {
+      i -= 1
+      continue
+    } else if !is_special_element(p, node) {
+      i -= 1
+      continue
+    }
+    break
+  }
+}
+
+fn in_body_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_TEXT {
+    var s = d
+    let n = top(p)
+    let nd = p.nodes[n].data
+    if (nd == "pre" || nd == "listing") && p.nodes[n].first_child == -1 {
+      s = strip_leading_newline(s)
+    }
+    s = s.replace("\u{0}", "")
+    if s == "" {
+      return true
+    }
+    reconstruct_active_formatting_elements(p)
+    add_text(p, s)
+    if p.frameset_ok && s.trim_start_chars(WHITESPACE) != "" {
+      p.frameset_ok = false
+    }
+  } else if t == K_START {
+    match d {
+      "html" => {
+        if oe_contains(p, "template") {
+          return true
+        }
+        copy_attributes(p, p.oe[0], p.tok.attrs)
+      }
+      "base" | "basefont" | "bgsound" | "link" | "meta" | "noframes" | "script" | "style" | "template" | "title" => {
+        return in_head_im(p)
+      }
+      "body" => {
+        if oe_contains(p, "template") {
+          return true
+        }
+        if p.oe.len() >= 2 {
+          let body = p.oe[1]
+          if p.nodes[body].typ == NodeType.Element && p.nodes[body].data == "body" {
+            p.frameset_ok = false
+            copy_attributes(p, body, p.tok.attrs)
+          }
+        }
+      }
+      "frameset" => {
+        if !p.frameset_ok || p.oe.len() < 2 || p.nodes[p.oe[1]].data != "body" {
+          return true
+        }
+        let body = p.oe[1]
+        if p.nodes[body].parent != -1 {
+          remove_child(p, p.nodes[body].parent, body)
+        }
+        truncate(p.oe, 1)
+        add_element(p)
+        p.im = IM_IN_FRAMESET
+        return true
+      }
+      "address" | "article" | "aside" | "blockquote" | "center" | "details" | "dialog" | "dir" | "div" | "dl" |
+      "fieldset" | "figcaption" | "figure" | "footer" | "header" | "hgroup" | "main" | "menu" | "nav" | "ol" | "p" |
+      "search" | "section" | "summary" | "ul" => {
+        pop_until(p, SCOPE_BUTTON, "p")
+        add_element(p)
+      }
+      "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+        pop_until(p, SCOPE_BUTTON, "p")
+        if is_heading(p.nodes[top(p)].data) {
+          pop_oe(p)
+        }
+        add_element(p)
+      }
+      "pre" | "listing" => {
+        pop_until(p, SCOPE_BUTTON, "p")
+        add_element(p)
+        p.frameset_ok = false
+      }
+      "form" => {
+        if p.form != -1 && !oe_contains(p, "template") {
+          return true
+        }
+        pop_until(p, SCOPE_BUTTON, "p")
+        add_element(p)
+        if !oe_contains(p, "template") {
+          p.form = top(p)
+        }
+      }
+      "li" => {
+        p.frameset_ok = false
+        li_dd_loop(p, "li", "li")
+        pop_until(p, SCOPE_BUTTON, "p")
+        add_element(p)
+      }
+      "dd" | "dt" => {
+        p.frameset_ok = false
+        li_dd_loop(p, "dd", "dt")
+        pop_until(p, SCOPE_BUTTON, "p")
+        add_element(p)
+      }
+      "plaintext" => {
+        pop_until(p, SCOPE_BUTTON, "p")
+        add_element(p)
+      }
+      "button" => {
+        if element_in_scope(p, SCOPE_DEFAULT, "button") {
+          generate_implied_end_tags(p)
+          pop_until(p, SCOPE_DEFAULT, "button")
+        }
+        reconstruct_active_formatting_elements(p)
+        add_element(p)
+        p.frameset_ok = false
+      }
+      "a" => {
+        var i = p.afe.len() - 1
+        while i >= 0 && p.afe[i] != -1 {
+          let n = p.afe[i]
+          if p.nodes[n].typ == NodeType.Element && p.nodes[n].data == "a" {
+            in_body_end_tag_formatting(p, "a")
+            stack_remove(p.oe, n)
+            stack_remove(p.afe, n)
+            break
+          }
+          i -= 1
+        }
+        reconstruct_active_formatting_elements(p)
+        add_formatting_element(p)
+      }
+      "b" | "big" | "code" | "em" | "font" | "i" | "s" | "small" | "strike" | "strong" | "tt" | "u" => {
+        reconstruct_active_formatting_elements(p)
+        add_formatting_element(p)
+      }
+      "nobr" => {
+        reconstruct_active_formatting_elements(p)
+        if element_in_scope(p, SCOPE_DEFAULT, "nobr") {
+          in_body_end_tag_formatting(p, "nobr")
+          reconstruct_active_formatting_elements(p)
+        }
+        add_formatting_element(p)
+      }
+      "applet" | "marquee" | "object" => {
+        reconstruct_active_formatting_elements(p)
+        add_element(p)
+        p.afe.push(-1)
+        p.frameset_ok = false
+      }
+      "table" => {
+        if !p.quirks {
+          pop_until(p, SCOPE_BUTTON, "p")
+        }
+        add_element(p)
+        p.frameset_ok = false
+        p.im = IM_IN_TABLE
+        return true
+      }
+      "area" | "br" | "embed" | "img" | "keygen" | "wbr" => {
+        reconstruct_active_formatting_elements(p)
+        add_element(p)
+        pop_oe(p)
+        acknowledge_self_closing_tag(p)
+        p.frameset_ok = false
+      }
+      "input" => {
+        if p.fragment && p.context != -1 && p.nodes[p.context].data == "select" {
+          return true
+        }
+        pop_until(p, SCOPE_DEFAULT, "select")
+        reconstruct_active_formatting_elements(p)
+        add_element(p)
+        pop_oe(p)
+        acknowledge_self_closing_tag(p)
+        if tok_has_attr_hidden(p) {
+          return true
+        }
+        p.frameset_ok = false
+      }
+      "param" | "source" | "track" => {
+        add_element(p)
+        pop_oe(p)
+        acknowledge_self_closing_tag(p)
+      }
+      "hr" => {
+        if element_in_scope(p, SCOPE_BUTTON, "p") {
+          generate_implied_end_tags(p, "p")
+          pop_until(p, SCOPE_DEFAULT, "p")
+        }
+        if element_in_scope(p, SCOPE_DEFAULT, "select") {
+          generate_implied_end_tags(p)
+        }
+        add_element(p)
+        pop_oe(p)
+        acknowledge_self_closing_tag(p)
+        p.frameset_ok = false
+      }
+      "image" => {
+        p.tok.data = "img"
+        return false
+      }
+      "textarea" => {
+        add_element(p)
+        set_original_im(p)
+        p.frameset_ok = false
+        p.im = IM_TEXT
+      }
+      "xmp" => {
+        pop_until(p, SCOPE_BUTTON, "p")
+        reconstruct_active_formatting_elements(p)
+        p.frameset_ok = false
+        parse_generic_raw_text_element(p)
+      }
+      "iframe" => {
+        p.frameset_ok = false
+        parse_generic_raw_text_element(p)
+      }
+      "noembed" => {
+        parse_generic_raw_text_element(p)
+      }
+      "noscript" => {
+        if p.scripting {
+          parse_generic_raw_text_element(p)
+          return true
+        }
+        reconstruct_active_formatting_elements(p)
+        add_element(p)
+        p.tz.next_is_not_raw_text()
+      }
+      "select" => {
+        if p.fragment && p.context != -1 && p.nodes[p.context].data == "select" {
+          return true
+        } else if pop_until(p, SCOPE_DEFAULT, "select") {
+          return true
+        }
+        reconstruct_active_formatting_elements(p)
+        add_element(p)
+        p.frameset_ok = false
+        return true
+      }
+      "option" => {
+        if element_in_scope(p, SCOPE_DEFAULT, "select") {
+          generate_implied_end_tags(p, "optgroup")
+        } else if p.nodes[top(p)].data == "option" {
+          pop_oe(p)
+        }
+        reconstruct_active_formatting_elements(p)
+        add_element(p)
+      }
+      "optgroup" => {
+        if element_in_scope(p, SCOPE_DEFAULT, "select") {
+          generate_implied_end_tags(p)
+        } else if p.nodes[top(p)].data == "option" {
+          pop_oe(p)
+        }
+        reconstruct_active_formatting_elements(p)
+        add_element(p)
+      }
+      "rb" | "rtc" => {
+        if element_in_scope(p, SCOPE_DEFAULT, "ruby") {
+          generate_implied_end_tags(p)
+        }
+        add_element(p)
+      }
+      "rp" | "rt" => {
+        if element_in_scope(p, SCOPE_DEFAULT, "ruby") {
+          generate_implied_end_tags(p, "rtc")
+        }
+        add_element(p)
+      }
+      "math" | "svg" => {
+        reconstruct_active_formatting_elements(p)
+        if d == "math" {
+          p.tok.attrs = adjust_attribute_names(p.tok.attrs, true)
+        } else {
+          p.tok.attrs = adjust_attribute_names(p.tok.attrs, false)
+        }
+        p.tok.attrs = adjust_foreign_attributes(p.tok.attrs)
+        add_element(p)
+        p.nodes[top(p)].namespace = p.tok.data
+        if p.has_self_closing {
+          pop_oe(p)
+          acknowledge_self_closing_tag(p)
+        }
+        return true
+      }
+      "caption" | "col" | "colgroup" | "frame" | "head" | "tbody" | "td" | "tfoot" | "th" | "thead" | "tr" => {}
+      _ => {
+        reconstruct_active_formatting_elements(p)
+        add_element(p)
+      }
+    }
+  } else if t == K_END {
+    match d {
+      "body" => {
+        if element_in_scope(p, SCOPE_DEFAULT, "body") {
+          p.im = IM_AFTER_BODY
+        }
+      }
+      "html" => {
+        if element_in_scope(p, SCOPE_DEFAULT, "body") {
+          parse_implied_token(p, K_END, "body")
+          return false
+        }
+        return true
+      }
+      "address" | "article" | "aside" | "blockquote" | "button" | "center" | "details" | "dialog" | "dir" | "div" |
+      "dl" | "fieldset" | "figcaption" | "figure" | "footer" | "header" | "hgroup" | "listing" | "main" | "menu" |
+      "nav" | "ol" | "pre" | "search" | "section" | "select" | "summary" | "ul" => {
+        if !element_in_scope(p, SCOPE_DEFAULT, d) {
+          return true
+        }
+        generate_implied_end_tags(p)
+        pop_until(p, SCOPE_DEFAULT, d)
+      }
+      "form" => {
+        if oe_contains(p, "template") {
+          let i = index_in_scope(p, SCOPE_DEFAULT, "form")
+          if i == -1 {
+            return true
+          }
+          generate_implied_end_tags(p)
+          if p.nodes[p.oe[i]].data != "form" {
+            return true
+          }
+          pop_until(p, SCOPE_DEFAULT, "form")
+        } else {
+          let node = p.form
+          p.form = -1
+          let i = index_in_scope(p, SCOPE_DEFAULT, "form")
+          if node == -1 || i == -1 || p.oe[i] != node {
+            return true
+          }
+          generate_implied_end_tags(p)
+          stack_remove(p.oe, node)
+        }
+      }
+      "p" => {
+        if !element_in_scope(p, SCOPE_BUTTON, "p") {
+          parse_implied_token(p, K_START, "p")
+        }
+        pop_until(p, SCOPE_BUTTON, "p")
+      }
+      "li" => {
+        pop_until(p, SCOPE_LIST_ITEM, "li")
+      }
+      "dd" | "dt" => {
+        pop_until(p, SCOPE_DEFAULT, d)
+      }
+      "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+        pop_until(p, SCOPE_DEFAULT, "h1", "h2")
+      }
+      "a" | "b" | "big" | "code" | "em" | "font" | "i" | "nobr" | "s" | "small" | "strike" | "strong" | "tt" | "u" => {
+        in_body_end_tag_formatting(p, d)
+      }
+      "applet" | "marquee" | "object" => {
+        if pop_until(p, SCOPE_DEFAULT, d) {
+          clear_active_formatting_elements(p)
+        }
+      }
+      "br" => {
+        p.tok.typ = K_START
+        return false
+      }
+      "template" => {
+        return in_head_im(p)
+      }
+      _ => {
+        in_body_end_tag_other(p, d)
+      }
+    }
+  } else if t == K_COMMENT {
+    add_comment(p, d)
+  } else if t == K_ERROR {
+    if p.template_stack.len() > 0 {
+      p.im = IM_IN_TEMPLATE
+      return false
+    }
+    for e in p.oe {
+      match p.nodes[e].data {
+        "dd" | "dt" | "li" | "optgroup" | "option" | "p" | "rb" | "rp" | "rt" | "rtc" | "tbody" | "td" | "tfoot" |
+        "th" | "thead" | "tr" | "body" | "html" => {}
+        _ => {
+          return true
+        }
+      }
+    }
+  }
+  true
+}
+
+/// The adoption agency algorithm (inBodyEndTagFormatting).
+fn in_body_end_tag_formatting(var p: Parser, tag: Str) {
+  let current = stack_top(p.oe)
+  if p.nodes[current].data == tag && stack_index(p.afe, current) == -1 {
+    pop_oe(p)
+    return
+  }
+  for _ in 0..8 {
+    var fe = -1
+    var j = p.afe.len() - 1
+    while j >= 0 {
+      if p.afe[j] == -1 {
+        break
+      }
+      if p.nodes[p.afe[j]].data == tag {
+        fe = p.afe[j]
+        break
+      }
+      j -= 1
+    }
+    if fe == -1 {
+      in_body_end_tag_other(p, tag)
+      return
+    }
+    let fe_index = stack_index(p.oe, fe)
+    if fe_index == -1 {
+      stack_remove(p.afe, fe)
+      return
+    }
+    if !element_in_scope(p, SCOPE_DEFAULT, tag) {
+      return
+    }
+    var furthest = -1
+    var k = fe_index
+    while k < p.oe.len() {
+      if is_special_element(p, p.oe[k]) {
+        furthest = p.oe[k]
+        break
+      }
+      k += 1
+    }
+    if furthest == -1 {
+      var e = pop_oe(p)
+      while e != fe {
+        e = pop_oe(p)
+      }
+      stack_remove(p.afe, e)
+      return
+    }
+    let common = p.oe[fe_index - 1]
+    var bookmark = stack_index(p.afe, fe)
+    var last_node = furthest
+    var node = furthest
+    var x = stack_index(p.oe, node)
+    var jj = 0
+    while true {
+      jj += 1
+      x -= 1
+      node = p.oe[x]
+      if node == fe {
+        break
+      }
+      let ni = stack_index(p.afe, node)
+      if jj > 3 && ni > -1 {
+        stack_remove(p.afe, node)
+        if ni <= bookmark {
+          bookmark -= 1
+        }
+        continue
+      }
+      if stack_index(p.afe, node) == -1 {
+        stack_remove(p.oe, node)
+        continue
+      }
+      let clone = clone_node(p, node)
+      p.afe[stack_index(p.afe, node)] = clone
+      p.oe[stack_index(p.oe, node)] = clone
+      node = clone
+      if last_node == furthest {
+        bookmark = stack_index(p.afe, node) + 1
+      }
+      if p.nodes[last_node].parent != -1 {
+        remove_child(p, p.nodes[last_node].parent, last_node)
+      }
+      append_child(p, node, last_node)
+      last_node = node
+    }
+    if p.nodes[last_node].parent != -1 {
+      remove_child(p, p.nodes[last_node].parent, last_node)
+    }
+    let cd = p.nodes[common].data
+    if cd == "table" || cd == "tbody" || cd == "tfoot" || cd == "thead" || cd == "tr" {
+      foster_parent(p, last_node)
+    } else {
+      append_child(p, common, last_node)
+    }
+    let clone2 = clone_node(p, fe)
+    reparent_children(p, clone2, furthest)
+    append_child(p, furthest, clone2)
+    let old_loc = stack_index(p.afe, fe)
+    if old_loc != -1 && old_loc < bookmark {
+      bookmark -= 1
+    }
+    stack_remove(p.afe, fe)
+    stack_insert(p.afe, bookmark, clone2)
+    stack_remove(p.oe, fe)
+    stack_insert(p.oe, stack_index(p.oe, furthest) + 1, clone2)
+  }
+}
+
+fn in_body_end_tag_other(var p: Parser, tag: Str) {
+  var i = p.oe.len() - 1
+  while i >= 0 {
+    if p.nodes[p.oe[i]].namespace.len() == 0 && p.nodes[p.oe[i]].data == tag {
+      truncate(p.oe, i)
+      break
+    }
+    if is_special_element(p, p.oe[i]) {
+      break
+    }
+    i -= 1
+  }
+}
+
+fn text_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  if t == K_ERROR {
+    pop_oe(p)
+  } else if t == K_TEXT {
+    var d = p.tok.data
+    let n = top(p)
+    if p.nodes[n].data == "textarea" && p.nodes[n].first_child == -1 {
+      d = strip_leading_newline(d)
+    }
+    if d == "" {
+      return true
+    }
+    add_text(p, d)
+    return true
+  } else if t == K_END {
+    pop_oe(p)
+  }
+  p.im = p.original_im
+  p.original_im = IM_NONE
+  p.tok.typ == K_END
+}
+
+fn in_table_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_TEXT {
+    p.tok.data = d.replace("\u{0}", "")
+    let td = p.nodes[top(p)].data
+    if td == "table" || td == "tbody" || td == "tfoot" || td == "thead" || td == "tr" {
+      if p.tok.data.trim_chars(WHITESPACE) == "" {
+        add_text(p, p.tok.data)
+        return true
+      }
+    }
+  } else if t == K_START {
+    match d {
+      "caption" => {
+        clear_stack_to_context(p, SCOPE_TABLE)
+        p.afe.push(-1)
+        add_element(p)
+        p.im = IM_IN_CAPTION
+        return true
+      }
+      "colgroup" => {
+        clear_stack_to_context(p, SCOPE_TABLE)
+        add_element(p)
+        p.im = IM_IN_COLUMN_GROUP
+        return true
+      }
+      "col" => {
+        parse_implied_token(p, K_START, "colgroup")
+        return false
+      }
+      "tbody" | "tfoot" | "thead" => {
+        clear_stack_to_context(p, SCOPE_TABLE)
+        add_element(p)
+        p.im = IM_IN_TABLE_BODY
+        return true
+      }
+      "td" | "th" | "tr" => {
+        parse_implied_token(p, K_START, "tbody")
+        return false
+      }
+      "table" => {
+        if pop_until(p, SCOPE_TABLE, "table") {
+          reset_insertion_mode(p)
+          return false
+        }
+        return true
+      }
+      "style" | "script" | "template" => {
+        return in_head_im(p)
+      }
+      "input" => {
+        if tok_has_attr_hidden(p) {
+          add_element(p)
+          pop_oe(p)
+          return true
+        }
+      }
+      "form" => {
+        if oe_contains(p, "template") || p.form != -1 {
+          return true
+        }
+        add_element(p)
+        p.form = pop_oe(p)
+      }
+      _ => {}
+    }
+  } else if t == K_END {
+    match d {
+      "table" => {
+        if pop_until(p, SCOPE_TABLE, "table") {
+          reset_insertion_mode(p)
+          return true
+        }
+        return true
+      }
+      "body" | "caption" | "col" | "colgroup" | "html" | "tbody" | "td" | "tfoot" | "th" | "thead" | "tr" => {
+        return true
+      }
+      "template" => {
+        return in_head_im(p)
+      }
+      _ => {}
+    }
+  } else if t == K_COMMENT {
+    add_comment(p, d)
+    return true
+  } else if t == K_DOCTYPE {
+    return true
+  } else if t == K_ERROR {
+    return in_body_im(p)
+  }
+  p.foster_parenting = true
+  let r = in_body_im(p)
+  p.foster_parenting = false
+  r
+}
+
+fn in_caption_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_START {
+    match d {
+      "caption" | "col" | "colgroup" | "tbody" | "td" | "tfoot" | "thead" | "tr" => {
+        if !pop_until(p, SCOPE_TABLE, "caption") {
+          return true
+        }
+        clear_active_formatting_elements(p)
+        p.im = IM_IN_TABLE
+        return false
+      }
+      _ => {}
+    }
+  } else if t == K_END {
+    match d {
+      "caption" => {
+        if pop_until(p, SCOPE_TABLE, "caption") {
+          clear_active_formatting_elements(p)
+          p.im = IM_IN_TABLE
+        }
+        return true
+      }
+      "table" => {
+        if !pop_until(p, SCOPE_TABLE, "caption") {
+          return true
+        }
+        clear_active_formatting_elements(p)
+        p.im = IM_IN_TABLE
+        return false
+      }
+      "body" | "col" | "colgroup" | "html" | "tbody" | "td" | "tfoot" | "th" | "thead" | "tr" => {
+        return true
+      }
+      _ => {}
+    }
+  }
+  in_body_im(p)
+}
+
+fn in_column_group_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_TEXT {
+    let s = d.trim_start_chars(WHITESPACE)
+    if s.len() < d.len() {
+      add_text(p, d[0..d.len() - s.len()])
+      if s == "" {
+        return true
+      }
+      p.tok.data = s
+    }
+  } else if t == K_COMMENT {
+    add_comment(p, d)
+    return true
+  } else if t == K_DOCTYPE {
+    return true
+  } else if t == K_START {
+    match d {
+      "html" => {
+        return in_body_im(p)
+      }
+      "col" => {
+        add_element(p)
+        pop_oe(p)
+        acknowledge_self_closing_tag(p)
+        return true
+      }
+      "template" => {
+        return in_head_im(p)
+      }
+      _ => {}
+    }
+  } else if t == K_END {
+    match d {
+      "colgroup" => {
+        if p.nodes[top(p)].data == "colgroup" {
+          pop_oe(p)
+          p.im = IM_IN_TABLE
+        }
+        return true
+      }
+      "col" => {
+        return true
+      }
+      "template" => {
+        return in_head_im(p)
+      }
+      _ => {}
+    }
+  } else if t == K_ERROR {
+    return in_body_im(p)
+  }
+  if p.nodes[top(p)].data != "colgroup" {
+    return true
+  }
+  pop_oe(p)
+  p.im = IM_IN_TABLE
+  false
+}
+
+fn in_table_body_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_START {
+    match d {
+      "tr" => {
+        clear_stack_to_context(p, SCOPE_TABLE_BODY)
+        add_element(p)
+        p.im = IM_IN_ROW
+        return true
+      }
+      "td" | "th" => {
+        parse_implied_token(p, K_START, "tr")
+        return false
+      }
+      "caption" | "col" | "colgroup" | "tbody" | "tfoot" | "thead" => {
+        if pop_until(p, SCOPE_TABLE, "tbody", "thead", "tfoot") {
+          p.im = IM_IN_TABLE
+          return false
+        }
+        return true
+      }
+      _ => {}
+    }
+  } else if t == K_END {
+    match d {
+      "tbody" | "tfoot" | "thead" => {
+        if element_in_scope(p, SCOPE_TABLE, d) {
+          clear_stack_to_context(p, SCOPE_TABLE_BODY)
+          pop_oe(p)
+          p.im = IM_IN_TABLE
+        }
+        return true
+      }
+      "table" => {
+        if pop_until(p, SCOPE_TABLE, "tbody", "thead", "tfoot") {
+          p.im = IM_IN_TABLE
+          return false
+        }
+        return true
+      }
+      "body" | "caption" | "col" | "colgroup" | "html" | "td" | "th" | "tr" => {
+        return true
+      }
+      _ => {}
+    }
+  } else if t == K_COMMENT {
+    add_comment(p, d)
+    return true
+  }
+  in_table_im(p)
+}
+
+fn in_row_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_START {
+    match d {
+      "td" | "th" => {
+        clear_stack_to_context(p, SCOPE_TABLE_ROW)
+        add_element(p)
+        p.afe.push(-1)
+        p.im = IM_IN_CELL
+        return true
+      }
+      "caption" | "col" | "colgroup" | "tbody" | "tfoot" | "thead" | "tr" => {
+        if element_in_scope(p, SCOPE_TABLE, "tr") {
+          clear_stack_to_context(p, SCOPE_TABLE_ROW)
+          pop_oe(p)
+          p.im = IM_IN_TABLE_BODY
+          return false
+        }
+        return true
+      }
+      _ => {}
+    }
+  } else if t == K_END {
+    match d {
+      "tr" => {
+        if element_in_scope(p, SCOPE_TABLE, "tr") {
+          clear_stack_to_context(p, SCOPE_TABLE_ROW)
+          pop_oe(p)
+          p.im = IM_IN_TABLE_BODY
+          return true
+        }
+        return true
+      }
+      "table" => {
+        if element_in_scope(p, SCOPE_TABLE, "tr") {
+          clear_stack_to_context(p, SCOPE_TABLE_ROW)
+          pop_oe(p)
+          p.im = IM_IN_TABLE_BODY
+          return false
+        }
+        return true
+      }
+      "tbody" | "tfoot" | "thead" => {
+        if element_in_scope(p, SCOPE_TABLE, d) && element_in_scope(p, SCOPE_TABLE, "tr") {
+          clear_stack_to_context(p, SCOPE_TABLE_ROW)
+          pop_oe(p)
+          p.im = IM_IN_TABLE_BODY
+          return false
+        }
+        return true
+      }
+      "body" | "caption" | "col" | "colgroup" | "html" | "td" | "th" => {
+        return true
+      }
+      _ => {}
+    }
+  }
+  in_table_im(p)
+}
+
+fn in_cell_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_START {
+    match d {
+      "caption" | "col" | "colgroup" | "tbody" | "td" | "tfoot" | "th" | "thead" | "tr" => {
+        if pop_until(p, SCOPE_TABLE, "td", "th") {
+          clear_active_formatting_elements(p)
+          p.im = IM_IN_ROW
+          return false
+        }
+        return true
+      }
+      _ => {}
+    }
+  } else if t == K_END {
+    match d {
+      "td" | "th" => {
+        if !pop_until(p, SCOPE_TABLE, d) {
+          return true
+        }
+        clear_active_formatting_elements(p)
+        p.im = IM_IN_ROW
+        return true
+      }
+      "body" | "caption" | "col" | "colgroup" | "html" => {
+        return true
+      }
+      "table" | "tbody" | "tfoot" | "thead" | "tr" => {
+        if !element_in_scope(p, SCOPE_TABLE, d) {
+          return true
+        }
+        if pop_until(p, SCOPE_TABLE, "td", "th") {
+          clear_active_formatting_elements(p)
+        }
+        p.im = IM_IN_ROW
+        return false
+      }
+      _ => {}
+    }
+  }
+  in_body_im(p)
+}
+
+fn replace_template_top(var p: Parser, im: Int) {
+  truncate(p.template_stack, p.template_stack.len() - 1)
+  p.template_stack.push(im)
+  p.im = im
+}
+
+fn in_template_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_TEXT || t == K_COMMENT || t == K_DOCTYPE {
+    return in_body_im(p)
+  } else if t == K_START {
+    match d {
+      "base" | "basefont" | "bgsound" | "link" | "meta" | "noframes" | "script" | "style" | "template" | "title" => {
+        return in_head_im(p)
+      }
+      "caption" | "colgroup" | "tbody" | "tfoot" | "thead" => {
+        replace_template_top(p, IM_IN_TABLE)
+        return false
+      }
+      "col" => {
+        replace_template_top(p, IM_IN_COLUMN_GROUP)
+        return false
+      }
+      "tr" => {
+        replace_template_top(p, IM_IN_TABLE_BODY)
+        return false
+      }
+      "td" | "th" => {
+        replace_template_top(p, IM_IN_ROW)
+        return false
+      }
+      _ => {
+        replace_template_top(p, IM_IN_BODY)
+        return false
+      }
+    }
+  } else if t == K_END {
+    if d == "template" {
+      return in_head_im(p)
+    }
+    return true
+  } else if t == K_ERROR {
+    if !oe_contains(p, "template") {
+      return true
+    }
+    close_template_end(p)
+    return false
+  }
+  false
+}
+
+fn after_body_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_ERROR {
+    return true
+  } else if t == K_TEXT {
+    if d.trim_start_chars(WHITESPACE).len() == 0 {
+      return in_body_im(p)
+    }
+  } else if t == K_START {
+    if d == "html" {
+      return in_body_im(p)
+    }
+  } else if t == K_END {
+    if d == "html" {
+      if !p.fragment {
+        p.im = IM_AFTER_AFTER_BODY
+      }
+      return true
+    }
+  } else if t == K_COMMENT {
+    if (p.oe.len() < 1 || p.nodes[p.oe[0]].data != "html") && p.err == "" {
+      p.err = "html: bad parser state: <html> element not found, in the after-body insertion mode"
+      return true
+    }
+    add_comment_doc(p, p.oe[0], d)
+    return true
+  }
+  p.im = IM_IN_BODY
+  false
+}
+
+fn in_frameset_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_COMMENT {
+    add_comment(p, d)
+  } else if t == K_TEXT {
+    let s = only_ws(d)
+    if s != "" {
+      add_text(p, s)
+    }
+  } else if t == K_START {
+    match d {
+      "html" => {
+        return in_body_im(p)
+      }
+      "frameset" => {
+        add_element(p)
+      }
+      "frame" => {
+        add_element(p)
+        pop_oe(p)
+        acknowledge_self_closing_tag(p)
+      }
+      "noframes" => {
+        return in_head_im(p)
+      }
+      _ => {}
+    }
+  } else if t == K_END {
+    if d == "frameset" {
+      if p.nodes[top(p)].data != "html" {
+        pop_oe(p)
+        if p.nodes[top(p)].data != "frameset" {
+          p.im = IM_AFTER_FRAMESET
+          return true
+        }
+      }
+    }
+  }
+  true
+}
+
+fn after_frameset_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_COMMENT {
+    add_comment(p, d)
+  } else if t == K_TEXT {
+    let s = only_ws(d)
+    if s != "" {
+      add_text(p, s)
+    }
+  } else if t == K_START {
+    if d == "html" {
+      return in_body_im(p)
+    } else if d == "noframes" {
+      return in_head_im(p)
+    }
+  } else if t == K_END {
+    if d == "html" {
+      p.im = IM_AFTER_AFTER_FRAMESET
+      return true
+    }
+  }
+  true
+}
+
+fn after_after_body_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_ERROR {
+    return true
+  } else if t == K_TEXT {
+    if d.trim_start_chars(WHITESPACE).len() == 0 {
+      return in_body_im(p)
+    }
+  } else if t == K_START {
+    if d == "html" {
+      return in_body_im(p)
+    }
+  } else if t == K_COMMENT {
+    add_comment_doc(p, DOC, d)
+    return true
+  } else if t == K_DOCTYPE {
+    return in_body_im(p)
+  }
+  p.im = IM_IN_BODY
+  false
+}
+
+fn after_after_frameset_im(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  let d = p.tok.data
+  if t == K_COMMENT {
+    add_comment_doc(p, DOC, d)
+  } else if t == K_TEXT {
+    let s = only_ws(d)
+    if s != "" {
+      p.tok.data = s
+      return in_body_im(p)
+    }
+  } else if t == K_START {
+    if d == "html" {
+      return in_body_im(p)
+    } else if d == "noframes" {
+      return in_head_im(p)
+    }
+  } else if t == K_DOCTYPE {
+    return in_body_im(p)
+  }
+  true
+}
+
+fn adjust_attribute_names(attrs: List[Attr], math: Bool) -> List[Attr] {
+  var out: List[Attr] = []
+  for a in attrs {
+    var nn = ""
+    if math {
+      nn = mathml_attr_name(a.key)
+    } else {
+      nn = svg_attr_name(a.key)
+    }
+    if nn != "" {
+      out.push(Attr{namespace: a.namespace, key: nn, val: a.val})
+    } else {
+      out.push(a)
+    }
+  }
+  out
+}
+
+fn adjust_foreign_attributes(attrs: List[Attr]) -> List[Attr] {
+  var out: List[Attr] = []
+  for a in attrs {
+    var hit = false
+    match a.key {
+      "xlink:actuate" | "xlink:arcrole" | "xlink:href" | "xlink:role" | "xlink:show" | "xlink:title" | "xlink:type" |
+      "xml:lang" | "xml:space" | "xmlns:xlink" => {
+        hit = true
+      }
+      _ => {}
+    }
+    if hit {
+      let j = a.key.find(":") ?? 0
+      out.push(Attr{namespace: a.key[0..j], key: a.key[j + 1..], val: a.val})
+    } else {
+      out.push(a)
+    }
+  }
+  out
+}
+
+fn html_integration_point(p: Parser, n: Int) -> Bool {
+  if p.nodes[n].typ != NodeType.Element {
+    return false
+  }
+  let ns = p.nodes[n].namespace
+  let d = p.nodes[n].data
+  if ns == "math" {
+    if d == "annotation-xml" {
+      for a in p.nodes[n].attrs {
+        if a.key == "encoding" {
+          if a.val.equal_fold("text/html") || a.val.equal_fold("application/xhtml+xml") {
+            return true
+          }
+        }
+      }
+    }
+  } else if ns == "svg" {
+    return d == "desc" || d == "foreignObject" || d == "title"
+  }
+  false
+}
+
+fn mathml_text_integration_point(p: Parser, n: Int) -> Bool {
+  if p.nodes[n].namespace != "math" {
+    return false
+  }
+  let d = p.nodes[n].data
+  d == "mi" || d == "mo" || d == "mn" || d == "ms" || d == "mtext"
+}
+
+fn adjusted_current_node(p: Parser) -> Int {
+  if p.oe.len() == 1 && p.fragment && p.context != -1 {
+    return p.context
+  }
+  stack_top(p.oe)
+}
+
+fn in_foreign_content(p: Parser) -> Bool {
+  if p.oe.len() == 0 {
+    return false
+  }
+  let n = adjusted_current_node(p)
+  if p.nodes[n].namespace.len() == 0 {
+    return false
+  }
+  let t = p.tok.typ
+  let d = p.tok.data
+  if mathml_text_integration_point(p, n) {
+    if t == K_START && d != "mglyph" && d != "malignmark" {
+      return false
+    }
+    if t == K_TEXT {
+      return false
+    }
+  }
+  if p.nodes[n].namespace == "math" && p.nodes[n].data == "annotation-xml" && t == K_START && d == "svg" {
+    return false
+  }
+  if html_integration_point(p, n) && (t == K_START || t == K_TEXT) {
+    return false
+  }
+  if t == K_ERROR {
+    return false
+  }
+  true
+}
+
+fn parse_foreign_content(var p: Parser) -> Bool {
+  let t = p.tok.typ
+  if t == K_TEXT {
+    if p.frameset_ok {
+      p.frameset_ok = p.tok.data.trim_start_chars(WHITESPACE + "\u{0}") == ""
+    }
+    p.tok.data = p.tok.data.replace("\u{0}", "\u{fffd}")
+    add_text(p, p.tok.data)
+  } else if t == K_COMMENT {
+    add_comment(p, p.tok.data)
+  } else if t == K_START {
+    var b = is_breakout(p.tok.data)
+    if p.tok.data == "font" {
+      for a in p.tok.attrs {
+        if a.key == "color" || a.key == "face" || a.key == "size" {
+          b = true
+          break
+        }
+      }
+    }
+    if b {
+      var i = p.oe.len() - 1
+      while i >= 0 {
+        let n = p.oe[i]
+        if p.nodes[n].namespace.len() == 0 || html_integration_point(p, n) || mathml_text_integration_point(p, n) {
+          truncate(p.oe, i + 1)
+          break
+        }
+        i -= 1
+      }
+      return call_im(p, p.im)
+    }
+    let current = adjusted_current_node(p)
+    let ns = p.nodes[current].namespace
+    if ns == "math" {
+      p.tok.attrs = adjust_attribute_names(p.tok.attrs, true)
+    } else if ns == "svg" {
+      let x = svg_tag_name(p.tok.data)
+      if x != "" {
+        p.tok.data = x
+      }
+      p.tok.attrs = adjust_attribute_names(p.tok.attrs, false)
+    } else {
+      if p.err == "" {
+        p.err = "html: bad parser state: unexpected namespace"
+      }
+      return true
+    }
+    p.tok.attrs = adjust_foreign_attributes(p.tok.attrs)
+    add_element(p)
+    p.nodes[top(p)].namespace = ns
+    if ns != "" {
+      p.tz.next_is_not_raw_text()
+    }
+    if p.has_self_closing {
+      pop_oe(p)
+      acknowledge_self_closing_tag(p)
+    }
+  } else if t == K_END {
+    if p.nodes[p.oe[p.oe.len() - 1]].data.equal_fold(p.tok.data) {
+      truncate(p.oe, p.oe.len() - 1)
+      return true
+    }
+    var i = p.oe.len() - 1
+    while i >= 0 {
+      if p.nodes[p.oe[i]].data.equal_fold(p.tok.data) {
+        truncate(p.oe, i)
+        return true
+      }
+      if i > 0 && p.nodes[p.oe[i - 1]].namespace.len() == 0 {
+        break
+      }
+      i -= 1
+    }
+    return call_im(p, p.im)
+  }
+  true
+}
+
+fn parse_current_token(var p: Parser) {
+  var consumed = false
+  while !consumed && p.err == "" {
+    if in_foreign_content(p) {
+      consumed = parse_foreign_content(p)
+    } else {
+      consumed = call_im(p, p.im)
+    }
+  }
+  if p.has_self_closing {
+    p.has_self_closing = false
+  }
+}
+
+fn convert_attrs(src: List[htmltok.Attribute]) -> List[Attr] {
+  var out: List[Attr] = []
+  for a in src {
+    out.push(Attr{namespace: "", key: a.key, val: a.val})
+  }
+  out
+}
+
+fn kind_of(t: htmltok.TokenType) -> Int {
+  match t {
+    htmltok.TokenType.Error => K_ERROR
+    htmltok.TokenType.Text => K_TEXT
+    htmltok.TokenType.StartTag => K_START
+    htmltok.TokenType.EndTag => K_END
+    htmltok.TokenType.SelfClosingTag => 4
+    htmltok.TokenType.Comment => K_COMMENT
+    htmltok.TokenType.Doctype => K_DOCTYPE
+  }
+}
+
+fn run(var p: Parser) -> Str {
+  var done = false
+  while !done {
+    let n = stack_top(p.oe)
+    p.tz.allow_cdata(n != -1 && p.nodes[n].namespace.len() != 0)
+    p.tz.next()
+    let tk = p.tz.token()
+    p.tok = Tok{typ: kind_of(tk.typ), data: tk.data, attrs: convert_attrs(tk.attrs)}
+    if p.tok.typ == K_ERROR {
+      let e = p.tz.err() ?? ""
+      if e == "EOF" {
+        done = true
+      } else if e != "" {
+        return e
+      }
+    }
+    if p.tok.typ == 4 {
+      p.has_self_closing = true
+      p.tok.typ = K_START
+    }
+    parse_current_token(p)
+    if p.err != "" {
+      return p.err
+    }
+  }
+  var ids: List[Int] = []
+  for k in p.text_nodes.keys() {
+    ids.push(k)
+  }
+  for k in ids {
+    let pieces = p.text_nodes.get(k) ?? []
+    var sb = StrBuilder.new()
+    for s in pieces {
+      sb.write(s)
+    }
+    p.nodes[k].data = sb.freeze()
+  }
+  p.text_nodes = {}
+  ""
+}
+
+fn new_parser(tz: htmltok.Tokenizer) -> Parser {
+  Parser{tz: tz, tok: Tok{typ: 0, data: "", attrs: []}, has_self_closing: false, nodes: [], oe: [], afe: [], head: -1,
+    form: -1, scripting: true, frameset_ok: true, template_stack: [], im: IM_INITIAL, original_im: IM_NONE, foster_parenting: false,
+    quirks: false, fragment: false, context: -1, text_nodes: {}, err: ""}
+}
+
+/// Parse (scripting on, as Go's default).
+fn parse_tree(text: Str, scripting: Bool) -> Result[Tree, Str] {
+  var p = new_parser(htmltok.tokenizer(text))
+  p.scripting = scripting
+  new_node(p, NodeType.Document, "")
+  let e = run(p)
+  if e != "" {
+    return Err(e)
+  }
+  Ok(Tree{nodes: p.nodes, root: DOC})
+}
+
+/// ParseFragment with a context element (an unattached node of that namespace and tag).
+fn parse_fragment_tree(text: Str, ctx_namespace: Str, ctx_tag: Str, scripting: Bool) -> Result[Tree, Str] {
+  var tz = htmltok.tokenizer(text)
+  if ctx_namespace.len() == 0 {
+    tz = htmltok.tokenizer_fragment(text, ctx_tag)
+  }
+  var p = new_parser(tz)
+  p.scripting = scripting
+  p.fragment = true
+  p.im = IM_NONE
+  new_node(p, NodeType.Document, "")
+  let ctx = new_node(p, NodeType.Element, ctx_tag)
+  p.nodes[ctx].namespace = ctx_namespace
+  p.context = ctx
+  let root = new_node(p, NodeType.Element, "html")
+  append_child(p, DOC, root)
+  p.oe = [root]
+  if ctx_tag == "template" {
+    p.template_stack.push(IM_IN_TEMPLATE)
+  }
+  reset_insertion_mode(p)
+  if ctx_tag == "form" {
+    p.form = ctx
+  }
+  let e = run(p)
+  if e != "" {
+    return Err(e)
+  }
+  Ok(Tree{nodes: p.nodes, root: root})
+}
+
+fn indent(var sb: List[Str], level: Int) {
+  sb.push("| ")
+  for _ in 0..level {
+    sb.push("  ")
+  }
+}
+
+fn dump_level(t: Tree, var sb: List[Str], n: Int, lvl: Int) {
+  var level = lvl
+  indent(sb, level)
+  level += 1
+  let node = t.nodes[n]
+  match node.typ {
+    NodeType.Element => {
+      if node.namespace.len() != 0 {
+        sb.push("<${node.namespace} ${node.data}>")
+      } else {
+        sb.push("<${node.data}>")
+      }
+      let attrs = node.attrs.sort_by(fn(a: Attr) -> Str { a.key })
+      for a in attrs {
+        sb.push("\n")
+        indent(sb, level)
+        if a.namespace.len() != 0 {
+          sb.push("${a.namespace} ${a.key}=\"${a.val}\"")
+        } else {
+          sb.push("${a.key}=\"${a.val}\"")
+        }
+      }
+      if node.namespace.len() == 0 && node.data == "template" {
+        sb.push("\n")
+        indent(sb, level)
+        level += 1
+        sb.push("content")
+      }
+    }
+    NodeType.Text => sb.push("\"${node.data}\"")
+    NodeType.Comment => sb.push("<!-- ${node.data} -->")
+    NodeType.Doctype => {
+      sb.push("<!DOCTYPE ${node.data}")
+      if node.attrs.len() > 0 {
+        var pubid = ""
+        var sys = ""
+        for a in node.attrs {
+          if a.key == "public" {
+            pubid = a.val
+          } else if a.key == "system" {
+            sys = a.val
+          }
+        }
+        if pubid != "" || sys != "" {
+          sb.push(" \"${pubid}\" \"${sys}\"")
+        }
+      }
+      sb.push(">")
+    }
+    NodeType.Error | NodeType.Document | NodeType.Raw => sb.push("?")
+  }
+  sb.push("\n")
+  var c = node.first_child
+  while c != -1 {
+    dump_level(t, sb, c, level)
+    c = t.nodes[c].next
+  }
+}
+
+fn svg_tag_name(s: Str) -> Str {
+  match s {
+    "altglyph" => "altGlyph"
+    "altglyphdef" => "altGlyphDef"
+    "altglyphitem" => "altGlyphItem"
+    "animatecolor" => "animateColor"
+    "animatemotion" => "animateMotion"
+    "animatetransform" => "animateTransform"
+    "clippath" => "clipPath"
+    "feblend" => "feBlend"
+    "fecolormatrix" => "feColorMatrix"
+    "fecomponenttransfer" => "feComponentTransfer"
+    "fecomposite" => "feComposite"
+    "feconvolvematrix" => "feConvolveMatrix"
+    "fediffuselighting" => "feDiffuseLighting"
+    "fedisplacementmap" => "feDisplacementMap"
+    "fedistantlight" => "feDistantLight"
+    "feflood" => "feFlood"
+    "fefunca" => "feFuncA"
+    "fefuncb" => "feFuncB"
+    "fefuncg" => "feFuncG"
+    "fefuncr" => "feFuncR"
+    "fegaussianblur" => "feGaussianBlur"
+    "feimage" => "feImage"
+    "femerge" => "feMerge"
+    "femergenode" => "feMergeNode"
+    "femorphology" => "feMorphology"
+    "feoffset" => "feOffset"
+    "fepointlight" => "fePointLight"
+    "fespecularlighting" => "feSpecularLighting"
+    "fespotlight" => "feSpotLight"
+    "fetile" => "feTile"
+    "feturbulence" => "feTurbulence"
+    "foreignobject" => "foreignObject"
+    "glyphref" => "glyphRef"
+    "lineargradient" => "linearGradient"
+    "radialgradient" => "radialGradient"
+    "textpath" => "textPath"
+    _ => ""
+  }
+}
+
+fn mathml_attr_name(s: Str) -> Str {
+  match s {
+    "definitionurl" => "definitionURL"
+    _ => ""
+  }
+}
+
+fn svg_attr_name(s: Str) -> Str {
+  match s {
+    "attributename" => "attributeName"
+    "attributetype" => "attributeType"
+    "basefrequency" => "baseFrequency"
+    "baseprofile" => "baseProfile"
+    "calcmode" => "calcMode"
+    "clippathunits" => "clipPathUnits"
+    "diffuseconstant" => "diffuseConstant"
+    "edgemode" => "edgeMode"
+    "filterunits" => "filterUnits"
+    "glyphref" => "glyphRef"
+    "gradienttransform" => "gradientTransform"
+    "gradientunits" => "gradientUnits"
+    "kernelmatrix" => "kernelMatrix"
+    "kernelunitlength" => "kernelUnitLength"
+    "keypoints" => "keyPoints"
+    "keysplines" => "keySplines"
+    "keytimes" => "keyTimes"
+    "lengthadjust" => "lengthAdjust"
+    "limitingconeangle" => "limitingConeAngle"
+    "markerheight" => "markerHeight"
+    "markerunits" => "markerUnits"
+    "markerwidth" => "markerWidth"
+    "maskcontentunits" => "maskContentUnits"
+    "maskunits" => "maskUnits"
+    "numoctaves" => "numOctaves"
+    "pathlength" => "pathLength"
+    "patterncontentunits" => "patternContentUnits"
+    "patterntransform" => "patternTransform"
+    "patternunits" => "patternUnits"
+    "pointsatx" => "pointsAtX"
+    "pointsaty" => "pointsAtY"
+    "pointsatz" => "pointsAtZ"
+    "preservealpha" => "preserveAlpha"
+    "preserveaspectratio" => "preserveAspectRatio"
+    "primitiveunits" => "primitiveUnits"
+    "refx" => "refX"
+    "refy" => "refY"
+    "repeatcount" => "repeatCount"
+    "repeatdur" => "repeatDur"
+    "requiredextensions" => "requiredExtensions"
+    "requiredfeatures" => "requiredFeatures"
+    "specularconstant" => "specularConstant"
+    "specularexponent" => "specularExponent"
+    "spreadmethod" => "spreadMethod"
+    "startoffset" => "startOffset"
+    "stddeviation" => "stdDeviation"
+    "stitchtiles" => "stitchTiles"
+    "surfacescale" => "surfaceScale"
+    "systemlanguage" => "systemLanguage"
+    "tablevalues" => "tableValues"
+    "targetx" => "targetX"
+    "targety" => "targetY"
+    "textlength" => "textLength"
+    "viewbox" => "viewBox"
+    "viewtarget" => "viewTarget"
+    "xchannelselector" => "xChannelSelector"
+    "ychannelselector" => "yChannelSelector"
+    "zoomandpan" => "zoomAndPan"
+    _ => ""
+  }
+}
+
+fn is_breakout(s: Str) -> Bool {
+  match s {
+    "b" | "big" | "blockquote" | "body" | "br" | "center" | "code" | "dd" | "div" | "dl" | "dt" | "em" | "embed" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "head" | "hr" | "i" | "img" | "li" | "listing" | "menu" | "meta" | "nobr" | "ol" | "p" | "pre" | "ruby" | "s" | "small" | "span" | "strong" | "strike" | "sub" | "sup" | "table" | "tt" | "u" | "ul" | "var" => true
+    _ => false
+  }
+}
+
+fn quirky_ids() -> List[Str] {
+  [
+    "+//silmaril//dtd html pro v0r11 19970101//",
+    "-//advasoft ltd//dtd html 3.0 aswedit + extensions//",
+    "-//as//dtd html 3.0 aswedit + extensions//",
+    "-//ietf//dtd html 2.0 level 1//",
+    "-//ietf//dtd html 2.0 level 2//",
+    "-//ietf//dtd html 2.0 strict level 1//",
+    "-//ietf//dtd html 2.0 strict level 2//",
+    "-//ietf//dtd html 2.0 strict//",
+    "-//ietf//dtd html 2.0//",
+    "-//ietf//dtd html 2.1e//",
+    "-//ietf//dtd html 3.0//",
+    "-//ietf//dtd html 3.2 final//",
+    "-//ietf//dtd html 3.2//",
+    "-//ietf//dtd html 3//",
+    "-//ietf//dtd html level 0//",
+    "-//ietf//dtd html level 1//",
+    "-//ietf//dtd html level 2//",
+    "-//ietf//dtd html level 3//",
+    "-//ietf//dtd html strict level 0//",
+    "-//ietf//dtd html strict level 1//",
+    "-//ietf//dtd html strict level 2//",
+    "-//ietf//dtd html strict level 3//",
+    "-//ietf//dtd html strict//",
+    "-//ietf//dtd html//",
+    "-//metrius//dtd metrius presentational//",
+    "-//microsoft//dtd internet explorer 2.0 html strict//",
+    "-//microsoft//dtd internet explorer 2.0 html//",
+    "-//microsoft//dtd internet explorer 2.0 tables//",
+    "-//microsoft//dtd internet explorer 3.0 html strict//",
+    "-//microsoft//dtd internet explorer 3.0 html//",
+    "-//microsoft//dtd internet explorer 3.0 tables//",
+    "-//netscape comm. corp.//dtd html//",
+    "-//netscape comm. corp.//dtd strict html//",
+    "-//o'reilly and associates//dtd html 2.0//",
+    "-//o'reilly and associates//dtd html extended 1.0//",
+    "-//o'reilly and associates//dtd html extended relaxed 1.0//",
+    "-//softquad software//dtd hotmetal pro 6.0::19990601::extensions to html 4.0//",
+    "-//softquad//dtd hotmetal pro 4.0::19971010::extensions to html 4.0//",
+    "-//spyglass//dtd html 2.0 extended//",
+    "-//sq//dtd html 2.0 hotmetal + extensions//",
+    "-//sun microsystems corp.//dtd hotjava html//",
+    "-//sun microsystems corp.//dtd hotjava strict html//",
+    "-//w3c//dtd html 3 1995-03-24//",
+    "-//w3c//dtd html 3.2 draft//",
+    "-//w3c//dtd html 3.2 final//",
+    "-//w3c//dtd html 3.2//",
+    "-//w3c//dtd html 3.2s draft//",
+    "-//w3c//dtd html 4.0 frameset//",
+    "-//w3c//dtd html 4.0 transitional//",
+    "-//w3c//dtd html experimental 19960712//",
+    "-//w3c//dtd html experimental 970421//",
+    "-//w3c//dtd w3 html//",
+    "-//w3o//dtd w3 html 3.0//",
+    "-//webtechs//dtd mozilla html 2.0//",
+    "-//webtechs//dtd mozilla html//",
+  ]
+}
+
+const ESCAPED_CHARS = "&'<>\"\r"
+
+fn escape_into(var out: StrBuilder, s: Str) {
+  var rest = s
+  while true {
+    match rest.find_any(ESCAPED_CHARS) {
+      Some(i) => {
+        out.write(rest[0..i])
+        let c = rest.bytes()[i]
+        if c == 38 {
+          out.write("&amp;")
+        } else if c == 39 {
+          out.write("&#39;")
+        } else if c == 60 {
+          out.write("&lt;")
+        } else if c == 62 {
+          out.write("&gt;")
+        } else if c == 34 {
+          out.write("&#34;")
+        } else {
+          out.write("&#13;")
+        }
+        rest = rest[i + 1..]
+      }
+      None => {
+        out.write(rest)
+        break
+      }
+    }
+  }
+}
+
+/// escapeComment: every `&`, and a `>` at the start of the data or after `!` or `-`.
+fn escape_comment_into(var out: StrBuilder, s: Str) {
+  if s.len() == 0 {
+    return
+  }
+  let b = s.bytes()
+  var i = 0
+  var j = 0
+  while j < b.len() {
+    var esc = ""
+    if b[j] == 38 {
+      esc = "&amp;"
+    } else if b[j] == 62 {
+      if j > 0 {
+        let prev = b[j - 1]
+        if prev != 33 && prev != 45 {
+          j += 1
+          continue
+        }
+      }
+      esc = "&gt;"
+    } else {
+      j += 1
+      continue
+    }
+    if i < j {
+      out.write(s[i..j])
+    }
+    out.write(esc)
+    i = j + 1
+    j += 1
+  }
+  if i < b.len() {
+    out.write(s[i..])
+  }
+}
+
+fn is_void_element(d: Str) -> Bool {
+  match d {
+    "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "keygen" | "link" | "meta" | "param" |
+    "source" | "track" | "wbr" => true
+    _ => false
+  }
+}
+
+/// childTextNodesAreLiteral: the text of a script-like element is written as is, when the parser would keep the
+/// element in the html namespace on re-parse.
+fn child_text_nodes_are_literal(p: Tree, n: Int) -> Bool {
+  if p.nodes[n].namespace.len() != 0 {
+    return false
+  }
+  match p.nodes[n].data {
+    "iframe" | "noembed" | "noframes" | "noscript" | "plaintext" | "script" | "style" | "xmp" => {
+      var c = n
+      var par = p.nodes[n].parent
+      while par != -1 {
+        if p.nodes[par].namespace.len() != 0 && p.nodes[par].namespace != p.nodes[c].namespace && !html_integration_point_t(p, par) {
+          return false
+        }
+        c = par
+        par = p.nodes[par].parent
+      }
+      true
+    }
+    _ => false
+  }
+}
+
+fn html_integration_point_t(t: Tree, n: Int) -> Bool {
+  if t.nodes[n].typ != NodeType.Element {
+    return false
+  }
+  let ns = t.nodes[n].namespace
+  let d = t.nodes[n].data
+  if ns == "math" {
+    if d == "annotation-xml" {
+      for a in t.nodes[n].attrs {
+        if a.key == "encoding" && (a.val.equal_fold("text/html") || a.val.equal_fold("application/xhtml+xml")) {
+          return true
+        }
+      }
+    }
+  } else if ns == "svg" {
+    return d == "desc" || d == "foreignObject" || d == "title"
+  }
+  false
+}
+
+fn write_doctype_quoted(var out: StrBuilder, s: Str) -> Str {
+  var q = "\""
+  if s.contains("\"") {
+    if s.contains("'") {
+      return "doctype contains both quote types, cannot be safely rendered"
+    }
+    q = "'"
+  }
+  out.write(q)
+  out.write(s.replace(">", "&gt;"))
+  out.write(q)
+  ""
+}
+
+const PLAINTEXT_ABORT = "html: internal error (plaintext abort)"
+
+/// render1: "" on success, PLAINTEXT_ABORT after a plaintext element, else the error text.
+fn render1(t: Tree, var out: StrBuilder, n: Int) -> Str {
+  let node = t.nodes[n]
+  match node.typ {
+    NodeType.Error => {
+      return "html: cannot render an ErrorNode node"
+    }
+    NodeType.Text => {
+      escape_into(out, node.data)
+      return ""
+    }
+    NodeType.Document => {
+      var c = node.first_child
+      while c != -1 {
+        let e = render1(t, out, c)
+        if e != "" {
+          return e
+        }
+        c = t.nodes[c].next
+      }
+      return ""
+    }
+    NodeType.Element => {}
+    NodeType.Comment => {
+      out.write("<!--")
+      escape_comment_into(out, node.data)
+      out.write("-->")
+      return ""
+    }
+    NodeType.Doctype => {
+      out.write("<!DOCTYPE ")
+      escape_into(out, node.data)
+      if node.attrs.len() > 0 {
+        var pubid = ""
+        var sys = ""
+        for a in node.attrs {
+          if a.key == "public" {
+            pubid = a.val
+          } else if a.key == "system" {
+            sys = a.val
+          }
+        }
+        if pubid != "" {
+          out.write(" PUBLIC ")
+          let e = write_doctype_quoted(out, pubid)
+          if e != "" {
+            return e
+          }
+          if sys != "" {
+            out.write(" ")
+            let e2 = write_doctype_quoted(out, sys)
+            if e2 != "" {
+              return e2
+            }
+          }
+        } else if sys != "" {
+          out.write(" SYSTEM ")
+          let e = write_doctype_quoted(out, sys)
+          if e != "" {
+            return e
+          }
+        }
+      }
+      out.write(">")
+      return ""
+    }
+    NodeType.Raw => {
+      out.write(node.data)
+      return ""
+    }
+  }
+  out.write("<")
+  out.write(node.data)
+  for a in node.attrs {
+    out.write(" ")
+    if a.namespace.len() != 0 {
+      out.write(a.namespace)
+      out.write(":")
+    }
+    out.write(a.key)
+    out.write("=\"")
+    escape_into(out, a.val)
+    out.write("\"")
+  }
+  if is_void_element(node.data) {
+    if node.first_child != -1 {
+      return "html: void element <${node.data}> has child nodes"
+    }
+    out.write("/>")
+    return ""
+  }
+  out.write(">")
+  let fc = node.first_child
+  if fc != -1 && t.nodes[fc].typ == NodeType.Text && t.nodes[fc].data.starts_with("\n") {
+    if node.data == "pre" || node.data == "listing" || node.data == "textarea" {
+      out.write("\n")
+    }
+  }
+  if child_text_nodes_are_literal(t, n) {
+    var c = node.first_child
+    while c != -1 {
+      if t.nodes[c].typ == NodeType.Text {
+        out.write(t.nodes[c].data)
+      } else {
+        let e = render1(t, out, c)
+        if e != "" {
+          return e
+        }
+      }
+      c = t.nodes[c].next
+    }
+    if node.data == "plaintext" {
+      return PLAINTEXT_ABORT
+    }
+  } else {
+    var c = node.first_child
+    while c != -1 {
+      let e = render1(t, out, c)
+      if e != "" {
+        return e
+      }
+      c = t.nodes[c].next
+    }
+  }
+  out.write("</")
+  out.write(node.data)
+  out.write(">")
+  ""
+}

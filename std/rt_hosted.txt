@@ -12,3 +12,5 @@ std/netip
 std/backoff
 std/trace
 std/metrics
+std/png
+std/jpeg

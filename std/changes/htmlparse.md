@@ -1,5 +1,18 @@
 # std/htmlparse changes
 
+## 2026-11-11: refactor: std/htmlparse is one file (decisions 0588, 0597)
+
+- Kind: refactor
+- Commit: this push
+- Found by: decision 0597 (std/native/htmlparse.xo imports nothing native)
+- Go reference: none (no behavior change)
+- Test: TestStdCorpora htmlparse on go, arm64, llvm; xo test --std-module=htmlparse (14 passed) on arm64 and llvm
+- Shipped in: not yet released
+
+std/native/htmlparse.xo moved into std/htmlparse.xo, its tests into
+std/htmlparse_test.xo. The Go backend compiles it from that source; the
+Go twin of its error displays (std/rt/htmlparse.go) is gone.
+
 ## 2026-11-08: perf: a node's namespace is tested empty by its length
 
 - Kind: perf

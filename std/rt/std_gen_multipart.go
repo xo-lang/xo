@@ -147,11 +147,11 @@ func Multipart_parse(tk *Task, v_body Bytes, v_boundary string) Result[List[Mult
 	_ = v_r
 	var v_parts List[Multipart_Part] = List[Multipart_Part]{}
 	_ = v_parts
-x_L694:
+x_L1103:
 	for {
 		{
-			var x_v695 Multipart_Next
-			x_m696 := func(v Result[Option[Multipart_Next], string]) Result[Option[Multipart_Next], string] {
+			var x_v1104 Multipart_Next
+			x_m1105 := func(v Result[Option[Multipart_Next], string]) Result[Option[Multipart_Next], string] {
 				if v.Ok {
 					if v.V.Some {
 						v.V.V.XoMark()
@@ -159,42 +159,42 @@ x_L694:
 				}
 				return v
 			}(v_r.M_next_part(tk, Multipart_MAX_HEADER_SIZE, Multipart_MAX_HEADERS))
-			_ = x_m696
-		x_M697:
+			_ = x_m1105
+		x_M1106:
 			switch {
 			default:
-				if x_m696.Ok && x_m696.V.Some {
-					var v_n Multipart_Next = x_m696.V.V
+				if x_m1105.Ok && x_m1105.V.Some {
+					var v_n Multipart_Next = x_m1105.V.V
 					_ = v_n
-					x_v695 = func(v Multipart_Next) Multipart_Next { v.XoMark(); return v }(v_n)
-					break x_M697
+					x_v1104 = func(v Multipart_Next) Multipart_Next { v.XoMark(); return v }(v_n)
+					break x_M1106
 				}
-				if x_m696.Ok && !x_m696.V.Some {
-					break x_L694
+				if x_m1105.Ok && !x_m1105.V.Some {
+					break x_L1103
 				}
-				if !x_m696.Ok {
-					var v_m string = x_m696.E
+				if !x_m1105.Ok {
+					var v_m string = x_m1105.E
 					_ = v_m
 					return Err[List[Multipart_Part]](Multipart_fail(tk, v_m))
 				}
 				panic(Unreachable("std/multipart.xo:49:13"))
 			}
-			var v_n_1 Multipart_Next = x_v695
+			var v_n_1 Multipart_Next = x_v1104
 			_ = v_n_1
-			x_let698 := v_r.M_part_data(tk, func(v Multipart_Next) Multipart_Next { v.XoMark(); return v }(v_n_1))
-			_ = x_let698
-			var v_data Bytes = x_let698.F0
+			x_let1107 := v_r.M_part_data(tk, func(v Multipart_Next) Multipart_Next { v.XoMark(); return v }(v_n_1))
+			_ = x_let1107
+			var v_data Bytes = x_let1107.F0
 			_ = v_data
-			var v_e string = x_let698.F1
+			var v_e string = x_let1107.F1
 			_ = v_e
 			if !(Str_is_empty(tk, v_e)) {
 				return Err[List[Multipart_Part]](Multipart_fail(tk, v_e))
 			}
-			x_pv699 := func(v Multipart_Part) Multipart_Part { v.XoMark(); return v }(Multipart_to_part(tk, func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_n_1.F_header), v_data))
+			x_pv1108 := func(v Multipart_Part) Multipart_Part { v.XoMark(); return v }(Multipart_to_part(tk, func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_n_1.F_header), v_data))
 			if List_CanPush(v_parts) {
-				v_parts = List_PushFast(v_parts, x_pv699)
+				v_parts = List_PushFast(v_parts, x_pv1108)
 			} else {
-				v_parts = List_PushSlow(v_parts, x_pv699)
+				v_parts = List_PushSlow(v_parts, x_pv1108)
 			}
 			_ = Unit{}
 		}
@@ -217,11 +217,11 @@ func Multipart_parse_form(tk *Task, v_body Bytes, v_boundary string, v_max_parts
 	_ = v_max_file_memory
 	var v_max_memory int64 = (Multipart_MAX_MEMORY + int64(10485760))
 	_ = v_max_memory
-x_L700:
+x_L1109:
 	for {
 		{
-			var x_v701 Multipart_Next
-			x_m702 := func(v Result[Option[Multipart_Next], string]) Result[Option[Multipart_Next], string] {
+			var x_v1110 Multipart_Next
+			x_m1111 := func(v Result[Option[Multipart_Next], string]) Result[Option[Multipart_Next], string] {
 				if v.Ok {
 					if v.V.Some {
 						v.V.V.XoMark()
@@ -229,51 +229,51 @@ x_L700:
 				}
 				return v
 			}(v_r.M_next_part(tk, v_max_memory, v_max_headers))
-			_ = x_m702
-		x_M703:
+			_ = x_m1111
+		x_M1112:
 			switch {
 			default:
-				if x_m702.Ok && x_m702.V.Some {
-					var v_n Multipart_Next = x_m702.V.V
+				if x_m1111.Ok && x_m1111.V.Some {
+					var v_n Multipart_Next = x_m1111.V.V
 					_ = v_n
-					x_v701 = func(v Multipart_Next) Multipart_Next { v.XoMark(); return v }(v_n)
-					break x_M703
+					x_v1110 = func(v Multipart_Next) Multipart_Next { v.XoMark(); return v }(v_n)
+					break x_M1112
 				}
-				if x_m702.Ok && !x_m702.V.Some {
-					break x_L700
+				if x_m1111.Ok && !x_m1111.V.Some {
+					break x_L1109
 				}
-				if !x_m702.Ok {
-					var v_m string = x_m702.E
+				if !x_m1111.Ok {
+					var v_m string = x_m1111.E
 					_ = v_m
 					return Err[Multipart_Form](Multipart_fail(tk, v_m))
 				}
 				panic(Unreachable("std/multipart.xo:74:13"))
 			}
-			var v_n_1 Multipart_Next = x_v701
+			var v_n_1 Multipart_Next = x_v1110
 			_ = v_n_1
 			if v_parts_left <= int64(0) {
 				return Err[Multipart_Form](Multipart_fail(tk, Multipart_TOO_LARGE))
 			}
 			v_parts_left = (v_parts_left - int64(1))
-			x_let704 := Multipart_names(tk, func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_n_1.F_header))
-			_ = x_let704
-			var v_name string = x_let704.F0
+			x_let1113 := Multipart_names(tk, func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_n_1.F_header))
+			_ = x_let1113
+			var v_name string = x_let1113.F0
 			_ = v_name
-			var v_file string = x_let704.F1
+			var v_file string = x_let1113.F1
 			_ = v_file
 			if Str_is_empty(tk, v_name) {
 				v_r.M_skip_part(tk, func(v Multipart_Next) Multipart_Next { v.XoMark(); return v }(v_n_1))
-				continue x_L700
+				continue x_L1109
 			}
 			v_max_memory = (v_max_memory - (Str_len(tk, v_name) + int64(200)))
 			if v_max_memory < int64(0) {
 				return Err[Multipart_Form](Multipart_fail(tk, Multipart_TOO_LARGE))
 			}
-			x_let705 := v_r.M_part_data(tk, func(v Multipart_Next) Multipart_Next { v.XoMark(); return v }(v_n_1))
-			_ = x_let705
-			var v_data Bytes = x_let705.F0
+			x_let1114 := v_r.M_part_data(tk, func(v Multipart_Next) Multipart_Next { v.XoMark(); return v }(v_n_1))
+			_ = x_let1114
+			var v_data Bytes = x_let1114.F0
 			_ = v_data
-			var v_e string = x_let705.F1
+			var v_e string = x_let1114.F1
 			_ = v_e
 			if Str_is_empty(tk, v_file) {
 				if Bytes_len(tk, v_data) > v_max_memory {
@@ -284,23 +284,23 @@ x_L700:
 				}
 				v_max_memory = (v_max_memory - Bytes_len(tk, v_data))
 				v_values.M_add(tk, v_name, Multipart_text_of(tk, v_data))
-				continue x_L700
+				continue x_L1109
 			}
 			var v_hsize int64 = int64(400)
 			_ = v_hsize
-			x_it706 := Range[int64]{Lo: int64(0), Hi: List_len[string](tk, v_n_1.F_header.F_keys), Incl: false}
-			for x_i708 := x_it706.Lo; x_i708 < x_it706.Hi; x_i708++ {
-				x_el709 := x_i708
-				_ = x_el709
-				var v_i int64 = x_el709
+			x_it1115 := Range[int64]{Lo: int64(0), Hi: List_len[string](tk, v_n_1.F_header.F_keys), Incl: false}
+			for x_i1117 := x_it1115.Lo; x_i1117 < x_it1115.Hi; x_i1117++ {
+				x_el1118 := x_i1117
+				_ = x_el1118
+				var v_i int64 = x_el1118
 				_ = v_i
 				{
 					v_hsize = AddS(v_hsize, (Str_len(tk, List_AtU(v_n_1.F_header.F_keys, v_i)) + int64(200)), "std/multipart.xo:106:7")
-					x_it710 := List_At(v_n_1.F_header.F_values, v_i, "std/multipart.xo:107:16")
-					for _, x_e712 := range List_Items(x_it710) {
-						x_el713 := x_e712
-						_ = x_el713
-						var v_v string = x_el713
+					x_it1119 := List_At(v_n_1.F_header.F_values, v_i, "std/multipart.xo:107:16")
+					for _, x_e1121 := range List_Items(x_it1119) {
+						x_el1122 := x_e1121
+						_ = x_el1122
+						var v_v string = x_el1122
 						_ = v_v
 						{
 							v_hsize = AddS(v_hsize, Str_len(tk, v_v), "std/multipart.xo:108:9")
@@ -320,26 +320,26 @@ x_L700:
 				v_max_file_memory = (v_max_file_memory - Bytes_len(tk, v_data))
 				v_max_memory = (v_max_memory - Bytes_len(tk, v_data))
 			}
-			x_a714 := v_name
-			x_t715 := func(v Option[List[Multipart_Part]]) Option[List[Multipart_Part]] {
+			x_a1123 := v_name
+			x_t1124 := func(v Option[List[Multipart_Part]]) Option[List[Multipart_Part]] {
 				if v.Some {
 					v.V.XoMark()
 				}
 				return v
-			}(Map_get[string, List[Multipart_Part]](tk, v_files, x_a714))
-			var x_c716 List[Multipart_Part]
-			if x_t715.Some {
-				x_c716 = x_t715.V
+			}(Map_get[string, List[Multipart_Part]](tk, v_files, x_a1123))
+			var x_c1125 List[Multipart_Part]
+			if x_t1124.Some {
+				x_c1125 = x_t1124.V
 			} else {
-				x_c716 = List[Multipart_Part]{}
+				x_c1125 = List[Multipart_Part]{}
 			}
-			var v_fs List[Multipart_Part] = x_c716
+			var v_fs List[Multipart_Part] = x_c1125
 			_ = v_fs
-			x_pv717 := func(v Multipart_Part) Multipart_Part { v.XoMark(); return v }(Multipart_to_part(tk, func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_n_1.F_header), v_data))
+			x_pv1126 := func(v Multipart_Part) Multipart_Part { v.XoMark(); return v }(Multipart_to_part(tk, func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_n_1.F_header), v_data))
 			if List_CanPush(v_fs) {
-				v_fs = List_PushFast(v_fs, x_pv717)
+				v_fs = List_PushFast(v_fs, x_pv1126)
 			} else {
-				v_fs = List_PushSlow(v_fs, x_pv717)
+				v_fs = List_PushSlow(v_fs, x_pv1126)
 			}
 			_ = Unit{}
 			Map_put[string, List[Multipart_Part]](tk, &v_files, v_name, List_Own(v_fs))
@@ -357,66 +357,66 @@ func Multipart_write(tk *Task, v_parts List[Multipart_Part], v_boundary string) 
 	_ = v_out
 	var v_first bool = true
 	_ = v_first
-	x_it718 := v_parts
-	for _, x_e720 := range List_Items(x_it718) {
-		x_el721 := x_e720
-		_ = x_el721
-		var v_p Multipart_Part = x_el721
+	x_it1127 := v_parts
+	for _, x_e1129 := range List_Items(x_it1127) {
+		x_el1130 := x_e1129
+		_ = x_el1130
+		var v_p Multipart_Part = x_el1130
 		_ = v_p
 		{
-			var x_v722 string
+			var x_v1131 string
 			if v_first {
-				x_v722 = ("--" + v_boundary + "\r\n")
+				x_v1131 = ("--" + v_boundary + "\r\n")
 			} else {
-				x_v722 = ("\r\n--" + v_boundary + "\r\n")
+				x_v1131 = ("\r\n--" + v_boundary + "\r\n")
 			}
-			v_out.M_write(tk, Str_bytes(tk, x_v722))
+			v_out.M_write(tk, Str_bytes(tk, x_v1131))
 			v_first = false
 			var v_h Map[string, string] = Map_Own(v_p.F_headers)
 			_ = v_h
 			if !(Map_contains[string, string](tk, v_h, "Content-Disposition")) {
-				var x_v723 string
-				x_m724 := v_p.F_filename
-				_ = x_m724
-			x_M725:
+				var x_v1132 string
+				x_m1133 := v_p.F_filename
+				_ = x_m1133
+			x_M1134:
 				switch {
 				default:
-					if x_m724.Some {
-						var v_f string = x_m724.V
+					if x_m1133.Some {
+						var v_f string = x_m1133.V
 						_ = v_f
-						x_v723 = ("form-data; name=\"" + Multipart_escape_quotes(tk, v_p.F_name) + "\"; filename=\"" + Multipart_escape_quotes(tk, v_f) + "\"")
-						break x_M725
+						x_v1132 = ("form-data; name=\"" + Multipart_escape_quotes(tk, v_p.F_name) + "\"; filename=\"" + Multipart_escape_quotes(tk, v_f) + "\"")
+						break x_M1134
 					}
-					if !x_m724.Some {
-						x_v723 = ("form-data; name=\"" + Multipart_escape_quotes(tk, v_p.F_name) + "\"")
-						break x_M725
+					if !x_m1133.Some {
+						x_v1132 = ("form-data; name=\"" + Multipart_escape_quotes(tk, v_p.F_name) + "\"")
+						break x_M1134
 					}
 					panic(Unreachable("std/multipart.xo:140:15"))
 				}
-				var v_d string = x_v723
+				var v_d string = x_v1132
 				_ = v_d
 				Map_put[string, string](tk, &v_h, "Content-Disposition", v_d)
 				if !Eq(v_p.F_filename, None[string]()) && !(Map_contains[string, string](tk, v_h, "Content-Type")) {
 					Map_put[string, string](tk, &v_h, "Content-Type", "application/octet-stream")
 				}
 			}
-			x_it726 := List_sort[string](tk, Map_keys[string, string](tk, v_h))
-			for _, x_e728 := range List_Items(x_it726) {
-				x_el729 := x_e728
-				_ = x_el729
-				var v_k string = x_el729
+			x_it1135 := List_sort[string](tk, Map_keys[string, string](tk, v_h))
+			for _, x_e1137 := range List_Items(x_it1135) {
+				x_el1138 := x_e1137
+				_ = x_el1138
+				var v_k string = x_el1138
 				_ = v_k
 				{
-					x_a733 := v_k
-					x_a730 := v_k
-					x_t731 := Map_get[string, string](tk, v_h, x_a730)
-					var x_c732 string
-					if x_t731.Some {
-						x_c732 = x_t731.V
+					x_a1142 := v_k
+					x_a1139 := v_k
+					x_t1140 := Map_get[string, string](tk, v_h, x_a1139)
+					var x_c1141 string
+					if x_t1140.Some {
+						x_c1141 = x_t1140.V
 					} else {
-						x_c732 = ""
+						x_c1141 = ""
 					}
-					v_out.M_write(tk, Str_bytes(tk, (x_a733+": "+x_c732+"\r\n")))
+					v_out.M_write(tk, Str_bytes(tk, (x_a1142+": "+x_c1141+"\r\n")))
 				}
 			}
 			v_out.M_write(tk, Bytes("\r\n"))
@@ -430,17 +430,17 @@ func Multipart_write(tk *Task, v_parts List[Multipart_Part], v_boundary string) 
 func Multipart_form_data_content_type(tk *Task, v_boundary string) string {
 	var v_b string = v_boundary
 	_ = v_b
-	x_it734 := Str_runes(tk, "()<>@,;:\\\"/[]?= ")
-x_L735:
-	for _, x_e736 := range List_Items(x_it734) {
-		x_el737 := x_e736
-		_ = x_el737
-		var v_c Rune = x_el737
+	x_it1143 := Str_runes(tk, "()<>@,;:\\\"/[]?= ")
+x_L1144:
+	for _, x_e1145 := range List_Items(x_it1143) {
+		x_el1146 := x_e1145
+		_ = x_el1146
+		var v_c Rune = x_el1146
 		_ = v_c
 		{
 			if List_contains[Rune](tk, Str_runes(tk, v_boundary), v_c) {
 				v_b = ("\"" + v_boundary + "\"")
-				break x_L735
+				break x_L1144
 			}
 		}
 	}
@@ -448,8 +448,8 @@ x_L735:
 }
 
 func Multipart_random_boundary(tk *Task, v_r Rand) string {
-	x_a738 := int64(30)
-	return Bytes_to_hex(tk, v_r.M_bytes(tk, x_a738))
+	x_a1147 := int64(30)
+	return Bytes_to_hex(tk, v_r.M_bytes(tk, x_a1147))
 }
 
 func Multipart_fail(tk *Task, v_msg string) Multipart_MultipartErr {
@@ -481,9 +481,9 @@ var Multipart_UNEXPECTED_EOF = func() string {
 }()
 
 func Multipart_text_of(tk *Task, v_b Bytes) string {
-	x_l739 := Bytes_to_str(tk, v_b)
-	if x_l739.Some {
-		var v_s string = x_l739.V
+	x_l1148 := Bytes_to_str(tk, v_b)
+	if x_l1148.Some {
+		var v_s string = x_l1148.V
 		_ = v_s
 		return v_s
 	}
@@ -496,12 +496,12 @@ func Multipart_text_of(tk *Task, v_b Bytes) string {
 			break
 		}
 		{
-			x_a741 := v_i
-			x_let742 := Bytes_decode_rune(tk, v_b, x_a741)
-			_ = x_let742
-			var v_r Rune = x_let742.F0
+			x_a1150 := v_i
+			x_let1151 := Bytes_decode_rune(tk, v_b, x_a1150)
+			_ = x_let1151
+			var v_r Rune = x_let1151.F0
 			_ = v_r
-			var v_n int64 = x_let742.F1
+			var v_n int64 = x_let1151.F1
 			_ = v_n
 			v_out.M_write(tk, Display(tk, v_r))
 			v_i = AddS(v_i, v_n, "std/multipart.xo:200:5")
@@ -514,11 +514,11 @@ func Multipart_has_prefix(tk *Task, v_b Bytes, v_at int64, v_p Bytes) bool {
 	if SubS(Bytes_len(tk, v_b), v_at, "std/multipart.xo:206:6") < Bytes_len(tk, v_p) {
 		return false
 	}
-	x_it743 := Range[int64]{Lo: int64(0), Hi: Bytes_len(tk, v_p), Incl: false}
-	for x_i745 := x_it743.Lo; x_i745 < x_it743.Hi; x_i745++ {
-		x_el746 := x_i745
-		_ = x_el746
-		var v_i int64 = x_el746
+	x_it1152 := Range[int64]{Lo: int64(0), Hi: Bytes_len(tk, v_p), Incl: false}
+	for x_i1154 := x_it1152.Lo; x_i1154 < x_it1152.Hi; x_i1154++ {
+		x_el1155 := x_i1154
+		_ = x_el1155
+		var v_i int64 = x_el1155
 		_ = v_i
 		{
 			if BytesAt(v_b, AddS(v_at, v_i, "std/multipart.xo:210:10"), "std/multipart.xo:210:8") != BytesAt(v_p, v_i, "std/multipart.xo:210:21") {
@@ -530,16 +530,16 @@ func Multipart_has_prefix(tk *Task, v_b Bytes, v_at int64, v_p Bytes) bool {
 }
 
 func Multipart_index_of(tk *Task, v_b Bytes, v_from int64, v_p Bytes) int64 {
-	x_m747 := Bytes_find(tk, BytesSlice(v_b, v_from, 0, true, false, "std/multipart.xo:218:9"), v_p)
-	_ = x_m747
+	x_m1156 := Bytes_find(tk, BytesSlice(v_b, v_from, 0, true, false, "std/multipart.xo:218:9"), v_p)
+	_ = x_m1156
 	switch {
 	default:
-		if x_m747.Some {
-			var v_i int64 = x_m747.V
+		if x_m1156.Some {
+			var v_i int64 = x_m1156.V
 			_ = v_i
 			return AddS(v_from, v_i, "std/multipart.xo:219:16")
 		}
-		if !x_m747.Some {
+		if !x_m1156.Some {
 			return int64(-1)
 		}
 		panic(Unreachable("std/multipart.xo:218:3"))
@@ -547,9 +547,9 @@ func Multipart_index_of(tk *Task, v_b Bytes, v_from int64, v_p Bytes) int64 {
 }
 
 func Multipart_go_q(tk *Task, v_b Bytes) string {
-	x_l749 := Bytes_to_str(tk, v_b)
-	if x_l749.Some {
-		var v_s string = x_l749.V
+	x_l1158 := Bytes_to_str(tk, v_b)
+	if x_l1158.Some {
+		var v_s string = x_l1158.V
 		_ = v_s
 		return Str_quote(tk, v_s)
 	}
@@ -563,12 +563,12 @@ func Multipart_go_q(tk *Task, v_b Bytes) string {
 			break
 		}
 		{
-			x_a751 := v_i
-			x_let752 := Bytes_decode_rune(tk, v_b, x_a751)
-			_ = x_let752
-			var v_r Rune = x_let752.F0
+			x_a1160 := v_i
+			x_let1161 := Bytes_decode_rune(tk, v_b, x_a1160)
+			_ = x_let1161
+			var v_r Rune = x_let1161.F0
 			_ = v_r
-			var v_n int64 = x_let752.F1
+			var v_n int64 = x_let1161.F1
 			_ = v_n
 			if (v_r == Rune(65533)) && (v_n == int64(1)) {
 				var v_h string = "0123456789abcdef"
@@ -696,26 +696,26 @@ func (v_r *Multipart_R) M_more(tk *Task) bool {
 			break
 		}
 		{
-			var x_v754 Bytes
-			x_m755 := List_At((*v_r).F_src, int64(0), "std/multipart.xo:271:19")(tk)
-			_ = x_m755
-		x_M756:
+			var x_v1163 Bytes
+			x_m1164 := List_At((*v_r).F_src, int64(0), "std/multipart.xo:271:19")(tk)
+			_ = x_m1164
+		x_M1165:
 			switch {
 			default:
-				if x_m755.Ok && x_m755.V.Some {
-					var v_d Bytes = x_m755.V.V
+				if x_m1164.Ok && x_m1164.V.Some {
+					var v_d Bytes = x_m1164.V.V
 					_ = v_d
-					x_v754 = v_d
-					break x_M756
+					x_v1163 = v_d
+					break x_M1165
 				}
-				if x_m755.Ok && !x_m755.V.Some {
+				if x_m1164.Ok && !x_m1164.V.Some {
 					{
 						(*v_r).F_done = true
 						return false
 					}
 				}
-				if !x_m755.Ok {
-					var v_e string = x_m755.E
+				if !x_m1164.Ok {
+					var v_e string = x_m1164.E
 					_ = v_e
 					{
 						(*v_r).F_done = true
@@ -725,16 +725,16 @@ func (v_r *Multipart_R) M_more(tk *Task) bool {
 				}
 				panic(Unreachable("std/multipart.xo:271:13"))
 			}
-			var v_d_1 Bytes = x_v754
+			var v_d_1 Bytes = x_v1163
 			_ = v_d_1
 			if !(Bytes_is_empty(tk, v_d_1)) {
-				var x_v757 Bytes
+				var x_v1166 Bytes
 				if (*v_r).F_pos >= Bytes_len(tk, (*v_r).F_buf) {
-					x_v757 = v_d_1
+					x_v1166 = v_d_1
 				} else {
-					x_v757 = (BytesSlice((*v_r).F_buf, (*v_r).F_pos, 0, true, false, "std/multipart.xo:284:52") + v_d_1)
+					x_v1166 = (BytesSlice((*v_r).F_buf, (*v_r).F_pos, 0, true, false, "std/multipart.xo:284:52") + v_d_1)
 				}
-				(*v_r).F_buf = x_v757
+				(*v_r).F_buf = x_v1166
 				(*v_r).F_pos = int64(0)
 				return true
 			}
@@ -768,13 +768,13 @@ func (v_r *Multipart_R) M_read_slice(tk *Task) Tuple2[Bytes, string] {
 			break
 		}
 		{
-			var x_v759 int64
+			var x_v1168 int64
 			if SubS(Bytes_len(tk, (*v_r).F_buf), (*v_r).F_pos, "std/multipart.xo:314:18") > Multipart_BUF {
-				x_v759 = AddIUp((*v_r).F_pos, Multipart_BUF, "std/multipart.xo:314:46")
+				x_v1168 = AddIUp((*v_r).F_pos, Multipart_BUF, "std/multipart.xo:314:46")
 			} else {
-				x_v759 = Bytes_len(tk, (*v_r).F_buf)
+				x_v1168 = Bytes_len(tk, (*v_r).F_buf)
 			}
-			var v_end int64 = x_v759
+			var v_end int64 = x_v1168
 			_ = v_end
 			var v_i int64 = AddS((*v_r).F_pos, v_off, "std/multipart.xo:315:13")
 			_ = v_i
@@ -803,14 +803,14 @@ func (v_r *Multipart_R) M_read_slice(tk *Task) Tuple2[Bytes, string] {
 				var v_line_2 Bytes = BytesSlice((*v_r).F_buf, (*v_r).F_pos, 0, true, false, "std/multipart.xo:331:18")
 				_ = v_line_2
 				(*v_r).F_pos = Bytes_len(tk, (*v_r).F_buf)
-				x_a762 := v_line_2
-				var x_v761 string
+				x_a1171 := v_line_2
+				var x_v1170 string
 				if Str_is_empty(tk, (*v_r).F_src_err) {
-					x_v761 = "EOF"
+					x_v1170 = "EOF"
 				} else {
-					x_v761 = (*v_r).F_src_err
+					x_v1170 = (*v_r).F_src_err
 				}
-				return Tuple2[Bytes, string]{F0: x_a762, F1: x_v761}
+				return Tuple2[Bytes, string]{F0: x_a1171, F1: x_v1170}
 			}
 		}
 	}
@@ -884,24 +884,24 @@ func Multipart_match_after_prefix(tk *Task, v_b Bytes, v_at int64, v_prefix Byte
 func (v_r Multipart_R) M_scan(tk *Task, v_total int64, v_eof bool) Tuple2[int64, string] {
 	var v_b Bytes = BytesSlice(v_r.F_buf, v_r.F_pos, 0, true, false, "std/multipart.xo:391:11")
 	_ = v_b
-	var x_v764 string
+	var x_v1173 string
 	if v_eof {
-		x_v764 = Multipart_UNEXPECTED_EOF
+		x_v1173 = Multipart_UNEXPECTED_EOF
 	} else {
-		x_v764 = ""
+		x_v1173 = ""
 	}
-	var v_read_err string = x_v764
+	var v_read_err string = x_v1173
 	_ = v_read_err
 	if v_total == int64(0) {
 		if Multipart_has_prefix(tk, v_b, int64(0), v_r.F_dash_boundary) {
-			x_m765 := Multipart_match_after_prefix(tk, v_b, int64(0), v_r.F_dash_boundary, v_eof)
-			_ = x_m765
+			x_m1174 := Multipart_match_after_prefix(tk, v_b, int64(0), v_r.F_dash_boundary, v_eof)
+			_ = x_m1174
 			switch {
 			default:
-				if x_m765 == int64(-1) {
+				if x_m1174 == int64(-1) {
 					return Tuple2[int64, string]{F0: Bytes_len(tk, v_r.F_dash_boundary), F1: ""}
 				}
-				if x_m765 == int64(0) {
+				if x_m1174 == int64(0) {
 					return Tuple2[int64, string]{F0: int64(0), F1: ""}
 				}
 				{
@@ -916,14 +916,14 @@ func (v_r Multipart_R) M_scan(tk *Task, v_total int64, v_eof bool) Tuple2[int64,
 	var v_i int64 = Multipart_index_of(tk, v_b, int64(0), v_r.F_nl_dash_boundary)
 	_ = v_i
 	if v_i >= int64(0) {
-		x_m767 := Multipart_match_after_prefix(tk, v_b, v_i, v_r.F_nl_dash_boundary, v_eof)
-		_ = x_m767
+		x_m1176 := Multipart_match_after_prefix(tk, v_b, v_i, v_r.F_nl_dash_boundary, v_eof)
+		_ = x_m1176
 		switch {
 		default:
-			if x_m767 == int64(-1) {
+			if x_m1176 == int64(-1) {
 				return Tuple2[int64, string]{F0: AddS(v_i, Bytes_len(tk, v_r.F_nl_dash_boundary), "std/multipart.xo:408:21"), F1: ""}
 			}
-			if x_m767 == int64(0) {
+			if x_m1176 == int64(0) {
 				return Tuple2[int64, string]{F0: v_i, F1: ""}
 			}
 			{
@@ -957,16 +957,16 @@ func (v_r *Multipart_R) M_read_part(tk *Task) Tuple2[Bytes, string] {
 	_ = v_total
 	var v_eof bool = false
 	_ = v_eof
-x_L770:
+x_L1179:
 	for {
 		{
-			x_a771 := v_total
-			x_a772 := v_eof
-			x_let773 := Addr(func(v Multipart_R) Multipart_R { v.XoMark(); return v }((*v_r))).M_scan(tk, x_a771, x_a772)
-			_ = x_let773
-			var v_n int64 = x_let773.F0
+			x_a1180 := v_total
+			x_a1181 := v_eof
+			x_let1182 := Addr(func(v Multipart_R) Multipart_R { v.XoMark(); return v }((*v_r))).M_scan(tk, x_a1180, x_a1181)
+			_ = x_let1182
+			var v_n int64 = x_let1182.F0
 			_ = v_n
-			var v_e string = x_let773.F1
+			var v_e string = x_let1182.F1
 			_ = v_e
 			if (v_n == int64(0)) && Str_is_empty(tk, v_e) {
 				if !((*v_r).M_more(tk)) {
@@ -975,20 +975,20 @@ x_L770:
 					}
 					v_eof = true
 				}
-				continue x_L770
+				continue x_L1179
 			}
 			v_out.M_write(tk, BytesSlice((*v_r).F_buf, (*v_r).F_pos, AddS((*v_r).F_pos, v_n, "std/multipart.xo:445:28"), true, true, "std/multipart.xo:445:15"))
 			(*v_r).F_pos = AddS((*v_r).F_pos, v_n, "std/multipart.xo:446:5")
 			v_total = AddS(v_total, v_n, "std/multipart.xo:447:5")
 			if !(Str_is_empty(tk, v_e)) {
-				x_a775 := v_out.M_freeze(tk)
-				var x_v774 string
+				x_a1184 := v_out.M_freeze(tk)
+				var x_v1183 string
 				if v_e == "EOF" {
-					x_v774 = ""
+					x_v1183 = ""
 				} else {
-					x_v774 = v_e
+					x_v1183 = v_e
 				}
-				return Tuple2[Bytes, string]{F0: x_a775, F1: x_v774}
+				return Tuple2[Bytes, string]{F0: x_a1184, F1: x_v1183}
 			}
 		}
 	}
@@ -1000,7 +1000,7 @@ func (v_r *Multipart_R) M_read_line(tk *Task) Option[Bytes] {
 	}
 	var v_i int64 = (*v_r).F_pos
 	_ = v_i
-x_L776:
+x_L1185:
 	for {
 		if !(true) {
 			break
@@ -1015,12 +1015,12 @@ x_L776:
 				}
 			}
 			if v_i < Bytes_len(tk, (*v_r).F_buf) {
-				break x_L776
+				break x_L1185
 			}
 			var v_off int64 = SubS(v_i, (*v_r).F_pos, "std/multipart.xo:468:15")
 			_ = v_off
 			if !((*v_r).M_more(tk)) {
-				break x_L776
+				break x_L1185
 			}
 			v_i = AddS((*v_r).F_pos, v_off, "std/multipart.xo:472:9")
 		}
@@ -1080,11 +1080,11 @@ func Multipart_canonical_key(tk *Task, v_k Bytes) Option[string] {
 	}
 	var v_spaces bool = false
 	_ = v_spaces
-	x_it780 := v_k
-	for x_bi782 := 0; x_bi782 < len(x_it780); x_bi782++ {
-		x_el783 := x_it780[x_bi782]
-		_ = x_el783
-		var v_c uint8 = x_el783
+	x_it1189 := v_k
+	for x_bi1191 := 0; x_bi1191 < len(x_it1189); x_bi1191++ {
+		x_el1192 := x_it1189[x_bi1191]
+		_ = x_el1192
+		var v_c uint8 = x_el1192
 		_ = v_c
 		{
 			if v_c == uint8(32) {
@@ -1103,11 +1103,11 @@ func Multipart_canonical_key(tk *Task, v_k Bytes) Option[string] {
 	_ = v_out
 	var v_upper bool = true
 	_ = v_upper
-	x_it784 := v_k
-	for x_bi786 := 0; x_bi786 < len(x_it784); x_bi786++ {
-		x_el787 := x_it784[x_bi786]
-		_ = x_el787
-		var v_c0 uint8 = x_el787
+	x_it1193 := v_k
+	for x_bi1195 := 0; x_bi1195 < len(x_it1193); x_bi1195++ {
+		x_el1196 := x_it1193[x_bi1195]
+		_ = x_el1196
+		var v_c0 uint8 = x_el1196
 		_ = v_c0
 		{
 			var v_c_1 uint8 = v_c0
@@ -1171,42 +1171,42 @@ func (v *Multipart_Header) XoMark() {
 }
 
 func (v_h *Multipart_Header) M_add(tk *Task, v_k string, v_v string) {
-	x_a788 := v_k
-	x_m789 := List_index_of[string](tk, (*v_h).F_keys, x_a788)
-	_ = x_m789
+	x_a1197 := v_k
+	x_m1198 := List_index_of[string](tk, (*v_h).F_keys, x_a1197)
+	_ = x_m1198
 	switch {
 	default:
-		if x_m789.Some {
-			var v_i int64 = x_m789.V
+		if x_m1198.Some {
+			var v_i int64 = x_m1198.V
 			_ = v_i
 			{
 				var v_vs List[string] = List_Own(List_At((*v_h).F_values, v_i, "std/multipart.xo:547:16"))
 				_ = v_vs
-				x_pv791 := v_v
+				x_pv1200 := v_v
 				if List_CanPush(v_vs) {
-					v_vs = List_PushFast(v_vs, x_pv791)
+					v_vs = List_PushFast(v_vs, x_pv1200)
 				} else {
-					v_vs = List_PushSlow(v_vs, x_pv791)
+					v_vs = List_PushSlow(v_vs, x_pv1200)
 				}
 				_ = Unit{}
 				List_set[List[string]](tk, &(*v_h).F_values, v_i, List_Own(v_vs))
 				return
 			}
 		}
-		if !x_m789.Some {
+		if !x_m1198.Some {
 			{
-				x_pv792 := v_k
+				x_pv1201 := v_k
 				if List_CanPush((*v_h).F_keys) {
-					(*v_h).F_keys = List_PushFast((*v_h).F_keys, x_pv792)
+					(*v_h).F_keys = List_PushFast((*v_h).F_keys, x_pv1201)
 				} else {
-					(*v_h).F_keys = List_PushSlow((*v_h).F_keys, x_pv792)
+					(*v_h).F_keys = List_PushSlow((*v_h).F_keys, x_pv1201)
 				}
 				_ = Unit{}
-				x_pv793 := ListOf[string](v_v)
+				x_pv1202 := ListOf[string](v_v)
 				if List_CanPush((*v_h).F_values) {
-					(*v_h).F_values = List_PushFast((*v_h).F_values, x_pv793)
+					(*v_h).F_values = List_PushFast((*v_h).F_values, x_pv1202)
 				} else {
-					(*v_h).F_values = List_PushSlow((*v_h).F_values, x_pv793)
+					(*v_h).F_values = List_PushSlow((*v_h).F_values, x_pv1202)
 				}
 				_ = Unit{}
 				return
@@ -1217,17 +1217,17 @@ func (v_h *Multipart_Header) M_add(tk *Task, v_k string, v_v string) {
 }
 
 func (v_h Multipart_Header) M_get(tk *Task, v_k string) string {
-	x_a794 := v_k
-	x_m795 := List_index_of[string](tk, v_h.F_keys, x_a794)
-	_ = x_m795
+	x_a1203 := v_k
+	x_m1204 := List_index_of[string](tk, v_h.F_keys, x_a1203)
+	_ = x_m1204
 	switch {
 	default:
-		if x_m795.Some {
-			var v_i int64 = x_m795.V
+		if x_m1204.Some {
+			var v_i int64 = x_m1204.V
 			_ = v_i
 			return List_At(List_At(v_h.F_values, v_i, "std/multipart.xo:560:16"), int64(0), "std/multipart.xo:560:16")
 		}
-		if !x_m795.Some {
+		if !x_m1204.Some {
 			return ""
 		}
 		panic(Unreachable("std/multipart.xo:559:3"))
@@ -1237,11 +1237,11 @@ func (v_h Multipart_Header) M_get(tk *Task, v_k string) string {
 func (v_h Multipart_Header) M_count(tk *Task) int64 {
 	var v_n int64 = int64(0)
 	_ = v_n
-	x_it797 := v_h.F_values
-	for _, x_e799 := range List_Items(x_it797) {
-		x_el800 := x_e799
-		_ = x_el800
-		var v_vs List[string] = x_el800
+	x_it1206 := v_h.F_values
+	for _, x_e1208 := range List_Items(x_it1206) {
+		x_el1209 := x_e1208
+		_ = x_el1209
+		var v_vs List[string] = x_el1209
 		_ = v_vs
 		{
 			v_n = AddS(v_n, List_len[string](tk, v_vs), "std/multipart.xo:568:5")
@@ -1251,24 +1251,24 @@ func (v_h Multipart_Header) M_count(tk *Task) int64 {
 }
 
 func (v_r *Multipart_R) M_read_continued(tk *Task, v_lim0 int64) Result[Bytes, string] {
-	var x_v801 Bytes
-	x_m802 := (*v_r).M_read_line(tk)
-	_ = x_m802
-x_M803:
+	var x_v1210 Bytes
+	x_m1211 := (*v_r).M_read_line(tk)
+	_ = x_m1211
+x_M1212:
 	switch {
 	default:
-		if x_m802.Some {
-			var v_l Bytes = x_m802.V
+		if x_m1211.Some {
+			var v_l Bytes = x_m1211.V
 			_ = v_l
-			x_v801 = v_l
-			break x_M803
+			x_v1210 = v_l
+			break x_M1212
 		}
-		if !x_m802.Some {
+		if !x_m1211.Some {
 			return Err[Bytes]("EOF")
 		}
 		panic(Unreachable("std/multipart.xo:576:14"))
 	}
-	var v_line Bytes = x_v801
+	var v_line Bytes = x_v1210
 	_ = v_line
 	if (v_lim0 >= int64(0)) && (Bytes_len(tk, v_line) > v_lim0) {
 		return Err[Bytes]("message too large")
@@ -1284,15 +1284,15 @@ x_M803:
 	v_out.M_write(tk, Multipart_trim_lwsp(tk, v_line))
 	var v_n int64 = Bytes_len(tk, Multipart_trim_lwsp(tk, v_line))
 	_ = v_n
-	var x_v804 int64
+	var x_v1213 int64
 	if v_lim0 < int64(0) {
-		x_v804 = INT_MAX
+		x_v1213 = INT_MAX
 	} else {
-		x_v804 = v_lim0
+		x_v1213 = v_lim0
 	}
-	var v_lim int64 = (x_v804 - v_n)
+	var v_lim int64 = (x_v1213 - v_n)
 	_ = v_lim
-x_L805:
+x_L1214:
 	for {
 		if !((*v_r).M_at_lwsp(tk)) {
 			break
@@ -1311,13 +1311,13 @@ x_L805:
 			if v_n >= v_lim {
 				return Err[Bytes]("message too large")
 			}
-			x_m807 := (*v_r).M_read_line(tk)
-			_ = x_m807
-		x_M808:
+			x_m1216 := (*v_r).M_read_line(tk)
+			_ = x_m1216
+		x_M1217:
 			switch {
 			default:
-				if x_m807.Some {
-					var v_l_1 Bytes = x_m807.V
+				if x_m1216.Some {
+					var v_l_1 Bytes = x_m1216.V
 					_ = v_l_1
 					{
 						if Bytes_len(tk, v_l_1) > (v_lim - v_n) {
@@ -1328,10 +1328,10 @@ x_L805:
 						v_out.M_write(tk, v_t)
 						v_n = AddS(v_n, Bytes_len(tk, v_t), "std/multipart.xo:609:9")
 					}
-					break x_M808
+					break x_M1217
 				}
-				if !x_m807.Some {
-					break x_L805
+				if !x_m1216.Some {
+					break x_L1214
 				}
 				panic(Unreachable("std/multipart.xo:602:5"))
 			}
@@ -1348,14 +1348,14 @@ func (v_r *Multipart_R) M_read_header(tk *Task, v_max_memory0 int64, v_max_heade
 	var v_max_headers int64 = v_max_headers0
 	_ = v_max_headers
 	if (*v_r).M_at_lwsp(tk) {
-		x_t809 := (*v_r).M_read_line(tk)
-		var x_c810 Bytes
-		if x_t809.Some {
-			x_c810 = x_t809.V
+		x_t1218 := (*v_r).M_read_line(tk)
+		var x_c1219 Bytes
+		if x_t1218.Some {
+			x_c1219 = x_t1218.V
 		} else {
-			x_c810 = Bytes("")
+			x_c1219 = Bytes("")
 		}
-		var v_line Bytes = x_c810
+		var v_line Bytes = x_c1219
 		_ = v_line
 		if Bytes_len(tk, v_line) > int64(80) {
 			return Err[Multipart_Header]("message too large")
@@ -1364,11 +1364,11 @@ func (v_r *Multipart_R) M_read_header(tk *Task, v_max_memory0 int64, v_max_heade
 	}
 	for {
 		{
-			x_r812 := (*v_r).M_read_continued(tk, v_max_memory)
-			if !x_r812.Ok {
-				return ErrTr[Multipart_Header](x_r812.E, Frame3(x_r812.Tr, "multipart.R.read_header", "std/multipart.xo:629", "r max_memory0 max_headers0", func(v Multipart_R) Multipart_R { v.XoMark(); return v }((*v_r)), v_max_memory0, v_max_headers0))
+			x_r1221 := (*v_r).M_read_continued(tk, v_max_memory)
+			if !x_r1221.Ok {
+				return ErrTr[Multipart_Header](x_r1221.E, Frame3(x_r1221.Tr, "multipart.R.read_header", "std/multipart.xo:629", "r max_memory0 max_headers0", func(v Multipart_R) Multipart_R { v.XoMark(); return v }((*v_r)), v_max_memory0, v_max_headers0))
 			}
-			var v_kv Bytes = x_r812.V
+			var v_kv Bytes = x_r1221.V
 			_ = v_kv
 			if Bytes_is_empty(tk, v_kv) {
 				return Ok[Multipart_Header, string](func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_h))
@@ -1378,32 +1378,32 @@ func (v_r *Multipart_R) M_read_header(tk *Task, v_max_memory0 int64, v_max_heade
 			if v_c < int64(0) {
 				return Err[Multipart_Header](("malformed MIME header line: " + Multipart_text_of(tk, v_kv)))
 			}
-			var x_v813 string
-			x_m814 := Multipart_canonical_key(tk, BytesSlice(v_kv, int64(0), v_c, true, true, "std/multipart.xo:637:35"))
-			_ = x_m814
-		x_M815:
+			var x_v1222 string
+			x_m1223 := Multipart_canonical_key(tk, BytesSlice(v_kv, int64(0), v_c, true, true, "std/multipart.xo:637:35"))
+			_ = x_m1223
+		x_M1224:
 			switch {
 			default:
-				if x_m814.Some {
-					var v_k string = x_m814.V
+				if x_m1223.Some {
+					var v_k string = x_m1223.V
 					_ = v_k
-					x_v813 = v_k
-					break x_M815
+					x_v1222 = v_k
+					break x_M1224
 				}
-				if !x_m814.Some {
+				if !x_m1223.Some {
 					return Err[Multipart_Header](("malformed MIME header line: " + Multipart_text_of(tk, v_kv)))
 				}
 				panic(Unreachable("std/multipart.xo:637:15"))
 			}
-			var v_key string = x_v813
+			var v_key string = x_v1222
 			_ = v_key
 			var v_v Bytes = BytesSlice(v_kv, AddIUp(v_c, int64(1), "std/multipart.xo:641:16"), 0, true, false, "std/multipart.xo:641:13")
 			_ = v_v
-			x_it816 := v_v
-			for x_bi818 := 0; x_bi818 < len(x_it816); x_bi818++ {
-				x_el819 := x_it816[x_bi818]
-				_ = x_el819
-				var v_b uint8 = x_el819
+			x_it1225 := v_v
+			for x_bi1227 := 0; x_bi1227 < len(x_it1225); x_bi1227++ {
+				x_el1228 := x_it1225[x_bi1227]
+				_ = x_el1228
+				var v_b uint8 = x_el1228
 				_ = v_b
 				{
 					if !(Multipart_valid_value_byte(tk, v_b)) {
@@ -1417,8 +1417,8 @@ func (v_r *Multipart_R) M_read_header(tk *Task, v_max_memory0 int64, v_max_heade
 			}
 			var v_value Bytes = Multipart_skip_lwsp(tk, v_v)
 			_ = v_value
-			x_a820 := v_key
-			if !(List_contains[string](tk, v_h.F_keys, x_a820)) {
+			x_a1229 := v_key
+			if !(List_contains[string](tk, v_h.F_keys, x_a1229)) {
 				v_max_memory = SubS(v_max_memory, (Str_len(tk, v_key) + int64(200)), "std/multipart.xo:653:7")
 			}
 			v_max_memory = SubS(v_max_memory, Bytes_len(tk, v_value), "std/multipart.xo:655:5")
@@ -1456,13 +1456,13 @@ func Multipart_is_qp_ws(tk *Task, v_c uint8) bool {
 }
 
 func Multipart_qp_decode(tk *Task, v_raw Bytes, v_end string) Tuple2[Bytes, string] {
-	x_let821 := Multipart_qp_decode_at(tk, v_raw, v_end)
-	_ = x_let821
-	var v_out Bytes = x_let821.F0
+	x_let1230 := Multipart_qp_decode_at(tk, v_raw, v_end)
+	_ = x_let1230
+	var v_out Bytes = x_let1230.F0
 	_ = v_out
-	var v_e string = x_let821.F1
+	var v_e string = x_let1230.F1
 	_ = v_e
-	var v__used int64 = x_let821.F2
+	var v__used int64 = x_let1230.F2
 	_ = v__used
 	return Tuple2[Bytes, string]{F0: v_out, F1: v_e}
 }
@@ -1477,27 +1477,27 @@ func Multipart_qp_decode_at(tk *Task, v_raw Bytes, v_end string) Tuple3[Bytes, s
 			if v_pos >= Bytes_len(tk, v_raw) {
 				return Tuple3[Bytes, string, int64]{F0: v_out.M_freeze(tk), F1: v_end, F2: v_pos}
 			}
-			var x_v823 int64
+			var x_v1232 int64
 			if (Bytes_len(tk, v_raw) - v_pos) > Multipart_BUF {
-				x_v823 = (v_pos + Multipart_BUF)
+				x_v1232 = (v_pos + Multipart_BUF)
 			} else {
-				x_v823 = Bytes_len(tk, v_raw)
+				x_v1232 = Bytes_len(tk, v_raw)
 			}
-			var v_stop int64 = x_v823
+			var v_stop int64 = x_v1232
 			_ = v_stop
 			var v_nl int64 = int64(-1)
 			_ = v_nl
-			x_it824 := Range[int64]{Lo: v_pos, Hi: v_stop, Incl: false}
-		x_L825:
-			for x_i826 := x_it824.Lo; x_i826 < x_it824.Hi; x_i826++ {
-				x_el827 := x_i826
-				_ = x_el827
-				var v_i int64 = x_el827
+			x_it1233 := Range[int64]{Lo: v_pos, Hi: v_stop, Incl: false}
+		x_L1234:
+			for x_i1235 := x_it1233.Lo; x_i1235 < x_it1233.Hi; x_i1235++ {
+				x_el1236 := x_i1235
+				_ = x_el1236
+				var v_i int64 = x_el1236
 				_ = v_i
 				{
 					if BytesAt(v_raw, v_i, "std/multipart.xo:700:10") == uint8(10) {
 						v_nl = v_i
-						break x_L825
+						break x_L1234
 					}
 				}
 			}
@@ -1511,17 +1511,17 @@ func Multipart_qp_decode_at(tk *Task, v_raw Bytes, v_end string) Tuple3[Bytes, s
 			} else {
 				v_whole = BytesSlice(v_raw, v_pos, v_stop, true, true, "std/multipart.xo:711:15")
 				v_pos = v_stop
-				var x_v828 string
+				var x_v1237 string
 				if v_stop == Bytes_len(tk, v_raw) {
 					if Str_is_empty(tk, v_end) {
-						x_v828 = "EOF"
+						x_v1237 = "EOF"
 					} else {
-						x_v828 = v_end
+						x_v1237 = v_end
 					}
 				} else {
-					x_v828 = "bufio: buffer full"
+					x_v1237 = "bufio: buffer full"
 				}
-				v_rerr = x_v828
+				v_rerr = x_v1237
 			}
 			var v_has_lf bool = ((Bytes_len(tk, v_whole) > int64(0)) && (BytesAt(v_whole, (Bytes_len(tk, v_whole)-int64(1)), "std/multipart.xo:715:37") == uint8(10)))
 			_ = v_has_lf
@@ -1555,13 +1555,13 @@ func Multipart_qp_decode_at(tk *Task, v_raw Bytes, v_end string) Tuple3[Bytes, s
 			} else {
 				v_line.M_write(tk, BytesSlice(v_whole, int64(0), v_e, true, true, "std/multipart.xo:732:18"))
 				if v_has_lf {
-					var x_v830 Bytes
+					var x_v1239 Bytes
 					if v_has_cr {
-						x_v830 = Bytes("\r\n")
+						x_v1239 = Bytes("\r\n")
 					} else {
-						x_v830 = Bytes("\n")
+						x_v1239 = Bytes("\n")
 					}
-					v_line.M_write(tk, x_v830)
+					v_line.M_write(tk, x_v1239)
 				}
 			}
 			var v_l Bytes = v_line.M_freeze(tk)
@@ -1587,13 +1587,13 @@ func Multipart_qp_decode_at(tk *Task, v_raw Bytes, v_end string) Tuple3[Bytes, s
 								if (BytesAt(v_l, (v_i_1+int64(1)), "std/multipart.xo:749:14") != uint8(13)) && (BytesAt(v_l, (v_i_1+int64(1)), "std/multipart.xo:749:32") != uint8(10)) {
 									v_c = uint8(61)
 								} else {
-									var x_v832 uint8
+									var x_v1241 uint8
 									if Multipart_qp_hex(tk, BytesAt(v_l, (v_i_1+int64(1)), "std/multipart.xo:752:31")) < int64(0) {
-										x_v832 = BytesAt(v_l, (v_i_1 + int64(1)), "std/multipart.xo:752:47")
+										x_v1241 = BytesAt(v_l, (v_i_1 + int64(1)), "std/multipart.xo:752:47")
 									} else {
-										x_v832 = BytesAt(v_l, (v_i_1 + int64(2)), "std/multipart.xo:752:65")
+										x_v1241 = BytesAt(v_l, (v_i_1 + int64(2)), "std/multipart.xo:752:65")
 									}
-									var v_x uint8 = x_v832
+									var v_x uint8 = x_v1241
 									_ = v_x
 									return Tuple3[Bytes, string, int64]{F0: v_out.M_freeze(tk), F1: ("quotedprintable: invalid hex byte 0x" + Multipart_hex2(tk, v_x)), F2: v_pos}
 								}
@@ -1618,14 +1618,14 @@ func Multipart_qp_decode_at(tk *Task, v_raw Bytes, v_end string) Tuple3[Bytes, s
 				return Tuple3[Bytes, string, int64]{F0: v_out.M_freeze(tk), F1: v_bad, F2: v_pos}
 			}
 			if !(Str_is_empty(tk, v_rerr)) {
-				x_a834 := v_out.M_freeze(tk)
-				var x_v833 string
+				x_a1243 := v_out.M_freeze(tk)
+				var x_v1242 string
 				if v_rerr == "EOF" {
-					x_v833 = ""
+					x_v1242 = ""
 				} else {
-					x_v833 = v_rerr
+					x_v1242 = v_rerr
 				}
-				return Tuple3[Bytes, string, int64]{F0: x_a834, F1: x_v833, F2: v_pos}
+				return Tuple3[Bytes, string, int64]{F0: x_a1243, F1: x_v1242, F2: v_pos}
 			}
 		}
 	}
@@ -1680,21 +1680,21 @@ func (v_r *Multipart_R) M_next_part(tk *Task, v_max_header_size int64, v_max_hea
 	}
 	var v_expect_new bool = false
 	_ = v_expect_new
-x_L835:
+x_L1244:
 	for {
 		{
-			x_let836 := (*v_r).M_read_slice(tk)
-			_ = x_let836
-			var v_line Bytes = x_let836.F0
+			x_let1245 := (*v_r).M_read_slice(tk)
+			_ = x_let1245
+			var v_line Bytes = x_let1245.F0
 			_ = v_line
-			var v_e string = x_let836.F1
+			var v_e string = x_let1245.F1
 			_ = v_e
-			x_b838 := (v_e == "EOF")
-			if x_b838 {
-				x_a837 := v_line
-				x_b838 = Addr(func(v Multipart_R) Multipart_R { v.XoMark(); return v }((*v_r))).M_is_final_boundary(tk, x_a837)
+			x_b1247 := (v_e == "EOF")
+			if x_b1247 {
+				x_a1246 := v_line
+				x_b1247 = Addr(func(v Multipart_R) Multipart_R { v.XoMark(); return v }((*v_r))).M_is_final_boundary(tk, x_a1246)
 			}
-			if x_b838 {
+			if x_b1247 {
 				return Ok[Option[Multipart_Next], string](func(v Option[Multipart_Next]) Option[Multipart_Next] {
 					if v.Some {
 						v.V.XoMark()
@@ -1707,25 +1707,25 @@ x_L835:
 			}
 			if (*v_r).M_is_boundary_delimiter_line(tk, v_line) {
 				(*v_r).F_parts_read = AddS((*v_r).F_parts_read, int64(1), "std/multipart.xo:799:7")
-				var x_v839 Multipart_Header
-				x_m840 := func(v Result[Multipart_Header, string]) Result[Multipart_Header, string] {
+				var x_v1248 Multipart_Header
+				x_m1249 := func(v Result[Multipart_Header, string]) Result[Multipart_Header, string] {
 					if v.Ok {
 						v.V.XoMark()
 					}
 					return v
 				}((*v_r).M_read_header(tk, v_max_header_size, v_max_headers))
-				_ = x_m840
-			x_M841:
+				_ = x_m1249
+			x_M1250:
 				switch {
 				default:
-					if x_m840.Ok {
-						var v_h Multipart_Header = x_m840.V
+					if x_m1249.Ok {
+						var v_h Multipart_Header = x_m1249.V
 						_ = v_h
-						x_v839 = func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_h)
-						break x_M841
+						x_v1248 = func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_h)
+						break x_M1250
 					}
-					if !x_m840.Ok {
-						var v_m string = x_m840.E
+					if !x_m1249.Ok {
+						var v_m string = x_m1249.E
 						_ = v_m
 						{
 							if v_m == "EOF" {
@@ -1739,18 +1739,18 @@ x_L835:
 									return v
 								}(None[Multipart_Next]()))
 							}
-							var x_v842 string
+							var x_v1251 string
 							if v_m == "message too large" {
-								x_v842 = Multipart_TOO_LARGE
+								x_v1251 = Multipart_TOO_LARGE
 							} else {
-								x_v842 = v_m
+								x_v1251 = v_m
 							}
-							return Err[Option[Multipart_Next]](x_v842)
+							return Err[Option[Multipart_Next]](x_v1251)
 						}
 					}
 					panic(Unreachable("std/multipart.xo:800:15"))
 				}
-				var v_h_1 Multipart_Header = x_v839
+				var v_h_1 Multipart_Header = x_v1248
 				_ = v_h_1
 				var v_qp bool = false
 				_ = v_qp
@@ -1758,14 +1758,14 @@ x_L835:
 				_ = v_hd
 				if Str_to_lower(tk, Addr(func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_h_1)).M_get(tk, "Content-Transfer-Encoding")) == "quoted-printable" {
 					v_qp = true
-					x_t843 := List_index_of[string](tk, v_hd.F_keys, "Content-Transfer-Encoding")
-					var x_c844 int64
-					if x_t843.Some {
-						x_c844 = x_t843.V
+					x_t1252 := List_index_of[string](tk, v_hd.F_keys, "Content-Transfer-Encoding")
+					var x_c1253 int64
+					if x_t1252.Some {
+						x_c1253 = x_t1252.V
 					} else {
-						x_c844 = int64(0)
+						x_c1253 = int64(0)
 					}
-					var v_i int64 = x_c844
+					var v_i int64 = x_c1253
 					_ = v_i
 					var v__k string = List_remove_at[string](tk, &v_hd.F_keys, v_i)
 					_ = v__k
@@ -1774,8 +1774,8 @@ x_L835:
 				}
 				return Ok[Option[Multipart_Next], string](Some[Multipart_Next](Multipart_Next{F_header: func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_hd), F_qp: v_qp}))
 			}
-			x_a845 := v_line
-			if Addr(func(v Multipart_R) Multipart_R { v.XoMark(); return v }((*v_r))).M_is_final_boundary(tk, x_a845) {
+			x_a1254 := v_line
+			if Addr(func(v Multipart_R) Multipart_R { v.XoMark(); return v }((*v_r))).M_is_final_boundary(tk, x_a1254) {
 				return Ok[Option[Multipart_Next], string](func(v Option[Multipart_Next]) Option[Multipart_Next] {
 					if v.Some {
 						v.V.XoMark()
@@ -1787,11 +1787,11 @@ x_L835:
 				return Err[Option[Multipart_Next]](("multipart: expecting a new Part; got line " + Multipart_go_q(tk, v_line)))
 			}
 			if (*v_r).F_parts_read == int64(0) {
-				continue x_L835
+				continue x_L1244
 			}
 			if v_line == (*v_r).F_nl {
 				v_expect_new = true
-				continue x_L835
+				continue x_L1244
 			}
 			return Err[Option[Multipart_Next]](("multipart: unexpected line in Next(): " + Multipart_go_q(tk, v_line)))
 		}
@@ -1799,11 +1799,11 @@ x_L835:
 }
 
 func (v_r *Multipart_R) M_part_data(tk *Task, v_n Multipart_Next) Tuple2[Bytes, string] {
-	x_let846 := (*v_r).M_read_part(tk)
-	_ = x_let846
-	var v_raw Bytes = x_let846.F0
+	x_let1255 := (*v_r).M_read_part(tk)
+	_ = x_let1255
+	var v_raw Bytes = x_let1255.F0
 	_ = v_raw
-	var v_e string = x_let846.F1
+	var v_e string = x_let1255.F1
 	_ = v_e
 	if v_n.F_qp {
 		return Multipart_qp_decode(tk, v_raw, v_e)
@@ -1827,67 +1827,67 @@ func (v_r *Multipart_R) M_skip_part(tk *Task, v_n Multipart_Next) {
 	_ = v_eof
 	var v_e string = ""
 	_ = v_e
-x_L847:
+x_L1256:
 	for {
 		{
-			x_a848 := v_total
-			x_a849 := v_eof
-			x_let850 := Addr(func(v Multipart_R) Multipart_R { v.XoMark(); return v }((*v_r))).M_scan(tk, x_a848, x_a849)
-			_ = x_let850
-			var v_k int64 = x_let850.F0
+			x_a1257 := v_total
+			x_a1258 := v_eof
+			x_let1259 := Addr(func(v Multipart_R) Multipart_R { v.XoMark(); return v }((*v_r))).M_scan(tk, x_a1257, x_a1258)
+			_ = x_let1259
+			var v_k int64 = x_let1259.F0
 			_ = v_k
-			var v_se string = x_let850.F1
+			var v_se string = x_let1259.F1
 			_ = v_se
 			if (v_k == int64(0)) && Str_is_empty(tk, v_se) {
 				if !((*v_r).M_more(tk)) {
 					if !(Str_is_empty(tk, (*v_r).F_src_err)) {
 						v_e = (*v_r).F_src_err
-						break x_L847
+						break x_L1256
 					}
 					v_eof = true
 				}
-				continue x_L847
+				continue x_L1256
 			}
 			v_raw.M_write(tk, BytesSlice((*v_r).F_buf, (*v_r).F_pos, AddS((*v_r).F_pos, v_k, "std/multipart.xo:882:28"), true, true, "std/multipart.xo:882:15"))
 			(*v_r).F_pos = AddS((*v_r).F_pos, v_k, "std/multipart.xo:883:5")
 			v_total = AddS(v_total, v_k, "std/multipart.xo:884:5")
-			x_pv851 := v_total
+			x_pv1260 := v_total
 			if List_CanPush(v_ends) {
-				v_ends = List_PushFast(v_ends, x_pv851)
+				v_ends = List_PushFast(v_ends, x_pv1260)
 			} else {
-				v_ends = List_PushSlow(v_ends, x_pv851)
+				v_ends = List_PushSlow(v_ends, x_pv1260)
 			}
 			_ = Unit{}
 			if !(Str_is_empty(tk, v_se)) {
-				var x_v852 string
+				var x_v1261 string
 				if v_se == "EOF" {
-					x_v852 = ""
+					x_v1261 = ""
 				} else {
-					x_v852 = v_se
+					x_v1261 = v_se
 				}
-				v_e = x_v852
-				break x_L847
+				v_e = x_v1261
+				break x_L1256
 			}
 		}
 	}
 	var v_rb Bytes = v_raw.M_freeze(tk)
 	_ = v_rb
-	x_let853 := Multipart_qp_decode_at(tk, v_rb, v_e)
-	_ = x_let853
-	var v__out Bytes = x_let853.F0
+	x_let1262 := Multipart_qp_decode_at(tk, v_rb, v_e)
+	_ = x_let1262
+	var v__out Bytes = x_let1262.F0
 	_ = v__out
-	var v_qe string = x_let853.F1
+	var v_qe string = x_let1262.F1
 	_ = v_qe
-	var v_used int64 = x_let853.F2
+	var v_used int64 = x_let1262.F2
 	_ = v_used
 	if Str_is_empty(tk, v_qe) || (v_qe == v_e) {
 		return
 	}
-	x_it854 := v_ends
-	for _, x_e856 := range List_Items(x_it854) {
-		x_el857 := x_e856
-		_ = x_el857
-		var v_c int64 = x_el857
+	x_it1263 := v_ends
+	for _, x_e1265 := range List_Items(x_it1263) {
+		x_el1266 := x_e1265
+		_ = x_el1266
+		var v_c int64 = x_el1266
 		_ = v_c
 		{
 			if v_c >= v_used {
@@ -1933,54 +1933,54 @@ func Multipart_base(tk *Task, v_p string) string {
 }
 
 func Multipart_names(tk *Task, v_h Multipart_Header) Tuple2[string, string] {
-	x_m860 := func(v Result[Mime_MediaType, Mime_MimeErr]) Result[Mime_MediaType, Mime_MimeErr] {
+	x_m1269 := func(v Result[Mime_MediaType, Mime_MimeErr]) Result[Mime_MediaType, Mime_MimeErr] {
 		if v.Ok {
 			v.V.XoMark()
 		}
 		return v
 	}(Mime_parse_media_type(tk, Addr(func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_h)).M_get(tk, "Content-Disposition")))
-	_ = x_m860
+	_ = x_m1269
 	switch {
 	default:
-		if x_m860.Ok {
-			var v_m Mime_MediaType = x_m860.V
+		if x_m1269.Ok {
+			var v_m Mime_MediaType = x_m1269.V
 			_ = v_m
 			{
-				var x_v862 string
+				var x_v1271 string
 				if v_m.F_kind == "form-data" {
-					x_t863 := Map_get[string, string](tk, v_m.F_params, "name")
-					var x_c864 string
-					if x_t863.Some {
-						x_c864 = x_t863.V
+					x_t1272 := Map_get[string, string](tk, v_m.F_params, "name")
+					var x_c1273 string
+					if x_t1272.Some {
+						x_c1273 = x_t1272.V
 					} else {
-						x_c864 = ""
+						x_c1273 = ""
 					}
-					x_v862 = x_c864
+					x_v1271 = x_c1273
 				} else {
-					x_v862 = ""
+					x_v1271 = ""
 				}
-				var v_name string = x_v862
+				var v_name string = x_v1271
 				_ = v_name
-				x_t865 := Map_get[string, string](tk, v_m.F_params, "filename")
-				var x_c866 string
-				if x_t865.Some {
-					x_c866 = x_t865.V
+				x_t1274 := Map_get[string, string](tk, v_m.F_params, "filename")
+				var x_c1275 string
+				if x_t1274.Some {
+					x_c1275 = x_t1274.V
 				} else {
-					x_c866 = ""
+					x_c1275 = ""
 				}
-				var v_f string = x_c866
+				var v_f string = x_c1275
 				_ = v_f
-				x_a868 := v_name
-				var x_v867 string
+				x_a1277 := v_name
+				var x_v1276 string
 				if Str_is_empty(tk, v_f) {
-					x_v867 = ""
+					x_v1276 = ""
 				} else {
-					x_v867 = Multipart_base(tk, v_f)
+					x_v1276 = Multipart_base(tk, v_f)
 				}
-				return Tuple2[string, string]{F0: x_a868, F1: x_v867}
+				return Tuple2[string, string]{F0: x_a1277, F1: x_v1276}
 			}
 		}
-		if !x_m860.Ok {
+		if !x_m1269.Ok {
 			return Tuple2[string, string]{F0: "", F1: ""}
 		}
 		panic(Unreachable("std/multipart.xo:929:3"))
@@ -1990,11 +1990,11 @@ func Multipart_names(tk *Task, v_h Multipart_Header) Tuple2[string, string] {
 func Multipart_first_values(tk *Task, v_h Multipart_Header) Map[string, string] {
 	var v_m Map[string, string] = Map[string, string]{}
 	_ = v_m
-	x_it869 := Range[int64]{Lo: int64(0), Hi: List_len[string](tk, v_h.F_keys), Incl: false}
-	for x_i871 := x_it869.Lo; x_i871 < x_it869.Hi; x_i871++ {
-		x_el872 := x_i871
-		_ = x_el872
-		var v_i int64 = x_el872
+	x_it1278 := Range[int64]{Lo: int64(0), Hi: List_len[string](tk, v_h.F_keys), Incl: false}
+	for x_i1280 := x_it1278.Lo; x_i1280 < x_it1278.Hi; x_i1280++ {
+		x_el1281 := x_i1280
+		_ = x_el1281
+		var v_i int64 = x_el1281
 		_ = v_i
 		{
 			Map_put[string, string](tk, &v_m, List_AtU(v_h.F_keys, v_i), List_At(List_At(v_h.F_values, v_i, "std/multipart.xo:942:22"), int64(0), "std/multipart.xo:942:22"))
@@ -2004,20 +2004,20 @@ func Multipart_first_values(tk *Task, v_h Multipart_Header) Map[string, string] 
 }
 
 func Multipart_to_part(tk *Task, v_h Multipart_Header, v_data Bytes) Multipart_Part {
-	x_let873 := Multipart_names(tk, func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_h))
-	_ = x_let873
-	var v_name string = x_let873.F0
+	x_let1282 := Multipart_names(tk, func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_h))
+	_ = x_let1282
+	var v_name string = x_let1282.F0
 	_ = v_name
-	var v_file string = x_let873.F1
+	var v_file string = x_let1282.F1
 	_ = v_file
-	x_a875 := v_name
-	var x_v874 Option[string]
+	x_a1284 := v_name
+	var x_v1283 Option[string]
 	if Str_is_empty(tk, v_file) {
-		x_v874 = None[string]()
+		x_v1283 = None[string]()
 	} else {
-		x_v874 = Some[string](v_file)
+		x_v1283 = Some[string](v_file)
 	}
-	return Multipart_Part{F_name: x_a875, F_filename: x_v874, F_headers: Map_Own(Multipart_first_values(tk, func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_h))), F_data: v_data}
+	return Multipart_Part{F_name: x_a1284, F_filename: x_v1283, F_headers: Map_Own(Multipart_first_values(tk, func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_h))), F_data: v_data}
 }
 
 type Multipart_PartHead struct {
@@ -2079,14 +2079,14 @@ func (v *Multipart_PartHead) XoMark() {
 }
 
 func (v_h Multipart_PartHead) M_header_values(tk *Task, v_name string) List[string] {
-	x_t876 := Multipart_canonical_key(tk, Str_bytes(tk, v_name))
-	var x_c877 string
-	if x_t876.Some {
-		x_c877 = x_t876.V
+	x_t1285 := Multipart_canonical_key(tk, Str_bytes(tk, v_name))
+	var x_c1286 string
+	if x_t1285.Some {
+		x_c1286 = x_t1285.V
 	} else {
-		x_c877 = v_name
+		x_c1286 = v_name
 	}
-	var v_k string = x_c877
+	var v_k string = x_c1286
 	_ = v_k
 	var v_vs List[string] = List[string]{}
 	_ = v_vs
@@ -2098,11 +2098,11 @@ func (v_h Multipart_PartHead) M_header_values(tk *Task, v_name string) List[stri
 		}
 		{
 			if List_At(v_h.F_fields, v_i, "std/multipart.xo:972:8") == v_k {
-				x_pv879 := List_At(v_h.F_fields, AddIUp(v_i, int64(1), "std/multipart.xo:973:24"), "std/multipart.xo:973:15")
+				x_pv1288 := List_At(v_h.F_fields, AddIUp(v_i, int64(1), "std/multipart.xo:973:24"), "std/multipart.xo:973:15")
 				if List_CanPush(v_vs) {
-					v_vs = List_PushFast(v_vs, x_pv879)
+					v_vs = List_PushFast(v_vs, x_pv1288)
 				} else {
-					v_vs = List_PushSlow(v_vs, x_pv879)
+					v_vs = List_PushSlow(v_vs, x_pv1288)
 				}
 				_ = Unit{}
 			}
@@ -2231,7 +2231,7 @@ func Multipart_reader(tk *Task, v_src func(*Task) Result[Option[Bytes], string],
 }
 
 func (v_r *Multipart_Reader) M_next_part(tk *Task) Result[Option[Multipart_PartHead], Multipart_MultipartErr] {
-	x_m880 := func(v Result[Option[Multipart_PartHead], string]) Result[Option[Multipart_PartHead], string] {
+	x_m1289 := func(v Result[Option[Multipart_PartHead], string]) Result[Option[Multipart_PartHead], string] {
 		if v.Ok {
 			if v.V.Some {
 				v.V.V.XoMark()
@@ -2239,11 +2239,11 @@ func (v_r *Multipart_Reader) M_next_part(tk *Task) Result[Option[Multipart_PartH
 		}
 		return v
 	}((*v_r).M_head_next(tk))
-	_ = x_m880
+	_ = x_m1289
 	switch {
 	default:
-		if x_m880.Ok {
-			var v_h Option[Multipart_PartHead] = x_m880.V
+		if x_m1289.Ok {
+			var v_h Option[Multipart_PartHead] = x_m1289.V
 			_ = v_h
 			return Ok[Option[Multipart_PartHead], Multipart_MultipartErr](func(v Option[Multipart_PartHead]) Option[Multipart_PartHead] {
 				if v.Some {
@@ -2252,8 +2252,8 @@ func (v_r *Multipart_Reader) M_next_part(tk *Task) Result[Option[Multipart_PartH
 				return v
 			}(v_h))
 		}
-		if !x_m880.Ok {
-			var v_m string = x_m880.E
+		if !x_m1289.Ok {
+			var v_m string = x_m1289.E
 			_ = v_m
 			return Err[Option[Multipart_PartHead]](Multipart_MultipartErr{F_msg: v_m})
 		}
@@ -2265,17 +2265,17 @@ func (v_r *Multipart_Reader) M_read(tk *Task, v_max int64) Result[Option[Bytes],
 	if v_max < int64(1) {
 		Fault(tk, ("multipart.Reader.read: max must be at least 1, got " + IntStr(v_max)), "std/multipart.xo:1026:5")
 	}
-	x_m882 := (*v_r).M_data_next(tk, v_max)
-	_ = x_m882
+	x_m1291 := (*v_r).M_data_next(tk, v_max)
+	_ = x_m1291
 	switch {
 	default:
-		if x_m882.Ok {
-			var v_d Option[Bytes] = x_m882.V
+		if x_m1291.Ok {
+			var v_d Option[Bytes] = x_m1291.V
 			_ = v_d
 			return Ok[Option[Bytes], Multipart_MultipartErr](v_d)
 		}
-		if !x_m882.Ok {
-			var v_m string = x_m882.E
+		if !x_m1291.Ok {
+			var v_m string = x_m1291.E
 			_ = v_m
 			return Err[Option[Bytes]](Multipart_MultipartErr{F_msg: v_m})
 		}
@@ -2304,20 +2304,20 @@ func (v_s *Multipart_Reader) M_head_next(tk *Task) Result[Option[Multipart_PartH
 			(*v_s).F_r.M_skip_part(tk, func(v Multipart_Next) Multipart_Next { v.XoMark(); return v }((*v_s).F_cur))
 		} else {
 			if !((*v_s).F_cur.F_qp) {
-			x_L884:
+			x_L1293:
 				for {
 					if !(!((*v_s).F_end)) {
 						break
 					}
 					{
-						x_let885 := (*v_s).M_chunk(tk, int64(1048576))
-						_ = x_let885
-						var v__d Bytes = x_let885.F0
+						x_let1294 := (*v_s).M_chunk(tk, int64(1048576))
+						_ = x_let1294
+						var v__d Bytes = x_let1294.F0
 						_ = v__d
-						var v_e string = x_let885.F1
+						var v_e string = x_let1294.F1
 						_ = v_e
 						if !(Str_is_empty(tk, v_e)) {
-							break x_L884
+							break x_L1293
 						}
 					}
 				}
@@ -2325,8 +2325,8 @@ func (v_s *Multipart_Reader) M_head_next(tk *Task) Result[Option[Multipart_PartH
 		}
 		(*v_s).F_open = false
 	}
-	var x_v886 Multipart_Next
-	x_m887 := func(v Result[Option[Multipart_Next], string]) Result[Option[Multipart_Next], string] {
+	var x_v1295 Multipart_Next
+	x_m1296 := func(v Result[Option[Multipart_Next], string]) Result[Option[Multipart_Next], string] {
 		if v.Ok {
 			if v.V.Some {
 				v.V.V.XoMark()
@@ -2334,17 +2334,17 @@ func (v_s *Multipart_Reader) M_head_next(tk *Task) Result[Option[Multipart_PartH
 		}
 		return v
 	}((*v_s).F_r.M_next_part(tk, Multipart_MAX_HEADER_SIZE, Multipart_MAX_HEADERS))
-	_ = x_m887
-x_M888:
+	_ = x_m1296
+x_M1297:
 	switch {
 	default:
-		if x_m887.Ok && x_m887.V.Some {
-			var v_n Multipart_Next = x_m887.V.V
+		if x_m1296.Ok && x_m1296.V.Some {
+			var v_n Multipart_Next = x_m1296.V.V
 			_ = v_n
-			x_v886 = func(v Multipart_Next) Multipart_Next { v.XoMark(); return v }(v_n)
-			break x_M888
+			x_v1295 = func(v Multipart_Next) Multipart_Next { v.XoMark(); return v }(v_n)
+			break x_M1297
 		}
-		if x_m887.Ok && !x_m887.V.Some {
+		if x_m1296.Ok && !x_m1296.V.Some {
 			{
 				(*v_s).F_last = true
 				return Ok[Option[Multipart_PartHead], string](func(v Option[Multipart_PartHead]) Option[Multipart_PartHead] {
@@ -2355,23 +2355,23 @@ x_M888:
 				}(None[Multipart_PartHead]()))
 			}
 		}
-		if !x_m887.Ok {
-			var v_m string = x_m887.E
+		if !x_m1296.Ok {
+			var v_m string = x_m1296.E
 			_ = v_m
 			{
-				var x_v889 string
+				var x_v1298 string
 				if v_m == "message too large" {
-					x_v889 = Multipart_TOO_LARGE
+					x_v1298 = Multipart_TOO_LARGE
 				} else {
-					x_v889 = v_m
+					x_v1298 = v_m
 				}
-				(*v_s).F_failed = x_v889
+				(*v_s).F_failed = x_v1298
 				return Err[Option[Multipart_PartHead]]((*v_s).F_failed)
 			}
 		}
 		panic(Unreachable("std/multipart.xo:1054:11"))
 	}
-	var v_n_1 Multipart_Next = x_v886
+	var v_n_1 Multipart_Next = x_v1295
 	_ = v_n_1
 	(*v_s).F_cur = func(v Multipart_Next) Multipart_Next { v.XoMark(); return v }(v_n_1)
 	(*v_s).F_open = true
@@ -2382,58 +2382,58 @@ x_M888:
 	(*v_s).F_pend = Bytes("")
 	(*v_s).F_ppos = int64(0)
 	(*v_s).F_qp_read = false
-	x_let890 := Multipart_names(tk, func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_n_1.F_header))
-	_ = x_let890
-	var v_name string = x_let890.F0
+	x_let1299 := Multipart_names(tk, func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_n_1.F_header))
+	_ = x_let1299
+	var v_name string = x_let1299.F0
 	_ = v_name
-	var v_file string = x_let890.F1
+	var v_file string = x_let1299.F1
 	_ = v_file
 	var v_fields List[string] = List[string]{}
 	_ = v_fields
-	x_it891 := Range[int64]{Lo: int64(0), Hi: List_len[string](tk, v_n_1.F_header.F_keys), Incl: false}
-	for x_i893 := x_it891.Lo; x_i893 < x_it891.Hi; x_i893++ {
-		x_el894 := x_i893
-		_ = x_el894
-		var v_i int64 = x_el894
+	x_it1300 := Range[int64]{Lo: int64(0), Hi: List_len[string](tk, v_n_1.F_header.F_keys), Incl: false}
+	for x_i1302 := x_it1300.Lo; x_i1302 < x_it1300.Hi; x_i1302++ {
+		x_el1303 := x_i1302
+		_ = x_el1303
+		var v_i int64 = x_el1303
 		_ = v_i
 		{
-			x_it895 := List_At(v_n_1.F_header.F_values, v_i, "std/multipart.xo:1077:14")
-			for _, x_e897 := range List_Items(x_it895) {
-				x_el898 := x_e897
-				_ = x_el898
-				var v_v string = x_el898
+			x_it1304 := List_At(v_n_1.F_header.F_values, v_i, "std/multipart.xo:1077:14")
+			for _, x_e1306 := range List_Items(x_it1304) {
+				x_el1307 := x_e1306
+				_ = x_el1307
+				var v_v string = x_el1307
 				_ = v_v
 				{
-					x_pv899 := List_AtU(v_n_1.F_header.F_keys, v_i)
+					x_pv1308 := List_AtU(v_n_1.F_header.F_keys, v_i)
 					if List_CanPush(v_fields) {
-						v_fields = List_PushFast(v_fields, x_pv899)
+						v_fields = List_PushFast(v_fields, x_pv1308)
 					} else {
-						v_fields = List_PushSlow(v_fields, x_pv899)
+						v_fields = List_PushSlow(v_fields, x_pv1308)
 					}
 					_ = Unit{}
-					x_pv900 := v_v
+					x_pv1309 := v_v
 					if List_CanPush(v_fields) {
-						v_fields = List_PushFast(v_fields, x_pv900)
+						v_fields = List_PushFast(v_fields, x_pv1309)
 					} else {
-						v_fields = List_PushSlow(v_fields, x_pv900)
+						v_fields = List_PushSlow(v_fields, x_pv1309)
 					}
 					_ = Unit{}
 				}
 			}
 		}
 	}
-	x_a902 := v_name
-	var x_v901 Option[string]
+	x_a1311 := v_name
+	var x_v1310 Option[string]
 	if Str_is_empty(tk, v_file) {
-		x_v901 = None[string]()
+		x_v1310 = None[string]()
 	} else {
-		x_v901 = Some[string](v_file)
+		x_v1310 = Some[string](v_file)
 	}
-	return Ok[Option[Multipart_PartHead], string](Some[Multipart_PartHead](Multipart_PartHead{F_name: x_a902, F_filename: x_v901, F_headers: Map_Own(Multipart_first_values(tk, func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_n_1.F_header))), F_fields: List_Own(v_fields)}))
+	return Ok[Option[Multipart_PartHead], string](Some[Multipart_PartHead](Multipart_PartHead{F_name: x_a1311, F_filename: x_v1310, F_headers: Map_Own(Multipart_first_values(tk, func(v Multipart_Header) Multipart_Header { v.XoMark(); return v }(v_n_1.F_header))), F_fields: List_Own(v_fields)}))
 }
 
 func (v_s *Multipart_Reader) M_chunk(tk *Task, v_max int64) Tuple2[Bytes, string] {
-x_L903:
+x_L1312:
 	for {
 		if !(true) {
 			break
@@ -2442,13 +2442,13 @@ x_L903:
 			if (*v_s).F_end {
 				return Tuple2[Bytes, string]{F0: Bytes(""), F1: (*v_s).F_err}
 			}
-			x_a904 := (*v_s).F_total
-			x_a905 := (*v_s).F_eof
-			x_let906 := Addr(func(v Multipart_R) Multipart_R { v.XoMark(); return v }((*v_s).F_r)).M_scan(tk, x_a904, x_a905)
-			_ = x_let906
-			var v_n int64 = x_let906.F0
+			x_a1313 := (*v_s).F_total
+			x_a1314 := (*v_s).F_eof
+			x_let1315 := Addr(func(v Multipart_R) Multipart_R { v.XoMark(); return v }((*v_s).F_r)).M_scan(tk, x_a1313, x_a1314)
+			_ = x_let1315
+			var v_n int64 = x_let1315.F0
 			_ = v_n
-			var v_e string = x_let906.F1
+			var v_e string = x_let1315.F1
 			_ = v_e
 			if (v_n == int64(0)) && Str_is_empty(tk, v_e) {
 				if !((*v_s).F_r.M_more(tk)) {
@@ -2459,15 +2459,15 @@ x_L903:
 					}
 					(*v_s).F_eof = true
 				}
-				continue x_L903
+				continue x_L1312
 			}
-			var x_v907 int64
+			var x_v1316 int64
 			if v_n < v_max {
-				x_v907 = v_n
+				x_v1316 = v_n
 			} else {
-				x_v907 = v_max
+				x_v1316 = v_max
 			}
-			var v_k int64 = x_v907
+			var v_k int64 = x_v1316
 			_ = v_k
 			var v_data Bytes = BytesSlice((*v_s).F_r.F_buf, (*v_s).F_r.F_pos, AddS((*v_s).F_r.F_pos, v_k, "std/multipart.xo:1105:33"), true, true, "std/multipart.xo:1105:16")
 			_ = v_data
@@ -2475,13 +2475,13 @@ x_L903:
 			(*v_s).F_total = AddS((*v_s).F_total, v_k, "std/multipart.xo:1107:5")
 			if (v_k == v_n) && !(Str_is_empty(tk, v_e)) {
 				(*v_s).F_end = true
-				var x_v908 string
+				var x_v1317 string
 				if v_e == "EOF" {
-					x_v908 = ""
+					x_v1317 = ""
 				} else {
-					x_v908 = v_e
+					x_v1317 = v_e
 				}
-				(*v_s).F_err = x_v908
+				(*v_s).F_err = x_v1317
 			}
 			if v_k > int64(0) {
 				return Tuple2[Bytes, string]{F0: v_data, F1: ""}
@@ -2501,17 +2501,17 @@ func (v_s *Multipart_Reader) M_data_next(tk *Task, v_max int64) Result[Option[By
 	if (*v_s).F_cur.F_qp {
 		if !((*v_s).F_qp_read) {
 			(*v_s).F_qp_read = true
-			x_let909 := (*v_s).F_r.M_read_part(tk)
-			_ = x_let909
-			var v_raw Bytes = x_let909.F0
+			x_let1318 := (*v_s).F_r.M_read_part(tk)
+			_ = x_let1318
+			var v_raw Bytes = x_let1318.F0
 			_ = v_raw
-			var v_e string = x_let909.F1
+			var v_e string = x_let1318.F1
 			_ = v_e
-			x_let910 := Multipart_qp_decode(tk, v_raw, v_e)
-			_ = x_let910
-			var v_d Bytes = x_let910.F0
+			x_let1319 := Multipart_qp_decode(tk, v_raw, v_e)
+			_ = x_let1319
+			var v_d Bytes = x_let1319.F0
 			_ = v_d
-			var v_de string = x_let910.F1
+			var v_de string = x_let1319.F1
 			_ = v_de
 			(*v_s).F_pend = v_d
 			(*v_s).F_err = v_de
@@ -2524,24 +2524,24 @@ func (v_s *Multipart_Reader) M_data_next(tk *Task, v_max int64) Result[Option[By
 			}
 			return Ok[Option[Bytes], string](None[Bytes]())
 		}
-		var x_v911 int64
+		var x_v1320 int64
 		if v_left < v_max {
-			x_v911 = v_left
+			x_v1320 = v_left
 		} else {
-			x_v911 = v_max
+			x_v1320 = v_max
 		}
-		var v_k int64 = x_v911
+		var v_k int64 = x_v1320
 		_ = v_k
 		var v_out Bytes = BytesSlice((*v_s).F_pend, (*v_s).F_ppos, AddS((*v_s).F_ppos, v_k, "std/multipart.xo:1142:30"), true, true, "std/multipart.xo:1142:15")
 		_ = v_out
 		(*v_s).F_ppos = AddS((*v_s).F_ppos, v_k, "std/multipart.xo:1143:5")
 		return Ok[Option[Bytes], string](Some[Bytes](v_out))
 	}
-	x_let912 := (*v_s).M_chunk(tk, v_max)
-	_ = x_let912
-	var v_d_1 Bytes = x_let912.F0
+	x_let1321 := (*v_s).M_chunk(tk, v_max)
+	_ = x_let1321
+	var v_d_1 Bytes = x_let1321.F0
 	_ = v_d_1
-	var v_e_1 string = x_let912.F1
+	var v_e_1 string = x_let1321.F1
 	_ = v_e_1
 	if !(Bytes_is_empty(tk, v_d_1)) {
 		return Ok[Option[Bytes], string](Some[Bytes](v_d_1))

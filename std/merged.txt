@@ -42,3 +42,6 @@ std/trace
 std/metrics
 std/term
 std/bufio
+std/png
+std/jpeg
+std/htmlparse
