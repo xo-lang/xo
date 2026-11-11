@@ -1057,6 +1057,11 @@ fn bytes_split_where[E, fx: Effects](b: Bytes, f: fn(Rune) -> Bool ! E uses fx) 
 /// bytes.TrimSpace.
 fn bytes_trim(b: Bytes) -> Bytes { strings.trim_bytes(b, 0) }
 
+/// `b.trim_start_chars(chars)` and `b.trim_end_chars(chars)`: Str's, over
+/// the same bytes (bytes.TrimLeft and TrimRight read b as Str's do).
+fn bytes_trim_start_chars(b: Bytes, chars: Str) -> Bytes { rt.cast(scan.trim_start_chars(rt.cast(b), chars)) }
+fn bytes_trim_end_chars(b: Bytes, chars: Str) -> Bytes { rt.cast(scan.trim_end_chars(rt.cast(b), chars)) }
+
 /// bytes.TrimPrefix: b itself when p is not a prefix.
 fn bytes_trim_prefix(b: Bytes, p: Bytes) -> Bytes {
   if p.len() <= b.len() && scan.eq_bytes(b, 0, p) {
@@ -1861,6 +1866,16 @@ fn list_binary_search[T: Ord](xs: List[T], x: T) -> (Int, Bool) {
     }
   }
   (lo, lo < n && !(x < xs[lo]))
+}
+
+/// `xs.is_sorted()`: Go's slices.IsSorted, by Xo's Ord (as sort).
+fn list_is_sorted[T: Ord](xs: List[T]) -> Bool {
+  for i in 1..xs.len() {
+    if xs[i] < xs[i - 1] {
+      return false
+    }
+  }
+  true
 }
 
 /// `xs.max()` (decision 0592): Go's slices.Max, None when empty; a NaN

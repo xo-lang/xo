@@ -565,6 +565,16 @@ func listExtreme[T any](l List[T], sign int) Option[T] {
 	return Some(m)
 }
 
+// List_is_sorted is `xs.is_sorted()`: slices.IsSorted by Xo's order (Cmp).
+func List_is_sorted[T any](_ *Task, l List[T]) bool {
+	for i := 1; i < len(l.s); i++ {
+		if Cmp(l.s[i], l.s[i-1]) < 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // List_max is `xs.max()` (decision 0592).
 func List_max[T any](_ *Task, l List[T]) Option[T] { return listExtreme(l, 1) }
 

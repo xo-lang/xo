@@ -731,6 +731,13 @@ fn (b: Bytes) trim_prefix(p: Bytes) -> Bytes
 /// b without the suffix p (bytes.TrimSuffix), a view of b; b itself when p
 /// is not a suffix.
 fn (b: Bytes) trim_suffix(p: Bytes) -> Bytes
+/// b without its leading bytes or runes in chars, a view of b
+/// (bytes.TrimLeft: an ASCII chars trims bytes; otherwise b is read as
+/// UTF-8, a byte that is not one being U+FFFD).
+fn (b: Bytes) trim_start_chars(chars: Str) -> Bytes
+/// b without its trailing bytes or runes in chars, a view of b
+/// (bytes.TrimRight).
+fn (b: Bytes) trim_end_chars(chars: Str) -> Bytes
 /// b without its leading and trailing runes for which f is true, a view of
 /// b like trim (bytes.TrimFunc).
 fn (b: Bytes) trim_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bytes ! E uses fx
@@ -912,6 +919,10 @@ fn (xs: List[T]) binary_search(x: T) -> (Int, Bool)
 fn (xs: List[T]) max() -> T?
 /// The smallest element, as max (Go's slices.Min).
 fn (xs: List[T]) min() -> T?
+/// Whether each element is not below the one before it, by the Ord of T
+/// that sort uses (Go's slices.IsSorted; a NaN Float sorts last here, as
+/// Xo orders it, where Go's cmp puts it first).
+fn (xs: List[T]) is_sorted() -> Bool
 /// A copy of xs in reverse order (Go's slices.Reverse on a clone).
 fn (xs: List[T]) reverse() -> List[T]
 /// The distinct elements as a set, in order of first appearance.

@@ -174,6 +174,8 @@ var (
 	_ func(*Task, Bytes) Bytes                                                                             = Bytes_trim
 	_ func(*Task, Bytes, Bytes) Bytes                                                                      = Bytes_trim_prefix
 	_ func(*Task, Bytes, Bytes) Bytes                                                                      = Bytes_trim_suffix
+	_ func(*Task, Bytes, string) Bytes                                                                     = Bytes_trim_start_chars
+	_ func(*Task, Bytes, string) Bytes                                                                     = Bytes_trim_end_chars
 	_ func(*Task, Bytes, Bytes, Bytes) Bytes                                                               = Bytes_replace
 	_ func(*Task, Bytes, Bytes, Bytes, int64) Bytes                                                        = Bytes_replace_n
 	_ func(*Task, Bytes) Bytes                                                                             = Bytes_to_lower

@@ -917,6 +917,7 @@ func bytesCorpus() string {
 	o.WriteString(bytesMiscTables())
 	o.WriteString(bytesTests)
 	o.WriteString(byteswhereCorpus())
+	o.WriteString(bytesTrimCharsCorpus())
 	return o.String()
 }
 
@@ -1347,3 +1348,44 @@ test "the search and cut family on a view of a longer value" {
   }
 }
 `
+
+// bytesTrimCharsCorpus checks trim_start_chars and trim_end_chars against
+// Go's TrimLeft and TrimRight on random bytes (invalid UTF-8 among them)
+// and cutsets of ASCII, other runes and U+FFFD.
+func bytesTrimCharsCorpus() string {
+	r := rand.New(rand.NewSource(2711))
+	cuts := []string{"", "a", " \t", "abc", "\x00", "é", "日本", "\ufffd", "a\ufffd", "€x", "\x7f\x01"}
+	var o strings.Builder
+	o.WriteString("\n/// (b, chars, Go's TrimLeft, Go's TrimRight)\nconst TRIM_CHARS: List[(Bytes, Str, Bytes, Bytes)] = [\n")
+	for i := 0; i < 600; i++ {
+		var b []byte
+		for k, n := 0, r.Intn(4); k < n; k++ {
+			b = append(b, []byte(cuts[r.Intn(len(cuts))])...)
+		}
+		b = append(b, bytesGen(r, r.Intn(6))...)
+		for k, n := 0, r.Intn(4); k < n; k++ {
+			b = append(b, []byte(cuts[r.Intn(len(cuts))])...)
+		}
+		if r.Intn(4) == 0 {
+			b = append(b, 0xff, 0xc3)
+		}
+		c := cuts[r.Intn(len(cuts))]
+		fmt.Fprintf(&o, "  (%s, %s, %s, %s),\n", xbytes(b), xq(c), xbytes(bytes.TrimLeft(b, c)), xbytes(bytes.TrimRight(b, c)))
+	}
+	o.WriteString(`]
+
+test "trim_start_chars and trim_end_chars are Go's TrimLeft and TrimRight" {
+  var bad: List[(Bytes, Str, Bytes, Bytes)] = []
+  for (b, c, l, rr) in TRIM_CHARS {
+    let gl = b.trim_start_chars(c)
+    let gr = b.trim_end_chars(c)
+    if gl != l || gr != rr {
+      bad.push((b, c, gl, gr))
+    }
+  }
+  expect(bad.len()) == 0
+  expect(bad[..bad.len().min(3)]) == []
+}
+`)
+	return o.String()
+}

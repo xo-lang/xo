@@ -287,9 +287,10 @@ fn (b: Bytes) fields() -> List[Bytes]        // runs of non-white-space bytes (b
 fn (b: Bytes) split_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> List[Bytes] ! E uses fx // the runs f rejects (bytes.FieldsFunc)
 fn (b: Bytes) trim() -> Bytes                // white space at both ends (bytes.TrimSpace)
 fn (b: Bytes) trim_prefix(p: Bytes) -> Bytes // also trim_suffix (bytes.TrimPrefix, TrimSuffix)
+fn (b: Bytes) trim_start_chars(chars: Str) -> Bytes // also trim_end_chars (bytes.TrimLeft, TrimRight)
 fn (b: Bytes) trim_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bytes ! E uses fx       // bytes.TrimFunc; also trim_start_where, trim_end_where (TrimLeftFunc, TrimRightFunc)
 // split, split_n, split_after, split_after_n, cut, cut_prefix, cut_suffix, fields, split_where, trim,
-// trim_prefix, trim_suffix, trim_where, trim_start_where and trim_end_where return views of b on native
+// trim_prefix, trim_suffix, trim_start_chars, trim_end_chars, trim_where, trim_start_where and trim_end_where return views of b on native
 // targets (O(1) per piece, no copy; a piece keeps b alive), as slices do (core 3.6)
 fn (b: Bytes) replace(old: Bytes, new: Bytes) -> Bytes  // bytes.ReplaceAll; b itself when nothing changes
 fn (b: Bytes) replace_n(old: Bytes, new: Bytes, n: Int) -> Bytes  // the first n copies (bytes.Replace); n below 0 for every one, 0 for none
@@ -374,6 +375,7 @@ List.concat(lists: List[List[T]]) -> List[T] // slices.Concat, sized once
 fn (xs: List[T]) binary_search(x: T) -> (Int, Bool) // T Ord, xs sorted: the first index not below x, and whether x is there
 fn (xs: List[T]) max() -> T?                 // T Ord; None when empty; the first of equals; a NaN is the result (slices.Max)
 fn (xs: List[T]) min() -> T?                 // as max (slices.Min)
+fn (xs: List[T]) is_sorted() -> Bool         // slices.IsSorted, by Xo's Ord (a NaN Float last, as sort)
 fn (xs: List[T]) to_set() -> Set[T]
 (0..n).to_list()                             // Range[Int] to List[Int]
 fn (xs: List[Str]) join(sep: Str) -> Str
@@ -5708,7 +5710,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-570 declarations.
+573 declarations.
 
 ### Range
 
@@ -6013,6 +6015,8 @@ fn (b: Bytes) split_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Li
 fn (b: Bytes) trim() -> Bytes
 fn (b: Bytes) trim_prefix(p: Bytes) -> Bytes
 fn (b: Bytes) trim_suffix(p: Bytes) -> Bytes
+fn (b: Bytes) trim_start_chars(chars: Str) -> Bytes
+fn (b: Bytes) trim_end_chars(chars: Str) -> Bytes
 fn (b: Bytes) trim_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bytes ! E uses fx
 fn (b: Bytes) trim_start_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bytes ! E uses fx
 fn (b: Bytes) trim_end_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bytes ! E uses fx
@@ -6060,6 +6064,7 @@ fn (static: List[T]) concat(lists: List[List[T]]) -> List[T]
 fn (xs: List[T]) binary_search(x: T) -> (Int, Bool)
 fn (xs: List[T]) max() -> T?
 fn (xs: List[T]) min() -> T?
+fn (xs: List[T]) is_sorted() -> Bool
 fn (xs: List[T]) reverse() -> List[T]
 fn (xs: List[T]) to_set() -> Set[T]
 fn (xs: List[Str]) join(sep: Str) -> Str

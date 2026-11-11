@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-11: feature: Bytes.trim_start_chars, trim_end_chars and List.is_sorted
+
+- Kind: feature
+- Commit: this push
+- Found by: std audit 2026-11-11 gaps 23, 27 and 28
+- Go reference: bytes.TrimLeft, bytes.TrimRight, slices.IsSorted (go1.26.1)
+- Test: bytes corpus TRIM_CHARS (600 cases from Go, invalid UTF-8 among them; go, arm64, llvm); golden list_is_sorted (arm64, llvm, Go parity, wasm)
+- Shipped in: not yet released
+
+The Bytes trims are Str's over the same bytes (views of b). is_sorted
+follows Xo's Ord, the order sort uses: a NaN Float sorts last, where Go's
+cmp puts it first, so `[1.0, Float.nan].is_sorted()` is true in Xo.
 ## 2026-11-11: feature: Float.copysign, frexp, ldexp and Float32.max, smallest_nonzero (Go's math)
 
 - Kind: feature

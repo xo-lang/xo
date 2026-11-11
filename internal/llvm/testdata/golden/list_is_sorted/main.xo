@@ -1,0 +1,17 @@
+// List.is_sorted (Go's slices.IsSorted) by Xo's Ord, the order sort uses:
+// a NaN Float sorts last, so a list ending in NaN is sorted and one with
+// NaN before a number is not; after sort_in_place every list is sorted.
+fn main(os: Os) {
+  let empty: List[Int] = []
+  os.stdio.println("${empty.is_sorted()} ${[5].is_sorted()} ${[1, 2, 2, 3].is_sorted()} ${[1, 3, 2].is_sorted()} ${[3, 2, 1].is_sorted()}")
+  os.stdio.println("${["a", "b", "b"].is_sorted()} ${["b", "a"].is_sorted()} ${["", "a", "ab", "b"].is_sorted()}")
+  os.stdio.println("${[-1.0, 0.0, -0.0, 1.0].is_sorted()} ${[1.0, Float.inf, Float.nan].is_sorted()} ${[Float.nan, 1.0].is_sorted()} ${[Float.nan, Float.nan].is_sorted()}")
+  var xs = [3.0, Float.nan, -1.0, Float.inf, 0.5]
+  os.stdio.println("${xs.is_sorted()}")
+  xs.sort_in_place()
+  os.stdio.println("${xs} ${xs.is_sorted()}")
+  var ps = [(2, "b"), (1, "z"), (2, "a")]
+  os.stdio.println("${ps.is_sorted()}")
+  ps.sort_in_place()
+  os.stdio.println("${ps.is_sorted()}")
+}

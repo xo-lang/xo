@@ -343,6 +343,16 @@ func Bytes_fields(_ *Task, b Bytes) List[Bytes] {
 }
 
 // Bytes_trim is `b.trim()`: bytes.TrimSpace.
+// Bytes_trim_start_chars is `b.trim_start_chars(chars)` (bytes.TrimLeft).
+func Bytes_trim_start_chars(_ *Task, b Bytes, chars string) Bytes {
+	return Bytes(strings.TrimLeft(string(b), chars))
+}
+
+// Bytes_trim_end_chars is `b.trim_end_chars(chars)` (bytes.TrimRight).
+func Bytes_trim_end_chars(_ *Task, b Bytes, chars string) Bytes {
+	return Bytes(strings.TrimRight(string(b), chars))
+}
+
 func Bytes_trim(_ *Task, b Bytes) Bytes {
 	return Bytes(bytes.TrimSpace([]byte(b)))
 }

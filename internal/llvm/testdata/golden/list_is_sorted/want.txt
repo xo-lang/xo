@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+true true true false false
+true false true
+true true false true
+false
+[-1.0, 0.5, 3.0, +Inf, NaN] true
+false
+true
+--- stderr
