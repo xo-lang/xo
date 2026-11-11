@@ -1,5 +1,19 @@
 # std/image changes
 
+## 2026-11-11: refactor: std/image is one file (decisions 0588, 0597)
+
+- Kind: refactor
+- Commit: this push
+- Found by: decision 0597's merges (no native imports, so the module merges whole)
+- Go reference: none (no behavior change)
+- Test: TestStdCorpora image, gif, png, jpeg, jpegenc on go, arm64, llvm; std/rt go vet and build tags; bench/perf/image builds
+- Shipped in: not yet released
+
+std/native/image.xo moved into std/image.xo (the declarations take their
+bodies, helpers stay private). std/image and std/binary are generated
+into std/rt (std/rt_hosted.txt), since the Go backend's gif decoder
+builds an image.
+
 ## 2026-11-11: feature: image/color's types and models over Color
 
 - Kind: feature

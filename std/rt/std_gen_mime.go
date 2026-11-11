@@ -85,42 +85,42 @@ func (v_e Mime_MimeErr) M_display(tk *Task) string {
 }
 
 func Mime_parse_media_type(tk *Task, v_v string) Result[Mime_MediaType, Mime_MimeErr] {
-	var x_v1 string
-	x_m2 := Str_find(tk, v_v, ";")
-	_ = x_m2
-x_M3:
+	var x_v337 string
+	x_m338 := Str_find(tk, v_v, ";")
+	_ = x_m338
+x_M339:
 	switch {
 	default:
-		if x_m2.Some {
-			var v_i int64 = x_m2.V
+		if x_m338.Some {
+			var v_i int64 = x_m338.V
 			_ = v_i
-			x_v1 = StrSlice(v_v, int64(0), v_i, true, true, "std/mime.xo:32:16")
-			break x_M3
+			x_v337 = StrSlice(v_v, int64(0), v_i, true, true, "std/mime.xo:32:16")
+			break x_M339
 		}
-		if !x_m2.Some {
-			x_v1 = v_v
-			break x_M3
+		if !x_m338.Some {
+			x_v337 = v_v
+			break x_M339
 		}
 		panic(Unreachable("std/mime.xo:31:14"))
 	}
-	var v_base string = x_v1
+	var v_base string = x_v337
 	_ = v_base
 	var v_big bool = (Str_len(tk, v_v) > Mime_OWN_MIN)
 	_ = v_big
 	var v_kind string = Mime_own(tk, Str_trim(tk, Str_to_lower(tk, v_base)), v_big)
 	_ = v_kind
-	x_r4 := Mime_check_media_type_disposition(tk, v_kind)
-	if !x_r4.Ok {
-		return ErrTr[Mime_MediaType](x_r4.E, Frame1(x_r4.Tr, "mime.parse_media_type", "std/mime.xo:40", "v", v_v))
+	x_r340 := Mime_check_media_type_disposition(tk, v_kind)
+	if !x_r340.Ok {
+		return ErrTr[Mime_MediaType](x_r340.E, Frame1(x_r340.Tr, "mime.parse_media_type", "std/mime.xo:40", "v", v_v))
 	}
-	_ = x_r4.V
+	_ = x_r340.V
 	var v_params Map[string, string] = Map[string, string]{}
 	_ = v_params
 	var v_cont Map[string, Map[string, string]] = Map[string, Map[string, string]]{}
 	_ = v_cont
 	var v_v1 string = StrSlice(v_v, Str_len(tk, v_base), 0, true, false, "std/mime.xo:44:12")
 	_ = v_v1
-x_L5:
+x_L341:
 	for {
 		if !(!(Str_is_empty(tk, v_v1))) {
 			break
@@ -128,52 +128,52 @@ x_L5:
 		{
 			v_v1 = Str_trim_start(tk, v_v1)
 			if Str_is_empty(tk, v_v1) {
-				break x_L5
+				break x_L341
 			}
-			x_let6 := Mime_consume_media_param(tk, v_v1)
-			_ = x_let6
-			var v_key string = x_let6.F0
+			x_let342 := Mime_consume_media_param(tk, v_v1)
+			_ = x_let342
+			var v_key string = x_let342.F0
 			_ = v_key
-			var v_value string = x_let6.F1
+			var v_value string = x_let342.F1
 			_ = v_value
-			var v_rest string = x_let6.F2
+			var v_rest string = x_let342.F2
 			_ = v_rest
 			if Str_is_empty(tk, v_key) {
 				if Str_trim(tk, v_rest) == ";" {
-					break x_L5
+					break x_L341
 				}
 				return Err[Mime_MediaType](Mime_err(tk, "mime: invalid media parameter"))
 			}
-			x_m7 := Str_find(tk, v_key, "*")
-			_ = x_m7
-		x_M8:
+			x_m343 := Str_find(tk, v_key, "*")
+			_ = x_m343
+		x_M344:
 			switch {
 			default:
-				if x_m7.Some {
-					var v_i_1 int64 = x_m7.V
+				if x_m343.Some {
+					var v_i_1 int64 = x_m343.V
 					_ = v_i_1
 					{
 						var v_name string = StrSlice(v_key, int64(0), v_i_1, true, true, "std/mime.xo:60:20")
 						_ = v_name
-						x_a9 := v_name
-						x_t10 := func(v Option[Map[string, string]]) Option[Map[string, string]] {
+						x_a345 := v_name
+						x_t346 := func(v Option[Map[string, string]]) Option[Map[string, string]] {
 							if v.Some {
 								v.V.XoMark()
 							}
 							return v
-						}(Map_get[string, Map[string, string]](tk, v_cont, x_a9))
-						var x_c11 Map[string, string]
-						if x_t10.Some {
-							x_c11 = x_t10.V
+						}(Map_get[string, Map[string, string]](tk, v_cont, x_a345))
+						var x_c347 Map[string, string]
+						if x_t346.Some {
+							x_c347 = x_t346.V
 						} else {
-							x_c11 = Map[string, string]{}
+							x_c347 = Map[string, string]{}
 						}
-						var v_pieces Map[string, string] = x_c11
+						var v_pieces Map[string, string] = x_c347
 						_ = v_pieces
-						x_a13 := v_key
-						x_l12 := Map_get[string, string](tk, v_pieces, x_a13)
-						if x_l12.Some {
-							var v_old string = x_l12.V
+						x_a349 := v_key
+						x_l348 := Map_get[string, string](tk, v_pieces, x_a349)
+						if x_l348.Some {
+							var v_old string = x_l348.V
 							_ = v_old
 							if v_old != v_value {
 								return Err[Mime_MediaType](Mime_err(tk, "mime: duplicate parameter name"))
@@ -182,14 +182,14 @@ x_L5:
 						Map_put[string, string](tk, &v_pieces, v_key, v_value)
 						Map_put[string, Map[string, string]](tk, &v_cont, v_name, Map_Own(v_pieces))
 					}
-					break x_M8
+					break x_M344
 				}
-				if !x_m7.Some {
+				if !x_m343.Some {
 					{
-						x_a15 := v_key
-						x_l14 := Map_get[string, string](tk, v_params, x_a15)
-						if x_l14.Some {
-							var v_old_1 string = x_l14.V
+						x_a351 := v_key
+						x_l350 := Map_get[string, string](tk, v_params, x_a351)
+						if x_l350.Some {
+							var v_old_1 string = x_l350.V
 							_ = v_old_1
 							if v_old_1 != v_value {
 								return Err[Mime_MediaType](Mime_err(tk, "mime: duplicate parameter name"))
@@ -197,35 +197,35 @@ x_L5:
 						}
 						Map_put[string, string](tk, &v_params, Mime_own(tk, v_key, v_big), Mime_own(tk, v_value, v_big))
 					}
-					break x_M8
+					break x_M344
 				}
 				panic(Unreachable("std/mime.xo:58:5"))
 			}
 			v_v1 = v_rest
 		}
 	}
-	x_it16 := Map_entries[string, Map[string, string]](tk, v_cont)
-x_L17:
-	for _, x_e18 := range List_Items(x_it16) {
-		x_el19 := x_e18
-		_ = x_el19
-		var v_key_1 string = x_el19.F0
+	x_it352 := Map_entries[string, Map[string, string]](tk, v_cont)
+x_L353:
+	for _, x_e354 := range List_Items(x_it352) {
+		x_el355 := x_e354
+		_ = x_el355
+		var v_key_1 string = x_el355.F0
 		_ = v_key_1
-		var v_pieces_1 Map[string, string] = x_el19.F1
+		var v_pieces_1 Map[string, string] = x_el355.F1
 		_ = v_pieces_1
 		{
-			x_a21 := (v_key_1 + "*")
-			x_l20 := Map_get[string, string](tk, v_pieces_1, x_a21)
-			if x_l20.Some {
-				var v_single string = x_l20.V
+			x_a357 := (v_key_1 + "*")
+			x_l356 := Map_get[string, string](tk, v_pieces_1, x_a357)
+			if x_l356.Some {
+				var v_single string = x_l356.V
 				_ = v_single
-				x_l22 := Mime_decode_2231(tk, v_single)
-				if x_l22.Some {
-					var v_d string = x_l22.V
+				x_l358 := Mime_decode_2231(tk, v_single)
+				if x_l358.Some {
+					var v_d string = x_l358.V
 					_ = v_d
 					Map_put[string, string](tk, &v_params, Mime_own(tk, v_key_1, v_big), Mime_own(tk, v_d, v_big))
 				}
-				continue x_L17
+				continue x_L353
 			}
 			var v_buf StrBuilder = StrBuilder_new(tk)
 			_ = v_buf
@@ -233,54 +233,54 @@ x_L17:
 			_ = v_valid
 			var v_n int64 = int64(0)
 			_ = v_n
-		x_L23:
+		x_L359:
 			for {
 				{
 					var v_simple string = (v_key_1 + "*" + IntStr(v_n))
 					_ = v_simple
-					x_a25 := v_simple
-					x_l24 := Map_get[string, string](tk, v_pieces_1, x_a25)
-					if x_l24.Some {
-						var v_p string = x_l24.V
+					x_a361 := v_simple
+					x_l360 := Map_get[string, string](tk, v_pieces_1, x_a361)
+					if x_l360.Some {
+						var v_p string = x_l360.V
 						_ = v_p
 						v_valid = true
 						v_buf.M_write(tk, v_p)
 						v_n = AddIUp(v_n, int64(1), "std/mime.xo:96:9")
-						continue x_L23
+						continue x_L359
 					}
-					x_a26 := (v_simple + "*")
-					x_m27 := Map_get[string, string](tk, v_pieces_1, x_a26)
-					_ = x_m27
-				x_M28:
+					x_a362 := (v_simple + "*")
+					x_m363 := Map_get[string, string](tk, v_pieces_1, x_a362)
+					_ = x_m363
+				x_M364:
 					switch {
 					default:
-						if !x_m27.Some {
-							break x_L23
+						if !x_m363.Some {
+							break x_L359
 						}
-						if x_m27.Some {
-							var v_p_1 string = x_m27.V
+						if x_m363.Some {
+							var v_p_1 string = x_m363.V
 							_ = v_p_1
 							{
 								v_valid = true
 								if v_n == int64(0) {
-									x_l29 := Mime_decode_2231(tk, v_p_1)
-									if x_l29.Some {
-										var v_d_1 string = x_l29.V
+									x_l365 := Mime_decode_2231(tk, v_p_1)
+									if x_l365.Some {
+										var v_d_1 string = x_l365.V
 										_ = v_d_1
 										v_buf.M_write(tk, v_d_1)
 									}
 								} else {
-									x_t30 := Mime_percent_hex_unescape(tk, v_p_1)
-									var x_c31 string
-									if x_t30.Some {
-										x_c31 = x_t30.V
+									x_t366 := Mime_percent_hex_unescape(tk, v_p_1)
+									var x_c367 string
+									if x_t366.Some {
+										x_c367 = x_t366.V
 									} else {
-										x_c31 = ""
+										x_c367 = ""
 									}
-									v_buf.M_write(tk, x_c31)
+									v_buf.M_write(tk, x_c367)
 								}
 							}
-							break x_M28
+							break x_M364
 						}
 						panic(Unreachable("std/mime.xo:99:7"))
 					}
@@ -298,12 +298,12 @@ x_L17:
 func Mime_format_media_type(tk *Task, v_kind string, v_params Map[string, string]) string {
 	var v_b StrBuilder = StrBuilder_new(tk)
 	_ = v_b
-	x_m32 := Str_find(tk, v_kind, "/")
-	_ = x_m32
-x_M33:
+	x_m368 := Str_find(tk, v_kind, "/")
+	_ = x_m368
+x_M369:
 	switch {
 	default:
-		if !x_m32.Some {
+		if !x_m368.Some {
 			{
 				var v_kc int64 = Mime_token_case(tk, v_kind)
 				_ = v_kc
@@ -312,10 +312,10 @@ x_M33:
 				}
 				Mime_write_cased(tk, &v_b, v_kind, v_kc)
 			}
-			break x_M33
+			break x_M369
 		}
-		if x_m32.Some {
-			var v_i int64 = x_m32.V
+		if x_m368.Some {
+			var v_i int64 = x_m368.V
 			_ = v_i
 			{
 				var v_major string = StrSlice(v_kind, int64(0), v_i, true, true, "std/mime.xo:135:19")
@@ -333,7 +333,7 @@ x_M33:
 				v_b.M_write(tk, "/")
 				Mime_write_cased(tk, &v_b, v_sub, v_sc)
 			}
-			break x_M33
+			break x_M369
 		}
 		panic(Unreachable("std/mime.xo:126:3"))
 	}
@@ -341,12 +341,12 @@ x_M33:
 	_ = v_hex
 	var v_ps List[Tuple2[string, string]] = List[Tuple2[string, string]]{}
 	_ = v_ps
-	x_it34 := v_params
-	for x_k36, x_v37 := range Map_All(x_it34) {
-		_, _ = x_k36, x_v37
-		var v_k string = x_k36
+	x_it370 := v_params
+	for x_k372, x_v373 := range Map_All(x_it370) {
+		_, _ = x_k372, x_v373
+		var v_k string = x_k372
 		_ = v_k
-		var v_v string = x_v37
+		var v_v string = x_v373
 		_ = v_v
 		{
 			var v_at int64 = List_len[Tuple2[string, string]](tk, v_ps)
@@ -362,14 +362,14 @@ x_M33:
 			List_insert[Tuple2[string, string]](tk, &v_ps, v_at, Tuple2[string, string]{F0: v_k, F1: v_v})
 		}
 	}
-	x_it39 := v_ps
-x_L40:
-	for _, x_e41 := range List_Items(x_it39) {
-		x_el42 := x_e41
-		_ = x_el42
-		var v_attr string = x_el42.F0
+	x_it375 := v_ps
+x_L376:
+	for _, x_e377 := range List_Items(x_it375) {
+		x_el378 := x_e377
+		_ = x_el378
+		var v_attr string = x_el378.F0
 		_ = v_attr
-		var v_value string = x_el42.F1
+		var v_value string = x_el378.F1
 		_ = v_value
 		{
 			v_b.M_write(tk, "; ")
@@ -385,11 +385,11 @@ x_L40:
 				v_b.M_write(tk, "*=utf-8''")
 				var v_out BytesBuilder = BytesBuilder_new(tk)
 				_ = v_out
-				x_it43 := Str_bytes(tk, v_value)
-				for x_bi45 := 0; x_bi45 < len(x_it43); x_bi45++ {
-					x_el46 := x_it43[x_bi45]
-					_ = x_el46
-					var v_ch uint8 = x_el46
+				x_it379 := Str_bytes(tk, v_value)
+				for x_bi381 := 0; x_bi381 < len(x_it379); x_bi381++ {
+					x_el382 := x_it379[x_bi381]
+					_ = x_el382
+					var v_ch uint8 = x_el382
 					_ = v_ch
 					{
 						if (((((v_ch <= uint8(32)) || (v_ch >= uint8(127))) || (v_ch == uint8(42))) || (v_ch == uint8(39))) || (v_ch == uint8(37))) || Mime_is_tspecial(tk, v_ch) {
@@ -401,31 +401,31 @@ x_L40:
 						}
 					}
 				}
-				x_t47 := Bytes_to_str(tk, v_out.M_freeze(tk))
-				var x_c48 string
-				if x_t47.Some {
-					x_c48 = x_t47.V
+				x_t383 := Bytes_to_str(tk, v_out.M_freeze(tk))
+				var x_c384 string
+				if x_t383.Some {
+					x_c384 = x_t383.V
 				} else {
-					x_c48 = ""
+					x_c384 = ""
 				}
-				v_b.M_write(tk, x_c48)
-				continue x_L40
+				v_b.M_write(tk, x_c384)
+				continue x_L376
 			}
 			v_b.M_write(tk, "=")
 			if v_vc == int64(0) {
 				v_b.M_write(tk, v_value)
-				continue x_L40
+				continue x_L376
 			}
 			v_b.M_write(tk, "\"")
 			var v_vb Bytes = Str_bytes(tk, v_value)
 			_ = v_vb
 			var v_from int64 = int64(0)
 			_ = v_from
-			x_it49 := Range[int64]{Lo: int64(0), Hi: Bytes_len(tk, v_vb), Incl: false}
-			for x_i51 := x_it49.Lo; x_i51 < x_it49.Hi; x_i51++ {
-				x_el52 := x_i51
-				_ = x_el52
-				var v_k_1 int64 = x_el52
+			x_it385 := Range[int64]{Lo: int64(0), Hi: Bytes_len(tk, v_vb), Incl: false}
+			for x_i387 := x_it385.Lo; x_i387 < x_it385.Hi; x_i387++ {
+				x_el388 := x_i387
+				_ = x_el388
+				var v_k_1 int64 = x_el388
 				_ = v_k_1
 				{
 					if (BytesAt(v_vb, v_k_1, "std/mime.xo:193:10") == uint8(92)) || (BytesAt(v_vb, v_k_1, "std/mime.xo:193:25") == uint8(34)) {
@@ -443,25 +443,25 @@ x_L40:
 }
 
 func Mime_type_by_extension(tk *Task, v_ext string) Option[string] {
-	x_l53 := Mime_builtin_type(tk, v_ext)
-	if x_l53.Some {
-		var v_t string = x_l53.V
+	x_l389 := Mime_builtin_type(tk, v_ext)
+	if x_l389.Some {
+		var v_t string = x_l389.V
 		_ = v_t
 		return Some[string](v_t)
 	}
 	var v_upper bool = false
 	_ = v_upper
-	x_it54 := Str_bytes(tk, v_ext)
-x_L55:
-	for x_bi56 := 0; x_bi56 < len(x_it54); x_bi56++ {
-		x_el57 := x_it54[x_bi56]
-		_ = x_el57
-		var v_c uint8 = x_el57
+	x_it390 := Str_bytes(tk, v_ext)
+x_L391:
+	for x_bi392 := 0; x_bi392 < len(x_it390); x_bi392++ {
+		x_el393 := x_it390[x_bi392]
+		_ = x_el393
+		var v_c uint8 = x_el393
 		_ = v_c
 		{
 			if ((v_c >= uint8(65)) && (v_c <= uint8(90))) || (v_c >= uint8(128)) {
 				v_upper = true
-				break x_L55
+				break x_L391
 			}
 		}
 	}
@@ -472,29 +472,29 @@ x_L55:
 }
 
 func Mime_extensions_by_type(tk *Task, v_kind string) Result[List[string], Mime_MimeErr] {
-	x_r58 := func(v Result[Mime_MediaType, Mime_MimeErr]) Result[Mime_MediaType, Mime_MimeErr] {
+	x_r394 := func(v Result[Mime_MediaType, Mime_MimeErr]) Result[Mime_MediaType, Mime_MimeErr] {
 		if v.Ok {
 			v.V.XoMark()
 		}
 		return v
 	}(Mime_parse_media_type(tk, v_kind))
-	if !x_r58.Ok {
-		return ErrTr[List[string]](x_r58.E, Frame1(x_r58.Tr, "mime.extensions_by_type", "std/mime.xo:228", "kind", v_kind))
+	if !x_r394.Ok {
+		return ErrTr[List[string]](x_r394.E, Frame1(x_r394.Tr, "mime.extensions_by_type", "std/mime.xo:228", "kind", v_kind))
 	}
-	var v_t string = x_r58.V.F_kind
+	var v_t string = x_r394.V.F_kind
 	_ = v_t
 	var v_out List[string] = List[string]{}
 	_ = v_out
-	x_it59 := Mime_BUILTIN
-	for _, x_e61 := range List_Items(x_it59) {
-		x_el62 := x_e61
-		_ = x_el62
-		var v_k string = x_el62.F0
+	x_it395 := Mime_BUILTIN
+	for _, x_e397 := range List_Items(x_it395) {
+		x_el398 := x_e397
+		_ = x_el398
+		var v_k string = x_el398.F0
 		_ = v_k
-		var v_v string = x_el62.F1
+		var v_v string = x_el398.F1
 		_ = v_v
 		{
-			x_t63 := func(v Option[Mime_MediaType]) Option[Mime_MediaType] {
+			x_t399 := func(v Option[Mime_MediaType]) Option[Mime_MediaType] {
 				if v.Some {
 					v.V.XoMark()
 				}
@@ -505,18 +505,18 @@ func Mime_extensions_by_type(tk *Task, v_kind string) Result[List[string], Mime_
 				}
 				return v
 			}(Mime_parse_media_type(tk, v_v))))
-			var x_c64 Mime_MediaType
-			if x_t63.Some {
-				x_c64 = x_t63.V
+			var x_c400 Mime_MediaType
+			if x_t399.Some {
+				x_c400 = x_t399.V
 			} else {
-				x_c64 = Mime_MediaType{F_kind: "", F_params: Map[string, string]{}}
+				x_c400 = Mime_MediaType{F_kind: "", F_params: Map[string, string]{}}
 			}
-			if x_c64.F_kind == v_t {
-				x_pv65 := v_k
+			if x_c400.F_kind == v_t {
+				x_pv401 := v_k
 				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv65)
+					v_out = List_PushFast(v_out, x_pv401)
 				} else {
-					v_out = List_PushSlow(v_out, x_pv65)
+					v_out = List_PushSlow(v_out, x_pv401)
 				}
 				_ = Unit{}
 			}
@@ -526,13 +526,13 @@ func Mime_extensions_by_type(tk *Task, v_kind string) Result[List[string], Mime_
 }
 
 func Mime_detect_content_type(tk *Task, v_data Bytes) string {
-	var x_v66 Bytes
+	var x_v402 Bytes
 	if Bytes_len(tk, v_data) > int64(512) {
-		x_v66 = BytesSlice(v_data, int64(0), int64(512), true, true, "std/mime.xo:242:37")
+		x_v402 = BytesSlice(v_data, int64(0), int64(512), true, true, "std/mime.xo:242:37")
 	} else {
-		x_v66 = v_data
+		x_v402 = v_data
 	}
-	var v_data1 Bytes = x_v66
+	var v_data1 Bytes = x_v402
 	_ = v_data1
 	var v_first int64 = int64(0)
 	_ = v_first
@@ -544,11 +544,11 @@ func Mime_detect_content_type(tk *Task, v_data Bytes) string {
 			v_first = (v_first + int64(1))
 		}
 	}
-	x_it68 := Mime_SIGS.Get(tk)
-	for _, x_e70 := range List_Items(x_it68) {
-		x_el71 := x_e70
-		_ = x_el71
-		var v_s Mime_Sig = x_el71
+	x_it404 := Mime_SIGS.Get(tk)
+	for _, x_e406 := range List_Items(x_it404) {
+		x_el407 := x_e406
+		_ = x_el407
+		var v_s Mime_Sig = x_el407
 		_ = v_s
 		{
 			if Mime_sig_hit(tk, v_s, v_data1, v_first) {
@@ -587,11 +587,11 @@ func Mime_token_case(tk *Task, v_s string) int64 {
 	}
 	var v_upper int64 = int64(0)
 	_ = v_upper
-	x_it72 := Str_bytes(tk, v_s)
-	for x_bi74 := 0; x_bi74 < len(x_it72); x_bi74++ {
-		x_el75 := x_it72[x_bi74]
-		_ = x_el75
-		var v_c uint8 = x_el75
+	x_it408 := Str_bytes(tk, v_s)
+	for x_bi410 := 0; x_bi410 < len(x_it408); x_bi410++ {
+		x_el411 := x_it408[x_bi410]
+		_ = x_el411
+		var v_c uint8 = x_el411
 		_ = v_c
 		{
 			if !(Mime_is_token_char(tk, v_c)) {
@@ -619,11 +619,11 @@ func Mime_is_token(tk *Task, v_s string) bool {
 	if Str_is_empty(tk, v_s) {
 		return false
 	}
-	x_it76 := Str_bytes(tk, v_s)
-	for x_bi78 := 0; x_bi78 < len(x_it76); x_bi78++ {
-		x_el79 := x_it76[x_bi78]
-		_ = x_el79
-		var v_c uint8 = x_el79
+	x_it412 := Str_bytes(tk, v_s)
+	for x_bi414 := 0; x_bi414 < len(x_it412); x_bi414++ {
+		x_el415 := x_it412[x_bi414]
+		_ = x_el415
+		var v_c uint8 = x_el415
 		_ = v_c
 		{
 			if !(Mime_is_token_char(tk, v_c)) {
@@ -635,19 +635,19 @@ func Mime_is_token(tk *Task, v_s string) bool {
 }
 
 func Mime_value_class(tk *Task, v_s string) int64 {
-	var x_v80 int64
+	var x_v416 int64
 	if Str_is_empty(tk, v_s) {
-		x_v80 = int64(1)
+		x_v416 = int64(1)
 	} else {
-		x_v80 = int64(0)
+		x_v416 = int64(0)
 	}
-	var v_cls int64 = x_v80
+	var v_cls int64 = x_v416
 	_ = v_cls
-	x_it81 := Str_bytes(tk, v_s)
-	for x_bi83 := 0; x_bi83 < len(x_it81); x_bi83++ {
-		x_el84 := x_it81[x_bi83]
-		_ = x_el84
-		var v_c uint8 = x_el84
+	x_it417 := Str_bytes(tk, v_s)
+	for x_bi419 := 0; x_bi419 < len(x_it417); x_bi419++ {
+		x_el420 := x_it417[x_bi419]
+		_ = x_el420
+		var v_c uint8 = x_el420
 		_ = v_c
 		{
 			if ((v_c < uint8(32)) || (v_c > uint8(126))) && (v_c != uint8(9)) {
@@ -678,11 +678,11 @@ func Mime_consume_token(tk *Task, v_v string) Tuple2[string, string] {
 }
 
 func Mime_check_media_type_disposition(tk *Task, v_s string) Result[Unit, Mime_MimeErr] {
-	x_let86 := Mime_consume_token(tk, v_s)
-	_ = x_let86
-	var v_typ string = x_let86.F0
+	x_let422 := Mime_consume_token(tk, v_s)
+	_ = x_let422
+	var v_typ string = x_let422.F0
 	_ = v_typ
-	var v_rest0 string = x_let86.F1
+	var v_rest0 string = x_let422.F1
 	_ = v_rest0
 	if Str_is_empty(tk, v_typ) {
 		return Err[Unit](Mime_err(tk, "mime: no media type"))
@@ -693,11 +693,11 @@ func Mime_check_media_type_disposition(tk *Task, v_s string) Result[Unit, Mime_M
 	if !(Str_starts_with(tk, v_rest0, "/")) {
 		return Err[Unit](Mime_err(tk, "mime: expected slash after first token"))
 	}
-	x_let87 := Mime_consume_token(tk, StrSlice(v_rest0, int64(1), 0, true, false, "std/mime.xo:349:35"))
-	_ = x_let87
-	var v_sub string = x_let87.F0
+	x_let423 := Mime_consume_token(tk, StrSlice(v_rest0, int64(1), 0, true, false, "std/mime.xo:349:35"))
+	_ = x_let423
+	var v_sub string = x_let423.F0
 	_ = v_sub
-	var v_rest string = x_let87.F1
+	var v_rest string = x_let423.F1
 	_ = v_rest
 	if Str_is_empty(tk, v_sub) {
 		return Err[Unit](Mime_err(tk, "mime: expected token after slash"))
@@ -714,8 +714,8 @@ func Mime_consume_value(tk *Task, v_v string) Tuple2[string, string] {
 	if Str_is_empty(tk, v_v) {
 		return Tuple2[string, string]{F0: "", F1: ""}
 	}
-	x_a88 := "\""
-	if !(Str_starts_with(tk, v_v, x_a88)) {
+	x_a424 := "\""
+	if !(Str_starts_with(tk, v_v, x_a424)) {
 		return Mime_consume_token(tk, v_v)
 	}
 	var v_b Bytes = Str_bytes(tk, v_v)
@@ -726,7 +726,7 @@ func Mime_consume_value(tk *Task, v_v string) Tuple2[string, string] {
 	_ = v_i
 	var v_end int64 = int64(-1)
 	_ = v_end
-x_L89:
+x_L425:
 	for {
 		if !(v_i < Bytes_len(tk, v_b)) {
 			break
@@ -736,15 +736,15 @@ x_L89:
 			_ = v_r
 			if v_r == uint8(34) {
 				v_end = v_i
-				break x_L89
+				break x_L425
 			}
 			if ((v_r == uint8(92)) && ((v_i + int64(1)) < Bytes_len(tk, v_b))) && Mime_is_tspecial(tk, BytesAt(v_b, (v_i+int64(1)), "std/mime.xo:376:50")) {
 				v_out.M_write_byte(tk, BytesAt(v_b, (v_i+int64(1)), "std/mime.xo:377:22"))
 				v_i = (v_i + int64(2))
-				continue x_L89
+				continue x_L425
 			}
 			if (v_r == uint8(13)) || (v_r == uint8(10)) {
-				break x_L89
+				break x_L425
 			}
 			v_out.M_write_byte(tk, v_r)
 			v_i = (v_i + int64(1))
@@ -753,14 +753,14 @@ x_L89:
 	if v_end < int64(0) {
 		return Tuple2[string, string]{F0: "", F1: v_v}
 	}
-	x_t90 := Bytes_to_str(tk, v_out.M_freeze(tk))
-	var x_c91 string
-	if x_t90.Some {
-		x_c91 = x_t90.V
+	x_t426 := Bytes_to_str(tk, v_out.M_freeze(tk))
+	var x_c427 string
+	if x_t426.Some {
+		x_c427 = x_t426.V
 	} else {
-		x_c91 = ""
+		x_c427 = ""
 	}
-	return Tuple2[string, string]{F0: x_c91, F1: StrSlice(v_v, (v_end + int64(1)), 0, true, false, "std/mime.xo:390:33")}
+	return Tuple2[string, string]{F0: x_c427, F1: StrSlice(v_v, (v_end + int64(1)), 0, true, false, "std/mime.xo:390:33")}
 }
 
 func Mime_consume_media_param(tk *Task, v_v string) Tuple3[string, string, string] {
@@ -770,11 +770,11 @@ func Mime_consume_media_param(tk *Task, v_v string) Tuple3[string, string, strin
 		return Tuple3[string, string, string]{F0: "", F1: "", F2: v_v}
 	}
 	v_rest = Str_trim_start(tk, StrSlice(v_rest, int64(1), 0, true, false, "std/mime.xo:400:10"))
-	x_let92 := Mime_consume_token(tk, v_rest)
-	_ = x_let92
-	var v_p0 string = x_let92.F0
+	x_let428 := Mime_consume_token(tk, v_rest)
+	_ = x_let428
+	var v_p0 string = x_let428.F0
 	_ = v_p0
-	var v_r1 string = x_let92.F1
+	var v_r1 string = x_let428.F1
 	_ = v_r1
 	var v_param string = Str_to_lower(tk, v_p0)
 	_ = v_param
@@ -786,11 +786,11 @@ func Mime_consume_media_param(tk *Task, v_v string) Tuple3[string, string, strin
 		return Tuple3[string, string, string]{F0: "", F1: "", F2: v_v}
 	}
 	v_rest = Str_trim_start(tk, StrSlice(v_rest, int64(1), 0, true, false, "std/mime.xo:410:10"))
-	x_let93 := Mime_consume_value(tk, v_rest)
-	_ = x_let93
-	var v_value string = x_let93.F0
+	x_let429 := Mime_consume_value(tk, v_rest)
+	_ = x_let429
+	var v_value string = x_let429.F0
 	_ = v_value
-	var v_rest2 string = x_let93.F1
+	var v_rest2 string = x_let429.F1
 	_ = v_rest2
 	if Str_is_empty(tk, v_value) && (v_rest2 == v_rest) {
 		return Tuple3[string, string, string]{F0: "", F1: "", F2: v_v}
@@ -826,7 +826,7 @@ func Mime_percent_hex_unescape(tk *Task, v_s string) Option[string] {
 	_ = v_out
 	var v_i int64 = int64(0)
 	_ = v_i
-x_L94:
+x_L430:
 	for {
 		if !(v_i < Bytes_len(tk, v_b)) {
 			break
@@ -835,7 +835,7 @@ x_L94:
 			if BytesAt(v_b, v_i, "std/mime.xo:434:8") != uint8(37) {
 				v_out.M_write_byte(tk, BytesAt(v_b, v_i, "std/mime.xo:435:22"))
 				v_i = (v_i + int64(1))
-				continue x_L94
+				continue x_L430
 			}
 			if (((v_i + int64(2)) >= Bytes_len(tk, v_b)) || !(Mime_is_hex(tk, BytesAt(v_b, (v_i+int64(1)), "std/mime.xo:439:36")))) || !(Mime_is_hex(tk, BytesAt(v_b, (v_i+int64(2)), "std/mime.xo:439:57"))) {
 				return None[string]()
@@ -848,24 +848,24 @@ x_L94:
 }
 
 func Mime_decode_2231(tk *Task, v_v string) Option[string] {
-	x_r95 := Str_find(tk, v_v, "'")
-	if !x_r95.Some {
+	x_r431 := Str_find(tk, v_v, "'")
+	if !x_r431.Some {
 		return None[string]()
 	}
-	var v_q1 int64 = x_r95.V
+	var v_q1 int64 = x_r431.V
 	_ = v_q1
 	var v_charset string = Str_to_lower(tk, StrSlice(v_v, int64(0), v_q1, true, true, "std/mime.xo:453:17"))
 	_ = v_charset
 	var v_rest string = StrSlice(v_v, AddIUp(v_q1, int64(1), "std/mime.xo:454:16"), 0, true, false, "std/mime.xo:454:14")
 	_ = v_rest
-	x_r96 := Str_find(tk, v_rest, "'")
-	if !x_r96.Some {
+	x_r432 := Str_find(tk, v_rest, "'")
+	if !x_r432.Some {
 		return None[string]()
 	}
-	var v_q2 int64 = x_r96.V
+	var v_q2 int64 = x_r432.V
 	_ = v_q2
-	x_t97 := v_charset
-	if !((x_t97 == "us-ascii") || (x_t97 == "utf-8")) {
+	x_t433 := v_charset
+	if !((x_t433 == "us-ascii") || (x_t433 == "utf-8")) {
 		return None[string]()
 	}
 	return Mime_percent_hex_unescape(tk, StrSlice(v_rest, AddIUp(v_q2, int64(1), "std/mime.xo:459:29"), 0, true, false, "std/mime.xo:459:24"))
@@ -1212,7 +1212,7 @@ func Mime_sigs_of(tk *Task, v_d Bytes) List[Mime_Sig] {
 	_ = v_out
 	var v_i int64 = int64(0)
 	_ = v_i
-x_L99:
+x_L435:
 	for {
 		if !(v_i < Bytes_len(tk, v_d)) {
 			break
@@ -1221,53 +1221,53 @@ x_L99:
 			var v_k int64 = int64(BytesAt(v_d, v_i, "std/mime.xo:640:17"))
 			_ = v_k
 			if (v_k == int64(4)) || (v_k == int64(5)) {
-				var x_v100 Mime_Sig
+				var x_v436 Mime_Sig
 				if v_k == int64(4) {
-					x_v100 = Mime_Sig{Tag: 4}
+					x_v436 = Mime_Sig{Tag: 4}
 				} else {
-					x_v100 = Mime_Sig{Tag: 5}
+					x_v436 = Mime_Sig{Tag: 5}
 				}
-				x_pv101 := x_v100
+				x_pv437 := x_v436
 				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv101)
+					v_out = List_PushFast(v_out, x_pv437)
 				} else {
-					v_out = List_PushSlow(v_out, x_pv101)
+					v_out = List_PushSlow(v_out, x_pv437)
 				}
 				_ = Unit{}
 				v_i = (v_i + int64(1))
-				continue x_L99
+				continue x_L435
 			}
 			var v_n int64 = int64(BytesAt(v_d, (v_i + int64(1)), "std/mime.xo:646:17"))
 			_ = v_n
 			var v_a Bytes = BytesSlice(v_d, (v_i + int64(2)), ((v_i + int64(2)) + v_n), true, true, "std/mime.xo:647:13")
 			_ = v_a
 			if v_k == int64(0) {
-				x_pv102 := Mime_Sig{Tag: 1, P: Mime_Sig_Html{F_p: v_a}}
+				x_pv438 := Mime_Sig{Tag: 1, P: Mime_Sig_Html{F_p: v_a}}
 				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv102)
+					v_out = List_PushFast(v_out, x_pv438)
 				} else {
-					v_out = List_PushSlow(v_out, x_pv102)
+					v_out = List_PushSlow(v_out, x_pv438)
 				}
 				_ = Unit{}
 				v_i = (v_i + (int64(2) + v_n))
 			} else {
 				if v_k == int64(3) {
-					x_pv103 := Mime_Sig{Tag: 3, P: Mime_Sig_Exact{F_sig: v_a, F_ct: List_At(Mime_SIG_TYPES.Get(tk), int64(BytesAt(v_d, ((v_i+int64(2))+v_n), "std/mime.xo:652:52")), "std/mime.xo:652:38")}}
+					x_pv439 := Mime_Sig{Tag: 3, P: Mime_Sig_Exact{F_sig: v_a, F_ct: List_At(Mime_SIG_TYPES.Get(tk), int64(BytesAt(v_d, ((v_i+int64(2))+v_n), "std/mime.xo:652:52")), "std/mime.xo:652:38")}}
 					if List_CanPush(v_out) {
-						v_out = List_PushFast(v_out, x_pv103)
+						v_out = List_PushFast(v_out, x_pv439)
 					} else {
-						v_out = List_PushSlow(v_out, x_pv103)
+						v_out = List_PushSlow(v_out, x_pv439)
 					}
 					_ = Unit{}
 					v_i = (v_i + (int64(3) + v_n))
 				} else {
 					var v_pat Bytes = BytesSlice(v_d, ((v_i + int64(2)) + v_n), ((v_i + int64(2)) + (int64(2) * v_n)), true, true, "std/mime.xo:655:17")
 					_ = v_pat
-					x_pv104 := Mime_Sig{Tag: 2, P: Mime_Sig_Masked{F_mask: v_a, F_pat: v_pat, F_skip_ws: (v_k == int64(2)), F_ct: List_At(Mime_SIG_TYPES.Get(tk), int64(BytesAt(v_d, ((v_i+int64(2))+(int64(2)*v_n)), "std/mime.xo:656:81")), "std/mime.xo:656:67")}}
+					x_pv440 := Mime_Sig{Tag: 2, P: Mime_Sig_Masked{F_mask: v_a, F_pat: v_pat, F_skip_ws: (v_k == int64(2)), F_ct: List_At(Mime_SIG_TYPES.Get(tk), int64(BytesAt(v_d, ((v_i+int64(2))+(int64(2)*v_n)), "std/mime.xo:656:81")), "std/mime.xo:656:67")}}
 					if List_CanPush(v_out) {
-						v_out = List_PushFast(v_out, x_pv104)
+						v_out = List_PushFast(v_out, x_pv440)
 					} else {
-						v_out = List_PushSlow(v_out, x_pv104)
+						v_out = List_PushSlow(v_out, x_pv440)
 					}
 					_ = Unit{}
 					v_i = (v_i + (int64(3) + (int64(2) * v_n)))
@@ -1286,11 +1286,11 @@ func Mime_has_prefix(tk *Task, v_data Bytes, v_p Bytes) bool {
 	if Bytes_len(tk, v_data) < Bytes_len(tk, v_p) {
 		return false
 	}
-	x_it105 := Range[int64]{Lo: int64(0), Hi: Bytes_len(tk, v_p), Incl: false}
-	for x_i107 := x_it105.Lo; x_i107 < x_it105.Hi; x_i107++ {
-		x_el108 := x_i107
-		_ = x_el108
-		var v_i int64 = x_el108
+	x_it441 := Range[int64]{Lo: int64(0), Hi: Bytes_len(tk, v_p), Incl: false}
+	for x_i443 := x_it441.Lo; x_i443 < x_it441.Hi; x_i443++ {
+		x_el444 := x_i443
+		_ = x_el444
+		var v_i int64 = x_el444
 		_ = v_i
 		{
 			if BytesAt(v_data, v_i, "std/mime.xo:672:8") != BytesAt(v_p, v_i, "std/mime.xo:672:19") {
@@ -1311,11 +1311,11 @@ func Mime_sig_hit(tk *Task, v_s Mime_Sig, v_data Bytes, v_first int64) bool {
 				if SubS(Bytes_len(tk, v_data), v_first, "std/mime.xo:687:10") < (Bytes_len(tk, v_h) + int64(1)) {
 					return false
 				}
-				x_it110 := Range[int64]{Lo: int64(0), Hi: Bytes_len(tk, v_h), Incl: false}
-				for x_i112 := x_it110.Lo; x_i112 < x_it110.Hi; x_i112++ {
-					x_el113 := x_i112
-					_ = x_el113
-					var v_i int64 = x_el113
+				x_it446 := Range[int64]{Lo: int64(0), Hi: Bytes_len(tk, v_h), Incl: false}
+				for x_i448 := x_it446.Lo; x_i448 < x_it446.Hi; x_i448++ {
+					x_el449 := x_i448
+					_ = x_el449
+					var v_i int64 = x_el449
 					_ = v_i
 					{
 						var v_db uint8 = BytesAt(v_data, AddS(v_first, v_i, "std/mime.xo:691:23"), "std/mime.xo:691:18")
@@ -1341,22 +1341,22 @@ func Mime_sig_hit(tk *Task, v_s Mime_Sig, v_data Bytes, v_first int64) bool {
 			var v_skip_ws bool = v_s.P.(Mime_Sig_Masked).F_skip_ws
 			_ = v_skip_ws
 			{
-				var x_v114 int64
+				var x_v450 int64
 				if v_skip_ws {
-					x_v114 = v_first
+					x_v450 = v_first
 				} else {
-					x_v114 = int64(0)
+					x_v450 = int64(0)
 				}
-				var v_o int64 = x_v114
+				var v_o int64 = x_v450
 				_ = v_o
 				if (Bytes_len(tk, v_pat) != Bytes_len(tk, v_mask)) || (SubS(Bytes_len(tk, v_data), v_o, "std/mime.xo:704:37") < Bytes_len(tk, v_pat)) {
 					return false
 				}
-				x_it115 := Range[int64]{Lo: int64(0), Hi: Bytes_len(tk, v_pat), Incl: false}
-				for x_i117 := x_it115.Lo; x_i117 < x_it115.Hi; x_i117++ {
-					x_el118 := x_i117
-					_ = x_el118
-					var v_i_1 int64 = x_el118
+				x_it451 := Range[int64]{Lo: int64(0), Hi: Bytes_len(tk, v_pat), Incl: false}
+				for x_i453 := x_it451.Lo; x_i453 < x_it451.Hi; x_i453++ {
+					x_el454 := x_i453
+					_ = x_el454
+					var v_i_1 int64 = x_el454
 					_ = v_i_1
 					{
 						if (BytesAt(v_data, AddS(v_o, v_i_1, "std/mime.xo:708:18"), "std/mime.xo:708:13") & BytesAt(v_mask, v_i_1, "std/mime.xo:708:27")) != BytesAt(v_pat, v_i_1, "std/mime.xo:708:39") {

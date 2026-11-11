@@ -6,3 +6,5 @@ std/multipart
 std/url
 std/regexp
 std/uniclass
+std/binary
+std/image
