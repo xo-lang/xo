@@ -1,0 +1,37 @@
+// The real keychain round trip of decision 0584 section 8, only against a
+// throwaway keychain file the harness creates and deletes (cmd/xo
+// TestRealKeychain sets XO_TEST_KEYCHAIN to its path and
+// XO_TEST_KEYCHAIN_PW to its password; owner's go, 2026-11-10), never the
+// login keychain. Without them, in every other run (internal/stdtest),
+// the test does nothing.
+
+use native/llrt/keychain
+use native/llrt/process
+
+const SVC = "xo-test-0584"
+
+test "a throwaway keychain's generic passwords" {
+  let path = process.env_real("XO_TEST_KEYCHAIN").get(0) ?? ""
+  if path != "" {
+    let pw = process.env_real("XO_TEST_KEYCHAIN_PW").get(0) ?? ""
+    expect(keychain_at(path, "${pw}-wrong").is_err())
+    let k = keychain_at(path, pw)?
+    // keychain_at turned the Security UI off for this process: a call that
+    // would prompt fails with -25308 instead of showing a dialog
+    expect(!keychain.ui_allowed())
+    expect(k.get_generic(SVC, "acct")? == None)
+    k.set_generic(SVC, "acct", b"one")?
+    expect(k.get_generic(SVC, "acct")? == Some(b"one"))
+    k.set_generic(SVC, "acct", b"two")?
+    expect(k.get_generic(SVC, "acct")? == Some(b"two"))
+    expect(k.get_generic(SVC, "other")? == None)
+    k.delete_generic(SVC, "acct")?
+    k.delete_generic(SVC, "acct")?
+    expect(k.get_generic(SVC, "acct")? == None)
+    // one item left for the harness to find in the file (security
+    // dump-keychain), so the writes went to it
+    k.set_generic(SVC, "left", b"\x00\xffbytes")?
+    expect(k.get_generic(SVC, "left")? == Some(b"\x00\xffbytes"))
+    close_at(k)
+  }
+}

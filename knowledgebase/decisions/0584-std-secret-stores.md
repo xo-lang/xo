@@ -145,6 +145,11 @@ golang.org/x/sys/windows (`CryptProtectData`, `CryptUnprotectData`,
    in a temp directory and deleted after, never the login keychain (it may
    prompt), and only with the owner's go. Windows DPAPI on the winarm VM
    and the amd64 host, protect/unprotect round trips only, no stored state.
+   (Addendum 2026-11-10, after the first run prompted the owner:) one
+   throwaway keychain per test binary, since an item trusts only the
+   binary that made it, and the Security UI turned off for the test
+   process (SecKeychainSetUserInteractionAllowed(false), checked with the
+   getter), so a call that would prompt fails with -25308 instead.
 9. **Order of work:** Linux Keyring (native syscalls, Go twin, fake, corpus
    against Go's x/sys behavior on the hosts), then Keychain, then Dpapi.
    Each step: spec/std.md section, std/changes/secrets.md (decision 0276),
@@ -264,3 +269,24 @@ secrets2 branch). So the work lands in two steps:
   wrong entropy refused, the known folder) passes natively on
   windows/amd64 (amd64 host), and on the Go backend on windows/amd64 and
   on the winarm VM (windows/arm64), 2026-11-10.
+- Keychain real check (2026-11-10, owner's go): userfs `keychain_at(path,
+  password)` (keychain.open_at: SecKeychainOpen and SecKeychainUnlock;
+  get, set and delete take the keychain, scoped with kSecMatchSearchList
+  and, for an add, kSecUseKeychain, as go-keychain), reachable only from
+  std's own tests, never from os.secrets. The keychain is made with
+  `security create-keychain -p` by cmd/xo TestRealKeychain, not with
+  SecKeychainCreate in Xo as section 4 planned (six arguments, and the
+  runtime's C calls take at most four). Runs only with
+  XO_TEST_REAL_KEYCHAIN=1, macOS. The first run, at 21:45, prompted: the
+  LLVM test binary updated an item the arm64 binary had made in the same
+  keychain, which raised an access dialog on the owner's screen until the
+  1 minute limit; the owner denied it, the keychain was already deleted
+  (gotchas/keychain-item-acl-prompts-other-binary.md). Since then each
+  backend's binary gets its own keychain and open_at turns the Security UI
+  off first (section 8 addendum). Passing run (arm64 and LLVM, 21:50): get
+  of a missing item None, set, update, get of another account None,
+  delete twice, a wrong password refused, the UI off, the item left behind
+  found in the file by `security dump-keychain` (attributes only); the
+  user's search list and default keychain unchanged before, during and
+  after; each file gone after `security delete-keychain`. The login
+  keychain was never opened.

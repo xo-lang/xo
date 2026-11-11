@@ -70,19 +70,39 @@ fn query(service: Str, account: Str) -> Int {
   d
 }
 
+/// Narrows the query q to the keychain kc (0: the user's search list):
+/// kSecUseKeychain for an add, else kSecMatchSearchList of [kc], as
+/// go-keychain's UseKeychain and MatchSearchList.
+fn scope(q: Int, kc: Int, add: Bool) {
+  if kc == 0 {
+    return
+  }
+  if add {
+    put(q, gval("kSecUseKeychain"), kc)
+    return
+  }
+  let one = rt.heap_large(8)
+  rt.mem_store(one, 0, kc, 8)
+  let arr = rt.call_c4(sym("CFArrayCreate"), 0, one, 1, sym("kCFTypeArrayCallBacks"))
+  rt.heap_release(one - 8)
+  put(q, gval("kSecMatchSearchList"), arr)
+  cf_release(arr)
+}
+
 fn cfdata(b: Bytes) -> Int {
   let r = rt.call_c4(sym("CFDataCreate"), 0, raw.bytes_addr(b), b.len(), 0)
   raw.alive(b)
   r
 }
 
-/// SecItemCopyMatching of the item: (0, its data), (0, None) when there
-/// is none, or (status, None).
-pub fn get(service: Str, account: Str) -> (Int, Bytes?) {
+/// SecItemCopyMatching of the item in the keychain kc (0: the search
+/// list): (0, its data), (0, None) when there is none, or (status, None).
+pub fn get(service: Str, account: Str, kc: Int) -> (Int, Bytes?) {
   let q = query(service, account)
   if q == 0 {
     return (ERR_NO_FRAMEWORK, None)
   }
+  scope(q, kc, false)
   put(q, gval("kSecReturnData"), gval("kCFBooleanTrue"))
   put(q, gval("kSecMatchLimit"), gval("kSecMatchLimitOne"))
   let out = rt.heap_large(8)
@@ -105,43 +125,115 @@ pub fn get(service: Str, account: Str) -> (Int, Bytes?) {
   (0, Some(b))
 }
 
-/// SecItemUpdate of the item's data, or SecItemAdd when there is none:
-/// 0 or the status.
-pub fn set(service: Str, account: Str, data: Bytes) -> Int {
+/// SecItemUpdate of the item's data in the keychain kc (0: the search
+/// list), or SecItemAdd when there is none (to kc, else the default
+/// keychain): 0 or the status.
+pub fn set(service: Str, account: Str, data: Bytes, kc: Int) -> Int {
   let q = query(service, account)
   if q == 0 {
     return ERR_NO_FRAMEWORK
   }
+  scope(q, kc, false)
   let dv = cfdata(data)
   let attrs = rt.call_c4(sym("CFDictionaryCreateMutable"), 0, 0, sym("kCFTypeDictionaryKeyCallBacks"), sym("kCFTypeDictionaryValueCallBacks"))
   put(attrs, gval("kSecValueData"), dv)
   var st = status(rt.call_c2(sym("SecItemUpdate"), q, attrs))
   cf_release(attrs)
+  cf_release(q)
   if st == ERR_NOT_FOUND {
-    put(q, gval("kSecValueData"), dv)
-    st = status(rt.call_c2(sym("SecItemAdd"), q, 0))
+    let a = query(service, account)
+    scope(a, kc, true)
+    put(a, gval("kSecValueData"), dv)
+    st = status(rt.call_c2(sym("SecItemAdd"), a, 0))
+    cf_release(a)
   }
   cf_release(dv)
-  cf_release(q)
   st
 }
 
-/// SecItemDelete of the item: 0 (a missing item or keychain too) or the
-/// status.
-pub fn delete(service: Str, account: Str) -> Int {
+/// SecItemDelete of the item in the keychain kc (0: the search list): 0
+/// (a missing item or keychain too) or the status.
+pub fn delete(service: Str, account: Str, kc: Int) -> Int {
   let q = query(service, account)
   if q == 0 {
     return ERR_NO_FRAMEWORK
   }
+  scope(q, kc, false)
   let st = status(rt.call_c2(sym("SecItemDelete"), q, 0))
   cf_release(q)
   if st == ERR_NOT_FOUND || st == ERR_NO_KEYCHAIN { 0 } else { st }
 }
 
+/// SecKeychainOpen of the keychain file at path, then SecKeychainUnlock
+/// with password (no prompt): (0, the keychain) or (status, 0). For
+/// tests (decision 0584 section 8: a throwaway keychain the test harness
+/// creates and deletes); a program's Keychain is always the search list.
+pub fn open_at(path: Str, password: Str) -> (Int, Int) {
+  let f = sym("SecKeychainOpen")
+  if f == 0 {
+    return (ERR_NO_FRAMEWORK, 0)
+  }
+  // no dialog can appear for this process from here on: a call that
+  // would prompt fails with errSecInteractionNotAllowed (-25308) instead
+  // (2026-11-10: an item another test binary made raised an access
+  // prompt on the owner's screen)
+  let st0 = status(rt.call_c2(sym("SecKeychainSetUserInteractionAllowed"), 0, 0))
+  if st0 != 0 {
+    return (st0, 0)
+  }
+  if ui_allowed() {
+    return (ERR_UI_ALLOWED, 0)
+  }
+  let c = "${path}\x00".bytes()
+  let out = rt.heap_large(8)
+  rt.mem_store(out, 0, 0, 8)
+  var st = status(rt.call_c2(f, raw.bytes_addr(c), out))
+  raw.alive(c)
+  let kc = rt.mem_load(out, 0, 8)
+  rt.heap_release(out - 8)
+  if st != 0 {
+    cf_release(kc)
+    return (st, 0)
+  }
+  let pw = password.bytes()
+  st = status(rt.call_c4(sym("SecKeychainUnlock"), kc, pw.len(), raw.bytes_addr(pw), 1))
+  raw.alive(pw)
+  if st != 0 {
+    cf_release(kc)
+    return (st, 0)
+  }
+  (0, kc)
+}
+
+/// The status open_at returns when the Security framework still allows
+/// user interaction after it was turned off.
+const ERR_UI_ALLOWED = -5
+
+/// SecKeychainGetUserInteractionAllowed: whether a keychain call of this
+/// process may show a dialog (true when the call fails).
+pub fn ui_allowed() -> Bool {
+  let f = sym("SecKeychainGetUserInteractionAllowed")
+  if f == 0 {
+    return true
+  }
+  let out = rt.heap_large(8)
+  rt.mem_store(out, 0, 1, 8)
+  let st = status(rt.call_c2(f, out, 0))
+  let v = rt.mem_load(out, 0, 1)
+  rt.heap_release(out - 8)
+  st != 0 || v != 0
+}
+
+/// Releases a keychain open_at returned (the file stays).
+pub fn close(kc: Int) { cf_release(kc) }
+
 /// SecCopyErrorMessageString's text for st.
 pub fn message(st: Int) -> Str {
   if st == ERR_NO_FRAMEWORK {
     return "the Security framework did not load"
+  }
+  if st == ERR_UI_ALLOWED {
+    return "keychain user interaction is still allowed"
   }
   let f = sym("SecCopyErrorMessageString")
   if f == 0 {

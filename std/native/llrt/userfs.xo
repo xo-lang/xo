@@ -174,7 +174,7 @@ fn (s: RealSecrets) keyring() -> Keyring? {
 }
 
 fn (s: RealSecrets) keychain() -> Keychain? {
-  if s.chain && keychain.available() { Some(RealKeychain{}) } else { None }
+  if s.chain && keychain.available() { Some(RealKeychain{kc: 0}) } else { None }
 }
 
 fn (s: RealSecrets) dpapi() -> Dpapi? {
@@ -200,13 +200,35 @@ fn (d: RealDpapi) protect(data: Bytes, entropy: Bytes = b"") -> Bytes ! DpapiErr
 
 fn (d: RealDpapi) unprotect(blob: Bytes, entropy: Bytes = b"") -> Bytes ! DpapiErr uses secrets.read { dpapi_out(dpapi.crypt(false, blob, entropy)) }
 
-/// The macOS login keychain behind RealSecrets.keychain().
-pub struct RealKeychain {}
+/// The macOS login keychain behind RealSecrets.keychain(): kc 0, the
+/// user's search list; a test's throwaway keychain (keychain_at) else.
+pub struct RealKeychain {
+  kc: Int
+}
+
+/// The keychain file at path, unlocked with password, as a Keychain whose
+/// items go only there: for the std tests' real round trip (decision 0584
+/// section 8), never reachable from a program's os.secrets. close_at
+/// releases it.
+pub fn keychain_at(path: Str, password: Str) -> RealKeychain ! KeychainErr {
+  let (st, kc) = keychain.open_at(path, password)
+  if st != 0 {
+    return Err(chain_err(st))
+  }
+  Ok(RealKeychain{kc: kc})
+}
+
+/// Releases a keychain_at keychain.
+pub fn close_at(k: RealKeychain) {
+  if k.kc != 0 {
+    keychain.close(k.kc)
+  }
+}
 
 fn chain_err(st: Int) -> KeychainErr { KeychainErr{status: st, msg: keychain.message(st)} }
 
 fn (k: RealKeychain) get_generic(service: Str, account: Str) -> Bytes? ! KeychainErr uses secrets.read {
-  let (st, b) = keychain.get(service, account)
+  let (st, b) = keychain.get(service, account, k.kc)
   if st != 0 {
     return Err(chain_err(st))
   }
@@ -214,7 +236,7 @@ fn (k: RealKeychain) get_generic(service: Str, account: Str) -> Bytes? ! Keychai
 }
 
 fn (k: RealKeychain) set_generic(service: Str, account: Str, data: Bytes) -> () ! KeychainErr uses secrets.write {
-  let st = keychain.set(service, account, data)
+  let st = keychain.set(service, account, data, k.kc)
   if st != 0 {
     return Err(chain_err(st))
   }
@@ -222,7 +244,7 @@ fn (k: RealKeychain) set_generic(service: Str, account: Str, data: Bytes) -> () 
 }
 
 fn (k: RealKeychain) delete_generic(service: Str, account: Str) -> () ! KeychainErr uses secrets.write {
-  let st = keychain.delete(service, account)
+  let st = keychain.delete(service, account, k.kc)
   if st != 0 {
     return Err(chain_err(st))
   }
