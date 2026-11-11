@@ -6504,3 +6504,27 @@ test "BigRat values" {
   expect(big.rat_from_float(0.1).map(fn(x) { x.float_text(20) })) == Some("0.10000000000000000555")
   expect(big.rat_from_float(Float.nan)) == None
 }
+
+// Go's floatStringTests (math/big ratconv_test.go): FloatString's half
+// away from zero rounding, carries into the integer part, and a prec
+// of 0 or below
+test "BigRat float_text, Go's floatStringTests" {
+  let rows = [
+    ("0", 0, "0"), ("0", 4, "0.0000"), ("1", 0, "1"), ("1", 2, "1.00"),
+    ("-1", 0, "-1"), ("0.05", 1, "0.1"), ("-0.05", 1, "-0.1"), (".25", 2, "0.25"),
+    (".25", 1, "0.3"), (".25", 3, "0.250"), ("-1/3", 3, "-0.333"), ("-2/3", 4, "-0.6667"),
+    ("0.96", 1, "1.0"), ("0.999", 2, "1.00"), ("0.9", 0, "1"), (".25", -1, "0"),
+    (".55", -1, "1"),
+  ]
+  var bad: List[Str] = []
+  for (s, k, want) in rows {
+    let got = match big.parse_rat(s) {
+      Ok(x) => x.float_text(k)
+      Err(e) => "err ${e}"
+    }
+    if got != want {
+      bad.push("${s} ${k}: ${got}, want ${want}")
+    }
+  }
+  expect(bad) == []
+}
