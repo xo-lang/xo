@@ -32,14 +32,21 @@ func TestStdRuntimeCallsHaveGoLowering(t *testing.T) {
 		if l == "" || strings.HasPrefix(l, "#") {
 			continue
 		}
+		// a merged module (decision 0588) has no native file left; a
+		// name that is no std module at all means the list's format
+		// changed (the check counted 20 files until merges took the list
+		// below that, 2026-11-11)
+		if _, err := os.Stat(filepath.Join(root, "std", l+".xo")); err != nil {
+			t.Fatalf("std/go_compiled.txt: %q is no std module (std/%s.xo): the list's format changed?", l, l)
+		}
 		for _, f := range []string{"std/native/" + l + ".xo", "std/native/" + l + "_test.xo"} {
 			if _, err := os.Stat(filepath.Join(root, f)); err == nil {
 				files = append(files, filepath.Join(root, f))
 			}
 		}
 	}
-	if len(files) < 20 {
-		t.Fatalf("std/go_compiled.txt: only %d implementation files: the list's format changed", len(files))
+	if len(files) == 0 {
+		t.Fatal("std/go_compiled.txt: no implementation files: the list's format changed?")
 	}
 	call := regexp.MustCompile(`\brt\.([a-z_][a-z_0-9]*)\s*[\[(]`)
 	callers := map[string][]string{}

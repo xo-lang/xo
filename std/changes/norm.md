@@ -1,5 +1,16 @@
 # std/norm changes
 
+## 2026-11-11: refactor: std/norm is one file (decisions 0588, 0597)
+
+- Kind: refactor
+- Commit: this push
+- Found by: decision 0597's merges
+- Go reference: none (no behavior change)
+- Test: TestStdCorpora norm, backoff, idna, otlp on go, arm64, llvm; golden otlp_export (arm64, llvm, Go parity); TestStdChecks; repotest
+- Shipped in: not yet released
+
+std/native/norm.xo moved into std/norm.xo; its two `_ =>` arms over Form name the forms (XO0305 in a merged module).
+
 ## 2026-11-03: feature: std/norm, Unicode normalization forms
 
 - Kind: feature

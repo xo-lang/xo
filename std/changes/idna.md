@@ -1,5 +1,16 @@
 # std/idna changes
 
+## 2026-11-11: refactor: std/idna is one file (decisions 0588, 0597)
+
+- Kind: refactor
+- Commit: this push
+- Found by: decision 0597 part 1 (rt.cast is a portable intrinsic)
+- Go reference: none (no behavior change)
+- Test: TestStdCorpora idna on go, arm64, llvm; TestStdChecks
+- Shipped in: not yet released
+
+std/native/idna.xo moved into std/idna.xo; std/rt/idna.go (IdnaErr's display on the Go backend) and the generated std_gen_idna.go and std_sigs_idna.go are gone: the Go backend compiles the module with the program.
+
 ## 2026-11-10: refactor: width bounds as the type constants (decision 0587 point 4)
 
 - Kind: refactor

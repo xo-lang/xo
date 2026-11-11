@@ -1,40 +1,119 @@
-// std/backoff (spec/std.md 43, std survey gap 15). Declaration file;
-// encoding rules are listed at the top of std/prelude.xo. Exponential
+// std/backoff (spec/std.md 43, std survey gap 15).
+// Encoding rules are listed at the top of std/prelude.xo. Exponential
 // backoff with jitter and a retry loop, cenkalti/backoff v4's
 // ExponentialBackOff and Retry. The Clock and Rand are given per call,
 // so a test's virtual clock and seeded Rand make it deterministic.
+//
+// std/backoff on the native backends and the Go backend (spec/std.md
+// 43): cenkalti/backoff v4's ExponentialBackOff (NextBackOff,
+// incrementCurrentInterval, getRandomValueFromInterval; Copyright (c)
+// 2014 Cenk Altı, MIT license) and Retry, over the Clock and Rand the
+// caller gives.
 
 /// The schedule (cenkalti/backoff v4's defaults): the first delay is
 /// `initial`, each next one `multiplier` times the last up to
 /// `max_interval`, each randomized within `randomization` of itself.
-struct Backoff {
-  initial: Duration = 500ms
-  multiplier: Float = 1.5
+pub struct Backoff {
+  pub initial: Duration = 500ms
+  pub multiplier: Float = 1.5
   /// A delay d is drawn from [d - r d, d + r d]; 0 is no jitter.
-  randomization: Float = 0.5
-  max_interval: Duration = 60s
+  pub randomization: Float = 0.5
+  pub max_interval: Duration = 60s
   /// retry stops when the next sleep would pass this since the first
   /// try; 0s is no limit.
-  max_elapsed: Duration = 15m
+  pub max_elapsed: Duration = 15m
   /// The most calls of op; 0 is no limit.
-  max_tries: Int = 0
+  pub max_tries: Int = 0
 }
 
 /// The delay before retry number attempt (0 for the first retry):
 /// `initial` times `multiplier` attempt times, capped at `max_interval`,
 /// randomized with one `rand.float()`.
-fn (b: Backoff) delay(attempt: Int, rand: Rand) -> Duration uses rand
+pub fn (b: Backoff) delay(attempt: Int, rand: Rand) -> Duration uses rand {
+  randomized(b.randomization, rand.float(), interval(b, attempt))
+}
 
 /// Calls op until it succeeds, `retryable(e)` is false, or a limit of b
 /// runs out, and then answers op's last result; sleeps on clock between
 /// tries (a cancellation point: a cancelled task unwinds there).
-fn retry[T, E, fx: Effects](b: Backoff, clock: Clock, rand: Rand, op: fn() -> T ! E uses fx, retryable: fn(E) -> Bool) -> T ! E uses (clock, rand, fx)
+pub fn retry[T, E, fx: Effects](b: Backoff, clock: Clock, rand: Rand, op: fn() -> T ! E uses fx, retryable: fn(E) -> Bool) -> T ! E uses (clock, rand, fx) {
+  let start = clock.now()
+  var tries = 0
+  while {
+    tries += 1
+    match op() {
+      Ok(v) => return Ok(v)
+      Err(e) => {
+        if !retryable(e) || (b.max_tries > 0 && tries >= b.max_tries) {
+          return Err(e)
+        }
+        let d = b.delay(tries - 1, rand)
+        // Go's NextBackOff: Stop once elapsed + next passes MaxElapsedTime
+        if b.max_elapsed > 0s && clock.since(start) + d > b.max_elapsed {
+          return Err(e)
+        }
+        clock.sleep(d)
+      }
+    }
+  }
+}
 
 /// retry, calling notify(e, d) with each error before sleeping d
 /// (cenkalti/backoff v4's RetryNotify): to log or count the retries.
 /// retryable and notify may have effects of their own (each its own
 /// effect variable: op's need not include a log's).
-fn retry_notify[T, E, fx: Effects, rx: Effects, nx: Effects](b: Backoff, clock: Clock, rand: Rand, op: fn() -> T ! E uses fx, retryable: fn(E) -> Bool uses rx, notify: fn(E, Duration) -> () uses nx) -> T ! E uses (clock, rand, fx, rx, nx)
+pub fn retry_notify[T, E, fx: Effects, rx: Effects, nx: Effects](b: Backoff, clock: Clock, rand: Rand, op: fn() -> T ! E uses fx, retryable: fn(E) -> Bool uses rx, notify: fn(E, Duration) -> () uses nx) -> T ! E uses (clock, rand, fx, rx, nx) {
+  let start = clock.now()
+  var tries = 0
+  while {
+    tries += 1
+    match op() {
+      Ok(v) => return Ok(v)
+      Err(e) => {
+        if !retryable(e) || (b.max_tries > 0 && tries >= b.max_tries) {
+          return Err(e)
+        }
+        let d = b.delay(tries - 1, rand)
+        if b.max_elapsed > 0s && clock.since(start) + d > b.max_elapsed {
+          return Err(e)
+        }
+        notify(e, d)
+        clock.sleep(d)
+      }
+    }
+  }
+}
 
 /// A retryable that retries every error.
-fn always[E]() -> fn(E) -> Bool
+pub fn always[E]() -> fn(E) -> Bool {
+  fn(_e: E) { true }
+}
+
+/// The interval before randomizing for retry number attempt: Go's
+/// currentInterval after attempt calls of incrementCurrentInterval.
+fn interval(b: Backoff, attempt: Int) -> Duration {
+  var ci = b.initial
+  var k = 0
+  while k < attempt && ci != b.max_interval {
+    // Go: float64(ci) >= float64(MaxInterval)/Multiplier caps it
+    if Float(ci.nanos()) >= Float(b.max_interval.nanos()) / b.multiplier {
+      ci = b.max_interval
+    } else {
+      ci = Duration.from_nanos(Int(Float(ci.nanos()) * b.multiplier))
+    }
+    k += 1
+  }
+  ci
+}
+
+/// Go's getRandomValueFromInterval: min + r (max - min + 1) nanoseconds.
+fn randomized(factor: Float, r: Float, ci: Duration) -> Duration {
+  if factor == 0.0 {
+    return ci
+  }
+  let c = Float(ci.nanos())
+  let delta = factor * c
+  let lo = c - delta
+  let hi = c + delta
+  Duration.from_nanos(Int(lo + r * (hi - lo + 1.0)))
+}

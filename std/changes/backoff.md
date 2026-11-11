@@ -1,5 +1,16 @@
 # std/backoff changes
 
+## 2026-11-11: refactor: std/backoff is one file (decisions 0588, 0597)
+
+- Kind: refactor
+- Commit: this push
+- Found by: decision 0597's merges
+- Go reference: none (no behavior change)
+- Test: TestStdCorpora norm, backoff, idna, otlp on go, arm64, llvm; golden otlp_export (arm64, llvm, Go parity); TestStdChecks; repotest
+- Shipped in: not yet released
+
+std/native/backoff.xo moved into std/backoff.xo; backoff.retry and retry_notify left the compiler's list of bodyless std functions that do not wait (compiler/ssa/waits.xo), since they have Xo bodies now. It is generated into std/rt (std/rt_hosted.txt), since std/otlp, which is, uses it.
+
 ## 2026-10-30: feature: retry_notify
 
 - Kind: feature

@@ -239,4 +239,13 @@ pushes.
   from Go's net/netip, and the display methods, which were Go's net/netip
   on the Go backend, are the port's there too (the netip corpus checks
   them against Go on every backend).
+- std/norm (part 1, its one `rt.cast`) and std/backoff (nothing native)
+  (2026-11-11): merged; backoff is rt-hosted, since std/otlp, which is
+  generated into std/rt, uses it (gotchas/rt-hosted-merged-imports.md). backoff.retry and retry_notify
+  left compiler/ssa/waits.xo's NO_WAIT: they have Xo bodies now.
+  std/idna (one `rt.cast`) merged with them, not rt-hosted (nothing
+  generated into std/rt uses it); its Go twin, only IdnaErr's display,
+  is gone.
+  std/protobuf cannot merge this way: marshal and unmarshal are the
+  compiler's (derive Proto), with no body to move.
 

@@ -77,14 +77,14 @@ func Binary_uvarint(tk *Task, v_n int64) Bytes {
 	var v_x int64 = v_n
 	_ = v_x
 	for {
-		x_a2 := int64(128)
-		if !(!(Int_lt_unsigned(tk, v_x, x_a2))) {
+		x_a19 := int64(128)
+		if !(!(Int_lt_unsigned(tk, v_x, x_a19))) {
 			break
 		}
 		{
 			v_out.M_write_byte(tk, ConvS_uint8(((v_x&int64(127))|int64(128)), "std/binary.xo:68:20"))
-			x_a3 := int64(7)
-			v_x = Int_shr_logical(tk, v_x, x_a3)
+			x_a20 := int64(7)
+			v_x = Int_shr_logical(tk, v_x, x_a20)
 		}
 	}
 	v_out.M_write_byte(tk, ConvS_uint8(v_x, "std/binary.xo:71:18"))
@@ -92,8 +92,8 @@ func Binary_uvarint(tk *Task, v_n int64) Bytes {
 }
 
 func Binary_varint(tk *Task, v_n int64) Bytes {
-	x_a4 := int64(1)
-	return Binary_uvarint(tk, (Int_wrapping_shl(tk, v_n, x_a4) ^ (v_n >> int64(63))))
+	x_a21 := int64(1)
+	return Binary_uvarint(tk, (Int_wrapping_shl(tk, v_n, x_a21) ^ (v_n >> int64(63))))
 }
 
 func Binary_get_uvarint(tk *Task, v_b Bytes, v_at int64) Option[Tuple2[int64, int64]] {
@@ -120,9 +120,9 @@ func Binary_get_uvarint(tk *Task, v_b Bytes, v_at int64) Option[Tuple2[int64, in
 				if (v_i == int64(9)) && (v_c > int64(1)) {
 					return None[Tuple2[int64, int64]]()
 				}
-				x_a7 := v_x
-				x_a6 := v_s
-				return Some[Tuple2[int64, int64]](Tuple2[int64, int64]{F0: (x_a7 | Int_wrapping_shl(tk, v_c, x_a6)), F1: AddIUp(v_i, int64(1), "std/binary.xo:99:43")})
+				x_a24 := v_x
+				x_a23 := v_s
+				return Some[Tuple2[int64, int64]](Tuple2[int64, int64]{F0: (x_a24 | Int_wrapping_shl(tk, v_c, x_a23)), F1: AddIUp(v_i, int64(1), "std/binary.xo:99:43")})
 			}
 			v_x = (v_x | Int_wrapping_shl(tk, (v_c&int64(127)), v_s))
 			v_s = AddIUp(v_s, int64(7), "std/binary.xo:102:5")
@@ -133,18 +133,18 @@ func Binary_get_uvarint(tk *Task, v_b Bytes, v_at int64) Option[Tuple2[int64, in
 }
 
 func Binary_get_varint(tk *Task, v_b Bytes, v_at int64) Option[Tuple2[int64, int64]] {
-	x_r8 := Binary_get_uvarint(tk, v_b, v_at)
-	if !x_r8.Some {
+	x_r25 := Binary_get_uvarint(tk, v_b, v_at)
+	if !x_r25.Some {
 		return None[Tuple2[int64, int64]]()
 	}
-	x_let9 := x_r8.V
-	_ = x_let9
-	var v_ux int64 = x_let9.F0
+	x_let26 := x_r25.V
+	_ = x_let26
+	var v_ux int64 = x_let26.F0
 	_ = v_ux
-	var v_n int64 = x_let9.F1
+	var v_n int64 = x_let26.F1
 	_ = v_n
-	x_a10 := int64(1)
-	var v_x int64 = Int_shr_logical(tk, v_ux, x_a10)
+	x_a27 := int64(1)
+	var v_x int64 = Int_shr_logical(tk, v_ux, x_a27)
 	_ = v_x
 	if (v_ux & int64(1)) != int64(0) {
 		v_x = (v_x ^ int64(-1))
@@ -170,9 +170,9 @@ func Binary_swap32(tk *Task, v_n int64) int64 {
 }
 
 func Binary_swap64(tk *Task, v_n int64) int64 {
-	x_a12 := Int_wrapping_shl(tk, Binary_swap32(tk, v_n), int64(32))
-	x_a11 := int64(32)
-	return (x_a12 | Binary_swap32(tk, Int_shr_logical(tk, v_n, x_a11)))
+	x_a29 := Int_wrapping_shl(tk, Binary_swap32(tk, v_n), int64(32))
+	x_a28 := int64(32)
+	return (x_a29 | Binary_swap32(tk, Int_shr_logical(tk, v_n, x_a28)))
 }
 
 func Binary_le(tk *Task, v_n int64, v_size int64) Bytes {

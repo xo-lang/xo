@@ -35,3 +35,6 @@ std/regexp
 std/uniclass
 std/image
 std/netip
+std/norm
+std/backoff
+std/idna
