@@ -222,3 +222,45 @@ fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr
 /// key of `bits` (1024 to 8192, exponent 65537; other algorithms ignore
 /// it). The same r gives the same key on every backend.
 fn generate_key(r: Rand, alg: KeyAlg, bits: Int = 2048) -> PrivateKey ! KeyErr uses rand
+
+// ---- ECDH key agreement (crypto/ecdh, decision 0599) ----
+
+/// crypto/ecdh's curves.
+enum EcdhCurve {
+  X25519
+  P256
+  P384
+  P521
+}
+
+/// An ECDH private key: Debug text `<ecdhprivatekey>`, never key material.
+struct EcdhPrivateKey {}
+
+/// An ECDH public key: ==.
+struct EcdhPublicKey {}
+
+/// A new key from r (Curve.GenerateKey): X25519 reads 32 bytes; a NIST
+/// curve samples its scalar as generate_key's ECDSA path, so the same r
+/// gives the same key on every backend.
+fn ecdh_generate_key(r: Rand, c: EcdhCurve) -> EcdhPrivateKey uses rand
+/// Curve.NewPrivateKey: X25519's 32 bytes, or a NIST scalar (big endian,
+/// the order's length) in [1, n); Go's texts (`crypto/ecdh: invalid
+/// private key size`, X25519; `crypto/ecdh: invalid private key`).
+fn ecdh_private_key(c: EcdhCurve, key: Bytes) -> EcdhPrivateKey ! KeyErr
+/// Curve.NewPublicKey: X25519's 32 bytes, or a NIST uncompressed point on
+/// the curve; Go's texts: `crypto/ecdh: invalid public key` (a wrong
+/// X25519 length, the identity, a compressed point), then nistec's
+/// (`invalid P256 point encoding`, `invalid P256 element encoding`, `invalid P384Element encoding`,
+/// `P256 point not on curve`).
+fn ecdh_public_key(c: EcdhCurve, key: Bytes) -> EcdhPublicKey ! KeyErr
+fn (k: EcdhPrivateKey) curve() -> EcdhCurve
+/// The key's encoding (PrivateKey.Bytes), which ecdh_private_key reads.
+fn (k: EcdhPrivateKey) bytes() -> Bytes
+fn (k: EcdhPrivateKey) public_key() -> EcdhPublicKey
+/// The shared secret (PrivateKey.ECDH): X25519's 32 bytes, or a NIST
+/// curve's x coordinate; KeyErr for keys of different curves or an
+/// X25519 result of zero (a low order point), with Go's texts.
+fn (k: EcdhPrivateKey) ecdh(peer: EcdhPublicKey) -> Bytes ! KeyErr
+fn (k: EcdhPublicKey) curve() -> EcdhCurve
+/// The key's encoding (PublicKey.Bytes), which ecdh_public_key reads.
+fn (k: EcdhPublicKey) bytes() -> Bytes

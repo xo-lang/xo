@@ -3872,6 +3872,40 @@ fn issue(db: sql.Db, r: Rand, user: Int) -> Str ! sql.SqlErr uses (rand, net.dia
 Passwords chosen by people have little entropy: store
 `hash_password_argon2id(os.rand, pw)` and check with `verify_password`.
 
+ECDH key agreement (Go's `crypto/ecdh`, decision 0599):
+
+```xo
+enum EcdhCurve { X25519, P256, P384, P521 }
+struct EcdhPrivateKey {}   // Debug `<ecdhprivatekey>`
+struct EcdhPublicKey {}    // ==, Debug `<ecdhpublickey>`
+fn ecdh_generate_key(r: Rand, c: EcdhCurve) -> EcdhPrivateKey uses rand
+fn ecdh_private_key(c: EcdhCurve, key: Bytes) -> EcdhPrivateKey ! KeyErr
+fn ecdh_public_key(c: EcdhCurve, key: Bytes) -> EcdhPublicKey ! KeyErr
+fn (k: EcdhPrivateKey) curve() -> EcdhCurve
+fn (k: EcdhPrivateKey) bytes() -> Bytes
+fn (k: EcdhPrivateKey) public_key() -> EcdhPublicKey
+fn (k: EcdhPrivateKey) ecdh(peer: EcdhPublicKey) -> Bytes ! KeyErr
+fn (k: EcdhPublicKey) curve() -> EcdhCurve
+fn (k: EcdhPublicKey) bytes() -> Bytes
+```
+
+Encodings and errors are Go's: X25519 keys and secrets are 32 bytes; a
+NIST private key is its scalar (big endian, the order's length, in
+[1, n)), a public key the uncompressed point, a secret the x coordinate.
+A wrong X25519 length is `crypto/ecdh: invalid private key size` or
+`crypto/ecdh: invalid public key`; a NIST scalar out of range or of the
+wrong length `crypto/ecdh: invalid private key`; the identity or a
+compressed point `crypto/ecdh: invalid public key`, other bad points
+nistec's texts (`invalid P256 point encoding`, `invalid P256 element
+encoding` as Go's assembly field on arm64 and amd64 says it, `invalid
+P384Element encoding`, `P521 point not on curve`); keys of two curves
+`crypto/ecdh: private key and public key curves do not match`; an X25519
+secret of zero `crypto/ecdh: bad X25519 remote ECDH input: low order
+point`. `ecdh_generate_key` reads `r` as `generate_key` does (X25519 32
+bytes; a NIST scalar by Go's rejection sampling), so a seeded `r` gives
+the same key on every backend. Checked against Go's `crypto/ecdh`
+(testdata/corpus/ecdh) and RFC 7748 (golden crypto_ecdh).
+
 ---
 
 ## 12. std/go

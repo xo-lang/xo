@@ -53,10 +53,13 @@ way to it.
    the scalar, big endian, as long as the order; NIST public keys are the
    uncompressed point (0x04 || x || y; compressed points and the identity
    are rejected, as Go rejects them). Errors: `crypto/ecdh: invalid
-   private key size`, `crypto/ecdh: invalid private key`, `crypto/ecdh:
-   invalid public key`, `crypto/ecdh: private key and public key curves
-   do not match`, `crypto/ecdh: bad X25519 remote ECDH input: low order
-   point`.
+   private key size` (X25519 only; a NIST key of the wrong length is
+   `crypto/ecdh: invalid private key`, as out of range), `crypto/ecdh:
+   invalid public key` (a wrong X25519 length, the identity, a compressed
+   point), nistec's texts for other bad NIST points (`invalid P256 point
+   encoding`, `invalid P256 element encoding`, `P384 point not on curve`),
+   `crypto/ecdh: private key and public key curves do not match`,
+   `crypto/ecdh: bad X25519 remote ECDH input: low order point`.
 2. Key generation takes the Rand capability, as generate_key does: X25519
    reads 32 bytes; a NIST curve samples the scalar as Go's randomPoint
    (and generate_key's ECDSA path) does, so one seeded r gives the same
@@ -86,3 +89,13 @@ way to it.
 - Reuse PrivateKey and PublicKey with new KeyAlg values: Go keeps
   ecdsa and ecdh keys apart (an ECDH key cannot sign), and a KeyAlg of
   X25519 in parse_private_key would change what PKCS #8 parsing returns.
+
+## Progress
+
+- 2026-11-11, stage 1 (branch lang3-ecdh, held for the owner): the
+  declarations in std/crypto.xo, native bodies over llrt's x25519 and
+  nistec, Go backend twins in std/rt/cryptoecdh.go, the ecdh corpus
+  against Go and golden crypto_ecdh. P-256's element text is Go's
+  assembly field's (`invalid P256 element encoding`, amd64 and arm64);
+  the same fix for parse_public_key landed on its own (3f87adc63).
+

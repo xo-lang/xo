@@ -1,0 +1,33 @@
+// std/crypto's ECDH (decision 0599): RFC 7748 6.1's X25519 vector, keys
+// generated from os.rand on every curve agreeing both ways (their bytes
+// differ per run, so only lengths and agreement print), Go's error texts,
+// and x509's text for a P-256 point with a coordinate at or above p (Go's
+// assembly field on arm64 and amd64).
+use std/crypto
+
+fn hx(s: Str) -> Bytes { Bytes.from_hex(s) ?? fault("hex") }
+
+fn main(os: Os) -> () ! Str {
+  let alice = crypto.ecdh_private_key(crypto.EcdhCurve.X25519, hx("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")).map_err(fn(e) { e.msg })?
+  let bob = crypto.ecdh_public_key(crypto.EcdhCurve.X25519, hx("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f")).map_err(fn(e) { e.msg })?
+  os.stdio.println("alice public ${alice.public_key().bytes().to_hex()}")
+  os.stdio.println("shared ${alice.ecdh(bob).map_err(fn(e) { e.msg })?.to_hex()}")
+  os.stdio.println("debug ${alice.debug()} ${bob.debug()}")
+  for c in [crypto.EcdhCurve.X25519, crypto.EcdhCurve.P256, crypto.EcdhCurve.P384, crypto.EcdhCurve.P521] {
+    let a = crypto.ecdh_generate_key(os.rand, c)
+    let b = crypto.ecdh_generate_key(os.rand, c)
+    let s1 = a.ecdh(b.public_key()).map_err(fn(e) { e.msg })?
+    let s2 = b.ecdh(a.public_key()).map_err(fn(e) { e.msg })?
+    let again = crypto.ecdh_private_key(c, a.bytes()).map_err(fn(e) { e.msg })?
+    os.stdio.println("${c.debug()}: private ${a.bytes().len()} public ${a.public_key().bytes().len()} secret ${s1.len()} agree ${s1 == s2} round trip ${again.public_key() == a.public_key()}")
+  }
+  let p = crypto.ecdh_generate_key(os.rand, crypto.EcdhCurve.P256)
+  os.stdio.println("mismatch: ${p.ecdh(bob).map_err(fn(e) { e.msg }).err() ?? ""}")
+  os.stdio.println("low order: ${alice.ecdh(crypto.ecdh_public_key(crypto.EcdhCurve.X25519, Bytes.zeroed(32)).map_err(fn(e) { e.msg })?).map_err(fn(e) { e.msg }).err() ?? ""}")
+  os.stdio.println("x25519 size: ${crypto.ecdh_private_key(crypto.EcdhCurve.X25519, b"short").map_err(fn(e) { e.msg }).err() ?? ""}")
+  os.stdio.println("p384 zero: ${crypto.ecdh_private_key(crypto.EcdhCurve.P384, Bytes.zeroed(48)).map_err(fn(e) { e.msg }).err() ?? ""}")
+  os.stdio.println("p256 compressed: ${crypto.ecdh_public_key(crypto.EcdhCurve.P256, p.public_key().bytes()[0..33]).map_err(fn(e) { e.msg }).err() ?? ""}")
+  let spki = hx("3059301306072a8648ce3d020106082a8648ce3d03010703420004ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+  os.stdio.println("x509 p256 coordinate past p: ${crypto.parse_public_key(spki).map_err(fn(e) { e.msg }).err() ?? ""}")
+  Ok(())
+}

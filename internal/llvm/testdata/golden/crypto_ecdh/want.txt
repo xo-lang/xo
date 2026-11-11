@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+alice public 8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a
+shared 4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742
+debug <ecdhprivatekey> <ecdhpublickey>
+X25519: private 32 public 32 secret 32 agree true round trip true
+P256: private 32 public 65 secret 32 agree true round trip true
+P384: private 48 public 97 secret 48 agree true round trip true
+P521: private 66 public 133 secret 66 agree true round trip true
+mismatch: crypto/ecdh: private key and public key curves do not match
+low order: crypto/ecdh: bad X25519 remote ECDH input: low order point
+x25519 size: crypto/ecdh: invalid private key size
+p384 zero: crypto/ecdh: invalid private key
+p256 compressed: invalid P256 point encoding
+x509 p256 coordinate past p: invalid P256 element encoding
+--- stderr

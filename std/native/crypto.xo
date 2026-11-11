@@ -22,6 +22,7 @@ use native/llrt/rsagen
 use native/llrt/sha1
 use native/llrt/sha256
 use native/llrt/sha3
+use native/llrt/x25519
 use native/rt
 
 fn sha256(data: Bytes) -> Bytes { dg.sha256(data) }
@@ -1731,3 +1732,111 @@ fn jwk_public_key(jwk: Str) -> PublicKey ! crypto.KeyErr {
     other => Err(key_err("jwk: unsupported key type ${other.quote()}"))
   }
 }
+
+// ---------------------------------------------------------------------------
+// ECDH (crypto/ecdh of go1.26, decision 0599): llrt's X25519 and nistec
+
+struct EcdhPrivateKey {
+  crv: crypto.EcdhCurve
+  d: Bytes
+  public: EcdhPublicKey
+}
+
+struct EcdhPublicKey {
+  crv: crypto.EcdhCurve
+  key: Bytes
+}
+
+fn ecdh_nist(c: crypto.EcdhCurve) -> Int {
+  match c {
+    crypto.EcdhCurve.P384 => nistec.P384
+    crypto.EcdhCurve.P521 => nistec.P521
+    _ => nistec.P256
+  }
+}
+
+fn ecdh_generate_key(r: Rand, c: crypto.EcdhCurve) -> EcdhPrivateKey uses rand {
+  if c == crypto.EcdhCurve.X25519 {
+    let d = r.bytes(32)
+    return EcdhPrivateKey{crv: c, d: d, public: EcdhPublicKey{crv: c, key: x25519.base(d)}}
+  }
+  let n = ecdh_nist(c)
+  // Go's randomPoint, as generate_key's ECDSA path: size(curve) bytes
+  // until a scalar in [1, n), P-521's candidates shifted right by 7 bits
+  while true {
+    let b0 = r.bytes(nistec.size(n))
+    let b = if n == nistec.P521 { nist_shift7(b0) } else { b0 }
+    let p = nistec.public_key(n, b)
+    if !p.is_empty() {
+      return EcdhPrivateKey{crv: c, d: b, public: EcdhPublicKey{crv: c, key: p}}
+    }
+  }
+  EcdhPrivateKey{crv: c, d: b"", public: EcdhPublicKey{crv: c, key: b""}}
+}
+
+fn ecdh_private_key(c: crypto.EcdhCurve, key: Bytes) -> EcdhPrivateKey ! crypto.KeyErr {
+  if c == crypto.EcdhCurve.X25519 {
+    if key.len() != 32 {
+      return Err(key_err("crypto/ecdh: invalid private key size"))
+    }
+    return Ok(EcdhPrivateKey{crv: c, d: key, public: EcdhPublicKey{crv: c, key: x25519.base(key)}})
+  }
+  let p = nistec.public_key(ecdh_nist(c), key)
+  if p.is_empty() {
+    return Err(key_err("crypto/ecdh: invalid private key"))
+  }
+  Ok(EcdhPrivateKey{crv: c, d: key, public: EcdhPublicKey{crv: c, key: p}})
+}
+
+fn ecdh_public_key(c: crypto.EcdhCurve, key: Bytes) -> EcdhPublicKey ! crypto.KeyErr {
+  if c == crypto.EcdhCurve.X25519 {
+    if key.len() != 32 {
+      return Err(key_err("crypto/ecdh: invalid public key"))
+    }
+    return Ok(EcdhPublicKey{crv: c, key: key})
+  }
+  // the identity and compressed points first, then nistec's SetBytes
+  // texts, as Go returns them
+  if key.is_empty() || key[0] != 4 {
+    return Err(key_err("crypto/ecdh: invalid public key"))
+  }
+  let name = c.debug()
+  match nistec.point_check(ecdh_nist(c), key) {
+    0 => Ok(EcdhPublicKey{crv: c, key: key})
+    1 => Err(key_err("invalid ${name} point encoding"))
+    2 => Err(key_err(element_err(name)))
+    _ => Err(key_err("${name} point not on curve"))
+  }
+}
+
+fn (k: EcdhPrivateKey) curve() -> crypto.EcdhCurve { k.crv }
+
+fn (k: EcdhPrivateKey) bytes() -> Bytes { k.d }
+
+fn (k: EcdhPrivateKey) public_key() -> EcdhPublicKey { k.public }
+
+fn (k: EcdhPrivateKey) ecdh(peer: EcdhPublicKey) -> Bytes ! crypto.KeyErr {
+  if k.crv != peer.crv {
+    return Err(key_err("crypto/ecdh: private key and public key curves do not match"))
+  }
+  if k.crv == crypto.EcdhCurve.X25519 {
+    let s = x25519.scalar_mult(k.d, peer.key)
+    var acc = 0
+    for x in s {
+      acc = acc | Int(x)
+    }
+    if acc == 0 {
+      return Err(key_err("crypto/ecdh: bad X25519 remote ECDH input: low order point"))
+    }
+    return Ok(s)
+  }
+  match nistec.ecdh(ecdh_nist(k.crv), k.d, peer.key) {
+    Some(s) => Ok(s)
+    // unreachable: both keys were checked when made (Go's comment)
+    None => Err(key_err("crypto/ecdh: invalid public key"))
+  }
+}
+
+fn (k: EcdhPublicKey) curve() -> crypto.EcdhCurve { k.crv }
+
+fn (k: EcdhPublicKey) bytes() -> Bytes { k.key }

@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-11: feature: ECDH key agreement (Go's crypto/ecdh)
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit of 2026-11-11 (bench/results/std-audit-2026-11-11.md, third gap), decision 0599
+- Go reference: crypto/ecdh (go1.26.1)
+- Test: the ecdh corpus on go, arm64, llvm (600 private keys, 800 public keys and shared secrets against Go, X25519's low order points); golden crypto_ecdh (RFC 7748 6.1, generated keys agreeing on each curve, every error text) on llvm, Go parity and arm64; `xo test --std-module=native/crypto`
+- Timing: none (llrt's X25519 and nistec, which TLS already runs)
+- Shipped in: not yet released
+
+EcdhCurve (X25519, P256, P384, P521), EcdhPrivateKey and EcdhPublicKey with ecdh_generate_key, ecdh_private_key, ecdh_public_key, bytes, curve, public_key and ecdh, Go's encodings and error texts. spec/std.md 11.
+
 ## 2026-11-11: fix: a P-256 public key with a coordinate at or above p says Go's text
 
 - Kind: fix
