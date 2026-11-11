@@ -2395,6 +2395,15 @@ fn (var b: Builder) path_named_mods() -> Set[Int] {
     by[md.name] = l
   }
   var out: Set[Int] = #{}
+  // a program module named like a module of std's object, which holds
+  // every std module whether this build loads it or not (std_obj_names;
+  // 2026-11-11: a program's sse beside std/sse, a duplicate symbol in a
+  // separately compiled build)
+  for (m, md) in b.c.mods.indexed() {
+    if !md.is_std && !md.native && b.c.std_obj_names.contains(md.name) {
+      out.add(m)
+    }
+  }
   for (_, ms) in by {
     if ms.len() < 2 {
       continue

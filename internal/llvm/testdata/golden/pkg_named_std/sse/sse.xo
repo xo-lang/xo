@@ -1,0 +1,16 @@
+// A program package named like std/sse, with a type and method of the
+// same names as std's (sse.Parser.feed).
+pub struct Parser {
+  pub n: Int
+}
+
+pub fn parser() -> Parser { Parser{n: 0} }
+
+pub fn (var p: Parser) feed(chunk: Bytes) -> Int {
+  p.n += count(chunk, 0)
+  p.n
+}
+
+fn count(b: Bytes, i: Int) -> Int {
+  if i >= b.len() { 0 } else { (if b[i] == 10 { 1 } else { 0 }) + count(b, i + 1) }
+}

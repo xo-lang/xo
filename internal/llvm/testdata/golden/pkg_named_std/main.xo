@@ -1,0 +1,17 @@
+// A program package named like a std module it does not import (sse,
+// beside std/sse) with std's names (sse.Parser.feed). std's object holds
+// every std module whether a program imports it or not, so both were
+// xo_f_sse_2eParser_2efeed, and a separately compiled build whose link
+// pulled std's part holding std's failed with a duplicate symbol
+// (2026-11-11, the landing_memo golden). The program's package is named
+// by its path in symbols now; internal/arm64
+// TestProgramModuleNamedLikeStd checks its symbols, since whether the
+// link pulls std's part depends on how std's object is split. A loaded
+// std module of the same name was already handled (ssa path_named_mods).
+use github.com/xo-lang/xo/test/pkg_named_std/sse
+
+fn main(os: Os) {
+  var p = sse.parser()
+  let _a = p.feed(b"a\nb\n")
+  os.stdio.println("lines ${p.feed(b"c\n")}")
+}
