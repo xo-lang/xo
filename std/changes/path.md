@@ -1,5 +1,18 @@
 # std/path changes
 
+## 2026-11-10: internal: std/path merged with its implementation
+
+- Kind: internal
+- Commit: this push
+- Found by: decisions 0588 (one file per module) and 0597 (portable intrinsics)
+- Go reference: path (go1.26.1), unchanged
+- Test: the path corpus on go, arm64 and llvm; `xo test --std-module=path` on native and llvm; goldens fs_glob* and path* on arm64 and Go parity
+- Shipped in: not yet released
+
+std/path.xo now holds the bodies (std/native/path.xo, std/rt/path.go and the generated Go twins are
+gone); its three `rt.cast[Bytes, Str]` views stay, the one intrinsic a merged module may call
+(decision 0597). No API or output change.
+
 ## 2026-11-07: perf: path cuts are views with no UTF-8 boundary check, and clean's result is not revalidated
 
 - Kind: perf

@@ -288,3 +288,5 @@ commit (the lead cuts it).
   streaming parser, Feed, Head, Stream, new_stream) and `std/mime`
   (std/rt's Go http calls Mime_parse_media_type and
   Mime_detect_content_type).
+- 2026-11-10: `std/path` merged, its `rt.cast` views kept under decision
+  0597's portable intrinsics (XO0609 for any other native/rt call).

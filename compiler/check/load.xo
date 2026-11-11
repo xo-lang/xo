@@ -1920,6 +1920,10 @@ fn (var c: Checker) load_imports(m: Int) {
           if c.mods[m].native {
             dep = c.load_runtime_module(p)
           }
+        } else if p == "native/rt" && c.mods[m].merged {
+          // a merged std module (decision 0588) sees the intrinsics, and
+          // calls only the portable ones (decision 0597, XO0609)
+          dep = c.load_native_rt(p)
         } else if c.mods[m].native || (c.mods[m].is_std && c.mods[m].path.starts_with("native/")) {
           let name = p.trim_prefix("native/")
           if c.native && c.mods[m].native && c.load_std(name) >= 0 {

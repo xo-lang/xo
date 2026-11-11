@@ -428,6 +428,7 @@ fn (var c: Checker) module_member(m: Int, imp_name: Bytes, span: Span, sel: Iden
   if !c.pub_in(o, m) {
     c.pub_fix(c.error("XO0605", sel.span, "`${text(name)}` is not `pub` in module `${c.mods[m].path}`"), o)
   }
+  c.portable_check(m, sel)
   match c.objs[o].kind {
     Func => {
       c.record(sel, o)
@@ -1174,6 +1175,7 @@ fn (var c: Checker) call_selector(call: Expr, sspan: Span, x: Expr, sel: Ident, 
         if !c.pub_in(o, m) {
           c.pub_fix(c.error("XO0605", sel.span, "`${text(sel.name)}` is not `pub` in module `${c.mods[m].path}`"), o)
         }
+        c.portable_check(m, sel)
         c.record(sel, o)
         match c.objs[o].kind {
           Func => return c.call_func(o, {}, targs, has_targs, call, hint, [])
@@ -1965,5 +1967,23 @@ fn (var c: Checker) module_member_habit(d: Int, path: Str, name: Str) {
   }
   if !xo.is_empty() {
     c.habit_note(d, "`${name}` is Go's encoding/json name; Xo writes ${xo} for a type with `derive Json` (spec/std.md)")
+  }
+}
+
+/// The intrinsics of native/rt a merged std module may call (decision
+/// 0597): those every backend implements, the Go backend included
+/// (std/rt Rt_cast).
+pub const PORTABLE_INTRINSICS = ["cast"]
+
+/// XO0609 when a merged std module (decision 0588) names a member of
+/// native/rt that is not portable (decision 0597).
+fn (var c: Checker) portable_check(m: Int, sel: Ident) {
+  if c.cur_mod < 0 || !c.mods[c.cur_mod].merged || c.mods[m].path != "native/rt" {
+    return
+  }
+  let n = text(sel.name)
+  if !PORTABLE_INTRINSICS.contains(n) {
+    let d = c.error("XO0609", sel.span, "`rt.${n}` is not a portable intrinsic: a merged std module calls only ${PORTABLE_INTRINSICS.map(fn(x: Str) -> Str { "`rt.${x}`" }).join(", ")} of native/rt (decision 0597)")
+    c.note(d, "keep the call in the module's std/native/M_native.xo behind a bodyless declaration, or write it with prelude operations")
   }
 }

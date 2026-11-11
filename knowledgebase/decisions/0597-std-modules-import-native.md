@@ -154,3 +154,13 @@ pushes.
 2. Accept point 2's order: rewrite where measured free, split the rest?
 3. Accept point 3: a public std/multipart streaming reader, and mime's
    Go generated into package rt? Or std/internal for the parser?
+
+## Progress
+
+- Part 1 (2026-11-10): a merged std module may `use native/rt`
+  (compiler/check load.xo), and naming any member but those of
+  `PORTABLE_INTRINSICS` (call.xo: `cast`) is XO0609 (spec core.md 10.6,
+  `xo explain XO0609`; checked by adding an `rt.mem_load` call to the
+  merged std/path.xo). std/path merged with it (0588 stage 2): its three
+  `rt.cast` views stay. scripts merge tool: a local variable named like
+  the module (`path.len()`) keeps its prefix.
