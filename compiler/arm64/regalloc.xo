@@ -1173,14 +1173,25 @@ fn insert_ranges(var lists: List[List[Int]], i: Int, rs: List[Int]) {
   }
 }
 
-/// Whether a range of rs overlaps one of occ, whose ranges are disjoint
-/// and sorted by start (so by end as well): a binary search per range of
-/// rs instead of overlaps' walk over all of occ.
+/// Whether a range of rs overlaps one of occ, both disjoint and sorted
+/// by start (so by end as well; every caller passes merged ranges or one
+/// range): a binary search per range of rs instead of overlaps' walk
+/// over all of occ. rs's spans with nothing of occ between them answer
+/// at once, and each search starts where the last one ended, since rs's
+/// ranges come in order (overlaps_sorted was 2.8% of the aiplatform/v1
+/// test build's CPU, most of it register candidates and spill slots
+/// whose ranges lie apart from the value's; Lang 1, 2026-11-11).
 fn overlaps_sorted(occ: List[Int], rs: List[Int]) -> Bool {
   let n = occ.len()
+  let m = rs.len()
+  if n == 0 || m == 0 || rng_e(occ[n - 1]) < rng_s(rs[0]) || rng_e(rs[m - 1]) < rng_s(occ[0]) {
+    return false
+  }
+  var from = 0
   for q in rs {
-    // the first range of occ ending at or after q's start
-    var lo = 0
+    // the first range of occ ending at or after q's start (at or past
+    // the previous range's)
+    var lo = from
     var hi = n
     while lo < hi {
       let mid = (lo + hi) / 2
@@ -1190,9 +1201,13 @@ fn overlaps_sorted(occ: List[Int], rs: List[Int]) -> Bool {
         hi = mid
       }
     }
-    if lo < n && rng_s(occ[lo]) <= rng_e(q) {
+    if lo >= n {
+      return false
+    }
+    if rng_s(occ[lo]) <= rng_e(q) {
       return true
     }
+    from = lo
   }
   false
 }
