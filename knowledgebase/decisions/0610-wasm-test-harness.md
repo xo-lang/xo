@@ -1,6 +1,6 @@
 # 0610: `xo test --backend=wasm` runs std's tests in WASI test modules
 
-Status: Proposed (Xo Lang 2, 2026-11-11; owner-approved stability item "run
+Status: Accepted (owner, 2026-11-11). Was: Proposed (Xo Lang 2, 2026-11-11; owner-approved stability item "run
 the std corpora on wasm", relayed by the lead)
 
 ## Context

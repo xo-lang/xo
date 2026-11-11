@@ -43,3 +43,7 @@ Status: Accepted (owner, 2026-11-11; low priority: after ADR 0603 stage 1 and th
   which a derive struct would wrap in a new type. Next: std/protodesc
   (item 2's second module), then item 3 (std/otlp, only if its timing row
   does not regress).
+
+## Owner decision, 2026-11-11
+
+std/protodesc stays hand written (option a): proto2 presence as derive Proto would express it (Option fields) would break protoparse, protojson and gRPC reflection. protowkt and the rest of this decision proceed.
