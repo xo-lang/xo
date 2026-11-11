@@ -422,9 +422,9 @@ big.Float = gap: no big.Float (arbitrary precision floats)
 big.NewFloat = gap: no big.Float (arbitrary precision floats)
 big.ParseFloat = gap: no big.Float (arbitrary precision floats)
 big.Float.* = gap: no big.Float (arbitrary precision floats)
-big.Rat = gap: no big.Rat (rationals)
-big.NewRat = gap: no big.Rat (rationals)
-big.Rat.* = gap: no big.Rat (rationals)
+big.Rat = std/big.BigRat
+big.NewRat = std/big.rat
+big.Rat.* = std/big.BigRat methods (Scan, Gob and Append forms: text, parse_rat)
 big.* = not planned: Float and Rat rounding modes and accuracy constants follow big.Float/big.Rat (gaps above)
 
 # time: prelude Time, Duration, Clock; std/time for zones, civil dates, layouts

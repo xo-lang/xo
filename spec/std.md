@@ -5577,6 +5577,22 @@ fn (x: BigFloat) to_int() -> (Int, Accuracy)           // Int64
 fn (x: BigFloat) to_float() -> (Float, Accuracy)       // Float64
 fn (x: BigFloat) to_big() -> (BigInt?, Accuracy)       // Int; None for an infinity
 fn (x: BigFloat) text(format: Int, prec: Int) -> Str   // Text: 'e' 'E' 'f' 'g' 'G' 'b' 'p' 'x'
+fn (x: BigFloat) to_rat() -> (BigRat?, Accuracy)       // Rat; None for an infinity
+
+// BigRat (decision 0608): Go's big.Rat as an immutable value, in lowest terms
+struct BigRat { a: BigInt, b: BigInt } derive Eq, Hash
+pub fn rat(a: BigInt, b: BigInt) -> BigRat           // SetFrac; b == 0 faults
+pub fn rat_from_int(n: Int) -> BigRat                // SetInt64; BigInt.to_rat() is SetInt
+pub fn rat_from_float(x: Float) -> BigRat?           // SetFloat64, exact; None for NaN and infinities
+pub fn parse_rat(s: Str) -> BigRat ! BigErr          // SetString; UnmarshalText's error text
+fn (x: BigRat) add(y: BigRat) -> BigRat              // also sub, mul, quo (y == 0 faults)
+fn (x: BigRat) inv() -> BigRat                       // 0 faults; also neg, abs
+fn (x: BigRat) num() -> BigInt                       // also denom (> 0), sign, cmp, is_int
+fn (x: BigRat) to_float() -> (Float, Bool)           // Float64 and exact
+fn (x: BigRat) float_prec() -> (Int, Bool)           // FloatPrec
+fn (x: BigRat) text() -> Str                         // String "a/b"; rat_text is RatString
+fn (x: BigRat) float_text(prec: Int) -> Str          // FloatString
+fn (x: BigRat) to_big_float(prec: Int = 0, mode: RoundingMode = RoundingMode.ToNearestEven) -> BigFloat   // SetRat
 ```
 
 - **The type is `BigInt`.** `Int` is predeclared (core 1.4), so Go's
@@ -5612,13 +5628,24 @@ fn (x: BigFloat) text(format: Int, prec: Int) -> Str   // Text: 'e' 'E' 'f' 'g' 
   the root of a negative number, a NaN Float) fault with its text.
   Rounding, Sqrt's Newton iteration, parsing's powers of five and the
   shortest decimal text are Go's, so every result, accuracy and text is
-  Go's; `display` is Go's String(), `text('g', 10)`. Rat, SetRat and
-  Float.Rat wait for a big.Rat; `Format` is `text`.
+  Go's; `display` is Go's String(), `text('g', 10)`. `Format` is `text`.
+- **BigRat** (decision 0608) is Go's big.Rat: `a/b` kept in lowest terms
+  with `b > 0` (1 for an integer), so `==` and Hash are numeric. Go's
+  panics (a zero denominator, `quo` by zero, `inv` of zero) fault with
+  `division by zero`. `parse_rat` reads what SetString reads (`a/b`, the
+  denominator's lone `0` prefix octal, or a number with a base prefix,
+  fraction and `e` or `p` exponent, limited as Go limits it) and fails
+  with UnmarshalText's text. `float_text` rounds the last digit half away
+  from zero; `display` is `text`. There is no Ord: compare with `cmp`.
 - **Tests.**
   - Golden `big_basic` on every backend.
   - A Go-generated corpus of 2,600 operations on operands up to 1,500
     bits, plus Go's SetString on valid and invalid texts
     (internal/stdtest/testdata/corpus/big, scripts/stdcorpus big).
+  - Go-generated corpora for BigFloat (scripts/stdcorpus bigfloat) and
+    BigRat (scripts/stdcorpus bigrat: 5,200 rows of arithmetic, Float64,
+    FloatPrec, the texts, SetFrac, SetFloat64, SetString, SetRat and
+    Float.Rat).
 
 ## 34. std/xml
 

@@ -206,3 +206,68 @@ fn (x: BigFloat) text(format: Int, prec: Int) -> Str
 /// text('g', 10) (Go's String).
 fn (x: BigFloat) display() -> Str
 fn (x: BigFloat) debug() -> Str
+
+// ---------------------------------------------------------------------------
+// BigRat (decision 0608): Go's math/big Rat as an immutable value.
+
+/// A rational number a/b in lowest terms with b > 0 (b is 1 for an
+/// integer), so == is numeric equality. Build one with the functions
+/// below, not a literal.
+struct BigRat {
+  a: BigInt
+  b: BigInt
+} derive Eq, Hash
+
+/// a/b (Go's SetFrac); a fault when b is 0.
+fn rat(a: BigInt, b: BigInt) -> BigRat
+/// n/1 (Go's SetInt64).
+fn rat_from_int(n: Int) -> BigRat
+/// x/1 (Go's SetInt).
+fn (x: BigInt) to_rat() -> BigRat
+/// x exactly (Go's SetFloat64); None for NaN and the infinities.
+fn rat_from_float(x: Float) -> BigRat?
+/// Go's SetString: `a/b` (a with an optional sign and base prefix, b
+/// with a base prefix, `0` alone meaning octal), or a number with an
+/// optional sign, base prefix, fraction and `e` or `p` exponent. The
+/// error is `math/big: cannot unmarshal "s" into a *big.Rat` (Go's
+/// UnmarshalText; SetString reports only false).
+fn parse_rat(s: Str) -> BigRat ! BigErr
+
+fn (x: BigRat) add(y: BigRat) -> BigRat
+fn (x: BigRat) sub(y: BigRat) -> BigRat
+fn (x: BigRat) mul(y: BigRat) -> BigRat
+/// x / y; a fault when y is 0.
+fn (x: BigRat) quo(y: BigRat) -> BigRat
+fn (x: BigRat) neg() -> BigRat
+fn (x: BigRat) abs() -> BigRat
+/// 1 / x; a fault when x is 0.
+fn (x: BigRat) inv() -> BigRat
+/// The numerator, with x's sign.
+fn (x: BigRat) num() -> BigInt
+/// The denominator, always positive (1 for an integer).
+fn (x: BigRat) denom() -> BigInt
+/// -1, 0, or 1.
+fn (x: BigRat) sign() -> Int
+/// -1, 0, or 1 as x <, ==, > y.
+fn (x: BigRat) cmp(y: BigRat) -> Int
+fn (x: BigRat) is_int() -> Bool
+/// The Float nearest x and whether it is exact (Go's Float64).
+fn (x: BigRat) to_float() -> (Float, Bool)
+/// The number of decimal digits after the point that x needs, and
+/// whether that many represent it exactly (Go's FloatPrec).
+fn (x: BigRat) float_prec() -> (Int, Bool)
+/// `a/b`, `/1` for an integer too (Go's String).
+fn (x: BigRat) text() -> Str
+/// `a/b`, or `a` for an integer (Go's RatString).
+fn (x: BigRat) rat_text() -> Str
+/// x in decimal with prec digits after the point, the last rounded half
+/// away from zero (Go's FloatString).
+fn (x: BigRat) float_text(prec: Int) -> Str
+/// x rounded to a BigFloat of prec bits (Go's SetRat; prec 0 is the
+/// larger of the numerator's and denominator's, at least 64).
+fn (x: BigRat) to_big_float(prec: Int = 0, mode: RoundingMode = RoundingMode.ToNearestEven) -> BigFloat
+/// x as a BigRat with Exact, or None and Above or Below for an infinity
+/// (Go's Float.Rat).
+fn (x: BigFloat) to_rat() -> (BigRat?, Accuracy)
+fn (x: BigRat) display() -> Str
+fn (x: BigRat) debug() -> Str

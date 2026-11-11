@@ -2709,3 +2709,516 @@ fn bigfloat_text(x: big.BigFloat, format0: Int, prec0: Int) -> Str {
 fn bigfloat_display(x: big.BigFloat) -> Str { bigfloat_text(x, 'g', 10) }
 
 fn bigfloat_debug(x: big.BigFloat) -> Str { bigfloat_text(x, 'g', 10) }
+
+// ---------------------------------------------------------------------------
+// BigRat (decision 0608): rat.go, ratconv.go and ratmarsh.go of go1.26.1
+// over the limbs above. Every BigRat is in lowest terms with b > 0.
+
+fn nat_is_one(x: List[Int]) -> Bool { x.len() == 1 && x[0] == 1 }
+
+/// Rat.norm: a/b by their gcd, 0 as 0/1.
+fn rat_norm(neg: Bool, a: List[Int], b: List[Int]) -> big.BigRat {
+  if a.is_empty() {
+    return big.BigRat{a: make(false, []), b: make(false, [1])}
+  }
+  if nat_is_one(b) {
+    return big.BigRat{a: make(neg, a), b: make(false, b)}
+  }
+  let g = nat_gcd(a, b)
+  if nat_is_one(g) {
+    return big.BigRat{a: make(neg, a), b: make(false, b)}
+  }
+  big.BigRat{a: make(neg, nat_divmod(a, g).0), b: make(false, nat_divmod(b, g).0)}
+}
+
+fn rat(a: big.BigInt, b: big.BigInt) -> big.BigRat {
+  let (an, aa) = parts(a)
+  let (bn, ba) = parts(b)
+  nonzero(ba)
+  rat_norm(an != bn, aa, ba)
+}
+
+fn rat_from_int(n: Int) -> big.BigRat { big.BigRat{a: from_int(n), b: from_int(1)} }
+
+fn bigint_to_rat(x: big.BigInt) -> big.BigRat { big.BigRat{a: x, b: from_int(1)} }
+
+fn rat_from_float(x: Float) -> big.BigRat? {
+  let bits = x.to_bits()
+  var mantissa = bits & ((1 << 52) - 1)
+  var exp = (bits >> 52) & 2047
+  if exp == 2047 {
+    return None
+  }
+  if exp == 0 {
+    exp -= 1022
+  } else {
+    mantissa = mantissa | (1 << 52)
+    exp -= 1023
+  }
+  var shift = 52 - exp
+  while mantissa & 1 == 0 && shift > 0 {
+    mantissa = mantissa >> 1
+    shift -= 1
+  }
+  let m = nat_word(mantissa)
+  if shift > 0 {
+    Some(rat_norm(x < 0.0, m, nat_shl([1], shift)))
+  } else {
+    Some(rat_norm(x < 0.0, nat_shl(m, -shift), [1]))
+  }
+}
+
+fn bigrat_add(x: big.BigRat, y: big.BigRat) -> big.BigRat {
+  let a = bigint_add(bigint_mul(x.a, y.b), bigint_mul(y.a, x.b))
+  let (an, aa) = parts(a)
+  rat_norm(an, aa, nat_mul(parts(x.b).1, parts(y.b).1))
+}
+
+fn bigrat_sub(x: big.BigRat, y: big.BigRat) -> big.BigRat { bigrat_add(x, bigrat_neg(y)) }
+
+fn bigrat_mul(x: big.BigRat, y: big.BigRat) -> big.BigRat {
+  let (xn, xa) = parts(x.a)
+  let (yn, ya) = parts(y.a)
+  rat_norm(xn != yn, nat_mul(xa, ya), nat_mul(parts(x.b).1, parts(y.b).1))
+}
+
+fn bigrat_quo(x: big.BigRat, y: big.BigRat) -> big.BigRat {
+  let (xn, xa) = parts(x.a)
+  let (yn, ya) = parts(y.a)
+  nonzero(ya)
+  rat_norm(xn != yn, nat_mul(xa, parts(y.b).1), nat_mul(parts(x.b).1, ya))
+}
+
+fn bigrat_neg(x: big.BigRat) -> big.BigRat { big.BigRat{a: bigint_neg(x.a), b: x.b} }
+
+fn bigrat_abs(x: big.BigRat) -> big.BigRat { big.BigRat{a: bigint_abs(x.a), b: x.b} }
+
+fn bigrat_inv(x: big.BigRat) -> big.BigRat {
+  let (xn, xa) = parts(x.a)
+  nonzero(xa)
+  big.BigRat{a: make(xn, parts(x.b).1), b: make(false, xa)}
+}
+
+fn bigrat_num(x: big.BigRat) -> big.BigInt { x.a }
+
+fn bigrat_denom(x: big.BigRat) -> big.BigInt { x.b }
+
+fn bigrat_sign(x: big.BigRat) -> Int { bigint_sign(x.a) }
+
+fn bigrat_cmp(x: big.BigRat, y: big.BigRat) -> Int { bigint_cmp(bigint_mul(x.a, y.b), bigint_mul(y.a, x.b)) }
+
+fn bigrat_is_int(x: big.BigRat) -> Bool { nat_is_one(parts(x.b).1) }
+
+/// quotToFloat64 of a/b, then x's sign.
+fn bigrat_to_float(x: big.BigRat) -> (Float, Bool) {
+  let (neg, a) = parts(x.a)
+  let b = parts(x.b).1
+  let alen = nat_bit_len(a)
+  if alen == 0 {
+    return (0.0, true)
+  }
+  let blen = nat_bit_len(b)
+  var exp = alen - blen
+  var a2 = a
+  var b2 = b
+  let shift = 54 - exp
+  if shift > 0 {
+    a2 = nat_shl(a2, shift)
+  } else if shift < 0 {
+    b2 = nat_shl(b2, -shift)
+  }
+  let (q, r) = nat_divmod(a2, b2)
+  var mantissa = if q.is_empty() { 0 } else { q[0] }
+  var have_rem = !r.is_empty()
+  if mantissa >> 54 == 1 {
+    if mantissa & 1 == 1 {
+      have_rem = true
+    }
+    mantissa = mantissa >> 1
+    exp += 1
+  }
+  if mantissa >> 53 != 1 {
+    fault("expected exactly 54 bits of result")
+  }
+  if -1074 <= exp && exp <= -1022 {
+    let sh = -1022 - (exp - 1)
+    let lost = mantissa & ((1 << sh) - 1)
+    have_rem = have_rem || lost != 0
+    mantissa = mantissa >> sh
+    exp = 2 - 1023
+  }
+  var ex = !have_rem
+  if mantissa & 1 != 0 {
+    ex = false
+    if have_rem || mantissa & 2 != 0 {
+      mantissa += 1
+      if mantissa >= 1 << 54 {
+        mantissa = mantissa >> 1
+        exp += 1
+      }
+    }
+  }
+  mantissa = mantissa >> 1
+  var f = Float(mantissa).ldexp(exp - 53)
+  if f.is_inf() {
+    ex = false
+  }
+  (if neg { -f } else { f }, ex)
+}
+
+/// FloatPrec: d = q * 2^p2 * 5^p5 with q free of 2 and 5.
+fn bigrat_float_prec(x: big.BigRat) -> (Int, Bool) {
+  let d = parts(x.b).1
+  let p2 = nat_trailing_zeros(d)
+  var q = nat_shr(d, p2)
+  var p5 = 0
+  // 5^27, the largest power of 5 in a word
+  let w27 = 7450580596923828125
+  while {
+    let (qq, r) = nat_div_w(q, w27)
+    if r != 0 {
+      break
+    }
+    q = qq
+    p5 += 27
+  }
+  while {
+    let (qq, r) = nat_div_w(q, 5)
+    if r != 0 {
+      break
+    }
+    q = qq
+    p5 += 1
+  }
+  (imax(p2, p5), nat_is_one(q))
+}
+
+fn bigrat_text(x: big.BigRat) -> Str { bigint_text(x.a, 10) + "/" + bigint_text(x.b, 10) }
+
+fn bigrat_rat_text(x: big.BigRat) -> Str {
+  if bigrat_is_int(x) { bigint_text(x.a, 10) } else { bigrat_text(x) }
+}
+
+fn bigrat_float_text(x: big.BigRat, prec: Int) -> Str {
+  var buf = StrBuilder.new()
+  if bigrat_is_int(x) {
+    buf.write(bigint_text(x.a, 10))
+    if prec > 0 {
+      buf.write(".")
+      buf.write("0".repeat(prec))
+    }
+    return buf.freeze()
+  }
+  let (neg, a) = parts(x.a)
+  let b = parts(x.b).1
+  var (q, r) = nat_divmod(a, b)
+  var p: List[Int] = [1]
+  if prec > 0 {
+    p = nat_exp([10], nat_word(prec), [])
+  }
+  r = nat_mul(r, p)
+  let (r1, r2) = nat_divmod(r, b)
+  r = r1
+  if nat_cmp(b, nat_add(r2, r2)) <= 0 {
+    r = nat_add(r, [1])
+    if nat_cmp(r, p) >= 0 {
+      q = nat_add(q, [1])
+      r = nat_sub(r, p)
+    }
+  }
+  if neg {
+    buf.write("-")
+  }
+  buf.write(bigint_text(make(false, q), 10))
+  if prec > 0 {
+    buf.write(".")
+    let rs = bigint_text(make(false, r), 10)
+    if prec > rs.len() {
+      buf.write("0".repeat(prec - rs.len()))
+    }
+    buf.write(rs)
+  }
+  buf.freeze()
+}
+
+fn bigrat_to_big_float(x: big.BigRat, prec: Int, mode: big.RoundingMode) -> big.BigFloat {
+  let (an, aa) = parts(x.a)
+  if bigrat_is_int(x) {
+    // SetInt at z's precision and mode
+    let bits = nat_bit_len(aa)
+    let p = op_prec(prec, imax(bits, 64))
+    if bits == 0 {
+      return f_special(p, mode, exact(), F_ZERO, false)
+    }
+    return f_round(an, aa, bits, 0, p, mode)
+  }
+  let fa = bigint_to_big_float(x.a, 0)
+  let fb = bigint_to_big_float(x.b, 0)
+  f_quo(fa, fb, op_prec(prec, imax(fa.prec, fb.prec)), mode)
+}
+
+fn bigfloat_to_rat(x: big.BigFloat) -> (big.BigRat?, big.Accuracy) {
+  if x.form == F_ZERO {
+    return (Some(rat_from_int(0)), exact())
+  }
+  if x.form == F_INF {
+    return (None, make_acc(x.neg))
+  }
+  let m = f_mant(x)
+  let sh = x.exp - nat_bit_len(m)
+  if sh >= 0 {
+    return (Some(big.BigRat{a: make(x.neg, nat_shl(m, sh)), b: from_int(1)}), exact())
+  }
+  (Some(rat_norm(x.neg, m, nat_shl([1], -sh))), exact())
+}
+
+fn bigrat_display(x: big.BigRat) -> Str { bigrat_text(x) }
+
+fn bigrat_debug(x: big.BigRat) -> Str { bigrat_text(x) }
+
+/// nat.scan(r, 0, frac_ok) over b[i0..n]: (digits, base, count or the
+/// negated fraction digit count, ok, the index after the number).
+fn rat_scan(b: Bytes, i0: Int, n: Int, frac0: Bool) -> (List[Int], Int, Int, Bool, Int) {
+  var i = i0
+  var frac_ok = frac0
+  var prev = '.'
+  var inval_sep = false
+  var bb = 10
+  var prefix = 0
+  var count = 0
+  if i < n && b[i] == '0' {
+    prev = '0'
+    count = 1
+    i += 1
+    if i < n {
+      let ch = Int(b[i])
+      if ch == 'b' || ch == 'B' {
+        bb = 2
+        prefix = 'b'
+      } else if ch == 'o' || ch == 'O' {
+        bb = 8
+        prefix = 'o'
+      } else if ch == 'x' || ch == 'X' {
+        bb = 16
+        prefix = 'x'
+      } else if !frac_ok {
+        bb = 8
+        prefix = '0'
+      }
+      if prefix != 0 {
+        count = 0
+        if prefix != '0' {
+          i += 1
+        }
+      }
+    }
+  }
+  var z: List[Int] = []
+  var dp = -1
+  // up to nd digits in a word, then one multiply-add by bb^k (nat.scan)
+  var nd = 1
+  var bn = bb
+  while let Some(next) = bn.checked_mul(bb) {
+    bn = next
+    nd += 1
+  }
+  var di = 0
+  var dn = 0
+  var dpow = 1
+  while i < n {
+    let ch = Int(b[i])
+    if ch == '.' && frac_ok {
+      frac_ok = false
+      if prev == '_' {
+        inval_sep = true
+      }
+      prev = '.'
+      dp = count
+    } else if ch == '_' {
+      if prev != '0' {
+        inval_sep = true
+      }
+      prev = '_'
+    } else {
+      let d1 = if ch >= '0' && ch <= '9' {
+        ch - '0'
+      } else if ch >= 'a' && ch <= 'z' {
+        ch - 'a' + 10
+      } else if ch >= 'A' && ch <= 'Z' {
+        ch - 'A' + 10
+      } else {
+        63
+      }
+      if d1 >= bb {
+        break
+      }
+      prev = '0'
+      count += 1
+      di = di * bb + d1
+      dpow = dpow * bb
+      dn += 1
+      if dn == nd {
+        z = nat_mul_add_ww(z, dpow, di)
+        di = 0
+        dn = 0
+        dpow = 1
+      }
+    }
+    i += 1
+  }
+  if dn > 0 {
+    z = nat_mul_add_ww(z, dpow, di)
+  }
+  var ok = !(inval_sep || prev == '_')
+  if count == 0 {
+    if prefix == '0' {
+      return ([], 10, 1, ok, i)
+    }
+    ok = false
+  }
+  if dp >= 0 {
+    count = dp - count
+  }
+  (z, bb, count, ok, i)
+}
+
+/// scanExponent(r, base2ok, sepOk) over b[i0..n]: (exp, base, ok, next).
+fn rat_scan_exponent(b: Bytes, i0: Int, n: Int) -> (Int, Int, Bool, Int) {
+  var i = i0
+  if i >= n {
+    return (0, 10, true, i)
+  }
+  let c0 = Int(b[i])
+  let ebase = if c0 == 'e' || c0 == 'E' { 10 } else if c0 == 'p' || c0 == 'P' { 2 } else { 0 }
+  if ebase == 0 {
+    return (0, 10, true, i)
+  }
+  i += 1
+  var neg = false
+  if i < n && (b[i] == '+' || b[i] == '-') {
+    neg = b[i] == '-'
+    i += 1
+  }
+  var prev = '.'
+  var inval_sep = false
+  var has = false
+  var over = false
+  var v = 0
+  while i < n {
+    let ch = Int(b[i])
+    if ch >= '0' && ch <= '9' {
+      let d = ch - '0'
+      let m = v.checked_mul(10)
+      let next = match m {
+        Some(t) => if neg { t.checked_sub(d) } else { t.checked_add(d) }
+        None => None
+      }
+      match next {
+        Some(t) => v = t
+        None => over = true
+      }
+      prev = '0'
+      has = true
+    } else if ch == '_' {
+      if prev != '0' {
+        inval_sep = true
+      }
+      prev = '_'
+    } else {
+      break
+    }
+    i += 1
+  }
+  (v, ebase, has && !over && !inval_sep && prev != '_', i)
+}
+
+fn parse_rat(s: Str) -> big.BigRat ! big.BigErr {
+  let bad = Err(big.BigErr{msg: "math/big: cannot unmarshal ${s.quote()} into a *big.Rat"})
+  let b = s.bytes()
+  let n = b.len()
+  if n == 0 {
+    return bad
+  }
+  if let Some(sep) = s.find("/") {
+    let a = match parse(s[..sep], 0) {
+      Ok(v) => v
+      Err(_) => return bad
+    }
+    let (z, _bz, _cz, ok, j) = rat_scan(b, sep + 1, n, false)
+    if !ok || j != n || z.is_empty() {
+      return bad
+    }
+    let (an, aa) = parts(a)
+    return Ok(rat_norm(an, aa, z))
+  }
+  var i = 0
+  var neg = false
+  if b[0] == '-' {
+    neg = true
+    i = 1
+  } else if b[0] == '+' {
+    i = 1
+  }
+  let (z, base, fcount, ok, j) = rat_scan(b, i, n, true)
+  if !ok {
+    return bad
+  }
+  let (exp, ebase, eok, k) = rat_scan_exponent(b, j, n)
+  if !eok || k != n {
+    return bad
+  }
+  if z.is_empty() {
+    return Ok(rat_from_int(0))
+  }
+  var exp2 = 0
+  var exp5 = 0
+  if fcount < 0 {
+    let d = fcount
+    if base == 10 {
+      exp5 = d
+      exp2 = d
+    } else if base == 2 {
+      exp2 = d
+    } else if base == 8 {
+      exp2 = d * 3
+    } else {
+      exp2 = d * 4
+    }
+  }
+  if ebase == 10 {
+    exp5 = match exp5.checked_add(exp) {
+      Some(t) => t
+      None => return bad
+    }
+  }
+  exp2 = match exp2.checked_add(exp) {
+    Some(t) => t
+    None => return bad
+  }
+  var a = z
+  var den: List[Int] = [1]
+  if exp5 != 0 {
+    if exp5 == Int.min {
+      return bad
+    }
+    let m = if exp5 < 0 { -exp5 } else { exp5 }
+    if m > 1000000 {
+      return bad
+    }
+    let pow5 = nat_exp([5], nat_word(m), [])
+    if exp5 > 0 {
+      a = nat_mul(a, pow5)
+    } else {
+      den = pow5
+    }
+  }
+  if exp2 < -10000000 || exp2 > 10000000 {
+    return bad
+  }
+  if exp2 > 0 {
+    a = nat_shl(a, exp2)
+  } else if exp2 < 0 {
+    den = nat_shl(den, -exp2)
+  }
+  Ok(rat_norm(neg, a, den))
+}

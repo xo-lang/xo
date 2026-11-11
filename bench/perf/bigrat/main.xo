@@ -1,0 +1,72 @@
+// bigrat: std/big's BigRat against Go's math/big Rat (twin.go.txt): add
+// (a harmonic sum, restarted when its denominator passes 512 bits), mul
+// and quo of small fractions, cmp, to_float, float_text (30 digits) and
+// parse (a 50 digit decimal); `none` is the setup alone. Usage:
+// `<program> none|add|mul|quo|cmp|tofloat|text|parse`. Prints
+// `<workload> <checksum>`; the twin prints the same.
+use std/big
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let one = big.rat_from_int(1)
+  let a = big.rat(big.from_int(355), big.from_int(113))
+  let b = big.rat(big.from_int(-22), big.from_int(7))
+  let dec = "3.14159265358979323846264338327950288419716939937510"
+  var sum = 0
+  if w == "add" {
+    var x = one
+    for i in 0..200000 {
+      x = x.add(big.rat(big.from_int(1), big.from_int(i % 97 + 1)))
+      if x.denom().bit_len() > 512 {
+        x = one
+      }
+      sum += x.denom().bit_len()
+    }
+  } else if w == "mul" {
+    var x = a
+    for i in 0..200000 {
+      x = x.mul(big.rat(big.from_int(i % 13 + 2), big.from_int(i % 11 + 3)))
+      if x.num().bit_len() > 512 {
+        x = a
+      }
+      sum += x.num().bit_len()
+    }
+  } else if w == "quo" {
+    var x = a
+    for i in 0..200000 {
+      x = x.quo(big.rat(big.from_int(i % 7 + 5), big.from_int(i % 5 + 2)))
+      if x.denom().bit_len() > 512 {
+        x = a
+      }
+      sum += x.denom().bit_len()
+    }
+  } else if w == "cmp" {
+    var x = a
+    for i in 0..400000 {
+      sum += x.cmp(b) + 2
+      if i % 1000 == 0 {
+        x = x.add(one)
+      }
+    }
+  } else if w == "tofloat" {
+    var x = a
+    for i in 0..200000 {
+      let (f, ex) = x.to_float()
+      sum += if ex { 1 } else { 0 } + f.to_bits() % 7
+      if i % 1000 == 0 {
+        x = x.mul(a)
+      }
+    }
+  } else if w == "text" {
+    for _ in 0..50000 {
+      sum += a.float_text(30).len()
+    }
+  } else if w == "parse" {
+    for _ in 0..50000 {
+      sum += (big.parse_rat(dec).ok() ?? one).denom().bit_len()
+    }
+  } else {
+    sum = a.num().bit_len() + b.num().bit_len() + dec.len()
+  }
+  os.stdio.println("${w} ${sum}")
+}

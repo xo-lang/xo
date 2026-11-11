@@ -1,5 +1,22 @@
 # std/big changes
 
+## 2026-11-11: feature: BigRat, Go's big.Rat as an immutable value (decision 0608)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the std audit of Go programs (Xo Lang 3, 2026-11-11, gap 15: math/big.Rat)
+- Go reference: math/big rat.go, ratconv.go, ratmarsh.go, float.go SetRat and Rat (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/bigrat (go, arm64, LLVM; 5,200 rows of Go's results: add, sub, mul, quo, neg, abs, inv, cmp, Float64 near float64's limits and halfway points, FloatPrec, String, RatString, FloatString, SetRat at every mode, SetString as UnmarshalText on valid and malformed texts, SetFloat64, SetInt64, SetFrac, Float.Rat); bench/perf/bigrat with its Go twin (twincheck agrees on 8 workloads)
+- Shipped in: not yet released
+
+`big.BigRat` in lowest terms: rat, rat_from_int, BigInt.to_rat,
+rat_from_float, parse_rat; add, sub, mul, quo, neg, abs, inv; num,
+denom, sign, cmp, is_int; to_float, float_prec, text, rat_text,
+float_text, to_big_float, display; BigFloat.to_rat. The Go backend calls
+math/big (std/rt/bigrat.go); the native backends port it over BigInt's
+limbs (std/native/big.xo), with Go's quotToFloat64 rounding and its
+parser's limits (5^1,000,000 and 2^10,000,000).
+
 ## 2026-11-11: feature: BigFloat, Go's big.Float as an immutable value (decision 0602)
 
 - Kind: feature

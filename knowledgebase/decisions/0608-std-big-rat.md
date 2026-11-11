@@ -19,8 +19,12 @@ with Go's semantics, always in lowest terms with a positive denominator.
   `rat_from_float(x: Float) -> BigRat?` (SetFloat64: exact; None for NaN
   and the infinities, where Go returns nil), `parse_rat(s: Str) -> BigRat
   ! BigErr` (SetString: `a/b`, decimals with an exponent, `0x` and the
-  other prefixes in the numerator; Go reports only `false`, so the error
-  text is `big: cannot parse "s" as a rational`).
+  other prefixes in the numerator; SetString reports only `false`, so the
+  error is UnmarshalText's text, `math/big: cannot unmarshal "s" into a
+  *big.Rat`).
+- Representation: `struct BigRat { a: BigInt, b: BigInt } derive Eq,
+  Hash`, Go's field names, in lowest terms with `b > 0`, so `==` and Hash
+  are numeric. No Ord: `cmp` compares.
 - Arithmetic: `add`, `sub`, `mul`, `quo`, `neg`, `abs`, `inv`. A zero
   denominator (`rat(a, 0)`, `quo` by zero, `inv` of zero) faults with
   Go's panic text (`division by zero`), as BigInt's `quo` does.
@@ -29,7 +33,8 @@ with Go's semantics, always in lowest terms with a positive denominator.
   `float_prec() -> (Int, Bool)` (FloatPrec), `text()` (String, `a/b`),
   `rat_text()` (RatString: `a` for an integer), `float_text(prec)`
   (FloatString), `display` as String. BigFloat gains `to_rat() ->
-  BigRat?` (Float.Rat; None for an infinity), and `rat.to_big_float(prec,
+  (BigRat?, Accuracy)` (Float.Rat; None and Above or Below for an
+  infinity), and `rat.to_big_float(prec,
   mode)` (SetRat).
 - The Go backend calls math/big. Native code builds on std/big's BigInt
   limbs: normalization by gcd and Go's algorithms (Knuth's 4.5.1 for

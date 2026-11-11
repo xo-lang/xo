@@ -1,0 +1,84 @@
+package main
+
+import (
+	"fmt"
+	"math"
+	"math/big"
+	"os"
+)
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	one := big.NewRat(1, 1)
+	a := big.NewRat(355, 113)
+	b := big.NewRat(-22, 7)
+	dec := "3.14159265358979323846264338327950288419716939937510"
+	sum := 0
+	switch w {
+	case "add":
+		x := one
+		for i := 0; i < 200000; i++ {
+			x = new(big.Rat).Add(x, big.NewRat(1, int64(i%97+1)))
+			if x.Denom().BitLen() > 512 {
+				x = one
+			}
+			sum += x.Denom().BitLen()
+		}
+	case "mul":
+		x := a
+		for i := 0; i < 200000; i++ {
+			x = new(big.Rat).Mul(x, big.NewRat(int64(i%13+2), int64(i%11+3)))
+			if x.Num().BitLen() > 512 {
+				x = a
+			}
+			sum += x.Num().BitLen()
+		}
+	case "quo":
+		x := a
+		for i := 0; i < 200000; i++ {
+			x = new(big.Rat).Quo(x, big.NewRat(int64(i%7+5), int64(i%5+2)))
+			if x.Denom().BitLen() > 512 {
+				x = a
+			}
+			sum += x.Denom().BitLen()
+		}
+	case "cmp":
+		x := a
+		for i := 0; i < 400000; i++ {
+			sum += x.Cmp(b) + 2
+			if i%1000 == 0 {
+				x = new(big.Rat).Add(x, one)
+			}
+		}
+	case "tofloat":
+		x := a
+		for i := 0; i < 200000; i++ {
+			f, ex := x.Float64()
+			if ex {
+				sum++
+			}
+			sum += int(int64(math.Float64bits(f)) % 7)
+			if i%1000 == 0 {
+				x = new(big.Rat).Mul(x, a)
+			}
+		}
+	case "text":
+		for i := 0; i < 50000; i++ {
+			sum += len(a.FloatString(30))
+		}
+	case "parse":
+		for i := 0; i < 50000; i++ {
+			z, ok := new(big.Rat).SetString(dec)
+			if !ok {
+				z = one
+			}
+			sum += z.Denom().BitLen()
+		}
+	default:
+		sum = a.Num().BitLen() + b.Num().BitLen() + len(dec)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}
