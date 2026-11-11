@@ -1,0 +1,7 @@
+exit 70
+--- stdout
+6c155799fdc8eec4b91523808e7726b7
+6c155799fdc8eec4b91523808e7726b7
+d228cb69101a8caf78912b704e4a1407
+--- stderr
+fault: fnv.update128: the sum is 10 bytes, want 16 at main.xo:12

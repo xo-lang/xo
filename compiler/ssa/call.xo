@@ -1339,6 +1339,13 @@ fn (var b: Builder) call_as_via(x: Expr, ci: check.CallInfo, impl: Int, real: In
           dfile = b.decl_file(fo)
         }
       }
+      if d.is_empty() && b.c.is_loc_type(p.ty) {
+        // a merged std function's trailing rt.Loc (decision 0597's
+        // amendment): this call's position, as loc_args gives a native
+        // implementation's
+        vals[i] = b.const_str(b.pos_line(span))
+        continue
+      }
       if d.is_empty() {
         b.unsupported("a call with a missing argument")
         vals[i] = b.undef(ps[off + i])

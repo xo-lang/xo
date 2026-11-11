@@ -273,6 +273,16 @@ reports its location.
   is gone.
   std/protobuf cannot merge this way: marshal and unmarshal are the
   compiler's (derive Proto), with no body to move.
+- The amendment's first use, std/fnv (2026-11-11): merged. The checker
+  lists Loc and fault_at as portable and counts a std function's
+  trailing rt.Loc parameter as filled (check/call.xo is_loc_type); SSA
+  fills it with `file:line` at a direct call, as loc_args does for a
+  native implementation (ssa/call.xo); the Go backend fills it the same
+  way (gen/call.xo) and std/rt has Rt_Loc (a string) and Rt_fault_at
+  (Fault at that position). spec/core.md 8 says a std argument fault
+  reports `FILE:LINE`. Golden fnv_caller_loc checks the position on
+  arm64, LLVM, the Go backend and wasm. std/task still waits: it also
+  calls rt.fault_raise and rt.task_deadline_left.
 - std/amqp (nothing native) (2026-11-11): merged, not rt-hosted. In its
   own module its wildcard arms over its own enums warned (XO0305: seven,
   now listing the variants) and its test peers' net.listen effect was

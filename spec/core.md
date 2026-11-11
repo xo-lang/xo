@@ -3192,6 +3192,12 @@ failed `Int32(x)` conversion, evaluated hole, explicit `fault("msg")`.
   (of any element type), structs' fields, an enum's variant with its
   fields, and `Os` by its type; a local declared at or after the frame's
   line with no value yet is left out).
+- A std function that faults on a bad argument (`fnv.update128` with a
+  sum that is not 16 bytes, `task.semaphore(0)`, a bad `time` layout)
+  reports the position of the call into std, as `FILE:LINE` without the
+  column: its implementation takes a trailing `at: rt.Loc` parameter that
+  each call fills with its own position, which no program writes or sees
+  (decisions 0074, 0597's amendment).
 - The native backends unwind a fault the same way (decision 0085: deferred
   code, scopes, Mutexes, and references are released on the way); they
   print the fault without its frames, write no crash bundle, and

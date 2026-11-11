@@ -1,0 +1,13 @@
+// std/fnv merged (decision 0597's amendment): update128's length check
+// faults at the caller's line, through a trailing rt.Loc parameter the
+// call fills, on every backend.
+use std/fnv
+
+fn main(os: Os) {
+  let s = fnv.sum128a(b"hello")
+  os.stdio.println(fnv.update128a(s, b" world").to_hex())
+  os.stdio.println(fnv.sum128a(b"hello world").to_hex())
+  os.stdio.println(fnv.update128(fnv.sum128(b""), b"x").to_hex())
+  let short = b"0123456789"
+  os.stdio.println(fnv.update128(short, b"x").to_hex())
+}

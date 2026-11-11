@@ -1,5 +1,19 @@
 # std/fnv changes
 
+## 2026-11-11: refactor: std/fnv is one file (decisions 0588, 0597's amendment)
+
+- Kind: refactor
+- Commit: this push
+- Found by: decision 0597's amendment (owner, 2026-11-11: rt.Loc and rt.fault_at are portable)
+- Go reference: none (no behavior change)
+- Test: TestStdCorpora fnv on go, arm64, llvm; golden fnv_caller_loc (arm64, llvm, Go parity, wasm)
+- Shipped in: not yet released
+
+std/native/fnv.xo moved into std/fnv.xo, and the Go backend compiles it
+from that source: its Go twin (std/rt/fnv.go, Go's hash/fnv) is gone.
+update128's and update128a's length check still faults at the caller's
+line on every backend, the Go backend included.
+
 ## 2026-10-29: perf: the 32 bit sums mask once
 
 - Kind: perf

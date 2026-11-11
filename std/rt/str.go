@@ -558,3 +558,12 @@ func Str_rfind(_ *Task, s, sub string) Option[int64] {
 // native source (norm, idna): Bytes is an immutable string here, so this
 // is a free conversion, not a copy.
 func Rt_cast[A, B ~string](_ *Task, a A) B { return B(a) }
+
+// Rt_Loc is native/rt's Loc, a call's position as `file:line`: a merged std
+// function's trailing `at: rt.Loc` parameter, which each call fills with its
+// own position (decision 0597's amendment, owner 2026-11-11).
+type Rt_Loc = string
+
+// Rt_fault_at is native/rt's fault_at: a fault reported at loc, the
+// caller's position, as the native backends report it.
+func Rt_fault_at(tk *Task, msg string, loc Rt_Loc) Never { return Fault(tk, msg, loc) }

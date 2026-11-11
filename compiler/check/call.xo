@@ -1623,7 +1623,9 @@ fn (var c: Checker) check_args(params: List[ParamInfo], call: Expr, fname: Str, 
         c.need_tree(ref_fo)
       }
     }
-    let has_default = if assigned[i] >= 0 { true } else if ref_fo >= 0 && i < c.objs[ref_fo].params.len() { !c.objs[ref_fo].params[i].default.is_empty() } else { !p.default.is_empty() }
+    let has_default0 = if assigned[i] >= 0 { true } else if ref_fo >= 0 && i < c.objs[ref_fo].params.len() { !c.objs[ref_fo].params[i].default.is_empty() } else { !p.default.is_empty() }
+    // a std function's trailing rt.Loc parameter: the call's position
+    let has_default = has_default0 || ref_fo >= 0 && c.objs[ref_fo].module >= 0 && c.mods[c.objs[ref_fo].module].is_std && c.is_loc_type(p.ty)
     if assigned[i] < 0 && !has_default {
       missing.push(text(p.name))
     }
@@ -1972,8 +1974,20 @@ fn (var c: Checker) module_member_habit(d: Int, path: Str, name: Str) {
 
 /// The intrinsics of native/rt a merged std module may call (decision
 /// 0597): those every backend implements, the Go backend included
-/// (std/rt Rt_cast).
-pub const PORTABLE_INTRINSICS = ["cast"]
+/// (std/rt Rt_cast, Rt_fault_at). Loc and fault_at (0597's amendment,
+/// owner 2026-11-11): a trailing `at: rt.Loc` parameter, filled with the
+/// call's position (is_loc_param), and a fault there.
+pub const PORTABLE_INTRINSICS = ["cast", "Loc", "fault_at"]
+
+/// Whether type t is native/rt's Loc: a trailing parameter of that type
+/// takes no argument, each call fills it with its own position.
+pub fn (c: Checker) is_loc_type(t: Int) -> Bool {
+  if t < 0 {
+    return false
+  }
+  let o = c.tys[c.resolve(t)].obj
+  o >= 0 && text(c.objs[o].name) == "Loc" && c.objs[o].module >= 0 && c.mods[c.objs[o].module].path == "native/rt"
+}
 
 /// XO0609 when a merged std module (decision 0588) names a member of
 /// native/rt that is not portable (decision 0597).

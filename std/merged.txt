@@ -47,3 +47,4 @@ std/png
 std/jpeg
 std/htmlparse
 std/amqp
+std/fnv
