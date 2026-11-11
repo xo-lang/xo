@@ -1,5 +1,29 @@
 # std/testing changes
 
+## 2026-11-11: fix: FakeNet patterns match natively as on the Go backend (a trailing slash, `{$}`, `{rest...}` on `/`)
+
+- Kind: fix
+- Commit: this commit
+- Found by: data/aztables' tracing test (Xo Azure) failed natively since v0.46.0: `os.net.handle("GET https://acct.table.example.test/{rest...}", ...)` answered the service's `GET /?restype=service&comp=properties` with "no fake handler", where the Go backend matched it (aws-43, 2026-11-11)
+- Go reference: net/http ServeMux's patterns (Go 1.22), less its redirects: a fake answers or fails, it never redirects
+- Test: cmd/xo TestFakeNetRestRoot on Go, arm64 and LLVM; natively before this change `https://rest.example.test/` gets "no fake handler"
+- Timing: none (test only)
+- Shipped in: not yet released
+
+Since aaef8a248 (v0.46.0) the native FakeNet split a request's path with
+the slashes at both ends dropped and turned a pattern's trailing slash
+into an exact path, where the Router and the Go backend's FakeNet keep
+the empty last piece of a trailing slash. Natively a `{rest...}` pattern
+did not match `/` or a path ending in a slash before it, a pattern ending
+in `/` (`POST https://sts.test/`) answered only that path, `{$}` was
+dropped, and `/users/{id}` also answered `/users/7/`. A FakeNet pattern
+now matches on every backend as the Router's does: a trailing slash is a
+subtree, `{$}` the exact path with a trailing slash, a rest takes the
+empty piece after a trailing slash (`""` on `/`), and a pattern without
+a trailing slash is an exact path. A test that registered `https://h/`
+for one call now answers every path on `h` there, as it already did on
+the Go backend.
+
 ## 2026-11-11: docs: the header says what the module is for
 
 - Kind: docs

@@ -4737,16 +4737,15 @@ fn fake_match(kind: Int, i: Int, req: Request, raw: Str) -> (Int, Map[Str, Str])
   if !prefix.is_empty() && !raw.starts_with(prefix) {
     return None
   }
-  let (_, segs0) = parse_pattern(testworld.fake_text(kind, i, 2))
-  var segs = segs0
-  // a fake's pattern is an exact path as before: no subtree or {$}
-  if !segs.is_empty() && (segs[segs.len() - 1].rest && segs[segs.len() - 1].param.is_empty() || segs[segs.len() - 1].dollar) {
-    segs.pop()
-  }
+  // the pattern and the path split as the Router splits them (Go 1.22's
+  // forms: a trailing slash is a subtree, a rest takes the empty piece
+  // after a trailing slash, "/" included), as the Go twin's matchFake
+  // does with reqPieces: one split, so the two cannot drift
+  let (_, segs) = parse_pattern(testworld.fake_text(kind, i, 2))
   let route = Route{method: "", segs: segs, h: fn(_q: Request) -> http.Response { empty(404) }}
   // the escaped path, split before unescaping (Go's ServeMux): a client
   // request's path is decoded, so an escaped slash would split it
-  let parts = split_path(http1.escaped_path(req.path, req.raw_path))
+  let parts = req_pieces(http1.escaped_path(req.path, req.raw_path))
   var uparts: List[Str] = List.with_capacity(parts.len())
   for p in parts {
     uparts.push(http1.path_unescape(p))
