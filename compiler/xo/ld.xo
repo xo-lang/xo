@@ -442,7 +442,7 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
         Err(e) => return e
       }
       let pf = elf_prep_file(os, ctx.sep_store, store_n, prog, eopts)
-      if let Some(h) = elf_half_load(os, elf_half_file_for(pf, eopts)) {
+      if let Some(h) = elf_half_load(os, elf_half_file_for(os, pf, eopts)) {
         // the link from std's half, as elf_store_laps makes it
         var s = macho.elf_store_prepare_half(prog, h, eopts)
         let dp = os.clock.since(t1).nanos() / 1000
@@ -1914,7 +1914,7 @@ fn elf_store_laps(os: Os, ctx: Ctx, ins: List[macho.LinkInput], store0: Bytes, l
     Err(e) => return Err(e)
   }
   let pf = elf_prep_file(os, ctx.sep_store, n, prog, opts)
-  let hf = elf_half_file_for(pf, opts)
+  let hf = elf_half_file_for(os, pf, opts)
   if let Some(h) = elf_half_load(os, hf) {
     match link_from_elf_half(os, ctx, prog, h, opts, t) {
       Some(r) => return r
@@ -2016,11 +2016,11 @@ fn pe_half_load(os: Os, f: Str) -> macho.PeHalf? {
 
 /// std's half for an ELF store link with the prepare cache's file pf (as
 /// half_file_for's), "" for none.
-fn elf_half_file_for(pf: Str, opts: macho.ElfLinkOpts) -> Str {
+fn elf_half_file_for(os: Os, pf: Str, opts: macho.ElfLinkOpts) -> Str {
   if pf.is_empty() || !opts.split_prog {
     return ""
   }
-  let k = "elf\n${base_name(pf)}\n${opts.interp}\n${opts.entry}\n${opts.static}\n${opts.strip}\n${opts.release}\n${opts.debug_link}\n"
+  let k = "elf\n${base_name(pf)}\n${opts.interp}\n${opts.entry}\n${opts.static}\n${opts.strip}\n${opts.release}\n${opts.debug_link}\n${link_env_key(os)}\n"
   "${dir_name(dir_name(pf))}/stdhalf/${crypto.sha256(k.bytes()).to_hex()[0..40]}"
 }
 
@@ -2084,7 +2084,7 @@ fn half_file_for(os: Os, pf: Str, opts: macho.LinkOpts) -> Str {
   if pf.is_empty() || !opts.split_prog {
     return ""
   }
-  let k = "${base_name(pf)}\n${opts.dylibs.join(",")}\n${opts.rpaths.join(",")}\n${opts.entry}\n${opts.embed_dwarf}\n${opts.dsym}\n${opts.std_parts.is_empty()}\n${opts.program_dwarf}\n${opts.strip}\n${opts.release}\n"
+  let k = "${base_name(pf)}\n${opts.dylibs.join(",")}\n${opts.rpaths.join(",")}\n${opts.entry}\n${opts.embed_dwarf}\n${opts.dsym}\n${opts.std_parts.is_empty()}\n${opts.program_dwarf}\n${opts.strip}\n${opts.release}\n${link_env_key(os)}\n"
   "${dir_name(dir_name(pf))}/stdhalf/${crypto.sha256(k.bytes()).to_hex()[0..40]}"
 }
 

@@ -738,6 +738,51 @@ func TestGoldenRunIslandsSplit(t *testing.T) {
 // far targets fit in the reach's eighth.
 const islandsReach = "262144"
 
+// TestBinCacheLinkEnv: a link made under XO_BRANCH_REACH is not served
+// to a build without it from the bin cache. The link's binary key held
+// its flags and inputs but not the environment the linker reads
+// (compiler/xo cache.xo link_env_key), and the islands' objects are the
+// default build's, so TestGoldenRunIslands' islanded link was cached
+// under the default link's key; TestDebugInfoSameCode's build with debug
+// information then got it back, every program function calling through
+// veneers (tiers 908 to 912, 2026-11-11: ten goldens, only in the full
+// package run, after the islands subtests).
+func TestBinCacheLinkEnv(t *testing.T) {
+	t.Parallel()
+	if !native() {
+		t.Skip("arm64 hosts only")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	dir := filepath.Join("..", "llvm", "testdata", "golden", "value_semantics")
+	cache := "XO_BIN_CACHE=" + t.TempDir()
+	build := func(env ...string) []byte {
+		t.Helper()
+		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64, Env: append([]string{cache, "XO_BACKEND_CACHE=off"}, env...)})
+		if err != nil {
+			t.Fatalf("build %v: %v", env, err)
+		}
+		if res.Dir != "" {
+			d := res.Dir
+			t.Cleanup(func() { os.RemoveAll(d) })
+		}
+		if res.Failed {
+			t.Fatalf("build %v failed:\n%s", env, res.Output)
+		}
+		b, err := os.ReadFile(res.Binaries[xotool.Host()])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	islands := build("XO_BRANCH_REACH=" + islandsReach)
+	plain := build()
+	if bytes.Equal(islands, plain) {
+		t.Fatalf("the build without XO_BRANCH_REACH is the islanded link (%d bytes): the bin cache served it", len(plain))
+	}
+}
+
 // TestNoPreemptPolls: with XO_PREEMPT_POLLS=off (`--no-preempt`, decision
 // 0286 step 3's opt out for tight loop benchmarks) sieve's own loops have
 // no preemption poll (no `_ppN` stub label, no xo_preempt_stub call);

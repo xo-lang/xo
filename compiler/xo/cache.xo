@@ -237,6 +237,21 @@ fn key_tree(os: Os, var k: Key, dir: Str, skip: List[Str], known: Map[Str, Str])
   true
 }
 
+/// The environment a link reads beyond its flags and inputs, for the
+/// binary keys (native_bin_key, macho_bin_key) and std's half keys
+/// (ld.xo half_file_for, elf_half_file_for): XO_BRANCH_REACH's veneers,
+/// XO_DATA_SHIFT's padding and XO_STD_HALF's layout change the linked
+/// bytes but no object, so a link without them must not reuse a link
+/// made with them. 2026-11-11: TestGoldenRunIslandsSplit's islanded link
+/// (XO_BRANCH_REACH=262144) was stored in the test bin cache under the
+/// default link's key, and TestDebugInfoSameCode then compared it with a
+/// link without debug information, every program function "differing"
+/// by its calls through veneers (tiers 908 to 912; it passed alone until
+/// the poisoned entry was cached).
+fn link_env_key(os: Os) -> Str {
+  "reach=${branch_reach(os.env.get("XO_BRANCH_REACH") ?? "")} shift=${data_shift(os.env.get("XO_DATA_SHIFT") ?? "")} half=${os.env.get("XO_STD_HALF") ?? ""}"
+}
+
 /// nativeBinKey: the cache key of a native link of srcs (all in dir)
 /// with cc and flags: the C compiler's identity, the flags, the sources'
 /// paths, the macOS SDK, the prebuilt runtime, and every file of dir but
@@ -249,6 +264,7 @@ fn native_bin_key(os: Os, ctx: Ctx, dir: Str, cc: Str, flags: List[Str], srcs: L
   var k = new_key("native")
   k.str(tool_id_memo(os, ctx, cc, ["--version"]))
   k.strs(flags)
+  k.str(link_env_key(os))
   for s in srcs {
     if !s.starts_with("${dir}/") {
       return ""
@@ -287,6 +303,7 @@ fn macho_bin_key(os: Os, ctx: Ctx, dir: Str, tgoos: Str, flags: List[Str], srcs:
   var k = new_key("macho")
   k.str(id)
   k.strs(flags)
+  k.str(link_env_key(os))
   // race_rt: the --race runtime's path, which the executable loads
   // dsym: an entry stored without --dsym has no bundle to fetch
   // release: its symbol table keeps fewer local symbols (LinkOpts.release)
