@@ -23,7 +23,10 @@ fn (var g: Gen) call(v: Int) {
       g.fail("the wasm backend: the call of `${name}` takes ${n} result leaves, it returns ${g.result_leaves(ci)}")
       return
     }
-    let blk = if wide { g.sret_block(ci) } else { -1 }
+    // the root of a local home: the callee stores its result in the
+    // home's block, which then holds it (home.xo add_local_homes)
+    let lh = if wide && g.held[v] >= 0 && g.lroot.get(v) == Some(g.held[v]) { g.held[v] } else { -1 }
+    let blk = if lh >= 0 { g.local_home_block(lh) } else if wide { g.sret_block(ci) } else { -1 }
     let id = if g.susp.len() > ci && g.susp[ci] { g.resume_point() } else { -1 }
     for a in x.args {
       g.push(a)
@@ -33,7 +36,9 @@ fn (var g: Gen) call(v: Int) {
     }
     g.e("call $f${ci}")
     g.suspend_check(id)
-    if wide {
+    if lh >= 0 {
+      g.take_snaps(v)
+    } else if wide {
       g.mem_def(blk, 0, g.leaves(ssa.ty_of(x.tb)), v)
       g.get(blk)
       g.e("call $free")
@@ -720,7 +725,9 @@ fn (var g: Gen) home_call(v: Int, ci: Int) {
   let cf = g.m.funcs[ci]
   // a wide result (wide_result): the callee stores its results but those
   // left in homes at the block passed after the arguments
-  let blk = if g.wide_result(ci) { g.sret_block(ci) } else { -1 }
+  // the root of a local home (only read only homes: v is the result)
+  let lh = if g.wide_result(ci) && g.held[v] >= 0 && g.lroot.get(v) == Some(g.held[v]) { g.held[v] } else { -1 }
+  let blk = if lh >= 0 { g.local_home_block(lh) } else if g.wide_result(ci) { g.sret_block(ci) } else { -1 }
   let sus = g.susp.len() > ci && g.susp[ci]
   // the temporary copies of a call that can suspend are made before its
   // resume point: a resumed call passes the same blocks, and reads the
@@ -833,12 +840,14 @@ fn (var g: Gen) home_call(v: Int, ci: Int) {
   // the results the callee returns, into the tuple's locals
   if g.homes[ci].len() == g.rhomes[ci].len() {
     // only read only homes: the results are the SSA's
-    if blk >= 0 {
+    if lh >= 0 {
+      g.take_snaps(v)
+    } else if blk >= 0 {
       g.mem_def(blk, 0, g.leaves(ssa.ty_of(x.tb)), v)
     } else {
       g.def(v)
     }
-    if blk >= 0 {
+    if blk >= 0 && lh < 0 {
       g.get(blk)
       g.e("call $free")
     }

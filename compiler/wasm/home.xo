@@ -401,6 +401,7 @@ fn (var g: Gen) plan_homes(pos: List[Int], hi: List[Int], bend: List[Int]) {
   }
   g.snapat = {}
   g.snapdef = {}
+  g.add_local_homes()
   for h in 0..g.hval.len() {
     g.hwhy.push("")
     g.hok.push(g.plan_home(h, pos, hi, bend))
@@ -408,6 +409,195 @@ fn (var g: Gen) plan_homes(pos: List[Int], hi: List[Int], bend: List[Int]) {
   g.plan_fields(pos)
   g.plan_nested()
   g.plan_field_calls()
+}
+
+/// Local homes: a struct value a call with a wide result defines (the
+/// callee stores it at an address the caller passes) and the function
+/// passes to `var` parameters with homes, as `var b = new_builder(..)`
+/// then `b.build()`, or returns as its wide result (plan_sret_home). The call stores it in a block of the function's,
+/// which holds it as a parameter's home holds its value: each `var` call
+/// passes the block's address, where every such call copied the value
+/// into a block and loaded it back after (ssa.build_program_fe: 54,000
+/// of its 71,000 lines, 2026-11-11). One per type, not for a type a
+/// parameter's home has; every such call defining a value of the type
+/// passed to a home is a root (`b = new_builder(..)` again, or in a
+/// loop): the block is made at the first one run and reused; the exits
+/// free it (free_local_homes). plan_home checks the chain as for a
+/// parameter's (a read of a value the home no longer holds drops it); a
+/// home that falls back is plain calls.
+fn (var g: Gen) add_local_homes() {
+  let f = g.f
+  var types: List[Int] = []
+  for p in g.hval {
+    types.push(ssa.ty_of(f.values[p].tb))
+  }
+  // the calls that can be roots, and the types one of them is passed to
+  // a home as
+  var cands: List[Int] = []
+  var passed: List[Int] = []
+  // (or returned in the function's wide result block: plan_sret_home)
+  if g.sret >= 0 && f.results.len() == 1 {
+    passed.push(f.results[0])
+  }
+  for b in f.blocks {
+    for v in b.instrs {
+      let x = f.values[v]
+      if !(x.op is ssa.Op.Call | ssa.Op.Struct) {
+        continue
+      }
+      let t = ssa.ty_of(x.tb)
+      if t < 0 || t >= g.m.types.len() || types.contains(t) || g.kind(t) != ssa.Kind.Struct || g.nleaves(t) <= WIDE_RC {
+        continue
+      }
+      var ci = -1
+      if x.op == ssa.Op.Call {
+        let name = match x.aux {
+          S(s) => s
+          _ => ""
+        }
+        ci = g.by_name.get(name) ?? -1
+        // (a callee with only read only homes returns the SSA's results)
+        if ci < 0 || g.homes[ci].len() != g.rhomes[ci].len() || !g.wide_result(ci) {
+          continue
+        }
+      }
+      // an argument passed by address (a home of the callee), or any
+      // field of a struct literal (stored a field at a time), that may
+      // be in the block would be read after the block is written
+      var alias = false
+      for (i, a) in x.args.indexed() {
+        if (ci < 0 || g.homes[ci].contains(i)) && a >= 0 {
+          let ba = g.field_base(a)
+          if ba >= 0 && ssa.ty_of(f.values[ba].tb) == t {
+            alias = true
+          }
+        }
+      }
+      if alias {
+        continue
+      }
+      cands.push(v)
+      for w in g.users[v] {
+        let cw = g.home_callee(w)
+        if cw < 0 {
+          continue
+        }
+        for pi in g.m.funcs[cw].var_params {
+          if g.homes[cw].contains(pi) && !g.rhomes[cw].contains(pi) && pi < f.values[w].args.len() && f.values[w].args[pi] == v && !passed.contains(t) {
+            passed.push(t)
+          }
+        }
+      }
+    }
+  }
+  for v in cands {
+    let t = ssa.ty_of(f.values[v].tb)
+    if !passed.contains(t) {
+      continue
+    }
+    var h = -1
+    for (k, p) in g.hval.indexed() {
+      if g.hlocal[k] && ssa.ty_of(f.values[p].tb) == t {
+        h = k
+      }
+    }
+    if h < 0 {
+      h = g.hval.len()
+      g.hptr.push(g.tmps(["i32"]))
+      g.hparam.push(-1)
+      g.hval.push(v)
+      g.hro.push(false)
+      g.hlocal.push(true)
+      g.hsret.push(false)
+    }
+    g.lroot[v] = h
+  }
+}
+
+/// The block of local home h where a root call runs: made (zeroed, as
+/// sret_block) at the first one run, then reused as it is: a root's
+/// arguments may read the value the home holds (`b = f(b.x)`), and a
+/// call that suspends runs its code again from its resume point with the
+/// callee's writes in place. Its local holds the address.
+fn (var g: Gen) local_home_block(h: Int) -> Int {
+  let p = g.hptr[h]
+  let n = g.size(ssa.ty_of(g.f.values[g.hval[h]].tb))
+  g.get(p)
+  g.e("i32.eqz")
+  g.e("if")
+  g.e("i32.const ${n}")
+  g.e("call $alloc")
+  g.set(p)
+  g.get(p)
+  g.e("i32.const 0")
+  g.e("i32.const ${n}")
+  g.e("memory.fill")
+  g.e("end")
+  p
+}
+
+/// Lowers struct literal v, the root of local home h: its fields stored
+/// into the home's block (the fields that are zero by one fill).
+fn (var g: Gen) local_home_struct(v: Int, h: Int) {
+  let x = g.f.values[v]
+  let t = ssa.ty_of(x.tb)
+  let p = g.local_home_block(h)
+  var zero: List[Bool] = []
+  var nz = 0
+  for a in x.args {
+    var z = false
+    if let Some(w) = g.const_words(a) {
+      z = w.all(fn(n: Int) -> Bool { n == 0 })
+    }
+    zero.push(z)
+    if z {
+      nz += g.nleaves(g.vty(a))
+    }
+  }
+  let fill = nz > 4
+  if fill {
+    g.get(p)
+    g.e("i32.const 0")
+    g.e("i32.const ${g.size(t)}")
+    g.e("memory.fill")
+  }
+  for (i, a) in x.args.indexed() {
+    if fill && zero[i] {
+      continue
+    }
+    let ls = g.leaves(g.vty(a))
+    let off = g.boff(t, g.field_off(t, i))
+    for (j, l) in ls.indexed() {
+      g.get(p)
+      g.push_part(a, j, j + 1)
+      g.e("${l}.store offset=${off + loff(ls, j)}")
+    }
+  }
+  g.mstat_add("store", g.nleaves(t) - (if fill { nz } else { 0 }))
+  g.take_snaps(v)
+}
+
+/// The value v is a field (at any depth) of: following field reads down.
+fn (g: Gen) field_base(v: Int) -> Int {
+  var a = v
+  while a >= 0 && g.f.values[a].op == ssa.Op.Field && g.f.values[a].args.len() > 0 {
+    a = g.f.values[a].args[0]
+  }
+  a
+}
+
+/// Frees the blocks of the local homes made (a function's exit).
+fn (var g: Gen) free_local_homes() {
+  for (h, p) in g.hptr.indexed() {
+    if !g.hlocal[h] || !g.hok[h] || g.hsret[h] {
+      continue
+    }
+    g.get(p)
+    g.e("if")
+    g.get(p)
+    g.e("call $free")
+    g.e("end")
+  }
 }
 
 /// The chain of home h; false when it falls back.
@@ -421,6 +611,11 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
   let p0 = g.hval[h]
   let ht = ssa.ty_of(f.values[p0].tb)
   chain[p0] = true
+  for (r, rh) in g.lroot.entries() {
+    if rh == h {
+      chain[r] = true
+    }
+  }
   if g.hro[h] {
     // read only: the home holds the parameter throughout
     g.held[p0] = h
@@ -574,6 +769,14 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
     }
     after[v] = if cparts[v].is_empty() { CONFLICT } else { c }
   }
+  if g.hlocal[h] {
+    // each root call defines the home's value
+    for (r, rh) in g.lroot.entries() {
+      if rh == h && chain[r] {
+        after[r] = r
+      }
+    }
+  }
   // the field reads of a chain value that may run after it is given up
   // read a snapshot taken where the value is defined (its call for a
   // part, its update, its block's start for a parameter)
@@ -676,7 +879,7 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
     for (bi, b) in f.blocks.indexed() {
       var st = TOP
       if bi == 0 {
-        st = p0
+        st = if g.hlocal[h] { TOP } else { p0 }
       } else {
         var pst = -1
         for x in b.params {
@@ -779,7 +982,43 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
     }
   }
   g.hbefore.push(before)
+  if g.hlocal[h] {
+    g.plan_sret_home(h, chain, before)
+  }
   true
+}
+
+/// A local home whose value every Return returns (`var b = ..; ..; b`,
+/// as new_builder) is the function's wide result block: the caller's
+/// block holds the value as it is built and Return copies nothing. A
+/// Return of a constant (a static unwind exit's zeros) stores over it,
+/// as before; any other value keeps the home a block of its own.
+fn (var g: Gen) plan_sret_home(h: Int, chain: List[Bool], before: List[Int]) {
+  let f = g.f
+  let t = ssa.ty_of(f.values[g.hval[h]].tb)
+  if g.sret < 0 || f.results.len() != 1 || f.results[0] != t {
+    return
+  }
+  for b in f.blocks {
+    for v in b.instrs {
+      let x = f.values[v]
+      if x.op != ssa.Op.Return || x.args.len() != 1 {
+        continue
+      }
+      let a = x.args[0]
+      if a < 0 {
+        return
+      }
+      if chain[a] && g.canon[a] == before[v] {
+        continue
+      }
+      if f.values[a].op != ssa.Op.Const {
+        return
+      }
+    }
+  }
+  g.hsret[h] = true
+  g.hptr[h] = g.sret
 }
 
 /// The values that are one chain value: the reads of a call's `var`
@@ -1220,7 +1459,7 @@ fn (g: Gen) mem_of(v: Int) -> (Int, Int) {
 /// Zeroes every home (a fault exit).
 fn (var g: Gen) zero_homes() {
   for (h, p) in g.hptr.indexed() {
-    if g.hro[h] {
+    if g.hro[h] || g.hlocal[h] {
       continue
     }
     g.get(p)

@@ -40,6 +40,9 @@ fn (var g: Gen) func(fi: Int) {
   g.hparam = []
   g.hval = []
   g.hro = []
+  g.hlocal = []
+  g.lroot = {}
+  g.hsret = []
   for (i, p) in f.blocks[0].params.indexed() {
     if g.homes[fi].contains(i) {
       // the address of its home (home.xo)
@@ -47,6 +50,8 @@ fn (var g: Gen) func(fi: Int) {
       g.hparam.push(i)
       g.hval.push(p)
       g.hro.push(g.rhomes[fi].contains(i))
+      g.hlocal.push(false)
+      g.hsret.push(false)
       ps.push("i32")
       continue
     }
@@ -156,7 +161,13 @@ fn (var g: Gen) func(fi: Int) {
   // a home whose chain does not stay in memory: its parameter is loaded
   // at entry (before a resumed task restores its locals)
   for (h, p) in g.hval.indexed() {
-    if !g.hok[h] {
+    if g.hsret[h] {
+      // the caller's block
+    } else if g.hlocal[h] {
+      // no block yet: the exits free a made one (free_local_homes)
+      g.e("i32.const 0")
+      g.set(g.hptr[h])
+    } else if !g.hok[h] {
       g.mem_def(g.hptr[h], 0, g.leaves(ssa.ty_of(f.values[p].tb)), p)
     }
   }
@@ -220,6 +231,7 @@ fn (var g: Gen) func(fi: Int) {
   if g.zexit {
     g.e("end")
     g.zero_homes()
+    g.free_local_homes()
     g.push_zeros(rs)
   }
   g.coalesce_locals(g.pc_local)
@@ -1098,6 +1110,7 @@ fn (var g: Gen) static_unwind(bi: Int) -> Bool {
       }
     }
   }
+  g.free_local_homes()
   g.e("return")
   true
 }
@@ -1499,6 +1512,11 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       g.def(v)
     }
     Struct | Tuple => {
+      if g.held[v] >= 0 && g.lroot.get(v) == Some(g.held[v]) {
+        // the root of a local home (home.xo add_local_homes)
+        g.local_home_struct(v, g.held[v])
+        return
+      }
       for a in x.args {
         g.push(a)
       }
@@ -1826,7 +1844,10 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       var at = 0
       for (k, a) in x.args.indexed() {
         if g.result_home(k) < 0 {
-          if g.sret >= 0 {
+          if g.sret >= 0 && g.held[a] >= 0 && g.hsret[g.held[a]] {
+            // the home is the result's block: already there
+            at += g.size(g.vty(a))
+          } else if g.sret >= 0 {
             let ls = g.leaves(g.vty(a))
             for (j, l) in ls.indexed() {
               g.get(g.sret)
@@ -1842,6 +1863,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       for (h, b) in stores {
         g.mem_store(g.hptr[h], 0, b, g.leaves(ssa.ty_of(g.f.values[g.hval[h]].tb)))
       }
+      g.free_local_homes()
       g.e("return")
     }
     Unreachable => g.e("unreachable")

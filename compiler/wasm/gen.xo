@@ -188,6 +188,14 @@ pub struct Gen {
   hptr: List[Int] = []
   hparam: List[Int] = []
   hval: List[Int] = []
+  /// per home: a local home (home.xo add_local_homes): its value is a
+  /// call's wide result, at a block the function makes and frees
+  hlocal: List[Bool] = []
+  /// the root calls of the local homes: value to home
+  lroot: Map[Int, Int] = {}
+  /// per home: a local home in the function's wide result block (the
+  /// caller's), which every Return returns (plan_sret_home)
+  hsret: List[Bool] = []
   hok: List[Bool] = []
   /// Per home, why it fell back or how many calls could not pass it
   /// (--annotate).

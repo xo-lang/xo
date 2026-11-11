@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+loop n=2 items=m0,l0 tags=2 conc=false need=true a8=x0
+loop n=3 items=m1,l1 tags=2 conc=true need=false a8=x1
+loop n=4 items=m2,l2 tags=2 conc=false need=true a8=x2
+built n=13 items=m10,b1,b2 tags=3 conc=false need=false a8=x10
+second n=104 items=m102,t tags=2 conc=true need=true a8=x102
+c n=13 items=m10,b1,b2 tags=3 conc=false need=false a8=x10
+d n=15 items=m13,u tags=2 conc=true need=false a8=x13
+--- stderr

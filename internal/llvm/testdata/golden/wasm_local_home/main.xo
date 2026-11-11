@@ -1,0 +1,109 @@
+// Local homes (wasm, 2026-11-11): a large struct value a call or struct
+// literal defines and a function then passes to `var` methods or returns
+// lives in a block of its own, or in the caller's result block. Cases: a
+// value defined again from a field of the old one (`b = make(b.n + 1)`),
+// a root in a loop, a builder returned from the function that builds it,
+// a struct literal root, and a value copied out before the next root.
+struct B {
+  name: Str = ""
+  n: Int = 0
+  items: List[Str] = []
+  tags: Map[Str, Int] = {}
+  a1: Str = ""
+  a2: Str = ""
+  a3: Str = ""
+  a4: Str = ""
+  a5: Str = ""
+  a6: Str = ""
+  a7: Str = ""
+  a8: Str = ""
+  a9: Str = ""
+  a10: Str = ""
+  a11: Str = ""
+  a12: Str = ""
+  a13: Str = ""
+  a14: Str = ""
+  a15: Str = ""
+  a16: Str = ""
+  a17: Str = ""
+  a18: Str = ""
+  a19: Str = ""
+  a20: Str = ""
+  a21: Str = ""
+  a22: Str = ""
+  a23: Str = ""
+  a24: Str = ""
+  a25: Str = ""
+  a26: Str = ""
+  a27: Str = ""
+  a28: Str = ""
+  a29: Str = ""
+  a30: Str = ""
+  a31: Str = ""
+  a32: Str = ""
+  a33: Str = ""
+  a34: Str = ""
+  a35: Str = ""
+  a36: Str = ""
+  a37: Str = ""
+  a38: Str = ""
+  a39: Str = ""
+  a40: Str = ""
+  conc: Bool = false
+  need: Bool = false
+}
+
+fn (var b: B) step(s: Str) {
+  b.items.push(s)
+  b.n += 1
+  b.tags[s] = b.n
+  b.need = b.n % 2 == 0
+}
+
+fn (b: B) show() -> Str {
+  "${b.name} n=${b.n} items=${b.items.join(",")} tags=${b.tags.len()} conc=${b.conc} need=${b.need} a8=${b.a8}"
+}
+
+fn make(name: Str, n: Int, conc: Bool) -> B {
+  var b = B{name: name, n: n, conc: conc, a8: "x${n}"}
+  b.step("m${n}")
+  b
+}
+
+fn builder(name: Str) -> B {
+  var b = make(name, 10, false)
+  b.a1 = "one"
+  b.step("b1")
+  b.step("b2")
+  b
+}
+
+fn rebuild() -> B {
+  var b = make("first", 1, false)
+  if b.need != b.conc {
+    // defined again from the old value's fields
+    b = make("second", b.n + 100, b.need)
+    b.step("t")
+  }
+  b
+}
+
+fn main(os: Os) {
+  var kept: List[B] = []
+  for i in 0..3 {
+    var b = make("loop", i, i == 1)
+    b.step("l${i}")
+    kept.push(b)
+  }
+  for b in kept {
+    os.stdio.println(b.show())
+  }
+  os.stdio.println(builder("built").show())
+  os.stdio.println(rebuild().show())
+  var c = builder("c")
+  let old = c
+  c = make("d", old.n, true)
+  c.step("u")
+  os.stdio.println(old.show())
+  os.stdio.println(c.show())
+}
