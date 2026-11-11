@@ -404,3 +404,30 @@ func TestLSPModuleCache(t *testing.T) {
 		t.Fatalf("lib.xo edited with a type error: no diagnostics (its clean entry replayed?)")
 	}
 }
+
+// TestLSPUseCNative: xo lsp checks by the native backends' rules, as
+// xo check and xo build do (decision 0248), so a `use c` program that
+// xo check accepts gets no XO1201 in the editor. The LSP checked by the
+// Go backend's rules and reported `use c "..."` as impossible on the Go
+// backend on every such file (2026-11-11, the scarlet session).
+func TestLSPUseCNative(t *testing.T) {
+	t.Parallel()
+	h := "#ifndef LCN_H\n#define LCN_H\n#include <stdint.h>\nint64_t lcn_add(int64_t a, int64_t b);\n#endif\n"
+	cs := "#include \"lcn.h\"\nint64_t lcn_add(int64_t a, int64_t b) { return a + b; }\n"
+	main := "use c \"lcn.h\" link \"lcn.c\" uses none\n\nfn main(os: Os) {\n  os.stdio.println(\"${lcn.lcn_add(1, 2)}\")\n}\n"
+	dir := writeFiles(t, map[string]string{"xo.mod": "module example.com/lspusec\n", "main.xo": main, "lcn.h": h, "lcn.c": cs})
+	chk := command(t, xoBin(t), "check", ".")
+	chk.Dir = dir
+	chk.Env = append(chk.Env, "PWD="+dir)
+	if out, err := chk.CombinedOutput(); err != nil {
+		t.Fatalf("xo check: %v\n%s", err, out)
+	}
+	c := startLSPEnv(t, dir, "XO_BACKEND_CACHE_DIR="+t.TempDir(), "XO_BACKEND_CACHE=on")
+	c.request("initialize", map[string]any{"processId": nil, "rootUri": fileURL(dir), "capabilities": map[string]any{}})
+	c.notify("initialized", map[string]any{})
+	uri := fileURL(filepath.Join(dir, "main.xo"))
+	c.notify("textDocument/didOpen", map[string]any{"textDocument": map[string]any{"uri": uri, "languageId": "xo", "version": 1, "text": main}})
+	if d := c.diagnostics(uri); len(d) != 0 {
+		t.Fatalf("main.xo (xo check passes): %v", d)
+	}
+}

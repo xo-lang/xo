@@ -548,6 +548,12 @@ fn new_lsp_checker(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes]) -> c
   c.walk_all = true
   // one module a module path, the others named (same_path)
   c.split_same_path = true
+  // the native backends' checker rules, as `xo check` and `xo build`
+  // check by default (decision 0248): `use c` is valid. Under the Go
+  // backend's rules the editor reported XO1201 on every `use c` that
+  // xo check accepts (2026-11-11), and the module check cache entries it
+  // shares with xo check (same mod_flags) were checked by other rules.
+  c.native = true
   c
 }
 
