@@ -8474,6 +8474,9 @@ fields of a `FieldDesc` as theirs, so a descriptor made by protoc or protobuf-go
 bytes (checked on descriptor.proto, the well known types and grpc-go's health, reflection and test files: testdata/corpus/
 protodesc, byte for byte against protobuf-go).
 
+std/protodesc.xo, std/protowkt.xo and std/protojson.xo are merged modules (decision 0588, every backend runs their Xo);
+their wire reader and writers are the internal module `std/protowire` (not for programs: use std/protobuf).
+
 ```xo
 fn encode(f: FileDesc) -> Bytes
 fn decode(data: Bytes) -> FileDesc ! protobuf.ProtoErr

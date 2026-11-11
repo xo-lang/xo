@@ -485,6 +485,12 @@ func UncoveredIn(root, text string) (entries []Entry, total int, err error) {
 		}
 		for c := range callsIn(d.body) {
 			for _, j := range byName[c] {
+				// an unqualified call names its own module's function
+				// or the prelude's, not a same named one elsewhere
+				// (protojson's key_text is not cbor's)
+				if !strings.Contains(c, ".") && decls[j].Module != d.Module && decls[j].Module != "prelude" {
+					continue
+				}
 				mark(j)
 			}
 			if dot := strings.LastIndexByte(c, '.'); dot >= 0 {

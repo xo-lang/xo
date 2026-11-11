@@ -27,3 +27,7 @@ std/htmlent
 std/html
 std/htmltok
 std/url
+std/protowire
+std/protodesc
+std/protowkt
+std/protojson

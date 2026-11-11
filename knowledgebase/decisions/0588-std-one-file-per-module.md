@@ -304,4 +304,13 @@ commit (the lead cuts it).
   (no native intrinsics), std/native/htmltok.xo and its tests move, and
   htmltok leaves std/go_compiled.txt. host 1 --ab against main on
   bench/perf/htmltok token: within noise (0.987, 0.98 to 1.006, n=7).
-
+- The protobuf descriptor modules merged (2026-11-11): `std/protodesc`,
+  `std/protowkt` and `std/protojson` are one file each, and leave
+  std/go_compiled.txt with std/rt/protojson.go and the generated
+  std_gen_protodesc.go, std_gen_protowkt.go, std_gen_protojson.go and
+  std_sigs_protojson.go. The wire reader and writers the three shared
+  through std/native/protodesc.xo (`Fld`, `walk`, `wv`, `wtag`, `ws`, ...)
+  are the internal module `std/protowire` (merged). protobuf stays a
+  declaration file: otlp and derive Proto use it, and the three merge
+  together because protojson's declarations name protodesc's types.
+  Output unchanged.

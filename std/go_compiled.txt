@@ -35,8 +35,5 @@ timego
 grpc
 otlp
 protoparse
-protodesc
-protowkt
-protojson
 htmlparse
 image

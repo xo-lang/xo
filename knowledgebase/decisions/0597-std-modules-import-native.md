@@ -212,4 +212,11 @@ pushes.
   backend's twin Url_escape in std/rt/url.go, which keeps urlText for
   std/rt's http). url is rt-hosted (std/rt_hosted.txt): std/rt's http and
   the generated multipart code call its functions.
-
+- Part 2, protowkt (2026-11-11): the last module of the table. Its
+  native file imported `native/protodesc` for the wire helpers; they are
+  the merged internal module std/protowire now, and protowkt merged with
+  protodesc and protojson (decision 0588 progress). None of the three is
+  rt-hosted: an rt-hosted module's Go code is in package rt, which
+  cannot call a go_compiled module such as protobuf
+  (gotchas/rt-hosted-calls-go-compiled.md). regexp is the table's other
+  open module.

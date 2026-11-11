@@ -1,0 +1,55 @@
+// Hand written cases for std/protowkt (decision 0546); the differential against protobuf-go's well known types is
+// internal/stdtest/testdata/corpus/protowkt.
+test "timestamp and duration write seconds then nanos" {
+  expect(encode_timestamp(Timestamp{seconds: 1, nanos: 2})) == b"\x08\x01\x10\x02"
+  expect(encode_duration(Duration{seconds: 1, nanos: 2})) == b"\x08\x01\x10\x02"
+  expect(encode_timestamp(Timestamp{})) == b""
+  let t = decode_timestamp(b"\x08\x01\x10\x02").or_fault("decode")
+  expect(t.seconds) == 1
+  expect(t.nanos) == 2
+}
+
+test "a negative nanos is a ten byte varint and comes back" {
+  let m = Duration{seconds: -1, nanos: -5}
+  let d = decode_duration(encode_duration(m)).or_fault("decode")
+  expect(d == m) == true
+}
+
+test "empty, field mask and any" {
+  expect(encode_empty(Empty{})) == b""
+  expect(encode_field_mask(FieldMask{paths: ["a", "b"]})) == b"\x0a\x01a\x0a\x01b"
+  let a = Any{type_url: "t/x", value: b"\x01\x02"}
+  expect(encode_any(a)) == b"\x0a\x03t/x\x12\x02\x01\x02"
+  expect(decode_any(encode_any(a)).or_fault("decode") == a) == true
+}
+
+test "wrappers write their value unless it is the zero" {
+  expect(encode_int32_value(Int32Value{value: 5})) == b"\x08\x05"
+  expect(encode_int32_value(Int32Value{})) == b""
+  expect(encode_bool_value(BoolValue{value: true})) == b"\x08\x01"
+  expect(encode_string_value(StringValue{value: "hi"})) == b"\x0a\x02hi"
+  expect(encode_bytes_value(BytesValue{value: b"\x00"})) == b"\x0a\x01\x00"
+}
+
+test "a value writes the member that is set, also when it is the zero" {
+  expect(encode_value(Value.Null)) == b"\x08\x00"
+  expect(encode_value(Value.Text("x"))) == b"\x1a\x01x"
+  expect(encode_value(Value.Flag(false))) == b"\x20\x00"
+  expect(encode_value(Value.Unset)) == b""
+}
+
+test "a struct and a list round trip" {
+  var f: Map[Str, Value] = {}
+  f.put("n", Value.Number(2.5))
+  f.put("l", Value.Array(ListValue{values: [Value.Null, Value.Text("z")]}))
+  let v = Value.Object(Struct{fields: f})
+  let back = decode_value(encode_value(v)).or_fault("decode")
+  expect(encode_value(back)) == encode_value(v)
+}
+
+test "a truncated message is an error, never a panic" {
+  let whole = encode_any(Any{type_url: "type.googleapis.com/x.Y", value: b"abcdef"})
+  for cut in 1..whole.len() {
+    let _ = decode_any(whole[0..cut]).ignore_err("a truncated message may be refused; only a panic fails")
+  }
+}

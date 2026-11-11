@@ -1,0 +1,152 @@
+// std/protowire: the protobuf wire reader and writers std/protodesc,
+// std/protowkt and std/protojson share (internal; use std/protobuf for
+// messages). Pure.
+use std/protobuf
+
+/// One field of a message as read off the wire: its number and wire type, the value of a varint
+/// field (`v`) or the bytes of a length delimited one (`data`), and the whole field (`raw`).
+pub struct Fld {
+  num: Int
+  wire: Int
+  v: Int
+  data: Bytes
+  raw: Bytes
+}
+
+pub fn walk(b: Bytes) -> List[Fld] ! protobuf.ProtoErr {
+  var out: List[Fld] = []
+  var at = 0
+  while at < b.len() {
+    let start = at
+    let (num, wire, next) = protobuf.read_tag(b, at)?
+    var v = 0
+    var data = b""
+    if wire == 0 {
+      let (x, n2) = protobuf.read_varint(b, next)?
+      v = x.to_bits()
+      at = n2
+    } else if wire == 2 {
+      let (d, n2) = protobuf.read_bytes(b, next)?
+      data = d
+      at = n2
+    } else if wire == 1 {
+      let (x, n2) = protobuf.read_fixed64(b, next)?
+      v = x.to_bits()
+      at = n2
+    } else if wire == 5 {
+      let (x, n2) = protobuf.read_fixed32(b, next)?
+      v = Int(x)
+      at = n2
+    } else {
+      at = protobuf.skip_field(b, next, num, wire)?
+      if wire == 3 {
+        // a group: data is what lies between its start tag and its end tag
+        var end_tag = (num << 3) | 4
+        var tag_len = 1
+        while end_tag >= 128 {
+          end_tag = end_tag >> 7
+          tag_len += 1
+        }
+        data = b[next..at - tag_len]
+      }
+    }
+    out.push(Fld{num: num, wire: wire, v: v, data: data, raw: b[start..at]})
+  }
+  Ok(out)
+}
+
+pub fn text(f: Fld) -> Str ! protobuf.ProtoErr {
+  match f.data.to_str() {
+    Some(s) => Ok(s)
+    None => Err(protobuf.ProtoErr.Utf8)
+  }
+}
+
+/// Whether f has the wire type its field number is declared with.
+pub fn is_s(f: Fld) -> Bool { f.wire == 2 }
+pub fn is_v(f: Fld) -> Bool { f.wire == 0 }
+
+pub fn cat(a: Bytes, b: Bytes) -> Bytes {
+  if a.is_empty() {
+    return b
+  }
+  var o = BytesBuilder.with_capacity(a.len() + b.len())
+  o.write(a)
+  o.write(b)
+  o.freeze()
+}
+
+// ---- writing -------------------------------------------------------------
+
+pub fn wv(var o: BytesBuilder, v: Int) {
+  var x = UInt64.wrapping_from(v).to_bits()
+  while x < 0 || x >= 128 {
+    o.write_byte(UInt8.wrapping_from((x & 127) | 128))
+    x = x.shr_logical(7)
+  }
+  o.write_byte(UInt8.wrapping_from(x))
+}
+
+pub fn wtag(var o: BytesBuilder, num: Int, wire: Int) { wv(o, (num << 3) | wire) }
+
+pub fn ws(var o: BytesBuilder, num: Int, s: Str) {
+  if !s.is_empty() {
+    wtag(o, num, 2)
+    wv(o, s.len())
+    o.write_str(s)
+  }
+}
+
+pub fn wsa(var o: BytesBuilder, num: Int, s: Str) {
+  wtag(o, num, 2)
+  wv(o, s.len())
+  o.write_str(s)
+}
+
+pub fn wi(var o: BytesBuilder, num: Int, v: Int) {
+  if v != 0 {
+    wtag(o, num, 0)
+    wv(o, v)
+  }
+}
+
+pub fn wia(var o: BytesBuilder, num: Int, v: Int) {
+  wtag(o, num, 0)
+  wv(o, v)
+}
+
+/// A bool written when true or when it was present on the wire (`seen`).
+pub fn wbp(var o: BytesBuilder, num: Int, v: Bool, seen: Bool) {
+  if v || seen {
+    wtag(o, num, 0)
+    wv(o, if v { 1 } else { 0 })
+  }
+}
+
+pub fn wb(var o: BytesBuilder, num: Int, v: Bool) {
+  if v {
+    wtag(o, num, 0)
+    wv(o, 1)
+  }
+}
+
+/// A message-valued field (always written, even when empty).
+pub fn wm(var o: BytesBuilder, num: Int, m: Bytes) {
+  wtag(o, num, 2)
+  wv(o, m.len())
+  o.write(m)
+}
+
+/// Opaque bytes: an options message is written when it has any bytes.
+/// An options message, written when non empty or when it was present on the wire (`seen`).
+pub fn wop(var o: BytesBuilder, num: Int, m: Bytes, seen: Bool) {
+  if m.len() > 0 || seen {
+    wm(o, num, m)
+  }
+}
+
+pub fn wo(var o: BytesBuilder, num: Int, m: Bytes) {
+  if !m.is_empty() {
+    wm(o, num, m)
+  }
+}

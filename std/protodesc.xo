@@ -1,4 +1,4 @@
-// std/protodesc (decision 0546, item 1). Declaration file; encoding rules are
+// std/protodesc (decision 0546, item 1). Encoding rules are
 // listed at the top of std/prelude.xo. The descriptors of google/protobuf/
 // descriptor.proto that reflection, ProtoJSON and Any resolve names through:
 // FileDescriptorProto and the messages under it as Xo values, with the wire
@@ -6,149 +6,545 @@
 // Options messages are kept as their wire bytes (`options`), unknown fields as
 // theirs (`unknown`, written after the known ones), so a descriptor made by
 // protoc or protobuf-go decodes and encodes back to the same bytes. Pure.
+//
+// std/protodesc on the native backends (decision 0546): descriptor.proto's
+// FileDescriptorProto and its messages, read and written by hand.
+
 use std/protobuf
+use std/protowire as pw
 
 /// FieldDescriptorProto.Label.
-const LABEL_OPTIONAL: Int = 1
-const LABEL_REQUIRED: Int = 2
-const LABEL_REPEATED: Int = 3
+pub const LABEL_OPTIONAL: Int = 1
+
+pub const LABEL_REQUIRED: Int = 2
+
+pub const LABEL_REPEATED: Int = 3
 
 /// FieldDescriptorProto.Type.
-const TYPE_DOUBLE: Int = 1
-const TYPE_FLOAT: Int = 2
-const TYPE_INT64: Int = 3
-const TYPE_UINT64: Int = 4
-const TYPE_INT32: Int = 5
-const TYPE_FIXED64: Int = 6
-const TYPE_FIXED32: Int = 7
-const TYPE_BOOL: Int = 8
-const TYPE_STRING: Int = 9
-const TYPE_GROUP: Int = 10
-const TYPE_MESSAGE: Int = 11
-const TYPE_BYTES: Int = 12
-const TYPE_UINT32: Int = 13
-const TYPE_ENUM: Int = 14
-const TYPE_SFIXED32: Int = 15
-const TYPE_SFIXED64: Int = 16
-const TYPE_SINT32: Int = 17
-const TYPE_SINT64: Int = 18
+pub const TYPE_DOUBLE: Int = 1
+
+pub const TYPE_FLOAT: Int = 2
+
+pub const TYPE_INT64: Int = 3
+
+pub const TYPE_UINT64: Int = 4
+
+pub const TYPE_INT32: Int = 5
+
+pub const TYPE_FIXED64: Int = 6
+
+pub const TYPE_FIXED32: Int = 7
+
+pub const TYPE_BOOL: Int = 8
+
+pub const TYPE_STRING: Int = 9
+
+pub const TYPE_GROUP: Int = 10
+
+pub const TYPE_MESSAGE: Int = 11
+
+pub const TYPE_BYTES: Int = 12
+
+pub const TYPE_UINT32: Int = 13
+
+pub const TYPE_ENUM: Int = 14
+
+pub const TYPE_SFIXED32: Int = 15
+
+pub const TYPE_SFIXED64: Int = 16
+
+pub const TYPE_SINT32: Int = 17
+
+pub const TYPE_SINT64: Int = 18
 
 /// A `start` to `end` range (DescriptorProto.ReservedRange and EnumReservedRange; end is exclusive for
 /// messages and inclusive for enums, as in descriptor.proto).
-struct ReservedRange {
-  start: Int
-  end: Int
+pub struct ReservedRange {
+  pub start: Int
+  pub end: Int
 } derive Eq
 
-struct ExtensionRange {
-  start: Int
-  end: Int
-  options: Bytes = b""
+pub struct ExtensionRange {
+  pub start: Int
+  pub end: Int
+  pub options: Bytes = b""
   /// The options message was on the wire, also when empty.
-  options_set: Bool = false
+  pub options_set: Bool = false
 } derive Eq
 
-struct OneofDesc {
-  name: Str
-  options: Bytes = b""
+pub struct OneofDesc {
+  pub name: Str
+  pub options: Bytes = b""
   /// The options message was on the wire, also when empty.
-  options_set: Bool = false
+  pub options_set: Bool = false
 } derive Eq
 
 /// FieldDescriptorProto. `kind` is the proto `type` (TYPE_*), `type_name` the fully qualified name with
 /// its leading dot (`.pkg.Msg`) for a message or enum field.
-struct FieldDesc {
-  name: Str
-  extendee: Str = ""
-  number: Int
-  label: Int = 0
-  kind: Int = 0
-  type_name: Str = ""
-  default_value: Str = ""
-  options: Bytes = b""
+pub struct FieldDesc {
+  pub name: Str
+  pub extendee: Str = ""
+  pub number: Int
+  pub label: Int = 0
+  pub kind: Int = 0
+  pub type_name: Str = ""
+  pub default_value: Str = ""
+  pub options: Bytes = b""
   /// The options message was on the wire, also when empty.
-  options_set: Bool = false
-  oneof_index: Int? = None
-  json_name: Str = ""
-  proto3_optional: Bool = false
-  unknown: Bytes = b""
+  pub options_set: Bool = false
+  pub oneof_index: Int? = None
+  pub json_name: Str = ""
+  pub proto3_optional: Bool = false
+  pub unknown: Bytes = b""
 } derive Eq
 
-struct EnumValueDesc {
-  name: Str
-  number: Int
-  options: Bytes = b""
+pub struct EnumValueDesc {
+  pub name: Str
+  pub number: Int
+  pub options: Bytes = b""
   /// The options message was on the wire, also when empty.
-  options_set: Bool = false
+  pub options_set: Bool = false
 } derive Eq
 
-struct EnumDesc {
-  name: Str
-  value: List[EnumValueDesc] = []
-  options: Bytes = b""
+pub struct EnumDesc {
+  pub name: Str
+  pub value: List[EnumValueDesc] = []
+  pub options: Bytes = b""
   /// The options message was on the wire, also when empty.
-  options_set: Bool = false
-  reserved_range: List[ReservedRange] = []
-  reserved_name: List[Str] = []
+  pub options_set: Bool = false
+  pub reserved_range: List[ReservedRange] = []
+  pub reserved_name: List[Str] = []
 } derive Eq
 
-struct MessageDesc {
-  name: Str
-  field: List[FieldDesc] = []
-  extension: List[FieldDesc] = []
-  nested_type: List[MessageDesc] = []
-  enum_type: List[EnumDesc] = []
-  extension_range: List[ExtensionRange] = []
-  oneof_decl: List[OneofDesc] = []
-  options: Bytes = b""
+pub struct MessageDesc {
+  pub name: Str
+  pub field: List[FieldDesc] = []
+  pub extension: List[FieldDesc] = []
+  pub nested_type: List[MessageDesc] = []
+  pub enum_type: List[EnumDesc] = []
+  pub extension_range: List[ExtensionRange] = []
+  pub oneof_decl: List[OneofDesc] = []
+  pub options: Bytes = b""
   /// The options message was on the wire, also when empty.
-  options_set: Bool = false
-  reserved_range: List[ReservedRange] = []
-  reserved_name: List[Str] = []
+  pub options_set: Bool = false
+  pub reserved_range: List[ReservedRange] = []
+  pub reserved_name: List[Str] = []
 } derive Eq
 
-struct MethodDesc {
-  name: Str
-  input_type: Str
-  output_type: Str
-  options: Bytes = b""
+pub struct MethodDesc {
+  pub name: Str
+  pub input_type: Str
+  pub output_type: Str
+  pub options: Bytes = b""
   /// The options message was on the wire, also when empty.
-  options_set: Bool = false
-  client_streaming: Bool = false
-  server_streaming: Bool = false
+  pub options_set: Bool = false
+  pub client_streaming: Bool = false
+  pub server_streaming: Bool = false
   /// Bit 1: `client_streaming` and bit 2: `server_streaming` were present on the wire, also when false (a proto2
   /// optional field written as false), so the descriptor encodes back to the same bytes.
-  streaming_set: Int = 0
+  pub streaming_set: Int = 0
 } derive Eq
 
-struct ServiceDesc {
-  name: Str
-  method: List[MethodDesc] = []
-  options: Bytes = b""
+pub struct ServiceDesc {
+  pub name: Str
+  pub method: List[MethodDesc] = []
+  pub options: Bytes = b""
   /// The options message was on the wire, also when empty.
-  options_set: Bool = false
+  pub options_set: Bool = false
 } derive Eq
 
 /// FileDescriptorProto. `syntax` is `proto2` (written as empty), `proto3` or `editions`.
-struct FileDesc {
-  name: Str
-  package: Str = ""
-  dependency: List[Str] = []
-  public_dependency: List[Int] = []
-  weak_dependency: List[Int] = []
-  message_type: List[MessageDesc] = []
-  enum_type: List[EnumDesc] = []
-  service: List[ServiceDesc] = []
-  extension: List[FieldDesc] = []
-  options: Bytes = b""
+pub struct FileDesc {
+  pub name: Str
+  pub package: Str = ""
+  pub dependency: List[Str] = []
+  pub public_dependency: List[Int] = []
+  pub weak_dependency: List[Int] = []
+  pub message_type: List[MessageDesc] = []
+  pub enum_type: List[EnumDesc] = []
+  pub service: List[ServiceDesc] = []
+  pub extension: List[FieldDesc] = []
+  pub options: Bytes = b""
   /// The options message was on the wire, also when empty.
-  options_set: Bool = false
-  source_code_info: Bytes = b""
-  syntax: Str = ""
-  edition: Int = 0
+  pub options_set: Bool = false
+  pub source_code_info: Bytes = b""
+  pub syntax: Str = ""
+  pub edition: Int = 0
 } derive Eq
 
 /// The wire bytes of `f` (a serialized FileDescriptorProto), fields in field number order.
-fn encode(f: FileDesc) -> Bytes
+pub fn encode(f: FileDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  pw.ws(o, 1, f.name)
+  pw.ws(o, 2, f.package)
+  for d in f.dependency {
+    pw.wsa(o, 3, d)
+  }
+  for m in f.message_type {
+    pw.wm(o, 4, enc_message(m))
+  }
+  for e in f.enum_type {
+    pw.wm(o, 5, enc_enum(e))
+  }
+  for s in f.service {
+    pw.wm(o, 6, enc_service(s))
+  }
+  for x in f.extension {
+    pw.wm(o, 7, enc_field(x))
+  }
+  pw.wop(o, 8, f.options, f.options_set)
+  pw.wo(o, 9, f.source_code_info)
+  for i in f.public_dependency {
+    pw.wia(o, 10, i)
+  }
+  for i in f.weak_dependency {
+    pw.wia(o, 11, i)
+  }
+  pw.ws(o, 12, f.syntax)
+  pw.wi(o, 14, f.edition)
+  o.freeze()
+}
+
 /// The FileDescriptorProto of `data`; the wire reader's errors, and `Utf8` for a name that is not text.
-fn decode(data: Bytes) -> FileDesc ! protobuf.ProtoErr
+pub fn decode(data: Bytes) -> FileDesc ! protobuf.ProtoErr {
+  var d = FileDesc{name: "", package: "", dependency: [], public_dependency: [], weak_dependency: [], message_type: [], enum_type: [], service: [], extension: [], options: b"", source_code_info: b"", syntax: "", edition: 0}
+  for f in pw.walk(data)? {
+    if f.num == 1 && pw.is_s(f) {
+      d.name = pw.text(f)?
+    } else if f.num == 2 && pw.is_s(f) {
+      d.package = pw.text(f)?
+    } else if f.num == 3 && pw.is_s(f) {
+      d.dependency.push(pw.text(f)?)
+    } else if f.num == 4 && pw.is_s(f) {
+      d.message_type.push(dec_message(f.data)?)
+    } else if f.num == 5 && pw.is_s(f) {
+      d.enum_type.push(dec_enum(f.data)?)
+    } else if f.num == 6 && pw.is_s(f) {
+      d.service.push(dec_service(f.data)?)
+    } else if f.num == 7 && pw.is_s(f) {
+      d.extension.push(dec_field(f.data)?)
+    } else if f.num == 8 && pw.is_s(f) {
+      d.options = f.data
+      d.options_set = true
+    } else if f.num == 9 && pw.is_s(f) {
+      d.source_code_info = f.data
+    } else if f.num == 10 && pw.is_v(f) {
+      d.public_dependency.push(f.v)
+    } else if f.num == 10 && pw.is_s(f) {
+      for v in packed(f.data)? {
+        d.public_dependency.push(v)
+      }
+    } else if f.num == 11 && pw.is_v(f) {
+      d.weak_dependency.push(f.v)
+    } else if f.num == 12 && pw.is_s(f) {
+      d.syntax = pw.text(f)?
+    } else if f.num == 14 && pw.is_v(f) {
+      d.edition = f.v
+    }
+  }
+  Ok(d)
+}
+
+fn enc_range(r: ReservedRange) -> Bytes {
+  var o = BytesBuilder.new()
+  pw.wia(o, 1, r.start)
+  pw.wia(o, 2, r.end)
+  o.freeze()
+}
+
+fn enc_ext_range(r: ExtensionRange) -> Bytes {
+  var o = BytesBuilder.new()
+  pw.wia(o, 1, r.start)
+  pw.wia(o, 2, r.end)
+  pw.wop(o, 3, r.options, r.options_set)
+  o.freeze()
+}
+
+fn enc_oneof(d: OneofDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  pw.ws(o, 1, d.name)
+  pw.wop(o, 2, d.options, d.options_set)
+  o.freeze()
+}
+
+fn enc_field(f: FieldDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  pw.ws(o, 1, f.name)
+  pw.ws(o, 2, f.extendee)
+  pw.wi(o, 3, f.number)
+  pw.wi(o, 4, f.label)
+  pw.wi(o, 5, f.kind)
+  pw.ws(o, 6, f.type_name)
+  pw.ws(o, 7, f.default_value)
+  pw.wop(o, 8, f.options, f.options_set)
+  match f.oneof_index {
+    Some(i) => pw.wia(o, 9, i)
+    None => {}
+  }
+  pw.ws(o, 10, f.json_name)
+  pw.wb(o, 17, f.proto3_optional)
+  o.write(f.unknown)
+  o.freeze()
+}
+
+fn enc_value(v: EnumValueDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  pw.ws(o, 1, v.name)
+  pw.wia(o, 2, v.number)
+  pw.wop(o, 3, v.options, v.options_set)
+  o.freeze()
+}
+
+fn enc_enum(e: EnumDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  pw.ws(o, 1, e.name)
+  for v in e.value {
+    pw.wm(o, 2, enc_value(v))
+  }
+  pw.wop(o, 3, e.options, e.options_set)
+  for r in e.reserved_range {
+    pw.wm(o, 4, enc_range(r))
+  }
+  for n in e.reserved_name {
+    pw.wsa(o, 5, n)
+  }
+  o.freeze()
+}
+
+fn enc_message(m: MessageDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  pw.ws(o, 1, m.name)
+  for f in m.field {
+    pw.wm(o, 2, enc_field(f))
+  }
+  for n in m.nested_type {
+    pw.wm(o, 3, enc_message(n))
+  }
+  for e in m.enum_type {
+    pw.wm(o, 4, enc_enum(e))
+  }
+  for r in m.extension_range {
+    pw.wm(o, 5, enc_ext_range(r))
+  }
+  for f in m.extension {
+    pw.wm(o, 6, enc_field(f))
+  }
+  pw.wop(o, 7, m.options, m.options_set)
+  for d in m.oneof_decl {
+    pw.wm(o, 8, enc_oneof(d))
+  }
+  for r in m.reserved_range {
+    pw.wm(o, 9, enc_range(r))
+  }
+  for n in m.reserved_name {
+    pw.wsa(o, 10, n)
+  }
+  o.freeze()
+}
+
+fn enc_method(m: MethodDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  pw.ws(o, 1, m.name)
+  pw.ws(o, 2, m.input_type)
+  pw.ws(o, 3, m.output_type)
+  pw.wop(o, 4, m.options, m.options_set)
+  pw.wbp(o, 5, m.client_streaming, (m.streaming_set & 1) != 0)
+  pw.wbp(o, 6, m.server_streaming, (m.streaming_set & 2) != 0)
+  o.freeze()
+}
+
+fn enc_service(s: ServiceDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  pw.ws(o, 1, s.name)
+  for m in s.method {
+    pw.wm(o, 2, enc_method(m))
+  }
+  pw.wop(o, 3, s.options, s.options_set)
+  o.freeze()
+}
+
+fn dec_range(b: Bytes) -> ReservedRange ! protobuf.ProtoErr {
+  var r = ReservedRange{start: 0, end: 0}
+  for f in pw.walk(b)? {
+    if f.num == 1 && pw.is_v(f) {
+      r.start = f.v
+    } else if f.num == 2 && pw.is_v(f) {
+      r.end = f.v
+    }
+  }
+  Ok(r)
+}
+
+fn dec_ext_range(b: Bytes) -> ExtensionRange ! protobuf.ProtoErr {
+  var r = ExtensionRange{start: 0, end: 0, options: b""}
+  for f in pw.walk(b)? {
+    if f.num == 1 && pw.is_v(f) {
+      r.start = f.v
+    } else if f.num == 2 && pw.is_v(f) {
+      r.end = f.v
+    } else if f.num == 3 && pw.is_s(f) {
+      r.options = f.data
+      r.options_set = true
+    }
+  }
+  Ok(r)
+}
+
+fn dec_oneof(b: Bytes) -> OneofDesc ! protobuf.ProtoErr {
+  var d = OneofDesc{name: "", options: b""}
+  for f in pw.walk(b)? {
+    if f.num == 1 && pw.is_s(f) {
+      d.name = pw.text(f)?
+    } else if f.num == 2 && pw.is_s(f) {
+      d.options = f.data
+      d.options_set = true
+    }
+  }
+  Ok(d)
+}
+
+fn dec_field(b: Bytes) -> FieldDesc ! protobuf.ProtoErr {
+  var d = FieldDesc{name: "", extendee: "", number: 0, label: 0, kind: 0, type_name: "", default_value: "", options: b"", oneof_index: None, json_name: "", proto3_optional: false, unknown: b""}
+  for f in pw.walk(b)? {
+    if f.num == 1 && pw.is_s(f) {
+      d.name = pw.text(f)?
+    } else if f.num == 2 && pw.is_s(f) {
+      d.extendee = pw.text(f)?
+    } else if f.num == 3 && pw.is_v(f) {
+      d.number = f.v
+    } else if f.num == 4 && pw.is_v(f) {
+      d.label = f.v
+    } else if f.num == 5 && pw.is_v(f) {
+      d.kind = f.v
+    } else if f.num == 6 && pw.is_s(f) {
+      d.type_name = pw.text(f)?
+    } else if f.num == 7 && pw.is_s(f) {
+      d.default_value = pw.text(f)?
+    } else if f.num == 8 && pw.is_s(f) {
+      d.options = f.data
+      d.options_set = true
+    } else if f.num == 9 && pw.is_v(f) {
+      d.oneof_index = Some(f.v)
+    } else if f.num == 10 && pw.is_s(f) {
+      d.json_name = pw.text(f)?
+    } else if f.num == 17 && pw.is_v(f) {
+      d.proto3_optional = f.v != 0
+    } else {
+      d.unknown = pw.cat(d.unknown, f.raw)
+    }
+  }
+  Ok(d)
+}
+
+fn dec_value(b: Bytes) -> EnumValueDesc ! protobuf.ProtoErr {
+  var d = EnumValueDesc{name: "", number: 0, options: b""}
+  for f in pw.walk(b)? {
+    if f.num == 1 && pw.is_s(f) {
+      d.name = pw.text(f)?
+    } else if f.num == 2 && pw.is_v(f) {
+      d.number = f.v
+    } else if f.num == 3 && pw.is_s(f) {
+      d.options = f.data
+      d.options_set = true
+    }
+  }
+  Ok(d)
+}
+
+fn dec_enum(b: Bytes) -> EnumDesc ! protobuf.ProtoErr {
+  var d = EnumDesc{name: "", value: [], options: b"", reserved_range: [], reserved_name: []}
+  for f in pw.walk(b)? {
+    if f.num == 1 && pw.is_s(f) {
+      d.name = pw.text(f)?
+    } else if f.num == 2 && pw.is_s(f) {
+      d.value.push(dec_value(f.data)?)
+    } else if f.num == 3 && pw.is_s(f) {
+      d.options = f.data
+      d.options_set = true
+    } else if f.num == 4 && pw.is_s(f) {
+      d.reserved_range.push(dec_range(f.data)?)
+    } else if f.num == 5 && pw.is_s(f) {
+      d.reserved_name.push(pw.text(f)?)
+    }
+  }
+  Ok(d)
+}
+
+fn dec_message(b: Bytes) -> MessageDesc ! protobuf.ProtoErr {
+  var d = MessageDesc{name: "", field: [], extension: [], nested_type: [], enum_type: [], extension_range: [], oneof_decl: [], options: b"", reserved_range: [], reserved_name: []}
+  for f in pw.walk(b)? {
+    if f.num == 1 && pw.is_s(f) {
+      d.name = pw.text(f)?
+    } else if f.num == 2 && pw.is_s(f) {
+      d.field.push(dec_field(f.data)?)
+    } else if f.num == 3 && pw.is_s(f) {
+      d.nested_type.push(dec_message(f.data)?)
+    } else if f.num == 4 && pw.is_s(f) {
+      d.enum_type.push(dec_enum(f.data)?)
+    } else if f.num == 5 && pw.is_s(f) {
+      d.extension_range.push(dec_ext_range(f.data)?)
+    } else if f.num == 6 && pw.is_s(f) {
+      d.extension.push(dec_field(f.data)?)
+    } else if f.num == 7 && pw.is_s(f) {
+      d.options = f.data
+      d.options_set = true
+    } else if f.num == 8 && pw.is_s(f) {
+      d.oneof_decl.push(dec_oneof(f.data)?)
+    } else if f.num == 9 && pw.is_s(f) {
+      d.reserved_range.push(dec_range(f.data)?)
+    } else if f.num == 10 && pw.is_s(f) {
+      d.reserved_name.push(pw.text(f)?)
+    }
+  }
+  Ok(d)
+}
+
+fn dec_method(b: Bytes) -> MethodDesc ! protobuf.ProtoErr {
+  var d = MethodDesc{name: "", input_type: "", output_type: "", options: b"", client_streaming: false, server_streaming: false, streaming_set: 0}
+  for f in pw.walk(b)? {
+    if f.num == 1 && pw.is_s(f) {
+      d.name = pw.text(f)?
+    } else if f.num == 2 && pw.is_s(f) {
+      d.input_type = pw.text(f)?
+    } else if f.num == 3 && pw.is_s(f) {
+      d.output_type = pw.text(f)?
+    } else if f.num == 4 && pw.is_s(f) {
+      d.options = f.data
+      d.options_set = true
+    } else if f.num == 5 && pw.is_v(f) {
+      d.client_streaming = f.v != 0
+      d.streaming_set = d.streaming_set | 1
+    } else if f.num == 6 && pw.is_v(f) {
+      d.server_streaming = f.v != 0
+      d.streaming_set = d.streaming_set | 2
+    }
+  }
+  Ok(d)
+}
+
+fn dec_service(b: Bytes) -> ServiceDesc ! protobuf.ProtoErr {
+  var d = ServiceDesc{name: "", method: [], options: b""}
+  for f in pw.walk(b)? {
+    if f.num == 1 && pw.is_s(f) {
+      d.name = pw.text(f)?
+    } else if f.num == 2 && pw.is_s(f) {
+      d.method.push(dec_method(f.data)?)
+    } else if f.num == 3 && pw.is_s(f) {
+      d.options = f.data
+      d.options_set = true
+    }
+  }
+  Ok(d)
+}
+
+/// The values of a packed varint run (descriptor.proto writes these unpacked; a reader accepts both).
+fn packed(b: Bytes) -> List[Int] ! protobuf.ProtoErr {
+  var out: List[Int] = []
+  var at = 0
+  while at < b.len() {
+    let (v, next) = protobuf.read_varint(b, at)?
+    out.push(v.to_bits())
+    at = next
+  }
+  Ok(out)
+}

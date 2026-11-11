@@ -1,0 +1,37 @@
+// Hand written cases for std/protodesc (decision 0546); the differential against protoc and protobuf-go
+// descriptors is internal/stdtest/testdata/corpus/protodesc.
+fn sample() -> FileDesc {
+  let f = FieldDesc{name: "id", number: 1, label: LABEL_OPTIONAL, kind: TYPE_INT64}
+  let m = MessageDesc{name: "Item", field: [f]}
+  let rpc = MethodDesc{name: "Get", input_type: ".p.Item", output_type: ".p.Item"}
+  let svc = ServiceDesc{name: "Inv", method: [rpc]}
+  FileDesc{name: "p/item.proto", package: "p", message_type: [m], service: [svc], syntax: "proto3"}
+}
+
+test "a descriptor encodes and decodes to an equal value" {
+  let f = sample()
+  let back = decode(encode(f)).or_fault("decode")
+  expect(back == f) == true
+  expect(back.service[0].method[0].name) == "Get"
+}
+
+test "the file name is field 1 and the package field 2" {
+  let b = encode(FileDesc{name: "a.proto", package: "p"})
+  expect(b) == b"\x0a\x07a.proto\x12\x01p"
+}
+
+test "an options message present but empty is written back" {
+  let f = MethodDesc{name: "Get", input_type: "A", output_type: "B", options_set: true}
+  let svc = ServiceDesc{name: "S", method: [f]}
+  let file = FileDesc{name: "x", service: [svc]}
+  let back = decode(encode(file)).or_fault("decode")
+  expect(back.service[0].method[0].options_set) == true
+  expect(encode(back)) == encode(file)
+}
+
+test "a truncated descriptor is an error, never a panic" {
+  let whole = encode(sample())
+  for cut in 1..whole.len() {
+    let _ = decode(whole[0..cut]).ignore_err("a truncated descriptor may be refused; only a panic fails")
+  }
+}
