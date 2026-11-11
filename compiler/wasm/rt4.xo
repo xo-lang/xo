@@ -425,7 +425,27 @@ fn rt4_text(var g: Gen, tz: List[tzsel.TZSel]) -> Str {
       i32.const 16
       i32.load
       local.set $fd
+      ;; room for the size path_filestat_get gave (its filestat at 24, the
+      ;; size at 56) and one byte, so the read that finds the end fits: a
+      ;; doubling from 4 KiB kept a 1.2 MB file in a 3 MB block (the
+      ;; playground's std record, decision 0583); 4 KiB when the size is
+      ;; under 4 KiB or over 1 GiB; the loop below grows past a file that grew
+      i32.const 56
+      i64.load
+      i32.wrap_i64
+      i32.const 1
+      i32.add
+      local.tee $cap
       i32.const 4096
+      local.get $cap
+      i32.const 4096
+      i32.gt_u
+      i32.const 56
+      i64.load
+      i64.const 1073741824
+      i64.lt_u
+      i32.and
+      select
       local.tee $cap
       call $rs_new
       local.set $s

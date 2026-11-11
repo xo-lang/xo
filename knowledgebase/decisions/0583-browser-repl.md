@@ -246,3 +246,24 @@ record its page writes at load), every value equal across the four runs:
 Still above 50 MB. Next: free the decoded record's lists before the relocated ones are built
 (decode, relocate and install each hold every std object, up to three at once), a growth step
 that does not hold a large list's old and new blocks together, and then 1-byte Bools and enum tags.
+
+
+## Memory below 50 MB: (d) the growth step and large free blocks (2026-11-11)
+
+A probe of every block (the runtime reporting each allocation and release to Node, scratch only)
+showed the record path's live blocks peaking at 48.4 MB with 30 MB in seven large blocks: std's object
+list three times (install_std's, a copy, and the copy grown), and the record file read into a 3 MB
+block. Three runtime changes:
+- `fs_read` sizes its buffer from the size `path_filestat_get` gave (it doubled from 4 KiB, so the
+  1.2 MB record took a 3 MB block for the session);
+- a list of 1 MiB or more grows by a quarter, not double;
+- a request of 1 MiB or more takes a free block of one of the next two size classes (kept whole) before
+  memory grows: the free lists neither split nor join blocks, and large lists freed in one class were
+  asked again in another.
+
+The 30-entry session in headless Chrome 157 (values equal to the terminal REPL's): without the record
+169 to 136 MB; with the record 87 MB as before (69 MB through entry 3). The record path's peak is
+entry 4 (`xs.sort()`, the first entry that lowers a std body): `need_tree` writes the joined tree into
+`c.objs[o]`, and an entry's checker is a copy of the warm one (`var c = base`), so the first write copies
+std's whole object list (about 6 MB, then grown) in every entry that lowers a std body. Next: keep the
+joined trees where the entry's write does not copy the list (decision 0583 (e)).
