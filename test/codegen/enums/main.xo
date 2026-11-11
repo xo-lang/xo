@@ -39,6 +39,20 @@ fn is_red(c: Color) -> Bool {
   c == Color.Red
 }
 
+// An enum whose variants hold nothing is its tag: `==` of two run-time
+// values is one compare, not a call of the enum's equality helper
+// (2026-11-11: the compiler's `x.op == ssa.Op.Call` was 1.8% of a build).
+enum Dir {
+  Up
+  Down
+  Left
+}
+
+fn same_dir(a: Dir, b: Dir) -> Bool {
+  // arm64: -"\tbl " "cset"
+  a == b
+}
+
 // A match arm whose variant holds no heap value drops nothing: the Ok
 // arm of a Result[Duration, DurationErr] called the Result's drop helper
 // (a bl _xo_h<hash>) on every parse; the Err arm still drops its text.
@@ -56,5 +70,6 @@ fn ok_nanos(t: Str) -> Int {
 fn main(os: Os) {
   let n = os.env.args().len()
   let c = if n > 5 { Color.Blue(n: n) } else { Color.Red }
-  os.stdio.println("${is_mac() || !is_mac()} ${not_wasm()} ${same()} ${is_red(c)} ${ok_nanos("${n}s")}")
+  let d = if n > 3 { Dir.Left } else { Dir.Up }
+  os.stdio.println("${is_mac() || !is_mac()} ${not_wasm()} ${same()} ${is_red(c)} ${ok_nanos("${n}s")} ${same_dir(d, Dir.Down)}")
 }

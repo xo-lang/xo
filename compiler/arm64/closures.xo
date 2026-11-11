@@ -490,13 +490,34 @@ fn (var g: G) eq_aggregate(v: Int) -> Bool {
     } else {
       let a = g.to_int(g.words(x.args[0]), lay)
       let b = g.to_int(g.words(x.args[1]), lay)
-      r = g.call(g.eq_helper(t), regs(a + b), [false])[0]
+      if !g.x86 && g.tag_only_enum(t, lay) {
+        // the tag is the whole value: one compare, where the helper call
+        // made `x.op == ssa.Op.Call` 1.8% of the aiplatform/v1 test
+        // build's CPU (Lang 1, 2026-11-11)
+        r = g.def1(false, "cmp $u0, $u1\ncset $d0, eq", [a[0], b[0]])
+      } else {
+        r = g.call(g.eq_helper(t), regs(a + b), [false])[0]
+      }
     }
   }
   if x.op == ssa.Op.Ne {
     r = g.def1(false, "eor $d0, $u0, #1", [r])
   }
   g.set(v, [r])
+  true
+}
+
+/// Whether t is an enum with no payload in any variant, one word wide:
+/// its values are equal when their tags are.
+fn (g: G) tag_only_enum(t: Int, lay: List[Bool]) -> Bool {
+  if g.kind(t) != ssa.Kind.Enum || lay.len() != 1 || lay[0] {
+    return false
+  }
+  for vr in g.m.types[t].variants {
+    if !vr.fields.is_empty() {
+      return false
+    }
+  }
   true
 }
 
