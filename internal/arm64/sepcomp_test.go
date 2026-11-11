@@ -492,6 +492,66 @@ func TestSepcompDebugInfo(t *testing.T) {
 	}
 }
 
+// TestSepcompConstIds: a separately compiled program numbers its
+// constants past std's (ssa show.xo const_base). From 0 they shared the
+// process's constants table with std's store, so a program with five
+// collection constants that called mime.detect_content_type faulted
+// (SIGTRAP; 0.44.0 to 0.48.0 with more constants, SIGSEGV or a wrong
+// value in other orders; gotchas/sepcomp-const-ids-shared-with-std.md).
+func TestSepcompConstIds(t *testing.T) {
+	skipWholeTier(t)
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds std's variants")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-sepconst-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	prog := filepath.Join(work, progExe)
+	if err := os.MkdirAll(prog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var src strings.Builder
+	src.WriteString("use std/mime\n\nfn mk(n: Int) -> List[Str] {\n  var out: List[Str] = []\n  for i in 0..n {\n    out.push(\"c${i}\")\n  }\n  out\n}\n\n")
+	var sum []string
+	for k := 0; k < 5; k++ {
+		fmt.Fprintf(&src, "const C%d: List[Str] = mk(%d)\n", k, k+1)
+		sum = append(sum, fmt.Sprintf("C%d.len()", k))
+	}
+	src.WriteString("\nfn main(os: Os) {\n  os.stdio.println(\"${" + strings.Join(sum, " + ") + "}\")\n")
+	src.WriteString("  os.stdio.println(mime.detect_content_type(b\"\\n<?xml!\"))\n  os.stdio.println(\"${C4[4]}\")\n}\n")
+	if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte(src.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BIN_CACHE="+filepath.Join(work, "bin"), "XO_SEPCOMP_BG=0")
+	for _, c := range []string{"0", "1"} {
+		cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc="+c))
+		cmd.Env = env
+		if out, err := stdRun(cmd.CombinedOutput); err != nil {
+			t.Fatalf("xo dev stdcache --conc=%s: %v\n%s", c, err, out)
+		}
+	}
+	cmd := testtmp.Guard(exec.Command(xo, "run", "--backend=arm64", "--phase-times", "."))
+	cmd.Dir = prog
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	log := string(out)
+	if !strings.Contains(log, "reused") || !strings.Contains(log, "cache std ") {
+		t.Fatalf("want std's variant reused (std from its store):\n%s", log)
+	}
+	if err != nil || !strings.Contains(log, "15\ntext/xml; charset=utf-8\nc4\n") {
+		t.Fatalf("xo run, want 15, text/xml; charset=utf-8, c4: %v\n%s", err, log)
+	}
+}
+
 // TestSepcompTestVariant (decision 0436): `xo test` links std's test
 // variant (std built in test mode: Fs calls on the test world's MemFs)
 // when it is in the cache, and its tests, including one whose std

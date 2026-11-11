@@ -702,7 +702,7 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
   var id = b.consts.get(name) ?? -1
   let made = id < 0
   if made {
-    id = b.consts.len()
+    id = b.const_base() + b.consts.len()
     b.consts[name] = id
     b.const_names.push(name)
   }
@@ -712,7 +712,7 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
   }
   if made {
     if id >= 4096 {
-      b.unsupported("more than 4096 constants of collection types")
+      b.unsupported("more than ${4096 - b.const_base()} constants of collection types")
     }
     // an initializer that runs code is built by a function of its own,
     // which the entry function calls under a landing (decision 0332)
@@ -752,6 +752,22 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
   }
   b.call("list.index", t, "", [l, b.cint(0)])
 }
+
+/// The first constant number this build gives: std's store numbers its
+/// constants from 0, and its code (and std's bodies inlined from its
+/// facts) reads them by those numbers from the one table of the process,
+/// so a separately compiled program's side numbers its own from
+/// CONST_PROGRAM_BASE. From 0 they took std's slots: a program with five
+/// constants that called mime.detect_content_type faulted (SIGTRAP),
+/// and a std module's test read std's constants as its own (2026-11-11,
+/// gotchas/sepcomp-const-ids-shared-with-std.md).
+fn (b: Builder) const_base() -> Int {
+  if b.c.sepcomp_facts.is_empty() { 0 } else { CONST_PROGRAM_BASE }
+}
+
+/// See const_base: std's store has fewer constants (the driver fails a
+/// std object of more), and a program at most 4096 - CONST_PROGRAM_BASE.
+pub const CONST_PROGRAM_BASE = 2048
 
 /// Whether a constant's read takes const_read's fast path: the native
 /// backends and LLVM on arm64 and amd64, not --race (whose readers call

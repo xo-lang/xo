@@ -490,8 +490,8 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
     } else if k == 6 {
       // a constant: its function's name, and whether this body made it
       // (its function is then one of the functions made whole)
-      e.str(b.const_names[x])
-      e.bool(x >= r.nconst)
+      e.str(b.const_names[x - b.const_base()])
+      e.bool(x - b.const_base() >= r.nconst)
     } else if k == 7 {
       // a thunk: its function's identity and its own name, and whether
       // this body made it (one of the functions made whole)
@@ -1112,7 +1112,7 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
     } else if ev.k == 6 {
       // numbered as the build here numbers constants
       if !b.consts.contains(ev.s) {
-        let id = b.consts.len()
+        let id = b.const_base() + b.consts.len()
         bad = bad || id >= 4096
         b.consts[ev.s] = id
         b.const_names.push(ev.s)

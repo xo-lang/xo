@@ -3445,6 +3445,18 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
   }
   // decision 0388 stage 4: XO_STD_OBJ=DIR builds std's object
   gm.std_obj = !std_obj_dir(os).is_empty() && gm.std_store
+  if gm.std_obj {
+    // std's constants keep below the program side's (ssa const_base)
+    var nconst = 0
+    for f in gm.funcs {
+      if f.name.starts_with("xo.const[") {
+        nconst += 1
+      }
+    }
+    if nconst >= ssa.CONST_PROGRAM_BASE {
+      fail(os, "std's object has ${nconst} constants of collection types, more than the ${ssa.CONST_PROGRAM_BASE} below a separately compiled program's (ssa show.xo const_base)")
+    }
+  }
   // decision 0388 stage 3: a separately compiled program's side
   // (sepcomp_program, set by XO_SEPCOMP) has its helpers weak and its
   // parts in store mode, as std's object
