@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- xo build and xo test (build time, arm64 and amd64 native backends): each function's label prefix is built once, not for every block and cause label; output unchanged. aiplatform/v1 (xo-lang/gcp) builds its tests in 0.945 of the wall time and 0.887 of the CPU, and xo builds itself in 0.961 and 0.921 (linux/arm64, `xo bench --ab`).
 - wasm (stack): a result of more than 64 leaves comes back through a block the caller passes (it was up to 1,000 as values), and a wide value read from memory is loaded a leaf at a time into its locals, where both held the whole value on the operand stack and V8 sized every caller's frame by it: the playground's compiler overflowed a browser worker's stack on every build once `Checker` grew to about 1,143 leaves; a build now runs in a 200 KB stack (0.35.0's compiler needed 350 KB).
 
 - xo build and xo test (memory, arm64 and amd64 native backends): each inlined function's value table is copied to its size once its inlining is done, so the build's peak at the inliner is lower: aiplatform/v1 (xo-lang/gcp) builds its tests in 0.812 of the peak memory (6.93 to 5.63 GB) on linux/arm64, the self build in 0.978; output unchanged.

@@ -166,7 +166,18 @@ fn (g: G) frame_bound(saved: Int) -> Int {
 }
 
 fn (g: G) label(b: Int) -> Str {
-  g.local("${g.lbl_prefix()}_b${g.blocks[b].id}")
+  "${g.lbl_local()}_b${g.blocks[b].id}"
+}
+
+/// g.local(g.lbl_prefix()), from the copy cause_label keeps when it is
+/// current: the labels' prefix was built twice per label, and its string
+/// increments were 9% of the aiplatform/v1 test build's CPU (Lang 1,
+/// 2026-11-11, cause_label 35% of them, label 13%)
+fn (g: G) lbl_local() -> Str {
+  if g.lp_n == g.nfunc && g.lp_canon == g.canon && g.lp_ns == g.ns {
+    return g.lp_str
+  }
+  g.local(g.lbl_prefix())
 }
 
 /// The location of v, or none (a register never allocated).
@@ -2321,9 +2332,15 @@ fn (g: G) fwd(b0: Int) -> Int {
 /// is_row_label; x86emit.xo x86_dbg_label), counted by compiler/macho
 /// assemble_causes and assemble_causes_amd64.
 fn (var g: G) cause_label(c: Int) -> Str {
-  let l = g.local("${g.lbl_prefix()}_x${c}_dc${g.dc_n}")
+  if g.lp_n != g.nfunc || g.lp_canon != g.canon || g.lp_ns != g.ns {
+    g.lp_str = g.local(g.lbl_prefix())
+    g.lp_n = g.nfunc
+    g.lp_canon = g.canon
+    g.lp_ns = g.ns
+  }
+  let n = g.dc_n
   g.dc_n += 1
-  "${l}:\n"
+  "${g.lp_str}_x${c}_dc${n}:\n"
 }
 
 /// Writes a cause label when the text changes cause (decision 0443).

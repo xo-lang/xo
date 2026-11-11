@@ -230,6 +230,12 @@ struct G {
   rel_stored: Bool = false
   dc_cur: Int = 0
   dc_n: Int = 0
+  /// lbl_local(): the function's local label prefix (`L<ns>f<n>`, or
+  /// the canonical token's) and the nfunc, canon and ns it was made for
+  lp_str: Str = ""
+  lp_n: Int = -1
+  lp_canon: Bool = false
+  lp_ns: Str = ""
   /// the label the call being emitted writes at its return address, for a
   /// variable's range that ends there (dwvars.xo dv_plan), and whether it
   /// did
