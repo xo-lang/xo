@@ -9,4 +9,5 @@ var (
 	_ func(*Netip_ParseErr, *Task) string = (*Netip_ParseErr).M_display
 	_ func(*Netip_Addr, *Task) string     = (*Netip_Addr).M_display
 	_ func(*Netip_Prefix, *Task) string   = (*Netip_Prefix).M_display
+	_ func(*Netip_AddrPort, *Task) string = (*Netip_AddrPort).M_display
 )

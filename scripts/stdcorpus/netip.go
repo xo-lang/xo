@@ -149,8 +149,128 @@ func netipCorpus() string {
 		fmt.Fprintf(&o, "  (%s, %s),\n", xbytes(b), xq(w))
 	}
 	o.WriteString("]\n")
+	netipMore(&o, r, good)
 	o.WriteString(netipTests)
 	return o.String()
+}
+
+// netipMore writes AddrPort, Addr.Prefix, Next, Prev, WithZone,
+// PrefixFrom, Prefix.Bits, IsSingleIP and Overlaps on the parsed
+// addresses and random texts.
+func netipMore(o *strings.Builder, r *rand.Rand, good []netip.Addr) {
+	o.WriteString("\n/// (text, Go's ParseAddrPort: ADDR|PORT|STRING, or err TEXT)\nconst ADDR_PORTS: List[(Str, Str)] = [\n")
+	ports := []string{"0", "80", "443", "65535", "65536", "080", "", "-1", "+1", "x", "99999", "1_0"}
+	for i := 0; i < 1500; i++ {
+		a := good[r.Intn(len(good))]
+		h := a.String()
+		switch r.Intn(6) {
+		case 0, 1, 2:
+			if a.Is6() {
+				h = "[" + h + "]"
+			}
+		case 3:
+			h = "[" + h + "]"
+		case 4:
+		case 5:
+			h = []string{"", "[", "[]", "[::1", "1.2.3.4]", "host"}[r.Intn(6)]
+		}
+		port := ports[r.Intn(len(ports))]
+		if r.Intn(2) == 0 {
+			port = strconv.Itoa(r.Intn(65536))
+		}
+		s := h + ":" + port
+		if r.Intn(30) == 0 {
+			s = h
+		}
+		s = textOf(s)
+		w := ""
+		if ap, err := netip.ParseAddrPort(s); err != nil {
+			w = "err " + textOf(err.Error())
+		} else {
+			w = textOf(ap.Addr().String()) + "|" + strconv.Itoa(int(ap.Port())) + "|" + textOf(ap.String())
+		}
+		fmt.Fprintf(o, "  (%s, %s),\n", xq(s), xq(w))
+	}
+	o.WriteString("]\n\n/// (index into good(), bits, Go's Addr.Prefix: STRING or err TEXT; Next; Prev (STRING or none); PrefixFrom (STRING|BITS|IsSingleIP or none); AddrPortFrom(a, port).String())\nconst ADDR_OPS: List[(Int, Int, Int, Str)] = [\n")
+	for i := 0; i < 1500; i++ {
+		k := r.Intn(len(good))
+		a := good[k]
+		if r.Intn(8) == 0 {
+			// the ends of each family, where Next and Prev run out
+			ends := []string{"0.0.0.0", "255.255.255.255", "::", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "::ffff:255.255.255.255", "::ffff:0.0.0.0", "0:0:0:0:ffff:ffff:ffff:ffff", "::1:0:0:0:0", "fe80::ffff:ffff:ffff:ffff%eth0"}
+			e := ends[r.Intn(len(ends))]
+			for j, g := range good {
+				if g.String() == e {
+					k, a = j, g
+				}
+			}
+		}
+		bits := []int{r.Intn(33), r.Intn(129), -1, 0, 32, 33, 128, 129}[r.Intn(8)]
+		var parts []string
+		if p, err := a.Prefix(bits); err != nil {
+			parts = append(parts, "err "+err.Error())
+		} else {
+			parts = append(parts, p.String())
+		}
+		for _, x := range []netip.Addr{a.Next(), a.Prev()} {
+			if x.IsValid() {
+				parts = append(parts, x.String())
+			} else {
+				parts = append(parts, "none")
+			}
+		}
+		if p := netip.PrefixFrom(a, bits); p.IsValid() {
+			parts = append(parts, fmt.Sprintf("%s|%d|%v", p, p.Bits(), p.IsSingleIP()))
+		} else {
+			parts = append(parts, "none")
+		}
+		port := r.Intn(65536)
+		parts = append(parts, netip.AddrPortFrom(a, uint16(port)).String())
+		fmt.Fprintf(o, "  (%d, %d, %d, %s),\n", k, bits, port, xq(textOf(strings.Join(parts, ";"))))
+	}
+	o.WriteString("]\n\n/// (index into good(), zone, Go's WithZone(zone).String())\nconst ZONES: List[(Int, Str, Str)] = [\n")
+	for i := 0; i < 200; i++ {
+		k := r.Intn(len(good))
+		z := []string{"", "eth0", "1", "en0"}[r.Intn(4)]
+		fmt.Fprintf(o, "  (%d, %s, %s),\n", k, xq(z), xq(textOf(good[k].WithZone(z).String())))
+	}
+	o.WriteString("]\n\n/// (prefix, prefix, Go's Overlaps)\nconst OVERLAPS: List[(Str, Str, Bool)] = [\n")
+	pfx := func() netip.Prefix {
+		for {
+			a := good[r.Intn(len(good))]
+			if r.Intn(3) == 0 && len(good) > 0 {
+				// a near neighbour: shares a long run of leading bits
+				a = good[r.Intn(len(good))]
+			}
+			n := r.Intn(a.BitLen() + 1)
+			if r.Intn(3) == 0 {
+				n = r.Intn(9)
+			}
+			p, err := a.WithZone("").Prefix(n)
+			if err == nil {
+				if r.Intn(2) == 0 {
+					return netip.PrefixFrom(a.WithZone(""), n)
+				}
+				return p
+			}
+		}
+	}
+	for i := 0; i < 1500; i++ {
+		p := pfx()
+		q := pfx()
+		if r.Intn(3) == 0 {
+			// q within or around p
+			b := p.Bits() + r.Intn(9) - 4
+			if b < 0 {
+				b = 0
+			}
+			if qq, err := p.Addr().Prefix(b); err == nil {
+				q = qq
+			}
+		}
+		fmt.Fprintf(o, "  (%s, %s, %v),\n", xq(p.String()), xq(q.String()), p.Overlaps(q))
+	}
+	o.WriteString("]\n")
 }
 
 const netipTests = `
@@ -182,6 +302,73 @@ fn good() -> List[netip.Addr] {
     }
   }
   out
+}
+
+test "parse_addr_port gives Go's AddrPort and errors" {
+  var bad: List[(Str, Str, Str)] = []
+  for (s, want) in ADDR_PORTS {
+    let got = match netip.parse_addr_port(s) {
+      Ok(p) => "${p.addr}|${p.port}|${p}"
+      Err(e) => "err ${e.display()}"
+    }
+    if got != want {
+      bad.push((s, got, want))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+test "Addr.prefix, next, prev, prefix_from and addr_port are Go's" {
+  let g = good()
+  var bad: List[(Str, Int, Str, Str)] = []
+  for (k, bits, port, want) in ADDR_OPS {
+    let a = g[k]
+    let pre = match a.prefix(bits) {
+      Ok(p) => "${p}"
+      Err(e) => "err ${e.display()}"
+    }
+    let nx = a.next().map(fn(x) { "${x}" }) ?? "none"
+    let pv = a.prev().map(fn(x) { "${x}" }) ?? "none"
+    let pf = netip.prefix_from(a, bits).map(fn(p) { "${p}|${p.bits()}|${p.is_single_ip()}" }) ?? "none"
+    let got = "${pre};${nx};${pv};${pf};${netip.addr_port(a, port)}"
+    if got != want {
+      bad.push(("${a}", bits, got, want))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+test "with_zone is Go's WithZone" {
+  let g = good()
+  var bad: List[(Str, Str, Str)] = []
+  for (k, z, want) in ZONES {
+    let got = "${g[k].with_zone(z)}"
+    if got != want {
+      bad.push(("${g[k]}", z, got))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+test "Prefix.overlaps is Go's Overlaps" {
+  var bad: List[(Str, Str, Bool)] = []
+  for (a, b, want) in OVERLAPS {
+    let p = netip.parse_prefix(a)?
+    let q = netip.parse_prefix(b)?
+    if p.overlaps(q) != want || q.overlaps(p) != want {
+      bad.push((a, b, want))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+test "AddrPort orders by address, then port" {
+  let a = netip.parse_addr_port("1.2.3.4:80")?
+  let b = netip.parse_addr_port("1.2.3.4:443")?
+  let c = netip.parse_addr_port("[::1]:1")?
+  expect(a < b) == true
+  expect(b < c) == true
+  expect(netip.addr_port(a.addr, 65536 + 80)) == a
 }
 
 test "parse_addr gives Go's address, predicates, and errors" {

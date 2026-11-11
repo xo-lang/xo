@@ -5185,13 +5185,15 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
 
 Status: implemented on every backend (decision 0287, 2026-10-20): Go's
 net/netip, ported natively (`std/native/netip.xo`; Go's results on 3,323
-address and prefix cases in `netip_test.xo`) and through net/netip on
+address and prefix cases in `netip_test.xo`, and 4,700 AddrPort, Prefix,
+Next, Prev, WithZone and Overlaps cases since 2026-11-11) and through net/netip on
 the Go backend. Pure but for `lookup` (decision 0406: host's addresses
 through `Net.lookup_host`, section 3.2).
 
 ```
 struct Addr { bits: Int, hi: Int, lo: Int, zone: Str } derive Ord   // 32, 128, or 0; the 16 bytes as two words (top bit flipped, as Uuid); an IPv6 zone
 struct Prefix { addr: Addr, len: Int }
+struct AddrPort { addr: Addr, port: Int } derive Ord   // Go's AddrPort: the address, then the port
 struct ParseErr { msg: Str }   // ParseAddr("1.2.3"): IPv4 address too short
 
 pub fn parse_addr(s: Str) -> Addr ! ParseErr
@@ -5206,6 +5208,14 @@ fn (a: Addr) display() -> Str                 // 1.2.3.4, 2001:db8::1, ::ffff:1.
 fn (p: Prefix) contains(a: Addr) -> Bool
 fn (p: Prefix) masked() -> Prefix
 fn (p: Prefix) display() -> Str
+pub fn parse_addr_port(s: Str) -> AddrPort ! ParseErr   // 1.2.3.4:80, [2001:db8::1]:443 (Go's ParseAddrPort)
+pub fn addr_port(addr: Addr, port: Int) -> AddrPort      // AddrPortFrom (port as uint16)
+fn (p: AddrPort) display() -> Str             // 1.2.3.4:80, [fe80::1%eth0]:22
+fn (a: Addr) prefix(bits: Int) -> Prefix ! ParseErr     // Addr.Prefix: masked, zone dropped
+fn (a: Addr) next() -> Addr?                  // also prev(); None past the family's range
+fn (a: Addr) with_zone(zone: Str) -> Addr     // IPv6 only, as Go
+pub fn prefix_from(addr: Addr, bits: Int) -> Prefix?    // PrefixFrom: not masked; None out of range
+fn (p: Prefix) bits() -> Int                  // also is_single_ip(), overlaps(o)
 ```
 
 - Parsing is Go's ParseAddr and ParsePrefix, errors included: IPv4

@@ -662,3 +662,163 @@ fn prefix_display(p: netip.Prefix) -> Str {
   }
   "${addr_display(p.addr)}/${p.len}"
 }
+
+fn ap_err(msg: Str) -> netip.ParseErr { netip.ParseErr{msg: msg} }
+
+/// Go's ParseAddrPort (splitAddrPort, then strconv.ParseUint(port, 10, 16)
+/// and ParseAddr).
+fn parse_addr_port(s: Str) -> netip.AddrPort ! netip.ParseErr {
+  let b = s.bytes()
+  var i = b.len() - 1
+  while i >= 0 && b[i] != 58 {
+    i -= 1
+  }
+  if i < 0 {
+    return Err(ap_err("not an ip:port"))
+  }
+  var ip = s[0..i]
+  let port = s[i + 1..]
+  if ip.is_empty() {
+    return Err(ap_err("no IP"))
+  }
+  if port.is_empty() {
+    return Err(ap_err("no port"))
+  }
+  var v6 = false
+  let ib = ip.bytes()
+  if ib[0] == 91 {
+    if ib.len() < 2 || ib[ib.len() - 1] != 93 {
+      return Err(ap_err("missing ]"))
+    }
+    ip = ip[1..ip.len() - 1]
+    v6 = true
+  }
+  // ParseUint base 10 of at most 16 bits: digits only, leading zeros allowed
+  var n = 0
+  for c in port.bytes() {
+    if c < 48 || c > 57 {
+      return Err(ap_err("invalid port ${port.quote()} parsing ${s.quote()}"))
+    }
+    n = n * 10 + Int(c) - 48
+    if n > 65535 {
+      return Err(ap_err("invalid port ${port.quote()} parsing ${s.quote()}"))
+    }
+  }
+  let a = parse_addr(ip)?
+  if v6 && a.bits == 32 {
+    return Err(ap_err("invalid ip:port ${s.quote()}, square brackets can only be used with IPv6 addresses"))
+  }
+  if !v6 && a.bits == 128 {
+    return Err(ap_err("invalid ip:port ${s.quote()}, IPv6 addresses must be surrounded by square brackets"))
+  }
+  netip.AddrPort{addr: a, port: n}
+}
+
+fn addr_port(addr: netip.Addr, port: Int) -> netip.AddrPort { netip.AddrPort{addr: addr, port: port & 65535} }
+
+fn addrport_display(p: netip.AddrPort) -> Str {
+  match p.addr.bits {
+    0 => "invalid AddrPort"
+    32 => "${addr_display(p.addr)}:${p.port}"
+    _ => "[${addr_display(p.addr)}]:${p.port}"
+  }
+}
+
+fn addr_prefix(a: netip.Addr, bits: Int) -> netip.Prefix ! netip.ParseErr {
+  if bits < 0 {
+    return Err(ap_err("negative Prefix bits"))
+  }
+  if a.bits == 0 {
+    return netip.Prefix{addr: a, len: 0}
+  }
+  if a.bits == 32 && bits > 32 {
+    return Err(ap_err("prefix length ${bits} too large for IPv4"))
+  }
+  if a.bits == 128 && bits > 128 {
+    return Err(ap_err("prefix length ${bits} too large for IPv6"))
+  }
+  let k = if a.bits == 32 { bits + 96 } else { bits }
+  netip.Prefix{addr: mk(a.bits, hi_of(a) & bits_mask(k), lo_of(a) & bits_mask(k - 64), ""), len: bits}
+}
+
+/// Go's Next: one more, None when the family's range wraps (an IPv4
+/// address's low 32 bits, an IPv6 address's 128).
+fn addr_next(a: netip.Addr) -> netip.Addr? {
+  if a.bits == 0 {
+    return None
+  }
+  var hi = hi_of(a)
+  let lo = lo_of(a).wrapping_add(1)
+  if lo == 0 {
+    hi = hi.wrapping_add(1)
+  }
+  if a.bits == 32 {
+    if (lo & 4294967295) == 0 {
+      return None
+    }
+  } else if hi == 0 && lo == 0 {
+    return None
+  }
+  Some(mk(a.bits, hi, lo, a.zone))
+}
+
+fn addr_prev(a: netip.Addr) -> netip.Addr? {
+  if a.bits == 0 {
+    return None
+  }
+  var hi = hi_of(a)
+  let lo0 = lo_of(a)
+  if a.bits == 32 {
+    if (lo0 & 4294967295) == 0 {
+      return None
+    }
+  } else if hi == 0 && lo0 == 0 {
+    return None
+  }
+  if lo0 == 0 {
+    hi = hi.wrapping_sub(1)
+  }
+  Some(mk(a.bits, hi, lo0.wrapping_sub(1), a.zone))
+}
+
+fn addr_with_zone(a: netip.Addr, zone: Str) -> netip.Addr {
+  if a.bits != 128 {
+    return a
+  }
+  mk(a.bits, hi_of(a), lo_of(a), zone)
+}
+
+fn prefix_from(addr: netip.Addr, bits: Int) -> netip.Prefix? {
+  let max = if addr.bits == 128 { 128 } else { 32 }
+  if addr.bits == 0 || bits < 0 || bits > max {
+    return None
+  }
+  Some(netip.Prefix{addr: mk(addr.bits, hi_of(addr), lo_of(addr), ""), len: bits})
+}
+
+fn prefix_bits(p: netip.Prefix) -> Int { p.len }
+
+fn prefix_is_single_ip(p: netip.Prefix) -> Bool { p.addr.bits != 0 && p.len == p.addr.bits }
+
+/// Go's Overlaps: both valid, the same family, and equal under the shorter
+/// length.
+fn prefix_overlaps(p: netip.Prefix, o: netip.Prefix) -> Bool {
+  if p.addr.bits == 0 || o.addr.bits == 0 {
+    return false
+  }
+  if p.addr == o.addr && p.len == o.len {
+    return true
+  }
+  if p.addr.bits != o.addr.bits {
+    return false
+  }
+  let min = if p.len < o.len { p.len } else { o.len }
+  if min == 0 {
+    return true
+  }
+  match (addr_prefix(p.addr, min), addr_prefix(o.addr, min)) {
+    (Ok(a), Ok(b)) => a.addr == b.addr
+    _ => false
+  }
+}
+

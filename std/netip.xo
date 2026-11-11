@@ -21,6 +21,13 @@ struct Prefix {
   len: Int
 }
 
+/// An address and a port (Go's AddrPort); the order is Go's Compare: the
+/// address, then the port.
+struct AddrPort {
+  addr: Addr
+  port: Int
+} derive Ord
+
 /// Go's texts: `ParseAddr("1.2.3"): IPv4 address too short`.
 struct ParseErr {
   msg: Str
@@ -54,3 +61,31 @@ fn (a: Addr) display() -> Str
 fn (p: Prefix) contains(a: Addr) -> Bool
 fn (p: Prefix) masked() -> Prefix
 fn (p: Prefix) display() -> Str
+
+/// Go's ParseAddrPort: `1.2.3.4:80`, `[2001:db8::1]:443`, `[fe80::1%eth0]:22`
+/// (an IPv6 address in brackets, an IPv4 one without).
+fn parse_addr_port(s: Str) -> AddrPort ! ParseErr
+/// Go's AddrPortFrom; port is 0 to 65535 (its low 16 bits otherwise, as
+/// Go's uint16).
+fn addr_port(addr: Addr, port: Int) -> AddrPort
+/// Go's AddrPort.String: `1.2.3.4:80`, `[2001:db8::1]:443`.
+fn (p: AddrPort) display() -> Str
+/// Go's Addr.Prefix: the prefix of the first bits bits, the rest zeroed
+/// and the zone dropped; an error for bits below 0 or past the family's.
+fn (a: Addr) prefix(bits: Int) -> Prefix ! ParseErr
+/// Go's Addr.Next and Prev: the address after or before, None past the
+/// end of the family (the zone kept).
+fn (a: Addr) next() -> Addr?
+fn (a: Addr) prev() -> Addr?
+/// Go's WithZone: an IPv6 address with zone (empty: none); an IPv4
+/// address as it is.
+fn (a: Addr) with_zone(zone: Str) -> Addr
+/// Go's PrefixFrom: addr (its zone dropped, not masked) and bits; None
+/// for bits below 0 or past the family's.
+fn prefix_from(addr: Addr, bits: Int) -> Prefix?
+/// Go's Prefix.Bits.
+fn (p: Prefix) bits() -> Int
+/// Go's Prefix.Overlaps: whether some address is in both.
+fn (p: Prefix) overlaps(o: Prefix) -> Bool
+/// Go's Prefix.IsSingleIP: the length is the family's.
+fn (p: Prefix) is_single_ip() -> Bool

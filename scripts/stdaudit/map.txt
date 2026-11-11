@@ -1255,10 +1255,14 @@ x509.IsEncryptedPEMBlock = not planned: deprecated in Go (insecure PEM encryptio
 x509.* = not planned: signature and public key algorithm constants, error reason codes, OID helpers and the legacy extended key usages (CertErr carries the reason as text)
 
 # net/netip: std/netip
-netip.ParseAddrPort = gap: no AddrPort type (host and port are text in Net.dial)
-netip.AddrPort = gap: no AddrPort type (host and port are text in Net.dial)
-netip.AddrPortFrom = gap: no AddrPort type (host and port are text in Net.dial)
-netip.AddrPort.* = gap: no AddrPort type (host and port are text in Net.dial)
+netip.ParseAddrPort = std/netip.parse_addr_port
+netip.AddrPort = std/netip.AddrPort
+netip.AddrPortFrom = std/netip.addr_port
+netip.AddrPort.Addr = std/netip.AddrPort.addr (field)
+netip.AddrPort.Port = std/netip.AddrPort.port (field)
+netip.AddrPort.String = std/netip.AddrPort.display
+netip.AddrPort.Compare = Ord on netip.AddrPort
+netip.AddrPort.* = not planned: IsValid (no zero AddrPort), binary and text marshalers
 netip.MustParseAddr = std/netip.parse_addr
 netip.MustParsePrefix = std/netip.parse_prefix
 netip.AddrFrom4 = std/netip.addr_from_bytes
@@ -1272,16 +1276,17 @@ netip.Addr.As4 = std/netip.Addr.bytes
 netip.Addr.As16 = std/netip.Addr.bytes
 netip.Addr.Compare = Ord on netip.Addr (a.cmp(b))
 netip.Addr.Less = Ord on netip.Addr (a < b)
-netip.Addr.Prefix = gap: no Addr.prefix(bits)
-netip.Addr.Next = gap: no Addr.next/prev
-netip.Addr.Prev = gap: no Addr.next/prev
-netip.Addr.Zone = gap: no IPv6 zones
-netip.Addr.WithZone = gap: no IPv6 zones
+netip.Addr.Prefix = std/netip.Addr.prefix
+netip.Addr.Next = std/netip.Addr.next
+netip.Addr.Prev = std/netip.Addr.prev
+netip.Addr.Zone = std/netip.Addr.zone (field)
+netip.Addr.WithZone = std/netip.Addr.with_zone
 netip.Prefix.String = std/netip.Prefix.display
-netip.Prefix.Overlaps = gap: no Prefix.overlaps
+netip.Prefix.Overlaps = std/netip.Prefix.overlaps
+netip.Prefix.IsSingleIP = std/netip.Prefix.is_single_ip
 netip.Prefix.Addr = std/netip.Prefix.masked
-netip.Prefix.Bits = gap: no Prefix.bits accessor
-netip.PrefixFrom = gap: no prefix_from(addr, bits) (parse_prefix of text)
+netip.Prefix.Bits = std/netip.Prefix.bits
+netip.PrefixFrom = std/netip.prefix_from
 netip.* = not planned: Must forms (a fault on Err), binary and text marshalers, IsValid (no zero Addr), named address constants
 
 # net/url: std/url and std/http.Url

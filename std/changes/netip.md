@@ -1,5 +1,22 @@
 # std/netip changes
 
+## 2026-11-11: feature: AddrPort, Addr.prefix, next, prev, with_zone, prefix_from, Prefix.bits, is_single_ip, overlaps
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit of 2026-11-11 (bench/results/std-audit-2026-11-11.md, sixth gap: no AddrPort type), and the netip gap rows of scripts/stdaudit/map.txt
+- Go reference: net/netip netip.go (go1.26.1): ParseAddrPort, AddrPortFrom, AddrPort.String, Addr.Prefix, Next, Prev, WithZone, PrefixFrom, Prefix.Bits, IsSingleIP, Overlaps
+- Test: the netip corpus on go, arm64, llvm (ADDR_PORTS 1,500 texts with Go's errors; ADDR_OPS 1,500 addresses including each family's ends; ZONES 200; OVERLAPS 1,500 pairs both ways)
+- Timing: none (new functions over the existing words)
+- Shipped in: not yet released
+
+`netip.parse_addr_port(s)` and `netip.addr_port(addr, port)` give an
+`AddrPort {addr, port}` ordered as Go's Compare, displayed as Go's String.
+`Addr.prefix(bits)` (masked, zone dropped, Go's errors), `next()` and
+`prev()` (None past the family's range), `with_zone(zone)`;
+`netip.prefix_from(addr, bits)` (None out of range), `Prefix.bits()`,
+`is_single_ip()` and `overlaps(o)`.
+
 ## 2026-11-10: refactor: integer bounds as `Int.max` and `Int.min` (decision 0587 point 4)
 
 - Kind: refactor
