@@ -96,6 +96,7 @@ use_c_add # wasip1 wasip2 # c: use c: no C calls on wasm
 use_c_bytes # wasip1 wasip2 # c: use c: no C calls on wasm
 use_c_enum # wasip1 wasip2 # c: use c: no C calls on wasm
 use_c_libc # wasip1 wasip2 # c: use c: no C calls on wasm
+use_c_names # wasip1 wasip2 # c: use c: no C calls on wasm
 use_c_stdio # wasip1 wasip2 # c: use c: no C calls on wasm
 user_caps # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.run)
 websocket # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets

@@ -168,7 +168,7 @@ fn c_objects(os: Os, cc: Str, cflags: List[Str], srcs: List[Str], dir: Str, trim
       let tmp = "${obj}.tmp"
       let (o, err) = combined(os, cc, args + ["-o", tmp])
       if !err.is_empty() {
-        return ([], "${o}${cc} -c ${s}: ${err}\n")
+        return ([], "${o}${cc} -c ${s}: ${err}\n${adapter_note(s, data, o)}")
       }
       match os.fs.rename(tmp, obj) {
         Ok(_) => {}
@@ -178,6 +178,48 @@ fn c_objects(os: Os, cc: Str, cflags: List[Str], srcs: List[Str], dir: Str, trim
     out.push(obj)
   }
   (out, "")
+}
+
+/// For a failed compile of a `use c` adapter (cffi/xo_*.c, which xo
+/// writes: the error points into the build's cache), a note naming the
+/// header and the C declaration of the adapter function holding the
+/// first error, from the `// DECLARATION` line above each one; "" for
+/// any other source or when no line matches (2026-11-11: a C parameter n
+/// beside the adapter's own local n failed as "redefinition of 'n'" in
+/// a cache file while `xo check` passed).
+fn adapter_note(src: Str, data: Bytes, out: Str) -> Str {
+  let base = base_name(src)
+  if !base.starts_with("xo_") || !dir_name(src).ends_with("/cffi") {
+    return ""
+  }
+  let text = data.to_str() ?? ""
+  // the first "SRC:LINE:" of the compiler's output
+  let at = out.find("${base}:") ?? -1
+  if at < 0 {
+    return ""
+  }
+  let rest = out[at + base.len() + 1..out.len()]
+  let ln = Int.parse(rest[0..(rest.find(":") ?? 0)]) ?? 0
+  if ln <= 0 {
+    return ""
+  }
+  var header = ""
+  var decl = ""
+  for (i, l) in text.split("\n").indexed() {
+    if i >= ln {
+      break
+    }
+    if l.starts_with("#include \"") {
+      header = l.trim_prefix("#include ")
+    }
+    if l.starts_with("// ") && !l.starts_with("// Code generated") && !l.starts_with("// Adapters") {
+      decl = l.trim_prefix("// ")
+    }
+  }
+  if decl.is_empty() {
+    return ""
+  }
+  "note: that file is xo's C adapter for `use c ${header}`; the error is in its function for `${decl}`: an xo binder bug (the C declaration is valid), please report it\n"
 }
 
 /// The defines std/sqlite's amalgamation is compiled with for a Windows

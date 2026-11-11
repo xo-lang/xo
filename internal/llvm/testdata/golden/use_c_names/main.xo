@@ -1,0 +1,25 @@
+// A `use c` binding whose C parameters are named like the locals the
+// binder's C adapters declared (r, c, v, n, xo_len) and like their own
+// function, one function per adapter shape. A Bytes result's adapter
+// declared `int64_t n` beside a parameter n: "redefinition of 'n'" at the
+// C compile, after `xo check` passed (2026-11-11, the scarlet session).
+// The adapters name their parameters xo_aN and their locals xo_r, xo_c,
+// xo_v and xo_n now.
+use c "nmc.h" link "nmc.c" uses none
+
+fn main(os: Os) {
+  os.stdio.println("scalar ${nmc.nmc_scalar(1, 2, 3, 4, 5)}")
+  os.stdio.println("self ${nmc.nmc_self(41)}")
+  os.stdio.println("str ${nmc.nmc_str("ab", 7)}")
+  os.stdio.println("bytes ${nmc.nmc_bytes(3, 1).to_str_lossy()}")
+  os.stdio.println("sum ${nmc.nmc_sum("abc".bytes())}")
+  match nmc.nmc_open(40) {
+    Some(b) => {
+      os.stdio.println("peek ${nmc.nmc_peek(b, 2)}")
+      nmc.nmc_close(b)
+    }
+    None => os.stdio.println("open failed")
+  }
+  let p = nmc.nmc_swap(nmc.NmcPair{r: 1, n: 2})
+  os.stdio.println("swap ${p.r} ${p.n}")
+}

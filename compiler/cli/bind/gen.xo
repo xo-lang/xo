@@ -458,47 +458,53 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
     var args: List[Str] = []
     var pre: List[Str] = []
     var post: List[Str] = []
-    for p in f.params {
+    // the adapter's parameters and locals take names no C declaration
+    // can: xo_aN for parameter N (its parts _p, _n, _fM), xo_r, xo_c,
+    // xo_v, xo_n (2026-11-11: a C parameter n beside the Bytes result's
+    // local n was "redefinition of 'n'"; one named like the function, or
+    // like a type the casts name, would shadow it)
+    for (pi, p) in f.params.indexed() {
+      let a = "xo_a${pi}"
       match p.kind {
         "scalar" => {
-          params.push("${word_type(p.sc)} ${p.xo}")
-          args.push(conv_in(p.sc, p.xo))
+          params.push("${word_type(p.sc)} ${a}")
+          args.push(conv_in(p.sc, a))
         }
         "str" => {
-          params.push("const char *${p.xo}_p")
-          params.push("int64_t ${p.xo}_n")
-          pre.push("char *${p.xo} = xo_cffi_cstr(${p.xo}_p, ${p.xo}_n);")
-          post.push("free(${p.xo});")
-          args.push(p.xo)
+          params.push("const char *${a}_p")
+          params.push("int64_t ${a}_n")
+          pre.push("char *${a} = xo_cffi_cstr(${a}_p, ${a}_n);")
+          post.push("free(${a});")
+          args.push(a)
         }
         "strn" | "bytes" => {
-          params.push("const char *${p.xo}_p")
-          params.push("int64_t ${p.xo}_n")
+          params.push("const char *${a}_p")
+          params.push("int64_t ${a}_n")
           let ptr_t = "const ${p.ct.base} *"
           let len_c = match scalar_of(p.len_ct) {
             Some(s) => s.c
             None => ""
           }
-          args.push("(${ptr_t})${p.xo}_p")
-          args.push("(${len_c})${p.xo}_n")
+          args.push("(${ptr_t})${a}_p")
+          args.push("(${len_c})${a}_n")
         }
         "handle" => {
-          params.push("int64_t ${p.xo}")
-          args.push("(${p.ct.base} *)(intptr_t)${p.xo}")
+          params.push("int64_t ${a}")
+          args.push("(${p.ct.base} *)(intptr_t)${a}")
         }
         "struct" => {
           var inits: List[Str] = []
-          for fd in p.st.fields {
-            let fp = "${p.xo}_${fd.xo}"
+          for (fi, fd) in p.st.fields.indexed() {
+            let fp = "${a}_f${fi}"
             params.push("${word_type(fd.sc)} ${fp}")
-            inits.push("${p.xo}.${fd.c} = ${conv_in(fd.sc, fp)};")
+            inits.push("${a}.${fd.c} = ${conv_in(fd.sc, fp)};")
           }
-          pre.push("struct ${p.st.tag} ${p.xo};")
-          pre.push("memset(&${p.xo}, 0, sizeof ${p.xo});")
+          pre.push("struct ${p.st.tag} ${a};")
+          pre.push("memset(&${a}, 0, sizeof ${a});")
           for it in inits {
             pre.push(it)
           }
-          args.push(p.xo)
+          args.push(a)
         }
         _ => {}
       }
@@ -518,48 +524,48 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
       }
       "scalar" => {
         ret = word_type(f.ret.sc)
-        body.push("${ret} r = (${ret})${conv_out(f.ret.sc, call)};")
+        body.push("${ret} xo_r = (${ret})${conv_out(f.ret.sc, call)};")
         for l in post {
           body.push(l)
         }
-        body.push("return r;")
+        body.push("return xo_r;")
       }
       "str" => {
         ret = "void *"
         params.push("int64_t *xo_len")
-        body.push("const char *c = ${call};")
-        body.push("if (!c) {")
-        body.push("\tc = \"\";")
+        body.push("const char *xo_c = ${call};")
+        body.push("if (!xo_c) {")
+        body.push("\txo_c = \"\";")
         body.push("}")
-        body.push("void *r = (void *)(intptr_t)xo_x_cffi_str((int64_t)(intptr_t)c, (int64_t)strlen(c), (int64_t)(intptr_t)xo_len);")
+        body.push("void *xo_r = (void *)(intptr_t)xo_x_cffi_str((int64_t)(intptr_t)xo_c, (int64_t)strlen(xo_c), (int64_t)(intptr_t)xo_len);")
         for l in post {
           body.push(l)
         }
-        body.push("return r;")
+        body.push("return xo_r;")
       }
       "bytes" => {
         ret = "void *"
         params.push("int64_t *xo_len")
-        body.push("${f.ret.ct.base} v = ${call};")
-        body.push("const char *c = (const char *)v.${f.ret.bp};")
-        body.push("int64_t n = c ? (int64_t)v.${f.ret.bn} : 0;")
-        body.push("if (!c || n < 0) {")
-        body.push("\tc = \"\";")
-        body.push("\tn = 0;")
+        body.push("${f.ret.ct.base} xo_v = ${call};")
+        body.push("const char *xo_c = (const char *)xo_v.${f.ret.bp};")
+        body.push("int64_t xo_n = xo_c ? (int64_t)xo_v.${f.ret.bn} : 0;")
+        body.push("if (!xo_c || xo_n < 0) {")
+        body.push("\txo_c = \"\";")
+        body.push("\txo_n = 0;")
         body.push("}")
-        body.push("void *r = (void *)(intptr_t)xo_x_cffi_str((int64_t)(intptr_t)c, n, (int64_t)(intptr_t)xo_len);")
+        body.push("void *xo_r = (void *)(intptr_t)xo_x_cffi_str((int64_t)(intptr_t)xo_c, xo_n, (int64_t)(intptr_t)xo_len);")
         for l in post {
           body.push(l)
         }
-        body.push("return r;")
+        body.push("return xo_r;")
       }
       "handle" => {
         ret = "int64_t"
-        body.push("int64_t r = (int64_t)(intptr_t)${call};")
+        body.push("int64_t xo_r = (int64_t)(intptr_t)${call};")
         for l in post {
           body.push(l)
         }
-        body.push("return r;")
+        body.push("return xo_r;")
       }
       "struct" => {
         let slot = "${sym}_ret"

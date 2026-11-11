@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+scalar 12345
+self 42
+str ab7
+bytes ell
+sum 294
+peek 42
+swap 2 1
+--- stderr
