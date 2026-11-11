@@ -1238,8 +1238,13 @@ yourself.
   origin/main and one of those checks applies, the check and any
   rebuild (41 to 75 s) run before pushq takes the merge lane, and the
   lane only re-checks (0.3 s), so the rebuild no longer holds the lane
-  (lead, 2026-11-11); the log line says `(before the lane)`. Last
-  verified: 2026-11-11.
+  (lead, 2026-11-11); the log line says `(before the lane)`.
+  `PUSHQ_PRE_REBASE=1` (opt in) also rebases a worktree that is behind
+  origin/main before the lane, so that check applies after a real
+  rebase too (3 of 4 in-lane rebuilds on 2026-11-10); the old merge
+  base goes to the lane as `--base`, so the overlap still counts from
+  the gate's commit, and a conflict is aborted and left to the lane.
+  Last verified: 2026-11-11.
   Pushes wait in heavyd's `merge` lane (decision 0451, 2026-10-31), so
   `~/xo-lead/agents/heavy.sh --status` shows the push queue; with no
   daemon pushq queues on its own lock as before.
