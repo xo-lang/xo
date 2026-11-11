@@ -767,19 +767,26 @@ func Http_new_request(tk *Task, method, rawURL string, headers Map[string, strin
 // M_query_all is `req.query_all(name)` (decision 0279): Go's
 // URL.Query()[name]; a request built as a struct literal has no raw
 // query, so its url.query value.
-func (r Http_Request) M_query_all(_ *Task, name string) List[string] {
+func (r Http_Request) M_query_all(tk *Task, name string) List[string] {
 	if r.XRawQuery == "" {
 		if v := Map_get(nil, r.F_url.F_query, name); v.Some {
 			return ListOf(v.V)
 		}
 		return ListOf[string]()
 	}
-	q, _ := url.ParseQuery(r.XRawQuery)
+	// std/url's query_unescape over the pairs in order, as the native
+	// request_query_all (std/native/http.xo): Go's ParseQuery returned a
+	// map, so two keys naming one field (`a=1&%61=2`) came back in map
+	// order
 	var out []string
-	for k, vs := range q {
-		if urlText(k) == name {
-			for _, v := range vs {
-				out = append(out, urlText(v))
+	for _, pair := range strings.Split(r.XRawQuery, "&") {
+		if pair == "" || strings.Contains(pair, ";") {
+			continue
+		}
+		k0, v0, _ := strings.Cut(pair, "=")
+		if k := Url_query_unescape(tk, k0); k.Ok && k.V == name {
+			if v := Url_query_unescape(tk, v0); v.Ok {
+				out = append(out, v.V)
 			}
 		}
 	}

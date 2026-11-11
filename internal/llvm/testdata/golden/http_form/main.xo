@@ -55,6 +55,10 @@ fn main(os: Os) ! {
   scope s {
     s.spawn_background(fn() -> () ! http.HttpErr { http.server(l, r).serve()? })
     os.stdio.println(raw(os.net, addr, "GET /search?q=a&q=b&q=c HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")?)
+    // an escaped key (%71 is q), an invalid UTF-8 value kept as %FF
+    // (decision 0259), and a pair with `;` and one with a bad escape skipped,
+    // in query order on every backend
+    os.stdio.println(raw(os.net, addr, "GET /search?q=1&%71=2&q=%FF&q=x;y&q=%zz&q=3 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")?)
     os.stdio.println(raw(os.net, addr, "POST /login HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 11\r\n\r\ntag=x&tag=y")?)
     // the client sends the raw query as given (Go's URL.RawQuery): repeated
     // keys and their order survive; a request whose url.query was changed

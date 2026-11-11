@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-11: behavior (Go backend): query_all reads the query with std/url's port
+
+- Kind: behavior
+- Commit: this commit
+- Found by: decision 0597's url follow-up (the Go backend still parsed queries with Go's net/url)
+- Go reference: net/url ParseQuery, URL.Query
+- Test: golden http_form on arm64, LLVM and the Go backend (TestGoldenGoParity)
+- Shipped in: not yet released
+
+On the Go backend `Request.query_all` split the raw query with Go's `url.ParseQuery`, a map, and kept invalid UTF-8 as `%XX` afterward, so two keys that read as one name (`%FF` and `%25FF`) came back in map order. It now unescapes each pair in order with std/url's `query_unescape`, as the native backends do, so every backend gives the same values in query order.
+
 ## 2026-11-11: docs: the header says what the module is for
 
 - Kind: docs
