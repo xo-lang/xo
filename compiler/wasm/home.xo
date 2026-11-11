@@ -613,16 +613,40 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
         reach[to] = true
       }
       for m in ms {
+        // a path from the give up back to a read that enters m's block
+        // again defines m afresh there (a loop's `b` parameter, given up
+        // by the body's `b.m.funcs[i] = ..`: its reads at the loop's top
+        // read the next iteration's b), so only the blocks reached
+        // without entering it count. Not for a read of an earlier call's
+        // `var` result (partof): reading it again reads the value given
+        // up; nor for m defined after the give up in its block.
+        // Given up along an edge (a loop's back edge passing b on): the
+        // same, from the edge's target.
+        let dm = g.blk[m]
+        let fresh = partof[a] < 0 && dm >= 0 && (to >= 0 || dm != g.blk[at] || !f.blocks[dm].instrs.contains(m) || g.before_in_block(m, at))
+        var mreach = reach
+        if fresh && to < 0 {
+          mreach = g.reach_avoiding(g.blk[at], dm)
+        } else if fresh && to != dm {
+          mreach = g.reach_avoiding(to, dm)
+          mreach[to] = true
+        } else if fresh {
+          // the target defines m: every read after the edge reads it afresh
+          mreach = []
+          for _ in f.blocks {
+            mreach.push(false)
+          }
+        }
         for w in g.users[m] {
           if f.values[w].op != ssa.Op.Field || g.nleaves(ssa.ty_of(f.values[w].tb)) == 0 || snapped[w] {
             continue
           }
           // only the reads that can run after the value is given up
           if g.blk[w] == g.blk[at] {
-            if g.before_in_block(w, at) && !reach[g.blk[w]] {
+            if g.before_in_block(w, at) && !mreach[g.blk[w]] {
               continue
             }
-          } else if !reach[g.blk[w]] {
+          } else if !mreach[g.blk[w]] {
             continue
           }
           let i = match f.values[w].aux {
@@ -805,6 +829,28 @@ fn (g: Gen) reach_from(b: Int) -> List[Bool] {
   r
 }
 
+/// The blocks reachable from block b's successors without entering
+/// block d (d itself is not marked unless it is b's own successor path's
+/// start, which it never is: entering d stops the walk).
+fn (g: Gen) reach_avoiding(b: Int, d: Int) -> List[Bool] {
+  let f = g.f
+  var r: List[Bool] = []
+  for _ in f.blocks {
+    r.push(false)
+  }
+  var work = [b]
+  while let Some(w) = work.pop() {
+    for e in f.values[f.term(w)].succs {
+      let t = f.edges[e].to
+      if t != d && !r[t] {
+        r[t] = true
+        work.push(t)
+      }
+    }
+  }
+  r
+}
+
 /// Whether w comes before v in their block.
 fn (g: Gen) before_in_block(w: Int, v: Int) -> Bool {
   for u in g.f.blocks[g.blk[v]].instrs {
@@ -887,7 +933,7 @@ fn (var g: Gen) plan_nested() {
       if mv < 0 || g.mfield[mv] < 0 || f.values[mv].op != ssa.Op.Field {
         continue
       }
-      if g.users[mv].len() != 1 || g.users[v].len() != 1 || g.inedge[v] || g.inedge[mv] {
+      if g.users[v].len() != 1 || g.inedge[v] || g.inedge[mv] || !g.reads_before(mv, v) {
         continue
       }
       let u = g.users[v][0]
@@ -913,6 +959,55 @@ fn (var g: Gen) plan_nested() {
       changed = true
     }
   }
+}
+
+/// Whether every use of the field view mv but the nested update v is a
+/// field read of it done, with every use of it, before v in v's block:
+/// `b.m.funcs[i].add(..)` reads b.m.funcs (a use of b.m) before b.m is
+/// updated in the home, and the home still holds the old value there.
+/// Before, a second use made b.m load all of Module's leaves into locals
+/// and store them back at the update (2026-11-11: most of the SSA
+/// builder's largest wasm functions).
+fn (g: Gen) reads_before(mv: Int, v: Int) -> Bool {
+  if g.users[mv].len() == 1 {
+    return true
+  }
+  let bi = g.blk[v]
+  var at: Map[Int, Int] = {}
+  for (k, w) in g.f.blocks[bi].instrs.indexed() {
+    at[w] = k
+  }
+  let pv = at.get(v) ?? -1
+  if pv < 0 {
+    return false
+  }
+  for w in g.users[mv] {
+    if w == v {
+      continue
+    }
+    if g.f.values[w].op != ssa.Op.Field || g.inedge[w] || !g.used_before(w, bi, at, pv, 0) {
+      return false
+    }
+  }
+  true
+}
+
+/// Whether value w is in block bi before position pv (at), and every
+/// use of it too, through field reads of it (a view that loads where it
+/// is used).
+fn (g: Gen) used_before(w: Int, bi: Int, at: Map[Int, Int], pv: Int, depth: Int) -> Bool {
+  if depth > 8 || g.blk[w] != bi || (at.get(w) ?? pv) >= pv {
+    return false
+  }
+  for y in g.users[w] {
+    if g.blk[y] != bi || (at.get(y) ?? pv) >= pv {
+      return false
+    }
+    if g.f.values[y].op == ssa.Op.Field && !g.used_before(y, bi, at, pv, depth + 1) {
+      return false
+    }
+  }
+  true
 }
 
 /// Whether no instruction strictly between v and u (one block) uses a

@@ -1,7 +1,7 @@
 # The playground compiler doubled when fault exits called zero_val.T
 
 Status: Observed (2026-11-11, Xo Lang 2, from the owner's question on the
-playground download)
+playground download; the second cause the same day)
 
 ## Symptom
 
@@ -32,6 +32,29 @@ so wasm fault exits build the zero as before. Main's playground compiler:
 shrink too (crypto_prims 15.9%). Native builds are unchanged.
 internal/selfhost TestWasmPlaygroundStack fails when the build passes
 playMaxBytes (32,000,000).
+
+## A second cause: snapshots over a loop's back edge
+
+After the fix, the largest functions (ssa.Builder.fe_replay 414 KB,
+net_err_func 342 KB) still copied the home's fields into a frame: 781
+snapshot reads in net_err_func, field 0 of Builder alone 619 leaves. A field
+read of a home's value is snapshotted (home.xo plan_home, "gone") when it
+can run after the value is given up (an update `b.m = ..`, a call taking b,
+an edge passing b on). The test used plain reachability from the give up,
+and in a loop every block of the body is reachable from the update through
+the back edge, so every `b.m.funcs[i]` read at the loop's top read a
+snapshot, although each iteration's b is the loop header's parameter (or
+an update in the body), defined afresh before the read.
+
+Fix: a read counts only when it is reachable from the give up without
+entering the block that defines the value (home.xo reach_avoiding), for a
+give up in a block or along an edge; not for the reads of an earlier call's
+`var` result (partof), which read the value given up. The home's dataflow
+still checks every read taken off the list, and falls back (hwhy) rather
+than miscompile; none did across the playground's compiler. A nested update
+(`b.m.funcs = ..`) also stays in the home when b.m's other uses are field
+reads done before it (plan_nested reads_before). The playground compiler:
+26.2 to 22.6 MB, 3.15 to 2.75 MB brotli.
 
 ## How to avoid
 
