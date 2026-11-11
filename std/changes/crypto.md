@@ -1,5 +1,19 @@
 # std/crypto changes
 
+## 2026-11-11: feature: crypto.xor (Go's subtle.XORBytes)
+
+- Kind: feature
+- Commit: this push
+- Found by: std audit 2026-11-11 gap 20
+- Go reference: crypto/subtle XORBytes (go1.26.1)
+- Test: crypto corpus XORS (240 cases from Go: every length 0 to 80, then unequal lengths; go, arm64, llvm)
+- Shipped in: not yet released
+
+`crypto.xor(a, b)` returns a new Bytes of the shorter length (Go writes
+into a dst it is given). Native code XORs 32 then 8 bytes at a time, then
+the tail. The corpus generator also gains the ed25519 64 byte private key
+check that fe1903df9 added to the generated file by hand.
+
 ## 2026-11-11: test: a Hasher copy is a clone (Go's hash.Cloner)
 
 - Kind: test

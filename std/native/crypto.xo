@@ -31,6 +31,26 @@ fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes { dg.hmac_sha256(key, msg) }
 
 fn equal(a: Bytes, b: Bytes) -> Bool { ct.bytes_equal(a, b) }
 
+/// `crypto.xor(a, b)`: a word at a time, as Go's xorBytes, then bytes.
+fn xor(a: Bytes, b: Bytes) -> Bytes {
+  let n = a.len().min(b.len())
+  var s = rt.rs_with_cap(n)
+  var i = 0
+  while i + 32 <= n {
+    s = rt.rs_push_words(s, rt.bytes_word(a, i) ^ rt.bytes_word(b, i), rt.bytes_word(a, i + 8) ^ rt.bytes_word(b, i + 8), rt.bytes_word(a, i + 16) ^ rt.bytes_word(b, i + 16), rt.bytes_word(a, i + 24) ^ rt.bytes_word(b, i + 24), 0x8888)
+    i += 32
+  }
+  while i + 8 <= n {
+    s = rt.rs_push_word(s, rt.bytes_word(a, i) ^ rt.bytes_word(b, i), 8)
+    i += 8
+  }
+  while i < n {
+    s = rt.rs_push_byte(s, Int(a[i] ^ b[i]))
+    i += 1
+  }
+  s.bytes()
+}
+
 fn random_bytes(r: Rand, n: Int, at: rt.Loc) -> Bytes uses rand {
   if n < 0 {
     rt.fault_at("crypto.random_bytes: negative length ${n}", at)

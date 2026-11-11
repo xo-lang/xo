@@ -33,6 +33,13 @@ func Crypto_equal(_ *Task, a, b Bytes) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
+// Crypto_xor is `crypto.xor(a, b)`: subtle.XORBytes into a new Bytes.
+func Crypto_xor(_ *Task, a, b Bytes) Bytes {
+	d := make([]byte, min(len(a), len(b)))
+	subtle.XORBytes(d, []byte(a), []byte(b))
+	return Bytes(d)
+}
+
 // Crypto_random_bytes is `crypto.random_bytes(r, n)`: n bytes from the Rand
 // capability (crypto/rand for real programs, seeded in tests). Faults when
 // n is negative.

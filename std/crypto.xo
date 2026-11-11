@@ -9,6 +9,9 @@ fn sha256(data: Bytes) -> Bytes
 fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes
 /// Constant time in the contents (not the lengths) of `a` and `b`.
 fn equal(a: Bytes, b: Bytes) -> Bool
+/// a[i] ^ b[i] for each i below the shorter length (Go's
+/// subtle.XORBytes, into a new Bytes).
+fn xor(a: Bytes, b: Bytes) -> Bytes
 fn random_bytes(r: Rand, n: Int) -> Bytes uses rand
 /// `n` random bytes as unpadded URL safe base64.
 fn token(r: Rand, n: Int = 32) -> Str uses rand

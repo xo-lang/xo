@@ -18,6 +18,7 @@ import (
 	"go/parser"
 	"go/token"
 	"hash"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -496,13 +497,18 @@ test "crypto.equal is Go's ConstantTimeCompare" {
   expect(show3(bad)) == []
 }
 
-test "ed25519 public keys and signatures are the reference vectors, and verify" {
+test "ed25519 public keys and signatures are the reference vectors, and verify, from the seed or Go's 64 byte private key" {
   var bad: List[(Str, Str, Str)] = []
   var n = 0
   for (seed, msg, want_pub, want_sig) in ED25519_SIGN_CASES {
     let pk_hex = crypto.ed25519_public_key(seed).to_hex()
     let sig = crypto.ed25519_sign(seed, msg).to_hex()
     let sig2 = crypto.ed25519_sign(seed, msg).to_hex()
+    // Go's private key: the seed, then the public key
+    let sig64 = crypto.ed25519_sign(seed + (Bytes.from_hex(want_pub) ?? b""), msg).to_hex()
+    if sig64 != want_sig {
+      bad.push(("signature ${n} from the 64 byte key", sig64, want_sig))
+    }
     if pk_hex != want_pub {
       bad.push(("public key ${n}", pk_hex, want_pub))
     }
@@ -581,6 +587,42 @@ test "a KeyErr displays the message it carries (std/crypto KeyErr)" {
   }
   expect(pem_msg.is_empty()) == false
   expect(pem_shown) == pem_msg
+}
+`)
+	o.WriteString(cryptoXorCorpus())
+	return o.String()
+}
+
+// cryptoXorCorpus checks crypto.xor against Go's subtle.XORBytes at every
+// length 0 to 80 and unequal lengths (the word loop, the tail and both
+// shorter sides).
+func cryptoXorCorpus() string {
+	r := rand.New(rand.NewSource(4242))
+	var o strings.Builder
+	o.WriteString("\n/// (a, b, Go's XORBytes into min(len) bytes)\nconst XORS: List[(Bytes, Bytes, Bytes)] = [\n")
+	for i := 0; i < 240; i++ {
+		la, lb := i%81, i%81
+		if i >= 81 {
+			la, lb = r.Intn(81), r.Intn(81)
+		}
+		a, b := make([]byte, la), make([]byte, lb)
+		r.Read(a)
+		r.Read(b)
+		d := make([]byte, min(la, lb))
+		subtle.XORBytes(d, a, b)
+		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xbytes(a), xbytes(b), xbytes(d))
+	}
+	o.WriteString(`]
+
+test "xor is Go's subtle.XORBytes" {
+  var bad: List[(Bytes, Bytes, Bytes)] = []
+  for (a, b, want) in XORS {
+    let got = crypto.xor(a, b)
+    if got != want {
+      bad.push((a, b, got))
+    }
+  }
+  expect(bad[..bad.len().min(3)]) == []
 }
 `)
 	return o.String()

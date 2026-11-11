@@ -3605,6 +3605,7 @@ from the operating system (`getentropy` on macOS, `getrandom` on Linux).
 pub fn sha256(data: Bytes) -> Bytes                     // 32 bytes
 pub fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes     // 32 bytes
 pub fn equal(a: Bytes, b: Bytes) -> Bool                // constant time in the contents
+pub fn xor(a: Bytes, b: Bytes) -> Bytes                 // a[i] ^ b[i] below the shorter length (subtle.XORBytes)
 pub fn random_bytes(r: Rand, n: Int) -> Bytes uses rand // faults when n < 0
 pub fn token(r: Rand, n: Int = 32) -> Str uses rand     // n random bytes, unpadded URL safe base64
 pub fn hash_password_argon2id(r: Rand, password: Str, memory_kib: Int = 19456,
