@@ -1,4 +1,4 @@
-// std/path natively (std/native/path.xo): every function on edge cases,
+// std/path natively (std/path.xo, merged): every function on edge cases,
 // compared with the Go backend (Go's path package).
 
 use std/path

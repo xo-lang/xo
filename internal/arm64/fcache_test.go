@@ -2220,7 +2220,7 @@ func TestPruneDetached(t *testing.T) {
 // TestFrontCacheStdTestEdit: an edit to one std test block's body keeps
 // the front end cache entries of every other body (the interface hash
 // cuts test bodies, compiler/parser iface.xo); before 2026-10-21 it did
-// not, and `xo test --std-module=native/path` after a one-line test edit
+// not, and `xo test --std-module=native/path` (now `path`, merged by decision 0588) after a one-line test edit
 // hit 0 of 1,148 bodies.
 func TestFrontCacheStdTestEdit(t *testing.T) {
 	t.Parallel()
@@ -2251,7 +2251,7 @@ func TestFrontCacheStdTestEdit(t *testing.T) {
 	hits := regexp.MustCompile(`cache fe (\d+)/(\d+) bodies`)
 	run := func() (int, int) {
 		t.Helper()
-		cmd := testtmp.Guard(exec.Command(xo, "test", "--backend=arm64", "--phase-times", "--std-module=native/path"))
+		cmd := testtmp.Guard(exec.Command(xo, "test", "--backend=arm64", "--phase-times", "--std-module=path"))
 		cmd.Dir = work
 		// the run cache off: it serves the unchanged second run without a
 		// build (5b98eec1), and this test measures the front end cache
@@ -2270,7 +2270,7 @@ func TestFrontCacheStdTestEdit(t *testing.T) {
 	}
 	run()
 	wh, wn := run()
-	tf := filepath.Join(std, "native", "path_test.xo")
+	tf := filepath.Join(std, "path_test.xo")
 	b, err := os.ReadFile(tf)
 	if err != nil {
 		t.Fatal(err)
@@ -2514,7 +2514,7 @@ func TestStdModuleRunCache(t *testing.T) {
 	}
 	run := func() string {
 		t.Helper()
-		cmd := testtmp.Guard(exec.Command(xo, "test", "--backend=arm64", "--phase-times", "--std-module=native/path"))
+		cmd := testtmp.Guard(exec.Command(xo, "test", "--backend=arm64", "--phase-times", "--std-module=path"))
 		cmd.Dir = work
 		cmd.Env = append(os.Environ(), "XO_STD="+std, "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BIN_CACHE="+filepath.Join(work, "bin"))
 		log, err := cmd.CombinedOutput()
@@ -2527,7 +2527,7 @@ func TestStdModuleRunCache(t *testing.T) {
 	if warm := run(); !strings.Contains(warm, "phase run_cache ") || strings.Contains(warm, "phase check ") {
 		t.Errorf("the second run checked again:\n%s", warm)
 	}
-	tf := filepath.Join(std, "native", "path_test.xo")
+	tf := filepath.Join(std, "path_test.xo")
 	b, err := os.ReadFile(tf)
 	if err != nil {
 		t.Fatal(err)
