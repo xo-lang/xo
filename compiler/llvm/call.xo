@@ -971,6 +971,21 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       clob = clob + ",~{memory},~{cc}"
       g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])}, i64 ${g.op(x.args[4])})")
     }
+    "rt.aes_cbc_enc10" | "rt.aes_cbc_enc12" | "rt.aes_cbc_enc14" => {
+      // arm64 only (ssa call.xo): ssa.aes_cbc_enc_lines as inline asm, x9
+      // to x11 and its V registers clobbered
+      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_cbc_enc")) ?? 10
+      var t = [".arch_extension crypto"]
+      for l in ssa.aes_cbc_enc_lines(nr, "$0", "$1", "$2", "$3", "$4", "x9", "x10", "x11") {
+        t.push(l)
+      }
+      var clob = "r,r,r,r,r,~{x9},~{x10},~{x11}"
+      for r in ssa.aes_cbc_enc_vregs() {
+        clob = clob + ",~{q${r}}"
+      }
+      clob = clob + ",~{memory},~{cc}"
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])}, i64 ${g.op(x.args[4])})")
+    }
     "rt.ticks" => g.set(v, "call i64 asm sideeffect \"mrs $0, cntvct_el0\", \"=r\"()")
     "rt.ticks_hz" => g.set(v, "call i64 asm sideeffect \"mrs $0, cntfrq_el0\", \"=r\"()")
     "rt.chacha_poly_seal4" | "rt.chacha_poly_open4" | "rt.chacha_poly_seal8" | "rt.chacha_poly_open8" => {

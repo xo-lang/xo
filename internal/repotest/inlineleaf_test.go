@@ -17,6 +17,7 @@ import (
 var inlineNotLeaf = map[string]string{
 	"rt.str_bytes": "--inline-str (decision 0370): calls the runtime for an inline Str", "rt.str_inline": "--inline-str (decision 0370): a tag test and a branch",
 	"rt.aes_ctr10": "block kernel", "rt.aes_ctr12": "block kernel", "rt.aes_ctr14": "block kernel",
+	"rt.aes_cbc_enc10": "block kernel", "rt.aes_cbc_enc12": "block kernel", "rt.aes_cbc_enc14": "block kernel",
 	"rt.aes_enc10": "block kernel", "rt.aes_enc12": "block kernel", "rt.aes_enc14": "block kernel",
 	"rt.aes_dec10": "block kernel", "rt.aes_dec12": "block kernel", "rt.aes_dec14": "block kernel",
 	"rt.aes_enc10x4": "block kernel", "rt.aes_enc12x4": "block kernel", "rt.aes_enc14x4": "block kernel",

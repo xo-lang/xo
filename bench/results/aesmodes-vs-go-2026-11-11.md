@@ -34,3 +34,37 @@ for the whole message and CTR runs 8 blocks interleaved. The next
 experiment is an intrinsic over a run of blocks with the keys loaded
 once (cpu.aes_enc10_n(st, kp, n), compiler/arm64), measured with
 `--ab` on this bench.
+
+## CTR through the CPU kernel (2026-11-11)
+
+Ctr.xor's whole 64 byte chunks now run in the CTR kernel AES-GCM
+already uses (rt.aes_ctr10/12/14: the round keys in registers, four
+blocks interleaved), when the counter's low 32 bits do not wrap in the
+call (the kernel steps those bits only). Same host and recipe, B built
+from branch lang3-aesn:
+
+| workload | Go wall | Xo wall | wall (95%) | before |
+|---|---|---|---|---|
+| ctr | 3.398 ms | 2.952 ms | 0.869 (0.818 to 0.941) | 1.475 |
+
+Against the previous build (A the old Xo, B the new): ctr 0.58 (0.573
+to 0.588).
+
+## CBC encryption kernel (2026-11-11)
+
+cbc_encrypt runs in a new arm64 kernel (cpu.aes_cbc_enc10/12/14, ssa
+a64aescbc.xo: the round keys in v16 to v30 for the whole message, one
+block a pass since each needs the last). Same host and recipe, B from
+branch lang3-aesn with both changes:
+
+| workload | Go wall | Xo wall | wall (95%) | before |
+|---|---|---|---|---|
+| block | 5.874 ms | 6.499 ms | 1.106 (1.077 to 1.694) | 1.074 |
+| cbcenc | 9.727 ms | 5.272 ms | 0.542 (0.537 to 0.552) | 1.128 |
+| cbcdec | 6.017 ms | 4.486 ms | 0.745 (0.735 to 0.752) | 0.735 |
+| ctr | 3.174 ms | 2.741 ms | 0.863 (0.822 to 0.939) | 1.475 |
+
+Against the previous build: cbcenc 0.478 (0.457 to 0.48). What is left
+is `block` (a single encrypt_block per call, 1.1: the call and the Bytes
+it returns), the next experiment there being the result written into a
+Str made at its final size with one store pair.

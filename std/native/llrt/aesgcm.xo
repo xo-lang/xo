@@ -712,6 +712,25 @@ pub fn (c: Cipher) cbc_encrypt(iv: Bytes, data: Bytes) -> Bytes {
   var out = rt.rs_with_cap(data.len())
   var p0 = rt.bytes_word(iv, 0)
   var p1 = rt.bytes_word(iv, 8)
+  let n0 = data.len()
+  if n0 > 0 && (c.hw & cpu.HW_AES) != 0 {
+    // the CPU's CBC kernel: the round keys held in registers for the
+    // whole message, as Go's cbc_arm64 encrypter
+    let ivl = [p0, p1]
+    let kp = addr(c.rk)
+    let q0 = raw.data(out)
+    let sp = raw.bytes_addr(data)
+    match c.nr {
+      10 => cpu.aes_cbc_enc10(q0, sp, kp, addr(ivl), n0)
+      12 => cpu.aes_cbc_enc12(q0, sp, kp, addr(ivl), n0)
+      _ => cpu.aes_cbc_enc14(q0, sp, kp, addr(ivl), n0)
+    }
+    keep(ivl)
+    keep(c.rk)
+    keep_bytes(data)
+    out = rt.rs_set_len(out, n0)
+    return out.bytes()
+  }
   // one io for the call, its words by address (io is this call's own:
   // encrypt_n works in place), one block of AES a block (ctr_o's pattern)
   var io = [0, 0, 0, 0, 0, 0, 0, 0]
@@ -738,9 +757,34 @@ pub fn (c: Cipher) ctr_xor(hi0: Int, lo0: Int, data: Bytes, from: Int, n: Int) -
   var out = rt.rs_with_cap(16 * n)
   var hi = hi0
   var lo = lo0
+  var b = 0
+  // whole 64 byte chunks through the CPU's CTR kernel (GCM's: the round
+  // keys held in registers, four blocks interleaved, as Go's
+  // ctr_arm64.s), when the counter's low 32 bits do not wrap in them
+  // (the kernel steps those bits only, GCM's inc32)
+  let wb = n & -4
+  if wb > 0 && (c.hw & cpu.HW_AES) != 0 && (lo & 0xFFFFFFFF) + wb <= 0x100000000 {
+    let iv = [hi.swap_bytes(), lo.swap_bytes()]
+    let kp = addr(c.rk)
+    let q0 = raw.data(out)
+    let sp = raw.bytes_addr(data).wrapping_add(from)
+    match c.nr {
+      10 => cpu.aes_ctr10(q0, sp, kp, addr(iv), 16 * wb)
+      12 => cpu.aes_ctr12(q0, sp, kp, addr(iv), 16 * wb)
+      _ => cpu.aes_ctr14(q0, sp, kp, addr(iv), 16 * wb)
+    }
+    keep(iv)
+    keep(c.rk)
+    keep_bytes(data)
+    out = rt.rs_set_len(out, 16 * wb)
+    lo = lo.wrapping_add(wb)
+    if lo.lt_unsigned(wb) {
+      hi = hi.wrapping_add(1)
+    }
+    b = wb
+  }
   var io = [0, 0, 0, 0, 0, 0, 0, 0]
   let p = addr(io)
-  var b = 0
   while b < n {
     let k = if n - b < 4 { n - b } else { 4 }
     for j in 0..k {

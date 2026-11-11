@@ -1,5 +1,23 @@
 # std/crypto changes
 
+## 2026-11-11: perf: AES CTR and CBC encryption through CPU kernels
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/aesmodes-vs-go-2026-11-11.md (ctr 1.48 and cbcenc 1.13 of Go's wall time: each block's rounds reloaded the round keys)
+- Go reference: crypto/internal/fips140/aes ctr_arm64.s and cbc.go (go1.26.1)
+- Timing: bench/results/aesmodes-vs-go-2026-11-11.md (second and third tables): ctr 1.48 to 0.86 of Go, cbcenc 1.13 to 0.54
+- Test: the aesmodes corpus gains 60 CTR rows whose counter's low 32 bits wrap inside long calls; aesmodes and aead corpora on go, arm64, llvm
+- Shipped in: not yet released
+
+`Ctr.xor` runs whole 64 byte chunks through the kernel AES-GCM uses
+(round keys held in registers, four blocks interleaved) when the
+counter's low 32 bits do not wrap in the call, and block by block
+otherwise.
+`cbc_encrypt` runs in a new arm64 kernel (`cpu.aes_cbc_enc10`, 12, 14)
+that holds the round keys in registers for the whole message; other
+targets run its body, one `aes_encNN` a block.
+
 ## 2026-11-11: feature: ML-KEM key encapsulation (Go's crypto/mlkem)
 
 - Kind: feature

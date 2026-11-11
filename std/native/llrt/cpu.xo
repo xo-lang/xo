@@ -458,6 +458,35 @@ fn aes_enc_x4(st: Int, rk: Int, nr: Int) {
   }
 }
 
+/// dst = the AES-CBC encryption of the n bytes (a multiple of 16) at src,
+/// with the nr + 1 round keys at rk and the IV at iv (16 bytes), the last
+/// ciphertext block stored back at iv; dst and src may be the same.
+/// arm64 and LLVM there run one loop with the round keys in vector
+/// registers (ssa a64aescbc.xo); elsewhere aes_encNN a block.
+pub fn aes_cbc_enc10(dst: Int, src: Int, rk: Int, iv: Int, n: Int) { aes_cbc_enc_soft(dst, src, rk, iv, n, 10) }
+
+pub fn aes_cbc_enc12(dst: Int, src: Int, rk: Int, iv: Int, n: Int) { aes_cbc_enc_soft(dst, src, rk, iv, n, 12) }
+
+pub fn aes_cbc_enc14(dst: Int, src: Int, rk: Int, iv: Int, n: Int) { aes_cbc_enc_soft(dst, src, rk, iv, n, 14) }
+
+/// The aes_cbc_enc functions' body where they are not lowered: the chain
+/// value in iv's 16 bytes, aes_encNN on it a block.
+fn aes_cbc_enc_soft(dst: Int, src: Int, rk: Int, iv: Int, n: Int, nr: Int) {
+  var i = 0
+  while i < n {
+    rt.mem_store(iv, 0, rt.mem_load(iv, 0, 8) ^ rt.mem_load(src, i, 8), 8)
+    rt.mem_store(iv, 8, rt.mem_load(iv, 8, 8) ^ rt.mem_load(src, i + 8, 8), 8)
+    match nr {
+      10 => aes_enc10(iv, rk)
+      12 => aes_enc12(iv, rk)
+      _ => aes_enc14(iv, rk)
+    }
+    rt.mem_store(dst, i, rt.mem_load(iv, 0, 8), 8)
+    rt.mem_store(dst, i + 8, rt.mem_load(iv, 8, 8), 8)
+    i += 16
+  }
+}
+
 /// dst = src xor AES-CTR's key stream for the n bytes (a multiple of 64)
 /// at src, with the nr + 1 round keys at rk and the first counter block
 /// at iv (16 bytes: a 12 byte nonce, then the counter, big endian), each

@@ -85,6 +85,35 @@ func aesModesCorpus() string {
 		}
 		fmt.Fprintf(&o, "  (%s, %s, [%s], %s, %s),\n", xq(h(kb)), xq(h(iv)), strings.Join(ss, ", "), xq(h(data)), xq(h(out)))
 	}
+	// (after the rows above, so they stay as they were) long calls with
+	// the counter's low 32 bits a few blocks below 2^32: the CPU kernel,
+	// which steps those bits only, must hand the carry back (2026-11-11)
+	for k := 0; k < 60; k++ {
+		kb, iv := key(), rb(16)
+		for i := 12; i < 16; i++ {
+			iv[i] = 0xff
+		}
+		iv[15] -= byte(r.Intn(24))
+		var sizes []int
+		total := 0
+		for c := 1 + r.Intn(3); c > 0; c-- {
+			s := []int{64, 65, 128, 200, 256, 300, 1000}[r.Intn(7)]
+			sizes = append(sizes, s)
+			total += s
+		}
+		data := rb(total)
+		b, _ := aes.NewCipher(kb)
+		st := cipher.NewCTR(b, iv)
+		out := make([]byte, total)
+		at := 0
+		var ss []string
+		for _, s := range sizes {
+			st.XORKeyStream(out[at:at+s], data[at:at+s])
+			at += s
+			ss = append(ss, fmt.Sprint(s))
+		}
+		fmt.Fprintf(&o, "  (%s, %s, [%s], %s, %s),\n", xq(h(kb)), xq(h(iv)), strings.Join(ss, ", "), xq(h(data)), xq(h(out)))
+	}
 	o.WriteString("]\n")
 	o.WriteString(aesModesTests)
 	return o.String()
