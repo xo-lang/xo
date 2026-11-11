@@ -11,3 +11,11 @@
 
 `sse.parser` and `feed` (I/O free), `reader` over any read function, `encode`, `comment`, `send` and `headers`
 (spec/std.md 79). The azure and openai SDKs keep their readers for now; they move onto it in a later release.
+
+## 2026-11-11: feature: sse.Source and sse.subscribe, reconnection
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0603 stage 1 (the client helper that reconnects with Last-Event-ID and the server's retry)
+- Test: internal/stdtest/testdata/corpus/sse (reconnection with Last-Event-ID and retry over FakeNet and FakeClock; a refused stream; giving up after max_retries) on LLVM and the Go backend; arm64 waits on the "reads virtual register before it is written" fix
+- Shipped in: not yet released

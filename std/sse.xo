@@ -416,3 +416,176 @@ pub fn send(w: http.BodyWriter, text: Str) -> () ! IoErr {
 pub fn headers() -> Map[Str, Str] {
   {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}
 }
+
+/// One connection attempt of a Source: the stream's bytes, or why there
+/// are none.
+pub enum Attempt[E, fx: Effects] {
+  /// Connected: read the event stream with this (as Reader's src).
+  Open(read: fn(Int) -> Bytes? ! E uses fx)
+  /// The connection failed: try again after the delay.
+  Retry(e: E)
+  /// The server ended the stream for good (HTTP 204): no reconnection.
+  Stop
+  /// The server refused the stream (another status or content type):
+  /// no reconnection.
+  Fail(e: E)
+}
+
+/// Why a Source stopped.
+pub enum SourceErr[E] {
+  /// The stream broke the format (a line over the limit).
+  Format(e: SseErr)
+  /// The server refused the stream.
+  Failed(e: E)
+  /// max_retries reconnections in a row failed; the last one's error.
+  GaveUp(e: E)
+}
+
+pub fn (e: SourceErr[E]) display() -> Str {
+  match e {
+    Format(f) => f.display()
+    Failed(_) => "sse: the server refused the stream"
+    GaveUp(_) => "sse: gave up reconnecting"
+  }
+}
+
+/// An event stream that reconnects, as the standard's EventSource: when
+/// the stream ends or breaks, it waits the reconnection time (retry_ms,
+/// then each `retry` field's) and connects again with the last event ID,
+/// which a stream event dispatched before the break left. An event cut
+/// off by the break is dropped.
+pub struct Source[E, fx: Effects] {
+  connect: fn(Str) -> Attempt[E, fx] uses fx
+  clock: Clock
+  retry_ms: Int
+  max_retries: Int
+  max_line: Int
+  last_id: Str
+  r: Reader[E, fx]? = None
+  /// attempts since the last event or open stream
+  failures: Int = 0
+  /// an event arrived on the current connection
+  got: Bool = false
+  done: Bool = false
+}
+
+/// A Source calling connect with the last event ID ("" for none) for each
+/// connection. max_retries: the failed attempts in a row (Retry, or a
+/// stream that ended without an event) after which next gives up; -1 never.
+pub fn source[E, fx: Effects](clock: Clock, connect: fn(Str) -> Attempt[E, fx] uses fx, retry_ms: Int = 3000, max_retries: Int = -1, last_event_id: Str = "", max_line: Int = MAX_LINE) -> Source[E, fx] {
+  if retry_ms < 0 {
+    fault("sse: retry_ms must not be negative")
+  }
+  Source{connect: connect, clock: clock, retry_ms: retry_ms, max_retries: max_retries, max_line: max_line, last_id: last_event_id}
+}
+
+/// The next event, connecting and reconnecting as needed; None once the
+/// server stopped the stream (Stop). An error ends the source.
+pub fn (var s: Source[E, fx]) next() -> Event? ! SourceErr[E] uses (fx, clock) {
+  while !s.done {
+    match s.r {
+      None => {
+        match (s.connect)(s.last_id) {
+          Attempt.Open(rd) => {
+            s.r = Some(reader(rd, max_line: s.max_line, last_event_id: s.last_id))
+            s.got = false
+          }
+          Attempt.Retry(e) => {
+            s.failures += 1
+            if s.max_retries >= 0 && s.failures > s.max_retries {
+              s.done = true
+              return Err(SourceErr.GaveUp(e))
+            }
+            s.clock.sleep(Duration.from_millis(s.retry_ms))
+          }
+          Attempt.Stop => s.done = true
+          Attempt.Fail(e) => {
+            s.done = true
+            return Err(SourceErr.Failed(e))
+          }
+        }
+      }
+      Some(r0) => {
+        var r = r0
+        let got = r.next()
+        s.last_id = r.last_event_id()
+        if let Some(ms) = r.retry() {
+          s.retry_ms = ms
+        }
+        match got {
+          Ok(Some(ev)) => {
+            s.r = Some(r)
+            s.got = true
+            s.failures = 0
+            return Ok(Some(ev))
+          }
+          Err(ReadErr.Format(e)) => {
+            s.done = true
+            return Err(SourceErr.Format(e))
+          }
+          Ok(None) | Err(ReadErr.Source(_)) => {
+            s.r = None
+            if !s.got {
+              s.failures += 1
+              if s.max_retries >= 0 && s.failures > s.max_retries {
+                s.done = true
+                return match got {
+                  Err(ReadErr.Source(e)) => Err(SourceErr.GaveUp(e))
+                  _ => Ok(None)
+                }
+              }
+            }
+            s.clock.sleep(Duration.from_millis(s.retry_ms))
+          }
+        }
+      }
+    }
+  }
+  Ok(None)
+}
+
+/// The last event ID so far (the next connection's Last-Event-ID).
+pub fn (s: Source[E, fx]) last_event_id() -> Str { s.last_id }
+
+/// The reconnection time in milliseconds now.
+pub fn (s: Source[E, fx]) retry_ms() -> Int { s.retry_ms }
+
+/// A Source of GET url on c, as EventSource connects: Accept:
+/// text/event-stream, Cache-Control: no-cache, Last-Event-ID when there is
+/// one, and headers. A response other than 200 with a text/event-stream
+/// content type fails it (Protocol with the status), 204 stops it; a
+/// connection that fails, or a body cut short, is retried.
+pub fn subscribe(c: http.Client, clock: Clock, url: Str, headers: Map[Str, Str] = {}, retry_ms: Int = 3000, max_retries: Int = -1, last_event_id: Str = "") -> Source[http.ClientErr, net.dial] {
+  source(clock, fn(id: Str) -> Attempt[http.ClientErr, net.dial] uses net.dial {
+    var req = http.new_request("GET", url, headers).with_header("Accept", "text/event-stream").with_header("Cache-Control", "no-cache")
+    if !id.is_empty() {
+      req = req.with_header("Last-Event-ID", id)
+    }
+    match c.open(req) {
+      Err(e) => {
+        match e {
+          http.ClientErr.InvalidUrl(_) => Attempt.Fail(e)
+          _ => Attempt.Retry(e)
+        }
+      }
+      Ok(st) => {
+        let h = st.head()
+        if h.status == 204 {
+          st.close()
+          return Attempt.Stop
+        }
+        var ct = ""
+        for (k, v) in h.headers {
+          if k.to_lower() == "content-type" {
+            ct = v.to_lower()
+          }
+        }
+        if h.status != 200 || !ct.starts_with("text/event-stream") {
+          st.close()
+          return Attempt.Fail(http.ClientErr.Protocol("sse: status ${h.status}, content type \"${ct}\""))
+        }
+        Attempt.Open(fn(n: Int) -> Bytes? ! http.ClientErr uses net.dial { st.read(n) })
+      }
+    }
+  }, retry_ms: retry_ms, max_retries: max_retries, last_event_id: last_event_id)
+}

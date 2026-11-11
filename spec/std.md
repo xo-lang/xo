@@ -8936,6 +8936,15 @@ fn encode(data: Str, event: Str = "", id: Str? = None, retry: Int? = None) -> St
 fn comment(text: Str = "") -> Str                   // `: text` lines, a keep-alive
 fn send(w: http.BodyWriter, text: Str) -> () ! IoErr   // write and flush
 fn headers() -> Map[Str, Str]                       // Content-Type: text/event-stream, Cache-Control: no-cache
+enum Attempt[E, fx: Effects] { Open(read: fn(Int) -> Bytes? ! E uses fx), Retry(e: E), Stop, Fail(e: E) }
+enum SourceErr[E] { Format(e: SseErr), Failed(e: E), GaveUp(e: E) }
+fn source[E, fx: Effects](clock: Clock, connect: fn(Str) -> Attempt[E, fx] uses fx, retry_ms: Int = 3000,
+    max_retries: Int = -1, last_event_id: Str = "", max_line: Int = MAX_LINE) -> Source[E, fx]
+fn (var s: Source[E, fx]) next() -> Event? ! SourceErr[E] uses (fx, clock)
+fn (s: Source[E, fx]) last_event_id() -> Str
+fn (s: Source[E, fx]) retry_ms() -> Int
+fn subscribe(c: http.Client, clock: Clock, url: Str, headers: Map[Str, Str] = {}, retry_ms: Int = 3000,
+    max_retries: Int = -1, last_event_id: Str = "") -> Source[http.ClientErr, net.dial]
 ```
 
 Parsing follows the standard: lines end at CRLF, LF or a lone CR, also when a chunk splits a CRLF; a UTF-8 BOM at the
@@ -8952,6 +8961,13 @@ is any read function, such as `http.BodyReader.read` or `http.ClientStream.read`
 from the standard, itself checked against the web-platform-tests eventsource format cases and against
 github.com/tmaxmax/go-sse on seeded random streams (testdata/corpus/sse, each stream fed whole, a byte at a time and in
 random chunks).
+
+`Source` reconnects as the standard's EventSource: when a stream ends or breaks it sleeps the reconnection time
+(`retry_ms`, then each `retry` field's) on the clock and connects again with the last event ID; an event cut off by
+the break is dropped. `subscribe` connects with GET, `Accept: text/event-stream`, `Cache-Control: no-cache` and
+`Last-Event-ID`; 204 stops the source, another status or content type fails it, a failed connection or a body cut
+short is retried, up to `max_retries` failed attempts in a row (-1: no limit; a stream that ends without an event
+counts as one).
 
 ## 80. std/jsonrpc
 

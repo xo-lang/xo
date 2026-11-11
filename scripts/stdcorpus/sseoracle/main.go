@@ -418,6 +418,7 @@ func main() {
 // cases (BSD 3-Clause) and github.com/tmaxmax/go-sse v0.12.0 (MIT).
 // Do not edit: regenerate with go run ./scripts/stdcorpus sse.
 
+use std/http
 use std/sse
 
 /// The events of chunks fed in order, then the stream's state, in the
@@ -579,5 +580,61 @@ test "comment writes one comment line for each line" {
 test "the event stream headers" {
   expect(sse.headers().get("Content-Type")) == Some("text/event-stream")
   expect(sse.headers().get("Cache-Control")) == Some("no-cache")
+}
+
+test "subscribe reconnects with Last-Event-ID and the server's retry" {
+  let calls = Mutex[Int].new(0)
+  os.net.handle("GET https://ev.test/s", fn(req: http.Request) -> http.Response {
+    let n = calls.with(fn(var c: Int) -> Int {
+      c += 1
+      c
+    })
+    let body = if n == 1 {
+      "retry: 50\nid: 1\ndata: a\n\nid: 2\ndata: b\n\ndata: cut"
+    } else if n == 2 {
+      "data: c\n\n"
+    } else {
+      ""
+    }
+    if n >= 3 {
+      return http.text(204, "")
+    }
+    http.text(200, body).with_header("Content-Type", "text/event-stream")
+  })
+  var s = sse.subscribe(http.client(os.net), os.clock, "https://ev.test/s")
+  var got: List[Str] = []
+  while true {
+    match s.next() {
+      Ok(Some(ev)) => got.push("${ev.data}@${ev.id}")
+      Ok(None) => break
+      Err(e) => {
+        got.push("err ${e.display()}")
+        break
+      }
+    }
+  }
+  expect(got) == ["a@1", "b@2", "c@2"]
+  var lids: List[Str] = []
+  for r in os.net.requests() {
+    lids.push(r.header("Last-Event-ID") ?? "-")
+  }
+  expect(lids) == ["-", "2", "2"]
+  expect(os.clock.sleeps()) == [50ms, 50ms]
+}
+
+test "subscribe: a refused stream fails, connect failures give up after max_retries" {
+  os.net.handle("GET https://ev.test/html", fn(_r: http.Request) -> http.Response { http.text(200, "<p>") })
+  var s = sse.subscribe(http.client(os.net), os.clock, "https://ev.test/html")
+  match s.next() {
+    Err(sse.SourceErr.Failed(_)) => {}
+    _ => expect(false) == true
+  }
+  os.net.fail("GET https://ev.test/down", http.ClientErr.Timeout)
+  var d = sse.subscribe(http.client(os.net), os.clock, "https://ev.test/down", retry_ms: 10, max_retries: 2)
+  match d.next() {
+    Err(sse.SourceErr.GaveUp(http.ClientErr.Timeout)) => {}
+    _ => expect(false) == true
+  }
+  expect(os.clock.sleeps()) == [10ms, 10ms]
 }
 `
