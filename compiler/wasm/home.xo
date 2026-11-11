@@ -1274,12 +1274,7 @@ fn (var g: Gen) rc_addr_fn(op: Str, t: Int) -> Str {
       var off = 1
       for fd in v.fields {
         if g.heap(fd.ty) {
-          for (k, l) in g.leaves(fd.ty).indexed() {
-            g.get(0)
-            g.e("i64.load offset=${8 * (off + k)}")
-            g.from_word(l)
-          }
-          g.e("call ${g.rc_fn(op, fd.ty)}")
+          g.word_rc(op, fd.ty, off)
         }
         off += g.nleaves(fd.ty)
       }
@@ -1317,6 +1312,31 @@ fn (var g: Gen) drop_mem_fields_fn(t: Int, fs: List[Int]) -> Str {
   g.end_helper(name, ["i32"], [], "drop fields ${ks.join(" ")} of ${g.m.types[t].name} in memory")
   g.cur = saved
   name
+}
+
+/// Retains or releases the value of type t stored as words (8 bytes a
+/// leaf, an enum's payload) from word off of the memory at local 0: its
+/// leaves loaded a word each and passed to the leaf helper, or, for a
+/// struct or tuple past WIDE_RC leaves, field by field, as rc_addr_fn
+/// does in a packed value. The leaf helper of a wide one took more than
+/// the 1,000 parameters an engine accepts (rc_large_offsets' Result[D,
+/// Str], D of 2,000 leaves; 4d2a5c8b3 loaded every payload leaf).
+fn (var g: Gen) word_rc(op: Str, t: Int, off: Int) {
+  if g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple && g.nleaves(t) > WIDE_RC {
+    let tys = g.field_tys(t)
+    for i in 0..tys.len() {
+      if g.heap(tys[i]) {
+        g.word_rc(op, tys[i], off + g.field_off(t, i))
+      }
+    }
+    return
+  }
+  for (k, l) in g.leaves(t).indexed() {
+    g.get(0)
+    g.e("i64.load offset=${8 * (off + k)}")
+    g.from_word(l)
+  }
+  g.e("call ${g.rc_fn(op, t)}")
 }
 
 /// Whether a value of type t is retained and released through its address
