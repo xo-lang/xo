@@ -746,6 +746,8 @@ test "subscribe reconnects with Last-Event-ID and the server's retry" {
   }
   expect(lids) == ["-", "2", "2"]
   expect(os.clock.sleeps()) == [50ms, 50ms]
+  // the server's retry replaced the default reconnection time
+  expect(s.retry_ms()) == 50
 }
 
 test "subscribe: a refused stream fails, connect failures give up after max_retries" {
@@ -757,6 +759,7 @@ test "subscribe: a refused stream fails, connect failures give up after max_retr
   }
   os.net.fail("GET https://ev.test/down", http.ClientErr.Timeout)
   var d = sse.subscribe(http.client(os.net), os.clock, "https://ev.test/down", retry_ms: 10, max_retries: 2)
+  expect(d.retry_ms()) == 10
   match d.next() {
     Err(sse.SourceErr.GaveUp(http.ClientErr.Timeout)) => {}
     _ => expect(false) == true
