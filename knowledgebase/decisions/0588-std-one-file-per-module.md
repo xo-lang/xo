@@ -293,3 +293,11 @@ commit (the lead cuts it).
 - 2026-11-10: `std/mime` merged; its Go is generated into std/rt (std/rt_hosted.txt, decision 0597 part 3).
 - 2026-11-10: `std/multipart` merged, rt-hosted, with its public streaming `Reader` (decision 0597 part 3).
 - 2026-11-10: `std/binary` merged (decision 0597 part 2: rewritten with prelude operations, faster).
+- `std/htmlent` merged (2026-11-10): the entity tables and lookups move
+  into std/htmlent.xo (ENTITY and ENTITY2 now private; REPLACEMENT,
+  LONGEST_ENTITY_WITHOUT_SEMICOLON, entity_of and entity2_of stay public
+  for std/html and std/htmltok), std/native/htmlent.xo is removed, and
+  std/native/html.xo and htmltok.xo `use std/htmlent`. htmlent leaves
+  std/go_compiled.txt (a merged module is generated as its own package).
+  This lifts the XO0601 limit above for html and htmltok.
+

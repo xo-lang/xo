@@ -1,5 +1,17 @@
 # std/html changes
 
+## 2026-11-10: internal: the entity tables move to the merged std/htmlent
+
+- Kind: internal
+- Commit: this push
+- Found by: decision 0588 (one file per std module); htmlent blocked merging std/html and std/htmltok (XO0601)
+- Go reference: html entity.go (go1.26.1)
+- Test: `xo test --std-module=html` and `htmltok` (native, LLVM); the htmltok and htmlparse corpora on go, arm64, llvm
+- Timing: none (no code change)
+- Shipped in: not yet released
+
+std/native/htmlent.xo is removed; its tables and lookups are std/htmlent.xo's, and the html and htmltok natives `use std/htmlent`. Output unchanged.
+
 ## 2026-11-08: perf: entity_of answers the common references before the search
 
 - Kind: perf

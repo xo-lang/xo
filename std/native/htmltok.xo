@@ -5,7 +5,7 @@
 // state are Go's. The script data states are a numbered loop in place of
 // Go's gotos.
 use std/htmltok
-use native/htmlent as nhtml
+use std/htmlent as nhtml
 
 /// The tokenizer: `src` the input, `rs`..`re` the raw span of the current
 /// token, `ds`..`de` its data span, `attr` four offsets per attribute (key

@@ -4,7 +4,7 @@
 // generated at the end of this file). The same results on every input.
 use native/llrt/raw
 use native/rt
-use native/htmlent as ent
+use std/htmlent as ent
 
 
 // Go's EscapeString is a byteStringReplacer: one pass sizes the result,

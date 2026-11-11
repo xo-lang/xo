@@ -23,3 +23,4 @@ std/path
 std/mime
 std/multipart
 std/binary
+std/htmlent
