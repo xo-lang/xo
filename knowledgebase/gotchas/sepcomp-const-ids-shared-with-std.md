@@ -32,7 +32,10 @@ a slot: whichever was built first was the other's value.
 The program's side of a separately compiled build numbers its constants
 from ssa.CONST_PROGRAM_BASE (2048); the driver fails a std object of 2048
 constants or more. internal/arm64 TestSepcompConstIds builds std's
-variants and runs a program of five constants that calls mime.
+variants, runs a program of five constants that calls mime (the fault),
+and runs `xo test --std-module=mime` (the wrong values without a fault);
+TestSepcompConstCap builds a std of 2205 such constants and wants the
+build refused (the xo before the fix built it without a word).
 
 ## How to avoid
 

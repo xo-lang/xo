@@ -496,8 +496,9 @@ func TestSepcompDebugInfo(t *testing.T) {
 // constants past std's (ssa show.xo const_base). From 0 they shared the
 // process's constants table with std's store, so a program with five
 // collection constants that called mime.detect_content_type faulted
-// (SIGTRAP; 0.44.0 to 0.48.0 with more constants, SIGSEGV or a wrong
-// value in other orders; gotchas/sepcomp-const-ids-shared-with-std.md).
+// (SIGTRAP; 0.44.0 to 0.48.0 with more constants, SIGSEGV in other
+// orders), and `xo test --std-module=mime` failed by value without a
+// fault (gotchas/sepcomp-const-ids-shared-with-std.md).
 func TestSepcompConstIds(t *testing.T) {
 	skipWholeTier(t)
 	if !native() {
@@ -549,6 +550,27 @@ func TestSepcompConstIds(t *testing.T) {
 	}
 	if err != nil || !strings.Contains(log, "15\ntext/xml; charset=utf-8\nc4\n") {
 		t.Fatalf("xo run, want 15, text/xml; charset=utf-8, c4: %v\n%s", err, log)
+	}
+	// the silent case: mime built from source over std's test variant read
+	// std's constants as its own and returned wrong strings ("", another
+	// input's hex) with no fault, so its tests failed by value
+	for _, c := range []string{"0", "1"} {
+		cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--test", "--conc="+c))
+		cmd.Env = env
+		if out, err := stdRun(cmd.CombinedOutput); err != nil {
+			t.Fatalf("xo dev stdcache --test --conc=%s: %v\n%s", c, err, out)
+		}
+	}
+	mt := testtmp.Guard(exec.Command(xo, "test", "--backend=arm64", "--phase-times", "--std-module=mime"))
+	mt.Dir = prog
+	mt.Env = env
+	out, err = mt.CombinedOutput()
+	log = string(out)
+	if !strings.Contains(log, "test=1 reused") {
+		t.Fatalf("xo test --std-module=mime, want std's test variant reused:\n%s", log)
+	}
+	if err != nil || !strings.Contains(log, " 0 failed") || strings.Contains(log, "fatal error") {
+		t.Fatalf("xo test --std-module=mime, want every test passing by value: %v\n%s", err, log)
 	}
 }
 
@@ -921,4 +943,55 @@ func stdDirList(cache string) string {
 		}
 	}
 	return b.String()
+}
+
+// TestSepcompConstCap: a separately compiled program's constants number
+// from 2048 (TestSepcompConstIds), so std's store must stay below that:
+// building a std of 2048 or more constants of collection types fails,
+// naming the count, instead of letting a program's constants share std's
+// slots again (gotchas/sepcomp-const-ids-shared-with-std.md).
+func TestSepcompConstCap(t *testing.T) {
+	skipWholeTier(t)
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds std's object")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-sepcap-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	std := filepath.Join(work, "std")
+	if err := os.CopyFS(std, os.DirFS(filepath.Join(root, "std"))); err != nil {
+		t.Fatal(err)
+	}
+	mime := filepath.Join(std, "mime.xo")
+	b, err := os.ReadFile(mime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var add strings.Builder
+	for k := 0; k < 2100; k++ {
+		fmt.Fprintf(&add, "\nconst ZZ%d: List[Int] = [%d, %d]\n\n/// test only\npub fn zz_%d() -> Int { ZZ%d.len() }\n", k, k, k+1, k, k)
+	}
+	if err := os.WriteFile(mime, append(b, add.String()...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
+	cmd.Dir = work
+	cmd.Env = append(os.Environ(), "XO_STD="+std, "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BIN_CACHE="+filepath.Join(work, "bin"), "XO_SEPCOMP_BG=0")
+	out, _ := stdRun(cmd.CombinedOutput)
+	if !strings.Contains(string(out), "constants of collection types, more than the 2048") {
+		t.Fatalf("xo dev stdcache over a std of more than 2048 constants: want the build refused naming the count:\n%s", out)
+	}
 }
