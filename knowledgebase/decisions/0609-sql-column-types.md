@@ -1,6 +1,6 @@
 # 0609: column type metadata in std/sql (Rows.column_types)
 
-Status: Proposed (Xo Lang 3, 2026-11-11, for the owner)
+Status: Accepted (owner, 2026-11-11; Xo Lang 3)
 
 ## Context
 

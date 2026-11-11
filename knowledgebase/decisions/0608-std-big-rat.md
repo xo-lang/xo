@@ -1,6 +1,6 @@
 # 0608: BigRat, Go's math/big Rat as an immutable value in std/big
 
-Status: Proposed (Xo Lang 3, 2026-11-11, for the owner)
+Status: Accepted (owner, 2026-11-11; Xo Lang 3)
 
 ## Context
 

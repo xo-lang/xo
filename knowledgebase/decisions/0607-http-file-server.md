@@ -1,6 +1,6 @@
 # 0607: http.file_server, Go's FileServer over an Fs
 
-Status: Proposed (Xo Lang 3, 2026-11-11, for the owner)
+Status: Accepted (owner, 2026-11-11; Xo Lang 3)
 
 ## Context
 

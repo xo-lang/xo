@@ -1,6 +1,6 @@
 # 0606: Random distributions, look_path, and URL user info as free functions and defaulted fields
 
-Status: Proposed (Xo Lang 3, 2026-11-11, for the owner)
+Status: Accepted (owner, 2026-11-11; Xo Lang 3)
 
 ## Context
 

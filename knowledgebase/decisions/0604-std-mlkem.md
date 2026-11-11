@@ -1,6 +1,6 @@
 # 0604: std/crypto ML-KEM, crypto/mlkem as a public API
 
-Status: Proposed (Xo Lang 3, 2026-11-11, for the owner)
+Status: Accepted (owner, 2026-11-11; Xo Lang 3)
 
 ## Context
 

@@ -1,6 +1,6 @@
 # 0605: std/crypto AES blocks and the CBC and CTR modes
 
-Status: Proposed (Xo Lang 3, 2026-11-11, for the owner)
+Status: Accepted (owner, 2026-11-11; Xo Lang 3)
 
 ## Context
 
