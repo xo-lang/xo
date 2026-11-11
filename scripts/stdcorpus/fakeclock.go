@@ -11,6 +11,7 @@ import "strings"
 func fakeclockCorpus() string {
 	var o strings.Builder
 	o.WriteString(header("spec/std.md 8.2 (FakeClock)"))
+	o.WriteString("use std/time\n")
 	o.WriteString(`
 test "the test clock starts at 2026-01-01T00:00:00Z, set moves it, advance moves it by d" {
   expect(os.clock.now().format_rfc3339()) == "2026-01-01T00:00:00Z"
@@ -20,6 +21,23 @@ test "the test clock starts at 2026-01-01T00:00:00Z, set moves it, advance moves
   os.clock.advance(Duration.from_secs_int(5))
   expect(os.clock.now().unix()) == 1700000005
   expect(os.clock.since(from).nanos()) == 5000000000
+}
+
+test "a ticker under the test clock ticks each period, and reset restarts it one new period from now" {
+  let start = os.clock.now()
+  let tk = time.ticker(os.clock, 50ms)
+  let t1 = tk.wait()
+  let t2 = tk.wait()
+  expect((t1 - start).millis()) == 50
+  expect((t2 - start).millis()) == 100
+  // Go's Reset: the next tick one new period after the reset, not on the
+  // old schedule
+  os.clock.sleep(10ms)
+  let r = tk.reset(20ms)
+  let t3 = r.wait()
+  let t4 = r.wait()
+  expect((t3 - start).millis()) == 130
+  expect((t4 - start).millis()) == 150
 }
 
 test "a sleep moves the clock to its deadline, and sleeps lists every request in order" {

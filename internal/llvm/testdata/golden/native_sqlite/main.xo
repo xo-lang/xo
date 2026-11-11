@@ -1,7 +1,8 @@
 // std/sqlite (decision 0534): an in memory database through
 // sql.open_driver: DDL, binds of every value kind, rows, a blob round trip,
 // the portable constraint codes, a missing table, a syntax error, and a
-// committed and a rolled back transaction.
+// committed and a rolled back transaction, each inside one, and the DSN's
+// parse (sqlite.config).
 use std/sql
 use std/sqlite
 
@@ -51,7 +52,26 @@ fn main(os: Os) ! {
   let tx2 = db.begin()?
   tx2.exec("UPDATE users SET score = 2 WHERE name = 'cy'", [])?
   tx2.commit()?
+  // each inside a transaction sees the transaction's own change
+  let tx3 = db.begin()?
+  tx3.exec("UPDATE users SET score = 3 WHERE name = 'cy'", [])?
+  let seen: Mutex[List[Str]] = Mutex.new([])
+  tx3.each("SELECT name, score FROM users WHERE score IS NOT NULL ORDER BY name", [], fn(row) {
+    let line = "${row.str("name")?} ${opt(row.float_opt("score")?)}"
+    seen.with(fn(var l) { l.push(line) })
+  })?
+  os.stdio.println("in tx: ${seen.with(fn(l) { l.join(", ") })}")
+  tx3.rollback()?
   for row in db.query("SELECT name, score FROM users WHERE name <> 'ada' ORDER BY name", [])? {
     os.stdio.println("after tx: ${row.str("name")?} ${opt(row.float_opt("score")?)}")
+  }
+  // the DSN as mattn/go-sqlite3 reads it
+  for dsn in [":memory:", "app.db", "file:app.db?mode=ro&cache=shared&_busy_timeout=250&_fk=1&_journal=wal&_sync=normal",
+      "file:?mode=memory", "file:", "app.db?_timeout=x", "app.db?_timeout=-1", "app.db?_journal_mode=fast",
+      "app.db?_sync=4", "app.db?_fk=maybe", "app.db?_cache=1"] {
+    match sqlite.config(dsn) {
+      Ok(c) => os.stdio.println("config ${dsn}: path=${c.path} uri=${c.uri} keys=${c.keys.join("&")} busy=${c.busy_ms} pragmas=${c.pragmas.join("; ")}")
+      Err(e) => os.stdio.println("config ${dsn}: ${e}")
+    }
   }
 }

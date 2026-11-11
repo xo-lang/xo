@@ -133,7 +133,21 @@ pub fn (img: Image) at(x: Int, y: Int) -> Int {
         (r << 24) | (g << 16) | (b << 8) | a
       }
     }
-    Model.NRGBA64 => (Int(pix[at]) << 24) | (Int(pix[at + 2]) << 16) | (Int(pix[at + 4]) << 8) | Int(pix[at + 6])
+    Model.NRGBA64 => {
+      // Go's NRGBAModel goes through RGBA(): premultiplied (c * a / 0xffff),
+      // then divided again by a, which can lose one in the high byte
+      let a = (Int(pix[at + 6]) << 8) | Int(pix[at + 7])
+      if a == 65535 {
+        (Int(pix[at]) << 24) | (Int(pix[at + 2]) << 16) | (Int(pix[at + 4]) << 8) | 255
+      } else if a == 0 {
+        0
+      } else {
+        let r = (((Int(pix[at]) << 8) | Int(pix[at + 1])) * a / 65535 * 65535 / a) >> 8
+        let g = (((Int(pix[at + 2]) << 8) | Int(pix[at + 3])) * a / 65535 * 65535 / a) >> 8
+        let b = (((Int(pix[at + 4]) << 8) | Int(pix[at + 5])) * a / 65535 * 65535 / a) >> 8
+        (r << 24) | (g << 16) | (b << 8) | (a >> 8)
+      }
+    }
     Model.RGBA64 => {
       let a = (Int(pix[at + 6]) << 8) | Int(pix[at + 7])
       if a == 65535 {

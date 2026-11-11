@@ -11,3 +11,14 @@
 - Shipped in: not yet released
 
 A new merged, pure module: canonical_key, trim, Header (every value, field order), Reader (read_line, read_continued_line, read_header, read_code_line, read_response, read_dot_bytes, read_dot_lines, rest) and dot_encode, with Go's error texts (TextErr). spec/std.md 77.
+
+## 2026-11-11: fix: trim strips carriage return and line feed (Go's TrimString)
+
+- Kind: fix
+- Commit: this commit
+- Found by: the resolved std API coverage check: the new HEADER_OPS and TRIMS corpus tables
+- Go reference: net/textproto textproto.go TrimString, isASCIISpace (go1.26.1)
+- Test: testdata/corpus/textproto TRIMS (against Go's TrimString)
+- Shipped in: not yet released
+
+`trim` stripped spaces and tabs only. Go's TrimString strips ASCII space, tab, carriage return and line feed from both ends.

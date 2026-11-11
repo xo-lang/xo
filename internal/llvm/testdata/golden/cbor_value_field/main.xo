@@ -1,0 +1,17 @@
+// derive Cbor with a cbor.Value field (Go's interface{} field under
+// fxamacker/cbor): the field's value is written as it is
+// (cbor.from_value) and read back as the item it was (cbor.to_value).
+use std/cbor
+
+struct Envelope {
+  k: Str
+  v: cbor.Value
+} derive Cbor
+
+fn main(os: Os) {
+  for v in [cbor.Value.Array([cbor.Value.Uint(1), cbor.Value.TextString("x")]), cbor.Value.Null, cbor.Value.Nint(4), cbor.Value.Map([(cbor.Value.TextString("a"), cbor.Value.Bool(true))])] {
+    let data = cbor.marshal(Envelope{k: "a", v: v}).ok() ?? fault("marshal")
+    let back = cbor.unmarshal[Envelope](data, true).ok() ?? fault("unmarshal")
+    os.stdio.println("${data.to_hex()} same ${back.v == v} k ${back.k}")
+  }
+}

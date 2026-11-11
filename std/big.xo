@@ -180,6 +180,7 @@ fn (x: BigFloat) quo(y: BigFloat, prec: Int = 0) -> BigFloat
 /// The square root at prec bits (0: x.prec) by x's mode, Go's Newton
 /// iteration; a fault when x < 0 (Go's Sqrt).
 fn (x: BigFloat) sqrt(prec: Int = 0) -> BigFloat
+/// -x and |x| at x's precision and mode (Go's Neg and Abs into a copy of x).
 fn (x: BigFloat) neg() -> BigFloat
 fn (x: BigFloat) abs() -> BigFloat
 /// -1, 0 or 1 as x is below, equal to or above y; -0 equals 0 (Go's Cmp).

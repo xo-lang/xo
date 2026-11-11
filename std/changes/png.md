@@ -24,3 +24,14 @@ display (std/rt/png.go) is gone, the port's is used.
 New module. `png.decode` gives the image type Go's decoder gives, with Go's pix layout and error
 texts; `png.encode` writes the bytes Go's encoder writes. 36,000 fresh fuzz cases (six seeds) agree with Go on
 arm64 and LLVM.
+
+## 2026-11-11: fix: Image.at of an NRGBA64 image is Go's NRGBAModel conversion
+
+- Kind: fix
+- Commit: this commit
+- Found by: the resolved std API coverage check (TestStdAPICovered): `Image.at` had no test; the new corpus cases found the difference
+- Go reference: image/color NRGBAModel and NRGBA64.RGBA (go1.26.1)
+- Test: testdata/corpus/png "at reads Go's pixel, as an NRGBA word" (each corner and a seeded point of 160 Go encoded images)
+- Shipped in: not yet released
+
+`at` took the high byte of each 16 bit channel. Go's NRGBAModel goes through `RGBA()`, which premultiplies by alpha (`c * a / 0xffff`), and divides by alpha again, so a channel of a pixel that is not opaque can be one lower. `at` now does the same.

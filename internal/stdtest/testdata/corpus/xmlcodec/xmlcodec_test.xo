@@ -1400,6 +1400,14 @@ test "build with open_path, leaf, chardata and comment is Go's printer" {
   expect(first_bad3(bad)) == []
 }
 
+test "build with child places a nested element under its parents, renamed (Go's printer for a struct field)" {
+  let inner = xml.Element{name: xml.Name{space: "", local: "ignored"}, attrs: [xmlcodec.attr("x", "1")], children: [xml.Node.Text("t & u")]}
+  let pieces = [xmlcodec.leaf(["a"], "b", "v"), xmlcodec.child(["a"], "inner", inner), xmlcodec.child([], "top", inner)]
+  // the inner element keeps its attributes and children and takes the
+  // field's name; it shares the open parent a with the leaf before it
+  expect(built_text(xmlcodec.build("r", [], pieces))) == "S(:r[]) S(:a[]) S(:b[]) T(v) E(:b) S(:inner[:x=1]) T(t & u) E(:inner) E(:a) S(:top[:x=1]) T(t & u) E(:top) E(:r)"
+}
+
 test "a Writer given the pieces writes the text build's tree encodes to" {
   var bad: List[(Str, Str, Str)] = []
   for (name, attrs, pieces, _want) in PIECE_ROWS {

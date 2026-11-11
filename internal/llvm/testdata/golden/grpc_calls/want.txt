@@ -9,6 +9,7 @@ slow: err rpc error: code = DeadlineExceeded desc = context deadline exceeded
 the server cancelled the handler
 count: ["0", "1", "2"]
 sum: 10
+trailer: body 6 x-trace=t1 grpc-status=0
 bidi: ["m0", "m1", "m2", "rpc error: code = Aborted desc = done"]
 done
 --- stderr

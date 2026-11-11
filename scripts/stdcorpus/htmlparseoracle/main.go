@@ -432,6 +432,17 @@ func xoCorpus(goVersion string) string {
 	}
 	o.WriteString("]\n\n")
 	fmt.Fprintf(&o, "const RENDER_COUNT: Int = %d\n", m)
+	o.WriteString("\n/// (s, Go's html.EscapeString)\nconst ESCAPES: List[(Str, Str)] = [\n")
+	er := rand.New(rand.NewSource(659))
+	parts := []string{"&", "'", "<", ">", "\"", "\r", "\n", "a", " ", "é", "&amp;", "\t", "日"}
+	for i := 0; i < 300; i++ {
+		var b strings.Builder
+		for j, k := 0, er.Intn(7); j < k; j++ {
+			b.WriteString(parts[er.Intn(len(parts))])
+		}
+		fmt.Fprintf(&o, "  (\"%s\", \"%s\"),\n", q(b.String()), q(html.EscapeString(b.String())))
+	}
+	o.WriteString("]\n")
 	o.WriteString(xoTests)
 	return o.String()
 }
@@ -486,6 +497,12 @@ test "tree dumps equal Go's x/net/html" {
       // the first difference shows in the failure
       expect("input ${q(input)} context ${ns} ${tag} scripting ${scripting}\\n${got}") == "input ${q(input)} context ${ns} ${tag} scripting ${scripting}\\n${want}"
     }
+  }
+}
+
+test "escape is Go's html.EscapeString" {
+  for (s, want) in ESCAPES {
+    expect("${q(s)}: ${q(htmlparse.escape(s))}") == "${q(s)}: ${q(want)}"
   }
 }
 

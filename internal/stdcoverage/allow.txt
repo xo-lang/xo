@@ -54,8 +54,26 @@ http.serve_component  a wasi:http component runs under a host, not as a program:
 # debug a program. dbg_wait blocks its own thread in mach_msg or wait4
 # with a timeout, not the event loop (compiler/ssa/waits.xo NO_WAIT).
 internal.dbg_*	reached only by xo debug, tested by cmd/xo TestDebug*
-amqp.Connection.abort	tested by the in-process peer tests of std/native/amqp_test.xo (a loopback listener), not a corpus
-amqp.Connection.end_session	tested by the in-process peer tests of std/native/amqp_test.xo, not a corpus
-amqp.Connection.peer_*	accessors read in the in-process peer tests of std/native/amqp_test.xo, not a corpus
+amqp.Connection.abort	tested by the in-process peer tests of std/amqptest_test.xo (a loopback listener), not a corpus
+amqp.Connection.end_session	tested by the in-process peer tests of std/amqptest_test.xo, not a corpus
+amqp.Connection.peer_*	accessors read in the in-process peer tests of std/amqptest_test.xo, not a corpus
 amqp.Receiver.reject	the settle path of accept (tested by the peer tests) with the Rejected state, whose frame bytes the corpus covers
 amqp.Receiver.release	the settle path of accept (tested by the peer tests) with the Released state, whose frame bytes the corpus covers
+amqp.Connection.send	the frame layer under Sender and Receiver, called by the in-process peer tests of std/amqptest_test.xo (`xo test --std-module=amqp`, not a program the sweep checks)
+amqp.Connection.recv	the frame layer under Sender and Receiver, called by the peer tests of std/amqptest_test.xo
+amqp.Connection.close	closes the peer test connections of std/amqptest_test.xo; a corpus has no AMQP peer
+
+# The compiler's own use of std: reached by xo builds, not by a program.
+internal.SharedLock.unlock	the Go build cache lock compiler/xo gobackend.xo holds (hold_go_cache, release_go_cache)
+
+# A test's `expect(x) == y` is the checker's builtin (compiler/check call.xo),
+# so no program's call resolves to the declaration that documents it.
+testing.expect	the checker's builtin in a test (compiler/check call.xo); every corpus uses it
+
+# std/go's handles need a Go module that hands Xo a channel or calls an Xo
+# callback; cmd/xo's tests build those from testdata/goproxy's synthetic
+# modules, which a program directory cannot require.
+go.Recv.each	cmd/xo TestUseGoChannels (example.com/chans)
+go.Recv.recv	cmd/xo TestUseGoChannels (example.com/chans)
+go.Recv.try_recv	cmd/xo TestUseGoChannels (example.com/chans)
+go.error	cmd/xo gocallback_test.go's callbacks returning Err(go.error(...)) (example.com/cberr)

@@ -144,6 +144,19 @@ func main() {
 	}
 	o.WriteString("]\n\n")
 	fmt.Fprintf(&o, "const COUNT: Int = %d\n", n)
+	// Buffered after each token of a whole input (the reader gives it all
+	// at once, so what is buffered is the input after the token's raw
+	// text), in mode 0, for the curated inputs
+	o.WriteString("\n/// (input, Go's Buffered after each Next, joined by |)\nconst BUFFERED: List[(Str, Str)] = [\n")
+	for _, in := range curated {
+		z := html.NewTokenizerFragment(strings.NewReader(in), ctx[0])
+		var bs []string
+		for z.Next() != html.ErrorToken {
+			bs = append(bs, string(z.Buffered()))
+		}
+		fmt.Fprintf(&o, "  (\"%s\", \"%s\"),\n", q(in), q(strings.Join(bs, "|")))
+	}
+	o.WriteString("]\n")
 	o.WriteString(xoTests)
 	os.Stdout.WriteString(o.String())
 }
@@ -225,6 +238,17 @@ test "token streams equal Go's x/net/html Tokenizer" {
       // the first difference shows in the failure
       expect("input ${q(input)} mode ${mode} max ${max_buf}\\n${got}") == "input ${q(input)} mode ${mode} max ${max_buf}\\n${want}"
     }
+  }
+}
+
+test "buffered is what follows the token, as Go's Buffered over a whole input" {
+  for (input, want) in BUFFERED {
+    var z = htmltok.tokenizer_fragment(input, "")
+    var bs: List[Str] = []
+    while z.next() != htmltok.TokenType.Error {
+      bs.push(z.buffered())
+    }
+    expect("${q(input)}: ${q(bs.join("|"))}") == "${q(input)}: ${q(want)}"
   }
 }
 

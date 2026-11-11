@@ -1,6 +1,6 @@
 // gRPC over HTTP/2 (decision 0535): a server and a client in one program over h2c with prior knowledge: a unary
 // call with request metadata, a status error (the message percent encoded on the wire), an unknown method, and
-// server streaming, client streaming and a bidirectional echo.
+// server streaming, client streaming, a bidirectional echo, and a handler's trailer.
 use std/grpc
 use std/http
 
@@ -41,6 +41,10 @@ fn handlers(clock: Clock, canceled: Chan[Int]) -> grpc.Server {
     }
     send.send("${total}".bytes())?
   })
+  srv.stream("/t.S/Trail", fn(_call, _recv, send) -> () ! grpc.Status {
+    send.set_trailer("x-trace", "t1")
+    send.send(b"m")?
+  })
   srv.stream("/t.S/Echo2", fn(_call, recv, send) -> () ! grpc.Status {
     while true {
       match recv.next()? {
@@ -60,7 +64,7 @@ fn show(r: Result[Bytes, grpc.Status]) -> Str {
   }
 }
 
-fn calls(os: Os, c: grpc.Client, canceled: Chan[Int]) {
+fn calls(os: Os, c: grpc.Client, hc: http.Client, base: Str, canceled: Chan[Int]) {
   os.stdio.println("echo: ${show(c.unary("/t.S/Echo", "hi ".bytes(), {"x-who": "bob"}))}")
   os.stdio.println("fail: ${show(c.unary("/t.S/Echo", b"x", {"x-fail": "1"}))}")
   os.stdio.println("missing: ${show(c.unary("/t.S/Missing", b"x"))}")
@@ -97,6 +101,16 @@ fn calls(os: Os, c: grpc.Client, canceled: Chan[Int]) {
     Ok(t) => os.stdio.println("sum: ${t}")
     Err(e) => os.stdio.println("sum: ${e.display()}")
   }
+  // set_trailer: a trailer next to grpc-status, as the HTTP/2 stream shows it
+  let req = http.new_request("POST", "${base}/t.S/Trail", {"content-type": "application/grpc", "te": "trailers"}, b"\x00\x00\x00\x00\x00")
+  match hc.with_protocols(#{http.Protocol.UnencryptedHttp2}).open(req) {
+    Ok(st) => {
+      let body = st.read_all().ok() ?? b""
+      let tr = st.trailers()
+      os.stdio.println("trailer: body ${body.len()} x-trace=${tr.get("X-Trace") ?? "none"} grpc-status=${tr.get("Grpc-Status") ?? "none"}")
+    }
+    Err(e) => os.stdio.println("trailer: ${e}")
+  }
   let echoed = c.call("/t.S/Echo2", {}, None, fn(cc) -> List[Str] ! grpc.Status {
     var out: List[Str] = []
     for i in 0..3 {
@@ -130,7 +144,8 @@ fn main(os: Os) {
             Err(e) => os.stdio.println("serve failed: ${e}")
           }
         })
-        calls(os, grpc.client(http.client(os.net, timeout: 30s), "http://${hs.addr()}"), canceled)
+        let hc = http.client(os.net, timeout: 30s)
+        calls(os, grpc.client(hc, "http://${hs.addr()}"), hc, "http://${hs.addr()}", canceled)
       }
       os.stdio.println("done")
     }

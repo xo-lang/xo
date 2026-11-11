@@ -410,6 +410,16 @@ func x509CreateCorpus() string {
 	// copies, with Go's answer
 	goCSRs, goCRLs := ctGoInputs()
 	mr := mrand.New(mrand.NewSource(10))
+	// pem of a parsed request: Go's pem.EncodeToMemory of its Raw
+	o.WriteString("\n/// (request DER, Go's PEM CERTIFICATE REQUEST block of the parsed Raw)\nconst REQUEST_PEMS: List[(Bytes, Bytes)] = [\n")
+	for _, der := range append(append([][]byte(nil), goCSRs...), csrDERs...) {
+		q, err := x509.ParseCertificateRequest(der)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&o, "  (%s, %s),\n", xbytes(der), xbytes(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: q.Raw})))
+	}
+	o.WriteString("]\n")
 	o.WriteString("\n/// (DER, Go's summary or error)\nconst REQUEST_ROWS: List[(Bytes, Str)] = [\n")
 	for _, der := range goCSRs {
 		fmt.Fprintf(&o, "  (%s, %s),\n", xbytes(der), xq(ctCSRWant(der)))
@@ -584,6 +594,17 @@ test "create_request makes Go's request, and parse_request reads Go's and its mu
     }
     if got != want {
       bad.push("${der.len()} bytes:\n  got  ${got}\n  want ${want}")
+    }
+  }
+  expect(shown(bad)) == []
+}
+
+test "a parsed request's pem is Go's CERTIFICATE REQUEST block" {
+  var bad: List[Str] = []
+  for (der, want) in REQUEST_PEMS {
+    match x509.parse_request(der) {
+      Ok(q) => if q.pem() != want { bad.push("${der.len()} bytes: other PEM") }
+      Err(e) => bad.push("${der.len()} bytes: ${e.display()}")
     }
   }
   expect(shown(bad)) == []

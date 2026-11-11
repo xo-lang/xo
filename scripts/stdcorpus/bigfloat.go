@@ -273,6 +273,13 @@ func bfCorpus() string {
 		b := bigRand(r, []int{10, 64, 100, 300}[r.Intn(4)])
 		row("frombig", b.Text(16), "", k, bfRep(new(big.Float).SetPrec(uint(k)).SetInt(b)))
 	}
+	// Abs keeps the operand's precision and mode, as Go's x.Abs(x) on a
+	// copy (a new z would take its own mode), after the others so their
+	// rows keep their seeds
+	for i := 0; i < 200; i++ {
+		x, xs := bfVal(r, false)
+		row("abs", xs, "", 0, bfRep(new(big.Float).Copy(x).Abs(x)))
+	}
 	o.WriteString("]\n")
 	o.WriteString(bfTests)
 	return o.String()
@@ -327,6 +334,7 @@ fn run(op: Str, a: Str, b: Str, k: Int) -> Str {
     "sqrt" => rep(val(a).sqrt(prec: k))
     "prec" => rep(val(a).with_prec(k))
     "cmp" => "${val(a).cmp(val(b))}"
+    "abs" => rep(val(a).abs())
     "pow2" => rep(val(a).mul_pow2(k))
     "mantexp" => {
       let (m, e) = val(a).mant_exp()

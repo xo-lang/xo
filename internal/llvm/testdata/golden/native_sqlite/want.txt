@@ -13,6 +13,18 @@ no table: no such table: nope
 syntax: syntax error: near "SELEC"
 named: sqlite: named placeholder ":a": std/sql passes arguments by position ($1 or ?)
 count: sqlite: placeholder 2 has no argument (1 given)
+in tx: ada 9.5, cy 3.0
 after tx: bob null
 after tx: cy 2.0
+config :memory:: path=:memory: uri=false keys= busy=5000 pragmas=
+config app.db: path=app.db uri=false keys= busy=5000 pragmas=
+config file:app.db?mode=ro&cache=shared&_busy_timeout=250&_fk=1&_journal=wal&_sync=normal: path=app.db uri=true keys=mode=ro&cache=shared busy=250 pragmas=PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL
+config file:?mode=memory: path= uri=true keys=mode=memory busy=5000 pragmas=
+config file:: sqlite: the DSN names no database (use :memory: for one in memory)
+config app.db?_timeout=x: sqlite: _timeout: "x" is not a number of milliseconds
+config app.db?_timeout=-1: sqlite: _timeout: "-1" is negative
+config app.db?_journal_mode=fast: sqlite: _journal_mode: "fast" is not a journal mode
+config app.db?_sync=4: sqlite: _sync: "4" is not a synchronous mode
+config app.db?_fk=maybe: sqlite: _fk: "maybe" is not a boolean
+config app.db?_cache=1: sqlite: unknown key "_cache"
 --- stderr

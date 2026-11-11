@@ -382,6 +382,18 @@ func pngCorpus() string {
 	for i, im := range encs {
 		fmt.Fprintf(&o, "  (%d, %d, %d, %s, %s, %d, %s),\n", im.model, im.w, im.h, xbytes(im.pix), xwords(im.pal), levels[i], xbytes(wants[i]))
 	}
+	o.WriteString("]\n\n")
+	// At of the encoded images: each corner and a seeded point, as
+	// color.NRGBAModel 8 bit words (what Image.at reads)
+	o.WriteString("/// (ENCODE row, x, y, Go's At(x, y) as an NRGBA 0xRRGGBBAA word)\nconst AT: List[(Int, Int, Int, Int)] = [\n")
+	for i, im := range encs {
+		gi := im.goImage()
+		pts := [][2]int{{0, 0}, {im.w - 1, 0}, {0, im.h - 1}, {im.w - 1, im.h - 1}, {r.Intn(im.w), r.Intn(im.h)}}
+		for _, p := range pts {
+			n := color.NRGBAModel.Convert(gi.At(p[0], p[1])).(color.NRGBA)
+			fmt.Fprintf(&o, "  (%d, %d, %d, %d),\n", i, p[0], p[1], uint32(n.R)<<24|uint32(n.G)<<16|uint32(n.B)<<8|uint32(n.A))
+		}
+	}
 	o.WriteString("]\n")
 	_ = names
 	o.WriteString(`
@@ -464,6 +476,19 @@ test "encode writes Go's bytes" {
     let got = png.encode(img, LEVELS[level]).ok() ?? b""
     if got != want {
       bad.push((i, model, got.len(), want.len()))
+    }
+  }
+  expect(bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]) == []
+}
+
+test "at reads Go's pixel, as an NRGBA word" {
+  var bad: List[(Int, Int, Int, Int, Int)] = []
+  for (i, x, y, want) in AT {
+    let (model, w, h, pix, pal, _, _) = ENCODE[i]
+    let img = png.Image{width: w, height: h, model: MODELS[model], pix: pix, palette: pal}
+    let got = img.at(x, y)
+    if got != want {
+      bad.push((i, x, y, got, want))
     }
   }
   expect(bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]) == []

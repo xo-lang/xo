@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+a2616b6161617682016178 same true k a
+a2616b61616176f6 same true k a
+a2616b6161617624 same true k a
+a2616b61616176a16161f5 same true k a
+--- stderr
