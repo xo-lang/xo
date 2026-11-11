@@ -42,6 +42,7 @@ var (
 	_ func(*Http_CookieErr, *Task) string                                                                                                               = (*Http_CookieErr).M_display
 	_ func(*Task, string, string, Map[string, string], Bytes) Http_Request                                                                              = Http_new_request
 	_ func(*Task, Http_Request, string, Option[Time], Bytes, Map[string, string]) Http_Response                                                         = Http_serve_content
+	_ func(*Task, Fs, string) func(*Task, Http_Request) Result[Http_Response, Never]                                                                    = Http_file_server
 	_ func(*Task, int64, string) Http_Response                                                                                                          = Http_text
 	_ func(*Task, int64) Http_Response                                                                                                                  = Http_empty
 	_ func(*Task, Http_Request, string, int64) Http_Response                                                                                            = Http_redirect

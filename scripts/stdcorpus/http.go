@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/textproto"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -49,6 +50,7 @@ func httpCorpus() string {
 	o.WriteString(httpCookieTables())
 	o.WriteString(httpStatusTextTable())
 	o.WriteString(httpCrossOriginCorpus())
+	o.WriteString(httpFileServerCorpus())
 	o.WriteString(httpMuxTables())
 	return o.String()
 }
@@ -1035,5 +1037,136 @@ test "cross_origin is Go's CrossOriginProtection" {
   expect(r.call(http.new_request("POST", "http://example.com/api", headers: {"Sec-Fetch-Site": "same-origin"}).with_host("example.com")).status) == 200
   // host() is with_host's on every backend (Go's Request.Host)
   expect(http.new_request("GET", "http://x.example/").with_host("y.example:81").host()) == "y.example:81"
+}
+`
+
+// httpFileServerCorpus checks http.file_server against Go's FileServerFS
+// (and StripPrefix) over the same tree: a directory written under a
+// temporary root with fixed modification times, and requests over its
+// files, directories, index pages, odd names, redirects, conditional and
+// range requests and paths that escape.
+func httpFileServerCorpus() string {
+	root, err := os.MkdirTemp("", "xo-fsrv-")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	type entry struct {
+		path, body string
+		dir        bool
+		mtime      int64
+	}
+	tree := []entry{
+		{"a.txt", "hello\n", false, 1700000000},
+		{"page.html", "<p>x</p>", false, 1700000100},
+		{"docs", "", true, 1700000200},
+		{"docs/index.html", "<h1>docs</h1>", false, 1700000300},
+		{"pub", "", true, 1700000400},
+		{"pub/b c.txt", "spaced", false, 1700000500},
+		{"pub/q?x.txt", "question", false, 1700000600},
+		{"pub/c:d", "colon", false, 1700000700},
+		{"pub/<i>.txt", "angle", false, 1700000800},
+		{"pub/é.txt", "accent", false, 1700000900},
+		{"pub/sub", "", true, 1700001000},
+		{"pub/sub/deep.json", "{\"k\":1}", false, 1700001100},
+		{"big.bin", strings.Repeat("0123456789", 30), false, 1700001200},
+	}
+	for _, e := range tree {
+		p := filepath.Join(root, filepath.FromSlash(e.path))
+		if e.dir {
+			if err := os.MkdirAll(p, 0o755); err != nil {
+				log.Fatal(err)
+			}
+		} else if err := os.WriteFile(p, []byte(e.body), 0o644); err != nil {
+			log.Fatal(err)
+		}
+	}
+	for i := len(tree) - 1; i >= 0; i-- {
+		e := tree[i]
+		t := time.Unix(e.mtime, 0)
+		if err := os.Chtimes(filepath.Join(root, filepath.FromSlash(e.path)), t, t); err != nil {
+			log.Fatal(err)
+		}
+	}
+	t0 := time.Unix(1600000000, 0)
+	if err := os.Chtimes(root, t0, t0); err != nil {
+		log.Fatal(err)
+	}
+	type rq struct {
+		method, strip, target string
+		hs                    [][2]string
+	}
+	ims := func(t int64) [][2]string {
+		return [][2]string{{"If-Modified-Since", time.Unix(t, 0).UTC().Format(http.TimeFormat)}}
+	}
+	reqs := []rq{
+		{"GET", "", "/", nil}, {"GET", "", "/a.txt", nil}, {"HEAD", "", "/a.txt", nil}, {"POST", "", "/a.txt", nil},
+		{"GET", "", "/missing", nil}, {"GET", "", "/docs", nil}, {"GET", "", "/docs/", nil}, {"GET", "", "/docs/index.html", nil},
+		{"GET", "", "/docs/index.html?v=1", nil}, {"GET", "", "/pub", nil}, {"GET", "", "/pub/?s=2", nil}, {"GET", "", "/pub/sub/", nil},
+		{"GET", "", "/a.txt/", nil}, {"GET", "", "/a.txt/x", nil}, {"GET", "", "/../a.txt", nil}, {"GET", "", "/pub/../a.txt", nil},
+		{"GET", "", "/pub/b%20c.txt", nil}, {"GET", "", "/pub/q%3Fx.txt", nil}, {"GET", "", "/pub/c:d", nil}, {"GET", "", "/pub/%C3%A9.txt", nil},
+		{"GET", "", "/a.txt", ims(1700000000)}, {"GET", "", "/a.txt", ims(1690000000)}, {"GET", "", "/pub/", ims(1700000400)},
+		{"GET", "", "/big.bin", [][2]string{{"Range", "bytes=10-19"}}}, {"GET", "", "/big.bin", [][2]string{{"Range", "bytes=500-"}}},
+		{"GET", "", "/page.html", nil}, {"GET", "", "/pub/sub/deep.json", nil}, {"GET", "", "//a.txt", nil}, {"GET", "", "/./pub/", nil},
+		{"GET", "/static", "/static/a.txt", nil}, {"GET", "/static", "/static/", nil}, {"GET", "/static", "/static", nil},
+		{"GET", "/static", "/other/a.txt", nil}, {"GET", "/static", "/static/docs", nil}, {"GET", "/static", "/static/pub/sub", nil},
+	}
+	var o strings.Builder
+	o.WriteString("\n/// (path, body, is_dir, modified unix seconds): the tree, newest entries written last\nconst FS_TREE: List[(Str, Str, Bool, Int)] = [\n")
+	for _, e := range tree {
+		fmt.Fprintf(&o, "  (%s, %s, %v, %d),\n", xq(e.path), xq(e.body), e.dir, e.mtime)
+	}
+	o.WriteString("]\n\n/// (method, strip, target, request fields, Go's status, Content-Type, Location, Last-Modified, Content-Range, body)\nconst FS_REQS: List[(Str, Str, Str, List[(Str, Str)], Int, Str, Str, Str, Str, Str)] = [\n")
+	for _, q := range reqs {
+		var h http.Handler = http.FileServerFS(os.DirFS(root))
+		if q.strip != "" {
+			h = http.StripPrefix(q.strip, h)
+		}
+		req := httptest.NewRequest(q.method, "http://example.com"+q.target, nil)
+		var hs []string
+		for _, kv := range q.hs {
+			req.Header.Set(kv[0], kv[1])
+			hs = append(hs, fmt.Sprintf("(%s, %s)", xq(kv[0]), xq(kv[1])))
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		g := rec.Header().Get
+		fmt.Fprintf(&o, "  (%s, %s, %s, [%s], %d, %s, %s, %s, %s, %s),\n", xq(q.method), xq(q.strip), xq(q.target), strings.Join(hs, ", "), rec.Code, xq(g("Content-Type")), xq(g("Location")), xq(g("Last-Modified")), xq(g("Content-Range")), xq(rec.Body.String()))
+	}
+	o.WriteString("]\n")
+	o.WriteString(fileServerTest)
+	return o.String()
+}
+
+const fileServerTest = `
+test "file_server is Go's FileServerFS and StripPrefix over the same tree" {
+  os.fs.create_dir_all("site")?
+  for (p, body, is_dir, _) in FS_TREE {
+    if is_dir {
+      os.fs.create_dir_all("site/${p}")?
+    } else {
+      os.fs.write("site/${p}", body.bytes())?
+    }
+  }
+  for (p, _, _, mt) in FS_TREE.reverse() {
+    os.fs.set_modified("site/${p}", Time.UNIX_EPOCH + mt * 1s)?
+  }
+  os.fs.set_modified("site", Time.UNIX_EPOCH + 1600000000 * 1s)?
+  let site = os.fs.sub("site")
+  var bad: List[Str] = []
+  for (m, strip, target, hs, code, ctype, loc, lm, cr, body) in FS_REQS {
+    var fields: Map[Str, Str] = {}
+    for (k, v) in hs {
+      fields[k] = v
+    }
+    let h = http.file_server(site, strip: strip)
+    let resp = h(http.new_request(m, "http://example.com${target}", headers: fields))
+    let got = (resp.status, resp.headers.get("Content-Type") ?? "", resp.headers.get("Location") ?? "", resp.headers.get("Last-Modified") ?? "", resp.headers.get("Content-Range") ?? "", resp.body.to_str_lossy())
+    let want = (code, ctype, loc, lm, cr, body)
+    if got != want {
+      bad.push("${m} ${strip} ${target}: ${got.debug()} want ${want.debug()}")
+    }
+  }
+  expect(bad[..bad.len().min(5)]) == []
 }
 `

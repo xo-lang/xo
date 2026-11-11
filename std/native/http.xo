@@ -1764,6 +1764,153 @@ fn empty(status: Int) -> http.Response { http.Response{status: status, headers: 
 
 /// The response Go's ServeContent writes for req from content, with
 /// preset the fields set on its ResponseWriter first.
+/// `http.file_server(fs, strip)` (decision 0607): Go's FileServer and
+/// StripPrefix (net/http fs.go serveFile, dirList, toHTTPError).
+fn file_server(fs: Fs, strip: Str) -> fn(http.Request) -> http.Response uses fs.read {
+  fn(req: http.Request) -> http.Response uses fs.read { fsrv_serve(fs, strip, req) }
+}
+
+fn fsrv_serve(fs: Fs, strip: Str, req: http.Request) -> http.Response uses fs.read {
+  var upath = req.path
+  if !strip.is_empty() {
+    // StripPrefix: NotFound unless the path starts with strip
+    if !upath.starts_with(strip) {
+      return sc_error({}, "404 page not found", 404)
+    }
+    upath = upath[strip.len()..]
+  }
+  if !upath.starts_with("/") {
+    upath = "/" + upath
+  }
+  let name = path_clean(upath)
+  let q = request_raw_query(rt.cast[http.Request, Request](req))
+  if upath.ends_with("/index.html") {
+    return fsrv_redirect("./", q)
+  }
+  var p = if name == "/" { "." } else { name[1..] }
+  var d = match fsrv_stat(fs, p) {
+    Ok(i) => i
+    Err(r) => return r
+  }
+  if d.is_dir {
+    if !upath.ends_with("/") {
+      return fsrv_redirect(fsrv_base(upath) + "/", q)
+    }
+  } else if upath.ends_with("/") {
+    let base = fsrv_base(upath)
+    if base == "/" || base == "." {
+      return sc_error({}, "http: attempting to traverse a non-directory", 500)
+    }
+    return fsrv_redirect("../" + base, q)
+  }
+  if d.is_dir {
+    // index.html in place of the directory when it opens and stats
+    let index = if p == "." { "index.html" } else { p + "/index.html" }
+    if let Ok(Some(i)) = fs.stat(index) {
+      d = i
+      p = index
+    }
+  }
+  if d.is_dir {
+    let mt = fsrv_modtime(d.modified)
+    if sc_if_modified_since(req, mt) == 2 {
+      return sc_not_modified({})
+    }
+    var h: Map[Str, Str] = {}
+    if let Some(t) = mt {
+      h.put("Last-Modified", http_time_text(t))
+    }
+    let list = match fs.read_dir(p) {
+      Ok(l) => l
+      Err(_) => return sc_error({}, "Error reading directory", 500)
+    }
+    var b = StrBuilder.new()
+    b.write("<!doctype html>\n<meta name=\"viewport\" content=\"width=device-width\">\n<pre>\n")
+    for e in list {
+      let n = if e.is_dir { e.name + "/" } else { e.name }
+      b.write("<a href=\"${fsrv_href(n)}\">${html_escape(n)}</a>\n")
+    }
+    b.write("</pre>\n")
+    h.put("Content-Type", "text/html; charset=utf-8")
+    return http.Response{status: 200, headers: h, body: b.freeze().bytes()}
+  }
+  match fs.read(p) {
+    Ok(data) => serve_content(req, d.name, fsrv_modtime(d.modified), data)
+    Err(e) => fsrv_error(e)
+  }
+}
+
+/// fs's FileInfo of p, or toHTTPError's answer (a path through a file is
+/// NotFound, as mapOpenError makes it).
+fn fsrv_stat(fs: Fs, p: Str) -> FileInfo ! http.Response uses fs.read {
+  match fs.stat(p) {
+    Ok(Some(i)) => Ok(i)
+    Ok(None) => Err(sc_error({}, "404 page not found", 404))
+    Err(e) => Err(fsrv_error(e))
+  }
+}
+
+/// toHTTPError: never the error's own text.
+fn fsrv_error(e: FsErr) -> http.Response {
+  match e {
+    FsErr.NotFound(path: _) | FsErr.NotDir(path: _) => sc_error({}, "404 page not found", 404)
+    FsErr.Denied(path: _) => sc_error({}, "403 Forbidden", 403)
+    _ => sc_error({}, "500 Internal Server Error", 500)
+  }
+}
+
+/// localRedirect: 301 to a relative Location, the query kept.
+fn fsrv_redirect(to: Str, q: Str) -> http.Response {
+  let loc = if q.is_empty() { to } else { to + "?" + q }
+  http.Response{status: 301, headers: {"Location": loc}, body: b""}
+}
+
+/// path.Base.
+fn fsrv_base(p0: Str) -> Str {
+  if p0.is_empty() {
+    return "."
+  }
+  var p = p0
+  while p.len() > 1 && p.ends_with("/") {
+    p = p[..p.len() - 1]
+  }
+  if p == "/" {
+    return "/"
+  }
+  match p.rfind("/") {
+    Some(i) => p[i + 1..]
+    None => p
+  }
+}
+
+/// isZeroTime: the Unix epoch is no modification time.
+fn fsrv_modtime(t: Time) -> Time? { if t == Time.UNIX_EPOCH { None } else { Some(t) } }
+
+/// url.URL{Path: n}.String(): encodePath escaping (only `?` of the
+/// reserved bytes), and `./` before a first segment with a colon.
+fn fsrv_href(n: Str) -> Str {
+  var b = StrBuilder.new()
+  let hex = "0123456789ABCDEF"
+  let nb = n.bytes()
+  for i in 0..nb.len() {
+    let x = Int(nb[i])
+    let keep = (x >= 'a' && x <= 'z') || (x >= 'A' && x <= 'Z') || (x >= '0' && x <= '9') || x == '-' || x == '_' || x == '.' || x == '~' || x == '$' || x == '&' || x == '+' || x == ',' || x == '/' || x == ':' || x == ';' || x == '=' || x == '@'
+    if keep {
+      b.write(n[i..i + 1])
+    } else {
+      b.write("%")
+      b.write(hex[x >> 4..(x >> 4) + 1])
+      b.write(hex[x & 15..(x & 15) + 1])
+    }
+  }
+  let s = b.freeze()
+  let first = match s.find("/") {
+    Some(i) => s[..i]
+    None => s
+  }
+  if first.contains(":") { "./" + s } else { s }
+}
+
 fn serve_content(req: http.Request, name: Str, modtime: Time?, content: Bytes, preset: Map[Str, Str] = {}) -> http.Response {
   var h: Map[Str, Str] = {}
   for (k, v) in preset {

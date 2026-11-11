@@ -10191,6 +10191,93 @@ test "cross_origin is Go's CrossOriginProtection" {
   expect(http.new_request("GET", "http://x.example/").with_host("y.example:81").host()) == "y.example:81"
 }
 
+/// (path, body, is_dir, modified unix seconds): the tree, newest entries written last
+const FS_TREE: List[(Str, Str, Bool, Int)] = [
+  ("a.txt", "hello\n", false, 1700000000),
+  ("page.html", "<p>x</p>", false, 1700000100),
+  ("docs", "", true, 1700000200),
+  ("docs/index.html", "<h1>docs</h1>", false, 1700000300),
+  ("pub", "", true, 1700000400),
+  ("pub/b c.txt", "spaced", false, 1700000500),
+  ("pub/q?x.txt", "question", false, 1700000600),
+  ("pub/c:d", "colon", false, 1700000700),
+  ("pub/<i>.txt", "angle", false, 1700000800),
+  ("pub/é.txt", "accent", false, 1700000900),
+  ("pub/sub", "", true, 1700001000),
+  ("pub/sub/deep.json", "{\"k\":1}", false, 1700001100),
+  ("big.bin", "012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789", false, 1700001200),
+]
+
+/// (method, strip, target, request fields, Go's status, Content-Type, Location, Last-Modified, Content-Range, body)
+const FS_REQS: List[(Str, Str, Str, List[(Str, Str)], Int, Str, Str, Str, Str, Str)] = [
+  ("GET", "", "/", [], 200, "text/html; charset=utf-8", "", "Sun, 13 Sep 2020 12:26:40 GMT", "", "<!doctype html>\n<meta name=\"viewport\" content=\"width=device-width\">\n<pre>\n<a href=\"a.txt\">a.txt</a>\n<a href=\"big.bin\">big.bin</a>\n<a href=\"docs/\">docs/</a>\n<a href=\"page.html\">page.html</a>\n<a href=\"pub/\">pub/</a>\n</pre>\n"),
+  ("GET", "", "/a.txt", [], 200, "text/plain; charset=utf-8", "", "Tue, 14 Nov 2023 22:13:20 GMT", "", "hello\n"),
+  ("HEAD", "", "/a.txt", [], 200, "text/plain; charset=utf-8", "", "Tue, 14 Nov 2023 22:13:20 GMT", "", ""),
+  ("POST", "", "/a.txt", [], 200, "text/plain; charset=utf-8", "", "Tue, 14 Nov 2023 22:13:20 GMT", "", "hello\n"),
+  ("GET", "", "/missing", [], 404, "text/plain; charset=utf-8", "", "", "", "404 page not found\n"),
+  ("GET", "", "/docs", [], 301, "", "docs/", "", "", ""),
+  ("GET", "", "/docs/", [], 200, "text/html; charset=utf-8", "", "Tue, 14 Nov 2023 22:18:20 GMT", "", "<h1>docs</h1>"),
+  ("GET", "", "/docs/index.html", [], 301, "", "./", "", "", ""),
+  ("GET", "", "/docs/index.html?v=1", [], 301, "", "./?v=1", "", "", ""),
+  ("GET", "", "/pub", [], 301, "", "pub/", "", "", ""),
+  ("GET", "", "/pub/?s=2", [], 200, "text/html; charset=utf-8", "", "Tue, 14 Nov 2023 22:20:00 GMT", "", "<!doctype html>\n<meta name=\"viewport\" content=\"width=device-width\">\n<pre>\n<a href=\"%3Ci%3E.txt\">&lt;i&gt;.txt</a>\n<a href=\"b%20c.txt\">b c.txt</a>\n<a href=\"./c:d\">c:d</a>\n<a href=\"q%3Fx.txt\">q?x.txt</a>\n<a href=\"sub/\">sub/</a>\n<a href=\"%C3%A9.txt\">é.txt</a>\n</pre>\n"),
+  ("GET", "", "/pub/sub/", [], 200, "text/html; charset=utf-8", "", "Tue, 14 Nov 2023 22:30:00 GMT", "", "<!doctype html>\n<meta name=\"viewport\" content=\"width=device-width\">\n<pre>\n<a href=\"deep.json\">deep.json</a>\n</pre>\n"),
+  ("GET", "", "/a.txt/", [], 301, "", "../a.txt", "", "", ""),
+  ("GET", "", "/a.txt/x", [], 404, "text/plain; charset=utf-8", "", "", "", "404 page not found\n"),
+  ("GET", "", "/../a.txt", [], 200, "text/plain; charset=utf-8", "", "Tue, 14 Nov 2023 22:13:20 GMT", "", "hello\n"),
+  ("GET", "", "/pub/../a.txt", [], 200, "text/plain; charset=utf-8", "", "Tue, 14 Nov 2023 22:13:20 GMT", "", "hello\n"),
+  ("GET", "", "/pub/b%20c.txt", [], 200, "text/plain; charset=utf-8", "", "Tue, 14 Nov 2023 22:21:40 GMT", "", "spaced"),
+  ("GET", "", "/pub/q%3Fx.txt", [], 200, "text/plain; charset=utf-8", "", "Tue, 14 Nov 2023 22:23:20 GMT", "", "question"),
+  ("GET", "", "/pub/c:d", [], 200, "text/plain; charset=utf-8", "", "Tue, 14 Nov 2023 22:25:00 GMT", "", "colon"),
+  ("GET", "", "/pub/%C3%A9.txt", [], 200, "text/plain; charset=utf-8", "", "Tue, 14 Nov 2023 22:28:20 GMT", "", "accent"),
+  ("GET", "", "/a.txt", [("If-Modified-Since", "Tue, 14 Nov 2023 22:13:20 GMT")], 304, "", "", "Tue, 14 Nov 2023 22:13:20 GMT", "", ""),
+  ("GET", "", "/a.txt", [("If-Modified-Since", "Sat, 22 Jul 2023 04:26:40 GMT")], 200, "text/plain; charset=utf-8", "", "Tue, 14 Nov 2023 22:13:20 GMT", "", "hello\n"),
+  ("GET", "", "/pub/", [("If-Modified-Since", "Tue, 14 Nov 2023 22:20:00 GMT")], 304, "", "", "", "", ""),
+  ("GET", "", "/big.bin", [("Range", "bytes=10-19")], 206, "application/octet-stream", "", "Tue, 14 Nov 2023 22:33:20 GMT", "bytes 10-19/300", "0123456789"),
+  ("GET", "", "/big.bin", [("Range", "bytes=500-")], 416, "text/plain; charset=utf-8", "", "", "bytes */300", "invalid range: failed to overlap\n"),
+  ("GET", "", "/page.html", [], 200, "text/html; charset=utf-8", "", "Tue, 14 Nov 2023 22:15:00 GMT", "", "<p>x</p>"),
+  ("GET", "", "/pub/sub/deep.json", [], 200, "application/json", "", "Tue, 14 Nov 2023 22:31:40 GMT", "", "{\"k\":1}"),
+  ("GET", "", "//a.txt", [], 200, "text/plain; charset=utf-8", "", "Tue, 14 Nov 2023 22:13:20 GMT", "", "hello\n"),
+  ("GET", "", "/./pub/", [], 200, "text/html; charset=utf-8", "", "Tue, 14 Nov 2023 22:20:00 GMT", "", "<!doctype html>\n<meta name=\"viewport\" content=\"width=device-width\">\n<pre>\n<a href=\"%3Ci%3E.txt\">&lt;i&gt;.txt</a>\n<a href=\"b%20c.txt\">b c.txt</a>\n<a href=\"./c:d\">c:d</a>\n<a href=\"q%3Fx.txt\">q?x.txt</a>\n<a href=\"sub/\">sub/</a>\n<a href=\"%C3%A9.txt\">é.txt</a>\n</pre>\n"),
+  ("GET", "/static", "/static/a.txt", [], 200, "text/plain; charset=utf-8", "", "Tue, 14 Nov 2023 22:13:20 GMT", "", "hello\n"),
+  ("GET", "/static", "/static/", [], 200, "text/html; charset=utf-8", "", "Sun, 13 Sep 2020 12:26:40 GMT", "", "<!doctype html>\n<meta name=\"viewport\" content=\"width=device-width\">\n<pre>\n<a href=\"a.txt\">a.txt</a>\n<a href=\"big.bin\">big.bin</a>\n<a href=\"docs/\">docs/</a>\n<a href=\"page.html\">page.html</a>\n<a href=\"pub/\">pub/</a>\n</pre>\n"),
+  ("GET", "/static", "/static", [], 200, "text/html; charset=utf-8", "", "Sun, 13 Sep 2020 12:26:40 GMT", "", "<!doctype html>\n<meta name=\"viewport\" content=\"width=device-width\">\n<pre>\n<a href=\"a.txt\">a.txt</a>\n<a href=\"big.bin\">big.bin</a>\n<a href=\"docs/\">docs/</a>\n<a href=\"page.html\">page.html</a>\n<a href=\"pub/\">pub/</a>\n</pre>\n"),
+  ("GET", "/static", "/other/a.txt", [], 404, "text/plain; charset=utf-8", "", "", "", "404 page not found\n"),
+  ("GET", "/static", "/static/docs", [], 301, "", "docs/", "", "", ""),
+  ("GET", "/static", "/static/pub/sub", [], 301, "", "sub/", "", "", ""),
+]
+
+test "file_server is Go's FileServerFS and StripPrefix over the same tree" {
+  os.fs.create_dir_all("site")?
+  for (p, body, is_dir, _) in FS_TREE {
+    if is_dir {
+      os.fs.create_dir_all("site/${p}")?
+    } else {
+      os.fs.write("site/${p}", body.bytes())?
+    }
+  }
+  for (p, _, _, mt) in FS_TREE.reverse() {
+    os.fs.set_modified("site/${p}", Time.UNIX_EPOCH + mt * 1s)?
+  }
+  os.fs.set_modified("site", Time.UNIX_EPOCH + 1600000000 * 1s)?
+  let site = os.fs.sub("site")
+  var bad: List[Str] = []
+  for (m, strip, target, hs, code, ctype, loc, lm, cr, body) in FS_REQS {
+    var fields: Map[Str, Str] = {}
+    for (k, v) in hs {
+      fields[k] = v
+    }
+    let h = http.file_server(site, strip: strip)
+    let resp = h(http.new_request(m, "http://example.com${target}", headers: fields))
+    let got = (resp.status, resp.headers.get("Content-Type") ?? "", resp.headers.get("Location") ?? "", resp.headers.get("Last-Modified") ?? "", resp.headers.get("Content-Range") ?? "", resp.body.to_str_lossy())
+    let want = (code, ctype, loc, lm, cr, body)
+    if got != want {
+      bad.push("${m} ${strip} ${target}: ${got.debug()} want ${want.debug()}")
+    }
+  }
+  expect(bad[..bad.len().min(5)]) == []
+}
+
 /// (patterns, method, target, status, Allow, Location, body of a 200): Go's ServeMux
 const MUX_ROWS: List[(List[Str], Str, Str, Int, Str, Str, Str)] = [
   (["GET /healthz"], "GET", "/", 404, "", "", ""),

@@ -297,6 +297,12 @@ fn json[T: Json](status: Int, v: T) -> Response
 /// Last-Modified, Accept-Ranges, Content-Length. headers are the fields
 /// a Go handler sets on its ResponseWriter before the call.
 fn serve_content(req: Request, name: Str, modtime: Time?, content: Bytes, headers: Map[Str, Str] = {}) -> Response
+/// Go's FileServer over fs, behind StripPrefix(strip) when strip is set
+/// (decision 0607): the request's path cleaned and read through fs (the
+/// sandbox), `index.html` for a directory, Go's redirects and directory
+/// listing, files through serve_content, and Go's error texts (`404 page
+/// not found`, `403 Forbidden`, `500 Internal Server Error`).
+fn file_server(fs: Fs, strip: Str = "") -> fn(Request) -> Response uses fs.read
 fn text(status: Int, s: Str) -> Response
 fn empty(status: Int) -> Response
 /// Go's Redirect: a response of status with `Location: url`; a url with

@@ -1909,6 +1909,10 @@ pub fn serve_content(req: Request, name: Str, modtime: Time?, content: Bytes, he
     // Go's ServeContent (decision 0306): Range (206, multipart/byteranges), the
     // conditional requests against modtime and the ETag in headers (304, 412),
     // 416, Content-Type from headers, name's extension, or the content
+pub fn file_server(fs: Fs, strip: Str = "") -> fn(Request) -> Response uses fs.read
+    // Go's FileServer behind StripPrefix(strip) (decision 0607): the cleaned path read through fs
+    // (the sandbox), index.html, Go's redirects (301, local) and directory listing, files through
+    // serve_content (read whole), errors `404 page not found`, `403 Forbidden`, `500 Internal Server Error`
 fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr
 fn (w: BodyWriter) flush() -> () ! IoErr
 fn (w: BodyWriter) set_trailer(name: Str, value: Str)   // a trailer after the body (decision 0433)

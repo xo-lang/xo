@@ -1,5 +1,20 @@
 # std/http changes
 
+## 2026-11-11: feature: file_server(fs, strip), Go's FileServer over an Fs
+
+- Kind: feature
+- Commit: this push
+- Found by: std audit 2026-11-11 gap 10 (decision 0607)
+- Go reference: net/http fs.go FileServer, FileServerFS, StripPrefix (go1.26.1)
+- Test: http corpus FS_TREE and FS_REQS (35 requests: files, HEAD and POST, missing paths, directories with and without index.html, index.html and trailing slash redirects with the query, paths through a file, `..`, escaped and odd names, If-Modified-Since on files and listings, ranges, strip) against Go's FileServerFS over the same tree, on go, arm64, llvm
+- Shipped in: not yet released
+
+A handler for `Router.handle`. The Fs is the sandbox, so `os.fs.sub(dir)`,
+an attenuated Fs or `embed.Dir.fs()` serves only what it holds. Files are
+read whole and passed to serve_content until a streaming serve_content
+exists. The Go backend runs net/http's FileServer over an http.FileSystem
+that reads through the Fs; native code is a port of serveFile and dirList.
+
 ## 2026-11-11: feature: cross_origin, CrossOrigin.check and middleware (Go's CrossOriginProtection)
 
 - Kind: feature
