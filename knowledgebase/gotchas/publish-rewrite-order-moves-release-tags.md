@@ -34,11 +34,16 @@ tag message.
 
 ## How to avoid
 
-After any prepare that follows a release kit, compare each unpublished
-tag's commit with the commit the kit was built from (the kit's
-rel-final.log "building HASH") before handing the owner `publish.sh push`,
-and look for private-only hashes in tag messages and in the tags' commit
-messages (a hash `git cat-file -e` finds privately but not in the public
-repository). A pruned commit (one that only touched a removed path, such as
-scripts/lead/) or a branch that never reached main also leaves a private
-hash; only those in a tag's chain or message matter for a kit.
+publish.sh (2026-11-11) checks it: the first prepare that makes a tag pins
+its public commit (tag-pins.txt in the tools' directory), and prepare and
+push fail when a tag's commit differs from its pin (XO_PUBLISH_REPIN=TAG
+accepts a deliberate move of an unpublished tag), or when an unpublished
+tag's message, or a message in its chain not yet published, names a commit
+the private repository has and the public one does not. Without the rules
+above, prepare fails naming both moved tags and all seven hashes. A failure
+names the hash and its commit: add a rule mapping it to the cited commit's
+public hash (filter-repo's .git/filter-repo/commit-map in the public
+checkout), after checking the hash appears in no file content the rule
+would also change. Hashes of a pruned commit (one that only touched a
+removed path, such as scripts/lead/) or a branch that never reached main
+stay private in main's messages; the check looks only at unpublished tags.
