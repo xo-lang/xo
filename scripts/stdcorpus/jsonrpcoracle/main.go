@@ -455,6 +455,31 @@ test "encode writes a notification without an id and an error without a result" 
   expect(jsonrpc.encode(jsonrpc.Message.Resp(jsonrpc.Response{id: Some(jsonrpc.Id.Int(3)), error: Some(e)}))) == "{\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32000,\"message\":\"boom\",\"data\":\"x\"}}"
   expect(jsonrpc.encode(jsonrpc.Message.Resp(jsonrpc.Response{id: Some(jsonrpc.Id.Str("a"))}))) == "{\"jsonrpc\":\"2.0\",\"id\":\"a\",\"result\":null}"
 }
+test "encode_batch, decode_value, ids and Request.is_call" {
+  let ms = [jsonrpc.Message.Req(jsonrpc.Request{id: Some(jsonrpc.Id.Int(1)), method: "a"}), jsonrpc.Message.Req(jsonrpc.Request{method: "b"})]
+  expect(jsonrpc.encode_batch(ms)) == "[{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"a\"},{\"jsonrpc\":\"2.0\",\"method\":\"b\"}]"
+  expect(jsonrpc.encode_batch([])) == "[]"
+  var calls: List[Bool] = []
+  for text in ["{\"jsonrpc\":\"2.0\",\"id\":\"x\",\"method\":\"m\"}", "{\"jsonrpc\":\"2.0\",\"method\":\"m\"}"] {
+    let v = json.parse_value(text).ok() ?? json.Value.Null
+    match jsonrpc.decode_value(v) {
+      Ok(jsonrpc.Message.Req(r)) => calls.push(r.is_call())
+      _ => calls.push(false)
+    }
+  }
+  expect(calls) == [true, false]
+  // a value that is not an object is not a message
+  match jsonrpc.decode_value(json.Value.Int(1)) {
+    Err(e) => expect(e.display()) == "Invalid Request"
+    Ok(_) => expect(false) == true
+  }
+  expect(jsonrpc.Id.Int(7).display()) == "7"
+  expect(jsonrpc.Id.Str("a b").display()) == "a b"
+  expect(jsonrpc.Id.Int(7).value().encode()) == "7"
+  expect(jsonrpc.Id.Str("a").value().encode()) == "\"a\""
+  expect(jsonrpc.RpcError{code: -32000, message: "boom"}.display()) == "boom"
+}
+
 fn pipe_conn(out: Chan[Str], cancel: jsonrpc.Cancel? = None) -> jsonrpc.Conn[()] {
   jsonrpc.conn(fn(t: Str) -> () ! IoErr {
     out.send(t)
@@ -501,6 +526,18 @@ test "Conn: the end of the read side ends the calls waiting, and later ones" {
     [sent, reply(t.await), reply(a.call("sum"))]
   }
   expect(got) == ["{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"subtract\"}", "err jsonrpc: connection closed", "err jsonrpc: connection closed"]
+}
+
+test "Conn: close ends the calls waiting, and later ones" {
+  let ab = Chan[Str].new(cap: 16)
+  let got = scope s {
+    let a = pipe_conn(ab)
+    let t = s.spawn(fn() -> json.Value ! jsonrpc.CallErr { a.call("slow") })
+    let sent = ab.recv() ?? ""
+    a.close()
+    [sent, reply(t.await), reply(a.call("later")), "${a.in_flight()}"]
+  }
+  expect(got) == ["{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"slow\"}", "err jsonrpc: connection closed", "err jsonrpc: connection closed", "0"]
 }
 
 test "Conn: a batch and invalid text from the peer are answered" {

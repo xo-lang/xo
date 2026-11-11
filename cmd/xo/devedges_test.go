@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -119,6 +120,97 @@ func TestDevEdgesMissingBindingKeepsOtherCommands(t *testing.T) {
 		if code != 1 {
 			t.Errorf("xo %s: exit %d, want 1 (the name does not resolve)", strings.Join(args, " "), code)
 		}
+	}
+}
+
+// TestDevEdgesOwnStd: `xo dev edges --own` prints a `# bindings B` line
+// and the program's own edges (no site in the std tree), `--std` the std
+// graph alone (every site in it), and the two together are refused: a
+// sweep over many programs (internal/stdcoverage.Sweep) reads --own of
+// each and --std once a bindings value, where the full output repeated
+// the std graph with every program (47 GB over 1,381 programs). The
+// program uses a C header bound by `xo check` first, into $XO_CBIND_DIR,
+// which the tests set (internal/xotool): the edge list's checker reads
+// that cache too, where it read only the module's .xo/cbind and stopped
+// on "use c without the binding" that the check had just written
+// (2026-11-11).
+func TestDevEdgesOwnStd(t *testing.T) {
+	if os.Getenv("XO_CBIND_DIR") == "" {
+		t.Skip("needs XO_CBIND_DIR, which internal/xotool sets for the tests")
+	}
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":  "module ownstd\n",
+		"addc.h":  "#include <stdint.h>\nint64_t addc_add(int64_t a, int64_t b);\n",
+		"addc.c":  "#include \"addc.h\"\nint64_t addc_add(int64_t a, int64_t b) { return a + b; }\n",
+		"main.xo": "use c \"addc.h\" link \"addc.c\"\n\nfn main(os: Os) {\n  os.stdio.println(\"${addc.addc_add(40, 2)}\".to_upper())\n}\n",
+	})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"check", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("xo check %s: exit %d: %s%s", dir, code, out.String(), errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"dev", "edges", "--own", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("xo dev edges --own after xo check bound the header: exit %d: %s", code, errOut.String())
+	}
+	first, rest, _ := strings.Cut(out.String(), "\n")
+	if first != "# bindings c" {
+		t.Errorf("xo dev edges --own: first line %q, want \"# bindings c\"", first)
+	}
+	own := 0
+	for _, l := range strings.Split(strings.TrimSpace(rest), "\n") {
+		f := strings.Split(l, "\t")
+		if len(f) != 10 {
+			t.Fatalf("xo dev edges --own: %d fields, want 10: %q", len(f), l)
+		}
+		if strings.HasPrefix(f[6], "std/") {
+			t.Errorf("xo dev edges --own: a site in the std tree: %q", l)
+		}
+		own++
+	}
+	// the program's own calls: addc_add, Str.to_upper and println at least
+	if own < 3 {
+		t.Errorf("xo dev edges --own: %d edges, want the program's own calls", own)
+	}
+	std := devEdges(t, dir, "--std")
+	if len(std) < 100 {
+		t.Errorf("xo dev edges --std: %d edges, want the std graph", len(std))
+	}
+	for _, f := range std {
+		if !strings.HasPrefix(f[6], "std/") {
+			t.Errorf("xo dev edges --std: a site outside the std tree: %q", strings.Join(f, "\t"))
+			break
+		}
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"dev", "edges", "--own", "--std", dir}, &out, &errOut); code != 2 {
+		t.Errorf("xo dev edges --own --std: exit %d, want 2 (one or the other)", code)
+	}
+}
+
+// TestDevEdgesStdGraphSameForEveryProgram: the std graph (`--std`, what
+// the edge cache keeps once for every program with the same bindings)
+// holds the bodies of a merged std module, one whose bodies are in
+// std/NAME.xo with no std/native twin (std/sse.xo), even when the program
+// does not import it. Before, only a program importing sse checked its
+// bodies, so the cached graph had them or not by which program filled the
+// entry, and the resolved coverage sweep read sse.source as unreached
+// (2026-11-11).
+func TestDevEdgesStdGraphSameForEveryProgram(t *testing.T) {
+	t.Setenv("XO_EDGES_CACHE", "off")
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":  "module nosse\n",
+		"main.xo": "fn main(os: Os) {\n  os.stdio.println(\"x\")\n}\n",
+	})
+	hit := false
+	for _, f := range devEdges(t, dir, "--std") {
+		if f[6] == "std/sse.xo" && f[2] == "subscribe" && f[5] == "source" {
+			hit = true
+		}
+	}
+	if !hit {
+		t.Errorf("xo dev edges --std of a program without `use std/sse`: no edge from sse.subscribe's body to sse.source")
 	}
 }
 

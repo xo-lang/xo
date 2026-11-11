@@ -3,47 +3,65 @@ package repotest
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/stdcoverage"
 )
 
 // TestStdAPICovered: every top level function and method std/*.xo and
-// std/native/prelude.xo declare is called by some corpus or golden, unless
+// std/native/prelude.xo declare is reached by a resolved call from some
+// corpus, golden, benchmark or script program, unless
 // internal/stdcoverage/allow.txt names it with the reason it cannot be, so
-// a new declaration cannot join the API without one or the other. The
+// a new declaration cannot join the API without one or the other. A
+// declaration counts only when a call resolves to it, directly or through
+// std's bodies (`xo dev edges`), not when some call has its name. The
 // allowlist must also stay honest: a line that matches nothing fails, so an
-// entry is removed once a corpus covers what it allowed.
-// `go run ./scripts/stdcoverage` prints the same list.
+// entry is removed once a program covers what it allowed.
+//
+// The sweep checks every program (stdcoverage.Sweep, a few minutes on a
+// gate host), so it runs where XO_STDCOV_SWEEP=1 and XO_CLI name an xo:
+// gate.sh's stdcov step, which std pushes and the 8-hourly tier run.
+// `go run ./scripts/stdcoverage -sweep` prints the same list.
 func TestStdAPICovered(t *testing.T) {
-	entries, total, err := stdcoverage.Uncovered(root)
+	if os.Getenv("XO_STDCOV_SWEEP") != "1" {
+		t.Skip("the resolved sweep runs in gate.sh's stdcov step (XO_STDCOV_SWEEP=1 with XO_CLI)")
+	}
+	xo := os.Getenv("XO_CLI")
+	if xo == "" {
+		t.Fatal("XO_STDCOV_SWEEP=1 needs XO_CLI, the xo to sweep with")
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges, failed, err := stdcoverage.Sweep(abs, xo, t.TempDir(), runtime.NumCPU())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// a program the sweep could not check reaches nothing, so what only it
+	// calls would read as uncovered
+	for _, f := range failed {
+		t.Errorf("xo dev edges failed, so its calls are not counted: %s", f)
+	}
+	entries, total, _, err := stdcoverage.UncoveredResolved(abs, edges)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if total < 1200 {
-		t.Fatalf("found %d declarations, too few for std: the scan read the wrong tree", total)
+		t.Fatalf("found %d declarations, too few for std: the sweep read the wrong tree", total)
 	}
 	rules, err := stdcoverage.Allow()
 	if err != nil {
 		t.Fatal(err)
 	}
-	used := make([]bool, len(rules))
-	for _, e := range entries {
-		allowed := false
-		for i, r := range rules {
-			if r.Match(e) {
-				used[i] = true
-				allowed = true
-			}
-		}
-		if !allowed {
-			t.Errorf("%s.%s (%s) has no corpus or golden call: add one, or a line to internal/stdcoverage/allow.txt with the reason it cannot have one", e.Module, e.Symbol, e.Kind)
-		}
+	open, unused := stdcoverage.Unallowed(entries, rules)
+	for _, e := range open {
+		t.Errorf("%s.%s (%s) has no resolved call from a corpus or golden: add one, or a line to internal/stdcoverage/allow.txt with the reason it cannot have one", e.Module, e.Symbol, e.Kind)
 	}
-	for i, r := range rules {
-		if !used[i] {
-			t.Errorf("internal/stdcoverage/allow.txt's %q matches no uncovered declaration: remove the line, or correct it", r.Pattern)
-		}
+	for _, r := range unused {
+		t.Errorf("internal/stdcoverage/allow.txt's %q matches no uncovered declaration: remove the line, or correct it", r.Pattern)
 	}
 }
 
@@ -71,6 +89,11 @@ func TestProgramDirs(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(root, d)); err != nil {
 			t.Errorf("%s: %v", d, err)
+		}
+		// a .xo directory holds the bindings xo writes for a program
+		// (.xo/gobind), which are not programs of their own
+		if strings.Contains("/"+filepath.ToSlash(d)+"/", "/.xo/") {
+			t.Errorf("%s is inside a .xo directory", d)
 		}
 	}
 	for _, want := range []string{"bench/perf/aesgcm", "scripts/pgtls", "internal/llvm/testdata/golden/strwhere"} {

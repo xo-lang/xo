@@ -36,7 +36,7 @@ use github.com/xo-lang/xo/compiler/check
 
 /// edges_usage is the command line of `xo dev edges`.
 pub fn edges_usage() -> Str {
-  "usage: xo dev edges [--out=FILE] [--impls] [--dir=DIR] DIR\n  every resolved reference of the checked program in DIR as SRC and TGT declaration lines; --impls adds an edge from each interface method to the methods that implement it"
+  "usage: xo dev edges [--out=FILE] [--impls] [--own|--std] [--dir=DIR] DIR\n  every resolved reference of the checked program in DIR as SRC and TGT declaration lines; --impls adds an edge from each interface method to the methods that implement it; --own prints the program's own edges after a `# bindings B` line, --std the std graph alone"
 }
 
 /// The edges of a checked program, split (decision 0381): the std graph
@@ -107,7 +107,8 @@ fn session(os: Os, dir: Str, preload: Bool) -> Session ! Str uses (stdio, fs, en
 }
 
 /// The std modules whose bodies an implementation file holds: `native/NAME`
-/// for each `std/NAME.xo` that has a `std/native/NAME.xo` (decision 0074
+/// for each `std/NAME.xo` that has a `std/native/NAME.xo`, and `std/NAME` for a
+/// merged module, whose bodies are in std/NAME.xo (decision 0074
 /// lowers a prelude method to a function there by symbol, so no import
 /// names the file). Without them in the preload the checker reads the
 /// declarations only, and their sites, which are most of what a corpus
@@ -128,9 +129,25 @@ fn impl_modules(os: Os, std_dir: Str) -> List[Str] uses fs.read {
     // none, and the preload failed (cmd/xo TestDevEdges on linux/arm64,
     // 2026-11-06); the std store build skips it the same way (check
     // load.xo std_uses_c)
-    let b = os.fs.read("${std_dir.trim_suffix("/")}/native/${name}.xo").ok() ?? continue
-    if !check.uses_c(b) {
-      out.push("native/${name}")
+    match os.fs.read("${std_dir.trim_suffix("/")}/native/${name}.xo").ok() {
+      Some(b) => {
+        if !check.uses_c(b) {
+          out.push("native/${name}")
+        }
+      }
+      // a merged module (one source for every backend, its bodies in
+      // std/NAME.xo itself, std/sse.xo): preloaded too, or its bodies are
+      // checked only in a program that imports it, and the std graph the
+      // cache keeps for every program held them or not by which program
+      // filled the entry (2026-11-11: sse.source read as unreached in the
+      // resolved coverage sweep although the sse corpus calls subscribe,
+      // whose body calls it)
+      None => {
+        let fb = os.fs.read("${std_dir.trim_suffix("/")}/${e.name}").ok() ?? continue
+        if !check.uses_c(fb) {
+          out.push("std/${name}")
+        }
+      }
     }
   }
   out

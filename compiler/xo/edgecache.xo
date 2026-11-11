@@ -26,21 +26,35 @@ use github.com/xo-lang/xo/compiler/cli/servers
 use github.com/xo-lang/xo/compiler/prune
 use std/crypto
 
-/// The entry format's version, part of the key.
-const EDGES_CACHE_VERSION = 1
+/// The entry format's version, part of the key (2: the std graph holds the
+/// merged modules' bodies whichever program filled it).
+const EDGES_CACHE_VERSION = 2
 
-/// edges_cmd is `xo dev edges [--out=FILE] [--impls] [--dir=DIR] DIR`: the
-/// edges of the program in DIR (this directory when no DIR is given).
+/// edges_cmd is `xo dev edges [--out=FILE] [--impls] [--own|--std]
+/// [--dir=DIR] DIR`: the edges of the program in DIR (this directory when
+/// no DIR is given). --own prints the program's own edges alone, from the
+/// check without std's bodies, after a `# bindings B` line that names the
+/// std graph they go with; --std prints that std graph alone. A sweep over
+/// many programs (scripts/stdcoverage -sweep) takes --own of each and
+/// --std once for each bindings value, instead of the std graph again
+/// with every program.
 fn edges_cmd(os: Os, args: List[Str]) -> Int {
   var dir = "."
   var out = ""
   var saw_dir = false
   var impls = false
+  var part = ""
   for a in args {
     if a.starts_with("--out=") {
       out = a.trim_prefix("--out=")
     } else if a == "--impls" {
       impls = true
+    } else if a == "--own" || a == "--std" {
+      if !part.is_empty() && part != a {
+        os.stdio.eprintln("xo dev edges: --own and --std are one or the other\n${servers.edges_usage()}")
+        return 2
+      }
+      part = a
     } else if a.starts_with("--dir=") {
       dir = a.trim_prefix("--dir=")
       saw_dir = true
@@ -55,14 +69,19 @@ fn edges_cmd(os: Os, args: List[Str]) -> Int {
       saw_dir = true
     }
   }
-  let (lines, rc) = match edges_lines(os, dir, impls) {
+  let res = if part == "--own" { own_lines(os, dir, impls) } else { edges_lines(os, dir, impls) }
+  let (parts, rc) = match res {
     Ok(x) => x
     Err(e) => {
       os.stdio.eprintln("xo dev edges: ${e}")
       return 1
     }
   }
-  let text = lines.sort().join("\n")
+  let text = match part {
+    "--own" => "# bindings ${parts.bindings}\n" + parts.own.sort().join("\n")
+    "--std" => parts.std.sort().join("\n")
+    _ => (parts.own + parts.std).sort().join("\n")
+  }
   if out.is_empty() {
     os.stdio.println(text)
     return rc
@@ -76,6 +95,13 @@ fn edges_cmd(os: Os, args: List[Str]) -> Int {
   }
 }
 
+/// own_lines is --own: the program-only check, which needs neither std's
+/// bodies nor the cache; its std part is left out.
+fn own_lines(os: Os, dir: Str, impls: Bool) -> (servers.Edges, Int) ! Str {
+  let fast = servers.edges_of(os, dir, impls, false)?
+  Ok((servers.Edges{own: fast.own, bindings: fast.bindings}, 0))
+}
+
 /// $XO_EDGES_CACHE off, else the backend cache's mode (off, verify, on).
 fn edges_cache_mode(os: Os) -> Str {
   if (os.env.get("XO_EDGES_CACHE") ?? "") == "off" {
@@ -84,10 +110,11 @@ fn edges_cache_mode(os: Os) -> Str {
   backend_cache_mode(os)
 }
 
-/// The edge lines of the program in dir (unsorted) and the exit code (1
-/// when a verify found a difference): the full check with no cache, else
-/// the program-only check with the cached std graph.
-fn edges_lines(os: Os, dir: Str, impls: Bool) -> (List[Str], Int) ! Str {
+/// The edge lines of the program in dir (unsorted, its own and the std
+/// graph apart) and the exit code (1 when a verify found a difference):
+/// the full check with no cache, else the program-only check with the
+/// cached std graph.
+fn edges_lines(os: Os, dir: Str, impls: Bool) -> (servers.Edges, Int) ! Str {
   let mode = edges_cache_mode(os)
   let goos = host_os(os)
   let ctx = Ctx{goos: goos, std: check.std_dir(os.env, os.fs), xo: check.executable(os.env, os.fs), cache: user_cache_dir(os, goos)}
@@ -98,7 +125,7 @@ fn edges_lines(os: Os, dir: Str, impls: Bool) -> (List[Str], Int) ! Str {
     if stats {
       os.stdio.eprintln("cache edges off")
     }
-    return Ok((e.own + e.std, 0))
+    return Ok((e, 0))
   }
   // the program alone: its own edges and its bindings, the key's part
   // only the check knows
@@ -122,7 +149,7 @@ fn edges_lines(os: Os, dir: Str, impls: Bool) -> (List[Str], Int) ! Str {
       if stats {
         os.stdio.eprintln("cache edges hit (${fast.bindings})")
       }
-      return Ok((fast.own + split_lines(t), 0))
+      return Ok((servers.Edges{own: fast.own, std: split_lines(t), bindings: fast.bindings}, 0))
     }
   }
   // a miss, or verify: the full check
@@ -157,7 +184,7 @@ fn edges_lines(os: Os, dir: Str, impls: Bool) -> (List[Str], Int) ! Str {
     let what = if mode == "verify" { "verify" } else if path.is_empty() { "full (no key)" } else { "miss" }
     os.stdio.eprintln("cache edges ${what} (${fast.bindings}, ${full.std.len()} std lines)")
   }
-  Ok((full.own + full.std, rc))
+  Ok((full, rc))
 }
 
 /// The lines of an entry's text ("" holds none).

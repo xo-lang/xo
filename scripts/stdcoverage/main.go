@@ -8,8 +8,13 @@
 //	go run ./scripts/stdcoverage -check   # exit 1 when allow.txt is not enough
 //	go run ./scripts/stdcoverage -programs > dirs.txt   # the sweep's list
 //	go run ./scripts/stdcoverage -edges=OUT -dirs=dirs.txt  # resolution vs scan
+//	XO_CLI=bin/xo go run ./scripts/stdcoverage -sweep [-check]  # resolved, as the test
 //
-// internal/repotest's TestStdAPICovered runs the same check in the fast set.
+// -sweep counts a declaration only when a call resolves to it
+// (stdcoverage.Sweep over `xo dev edges`), as internal/repotest's
+// TestStdAPICovered does in gate.sh's stdcov step; without it the list is
+// the name scan's, which over-claims a method whose name some other call
+// has.
 package main
 
 import (
@@ -18,6 +23,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -30,6 +36,7 @@ func main() {
 	edgesDir := flag.String("edges", "", "a directory of `xo dev edges` output: report the resolution's coverage and its difference from the name scan")
 	dirsFile := flag.String("dirs", "", "a file of program directories (one per line, relative to the root): the name scan reads only those, so the comparison is like with like")
 	programs := flag.Bool("programs", false, "print the program directories a `xo dev edges` sweep runs over, one per line: the file -dirs reads")
+	sweep := flag.Bool("sweep", false, "the resolved coverage: run `xo dev edges` ($XO_CLI) over every program directory, as TestStdAPICovered does, instead of the name scan")
 	listDir := flag.String("list", "", "with -edges: write `uncovered.txt`, `over.txt` and `under.txt` in this directory, one `module.symbol (kind)` an entry, `[impl]` on a method whose name a covered interface method has (so a sharded audit's lists can be merged)")
 	flag.Parse()
 	root, err := xotool.Root()
@@ -50,6 +57,37 @@ func main() {
 	}
 	var entries []stdcoverage.Entry
 	var total int
+	if *sweep {
+		xo := os.Getenv("XO_CLI")
+		if xo == "" {
+			fmt.Fprintln(os.Stderr, "stdcoverage: -sweep needs XO_CLI, the xo to run")
+			os.Exit(2)
+		}
+		work, err := os.MkdirTemp("", "stdcoverage-sweep")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "stdcoverage:", err)
+			os.Exit(1)
+		}
+		defer os.RemoveAll(work)
+		edges, failed, err := stdcoverage.Sweep(root, xo, work, runtime.NumCPU())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "stdcoverage:", err)
+			os.Exit(1)
+		}
+		for _, f := range failed {
+			fmt.Fprintln(os.Stderr, "stdcoverage: not counted:", f)
+		}
+		entries, total, _, err = stdcoverage.UncoveredResolved(root, edges)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "stdcoverage:", err)
+			os.Exit(1)
+		}
+		if report(entries, total) && *check {
+			os.RemoveAll(work)
+			os.Exit(1)
+		}
+		return
+	}
 	if *dirsFile != "" {
 		dirs, err := readDirs(*dirsFile)
 		if err != nil {
@@ -77,6 +115,14 @@ func main() {
 		resolved(os.Stdout, root, *edgesDir, *listDir, entries, total)
 		return
 	}
+	if report(entries, total) && *check {
+		os.Exit(1)
+	}
+}
+
+// report prints the uncovered declarations by module and those allow.txt
+// does not name, and says whether there are any of the latter.
+func report(entries []stdcoverage.Entry, total int) bool {
 	rules, err := stdcoverage.Allow()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "stdcoverage:", err)
@@ -115,10 +161,8 @@ func main() {
 		for _, e := range open {
 			fmt.Printf("  %s.%s (%s)\n", e.Module, e.Symbol, e.Kind)
 		}
-		if *check {
-			os.Exit(1)
-		}
 	}
+	return len(open) > 0
 }
 
 // readDirs reads the program directories of -dirs: one path per line,

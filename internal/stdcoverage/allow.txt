@@ -4,7 +4,10 @@
 # emits is reached by the lowering and needs no line (emitted.go).
 #
 # A line here says the declaration cannot have a corpus or golden call. When
-# one could, add the corpus instead. TestStdAPICovered fails both for an
+# one could, add the corpus instead. Coverage is resolved (stdcoverage.Sweep:
+# a call counts when `xo dev edges` resolves it to the declaration, through
+# std's bodies and the code a derive generates), so a helper reached that
+# way needs no line (the derive Yaml and derive Cbor helpers had 50). TestStdAPICovered fails both for an
 # uncovered declaration missing here and for a line here that matches
 # nothing, so this file cannot go stale quietly.
 
@@ -45,11 +48,6 @@ x509.system_roots  reads the host's root store, which differs per machine
 go.Any.*  a use go value: needs the Go backend, covered by cmd/xo TestUseGoAny*
 http.serve_component  a wasi:http component runs under a host, not as a program: needs the wasm backend and a host, covered by internal/selfhost TestWasmComponentHTTP
 
-# std/yaml: the helpers the code `derive Yaml` generates calls; the yaml corpora
-# (corpus/yaml, corpus/yamlfuzz, golden yaml_derive) reach them through yaml.decode and
-# yaml.encode_value, which the coverage scan does not follow into generated code.
-yaml.*  called only by derive Yaml's generated code
-
 # xo debug's process control (decision 0253): reached only by xo debug,
 # whose cmd/xo tests (TestDebugBatch, TestDebugStep, TestDebugTasks,
 # TestDebugDAP, TestDebugAttach) trace a second process; a golden cannot
@@ -61,25 +59,3 @@ amqp.Connection.end_session	tested by the in-process peer tests of std/native/am
 amqp.Connection.peer_*	accessors read in the in-process peer tests of std/native/amqp_test.xo, not a corpus
 amqp.Receiver.reject	the settle path of accept (tested by the peer tests) with the Rejected state, whose frame bytes the corpus covers
 amqp.Receiver.release	the settle path of accept (tested by the peer tests) with the Released state, whose frame bytes the corpus covers
-
-# derive Cbor (decision 0527): the helpers its generated code calls, reached through cbor.marshal and
-# cbor.unmarshal (corpus/cbor typed cases), which the coverage scan does not follow into generated code.
-cbor.bad_arity  called only by derive Cbor's generated code
-cbor.bad_variant  called only by derive Cbor's generated code
-cbor.dec_error  called only by derive Cbor's generated code
-cbor.from_duration  called only by derive Cbor's generated code
-cbor.from_time  called only by derive Cbor's generated code
-cbor.key_int  called only by derive Cbor's generated code
-cbor.key_text  called only by derive Cbor's generated code
-cbor.sorted_keys  called only by derive Cbor's generated code
-cbor.to_bool  called only by derive Cbor's generated code
-cbor.to_bytes  called only by derive Cbor's generated code
-cbor.to_duration  called only by derive Cbor's generated code
-cbor.to_time  called only by derive Cbor's generated code
-cbor.unm_new  called only by derive Cbor's generated code
-cbor.det_keys  called only by derive Cbor's generated code (decision 0559's direct writers)
-cbor.put_float  called only by derive Cbor's generated code (decision 0559's direct writers)
-cbor.put_int  called only by derive Cbor's generated code (decision 0559's direct writers)
-cbor.put_head  called only by derive Cbor's generated code (decision 0559's direct writers)
-cbor.put_text  called only by derive Cbor's generated code (decision 0559's direct writers)
-cbor.put_value  called only by derive Cbor's generated code (decision 0559's direct writers)

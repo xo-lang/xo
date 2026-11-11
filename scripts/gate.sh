@@ -60,6 +60,11 @@
 #            when its summary line is ok, its listed wasm skips named
 #            there. Needs node; about 4 minutes on host 2 (2026-11-11);
 #            for the 8-hourly full tier
+#   stdcov  internal/repotest's TestStdAPICovered with the resolved sweep
+#            (`xo dev edges` over every program, a few minutes): also run
+#            after the steps named when the branch changes std, a program
+#            the sweep checks, internal/stdcoverage or `xo dev edges`
+#            (XO_GATE_STDCOV=0 skips that; owner, 2026-11-11)
 #   cross, codegen, wasm, selfbuild, seedbuild
 #            pushq.sh's proving checks (below; wasm also runs
 #            TestWasmCommandGoldens under wasmtime where the host has it): named, each runs after
@@ -325,6 +330,7 @@ check_change() {
   { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/(check|ssa|xo)/'
 }
 chkcache_ran=0
+stdcov_ran=0
 # the cross step (internal/arm64 TestAmd64CrossBuilds) runs when the
 # branch changes the native backend (compiler/arm64 holds the amd64
 # emitter and the shared MIR passes; lead, 2026-10-23: daed94d4d, a mir.xo
@@ -502,8 +508,9 @@ for step in "$@"; do
     # PUSHQ_RAN line when they pass (lead, 2026-11-08: a named `cross
     # codegen` ran neither, then pushq refused the push for cross)
     named="$named $step" ;;
-  short|arm64|llvm|corpora|cmd|gen|fuzz|corpora-all|alloff|fp|warm|chkcache|stdwasm)
+  short|arm64|llvm|corpora|cmd|gen|fuzz|corpora-all|alloff|fp|warm|chkcache|stdwasm|stdcov)
     [ "$step" = chkcache ] && chkcache_ran=1
+    [ "$step" = stdcov ] && stdcov_ran=1
     steps="$steps $step" ;;
   *) echo "gate.sh: unknown step $step"; failed=1 ;;
   esac
@@ -520,6 +527,7 @@ run_step() {
     echo "short fails: $k" ;;
   arm64) full arm64 ./internal/arm64 ;;
   llvm) llvm_step ;;
+  stdcov) stdcov_step ;;
   corpora)
     if go_backend; then
       full corpora ./internal/stdtest -run '^TestStdCorpora$/^go/'
@@ -613,6 +621,23 @@ run_step() {
     fi ;;
   esac
 }
+# stdcov_change: the branch changes what the resolved std coverage reads:
+# a std module's source, a program the sweep checks (the corpora, the
+# goldens, the benchmark programs, the scripts' programs), the allowlist
+# and its checker, or `xo dev edges`. XO_GATE_STDCOV=0 skips it.
+stdcov_change() {
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^(std/|internal/stdtest/testdata/corpus/|internal/llvm/testdata/golden/|internal/arm64/testdata/|internal/gen/testdata/|cmd/xo/testdata/|bench/perf/|scripts/.*\.xo$|internal/stdcoverage/|compiler/xo/edgecache\.xo$|compiler/cli/servers/edges\.xo$)'
+}
+# stdcov_step: internal/repotest's TestStdAPICovered with the resolved
+# sweep (stdcoverage.Sweep: `xo dev edges --own` of every program and the
+# std graph once a bindings value), so a std declaration counts as covered
+# only when a call resolves to it (owner, 2026-11-11). A few minutes, so
+# not in the fast set: std pushes run it by path and the 8-hourly tier by
+# name.
+stdcov_step() {
+  XO_STDCOV_SWEEP=1 full stdcov ./internal/repotest -run '^TestStdAPICovered$'
+}
 # the checks after the named steps, by path
 after_steps() {
   if [ "$chkcache_ran" = 0 ] && [ "${XO_GATE_CHKCACHE:-1}" != 0 ] && check_change; then
@@ -626,6 +651,9 @@ after_steps() {
   fi
   if [ "${XO_GATE_STDSTORE:-1}" != 0 ] && stdstore_change; then
     full stdstore ./internal/arm64 -run '^TestStdStoreBuilds$'
+  fi
+  if [ "$stdcov_ran" = 0 ] && [ "${XO_GATE_STDCOV:-1}" != 0 ] && stdcov_change; then
+    stdcov_step
   fi
   if [ "${XO_GATE_RACE:-1}" != 0 ] && race_change; then
     full race ./internal/llvm -run '^TestRaceSyncTable(Arm64)?$'

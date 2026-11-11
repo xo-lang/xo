@@ -232,6 +232,43 @@ func textprotoCorpus() string {
 		got, enc := textprotoDot(s)
 		fmt.Fprintf(&o, "  (%s, %s, %s, %s),\n", xq(s), xq(got), xq(enc), xq(textprotoDotLines(s)))
 	}
+	o.WriteString("]\n\n/// (Add and Set calls as a|KEY|VALUE or s|KEY|VALUE lines, Go's MIMEHeader after them: K=V,V|K=V sorted, each key's first value: K=V|K=V sorted)\nconst HEADER_OPS: List[(Str, Str, Str)] = [\n")
+	opKeys := []string{"content-type", "Content-Type", "x-a", "X-A", "subject", "k_1", "a b"}
+	opVals := []string{"text/plain", "", "v", "a: b", "é", " pad "}
+	for i := 0; i < 300; i++ {
+		m := textproto.MIMEHeader{}
+		var ops []string
+		for j, n := 0, 1+r.Intn(6); j < n; j++ {
+			k, v := textprotoPick(r, opKeys), textprotoPick(r, opVals)
+			if r.Intn(3) == 0 {
+				m.Set(k, v)
+				ops = append(ops, "s|"+k+"|"+v)
+			} else {
+				m.Add(k, v)
+				ops = append(ops, "a|"+k+"|"+v)
+			}
+		}
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var all, first []string
+		for _, k := range keys {
+			all = append(all, k+"="+strings.Join(m[k], ","))
+			first = append(first, k+"="+m.Get(k))
+		}
+		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xq(strings.Join(ops, "\n")), xq(strings.Join(all, "|")), xq(strings.Join(first, "|")))
+	}
+	o.WriteString("]\n\n/// (s, Go's TrimString)\nconst TRIMS: List[(Str, Str)] = [\n")
+	trimParts := []string{" ", "\t", "\r", "\n", "a", "b c", "\v", "\u00a0", "é"}
+	for i := 0; i < 300; i++ {
+		var b strings.Builder
+		for j, n := 0, r.Intn(6); j < n; j++ {
+			b.WriteString(textprotoPick(r, trimParts))
+		}
+		fmt.Fprintf(&o, "  (%s, %s),\n", xq(b.String()), xq(textproto.TrimString(b.String())))
+	}
 	o.WriteString("]\n")
 	o.WriteString(textprotoTests)
 	return o.String()
@@ -313,6 +350,38 @@ fn dot_of(s: Str) -> Str {
     Ok(b) => "ok ${b.to_str_lossy()} REST ${r.rest().to_str_lossy()}"
     Err(e) => "err ${err_text(e)}"
   }
+}
+
+test "Add and Set build Go's MIMEHeader, to_map holds each key's first value" {
+  var bad: List[(Str, Str, Str)] = []
+  for (ops, want, first) in HEADER_OPS {
+    var h = textproto.header()
+    for line in ops.split("\n") {
+      let f = line.split("|")
+      h = if f[0] == "s" { h.set(f[1], f[2]) } else { h.add(f[1], f[2]) }
+    }
+    let got = h.keys().sort().map(fn(k) { "${k}=${h.values(k).join(",")}" }).join("|")
+    if got != want {
+      bad.push((ops, got, want))
+    }
+    let m = h.to_map()
+    let gf = m.keys().sort().map(fn(k) { "${k}=${m.get(k) ?? "-"}" }).join("|")
+    if gf != first {
+      bad.push((ops, gf, first))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+test "trim is Go's TrimString" {
+  var bad: List[(Str, Str, Str)] = []
+  for (s, want) in TRIMS {
+    let got = textproto.trim(s)
+    if got != want {
+      bad.push((s, got, want))
+    }
+  }
+  expect(first_bad(bad)) == []
 }
 
 test "canonical keys are Go's" {

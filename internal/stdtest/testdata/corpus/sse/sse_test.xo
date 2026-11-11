@@ -750,6 +750,42 @@ test "subscribe reconnects with Last-Event-ID and the server's retry" {
   expect(s.retry_ms()) == 50
 }
 
+test "a server sends events with send as they happen, and a Source keeps the last id" {
+  os.net.handle("GET https://ev.test/live", fn(_r: http.Request) -> http.Response {
+    http.stream(200, fn(w: http.BodyWriter) -> () ! IoErr {
+      sse.send(w, sse.comment("hello"))?
+      sse.send(w, sse.encode("one", id: Some("7")))?
+      sse.send(w, sse.encode("two", event: "tick"))
+    }).with_header("Content-Type", "text/event-stream")
+  })
+  var s = sse.subscribe(http.client(os.net), os.clock, "https://ev.test/live", max_retries: 0)
+  expect(s.last_event_id()) == ""
+  var got: List[Str] = []
+  while got.len() < 2 {
+    match s.next() {
+      Ok(Some(ev)) => got.push("${ev.event}:${ev.data}@${ev.id}")
+      _ => break
+    }
+  }
+  // the comment is no event; the second event has no id field, so the
+  // last one carries over
+  expect(got) == ["message:one@7", "tick:two@7"]
+  expect(s.last_event_id()) == "7"
+}
+
+test "a Parser started from a saved cursor reports it until an id field" {
+  var p = sse.parser()
+  p.set_last_event_id("41")
+  expect(p.last_event_id()) == "41"
+  let evs = p.feed("data: a\n\nid: 42\ndata: b\n\n".bytes()).ok() ?? []
+  var ids: List[Str] = []
+  for e in evs {
+    ids.push(e.id)
+  }
+  expect(ids) == ["41", "42"]
+  expect(p.last_event_id()) == "42"
+}
+
 test "subscribe: a refused stream fails, connect failures give up after max_retries" {
   os.net.handle("GET https://ev.test/html", fn(_r: http.Request) -> http.Response { http.text(200, "<p>") })
   var s = sse.subscribe(http.client(os.net), os.clock, "https://ev.test/html")

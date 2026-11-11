@@ -16,5 +16,6 @@ tcp: one, two, three
 nx: lookup nx.test.: no such host
 fail: lookup fail.test.: server misbehaving
 only: denied true
+package only: denied [true, true, true, true]
 done
 --- stderr

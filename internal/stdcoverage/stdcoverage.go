@@ -245,6 +245,11 @@ func ProgramDirs(root string) ([]string, error) {
 			if err != nil {
 				return err
 			}
+			// a program's .xo directory holds the bindings and caches xo
+			// writes for it (.xo/gobind, .xo/cbind), not programs
+			if d.IsDir() && d.Name() == ".xo" {
+				return filepath.SkipDir
+			}
 			if d.IsDir() || !strings.HasSuffix(p, ".xo") {
 				return nil
 			}
@@ -536,7 +541,8 @@ func ReadEdges(paths []string) ([]Edge, error) {
 			return nil, err
 		}
 		for _, line := range strings.Split(string(data), "\n") {
-			if line == "" {
+			// `xo dev edges --own` names its bindings on a # line
+			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
 			// SRC_PATH SRC_LINE SRC_NAME TGT_PATH TGT_LINE TGT_NAME

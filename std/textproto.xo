@@ -110,19 +110,23 @@ fn line_key(k: Bytes) -> Str? {
   Some(canon(k))
 }
 
-/// s without leading and trailing spaces and tabs (Go's TrimString).
+/// s without leading and trailing ASCII space: spaces, tabs, CR and LF
+/// (Go's TrimString).
 pub fn trim(s: Str) -> Str {
   let b = s.bytes()
   var lo = 0
-  while lo < b.len() && (b[lo] == ' ' || b[lo] == '\t') {
+  while lo < b.len() && ascii_space(b[lo]) {
     lo += 1
   }
   var hi = b.len()
-  while hi > lo && (b[hi - 1] == ' ' || b[hi - 1] == '\t') {
+  while hi > lo && ascii_space(b[hi - 1]) {
     hi -= 1
   }
   s[lo..hi]
 }
+
+/// Go's textproto isASCIISpace.
+fn ascii_space(c: UInt8) -> Bool { c == ' ' || c == '\t' || c == '\r' || c == '\n' }
 
 fn trim_bytes(b: Bytes) -> Bytes {
   var lo = 0

@@ -4,7 +4,8 @@
 // preference, TXT strings joined, SRV by priority, PTR for IPv4 and IPv6,
 // an MX with an invalid host left out (Ok) and one with only invalid hosts
 // (Err), a truncated UDP answer retried over TCP, NXDOMAIN, SERVFAIL, an
-// address that does not parse, and Net.only's Denied. Errors are printed
+// address that does not parse, and Net.only's Denied (the package
+// functions too, which otherwise ask the system's servers). Errors are printed
 // without their " on SERVER" part (Go names resolv.conf's server there).
 use std/dns
 use std/udp
@@ -147,6 +148,14 @@ fn servers(os: Os) -> (udp.UdpConn, Listener) {
   (u, os.net.listen(u.local_addr()).or_fault("tcp listen"))
 }
 
+/// Whether r is the Denied error of an attenuated Net.
+fn denied[T](r: Result[T, NetErr]) -> Bool {
+  match r {
+    Err(NetErr.Denied(_)) => true
+    _ => false
+  }
+}
+
 fn main(os: Os) {
   let (srv_udp, lis) = servers(os)
   let addr = srv_udp.local_addr()
@@ -242,6 +251,16 @@ fn main(os: Os) {
       Ok(_) => os.stdio.println("only: looked up?")
       Err(e) => os.stdio.println("only: denied ${e is NetErr.Denied(_)}")
     }
+    // the package functions ask the system's servers, and an attenuated
+    // Net refuses a name it does not admit before any query is sent
+    let none = os.net.only(["example.com"])
+    let denied = [
+      denied(dns.lookup_mx(none, "mx.test.")),
+      denied(dns.lookup_txt(none, "txt.test.")),
+      denied(dns.lookup_srv(none, "xmpp", "tcp", "srv.test.")),
+      denied(dns.lookup_addr(none, "192.0.2.1")),
+    ]
+    os.stdio.println("package only: denied ${denied}")
     srv_udp.close()
     lis.close()
   }
