@@ -248,6 +248,11 @@ pushes.
   is gone.
   std/protobuf cannot merge this way: marshal and unmarshal are the
   compiler's (derive Proto), with no body to move.
+- std/amqp (nothing native) (2026-11-11): merged, not rt-hosted. In its
+  own module its wildcard arms over its own enums warned (XO0305: seven,
+  now listing the variants) and its test peers' net.listen effect was
+  checked (eleven gained `uses net.listen`); twenty Connection, Receiver,
+  Sender and amqp functions left compiler/ssa/waits.xo's NO_WAIT.
 - std/term and std/bufio (nothing native) (2026-11-11): merged, not
   rt-hosted; the Go backend compiles them from source, so their Go twins
   (std/rt/bufio.go, the std/term part of std/rt/term.go) are gone, and

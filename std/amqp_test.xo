@@ -1,0 +1,980 @@
+use std/base64
+use std/crypto
+use std/url
+
+fn hb(s: Str) -> Bytes { Bytes.from_hex(s).or_fault("hex") }
+
+fn dec(s: Str) -> Value { decode(hb(s)).or_fault("decode").0 }
+
+test "constructors go-amqp's encoder never writes decode" {
+  // list8, map8, array8 of ubyte, the zero value forms, small signed forms
+  expect(dec("c003015207")) == Value.List(items: [Value.UInt(v: UInt32(7))])
+  expect(dec("c1030243" + "44")) == Value.Map(pairs: [(Value.UInt(v: UInt32(0)), Value.ULong(v: UInt64(0)))])
+  expect(dec("e004" + "02" + "50" + "0102")) == Value.Array(items: [Value.UByte(v: UInt8(1)), Value.UByte(v: UInt8(2))])
+  expect(dec("45")) == Value.List(items: [])
+  expect(dec("5401")) == Value.Int(v: Int32(1))
+  expect(dec("55ff")) == Value.Long(v: Int64(-1))
+  expect(dec("7000000100")) == Value.UInt(v: UInt32(256))
+  expect(dec("a000")) == Value.Binary(v: b"")
+}
+
+test "decimals, chars and described values (which go-amqp's ReadAny refuses)" {
+  expect(dec("7400000001")) == Value.Decimal32(bits: UInt32(1))
+  expect(dec("840000000000000002")) == Value.Decimal64(bits: UInt64(2))
+  expect(dec("94000102030405060708090a0b0c0d0e0f")) == Value.Decimal128(bits: hb("000102030405060708090a0b0c0d0e0f"))
+  expect(dec("73000000e9")) == Value.Char(v: 'é')
+  expect(dec("005377a10161")) == Value.Described(descriptor: Value.ULong(v: UInt64(119)), value: Value.Str(v: "a"))
+  let d = Value.Described(descriptor: Value.Symbol(v: "x"), value: Value.List(items: [Value.Bool(v: true)]))
+  expect(decode(encode(d).or_fault("enc")).or_fault("dec").0) == d
+}
+
+test "bad input is an error, never a fault" {
+  for s in [
+    "",
+    "ff",                      // unknown constructor
+    "a105",                    // string longer than the data
+    "a1c3",                    // not UTF-8 (and short)
+    "a102c328",                // invalid UTF-8
+    "c101" + "0143",           // odd map count
+    "c002" + "05" + "52",      // count above the data
+    "c0020352",                // size past the data
+    "d000000001" + "00000000", // list32 size below its count field
+    "e0020150",                // array with no element for its count
+    "5600",                    // ok boolean: control (decoded below)
+    "5602",                    // invalid boolean
+  ] {
+    let r = decode(hb(s))
+    if s == "5600" {
+      expect(r.is_err()) == false
+    } else {
+      expect(r.is_err()) == true
+    }
+  }
+}
+
+test "nesting is bounded" {
+  var s = ""
+  for _ in 0..100 {
+    s += "c00101"
+  }
+  expect(decode(hb(s + "40")).is_err()) == true
+}
+
+test "values that cannot be encoded" {
+  expect(encode(Value.Array(items: [])).is_err()) == true
+  expect(encode(Value.Array(items: [Value.UByte(v: UInt8(1)), Value.UShort(v: UInt16(1))])).is_err()) == true
+  expect(encode(Value.Array(items: [Value.Null])).is_err()) == true
+  expect(encode(Value.Uuid(bytes: b"short")).is_err()) == true
+  expect(encode(Value.Decimal128(bits: b"short")).is_err()) == true
+}
+
+test "a ubyte array and the decimals round trip" {
+  for v in [
+    Value.Array(items: [Value.UByte(v: UInt8(1)), Value.UByte(v: UInt8(255))]),
+    Value.Decimal32(bits: UInt32(7)),
+    Value.Decimal64(bits: UInt64(7)),
+    Value.Char(v: '世'),
+    Value.Array(items: [Value.Char(v: 'a'), Value.Char(v: 'b')]),
+    Value.Array(items: [Value.Decimal32(bits: UInt32(1))]),
+  ] {
+    let (back, n) = decode(encode(v).or_fault("enc")).or_fault("dec")
+    expect(back) == v
+    expect(n) == encode(v).or_fault("enc").len()
+  }
+}
+
+fn rt(f: Frame) -> Frame {
+  let b = encode_frame(f).or_fault("encode")
+  let (g, n) = decode_frame(b).or_fault("decode")
+  expect(n) == b.len()
+  expect(encode_frame(g).or_fault("again")) == b
+  g
+}
+
+test "frame headers and the smallest performatives" {
+  expect(encode_frame(Frame{channel: UInt16(0), body: FrameBody.Empty}).or_fault("e")) == hb("0000000802000000")
+  expect(encode_frame(Frame{channel: UInt16(3), body: FrameBody.Close(v: Close{error: None})}).or_fault("e")) == hb("0000000c02000003005318" + "45")
+  expect(encode_frame(Frame{channel: UInt16(0), body: FrameBody.Open(v: Open{container_id: "c"})}).or_fault("e")) == hb("0000001702000000005310d00000000700000001a10163")
+}
+
+test "every performative round trips" {
+  let st = DeliveryState.Rejected(error: Some(WireError{condition: "amqp:decode-error", description: "bad", info: [("k", Value.Bool(v: true))]}))
+  let bodies: List[FrameBody] = [
+    FrameBody.Open(v: Open{container_id: "id", hostname: "h", max_frame_size: 65536, channel_max: 255, idle_timeout_ms: 30000, outgoing_locales: ["en", "fr"], offered_capabilities: ["x"], properties: [("p", Value.Str(v: "v"))]}),
+    FrameBody.Begin(v: Begin{remote_channel: Some(UInt16(2)), next_outgoing_id: UInt32(1), incoming_window: UInt32(2048), outgoing_window: UInt32(2048), handle_max: 10}),
+    FrameBody.Attach(v: Attach{name: "l", handle: UInt32(0), role: Role.Sender, sender_settle_mode: Some(SenderSettleMode.Mixed), receiver_settle_mode: Some(ReceiverSettleMode.Second), source: Some(Source{address: "a", durable: 2, filter: [("f", Value.Str(v: "x"))], outcomes: ["amqp:accepted:list", "amqp:rejected:list"]}), target: Some(Target{address: "t", dynamic: true}), unsettled: [(b"t1", Some(DeliveryState.Accepted)), (b"t2", None)], initial_delivery_count: 5, max_message_size: 1000}),
+    FrameBody.Attach(v: Attach{name: "r", handle: UInt32(1), role: Role.Receiver, sender_settle_mode: None, receiver_settle_mode: None, source: None, target: None}),
+    FrameBody.Flow(v: Flow{next_incoming_id: Some(UInt32(1)), incoming_window: UInt32(100), next_outgoing_id: UInt32(7), outgoing_window: UInt32(100), handle: Some(UInt32(0)), delivery_count: Some(UInt32(3)), link_credit: Some(UInt32(50)), available: None, drain: true, echo: true}),
+    FrameBody.Transfer(v: Transfer{handle: UInt32(0), delivery_id: Some(UInt32(4)), delivery_tag: b"tag", message_format: Some(UInt32(0)), settled: false, more: true, receiver_settle_mode: Some(ReceiverSettleMode.First), state: Some(DeliveryState.Received(section_number: UInt32(1), section_offset: UInt64(9))), payload: hb("0053777b")}),
+    FrameBody.Disposition(v: Disposition{role: Role.Receiver, first: UInt32(1), last: Some(UInt32(3)), settled: true, state: Some(DeliveryState.Modified(delivery_failed: true, undeliverable_here: false, annotations: [(Value.Symbol(v: "a"), Value.Bool(v: true))]))}),
+    FrameBody.Disposition(v: Disposition{role: Role.Sender, first: UInt32(0), last: None, settled: false, state: Some(st)}),
+    FrameBody.Detach(v: Detach{handle: UInt32(1), closed: true, error: Some(WireError{condition: "amqp:link:detach-forced"})}),
+    FrameBody.End(v: End{error: None}),
+    FrameBody.Close(v: Close{error: Some(WireError{condition: "amqp:internal-error", description: "x"})}),
+    FrameBody.SaslMechanisms(v: SaslMechanisms{mechanisms: ["PLAIN", "ANONYMOUS"]}),
+    FrameBody.SaslInit(v: SaslInit{mechanism: "PLAIN", initial_response: hb("00757000"), hostname: "h"}),
+    FrameBody.SaslChallenge(v: SaslChallenge{challenge: b"c"}),
+    FrameBody.SaslResponse(v: SaslResponse{response: b"r"}),
+    FrameBody.SaslOutcome(v: SaslOutcome{code: UInt8(0), additional_data: b"ok"}),
+    FrameBody.Empty,
+  ]
+  for body in bodies {
+    let f = Frame{channel: UInt16(1), body: body}
+    expect(rt(f)) == f
+  }
+}
+
+test "a bad frame is refused" {
+  expect(decode_frame(hb("00000008")).is_err()) == true
+  expect(decode_frame(hb("0000000802010000")).is_err()) == true
+  expect(decode_frame(hb("0000000802020000")).is_err()) == true
+  expect(decode_frame(hb("0000000402000000")).is_err()) == true
+  expect(decode_frame(hb("0000000c02000000005318"), 8).is_err()) == true
+  expect(decode_frame(hb("0000001002000000005310" + "45" + "0000")).is_err()) == true
+}
+
+test "an Int field outside its wire range is refused on encode" {
+  let f = Frame{channel: UInt16(0), body: FrameBody.Open(v: Open{container_id: "c", channel_max: 70000})}
+  expect(encode_frame(f).is_err()) == true
+  let g = Frame{channel: UInt16(0), body: FrameBody.Begin(v: Begin{remote_channel: None, next_outgoing_id: UInt32(0), incoming_window: UInt32(0), outgoing_window: UInt32(0), handle_max: -1})}
+  expect(encode_frame(g).is_err()) == true
+}
+
+// ---------------------------------------------------------------------------
+// The connection against an in-process peer
+
+fn peer_frame(sc: ServerConn, buf: Bytes) -> (Frame, Bytes) uses net.listen {
+  var b = buf
+  while b.len() < 4 {
+    match sc.read(4096).or_fault("peer read") {
+      Some(x) => b = b + x
+      None => fault("peer: eof")
+    }
+  }
+  var size = 0
+  for i in 0..4 { size = size * 256 + Int(b[i]) }
+  while b.len() < size {
+    match sc.read(4096).or_fault("peer read") {
+      Some(x) => b = b + x
+      None => fault("peer: eof")
+    }
+  }
+  let (f, _) = decode_frame(b[0..size]).or_fault("peer decode")
+  (f, b[size..])
+}
+
+fn peer_send(sc: ServerConn, ch: Int, body: FrameBody) uses net.listen {
+  sc.write(encode_frame(Frame{channel: UInt16.wrapping_from(ch), body: body}).or_fault("peer encode")).or_fault("peer write")
+}
+
+fn peer_header(sc: ServerConn, want: Bytes, buf: Bytes) -> Bytes uses net.listen {
+  var b = buf
+  while b.len() < 8 {
+    match sc.read(4096).or_fault("peer read") {
+      Some(x) => b = b + x
+      None => fault("peer: eof")
+    }
+  }
+  expect(b[0..8]) == want
+  sc.write(want).or_fault("peer write")
+  b[8..]
+}
+
+/// A scripted peer: optional SASL (PLAIN user/pass accepted, or refused), then open, begin, end and close.
+fn serve(l: Listener, sasl: Bool, accept_auth: Bool, peer_error: Bool) uses net.listen {
+  let sc = l.accept().or_fault("accept")
+  var buf = b""
+  if sasl {
+    buf = peer_header(sc, b"AMQP\x03\x01\x00\x00", buf)
+    peer_send(sc, 0, FrameBody.SaslMechanisms(v: SaslMechanisms{mechanisms: ["EXTERNAL", "PLAIN"]}))
+    let (f, rest) = peer_frame(sc, buf)
+    buf = rest
+    match f.body {
+      SaslInit(i) => {
+        expect(i.mechanism) == "PLAIN"
+        expect(i.initial_response) == b"\x00user\x00pass"
+      }
+      _ => fault("expected sasl-init")
+    }
+    peer_send(sc, 0, FrameBody.SaslOutcome(v: SaslOutcome{code: UInt8(if accept_auth { 0 } else { 1 }), additional_data: b""}))
+    if !accept_auth {
+      sc.close()
+      return
+    }
+  }
+  buf = peer_header(sc, b"AMQP\x00\x01\x00\x00", buf)
+  let (o, rest) = peer_frame(sc, buf)
+  buf = rest
+  match o.body {
+    Open(x) => expect(x.container_id) == "tester"
+    _ => fault("expected open")
+  }
+  peer_send(sc, 0, FrameBody.Open(v: Open{container_id: "broker", max_frame_size: 1024, channel_max: 7}))
+  while true {
+    let (f, rest) = peer_frame(sc, buf)
+    buf = rest
+    match f.body {
+      Begin(_) => {
+        if peer_error {
+          peer_send(sc, Int(f.channel), FrameBody.End(v: End{error: Some(WireError{condition: "amqp:not-allowed", description: "no sessions"})}))
+        } else {
+          peer_send(sc, Int(f.channel), FrameBody.Begin(v: Begin{remote_channel: Some(f.channel), next_outgoing_id: UInt32(5), incoming_window: UInt32(100), outgoing_window: UInt32(200)}))
+        }
+      }
+      End(_) => peer_send(sc, Int(f.channel), FrameBody.End(v: End{error: None}))
+      Close(_) => {
+        peer_send(sc, 0, FrameBody.Close(v: Close{error: None}))
+        sc.close()
+        return
+      }
+      _ => {}
+    }
+  }
+}
+
+test "dial opens a connection, begins and ends sessions, and closes" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve(l, false, true, false) })
+    var c = dial(os.net, l.addr(), ConnOptions{container_id: "tester"}).or_fault("dial")
+    expect(c.peer_container_id()) == "broker"
+    expect(c.peer_max_frame_size()) == 1024
+    expect(c.peer_channel_max()) == 7
+    let a = c.begin().or_fault("begin a")
+    let b = c.begin(SessionOptions{incoming_window: 10}).or_fault("begin b")
+    expect(a.channel) == 0
+    expect(b.channel) == 1
+    expect(a.remote_incoming_window) == 100
+    expect(a.remote_outgoing_window) == 200
+    expect(a.remote_next_outgoing_id) == 5
+    expect(b.incoming_window) == 10
+    c.end_session(a).or_fault("end a")
+    let again = c.begin().or_fault("begin again")
+    expect(again.channel) == 0
+    c.end_session(b).or_fault("end b")
+    c.end_session(again).or_fault("end again")
+    c.close().or_fault("close")
+  }
+}
+
+test "SASL PLAIN, then open" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve(l, true, true, false) })
+    var c = dial(os.net, l.addr(), ConnOptions{container_id: "tester", sasl: Sasl.Plain(user: "user", password: "pass")}).or_fault("dial")
+    c.close().or_fault("close")
+  }
+}
+
+test "a refused SASL login is an Auth error" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve(l, true, false, false) })
+    match dial(os.net, l.addr(), ConnOptions{container_id: "tester", sasl: Sasl.Plain(user: "user", password: "pass")}) {
+      Ok(_) => fault("expected an error")
+      Err(AmqpErr.Auth(code, _)) => expect(code) == 1
+      Err(_) => fault("wrong error")
+    }
+  }
+}
+
+test "a peer's End with an error is a Peer error" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve(l, false, true, true) })
+    var c = dial(os.net, l.addr(), ConnOptions{container_id: "tester"}).or_fault("dial")
+    match c.begin() {
+      Ok(_) => fault("expected an error")
+      Err(AmqpErr.Peer(e)) => expect(e.condition) == "amqp:not-allowed"
+      Err(_) => fault("wrong error")
+    }
+    c.close().or_fault("close")
+  }
+}
+
+test "addresses: schemes and default ports" {
+  expect(parse_addr("broker:5673")) == ("broker", "broker:5673", false)
+  expect(parse_addr("amqp://broker")) == ("broker", "broker:5672", false)
+  expect(parse_addr("amqps://b.example.com/")) == ("b.example.com", "b.example.com:5671", true)
+  expect(parse_addr("amqps://[::1]:9")) == ("::1", "[::1]:9", true)
+  expect(parse_addr("[::1]")) == ("::1", "[::1]:5672", false)
+}
+
+// ---------------------------------------------------------------------------
+// Links against an in-process peer
+
+fn big_payload(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for i in 0..n { b.write_byte(UInt8.wrapping_from(i * 7 + 3)) }
+  b.freeze()
+}
+
+/// mode 0: the client sends (the peer gives credit 5, checks the fragments, accepts); mode 1: the client
+/// receives (the peer sends a two frame delivery after the client's credit and expects an Accept).
+fn serve_links(l: Listener, mode: Int) uses net.listen {
+  let sc = l.accept().or_fault("accept")
+  var buf = peer_header(sc, b"AMQP\x00\x01\x00\x00", b"")
+  let (o, rest) = peer_frame(sc, buf)
+  buf = rest
+  match o.body {
+    Open(_) => {}
+    _ => fault("expected open")
+  }
+  peer_send(sc, 0, FrameBody.Open(v: Open{container_id: "broker", max_frame_size: 512}))
+  var acc = b""
+  var frames = 0
+  var cur_id = UInt32(0)
+  while true {
+    let (f, rest) = peer_frame(sc, buf)
+    buf = rest
+    let ch = Int(f.channel)
+    match f.body {
+      Begin(_) => peer_send(sc, ch, FrameBody.Begin(v: Begin{remote_channel: Some(f.channel), next_outgoing_id: UInt32(0), incoming_window: UInt32(100), outgoing_window: UInt32(100)}))
+      Attach(a) => {
+        match a.role {
+          Sender => {
+            peer_send(sc, ch, FrameBody.Attach(v: Attach{name: a.name, handle: UInt32(7), role: Role.Receiver, sender_settle_mode: None, receiver_settle_mode: None, source: a.source, target: a.target}))
+            peer_send(sc, ch, FrameBody.Flow(v: Flow{next_incoming_id: Some(UInt32(0)), incoming_window: UInt32(100), next_outgoing_id: UInt32(0), outgoing_window: UInt32(100), handle: Some(UInt32(7)), delivery_count: Some(UInt32(0)), link_credit: Some(UInt32(5)), available: None}))
+          }
+          Receiver => {
+            peer_send(sc, ch, FrameBody.Attach(v: Attach{name: a.name, handle: UInt32(7), role: Role.Sender, sender_settle_mode: None, receiver_settle_mode: None, source: a.source, target: a.target, initial_delivery_count: 0}))
+          }
+        }
+      }
+      Flow(x) => {
+        if mode == 1 && x.link_credit is Some(..) {
+          expect(x.link_credit) == Some(UInt32(2))
+          let msg = encode_message(Message{body: Body.Data(sections: [big_payload(700)])}).or_fault("msg")
+          let half = msg.len() / 2
+          peer_send(sc, ch, FrameBody.Transfer(v: Transfer{handle: UInt32(7), delivery_id: Some(UInt32(0)), delivery_tag: b"t0", message_format: Some(UInt32(0)), more: true, receiver_settle_mode: None, state: None, payload: msg[0..half]}))
+          peer_send(sc, ch, FrameBody.Transfer(v: Transfer{handle: UInt32(7), delivery_id: None, message_format: None, receiver_settle_mode: None, state: None, payload: msg[half..]}))
+        }
+      }
+      Transfer(t) => {
+        frames += 1
+        acc = acc + t.payload
+        match t.delivery_id {
+          Some(i) => { cur_id = i }
+          None => {}
+        }
+        if !t.more {
+          expect(frames >= 3) == true
+          let m = decode_message(acc).or_fault("decode")
+          expect(m.body) == Body.Data(sections: [big_payload(1500)])
+          peer_send(sc, ch, FrameBody.Disposition(v: Disposition{role: Role.Receiver, first: cur_id, last: None, settled: true, state: Some(DeliveryState.Accepted)}))
+          acc = b""
+          frames = 0
+        }
+      }
+      Disposition(d) => {
+        expect(d.state) == Some(DeliveryState.Accepted)
+        expect(d.settled) == true
+      }
+      Detach(_) => peer_send(sc, ch, FrameBody.Detach(v: Detach{handle: UInt32(7), closed: true, error: None}))
+      End(_) => peer_send(sc, ch, FrameBody.End(v: End{error: None}))
+      Close(_) => {
+        peer_send(sc, 0, FrameBody.Close(v: Close{error: None}))
+        sc.close()
+        return
+      }
+      Open(_) | SaslMechanisms(_) | SaslInit(_) | SaslChallenge(_) | SaslResponse(_) | SaslOutcome(_) | Empty => {}
+    }
+  }
+}
+
+test "a sender fragments to the peer's frame size and gets the outcome" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_links(l, 0) })
+    let c = dial(os.net, l.addr(), ConnOptions{container_id: "tester", max_frame_size: 4096}).or_fault("dial")
+    let sess = c.begin().or_fault("begin")
+    let snd = c.new_sender(sess, "queue").or_fault("sender")
+    let out = snd.send(Message{body: Body.Data(sections: [big_payload(1500)])}).or_fault("send")
+    expect(out) == Some(DeliveryState.Accepted)
+    let again = snd.send(Message{body: Body.Data(sections: [big_payload(1500)])}).or_fault("send 2")
+    expect(again) == Some(DeliveryState.Accepted)
+    snd.close().or_fault("close link")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}
+
+test "a receiver assembles a fragmented delivery and accepts it" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_links(l, 1) })
+    let c = dial(os.net, l.addr(), ConnOptions{container_id: "tester", max_frame_size: 4096}).or_fault("dial")
+    let sess = c.begin().or_fault("begin")
+    let rcv = c.new_receiver(sess, "queue", ReceiverOptions{credit: 2}).or_fault("receiver")
+    let d = rcv.receive().or_fault("receive")
+    expect(d.message.body) == Body.Data(sections: [big_payload(700)])
+    expect(d.tag) == b"t0"
+    expect(d.id) == 0
+    rcv.accept(d).or_fault("accept")
+    rcv.close().or_fault("close link")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Concurrent calls on one connection (the reader task)
+
+fn peer_deliver(sc: ServerConn, ch: Int, handle: Int, id: Int, text: Str) uses net.listen {
+  let msg = encode_message(Message{body: Body.Data(sections: [text.bytes()])}).or_fault("msg")
+  peer_send(sc, ch, FrameBody.Transfer(v: Transfer{handle: UInt32.wrapping_from(handle), delivery_id: Some(UInt32.wrapping_from(id)), delivery_tag: b"t",
+    message_format: Some(UInt32(0)), more: false, receiver_settle_mode: None, state: None, payload: msg}))
+}
+
+/// A peer for the receivers "a" and "b" and a sender: it accepts every transfer, echoes it on "b",
+/// and sends one delivery on "a" only when the transfer says "stop".
+fn serve_mux(l: Listener) uses net.listen {
+  let sc = l.accept().or_fault("accept")
+  var buf = peer_header(sc, b"AMQP\x00\x01\x00\x00", b"")
+  let (o, rest) = peer_frame(sc, buf)
+  buf = rest
+  match o.body {
+    Open(_) => {}
+    _ => fault("expected open")
+  }
+  peer_send(sc, 0, FrameBody.Open(v: Open{container_id: "broker"}))
+  var ha = -1
+  var hb = -1
+  var next_handle = 10
+  var out_id = 0
+  while true {
+    let (f, rest) = peer_frame(sc, buf)
+    buf = rest
+    let ch = Int(f.channel)
+    match f.body {
+      Begin(_) => peer_send(sc, ch, FrameBody.Begin(v: Begin{remote_channel: Some(f.channel), next_outgoing_id: UInt32(0), incoming_window: UInt32(1000), outgoing_window: UInt32(1000)}))
+      Attach(a) => {
+        let h = next_handle
+        next_handle += 1
+        match a.role {
+          Sender => {
+            peer_send(sc, ch, FrameBody.Attach(v: Attach{name: a.name, handle: UInt32.wrapping_from(h), role: Role.Receiver, sender_settle_mode: None, receiver_settle_mode: None, source: a.source, target: a.target}))
+            peer_send(sc, ch, FrameBody.Flow(v: Flow{next_incoming_id: Some(UInt32(0)), incoming_window: UInt32(1000), next_outgoing_id: UInt32(0), outgoing_window: UInt32(1000), handle: Some(UInt32.wrapping_from(h)), delivery_count: Some(UInt32(0)), link_credit: Some(UInt32(1000)), available: None}))
+          }
+          Receiver => {
+            if a.name == "a" { ha = h }
+            if a.name == "b" { hb = h }
+            peer_send(sc, ch, FrameBody.Attach(v: Attach{name: a.name, handle: UInt32.wrapping_from(h), role: Role.Sender, sender_settle_mode: None, receiver_settle_mode: None, source: a.source, target: a.target, initial_delivery_count: 0}))
+          }
+        }
+      }
+      Transfer(t) => {
+        let m = decode_message(t.payload).or_fault("decode")
+        var text = "?"
+        match m.body {
+          Data(sections) => { text = (sections[0]).to_str_lossy() }
+          Empty | Sequence(_) | Value(_) => {}
+        }
+        match t.delivery_id {
+          Some(i) => peer_send(sc, ch, FrameBody.Disposition(v: Disposition{role: Role.Receiver, first: i, last: None, settled: true, state: Some(DeliveryState.Accepted)}))
+          None => {}
+        }
+        if text == "stop" {
+          peer_deliver(sc, ch, ha, out_id, "to-a")
+        } else {
+          peer_deliver(sc, ch, hb, out_id, text)
+        }
+        out_id += 1
+      }
+      // the peer's handles are ours plus 10
+      Detach(d) => peer_send(sc, ch, FrameBody.Detach(v: Detach{handle: UInt32.wrapping_from(Int(d.handle) + 10), closed: true, error: None}))
+      End(_) => peer_send(sc, ch, FrameBody.End(v: End{error: None}))
+      Close(_) => {
+        peer_send(sc, 0, FrameBody.Close(v: Close{error: None}))
+        sc.close()
+        return
+      }
+      _ => {}
+    }
+  }
+}
+
+/// A peer that checks each link's Attach as decoded from the client's bytes: the link's desired
+/// capabilities ("s", "r", and none on "p") apart from its source's and target's.
+fn serve_caps(l: Listener, geo: Str) uses net.listen {
+  let sc = l.accept().or_fault("accept")
+  var buf = peer_header(sc, b"AMQP\x00\x01\x00\x00", b"")
+  let (o, rest) = peer_frame(sc, buf)
+  buf = rest
+  match o.body {
+    Open(_) => {}
+    _ => fault("expected open")
+  }
+  peer_send(sc, 0, FrameBody.Open(v: Open{container_id: "broker"}))
+  var next_handle = 10
+  while true {
+    let (f, rest) = peer_frame(sc, buf)
+    buf = rest
+    let ch = Int(f.channel)
+    match f.body {
+      Begin(_) => peer_send(sc, ch, FrameBody.Begin(v: Begin{remote_channel: Some(f.channel), next_outgoing_id: UInt32(0), incoming_window: UInt32(1000), outgoing_window: UInt32(1000)}))
+      Attach(a) => {
+        let src = match a.source {
+          Some(x) => x.capabilities
+          None => ["no source"]
+        }
+        let dst = match a.target {
+          Some(x) => x.capabilities
+          None => ["no target"]
+        }
+        match a.name {
+          "s" => {
+            expect(a.desired_capabilities) == [geo]
+            expect(dst) == ["queue"]
+            expect(src) == []
+          }
+          "r" => {
+            expect(a.desired_capabilities) == [geo, "x"]
+            expect(src) == ["queue"]
+            expect(dst) == []
+          }
+          _ => expect(a.desired_capabilities) == []
+        }
+        let h = next_handle
+        next_handle += 1
+        match a.role {
+          Sender => {
+            peer_send(sc, ch, FrameBody.Attach(v: Attach{name: a.name, handle: UInt32.wrapping_from(h), role: Role.Receiver, sender_settle_mode: None, receiver_settle_mode: None, source: a.source, target: a.target}))
+            peer_send(sc, ch, FrameBody.Flow(v: Flow{next_incoming_id: Some(UInt32(0)), incoming_window: UInt32(1000), next_outgoing_id: UInt32(0), outgoing_window: UInt32(1000), handle: Some(UInt32.wrapping_from(h)), delivery_count: Some(UInt32(0)), link_credit: Some(UInt32(10)), available: None}))
+          }
+          Receiver => peer_send(sc, ch, FrameBody.Attach(v: Attach{name: a.name, handle: UInt32.wrapping_from(h), role: Role.Sender, sender_settle_mode: None, receiver_settle_mode: None, source: a.source, target: a.target, initial_delivery_count: 0}))
+        }
+      }
+      // the peer's handles are ours plus 10
+      Detach(d) => peer_send(sc, ch, FrameBody.Detach(v: Detach{handle: UInt32.wrapping_from(Int(d.handle) + 10), closed: true, error: None}))
+      End(_) => peer_send(sc, ch, FrameBody.End(v: End{error: None}))
+      Close(_) => {
+        peer_send(sc, 0, FrameBody.Close(v: Close{error: None}))
+        sc.close()
+        return
+      }
+      _ => {}
+    }
+  }
+}
+
+test "a link's desired capabilities go in its Attach, apart from its source's and target's" uses (net, clock) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  // Event Hubs' geo-replication asks for it on every link
+  let geo = "com.microsoft:georeplication"
+  scope s {
+    s.spawn(fn() { serve_caps(l, geo) })
+    let c = dial(os.net, l.addr(), ConnOptions{container_id: "tester", clock: Some(os.clock), timeout_ms: 10000}).or_fault("dial")
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let snd = c.new_sender(sess, "q", SenderOptions{name: "s", target_capabilities: ["queue"], desired_capabilities: [geo]}).or_fault("sender")
+    let rcv = c.new_receiver(sess, "q", ReceiverOptions{name: "r", source_capabilities: ["queue"], desired_capabilities: [geo, "x"]}).or_fault("receiver")
+    let plain = c.new_sender(sess, "q", SenderOptions{name: "p"}).or_fault("plain sender")
+    snd.close().or_fault("close s")
+    rcv.close().or_fault("close r")
+    plain.close().or_fault("close p")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}
+
+test "two receivers and a sender on one connection do not block each other" uses (net, clock, stdio) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_mux(l) })
+    let c = dial(os.net, l.addr(), ConnOptions{container_id: "tester", clock: Some(os.clock), timeout_ms: 10000}).or_fault("dial")
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin(SessionOptions{incoming_window: 1000, outgoing_window: 1000}).or_fault("begin")
+    let a = c.new_receiver(sess, "qa", ReceiverOptions{name: "a", credit: 10}).or_fault("receiver a")
+    let b = c.new_receiver(sess, "qb", ReceiverOptions{name: "b", credit: 500}).or_fault("receiver b")
+    let snd = c.new_sender(sess, "qs").or_fault("sender")
+    let done_a = Chan[Str].new(cap: 1)
+    let done_b = Chan[Int].new(cap: 1)
+    // "a" waits with no deadline until the sender's last message; under one lock this would stall the rest
+    s.spawn(fn() {
+      let d = a.receive().or_fault("receive a")
+      a.accept(d).or_fault("accept a")
+      done_a.send(text(d))
+    })
+    s.spawn(fn() {
+      var n = 0
+      for _ in 0..100 {
+        let d = b.receive().or_fault("receive b")
+        b.accept(d).or_fault("accept b")
+        n += 1
+      }
+      done_b.send(n)
+    })
+    let t0 = os.clock.now().unix_millis()
+    for i in 0..100 {
+      let out = snd.send(Message{body: Body.Data(sections: ["m-${i}".bytes()])}).or_fault("send ${i}")
+      expect(out) == Some(DeliveryState.Accepted)
+    }
+    let took = os.clock.now().unix_millis() - t0
+    os.stdio.println("mux: 100 sends and 100 echoed receives with a third receiver waiting took ${took} ms")
+    expect(took < 3000) == true
+    expect(done_a.try_recv() is None) == true
+    expect(done_b.recv()) == Some(100)
+    let out = snd.send(Message{body: Body.Data(sections: [b"stop"])}).or_fault("send stop")
+    expect(out) == Some(DeliveryState.Accepted)
+    expect(done_a.recv()) == Some("to-a")
+    a.close().or_fault("close a")
+    b.close().or_fault("close b")
+    snd.close().or_fault("close sender")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}
+
+test "concurrent begins on one connection get distinct channels" uses (net, clock) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_mux(l) })
+    let c = dial(os.net, l.addr(), ConnOptions{container_id: "tester", clock: Some(os.clock), timeout_ms: 10000}).or_fault("dial")
+    c.keepalive(s.group()).or_fault("keepalive")
+    let got = Chan[Int].new(cap: 16)
+    for _ in 0..8 {
+      s.spawn(fn() {
+        let sess = c.begin().or_fault("begin")
+        got.send(sess.channel)
+      })
+    }
+    var seen: List[Int] = []
+    for _ in 0..8 {
+      let ch = got.recv() ?? -1
+      expect(seen.contains(ch)) == false
+      seen.push(ch)
+    }
+    expect(seen.len()) == 8
+    c.close().or_fault("close")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CBS put-token against an in-process peer
+
+fn serve_cbs(l: Listener, status: Int) uses net.listen {
+  let sc = l.accept().or_fault("accept")
+  var buf = peer_header(sc, b"AMQP\x00\x01\x00\x00", b"")
+  let (o, rest) = peer_frame(sc, buf)
+  buf = rest
+  match o.body {
+    Open(_) => {}
+    _ => fault("expected open")
+  }
+  peer_send(sc, 0, FrameBody.Open(v: Open{container_id: "broker"}))
+  var got = false
+  var credit = false
+  var sent = false
+  var detaches = 0
+  while true {
+    let (f, rest) = peer_frame(sc, buf)
+    buf = rest
+    let ch = Int(f.channel)
+    match f.body {
+      Begin(_) => peer_send(sc, ch, FrameBody.Begin(v: Begin{remote_channel: Some(f.channel), next_outgoing_id: UInt32(0), incoming_window: UInt32(100), outgoing_window: UInt32(100)}))
+      Attach(a) => {
+        match a.role {
+          Sender => {
+            expect(a.target) == Some(Target{address: "$cbs"})
+            peer_send(sc, ch, FrameBody.Attach(v: Attach{name: a.name, handle: UInt32(7), role: Role.Receiver, sender_settle_mode: None, receiver_settle_mode: None, source: a.source, target: a.target}))
+            peer_send(sc, ch, FrameBody.Flow(v: Flow{next_incoming_id: Some(UInt32(0)), incoming_window: UInt32(100), next_outgoing_id: UInt32(0), outgoing_window: UInt32(100), handle: Some(UInt32(7)), delivery_count: Some(UInt32(0)), link_credit: Some(UInt32(5)), available: None}))
+          }
+          Receiver => {
+            peer_send(sc, ch, FrameBody.Attach(v: Attach{name: a.name, handle: UInt32(8), role: Role.Sender, sender_settle_mode: None, receiver_settle_mode: None, source: a.source, target: a.target, initial_delivery_count: 0}))
+          }
+        }
+      }
+      Flow(x) => {
+        if x.link_credit is Some(..) { credit = true }
+      }
+      Transfer(t) => {
+        let m = decode_message(t.payload).or_fault("decode")
+        expect(m.body) == Body.Value(v: Value.Str(v: "SAS token"))
+        let ap = m.app_properties ?? []
+        expect(ap.contains(("operation", Value.Str(v: "put-token")))) == true
+        expect(ap.contains(("name", Value.Str(v: "sb://x/q")))) == true
+        expect(ap.contains(("type", Value.Str(v: "servicebus.windows.net:sastoken")))) == true
+        got = true
+        peer_send(sc, ch, FrameBody.Disposition(v: Disposition{role: Role.Receiver, first: t.delivery_id ?? UInt32(0), last: None, settled: true, state: Some(DeliveryState.Accepted)}))
+      }
+      Detach(_) => {
+        detaches += 1
+        peer_send(sc, ch, FrameBody.Detach(v: Detach{handle: UInt32(if detaches == 1 { 8 } else { 7 }), closed: true, error: None}))
+      }
+      End(_) => peer_send(sc, ch, FrameBody.End(v: End{error: None}))
+      Close(_) => {
+        peer_send(sc, 0, FrameBody.Close(v: Close{error: None}))
+        sc.close()
+        return
+      }
+      _ => {}
+    }
+    if got && credit && !sent {
+      sent = true
+      let reply = encode_message(Message{app_properties: Some([("status-code", Value.Int(v: Int32.wrapping_from(status))), ("status-description", Value.Str(v: "reply"))]), body: Body.Value(v: Value.Null)}).or_fault("reply")
+      peer_send(sc, 0, FrameBody.Transfer(v: Transfer{handle: UInt32(8), delivery_id: Some(UInt32(0)), delivery_tag: b"r", message_format: Some(UInt32(0)), receiver_settle_mode: None, state: None, payload: reply}))
+    }
+  }
+}
+
+test "cbs put-token succeeds on a 2xx status" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_cbs(l, 202) })
+    let c = dial(os.net, l.addr(), ConnOptions{container_id: "tester"}).or_fault("dial")
+    let sess = c.begin().or_fault("begin")
+    cbs_put_token(c, sess, "sb://x/q", "SAS token").or_fault("put-token")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}
+
+test "cbs put-token with a 401 is a Peer error" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_cbs(l, 401) })
+    let c = dial(os.net, l.addr(), ConnOptions{container_id: "tester"}).or_fault("dial")
+    let sess = c.begin().or_fault("begin")
+    match cbs_put_token(c, sess, "sb://x/q", "SAS token") {
+      Ok(_) => fault("expected an error")
+      Err(AmqpErr.Peer(e)) => expect(e.condition) == "amqp:unauthorized-access"
+      Err(_) => fault("wrong error")
+    }
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}
+
+/// A peer for the timeout tests: opens (advertising `idle_ms`), then by `mode`: 0 counts empty
+/// frames until the Close and requires `want_beats` of them; 1 reads the Begin and stays silent;
+/// 2 stays silent without reading.
+/// Reads and drops everything until the client closes.
+fn peer_drain(sc: ServerConn) uses net.listen {
+  while true {
+    match sc.read(4096) {
+      Ok(Some(_)) => {}
+      _ => return
+    }
+  }
+}
+
+fn serve_quiet(l: Listener, mode: Int, idle_ms: Int, want_beats: Int) uses net.listen {
+  let sc = l.accept().or_fault("accept")
+  var buf = peer_header(sc, b"AMQP\x00\x01\x00\x00", b"")
+  let (_o, rest) = peer_frame(sc, buf)
+  buf = rest
+  peer_send(sc, 0, FrameBody.Open(v: Open{container_id: "quiet", max_frame_size: 1024, channel_max: 7, idle_timeout_ms: idle_ms}))
+  if mode == 2 {
+    peer_drain(sc)
+    return
+  }
+  var beats = 0
+  while true {
+    let (f, rest) = peer_frame(sc, buf)
+    buf = rest
+    match f.body {
+      Empty => { beats += 1 }
+      Begin(_) => {
+        if mode == 1 {
+          peer_drain(sc)
+          return
+        }
+      }
+      Close(_) => {
+        if beats < want_beats { fault("peer saw ${beats} heartbeats, want ${want_beats}") }
+        peer_send(sc, 0, FrameBody.Close(v: Close{error: None}))
+        sc.close()
+        return
+      }
+      _ => {}
+    }
+  }
+}
+
+test "a call that waits longer than timeout_ms fails with an i/o timeout" uses (net, clock) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_quiet(l, 1, 0, 0) })
+    let c = dial(os.net, l.addr(), ConnOptions{container_id: "tester", clock: Some(os.clock), timeout_ms: 100}).or_fault("dial")
+    match c.begin() {
+      Ok(_) => fault("begin should time out")
+      Err(Net(m)) => expect(m) == "i/o timeout"
+      Err(_) => fault("wrong error")
+    }
+    c.abort()
+  }
+}
+
+test "the keeper sends empty frames at half the peer's idle timeout" uses (net, clock) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_quiet(l, 0, 200, 3) })
+    let c = dial(os.net, l.addr(), ConnOptions{container_id: "tester", clock: Some(os.clock)}).or_fault("dial")
+    expect(c.peer_idle_timeout_ms()) == 200
+    c.keepalive(s.group()).or_fault("keepalive")
+    os.clock.sleep(550ms)
+    c.close().or_fault("close")
+  }
+}
+
+test "a silent peer fails the connection after idle_timeout_ms" uses (net, clock) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_quiet(l, 2, 0, 0) })
+    let c = dial(os.net, l.addr(), ConnOptions{container_id: "tester", clock: Some(os.clock), idle_timeout_ms: 200}).or_fault("dial")
+    c.keepalive(s.group()).or_fault("keepalive")
+    os.clock.sleep(500ms)
+    match c.begin() {
+      Ok(_) => fault("begin should fail")
+      Err(Net(m)) => expect(m.starts_with("idle timeout")) == true
+      Err(_) => fault("wrong error")
+    }
+    c.abort()
+  }
+}
+
+// Interop test against a real AMQP 1.0 broker, opt-in: it runs only with `xo test --real` and
+// XO_AMQP_INTEROP_ADDR set (for example localhost:5672), and passes without doing anything otherwise.
+// It is not a gate. XO_AMQP_INTEROP_USER and _PASSWORD default to artemis / artemis, the login of
+// apache/activemq-artemis; knowledgebase/infrastructure/amqp-interop.md has the docker command.
+
+fn interop_opts(os_env: Env, clk: Clock) -> ConnOptions uses (env, clock) {
+  let user = os_env.get("XO_AMQP_INTEROP_USER") ?? "artemis"
+  let pass = os_env.get("XO_AMQP_INTEROP_PASSWORD") ?? "artemis"
+  ConnOptions{container_id: "xo-interop", clock: Some(clk), timeout_ms: 10000, idle_timeout_ms: 30000,
+    sasl: Sasl.Plain(user: user, password: pass)}
+}
+
+fn text(d: Delivery) -> Str {
+  match d.message.body {
+    Data(sections) => (sections[0]).to_str_lossy()
+    Empty | Sequence(_) | Value(_) => "?"
+  }
+}
+
+test "interop: send, receive and settle against a real broker" uses (net, clock, env) {
+  let addr = os.env.get("XO_AMQP_INTEROP_ADDR") ?? ""
+  if addr == "" { return }
+  let queue = "xo-interop-${os.clock.now().unix_millis()}"
+  let c = dial(os.net, addr, interop_opts(os.env, os.clock)).or_fault("dial")
+  expect(c.peer_container_id() != "") == true
+  let sess = c.begin().or_fault("begin")
+  let snd = c.new_sender(sess, queue, SenderOptions{target_capabilities: ["queue"]}).or_fault("sender")
+  for i in 0..3 {
+    let m = Message{
+      properties: Some(Properties{message_id: Value.Str(v: "id-${i}")}),
+      app_properties: Some([("n", Value.Int(v: Int32(i)))]),
+      body: Body.Data(sections: ["msg-${i}".bytes()])}
+    let out = snd.send(m).or_fault("send ${i}")
+    expect(out) == Some(DeliveryState.Accepted)
+  }
+  let rcv = c.new_receiver(sess, queue, ReceiverOptions{credit: 3, source_capabilities: ["queue"]}).or_fault("receiver")
+  let d0 = rcv.receive().or_fault("receive 0")
+  let d1 = rcv.receive().or_fault("receive 1")
+  let d2 = rcv.receive().or_fault("receive 2")
+  expect(text(d0)) == "msg-0"
+  expect(text(d1)) == "msg-1"
+  expect(text(d2)) == "msg-2"
+  expect(d0.message.properties.or_fault("properties").message_id) == Value.Str(v: "id-0")
+  rcv.accept(d0).or_fault("accept")
+  rcv.release(d1).or_fault("release")
+  rcv.accept(d2).or_fault("accept 2")
+  // the released message comes back
+  let again = rcv.receive().or_fault("redelivery")
+  expect(text(again)) == "msg-1"
+  rcv.accept(again).or_fault("accept again")
+  rcv.close().or_fault("close receiver")
+  snd.close().or_fault("close sender")
+  c.end_session(sess).or_fault("end")
+  c.close().or_fault("close")
+}
+
+test "interop: a large delivery, keepalive, reject and the dead letter path" uses (net, clock, env) {
+  let addr = os.env.get("XO_AMQP_INTEROP_ADDR") ?? ""
+  if addr == "" { return }
+  let queue = "xo-interop-big-${os.clock.now().unix_millis()}"
+  let c = dial(os.net, addr, interop_opts(os.env, os.clock)).or_fault("dial")
+  scope s {
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let snd = c.new_sender(sess, queue, SenderOptions{target_capabilities: ["queue"]}).or_fault("sender")
+    var payload = BytesBuilder.new()
+    for i in 0..200000 { payload.write_byte(UInt8.wrapping_from(i)) }
+    let big = payload.freeze()
+    let out = snd.send(Message{body: Body.Data(sections: [big])}).or_fault("send big")
+    expect(out) == Some(DeliveryState.Accepted)
+    let rcv = c.new_receiver(sess, queue, ReceiverOptions{credit: 2, source_capabilities: ["queue"]}).or_fault("receiver")
+    let d = rcv.receive().or_fault("receive big")
+    expect(d.message.body) == Body.Data(sections: [big])
+    rcv.accept(d).or_fault("accept big")
+    // Artemis 2.44 closes the connection with an internal error when a large message is rejected
+    // (AMQ119008), so the reject goes on a small one
+    let small = snd.send(Message{body: Body.Data(sections: [b"small"])}).or_fault("send small")
+    expect(small) == Some(DeliveryState.Accepted)
+    let d2 = rcv.receive().or_fault("receive small")
+    rcv.reject(d2).or_fault("reject")
+    // modified with delivery-failed: redelivered with the delivery count raised
+    let sent_mod = snd.send(Message{body: Body.Data(sections: [b"mod"])}).or_fault("send mod")
+    expect(sent_mod) == Some(DeliveryState.Accepted)
+    let d3 = rcv.receive().or_fault("receive mod")
+    rcv.modify(d3).or_fault("modify")
+    let d4 = rcv.receive().or_fault("redelivery after modify")
+    expect(d4.message.body) == Body.Data(sections: [b"mod"])
+    expect(d4.message.header.or_fault("header").delivery_count) == 1
+    rcv.accept(d4).or_fault("accept mod")
+    // an empty queue: receive gives up at its own deadline, and the link stays usable
+    match rcv.receive(timeout_ms: 300) {
+      Ok(_) => fault("the queue should be empty")
+      Err(Net(m)) => expect(m) == "i/o timeout"
+      Err(_) => fault("wrong error for a receive deadline")
+    }
+    let after = snd.send(Message{body: Body.Data(sections: [b"after"])}).or_fault("send after")
+    expect(after) == Some(DeliveryState.Accepted)
+    let d5 = rcv.receive(timeout_ms: 5000).or_fault("receive after the deadline")
+    rcv.accept(d5).or_fault("accept after")
+    // the keeper runs while the test is idle
+    os.clock.sleep(1500ms)
+    snd.close().or_fault("close sender")
+    rcv.close().or_fault("close receiver")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}
+
+/// A Service Bus SAS token for `uri` (std/crypto HMAC-SHA256 over "url-encoded-uri\nexpiry").
+fn sb_sas_token(uri: Str, key_name: Str, key: Str, expiry: Int) -> Str {
+  let enc = url.query_escape(uri)
+  let sig = crypto.hmac_sha256(key.bytes(), "${enc}\n${expiry}".bytes())
+  "SharedAccessSignature sr=${enc}&sig=${url.query_escape(base64.encode(sig))}&se=${expiry}&skn=${key_name}"
+}
+
+test "interop: Service Bus emulator, CBS put-token then send and receive" uses (net, clock, env) {
+  let addr = os.env.get("XO_AMQP_SB_ADDR") ?? ""
+  if addr == "" { return }
+  let c = dial(os.net, addr, ConnOptions{container_id: "xo-sb", clock: Some(os.clock), timeout_ms: 20000,
+    sasl: Sasl.Anonymous}).or_fault("dial")
+  let sess = c.begin().or_fault("begin")
+  let audience = "sb://sbemulatorns/xo-interop"
+  let expiry = os.clock.now().unix() + 3600
+  let tok = sb_sas_token(audience, "RootManageSharedAccessKey", "SAS_KEY_VALUE", expiry)
+  cbs_put_token(c, sess, audience, tok, expiry_ms: expiry * 1000).or_fault("put-token")
+  // a wrong key is refused
+  let bad = sb_sas_token(audience, "RootManageSharedAccessKey", "wrong", expiry)
+  match cbs_put_token(c, sess, audience, bad, expiry_ms: expiry * 1000) {
+    Ok(_) => fault("a bad token should be refused")
+    Err(Peer(_)) => {}
+    Err(_) => fault("wrong error for a bad token")
+  }
+  let snd = c.new_sender(sess, "xo-interop").or_fault("sender")
+  let out = snd.send(Message{body: Body.Data(sections: [b"hello sb"])}).or_fault("send")
+  expect(out) == Some(DeliveryState.Accepted)
+  let rcv = c.new_receiver(sess, "xo-interop", ReceiverOptions{credit: 1}).or_fault("receiver")
+  let d = rcv.receive().or_fault("receive")
+  expect(d.message.body) == Body.Data(sections: [b"hello sb"])
+  rcv.accept(d).or_fault("accept")
+  rcv.close().or_fault("close receiver")
+  snd.close().or_fault("close sender")
+  c.end_session(sess).or_fault("end")
+  c.close().or_fault("close")
+}

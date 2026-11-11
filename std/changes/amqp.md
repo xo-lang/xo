@@ -1,5 +1,18 @@
 # std/amqp changes
 
+## 2026-11-11: refactor: std/amqp is one file (decisions 0588, 0597)
+
+- Kind: refactor
+- Commit: this push
+- Found by: decision 0597 (std/native/amqp.xo imports nothing native)
+- Go reference: none (no behavior change)
+- Test: TestStdCorpora amqp on go, arm64, llvm; xo test --real --std-module=amqp (28 passed) on arm64 and llvm; goldens amqptest_broker and amqp_tls_hostname (arm64, llvm, Go parity)
+- Shipped in: not yet released
+
+std/native/amqp.xo moved into std/amqp.xo, its tests into std/amqp_test.xo.
+In its own module the match arms over its own enums name their variants
+instead of `_` (XO0305), and the test peers declare `uses net.listen`.
+
 ## 2026-11-10: refactor: width bounds as the type constants (decision 0587 point 4)
 
 ## 2026-11-10: refactor: integer bounds as `Int.max` and `Int.min` (decision 0587 point 4)
