@@ -1977,7 +1977,10 @@ fn (var c: Checker) module_member_habit(d: Int, path: Str, name: Str) {
 /// (std/rt Rt_cast, Rt_fault_at). Loc and fault_at (0597's amendment,
 /// owner 2026-11-11): a trailing `at: rt.Loc` parameter, filled with the
 /// call's position (is_loc_param), and a fault there.
-pub const PORTABLE_INTRINSICS = ["cast", "Loc", "fault_at"]
+/// fault_raise and task_deadline_left (owner, 2026-11-11, for std/task
+/// alone): a fault at a recorded position, and the ns left before the
+/// task's deadline.
+pub const PORTABLE_INTRINSICS = ["cast", "Loc", "fault_at", "fault_raise", "task_deadline_left"]
 
 /// Whether type t is native/rt's Loc: a trailing parameter of that type
 /// takes no argument, each call fills it with its own position.

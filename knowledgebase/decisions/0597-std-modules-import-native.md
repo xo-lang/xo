@@ -283,6 +283,14 @@ reports its location.
   reports `FILE:LINE`. Golden fnv_caller_loc checks the position on
   arm64, LLVM, the Go backend and wasm. std/task still waits: it also
   calls rt.fault_raise and rt.task_deadline_left.
+- Owner decision (2026-11-11, via the lead): rt.fault_raise and
+  rt.task_deadline_left are portable too, on the condition that std/task
+  is the only merged module using them (checked that day: the other
+  callers are llrt and the prelude, which stay native). A new user asks
+  the lead first. The checker allows them first, alone, so that seed
+  0.49.0 (owner-approved 2026-11-11) knows them; std/task's merge lands
+  after that seed, since the 0.48.0 seed's checker rejects its calls
+  (and the `at: rt.Loc` parameters) when it builds xo.
 - std/amqp (nothing native) (2026-11-11): merged, not rt-hosted. In its
   own module its wildcard arms over its own enums warned (XO0305: seven,
   now listing the variants) and its test peers' net.listen effect was
