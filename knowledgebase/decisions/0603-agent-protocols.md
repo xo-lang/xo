@@ -1,9 +1,18 @@
-# 0603: Agent protocols: std/jsonrpc, std/sse, std/mcp, derive JsonSchema, and the oauth2, a2a and OpenAPI modules
+# 0603: Agent protocols: std/jsonrpc, std/sse, std/mcp, derive JsonSchema, std/oauth2 (0531), and the a2a and OpenAPI modules
 
-Status: Proposed (Xo Azure 1, 2026-11-11, at the lead's request, for the owner). The owner's direction so far
+Status: Accepted (owner, 2026-11-11; written by Xo Azure 1 at the lead's request). The owner's direction
 (2026-11-11, relayed by the lead): MCP goes in std, because it is core to the language and std ships with fast
-releases. A2A, OAuth 2 and an OpenAPI SDK generator are modules. This record proposes the pieces, their order
-and how each is checked.
+releases. A2A and an OpenAPI SDK generator are modules. The owner's rulings on the open questions (2026-11-11,
+midday, relayed by the lead):
+
+1. OAuth 2 stays in std as decision 0531 places it. Stage 4 implements 0531; std/mcp's HTTP auth uses
+   std/oauth2 directly, and the auth hook stays for custom auth.
+2. The supported MCP protocol versions are those Go's official MCP SDK supports; a version is dropped when the
+   Go SDK drops it.
+3. JSON Schema annotations come in stage 2, at least `description`.
+4. The OpenAPI generator is a module first.
+
+This record sets the pieces, their order and how each is checked.
 
 ## Context
 
@@ -91,7 +100,8 @@ The WHATWG `text/event-stream` format, both directions:
   - `List` as `array`, `Map[Str, T]` as `additionalProperties`;
   - doc comments as `description`.
 - Schema-only attributes, such as `minimum` or `pattern`, are field annotations next to the existing Json ones.
-  Which annotations go in is a stage 2 detail; the derive works without them.
+  They come in stage 2 (owner, 2026-11-11), `description` (from doc comments and an annotation) at least; the
+  rest of the set is a stage 2 detail.
 - Validation: `jsonschema.validate(schema, value) -> () ! List[SchemaErr]` for the keywords MCP and A2A
   servers meet (type, properties, required, additionalProperties, items, enum, const, minimum, maximum, minLength,
   maxLength, pattern, anyOf, oneOf, allOf, $ref within the document, $defs). It lives in std as a small module
@@ -106,8 +116,8 @@ The WHATWG `text/event-stream` format, both directions:
 
 The Model Context Protocol, server and client, over std/jsonrpc:
 
-- **Versions**: every dated protocol version the Go SDK supports at the time of the port, negotiated in
-  `initialize` as the spec says. The server answers the client's version when it supports it, else its latest.
+- **Versions**: every dated protocol version Go's official MCP SDK supports, negotiated in `initialize` as the
+  spec says. A version leaves std/mcp when the Go SDK drops it (owner, 2026-11-11). The server answers the client's version when it supports it, else its latest.
   Each version's differences are a table in the module, not branches spread through it.
 - **Server**:
   - tools, where a typed handler `fn(In) -> Out ! ToolErr` gets its input and output schemas from
@@ -122,8 +132,8 @@ The Model Context Protocol, server and client, over std/jsonrpc:
   transport, client side only, for old servers.
 - **Auth hook**: the Streamable HTTP server takes an `Authorizer` interface. It verifies a bearer token, names
   the protected resource metadata URL for `WWW-Authenticate`, and gives the handler the principal. The client
-  takes a `TokenSource`-like interface. std/mcp has no OAuth code of its own; the oauth2 module implements both
-  interfaces (piece 5).
+  takes a `TokenSource`-like interface. std/mcp's HTTP auth uses std/oauth2 (0531, piece 5) directly; the
+  interfaces stay so a program can plug in custom auth.
 - **Effects**: a server's handlers declare their own effects through the generic `fx`, as std/http's do; stdio
   servers use `stdio`, HTTP ones `net.listen`.
 - **Dogfood**: `xo mcp` moves onto std/mcp. It gains version negotiation, typed tool inputs (its seven tools'
@@ -135,24 +145,18 @@ The Model Context Protocol, server and client, over std/jsonrpc:
   cancellation mid-call, progress, a validation error, session resumption and a dropped stream. The official
   MCP conformance suite, if one exists at the time, runs too.
 
-### 5. github.com/xo-lang/oauth2 (stage 4, module)
+### 5. std/oauth2 (stage 4, decision 0531)
 
-- OAuth 2.1 for MCP and A2A:
+- The owner kept OAuth 2 in std (2026-11-11): stage 4 implements decision 0531's std/oauth2 and std/oidc,
+  plus what MCP and A2A need on top of it:
   - authorization server metadata (RFC 8414) and protected resource metadata (RFC 9728) discovery;
   - dynamic client registration (RFC 7591);
   - auth code with PKCE (S256 only) and a loopback redirect;
   - client credentials, refresh, and the resource indicator (RFC 8707);
   - on the resource side, bearer validation through introspection (RFC 7662) or JWT access tokens (RFC 9068,
     with std/jwt).
-- It implements std/mcp's `Authorizer` and token interfaces. It is a module, so it versions apart from std.
-- **Conflict for the owner**: decision 0531 (Accepted 2026-11-06, not built) places an OAuth 2.0 client and
-  OIDC in std. Options:
-  - (a) 0531 moves to this module whole (one OAuth code base, and std stays protocol-neutral);
-  - (b) 0531's client stays in std, and the module adds only the MCP/A2A authorization-server side;
-  - (c) both in std.
-
-  Recommendation: (a), since the owner's direction for this record puts oauth2 in a module and nothing in std
-  uses 0531 yet.
+- std/mcp's Streamable HTTP server and client use it directly. std/mcp's `Authorizer` and token interfaces
+  stay, for custom auth.
 - Oracle: golang.org/x/oauth2 for the client grants (as 0531 planned). The go-sdk's auth package covers the
   MCP flows: discovery, registration and the 401 to token path. Fakes only.
 
@@ -166,7 +170,7 @@ The Model Context Protocol, server and client, over std/jsonrpc:
 - Types are generated from a2a.proto through std/protodesc. This needs a new
   `xo proto gen --descriptor-set` path, since generation today works from .proto text through std/protoparse.
   ProtoJSON comes from 0546.
-- Bindings sit on std/jsonrpc, std/sse and std/grpc (0535). Auth uses the oauth2 module.
+- Bindings sit on std/jsonrpc, std/sse and std/grpc (0535). Auth uses std/oauth2.
 - Oracle: a2a-go (a2aproject). A Go agent and a Go client against Xo ones on loopback in each binding, printing
   each wire message.
 
@@ -189,10 +193,10 @@ The Model Context Protocol, server and client, over std/jsonrpc:
 1. std/jsonrpc and std/sse, with `xo mcp` and `xo lsp` on jsonrpc.
 2. derive JsonSchema and std/jsonschema.
 3. std/mcp: server stdio, then Streamable HTTP, then the client side; then `xo mcp` on it.
-4. The oauth2 module, after the owner rules on 0531.
+4. std/oauth2 as 0531 designs it, with the MCP and A2A additions of piece 5.
 5. The a2a module and the OpenAPI generator. They do not depend on each other.
 
-Each stage is a release note and a std/changes entry. Stages 1 to 3 are std and ship with xo releases, which is
+Each stage is a release note and a std/changes entry. Stages 1 to 4 are std and ship with xo releases, which is
 the reason the owner gave for MCP in std.
 
 ## Consequences
@@ -200,10 +204,10 @@ the reason the owner gave for MCP in std.
 - Xo programs can be MCP servers with typed tools in a few lines, and `xo mcp` becomes the first user.
 - One JSON-RPC and one SSE implementation replace three inlined copies.
 - `derive JsonSchema` is a general feature, not an MCP one: API docs, config validation, and OpenAPI later.
-- std grows by four modules (jsonrpc, sse, jsonschema, mcp). Each follows 0588's one-file layout and 0461's
-  maturity levels, starting experimental.
+- std grows by four modules (jsonrpc, sse, jsonschema, mcp), plus 0531's oauth2 and oidc. Each follows 0588's
+  one-file layout and 0461's maturity levels, starting experimental.
 - MCP dated versions keep coming. Supporting several in one module means a version table that grows with each
-  spec release; old versions leave on a schedule the owner sets.
+  spec release; old versions leave when Go's official MCP SDK drops them.
 
 ## Alternatives
 
@@ -212,11 +216,5 @@ the reason the owner gave for MCP in std.
 - **No derive, schemas by hand**: this is what `xo mcp` does now. It is error prone and duplicates the Json form.
 - **Wrap the Go SDK through std/go bindings**: Go-backend only, so native and LLVM builds lose it.
 - **Port azure/codegen whole as the OpenAPI generator**: it is Azure-specific throughout, so it is not a lift.
-
-## Open questions for the owner
-
-1. 0531's placement: (a), (b) or (c) above.
-2. How long old MCP protocol versions stay supported (proposal: each version for 12 months after the next).
-3. Schema annotations for `derive JsonSchema`: the minimal set (description from doc comments only) first, or
-   min/max/pattern from stage 2.
-4. `xo gen openapi` as a subcommand from the start, or a module until it is stable (proposal: module first).
+- **OAuth 2 as a module** (this record's first proposal): the owner kept 0531's std/oauth2, so one OAuth code
+  base sits in std and std/mcp uses it directly.
