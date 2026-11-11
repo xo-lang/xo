@@ -50,3 +50,4 @@ std/amqp
 std/fnv
 std/crc64
 std/adler32
+std/asn1

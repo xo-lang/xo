@@ -89,7 +89,7 @@ pub fn private_key(der: Bytes) -> PrivateKey? {
   // PKCS #8: version 0, AlgorithmIdentifier rsaEncryption, OCTET STRING
   if xs[1].tag == asn1.SEQUENCE && xs[2].tag == asn1.OCTET_STRING {
     let alg = asn1.children(der, xs[1])
-    if asn1.any_bad(alg) || alg.len() == 0 || asn1.oid(der, alg[0]) != "1.2.840.113549.1.1.1" {
+    if asn1.any_bad(alg) || alg.len() == 0 || asn1.oid_text(der, alg[0]) != "1.2.840.113549.1.1.1" {
       return None
     }
     return private_key(asn1.contents(der, xs[2]))

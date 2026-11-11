@@ -183,7 +183,7 @@ fn private_key(der: Bytes) -> (Int, Bytes, Str) {
     let alg = asn1.children(der, xs[1])
     if !asn1.any_bad(alg) && alg.len() >= 1 && alg[0].tag == asn1.OID {
       let inner = asn1.contents(der, xs[2])
-      let oid = asn1.oid(der, alg[0])
+      let oid = asn1.oid_text(der, alg[0])
       if oid == "1.2.840.113549.1.1.1" {
         if let Some(_) = rsa.private_key(inner) {
           return (x509.KEY_RSA, inner, "")
@@ -191,7 +191,7 @@ fn private_key(der: Bytes) -> (Int, Bytes, Str) {
         return (0, b"", "tls: failed to parse private key")
       }
       if oid == "1.2.840.10045.2.1" {
-        let curve = if alg.len() >= 2 && alg[1].tag == asn1.OID { asn1.oid(der, alg[1]) } else { "" }
+        let curve = if alg.len() >= 2 && alg[1].tag == asn1.OID { asn1.oid_text(der, alg[1]) } else { "" }
         return ec_key(inner, curve)
       }
       if oid == "1.3.101.112" {
@@ -223,7 +223,7 @@ fn ec_key(der: Bytes, curve0: Str) -> (Int, Bytes, Str) {
     if x.tag == 0xa0 {
       let p = asn1.children(der, x)
       if !asn1.any_bad(p) && p.len() == 1 && p[0].tag == asn1.OID {
-        curve = asn1.oid(der, p[0])
+        curve = asn1.oid_text(der, p[0])
       }
     }
   }

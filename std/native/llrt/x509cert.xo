@@ -1487,17 +1487,17 @@ fn pss_algorithm(b: Bytes, t: asn1.Tlv) -> Int {
       if asn1.any_bad(a) || a.len() == 0 {
         return SIG_UNKNOWN
       }
-      hash = hash_bits(asn1.oid(b, a[0]))
+      hash = hash_bits(asn1.oid_text(b, a[0]))
     } else if p.tag == 0xa1 {
       let a = asn1.children(b, inner)
-      if asn1.any_bad(a) || a.len() != 2 || asn1.oid(b, a[0]) != "1.2.840.113549.1.1.8" {
+      if asn1.any_bad(a) || a.len() != 2 || asn1.oid_text(b, a[0]) != "1.2.840.113549.1.1.8" {
         return SIG_UNKNOWN
       }
       let h = asn1.children(b, a[1])
       if asn1.any_bad(h) || h.len() == 0 {
         return SIG_UNKNOWN
       }
-      mgf = hash_bits(asn1.oid(b, h[0]))
+      mgf = hash_bits(asn1.oid_text(b, h[0]))
     } else if p.tag == 0xa2 {
       match asn1.small_int(b, inner) {
         Some(n) => salt = n

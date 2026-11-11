@@ -135,8 +135,8 @@ fn verify_mac(mac: Bytes, m: asn1.Tlv, message: Bytes, password: Bytes) -> Str {
     return "pkcs12: error reading P12 data: malformed DigestInfo"
   }
   let alg = asn1.children(mac, di[0])
-  if alg.len() == 0 || asn1.any_bad(alg) || asn1.oid(mac, alg[0]) != OID_SHA1 {
-    let name = if alg.len() > 0 { asn1.oid(mac, alg[0]) } else { "" }
+  if alg.len() == 0 || asn1.any_bad(alg) || asn1.oid_text(mac, alg[0]) != OID_SHA1 {
+    let name = if alg.len() > 0 { asn1.oid_text(mac, alg[0]) } else { "" }
     return "pkcs12: unknown digest algorithm: " + name
   }
   var iterations = 1
@@ -165,7 +165,7 @@ fn pb_decrypt(b: Bytes, alg: asn1.Tlv, encrypted: Bytes, password: Bytes) -> (By
   if parts.len() != 2 || asn1.any_bad(parts) || parts[1].tag != asn1.SEQUENCE {
     return (b"", "pkcs12: error reading P12 data: malformed algorithm identifier")
   }
-  let oid = asn1.oid(b, parts[0])
+  let oid = asn1.oid_text(b, parts[0])
   if oid != OID_3DES && oid != OID_RC2_40 {
     return (b"", "pkcs12: algorithm " + oid + " is not supported")
   }
@@ -210,7 +210,7 @@ fn pb_decrypt(b: Bytes, alg: asn1.Tlv, encrypted: Bytes, password: Bytes) -> (By
 fn local_key_id(b: Bytes, attrs: asn1.Tlv) -> Bytes {
   for a in asn1.children(b, attrs) {
     let kv = asn1.children(b, a)
-    if kv.len() == 2 && !asn1.any_bad(kv) && asn1.oid(b, kv[0]) == OID_LOCAL_KEY_ID && kv[1].tag == asn1.SET {
+    if kv.len() == 2 && !asn1.any_bad(kv) && asn1.oid_text(b, kv[0]) == OID_LOCAL_KEY_ID && kv[1].tag == asn1.SET {
       let vs = asn1.children(b, kv[1])
       if vs.len() == 1 && vs[0].tag == asn1.OCTET_STRING {
         return asn1.contents(b, vs[0])
@@ -231,7 +231,7 @@ fn read_bags(safe: Bytes, password: Bytes, var out: Pfx) -> Str {
     if bag.tag != asn1.SEQUENCE || f.len() < 2 || f.len() > 3 || asn1.any_bad(f) || f[1].tag != 0xa0 {
       return "pkcs12: error reading P12 data: malformed safe bag"
     }
-    let id = asn1.oid(safe, f[0])
+    let id = asn1.oid_text(safe, f[0])
     let value = asn1.contents(safe, f[1])
     var lk = b""
     if f.len() == 3 && f[2].tag == asn1.SET {
@@ -243,7 +243,7 @@ fn read_bags(safe: Bytes, password: Bytes, var out: Pfx) -> Str {
       if cb.tag < 0 || cf.len() != 2 || asn1.any_bad(cf) || cf[1].tag != 0xa0 {
         return "pkcs12: error decoding cert bag: malformed"
       }
-      if asn1.oid(value, cf[0]) != OID_X509_CERT {
+      if asn1.oid_text(value, cf[0]) != OID_X509_CERT {
         return "pkcs12: only X509 certificates are supported"
       }
       let inner = asn1.contents(value, cf[1])
@@ -341,7 +341,7 @@ pub fn parse(data: Bytes, password: Str) -> Pfx {
   if ci.len() != 2 || asn1.any_bad(ci) || ci[1].tag != 0xa0 {
     return fail("pkcs12: error reading P12 data: malformed ContentInfo")
   }
-  if asn1.oid(data, ci[0]) != OID_DATA {
+  if asn1.oid_text(data, ci[0]) != OID_DATA {
     return fail("pkcs12: only password-protected PFX is implemented")
   }
   let wrapped = asn1.contents(data, ci[1])
@@ -373,7 +373,7 @@ pub fn parse(data: Bytes, password: Str) -> Pfx {
     if item.tag != asn1.SEQUENCE || f.len() != 2 || asn1.any_bad(f) || f[1].tag != 0xa0 {
       return fail("pkcs12: error reading P12 data: malformed ContentInfo")
     }
-    let kind = asn1.oid(message, f[0])
+    let kind = asn1.oid_text(message, f[0])
     let body = asn1.contents(message, f[1])
     var safe = b""
     if kind == OID_DATA {

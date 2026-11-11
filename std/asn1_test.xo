@@ -1,0 +1,65 @@
+// std/asn1's API beyond the Go corpus (internal/stdtest/testdata/corpus/asn1).
+use std/big
+
+test "oid parses, displays and encodes dotted" {
+  let o = oid("1.2.840.113549.1.1.11") ?? e => fault("${e}")
+  expect("${o}") == "1.2.840.113549.1.1.11"
+  expect((Value.Oid(v: o).der() ?? e => fault("${e}")).to_hex()) == "06092a864886f70d01010b"
+  expect(oid("2.999.3").is_ok()) == true
+  for bad in ["", "1", "3.1", "1.40", "1.2.-3", "1.02", "1..2", "1.2.2147483648", "a.b"] {
+    expect(oid(bad).is_ok()) == false
+  }
+}
+
+test "bit_at and right_align are Go's BitString.At and RightAlign" {
+  let v = Value.BitString(bytes: b"\xff\xc0", bit_len: 10)
+  expect([0, 1, 7, 8, 9, 10, -1].map(fn(i: Int) -> Int { v.bit_at(i) })) == [1, 1, 1, 1, 1, 0, 0]
+  expect(Value.Null.bit_at(0)) == 0
+  expect(right_align(b"\xff\xc0", 10).to_hex()) == "03ff"
+  expect(right_align(b"\xab", 8).to_hex()) == "ab"
+  expect(right_align(b"", 0).to_hex()) == ""
+}
+
+test "tagged_as reads a context specific value as the schema says" {
+  let raw = parse(b"\xa0\x03\x02\x01\x07") ?? e => fault("${e}")
+  let ex = raw.tagged_as(true) ?? e => fault("${e}")
+  expect(ex) == Value.Tagged(class: Class.ContextSpecific, tag: 0, explicit: true, v: Value.Int(v: big.from_int(7)))
+  expect((ex.der() ?? e => fault("${e}")).to_hex()) == "a003020107"
+  let imp = parse(b"\x81\x01\x05") ?? e => fault("${e}")
+  let iv = imp.tagged_as(false, tag: TAG_INT) ?? e => fault("${e}")
+  expect(iv) == Value.Tagged(class: Class.ContextSpecific, tag: 1, explicit: false, v: Value.Int(v: big.from_int(5)))
+  expect((iv.der() ?? e => fault("${e}")).to_hex()) == "810105"
+  expect(parse(b"\x80\x01\x05").ok().map(fn(v: Value) -> Bool { v.tagged_as(true).is_ok() })) == Some(false)
+  expect(Value.Null.tagged_as(true).is_ok()) == false
+}
+
+test "an implicit tag keeps the constructed bit of what it tags" {
+  let seq = Value.Sequence(items: [Value.Int(v: big.from_int(1))])
+  let t = Value.Tagged(class: Class.ContextSpecific, tag: 1, explicit: false, v: seq)
+  expect((t.der() ?? e => fault("${e}")).to_hex()) == "a103020101"
+  let hi = Value.Tagged(class: Class.Application, tag: 200, explicit: true, v: Value.Null)
+  expect((hi.der() ?? e => fault("${e}")).to_hex()) == "7f81480205 00".replace(" ", "")
+}
+
+test "times outside a Time and outside UTCTime are errors" {
+  expect(parse(b"\x18\x0f16001231235959Z").is_ok()) == false
+  expect("${parse(b"\x18\x0f16001231235959Z").err() ?? Asn1Err.Syntax(msg: "")}") == "asn1: time out of range"
+  let t = Time.from_unix(-1000000000 * 2)
+  expect("${Value.UtcTime(t: t).der().err() ?? Asn1Err.Syntax(msg: "")}") == "asn1: structure error: cannot represent time as UTCTime"
+  expect((Value.GeneralizedTime(t: t).der() ?? e => fault("${e}")).to_hex()) == "180f31393036303831363230323634305a"
+}
+
+test "der refuses what Marshal refuses" {
+  expect(Value.Printable(s: "a*b").der().is_ok()) == false
+  expect(Value.Ia5(s: "é").der().is_ok()) == false
+  expect(Value.Numeric(s: "1a").der().is_ok()) == false
+  expect(Value.Oid(v: Oid{arcs: [1]}).der().is_ok()) == false
+  expect(Value.Sequence(items: [Value.Oid(v: Oid{arcs: [3, 1]})]).der().is_ok()) == false
+}
+
+test "parse_prefix returns the rest" {
+  let (v, rest) = parse_prefix(b"\x05\x00\x01\x02") ?? e => fault("${e}")
+  expect(v) == Value.Null
+  expect(rest.to_hex()) == "0102"
+  expect("${parse(b"\x05\x00\x01").err() ?? Asn1Err.Syntax(msg: "")}") == "asn1: syntax error: trailing data"
+}

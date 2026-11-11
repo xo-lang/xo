@@ -1,6 +1,6 @@
 # 0601: std/asn1, ASN.1 DER as a public module
 
-Status: Accepted (owner, 2026-11-11 morning, via the lead; proposed by Xo Lang 3, 2026-11-11), for the owner.
+Status: Accepted (owner, 2026-11-11 morning, via the lead; proposed by Xo Lang 3, 2026-11-11). Stage 1 implemented 2026-11-11 (std/asn1.xo, spec/std.md 78).
 
 ## Context
 
@@ -87,3 +87,32 @@ green and the tree's shape has settled.
 - A cryptobyte style builder and reader (golang.org/x/crypto/cryptobyte):
   closer to how Go's own crypto code reads DER now; a later addition over
   the same rules if the tree is too slow for a hot path.
+
+## Stage 1 as built (2026-11-11)
+
+- std/asn1.xo, one merged file (decision 0588), pure; spec/std.md 78.
+- `Asn1Err` gained `Invalid(msg)` beside Syntax and Structure: Go makes
+  some errors with errors.New or fmt.Errorf (`asn1: invalid UTF-8
+  string`, `invalid BMPString`, its time texts), and Invalid shows its
+  text as is.
+- OID arcs are limited to 2^31 - 1, not 64 bits: Go's
+  parseObjectIdentifier reads arcs with parseBase128Int, which refuses
+  larger ones (`base 128 integer too large`); the proposal's "64 bit arc
+  limit" was wrong.
+- Time errors: a time Go refuses is `Invalid` with Xo's own text
+  (`asn1: invalid UTCTime "..."`); Go's time.Parse texts are not ported,
+  and the corpus compares them as one class. A `Time` holds 1678 to
+  2261 (decision 0364), so a valid DER time written in another year is
+  `asn1: time out of range`.
+- ENUMERATED is read as an INTEGER of up to 64 bits (Go's Enumerated
+  target is 32 bits; the tree's `Int` holds 64).
+- `tagged_as(explicit, tag, constructed)` is the read the proposal named
+  `tagged_as(...)`.
+- Checked against Go's Unmarshal and Marshal: scripts/stdcorpus asn1.go,
+  1305 cases (random trees from Marshal, their bit flips, truncations
+  and byte swaps, and hand-made cases for each rule), on the Go, arm64
+  and LLVM backends; std/asn1_test.xo for oid, bit_at, right_align,
+  tagged_as and the encode errors.
+- The X.509 and TLS code keeps llrt/asn1.xo (no shared encoders yet: its
+  writers are internal and offset based).
+

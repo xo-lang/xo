@@ -8735,3 +8735,44 @@ Go returns a header with `io.EOF`, `read_header` returns it with `header_truncat
 partial header, lines or bytes. `expect` is Go's: 0 or less any code, 1 to 9 the first digit, 10 to 99 the first two,
 100 to 999 the whole code. Not ported: Conn, Dial, Pipeline, Writer.PrintfLine (decision 0598). Checked against Go's
 `net/textproto` (testdata/corpus/textproto) and its own tests (std/textproto_test.xo).
+
+## 78. std/asn1
+
+ASN.1 DER as a value tree with Go's `encoding/asn1` rules (decision 0601 stage 1): `parse` reads one DER value as
+strictly as Go's Unmarshal and `der` writes Go's Marshal encoding. Pure.
+
+```xo
+enum Value {
+  Bool(v: Bool), Int(v: big.BigInt), BitString(bytes: Bytes, bit_len: Int), OctetString(v: Bytes), Null, Oid(v: Oid),
+  Enumerated(v: Int), Utf8(s: Str), Printable(s: Str), Ia5(s: Str), Numeric(s: Str), T61(s: Str), Bmp(s: Str),
+  UtcTime(t: Time), GeneralizedTime(t: Time), Sequence(items: List[Value]), Set(items: List[Value]),
+  Tagged(class: Class, tag: Int, explicit: Bool, v: Value), Raw(class: Class, tag: Int, constructed: Bool, bytes: Bytes),
+}
+enum Class { Universal, Application, ContextSpecific, Private }
+struct Oid { pub arcs: List[Int] } derive Eq, Ord, Hash  // display: dotted, as Go's ObjectIdentifier.String
+enum Asn1Err { Syntax(msg: Str), Structure(msg: Str), Invalid(msg: Str) }  // display: Go's texts
+const TAG_BOOL: Int = 1                            // and TAG_INT ... TAG_BMP, the universal tag numbers
+fn parse(der: Bytes) -> Value ! Asn1Err            // the whole input, one value; data after it: `trailing data`
+fn parse_prefix(der: Bytes) -> (Value, Bytes) ! Asn1Err   // Unmarshal and its rest
+fn (v: Value) der() -> Bytes ! Asn1Err             // Marshal's encoding (a Set's elements sorted, as DER)
+fn oid(dotted: Str) -> Oid ! Asn1Err
+fn (v: Value) bit_at(i: Int) -> Int                // BitString.At; 0 out of range or for another value
+fn right_align(bytes: Bytes, bit_len: Int) -> Bytes   // BitString.RightAlign
+fn (v: Value) tagged_as(explicit: Bool, tag: Int = -1, constructed: Bool = false) -> Value ! Asn1Err
+```
+
+`parse` refuses what Go refuses, with Go's texts (`asn1: syntax error: ...` for a SyntaxError, `asn1: structure error:
+...` for a StructuralError, and Go's own text, `asn1: invalid UTF-8 string` or `invalid BMPString`, as `Invalid`):
+non-minimal lengths, tags and integers, indefinite lengths, bad BIT STRING padding, characters outside a string type's
+set (parsing accepts `*` and `&` in a PrintableString, as Go does, and `der` refuses them, as Marshal does), OID arcs of
+2^31 or more, and a UTCTime (`YYMMDDhhmm[ss]`, years before 50 are 20YY) or GeneralizedTime
+(`YYYYMMDDhhmmss[.fff]`, the fraction without trailing zeros) that is not in the form Go formats back, with `Z` or a
+`+hhmm`/`-hhmm` offset; such a time is `Invalid` with a text of Xo's (`asn1: invalid UTCTime "..."`; Go's
+`parsing time` texts are not ported). A `Time` holds 1678 to 2261, so a time written in another year is
+`asn1: time out of range`. Times are instants: `der` writes them in UTC with `Z`, and a GeneralizedTime without its
+fraction, as Marshal does. INTEGER is a `BigInt` of any size; ENUMERATED an `Int` (up to 64 bits). A context specific,
+application or private tag, a constructed universal type other than SEQUENCE and SET, a NULL with contents and an
+unknown universal tag are `Raw`; `tagged_as` reads a `Raw` as explicit (one value inside; `explicit tag has no child`
+when it is not constructed) or implicit (the universal `tag` with its contents), giving `Tagged`, which `der` writes back
+the same way. Stage 2, `derive Asn1` for structs, is a later decision. Checked against Go's Unmarshal and Marshal
+(testdata/corpus/asn1, 1305 cases) and its own tests (std/asn1_test.xo).

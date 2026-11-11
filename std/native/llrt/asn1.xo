@@ -173,7 +173,7 @@ pub fn bits(b: Bytes, t: Tlv) -> Bytes? {
 
 /// The dotted text of the OBJECT IDENTIFIER t ("1.2.840.10045.2.1"); ""
 /// when it is not one.
-pub fn oid(b: Bytes, t: Tlv) -> Str {
+pub fn oid_text(b: Bytes, t: Tlv) -> Str {
   if t.tag != OID || t.hi == t.lo || Int(b[t.hi - 1]) >= 128 {
     return ""
   }

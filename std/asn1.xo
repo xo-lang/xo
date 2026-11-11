@@ -1,0 +1,804 @@
+// std/asn1 (spec/std.md 78, decision 0601 stage 1). ASN.1 DER as a value
+// tree with Go's encoding/asn1 rules (asn1.go and marshal.go of go1.26.1):
+// parse reads one DER value as strictly as Go's Unmarshal (minimal
+// integers, lengths and tags, no indefinite lengths, the character sets
+// of each string type, Go's time formats, OID arcs below 2^31), and der
+// writes Go's Marshal encoding. Pure.
+use std/big
+use std/charset
+use std/time
+
+/// One ASN.1 value. A universal type std/asn1 knows is its own variant;
+/// a context specific, application or private tag, a constructed string,
+/// a NULL with contents, and a universal tag it does not know stay `Raw`
+/// (DER does not say whether a context specific tag is explicit:
+/// `tagged_as` reads one when the schema says, as Go's `explicit` tag).
+/// `BitString`'s bytes hold bit_len bits, the first in the high bit.
+/// Times are instants; der writes them in UTC with `Z`, as DER requires.
+pub enum Value {
+  Bool(v: Bool)
+  Int(v: big.BigInt)
+  BitString(bytes: Bytes, bit_len: Int)
+  OctetString(v: Bytes)
+  Null
+  Oid(v: Oid)
+  Enumerated(v: Int)
+  Utf8(s: Str)
+  Printable(s: Str)
+  Ia5(s: Str)
+  Numeric(s: Str)
+  T61(s: Str)
+  Bmp(s: Str)
+  UtcTime(t: Time)
+  GeneralizedTime(t: Time)
+  Sequence(items: List[Value])
+  Set(items: List[Value])
+  Tagged(class: Class, tag: Int, explicit: Bool, v: Value)
+  Raw(class: Class, tag: Int, constructed: Bool, bytes: Bytes)
+}
+
+/// The class bits of a tag.
+pub enum Class {
+  Universal
+  Application
+  ContextSpecific
+  Private
+}
+
+/// An OBJECT IDENTIFIER; displays dotted, as Go's ObjectIdentifier.String.
+pub struct Oid {
+  pub arcs: List[Int]
+} derive Eq, Ord, Hash
+
+/// Go's errors: `Syntax` is SyntaxError (`asn1: syntax error: MSG`),
+/// `Structure` is StructuralError (`asn1: structure error: MSG`), and
+/// `Invalid` an error Go makes with its own text (invalid UTF-8, a bad
+/// BMPString, a time that is not in DER's form), shown as is.
+pub enum Asn1Err {
+  Syntax(msg: Str)
+  Structure(msg: Str)
+  Invalid(msg: Str)
+}
+
+pub fn (e: Asn1Err) display() -> Str {
+  match e {
+    Asn1Err.Syntax(m) => "asn1: syntax error: ${m}"
+    Asn1Err.Structure(m) => "asn1: structure error: ${m}"
+    Asn1Err.Invalid(m) => m
+  }
+}
+
+pub fn (o: Oid) display() -> Str { o.arcs.map(fn(a: Int) -> Str { "${a}" }).join(".") }
+
+/// The universal tag numbers (Go's TagBoolean and the rest).
+pub const TAG_BOOL: Int = 1
+pub const TAG_INT: Int = 2
+pub const TAG_BIT_STRING: Int = 3
+pub const TAG_OCTET_STRING: Int = 4
+pub const TAG_NULL: Int = 5
+pub const TAG_OID: Int = 6
+pub const TAG_ENUM: Int = 10
+pub const TAG_UTF8: Int = 12
+pub const TAG_SEQUENCE: Int = 16
+pub const TAG_SET: Int = 17
+pub const TAG_NUMERIC: Int = 18
+pub const TAG_PRINTABLE: Int = 19
+pub const TAG_T61: Int = 20
+pub const TAG_IA5: Int = 22
+pub const TAG_UTC_TIME: Int = 23
+pub const TAG_GENERALIZED_TIME: Int = 24
+pub const TAG_BMP: Int = 30
+
+/// The one DER value that is all of der; data after it is an error.
+pub fn parse(der: Bytes) -> Value ! Asn1Err {
+  let (v, rest) = parse_prefix(der)?
+  if !rest.is_empty() {
+    return Err(Asn1Err.Syntax(msg: "trailing data"))
+  }
+  v
+}
+
+/// The DER value at the start of der and the bytes after it (Go's
+/// Unmarshal and its rest).
+pub fn parse_prefix(der: Bytes) -> (Value, Bytes) ! Asn1Err {
+  if der.is_empty() {
+    return Err(Asn1Err.Syntax(msg: "sequence truncated"))
+  }
+  let h = header(der, 0)?
+  if h.len > der.len() - h.off {
+    return Err(Asn1Err.Syntax(msg: "data truncated"))
+  }
+  let end = h.off + h.len
+  let v = value_of(h, der[h.off..end])?
+  (v, der[end..])
+}
+
+/// An OID from its dotted form (`1.2.840.113549`): at least two arcs, the
+/// first 0, 1 or 2, the second below 40 unless the first is 2, every arc
+/// below 2^31.
+pub fn oid(dotted: Str) -> Oid ! Asn1Err {
+  var arcs: List[Int] = []
+  for part in dotted.split(".") {
+    let n = match Int.parse(part) {
+      Some(n) => n
+      None => return Err(Asn1Err.Syntax(msg: "invalid object identifier ${dotted.quote()}"))
+    }
+    if n < 0 || n > 2147483647 || part.starts_with("+") || part.len() > 1 && part.starts_with("0") {
+      return Err(Asn1Err.Syntax(msg: "invalid object identifier ${dotted.quote()}"))
+    }
+    arcs.push(n)
+  }
+  let o = Oid{arcs: arcs}
+  if !oid_valid(o) {
+    return Err(Asn1Err.Structure(msg: "invalid object identifier"))
+  }
+  o
+}
+
+/// Bit i of a BIT STRING value, the first bit 0 (Go's BitString.At); 0 out
+/// of range or for any other value.
+pub fn (v: Value) bit_at(i: Int) -> Int {
+  match v {
+    Value.BitString(b, n) => if i < 0 || i >= n { 0 } else { (Int(b[i / 8]) >> (7 - i % 8)) & 1 }
+    _ => 0
+  }
+}
+
+/// The bits of a BIT STRING of bit_len bits shifted right so the last bit
+/// ends a byte (Go's BitString.RightAlign).
+pub fn right_align(bytes: Bytes, bit_len: Int) -> Bytes {
+  let shift = 8 - bit_len % 8
+  if shift == 8 || bytes.is_empty() {
+    return bytes
+  }
+  var out = BytesBuilder.with_capacity(bytes.len())
+  out.write_byte(UInt8(Int(bytes[0]) >> shift))
+  for i in 1..bytes.len() {
+    out.write_byte(UInt8(((Int(bytes[i - 1]) << (8 - shift)) | (Int(bytes[i]) >> shift)) & 255))
+  }
+  out.freeze()
+}
+
+/// A `Raw` context specific (or application, or private) value read as the
+/// schema says: explicit holds one DER value inside, implicit is the
+/// universal type `tag` with the raw value's contents (Go's `explicit` and
+/// default implicit field tags). Any other value is an error.
+pub fn (v: Value) tagged_as(explicit: Bool, tag: Int = -1, constructed: Bool = false) -> Value ! Asn1Err {
+  match v {
+    Value.Raw(c, t, k, b) => {
+      if explicit {
+        if !k {
+          return Err(Asn1Err.Structure(msg: "explicit tag has no child"))
+        }
+        let inner = parse(b)?
+        return Value.Tagged(class: c, tag: t, explicit: true, v: inner)
+      }
+      let h = Header{class: Class.Universal, tag: tag, constructed: constructed, off: 0, len: b.len()}
+      Value.Tagged(class: c, tag: t, explicit: false, v: value_of(h, b)?)
+    }
+    _ => Err(Asn1Err.Structure(msg: "tags don't match"))
+  }
+}
+
+/// The DER encoding of v (Go's Marshal): integers minimal, a SET's
+/// elements in the order of their encodings, times in UTC.
+pub fn (v: Value) der() -> Bytes ! Asn1Err {
+  var out = BytesBuilder.new()
+  encode(v, out)?
+  out.freeze()
+}
+
+struct Header {
+  class: Class
+  tag: Int
+  constructed: Bool
+  off: Int
+  len: Int
+}
+
+fn class_of(n: Int) -> Class {
+  match n {
+    0 => Class.Universal
+    1 => Class.Application
+    2 => Class.ContextSpecific
+    _ => Class.Private
+  }
+}
+
+fn class_bits(c: Class) -> Int {
+  match c {
+    Class.Universal => 0
+    Class.Application => 1
+    Class.ContextSpecific => 2
+    Class.Private => 3
+  }
+}
+
+/// Go's parseTagAndLength at offset i of b (i < b.len()).
+fn header(b: Bytes, i0: Int) -> Header ! Asn1Err {
+  var i = i0
+  let x = Int(b[i])
+  i += 1
+  var tag = x & 0x1f
+  if tag == 0x1f {
+    let (t, next) = read_base128(b, i)?
+    tag = t
+    i = next
+    if tag < 0x1f {
+      return Err(Asn1Err.Syntax(msg: "non-minimal tag"))
+    }
+  }
+  if i >= b.len() {
+    return Err(Asn1Err.Syntax(msg: "truncated tag or length"))
+  }
+  let l = Int(b[i])
+  i += 1
+  var len = 0
+  if l & 0x80 == 0 {
+    len = l & 0x7f
+  } else {
+    let n = l & 0x7f
+    if n == 0 {
+      return Err(Asn1Err.Syntax(msg: "indefinite length found (not DER)"))
+    }
+    for _ in 0..n {
+      if i >= b.len() {
+        return Err(Asn1Err.Syntax(msg: "truncated tag or length"))
+      }
+      let c = Int(b[i])
+      i += 1
+      if len >= 8388608 {
+        return Err(Asn1Err.Structure(msg: "length too large"))
+      }
+      len = (len << 8) | c
+      if len == 0 {
+        return Err(Asn1Err.Structure(msg: "superfluous leading zeros in length"))
+      }
+    }
+    if len < 0x80 {
+      return Err(Asn1Err.Structure(msg: "non-minimal length"))
+    }
+  }
+  Header{class: class_of(x >> 6), tag: tag, constructed: x & 0x20 != 0, off: i, len: len}
+}
+
+/// Go's parseBase128Int: a base 128 number at offset i of b and the offset
+/// after it.
+fn read_base128(b: Bytes, i0: Int) -> (Int, Int) ! Asn1Err {
+  var i = i0
+  var r = 0
+  var shifted = 0
+  while i < b.len() {
+    if shifted == 5 {
+      return Err(Asn1Err.Structure(msg: "base 128 integer too large"))
+    }
+    r = r << 7
+    let c = Int(b[i])
+    if shifted == 0 && c == 0x80 {
+      return Err(Asn1Err.Syntax(msg: "integer is not minimally encoded"))
+    }
+    r = r | (c & 0x7f)
+    i += 1
+    if c & 0x80 == 0 {
+      if r > 2147483647 {
+        return Err(Asn1Err.Structure(msg: "base 128 integer too large"))
+      }
+      return (r, i)
+    }
+    shifted += 1
+  }
+  Err(Asn1Err.Syntax(msg: "truncated base 128 integer"))
+}
+
+/// The value of header h with contents c (Go's parseField into an `any`,
+/// with a tree for SEQUENCE and SET and a BigInt for INTEGER).
+fn value_of(h: Header, c: Bytes) -> Value ! Asn1Err {
+  if h.class != Class.Universal {
+    return Value.Raw(class: h.class, tag: h.tag, constructed: h.constructed, bytes: c)
+  }
+  if h.constructed {
+    if h.tag == TAG_SEQUENCE {
+      return Value.Sequence(items: child_values(c)?)
+    }
+    if h.tag == TAG_SET {
+      return Value.Set(items: child_values(c)?)
+    }
+    return Value.Raw(class: h.class, tag: h.tag, constructed: true, bytes: c)
+  }
+  match h.tag {
+    1 => Value.Bool(v: parse_bool(c)?)
+    2 => Value.Int(v: parse_big(c)?)
+    3 => {
+      let (bytes, n) = parse_bit_string(c)?
+      Value.BitString(bytes: bytes, bit_len: n)
+    }
+    4 => Value.OctetString(v: c)
+    5 => if c.is_empty() { Value.Null } else { Value.Raw(class: h.class, tag: h.tag, constructed: false, bytes: c) }
+    6 => Value.Oid(v: parse_oid(c)?)
+    10 => Value.Enumerated(v: parse_int64(c)?)
+    12 => match c.to_str() {
+      Some(s) => Value.Utf8(s: s)
+      None => Err(Asn1Err.Invalid(msg: "asn1: invalid UTF-8 string"))
+    }
+    18 => Value.Numeric(s: parse_numeric(c)?)
+    19 => Value.Printable(s: parse_printable(c)?)
+    20 => Value.T61(s: parse_t61(c))
+    22 => Value.Ia5(s: parse_ia5(c)?)
+    23 => Value.UtcTime(t: parse_utc_time(c)?)
+    24 => Value.GeneralizedTime(t: parse_generalized_time(c)?)
+    30 => Value.Bmp(s: parse_bmp(c)?)
+    _ => Value.Raw(class: h.class, tag: h.tag, constructed: false, bytes: c)
+  }
+}
+
+fn child_values(c: Bytes) -> List[Value] ! Asn1Err {
+  var out: List[Value] = []
+  var rest = c
+  while !rest.is_empty() {
+    let (v, r) = parse_prefix(rest)?
+    out.push(v)
+    rest = r
+  }
+  out
+}
+
+fn parse_bool(c: Bytes) -> Bool ! Asn1Err {
+  if c.len() != 1 {
+    return Err(Asn1Err.Syntax(msg: "invalid boolean"))
+  }
+  match c[0] {
+    0 => false
+    0xff => true
+    _ => Err(Asn1Err.Syntax(msg: "invalid boolean"))
+  }
+}
+
+/// Go's checkInteger: present and minimally encoded.
+fn check_integer(c: Bytes) -> () ! Asn1Err {
+  if c.is_empty() {
+    return Err(Asn1Err.Structure(msg: "empty integer"))
+  }
+  if c.len() == 1 {
+    return
+  }
+  if c[0] == 0 && c[1] & 0x80 == 0 || c[0] == 0xff && c[1] & 0x80 == 0x80 {
+    return Err(Asn1Err.Structure(msg: "integer not minimally-encoded"))
+  }
+}
+
+fn parse_int64(c: Bytes) -> Int ! Asn1Err {
+  check_integer(c)?
+  if c.len() > 8 {
+    return Err(Asn1Err.Structure(msg: "integer too large"))
+  }
+  var r = if c[0] & 0x80 != 0 { -1 } else { 0 }
+  for x in c {
+    r = r.wrapping_shl(8) | Int(x)
+  }
+  r
+}
+
+fn parse_big(c: Bytes) -> big.BigInt ! Asn1Err {
+  check_integer(c)?
+  if c[0] & 0x80 != 0 {
+    var b = BytesBuilder.with_capacity(c.len())
+    for x in c {
+      b.write_byte(UInt8(255 - Int(x)))
+    }
+    return big.from_bytes(b.freeze()).add(big.from_int(1)).neg()
+  }
+  big.from_bytes(c)
+}
+
+fn parse_bit_string(c: Bytes) -> (Bytes, Int) ! Asn1Err {
+  if c.is_empty() {
+    return Err(Asn1Err.Syntax(msg: "zero length BIT STRING"))
+  }
+  let pad = Int(c[0])
+  if pad > 7 || c.len() == 1 && pad > 0 || Int(c[c.len() - 1]) & ((1 << pad) - 1) != 0 {
+    return Err(Asn1Err.Syntax(msg: "invalid padding bits in BIT STRING"))
+  }
+  (c[1..], (c.len() - 1) * 8 - pad)
+}
+
+fn parse_oid(c: Bytes) -> Oid ! Asn1Err {
+  if c.is_empty() {
+    return Err(Asn1Err.Syntax(msg: "zero length OBJECT IDENTIFIER"))
+  }
+  let (v, i0) = read_base128(c, 0)?
+  var arcs = if v < 80 { [v / 40, v % 40] } else { [2, v - 80] }
+  var i = i0
+  while i < c.len() {
+    let (a, next) = read_base128(c, i)?
+    arcs.push(a)
+    i = next
+  }
+  Oid{arcs: arcs}
+}
+
+fn parse_numeric(c: Bytes) -> Str ! Asn1Err {
+  for x in c {
+    if !numeric_byte(x) {
+      return Err(Asn1Err.Syntax(msg: "NumericString contains invalid character"))
+    }
+  }
+  c.to_str_lossy()
+}
+
+fn numeric_byte(x: UInt8) -> Bool { x >= '0' && x <= '9' || x == ' ' }
+
+/// Go's isPrintable with `*` and `&` allowed (parsing accepts both, as Go
+/// does for certificates that use them).
+fn printable_byte(x: UInt8) -> Bool {
+  x >= 'a' && x <= 'z' || x >= 'A' && x <= 'Z' || x >= '0' && x <= '9' || x >= '\'' && x <= ')' || x >= '+' && x <= '/' || x == ' ' || x == ':' || x == '=' || x == '?' || x == '*' || x == '&'
+}
+
+fn parse_printable(c: Bytes) -> Str ! Asn1Err {
+  for x in c {
+    if !printable_byte(x) {
+      return Err(Asn1Err.Syntax(msg: "PrintableString contains invalid character"))
+    }
+  }
+  c.to_str_lossy()
+}
+
+fn parse_ia5(c: Bytes) -> Str ! Asn1Err {
+  for x in c {
+    if x >= 0x80 {
+      return Err(Asn1Err.Syntax(msg: "IA5String contains invalid character"))
+    }
+  }
+  c.to_str_lossy()
+}
+
+/// Each byte a code point (Go's parseT61String: Latin-1 into UTF-8).
+fn parse_t61(c: Bytes) -> Str {
+  var b = BytesBuilder.with_capacity(c.len() * 2)
+  for x in c {
+    b.write_rune(Rune(Int(x)))
+  }
+  b.freeze().to_str_lossy()
+}
+
+fn parse_bmp(c0: Bytes) -> Str ! Asn1Err {
+  if c0.len() % 2 != 0 {
+    return Err(Asn1Err.Invalid(msg: "invalid BMPString"))
+  }
+  var c = c0
+  if c.len() >= 2 && c[c.len() - 1] == 0 && c[c.len() - 2] == 0 {
+    c = c[..c.len() - 2]
+  }
+  var units: List[Int] = []
+  var i = 0
+  while i < c.len() {
+    let p = (Int(c[i]) << 8) | Int(c[i + 1])
+    if p == 0xfffe || p == 0xffff || p >= 0xfdd0 && p <= 0xfdef || p >= 0xd800 && p <= 0xdfff {
+      return Err(Asn1Err.Invalid(msg: "invalid BMPString"))
+    }
+    units.push(p)
+    i += 2
+  }
+  charset.from_utf16_units(units)
+}
+
+/// The digits c[i..i + n] as a number, or -1.
+fn digits_at(c: Bytes, i: Int, n: Int) -> Int {
+  if i + n > c.len() {
+    return -1
+  }
+  var r = 0
+  for k in i..i + n {
+    let x = Int(c[k])
+    if x < '0' || x > '9' {
+      return -1
+    }
+    r = r * 10 + (x - '0')
+  }
+  r
+}
+
+fn time_err(kind: Str, c: Bytes) -> Asn1Err { Asn1Err.Invalid(msg: "asn1: invalid ${kind} ${c.to_str_lossy().quote()}") }
+
+/// The instant of a date and time at the zone suffix c[i..] (`Z`, or
+/// `+hhmm` / `-hhmm` other than zero, as Go's Z0700 parses and formats
+/// back); kind names the type in the error.
+fn instant_at(c: Bytes, i: Int, y: Int, mo: Int, d: Int, h: Int, mi: Int, s: Int, ns: Int, kind: Str) -> Time ! Asn1Err {
+  if h > 23 || mi > 59 || s > 59 {
+    return Err(time_err(kind, c))
+  }
+  let date = match time.date(y, mo, d) {
+    Ok(dt) => dt
+    Err(_) => return Err(time_err(kind, c))
+  }
+  var off = 0s
+  if i + 1 == c.len() && c[i] == 'Z' {
+    off = 0s
+  } else {
+    if i + 5 != c.len() || c[i] != '+' && c[i] != '-' {
+      return Err(time_err(kind, c))
+    }
+    let oh = digits_at(c, i + 1, 2)
+    let om = digits_at(c, i + 3, 2)
+    if oh < 0 || om < 0 || oh > 24 || om > 59 || oh == 0 && om == 0 {
+      return Err(time_err(kind, c))
+    }
+    off = 1s * (oh * 3600 + om * 60)
+    if c[i] == '-' {
+      off = 0s - off
+    }
+  }
+  if y < 1678 || y > 2261 {
+    // a valid DER time outside what a Time holds (decision 0364), with a
+    // day to spare for the offset
+    return Err(Asn1Err.Invalid(msg: "asn1: time out of range"))
+  }
+  match time.instant(date, time.ClockTime{hour: h, minute: mi, second: s, nanos: ns}, time.utc()) {
+    Ok(t) => t - off
+    Err(_) => Err(time_err(kind, c))
+  }
+}
+
+/// YYMMDDhhmm[ss] and a zone (Go's parseUTCTime: years before 50 are 20YY).
+fn parse_utc_time(c: Bytes) -> Time ! Asn1Err {
+  let yy = digits_at(c, 0, 2)
+  let mo = digits_at(c, 2, 2)
+  let d = digits_at(c, 4, 2)
+  let h = digits_at(c, 6, 2)
+  let mi = digits_at(c, 8, 2)
+  if yy < 0 || mo < 0 || d < 0 || h < 0 || mi < 0 {
+    return Err(time_err("UTCTime", c))
+  }
+  let y = if yy < 50 { 2000 + yy } else { 1900 + yy }
+  var s = 0
+  var i = 10
+  let ss = digits_at(c, 10, 2)
+  if ss >= 0 {
+    s = ss
+    i = 12
+  }
+  instant_at(c, i, y, mo, d, h, mi, s, 0, "UTCTime")
+}
+
+/// YYYYMMDDhhmmss, an optional fraction (`.` and 1 to 9 digits, the last
+/// not 0) and a zone (Go's parseGeneralizedTime, which formats back).
+fn parse_generalized_time(c: Bytes) -> Time ! Asn1Err {
+  let y = digits_at(c, 0, 4)
+  let mo = digits_at(c, 4, 2)
+  let d = digits_at(c, 6, 2)
+  let h = digits_at(c, 8, 2)
+  let mi = digits_at(c, 10, 2)
+  let s = digits_at(c, 12, 2)
+  if y < 0 || mo < 0 || d < 0 || h < 0 || mi < 0 || s < 0 {
+    return Err(time_err("GeneralizedTime", c))
+  }
+  var i = 14
+  var ns = 0
+  if i < c.len() && c[i] == '.' {
+    var k = i + 1
+    var scale = 100000000
+    while k < c.len() && c[k] >= '0' && c[k] <= '9' {
+      if k - i > 9 {
+        return Err(time_err("GeneralizedTime", c))
+      }
+      ns += (Int(c[k]) - '0') * scale
+      scale = scale / 10
+      k += 1
+    }
+    if k == i + 1 || c[k - 1] == '0' {
+      return Err(time_err("GeneralizedTime", c))
+    }
+    i = k
+  }
+  instant_at(c, i, y, mo, d, h, mi, s, ns, "GeneralizedTime")
+}
+
+fn oid_valid(o: Oid) -> Bool {
+  o.arcs.len() >= 2 && o.arcs[0] >= 0 && o.arcs[0] <= 2 && (o.arcs[0] == 2 || o.arcs[1] < 40) && o.arcs.all(fn(a: Int) -> Bool { a >= 0 })
+}
+
+fn write_header(var out: BytesBuilder, class: Class, tag: Int, constructed: Bool, len: Int) {
+  var b = class_bits(class) << 6
+  if constructed {
+    b = b | 0x20
+  }
+  if tag >= 31 {
+    out.write_byte(UInt8(b | 0x1f))
+    write_base128(out, tag)
+  } else {
+    out.write_byte(UInt8(b | tag))
+  }
+  if len >= 128 {
+    var n = 0
+    var x = len
+    while x > 0 {
+      n += 1
+      x = x >> 8
+    }
+    out.write_byte(UInt8(0x80 | n))
+    for k in 0..n {
+      out.write_byte(UInt8((len >> ((n - 1 - k) * 8)) & 255))
+    }
+  } else {
+    out.write_byte(UInt8(len))
+  }
+}
+
+fn write_base128(var out: BytesBuilder, n: Int) {
+  var l = 1
+  var x = n >> 7
+  while x > 0 {
+    l += 1
+    x = x >> 7
+  }
+  for k in 0..l {
+    var o = (n >> ((l - 1 - k) * 7)) & 0x7f
+    if k != l - 1 {
+      o = o | 0x80
+    }
+    out.write_byte(UInt8(o))
+  }
+}
+
+fn prim(var out: BytesBuilder, tag: Int, c: Bytes) {
+  write_header(out, Class.Universal, tag, false, c.len())
+  out.write(c)
+}
+
+/// Go's makeBigInt: two's complement, minimal.
+fn big_bytes(n: big.BigInt) -> Bytes {
+  if n.sign() == 0 {
+    return b"\x00"
+  }
+  var b = BytesBuilder.new()
+  if n.sign() < 0 {
+    let m = n.neg().sub(big.from_int(1)).bytes()
+    // the complement's top bit, as Go tests it after the xor
+    if m.is_empty() || Int(m[0]) & 0x80 != 0 {
+      b.write_byte(0xff)
+    }
+    for x in m {
+      b.write_byte(UInt8(255 - Int(x)))
+    }
+    return b.freeze()
+  }
+  let m = n.bytes()
+  if Int(m[0]) & 0x80 != 0 {
+    b.write_byte(0)
+  }
+  b.write(m)
+  b.freeze()
+}
+
+fn int_bytes(n: Int) -> Bytes { big_bytes(big.from_int(n)) }
+
+fn put_two(var b: BytesBuilder, n: Int) {
+  b.write_byte(UInt8('0' + n / 10 % 10))
+  b.write_byte(UInt8('0' + n % 10))
+}
+
+fn time_bytes(t: Time, utc: Bool) -> Bytes ! Asn1Err {
+  let cv = time.civil(t, time.utc())
+  let y = cv.date.year
+  var b = BytesBuilder.new()
+  if utc {
+    if y < 1950 || y >= 2050 {
+      return Err(Asn1Err.Structure(msg: "cannot represent time as UTCTime"))
+    }
+    put_two(b, y % 100)
+  } else {
+    if y < 0 || y > 9999 {
+      return Err(Asn1Err.Structure(msg: "cannot represent time as GeneralizedTime"))
+    }
+    put_two(b, y / 100)
+    put_two(b, y % 100)
+  }
+  put_two(b, cv.date.month)
+  put_two(b, cv.date.day)
+  put_two(b, cv.time.hour)
+  put_two(b, cv.time.minute)
+  put_two(b, cv.time.second)
+  b.write_byte('Z')
+  b.freeze()
+}
+
+fn check_str(s: Str, ok: fn(UInt8) -> Bool, kind: Str) -> () ! Asn1Err {
+  for x in s.bytes() {
+    if !ok(x) {
+      return Err(Asn1Err.Structure(msg: "${kind} contains invalid character"))
+    }
+  }
+}
+
+/// Go's isPrintable as Marshal checks it: `*` and `&` refused.
+fn printable_strict(x: UInt8) -> Bool { x != '*' && x != '&' && printable_byte(x) }
+
+fn ia5_byte(x: UInt8) -> Bool { x < 0x80 }
+
+fn encode(v: Value, var out: BytesBuilder) -> () ! Asn1Err {
+  match v {
+    Value.Bool(x) => prim(out, TAG_BOOL, if x { b"\xff" } else { b"\x00" })
+    Value.Int(n) => prim(out, TAG_INT, big_bytes(n))
+    Value.BitString(bytes, n) => {
+      write_header(out, Class.Universal, TAG_BIT_STRING, false, bytes.len() + 1)
+      out.write_byte(UInt8((8 - n % 8) % 8))
+      out.write(bytes)
+    }
+    Value.OctetString(b) => prim(out, TAG_OCTET_STRING, b)
+    Value.Null => prim(out, TAG_NULL, b"")
+    Value.Oid(o) => {
+      if !oid_valid(o) {
+        return Err(Asn1Err.Structure(msg: "invalid object identifier"))
+      }
+      var b = BytesBuilder.new()
+      write_base128(b, o.arcs[0] * 40 + o.arcs[1])
+      for k in 2..o.arcs.len() {
+        write_base128(b, o.arcs[k])
+      }
+      prim(out, TAG_OID, b.freeze())
+    }
+    Value.Enumerated(n) => prim(out, TAG_ENUM, int_bytes(n))
+    Value.Utf8(s) => prim(out, TAG_UTF8, s.bytes())
+    Value.Printable(s) => {
+      check_str(s, printable_strict, "PrintableString")?
+      prim(out, TAG_PRINTABLE, s.bytes())
+    }
+    Value.Ia5(s) => {
+      check_str(s, ia5_byte, "IA5String")?
+      prim(out, TAG_IA5, s.bytes())
+    }
+    Value.Numeric(s) => {
+      check_str(s, numeric_byte, "NumericString")?
+      prim(out, TAG_NUMERIC, s.bytes())
+    }
+    Value.T61(s) => prim(out, TAG_T61, s.bytes())
+    Value.Bmp(s) => {
+      var b = BytesBuilder.new()
+      for u in charset.utf16_units(s) {
+        b.write_be(u, 2)
+      }
+      prim(out, TAG_BMP, b.freeze())
+    }
+    Value.UtcTime(t) => prim(out, TAG_UTC_TIME, time_bytes(t, true)?)
+    Value.GeneralizedTime(t) => prim(out, TAG_GENERALIZED_TIME, time_bytes(t, false)?)
+    Value.Sequence(items) => {
+      var b = BytesBuilder.new()
+      for x in items {
+        encode(x, b)?
+      }
+      let c = b.freeze()
+      write_header(out, Class.Universal, TAG_SEQUENCE, true, c.len())
+      out.write(c)
+    }
+    Value.Set(items) => {
+      var parts: List[Bytes] = []
+      for x in items {
+        parts.push(x.der()?)
+      }
+      parts.sort_in_place()
+      var n = 0
+      for p in parts {
+        n += p.len()
+      }
+      write_header(out, Class.Universal, TAG_SET, true, n)
+      for p in parts {
+        out.write(p)
+      }
+    }
+    Value.Tagged(c, t, explicit, x) => {
+      let inner = x.der()?
+      if explicit {
+        write_header(out, c, t, true, inner.len())
+        out.write(inner)
+      } else {
+        // the inner value's contents under this tag, its constructed bit kept
+        let h = header(inner, 0)?
+        write_header(out, c, t, h.constructed, h.len)
+        out.write(inner[h.off..])
+      }
+    }
+    Value.Raw(c, t, k, b) => {
+      write_header(out, c, t, k, b.len())
+      out.write(b)
+    }
+  }
+}

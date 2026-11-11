@@ -114,7 +114,7 @@ streams (0433), mutual TLS (`with_client_auth`, `Client.with_cert`),
 streaming bodies, multipart, ServeContent, gzip), tls, websocket, json (derive, Value,
 streaming decoder), xml (tokens, tree, derive), sql (Postgres driver),
 csv, toml, yaml (derive Yaml, decode/encode, Node with comments, to_json; a port of yaml.v3, 0512), regexp, time, url, netip, udp, mime, mail, smtp, amqp (AMQP 1.0 client with a reader task for concurrent links, CBS; a port of go-amqp, 0521) and amqptest (an in-process Service Bus shaped broker for tests, spec/std.md 64.6), multipart,
-template, embed, compress, big, base64/base32, binary, uuid, path, png (decode and encode, 0466), jpeg (decode, 0467), image (shared Image, color, draw, draw_mask, fill, floyd_steinberg, scale; 0578), gif (decode, encode; 0578), lzw in compress (0578), cbor (0468; derive Cbor, marshal/unmarshal, 0527),
+template, embed, compress, big, base64/base32, binary, uuid, path, asn1 (DER value tree, Go's rules, 0601), png (decode and encode, 0466), jpeg (decode, 0467), image (shared Image, color, draw, draw_mask, fill, floyd_steinberg, scale; 0578), gif (decode, encode; 0578), lzw in compress (0578), cbor (0468; derive Cbor, marshal/unmarshal, 0527),
 crypto, archive, log, task, testing, cli, term, go (`use go` bindings).
 `time` layouts are named fields (`"{year}-{month}-{day}"`), checked at
 compile time when constant; `time.layout(text)` gives a `Layout` parsed
