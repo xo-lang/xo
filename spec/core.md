@@ -2325,8 +2325,8 @@ fn main(os: Os) ! {
 
 ### 4.5 C headers [P2, native builds]
 
-Native builds (`--no-gc`, 10.1) call C through bindings generated from a
-header (decisions 0093 and 0116):
+Native builds (the default backend, 10.1; decision 0248) call C through
+bindings generated from a header (decisions 0093 and 0116):
 
 ```
 use c "tiny.h" link "tiny.c"
@@ -2383,7 +2383,9 @@ fn main(os: Os) {
   module's own code: in a required module the consuming module's `vouch`
   line decides the binding's effects (4.2, decision 0156).
 - `use c` is impossible on the Go backend: `xo check`, `build`, `run`, and
-  `test` without `--no-gc` report `XO1201` on the line. (`use go` is
+  `test` with `--backend=go` report `XO1201` on the line. The native
+  default needs no flag (`--no-gc` is accepted and changes nothing
+  there). (`use go` is
   likewise `XO1201` on the native backends.)
 - A C crash is not recoverable: it ends the process (8).
 
@@ -3546,7 +3548,10 @@ backends; a test WASI preview 1 cannot run (sockets, `use c`, a test of
 the native runtimes' own layout) is skipped with its reason in the
 summary line, never counted as a pass (decision 0610).
 
-**Builds without a garbage collector.** `xo build --no-gc` (also `xo run`,
+**Builds without a garbage collector.** Native is the default backend
+(decision 0248, 2026-10-16; 0270 on x86-64 hosts), so `xo build`, `run`,
+`test`, and `check` build this way with no flag; `--no-gc` is kept, and
+says the same explicitly. `xo build --no-gc` (also `xo run`,
 `xo test`, and `xo check`) builds on a native backend whose memory is
 reference counted instead of collected: arm64 on darwin/arm64 and
 linux/arm64 hosts, LLVM otherwise; `--backend=llvm`, `--backend=arm64`, or
@@ -3555,7 +3560,7 @@ picks one, and `--backend=go` with `--no-gc` is a usage error. After type
 checking and before any code generation, a check reports every construct,
 std API, or effect the native backends do not support as error `XO1201` at
 its site, naming the feature and saying whether support is *planned* (build
-without `--no-gc` until then) or *impossible* (code from a `use go` package
+with `--backend=go` until then) or *impossible* (code from a `use go` package
 needs Go's runtime). A program the check accepts builds; the check is
 derived from the native code generator itself, so the two cannot disagree.
 `xo check` runs the same check without building, by default (decision
@@ -3912,7 +3917,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1105` | error | checker | C function exists in the header but its signature does not map to Xo, so the binding skipped it |
 | `XO1106` | error | checker | a value with no Go value passed to Go as `any`: `go.any(x)`'s argument or an element of a list literal for a `...any` parameter (decision 0412) |
 | `XO1107` | warning | checker | a List, Map or Set given to a Go function as `any` (`go.any(xs)` for an `any` parameter, or an element of a `...any` list): Go receives a copy, so a change it makes is not seen; not for a function compiler/check/goreads.xo lists as only reading, nor with `// xo:allow XO1107 <reason>` (core 4.4, decision 0491) |
-| `XO1201` | error | no GC check, checker (`use c` without `--no-gc`) | construct, std API, or effect not available on the native backends (arm64, amd64, LLVM); planned or impossible |
+| `XO1201` | error | no GC check, checker (`use c` with `--backend=go`) | construct, std API, or effect not available on the native backends (arm64, amd64, LLVM); planned or impossible |
 | `XO1301` | error | modules | malformed xo.mod require or deny line, xo.lock, or xo.work line, or a deny rule naming a package that does not exist (core 4.2, 4.3) |
 | `XO1302` | error | modules | module version cannot be fetched from git or a module proxy (XO_PROXY): repository, tag, or version missing, or its xo.mod declares another path |
 | `XO1303` | error | modules | module version is not in the module cache and the build is offline (XO_OFFLINE, --offline) |

@@ -31,8 +31,8 @@ struct Opts {
   layout_syms: List[Str] = []
   /// --targets (comma separated os/arch, or all) or xo1's --target.
   targets: Str = ""
-  /// --backend as given ("" when not given: go, or arm64 with --no-gc and
-  /// for asm; main.xo).
+  /// --backend as given ("" when not given: the native default, decision
+  /// 0248, whether or not --no-gc is given; main.xo).
   backend: Str = ""
   /// build_native: o.backend was empty and is the default it chose.
   backend_auto: Bool = false

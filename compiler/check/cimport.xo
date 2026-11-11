@@ -19,7 +19,7 @@ fn (var c: Checker) load_c_import(m: Int, f: Int, u: parser.UseDecl) {
   let fpath = c.files[f].path
   if !c.native {
     let d = c.error_at(f, "XO1201", u.span, "`use c \"${header}\"` is impossible on the Go backend: C code is called from native builds only")
-    c.note(d, "check and build with `--no-gc` (a native backend: arm64 or LLVM); the Go backend reaches Go packages with `use go` (decision 0116)")
+    c.note(d, "check and build on a native backend (the default: drop `--backend=go`); the Go backend reaches Go packages with `use go` (decision 0116)")
   }
   var eff_names: List[Str] = []
   var has_uses = u.effects != None
