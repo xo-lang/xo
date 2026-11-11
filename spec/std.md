@@ -6884,10 +6884,12 @@ fn (a: Active) end() uses clock                           // records into the Ri
 ## 39. std/html
 
 Status: implemented on every backend (decision 0408, 2026-10-29): Go's
-html package, run by the Go backend itself (`std/rt/html.go`) and ported
-natively (`std/native/html.xo`, its entity table generated from Go's
-entity.go); Go's results on its
-escape_test.go cases (`html_test.xo`). Pure.
+html package ported in `std/html.xo` (merged, decision 0588; the entity
+table in `std/htmlent.xo`, generated from Go's entity.go), with
+`escape_string`'s word at a time fast path in `std/native/html_native.xo`
+and Go's html.EscapeString on the Go backend (`std/rt/html.go`, decision
+0597 part 2); Go's results on its escape_test.go cases (`html_test.xo`).
+Pure.
 
 ```
 pub fn escape_string(s: Str) -> Str      // html.EscapeString: < > & ' " as &lt; &gt; &amp; &#39; &#34;

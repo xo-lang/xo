@@ -200,4 +200,11 @@ pushes.
   rt.Url_escape). Stage B, url split this way, waits for a seed: an
   older xo stops at the bodyless declaration (XO0172) when it builds
   compiler/xo, which imports std/url.
+- Part 2, std/html (2026-11-10): merged with escape_string as the
+  bodyless fast path (std/native/html_native.xo, the Go backend's twin
+  Html_escape_string in std/rt/html.go). The portable form, prelude
+  BytesBuilder writes of the runs and the replacements, took 1.674 times
+  the native one (1.659 to 1.692, n=6; host 1, bench/perf/html escape),
+  so the fast path stays. unescape_string was already portable. html
+  needs no seed: compiler/xo does not import it.
 

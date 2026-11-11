@@ -1,5 +1,17 @@
 # std/html changes
 
+## 2026-11-10: internal: merged, escape_string's fast path in std/native/html_native.xo
+
+- Kind: internal
+- Commit: this push
+- Found by: decisions 0588 and 0597 part 2 (one file per std module, native parts behind bodyless declarations)
+- Go reference: html escape.go (go1.26.1)
+- Test: `xo test --std-module=html` (native, LLVM); the htmltok and htmlparse corpora on go, arm64, llvm; bench/perf/html checksums equal on arm64, llvm, go
+- Timing: none (the code is the same); the portable escape_string measured 1.674 of this (1.659 to 1.692, n=6, host 1) and was not taken
+- Shipped in: not yet released
+
+std/html.xo holds the module with unescape_string's body and its tests (std/html_test.xo); escape_string is declared there and its body is std/native/html_native.xo's (Go's html.EscapeString on the Go backend). std/native/html.xo and the Go backend's hand Html_unescape_string are removed. Output unchanged.
+
 ## 2026-11-10: internal: the entity tables move to the merged std/htmlent
 
 - Kind: internal

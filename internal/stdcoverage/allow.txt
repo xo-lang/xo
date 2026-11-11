@@ -82,6 +82,4 @@ cbor.put_float  called only by derive Cbor's generated code (decision 0559's dir
 cbor.put_head  called only by derive Cbor's generated code (decision 0559's direct writers)
 cbor.put_text  called only by derive Cbor's generated code (decision 0559's direct writers)
 cbor.put_value  called only by derive Cbor's generated code (decision 0559's direct writers)
-htmlent.entity2_of  internal table lookup of std/html and std/htmltok, covered through their corpora (unescape and the token corpus)
-htmlent.entity_of  internal table lookup of std/html and std/htmltok, covered through their corpora (unescape and the token corpus)
 htmltok.Tokenizer.next_is_not_raw_text  internal hook for the html parser's raw text handling, no Go corpus case drives it alone

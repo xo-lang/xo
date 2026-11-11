@@ -1,0 +1,124 @@
+// std/html's native part (decision 0597 part 2): escape_string, declared
+// bodyless in std/html.xo, a word at a time through the output's address.
+// Measured against the portable form (prelude BytesBuilder writes of the
+// runs and the replacements) on host 1, 2026-11-10: that form took 1.674
+// times this (1.659 to 1.692, n=6; bench/perf/html escape). The Go backend
+// runs Go's html.EscapeString (std/rt/html.go).
+
+use native/llrt/raw
+use native/rt
+
+// Go's EscapeString is a byteStringReplacer: one pass sizes the result,
+// the builder is made once at that size, and a second pass copies the
+// runs between the five characters by index (a find_any call per run was
+// 52% of the profile: its set is built on every call, and the runs here
+// are a few bytes; a byte at a time into a builder ran at 3.8 times Go's,
+// 2026-10-29)
+const ESC_EXTRA: Bytes = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00\x04\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+
+/// Words of eight equal bytes.
+const ONES: Int = 72340172838076673
+
+const HIGHS: Int = -9187201950435737472
+
+const LOW7S: Int = 9187201950435737471
+
+/// The high bit of each byte of w that is the byte of r (eight copies of
+/// one byte), exactly (std/native/llrt/scan.xo's eq8).
+fn eq8(w: Int, r: Int) -> Int {
+  let y = w ^ r
+  ((((y & LOW7S).wrapping_add(LOW7S)) | y) ^ -1) & HIGHS
+}
+
+/// The high bit of each of the 8 bytes of w that escapes to 5 bytes
+/// (& ' ").
+fn esc5(w: Int) -> Int { eq8(w, 38 * ONES) | eq8(w, 39 * ONES) | eq8(w, 34 * ONES) }
+
+/// The high bit of each of the 8 bytes of w that escapes to 4 bytes
+/// (< >).
+fn esc4(w: Int) -> Int { eq8(w, 60 * ONES) | eq8(w, 62 * ONES) }
+
+fn escape_string(s: Str) -> Str {
+  let b = s.bytes()
+  let n = b.len()
+  var extra = 0
+  var i = 0
+  // 32 bytes a step, each character counted by one lane compare, then a
+  // word a step: each special's extra length counted by mask, so a text
+  // dense in specials costs no more than a clean one
+  while n - i >= 32 {
+    let e5 = rt.bytes_count_eq32(b, i, 38) + rt.bytes_count_eq32(b, i, 39) + rt.bytes_count_eq32(b, i, 34)
+    extra += 4 * e5 + 3 * (rt.bytes_count_eq32(b, i, 60) + rt.bytes_count_eq32(b, i, 62))
+    i += 32
+  }
+  while n - i >= 8 {
+    let w = rt.bytes_word(b, i)
+    extra += 4 * rt.popcount(esc5(w)) + 3 * rt.popcount(esc4(w))
+    i += 8
+  }
+  while i < n {
+    let c = Int(b[i])
+    extra += Int(ESC_EXTRA[c])
+    i += 1
+  }
+  if extra == 0 {
+    return s
+  }
+  // the output is written through its address: a run is one mem_copy and a
+  // replacement one 4 byte store (and a ';' for the 5 byte ones), where a
+  // builder call a byte was the cost against Go (host 1, 2026-11-04)
+  let ob = raw.bytes_buf(n + extra)
+  let op = raw.bytes_addr(ob)
+  let sp = raw.bytes_addr(b)
+  var o = 0
+  var start = 0
+  i = 0
+  while i < n {
+    if n - i >= 8 {
+      // a clean word is skipped whole; else straight to its first special
+      let w = rt.bytes_word(b, i)
+      let m = esc5(w) | esc4(w)
+      if m == 0 {
+        i += 8
+        continue
+      }
+      i += rt.ctz(m).shr_logical(3)
+    }
+    let c = b[i]
+    if c == 38 || c == 60 || c == 62 || c == 39 || c == 34 {
+      let run = i - start
+      if run > 0 {
+        rt.mem_copy(op.wrapping_add(o), sp.wrapping_add(start), run)
+        o += run
+      }
+      if c == 38 {
+        // "&amp;"
+        rt.mem_store(op, o, 0x706d6126, 4)
+        rt.mem_store(op, o + 4, 59, 1)
+        o += 5
+      } else if c == 60 {
+        // "&lt;"
+        rt.mem_store(op, o, 0x3b746c26, 4)
+        o += 4
+      } else if c == 62 {
+        // "&gt;"
+        rt.mem_store(op, o, 0x3b746726, 4)
+        o += 4
+      } else {
+        // "&#39;" and "&#34;"
+        rt.mem_store(op, o, if c == 39 { 0x39332326 } else { 0x34332326 }, 4)
+        rt.mem_store(op, o + 4, 59, 1)
+        o += 5
+      }
+      start = i + 1
+    }
+    i += 1
+  }
+  if start < n {
+    rt.mem_copy(op.wrapping_add(o), sp.wrapping_add(start), n - start)
+  }
+  raw.alive(b)
+  // the replacements are ASCII and the runs between them are cut at ASCII
+  // bytes of a valid text: valid, as Go's string result is
+  rt.cast[Bytes, Str](ob)
+}

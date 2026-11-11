@@ -1,6 +1,4 @@
 // std/html: Go's escape_test.go cases (go1.26.1) and the round trip.
-use std/html
-
 /// (description, html, unescaped): Go's unescapeTests.
 const UNESCAPE: List[(Str, Str, Str)] = [
   ("copy", "A\ttext\nstring", "A\ttext\nstring"),
@@ -19,16 +17,16 @@ const UNESCAPE: List[(Str, Str, Str)] = [
 
 test "unescape_string: Go's cases" {
   for (desc, h, want) in UNESCAPE {
-    expect(html.unescape_string(h)) == want
+    expect(unescape_string(h)) == want
     let _ = desc
   }
 }
 
 test "escape_string: the five characters, and the round trip" {
-  expect(html.escape_string("<a href=\"x\">&'</a>")) == "&lt;a href=&#34;x&#34;&gt;&amp;&#39;&lt;/a&gt;"
-  expect(html.escape_string("plain")) == "plain"
+  expect(escape_string("<a href=\"x\">&'</a>")) == "&lt;a href=&#34;x&#34;&gt;&amp;&#39;&lt;/a&gt;"
+  expect(escape_string("plain")) == "plain"
   for s in ["", "A\ttext\nstring", "<>&'\"", "\u{20AC} \u{03BB} \u{22DB}\u{FE00}", "&amp; stays &amp;", "x&#; &#x; &zzz;"] {
-    expect(html.unescape_string(html.escape_string(s))) == s
+    expect(unescape_string(escape_string(s))) == s
   }
 }
 
@@ -49,7 +47,7 @@ test "escape_string: each character at each place of 0 to 100, against a byte lo
             want.write("x")
           }
         }
-        expect(html.escape_string(src.freeze())) == want.freeze()
+        expect(escape_string(src.freeze())) == want.freeze()
       }
     }
     k += 1
@@ -58,19 +56,19 @@ test "escape_string: each character at each place of 0 to 100, against a byte lo
 
 test "unescape_string: legacy names, prefixes and a name followed by text" {
   // &copy without a semicolon, &copyright as the prefix copy + "right"
-  expect(html.unescape_string("&copy &copyright &notit")) == "\u{00A9} \u{00A9}right \u{00AC}it"
+  expect(unescape_string("&copy &copyright &notit")) == "\u{00A9} \u{00A9}right \u{00AC}it"
   // an unknown name stays
-  expect(html.unescape_string("&xyzzy; &xyzzy")) == "&xyzzy; &xyzzy"
+  expect(unescape_string("&xyzzy; &xyzzy")) == "&xyzzy; &xyzzy"
   // invalid numeric references: U+FFFD, surrogates, beyond the range
-  expect(html.unescape_string("&#0; &#xD800; &#x110000;")) == "\u{FFFD} \u{FFFD} \u{FFFD}"
+  expect(unescape_string("&#0; &#xD800; &#x110000;")) == "\u{FFFD} \u{FFFD} \u{FFFD}"
 }
 
 test "escape_string: adjacent and trailing specials, multi-byte runs" {
-  expect(html.escape_string("&&<>'\"")) == "&amp;&amp;&lt;&gt;&#39;&#34;"
-  expect(html.escape_string("é<ü>日本'語\"")) == "é&lt;ü&gt;日本&#39;語&#34;"
-  expect(html.escape_string("x&")) == "x&amp;"
-  expect(html.escape_string("&x")) == "&amp;x"
-  expect(html.escape_string("")) == ""
+  expect(escape_string("&&<>'\"")) == "&amp;&amp;&lt;&gt;&#39;&#34;"
+  expect(escape_string("é<ü>日本'語\"")) == "é&lt;ü&gt;日本&#39;語&#34;"
+  expect(escape_string("x&")) == "x&amp;"
+  expect(escape_string("&x")) == "&amp;x"
+  expect(escape_string("")) == ""
 }
 
 /// escape_string by replacement, the reference of the word skipping one
@@ -87,7 +85,7 @@ test "escape_string: each special at each place of 0 to 40, and near misses" {
       for j in 0..41 {
         s = s + (if j == p { c } else { letters[j % 8] })
       }
-      expect(html.escape_string(s)) == escape_ref(s)
+      expect(escape_string(s)) == escape_ref(s)
     }
   }
 }

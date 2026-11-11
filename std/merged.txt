@@ -24,3 +24,4 @@ std/mime
 std/multipart
 std/binary
 std/htmlent
+std/html
