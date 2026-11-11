@@ -1,6 +1,6 @@
 # 0584: Per-OS secret stores: Keyring, Keychain, Dpapi under one `secrets` effect
 
-Status: Proposed (Lang 3, 2026-11-10). Asked for by Azure 1
+Status: Accepted (owner, 2026-11-11; proposed by Lang 3, 2026-11-10). Asked for by Azure 1
 (`~/xo-lead/notes/aws-43/PROPOSAL-std-0012b-secret-stores.md`), assigned by
 the lead; unblocks azidentity/cache, the last Azure data-plane module.
 Related: 0004 (effects and capabilities), 0156 (attenuation), 0161 (Proc).
