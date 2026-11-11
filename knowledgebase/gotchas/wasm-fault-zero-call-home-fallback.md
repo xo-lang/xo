@@ -28,7 +28,8 @@ and Module.
 
 zero_val_name (compiler/ssa build.xo) gives no zero_val.T for a wasm build,
 so wasm fault exits build the zero as before. Main's playground compiler:
-58.2 to 26.2 MB, 4.50 to 3.15 MB brotli. Native builds are unchanged.
+58.0 to 26.2 MB, 4.45 to 3.15 MB brotli; user programs with such methods
+shrink too (crypto_prims 15.9%). Native builds are unchanged.
 internal/selfhost TestWasmPlaygroundStack fails when the build passes
 playMaxBytes (32,000,000).
 
