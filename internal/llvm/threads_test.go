@@ -331,8 +331,32 @@ func usesTasks(t *testing.T, dir string) bool {
 	if bytes.HasPrefix(src, []byte("use c ")) || bytes.Contains(src, []byte("\nuse c ")) {
 		return false
 	}
+	// so does a std module that is a `use c` (std/sqlite's SQLite)
+	if usesStdC(t, src) {
+		return false
+	}
 	for _, w := range []string{"scope ", "Chan[", "Mutex[", "Atomic["} {
 		if bytes.Contains(src, []byte(w)) {
+			return true
+		}
+	}
+	return false
+}
+
+// usesStdC reports whether src uses a std module whose native source
+// (std/native/M.xo) is a `use c` module, as std/sqlite is.
+func usesStdC(t *testing.T, src []byte) bool {
+	for _, line := range bytes.Split(src, []byte("\n")) {
+		f := bytes.Fields(line)
+		if len(f) < 2 || string(f[0]) != "use" || !bytes.HasPrefix(f[1], []byte("std/")) {
+			continue
+		}
+		m := string(bytes.TrimPrefix(f[1], []byte("std/")))
+		b, err := os.ReadFile(filepath.Join("..", "..", "std", "native", m+".xo"))
+		if err != nil {
+			continue // no native source: not a C module
+		}
+		if bytes.HasPrefix(b, []byte("use c ")) || bytes.Contains(b, []byte("\nuse c ")) {
 			return true
 		}
 	}

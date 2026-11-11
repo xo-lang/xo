@@ -396,7 +396,7 @@ fn check_op(name: Str) -> List[(Str, Str, Str, Int, Str, Str)] {
 }
 
 test "every row's operation has its test" {
-  let tested = ["add", "sub", "mul", "quo", "sqrt", "cmp", "info", "mantexp", "pow2", "prec", "text", "parse", "toint", "tofloat", "tobig", "fromint", "fromfloat", "frombig"]
+  let tested = ["add", "sub", "mul", "quo", "sqrt", "cmp", "info", "mantexp", "pow2", "prec", "text", "parse", "toint", "tofloat", "tobig", "fromint", "fromfloat", "frombig", "abs"]
   var missing: List[Str] = []
   for (op, _a, _b, _k, _w) in OPS {
     if !tested.contains(op) && !missing.contains(op) {
@@ -476,6 +476,10 @@ test "Float fromfloat is Go's" {
 
 test "Float frombig is Go's" {
   expect(check_op("frombig")) == []
+}
+
+test "Float abs is Go's" {
+  expect(check_op("abs")) == []
 }
 
 test "display is Text('g', 10)" {
