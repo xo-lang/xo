@@ -8911,3 +8911,44 @@ unknown universal tag are `Raw`; `tagged_as` reads a `Raw` as explicit (one valu
 when it is not constructed) or implicit (the universal `tag` with its contents), giving `Tagged`, which `der` writes back
 the same way. Stage 2, `derive Asn1` for structs, is a later decision. Checked against Go's Unmarshal and Marshal
 (testdata/corpus/asn1, 1305 cases) and its own tests (std/asn1_test.xo).
+
+## 79. std/sse
+
+Server-sent events (decision 0603 stage 1): the WHATWG `text/event-stream` format (HTML Living Standard 9.2.6,
+"Event stream interpretation") in both directions, over any byte source. One pure source for every backend.
+
+```xo
+const MAX_LINE: Int = 1048576                       // the default line limit (Go's bufio.Scanner, as azcore and openai-go)
+struct Event { pub event: Str = "message", pub data: Str = "", pub id: Str = "" }
+enum SseErr { TooLong(limit: Int) }                 // display: `sse: line longer than N bytes`
+fn parser(max_line: Int = MAX_LINE) -> Parser       // a fault for max_line < 1
+fn (var p: Parser) feed(chunk: Bytes) -> List[Event] ! SseErr   // the events the chunk completes; an error sticks
+fn (p: Parser) last_event_id() -> Str               // the last event ID buffer
+fn (p: Parser) retry() -> Int?                      // the latest valid `retry`, in milliseconds
+fn (var p: Parser) set_last_event_id(id: Str)       // start from a saved cursor
+enum ReadErr[E] { Format(e: SseErr), Source(e: E) }
+fn reader[E, fx: Effects](src: fn(Int) -> Bytes? ! E uses fx, max_line: Int = MAX_LINE, read_size: Int = 32768,
+  last_event_id: Str = "") -> Reader[E, fx]
+fn (var r: Reader[E, fx]) next() -> Event? ! ReadErr[E] uses fx   // None at the end; None after an error
+fn (r: Reader[E, fx]) last_event_id() -> Str
+fn (r: Reader[E, fx]) retry() -> Int?
+fn encode(data: Str, event: Str = "", id: Str? = None, retry: Int? = None) -> Str
+fn comment(text: Str = "") -> Str                   // `: text` lines, a keep-alive
+fn send(w: http.BodyWriter, text: Str) -> () ! IoErr   // write and flush
+fn headers() -> Map[Str, Str]                       // Content-Type: text/event-stream, Cache-Control: no-cache
+```
+
+Parsing follows the standard: lines end at CRLF, LF or a lone CR, also when a chunk splits a CRLF; a UTF-8 BOM at the
+start is dropped (also split across chunks), a second one is not; a line starting with `:` is a comment; a field name
+is the text before the first `:` and one space after it is dropped; `data` appends its value and a LF, `event` sets
+the type, `id` sets the last event ID unless it holds NUL (an empty `id` clears it), and `retry` takes only ASCII
+digits; other fields are ignored. An empty line dispatches when there was a data line (the type `message` when none
+was given) and otherwise only clears the type. At the end of the source an unfinished event and an unterminated line
+are dropped. Values are decoded as the Encoding Standard's UTF-8 decoder does: each maximal invalid subpart is one
+U+FFFD (`Bytes.to_str_lossy`, as Go's `[]rune`, gives one per byte). `encode` writes `event:` unless it is empty or
+`message`, `id:` and `retry:` when given, then a `data:` line for each line of data (CRLF and CR are line breaks), and
+the empty line; an event name or id with a line break, an id with NUL or a negative retry is a fault. A Reader's source
+is any read function, such as `http.BodyReader.read` or `http.ClientStream.read`. Checked against a reference written
+from the standard, itself checked against the web-platform-tests eventsource format cases and against
+github.com/tmaxmax/go-sse on seeded random streams (testdata/corpus/sse, each stream fed whole, a byte at a time and in
+random chunks).

@@ -121,6 +121,7 @@ var generators = map[string]func() string{
 	"grpc":       grpcCorpus,
 	"otlp":       otlpCorpus,
 	"timego":     timegoCorpus,
+	"sse":        sseCorpus,
 }
 
 func main() {

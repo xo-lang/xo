@@ -1,0 +1,418 @@
+// std/sse (spec/std.md, decision 0603 stage 1). Server-sent events: the
+// WHATWG `text/event-stream` format (HTML Living Standard 9.2.6, "Event
+// stream interpretation"), both directions, over any byte source.
+//
+// - Parser: I/O free. feed bytes as they arrive, take the events each
+//   chunk completes. It keeps the stream's state: the last event ID and
+//   the reconnection time a `retry` field set.
+// - Reader: a Parser over a read function (an http.BodyReader's, a
+//   ClientStream's, a test's), `next` until None.
+// - encode, comment and send: the writer side, an event's text and an
+//   http.BodyWriter that writes and flushes it.
+//
+// One pure source for every backend (decision 0312, std/go_compiled.txt).
+
+use std/http
+
+/// The longest line a Parser takes by default (Go's bufio.Scanner limit
+/// of 1 MiB, as azcore's and openai-go's readers); a longer one is
+/// SseErr.TooLong. Several data lines make one event, so an event may be
+/// longer.
+pub const MAX_LINE: Int = 1048576
+
+/// One dispatched event (the WHATWG MessageEvent's fields).
+pub struct Event {
+  /// The `event` field, `message` when the event had none (or an empty one).
+  pub event: Str = "message"
+  /// The `data` lines joined by `\n`. An event with no data line is never
+  /// dispatched; one `data` line with no value gives "".
+  pub data: Str = ""
+  /// The stream's last event ID when the event was dispatched: the latest
+  /// `id` field so far, this event's or an earlier one's ("" after an
+  /// empty `id`). A client sends it back as `Last-Event-ID`.
+  pub id: Str = ""
+}
+
+/// Why a stream could not be read.
+pub enum SseErr {
+  /// A line longer than the parser's limit.
+  TooLong(limit: Int)
+}
+
+pub fn (e: SseErr) display() -> Str {
+  match e {
+    TooLong(n) => "sse: line longer than ${n} bytes"
+  }
+}
+
+/// The event-stream parser: bytes in, events out. Lines end at CRLF, LF or
+/// a lone CR, also split across chunks; a UTF-8 BOM at the start is
+/// dropped; field values are decoded as UTF-8 with replacement.
+pub struct Parser {
+  max_line: Int = MAX_LINE
+  buf: Bytes = b""
+  started: Bool = false
+  skip_lf: Bool = false
+  event: Str = ""
+  data: List[Str] = []
+  have_data: Bool = false
+  last_id: Str = ""
+  retry_ms: Int? = None
+  failed: SseErr? = None
+}
+
+/// A parser whose lines may be max_line bytes long (at least 1).
+pub fn parser(max_line: Int = MAX_LINE) -> Parser {
+  if max_line < 1 {
+    fault("sse: max_line must be at least 1")
+  }
+  Parser{max_line: max_line}
+}
+
+/// The events chunk completes, in order. A line over the limit is an
+/// error, and every later feed returns it too.
+pub fn (var p: Parser) feed(chunk: Bytes) -> List[Event] ! SseErr {
+  if let Some(e) = p.failed {
+    return Err(e)
+  }
+  var out: List[Event] = []
+  var b = p.buf + chunk
+  var start = 0
+  if !p.started && !b.is_empty() {
+    // the BOM may arrive split; wait for three bytes or a mismatch
+    let bom = b"\xEF\xBB\xBF"
+    let n = if b.len() < 3 { b.len() } else { 3 }
+    if b[0..n] == bom[0..n] {
+      if n < 3 {
+        p.buf = b
+        return Ok(out)
+      }
+      start = 3
+    }
+    p.started = true
+  }
+  if p.skip_lf && start < b.len() {
+    p.skip_lf = false
+    if b[start] == 10 {
+      start += 1
+    }
+  }
+  var i = start
+  while i < b.len() {
+    let c = b[i]
+    if c == 10 || c == 13 {
+      if i - start > p.max_line {
+        return p.fail(SseErr.TooLong(p.max_line))
+      }
+      if let Some(ev) = p.line(b[start..i]) {
+        out.push(ev)
+      }
+      start = i + 1
+      if c == 13 {
+        if start < b.len() {
+          if b[start] == 10 {
+            start += 1
+          }
+        } else {
+          // the LF of a CRLF may come in the next chunk
+          p.skip_lf = true
+        }
+      }
+      i = start
+    } else {
+      i += 1
+    }
+  }
+  if b.len() - start > p.max_line {
+    return p.fail(SseErr.TooLong(p.max_line))
+  }
+  p.buf = b[start..b.len()]
+  Ok(out)
+}
+
+fn (var p: Parser) fail(e: SseErr) -> List[Event] ! SseErr {
+  p.failed = Some(e)
+  p.buf = b""
+  Err(e)
+}
+
+/// The last event ID so far (the WHATWG last event ID buffer), "" before
+/// any `id` field.
+pub fn (p: Parser) last_event_id() -> Str { p.last_id }
+
+/// The reconnection time the latest valid `retry` field set, in
+/// milliseconds; None before one.
+pub fn (p: Parser) retry() -> Int? { p.retry_ms }
+
+/// Starts from a client's saved cursor (its Last-Event-ID), as a
+/// reconnected stream does.
+pub fn (var p: Parser) set_last_event_id(id: Str) {
+  p.last_id = id
+}
+
+/// One line, its terminator removed: a field, a comment, or the empty line
+/// that dispatches.
+fn (var p: Parser) line(l: Bytes) -> Event? {
+  if l.is_empty() {
+    if !p.have_data {
+      p.event = ""
+      return None
+    }
+    let ev = Event{event: if p.event.is_empty() { "message" } else { p.event }, data: p.data.join("\n"), id: p.last_id}
+    p.event = ""
+    p.data = []
+    p.have_data = false
+    return Some(ev)
+  }
+  if l[0] == 58 {
+    // ':' starts a comment
+    return None
+  }
+  var name = l
+  var value = b""
+  if let Some(k) = l.find(b":") {
+    name = l[0..k]
+    value = l[k + 1..l.len()]
+    if !value.is_empty() && value[0] == 32 {
+      value = value[1..value.len()]
+    }
+  }
+  if name == b"data" {
+    p.data.push(utf8(value))
+    p.have_data = true
+  } else if name == b"event" {
+    p.event = utf8(value)
+  } else if name == b"id" {
+    if !value.contains(b"\x00") {
+      p.last_id = utf8(value)
+    }
+  } else if name == b"retry" {
+    if digits(value) {
+      if let Some(n) = Int.parse(value.to_str_lossy()) {
+        p.retry_ms = Some(n)
+      }
+    }
+  }
+  None
+}
+
+/// b decoded as the WHATWG Encoding Standard's UTF-8 decoder does: each
+/// maximal subpart of an invalid sequence is one U+FFFD (`\xE2\x80a` is
+/// one, then `a`), where Bytes.to_str_lossy, as Go's []rune, gives one per
+/// byte.
+fn utf8(b: Bytes) -> Str {
+  var plain = true
+  for c in b {
+    if c >= 128 {
+      plain = false
+      break
+    }
+  }
+  if plain {
+    return b.to_str_lossy()
+  }
+  var o = BytesBuilder.with_capacity(b.len() + 8)
+  var i = 0
+  while i < b.len() {
+    let c = Int(b[i])
+    if c < 128 {
+      o.write_byte(b[i])
+      i += 1
+      continue
+    }
+    var need = 0
+    var lo = 128
+    var hi = 191
+    if c >= 194 && c <= 223 {
+      need = 1
+    } else if c >= 224 && c <= 239 {
+      need = 2
+      if c == 224 {
+        lo = 160
+      }
+      if c == 237 {
+        hi = 159
+      }
+    } else if c >= 240 && c <= 244 {
+      need = 3
+      if c == 240 {
+        lo = 144
+      }
+      if c == 244 {
+        hi = 143
+      }
+    }
+    if need == 0 {
+      o.write(b"\xEF\xBF\xBD")
+      i += 1
+      continue
+    }
+    var j = i + 1
+    var ok = true
+    while j - i <= need {
+      if j >= b.len() {
+        ok = false
+        break
+      }
+      let d = Int(b[j])
+      if d < lo || d > hi {
+        ok = false
+        break
+      }
+      lo = 128
+      hi = 191
+      j += 1
+    }
+    if ok {
+      o.write(b[i..j])
+    } else {
+      // the bytes so far are one maximal subpart; b[j] starts afresh
+      o.write(b"\xEF\xBF\xBD")
+    }
+    i = j
+  }
+  o.freeze().to_str_lossy()
+}
+
+fn digits(b: Bytes) -> Bool {
+  if b.is_empty() {
+    return false
+  }
+  for c in b {
+    if c < 48 || c > 57 {
+      return false
+    }
+  }
+  true
+}
+
+/// Why a Reader stopped: the stream's format or its source.
+pub enum ReadErr[E] {
+  Format(e: SseErr)
+  Source(e: E)
+}
+
+/// Events read from a byte source as they arrive: `next` until None. At
+/// the end of the source an unfinished event is dropped, as the standard
+/// says.
+pub struct Reader[E, fx: Effects] {
+  src: fn(Int) -> Bytes? ! E uses fx
+  read_size: Int
+  p: Parser
+  pending: List[Event] = []
+  at: Int = 0
+  done: Bool = false
+}
+
+/// A Reader over src, which returns at most its argument's bytes and None
+/// at the end (http.BodyReader.read, http.ClientStream.read). last_event_id
+/// starts the parser's cursor (a reconnection's).
+pub fn reader[E, fx: Effects](src: fn(Int) -> Bytes? ! E uses fx, max_line: Int = MAX_LINE, read_size: Int = 32768, last_event_id: Str = "") -> Reader[E, fx] {
+  if read_size < 1 {
+    fault("sse: read_size must be at least 1")
+  }
+  var p = parser(max_line)
+  p.set_last_event_id(last_event_id)
+  Reader{src: src, read_size: read_size, p: p}
+}
+
+/// The next event; None at the end of the source. An error ends the
+/// reader: `next` returns None after it.
+pub fn (var r: Reader[E, fx]) next() -> Event? ! ReadErr[E] uses fx {
+  while true {
+    if r.at < r.pending.len() {
+      let ev = r.pending[r.at]
+      r.at += 1
+      return Ok(Some(ev))
+    }
+    if r.done {
+      return Ok(None)
+    }
+    r.pending = []
+    r.at = 0
+    match (r.src)(r.read_size) {
+      Ok(Some(chunk)) => {
+        match r.p.feed(chunk) {
+          Ok(evs) => r.pending = evs
+          Err(e) => {
+            r.done = true
+            return Err(ReadErr.Format(e))
+          }
+        }
+      }
+      Ok(None) => r.done = true
+      Err(e) => {
+        r.done = true
+        return Err(ReadErr.Source(e))
+      }
+    }
+  }
+  Ok(None)
+}
+
+/// The stream's last event ID so far (see Parser.last_event_id).
+pub fn (r: Reader[E, fx]) last_event_id() -> Str { r.p.last_event_id() }
+
+/// The latest `retry` in milliseconds (see Parser.retry).
+pub fn (r: Reader[E, fx]) retry() -> Int? { r.p.retry() }
+
+/// An event's wire text: `event:` unless it is empty or `message`, `id:`
+/// when given, `retry:` when given, one `data:` line for each line of data
+/// (split at CRLF, LF and CR), then the empty line. A fault for an event
+/// name or id with a line break, an id with NUL, or a negative retry:
+/// each would change the stream's meaning.
+pub fn encode(data: Str, event: Str = "", id: Str? = None, retry: Int? = None) -> Str {
+  var o = StrBuilder.new()
+  if !event.is_empty() && event != "message" {
+    no_break(event, "event")
+    o.write("event: ${event}\n")
+  }
+  if let Some(v) = id {
+    no_break(v, "id")
+    if v.contains("\u{0}") {
+      fault("sse: an id must not contain NUL")
+    }
+    o.write(if v.is_empty() { "id\n" } else { "id: ${v}\n" })
+  }
+  if let Some(n) = retry {
+    if n < 0 {
+      fault("sse: retry must not be negative")
+    }
+    o.write("retry: ${n}\n")
+  }
+  for l in data.replace("\r\n", "\n").replace("\r", "\n").split("\n") {
+    o.write(if l.is_empty() { "data\n" } else { "data: ${l}\n" })
+  }
+  o.write("\n")
+  o.freeze()
+}
+
+fn no_break(s: Str, what: Str) {
+  if s.contains("\n") || s.contains("\r") {
+    fault("sse: an ${what} must not contain a line break")
+  }
+}
+
+/// A comment line (`: text`), which a reader ignores; a keep-alive that
+/// stops an idle connection from timing out. Each line of text is its own
+/// comment.
+pub fn comment(text: Str = "") -> Str {
+  var o = StrBuilder.new()
+  for l in text.replace("\r\n", "\n").replace("\r", "\n").split("\n") {
+    o.write(if l.is_empty() { ":\n" } else { ": ${l}\n" })
+  }
+  o.freeze()
+}
+
+/// Writes text (from encode or comment) to w and flushes it, so the event
+/// leaves at once.
+pub fn send(w: http.BodyWriter, text: Str) -> () ! IoErr {
+  w.write(text.bytes())?
+  w.flush()
+}
+
+/// The response headers of an event stream: `Content-Type:
+/// text/event-stream` and `Cache-Control: no-cache`.
+pub fn headers() -> Map[Str, Str] {
+  {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}
+}
