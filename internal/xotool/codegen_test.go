@@ -560,3 +560,83 @@ func TestDriverKeyChanges(t *testing.T) {
 		t.Errorf("StampArgs does not stamp XO_DRIVER_KEY=%s", base)
 	}
 }
+
+// linkEnvNoOutput: the XO_ variables the link reads (compiler/xo ld.xo,
+// compiler/macho) that do not change the linked bytes, or that reach the
+// binary keys another way. Every other one goes into link_env_key
+// (compiler/xo cache.xo), which the binary keys and std's half keys hold.
+var linkEnvNoOutput = map[string]string{
+	"XO_CACHE_STATS":        "prints the cache's counts",
+	"XO_PDB_OBJ":            "0: the PDB from the image, not each object's cached part: the same bytes",
+	"XO_PDB_OBJ_CHECK":      "prints the per-object DWARF check",
+	"XO_PREP_CACHE":         "off: a store link decides its kept atoms afresh; a hit links the same bytes",
+	"XO_RACE_RUNTIME":       "the --race runtime's path, in macho_bin_key as race_rt",
+	"XO_SEPCOMP_STORE":      "std's store, in the binary key as sep_key",
+	"XO_SEPCOMP_STORE_CONC": "the concurrent variant's store, in the binary key as sep_key",
+	"XO_STD_STORE":          "links through std's indexed store: the parts' binary, byte for byte",
+	"XO_STD_STORE_CHECK":    "also links the parts and fails on a difference",
+	"XO_STD_STORE_REPEAT":   "times N more store links",
+}
+
+// TestLinkEnvKeyed: every XO_ variable the link reads is in link_env_key
+// or in linkEnvNoOutput, so a new linker knob cannot leave the binary
+// cache's key. 2026-11-11: XO_BRANCH_REACH was in neither key, and
+// TestGoldenRunIslands' islanded link was served to the default build
+// (TestDebugInfoSameCode, tiers 908 to 912; gotchas/link-env-not-in-bin-key.md).
+func TestLinkEnvKeyed(t *testing.T) {
+	root := codegenRepoRoot(t)
+	cdir := filepath.Join(root, CompilerDir(root))
+	cache, err := os.ReadFile(filepath.Join(cdir, "xo", "cache.xo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := string(cache)
+	i := strings.Index(c, "fn link_env_key(")
+	if i < 0 {
+		t.Fatal("compiler/xo cache.xo has no fn link_env_key")
+	}
+	body := c[i:]
+	if j := strings.Index(body, "\n}\n"); j >= 0 {
+		body = body[:j]
+	}
+	files, err := filepath.Glob(filepath.Join(cdir, "macho", "*.xo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, filepath.Join(cdir, "xo", "ld.xo"))
+	name := regexp.MustCompile(`"(XO_[A-Z0-9_]+)"`)
+	seen := map[string]string{}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.xo") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, l := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(l), "//") {
+				continue
+			}
+			for _, m := range name.FindAllStringSubmatch(l, -1) {
+				seen[m[1]] = filepath.Base(f)
+			}
+		}
+	}
+	var names []string
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		_, quiet := linkEnvNoOutput[n]
+		if !quiet && !strings.Contains(body, `"`+n+`"`) {
+			t.Errorf("%s (read in %s) changes a link but link_env_key (compiler/xo cache.xo) does not hold it: add it there, or to linkEnvNoOutput with why the linked bytes are the same", n, seen[n])
+		}
+	}
+	for n := range linkEnvNoOutput {
+		if _, ok := seen[n]; !ok {
+			t.Errorf("linkEnvNoOutput lists %s, which the link no longer reads", n)
+		}
+	}
+}
