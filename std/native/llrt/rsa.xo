@@ -214,7 +214,9 @@ fn private_op_dit(k: PrivateKey, c: Bytes) -> Bytes? {
   }
   let out = bigmod.to_bytes(bigmod.add_plain(m, m2), k.n.len())
   match public_op(PublicKey{n: k.n, e: k.e}, out) {
-    Some(back) => if back == pad(c, k.n.len()) { Some(out) } else { None }
+    // a constant time compare, as Go's c.Equal: the result is secret
+    // until the check passes (the 0616 RSA review's second reader)
+    Some(back) => if ct.bytes_equal(back, pad(c, k.n.len())) { Some(out) } else { None }
     None => None
   }
 }

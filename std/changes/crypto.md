@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-12: security: the RSA private operation's fault check compares in constant time
+
+- Kind: security
+- Commit: this push
+- Found by: the 0616 RSA review's second reader (F7)
+- Go reference: crypto/internal/fips140/rsa decrypt (the check against the public operation with bigmod's constant time Equal), go1.26.1
+- Test: std/native/crypto_test.xo's RSA tests and golden crypto_rsa_encrypt (unchanged output)
+- Shipped in: not yet released
+
+The private operation checks its result by running the public operation on it; that compare used `==` on Bytes, which may stop at the first differing byte, so a fault in the CRT could take a time that depended on the secret result. It is now `ct.bytes_equal`, as Go's. The result was never released on a mismatch.
+
 ## 2026-11-12: fix: encrypt_pkcs1v15 refuses a small key before a long message
 
 - Kind: fix
