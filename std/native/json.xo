@@ -484,14 +484,135 @@ fn value_get(v: json.Value, key: Str) -> json.Value? {
 // then parse_value on it, so the values and errors are parse_value's
 
 struct Decoder {
-  buf: Bytes
   max: Int
   /// an error found after values the same write returned: the next
   /// call's (Go's Decoder returns the values before it first)
   err: Str = ""
+  /// the bytes of a value the writes so far have not finished, from its
+  /// first byte, and where its scan stopped: each write scans only its
+  /// new bytes and appends them (it joined and rescanned the whole value
+  /// on every write, quadratic in a value sent in small pieces: the 0616
+  /// json review's F5)
+  pend: BytesBuilder = BytesBuilder.new()
+  scan: VScan = VScan{}
 }
 
-fn decoder(max_value: Int) -> Decoder { Decoder{buf: b"", max: max_value} }
+fn decoder(max_value: Int) -> Decoder { Decoder{max: max_value} }
+
+/// value_end's state over a value that may arrive in pieces: kind is the
+/// value's first byte (0: no value started); depth, in_str and esc for
+/// an array, object or string; num the number_end state; lit the bytes
+/// of a literal matched.
+struct VScan {
+  kind: Int = 0
+  depth: Int = 0
+  in_str: Bool = false
+  esc: Bool = false
+  num: Int = 0
+  lit: Int = 0
+}
+
+/// value_end over b[from..] for the value s began (s.kind set from its
+/// first byte, which from is past): the end of the value in b
+/// (exclusive), or -1 when b ends first, s then holding where it stopped.
+/// The ends are value_end's: one past a byte that breaks a number or
+/// literal.
+fn scan_value(var s: VScan, b: Bytes, from: Int) -> Int {
+  let n = b.len()
+  let c = s.kind
+  var k = from
+  if c == 123 || c == 91 || c == 34 {
+    while k < n {
+      let x = Int(b[k])
+      if s.esc {
+        s.esc = false
+      } else if s.in_str {
+        if x == 92 {
+          s.esc = true
+        } else if x == 34 {
+          s.in_str = false
+          if c == 34 {
+            return k + 1
+          }
+        }
+      } else if x == 34 {
+        s.in_str = true
+      } else if x == 123 || x == 91 {
+        s.depth += 1
+      } else if x == 125 || x == 93 {
+        s.depth -= 1
+        if s.depth == 0 {
+          return k + 1
+        }
+      }
+      k += 1
+    }
+    return -1
+  }
+  if c == 45 || digit(c) {
+    while k < n {
+      let x = Int(b[k])
+      let st = s.num
+      var next = -1
+      if st == 1 {
+        next = if x == 48 { 2 } else if digit(x) { 3 } else { -1 }
+      } else if st == 2 || st == 3 {
+        next = if st == 3 && digit(x) { 3 } else if x == 46 { 4 } else if x == 101 || x == 69 { 6 } else { -2 }
+      } else if st == 4 || st == 5 {
+        next = if digit(x) { 5 } else if st == 5 && (x == 101 || x == 69) { 6 } else if st == 5 { -2 } else { -1 }
+      } else if st == 6 {
+        next = if x == 43 || x == 45 { 7 } else if digit(x) { 8 } else { -1 }
+      } else if st == 7 {
+        next = if digit(x) { 8 } else { -1 }
+      } else {
+        next = if digit(x) { 8 } else { -2 }
+      }
+      if next == -2 {
+        return k
+      }
+      if next == -1 {
+        return k + 1
+      }
+      s.num = next
+      k += 1
+    }
+    return -1
+  }
+  if c == 116 || c == 102 || c == 110 {
+    let lit = if c == 116 { b"true" } else if c == 102 { b"false" } else { b"null" }
+    while s.lit < lit.len() {
+      if k >= n {
+        return -1
+      }
+      if b[k] != lit[s.lit] {
+        return k + 1
+      }
+      s.lit += 1
+      k += 1
+    }
+    return k
+  }
+  // a byte no value starts with: parse_value names it
+  from
+}
+
+/// A scan of the value whose first byte is c (scan_value's state after
+/// that byte).
+fn scan_start(c: Int) -> VScan {
+  if c == 123 || c == 91 {
+    return VScan{kind: c, depth: 1}
+  }
+  if c == 34 {
+    return VScan{kind: c, in_str: true}
+  }
+  if c == 45 {
+    return VScan{kind: c, num: 1}
+  }
+  if digit(c) {
+    return VScan{kind: c, num: if c == 48 { 2 } else { 3 }}
+  }
+  VScan{kind: c, lit: 1}
+}
 
 fn is_space(c: Int) -> Bool { c == 32 || c == 9 || c == 10 || c == 13 }
 
@@ -612,67 +733,101 @@ fn value_end(b: Bytes, i: Int) -> Int {
 
 fn stream_err(msg: Str) -> json.DecodeErr { json.DecodeErr{path: "$", msg: msg} }
 
-/// The values of d.buf; with last, an unfinished value is an error.
-fn (var d: Decoder) take(last: Bool) -> List[json.Value] ! json.DecodeErr {
+/// The values that data, after the bytes of earlier writes, finishes;
+/// with last (finish), an unfinished value is an error.
+fn (var d: Decoder) take(data: Bytes, last: Bool) -> List[json.Value] ! json.DecodeErr {
   if !d.err.is_empty() {
     return Err(stream_err(d.err))
   }
   var out: List[json.Value] = []
-  let b = d.buf
+  let b = data
   let n = b.len()
   var i = 0
   var err = ""
-  while true {
-    while i < n && is_space(Int(b[i])) {
-      i += 1
-    }
-    if i >= n {
-      break
-    }
-    var end = value_end(b, i)
-    if end < 0 && !last {
-      // it may go on: wait for more, up to max_value
-      if n - i > d.max {
-        err = "invalid JSON: value exceeds max_value (${d.max} bytes)"
+  let too_big = "invalid JSON: value exceeds max_value (${d.max} bytes)"
+  while err.is_empty() {
+    var value = b""
+    if d.scan.kind != 0 {
+      // the value earlier writes began goes on in b
+      let had = d.pend.len()
+      var end = scan_value(d.scan, b, 0)
+      if end < 0 && !last {
+        d.pend.write(b)
+        if d.pend.len() > d.max {
+          err = too_big
+        }
+        i = n
+        break
       }
-      break
+      if end < 0 {
+        end = n
+      }
+      if had + end > d.max {
+        err = too_big
+        break
+      }
+      d.pend.write(b[0..end])
+      value = d.pend.freeze()
+      d.pend = BytesBuilder.new()
+      d.scan = VScan{}
+      i = end
+    } else {
+      while i < n && is_space(Int(b[i])) {
+        i += 1
+      }
+      if i >= n {
+        break
+      }
+      d.scan = scan_start(Int(b[i]))
+      var end = scan_value(d.scan, b, i + 1)
+      if end < 0 && !last {
+        // it may go on: wait for more, up to max_value
+        if n - i > d.max {
+          err = too_big
+          d.scan = VScan{}
+          break
+        }
+        d.pend.write(b[i..n])
+        i = n
+        break
+      }
+      d.scan = VScan{}
+      if end < 0 {
+        end = n
+      }
+      if end - i > d.max {
+        err = too_big
+        break
+      }
+      value = b[i..end]
+      i = end
     }
-    if end < 0 {
-      end = n
-    }
-    if end - i > d.max {
-      err = "invalid JSON: value exceeds max_value (${d.max} bytes)"
-      break
-    }
-    match parse_bytes(b[i..end]) {
+    match parse_bytes(value) {
       Ok(v) => out.push(v)
       Err(e) => {
         // the input ran out (jsontext's texts, Go's)
         let short = e.msg == "invalid JSON: EOF" || e.msg.ends_with("unexpected end of JSON input")
         err = if short { "invalid JSON: unexpected EOF" } else { e.msg }
-        break
       }
     }
-    i = end
   }
-  d.buf = b[i..n]
   if err.is_empty() {
     return out
   }
+  // every later call is the error: the bytes it stopped at are not
+  // kept, as the old decoder, which kept them, failed on them again
+  d.pend = BytesBuilder.new()
+  d.scan = VScan{}
+  d.err = err
   if out.is_empty() {
     return Err(stream_err(err))
   }
-  d.err = err
   out
 }
 
-fn (var d: Decoder) write(data: Bytes) -> List[json.Value] ! json.DecodeErr {
-  let b0 = d.buf
-  d.buf = b0 + data
-  d.take(false)
-}
+fn (var d: Decoder) write(data: Bytes) -> List[json.Value] ! json.DecodeErr { d.take(data, false) }
 
-fn (var d: Decoder) finish() -> List[json.Value] ! json.DecodeErr { d.take(true) }
+fn (var d: Decoder) finish() -> List[json.Value] ! json.DecodeErr { d.take(b"", true) }
 
 // from_value reads v's tape (jsontext's format, written from the Value
 // with its strings placed as they are and its numbers' text) with the

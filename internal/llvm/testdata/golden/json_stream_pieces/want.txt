@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+values: 1 whole, 1 in pieces
+a value in 64 byte writes decodes as fast as whole
+--- stderr

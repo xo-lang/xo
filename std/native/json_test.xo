@@ -3351,3 +3351,62 @@ test "JsonWriter.raw escapes U+2028 and U+2029 with escape_html, as Go's Encoder
   p.raw("[\"\u{2028}<\"]").or_fault("raw")
   expect(p.finish().to_str() ?? "") == "[\"\u{2028}<\"]"
 }
+
+/// The values and first error of feeding text to a Decoder in pieces of
+/// at most size bytes (size 0: whole), then finish.
+fn stream_pieces(text: Bytes, size: Int) -> Str {
+  var d = json.decoder(max_value: 64)
+  var out = ""
+  var i = 0
+  let n = text.len()
+  while i < n {
+    let e = if size == 0 { n } else { (i + size).min(n) }
+    match d.write(text[i..e]) {
+      Ok(vs) => {
+        for v in vs {
+          out = out + "${v:?};"
+        }
+      }
+      Err(x) => return out + "err " + x.msg
+    }
+    i = e
+  }
+  match d.finish() {
+    Ok(vs) => {
+      for v in vs {
+        out = out + "${v:?};"
+      }
+      out
+    }
+    Err(x) => out + "err " + x.msg
+  }
+}
+
+test "the stream Decoder gives the same values and errors in pieces as whole (0616 json review F5)" {
+  let docs = [
+    "[1,2] {\"a\":\"x\\\"]}\"} 3 4.5e-7 -0 true false null \"s\\\\\"",
+    "{\"a\":[1,{\"b\":\"]\"}]}\n[\"\\u0041\"]",
+    "12 13",
+    "[1,2",
+    "[1,]",
+    "1 trux",
+    "nul",
+    "\"unterminated",
+    "- 1",
+    "1.e5",
+    "[\"" + "x".repeat(70) + "\"]",
+    "[1] ?",
+    "  \t\n ",
+    "{\"k\":1}{\"k\":2}",
+    "0123",
+  ]
+  for doc in docs {
+    let whole = stream_pieces(doc.bytes(), 0)
+    for size in [1, 2, 3, 5, 7] {
+      let got = stream_pieces(doc.bytes(), size)
+      if got != whole {
+        fault("${doc:?} in pieces of ${size}: ${got}; whole: ${whole}")
+      }
+    }
+  }
+}

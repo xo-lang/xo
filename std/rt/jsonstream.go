@@ -14,6 +14,146 @@ type Json_Decoder struct {
 	buf []byte
 	max int64
 	err string // an error after values a write returned: the next call's
+	// scan is the state of the unfinished value buf begins with, scanned
+	// through buf[scanned]: a write scans only its new bytes (it rescanned
+	// and copied the whole value on every write, quadratic in a value sent
+	// in small pieces: the 0616 json review's F5)
+	scan    jsonVScan
+	scanned int
+}
+
+// jsonVScan is jsonValueEnd's state over a value that may arrive in
+// pieces (std/native/json.xo VScan): kind is its first byte (0: none).
+type jsonVScan struct {
+	kind       byte
+	depth      int
+	inStr, esc bool
+	num, lit   int
+}
+
+func jsonScanStart(c byte) jsonVScan {
+	switch {
+	case c == '{' || c == '[':
+		return jsonVScan{kind: c, depth: 1}
+	case c == '"':
+		return jsonVScan{kind: c, inStr: true}
+	case c == '-':
+		return jsonVScan{kind: c, num: 1}
+	case c == '0':
+		return jsonVScan{kind: c, num: 2}
+	case jsonDigit(c):
+		return jsonVScan{kind: c, num: 3}
+	}
+	return jsonVScan{kind: c, lit: 1}
+}
+
+// jsonScanValue is jsonValueEnd over b[from:] for the value s began: its
+// end in b, or -1 when b ends first, s then holding where it stopped.
+func jsonScanValue(s *jsonVScan, b []byte, from int) int {
+	c := s.kind
+	k := from
+	n := len(b)
+	switch {
+	case c == '{' || c == '[' || c == '"':
+		for ; k < n; k++ {
+			x := b[k]
+			switch {
+			case s.esc:
+				s.esc = false
+			case s.inStr:
+				if x == '\\' {
+					s.esc = true
+				} else if x == '"' {
+					s.inStr = false
+					if c == '"' {
+						return k + 1
+					}
+				}
+			case x == '"':
+				s.inStr = true
+			case x == '{' || x == '[':
+				s.depth++
+			case x == '}' || x == ']':
+				s.depth--
+				if s.depth == 0 {
+					return k + 1
+				}
+			}
+		}
+		return -1
+	case c == '-' || jsonDigit(c):
+		for ; k < n; k++ {
+			x := b[k]
+			next := -1
+			switch st := s.num; st {
+			case 1:
+				if x == '0' {
+					next = 2
+				} else if jsonDigit(x) {
+					next = 3
+				}
+			case 2, 3:
+				if st == 3 && jsonDigit(x) {
+					next = 3
+				} else if x == '.' {
+					next = 4
+				} else if x == 'e' || x == 'E' {
+					next = 6
+				} else {
+					next = -2
+				}
+			case 4, 5:
+				if jsonDigit(x) {
+					next = 5
+				} else if st == 5 && (x == 'e' || x == 'E') {
+					next = 6
+				} else if st == 5 {
+					next = -2
+				}
+			case 6:
+				if x == '+' || x == '-' {
+					next = 7
+				} else if jsonDigit(x) {
+					next = 8
+				}
+			case 7:
+				if jsonDigit(x) {
+					next = 8
+				}
+			default:
+				if jsonDigit(x) {
+					next = 8
+				} else {
+					next = -2
+				}
+			}
+			if next == -2 {
+				return k
+			}
+			if next == -1 {
+				return k + 1
+			}
+			s.num = next
+		}
+		return -1
+	case c == 't' || c == 'f' || c == 'n':
+		lit := "null"
+		if c == 't' {
+			lit = "true"
+		} else if c == 'f' {
+			lit = "false"
+		}
+		for ; s.lit < len(lit); s.lit, k = s.lit+1, k+1 {
+			if k >= n {
+				return -1
+			}
+			if b[k] != lit[s.lit] {
+				return k + 1
+			}
+		}
+		return k
+	}
+	return from
 }
 
 func (Json_Decoder) XoDebug(b *strings.Builder) { b.WriteString("<json decoder>") }
@@ -170,6 +310,7 @@ func (d *Json_Decoder) take(tk *Task, last bool) Result[List[Json_Value], Json_D
 	i := 0
 	err := ""
 	tooBig := "invalid JSON: value exceeds max_value (" + strconv.FormatInt(d.max, 10) + " bytes)"
+	resume := d.scan.kind != 0
 	for {
 		for i < n && jsonSpace(b[i]) {
 			i++
@@ -177,13 +318,26 @@ func (d *Json_Decoder) take(tk *Task, last bool) Result[List[Json_Value], Json_D
 		if i >= n {
 			break
 		}
-		end := jsonValueEnd(b, i)
+		var end int
+		if resume {
+			// the value buf begins with, from where the last write's scan
+			// stopped
+			end = jsonScanValue(&d.scan, b, d.scanned)
+			resume = false
+		} else {
+			d.scan = jsonScanStart(b[i])
+			end = jsonScanValue(&d.scan, b, i+1)
+		}
 		if end < 0 && !last {
 			if int64(n-i) > d.max {
 				err = tooBig
+				d.scan = jsonVScan{}
+			} else {
+				d.scanned = n - i
 			}
 			break
 		}
+		d.scan = jsonVScan{}
 		if end < 0 {
 			end = n
 		}
@@ -193,6 +347,7 @@ func (d *Json_Decoder) take(tk *Task, last bool) Result[List[Json_Value], Json_D
 		}
 		r := Json_parse_value(tk, string(b[i:end]))
 		if !r.Ok {
+			d.scan = jsonVScan{}
 			msg := r.E.F_msg
 			if msg == "invalid JSON: EOF" || strings.HasSuffix(msg, "unexpected end of JSON input") {
 				msg = "invalid JSON: unexpected EOF"
@@ -203,7 +358,11 @@ func (d *Json_Decoder) take(tk *Task, last bool) Result[List[Json_Value], Json_D
 		out = append(out, r.V)
 		i = end
 	}
-	d.buf = append([]byte(nil), b[i:]...)
+	if i > 0 {
+		// copied only when values were taken: a value still arriving
+		// stays where it is, appended to
+		d.buf = append([]byte(nil), b[i:]...)
+	}
 	if err == "" {
 		return Ok[List[Json_Value], Json_DecodeErr](ListFromSlice(out))
 	}

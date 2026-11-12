@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-12: security: the stream Decoder is linear in a value sent in small pieces
+
+- Kind: security
+- Commit: this commit
+- Found by: the decision 0616 security review of std/json (second reviewer, finding F5)
+- Go reference: encoding/json Decoder (its scanner keeps its state between reads)
+- Test: golden internal/llvm/testdata/golden/json_stream_pieces (arm64, LLVM, Go parity); std/native/json_test.xo "the stream Decoder gives the same values and errors in pieces as whole" (arm64, LLVM)
+- Shipped in: not yet released
+
+`json.decoder()`'s `write` joined the unfinished value with the new bytes and scanned it again from its start on every call, so a peer sending a value a few bytes at a time made the decoder do work proportional to the square of its size, up to `max_value` (64 MiB by default): 480 KB in 64 byte writes took 1.56 s natively and 1.65 s on the Go backend, against 2 ms whole. The decoder now keeps where its scan stopped and appends each write once. The values and errors are unchanged, in pieces of any size.
+
 ## 2026-11-12: fix: JsonWriter.raw escapes U+2028 and U+2029 with escape_html
 
 - Kind: fix

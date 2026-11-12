@@ -1,0 +1,42 @@
+// The 0616 json review's F5: the stream Decoder joined and rescanned an
+// unfinished value on every write, so a value sent in small pieces cost
+// the square of its size (480 KB in 64 byte writes: 1.56 s native, 1.65 s
+// on the Go backend, against 2 ms whole). Each write now scans only its
+// new bytes. Checked on the real clock against the whole value.
+use std/json
+
+fn doc(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_str("[")
+  for i in 0..n {
+    b.write_str(if i > 0 { ",\"ab\\\"c\"" } else { "12345" })
+  }
+  b.write_str("]")
+  b.freeze()
+}
+
+fn feed(os: Os, text: Bytes, chunk: Int) -> (Int, Duration) {
+  var d = json.decoder()
+  let t0 = os.clock.now()
+  var i = 0
+  var got = 0
+  while i < text.len() {
+    let e = (i + chunk).min(text.len())
+    got += d.write(text[i..e]).or_fault("write").len()
+    i = e
+  }
+  got += d.finish().or_fault("finish").len()
+  (got, os.clock.now() - t0)
+}
+
+fn main(os: Os) ! {
+  let text = doc(60000)
+  let (wn, wd) = feed(os, text, text.len())
+  let (pn, pd) = feed(os, text, 64)
+  os.stdio.println("values: ${wn} whole, ${pn} in pieces")
+  if pd > wd * 10 + 100ms {
+    os.stdio.println("${text.len()} bytes in 64 byte writes took ${pd}, whole ${wd}")
+  } else {
+    os.stdio.println("a value in 64 byte writes decodes as fast as whole")
+  }
+}
