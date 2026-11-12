@@ -668,7 +668,13 @@ after_steps() {
     full stdstore ./internal/arm64 -run '^TestStdStoreBuilds$'
   fi
   if [ "$stdcov_ran" = 0 ] && [ "${XO_GATE_STDCOV:-1}" != 0 ] && stdcov_change; then
-    stdcov_step
+    # not a darwin check: on the Mac it ran beside selfbuild gates and
+    # starved them (2026-11-11); named, stdcov still runs anywhere
+    if [ "$(uname -s)" = Darwin ]; then
+      echo "stdcov: skipped on darwin, runs in the tier / an offload gate"
+    else
+      stdcov_step
+    fi
   fi
   if [ "${XO_GATE_RACE:-1}" != 0 ] && race_change; then
     full race ./internal/llvm -run '^TestRaceSyncTable(Arm64)?$'

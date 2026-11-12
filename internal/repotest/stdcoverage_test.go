@@ -3,7 +3,6 @@ package repotest
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -36,7 +35,7 @@ func TestStdAPICovered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	edges, failed, err := stdcoverage.Sweep(abs, xo, t.TempDir(), runtime.NumCPU())
+	edges, failed, err := stdcoverage.Sweep(abs, xo, t.TempDir(), stdcoverage.Jobs())
 	if err != nil {
 		t.Fatal(err)
 	}

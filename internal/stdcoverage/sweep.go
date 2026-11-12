@@ -8,9 +8,23 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
+
+// Jobs is how many `xo dev edges` the sweep runs at once: XO_STDCOV_JOBS,
+// else 2. Each check holds a program and std in memory (up to about 2 GB),
+// and runtime.NumCPU() of them at once peaked at 32 GB on a 24 GB Mac
+// beside other gates (2026-11-11), so the default stays small.
+func Jobs() int {
+	if v := os.Getenv("XO_STDCOV_JOBS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 2
+}
 
 // Sweep runs the resolved coverage sweep: `xo dev edges --impls --own` of
 // every program directory (ProgramDirs), then `xo dev edges --impls --std`

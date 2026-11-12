@@ -23,7 +23,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -69,7 +68,7 @@ func main() {
 			os.Exit(1)
 		}
 		defer os.RemoveAll(work)
-		edges, failed, err := stdcoverage.Sweep(root, xo, work, runtime.NumCPU())
+		edges, failed, err := stdcoverage.Sweep(root, xo, work, stdcoverage.Jobs())
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "stdcoverage:", err)
 			os.Exit(1)
