@@ -4,4 +4,6 @@ values: 1 whole, 1 in pieces
 a value in 64 byte writes decodes as fast as whole
 tokens: 4 whole, 4 in pieces
 long tokens in 64 byte writes read as fast as whole
+skip on a token_reader: skip and value read a text given to json.tokens; a token_reader's write returns every token
+value on a token_reader: skip and value read a text given to json.tokens; a token_reader's write returns every token
 --- stderr

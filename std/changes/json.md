@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-12: fix: skip and value on a token_reader say why they cannot read
+
+- Kind: fix
+- Commit: this commit
+- Found by: the decision 0616 security review of std/json (second reviewer, finding F10)
+- Go reference: none (Go's Decoder reads from an io.Reader, with no push mode)
+- Test: golden internal/llvm/testdata/golden/json_stream_pieces (arm64, LLVM, Go parity)
+- Shipped in: not yet released
+
+A `json.token_reader()`'s `write` and `finish` return every token, so `skip` and `value` on it only ever saw the rest of a token and returned `invalid JSON: unexpected EOF`, which read as a truncated input. They now return `skip and value read a text given to json.tokens; a token_reader's write returns every token`. Readers made by `json.tokens(data)` are unchanged.
+
 ## 2026-11-12: security: a decode error deep in a document is linear in its path
 
 - Kind: security

@@ -2752,7 +2752,10 @@ fn (var w: JsonWriter) finish() -> Bytes
 - Strings are read as `decode` reads them (invalid UTF-8 and lone
   surrogate escapes are U+FFFD). `skip` steps over the next value (an
   array or object whole, found by its brackets and then checked) and
-  `value` reads it as `parse_value` does.
+  `value` reads it as `parse_value` does, on a reader made by `tokens`;
+  on a `token_reader`, whose `write` and `finish` return every token,
+  both are `DecodeErr` `skip and value read a text given to json.tokens;
+  a token_reader's write returns every token`.
 - The writer inserts commas and colons and writes strings as encoding/json
   does (`"`, `\`, control characters, U+2028, U+2029 and invalid
   UTF-8 escaped; `<`, `>`, `&` as `\u003c`, `\u003e`, `\u0026` when `escape_html`) and

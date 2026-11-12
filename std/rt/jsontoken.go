@@ -39,13 +39,20 @@ type Json_TokenReader struct {
 	tokSet      bool
 	tokAt, tokK int
 	tokScan     jsonVScan
+	// push: a token_reader, whose writes return every token, so skip and
+	// value have nothing whole to read (the 0616 json review's F10)
+	push bool
 }
 
 func (Json_TokenReader) XoDebug(b *strings.Builder) { b.WriteString("<json token reader>") }
 func (x Json_TokenReader) M_debug(*Task) string     { return Debug(x) }
 
 // Json_token_reader is `json.token_reader(max_token)`.
-func Json_token_reader(_ *Task, max int64) Json_TokenReader { return Json_TokenReader{max: max} }
+func Json_token_reader(_ *Task, max int64) Json_TokenReader {
+	return Json_TokenReader{max: max, push: true}
+}
+
+var tkPushOnly = tkErr("skip and value read a text given to json.tokens; a token_reader's write returns every token")
 
 // Json_tokens is `json.tokens(data)`.
 func Json_tokens(_ *Task, data Bytes) Json_TokenReader {
@@ -395,6 +402,9 @@ func (r *Json_TokenReader) toValue() {
 
 // M_skip is `r.skip()`.
 func (r *Json_TokenReader) M_skip(tk *Task) Result[Unit, Json_DecodeErr] {
+	if r.push {
+		return Err[Unit](tkPushOnly)
+	}
 	r.toValue()
 	b := r.buf
 	i := r.pos
@@ -430,6 +440,9 @@ func (r *Json_TokenReader) M_skip(tk *Task) Result[Unit, Json_DecodeErr] {
 
 // M_value is `r.value()`.
 func (r *Json_TokenReader) M_value(tk *Task) Result[Json_Value, Json_DecodeErr] {
+	if r.push {
+		return Err[Json_Value](tkPushOnly)
+	}
 	r.toValue()
 	start := r.pos
 	if s := r.M_skip(tk); !s.Ok {

@@ -63,4 +63,14 @@ fn main(os: Os) ! {
   } else {
     os.stdio.println("long tokens in 64 byte writes read as fast as whole")
   }
+  var pr = json.token_reader()
+  let _ = pr.write(b"[1,{\"a\":").or_fault("write")
+  match pr.skip() {
+    Ok(_) => os.stdio.println("skip on a token_reader: ok")
+    Err(e) => os.stdio.println("skip on a token_reader: ${e.msg}")
+  }
+  match pr.value() {
+    Ok(_) => os.stdio.println("value on a token_reader: ok")
+    Err(e) => os.stdio.println("value on a token_reader: ${e.msg}")
+  }
 }

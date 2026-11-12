@@ -933,10 +933,14 @@ struct TokenReader {
   tok_at: Int = -1
   tok_k: Int = 0
   tok_scan: VScan = VScan{}
+  /// a token_reader: write and finish return every token, so skip and
+  /// value have nothing whole to read (the 0616 json review's F10: they
+  /// returned unexpected EOF)
+  push: Bool = false
 }
 
 fn token_reader(max_token: Int) -> TokenReader {
-  TokenReader{buf: b"", pos: 0, base: 0, max: max_token, state: T_TOP, stack: [], eof: false}
+  TokenReader{buf: b"", pos: 0, base: 0, max: max_token, state: T_TOP, stack: [], eof: false, push: true}
 }
 
 fn tokens(data: Bytes) -> TokenReader {
@@ -1261,6 +1265,9 @@ fn (var r: TokenReader) to_value() {
 }
 
 fn (var r: TokenReader) skip() -> () ! json.DecodeErr {
+  if r.push {
+    return Err(stream_err("skip and value read a text given to json.tokens; a token_reader's write returns every token"))
+  }
   r.to_value()
   let b = r.buf
   let n = b.len()
@@ -1293,6 +1300,9 @@ fn (var r: TokenReader) skip() -> () ! json.DecodeErr {
 }
 
 fn (var r: TokenReader) value() -> json.Value ! json.DecodeErr {
+  if r.push {
+    return Err(stream_err("skip and value read a text given to json.tokens; a token_reader's write returns every token"))
+  }
   r.to_value()
   let start = r.pos
   r.skip()?
