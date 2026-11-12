@@ -4,13 +4,18 @@
 // receiver the same), so step, which
 // keeps its `var g`, counted up every heap field of G for the call and
 // get_name dropped them all after (the arm64 backend's lbl_local and
-// memo_at copied its whole G per label and per block, 2026-11-11).
+// memo_at copied its whole G per label and per block, 2026-11-11). The rule
+// takes a struct of at least 8 heap leaves (PART_BORROW_MIN).
 struct G {
   a: List[Int] = []
   b: List[Str] = []
   c: Map[Int, Int] = {}
   d: List[Bool] = []
   e: Str = ""
+  f: List[Int] = []
+  g2: List[Str] = []
+  h: Str = ""
+  i: List[Int] = []
   name: Str = ""
   n: Int = 0
 }

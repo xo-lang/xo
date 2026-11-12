@@ -1206,8 +1206,18 @@ fn (var r: Rc) part_consumed(t: Int, ps: Set[Str]) -> Bool {
       return false
     }
   }
-  ps.len() < r.leaf_paths(t).len()
+  let n = r.leaf_paths(t).len()
+  n >= PART_BORROW_MIN && ps.len() < n
 }
+
+/// The heap leaves a struct needs before part_consumed borrows it
+/// (decision 0612): a small struct a caller moves into the call (a
+/// builder threaded through, bench/perf/rcpart's rows) is updated in
+/// place only owned, and a caller that keeps it counts up few leaves; a
+/// large one (a compiler's state) is kept by its callers, so the field it
+/// gives away is shared either way and owned only adds the copy of every
+/// leaf per call.
+const PART_BORROW_MIN = 8
 
 /// Records that block bl consumes leaf l when it is of a borrowed
 /// parameter (inferBorrows' consumed).
