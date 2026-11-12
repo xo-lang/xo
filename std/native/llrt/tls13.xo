@@ -825,6 +825,10 @@ fn certificate(var c: Client, msg: Bytes) {
       fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to parse certificate from server: ${parsed.err}")
       return
     }
+    if x509.rsa_too_large(parsed.cert) {
+      fail(c, ALERT_BAD_CERTIFICATE, "tls: server sent certificate containing RSA key larger than ${x509.MAX_TLS_RSA_BITS} bits")
+      return
+    }
     certs.push(parsed.cert)
     ders.push(der)
   }

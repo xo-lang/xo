@@ -1,5 +1,23 @@
 # std/tls changes
 
+
+## 2026-11-12: security: a peer's RSA key over 8192 bits is refused (CVE-2023-29409)
+
+- Kind: security
+- Commit: this push
+- Found by: the decision 0616 security review of RSA (Go vulnerability database GO-2023-1987, checked against Xo's code)
+- Go reference: crypto/tls handshake_client.go verifyServerCertificate and handshake_server.go processCertsFromClient, checkKeySize, defaultMaxRSAKeySize (go1.26.1)
+- Test: std/native/llrt/tls12_test.xo (certificates with 8192 and 8193 bit RSA keys, Go's limit); TestGoldenRun tls, https and x509 goldens (arm64)
+- Shipped in: not yet released
+
+The native TLS client and server (TLS 1.2 and 1.3) now refuse a peer
+certificate chain holding an RSA key of more than 8192 bits, with Go's
+bad_certificate alert and text (`tls: server sent certificate containing
+RSA key larger than 8192 bits`, `tls: client sent ...`), before verifying
+any signature. Before, a peer could send huge RSA keys and make Xo spend
+CPU time verifying with them, as Go did before 1.19.12 and 1.20.7. The Go
+backend runs Go's crypto/tls, which already refused them.
+
 ## 2026-11-05: perf: a TLS connection reads into a 16 KiB block, not a 32 KiB one
 
 - Kind: perf

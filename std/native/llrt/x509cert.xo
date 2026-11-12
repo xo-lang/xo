@@ -2195,3 +2195,23 @@ pub fn parse_csr(der: Bytes) -> Csr {
 /// Go's CertificateRequest.CheckSignature: the request's own key signed
 /// it; "" or Go's text.
 pub fn csr_check(c: Cert) -> Str { check_err_sha1(c.sig_oid, c.sig_alg, c, c.tbs, c.signature, true) }
+
+/// TLS's cap on a peer's RSA key (Go's crypto/tls defaultMaxRSAKeySize,
+/// CVE-2023-29409: a certificate chain with huge RSA keys made the peer
+/// spend its CPU verifying signatures).
+pub const MAX_TLS_RSA_BITS = 8192
+
+/// Whether c carries an RSA key of more than MAX_TLS_RSA_BITS bits.
+pub fn rsa_too_large(c: Cert) -> Bool {
+  if c.key_alg != KEY_RSA {
+    return false
+  }
+  let t = asn1.whole(c.key, asn1.SEQUENCE)
+  let xs = asn1.children(c.key, t)
+  if t.tag < 0 || xs.is_empty() {
+    return false
+  }
+  // a minimal positive INTEGER: past 1024 bytes is past 8192 bits
+  let n = asn1.uint_bytes(c.key, xs[0]) ?? b""
+  n.len() > MAX_TLS_RSA_BITS / 8
+}

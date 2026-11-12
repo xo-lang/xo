@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Security (std/tls, native backends): a TLS peer certificate with an RSA key over 8192 bits is refused, with Go's text (`tls: server sent certificate containing RSA key larger than 8192 bits`), before any signature is verified (CVE-2023-29409, GO-2023-1987: huge keys made the peer spend CPU time). The Go backend already refused them.
+
 - std/crypto (decision 0618): RSA encryption. `crypto.encrypt_oaep` and `crypto.decrypt_oaep` (RSA-OAEP, Go's `EncryptOAEP` and `DecryptOAEP`) are the recommended scheme; `encrypt_pkcs1v15` and `decrypt_pkcs1v15` are legacy, for interoperating with systems that require them. Decryption checks padding in constant time and reports every failure as the one `crypto/rsa: decryption error`.
 
 ## v0.50.0 (2026-11-12)

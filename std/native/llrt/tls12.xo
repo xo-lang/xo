@@ -1403,6 +1403,10 @@ fn verify_certificates(var c: Client) -> Bool {
       fail(c, ALERT_DECODE_ERROR, "tls: failed to parse certificate from server: ${parsed.err}")
       return false
     }
+    if x509.rsa_too_large(parsed.cert) {
+      fail(c, ALERT_BAD_CERTIFICATE, "tls: server sent certificate containing RSA key larger than ${x509.MAX_TLS_RSA_BITS} bits")
+      return false
+    }
     certs.push(parsed.cert)
   }
   let leaf = certs[0]
