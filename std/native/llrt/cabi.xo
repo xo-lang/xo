@@ -477,6 +477,16 @@ fn obj_rs_push_byte(a: Int, an: Int, x: Int, lenp: Int) -> Int {
     len_over()
   }
   rt.mem_store(lenp, 0, n, 8)
+  // the byte in place when a is a string object (not inline, decision
+  // 0370: bit 0 clear; not a view: an's high word 0) held only here
+  // with room: obj.reserve's fast test, without its two calls (2026-11-12:
+  // a BytesBuilder.write_byte outside a loop, which the arm64 backend's
+  // push_fast leaves to this call, went through obj.rs_push_byte and
+  // obj.reserve; 30% of protobuf marshal on host 1)
+  if ((a & 1) | an >> 32) == 0 && rt.slot_load(a, 0, 0) == 1 && rt.mem_load(a, 8, 8) > an {
+    rt.mem_store(a.wrapping_add(16), an, x, 1)
+    return a
+  }
   obj.rs_push_byte(a, an, x)
 }
 

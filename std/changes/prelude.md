@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-11-12: perf: BytesBuilder.write_byte and StrBuilder pushes outside a loop store in place
+
+- Kind: perf
+- Commit: this push
+- Found by: XO_PROF=cpu of bench/perf/protobuf marshal on linux/arm64 host 1 (cabi.obj_rs_push_byte, obj.rs_push_byte and obj.reserve, three calls per byte that fits)
+- Go reference: bytes.Buffer.WriteByte (a capacity check and a store)
+- Timing: --ab on linux/arm64 host 1 against c756874c8: bench/perf/jsontoken write 0.918 (0.908 to 0.934), protobuf marshal 0.992 (within noise; its writes are words since c756874c8), the self build 1.003 (within noise); xo's __text +144 bytes
+- Test: every arm64 golden (TestGoldenRun), the codegen patterns (46 programs, arm64 and llvm), the self build and the seed build
+- Shipped in: not yet released
+
+A byte pushed outside a loop (arm64 inlines the push only in loops) was a call to the runtime that called two more
+before the store. The runtime's call now tests obj.reserve's fast case itself (a string object held only here, not a
+view or an inline Str, with room) and stores the byte; anything else takes the old path.
+
 ## 2026-11-11: feature: Child.set_read_deadline and ProcErr.Timeout (Go's SetReadDeadline on a child's pipes)
 
 - Kind: feature
