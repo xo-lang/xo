@@ -25,12 +25,22 @@ words past x7 stored at sp+0 upward, over the result. With 0612 the
 caller of `Pager.starting_with` released the borrowed Pager's Pipeline
 and Request after the call and before reading the result.
 
+## Releases affected
+
+Decision 0564 step 3 added the in place read (WIP 5319aea26, landed as
+686ba3565 on 2026-11-10, reverted twice, last landed d02c6ef10 on
+2026-11-11 00:18). v0.48.2 does not contain it (its release branch has
+the second revert, fa5274305); v0.49.0, v0.49.1, v0.50.0 and v0.50.1
+(and its respin 2ca00e811, decision 0612 off) do. Golden
+sret_lazy_release_whole, which needs no partial borrow, faults with the
+published 0.49.1 and passes with 0.48.2.
+
 ## Fix
 
 plan_sret_lazy ends the in place window at any op whose operands pass
-more than eight words (byref.xo stack_args_op), not only at calls. Golden
-internal/llvm/testdata/golden/sret_lazy_release reproduces it (faults
-with xo 0.50.1).
+more than eight words (byref.xo stack_args_op), not only at calls. Goldens
+internal/llvm/testdata/golden/sret_lazy_release (with 0612) and
+sret_lazy_release_whole (without it) reproduce it.
 
 ## How it was found
 
