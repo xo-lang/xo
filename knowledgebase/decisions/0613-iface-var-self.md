@@ -86,9 +86,12 @@ Azure 1 porting BigQuery. Step 4 built 2026-11-11 (new code XO0439).
   first stage (step 4), but leaving values at XO1201 keeps the gap that
   Azure 1 hit for any SDK that stores a Loader in a struct.
 
-## Amendment: step 5 needs a representation choice (Proposed, Xo Lang 1, 2026-11-12)
+## Amendment: step 5 needs a representation choice (Accepted, owner, 2026-11-12: option B)
 
-Status of this amendment: Proposed, for the owner. Step 4 (bounds) is on
+Status of this amendment: Accepted (owner, 2026-11-12): option B, the
+itab form (an erased box, a static method table, take-if-unique), staged
+as below; stage 1 (SSA and arm64) reports the interface dispatch --ab as
+its go/no-go before stage 2. Step 4 (bounds) is on
 main (17abec150); interface values with a `var self` method are still
 XO1201 on the native backends and a clean "decision 0613 step 5" error on
 the Go backend.
