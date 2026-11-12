@@ -8,6 +8,12 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+
+## v0.49.1 (2026-11-12)
+
+The first public 0.49 release (0.49.0 was an internal seed). The release notes
+(the GitHub release) group these entries.
+
 - Fixed (checker, `derive Json(via: P, to: f, from: g)`): a type whose fields do not implement Json can derive it through its proxy, where every field was required to (XO0404) though the proxy alone is encoded; only P and the `to`/`from` signatures (XO0433) are checked. Found by a BigQuery Null type (`NullInt { raw, valid }` as `Int?`). Golden json_via, core 2.3.
 - scripts/gate.sh: `repo` is a step name (the internal/repotest run every gate starts with; named, it runs even with XO_GATE_REPO=0). Naming it failed the gate with "unknown step repo" after every step passed.
 - xo build and xo test (build time, arm64 and amd64 native backends): constant hoisting counts definitions in a list indexed by register, and the register allocator finds an outgoing argument word's index directly and fills its map of the other stack words only when a value needs one: the aiplatform test build's CPU 0.976 of before (linux/arm64; wall within noise). Output unchanged.
