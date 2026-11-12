@@ -4530,8 +4530,27 @@ fn valid_method(m: Str) -> Bool {
 /// client's timeout (ns, 0: none), the roots https verifies against, and
 /// the attenuation lists of the client's Net (decision 0175), following
 /// redirects as net/http's Client does (redirectBehavior,
+/// Gives the client's jar (put, empty for none) the Set-Cookie values of
+/// the response headers (names and values in turn) to the URL raw.
+fn jar_keep(put: List[fn(Str, List[Str])], raw: Str, headers: List[Str]) {
+  if put.is_empty() {
+    return
+  }
+  var vs: List[Str] = []
+  var i = 0
+  while i + 1 < headers.len() {
+    if ascii_lower(headers[i]) == "set-cookie" {
+      vs.push(headers[i + 1])
+    }
+    i += 2
+  }
+  if !vs.is_empty() {
+    put[0](raw, vs)
+  }
+}
+
 /// defaultCheckRedirect, the headers a redirect drops, refererForURL).
-pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], h2cfg: List[Int] = [], expect: Int = 0, proxy: List[fn(Str) -> Str] = []) -> CResult {
+pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], h2cfg: List[Int] = [], expect: Int = 0, proxy: List[fn(Str) -> Str] = [], jar_get: List[fn(Str) -> Str] = [], jar_put: List[fn(Str, List[Str])] = []) -> CResult {
   if !valid_method(m) {
     return cfail(1, "net/http: invalid method " + go_quote(m))
   }
@@ -4624,6 +4643,27 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       }
       j += 1
     }
+    // the client's jar (decision 0617 B, Go's Client.send): its cookies for
+    // this hop's URL after the request's own Cookie field
+    if !jar_get.is_empty() {
+      let jc = jar_get[0](cut)
+      if !jc.is_empty() {
+        var at = -1
+        var k = 0
+        while k < hk.len() {
+          if canonical_key(hk[k]) == "Cookie" {
+            at = k
+          }
+          k += 1
+        }
+        if at >= 0 {
+          hv[at] = hv[at] + "; " + jc
+        } else {
+          hk.push("Cookie")
+          hv.push(jc)
+        }
+      }
+    }
     // refererForURL: no Referer from an https URL to an http one
     if redirects > 0 && has_referer && referer.starts_with("https://") && u.scheme == "http" {
       has_referer = false
@@ -4707,6 +4747,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       status = x.status
       headers = x.headers
       rbody = x.body
+      jar_keep(jar_put, cut, headers)
     } else {
       var r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, true, hop_h2c, alpn, h2cfg)
       // stream over HTTP/2 (decision 0404 stage B2): the exchange kept open
@@ -4771,6 +4812,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       if err != 0 {
         return cfail(err, hclient.msg(r))
       }
+      jar_keep(jar_put, cut, headers)
       if stream && (h1 || h2x is Some(_)) {
         let li0 = field_at(headers, "Location")
         let hop = max_redirects > 0 && (status == 301 || status == 302 || status == 303 || (src.is_empty() && (status == 307 || status == 308))) && li0 >= 0 && !headers[li0 + 1].is_empty()

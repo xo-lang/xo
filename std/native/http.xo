@@ -179,6 +179,11 @@ struct Client {
   /// with_proxy and with_proxy_for (decision 0617 B): the chooser
   /// http1.client_do asks for each hop's URL, empty for none
   proxy: List[fn(Str) -> Str] = []
+  /// with_jar (decision 0617 B): http1.client_do asks jar_get for a hop
+  /// URL's Cookie value and gives jar_put each response's Set-Cookie
+  /// values; empty for none
+  jar_get: List[fn(Str) -> Str] = []
+  jar_put: List[fn(Str, List[Str])] = []
 }
 
 /// http.Response with its streamed body's function, hidden from Xo code:
@@ -3645,6 +3650,49 @@ fn (c: Client) with_proxy_for(f: fn(http.Url) -> http.Url?) -> Client {
   c with {proxy: [fn(raw: Str) { proxy_choice(f, raw) }]}
 }
 
+/// The client keeping cookies in store (decision 0617 B, Go's Client.Jar):
+/// http1.client_do asks for each hop's cookies and stores each response's.
+fn (c: Client) with_jar(store: http.CookieStore, clock: Clock) -> Client {
+  // the installer pays (core 6.3): this call performs the store's effects
+  // and clock's; client_do runs them under send's net.dial
+  c with {jar_get: [rt.launder1(fn(raw: Str) { jar_cookie_value(store, clock, raw) })], jar_put: [rt.launder2(fn(raw: Str, lines: List[Str]) { jar_store(store, clock, raw, lines) })]}
+}
+
+/// The Cookie value store gives for the URL raw (Go's Request.AddCookie of
+/// each of Jar.Cookies), "" for none.
+fn jar_cookie_value(store: http.CookieStore, clock: Clock, raw: Str) -> Str {
+  let u = match parse_url(raw) {
+    Ok(u) => u
+    Err(_) => return ""
+  }
+  var parts: List[Str] = []
+  for c in store.cookies(u, clock.now()) {
+    parts.push("${sanitize_cookie_name(c.name)}=${sanitize_cookie_value(c.value, c.quoted)}")
+  }
+  parts.join("; ")
+}
+
+/// Stores the cookies of a response's Set-Cookie values from the URL raw
+/// (Go's Client.send: Jar.SetCookies(req.URL, resp.Cookies())).
+fn jar_store(store: http.CookieStore, clock: Clock, raw: Str, lines: List[Str]) {
+  if lines.is_empty() || lines.len() > COOKIE_MAX {
+    return
+  }
+  let u = match parse_url(raw) {
+    Ok(u) => u
+    Err(_) => return
+  }
+  var cs: List[http.Cookie] = []
+  for v in lines {
+    if let Ok(c) = parse_set_cookie(v) {
+      cs.push(c)
+    }
+  }
+  if !cs.is_empty() {
+    store.set_cookies(u, cs, clock.now())
+  }
+}
+
 /// What http1.client_do's chooser answers for the hop URL raw: "" to
 /// connect directly, else the proxy's URL without its userinfo and, after
 /// a \u{1}, the Proxy-Authorization its userinfo gives (Basic, as Go's
@@ -4075,7 +4123,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   }
   let ta = trailer_args(req)
   let dsrc = if duplex.is_empty() || ta.src.is_empty() { ta.src } else { [ta.src[0], poll_source(ta.src[0], duplex[0])] }
-  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, dsrc, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), proxy: c.proxy)
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, dsrc, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put)
   match r.err {
     0 => ()
     _ => {
@@ -4526,7 +4574,7 @@ fn (c: Client) send(req0: Request) -> http.Response ! http.ClientErr uses net.di
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
   // a wasi:http component sends a whole body (decision 0447)
   let ta = trailer_args(if wasiworld.component() { src_whole(req)? } else { req })
-  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), expect: req.expect_ns, proxy: c.proxy)
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), expect: req.expect_ns, proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put)
   // done with the request: its body's reader closes (net/http closes
   // the request body), so a later write fails instead of waiting
   close_src(req.src)

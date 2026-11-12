@@ -1,0 +1,72 @@
+// Client.with_jar (decision 0617 B), on every backend: the client keeps
+// cookies in a CookieStore between requests, as Go's Client.Jar does. A
+// redirect's Set-Cookie is stored before the next hop, each request
+// carries the store's cookies for its URL after its own Cookie field, a
+// client without a jar sends none, and a store of the program's own
+// (counting its calls) works as cookiejar.Jar does. The installer pays
+// (core 6.3): with_jar performs `clock`; send stays `uses net.dial`.
+use std/cookiejar
+use std/http
+
+/// A store that keeps one cookie per name and counts its calls.
+struct Counting {
+  st: Mutex[(Map[Str, Str], Int)]
+}
+
+fn (c: Counting) set_cookies(_url: http.Url, cookies: List[http.Cookie], _now: Time) {
+  c.st.with(fn(var s) {
+    for k in cookies {
+      s.0.put(k.name, k.value)
+    }
+    s.1 += 1
+  })
+}
+
+fn (c: Counting) cookies(_url: http.Url, _now: Time) -> List[http.Cookie] {
+  c.st.with(fn(var s) {
+    s.1 += 1
+    var out: List[http.Cookie] = []
+    for (k, v) in s.0 {
+      out.push(http.Cookie{name: k, value: v})
+    }
+    out
+  })
+}
+
+fn show(r: Result[http.Response, http.ClientErr]) -> Str {
+  match r {
+    Ok(resp) => "${resp.status} ${resp.body.to_str() ?? "?"}"
+    Err(e) => "error: ${e}"
+  }
+}
+
+fn main(os: Os) ! {
+  var r = http.router()
+  r.handle("GET /login", fn(req) { http.redirect(req, "/home", 302).with_cookie(http.Cookie{name: "sid", value: "abc"}) })
+  r.handle("GET /home", fn(req) { http.text(200, "cookie=${req.header("Cookie") ?? "-"}") })
+  r.handle("GET /pref", fn(_req) { http.text(200, "set").with_cookie(http.Cookie{name: "theme", value: "dark", path: "/"}) })
+  let l = os.net.listen("127.0.0.1:0")?
+  let srv = http.server(l, r)
+  let base = "http://127.0.0.1:${srv.addr().split(":")[1]}"
+  scope s {
+    s.spawn_background(fn() { let _ = srv.serve().is_ok() })
+    let c = http.client(os.net).with_jar(cookiejar.new(), os.clock)
+    os.stdio.println("a redirect's cookie reaches the next hop:")
+    os.stdio.println("  ${show(c.get("${base}/login"))}")
+    os.stdio.println("a final response's cookie is kept:")
+    os.stdio.println("  ${show(c.get("${base}/pref"))}")
+    os.stdio.println("later requests carry both:")
+    os.stdio.println("  ${show(c.get("${base}/home"))}")
+    os.stdio.println("after the request's own Cookie field:")
+    os.stdio.println("  ${show(c.send(http.new_request("GET", "${base}/home").with_header("Cookie", "own=1")))}")
+    os.stdio.println("a client without a jar sends none:")
+    os.stdio.println("  ${show(http.client(os.net).get("${base}/login"))}")
+    let store = Counting{st: Mutex.new(({}, 0))}
+    let cc = http.client(os.net).with_jar(store, os.clock)
+    os.stdio.println("a store of the program's own:")
+    os.stdio.println("  ${show(cc.get("${base}/login"))}")
+    let calls = store.st.with(fn(s) { s.1 })
+    os.stdio.println("  its calls: ${calls}")
+    s.cancel()
+  }
+}

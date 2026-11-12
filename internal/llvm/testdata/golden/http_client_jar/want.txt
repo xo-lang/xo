@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+a redirect's cookie reaches the next hop:
+  200 cookie=sid=abc
+a final response's cookie is kept:
+  200 set
+later requests carry both:
+  200 cookie=sid=abc; theme=dark
+after the request's own Cookie field:
+  200 cookie=own=1; sid=abc; theme=dark
+a client without a jar sends none:
+  200 cookie=-
+a store of the program's own:
+  200 cookie=sid=abc
+  its calls: 3
+--- stderr

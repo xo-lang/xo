@@ -1454,6 +1454,18 @@ type Http_Client struct {
 	// with_proxy and with_proxy_for (decision 0617 B): the chooser asked
 	// for each request's proxy
 	proxy Option[func(*Task, Http_Url) Result[Option[Http_Url], Never]]
+	// with_jar (decision 0617 B): the store net/http's Client.Jar asks,
+	// at the clock's time
+	jar   Http_CookieStore
+	clock Clock
+}
+
+// M_with_jar is `c.with_jar(store, clock)` (decision 0617 B): Go's
+// Client.Jar over store.
+func (c Http_Client) M_with_jar(_ *Task, store Http_CookieStore, clock Clock) Http_Client {
+	c.jar = store
+	c.clock = clock
+	return c
 }
 
 // M_with_proxy is `c.with_proxy(url)` (decision 0617 B).

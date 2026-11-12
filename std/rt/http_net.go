@@ -480,6 +480,10 @@ func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool) 
 		timeout = req.XTimeout
 	}
 	hc := &http.Client{Timeout: time.Duration(timeout), Transport: tr}
+	if c.jar != nil {
+		// with_jar (decision 0617 B)
+		hc.Jar = xoJar{store: c.jar, clock: c.clock}
+	}
 	var headTimer *time.Timer
 	var headFired atomic.Bool
 	if stream {
@@ -777,4 +781,36 @@ func faultProbe(tk *Task, hr *http.Request) {
 		logRecord(tk, levelError, "http: panic serving", []logField{{k: "fault", v: "http fault probe: " + at}}, "")
 		panic(http.ErrAbortHandler)
 	}
+}
+
+// xoJar is net/http's CookieJar over a CookieStore (with_jar).
+type xoJar struct {
+	store Http_CookieStore
+	clock Clock
+}
+
+func (j xoJar) SetCookies(u *url.URL, cs []*http.Cookie) {
+	tk := NewRootTask()
+	pu := Http_parse_url(tk, u.String())
+	if !pu.Ok || len(cs) == 0 {
+		return
+	}
+	out := make([]Http_Cookie, 0, len(cs))
+	for _, g := range cs {
+		out = append(out, xoCookie(g))
+	}
+	j.store.M_set_cookies(tk, pu.V, ListOf(out...), j.clock.M_now(tk))
+}
+
+func (j xoJar) Cookies(u *url.URL) []*http.Cookie {
+	tk := NewRootTask()
+	pu := Http_parse_url(tk, u.String())
+	if !pu.Ok {
+		return nil
+	}
+	var out []*http.Cookie
+	for c := range List_All(j.store.M_cookies(tk, pu.V, j.clock.M_now(tk))) {
+		out = append(out, goCookie(c))
+	}
+	return out
 }

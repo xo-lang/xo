@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-12: feature: Client.with_jar and CookieStore
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0617 B (the owner's high group of std features, 2026-11-12; the owner chose the installer pays, 2026-11-12)
+- Go reference: net/http client.go (Client.Jar: send adds Jar.Cookies to each request and stores resp.Cookies() with Jar.SetCookies, redirects included), go1.26.1
+- Test: golden http_client_jar (a redirect's cookie reaching the next hop, a final response's kept, the request's own Cookie first, no jar no cookies, a program's own store; arm64, llvm, Go parity)
+- Timing: none (one store call each way a hop, only with a jar)
+- Shipped in: not yet released
+
+`with_jar(store, clock)` gives the client a `CookieStore` (`cookiejar.Jar`, or a program's own). Each hop asks the store for its URL's cookies, appended after the request's own `Cookie` field, and stores the response's `Set-Cookie` fields at the clock's time. Go's redirect rule that drops a request's own Cookie field when the jar changed a cookie of the same name is not ported: the request's own field is kept on same host hops and dropped on cross host ones, as without a jar.
+
 ## 2026-11-12: feature: Client.with_proxy and with_proxy_for; fix: the Go backend no longer reads HTTP_PROXY implicitly
 
 - Kind: feature, fix

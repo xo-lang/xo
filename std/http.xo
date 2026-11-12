@@ -625,6 +625,20 @@ fn (c: Client) with_proxy(url: Url) -> Client
 /// `httpproxy.proxy_from_env(env)` follows HTTP_PROXY, HTTPS_PROXY and
 /// NO_PROXY).
 fn (c: Client) with_proxy_for(f: fn(Url) -> Url?) -> Client
+/// Where a Client keeps cookies between requests (decision 0617 B;
+/// Go's http.CookieJar): `cookiejar.Jar` is one. The store is given the
+/// time (`now`) rather than reading a clock.
+interface CookieStore[fx: Effects] {
+  fn set_cookies(self, url: Url, cookies: List[Cookie], now: Time) uses fx
+  fn cookies(self, url: Url, now: Time) -> List[Cookie] uses fx
+}
+/// The client keeping cookies in store (decision 0617 B; Go's
+/// Client.Jar): each request, redirects too, carries store's cookies for
+/// its URL after the request's own Cookie field, and each response's
+/// Set-Cookie fields are stored, a redirect's included, at clock's time.
+/// The installer pays (core 6.3): this call performs the store's effects
+/// and `clock`; send, get and open stay `uses net.dial`.
+fn (c: Client) with_jar(store: CookieStore, clock: Clock) -> Client uses clock
 
 enum ClientErr {
   InvalidUrl(msg: Str)

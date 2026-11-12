@@ -2168,6 +2168,11 @@ fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr   // 4.6
 fn (c: Client) with_redirects(max: Int) -> Client          // decision 0404
 fn (c: Client) with_proxy(url: Url) -> Client              // decision 0617 B
 fn (c: Client) with_proxy_for(f: fn(Url) -> Url?) -> Client  // None: direct
+fn (c: Client) with_jar(store: CookieStore, clock: Clock) -> Client uses clock   // and store's fx
+interface CookieStore[fx: Effects] {                          // cookiejar.Jar is one
+  fn set_cookies(self, url: Url, cookies: List[Cookie], now: Time) uses fx
+  fn cookies(self, url: Url, now: Time) -> List[Cookie] uses fx
+}
 fn (c: Client) with_protocols(p: Set[Protocol]) -> Client  // Go's Transport.Protocols (4.6, decision 0434)
 fn (c: Client) with_h2_config(cfg: H2Config) -> Client     // Go's Transport.HTTP2 (4.6)
 fn (r: Request) with_timeout(d: Duration) -> Request       // decision 0404
@@ -2358,6 +2363,18 @@ let p = http.reverse_proxy(client, target).with_rewrite(fn(inb: http.Request, ou
   }
 })
 ```
+
+Cookies (decision 0617 B, Go's `Client.Jar`): `with_jar(store, clock)`
+keeps cookies in `store` between requests. Each request, each redirect
+hop included, carries the store's cookies for its URL after the
+request's own `Cookie` field (which a redirect to another host drops,
+as without a jar), and every response's `Set-Cookie` fields, a
+redirect's included, are stored at the clock's time before the next
+hop. The installer pays (core 6.3): `with_jar` performs `clock` and the
+store's effects; `send`, `get` and `open` stay `uses net.dial`. A
+client without a jar keeps no cookies.
+`http.client(os.net).with_jar(cookiejar.new(), os.clock)` is the usual
+form (section 59). Golden `http_client_jar` (every backend, Go parity).
 
 Proxies (decision 0617 B): `with_proxy(url)` sends every request
 through the proxy at `url`, `with_proxy_for(f)` asks `f` for each
@@ -8169,6 +8186,8 @@ fn (j: Jar) set_cookies(url: http.Url, cookies: List[http.Cookie], now: Time)
 fn (j: Jar) cookies(url: http.Url, now: Time) -> List[http.Cookie]    // name, value, quoted only
 fn (j: Jar) clear()
 ```
+
+A `Jar` is an `http.CookieStore` (section 4.5): `client.with_jar(jar, os.clock)` keeps a Client's cookies in it.
 
 - Cookies are kept per registrable domain key (the last two labels of the host; an IP address is its own key), by domain, path and name. `set_cookies` takes the Domain and Path attributes as RFC 6265 section 5.3 and Go: a Domain that is not the host or a parent of it is ignored, an IP host takes a Domain only if equal to it (then host only), a Max-Age below 0 or an Expires not after `now` deletes the cookie, Max-Age wins over Expires, a Path that does not start with `/` is the default path of the URL.
 - `cookies` sends a cookie whose domain matches (a host cookie only its host), whose path matches (RFC 6265 section 5.1.4) and, if it is Secure, over https, or to `localhost` and loopback addresses over http (as Go 1.26 does). Cookies past their expiry are dropped. They come in Go's order: the greater path first (compared as strings), then the earlier created.
