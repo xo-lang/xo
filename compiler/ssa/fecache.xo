@@ -29,6 +29,10 @@ const FE_CACHE_VERSION = "xo front cache v17"
 /// entries to store, and counts.
 pub struct FeCache {
   pub on: Bool = false
+  /// interface values in option B's form (decision 0613 step 5 stage 1,
+  /// XO_ITAB=1, native backends only): method slots are code words
+  /// (CodeOf), calls Bind them to the show closure's environment
+  pub itab: Bool = false
   /// every body built and compared with its entry
   pub verify: Bool = false
   /// per function object: its key ("" when not cached)
@@ -193,7 +197,10 @@ pub fn fe_flags(line_root: Str, tests: Bool, release: Bool, real_tests: Bool, go
 
 /// The flags the builder sets itself, compared with an entry's.
 fn (var b: Builder) fe_own_flags() -> Str {
-  "conc=${b.conc} comp=${b.wasi_comp} budgets=${b.budgets} scan=${b.scan_budget} rt=${b.user_realtime()}${b.names_key}"
+  // option B's interface form (decision 0613 step 5) only when on, so the
+  // default's keys stay the same
+  let itab = if b.fe.itab { " itab=1" } else { "" }
+  "conc=${b.conc} comp=${b.wasi_comp} budgets=${b.budgets} scan=${b.scan_budget} rt=${b.user_realtime()}${b.names_key}${itab}"
 }
 
 /// The program's type naming in the own flags (fe_own_flags): the user
@@ -821,7 +828,7 @@ fn numbered_checks(p: Bytes, var clos: Map[Str, Str]) -> Option[Bytes] {
 fn (b: Builder) numbered_body(d: Bytes, var clos: Map[Str, Str]) -> Option[Bytes] {
   var f = decode_func(b.m, d, op_names())?
   for i in 0..f.values.len() {
-    if f.values[i].op is Op.Call | Op.FuncAddr | Op.Closure | Op.Rebind {
+    if f.values[i].op is Op.Call | Op.FuncAddr | Op.Closure | Op.Rebind | Op.CodeOf {
       if let S(s) = f.values[i].aux {
         if closure_name(s) {
           if !clos.contains(s) {
@@ -1391,7 +1398,7 @@ fn fe_rename(var f: Func, renames: Map[Str, Str]) {
     return
   }
   for i in 0..f.values.len() {
-    if f.values[i].op is Op.Call | Op.FuncAddr | Op.Closure | Op.Rebind {
+    if f.values[i].op is Op.Call | Op.FuncAddr | Op.Closure | Op.Rebind | Op.CodeOf {
       if let S(s) = f.values[i].aux {
         if let Some(n) = renames.get(s) {
           f.values[i].aux = Aux.S(s: n)

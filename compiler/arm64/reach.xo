@@ -5,7 +5,7 @@
 // points, which the scheduler, the personality routine and the process
 // entry call) and the functions the runtime calls (Func.entry). A
 // function reaches every function an operation of it names (Call,
-// Closure, FuncAddr, Rebind: each names its callee in aux), which are
+// Closure, FuncAddr, Rebind, CodeOf: each names its callee in aux), which are
 // the only ways the emitter refers to a function's symbol (fname).
 // A function it missed fails the link as an undefined symbol.
 

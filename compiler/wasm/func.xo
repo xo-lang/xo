@@ -1875,6 +1875,28 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       g.e("return")
     }
     Unreachable => g.e("unreachable")
+    // decision 0613 step 5, option B: an interface value's method slot
+    // (the function's table index, as an Int) and the call's function
+    // value, that index with the show closure's environment
+    CodeOf => {
+      let name = match x.aux {
+        S(s) => s
+        _ => ""
+      }
+      let ci = g.by_name.get(name) ?? -1
+      if ci < 0 {
+        g.fail("the wasm backend does not take the code of `${name}`")
+        return
+      }
+      g.e("i64.const ${g.table_index("$f${ci}")}")
+      g.def(v)
+    }
+    Bind => {
+      g.push(x.args[0])
+      g.e("i32.wrap_i64")
+      g.push_part(x.args[1], 1, 2)
+      g.def(v)
+    }
     Rebind => {
       // the function value of another code with the same environment
       let name = match x.aux {

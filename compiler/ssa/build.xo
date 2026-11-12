@@ -280,6 +280,9 @@ pub struct Builder {
   /// The interface types lowered as xo.iface[I], by SSA type: their
   /// checker type (build_iface.go ifaces).
   ifaces: Map[Int, Int] = {}
+  /// option B's interface types (FeCache.itab): the function type of each
+  /// slot, the methods' and xo.eq's, whose fields hold code words
+  itab_ft: Map[Int, List[Int]] = {}
   /// The numbers of the concrete types held by interface values (tids).
   tids: Map[Str, Int] = {}
   /// Method values made so far (each a literal at offsets of its own).

@@ -553,7 +553,9 @@ fn (var r: Rc) kind(f: Func, v: Int) -> RootKind {
       }
     }
     Const => return RootKind.Borrowed
-    Payload | Capture | Unbox => return r.proj_kind(f, v)
+    // Bind (decision 0613 step 5, option B): a function value made of a
+    // code word and the environment of its second operand, borrowed from it
+    Payload | Capture | Unbox | Bind => return r.proj_kind(f, v)
     Call => {
       // rt.str_borrow is always one (only view_proj makes it, and the
       // verifier's Rc reads the module after it)
@@ -589,7 +591,7 @@ fn (var r: Rc) parent(f: Func, v: Int) -> Leaf {
   let x = f.values[v]
   // a call of a function that returns a view of its argument p (decision
   // 0465 step 2): that argument's
-  let p = if x.op == Op.Call { r.ret_view_at(x) } else { -1 }
+  let p = if x.op == Op.Call { r.ret_view_at(x) } else if x.op == Op.Bind { 1 } else { -1 }
   r.leaves(f, x.args[if p > 0 && p < x.args.len() { p } else { 0 }])[0]
 }
 
@@ -643,7 +645,7 @@ fn (var r: Rc) modes(f: Func, v: Int) -> List[Mode] {
         ms[0] = Mode.Borrow
       }
     }
-    Fault | Retain | Eq | Ne | Capture | Unbox | Share | ShareIn => ms = fill_modes(n, Mode.Borrow)
+    Fault | Retain | Eq | Ne | Capture | Unbox | Share | ShareIn | Bind => ms = fill_modes(n, Mode.Borrow)
     CallValue => {
       // the closure borrowed; each argument borrowed unless its type is
       // the result's (decision 0337, fv_arg_owned)

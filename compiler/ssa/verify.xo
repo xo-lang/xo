@@ -521,6 +521,17 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
         return "rebind type does not match its function"
       }
     }
+    Bind => {
+      if n != 2 || k0 != Kind.Int || ats[1] < 0 || m.types[ats[1]].kind != Kind.Func || tk != Kind.Func {
+        return "bind takes a code word and a function value to a function value"
+      }
+    }
+    CodeOf => {
+      let ci = m.func_index(aux_name(x.aux))
+      if ci < 0 || !m.funcs[ci].indirect || n != 0 || tk != Kind.Int {
+        return "codeof of a function that is not Indirect, or not an Int"
+      }
+    }
     FuncAddr => {
       let fname = aux_name(x.aux)
       if fname.starts_with("&") {

@@ -383,7 +383,7 @@ pub fn (var g: Gen) generate() -> Str {
     for bl in g.m.funcs[fi].blocks {
       for v in bl.instrs {
         let op = g.m.funcs[fi].values[v].op
-        if op is ssa.Op.Closure | ssa.Op.FuncAddr | ssa.Op.Rebind {
+        if op is ssa.Op.Closure | ssa.Op.FuncAddr | ssa.Op.Rebind | ssa.Op.CodeOf {
           if let S(s) = g.m.funcs[fi].values[v].aux {
             g.addr_taken[s] = true
           }

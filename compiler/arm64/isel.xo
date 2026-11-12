@@ -1692,6 +1692,11 @@ fn (var g: G) instr1(v: Int) {
       let code = g.sym_addr(g.fname(aux_str(x.aux)))
       g.set(v, [code, g.words(x.args[0])[1]])
     }
+    // decision 0613 step 5, option B: an interface value's method slot
+    // (the code word an indirect call jumps to, as Rebind's) and the call's
+    // function value, that code word with the show closure's environment
+    CodeOf => g.set(v, [g.sym_addr(g.fname(aux_str(x.aux)))])
+    Bind => g.set(v, [g.words(x.args[0])[0], g.words(x.args[1])[1]])
     Unbox => g.unbox_op(v)
     Fault => {
       let ws = g.words(x.args[0])

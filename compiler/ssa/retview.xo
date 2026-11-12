@@ -30,10 +30,10 @@ pub fn return_views(funcs: List[Func], types: List[SType], fidx: Map[Str, Int], 
     rvp.push(-1)
     cand.push(!f.indirect && !f.entry && f.export.is_empty() && f.results.len() == 1 && is_str(types, f.results[0]))
   }
-  // a function named by a FuncAddr or a Closure is reached through a value
+  // a function named by a FuncAddr, a Closure or a CodeOf is reached through a value
   for f in funcs {
     for v in f.values {
-      if v.op is Op.FuncAddr | Op.Closure {
+      if v.op is Op.FuncAddr | Op.Closure | Op.CodeOf {
         let k = fidx.get(aux_name(v.aux)) ?? -1
         if k >= 0 {
           cand[k] = false

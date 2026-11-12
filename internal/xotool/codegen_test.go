@@ -51,6 +51,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_CHECK_EAGER":          {"content", ""},
 	"XO_STD_ROOTS":            {"content", ""}, // decision 0388 1b: every std function a root; the module's content says so
 	"XO_STD_CONC":             {"content", ""}, // decision 0388: the unwinding checks fixed on or off; the SSA bodies every key hashes differ
+	"XO_ITAB":                 {"content", ""}, // decision 0613 step 5 stage 1: interface values in option B's form; the SSA bodies every key hashes differ, and the front end cache is off
 	"XO_STD_OBJ":              {"content", ""}, // decision 0388 stage 4: std's object (XO_STD_ROOTS, the program's functions left out, weak helpers: " weak=1" in the fn and part keys); written to a directory, not linked
 	"XO_CHECK_NO_PARSE_CACHE": {"none", ""},
 	"XO_LOOKUP_EAGER":         {"none", ""}, // xo refs and the agent server's lookups (cli/semantic, reached through compiler/wasm's --play repl): no code

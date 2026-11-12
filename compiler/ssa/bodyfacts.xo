@@ -195,7 +195,7 @@ pub fn (m: Module) taken_names(fi: Int) -> List[Str] {
   var out: List[Str] = []
   if let Some(x) = m.facts.get(fi) {
     for (s, op, inb) in x.names {
-      if inb && op is Op.Closure | Op.FuncAddr | Op.Rebind {
+      if inb && op is Op.Closure | Op.FuncAddr | Op.Rebind | Op.CodeOf {
         out.push(s)
       }
     }
@@ -205,7 +205,7 @@ pub fn (m: Module) taken_names(fi: Int) -> List[Str] {
   for bl in f.blocks {
     for v in bl.instrs {
       let x = f.values[v]
-      if x.op is Op.Closure | Op.FuncAddr | Op.Rebind {
+      if x.op is Op.Closure | Op.FuncAddr | Op.Rebind | Op.CodeOf {
         if let S(n) = x.aux {
           out.push(n)
         }

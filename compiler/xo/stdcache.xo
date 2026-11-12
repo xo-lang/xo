@@ -37,7 +37,10 @@ fn std_cache_key(os: Os, ctx: Ctx, std: Str, tgoos: Str, tgoarch: Str, conc: Boo
   if tree.is_empty() {
     return ""
   }
-  crypto.sha256("${std_key_head(id, tgoos, tgoarch, conc, tmode)}${tree}".bytes()).to_hex()
+  // option B's interface form (decision 0613 step 5): std's objects in
+  // the program's form; the default's keys stay the same
+  let itab = if itab_on(os) { "itab=1\n" } else { "" }
+  crypto.sha256("${std_key_head(id, tgoos, tgoarch, conc, tmode)}${itab}${tree}".bytes()).to_hex()
 }
 
 /// The stamp table of the std tree at std in the back-end cache: one per
@@ -538,7 +541,9 @@ fn std_cache_dir(os: Os) -> Str {
 /// beside them names this xo's code generation and driver identity
 /// (std_release_id); None otherwise.
 fn std_released(os: Os, std: Str, tgoos: Str, tgoarch: Str, conc: Bool, tmode: Bool) -> (Str, Str)? {
-  if XO_CODEGEN_KEY.len() != 64 || !std.trim_suffix("/").ends_with("/lib/xo/std") {
+  // a release's store is the default interface form's; option B's
+  // (XO_ITAB=1, decision 0613 step 5) builds its own in the cache
+  if XO_CODEGEN_KEY.len() != 64 || !std.trim_suffix("/").ends_with("/lib/xo/std") || itab_on(os) {
     return None
   }
   let base = "${dir_name(std.trim_suffix("/"))}/stdstore/${tgoos}-${tgoarch}-conc${if conc { 1 } else { 0 }}${if tmode { "-test" } else { "" }}"

@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+sq1 sq2 o1
+true true true false false false true true false
+Sq{s: 1} Sq{s: 1}
+sq1,sq1,sq2,sq3,
+--- stderr

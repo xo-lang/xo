@@ -110,6 +110,15 @@ pub enum Op {
   Branch
   Return
   Unreachable
+  // Bind(code, f): the function value of the code word code (an Int,
+  // FuncAddr's) with f's environment, borrowed from f: an interface
+  // value's method (decision 0613 step 5, option B: the slots hold code
+  // words, the show closure the value)
+  Bind
+  // CodeOf: the code word of the Indirect function aux names (an Int: a
+  // closure's first word, as Rebind's), the method slots of an interface
+  // value in option B's form
+  CodeOf
 }
 
 /// The printed name of an opcode.
@@ -166,6 +175,8 @@ pub fn op_name(o: Op) -> Str {
     Branch => "br"
     Return => "ret"
     Unreachable => "unreachable"
+    Bind => "bind"
+    CodeOf => "codeof"
   }
 }
 

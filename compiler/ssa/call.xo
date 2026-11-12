@@ -2986,7 +2986,7 @@ fn (var b: Builder) user_cap_call(x: Expr, ci: check.CallInfo) -> Int? {
   b.s.cur = yes
   // the user value's method, through its record
   let rec = b.user_rec(u)
-  let pts = b.m.types[b.m.types[rect].fields[j].ty].elems
+  let pts = b.m.types[b.slot_ft(rect, j)].elems
   let es = arg_exprs(b.c.objs[fo].params, args)
   var vals: List[Int] = []
   for i in 0..es.len() {

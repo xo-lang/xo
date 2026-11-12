@@ -1527,6 +1527,16 @@ fn (var g: Gen) instr_body(v: Int) {
       let a0 = g.op(args[0])
       g.set(v, "insertvalue { ptr, ptr } ${a0}, ptr ${fname(aux_str(x.aux))}, 0")
     }
+    // decision 0613 step 5, option B: an interface value's method slot
+    // (the function's address as a word) and the call's function value,
+    // that address with the show closure's environment
+    CodeOf => g.set(v, "ptrtoint ptr ${fname(aux_str(x.aux))} to i64")
+    Bind => {
+      let a0 = g.op(args[0])
+      let a1 = g.op(args[1])
+      let c = g.def("inttoptr i64 ${a0} to ptr")
+      g.set(v, "insertvalue { ptr, ptr } ${a1}, ptr ${c}, 0")
+    }
     Box => {
       let et = g.vty(args[0])
       let (es, ea) = g.layout(et)

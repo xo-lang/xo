@@ -9,6 +9,11 @@ use github.com/xo-lang/xo/compiler/parser
 /// The hidden fields of an interface value: the Display and Debug text,
 /// equality, and the concrete type's id.
 const IFACE_SHOW = "xo.show"
+/// xo.tid of an interface value made by converting another interface
+/// value whose methods need adapting, in option B's form (decision 0613
+/// step 5): its environment holds the source value, so xo.eq unwraps it
+/// (wrap_eq_thunk) and a concrete xo.eq that meets it swaps sides
+const IFACE_WRAP_TID = -1
 const IFACE_EQ = "xo.eq"
 const IFACE_TID = "xo.tid"
 
@@ -48,11 +53,51 @@ fn (var b: Builder) iface_type(t: Int, obj: Int) -> Int {
   let it = b.int_t()
   let bt = b.bool_t()
   let show = b.m.func_type([s, bt], s)
-  fs.push(SField{name: IFACE_EQ, ty: b.m.func_type([it, show], bt)})
+  // option B's xo.eq also takes the other value's xo.eq code word, which
+  // a concrete xo.eq calls with the sides swapped when the other is
+  // wrapped (IFACE_WRAP_TID)
+  let eps = if b.fe.itab { [it, show, it] } else { [it, show] }
+  fs.push(SField{name: IFACE_EQ, ty: b.m.func_type(eps, bt)})
+  if b.fe.itab {
+    // option B (decision 0613 step 5): each method slot and xo.eq hold
+    // the code word of their thunk (CodeOf); a call Binds it to xo.show's
+    // environment, the one object that holds the value
+    var fts: List[Int] = []
+    for k in 0..fs.len() {
+      fts.push(fs[k].ty)
+      fs[k].ty = it
+    }
+    b.itab_ft[st] = fts
+  }
   fs.push(SField{name: IFACE_TID, ty: it})
   fs.push(SField{name: IFACE_SHOW, ty: show})
   b.m.types[st].fields = fs
   st
+}
+
+/// The function type of slot j (a method, or xo.eq) of the interface
+/// value type t.
+fn (b: Builder) slot_ft(t: Int, j: Int) -> Int {
+  if let Some(fts) = b.itab_ft.get(t) {
+    if j < fts.len() {
+      return fts[j]
+    }
+  }
+  b.m.types[t].fields[j].ty
+}
+
+/// The function value of slot j of the interface value v: the field, or
+/// in option B's form its code word bound to xo.show's environment.
+fn (var b: Builder) slot_fn(v: Int, j: Int) -> Int {
+  let t = b.vty(v)
+  let ft = b.slot_ft(t, j)
+  if !b.itab_ft.contains(t) {
+    return b.add(Op.Field, ft, Aux.I(n: j), [v])
+  }
+  let code = b.add(Op.Field, b.int_t(), Aux.I(n: j), [v])
+  let si = b.m.field_index(t, IFACE_SHOW)
+  let show = b.add(Op.Field, b.m.types[t].fields[si].ty, Aux.I(n: si), [v])
+  b.add(Op.Bind, ft, Aux.None, [code, show])
 }
 
 /// The method name of the interface type r (checker) and the
@@ -84,16 +129,21 @@ fn (var b: Builder) to_iface(v: Int, from0: Int, t: Int, at: Expr?) -> Int {
     // function values that already have the wanted type, adapt the
     // others; the hidden fields are the concrete value's
     for (i, im) in meths.indexed() {
-      let ft = b.m.types[t].fields[i].ty
+      let ft = b.slot_ft(t, i)
       let iname = b.obj_name(im)
       let j = b.m.field_index(vt, iname)
       if j < 0 {
         b.unsupported("converting `${b.m.types[vt].name}` to `${b.m.types[t].name}`")
         return b.undef(t)
       }
-      if b.m.types[vt].fields[j].ty == ft {
-        fields.push(b.add(Op.Field, ft, Aux.I(n: j), [v]))
+      if b.slot_ft(vt, j) == ft {
+        fields.push(b.add(Op.Field, b.m.types[t].fields[i].ty, Aux.I(n: j), [v]))
         continue
+      }
+      if b.itab_ft.contains(t) {
+        // a code word bound to xo.show's environment cannot reach the
+        // source value's own code words: wrap the source value
+        return b.wrap_iface(v, from, t, at)
       }
       let name = b.iface_thunk(t, i, from, vt, at)
       fields.push(b.add(Op.Closure, ft, Aux.S(s: name), [v]))
@@ -108,12 +158,13 @@ fn (var b: Builder) to_iface(v: Int, from0: Int, t: Int, at: Expr?) -> Int {
   let n = meths.len()
   let st = b.show_thunk(from, vt, at)
   let show = b.add(Op.Closure, b.m.types[t].fields[n + 2].ty, Aux.S(s: st), [v])
+  let itab = b.itab_ft.contains(t)
   for i in 0..n {
     let name = b.iface_thunk(t, i, from, vt, at)
-    fields.push(b.add(Op.Rebind, b.m.types[t].fields[i].ty, Aux.S(s: name), [show]))
+    fields.push(if itab { b.add(Op.CodeOf, b.int_t(), Aux.S(s: name), []) } else { b.add(Op.Rebind, b.m.types[t].fields[i].ty, Aux.S(s: name), [show]) })
   }
   let eq = b.eq_thunk(from, vt)
-  fields.push(b.add(Op.Rebind, b.m.types[t].fields[n].ty, Aux.S(s: eq), [show]))
+  fields.push(if itab { b.add(Op.CodeOf, b.int_t(), Aux.S(s: eq), []) } else { b.add(Op.Rebind, b.m.types[t].fields[n].ty, Aux.S(s: eq), [show]) })
   fields.push(b.cint(b.type_id(from)))
   fields.push(show)
   b.add(Op.Struct, t, Aux.None, fields)
@@ -174,9 +225,10 @@ fn (var b: Builder) eq_thunk(ct: Int, vt: Int) -> Str {
   let bt = b.bool_t()
   let it = b.int_t()
   let show = b.m.func_type([st, bt], st)
-  let ft = b.m.func_type([it, show], bt)
+  let itab = b.fe.itab
+  let ft = b.m.func_type(if itab { [it, show, it] } else { [it, show] }, bt)
   let name = "xo.ifeq[${b.impl_text(ct)}]"
-  let fi = b.thunk_func(name, [ft, it, show], [bt], [vt])
+  let fi = b.thunk_func(name, if itab { [ft, it, show, it] } else { [ft, it, show] }, [bt], [vt])
   if fi < 0 {
     return name
   }
@@ -184,6 +236,21 @@ fn (var b: Builder) eq_thunk(ct: Int, vt: Int) -> Str {
   let id = b.cint(b.type_id(ct))
   let same = b.add(Op.Eq, bt, Aux.None, [b.param(1), id])
   let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [same]))
+  if itab {
+    // the other value is wrapped (wrap_iface): its xo.eq, with this
+    // value's type, xo.show and xo.eq, unwraps it
+    let wrapped = b.add(Op.Eq, bt, Aux.None, [b.param(1), b.cint(IFACE_WRAP_TID)])
+    let (yes, wj) = b.if_then_begin(wrapped)
+    let other_eq = b.add(Op.Bind, ft, Aux.None, [b.param(3), b.param(2)])
+    let my_show = b.add(Op.Bind, show, Aux.None, [b.add(Op.CodeOf, it, Aux.S(s: b.show_thunk(ct, vt, None)), []), b.param(0)])
+    let my_eq = b.add(Op.CodeOf, it, Aux.S(s: name), [])
+    let res = b.add(Op.CallValue, bt, Aux.None, [other_eq, id, my_show, my_eq])
+    b.check("")
+    if !b.is_dead() {
+      b.retv(res)
+    }
+    b.if_then_end(yes, wj)
+  }
   b.retv(b.cbool(false))
   b.if_then_end(no, join)
   if holds_kind(b.m, vt, Kind.Func, []) || holds_kind(b.m, vt, Kind.Handle, []) {
@@ -209,16 +276,67 @@ fn (var b: Builder) eq_thunk(ct: Int, vt: Int) -> Str {
   name
 }
 
+/// The interface value of type t (option B's form) whose environment
+/// holds v, an interface value of checker type from that converts to t
+/// only with adapted methods: every slot is the code of the thunk that
+/// calls v's method (iface_thunk, which captures v), xo.show shows v, and
+/// xo.eq compares v (wrap_eq_thunk); xo.tid is IFACE_WRAP_TID.
+fn (var b: Builder) wrap_iface(v: Int, from: Int, t: Int, at: Expr?) -> Int {
+  let vt = b.vty(v)
+  let n = b.c.objs[b.named_obj(b.ifaces.get(t) ?? -1)].iface_meths.len()
+  let st = b.show_thunk(from, vt, at)
+  let show = b.add(Op.Closure, b.m.types[t].fields[n + 2].ty, Aux.S(s: st), [v])
+  var fields: List[Int] = []
+  for i in 0..n {
+    fields.push(b.add(Op.CodeOf, b.int_t(), Aux.S(s: b.iface_thunk(t, i, from, vt, at)), []))
+  }
+  fields.push(b.add(Op.CodeOf, b.int_t(), Aux.S(s: b.wrap_eq_thunk(from, vt)), []))
+  fields.push(b.cint(IFACE_WRAP_TID))
+  fields.push(show)
+  b.add(Op.Struct, t, Aux.None, fields)
+}
+
+/// The xo.eq of a wrapped interface value (wrap_iface) whose environment
+/// holds an interface value of checker type ct (SSA type vt): that
+/// value's xo.eq with the same arguments.
+fn (var b: Builder) wrap_eq_thunk(ct: Int, vt: Int) -> Str {
+  let st = b.str_t()
+  let bt = b.bool_t()
+  let it = b.int_t()
+  let show = b.m.func_type([st, bt], st)
+  let ft = b.m.func_type([it, show, it], bt)
+  let name = "xo.ifeq.wrap[${b.impl_text(ct)}]"
+  let fi = b.thunk_func(name, [ft, it, show, it], [bt], [vt])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let me = b.add(Op.Capture, vt, Aux.I(n: 0), [b.param(0)])
+  let fv = b.slot_fn(me, b.m.field_index(vt, IFACE_EQ))
+  let res = b.add(Op.CallValue, bt, Aux.None, [fv, b.param(1), b.param(2), b.param(3)])
+  b.check("")
+  if !b.is_dead() {
+    b.retv(res)
+  }
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
 /// `l == r` on two interface values of one type (ifaceEqual).
 fn (var b: Builder) iface_equal(l: Int, r: Int) -> Int {
   let t = b.vty(l)
   let ei = b.m.field_index(t, IFACE_EQ)
   let ti = b.m.field_index(t, IFACE_TID)
   let si = b.m.field_index(t, IFACE_SHOW)
-  let fv = b.add(Op.Field, b.m.types[t].fields[ei].ty, Aux.I(n: ei), [l])
+  let fv = b.slot_fn(l, ei)
   let tid = b.add(Op.Field, b.m.types[t].fields[ti].ty, Aux.I(n: ti), [r])
   let show = b.add(Op.Field, b.m.types[t].fields[si].ty, Aux.I(n: si), [r])
-  let res = b.add(Op.CallValue, b.bool_t(), Aux.None, [fv, tid, show])
+  var args = [fv, tid, show]
+  if b.itab_ft.contains(t) {
+    args.push(b.add(Op.Field, b.int_t(), Aux.I(n: ei), [r]))
+  }
+  let res = b.add(Op.CallValue, b.bool_t(), Aux.None, args)
   b.check("")
   res
 }
@@ -272,7 +390,7 @@ fn (var b: Builder) iface_thunk(t: Int, i: Int, ct: Int, vt: Int, at: Expr?) -> 
   let r = b.ifaces.get(t) ?? -1
   let robj = b.named_obj(r)
   let im = b.c.objs[robj].iface_meths[i]
-  let ft = b.m.types[t].fields[i].ty
+  let ft = b.slot_ft(t, i)
   let name = "${b.m.types[t].name}.${b.impl_text(ct)}.${b.obj_name(im)}"
   var ps = [ft]
   for e in b.m.types[ft].elems {
@@ -357,8 +475,8 @@ fn (var b: Builder) method_on(name: Str, ct0: Int, recv: Int, args: List[Int], w
       b.unsupported("the method `${name}` of `${b.c.show(ct)}`")
       return b.undef(want)
     }
-    let ft = b.m.types[rt].fields[j].ty
-    let fv = b.add(Op.Field, ft, Aux.I(n: j), [recv])
+    let ft = b.slot_ft(rt, j)
+    let fv = b.slot_fn(recv, j)
     var all = [fv]
     for a in args {
       all.push(a)
@@ -532,7 +650,7 @@ fn (var b: Builder) iface_call(x: Expr, ci: check.CallInfo) -> Int {
       b.unsupported("the interface method `${b.c.display_name(fo)}` of `${b.c.show(ct)}`")
       return b.undef(nt)
     }
-    pts = b.m.types[b.m.types[vt].fields[j].ty].elems
+    pts = b.m.types[b.slot_ft(vt, j)].elems
   } else {
     let sub = b.iface_subst(ci, fo)
     for p in b.c.objs[fo].params {

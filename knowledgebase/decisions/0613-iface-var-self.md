@@ -159,3 +159,74 @@ dispatch and of building interface values (the decision point: B ships
 only if dispatch is within noise); (2) amd64, LLVM, wasm; (3) the Go
 backend's cell; (4) `var self` slots on top, which then cost what a
 direct `var` call costs. A stays rejected for the quadratic cost above.
+
+## Addendum: option B stages 1 and 2 as built (2026-11-12)
+
+Behind `XO_ITAB=1` (off by default; the default flip is its own push
+with the default-change gate). Branch history: lang1-itab.
+
+**Layout, and how it differs from the accepted text.** An interface
+value keeps its struct of slots, but every method slot and `xo.eq` hold
+a code word (new op CodeOf: a function's address as an Int) instead of a
+closure, and `xo.show` stays a closure whose environment is the one heap
+object holding the concrete value. A call builds a borrowed function
+value from the slot's code word and xo.show's environment (new op Bind)
+and calls it. So the value is n + 4 words for n methods (n code words,
+xo.eq, xo.tid, xo.show's code and environment), against 2(n + 1) + 3
+today, and only xo.show retains the environment, so its count is 1 when
+the value is unique, which is what step 4's take-if-unique needs. The
+accepted text said "a static table of the concrete type's methods"
+(4 words a value, the table in read-only data). The code words are
+copied into each value instead because a static table needs a global
+data operation, a per (interface, concrete type) table and its emission
+on four backends, and a second load per call, while the in-value form
+reuses Field and keeps one load per call, as today. What the static
+table would still save is n words a value (64 bytes for 8 methods); it
+stays open as a later step if wide interfaces held in bulk matter.
+
+**Measured** (xo bench --ab, linux/arm64 host 1, the flag off against
+on, each side's xo built by itself; bench/perf/iface):
+
+| row | B / today | interval | verdict |
+|---|---|---|---|
+| dispatch, one concrete type, 3,000,000 calls (9 rounds, quiet) | 1.004 | 0.995 to 1.006 | within noise |
+| dispatch, three concrete types (7 rounds) | 0.994 | 0.977 to 1.008 | within noise |
+| building 400,000 interface values (7 rounds) | 0.823 | 0.813 to 0.872 | better |
+| holding 1,000,000 values of an 8 method interface: max RSS | 0.666 | 209.9 to 139.7 MB | better |
+| the same: wall | 0.762 | 0.695 to 0.816 | better |
+| holding 100,000: max RSS | 0.911 | | better (wall within noise) |
+
+Dispatch is within noise, the decision point of stage 1.
+
+**Converting with adapted methods.** An interface value converted to an
+interface whose method differs in type (a method that cannot fail where
+the target's can, decision 0100 point 4) cannot copy the source's code
+words: each needs the source's slot, which a code word bound to xo.show's
+environment cannot reach. Such a value is wrapped (iface.xo wrap_iface):
+its environment holds the source interface value, every slot is the
+adapting thunk that calls the source's method (iface_thunk), xo.show
+shows the source, xo.tid is -1 (IFACE_WRAP_TID), and its xo.eq calls the
+source's. With the flag, xo.eq also takes the other value's xo.eq code
+word, and a concrete xo.eq that meets xo.tid -1 calls the other's with
+the sides swapped, so `==` between a wrapped value and one converted
+directly from the same concrete value is still true (golden
+iface_wrap_eq). The branch runs only when the type ids differ.
+internal/gen's iface_adapters was a Go backend golden only, so no native
+gate ran this conversion before; iface_wrap_eq covers it on arm64, LLVM
+and wasm.
+
+**Caches.** The flag joins the front end cache's own flags
+(fe_own_flags `itab=1`) and std's variant key (`itab=1` in
+std_cache_key), only when on, so the default's keys are unchanged; a
+release's prebuilt std store is the default form's and is not used with
+the flag.
+
+**Backends.** arm64 and amd64 (isel), LLVM (CodeOf is a ptrtoint, Bind an
+inttoptr inserted into the show closure's pair) and wasm (a table index,
+wrapped to i32 by Bind) lower both ops. The Go backend does not build
+interface values from SSA and is stage 3 (its cell).
+
+**Next.** Stage 3 (the Go backend's cell), the default flip (its own
+push: full suites of the touched packages and the s2 self build), then
+stage 4 (`var self` slots taking the value when xo.show's environment is
+unique).

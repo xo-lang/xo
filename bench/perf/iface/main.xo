@@ -1,0 +1,136 @@
+// Interface values (decision 0613's step 5 amendment, option B): the
+// cost of a method call through an interface value (one concrete type,
+// and three in turn) and of building interface values, for the --ab that
+// decides whether the itab form ships (stage 1's go/no-go).
+//
+//   xo run . dispatch|poly|build|wide [REPS] [PATTERN]
+
+interface Shape {
+  fn area(self) -> Int
+  fn grow(self, k: Int) -> Int
+}
+
+struct Sq {
+  s: Int
+}
+
+fn (q: Sq) area() -> Int { q.s * q.s }
+fn (q: Sq) grow(k: Int) -> Int { q.s + k }
+
+struct Rect {
+  w: Int
+  h: Int
+}
+
+fn (r: Rect) area() -> Int { r.w * r.h }
+fn (r: Rect) grow(k: Int) -> Int { r.w + r.h + k }
+
+struct Named {
+  name: Str
+  tags: List[Int]
+}
+
+fn (n: Named) area() -> Int { n.name.len() + n.tags.len() }
+fn (n: Named) grow(k: Int) -> Int { n.tags.len() + k }
+
+/// The shapes the pattern names, one byte each in turn (s a Sq, r a
+/// Rect, n a Named): read from the command line, so the compiler cannot
+/// know the concrete types and each call goes through the value.
+fn shapes(pat: Str) -> List[Shape] {
+  let p = pat.bytes()
+  var xs: List[Shape] = []
+  for i in 0..64 {
+    let c = p[i % p.len()]
+    if c == 's' {
+      xs.push(Sq{s: i})
+    } else if c == 'r' {
+      xs.push(Rect{w: i, h: 2})
+    } else {
+      xs.push(Named{name: "n${i}", tags: [i]})
+    }
+  }
+  xs
+}
+
+/// Calls through each value, reps times: dispatch is the pattern `s` (one
+/// concrete type), poly `srn` (three in turn).
+fn calls(xs: List[Shape], reps: Int) -> Int {
+  var sum = 0
+  for r in 0..reps {
+    for x in xs {
+      sum += x.area() * r + x.grow(r)
+    }
+  }
+  sum
+}
+
+/// Building interface values: a value with heap fields converted and kept,
+/// then dropped.
+fn build(reps: Int) -> Int {
+  var sum = 0
+  for r in 0..reps {
+    var xs: List[Shape] = []
+    for i in 0..64 {
+      if i % 2 == 0 {
+        xs.push(Named{name: "n", tags: [i, r]})
+      } else {
+        xs.push(Rect{w: i, h: r})
+      }
+    }
+    sum += xs.len()
+  }
+  sum
+}
+
+interface Wide {
+  fn m1(self) -> Int
+  fn m2(self) -> Int
+  fn m3(self) -> Int
+  fn m4(self) -> Int
+  fn m5(self) -> Int
+  fn m6(self) -> Int
+  fn m7(self) -> Int
+  fn m8(self) -> Int
+}
+
+struct Pt {
+  x: Int
+}
+
+fn (p: Pt) m1() -> Int { p.x }
+fn (p: Pt) m2() -> Int { p.x + 2 }
+fn (p: Pt) m3() -> Int { p.x + 3 }
+fn (p: Pt) m4() -> Int { p.x + 4 }
+fn (p: Pt) m5() -> Int { p.x + 5 }
+fn (p: Pt) m6() -> Int { p.x + 6 }
+fn (p: Pt) m7() -> Int { p.x + 7 }
+fn (p: Pt) m8() -> Int { p.x + 8 }
+
+/// Holding many values of a wide interface (8 methods): reps values kept
+/// at once, for the resident size of an interface value's layout.
+fn wide(reps: Int) -> Int {
+  var xs: List[Wide] = []
+  for i in 0..reps {
+    xs.push(Pt{x: i})
+  }
+  var sum = 0
+  for x in xs {
+    sum += x.m1() + x.m8()
+  }
+  sum
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = args.get(0) ?? "dispatch"
+  let dflt = if w == "build" { 400000 } else if w == "wide" { 100000 } else { 3000000 }
+  let reps = Int.parse(args.get(1) ?? "${dflt}") ?? dflt
+  let t = os.clock.now()
+  let pat = args.get(2) ?? (if w == "poly" { "srn" } else { "s" })
+  let s = match w {
+    "build" => build(reps)
+    "wide" => wide(reps)
+    _ => calls(shapes(pat), reps)
+  }
+  os.stdio.println("${w} ${s} ${(os.clock.now() - t).millis()} ms")
+}

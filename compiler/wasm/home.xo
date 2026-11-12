@@ -34,7 +34,7 @@ fn (var g: Gen) compute_homes(main: Int) {
   var named: Map[Str, Bool] = {}
   for f in g.m.funcs {
     for x in f.values {
-      if x.op is ssa.Op.Closure | ssa.Op.Rebind | ssa.Op.FuncAddr {
+      if x.op is ssa.Op.Closure | ssa.Op.Rebind | ssa.Op.FuncAddr | ssa.Op.CodeOf {
         if let S(n) = x.aux {
           named[n] = true
         }

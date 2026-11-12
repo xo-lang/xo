@@ -1250,7 +1250,7 @@ fn tuple_operand_owned(f: Func, m: Module, a: Int) -> Bool {
   }
   match x.op {
     Param => block_of(x.tb) != 0
-    Const | Payload | Capture | Unbox | Field => false
+    Const | Payload | Capture | Unbox | Field | Bind => false
     Call => !is_proj_call(aux_name(x.aux))
     _ => true
   }

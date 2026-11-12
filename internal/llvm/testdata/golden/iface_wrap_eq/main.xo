@@ -1,0 +1,40 @@
+interface Named {
+  fn name(self) -> Str ! Error
+}
+
+interface Plain {
+  fn name(self) -> Str
+}
+
+struct Sq {
+  s: Int
+}
+
+fn (q: Sq) name() -> Str { "sq${q.s}" }
+
+struct Other {
+  s: Int
+}
+
+fn (o: Other) name() -> Str { "o${o.s}" }
+
+fn widen(p: Plain) -> Named { p }
+
+fn main(os: Os) ! Error {
+  let a = widen(Sq{s: 1})
+  let b: Named = Sq{s: 1}
+  let c = widen(Sq{s: 2})
+  let d = widen(Sq{s: 1})
+  let e = widen(Other{s: 1})
+  let f: Named = Other{s: 1}
+  os.stdio.println("${a.name()?} ${c.name()?} ${e.name()?}")
+  os.stdio.println("${a == b} ${b == a} ${a == d} ${a == c} ${c == a} ${a == e} ${e == f} ${f == e} ${b == f}")
+  os.stdio.println("${a.debug()} ${b.debug()}")
+  var xs: List[Named] = [a, b, c]
+  xs.push(widen(Sq{s: 3}))
+  var t = ""
+  for x in xs {
+    t = "${t}${x.name()?},"
+  }
+  os.stdio.println(t)
+}
