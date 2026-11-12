@@ -7,6 +7,8 @@
 #   scripts/gate.sh WORKTREE STEP...
 #
 # Steps:
+#   repo     internal/repotest, which runs first in every gate anyway (named:
+#            also with XO_GATE_REPO=0)
 #   short    go test -short over the repository (runs/ excluded)
 #   arm64    the full tests of internal/arm64
 #   llvm     the full tests of internal/llvm, skipped when every file
@@ -490,9 +492,16 @@ case $gjobs in '' | *[!0-9]* | 0) echo "gate.sh: XO_GATE_JOBS=$gjobs is not a po
 # each found only after a whole gate had passed). It runs before the
 # concurrent jobs too: it is short, and a repo failure is the first thing
 # to fix.
+# A named `repo` is that same first run (lead, 2026-11-11: offload-gate
+# callers name it, and gate.sh failed the gate on "unknown step repo"
+# after every step had passed); it runs even with XO_GATE_REPO=0.
 has_short=0
-for s in "$@"; do [ "$s" = short ] && has_short=1; done
-if [ "${XO_GATE_REPO:-1}" != 0 ] && [ "$has_short" = 0 ]; then
+has_repo=0
+for s in "$@"; do
+  [ "$s" = short ] && has_short=1
+  [ "$s" = repo ] && has_repo=1
+done
+if { [ "${XO_GATE_REPO:-1}" != 0 ] || [ "$has_repo" = 1 ]; } && [ "$has_short" = 0 ]; then
   full repo ./internal/repotest
 fi
 # the named steps, in order: pushq's proving checks are collected into
@@ -508,6 +517,7 @@ for step in "$@"; do
     # PUSHQ_RAN line when they pass (lead, 2026-11-08: a named `cross
     # codegen` ran neither, then pushq refused the push for cross)
     named="$named $step" ;;
+  repo) ;; # ran first, above
   short|arm64|llvm|corpora|cmd|gen|fuzz|corpora-all|alloff|fp|warm|chkcache|stdwasm|stdcov)
     [ "$step" = chkcache ] && chkcache_ran=1
     [ "$step" = stdcov ] && stdcov_ran=1
