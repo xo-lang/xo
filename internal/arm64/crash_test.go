@@ -21,18 +21,40 @@ import (
 // named from the program's DWARF, the faulting Xo frame's line first
 // after the C function's; then the signal's default action ends the
 // program, so its status is the signal's as before. XO_CRASH_REPORT=0
-// leaves the old behavior: no report, the same signal.
+// leaves the old behavior: no report, the same signal. It runs on
+// arm64 (darwin, linux) and on linux/amd64 with the amd64 backend, where
+// the handler's flags and register layout differ (2026-11-12: it ran on
+// arm64 only, and the SA_RESETHAND fix was checked on amd64 by hand).
 func TestCrashReport(t *testing.T) {
 	t.Parallel()
-	if !native() {
-		t.Skip("the host is not arm64")
+	if !native() && !crashAmd64() {
+		t.Skip("the host is neither arm64 nor linux/amd64")
 	}
 	if testing.Short() {
 		t.Skip("builds and runs a program")
 	}
-	for _, be := range tracebackBackends(t) {
+	for _, be := range crashBackends(t) {
 		t.Run(be, func(t *testing.T) { testCrashReport(t, be) })
 	}
+}
+
+// crashAmd64 reports a linux/amd64 host, where TestCrashReport builds
+// with the amd64 backend.
+func crashAmd64() bool {
+	return runtime.GOARCH == "amd64" && runtime.GOOS == "linux"
+}
+
+// crashBackends are TestCrashReport's backends: tracebackBackends on
+// arm64, amd64 and LLVM (when clang is there) on linux/amd64.
+func crashBackends(t *testing.T) []string {
+	if !crashAmd64() {
+		return tracebackBackends(t)
+	}
+	bes := []string{"amd64"}
+	if _, err := xotool.Clang(); err == nil {
+		bes = append(bes, xotool.BackendLLVM)
+	}
+	return bes
 }
 
 func testCrashReport(t *testing.T, be string) {
@@ -107,9 +129,13 @@ func testCrashReport(t *testing.T, be string) {
 	if runtime.GOOS == "linux" && be == "llvm" && !strings.Contains(got, "[inlined]") {
 		t.Errorf("inl: the Linux LLVM link inlines crashc_write_inl, want it as an inlined frame:\n%s", got)
 	}
-	// the trap instruction: brk on arm64 (SIGTRAP)
+	// the trap instruction: brk on arm64 (SIGTRAP), ud2 on amd64 (SIGILL)
 	_, got, sig = run("XO_CRASH_KIND=trap")
-	if sig != syscall.SIGTRAP || !strings.HasPrefix(got, "fatal error: SIGTRAP: trace trap (code ") || strings.Contains(got, "crash report faulted") || !regexp.MustCompile(`crashc_trap`+loc+`\n`+thunk+`  poke \(main\.xo:15\)\n`).MatchString(got) {
+	trapSig, trapLine := syscall.SIGTRAP, "fatal error: SIGTRAP: trace trap (code "
+	if runtime.GOARCH == "amd64" {
+		trapSig, trapLine = syscall.SIGILL, "fatal error: SIGILL: illegal instruction (code "
+	}
+	if sig != trapSig || !strings.HasPrefix(got, trapLine) || strings.Contains(got, "crash report faulted") || !regexp.MustCompile(`crashc_trap(\.cold)?`+loc+`\n`+thunk+`  poke \(main\.xo:15\)\n`).MatchString(got) {
 		t.Errorf("trap: signal %v\n%s", sig, got)
 	}
 	// a stack overflow in C: reported on the alternate signal stack, named
@@ -155,7 +181,14 @@ func testCrashReport(t *testing.T, be string) {
 	}
 	t0 = time.Now()
 	_, got, _ = run("XO_CRASH_KIND=segv")
-	if strings.Contains(got, "crash: holding") || time.Since(t0) > 900*time.Millisecond {
+	// without the hold, faster than the held run (amd64's phase 2, with
+	// gcc's C debug information, takes about 3 s on the linux/amd64 host,
+	// 2026-11-12; arm64's well under 0.9 s)
+	limit := 900 * time.Millisecond
+	if runtime.GOARCH == "amd64" {
+		limit = held
+	}
+	if strings.Contains(got, "crash: holding") || time.Since(t0) > limit {
 		t.Errorf("no XO_CRASH_SLEEP: held %v, stderr:\n%s", time.Since(t0), got)
 	}
 	// XO_CRASH_FILE (decision 0520): the same report appended to the file

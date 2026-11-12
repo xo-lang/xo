@@ -58,3 +58,4 @@ xml_basic
 fault_pad_proved
 loop_compare_moved
 mutex_poison_leaf
+const_wait_canceled
