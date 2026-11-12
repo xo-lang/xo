@@ -1140,19 +1140,23 @@ fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
     // nothing left to find (flags only go from borrowed to owned)
     return []
   }
-  // the blocks that consume each borrowed parameter
+  // the blocks that consume each borrowed parameter, and the paths of
+  // its leaves they consume
   var cons: Map[Int, List[Bool]] = {}
+  var cpaths: Map[Int, Set[Str]] = {}
   for bi in 0..f.blocks.len() {
     for v in f.blocks[bi].instrs {
       for u in r.leaf_uses(f, v) {
         if u.m == Mode.Consume {
           cons = r.consumed(f, u.l, bi, cons)
+          r.consumed_path(f, u.l, cpaths)
         }
       }
       for e in f.values[v].succs {
         for a in f.edges[e].args {
           for l in r.leaves(f, a) {
             cons = r.consumed(f, l, bi, cons)
+            r.consumed_path(f, l, cpaths)
           }
         }
       }
@@ -1161,11 +1165,48 @@ fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
   var owned: List[Int] = []
   for (i, bs) in cons {
     let pt = ty_of(f.values[f.blocks[0].params[i]].tb)
-    if !r.enum_like(pt) || consumed_on_every_path(f, bs) {
+    if r.enum_like(pt) {
+      if consumed_on_every_path(f, bs) {
+        owned.push(i)
+      }
+    } else if !r.part_consumed(pt, cpaths.get(i) ?? #{}) {
       owned.push(i)
     }
   }
   owned
+}
+
+/// Records the path of leaf l in cpaths when l is of a borrowed
+/// parameter (borrow_scan; decision 0612).
+fn (var r: Rc) consumed_path(f: Func, l: Leaf, var cpaths: Map[Int, Set[Str]]) {
+  let p = l.root
+  if f.values[p].op != Op.Param || block_of(f.values[p].tb) != 0 {
+    return
+  }
+  let i = param_index(f, p)
+  if i >= 0 && r.borrowed[r.fi][i] {
+    cpaths.update(i, #{}, fn(var s) { s.add(l.path) })
+  }
+}
+
+/// Whether a struct or tuple parameter of type t whose consumed leaves
+/// have the paths ps stays borrowed (decision 0612): ps are some, not
+/// all, of t's heap leaves, each a field's (a method returning one field
+/// of a large receiver). Owned, every caller that keeps its argument
+/// counted up all of t's heap leaves for the call and the callee dropped
+/// them; borrowed, the paths that consume a leaf count up that leaf
+/// alone (decisions 0149 and 0489 retain a borrowed parameter's leaves
+/// where a path consumes them).
+fn (var r: Rc) part_consumed(t: Int, ps: Set[Str]) -> Bool {
+  if ps.is_empty() || !r.decomposable(t) {
+    return false
+  }
+  for p in ps {
+    if p.is_empty() {
+      return false
+    }
+  }
+  ps.len() < r.leaf_paths(t).len()
 }
 
 /// Records that block bl consumes leaf l when it is of a borrowed
