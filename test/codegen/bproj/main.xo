@@ -25,7 +25,10 @@ fn get_name(g: G) -> Str {
 }
 
 fn step(var g: G) -> Int {
-  // arm64: -"bl _xo_h[A-Za-z0-9]+_x[0-9]+\s+bl _xo_h[A-Za-z0-9]+_x[0-9]+\s+bl _xo_h[A-Za-z0-9]+_x[0-9]+\s+"
+  // Expected off: 0612's partial borrow is off since 2026-11-12
+  // (knowledgebase/decisions/0612-borrow-struct-projections.md, addendum);
+  // restore the next line's `// arm64: ` key when it comes back.
+  // off-0612 arm64: -"bl _xo_h[A-Za-z0-9]+_x[0-9]+\s+bl _xo_h[A-Za-z0-9]+_x[0-9]+\s+bl _xo_h[A-Za-z0-9]+_x[0-9]+\s+"
   g.n += 1
   let s = get_name(g)
   g.n += s.len()
