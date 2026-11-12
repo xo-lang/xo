@@ -148,16 +148,25 @@ const (
 // (no instant), 3 for an overlap (two instants); early and late are the
 // candidates, in seconds since the epoch.
 func civilInstant(local int64, z Time_Zone) (early, late int64, kind int) {
+	return civilInstantW(local, z, false)
+}
+
+// civilInstantW is civilInstant; wide looks the zone up at any second
+// (decision 0614), else within Time's range.
+func civilInstantW(local int64, z Time_Zone, wide bool) (early, late int64, kind int) {
 	const span = 2 * 86400
-	ns := func(s int64) int64 {
+	at := func(s int64) int64 {
+		if wide {
+			return z.offsetAt(s)
+		}
 		s = max(min(s, maxTimeSecs), minTimeSecs)
-		return s * 1e9
+		return z.offsetSecs(s * 1e9)
 	}
-	before := z.offsetSecs(ns(local - span))
-	after := z.offsetSecs(ns(local + span))
+	before := at(local - span)
+	after := at(local + span)
 	tb, ta := local-before, local-after
-	okB := z.offsetSecs(ns(tb)) == before
-	okA := z.offsetSecs(ns(ta)) == after
+	okB := at(tb) == before
+	okA := at(ta) == after
 	switch {
 	case before == after:
 		if okB {
@@ -165,7 +174,7 @@ func civilInstant(local int64, z Time_Zone) (early, late int64, kind int) {
 		}
 		// a transition and its reversal within the window: use the
 		// offset at the naive instant
-		off := z.offsetSecs(ns(local))
+		off := at(local)
 		return local - off, local - off, 0
 	case okB && okA:
 		return min(tb, ta), max(tb, ta), 3

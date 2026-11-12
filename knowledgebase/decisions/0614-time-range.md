@@ -1,6 +1,6 @@
 # 0614: Times outside 1677 to 2262 (years 1 to 9999 in formats)
 
-Status: Proposed (Xo Lang 3, 2026-11-11, at the lead's request; for the owner)
+Status: Accepted (owner, 2026-11-11; option b). Proposed by Xo Lang 3, 2026-11-11, at the lead's request.
 
 ## Context
 
@@ -85,3 +85,14 @@ Its gap: arithmetic on a year 1 instant goes through `Civil.unix()` seconds
 - A separate `WideTime` instant type with arithmetic: (b) plus a second
   instant type to learn and convert; `Civil` already exists and holds the
   year.
+
+## Progress
+
+- Step 1 (2026-11-11, Xo Lang 3): `time.parse_civil`, `Layout.parse_civil`,
+  `Civil.format`, `Layout.format_civil`, `Civil.unix`, `Civil.to_time` on
+  every backend (native: the layout parser's fields are kept apart from the
+  range check, and zone lookups for a Civil are not clamped to Time's range,
+  so Europe/Berlin's summer offset in 9999 is Go's). Golden time_civil_wide
+  against Go's time.Parse values. The names follow 13.2: `to_time`, not
+  `instant` (the native `civil_instant` helper). Next: the codecs (asn1
+  GeneralizedTime, yaml timestamp, mail date, json RFC 3339 into a Civil).

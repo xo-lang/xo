@@ -1,5 +1,18 @@
 # std/time changes
 
+## 2026-11-11: feature: parse_civil, Civil.format, Civil.unix, Civil.to_time (years outside 1677 to 2262)
+
+- Kind: feature
+- Commit: this push
+- Found by: the lead (BigQuery TIMESTAMP, ASN.1, YAML and mail years 0001 to 9999 hit "out of range"), decision 0614 (owner: option b)
+- Go reference: time.Parse and Time.Format for years 1 to 9999 (go1.26.1)
+- Test: golden time_civil_wide (go, arm64, llvm; values checked against Go's time.Parse)
+- Timing: none on the existing paths (format and parse of a Time keep their code; the split adds one call)
+- Shipped in: not yet released
+
+`Time` is unchanged. `parse_civil` reads what `parse` reads, for any year, into a `Civil`; `Civil.format` writes any
+year; `unix()` and `to_time()` give the instant.
+
 ## 2026-11-08: perf: read_fixed compares the first byte, then the name as one slice
 
 - Kind: perf

@@ -181,7 +181,47 @@ func Time_format(_ *Task, t Time, z Time_Zone, layout string) string {
 }
 
 func formatItems(items []tlItem, t Time, z Time_Zone) string {
-	gt := goTime(t, z)
+	return formatGo(items, goTime(t, z))
+}
+
+// civilGo is c as a Go time.Time (any year Go's Time holds), in a zone
+// named UTC at offset zero, else +hhmm (decision 0614).
+func civilGo(c Time_Civil) time.Time {
+	off := int(floorDivI(int64(c.F_offset), 1e9))
+	name := "UTC"
+	if off != 0 {
+		a, sign := off, "+"
+		if off < 0 {
+			a, sign = -off, "-"
+		}
+		name = fmt.Sprintf("%s%02d%02d", sign, a/3600, a/60%60)
+	}
+	d, ct := c.F_date, c.F_time
+	return time.Date(int(d.F_year), time.Month(d.F_month), int(d.F_day), int(ct.F_hour), int(ct.F_minute), int(ct.F_second), int(ct.F_nanos), time.FixedZone(name, off))
+}
+
+// M_format is `c.format(layout)` (decision 0614).
+func (c Time_Civil) M_format(_ *Task, layout string) string {
+	return formatGo(timeLayout("format", layout), civilGo(c))
+}
+
+// M_unix is `c.unix()`: seconds since the epoch, any year.
+func (c Time_Civil) M_unix(*Task) int64 { return civilGo(c).Unix() }
+
+// M_to_time is `c.to_time()`: None outside Time's range.
+func (c Time_Civil) M_to_time(*Task) Option[Time] {
+	gt := civilGo(c)
+	s := gt.Unix()
+	if s <= minTimeSecs || s >= maxTimeSecs {
+		return Option[Time]{}
+	}
+	return Some(Time(s*1e9 + int64(gt.Nanosecond())))
+}
+
+// M_format_civil is `l.format_civil(c)`.
+func (l *Time_Layout) M_format_civil(_ *Task, c Time_Civil) string { return formatGo(l.items, civilGo(c)) }
+
+func formatGo(items []tlItem, gt time.Time) string {
 	abbr, off := gt.Zone()
 	var b strings.Builder
 	two := func(n int) {
@@ -331,7 +371,81 @@ func Time_parse(_ *Task, s, layout string, z Time_Zone) Result[Time, Time_ParseE
 	return parseItems(timeLayout("parse", layout), s, layout, z)
 }
 
+// civilFields is what parse_civil keeps of a parse (decision 0614).
+type civilFields struct {
+	secs, nanos, local int64
+	hasOff             bool
+}
+
 func parseItems(items []tlItem, s, layout string, z Time_Zone) Result[Time, Time_ParseErr] {
+	return parseItemsW(items, s, layout, z, nil)
+}
+
+// Time_parse_civil is `time.parse_civil(s, layout, z)` (decision 0614).
+func Time_parse_civil(_ *Task, s, layout string, z Time_Zone) Result[Time_Civil, Time_ParseErr] {
+	return parseCivil(timeLayout("parse_civil", layout), s, layout, z)
+}
+
+// M_parse_civil is `l.parse_civil(s, z)`.
+func (l *Time_Layout) M_parse_civil(_ *Task, s string, z Time_Zone) Result[Time_Civil, Time_ParseErr] {
+	return parseCivil(l.items, s, l.text, z)
+}
+
+func parseCivil(items []tlItem, s, layout string, z Time_Zone) Result[Time_Civil, Time_ParseErr] {
+	var f civilFields
+	if r := parseItemsW(items, s, layout, z, &f); !r.Ok {
+		return Err[Time_Civil](r.E)
+	}
+	days := floorDivI(f.local, 86400)
+	rem := f.local - days*86400
+	y, m, d := civilFromDaysI(days)
+	off := f.local - f.secs
+	zone := z.data().name
+	if f.hasOff && z.offsetAt(f.secs) != off {
+		zone = ""
+	}
+	return Ok[Time_Civil, Time_ParseErr](Time_Civil{
+		F_date:   Time_Date{F_year: y, F_month: m, F_day: d},
+		F_time:   Time_ClockTime{F_hour: rem / 3600, F_minute: rem / 60 % 60, F_second: rem % 60, F_nanos: f.nanos},
+		F_offset: Duration(off * 1e9),
+		F_zone:   zone,
+	})
+}
+
+func floorDivI(a, b int64) int64 {
+	q := a / b
+	if a%b != 0 && (a < 0) != (b < 0) {
+		q--
+	}
+	return q
+}
+
+// civilFromDaysI is the date of days since 1970-01-01 (Hinnant's civil_from_days).
+func civilFromDaysI(days int64) (y, m, d int64) {
+	z := days + 719468
+	era := z
+	if era < 0 {
+		era -= 146096
+	}
+	era /= 146097
+	doe := z - era*146097
+	yoe := (doe - doe/1460 + doe/36524 - doe/146096) / 365
+	doy := doe - (365*yoe + yoe/4 - yoe/100)
+	mp := (5*doy + 2) / 153
+	d = doy - (153*mp+2)/5 + 1
+	m = mp + 3
+	if mp >= 10 {
+		m = mp - 9
+	}
+	y = yoe + era*400
+	if m <= 2 {
+		y++
+	}
+	return
+}
+
+func parseItemsW(items []tlItem, s, layout string, z Time_Zone, wideOut *civilFields) Result[Time, Time_ParseErr] {
+	wide := wideOut != nil
 	p := &timeParser{s: s, layout: layout}
 	year, month, day := int64(1970), int64(1), int64(1)
 	var hour, minute, second, nanos, hour12 int64
@@ -524,10 +638,10 @@ func parseItems(items []tlItem, s, layout string, z Time_Zone) Result[Time, Time
 	case hasOff:
 		secs = local - off
 	case abbr != "":
-		early, late, _ := civilInstant(local, z)
+		early, late, _ := civilInstantW(local, z, wide)
 		found := false
 		for _, c := range []int64{early, late} {
-			if c > minTimeSecs && c < maxTimeSecs {
+			if wide || (c > minTimeSecs && c < maxTimeSecs) {
 				if a, _ := time.Unix(c, 0).In(z.data().loc).Zone(); a == abbr {
 					secs, found = c, true
 					break
@@ -541,7 +655,7 @@ func parseItems(items []tlItem, s, layout string, z Time_Zone) Result[Time, Time
 			secs = local
 		}
 	default:
-		early, _, kind := civilInstant(local, z)
+		early, _, kind := civilInstantW(local, z, wide)
 		switch kind {
 		case 2:
 			return p.fail(0, "%s does not exist in %s (skipped by a daylight saving change); the layout needs {offset}", at(), z.data().name)
@@ -549,6 +663,10 @@ func parseItems(items []tlItem, s, layout string, z Time_Zone) Result[Time, Time
 			return p.fail(0, "%s happens twice in %s (repeated by a daylight saving change); the layout needs {offset} or {zone}", at(), z.data().name)
 		}
 		secs = early
+	}
+	if wide {
+		*wideOut = civilFields{secs: secs, nanos: nanos, local: local, hasOff: hasOff}
+		return Ok[Time, Time_ParseErr](0)
 	}
 	if secs <= minTimeSecs || secs >= maxTimeSecs {
 		return p.fail(0, "%s is outside the range of Time (1678 to 2262)", at())

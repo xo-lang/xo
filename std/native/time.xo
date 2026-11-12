@@ -288,21 +288,22 @@ fn clamp_secs(s: Int) -> Int {
 /// The instants of local seconds (the civil time read as if in UTC) in z:
 /// (early, late, kind), kind 0 for one instant, 2 for a gap (none), 3 for
 /// an overlap (two).
-fn civil_instant(local: Int, z: Zone) -> (Int, Int, Int) {
+fn civil_instant(local: Int, z: Zone, clamp: Bool = true) -> (Int, Int, Int) {
   let span = 2 * 86400
-  let before = offset_secs(z, clamp_secs(local - span))
-  let after = offset_secs(z, clamp_secs(local + span))
+  let cl = fn(x: Int) -> Int { if clamp { clamp_secs(x) } else { x } }
+  let before = offset_secs(z, cl(local - span))
+  let after = offset_secs(z, cl(local + span))
   let tb = local - before
   let ta = local - after
-  let ok_b = offset_secs(z, clamp_secs(tb)) == before
-  let ok_a = offset_secs(z, clamp_secs(ta)) == after
+  let ok_b = offset_secs(z, cl(tb)) == before
+  let ok_a = offset_secs(z, cl(ta)) == after
   if before == after {
     if ok_b {
       return (tb, tb, 0)
     }
     // a transition and its reversal within the window: the offset at the
     // naive instant
-    let off = offset_secs(z, clamp_secs(local))
+    let off = offset_secs(z, cl(local))
     return (local - off, local - off, 0)
   }
   if ok_b && ok_a {
@@ -949,7 +950,13 @@ fn format_items(items: List[Item], t: Time, z: Zone) -> Str {
     off = o
     name_pos = np
   }
-  let local = sec + off
+  format_local(items, sec + off, nanos, off, z, name_pos, false)
+}
+
+/// The text of a wall clock (local seconds, as if in UTC), its nanoseconds
+/// and offset; {zone} is z's name at name_pos, or for a Civil (civil) UTC
+/// or the compact offset (decision 0614).
+fn format_local(items: List[Item], local: Int, nanos: Int, off: Int, z: Zone, name_pos: Int, civil: Bool) -> Str {
   let days = floor_div(local, 86400)
   let rem = local - days * 86400
   let d = date_of(days)
@@ -1033,11 +1040,50 @@ fn format_items(items: List[Item], t: Time, z: Zone) -> Str {
           put_num(out, o / 60 % 60, 2)
         }
       }
-      _ => out.write_str(if z.fixed { z.label } else { tz.name(z.rules, name_pos) })
+      _ => {
+        if civil {
+          out.write_str(civil_zone_text(off))
+        } else {
+          out.write_str(if z.fixed { z.label } else { tz.name(z.rules, name_pos) })
+        }
+      }
     }
   }
   rt.cast[Bytes, Str](out.freeze())
 }
+
+/// A Civil's {zone}: UTC at offset zero, else +hhmm (Go's unnamed zone).
+fn civil_zone_text(off: Int) -> Str {
+  if off == 0 {
+    return "UTC"
+  }
+  let a = if off < 0 { -off } else { off }
+  "${if off < 0 { "-" } else { "+" }}${pad(a / 3600, 2)}${pad(a / 60 % 60, 2)}"
+}
+
+/// The wall clock seconds of c (as if in UTC).
+fn civil_local(c: time.Civil) -> Int {
+  days_from_civil(c.date.year, c.date.month, c.date.day) * 86400 + c.time.hour * 3600 + c.time.minute * 60 + c.time.second
+}
+
+fn civil_unix(c: time.Civil) -> Int { civil_local(c) - floor_div(c.offset.nanos(), 1000000000) }
+
+fn civil_to_time(c: time.Civil) -> Time? {
+  let s = civil_unix(c)
+  if s <= MIN_TIME_SECS || s >= MAX_TIME_SECS {
+    return None
+  }
+  Some(time_of(s * 1000000000 + c.time.nanos))
+}
+
+fn civil_format(c: time.Civil, layout: Str, at: rt.Loc) -> Str { format_civil_items(layout_or_fault("format", layout, at), c) }
+
+fn format_civil_items(items: List[Item], c: time.Civil) -> Str {
+  let off = floor_div(c.offset.nanos(), 1000000000)
+  format_local(items, civil_local(c), c.time.nanos, off, utc(), -1, true)
+}
+
+fn (l: Layout) format_civil(c: time.Civil) -> Str { format_civil_items(l.items, c) }
 
 /// The field at b[i] (a `{`): code, mode + 2 and the position after its
 /// `}` packed as code | (mode + 2) << 8 | end << 16, or -1 when it is not
@@ -1411,7 +1457,11 @@ fn parse(s: Str, layout: Str, z: Zone, at: rt.Loc) -> Time ! time.ParseErr {
   }
 }
 
-fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
+/// The fields of s read by the layout's items: the instant's seconds, its
+/// nanoseconds, the wall clock's seconds (the civil time read as if in UTC),
+/// and whether the text carried the offset. wide: any year (parse_civil,
+/// decision 0614), else zone lookups stay in Time's range.
+fn parse_secs(items: List[Item], s: Str, layout: Str, z: Zone, wide: Bool) -> (Int, Int, Int, Bool) ! time.ParseErr {
   let b = s.bytes()
   let n = b.len()
   var pos = 0
@@ -1444,7 +1494,7 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
         k += 1
       }
       if k != lb.len() {
-        return perr(s, layout, start, "expected ${it.lit.quote()}")
+        return perr_t(s, layout, start, "expected ${it.lit.quote()}")
       }
       pos += lb.len()
       continue
@@ -1486,7 +1536,7 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
             if it.arg == "name" {
               first = "January"
             }
-            return perr(s, layout, start, "expected a month name such as ${first.quote()}")
+            return perr_t(s, layout, start, "expected a month name such as ${first.quote()}")
           }
           month = i + 1
           pos += len
@@ -1516,7 +1566,7 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
           if it.arg == "name" {
             first = "Monday"
           }
-          return perr(s, layout, start, "expected a weekday name such as ${first.quote()}")
+          return perr_t(s, layout, start, "expected a weekday name such as ${first.quote()}")
         }
         weekday = i
         weekday_at = start
@@ -1536,7 +1586,7 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
         if rest.starts_with("PM") {
           pm = true
         } else if !rest.starts_with("AM") {
-          return perr(s, layout, start, "expected AM or PM")
+          return perr_t(s, layout, start, "expected AM or PM")
         }
         pos += 2
       }
@@ -1555,7 +1605,7 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
         }
         if pos >= n || b[pos] != 46 {
           if k > 0 {
-            return perr(s, layout, start, "expected \".\" and ${k} digit fraction")
+            return perr_t(s, layout, start, "expected \".\" and ${k} digit fraction")
           }
         } else {
           pos += 1
@@ -1568,7 +1618,7 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
           }
           let (v, cnt) = read_digits(b, pos, fhi)
           if cnt < flo {
-            return perr(s, layout, fstart, "expected ${digit_text(flo, fhi)} fraction")
+            return perr_t(s, layout, fstart, "expected ${digit_text(flo, fhi)} fraction")
           }
           pos += cnt
           var f = v
@@ -1591,24 +1641,24 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
           off = 0
         } else {
           if pos >= n || (b[pos] != 43 && b[pos] != 45) {
-            return perr(s, layout, start, bad)
+            return perr_t(s, layout, start, bad)
           }
           let neg = b[pos] == 45
           pos += 1
           let (h, hn) = read_digits(b, pos, 2)
           if hn < 2 {
-            return perr(s, layout, start, bad)
+            return perr_t(s, layout, start, bad)
           }
           pos += 2
           if it.arg == "" {
             if pos >= n || b[pos] != 58 {
-              return perr(s, layout, start, bad)
+              return perr_t(s, layout, start, bad)
             }
             pos += 1
           }
           let (m, mn) = read_digits(b, pos, 2)
           if mn < 2 || h > 23 || m > 59 {
-            return perr(s, layout, start, bad)
+            return perr_t(s, layout, start, bad)
           }
           pos += 2
           off = h * 3600 + m * 60
@@ -1625,7 +1675,7 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
           k += 1
         }
         if k == 0 {
-          return perr(s, layout, start, "expected a zone abbreviation such as \"UTC\"")
+          return perr_t(s, layout, start, "expected a zone abbreviation such as \"UTC\"")
         }
         abbr = s[pos..pos + k]
         abbr_at_pos = start
@@ -1636,10 +1686,10 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
       let (v, cnt) = read_digits(b, pos, hi)
       var name = field_name(what)
       if cnt < lo {
-        return perr(s, layout, start, "expected ${digit_text(lo, hi)} ${name}")
+        return perr_t(s, layout, start, "expected ${digit_text(lo, hi)} ${name}")
       }
       if v < min || v > max {
-        return perr(s, layout, start, "${name} ${v} out of range ${min} to ${max}")
+        return perr_t(s, layout, start, "${name} ${v} out of range ${min} to ${max}")
       }
       pos += cnt
       match what {
@@ -1669,10 +1719,10 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
     }
   }
   if pos < n {
-    return perr(s, layout, pos, "extra text after the layout: ${s[pos..].quote()}")
+    return perr_t(s, layout, pos, "extra text after the layout: ${s[pos..].quote()}")
   }
   if day > days_in(year, month) {
-    return perr(s, layout, day_at, "day ${day} out of range 1 to ${days_in(year, month)} for ${pad(year, 4)}-${pad(month, 2)}")
+    return perr_t(s, layout, day_at, "day ${day} out of range 1 to ${days_in(year, month)} for ${pad(year, 4)}-${pad(month, 2)}")
   }
   if has12 {
     hour = hour12 % 12
@@ -1688,35 +1738,75 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
   if has_off {
     secs = local - off
   } else if abbr != "" {
-    let (early, late, _) = civil_instant(local, z)
+    let (early, late, _) = civil_instant(local, z, !wide)
     var found = false
     for c in [early, late] {
-      if !found && c > MIN_TIME_SECS && c < MAX_TIME_SECS && abbr_at(z, c) == abbr {
+      if !found && (wide || (c > MIN_TIME_SECS && c < MAX_TIME_SECS)) && abbr_at(z, c) == abbr {
         secs = c
         found = true
       }
     }
     if !found {
       if abbr != "UTC" && abbr != "GMT" {
-        return perr(s, layout, abbr_at_pos, "zone abbreviation ${abbr.quote()} is not used by ${z.label} at ${when_text(year, month, day, hour, minute, second)}")
+        return perr_t(s, layout, abbr_at_pos, "zone abbreviation ${abbr.quote()} is not used by ${z.label} at ${when_text(year, month, day, hour, minute, second)}")
       }
       secs = local
     }
   } else {
-    let (early, _, kind) = civil_instant(local, z)
+    let (early, _, kind) = civil_instant(local, z, !wide)
     if kind == 2 {
-      return perr(s, layout, 0, "${when_text(year, month, day, hour, minute, second)} does not exist in ${z.label} (skipped by a daylight saving change); the layout needs {offset}")
+      return perr_t(s, layout, 0, "${when_text(year, month, day, hour, minute, second)} does not exist in ${z.label} (skipped by a daylight saving change); the layout needs {offset}")
     }
     if kind == 3 {
-      return perr(s, layout, 0, "${when_text(year, month, day, hour, minute, second)} happens twice in ${z.label} (repeated by a daylight saving change); the layout needs {offset} or {zone}")
+      return perr_t(s, layout, 0, "${when_text(year, month, day, hour, minute, second)} happens twice in ${z.label} (repeated by a daylight saving change); the layout needs {offset} or {zone}")
     }
     secs = early
   }
+  Ok((secs, nanos, local, has_off))
+}
+
+fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
+  let (secs, nanos, local, _) = parse_secs(items, s, layout, z, false)?
   if secs <= MIN_TIME_SECS || secs >= MAX_TIME_SECS {
-    return perr(s, layout, 0, "${when_text(year, month, day, hour, minute, second)} is outside the range of Time (1678 to 2262)")
+    return perr(s, layout, 0, "${when_local(local)} is outside the range of Time (1678 to 2262)")
   }
   Ok(time_of(secs * 1000000000 + nanos))
 }
+
+/// when_text of the wall clock's seconds.
+fn when_local(local: Int) -> Str {
+  let days = floor_div(local, 86400)
+  let rem = local - days * 86400
+  let d = date_of(days)
+  when_text(d.year, d.month, d.day, rem / 3600, rem / 60 % 60, rem % 60)
+}
+
+/// The Civil of parse_secs's fields: the wall clock, its offset, and z's
+/// name when the offset is z's at that instant (decision 0614).
+fn civil_of(secs: Int, nanos: Int, local: Int, has_off: Bool, z: Zone) -> time.Civil {
+  let days = floor_div(local, 86400)
+  let rem = local - days * 86400
+  let off = local - secs
+  time.Civil{
+    date: date_of(days),
+    time: time.ClockTime{hour: rem / 3600, minute: rem / 60 % 60, second: rem % 60, nanos: nanos},
+    offset: Duration.from_secs_int(off),
+    zone: if !has_off || offset_secs(z, secs) == off { z.label } else { "" },
+  }
+}
+
+fn parse_civil_items(items: List[Item], s: Str, layout: Str, z: Zone) -> time.Civil ! time.ParseErr {
+  let (secs, nanos, local, has_off) = parse_secs(items, s, layout, z, true)?
+  Ok(civil_of(secs, nanos, local, has_off, z))
+}
+
+fn parse_civil(s: Str, layout: Str, z: Zone, at: rt.Loc) -> time.Civil ! time.ParseErr {
+  parse_civil_items(layout_or_fault("parse_civil", layout, at), s, layout, z)
+}
+
+fn (l: Layout) parse_civil(s: Str, z: Zone) -> time.Civil ! time.ParseErr { parse_civil_items(l.items, s, l.text, z) }
+
+fn perr_t(s: Str, layout: Str, at: Int, msg: Str) -> (Int, Int, Int, Bool) ! time.ParseErr { Err(time.ParseErr{input: s, layout: layout, at: at, msg: msg}) }
 
 /// Whether layout is a well formed layout text with no {lbrace} or {rbrace}
 /// and no {hour12} without {ampm}: parse_stream may read it as it parses.

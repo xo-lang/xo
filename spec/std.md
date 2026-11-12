@@ -4188,6 +4188,9 @@ fn (d: Date) add_days(n: Int) -> Date
 fn (d: Date) add_months(n: Int) -> Date          // clamps the day: Jan 31 + 1 month is Feb 28 or 29
 fn (d: Date) days_until(o: Date) -> Int
 fn (d: Date) display() -> Str                    // "2026-10-09"
+fn (c: Civil) unix() -> Int                      // decision 0614: seconds since 1970 of the instant, any year
+fn (c: Civil) to_time() -> Time?                 // None outside Time's 1677 to 2262
+fn (c: Civil) format(layout: Str) -> Str         // format's text for any year; faults on a bad layout
 ```
 
 `instant` with `Reject` returns `Skipped` for a time inside a spring
@@ -4212,6 +4215,7 @@ fn (e: LayoutErr) display() -> Str               // bad layout "{yr}": unknown f
 
 pub fn format(t: Time, z: Zone, layout: Str) -> Str             // faults on a bad layout (constant layouts are checked at compile time)
 pub fn parse(s: Str, layout: Str, z: Zone) -> Time ! ParseErr   // z applies when the text has no offset
+pub fn parse_civil(s: Str, layout: Str, z: Zone) -> Civil ! ParseErr   // decision 0614: as parse, for any year the layout reads
 pub fn check_layout(layout: Str) -> () ! LayoutErr
 // Hot code uses a `const Layout`: format with a string layout parses it on every call (5.4x Go's wall,
 // 4.7x for parse); the same layout as a const runs at 2.03x and 1.90x (bench/results/std-twin-rows2-2026-11-03.md)
@@ -4219,6 +4223,8 @@ struct Layout                                              // a layout parsed on
 pub fn layout(text: Str) -> Layout                         // faults on a bad layout; `const ISO: Layout = layout("{year}-{month}-{day}")` parses it on first use
 fn (l: Layout) format(t: Time, z: Zone) -> Str             // as format(t, z, text), without the layout walk
 fn (l: Layout) parse(s: Str, z: Zone) -> Time ! ParseErr   // as parse(s, text, z)
+fn (l: Layout) parse_civil(s: Str, z: Zone) -> Civil ! ParseErr   // as parse_civil(s, text, z)
+fn (l: Layout) format_civil(c: Civil) -> Str               // as c.format(text)
 // consts RFC3339_LAYOUT, RFC1123_LAYOUT, DATE_LAYOUT, TIME_LAYOUT are the named layouts as Layouts
 ```
 
@@ -4285,7 +4291,15 @@ Settled while implementing; examples are in the goldens
 - **Civil time.** `Civil.zone` is the zone's name (`Europe/Berlin`), not
   the abbreviation (`abbreviation_at` gives that). `date` accepts years 1
   to 9999; `Time` covers about 1678 to 2262, and `instant` outside it is
-  `CivilErr.Invalid`. Date methods on a `Date` built with a struct
+  `CivilErr.Invalid`. A `Civil` is the wide type (decision 0614): it
+  holds any year, so formats that carry years outside `Time`'s (Go's zero
+  Time `0001-01-01T00:00:00Z`, `9999-12-31T23:59:59Z`) are read with
+  `parse_civil`, written with `Civil.format`, and compared or sorted by
+  `(unix(), time.nanos)`; `to_time` is the `Time` when it fits. A `Civil`
+  from `parse_civil` has the text's offset (or `z`'s at that instant) and
+  `z`'s name, empty when the text's offset is not `z`'s; `Civil.format`
+  writes `{zone}` as `UTC` at offset zero, else as the compact offset
+  (`+0200`), as Go formats an unnamed zone. Date methods on a `Date` built with a struct
   literal and out of range fields normalize it (month 13 is January of the
   next year). For a gap, `Earlier` is the earlier instant and `Later` the later one
   (Temporal's `earlier` and `later`): 02:30 on 2026-03-08 in New York is

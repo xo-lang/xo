@@ -1,0 +1,33 @@
+// time.parse_civil, Civil.format, Civil.unix and Civil.to_time (decision 0614): times outside Time's
+// 1677 to 2262 that formats carry (Go's zero Time, 9999-12-31, ASN.1 and BigQuery years), against Go's
+// time.Parse: the unix seconds and offsets below are Go's (Europe/Berlin's summer offset in 9999,
+// New York's LMT in 500), and time.parse still refuses the same texts.
+use std/time
+
+fn show(r: Result[time.Civil, time.ParseErr]) -> Str {
+  match r {
+    Ok(c) => "${c.format(time.RFC3339)} unix ${c.unix()} ns ${c.time.nanos} off ${c.offset.nanos() / 1000000000} zone ${c.zone.quote()} time ${if let Some(t) = c.to_time() { t.format_rfc3339() } else { "none" }}"
+    Err(e) => "err ${e}"
+  }
+}
+
+fn main(os: Os) {
+  let utc = time.utc()
+  let ny = time.zone("America/New_York").ok() ?? utc
+  let be = time.zone("Europe/Berlin").ok() ?? utc
+  for s in ["0001-01-01T00:00:00Z", "9999-12-31T23:59:59.999999999Z", "0000-01-01T00:00:00Z", "1677-09-21T00:12:43.145224191Z", "1677-09-21T00:12:43.145224192Z", "2262-04-11T23:47:16.854775807Z", "2262-04-11T23:47:16.854775808Z", "1600-02-29T12:00:00+05:30", "2024-06-01T12:00:00-07:00", "9999-07-01T12:00:00+02:00", "0001-13-01T00:00:00Z"] {
+    os.stdio.println("${s}: ${show(time.parse_civil(s, time.RFC3339, utc))}")
+    match time.parse(s, time.RFC3339, utc) {
+      Ok(t) => os.stdio.println("  parse ok ${t.format_rfc3339()}")
+      Err(e) => os.stdio.println("  parse ${e}")
+    }
+  }
+  os.stdio.println(show(time.parse_civil("9999-07-01 12:00:00", "{year}-{month}-{day} {hour}:{minute}:{second}", be)))
+  os.stdio.println(show(time.parse_civil("0500-07-01 12:00:00", "{year}-{month}-{day} {hour}:{minute}:{second}", ny)))
+  os.stdio.println(show(time.RFC3339_LAYOUT.parse_civil("2500-01-01T00:00:00Z", utc)))
+  let c = time.parse_civil("9999-12-31T23:59:59Z", time.RFC3339, utc) ?? e => fault("${e}")
+  os.stdio.println(c.format(time.RFC1123))
+  os.stdio.println(time.RFC1123_LAYOUT.format_civil(c))
+  let k = time.parse_civil("0001-01-01T01:30:00+01:30", time.RFC3339, utc) ?? e => fault("${e}")
+  os.stdio.println("${k.format("{year}-{month}-{day} {hour}:{minute} {zone} {offset:compact} {weekday:name}")}")
+}

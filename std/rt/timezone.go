@@ -275,6 +275,13 @@ func (z Time_Zone) offsetSecs(ns int64) int64 {
 	return int64(off)
 }
 
+// offsetAt is z's offset at sec seconds since the epoch, for any year
+// (decision 0614: a Civil outside Time's range).
+func (z Time_Zone) offsetAt(sec int64) int64 {
+	_, off := time.Unix(sec, 0).In(z.data().loc).Zone()
+	return int64(off)
+}
+
 // M_display of a ZoneErr (std.md 13.1): `unknown time zone "Mars/Olympus"`.
 func (v Time_ZoneErr) M_display(*Task) string {
 	switch p := v.P.(type) {

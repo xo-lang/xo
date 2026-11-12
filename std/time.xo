@@ -56,13 +56,27 @@ struct ClockTime {
   nanos: Int
 } derive Ord, Json
 
-/// A wall clock reading in a zone: what `civil(t, z)` returns.
+/// A wall clock reading in a zone: what `civil(t, z)` returns. Its year is
+/// any Int, so it also holds the times outside `Time`'s 1677 to 2262 that
+/// formats carry (years 1 to 9999: Go's zero Time, `9999-12-31`;
+/// decision 0614): `parse_civil` reads them, `format` writes them.
 struct Civil {
   date: Date
   time: ClockTime
   offset: Duration
   zone: Str
 } derive Json
+
+/// The instant's seconds since 1970-01-01T00:00:00Z (the wall clock less
+/// its offset), for any year: wide times compare and sort by
+/// `(unix(), time.nanos)` (decision 0614).
+fn (c: Civil) unix() -> Int
+/// The instant as a `Time`, or None outside 1677 to 2262.
+fn (c: Civil) to_time() -> Time?
+/// The text of the layout (as `format(t, z, layout)`, for any year); faults
+/// on a bad layout. `{zone}` is `UTC` at offset zero, else the compact
+/// offset (`+0200`), as Go formats an unnamed zone.
+fn (c: Civil) format(layout: Str) -> Str
 
 enum Weekday {
   Monday
@@ -165,6 +179,10 @@ fn (l: Layout) display() -> Str
 fn (l: Layout) format(t: Time, z: Zone) -> Str
 /// Same result as `time.parse(s, text, z)`.
 fn (l: Layout) parse(s: Str, z: Zone) -> Time ! ParseErr
+/// Same result as `time.parse_civil(s, text, z)`.
+fn (l: Layout) parse_civil(s: Str, z: Zone) -> Civil ! ParseErr
+/// Same text as `c.format(text)`.
+fn (l: Layout) format_civil(c: Civil) -> Str
 
 const RFC3339_LAYOUT: Layout = layout(RFC3339)
 const RFC1123_LAYOUT: Layout = layout(RFC1123)
@@ -201,4 +219,9 @@ fn format(t: Time, z: Zone, layout: Str) -> Str
 /// Strict: accepts exactly the layout. `z` applies when the text has no
 /// offset.
 fn parse(s: Str, layout: Str, z: Zone) -> Time ! ParseErr
+/// `parse`, for any year the layout reads (0000 to 9999 with `{year}`):
+/// the wall clock the text names, its offset (the text's, else z's at that
+/// instant) and z's name (empty when the text's offset is not z's)
+/// (decision 0614). `parse` refuses the same text outside 1677 to 2262.
+fn parse_civil(s: Str, layout: Str, z: Zone) -> Civil ! ParseErr
 fn check_layout(layout: Str) -> () ! LayoutErr

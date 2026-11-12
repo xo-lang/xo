@@ -1,0 +1,31 @@
+exit 0
+--- stdout
+0001-01-01T00:00:00Z: 0001-01-01T00:00:00Z unix -62135596800 ns 0 off 0 zone "UTC" time none
+  parse at byte 0 of "0001-01-01T00:00:00Z": 0001-01-01T00:00:00 is outside the range of Time (1678 to 2262)
+9999-12-31T23:59:59.999999999Z: 9999-12-31T23:59:59.999999999Z unix 253402300799 ns 999999999 off 0 zone "UTC" time none
+  parse at byte 0 of "9999-12-31T23:59:59.999999999Z": 9999-12-31T23:59:59 is outside the range of Time (1678 to 2262)
+0000-01-01T00:00:00Z: err at byte 0 of "0000-01-01T00:00:00Z": year 0 out of range 1 to 9999
+  parse at byte 0 of "0000-01-01T00:00:00Z": year 0 out of range 1 to 9999
+1677-09-21T00:12:43.145224191Z: 1677-09-21T00:12:43.145224191Z unix -9223372037 ns 145224191 off 0 zone "UTC" time none
+  parse at byte 0 of "1677-09-21T00:12:43.145224191Z": 1677-09-21T00:12:43 is outside the range of Time (1678 to 2262)
+1677-09-21T00:12:43.145224192Z: 1677-09-21T00:12:43.145224192Z unix -9223372037 ns 145224192 off 0 zone "UTC" time none
+  parse at byte 0 of "1677-09-21T00:12:43.145224192Z": 1677-09-21T00:12:43 is outside the range of Time (1678 to 2262)
+2262-04-11T23:47:16.854775807Z: 2262-04-11T23:47:16.854775807Z unix 9223372036 ns 854775807 off 0 zone "UTC" time none
+  parse at byte 0 of "2262-04-11T23:47:16.854775807Z": 2262-04-11T23:47:16 is outside the range of Time (1678 to 2262)
+2262-04-11T23:47:16.854775808Z: 2262-04-11T23:47:16.854775808Z unix 9223372036 ns 854775808 off 0 zone "UTC" time none
+  parse at byte 0 of "2262-04-11T23:47:16.854775808Z": 2262-04-11T23:47:16 is outside the range of Time (1678 to 2262)
+1600-02-29T12:00:00+05:30: 1600-02-29T12:00:00+05:30 unix -11670975000 ns 0 off 19800 zone "" time none
+  parse at byte 0 of "1600-02-29T12:00:00+05:30": 1600-02-29T12:00:00 is outside the range of Time (1678 to 2262)
+2024-06-01T12:00:00-07:00: 2024-06-01T12:00:00-07:00 unix 1717268400 ns 0 off -25200 zone "" time 2024-06-01T19:00:00Z
+  parse ok 2024-06-01T19:00:00Z
+9999-07-01T12:00:00+02:00: 9999-07-01T12:00:00+02:00 unix 253386439200 ns 0 off 7200 zone "" time none
+  parse at byte 0 of "9999-07-01T12:00:00+02:00": 9999-07-01T12:00:00 is outside the range of Time (1678 to 2262)
+0001-13-01T00:00:00Z: err at byte 5 of "0001-13-01T00:00:00Z": month 13 out of range 1 to 12
+  parse at byte 5 of "0001-13-01T00:00:00Z": month 13 out of range 1 to 12
+9999-07-01T12:00:00+02:00 unix 253386439200 ns 0 off 7200 zone "Europe/Berlin" time none
+0500-07-01T12:00:00-04:56 unix -46372979038 ns 0 off -17762 zone "America/New_York" time none
+2500-01-01T00:00:00Z unix 16725225600 ns 0 off 0 zone "UTC" time none
+Fri, 31 Dec 9999 23:59:59 UTC
+Fri, 31 Dec 9999 23:59:59 UTC
+0001-01-01 01:30 +0130 +0130 Monday
+--- stderr

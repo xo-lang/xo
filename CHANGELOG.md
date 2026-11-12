@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- std/time (decision 0614): `time.parse_civil` and `Layout.parse_civil` read times of any year a layout reads (0001 to 9999: Go's zero Time, `9999-12-31`, BigQuery TIMESTAMP) into a `Civil`; `Civil.format`, `Layout.format_civil`, `Civil.unix` and `Civil.to_time` write and compare them. `Time` keeps its 1677 to 2262 range.
 
 ## v0.49.1 (2026-11-12)
 

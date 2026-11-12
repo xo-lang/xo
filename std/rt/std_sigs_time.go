@@ -28,6 +28,9 @@ var (
 	_ func(*Time_Zone, *Task) string                                                                = (*Time_Zone).M_name
 	_ func(*Time_Zone, *Task, Time) Duration                                                        = (*Time_Zone).M_offset_at
 	_ func(*Time_Zone, *Task, Time) string                                                          = (*Time_Zone).M_abbreviation_at
+	_ func(*Time_Civil, *Task) int64                                                                = (*Time_Civil).M_unix
+	_ func(*Time_Civil, *Task) Option[Time]                                                         = (*Time_Civil).M_to_time
+	_ func(*Time_Civil, *Task, string) string                                                       = (*Time_Civil).M_format
 	_ func(*Time_CivilErr, *Task) string                                                            = (*Time_CivilErr).M_display
 	_ func(*Task, Time, Time_Zone) Time_Civil                                                       = Time_civil
 	_ func(*Task, Time_Date, Time_ClockTime, Time_Zone, Time_Ambiguity) Result[Time, Time_CivilErr] = Time_instant
@@ -48,9 +51,12 @@ var (
 	_ func(*Time_Layout, *Task) string                                                              = (*Time_Layout).M_display
 	_ func(*Time_Layout, *Task, Time, Time_Zone) string                                             = (*Time_Layout).M_format
 	_ func(*Time_Layout, *Task, string, Time_Zone) Result[Time, Time_ParseErr]                      = (*Time_Layout).M_parse
+	_ func(*Time_Layout, *Task, string, Time_Zone) Result[Time_Civil, Time_ParseErr]                = (*Time_Layout).M_parse_civil
+	_ func(*Time_Layout, *Task, Time_Civil) string                                                  = (*Time_Layout).M_format_civil
 	_ func(*Time_ParseErr, *Task) string                                                            = (*Time_ParseErr).M_display
 	_ func(*Time_LayoutErr, *Task) string                                                           = (*Time_LayoutErr).M_display
 	_ func(*Task, Time, Time_Zone, string) string                                                   = Time_format
 	_ func(*Task, string, string, Time_Zone) Result[Time, Time_ParseErr]                            = Time_parse
+	_ func(*Task, string, string, Time_Zone) Result[Time_Civil, Time_ParseErr]                      = Time_parse_civil
 	_ func(*Task, string) Result[Unit, Time_LayoutErr]                                              = Time_check_layout
 )
