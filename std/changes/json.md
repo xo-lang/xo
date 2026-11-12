@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-12: security: the Go backend builds a decode path only for an error
+
+- Kind: security
+- Commit: this commit
+- Found by: the decision 0616 security review of std/json (second reviewer, finding F6)
+- Go reference: encoding/json's errorContext (a FieldStack appended on the way down, joined once at the error)
+- Test: std/native/json_test.xo's error path cases, run on the Go backend against the native output; TestGoldenGoParity; TestStdCorpora go
+- Shipped in: not yet released
+
+On the Go backend every member's decode path was its parent's text with the key added, as the decoders went down (`json.decode` into derived types, `json.parse_value`, `from_value`), so a deep document with long keys cost the square of its path even when it decoded: 2,500 levels of 1 KB keys took 637 ms to decode and 1.8 s with an error at the bottom. The path is now a chain of segments turned into text only for an error (std/rt JsonPath): 20 ms and 30 ms. Error paths are unchanged.
+
 ## 2026-11-12: fix: skip and value on a token_reader say why they cannot read
 
 - Kind: fix
@@ -20,7 +31,7 @@ A `json.token_reader()`'s `write` and `finish` return every token, so `skip` and
 - Test: std/native/json_test.xo "error paths keep their segments in order through deep and non-ASCII documents" (arm64, LLVM; the same paths as the old decoder and the Go backend)
 - Shipped in: not yet released
 
-The native decoders put each level's segment in front of the error's path as the error returned, copying the whole path at every level: an error under 2,500 levels of 1 KB keys (a 2.5 MB document) took 432 ms, against 1 ms to decode the document. The path is now kept with its runes reversed while it returns, each level adding its segment at the end, and turned back once (std/native/llrt/jsontext.xo path_push, path_final): 15 ms. The error paths are unchanged. The Go backend still builds each member's path as it decodes (next).
+The native decoders put each level's segment in front of the error's path as the error returned, copying the whole path at every level: an error under 2,500 levels of 1 KB keys (a 2.5 MB document) took 432 ms, against 1 ms to decode the document. The path is now kept with its runes reversed while it returns, each level adding its segment at the end, and turned back once (std/native/llrt/jsontext.xo path_push, path_final): 15 ms. The error paths are unchanged. The Go backend is the next entry.
 
 ## 2026-11-12: security: the TokenReader is linear in a long token sent in small pieces
 

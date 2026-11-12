@@ -229,17 +229,17 @@ func (v Trace_Span) XoJsonEnc(tk *Task, w *JsonW) {
 	w.ObjEnd()
 }
 
-func (v *Trace_Span) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Trace_Span) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	return JsonGoTag(tk, v.xoJsonDec0(tk, x, path), "Span", path)
 }
 
-func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	obj, err := JsonObject(x, path)
 	if err != nil {
 		return err
 	}
 	if e, ok := obj["id"]; ok {
-		if err := JsonDec(tk, &v.F_id, e, path+".id"); err != nil {
+		if err := JsonDec(tk, &v.F_id, e, path.Key(".id")); err != nil {
 			return err
 		}
 	} else {
@@ -248,7 +248,7 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["name"]; ok {
-		if err := JsonDec(tk, &v.F_name, e, path+".name"); err != nil {
+		if err := JsonDec(tk, &v.F_name, e, path.Key(".name")); err != nil {
 			return err
 		}
 	} else {
@@ -257,7 +257,7 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["start_ms"]; ok {
-		if err := JsonDec(tk, &v.F_start_ms, e, path+".start_ms"); err != nil {
+		if err := JsonDec(tk, &v.F_start_ms, e, path.Key(".start_ms")); err != nil {
 			return err
 		}
 	} else {
@@ -266,7 +266,7 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["micros"]; ok {
-		if err := JsonDec(tk, &v.F_micros, e, path+".micros"); err != nil {
+		if err := JsonDec(tk, &v.F_micros, e, path.Key(".micros")); err != nil {
 			return err
 		}
 	} else {
@@ -275,7 +275,7 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["status"]; ok {
-		if err := JsonDec(tk, &v.F_status, e, path+".status"); err != nil {
+		if err := JsonDec(tk, &v.F_status, e, path.Key(".status")); err != nil {
 			return err
 		}
 	} else {
@@ -284,7 +284,7 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["trace_id"]; ok {
-		if err := JsonDec(tk, &v.F_trace_id, e, path+".trace_id"); err != nil {
+		if err := JsonDec(tk, &v.F_trace_id, e, path.Key(".trace_id")); err != nil {
 			return err
 		}
 	} else {
@@ -293,7 +293,7 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["span_id"]; ok {
-		if err := JsonDec(tk, &v.F_span_id, e, path+".span_id"); err != nil {
+		if err := JsonDec(tk, &v.F_span_id, e, path.Key(".span_id")); err != nil {
 			return err
 		}
 	} else {
@@ -302,7 +302,7 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["parent_id"]; ok {
-		if err := JsonDec(tk, &v.F_parent_id, e, path+".parent_id"); err != nil {
+		if err := JsonDec(tk, &v.F_parent_id, e, path.Key(".parent_id")); err != nil {
 			return err
 		}
 	} else {
@@ -311,14 +311,14 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["kind"]; ok {
-		if err := JsonDec(tk, &v.F_kind, e, path+".kind"); err != nil {
+		if err := JsonDec(tk, &v.F_kind, e, path.Key(".kind")); err != nil {
 			return err
 		}
 	} else {
 		v.F_kind = Option[Trace_SpanKind]{}
 	}
 	if e, ok := obj["attributes"]; ok {
-		if err := JsonDec(tk, &v.F_attributes, e, path+".attributes"); err != nil {
+		if err := JsonDec(tk, &v.F_attributes, e, path.Key(".attributes")); err != nil {
 			return err
 		}
 	} else {
@@ -327,7 +327,7 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["events"]; ok {
-		if err := JsonDec(tk, &v.F_events, e, path+".events"); err != nil {
+		if err := JsonDec(tk, &v.F_events, e, path.Key(".events")); err != nil {
 			return err
 		}
 	} else {
@@ -336,14 +336,14 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["status_code"]; ok {
-		if err := JsonDec(tk, &v.F_status_code, e, path+".status_code"); err != nil {
+		if err := JsonDec(tk, &v.F_status_code, e, path.Key(".status_code")); err != nil {
 			return err
 		}
 	} else {
 		v.F_status_code = Option[Trace_StatusCode]{}
 	}
 	if e, ok := obj["status_message"]; ok {
-		if err := JsonDec(tk, &v.F_status_message, e, path+".status_message"); err != nil {
+		if err := JsonDec(tk, &v.F_status_message, e, path.Key(".status_message")); err != nil {
 			return err
 		}
 	} else {
@@ -352,7 +352,7 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["start_ns"]; ok {
-		if err := JsonDec(tk, &v.F_start_ns, e, path+".start_ns"); err != nil {
+		if err := JsonDec(tk, &v.F_start_ns, e, path.Key(".start_ns")); err != nil {
 			return err
 		}
 	} else {
@@ -361,7 +361,7 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["end_ns"]; ok {
-		if err := JsonDec(tk, &v.F_end_ns, e, path+".end_ns"); err != nil {
+		if err := JsonDec(tk, &v.F_end_ns, e, path.Key(".end_ns")); err != nil {
 			return err
 		}
 	} else {
@@ -370,7 +370,7 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["scope"]; ok {
-		if err := JsonDec(tk, &v.F_scope, e, path+".scope"); err != nil {
+		if err := JsonDec(tk, &v.F_scope, e, path.Key(".scope")); err != nil {
 			return err
 		}
 	} else {
@@ -379,7 +379,7 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["scope_version"]; ok {
-		if err := JsonDec(tk, &v.F_scope_version, e, path+".scope_version"); err != nil {
+		if err := JsonDec(tk, &v.F_scope_version, e, path.Key(".scope_version")); err != nil {
 			return err
 		}
 	} else {
@@ -388,7 +388,7 @@ func (v *Trace_Span) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["schema_url"]; ok {
-		if err := JsonDec(tk, &v.F_schema_url, e, path+".schema_url"); err != nil {
+		if err := JsonDec(tk, &v.F_schema_url, e, path.Key(".schema_url")); err != nil {
 			return err
 		}
 	} else {
@@ -622,7 +622,7 @@ func (v Trace_SpanKind) XoJsonEnc(tk *Task, w *JsonW) {
 	}
 }
 
-func (v *Trace_SpanKind) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Trace_SpanKind) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	name, payload, hasPayload, err := JsonVariant(x, path)
 	if err != nil {
 		return err
@@ -697,7 +697,7 @@ func (v Trace_StatusCode) XoJsonEnc(tk *Task, w *JsonW) {
 	}
 }
 
-func (v *Trace_StatusCode) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Trace_StatusCode) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	name, payload, hasPayload, err := JsonVariant(x, path)
 	if err != nil {
 		return err
@@ -851,7 +851,7 @@ func (v Trace_AttrValue) XoJsonEnc(tk *Task, w *JsonW) {
 	}
 }
 
-func (v *Trace_AttrValue) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Trace_AttrValue) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	name, payload, hasPayload, err := JsonVariant(x, path)
 	if err != nil {
 		return err
@@ -863,13 +863,13 @@ func (v *Trace_AttrValue) XoJsonDec(tk *Task, x any, path string) *Json_DecodeEr
 			return JsonErr(path, "variant `Str` needs fields")
 		}
 		var p Trace_AttrValue_Str
-		obj, err := JsonObject(payload, path+".Str")
+		obj, err := JsonObject(payload, path.Key(".Str"))
 		if err != nil {
 			return err
 		}
-		if err := func(v *Trace_AttrValue_Str, path string) *Json_DecodeErr {
+		if err := func(v *Trace_AttrValue_Str, path JsonPath) *Json_DecodeErr {
 			if e, ok := obj["v"]; ok {
-				if err := JsonDec(tk, &v.F_v, e, path+".v"); err != nil {
+				if err := JsonDec(tk, &v.F_v, e, path.Key(".v")); err != nil {
 					return err
 				}
 			} else {
@@ -878,7 +878,7 @@ func (v *Trace_AttrValue) XoJsonDec(tk *Task, x any, path string) *Json_DecodeEr
 				}
 			}
 			return nil
-		}(&p, path+".Str"); err != nil {
+		}(&p, path.Key(".Str")); err != nil {
 			return err
 		}
 		*v = Trace_AttrValue{Tag: 1, P: p}
@@ -888,13 +888,13 @@ func (v *Trace_AttrValue) XoJsonDec(tk *Task, x any, path string) *Json_DecodeEr
 			return JsonErr(path, "variant `Int` needs fields")
 		}
 		var p Trace_AttrValue_Int
-		obj, err := JsonObject(payload, path+".Int")
+		obj, err := JsonObject(payload, path.Key(".Int"))
 		if err != nil {
 			return err
 		}
-		if err := func(v *Trace_AttrValue_Int, path string) *Json_DecodeErr {
+		if err := func(v *Trace_AttrValue_Int, path JsonPath) *Json_DecodeErr {
 			if e, ok := obj["v"]; ok {
-				if err := JsonDec(tk, &v.F_v, e, path+".v"); err != nil {
+				if err := JsonDec(tk, &v.F_v, e, path.Key(".v")); err != nil {
 					return err
 				}
 			} else {
@@ -903,7 +903,7 @@ func (v *Trace_AttrValue) XoJsonDec(tk *Task, x any, path string) *Json_DecodeEr
 				}
 			}
 			return nil
-		}(&p, path+".Int"); err != nil {
+		}(&p, path.Key(".Int")); err != nil {
 			return err
 		}
 		*v = Trace_AttrValue{Tag: 2, P: p}
@@ -913,13 +913,13 @@ func (v *Trace_AttrValue) XoJsonDec(tk *Task, x any, path string) *Json_DecodeEr
 			return JsonErr(path, "variant `Float` needs fields")
 		}
 		var p Trace_AttrValue_Float
-		obj, err := JsonObject(payload, path+".Float")
+		obj, err := JsonObject(payload, path.Key(".Float"))
 		if err != nil {
 			return err
 		}
-		if err := func(v *Trace_AttrValue_Float, path string) *Json_DecodeErr {
+		if err := func(v *Trace_AttrValue_Float, path JsonPath) *Json_DecodeErr {
 			if e, ok := obj["v"]; ok {
-				if err := JsonDec(tk, &v.F_v, e, path+".v"); err != nil {
+				if err := JsonDec(tk, &v.F_v, e, path.Key(".v")); err != nil {
 					return err
 				}
 			} else {
@@ -928,7 +928,7 @@ func (v *Trace_AttrValue) XoJsonDec(tk *Task, x any, path string) *Json_DecodeEr
 				}
 			}
 			return nil
-		}(&p, path+".Float"); err != nil {
+		}(&p, path.Key(".Float")); err != nil {
 			return err
 		}
 		*v = Trace_AttrValue{Tag: 3, P: p}
@@ -938,13 +938,13 @@ func (v *Trace_AttrValue) XoJsonDec(tk *Task, x any, path string) *Json_DecodeEr
 			return JsonErr(path, "variant `Bool` needs fields")
 		}
 		var p Trace_AttrValue_Bool
-		obj, err := JsonObject(payload, path+".Bool")
+		obj, err := JsonObject(payload, path.Key(".Bool"))
 		if err != nil {
 			return err
 		}
-		if err := func(v *Trace_AttrValue_Bool, path string) *Json_DecodeErr {
+		if err := func(v *Trace_AttrValue_Bool, path JsonPath) *Json_DecodeErr {
 			if e, ok := obj["v"]; ok {
-				if err := JsonDec(tk, &v.F_v, e, path+".v"); err != nil {
+				if err := JsonDec(tk, &v.F_v, e, path.Key(".v")); err != nil {
 					return err
 				}
 			} else {
@@ -953,7 +953,7 @@ func (v *Trace_AttrValue) XoJsonDec(tk *Task, x any, path string) *Json_DecodeEr
 				}
 			}
 			return nil
-		}(&p, path+".Bool"); err != nil {
+		}(&p, path.Key(".Bool")); err != nil {
 			return err
 		}
 		*v = Trace_AttrValue{Tag: 4, P: p}
@@ -1008,17 +1008,17 @@ func (v Trace_Attr) XoJsonEnc(tk *Task, w *JsonW) {
 	w.Raw("}")
 }
 
-func (v *Trace_Attr) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Trace_Attr) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	return JsonGoTag(tk, v.xoJsonDec0(tk, x, path), "Attr", path)
 }
 
-func (v *Trace_Attr) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Trace_Attr) xoJsonDec0(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	obj, err := JsonObject(x, path)
 	if err != nil {
 		return err
 	}
 	if e, ok := obj["key"]; ok {
-		if err := JsonDec(tk, &v.F_key, e, path+".key"); err != nil {
+		if err := JsonDec(tk, &v.F_key, e, path.Key(".key")); err != nil {
 			return err
 		}
 	} else {
@@ -1027,7 +1027,7 @@ func (v *Trace_Attr) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["value"]; ok {
-		if err := JsonDec(tk, &v.F_value, e, path+".value"); err != nil {
+		if err := JsonDec(tk, &v.F_value, e, path.Key(".value")); err != nil {
 			return err
 		}
 	} else {
@@ -1138,17 +1138,17 @@ func (v Trace_Event) XoJsonEnc(tk *Task, w *JsonW) {
 	w.ObjEnd()
 }
 
-func (v *Trace_Event) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Trace_Event) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	return JsonGoTag(tk, v.xoJsonDec0(tk, x, path), "Event", path)
 }
 
-func (v *Trace_Event) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Trace_Event) xoJsonDec0(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	obj, err := JsonObject(x, path)
 	if err != nil {
 		return err
 	}
 	if e, ok := obj["name"]; ok {
-		if err := JsonDec(tk, &v.F_name, e, path+".name"); err != nil {
+		if err := JsonDec(tk, &v.F_name, e, path.Key(".name")); err != nil {
 			return err
 		}
 	} else {
@@ -1157,7 +1157,7 @@ func (v *Trace_Event) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["time_ns"]; ok {
-		if err := JsonDec(tk, &v.F_time_ns, e, path+".time_ns"); err != nil {
+		if err := JsonDec(tk, &v.F_time_ns, e, path.Key(".time_ns")); err != nil {
 			return err
 		}
 	} else {
@@ -1166,7 +1166,7 @@ func (v *Trace_Event) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["attributes"]; ok {
-		if err := JsonDec(tk, &v.F_attributes, e, path+".attributes"); err != nil {
+		if err := JsonDec(tk, &v.F_attributes, e, path.Key(".attributes")); err != nil {
 			return err
 		}
 	} else {

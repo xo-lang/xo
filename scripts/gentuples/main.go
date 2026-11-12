@@ -81,9 +81,9 @@ import "strings"
 			fmt.Fprintf(&b, "\tw.Elem()\n\tJsonEncP(tk, w, &t.F%d)\n", i)
 		}
 		b.WriteString("\tw.ArrEnd()\n}\n")
-		fmt.Fprintf(&b, "\n// XoJsonDec decodes an array of %d elements.\nfunc (t *%s) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {\n\treturn jsonTupleDec(x, path,\n", n, ty)
+		fmt.Fprintf(&b, "\n// XoJsonDec decodes an array of %d elements.\nfunc (t *%s) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {\n\treturn jsonTupleDec(x, path,\n", n, ty)
 		for i := range ns {
-			fmt.Fprintf(&b, "\t\tfunc(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F%d, e, p) },\n", i)
+			fmt.Fprintf(&b, "\t\tfunc(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F%d, e, p) },\n", i)
 		}
 		b.WriteString("\t)\n}\n")
 	}

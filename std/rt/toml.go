@@ -901,7 +901,7 @@ func Toml_decode[T any](tk *Task, text string) Result[T, Toml_DecodeErr] {
 		return Err[T](Toml_DecodeErr{Tag: 1, P: Toml_DecodeErr_Syntax{F_err: *err}})
 	}
 	var v T
-	if e := JsonDec(tk, &v, tree, "$"); e != nil {
+	if e := JsonDec(tk, &v, tree, JsonRoot); e != nil {
 		return Err[T](Toml_DecodeErr{Tag: 2, P: Toml_DecodeErr_Value{F_err: *e}})
 	}
 	return Ok[T, Toml_DecodeErr](v)

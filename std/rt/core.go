@@ -294,7 +294,7 @@ func (b Box[T]) XoDebug(sb *strings.Builder) { debugTo(sb, b.Get()) }
 func (b Box[T]) XoJsonEnc(tk *Task, w *JsonW) { JsonEnc(tk, w, b.Get()) }
 
 // XoJsonDec decodes into the box.
-func (b *Box[T]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (b *Box[T]) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	var v T
 	if err := JsonDec(tk, &v, x, path); err != nil {
 		return err

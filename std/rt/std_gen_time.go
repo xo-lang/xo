@@ -137,17 +137,17 @@ func (v Time_Date) XoJsonEnc(tk *Task, w *JsonW) {
 	w.Raw("}")
 }
 
-func (v *Time_Date) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Time_Date) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	return JsonGoTag(tk, v.xoJsonDec0(tk, x, path), "Date", path)
 }
 
-func (v *Time_Date) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Time_Date) xoJsonDec0(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	obj, err := JsonObject(x, path)
 	if err != nil {
 		return err
 	}
 	if e, ok := obj["year"]; ok {
-		if err := JsonDec(tk, &v.F_year, e, path+".year"); err != nil {
+		if err := JsonDec(tk, &v.F_year, e, path.Key(".year")); err != nil {
 			return err
 		}
 	} else {
@@ -156,7 +156,7 @@ func (v *Time_Date) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["month"]; ok {
-		if err := JsonDec(tk, &v.F_month, e, path+".month"); err != nil {
+		if err := JsonDec(tk, &v.F_month, e, path.Key(".month")); err != nil {
 			return err
 		}
 	} else {
@@ -165,7 +165,7 @@ func (v *Time_Date) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["day"]; ok {
-		if err := JsonDec(tk, &v.F_day, e, path+".day"); err != nil {
+		if err := JsonDec(tk, &v.F_day, e, path.Key(".day")); err != nil {
 			return err
 		}
 	} else {
@@ -303,17 +303,17 @@ func (v Time_ClockTime) XoJsonEnc(tk *Task, w *JsonW) {
 	w.Raw("}")
 }
 
-func (v *Time_ClockTime) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Time_ClockTime) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	return JsonGoTag(tk, v.xoJsonDec0(tk, x, path), "ClockTime", path)
 }
 
-func (v *Time_ClockTime) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Time_ClockTime) xoJsonDec0(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	obj, err := JsonObject(x, path)
 	if err != nil {
 		return err
 	}
 	if e, ok := obj["hour"]; ok {
-		if err := JsonDec(tk, &v.F_hour, e, path+".hour"); err != nil {
+		if err := JsonDec(tk, &v.F_hour, e, path.Key(".hour")); err != nil {
 			return err
 		}
 	} else {
@@ -322,7 +322,7 @@ func (v *Time_ClockTime) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeEr
 		}
 	}
 	if e, ok := obj["minute"]; ok {
-		if err := JsonDec(tk, &v.F_minute, e, path+".minute"); err != nil {
+		if err := JsonDec(tk, &v.F_minute, e, path.Key(".minute")); err != nil {
 			return err
 		}
 	} else {
@@ -331,7 +331,7 @@ func (v *Time_ClockTime) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeEr
 		}
 	}
 	if e, ok := obj["second"]; ok {
-		if err := JsonDec(tk, &v.F_second, e, path+".second"); err != nil {
+		if err := JsonDec(tk, &v.F_second, e, path.Key(".second")); err != nil {
 			return err
 		}
 	} else {
@@ -340,7 +340,7 @@ func (v *Time_ClockTime) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeEr
 		}
 	}
 	if e, ok := obj["nanos"]; ok {
-		if err := JsonDec(tk, &v.F_nanos, e, path+".nanos"); err != nil {
+		if err := JsonDec(tk, &v.F_nanos, e, path.Key(".nanos")); err != nil {
 			return err
 		}
 	} else {
@@ -468,17 +468,17 @@ func (v Time_Civil) XoJsonEnc(tk *Task, w *JsonW) {
 	w.Raw("}")
 }
 
-func (v *Time_Civil) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Time_Civil) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	return JsonGoTag(tk, v.xoJsonDec0(tk, x, path), "Civil", path)
 }
 
-func (v *Time_Civil) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Time_Civil) xoJsonDec0(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	obj, err := JsonObject(x, path)
 	if err != nil {
 		return err
 	}
 	if e, ok := obj["date"]; ok {
-		if err := JsonDec(tk, &v.F_date, e, path+".date"); err != nil {
+		if err := JsonDec(tk, &v.F_date, e, path.Key(".date")); err != nil {
 			return err
 		}
 	} else {
@@ -487,7 +487,7 @@ func (v *Time_Civil) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["time"]; ok {
-		if err := JsonDec(tk, &v.F_time, e, path+".time"); err != nil {
+		if err := JsonDec(tk, &v.F_time, e, path.Key(".time")); err != nil {
 			return err
 		}
 	} else {
@@ -496,7 +496,7 @@ func (v *Time_Civil) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["offset"]; ok {
-		if err := JsonDec(tk, &v.F_offset, e, path+".offset"); err != nil {
+		if err := JsonDec(tk, &v.F_offset, e, path.Key(".offset")); err != nil {
 			return err
 		}
 	} else {
@@ -505,7 +505,7 @@ func (v *Time_Civil) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 		}
 	}
 	if e, ok := obj["zone"]; ok {
-		if err := JsonDec(tk, &v.F_zone, e, path+".zone"); err != nil {
+		if err := JsonDec(tk, &v.F_zone, e, path.Key(".zone")); err != nil {
 			return err
 		}
 	} else {
@@ -646,7 +646,7 @@ func (v Time_Weekday) XoJsonEnc(tk *Task, w *JsonW) {
 	}
 }
 
-func (v *Time_Weekday) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Time_Weekday) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	name, payload, hasPayload, err := JsonVariant(x, path)
 	if err != nil {
 		return err

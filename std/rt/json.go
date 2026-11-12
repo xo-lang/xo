@@ -31,7 +31,7 @@ type jsonEncoder interface {
 }
 
 type jsonDecoder interface {
-	XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr
+	XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr
 }
 
 func (w *JsonW) sep() {
@@ -156,8 +156,62 @@ func appendJSONString(dst []byte, s string) []byte {
 func (w *JsonW) Raw(s string) { w.b = append(w.b, s...) }
 
 // JsonErr makes a decode error at a path (std.md 5).
-func JsonErr(path, msg string) *Json_DecodeErr {
+func JsonErr(path JsonPath, msg string) *Json_DecodeErr {
+	return &Json_DecodeErr{F_path: path.String(), F_msg: msg}
+}
+
+// jsonErrAt is JsonErr at a path already as text.
+func jsonErrAt(path, msg string) *Json_DecodeErr {
 	return &Json_DecodeErr{F_path: path, F_msg: msg}
+}
+
+// JsonPath is where a decoder is in the value: built a segment at a time
+// as the decoders go down and turned into text only for an error, so a
+// member costs one small node (the 0616 json review's F6: every member's
+// path was its parent's text copied with the key added, the square of a
+// deep document's path even when it decoded).
+type JsonPath = *jsonPathNode
+
+type jsonPathNode struct {
+	up  *jsonPathNode
+	seg string // ".key" (it may be empty)
+	idx int    // "[idx]" when 0 or more; -1 for a key
+	n   int    // the text's length in bytes
+}
+
+// JsonRoot is the path of the whole value, "$".
+var JsonRoot JsonPath = &jsonPathNode{seg: "$", idx: -1, n: 1}
+
+// Key is p with seg (".name") after it.
+func (p *jsonPathNode) Key(seg string) JsonPath {
+	return &jsonPathNode{up: p, seg: seg, idx: -1, n: p.n + len(seg)}
+}
+
+// Idx is p with "[i]" after it.
+func (p *jsonPathNode) Idx(i int) JsonPath {
+	return &jsonPathNode{up: p, idx: i, n: p.n + 2 + len(strconv.Itoa(i))}
+}
+
+// Len is the length of p's text, without building it.
+func (p *jsonPathNode) Len() int { return p.n }
+
+// String is p's text: "$.a[2].b".
+func (p *jsonPathNode) String() string {
+	b := make([]byte, p.n)
+	at := p.n
+	for q := p; q != nil; q = q.up {
+		if q.idx < 0 {
+			at -= len(q.seg)
+			copy(b[at:], q.seg)
+			continue
+		}
+		d := strconv.Itoa(q.idx)
+		at -= len(d) + 2
+		b[at] = '['
+		copy(b[at+1:], d)
+		b[at+1+len(d)] = ']'
+	}
+	return string(b)
 }
 
 // M_display renders a decode error as "at $.user.email: expected string".
@@ -297,7 +351,7 @@ func jsonFloat32(f float32) string {
 }
 
 // JsonDec decodes the parsed JSON value x into dst.
-func JsonDec[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
+func JsonDec[T any](tk *Task, dst *T, x any, path JsonPath) *Json_DecodeErr {
 	e := jsonDec0(tk, dst, x, path)
 	if e != nil && tk != nil && tk.jsonGo {
 		return jsonGoLeaf(dst, x, path, e)
@@ -309,8 +363,8 @@ func JsonDec[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
 // does (decision 0553), as the marker the native decoder builds
 // ("@@go|STRUCT|KIND|LITERAL|TYPE", jsontext.go_tag, go_final): only an
 // error at path itself, not one a child reported.
-func jsonGoLeaf(dst any, x any, path string, e *Json_DecodeErr) *Json_DecodeErr {
-	if e.F_path != path || !(strings.HasPrefix(e.F_msg, "expected ") || strings.HasPrefix(e.F_msg, "cannot unmarshal number ")) {
+func jsonGoLeaf(dst any, x any, path JsonPath, e *Json_DecodeErr) *Json_DecodeErr {
+	if len(e.F_path) != path.Len() || !(strings.HasPrefix(e.F_msg, "expected ") || strings.HasPrefix(e.F_msg, "cannot unmarshal number ")) {
 		return e
 	}
 	var kind, lit string
@@ -368,11 +422,11 @@ func jsonGoTypeName(t reflect.Type) string {
 // JsonGoTag names the struct whose field e is about under json.decode_go:
 // an error of a field (not the struct itself) takes the innermost struct's
 // name, as encoding/json words it.
-func JsonGoTag(tk *Task, e *Json_DecodeErr, sname string, path string) *Json_DecodeErr {
-	if e == nil || tk == nil || !tk.jsonGo || e.F_path == path || !strings.HasPrefix(e.F_msg, "@@go||") {
+func JsonGoTag(tk *Task, e *Json_DecodeErr, sname string, path JsonPath) *Json_DecodeErr {
+	if e == nil || tk == nil || !tk.jsonGo || len(e.F_path) == path.Len() || !strings.HasPrefix(e.F_msg, "@@go||") {
 		return e
 	}
-	return JsonErr(e.F_path, "@@go|"+sname+e.F_msg[5:])
+	return jsonErrAt(e.F_path, "@@go|"+sname+e.F_msg[5:])
 }
 
 // jsonGoFinal turns the marker into encoding/json's text (native: go_final).
@@ -390,7 +444,7 @@ func jsonGoFinal(e *Json_DecodeErr) *Json_DecodeErr {
 	}
 	head := "json: cannot unmarshal " + parts[1] + lit
 	if parts[0] == "" {
-		return JsonErr(e.F_path, head+" into Go value of type "+parts[3])
+		return jsonErrAt(e.F_path, head+" into Go value of type "+parts[3])
 	}
 	var sb strings.Builder
 	in := false
@@ -404,10 +458,10 @@ func jsonGoFinal(e *Json_DecodeErr) *Json_DecodeErr {
 			sb.WriteRune(c)
 		}
 	}
-	return JsonErr(e.F_path, head+" into Go struct field "+parts[0]+"."+strings.TrimPrefix(sb.String(), ".")+" of type "+parts[3])
+	return jsonErrAt(e.F_path, head+" into Go struct field "+parts[0]+"."+strings.TrimPrefix(sb.String(), ".")+" of type "+parts[3])
 }
 
-func jsonDec0[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
+func jsonDec0[T any](tk *Task, dst *T, x any, path JsonPath) *Json_DecodeErr {
 	if dd, ok := x.(*jsonDup); ok {
 		// the values a duplicate key replaced decode first, their results
 		// dropped, as Go's decoder reads every member
@@ -462,7 +516,7 @@ func jsonDec0[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
 // dst decoded from that. A text that is not JSON, or that dst does not
 // take, is Go's `invalid use of ,string struct tag` error, except a
 // number's own error (an overflow). tn is the type's name in the message.
-func JsonDecQ[T any](tk *Task, dst *T, x any, path string, tn string) *Json_DecodeErr {
+func JsonDecQ[T any](tk *Task, dst *T, x any, path JsonPath, tn string) *Json_DecodeErr {
 	if dd, ok := x.(*jsonDup); ok {
 		// the values a duplicate key replaced decode first (JsonDec), as
 		// quoted values
@@ -499,7 +553,7 @@ func JsonDecQ[T any](tk *Task, dst *T, x any, path string, tn string) *Json_Deco
 }
 
 // jsonDecAny is JsonDec's body for the other kinds, not generic.
-func jsonDecAny(tk *Task, dst any, x any, path string) *Json_DecodeErr {
+func jsonDecAny(tk *Task, dst any, x any, path JsonPath) *Json_DecodeErr {
 	switch d := dst.(type) {
 	case *int64:
 		n, err := jsonInt(x, path, 64, true)
@@ -632,7 +686,7 @@ func jsonDecAny(tk *Task, dst any, x any, path string) *Json_DecodeErr {
 	return nil
 }
 
-func jsonInt(x any, path string, bits int, signed bool) (int64, *Json_DecodeErr) {
+func jsonInt(x any, path JsonPath, bits int, signed bool) (int64, *Json_DecodeErr) {
 	num, ok := x.(json.Number)
 	if !ok {
 		return 0, JsonErr(path, "expected integer")
@@ -644,7 +698,7 @@ func jsonInt(x any, path string, bits int, signed bool) (int64, *Json_DecodeErr)
 	return n, nil
 }
 
-func jsonUint(x any, path string, bits int) (uint64, *Json_DecodeErr) {
+func jsonUint(x any, path JsonPath, bits int) (uint64, *Json_DecodeErr) {
 	num, ok := x.(json.Number)
 	if !ok {
 		return 0, JsonErr(path, "expected integer")
@@ -747,23 +801,23 @@ func jsonEOFErr(data []byte) *Json_DecodeErr {
 	}
 	d := bytes.TrimRight(data, " \t\r\n")
 	if inStr {
-		return JsonErr("$", "invalid JSON: unexpected EOF")
+		return JsonErr(JsonRoot, "invalid JSON: unexpected EOF")
 	}
 	if len(d) == 0 {
-		return JsonErr("$", "invalid JSON: EOF")
+		return JsonErr(JsonRoot, "invalid JSON: EOF")
 	}
 	switch d[len(d)-1] {
 	case '{', '[', ',', ':', '}', ']', '"':
-		return JsonErr("$", "invalid JSON: EOF")
+		return JsonErr(JsonRoot, "invalid JSON: EOF")
 	}
 	i := len(d)
 	for i > 0 && (d[i-1] == '+' || d[i-1] == '-' || d[i-1] == '.' || d[i-1] >= '0' && d[i-1] <= '9' || d[i-1] >= 'a' && d[i-1] <= 'z' || d[i-1] >= 'A' && d[i-1] <= 'Z') {
 		i--
 	}
 	if json.Valid(d[i:]) {
-		return JsonErr("$", "invalid JSON: EOF")
+		return JsonErr(JsonRoot, "invalid JSON: EOF")
 	}
-	return JsonErr("$", "invalid JSON: unexpected EOF")
+	return JsonErr(JsonRoot, "invalid JSON: unexpected EOF")
 }
 
 // jsonSyntaxErr is jsonParseSlow's error for text the scanner of
@@ -793,7 +847,7 @@ func jsonErrOf(se *jsSyntaxError, data []byte) *Json_DecodeErr {
 	if i := int(se.Offset) - 1; strings.HasPrefix(msg, "invalid character ") && (i < 0 || i >= len(data) || !strings.HasPrefix(msg[len("invalid character "):], jsonQuoteChar(data[i]))) {
 		return jsonEOFErr(data)
 	}
-	return JsonErr("$", "invalid JSON: "+msg)
+	return JsonErr(JsonRoot, "invalid JSON: "+msg)
 }
 
 // jsonParseSlow is jsonParse by the token decoder: any text, and the
@@ -803,12 +857,12 @@ func jsonParseSlow(data []byte) (any, *Json_DecodeErr) {
 	dec.UseNumber()
 	x, err := jsonValue(dec)
 	if err != nil {
-		return nil, JsonErr("$", "invalid JSON: "+strings.TrimPrefix(err.Error(), "json: "))
+		return nil, JsonErr(JsonRoot, "invalid JSON: "+strings.TrimPrefix(err.Error(), "json: "))
 	}
 	// one value and white space (RFC 8259; Unmarshal's checkValid)
 	for i := int(dec.InputOffset()); i < len(data); i++ {
 		if c := data[i]; c != ' ' && c != '\t' && c != '\r' && c != '\n' {
-			return nil, JsonErr("$", "invalid JSON: invalid character "+jsonQuoteChar(c)+" after top-level value")
+			return nil, JsonErr(JsonRoot, "invalid JSON: invalid character "+jsonQuoteChar(c)+" after top-level value")
 		}
 	}
 	return x, nil
@@ -912,7 +966,7 @@ func Json_decode_go[T any](tk *Task, data Bytes) Result[T, Json_DecodeErr] {
 		return Err[T](*err)
 	}
 	var v T
-	if e := JsonDec(tk, &v, x, "$"); e != nil {
+	if e := JsonDec(tk, &v, x, JsonRoot); e != nil {
 		return Err[T](*jsonGoFinal(e))
 	}
 	return Ok[T, Json_DecodeErr](v)
@@ -941,7 +995,7 @@ func Json_decode[T any](tk *Task, data Bytes) Result[T, Json_DecodeErr] {
 		return Err[T](*err)
 	}
 	var v T
-	if e := JsonDec(tk, &v, x, "$"); e != nil {
+	if e := JsonDec(tk, &v, x, JsonRoot); e != nil {
 		return Err[T](*e)
 	}
 	return Ok[T, Json_DecodeErr](v)
@@ -966,14 +1020,14 @@ func (l List[T]) XoJsonEnc(tk *Task, w *JsonW) {
 }
 
 // XoJsonDec decodes an array.
-func (l *List[T]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (l *List[T]) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	arr, ok := x.([]any)
 	if !ok {
 		return JsonErr(path, "expected array")
 	}
 	out := make([]T, len(arr))
 	for i, e := range arr {
-		if err := JsonDec(tk, &out[i], e, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+		if err := JsonDec(tk, &out[i], e, path.Idx(i)); err != nil {
 			return err
 		}
 	}
@@ -985,7 +1039,7 @@ func (l *List[T]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
 func (s Set[T]) XoJsonEnc(tk *Task, w *JsonW) { Set_to_list(tk, s).XoJsonEnc(tk, w) }
 
 // XoJsonDec decodes an array into a set.
-func (s *Set[T]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (s *Set[T]) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	var l List[T]
 	if err := l.XoJsonDec(tk, x, path); err != nil {
 		return err
@@ -1020,7 +1074,7 @@ func (m Map[K, V]) XoJsonEnc(tk *Task, w *JsonW) {
 
 // XoJsonDec decodes an object into a Map[Str, V]; keys keep the order of
 // the text.
-func (m *Map[K, V]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (m *Map[K, V]) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	obj, ok := x.(*jsonObj)
 	if !ok {
 		return JsonErr(path, "expected object")
@@ -1029,7 +1083,7 @@ func (m *Map[K, V]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
 	// dropped, as Go's decoder reads every member
 	for _, r := range obj.reps {
 		var v V
-		if err := JsonDec(tk, &v, r.v, path+"."+r.k); err != nil {
+		if err := JsonDec(tk, &v, r.v, path.Key("."+r.k)); err != nil {
 			return err
 		}
 	}
@@ -1040,7 +1094,7 @@ func (m *Map[K, V]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
 			return JsonErr(path, "only Map[Str, V] decodes from JSON")
 		}
 		var v V
-		if err := JsonDec(tk, &v, obj.vals[k], path+"."+k); err != nil {
+		if err := JsonDec(tk, &v, obj.vals[k], path.Key("."+k)); err != nil {
 			return err
 		}
 		Map_put(tk, &out, kk, v)
@@ -1059,7 +1113,7 @@ func (o Option[T]) XoJsonEnc(tk *Task, w *JsonW) {
 }
 
 // XoJsonDec decodes null as None.
-func (o *Option[T]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (o *Option[T]) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	if x == nil {
 		*o = Option[T]{}
 		return nil
@@ -1085,7 +1139,7 @@ func (p Json_Patch[T]) XoJsonEnc(tk *Task, w *JsonW) {
 
 // XoJsonDec decodes a Patch field: null is Null, a value is Value(v). A
 // missing key is set to Absent by the enclosing struct.
-func (p *Json_Patch[T]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (p *Json_Patch[T]) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	if x == nil {
 		*p = Json_Patch[T]{Tag: 2}
 		return nil
@@ -1102,7 +1156,7 @@ func (p *Json_Patch[T]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr 
 func Json_Patch_PatchAbsent[T any](p Json_Patch[T]) bool { return p.Tag <= 1 }
 
 // JsonObject returns the fields of a parsed object for generated decoders.
-func JsonObject(x any, path string) (map[string]any, *Json_DecodeErr) {
+func JsonObject(x any, path JsonPath) (map[string]any, *Json_DecodeErr) {
 	obj, ok := x.(*jsonObj)
 	if !ok {
 		return nil, JsonErr(path, "expected object")
@@ -1134,7 +1188,7 @@ func JsonObject(x any, path string) (map[string]any, *Json_DecodeErr) {
 // order, the last one selecting it last, with the earlier null ones left
 // out (a null into a value is a no-op in Go), as std/native's
 // jsontext.find_all_fold.
-func JsonObjectFold(x any, path string, keys []string) ([][]JsonFoldMember, *Json_DecodeErr) {
+func JsonObjectFold(x any, path JsonPath, keys []string) ([][]JsonFoldMember, *Json_DecodeErr) {
 	obj, ok := x.(*jsonObj)
 	if !ok {
 		return nil, JsonErr(path, "expected object")
@@ -1230,10 +1284,10 @@ func jsonFoldName(in []byte) []byte {
 }
 
 // JsonEnumInt reads the integer value of a valued enum (decision 0269).
-func JsonEnumInt(x any, path string) (int64, *Json_DecodeErr) { return jsonInt(x, path, 64, true) }
+func JsonEnumInt(x any, path JsonPath) (int64, *Json_DecodeErr) { return jsonInt(x, path, 64, true) }
 
 // JsonEnumUnknown is the error of a value no variant of enum name has.
-func JsonEnumUnknown(path, name, value string, quoted bool) *Json_DecodeErr {
+func JsonEnumUnknown(path JsonPath, name, value string, quoted bool) *Json_DecodeErr {
 	if quoted {
 		value = "`" + value + "`"
 	}
@@ -1241,12 +1295,12 @@ func JsonEnumUnknown(path, name, value string, quoted bool) *Json_DecodeErr {
 }
 
 // JsonEnumUnknownInt is JsonEnumUnknown for an Int valued enum.
-func JsonEnumUnknownInt(path, name string, n int64) *Json_DecodeErr {
+func JsonEnumUnknownInt(path JsonPath, name string, n int64) *Json_DecodeErr {
 	return JsonEnumUnknown(path, name, strconv.FormatInt(n, 10), false)
 }
 
 // JsonEnumStr reads the string value of a valued enum (decision 0269).
-func JsonEnumStr(x any, path string) (string, *Json_DecodeErr) {
+func JsonEnumStr(x any, path JsonPath) (string, *Json_DecodeErr) {
 	s, ok := x.(string)
 	if !ok {
 		return "", JsonErr(path, "expected string")
@@ -1256,7 +1310,7 @@ func JsonEnumStr(x any, path string) (string, *Json_DecodeErr) {
 
 // JsonVariant splits an enum's JSON form into the variant name and its
 // payload (nil for a unit variant written as a string).
-func JsonVariant(x any, path string) (string, any, bool, *Json_DecodeErr) {
+func JsonVariant(x any, path JsonPath) (string, any, bool, *Json_DecodeErr) {
 	switch y := x.(type) {
 	case string:
 		return y, nil, false, nil
@@ -1274,7 +1328,7 @@ func JsonVariant(x any, path string) (string, any, bool, *Json_DecodeErr) {
 
 // jsonTupleDec decodes the array x into the tuple positions, one decoder
 // each.
-func jsonTupleDec(x any, path string, fs ...func(any, string) *Json_DecodeErr) *Json_DecodeErr {
+func jsonTupleDec(x any, path JsonPath, fs ...func(any, JsonPath) *Json_DecodeErr) *Json_DecodeErr {
 	arr, ok := x.([]any)
 	if !ok {
 		return JsonErr(path, "expected array")
@@ -1283,7 +1337,7 @@ func jsonTupleDec(x any, path string, fs ...func(any, string) *Json_DecodeErr) *
 		return JsonErr(path, fmt.Sprintf("expected array of %d elements, got %d", len(fs), len(arr)))
 	}
 	for i, f := range fs {
-		if err := f(arr[i], fmt.Sprintf("%s[%d]", path, i)); err != nil {
+		if err := f(arr[i], path.Idx(i)); err != nil {
 			return err
 		}
 	}
@@ -1301,10 +1355,10 @@ func (t Tuple2[A, B]) XoJsonEnc(tk *Task, w *JsonW) {
 }
 
 // XoJsonDec decodes an array of 2 elements.
-func (t *Tuple2[A, B]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (t *Tuple2[A, B]) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	return jsonTupleDec(x, path,
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
 	)
 }
 
@@ -1321,11 +1375,11 @@ func (t Tuple3[A, B, C]) XoJsonEnc(tk *Task, w *JsonW) {
 }
 
 // XoJsonDec decodes an array of 3 elements.
-func (t *Tuple3[A, B, C]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (t *Tuple3[A, B, C]) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	return jsonTupleDec(x, path,
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F2, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F2, e, p) },
 	)
 }
 
@@ -1344,12 +1398,12 @@ func (t Tuple4[A, B, C, D]) XoJsonEnc(tk *Task, w *JsonW) {
 }
 
 // XoJsonDec decodes an array of 4 elements.
-func (t *Tuple4[A, B, C, D]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (t *Tuple4[A, B, C, D]) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	return jsonTupleDec(x, path,
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F2, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F3, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F2, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F3, e, p) },
 	)
 }
 
@@ -1370,13 +1424,13 @@ func (t Tuple5[A, B, C, D, E]) XoJsonEnc(tk *Task, w *JsonW) {
 }
 
 // XoJsonDec decodes an array of 5 elements.
-func (t *Tuple5[A, B, C, D, E]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (t *Tuple5[A, B, C, D, E]) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	return jsonTupleDec(x, path,
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F2, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F3, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F4, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F2, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F3, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F4, e, p) },
 	)
 }
 
@@ -1399,13 +1453,13 @@ func (t Tuple6[A, B, C, D, E, F]) XoJsonEnc(tk *Task, w *JsonW) {
 }
 
 // XoJsonDec decodes an array of 6 elements.
-func (t *Tuple6[A, B, C, D, E, F]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (t *Tuple6[A, B, C, D, E, F]) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	return jsonTupleDec(x, path,
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F2, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F3, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F4, e, p) },
-		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F5, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F2, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F3, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F4, e, p) },
+		func(e any, p JsonPath) *Json_DecodeErr { return JsonDec(tk, &t.F5, e, p) },
 	)
 }

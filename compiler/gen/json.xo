@@ -59,8 +59,8 @@ fn (var g: Gen) gen_json_struct(t: Int) {
     }
     g.pl("}\n")
   }
-  g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path string) *${rt}Json_DecodeErr {\n\treturn ${rt}JsonGoTag(tk, v.xoJsonDec0(tk, x, path), ${check.text(g.c.objs[t].name).quote()}, path)\n}\n")
-  g.pl("func (v *${self}) xoJsonDec0(tk *${rt}Task, x any, path string) *${rt}Json_DecodeErr {")
+  g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path ${rt}JsonPath) *${rt}Json_DecodeErr {\n\treturn ${rt}JsonGoTag(tk, v.xoJsonDec0(tk, x, path), ${check.text(g.c.objs[t].name).quote()}, path)\n}\n")
+  g.pl("func (v *${self}) xoJsonDec0(tk *${rt}Task, x any, path ${rt}JsonPath) *${rt}Json_DecodeErr {")
   // an empty struct reads no field, and Go rejects an unused obj
   let obj = if fields.is_empty() { "_" } else { "obj" }
   var keys: List[Str] = []
@@ -322,9 +322,9 @@ fn (var g: Gen) gen_json_read(t: Int) {
 fn (var g: Gen) json_dec_call(go_name: Str, x: Str, name: Str, t: Int, q: Bool) -> Str {
   let rt = g.rt()
   if q {
-    return "${rt}JsonDecQ(tk, &v.${go_name}, ${x}, path+${("." + name).quote()}, ${g.c.show(t).quote()})"
+    return "${rt}JsonDecQ(tk, &v.${go_name}, ${x}, path.Key(${("." + name).quote()}), ${g.c.show(t).quote()})"
   }
-  "${rt}JsonDec(tk, &v.${go_name}, ${x}, path+${("." + name).quote()})"
+  "${rt}JsonDec(tk, &v.${go_name}, ${x}, path.Key(${("." + name).quote()}))"
 }
 
 /// The decoding of one object field, key name (the JSON key), into
@@ -370,7 +370,7 @@ fn (var g: Gen) gen_json_enum(t: Int) {
       }
     }
     g.pl("\t}\n}\n")
-    g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path string) *${rt}Json_DecodeErr {")
+    g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path ${rt}JsonPath) *${rt}Json_DecodeErr {")
     if vk == 1 {
       g.pl("\tn, err := ${rt}JsonEnumInt(x, path)\n\tif err != nil {\n\t\treturn err\n\t}\n\tswitch n {")
     } else {
@@ -452,7 +452,7 @@ fn (var g: Gen) gen_json_enum(t: Int) {
     g.pl("\t\tw.ObjEnd()")
   }
   g.pl("\t}\n}\n")
-  g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path string) *${rt}Json_DecodeErr {")
+  g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path ${rt}JsonPath) *${rt}Json_DecodeErr {")
   if !jtag.is_empty() {
     g.gen_json_tagged_dec(t, self, tuse, jtag, jcontent)
     return
@@ -472,13 +472,13 @@ fn (var g: Gen) gen_json_enum(t: Int) {
     g.pl("\t\tif !hasPayload {\n\t\t\treturn ${rt}JsonErr(path, ${("variant `" + vname + "` needs fields").quote()})\n\t\t}")
     g.pl("\t\tvar p ${pt}")
     if v.fields.len() == 1 && (v.fields[0].from || v.fields[0].name.is_empty()) {
-      g.pl("\t\tif err := ${rt}JsonDec(tk, &p.${g.vfield_name(v.fields[0], 0)}, payload, path+${("." + vname).quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
+      g.pl("\t\tif err := ${rt}JsonDec(tk, &p.${g.vfield_name(v.fields[0], 0)}, payload, path.Key(${("." + vname).quote()})); err != nil {\n\t\t\treturn err\n\t\t}")
     } else {
-      g.pl("\t\tobj, err := ${g.json_object(t, "payload", "path+" + ("." + vname).quote(), vfield_keys(v))}")
+      g.pl("\t\tobj, err := ${g.json_object(t, "payload", "path.Key(" + ("." + vname).quote() + ")", vfield_keys(v))}")
       g.pl("\t\tif err != nil {\n\t\t\treturn err\n\t\t}")
-      g.pl("\t\tif err := func(v *${pt}, path string) *${rt}Json_DecodeErr {")
+      g.pl("\t\tif err := func(v *${pt}, path ${rt}JsonPath) *${rt}Json_DecodeErr {")
       g.json_variant_fields(t, v)
-      g.pl("\t\t}(&p, path+${("." + vname).quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
+      g.pl("\t\t}(&p, path.Key(${("." + vname).quote()})); err != nil {\n\t\t\treturn err\n\t\t}")
     }
     g.pl("\t\t*v = ${self}{Tag: ${v.index + 1}, P: p}\n\t\treturn nil")
   }
@@ -498,7 +498,7 @@ fn (var g: Gen) gen_json_tagged_dec(t: Int, self: Str, tuse: Str, jtag: Str, jco
   g.pl("\ttv, ok := obj[${jtag.quote()}]")
   g.pl("\tif !ok {\n\t\treturn ${rt}JsonErr(path, ${"missing tag `${jtag}` of enum ${ename}".quote()})\n\t}")
   g.pl("\tname, ok := tv.(string)")
-  g.pl("\tif !ok {\n\t\treturn ${rt}JsonErr(path+${("." + jtag).quote()}, \"expected a variant name\")\n\t}")
+  g.pl("\tif !ok {\n\t\treturn ${rt}JsonErr(path.Key(${("." + jtag).quote()}), \"expected a variant name\")\n\t}")
   if !jcontent.is_empty() {
     g.pl("\tpayload, hasPayload := obj[${jcontent.quote()}]")
     g.pl("\t_, _ = payload, hasPayload")
@@ -522,18 +522,18 @@ fn (var g: Gen) gen_json_tagged_dec(t: Int, self: Str, tuse: Str, jtag: Str, jco
       seg = "." + jcontent
     }
     if wrapped {
-      g.pl("\t\tif err := ${rt}JsonDec(tk, &p.${g.vfield_name(v.fields[0], 0)}, ${src}, path+${seg.quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
+      g.pl("\t\tif err := ${rt}JsonDec(tk, &p.${g.vfield_name(v.fields[0], 0)}, ${src}, path.Key(${seg.quote()})); err != nil {\n\t\t\treturn err\n\t\t}")
     } else {
-      g.pl("\t\tobj, err := ${g.json_object(t, src, "path+" + seg.quote(), vfield_keys(v))}")
+      g.pl("\t\tobj, err := ${g.json_object(t, src, "path.Key(" + seg.quote() + ")", vfield_keys(v))}")
       g.pl("\t\tif err != nil {\n\t\t\treturn err\n\t\t}")
-      g.pl("\t\tif err := func(v *${pt}, path string) *${rt}Json_DecodeErr {")
+      g.pl("\t\tif err := func(v *${pt}, path ${rt}JsonPath) *${rt}Json_DecodeErr {")
       g.json_variant_fields(t, v)
-      g.pl("\t\t}(&p, path+${seg.quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
+      g.pl("\t\t}(&p, path.Key(${seg.quote()})); err != nil {\n\t\t\treturn err\n\t\t}")
     }
     g.pl("\t\t*v = ${self}{Tag: ${v.index + 1}, P: p}\n\t\treturn nil")
   }
   g.pl("\t}")
-  g.pl("\treturn ${rt}JsonErr(path+${("." + jtag).quote()}, \"unknown variant `\"+name+${("` of enum " + ename).quote()})")
+  g.pl("\treturn ${rt}JsonErr(path.Key(${("." + jtag).quote()}), \"unknown variant `\"+name+${("` of enum " + ename).quote()})")
   g.pl("}\n")
 }
 
@@ -550,12 +550,12 @@ fn (var g: Gen) gen_json_via(t: Int) {
   let to = g.func_go_name(o.json_to)
   let from = g.func_go_name(o.json_from)
   g.pl("func (v ${self}) XoJsonEnc(tk *${rt}Task, w *${rt}JsonW) { ${rt}JsonEnc(tk, w, ${to}(tk, v)) }\n")
-  g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path string) *${rt}Json_DecodeErr {")
+  g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path ${rt}JsonPath) *${rt}Json_DecodeErr {")
   g.pl("\tvar p ${p}")
   g.pl("\tif err := ${rt}JsonDec(tk, &p, x, path); err != nil {\n\t\treturn err\n\t}")
   if g.returns_result(o.json_from) {
     g.pl("\tr := ${from}(tk, p)")
-    g.pl("\tif !r.Ok {\n\t\treturn &${rt}Json_DecodeErr{F_path: path, F_msg: ${rt}Display(tk, r.E)}\n\t}")
+    g.pl("\tif !r.Ok {\n\t\treturn &${rt}Json_DecodeErr{F_path: path.String(), F_msg: ${rt}Display(tk, r.E)}\n\t}")
     g.pl("\t*v = r.V")
   } else {
     g.pl("\t*v = ${from}(tk, p)")
@@ -572,7 +572,7 @@ fn (var g: Gen) gen_json_newtype(t: Int) {
   let rt = g.rt()
   let self = g.self_type(t)
   g.pl("func (v ${self}) XoJsonEnc(tk *${rt}Task, w *${rt}JsonW) { ${rt}JsonEnc(tk, w, v.F0) }\n")
-  g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path string) *${rt}Json_DecodeErr { return ${rt}JsonDec(tk, &v.F0, x, path) }\n")
+  g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path ${rt}JsonPath) *${rt}Json_DecodeErr { return ${rt}JsonDec(tk, &v.F0, x, path) }\n")
 }
 
 /// XoSqlRowDec for a struct with `derive SqlRow` (genSqlRowStruct).

@@ -227,7 +227,7 @@ func JsonRead[T any](tk *Task, r *JsonR, dst *T) bool {
 	if err != nil {
 		return false
 	}
-	return JsonDec(tk, dst, x, "$") == nil
+	return JsonDec(tk, dst, x, JsonRoot) == nil
 }
 
 // jsonDecodeFast is the fast path of Json_decode; se is the scanner's error

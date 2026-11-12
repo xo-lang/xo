@@ -14,7 +14,7 @@ import (
 // jsonValueOf is jsonValueAt at "$", Null for the error (to_value's text
 // is an encoding, whose numbers are in range).
 func jsonValueOf(x any) Json_Value {
-	v, err := jsonValueAt(x, "$")
+	v, err := jsonValueAt(x, JsonRoot)
 	if err != nil {
 		return Json_Value{Tag: 1}
 	}
@@ -24,7 +24,7 @@ func jsonValueOf(x any) Json_Value {
 // jsonValueAt is the Value of a parsed tree; a number out of Float64's
 // range (strconv's range error) is "cannot unmarshal number N into Float"
 // at its path, as std/native/json.xo's parse_bytes gives.
-func jsonValueAt(x any, path string) (Json_Value, *Json_DecodeErr) {
+func jsonValueAt(x any, path JsonPath) (Json_Value, *Json_DecodeErr) {
 	switch t := x.(type) {
 	case nil:
 		return Json_Value{Tag: 1}, nil
@@ -44,7 +44,7 @@ func jsonValueAt(x any, path string) (Json_Value, *Json_DecodeErr) {
 	case []any:
 		items := make([]Json_Value, len(t))
 		for i, e := range t {
-			v, err := jsonValueAt(e, path+"["+strconv.Itoa(i)+"]")
+			v, err := jsonValueAt(e, path.Idx(i))
 			if err != nil {
 				return Json_Value{}, err
 			}
@@ -65,7 +65,7 @@ func jsonValueAt(x any, path string) (Json_Value, *Json_DecodeErr) {
 			}
 			kept := make(map[string]Json_Value, len(t.keys))
 			for i, m := range t.all {
-				v, err := jsonValueAt(m.v, path+"."+m.k)
+				v, err := jsonValueAt(m.v, path.Key("."+m.k))
 				if err != nil {
 					return Json_Value{}, err
 				}
@@ -79,7 +79,7 @@ func jsonValueAt(x any, path string) (Json_Value, *Json_DecodeErr) {
 			return Json_Value{Tag: 7, P: Json_Value_Object{F_fields: ListFromSlice(fs)}}, nil
 		}
 		for i, k := range t.keys {
-			v, err := jsonValueAt(t.vals[k], path+"."+k)
+			v, err := jsonValueAt(t.vals[k], path.Key("."+k))
 			if err != nil {
 				return Json_Value{}, err
 			}
@@ -96,7 +96,7 @@ func Json_parse_value(_ *Task, text string) Result[Json_Value, Json_DecodeErr] {
 	if err != nil {
 		return Err[Json_Value](*err)
 	}
-	v, verr := jsonValueAt(x, "$")
+	v, verr := jsonValueAt(x, JsonRoot)
 	if verr != nil {
 		return Err[Json_Value](*verr)
 	}
@@ -180,7 +180,7 @@ func (v Json_Value) XoJsonEnc(tk *Task, w *JsonW) {
 }
 
 // XoJsonDec reads any JSON value into v.
-func (v *Json_Value) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Json_Value) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	// a number out of Float's range fails, as in Go and std/native
 	jv, err := jsonValueAt(x, path)
 	if err != nil {

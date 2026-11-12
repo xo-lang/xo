@@ -38,7 +38,7 @@ func (v Http_Status) M_debug(*Task) string { return Debug(v) }
 
 func (v Http_Status) XoJsonEnc(tk *Task, w *JsonW) { JsonEnc(tk, w, v.F0) }
 
-func (v *Http_Status) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+func (v *Http_Status) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	return JsonDec(tk, &v.F0, x, path)
 }
 
