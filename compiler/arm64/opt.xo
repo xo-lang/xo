@@ -1980,17 +1980,29 @@ fn count_true(xs: List[Bool]) -> Int {
 /// function made its own (2026-10-20: portable u64's loop inlined
 /// ints.u64_rem three times, and x86_64 kept 9 words in spill slots for
 /// 3 values).
+/// Whether register d has exactly one definition in ndef (hoist_consts).
+fn ndef_one(ndef: List[Int], d: Int) -> Bool {
+  d >= 0 && d < ndef.len() && ndef[d] == 1
+}
+
 fn (var g: G) hoist_consts() {
   let blocks = g.all_blocks()
   let preds = g.mpreds_all(blocks)
   var moved: Map[Int, Bool] = {}
-  var ndef: Map[Int, Int] = {}
+  // definitions per register (every register is below g.fp.len(); a
+  // hash map here was 0.5% of the aiplatform test build's CPU)
+  var ndef: List[Int] = List.with_capacity(g.fp.len())
+  for _ in 0..g.fp.len() {
+    ndef.push(0)
+  }
   // a merged constant's register -> the one kept
   var same: Map[Int, Int] = {}
   for b in blocks {
     for inst in g.blocks[b].insts {
       for d in inst.defs {
-        ndef[d] = (ndef.get(d) ?? 0) + 1
+        if d >= 0 && d < ndef.len() {
+          ndef[d] += 1
+        }
       }
       // a constant a move, call, or return takes is made straight into
       // its register in place
@@ -2112,13 +2124,13 @@ fn (var g: G) hoist_consts() {
     // range for Int`, list_field_licm's 15.0 for 20.0)
     var by_text: Map[Str, Int] = {}
     for inst in ins {
-      if inst.has(IF_KONST) && inst.defs.len() == 1 && (ndef.get(inst.defs[0]) ?? 0) == 1 && !moved.contains(inst.defs[0]) {
+      if inst.has(IF_KONST) && inst.defs.len() == 1 && ndef_one(ndef, inst.defs[0]) && !moved.contains(inst.defs[0]) {
         by_text[konst_key(inst, g.fp[inst.defs[0]])] = inst.defs[0]
       }
     }
     var keep: List[Inst] = []
     for inst in hoisted {
-      if inst.defs.len() == 1 && (ndef.get(inst.defs[0]) ?? 0) == 1 {
+      if inst.defs.len() == 1 && ndef_one(ndef, inst.defs[0]) {
         let key = konst_key(inst, g.fp[inst.defs[0]])
         let k = by_text.get(key) ?? -1
         if k >= 0 && k != inst.defs[0] {

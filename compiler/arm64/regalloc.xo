@@ -820,10 +820,13 @@ fn (var g: G) regalloc() {
     var wcode: List[Int] = []
     var wocc: List[List[Int]] = []
     // each stack word's index in wcode (a scan of wcode per hint was 20%
-    // of GCP aiplatform/v1's build: wide structs pass many words)
+    // of GCP aiplatform/v1's build: wide structs pass many words). The
+    // outgoing words SLOT_OUT + j are index j; the rest go in wix, filled
+    // at the first hint that needs it (filling it for every frame memory
+    // word was 0.7% of the aiplatform test build's CPU; Lang 1, 2026-11-11)
     var wix: Map[Int, Int] = {}
+    let nout = wclob.len()
     for (j, ps) in wclob.indexed() {
-      wix[SLOT_OUT + j] = wcode.len()
       wcode.push(SLOT_OUT + j)
       var rs: List[Int] = []
       for c in ps {
@@ -835,10 +838,11 @@ fn (var g: G) regalloc() {
       wocc.push(merge_ranges(rs))
     }
     for (c, rs) in wbusym {
-      wix[c] = wcode.len()
       wcode.push(c)
       wocc.push(merge_ranges(rs))
     }
+    let nfix = wcode.len()
+    var wix_full = false
     // per wcode index, the argument stores' positions (wclob0)
     var wocc0: List[List[Int]] = []
     for (j, ps) in wclob0.indexed() {
@@ -911,7 +915,18 @@ fn (var g: G) regalloc() {
         // a callee write it: the copy goes (src and destination equal)
         var w = -1
         for h in ghint[v] {
-          var i = wix.get(h) ?? -1
+          var i = -1
+          if h >= SLOT_OUT && h < SLOT_OUT + nout {
+            i = h - SLOT_OUT
+          } else {
+            if !wix_full {
+              for k in nout..nfix {
+                wix[wcode[k]] = k
+              }
+              wix_full = true
+            }
+            i = wix.get(h) ?? -1
+          }
           if i < 0 {
             i = wcode.len()
             wix[h] = i
