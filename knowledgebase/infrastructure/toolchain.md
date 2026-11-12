@@ -319,7 +319,10 @@ and runs `gh release create`. The order:
    host. The release agent runs this step, not the owner. On the Mac it
    goes through heavy.sh (`HEAVY_CLASS=bulk HEAVY_DARWIN=1
    HEAVY_MAX_GB=20 ~/xo-lead/agents/heavy.sh release scripts/release.sh
-   VERSION`). Without HEAVY_JOB, release.sh refuses with exit 64 (as
+   VERSION`). It builds cold: XO_BACKEND_CACHE, XO_FE_CACHE, XO_CHK_CACHE
+   and XO_BIN_CACHE off and an empty XO_CHECKOUT_CACHE, so xobuild's host
+   xo comes from the seed (lead, 2026-11-12; XO_RELEASE_WARM=1 keeps the
+   caches for a rehearsal). Without HEAVY_JOB, release.sh refuses with exit 64 (as
    `go run ./scripts/xobuild` does), unless it is a dry run or
    XO_UNGUARDED=1 is set (2026-11-05);
 5. the owner runs `publish.sh push`;

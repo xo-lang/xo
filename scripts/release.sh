@@ -220,6 +220,22 @@ export XO_INLINE_STRICT=1
 # gotchas/debug-map-names-cache-paths.md); a release must not depend on
 # what the cache holds
 export XO_SEPCOMP=0
+# cold builds (lead, 2026-11-12, after 0.50.0's kit): no cache feeds a
+# release binary. Every xo build here runs with the back-end, front-end,
+# module check and binary caches off, and xobuild's host xo is built from
+# the seed in an empty checkout cache rather than taken from a cached
+# checkout build (a build from the shared cache once differed from a
+# cache-off one; the cause was separate compilation, which XO_SEPCOMP=0
+# above already rules out, but nothing a release ships should depend on
+# what a cache holds). XO_RELEASE_WARM=1 keeps the caches (a dry run or a
+# rehearsal).
+if [ "${XO_RELEASE_WARM:-0}" != 1 ]; then
+	export XO_BACKEND_CACHE=off XO_FE_CACHE=off XO_CHK_CACHE=off XO_BIN_CACHE=off
+	if [ -z "${XO_CHECKOUT_CACHE:-}" ]; then
+		XO_CHECKOUT_CACHE=$(mktemp -d "${TMPDIR:-/tmp}/xo-release-checkout.XXXXXX") || exit 1
+		export XO_CHECKOUT_CACHE
+	fi
+fi
 # the seed: an existing xo (decision 0215: no Go compiler to build one)
 if [ -n "${XO_SEED:-}" ]; then
 	host_xo="$XO_SEED"
@@ -458,7 +474,9 @@ else
 		mkdir -p "$st/lib/xo/stdstore"
 		sc=$(mktemp -d)
 		for c in 0 1; do
-			paths=$(XO_STD="$st/lib/xo/std" XO_BACKEND_CACHE_DIR="$sc/cache" "$xo1" dev stdcache --conc=$c --target="$st_t") ||
+			# its own empty cache directory: the store is made in it, so the
+			# cache is on for this one command
+			paths=$(XO_STD="$st/lib/xo/std" XO_BACKEND_CACHE=on XO_BACKEND_CACHE_DIR="$sc/cache" "$xo1" dev stdcache --conc=$c --target="$st_t") ||
 				{ echo "release.sh: no std store for $st_t conc$c" >&2; exit 1; }
 			cp "$(echo "$paths" | sed -n 1p)" "$st/lib/xo/stdstore/$name-conc$c.store"
 			# windows/amd64: the store's PDB parts beside it (pe_link reads
