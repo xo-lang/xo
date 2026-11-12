@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-12: feature: Client.with_proxy and with_proxy_for; fix: the Go backend no longer reads HTTP_PROXY implicitly
+
+- Kind: feature, fix
+- Commit: this push
+- Found by: decision 0617 B (the owner's high group of std features, 2026-11-12); the Go backend's implicit proxy found while porting it
+- Go reference: net/http transport.go (connectMethod, dialConn's CONNECT and its error texts, Proxy, OnProxyConnectResponse), go1.26.1
+- Test: golden http_client_proxy (a forward proxy over raw TCP: absolute form with Proxy-Authorization, a redirect asking the chooser again, https through CONNECT with the certificate verified, a chooser's None, Net.only refusing the proxy, a refused CONNECT; arm64, llvm, Go parity)
+- Timing: none (a chooser call a request; the tunnel is one round trip on a new connection)
+- Shipped in: not yet released
+
+Plain http goes to the proxy in absolute form, https through a CONNECT tunnel with TLS to the server inside; an attenuated Net must admit the proxy; tunnels pool by target, proxy and credentials. The Go backend's transports were clones of Go's DefaultTransport, which reads HTTP_PROXY, HTTPS_PROXY and NO_PROXY on its own, so a Go backend program went through a proxy the native one did not use and Net.only never saw; now neither backend uses a proxy unless the program sets one.
+
 ## 2026-11-11: feature: Url user and password, display and redacted, Basic auth from the URL
 
 - Kind: feature

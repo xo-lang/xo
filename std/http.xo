@@ -614,6 +614,17 @@ fn (s: ClientStream) trailers() -> Map[Str, Str]
 /// a 3xx response as it came, its Location as the server sent it (Go's
 /// ErrUseLastResponse; decision 0404).
 fn (c: Client) with_redirects(max: Int) -> Client
+/// The client sending every request through the proxy at url (decision
+/// 0617 B; Go's http.ProxyURL): plain http in absolute form, https
+/// through a CONNECT tunnel with TLS to the server inside; the URL's
+/// user and password become Proxy-Authorization: Basic. An attenuated
+/// Net must admit the proxy as well as each request's target.
+fn (c: Client) with_proxy(url: Url) -> Client
+/// The client asking f for each request's proxy, None to connect
+/// directly, again for each redirect (Go's Transport.Proxy;
+/// `httpproxy.proxy_from_env(env)` follows HTTP_PROXY, HTTPS_PROXY and
+/// NO_PROXY).
+fn (c: Client) with_proxy_for(f: fn(Url) -> Url?) -> Client
 
 enum ClientErr {
   InvalidUrl(msg: Str)

@@ -534,6 +534,10 @@ func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool) 
 		case headFired.Load() || (errors.As(err, &ne) && ne.Timeout()):
 			return nil, nil, head, clientErr(3, "")
 		}
+		var pe proxyErr
+		if errors.As(err, &pe) {
+			return nil, nil, head, clientErr(2, err.Error())
+		}
 		var ue *url.Error
 		if errors.As(err, &ue) {
 			var oe *net.OpError
@@ -615,6 +619,10 @@ func newTransport(roots *x509.CertPool) *http.Transport {
 // asks for one.
 func certTransport(roots *x509.CertPool, cert *tls.Certificate, serverName string, vconn Option[func(*Task, List[X509_Certificate]) Result[Unit, string]], verify int) *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
+	// no proxy unless the program sets one (decision 0617 B): Go's
+	// DefaultTransport reads HTTP_PROXY implicitly, which neither the
+	// native client nor Net.only saw
+	t.Proxy = nil
 	t.Protocols = new(http.Protocols)
 	t.Protocols.SetHTTP1(true)
 	t.Protocols.SetHTTP2(true)
@@ -682,8 +690,56 @@ func clientTransport(c Http_Client) any {
 	if c.h2.Some {
 		t.HTTP2 = h2ConfigOf(c.h2.V)
 	}
+	if c.proxy.Some {
+		f := c.proxy.V
+		o, only := c.net.(*onlyNet)
+		t.Proxy = func(r *http.Request) (*url.URL, error) {
+			tk := NewRootTask()
+			pu := Http_parse_url(tk, r.URL.String())
+			if !pu.Ok {
+				return nil, errors.New("proxyconnect: the request URL does not parse: " + r.URL.String())
+			}
+			p := f(tk, pu.V).V
+			if !p.Some {
+				return nil, nil
+			}
+			port := "80"
+			if p.V.F_scheme == "https" {
+				port = "443"
+			}
+			if p.V.F_port.Some {
+				port = strconv.FormatInt(p.V.F_port.V, 10)
+			}
+			if only && !o.admits(p.V.F_host, port) {
+				return nil, proxyErr("denied by Net.only: proxy " + net.JoinHostPort(p.V.F_host, port))
+			}
+			if r.URL.Scheme == "https" && p.V.F_scheme == "https" {
+				return nil, proxyErr("proxyconnect: an https proxy for an https request is not supported (use an http proxy, whose CONNECT tunnel carries the TLS)")
+			}
+			return url.Parse(p.V.M_display(tk))
+		}
+		// a refused CONNECT: Go's error text (the status's reason), as a
+		// Connect error like the native client's
+		t.OnProxyConnectResponse = func(_ context.Context, _ *url.URL, _ *http.Request, res *http.Response) error {
+			if res.StatusCode == 200 {
+				return nil
+			}
+			_, text, ok := strings.Cut(res.Status, " ")
+			if !ok {
+				return proxyErr("unknown status code")
+			}
+			return proxyErr(text)
+		}
+	}
 	return t
 }
+
+// proxyErr is a proxy's refusal (decision 0617 B): an attenuated Net not
+// admitting it, or its answer to CONNECT; a Connect error, as on the
+// native client.
+type proxyErr string
+
+func (e proxyErr) Error() string { return string(e) }
 
 // h2ConfigOf is an H2Config as Go's (decision 0434): 0 fields are Go's
 // defaults, and Go clamps the rest.

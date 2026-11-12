@@ -2166,6 +2166,8 @@ fn (c: Client) send(req: Request) -> Response ! ClientErr uses net.dial
 fn (c: Client) post_json[T: Json](url: Str, v: T) -> Response ! ClientErr uses net.dial
 fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr   // 4.6
 fn (c: Client) with_redirects(max: Int) -> Client          // decision 0404
+fn (c: Client) with_proxy(url: Url) -> Client              // decision 0617 B
+fn (c: Client) with_proxy_for(f: fn(Url) -> Url?) -> Client  // None: direct
 fn (c: Client) with_protocols(p: Set[Protocol]) -> Client  // Go's Transport.Protocols (4.6, decision 0434)
 fn (c: Client) with_h2_config(cfg: H2Config) -> Client     // Go's Transport.HTTP2 (4.6)
 fn (r: Request) with_timeout(d: Duration) -> Request       // decision 0404
@@ -2356,6 +2358,26 @@ let p = http.reverse_proxy(client, target).with_rewrite(fn(inb: http.Request, ou
   }
 })
 ```
+
+Proxies (decision 0617 B): `with_proxy(url)` sends every request
+through the proxy at `url`, `with_proxy_for(f)` asks `f` for each
+request's proxy and again for each redirect's URL (`None` connects
+directly; `httpproxy.proxy_from_env(env)`, section 82, is Go's
+ProxyFromEnvironment). A plain http request goes to the proxy with the
+absolute URL as its target; an https one opens a `CONNECT host:port`
+tunnel and runs TLS to the server inside it, verifying the server's
+certificate as without a proxy, and HTTP/2 when the server's ALPN picks
+it. The proxy URL's user and password become `Proxy-Authorization:
+Basic`. A proxy must be http (an https proxy for an https request is a
+`Connect` error; an https proxy for plain http is used over TLS). An
+attenuated Net (`Net.only`) must admit the proxy's address as well as
+the request's target, so a proxy cannot carry a request the Net refuses:
+`Connect` with `denied by Net.only: proxy host:port`. A proxy answering
+CONNECT with another status than 200 is `Connect` with the status's
+reason text (Go's, `Proxy Authentication Required`). Without either
+method a client connects directly: the environment's HTTP_PROXY is not
+read (Go's DefaultTransport reads it). A CONNECT tunnel is not supported
+on wasm.
 
 `parse_url` accepts absolute RFC 3986 URLs with an
 `http` or `https` scheme and a host; anything else is a `UrlErr`. An

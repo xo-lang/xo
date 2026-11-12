@@ -1,0 +1,174 @@
+// Client.with_proxy and with_proxy_for (decision 0617 B), on every
+// backend: a forward proxy written here over raw TCP logs each request it
+// gets and passes it on. Plain http goes to the proxy in absolute form with
+// Proxy-Authorization from the proxy URL's userinfo, a redirect asks the
+// chooser again, https opens a CONNECT tunnel and verifies the server's
+// certificate through it, a chooser's None connects directly, an
+// attenuated Net must admit the proxy, and a proxy refusing CONNECT is the
+// request's error with its reason text.
+use std/http
+
+/// The request head at the start of c's input (up to its blank line) and
+/// the bytes read after it.
+fn read_head(c: ServerConn) -> (Str, Bytes) {
+  var got = b""
+  while true {
+    let s = got.to_str() ?? ""
+    if let Some(i) = s.find("\r\n\r\n") {
+      return (s[..i], got[i + 4..])
+    }
+    match c.read(4096) {
+      Ok(Some(b)) => got = got + b
+      _ => return ("", b"")
+    }
+  }
+  ("", b"")
+}
+
+/// Copies a's input to b until either ends, then closes both.
+fn pipe(a: ServerConn, b: Conn) {
+  scope s {
+    s.spawn_background(fn() {
+      while let Ok(Some(d)) = b.read(65536) {
+        if a.write(d).is_err() {
+          break
+        }
+      }
+      a.close()
+    })
+    while let Ok(Some(d)) = a.read(65536) {
+      if b.write(d).is_err() {
+        break
+      }
+    }
+    b.close()
+    s.cancel()
+  }
+}
+
+fn field(head: Str, name: Str) -> Str {
+  for line in head.split("\r\n") {
+    if line.to_lower().starts_with(name.to_lower() + ":") {
+      return line[name.len() + 1..].trim()
+    }
+  }
+  "-"
+}
+
+/// One proxied connection: the request line and Proxy-Authorization
+/// logged with the ports hidden, then CONNECT's tunnel or the request
+/// passed on to the URL's host; refuse answers every CONNECT 407.
+fn proxy_conn(os: Os, c: ServerConn, ports: List[Str], refuse: Bool) {
+  let (head, rest) = read_head(c)
+  if head.is_empty() {
+    c.close()
+    return
+  }
+  let line = head.split("\r\n")[0]
+  var shown = line
+  for p in ports {
+    shown = shown.replace(p, "PORT")
+  }
+  os.stdio.println("  proxy got: ${shown} (Proxy-Authorization: ${field(head, "Proxy-Authorization")})")
+  let parts = line.split(" ")
+  if parts[0] == "CONNECT" {
+    if refuse {
+      let _ = c.write(b"HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n").is_ok()
+      c.close()
+      return
+    }
+    match os.net.dial(parts[1]) {
+      Ok(d) => {
+        let _ = c.write(b"HTTP/1.1 200 Connection established\r\n\r\n").is_ok()
+        pipe(c, d)
+      }
+      Err(_) => c.close()
+    }
+    return
+  }
+  // absolute form: http://host:port/path, passed on with Connection:
+  // close, so each request the client sends comes on a new connection and
+  // is logged
+  let hostport = parts[1].trim_prefix("http://").split("/")[0]
+  var lines: List[Str] = []
+  for l in head.split("\r\n") {
+    if !l.to_lower().starts_with("connection:") {
+      lines.push(l)
+    }
+  }
+  lines.push("Connection: close")
+  match os.net.dial(hostport) {
+    Ok(d) => {
+      let _ = d.write((lines.join("\r\n") + "\r\n\r\n").bytes() + rest).is_ok()
+      pipe(c, d)
+    }
+    Err(_) => c.close()
+  }
+}
+
+fn show(r: Result[http.Response, http.ClientErr], ports: List[Str]) -> Str {
+  var t = match r {
+    Ok(resp) => "${resp.status} ${resp.body.to_str() ?? "?"}"
+    Err(e) => "error: ${e}"
+  }
+  for p in ports {
+    t = t.replace(p, "PORT")
+  }
+  t
+}
+
+fn main(os: Os) ! {
+  var r = http.router()
+  r.handle("GET /hello", fn(_req) { http.text(200, "hello") })
+  r.handle("GET /redir", fn(_req) { http.redirect(_req, "/hello", 302) })
+  let origin_l = os.net.listen("127.0.0.1:0")?
+  let tls_l = os.net.listen("127.0.0.1:0")?
+  let proxy_l = os.net.listen("127.0.0.1:0")?
+  let refuse_l = os.net.listen("127.0.0.1:0")?
+  let cert = http.tls_cert(good_cert(), good_key())?
+  let origin = http.server(origin_l, r)
+  let secure = http.server(tls_l, r).with_tls([cert])
+  let op = origin.addr().split(":")[1]
+  let tp = secure.addr().split(":")[1]
+  let pp = proxy_l.addr().split(":")[1]
+  let rp = refuse_l.addr().split(":")[1]
+  let ports = [op, tp, pp, rp]
+  scope s {
+    s.spawn_background(fn() { let _ = origin.serve().is_ok() })
+    s.spawn_background(fn() { let _ = secure.serve().is_ok() })
+    s.spawn_background(fn() {
+      while let Ok(c) = proxy_l.accept() {
+        s.spawn_background(fn() { proxy_conn(os, c, ports, false) })
+      }
+    })
+    s.spawn_background(fn() {
+      while let Ok(c) = refuse_l.accept() {
+        s.spawn_background(fn() { proxy_conn(os, c, ports, true) })
+      }
+    })
+    let proxy = http.parse_url("http://alice:s3cret@127.0.0.1:${pp}")?
+    let c = http.client(os.net).with_roots(ca_pem())?.with_proxy(proxy)
+    os.stdio.println("http through the proxy:")
+    os.stdio.println("  ${show(c.get("http://127.0.0.1:${op}/hello"), ports)}")
+    os.stdio.println("a redirect, each hop through the proxy:")
+    os.stdio.println("  ${show(c.get("http://127.0.0.1:${op}/redir"), ports)}")
+    os.stdio.println("https through a CONNECT tunnel, the certificate verified:")
+    os.stdio.println("  ${show(c.get("https://localhost:${tp}/hello"), ports)}")
+    let direct = http.client(os.net).with_proxy_for(fn(u: http.Url) { if u.path == "/hello" { None } else { Some(proxy) } })
+    os.stdio.println("with_proxy_for's None connects directly (the proxy logs nothing):")
+    os.stdio.println("  ${show(direct.get("http://127.0.0.1:${op}/hello"), ports)}")
+    let only = http.client(os.net.only(["127.0.0.1:${op}"])).with_proxy(proxy)
+    os.stdio.println("an attenuated Net that does not admit the proxy:")
+    os.stdio.println("  ${show(only.get("http://127.0.0.1:${op}/hello"), ports)}")
+    let refusing = http.client(os.net).with_roots(ca_pem())?.with_proxy(http.parse_url("http://127.0.0.1:${rp}")?)
+    os.stdio.println("a proxy refusing CONNECT:")
+    os.stdio.println("  ${show(refusing.get("https://localhost:${tp}/hello"), ports)}")
+    proxy_l.close()
+    refuse_l.close()
+    s.cancel()
+  }
+}
+
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }

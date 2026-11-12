@@ -1,0 +1,20 @@
+exit 0
+--- stdout
+http through the proxy:
+  proxy got: GET http://127.0.0.1:PORT/hello HTTP/1.1 (Proxy-Authorization: Basic YWxpY2U6czNjcmV0)
+  200 hello
+a redirect, each hop through the proxy:
+  proxy got: GET http://127.0.0.1:PORT/redir HTTP/1.1 (Proxy-Authorization: Basic YWxpY2U6czNjcmV0)
+  proxy got: GET http://127.0.0.1:PORT/hello HTTP/1.1 (Proxy-Authorization: Basic YWxpY2U6czNjcmV0)
+  200 hello
+https through a CONNECT tunnel, the certificate verified:
+  proxy got: CONNECT localhost:PORT HTTP/1.1 (Proxy-Authorization: Basic YWxpY2U6czNjcmV0)
+  200 hello
+with_proxy_for's None connects directly (the proxy logs nothing):
+  200 hello
+an attenuated Net that does not admit the proxy:
+  error: Get "http://127.0.0.1:PORT/hello": denied by Net.only: proxy 127.0.0.1:PORT
+a proxy refusing CONNECT:
+  proxy got: CONNECT localhost:PORT HTTP/1.1 (Proxy-Authorization: -)
+  error: Get "https://localhost:PORT/hello": Proxy Authentication Required
+--- stderr

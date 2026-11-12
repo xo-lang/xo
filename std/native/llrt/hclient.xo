@@ -1059,6 +1059,79 @@ fn h1_take(a: Int, roots: Int, kp: Int, kn: Int, dl: Int) -> Bool {
 
 /// The pool key of an exchange: addr and, for https, the server name
 /// (HTTP/2's key; the kinds keep the two apart).
+/// The address of a CONNECT tunnel to target (`host:port`) through the
+/// proxy at proxy (`host:port`), with auth the Proxy-Authorization value
+/// ("" for none) (decision 0617 B): one string, so the connection pools
+/// keyed by all three (net/http's connectMethod key), and start dials
+/// the proxy.
+pub fn tunnel_addr(target: Str, proxy: Str, auth: Str) -> Str { target + "\u{1}" + proxy + "\u{1}" + auth }
+
+/// addr's tunnel target, the address to dial and the proxy's credentials:
+/// ("", addr, "") for a direct connection.
+fn tunnel_parts(addr: Str) -> (Str, Str, Str) {
+  let a = scan.find(addr, "\u{1}", 0)
+  if a < 0 {
+    return ("", addr, "")
+  }
+  let b = scan.find(addr, "\u{1}", a + 1)
+  (addr[..a], addr[a + 1..b], addr[b + 1..])
+}
+
+/// Sends `CONNECT target` on the new plain connection c and reads the
+/// proxy's response head (net/http's Transport.dialConn): a 200 opens the
+/// tunnel; any other status is the error of its reason text, as Go's
+/// (`Proxy Authentication Required`). The proxy sends nothing past the
+/// head before the client's first bytes, so bytes past it are an error
+/// rather than the start of the TLS handshake.
+fn tunnel_open(c: Int, target: Str, auth: Str) -> (Int, Str) {
+  var req = "CONNECT " + target + " HTTP/1.1\r\nHost: " + target + "\r\n"
+  if !auth.is_empty() {
+    req = req + "Proxy-Authorization: " + auth + "\r\n"
+  }
+  req = req + "\r\n"
+  let ws = send(c, raw.data(req), req.len())
+  raw.alive_str(req)
+  if ws != CC_OK {
+    return (ws, "proxyconnect tcp: write failed")
+  }
+  while true {
+    let n = ld(c, C_N)
+    let head = raw.str_at(ld(c, C_BUF), n)
+    let end = scan.find(head, "\r\n\r\n", 0)
+    if end >= 0 {
+      if end + 4 != n {
+        return (CC_ERR, "proxyconnect tcp: bytes after the proxy's response to CONNECT")
+      }
+      st(c, C_N, 0)
+      st(c, C_OFF, 0)
+      let line_end = scan.find(head, "\r\n", 0)
+      let line = head[..line_end]
+      // "HTTP/1.1 200 Connection established"
+      let sp = scan.find(line, " ", 0)
+      if sp < 0 || !line.starts_with("HTTP/1.") {
+        return (CC_ERR, "proxyconnect tcp: malformed HTTP response \"" + line + "\"")
+      }
+      let status = line[sp + 1..]
+      if status.starts_with("200") && (status.len() == 3 || status[3..].starts_with(" ")) {
+        return (CC_OK, "")
+      }
+      let sp2 = scan.find(status, " ", 0)
+      return (CC_ERR, if sp2 < 0 { "unknown status code" } else { status[sp2 + 1..] })
+    }
+    if n > 65536 {
+      return (CC_ERR, "proxyconnect tcp: the proxy's response head is too large")
+    }
+    let f = fill(c)
+    if f == CC_EOF {
+      return (CC_ERR, "proxyconnect tcp: unexpected EOF")
+    }
+    if f != CC_OK {
+      return (f, "proxyconnect tcp: read failed")
+    }
+  }
+  (CC_ERR, "")
+}
+
 fn pool_key(https: Bool, addr: Str, tls_host: Str) -> Str { if https { addr + "|" + tls_host } else { addr } }
 
 /// Ends the HTTP/1.1 exchange Xo read in full with keep (the connection
@@ -1436,6 +1509,10 @@ pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roo
 /// knowledge (R2f: conn_new and an exchange, as start); an idle pooled
 /// connection first, as start (R2g).
 fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool, h2c: Bool, alpn: List[Str], cfg: List[Int]) {
+  if scan.find(addr, "\u{1}", 0) >= 0 {
+    fail(r, 2, prefix + ": proxyconnect: a CONNECT tunnel is not supported on wasm")
+    return
+  }
   let key = pool_key(https, addr, tls_host) + cfg_key(cfg)
   if (https || h2c) && pool && (alpn.is_empty() || alpn.contains("h2")) {
     let pc = pool_take(roots, raw.data(key), key.len())
@@ -1513,8 +1590,10 @@ fn start_h2_wasm(r: Int, c: Int, cna: Int, https: Bool, addr: Str, tls_host: Str
 
 fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool, h2c: Bool, alpn: List[Str], cfg: List[Int]) {
   // an idle HTTP/2 connection to the same address, server name, and
-  // roots
+  // roots (a tunnel's addr names the target, the proxy and its
+  // credentials, so its connections pool apart: tunnel_addr)
   let key = pool_key(https, addr, tls_host) + cfg_key(cfg)
+  let (target_addr, dial_addr, proxy_auth) = tunnel_parts(addr)
   if (https || h2c) && pool && (alpn.is_empty() || alpn.contains("h2")) {
     let pc = pool_take(roots, raw.data(key), key.len())
     if pc != 0 {
@@ -1532,7 +1611,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
     return
   }
   // the connection's handle (its reference is the record's), or 0
-  let cna = netconn.dial_timeout(addr, d)
+  let cna = netconn.dial_timeout(dial_addr, d)
   let x = ctx.cur()
   let ns = ld(x, ctx.C_NET_STATUS)
   if ns != 0 {
@@ -1540,7 +1619,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
     if ns == 5 {
       fail(r, 5, "")
     } else if ns == 2 {
-      fail(r, 2, "dial tcp ${addr}: connect: connection refused")
+      fail(r, 2, "dial tcp ${dial_addr}: connect: connection refused")
     } else if nm.contains("i/o timeout") {
       fail(r, 3, "")
     } else {
@@ -1554,6 +1633,25 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
   st(c, C_PD, pd)
   rt.mem_store(c, C_FD, rt.mem_load(pd, 8, 4), 4)
   st(c, C_WHEN, dl)
+  if !target_addr.is_empty() {
+    // through a proxy (decision 0617 B): a CONNECT tunnel to the target,
+    // then TLS to it over the tunnel
+    let (ts, why) = tunnel_open(c, target_addr, proxy_auth)
+    if ts != CC_OK {
+      free_c(ld(c, C_BUF))
+      poll.pd_close(pd)
+      tasks.h_release(cna)
+      rt.mem_set(c, 0, 72)
+      if ts == CC_TIMEOUT {
+        fail(r, 3, "")
+      } else if ts == CC_CANCELED {
+        fail(r, 5, "")
+      } else {
+        fail(r, 2, prefix + ": " + why)
+      }
+      return
+    }
+  }
   if https {
     // the TLS handshake (tlsio.xo): its failures are
     // Protocol errors with crypto/tls's texts, or Timeout and Canceled

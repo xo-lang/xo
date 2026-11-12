@@ -4531,7 +4531,7 @@ fn valid_method(m: Str) -> Bool {
 /// the attenuation lists of the client's Net (decision 0175), following
 /// redirects as net/http's Client does (redirectBehavior,
 /// defaultCheckRedirect, the headers a redirect drops, refererForURL).
-pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], h2cfg: List[Int] = [], expect: Int = 0) -> CResult {
+pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], h2cfg: List[Int] = [], expect: Int = 0, proxy: List[fn(Str) -> Str] = []) -> CResult {
   if !valid_method(m) {
     return cfail(1, "net/http: invalid method " + go_quote(m))
   }
@@ -4648,6 +4648,52 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       target_of = target_of + "?" + u.rawquery
     }
     let prefix = url_op(method) + " " + q
+    // through a proxy (decision 0617 B; net/http's connectMethod): the
+    // client's chooser names one for this hop's URL, as
+    // `URL\u{1}Proxy-Authorization`, or "" to connect directly
+    var conn_https = https
+    var conn_addr = addr
+    var conn_name = name
+    var hop_h2c = h2c
+    if !proxy.is_empty() {
+      let chosen = proxy[0](cut)
+      if !chosen.is_empty() {
+        let sep = scan.find(chosen, "\u{1}", 0)
+        let purl = if sep >= 0 { chosen[..sep] } else { chosen }
+        let pauth = if sep >= 0 { chosen[sep + 1..] } else { "" }
+        let pu = neturl.url_parse(purl, false)
+        if !pu.ok || (pu.scheme != "http" && pu.scheme != "https") || pu.host.is_empty() {
+          return cfail(2, op + " " + q + ": proxyconnect: invalid proxy URL " + go_quote(purl))
+        }
+        let (pname, pport0) = split_hostport(pu.host)
+        let pport = if !pport0.is_empty() { pport0 } else if pu.scheme == "https" { "443" } else { "80" }
+        let paddr = if scan.find(pname, ":", 0) >= 0 { "[" + pname + "]:" + pport } else { pname + ":" + pport }
+        // an attenuated Net (Net.only, decision 0175) must admit the
+        // proxy too; the target was checked above, so a proxy cannot
+        // carry a request the Net refuses
+        if !lists.is_empty() && !netpolicy.admits(lists, pname, pport) {
+          return cfail(2, op + " " + q + ": denied by Net.only: proxy " + paddr)
+        }
+        hop_h2c = false
+        if https {
+          if pu.scheme == "https" {
+            return cfail(2, op + " " + q + ": proxyconnect: an https proxy for an https request is not supported (use an http proxy, whose CONNECT tunnel carries the TLS)")
+          }
+          // a CONNECT tunnel through the proxy, TLS to the target inside
+          conn_addr = hclient.tunnel_addr(addr, paddr, pauth)
+        } else {
+          // the request to the proxy, its target the absolute URL
+          conn_https = pu.scheme == "https"
+          conn_addr = paddr
+          conn_name = pname
+          target_of = "http://" + u.host + target_of
+          if !pauth.is_empty() && !has_key(hk, "Proxy-Authorization") {
+            hk.push("Proxy-Authorization")
+            hv.push(pauth)
+          }
+        }
+      }
+    }
     var status = 0
     var headers: List[Str] = []
     var rbody = b""
@@ -4662,7 +4708,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       headers = x.headers
       rbody = x.body
     } else {
-      var r = hclient.cl_start(https, addr, name, body, when, roots, prefix, true, h2c, alpn, h2cfg)
+      var r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, true, hop_h2c, alpn, h2cfg)
       // stream over HTTP/2 (decision 0404 stage B2): the exchange kept open
       // after the head
       var h2x: H2X? = None
@@ -4676,7 +4722,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
         if hclient.retry(r) {
           // the server did not take the request on the pooled connection:
           // it goes on a new one, as Transport retries it
-          r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn, h2cfg)
+          r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, false, hop_h2c, alpn, h2cfg)
           if hclient.h2(r) {
             h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn)
           }
@@ -4687,26 +4733,26 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       var hb = BodyRead{mode: 0, done: true}
       if h1 {
         var x = if stream {
-          let hr = h1_head_round(r, method, target_of, sent_host, hk, hv, body, https, addr, name, roots, src, duplex, tnames, tfn)
+          let hr = h1_head_round(r, method, target_of, sent_host, hk, hv, body, conn_https, conn_addr, conn_name, roots, src, duplex, tnames, tfn)
           hb = hr.b
           hr.x
         } else {
-          h1_round(r, method, target_of, sent_host, hk, hv, body, https, addr, name, roots, src, tnames, tfn, expect)
+          h1_round(r, method, target_of, sent_host, hk, hv, body, conn_https, conn_addr, conn_name, roots, src, tnames, tfn, expect)
         }
         if x.none && hclient.reused(r) && replayable(method, hk) && src.is_empty() {
           // the pooled connection was dead (the server closed it): the
           // request goes once more on a new one, as Transport retries it
           // (decision 0303)
-          r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn, h2cfg)
+          r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, false, hop_h2c, alpn, h2cfg)
           h1 = hclient.reading(r)
           if hclient.h2(r) {
             h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn)
           } else if h1 && stream {
-            let hr = h1_head_round(r, method, target_of, sent_host, hk, hv, body, https, addr, name, roots, src, duplex, tnames, tfn)
+            let hr = h1_head_round(r, method, target_of, sent_host, hk, hv, body, conn_https, conn_addr, conn_name, roots, src, duplex, tnames, tfn)
             hb = hr.b
             x = hr.x
           } else if h1 {
-            x = h1_round(r, method, target_of, sent_host, hk, hv, body, https, addr, name, roots, src, tnames, tfn, expect)
+            x = h1_round(r, method, target_of, sent_host, hk, hv, body, conn_https, conn_addr, conn_name, roots, src, tnames, tfn, expect)
           }
         }
         if h1 && hclient.err(r) == 0 {
@@ -4739,7 +4785,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
               headers = without_fields(headers, "Content-Encoding", "Content-Length")
             }
           }
-          return CResult{err: 0, msg: "", status: status, headers: headers, body: b"", open: true, conn: Some(r), read: hb, https: https, addr: addr, name: name, gz: gz, h2: h2x}
+          return CResult{err: 0, msg: "", status: status, headers: headers, body: b"", open: true, conn: Some(r), read: hb, https: conn_https, addr: conn_addr, name: conn_name, gz: gz, h2: h2x}
         }
         // a redirect: its body read and dropped, its connection pooled
         // before the next hop
@@ -4754,11 +4800,11 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
         while !hb.done {
           let st = cbody_next(r, hb, 65536)
           if st.s != CC_OK {
-            hclient.end_keep(r, false, https, addr, name, roots, st.s, if st.why.is_empty() { "" } else { "\u{1}" + st.why })
+            hclient.end_keep(r, false, conn_https, conn_addr, conn_name, roots, st.s, if st.why.is_empty() { "" } else { "\u{1}" + st.why })
             return cfail(hclient.err(r), hclient.msg(r))
           }
         }
-        hclient.end_keep(r, hb.keep, https, addr, name, roots, CC_OK, "")
+        hclient.end_keep(r, hb.keep, conn_https, conn_addr, conn_name, roots, CC_OK, "")
       }
     }
     // a gzip body the request asked for (hclient.request and h2_exchange

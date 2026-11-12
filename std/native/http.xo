@@ -176,6 +176,9 @@ struct Client {
   /// the redirects followed at most (with_redirects, decision 0404); 0
   /// returns the 3xx itself
   redirects: Int = 10
+  /// with_proxy and with_proxy_for (decision 0617 B): the chooser
+  /// http1.client_do asks for each hop's URL, empty for none
+  proxy: List[fn(Str) -> Str] = []
 }
 
 /// http.Response with its streamed body's function, hidden from Xo code:
@@ -3631,6 +3634,36 @@ fn (c: Client) with_h2_config(cfg: http.H2Config) -> Client { c with {h2cfg: Som
 
 /// The client following at most max redirects (decision 0404): 0 returns
 /// a 3xx response as it came, its Location as the server sent it.
+/// The client sending every request through the proxy at url (decision
+/// 0617 B; Go's Transport.Proxy of http.ProxyURL).
+fn (c: Client) with_proxy(url: http.Url) -> Client { c.with_proxy_for(fn(_u: http.Url) { Some(url) }) }
+
+/// The client asking f for each request's proxy, None to connect directly
+/// (Go's Transport.Proxy; httpproxy.proxy_from_env is one). It is asked
+/// again for each redirect's URL.
+fn (c: Client) with_proxy_for(f: fn(http.Url) -> http.Url?) -> Client {
+  c with {proxy: [fn(raw: Str) { proxy_choice(f, raw) }]}
+}
+
+/// What http1.client_do's chooser answers for the hop URL raw: "" to
+/// connect directly, else the proxy's URL without its userinfo and, after
+/// a \u{1}, the Proxy-Authorization its userinfo gives (Basic, as Go's
+/// Transport sends). A URL the chooser cannot be asked about is an
+/// invalid proxy, never a direct connection.
+fn proxy_choice(f: fn(http.Url) -> http.Url?, raw: Str) -> Str {
+  let u = match parse_url(raw) {
+    Ok(u) => u
+    Err(_) => return "\u{1}"
+  }
+  match f(u) {
+    None => ""
+    Some(p) => {
+      let auth = if p.user.is_empty() && p.password is None { "" } else { "Basic " + (p.user + ":" + (p.password ?? "")).bytes().to_base64() }
+      url_string(p with {user: "", password: None, path: "", query: {}}) + "\u{1}" + auth
+    }
+  }
+}
+
 fn (c: Client) with_redirects(max: Int) -> Client { c with {redirects: if max < 0 { 0 } else { max }} }
 
 /// The request sent with Host (HTTP/1.1) and :authority (HTTP/2) host in place of the URL's (Go's Request.Host); the
@@ -4042,7 +4075,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   }
   let ta = trailer_args(req)
   let dsrc = if duplex.is_empty() || ta.src.is_empty() { ta.src } else { [ta.src[0], poll_source(ta.src[0], duplex[0])] }
-  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, dsrc, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c))
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, dsrc, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), proxy: c.proxy)
   match r.err {
     0 => ()
     _ => {
@@ -4493,7 +4526,7 @@ fn (c: Client) send(req0: Request) -> http.Response ! http.ClientErr uses net.di
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
   // a wasi:http component sends a whole body (decision 0447)
   let ta = trailer_args(if wasiworld.component() { src_whole(req)? } else { req })
-  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), expect: req.expect_ns)
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), expect: req.expect_ns, proxy: c.proxy)
   // done with the request: its body's reader closes (net/http closes
   // the request body), so a later write fails instead of waiting
   close_src(req.src)

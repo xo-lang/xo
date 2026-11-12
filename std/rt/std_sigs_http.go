@@ -115,6 +115,8 @@ var (
 	_ func(*Http_ClientStream, *Task)                                                                                                                   = (*Http_ClientStream).M_close
 	_ func(*Http_ClientStream, *Task) Map[string, string]                                                                                               = (*Http_ClientStream).M_trailers
 	_ func(*Http_Client, *Task, int64) Http_Client                                                                                                      = (*Http_Client).M_with_redirects
+	_ func(*Http_Client, *Task, Http_Url) Http_Client                                                                                                   = (*Http_Client).M_with_proxy
+	_ func(*Http_Client, *Task, func(*Task, Http_Url) Result[Option[Http_Url], Never]) Http_Client                                                      = (*Http_Client).M_with_proxy_for
 	_ func(*Http_ClientErr, *Task) string                                                                                                               = (*Http_ClientErr).M_display
 	_ func(*Task, string) Result[Http_Url, Http_UrlErr]                                                                                                 = Http_parse_url
 	_ func(*Http_Url, *Task) string                                                                                                                     = (*Http_Url).M_display

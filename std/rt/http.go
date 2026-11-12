@@ -1451,6 +1451,22 @@ type Http_Client struct {
 	// with_redirects (decision 0404): the redirects followed at most; 0
 	// returns the 3xx itself
 	redirects int64
+	// with_proxy and with_proxy_for (decision 0617 B): the chooser asked
+	// for each request's proxy
+	proxy Option[func(*Task, Http_Url) Result[Option[Http_Url], Never]]
+}
+
+// M_with_proxy is `c.with_proxy(url)` (decision 0617 B).
+func (c Http_Client) M_with_proxy(tk *Task, u Http_Url) Http_Client {
+	return c.M_with_proxy_for(tk, func(*Task, Http_Url) Result[Option[Http_Url], Never] { return Ok[Option[Http_Url], Never](Some(u)) })
+}
+
+// M_with_proxy_for is `c.with_proxy_for(f)` (decision 0617 B): the
+// transport's Proxy asks f, an attenuated Net admitting the proxy.
+func (c Http_Client) M_with_proxy_for(_ *Task, f func(*Task, Http_Url) Result[Option[Http_Url], Never]) Http_Client {
+	c.proxy = Some(f)
+	c.tr = clientTransport(c)
+	return c
 }
 
 // M_with_redirects is `c.with_redirects(max)` (decision 0404).
