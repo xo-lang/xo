@@ -75,3 +75,18 @@ on host 3, the others on host 1.
 - Per-leaf ownership in the calling convention (pass the given away
   field owned, the rest borrowed): a convention change across every
   backend; the threshold gets the measured gain without it.
+
+## Addendum (2026-11-12): turned off
+
+azure armnetwork's poller-of-pager tests (845 tests, 4 failed) faulted on
+arm64 with the partial borrow on (bisected to 5b1c2cda9 by aws-43): a
+SIGSEGV retaining a zeroed `roots` word in Pipeline.send, after the Pager
+returned by poll_until_done already had its `pipeline.policies` list
+over-released. A per-function filter narrowed it to `runtime.Pager`'s
+`p with {k: x}` methods (starting_with; traced_as too with inlining off).
+`PART_BORROW_ON = false` in compiler/ssa/rc.xo turns the rule off on main
+and on the 0.50.x release branch. Treating a `setfield` whose struct is a
+borrowed parameter as consuming it whole makes the tests pass, but the
+over-release is not yet explained (the callee's retains and the caller's
+releases balance in SSA) and small programs of the same shape do not
+reproduce it, so the rule stays off until a reproducing golden exists.
