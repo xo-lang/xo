@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"strconv"
 	"strings"
@@ -520,4 +521,67 @@ func Crypto_jwk_public_key(_ *Task, jwk string) Result[Crypto_PublicKey, Crypto_
 		return fail(err.Error())
 	}
 	return Ok[Crypto_PublicKey, Crypto_KeyErr](Crypto_PublicKey{k: k, der: string(m)})
+}
+
+// RSA encryption (decision 0618). Go's crypto/rsa ignores a custom random
+// reader since Go 1.26 (crypto/internal/rand.CustomReader), so the
+// ciphertext uses Go's own randomness; r gives the bytes the native
+// backend draws, so a program's Rand advances the same way.
+
+func Crypto_encrypt_oaep(tk *Task, r Rand, k Crypto_PublicKey, h Crypto_Hash, msg Bytes, label Bytes) Result[Bytes, Crypto_KeyErr] {
+	p, ok := k.k.(*rsa.PublicKey)
+	if !ok {
+		return Err[Bytes](keyErr("crypto: encrypt_oaep needs an RSA key"))
+	}
+	r.M_bytes(tk, int64(cryptoGoHashes[h.Tag].Size()))
+	c, err := rsa.EncryptOAEP(cryptoGoHashes[h.Tag].New(), cryptorand.Reader, p, []byte(msg), []byte(label))
+	if err != nil {
+		return Err[Bytes](keyErr(err.Error()))
+	}
+	return Ok[Bytes, Crypto_KeyErr](Bytes(c))
+}
+
+func Crypto_decrypt_oaep(_ *Task, k Crypto_PrivateKey, h Crypto_Hash, ciphertext Bytes, label Bytes) Result[Bytes, Crypto_KeyErr] {
+	p, ok := k.k.(*rsa.PrivateKey)
+	if !ok {
+		return Err[Bytes](keyErr("crypto: decrypt_oaep needs an RSA key"))
+	}
+	m, err := rsa.DecryptOAEP(cryptoGoHashes[h.Tag].New(), nil, p, []byte(ciphertext), []byte(label))
+	if err != nil {
+		if errors.Is(err, rsa.ErrDecryption) {
+			err = rsa.ErrDecryption
+		}
+		return Err[Bytes](keyErr(err.Error()))
+	}
+	return Ok[Bytes, Crypto_KeyErr](Bytes(m))
+}
+
+func Crypto_encrypt_pkcs1v15(tk *Task, r Rand, k Crypto_PublicKey, msg Bytes) Result[Bytes, Crypto_KeyErr] {
+	p, ok := k.k.(*rsa.PublicKey)
+	if !ok {
+		return Err[Bytes](keyErr("crypto: encrypt_pkcs1v15 needs an RSA key"))
+	}
+	if n := p.Size() - len(msg) - 3; n >= 8 {
+		r.M_bytes(tk, int64(n))
+	}
+	c, err := rsa.EncryptPKCS1v15(cryptorand.Reader, p, []byte(msg))
+	if err != nil {
+		return Err[Bytes](keyErr(err.Error()))
+	}
+	return Ok[Bytes, Crypto_KeyErr](Bytes(c))
+}
+
+func Crypto_decrypt_pkcs1v15(_ *Task, k Crypto_PrivateKey, ciphertext Bytes) Result[Bytes, Crypto_KeyErr] {
+	p, ok := k.k.(*rsa.PrivateKey)
+	if !ok {
+		return Err[Bytes](keyErr("crypto: decrypt_pkcs1v15 needs an RSA key"))
+	}
+	m, err := rsa.DecryptPKCS1v15(nil, p, []byte(ciphertext))
+	if err != nil {
+		if errors.Is(err, rsa.ErrDecryption) {
+			err = rsa.ErrDecryption
+		}
+		return Err[Bytes](keyErr(err.Error()))
+	}
+	return Ok[Bytes, Crypto_KeyErr](Bytes(m))
 }

@@ -1,5 +1,20 @@
 # std/crypto changes
 
+## 2026-11-12: feature: RSA encryption, OAEP and legacy PKCS #1 v1.5 (Go's crypto/rsa)
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit of 2026-11-12 (bench/results/std-audit-2026-11-12.md, crypto/rsa's largest gap group), decision 0618 (owner, 2026-11-12: OAEP recommended, PKCS #1 v1.5 legacy, for interop only)
+- Go reference: crypto/internal/fips140/rsa pkcs1v22.go (EncryptOAEP, DecryptOAEP) and crypto/rsa pkcs1v15.go (go1.26.1)
+- Test: std/native/crypto_test.xo (Go's rsa_test.go OAEP vectors, RFC 8017, encrypt and decrypt; pkcs1v15_test.go decryption vectors); internal/llvm/testdata/golden/crypto_rsa_encrypt (140 ciphertexts from Go's EncryptOAEP and EncryptPKCS1v15, changed and unchanged, decrypt to Go's outcome on every backend; Go's limits; round trips)
+- Shipped in: not yet released
+
+`crypto.encrypt_oaep` and `decrypt_oaep` (RSA-OAEP, the recommended
+scheme: JWE RSA-OAEP and RSA-OAEP-256, KMS key wrapping) and the legacy
+`encrypt_pkcs1v15` and `decrypt_pkcs1v15`, only for systems that require
+them. Decryption checks the padding in constant time (native/llrt/ct
+masks) and every failure is the one `crypto/rsa: decryption error`.
+
 ## 2026-11-11: perf: AES CTR and CBC encryption through CPU kernels
 
 - Kind: perf

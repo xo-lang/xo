@@ -1562,6 +1562,87 @@ fn sign_z(k: PrivateKey, h: crypto.Hash, msg: Bytes, z: Bytes) -> Bytes ! crypto
 
 fn sign_pss(r: Rand, k: PrivateKey, h: crypto.Hash, msg: Bytes) -> Bytes ! crypto.KeyErr uses rand { sign_pss_with(k, h, msg, r.bytes(h.size())) }
 
+fn encrypt_oaep(r: Rand, k: PublicKey, h: crypto.Hash, msg: Bytes, label: Bytes) -> Bytes ! crypto.KeyErr uses rand {
+  encrypt_oaep_with(k, h, msg, label, r.bytes(h.size()))
+}
+
+/// encrypt_oaep with the seed.
+fn encrypt_oaep_with(k: PublicKey, h: crypto.Hash, msg: Bytes, label: Bytes, seed: Bytes) -> Bytes ! crypto.KeyErr {
+  if k.kind != crypto.KeyAlg.Rsa {
+    return Err(key_err("crypto: encrypt_oaep needs an RSA key"))
+  }
+  let e = rsa_public_err(k.n, k.e)
+  if !e.is_empty() {
+    return Err(key_err(e))
+  }
+  match rsa.encrypt_oaep_fn(rsa_pub(k), h.size(), fn(b) { digest(h, b) }, msg, label, seed) {
+    Some(c) => c
+    None => Err(key_err("crypto/rsa: message too long for RSA key size"))
+  }
+}
+
+fn decryption_error() -> crypto.KeyErr { key_err("crypto/rsa: decryption error") }
+
+fn decrypt_oaep(k: PrivateKey, h: crypto.Hash, ciphertext: Bytes, label: Bytes) -> Bytes ! crypto.KeyErr {
+  if k.kind != crypto.KeyAlg.Rsa {
+    return Err(key_err("crypto: decrypt_oaep needs an RSA key"))
+  }
+  let e = rsa_public_err(k.rsa.n, k.rsa.e)
+  if !e.is_empty() {
+    return Err(key_err(e))
+  }
+  match rsa.decrypt_oaep_fn(k.rsa, h.size(), fn(b) { digest(h, b) }, ciphertext, label) {
+    Some(m) => m
+    None => Err(decryption_error())
+  }
+}
+
+fn encrypt_pkcs1v15(r: Rand, k: PublicKey, msg: Bytes) -> Bytes ! crypto.KeyErr uses rand {
+  if k.kind != crypto.KeyAlg.Rsa {
+    return Err(key_err("crypto: encrypt_pkcs1v15 needs an RSA key"))
+  }
+  let n = rsa.size(k.n) - msg.len() - 3
+  if n < 8 {
+    return Err(key_err("crypto/rsa: message too long for RSA key size"))
+  }
+  // nonzero padding bytes: a zero is drawn again
+  var ps = rt.rs_with_cap(n)
+  while ps.len() < n {
+    for b in r.bytes(n - ps.len()) {
+      if b != 0 {
+        ps = rt.rs_push_byte(ps, Int(b))
+      }
+    }
+  }
+  encrypt_pkcs1v15_with(k, msg, ps.bytes())
+}
+
+/// encrypt_pkcs1v15 with the padding.
+fn encrypt_pkcs1v15_with(k: PublicKey, msg: Bytes, ps: Bytes) -> Bytes ! crypto.KeyErr {
+  let e = rsa_public_err(k.n, k.e)
+  if !e.is_empty() {
+    return Err(key_err(e))
+  }
+  match rsa.encrypt_pkcs1v15(rsa_pub(k), msg, ps) {
+    Some(c) => c
+    None => Err(key_err("crypto/rsa: message too long for RSA key size"))
+  }
+}
+
+fn decrypt_pkcs1v15(k: PrivateKey, ciphertext: Bytes) -> Bytes ! crypto.KeyErr {
+  if k.kind != crypto.KeyAlg.Rsa {
+    return Err(key_err("crypto: decrypt_pkcs1v15 needs an RSA key"))
+  }
+  let e = rsa_public_err(k.rsa.n, k.rsa.e)
+  if !e.is_empty() {
+    return Err(key_err(e))
+  }
+  match rsa.decrypt_pkcs1v15(k.rsa, ciphertext) {
+    Some(m) => m
+    None => Err(decryption_error())
+  }
+}
+
 /// sign_pss with the salt.
 fn sign_pss_with(k: PrivateKey, h: crypto.Hash, msg: Bytes, salt: Bytes) -> Bytes ! crypto.KeyErr {
   if k.kind != crypto.KeyAlg.Rsa {

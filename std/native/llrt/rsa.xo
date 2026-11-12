@@ -9,6 +9,7 @@
 // sha256.xo's HASH_ constants (0 SHA-256, 1 SHA-384, 2 SHA-512).
 use native/llrt/asn1
 use native/llrt/bigmod
+use native/llrt/ct
 use native/llrt/rand
 use native/llrt/sha256
 use native/rt
@@ -436,4 +437,137 @@ fn int_bytes(e: Int) -> Bytes {
     i -= 1
   }
   s.bytes()
+}
+
+// ---------------------------------------------------------------------------
+// Encryption: OAEP (RFC 8017 7.1) and PKCS #1 v1.5 (RFC 8017 7.2), decision
+// 0618. Decryption checks the padding without a branch or an index on the
+// decrypted bytes (Go's crypto/internal/fips140/rsa decryptOAEP and
+// crypto/rsa decryptPKCS1v15): native/llrt/ct masks (0 or -1) combined with
+// & and |, and one branch on the final answer.
+
+/// -1 when a and b (the same, public, length) hold the same bytes, else 0.
+fn ct_bytes_mask(a: Bytes, b: Bytes) -> Int {
+  var d = 0
+  for i in 0..a.len() {
+    d = ct.barrier(d | (Int(a[i]) ^ Int(b[i])))
+  }
+  ~ct.mask_nonzero(d)
+}
+
+/// c below n as size(n) bytes (c left padded), or None: a ciphertext
+/// longer than the key, or not below the modulus.
+fn ciphertext_in(k: PublicKey, c: Bytes) -> Bytes? {
+  let kk = size(k.n)
+  if c.len() > kk {
+    return None
+  }
+  let cp = pad(c, kk)
+  let nl = limbs_of(k.n)
+  let x = bigmod.from_bytes(cp, nl.len()) ?? []
+  if !bigmod.below(bigmod.modulus(nl), x) {
+    return None
+  }
+  Some(cp)
+}
+
+/// RSAES-OAEP-ENCRYPT of msg with the hash hf (hl bytes) for the label
+/// hash and MGF1, and seed (hl bytes); None when msg is longer than
+/// size(n) - 2 hl - 2.
+pub fn encrypt_oaep_fn(k: PublicKey, hl: Int, hf: fn(Bytes) -> Bytes, msg: Bytes, label: Bytes, seed: Bytes) -> Bytes? {
+  let kk = size(k.n)
+  if kk < 2 * hl + 2 || msg.len() > kk - 2 * hl - 2 || seed.len() != hl {
+    return None
+  }
+  let lhash = hf(label)
+  // DB = lHash || PS || 0x01 || M
+  var db = rt.rs_with_cap(kk - hl - 1)
+  db = rt.rs_append_bytes(db, lhash, 0, lhash.len(), 0)
+  for _ in 0..kk - msg.len() - 2 * hl - 2 {
+    db = rt.rs_push_byte(db, 0)
+  }
+  db = rt.rs_push_byte(db, 1)
+  db = rt.rs_append_bytes(db, msg, 0, msg.len(), 0)
+  let masked_db = xor(db.bytes(), mgf1(hf, seed, kk - hl - 1))
+  let masked_seed = xor(seed, mgf1(hf, masked_db, hl))
+  var em = rt.rs_with_cap(kk)
+  em = rt.rs_push_byte(em, 0)
+  em = rt.rs_append_bytes(em, masked_seed, 0, hl, 0)
+  em = rt.rs_append_bytes(em, masked_db, 0, masked_db.len(), 0)
+  public_op(k, em.bytes())
+}
+
+/// RSAES-OAEP-DECRYPT: the message, or None for any failure.
+pub fn decrypt_oaep_fn(k: PrivateKey, hl: Int, hf: fn(Bytes) -> Bytes, c: Bytes, label: Bytes) -> Bytes? {
+  let kk = size(k.n)
+  if kk < 2 * hl + 2 {
+    return None
+  }
+  let cp = ciphertext_in(PublicKey{n: k.n, e: k.e}, c)?
+  let em = private_op(k, cp)?
+  let lhash = hf(label)
+  let first_zero = ct.mask_eq(Int(em[0]), 0)
+  let masked_seed = em[1..1 + hl]
+  let masked_db = em[1 + hl..kk]
+  let seed = xor(masked_seed, mgf1(hf, masked_db, hl))
+  let db = xor(masked_db, mgf1(hf, seed, kk - hl - 1))
+  let lhash_ok = ct_bytes_mask(lhash, db[0..hl])
+  // the first 0x01 after lHash, with only 0x00 before it
+  var looking = -1
+  var index = 0
+  var invalid = 0
+  for i in hl..db.len() {
+    let b = Int(db[i])
+    let eq0 = ct.mask_eq(b, 0)
+    let eq1 = ct.mask_eq(b, 1)
+    index = ct.pick(looking & eq1, i, index)
+    looking = ct.pick(eq1, 0, looking)
+    invalid = ct.pick(looking & ~eq0, -1, invalid)
+  }
+  if (first_zero & lhash_ok & ~invalid & ~looking) == 0 {
+    return None
+  }
+  Some(db[index + 1..db.len()])
+}
+
+/// RSAES-PKCS1-V1_5-ENCRYPT of msg with ps, size(n) - msg.len() - 3
+/// nonzero bytes; None when msg is longer than size(n) - 11 or ps does not
+/// fit.
+pub fn encrypt_pkcs1v15(k: PublicKey, msg: Bytes, ps: Bytes) -> Bytes? {
+  let kk = size(k.n)
+  if kk < 11 || msg.len() > kk - 11 || ps.len() != kk - msg.len() - 3 {
+    return None
+  }
+  var em = rt.rs_with_cap(kk)
+  em = rt.rs_push_byte(em, 0)
+  em = rt.rs_push_byte(em, 2)
+  em = rt.rs_append_bytes(em, ps, 0, ps.len(), 0)
+  em = rt.rs_push_byte(em, 0)
+  em = rt.rs_append_bytes(em, msg, 0, msg.len(), 0)
+  public_op(k, em.bytes())
+}
+
+/// RSAES-PKCS1-V1_5-DECRYPT: the message, or None for any failure.
+pub fn decrypt_pkcs1v15(k: PrivateKey, c: Bytes) -> Bytes? {
+  let kk = size(k.n)
+  if kk < 11 {
+    return None
+  }
+  let cp = ciphertext_in(PublicKey{n: k.n, e: k.e}, c)?
+  let em = private_op(k, cp)?
+  let first_zero = ct.mask_eq(Int(em[0]), 0)
+  let second_two = ct.mask_eq(Int(em[1]), 2)
+  // the first zero after the head; eight padding bytes at least
+  var looking = -1
+  var index = 0
+  for i in 2..kk {
+    let eq0 = ct.mask_eq(Int(em[i]), 0)
+    index = ct.pick(looking & eq0, i, index)
+    looking = ct.pick(eq0, 0, looking)
+  }
+  let ps_ok = ~ct.mask_lt(index.wrapping_sub(2), 8)
+  if (first_zero & second_two & ~looking & ps_ok) == 0 {
+    return None
+  }
+  Some(em[index + 1..kk])
 }

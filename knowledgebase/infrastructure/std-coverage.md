@@ -158,7 +158,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | crypto/hkdf | std/crypto | done | `hkdf_extract`, `hkdf_expand`, `hkdf` over every Hash (Go's Extract, Expand, Key), on TLS's llrt code (2026-10-29, `std/changes/crypto.md`). |
 | crypto/aes, crypto/cipher | std/crypto | done | AEAD: `aead_key(Aead.AesGcm or ChaCha20Poly1305, key)`, `seal`/`open` with a nonce and additional data, `seal_random`/`open_random` (Go's NewGCMWithRandomNonce) (2026-10-29); the raw block cipher (`aes_block`) and CTR and CBC (`ctr`, `cbc_encrypt`, `cbc_decrypt`; decision 0605). CFB and OFB are not planned (deprecated in Go; stdaudit 2026-11-12). |
 | crypto/ecdh | std/crypto | done | X25519, P-256, P-384 and P-521: `ecdh_generate_key`, `ecdh_private_key`, `ecdh_public_key`, `EcdhPrivateKey.ecdh` (decision 0599 stage 1; stdaudit 2026-11-12). An ECDSA key as an ECDH key is stage 2 (the crypto/ecdsa row). |
-| crypto/ecdsa, crypto/rsa, crypto/elliptic | std/crypto | partial | Sign and verify (PKCS #1 v1.5, PSS, ECDSA DER and raw), ECDSA, Ed25519 and RSA key generation (decision 0285); ECDH as an API (the crypto/ecdh row). Missing (stdaudit 2026-11-12): RSA encryption (OAEP and PKCS #1 v1.5), the RSA key size, an ECDSA key as an ECDH key (decision 0599 stage 2), a public key from a raw point. |
+| crypto/ecdsa, crypto/rsa, crypto/elliptic | std/crypto | partial | Sign and verify (PKCS #1 v1.5, PSS, ECDSA DER and raw), ECDSA, Ed25519 and RSA key generation (decision 0285); ECDH as an API (the crypto/ecdh row); RSA encryption, OAEP and legacy PKCS #1 v1.5 (decision 0618; one hash for OAEP and MGF1, no session key form). Missing (stdaudit 2026-11-12): the RSA key size, an ECDSA key as an ECDH key (decision 0599 stage 2), a public key from a raw point. |
 | crypto/mlkem | std/crypto | done | ML-KEM-768 and ML-KEM-1024 key generation, encapsulation and decapsulation (decision 0604; stdaudit 2026-11-12), the same code as the TLS key exchange (std/native/llrt/mlkem.xo). |
 | crypto/hpke | none | planned | After a public AEAD and ECDH. |
 | crypto/x509, crypto/x509/pkix | std/x509, std/crypto (keys) | partial | Certificates: `x509.parse`, `parse_pem`, `create_certificate`, requests (`create_request`, `parse_request`), revocation lists (`parse_revocation_list`), PKCS #12, chain verification; key parsing and marshaling in std/crypto (decision 0285). Missing (stdaudit 2026-11-12): creating a revocation list. |
@@ -295,7 +295,7 @@ files, grouped by feature (`-rank REPORT -status gap DIRS...`; Last verified:
 | 27 | no Request.basic_auth (decode the Authorization header by hand) | 3 | 1 / 1 | `net/http.Request.BasicAuth` |
 | 28 | no capture positions | 3 | 1 / 1 | `regexp.Regexp.FindStringSubmatchIndex`, `regexp.Regexp.FindSubmatchIndex` |
 | 29 | no content sniffing (Go's DetectContentType) | 3 | 0 / 3 | `net/http.DetectContentType` |
-| 30 | see rsa.EncryptOAEP | 3 | 0 / 3 | `crypto/rsa.PKCS1v15DecryptOptions`, `crypto/rsa.PrivateKey.Decrypt`, `crypto/rsa.EncryptPKCS1v15`, `crypto/rsa.ErrMessageTooLong` and 6 more |
+| 30 | see rsa.EncryptOAEP (closed 2026-11-12, decision 0618) | 3 | 0 / 3 | `crypto/rsa.PKCS1v15DecryptOptions`, `crypto/rsa.PrivateKey.Decrypt`, `crypto/rsa.EncryptPKCS1v15`, `crypto/rsa.ErrMessageTooLong` and 6 more |
 
 Closed since the 2026-11-11 table (every row of it but 13,
 HPKE): image/color models (0578), textproto, ECDH, File.seek (0600), asn1

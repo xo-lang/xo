@@ -219,6 +219,28 @@ fn verify_raw_ecdsa(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
 fn sign(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
 /// RSA PSS with a salt as long as the hash, from r.
 fn sign_pss(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
+/// RSA-OAEP encryption (RFC 8017, Go's EncryptOAEP), the recommended RSA
+/// encryption scheme: msg under the RSA key k, with h for the label hash
+/// and MGF1 and a seed of h.size() bytes from r. KeyErr for a key that is
+/// not RSA or a msg longer than the key's size - 2 * h.size() - 2.
+fn encrypt_oaep(r: Rand, k: PublicKey, h: Hash, msg: Bytes, label: Bytes = b"") -> Bytes ! KeyErr uses rand
+/// RSA-OAEP decryption (Go's DecryptOAEP). The padding is checked in
+/// constant time, and every failure (a bad ciphertext, padding or label)
+/// is the one KeyErr `crypto/rsa: decryption error`, so a caller cannot
+/// tell causes apart.
+fn decrypt_oaep(k: PrivateKey, h: Hash, ciphertext: Bytes, label: Bytes = b"") -> Bytes ! KeyErr
+/// Legacy: RSA PKCS #1 v1.5 encryption (Go's EncryptPKCS1v15), only for
+/// interoperating with existing systems that require it; new protocols use
+/// encrypt_oaep. As Go's crypto/rsa says, PKCS #1 v1.5 encryption is
+/// dangerous: a decrypter that reveals whether padding was valid is open to
+/// Bleichenbacher's attack. Padding is nonzero bytes from r.
+fn encrypt_pkcs1v15(r: Rand, k: PublicKey, msg: Bytes) -> Bytes ! KeyErr uses rand
+/// Legacy: RSA PKCS #1 v1.5 decryption (Go's DecryptPKCS1v15), for
+/// interoperating with existing systems only; decrypt_oaep otherwise.
+/// Constant-time padding checks and the one KeyErr `crypto/rsa: decryption
+/// error`, but the scheme stays unsafe wherever an attacker can learn
+/// whether a ciphertext decrypted.
+fn decrypt_pkcs1v15(k: PrivateKey, ciphertext: Bytes) -> Bytes ! KeyErr
 /// ECDSA as the fixed size r || s of JWS.
 fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
 /// A new key from r (Go's GenerateKey): an ECDSA or Ed25519 key, or an RSA

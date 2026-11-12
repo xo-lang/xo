@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- std/crypto (decision 0618): RSA encryption. `crypto.encrypt_oaep` and `crypto.decrypt_oaep` (RSA-OAEP, Go's `EncryptOAEP` and `DecryptOAEP`) are the recommended scheme; `encrypt_pkcs1v15` and `decrypt_pkcs1v15` are legacy, for interoperating with systems that require them. Decryption checks padding in constant time and reports every failure as the one `crypto/rsa: decryption error`.
+
 ## v0.50.0 (2026-11-12)
 
 The 0.50 release. The release notes (the GitHub release) group these entries;

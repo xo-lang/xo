@@ -3880,6 +3880,10 @@ pub fn verify_raw_ecdsa(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
 pub fn sign(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
 pub fn sign_pss(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
 pub fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
+pub fn encrypt_oaep(r: Rand, k: PublicKey, h: Hash, msg: Bytes, label: Bytes = b"") -> Bytes ! KeyErr uses rand
+pub fn decrypt_oaep(k: PrivateKey, h: Hash, ciphertext: Bytes, label: Bytes = b"") -> Bytes ! KeyErr
+pub fn encrypt_pkcs1v15(r: Rand, k: PublicKey, msg: Bytes) -> Bytes ! KeyErr uses rand   // legacy
+pub fn decrypt_pkcs1v15(k: PrivateKey, ciphertext: Bytes) -> Bytes ! KeyErr              // legacy
 pub fn generate_key(r: Rand, alg: KeyAlg, bits: Int = 2048) -> PrivateKey ! KeyErr uses rand
 ```
 
@@ -3905,6 +3909,23 @@ pub fn generate_key(r: Rand, alg: KeyAlg, bits: Int = 2048) -> PrivateKey ! KeyE
   wrong length, or a malformed signature is `false`, never a fault.
   `verify_pss` accepts any salt length (Go's `PSSSaltLengthAuto`);
   `sign_pss` uses a salt as long as the hash (RFC 7518 PS256, TLS 1.3).
+- RSA encryption (decision 0618) is Go's `crypto/rsa`. `encrypt_oaep` and
+  `decrypt_oaep` (RSA-OAEP, RFC 8017 7.1; `h` is both the label hash and
+  MGF1's hash; the seed is `h.size()` bytes from `r`) are the recommended
+  scheme. `encrypt_pkcs1v15` and `decrypt_pkcs1v15` (RFC 8017 7.2) are
+  legacy, for interoperating with existing systems only (Go documents them
+  as "dangerous and should not be used"): an attacker who can learn whether
+  a ciphertext decrypted can decrypt others (Bleichenbacher); the padding
+  is nonzero bytes from `r`. Decryption checks the padding in constant
+  time and every failure (a ciphertext longer than the key or not below
+  the modulus, a bad padding, a wrong label) is the one `KeyErr`
+  `crypto/rsa: decryption error`. Encrypting more than the key's size
+  minus `2 * h.size() + 2` bytes (OAEP) or minus 11 (PKCS #1 v1.5) is
+  `crypto/rsa: message too long for RSA key size`; a key that is not RSA is
+  `KeyErr`; the key's size and public values are checked as for signing.
+  On the Go backend the ciphertext comes from Go's `crypto/rsa`, which
+  since Go 1.26 draws its own randomness (`r` gives up the same number of
+  bytes).
 - RSA keys verify and sign from 1024 bits (Go 1.24's minimum: `crypto/rsa:
   512-bit keys are insecure (see ...)`), and a key's public values are
   checked as Go checks them (`crypto/rsa: public exponent is even`, ...);

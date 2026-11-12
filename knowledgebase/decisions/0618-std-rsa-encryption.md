@@ -1,6 +1,12 @@
 # 0618: RSA encryption in std/crypto (OAEP, PKCS #1 v1.5)
 
-Status: Proposed (Xo Lang 3, 2026-11-12; the owner's std track, medium list: "RSA OAEP").
+Status: Accepted (owner, 2026-11-12), with one condition: OAEP is the
+recommended scheme, and PKCS #1 v1.5 encryption is documented as legacy,
+for interoperating with existing systems only (the doc comments,
+spec/std.md and std/changes say so, as Go's crypto/rsa documentation
+does); the constant-time decoding and the single error text stay.
+Proposed by Xo Lang 3, 2026-11-12 (the owner's std track, medium list:
+"RSA OAEP").
 
 ## Context
 
@@ -92,3 +98,14 @@ Tests:
   their random parameter "legacy and ignored" (crypto/rsa pkcs1v15.go, Go
   1.26); like Go's bigmod, Xo's bigmod operations are constant time in the
   exponent and modulus, so decryption takes no Rand.
+
+## Progress
+
+- 2026-11-12: implemented (Xo Lang 3). std/native/llrt/rsa.xo
+  encrypt_oaep_fn, decrypt_oaep_fn, encrypt_pkcs1v15 and decrypt_pkcs1v15
+  (native/llrt/ct masks); std/crypto's four functions with the legacy
+  wording; the Go backend through Go's crypto/rsa. Tests: Go's OAEP
+  vectors (encrypt and decrypt) and PKCS #1 v1.5 decryption vectors in
+  std/native/crypto_test.xo; golden crypto_rsa_encrypt, a differential of
+  140 Go ciphertexts (each changed in five ways) on every backend. A fuzz
+  of the decrypt paths against Go and the 0616 security review follow.

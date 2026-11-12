@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+go ciphertexts: 17 decrypted, 123 refused as Go refuses, 0 mismatches
+limit oaep Sha1 214: as Go
+limit oaep Sha1 215: as Go
+limit oaep Sha256 190: as Go
+limit oaep Sha256 191: as Go
+limit oaep Sha512 126: as Go
+limit oaep Sha512 127: as Go
+limit pkcs1v15 Sha256 245: as Go
+limit pkcs1v15 Sha256 246: as Go
+oaep round trip Sha1: true, randomized true, wrong label: crypto/rsa: decryption error
+oaep round trip Sha256: true, randomized true, wrong label: crypto/rsa: decryption error
+oaep round trip Sha384: true, randomized true, wrong label: crypto/rsa: decryption error
+oaep round trip Sha512: true, randomized true, wrong label: crypto/rsa: decryption error
+pkcs1v15 round trip: legacy
+ecdsa key: crypto: encrypt_oaep needs an RSA key / crypto: decrypt_oaep needs an RSA key
+--- stderr
