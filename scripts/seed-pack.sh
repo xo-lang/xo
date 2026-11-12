@@ -36,6 +36,15 @@
 #
 # XO_SEED_FORBID (paths separated by ':') refuses a pack when a packed file
 # contains one of them; seed-cut.sh passes its WORKDIR.
+#
+# A separately compiled xo (decision 0388: std's prebuilt object linked
+# beside the program, the default for a host build once the cache holds
+# one) is refused: a seed is a whole program build (XO_SEPCOMP=0, as
+# release.sh and seed-cut.sh set). Its mark is the same local text
+# symbol defined twice, once in std's object and once in the program's
+# (about 1400 in xo; a whole program build has 1);
+# XO_SEED_ALLOW_SEPCOMP=1 skips the check.
+# gotchas/seed-built-separately-compiled.md
 set -euo pipefail
 
 die() { echo "seed-pack: $*" >&2; exit 1; }
@@ -79,6 +88,10 @@ xo=$(cd "$(dirname "$xo")" && pwd)/$(basename "$xo")
 bindir=$(dirname "$xo"); prefix=$(dirname "$bindir")
 if [ -f "$bindir/xo.opt" ] && [ "$(cat "$bindir/xo.opt")" != O2 ] && [ "${XO_SEED_ALLOW_OPT:-0}" != 1 ]; then
   die "$xo was built at clang -$(cat "$bindir/xo.opt") (bin/xo.opt); seeds are -O2: XO_LLVM_OPT=O2 go run ./scripts/xobuild"
+fi
+
+if [ "${XO_SEED_ALLOW_SEPCOMP:-0}" != 1 ] && dups=$(nm "$xo" 2>/dev/null | awk '$2 ~ /^[tT]$/ {print $3}' | sort | uniq -d | wc -l | tr -d ' '); then
+  [ "$dups" -le 100 ] || die "$xo defines $dups local symbols twice: a separately compiled build (decision 0388), not a whole program; rebuild it with XO_SEPCOMP=0 (gotchas/seed-built-separately-compiled.md)"
 fi
 
 # the layout: a release's lib/xo, else a checkout

@@ -131,6 +131,11 @@ work=$(cd "$work" && pwd)
 # no packed file may name WORKDIR, which is under the cutter's home
 # directory (seed-pack.sh; the TSan runtimes did through 0.33.0)
 export XO_SEED_FORBID=$work
+# whole program builds, as release.sh: xobuild's darwin-arm64 build is a
+# host build, which links std's separately compiled object (decision 0388)
+# when the cache holds one, so the seed would depend on the cache (the
+# 0.47.0 seed was one; gotchas/seed-built-separately-compiled.md)
+export XO_SEPCOMP=0
 [ -z "$(ls -A "$work")" ] || die "$work is not empty"
 # a worktree a deleted WORKDIR left registered fails step 1's worktree
 # add after the checks (the 0.44.0 cut's third try,
