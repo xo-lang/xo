@@ -16,3 +16,9 @@ test "verdict" {
   let p = verdict(want, [("/x/a/m.xo", 3, "XO0601", "error", "name `z` not found"), ("/x/a/m.xo", 9, "XO0401", "error", "bad")])
   expect(p.len() == 4)
 }
+
+test "verdict: a diagnostic without a position is a problem, expected or not" {
+  let p = verdict([], [("", 0, "XO1201", "error", "converting `Result[Int, _]` to `Int`")])
+  expect(p.len()) == 2
+  expect(p.any(fn(l) { l.contains("without a position") })) == true
+}

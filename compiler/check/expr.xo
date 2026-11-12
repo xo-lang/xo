@@ -2065,6 +2065,57 @@ fn (var c: Checker) with_expr(span: Span, x: Expr, fields: List[parser.FieldInit
 // ---------------------------------------------------------------------------
 // Closures (core 3.3)
 
+/// Retypes the tail expressions of bl that are `Result[T, ev]` (an `if`
+/// or `match` checked against a closure body's want) as rt, for a
+/// closure whose error variable ev nothing bound (fn_lit).
+fn (var c: Checker) untry_tails(bl: parser.Block, ev: Int, rt: Int) {
+  if bl.stmts.is_empty() {
+    return
+  }
+  if let ExprStmt(x: e, ..) = bl.stmts[bl.stmts.len() - 1] {
+    c.untry_expr(e, ev, rt)
+  }
+}
+
+fn (var c: Checker) untry_expr(e: Expr, ev: Int, rt: Int) {
+  let t = c.type_of(e)
+  if t < 0 || !c.result_with_err(t, ev) {
+    return
+  }
+  c.set_type(e, rt)
+  let k = c.expr_key(e)
+  if c.nat_at.contains(k) {
+    c.nat_at[k] = rt
+  }
+  match e {
+    ParenExpr(x: x, ..) => c.untry_expr(x, ev, rt)
+    Block(b) => c.untry_tails(b, ev, rt)
+    IfExpr(e: x) => {
+      c.untry_tails(x.then, ev, rt)
+      if let Some(el) = x.els {
+        c.untry_expr(el, ev, rt)
+      }
+    }
+    MatchExpr(arms: arms, ..) => {
+      for arm in arms {
+        if let Some(ExprStmt(x: ae, ..)) = arm.body {
+          c.untry_expr(ae, ev, rt)
+        }
+      }
+    }
+    _ => {}
+  }
+}
+
+/// Whether t is `Result[_, ev]`.
+fn (var c: Checker) result_with_err(t0: Int, ev: Int) -> Bool {
+  let t = c.resolve(t0)
+  if c.tys[t].kind != TyKind.Named || c.tys[t].obj != c.prelude_obj("Result") || c.tys[t].args.len() != 2 {
+    return false
+  }
+  c.resolve(c.tys[t].args[1]) == c.resolve(ev)
+}
+
 fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
   var ft = -1
   if hint >= 0 {
@@ -2157,6 +2208,14 @@ fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
   c.block(x.body, w)
   if c.is_open_var(cx.result) && c.block_never(x.body) {
     c.never_results.push(cx.result)
+  }
+  if cx.err_var >= 0 && c.tys[cx.err_var].ref < 0 {
+    // nothing in the body failed, so the closure returns its result
+    // plainly: an `if` or `match` at its end that took `Result[T, _]`
+    // from the body's want (if_value) is T (the scarlet session,
+    // 2026-11-11: `fn(d: Int) { if d > 0 { d } else { 0 } }` was XO1201
+    // "converting `Result[Int, _]` to `Int`" on the native backends)
+    c.untry_tails(x.body, cx.err_var, cx.result)
   }
   c.finish_groups(c.ctx)
   c.pop_scope()

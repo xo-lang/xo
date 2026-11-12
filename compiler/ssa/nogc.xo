@@ -3,6 +3,7 @@
 // --no-gc` (compiler/cli/core) and xo1's native builds report them.
 
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// One construct the builder does not lower (build.go Error): the file
 /// as the checker names it ("" without a position), the span, the
@@ -18,15 +19,39 @@ pub struct BuildErr {
 /// feature (build.go unsupportedKind).
 fn (var b: Builder) record_err(what: Str, never: Bool) {
   var file = ""
+  var sp = b.at
   if b.at_file >= 0 && b.at_file < b.c.files.len() {
     file = b.c.files[b.at_file].path
   }
-  let key = "${file}:${b.at.start.line}:${b.at.start.col}:${what}"
+  if file.is_empty() || sp.start.line == 0 {
+    // no expression position: the closure literal or the function being
+    // built, so every XO1201 names a place (the scarlet session,
+    // 2026-11-11: one at "" 0:0 in a 5,000 line module was found only by
+    // stubbing functions out)
+    let fo = if b.s.fo >= 0 { b.s.fo } else { b.s.frame_fo }
+    if b.s.lit_line > 0 && b.s.file >= 0 && b.s.file < b.c.files.len() {
+      file = b.c.files[b.s.file].path
+      sp = point_span(b.s.lit_line, b.s.lit_col)
+    } else if fo >= 0 {
+      let df = b.decl_file(fo)
+      if df >= 0 && df < b.c.files.len() && b.c.objs[fo].line > 0 {
+        file = b.c.files[df].path
+        sp = point_span(b.c.objs[fo].line, b.c.objs[fo].col)
+      }
+    }
+  }
+  let key = "${file}:${sp.start.line}:${sp.start.col}:${what}"
   if b.seen_err.contains(key) {
     return
   }
   b.seen_err[key] = true
-  b.errs.push(BuildErr{file: file, span: b.at, feature: what, impossible: never})
+  b.errs.push(BuildErr{file: file, span: sp, feature: what, impossible: never})
+}
+
+/// A span of one position, line and column (record_err's fallback).
+fn point_span(line: Int, col: Int) -> Span {
+  let p = parser.Pos{offset: 0, line: line, col: col}
+  Span{start: p, end: p}
 }
 
 /// The XO1201 diagnostics of the build (NoGCDiagnostics), unsorted: an

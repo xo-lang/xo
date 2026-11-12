@@ -108,6 +108,12 @@ pub fn verdict(want: List[Expect], got: List[(Str, Int, Str, Str, Str)]) -> List
     if !used[i] && (sev == "error" || sev == "warning") {
       problems.push("${base(file)}:${line}: unexpected ${code}: ${msg}")
     }
+    // every diagnostic names a place (the scarlet session, 2026-11-11: an
+    // XO1201 at "" 0:0 in a 5,000 line module was found only by stubbing
+    // functions out), expected or not
+    if file.is_empty() || line <= 0 {
+      problems.push("a diagnostic without a position: ${code}: ${msg}")
+    }
   }
   problems
 }

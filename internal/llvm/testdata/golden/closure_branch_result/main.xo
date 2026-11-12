@@ -1,0 +1,28 @@
+// Closures with no written result whose body ends in an if or a match
+// (the scarlet session, 2026-11-11): the checker gave the if and match
+// the body want's Result[T, _] and, nothing failing, the closure fn(..) -> T,
+// so native builds reported XO1201 "converting `Result[Int, _]` to `Int`"
+// at no position.
+fn main(os: Os) {
+  let get = fn(d: Int) { if d > 0 { d } else { 0 } }
+  let pick = fn(v: Int?) {
+    match v {
+      Some(n) => n
+      None => 0
+    }
+  }
+  let deep = fn(d: Int) {
+    if d > 5 {
+      5
+    } else if d > 0 {
+      d
+    } else {
+      match d {
+        -1 => 1
+        _ => 0
+      }
+    }
+  }
+  let blk = fn(d: Int) { { if d > 0 { d * 2 } else { 0 } } }
+  os.stdio.println("${get(1)} ${get(-2)} ${pick(Some(7))} ${pick(None)} ${deep(9)} ${deep(3)} ${deep(-1)} ${deep(-4)} ${blk(4)}")
+}

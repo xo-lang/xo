@@ -507,6 +507,8 @@ fn (var b: Builder) closure_body(fi: Int, lit: parser.FnLit, file: Int, result: 
   b.s.res = result
   b.s.err_t = err_t
   b.s.frame_fo = owner
+  b.s.lit_line = lit.span.start.line
+  b.s.lit_col = lit.span.start.col
   b.s.closures = closures
   b.s.sub = sub
   b.s.pack_var = pack

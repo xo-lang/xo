@@ -36,6 +36,10 @@ struct S {
   /// function whose frame a `?` in a closure records.
   fo: Int = -1
   frame_fo: Int = -1
+  /// A closure body's literal position (closure_body), where record_err
+  /// puts what it records with no expression position (0: none)
+  lit_line: Int = 0
+  lit_col: Int = 0
   /// How deep in closures this code is.
   closures: Int = 0
   cur: Int = 0
@@ -3799,6 +3803,18 @@ fn (var b: Builder) ret_at(v0: Int, at: Expr?) {
     return
   }
   var v = v0
+  // what the conversions below record is at the returned expression
+  // (the scarlet session, 2026-11-11: a closure body's was at no
+  // position, "" 0:0, since its job runs after the enclosing expression)
+  let pa = b.at
+  let pf = b.at_file
+  if let Some(e) = at {
+    let sp = parser.expr_span(e)
+    if sp.start.line > 0 {
+      b.at = sp
+      b.at_file = b.s.file
+    }
+  }
   if b.s.err_t >= 0 {
     if b.vty(v) != want {
       let ok = b.m.variant_index(want, "Ok")
@@ -3808,6 +3824,8 @@ fn (var b: Builder) ret_at(v0: Int, at: Expr?) {
   } else {
     v = b.coerce_at(v, want, at)
   }
+  b.at = pa
+  b.at_file = pf
   var args = [v]
   for vo in b.s.var_params {
     args.push(b.read(vo))

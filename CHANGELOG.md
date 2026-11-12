@@ -8,6 +8,8 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Closures (native backends): a closure with no written result whose body ends in an `if` or a `match` (`fn(d: Int) { if d > 0 { d } else { 0 } }`) builds; it was XO1201 "converting `Result[Int, _]` to `Int`" on check and build (the Go backend ran it).
+- Diagnostics: an XO1201 found while lowering a closure body names the place (the returned expression, else the closure literal or the function); it carried file "" line 0. `xo dev errorcheck` now fails any diagnostic without a position.
 - **Breaking** (std/asn1, decision 0614): a UTCTime or GeneralizedTime outside 1678 to 2261 parses as the new `Value.WideTime(c: time.Civil, generalized: Bool)` (its wall clock and offset), where it was `asn1: time out of range`; `der` writes it back in UTC. Migration: add a `Value.WideTime(c, g)` arm to exhaustive matches on `asn1.Value`.
 - std/yaml and std/mail (decision 0614): a `time.Civil` yaml field reads and writes any year (`0001-01-01T00:00:00Z`, `9999-12-31`; the year in four digits, as yaml.v3), and `mail.parse_date_civil` reads RFC 5322 dates of any year.
 - Fixed (`--backend=llvm`, linux/amd64 and freebsd/amd64): a fault (an overflow, a failed contract, an unhandled error) in a program crashed with SIGSEGV at its fiber stack's top instead of reporting the fault and exiting 70: the fault's unwind read past the fiber's outermost frame, whose return address is now undefined in the unwind tables, as on linux/arm64. And `xo dump` (and SIGQUIT) of an LLVM build named the runtime's frame (`poll.xo:1187`) as a blocked task's site instead of the program's line.
