@@ -88,19 +88,43 @@ with default tiering, not freed after 10 s. It did not happen with a
 single tier. Whether it is bounded (a garbage collection eventually frees
 them) is not measured yet.
 
+## Experiment 1: bounded or not (100 runs, then a forced collection)
+
+Same setup and assets (0.50.1's), 100 builds and runs, the tab's footprint
+every 25 runs, then 10 s idle, then `HeapProfiler.collectGarbage` over CDP
+in the page and every live worker (driver profile2-2026-11-12.mjs in the
+lead's notes):
+
+| point | footprint (MB) | wasm memories, untagged (MB) | live compiler instances (MB) |
+|---|---|---|---|
+| page ready | 115 | 1 | 0 |
+| after run 1 | 152 | 1 | 1 |
+| after run 25 | 235 | 94 | 3 (99.8) |
+| after run 50 | 344 | 188 | 6 (199.5) |
+| after run 75 | 257 | 95 | 3 (99.8) |
+| after run 100 | 404 | 249 | 8 (266) |
+| 10 s idle | 129 | 1 | 0 |
+| forced collection | 123 | 1 | 0 |
+
+Bounded, but only by V8's collector. The old instances are not leaked:
+they rise and fall with V8's collections (3, 6, 3, 8), and all of them go
+when V8 collects (here within 10 s of the last run; in the 30-run session
+above, 4 were still alive 10 s after it). Between collections they add 32
+MB each. The 404 MB after run 100 is higher than any 30-run sample
+outside the compile peak. So the per-run growth is collection lag on
+32 MB memories that V8 does not count as pressure soon enough. It is not
+a leak.
+
 ## Next experiments
 
-1. Bounded or not: the same session with 100 runs and a footprint sample
-   every 10 runs, then `HeapProfiler.collectGarbage` in the toolchain
-   worker over CDP, and the live instance count after it (profile.mjs
-   with RUNS=100).
-2. What keeps old instances alive under dynamic tiering: a heap snapshot
+1. What delays the old instances' collection under dynamic tiering (with
+   a single tier, one instance was alive after run 30): a heap snapshot
    of the toolchain worker after run 30 (HeapProfiler.takeHeapSnapshot
    on its CDP session), and retainers of the `WebAssembly.Instance`
    objects.
-3. The compiled code's share of V8's 43 to 69 MB: a run with
+2. The compiled code's share of V8's 43 to 69 MB: a run with
    `--js-flags=--trace-wasm-native-heap` and the code space commits
    summed.
-4. Then the fix candidates to measure, not chosen yet: reusing one
+3. Then the fix candidates to measure, not chosen yet: reusing one
    compiler instance across requests (resetting its memory), or dropping
    each instance's references when its request ends.
