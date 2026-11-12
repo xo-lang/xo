@@ -114,7 +114,34 @@ compare; Go's subtle.ConstantTimeCompare sets no DIT either) and the
 software AES and GHASH paths (every CPU with FEAT_DIT has the AES
 instructions, so they never run under it).
 
-Still to do before Accepted: the --ab
+Step 4 (the same day): the -O2 fallback (split.xo ct_split and
+split_build's per module level). In a -O0 build of an RSA program,
+pkcs1_unpad and ct.pick are inlined and decrypt_pkcs1v15's stack
+references fall from 315 to 61.
+
+The amd64 host (AMD Ryzen 9 9955HX, Zen 5; no user mode DIT), the same
+dudect, 10^5 a pair, max |t|:
+
+| build | before | with the -O2 fallback |
+|---|---|---|
+| native amd64 | 1.74 | 1.93 |
+| LLVM -O2 | 2.98 | (unchanged code) |
+| LLVM -O0 (xo test) | 30.7 (A/A 28.2) | 5.33 (A/A 4.03) |
+
+The A/A pairs are two sets of random blocks of one class (blocks() is
+called once a side), so they differ in the padding's zero position: a
+failing A/A pair is a real leak of that position, not a broken harness;
+native and -O2 pass with the same blocks. x86-64's -O0 code of
+pkcs1_unpad has no branch on the data, no division, cmov, setcc or bit
+scan: its branches are the loop and the bounds checks of `i < em.len()`;
+it kept `looking` and `index` in stack slots stored and reloaded each
+iteration, so the effect is the stack's store and reload path in Zen 5
+(not identified further from user mode).
+
+--ab on linux/arm64 host 1 (3 rounds), bench/perf/rsa sign2048: wall
+1.019 (95% interval 1.013 to 1.019) with DIT.
+
+Still to do before Accepted: the rest of the --ab
 cost on host 1, the linux/arm64 and amd64 rows.
 
 Step 3 (the same day): the XO_LOCKCHECK=1 check (pool.xo run_fiber,

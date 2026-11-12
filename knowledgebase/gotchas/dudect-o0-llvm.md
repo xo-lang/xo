@@ -23,6 +23,12 @@ ship: `xo build` uses -O2, where the values stay in registers.
 
 ## Fix
 
+Fixed by decision 0619 (2026-11-12): std's constant time code runs with
+Arm's DIT bit set where the CPU has it, and its modules compile at -O2 in
+every -O0 LLVM build (split.xo ct_split), so a timing test of std's code
+no longer needs XO_LLVM_OPT=O2. What follows was the workaround, and
+still applies to timing a constant time function outside those modules:
+
 Run a timing test on LLVM with `XO_LLVM_OPT=O2` (the opt level is then
 set, so the test build uses it): every pair passes (max |t| 1.7), the
 early exit control is still seen (|t| 246), and the classes' mean times
