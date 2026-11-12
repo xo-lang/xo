@@ -4299,7 +4299,19 @@ Settled while implementing; examples are in the goldens
   from `parse_civil` has the text's offset (or `z`'s at that instant) and
   `z`'s name, empty when the text's offset is not `z`'s; `Civil.format`
   writes `{zone}` as `UTC` at offset zero, else as the compact offset
-  (`+0200`), as Go formats an unnamed zone. Date methods on a `Date` built with a struct
+  (`+0200`), as Go formats an unnamed zone. derive Json writes a
+  `Civil` as its derived object (`{date, time, offset, zone}`); a field
+  that travels as RFC 3339 text (BigQuery TIMESTAMP, Go's `time.Time`)
+  is a newtype with `derive Json(via: Str, ...)` over `parse_civil`
+  (owner, 2026-11-11):
+
+  ```
+  type Stamp struct(time.Civil) derive Json(via: Str, to: stamp_text, from: parse_stamp)
+  fn stamp_text(s: Stamp) -> Str { s.0.format(time.RFC3339) }
+  fn parse_stamp(s: Str) -> Stamp ! time.ParseErr { Ok(Stamp(time.parse_civil(s, time.RFC3339, time.utc())?)) }
+  ```
+
+  Date methods on a `Date` built with a struct
   literal and out of range fields normalize it (month 13 is January of the
   next year). For a gap, `Earlier` is the earlier instant and `Later` the later one
   (Temporal's `earlier` and `later`): 02:30 on 2026-03-08 in New York is
@@ -5169,6 +5181,7 @@ fn (a: Address) display() -> Str             // `"Ann Lee" <ann@example.com>`
 pub fn read_message(msg: Bytes) -> Message ! MailErr
 fn (m: Message) header(name: Str) -> Str?    // the first value, any case
 pub fn parse_date(s: Str) -> Time ! MailErr
+pub fn parse_date_civil(s: Str) -> time.Civil ! MailErr   // decision 0614: any year
 pub fn compose(from: Address, to: List[Address], subject: Str, text: Str,
                html: Str? = None, date: Time, id: Str) -> Bytes
 ```
@@ -5198,7 +5211,10 @@ pub fn compose(from: Address, to: List[Address], subject: Str, text: Str,
   `time.ParseInLocation` in UTC; `time.Parse` would take the local zone's
   offset for its own names, which depends on the machine). A date outside
   the years 1678 to 2262 is `mail: date out of range` (a `Time` is
-  nanoseconds since 1970).
+  nanoseconds since 1970); `parse_date_civil` reads the same dates for
+  any year into a `time.Civil` (decision 0614): the wall clock with the
+  text's offset (zero for a zone name or `UT`), zone `UTC` at offset
+  zero, else empty.
 - `compose` writes `From`, `To`, `Subject` (encoded with mime's
   QEncoding when it is not ASCII), `Date` (RFC 1123 with a numeric zone,
   in UTC), `Message-ID: <id>`, `MIME-Version: 1.0`, and a text/plain body,
@@ -8181,7 +8197,9 @@ fn to_json(text: Str) -> Str ! YamlErr
   reproduced), and a mapping decodes into nothing, as for yaml.v3's struct. A `Time` is an instant with no zone (decision
   0094) and spans 1677-09-21 to 2262-04-11, so a timestamp outside that range is `cannot unmarshal !!timestamp ... into
   time.Time`, and a `Time` is written as RFC 3339 in UTC (`2001-12-15T02:59:43.1Z`), where yaml.v3 keeps the zone it read. A
-  `time.Civil` field keeps the offset (`+05:30`) and writes it back as yaml.v3 does. The zero of both is 1970-01-01T00:00:00Z
+  `time.Civil` field keeps the offset (`+05:30`) and writes it back as yaml.v3 does, for any year a timestamp names
+  (`0001-01-01T00:00:00Z` to `9999-12-31T23:59:59.999999999Z`, plain, quoted or tagged; the year in four digits; decision
+  0614). The zero of both is 1970-01-01T00:00:00Z
   (yaml.v3's is year 1), so a field the document lacks differs.
 - A Duration is a string in `Duration.parse` syntax (`1h30m`), written as Go's Duration.String (`1h30m0s`); yaml.v3 refuses an
   int or a float there (`cannot unmarshal !!int `5` into time.Duration`), and so does Xo. Bytes is, as yaml.v3's `[]byte`, a
@@ -8965,7 +8983,7 @@ strictly as Go's Unmarshal and `der` writes Go's Marshal encoding. Pure.
 enum Value {
   Bool(v: Bool), Int(v: big.BigInt), BitString(bytes: Bytes, bit_len: Int), OctetString(v: Bytes), Null, Oid(v: Oid),
   Enumerated(v: Int), Utf8(s: Str), Printable(s: Str), Ia5(s: Str), Numeric(s: Str), T61(s: Str), Bmp(s: Str),
-  UtcTime(t: Time), GeneralizedTime(t: Time), Sequence(items: List[Value]), Set(items: List[Value]),
+  UtcTime(t: Time), GeneralizedTime(t: Time), WideTime(c: time.Civil, generalized: Bool), Sequence(items: List[Value]), Set(items: List[Value]),
   Tagged(class: Class, tag: Int, explicit: Bool, v: Value), Raw(class: Class, tag: Int, constructed: Bool, bytes: Bytes),
 }
 enum Class { Universal, Application, ContextSpecific, Private }
@@ -8988,8 +9006,9 @@ set (parsing accepts `*` and `&` in a PrintableString, as Go does, and `der` ref
 2^31 or more, and a UTCTime (`YYMMDDhhmm[ss]`, years before 50 are 20YY) or GeneralizedTime
 (`YYYYMMDDhhmmss[.fff]`, the fraction without trailing zeros) that is not in the form Go formats back, with `Z` or a
 `+hhmm`/`-hhmm` offset; such a time is `Invalid` with a text of Xo's (`asn1: invalid UTCTime "..."`; Go's
-`parsing time` texts are not ported). A `Time` holds 1678 to 2261, so a time written in another year is
-`asn1: time out of range`. Times are instants: `der` writes them in UTC with `Z`, and a GeneralizedTime without its
+`parsing time` texts are not ported). A `Time` holds 1678 to 2261, so a time written in another year (0000 to 9999,
+as Go reads) is `WideTime` (decision 0614): its wall clock and offset as written, `generalized` for a GeneralizedTime;
+`der` writes it as the in range variants, in UTC. Times are instants: `der` writes them in UTC with `Z`, and a GeneralizedTime without its
 fraction, as Marshal does. INTEGER is a `BigInt` of any size; ENUMERATED an `Int` (up to 64 bits). A context specific,
 application or private tag, a constructed universal type other than SEQUENCE and SET, a NULL with contents and an
 unknown universal tag are `Raw`; `tagged_as` reads a `Raw` as explicit (one value inside; `explicit tag has no child`

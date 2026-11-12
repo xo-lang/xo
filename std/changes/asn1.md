@@ -1,5 +1,18 @@
 # std/asn1 changes
 
+## 2026-11-11: feature (Breaking): WideTime for times outside 1678 to 2261
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0614 (the lead's report: GeneralizedTime years such as 0001 and 9999 were `asn1: time out of range`)
+- Go reference: encoding/asn1 Unmarshal and Marshal of time.Time for years 0 to 9999 (go1.26.1)
+- Test: corpus asn1 regenerated (three random rows now WideTime, seven edge cases); golden time_civil_codecs; std/asn1_test.xo
+- Timing: none (only the out of range branch changed)
+- Shipped in: not yet released
+
+`parse` returns `Value.WideTime(c, generalized)` where it returned the error; `der` writes it in UTC as Go's Marshal.
+Migration: an exhaustive `match` on `asn1.Value` adds a `WideTime(c, g)` arm.
+
 ## 2026-11-11: port: std/asn1, Go's encoding/asn1 as a DER value tree (decision 0601 stage 1)
 
 - Kind: port

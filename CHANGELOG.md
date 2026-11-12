@@ -8,6 +8,8 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- **Breaking** (std/asn1, decision 0614): a UTCTime or GeneralizedTime outside 1678 to 2261 parses as the new `Value.WideTime(c: time.Civil, generalized: Bool)` (its wall clock and offset), where it was `asn1: time out of range`; `der` writes it back in UTC. Migration: add a `Value.WideTime(c, g)` arm to exhaustive matches on `asn1.Value`.
+- std/yaml and std/mail (decision 0614): a `time.Civil` yaml field reads and writes any year (`0001-01-01T00:00:00Z`, `9999-12-31`; the year in four digits, as yaml.v3), and `mail.parse_date_civil` reads RFC 5322 dates of any year.
 - std/time (decision 0614): `time.parse_civil` and `Layout.parse_civil` read times of any year a layout reads (0001 to 9999: Go's zero Time, `9999-12-31`, BigQuery TIMESTAMP) into a `Civil`; `Civil.format`, `Layout.format_civil`, `Civil.unix` and `Civil.to_time` write and compare them. `Time` keeps its 1677 to 2262 range.
 
 ## v0.49.1 (2026-11-12)

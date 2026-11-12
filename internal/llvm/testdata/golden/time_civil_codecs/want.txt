@@ -1,0 +1,33 @@
+exit 0
+--- stdout
+"at: 0001-01-01T00:00:00Z\n": unix -62135596800 ns 0 off 0 out "at: 0001-01-01T00:00:00Z\n"
+  Time err yaml: unmarshal errors:
+  line 1: cannot unmarshal !!timestamp `0001-01...` into time.Time
+"at: 9999-12-31T23:59:59.999999999Z\n": unix 253402300799 ns 999999999 off 0 out "at: 9999-12-31T23:59:59.999999999Z\n"
+  Time err yaml: unmarshal errors:
+  line 1: cannot unmarshal !!timestamp `9999-12...` into time.Time
+"at: 1600-02-29T12:00:00+05:30\n": unix -11670975000 ns 0 off 19800 out "at: 1600-02-29T12:00:00+05:30\n"
+  Time err yaml: unmarshal errors:
+  line 1: cannot unmarshal !!timestamp `1600-02...` into time.Time
+"at: \"0001-01-01T00:00:00Z\"\n": unix -62135596800 ns 0 off 0 out "at: 0001-01-01T00:00:00Z\n"
+  Time err yaml: parsing time "0001-01-01T00:00:00Z" as "2006-01-02T15:04:05Z07:00": cannot parse
+"at: !!timestamp 9999-12-31\n": unix 253402214400 ns 0 off 0 out "at: 9999-12-31T00:00:00Z\n"
+  Time err yaml: unmarshal errors:
+  line 1: cannot unmarshal !!timestamp `9999-12-31` into time.Time
+"at: 2024-06-01 12:00:00\n": unix 1717243200 ns 0 off 0 out "at: 2024-06-01T12:00:00Z\n"
+  Time 2024-06-01T12:00:00Z
+json 1: unix -62135596800 back {"id":1,"at":"0001-01-01T00:00:00Z"}
+json 2: unix 253402300799 back {"id":2,"at":"9999-12-31T23:59:59.999999999Z"}
+json err at $.at: at byte 5 of "9999-13-31T00:00:00Z": month 13 out of range 1 to 12
+asn1 0001-01-01T00:00:00Z unix -62135596800 generalized true der 180f30303031303130313030303030305a
+asn1 9999-12-31T23:59:59.999999999Z unix 253402300799 generalized true der 180f39393939313233313233353935395a
+asn1 1600-12-31T23:59:59+05:30 unix -11644493401 generalized true der 180f31363030313233313138323935395a
+"Mon, 01 Jan 0001 00:00:00 +0000": unix -62135596800 off 0 0001-01-01T00:00:00Z
+  Time err mail: date out of range
+"Fri, 31 Dec 9999 23:59:59 -0700": unix 253402325999 off -25200 9999-12-31T23:59:59-07:00
+  Time err mail: date out of range
+"1 Jan 1600 12:00:00 UT": unix -11676052800 off 0 1600-01-01T12:00:00Z
+  Time err mail: date out of range
+"Tue, 1 Jul 2003 10:52:37 +0200": unix 1057049557 off 7200 2003-07-01T10:52:37+02:00
+  Time 2003-07-01T08:52:37Z
+--- stderr

@@ -1,5 +1,18 @@
 # std/yaml changes
 
+## 2026-11-11: fix: time.Civil fields read and write years outside 1677 to 2262
+
+- Kind: fix
+- Commit: this push
+- Found by: decision 0614
+- Go reference: gopkg.in/yaml.v3 v3.0.1 decode and encode of time.Time for years 1 to 9999
+- Test: golden time_civil_codecs (go, arm64, llvm; text, unix seconds and offsets from yaml.v3)
+- Timing: none (the wide check runs only after parse_rfc3339 refuses)
+- Shipped in: not yet released
+
+A plain or quoted RFC 3339 text outside Time's range failed (`parsing time ... cannot parse`) for a `time.Civil` field, and
+a year below 1000 was written without its leading zeros (`1-01-01T00:00:00Z`, yaml.v3 `0001-01-01T00:00:00Z`).
+
 ## 2026-11-10: refactor: integer bounds as `Int.max` and `Int.min` (decision 0587 point 4)
 
 - Kind: refactor

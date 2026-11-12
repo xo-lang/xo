@@ -186,6 +186,35 @@ pub fn (m: Message) header(name: Str) -> Str? {
 /// with the forms Go accepts (no weekday, one digit days, two digit
 /// years, no seconds, zone names, comments).
 pub fn parse_date(s: Str) -> Time ! MailErr {
+  let (t, ns, _) = date_parts(s)?
+  if t < -9223372036 || t > 9223372036 || (t == 9223372036 && ns > 854775807) {
+    return Err(fail("mail: date out of range"))
+  }
+  Ok(Time.UNIX_EPOCH + Duration.from_nanos(t * 1000000000 + ns))
+}
+
+/// `parse_date` for any year (decision 0614): the wall clock with the
+/// text's offset (zero for a zone name or `UT`, as Go's ParseDate keeps
+/// the wall clock as UTC's), zone `UTC` at offset zero, else empty.
+pub fn parse_date_civil(s: Str) -> time.Civil ! MailErr {
+  let (t, ns, off) = date_parts(s)?
+  let local = t + off
+  var days = local / 86400
+  if local % 86400 < 0 {
+    days -= 1
+  }
+  let rem = local - days * 86400
+  let d = time.Date{year: 1970, month: 1, day: 1}.add_days(days)
+  Ok(time.Civil{
+    date: d,
+    time: time.ClockTime{hour: rem / 3600, minute: rem / 60 % 60, second: rem % 60, nanos: ns},
+    offset: Duration.from_secs_int(off),
+    zone: if off == 0 { "UTC" } else { "" },
+  })
+}
+
+/// The seconds since 1970, nanoseconds and offset of an RFC 5322 date.
+fn date_parts(s: Str) -> (Int, Int, Int) ! MailErr {
   let date0 = s.replace("\r\n", "")
   if date0.contains("\r") {
     return Err(fail("mail: header has a CR without LF"))
@@ -227,12 +256,7 @@ pub fn parse_date(s: Str) -> Time ! MailErr {
         for secs in TRUE_FALSE {
           for zone in ZONE_FORMS {
             match try_layout(db, dow, day2, year4, secs, zone) {
-              Some((t, ns)) => {
-                if t < -9223372036 || t > 9223372036 || (t == 9223372036 && ns > 854775807) {
-                  return Err(fail("mail: date out of range"))
-                }
-                return Ok(Time.UNIX_EPOCH + Duration.from_nanos(t * 1000000000 + ns))
-              }
+              Some(r) => return Ok(r)
               None => {}
             }
           }
@@ -1163,7 +1187,7 @@ fn spaces(s: Bytes, at: Int) -> Int {
 /// seconds, and the zone kind (0 numeric, 1 name, 2 "UT"); the instant
 /// in seconds and its nanoseconds, or None when the layout does not
 /// match.
-fn try_layout(s: Bytes, dow: Bool, day2: Bool, year4: Bool, secs: Bool, zone: Int) -> (Int, Int)? {
+fn try_layout(s: Bytes, dow: Bool, day2: Bool, year4: Bool, secs: Bool, zone: Int) -> (Int, Int, Int)? {
   var at = 0
   if dow {
     if !DAYS.contains(lower3(s, at)) || at + 4 > s.len() || s[at + 3] != ',' {
@@ -1288,7 +1312,7 @@ fn try_layout(s: Bytes, dow: Bool, day2: Bool, year4: Bool, secs: Bool, zone: In
   if hour >= 24 || min >= 60 || sec >= 60 || day < 1 || day > month_days(year, mon + 1) {
     return None
   }
-  Some((days_from_civil(year, mon + 1, day) * 86400 + hour * 3600 + min * 60 + sec - offset, nsec))
+  Some((days_from_civil(year, mon + 1, day) * 86400 + hour * 3600 + min * 60 + sec - offset, nsec, offset))
 }
 
 // parse_date's layout choices as constants: a list literal inside its

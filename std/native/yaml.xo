@@ -6197,7 +6197,7 @@ fn to_civil_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, time.Civil) !
     return Ok((false, zero))
   }
   let p = ts_parts(n.value)
-  if p.len() > 0 && (n.tag == "!!timestamp" || Time.parse_rfc3339(n.value) != None) {
+  if p.len() > 0 && (n.tag == "!!timestamp" || Time.parse_rfc3339(n.value) != None || time.parse_civil(n.value, time.RFC3339, time.utc()).ok() != None) {
     return Ok((true, civil_of(p)))
   }
   Err(yaml.YamlErr{line: 0, msg: "parsing time \"${n.value}\" as \"2006-01-02T15:04:05Z07:00\": cannot parse"})
@@ -6207,8 +6207,17 @@ fn pad2(n: Int) -> Str {
   if n < 10 { "0${n}" } else { "${n}" }
 }
 
+/// A year in four digits at least, as Go's RFC 3339 (`0001`; decision 0614).
+fn pad4(n: Int) -> Str {
+  var t = "${n}"
+  while t.len() < 4 {
+    t = "0${t}"
+  }
+  t
+}
+
 fn put_civil(var w: yaml.Enc, c: time.Civil) {
-  var s = "${c.date.year}-${pad2(c.date.month)}-${pad2(c.date.day)}T${pad2(c.time.hour)}:${pad2(c.time.minute)}:${pad2(c.time.second)}"
+  var s = "${pad4(c.date.year)}-${pad2(c.date.month)}-${pad2(c.date.day)}T${pad2(c.time.hour)}:${pad2(c.time.minute)}:${pad2(c.time.second)}"
   if c.time.nanos != 0 {
     var f = "${c.time.nanos}"
     while f.len() < 9 {

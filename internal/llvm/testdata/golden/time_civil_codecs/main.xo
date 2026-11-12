@@ -1,0 +1,67 @@
+// Codecs (yaml, mail, json via:, asn1 WideTime) for times outside Time's 1677 to 2262 (decision 0614): a yaml `time.Civil` field reads and writes years 1 to
+// 9999 (tagged, plain and quoted), and mail.parse_date_civil reads RFC 5322 dates of any year, while yaml's `Time` field
+// and mail.parse_date keep refusing them. The unix seconds, offsets and yaml text below are gopkg.in/yaml.v3 v3.0.1's
+// and net/mail's (go1.26.1).
+use std/asn1
+use std/json
+use std/mail
+use std/time
+use std/yaml
+
+struct Doc {
+  at: time.Civil
+} derive Yaml
+
+/// A BigQuery TIMESTAMP column as RFC 3339 text in JSON: a Civil travels as Str through
+/// derive Json(via:) and time.parse_civil (decision 0614; spec/std.md 13).
+type Stamp struct(time.Civil) derive Json(via: Str, to: stamp_text, from: parse_stamp)
+
+fn stamp_text(s: Stamp) -> Str { s.0.format(time.RFC3339) }
+
+fn parse_stamp(s: Str) -> Stamp ! time.ParseErr { Ok(Stamp(time.parse_civil(s, time.RFC3339, time.utc())?)) }
+
+struct Row {
+  id: Int
+  at: Stamp
+} derive Json
+
+struct TDoc {
+  at: Time
+} derive Yaml
+
+fn main(os: Os) {
+  for s in ["at: 0001-01-01T00:00:00Z\n", "at: 9999-12-31T23:59:59.999999999Z\n", "at: 1600-02-29T12:00:00+05:30\n", "at: \"0001-01-01T00:00:00Z\"\n", "at: !!timestamp 9999-12-31\n", "at: 2024-06-01 12:00:00\n"] {
+    match yaml.decode[Doc](s) {
+      Ok(d) => os.stdio.println("${s.quote()}: unix ${d.at.unix()} ns ${d.at.time.nanos} off ${d.at.offset.nanos() / 1000000000} out ${(yaml.encode_value(d) ?? e => "err ${e}").quote()}")
+      Err(e) => os.stdio.println("${s.quote()}: err ${e}")
+    }
+    match yaml.decode[TDoc](s) {
+      Ok(d) => os.stdio.println("  Time ${d.at.format_rfc3339()}")
+      Err(e) => os.stdio.println("  Time err ${e}")
+    }
+  }
+  for s in ["{\"id\":1,\"at\":\"0001-01-01T00:00:00Z\"}", "{\"id\":2,\"at\":\"9999-12-31T23:59:59.999999999Z\"}", "{\"id\":3,\"at\":\"9999-13-31T00:00:00Z\"}"] {
+    match json.decode_str[Row](s) {
+      Ok(r) => os.stdio.println("json ${r.id}: unix ${r.at.0.unix()} back ${json.encode(r).to_str_lossy()}")
+      Err(e) => os.stdio.println("json err ${e}")
+    }
+  }
+  // asn1 GeneralizedTime outside Time's range is WideTime (Go's encoding/asn1 values)
+  for der in [b"\x18\x0f00010101000000Z", b"\x18\x1999991231235959.999999999Z", b"\x18\x1316001231235959+0530"] {
+    match asn1.parse(der) {
+      Ok(asn1.Value.WideTime(c, g)) => os.stdio.println("asn1 ${c.format(time.RFC3339)} unix ${c.unix()} generalized ${g} der ${((asn1.Value.WideTime(c: c, generalized: g)).der() ?? e => fault("${e}")).to_hex()}")
+      Ok(_) => os.stdio.println("asn1 not wide")
+      Err(e) => os.stdio.println("asn1 err ${e}")
+    }
+  }
+  for s in ["Mon, 01 Jan 0001 00:00:00 +0000", "Fri, 31 Dec 9999 23:59:59 -0700", "1 Jan 1600 12:00:00 UT", "Tue, 1 Jul 2003 10:52:37 +0200"] {
+    match mail.parse_date_civil(s) {
+      Ok(c) => os.stdio.println("${s.quote()}: unix ${c.unix()} off ${c.offset.nanos() / 1000000000} ${c.format(time.RFC3339)}")
+      Err(e) => os.stdio.println("${s.quote()}: err ${e}")
+    }
+    match mail.parse_date(s) {
+      Ok(t) => os.stdio.println("  Time ${t.format_rfc3339()}")
+      Err(e) => os.stdio.println("  Time err ${e}")
+    }
+  }
+}

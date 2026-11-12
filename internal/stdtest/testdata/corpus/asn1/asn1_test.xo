@@ -92,6 +92,13 @@ const CASES: List[(Bytes, Str, Str)] = [
   (b"\x18\x1320201231235959+0130", "gen:1609453799.000000000", "180f32303230313233313232323935395a"),
   (b"\x18\x1a20201231235959.123456789Z", "err asn1: syntax error: data truncated", "-"),
   (b"\x18\x1b20201231235959.1234567891Z", "err asn1: syntax error: data truncated", "-"),
+  (b"\x18\x0f00010101000000Z", "wgen:-62135596800.000000000:0", "180f30303031303130313030303030305a"),
+  (b"\x18\x0f99991231235959Z", "wgen:253402300799.000000000:0", "180f39393939313233313233353935395a"),
+  (b"\x18\x1999991231235959.999999999Z", "wgen:253402300799.999999999:0", "180f39393939313233313233353935395a"),
+  (b"\x18\x1316001231235959+0530", "wgen:-11644493401.000000000:19800", "180f31363030313233313138323935395a"),
+  (b"\x18\x0f22620411234717Z", "wgen:9223372037.000000000:0", "180f32323632303431313233343731375a"),
+  (b"\x18\x1316770921001243-0100", "wgen:-9223368437.000000000:-3600", "180f31363737303932313031313234335a"),
+  (b"\x18\x0f00000101000000Z", "wgen:-62167219200.000000000:0", "180f30303030303130313030303030305a"),
   (b"0\x00", "seq()", "3000"),
   (b"1\x00", "set()", "3100"),
   (b"1\x03\x02\x01\x01", "set(int:1)", "3103020101"),
@@ -210,7 +217,7 @@ const CASES: List[(Bytes, Str, Str)] = [
   (b"\x04\x10\xa3\x8d\x94%@\xf2\x98!\x1c\x05\xb2~B\xce:\xb2", "octets:a38d942540f298211c05b27e42ce3ab2", "0410a38d942540f298211c05b27e42ce3ab2"),
   (b"\x17\x0d0210O5160532Z", "err time", "-"),
   (b"\x12\x051 2\xf13", "err asn1: syntax error: NumericString contains invalid character", "-"),
-  (b"\x18\x0f59910522021228Z", "err asn1: time out of range", "-"),
+  (b"\x18\x0f59910522021228Z", "wgen:126902686348.000000000:0", "180f35393931303532323032313232385a"),
   (b"\xa4\x02\x05\x00", "raw:2:4:true:0500", "a4020500"),
   (b"\x04\x13<%\x80\x5c7WI\xaa\xff2CA\x8bE|\xc0\xf4h`", "octets:3c25805c375749aaff3243418b457cc0f46860", "04133c25805c375749aaff3243418b457cc0f46860"),
   (b"0\x85\x03\x03\x00\xdcc", "err asn1: structure error: length too large", "-"),
@@ -1055,7 +1062,7 @@ const CASES: List[(Bytes, Str, Str)] = [
   (b"1\x121\x10\x16\x00\x02\x06\xee\xca\xa0\x9e\xa0\xf9\x12\x040123", "set(set(ia5:,int:-18920931155719,numeric:30313233))", "311231100206eecaa09ea0f91204303132331600"),
   (b"\x03\x03\x02t\xac", "bits:74ac:14", "03030274ac"),
   (b"0\x17\x1e\x04\x00A\x00B\x18\x0f19160728160553Z", "seq(bmp:4142,gen:-1686038047.000000000)", "30171e0400410042180f31393136303732383136303535335a"),
-  (b"\x18\x0f11291231045338Z", "err asn1: time out of range", "-"),
+  (b"\x18\x0f11291231045338Z", "wgen:-26507934382.000000000:0", "180f31313239313233313034353333385a"),
   (b"", "err asn1: syntax error: sequence truncated", "-"),
   (b"\x04\x04", "err asn1: syntax error: data truncated", "-"),
   (b"\x13\x07Q?\x17x)=1", "err asn1: syntax error: PrintableString contains invalid character", "-"),
@@ -1140,7 +1147,7 @@ const CASES: List[(Bytes, Str, Str)] = [
   (b"\x0c\x06h\xd2\xa9llo", "utf8:68d2a96c6c6f", "0c0668d2a96c6c6f"),
   (b"\x13\x90", "err asn1: syntax error: truncated tag or length", "-"),
   (b"\x1e", "err asn1: syntax error: truncated tag or length", "-"),
-  (b"1\x19\x12\x00\x18\x0f09180407185317Z\x03\x04\x04=\x15`", "err asn1: time out of range", "-"),
+  (b"1\x19\x12\x00\x18\x0f09180407185317Z\x03\x04\x04=\x15`", "set(numeric:,wgen:-33189541603.000000000:0,bits:3d1560:20)", "31190304043d15601200180f30393138303430373138353331375a"),
   (b"\x97\x0d600304180501Z", "raw:2:23:false:3630303330343138303530315a", "970d3630303330343138303530315a"),
   (b"\x04\x0bR\x96\x07\xc9Q\x95\x869\xe3\xf3e", "octets:529607c951958639e3f365", "040b529607c951958639e3f365"),
   (b"\x18\x0f20", "err asn1: syntax error: data truncated", "-"),
@@ -1747,6 +1754,7 @@ fn tree_text(v: asn1.Value) -> Str {
     asn1.Value.Bmp(s) => "bmp:${s.bytes().to_hex()}"
     asn1.Value.UtcTime(t) => "utc:${when(t)}"
     asn1.Value.GeneralizedTime(t) => "gen:${when(t)}"
+    asn1.Value.WideTime(c, g) => "${if g { "wgen" } else { "wutc" }}:${c.unix()}.${"0".repeat(9 - "${c.time.nanos}".len())}${c.time.nanos}:${c.offset / 1s}"
     asn1.Value.Sequence(items) => "seq(${items.map(tree_text).join(",")})"
     asn1.Value.Set(items) => "set(${items.map(tree_text).join(",")})"
     asn1.Value.Tagged(c, t, e, x) => "tagged:${class_num(c)}:${t}:${e}:${tree_text(x)}"

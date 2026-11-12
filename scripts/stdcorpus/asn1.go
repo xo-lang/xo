@@ -163,12 +163,17 @@ func asn1Node(rv asn1.RawValue) (string, []byte, error) {
 			}
 			return fmt.Sprintf("%s:%x", names[rv.Tag], x), enc, nil
 		case time.Time:
-			// std/asn1 holds a Time (1677 to 2262): it refuses a written
-			// year outside 1678 to 2261
-			if x.Year() < 1678 || x.Year() > 2261 {
-				return "", nil, fmt.Errorf("asn1: time out of range")
-			}
+			// std/asn1 holds a Time (1677 to 2262): a written year outside
+			// 1678 to 2261 is WideTime, its wall clock and offset (decision 0614)
 			u := x.UTC()
+			if x.Year() < 1678 || x.Year() > 2261 {
+				_, off := x.Zone()
+				kind, p := "wgen", "generalized"
+				if rv.Tag == 23 {
+					kind, p = "wutc", "utc"
+				}
+				return fmt.Sprintf("%s:%d.%09d:%d", kind, u.Unix(), u.Nanosecond(), off), m(u, p), nil
+			}
 			if rv.Tag == 23 {
 				return fmt.Sprintf("utc:%d.%09d", u.Unix(), u.Nanosecond()), m(u, "utc"), nil
 			}
@@ -298,6 +303,8 @@ func asn1Fixed() [][]byte {
 		"18133230323031323331323335393539 2c32355a", "180f32303230313233313233353936305a",
 		"181332303230313233313233353935392b30313330", "181a3230323031323331323335393539 2e3132333435363738395a",
 		"181b3230323031323331323335393539 2e313233343536373839315a",
+		// decision 0614: WideTime at both ends of years 1 to 9999, with a fraction and an offset
+		"180f30303031303130313030303030305a", "180f39393939313233313233353935395a", "181939393939313233313233353935392e3939393939393939395a", "181331363030313233313233353935392b30353330", "180f32323632303431313233343731375a", "181331363737303932313030313234332d30313030", "180f30303030303130313030303030305a",
 		"3000", "3100", "3103020101", "310602010502 0101", "30030201", "3005020101", "3003020101 00",
 		"a000", "a003020101", "8001ff", "4001aa", "c001aa", "bf1f00", "2400", "2c00", "0d00",
 		"30060101ff0500",
@@ -431,6 +438,7 @@ fn tree_text(v: asn1.Value) -> Str {
     asn1.Value.Bmp(s) => "bmp:${s.bytes().to_hex()}"
     asn1.Value.UtcTime(t) => "utc:${when(t)}"
     asn1.Value.GeneralizedTime(t) => "gen:${when(t)}"
+    asn1.Value.WideTime(c, g) => "${if g { "wgen" } else { "wutc" }}:${c.unix()}.${"0".repeat(9 - "${c.time.nanos}".len())}${c.time.nanos}:${c.offset / 1s}"
     asn1.Value.Sequence(items) => "seq(${items.map(tree_text).join(",")})"
     asn1.Value.Set(items) => "set(${items.map(tree_text).join(",")})"
     asn1.Value.Tagged(c, t, e, x) => "tagged:${class_num(c)}:${t}:${e}:${tree_text(x)}"

@@ -1,5 +1,15 @@
 # std/mail changes
 
+## 2026-11-11: feature: parse_date_civil (dates of any year)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0614 (the lead's report: dates outside 1677 to 2262 are `mail: date out of range`)
+- Go reference: net/mail ParseDate (go1.26.1) for years 1 to 9999
+- Test: golden time_civil_wide's codecs twin time_civil_codecs (go, arm64, llvm; unix seconds and offsets from net/mail)
+- Timing: none (parse_date keeps its path; try_layout also returns the offset)
+- Shipped in: not yet released
+
 ## 2026-11-11: internal: read_message reads lines with std/textproto
 
 - Kind: internal

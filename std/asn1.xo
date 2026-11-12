@@ -15,6 +15,9 @@ use std/time
 /// `tagged_as` reads one when the schema says, as Go's `explicit` tag).
 /// `BitString`'s bytes hold bit_len bits, the first in the high bit.
 /// Times are instants; der writes them in UTC with `Z`, as DER requires.
+/// A valid time outside what a `Time` holds (the years 1678 to 2261) is
+/// `WideTime`: its wall clock and offset as written, `generalized` for a
+/// GeneralizedTime (decision 0614); der writes it as the in range ones.
 pub enum Value {
   Bool(v: Bool)
   Int(v: big.BigInt)
@@ -31,6 +34,7 @@ pub enum Value {
   Bmp(s: Str)
   UtcTime(t: Time)
   GeneralizedTime(t: Time)
+  WideTime(c: time.Civil, generalized: Bool)
   Sequence(items: List[Value])
   Set(items: List[Value])
   Tagged(class: Class, tag: Int, explicit: Bool, v: Value)
@@ -324,8 +328,8 @@ fn value_of(h: Header, c: Bytes) -> Value ! Asn1Err {
     19 => Value.Printable(s: parse_printable(c)?)
     20 => Value.T61(s: parse_t61(c))
     22 => Value.Ia5(s: parse_ia5(c)?)
-    23 => Value.UtcTime(t: parse_utc_time(c)?)
-    24 => Value.GeneralizedTime(t: parse_generalized_time(c)?)
+    23 => parse_utc_time(c)?
+    24 => parse_generalized_time(c)?
     30 => Value.Bmp(s: parse_bmp(c)?)
     _ => Value.Raw(class: h.class, tag: h.tag, constructed: false, bytes: c)
   }
@@ -501,13 +505,16 @@ fn time_err(kind: Str, c: Bytes) -> Asn1Err { Asn1Err.Invalid(msg: "asn1: invali
 
 /// The instant of a date and time at the zone suffix c[i..] (`Z`, or
 /// `+hhmm` / `-hhmm` other than zero, as Go's Z0700 parses and formats
-/// back); kind names the type in the error.
-fn instant_at(c: Bytes, i: Int, y: Int, mo: Int, d: Int, h: Int, mi: Int, s: Int, ns: Int, kind: Str) -> Time ! Asn1Err {
+/// back); kind names the type in the error. A time outside what a Time
+/// holds is WideTime (decision 0614).
+fn instant_at(c: Bytes, i: Int, y: Int, mo: Int, d: Int, h: Int, mi: Int, s: Int, ns: Int, kind: Str) -> Value ! Asn1Err {
   if h > 23 || mi > 59 || s > 59 {
     return Err(time_err(kind, c))
   }
-  let date = match time.date(y, mo, d) {
-    Ok(dt) => dt
+  // year 0 (Go reads it; time.date takes 1 to 9999) checked as 2000, which
+  // has its leap rule
+  let date = match time.date(if y == 0 { 2000 } else { y }, mo, d) {
+    Ok(dt) => time.Date{year: y, month: dt.month, day: dt.day}
     Err(_) => return Err(time_err(kind, c))
   }
   var off = 0s
@@ -527,19 +534,21 @@ fn instant_at(c: Bytes, i: Int, y: Int, mo: Int, d: Int, h: Int, mi: Int, s: Int
       off = 0s - off
     }
   }
+  let clock = time.ClockTime{hour: h, minute: mi, second: s, nanos: ns}
+  let generalized = kind == "GeneralizedTime"
   if y < 1678 || y > 2261 {
-    // a valid DER time outside what a Time holds (decision 0364), with a
-    // day to spare for the offset
-    return Err(Asn1Err.Invalid(msg: "asn1: time out of range"))
+    // a valid DER time outside what a Time holds (decision 0364, with a
+    // day to spare for the offset): its wall clock (decision 0614)
+    return Ok(Value.WideTime(c: time.Civil{date: date, time: clock, offset: off, zone: if off == 0s { "UTC" } else { "" }}, generalized: generalized))
   }
-  match time.instant(date, time.ClockTime{hour: h, minute: mi, second: s, nanos: ns}, time.utc()) {
-    Ok(t) => t - off
+  match time.instant(date, clock, time.utc()) {
+    Ok(t) => Ok(if generalized { Value.GeneralizedTime(t: t - off) } else { Value.UtcTime(t: t - off) })
     Err(_) => Err(time_err(kind, c))
   }
 }
 
 /// YYMMDDhhmm[ss] and a zone (Go's parseUTCTime: years before 50 are 20YY).
-fn parse_utc_time(c: Bytes) -> Time ! Asn1Err {
+fn parse_utc_time(c: Bytes) -> Value ! Asn1Err {
   let yy = digits_at(c, 0, 2)
   let mo = digits_at(c, 2, 2)
   let d = digits_at(c, 4, 2)
@@ -561,7 +570,7 @@ fn parse_utc_time(c: Bytes) -> Time ! Asn1Err {
 
 /// YYYYMMDDhhmmss, an optional fraction (`.` and 1 to 9 digits, the last
 /// not 0) and a zone (Go's parseGeneralizedTime, which formats back).
-fn parse_generalized_time(c: Bytes) -> Time ! Asn1Err {
+fn parse_generalized_time(c: Bytes) -> Value ! Asn1Err {
   let y = digits_at(c, 0, 4)
   let mo = digits_at(c, 4, 2)
   let d = digits_at(c, 6, 2)
@@ -676,8 +685,21 @@ fn put_two(var b: BytesBuilder, n: Int) {
   b.write_byte(UInt8('0' + n % 10))
 }
 
-fn time_bytes(t: Time, utc: Bool) -> Bytes ! Asn1Err {
-  let cv = time.civil(t, time.utc())
+fn time_bytes(t: Time, utc: Bool) -> Bytes ! Asn1Err { civil_bytes(time.civil(t, time.utc()), utc) }
+
+/// A WideTime's text: its instant's wall clock in UTC.
+fn wide_bytes(c: time.Civil, utc: Bool) -> Bytes ! Asn1Err {
+  let u = c.unix()
+  var days = u / 86400
+  if u % 86400 < 0 {
+    days -= 1
+  }
+  let rem = u - days * 86400
+  let d = time.Date{year: 1970, month: 1, day: 1}.add_days(days)
+  civil_bytes(time.Civil{date: d, time: time.ClockTime{hour: rem / 3600, minute: rem / 60 % 60, second: rem % 60, nanos: 0}, offset: 0s, zone: "UTC"}, utc)
+}
+
+fn civil_bytes(cv: time.Civil, utc: Bool) -> Bytes ! Asn1Err {
   let y = cv.date.year
   var b = BytesBuilder.new()
   if utc {
@@ -760,6 +782,7 @@ fn encode(v: Value, var out: BytesBuilder) -> () ! Asn1Err {
     }
     Value.UtcTime(t) => prim(out, TAG_UTC_TIME, time_bytes(t, true)?)
     Value.GeneralizedTime(t) => prim(out, TAG_GENERALIZED_TIME, time_bytes(t, false)?)
+    Value.WideTime(c, g) => prim(out, if g { TAG_GENERALIZED_TIME } else { TAG_UTC_TIME }, wide_bytes(c, !g)?)
     Value.Sequence(items) => {
       var b = BytesBuilder.new()
       for x in items {

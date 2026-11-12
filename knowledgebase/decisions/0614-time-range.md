@@ -96,3 +96,28 @@ Its gap: arithmetic on a year 1 instant goes through `Civil.unix()` seconds
   against Go's time.Parse values. The names follow 13.2: `to_time`, not
   `instant` (the native `civil_instant` helper). Next: the codecs (asn1
   GeneralizedTime, yaml timestamp, mail date, json RFC 3339 into a Civil).
+- Step 2 (2026-11-11, Xo Lang 3): std/yaml `time.Civil` fields read any
+  year (a plain or quoted RFC 3339 text outside Time's range no longer
+  fails the `parse_rfc3339` check) and write the year in four digits
+  (`0001`, was `1`); `mail.parse_date_civil`. Golden time_civil_codecs
+  against yaml.v3 v3.0.1 and net/mail. x509 needed nothing: it reads
+  validity as unix seconds and clamps to Time's range, so a `99991231235959Z`
+  NotAfter already parses. Open: std/asn1's `Value.UtcTime(t: Time)` and
+  `GeneralizedTime(t: Time)` (a wide time is `asn1: time out of range`;
+  holding it needs a new variant or a Civil payload, both Breaking), and
+  derive Json for a `Civil` field (today the derived object
+  `{date, time, offset, zone}`; RFC 3339 text would be a wire change):
+  both asked of the lead. The ADR's `parse_civil(layout, s)` is
+  `parse_civil(s, layout, z)` as built, matching `parse`; its
+  `nanos_of_second()` is the field `c.time.nanos`.
+- Owner choices (2026-11-11, through the lead): (1) std/asn1 gains
+  `Value.WideTime(c: time.Civil, generalized: Bool)`, used only for a
+  time outside 1678 to 2261 (Breaking: an exhaustive match adds the arm;
+  the in range variants are unchanged), not a Civil payload for both
+  variants; (2) a `Civil` keeps its derived JSON object, and text
+  (BigQuery TIMESTAMP) goes through a newtype with
+  `derive Json(via: Str, ...)` over `parse_civil`, documented in
+  spec/std.md 13. Both built in step 2: golden time_civil_codecs
+  (yaml.v3, net/mail and encoding/asn1 values) and the regenerated asn1
+  corpus (WideTime rows from Go's Unmarshal, edge cases at years 0, 1,
+  1600, 1677, 2262 and 9999).

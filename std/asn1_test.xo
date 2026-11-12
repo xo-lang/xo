@@ -1,5 +1,6 @@
 // std/asn1's API beyond the Go corpus (internal/stdtest/testdata/corpus/asn1).
 use std/big
+use std/time
 
 test "oid parses, displays and encodes dotted" {
   let o = oid("1.2.840.113549.1.1.11") ?? e => fault("${e}")
@@ -41,9 +42,17 @@ test "an implicit tag keeps the constructed bit of what it tags" {
   expect((hi.der() ?? e => fault("${e}")).to_hex()) == "7f81480205 00".replace(" ", "")
 }
 
-test "times outside a Time and outside UTCTime are errors" {
-  expect(parse(b"\x18\x0f16001231235959Z").is_ok()) == false
-  expect("${parse(b"\x18\x0f16001231235959Z").err() ?? Asn1Err.Syntax(msg: "")}") == "asn1: time out of range"
+test "a time outside a Time is WideTime; outside UTCTime an error" {
+  // decision 0614: the wall clock and offset as written, der in UTC
+  match parse(b"\x18\x1316001231235959+0530") ?? e => fault("${e}") {
+    Value.WideTime(c, g) => {
+      expect(g) == true
+      expect(c.format(time.RFC3339)) == "1600-12-31T23:59:59+05:30"
+      expect(c.unix()) == -11644493401
+      expect((Value.WideTime(c: c, generalized: true).der() ?? e => fault("${e}")).to_hex()) == "180f31363030313233313138323935395a"
+    }
+    _ => fault("want WideTime")
+  }
   let t = Time.from_unix(-1000000000 * 2)
   expect("${Value.UtcTime(t: t).der().err() ?? Asn1Err.Syntax(msg: "")}") == "asn1: structure error: cannot represent time as UTCTime"
   expect((Value.GeneralizedTime(t: t).der() ?? e => fault("${e}")).to_hex()) == "180f31393036303831363230323634305a"
