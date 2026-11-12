@@ -9,16 +9,16 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
-- Interfaces (decision 0613 step 5, Go backend): a `var self` method can be called through an interface value (`var l: Loader = Box{}; l.load(3)`), updating the value in its place; a copy of the interface value is unaffected (`let b = l` before the call keeps the old value). The native backends still report XO1201 for it until stage 4.
-
 ## v0.50.1 (2026-11-12)
 
 The first public 0.50 release (0.50.0 was an internal seed). The release notes
 (the GitHub release) group these entries.
 
+- Security (std/tls, native backends): a TLS peer certificate with an RSA key over 8192 bits is refused, with Go's text (`tls: server sent certificate containing RSA key larger than 8192 bits`), before any signature is verified (CVE-2023-29409, GO-2023-1987: huge keys made the peer spend CPU time). The Go backend already refused them.
+
 - Fix (native backends and LLVM): a task canceled while it waited for another task to build a constant (a sibling failed while the constant's first read was in progress) now unwinds; it went on with an empty list and read past it, and the program crashed with SIGSEGV about 1 run in 30 under load (present since at least 0.48.2). Golden const_wait_canceled.
 
-- Security (std/tls, native backends): a TLS peer certificate with an RSA key over 8192 bits is refused, with Go's text (`tls: server sent certificate containing RSA key larger than 8192 bits`), before any signature is verified (CVE-2023-29409, GO-2023-1987: huge keys made the peer spend CPU time). The Go backend already refused them.
+- Interfaces (decision 0613 step 5, Go backend): a `var self` method can be called through an interface value (`var l: Loader = Box{}; l.load(3)`), updating the value in its place; a copy of the interface value is unaffected (`let b = l` before the call keeps the old value). The native backends still report XO1201 for it until stage 4.
 
 - std/crypto (decision 0618): RSA encryption. `crypto.encrypt_oaep` and `crypto.decrypt_oaep` (RSA-OAEP, Go's `EncryptOAEP` and `DecryptOAEP`) are the recommended scheme; `encrypt_pkcs1v15` and `decrypt_pkcs1v15` are legacy, for interoperating with systems that require them. Decryption checks padding in constant time and reports every failure as the one `crypto/rsa: decryption error`.
 
