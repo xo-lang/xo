@@ -45,6 +45,21 @@ four steps: 35 MB (entry 1, std's record decoded and installed), 41 (entry 2, th
 build), 44 (entry 4, `xs.sort()`, the first entry that lowers a std body), 49 (entry 15, the first
 method declaration), then flat to entry 30.
 
+## What the REPL adds to the tab (renderer RSS)
+
+The same page (main 955a6c8a7's assets), three runs of each, headless Chrome on the Mac:
+
+- **REPL tab**: consent (the default program is checked), the repl tab opened, the 30 entries
+  (each built entry runs in the page's runner worker). Renderer RSS 514 to 522 MB before the first
+  entry, peak 1,490, 1,492 and 1,499 MB (a fourth, earlier run: 1,360 MB).
+- **playground alone** (`NOREPL=1`): consent and check, the repl tab never opened, the default
+  program run 30 times. 751 to 813 MB after consent and the check, 852 to 1,035 MB after the first
+  run, peak 1,355, 1,396 and 1,400 MB over the 30 runs.
+
+The REPL session's tab peaks about 100 MB (7%) above the playground's own; most of either is the
+page's compiler instances (V8's code for the 16.9 MB compiler module) and the runner workers. The
+REPL compiler's own memory, the bar, is the 49 MB above.
+
 ## Per entry (MB, ms)
 
 | # | entry | mem 0.49.1 | mem main | ms 0.49.1 | ms main | RSS 0.49.1 | RSS main |
