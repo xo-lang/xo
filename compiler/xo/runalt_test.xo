@@ -1,0 +1,9 @@
+test "--run is a text or several separated by |, each contained in the name" {
+  expect(run_matches("", "anything")) == true
+  expect(run_matches("rsa", "rsa encryption: OAEP")) == true
+  expect(run_matches("below 1024|CVE", "CVE-2025-22865: zero CRT")) == true
+  expect(run_matches("below 1024|CVE", "rsa: a key below 1024 bits")) == true
+  expect(run_matches("below 1024|CVE", "ecdsa sign")) == false
+  // an empty alternative selects nothing by itself
+  expect(run_matches("|", "x")) == false
+}

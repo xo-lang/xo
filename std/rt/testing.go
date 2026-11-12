@@ -115,7 +115,7 @@ func runTests(args []string, tables [][]TestCase) int {
 	skippedUses, skippedFx := 0, map[string]bool{}
 	for _, table := range tables {
 		for _, tc := range table {
-			if *run != "" && !strings.Contains(tc.Name, *run) {
+			if *run != "" && !runMatches(*run, tc.Name) {
 				continue
 			}
 			if tc.Dir != "" {
@@ -2066,4 +2066,15 @@ func contractSummary(pass, fail, skip int) string {
 		parts = append(parts, fmt.Sprintf("%d skipped", skip))
 	}
 	return fmt.Sprintf(" (contract fuzz: %d %s: %s)", n, fns, strings.Join(parts, ", "))
+}
+
+// runMatches is xo test's --run (compiler/xo test.xo run_matches): the
+// name contains one of the `|` separated texts.
+func runMatches(run, name string) bool {
+	for _, alt := range strings.Split(run, "|") {
+		if alt != "" && strings.Contains(name, alt) {
+			return true
+		}
+	}
+	return false
 }

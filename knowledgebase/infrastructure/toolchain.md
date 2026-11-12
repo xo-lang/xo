@@ -499,6 +499,7 @@ XO_TEST=3 XO_TEST_SEED=1 <build dir>/arm64/bin/<module>.test   # run one test of
 go test ./cmd/xo -run 'TestNoGC(Tests|TestLeaks|NotesServer)'   # native test reports vs the Go backend (cmd/xo/testdata/nogc, examples/notes-service), no live allocation at exit, and notes-service served natively on a socket with SIGTERM shutdown (about 40 s)
 go run ./cmd/xo replay [--dir=<module dir>] <trace.xotrace | crash.xocrash>   # rebuild and rerun offline from the trace (core 11.3)
 go run ./cmd/xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [dir...]
+# --run=text selects tests whose name contains text; `--run='a|b'` either (Go's -run alternation, 2026-11-12). Last verified: 2026-11-12
 go run ./cmd/xo dump [--timeout=5s] <pid>                        # task tree of a running Xo program (core 11.4)
 go run ./cmd/xo bind [--dir=<project dir>] [--json] <go import paths...>   # bind Go packages for `use go` (Go interop)
 go run ./cmd/xo fmt [--check] [--json] [files or dirs...]        # canonical layout (core 10.5)

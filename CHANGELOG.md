@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- `xo test --run='a|b'` selects the tests whose name contains either text, as Go's `-run` alternation reads (a `|` was taken literally and matched nothing), on every backend.
 - Security (std/crypto, std/tls, arm64): the RSA private key operation and decryption's padding checks, X25519, P-256/P-384/P-521 key generation, ECDH and ECDSA signing, Ed25519 keys and signing, and ML-KEM run with Arm's DIT bit set (decision 0619), as Go 1.24's crypto does. A test binary built at LLVM's -O0 checked PKCS #1 v1.5 padding in a time that followed the data on Apple silicon (dudect |t| 81, no branch in the code); with DIT every class pair passes (max |t| 3.8 at -O0, 1.9 native, 3.1 at -O2). CPUs without FEAT_DIT, x86-64 and wasm are unchanged.
 - Security (std/x509, std/tls, native and LLVM backends): an RSA key below 1024 bits no longer verifies a certificate or TLS handshake signature; the floor was 128 bytes, so a 1017 to 1023 bit key verified where Go refuses it.
 - Fix (native): decision 0612's partial borrow of a large struct parameter is off again: with it, a by-value method returning `p with {k: x}` of such a struct (azure armnetwork's Pager) over-released the struct's fields and faulted (SIGSEGV) on arm64. Performance returns to before 0612 until it is fixed.

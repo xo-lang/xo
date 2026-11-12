@@ -376,7 +376,7 @@ usage: xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=
 
 Run test blocks, property tests, and contract fuzzing on the
 deterministic scheduler. --run selects the tests whose name contains
-text; --cases sets the cases per property test and fuzzed function
+text, or one of several texts separated by `|`; --cases sets the cases per property test and fuzzed function
 (default 100); --explore=N runs each test under N schedules; --real
 gives tests real capabilities for their declared effects; --timeout
 is the real time each test (each property case) may take, 60s by

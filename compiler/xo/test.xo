@@ -223,7 +223,22 @@ struct TestOpts {
 
 /// Whether the run takes test t: --run's text and the --watch selection.
 fn selected(o: TestOpts, t: TestInfo) -> Bool {
-  (o.run.is_empty() || t.name.contains(o.run)) && (o.only.is_empty() || o.only.contains(t.name))
+  run_matches(o.run, t.name) && (o.only.is_empty() || o.only.contains(t.name))
+}
+
+/// Whether name contains one of run's `|` separated texts (every name
+/// for an empty run): `--run='a|b'` is either, as Go's -run alternation
+/// reads (agents type it; a `|` was taken literally and matched nothing).
+fn run_matches(run: Str, name: Str) -> Bool {
+  if run.is_empty() {
+    return true
+  }
+  for alt in run.split("|") {
+    if !alt.is_empty() && name.contains(alt) {
+      return true
+    }
+  }
+  false
 }
 
 /// The outcome of a test: pass, fail, or skip, the message, and the
