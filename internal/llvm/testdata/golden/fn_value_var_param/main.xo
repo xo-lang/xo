@@ -66,4 +66,10 @@ fn main(os: Os) {
   m.update("a", 0, inc)
   m.update("b", 100, inc)
   os.stdio.println("${m.get("a") ?? -1} ${m.get("b") ?? -1}")
+  // a function value kept in a list and called through it
+  let fs: List[fn(var Int) -> ()] = [inc, fn(var v: Int) { v *= 3 }]
+  var k = 1
+  fs[0](k)
+  fs[1](k)
+  os.stdio.println("${k}")
 }
