@@ -15,6 +15,7 @@ import (
 // name out only costs speed; listing one whose lowering calls (a bl, an
 // svc, a retain) would make a leaf of a function that calls.
 var inlineNotLeaf = map[string]string{
+	"rt.dit_set":   "decision 0619: a PSTATE.DIT write (mrs/msr), kept out of the leaf count so the window it opens stays in its own function",
 	"rt.str_bytes": "--inline-str (decision 0370): calls the runtime for an inline Str", "rt.str_inline": "--inline-str (decision 0370): a tag test and a branch",
 	"rt.aes_ctr10": "block kernel", "rt.aes_ctr12": "block kernel", "rt.aes_ctr14": "block kernel",
 	"rt.aes_cbc_enc10": "block kernel", "rt.aes_cbc_enc12": "block kernel", "rt.aes_cbc_enc14": "block kernel",
