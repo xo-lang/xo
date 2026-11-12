@@ -245,63 +245,68 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | image/gif | std/gif | complete | Decode, DecodeAll, DecodeConfig, Encode, EncodeAll over whole buffers (0578 step 5). |
 | image, image/draw, image/gif | planned | 0578: Image over png and jpeg, draw, gif follow; image/png and image/jpeg (decode) are done (std/png 0466, std/jpeg 0467). |
 
-## Function level gaps (2026-11-11, scripts/stdaudit)
+## Function level gaps (2026-11-12, scripts/stdaudit)
 
 `go run ./scripts/stdaudit` compares every exported symbol (functions, methods,
-types, consts, vars) of the 11088 Go symbols in the packages above with Xo's
-public surface (`xo doc` of the builtin types, the type constants of
-std/prelude.xo, `xo symbols --module --pub` of every std module). Its mapping
-file scripts/stdaudit/map.txt records each symbol (or a package or type with
-`pkg.*`, `pkg.Type.*`) as an Xo name, `not planned: why`, or `gap: what`.
-Counts (third pass, bench/results/std-audit-2026-11-11.md): 194 named by an Xo
-doc comment, 154 matched by snake_case name, 1700 mapped by hand, 8407 skipped
-(packages marked not planned above, or a not planned line), 633 gaps (whole
-planned or internal only packages count each symbol), 0 unreviewed. Use is
-counted over GOROOT/src (go1.26.1, outside cmd) and the pinned modules of
-scripts/stdaudit/corpus.txt (chi, gin, cobra, pgx, aws-sdk-go-v2,
-client_golang, mux): files that use the symbol; method counts are an upper
-bound. Top 30 gaps by twice the module files plus the stdlib files, grouped by
-feature (`-rank REPORT -status gap DIRS...`; Last verified: 2026-11-11):
+types, consts, vars) of the Go packages above with Xo's public surface (`xo
+doc` of the builtin types, the type constants of std/prelude.xo, `xo symbols
+--module --pub` of every std module). Its mapping file scripts/stdaudit/map.txt
+records each symbol (or a package or type with `pkg.*`, `pkg.Type.*`) as an
+Xo name, `not planned: why`, or `gap: what`. Counts (fourth pass,
+bench/results/std-audit-2026-11-12.md, origin/main 2baf5826a): 192 named by an
+Xo doc comment, 168 matched by snake_case name, 2008 mapped by hand, 8425
+skipped (packages marked not planned above, or a not planned line), 295 gaps
+(633 on 2026-11-11), 0 unreviewed, 0 stale. Use is counted over GOROOT/src
+(go1.26.1, outside cmd) and the pinned modules of scripts/stdaudit/corpus.txt
+(chi, gin, cobra, pgx, aws-sdk-go-v2, client_golang, mux): files that use the
+symbol; method counts are an upper bound (any `.Name` selector in a file that
+imports the package). Top 30 gaps by twice the module files plus the stdlib
+files, grouped by feature (`-rank REPORT -status gap DIRS...`; Last verified:
+2026-11-12):
 
 | # | Gap | Score | Files (modules / stdlib) | Symbols (most used first) |
 |---|---|---|---|---|
-| 1 | std/image has the color conversions as functions but no Color model values per type (std-coverage.md partial, 0578 step 1) | 78 | 0 / 78 | `image/color.Palette`, `image/color.RGBA64`, `image/color.Model`, `image/color.RGBA` and 27 more |
-| 2 | header canonicalization lives inside std/http; no public textproto reader | 60 | 2 / 56 | `net/textproto.MIMEHeader.Get`, `net/textproto.TrimString`, `net/textproto.CanonicalMIMEHeaderKey`, `net/textproto.NewReader` and 16 more |
-| 3 | no ECDH key agreement (X25519, P-256, P-384, P-521) in std/crypto; std/tls has it internally | 53 | 0 / 53 | `crypto/ecdh.PrivateKey.PublicKey`, `crypto/ecdh.X25519`, `crypto/ecdh.PrivateKey`, `crypto/ecdh.P256` and 6 more |
-| 4 | no File.seek (read_at/write_at take offsets) | 38 | 0 / 38 | `io.SeekStart`, `os.File.Seek` |
-| 5 | ASN.1 DER is inside std/native/llrt/asn1.xo (X.509), no public API | 36 | 0 / 36 | `encoding/asn1.ObjectIdentifier`, `encoding/asn1.Marshal`, `encoding/asn1.Unmarshal`, `encoding/asn1.BitString` and 10 more |
-| 6 | no AddrPort type (host and port are text in Net.dial) | 33 | 5 / 23 | `net/netip.AddrPort.IsValid`, `net/netip.AddrPort.Addr`, `net/netip.AddrPort.Port`, `net/netip.AddrPort` and 4 more |
-| 7 | no big.Float (arbitrary precision floats) | 30 | 5 / 20 | `math/big.Float.Int64`, `math/big.Float`, `math/big.Float.Int`, `math/big.Float.Append` and 8 more |
-| 8 | ML-KEM is inside the TLS stack only (std/native/llrt/mlkem.xo), no public API | 24 | 0 / 24 | `crypto/mlkem.CiphertextSize1024`, `crypto/mlkem.CiphertextSize768`, `crypto/mlkem.EncapsulationKeySize1024`, `crypto/mlkem.EncapsulationKeySize768` and 9 more |
-| 9 | no raw block modes (CTR, CBC); AEADs only (Aead) | 16 | 0 / 16 | `crypto/cipher.Block`, `crypto/cipher.NewCBCDecrypter`, `crypto/cipher.NewCBCEncrypter`, `crypto/cipher.BlockMode` and 2 more |
-| 10 | no file server handler over an Fs (serve_content serves one value) | 14 | 6 / 2 | `net/http.FileServer`, `net/http.Dir`, `net/http.File`, `net/http.FS` |
-| 11 | no Hasher clone (std/crypto.Hasher has write, sum, written) | 13 | 0 / 13 | `hash.Cloner` |
-| 12 | no IPv6 zones | 13 | 1 / 11 | `net/netip.Addr.Zone`, `net/netip.Addr.WithZone` |
-| 13 | no HPKE (std-coverage.md: planned after a public AEAD and ECDH) | 12 | 0 / 12 | `crypto/hpke.Recipient`, `crypto/hpke.NewAEAD`, `crypto/hpke.NewKDF`, `crypto/hpke.NewKEM` and 7 more |
-| 14 | no cross origin protection middleware (Go 1.25 CrossOriginProtection) | 12 | 6 / 0 | `net/http.CrossOriginProtection.Handler` |
-| 15 | no big.Rat (rationals) | 10 | 0 / 10 | `math/big.Rat`, `math/big.Rat.Denom`, `math/big.Rat.Num`, `math/big.Rat.SetFrac` and 1 more |
-| 16 | no Float.ldexp/frexp | 8 | 2 / 4 | `math.Frexp`, `math.Ldexp` |
-| 17 | no normal or exponential distributions | 8 | 4 / 0 | `math/rand.ExpFloat64`, `math/rand.NormFloat64` |
-| 18 | no streaming XML encoder (Element.encode and encode_value) | 8 | 4 / 0 | `encoding/xml.NewEncoder`, `encoding/xml.Encoder.EncodeElement`, `encoding/xml.Encoder.EncodeToken`, `encoding/xml.Encoder` |
-| 19 | no join_host_port (IPv6 brackets by hand) | 7 | 1 / 5 | `net.JoinHostPort` |
-| 20 | no Bytes XOR | 6 | 0 / 6 | `crypto/subtle.XORBytes` |
-| 21 | no Fs.create_temp_dir (Fs.create_temp makes a file) | 6 | 0 / 6 | `os.MkdirTemp` |
-| 22 | no Float.copysign | 5 | 0 / 5 | `math.Copysign` |
-| 23 | no List.is_sorted | 5 | 1 / 3 | `sort.IsSorted`, `slices.IsSorted` |
-| 24 | no Userinfo (user:password in a URL) | 5 | 0 / 5 | `net/url.Userinfo.Password`, `net/url.Userinfo.Username`, `net/url.Userinfo` |
-| 25 | no column type metadata (Rows.columns gives names only) | 5 | 0 / 5 | `database/sql/driver.RowsColumnTypeDatabaseTypeName`, `database/sql/driver.RowsColumnTypeLength`, `database/sql/driver.RowsColumnTypeNullable`, `database/sql/driver.RowsColumnTypePrecisionScale` and 1 more |
-| 26 | no prefix_from(addr, bits) (parse_prefix of text) | 5 | 2 / 1 | `net/netip.PrefixFrom` |
-| 27 | no Bytes.trim_end_chars (Str.trim_end_chars exists) | 4 | 0 / 4 | `bytes.TrimRight` |
-| 28 | no Bytes.trim_start_chars (Str.trim_start_chars exists) | 4 | 0 / 4 | `bytes.TrimLeft` |
-| 29 | no Float limit consts | 4 | 0 / 4 | `math.MaxFloat32` |
-| 30 | no PATH lookup by itself (Proc.cmd searches PATH when it runs) | 4 | 0 / 4 | `os/exec.LookPath` |
+| 1 | no MAC address type (the score is mostly `.String` in files that import net, an upper bound; the type alone: 1 module file) | 41 | 12 / 17 | `net.HardwareAddr.String`, `net.HardwareAddr` |
+| 2 | no HPKE (std-coverage.md: planned after a public AEAD and ECDH) | 13 | 0 / 13 | `crypto/hpke.Recipient`, `crypto/hpke.Sender`, `crypto/hpke.PublicKey`, `crypto/hpke.KDF` and 35 more |
+| 3 | no Request.without_header / Response.without_header | 13 | 5 / 3 | `net/http.Header.Del` |
+| 4 | no relative path between two paths (std/path has join, clean, dir) | 7 | 0 / 7 | `path/filepath.Rel` |
+| 5 | no Env.temp_dir (TMPDIR by hand) | 6 | 1 / 4 | `os.TempDir` |
+| 6 | no Rune.REPLACEMENT constant ('\u{FFFD}' literal) | 6 | 0 / 6 | `unicode.ReplacementChar` |
+| 7 | no Writer interface to fan out (io.Copy is a gap too) | 6 | 0 / 6 | `io.MultiWriter` |
+| 8 | no public RFC 2047 encoded-word codec (std/mail's decode_word and encode_word are internal) | 6 | 0 / 6 | `mime.WordEncoder.Encode`, `mime.WordDecoder`, `mime.WordDecoder.Decode`, `mime.QEncoding` and 3 more |
+| 9 | the Client reads no HTTP_PROXY / HTTPS_PROXY / NO_PROXY | 6 | 2 / 2 | `net/http.ProxyFromEnvironment` |
+| 10 | no ${VAR} expansion helper | 5 | 0 / 5 | `os.ExpandEnv`, `os.Expand` |
+| 11 | no decode of the last rune (Str.runes().last() walks the text) | 5 | 0 / 5 | `unicode/utf8.DecodeLastRuneInString` |
+| 12 | no test for a complete UTF-8 sequence at the end of a buffer (stream decoding) | 5 | 0 / 5 | `unicode/utf8.FullRune` |
+| 13 | no List.binary_search_by | 4 | 0 / 4 | `slices.BinarySearchFunc` |
+| 14 | no Request.with_basic_auth | 4 | 1 / 2 | `net/http.Request.SetBasicAuth` |
+| 15 | no decode of the last rune (Bytes.decode_rune reads forward) | 4 | 0 / 4 | `unicode/utf8.DecodeLastRune` |
+| 16 | no equality of two lists by a function (== compares elements by ==) | 4 | 0 / 4 | `slices.EqualFunc` |
+| 17 | no first-nonzero helper (Option.or covers Option values only) | 4 | 1 / 2 | `cmp.Or` |
+| 18 | no whole-path symlink resolution (Fs.read_link reads one link) | 4 | 0 / 4 | `path/filepath.EvalSymlinks` |
+| 19 | Float.round only (check rounding mode) | 3 | 1 / 1 | `math.RoundToEven` |
+| 20 | maphash is internal to Map (no public seeded hash) | 3 | 0 / 3 | `hash/maphash.Hash`, `hash/maphash.Hash.Sum64`, `hash/maphash.Hash.Reset`, `hash/maphash.Seed` and 14 more |
+| 21 | no 128 by 64 bit division | 3 | 0 / 3 | `math/bits.Div` |
+| 22 | no Bytes join (List.join takes Str only) | 3 | 1 / 1 | `bytes.Join` |
+| 23 | no Conn.close_write (half close) | 3 | 0 / 3 | `net.TCPConn.CloseWrite` |
+| 24 | no DATE_TIME layout constant (std/time.layout("2006-01-02 15:04:05")) | 3 | 0 / 3 | `time.DateTime` |
+| 25 | no Float math constants (E, PI, LN2 and the rest are literals today) | 3 | 0 / 3 | `math.Log10E`, `math.Ln2`, `math.Ln10`, `math.Sqrt2` and 1 more |
+| 26 | no Float.signbit | 3 | 0 / 3 | `math.Signbit` |
+| 27 | no Request.basic_auth (decode the Authorization header by hand) | 3 | 1 / 1 | `net/http.Request.BasicAuth` |
+| 28 | no capture positions | 3 | 1 / 1 | `regexp.Regexp.FindStringSubmatchIndex`, `regexp.Regexp.FindSubmatchIndex` |
+| 29 | no content sniffing (Go's DetectContentType) | 3 | 0 / 3 | `net/http.DetectContentType` |
+| 30 | see rsa.EncryptOAEP | 3 | 0 / 3 | `crypto/rsa.PKCS1v15DecryptOptions`, `crypto/rsa.PrivateKey.Decrypt`, `crypto/rsa.EncryptPKCS1v15`, `crypto/rsa.ErrMessageTooLong` and 6 more |
 
-Closed or in flight since the ranking (Last verified: 2026-11-11): 1 (image/color
-types and models, decision 0578 addendum), 4 (File.seek, 0600), 7 (BigFloat,
-0602), 14 (cross_origin, 32ada584b), 16, 22 and 29 (877f55ed9), 18 (xml.writer,
-336db9141), 19 (9cd6f0688), 20 (a70322519), 21 (01045fd27), 23, 27 and 28
-(eac4bf36e). Proposed, waiting on the owner: 10 (0607), 15 (0608), 17, 24 and 30
-(0606), 8 (0604), 9 (0605); 13 (HPKE) after 8 and 9.
+Closed since the 2026-11-11 table (every row of it but 13,
+HPKE): image/color models (0578), textproto, ECDH, File.seek (0600), asn1
+(0601 stage 1), AddrPort, BigFloat (0602), ML-KEM (0604), CTR and CBC (0605),
+file_server (0607), Hasher clone, IPv6 zones, HPKE's prerequisites,
+cross_origin, BigRat (0608), Float.ldexp/frexp/copysign and the limit consts,
+normal and exponential distributions, the streaming XML writer,
+join_host_port, Bytes XOR, Fs.create_temp_dir, List.is_sorted, URL user and
+password, column types, prefix_from, Bytes.trim_start_chars and
+trim_end_chars, and PATH lookup. Open from the owner's medium list: RSA
+encryption (OAEP and PKCS #1 v1.5, row 30's group) and HPKE (row 2).
 
 ## Outside Go's standard library
 
