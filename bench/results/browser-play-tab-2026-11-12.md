@@ -115,16 +115,27 @@ outside the compile peak. So the per-run growth is collection lag on
 32 MB memories that V8 does not count as pressure soon enough. It is not
 a leak.
 
+## Experiment 2: what holds the old instances
+
+The same 30-run session (SNAP=1 in profile2-2026-11-12.mjs). After run 30,
+6 compiler instances were alive by the hook's count. A heap snapshot of
+the toolchain worker (`HeapProfiler.takeHeapSnapshot`, which runs a full
+collection first) then held no `WebAssembly.Instance` or
+`WebAssembly.Memory` object at all, and the hook's count was 0 afterwards.
+Nothing retains them, including the page's own code. They are unreachable,
+and V8 had not yet run a full collection. V8 counts a wasm memory as
+external memory, so 32 MB of it per request does not push the
+collector soon enough. That V8 collected them sooner with a single tier
+fits this explanation: dynamic tiering's background compile keeps the
+worker busy, and its own allocations set the collection schedule.
+
 ## Next experiments
 
-1. What delays the old instances' collection under dynamic tiering (with
-   a single tier, one instance was alive after run 30): a heap snapshot
-   of the toolchain worker after run 30 (HeapProfiler.takeHeapSnapshot
-   on its CDP session), and retainers of the `WebAssembly.Instance`
-   objects.
-2. The compiled code's share of V8's 43 to 69 MB: a run with
+1. The compiled code's share of V8's 43 to 69 MB: a run with
    `--js-flags=--trace-wasm-native-heap` and the code space commits
    summed.
-3. Then the fix candidates to measure, not chosen yet: reusing one
-   compiler instance across requests (resetting its memory), or dropping
-   each instance's references when its request ends.
+2. Then the fix candidates to measure, not chosen yet. Experiment 2
+   rules out dropping references, since nothing holds them. That leaves
+   reusing one compiler instance across requests (resetting its memory
+   between them), or growing each instance's memory in place of a new
+   one, either bounding the tab near 150 MB.
