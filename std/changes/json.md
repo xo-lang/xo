@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-12: security: nested duplicate keys parse in linear time
+
+- Kind: security
+- Commit: this commit
+- Found by: the decision 0616 security review of std/json (second reviewer, finding F4)
+- Go reference: encoding/json (every member read once)
+- Test: golden internal/llvm/testdata/golden/json_dup_nested (arm64, LLVM, Go parity)
+- Shipped in: not yet released
+
+On the native and LLVM backends, `parse_value` (and Value fields) walked an object's whole subtree for a number out of range whenever the object had a duplicate key, so nested levels of duplicates over a large value cost depth times size: 2000 levels of `{"a":0,"a":...}` over a 200,000 element array took 1.5 s against 3.6 ms without the duplicates. Only the replaced values are walked now; the error for a number out of range in one is unchanged.
+
 ## 2026-11-12: security: an object's keys are hashed with the seeded Str hash
 
 - Kind: security

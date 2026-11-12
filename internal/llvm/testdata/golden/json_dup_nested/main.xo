@@ -1,0 +1,47 @@
+// The 0616 json review's F4 (and F3 on the Go backend): an object with a
+// duplicate key checked its whole subtree for numbers out of range, so
+// nested levels of duplicates over a large value cost depth x size (the Go
+// backend: 2^depth). 2000 levels of {"a":0,"a":...} over a 200,000 element
+// array must parse about as fast as the same document without duplicates,
+// on the real clock; a number out of range in a replaced value is still
+// Go's error at its path.
+use std/json
+
+fn doc(levels: Int, key0: Str, n: Int) -> Str {
+  var b = StrBuilder.new()
+  for _ in 0..levels {
+    b.write("{\"${key0}\":0,\"a\":")
+  }
+  b.write("[")
+  for i in 0..n {
+    b.write(if i > 0 { ",1" } else { "1" })
+  }
+  b.write("]")
+  b.write("}".repeat(levels))
+  b.freeze()
+}
+
+fn main(os: Os) ! {
+  let dup = doc(2000, "a", 200000)
+  let plain = doc(2000, "b", 200000)
+  let t0 = os.clock.now()
+  let p = json.parse_value(plain)
+  let t1 = os.clock.now()
+  let d = json.parse_value(dup)
+  let t2 = os.clock.now()
+  if !(p.is_ok() && d.is_ok()) {
+    os.stdio.println("a parse failed")
+    return
+  }
+  let (pd, dd) = (t1 - t0, t2 - t1)
+  if dd > pd * 10 + 100ms {
+    os.stdio.println("duplicates took ${dd}, without ${pd}")
+  } else {
+    os.stdio.println("2000 levels of duplicate keys parse as fast as none")
+  }
+  // a replaced value's number out of range is still the error, at its path
+  match json.parse_value("{\"a\":{\"x\":{\"a\":[1e999],\"a\":1}},\"a\":2}") {
+    Ok(_) => os.stdio.println("1e999 accepted")
+    Err(e) => os.stdio.println("${e}")
+  }
+}

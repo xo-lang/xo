@@ -153,9 +153,17 @@ fn value_at(src: Bytes, tape: List[Int], i: Int) -> json.Value? {
   let ms = jsontext.members(src, tape, i)
   // a duplicate key's earlier values are dropped, but Go's decode still
   // fails on a number out of range in one (found by the json fuzz,
-  // internal/stdtest/jsonfuzz_test.go, 2026-11-02)
-  if ms.len() < 2 * tape[i + 1] && bad_path(src, tape, i) != None {
-    return None
+  // internal/stdtest/jsonfuzz_test.go, 2026-11-02). Only those values are
+  // walked here: the kept ones are checked as they are built below
+  // (walking the whole object at every level with a duplicate key was
+  // O(depth x size), the 0616 json review's F4); parse_bytes names the
+  // first bad number from the root.
+  if ms.len() < 2 * tape[i + 1] {
+    for r in jsontext.replaced(src, tape, i) {
+      if bad_path(src, tape, r) != None {
+        return None
+      }
+    }
   }
   var fields: List[(Str, json.Value)] = []
   var m = 0
