@@ -65,8 +65,8 @@
 #   stdcov  internal/repotest's TestStdAPICovered with the resolved sweep
 #            (`xo dev edges` over every program, XO_STDCOV_JOBS at once,
 #            default 2; 3636 s in tier 69 on the Mac beside other steps
-#            with NumCPU jobs; time and peak at 2 jobs measured in the next
-#            tier). Only when named, and by the 8-hourly tier (tier.sh):
+#            with NumCPU jobs; at 2 jobs 417 s alone on host 2, 2026-11-12,
+#            host memory 19.2 to 22.9 GB of 24 GB). Only when named, and by the 8-hourly tier (tier.sh):
 #            never after other steps by path, since per push only the bare
 #            minimum runs (owner, via lead 2026-11-12; it auto-ran for std
 #            pushes from 2026-11-11 and outran a 90 minute gate lease)
@@ -642,8 +642,9 @@ run_step() {
 # std graph once a bindings value), so a std declaration counts as covered
 # only when a call resolves to it (owner, 2026-11-11). Not a few minutes:
 # about an hour in tier 69 (NumCPU jobs, 32 GB peak on a 24 GB Mac beside
-# selfbuild gates); with XO_STDCOV_JOBS (default 2) its time and peak are
-# measured in the next tier. Not in the fast set: it runs when named and
+# selfbuild gates); with XO_STDCOV_JOBS (default 2) 417 s alone on host 2
+# (18 CPUs, 2026-11-12), host memory 19.2 GB at the start to a 22.9 GB
+# peak, so about 4 GB its own. Not in the fast set: it runs when named and
 # in the 8-hourly tier, never by path.
 stdcov_step() {
   XO_STDCOV_SWEEP=1 full stdcov ./internal/repotest -run '^TestStdAPICovered$'

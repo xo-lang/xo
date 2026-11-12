@@ -20,8 +20,8 @@ import (
 // entry is removed once a program covers what it allowed.
 //
 // The sweep checks every program (stdcoverage.Sweep, XO_STDCOV_JOBS at a
-// time, default 2; about an hour in tier 69 with NumCPU jobs, its time at 2
-// measured in the next tier), so it runs where XO_STDCOV_SWEEP=1 and XO_CLI name an xo:
+// time, default 2; about an hour in tier 69 with NumCPU jobs, 417 s and
+// about 4 GB at 2 alone on host 2), so it runs where XO_STDCOV_SWEEP=1 and XO_CLI name an xo:
 // gate.sh's stdcov step, run when named and by the 8-hourly tier.
 // `go run ./scripts/stdcoverage -sweep` prints the same list.
 func TestStdAPICovered(t *testing.T) {
