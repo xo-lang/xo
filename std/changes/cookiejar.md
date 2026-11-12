@@ -1,5 +1,17 @@
 # std/cookiejar changes
 
+## 2026-11-12: feature: new_with, the public suffix list; a Jar is an http.CookieStore
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0617 B (the owner's high group of std features, 2026-11-12)
+- Go reference: net/http/cookiejar jar.go (jarKey and domainAndType with a PublicSuffixList), go1.26.1; golang.org/x/net/publicsuffix v0.60.0
+- Test: internal/stdtest corpus cookiejar's STEPS_PSL (80 seeded scripts replayed on Go's jar with publicsuffix.List by scripts/stdcorpus/psloracle) and its new_with tests, on go, arm64 and llvm
+- Timing: none (one table lookup a cookie set and a jar key)
+- Shipped in: not yet released
+
+`new_with(psl: Bool = true)` makes a jar that consults std/publicsuffix: a Domain attribute that is a public suffix (`co.uk`, `github.io`) is refused, or makes a host cookie when it is the host itself, and cookies are kept per registrable domain. `new()` is unchanged (no list, Go's default). `Jar` satisfies `http.CookieStore`, so `client.with_jar(cookiejar.new_with(), os.clock)` keeps a client's cookies.
+
 ## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
 
 - Kind: refactor

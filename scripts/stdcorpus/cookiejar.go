@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -96,7 +99,73 @@ func cookiejarCorpus() string {
 	}
 	_ = scripts
 	o.WriteString("]\n\n")
+	o.WriteString(cookiejarPslSteps(rand.New(rand.NewSource(617))))
 	o.WriteString(cookiejarTests)
+	return o.String()
+}
+
+// cookiejarPslSteps: seeded scripts on hosts and Domain attributes around
+// public suffixes (wildcards, exceptions, private suffixes), replayed by
+// psloracle's jar mode on net/http/cookiejar with x/net's
+// publicsuffix.List (decision 0617 B), as STEPS_PSL for cookiejar.new_with.
+func cookiejarPslSteps(rg *rand.Rand) string {
+	hosts := []string{"example.co.uk", "www.example.co.uk", "foo.co.uk", "co.uk", "uk", "user.github.io", "a.user.github.io", "github.io", "example.com", "www.example.com", "com", "city.kawasaki.jp", "www.city.kawasaki.jp", "a.foo.kawasaki.jp", "foo.kawasaki.jp", "kawasaki.jp", "x.s3.amazonaws.com", "s3.amazonaws.com", "a.nosuchtld", "b.a.nosuchtld", "127.0.0.1"}
+	domains := []string{"", "", "co.uk", ".co.uk", "example.co.uk", "uk", "github.io", "user.github.io", ".github.io", "com", "example.com", "kawasaki.jp", "city.kawasaki.jp", "foo.kawasaki.jp", "a.foo.kawasaki.jp", "jp", "s3.amazonaws.com", "amazonaws.com", "nosuchtld", "a.nosuchtld"}
+	paths := []string{"/", "/a", "/a/b"}
+	names := []string{"n1", "n2", "id"}
+	type step struct {
+		set                bool
+		scheme, host, path string
+		enc                string
+	}
+	var scripts [][]step
+	var in strings.Builder
+	for sc := 0; sc < 80; sc++ {
+		in.WriteString("N\n")
+		var st []step
+		for i, n := 0, 6+rg.Intn(24); i < n; i++ {
+			x := step{scheme: []string{"http", "https"}[rg.Intn(2)], host: hosts[rg.Intn(len(hosts))], path: paths[rg.Intn(len(paths))]}
+			if rg.Intn(3) != 0 {
+				x.set = true
+				var enc []string
+				for k := rg.Intn(3) + 1; k > 0; k-- {
+					enc = append(enc, fmt.Sprintf("%s|v%d|%s|/|false|0|-", names[rg.Intn(len(names))], rg.Intn(100), domains[rg.Intn(len(domains))]))
+				}
+				x.enc = strings.Join(enc, ";;")
+				fmt.Fprintf(&in, "S\t%s\t%s\t%s\t%s\n", x.scheme, x.host, x.path, x.enc)
+			} else {
+				fmt.Fprintf(&in, "G\t%s\t%s\t%s\n", x.scheme, x.host, x.path)
+			}
+			st = append(st, x)
+		}
+		scripts = append(scripts, st)
+	}
+	cmd := exec.Command("go", "run", ".", "jar")
+	cmd.Dir = filepath.Join("scripts", "stdcorpus", "psloracle")
+	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOPROXY=off", "GOSUMDB=off")
+	cmd.Stdin = strings.NewReader(in.String())
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		panic("psloracle jar: " + err.Error())
+	}
+	answers := strings.Split(string(out), "\n")
+	var o strings.Builder
+	o.WriteString("/// The same as STEPS for cookiejar.new_with(): net/http/cookiejar with\n/// golang.org/x/net/publicsuffix.List (psloracle jar)\nconst STEPS_PSL: List[List[(Int, Str, Str, Str, Str, Str)]] = [\n")
+	ai := 0
+	for _, st := range scripts {
+		o.WriteString("  [\n")
+		for _, x := range st {
+			if x.set {
+				fmt.Fprintf(&o, "    (0, %q, %q, %q, %q, \"\"),\n", x.scheme, x.host, x.path, x.enc)
+			} else {
+				fmt.Fprintf(&o, "    (1, %q, %q, %q, \"\", %q),\n", x.scheme, x.host, x.path, answers[ai])
+				ai++
+			}
+		}
+		o.WriteString("  ],\n")
+	}
+	o.WriteString("]\n\n")
 	return o.String()
 }
 
@@ -154,6 +223,53 @@ test "net/http/cookiejar's SetCookies and Cookies on seeded sequences" {
     si += 1
   }
   expect(bad[0..(if bad.len() < 8 { bad.len() } else { 8 })]) == []
+}
+
+fn replay(steps: List[List[(Int, Str, Str, Str, Str, Str)]], mk: fn() -> cookiejar.Jar) -> List[Str] {
+  var bad: List[Str] = []
+  var si = 0
+  for script in steps {
+    let j = mk()
+    var i = 0
+    for s in script {
+      let u = url_of(s.1, s.2, s.3)
+      if s.0 == 0 {
+        var cs: List[http.Cookie] = []
+        for e in s.4.split(";;") {
+          cs.push(cookie_of(e))
+        }
+        j.set_cookies(u, cs, now(i))
+      } else {
+        let got = show(j.cookies(u, now(i)))
+        if got != s.5 {
+          bad.push("script ${si} step ${i} ${s.1}://${s.2}${s.3}: ${got} want ${s.5}")
+        }
+      }
+      i += 1
+    }
+    si += 1
+  }
+  bad[0..(if bad.len() < 8 { bad.len() } else { 8 })]
+}
+
+test "new_with() answers as net/http/cookiejar with x/net's publicsuffix.List" {
+  expect(replay(STEPS_PSL, fn() { cookiejar.new_with() })) == []
+}
+
+test "new_with(): a public suffix is no cookie domain, and the key is the registrable domain" {
+  let j = cookiejar.new_with()
+  // co.uk from example.co.uk: refused (new() would keep it for every .co.uk site)
+  j.set_cookies(url_of("http", "example.co.uk", "/"), [http.Cookie{name: "bad", value: "1", domain: "co.uk"}, http.Cookie{name: "ok", value: "2", domain: "example.co.uk"}], now(0))
+  expect(show(j.cookies(url_of("http", "other.co.uk", "/"), now(1)))) == ""
+  expect(show(j.cookies(url_of("http", "www.example.co.uk", "/"), now(1)))) == "ok=2"
+  // the host itself naming its public suffix: a host cookie
+  j.set_cookies(url_of("http", "github.io", "/"), [http.Cookie{name: "h", value: "3", domain: "github.io"}], now(2))
+  expect(show(j.cookies(url_of("http", "github.io", "/"), now(3)))) == "h=3"
+  expect(show(j.cookies(url_of("http", "user.github.io", "/"), now(3)))) == ""
+  let k = cookiejar.new()
+  k.set_cookies(url_of("http", "example.co.uk", "/"), [http.Cookie{name: "bad", value: "1", domain: "co.uk"}], now(0))
+  expect(show(k.cookies(url_of("http", "other.co.uk", "/"), now(1)))) == "bad=1"
+  expect(show(cookiejar.new_with(psl: false).cookies(url_of("http", "x.co.uk", "/"), now(1)))) == ""
 }
 
 test "a host cookie is for its host only, a domain cookie for its subdomains" {

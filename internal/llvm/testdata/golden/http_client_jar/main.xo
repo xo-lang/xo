@@ -50,7 +50,7 @@ fn main(os: Os) ! {
   let base = "http://127.0.0.1:${srv.addr().split(":")[1]}"
   scope s {
     s.spawn_background(fn() { let _ = srv.serve().is_ok() })
-    let c = http.client(os.net).with_jar(cookiejar.new(), os.clock)
+    let c = http.client(os.net).with_jar(cookiejar.new_with(), os.clock)
     os.stdio.println("a redirect's cookie reaches the next hop:")
     os.stdio.println("  ${show(c.get("${base}/login"))}")
     os.stdio.println("a final response's cookie is kept:")

@@ -637,7 +637,9 @@ interface CookieStore[fx: Effects] {
 /// its URL after the request's own Cookie field, and each response's
 /// Set-Cookie fields are stored, a redirect's included, at clock's time.
 /// The installer pays (core 6.3): this call performs the store's effects
-/// and `clock`; send, get and open stay `uses net.dial`.
+/// and `clock`; send, get and open stay `uses net.dial`. Use
+/// `cookiejar.new_with()` (the public suffix list) for a jar a client
+/// shares across sites.
 fn (c: Client) with_jar(store: CookieStore, clock: Clock) -> Client uses clock
 
 enum ClientErr {

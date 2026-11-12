@@ -2373,7 +2373,7 @@ redirect's included, are stored at the clock's time before the next
 hop. The installer pays (core 6.3): `with_jar` performs `clock` and the
 store's effects; `send`, `get` and `open` stay `uses net.dial`. A
 client without a jar keeps no cookies.
-`http.client(os.net).with_jar(cookiejar.new(), os.clock)` is the usual
+`http.client(os.net).with_jar(cookiejar.new_with(), os.clock)` is the usual
 form (section 59). Golden `http_client_jar` (every backend, Go parity).
 
 Proxies (decision 0617 B): `with_proxy(url)` sends every request
@@ -8182,6 +8182,7 @@ Status: implemented on every backend (2026-11-03, decision 0475, Accepted by the
 ```xo
 struct Jar {}                                  // a handle: copies share the cookies; tasks may use it at once
 fn new() -> Jar
+fn new_with(psl: Bool = true) -> Jar           // the public suffix list consulted (decision 0617 B)
 fn (j: Jar) set_cookies(url: http.Url, cookies: List[http.Cookie], now: Time)
 fn (j: Jar) cookies(url: http.Url, now: Time) -> List[http.Cookie]    // name, value, quoted only
 fn (j: Jar) clear()
@@ -8191,7 +8192,7 @@ A `Jar` is an `http.CookieStore` (section 4.5): `client.with_jar(jar, os.clock)`
 
 - Cookies are kept per registrable domain key (the last two labels of the host; an IP address is its own key), by domain, path and name. `set_cookies` takes the Domain and Path attributes as RFC 6265 section 5.3 and Go: a Domain that is not the host or a parent of it is ignored, an IP host takes a Domain only if equal to it (then host only), a Max-Age below 0 or an Expires not after `now` deletes the cookie, Max-Age wins over Expires, a Path that does not start with `/` is the default path of the URL.
 - `cookies` sends a cookie whose domain matches (a host cookie only its host), whose path matches (RFC 6265 section 5.1.4) and, if it is Secure, over https, or to `localhost` and loopback addresses over http (as Go 1.26 does). Cookies past their expiry are dropped. They come in Go's order: the greater path first (compared as strings), then the earlier created.
-- A scheme other than http and https stores and sends nothing. A host that is not ASCII is ignored (there is no IDNA yet, decision 0476). No public suffix list is consulted (Go's default): a cookie for `com` or `co.uk` is accepted. `http.Url` holds the port apart; an IPv6 host keeps its brackets unless the Url has a port, as Go's `net/url` and `canonicalHost` do. The jar is not saved to a file and is not wired into `http.Client` (a later change).
+- A scheme other than http and https stores and sends nothing. A host that is not ASCII is ignored (there is no IDNA yet, decision 0476). `new()` consults no public suffix list (Go's default): a cookie for `com` or `co.uk` is accepted. `new_with(psl: Bool = true)` consults std/publicsuffix (section 83; Go's `Options.PublicSuffixList` set to x/net's `publicsuffix.List`, decision 0617 B): a Domain attribute that is a public suffix is refused, or makes a host cookie when it is the host itself, and cookies are kept per registrable domain; checked against Go with x/net's list on 80 seeded scripts (`STEPS_PSL`, replayed by scripts/stdcorpus/psloracle). A jar shared by a client that visits many sites should be `new_with()`. `http.Url` holds the port apart; an IPv6 host keeps its brackets unless the Url has a port, as Go's `net/url` and `canonicalHost` do. The jar is not saved to a file; `Client.with_jar` (section 4.5) wires it into a client.
 
 ## 60. std/norm
 

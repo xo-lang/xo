@@ -7,9 +7,16 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"math/rand"
+	"net/http"
+	"net/http/cookiejar"
+	"net/url"
+	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/net/publicsuffix"
 )
@@ -44,7 +51,51 @@ var labels = []string{
 	"tokyo", "osaka", "nom", "ne", "or", "go", "lg", "ad", "ed", "gr",
 }
 
+// jarReplay (`psloracle jar`) replays std/cookiejar's corpus scripts from
+// standard input on net/http/cookiejar with x/net's publicsuffix.List and
+// prints, for each Cookies step, the cookies to send as `name=value,...`
+// (scripts/stdcorpus cookiejar.go writes the steps): `N` starts a jar,
+// `S\tscheme\thost\tpath\tcookies` sets (cookies as the corpus encodes
+// them, joined by `;;`), `G\tscheme\thost\tpath` gets.
+func jarReplay() {
+	var j *cookiejar.Jar
+	in := bufio.NewScanner(os.Stdin)
+	in.Buffer(make([]byte, 1<<20), 1<<20)
+	for in.Scan() {
+		f := strings.Split(in.Text(), "\t")
+		switch f[0] {
+		case "N":
+			j, _ = cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+		case "S":
+			var cs []*http.Cookie
+			for _, e := range strings.Split(f[4], ";;") {
+				p := strings.Split(e, "|")
+				c := &http.Cookie{Name: p[0], Value: p[1], Domain: p[2], Path: p[3], Secure: p[4] == "true"}
+				c.MaxAge, _ = strconv.Atoi(p[5])
+				switch p[6] {
+				case "past":
+					c.Expires = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+				case "future":
+					c.Expires = time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+				}
+				cs = append(cs, c)
+			}
+			j.SetCookies(&url.URL{Scheme: f[1], Host: f[2], Path: f[3]}, cs)
+		case "G":
+			var got []string
+			for _, c := range j.Cookies(&url.URL{Scheme: f[1], Host: f[2], Path: f[3]}) {
+				got = append(got, c.Name+"="+c.Value)
+			}
+			fmt.Println(strings.Join(got, ","))
+		}
+	}
+}
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "jar" {
+		jarReplay()
+		return
+	}
 	r := rand.New(rand.NewSource(617))
 	ds := append([]string{}, fixed...)
 	for i := 0; i < 3000; i++ {

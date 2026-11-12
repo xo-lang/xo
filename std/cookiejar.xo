@@ -1,19 +1,22 @@
 // std/cookiejar (spec/std.md 58, decision 0475). A cookie
 // jar with net/http/cookiejar's rules (RFC 6265 section 5): the cookies a
 // server sets for a URL are kept, and the ones to send with a request for a
-// URL are chosen by domain, path and Secure, in Go's order. No public suffix
-// list is consulted (Go's default too). The time is a parameter, so a test
-// passes a fixed instant.
+// URL are chosen by domain, path and Secure, in Go's order. `new()`
+// consults no public suffix list (Go's default too); `new_with()` consults
+// std/publicsuffix (Go's Options.PublicSuffixList set to
+// golang.org/x/net/publicsuffix.List; decision 0617 B). The time is a
+// parameter, so a test passes a fixed instant.
 //
 // Origin: go
 // std/cookiejar on the native backends and, through std/go_compiled.txt, on
 // the Go backend (decision 0312): one source, go1.26.1's net/http/cookiejar
 // (jar.go, punycode excluded; Copyright 2012 The Go Authors, BSD-style
-// license; THIRD_PARTY_NOTICES) with the clock a parameter and no public
-// suffix list.
+// license; THIRD_PARTY_NOTICES) with the clock a parameter and the public
+// suffix list std/publicsuffix's.
 
 use std/http
 use std/netip
+use std/publicsuffix
 
 /// One stored cookie (net/http/cookiejar's entry). Internal: use the jar.
 pub struct Entry {
@@ -43,11 +46,26 @@ pub struct JarState {
 /// at once.
 pub struct Jar {
   pub st: Mutex[JarState]
+  /// whether the public suffix list is consulted (new_with)
+  pub psl: Bool = false
 }
 
-/// An empty jar (cookiejar.New(nil)).
+/// An empty jar (cookiejar.New(nil)): no public suffix list, so a site
+/// may set a cookie for a public suffix it is under (`co.uk` from
+/// `example.co.uk`), which every other site under it then receives. A jar
+/// shared across sites should be `new_with()`.
 pub fn new() -> Jar {
   Jar{st: Mutex[JarState].new(JarState{entries: {}, next_seq: 0})}
+}
+
+/// An empty jar that consults the public suffix list when psl is true
+/// (cookiejar.New with Options.PublicSuffixList = publicsuffix.List;
+/// decision 0617 B): a Domain attribute that is a public suffix makes a
+/// host cookie when it is the host itself and is refused otherwise (RFC
+/// 6265 section 5.3 step 5), and cookies are kept per registrable domain
+/// (`example.co.uk`, not `co.uk`).
+pub fn new_with(psl: Bool = true) -> Jar {
+  Jar{st: Mutex[JarState].new(JarState{entries: {}, next_seq: 0}), psl: psl}
 }
 
 /// Stores the cookies a server set for url (Jar.SetCookies): none for a
@@ -63,7 +81,7 @@ pub fn (j: Jar) set_cookies(url: http.Url, cookies: List[http.Cookie], now: Time
   if host.is_empty() {
     return
   }
-  let key = jar_key(host)
+  let key = jar_key(host, j.psl)
   let def_path = default_path(url.path)
   j.st.with(fn(var s: JarState) {
     let base = s.next_seq
@@ -72,7 +90,7 @@ pub fn (j: Jar) set_cookies(url: http.Url, cookies: List[http.Cookie], now: Time
     let (used, empty) = s.entries.update(key, {}, fn(var sub: Map[Str, Entry]) -> (Int, Bool) {
       var used = 0
       for c in cookies {
-        let r = new_entry(c, now, def_path, host) ?? continue
+        let r = new_entry(c, now, def_path, host, j.psl) ?? continue
         var e = r.0
         let id = entry_id(e.domain, e.path, e.name)
         if r.1 {
@@ -110,7 +128,7 @@ pub fn (j: Jar) cookies(url: http.Url, now: Time) -> List[http.Cookie] {
   if host.is_empty() {
     return []
   }
-  let key = jar_key(host)
+  let key = jar_key(host, j.psl)
   let https = url.scheme == "https"
   let path = if url.path.is_empty() { "/" } else { url.path }
   let selected = j.st.with(fn(var s: JarState) -> List[Entry] {
@@ -229,14 +247,28 @@ fn canonical_host(host0: Str, has_port: Bool) -> Str? {
   Some(host.to_lower())
 }
 
-/// jarKey with no public suffix list: the last two labels, or the host.
-fn jar_key(host: Str) -> Str {
+/// jarKey: the registrable domain with the public suffix list (psl),
+/// else the last two labels; the host when there is none.
+fn jar_key(host: Str, psl: Bool) -> Str {
   if is_ip(host) {
     return host
   }
-  let i = host.rfind(".") ?? -1
-  if i <= 0 {
-    return host
+  var i = -1
+  if psl {
+    let (suffix, _) = publicsuffix.public_suffix(host)
+    if suffix == host {
+      return host
+    }
+    i = host.len() - suffix.len()
+    if i <= 0 || host[i - 1..i] != "." {
+      // cannot happen (Go's comment): the suffix is a dot suffix of host
+      return host
+    }
+  } else {
+    i = host.rfind(".") ?? -1
+    if i <= 0 {
+      return host
+    }
   }
   let prev = host[0..i - 1].rfind(".") ?? -1
   host[prev + 1..host.len()]
@@ -329,7 +361,7 @@ fn sends_before(a: Entry, b: Entry) -> Bool {
 
 /// domainAndType: the cookie's domain and whether it is host only, or None
 /// when the Domain attribute is not allowed.
-fn domain_and_type(host: Str, domain0: Str) -> (Str, Bool)? {
+fn domain_and_type(host: Str, domain0: Str, psl: Bool) -> (Str, Bool)? {
   if domain0.is_empty() {
     return Some((host, true))
   }
@@ -353,6 +385,17 @@ fn domain_and_type(host: Str, domain0: Str) -> (Str, Bool)? {
   if domain.ends_with(".") {
     return None
   }
+  // RFC 6265 section 5.3 step 5: a public suffix is no cookie domain
+  if psl {
+    let (ps, _) = publicsuffix.public_suffix(domain)
+    if !ps.is_empty() && !has_dot_suffix(domain, ps) {
+      if host == domain {
+        // the one Domain attribute that makes a host cookie
+        return Some((host, true))
+      }
+      return None
+    }
+  }
   if host != domain && !has_dot_suffix(host, domain) {
     return None
   }
@@ -361,8 +404,8 @@ fn domain_and_type(host: Str, domain0: Str) -> (Str, Bool)? {
 
 /// newEntry: the entry of a cookie, or (when remove is true) a request to
 /// delete it; None for an illegal Domain.
-fn new_entry(c: http.Cookie, now: Time, def_path: Str, host: Str) -> (Entry, Bool)? {
-  let dt = domain_and_type(host, c.domain) ?? return None
+fn new_entry(c: http.Cookie, now: Time, def_path: Str, host: Str, psl: Bool) -> (Entry, Bool)? {
+  let dt = domain_and_type(host, c.domain, psl) ?? return None
   let path = if c.path.is_empty() || c.path[0..1] != "/" { def_path } else { c.path }
   var e = Entry{name: c.name, value: c.value, quoted: c.quoted, domain: dt.0, path: path, secure: c.secure, persistent: false, host_only: dt.1, expires: now, creation: now, last_access: now, seq: 0}
   if c.max_age < 0 {
