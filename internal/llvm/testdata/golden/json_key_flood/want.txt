@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+16384 colliding keys parse as fast as others
+--- stderr

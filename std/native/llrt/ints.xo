@@ -174,6 +174,39 @@ pub fn str_hash(s: Str) -> Int {
   h ^ h.shr_logical(29)
 }
 
+/// str_hash of the n bytes of b from i, with the same seed: a parser's
+/// table of keys still in its input (std/json's duplicate keys; the 0616
+/// json review's F2: FNV-1a with no seed let a peer send keys that all
+/// collide, O(m^2) compares).
+pub fn bytes_hash_at(b: Bytes, i: Int, n: Int) -> Int {
+  let k = -7046029254386353131
+  var h = (1469598103934665603 ^ rt.mem_load(rt.static_word(HSEED), 0, 8)) ^ n.wrapping_shl(56)
+  if n < 8 {
+    var w = 0
+    if n >= 4 {
+      w = Int(b[i]) | Int(b[i + 1]).wrapping_shl(8) | Int(b[i + 2]).wrapping_shl(16) | Int(b[i + 3]).wrapping_shl(24) | Int(b[i + n - 4]).wrapping_shl(32) | Int(b[i + n - 3]).wrapping_shl(40) | Int(b[i + n - 2]).wrapping_shl(48) | Int(b[i + n - 1]).wrapping_shl(56)
+    } else if n > 0 {
+      w = Int(b[i]) | Int(b[i + (n >> 1)]).wrapping_shl(8) | Int(b[i + n - 1]).wrapping_shl(16)
+    }
+    h = (h ^ w).wrapping_mul(k)
+    h = h ^ h.shr_logical(32)
+  } else {
+    var j = 0
+    while j + 8 <= n {
+      h = (h ^ rt.bytes_word(b, i + j)).wrapping_mul(k)
+      h = h ^ h.shr_logical(32)
+      j += 8
+    }
+    if j < n {
+      h = (h ^ rt.bytes_word(b, i + n - 8).shr_logical((8 - (n - j)) * 8)).wrapping_mul(k)
+      h = h ^ h.shr_logical(32)
+    }
+  }
+  h = h ^ h.shr_logical(31)
+  h = h.wrapping_mul(k)
+  h ^ h.shr_logical(29)
+}
+
 /// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /: b is not 0 and not
 /// the minimum over -1): the checked_ and saturating_ methods (it was
 /// std/llrt/xo_bytes.c xo_int_fits, a C call).

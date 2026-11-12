@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-12: security: an object's keys are hashed with the seeded Str hash
+
+- Kind: security
+- Commit: this commit
+- Found by: the decision 0616 security review of std/json (second reviewer, finding F2)
+- Go reference: encoding/json (Go's maps are seeded)
+- Test: golden internal/llvm/testdata/golden/json_key_flood (arm64, LLVM, Go parity)
+- Shipped in: not yet released
+
+On the native and LLVM backends, the table that finds an object's duplicate keys (for `parse_value`, Value fields, the stream Decoder and Map decodes) hashed keys with FNV-1a and no seed. A peer could send keys that all collide in its low bits: 16,384 of them (1.4 MB) took 857 ms to parse and decode against 6.7 ms for ordinary keys, growing with the square of the count. The table now uses Map's seeded Str hash (decision 0545), and those keys parse as fast as any others. The Go backend uses Go's seeded maps and was not affected.
+
 ## 2026-11-12: security: parse_value on the Go backend is linear in nested duplicate keys
 
 - Kind: security

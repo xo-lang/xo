@@ -1,0 +1,86 @@
+// The 0616 json review's F2: std/json's table of an object's keys (for
+// duplicate keys) hashed them with FNV-1a and no seed, so a peer could send
+// keys that all collide in its low bits: one probe chain, m^2 / 2 compares.
+// This builds 16384 such keys (each a choice of one of two six letter
+// blocks at 14 places, every pair reaching one FNV-1a state) and parses
+// them against as many ordinary keys, on the real clock. The table now
+// uses Map's seeded Str hash (decision 0545).
+use std/json
+
+/// The low 32 bits of FNV-1a 64 after block b (six letters) from state h:
+/// the low bits of a product depend only on the low bits of its operands.
+/// (Four letter blocks never collide from one state: none in all 26^4.)
+fn fnv_lo(h: Int, b: Str) -> Int {
+  var x = h
+  for c in b.bytes() {
+    x = ((x ^ Int(c)).wrapping_mul(1099511628211)) & 0xFFFFFFFF
+  }
+  x
+}
+
+fn fnv_block(t: Int) -> Str {
+  var s = ""
+  var n = t
+  for _ in 0..6 {
+    s = s + "${Rune(97 + n % 26)}"
+    n = n / 26
+  }
+  s
+}
+
+fn main(os: Os) ! {
+  // 14 pairs of blocks, each pair reaching one state from the one before:
+  // 16384 keys that all collide in the low 32 bits of FNV-1a, the old
+  // duplicate key table's hash (one probe chain, m^2 / 2 compares)
+  var h = -3750763034362895579 & 0xFFFFFFFF
+  var pairs: List[(Str, Str)] = []
+  for _ in 0..14 {
+    var seen: Map[Int, Int] = {}
+    var t = 0
+    while true {
+      let s = fnv_lo(h, fnv_block(t))
+      if let Some(u) = seen.get(s) {
+        pairs.push((fnv_block(u), fnv_block(t)))
+        h = s
+        break
+      }
+      seen[s] = t
+      t += 1
+    }
+  }
+  var flood = StrBuilder.new()
+  var plain = StrBuilder.new()
+  flood.write("{")
+  plain.write("{")
+  for i in 0..16384 {
+    var k = ""
+    for (b, (x, y)) in pairs.indexed() {
+      k = k + if (i >> b) & 1 == 1 { y } else { x }
+    }
+    let sep = if i > 0 { "," } else { "" }
+    flood.write("${sep}\"${k}\":${i}")
+    plain.write("${sep}\"${fnv_block(i).repeat(14)}\":${i}")
+  }
+  flood.write("}")
+  plain.write("}")
+  let ft = flood.freeze()
+  let pt = plain.freeze()
+  let t0 = os.clock.now()
+  let pv = json.parse_value(pt)
+  let pm = json.decode_str[Map[Str, Int]](pt)
+  let t1 = os.clock.now()
+  let fv = json.parse_value(ft)
+  let fm = json.decode_str[Map[Str, Int]](ft)
+  let t2 = os.clock.now()
+  if !(pv.is_ok() && fv.is_ok() && pm.is_ok() && fm.is_ok()) {
+    os.stdio.println("a parse failed")
+    return
+  }
+  let (pd, fd) = (t1 - t0, t2 - t1)
+  // the old table: 287 + 571 ms against 2.7 + 4.8 ms on darwin/arm64
+  if fd > pd * 10 + 100ms {
+    os.stdio.println("colliding keys took ${fd}, other keys ${pd}")
+    return
+  }
+  os.stdio.println("16384 colliding keys parse as fast as others")
+}

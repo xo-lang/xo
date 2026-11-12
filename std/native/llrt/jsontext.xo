@@ -25,6 +25,7 @@
 // order of the text, duplicates included (the Go backend keeps the first
 // position and the last value of a key: members, find). The C tape has
 // no string flags; nothing but this module reads a string's b.
+use native/llrt/ints
 use native/llrt/num
 use native/llrt/raw
 use native/llrt/scan as scans
@@ -1185,25 +1186,15 @@ fn keys_eq_slow(src: Bytes, tape: List[Int], a: Int, j: Int) -> Bool {
   str_at(src, tape, a) == str_at(src, tape, j)
 }
 
-/// FNV-1a of the n bytes of b from i.
-fn hash_bytes(b: Bytes, i: Int, n: Int) -> Int {
-  var h = -3750763034362895579
-  var k = 0
-  while k < n {
-    h = mulw(h ^ Int(b[i + k]), 1099511628211)
-    k += 1
-  }
-  h
-}
-
-/// The hash of the value of the string node at j.
+/// The hash of the value of the string node at j: Map's seeded Str hash
+/// (decision 0545), so a peer cannot choose keys that collide (it was
+/// FNV-1a with no seed, the 0616 json review's F2).
 fn key_hash(src: Bytes, tape: List[Int], j: Int) -> Int {
   let raw = tape[j + 2]
   if raw <= LEN_MASK {
-    return hash_bytes(src, tape[j + 1], raw)
+    return ints.bytes_hash_at(src, tape[j + 1], raw)
   }
-  let s = str_at(src, tape, j).bytes()
-  hash_bytes(s, 0, s.len())
+  ints.str_hash(str_at(src, tape, j))
 }
 
 /// The members of the object at i as std/rt's jsonObj has them: each key
