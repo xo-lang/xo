@@ -532,6 +532,13 @@ whole tier (tier 34 held the lane 1h18m; `--ab` runs waited up to 1h16m).
 A Mac tier step the memory cap stops (exit 143) runs once more at `-p=2`.
 Last verified: 2026-11-01
 
+- The offload host also runs the tier's `stdwasm` (every std test module
+  on wasm, decision 0610) and `stdcov` steps, after selfhost and in the
+  same lease (aws-43, lead approved 2026-11-12): on the Mac they ran
+  beside arm64, llvm and cmd, and tier 69's Mac steps took 3 to 5 times
+  as long (154 minute tier); on the arm64 host they take about 184 s and
+  417 s and need node, wasmtime and wasm-tools in `/work/tools/bin`. With
+  no offload host they still run on the Mac.
 - `OFF_WAIT_MIN=N` (offload.sh, heavyd `lease -wait=N`): when no lane slot
   came in N minutes the job is not run and offload.sh exits 77. For
   coverage steps that should be skipped rather than waited for: the full
