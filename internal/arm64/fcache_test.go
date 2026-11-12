@@ -1525,9 +1525,12 @@ fn main(os: Os) uses stdio {
 
 // removeFeEntries removes the front end cache's entries (every fe
 // directory) from the back-end cache dir, keeping the module entries.
+// Only a pack's fe directory (packs/<shard>/<key>/fe): a two hex digit
+// shard of another store (ast/fe, chk/fe) is named fe too, and removing
+// one dropped a module check entry whose key began with fe (2026-11-12).
 func removeFeEntries(cache string) {
 	filepath.WalkDir(cache, func(p string, e fs.DirEntry, err error) error {
-		if err == nil && e.IsDir() && e.Name() == "fe" {
+		if err == nil && e.IsDir() && e.Name() == "fe" && filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(p)))) == "packs" {
 			os.RemoveAll(p)
 			return filepath.SkipDir
 		}
