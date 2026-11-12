@@ -533,9 +533,9 @@ run_step() {
     # packages and tests passed 16 GB on the Mac (six packages at once,
     # each with parallel xo builds); XO_SHORT_P and XO_SHORT_PARALLEL set them
     go test -short -count=1 -p="${XO_SHORT_P:-2}" -parallel="${XO_SHORT_PARALLEL:-4}" $(go list ./... | grep -v /runs/) >"$logs/short.txt" 2>&1
-    k=$(grep -c '^--- FAIL' "$logs/short.txt")
-    [ "$k" -gt 0 ] && failed=1
-    echo "short fails: $k" ;;
+    nf=$(grep -c '^--- FAIL' "$logs/short.txt")
+    [ "$nf" -gt 0 ] && failed=1
+    echo "short fails: $nf" ;;
   arm64) full arm64 ./internal/arm64 ;;
   llvm) llvm_step ;;
   stdcov) stdcov_step ;;
