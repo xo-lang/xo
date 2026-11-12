@@ -7,7 +7,14 @@
 //   wasm --std=DIR --wd=DIR --play fmt FILE         {"changed":B} or {"error":S}
 //   wasm --std=DIR --wd=DIR --play build DIR OUT    {"ok":B,"bytes":N,"diagnostics":[...]} or
 //                                                   {"ok":false,"unsupported":S,"diagnostics":[...]}
+//   wasm --std=DIR --wd=DIR --play serve             one of the lines above a request
 //
+// serve is one compiler for a page's whole visit: each standard input line
+// is a JSON list of a command's arguments (["build", DIR, OUT]) and gets
+// that command's line. A command keeps nothing for the next (Xo has no
+// globals; each builds its own checker), so the page reuses one instance
+// and its memory instead of a new instance a run (bench/results
+// browser-play-tab-2026-11-12.md).
 // Diagnostics are the checker's JSON (spec 10, stable XOnnnn codes), as
 // `xo check --json` prints them. build writes the program's module to
 // OUT, for the page's runner (WASI preview1, as compiler/wasm/run.mjs).
@@ -15,9 +22,14 @@
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/cli/core/format
 use github.com/xo-lang/xo/compiler/ssa
+use std/json
 
 /// Runs one playground command and prints its JSON line.
 fn play(os: Os, std_dir: Str, wd: Str, args: List[Str]) {
+  if args.len() == 1 && args[0] == "serve" {
+    play_serve(os, std_dir, wd)
+    return
+  }
   if args.len() < 2 {
     os.stdio.println("{\"error\":\"usage: --play check DIR | fmt FILE | build DIR OUT\"}")
     return
@@ -94,6 +106,36 @@ fn play(os: Os, std_dir: Str, wd: Str, args: List[Str]) {
       os.stdio.println("{\"ok\":true}")
     }
     _ => os.stdio.println("{\"error\":${json_text("unknown command ${args[0]}")}}")
+  }
+}
+
+/// `--play serve`: the commands of the request lines, one reply line each,
+/// until standard input ends.
+fn play_serve(os: Os, std_dir: Str, wd: Str) {
+  while {
+    let line = match os.stdio.read_line() {
+      Ok(Some(l)) => l
+      Ok(None) => return
+      Err(e) => {
+        os.stdio.eprintln("xo play serve: ${e}")
+        return
+      }
+    }
+    if line.trim().is_empty() {
+      continue
+    }
+    let args = match json.decode_str[List[Str]](line) {
+      Ok(a) => a
+      Err(e) => {
+        os.stdio.println("{\"error\":${json_text("xo play serve: a request is a JSON list of a command's arguments: ${e}")}}")
+        continue
+      }
+    }
+    if args.is_empty() || args[0] is "serve" | "repl" | "rebuild" {
+      os.stdio.println("{\"error\":\"xo play serve: a request is check, fmt, or build\"}")
+      continue
+    }
+    play(os, std_dir, wd, args)
   }
 }
 

@@ -1,6 +1,11 @@
 package selfhost
 
 import (
+	"bufio"
+	"bytes"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,22 +157,8 @@ func TestPlayReplType(t *testing.T) {
 // the replies.
 func playRepl(t *testing.T, in string) []byte {
 	t.Helper()
-	if testing.Short() || selfhostTier(t) == tierShort {
-		t.Skip("builds compiler/wasm (merge and full tiers)")
-	}
-	xo, err := xotool.Path()
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := repoRoot(t)
 	tmp := t.TempDir()
-	xoc := filepath.Join(tmp, "xoc")
-	cmd := testtmp.Guard(exec.Command(xo, "build", "-o", xoc, "compiler/wasm"))
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
-	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("xo build compiler/wasm: %v\n%s", err, b)
-	}
+	xoc, root := playCompiler(t, tmp)
 	for d, f := range map[string]string{
 		"warm/main.xo": "fn main(os: Os) {\n  os.stdio.println(\"${[1, 2, 3].len()}\")\n}\n",
 		"warm/xo.mod":  "module warm\n",
@@ -221,5 +212,155 @@ func TestPlayReplConc(t *testing.T) {
 		if !strings.Contains(got[i], w) || (w != `"run":` && !strings.Contains(got[i], `"ok":true`)) {
 			t.Errorf("reply %d: %s, want %s and ok", i+1, got[i], w)
 		}
+	}
+}
+
+// playCompiler builds compiler/wasm natively into dir; it returns the
+// binary and the repository's root.
+func playCompiler(t *testing.T, dir string) (string, string) {
+	t.Helper()
+	if testing.Short() || selfhostTier(t) == tierShort {
+		t.Skip("builds compiler/wasm (merge and full tiers)")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := repoRoot(t)
+	xoc := filepath.Join(dir, "xoc")
+	cmd := testtmp.Guard(exec.Command(xo, "build", "-o", xoc, "compiler/wasm"))
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("xo build compiler/wasm: %v\n%s", err, b)
+	}
+	return xoc, root
+}
+
+// TestPlayServe: one `--play serve` process (compiler/wasm play.xo, the
+// page's one compiler a visit) answers a run of requests as a fresh
+// process answers each, with the program's file rewritten at the same
+// path between requests as the page does. Same replies, same built
+// modules, same formatted text: no state (a checker, std's record, an
+// output buffer, a definition of the last program) carries from one
+// request to the next.
+func TestPlayServe(t *testing.T) {
+	tmp := t.TempDir()
+	xoc, root := playCompiler(t, tmp)
+	src := filepath.Join(tmp, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "xo.mod"), []byte("module play\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const (
+		withHelper = "fn helper() -> Int { 41 }\n\nfn main(os: Os) {\n  os.stdio.println(\"A ${helper() + 1}\")\n}\n"
+		usesHelper = "fn main(os: Os) {\n  os.stdio.println(\"B ${helper()}\")\n}\n"
+		syntaxErr  = "fn main(os: Os) {\n  let x = \n}\n"
+		other      = "struct P {\n  x: Int\n}\n\nfn main(os: Os) {\n  let p = P{x: 3}\n  os.stdio.println(\"C ${p.x}\")\n}\n"
+		unformat   = "fn main(os:Os){\nos.stdio.println(\"D\")\n}\n"
+	)
+	steps := []struct{ cmd, prog string }{
+		{"build", withHelper},
+		{"check", usesHelper}, // helper is gone: the check reports it
+		{"build", usesHelper},
+		{"check", syntaxErr},
+		{"build", other},
+		{"fmt", unformat},
+		{"check", other}, // after diagnostics: none
+		{"build", withHelper},
+	}
+	main := filepath.Join(src, "main.xo")
+	args := func(i int, cmd, tag string) []string {
+		switch cmd {
+		case "build":
+			return []string{"build", src, filepath.Join(tmp, fmt.Sprintf("%s-%d.wasm", tag, i))}
+		case "fmt":
+			return []string{"fmt", main}
+		}
+		return []string{"check", src}
+	}
+	// what a request leaves besides its reply: the built module, or the
+	// formatted file
+	result := func(i int, cmd, tag string) string {
+		p := main
+		if cmd == "build" {
+			p = filepath.Join(tmp, fmt.Sprintf("%s-%d.wasm", tag, i))
+		} else if cmd != "fmt" {
+			return ""
+		}
+		b, _ := os.ReadFile(p)
+		return fmt.Sprintf("%x", sha256.Sum256(b))
+	}
+	base := []string{"--std=" + filepath.Join(root, "std"), "--wd=" + tmp, "--play"}
+
+	srv := testtmp.Guard(exec.Command(xoc, append(base, "serve")...))
+	srv.Dir = tmp
+	in, err := srv.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outp, err := srv.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	srv.Stderr = &stderr
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	lines := bufio.NewReader(outp)
+	served := make([][2]string, len(steps))
+	for i, s := range steps {
+		if err := os.WriteFile(main, []byte(s.prog), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		req, _ := json.Marshal(args(i, s.cmd, "serve"))
+		if _, err := in.Write(append(req, '\n')); err != nil {
+			t.Fatal(err)
+		}
+		line, err := lines.ReadString('\n')
+		if err != nil {
+			t.Fatalf("request %d %s: no reply: %v\n%s", i, req, err, stderr.String())
+		}
+		served[i] = [2]string{strings.TrimSpace(line), result(i, s.cmd, "serve")}
+	}
+	in.Close()
+	if err := srv.Wait(); err != nil {
+		t.Fatalf("--play serve: %v\n%s", err, stderr.String())
+	}
+
+	sawDiag := false
+	for i, s := range steps {
+		if err := os.WriteFile(main, []byte(s.prog), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		c := testtmp.Guard(exec.Command(xoc, append(base, args(i, s.cmd, "one")...)...))
+		c.Dir = tmp
+		out, err := c.Output()
+		if err != nil {
+			t.Fatalf("--play %s: %v\n%s", s.cmd, err, out)
+		}
+		want := [2]string{strings.TrimSpace(string(out)), result(i, s.cmd, "one")}
+		if served[i] != want {
+			t.Errorf("request %d (%s): served %q, a fresh process %q", i, s.cmd, served[i], want)
+		}
+		if strings.Contains(want[0], "XO") {
+			sawDiag = true
+		}
+	}
+	// the run exercised what could leak: diagnostics, and a later
+	// request with none
+	if !sawDiag || strings.Contains(served[6][0], "XO") {
+		t.Errorf("the steps did not show a diagnostic and then none: %q", served)
+	}
+	for _, i := range []int{0, 4, 7} {
+		if !strings.Contains(served[i][0], `"ok":true`) {
+			t.Errorf("request %d did not build: %s", i, served[i][0])
+		}
+	}
+	if !strings.Contains(served[2][0], `"ok":false`) {
+		t.Errorf("request 2 (helper gone) built: %s", served[2][0])
 	}
 }
