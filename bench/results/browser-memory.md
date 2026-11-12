@@ -9,3 +9,4 @@ version commit; scripts/release-publish.sh refuses a tag without an ok row.
 | label | date | xo commit | /repl/ compiler peak (budget) | /play/ tab footprint peak (budget) | result |
 |---|---|---|---|---|---|
 | v0.50.0 | 2026-11-12 | - | 37 MB (43) | 447 MB (554) | ok |
+| v0.50.1 | 2026-11-12 | - | 37 MB (43) | 449 MB (554) | ok |
