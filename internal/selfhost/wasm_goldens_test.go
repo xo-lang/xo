@@ -127,6 +127,7 @@ var componentGoldensNotRun = map[string]string{
 	"http_raw_path":             "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
 	"http_client":               "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
 	"http_client_body_reader":   "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
+	"http_client_proxy":         "it listens on sockets of its own (the proxy and the target) for the client to call, which a component cannot",
 	"http_reverse_proxy":        "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
 	"http_conn_fault":           "faults on a connection, which the host owns",
 	"http_duplex":               "reads and writes a stream at once; handle_stream on the input-stream is not decided",
