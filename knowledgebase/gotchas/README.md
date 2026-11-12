@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [dudect-o0-llvm.md](dudect-o0-llvm.md): Observed 2026-11-12: RSA unpad dudect failed only on LLVM (|t| 81, and an A/A pair 5.7): `xo test` builds LLVM at -O0, whose stack reloads leaked on Apple silicon; run timing tests with XO_LLVM_OPT=O2 (all pass, max |t| 1.7)
 - [selinux-untarred-binary-203-exec.md](selinux-untarred-binary-203-exec.md): Observed 2026-11-12: a new xo untarred in a mktemp dir and moved under /srv/xomod failed systemd 203/EXEC on the SELinux Enforcing sumdb host (label var_lib_t, mv keeps labels); `chcon -R --reference=` the old build (bin_t) before the restart
 - [tier-gocache-trim-under-running-builds.md](tier-gocache-trim-under-running-builds.md): Observed 2026-11-11: the main check's TestBuildDevNull failed "could not import os (open .../gocache/ff/...-d: no such file)": tier.sh deleted every gocache file idle over 30 minutes (and the top-level locks) before each Mac step, under concurrent builds, while Go refreshes a used file only hourly; now only under 60 GB free, idle over 2 hours, below the shards
 - [pq-client-hello-pmtud-blackhole.md](pq-client-hello-pmtud-blackhole.md): Observed 2026-11-11: every R2 PUT from the sumdb host timed out at 120 s while curl worked: xo's ClientHello with X25519MLKEM768 (1,501 bytes, as Go's) left an MTU 9000 VNIC as one packet and was dropped with PMTUD broken; XO_TLS_MLKEM=0 (275 bytes) until the host allows ICMP 3/4 or uses MTU 1500

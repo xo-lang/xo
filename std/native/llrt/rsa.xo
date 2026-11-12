@@ -542,7 +542,21 @@ pub fn decrypt_oaep_fn(k: PrivateKey, hl: Int, hf: fn(Bytes) -> Bytes, c: Bytes,
   }
   let cp = ciphertext_in(PublicKey{n: k.n, e: k.e}, c)?
   let em = private_op(k, cp)?
-  let lhash = hf(label)
+  let (good, db, index) = oaep_unpad(hl, hf, em, hf(label))
+  if good == 0 {
+    return None
+  }
+  Some(db[index + 1..db.len()])
+}
+
+/// OAEP's decoding of em (kk bytes, kk >= 2 hl + 2) with the label hash
+/// lhash, in constant time: (-1 when it is valid else 0, DB, the index in
+/// DB of the 0x01 before the message). The first byte check, the label
+/// hash compare and the separator search combine into the one mask, as
+/// Go's fips140/rsa decryptOAEP; it is its own function so its timing is
+/// tested alone (rsa_test.xo's dudect, the 0616 RSA review's F1).
+pub fn oaep_unpad(hl: Int, hf: fn(Bytes) -> Bytes, em: Bytes, lhash: Bytes) -> (Int, Bytes, Int) {
+  let kk = em.len()
   let first_zero = ct.mask_eq(Int(em[0]), 0)
   let masked_seed = em[1..1 + hl]
   let masked_db = em[1 + hl..kk]
@@ -561,10 +575,7 @@ pub fn decrypt_oaep_fn(k: PrivateKey, hl: Int, hf: fn(Bytes) -> Bytes, c: Bytes,
     looking = ct.pick(eq1, 0, looking)
     invalid = ct.pick(looking & ~eq0, -1, invalid)
   }
-  if (first_zero & lhash_ok & ~invalid & ~looking) == 0 {
-    return None
-  }
-  Some(db[index + 1..db.len()])
+  (first_zero & lhash_ok & ~invalid & ~looking, db, index)
 }
 
 /// RSAES-PKCS1-V1_5-ENCRYPT of msg with ps, size(n) - msg.len() - 3
@@ -592,6 +603,21 @@ pub fn decrypt_pkcs1v15(k: PrivateKey, c: Bytes) -> Bytes? {
   }
   let cp = ciphertext_in(PublicKey{n: k.n, e: k.e}, c)?
   let em = private_op(k, cp)?
+  let (good, index) = pkcs1_unpad(em)
+  if good == 0 {
+    return None
+  }
+  Some(em[index + 1..kk])
+}
+
+/// PKCS #1 v1.5 decoding of em (11 bytes at least), in constant time: (-1
+/// when it is valid else 0, the index of the zero before the message). The
+/// 0x00 0x02 head, the first zero after it and the eight byte minimum
+/// combine into the one mask, as Go's decryptPKCS1v15; its own function so
+/// its timing is tested alone (rsa_test.xo's dudect, the 0616 RSA review's
+/// F1).
+pub fn pkcs1_unpad(em: Bytes) -> (Int, Int) {
+  let kk = em.len()
   let first_zero = ct.mask_eq(Int(em[0]), 0)
   let second_two = ct.mask_eq(Int(em[1]), 2)
   // the first zero after the head; eight padding bytes at least
@@ -603,8 +629,5 @@ pub fn decrypt_pkcs1v15(k: PrivateKey, c: Bytes) -> Bytes? {
     looking = ct.pick(eq0, 0, looking)
   }
   let ps_ok = ~ct.mask_lt(index.wrapping_sub(2), 8)
-  if (first_zero & second_two & ~looking & ps_ok) == 0 {
-    return None
-  }
-  Some(em[index + 1..kk])
+  (first_zero & second_two & ~looking & ps_ok, index)
 }

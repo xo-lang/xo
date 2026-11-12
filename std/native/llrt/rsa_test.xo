@@ -1,0 +1,313 @@
+// The timing of RSA decryption's padding checks, alone (decision 0616
+// checklist item 3, the 0616 RSA review's F1): dudect's method (Reparaz,
+// Balasch, Verbauwhede 2017) on oaep_unpad and pkcs1_unpad, the functions
+// decrypt_oaep_fn and decrypt_pkcs1v15 call after the private operation,
+// so the CRT exponentiation's noise does not hide them. Two classes of
+// encoded blocks that fail different checks (or pass), built here from
+// their definition so every block is of its class, are measured
+// interleaved in a random order; Welch's t-test on the times, and on the
+// times below several percentiles of a warm-up sample (dudect's
+// cropping). Pass: every |t| < 4.5. A control pair times an early exit
+// compare, which must fail, so a pass means the test could see a leak.
+//
+// It needs the real clock, so it runs only under `xo test --real` (its
+// `uses clock, env, fs`), XO_DUDECT measurements a pair (default 100000;
+// 10^6 for the evidence: go run ./scripts/stdproven timing), its result
+// lines written to the file XO_DUDECT_OUT names, when set.
+//
+// On LLVM it must run with XO_LLVM_OPT=O2: a test binary is built at -O0
+// (decision 0236), whose loops keep looking and index on the stack, and
+// on Apple silicon that code's time followed where the first zero byte
+// was (|t| 81 between v15_nozero and v15_short, 5.7 between two sets of
+// v15_short); at -O2, what programs ship, every pair passes (max |t| 1.7)
+// and the classes' means are equal. knowledgebase/gotchas/dudect-o0-llvm.md.
+
+use native/rt
+use std/testing
+
+/// SHA-256, the hash the classes are built and checked with.
+fn h256(b: Bytes) -> Bytes { hsum(0, b) }
+
+/// The calls of the same block timed as one measurement: one call (well
+/// under a microsecond) is below a coarse clock's step (about 1 us on
+/// macOS), which made every crop's times equal.
+const REPS: Int = 16
+
+const HL: Int = 32
+const KK: Int = 128
+
+struct Dud {
+  /// xorshift state: the order and the block picked (public choices)
+  x: Int
+}
+
+fn (var d: Dud) next() -> Int {
+  d.x = d.x ^ d.x.wrapping_shl(13)
+  d.x = d.x ^ d.x.shr_logical(7)
+  d.x = d.x ^ d.x.wrapping_shl(17)
+  d.x
+}
+
+fn (var d: Dud) bytes(n: Int) -> Bytes {
+  var out = rt.rs_with_cap(n)
+  for _ in 0..n {
+    out = rt.rs_push_byte(out, d.next() & 255)
+  }
+  out.bytes()
+}
+
+fn (var d: Dud) nonzero(n: Int) -> Bytes {
+  var out = rt.rs_with_cap(n)
+  for _ in 0..n {
+    out = rt.rs_push_byte(out, 1 + (d.next() & 255) % 255)
+  }
+  out.bytes()
+}
+
+fn cat(parts: List[Bytes]) -> Bytes {
+  var out = rt.rs_with_cap(KK)
+  for p in parts {
+    out = rt.rs_append_bytes(out, p, 0, p.len(), 0)
+  }
+  out.bytes()
+}
+
+fn byte1(v: Int) -> Bytes { rt.rs_push_byte(rt.rs_with_cap(1), v).bytes() }
+
+/// b with its byte at xored with x.
+fn flip(b: Bytes, at: Int, x: Int) -> Bytes { cat([b[0..at], byte1(Int(b[at]) ^ x), b[at + 1..b.len()]]) }
+
+/// An OAEP block: 0x00 (or first), the masked seed, the masked DB with
+/// DB = lhash' || zeros || sep || message.
+fn oaep_block(var d: Dud, lhash: Bytes, kind: Str) -> Bytes {
+  let msg = d.bytes(1 + (d.next() & 15))
+  var lh = lhash
+  var sep = 1
+  var first = 0
+  match kind {
+    "first" => first = 1 + (d.next() & 255) % 255
+    "lhash" => lh = flip(lhash, (d.next() & 0x7fffffff) % HL, 1 + (d.next() & 255) % 255)
+    "sep" => sep = 2 + (d.next() & 255) % 254
+    _ => ()
+  }
+  let ps = b"\x00".repeat(KK - HL - 1 - HL - 1 - msg.len())
+  let db = cat([lh, ps, byte1(sep), msg])
+  let seed = d.bytes(HL)
+  let masked_db = xor(db, mgf1(h256, seed, KK - HL - 1))
+  let masked_seed = xor(seed, mgf1(h256, masked_db, HL))
+  cat([byte1(first), masked_seed, masked_db])
+}
+
+/// A PKCS #1 v1.5 block: 0x00 0x02, nonzero padding, 0x00, the message.
+fn v15_block(var d: Dud, kind: Str) -> Bytes {
+  let msg = d.bytes(1 + (d.next() & 15))
+  let pad = d.nonzero(KK - 3 - msg.len())
+  match kind {
+    "head" => cat([b"\x00", byte1(3 + (d.next() & 255) % 253), pad, b"\x00", msg])
+    "nozero" => cat([b"\x00\x02", pad, d.nonzero(msg.len() + 1)])
+    "short" => {
+      let at = (d.next() & 0x7fffffff) % 8
+      cat([b"\x00\x02", pad[0..at], b"\x00", pad[at + 1..pad.len()], b"\x00", msg])
+    }
+    _ => cat([b"\x00\x02", pad, b"\x00", msg])
+  }
+}
+
+/// The control: a compare that stops at the first difference, timed on
+/// blocks that differ at their first byte and at their last.
+fn leaky(a: Bytes, b: Bytes) -> Int {
+  for i in 0..a.len() {
+    if a[i] != b[i] {
+      return 0
+    }
+  }
+  -1
+}
+
+struct Stat {
+  n: List[Int]
+  mean: List[Float]
+  m2: List[Float]
+}
+
+fn (var s: Stat) add(c: Int, x: Float) {
+  s.n[c] += 1
+  let dd = x - s.mean[c]
+  s.mean[c] += dd / Float(s.n[c])
+  s.m2[c] += dd * (x - s.mean[c])
+}
+
+fn (s: Stat) t() -> Float {
+  if s.n[0] < 2 || s.n[1] < 2 {
+    return 0.0
+  }
+  let v0 = s.m2[0] / Float(s.n[0] - 1)
+  let v1 = s.m2[1] / Float(s.n[1] - 1)
+  let se = (v0 / Float(s.n[0]) + v1 / Float(s.n[1])).sqrt()
+  let diff = s.mean[0] - s.mean[1]
+  if se == 0.0 {
+    // every time equal within each class: no difference, or an exact one
+    return if diff == 0.0 { 0.0 } else { 1.0e9 }
+  }
+  diff / se
+}
+
+/// The blocks of a class: "oaep_KIND", "v15_KIND" or "control_KIND".
+fn blocks(var d: Dud, lhash: Bytes, name: Str) -> List[Bytes] {
+  var out: List[Bytes] = []
+  for _ in 0..128 {
+    if name.starts_with("oaep_") {
+      out.push(oaep_block(d, lhash, name[5..]))
+    } else if name.starts_with("v15_") {
+      out.push(v15_block(d, name[4..]))
+    } else {
+      // the control's blocks differ from lhash.repeat(4) at the first byte
+      // or the last
+      let base = lhash.repeat(4)
+      out.push(if name == "control_early" { flip(base, 0, 1) } else { flip(base, base.len() - 1, 1) })
+    }
+  }
+  out
+}
+
+/// max |t| of n measurements of pair (a, b).
+fn dudect(os: testing.TestOs, a: Str, b: Str, n: Int) -> Float {
+  var d = Dud{x: 0x2545F4914F6CDD1D}
+  let lhash = h256(b"")
+  // both classes' blocks in one buffer, interleaved at KK byte steps,
+  // so where a block sits in memory is the same for both classes (a
+  // block apiece made two sets of the same class differ: a layout effect
+  // the many measurements of each block brought out on LLVM)
+  let ca = blocks(d, lhash, a)
+  let cb = blocks(d, lhash, b)
+  var parts: List[Bytes] = []
+  for j in 0..128 {
+    parts.push(ca[j])
+    parts.push(cb[j])
+  }
+  var pool = rt.rs_with_cap(256 * KK)
+  for q in parts {
+    pool = rt.rs_append_bytes(pool, q, 0, q.len(), 0)
+  }
+  let all = pool.bytes()
+  let control = lhash.repeat(4)
+  let clock = os.clock
+  let warm = 20000
+  var sample: List[Float] = []
+  let pcts = [1.0, 0.99, 0.95, 0.9, 0.75, 0.5]
+  var thr: List[Float] = []
+  var stats: List[Stat] = []
+  for _ in pcts {
+    stats.push(Stat{n: [0, 0], mean: [0.0, 0.0], m2: [0.0, 0.0]})
+  }
+  var sink = 0
+  for i in 0..warm + n {
+    let r = d.next()
+    let c = r & 1
+    let off = ((r.shr_logical(8) & 127) * 2 + c) * KK
+    let em = all[off..off + KK]
+    let t0 = clock.now()
+    for _ in 0..REPS {
+      if a.starts_with("oaep_") {
+        let (good, _, index) = oaep_unpad(HL, h256, em, lhash)
+        sink = sink ^ good ^ index
+      } else if a.starts_with("v15_") {
+        let (good, index) = pkcs1_unpad(em)
+        sink = sink ^ good ^ index
+      } else {
+        sink = sink ^ leaky(em, control)
+      }
+    }
+    let dt = Float(clock.since(t0).nanos())
+    if i < warm {
+      sample.push(dt)
+      if i == warm - 1 {
+        let s = sample.sort()
+        for p in pcts {
+          thr.push(if p >= 1.0 { 1.0e18 } else { s[Int(p * Float(warm))] })
+        }
+      }
+      continue
+    }
+    for j in 0..pcts.len() {
+      if dt < thr[j] {
+        stats[j].add(c, dt)
+      }
+    }
+  }
+  var worst = 0.0
+  for j in 0..pcts.len() {
+    let t = stats[j].t()
+    if t.is_nan() {
+      return 1.0e9
+    }
+    if t.abs() > worst {
+      worst = t.abs()
+    }
+  }
+  if sink == 0x7fffffff {
+    os.stdio.println("")
+  }
+  worst
+}
+
+test "the classes are what they say: each block passes or fails the check it is built for" {
+  var d = Dud{x: 99}
+  let lhash = h256(b"")
+  for (name, want) in [("oaep_ok", -1), ("oaep_first", 0), ("oaep_lhash", 0), ("oaep_sep", 0), ("v15_ok", -1), ("v15_head", 0), ("v15_nozero", 0), ("v15_short", 0)] {
+    for em in blocks(d, lhash, name) {
+      expect(em.len()) == KK
+      let good = if name.starts_with("oaep_") {
+        let (g, _, _) = oaep_unpad(HL, h256, em, lhash)
+        g
+      } else {
+        let (g, _) = pkcs1_unpad(em)
+        g
+      }
+      if good != want {
+        fault("${name}: a block decodes as ${good}")
+      }
+    }
+  }
+  // each failing OAEP class fails only its own check
+  for em in blocks(d, lhash, "oaep_first") {
+    let (g, _, _) = oaep_unpad(HL, h256, cat([b"\x00", em[1..KK]]), lhash)
+    expect(g) == -1
+  }
+}
+
+test "dudect: the padding checks take the same time whichever fails, and the early exit control is seen" uses clock, env, fs {
+  let n = Int.parse(os.env.get("XO_DUDECT") ?? "") ?? 100000
+  var bad: List[Str] = []
+  var lines: List[Str] = []
+  for (a, b, leak) in [
+    ("oaep_first", "oaep_lhash", false),
+    ("oaep_lhash", "oaep_sep", false),
+    ("oaep_sep", "oaep_ok", false),
+    ("oaep_first", "oaep_ok", false),
+    ("v15_head", "v15_nozero", false),
+    ("v15_nozero", "v15_short", false),
+    ("v15_short", "v15_ok", false),
+    ("v15_head", "v15_ok", false),
+    ("control_early", "control_late", true),
+    ("v15_ok", "v15_ok", false),
+    ("v15_short", "v15_short", false),
+    ("oaep_ok", "oaep_ok", false),
+  ] {
+    let t = dudect(os, a, b, n)
+    let ok = if leak { t >= 4.5 } else { t < 4.5 }
+    lines.push("${a} vs ${b}: ${n} measurements, max |t| ${t}, ${if ok { "pass" } else { "FAIL" }}${if leak { " (control: must exceed 4.5)" } else { "" }}")
+    if !ok {
+      bad.push("${a} vs ${b}")
+    }
+  }
+  let out = os.env.get("XO_DUDECT_OUT") ?? ""
+  if !out.is_empty() {
+    os.fs.write(out, (lines.join("\n") + "\n").bytes())?
+  }
+  if !bad.is_empty() {
+    fault("${bad.len()} pairs failed:\n${lines.join("\n")}")
+  }
+}
+
+
