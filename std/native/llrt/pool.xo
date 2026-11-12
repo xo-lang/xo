@@ -1527,6 +1527,14 @@ fn run_fiber(p: Int, w: Int, f0: Int) {
     // a fiber switched away holding a runtime lock (XO_LOCKCHECK=1)
     let _r = rt.call_c2(rt.fn_addr("lock_held_switch"), 0, 0)
   }
+  if (cpu.hw() & cpu.HW_DIT) != 0 && rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_LOCKCHECK, RELAXED) != 0 {
+    // a constant time section that parked or yielded (decision 0619):
+    // its DIT bit is still this thread's
+    let o = cpu.dit_set(0)
+    if o != 0 {
+      let _r = rt.call_c2(rt.fn_addr("dit_held_switch"), 0, 0)
+    }
+  }
   rt.slot_store(w, W_PREEMPT_I, 0, RELAXED)
   if r == 2 {
     if rt.mem_load(w, W_ASYNC, 8) == 2 {

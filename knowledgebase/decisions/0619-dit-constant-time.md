@@ -61,8 +61,10 @@ DIT cost in that loop: +25% at -O0, +11% at -O2.
    fibers and run on without it after resuming on another worker. So:
    - the code between dit_on and dit_off makes no call that can park or
      yield (no I/O, channel, lock, sleep or spawn): pure computation over
-     bytes it was given. A test build checks it: sched's fiber_yield
-     faults when DIT is set (`mrs` in a test build only);
+     bytes it was given. XO_LOCKCHECK=1 checks it: when a fiber's run
+     ends (it parked, yielded or switched) with DIT still set on the
+     worker, the program stops with `xo: DIT held` (status 70), as it does
+     for a runtime lock held across a switch;
    - asynchronous preemption (decision 0318) declines while the
      interrupted code has DIT set: pool.async_signal reads PSTATE from the
      ucontext (darwin arm_thread_state64.cpsr at 264, Linux
@@ -113,8 +115,12 @@ software AES and GHASH paths (every CPU with FEAT_DIT has the AES
 instructions, so they never run under it).
 
 Still to do before Accepted: the --ab
-cost on host 1, the linux/arm64 and amd64 rows, the test build check in
-fiber_yield.
+cost on host 1, the linux/arm64 and amd64 rows.
+
+Step 3 (the same day): the XO_LOCKCHECK=1 check (pool.xo run_fiber,
+cabi.xo dit_held_switch). A temporary test that slept inside dit_on
+stopped with `xo: DIT held` on arm64 and LLVM; native/crypto,
+native/tls and rsa_test pass under XO_LOCKCHECK=1 on both.
 
 ## Consequences
 
