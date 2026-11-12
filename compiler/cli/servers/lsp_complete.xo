@@ -175,7 +175,7 @@ fn (s: Session) check_patched(os: Os, path: Str, src: Bytes) -> (Res, Int)? uses
 /// patched_check: the resolution of dirs checked with overlay, and the
 /// file index of path in it; empty when it does not check.
 fn patched_check(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], path: Str) -> List[(Res, Int)] uses (fs, env) {
-  var c = new_lsp_checker(os, std_dir, wd, overlay)
+  var c = new_lsp_checker(os, std_dir, wd, overlay, true)
   if c.check_dirs(dirs).is_err() {
     return []
   }

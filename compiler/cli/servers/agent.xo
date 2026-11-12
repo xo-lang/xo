@@ -699,13 +699,13 @@ fn agent_session_named(os: Os, dir: Str, std: Str, preload: List[Str], testdata:
   var s = Session{version: "", std_dir: std, wd: wd, lsp_std: "", quiet: true, preload: preload, decls_only: decls_only}
   let d = abs_of(wd, dir)
   if decls_only && !name.is_empty() {
-    var probe = new_lsp_checker(os, std, wd, {})
+    var probe = new_lsp_checker(os, std, wd, {}, false)
     let own = (os.fs.read_dir(d).ok() ?? []).any(fn(e) { !e.is_dir && e.name.ends_with(".xo") })
     probe.walk_all = false
     if !own || probe.check_workspace_dirs([d]).len() > 1 {
       let cands = probe.decl_candidates(d, name)
       if !cands.is_empty() {
-        let v = check_view_walk(os, s.std_dir, wd, {}, cands, preload, [], testdata, words, decls_only, false, ("", ""))
+        let v = check_view_walk(os, s.std_dir, wd, {}, cands, preload, [], testdata, words, decls_only, false, ("", ""), false)
         if v.err.is_empty() && v.stopped.is_empty() {
           s.use_view(v)
           s.diags = v.diags
@@ -734,7 +734,7 @@ fn agent_session_named(os: Os, dir: Str, std: Str, preload: List[Str], testdata:
     }
     // a workspace or repository root: the modules under it, as `xo
     // query` and `xo check` find them (decision 0289)
-    var v = check_view_excluding(os, s.std_dir, wd, {}, [d], preload, [], testdata, words, decls_only)
+    var v = check_view_excluding(os, s.std_dir, wd, {}, [d], preload, [], testdata, words, decls_only, false)
     // a module below the root whose `use go` or `use c` binding is
     // missing stops the whole check: leave such modules out and check
     // again (the xo checkout's examples/realtime-control), naming them
@@ -753,7 +753,7 @@ fn agent_session_named(os: Os, dir: Str, std: Str, preload: List[Str], testdata:
       }
       skipped = skipped + more
       tries += 1
-      v = check_view_excluding(os, s.std_dir, wd, {}, [d], preload, skipped, testdata, words, decls_only)
+      v = check_view_excluding(os, s.std_dir, wd, {}, [d], preload, skipped, testdata, words, decls_only, false)
     }
     s.skipped = skipped
     s.testdata_skipped = v.testdata_skipped

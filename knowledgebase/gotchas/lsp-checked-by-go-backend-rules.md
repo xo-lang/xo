@@ -24,3 +24,12 @@ a `use c` program that `xo check` passes and expects no diagnostics.
 A new path that builds a Checker by hand (not through
 compiler/cli/core's load functions) must set `native` the way `xo check`
 does, or it reports what the build accepts.
+
+Follow-up (2026-11-11, Xo Lang 2, tier 69): setting `native` in
+new_lsp_checker itself also changed the agent lookups that share it (xo
+def, refs, doc: agent.xo's probe and check_view_walk), which then loaded
+std/native's implementation files and returned their declarations (`def
+next` found llrt det.xo's, `refs g.label` named Zone.label): cmd/xo
+TestAgentCLI, TestAgentRefsReceiver, TestAgentRefsBatch failed. The flag
+is now a parameter: the editor's paths (the LSP session, its worker,
+completion) pass true; the agent tools pass false.
