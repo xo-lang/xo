@@ -11,12 +11,13 @@
 # $BROWSER_MEMORY_SITE_REV: a release's site branch before it is pushed),
 # builds the site with hugo ($HUGO, else hugo on PATH), and runs the
 # site's scripts/test-memory.mjs in headless Chrome: the REPL compiler's
-# peak over the 30-entry session on /repl/ and /play/'s renderer RSS peak
-# over 30 runs, against the budgets in the site's data/memory.json.
+# peak over the 30-entry session on /repl/ and the /play/ tab's footprint
+# peak over 30 builds and runs (macOS footprint; darwin only), against the budgets in the site's data/memory.json.
 #
 # Each run appends one row to $BROWSER_MEMORY_LOG (default
 # bench/results/browser-memory.md in this tree): the label (--record's,
-# else the tree's commit), the date, the commit, both peaks and budgets,
+# else the tree's commit), the date, the commit (none for a release label:
+# the row is part of that release's own commit), both peaks and budgets,
 # and ok or FAIL. A release records its row with --record vX.Y.Z in the
 # version commit; scripts/release-publish.sh refuses a tag whose tree has
 # no ok row for it. The lead's 8-hourly tier runs it with
@@ -49,12 +50,12 @@ git -C "$site" worktree add -q --detach "$work/site" "${BROWSER_MEMORY_SITE_REV:
 MEMORY_OUT=$work/memory.json node "$work/site/scripts/test-memory.mjs" "$work/public" | tee "$work/out.txt"
 s=${PIPESTATUS[0]}
 [ $s -le 1 ] || die "test-memory.mjs could not drive the pages (exit $s)"
-[ -f "$log" ] || printf '# Browser memory of the playground pages (decision 0615)\n\n| label | date | xo commit | /repl/ compiler peak (budget) | /play/ renderer RSS peak (budget) | result |\n|---|---|---|---|---|---|\n' > "$log"
+[ -f "$log" ] || printf '# Browser memory of the playground pages (decision 0615)\n\n| label | date | xo commit | /repl/ compiler peak (budget) | /play/ tab footprint peak (budget) | result |\n|---|---|---|---|---|---|\n' > "$log"
 row=$(python3 - "$work/memory.json" "$label" "$rev" "$([ $s = 0 ] && echo ok || echo FAIL)" <<'EOF'
 import json, sys
 m = json.load(open(sys.argv[1]))
 r, p = m.get("repl", {}), m.get("play", {})
-print(f"| {sys.argv[2]} | {m['date']} | {sys.argv[3]} | {r.get('peak', '-')} MB ({r.get('budget', '-')}) | {p.get('peak', '-')} MB ({p.get('budget', '-')}) | {sys.argv[4]} |")
+print(f"| {sys.argv[2]} | {m['date']} | {'-' if sys.argv[2].startswith('v') else sys.argv[3]} | {r.get('peak', '-')} MB ({r.get('budget', '-')}) | {p.get('peak', '-')} MB ({p.get('budget', '-')}) | {sys.argv[4]} |")
 EOF
 ) || die "no numbers"
 echo "$row" >> "$log"
