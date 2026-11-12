@@ -3,8 +3,28 @@
 // the same path, then calls g, whose error's Display text becomes the
 // DecodeErr's message. It works for a struct, an enum and a newtype, and
 // wherever a Json type does: fields, List, Map, T?, Patch, and a
-// tagged enum's variants.
+// tagged enum's variants. A type whose fields do not implement Json
+// still derives it through the proxy (the fields are never encoded).
 use std/json
+
+// not Json: a NullInt with via never needs it to be
+struct Raw {
+  n: Int
+}
+
+struct NullInt {
+  raw: Raw
+  valid: Bool
+} derive Json(via: Int?, to: null_to, from: null_from)
+
+fn null_to(x: NullInt) -> Int? { if x.valid { Some(x.raw.n) } else { None } }
+
+fn null_from(p: Int?) -> NullInt ! MoneyErr {
+  match p {
+    Some(n) => Ok(NullInt{raw: Raw{n: n}, valid: true})
+    None => Ok(NullInt{raw: Raw{n: 0}, valid: false})
+  }
+}
 
 struct MoneyErr {
   text: Str
@@ -126,5 +146,11 @@ fn main(os: Os) {
   match json.decode[List[Level]](b"[9,1]") {
     Ok(ls) => os.stdio.println("levels ${json.encode_str(ls)}")
     Err(e) => os.stdio.println("levels: ${e}")
+  }
+  let nis = [NullInt{raw: Raw{n: 7}, valid: true}, NullInt{raw: Raw{n: 0}, valid: false}]
+  os.stdio.println("nullint ${json.encode_str(nis)}")
+  match json.decode[List[NullInt]](b"[42,null]") {
+    Ok(xs) => os.stdio.println("nullint back ${xs.map(fn(x) { "${x.raw.n}/${x.valid}" }).join(" ")}")
+    Err(e) => os.stdio.println("nullint: ${e}")
   }
 }

@@ -166,13 +166,13 @@ fn (var c: Checker) check_module(m: Int) {
           if c.is_scope_entry(f, i, sd.name.name) {
             let t = c.files[f].decl_objs[i]
             c.check_struct_extras(t, sd)
-            c.check_derives(t, sd.derive)
+            c.check_derives(t, sd.derive, sd.derive_args)
             c.check_json_via(t, sd.derive_args)
           }
         }
         EnumDecl(d: ed) => {
           if c.is_scope_entry(f, i, ed.name.name) {
-            c.check_derives(c.files[f].decl_objs[i], ed.derive)
+            c.check_derives(c.files[f].decl_objs[i], ed.derive, ed.derive_args)
             c.check_tagged_enum(c.files[f].decl_objs[i], ed)
             c.check_json_via(c.files[f].decl_objs[i], ed.derive_args)
           }
@@ -1002,11 +1002,16 @@ fn (var c: Checker) check_tagged_enum(t: Int, ed: parser.EnumDecl) {
   }
 }
 
-fn (var c: Checker) check_derives(t: Int, ids: List[Ident]) {
+fn (var c: Checker) check_derives(t: Int, ids: List[Ident], args: List[parser.DeriveArg]) {
   for id in ids {
     let n = text(id.name)
     if n == "SqlRow" {
       c.check_sql_row_derive(t, id)
+      continue
+    }
+    if n == "Json" && args.any(fn(a) { a.derive.name == b"Json" && a.key.name == b"via" }) {
+      // its own JSON form (decision 0478) converts through the proxy and never encodes the
+      // fields: check_json_via checks the proxy and the to and from functions (XO0433)
       continue
     }
     if !(derivable(n) ?? Derivable{name: n, kind: DeriveKind.Text, marker: false, fields_must: false}).fields_must {

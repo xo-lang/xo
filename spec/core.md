@@ -972,7 +972,9 @@ enum Color: Str { Red, Green, Blue }       // "Red", "Green", "Blue"
   decodes a P at the same path, then calls `g`, and an `Err(e)` is a
   `DecodeErr` at that path whose message is `e`'s Display text (`at
   $.legs[1].amount: invalid amount "12.3.4"`). The type then works
-  wherever a Json type does (fields, `List`, `Map`, `T?`). A `to:` or
+  wherever a Json type does (fields, `List`, `Map`, `T?`). Only P must
+  implement Json: T's own fields are never encoded, so they need not
+  (a `NullInt { raw: Raw, valid: Bool }` travels as `Int?`). A `to:` or
   `from:` naming no such function is `XO0432`, a mistyped one, or an E
   without Display, `XO0433`; `via:` without both functions, beside any
   other `derive Json` argument, or on a generic type is `XO0413`.

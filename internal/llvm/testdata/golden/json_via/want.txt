@@ -16,4 +16,6 @@ patch {"amount":"3.1"} -> at $.amount: invalid amount "3.1"
 {"kind":"tagged","data":"Z"} round trip true
 bad event: at $.data.amount: invalid amount "x"
 levels [9,1]
+nullint [7,null]
+nullint back 42/true 0/false
 --- stderr
