@@ -1,0 +1,158 @@
+// A call's wide result returned through the caller's outgoing area and
+// read there in place (arm64 plan_sret_lazy) after the caller releases
+// the Pager the call borrowed whole: summary only reads lengths and
+// cannot fault (no landing pad), and the Pager's release calls a drop
+// helper whose words past x7 go to that same area, over the result
+// (SIGSEGV with xo 0.50.1 and its respin, decision 0612 off; found with
+// azure armnetwork's Pager, 2026-11-12). maker_b releases another wide
+// Pager after the call. Eight more call sites keep summary out of line.
+struct Conn {
+  name: Str
+  host: Str?
+  port: Int?
+  tags: List[Str]
+  opts: Map[Str, Str]
+  note: Str?
+}
+
+struct Req {
+  method: Str
+  url: Str
+  headers: List[(Str, Str)]
+  body: Str?
+  query: Map[Str, Str]
+  trace: Str?
+}
+
+struct Pager {
+  conn: Conn
+  first: Req
+  last: Req
+  spare: Conn
+  retry: Req
+  ok: List[Int]
+  started: Bool
+  pending: Req?
+  seed: Str?
+  failed: Str?
+  link: Str?
+  kind: Str
+}
+
+fn conn(s: Str) -> Conn {
+  Conn{name: "${s}-conn", host: Some("${s}.example.test"), port: Some(443), tags: ["${s}1", "${s}2"], opts: {"k": "${s}v"}, note: None}
+}
+
+fn req(s: Str) -> Req {
+  Req{method: "GET", url: "https://${s}.example.test/p", headers: [("Accept", "${s}/json")], body: None, query: {"q": s}, trace: Some("${s}-t")}
+}
+
+fn new_pager(c: Conn, r: Req) -> Pager {
+  Pager{conn: c, first: r, last: r, spare: c, retry: r, ok: [200], started: false, pending: None, seed: None, failed: None, link: None, kind: ""}
+}
+
+fn page(s: Str) -> Str ! Str {
+  if s.is_empty() {
+    return Err("empty page")
+  }
+  Ok("${s}-page")
+}
+
+fn show(p: Pager) -> Str {
+  "${p.conn.name} ${p.conn.host ?? "-"} ${p.conn.tags.len()} ${p.conn.opts.get("k") ?? "-"} ${p.first.url} ${p.first.query.get("q") ?? "-"} ${p.seed ?? "-"} ${p.kind}"
+}
+
+// reads p only, every result leaf new: p stays wholly borrowed (no 0612)
+fn (p: Pager) summary(tag: Str) -> Pager {
+  let a = p.conn.name.len()
+  let b = p.first.url.len()
+  let k = p.kind.len()
+  let t = p.conn.tags.len()
+  let c = Conn{name: "sum", host: None, port: Some(a), tags: [], opts: {}, note: None}
+  let r = Req{method: "GET", url: "u", headers: [], body: None, query: {}, trace: None}
+  Pager{conn: c, first: r, last: r, spare: c, retry: r, ok: [], started: b > k && t > 0, pending: None, seed: None, failed: None, link: None, kind: "k"}
+}
+
+fn mk(s: Str) -> Pager {
+  new_pager(conn(s), req(s))
+}
+
+fn maker_a(c: Conn, r: Req) -> fn(Str) -> Pager ! Str {
+  fn(s: Str) -> Pager ! Str {
+    let p = new_pager(c, r) with {kind: "${s}k"}
+    Ok(p.summary(page(s)?))
+  }
+}
+
+fn maker_b(c: Conn, r: Req) -> fn(Str) -> Pager ! Str {
+  fn(s: Str) -> Pager ! Str {
+    let q = new_pager(c, r) with {kind: "${s}q"}
+    let big = mk(page(s)?).summary("b")
+    if q.kind.is_empty() {
+      return Err("no kind")
+    }
+    Ok(big)
+  }
+}
+
+fn osum0(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).summary("${s}0")
+}
+
+fn osum1(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).summary("${s}1")
+}
+
+fn osum2(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).summary("${s}2")
+}
+
+fn osum3(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).summary("${s}3")
+}
+
+fn osum4(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).summary("${s}4")
+}
+
+fn osum5(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).summary("${s}5")
+}
+
+fn osum6(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).summary("${s}6")
+}
+
+fn osum7(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).summary("${s}7")
+}
+
+fn main(os: Os) {
+  for i in 0..3 {
+    let fa = maker_a(conn("a${i}"), req("a${i}"))
+    match fa("s${i}") {
+      Ok(p) => os.stdio.println("A ${show(p)}")
+      Err(e) => os.stdio.println("A error ${e}")
+    }
+    let fb = maker_b(conn("b${i}"), req("b${i}"))
+    match fb("t${i}") {
+      Ok(p) => os.stdio.println("B ${show(p)}")
+      Err(e) => os.stdio.println("B error ${e}")
+    }
+  }
+  var n = 0
+  for k in 0..8 {
+    let o = match k {
+      0 => osum0(conn("o"), req("o"), "x")
+      1 => osum1(conn("o"), req("o"), "x")
+      2 => osum2(conn("o"), req("o"), "x")
+      3 => osum3(conn("o"), req("o"), "x")
+      4 => osum4(conn("o"), req("o"), "x")
+      5 => osum5(conn("o"), req("o"), "x")
+      6 => osum6(conn("o"), req("o"), "x")
+      _ => osum7(conn("o"), req("o"), "x")
+    }
+    n += o.kind.len()
+  }
+  os.stdio.println("others ${n}")
+}

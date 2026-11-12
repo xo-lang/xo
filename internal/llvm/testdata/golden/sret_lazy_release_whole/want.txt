@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+A sum - 0 - u - - k
+B sum - 0 - u - - k
+A sum - 0 - u - - k
+B sum - 0 - u - - k
+A sum - 0 - u - - k
+B sum - 0 - u - - k
+others 8
+--- stderr
