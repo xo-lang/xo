@@ -1592,7 +1592,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     }
     // a test build's split (stable) is made after a miss of the binary
     // cache, which keys it on the whole IR: a warm build does not split
-    let parts = if split.stable { [code] } else { split_ir(code, split.modules, false, false) }
+    // a -O0 build's constant time functions in a module of their own,
+    // compiled at -O2 (split.xo ct_split, decision 0619)
+    let parts = if split.stable { [code] } else if split.opt == "-O0" && split.modules <= 1 && o.lib != "static" { ct_split(code) } else { split_ir(code, split.modules, false, false) }
     let multi = parts.len() > 1 || split.stable
     var dir = "${bdir}/llvm"
     if o.race {

@@ -51,3 +51,18 @@ test "a module with a giant function compiles without the AArch64 machine combin
   expect(giant_fn_flags("linux", "arm64", "full")) == ["-mllvm", "-aarch64-enable-mcr=false", "-Wl,-plugin-opt=-aarch64-enable-mcr=false"]
   expect(giant_fn_flags("linux", "amd64", "none")) == []
 }
+
+test "a -O0 build's constant time functions go to a module of their own (decision 0619)" {
+  let ir = "target triple = \"arm64-apple-macosx\"\n\ndefine internal i64 @\"x.ct.pick\"(i64 %v0) #1 {\n  ret i64 %v0\n}\n\ndefine hidden i64 @\"x.main.main\"(i64 %v0) #1 {\n  %v1 = call i64 @\"x.ct.pick\"(i64 %v0)\n  ret i64 %v1\n}\n"
+  let parts = ct_split(ir)
+  expect(parts.len()) == 2
+  expect(has_ct_def(parts[0])) == false
+  expect(has_ct_def(parts[1])) == true
+  // the main module calls pick by a declaration; pick is no longer internal
+  expect(parts[0].contains("declare")) == true
+  expect(parts[1].contains("define hidden i64 @\"x.ct.pick\"")) == true
+  // no constant time function: one module
+  expect(ct_split("define hidden i64 @\"x.main.main\"() #1 {\n  ret i64 0\n}\n").len()) == 1
+  expect(ct_def("@\"x.rsa.pkcs1_unpad\"")) == true
+  expect(ct_def("@\"x.rsakit.f\"")) == false
+}

@@ -648,6 +648,13 @@ fn split_ir(ir: Str, n0: Int, stable: Bool, by_file: Bool) -> List[Str] {
     home[i] = m
     load[m] += p.defs[i].text.len()
   }
+  split_emit(p, home, n, stable)
+}
+
+/// The modules of a split: each function in module home[i] (helpers,
+/// home -1, copied where used), with the constants and helpers it uses and
+/// declarations of the functions of other modules it calls.
+fn split_emit(p: ParsedIR, home: List[Int], n: Int, stable: Bool) -> List[Str] {
   var members: List[List[Int]] = []
   for _ in 0..n {
     members.push([])
@@ -760,6 +767,58 @@ fn split_ir(ir: Str, n0: Int, stable: Bool, by_file: Bool) -> List[Str] {
     out.push(if stable { meta_renumber(b.freeze(), renum) } else { b.freeze() })
   }
   out
+}
+
+/// std's constant time modules (decision 0619): their functions compile at
+/// -O2 in a -O0 build, so their values stay in registers. At -O0 the
+/// loops of rsa.pkcs1_unpad kept their masks on the stack, and the time of
+/// those stores and loads followed the data on Apple silicon and AMD Zen 5
+/// (dudect |t| 81 and 31; gotchas/dudect-o0-llvm.md).
+fn ct_mods() -> List[Str] { ["ct", "rsa", "bigmod", "x25519", "nistec", "ed25519", "mlkem"] }
+
+/// Whether name (an IR symbol, `@"x.MOD.fn"`) is in a constant time module.
+fn ct_def(name: Str) -> Bool {
+  for m in ct_mods() {
+    if name.starts_with("@\"x.${m}.") {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether the IR defines a constant time module's function.
+fn has_ct_def(ir: Str) -> Bool {
+  for line in ir.split("\n") {
+    if line.starts_with("define ") && ct_def(def_symbol(line)) {
+      return true
+    }
+  }
+  false
+}
+
+/// A -O0 build's IR as two modules, the constant time modules' functions
+/// in the second (compiled at -O2, split_build), or the IR as one module
+/// when it has none of them.
+fn ct_split(ir: Str) -> List[Str] {
+  let p = parse_ir(ir)
+  var home: List[Int] = []
+  var nct = 0
+  var nrest = 0
+  for d in p.defs {
+    if d.helper {
+      home.push(-1)
+    } else if ct_def(d.name) {
+      home.push(1)
+      nct += 1
+    } else {
+      home.push(0)
+      nrest += 1
+    }
+  }
+  if nct == 0 || nrest == 0 {
+    return [ir]
+  }
+  split_emit(p, home, 2, false)
 }
 
 /// The key a stable split places d by: the DIFile line of the
@@ -910,18 +969,26 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
   var giants: List[List[Str]] = []
   var any_giant = false
   let gflags = if c.opt == "-O0" { [] } else { giant_fn_flags(c.goos, c.arch, "none") }
+  // each module's optimization level: -O2 for a -O0 build's module with
+  // a constant time module's function (ct_mods, decision 0619)
+  var opts: List[Str] = []
   for (i, ll) in lls.indexed() {
     var gf: List[Str] = []
-    if !gflags.is_empty() {
+    var opt = c.opt
+    if !gflags.is_empty() || c.opt == "-O0" {
       // xo:allow XO0903 an unreadable module fails its compile below
       let t = os.fs.read_text(ll).ok() ?? ""
-      if ir_has_giant_fn(t) {
+      if !gflags.is_empty() && ir_has_giant_fn(t) {
         gf = gflags
         any_giant = true
       }
+      if c.opt == "-O0" && has_ct_def(t) {
+        opt = "-O2"
+      }
     }
     giants.push(gf)
-    let args = [c.opt] + lto_flags(c.lto) + target + gf + ["-Wno-override-module", "-fexceptions", "-funwind-tables"]
+    opts.push(opt)
+    let args = [opt] + lto_flags(c.lto) + target + gf + ["-Wno-override-module", "-fexceptions", "-funwind-tables"]
     var k = ""
     if !c.objcache.is_empty() {
       match os.fs.read(ll) {
@@ -957,7 +1024,7 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
       // its source file's name, which ThinLTO's names of promoted locals
       // hash, so the build's random directory made two builds of the same
       // IR differ (gotchas/windows-thinlto-module-path.md)
-      let args = [c.opt] + lto_flags(c.lto) + target + giants[next] + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", base_name(lls[next]), "-o", base_name(objs[next])]
+      let args = [opts[next]] + lto_flags(c.lto) + target + giants[next] + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", base_name(lls[next]), "-o", base_name(objs[next])]
       match os.proc.cmd(clang, args).dir(dir_name(lls[next])).merge_stderr().spawn() {
         Ok(ch) => running.push((next, ch))
         Err(e) => fails.push("${lls[next]}: ${e}\n")
