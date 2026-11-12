@@ -136,6 +136,15 @@ export XO_SEED_FORBID=$work
 # when the cache holds one, so the seed would depend on the cache (the
 # 0.47.0 seed was one; gotchas/seed-built-separately-compiled.md)
 export XO_SEPCOMP=0
+# cold builds, as scripts/release.sh (lead, 2026-11-12): no cache feeds a
+# seed. The back-end, front-end, module check and binary caches are off for
+# every xo build here (the cross builds of step 5 among them), and xobuild's
+# xo is built from the seed in an empty checkout cache.
+export XO_BACKEND_CACHE=off XO_FE_CACHE=off XO_CHK_CACHE=off XO_BIN_CACHE=off
+if [ -z "${XO_CHECKOUT_CACHE:-}" ]; then
+  XO_CHECKOUT_CACHE=$(mktemp -d "${TMPDIR:-/tmp}/xo-seed-checkout.XXXXXX") || die "mktemp"
+  export XO_CHECKOUT_CACHE
+fi
 [ -z "$(ls -A "$work")" ] || die "$work is not empty"
 # a worktree a deleted WORKDIR left registered fails step 1's worktree
 # add after the checks (the 0.44.0 cut's third try,
