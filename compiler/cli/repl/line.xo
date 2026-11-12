@@ -10,6 +10,9 @@ pub enum Key {
   /// text typed: one character (a UTF-8 sequence)
   Char(text: Str)
   Enter
+  /// alt-Enter: a new line, even in an entry that is complete (the
+  /// browser REPL's Shift+Enter, which a terminal does not tell apart)
+  Newline
   Back
   Del
   Left
@@ -231,7 +234,7 @@ fn decode_esc(b: Bytes) -> (Key, Int) {
     0x62 => Key.WordLeft
     0x66 => Key.WordRight
     0x7f | 0x08 => Key.WordBack
-    0x0d => Key.Enter
+    0x0d | 0x0a => Key.Newline
     _ => Key.Other
   }
   (k, 2)
@@ -252,6 +255,9 @@ pub fn key(var e: Ed, k: Key) -> Act {
         e.at = e.text.len()
         return Act.Submit(text: if blank { e.text[..last - 1] } else { e.text })
       }
+      insert(e, "\n")
+    }
+    Key.Newline => {
       insert(e, "\n")
     }
     Key.Back => {

@@ -12,6 +12,27 @@ use github.com/xo-lang/xo/compiler/cli/semantic
 use github.com/xo-lang/xo/compiler/hostpath
 use std/json
 
+/// The commands and keys: the tail of usage and what :help prints.
+fn help_text() -> Str {
+  [
+    "Commands: :type EXPR (:t), :doc NAME, :undo, :reset, :quit; :defs prints the",
+    "session's use lines, definitions and bindings; :save FILE writes its",
+    "entries to FILE, and :load FILE runs FILE's entries as if typed; :help",
+    "(:h, :?) prints this.",
+    "",
+    "On a terminal, entries are edited in place: left and right, home and",
+    "end (ctrl-a, ctrl-e), alt-b and alt-f by word, backspace, delete,",
+    "ctrl-w, ctrl-k and ctrl-u (ctrl-y puts the text back), up and down",
+    "between an entry's lines and then through the history (the entries that",
+    "start with what is typed), Enter to run a complete entry (an open",
+    "bracket continues it; Enter on an empty last line runs it as it is),",
+    "alt-Enter to start a new line in an entry that is complete,",
+    "ctrl-c to drop the entry, ctrl-d on an empty one to quit, ctrl-l to",
+    "clear the screen. The history is <config dir>/xo/repl_history (the last",
+    "1000 entries); XO_REPL_HISTORY=off keeps none.",
+  ].join("\n")
+}
+
 pub fn usage() -> Str {
   [
     "usage: xo repl [--session=FILE] [--keep] [--effects=LIST] [--json | --eval=ENTRIES]",
@@ -36,19 +57,7 @@ pub fn usage() -> Str {
     "                   stdio,clock or none; stdio always): an entry that",
     "                   needs another is rejected by the checker",
     "",
-    "Commands: :type EXPR, :doc NAME, :undo, :reset, :quit; :defs prints the",
-    "session's use lines, definitions and bindings; :save FILE writes its",
-    "entries to FILE, and :load FILE runs FILE's entries as if typed.",
-    "",
-    "On a terminal, entries are edited in place: left and right, home and",
-    "end (ctrl-a, ctrl-e), alt-b and alt-f by word, backspace, delete,",
-    "ctrl-w, ctrl-k and ctrl-u (ctrl-y puts the text back), up and down",
-    "between an entry's lines and then through the history (the entries that",
-    "start with what is typed), Enter to run a complete entry (an open",
-    "bracket continues it; Enter on an empty last line runs it as it is),",
-    "ctrl-c to drop the entry, ctrl-d on an empty one to quit, ctrl-l to",
-    "clear the screen. The history is <config dir>/xo/repl_history (the last",
-    "1000 entries); XO_REPL_HISTORY=off keeps none.",
+    help_text(),
   ].join("\n") + "\n"
 }
 
@@ -348,7 +357,7 @@ fn eval_all(os: Os, var st: State, text: Str) -> Int uses (clock, env, fs, proc,
 }
 
 fn interact(os: Os, var st: State) -> Int uses (clock, env, fs, proc, rand, stdio) {
-  os.stdio.eprintln("xo repl (experimental, decision 0572): :quit to end, :type EXPR, :doc NAME, :undo, :reset")
+  os.stdio.eprintln("xo repl (experimental, decision 0572): :quit to end, :help for the commands and keys")
   warm_start(os, st)
   // a terminal: the line editor on raw input (decision 0581); else lines
   if os.stdio.stdin_is_tty() && os.stdio.raw_input(true) {
@@ -764,6 +773,13 @@ pub fn map_diags(msg: Str, main: Str, at: Int, shift: Int) -> (Str, Bool) {
 }
 
 fn command(os: Os, var st: State, t: Str) -> Bool uses (clock, env, fs, proc, rand, stdio) {
+  if t is ":help" | ":h" | ":?" {
+    say(os, st, help_text() + "\n")
+    return true
+  }
+  if let Some(x) = t.cut_prefix(":t ") {
+    return command(os, st, ":type ${x}")
+  }
   if t == ":reset" {
     st.undo.push(st.sess)
     st.sess = Sess{entries: []}
@@ -853,6 +869,6 @@ fn command(os: Os, var st: State, t: Str) -> Bool uses (clock, env, fs, proc, ra
       }
     }
   }
-  esay(os, st, "xo repl: unknown command ${t} (:type EXPR, :doc NAME, :defs, :save FILE, :load FILE, :undo, :reset, :quit)\n")
+  esay(os, st, "xo repl: unknown command ${t} (:help lists the commands)\n")
   false
 }

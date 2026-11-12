@@ -144,3 +144,12 @@ test "draw follows a line wider than the terminal" {
   expect(draw(f, "xo> ", "... ") == "\r\x1b[Jxo> abcdef\n\r")
   expect(f.rows == 1)
 }
+
+test "alt-Enter starts a new line in a complete entry" {
+  expect(decode(b"\x1b\r") == (Key.Newline, 2))
+  var e = editor([])
+  // `let x = 1` is complete: Enter would run it; alt-Enter adds a line
+  expect(feed(e, b"let x = 1\x1b\rx + 1").is_empty())
+  expect(e.text == "let x = 1\nx + 1")
+  expect(feed(e, b"\r") == [Act.Submit(text: "let x = 1\nx + 1")])
+}

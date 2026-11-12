@@ -218,7 +218,10 @@ func TestReplLineEditing(t *testing.T) {
 		{2, "fn sq(x: Int) -> Int {\r  x * x\r}\r"},
 		{3, "sq(5)\r"},
 		{4, "\x1b[A\x7f\x7f6)\r"},
-		{5, "\x04"},
+		// alt-Enter: a second line in an entry whose first is complete
+		{5, "fn one() -> Int { 1 }\x1b\rfn two() -> Int { 2 }\r"},
+		{6, "one() + two() + 39\r"},
+		{7, "\x04"},
 	} {
 		wait(k.prompts)
 		time.Sleep(300 * time.Millisecond)
@@ -235,7 +238,7 @@ func TestReplLineEditing(t *testing.T) {
 		t.Fatalf("the session did not end: %q", out.String())
 	}
 	text := regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]").ReplaceAllString(strings.ReplaceAll(out.String(), "\r", ""), "")
-	for _, want := range []string{"\n3\n", "\n25\n", "\n36\n"} {
+	for _, want := range []string{"\n3\n", "\n25\n", "\n36\n", "\n42\n"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the session's output has no %q: %q", want, text)
 		}
@@ -247,7 +250,7 @@ func TestReplLineEditing(t *testing.T) {
 		}
 		return nil
 	})
-	if got := strings.Split(string(hist), "\x00"); len(got) != 4 || got[1] != "fn sq(x: Int) -> Int {\n  x * x\n}" || got[3] != "sq(6)" {
+	if got := strings.Split(string(hist), "\x00"); len(got) != 6 || got[1] != "fn sq(x: Int) -> Int {\n  x * x\n}" || got[3] != "sq(6)" || got[4] != "fn one() -> Int { 1 }\nfn two() -> Int { 2 }" {
 		t.Errorf("history: %q", got)
 	}
 }
@@ -366,5 +369,24 @@ func TestReplVarMethodCall(t *testing.T) {
 		if !strings.Contains(q.out, c.want) || !strings.Contains(q.out, `"kind": "binding"`) {
 			t.Errorf("query type main.xo%s: %s%s, want %s", c.at, q.out, q.err, c.want)
 		}
+	}
+}
+
+// TestReplHelp: the browser REPL's commands in the terminal one (decision
+// 0572): :help (and :h, :?) lists the commands and keys, :t is :type,
+// and an unknown command points at :help.
+func TestReplHelp(t *testing.T) {
+	t.Parallel()
+	r := xo(t, "repl", "--eval="+strings.Join([]string{`:help`, `:?`, `:t 1 + 2`, `:bogus`}, "\n")).want(1)
+	for _, w := range []string{":type EXPR (:t)", "alt-Enter to start a new line", "(:h, :?) prints this."} {
+		if strings.Count(r.out, w) != 2 {
+			t.Errorf(":help and :? should each print %q:\n%s", w, r.out)
+		}
+	}
+	if !strings.Contains(r.out, "Int\n") {
+		t.Errorf(":t 1 + 2 should print Int:\n%s", r.out)
+	}
+	if !strings.Contains(r.err, "unknown command :bogus (:help lists the commands)") {
+		t.Errorf("an unknown command should point at :help:\n%s", r.err)
 	}
 }
