@@ -1,6 +1,6 @@
 # A `use c` binding of a std module is written into std
 
-Status: Observed (2026-11-08, tier 60).
+Status: Observed (2026-11-08, tier 60; again 2026-11-11, tier 69).
 
 Symptom: internal/arm64 TestSepcompDefault failed in the full tier with
 "the default build did not ask the std cache: std variant: miss, the
@@ -34,3 +34,18 @@ Fix (the key, 2026-11-08): std_tree_lines keys std's C headers and no file
 under a `.xo/` directory (stdcache.xo std_tree_file). A binding is made
 from its header and link paths (bind.std_key), so the headers stand for
 it, and writing it no longer changes the key.
+
+Seen again (2026-11-11, tier 69, Xo Lang 2): cmd/xo TestWholeBuildWindowsPDB
+failed with "unchanged: run cache hit false, want true", miss reason
+"directory listing changed: .../std/native": std/native/.xo/cbind/
+c_xo_sqlite_045d638a.{c,xo} appeared in the tier's fresh checkout mid test
+(the run cache key covers std/native's listing, which std_tree_file's
+`.xo/` exclusion does not reach). Some process ran without the tests'
+XO_CBIND_DIR. It passed alone.
+
+Fix (2026-11-11): internal/xotool writes the binding before any test, as a
+release ships it (EnsureStdBinding, from Ensure and for XO_CLI: an `xo
+build` of a std/sqlite program with XO_CBIND_DIR="" and no binary cache;
+needs clang, else one line on stderr), so no later process writes it; and
+cmd/xo's TestMain fails the package when its tests add any path under the
+std tree, naming the paths.

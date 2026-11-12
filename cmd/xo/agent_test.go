@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -35,9 +36,45 @@ func TestMain(m *testing.M) {
 			os.Setenv("XO_BIN_CACHE", filepath.Join(c, "xo", "testbin"))
 		}
 	}
+	// a test must not write into std (the checkout's, or XO_CLI's): the
+	// std/sqlite binding written mid run missed a cache (tier 69,
+	// 2026-11-11; gotchas/test-writes-std-binding.md). xotool.Path writes
+	// that binding before the first test, as a release ships it.
+	var std string
+	var before map[string]bool
+	if bin, err := xotool.Path(); err == nil {
+		std = xotool.StdDir(bin)
+		before = listTree(std)
+	}
 	code := m.Run()
 	xotool.CleanupTemp() // the builds without an output path (xotool.TempDir)
+	if before != nil {
+		var added []string
+		for p := range listTree(std) {
+			if !before[p] {
+				added = append(added, p)
+			}
+		}
+		if len(added) > 0 {
+			sort.Strings(added)
+			fmt.Fprintf(os.Stderr, "FAIL: the tests wrote into %s (a test must write only under its temporary directories): %s\n", std, strings.Join(added, ", "))
+			code = 1
+		}
+	}
 	os.Exit(code)
+}
+
+// listTree is every path under dir, relative to it.
+func listTree(dir string) map[string]bool {
+	m := map[string]bool{}
+	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err == nil && p != dir {
+			r, _ := filepath.Rel(dir, p)
+			m[r] = true
+		}
+		return nil
+	})
+	return m
 }
 
 // The `xo serve` protocol (decision 0086): one JSON request per

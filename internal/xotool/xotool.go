@@ -118,6 +118,7 @@ func Path() (string, error) {
 			}
 			root, _ := Root()
 			announce(root, pathBin)
+			EnsureStdBinding(pathBin, os.Stderr)
 			if os.Getenv("XO_CLI_STALE_OK") != "1" && root != "" {
 				pathErr = StaleCLI(root, pathBin)
 				if pathErr != nil {
@@ -465,6 +466,7 @@ func Ensure(root string, log io.Writer) (string, error) {
 		if base, err := cacheBase(); err == nil {
 			useCheckout(base, key)
 		}
+		EnsureStdBinding(bin, log)
 		return bin, nil
 	}
 	base, err := cacheBase()
@@ -525,6 +527,7 @@ func Ensure(root string, log io.Writer) (string, error) {
 	} else {
 		os.Remove(optFile)
 	}
+	EnsureStdBinding(bin, log)
 	return bin, nil
 }
 
@@ -1608,4 +1611,50 @@ func debuggerArgs(seed string) []string {
 		return nil
 	}
 	return []string{"--entitlement=com.apple.security.cs.debugger"}
+}
+
+// StdDir is the std tree the xo at bin reads: XO_STD, else bin/../std.
+func StdDir(bin string) string {
+	if d := os.Getenv("XO_STD"); d != "" {
+		return d
+	}
+	return filepath.Join(filepath.Dir(filepath.Dir(bin)), "std")
+}
+
+// EnsureStdBinding writes std/sqlite's C binding (std/native/.xo/cbind,
+// decision 0534 stage 2) into the std tree of the xo at bin when it is not
+// there, as a release ships it (scripts/release.sh). Without it the first
+// test to use std/sqlite wrote it into std mid run, and a test whose cache
+// key covers std/native's listing (TestWholeBuildWindowsPDB, tier 69,
+// 2026-11-11) missed its cache; cmd/xo's TestMain fails when a test adds
+// files to std (gotchas/test-writes-std-binding.md). Binding needs clang;
+// without it this logs one line and returns.
+func EnsureStdBinding(bin string, log io.Writer) {
+	std := StdDir(bin)
+	if _, err := os.Stat(filepath.Join(std, "native", "sqlite")); err != nil {
+		return
+	}
+	if m, _ := filepath.Glob(filepath.Join(std, "native", ".xo", "cbind", "c_xo_sqlite_*.xo")); len(m) > 0 {
+		return
+	}
+	dir, err := os.MkdirTemp("", "xo-stdbind-")
+	if err != nil {
+		return
+	}
+	defer os.RemoveAll(dir)
+	prog := "use std/sqlite\n\nfn main() {\n  let _ = sqlite.driver\n}\n"
+	if os.WriteFile(filepath.Join(dir, "main.xo"), []byte(prog), 0o644) != nil {
+		return
+	}
+	// a build binds the header (xo check reads a binding that is there
+	// but does not write one)
+	cmd := exec.Command(bin, "build", "-o", filepath.Join(dir, "p"), ".")
+	cmd.Dir = dir
+	// no binary cache (a hit links nothing and binds nothing), and the
+	// binding into std's own .xo/cbind, not the tests' XO_CBIND_DIR
+	cmd.Env = append(os.Environ(), "XO_STD="+std, "XO_BIN_CACHE=off", "XO_CBIND_DIR=")
+	out, err := cmd.CombinedOutput()
+	if m, _ := filepath.Glob(filepath.Join(std, "native", ".xo", "cbind", "c_xo_sqlite_*.xo")); len(m) == 0 && log != nil {
+		fmt.Fprintf(log, "xotool: std/sqlite's binding was not written into %s (xo build: %v): %s\n", std, err, strings.TrimSpace(string(out)))
+	}
 }
