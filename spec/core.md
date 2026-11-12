@@ -2450,9 +2450,9 @@ never depend on it, but the time does:
   handle) by counting it up. The cost is the number of heap fields,
   counted through nested structs, never the size of their contents. A
   parameter that is only read is borrowed and costs nothing. So is a
-  struct or tuple parameter of which a body keeps some fields but not
-  all (a method returning one field of its receiver): the path that
-  keeps a field counts up that field alone (decision 0612).
+  struct or tuple parameter of at least 8 heap fields of which a body
+  keeps some but not all (a method returning one field of its receiver):
+  the path that keeps a field counts up that field alone (decision 0612).
 - An argument passed to a function value (a closure, a `fn` parameter, a
   named function used as a value) is borrowed too, unless its type is
   the function's result type or one of a tuple result's (an accumulator
