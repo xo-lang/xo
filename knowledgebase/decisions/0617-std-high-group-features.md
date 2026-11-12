@@ -1,6 +1,6 @@
 # 0617: The std features axis, high group (format specs, HTTP client proxies and cookies, log handlers)
 
-Status: Proposed (Xo Lang 3, 2026-11-12, at the lead's request: the owner's high group of the std features axis, 2026-11-12).
+Status: Accepted (owner, 2026-11-12: all three parts, A, B and C, in that order). Proposed by Xo Lang 3, 2026-11-12, at the lead's request: the owner's high group of the std features axis, 2026-11-12).
 
 ## Context
 
