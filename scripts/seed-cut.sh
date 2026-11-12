@@ -230,8 +230,11 @@ fi
 commit=$(git rev-parse HEAD)
 
 step "2. go test -short ./internal/xotool ./cmd/xo"
-XO_SELF_DRIVER=0 GOMAXPROCS=4 go test -short -p 2 ./internal/xotool ./cmd/xo > "$log/short.log" 2>&1 &&
-  go test -count=1 ./internal/repotest -run '^TestSpecDraftFollowsVersion$' >> "$log/short.log" 2>&1 ||
+# the tests run with the caches at their defaults: the cold exports above are
+# for the seed's builds, and tests such as cmd/xo TestLSPModuleCache check the
+# caches themselves (the 0.50.0 cut failed it, 2026-11-12)
+env -u XO_BACKEND_CACHE -u XO_FE_CACHE -u XO_CHK_CACHE -u XO_BIN_CACHE XO_SELF_DRIVER=0 GOMAXPROCS=4 go test -short -p 2 ./internal/xotool ./cmd/xo > "$log/short.log" 2>&1 &&
+  env -u XO_BACKEND_CACHE -u XO_FE_CACHE -u XO_CHK_CACHE -u XO_BIN_CACHE go test -count=1 ./internal/repotest -run '^TestSpecDraftFollowsVersion$' >> "$log/short.log" 2>&1 ||
   { grep -E '^(FAIL|--- FAIL)' "$log/short.log" | head; die "-short failed ($log/short.log)"; }
 
 step "3. gate: xobuild, hello, fixed point"
