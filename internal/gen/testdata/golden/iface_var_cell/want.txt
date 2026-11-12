@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+4 3
+4 5 false
+3 3 0 0
+9 4 3
+true Counter{n: 5}
+11 1 3 0 7 2 100 101 8 7
+--- stderr

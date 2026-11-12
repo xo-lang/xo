@@ -293,6 +293,18 @@ fn (var g: Gen) find_method(t: Int, name: Str) -> (Int, Map[Int, Int]) {
 /// satisfy interface to when its Go methods differ, or ""
 /// (ifaceAdapter).
 fn (var g: Gen) iface_adapter(from: Int, to: Int) -> Str {
+  g.adapter_of(from, to, false)
+}
+
+/// The generated cell type holding a value of type from as interface to,
+/// one with a `var self` method (decision 0613 step 5): methods on its
+/// pointer, a sticky shared flag S (rt cell.go), or "" when the Go
+/// backend cannot build one (a type parameter).
+fn (var g: Gen) cell_adapter(from: Int, to: Int) -> Str {
+  g.adapter_of(from, to, true)
+}
+
+fn (var g: Gen) adapter_of(from: Int, to: Int, cell: Bool) -> Str {
   let tn = g.nobj(to)
   if tn < 0 || g.contains_param(from) || g.contains_param(to) {
     return ""
@@ -320,11 +332,11 @@ fn (var g: Gen) iface_adapter(from: Int, to: Int) -> Str {
     ms.push(m)
     msubs.push(msub)
   }
-  if !differ {
+  if !differ && !cell {
     return ""
   }
-  let key = g.go_type(from) + "|" + g.go_type(to)
-  let name = "xoAdapt_${g.pkgs[g.p].adapt.len()}"
+  let key = (if cell { "cell|" } else { "" }) + g.go_type(from) + "|" + g.go_type(to)
+  let name = "${if cell { "xoCell" } else { "xoAdapt" }}_${g.pkgs[g.p].adapt.len()}"
   if let Some(n) = g.pkgs[g.p].adapt.get(key) {
     return n
   }
@@ -332,10 +344,20 @@ fn (var g: Gen) iface_adapter(from: Int, to: Int) -> Str {
   let rt = g.rt()
   g.import_std("strings")
   var b = StrBuilder.new()
-  b.write("type ${name} struct{ V ${g.go_type(from)} }\n\n")
-  b.write("func (a ${name}) XoDebug(b *strings.Builder) { ${rt}DebugTo(b, a.V) }\n")
-  b.write("func (a ${name}) XoEq(o any) bool { if p, ok := o.(${name}); ok { return ${rt}EqAny(a.V, p.V) }; return false }\n")
-  b.write("func (a ${name}) XoHash() uint64 { return ${rt}HashAny(a.V) }\n\n")
+  // a cell's methods are on its pointer, so `var` methods write a.V in
+  // place (decision 0613 step 5)
+  let ar = if cell { "*" + name } else { name }
+  if cell {
+    b.write("type ${name} struct {\n\tV ${g.go_type(from)}\n\tS uint32\n}\n\n")
+    b.write("func (a *${name}) XoMark() { ${rt}CellMark(&a.S) }\n")
+    b.write("func (a *${name}) XoShared() bool { return ${rt}CellShared(&a.S) }\n")
+    b.write("func (a *${name}) XoCopy() any { n := &${name}{V: a.V}; ${rt}MarkP(&n.V); return n }\n")
+  } else {
+    b.write("type ${name} struct{ V ${g.go_type(from)} }\n\n")
+  }
+  b.write("func (a ${ar}) XoDebug(b *strings.Builder) { ${rt}DebugTo(b, a.V) }\n")
+  b.write("func (a ${ar}) XoEq(o any) bool { if p, ok := o.(${ar}); ok { return ${rt}EqAny(a.V, p.V) }; return false }\n")
+  b.write("func (a ${ar}) XoHash() uint64 { return ${rt}HashAny(a.V) }\n\n")
   for (k, im) in ims.indexed() {
     let m = ms[k]
     let msub = msubs[k]
@@ -393,7 +415,7 @@ fn (var g: Gen) iface_adapter(from: Int, to: Int) -> Str {
       }
     }
     g.f = saved_f
-    b.write("func (a ${name}) ${go_method(g.oname(im))}(tk *${rt}Task${prefix_comma(ps)}) ${ires} { ${body} }\n")
+    b.write("func (a ${ar}) ${go_method(g.oname(im))}(tk *${rt}Task${prefix_comma(ps)}) ${ires} { ${body} }\n")
   }
   g.pkgs[g.p].keep[g.pkgs[g.p].out.len()] = true
   g.pout(b.freeze())

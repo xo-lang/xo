@@ -59,6 +59,11 @@ fn (var g: Gen) holds_list1(t0: Int, var seen: Map[Int, Bool]) -> Bool {
       if k == "struct" && g.opaque_std(o) {
         return true
       }
+      if k == "interface" {
+        // a cell (decision 0613 step 5, rt cell.go): copies share it until
+        // a `var` call, so a copy marks it
+        return g.celled(t)
+      }
       if k == "struct" {
         seen[o] = true
         let s = g.subst_of(o, t)
@@ -134,6 +139,9 @@ fn (var g: Gen) mark_stmts(addr: Str, t0: Int) -> List[Str] {
       if g.opaque_std(x.obj) {
         return ["${g.rt()}MarkP(&${addr})"]
       }
+      if g.tkind(x.obj) == "interface" {
+        return ["${g.rt()}MarkI(${addr})"]
+      }
       // a struct or newtype: its generated XoMark (markMethod)
       [addr + ".XoMark()"]
     }
@@ -170,6 +178,9 @@ fn (var g: Gen) own_code(code: Str, t0: Int) -> Str {
   }
   if g.contains_param(t) {
     return "${g.rt()}Own(${code})"
+  }
+  if g.celled(t) {
+    return "${g.rt()}MarkI(${code})"
   }
   let gt = g.go_type(t)
   let stmts = g.mark_stmts("v", t)

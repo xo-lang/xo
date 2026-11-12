@@ -1009,6 +1009,16 @@ fn (g: Gen) is_interface(t: Int) -> Bool {
   o >= 0 && g.tkind(o) == "interface"
 }
 
+/// Whether t is an interface with a `var self` method, whose values the
+/// Go backend holds in a cell (decision 0613 step 5; rt cell.go).
+fn (g: Gen) celled(t: Int) -> Bool {
+  let o = g.nobj(t)
+  if o < 0 || g.tkind(o) != "interface" {
+    return false
+  }
+  g.c.objs[o].iface_meths.any(fn(im) { g.c.objs[im].recv_var })
+}
+
 fn (g: Gen) is_never(t: Int) -> Bool {
   t >= 0 && g.c.is_never(t)
 }

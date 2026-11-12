@@ -1038,9 +1038,12 @@ pub interface Store {
   implements only a `var self` interface method, and a plain method
   implements either. A `var` method where the interface method takes a
   plain `self` is `XO0439`: a call through the interface would lose its
-  update. Generic bounds support `var self` methods on every backend;
-  through an interface value they are `XO1201` (planned, decision 0613
-  step 5).
+  update. Generic bounds support `var self` methods on every backend.
+  Through an interface value the receiver must be a `var` place as
+  well, the call writes the updated value back into the interface value,
+  and copies of the interface value are unaffected, as for any value
+  (5.1); the Go backend supports it, the native backends report
+  `XO1201` until decision 0613 step 5 stage 4.
 
 ### 2.5 Optionals
 

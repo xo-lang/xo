@@ -94,6 +94,13 @@ type marker interface{ XoMark() }
 func MarkP[T any](p *T) {
 	if m, ok := any(p).(marker); ok {
 		m.XoMark()
+		return
+	}
+	// an interface value: the cell (cell.go) or lists it holds
+	if isIface[T]() {
+		if m, ok := any(*p).(marker); ok {
+			m.XoMark()
+		}
 	}
 }
 
@@ -122,7 +129,8 @@ func Own[T any](v T) T {
 // markable reports whether values of T may hold lists.
 func markable[T any]() bool {
 	_, ok := any((*T)(nil)).(marker)
-	return ok
+	// an interface value may hold a cell (cell.go)
+	return ok || isIface[T]()
 }
 
 // markElems marks the lists held by the elements of s: s was copied from

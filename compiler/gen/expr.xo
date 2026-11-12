@@ -193,6 +193,14 @@ fn (var g: Gen) to_iface(code0: Str, from0: Int, to0: Int) -> Str {
   if n >= 0 && g.oprelude(n) {
     return "${g.rt()}Iface[${tt}](${code})"
   }
+  if g.is_interface(from) && g.go_type(from) != tt && g.celled(to) && !g.celled(from) {
+    // a plain interface value into one with a `var self` method: a cell
+    // holding it (its methods cannot write it, so nothing is lost)
+    let cell = g.cell_adapter(from, to)
+    if !cell.is_empty() {
+      return "&${cell}{V: ${code}}"
+    }
+  }
   if g.is_interface(from) && g.go_type(from) != tt {
     let adapter = g.iface_adapter(from, to)
     if !adapter.is_empty() {
@@ -209,16 +217,16 @@ fn (var g: Gen) to_iface(code0: Str, from0: Int, to0: Int) -> Str {
   if g.is_never(from) {
     return "${g.rt()}Absurd[${tt}](${code})"
   }
-  if n >= 0 && g.c.objs[n].tkind == "interface" {
-    for im in g.c.objs[n].iface_meths {
-      if g.c.objs[im].recv_var {
-        // a concrete value as an interface with a `var self` method: the
-        // interface value's write back is decision 0613's step 5 (Go would
-        // need the value's address, which a copy of the interface value
-        // must not share)
-        g.unsupported("a value of `${g.c.show(from)}` as `${g.c.show(to)}`, whose method `${g.c.objs[im].name.to_str() ?? ""}` takes `var self` (decision 0613 step 5)")
-      }
+  if g.celled(to) {
+    // a concrete value as an interface with a `var self` method (decision
+    // 0613 step 5): a cell of its own, written in place by `var` calls
+    // and copied before one when shared (rt cell.go)
+    let cell = g.cell_adapter(from, to)
+    if cell.is_empty() {
+      g.unsupported("a value of `${g.c.show(from)}` as `${g.c.show(to)}`, an interface with a `var self` method, in generic code (decision 0613 step 5)")
+      return code
     }
+    return "&${cell}{V: ${code}}"
   }
   let adapter = g.iface_adapter(from, to)
   if !adapter.is_empty() {

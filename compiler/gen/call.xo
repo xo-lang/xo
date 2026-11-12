@@ -396,6 +396,11 @@ fn (var g: Gen) decl_call1(x: Expr, ci: check.CallInfo) -> (Str, Int) {
         // 2026-10-23: place's marked copy cloned the element per call)
         if let Some(r) = g.resolve_addr_place(re) {
           code = g.place_addr(r)
+          if g.celled(g.type_of(re)) {
+            // an interface value's cell, first copied when shared
+            // (decision 0613 step 5, rt cell.go)
+            code = "${g.rt()}Unshare(&${code})"
+          }
           done = true
         }
       }
@@ -540,6 +545,11 @@ fn (var g: Gen) recv_code(e: Expr, fo: Int, borrow: Bool) -> Str {
         g.note_target(vc)
         return "${g.rt()}Iface[${g.go_type(vc)}](&${g.place(e)})"
       }
+    }
+    if g.celled(vt) {
+      // through an interface value (decision 0613 step 5): its cell,
+      // first copied when shared (rt cell.go)
+      return "${g.rt()}Unshare(&${g.place(e)})"
     }
     return g.place(e)
   }

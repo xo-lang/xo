@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Interfaces (decision 0613 step 5, Go backend): a `var self` method can be called through an interface value (`var l: Loader = Box{}; l.load(3)`), updating the value in its place; a copy of the interface value is unaffected (`let b = l` before the call keeps the old value). The native backends still report XO1201 for it until stage 4.
+
 ## v0.50.1 (2026-11-12)
 
 The first public 0.50 release (0.50.0 was an internal seed). The release notes

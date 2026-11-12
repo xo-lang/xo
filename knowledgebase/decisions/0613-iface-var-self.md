@@ -230,3 +230,27 @@ interface values from SSA and is stage 3 (its cell).
 push: full suites of the touched packages and the s2 self build), then
 stage 4 (`var self` slots taking the value when xo.show's environment is
 unique).
+
+## Addendum: stage 3, the Go backend's cell (2026-11-12)
+
+The Go backend builds Go interfaces, not SSA, so B's code words do not
+apply to it; what stage 3 needs is the cell the amendment named. A value
+converted to an interface with a `var self` method (gen celled) becomes
+`&xoCell_N{V: v}`, a generated type (gen adapter_of, the adapters'
+generator with pointer receivers) whose methods forward to V, a `var`
+one writing V in place. Go has no counts, so the cell's S is a sticky
+shared flag, the same scheme as a List's block (std/rt list.go): every
+place the generated code copies an interface value out of a place marks
+its cell (own.xo: such an interface now "holds a list", MarkI), the
+runtime marks interface valued elements when it copies a list's or a
+Map's array (markable is true for an interface type, MarkP reaches the
+dynamic value), and a `var` call through an interface value first
+replaces a shared cell with a copy of its own (rt.Unshare; the copy
+marks the lists V holds). A cell is written in place while one value
+holds it, and copied once per copy of the value at most. XoEq, XoDebug
+and XoHash compare and show V, so `==` and Debug text are the
+concrete value's. Golden internal/gen iface_var_cell: copies through a
+binding, a list, a struct field, a Map value, an Option, a closure
+capture, a `var` parameter, and one such interface converted to another.
+A type parameter converted to such an interface stays unsupported on
+the Go backend (no cell type without the concrete type).
