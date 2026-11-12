@@ -18,6 +18,8 @@ The first public 0.50 release (0.50.0 was an internal seed). The release notes
 
 - Security (std/json, native and LLVM backends): `json.decode_go` no longer faults when a type error sits under a non-ASCII object key (`{"é": "x"}` decoded into `Map[Str, Int]`); it returns Go's error, `json: cannot unmarshal string into Go value of type int`. One such request could stop a server that decodes peer JSON with `decode_go`. Found by the decision 0616 review of std/json.
 
+- xo build (native arm64): a call returning a large struct (a result wider than the return registers) could have its result overwritten by a value's cleanup call before the caller read it, a segmentation fault (since 0.49.0; 0.48.2 and earlier are not affected). Found through a native build of the Azure SDK's pagers (75dc4bd3b, golden sret_lazy_release_whole).
+
 - xo build (native backends, decision 0612): the partial borrow of a large struct parameter (the 0612 entry below) is off in this release (`PART_BORROW_ON = false`): with it, a native build of the Azure SDK's armnetwork poller-of-pager tests faulted (SIGSEGV) on arm64. It returns once that is fixed.
 
 - Fix (native backends and LLVM): a task canceled while it waited for another task to build a constant (a sibling failed while the constant's first read was in progress) now unwinds; it went on with an empty list and read past it, and the program crashed with SIGSEGV about 1 run in 30 under load (present since at least 0.48.2). Golden const_wait_canceled.
