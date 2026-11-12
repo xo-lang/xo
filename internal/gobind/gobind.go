@@ -92,7 +92,10 @@ import (
 // get accessors (decision 0491 A).
 // 36 (2026-11-04): a Go name `scope` is no longer renamed `scope_`:
 // scope is a contextual word since decision 0497.
-const Version = 36
+// 37 (2026-11-11): a `// go-target: GOOS/GOARCH` line, and a binding made
+// for another platform is stale (Target; tier 69's darwin syscall binding
+// in a linux container).
+const Version = 37
 
 // Binding is one bound Go package.
 type Binding struct {
@@ -267,8 +270,26 @@ func PinFor(pins map[string]string, goPath string) (string, string) {
 	return best, v
 }
 
+// Target is the GOOS/GOARCH a binding is made for: the go tool's, from
+// $GOOS and $GOARCH, else this binder's own. A package's API can differ by
+// platform (syscall's BpfHdr is darwin and BSD only), so a binding made on
+// one platform is stale on another: a golden directory copied from the Mac
+// into a linux container carried its darwin syscall binding along, and rt
+// did not compile there (tier 69, 2026-11-11).
+func Target() string {
+	goos, goarch := os.Getenv("GOOS"), os.Getenv("GOARCH")
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
+	return goos + "/" + goarch
+}
+
 // Load returns the cached binding of goPath, or nil when there is none or
-// it is stale (another Version, or another pinned module version).
+// it is stale (another Version, another target platform, or another pinned
+// module version).
 func Load(goPath string, opts Options) (*Binding, error) {
 	dp := declPath(opts.Dir, goPath, opts.Rerun)
 	decl, err := os.ReadFile(dp)
@@ -282,6 +303,7 @@ func Load(goPath string, opts Options) (*Binding, error) {
 	b := &Binding{GoPath: goPath, Prefix: Prefix(goPath), DeclPath: dp, Decl: decl, Adapter: adapter, Skipped: map[string]string{}}
 	version := -1
 	rerun := ""
+	target := ""
 	sc := bufio.NewScanner(bytes.NewReader(decl))
 	for sc.Scan() {
 		l := sc.Text()
@@ -294,6 +316,8 @@ func Load(goPath string, opts Options) (*Binding, error) {
 			fmt.Sscanf(l, "xo-bind: v%d", &version)
 		case strings.HasPrefix(l, "go-package: "):
 			b.Name = strings.TrimPrefix(l, "go-package: ")
+		case strings.HasPrefix(l, "go-target: "):
+			target = strings.TrimPrefix(l, "go-target: ")
 		case l == "go-standard: true":
 			b.Standard = true
 		case strings.HasPrefix(l, "go-module: "):
@@ -314,7 +338,7 @@ func Load(goPath string, opts Options) (*Binding, error) {
 			b.Skipped[name] = reason
 		}
 	}
-	if version != Version || b.Name == "" || rerun != rerunKey(opts.Rerun) {
+	if version != Version || b.Name == "" || target != Target() || rerun != rerunKey(opts.Rerun) {
 		return nil, nil
 	}
 	if opts.Version != "" && !b.Standard && (opts.Module == "" || opts.Module == b.Module) && opts.Version != b.ModVersion {

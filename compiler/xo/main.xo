@@ -977,6 +977,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   c.set_mod_env(o.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", offline, work)
   c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
   c.gobind_dir = os.env.get("XO_GOBIND_DIR") ?? ""
+  c.go_target = check.go_target(os.env.get("GOOS") ?? "", os.env.get("GOARCH") ?? "")
   c.walk = o.walk
   // binds a `use go` or `use c` missing from the cache first, as the
   // Go checker does (decision 0178 stage 6)

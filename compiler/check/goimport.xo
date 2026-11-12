@@ -5,16 +5,39 @@
 // $XO_GOBIND_DIR); this checker reads that file as gobind.Load does
 // (the same path, the same staleness rules: binder version, package
 // name, `replay rerun` list, pinned module version, the adapter next to
-// it) and loads it as a std like module. Without a current file in the
+// it, the target platform) and loads it as a std like module. Without a current file in the
 // cache the run is not checked here (unsupported); check_dirs_bound
 // (bindmiss.xo) binds the package with the Go helper xo-gobind and
 // checks again (decision 0178 stage 6: the binder stays Go).
 
 use std/crypto
+use github.com/xo-lang/xo/compiler/hostpath
 use github.com/xo-lang/xo/compiler/parser
 
 /// gobind.Version: bindings of another binder version are stale.
-const GOBIND_VERSION: Int = 36
+const GOBIND_VERSION: Int = 37
+
+/// gobind.Target: the GOOS/GOARCH a binding is made for, goos and goarch
+/// ($GOOS, $GOARCH) when set, else this xo's own. A binding names it
+/// (`// go-target:`) and one made for another platform is stale: a
+/// package's API differs by platform (syscall's BpfHdr is darwin and BSD
+/// only), and a golden directory copied from the Mac into a linux
+/// container carried its darwin syscall binding along (tier 69,
+/// 2026-11-11).
+pub fn go_target(goos: Str, goarch: Str) -> Str {
+  let o = if goos.is_empty() { hostpath.host() } else { goos }
+  let a = if !goarch.is_empty() {
+    goarch
+  } else {
+    match target.arch {
+      Amd64 => "amd64"
+      Arm64 => "arm64"
+      Wasm32 => "wasm"
+      Riscv64 => "riscv64"
+    }
+  }
+  "${o}/${a}"
+}
 
 /// gobind purePackages: the Go std packages whose `use go` in a dependency
 /// is not an escape hatch (decision 0156).
@@ -70,7 +93,7 @@ fn (var c: Checker) load_go_import(m: Int, f: Int, u: parser.UseDecl) {
       return
     }
     let hdr = go_binding_header(data)
-    if hdr.version != GOBIND_VERSION || hdr.name.is_empty() || hdr.rerun != go_rerun_key(rerun) || (!pin.is_empty() && !hdr.standard && pin_mod == hdr.mod_path && pin != hdr.mod_version) {
+    if hdr.version != GOBIND_VERSION || hdr.name.is_empty() || (!c.go_target.is_empty() && hdr.target != c.go_target) || hdr.rerun != go_rerun_key(rerun) || (!pin.is_empty() && !hdr.standard && pin_mod == hdr.mod_path && pin != hdr.mod_version) {
       // stale: the Go checker binds it again
       c.go_miss(f, u.span, gopath, root, cache, fpath)
       return
@@ -191,6 +214,7 @@ fn (var c: Checker) check_go_lock(f: Int, sp: Span, root: Str, mod_path: Str, ve
 struct GoBindHeader {
   version: Int = -1
   name: Str = ""
+  target: Str = ""
   standard: Bool = false
   mod_path: Str = ""
   mod_version: Str = ""
@@ -257,6 +281,8 @@ fn go_binding_header(data: Bytes) -> GoBindHeader {
       }
     } else if l.starts_with("go-package: ") {
       h.name = l.trim_prefix("go-package: ")
+    } else if l.starts_with("go-target: ") {
+      h.target = l.trim_prefix("go-target: ")
     } else if l == "go-standard: true" {
       h.standard = true
     } else if l.starts_with("go-module: ") {

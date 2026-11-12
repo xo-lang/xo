@@ -104,6 +104,22 @@ func TestMapping(t *testing.T) {
 	if l, _ := Load("os/exec", Options{Dir: dir}); l != nil {
 		t.Error("stale binding loaded")
 	}
+	// a binding made for another platform is stale (tier 69: a darwin
+	// syscall binding copied into a linux container), as is one from
+	// before bindings named their platform
+	other := "plan9/386"
+	if Target() == other {
+		other = "linux/arm64"
+	}
+	for _, tgt := range []string{"// go-target: " + other + "\n", ""} {
+		os.WriteFile(dp, []byte(strings.Replace(decl, "// go-target: "+Target()+"\n", tgt, 1)), 0o644)
+		if l, _ := Load("os/exec", Options{Dir: dir}); l != nil {
+			t.Errorf("binding with target line %q loaded on %s", tgt, Target())
+		}
+	}
+	if !strings.Contains(decl, "// go-target: "+Target()+"\n") {
+		t.Errorf("binding names no go-target %s:\n%s", Target(), grep(decl, "go-"))
+	}
 
 	decl, sb, _ := bindDecl(t, "strings")
 	// a callback never runs with the request's arena (decision 0066), and

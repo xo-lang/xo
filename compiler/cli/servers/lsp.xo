@@ -554,6 +554,7 @@ fn new_lsp_checker(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], nati
   // (2026-11-11, the resolved std coverage sweep)
   c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
   c.gobind_dir = os.env.get("XO_GOBIND_DIR") ?? ""
+  c.go_target = check.go_target(os.env.get("GOOS") ?? "", os.env.get("GOARCH") ?? "")
   // the editor's and the agent tools' checks cover the modules below a
   // workspace or repository root (decision 0289), within the walk's
   // bound (decision 0345)

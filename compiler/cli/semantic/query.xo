@@ -67,6 +67,7 @@ pub fn load_session_scope(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[St
   c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
   c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
   c.gobind_dir = os.env.get("XO_GOBIND_DIR") ?? ""
+  c.go_target = check.go_target(os.env.get("GOOS") ?? "", os.env.get("GOARCH") ?? "")
   c.set_overlay(overlay)
   // xo query and xo edit cover the modules below a workspace or
   // repository root (decision 0289), within the walk's bound (0345)

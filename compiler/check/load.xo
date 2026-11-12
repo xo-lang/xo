@@ -374,6 +374,9 @@ pub struct Checker {
   /// $XO_GOBIND_DIR: the `use go` binding cache, when set; else
   /// `<module root>/.xo/gobind`.
   pub gobind_dir: Str = ""
+  /// The platform a `use go` binding must be made for (go_target), ""
+  /// for any.
+  pub go_target: Str = ""
   /// The bindings the run needs (bindmiss.xo): `use go` packages without
   /// a current binding and `use c` headers, for check_dirs_bound to bind;
   /// and the ones whose binding failed, by key, with the binder's

@@ -158,6 +158,7 @@ pub fn new_checker(os: Os, ctx: Ctx) -> check.Checker uses fs.read, env {
   c.set_mod_env(ctx.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", ctx.offline, ctx.work)
   c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
   c.gobind_dir = os.env.get("XO_GOBIND_DIR") ?? ""
+  c.go_target = check.go_target(os.env.get("GOOS") ?? "", os.env.get("GOARCH") ?? "")
   c.walk = ctx.walk
   c
 }

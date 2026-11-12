@@ -121,6 +121,7 @@ fn (var c: ModCtx) run_audit(args: List[Str]) -> Int uses (fs, net, proc, stdio,
   chk.set_mod_env(c.wd, c.getenv("XO_MODCACHE"), c.getenv("HOME"), c.getenv("XDG_CACHE_HOME"), c.getenv("XO_OFFLINE"), c.getenv("XO_WORK"))
   chk.cbind_dir = c.getenv("XO_CBIND_DIR")
   chk.gobind_dir = c.getenv("XO_GOBIND_DIR")
+  chk.go_target = check.go_target(c.getenv("GOOS"), c.getenv("GOARCH"))
   if walk {
     chk.walk = [c.abs(root)]
   }

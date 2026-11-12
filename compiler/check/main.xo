@@ -61,6 +61,7 @@ fn dump_body(os: Os, args: List[Str]) ! {
   let work = os.env.get("XO_WORK") ?? ""
   let cbind = os.env.get("XO_CBIND_DIR") ?? ""
   let gobind = os.env.get("XO_GOBIND_DIR") ?? ""
+  let gotarget = go_target(os.env.get("GOOS") ?? "", os.env.get("GOARCH") ?? "")
   var runs: List[List[Str]] = [dirs]
   if each {
     runs = []
@@ -85,6 +86,8 @@ fn dump_body(os: Os, args: List[Str]) ! {
         c.set_mod_env(wd, modcache, home, xdg, offline, work)
         c.cbind_dir = cbind
         c.gobind_dir = gobind
+    c.go_target = gotarget
+        c.go_target = gotarget
         match c.check_dirs(r) {
           Ok(_) => mods += c.root_mods.len()
           Err(e) => fault("check: ${e}")
