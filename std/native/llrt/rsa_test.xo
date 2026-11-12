@@ -39,7 +39,14 @@ const KK: Int = 128
 struct Dud {
   /// xorshift state: the order and the block picked (public choices)
   x: Int
+  /// the message length of every block, 0 for 1 to 16 at random
+  /// (XO_DUDECT_MSGLEN: with one length, a class's blocks differ only in
+  /// their random bytes, so a pair that fails then does not follow the
+  /// plaintext's length)
+  msglen: Int = 0
 }
+
+fn (var d: Dud) mlen() -> Int { if d.msglen > 0 { d.msglen } else { 1 + (d.next() & 15) } }
 
 fn (var d: Dud) next() -> Int {
   d.x = d.x ^ d.x.wrapping_shl(13)
@@ -80,7 +87,7 @@ fn flip(b: Bytes, at: Int, x: Int) -> Bytes { cat([b[0..at], byte1(Int(b[at]) ^ 
 /// An OAEP block: 0x00 (or first), the masked seed, the masked DB with
 /// DB = lhash' || zeros || sep || message.
 fn oaep_block(var d: Dud, lhash: Bytes, kind: Str) -> Bytes {
-  let msg = d.bytes(1 + (d.next() & 15))
+  let msg = d.bytes(d.mlen())
   var lh = lhash
   var sep = 1
   var first = 0
@@ -100,7 +107,7 @@ fn oaep_block(var d: Dud, lhash: Bytes, kind: Str) -> Bytes {
 
 /// A PKCS #1 v1.5 block: 0x00 0x02, nonzero padding, 0x00, the message.
 fn v15_block(var d: Dud, kind: Str) -> Bytes {
-  let msg = d.bytes(1 + (d.next() & 15))
+  let msg = d.bytes(d.mlen())
   let pad = d.nonzero(KK - 3 - msg.len())
   match kind {
     "head" => cat([b"\x00", byte1(3 + (d.next() & 255) % 253), pad, b"\x00", msg])
@@ -172,7 +179,7 @@ fn blocks(var d: Dud, lhash: Bytes, name: Str) -> List[Bytes] {
 
 /// max |t| of n measurements of pair (a, b).
 fn dudect(os: testing.TestOs, a: Str, b: Str, n: Int) -> Float {
-  var d = Dud{x: 0x2545F4914F6CDD1D}
+  var d = Dud{x: 0x2545F4914F6CDD1D, msglen: Int.parse(os.env.get("XO_DUDECT_MSGLEN") ?? "") ?? 0}
   let lhash = h256(b"")
   // both classes' blocks in one buffer, interleaved at KK byte steps,
   // so where a block sits in memory is the same for both classes (a
