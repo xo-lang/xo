@@ -18,3 +18,4 @@ budget is rerun once before it counts; over again, it is a regression
 |---|---|---|---|---|---|
 | v0.50.0 | 2026-11-12 | - | 37 MB (43) | 447 MB (554) | ok |
 | v0.50.1 | 2026-11-12 | - | 37 MB (43) | 501 MB (554) | ok |
+| v0.50.1 | 2026-11-12 | - | 37 MB (43) | 483 MB (554) | ok |

@@ -9,14 +9,16 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
-- Security (std/json, native and LLVM backends): `json.decode_go` no longer faults when a type error sits under a non-ASCII object key (`{"é": "x"}` decoded into `Map[Str, Int]`); it returns Go's error, `json: cannot unmarshal string into Go value of type int`. One such request could stop a server that decodes peer JSON with `decode_go`. Found by the decision 0616 review of std/json.
-
 ## v0.50.1 (2026-11-12)
 
 The first public 0.50 release (0.50.0 was an internal seed). The release notes
 (the GitHub release) group these entries.
 
 - Security (std/tls, native backends): a TLS peer certificate with an RSA key over 8192 bits is refused, with Go's text (`tls: server sent certificate containing RSA key larger than 8192 bits`), before any signature is verified (CVE-2023-29409, GO-2023-1987: huge keys made the peer spend CPU time). The Go backend already refused them.
+
+- Security (std/json, native and LLVM backends): `json.decode_go` no longer faults when a type error sits under a non-ASCII object key (`{"é": "x"}` decoded into `Map[Str, Int]`); it returns Go's error, `json: cannot unmarshal string into Go value of type int`. One such request could stop a server that decodes peer JSON with `decode_go`. Found by the decision 0616 review of std/json.
+
+- xo build (native backends, decision 0612): the partial borrow of a large struct parameter (the 0612 entry below) is off in this release (`PART_BORROW_ON = false`): with it, a native build of the Azure SDK's armnetwork poller-of-pager tests faulted (SIGSEGV) on arm64. It returns once that is fixed.
 
 - Fix (native backends and LLVM): a task canceled while it waited for another task to build a constant (a sibling failed while the constant's first read was in progress) now unwinds; it went on with an empty list and read past it, and the program crashed with SIGSEGV about 1 run in 30 under load (present since at least 0.48.2). Golden const_wait_canceled.
 
