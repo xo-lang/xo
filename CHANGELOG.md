@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Security (std/json, native and LLVM backends): `json.decode_go` no longer faults when a type error sits under a non-ASCII object key (`{"é": "x"}` decoded into `Map[Str, Int]`); it returns Go's error, `json: cannot unmarshal string into Go value of type int`. One such request could stop a server that decodes peer JSON with `decode_go`. Found by the decision 0616 review of std/json.
+
 ## v0.50.1 (2026-11-12)
 
 The first public 0.50 release (0.50.0 was an internal seed). The release notes

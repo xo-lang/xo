@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-12: security: decode_go no longer faults on a type error under a non-ASCII key
+
+- Kind: security
+- Commit: this commit
+- Found by: the decision 0616 security review of std/json (second reviewer, finding F1)
+- Go reference: encoding/json UnmarshalTypeError.Field
+- Test: std/native/json_test.xo "decode_go: a type error under a non-ASCII key is Go's error, not a fault" (arm64, LLVM)
+- Shipped in: not yet released
+
+On the native and LLVM backends, `decode_go` built a type error's Go field name by slicing the path one byte at a time, which faulted inside a multi-byte key: `json.decode_go_str[Map[Str, Int]]("{\"é\":\"x\"}")` ended the program instead of returning `json: cannot unmarshal string into Go value of type int`. A peer could stop a server that decodes its JSON with `decode_go`. The path is now copied byte by byte into a builder, and the error text is Go's. The Go backend was not affected.
+
 ## 2026-11-12: feature: html_escape (Go's HTMLEscape)
 
 - Kind: feature
