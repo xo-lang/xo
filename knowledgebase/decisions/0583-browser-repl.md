@@ -329,6 +329,26 @@ Entry 1 then leaves one 6.9 MB block and a 1.2 MB one; the session peaks at 48 M
 1, was 35), values unchanged. Left: install_std's new object list beside the relocated one (the 6.9
 MB block), and the 4.3 to 4.4 MB blocks entries 2 and 20 leave free.
 
+## Memory: the SSA builder owns the entry's checker (2026-11-12)
+
+A trace of the big block requests (256 KiB and up, each with its wasm stack, scratch probe) through
+the 30-entry session showed every entry copying the checker's object list (4.3 MB) twice: once when
+the entry's check adds its module to `var c = base` (base keeps its own; by design), and again when
+the SSA builder joins a std function's trees (`need_tree`) or checks a lazy body, because two holders
+were still sharing the entry's list: play_repl, which asked `semantic.Session.type_at` for the
+entry's types after the build, and `ssa.build_program_fe`, which keeps its checker to build again
+from it when a body needs the unwinding checks the first build left out. Entries 4 and later peaked
+with three object lists live (36.4 MB). Now play_repl takes the entry's types before the build, and
+builds with `ssa.build_program_handed`: one build, no second one, the checker's last reference
+handed to the builder, which then writes in place. A program that needs the other setting
+(`need_conc != conc`) is checked again from base and built with it; the setting the last build used
+is the next entry's first guess, so a session holding a Mutex builds twice once, not in every entry.
+The session's live peak is 31.4 MB and the page's compiler memory peaks at 39 MB (48 before; 33 MB
+after entry 1, unchanged), the later entries' median 31 ms (35); every reply, types included, is
+the same as main's compiler's for the session, a Mutex and Chan session, and `:reset` and `:undo`
+back to no concurrency (TestPlayReplConc). Left: entry 1's 6.9 MB free block (install_std's object
+list beside the decoded one).
+
 ## The playground page: a repl tab and std's record (2026-11-11)
 
 The lead asked (2026-11-11) for the owner's 50 MB bar on the real /play/ page, not the harness. The

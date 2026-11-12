@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Playground REPL (xolang.dev/play/): the compiler's memory peaks at 39 MB over the 30-entry session, was 48: the SSA builder takes the entry's checker over (`ssa.build_program_handed`) instead of copying its object list, and an entry needing the other concurrency setting is checked again and built with it (decision 0583).
 - Checker: a type alias reached again through a struct or enum (`type Schema = List[Field]` with `struct Field { schema: Schema }`, named first from a struct sorting before `Field`) is no longer a false XO0407 "type alias refers to itself"; an alias naming itself with no struct between still is.
 - **Breaking** (interfaces, decision 0613): a type's `var` method no longer implements an interface method that takes a plain `self` (new error XO0439). The checker used to accept it, but a call through the interface would have lost the update, and every native build reported XO1201. Migration: if callers through the interface may change the value, declare the interface method `fn name(var self, ...)` and give generic callers a `var` receiver (`fn fill[T: Loader](var t: T)`); if the method only reads, make it a plain method `fn (x: T) name(...)`.
 - Interfaces (decision 0613 step 4): an interface method may take `var self`, and a generic bound's call of one (`fn fill[T: Loader](var t: T) { t.load(5) }`) updates its receiver on every backend (native, LLVM, Go). Through an interface value it is still XO1201 (step 5).

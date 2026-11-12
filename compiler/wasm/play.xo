@@ -167,8 +167,20 @@ fn play_build(os: Os, std_dir: Str, wd: Str, dir: Str, out: Str) -> Str {
   play_emit(os, wd, dir, out, c, times)
 }
 
+/// play_emit_conc's reply for a program built without the unwinding
+/// checks one of its bodies needs.
+const RETRY_CONC = "{\"retry_conc\":true}"
+
 /// play_build after the check: the checked program c built to out.
 fn play_emit(os: Os, wd: Str, dir: Str, out: Str, c: check.Checker, times: Bool) -> Str {
+  play_emit_conc(os, wd, dir, out, c, times, -1)
+}
+
+/// play_emit with conc 0 or 1: c's last reference handed to the SSA
+/// builder (ssa.build_program_handed) with unwinding checks off or on; a
+/// program that needs the other setting returns RETRY_CONC, and the
+/// caller checks it again and builds it with conc 1. -1: as play_emit.
+fn play_emit_conc(os: Os, wd: Str, dir: Str, out: Str, c: check.Checker, times: Bool, conc: Int) -> Str {
   var t = os.clock.now().unix_millis()
   let ds = diags_json(c.diags)
   if !c.unsupported.is_empty() {
@@ -194,7 +206,10 @@ fn play_emit(os: Os, wd: Str, dir: Str, out: Str, c: check.Checker, times: Bool)
     return "{\"ok\":false,\"unsupported\":${json_text("the wasm backend does not support the network (std/http): WASI preview1 has no sockets")},\"diagnostics\":${ds}}"
   }
   let root = line_root(os, wd, dir)
-  var b = ssa.build_program_for(c, root, false, false, false, "", "wasm", true)
+  var b = if conc < 0 { ssa.build_program_for(c, root, false, false, false, "", "wasm", true) } else { ssa.build_program_handed(c, root, "", "wasm", true, conc == 1) }
+  if conc >= 0 && b.need_conc != b.conc {
+    return RETRY_CONC
+  }
   if times {
     let n = os.clock.now().unix_millis()
     os.stdio.eprintln("play ssa ${n - t} ms, ${b.m.funcs.len()} functions")

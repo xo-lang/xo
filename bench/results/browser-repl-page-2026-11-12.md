@@ -143,9 +143,36 @@ relocated in place"), measured the same way:
 
 All 30 values the same.
 
+## The builder's copy of the object list (2026-11-12)
+
+A second probe (scratch, never pushed) logged every big block request and free (256 KiB or more)
+with its wasm stack, named from the WAT of the same build (XO_KEEP_WAT=1). Every entry copied the
+checker's 4.3 MB object list twice: `check.Checker.new_module` (the entry's check, `var c = base`;
+base keeps its own) and `check.Checker.need_tree` or `force_body` under the SSA builder, whose
+checker still shared the list with play_repl (which read the entry's types after the build) and
+with `ssa.build_program_fe` (which keeps its checker for a second build). Entry 4's live peak held
+three object lists.
+
+With the types taken before the build and the builder handed the checker (`ssa.build_program_handed`,
+decision 0583 "the SSA builder owns the entry's checker"), the same 30-entry session in the same
+probe page:
+
+| | relocated in place (8d404d9e3) | builder owns the checker |
+|---|---|---|
+| wasm memory after entry 1 | 33 MB | 33 MB |
+| peak live | 36.4 MB | 31.4 MB |
+| free big blocks after entry 30 | 1.2, 6.9, 4.3, 4.4 MB | 1.2, 6.9 MB |
+| heap top after entry 30 | 47.5 MB | 38.4 MB |
+| **compiler memory, peak** | **48 MB** | **39 MB** |
+| later entries, median | 35 ms | 31 ms |
+
+All 30 values the same; natively, every reply (types too) of this session after a Mutex and Chan
+session, and of `:reset` and `:undo` back to no concurrency, is the same as 8d404d9e3's compiler's.
+The renderer's RSS is not compared: one run each, and it ranged 1,370 to 1,581 MB across runs of the
+same page in this probe.
+
 ## Next
 
-With the record relocated in place the margin is 2 MB. Next: (1) the 6.9 MB block entry 1 still
-leaves (install_std builds a new object list beside the relocated one, which it could take over);
-(2) the 4.3 and 4.4 MB blocks entries 2 and 20 leave free below the heap's top; (3) an entry's own
-peak (14.7 MB over the warm 21.8 MB), by allocation site at entry 4.
+The margin is now 11 MB. Next: (1) the 6.9 MB block entry 1 leaves (install_std builds a new
+object list beside the decoded one, which it could take over); (2) the warm session's 21.8 MB, by
+owner (the base checker's object list, its types, the record's trees).

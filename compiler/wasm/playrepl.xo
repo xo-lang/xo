@@ -52,6 +52,10 @@ fn play_repl(os: Os, std_dir: Str, wd: Str, warm: Str, dir: Str) {
   var pending_typ = ""
   // notes the entry's check made (dropped bindings), said with its reply
   var pending_note = ""
+  // the unwinding checks the last build used (0 off, 1 on), the next
+  // entry's first guess: a session that holds a Mutex needs them in
+  // every entry from then on
+  var conc = 0
   var t0 = os.clock.now()
   let out = "${dir}/entry.wasm"
   while {
@@ -212,31 +216,32 @@ fn play_repl(os: Os, std_dir: Str, wd: Str, warm: Str, dir: Str) {
         os.stdio.println(json.encode_str(repl.JOut{ok: false, value: None, typ: "", out: "", err: text, ms: os.clock.since(t0).nanos() / 1000000, diagnostics: ds}))
         break
       }
-      let built = play_emit(os, wd, dir, out, c, false)
+      // the types xo repl records (a binding's at its name, a value's at
+      // column 5, where `let VALUE` binds it), taken before the build so
+      // the build holds the entry's checker's last reference: the SSA
+      // builder's writes to its objects then need no copy of the object
+      // list (4.3 MB a copy, the REPL's memory peak; decision 0583)
+      let (tys, typ) = entry_types(c, wd, main, at, src, e)
+      var built = play_emit_conc(os, wd, dir, out, c, false, conc)
+      if built == RETRY_CONC {
+        // the program needs the other setting: the entry checked again
+        // (the first build wrote to its checker) and built with it
+        conc = 1 - conc
+        var c2 = base
+        c2.start_member_with(true)
+        built = match c2.check_dirs([dir]) {
+          Ok(_) => play_emit_conc(os, wd, dir, out, c2, false, conc)
+          Err(ce) => "{\"ok\":false,\"error\":${json_text("${ce}")}}"
+        }
+      }
       if !built.starts_with("{\"ok\":true") {
         // the build's own JSON (diagnostics or unsupported) as the error text
         sess = before
         os.stdio.println(reply(false, None, "", "${built}\n", os.clock.since(t0).nanos() / 1000000))
         break
       }
-      // the types xo repl records: a binding's at its name, a value's at
-      // column 5 (where `let VALUE` binds it)
-      let qs = semantic.Session{c: c, wd: wd}
-      pending_types = {}
-      pending_typ = ""
-      if let Bind(name: n, mutable: _) = e.kind {
-        let first = src.split("\n")[0]
-        let col = (first.find(n) ?? 0) + 1
-        if let Ok(t) = qs.type_at(main, at, col) {
-          pending_types[n] = t.typ
-          pending_typ = t.typ
-        }
-      }
-      if e.kind is Expr {
-        if let Ok(t) = qs.type_at(main, at, 5) {
-          pending_typ = t.typ
-        }
-      }
+      pending_types = tys
+      pending_typ = typ
       pending_note = note
       outcome = 2
       break
@@ -247,6 +252,29 @@ fn play_repl(os: Os, std_dir: Str, wd: Str, warm: Str, dir: Str) {
     pending = Some(e)
     os.stdio.println(json.encode_str(PRun{run: out}))
   }
+}
+
+/// The types xo repl records for entry e of the checked program c: a
+/// binding's type at its name (by name) and the entry's type, a value's
+/// at column 5 of line at.
+fn entry_types(c: check.Checker, wd: Str, main: Str, at: Int, src: Str, e: repl.Entry) -> (Map[Str, Str], Str) {
+  let qs = semantic.Session{c: c, wd: wd}
+  var types: Map[Str, Str] = {}
+  var typ = ""
+  if let Bind(name: n, mutable: _) = e.kind {
+    let first = src.split("\n")[0]
+    let col = (first.find(n) ?? 0) + 1
+    if let Ok(t) = qs.type_at(main, at, col) {
+      types[n] = t.typ
+      typ = t.typ
+    }
+  }
+  if e.kind is Expr {
+    if let Ok(t) = qs.type_at(main, at, 5) {
+      typ = t.typ
+    }
+  }
+  (types, typ)
 }
 
 /// A reply line in xo repl --json's shape (repl.JOut).

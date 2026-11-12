@@ -122,6 +122,36 @@ func TestWasmPlaygroundStack(t *testing.T) {
 // printed its type (2026-11-11). The REPL's code is the same on every
 // backend: this builds compiler/wasm natively, which takes seconds.
 func TestPlayReplType(t *testing.T) {
+	// a binding's entry is built and its run answered (empty output), so
+	// the next requests see it
+	in := strings.Join([]string{
+		`{"cmd": "type", "arg": "3.5 * 2.0"}`,
+		`{"in": "let xs = [1, 2]"}`,
+		`{"ran": "", "code": 0}`,
+		`{"cmd": "type", "arg": "xs.map(fn(x) { x > 1 })"}`,
+		// a var binding has its type too (so it is pinned, and a later
+		// `ys.push(2)` entry's change is kept: TestReplVarMethodCall)
+		`{"in": "var ys = [1]"}`,
+		`{"ran": "", "code": 0}`,
+	}, "\n") + "\n"
+	out := playRepl(t, in)
+	got := strings.Split(strings.TrimSpace(string(out)), "\n")
+	want := []string{`"type":"Float"`, `"run":`, `"type":"List[Int]"`, `"type":"List[Bool]"`, `"run":`, `"type":"List[Int]"`}
+	if len(got) != len(want) {
+		t.Fatalf("--play repl: %d replies, want %d:\n%s", len(got), len(want), out)
+	}
+	for i, w := range want {
+		if !strings.Contains(got[i], w) || (w != `"run":` && !strings.Contains(got[i], `"ok":true`)) {
+			t.Errorf("reply %d: %s, want %s and ok", i+1, got[i], w)
+		}
+	}
+}
+
+// playRepl builds compiler/wasm natively and runs `--play repl` over
+// the request lines in, with the playground's warm program; it returns
+// the replies.
+func playRepl(t *testing.T, in string) []byte {
+	t.Helper()
 	if testing.Short() || selfhostTier(t) == tierShort {
 		t.Skip("builds compiler/wasm (merge and full tiers)")
 	}
@@ -151,18 +181,6 @@ func TestPlayReplType(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// a binding's entry is built and its run answered (empty output), so
-	// the next requests see it
-	in := strings.Join([]string{
-		`{"cmd": "type", "arg": "3.5 * 2.0"}`,
-		`{"in": "let xs = [1, 2]"}`,
-		`{"ran": "", "code": 0}`,
-		`{"cmd": "type", "arg": "xs.map(fn(x) { x > 1 })"}`,
-		// a var binding has its type too (so it is pinned, and a later
-		// `ys.push(2)` entry's change is kept: TestReplVarMethodCall)
-		`{"in": "var ys = [1]"}`,
-		`{"ran": "", "code": 0}`,
-	}, "\n") + "\n"
 	c := testtmp.Guard(exec.Command(xoc, "--std="+filepath.Join(root, "std"), "--wd="+tmp, "--play", "repl", filepath.Join(tmp, "warm"), filepath.Join(tmp, "sess")))
 	c.Dir = tmp
 	c.Stdin = strings.NewReader(in)
@@ -170,8 +188,32 @@ func TestPlayReplType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("--play repl: %v\n%s", err, out)
 	}
+	return out
+}
+
+// TestPlayReplConc: the playground's REPL builds an entry once, with the
+// unwinding checks the last build used, handing the SSA builder its
+// checker (decision 0583, 2026-11-12); an entry that needs the other
+// setting is checked again and built with it. A Mutex binding turns them
+// on, :reset off again, and every entry still builds.
+func TestPlayReplConc(t *testing.T) {
+	if testing.Short() || selfhostTier(t) == tierShort {
+		t.Skip("builds compiler/wasm (merge and full tiers)")
+	}
+	in := strings.Join([]string{
+		`{"in": "1 + 2"}`,
+		`{"ran": "", "code": 0}`,
+		`{"in": "let mu = Mutex[Int].new(1)"}`,
+		`{"ran": "", "code": 0}`,
+		`{"in": "let ch = Chan[Int].new(1)"}`,
+		`{"ran": "", "code": 0}`,
+		`{"cmd": "reset"}`,
+		`{"in": "[1, 2].len()"}`,
+		`{"ran": "", "code": 0}`,
+	}, "\n") + "\n"
+	out := playRepl(t, in)
 	got := strings.Split(strings.TrimSpace(string(out)), "\n")
-	want := []string{`"type":"Float"`, `"run":`, `"type":"List[Int]"`, `"type":"List[Bool]"`, `"run":`, `"type":"List[Int]"`}
+	want := []string{`"run":`, `"type":"Int"`, `"run":`, `"type":"Mutex[Int]"`, `"run":`, `"type":"Chan[Int]"`, `"ok":true`, `"run":`, `"type":"Int"`}
 	if len(got) != len(want) {
 		t.Fatalf("--play repl: %d replies, want %d:\n%s", len(got), len(want), out)
 	}

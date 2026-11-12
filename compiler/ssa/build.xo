@@ -496,6 +496,21 @@ pub fn build_program_fe(c: check.Checker, line_root: Str, tests: Bool, release: 
   b
 }
 
+/// build_program_for, built once with unwinding checks as conc says, for
+/// a driver that hands over c's last reference (the playground's REPL,
+/// decision 0583): build_program_fe keeps c to build again from it when a
+/// body needs concurrency, so the builder's first write to c's objects
+/// (a joined tree, a lazy check) copied the whole object list, 4.3 MB a
+/// REPL entry. Here nothing else holds c; when b.need_conc != b.conc the
+/// caller checks the program again and builds it with conc = b.need_conc.
+pub fn build_program_handed(c: check.Checker, line_root: Str, goos: Str, goarch: Str, wasm: Bool, conc: Bool) -> Builder uses fs.read {
+  var b = program_builder(c, line_root, false, false, false, goos, goarch, wasm, false, true, false, false, false, FeCache{}, conc)
+  b.build()
+  b.m.goarch = goarch
+  b.m.heap_guard = false
+  b
+}
+
 /// contractOn: whether a contract clause marked debug (or not) is
 /// checked: always, except debug clauses of a release build.
 fn (b: Builder) contract_on(debug: Bool) -> Bool {
