@@ -91,6 +91,43 @@ test "verify numbers closures alike: closure_name" {
   expect(closure_name("a.fnx")) == false
 }
 
+/// A tail's checks part as fe_entry writes it: each check's value,
+/// callee and weight, then the variable count.
+fn checks_part(callees: List[Str]) -> Bytes {
+  var t = EntryW{b: BytesBuilder.new()}
+  t.uv(callees.len())
+  for i in 0..callees.len() {
+    t.uv(i + 3)
+    t.str(callees[i])
+    t.sv(1)
+  }
+  t.sv(0)
+  t.b.freeze()
+}
+
+test "verify numbers the closures the unwinding checks call alike (numbered_checks, 2026-11-12)" {
+  // time.civil_instant's closure cl was fn2 in one program and fn4 in
+  // another; the body's names were numbered, the checks' were not, and
+  // TestChainKeysSharedCache's verify failed (0f6a30746)
+  let a = checks_part(["time.civil_instant.fn2", "time.offset_secs", "time.civil_instant.fn2"])
+  let b = checks_part(["time.civil_instant.fn4", "time.offset_secs", "time.civil_instant.fn4"])
+  var ca: Map[Str, Str] = {}
+  var cb: Map[Str, Str] = {}
+  expect(numbered_checks(a, ca)) == numbered_checks(b, cb)
+  // numbered on from the body's map: a check calling another closure than
+  // the body's first still differs
+  var cx: Map[Str, Str] = {"f.fn1": "closure#0"}
+  var cy: Map[Str, Str] = {"f.fn1": "closure#0"}
+  expect(numbered_checks(checks_part(["f.fn1"]), cx) == numbered_checks(checks_part(["f.fn2"]), cy)) == false
+  // other callees are compared as named
+  var c1: Map[Str, Str] = {}
+  var c2: Map[Str, Str] = {}
+  expect(numbered_checks(checks_part(["time.offset_secs"]), c1) == numbered_checks(checks_part(["time.clamp_secs"]), c2)) == false
+  // a part that does not decode
+  var c3: Map[Str, Str] = {}
+  expect(numbered_checks(b"\x05", c3)) == None
+}
+
 test "an entry that made a thunk replays with the one there only when it is the same (thunk_replay_ok)" {
   let sig = "(Int) -> (Int)"
   // the same thunk another body made first: replay with it
