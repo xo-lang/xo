@@ -10,7 +10,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -103,15 +106,16 @@ func TestSelfhostWasm(t *testing.T) {
 		r, _ := filepath.Rel(root, d)
 		rel = append(rel, r)
 	}
-	cmd := testtmp.Guard(exec.Command(bin, append([]string{"--std=std", "--wd=" + root, "--each", "--out=" + out}, rel...)...))
-	cmd.Dir = root
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	res, err := cmd.Output()
+	// compiler/wasm --each is one single threaded process: over the 686
+	// goldens it was 2087 of the test's 2343 s on host 2 (18 CPUs,
+	// 2026-11-12; the node runs after it 256 s), at about 5.5 GB. So the
+	// goldens are dealt round robin to XO_WASM_EACH_JOBS processes
+	// (default 3, which fits a 24 GB host) that compile at once into the
+	// same --out directory (each golden's own file).
+	results, err := wasmEach(bin, root, out, rel, wasmEachJobs())
 	if err != nil {
-		t.Fatalf("compiler/wasm: %v\n%s", err, stderr.String())
+		t.Fatal(err)
 	}
-	results := parseWasmRuns(string(res))
 	runner := filepath.Join(root, "compiler", "wasm", "run.mjs")
 	pass, unsupported, failed := 0, 0, 0
 	passed := map[string]bool{}
@@ -305,6 +309,63 @@ func TestSelfhostWasmFsWrite(t *testing.T) {
 var wasmTimeRE = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z`)
 
 var wasmLeakRE = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
+
+// wasmEachJobs is $XO_WASM_EACH_JOBS, else 6 (at most the CPU count): on
+// the 18 CPU arm64 offload host the compile phase took 2087 s in one
+// process, 798 s in 3 and 468 s in 6, peak memory 7.6 of 24 GB (2026-11-12)
+func wasmEachJobs() int {
+	if v := os.Getenv("XO_WASM_EACH_JOBS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return min(6, runtime.NumCPU())
+}
+
+// wasmEach compiles the goldens rel (repository relative) with
+// compiler/wasm --each in up to jobs processes at once, each golden to
+// out/NAME.wasm, and returns each golden's result line (parseWasmRuns).
+func wasmEach(bin, root, out string, rel []string, jobs int) (map[string]string, error) {
+	if jobs > len(rel) {
+		jobs = len(rel)
+	}
+	if jobs < 1 {
+		jobs = 1
+	}
+	shards := make([][]string, jobs)
+	for i, r := range rel {
+		shards[i%jobs] = append(shards[i%jobs], r)
+	}
+	outs := make([]string, jobs)
+	errs := make([]error, jobs)
+	var wg sync.WaitGroup
+	for i, sh := range shards {
+		wg.Add(1)
+		go func(i int, sh []string) {
+			defer wg.Done()
+			cmd := testtmp.Guard(exec.Command(bin, append([]string{"--std=std", "--wd=" + root, "--each", "--out=" + out}, sh...)...))
+			cmd.Dir = root
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			res, err := cmd.Output()
+			outs[i] = string(res)
+			if err != nil {
+				errs[i] = fmt.Errorf("compiler/wasm (shard %d of %d, %d goldens): %v\n%s", i+1, jobs, len(sh), err, stderr.String())
+			}
+		}(i, sh)
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	results := map[string]string{}
+	for _, o := range outs {
+		for k, v := range parseWasmRuns(o) {
+			results[k] = v
+		}
+	}
+	return results, nil
+}
 
 // parseWasmRuns maps each run of `compiler/wasm --each` to its result line.
 func parseWasmRuns(s string) map[string]string {
