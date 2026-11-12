@@ -3,6 +3,14 @@
 //
 //	go run ./scripts/stdproven hash MODULE
 //	go run ./scripts/stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE
+//	go run ./scripts/stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME
+//
+// timing (decision 0616 checklist item 3) builds the dudect program
+// std/evidence/MODULE/timing/NAME/ on each backend and runs it once per
+// pair of input classes with -n measurements (default 1,000,000); the
+// program prints a last line "A vs B: N measurements, max |t| T, pass".
+// It writes std/evidence/MODULE/timing-NAME.md when every |t| is below
+// 4.5, and fails with the program's output otherwise.
 //
 // hash prints the module's source hash (decision 0616 section 3) and the
 // files it covers. fuzz runs every fuzz harness that names the module with
@@ -72,6 +80,8 @@ func main() {
 		}
 	case "fuzz":
 		err = fuzz(os.Args[2:])
+	case "timing":
+		err = timing(os.Args[2:])
 	default:
 		usage()
 	}
@@ -82,7 +92,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE")
+	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME")
 	os.Exit(2)
 }
 
@@ -278,4 +288,80 @@ func fuzz(args []string) error {
 func gitOut(args ...string) (string, error) {
 	b, err := exec.Command("git", args...).Output()
 	return strings.TrimSpace(string(b)), err
+}
+
+// timing runs a dudect program of decision 0616's checklist item 3.
+func timing(args []string) error {
+	fs := flag.NewFlagSet("timing", flag.ExitOnError)
+	n := fs.Int("n", 1000000, "measurements per pair")
+	backends := fs.String("backends", "arm64,llvm", "backends, comma separated")
+	pairs := fs.String("pairs", "", "class pairs A:B, comma separated")
+	hostLabel := fs.String("host", "", "the host's name in the evidence")
+	fs.Parse(args)
+	if fs.NArg() != 2 || *pairs == "" {
+		usage()
+	}
+	module, name := fs.Arg(0), fs.Arg(1)
+	dir := filepath.Join("std", "evidence", module, "timing", name)
+	if _, err := os.Stat(filepath.Join(dir, "main.xo")); err != nil {
+		return err
+	}
+	src, _, err := sourceHash(module)
+	if err != nil {
+		return err
+	}
+	commit, err := gitOut("rev-parse", "--short=9", "HEAD")
+	if err != nil {
+		return err
+	}
+	if dirty, _ := gitOut("status", "--porcelain", "--", "std", "compiler"); dirty != "" {
+		return errors.New("std or compiler has uncommitted changes: evidence names a commit")
+	}
+	tmp, err := os.MkdirTemp("", "stdproven-timing-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	start := time.Now()
+	var lines []string
+	worst := 0.0
+	for _, b := range strings.Split(*backends, ",") {
+		bin := filepath.Join(tmp, "t-"+b)
+		if out, err := exec.Command(filepath.Join("bin", "xo"), "build", "--backend="+b, "-o", bin, dir).CombinedOutput(); err != nil {
+			return fmt.Errorf("xo build --backend=%s %s: %v\n%s", b, dir, err, out)
+		}
+		for _, p := range strings.Split(*pairs, ",") {
+			a, c, ok := strings.Cut(p, ":")
+			if !ok {
+				usage()
+			}
+			out, err := exec.Command(bin, a, c, strconv.Itoa(*n)).CombinedOutput()
+			text := strings.TrimSpace(string(out))
+			last := text[strings.LastIndex(text, "\n")+1:]
+			fmt.Printf("%s: %s\n", b, last)
+			if err != nil || !strings.HasSuffix(last, ", pass") {
+				return fmt.Errorf("%s %s: %v\n%s", b, p, err, text)
+			}
+			if i := strings.Index(last, "max |t| "); i >= 0 {
+				f := strings.Fields(last[i+len("max |t| "):])
+				if len(f) > 0 {
+					if t, err := strconv.ParseFloat(strings.TrimSuffix(f[0], ","), 64); err == nil && t > worst {
+						worst = t
+					}
+				}
+			}
+			lines = append(lines, "- "+b+": "+last)
+		}
+	}
+	host := *hostLabel
+	if host == "" {
+		host = runtime.GOOS + "/" + runtime.GOARCH
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "kind: timing\nmodule: %s\nresult: pass\ncommit: %s\nsource: %s\ndate: %s\nhost: %s\n", module, commit, src, time.Now().UTC().Format("2006-01-02"), host)
+	fmt.Fprintf(&b, "command: go run ./scripts/stdproven timing -n %d -backends %s -pairs %s -host %q %s %s\n", *n, *backends, *pairs, host, module, name)
+	fmt.Fprintf(&b, "measure: %d pairs on %s, %d measurements each, max |t| %.3f (pass below 4.5), %s\n\n", len(lines), *backends, *n, worst, time.Since(start).Round(time.Second))
+	fmt.Fprintf(&b, "Timing evidence (decision 0616 checklist item 3): the dudect program %s, Welch's t over the times of two input classes, uncropped and cropped at several percentiles.\n\n", dir)
+	b.WriteString(strings.Join(lines, "\n") + "\n")
+	return os.WriteFile(filepath.Join("std", "evidence", module, "timing-"+name+".md"), []byte(b.String()), 0o644)
 }
