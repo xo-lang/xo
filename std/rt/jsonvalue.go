@@ -52,14 +52,32 @@ func jsonValueAt(x any, path string) (Json_Value, *Json_DecodeErr) {
 		}
 		return Json_Value{Tag: 6, P: Json_Value_List{F_items: ListFromSlice(items)}}, nil
 	case *jsonObj:
-		// the values a duplicate key replaced are range checked too, in
-		// document order, as Go's decoder reads every member
-		for _, m := range t.all {
-			if _, err := jsonValueAt(m.v, path+"."+m.k); err != nil {
-				return Json_Value{}, err
-			}
-		}
 		fs := make([]Tuple2[string, Json_Value], len(t.keys))
+		if t.all != nil {
+			// the values a duplicate key replaced are range checked too, in
+			// document order, as Go's decoder reads every member; each
+			// member is converted once, its key's last one kept (converting
+			// the kept values again doubled the work at every level with a
+			// duplicate key: 2^depth, the 0616 json review's F3)
+			last := make(map[string]int, len(t.keys))
+			for i, m := range t.all {
+				last[m.k] = i
+			}
+			kept := make(map[string]Json_Value, len(t.keys))
+			for i, m := range t.all {
+				v, err := jsonValueAt(m.v, path+"."+m.k)
+				if err != nil {
+					return Json_Value{}, err
+				}
+				if last[m.k] == i {
+					kept[m.k] = v
+				}
+			}
+			for i, k := range t.keys {
+				fs[i] = Tuple2[string, Json_Value]{F0: k, F1: kept[k]}
+			}
+			return Json_Value{Tag: 7, P: Json_Value_Object{F_fields: ListFromSlice(fs)}}, nil
+		}
 		for i, k := range t.keys {
 			v, err := jsonValueAt(t.vals[k], path+"."+k)
 			if err != nil {

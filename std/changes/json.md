@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-12: security: parse_value on the Go backend is linear in nested duplicate keys
+
+- Kind: security
+- Commit: this commit
+- Found by: the decision 0616 security review of std/json (second reviewer, finding F3)
+- Go reference: encoding/json (a duplicate key's later value wins, every member read once)
+- Test: std/rt/jsonvalue_dup_test.go TestJsonValueNestedDuplicates (64 levels; the old code ran past 30 s)
+- Shipped in: not yet released
+
+On the Go backend, an object with a duplicate key converted its kept values twice, once in the range check of every member and again for the result, so each nested level doubled the work: about 40 levels of `{"a":0,"a":{...}}`, 600 bytes, hung `parse_value`, `decode[Value]`, Value fields and the stream Decoder. Each member is now converted once. The native and LLVM backends were not affected.
+
 ## 2026-11-12: security: decode_go no longer faults on a type error under a non-ASCII key
 
 - Kind: security
