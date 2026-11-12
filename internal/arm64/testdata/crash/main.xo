@@ -1,6 +1,6 @@
 // TestCrashReport's program (decision 0343): a hardware fault two Xo
 // frames down, chosen by XO_CRASH_KIND (segv, trap, overflow; task: segv
-// in a task; xdeep, xdeep_task: Xo recursion), reported by the runtime's
+// in a task, tasks: in four at once; xdeep, xdeep_task: Xo recursion), reported by the runtime's
 // crash handler before the signal's default action
 // (scripts/ci/windows-crash.sh runs it on Windows).
 use c "crashc.h" link "crashc.c"
@@ -52,5 +52,26 @@ fn main(os: Os) {
     }
     return
   }
+  if kind == "tasks" {
+    together()
+    return
+  }
   os.stdio.println("${poke(kind, 2)}")
+}
+
+/// Four tasks fault at the same moment: one thread reports, the others
+/// park in the handler (2026-11-12: with SA_RESETHAND a second fault met
+/// the default action and ended the process before the report's frames,
+/// gotchas/const-read-canceled-waiter.md).
+fn together() {
+  let ready = Atomic[Int].new(0)
+  scope s {
+    for _ in 0..4 {
+      s.spawn(fn() {
+        let _r = ready.add(1)
+        while ready.get() < 4 {}
+        let _n = poke("segv", 2)
+      })
+    }
+  }
 }

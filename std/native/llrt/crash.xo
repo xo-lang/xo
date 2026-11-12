@@ -3,7 +3,7 @@
 // error, then lets the system's default action end it (the same signal,
 // status 128+signal, a core file where enabled). install (entry.xo
 // start) maps the process's one crash record and sets the handlers
-// (SA_SIGINFO, SA_ONSTACK, SA_RESETHAND, SA_NODEFER); thread_init gives
+// (SA_SIGINFO, SA_ONSTACK, SA_NODEFER); thread_init gives
 // each runtime thread an alternate signal stack, so a fault on a guard
 // page is reported too.
 //
@@ -16,8 +16,12 @@
 // line tables), which allocates and reads files; a watchdog (ITIMER_REAL,
 // XO_CRASH_TIMEOUT seconds, 5 by default) ends a phase 2 that hangs on a
 // lock the faulting thread held, and a fault inside it ends the process
-// (its signal's handler is the default by then). Either way phase 1's
-// lines are already written.
+// (on_crash's own-claim case). Either way phase 1's lines are already
+// written. The handlers stay installed until the report is done (no
+// SA_RESETHAND): a second thread that faults while the first reports
+// parks in on_crash instead of meeting the default action, which ended
+// the process before the first could write its frames (two tasks
+// faulting at one read, 2026-11-12, gotchas/const-read-canceled-waiter.md).
 //
 // Windows (x86_64): the last vectored exception handler (on_crash_veh)
 // reports an exception nothing could handle (Xo code runs on fiber
@@ -212,14 +216,17 @@ fn set(r: Int, sig: Int, h: Int, flags: Int) {
   }
 }
 
-/// The handlers' flags: SA_SIGINFO, SA_ONSTACK, SA_RESETHAND and
-/// SA_NODEFER (a fault inside the report, or the watchdog's signal, is
-/// not held back while the handler runs).
+/// The handlers' flags: SA_SIGINFO, SA_ONSTACK and SA_NODEFER (a fault
+/// inside the report, or the watchdog's signal, is not held back while
+/// the handler runs). No SA_RESETHAND: it made the default action every
+/// thread's at the first fault, so a second thread faulting at the same
+/// time ended the process mid-report; on_crash sets the default itself
+/// when its report is done.
 fn flags() -> Int {
   if bsd() {
-    64 | 1 | 4 | 16
+    64 | 1 | 16
   } else {
-    4 | 134217728 | 2147483648 | 1073741824
+    4 | 134217728 | 1073741824
   }
 }
 
@@ -437,8 +444,8 @@ pub fn on_crash(sig: Int, info: Int, uc: Int) {
   let me = rt.tlocal_addr()
   let prev = if rt.slot_cas[Int](r, R_CLAIM / 8, 0, me, ACQ_REL) { 0 } else { rt.slot_load[Int](r, R_CLAIM / 8, ACQUIRE) }
   if prev == me {
-    // a fault inside this thread's report: its handler is the default
-    // now, so returning runs the instruction again and ends the process
+    // a fault inside this thread's report: with the handler the default,
+    // returning runs the instruction again and ends the process
     rt.mem_store(r, R_POS, 0, 8)
     w_str(r, "(the crash report faulted: ")
     w_str(r, sig_name(sig))
@@ -509,6 +516,9 @@ pub fn on_alarm(sig: Int) {
   let s = "(the traceback timed out)\n"
   crashfile.report(raw.data(s), s.len())
   let c = ld(r, R_SIG)
+  // the reported signal's default action, so the kill ends the process
+  // rather than entering on_crash again
+  set(r, c, 0, 0)
   if darwin() {
     let _k = sys_darwin.kill(Int(sys_darwin.getpid()), c)
   } else {

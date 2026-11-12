@@ -76,7 +76,7 @@ func testCrashReport(t *testing.T, be string) {
 	// inlines it into poke and the frame says [inlined])
 	const loc = `( \([^)]*\))?`
 	const thunk = `(  xo_c_\S+` + loc + `( \[inlined\])?\n)?`
-	frames := regexp.MustCompile(`(?m)^  \S*crashc_write` + loc + `\n` + thunk + `  poke \(main\.xo:18\)\n  poke \(main\.xo:10\)\n  poke \(main\.xo:10\)\n  main \(main\.xo:55\)$`)
+	frames := regexp.MustCompile(`(?m)^  \S*crashc_write` + loc + `\n` + thunk + `  poke \(main\.xo:18\)\n  poke \(main\.xo:10\)\n  poke \(main\.xo:10\)\n  main \(main\.xo:59\)$`)
 	if !frames.MatchString(got) {
 		t.Errorf("segv: the traceback lacks the frames:\n%s", got)
 	}
@@ -134,6 +134,16 @@ func testCrashReport(t *testing.T, be string) {
 	_, got, sig = run("XO_CRASH_KIND=task")
 	if sig != syscall.SIGSEGV || !strings.HasPrefix(got, "fatal error: SIGSEGV") || !regexp.MustCompile(`crashc_write`+loc+`\n`+thunk+`  poke \(main\.xo:18\)\n  poke \(main\.xo:10\)\n  poke \(main\.xo:10\)\n`).MatchString(got) {
 		t.Errorf("task: signal %v\n%s", sig, got)
+	}
+	// faults in four tasks at once: one report with its frames, the
+	// handler never run twice (SA_RESETHAND let a second thread's fault
+	// end the process before the frames, 2026-11-12); five runs, as the
+	// faults race
+	for i := 0; i < 5; i++ {
+		_, got, sig = run("XO_CRASH_KIND=tasks")
+		if sig != syscall.SIGSEGV || strings.Count(got, "fatal error: SIGSEGV") != 1 || !strings.Contains(got, "\nframes: 0x") || !strings.Contains(got, "\ntraceback:\n") || strings.Contains(got, "crash report faulted") {
+			t.Fatalf("tasks (run %d): signal %v\n%s", i, sig, got)
+		}
 	}
 	// XO_CRASH_SLEEP=1: the process names its pid and holds a second after
 	// phase 1 (for vmmap), then ends with the same signal; unset, it does not

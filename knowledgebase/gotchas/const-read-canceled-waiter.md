@@ -38,3 +38,16 @@ and passes 30 of 30 after.
 A runtime call that can return early on cancellation with a placeholder
 value needs an unwinding check at its call site before the value is
 used. When adding such a call, use `check_then` after it.
+
+## The report stopped before its frames
+
+The crash report printed its first line and the registers, then the
+process died with no `frames:` line or traceback. Two tasks had faulted
+at the same read at the same moment. The handlers were installed with
+SA_RESETHAND, so the first fault set the default action for the whole
+process, and the second thread's fault ended it while the first thread
+was still writing. crash.xo now installs them without SA_RESETHAND: a
+second faulting thread parks in on_crash, the reporting thread sets the
+default itself when done, and on_alarm sets it before its kill.
+TestCrashReport's `tasks` kind (four tasks faulting at once) lacked the
+traceback 20 of 20 runs before and has it after.
