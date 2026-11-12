@@ -131,6 +131,39 @@ fn put_bytes(out: BytesBuilder, data: Bytes) -> BytesBuilder {
   o
 }
 
+fn put_key_varint(out: BytesBuilder, key: Int, v: UInt64) -> BytesBuilder {
+  var x = v.to_bits()
+  // a one byte key and a varint of up to 7 bytes (below 2^49): one word
+  if key >= 0 && key < 128 && x >= 0 && x < 562949953421312 {
+    var w = key
+    var n = 1
+    while x >= 128 {
+      w = w | ((x & 127) | 128).wrapping_shl(8 * n)
+      x = x.shr_logical(7)
+      n += 1
+    }
+    var o = out
+    o.write_le(w | x.wrapping_shl(8 * n), n + 1)
+    return o
+  }
+  put_varint(put_varint(out, UInt64.wrapping_from(key)), v)
+}
+
+fn put_key_fixed32(out: BytesBuilder, key: Int, v: UInt32) -> BytesBuilder {
+  if key >= 0 && key < 128 {
+    var o = out
+    o.write_le(key | Int(v).wrapping_shl(8), 5)
+    return o
+  }
+  put_fixed32(put_varint(out, UInt64.wrapping_from(key)), v)
+}
+
+fn put_key_bytes(out: BytesBuilder, key: Int, data: Bytes) -> BytesBuilder {
+  var o = put_key_varint(out, key, UInt64.wrapping_from(data.len()))
+  o.write(data)
+  o
+}
+
 fn encode_zigzag(v: Int) -> UInt64 { UInt64.from_bits(v.wrapping_shl(1) ^ (v >> 63)) }
 
 fn decode_zigzag(v: UInt64) -> Int {

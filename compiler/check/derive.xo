@@ -1859,6 +1859,27 @@ fn proto_sub(t: Str, b: Str, v: Str, x: Str) -> Str {
   t.replace("$B", b).replace("$V", v).replace("$X", x)
 }
 
+/// A field's write into `b` with its key (`num << 3 | wire`): the
+/// element's writer of the tag's builder, where it is one std/protobuf
+/// has a keyed form of (put_key_varint, put_key_fixed32, put_key_bytes,
+/// and a nested message's proto_kwrite__T), so the key and the value or
+/// length go out together; otherwise the tag, then the writer.
+fn proto_keyed(enc: Str, num: Int, wire: Int, v: Str) -> Str {
+  let key = (num << 3) | wire
+  for (from, to) in [("protobuf.put_varint($B, ", "protobuf.put_key_varint"), ("protobuf.put_fixed32($B, ", "protobuf.put_key_fixed32"), ("protobuf.put_bytes($B, ", "protobuf.put_key_bytes")] {
+    if enc.starts_with(from) {
+      return "${to}(b, ${key}, ${proto_sub(enc[from.len()..enc.len()], "", v, "")}"
+    }
+  }
+  if enc.starts_with("proto_cwrite__") {
+    let at = enc.find("($B, ") ?? -1
+    if at > 0 {
+      return "proto_kwrite__${enc[14..at]}(b, ${key}, ${proto_sub(enc[at + 5..enc.len()], "", v, "")}"
+    }
+  }
+  proto_sub(enc, "protobuf.put_tag(b, ${num}, ${wire})", v, "")
+}
+
 /// `proto_zero__N`, `proto_marshal__N` and `proto_unmarshal__N` for a struct deriving Proto: Int, Bool,
 /// Float, Str, Bytes and nested Proto struct fields, with Option (explicit presence) and List (packed
 /// for the numeric types), proto3 implicit presence otherwise (a zero value is not written), fields
@@ -1944,7 +1965,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
         if first_zero.is_empty() {
           first_zero = "${tx}.${vn}(${ve.zero})"
         }
-        arms.push("      ${vn}(x) => { b = ${proto_sub(ve.enc, "protobuf.put_tag(b, ${num}, ${ve.wire})", "x", "")} }")
+        arms.push("      ${vn}(x) => { b = ${proto_keyed(ve.enc, num, ve.wire, "x")} }")
         sarms.push("      ${vn}(x) => { s += ${proto_tag_size(num, ve.wire)} + ${proto_sub(ve.size, "", "x", "")} }")
         var val = proto_sub(ve.conv, "", "", "x")
         if !ve.merge.is_empty() {
@@ -2006,9 +2027,9 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
             wr.push("    let val = v.${f}.get(k) ?? ${ve.zero}")
             wr.push("    var msz__: List[Int] = []")
             wr.push("    var mat__ = 0")
-            wr.push("    b = protobuf.put_varint(protobuf.put_tag(b, ${k}, 2), UInt64.wrapping_from(${esz}))")
-            wr.push("    b = ${proto_sub(ke.enc, "protobuf.put_tag(b, 1, ${ke.wire})", "k", "")}")
-            wr.push("    b = ${proto_sub(ve.enc, "protobuf.put_tag(b, 2, ${ve.wire})", "val", "").replace("sz__", "msz__").replace("at__", "mat__")}")
+            wr.push("    b = protobuf.put_key_varint(b, ${(k << 3) | 2}, UInt64.wrapping_from(${esz}))")
+            wr.push("    b = ${proto_keyed(ke.enc, 1, ke.wire, "k")}")
+            wr.push("    b = ${proto_keyed(ve.enc, 2, ve.wire, "val").replace("sz__", "msz__").replace("at__", "mat__")}")
             wr.push("  }")
             sz.push("  for (k, val) in v.${f} {")
             sz.push("    var msz__: List[Int] = []")
@@ -2027,10 +2048,9 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       continue
     }
     let w = el.wire
-    let tag = "protobuf.put_tag(b, ${k}, ${w})"
         if kind == 0 {
       zeros.push("${f}: ${el.zero}")
-      wr.push("  if ${proto_sub(el.nonzero, "", "v.${f}", "")} { b = ${proto_sub(el.enc, tag, "v.${f}", "")} }")
+      wr.push("  if ${proto_sub(el.nonzero, "", "v.${f}", "")} { b = ${proto_keyed(el.enc, k, w, "v.${f}")} }")
       sz.push("  if ${proto_sub(el.nonzero, "", "v.${f}", "")} { s += ${proto_tag_size(k, w)} + ${proto_sub(el.size, "", "v.${f}", "")} }")
       var val = proto_sub(el.conv, "", "", "x")
       if !el.merge.is_empty() {
@@ -2039,7 +2059,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${el.rd}(data, at)?", "at = n2", "r.${f} = ${val}"]))
     } else if kind == 1 {
       zeros.push("${f}: None")
-      wr.push("  if let Some(x) = v.${f} { b = ${proto_sub(el.enc, tag, "x", "")} }")
+      wr.push("  if let Some(x) = v.${f} { b = ${proto_keyed(el.enc, k, w, "x")} }")
       sz.push("  if let Some(x) = v.${f} { s += ${proto_tag_size(k, w)} + ${proto_sub(el.size, "", "x", "")} }")
       var val = proto_sub(el.conv, "", "", "x")
       if !el.merge.is_empty() {
@@ -2059,7 +2079,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
           helpers.push("}")
         }
         wr.push("  if v.${f}.len() > 0 {")
-        wr.push("    b = protobuf.put_varint(protobuf.put_tag(b, ${k}, 2), UInt64.wrapping_from(${psz}))")
+        wr.push("    b = protobuf.put_key_varint(b, ${(k << 3) | 2}, UInt64.wrapping_from(${psz}))")
         wr.push("    for x in v.${f} { b = ${proto_sub(el.enc, "b", "x", "")} }")
         wr.push("  }")
         sz.push("  if v.${f}.len() > 0 {")
@@ -2068,7 +2088,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
         sz.push("  }")
         rd.push((" num == ${k} && wire == 2", ["let (x, n2) = protobuf.read_bytes(data, at)?", "at = n2", "var q = 0", "while q < x.len() {", "  let (y, q2) = ${el.rd}(x, q)?", "  q = q2", "  r.${f}.push(${proto_sub(el.conv, "", "", "y")})", "}"]))
       } else {
-        wr.push("  for x in v.${f} { b = ${proto_sub(el.enc, tag, "x", "")} }")
+        wr.push("  for x in v.${f} { b = ${proto_keyed(el.enc, k, w, "x")} }")
         sz.push("  for x in v.${f} { s += ${proto_tag_size(k, w)} + ${proto_sub(el.size, "", "x", "")} }")
       }
       rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${el.rd}(data, at)?", "at = n2", "r.${f}.push(${proto_sub(el.conv, "", "", "x")})"]))
@@ -2127,6 +2147,12 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
   e.ln("  let n = sz__[at__]", sp)
   e.ln("  at__ += 1", sp)
   e.ln("  proto_write__${n}(protobuf.put_varint(b, UInt64.wrapping_from(n)), v, sz__, at__)", sp)
+  e.ln("}", sp)
+  // the same with the field's key written with the length (proto_keyed)
+  e.ln("${pub_}fn proto_kwrite__${n}(b: BytesBuilder, key: Int, v: ${n}, sz__: List[Int], var at__: Int) -> BytesBuilder {", sp)
+  e.ln("  let n = sz__[at__]", sp)
+  e.ln("  at__ += 1", sp)
+  e.ln("  proto_write__${n}(protobuf.put_key_varint(b, key, UInt64.wrapping_from(n)), v, sz__, at__)", sp)
   e.ln("}", sp)
   e.ln("${pub_}fn proto_marshal__${n}(v: ${n}) -> Bytes {", sp)
   e.ln("  var sz__: List[Int] = []", sp)

@@ -822,4 +822,27 @@ test "the put_ builder forms write what the append_ forms write" {
     }
   }
 }
+
+test "the put_key_ forms write the tag then the value (derive Proto's keyed writes)" {
+  // one byte keys and two byte ones (field 16 and up), every wire type,
+  // and values on each side of the one word form's 2^49 bound
+  for num in [1, 2, 15, 16, 2047, 536870911] {
+    for wire in [0, 2, 5] {
+      let key = (num << 3) | wire
+      for v in [0, 1, 127, 128, 16384, 562949953421311, 562949953421312, 4294967295, 9223372036854775807, -1] {
+        let u = UInt64.from_bits(v)
+        var o = BytesBuilder.new()
+        o = protobuf.put_key_varint(o, key, u)
+        o = protobuf.put_key_fixed32(o, key, UInt32.wrapping_from(v))
+        o = protobuf.put_key_bytes(o, key, b"abc")
+        var b = protobuf.append_varint(protobuf.append_tag(b"", num, wire), u)
+        b = protobuf.append_fixed32(protobuf.append_tag(b, num, wire), UInt32.wrapping_from(v))
+        b = protobuf.append_bytes(protobuf.append_tag(b, num, wire), b"abc")
+        if o.freeze() != b {
+          fault("put_key_ and append_ differ for field ${num} wire ${wire} value ${v}")
+        }
+      }
+    }
+  }
+}
 `

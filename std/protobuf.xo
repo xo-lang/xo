@@ -43,6 +43,13 @@ fn put_tag(out: BytesBuilder, num: Int, wire: Int) -> BytesBuilder
 fn put_fixed32(out: BytesBuilder, v: UInt32) -> BytesBuilder
 fn put_fixed64(out: BytesBuilder, v: UInt64) -> BytesBuilder
 fn put_bytes(out: BytesBuilder, data: Bytes) -> BytesBuilder
+/// A field's key (`num << 3 | wire`, the tag's varint) and then its value, written together: one word
+/// when the key is one byte and the value fits beside it (the generated writers of `derive Proto` call
+/// these for every field: a tag pushed alone was a builder call per field).
+fn put_key_varint(out: BytesBuilder, key: Int, v: UInt64) -> BytesBuilder
+fn put_key_fixed32(out: BytesBuilder, key: Int, v: UInt32) -> BytesBuilder
+/// The key, the length prefix, then the bytes.
+fn put_key_bytes(out: BytesBuilder, key: Int, data: Bytes) -> BytesBuilder
 /// The number of bytes `append_varint` writes for `v` (SizeVarint).
 fn size_varint(v: UInt64) -> Int
 /// The zigzag form of a signed value (EncodeZigZag) and its inverse (DecodeZigZag).

@@ -116,3 +116,17 @@ linux/arm64 host 1, `ab-host.sh` (xo bench --ab, 7 rounds, stopped at 6), A main
 The protobuf run's B was 9a1f7837b, the same code but for one shift that faulted on 8 byte varints with a high
 byte of 128 or more (Xo's `<<` checks overflow; `wrapping_shl` fixes it, a path the bench never reaches).
 
+## Each field's key written with its value (2026-11-12)
+
+derive Proto's writers call `protobuf.put_key_varint`, `put_key_fixed32` and `put_key_bytes` (and a nested
+message's `proto_kwrite__T`) with the field's key, so a one byte key and its value or length go out as one word,
+where the tag was pushed alone. Found with XO_PROF=cpu at main 99c339dfc (host 1, protobuf marshal, 1501 samples):
+`put_varint` 49% cumulative, `cabi.obj_rs_push_byte` 30% (the tags). linux/arm64 host 1, `ab-host.sh`
+(xo bench --ab, 7 rounds, stopped at 6), A main 99c339dfc, B f530903ff:
+
+| workload | A wall | B wall | B / A (95%) |
+|---|---|---|---|
+| protobuf marshal | 15.01 ms | 12.72 ms | 0.847 (0.819 to 0.865) |
+| otlp traces | 284.9 ms | 262.8 ms | 0.923 (0.918 to 0.925) |
+| otlp metrics | 144.1 ms | 139.7 ms | 0.969 (0.958 to 0.986) |
+

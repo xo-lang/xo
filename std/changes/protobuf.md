@@ -1,5 +1,20 @@
 # std/protobuf changes
 
+## 2026-11-12: perf: derive Proto writes each field's key with its value
+
+- Kind: perf, feature (put_key_varint, put_key_fixed32, put_key_bytes)
+- Commit: this push
+- Found by: XO_PROF=cpu of bench/perf/protobuf marshal on linux/arm64 host 1 after the word writers: the tag pushed alone, a byte at a time (cabi.obj_rs_push_byte 30% cumulative with obj.reserve)
+- Go reference: protobuf-go's generated fast path appends a field's precomputed tag bytes and its value in one step
+- Timing: bench/results/otlp-derive-2026-11-11.md sixth table: protobuf marshal 0.847, otlp traces 0.923, metrics 0.969 of main (linux/arm64 host 1, --ab)
+- Test: protobuf corpus "the put_key_ forms write the tag then the value" (fields 1 to 536870911, wire 0, 2, 5, values each side of 2^49); the protobuf, protowkt, protojson, protodesc, protoparse, textproto and otlp corpora on go, arm64, llvm; goldens otlp_export, derive_empty_struct
+- Shipped in: not yet released
+
+`put_key_varint(out, key, v)`, `put_key_fixed32` and `put_key_bytes` take a field's key (`num << 3 | wire`) and
+write it and the value (or the length prefix) together, as one `BytesBuilder.write_le` when the key is one byte and
+the value fits beside it. The generated writers call them for every field, and a nested message's
+`proto_kwrite__T` writes its key with its length, where each field pushed its tag alone. Output bytes are unchanged.
+
 ## 2026-11-12: perf: varints and fixed width values are written as one word
 
 - Kind: perf
