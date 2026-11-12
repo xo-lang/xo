@@ -97,9 +97,36 @@ REPL compiler's own memory, the bar, is the 49 MB above.
 
 Raw: repl30/page-0491.json, repl30/page-main-955a6c8a7.json (lead's notes).
 
+## Where the 49 MB is: live bytes against the heap (scratch probe)
+
+A scratch build of main 955a6c8a7 (never pushed) wrapped the wasm runtime's `$alloc` and `$free`
+(compiler/wasm/rt.xo) to count the bytes of live blocks (headers and size class rounding included)
+and their peak, exported as `xo_live_bytes` and `xo_peak_bytes`, and the scratch page's toolchain.js
+reported them after each entry. The same session on that page:
+
+| after entry | wasm memory | live between entries | peak live so far |
+|---|---|---|---|
+| 1 `use std/adler32` (std's record decoded, relocated, installed) | 35 MB | 21.8 MB | 28.1 MB |
+| 2 `1 + 2` (the first check and build) | 41 MB | 21.8 MB | 32.8 MB |
+| 4 `xs.sort()` (the first std body lowered) | 44 MB | 21.8 MB | 36.3 MB |
+| 11 | 49 MB | 21.8 MB | 36.3 MB |
+| 30 | 49 MB | 21.8 MB | 36.5 MB |
+
+- The session holds 21.8 MB between entries, from entry 1 to entry 30 (nothing accumulates).
+- Live bytes peak at 36.5 MB, inside an entry (entry 4 and later: an entry's check and build on top
+  of the warm session), not at the record's load (28.1 MB at entry 1).
+- The heap's end is 12.5 MB above the live peak: free blocks the later requests do not fit, and the
+  1 MiB the grow step adds past the end.
+
+So releasing the decoded record before its relocated copy is built (decision 0583's last named item)
+lowers entry 1's transient, which is 8 MB below the session's live peak: it cannot lower the 49 MB
+alone. The levers on the number are an entry's own peak over the warm session (14.7 MB at entry 4:
+the entry's checker copying std's object list, 0583 (f)) and the 12.5 MB between the live peak and
+the heap's end (where the free space sits, by block size, is the next probe).
+
 ## Next
 
-The margin is 1 MB. Decision 0583's left item is the record's load, which holds std's objects twice
-while it installs them (about 7 MB at entry 1, step (d) "free the decoded record"); entry 1 is not
-the peak (entry 15 is), so its gain shows only if the later entries reuse those freed blocks rather
-than growing the heap: to be measured with this method.
+The margin is 1 MB. By the probe above, the next steps are: (1) the free space between the live
+peak and the heap's end (12.5 MB), by a probe of the free blocks by size at entry 11; (2) an entry's
+own peak (14.7 MB over the warm 21.8 MB), by allocation site at entry 4. Releasing the decoded
+record before relocation is not one of them.
