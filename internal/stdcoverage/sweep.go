@@ -75,7 +75,7 @@ func Sweep(root, xo, work string, jobs int) (edges []Edge, failed []string, err 
 			defer wg.Done()
 			for i := range next {
 				out := filepath.Join(work, fmt.Sprintf("own-%d.tsv", i))
-				msg, ok := runEdges(root, xo, dirs[i], out, "--own")
+				msg, ok := runEdges(root, xo, dirs[i], out, "--own", bindDir(work, i))
 				if !ok {
 					results[i] = result{fail: msg}
 					continue
@@ -91,7 +91,8 @@ func Sweep(root, xo, work string, jobs int) (edges []Edge, failed []string, err 
 	wg.Wait()
 	// A program that stopped on a missing binding: xo check binds it, one
 	// program at a time (into $XO_CBIND_DIR or $XO_GOBIND_DIR when set, as
-	// a test's environment sets them, which xo dev edges reads too), and
+	// a test's environment sets them, else the program's directory under
+	// work, bindEnv; xo dev edges reads them too), and
 	// the program is swept again.
 	for i, r := range results {
 		if r.fail == "" || !strings.Contains(r.fail, "binding") {
@@ -99,11 +100,12 @@ func Sweep(root, xo, work string, jobs int) (edges []Edge, failed []string, err 
 		}
 		c := exec.Command(xo, "check", dirs[i])
 		c.Dir = root
+		c.Env = bindEnv(bindDir(work, i))
 		// a program may fail its check on purpose; the retry says whether
 		// the bindings were written
 		checked, _ := c.CombinedOutput()
 		out := filepath.Join(work, fmt.Sprintf("own-%d.tsv", i))
-		if msg, ok := runEdges(root, xo, dirs[i], out, "--own"); ok {
+		if msg, ok := runEdges(root, xo, dirs[i], out, "--own", bindDir(work, i)); ok {
 			results[i] = result{path: out, bindings: bindingsOf(out)}
 		} else {
 			results[i] = result{fail: firstLine(msg) + " (after xo check: " + firstLine(string(checked)) + ")"}
@@ -133,7 +135,7 @@ func Sweep(root, xo, work string, jobs int) (edges []Edge, failed []string, err 
 	sort.Strings(values)
 	for _, b := range values {
 		out := filepath.Join(work, "std-"+strings.ReplaceAll(b, ",", "-")+".tsv")
-		if msg, ok := runEdges(root, xo, dirs[first[b]], out, "--std"); !ok {
+		if msg, ok := runEdges(root, xo, dirs[first[b]], out, "--std", bindDir(work, first[b])); !ok {
 			return nil, failed, fmt.Errorf("the std graph for bindings %s (from %s): %s", b, dirs[first[b]], firstLine(msg))
 		}
 		paths = append(paths, out)
@@ -144,14 +146,33 @@ func Sweep(root, xo, work string, jobs int) (edges []Edge, failed []string, err 
 
 // runEdges runs `xo dev edges --impls PART --out=OUT DIR` in root and says
 // whether it succeeded, with what it printed.
-func runEdges(root, xo, dir, out, part string) (string, bool) {
+func runEdges(root, xo, dir, out, part, bind string) (string, bool) {
 	c := exec.Command(xo, "dev", "edges", "--impls", part, "--out="+out, dir)
 	c.Dir = root
+	c.Env = bindEnv(bind)
 	var b bytes.Buffer
 	c.Stdout = &b
 	c.Stderr = &b
 	err := c.Run()
 	return b.String(), err == nil
+}
+
+// bindEnv is the environment of a program's xo commands: its `use go`
+// and `use c` bindings go to bind (one directory a program, since
+// programs pin different versions), unless $XO_GOBIND_DIR or
+// $XO_CBIND_DIR already name a cache. Without it xo check wrote them into
+// the program's directory in the repository (<dir>/.xo), and tier 69
+// (2026-11-11) copied the Mac's darwin syscall binding from there into a
+// linux container, where rt did not build.
+func bindEnv(bind string) []string {
+	env := os.Environ()
+	if os.Getenv("XO_GOBIND_DIR") == "" {
+		env = append(env, "XO_GOBIND_DIR="+filepath.Join(bind, "go"))
+	}
+	if os.Getenv("XO_CBIND_DIR") == "" {
+		env = append(env, "XO_CBIND_DIR="+filepath.Join(bind, "c"))
+	}
+	return env
 }
 
 // bindingsOf reads the `# bindings B` line `xo dev edges --own` writes
@@ -167,6 +188,9 @@ func bindingsOf(path string) string {
 	}
 	return "none"
 }
+
+// bindDir is program i's binding directory under work.
+func bindDir(work string, i int) string { return filepath.Join(work, fmt.Sprintf("bind-%d", i)) }
 
 func firstLine(s string) string {
 	s = strings.TrimSpace(s)
