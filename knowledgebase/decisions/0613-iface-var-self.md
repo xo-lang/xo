@@ -2,7 +2,7 @@
 
 Status: Accepted (owner, 2026-11-11; staged: bounds, then values). Proposed by
 Xo Lang 1 (2026-11-11); gap found by
-Azure 1 porting BigQuery)
+Azure 1 porting BigQuery. Step 4 built 2026-11-11 (new code XO0439).
 
 ## Context
 

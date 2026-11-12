@@ -343,6 +343,10 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
           if !c.mods[c.objs[t].module].is_std {
             c.error("XO0403", md.name.span, "interface method `${text(md.name.name)}` must take `self` first (core 2.4)")
           }
+        } else if md.params[0].is_var {
+          // `var self` (decision 0613): a call through the interface
+          // updates its receiver's place
+          c.objs[fo].recv_var = true
         }
         c.resolve_sig(fo, env, true)
         c.objs[t].iface_meths.push(fo)

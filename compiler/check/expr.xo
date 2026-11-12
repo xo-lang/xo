@@ -226,6 +226,12 @@ fn (var c: Checker) mismatch_d(sp: Span, w: Int, g: Int, has_e: Bool) -> Int {
   if c.contains_bad(w) || c.contains_bad(g) {
     return -1
   }
+  if c.is_interface(w) {
+    let vm = c.var_self_conflict(g, w)
+    if vm >= 0 {
+      return c.var_self_error(sp, g, w, vm)
+    }
+  }
   var ws = c.show(w)
   var gs = c.show(g)
   let same = ws == gs

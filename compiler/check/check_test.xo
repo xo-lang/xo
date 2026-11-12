@@ -844,6 +844,62 @@ test "a valued enum's catch-all (decision 0493): a misplaced or mistyped one is 
   expect(ls.filter(fn(l) { l.contains("\"XO0401\"") }).len()) == 0
 }
 
+test "var self interface methods (decision 0613): declared, satisfied by var or plain methods, a var method for a plain self one is XO0439, an immutable receiver XO0501" {
+  let out = check_files(os, "v", [("v/main.xo", """
+    interface Loader {
+      fn load(var self, n: Int)
+      fn total(self) -> Int
+    }
+
+    interface Reader {
+      fn read(self, n: Int)
+    }
+
+    struct Box {
+      items: List[Int] = []
+    }
+
+    fn (var b: Box) load(n: Int) { b.items.push(n) }
+
+    fn (b: Box) total() -> Int { b.items.len() }
+
+    fn (var b: Box) read(n: Int) { b.items.push(n) }
+
+    struct Plain {
+      n: Int = 0
+    }
+
+    fn (p: Plain) load(n: Int) {}
+
+    fn (p: Plain) total() -> Int { p.n }
+
+    fn fill[T: Loader](var t: T) -> Int {
+      t.load(1)
+      t.total()
+    }
+
+    fn peek[T: Loader](t: T) {
+      t.load(1)
+    }
+
+    fn reads[T: Reader](t: T) {
+      t.read(1)
+    }
+
+    fn g() -> Int {
+      var b = Box{}
+      var p = Plain{}
+      reads(b)
+      let _r: Reader = b
+      fill(b) + fill(p)
+    }
+    """)])?
+  let ls = lines(out)
+  expect(ls.filter(fn(l) { l.contains("\"XO0439\"") }).len()) == 2
+  expect(ls.filter(fn(l) { l.contains("\"XO0501\"") }).len()) == 1
+  expect(ls.filter(fn(l) { l.contains("\"XO0403\"") || l.contains("\"XO0160\"") || l.contains("\"XO0404\"") || l.contains("\"XO0401\"") }).len()) == 0
+}
+
 test "for over a type with next() (decision 0494): a `?` that does not match next() is XO0436, once" {
   let out = check_files(os, "n", [("n/main.xo", """
     struct C {

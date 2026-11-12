@@ -560,9 +560,53 @@ fn (var b: Builder) iface_call(x: Expr, ci: check.CallInfo) -> Int {
     let (_, et) = b.result_parts(b.nat_check(x))
     to_err = et
   }
+  if !b.is_iface(vt) && b.c.objs[fo].recv_var {
+    // a `var self` method through a generic bound (decision 0613): the
+    // body is instantiated for the type, so the call is the type's `var`
+    // method's, its receiver's place read, passed, and written back
+    let m = b.method_of(ct, fname)
+    if m >= 0 && b.c.objs[m].recv_var {
+      return b.var_bound_call(m, ct, recv, vals, nt, b.fail_err(to_err), x)
+    }
+  }
   let rv = if late { b.expr(recv) } else { v }
   let r = b.method_on(fname, ct, rv, vals, nt, b.fail_err(to_err), Some(x))
   b.call_result(r, x)
+}
+
+/// A call of method m, which takes `var self`, of the type ct a generic
+/// bound's type parameter stands for, on the place recv (decision 0613
+/// step 4): as a direct `var` method call (call.xo), the place is read,
+/// passed, and written with the method's updated receiver.
+fn (var b: Builder) var_bound_call(m: Int, ct: Int, recv: Expr, args: List[Int], want: Int, to_err: Int, x: Expr) -> Int {
+  let targs = b.recv_targs(m, ct)
+  let tps = b.type_params(m)
+  if tps.len() != targs.len() {
+    b.unsupported("the method `${b.c.display_name(m)}` of `${b.c.show(ct)}` through an interface")
+    return b.undef(want)
+  }
+  var p = b.place(recv)
+  if !p.ok {
+    return b.undef(want)
+  }
+  let callee = b.declare(m, targs)
+  let cname = b.m.funcs[callee].name
+  let cres = b.m.funcs[callee].results
+  if b.m.funcs[callee].blocks[0].params.len() != args.len() + 1 || cres.len() != 2 {
+    b.unsupported("the method `${b.c.display_name(m)}` of `${b.c.show(ct)}` through an interface")
+    return b.undef(want)
+  }
+  var all = [b.place_get(p)]
+  for a in args {
+    all.push(a)
+  }
+  let t = b.m.tuple(cres)
+  let r = b.call(cname, t, "", all)
+  b.check(cname)
+  b.place_set(p, b.add(Op.Field, b.m.types[t].elems[1], Aux.I(n: 1), [r]))
+  let f0 = b.add(Op.Field, b.m.types[t].elems[0], Aux.I(n: 0), [r])
+  let from_err = b.fail_err(b.c.subst(b.c.objs[m].err, b.c.args_subst(tps, targs)))
+  b.call_result(b.adapt_result(f0, from_err, want, to_err, Some(x)), x)
 }
 
 /// The type parameters of the interface declaring the method fo mapped to

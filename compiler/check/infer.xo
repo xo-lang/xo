@@ -444,6 +444,38 @@ pub fn (var c: Checker) implements(t0: Int, iface: Int, sp: Span) -> Bool {
   }
 }
 
+/// The method of t that takes `var self` where interface iface's method of
+/// its name takes a plain `self` (decision 0613, XO0439), or -1.
+fn (var c: Checker) var_self_conflict(t0: Int, iface: Int) -> Int {
+  let t = c.resolve(t0)
+  let ir = c.resolve(iface)
+  if c.tys[t].kind != TyKind.Named || c.tys[ir].kind != TyKind.Named {
+    return -1
+  }
+  let io = c.tys[ir].obj
+  if c.objs[io].tkind != "interface" {
+    return -1
+  }
+  for im in c.objs[io].iface_meths {
+    let (m, _) = c.find_method(t, text(c.objs[im].name))
+    if m >= 0 && c.objs[m].recv_var && !c.objs[im].recv_var {
+      return m
+    }
+  }
+  -1
+}
+
+/// Reports XO0439 for method m of t, a `var` method where interface
+/// iface's takes a plain `self` (decision 0613), at sp.
+fn (var c: Checker) var_self_error(sp: Span, t: Int, iface: Int, m: Int) -> Int {
+  let name = text(c.objs[m].name)
+  let d = c.error("XO0439", sp, "`${c.show(t)}` does not implement `${c.show_raw(iface)}`: its method `${name}` takes `var self`, and `${c.show_raw(iface)}`'s `${name}` takes `self`, so a call through the interface would lose the update")
+  if d >= 0 {
+    c.note(d, "if callers through `${c.show_raw(iface)}` may change the value, declare the interface method `fn ${name}(var self, ...)`; if `${name}` only reads, declare it `fn (x: ${c.show(t)}) ${name}(...)` (core 2.4, decision 0613)")
+  }
+  d
+}
+
 /// Whether t has every method of iface with a matching signature.
 fn (var c: Checker) structural(t: Int, iface: Int, sp: Span) -> Bool {
   let io = c.tys[iface].obj
@@ -451,6 +483,12 @@ fn (var c: Checker) structural(t: Int, iface: Int, sp: Span) -> Bool {
   for im in c.objs[io].iface_meths {
     let (m, ms) = c.find_method(t, text(c.objs[im].name))
     if m < 0 || c.objs[m].is_static {
+      return false
+    }
+    // a `var` method implements only a `var self` interface method (Go's
+    // pointer receivers, decision 0613): through a plain `self` one its
+    // update would be lost (var_self_conflict reports it, XO0439)
+    if c.objs[m].recv_var && !c.objs[im].recv_var {
       return false
     }
     if c.objs[m].params.len() != c.objs[im].params.len() {

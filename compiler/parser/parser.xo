@@ -1178,11 +1178,13 @@ fn (var p: Parser) parse_param(closure: Bool, allow_self: Bool) -> Param {
     let typ = p.parse_type()
     return Param{span: p.span_from(start), is_var: true, name: name, typ: Some(typ)}
   }
-  if name.name == b"self" && !is_var && !p.at(Kind.Colon) && !closure {
+  // `var self` too, in an interface method (decision 0613): a method
+  // through the interface may update the value
+  if name.name == b"self" && (!is_var || allow_self) && !p.at(Kind.Colon) && !closure {
     if !allow_self {
       p.soft(MISPLACED_SELF, name.span, "a bare `self` parameter is only allowed first in an interface method signature")
     }
-    return Param{span: p.span_from(start), is_self: true, name: name}
+    return Param{span: p.span_from(start), is_var: is_var, is_self: true, name: name}
   }
   var prm = Param{span: p.tok.span, is_var: is_var, name: name}
   if p.got(Kind.Colon) {

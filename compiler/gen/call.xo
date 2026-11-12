@@ -529,6 +529,18 @@ fn (var g: Gen) emit_spec_call(fo: Int, sub: Map[Int, Int], name: Str, recv0: St
 /// receiver (recvCode).
 fn (var g: Gen) recv_code(e: Expr, fo: Int, borrow: Bool) -> Str {
   if g.c.objs[fo].recv_var {
+    let vt = g.type_of(e)
+    if g.is_param_t(vt) && g.c.objs[fo].iface {
+      let vp = g.c.tys[g.c.resolve(vt)].obj
+      let vc = g.c.objs[vp].constraint
+      if vc >= 0 {
+        // a `var self` interface method through a generic bound (decision
+        // 0613): the place's address, whose Go method set has the type's
+        // pointer receiver (`var`) methods, as the interface
+        g.note_target(vc)
+        return "${g.rt()}Iface[${g.go_type(vc)}](&${g.place(e)})"
+      }
+    }
     return g.place(e)
   }
   let t = g.type_of(e)

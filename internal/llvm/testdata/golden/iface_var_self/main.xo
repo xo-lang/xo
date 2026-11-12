@@ -1,0 +1,57 @@
+// var self interface methods through generic bounds (decision 0613
+// step 4): the bound call is the type's var method, its receiver's
+// place read, passed, and written back; a field path receiver too.
+interface Loader {
+  fn load(var self, n: Int)
+  fn total(self) -> Int
+}
+
+struct Box {
+  items: List[Int] = []
+}
+
+fn (var b: Box) load(n: Int) {
+  for i in 0..n {
+    b.items.push(i)
+  }
+}
+
+fn (b: Box) total() -> Int {
+  var s = 0
+  for x in b.items {
+    s += x
+  }
+  s
+}
+
+struct Counter {
+  n: Int = 0
+}
+
+fn (var c: Counter) load(n: Int) {
+  c.n += n
+}
+
+fn (c: Counter) total() -> Int {
+  c.n
+}
+
+fn fill[T: Loader](var t: T) -> Int {
+  t.load(5)
+  t.load(2)
+  t.total()
+}
+
+struct Holder {
+  box: Box = Box{}
+}
+
+fn main(os: Os) {
+  var b = Box{}
+  let r = fill(b)
+  var c = Counter{}
+  let rc = fill(c)
+  var h = Holder{}
+  let rh = fill(h.box)
+  os.stdio.println("${r} ${b.items.len()} ${b.total()} ${rc} ${c.n} ${rh} ${h.box.items.len()}")
+}

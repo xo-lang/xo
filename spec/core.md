@@ -1019,6 +1019,24 @@ pub interface Store {
   `uses` with it (decision 0540).
 - Every derivable name (`Display`, `Ord`, `Json`, ...) is also an interface and
   may be used as a constraint: `fn reply[T: Json](v: T)`.
+- An interface method may take `var self` (decision 0613): a call
+  through the interface may update the receiver, so its receiver must be
+  a `var` place (a `var` local or parameter, or a field path of one;
+  `XO0501` otherwise), and the call writes the updated value back to it,
+  as a direct `var` method call does (3.3).
+  ```
+  interface Loader {
+    fn load(var self, n: Int)
+  }
+  fn fill[T: Loader](var t: T) { t.load(5) }
+  ```
+  Method sets follow Go's pointer receivers: a type's `var` method
+  implements only a `var self` interface method, and a plain method
+  implements either. A `var` method where the interface method takes a
+  plain `self` is `XO0439`: a call through the interface would lose its
+  update. Generic bounds support `var self` methods on every backend;
+  through an interface value they are `XO1201` (planned, decision 0613
+  step 5).
 
 ### 2.5 Optionals
 
@@ -3895,6 +3913,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0436` | error | checker | `for` over a type with `next()` whose `?` does not match it: `for x in v` where `next()` can fail (write `for x? in v`), `for x? in v` where it cannot or over a builtin iteration, or a `next()` that does not return `T?` (core 3.5, decision 0494) |
 | `XO0437` | error | checker | the `string` wire option on a field that is not a Bool, integer, float or Str, or an Option of one (core 2.2, decision 0555) |
 | `XO0438` | warning | checker | an argument of a `log.debug`, `log.info`, `log.warn` or `log.error` call (or a Logger's) performs an effect other than `log`; it runs only when the record is at or above the configured level (decision 0558, std.md 6) |
+| `XO0439` | error | checker | a type's `var` method where an interface's method of its name takes a plain `self`: the type does not implement the interface, since a call through it would lose the update; declare the interface method `var self` or make the method plain (core 2.4, decision 0613) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding, to a captured variable, or to an element of `Bytes` (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |

@@ -209,6 +209,17 @@ fn (var g: Gen) to_iface(code0: Str, from0: Int, to0: Int) -> Str {
   if g.is_never(from) {
     return "${g.rt()}Absurd[${tt}](${code})"
   }
+  if n >= 0 && g.c.objs[n].tkind == "interface" {
+    for im in g.c.objs[n].iface_meths {
+      if g.c.objs[im].recv_var {
+        // a concrete value as an interface with a `var self` method: the
+        // interface value's write back is decision 0613's step 5 (Go would
+        // need the value's address, which a copy of the interface value
+        // must not share)
+        g.unsupported("a value of `${g.c.show(from)}` as `${g.c.show(to)}`, whose method `${g.c.objs[im].name.to_str() ?? ""}` takes `var self` (decision 0613 step 5)")
+      }
+    }
+  }
   let adapter = g.iface_adapter(from, to)
   if !adapter.is_empty() {
     return adapter + "{V: " + code + "}"
