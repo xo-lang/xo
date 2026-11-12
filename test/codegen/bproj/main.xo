@@ -1,0 +1,34 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a function
+// that returns one field of a struct parameter borrows the struct (decision
+// 0612). Before, returning g.name made get_name's g owned (a method's
+// receiver the same), so step, which
+// keeps its `var g`, counted up every heap field of G for the call and
+// get_name dropped them all after (the arm64 backend's lbl_local and
+// memo_at copied its whole G per label and per block, 2026-11-11).
+struct G {
+  a: List[Int] = []
+  b: List[Str] = []
+  c: Map[Int, Int] = {}
+  d: List[Bool] = []
+  e: Str = ""
+  name: Str = ""
+  n: Int = 0
+}
+
+fn get_name(g: G) -> Str {
+  g.name
+}
+
+fn step(var g: G) -> Int {
+  // arm64: -"bl _xo_h[A-Za-z0-9]+_x[0-9]+\s+bl _xo_h[A-Za-z0-9]+_x[0-9]+\s+bl _xo_h[A-Za-z0-9]+_x[0-9]+\s+"
+  g.n += 1
+  let s = get_name(g)
+  g.n += s.len()
+  g.n
+}
+
+fn main(os: Os) {
+  var g = G{name: "hello"}
+  g.a.push(1)
+  os.stdio.println("${step(g)} ${get_name(g)}")
+}
