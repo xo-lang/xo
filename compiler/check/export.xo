@@ -769,8 +769,13 @@ pub fn encode_std_export(e: StdExport) -> Bytes {
 
 /// The records of d, or None when d is not an export of this version or
 /// is damaged (a miss, never a wrong table).
-pub fn decode_std_export(d: Bytes) -> Option[StdExport] {
-  var r = ExR{d: d}
+pub fn decode_std_export(d: Bytes) -> Option[StdExport] { decode_std_export_at(d, 0) }
+
+/// decode_std_export of d's bytes from offset at to its end, read in
+/// place: on wasm `d[at..]` copies (its slices are not views), and a
+/// cache entry's record is about 1.2 MB (decision 0583, REPL memory).
+fn decode_std_export_at(d: Bytes, at: Int) -> Option[StdExport] {
+  var r = ExR{d: d, at: at}
   if r.str() != EXPORT_VERSION {
     return None
   }
@@ -1737,7 +1742,7 @@ fn decode_std_entry(d: Bytes, fp: Str) -> Option[StdExport] {
       if h.fp != fp {
         return None
       }
-      decode_std_export(d[at..])
+      decode_std_export_at(d, at)
     }
     None => None
   }
