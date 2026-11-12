@@ -190,8 +190,22 @@ All 30 values the same. The 4.3 MB block is each entry's copy of the object list
 freed after the entry and taken again by the next. The 1.2 MB blocks are the record's read buffer
 and decode_std_entry's copy of its bytes.
 
+## decode_std_entry reads the record in place
+
+decode_std_entry decoded `d[at..]`, and on wasm a Bytes slice is a copy (the runtime's
+`$str_slice`; slices are views only on the native backends, decision 0330): a second 1.2 MB block
+beside the record's read buffer. It now reads the record from offset `at` (decode_std_export_at).
+scripts/browser-memory.sh (decision 0615) on the Mac, the parent ba5912f10 against the change, the
+same site (l2-rel0500's test):
+
+| | parent | in place |
+|---|---|---|
+| /repl/ compiler peak | 37 MB | 36 MB |
+
+All 30 values the same. (The /play/ footprints, 463 and 492 MB, are within that test's run-to-run
+spread; /play/ does not load the record.)
+
 ## Next
 
-The margin is now 13 MB. Next: (1) decode_std_entry's 1.2 MB copy of the record's bytes (a view
-would do); (2) the warm session's 21.9 MB, by owner (the base checker's object list, its types,
-the record's trees); (3) the small blocks' free lists (6.9 MB free after entry 30).
+The margin is now 14 MB. Next: (1) the warm session's 21.9 MB, by owner (the base checker's object list, its types,
+the record's trees); (2) the small blocks' free lists (6.9 MB free after entry 30).
