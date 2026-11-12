@@ -4,6 +4,14 @@
 //	go run ./scripts/stdproven hash MODULE
 //	go run ./scripts/stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE
 //	go run ./scripts/stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME
+//	go run ./scripts/stdproven race [-backend B] [-host LABEL] MODULE
+//
+// race (decision 0616 section 2) runs the module's own tests
+// (std/native/MODULE_test.xo) and every corpus directory of
+// internal/stdtest/testdata/corpus named MODULE or starting with it, each
+// with xo test --race, and writes std/evidence/MODULE/race.md when none
+// fails or reports a data race. (The stress program under --race joins it
+// when the module has one.)
 //
 // timing (decision 0616 checklist item 3) builds the dudect program
 // std/evidence/MODULE/timing/NAME/ on each backend and runs it once per
@@ -82,6 +90,8 @@ func main() {
 		err = fuzz(os.Args[2:])
 	case "timing":
 		err = timing(os.Args[2:])
+	case "race":
+		err = race(os.Args[2:])
 	default:
 		usage()
 	}
@@ -92,7 +102,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME")
+	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] MODULE")
 	os.Exit(2)
 }
 
@@ -364,4 +374,83 @@ func timing(args []string) error {
 	fmt.Fprintf(&b, "Timing evidence (decision 0616 checklist item 3): the dudect program %s, Welch's t over the times of two input classes, uncropped and cropped at several percentiles.\n\n", dir)
 	b.WriteString(strings.Join(lines, "\n") + "\n")
 	return os.WriteFile(filepath.Join("std", "evidence", module, "timing-"+name+".md"), []byte(b.String()), 0o644)
+}
+
+// race runs decision 0616's race kind for one module.
+func race(args []string) error {
+	fs := flag.NewFlagSet("race", flag.ExitOnError)
+	backend := fs.String("backend", "arm64", "the native backend that has --race")
+	hostLabel := fs.String("host", "", "the host's name in the evidence")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		usage()
+	}
+	module := fs.Arg(0)
+	src, _, err := sourceHash(module)
+	if err != nil {
+		return err
+	}
+	commit, err := gitOut("rev-parse", "--short=9", "HEAD")
+	if err != nil {
+		return err
+	}
+	if dirty, _ := gitOut("status", "--porcelain", "--", "std", "compiler", "internal/stdtest"); dirty != "" {
+		return errors.New("std, compiler or internal/stdtest has uncommitted changes: evidence names a commit")
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	xo := filepath.Join(root, "bin", "xo")
+	type run struct{ name, target string }
+	var runs []run
+	if _, err := os.Stat(filepath.Join("std", "native", module+"_test.xo")); err == nil {
+		runs = append(runs, run{"module tests (std/native/" + module + "_test.xo)", "--std-module=native/" + module})
+	}
+	dirs, _ := filepath.Glob(filepath.Join("internal", "stdtest", "testdata", "corpus", module+"*"))
+	for _, d := range dirs {
+		base := filepath.Base(d)
+		if _, err := os.Stat(filepath.Join("std", base+".xo")); err == nil && base != module {
+			continue // another module's corpus (jsonrpc for json)
+		}
+		runs = append(runs, run{"corpus " + base, filepath.Join(root, d)})
+	}
+	if len(runs) == 0 {
+		return fmt.Errorf("%s has no module tests and no corpus", module)
+	}
+	start := time.Now()
+	var lines []string
+	for _, r := range runs {
+		t0 := time.Now()
+		cmd := exec.Command(xo, "test", "--race", "--backend="+*backend, r.target)
+		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
+		out, err := cmd.CombinedOutput()
+		text := string(out)
+		if err != nil || strings.Contains(text, "DATA RACE") {
+			if len(text) > 20000 {
+				text = text[len(text)-20000:]
+			}
+			return fmt.Errorf("%s: xo test --race: %v\n%s", r.name, err, text)
+		}
+		sum := strings.TrimSpace(text)
+		sum = sum[strings.LastIndex(sum, "\n")+1:]
+		line := fmt.Sprintf("- %s: %s, %s", r.name, sum, time.Since(t0).Round(time.Second))
+		fmt.Println(line)
+		lines = append(lines, line)
+	}
+	host := *hostLabel
+	if host == "" {
+		host = runtime.GOOS + "/" + runtime.GOARCH
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "kind: race\nmodule: %s\nresult: pass\ncommit: %s\nsource: %s\ndate: %s\nhost: %s\n", module, commit, src, time.Now().UTC().Format("2006-01-02"), host)
+	fmt.Fprintf(&b, "command: go run ./scripts/stdproven race -backend %s -host %q %s\n", *backend, host, module)
+	fmt.Fprintf(&b, "measure: %d runs under --race on %s, 0 data races, 0 failures, %s\n\n", len(runs), *backend, time.Since(start).Round(time.Second))
+	fmt.Fprintf(&b, "Race evidence (decision 0616): std/%s's tests and corpora under xo test --race (ThreadSanitizer).\n\n", module)
+	b.WriteString(strings.Join(lines, "\n") + "\n")
+	out := filepath.Join("std", "evidence", module, "race.md")
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(out, []byte(b.String()), 0o644)
 }

@@ -3052,3 +3052,12 @@ test "rsa: a key below 1024 bits parses but every operation refuses it, as Go (0
     }
   }
 }
+
+// CVE-2025-22865 (GO-2025-3421): a PKCS #1 key whose CRT values are zero made
+// Go's ParsePKCS1PrivateKey panic; Go 1.26 refuses it (crtgen, 2026-11-12).
+const CRT_ZERO = "3082019e02010002818100bacb775437600eaa948e68d499f829b8ade25bfdd5ea6ed8479924c6e865d2383486e08d477f07ce9d58e6526c052671026b760a87da137e9d622f18d8b2ea9d945d723c79d4845d17aabadfa8b37b135f5f938e4c2210417092f75e2fd7c5242aa94b58f6f394ade882e3e14483c85944af1eefd7886e6e1ca546c23015458b0203010001028180009fea9113b2ff5ee4554a40ca6d068806be2c36ea9963452ce41f0d32921899b5d9ecf3fbffb99675773fcf446b8b52886d5f3d2f717416e7242b6a7c05b3d17bf3db829139b37cf858500d27a46958c80247b242fa6c29021b53ecb75350594fe7288501c9f7c28cb7f58f5d7395704aed4145014cd147fc4d55132926d201024100c6885e86d796b255797a39ff75cb39da0a8a6d6c5bf5b5be23117d07b382bde76eaac0f3d080a507bae3b47446e3b6bab0068808124dbb05a17b7a55d927378b024100f0dd4c0f1ad27fad17ebe7504d1c70e3a5bf1afcbee64d8ceb62aea79184536744e2fcac0aa3be2e48483a886d3c221ddca22167fb2ad64a675304e3379bea01020100020100020100"
+const CRT_ZERO_GO = "x509: private key contains zero or negative value"
+
+test "CVE-2025-22865: a PKCS #1 key with zero CRT values is Go's error, not a fault" {
+  expect(parse_private_key(hb(CRT_ZERO)).map(fn(k) { k.alg().debug() }).map_err(fn(e) { e.msg })) == Err(CRT_ZERO_GO)
+}
