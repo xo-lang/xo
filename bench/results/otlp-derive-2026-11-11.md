@@ -99,3 +99,20 @@ Against the hand writer of main 3b0fe3824 (third table's A), the two steps
 together are about 0.855 x 0.897 = 0.77 for metrics and 0.776 x 0.856 = 0.66
 for traces (products of separate runs, not one --ab).
 
+## Varints and fixed width values as one word (2026-11-12)
+
+std/native/protobuf.xo's `put_varint`, `put_fixed32` and `put_fixed64` append a value with one
+`BytesBuilder.write_le` where they pushed a byte at a time. Found with XO_PROF=cpu on host 1 (bench/perf/protobuf
+marshal, 100000 passes, 1593 samples): `put_varint` 43% cumulative, `obj_rs_push_byte` 34% and `obj.reserve` 11%;
+the size pass (`proto_sizes__Doc`) was 12.7%, which caps what a back-patched length prefix could save.
+linux/arm64 host 1, `ab-host.sh` (xo bench --ab, 7 rounds, stopped at 6), A main 591a43ea2, B 8beb0d6e8:
+
+| workload | A wall | B wall | B / A (95%) |
+|---|---|---|---|
+| protobuf marshal | 17.64 ms | 15.09 ms | 0.856 (0.829 to 0.872) |
+| otlp traces | 293.1 ms | 285.0 ms | 0.972 (0.966 to 0.974) |
+| otlp metrics | 152.6 ms | 139.8 ms | 0.916 (0.91 to 0.93) |
+
+The protobuf run's B was 9a1f7837b, the same code but for one shift that faulted on 8 byte varints with a high
+byte of 128 or more (Xo's `<<` checks overflow; `wrapping_shl` fixes it, a path the bench never reaches).
+

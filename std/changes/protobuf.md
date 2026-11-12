@@ -1,5 +1,19 @@
 # std/protobuf changes
 
+## 2026-11-12: perf: varints and fixed width values are written as one word
+
+- Kind: perf
+- Commit: this push
+- Found by: XO_PROF=cpu of bench/perf/protobuf marshal on linux/arm64 host 1 (put_varint 43% cumulative, obj_rs_push_byte and obj.reserve per byte; the size pass only 12.7%)
+- Go reference: protowire.AppendVarint and AppendFixed64 append each value with one append
+- Timing: bench/results/otlp-derive-2026-11-11.md fifth table: protobuf marshal 0.856, otlp traces 0.972, metrics 0.916 of main (linux/arm64 host 1, --ab)
+- Test: the protobuf (put_ forms against append_ forms, protowire's cases), protowkt, protojson, protodesc, protoparse, textproto and otlp corpora on go, arm64, llvm; goldens otlp_export, derive_empty_struct
+- Shipped in: not yet released
+
+`put_varint` gathers a varint of up to 8 bytes into one word and appends it with `BytesBuilder.write_le`
+(a longer one writes its last bytes after); `put_fixed32` and `put_fixed64` are one `write_le` each. They pushed
+a byte at a time. Output bytes are unchanged.
+
 ## 2026-11-11: perf: derive Proto computes each nested message's size once
 
 - Kind: perf
