@@ -1,0 +1,24 @@
+exit 0
+--- stdout
+parse_value arrays 10000: ok
+parse_value objects 10000: ok
+parse_value arrays 10001: err invalid JSON: invalid character '[' exceeded max depth
+parse_value objects 10001: err invalid JSON: invalid character '{' exceeded max depth
+decode Node 10000: ok, 5000 Nodes
+decode_go Node 10000: ok
+from_value Node 10000: ok
+tokens skip 10000: ok
+tokens value 10000: ok
+decoder 10000: ok, 1 value
+decode Node 10001: err invalid JSON: invalid character '{' exceeded max depth
+decode_go Node 10001: err invalid JSON: invalid character '{' exceeded max depth
+from_value Node 10001: no value, invalid JSON: invalid character '{' exceeded max depth
+tokens skip 10001: err invalid JSON: invalid character '{' exceeded max depth
+tokens value 10001: err invalid JSON: invalid character '{' exceeded max depth
+decoder 10001: err invalid JSON: invalid character '{' exceeded max depth
+max_token 16, 16 bytes of an unfinished string: ok
+max_token 16, 17 bytes of an unfinished string: err invalid JSON: token exceeds max_token (16 bytes)
+max_value 16, a 16 byte value in two writes: ok
+max_value 16, a 17 byte value in two writes: err invalid JSON: value exceeds max_value (16 bytes)
+the same in a spawned task
+--- stderr

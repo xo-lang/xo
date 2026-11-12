@@ -1,0 +1,103 @@
+// The nesting limit (10000, encoding/json's maxNestingDepth) at and one
+// past it, through every way std/json reads a text: parse_value, decode
+// and decode_go into a recursive derived type, from_value, a TokenReader's
+// skip and value, and the stream Decoder, on the main task and in a
+// spawned one (a task's stack is smaller), and max_token and max_value
+// at their bound and one byte past it. The decision 0616 json review's F8.
+use std/json
+
+struct Node {
+  c: List[Node] = []
+} derive Json
+
+fn arrays(n: Int) -> Str { "[".repeat(n) + "]".repeat(n) }
+
+fn objects(n: Int) -> Str { "{\"a\":".repeat(n) + "1" + "}".repeat(n) }
+
+/// levels Nodes, 2 levels of nesting each; extra puts one more Node in
+/// the innermost list.
+fn nodes(levels: Int, extra: Bool) -> Str {
+  let inner = if extra { "{}" } else { "" }
+  "{\"c\":[".repeat(levels) + inner + "]}".repeat(levels)
+}
+
+fn show[T](r: Result[T, json.DecodeErr]) -> Str {
+  match r {
+    Ok(_) => "ok"
+    Err(e) => "err ${e.msg}"
+  }
+}
+
+fn depth_of(n: Node) -> Int {
+  var d = 0
+  var cur = n
+  while cur.c.len() > 0 {
+    d += 1
+    cur = cur.c[0]
+  }
+  d
+}
+
+fn checks() -> List[Str] {
+  var out: List[Str] = []
+  for n in [10000, 10001] {
+    out.push("parse_value arrays ${n}: ${show(json.parse_value(arrays(n)))}")
+    out.push("parse_value objects ${n}: ${show(json.parse_value(objects(n)))}")
+  }
+  for extra in [false, true] {
+    let text = nodes(5000, extra)
+    let what = if extra { "10001" } else { "10000" }
+    match json.decode_str[Node](text) {
+      Ok(v) => out.push("decode Node ${what}: ok, ${depth_of(v) + 1} Nodes")
+      Err(e) => out.push("decode Node ${what}: err ${e.msg}")
+    }
+    out.push("decode_go Node ${what}: ${show(json.decode_go_str[Node](text))}")
+    match json.parse_value(text) {
+      Ok(v) => out.push("from_value Node ${what}: ${show(json.from_value[Node](v))}")
+      Err(e) => out.push("from_value Node ${what}: no value, ${e.msg}")
+    }
+    var r = json.tokens(text.bytes())
+    out.push("tokens skip ${what}: ${show(r.skip())}")
+    var r2 = json.tokens(text.bytes())
+    out.push("tokens value ${what}: ${show(r2.value())}")
+    var d = json.decoder()
+    let got = match d.write(text.bytes()) {
+      Ok(vs) => match d.finish() {
+        Ok(rest) => "ok, ${vs.len() + rest.len()} value"
+        Err(e) => "err ${e.msg}"
+      }
+      Err(e) => "err ${e.msg}"
+    }
+    out.push("decoder ${what}: ${got}")
+  }
+  // max_token bounds the bytes of a token not yet complete: exactly the
+  // bound waits for more, one byte past it is the error
+  for n in [16, 17] {
+    var t = json.token_reader(max_token: 16)
+    let s = "\"" + "a".repeat(n - 1)
+    out.push("max_token 16, ${n} bytes of an unfinished string: ${show(t.write(s.bytes()))}")
+  }
+  // max_value: a value of exactly the bound, then one byte more
+  for n in [16, 17] {
+    var d = json.decoder(max_value: 16)
+    let s = "[" + "1,".repeat((n - 3) / 2) + "1" + (if n % 2 == 0 { " " } else { "" }) + "]"
+    var res = show(d.write(s.bytes()[0..n - 1]))
+    if res == "ok" {
+      res = show(d.write(s.bytes()[n - 1..]))
+    }
+    out.push("max_value 16, a ${s.len()} byte value in two writes: ${res}")
+  }
+  out
+}
+
+fn main(os: Os) {
+  let here = checks()
+  for l in here {
+    os.stdio.println(l)
+  }
+  scope s {
+    let t = s.spawn(fn() -> List[Str] { checks() })
+    let there = t.await
+    os.stdio.println(if there == here { "the same in a spawned task" } else { "a spawned task differs: ${there}" })
+  }
+}
