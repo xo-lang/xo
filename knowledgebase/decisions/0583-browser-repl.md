@@ -315,6 +315,20 @@ to 101 MB; values unchanged. Below 50 MB, as the owner asked. Left: the record's
 std's objects twice while it installs them (about 7 MB), and on wasm a slice of the record's bytes is
 a copy (1.6 MB).
 
+## Memory: std's record relocated in place (2026-11-12)
+
+Measured on the /play/ page itself (bench/results/browser-repl-page-2026-11-12.md: the 30-entry
+session typed into the repl tab in headless Chrome, `data-repl-mem`), main 955a6c8a7 peaks at 49 MB.
+A scratch probe of the runtime's live bytes showed the session holding 21.8 MB between entries, live
+bytes peaking at 36.5 MB inside entries (entry 4 and later), and the heap's top 12.5 MB above that:
+free big blocks, 9.4 MB of them (1.2, 2.6 and 5.7 MB) left by entry 1's record load below the data
+the session keeps, where later entries' 4 MB requests did not land. `relocate_export` now renumbers
+the decoded record's object and type lists in place (the caller hands it the record's last
+reference) instead of building relocated copies (the object list's with half again its length free).
+Entry 1 then leaves one 6.9 MB block and a 1.2 MB one; the session peaks at 48 MB (33 MB after entry
+1, was 35), values unchanged. Left: install_std's new object list beside the relocated one (the 6.9
+MB block), and the 4.3 to 4.4 MB blocks entries 2 and 20 leave free.
+
 ## The playground page: a repl tab and std's record (2026-11-11)
 
 The lead asked (2026-11-11) for the owner's 50 MB bar on the real /play/ page, not the harness. The

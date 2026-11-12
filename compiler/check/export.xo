@@ -1186,7 +1186,8 @@ fn (var r: Reloc) ty_rec(t0: Ty) -> Ty {
 /// files are already loaded; None when a module or file e names is not
 /// loaded in c, or a record refers outside what relocation knows (then
 /// the records cannot serve c).
-pub fn (c: Checker) relocate_export(e: StdExport, at: StdBlock) -> Option[StdExport] {
+pub fn (c: Checker) relocate_export(e0: StdExport, at: StdBlock) -> Option[StdExport] {
+  var e = e0
   let b = e.block
   var r = Reloc{b: b, d_obj: at.obj_lo - b.obj_lo, d_ty: at.ty_lo - b.ty_lo, d_eset: at.eset_lo - b.eset_lo, d_evar: at.evar_lo - b.evar_lo}
   for (i, p) in e.mod_ids {
@@ -1218,14 +1219,23 @@ pub fn (c: Checker) relocate_export(e: StdExport, at: StdBlock) -> Option[StdExp
     }
   }
   var out = StdExport{block: StdBlock{obj_lo: at.obj_lo, obj_hi: at.obj_lo + (b.obj_hi - b.obj_lo), ty_lo: at.ty_lo, ty_hi: at.ty_lo + (b.ty_hi - b.ty_lo), eset_lo: at.eset_lo, eset_hi: at.eset_lo + (b.eset_hi - b.eset_lo), evar_lo: at.evar_lo, evar_hi: at.evar_lo + (b.evar_hi - b.evar_lo)}, trees: e.trees}
-  out.objs = List.with_capacity(e.objs.len() * 3 / 2)
-  for x in e.objs {
-    out.objs.push(r.obj_rec(x))
+  // in place: the decoded lists become the relocated ones (when the
+  // caller passed the record's last reference), so std's objects are not
+  // held twice while the record loads; the copies left free blocks of
+  // several MB below the session's data that later entries could not reuse
+  // (bench/results/browser-repl-page-2026-11-12.md)
+  var objs = e.objs
+  e.objs = []
+  for i in 0..objs.len() {
+    objs[i] = r.obj_rec(objs[i])
   }
-  out.tys = List.with_capacity(e.tys.len())
-  for t in e.tys {
-    out.tys.push(r.ty_rec(t))
+  out.objs = objs
+  var tys = e.tys
+  e.tys = []
+  for i in 0..tys.len() {
+    tys[i] = r.ty_rec(tys[i])
   }
+  out.tys = tys
   for s in e.esets {
     var items: List[EffItem] = []
     for it in s {

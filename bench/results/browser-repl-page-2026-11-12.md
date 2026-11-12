@@ -124,9 +124,28 @@ alone. The levers on the number are an entry's own peak over the warm session (1
 the entry's checker copying std's object list, 0583 (f)) and the 12.5 MB between the live peak and
 the heap's end (where the free space sits, by block size, is the next probe).
 
+## The free big blocks, and std's record relocated in place
+
+The probe also listed the free big blocks (256 KiB or more) after each entry. On main, entry 1 (the
+record's load) leaves 1.2, 2.6 and 5.7 MB free below the session's data; entry 2 adds 4.3 MB, entry
+20 another 4.4 MB, and the heap's top climbs from 34.3 MB (entry 1) to 48.9 MB (entry 20).
+
+Relocating the decoded record's object and type lists in place (decision 0583, "std's record
+relocated in place"), measured the same way:
+
+| | main 955a6c8a7 | in place |
+|---|---|---|
+| wasm memory after entry 1 | 35 MB | 33 MB |
+| free big blocks after entry 1 | 1.2, 2.6, 5.7 MB | 1.2, 6.9 MB |
+| heap top after entry 30 | 48.9 MB | 47.5 MB |
+| **compiler memory, peak** | **49 MB** | **48 MB** |
+| live between entries / peak live | 21.8 / 36.5 MB | 21.8 / 36.5 MB |
+
+All 30 values the same.
+
 ## Next
 
-The margin is 1 MB. By the probe above, the next steps are: (1) the free space between the live
-peak and the heap's end (12.5 MB), by a probe of the free blocks by size at entry 11; (2) an entry's
-own peak (14.7 MB over the warm 21.8 MB), by allocation site at entry 4. Releasing the decoded
-record before relocation is not one of them.
+With the record relocated in place the margin is 2 MB. Next: (1) the 6.9 MB block entry 1 still
+leaves (install_std builds a new object list beside the relocated one, which it could take over);
+(2) the 4.3 and 4.4 MB blocks entries 2 and 20 leave free below the heap's top; (3) an entry's own
+peak (14.7 MB over the warm 21.8 MB), by allocation site at entry 4.

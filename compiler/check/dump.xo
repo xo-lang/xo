@@ -162,10 +162,15 @@ fn (var c: Checker) run() -> () ! Str {
         c.std_record = None
         var rel: Option[StdExport] = None
         let had = found != None
-        if let Some(e) = found {
-          rel = c.relocate_export(e, at)
+        match found {
+          Some(e) => {
+            // the record's last reference goes to the relocation, which
+            // renumbers its lists in place
+            found = None
+            rel = c.relocate_export(e, at)
+          }
+          None => {}
         }
-        found = None
         if had {
           match rel {
             Some(r) => {
