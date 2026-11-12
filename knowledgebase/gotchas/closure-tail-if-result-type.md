@@ -34,3 +34,13 @@ BuildErr.borrowed marks a fallback position, the grouping treats it as
 no position, and the once-per-position key is the record's own position
 again. Before giving a missing value a default, find who reads "missing"
 as information (grep the field's `.is_empty()` and `== 0` readers).
+
+**Addendum (2026-11-12): natural and converted types are two records.**
+The retype also overwrote each tail's natural type (`nat_at`), so a leaf
+like `find(k)? + 1` in a closure inferred as `Int?` read as natural
+`Int?` and converted `Int?`: no conversion, and the Go backend wrapped a
+bare int64 as the Option (cmd/xo TestOptionTryInTests, Go only, skipped
+by -short). untry_expr now rewrites the natural type only when it is
+itself `Result[_, ev]` (an `if` or `match` that took the want). Golden
+closure_option_try_tail. When retyping an expression, decide separately
+for type_at (after conversion) and nat_at (before).

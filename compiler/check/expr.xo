@@ -2089,9 +2089,15 @@ fn (var c: Checker) untry_expr(e: Expr, ev: Int, rt: Int) {
     return
   }
   c.set_type(e, rt)
+  // the natural type too, only when it took the want itself (an `if`
+  // or `match`); a leaf's own type stays, so its conversion to rt does
+  // (2026-11-12: `fn(k: Int) { find(k)? + 1 }` lost its Int to Option
+  // conversion and the Go backend failed to build it)
   let k = c.expr_key(e)
-  if c.nat_at.contains(k) {
-    c.nat_at[k] = rt
+  if let Some(nt) = c.nat_at.get(k) {
+    if c.result_with_err(nt, ev) {
+      c.nat_at[k] = rt
+    }
   }
   match e {
     ParenExpr(x: x, ..) => c.untry_expr(x, ev, rt)

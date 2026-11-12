@@ -1,0 +1,28 @@
+// Closures with no written result that use `?` on an optional value
+// (2026-11-12, cmd/xo TestOptionTryInTests on the Go backend): a tail
+// that is not an `if` or `match` keeps its own type, so its conversion to
+// the closure's optional result stays; an `if` at the end converts each
+// branch (the `?` comes first: a closure's result is inferred from its
+// first branch).
+fn find(k: Int) -> Int? {
+  if k == 0 { Some(0) } else { None }
+}
+
+fn show(v: Int?) -> Str {
+  match v {
+    Some(n) => "${n}"
+    None => "none"
+  }
+}
+
+fn main(os: Os) {
+  let g = fn(k: Int) { find(k)? + 1 }
+  let h = fn(k: Int) { if k < 5 { find(k)? + 2 } else { 9 } }
+  let m = fn(k: Int) {
+    match k {
+      7 => find(k - 7)? * 3 + 4
+      _ => 70 + find(k)?
+    }
+  }
+  os.stdio.println("${show(g(0))} ${show(g(1))} ${show(h(6))} ${show(h(0))} ${show(h(1))} ${show(m(7))} ${show(m(0))} ${show(m(2))}")
+}
