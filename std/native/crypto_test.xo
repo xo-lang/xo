@@ -3026,3 +3026,29 @@ test "rsa encryption: PKCS #1 v1.5 padding is nonzero, from Rand" {
   expect(decrypt_pkcs1v15(k, c).map_err(fn(x) { x.msg })) == Ok(b"hello")
   expect(rsa.encrypt_pkcs1v15(rsa_pub(k.public_key()), b"hello", b"\x01".repeat(n - 1))) == None
 }
+
+
+// A 1020-bit and a 1024-bit key (both 128 bytes; PKIX and PKCS #1 DER)
+// with a PKCS #1 v1.5 SHA-256 signature of "floor" by each, from Go's
+// crypto/rsa (go1.26.1, GODEBUG=rsa1024min=0 to make the small one; Go
+// parses both and refuses every operation with the small one).
+const FLOOR: List[(Int, Str, Str, Str)] = [
+  (1020, "30819e300d06092a864886f70d010101050003818c003081880281800bae7dd871c1446e5263d7c327b71e89c46d9f878c0691053a8b29492ea2b24d1db8edd6492e74d96aa895295e7a51ee0f9eb76460fcfcb4fe6c1f8ad4a9aa08c08561ccfca444536831b84b509caa16efdbe00f8f07e16d931c10cf21ff8e68df1e373cea041d0287f590a7474075414c57c2f21116bb426144dba3af55c0b10203010001", "3081880281800bae7dd871c1446e5263d7c327b71e89c46d9f878c0691053a8b29492ea2b24d1db8edd6492e74d96aa895295e7a51ee0f9eb76460fcfcb4fe6c1f8ad4a9aa08c08561ccfca444536831b84b509caa16efdbe00f8f07e16d931c10cf21ff8e68df1e373cea041d0287f590a7474075414c57c2f21116bb426144dba3af55c0b10203010001", "078b32589f810bef895fc891524219811b27f9051f2b8acbbce412d5a009c2e75aa67e7053bde41b02c614a53f24cbc1061af7d2f729ac674baa891242f70e6d9a5f59fd202d04a468bd9c032b5cb7b730353fe4f4a15af00bfa8ebd8767b5dc11f33563428e9b2ba91cbf248ff4817c6340a829f5ac938c9bc463ea5b777b39"),
+  (1024, "30819f300d06092a864886f70d010101050003818d0030818902818100b81a9c3d26ff721042791517ca315b37f6a75424ac1ac918b598032b2d8f03c479dbac40fc3455d1e4b5d0d4c98aeb22d60392ff83cc03537cbcbacf8c529c48a3ab7273261e3d2b42e0dee1f1a68b5062fec07b4472acc9492f39c90d6eb0d9f95d6c2a8e0b1ddc50c426492732e85c4737c44b68c75827d578b379a79c98cb0203010001", "30818902818100b81a9c3d26ff721042791517ca315b37f6a75424ac1ac918b598032b2d8f03c479dbac40fc3455d1e4b5d0d4c98aeb22d60392ff83cc03537cbcbacf8c529c48a3ab7273261e3d2b42e0dee1f1a68b5062fec07b4472acc9492f39c90d6eb0d9f95d6c2a8e0b1ddc50c426492732e85c4737c44b68c75827d578b379a79c98cb0203010001", "56815bc6780d974a7f63d346aa8a6ee4290cf83454dab224a5d1d9e2846d3d77012570cacff18a9886f42e1bdcb5ae0fca8c3146e3c629fb7ed34ab865b437fe37ae1756bfedb2d07f2aa9335ae4eccf001cdc33219fb7f8bd24cdf0398304cfedfeb2d21a406c8d8f6306fb7bf69b828dbbd20d848886f07ac5f05f0d761411"),
+]
+
+test "rsa: a key below 1024 bits parses but every operation refuses it, as Go (0616 RSA review F6, F9)" {
+  let digest = crypto.sha256(b"floor")
+  for (bits, pkix, pkcs1, sig) in FLOOR {
+    let k = parse_public_key(Bytes.from_hex(pkix) ?? b"")?
+    // the certificate and TLS paths verify with llrt's key
+    let rk = rsa.public_key(Bytes.from_hex(pkcs1) ?? b"") ?? fault("llrt parse ${bits}")
+    expect(rsa.verify_pkcs1(rk, 0, digest, Bytes.from_hex(sig) ?? b"")) == (bits >= 1024)
+    let enc = encrypt_oaep_with(k, crypto.Hash.Sha256, b"hi", b"", b"s".repeat(32)).map_err(fn(e) { e.msg })
+    if bits < 1024 {
+      expect(enc) == Err("crypto/rsa: 1020-bit keys are insecure (see https://go.dev/pkg/crypto/rsa#hdr-Minimum_key_size)")
+    } else {
+      expect(enc.is_ok()) == true
+    }
+  }
+}

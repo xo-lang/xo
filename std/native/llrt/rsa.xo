@@ -69,6 +69,24 @@ pub fn public_key(der: Bytes) -> PublicKey? {
   check_public(n, e)
 }
 
+/// The length in bits of the big-endian number b.
+fn bit_len(b: Bytes) -> Int {
+  var i = 0
+  while i < b.len() && b[i] == 0 {
+    i += 1
+  }
+  if i == b.len() {
+    return 0
+  }
+  var top = Int(b[i])
+  var bits = 0
+  while top > 0 {
+    bits += 1
+    top = top >> 1
+  }
+  (b.len() - i - 1) * 8 + bits
+}
+
 fn check_public(n: Bytes, e: Int) -> PublicKey? {
   if n.len() < 128 || (Int(n[n.len() - 1]) & 1) == 0 || e < 2 || e >= 2147483648 || (e & 1) == 0 {
     return None
@@ -149,7 +167,12 @@ fn public_op(k: PublicKey, s: Bytes) -> Bytes? {
   }
   let nl = limbs_of(k.n)
   let md = bigmod.modulus(nl)
-  let x = bigmod.from_bytes(s, nl.len()) ?? []
+  // a None is refused (`?? []` handed bigmod.below an empty number, which
+  // it reads past; unreachable for s of n's length: the 0616 RSA review's F5)
+  let x = match bigmod.from_bytes(s, nl.len()) {
+    Some(v) => v
+    None => return None
+  }
   if !bigmod.below(md, x) {
     return None
   }
@@ -219,8 +242,15 @@ fn pkcs1_encode(prefix: Bytes, hashed: Bytes, k: Int) -> Bytes {
 }
 
 /// Whether sig is a PKCS #1 v1.5 signature of the hashed message by k.
+/// A key's modulus is too small to verify with: below 1024 bits, as Go
+/// refuses (crypto/rsa checkPublicKeySize). Parsing allows from 128 bytes,
+/// as Go's x509 parses any size, so a certificate's or a TLS peer's 1017
+/// to 1023 bit key was verified (the 0616 RSA review's F6); std/crypto's
+/// operations check every size first (crypto.xo rsa_public_err).
+fn too_small(k: PublicKey) -> Bool { bit_len(k.n) < 1024 }
+
 pub fn verify_pkcs1(k: PublicKey, hash: Int, hashed: Bytes, sig: Bytes) -> Bool {
-  if hashed.len() != hash_len(hash) {
+  if hashed.len() != hash_len(hash) || too_small(k) {
     return false
   }
   let em = pkcs1_encode(digest_prefix(hash), hashed, k.n.len())
@@ -243,6 +273,9 @@ pub fn sign_pkcs1(k: PrivateKey, hash: Int, hashed: Bytes) -> Bytes {
 // ---------------------------------------------------------------------------
 /// verify_pkcs1 with the DigestInfo prefix of any hash (decision 0285).
 pub fn verify_pkcs1_prefix(k: PublicKey, prefix: Bytes, hashed: Bytes, sig: Bytes) -> Bool {
+  if too_small(k) {
+    return false
+  }
   let em = pkcs1_encode(prefix, hashed, k.n.len())
   match public_op(k, sig) {
     Some(m) => em.len() > 0 && m == em
@@ -304,7 +337,7 @@ pub fn verify_pss(k: PublicKey, hash: Int, hashed: Bytes, sig: Bytes, salt_len: 
 /// verify_pss with any hash: its length hl and function hf (std/crypto's
 /// hashes, decision 0285).
 pub fn verify_pss_fn(k: PublicKey, hl: Int, hf: fn(Bytes) -> Bytes, hashed: Bytes, sig: Bytes, salt_len: Int) -> Bool {
-  if hashed.len() != hl {
+  if hashed.len() != hl || too_small(k) {
     return false
   }
   let m = public_op(k, sig) ?? b""
@@ -464,7 +497,11 @@ fn ciphertext_in(k: PublicKey, c: Bytes) -> Bytes? {
   }
   let cp = pad(c, kk)
   let nl = limbs_of(k.n)
-  let x = bigmod.from_bytes(cp, nl.len()) ?? []
+  // None is refused, as in public_op (the 0616 RSA review's F5)
+  let x = match bigmod.from_bytes(cp, nl.len()) {
+    Some(v) => v
+    None => return None
+  }
   if !bigmod.below(bigmod.modulus(nl), x) {
     return None
   }
