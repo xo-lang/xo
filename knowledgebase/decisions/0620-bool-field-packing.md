@@ -51,8 +51,9 @@ XO_PACK_BOOLS=1, then `xo bench --ab` with RSS on the linux/arm64 host.
   (decision 0252) and `xo dbg` must know a Bool's bit.
 - A write is a read-modify-write of a shared word. Two tasks writing two
   Bools of one struct value at once would race where two separate words
-  did not; struct values are not shared mutably between tasks in Xo
-  (decision 0274), so this matters only for raw shared memory.
+  did not. Structs have value semantics (spec/core.md: every user
+  struct, enum and tuple), and tasks share mutable state only through a
+  Mutex or similar, so this matters only for raw shared memory.
 - Each Bool read gains an AND; each write a load, an OR or AND, and a
   store.
 
