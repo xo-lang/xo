@@ -129,13 +129,38 @@ collector soon enough. That V8 collected them sooner with a single tier
 fits this explanation: dynamic tiering's background compile keeps the
 worker busy, and its own allocations set the collection schedule.
 
-## Next experiments
+## Experiment 3: the compiled code's share
 
-1. The compiled code's share of V8's 43 to 69 MB: a run with
-   `--js-flags=--trace-wasm-native-heap` and the code space commits
-   summed.
-2. Then the fix candidates to measure, not chosen yet. Experiment 2
-   rules out dropping references, since nothing holds them. That leaves
-   reusing one compiler instance across requests (resetting its memory
-   between them), or growing each instance's memory in place of a new
-   one, either bounding the tab near 150 MB.
+V8's `--trace-wasm-native-heap` output does not reach Chrome's log from a
+renderer, so the share was read from `vmmap -wide -interleaved` on the
+tab's renderer instead. Apple silicon's JIT code is in executable regions
+(rwx, MAP_JIT) under V8's tag (255):
+
+| point | V8 executable, resident (MB) | V8 read-write, resident (MB) | PartitionAlloc read-write, resident (MB) |
+|---|---|---|---|
+| page ready | 12.9 | 49.6 | 172.8 |
+| after run 1 | 22.2 | 68.0 | 315.6 |
+| 10 s idle after run 10 | 19.3 | 43.3 | 406.9 |
+
+So the compiler module's compiled code is about 13 MB with Liftoff and
+about 20 MB once TurboFan's code replaces the hot functions: under a tenth
+of the tab. These are resident sizes. PartitionAlloc's read-write
+resident includes the compile memory freed but not returned, which the
+footprint leaves out (see the split above).
+
+## Summary for a fix (measured, not chosen)
+
+The tab is about 150 MB after the first build. On top of that come three
+things:
+- a one-time 300 to 350 MB peak while TurboFan recompiles the compiler
+  module;
+- 32 MB per compiler instance awaiting collection (up to 8 seen);
+- about 20 MB of compiled code.
+
+The candidates, in order of payoff:
+1. Reuse one compiler instance across requests, resetting its memory
+   between them. This bounds the per-request growth: up to 250 MB at run
+   100 drops to 32 MB.
+2. Keep the compiler on Liftoff (`WebAssembly.compile` with a hint, or a
+   lazy tier-up limit) if the TurboFan peak matters more than speed. This
+   needs an `xo bench`-style timing of the compile and the runs first.
