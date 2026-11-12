@@ -49,3 +49,53 @@ parent's builder with a reserved length prefix (protobuf-go computes
 sizes first; a back-patched one byte prefix moved up when longer is the
 cheaper form), so no message is a Bytes of its own; then this row again.
 
+## Derive Proto with a size pass (2026-11-11): metrics move to derive
+
+The generated marshal now does what protobuf-go does: `proto_size__T` sums
+the message's size, then `proto_write__T` writes it into one BytesBuilder of
+that capacity, each nested message, packed list and map entry in place after
+its length (computed by the same size functions), where each was a Bytes of
+its own copied into its parent. A is main 3b0fe3824 (old generator, metrics
+by the writer, traces by derive); B is the new generator with metrics as the
+derive structs of the second table. Same checksums; the otlp corpus and a
+registry with summaries hash the same. linux/arm64 host 1, `--ab --rounds=10`:
+
+| workload | A wall | B wall | B / A (95%) |
+|---|---|---|---|
+| otlp metrics (writer to derive) | 205.6 ms | 175.8 ms | 0.855 (0.851 to 0.863) |
+| otlp traces (derive, generator only) | 450.8 ms | 349.8 ms | 0.776 (0.772 to 0.783) |
+| protobuf marshal (generator only) | 24.35 ms | 19.43 ms | 0.798 (0.763 to 0.807) |
+| protobuf unmarshal (unchanged code) | 22.42 ms | 22.91 ms | 1.022 (1.013 to 1.052) |
+
+Unmarshal's generated code is unchanged; its 2% is the binary's layout (no
+code on its path changed). The back-patched length prefix (reserve one byte,
+move the body when the length passes 127) was not built: BytesBuilder has no
+move or insert, and the size pass already beats the writer. Next experiment:
+a size cache per nested message (protobuf-go caches sizes in the message;
+here a nested message's size is computed once by its parent's size pass and
+again before it is written, so deep trees pay depth times), measured on the
+same rows: the next table.
+
+## Nested sizes computed once (2026-11-11)
+
+`XO_PROF=cpu` on the size pass build: proto_size__ functions were about a
+third of traces, recomputed at every level. Now the size pass records each
+nested message's size in a list in the order the writer meets them
+(`proto_sizes__T(v, var sz)`), and the writer reads them with a cursor
+(`proto_write__T(b, v, sz, var at)`); a map entry keeps a list of its own,
+since the size pass walks the map unsorted and the writer in key order.
+A is the size pass build (an unpublished build), B adds the cache. Same checksums;
+the protobuf, protowkt, protojson and otlp corpora pass on go, arm64, llvm.
+linux/arm64 host 1, `--ab --rounds=10`:
+
+| workload | A wall | B wall | B / A (95%) |
+|---|---|---|---|
+| otlp metrics | 170.7 ms | 153.2 ms | 0.897 (0.883 to 0.908) |
+| otlp traces | 348.2 ms | 297.9 ms | 0.856 (0.853 to 0.859) |
+| protobuf marshal | 19.19 ms | 16.33 ms | 0.851 (0.836 to 0.876) |
+| protobuf unmarshal (unchanged code) | 22.52 ms | 22.12 ms | 0.982 (0.969 to 1.001), within noise |
+
+Against the hand writer of main 3b0fe3824 (third table's A), the two steps
+together are about 0.855 x 0.897 = 0.77 for metrics and 0.776 x 0.856 = 0.66
+for traces (products of separate runs, not one --ab).
+

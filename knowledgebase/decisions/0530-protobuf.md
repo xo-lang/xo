@@ -23,7 +23,8 @@ generated from it, and the field numbers (not names) are the wire identity.
    (kept and re-emitted in order, as Go does). Malformed input is a `ProtoErr` with Go's cases (truncated, overflow, bad
    wire type, bad UTF-8 in a `string` field, recursion limit).
 2. **derive Proto** on structs (and enums for oneofs and enum values), generating `proto_marshal__T`, `proto_unmarshal__T`
-   and `proto_size__T` as Xo source like `derive Cbor`; `protobuf.marshal[T]`, `protobuf.unmarshal[T]` are rewritten to them.
+   and `proto_size__T` as Xo source like `derive Cbor` (since 2026-11-11 also `proto_write__T`, which writes into one
+   buffer sized by `proto_size__T`, nested messages in place, decision 0549); `protobuf.marshal[T]`, `protobuf.unmarshal[T]` are rewritten to them.
    A field's number is its tag: `name proto "1": Int`, options after a comma (`packed`, `zigzag`, `fixed`, `oneof=group`).
    Proto3 semantics first (implicit presence for scalars, `optional` as Option, `repeated` as List, packed by default,
    `map<K,V>` as Map, a oneof as an enum field, a nested message as a struct, Timestamp/Duration as Time/Duration, Any,

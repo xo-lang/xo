@@ -48,11 +48,12 @@ Status: Accepted (owner, 2026-11-11; low priority: after ADR 0603 stage 1 and th
   a oneof enum that itself derives Proto); bench/perf/otlp traces 0.869
   of the hand writer's wall time on linux/arm64 host 1, the same bytes
   (bench/results/otlp-derive-2026-11-11.md), so the condition holds.
-  Metrics export stays on the writer: as derive structs it measured
-  1.205 of the writer's wall time (bench/perf/otlp metrics, same bytes),
-  so item 3's condition fails for it (bench/results/otlp-derive-2026-11-11.md,
-  second table; next experiment named there: nested messages written in
-  place by the generated marshal).
+  Metrics export as derive structs first measured 1.205 of the writer's
+  wall time (second table), so derive Proto's marshal gained protobuf-go's
+  shape (a size pass, then one buffer, nested messages in place): metrics
+  then measured 0.855 and moved to derive, traces 0.776, protobuf marshal
+  0.798 (third table). std/otlp has no hand writer left. Caching nested sizes in
+  the size pass took a further 0.851 to 0.897 (fourth table).
 
 ## Owner decision, 2026-11-11
 

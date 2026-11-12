@@ -1,5 +1,15 @@
 # std/otlp changes
 
+## 2026-11-11: perf: metrics export encodes derive Proto message structs
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0549 item 3, after derive Proto's size pass
+- Go reference: go.opentelemetry.io/proto/otlp (metrics.proto), as protobuf-go marshals it
+- Timing: bench/results/otlp-derive-2026-11-11.md third table: bench/perf/otlp metrics 0.855 of the hand writer's wall time (linux/arm64 host 1, --ab)
+- Test: the otlp corpus on go, arm64, llvm; std/native/otlp_test.xo; a registry with summaries, function families, a zero gauge and an empty bucket list hashes the same as the writer's output
+- Shipped in: not yet released
+
 ## 2026-11-11: perf: trace export encodes derive Proto message structs
 
 - Kind: perf

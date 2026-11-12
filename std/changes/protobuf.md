@@ -1,5 +1,32 @@
 # std/protobuf changes
 
+## 2026-11-11: perf: derive Proto computes each nested message's size once
+
+- Kind: perf
+- Commit: this push
+- Found by: XO_PROF=cpu after the size pass (its size functions were about a third of otlp traces, recomputed per level)
+- Go reference: google.golang.org/protobuf caches a message's size between Size and the append (XXX_sizecache)
+- Timing: bench/results/otlp-derive-2026-11-11.md fourth table: protobuf marshal 0.851, otlp traces 0.856, metrics 0.897 of the size pass (linux/arm64 host 1, --ab)
+- Test: the protobuf, protowkt, protojson and otlp corpora on go, arm64, llvm; derive goldens
+- Shipped in: not yet released
+
+The size pass records nested message sizes in order (`proto_sizes__T`) and the writer reads them back; output bytes
+are unchanged.
+
+## 2026-11-11: perf: derive Proto marshals in one buffer after a size pass
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0549 item 3 (otlp metrics as derive structs measured 1.205 of the hand writer; the profile showed a Bytes per nested message)
+- Go reference: google.golang.org/protobuf's marshal (Size, then one append buffer)
+- Timing: bench/results/otlp-derive-2026-11-11.md third table: bench/perf/protobuf marshal 0.798, otlp traces 0.776 (linux/arm64 host 1, --ab)
+- Test: the protobuf, protowkt, protojson and otlp corpora (protobuf-go's bytes) on go, arm64, llvm; derive goldens
+- Shipped in: not yet released
+
+The generated `proto_marshal__T` now computes the message size (`proto_size__T`) and writes every nested message,
+packed list and map entry into one `BytesBuilder` of that capacity (`proto_write__T`), where each was built as a
+`Bytes` of its own and copied into its parent. Output bytes are unchanged.
+
 ## 2026-11-06: feature: std/protobuf, the wire layer and derive Proto (decision 0530 Accepted)
 
 - Kind: feature
