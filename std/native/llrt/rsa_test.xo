@@ -15,12 +15,12 @@
 // 10^6 for the evidence: go run ./scripts/stdproven timing), its result
 // lines written to the file XO_DUDECT_OUT names, when set.
 //
-// On LLVM it must run with XO_LLVM_OPT=O2: a test binary is built at -O0
-// (decision 0236), whose loops keep looking and index on the stack, and
-// on Apple silicon that code's time followed where the first zero byte
-// was (|t| 81 between v15_nozero and v15_short, 5.7 between two sets of
-// v15_short); at -O2, what programs ship, every pair passes (max |t| 1.7)
-// and the classes' means are equal. knowledgebase/gotchas/dudect-o0-llvm.md.
+// A test binary is LLVM -O0 (decision 0236), whose loops kept looking and
+// index on the stack, and that code's time followed where the first zero
+// byte was (|t| 81 on Apple silicon, 31 on AMD Zen 5). Decision 0619 sets
+// Arm's DIT bit around these functions and compiles std's constant time
+// modules at -O2 in a -O0 build; the A/A pairs (two sets of blocks of one
+// class) are what showed the effect. knowledgebase/gotchas/dudect-o0-llvm.md.
 
 use native/rt
 use std/testing
