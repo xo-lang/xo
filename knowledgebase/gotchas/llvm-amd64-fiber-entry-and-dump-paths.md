@@ -38,6 +38,11 @@ Two separate bugs:
    fiber walk reaches the same test, but arm64 hosts build "native" with
    the arm64 backend, so no Mac or arm64 run saw it.
 
+3. Then the second task (blocked in Mutex.with) had no site at all: on
+   x86_64 `unwind.fiber_walk` returned nothing (arm64 only), so the dump
+   followed frame pointers from the park, and an LLVM -O2 std frame on
+   the Mutex.with path broke the chain before the program's frame.
+
 ## Fix
 
 compiler/llvm/sched.xo switch_asm: `.cfi_escape 0x07, 16`
@@ -45,6 +50,9 @@ compiler/llvm/sched.xo switch_asm: `.cfi_escape 0x07, 16`
 freebsd amd64, with `uwtable` (sched_switch); sched_test.xo checks the
 directive per target. dump.xo std_file: `starts_with("std/") ||
 contains("/std/")`, as compiler/debug tasks.xo already tested.
+unwind.xo fiber_walk walks a parked fiber by the unwind tables on x86_64
+System V too (the switch frame: control words, r15 to r12, rbx, rbp, the
+return address, on both backends), as on arm64; Windows still returns 0.
 
 ## How to avoid
 
