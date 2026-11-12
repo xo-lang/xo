@@ -1,0 +1,140 @@
+// A call's wide result returned through the caller's outgoing area and
+// read there in place (arm64 plan_sret_lazy) after the caller releases
+// the fields of the Pager the call borrowed: a field holding Options, a
+// List and a Map is released by a drop helper taking its words, past x7
+// on the stack, in that same area, and overwrote the result's first
+// words. Decision 0612 borrows `p` in `p with {seed: ...}` (all leaves
+// but seed), so the caller releases it after the call; eight more call
+// sites keep kinded and seeded out of line. azure armnetwork's
+// Pager.starting_with faulted this way (2026-11-12).
+struct Conn {
+  name: Str
+  host: Str?
+  port: Int?
+  tags: List[Str]
+  opts: Map[Str, Str]
+  note: Str?
+}
+
+struct Req {
+  method: Str
+  url: Str
+  headers: List[(Str, Str)]
+  body: Str?
+  query: Map[Str, Str]
+  trace: Str?
+}
+
+struct Pager {
+  conn: Conn
+  first: Req
+  last: Req
+  spare: Conn
+  retry: Req
+  ok: List[Int]
+  started: Bool
+  pending: Req?
+  seed: Str?
+  failed: Str?
+  link: Str?
+  kind: Str
+}
+
+fn conn(s: Str) -> Conn {
+  Conn{name: "${s}-conn", host: Some("${s}.example.test"), port: Some(443), tags: ["${s}1", "${s}2"], opts: {"k": "${s}v"}, note: None}
+}
+
+fn req(s: Str) -> Req {
+  Req{method: "GET", url: "https://${s}.example.test/p", headers: [("Accept", "${s}/json")], body: None, query: {"q": s}, trace: Some("${s}-t")}
+}
+
+fn new_pager(c: Conn, r: Req) -> Pager {
+  Pager{conn: c, first: r, last: r, spare: c, retry: r, ok: [200], started: false, pending: None, seed: None, failed: None, link: None, kind: ""}
+}
+
+fn (p: Pager) kinded(k: Str) -> Pager {
+  p with {kind: k}
+}
+
+fn (p: Pager) seeded(s: Str) -> Pager {
+  p with {seed: Some(s)}
+}
+
+fn page(s: Str) -> Str ! Str {
+  if s.is_empty() {
+    return Err("empty page")
+  }
+  Ok("${s}-page")
+}
+
+fn show(p: Pager) -> Str {
+  "${p.conn.name} ${p.conn.host ?? "-"} ${p.conn.tags.len()} ${p.conn.opts.get("k") ?? "-"} ${p.first.url} ${p.first.query.get("q") ?? "-"} ${p.seed ?? "-"} ${p.kind}"
+}
+
+fn maker(c: Conn, r: Req) -> fn(Str) -> Pager ! Str {
+  fn(s: Str) -> Pager ! Str {
+    Ok(new_pager(c, r).kinded("K").seeded(page(s)?))
+  }
+}
+
+fn other0(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).kinded("O0").seeded("${s}0")
+}
+
+fn other1(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).kinded("O1").seeded("${s}1")
+}
+
+fn other2(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).kinded("O2").seeded("${s}2")
+}
+
+fn other3(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).kinded("O3").seeded("${s}3")
+}
+
+fn other4(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).kinded("O4").seeded("${s}4")
+}
+
+fn other5(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).kinded("O5").seeded("${s}5")
+}
+
+fn other6(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).kinded("O6").seeded("${s}6")
+}
+
+fn other7(c: Conn, r: Req, s: Str) -> Pager {
+  new_pager(c, r).kinded("O7").seeded("${s}7")
+}
+
+fn main(os: Os) {
+  for i in 0..3 {
+    let f = maker(conn("c${i}"), req("r${i}"))
+    match f("s${i}") {
+      Ok(p) => os.stdio.println(show(p))
+      Err(e) => os.stdio.println("error ${e}")
+    }
+  }
+  var n = 0
+  for k in 0..8 {
+    let o = match k {
+      0 => other0(conn("o"), req("o"), "x")
+      1 => other1(conn("o"), req("o"), "x")
+      2 => other2(conn("o"), req("o"), "x")
+      3 => other3(conn("o"), req("o"), "x")
+      4 => other4(conn("o"), req("o"), "x")
+      5 => other5(conn("o"), req("o"), "x")
+      6 => other6(conn("o"), req("o"), "x")
+      _ => other7(conn("o"), req("o"), "x")
+    }
+    n += o.kind.len() + (o.seed ?? "").len()
+  }
+  os.stdio.println("others ${n}")
+  let g = maker(conn("e"), req("e"))
+  match g("") {
+    Ok(p) => os.stdio.println(show(p))
+    Err(e) => os.stdio.println("error ${e}")
+  }
+}

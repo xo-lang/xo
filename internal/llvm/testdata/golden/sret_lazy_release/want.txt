@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+c0-conn c0.example.test 2 c0v https://r0.example.test/p r0 s0-page K
+c1-conn c1.example.test 2 c1v https://r1.example.test/p r1 s1-page K
+c2-conn c2.example.test 2 c2v https://r2.example.test/p r2 s2-page K
+others 32
+error empty page
+--- stderr

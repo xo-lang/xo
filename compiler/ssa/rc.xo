@@ -1212,12 +1212,8 @@ fn (var r: Rc) part_consumed(t: Int, ps: Set[Str]) -> Bool {
     }
   }
   let n = r.leaf_paths(t).len()
-  // off for the 0.50.x release: a borrowed Pager's pipeline faulted
-  // (azure armnetwork poller-of-pager tests, 2026-11-12); fixed on main
-  n >= PART_BORROW_MIN && ps.len() < n && PART_BORROW_ON
+  n >= PART_BORROW_MIN && ps.len() < n
 }
-
-const PART_BORROW_ON = false
 
 /// The heap leaves a struct needs before part_consumed borrows it
 /// (decision 0612): a small struct a caller moves into the call (a

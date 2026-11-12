@@ -90,3 +90,27 @@ borrowed parameter as consuming it whole makes the tests pass, but the
 over-release is not yet explained (the callee's retains and the caller's
 releases balance in SSA) and small programs of the same shape do not
 reproduce it, so the rule stays off until a reproducing golden exists.
+
+## Addendum (2026-11-12, later): cause found, on again
+
+The fault was in the arm64 back end, not in the rule. An sret call's
+result of 32 words or more comes back in the caller's outgoing area
+(byref.xo sret_slot) and, when every use of it is in the call's block
+before the block's next call, is read there in place (plan_sret_lazy).
+That check counted only `call` and `callvalue` as calls, but a `retain`
+or `release` of a struct, tuple or enum of more than eight words calls
+its dup or drop helper with every word, the words past x7 on the stack
+in that same area. With the partial borrow, the closure that built the
+Pager (`new_pager(...).traced_as(...).starting_with(page?)`) released
+the borrowed Pager's Pipeline and Request after `starting_with` returned
+and before it read the result, so the helpers' stack arguments replaced
+the result's first 14 words (the Pipeline: policies, roots) with zeros
+and other words; the Pager returned by poll_until_done then faulted in
+Pipeline.send. LLVM, which does not read results in place this way,
+passed. plan_sret_lazy now also ends the in place window at any op whose
+operands pass more than eight words (stack_args_op), the partial borrow
+is on again (PART_BORROW_ON removed), test/codegen/bproj's pattern is
+back, and golden sret_lazy_release (a Pager of the same shape, its
+methods kept out of line by eight more call sites) faults with 0.50.1
+and passes now. armnetwork's poller tests pass with and without inlining.
+

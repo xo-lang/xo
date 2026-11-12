@@ -356,7 +356,7 @@ fn (var g: G) plan_sret_lazy(calls: List[Int]) {
     var open: List[Int] = []
     for (i, w) in bl.instrs.indexed() {
       let y = g.f.values[w]
-      let call = y.op == ssa.Op.Call || y.op == ssa.Op.CallValue
+      let call = y.op == ssa.Op.Call || y.op == ssa.Op.CallValue || g.stack_args_op(w)
       if call {
         for c in open {
           let (b0, i0, _) = at.get(c) ?? (bi, i, i)
@@ -404,6 +404,28 @@ fn (var g: G) plan_sret_lazy(calls: List[Int]) {
       g.sret_lazy[c] = true
     }
   }
+}
+
+/// Whether value w may lower to a call that passes words on the stack,
+/// in the outgoing area a result read in place is still in (plan_sret_lazy):
+/// a retain or release of a struct, tuple or enum of more than eight
+/// words calls its dup or drop helper with every word (calls.xo retain
+/// and release), and so may another op whose operands pass eight words.
+/// The ops that only move words call nothing. (azure armnetwork's
+/// Pager.starting_with, 2026-11-12: with decision 0612 the caller released
+/// the borrowed Pager's Pipeline and Request after the call, and their
+/// helpers' stack words overwrote the result's first 14 words before
+/// they were read.)
+fn (var g: G) stack_args_op(w: Int) -> Bool {
+  let y = g.f.values[w]
+  if y.op is ssa.Op.Param | ssa.Op.Const | ssa.Op.Struct | ssa.Op.Tuple | ssa.Op.Variant | ssa.Op.Field | ssa.Op.SetField | ssa.Op.Tag | ssa.Op.Payload | ssa.Op.Cap | ssa.Op.Undef | ssa.Op.Capture | ssa.Op.FuncAddr | ssa.Op.Rebind | ssa.Op.Jump | ssa.Op.Branch | ssa.Op.Return | ssa.Op.Unreachable | ssa.Op.Bind | ssa.Op.CodeOf {
+    return false
+  }
+  var n = 0
+  for a in y.args {
+    n += g.nwords(g.vty(a))
+  }
+  n > 8
 }
 
 /// Whether call v (an sret call) returns a tuple: its result and its
