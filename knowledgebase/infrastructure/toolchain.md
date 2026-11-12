@@ -308,6 +308,13 @@ and runs `gh release create`. The order:
    gotchas/off-main-release-seed-skipped.md);
 2. tag `vX.Y.Z`;
 3. `publish.sh prepare`;
+3a. on the Mac, in the version commit's tree with its bin/xo:
+   `HUGO=~/xo-tools/hugo/hugo scripts/browser-memory.sh --record vX.Y.Z
+   SITE_REPO` (under heavy.sh, HEAVY_CLASS=bulk HEAVY_DARWIN=1;
+   BROWSER_MEMORY_SITE_REV for a release's site branch). It must print ok;
+   commit its row of bench/results/browser-memory.md, since
+   release-publish.sh refuses a tag with no ok row (decision 0615, owner,
+   2026-11-12). Last verified: 2026-11-12;
 4. in `../xo-publish`, `scripts/release.sh`, then release-verify.sh per
    host. The release agent runs this step, not the owner. On the Mac it
    goes through heavy.sh (`HEAVY_CLASS=bulk HEAVY_DARWIN=1

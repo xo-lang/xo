@@ -14,6 +14,8 @@
 #   - every archive's version is TAG (xo-<TAG>-<os>-<arch>.tar.gz);
 #   - the host's archive reports TAG's commit in `xo version --json`;
 #   - no release exists for TAG yet;
+#   - bench/results/browser-memory.md has an ok row for TAG (the playground
+#     pages' memory budgets, scripts/browser-memory.sh, decision 0615);
 #   - NOTES.md's breaking section names every CHANGELOG entry marked
 #     breaking since the latest published release
 #     (scripts/release-notes-check.py), and its suspects (entries that read
@@ -84,6 +86,13 @@ if [ -n "$prev" ]; then
 	python3 -I scripts/release-notes-check.py "$notes" "$tag" "$prev" CHANGELOG.md ||
 		die "the notes' breaking section misses a CHANGELOG entry marked breaking (above): add it, or fix the entry's mark"
 fi
+
+# the playground pages' memory was measured for this release and was within
+# its budgets (decision 0615; owner, 2026-11-12: /repl/ and /play/ must not
+# quietly grow): the tree's bench/results/browser-memory.md has an ok row
+# for the tag, recorded by scripts/browser-memory.sh --record TAG
+grep -Eq "^\| $tag \|.*\| ok \|\$" bench/results/browser-memory.md 2>/dev/null ||
+	die "bench/results/browser-memory.md has no ok row for $tag: run scripts/browser-memory.sh --record $tag SITE_REPO in the version commit (decision 0615)"
 
 echo
 echo "Release $tag on $repo${draft:+ (draft)}, commit $head, files:"
