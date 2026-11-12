@@ -431,6 +431,10 @@ pub struct Checker {
   /// Result types of closures whose body never completes: Never when
   /// nothing else determines them (check.go reportAmbiguous).
   never_results: List[Int] = []
+  /// The type declarations resolve_type_obj is inside, outermost first
+  /// (alias_target: an alias reached again through a struct or enum is
+  /// not a cycle).
+  type_stack: List[Int] = []
   /// Inference variables of explicit type parameters at calls; unbound
   /// ones at the end are XO0402 (check.go typeArgVars).
   type_arg_vars: List[TypeArgVar] = []

@@ -181,6 +181,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
     return
   }
   c.objs[t].resolving = true
+  c.type_stack.push(t)
   let saved_mod = c.cur_mod
   let saved_file = c.cur_file
   let saved_path = c.path
@@ -362,6 +363,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
   }
   c.objs[t].resolving = false
   c.objs[t].resolved = true
+  let _top = c.type_stack.pop()
   c.cur_mod = saved_mod
   c.cur_file = saved_file
   c.path = saved_path
@@ -694,6 +696,16 @@ fn (var c: Checker) derives_of(ids: List[Ident]) -> List[Str] {
 /// The resolved target of alias t, guarding cycles.
 fn (var c: Checker) alias_target(t: Int, sp: Span) -> Int {
   if c.objs[t].resolving {
+    if c.nominal_since(t) {
+      // reached again through a struct or enum being resolved (`type
+      // Schema = List[Field]`, `struct Field { schema: Schema }`, entered
+      // from a third struct naming Schema first; aws-43, 2026-11-11): not
+      // a cycle, since the struct names itself without its fields. The
+      // target is the same type the outer resolution builds: resolve its
+      // expression here, where the struct is resolving and so not entered
+      // again.
+      return c.alias_expr_type(t)
+    }
     c.error("XO0407", sp, "type alias `${text(c.objs[t].name)}` refers to itself")
     return c.bad_ty
   }
@@ -702,6 +714,47 @@ fn (var c: Checker) alias_target(t: Int, sp: Span) -> Int {
     return c.bad_ty
   }
   c.objs[t].target
+}
+
+/// Whether a struct or enum declaration is being resolved inside alias t's
+/// own resolution (alias_target).
+fn (c: Checker) nominal_since(t: Int) -> Bool {
+  var inside = false
+  for o in c.type_stack {
+    if o == t {
+      inside = true
+    } else if inside && c.objs[o].decl_file >= 0 {
+      if let Some(d) = c.top_decl(c.objs[o].decl_file, c.objs[o].decl_idx) {
+        if d is StructDecl(..) | EnumDecl(..) {
+          return true
+        }
+      }
+    }
+  }
+  false
+}
+
+/// Alias t's target resolved from its declaration, in its own file and
+/// type parameters (alias_target's cycle through a struct).
+fn (var c: Checker) alias_expr_type(t: Int) -> Int {
+  let f = c.objs[t].decl_file
+  let d = c.top_decl(f, c.objs[t].decl_idx) ?? fault("internal: alias ${text(c.objs[t].name)}'s tree is not parsed")
+  let saved_mod = c.cur_mod
+  let saved_file = c.cur_file
+  let saved_path = c.path
+  c.set_file(f)
+  var env = c.env_with(TypeEnv{file: f, mod: c.objs[t].module}, c.objs[t].tparams)
+  env.elided = true
+  var r = c.bad_ty
+  if let TypeDecl(d: td) = d {
+    if let Some(x) = td.typ {
+      r = c.resolve_type(x, env)
+    }
+  }
+  c.cur_mod = saved_mod
+  c.cur_file = saved_file
+  c.path = saved_path
+  r
 }
 
 // ---------------------------------------------------------------------------

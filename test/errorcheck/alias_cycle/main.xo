@@ -1,0 +1,24 @@
+// An alias reached again through a struct is not a cycle (aws-43,
+// 2026-11-11: A sorted before Field, so A's field resolved Schema, whose
+// List[Field] resolved Field, whose field met Schema still resolving and
+// was a false XO0407). An alias naming itself with no struct between is.
+struct A {
+  schema: Schema
+  page: Schema?
+}
+
+type Schema = List[Field]
+
+struct Field {
+  name: Str
+  schema: Schema
+  sub: Schema? = None
+}
+
+type Loop = List[Loop] // ERROR XO0407 "refers to itself"
+
+fn main(os: Os) {
+  let f = Field{name: "x", schema: [Field{name: "y", schema: []}]}
+  let a = A{schema: [f], page: Some([])}
+  os.stdio.println("${a.schema.len()} ${a.schema[0].schema[0].name}")
+}
