@@ -70,6 +70,24 @@ func protoMissing(method string, v any) {
 	FaultHere("xo internal: %s not generated for %T (decision 0542; XO_GO_PROTO=all writes every one)", method, v)
 }
 
+// Inner is an interface adapter or cell the Go backend generates (an
+// interface value converted to an interface whose methods differ, or one
+// whose `var self` methods write it in place): XoInner is the value it
+// holds. Two interface values are equal when the concrete values they
+// hold are, through any number of such wrappers (decision 0613).
+type Inner interface{ XoInner() any }
+
+// UnwrapAny is v with its adapters and cells removed.
+func UnwrapAny(v any) any {
+	for {
+		w, ok := v.(Inner)
+		if !ok {
+			return v
+		}
+		v = w.XoInner()
+	}
+}
+
 // EqAny compares two values of the same Xo type.
 func EqAny(a, b any) bool {
 	switch x := a.(type) {
@@ -126,7 +144,12 @@ func EqAny(a, b any) bool {
 	case Unit:
 		_, ok := b.(Unit)
 		return ok
+	case Inner:
+		return EqAny(UnwrapAny(x), UnwrapAny(b))
 	case Equaler:
+		if w, ok := b.(Inner); ok {
+			return EqAny(a, UnwrapAny(w))
+		}
 		return x.XoEq(b)
 	case protoType:
 		protoMissing("XoEq", a)

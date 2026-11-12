@@ -356,7 +356,10 @@ fn (var g: Gen) adapter_of(from: Int, to: Int, cell: Bool) -> Str {
     b.write("type ${name} struct{ V ${g.go_type(from)} }\n\n")
   }
   b.write("func (a ${ar}) XoDebug(b *strings.Builder) { ${rt}DebugTo(b, a.V) }\n")
-  b.write("func (a ${ar}) XoEq(o any) bool { if p, ok := o.(${ar}); ok { return ${rt}EqAny(a.V, p.V) }; return false }\n")
+  // equal to any value holding an equal concrete value, wrapped or not,
+  // as on the native backends (rt.EqAny unwraps XoInner)
+  b.write("func (a ${ar}) XoInner() any { return a.V }\n")
+  b.write("func (a ${ar}) XoEq(o any) bool { return ${rt}EqAny(a.V, ${rt}UnwrapAny(o)) }\n")
   b.write("func (a ${ar}) XoHash() uint64 { return ${rt}HashAny(a.V) }\n\n")
   for (k, im) in ims.indexed() {
     let m = ms[k]
