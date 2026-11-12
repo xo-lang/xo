@@ -232,11 +232,19 @@ large is `Obj` itself: 75 fields, each at least one 8 byte word (compiler/ssa co
 copies this list (`var c = base`, the 4.3 MB block above), so the list's size counts twice at the
 peak.
 
+## Obj's Bools in one word
+
+Lever 1 below, done: `Obj`'s 23 Bools in one `ObjFlags` word (`x.flags.used()`,
+`x.flags.set_used(v)`; decision 0620's measurement). scripts/browser-memory.sh, parent 311a65a63
+against the change: the REPL's compiler peak 36 to 35 MB. Less than the native estimate: on wasm a
+Bool is a 4 byte leaf, so the Bools were about 20% of Obj there. xo's self build on linux/arm64
+(`--ab`, 7 rounds): wall 0.991, RSS within noise.
+
 ## Next
 
-The margin is now 14 MB. Levers on the object list, in order of payoff (none started):
+The margin is now 15 MB. Levers on the object list, in order of payoff:
 
-1. Pack Obj's 23 Bools into one flags word (`flags: Int`, methods for each). This saves about 22 of
+1. (Done above.) Pack Obj's 23 Bools into one flags word (`flags: Int`, methods for each). This saves about 22 of
    82 words: about 27% of the list, and of each entry's copy, so roughly 2 to 2.5 MB at the REPL's
    peak. Every native build's checker gains too. It is a mechanical change across compiler/check and
    its readers.

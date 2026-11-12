@@ -33,8 +33,16 @@ inside enum payloads are not packed in the first step.
 The hand version on the checker's `Obj` alone (decision 0583 work, branch
 l2-objflags2: 23 Bools in one `ObjFlags` word, 82 to 60 words an object)
 measures what packing one Bool-heavy struct gives:
-- the REPL's compiler peak (scripts/browser-memory.sh): PENDING;
-- xo's self build, linux/arm64 `xo bench --ab`, wall and RSS: PENDING.
+- the REPL's compiler peak (scripts/browser-memory.sh): 36 to 35 MB. On
+  wasm a Bool is a 4 byte leaf (compiler/wasm gen.xo `size`), so the
+  23 Bools are about 92 of Obj's 432 bytes there (20%), not 28%;
+- xo's self build, linux/arm64 `xo bench --ab` (7 rounds, ab-host): wall
+  0.991 (0.97 to 0.998, better), cpu 0.996 and max RSS 0.989 (4325184 to
+  4277180 kB) within noise.
+The 2026-11-02 draft that read each flag through a method on the whole
+`Obj` (`fn (o: Obj) used()`) was worse: Mac `--ab` wall 1.064, RSS 1.237,
+since a by-value receiver copied the 61 word struct out of the list per
+read. Reads through the one word field (`x.flags.used()`) copy one word.
 
 The language version applies the same packing to all of those structs
 without hand-written accessors. Its gain on std-heavy programs (the HTTP
