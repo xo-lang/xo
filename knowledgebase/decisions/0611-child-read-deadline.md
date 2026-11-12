@@ -1,6 +1,6 @@
 # 0611: Child read deadline (Go's SetReadDeadline on a child's pipes) and ProcErr.Timeout
 
-Status: Accepted (Xo-lead, 2026-11-11, relaying the scarlet session's field report and naming Go's shape; follows decision 0430, whose shape the lead and Xo Lang 3 agreed for connections). Xo Lang 3.
+Status: Accepted (owner, 2026-11-11). Proposed by Xo Lang 3, 2026-11-11, from the scarlet session's field report relayed by the lead; the shape of decision 0430.
 
 ## Context
 
