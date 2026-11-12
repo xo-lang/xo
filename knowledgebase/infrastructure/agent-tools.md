@@ -1161,6 +1161,10 @@ yourself.
   `~/xo-lead/notes/NAME/gate-*.log` on a failure, and ends with the PUSHQ_RAN value to give pushq.sh
   --gated; its exit status is the gate's. A step that needs the Mac (darwin output) still runs there.
   Last verified: 2026-11-07.
+  A failed step's whole log (the stream shows its last 60 lines) is copied back to
+  `~/xo-lead/agents/offgate-NAME-STEP.log.gz` (NAME is the worktree and short HEAD), and the run's last lines
+  name it; the host keeps its copy in /work/offgate-keep for 3 days (lead, 2026-11-11: a host-only corpus
+  failure scrolled out of the tail and the checkout's logs were deleted). Last verified: 2026-11-11.
   Since 2026-11-10 (lead, owner's test-speed plan item 5) the host's gate.sh runs the steps at once, at most 3
   (OFFGATE_CONCURRENT=3 by default; 0 runs them one after another), and the output ends with the host's memory
   peak while the gate ran ("offload-gate: host memory peak N MB in use of T MB"). Each step is slower beside
