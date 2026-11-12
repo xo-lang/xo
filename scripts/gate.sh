@@ -63,10 +63,13 @@
 #            there. Needs node; about 4 minutes on host 2 (2026-11-11);
 #            for the 8-hourly full tier
 #   stdcov  internal/repotest's TestStdAPICovered with the resolved sweep
-#            (`xo dev edges` over every program, a few minutes): also run
-#            after the steps named when the branch changes std, a program
-#            the sweep checks, internal/stdcoverage or `xo dev edges`
-#            (XO_GATE_STDCOV=0 skips that; owner, 2026-11-11)
+#            (`xo dev edges` over every program, XO_STDCOV_JOBS at once,
+#            default 2; 3636 s in tier 69 on the Mac beside other steps
+#            with NumCPU jobs; time and peak at 2 jobs measured in the next
+#            tier): also run after the steps named when the branch
+#            changes std, a program the sweep checks, internal/stdcoverage
+#            or `xo dev edges` (XO_GATE_STDCOV=0 skips that; owner,
+#            2026-11-11), except on darwin, where only a named stdcov runs
 #   cross, codegen, wasm, selfbuild, seedbuild
 #            pushq.sh's proving checks (below; wasm also runs
 #            TestWasmCommandGoldens under wasmtime where the host has it): named, each runs after
@@ -647,9 +650,11 @@ stdcov_change() {
 # stdcov_step: internal/repotest's TestStdAPICovered with the resolved
 # sweep (stdcoverage.Sweep: `xo dev edges --own` of every program and the
 # std graph once a bindings value), so a std declaration counts as covered
-# only when a call resolves to it (owner, 2026-11-11). A few minutes, so
-# not in the fast set: std pushes run it by path and the 8-hourly tier by
-# name.
+# only when a call resolves to it (owner, 2026-11-11). Not a few minutes:
+# about an hour in tier 69 (NumCPU jobs, 32 GB peak on a 24 GB Mac beside
+# selfbuild gates); with XO_STDCOV_JOBS (default 2) its time and peak are
+# measured in the next tier. Not in the fast set: std pushes run it by path
+# (not on darwin) and the 8-hourly tier by name.
 stdcov_step() {
   XO_STDCOV_SWEEP=1 full stdcov ./internal/repotest -run '^TestStdAPICovered$'
 }

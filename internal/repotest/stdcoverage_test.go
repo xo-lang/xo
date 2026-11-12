@@ -19,8 +19,9 @@ import (
 // allowlist must also stay honest: a line that matches nothing fails, so an
 // entry is removed once a program covers what it allowed.
 //
-// The sweep checks every program (stdcoverage.Sweep, a few minutes on a
-// gate host), so it runs where XO_STDCOV_SWEEP=1 and XO_CLI name an xo:
+// The sweep checks every program (stdcoverage.Sweep, XO_STDCOV_JOBS at a
+// time, default 2; about an hour in tier 69 with NumCPU jobs, its time at 2
+// measured in the next tier), so it runs where XO_STDCOV_SWEEP=1 and XO_CLI name an xo:
 // gate.sh's stdcov step, which std pushes and the 8-hourly tier run.
 // `go run ./scripts/stdcoverage -sweep` prints the same list.
 func TestStdAPICovered(t *testing.T) {
