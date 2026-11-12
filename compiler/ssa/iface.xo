@@ -46,7 +46,16 @@ fn (var b: Builder) iface_type(t: Int, obj: Int) -> Int {
     }
     let res = b.c.subst(b.c.objs[im].result, sub)
     let err = b.fail_err(b.c.subst(b.c.objs[im].err, sub))
-    let ret = b.typ(b.result_of(res, err))
+    var ret = b.typ(b.result_of(res, err))
+    if b.fe.itab && b.c.objs[im].recv_var {
+      // a `var self` slot (decision 0613 step 5 stage 4) takes the
+      // interface value itself, consumed (an argument of a type the result
+      // holds is owned, rc.xo fv_arg_owned), and returns it afterwards: the
+      // same value when it wrote the concrete value in place, a new one
+      // holding a copy when another value still held the old
+      ps.push(st)
+      ret = b.m.tuple([ret, st])
+    }
     fs.push(SField{name: iname, ty: b.m.func_type(ps, ret)})
   }
   let s = b.str_t()
@@ -392,6 +401,9 @@ fn (var b: Builder) iface_thunk(t: Int, i: Int, ct: Int, vt: Int, at: Expr?) -> 
   let im = b.c.objs[robj].iface_meths[i]
   let ft = b.slot_ft(t, i)
   let name = "${b.m.types[t].name}.${b.impl_text(ct)}.${b.obj_name(im)}"
+  if b.fe.itab && b.c.objs[im].recv_var {
+    return b.var_thunk(name, t, i, im, ft, ct, vt, at)
+  }
   var ps = [ft]
   for e in b.m.types[ft].elems {
     ps.push(e)
@@ -687,9 +699,227 @@ fn (var b: Builder) iface_call(x: Expr, ci: check.CallInfo) -> Int {
       return b.var_bound_call(m, ct, recv, vals, nt, b.fail_err(to_err), x)
     }
   }
+  if b.is_iface(vt) && b.c.objs[fo].recv_var && b.itab_ft.contains(vt) {
+    return b.var_iface_call(fname, ct, vt, recv, vals, nt, b.fail_err(to_err), x)
+  }
   let rv = if late { b.expr(recv) } else { v }
   let r = b.method_on(fname, ct, rv, vals, nt, b.fail_err(to_err), Some(x))
   b.call_result(r, x)
+}
+
+/// A call of the `var self` method name through the interface value at
+/// the place recv (decision 0613 step 5 stage 4, option B): the value is
+/// the slot's last argument, consumed, so its xo.show environment's count
+/// is 1 exactly when no other value holds it; the slot's thunk writes in
+/// place then, else a copy, and returns the value afterwards, which goes
+/// back into the place. The function value called is the slot's code with
+/// no environment (the thunk reads the value's).
+fn (var b: Builder) var_iface_call(name: Str, ct: Int, vt: Int, recv: Expr, args: List[Int], want: Int, to_err: Int, x: Expr) -> Int {
+  var p = b.place(recv)
+  if !p.ok {
+    return b.undef(want)
+  }
+  let j = b.m.field_index(vt, name)
+  let ft = b.slot_ft(vt, j)
+  let rt = b.m.types[ft].ret
+  let v = b.place_get(p)
+  let code = b.add(Op.Field, b.int_t(), Aux.I(n: j), [v])
+  var all = [b.add(Op.Bind, ft, Aux.None, [code, b.noenv()])]
+  for a in args {
+    all.push(a)
+  }
+  all.push(v)
+  let r = b.add(Op.CallValue, rt, Aux.None, all)
+  b.check("")
+  b.place_set(p, b.add(Op.Field, vt, Aux.I(n: 1), [r]))
+  let res = b.add(Op.Field, b.m.types[rt].elems[0], Aux.I(n: 0), [r])
+  let src = b.ifaces.get(vt) ?? -1
+  let (im, sub) = b.iface_meth(src, name)
+  let from_err = b.fail_err(b.c.subst(b.c.objs[im].err, sub))
+  b.call_result(b.adapt_result(res, from_err, want, to_err, Some(x)), x)
+}
+
+/// A function value with no environment (xo.noenv, which nothing calls):
+/// the environment word of a `var self` slot's call, whose thunk reads the
+/// interface value it is passed instead.
+fn (var b: Builder) noenv() -> Int {
+  let st = b.str_t()
+  let ft = b.m.func_type([st, b.bool_t()], st)
+  let name = "xo.noenv"
+  let fi = b.thunk_func(name, [ft, st, b.bool_t()], [st], [])
+  if fi >= 0 {
+    b.m.funcs[fi].indirect = true
+    let saved = b.begin(fi, b.s.file)
+    b.retv(b.param(1))
+    b.finish_fn()
+    b.end(saved)
+  }
+  b.add(Op.Closure, ft, Aux.S(s: name), [])
+}
+
+/// The thunk of interface t's `var self` slot i (method im) for a value
+/// of checker type ct held in xo.show's environment as vt (decision 0613
+/// step 5 stage 4). Its last parameter is the interface value, owned.
+/// When xo.show's environment is unique the concrete value is moved out
+/// (CapTake), the type's `var` method runs on it, and it goes back
+/// (CapPut), so the method writes it in place and the value is returned
+/// as it came; otherwise the method runs on a copy and a new value with a
+/// new xo.show holds the result, so the other holders keep the old one. A
+/// plain method (which implements a `var self` one) runs on the value as
+/// it is.
+fn (var b: Builder) var_thunk(name: Str, t: Int, i: Int, im: Int, ft: Int, ct: Int, vt: Int, at: Expr?) -> Str {
+  var ps = [ft]
+  for e in b.m.types[ft].elems {
+    ps.push(e)
+  }
+  let rt = b.m.types[ft].ret
+  let fi = b.thunk_func(name, ps, [rt], [vt])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mname = b.obj_name(im)
+  let m = b.method_of(ct, mname)
+  let ret0 = b.m.types[rt].elems[0]
+  let pv = b.param(ps.len() - 1)
+  let si = b.m.field_index(t, IFACE_SHOW)
+  let show_t = b.m.types[t].fields[si].ty
+  let ir = b.ifaces.get(t) ?? -1
+  let isub = b.c.args_subst(b.c.objs[b.named_obj(ir)].tparams, b.ty_args(ir))
+  let to_err = b.fail_err(b.c.subst(b.c.objs[im].err, isub))
+  var margs: List[Int] = []
+  for k in 1..ps.len() - 1 {
+    margs.push(b.param(k))
+  }
+  let fail = fn(var b: Builder, msg: Str) {
+    b.unsupported(msg)
+    b.retv(b.undef(rt))
+    b.finish_fn()
+    b.end(saved)
+  }
+  let show = b.add(Op.Field, show_t, Aux.I(n: si), [pv])
+  if b.is_iface(vt) {
+    b.var_thunk_wrapped(mname, t, si, ft, ct, vt, pv, show, margs, ret0, to_err, at)
+    b.finish_fn()
+    b.end(saved)
+    return name
+  }
+  if m < 0 || !b.c.objs[m].recv_var {
+    // a plain method: it reads the value where it is
+    let me = b.add(Op.Capture, vt, Aux.I(n: 0), [show])
+    let res = b.method_on(mname, ct, me, margs, ret0, to_err, at)
+    if !b.is_dead() {
+      b.retv(b.add(Op.Tuple, rt, Aux.None, [res, pv]))
+    }
+    b.finish_fn()
+    b.end(saved)
+    return name
+  }
+  let targs = b.recv_targs(m, ct)
+  let tps = b.type_params(m)
+  let callee = b.declare(m, targs)
+  let cname = b.m.funcs[callee].name
+  let cres = b.m.funcs[callee].results
+  if tps.len() != targs.len() || b.m.funcs[callee].blocks[0].params.len() != margs.len() + 1 || cres.len() != 2 {
+    fail(b, "the method `${b.c.display_name(m)}` of `${b.c.show(ct)}` through an interface")
+    return name
+  }
+  let ct2 = b.m.tuple(cres)
+  let from_err = b.fail_err(b.c.subst(b.c.objs[m].err, b.c.args_subst(tps, targs)))
+  let st = b.show_thunk(ct, vt, at)
+  let (yes, no) = b.branch(b.add(Op.EnvUnique, b.bool_t(), Aux.None, [show]))
+  for unique in [true, false] {
+    b.s.cur = if unique { yes } else { no }
+    let me = if unique { b.add(Op.CapTake, vt, Aux.I(n: 0), [show]) } else { b.add(Op.Capture, vt, Aux.I(n: 0), [show]) }
+    let r = b.call(cname, ct2, "", [me] + margs)
+    b.check(cname)
+    if b.is_dead() {
+      continue
+    }
+    let nv = b.add(Op.Field, cres[1], Aux.I(n: 1), [r])
+    let f0 = b.add(Op.Field, cres[0], Aux.I(n: 0), [r])
+    let res = b.adapt_result(f0, from_err, ret0, to_err, at)
+    if unique {
+      b.add(Op.CapPut, b.unit_t(), Aux.I(n: 0), [show, nv])
+      b.retv(b.add(Op.Tuple, rt, Aux.None, [res, pv]))
+    } else {
+      // a new value: the same code words and type id, a new xo.show
+      var fs: List[Int] = []
+      for k in 0..b.m.types[t].fields.len() {
+        fs.push(if k == si { b.add(Op.Closure, show_t, Aux.S(s: st), [nv]) } else { b.add(Op.Field, b.m.types[t].fields[k].ty, Aux.I(n: k), [pv]) })
+      }
+      b.retv(b.add(Op.Tuple, rt, Aux.None, [res, b.add(Op.Struct, t, Aux.None, fs)]))
+    }
+  }
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The body of a `var self` slot's thunk for a wrapped value (wrap_iface):
+/// xo.show's environment holds an interface value of checker type ct (SSA
+/// type vt), whose own slot runs the method. When the environment is
+/// unique the held value is moved out, its slot called (which writes it in
+/// place when nothing else holds it) and the result put back; otherwise
+/// the held value is copied (counted) and a new wrapper holds the slot's
+/// result, so the other holders keep the old one. A held value whose
+/// method is a plain one is read where it is.
+fn (var b: Builder) var_thunk_wrapped(mname: Str, t: Int, si: Int, ft: Int, ct: Int, vt: Int, pv: Int, show: Int, margs: List[Int], ret0: Int, to_err: Int, at: Expr?) {
+  let rt = b.m.types[ft].ret
+  let show_t = b.m.types[t].fields[si].ty
+  let src = b.ifaces.get(vt) ?? -1
+  let (sim, ssub) = b.iface_meth(src, mname)
+  let j = b.m.field_index(vt, mname)
+  if sim < 0 || j < 0 || !b.itab_ft.contains(vt) {
+    b.unsupported("the `var self` method `${mname}` through an interface value converted from `${b.c.show(ct)}` (decision 0613 step 5 stage 4)")
+    b.retv(b.undef(rt))
+    return
+  }
+  let from_err = b.fail_err(b.c.subst(b.c.objs[sim].err, ssub))
+  if !b.c.objs[sim].recv_var {
+    let me = b.add(Op.Capture, vt, Aux.I(n: 0), [show])
+    var all = [b.slot_fn(me, j)]
+    for a in margs {
+      all.push(a)
+    }
+    let r0 = b.add(Op.CallValue, b.m.types[b.slot_ft(vt, j)].ret, Aux.None, all)
+    b.check("")
+    if !b.is_dead() {
+      b.retv(b.add(Op.Tuple, rt, Aux.None, [b.adapt_result(r0, from_err, ret0, to_err, at), pv]))
+    }
+    return
+  }
+  let sft = b.slot_ft(vt, j)
+  let srt = b.m.types[sft].ret
+  let st = b.show_thunk(ct, vt, at)
+  let (yes, no) = b.branch(b.add(Op.EnvUnique, b.bool_t(), Aux.None, [show]))
+  for unique in [true, false] {
+    b.s.cur = if unique { yes } else { no }
+    let sv = if unique { b.add(Op.CapTake, vt, Aux.I(n: 0), [show]) } else { b.add(Op.Capture, vt, Aux.I(n: 0), [show]) }
+    let code = b.add(Op.Field, b.int_t(), Aux.I(n: j), [sv])
+    var all = [b.add(Op.Bind, sft, Aux.None, [code, b.noenv()])]
+    for a in margs {
+      all.push(a)
+    }
+    all.push(sv)
+    let r0 = b.add(Op.CallValue, srt, Aux.None, all)
+    b.check("")
+    if b.is_dead() {
+      continue
+    }
+    let nv = b.add(Op.Field, vt, Aux.I(n: 1), [r0])
+    let res = b.adapt_result(b.add(Op.Field, b.m.types[srt].elems[0], Aux.I(n: 0), [r0]), from_err, ret0, to_err, at)
+    if unique {
+      b.add(Op.CapPut, b.unit_t(), Aux.I(n: 0), [show, nv])
+      b.retv(b.add(Op.Tuple, rt, Aux.None, [res, pv]))
+    } else {
+      var fs: List[Int] = []
+      for k in 0..b.m.types[t].fields.len() {
+        fs.push(if k == si { b.add(Op.Closure, show_t, Aux.S(s: st), [nv]) } else { b.add(Op.Field, b.m.types[t].fields[k].ty, Aux.I(n: k), [pv]) })
+      }
+      b.retv(b.add(Op.Tuple, rt, Aux.None, [res, b.add(Op.Struct, t, Aux.None, fs)]))
+    }
+  }
 }
 
 /// A call of method m, which takes `var self`, of the type ct a generic

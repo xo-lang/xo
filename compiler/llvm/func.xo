@@ -1531,6 +1531,31 @@ fn (var g: Gen) instr_body(v: Int) {
     // (the function's address as a word) and the call's function value,
     // that address with the show closure's environment
     CodeOf => g.set(v, "ptrtoint ptr ${fname(aux_str(x.aux))} to i64")
+    // decision 0613 step 5 stage 4: a `var self` slot's environment, its
+    // count (1: held once) and a capture moved out and back
+    EnvUnique => {
+      let a0 = g.op(args[0])
+      let env = g.def("extractvalue { ptr, ptr } ${a0}, 1")
+      let rc = g.def("load i64, ptr ${env}")
+      g.set(v, "icmp eq i64 ${rc}, 1")
+    }
+    CapTake => {
+      let a0 = g.op(args[0])
+      let env = g.def("extractvalue { ptr, ptr } ${a0}, 1")
+      let el = g.env_ll(g.fi)
+      let p = g.def("getelementptr ${el}, ptr ${env}, i32 0, i32 ${aux_int(x.aux) + ENV_FIELDS}")
+      let l = g.ll(vt)
+      let r = g.def("load ${l}, ptr ${p}")
+      g.emit("store ${l} zeroinitializer, ptr ${p}")
+      g.alias(v, r)
+    }
+    CapPut => {
+      let a0 = g.op(args[0])
+      let env = g.def("extractvalue { ptr, ptr } ${a0}, 1")
+      let el = g.env_ll(g.fi)
+      let p = g.def("getelementptr ${el}, ptr ${env}, i32 0, i32 ${aux_int(x.aux) + ENV_FIELDS}")
+      g.store_value(args[1], p)
+    }
     Bind => {
       let a0 = g.op(args[0])
       let a1 = g.op(args[1])

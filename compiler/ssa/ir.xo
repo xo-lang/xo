@@ -119,6 +119,16 @@ pub enum Op {
   // closure's first word, as Rebind's), the method slots of an interface
   // value in option B's form
   CodeOf
+  // EnvUnique(f): whether f's environment (a closure's) is held once (its
+  // count is 1): a `var self` slot of an interface value writes the value
+  // in place then (decision 0613 step 5 stage 4)
+  EnvUnique
+  // CapTake(f): capture aux of f's environment moved out, owned, the slot
+  // left zero (a released zero is a no-op); only on a unique environment
+  CapTake
+  // CapPut(f, v): v stored into capture aux of f's environment, consumed;
+  // the slot was CapTake's (no release of what it held)
+  CapPut
 }
 
 /// The printed name of an opcode.
@@ -177,6 +187,9 @@ pub fn op_name(o: Op) -> Str {
     Unreachable => "unreachable"
     Bind => "bind"
     CodeOf => "codeof"
+    EnvUnique => "envunique"
+    CapTake => "captake"
+    CapPut => "capput"
   }
 }
 

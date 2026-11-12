@@ -252,6 +252,50 @@ fn (var g: G) capture_op(v: Int) {
   g.set(v, ws)
 }
 
+/// EnvUnique (decision 0613 step 5 stage 4): whether the environment of
+/// the function value's count is 1 (a frame's environment, MIN_INT, and
+/// a shared one, its SHARED bit set, are not).
+fn (var g: G) env_unique_op(v: Int) {
+  let x = g.f.values[v]
+  let env = g.real(g.words(x.args[0])[1])
+  let rc = g.def1(false, "ldr $d0, [$u0]", [env])
+  g.set(v, [g.def1(false, "cmp $u0, #1\ncset $d0, eq", [rc])])
+}
+
+/// CapTake: capture aux of the function's own environment, its slot then
+/// zero, so a later release of the environment releases nothing there.
+fn (var g: G) cap_take_op(v: Int) {
+  let x = g.f.values[v]
+  let env = g.real(g.words(x.args[0])[1])
+  let (off, _) = g.capture_words(g.fi, aux_int(x.aux))
+  var ws: List[Int] = []
+  for (k, fp) in g.layout(ssa.ty_of(x.tb)).indexed() {
+    let (base, o) = g.mem_at(env, ENV_HDR + 8 * (off + k))
+    ws.push(g.def1(fp, "ldr $d0, [$u0, #${o}]", [base]))
+  }
+  let z = g.cimm(0)
+  for k in 0..ws.len() {
+    let (base, o) = g.mem_at(env, ENV_HDR + 8 * (off + k))
+    g.store("str $u0, [$u1, #${o}]", [z, base])
+  }
+  g.set(v, ws)
+}
+
+/// CapPut: the value stored into capture aux of the function's own
+/// environment (the slot CapTake emptied).
+fn (var g: G) cap_put_op(v: Int) {
+  let x = g.f.values[v]
+  let env = g.real(g.words(x.args[0])[1])
+  let (off, _) = g.capture_words(g.fi, aux_int(x.aux))
+  var k = 0
+  for w in g.store_words(x.args[1]) {
+    let (base, o) = g.mem_at(env, ENV_HDR + 8 * (off + k))
+    g.store("str $u0, [$u1, #${o}]", [w, base])
+    k += 1
+  }
+  g.set(v, [])
+}
+
 /// Lowers a call through a function value: the closure's words (code in
 /// x0, environment in x1) and the arguments, then `blr x0`.
 fn (var g: G) call_value_op(v: Int) {

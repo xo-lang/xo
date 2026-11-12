@@ -1697,6 +1697,10 @@ fn (var g: G) instr1(v: Int) {
     // function value, that code word with the show closure's environment
     CodeOf => g.set(v, [g.sym_addr(g.fname(aux_str(x.aux)))])
     Bind => g.set(v, [g.words(x.args[0])[0], g.words(x.args[1])[1]])
+    // decision 0613 step 5 stage 4: a `var self` slot's environment
+    EnvUnique => g.env_unique_op(v)
+    CapTake => g.cap_take_op(v)
+    CapPut => g.cap_put_op(v)
     Unbox => g.unbox_op(v)
     Fault => {
       let ws = g.words(x.args[0])

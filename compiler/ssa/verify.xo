@@ -526,6 +526,28 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
         return "bind takes a code word and a function value to a function value"
       }
     }
+    EnvUnique => {
+      if n != 1 || k0 != Kind.Func || tk != Kind.Bool {
+        return "envunique takes a function value to a Bool"
+      }
+    }
+    CapTake | CapPut => {
+      // the function's own closure's capture aux (decision 0613 step 5)
+      let i = match x.aux {
+        I(n: t) => t
+        None | F(..) | B(..) | S(..) | Bs(..) | P(..) => -1
+      }
+      let want = if x.op == Op.CapTake { 1 } else { 2 }
+      // operand 0 is a closure whose environment has this function's
+      // layout (a `var self` slot's interface value's xo.show)
+      if n != want || !f.indirect || k0 != Kind.Func || i < 0 || i >= f.captures.len() {
+        return "${op_name(x.op)} of a capture outside the function's layout"
+      }
+      let ct = f.captures[i]
+      if (x.op == Op.CapTake && ty_of(x.tb) != ct) || (x.op == Op.CapPut && ats[1] != ct) {
+        return "${op_name(x.op)} of a value of another type than the capture"
+      }
+    }
     CodeOf => {
       let ci = m.func_index(aux_name(x.aux))
       if ci < 0 || !m.funcs[ci].indirect || n != 0 || tk != Kind.Int {

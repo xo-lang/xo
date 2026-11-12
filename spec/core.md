@@ -1042,8 +1042,7 @@ pub interface Store {
   Through an interface value the receiver must be a `var` place as
   well, the call writes the updated value back into the interface value,
   and copies of the interface value are unaffected, as for any value
-  (5.1); the Go backend supports it, the native backends report
-  `XO1201` until decision 0613 step 5 stage 4.
+  (5.1), also through a value converted from another interface.
 
 ### 2.5 Optionals
 

@@ -257,3 +257,50 @@ binding, a list, a struct field, a Map value, an Option, a closure
 capture, a `var` parameter, and one such interface converted to another.
 A type parameter converted to such an interface stays unsupported on
 the Go backend (no cell type without the concrete type).
+
+## Addendum: stage 4, `var self` through interface values on the native backends (2026-11-12)
+
+A `var self` slot's function takes the interface value itself as its
+last argument and returns (the method's result, the value afterwards).
+The argument's type is one the result holds, so the call passes it owned
+(rc.xo fv_arg_owned): the caller's place gives its reference up, and the
+count of xo.show's environment is 1 exactly when no other interface value
+holds the concrete value. The call's function value is the slot's code
+bound to a closure with no environment (xo.noenv), since the thunk reads
+the environment of the value it is passed. The thunk (iface.xo var_thunk)
+tests the count (new op EnvUnique); when it is 1 it moves the concrete
+value out (CapTake, which zeroes the slot), runs the type's `var` method
+on it, puts the result back (CapPut) and returns the value as it came, so
+the method writes in place; otherwise it runs the method on a copy and
+returns a new value whose xo.show holds the result. A plain method that
+implements a `var self` interface method reads the value where it is.
+arm64 and amd64 (isel: a load and compare of the count, loads and stores
+of the capture words), LLVM and wasm lower the ops (wasm does not zero the
+moved slot: a wasm fault ends the instance).
+
+Two attempts that did not work, kept as a gotcha
+(gotchas/rc-field-owned-while-parent-lives.md): passing xo.show's closure
+owned (a field of the place's value) made the count pass retain it,
+because the value it came from was still released after the call, so
+every call took the copy path (100,000 calls 5.6 s, quadratic); and
+binding the slot's code to that closure while also passing it owned did
+the same.
+
+Measured (darwin/arm64, one run each, bench in the stage 4 notes): a
+million `load` calls pushing onto a List through one interface value
+take 2 ms (100,000: under 1 ms), where the copy path took 5.6 s for
+100,000. Golden iface_var_value (arm64, LLVM, wasm): copies through a
+binding, a list, a struct field, a Map value, an Option, a closure
+capture and a `var` parameter, `==` and Debug text.
+
+Converted values (stage 4b, 2026-11-12): an interface value converted to
+another interface is wrapped (wrap_iface: xo.show's environment holds the
+source interface value). A `var self` slot of the wrapper
+(iface.xo var_thunk_wrapped) moves the held value out when the wrapper's
+environment is unique, calls the source value's own slot with it (which
+writes in place when it is unique in turn) and puts the result back;
+otherwise it copies the held value and returns a new wrapper. A source
+whose method is a plain one is read where it is. Golden iface_var_wrap
+(arm64, LLVM, wasm); a million `load` calls through a converted value
+take 5 ms on darwin/arm64. No `var self` call through an interface value
+is XO1201 on the native backends any more.

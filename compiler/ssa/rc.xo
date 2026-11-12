@@ -645,7 +645,10 @@ fn (var r: Rc) modes(f: Func, v: Int) -> List[Mode] {
         ms[0] = Mode.Borrow
       }
     }
-    Fault | Retain | Eq | Ne | Capture | Unbox | Share | ShareIn | Bind => ms = fill_modes(n, Mode.Borrow)
+    Fault | Retain | Eq | Ne | Capture | Unbox | Share | ShareIn | Bind | EnvUnique | CapTake => ms = fill_modes(n, Mode.Borrow)
+    // the closure borrowed, the value consumed into its environment
+    // (decision 0613 step 5 stage 4)
+    CapPut => ms = [Mode.Borrow, Mode.Consume]
     CallValue => {
       // the closure borrowed; each argument borrowed unless its type is
       // the result's (decision 0337, fv_arg_owned)

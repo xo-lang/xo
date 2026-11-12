@@ -1,0 +1,111 @@
+// var self through interface values (decision 0613 step 5): the call
+// updates the value in its place; copies stay independent.
+interface Loader {
+  fn load(var self, n: Int)
+  fn total(self) -> Int
+}
+
+struct Box {
+  items: List[Int] = []
+}
+
+fn (var b: Box) load(n: Int) {
+  for i in 0..n {
+    b.items.push(i)
+  }
+}
+
+fn (b: Box) total() -> Int {
+  var s = 0
+  for x in b.items {
+    s += x
+  }
+  s
+}
+
+struct Counter {
+  n: Int = 0
+}
+
+fn (var c: Counter) load(n: Int) {
+  c.n += n
+}
+
+fn (c: Counter) total() -> Int { c.n }
+
+struct Holder {
+  l: Loader
+}
+
+fn add(var l: Loader, n: Int) {
+  l.load(n)
+}
+
+fn main(os: Os) {
+  var a: Loader = Box{}
+  a.load(3)
+  let b = a
+  a.load(2)
+  os.stdio.println("${a.total()} ${b.total()}")
+  var c: Loader = Counter{}
+  c.load(4)
+  var d = c
+  d.load(1)
+  os.stdio.println("${c.total()} ${d.total()} ${c == d}")
+  var xs: List[Loader] = [Box{}, Counter{}]
+  let ys = xs
+  for i in 0..xs.len() {
+    xs[i].load(3)
+  }
+  os.stdio.println("${xs[0].total()} ${xs[1].total()} ${ys[0].total()} ${ys[1].total()}")
+  var h = Holder{l: Counter{}}
+  h.l.load(7)
+  add(h.l, 2)
+  add(a, 1)
+  os.stdio.println("${h.l.total()} ${a.total()} ${b.total()}")
+  let e: Loader = Counter{n: 5}
+  var f = e
+  f.load(0)
+  os.stdio.println("${e == f} ${f.debug()}")
+  more(os)
+}
+
+interface Plain {
+  fn total(self) -> Int
+}
+
+interface Loader2 {
+  fn load(var self, n: Int)
+  fn total(self) -> Int
+}
+
+fn more(os: Os) {
+  // a struct holding one, copied
+  var h = Holder{l: Counter{n: 1}}
+  let h2 = h
+  h.l.load(10)
+  // a Map's value and an Option
+  var m: Map[Str, Loader] = {"k": Counter{}}
+  let m2 = m
+  if let Some(v) = m.get("k") {
+    var w = v
+    w.load(3)
+    m["k"] = w
+  }
+  var o: Option[Loader] = Some(Counter{n: 2})
+  let o2 = o
+  if let Some(x0) = o {
+    var x = x0
+    x.load(5)
+    o = Some(x)
+  }
+  // a closure capture
+  var cc: Loader = Counter{n: 100}
+  let f = fn() -> Int { cc.total() }
+  cc.load(1)
+  // one interface value converted to another
+  let lp: Loader = Counter{n: 7}
+  var l2: Loader2 = lp
+  l2.load(1)
+  os.stdio.println("${h.l.total()} ${h2.l.total()} ${m.get_or_fault("k", "set").total()} ${m2.get_or_fault("k", "set").total()} ${o.map(fn(v) { v.total() }) ?? -1} ${o2.map(fn(v) { v.total() }) ?? -1} ${f()} ${cc.total()} ${l2.total()} ${lp.total()}")
+}
