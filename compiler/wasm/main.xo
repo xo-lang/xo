@@ -64,12 +64,23 @@ fn main(os: Os) ! {
     } else if a == "--each" {
       each = true
     } else if a == "--play" {
+      let bad = wd_error(os, wd)
+      if !bad.is_empty() {
+        os.stdio.println("{\"error\":${json_text(bad)}}")
+        os.proc.exit(2)
+      }
       play(os, std_dir, wd, args[i + 1..])
       return
     } else {
       dirs.push(a)
     }
     i += 1
+  }
+  // a --wd that is not the working directory read another tree (2026-11-12)
+  let bad_wd = wd_error(os, wd)
+  if !bad_wd.is_empty() && asm_in.is_empty() {
+    os.stdio.eprintln("wasm: ${bad_wd}")
+    os.proc.exit(2)
   }
   if !asm_in.is_empty() {
     let (bin, err) = assemble(os.fs.read_text(asm_in)?)
@@ -215,3 +226,53 @@ fn rel_to(wd: Str, p: Str) -> Str {
   }
   p
 }
+
+/// check.wd_mismatch for this process, with wd's symbolic links followed
+/// (macOS's getcwd names /tmp as /private/tmp): "" when wd is the working
+/// directory.
+fn wd_error(os: Os, wd: Str) -> Str {
+  let cwd = os.fs.cwd_path().ok()
+  let bad = check.wd_mismatch(cwd, wd)
+  if bad.is_empty() {
+    return ""
+  }
+  let c = cwd ?? return bad
+  let abs = if wd.starts_with("/") { wd } else { "${c}/${wd}" }
+  if check.wd_mismatch(cwd, real_dir(os, abs)).is_empty() { "" } else { bad }
+}
+
+/// Absolute path p with each symbolic link among its parts replaced by its
+/// target (at most 40 links, as a loop guard).
+fn real_dir(os: Os, p: Str) -> Str {
+  var done = ""
+  var rest = p.split("/").filter(fn(x) { !x.is_empty() && x != "." })
+  var links = 0
+  while !rest.is_empty() {
+    let part = rest[0]
+    rest = rest[1..]
+    if part == ".." {
+      done = match done.rfind("/") {
+        Some(i) => done[..i]
+        None => ""
+      }
+      continue
+    }
+    let next = "${done}/${part}"
+    match os.fs.read_link(next).ok() ?? None {
+      Some(t) => {
+        links += 1
+        if links > 40 {
+          return p
+        }
+        let tparts = t.split("/").filter(fn(x) { !x.is_empty() && x != "." })
+        rest = tparts + rest
+        if t.starts_with("/") {
+          done = ""
+        }
+      }
+      None => done = next
+    }
+  }
+  if done.is_empty() { "/" } else { done }
+}
+

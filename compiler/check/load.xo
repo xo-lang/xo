@@ -2178,6 +2178,30 @@ pub fn path_volume(p: Str) -> Str {
 }
 
 /// Whether p is absolute: rooted at /, or a Windows drive path (C:/x).
+/// The error of a working directory flag wd (--wd=WD) that is not the
+/// process's working directory cwd (None under WASI, which has none):
+/// the checker names a path below wd relative to wd (rel_dir) and the
+/// file system reads that relative path from cwd, so such a run read
+/// another tree and could check nothing without a word (a native
+/// compiler/wasm `--play check` printed no diagnostics and `--play
+/// build` "no `main` function", 2026-11-12). "" when they agree; a
+/// relative wd is taken from cwd.
+pub fn wd_mismatch(cwd: Str?, wd: Str) -> Str {
+  let c = match cwd {
+    Some(c) => c
+    None => return ""
+  }
+  if c.is_empty() || wd.is_empty() {
+    return ""
+  }
+  let cc = clean(c)
+  let w = if is_rooted(wd) { clean(wd) } else { clean("${cc}/${wd}") }
+  if w == cc {
+    return ""
+  }
+  "--wd=${wd} is not the working directory (${cc}): run from ${w}, or leave --wd out"
+}
+
 pub fn is_rooted(p: Str) -> Bool {
   p.starts_with("/") || !path_volume(p).is_empty()
 }

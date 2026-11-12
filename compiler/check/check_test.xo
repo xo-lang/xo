@@ -947,3 +947,14 @@ test "a bare const in a pattern matches by equality and a misspelled one is XO04
   expect(ls.filter(fn(l) { l.contains("\"XO0430\"") }).len()) == 1
   expect(ls.filter(fn(l) { l.contains("\"XO0302\"") }).len()) == 0
 }
+
+test "wd_mismatch: a --wd that is not the working directory is an error" {
+  expect(wd_mismatch(None, "/w")) == ""
+  expect(wd_mismatch(Some("/a/b"), "/a/b")) == ""
+  expect(wd_mismatch(Some("/a/b"), "/a/b/")) == ""
+  expect(wd_mismatch(Some("/a/b"), ".")) == ""
+  expect(wd_mismatch(Some("/a"), "b/..")) == ""
+  expect(wd_mismatch(Some("/a"), "/a/b").is_empty()) == false
+  expect(wd_mismatch(Some("/a/b"), "/a").is_empty()) == false
+  expect(wd_mismatch(Some("/a"), "b")) == "--wd=b is not the working directory (/a): run from /a/b, or leave --wd out"
+}
