@@ -298,7 +298,13 @@ func TestSeedPackHello(t *testing.T) {
 	loc := t.TempDir()
 	out := filepath.Join(loc, "seeds", "pack")
 	cmd := exec.Command("bash", filepath.Join(root, "scripts", "seed-pack.sh"), xo, out)
-	cmd.Env = append(os.Environ(), "XO_SEED_ALLOW_DIRTY=1", "XO_SEED_GZIP_LEVEL=1") // the level does not matter here
+	// the level does not matter here; nor does how xo was built: a
+	// checkout's bin/xo is separately compiled once the cache holds std's
+	// object (decision 0388), which seed-pack.sh refuses for a real seed
+	// (bf72a99ab; seed-cut.sh builds whole program ones), so the test
+	// skips that check (2026-11-12: hourly -short failed on main with
+	// "defines 1465 local symbols twice")
+	cmd.Env = append(os.Environ(), "XO_SEED_ALLOW_DIRTY=1", "XO_SEED_GZIP_LEVEL=1", "XO_SEED_ALLOW_SEPCOMP=1")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	o, err := cmd.Output()
