@@ -1,6 +1,7 @@
 # 0613: `var self` interface methods
 
-Status: Proposed (Xo Lang 1, 2026-11-11; for the owner. Gap found by
+Status: Accepted (owner, 2026-11-11; staged: bounds, then values). Proposed by
+Xo Lang 1 (2026-11-11); gap found by
 Azure 1 porting BigQuery)
 
 ## Context
