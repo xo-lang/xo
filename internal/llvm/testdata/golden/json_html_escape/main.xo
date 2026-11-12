@@ -1,0 +1,12 @@
+// json.html_escape (Go's HTMLEscape): <, >, &, U+2028 and U+2029 escaped
+// inside a JSON text, every other byte kept (2026-11-12).
+use std/json
+
+fn main(os: Os) {
+  let src = "{\"M\":\"<html>foo &\u{2028} \u{2029}</html>\"}"
+  os.stdio.println(json.html_escape(src))
+  os.stdio.println(json.html_escape("a\u{2027}b\u{202A}c"))
+  os.stdio.println("[${json.html_escape("")}]")
+  let enc = json.encode_str(["<a>", "x&y"])
+  os.stdio.println(json.html_escape(enc))
+}

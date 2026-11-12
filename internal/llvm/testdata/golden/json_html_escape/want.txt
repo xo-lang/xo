@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+{"M":"\u003chtml\u003efoo \u0026\u2028 \u2029\u003c/html\u003e"}
+a‧b‪c
+[]
+["\u003ca\u003e","x\u0026y"]
+--- stderr

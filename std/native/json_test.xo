@@ -3161,6 +3161,15 @@ test "json.Value as a field (S3): Go's RawMessage and any, null included" {
   expect(json.encode_str(v)) == "{\"id\":6,\"raw\":[1,\"x\"],\"note\":\"\"}"
 }
 
+test "html_escape: Go's TestHTMLEscape" {
+  let src = "{\"M\":\"<html>foo &\u{2028} \u{2029}</html>\"}"
+  expect(json.html_escape(src)) == "{\"M\":\"\\u003chtml\\u003efoo \\u0026\\u2028 \\u2029\\u003c/html\\u003e\"}"
+  expect(json.html_escape("plain")) == "plain"
+  expect(json.html_escape("")) == ""
+  // a lone 0xE2 lead and other U+20xx runes stay as they are
+  expect(json.html_escape("a\u{2027}b\u{202A}")) == "a\u{2027}b\u{202A}"
+}
+
 test "indent and compact (S3): Go's TestCompactAndIndent" {
   let cases: List[(Str, Str)] = [
     ("1", "1"),

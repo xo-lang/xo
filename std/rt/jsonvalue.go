@@ -201,6 +201,13 @@ func Json_indent(tk *Task, text string, prefix string, indent string) Result[str
 	return Ok[string, Json_DecodeErr](b.String())
 }
 
+// Json_html_escape is `json.html_escape(text)`: Go's HTMLEscape.
+func Json_html_escape(tk *Task, text string) string {
+	var b bytes.Buffer
+	json.HTMLEscape(&b, []byte(text))
+	return b.String()
+}
+
 // Json_compact is `json.compact(text)`: Go's Compact.
 func Json_compact(tk *Task, text string) Result[string, Json_DecodeErr] {
 	// the syntax only: Go's Compact and Indent take a number out of

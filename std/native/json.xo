@@ -335,6 +335,45 @@ fn walk_text(text: Str, prefix: Str, indent: Str, pretty: Bool) -> Str ! json.De
 
 fn compact(text: Str) -> Str ! json.DecodeErr { walk_text(text, "", "", false) }
 
+fn html_escape(text: Str) -> Str {
+  let b = text.bytes()
+  var out = BytesBuilder.new()
+  var start = 0
+  var i = 0
+  while i < b.len() {
+    let c = Int(b[i])
+    var w = 0
+    var rep = ""
+    if c == 0x3C {
+      w = 1
+      rep = "\\u003c"
+    } else if c == 0x3E {
+      w = 1
+      rep = "\\u003e"
+    } else if c == 0x26 {
+      w = 1
+      rep = "\\u0026"
+    } else if c == 0xE2 && i + 2 < b.len() && Int(b[i + 1]) == 0x80 && (Int(b[i + 2]) == 0xA8 || Int(b[i + 2]) == 0xA9) {
+      // U+2028 and U+2029, which end a line in JavaScript
+      w = 3
+      rep = if Int(b[i + 2]) == 0xA8 { "\\u2028" } else { "\\u2029" }
+    }
+    if w == 0 {
+      i += 1
+    } else {
+      out.write(b[start..i])
+      out.write_str(rep)
+      i += w
+      start = i
+    }
+  }
+  if start == 0 {
+    return text
+  }
+  out.write(b[start..b.len()])
+  out.freeze().to_str() ?? text
+}
+
 /// A string node's b holds its raw length under jsontext's flag bits.
 const RAW_LEN_MASK: Int = 2305843009213693951
 

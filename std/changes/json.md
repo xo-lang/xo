@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-12: feature: html_escape (Go's HTMLEscape)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the std audit of 2026-11-12 (bench/results/std-audit-2026-11-12.md): `encoding/json.HTMLEscape` was the module's last gap
+- Go reference: encoding/json.HTMLEscape
+- Test: std/native/json_test.xo "html_escape: Go's TestHTMLEscape"; golden json_html_escape (arm64, LLVM, Go parity, wasm)
+- Shipped in: not yet released
+
+`json.html_escape(text)` writes `<`, `>`, `&`, U+2028 and U+2029 in a JSON text as `\u003c`, `\u003e`, `\u0026`, `\u2028` and `\u2029`, so the text can sit inside an HTML `<script>` element, and keeps every other byte, as Go's HTMLEscape.
+
 ## 2026-11-11: docs: the header says what the module is for
 
 - Kind: docs

@@ -8,6 +8,7 @@ package rt
 var (
 	_ func(*Task, string, string, string) Result[string, Json_DecodeErr]             = Json_indent
 	_ func(*Task, string) Result[string, Json_DecodeErr]                             = Json_compact
+	_ func(*Task, string) string                                                     = Json_html_escape
 	_ func(*Json_DecodeErr, *Task) string                                            = (*Json_DecodeErr).M_go_text
 	_ func(*Task, string) Result[Json_Value, Json_DecodeErr]                         = Json_parse_value
 	_ func(*Json_Value, *Task) string                                                = (*Json_Value).M_encode

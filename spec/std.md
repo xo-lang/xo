@@ -2586,6 +2586,7 @@ pub fn encode_indent[T: Json](v: T, prefix: Str = "", indent: Str = "  ") -> Byt
 pub fn encode_indent_str[T: Json](v: T, prefix: Str = "", indent: Str = "  ") -> Str
 pub fn indent(text: Str, prefix: Str = "", indent: Str = "  ") -> Str ! DecodeErr      // Go's Indent over a text (the whitespace after the value is kept)
 pub fn compact(text: Str) -> Str ! DecodeErr                                            // Go's Compact
+pub fn html_escape(text: Str) -> Str                                                    // Go's HTMLEscape: < > & U+2028 U+2029 as \u escapes
 
 struct DecodeErr { path: Str, msg: Str }    // displays as "at $.user.email: expected string"
 fn (e: DecodeErr) go_text() -> Str    // encoding/json's text of a syntax error (decision 0553): "unexpected end of JSON input", "invalid character '}' looking for beginning of value"; a text that ends inside a literal or number gives the truncation text (Go names the literal) until DecodeErr gains a field; any other error returns msg
