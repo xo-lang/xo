@@ -23,3 +23,14 @@ empty position when ret_at's conversion recorded the XO1201.
 falls back to the closure literal or the function being built. `xo dev
 errorcheck` fails any diagnostic without a file and line. Golden
 closure_branch_result.
+
+**Addendum (2026-11-12): an empty position was a signal.** The fallback
+broke cmd/xo TestUseGoNoGCTypesInOneError: compiler/ssa nogc.xo groups
+`use go` records by whether they have a file, a record with none being a
+package's type (listed in its package's XO1201) and one with a file a use
+(counted). With the fallback every type record had a file, so the type
+was counted as a use and the list vanished. Fix (e11226596):
+BuildErr.borrowed marks a fallback position, the grouping treats it as
+no position, and the once-per-position key is the record's own position
+again. Before giving a missing value a default, find who reads "missing"
+as information (grep the field's `.is_empty()` and `== 0` readers).
