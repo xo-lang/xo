@@ -1,8 +1,9 @@
 // The 0616 json review's F5: the stream Decoder joined and rescanned an
 // unfinished value on every write, so a value sent in small pieces cost
 // the square of its size (480 KB in 64 byte writes: 1.56 s native, 1.65 s
-// on the Go backend, against 2 ms whole). Each write now scans only its
-// new bytes. Checked on the real clock against the whole value.
+// on the Go backend, against 2 ms whole); the TokenReader did the same
+// for a long string or number token (400 KB: 584 ms). Each write now
+// scans only its new bytes. Checked on the real clock against whole.
 use std/json
 
 fn doc(n: Int) -> Bytes {
@@ -29,6 +30,20 @@ fn feed(os: Os, text: Bytes, chunk: Int) -> (Int, Duration) {
   (got, os.clock.now() - t0)
 }
 
+fn tokens(os: Os, text: Bytes, chunk: Int) -> (Int, Duration) {
+  var r = json.token_reader()
+  let t0 = os.clock.now()
+  var i = 0
+  var got = 0
+  while i < text.len() {
+    let e = (i + chunk).min(text.len())
+    got += r.write(text[i..e]).or_fault("write").len()
+    i = e
+  }
+  got += r.finish().or_fault("finish").len()
+  (got, os.clock.now() - t0)
+}
+
 fn main(os: Os) ! {
   let text = doc(60000)
   let (wn, wd) = feed(os, text, text.len())
@@ -38,5 +53,14 @@ fn main(os: Os) ! {
     os.stdio.println("${text.len()} bytes in 64 byte writes took ${pd}, whole ${wd}")
   } else {
     os.stdio.println("a value in 64 byte writes decodes as fast as whole")
+  }
+  let long = ("[\"" + "a\\\"".repeat(100000) + "\"," + "1".repeat(300) + "]").bytes()
+  let (tw, twd) = tokens(os, long, long.len())
+  let (tp, tpd) = tokens(os, long, 64)
+  os.stdio.println("tokens: ${tw} whole, ${tp} in pieces")
+  if tpd > twd * 10 + 100ms {
+    os.stdio.println("${long.len()} bytes of tokens in 64 byte writes took ${tpd}, whole ${twd}")
+  } else {
+    os.stdio.println("long tokens in 64 byte writes read as fast as whole")
   }
 }

@@ -31,6 +31,14 @@ type Json_TokenReader struct {
 	stack []int
 	eof   bool
 	err   string // an error after tokens a write returned: the next call's
+	// a string, number or literal the input ended in (tokSet): where it
+	// starts and where its scan stopped, offsets from the first byte
+	// written, and a number's or literal's scan state, so the next write
+	// scans only its new bytes (it rescanned the token on every write,
+	// quadratic in a long token sent in pieces: the 0616 json review's F5)
+	tokSet      bool
+	tokAt, tokK int
+	tokScan     jsonVScan
 }
 
 func (Json_TokenReader) XoDebug(b *strings.Builder) { b.WriteString("<json token reader>") }
@@ -91,22 +99,30 @@ func tkEOFMapped(e Json_DecodeErr) Json_DecodeErr {
 
 // tkStringEnd is std/native/json.xo's string_end.
 func tkStringEnd(b []byte, i int) int {
+	end, _ := tkStringEndFrom(b, i+1)
+	return end
+}
+
+// tkStringEndFrom is tkStringEnd with the scan starting at k0, and where
+// it stopped when it returns -1.
+func tkStringEndFrom(b []byte, k0 int) (int, int) {
 	n := len(b)
-	for k := i + 1; k < n; {
+	k := k0
+	for k < n {
 		x := b[k]
 		if x == '"' {
-			return k + 1
+			return k + 1, k
 		}
 		if x == '\\' {
 			k += 2
 			continue
 		}
 		if x < 32 {
-			return k + 1
+			return k + 1, k
 		}
 		k++
 	}
-	return -1
+	return -1, k
 }
 
 // tkStringText is std/native/json.xo's string_text.
@@ -222,7 +238,11 @@ func (r *Json_TokenReader) pull(tk *Task) (Json_Token, bool, *Json_DecodeErr) {
 			if !key && !tkValueAllowed(st) {
 				return bad(st, c)
 			}
-			end := tkStringEnd(b, i)
+			from := i + 1
+			if r.tokSet && r.tokAt == r.base+i {
+				from = r.tokK - r.base
+			}
+			end, stop := tkStringEndFrom(b, from)
 			if end < 0 {
 				if r.eof {
 					e := tkEOF
@@ -232,8 +252,10 @@ func (r *Json_TokenReader) pull(tk *Task) (Json_Token, bool, *Json_DecodeErr) {
 					e := tkTooBig(r.max)
 					return Json_Token{}, false, &e
 				}
+				r.tokSet, r.tokAt, r.tokK = true, r.base+i, r.base+stop
 				return Json_Token{}, false, nil
 			}
+			r.tokSet = false
 			s, e := tkStringText(tk, b, i, end)
 			if e != nil {
 				return Json_Token{}, false, e
@@ -251,11 +273,14 @@ func (r *Json_TokenReader) pull(tk *Task) (Json_Token, bool, *Json_DecodeErr) {
 		if (!num && !lit) || !tkValueAllowed(st) {
 			return bad(st, c)
 		}
+		// jsonNumberEnd or jsonLiteralEnd, resumed where the last write's
+		// scan stopped
 		var end int
-		if num {
-			end = jsonNumberEnd(b, i)
+		if r.tokSet && r.tokAt == r.base+i {
+			end = jsonScanValue(&r.tokScan, b, r.tokK-r.base)
 		} else {
-			end = jsonLiteralEnd(b, i)
+			r.tokScan = jsonScanStart(c)
+			end = jsonScanValue(&r.tokScan, b, i+1)
 		}
 		if end < 0 {
 			if !r.eof {
@@ -263,10 +288,12 @@ func (r *Json_TokenReader) pull(tk *Task) (Json_Token, bool, *Json_DecodeErr) {
 					e := tkTooBig(r.max)
 					return Json_Token{}, false, &e
 				}
+				r.tokSet, r.tokAt, r.tokK = true, r.base+i, r.base+n
 				return Json_Token{}, false, nil
 			}
 			end = n
 		}
+		r.tokSet = false
 		v := Json_parse_value(tk, string(b[i:end]))
 		if !v.Ok {
 			e := tkEOFMapped(v.E)

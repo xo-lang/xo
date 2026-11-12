@@ -3410,3 +3410,63 @@ test "the stream Decoder gives the same values and errors in pieces as whole (06
     }
   }
 }
+
+/// The tokens and first error of feeding text to a TokenReader in pieces
+/// of at most size bytes (size 0: whole), then finish.
+fn token_pieces(text: Bytes, size: Int) -> Str {
+  var r = json.token_reader()
+  var out = ""
+  var i = 0
+  let n = text.len()
+  while i < n {
+    let e = if size == 0 { n } else { (i + size).min(n) }
+    match r.write(text[i..e]) {
+      Ok(ts) => {
+        for t in ts {
+          out = out + "${t:?};"
+        }
+      }
+      Err(x) => return out + "err " + x.msg
+    }
+    i = e
+  }
+  match r.finish() {
+    Ok(ts) => {
+      for t in ts {
+        out = out + "${t:?};"
+      }
+      out
+    }
+    Err(x) => out + "err " + x.msg
+  }
+}
+
+test "the TokenReader gives the same tokens and errors in pieces as whole (0616 json review F5)" {
+  let docs = [
+    "[1,2] {\"a\":\"x\\\"]}\"} 3 4.5e-7 -0 true false null \"s\\\\\"",
+    "{\"k\\u0041\":[1,{\"b\":\"]\"}]}\n[\"\\u00e9\\\"\"]",
+    "12 13",
+    "[1,2",
+    "[1,]",
+    "1 trux",
+    "nul",
+    "\"unterminated",
+    "\"ctl\u{1}x\"",
+    "- 1",
+    "1.e5",
+    "[\"" + "x".repeat(70) + "\"]",
+    "[" + "1".repeat(70) + "]",
+    "[1] ?",
+    "{\"k\":1}{\"k\":2}",
+    "0123",
+  ]
+  for doc in docs {
+    let whole = token_pieces(doc.bytes(), 0)
+    for size in [1, 2, 3, 5, 7] {
+      let got = token_pieces(doc.bytes(), size)
+      if got != whole {
+        fault("${doc:?} in pieces of ${size}: ${got}; whole: ${whole}")
+      }
+    }
+  }
+}

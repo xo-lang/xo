@@ -2,4 +2,6 @@ exit 0
 --- stdout
 values: 1 whole, 1 in pieces
 a value in 64 byte writes decodes as fast as whole
+tokens: 4 whole, 4 in pieces
+long tokens in 64 byte writes read as fast as whole
 --- stderr

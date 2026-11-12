@@ -924,6 +924,15 @@ struct TokenReader {
   eof: Bool
   /// an error found after tokens the same write returned: the next call's
   err: Str = ""
+  /// a string, number or literal the input ended in: where it starts and
+  /// where its scan stopped (offsets from the first byte written; -1:
+  /// none), and a number's or literal's scan state, so the next write
+  /// scans only its new bytes (it scanned the token from its start on
+  /// every write, quadratic in a long token sent in pieces: the 0616 json
+  /// review's F5)
+  tok_at: Int = -1
+  tok_k: Int = 0
+  tok_scan: VScan = VScan{}
 }
 
 fn token_reader(max_token: Int) -> TokenReader {
@@ -972,23 +981,31 @@ fn eof_mapped(e: json.DecodeErr) -> json.DecodeErr {
 /// the input ends first; a control byte before the closing quote ends the
 /// scan one past it, so the parse of the slice names it.
 fn string_end(b: Bytes, i: Int) -> Int {
+  let (end, _) = string_end_from(b, i + 1)
+  end
+}
+
+/// string_end with the scan starting at k (past the opening quote, where
+/// an earlier scan stopped), and where this one stopped when it returns
+/// -1 (one past the end of b after a final backslash).
+fn string_end_from(b: Bytes, k0: Int) -> (Int, Int) {
   let n = b.len()
-  var k = i + 1
+  var k = k0
   while k < n {
     let x = Int(b[k])
     if x == 34 {
-      return k + 1
+      return (k + 1, k)
     }
     if x == 92 {
       k += 2
       continue
     }
     if x < 32 {
-      return k + 1
+      return (k + 1, k)
     }
     k += 1
   }
-  -1
+  (-1, k)
 }
 
 /// The string at b[lo..hi] (its quotes included), as decode reads it.
@@ -1095,7 +1112,8 @@ fn (var r: TokenReader) pull() -> json.Token? ! json.DecodeErr {
       if !key && !value_allowed(st) {
         return Err(bad_char(st, c))
       }
-      let end = string_end(b, i)
+      let from = if r.tok_at == r.base + i { r.tok_k - r.base } else { i + 1 }
+      let (end, stop) = string_end_from(b, from)
       if end < 0 {
         if r.eof {
           return Err(eof_err())
@@ -1103,8 +1121,11 @@ fn (var r: TokenReader) pull() -> json.Token? ! json.DecodeErr {
         if n - i > r.max {
           return Err(too_big(r.max))
         }
+        r.tok_at = r.base + i
+        r.tok_k = r.base + stop
         return None
       }
+      r.tok_at = -1
       let s = string_text(b, i, end)?
       r.pos = end
       if key {
@@ -1122,16 +1143,27 @@ fn (var r: TokenReader) pull() -> json.Token? ! json.DecodeErr {
     if !value_allowed(st) {
       return Err(bad_char(st, c))
     }
-    var end = if num { number_end(b, i) } else { literal_end(b, i) }
+    // number_end or literal_end, resumed where the last write's scan
+    // stopped
+    var end = -1
+    if r.tok_at == r.base + i {
+      end = scan_value(r.tok_scan, b, r.tok_k - r.base)
+    } else {
+      r.tok_scan = scan_start(c)
+      end = scan_value(r.tok_scan, b, i + 1)
+    }
     if end < 0 {
       if !r.eof {
         if n - i > r.max {
           return Err(too_big(r.max))
         }
+        r.tok_at = r.base + i
+        r.tok_k = r.base + n
         return None
       }
       end = n
     }
+    r.tok_at = -1
     let v = match parse_bytes(b[i..end]) {
       Ok(v) => v
       Err(e) => return Err(eof_mapped(e))

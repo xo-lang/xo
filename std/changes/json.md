@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-12: security: the TokenReader is linear in a long token sent in small pieces
+
+- Kind: security
+- Commit: this commit
+- Found by: the decision 0616 security review of std/json (second reviewer, finding F5)
+- Go reference: encoding/json Decoder.Token (its scanner keeps its state between reads)
+- Test: golden internal/llvm/testdata/golden/json_stream_pieces (arm64, LLVM, Go parity); std/native/json_test.xo "the TokenReader gives the same tokens and errors in pieces as whole" (arm64, LLVM)
+- Shipped in: not yet released
+
+`json.token_reader()` scanned an unfinished string or number from its start on every `write`, so a long token sent a few bytes at a time cost the square of its length, up to `max_token`: a 400 KB string in 64 byte writes took 584 ms natively and 665 ms on the Go backend, against 0.5 ms whole. The reader now keeps where its scan stopped. The tokens and errors are unchanged, in pieces of any size.
+
 ## 2026-11-12: security: the stream Decoder is linear in a value sent in small pieces
 
 - Kind: security
