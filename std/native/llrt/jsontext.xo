@@ -1416,6 +1416,30 @@ pub fn go_lit(src: Bytes, tape: List[Int], i: Int) -> Str {
 /// A decode_go marker "@@go||KIND|LIT|TYPE" with the struct name filled in
 /// ("@@go|STRUCT|..."), unless a struct is already named: the innermost
 /// struct names the field, as in encoding/json. Any other message is as it is.
+/// The decoders' error path while it is built (the 0616 json review's F6):
+/// its segments, innermost first, each with its runes reversed, so a
+/// level adds its segment at the end (acc's buffer grows in place) where
+/// putting it in front copied the whole path at every level, quadratic in
+/// a deep document's path. acc + seg's runes in reverse order.
+pub fn path_push(acc: Str, seg: Str) -> Str {
+  let b = seg.bytes()
+  var out = acc
+  var e = b.len()
+  var k = e - 1
+  while k >= 0 {
+    if Int(b[k]) & 0xC0 != 0x80 {
+      out = rt.rs_append_bytes(out, b, k, e, 0)
+      e = k
+    }
+    k -= 1
+  }
+  out
+}
+
+/// The error path built by path_push as text: "$" and the segments in
+/// order.
+pub fn path_final(rev: Str) -> Str { path_push("$", rev) }
+
 pub fn go_tag(msg: Str, sname: Str) -> Str {
   if msg.starts_with("@@go||") {
     return "@@go|" + sname + msg[5..]

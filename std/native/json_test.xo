@@ -3470,3 +3470,37 @@ test "the TokenReader gives the same tokens and errors in pieces as whole (0616 
     }
   }
 }
+
+struct PathLeaf {
+  x: Int
+} derive Json
+
+enum PathKind {
+  Box(w: Int, leaf: PathLeaf)
+} derive Json
+
+struct PathRoot {
+  m: Map[Str, List[PathLeaf]]
+  k: List[PathKind] = []
+} derive Json
+
+test "error paths keep their segments in order through deep and non-ASCII documents (0616 json review F6)" {
+  let cases = [
+    ("{\"m\":{\"é\":[{\"x\":1},{\"x\":\"s\"}]}}", "$.m.é[1].x"),
+    ("{\"m\":{\"日本\":[{\"y\":1}]}}", "$.m.日本[0]"),
+    ("{\"m\":{\"a\\u00ff\":[{\"x\":1.5}]}}", "$.m.aÿ[0].x"),
+    ("{\"m\":{},\"k\":[{\"Box\":{\"w\":1,\"leaf\":{\"x\":true}}}]}", "$.k[0].Box.leaf.x"),
+    ("{\"m\":{},\"k\":[{\"Box\":{\"w\":1}}]}", "$.k[0].Box"),
+    ("{\"m\":{},\"k\":[{\"Boxé\":{}}]}", "$.k[0]"),
+  ]
+  for (doc, want) in cases {
+    match json.decode_str[PathRoot](doc) {
+      Ok(_) => fault("${doc}: decoded")
+      Err(e) => {
+        if e.path != want {
+          fault("${doc}: path ${e.path:?}, want ${want:?} (${e.msg})")
+        }
+      }
+    }
+  }
+}

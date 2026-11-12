@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-12: security: a decode error deep in a document is linear in its path
+
+- Kind: security
+- Commit: this commit
+- Found by: the decision 0616 security review of std/json (second reviewer, finding F6)
+- Go reference: encoding/json's errorContext (a FieldStack appended on the way down, joined once at the error)
+- Test: std/native/json_test.xo "error paths keep their segments in order through deep and non-ASCII documents" (arm64, LLVM; the same paths as the old decoder and the Go backend)
+- Shipped in: not yet released
+
+The native decoders put each level's segment in front of the error's path as the error returned, copying the whole path at every level: an error under 2,500 levels of 1 KB keys (a 2.5 MB document) took 432 ms, against 1 ms to decode the document. The path is now kept with its runes reversed while it returns, each level adding its segment at the end, and turned back once (std/native/llrt/jsontext.xo path_push, path_final): 15 ms. The error paths are unchanged. The Go backend still builds each member's path as it decodes (next).
+
 ## 2026-11-12: security: the TokenReader is linear in a long token sent in small pieces
 
 - Kind: security

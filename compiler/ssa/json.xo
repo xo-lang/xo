@@ -772,6 +772,23 @@ struct Dec {
   sname: Str = ""
 }
 
+/// A constant path segment as the decoders keep an error's path while it
+/// unwinds: its runes reversed (std/native/llrt/jsontext.xo path_push, the
+/// 0616 json review's F6; std/native/json.xo path_final turns it back).
+fn rev_path(s: Str) -> Str {
+  var rs: List[Rune] = []
+  for r in s.runes() {
+    rs.push(r)
+  }
+  var out = StrBuilder.new()
+  var k = rs.len() - 1
+  while k >= 0 {
+    out.write("${rs[k]}")
+    k -= 1
+  }
+  out.freeze()
+}
+
 /// The error result of a decoder (mkErr).
 fn (var b: Builder) dec_err(d: Dec, path: Int, msg: Int) -> Int {
   let err_i = b.m.variant_index(d.rt, "Err")
@@ -947,7 +964,8 @@ fn (var b: Builder) dec_child_q(d: Dec, xt: Int, j: Int, seg0: Int, idx: Int, q:
     let s1 = b.call("str.concat_int", st, "", [b.const_str("["), idx])
     seg = b.call("str.concat", st, "", [s1, b.const_str("]")])
   }
-  let p = b.call("str.concat", st, "", [seg, b.add(Op.Field, st, Aux.I(n: 0), [e])])
+  // the path is kept reversed while the error unwinds (jsontext.path_push)
+  let p = b.json_rt("json_path_push", st, [b.add(Op.Field, st, Aux.I(n: 0), [e]), seg])
   let msg = b.add(Op.Field, st, Aux.I(n: 1), [e])
   b.retv(b.dec_err(d, p, msg))
   b.if_then_end(no, join)
@@ -1491,7 +1509,7 @@ fn (var b: Builder) dec_tagged(d: Dec, t: Int, obj: Int, sb: Map[Int, Int]) {
   b.if_then_end(no1, join1)
   let k = b.call("list.index", it, "", [d.tape, j])
   let (no2, join2) = b.if_then_begin(b.add(Op.Ne, bt, Aux.None, [k, b.cint(JK_STR)]))
-  b.retv(b.dec_err(d, b.const_str(".${tag}"), b.const_str("expected a variant name")))
+  b.retv(b.dec_err(d, b.const_str(rev_path(".${tag}")), b.const_str("expected a variant name")))
   b.if_then_end(no2, join2)
   var pay = i
   var has = b.cbool(true)
@@ -1531,7 +1549,7 @@ fn (var b: Builder) dec_tagged(d: Dec, t: Int, obj: Int, sb: Map[Int, Int]) {
   let nm = b.dec_str(d, j)
   let s1 = b.call("str.concat", b.str_t(), "", [b.const_str("unknown variant `"), nm])
   let s2 = b.call("str.concat", b.str_t(), "", [s1, b.const_str("` of enum ${ename}")])
-  b.retv(b.dec_err(d, b.const_str(".${tag}"), s2))
+  b.retv(b.dec_err(d, b.const_str(rev_path(".${tag}")), s2))
 }
 
 /// The body of one variant's branch of an enum decoder.
@@ -1555,7 +1573,7 @@ fn (var b: Builder) dec_variant(d: Dec, t: Int, vi: Int, vname: Str, vseg: Str, 
   }
   let k = b.call("list.index", it, "", [d.tape, pay])
   let (no2, join2) = b.if_then_begin(b.add(Op.Ne, bt, Aux.None, [k, b.cint(JK_OBJ)]))
-  let p = b.const_str(vseg)
+  let p = b.const_str(rev_path(vseg))
   let m = b.const_str("expected object")
   b.retv(b.dec_err(d, p, m))
   b.if_then_end(no2, join2)
@@ -1738,7 +1756,7 @@ fn (var b: Builder) dec_fields_fold_err(d: Dec, seg: Str, fs: List[JField], with
     } else if b.dec_go {
       b.jump(join, [b.zero(f.st, [])])
     } else {
-      b.fold_err(ev, b.cint(1 << 62), false, b.const_str(seg), b.const_str("missing field `${f.key}`"))
+      b.fold_err(ev, b.cint(1 << 62), false, b.const_str(rev_path(seg)), b.const_str("missing field `${f.key}`"))
       b.jump(join, [b.zero(f.st, [])])
     }
     b.seal(join)
@@ -1797,7 +1815,7 @@ fn (var b: Builder) dec_try(d: Dec, ev: FoldErr, xt: Int, st: Int, j: Int, seg: 
   b.s.cur = bad
   let cdt = b.m.types[crt].variants[ce].fields[0].ty
   let e = b.add(Op.Payload, cdt, Aux.P(tag: ce, field: 0), [r])
-  let p = b.call("str.concat", b.str_t(), "", [seg, b.add(Op.Field, b.str_t(), Aux.I(n: 0), [e])])
+  let p = b.json_rt("json_path_push", b.str_t(), [b.add(Op.Field, b.str_t(), Aux.I(n: 0), [e]), seg])
   b.fold_err(ev, j, hard, p, b.add(Op.Field, b.str_t(), Aux.I(n: 1), [e]))
   b.jump(join, [b.zero(st, [])])
   b.s.cur = good
@@ -1928,7 +1946,7 @@ fn (var b: Builder) dec_fields_in(d: Dec, o: Int, seg: Str, fs: List[JField], wi
     } else if b.dec_go {
       b.jump(join, [b.zero(f.st, [])])
     } else {
-      let p = b.const_str(seg)
+      let p = b.const_str(rev_path(seg))
       let m = b.const_str("missing field `${f.key}`")
       b.retv(b.dec_err(d, p, m))
     }

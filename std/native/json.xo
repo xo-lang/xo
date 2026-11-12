@@ -18,7 +18,7 @@ fn decode[T: Json](data: Bytes) -> T ! json.DecodeErr {
   }
   match rtjson.json_dec[T](data, tape, 0) {
     Ok(v) => Ok(v)
-    Err(e) => Err(json.DecodeErr{path: "$" + e.path, msg: e.msg})
+    Err(e) => Err(json.DecodeErr{path: jsontext.path_final(e.path), msg: e.msg})
   }
 }
 
@@ -31,7 +31,7 @@ fn decode_go[T: Json](data: Bytes) -> T ! json.DecodeErr {
   }
   match rtjson.json_dec_go[T](data, tape, 0) {
     Ok(v) => Ok(v)
-    Err(e) => Err(go_final(json.DecodeErr{path: "$" + e.path, msg: e.msg}))
+    Err(e) => Err(go_final(json.DecodeErr{path: jsontext.path_final(e.path), msg: e.msg}))
   }
 }
 
@@ -840,7 +840,7 @@ fn from_value[T: Json](v: json.Value) -> T ! json.DecodeErr {
   value_tape(src, tape, v)
   match rtjson.json_dec[T](src.freeze(), tape, 0) {
     Ok(x) => Ok(x)
-    Err(e) => Err(json.DecodeErr{path: "$" + e.path, msg: e.msg})
+    Err(e) => Err(json.DecodeErr{path: jsontext.path_final(e.path), msg: e.msg})
   }
 }
 

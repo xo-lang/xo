@@ -6001,6 +6001,7 @@ fn llrt_json_go_kind(kind: Int) -> Str { jsontext.go_kind(kind) }
 fn llrt_json_go_lit(src: Bytes, tape: List[Int], i: Int) -> Str { jsontext.go_lit(src, tape, i) }
 
 fn llrt_json_go_tag(msg: Str, sname: Str) -> Str { jsontext.go_tag(msg, sname) }
+fn llrt_json_path_push(acc: Str, seg: Str) -> Str { jsontext.path_push(acc, seg) }
 
 fn llrt_json_range_msg(src: Bytes, tape: List[Int], i: Int, ty: Str) -> Str { jsontext.range_msg(src, tape, i, ty) }
 
