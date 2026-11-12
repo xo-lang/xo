@@ -205,7 +205,46 @@ same site (l2-rel0500's test):
 All 30 values the same. (The /play/ footprints, 463 and 492 MB, are within that test's run-to-run
 spread; /play/ does not load the record.)
 
+## The warm session by owner (native heap profile)
+
+The browser has no heap profiler, so the same session was run on a native build of compiler/wasm
+(`--play repl`, the page's protocol, with each entry's run answered empty, so state but not values),
+on main 2cfa0898b's tree with a scratch `debug.mem_label` before each request (never pushed), under
+`XO_PROF=heap XO_PROF_HEAP_RATE=4096` and `XO_PROF_HEAP_AT`. The driver is drive-2026-11-12.py in
+the lead's notes (xo-lang-2/replown). Native sizes are not wasm sizes (both use 8 byte words for a
+struct's fields, but the allocator's headers and size classes differ: 15.3 MB native here against
+the 21.8 MB counted on wasm), so the shares are the result:
+
+| owner (allocation site) | live after warm-up | after entry 30 | share |
+|---|---|---|---|
+| std's object list (decode_std_export_at, export.xo:797: `List[Obj]` with 1/8 + 1/32 room) | 6.67 MB | 6.67 MB | 43% |
+| the record file's bytes (play_check's `fs.read`, natively kept alive by the names sliced from it, which are views; on wasm a slice copies, so there the buffer is freed and the names are copied) | 1.17 MB | 1.17 MB | 8% |
+| each object's params and int lists (ExR.obj :571, ExR.ints :265) | 1.95 MB | 1.95 MB | 13% |
+| std declarations parsed where a signature needs one (decision 0428: parse_fn_decl and below) | 1.9 MB | 1.9 MB | 12% |
+| std's file ranges (decode_std_export_at :923), relocation, install_std, join_trees | 1.2 MB | 1.2 MB | 8% |
+| maps (`rebuildk[Str]`, put, mlog), about | 1.4 MB | 1.4 MB | 9% |
+| total | 15.26 MB | 15.39 MB | |
+
+Nothing accumulates over the 30 entries (+0.13 MB). The object list dominates, and what makes it
+large is `Obj` itself: 75 fields, each at least one 8 byte word (compiler/ssa cost.xo
+`type_words`: Bool, Int, List and Map are 1 word, Str 2), about 82 words or 656 bytes an object.
+23 of the fields are Bools, 23 words (184 bytes, 28% of every object). Each entry's checker also
+copies this list (`var c = base`, the 4.3 MB block above), so the list's size counts twice at the
+peak.
+
 ## Next
 
-The margin is now 14 MB. Next: (1) the warm session's 21.9 MB, by owner (the base checker's object list, its types,
-the record's trees); (2) the small blocks' free lists (6.9 MB free after entry 30).
+The margin is now 14 MB. Levers on the object list, in order of payoff (none started):
+
+1. Pack Obj's 23 Bools into one flags word (`flags: Int`, methods for each). This saves about 22 of
+   82 words: about 27% of the list, and of each entry's copy, so roughly 2 to 2.5 MB at the REPL's
+   peak. Every native build's checker gains too. It is a mechanical change across compiler/check and
+   its readers.
+2. Or the general form: the native backends pack a struct's Bool fields into shared words. That is
+   a layout change on every backend, so an ADR first. It shrinks every struct with Bools, not only
+   Obj.
+3. Move the fields only some objects use into side tables: Json's 7 fields for derive Json types;
+   a local's let_at, let_value, vctx, frame and group_frame (std's record has no locals); and
+   realtime_span, internal_hint and elided_from.
+
+Then: (1) the small blocks' free lists (6.9 MB free after entry 30).
