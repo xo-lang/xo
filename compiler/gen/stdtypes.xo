@@ -104,7 +104,7 @@ pub fn std_types(c: check.Checker) -> Str ! Str {
         }
         match d {
           StructDecl(sd) => {
-            if !c.objs[o].opaque {
+            if !c.objs[o].flags.opaque() {
               g.gen_struct(o, sd)
             }
           }
@@ -196,7 +196,7 @@ fn (var g: Gen) std_sig_type(fo: Int, recv: Str) -> Str {
 /// check.
 fn (g: Gen) has_type_param(ps: List[Int]) -> Bool {
   for p in ps {
-    if !g.c.objs[p].effect {
+    if !g.c.objs[p].flags.effect() {
       return true
     }
   }
@@ -246,7 +246,7 @@ pub fn std_sigs(c: check.Checker) -> Str ! Str {
           _ => true
         }
         let o = c.objs[fo]
-        if body || g.has_type_param(o.tparams) || o.iface {
+        if body || g.has_type_param(o.tparams) || o.flags.iface() {
           continue
         }
         if o.recv < 0 {
@@ -269,11 +269,11 @@ pub fn std_sigs(c: check.Checker) -> Str ! Str {
           let rt = if gt.starts_with("*") { gt } else { "*" + gt }
           let sig = g.std_sig_type(fo, "").trim_prefix("func(*Task")
           b.write("\t_ func(${rt}, *Task${sig} = (${rt}).${go_method(g.oname(fo))}\n")
-        } else if o.is_static {
+        } else if o.flags.is_static() {
           b.write("\t_ ${g.std_sig_type(fo, "")} = ${g.std_prefix(g.omod(o.recv))}${g.oname(o.recv)}_${g.oname(fo)}\n")
         } else {
           let rt = g.go_type(o.recv_ty)
-          let recv = if o.recv_var { "*" + rt } else { rt }
+          let recv = if o.flags.recv_var() { "*" + rt } else { rt }
           b.write("\t_ ${g.std_sig_type(fo, recv)} = ${g.std_prefix(g.omod(o.recv))}${g.oname(o.recv)}_${g.oname(fo)}\n")
         }
       }

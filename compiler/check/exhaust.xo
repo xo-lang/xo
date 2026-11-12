@@ -105,7 +105,7 @@ fn (var c: Checker) ctors_of(t: Int, heads: List[IPat]) -> (List[CtorInfo], Bool
     return ([CtorInfo{key: 0, arity: 1, arg_types: [c.subst(c.objs[o].target, s)]}], false)
   }
   if tk == "struct" {
-    if c.objs[o].opaque {
+    if c.objs[o].flags.opaque() {
       return ([], true)
     }
     var ci = CtorInfo{key: 0, arity: c.objs[o].fields.len()}

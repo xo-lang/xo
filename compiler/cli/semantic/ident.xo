@@ -770,7 +770,7 @@ pub fn (var r: Res) obj_target(o: Int) -> LspTarget {
   match ob.kind {
     Func => {
       var t = LspTarget{kind: "function", obj: "o${o}", what: "func", oi: o}
-      if ob.recv >= 0 || ob.iface {
+      if ob.recv >= 0 || ob.flags.iface() {
         t.kind = "method"
       }
       if let Some(fd) = ob.fn_decl.first() {

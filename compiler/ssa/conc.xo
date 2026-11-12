@@ -450,7 +450,7 @@ fn (var b: Builder) site_id(e: Expr) -> Int {
 /// awaited, so its error does not fail the scope (consumed).
 fn (var b: Builder) consumed(e: Expr) -> Bool {
   let vo = b.bound_to.get(b.c.expr_key_in(b.s.file, e)) ?? -1
-  vo >= 0 && b.c.objs[vo].awaited
+  vo >= 0 && b.c.objs[vo].flags.awaited()
 }
 
 /// Records the binding a spawn call's handle is stored in (noteBinding).

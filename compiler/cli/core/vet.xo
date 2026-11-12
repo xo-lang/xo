@@ -409,7 +409,7 @@ fn var_method_on(c: check.Checker, f: Int, call: parser.Expr, v: Int) -> Bool {
       if let Some(id) = root_ident(recv) {
         if c.var_of(f, id) == v {
           if let Some(ci) = c.call_in(f, call) {
-            return ci.fn_obj >= 0 && c.objs[ci.fn_obj].recv_var
+            return ci.fn_obj >= 0 && c.objs[ci.fn_obj].flags.recv_var()
           }
         }
       }
@@ -486,7 +486,7 @@ fn stale_captures(c: check.Checker, f: Int, file: Str, b: parser.Block) -> List[
         _ => continue
       }
       let v = c.var_of(f, id)
-      if v < 0 || seen.contains(v) || !c.objs[v].mutable {
+      if v < 0 || seen.contains(v) || !c.objs[v].flags.mutable() {
         continue
       }
       let o = c.objs[v]
@@ -982,7 +982,7 @@ fn changes(c: check.Checker, f: Int, s: parser.Stmt, x: Str) -> Bool {
         if let SelectorExpr(_, recv, _) = fun {
           if root_name(recv) == x && is_ident(recv) {
             if let Some(ci) = c.call_in(f, e) {
-              return ci.fn_obj >= 0 && c.objs[ci.fn_obj].recv_var
+              return ci.fn_obj >= 0 && c.objs[ci.fn_obj].flags.recv_var()
             }
           }
         }

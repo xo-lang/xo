@@ -1246,7 +1246,7 @@ fn (var s: Session) agent_symbols(os: Os, dir: Str, pub_only: Bool, file: Str, m
       if name.is_empty() {
         continue
       }
-      if pub_only && !c.objs[tg.oi].is_pub {
+      if pub_only && !c.objs[tg.oi].flags.is_pub() {
         continue
       }
       out.push(s.decl_json(Found{f: f, site: site, tg: tg, name: name}))

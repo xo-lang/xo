@@ -69,7 +69,7 @@ fn (var g: Gen) gen_json_struct(t: Int) {
   }
   g.pl("\t${obj}, err := ${g.json_object(t, "x", "path", keys)}")
   g.pl("\tif err != nil {\n\t\treturn err\n\t}")
-  let fold = g.c.objs[t].json_fold && !fields.is_empty()
+  let fold = g.c.objs[t].flags.json_fold() && !fields.is_empty()
   if fold {
     g.pl("\tvar fe ${rt}JsonFoldErr")
   }
@@ -96,7 +96,7 @@ fn (var g: Gen) gen_json_struct(t: Int) {
 /// first, else the first declared key that folds equal, the last
 /// selecting member winning).
 fn (var g: Gen) json_object(t: Int, x: Str, path: Str, keys: List[Str]) -> Str {
-  if !g.c.objs[t].json_fold {
+  if !g.c.objs[t].flags.json_fold() {
     return "${g.rt()}JsonObject(${x}, ${path})"
   }
   var ks: List[Str] = []
@@ -110,7 +110,7 @@ fn (var g: Gen) json_object(t: Int, x: Str, path: Str, keys: List[Str]) -> Str {
 /// or for a folding enum (decision 0550) json_field_fold and the error
 /// kept.
 fn (var g: Gen) json_variant_fields(t: Int, v: check.VariantInfo) {
-  let fold = g.c.objs[t].json_fold
+  let fold = g.c.objs[t].flags.json_fold()
   if fold {
     g.pl("\tvar fe ${g.rt()}JsonFoldErr")
   }
@@ -271,7 +271,7 @@ fn (var g: Gen) gen_json_read(t: Int) {
   for f in fields {
     any_q = any_q || f.json_string
   }
-  if g.c.objs[t].json_fold || any_q {
+  if g.c.objs[t].flags.json_fold() || any_q {
     // the direct reader matches keys exactly; a folding type (decision
     // 0550) leaves the decode to the tree decoder's JsonObjectFold, and a
     // `string` field (decision 0555) to the tree decoder's JsonDecQ

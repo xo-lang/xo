@@ -226,7 +226,7 @@ fn (var s: Session) impl_lines() -> (List[Str], List[Str]) {
   // a type's methods, by the receiver type's object
   var by_recv: Map[Int, List[Int]] = {}
   for (o, ob) in c.objs.indexed() {
-    if ob.kind != check.ObjKind.Func || ob.recv < 0 || ob.iface {
+    if ob.kind != check.ObjKind.Func || ob.recv < 0 || ob.flags.iface() {
       continue
     }
     var l = by_recv.get(ob.recv) ?? []

@@ -626,7 +626,7 @@ pub fn (c: Checker) std_root() -> Str {
 /// Makes c's object list its own now rather than at its first write.
 pub fn (var c: Checker) own_objs() {
   if !c.objs.is_empty() {
-    c.objs[0].used = c.objs[0].used
+    c.objs[0].flags.set_used(c.objs[0].flags.used())
   }
 }
 

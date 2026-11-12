@@ -368,7 +368,7 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
     return
   }
   if b.tkind(t) == Kind.Struct && tk == "struct" {
-    if b.c.objs[obj].opaque {
+    if b.c.objs[obj].flags.opaque() {
       // its own Debug text (a native implementation's, as `Row(a: 1)`),
       // else its name
       let dm = b.text_method(ct, "debug")

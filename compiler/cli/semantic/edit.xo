@@ -464,7 +464,7 @@ fn edit_rename(os: Os, dirs: List[Str], dry: Bool, target: Str, new_name0: Str) 
   var decl_name: parser.Ident? = None
   match o.kind {
     Func => {
-      if o.iface {
+      if o.flags.iface() {
         return s.rename_iface_method(os, obj, new_name)
       }
       let fd = match o.fn_decl.first() {
@@ -666,7 +666,7 @@ fn (var s: EditSession) rename_iface_method(os: Os, m: Int, new_name: Str) -> Ed
   // the methods of each user type, by receiver
   var by_recv: Map[Int, List[Int]] = {}
   for (o, ob) in c.objs.indexed() {
-    if ob.kind != check.ObjKind.Func || ob.recv < 0 || ob.iface || ob.module < 0 || c.mods[ob.module].is_std {
+    if ob.kind != check.ObjKind.Func || ob.recv < 0 || ob.flags.iface() || ob.module < 0 || c.mods[ob.module].is_std {
       continue
     }
     var l = by_recv.get(ob.recv) ?? []
@@ -918,7 +918,7 @@ fn edit_change_sig(os: Os, dirs: List[Str], dry: Bool, target: Str, sig0: Str) -
     Some(x) => x
     None => return Err("${target.quote()} is not a function or method with a body")
   }
-  if o.kind != check.ObjKind.Func || o.iface {
+  if o.kind != check.ObjKind.Func || o.flags.iface() {
     return Err("${target.quote()} is not a function or method with a body")
   }
   if let Some(r) = s.precheck() {

@@ -75,7 +75,7 @@ fn (var g: Gen) recv_and_arg(ci: check.CallInfo, arg: Expr) -> List[Str] {
 /// awaited (consumed).
 fn (g: Gen) consumed(x: Expr) -> Bool {
   let v = g.f.bound_to.get(g.ek(x)) ?? -1
-  v >= 0 && g.c.objs[v].awaited
+  v >= 0 && g.c.objs[v].flags.awaited()
 }
 
 /// Records the binding a spawn call's handle is stored in (noteBinding).

@@ -245,7 +245,7 @@ fn (c: Checker) uw_write(var w: UndoWalk, sp: Span) {
 /// Whether call e is a method whose receiver is `var`.
 fn (c: Checker) var_method(e: Expr) -> Bool {
   match c.call_infos.get(c.expr_key(e)) {
-    Some(ci) => ci.fn_obj >= 0 && c.objs[ci.fn_obj].recv >= 0 && c.objs[ci.fn_obj].recv_var
+    Some(ci) => ci.fn_obj >= 0 && c.objs[ci.fn_obj].recv >= 0 && c.objs[ci.fn_obj].flags.recv_var()
     None => false
   }
 }

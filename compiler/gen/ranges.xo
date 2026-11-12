@@ -454,7 +454,7 @@ fn (var g: Gen) analyze_ranges(body: parser.Block, fixed: List[Int], by_ref: Lis
   }
   g.ra = RA{}
   for v in fixed {
-    if v >= 0 && !g.c.objs[v].mutable {
+    if v >= 0 && !g.c.objs[v].flags.mutable() {
       g.ra.stable[v] = true
     }
   }
@@ -475,7 +475,7 @@ fn (var g: Gen) analyze_ranges(body: parser.Block, fixed: List[Int], by_ref: Lis
       if let Some(pat) = p {
         if let BindPat(name: name, ..) = pat {
           let v = g.var_of(name)
-          if v >= 0 && !g.c.objs[v].mutable {
+          if v >= 0 && !g.c.objs[v].flags.mutable() {
             g.ra.stable[v] = true
           }
         }
@@ -650,7 +650,7 @@ fn (g: Gen) ra_stable_key(e0: Expr) -> (Int, Str, Bool) {
     match unparen(e) {
       Ident(id) => {
         let v = g.var_of(id)
-        if v < 0 || !g.ra.stable.contains(v) || g.c.objs[v].mutable || g.ra.volatile.contains(v) {
+        if v < 0 || !g.ra.stable.contains(v) || g.c.objs[v].flags.mutable() || g.ra.volatile.contains(v) {
           return (-1, "", false)
         }
         return (v, path, true)
@@ -772,7 +772,7 @@ fn (var g: Gen) ra_var_args(x: Expr) {
           g.ra_vol(args[ai].value)
         }
       }
-      if g.c.objs[fo].recv_var && !ci.recv.is_empty() {
+      if g.c.objs[fo].flags.recv_var() && !ci.recv.is_empty() {
         g.ra_vol(ci.recv[0])
       }
       return
@@ -1391,7 +1391,7 @@ fn (var g: Gen) ra_closure(body: Node) {
   let saved_loops = g.ra.loops
   var m: Map[Int, Ival] = {}
   for (v, r) in g.ra.env.m.entries() {
-    if !g.c.objs[v].mutable {
+    if !g.c.objs[v].flags.mutable() {
       m[v] = r
     }
   }

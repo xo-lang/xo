@@ -98,6 +98,12 @@ pub struct ParamInfo {
 }
 
 /// A named entity. Positions are those of the declaring name.
+/// Obj's Bool fields, one bit each, in a one word struct so a read through
+/// a list element copies one word, not the whole Obj (decision 0448 case (c)).
+pub struct ObjFlags {
+  w: Int
+}
+
 pub struct Obj {
   pub kind: ObjKind
   pub name: Bytes
@@ -110,13 +116,11 @@ pub struct Obj {
   pub col: Int = 0
   /// Local: let, var, param, var-param, recv, var-recv, or predeclared.
   pub local: Str = ""
-  /// TParam: an effect variable (`fx: Effects`).
-  pub effect: Bool = false
+  /// the Bool fields, one bit each (decision 0448 case (c): 22 words of every object); read and written through the methods below
+  pub flags: ObjFlags = ObjFlags{w: 0}
   /// Type, Func: type parameters (TParam objects); a function's implicit
   /// receiver parameters come first.
   pub tparams: List[Int] = []
-  /// Func, Const, Type: declared `pub` (everything in std is).
-  pub is_pub: Bool = false
   /// Type: struct, enum, interface, alias, or newtype.
   pub tkind: Str = ""
 
@@ -139,9 +143,6 @@ pub struct Obj {
   /// payload (empty: the fields beside the tag).
   pub json_tag: Bytes = b""
   pub json_content: Bytes = b""
-  /// `derive Json(match: fold)` (decision 0550): its decoder matches keys
-  /// as Go's encoding/json does, an exact key first, else a folded one.
-  pub json_fold: Bool = false
   /// `derive Json(via: P, to: f, from: g)` (decision 0478): the proxy
   /// type P and the Func objects that convert to and from it (-1: none),
   /// and g's error type (-1: g has none).
@@ -149,13 +150,9 @@ pub struct Obj {
   pub json_to: Int = -1
   pub json_from: Int = -1
   pub json_from_err: Int = -1
-  /// An empty std struct: an opaque handle.
-  pub opaque: Bool = false
   /// Methods and statics (Func objects) by name.
   pub methods: Map[Bytes, Int] = {}
   pub statics: Map[Bytes, Int] = {}
-  pub resolving: Bool = false
-  pub resolved: Bool = false
   /// The declaration: file and index in its declarations (Type, Func,
   /// Const), -1 for none.
   pub decl_file: Int = -1
@@ -171,46 +168,21 @@ pub struct Obj {
   /// Methods: the receiver's Type object and receiver type.
   pub recv: Int = -1
   pub recv_ty: Int = -1
-  pub recv_var: Bool = false
-  /// A std function whose receiver is named `static`.
-  pub is_static: Bool = false
-  /// A static constant: `Time.UNIX_EPOCH`.
-  pub static_const: Bool = false
-  pub iface: Bool = false
   /// The number of type parameters the declaration writes.
   pub own_tparams: Int = 0
   /// The declared effects (an effect set), -1 when they are inferred
   /// (a function that is not pub and has no `uses`).
   pub declared: Int = -1
-  pub sig_done: Bool = false
   /// The effects its body performs (an effect set), -1 until checked.
   pub body_eff: Int = -1
-  /// A function whose doc comment says `@moves`: its receiver is moved
-  /// by the call (core 5.3).
-  pub moves: Bool = false
-  /// A std struct whose doc comment says `@move_only`: its values move
-  /// like the builders' (core 5.3).
-  pub move_only: Bool = false
-  /// a std struct documented `@internal` (decision 0440): its fields are
-  /// visible only to std's modules, XO0605 elsewhere
-  pub std_internal: Bool = false
   /// the text after `@internal:` on that doc line, the public way the
   /// XO0605 note names
   pub internal_hint: Str = ""
-  /// Declared `uses realtime` (core 6.5), and where (zero or one element:
-  /// a rare field, and every program holds thousands of objects).
-  pub realtime: Bool = false
   pub realtime_span: List[Span] = []
 
   // Constants and locals.
   /// Const, Local: the type, -1 until known.
   pub ty: Int = -1
-  pub done: Bool = false
-  pub checking: Bool = false
-  /// Local: a `var` binding, parameter, or receiver.
-  pub mutable: Bool = false
-  /// Local: a block `const`.
-  pub is_const: Bool = false
   /// Local: the value of a block `const` (zero or one element).
   pub const_val: List[parser.Expr] = []
   /// Local: the context (Ctx) it was declared in.
@@ -219,11 +191,6 @@ pub struct Obj {
   /// whose group it holds; -1 for none.
   pub frame: Int = -1
   pub group_frame: Int = -1
-  /// Local: a task handle awaited somewhere.
-  pub awaited: Bool = false
-  /// Local: read somewhere (stmt.go VarObj.Used): a `let` or `var`
-  /// binding never read is XO0110.
-  pub used: Bool = false
   /// Local: bound by a `let` of a single name (stmt.go VarObj.decl): the
   /// statement's start and value (zero or one element), for the fixes of
   /// XO0201 and XO0502.
@@ -232,14 +199,100 @@ pub struct Obj {
 
   // Type parameters.
   pub constraint: Int = -1
-  pub implicit: Bool = false
-  /// An implicit effect parameter for an effect argument left out (core
-  /// 6.2): the function may perform it.
-  pub elided: Bool = false
   /// Elided: the type written without its effect arguments that created
   /// it and its text, for the XO0701 note (zero or one element).
   pub elided_from: List[ElidedFrom] = []
 }
+
+/// TParam: an effect variable (`fx: Effects`).
+pub fn (f: ObjFlags) effect() -> Bool { (f.w & 1) != 0 }
+pub fn (var f: ObjFlags) set_effect(v: Bool) { f.w = if v { f.w | 1 } else { f.w & -2 } }
+
+/// Func, Const, Type: declared `pub` (everything in std is).
+pub fn (f: ObjFlags) is_pub() -> Bool { (f.w & 2) != 0 }
+pub fn (var f: ObjFlags) set_is_pub(v: Bool) { f.w = if v { f.w | 2 } else { f.w & -3 } }
+
+/// An empty std struct: an opaque handle.
+pub fn (f: ObjFlags) opaque() -> Bool { (f.w & 4) != 0 }
+pub fn (var f: ObjFlags) set_opaque(v: Bool) { f.w = if v { f.w | 4 } else { f.w & -5 } }
+
+pub fn (f: ObjFlags) resolving() -> Bool { (f.w & 8) != 0 }
+pub fn (var f: ObjFlags) set_resolving(v: Bool) { f.w = if v { f.w | 8 } else { f.w & -9 } }
+
+pub fn (f: ObjFlags) resolved() -> Bool { (f.w & 16) != 0 }
+pub fn (var f: ObjFlags) set_resolved(v: Bool) { f.w = if v { f.w | 16 } else { f.w & -17 } }
+
+pub fn (f: ObjFlags) recv_var() -> Bool { (f.w & 32) != 0 }
+pub fn (var f: ObjFlags) set_recv_var(v: Bool) { f.w = if v { f.w | 32 } else { f.w & -33 } }
+
+/// A std function whose receiver is named `static`.
+pub fn (f: ObjFlags) is_static() -> Bool { (f.w & 64) != 0 }
+pub fn (var f: ObjFlags) set_is_static(v: Bool) { f.w = if v { f.w | 64 } else { f.w & -65 } }
+
+/// A static constant: `Time.UNIX_EPOCH`.
+pub fn (f: ObjFlags) static_const() -> Bool { (f.w & 128) != 0 }
+pub fn (var f: ObjFlags) set_static_const(v: Bool) { f.w = if v { f.w | 128 } else { f.w & -129 } }
+
+pub fn (f: ObjFlags) iface() -> Bool { (f.w & 256) != 0 }
+pub fn (var f: ObjFlags) set_iface(v: Bool) { f.w = if v { f.w | 256 } else { f.w & -257 } }
+
+pub fn (f: ObjFlags) sig_done() -> Bool { (f.w & 512) != 0 }
+pub fn (var f: ObjFlags) set_sig_done(v: Bool) { f.w = if v { f.w | 512 } else { f.w & -513 } }
+
+/// A function whose doc comment says `@moves`: its receiver is moved
+/// by the call (core 5.3).
+pub fn (f: ObjFlags) moves() -> Bool { (f.w & 1024) != 0 }
+pub fn (var f: ObjFlags) set_moves(v: Bool) { f.w = if v { f.w | 1024 } else { f.w & -1025 } }
+
+/// A std struct whose doc comment says `@move_only`: its values move
+/// like the builders' (core 5.3).
+pub fn (f: ObjFlags) move_only() -> Bool { (f.w & 2048) != 0 }
+pub fn (var f: ObjFlags) set_move_only(v: Bool) { f.w = if v { f.w | 2048 } else { f.w & -2049 } }
+
+/// a std struct documented `@internal` (decision 0440): its fields are
+/// visible only to std's modules, XO0605 elsewhere
+pub fn (f: ObjFlags) std_internal() -> Bool { (f.w & 4096) != 0 }
+pub fn (var f: ObjFlags) set_std_internal(v: Bool) { f.w = if v { f.w | 4096 } else { f.w & -4097 } }
+
+/// Declared `uses realtime` (core 6.5), and where (zero or one element:
+/// a rare field, and every program holds thousands of objects).
+pub fn (f: ObjFlags) realtime() -> Bool { (f.w & 8192) != 0 }
+pub fn (var f: ObjFlags) set_realtime(v: Bool) { f.w = if v { f.w | 8192 } else { f.w & -8193 } }
+
+pub fn (f: ObjFlags) done() -> Bool { (f.w & 16384) != 0 }
+pub fn (var f: ObjFlags) set_done(v: Bool) { f.w = if v { f.w | 16384 } else { f.w & -16385 } }
+
+pub fn (f: ObjFlags) checking() -> Bool { (f.w & 32768) != 0 }
+pub fn (var f: ObjFlags) set_checking(v: Bool) { f.w = if v { f.w | 32768 } else { f.w & -32769 } }
+
+/// Local: a `var` binding, parameter, or receiver.
+pub fn (f: ObjFlags) mutable() -> Bool { (f.w & 65536) != 0 }
+pub fn (var f: ObjFlags) set_mutable(v: Bool) { f.w = if v { f.w | 65536 } else { f.w & -65537 } }
+
+/// Local: a block `const`.
+pub fn (f: ObjFlags) is_const() -> Bool { (f.w & 131072) != 0 }
+pub fn (var f: ObjFlags) set_is_const(v: Bool) { f.w = if v { f.w | 131072 } else { f.w & -131073 } }
+
+/// Local: a task handle awaited somewhere.
+pub fn (f: ObjFlags) awaited() -> Bool { (f.w & 262144) != 0 }
+pub fn (var f: ObjFlags) set_awaited(v: Bool) { f.w = if v { f.w | 262144 } else { f.w & -262145 } }
+
+/// Local: read somewhere (stmt.go VarObj.Used): a `let` or `var`
+/// binding never read is XO0110.
+pub fn (f: ObjFlags) used() -> Bool { (f.w & 524288) != 0 }
+pub fn (var f: ObjFlags) set_used(v: Bool) { f.w = if v { f.w | 524288 } else { f.w & -524289 } }
+
+pub fn (f: ObjFlags) implicit() -> Bool { (f.w & 1048576) != 0 }
+pub fn (var f: ObjFlags) set_implicit(v: Bool) { f.w = if v { f.w | 1048576 } else { f.w & -1048577 } }
+
+/// An implicit effect parameter for an effect argument left out (core
+/// 6.2): the function may perform it.
+pub fn (f: ObjFlags) elided() -> Bool { (f.w & 2097152) != 0 }
+pub fn (var f: ObjFlags) set_elided(v: Bool) { f.w = if v { f.w | 2097152 } else { f.w & -2097153 } }
+/// `derive Json(match: fold)` (decision 0550): its decoder matches keys
+/// as Go's encoding/json does, an exact key first, else a folded one.
+pub fn (f: ObjFlags) json_fold() -> Bool { (f.w & 4194304) != 0 }
+pub fn (var f: ObjFlags) set_json_fold(v: Bool) { f.w = if v { f.w | 4194304 } else { f.w & -4194305 } }
 
 /// Where an elided effect parameter came from (Obj.elided_from).
 pub struct ElidedFrom {

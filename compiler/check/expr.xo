@@ -1221,7 +1221,7 @@ fn (var c: Checker) scope_expr(span: Span, name: Ident, body: Block, w: Want) ->
   let saved = c.ctx
   c.ctx = c.frames[frame].ctx
   for sp in c.frames[frame].spawns {
-    if sp.bound >= 0 && c.objs[sp.bound].awaited {
+    if sp.bound >= 0 && c.objs[sp.bound].flags.awaited() {
       continue
     }
     c.propagate(sp.err, sp.span, "XO0801", "this task")
@@ -1831,7 +1831,7 @@ fn (var c: Checker) type_of_expr(e: Expr) -> TypeRef {
       }
       c.record(id, c.mods[m].obj)
       c.record(sel, o)
-      if !c.objs[o].is_pub && m != c.cur_mod {
+      if !c.objs[o].flags.is_pub() && m != c.cur_mod {
         c.error("XO0605", sel.span, "type `${text(sel.name)}` is not `pub` in module `${c.mods[m].path}`")
       }
       TypeRef{obj: o}
@@ -1841,7 +1841,7 @@ fn (var c: Checker) type_of_expr(e: Expr) -> TypeRef {
       if r.obj < 0 {
         return r
       }
-      if !c.objs[r.obj].resolving {
+      if !c.objs[r.obj].flags.resolving() {
         c.resolve_type_obj(r.obj)
       }
       var env = c.local_env()
@@ -1871,7 +1871,7 @@ fn (var c: Checker) instantiate(obj: Int, args: List[Int], has_args: Bool, sp: S
 
 /// A fresh inference argument for type parameter p.
 fn (var c: Checker) fresh_arg(p: Int) -> Int {
-  if c.objs[p].effect {
+  if c.objs[p].flags.effect() {
     return c.fresh_effarg()
   }
   c.new_var()
@@ -1965,7 +1965,7 @@ fn (var c: Checker) struct_lit(span: Span, typ: Expr, fields: List[parser.FieldI
     }
     return c.bad_ty
   }
-  if c.objs[obj].opaque {
+  if c.objs[obj].flags.opaque() {
     c.error("XO0605", tsp, "`${c.qual_name(obj)}` is an opaque handle and cannot be built with a struct literal; use its constructor function")
     return c.bad_ty
   }
@@ -2040,7 +2040,7 @@ fn (var c: Checker) struct_lit(span: Span, typ: Expr, fields: List[parser.FieldI
 fn (var c: Checker) with_expr(span: Span, x: Expr, fields: List[parser.FieldInit], hint: Int) -> Int {
   let t = c.infer(x, hint)
   let r = c.resolve(t)
-  if c.tys[r].kind != TyKind.Named || c.objs[c.tys[r].obj].tkind != "struct" || c.objs[c.tys[r].obj].opaque {
+  if c.tys[r].kind != TyKind.Named || c.objs[c.tys[r].obj].tkind != "struct" || c.objs[c.tys[r].obj].flags.opaque() {
     for f in fields {
       c.infer(f.value, -1)
     }

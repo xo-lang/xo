@@ -214,7 +214,7 @@ fn (s: Session) impl_location(os: Os, tg: LspTarget) -> J? uses fs {
   }
   let c = s.res[0].c
   let o = c.objs[tg.oi]
-  if o.module < 0 || o.iface {
+  if o.module < 0 || o.flags.iface() {
     return None
   }
   let mo = c.mods[o.module]
@@ -245,7 +245,7 @@ fn (s: Session) impl_location(os: Os, tg: LspTarget) -> J? uses fs {
         let n = check.text(fd.name.name)
         match fd.recv {
           Some(r) => {
-            if tg.what == "func" && !recv.is_empty() && !o.is_static && n == oname && type_name(r.typ) == recv {
+            if tg.what == "func" && !recv.is_empty() && !o.flags.is_static() && n == oname && type_name(r.typ) == recv {
               return s.std_location(os, rel, src, fd.name.span.start.offset, fd.name.span.end.offset)
             }
           }
@@ -548,7 +548,7 @@ fn (s: Session) describe(tg: LspTarget) -> (Str, Str) {
       var kw = "let "
       if o.local.contains("param") || o.local.contains("recv") {
         kw = ""
-      } else if o.mutable {
+      } else if o.flags.mutable() {
         kw = "var "
       }
       if o.ty < 0 {
@@ -608,7 +608,7 @@ fn (s: Session) doc_link(tg: LspTarget) -> Str {
   }
   let c = s.res[0].c
   let o = c.objs[tg.oi]
-  if o.module < 0 || o.std_internal {
+  if o.module < 0 || o.flags.std_internal() {
     return ""
   }
   let m = c.mods[o.module]

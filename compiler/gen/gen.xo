@@ -854,7 +854,7 @@ fn (g: Gen) tkind(o: Int) -> Str {
 fn (g: Gen) type_params(ps: List[Int]) -> List[Int] {
   var out: List[Int] = []
   for p in ps {
-    if !g.c.objs[p].effect {
+    if !g.c.objs[p].flags.effect() {
       out.push(p)
     }
   }
@@ -866,7 +866,7 @@ fn (g: Gen) type_params(ps: List[Int]) -> List[Int] {
 fn (g: Gen) own_tparams(fo: Int) -> List[Int] {
   var out: List[Int] = []
   for p in g.c.objs[fo].tparams {
-    if !g.c.objs[p].implicit {
+    if !g.c.objs[p].flags.implicit() {
       out.push(p)
     }
   }
@@ -1016,7 +1016,7 @@ fn (g: Gen) celled(t: Int) -> Bool {
   if o < 0 || g.tkind(o) != "interface" {
     return false
   }
-  g.c.objs[o].iface_meths.any(fn(im) { g.c.objs[im].recv_var })
+  g.c.objs[o].iface_meths.any(fn(im) { g.c.objs[im].flags.recv_var() })
 }
 
 fn (g: Gen) is_never(t: Int) -> Bool {
@@ -1074,7 +1074,7 @@ fn (g: Gen) type_args(t: Int) -> List[Int] {
     if g.c.tys[g.c.resolve(a)].kind == check.TyKind.EffArg {
       continue
     }
-    if i < tps.len() && g.c.objs[tps[i]].effect {
+    if i < tps.len() && g.c.objs[tps[i]].flags.effect() {
       continue
     }
     out.push(a)

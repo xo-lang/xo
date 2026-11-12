@@ -481,7 +481,7 @@ fn (var b: Builder) mem_fs_call(x: Expr, ci: check.CallInfo) -> Int? {
   let fo = ci.fn_obj
   let r = b.c.objs[fo].recv
   let fm = b.obj_mod(fo)
-  if !b.tests || r < 0 || b.c.objs[fo].is_static || fm < 0 {
+  if !b.tests || r < 0 || b.c.objs[fo].flags.is_static() || fm < 0 {
     return None
   }
   let rname = b.obj_name(r)
@@ -902,7 +902,7 @@ fn (var b: Builder) gen_value_body(ct: Int, t: Int) {
       b.retv(b.add(Op.Struct, t, Aux.None, [v]))
       return
     }
-    if tk == "struct" && b.tkind(t) == Kind.Struct && !b.c.objs[obj].opaque {
+    if tk == "struct" && b.tkind(t) == Kind.Struct && !b.c.objs[obj].flags.opaque() {
       b.gen_struct(g, ct, t, obj, sb)
       return
     }

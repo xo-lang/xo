@@ -573,10 +573,10 @@ fn (g: Gen) rt_func_methods(o: Int) -> Bool {
 
 fn (g: Gen) method_is_go_method(fo: Int) -> Bool {
   let o = g.c.objs[fo]
-  if o.iface {
+  if o.flags.iface() {
     return g.type_params(g.own_tparams(fo)).is_empty()
   }
-  if o.is_static || o.recv < 0 {
+  if o.flags.is_static() || o.recv < 0 {
     return false
   }
   if !g.type_params(g.own_tparams(fo)).is_empty() {
@@ -784,10 +784,10 @@ fn (var g: Gen) gen_func_with(fo: Int, sp: SpecReq?) {
   let rv = g.recv_var(fo)
   let is_spec = sp != None
   // a static (a valued enum's from and all, decision 0269) has no receiver value
-  if rv >= 0 && !o.is_static {
+  if rv >= 0 && !o.flags.is_static() {
     let name = g.decl_name(rv)
     var rtype = g.go_type(o.recv_ty)
-    if o.recv_var {
+    if o.flags.recv_var() {
       g.f.names[rv] = "(*" + name + ")"
       rtype = "*" + rtype
     }
@@ -831,8 +831,8 @@ fn (var g: Gen) gen_func_with(fo: Int, sp: SpecReq?) {
   }
   var fixed: List[Int] = []
   var by_ref: List[Int] = []
-  if rv >= 0 && !o.is_static {
-    if o.recv_var {
+  if rv >= 0 && !o.flags.is_static() {
+    if o.flags.recv_var() {
       by_ref.push(rv)
     } else {
       fixed.push(rv)

@@ -351,9 +351,9 @@ fn (var w: ExW) obj(x: Obj, t: List[Int]) {
   w.uv(x.line)
   w.uv(x.col)
   w.str(x.local)
-  w.bool(x.effect)
+  w.bool(x.flags.effect())
   w.ints(x.tparams)
-  w.bool(x.is_pub)
+  w.bool(x.flags.is_pub())
   w.str(x.tkind)
   w.uv(x.fields.len())
   for f in x.fields {
@@ -399,12 +399,12 @@ fn (var w: ExW) obj(x: Obj, t: List[Int]) {
   }
   w.bytes(x.json_tag)
   w.bytes(x.json_content)
-  w.bool(x.json_fold)
+  w.bool(x.flags.json_fold())
   w.sv(x.json_via)
   w.sv(x.json_to)
   w.sv(x.json_from)
   w.sv(x.json_from_err)
-  w.bool(x.opaque)
+  w.bool(x.flags.opaque())
   w.uv(x.methods.len())
   for (k, f) in x.methods.entries() {
     w.bytes(k)
@@ -415,8 +415,8 @@ fn (var w: ExW) obj(x: Obj, t: List[Int]) {
     w.bytes(k)
     w.sv(f)
   }
-  w.bool(x.resolving)
-  w.bool(x.resolved)
+  w.bool(x.flags.resolving())
+  w.bool(x.flags.resolved())
   w.sv(x.decl_file)
   w.sv(x.decl_idx)
   w.uv(t[ti])
@@ -435,40 +435,40 @@ fn (var w: ExW) obj(x: Obj, t: List[Int]) {
   w.sv(x.err)
   w.sv(x.recv)
   w.sv(x.recv_ty)
-  w.bool(x.recv_var)
-  w.bool(x.is_static)
-  w.bool(x.static_const)
-  w.bool(x.iface)
+  w.bool(x.flags.recv_var())
+  w.bool(x.flags.is_static())
+  w.bool(x.flags.static_const())
+  w.bool(x.flags.iface())
   w.uv(x.own_tparams)
   w.sv(x.declared)
-  w.bool(x.sig_done)
+  w.bool(x.flags.sig_done())
   w.sv(x.body_eff)
-  w.bool(x.moves)
-  w.bool(x.move_only)
-  w.bool(x.realtime)
+  w.bool(x.flags.moves())
+  w.bool(x.flags.move_only())
+  w.bool(x.flags.realtime())
   w.uv(x.realtime_span.len())
   for s in x.realtime_span {
     w.span(s)
   }
   w.sv(x.ty)
-  w.bool(x.done)
-  w.bool(x.checking)
-  w.bool(x.mutable)
-  w.bool(x.is_const)
+  w.bool(x.flags.done())
+  w.bool(x.flags.checking())
+  w.bool(x.flags.mutable())
+  w.bool(x.flags.is_const())
   w.uv(t[ti])
   ti += 1
   w.sv(x.vctx)
   w.sv(x.frame)
   w.sv(x.group_frame)
-  w.bool(x.awaited)
-  w.bool(x.used)
+  w.bool(x.flags.awaited())
+  w.bool(x.flags.used())
   w.uv(x.let_at.offset)
   w.uv(x.let_at.line)
   w.uv(x.let_at.col)
   w.uv(t[ti])
   w.sv(x.constraint)
-  w.bool(x.implicit)
-  w.bool(x.elided)
+  w.bool(x.flags.implicit())
+  w.bool(x.flags.elided())
   w.uv(x.elided_from.len())
   for f in x.elided_from {
     w.str(f.file)
@@ -487,9 +487,9 @@ fn (var r: ExR) obj() -> (Obj, List[Int]) {
   x.line = r.uv()
   x.col = r.uv()
   x.local = r.str()
-  x.effect = r.bool()
+  x.flags.set_effect(r.bool())
   x.tparams = r.ints()
-  x.is_pub = r.bool()
+  x.flags.set_is_pub(r.bool())
   x.tkind = r.str()
   let nf = r.uv()
   for _ in 0..nf {
@@ -532,12 +532,12 @@ fn (var r: ExR) obj() -> (Obj, List[Int]) {
   }
   x.json_tag = r.bytes()
   x.json_content = r.bytes()
-  x.json_fold = r.bool()
+  x.flags.set_json_fold(r.bool())
   x.json_via = r.sv()
   x.json_to = r.sv()
   x.json_from = r.sv()
   x.json_from_err = r.sv()
-  x.opaque = r.bool()
+  x.flags.set_opaque(r.bool())
   let nm = r.uv()
   for _ in 0..nm {
     if !r.ok {
@@ -554,8 +554,8 @@ fn (var r: ExR) obj() -> (Obj, List[Int]) {
     let k = r.bytes()
     x.statics[k] = r.sv()
   }
-  x.resolving = r.bool()
-  x.resolved = r.bool()
+  x.flags.set_resolving(r.bool())
+  x.flags.set_resolved(r.bool())
   x.decl_file = r.sv()
   x.decl_idx = r.sv()
   trees.push(r.uv())
@@ -574,38 +574,38 @@ fn (var r: ExR) obj() -> (Obj, List[Int]) {
   x.err = r.sv()
   x.recv = r.sv()
   x.recv_ty = r.sv()
-  x.recv_var = r.bool()
-  x.is_static = r.bool()
-  x.static_const = r.bool()
-  x.iface = r.bool()
+  x.flags.set_recv_var(r.bool())
+  x.flags.set_is_static(r.bool())
+  x.flags.set_static_const(r.bool())
+  x.flags.set_iface(r.bool())
   x.own_tparams = r.uv()
   x.declared = r.sv()
-  x.sig_done = r.bool()
+  x.flags.set_sig_done(r.bool())
   x.body_eff = r.sv()
-  x.moves = r.bool()
-  x.move_only = r.bool()
-  x.realtime = r.bool()
+  x.flags.set_moves(r.bool())
+  x.flags.set_move_only(r.bool())
+  x.flags.set_realtime(r.bool())
   for _ in 0..r.uv() {
     x.realtime_span.push(r.span())
   }
   x.ty = r.sv()
-  x.done = r.bool()
-  x.checking = r.bool()
-  x.mutable = r.bool()
-  x.is_const = r.bool()
+  x.flags.set_done(r.bool())
+  x.flags.set_checking(r.bool())
+  x.flags.set_mutable(r.bool())
+  x.flags.set_is_const(r.bool())
   trees.push(r.uv())
   x.vctx = r.sv()
   x.frame = r.sv()
   x.group_frame = r.sv()
-  x.awaited = r.bool()
-  x.used = r.bool()
+  x.flags.set_awaited(r.bool())
+  x.flags.set_used(r.bool())
   let lo = r.uv()
   let ll = r.uv()
   x.let_at = parser.Pos{offset: lo, line: ll, col: r.uv()}
   trees.push(r.uv())
   x.constraint = r.sv()
-  x.implicit = r.bool()
-  x.elided = r.bool()
+  x.flags.set_implicit(r.bool())
+  x.flags.set_elided(r.bool())
   for _ in 0..r.uv() {
     let f = r.str()
     let at = r.span()
@@ -1361,7 +1361,7 @@ fn (c: Checker) join_trees(x0: Obj, t: List[Int], owner: Option[Obj]) -> Option[
   }
   if t[ti] > 0 {
     var fd: Option[parser.FnDecl] = None
-    if x.iface {
+    if x.flags.iface() {
       if let Some(ow) = owner {
         if let Some(d) = c.top_decl(ow.decl_file, ow.decl_idx) {
           match d {
@@ -1446,7 +1446,7 @@ pub fn (var c: Checker) install_std(e0: StdExport) -> Bool {
   // which joining keeps) before the pass moves it
   var owners: Map[Int, Obj] = {}
   for x in objs {
-    if x.iface && x.recv >= lo && x.recv - lo < n && !owners.contains(x.recv) {
+    if x.flags.iface() && x.recv >= lo && x.recv - lo < n && !owners.contains(x.recv) {
       owners[x.recv] = objs[x.recv - lo]
     }
   }
@@ -1461,7 +1461,7 @@ pub fn (var c: Checker) install_std(e0: StdExport) -> Bool {
     // an object of a file not parsed (trees_lazy): installed without
     // its trees, its counts kept for need_tree; an interface's method
     // (no file of its own) by its interface's file
-    let owner = if x.iface { owners.get(x.recv) } else { None }
+    let owner = if x.flags.iface() { owners.get(x.recv) } else { None }
     var tf = x.decl_file
     if let Some(ow) = owner {
       tf = ow.decl_file
@@ -1474,7 +1474,7 @@ pub fn (var c: Checker) install_std(e0: StdExport) -> Bool {
         }
       }
       if has {
-        pending.push((lo + i, e.trees[i], if x.iface { x.recv } else { -1 }))
+        pending.push((lo + i, e.trees[i], if x.flags.iface() { x.recv } else { -1 }))
       }
       objs[i + head] = x
       i -= 1
@@ -1850,7 +1850,7 @@ fn (c: Checker) verify_std_entry(fp: Str, at: StdBlock, mine: StdExport) -> Str 
   }
   let lo = r.block.obj_lo
   for (i, x) in r.objs.indexed() {
-    let owner = if x.iface && x.recv >= lo && x.recv - lo < r.objs.len() { Some(r.objs[x.recv - lo]) } else { None }
+    let owner = if x.flags.iface() && x.recv >= lo && x.recv - lo < r.objs.len() { Some(r.objs[x.recv - lo]) } else { None }
     match c.join_trees(x, r.trees[i], owner) {
       Some(y) => {
         let z = c.objs[lo + i]

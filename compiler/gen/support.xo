@@ -322,7 +322,7 @@ fn (var g: Gen) adapter_of(from: Int, to: Int, cell: Bool) -> Str {
     if m < 0 {
       return ""
     }
-    if g.c.objs[m].iface && !g.is_interface(from) {
+    if g.c.objs[m].flags.iface() && !g.is_interface(from) {
       return ""
     }
     if g.method_sig(m, msub) != g.method_sig(im, isub) || !g.method_is_go_method(m) {

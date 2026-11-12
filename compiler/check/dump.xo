@@ -546,7 +546,7 @@ fn (c: Checker) dump_sigs(var out: StrBuilder, m: Int) {
   var lines: List[Str] = []
   for f in fns {
     let x = c.objs[f]
-    if !x.sig_done {
+    if !x.flags.sig_done() {
       continue
     }
     var line = "${pos_text(x.file, x.line, x.col)} ${c.display_name(f)} ${c.sig_text(f)}"
@@ -585,11 +585,11 @@ fn (c: Checker) sig_text(f: Int) -> Str {
       if i > 0 {
         b.write(", ")
       }
-      if c.objs[p].implicit {
+      if c.objs[p].flags.implicit() {
         b.write("implicit ")
       }
       b.write(text(c.objs[p].name))
-      if c.objs[p].effect {
+      if c.objs[p].flags.effect() {
         b.write(": Effects")
       } else if c.objs[p].constraint >= 0 {
         b.write(": ")
@@ -600,7 +600,7 @@ fn (c: Checker) sig_text(f: Int) -> Str {
   }
   b.write("(")
   if x.recv_ty >= 0 {
-    if x.recv_var {
+    if x.flags.recv_var() {
       b.write("var ")
     }
     b.write("self: ")

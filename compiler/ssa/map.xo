@@ -884,7 +884,7 @@ fn (var b: Builder) map_call(x: Expr, ci: check.CallInfo) -> Int? {
   let nt = b.nat_of(x)
   let args = arg_exprs(b.c.objs[fo].params, cargs)
   let key = "${b.obj_name(b.c.objs[fo].recv)}.${b.obj_name(fo)}"
-  if b.c.objs[fo].recv_var {
+  if b.c.objs[fo].flags.recv_var() {
     var p = b.place(ci.recv[0])
     if !p.ok || !b.m.types[p.t()].coll {
       return None

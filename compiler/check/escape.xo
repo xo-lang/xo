@@ -497,7 +497,7 @@ fn (var c: Checker) group_escapes(span: Span, body: Block, h: Int) {
           } else {
             // a `var` method call on a binding declared outside the scope
             let m = c.named_by(sel)
-            if m >= 0 && c.objs[m].kind == ObjKind.Func && c.objs[m].recv_var {
+            if m >= 0 && c.objs[m].kind == ObjKind.Func && c.objs[m].flags.recv_var() {
               if let Some(id) = place_root(recv) {
                 let v = c.ident_obj(id)
                 if v >= 0 && c.declared_before(v, span) {

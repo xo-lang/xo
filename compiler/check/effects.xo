@@ -176,7 +176,7 @@ fn uses_fix_of(fd: parser.FnDecl) -> UsesFix? {
 /// name (elided_effect_note has its fix).
 fn (c: Checker) uses_fix_edit(ob: EffOb, missing: List[Str], sub: Flat, sup: Flat) -> (Str, DEdit, Str)? {
   for p in sub.params {
-    if !sup.params.contains(p) && c.objs[p].elided {
+    if !sup.params.contains(p) && c.objs[p].flags.elided() {
       return None
     }
   }
@@ -214,7 +214,7 @@ fn uses_edit(ob: EffOb, missing: List[Str]) -> (Str, DEdit, Str)? {
 fn (var c: Checker) elided_effect_note(d: Int, sub: Flat, sup: Flat, ob: EffOb) {
   for p in sub.params {
     let o = c.objs[p]
-    if sup.params.contains(p) || !o.elided || o.elided_from.is_empty() {
+    if sup.params.contains(p) || !o.flags.elided() || o.elided_from.is_empty() {
       continue
     }
     let from = o.elided_from[0]
@@ -259,7 +259,7 @@ fn (var c: Checker) implicit_callee_note(d: Int, sub: Flat, sup: Flat) {
       continue
     }
     let o = c.objs[q]
-    if !o.elided || !o.effect {
+    if !o.flags.elided() || !o.flags.effect() {
       continue
     }
     // the callee is the function whose body obligation has q among its
@@ -997,7 +997,7 @@ fn (c: Checker) ob_what(ob: EffOb, s: Str) -> Str {
       if !s.is_empty() {
         return "`${name}` declares `uses ${s}`"
       }
-      if c.objs[ob.fo].is_pub {
+      if c.objs[ob.fo].flags.is_pub() {
         return "`${name}` is pub with no `uses` clause, so it is pure"
       }
       "`${name}` is pure"
@@ -1042,7 +1042,7 @@ fn (var c: Checker) iface_covariant(t: Int) -> List[Bool] {
   }
   var out: List[Bool] = []
   for p in c.objs[t].tparams {
-    var cov = c.objs[p].effect
+    var cov = c.objs[p].flags.effect()
     if cov {
       for m in c.objs[t].iface_meths {
         for pi in c.objs[m].params {

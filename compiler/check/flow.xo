@@ -129,10 +129,10 @@ fn (var c: Checker) require_mutable(e: Expr, code: Str, what: Str) {
   if v < 0 {
     return // reported as unresolved by the type check
   }
-  if c.objs[v].mutable && c.objs[v].vctx == c.ctx {
+  if c.objs[v].flags.mutable() && c.objs[v].vctx == c.ctx {
     return
   }
-  if c.objs[v].mutable {
+  if c.objs[v].flags.mutable() {
     let d = c.error(code, id.span, "${what} mutates `${text(id.name)}`, which is captured by a closure; closures capture by value (core 3.3)")
     c.note_obj(d, v, "`${text(id.name)}` is declared here, outside the closure")
     c.note(d, "to share mutable state with a closure, capture a `Mutex` or `Atomic` handle (core 5.4)")
@@ -935,7 +935,7 @@ pub fn (c: Checker) is_move_only(t: Int) -> Bool {
   if c.tys[r].kind != TyKind.Named {
     return false
   }
-  if c.objs[c.tys[r].obj].move_only {
+  if c.objs[c.tys[r].obj].flags.move_only() {
     return true
   }
   if c.objs[c.tys[r].obj].module != c.prelude {
@@ -1193,7 +1193,7 @@ fn (var c: Checker) mv_expr(e: Expr, mv: Bool, var moved: Moved) {
       var known: List[Int] = []
       if let Some(info) = ci {
         recv = info.recv
-        fn_moves = info.fn_obj >= 0 && c.objs[info.fn_obj].moves
+        fn_moves = info.fn_obj >= 0 && c.objs[info.fn_obj].flags.moves()
         no_params = info.fn_obj < 0 && info.params.is_empty()
         for p in info.params {
           let k = c.expr_key(p.arg)
@@ -1486,7 +1486,7 @@ fn (var c: Checker) lost_updates(sites: List[FlowSite], nodes: List[Node]) {
       NExpr(e) => {
         if e is CallExpr(..) {
           if let Some(ci) = c.call_infos.get(c.expr_key(e)) {
-            if ci.fn_obj >= 0 && c.objs[ci.fn_obj].recv_var {
+            if ci.fn_obj >= 0 && c.objs[ci.fn_obj].flags.recv_var() {
               if let Some(r) = ci.recv.first() {
                 if let Some(id) = place_root(r) {
                   mutating[c.name_key(id.span.start.offset)] = true
@@ -1652,7 +1652,7 @@ fn (var c: Checker) stored_updates(sites: List[FlowSite], nodes: List[Node]) {
           Some(x) => x
           None => continue
         }
-        if ci.fn_obj >= 0 && c.objs[ci.fn_obj].recv_var {
+        if ci.fn_obj >= 0 && c.objs[ci.fn_obj].flags.recv_var() {
           if let Some(r) = ci.recv.first() {
             if let Some(id) = place_root(r) {
               kinds[c.name_key(id.span.start.offset)] = SU_MUTATE

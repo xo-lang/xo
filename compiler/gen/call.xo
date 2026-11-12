@@ -335,7 +335,7 @@ fn (var g: Gen) decl_call1(x: Expr, ci: check.CallInfo) -> (Str, Int) {
   var order: List[Int] = []
   // a by value receiver that is a variable or a field path is read after
   // the arguments (core 5.2, decision 0326)
-  let recv_late = !recv_e.is_empty() && !g.c.objs[fo].recv_var && recv_after_args(recv_e[0])
+  let recv_late = !recv_e.is_empty() && !g.c.objs[fo].flags.recv_var() && recv_after_args(recv_e[0])
   if !recv_e.is_empty() && !recv_late {
     order.push(-1)
   }
@@ -360,7 +360,7 @@ fn (var g: Gen) decl_call1(x: Expr, ci: check.CallInfo) -> (Str, Int) {
   }
   // by value arguments of a user function and the receiver of a read
   // only List or Map method are borrowed (own.xo)
-  var any_var = g.c.objs[fo].recv_var
+  var any_var = g.c.objs[fo].flags.recv_var()
   for p in params {
     any_var = any_var || p.is_var
   }
@@ -384,13 +384,13 @@ fn (var g: Gen) decl_call1(x: Expr, ci: check.CallInfo) -> (Str, Int) {
     var code = ""
     var keep = false
     if i < 0 {
-      keep = g.c.objs[fo].recv_var
+      keep = g.c.objs[fo].flags.recv_var()
       let re = recv_e[0]
       let fr0 = g.c.objs[fo].recv
       let list_read = g.ostd(fo) && fr0 >= 0 && g.oprelude(fr0) && (g.oname(fr0) == "List" && borrow_recv(g.oname(fo)) || g.oname(fr0) == "Map" && borrow_map_recv(g.oname(fo)))
       let calm = g.borrow_ok(re, g.call_others(recv_e, args, aidx, -1))
       var done = false
-      if g.c.objs[fo].recv_var && calm {
+      if g.c.objs[fo].flags.recv_var() && calm {
         // an element place is passed by address: a method writes only
         // its receiver of the caller's (a user method's too since
         // 2026-10-23: place's marked copy cloned the element per call)
@@ -522,7 +522,7 @@ fn (var g: Gen) emit_spec_call(fo: Int, sub: Map[Int, Int], name: Str, recv0: St
     call = "${name}(tk${prefix_comma(args)})"
   } else {
     var recv = recv0
-    if g.c.objs[fo].recv_var {
+    if g.c.objs[fo].flags.recv_var() {
       recv = "&" + recv
     }
     call = "${name}(tk, ${recv}${prefix_comma(args)})"
@@ -533,9 +533,9 @@ fn (var g: Gen) emit_spec_call(fo: Int, sub: Map[Int, Int], name: Str, recv0: St
 /// The receiver of a method call: an addressable place for a `var`
 /// receiver (recvCode).
 fn (var g: Gen) recv_code(e: Expr, fo: Int, borrow: Bool) -> Str {
-  if g.c.objs[fo].recv_var {
+  if g.c.objs[fo].flags.recv_var() {
     let vt = g.type_of(e)
-    if g.is_param_t(vt) && g.c.objs[fo].iface {
+    if g.is_param_t(vt) && g.c.objs[fo].flags.iface() {
       let vp = g.c.tys[g.c.resolve(vt)].obj
       let vc = g.c.objs[vp].constraint
       if vc >= 0 {
@@ -560,7 +560,7 @@ fn (var g: Gen) recv_code(e: Expr, fo: Int, borrow: Bool) -> Str {
   } else {
     code = g.val(e)
   }
-  if g.is_param_t(t) && g.c.objs[fo].iface {
+  if g.is_param_t(t) && g.c.objs[fo].flags.iface() {
     let p = g.c.tys[g.c.resolve(t)].obj
     let c = g.c.objs[p].constraint
     if c >= 0 {
@@ -639,7 +639,7 @@ fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[St
     if g.c.objs[fo].recv >= 0 {
       // a `var` receiver is a place: the implementation's `var` first
       // parameter takes its address, as a `var` argument does
-      let r = if g.c.objs[fo].recv_var { "&" + recv0 } else { recv0 }
+      let r = if g.c.objs[fo].flags.recv_var() { "&" + recv0 } else { recv0 }
       return g.emit_call(impl, isub, "", [r] + args, at)
     }
     return g.emit_call(impl, isub, recv0, args, at)
@@ -647,7 +647,7 @@ fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[St
   let o = g.c.objs[fo]
   var call = ""
   var recv = recv0
-  if o.iface && g.method_is_go_method(fo) {
+  if o.flags.iface() && g.method_is_go_method(fo) {
     call = "${g.go_recv(recv)}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
   } else if g.ostd(fo) || g.rt_twin(fo) {
     call = g.std_call(fo, sub, recv, args)
@@ -669,11 +669,11 @@ fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[St
       call = "${g.go_recv(recv)}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
     }
   } else {
-    if o.recv_var {
+    if o.flags.recv_var() {
       recv = "&" + recv
     }
     let pr = g.pkg_ref(o.module)
-    if o.is_static {
+    if o.flags.is_static() {
       // no receiver value (a valued enum's from and all, decision 0269)
       call = "${pr}${g.func_go_name(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
     } else {
@@ -711,16 +711,16 @@ fn (var g: Gen) go_impl(fo: Int) -> Int {
   if m < 0 || (g.pkg_of.get(m) ?? -1) < 0 {
     return -1
   }
-  let var_unrouted = o.recv_var && g.impl_member(m, fo) < 0
+  let var_unrouted = o.flags.recv_var() && g.impl_member(m, fo) < 0
   // a generic method routes to a free function TYPE_method with as many type parameters (Xo Lang 3, 2026-11-06:
   // std/grpc's effect generic `Server.unary` and `Client.call`)
   let generic_unrouted = !o.tparams.is_empty() && g.impl_member(m, fo) < 0
-  if o.recv >= 0 && (o.is_static || var_unrouted || generic_unrouted) && !(g.oname(fo) is "display" | "debug") && !o.iface {
+  if o.recv >= 0 && (o.flags.is_static() || var_unrouted || generic_unrouted) && !(g.oname(fo) is "display" | "debug") && !o.flags.iface() {
     // the module is compiled from its Xo implementation, so std/rt's Go
     // version may be gone or stale: no silent fallback (owner,
     // 2026-10-21)
-    let kind = if o.is_static { "static" } else if o.recv_var { "`var`" } else { "generic" }
-    let want = if o.recv_var { " whose first parameter is `var`" } else { "" }
+    let kind = if o.flags.is_static() { "static" } else if o.flags.recv_var() { "`var`" } else { "generic" }
+    let want = if o.flags.recv_var() { " whose first parameter is `var`" } else { "" }
     let msg = "`${g.c.mods[o.module].path}.${g.oname(o.recv)}.${g.oname(fo)}`: a ${kind} method of a std module the Go backend compiles from its Xo implementation (std/go_compiled.txt, decision 0312) has no route there; give the implementation a free function ${g.oname(o.recv).to_lower()}_${g.oname(fo)}${want} and route it in compiler/gen go_impl, or take the module off go_compiled.txt"
     if !g.errs.contains(msg) {
       g.errorf(Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}, msg)
@@ -735,7 +735,7 @@ fn (g: Gen) impl_member(m: Int, fo: Int) -> Int {
   let o = g.c.objs[fo]
   var name = g.oname(fo)
   if o.recv >= 0 {
-    if o.is_static || o.iface || name == "display" || name == "debug" {
+    if o.flags.is_static() || o.flags.iface() || name == "display" || name == "debug" {
       return -1
     }
     name = "${g.oname(o.recv).to_lower()}_${name}"
@@ -747,7 +747,7 @@ fn (g: Gen) impl_member(m: Int, fo: Int) -> Int {
   if o.recv >= 0 && g.c.objs[x].tparams.len() != o.tparams.len() {
     return -1
   }
-  if o.recv >= 0 && o.recv_var {
+  if o.recv >= 0 && o.flags.recv_var() {
     // a `var` receiver routes only to a `var` first parameter (Xo Lang
     // 3, 2026-11-05: amqp's `fn (var c: Connection)` gave std_sigs an
     // undefined (*Amqp_Connection).M_x)
@@ -800,7 +800,7 @@ fn (var g: Gen) std_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[Str
     return "${r}${prefix}${g.oname(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
   }
   let rm = g.omod(o.recv)
-  if o.is_static {
+  if o.flags.is_static() {
     return "${r}${g.std_prefix(rm)}${g.oname(o.recv)}_${g.oname(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
   }
   if g.method_is_go_method(fo) {
@@ -810,11 +810,11 @@ fn (var g: Gen) std_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[Str
     return "${g.go_recv(recv0)}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
   }
   var recv = recv0
-  if o.recv_var {
+  if o.flags.recv_var() {
     recv = "&" + recv
   }
   var tps = o.tparams
-  if o.iface {
+  if o.flags.iface() {
     tps = g.c.objs[o.recv].tparams + o.tparams
   }
   "${r}${g.std_prefix(rm)}${g.oname(o.recv)}_${g.oname(fo)}${g.targs_code(tps, sub)}(tk, ${recv}${prefix_comma(args)})"

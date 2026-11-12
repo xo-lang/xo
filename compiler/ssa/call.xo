@@ -101,7 +101,7 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     return b.value_call(x)
   }
   let fr = b.c.objs[fo].recv
-  if b.c.objs[fo].iface && fr >= 0 && (!b.is_prelude_mod(b.obj_mod(fr)) || b.dyn_iface(fr) || (b.obj_name(fr) is "Stream" | "NetConn" | "Secrets" | "Keyring" | "Keychain" | "Dpapi")) {
+  if b.c.objs[fo].flags.iface() && fr >= 0 && (!b.is_prelude_mod(b.obj_mod(fr)) || b.dyn_iface(fr) || (b.obj_name(fr) is "Stream" | "NetConn" | "Secrets" | "Keyring" | "Keychain" | "Dpapi")) {
     // not a capability's method (those are lowered as std calls); the
     // prelude's Stream (decision 0280), NetConn (decision 0481), Secrets
     // and Keyring (decision 0584) are ordinary interfaces
@@ -349,7 +349,7 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
 
 fn (var b: Builder) is_proc_run(fo: Int) -> Bool {
   let r = b.c.objs[fo].recv
-  if r < 0 || b.c.objs[fo].is_static || b.obj_name(fo) != "run" {
+  if r < 0 || b.c.objs[fo].flags.is_static() || b.obj_name(fo) != "run" {
     return false
   }
   let m = b.obj_mod(fo)
@@ -1266,7 +1266,7 @@ fn (var b: Builder) call_as_via(x: Expr, ci: check.CallInfo, impl: Int, real: In
   }
   let cres = b.m.funcs[callee].results
   var impl_params = b.c.objs[impl].params
-  let is_method = b.c.objs[fo].recv >= 0 && !b.c.objs[fo].is_static
+  let is_method = b.c.objs[fo].recv >= 0 && !b.c.objs[fo].flags.is_static()
   if is_method && b.c.objs[impl].recv < 0 && !impl_params.is_empty() {
     impl_params = impl_params[1..impl_params.len()]
   }
@@ -1279,7 +1279,7 @@ fn (var b: Builder) call_as_via(x: Expr, ci: check.CallInfo, impl: Int, real: In
       b.unsupported("this method call")
       return b.undef(cres[0])
     }
-    if b.c.objs[fo].recv_var {
+    if b.c.objs[fo].flags.recv_var() {
       let p = b.place(ci.recv[0])
       if !p.ok {
         return b.undef(cres[0])
@@ -1408,7 +1408,7 @@ fn (var b: Builder) call_as_via(x: Expr, ci: check.CallInfo, impl: Int, real: In
   }
   // a call of a real-time function from code that is not real-time is a
   // real-time section (core 6.5, decision 0133)
-  let section = b.c.objs[impl].realtime && (b.s.fo < 0 || !b.c.objs[b.s.fo].realtime)
+  let section = b.c.objs[impl].flags.realtime() && (b.s.fo < 0 || !b.c.objs[b.s.fo].flags.realtime())
   if section {
     b.rt("realtime_enter", -1, [])
   }
@@ -2071,7 +2071,7 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
     return b.undef(nt)
   }
   let rname = b.obj_name(r)
-  let is_static = b.c.objs[fo].is_static
+  let is_static = b.c.objs[fo].flags.is_static()
   match rname {
     "Range" => {
       let recv = strip_parens(ci.recv[0])
@@ -2165,7 +2165,7 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
       if is_static && fname == "new" && b.tkind(nt) == Kind.List {
         return b.call("list.new", nt, "", [])
       }
-      if b.c.objs[fo].recv_var && fname == "push" && args.len() == 1 {
+      if b.c.objs[fo].flags.recv_var() && fname == "push" && args.len() == 1 {
         var p = b.place(ci.recv[0])
         if p.ok && b.tkind(p.t()) == Kind.List {
           let v = b.value_as(args[0].value, b.m.types[p.t()].elems[0])
@@ -2231,7 +2231,7 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
         // 0448), where a literal's size keeps the runtime's minimum
         return b.call("list.new", nt, "", [b.value_as(args[0].value, it), b.cint(1)])
       }
-      if b.c.objs[fo].recv_var {
+      if b.c.objs[fo].flags.recv_var() {
         var p = b.place(ci.recv[0])
         if p.ok && b.tkind(p.t()) == Kind.List {
           let lt = p.t()
@@ -2388,7 +2388,7 @@ fn (var b: Builder) word_method(x: Expr, ci: check.CallInfo) -> Int? {
     return None
   }
   let r = b.c.objs[fo].recv
-  if r < 0 || b.c.objs[fo].is_static || b.obj_name(r) != "Int" || !b.c.mods[b.obj_mod(fo)].is_prelude {
+  if r < 0 || b.c.objs[fo].flags.is_static() || b.obj_name(r) != "Int" || !b.c.mods[b.obj_mod(fo)].is_prelude {
     return None
   }
   let code = match b.obj_name(fo) {
@@ -2518,7 +2518,7 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     }
   }
   let pos = b.pos_line(span)
-  if b.c.objs[fo].is_static {
+  if b.c.objs[fo].flags.is_static() {
     match key {
       "Duration.from_nanos" => return Some(b.io_arg(fo, es, 0, it))
       "Duration.from_millis" => return Some(b.mul_pos(b.io_arg(fo, es, 0, it), 1000000, pos))
@@ -2877,7 +2877,7 @@ fn (var b: Builder) net_waits(fo: Int) -> Bool {
 fn (var b: Builder) native_waits(fo: Int) -> Bool {
   let r = b.c.objs[fo].recv
   let m = b.obj_mod(fo)
-  if r < 0 || b.c.objs[fo].is_static || m < 0 || !b.is_prelude_mod(m) {
+  if r < 0 || b.c.objs[fo].flags.is_static() || m < 0 || !b.is_prelude_mod(m) {
     return false
   }
   WAITS.contains("${b.obj_name(r)}.${b.obj_name(fo)}")
@@ -2940,7 +2940,7 @@ fn (var b: Builder) user_cap_call(x: Expr, ci: check.CallInfo) -> Int? {
   }
   let fo = ci.fn_obj
   let r = b.c.objs[fo].recv
-  if r < 0 || !b.c.objs[fo].iface || ci.recv.is_empty() || !b.is_prelude_mod(b.obj_mod(fo)) {
+  if r < 0 || !b.c.objs[fo].flags.iface() || ci.recv.is_empty() || !b.is_prelude_mod(b.obj_mod(fo)) {
     return None
   }
   let rname = b.obj_name(r)

@@ -106,7 +106,7 @@ fn (var c: Checker) ident(id: Ident, hint: Int) -> Int {
       }
       Type => {
         let d = c.error("XO0407", id.span, "`${text(name)}` is a type, not a value")
-        if c.objs[o].tkind == "struct" && !c.objs[o].opaque {
+        if c.objs[o].tkind == "struct" && !c.objs[o].flags.opaque() {
           c.note(d, "build a value with a struct literal: `${text(name)}{...}`")
         }
         return c.bad_ty
@@ -288,7 +288,7 @@ fn (var c: Checker) sig_of(fo: Int) -> Int {
 /// A declared function used as a value: its type parameters are
 /// instantiated with fresh variables (or targs).
 fn (var c: Checker) func_value(fo: Int, targs: List[Int], has_targs: Bool, sp: Span) -> Int {
-  if !c.objs[fo].sig_done {
+  if !c.objs[fo].flags.sig_done() {
     return c.bad_ty
   }
   c.check_ceiling(fo, sp)
@@ -310,7 +310,7 @@ fn (var c: Checker) fresh_subst(fo: Int, pre: Subst, targs0: List[Int], has_targ
   let tps = c.objs[fo].tparams
   var type_own = 0
   for p in tps {
-    if !c.objs[p].implicit && !c.objs[p].effect {
+    if !c.objs[p].flags.implicit() && !c.objs[p].flags.effect() {
       type_own += 1
     }
   }
@@ -324,11 +324,11 @@ fn (var c: Checker) fresh_subst(fo: Int, pre: Subst, targs0: List[Int], has_targ
     if sm.contains(p) {
       continue
     }
-    if c.objs[p].effect {
+    if c.objs[p].flags.effect() {
       sm[p] = c.call_effarg()
       continue
     }
-    if has_targs && !c.objs[p].implicit {
+    if has_targs && !c.objs[p].flags.implicit() {
       sm[p] = targs[i]
       i += 1
       continue
@@ -406,7 +406,7 @@ fn (c: Checker) pub_in(o: Int, m: Int) -> Bool {
     return true
   }
   match c.objs[o].kind {
-    Func | Const | Type => c.objs[o].is_pub
+    Func | Const | Type => c.objs[o].flags.is_pub()
     TParam | Local | Module => true
   }
 }
@@ -481,7 +481,7 @@ fn (var c: Checker) type_member(obj0: Int, targs0: List[Int], has_targs0: Bool, 
   }
   if fo >= 0 {
     c.record(sel, fo)
-    if c.objs[fo].static_const {
+    if c.objs[fo].flags.static_const() {
       if !call.is_empty() {
         c.error("XO0407", parser.expr_span(call[0]), "`${text(c.objs[obj].name)}.${text(name)}` is a constant, not a function")
         return c.bad_ty
@@ -614,7 +614,7 @@ fn (var c: Checker) static_subst(obj: Int, targs: List[Int], has_targs: Bool, fo
     return sm
   }
   for (i, a) in c.tys[rt].args.indexed() {
-    if c.tys[a].kind != TyKind.Param || !c.objs[c.tys[a].obj].implicit {
+    if c.tys[a].kind != TyKind.Param || !c.objs[c.tys[a].obj].flags.implicit() {
       continue
     }
     if has_targs && i < targs.len() {
@@ -696,12 +696,12 @@ fn (var c: Checker) field_of(bt: Int, span: Span, x: Expr, sel: Ident, place: Bo
       if let Ident(id) = x {
         let v = c.lookup_local(id.name)
         if v >= 0 {
-          c.objs[v].awaited = true
+          c.objs[v].flags.set_awaited(true)
         }
       }
       return c.call_result(c.tys[r].args[0], c.tys[r].args[1])
     }
-    if c.objs[o].tkind == "struct" && !c.objs[o].opaque {
+    if c.objs[o].tkind == "struct" && !c.objs[o].flags.opaque() {
       let fi = c.field_index(o, name)
       if fi >= 0 {
         let f = c.objs[o].fields[fi]
@@ -717,7 +717,7 @@ fn (var c: Checker) field_of(bt: Int, span: Span, x: Expr, sel: Ident, place: Bo
     let (m, sm) = c.find_method(r, text(name))
     if m >= 0 {
       c.record(sel, m)
-      if c.objs[m].recv_var {
+      if c.objs[m].flags.recv_var() {
         c.error("XO0407", span, "method `${text(name)}` mutates its receiver and cannot be used as a value")
         return c.bad_ty
       }
@@ -783,7 +783,7 @@ fn (c: Checker) field_hidden(o: Int, is_pub: Bool) -> Bool {
 /// The note on XO0605 for a field of an `@internal` std struct: its
 /// fields are std's, and the public way, from its doc (decision 0440).
 fn (var c: Checker) internal_note(d: Int, o: Int) {
-  if d < 0 || !c.objs[o].std_internal {
+  if d < 0 || !c.objs[o].flags.std_internal() {
     return
   }
   let way = c.objs[o].internal_hint
@@ -816,7 +816,7 @@ fn (var c: Checker) no_member(t: Int, sel: Ident, place: Bool) {
   }
   if c.tys[r].kind == TyKind.Named {
     let o = c.tys[r].obj
-    if c.objs[o].tkind == "struct" && !c.objs[o].opaque {
+    if c.objs[o].tkind == "struct" && !c.objs[o].flags.opaque() {
       for f in c.objs[o].fields {
         cands.push(text(f.name))
       }
@@ -1268,7 +1268,7 @@ fn (var c: Checker) call_method(bt: Int, sspan: Span, x: Expr, sel: Ident, targs
   }
   let (m, _) = c.find_method_any(r, text(name))
   if m < 0 {
-    if is_named && c.objs[c.tys[r].obj].tkind == "struct" && !c.objs[c.tys[r].obj].opaque && c.field_index(c.tys[r].obj, name) >= 0 {
+    if is_named && c.objs[c.tys[r].obj].tkind == "struct" && !c.objs[c.tys[r].obj].flags.opaque() && c.field_index(c.tys[r].obj, name) >= 0 {
       let ft = c.field_of(bt, sspan, x, sel, false)
       return c.call_value(ft, call, hint, text(name))
     }
@@ -1312,16 +1312,16 @@ fn (var c: Checker) call_method(bt: Int, sspan: Span, x: Expr, sel: Ident, targs
     return c.bad_ty
   }
   c.record(sel, m)
-  if c.objs[m].is_static {
+  if c.objs[m].flags.is_static() {
     c.error("XO0407", sel.span, "`${text(name)}` is an associated function; call it on the type: `${text(c.objs[c.objs[m].recv].name)}.${text(name)}(...)`")
     c.infer_args(args)
     return c.bad_ty
   }
-  if !c.objs[m].is_pub && c.objs[m].module != c.cur_mod && !c.objs[m].iface && !c.prelude_iface_method(r, m, sel.span) {
+  if !c.objs[m].flags.is_pub() && c.objs[m].module != c.cur_mod && !c.objs[m].flags.iface() && !c.prelude_iface_method(r, m, sel.span) {
     c.pub_fix(c.error("XO0605", sel.span, "method `${text(name)}` of `${text(c.objs[c.objs[m].recv].name)}` is not `pub` in module `${c.mods[c.objs[m].module].path}`"), m)
   }
   var pre: Subst = {}
-  if c.objs[m].iface {
+  if c.objs[m].flags.iface() {
     if is_named {
       let rargs = c.tys[r].args
       for (i, p) in c.objs[c.objs[m].recv].tparams.indexed() {
@@ -1332,8 +1332,8 @@ fn (var c: Checker) call_method(bt: Int, sspan: Span, x: Expr, sel: Ident, targs
     }
   } else {
     for p in c.objs[m].tparams {
-      if c.objs[p].implicit {
-        if c.objs[p].effect {
+      if c.objs[p].flags.implicit() {
+        if c.objs[p].flags.effect() {
           pre[p] = c.fresh_effarg()
         } else {
           pre[p] = c.new_var()
@@ -1347,7 +1347,7 @@ fn (var c: Checker) call_method(bt: Int, sspan: Span, x: Expr, sel: Ident, targs
       return c.bad_ty
     }
   }
-  if c.objs[m].recv_var {
+  if c.objs[m].flags.recv_var() {
     c.require_mutable(x, "XO0501", "method `${text(name)}`")
   }
   let t = c.call_func(m, pre, targs, has_targs, call, hint, [x])
@@ -1425,7 +1425,7 @@ fn (var c: Checker) record_spawn(recv: Expr, call: Expr, task_t: Int) {
 /// parameters; recv is the receiver expression, zero or one element).
 fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: Bool, call: Expr, hint: Int, recv: List[Expr]) -> Int {
   let (span, fun, args) = call_parts(call)
-  if !c.objs[fo].sig_done {
+  if !c.objs[fo].flags.sig_done() {
     c.infer_args(args)
     return c.bad_ty
   }
@@ -1469,7 +1469,7 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
   // constraints
   for p in c.objs[fo].tparams {
     let ct = c.objs[p].constraint
-    if ct < 0 || c.objs[p].effect {
+    if ct < 0 || c.objs[p].flags.effect() {
       continue
     }
     let at = c.resolve(sm.get(p) ?? c.bad_ty)
@@ -1503,7 +1503,7 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
     }
   }
   for p in c.objs[fo].tparams {
-    if c.objs[p].effect || c.objs[p].implicit {
+    if c.objs[p].flags.effect() || c.objs[p].flags.implicit() {
       continue
     }
     let v = sm.get(p) ?? -1
@@ -1519,7 +1519,7 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
     }
   }
   for p in c.objs[fo].tparams {
-    if !c.objs[p].effect {
+    if !c.objs[p].flags.effect() {
       continue
     }
     let a = sm.get(p) ?? -1
@@ -1688,7 +1688,7 @@ fn (var c: Checker) check_args(params: List[ParamInfo], call: Expr, fname: Str, 
     ci.params = aps
     c.call_infos[ckey] = ci
     let fo = ci.fn_obj
-    if fo >= 0 && c.objs[fo].recv_var && !c.objs[fo].is_static {
+    if fo >= 0 && c.objs[fo].flags.recv_var() && !c.objs[fo].flags.is_static() {
       if let Some(r) = ci.recv.first() {
         var_args.push(r)
       }
@@ -1826,7 +1826,7 @@ fn (var c: Checker) type_call(obj0: Int, targs0: List[Int], has_targs0: Bool, ca
     if c.qual_name(obj) == "uuid.Uuid" {
       // 0.33.0's newtype constructor (XO0912, decision 0387)
       c.note(d, "a Uuid is two Ints since 0.34.0: `uuid.parse(s)?` makes one from a text, `uuid.from_bytes(b)?` from 16 bytes (spec/std.md 24, decision 0387)")
-    } else if c.objs[obj].tkind == "struct" && !c.objs[obj].opaque {
+    } else if c.objs[obj].tkind == "struct" && !c.objs[obj].flags.opaque() {
       c.note(d, "build a struct with a literal: `${oname}{field: value}` (core 2.2)")
     } else if c.objs[obj].tkind == "enum" {
       c.note(d, "construct a variant: `${oname}.Variant(...)` (core 2.3)")

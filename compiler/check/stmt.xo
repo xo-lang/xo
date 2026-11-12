@@ -190,7 +190,7 @@ fn (var c: Checker) check_module(m: Int) {
 }
 
 fn (var c: Checker) check_fn_decl(fd: parser.FnDecl, fo: Int) {
-  if !c.objs[fo].sig_done {
+  if !c.objs[fo].flags.sig_done() {
     return
   }
   let saved_scopes = c.scopes
@@ -201,7 +201,7 @@ fn (var c: Checker) check_fn_decl(fd: parser.FnDecl, fo: Int) {
   c.scopes = []
   c.push_scope()
   if let Some(r) = fd.recv {
-    if !c.objs[fo].is_static {
+    if !c.objs[fo].flags.is_static() {
       let rv = c.declare_local(r.name, c.objs[fo].recv_ty, if r.is_var { "var-recv" } else { "recv" })
       c.objs[rv].vctx = cx
       c.recv_var[fo] = rv
@@ -210,7 +210,9 @@ fn (var c: Checker) check_fn_decl(fd: parser.FnDecl, fo: Int) {
   var pvs: List[Int] = []
   for p in c.objs[fo].params {
     let pv = c.objs.len()
-    c.objs.push(Obj{kind: ObjKind.Local, name: p.name, file: c.path, line: p.line, col: p.col, local: if p.is_var { "var-param" } else { "param" }, ty: p.ty, mutable: p.is_var, vctx: cx})
+    var po = Obj{kind: ObjKind.Local, name: p.name, file: c.path, line: p.line, col: p.col, local: if p.is_var { "var-param" } else { "param" }, ty: p.ty, vctx: cx}
+    po.flags.set_mutable(p.is_var)
+    c.objs.push(po)
     c.declare_var(pv)
     pvs.push(pv)
     if !p.default.is_empty() && !c.lazy_fns.contains(fo) {
@@ -250,7 +252,7 @@ fn (c: Checker) dep_lazy_mod(m: Int) -> Bool {
 /// effects are inferred from its body, and a caller in another module
 /// reads them before check_lazy would check it (decision 0517).
 fn (c: Checker) dep_cross_eager(m: Int, fo: Int) -> Bool {
-  if !c.dep_lazy_mod(m) || c.objs[fo].recv < 0 || c.objs[fo].is_pub {
+  if !c.dep_lazy_mod(m) || c.objs[fo].recv < 0 || c.objs[fo].flags.is_pub() {
     return false
   }
   let n = c.objs[fo].name
@@ -617,7 +619,7 @@ fn (var c: Checker) check_test(td: parser.TestDecl) {
 
 /// The type of a constant, checking its initializer on first use.
 fn (var c: Checker) const_type(co: Int) -> Int {
-  if c.objs[co].done {
+  if c.objs[co].flags.done() {
     return c.objs[co].ty
   }
   c.need_tree(co)
@@ -626,12 +628,12 @@ fn (var c: Checker) const_type(co: Int) -> Int {
     Some(ConstDecl(d: x)) => x
     _ => fault("a constant's declaration")
   }
-  if c.objs[co].checking {
+  if c.objs[co].flags.checking() {
     c.error_at(f, "XO0407", cd.name.span, "constant `${text(cd.name.name)}` refers to itself")
     c.objs[co].ty = c.bad_ty
     return c.bad_ty
   }
-  c.objs[co].checking = true
+  c.objs[co].flags.set_checking(true)
   let saved_mod = c.cur_mod
   let saved_file = c.cur_file
   let saved_path = c.path
@@ -669,8 +671,8 @@ fn (var c: Checker) const_type(co: Int) -> Int {
   c.cur_file = saved_file
   c.path = saved_path
   c.objs[co].ty = c.deep_copy(t)
-  c.objs[co].done = true
-  c.objs[co].checking = false
+  c.objs[co].flags.set_done(true)
+  c.objs[co].flags.set_checking(false)
   c.objs[co].ty
 }
 
@@ -787,7 +789,7 @@ fn (var c: Checker) check_const_expr(e: Expr) {
     Ident(id) => {
       if let Some(i) = c.name_at.get(c.name_key(id.span.start.offset)) {
         let o = c.names[i].obj
-        if o >= 0 && c.objs[o].kind == ObjKind.Local && !c.objs[o].is_const {
+        if o >= 0 && c.objs[o].kind == ObjKind.Local && !c.objs[o].flags.is_const() {
           c.const_bad(parser.expr_span(e), "a local binding")
         }
       }
@@ -954,7 +956,7 @@ fn (var c: Checker) json_via_fn(t: Int, a: parser.DeriveArg, what: Str, _p: List
     c.error("XO0432", a.value.span, "`${what}: ${text(name)}` names no non generic function of this module; declare `fn ${text(name)}(...)` beside the type (decision 0478)")
     return -1
   }
-  if !c.objs[fo].sig_done {
+  if !c.objs[fo].flags.sig_done() {
     c.resolve_sig(fo, TypeEnv{file: c.objs[fo].decl_file, mod: c.objs[fo].module}, false)
   }
   fo
@@ -983,7 +985,7 @@ fn (var c: Checker) check_tagged_enum(t: Int, ed: parser.EnumDecl) {
     if v.fields.len() == 1 && (v.fields[0].from || v.fields[0].name.is_empty()) {
       let r = c.resolve(v.fields[0].ty)
       let so = if c.tys[r].kind == TyKind.Named { c.tys[r].obj } else { -1 }
-      if so < 0 || c.objs[so].tkind != "struct" || c.objs[so].opaque {
+      if so < 0 || c.objs[so].tkind != "struct" || c.objs[so].flags.opaque() {
         c.error("XO0431", decl.name.span, "variant `${text(v.name)}` of a tagged enum holds `${c.show(v.fields[0].ty)}`, which is not an object, so its fields cannot go beside the tag `${text(tag)}`; give it named fields, wrap a struct, or add `content: \"KEY\"` to the derive")
         continue
       }
@@ -1393,7 +1395,7 @@ fn (var c: Checker) expr_stmt(x: Expr) {
     if let SelectorExpr(x: recv, ..) = fun {
       if let Ident(id) = recv {
         let v = c.lookup_local(id.name)
-        if v >= 0 && c.objs[v].mutable && c.objs[v].vctx == c.ctx && c.objs[v].ty >= 0 && c.show(c.objs[v].ty) == c.show(t) {
+        if v >= 0 && c.objs[v].flags.mutable() && c.objs[v].vctx == c.ctx && c.objs[v].ty >= 0 && c.show(c.objs[v].ty) == c.show(t) {
           fixes.push(DFix{title: "assign the result back to `${text(id.name)}`", edits: [c.insert_edit(sp.start, "${text(id.name)} = ")]})
           back = "${text(id.name)} = ${c.src_of(sp)}"
         }
@@ -1665,7 +1667,7 @@ fn (var c: Checker) next_method(t: Int, e: Expr, span: Span, try_next: Bool) -> 
     c.error("XO0436", parser.expr_span(e), "`${c.show(t)}.next()` cannot fail; write `for x in ...` (decision 0494)")
     return None
   }
-  Some(c.objs[fo].recv_var)
+  Some(c.objs[fo].flags.recv_var())
 }
 
 fn (var c: Checker) iter_elem(t: Int, e: Expr) -> Int {
@@ -1784,7 +1786,7 @@ fn (var c: Checker) local_const(cd: parser.ConstDecl) {
   }
   c.check_name(cd.name, "constant")
   let v = c.declare_local(cd.name, t, "let")
-  c.objs[v].is_const = true
+  c.objs[v].flags.set_is_const(true)
   c.objs[v].const_val = [cd.value]
   c.objs[v].vctx = c.ctx
 }
@@ -2244,7 +2246,7 @@ fn (var c: Checker) finish_groups(x: Int) {
   let g = c.ctxs[x].groups
   if g >= 0 {
     for sp in c.frames[g].spawns {
-      if sp.bound >= 0 && c.objs[sp.bound].awaited {
+      if sp.bound >= 0 && c.objs[sp.bound].flags.awaited() {
         continue
       }
       let saved = c.ctx
@@ -2258,7 +2260,7 @@ fn (var c: Checker) finish_groups(x: Int) {
     return
   }
   for sp in c.frames[ext].spawns {
-    if sp.bound >= 0 && c.objs[sp.bound].awaited {
+    if sp.bound >= 0 && c.objs[sp.bound].flags.awaited() {
       continue
     }
     let e = c.resolve(sp.err)

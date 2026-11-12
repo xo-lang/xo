@@ -141,7 +141,7 @@ fn (var g: Gen) fuzzable(fo: Int) -> Bool {
       }
     }
   }
-  if !has_contract || !g.type_params(o.tparams).is_empty() || o.is_static {
+  if !has_contract || !g.type_params(o.tparams).is_empty() || o.flags.is_static() {
     return false
   }
   var ts: List[Int] = []
@@ -185,7 +185,7 @@ fn (var g: Gen) gen_fuzz(fo: Int) {
   var ps: List[FParam] = []
   let rv = g.recv_var(fo)
   if rv >= 0 {
-    ps.push(FParam{v: rv, t: o.recv_ty, is_var: o.recv_var})
+    ps.push(FParam{v: rv, t: o.recv_ty, is_var: o.flags.recv_var()})
   }
   for (i, pv) in g.param_vars(fo).indexed() {
     ps.push(FParam{v: pv, t: o.params[i].ty, is_var: o.params[i].is_var})

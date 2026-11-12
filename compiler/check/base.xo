@@ -401,7 +401,7 @@ fn (var c: Checker) push_scope() {
 
 /// Marks local v read.
 fn (var c: Checker) mark_used(v: Int) {
-  c.objs[v].used = true
+  c.objs[v].flags.set_used(true)
 }
 
 /// Closes the innermost scope and collects its `let` and `var` bindings
@@ -410,7 +410,7 @@ fn (var c: Checker) pop_scope() {
   let n = c.scopes.len() - 1
   for (_, v) in c.scopes[n].entries() {
     let o = c.objs[v]
-    if !(o.local is "let" | "var") || o.used {
+    if !(o.local is "let" | "var") || o.flags.used() {
       continue
     }
     if o.name.len() > 0 && o.name[0] == '_' && !c.is_result(o.ty) {
@@ -427,7 +427,7 @@ fn (var c: Checker) new_local(id: Ident, ty: Int, local: Str) -> Int {
   c.objs[o].local = local
   c.objs[o].module = -1
   c.objs[o].ty = ty
-  c.objs[o].mutable = local is "var" | "var-param" | "var-recv"
+  c.objs[o].flags.set_mutable(local is "var" | "var-param" | "var-recv")
   o
 }
 

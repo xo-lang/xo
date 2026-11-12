@@ -108,7 +108,7 @@ fn (var g: Gen) may_recurse(body: Node) -> Bool {
           }
           Some(ci) => {
             let fo = ci.fn_obj
-            if fo < 0 || g.omod(fo) < 0 || !g.ostd(fo) || g.c.objs[fo].iface {
+            if fo < 0 || g.omod(fo) < 0 || !g.ostd(fo) || g.c.objs[fo].flags.iface() {
               return true
             }
           }

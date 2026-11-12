@@ -337,7 +337,7 @@ fn (var s: Session) module_items(mo: Int, m: Int, rank: Int, pub_only: Bool) -> 
     if !(ob.kind is Func | Const | Type) {
       continue
     }
-    if (pub_only || mo != m) && !ob.is_pub && !c.mods[mo].is_std {
+    if (pub_only || mo != m) && !ob.flags.is_pub() && !c.mods[mo].is_std {
       continue
     }
     if n.is_empty() || n[0] == '_' {
@@ -365,7 +365,7 @@ fn (var s: Session) static_items(to: Int) -> List[Item] {
     let fo = ob.statics.get(n) ?? -1
     if fo >= 0 {
       var it = s.obj_item(fo, 1)
-      if c.objs[fo].static_const {
+      if c.objs[fo].flags.static_const() {
         it.kind = CK_CONSTANT
       }
       out.push(it)
@@ -407,7 +407,7 @@ fn (var s: Session) value_items(t0: Int, m: Int, depth: Int) -> List[Item] {
       }
       for n in names.sort_by(fn(b) { check.text(b) }) {
         let fo = ob.methods.get(n) ?? -1
-        if fo < 0 || (other && !c.objs[fo].is_pub) {
+        if fo < 0 || (other && !c.objs[fo].flags.is_pub()) {
           continue
         }
         var it = s.obj_item(fo, 1)

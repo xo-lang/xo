@@ -238,7 +238,7 @@ fn (var b: Builder) json_val_body(ct: Int, t: Int, vt: Int) {
     return
   }
   let tk = b.c.objs[obj].tkind
-  if b.tkind(t) == Kind.Struct && tk == "struct" && !b.c.objs[obj].opaque {
+  if b.tkind(t) == Kind.Struct && tk == "struct" && !b.c.objs[obj].flags.opaque() {
     let lv = b.jv_members(vt)
     b.val_struct_fields(lv, v, t, obj, sb, vt)
     b.retv(b.jv(vt, "Object", [b.read(lv)]))

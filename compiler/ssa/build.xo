@@ -1645,7 +1645,7 @@ fn (var b: Builder) result_of(res: Int, err: Int) -> Int {
 fn (var b: Builder) type_params(fo: Int) -> List[Int] {
   var out: List[Int] = []
   for p in b.c.objs[fo].tparams {
-    if !b.c.objs[p].effect {
+    if !b.c.objs[p].flags.effect() {
       out.push(p)
     }
   }
@@ -1811,7 +1811,7 @@ fn (var b: Builder) named_type(t: Int) -> Int {
     b.impossible("the type `${name}` of the Go package `${b.c.mods[om].go_path}` (`use go`)")
     return b.unit_t()
   }
-  if om >= 0 && !b.c.mods[om].c_prefix.is_empty() && b.c.objs[obj].opaque {
+  if om >= 0 && !b.c.mods[om].c_prefix.is_empty() && b.c.objs[obj].flags.opaque() {
     // a C handle of `use c`: the pointer in a word, never reference
     // counted (decision 0116)
     return b.int_t()
@@ -1841,13 +1841,13 @@ fn (var b: Builder) named_type(t: Int) -> Int {
     if it >= 0 {
       return b.typ(b.c.mk_named(it, x.args))
     }
-    if om >= 0 && b.c.mods[om].path.starts_with("native/") && b.c.objs[obj].opaque {
+    if om >= 0 && b.c.mods[om].path.starts_with("native/") && b.c.objs[obj].flags.opaque() {
       if oname == "Loc" {
         return b.str_t()
       }
       return b.m.handle("${b.c.mods[om].path.replace("/", ".")}.${oname}", [])
     }
-    let std_opaque = b.is_std_mod(om) && (b.c.objs[obj].opaque || b.is_prelude_mod(om) && !(oname is "DurationErr" | "FileInfo" | "ProcOutput" | "Target"))
+    let std_opaque = b.is_std_mod(om) && (b.c.objs[obj].flags.opaque() || b.is_prelude_mod(om) && !(oname is "DurationErr" | "FileInfo" | "ProcOutput" | "Target"))
     if !std_opaque {
       let (st, created) = b.m.named(name, Kind.Struct)
       if created {
@@ -2360,7 +2360,7 @@ fn (var b: Builder) reaches(t0: Int, owner: Str, seen0: List[Str]) -> (Bool, Lis
         // boxed, and its layout recursed without end (a stack overflow in
         // arm64 dv_type_ok, a fault in isel's variant; 2026-11-05,
         // gotchas/recursive-option-struct-debug.md)
-        if tk == "struct" && b.is_std_mod(om) && (b.c.objs[obj].opaque || b.is_prelude_mod(om) && !(oname is "DurationErr" | "FileInfo" | "ProcOutput" | "Target")) {
+        if tk == "struct" && b.is_std_mod(om) && (b.c.objs[obj].flags.opaque() || b.is_prelude_mod(om) && !(oname is "DurationErr" | "FileInfo" | "ProcOutput" | "Target")) {
           return (false, seen)
         }
         let name = b.type_name(t)
@@ -2640,7 +2640,7 @@ fn (var b: Builder) member(m: Int, name: Str) -> Int {
 /// The implementation of the std function fo, or -1 (implOf).
 fn (var b: Builder) impl_of(fo: Int) -> Int {
   let om = b.obj_mod(fo)
-  if om < 0 || !b.c.mods[om].is_std || b.c.objs[fo].iface {
+  if om < 0 || !b.c.mods[om].is_std || b.c.objs[fo].flags.iface() {
     return -1
   }
   let nm = b.native_mod(b.c.mods[om].path)
@@ -2650,7 +2650,7 @@ fn (var b: Builder) impl_of(fo: Int) -> Int {
   var name = b.obj_name(fo)
   let r = b.c.objs[fo].recv
   if r >= 0 {
-    if !b.c.objs[fo].is_static {
+    if !b.c.objs[fo].flags.is_static() {
       let t = b.member(nm, b.obj_name(r))
       if t >= 0 && b.c.objs[t].kind == check.ObjKind.Type {
         if let Some(mo) = b.c.objs[t].methods.get(b.c.objs[fo].name) {
@@ -2871,9 +2871,9 @@ fn (var b: Builder) declare0(fo: Int, targs: List[Int]) -> Int {
   }
   var params: List[Int] = []
   var var_idx: List[Int] = []
-  if b.c.objs[fo].recv >= 0 && !b.c.objs[fo].is_static {
+  if b.c.objs[fo].recv >= 0 && !b.c.objs[fo].flags.is_static() {
     params.push(b.typ(b.c.subst(b.c.objs[fo].recv_ty, sub)))
-    if b.c.objs[fo].recv_var {
+    if b.c.objs[fo].flags.recv_var() {
       var_idx.push(0)
     }
   }
@@ -2980,7 +2980,7 @@ fn (var b: Builder) invariant_of(obj: Int) -> List[Expr] {
 /// for none).
 fn (var b: Builder) param_bindings(fo: Int) -> List[Int] {
   var vars: List[Int] = []
-  if b.c.objs[fo].recv >= 0 && !b.c.objs[fo].is_static {
+  if b.c.objs[fo].recv >= 0 && !b.c.objs[fo].flags.is_static() {
     vars.push(b.c.recv_var.get(fo) ?? -1)
   }
   for v in b.c.param_vars.get(fo) ?? [] {

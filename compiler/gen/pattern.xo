@@ -409,7 +409,7 @@ fn (var g: Gen) match_expr(e: Expr, d: Dest) {
   var in_place = false
   if let Ident(id) = subject {
     let v = g.var_of(id)
-    in_place = v >= 0 && !g.c.objs[v].mutable && is_go_ident(subj)
+    in_place = v >= 0 && !g.c.objs[v].flags.mutable() && is_go_ident(subj)
   }
   if !in_place {
     let val = subj

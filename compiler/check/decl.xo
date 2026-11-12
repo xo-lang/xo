@@ -38,7 +38,7 @@ fn (var c: Checker) new_tparams(tps: List[parser.TypeParam]) -> List[Int] {
   var out: List[Int] = []
   for tp in tps {
     let p = c.new_tparam(tp.name.name, c.path, tp.name.span.start.line, tp.name.span.start.col)
-    c.objs[p].effect = tp.effects
+    c.objs[p].flags.set_effect(tp.effects)
     c.check_name(tp.name, if tp.effects { "effect variable" } else { "type parameter" })
     out.push(p)
   }
@@ -88,9 +88,9 @@ fn (var c: Checker) declare(m: Int) {
         FnDecl(d: fd) => {
           if fd.recv == None {
             o = c.new_obj(ObjKind.Func, fd.name)
-            c.objs[o].is_pub = fd.is_pub || c.exports_all(m)
+            c.objs[o].flags.set_is_pub(fd.is_pub || c.exports_all(m))
             c.objs[o].fn_decl = [fd]
-            c.objs[o].moves = doc_moves(fd.doc)
+            c.objs[o].flags.set_moves(doc_moves(fd.doc))
             c.objs[o].decl_file = f
             c.objs[o].decl_idx = i
             c.check_name(fd.name, "function")
@@ -99,14 +99,14 @@ fn (var c: Checker) declare(m: Int) {
         }
         StructDecl(d: sd) => {
           o = c.declare_type(sd.name, sd.type_params, sd.is_pub, "struct", f, i)
-          c.objs[o].opaque = c.mods[m].is_std && sd.fields.is_empty()
+          c.objs[o].flags.set_opaque(c.mods[m].is_std && sd.fields.is_empty())
           // a std handle documented `@move_only` is moved like the builders
           // (core 5.3; std/compress's Compressor, decision 0305)
-          c.objs[o].move_only = c.mods[m].is_std && doc_has(sd.doc, "@move_only")
+          c.objs[o].flags.set_move_only(c.mods[m].is_std && doc_has(sd.doc, "@move_only"))
           // std writes no `pub`: its fields are public unless the struct
           // is documented `@internal` (decision 0440; std/uuid's Uuid)
-          c.objs[o].std_internal = c.mods[m].is_std && doc_has(sd.doc, "@internal")
-          if c.objs[o].std_internal {
+          c.objs[o].flags.set_std_internal(c.mods[m].is_std && doc_has(sd.doc, "@internal"))
+          if c.objs[o].flags.std_internal() {
             c.objs[o].internal_hint = doc_after(sd.doc, "@internal:")
           }
         }
@@ -115,7 +115,7 @@ fn (var c: Checker) declare(m: Int) {
         TypeDecl(d: td) => o = c.declare_type(td.name, td.type_params, td.is_pub, if td.newtype { "newtype" } else { "alias" }, f, i)
         ConstDecl(d: cd) => {
           o = c.new_obj(ObjKind.Const, cd.name)
-          c.objs[o].is_pub = cd.is_pub || c.exports_all(m)
+          c.objs[o].flags.set_is_pub(cd.is_pub || c.exports_all(m))
           c.objs[o].decl_file = f
           c.objs[o].decl_idx = i
           c.check_name(cd.name, "constant")
@@ -141,7 +141,7 @@ fn (c: Checker) exports_all(m: Int) -> Bool {
 
 fn (var c: Checker) declare_type(name: Ident, tps: List[parser.TypeParam], is_pub: Bool, tkind: Str, f: Int, i: Int) -> Int {
   let o = c.new_obj(ObjKind.Type, name)
-  c.objs[o].is_pub = is_pub || c.exports_all(c.cur_mod)
+  c.objs[o].flags.set_is_pub(is_pub || c.exports_all(c.cur_mod))
   c.objs[o].tparams = c.new_tparams(tps)
   c.objs[o].tkind = tkind
   c.objs[o].decl_file = f
@@ -177,10 +177,10 @@ fn (var c: Checker) resolve_types(m: Int) {
 }
 
 fn (var c: Checker) resolve_type_obj(t: Int) {
-  if c.objs[t].resolved || c.objs[t].resolving || c.objs[t].decl_file < 0 {
+  if c.objs[t].flags.resolved() || c.objs[t].flags.resolving() || c.objs[t].decl_file < 0 {
     return
   }
-  c.objs[t].resolving = true
+  c.objs[t].flags.set_resolving(true)
   c.type_stack.push(t)
   let saved_mod = c.cur_mod
   let saved_file = c.cur_file
@@ -279,7 +279,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
           c.error("XO0437", fl.wire_span ?? fl.name.span, "the `string` option applies to scalar fields only: field `${text(fl.name.name)}` is not a Bool, Int, Float, Str or an Option of one (decision 0555)")
           qstr = false
         }
-        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || (c.exports_all(c.objs[t].module) && !c.objs[t].std_internal), default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit, json_string: qstr, json_wire: json_wire, sql_wire: sql_wire, xml_wire: xml_wire})
+        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || (c.exports_all(c.objs[t].module) && !c.objs[t].flags.std_internal()), default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit, json_string: qstr, json_wire: json_wire, sql_wire: sql_wire, xml_wire: xml_wire})
       }
       c.objs[t].derives = c.derives_of(sd.derive)
       c.objs[t].fields = c.wire_keys(t, sd, fields, c.objs[t].derives)
@@ -329,9 +329,9 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
       for md in id.methods {
         let fo = c.new_obj(ObjKind.Func, md.name)
         c.objs[fo].module = c.objs[t].module
-        c.objs[fo].is_pub = true
+        c.objs[fo].flags.set_is_pub(true)
         c.objs[fo].fn_decl = [md]
-        c.objs[fo].iface = true
+        c.objs[fo].flags.set_iface(true)
         c.objs[fo].recv = t
         c.check_name(md.name, "method")
         if seen.contains(md.name.name) {
@@ -346,7 +346,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
         } else if md.params[0].is_var {
           // `var self` (decision 0613): a call through the interface
           // updates its receiver's place
-          c.objs[fo].recv_var = true
+          c.objs[fo].flags.set_recv_var(true)
         }
         c.resolve_sig(fo, env, true)
         c.objs[t].iface_meths.push(fo)
@@ -365,8 +365,8 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
   for p in env.elided_list {
     c.objs[t].tparams.push(p)
   }
-  c.objs[t].resolving = false
-  c.objs[t].resolved = true
+  c.objs[t].flags.set_resolving(false)
+  c.objs[t].flags.set_resolved(true)
   let _top = c.type_stack.pop()
   c.cur_mod = saved_mod
   c.cur_file = saved_file
@@ -490,7 +490,7 @@ fn (var c: Checker) json_match(t: Int, a: parser.DeriveArg) {
     c.error("XO0413", a.value.span, "unknown match `${v}`; `match:` is exact or fold")
     return
   }
-  c.objs[t].json_fold = v == "fold"
+  c.objs[t].flags.set_json_fold(v == "fold")
 }
 
 /// vs with their JSON names and their fields' keys set (decision 0478):
@@ -699,7 +699,7 @@ fn (var c: Checker) derives_of(ids: List[Ident]) -> List[Str] {
 
 /// The resolved target of alias t, guarding cycles.
 fn (var c: Checker) alias_target(t: Int, sp: Span) -> Int {
-  if c.objs[t].resolving {
+  if c.objs[t].flags.resolving() {
     if c.nominal_since(t) {
       // reached again through a struct or enum being resolved (`type
       // Schema = List[Field]`, `struct Field { schema: Schema }`, entered
@@ -786,14 +786,14 @@ fn (var c: Checker) resolve_sigs(m: Int) {
         fo = c.files[f].decl_objs[i]
         if !c.is_scope_entry(f, i, fd.name.name) {
           fo = c.new_obj(ObjKind.Func, fd.name)
-          c.objs[fo].is_pub = fd.is_pub || c.exports_all(m)
+          c.objs[fo].flags.set_is_pub(fd.is_pub || c.exports_all(m))
           c.objs[fo].fn_decl = [fd]
         }
       } else {
         fo = c.new_obj(ObjKind.Func, fd.name)
-        c.objs[fo].is_pub = fd.is_pub || c.exports_all(m)
+        c.objs[fo].flags.set_is_pub(fd.is_pub || c.exports_all(m))
         c.objs[fo].fn_decl = [fd]
-        c.objs[fo].moves = doc_moves(fd.doc)
+        c.objs[fo].flags.set_moves(doc_moves(fd.doc))
       }
       if fo >= 0 {
         // the SSA builder lowers the body in its file (decision 0150)
@@ -850,8 +850,8 @@ fn (var c: Checker) attach_method(fo: Int, fd: parser.FnDecl, var env: TypeEnv) 
   renv.implicit = true
   renv.implicit_list = []
   let rt = c.resolve_type(recv.typ, renv)
-  c.objs[fo].recv_var = recv.is_var
-  c.objs[fo].is_static = recv.name.name == b"static" && (c.mods[c.cur_mod].is_std || c.files[c.cur_file].generated)
+  c.objs[fo].flags.set_recv_var(recv.is_var)
+  c.objs[fo].flags.set_is_static(recv.name.name == b"static" && (c.mods[c.cur_mod].is_std || c.files[c.cur_file].generated))
   let r = c.resolve(rt)
   if c.tys[r].kind != TyKind.Named {
     if !c.is_bad(rt) {
@@ -868,7 +868,7 @@ fn (var c: Checker) attach_method(fo: Int, fd: parser.FnDecl, var env: TypeEnv) 
     c.error("XO0606", fd.name.span, "method `${text(fd.name.name)}` is declared on `${c.qual_name(t)}` from another module; methods may be declared only in the module that declares the type (core 3.4)")
     return false
   }
-  if !c.objs[fo].is_static {
+  if !c.objs[fo].flags.is_static() {
     c.check_name(recv.name, "receiver")
   }
   c.check_name(fd.name, "method")
@@ -879,8 +879,8 @@ fn (var c: Checker) attach_method(fo: Int, fd: parser.FnDecl, var env: TypeEnv) 
     env.params[c.objs[p].name] = p
   }
   let name = fd.name.name
-  if c.objs[fo].is_static {
-    c.objs[fo].static_const = fd.params.is_empty() && is_upper_snake(name)
+  if c.objs[fo].flags.is_static() {
+    c.objs[fo].flags.set_static_const(fd.params.is_empty() && is_upper_snake(name))
     if let Some(prev) = c.objs[t].statics.get(name) {
       let d = c.error("XO0603", fd.name.span, "method `${text(name)}` is already declared on `${text(c.objs[t].name)}`")
       c.note_obj(d, prev, "previous declaration")
@@ -900,7 +900,7 @@ fn (var c: Checker) attach_method(fo: Int, fd: parser.FnDecl, var env: TypeEnv) 
   if is_field && !c.mods[c.cur_mod].is_std {
     c.error("XO0603", fd.name.span, "`${text(name)}` is both a field and a method of `${text(c.objs[t].name)}`")
   }
-  if c.objs[fo].is_static {
+  if c.objs[fo].flags.is_static() {
     c.objs[t].statics[name] = fo
   } else {
     c.objs[t].methods[name] = fo
@@ -973,7 +973,7 @@ fn (var c: Checker) resolve_sig(fo: Int, env0: TypeEnv, iface: Bool) {
       for e in es {
         if e.sub == None && e.name.name == b"realtime" && !iface {
           // a discipline, not an effect (core 6.5)
-          c.objs[fo].realtime = true
+          c.objs[fo].flags.set_realtime(true)
           c.objs[fo].realtime_span = [e.span]
           continue
         }
@@ -982,7 +982,7 @@ fn (var c: Checker) resolve_sig(fo: Int, env0: TypeEnv, iface: Bool) {
     }
   }
   var set = c.resolve_effects(use_list, env)
-  if c.objs[fo].realtime {
+  if c.objs[fo].flags.realtime() {
     c.realtime_fns.push(fo)
     c.objs[fo].decl_file = c.cur_file
     for e in use_list {
@@ -1000,16 +1000,16 @@ fn (var c: Checker) resolve_sig(fo: Int, env0: TypeEnv, iface: Bool) {
     c.objs[fo].tparams.push(p)
   }
   for p in c.objs[fo].tparams {
-    if c.objs[p].elided {
+    if c.objs[p].flags.elided() {
       c.esets[set].push(EffItem{param: p})
     }
   }
-  if c.objs[fo].is_pub || iface || c.mods[c.objs[fo].module].is_std || has_uses {
+  if c.objs[fo].flags.is_pub() || iface || c.mods[c.objs[fo].module].is_std || has_uses {
     c.objs[fo].declared = set
   } else {
     c.inferred_fns.push(fo)
   }
-  c.objs[fo].sig_done = true
+  c.objs[fo].flags.set_sig_done(true)
 }
 
 fn (var c: Checker) resolve_err_spec(es: parser.ErrSpec?, var env: TypeEnv) -> Int {
@@ -1051,7 +1051,7 @@ fn (var c: Checker) resolve_effects(effs: List[parser.Effect], env: TypeEnv) -> 
     }
     if e.sub == None {
       if let Some(p) = env.params.get(e.name.name) {
-        if c.objs[p].effect {
+        if c.objs[p].flags.effect() {
           items.push(EffItem{param: p})
           continue
         }
@@ -1059,7 +1059,7 @@ fn (var c: Checker) resolve_effects(effs: List[parser.Effect], env: TypeEnv) -> 
     }
     var cands = ["net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "secrets", "secrets.read", "secrets.write", "ffi", "log", "go"]
     for (n, p) in env.params.entries() {
-      if c.objs[p].effect {
+      if c.objs[p].flags.effect() {
         cands.push(text(n))
       }
     }
@@ -1189,7 +1189,7 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
     let id = path[0]
     let name = id.name
     if let Some(p) = env.params.get(name) {
-      if c.objs[p].effect {
+      if c.objs[p].flags.effect() {
         c.error("XO0407", span, "`${text(name)}` is an effect variable, not a type")
         return c.bad_ty
       }
@@ -1207,7 +1207,7 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
     if o < 0 {
       if env.implicit && args.is_empty() && is_upper_camel(name) {
         let p = c.new_tparam(name, c.path, id.span.start.line, id.span.start.col)
-        c.objs[p].implicit = true
+        c.objs[p].flags.set_implicit(true)
         if env.arg_param >= 0 {
           c.objs[p].constraint = c.objs[env.arg_param].constraint
         }
@@ -1272,7 +1272,7 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
       c.error("XO0407", span, "`${text(mid.name)}.${text(last.name)}` is not a type")
       return c.bad_ty
     }
-    if !c.objs[o].is_pub && m != env.mod {
+    if !c.objs[o].flags.is_pub() && m != env.mod {
       c.error("XO0605", last.span, "type `${text(last.name)}` is not `pub` in module `${c.mods[m].path}`")
     }
     c.record(last, o)
@@ -1285,7 +1285,7 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
     c.error("XO0601", span, "type path `${parts.join(".")}` has too many segments")
     return c.bad_ty
   }
-  if !c.objs[obj].resolving {
+  if !c.objs[obj].flags.resolving() {
     c.resolve_type_obj(obj)
   }
   let fargs = c.fn_type_effect_args(args, c.objs[obj].tparams.len())
@@ -1295,7 +1295,7 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
   for a in targs {
     if c.tys[a].kind == TyKind.EffArg && c.tys[a].eff >= 0 {
       for it in c.esets[c.tys[a].eff] {
-        if it.param >= 0 && c.objs[it.param].elided && c.objs[it.param].elided_from.is_empty() {
+        if it.param >= 0 && c.objs[it.param].flags.elided() && c.objs[it.param].elided_from.is_empty() {
           c.objs[it.param].elided_from = [ElidedFrom{file: if env.file >= 0 { c.files[env.file].path } else { c.path }, at: span, text: type_text(Type.NamedType(span: span, path: path, args: fargs))}]
         }
       }
@@ -1315,12 +1315,12 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
       // a receiver `List` without arguments: fully generic
       for p in c.objs[obj].tparams {
         let ip = c.new_tparam(c.objs[p].name, "", 0, 0)
-        c.objs[ip].implicit = true
-        c.objs[ip].effect = c.objs[p].effect
-        c.objs[ip].elided = c.objs[p].effect
+        c.objs[ip].flags.set_implicit(true)
+        c.objs[ip].flags.set_effect(c.objs[p].flags.effect())
+        c.objs[ip].flags.set_elided(c.objs[p].flags.effect())
         c.objs[ip].constraint = c.objs[p].constraint
         env.implicit_list.push(ip)
-        if c.objs[p].effect {
+        if c.objs[p].flags.effect() {
           targs.push(c.effarg(c.new_eset([EffItem{param: ip}])))
         } else {
           targs.push(c.mk_param(ip))
@@ -1374,7 +1374,7 @@ fn (var c: Checker) resolve_args_for(obj: Int, wr: List[Type], var env: TypeEnv)
   let tps = c.objs[obj].tparams
   var non_eff = 0
   for p in tps {
-    if !c.objs[p].effect {
+    if !c.objs[p].flags.effect() {
       non_eff += 1
     }
   }
@@ -1388,7 +1388,7 @@ fn (var c: Checker) resolve_args_for(obj: Int, wr: List[Type], var env: TypeEnv)
   }
   var i = 0
   for tp in tps {
-    if c.objs[tp].effect {
+    if c.objs[tp].flags.effect() {
       out.push(c.elided_effect(obj, tp, env))
       continue
     }
@@ -1405,9 +1405,9 @@ fn (var c: Checker) elided_effect(obj: Int, tp: Int, var env: TypeEnv) -> Int {
     return c.fresh_effarg()
   }
   let p = c.new_tparam("${text(c.objs[obj].name)}.${text(c.objs[tp].name)}".bytes(), "", 0, 0)
-  c.objs[p].implicit = true
-  c.objs[p].effect = true
-  c.objs[p].elided = true
+  c.objs[p].flags.set_implicit(true)
+  c.objs[p].flags.set_effect(true)
+  c.objs[p].flags.set_elided(true)
   if env.implicit {
     env.implicit_list.push(p)
   } else {
@@ -1417,7 +1417,7 @@ fn (var c: Checker) elided_effect(obj: Int, tp: Int, var env: TypeEnv) -> Int {
 }
 
 fn (var c: Checker) resolve_type_arg(a: Type, tp: Int, var env: TypeEnv) -> Int {
-  if tp >= 0 && c.objs[tp].effect {
+  if tp >= 0 && c.objs[tp].flags.effect() {
     var items: List[EffItem] = []
     c.effect_arg(a, env, items)
     return c.effarg(c.new_eset(items))
@@ -1450,15 +1450,15 @@ fn (var c: Checker) effect_arg(a: Type, var env: TypeEnv, var items: List[EffIte
         }
         if path.len() == 1 {
           if let Some(p) = env.params.get(path[0].name) {
-            if c.objs[p].effect {
+            if c.objs[p].flags.effect() {
               items.push(EffItem{param: p})
               return
             }
           }
           if env.implicit && is_snake(path[0].name) {
             let p = c.new_tparam(path[0].name, "", 0, 0)
-            c.objs[p].implicit = true
-            c.objs[p].effect = true
+            c.objs[p].flags.set_implicit(true)
+            c.objs[p].flags.set_effect(true)
             env.implicit_list.push(p)
             env.params[path[0].name] = p
             items.push(EffItem{param: p})

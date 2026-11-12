@@ -661,7 +661,7 @@ test "only functions that are not pub, not std's and with no uses have inferred 
   }
   var names: List[Str] = []
   for f in c.inferred_fns {
-    expect(c.objs[f].is_pub) == false
+    expect(c.objs[f].flags.is_pub()) == false
     names.push(text(c.objs[f].name))
   }
   expect(names.contains("helper")) == true

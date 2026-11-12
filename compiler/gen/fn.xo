@@ -415,7 +415,7 @@ fn (var g: Gen) func_body(fd: parser.FnDecl) -> Str {
   }
   let body = fd.body ?? parser.Block{span: fd.span}
   // a var method of a type with an invariant checks it afterwards
-  let inv = fo >= 0 && g.c.objs[fo].recv_var && g.c.objs[fo].recv >= 0 && g.invariant_of(g.c.objs[fo].recv) != None && !g.ostd(g.c.objs[fo].recv)
+  let inv = fo >= 0 && g.c.objs[fo].flags.recv_var() && g.c.objs[fo].recv >= 0 && g.invariant_of(g.c.objs[fo].recv) != None && !g.ostd(g.c.objs[fo].recv)
   if g.may_recurse(Node.E(Expr.Block(body))) {
     // a step of a resource budget (decision 0173)
     g.line("tk.Tick()")

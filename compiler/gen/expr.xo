@@ -722,10 +722,10 @@ fn (var g: Gen) selector(e: Expr) -> Str {
       return g.const_ref(ref)
     }
     if g.c.objs[ref].kind == check.ObjKind.Func {
-      if g.c.objs[ref].static_const {
+      if g.c.objs[ref].flags.static_const() {
         return g.std_call(ref, {}, "", [])
       }
-      if g.c.objs[ref].recv >= 0 && !g.c.objs[ref].is_static && g.info_type(x) >= 0 {
+      if g.c.objs[ref].recv >= 0 && !g.c.objs[ref].flags.is_static() && g.info_type(x) >= 0 {
         return g.method_value(e, x, ref)
       }
       g.note_zone_value(ref, span)
@@ -1426,7 +1426,7 @@ fn (var g: Gen) fn_lit(x: parser.FnLit) -> Str {
   var saved: Map[Int, Str] = {}
   for v in g.free_vars(x) {
     let cur = g.var_name(v)
-    if !g.c.objs[v].mutable {
+    if !g.c.objs[v].flags.mutable() {
       for l in g.mark_stmts(cur, g.vtype(v)) {
         g.line(l)
       }

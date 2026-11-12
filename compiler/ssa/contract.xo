@@ -82,7 +82,7 @@ fn (var b: Builder) body(fo: Int, fi: Int, sub: Map[Int, Int]) {
   let decl = b.c.objs[fo].fn_decl
   if !decl.is_empty() && decl[0].body != None {
     let ens = b.ensures_of(fo)
-    let inv = b.c.objs[fo].recv_var && b.c.objs[fo].recv >= 0 && b.has_invariant(b.c.objs[fo].recv)
+    let inv = b.c.objs[fo].flags.recv_var() && b.c.objs[fo].recv >= 0 && b.has_invariant(b.c.objs[fo].recv)
     if !ens.is_empty() || inv {
       b.contract_body(fo, fi, sub, ens, inv)
       return

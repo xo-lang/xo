@@ -17,7 +17,7 @@ use github.com/xo-lang/xo/compiler/check
 fn (var b: Builder) list_move_call(x: Expr, ci: check.CallInfo) -> Int? {
   let fo = ci.fn_obj
   let r = b.c.objs[fo].recv
-  if b.wasm || r < 0 || b.obj_name(r) != "List" || !b.c.objs[fo].recv_var || ci.recv.is_empty() {
+  if b.wasm || r < 0 || b.obj_name(r) != "List" || !b.c.objs[fo].flags.recv_var() || ci.recv.is_empty() {
     return None
   }
   let fname = b.obj_name(fo)

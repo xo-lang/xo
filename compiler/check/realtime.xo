@@ -390,7 +390,7 @@ fn (var c: Checker) rt_call(var w: RtWalk, call: Expr, fun: Expr) -> Bool {
     }
     if rt_blocking(k) {
       c.rt_report(w, "XO1405", fsp, "`${k}` blocks or synchronizes with other tasks; real-time functions may not block")
-    } else if c.objs[fo].iface {
+    } else if c.objs[fo].flags.iface() {
       c.rt_report(w, "XO1405", fsp, "`${k}` is a capability call; real-time functions perform no effects except `ffi`")
     } else {
       c.rt_report(w, "XO1401", fsp, "`${k}` may allocate or run for a time its operands do not bound; it is not allowed in a real-time function")
@@ -400,11 +400,11 @@ fn (var c: Checker) rt_call(var w: RtWalk, call: Expr, fun: Expr) -> Bool {
   if m >= 0 && !c.mods[m].c_prefix.is_empty() {
     return false
   }
-  if c.objs[fo].iface {
+  if c.objs[fo].flags.iface() {
     c.rt_report(w, "XO1403", fsp, "call of interface method `${c.display_name(fo)}` in a real-time function; its implementation is not known")
     return false
   }
-  if !c.objs[fo].realtime {
+  if !c.objs[fo].flags.realtime() {
     let d = c.rt_report(w, "XO1403", fsp, "`${c.display_name(fo)}` is not real-time; a real-time function may call only real-time functions")
     let m = c.objs[fo].module
     if d >= 0 && m >= 0 && !c.mods[m].is_std && !c.objs[fo].fn_decl.is_empty() && c.mods[m].dependency.is_empty() {
@@ -519,7 +519,7 @@ fn (c: Checker) const_ref(f: Int, id: Ident, depth: Int) -> Int? {
   }
   let x = c.objs[o]
   if x.kind == ObjKind.Local {
-    if x.is_const && !x.const_val.is_empty() {
+    if x.flags.is_const() && !x.const_val.is_empty() {
       return c.const_int(f, x.const_val[0], depth + 1)
     }
     return None

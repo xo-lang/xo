@@ -458,7 +458,7 @@ fn (var c: Checker) var_self_conflict(t0: Int, iface: Int) -> Int {
   }
   for im in c.objs[io].iface_meths {
     let (m, _) = c.find_method(t, text(c.objs[im].name))
-    if m >= 0 && c.objs[m].recv_var && !c.objs[im].recv_var {
+    if m >= 0 && c.objs[m].flags.recv_var() && !c.objs[im].flags.recv_var() {
       return m
     }
   }
@@ -482,13 +482,13 @@ fn (var c: Checker) structural(t: Int, iface: Int, sp: Span) -> Bool {
   let is = c.args_subst(c.objs[io].tparams, c.tys[iface].args)
   for im in c.objs[io].iface_meths {
     let (m, ms) = c.find_method(t, text(c.objs[im].name))
-    if m < 0 || c.objs[m].is_static {
+    if m < 0 || c.objs[m].flags.is_static() {
       return false
     }
     // a `var` method implements only a `var self` interface method (Go's
     // pointer receivers, decision 0613): through a plain `self` one its
     // update would be lost (var_self_conflict reports it, XO0439)
-    if c.objs[m].recv_var && !c.objs[im].recv_var {
+    if c.objs[m].flags.recv_var() && !c.objs[im].flags.recv_var() {
       return false
     }
     if c.objs[m].params.len() != c.objs[im].params.len() {
@@ -583,13 +583,13 @@ fn (var c: Checker) bind_param_effs(mt0: Int, it0: Int, m: Int, var s: Subst) {
         return
       }
       let q = c.esets[x.eff][0].param
-      if q >= 0 && !s.contains(q) && c.objs[q].implicit && c.objs[q].effect && c.objs[m].tparams.contains(q) {
+      if q >= 0 && !s.contains(q) && c.objs[q].flags.implicit() && c.objs[q].flags.effect() && c.objs[m].tparams.contains(q) {
         s[q] = it
       }
     }
     Param => {
       let q = x.obj
-      if y.kind == TyKind.EffArg && !s.contains(q) && c.objs[q].implicit && c.objs[q].effect && c.objs[m].tparams.contains(q) {
+      if y.kind == TyKind.EffArg && !s.contains(q) && c.objs[q].flags.implicit() && c.objs[q].flags.effect() && c.objs[m].tparams.contains(q) {
         s[q] = it
       }
     }
@@ -667,7 +667,7 @@ fn (var c: Checker) match_recv(m: Int, t: Int) -> (Subst, Bool) {
   }
   for (i, a) in rargs.indexed() {
     let ax = c.tys[a]
-    if ax.kind == TyKind.Param && c.objs[ax.obj].implicit {
+    if ax.kind == TyKind.Param && c.objs[ax.obj].flags.implicit() {
       s[ax.obj] = targs[i]
       continue
     }
@@ -708,10 +708,10 @@ fn (c: Checker) is_handle(o: Int) -> Bool {
   }
   if !c.mods[m].c_prefix.is_empty() {
     // an opaque C pointer of `use c` (decision 0116)
-    return c.objs[o].opaque
+    return c.objs[o].flags.opaque()
   }
   if c.mods[m].native {
-    return c.objs[o].opaque && n != "Loc"
+    return c.objs[o].flags.opaque() && n != "Loc"
   }
   if !c.mods[m].is_std {
     return false

@@ -460,7 +460,7 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
     return
   }
   let tk = b.c.objs[obj].tkind
-  if b.tkind(t) == Kind.Struct && tk == "struct" && !b.c.objs[obj].opaque {
+  if b.tkind(t) == Kind.Struct && tk == "struct" && !b.c.objs[obj].flags.opaque() {
     // {"f":v,...}; an Absent Patch field is left out. Until the first
     // Patch field, whether a field needs its comma is known here, so the
     // brace, the comma, and the key are one literal (one append): a
@@ -1321,7 +1321,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     return
   }
   let tk = b.c.objs[obj].tkind
-  if b.tkind(t) == Kind.Struct && tk == "struct" && !b.c.objs[obj].opaque {
+  if b.tkind(t) == Kind.Struct && tk == "struct" && !b.c.objs[obj].flags.opaque() {
     b.dec_need(d, JK_OBJ, "expected object")
     // the fields' errors name this struct (decode_go)
     let d = Dec{src: d.src, tape: d.tape, i: d.i, rt: d.rt, t: d.t, kind: d.kind, gt: d.gt, sname: if b.dec_go { check.text(b.c.objs[obj].name) } else { "" }}
@@ -1335,7 +1335,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
       }
       fs.push(JField{name: fname, key: check.text(f.json_key), ct: b.c.subst(f.ty, sb), st: b.m.types[t].fields[fi].ty, dflt: f.default, dfile: df, strq: f.json_string})
     }
-    let vals = b.dec_fields(d, i, "", fs, !b.is_std_mod(om), b.c.objs[obj].json_fold)
+    let vals = b.dec_fields(d, i, "", fs, !b.is_std_mod(om), b.c.objs[obj].flags.json_fold())
     // the struct in SSA field order
     var sargs: List[Int] = []
     for _ in b.m.types[t].fields {
@@ -1451,7 +1451,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
       }
       let wn = check.text(check.variant_json_name(vo))
       let (no, join3) = b.if_then_begin(b.call("str.eq", bt, "", [nm, b.const_str(wn)]))
-      b.dec_variant(d, t, vi, wn, ".${wn}", vo, sb, pay, has, b.c.objs[obj].json_fold)
+      b.dec_variant(d, t, vi, wn, ".${wn}", vo, sb, pay, has, b.c.objs[obj].flags.json_fold())
       b.if_then_end(no, join3)
     }
     let p = b.const_str("")
@@ -1526,7 +1526,7 @@ fn (var b: Builder) dec_tagged(d: Dec, t: Int, obj: Int, sb: Map[Int, Int]) {
     // the tag compared in place, with no Str of it (str_is)
     let (no, join3) = b.if_then_begin(b.json_rt("json_str_is", bt, [d.src, d.tape, j, b.const_str(wn)]))
     if !content.is_empty() {
-      b.dec_variant(d, t, vi, wn, ".${content}", vo, sb, pay, has, b.c.objs[obj].json_fold)
+      b.dec_variant(d, t, vi, wn, ".${content}", vo, sb, pay, has, b.c.objs[obj].flags.json_fold())
     } else if vo.fields.is_empty() {
       b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), []))
     } else if vo.fields.len() == 1 && (vo.fields[0].from || vo.fields[0].name.is_empty()) {
@@ -1541,7 +1541,7 @@ fn (var b: Builder) dec_tagged(d: Dec, t: Int, obj: Int, sb: Map[Int, Int]) {
       for (fi, f) in vo.fields.indexed() {
         fs.push(JField{name: check.text(f.name), key: check.text(check.vfield_json_key(f)), ct: b.c.subst(f.ty, sb), st: vfs[fi].ty})
       }
-      let vals = b.dec_fields(d, i, "", fs, false, b.c.objs[obj].json_fold)
+      let vals = b.dec_fields(d, i, "", fs, false, b.c.objs[obj].flags.json_fold())
       b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), vals))
     }
     b.if_then_end(no, join3)

@@ -1079,7 +1079,7 @@ fn (var b: Builder) selector(e: Expr) -> Int {
   if r >= 0 && b.c.objs[r].kind == check.ObjKind.Const && b.c.objs[r].decl_file >= 0 {
     return b.const_value(r, b.nat_of(e))
   }
-  if r >= 0 && b.c.objs[r].kind == check.ObjKind.Func && b.c.objs[r].static_const {
+  if r >= 0 && b.c.objs[r].kind == check.ObjKind.Func && b.c.objs[r].flags.static_const() {
     let rm = b.obj_mod(r)
     let rr = b.c.objs[r].recv
     if b.is_prelude_mod(rm) && rr >= 0 && b.obj_name(rr) == "Time" && b.obj_name(r) == "UNIX_EPOCH" {
@@ -1099,7 +1099,7 @@ fn (var b: Builder) selector(e: Expr) -> Int {
     // bare name of this module's is (ident)
     return b.func_value(r, e)
   }
-  if r >= 0 && b.c.objs[r].kind == check.ObjKind.Func && b.c.objs[r].recv >= 0 && !b.c.objs[r].is_static && b.c.type_in(b.s.file, x) >= 0 {
+  if r >= 0 && b.c.objs[r].kind == check.ObjKind.Func && b.c.objs[r].recv >= 0 && !b.c.objs[r].flags.is_static() && b.c.type_in(b.s.file, x) >= 0 {
     // a method value: a closure over the receiver's value now (decision
     // 0109)
     let v = b.method_value(e)

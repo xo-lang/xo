@@ -47,7 +47,7 @@ fn (var b: Builder) iface_type(t: Int, obj: Int) -> Int {
     let res = b.c.subst(b.c.objs[im].result, sub)
     let err = b.fail_err(b.c.subst(b.c.objs[im].err, sub))
     var ret = b.typ(b.result_of(res, err))
-    if b.fe.itab && b.c.objs[im].recv_var {
+    if b.fe.itab && b.c.objs[im].flags.recv_var() {
       // a `var self` slot (decision 0613 step 5 stage 4) takes the
       // interface value itself, consumed (an argument of a type the result
       // holds is owned, rc.xo fv_arg_owned), and returns it afterwards: the
@@ -401,7 +401,7 @@ fn (var b: Builder) iface_thunk(t: Int, i: Int, ct: Int, vt: Int, at: Expr?) -> 
   let im = b.c.objs[robj].iface_meths[i]
   let ft = b.slot_ft(t, i)
   let name = "${b.m.types[t].name}.${b.impl_text(ct)}.${b.obj_name(im)}"
-  if b.fe.itab && b.c.objs[im].recv_var {
+  if b.fe.itab && b.c.objs[im].flags.recv_var() {
     return b.var_thunk(name, t, i, im, ft, ct, vt, at)
   }
   var ps = [ft]
@@ -509,7 +509,7 @@ fn (var b: Builder) method_on(name: Str, ct0: Int, recv: Int, args: List[Int], w
   if m >= 0 {
     let targs = b.recv_targs(m, ct)
     let tps = b.type_params(m)
-    if tps.len() != targs.len() || b.c.objs[m].recv_var {
+    if tps.len() != targs.len() || b.c.objs[m].flags.recv_var() {
       b.unsupported("the method `${b.c.display_name(m)}` of `${b.c.show(ct)}` through an interface")
       return b.undef(want)
     }
@@ -690,16 +690,16 @@ fn (var b: Builder) iface_call(x: Expr, ci: check.CallInfo) -> Int {
     let (_, et) = b.result_parts(b.nat_check(x))
     to_err = et
   }
-  if !b.is_iface(vt) && b.c.objs[fo].recv_var {
+  if !b.is_iface(vt) && b.c.objs[fo].flags.recv_var() {
     // a `var self` method through a generic bound (decision 0613): the
     // body is instantiated for the type, so the call is the type's `var`
     // method's, its receiver's place read, passed, and written back
     let m = b.method_of(ct, fname)
-    if m >= 0 && b.c.objs[m].recv_var {
+    if m >= 0 && b.c.objs[m].flags.recv_var() {
       return b.var_bound_call(m, ct, recv, vals, nt, b.fail_err(to_err), x)
     }
   }
-  if b.is_iface(vt) && b.c.objs[fo].recv_var && b.itab_ft.contains(vt) {
+  if b.is_iface(vt) && b.c.objs[fo].flags.recv_var() && b.itab_ft.contains(vt) {
     return b.var_iface_call(fname, ct, vt, recv, vals, nt, b.fail_err(to_err), x)
   }
   let rv = if late { b.expr(recv) } else { v }
@@ -804,7 +804,7 @@ fn (var b: Builder) var_thunk(name: Str, t: Int, i: Int, im: Int, ft: Int, ct: I
     b.end(saved)
     return name
   }
-  if m < 0 || !b.c.objs[m].recv_var {
+  if m < 0 || !b.c.objs[m].flags.recv_var() {
     // a plain method: it reads the value where it is
     let me = b.add(Op.Capture, vt, Aux.I(n: 0), [show])
     let res = b.method_on(mname, ct, me, margs, ret0, to_err, at)
@@ -876,7 +876,7 @@ fn (var b: Builder) var_thunk_wrapped(mname: Str, t: Int, si: Int, ft: Int, ct: 
     return
   }
   let from_err = b.fail_err(b.c.subst(b.c.objs[sim].err, ssub))
-  if !b.c.objs[sim].recv_var {
+  if !b.c.objs[sim].flags.recv_var() {
     let me = b.add(Op.Capture, vt, Aux.I(n: 0), [show])
     var all = [b.slot_fn(me, j)]
     for a in margs {
@@ -1058,7 +1058,7 @@ fn (var b: Builder) method_value(e: Expr) -> Int {
   }
   let f = b.s.file
   let fo = b.c.ref_of(f, sel)
-  if fo < 0 || b.c.objs[fo].recv < 0 || b.c.objs[fo].is_static || b.c.objs[fo].recv_var {
+  if fo < 0 || b.c.objs[fo].recv < 0 || b.c.objs[fo].flags.is_static() || b.c.objs[fo].flags.recv_var() {
     return -1
   }
   var ft = b.c.type_in(f, e)
@@ -1127,7 +1127,9 @@ fn syn_span(sp: Span, off: Int) -> Span {
 /// A local binding of the checker made up for a method value's literal.
 fn (var b: Builder) syn_local(name: Bytes, t: Int) -> Int {
   let o = b.c.objs.len()
-  b.c.objs.push(check.Obj{kind: check.ObjKind.Local, name: name, local: "let", ty: t, used: true})
+  var x = check.Obj{kind: check.ObjKind.Local, name: name, local: "let", ty: t}
+  x.flags.set_used(true)
+  b.c.objs.push(x)
   o
 }
 

@@ -32,7 +32,7 @@ fn (g: Gen) is_generic_user_func(fo: Int) -> Bool {
     return false
   }
   let o = g.c.objs[fo]
-  fo >= 0 && !g.ostd(fo) && !o.iface && !o.fn_decl.is_empty() && o.fn_decl[0].body != None && !g.type_params(o.tparams).is_empty()
+  fo >= 0 && !g.ostd(fo) && !o.flags.iface() && !o.fn_decl.is_empty() && o.fn_decl[0].body != None && !g.type_params(o.tparams).is_empty()
 }
 
 /// The Go name of the copy of fo for the type arguments in sub, requesting
@@ -54,7 +54,7 @@ fn (var g: Gen) spec_for_lits(fo: Int, sub: Map[Int, Int], lits: Map[Int, LitRef
   var texts: List[Str] = []
   for p in o.tparams {
     let t0 = sub.get(p) ?? -1
-    if g.c.objs[p].effect {
+    if g.c.objs[p].flags.effect() {
       args.push(t0)
       continue
     }
@@ -303,7 +303,7 @@ fn (var g: Gen) drain_specs() {
 /// The concrete method a constraint interface method call on a type
 /// parameter resolves to inside a copy, or -1 (devirt).
 fn (var g: Gen) devirt(fo: Int, recv: List[Expr]) -> (Int, Map[Int, Int]) {
-  if !g.pkgs[g.p].ms.on || !g.c.objs[fo].iface || recv.is_empty() || !g.method_is_go_method(fo) {
+  if !g.pkgs[g.p].ms.on || !g.c.objs[fo].flags.iface() || recv.is_empty() || !g.method_is_go_method(fo) {
     return (-1, {})
   }
   let pt = g.type_of(recv[0])
@@ -320,7 +320,7 @@ fn (var g: Gen) devirt(fo: Int, recv: List[Expr]) -> (Int, Map[Int, Int]) {
     return (-1, {})
   }
   let mo = g.c.objs[m]
-  if mo.iface || mo.recv_var || g.ostd(m) || !g.type_params(g.own_tparams(m)).is_empty() {
+  if mo.flags.iface() || mo.flags.recv_var() || g.ostd(m) || !g.type_params(g.own_tparams(m)).is_empty() {
     return (-1, {})
   }
   let p = g.c.tys[g.c.resolve(pt)].obj
