@@ -163,9 +163,15 @@ fn result(re: regexp.Regex, s: Str) -> Str {
   parts.join("\u{3}")
 }
 
-test "regexp is Go's on the corpus" {
+/// The patterns of CASES from k of PARTS in turn: each a test of its own,
+/// so a loaded host stays under xo test's 60 s per test (host 3 took 81 s
+/// for the whole corpus in one test, 2026-11-11).
+fn bad_in(k: Int) -> List[(Str, Str, Str, Str)] {
   var bad: List[(Str, Str, Str, Str)] = []
-  for (pat, ok, want) in CASES {
+  for (j, (pat, ok, want)) in CASES.indexed() {
+    if j % PARTS != k {
+      continue
+    }
     match regexp.compile(pat) {
       Ok(re) => {
         if !ok {
@@ -186,6 +192,28 @@ test "regexp is Go's on the corpus" {
       }
     }
   }
+  bad
+}
+
+const PARTS: Int = 4
+
+test "regexp is Go's on the corpus, part 1 of 4" {
+  let bad = bad_in(0)
+  expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
+}
+
+test "regexp is Go's on the corpus, part 2 of 4" {
+  let bad = bad_in(1)
+  expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
+}
+
+test "regexp is Go's on the corpus, part 3 of 4" {
+  let bad = bad_in(2)
+  expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
+}
+
+test "regexp is Go's on the corpus, part 4 of 4" {
+  let bad = bad_in(3)
   expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
 }
 
