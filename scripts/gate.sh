@@ -26,7 +26,7 @@
 #            compiler/gen, or a std module std/rt also implements
 #            (go_backend, std_twin); skipped otherwise
 #   cmd      the full tests of cmd/xo
-#   gen      the full tests of internal/gen
+#   gen      the full tests of internal/gen (-parallel 8, XO_GEN_PARALLEL)
 #   fuzz     the private-module parser differentials of internal/stdtest
 #            against Go's own parsers: http1's raw request head, its
 #            response head, the request smuggling framing table, and
@@ -556,7 +556,12 @@ run_step() {
       echo "corpora: skipped (no std/rt, compiler/gen or std module with a std/rt twin changed)"
     fi ;;
   cmd) full cmd ./cmd/xo ;;
-  gen) full gen ./internal/gen ;;
+  # -parallel capped (2026-11-12, aws-43's tier): uncapped it is the
+  # machine's CPU count, and internal/gen's tests each build a Go program
+  # (about 1.3 GB apiece), so the Mac's 30 cores peaked at 39 GB; at 8 the
+  # step took 336 s and 13.3 GB on the Mac (hosts with 12 to 18 CPUs: 242
+  # to 469 s, 11 to 18 GB). XO_GEN_PARALLEL sets it.
+  gen) full gen ./internal/gen -parallel "${XO_GEN_PARALLEL:-8}" ;;
   fuzz)
     # the private-module probes only (the http parsers and neturl), at
     # their default counts, non -short: they skip under -short. 20 s alone,
