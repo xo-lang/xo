@@ -9,15 +9,14 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+## v0.50.1 (2026-11-12)
+
+The first public 0.50 release (0.50.0 was an internal seed). The release notes
+(the GitHub release) group these entries.
+
 - Security (std/tls, native backends): a TLS peer certificate with an RSA key over 8192 bits is refused, with Go's text (`tls: server sent certificate containing RSA key larger than 8192 bits`), before any signature is verified (CVE-2023-29409, GO-2023-1987: huge keys made the peer spend CPU time). The Go backend already refused them.
 
 - std/crypto (decision 0618): RSA encryption. `crypto.encrypt_oaep` and `crypto.decrypt_oaep` (RSA-OAEP, Go's `EncryptOAEP` and `DecryptOAEP`) are the recommended scheme; `encrypt_pkcs1v15` and `decrypt_pkcs1v15` are legacy, for interoperating with systems that require them. Decryption checks padding in constant time and reports every failure as the one `crypto/rsa: decryption error`.
-
-## v0.50.0 (2026-11-12)
-
-The 0.50 release. The release notes (the GitHub release) group these entries;
-the two breaking changes (std/asn1's WideTime, decision 0614; interfaces'
-`var` methods, decision 0613) come first, each with its migration.
 
 - **Breaking** (std/asn1, decision 0614): a UTCTime or GeneralizedTime outside 1678 to 2261 parses as the new `Value.WideTime(c: time.Civil, generalized: Bool)` (its wall clock and offset), where it was `asn1: time out of range`; `der` writes it back in UTC. Migration: add a `Value.WideTime(c, g)` arm to exhaustive matches on `asn1.Value`.
 - **Breaking** (interfaces, decision 0613): a type's `var` method no longer implements an interface method that takes a plain `self` (new error XO0439). The checker used to accept it, but a call through the interface would have lost the update, and every native build reported XO1201. Migration: if callers through the interface may change the value, declare the interface method `fn name(var self, ...)` and give generic callers a `var` receiver (`fn fill[T: Loader](var t: T)`); if the method only reads, make it a plain method `fn (x: T) name(...)`.
