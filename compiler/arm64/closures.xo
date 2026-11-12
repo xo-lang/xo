@@ -93,7 +93,7 @@ fn (var g: G) env_words(ci: Int) -> Int {
 /// captured values (consumed) when there are any.
 fn (var g: G) closure_op(v: Int) {
   let x = g.f.values[v]
-  let name = aux_str(x.aux)
+  let name = g.f.name_of(x)
   let ci = g.by_name.get(name) ?? -1
   if ci < 0 {
     g.fail("closure of unknown function `${name}`")
@@ -164,7 +164,7 @@ fn (var g: G) stack_closures() -> Map[Int, Bool] {
     // (mem_at; a fault frame's parameters, 2026-11-07: generated GCP
     // services hold thousands of words); such an environment stays on
     // the heap
-    let ci = g.by_name.get(aux_str(x.aux)) ?? -1
+    let ci = g.by_name.get(g.f.name_of(x)) ?? -1
     if ci < 0 || ENV_HDR + 8 * g.env_words(ci) > 32760 {
       continue
     }
@@ -187,7 +187,7 @@ fn (var g: G) stack_closures() -> Map[Int, Bool] {
           cand.remove(a)
         }
       }
-      for e in y.succs {
+      for e in y.succs() {
         for a in g.f.edges[e].args {
           if cand.contains(a) {
             cand.remove(a)
@@ -217,9 +217,9 @@ fn (var g: G) stack_env_release(v: Int) {
   if !g.counted_env(v) {
     return
   }
-  let ci = g.by_name.get(aux_str(g.f.values[v].aux)) ?? -1
+  let ci = g.by_name.get(g.f.name_of(g.f.values[v])) ?? -1
   if ci < 0 {
-    g.fail("closure of unknown function `${aux_str(g.f.values[v].aux)}`")
+    g.fail("closure of unknown function `${g.f.name_of(g.f.values[v])}`")
     return
   }
   let env = g.real(g.words(v)[1])
@@ -243,7 +243,7 @@ fn (var g: G) stack_env_release(v: Int) {
 fn (var g: G) capture_op(v: Int) {
   let x = g.f.values[v]
   let env = g.real(g.words(x.args[0])[1])
-  let (off, _) = g.capture_words(g.fi, aux_int(x.aux))
+  let (off, _) = g.capture_words(g.fi, ssa.auxw_int(x.aux))
   var ws: List[Int] = []
   for (k, fp) in g.layout(ssa.ty_of(x.tb)).indexed() {
     let (base, o) = g.mem_at(env, ENV_HDR + 8 * (off + k))
@@ -267,7 +267,7 @@ fn (var g: G) env_unique_op(v: Int) {
 fn (var g: G) cap_take_op(v: Int) {
   let x = g.f.values[v]
   let env = g.real(g.words(x.args[0])[1])
-  let (off, _) = g.capture_words(g.fi, aux_int(x.aux))
+  let (off, _) = g.capture_words(g.fi, ssa.auxw_int(x.aux))
   var ws: List[Int] = []
   for (k, fp) in g.layout(ssa.ty_of(x.tb)).indexed() {
     let (base, o) = g.mem_at(env, ENV_HDR + 8 * (off + k))
@@ -286,7 +286,7 @@ fn (var g: G) cap_take_op(v: Int) {
 fn (var g: G) cap_put_op(v: Int) {
   let x = g.f.values[v]
   let env = g.real(g.words(x.args[0])[1])
-  let (off, _) = g.capture_words(g.fi, aux_int(x.aux))
+  let (off, _) = g.capture_words(g.fi, ssa.auxw_int(x.aux))
   var k = 0
   for w in g.store_words(x.args[1]) {
     let (base, o) = g.mem_at(env, ENV_HDR + 8 * (off + k))

@@ -31,8 +31,8 @@ fn ssa_census(os: Os, m: ssa.Module, at: Str) {
       if !v.args.is_empty() {
         nal += 1
       }
-      ns += v.succs.len()
-      if !v.succs.is_empty() {
+      ns += ssa.succ_n(v)
+      if ssa.succ_n(v) > 0 {
         nsl += 1
       }
       let k = ssa.op_name(v.op)
@@ -45,7 +45,7 @@ fn ssa_census(os: Os, m: ssa.Module, at: Str) {
         if heapty.get(t) ?? false {
           fheap += 1
         }
-        let fk = match v.aux {
+        let fk = match f.aux(v) {
           I(n) => "${v.args[0]} #${n}"
           P(a, b) => "${v.args[0]} #${a}.${b}"
           _ => "${v.args[0]} ?"

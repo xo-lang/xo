@@ -242,8 +242,8 @@ fn (g: G) less_on_entry(d: Int, a: Int, b: Int) -> Bool {
     return false
   }
   let tv = g.f.values[t]
-  let yes = g.f.edges[tv.succs[0]].to == d
-  let no = g.f.edges[tv.succs[1]].to == d
+  let yes = g.f.edges[ssa.succ(tv, 0)].to == d
+  let no = g.f.edges[ssa.succ(tv, 1)].to == d
   if yes == no {
     return false
   }
@@ -474,7 +474,7 @@ fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
       (Interval{lo: -a.hi, hi: -a.lo}, true)
     }
     Call => {
-      match aux_str(x.aux) {
+      match g.f.name_of(x) {
         "list.len" => (Interval{lo: 0, hi: MAX_INT}, true)
         // bytes in memory (decision 0184): an address space of 2^48
         "Str.len" => (Interval{lo: 0, hi: MAX_STR_LEN}, true)
@@ -531,7 +531,7 @@ fn (var g: G) safe_mul(v: Int) -> Bool {
 /// negative).
 fn (var g: G) call_bound(x: ssa.Value) -> (Interval, Bool) {
   var r = full_interval()
-  let ci = g.by_name.get(aux_str(x.aux)) ?? -1
+  let ci = g.by_name.get(g.f.name_of(x)) ?? -1
   if ci < 0 || ssa.ty_of(x.tb) < 0 || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int {
     return (r, true)
   }
@@ -582,7 +582,7 @@ fn (var g: G) acc_bounds(blocks: List[Int], idom: List[Int]) -> Map[Int, Interva
     }
     // the test: the loop goes on only while i < n
     let t = g.f.term(h)
-    if t < 0 || g.f.values[t].op != ssa.Op.Branch || g.f.values[t].succs.len() != 2 || g.f.values[t].args.len() != 1 {
+    if t < 0 || g.f.values[t].op != ssa.Op.Branch || ssa.succ_n(g.f.values[t]) != 2 || g.f.values[t].args.len() != 1 {
       continue
     }
     let tv = g.f.values[t]
@@ -599,7 +599,7 @@ fn (var g: G) acc_bounds(blocks: List[Int], idom: List[Int]) -> Map[Int, Interva
     // the false edge must leave the loop: its target reaches no back
     // edge without passing h
     let body = g.loop_body(h, back)
-    let out = g.f.edges[tv.succs[1]].to
+    let out = g.f.edges[ssa.succ(tv, 1)].to
     if out == h || body[out] {
       continue
     }

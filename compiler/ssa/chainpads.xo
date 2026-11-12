@@ -90,7 +90,7 @@ fn (var r: Rc) chain_pads(var f: Func) {
       }
     }
     f.blocks[p.bl].instrs = ins
-    let e = f.values[f.term(p.bl)].succs[0]
+    let e = succ(f.values[f.term(p.bl)], 0)
     f.edges[e].to = q.bl
     var ps: List[Int] = []
     for pe in f.blocks[exit].preds {
@@ -130,7 +130,7 @@ fn (var r: Rc) home_types(f: Func) -> Set[Int] {
       if x.op != Op.Call {
         continue
       }
-      for i in r.vparams.get(aux_name(x.aux)) ?? [] {
+      for i in r.vparams.get(f.name_of(x)) ?? [] {
         if i < x.args.len() {
           r.add_home(out, ty_of(f.values[x.args[i]].tb))
         }
@@ -191,7 +191,7 @@ fn (var r: Rc) pad_of(f: Func, bl: Int, exit: Int) -> Pad? {
   }
   let t = b.instrs[b.instrs.len() - 1]
   let tx = f.values[t]
-  if tx.op != Op.Jump || f.edges[tx.succs[0]].to != exit || !f.edges[tx.succs[0]].args.is_empty() {
+  if tx.op != Op.Jump || f.edges[succ(tx, 0)].to != exit || !f.edges[succ(tx, 0)].args.is_empty() {
     return None
   }
   var p = Pad{bl: bl}
@@ -287,7 +287,7 @@ fn order_pad_releases(var f: Func) {
       if x.op == Op.Field {
         let a = x.args[0]
         let base = mine.get(a) ?? "v${a}"
-        mine[v] = "${base}.${aux_int(x.aux)}"
+        mine[v] = "${base}.${auxw_int(x.aux)}"
       } else if x.op == Op.Release {
         let a = x.args[0]
         keys[v] = mine.get(a) ?? "v${a}"

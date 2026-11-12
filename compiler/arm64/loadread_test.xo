@@ -16,9 +16,9 @@ fn loadread_g(extra: List[ssa.Value]) -> G {
   m.types.push(ssa.SType{kind: ssa.Kind.Struct, name: "Outer", fields: [ssa.SField{name: "x", ty: 0}, ssa.SField{name: "inner", ty: 1}]})
   var f = ssa.Func{name: "pkg.f"}
   f.values.push(ssa.Value{op: ssa.Op.Param, tb: ssa.pack_tb(2, 0)})
-  f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(1, 0), args: [0], aux: ssa.Aux.I(1)})
-  f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(0, 0), args: [1], aux: ssa.Aux.I(3)})
-  f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(0, 0), args: [1], aux: ssa.Aux.I(7)})
+  f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(1, 0), args: [0], aux: ssa.AuxW.I(1)})
+  f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(0, 0), args: [1], aux: ssa.AuxW.I(3)})
+  f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(0, 0), args: [1], aux: ssa.AuxW.I(7)})
   var instrs = [1, 2, 3]
   for x in extra {
     instrs.push(f.values.len())

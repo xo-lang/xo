@@ -435,7 +435,7 @@ fn (var g: G) dv_plan() -> DvPlan {
     // (2026-10-22: it showed <unavailable> in every frame)
     let cx = g.f.values[d.value]
     if cx.op == ssa.Op.Const && fn_end > 0 {
-      let ks = g.dv_const(cx.aux)
+      let ks = g.dv_const(g.f.aux(cx))
       if ks.len() == g.layout(dv.ty).len() {
         var words: List[List[DvSpan]] = []
         for (sym, op) in ks {
@@ -590,7 +590,7 @@ fn (var g: G) dv_const(a: ssa.Aux) -> List[(Str, List[Int])] {
   match a {
     I(n) => [("", dv_int(n))]
     B(b) => [("", dv_int(if b { 1 } else { 0 }))]
-    S(..) | Bs(..) => {
+    S(..) | Bs(..) | E(..) => {
       let bs = const_bytes(a) ?? b""
       // only a string this function's code names exists in every build
       // of it (fn_strs)

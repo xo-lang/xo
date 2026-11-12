@@ -63,7 +63,7 @@ fn (var r: Rc) borrow_projections(f: Func) {
           add_site(st.cons, r.base(f, x.args[k]).root, BSite{b: bl, i: i})
         }
       }
-      for e in x.succs {
+      for e in x.succs() {
         for a in f.edges[e].args {
           let root = r.base(f, a).root
           add_site(st.all, root, BSite{b: bl, i: i})
@@ -217,7 +217,7 @@ fn (r: Rc) carries(f: Func, w: Int, root: Int, path: Str) -> Bool {
   if x.op != Op.SetField || x.args[0] != root || path.is_empty() {
     return false
   }
-  !paths_overlap(".${aux_int(x.aux)}", path)
+  !paths_overlap(".${auxw_int(x.aux)}", path)
 }
 
 /// Whether every use of projection v that a setfield of chain reaches
@@ -237,7 +237,7 @@ fn (var r: Rc) chain_dominates(f: Func, st: Borrows, v: Int, chain: List[Int]) -
     var work: List[Int] = [wb]
     while !work.is_empty() {
       let b = work.pop() ?? 0
-      for e in f.values[f.term(b)].succs {
+      for e in f.values[f.term(b)].succs() {
         let to = f.edges[e].to
         if seen.contains(to) || to == db {
           continue
@@ -289,7 +289,7 @@ fn used_after(f: Func, st: Borrows, o: Leaf, s: BSite) -> Bool {
   let home = block_of(f.values[root].tb)
   while !work.is_empty() {
     let b = work.pop() ?? 0
-    for e in f.values[f.term(b)].succs {
+    for e in f.values[f.term(b)].succs() {
       let to = f.edges[e].to
       if seen.contains(to) || to == home {
         continue

@@ -1695,7 +1695,7 @@ fn (b: Builder) int_const_of(v: Int) -> (Int, Bool) {
   }
   match x.aux {
     I(n) => (n, true)
-    None | F(..) | B(..) | S(..) | Bs(..) | P(..) => (0, false)
+    None | F(..) | B(..) | S(..) | Bs(..) | P(..) | E(..) => (0, false)
   }
 }
 

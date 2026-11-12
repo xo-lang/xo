@@ -37,14 +37,14 @@ pub fn body_facts(f: Func, types: List[SType]) -> BodyFacts {
   for bl in f.blocks {
     for v in bl.instrs {
       in_block[v] = true
-      if value_self_faults(f.values[v]) {
+      if value_self_faults(f, f.values[v]) {
         faults = true
       }
     }
   }
   var names: List[(Str, Op, Bool)] = []
   for (vi, x) in f.values.indexed() {
-    if let S(s) = x.aux {
+    if let S(s) = f.aux(x) {
       names.push((s, x.op, in_block.contains(vi)))
     }
   }
@@ -158,7 +158,7 @@ pub fn (m: Module) block_names(fi: Int) -> List[Str] {
   let f = m.funcs[fi]
   for bl in f.blocks {
     for v in bl.instrs {
-      if let S(s) = f.values[v].aux {
+      if let S(s) = f.aux(f.values[v]) {
         out.push(s)
       }
     }
@@ -206,7 +206,7 @@ pub fn (m: Module) taken_names(fi: Int) -> List[Str] {
     for v in bl.instrs {
       let x = f.values[v]
       if x.op is Op.Closure | Op.FuncAddr | Op.Rebind | Op.CodeOf {
-        if let S(n) = x.aux {
+        if let S(n) = f.aux(x) {
           out.push(n)
         }
       }
@@ -251,7 +251,7 @@ pub fn (m: Module) value_names(fi: Int) -> List[Str] {
     return out
   }
   for x in m.funcs[fi].values {
-    if let S(s) = x.aux {
+    if let S(s) = m.funcs[fi].aux(x) {
       out.push(s)
     }
   }
@@ -279,10 +279,10 @@ pub fn (m: Module) fault_facts(fi: Int) -> (Bool, List[Int]) {
   for bl in f.blocks {
     for v in bl.instrs {
       let x = f.values[v]
-      if value_self_faults(x) {
+      if value_self_faults(f, x) {
         mf = true
       }
-      let g = user_callee(m, x)
+      let g = user_callee(m, f, x)
       if g >= 0 {
         cs.push(g)
       }

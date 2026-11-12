@@ -35,7 +35,7 @@ fn (var g: Gen) compute_homes(main: Int) {
   for f in g.m.funcs {
     for x in f.values {
       if x.op is ssa.Op.Closure | ssa.Op.Rebind | ssa.Op.FuncAddr | ssa.Op.CodeOf {
-        if let S(n) = x.aux {
+        if let S(n) = f.aux(x) {
           named[n] = true
         }
       }
@@ -168,7 +168,7 @@ fn (g: Gen) home_callee(v: Int) -> Int {
   if x.op != ssa.Op.Call {
     return -1
   }
-  let name = match x.aux {
+  let name = match g.f.aux(x) {
     S(s) => s
     _ => ""
   }
@@ -205,7 +205,7 @@ fn (var g: Gen) dies_except(a: Int, v: Int, skip: List[Int], to: Int) -> Bool {
       if f.values[w].args.contains(a) && !skip.contains(w) {
         return false
       }
-      for e in f.values[w].succs {
+      for e in f.values[w].succs() {
         if f.edges[e].args.contains(a) {
           return false
         }
@@ -214,7 +214,7 @@ fn (var g: Gen) dies_except(a: Int, v: Int, skip: List[Int], to: Int) -> Bool {
     if w == v {
       after = true
       // the terminator's own edges are after its arguments
-      for e in f.values[w].succs {
+      for e in f.values[w].succs() {
         if f.edges[e].args.contains(a) && f.values[w].op != ssa.Op.Jump && f.values[w].op != ssa.Op.Branch {
           return false
         }
@@ -223,7 +223,7 @@ fn (var g: Gen) dies_except(a: Int, v: Int, skip: List[Int], to: Int) -> Bool {
   }
   let li = if skip.is_empty() { g.live_in(a) } else { g.live_in_except(a, skip) }
   for w in b.instrs {
-    for e in f.values[w].succs {
+    for e in f.values[w].succs() {
       if li[f.edges[e].to] && (to < 0 || w != v || f.edges[e].to == to) {
         return false
       }
@@ -387,7 +387,7 @@ fn (var g: Gen) plan_homes(pos: List[Int], hi: List[Int], bend: List[Int]) {
         g.users[a].push(w)
       }
     }
-    for e in y.succs {
+    for e in y.succs() {
       for a in f.edges[e].args {
         if a >= 0 {
           g.inedge[a] = true
@@ -451,7 +451,7 @@ fn (var g: Gen) add_local_homes() {
       }
       var ci = -1
       if x.op == ssa.Op.Call {
-        let name = match x.aux {
+        let name = match f.aux(x) {
           S(s) => s
           _ => ""
         }
@@ -947,7 +947,7 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
           return g.drop_home(h)
         }
       }
-      for e in x.succs {
+      for e in x.succs() {
         for a in f.edges[e].args {
           if a >= 0 && chain[a] && st != TOP && g.canon[a] != st {
             g.hwhy[h] = "an edge of v${v} passes v${a} where the home holds ${if st == CONFLICT { "conflicting values" } else { "v${st}" }}"
@@ -1061,7 +1061,7 @@ fn (g: Gen) reach_from(b: Int) -> List[Bool] {
   }
   var work = [b]
   while let Some(w) = work.pop() {
-    for e in f.values[f.term(w)].succs {
+    for e in f.values[f.term(w)].succs() {
       let t = f.edges[e].to
       if !r[t] {
         r[t] = true
@@ -1083,7 +1083,7 @@ fn (g: Gen) reach_avoiding(b: Int, d: Int) -> List[Bool] {
   }
   var work = [b]
   while let Some(w) = work.pop() {
-    for e in f.values[f.term(w)].succs {
+    for e in f.values[f.term(w)].succs() {
       let t = f.edges[e].to
       if t != d && !r[t] {
         r[t] = true
@@ -1319,7 +1319,7 @@ fn (var g: Gen) plan_fields(pos: List[Int]) {
       for a in x.args {
         us.push(a)
       }
-      for e in x.succs {
+      for e in x.succs() {
         for a in f.edges[e].args {
           us.push(a)
         }

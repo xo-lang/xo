@@ -55,7 +55,7 @@ fn (g: Gen) race_keeps_call(callee: Int) -> Bool {
 
 fn (var g: Gen) call(v: Int) {
   let x = g.f.values[v]
-  let name = aux_str(x.aux)
+  let name = g.f.name_of(x)
   let args = x.args
   let vt = ssa.ty_of(x.tb)
   // the alias scopes of a list access (decision 0211, noalias.xo)
@@ -603,8 +603,8 @@ fn (var g: Gen) user_call(v: Int, callee: Int) {
     }
   }
   let rl = g.res_ll(callee)
-  var c = "${rl} ${fname(aux_str(x.aux))}(${args.join(", ")})"
-  if g.inl.contains(aux_str(x.aux)) && !g.race_keeps_call(callee) {
+  var c = "${rl} ${fname(g.f.name_of(x))}(${args.join(", ")})"
+  if g.inl.contains(g.f.name_of(x)) && !g.race_keeps_call(callee) {
     c = "${c} #6"
   }
   let kept = g.kept_results(callee)
@@ -765,7 +765,7 @@ fn (g: Gen) comdat() -> Str {
 /// new length); whether v was one (fromssa.go inlineRT).
 fn (var g: Gen) inline_rt(v: Int) -> Bool {
   let x = g.f.values[v]
-  match aux_str(x.aux) {
+  match g.f.name_of(x) {
     "rt.int_wrap" => {
       let c = g.f.values[x.args[0]]
       if c.op != ssa.Op.Const {
@@ -830,7 +830,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     // decision 0231: the carry out of a + b and the borrow out of a - b
     // (std/native/llrt/cpu.xo), which arm64 selects as adds/adcs chains
     "rt.u64_carry" | "rt.u64_borrow" => {
-      let f = if aux_str(x.aux) == "rt.u64_carry" { "uadd" } else { "usub" }
+      let f = if g.f.name_is(x, "rt.u64_carry") { "uadd" } else { "usub" }
       g.llvm_decl("@llvm.${f}.with.overflow.i64", "declare {i64, i1} @llvm.${f}.with.overflow.i64(i64, i64)")
       let r = g.def("call {i64, i1} @llvm.${f}.with.overflow.i64(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
       g.set(v, "zext i1 ${g.def("extractvalue {i64, i1} ${r}, 1")} to i64")
@@ -843,7 +843,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let r1 = g.def("call {i64, i1} @llvm.uadd.with.overflow.i64(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
       let s1 = g.def("extractvalue {i64, i1} ${r1}, 0")
       let r2 = g.def("call {i64, i1} @llvm.uadd.with.overflow.i64(i64 ${s1}, i64 ${g.op(x.args[2])})")
-      if aux_str(x.aux) == "rt.u64_adc" {
+      if g.f.name_is(x, "rt.u64_adc") {
         g.set(v, "extractvalue {i64, i1} ${r2}, 0")
       } else {
         let c1 = g.def("extractvalue {i64, i1} ${r1}, 1")
@@ -860,7 +860,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let b = g.def("insertelement <2 x i64> undef, i64 ${g.op(x.args[1])}, i32 0")
       let asm = if g.arch() == "amd64" { "asm \"pclmulqdq $$0, $2, $0\", \"=x,0,x\"" } else { "asm \".arch_extension crypto\\0Apmull $0.1q, $1.1d, $2.1d\", \"=w,w,w\"" }
       let r = g.def("call <2 x i64> ${asm}(<2 x i64> ${a}, <2 x i64> ${b})")
-      g.set(v, "extractelement <2 x i64> ${r}, i32 ${if aux_str(x.aux) == "rt.clmul_lo" { 0 } else { 1 }}")
+      g.set(v, "extractelement <2 x i64> ${r}, i32 ${if g.f.name_is(x, "rt.clmul_lo") { 0 } else { 1 }}")
     }
     // decision 0231 addendum: arm64's crc32x as inline asm (no target
     // feature on the function); the w result is zero extended
@@ -878,7 +878,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // amd64 only (ssa cpu_call): ssa.crc32_fold_x86_lines as inline
       // asm (its immediates' `$` doubled), its registers clobbered
       var t: List[Str] = []
-      for l in ssa.crc32_fold_x86_lines_of(aux_str(x.aux), "@1@", "@2@", "@3@", "@0@") {
+      for l in ssa.crc32_fold_x86_lines_of(g.f.name_of(x), "@1@", "@2@", "@3@", "@0@") {
         t.push(l.replace("$", "$$").replace("@0@", "$0").replace("@1@", "$1").replace("@2@", "$2").replace("@3@", "$3"))
       }
       var clob = "=r,r,r,r,~{r11}"
@@ -909,7 +909,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.aes_gcm_enc10" | "rt.aes_gcm_enc12" | "rt.aes_gcm_enc14" | "rt.aes_gcm_dec10" | "rt.aes_gcm_dec12" | "rt.aes_gcm_dec14" => {
       // arm64 only (ssa call.xo): ssa.aes_gcm_lines as inline asm, x9 to
       // x11 and its V registers clobbered (d8, d9 restored by it)
-      let name = aux_str(x.aux)
+      let name = g.f.name_of(x)
       let nr = Int.parse(name[name.len() - 2..name.len()]) ?? 10
       var t = [".arch_extension crypto"]
       for l in ssa.aes_gcm_lines(nr, name.contains("enc"), "$0", "$1", "$2", "$3", "$4", "$5", "$6", "x9", "x10", "x11") {
@@ -925,7 +925,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.aes_gcm8_enc10" | "rt.aes_gcm8_enc12" | "rt.aes_gcm8_enc14" | "rt.aes_gcm8_dec10" | "rt.aes_gcm8_dec12" | "rt.aes_gcm8_dec14" if g.arch() == "amd64" => {
       // ssa.aes_gcm8_x86_lines as inline asm (AT&T: its immediates' `$`
       // doubled), its registers clobbered
-      let name = aux_str(x.aux)
+      let name = g.f.name_of(x)
       let nr = Int.parse(name[name.len() - 2..name.len()]) ?? 10
       var t: List[Str] = []
       for l in ssa.aes_gcm8_x86_lines(nr, name.contains("enc"), "@0@", "@1@", "@2@", "@3@", "@4@", "@5@", "@6@") {
@@ -944,7 +944,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.aes_gcm8_enc10" | "rt.aes_gcm8_enc12" | "rt.aes_gcm8_enc14" | "rt.aes_gcm8_dec10" | "rt.aes_gcm8_dec12" | "rt.aes_gcm8_dec14" => {
       // arm64 only (ssa call.xo): ssa.aes_gcm8_lines as inline asm, x9 to
       // x11 and its V registers clobbered (d8 to d15 restored by it)
-      let name = aux_str(x.aux)
+      let name = g.f.name_of(x)
       let nr = Int.parse(name[name.len() - 2..name.len()]) ?? 10
       var t = [".arch_extension crypto"]
       for l in ssa.aes_gcm8_lines(nr, name.contains("enc"), "$0", "$1", "$2", "$3", "$4", "$5", "$6", "x9", "x10", "x11") {
@@ -974,7 +974,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.aes_ctr10" | "rt.aes_ctr12" | "rt.aes_ctr14" => {
       // arm64 only (ssa call.xo): ssa.aes_ctr_lines as inline asm, x9 to
       // x11 and its V registers clobbered
-      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_ctr")) ?? 10
+      let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_ctr")) ?? 10
       var t = [".arch_extension crypto"]
       for l in ssa.aes_ctr_lines(nr, "$0", "$1", "$2", "$3", "$4", "x9", "x10", "x11") {
         t.push(l)
@@ -989,7 +989,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.aes_cbc_enc10" | "rt.aes_cbc_enc12" | "rt.aes_cbc_enc14" => {
       // arm64 only (ssa call.xo): ssa.aes_cbc_enc_lines as inline asm, x9
       // to x11 and its V registers clobbered
-      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_cbc_enc")) ?? 10
+      let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_cbc_enc")) ?? 10
       var t = [".arch_extension crypto"]
       for l in ssa.aes_cbc_enc_lines(nr, "$0", "$1", "$2", "$3", "$4", "x9", "x10", "x11") {
         t.push(l)
@@ -1008,7 +1008,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // asm (AT&T: its immediates' `$` doubled); rbx and r12 to r15 it
       // saves itself, the rest clobbered
       var t: List[Str] = []
-      let nm = aux_str(x.aux)
+      let nm = g.f.name_of(x)
       let ls = if nm.ends_with("8") { ssa.chacha_poly8_avx2_lines(nm == "rt.chacha_poly_seal8", "@0@", "@1@", "@2@", "@3@", "@4@") } else { ssa.chacha_poly4_x86_lines(nm == "rt.chacha_poly_seal4", "@0@", "@1@", "@2@", "@3@", "@4@") }
       for l in ls {
         t.push(l.replace("$", "$$").replace("@0@", "$0").replace("@1@", "$1").replace("@2@", "$2").replace("@3@", "$3").replace("@4@", "$4"))
@@ -1155,7 +1155,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       g.set(v, "extractelement <2 x i64> ${g.def("bitcast <16 x i8> ${r} to <2 x i64>")}, i32 0")
     }
     "rt.aes_round" | "rt.aes_last" => {
-      let last = aux_str(x.aux) == "rt.aes_last"
+      let last = g.f.name_is(x, "rt.aes_last")
       let p = g.raw_ptr(x.args[0])
       let s = g.def("load <16 x i8>, ptr ${p}, align 1")
       let k = g.def("load <16 x i8>, ptr ${g.raw_ptr(x.args[1])}, align 1")
@@ -1182,7 +1182,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.aes_enc10x4" | "rt.aes_enc12x4" | "rt.aes_enc14x4" => {
       // four blocks (arm64 only, ssa call.xo): the rounds of each, the
       // four states SSA values the backend interleaves
-      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_enc").trim_suffix("x4")) ?? 10
+      let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_enc").trim_suffix("x4")) ?? 10
       let p = g.raw_ptr(x.args[0])
       let kp = g.raw_ptr(x.args[1])
       var ks: List[Str] = []
@@ -1211,7 +1211,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.aes_enc10" | "rt.aes_enc12" | "rt.aes_enc14" => {
       // the whole block unrolled, the state an SSA value (the rounds of
       // rt.aes_round without the loads and stores between them)
-      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_enc")) ?? 10
+      let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_enc")) ?? 10
       let p = g.raw_ptr(x.args[0])
       let kp = g.raw_ptr(x.args[1])
       var ks: List[Str] = []
@@ -1239,7 +1239,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // the inverse cipher with the encryption round keys: AddRoundKey of the last key, then rounds of
       // (inverse shift rows and sub bytes, the next key with InvMixColumns, InvMixColumns of the state)
       // as AESD with AESIMC on arm64 and AESDEC with AESIMC on x86
-      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_dec")) ?? 10
+      let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_dec")) ?? 10
       let p = g.raw_ptr(x.args[0])
       let kp = g.raw_ptr(x.args[1])
       var ks: List[Str] = []
@@ -1285,7 +1285,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     }
     "rt.mlkem_ntt" | "rt.mlkem_inverse_ntt" | "rt.mlkem_mul_acc" if g.arch() == "arm64" => {
       // ssa a64mlkem.xo's lines as inline asm, its registers clobbered
-      let name = aux_str(x.aux)
+      let name = g.f.name_of(x)
       let ls = if name == "rt.mlkem_ntt" { ssa.mlkem_ntt_neon_lines("$0", "$1") } else if name == "rt.mlkem_inverse_ntt" { ssa.mlkem_inverse_ntt_neon_lines("$0", "$1") } else { ssa.mlkem_mul_acc_neon_lines("$0", "$1", "$2", "$3") }
       var ops: List[Str] = []
       var clob = ""
@@ -1305,7 +1305,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.mlkem_ntt" | "rt.mlkem_inverse_ntt" => {
       // amd64 only (ssa cpu_call): ssa.mlkem_ntt_sse2_lines as inline asm
       var t: List[Str] = []
-      let ls = if aux_str(x.aux) == "rt.mlkem_ntt" { ssa.mlkem_ntt_sse2_lines("@0@", "@1@") } else { ssa.mlkem_inverse_ntt_sse2_lines("@0@", "@1@") }
+      let ls = if g.f.name_is(x, "rt.mlkem_ntt") { ssa.mlkem_ntt_sse2_lines("@0@", "@1@") } else { ssa.mlkem_inverse_ntt_sse2_lines("@0@", "@1@") }
       for l in ls {
         t.push(l.replace("$", "$$").replace("@0@", "$0").replace("@1@", "$1"))
       }
@@ -1576,7 +1576,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
       let w = g.def("load <16 x i8>, ptr ${p}, align 1${g.sc_md(v)}")
       var e = ""
-      if aux_str(x.aux) == "rt.bytes_eq16_bits" {
+      if g.f.name_is(x, "rt.bytes_eq16_bits") {
         let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
         var r = g.def("insertelement <16 x i8> poison, i8 ${c}, i64 0")
         r = g.def("shufflevector <16 x i8> ${r}, <16 x i8> poison, <16 x i32> zeroinitializer")
@@ -1690,7 +1690,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
       let w = g.def("load <32 x i8>, ptr ${p}, align 1${g.sc_md(v)}")
       var e = ""
-      if aux_str(x.aux) == "rt.bytes_any_eq32" {
+      if g.f.name_is(x, "rt.bytes_any_eq32") {
         let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
         var r = g.def("insertelement <32 x i8> poison, i8 ${c}, i64 0")
         r = g.def("shufflevector <32 x i8> ${r}, <32 x i8> poison, <32 x i32> zeroinitializer")
@@ -1809,7 +1809,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
       let w = g.def("load <16 x i8>, ptr ${p}, align 1${g.sc_md(v)}")
       var e = ""
-      if aux_str(x.aux) == "rt.bytes_eq16" {
+      if g.f.name_is(x, "rt.bytes_eq16") {
         let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
         var r = g.def("insertelement <16 x i8> poison, i8 ${c}, i64 0")
         r = g.def("shufflevector <16 x i8> ${r}, <16 x i8> poison, <16 x i32> zeroinitializer")
@@ -1856,7 +1856,7 @@ fn (var g: Gen) raw_at(a: Int, off: Int) -> Str {
 /// whether v was one.
 fn (var g: Gen) inline_raw(v: Int) -> Bool {
   let x = g.f.values[v]
-  let name = aux_str(x.aux)
+  let name = g.f.name_of(x)
   match name {
     "rt.mem_load" => {
       let w = match g.f.values[x.args[2]].aux {
@@ -2087,7 +2087,7 @@ fn (var g: Gen) atomic_result(v: Int, r: Str) {
 /// asm (spin_hint_asm), as the C runtime's spin_relax.
 fn (var g: Gen) atomic(v: Int) {
   let x = g.f.values[v]
-  let name = aux_str(x.aux)
+  let name = g.f.name_of(x)
   if name == "rt.preempt_poll" {
     // decision 0286 step 3: the flag's word; set, a call of the stub that
     // keeps every register (the asm writes x16 and lr)
@@ -2183,7 +2183,7 @@ fn (var g: Gen) llvm_decl(sym: Str, decl: Str) {
 /// an i64 0 or 1, a List or handle a pointer, a Str its bytes and length;
 /// the result is void or one of those.
 fn (var g: Gen) rt_call(v: Int) {
-  if aux_str(g.f.values[v].aux).starts_with("rt.pc.") {
+  if g.f.name_starts(g.f.values[v], "rt.pc.") {
     g.platform_call(v)
     return
   }
@@ -2191,7 +2191,7 @@ fn (var g: Gen) rt_call(v: Int) {
     return
   }
   let x = g.f.values[v]
-  let name = aux_str(x.aux)
+  let name = g.f.name_of(x)
   // the shields and budgets are ctx.xo's and budget.xo's exports,
   // defined in the module (decision 0229): called directly, their
   // pointers passed as Ints, with no declaration
@@ -2360,7 +2360,7 @@ fn platform_parts(name: Str) -> (Str, Str, Int) {
 /// is a trap.
 fn (var g: Gen) platform_call(v: Int) {
   let x = g.f.values[v]
-  let (os, sym, nfixed) = platform_parts(aux_str(x.aux))
+  let (os, sym, nfixed) = platform_parts(g.f.name_of(x))
   let rk = g.kind(ssa.ty_of(x.tb))
   if os == "cp" {
     // rt.sym_present (decision 0232): the weak symbol's address against

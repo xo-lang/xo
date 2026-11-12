@@ -36,7 +36,7 @@ fn (var g: G) elem_in_place(v: Int) -> Bool {
     chain[w] = true
     for u in g.held.us.get(w) ?? [] {
       let ux = g.f.values[u]
-      if !ux.succs.is_empty() {
+      if ssa.succ_n(ux) > 0 {
         return false // passed on through a block edge
       }
       if ux.op is ssa.Op.Field | ssa.Op.Payload {
@@ -158,7 +158,7 @@ fn (g: G) succ_blocks(b: Int) -> List[Int] {
   if ins.is_empty() {
     return out
   }
-  for e in g.f.values[ins[ins.len() - 1]].succs {
+  for e in g.f.values[ins[ins.len() - 1]].succs() {
     out.push(g.f.edges[e].to)
   }
   out
@@ -191,7 +191,7 @@ fn (g: G) keeps_memory(u: Int, chain: Map[Int, Bool], root: Int) -> Bool {
 
 /// A call lowered in line that only reads its operands.
 fn (g: G) reads_only(x: ssa.Value) -> Bool {
-  aux_str(x.aux) is "list.len" | "list.index" | "str.len" | "str.eq" | "str.cmp" | "rt.landing" | "rt.unwinding" | "rt.rl_empty" | "rt.h_zero" | "rt.int_wrap"
+  g.f.name_of(x) is "list.len" | "list.index" | "str.len" | "str.eq" | "str.cmp" | "rt.landing" | "rt.unwinding" | "rt.rl_empty" | "rt.h_zero" | "rt.int_wrap"
 }
 
 /// Whether v is a part of a chain value (a field or payload read of it,

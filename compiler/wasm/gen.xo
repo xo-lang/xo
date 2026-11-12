@@ -346,7 +346,7 @@ fn (var g: Gen) no_processes() {
       if x.op != ssa.Op.Call {
         continue
       }
-      let name = match x.aux {
+      let name = match f.aux(x) {
         S(s) => s
         _ => ""
       }
@@ -367,7 +367,7 @@ fn (g: Gen) component_lacks() -> Str {
       if x.op != ssa.Op.Call {
         continue
       }
-      let name = match x.aux {
+      let name = match f.aux(x) {
         S(s) => s
         _ => ""
       }
@@ -408,7 +408,7 @@ fn (g: Gen) calls(name: Str) -> Bool {
   for f in g.m.funcs {
     for x in f.values {
       if x.op == ssa.Op.Call {
-        if let S(s) = x.aux {
+        if let S(s) = f.aux(x) {
           if s == name {
             return true
           }
@@ -428,7 +428,7 @@ fn (g: Gen) call_chain(name: Str) -> Str {
     var up = ""
     for f in g.m.funcs {
       if !chain.contains(f.name) && f.values.any(fn(x) {
-        match x.aux {
+        match g.f.aux(x) {
           S(s) => s == at
           _ => false
         }
@@ -1558,7 +1558,7 @@ fn (var g: Gen) find_susp() {
   for f in g.m.funcs {
     for x in f.values {
       if x.op == ssa.Op.Call {
-        if let S(n) = x.aux {
+        if let S(n) = f.aux(x) {
           if rt3_blocking(n) || rt9_blocking(n) || (n == "rt.wasi_stdin_read" && g.cmd) || (g.p3 && rt10_blocking(n)) {
             blocks = true
           }
@@ -1567,7 +1567,7 @@ fn (var g: Gen) find_susp() {
         // a C ABI export's FuncAddr (rt.wasi_hook) is called through the
         // table too (rt.call_c2 and call_c4, decision 0447 R2d); other
         // FuncAddrs (task entries, list drops) are not called as values
-        if let S(n) = x.aux {
+        if let S(n) = f.aux(x) {
           if x.op == ssa.Op.Rebind || n.starts_with("cabi") {
             if let Some(ci) = g.by_name.get(n) {
               target[ci] = true
@@ -1589,14 +1589,14 @@ fn (var g: Gen) find_susp() {
       if x.op == ssa.Op.Call && blocks {
         // a C ABI export through its table index (call.xo): its targets
         // take only the Ints after the index
-        if let S(n) = x.aux {
+        if let S(n) = f.aux(x) {
           if n is "rt.call_c2" | "rt.call_c4" {
             cv.push(g.args_key(f, x.args[1..x.args.len()]))
           }
         }
       }
       if x.op == ssa.Op.Call {
-        let name = match x.aux {
+        let name = match f.aux(x) {
           S(n) => n
           _ => ""
         }

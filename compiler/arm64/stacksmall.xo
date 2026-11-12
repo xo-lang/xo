@@ -57,7 +57,7 @@ fn ss_facts(f: ssa.Func) -> SsFacts {
       for a in f.values[u].args {
         vuses[a].push(u)
       }
-      for e in f.values[u].succs {
+      for e in f.values[u].succs() {
         for (k, a) in f.edges[e].args.indexed() {
           euses[a].push((e, k))
         }
@@ -111,7 +111,7 @@ fn block_succs(f: ssa.Func, b: Int) -> List[Int] {
   if is.is_empty() {
     return out
   }
-  for e in f.values[is[is.len() - 1]].succs {
+  for e in f.values[is[is.len() - 1]].succs() {
     out.push(f.edges[e].to)
   }
   out
@@ -125,7 +125,7 @@ fn const_through(f: ssa.Func, v0: Int, fx: SsFacts) -> Int {
     let x = f.values[v]
     if x.op == ssa.Op.Const {
       return match x.aux {
-        ssa.Aux.I(k) => k
+        ssa.AuxW.I(k) => k
         _ => -1
       }
     }
@@ -155,7 +155,7 @@ fn stack_small(var f: ssa.Func) -> Bool {
   for b in 0..f.blocks.len() {
     for v in f.blocks[b].instrs {
       let x = f.values[v]
-      if x.op != ssa.Op.Call || aux_str(x.aux) != "rt.rs_with_cap" || x.args.len() != 1 {
+      if x.op != ssa.Op.Call || !f.name_is(x, "rt.rs_with_cap") || x.args.len() != 1 {
         continue
       }
       if fx is None {
@@ -169,7 +169,7 @@ fn stack_small(var f: ssa.Func) -> Bool {
       if escapes(f, v, facts) {
         continue
       }
-      f.values[v].aux = ssa.Aux.S("rt.rs_stack")
+      f.values[v].aux = f.pack(ssa.Aux.S("rt.rs_stack"))
       changed = true
     }
   }
@@ -200,7 +200,7 @@ fn escapes(f: ssa.Func, v: Int, fx: SsFacts) -> Bool {
       match y.op {
         ssa.Op.Retain | ssa.Op.Release | ssa.Op.Drop => {}
         ssa.Op.Call => {
-          let name = aux_str(y.aux)
+          let name = f.name_of(y)
           if same_object_call(name) && y.args.len() > 0 && y.args[0] == a {
             work.push(u)
           } else if !read_call(name) {
@@ -224,7 +224,7 @@ fn stack_small_violations(f: ssa.Func) -> List[Str] {
   for b in 0..f.blocks.len() {
     for v in f.blocks[b].instrs {
       let x = f.values[v]
-      if x.op != ssa.Op.Call || aux_str(x.aux) != "rt.rs_stack" {
+      if x.op != ssa.Op.Call || !f.name_is(x, "rt.rs_stack") {
         continue
       }
       if fx is None {

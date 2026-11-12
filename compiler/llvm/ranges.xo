@@ -89,7 +89,7 @@ fn (var g: Gen) ssa_const(v: Int) -> (Int, Bool) {
   }
   match g.f.values[v].aux {
     I(n) => (n, true)
-    None | S(..) | F(..) | B(..) | Bs(..) | P(..) => (0, false)
+    None | S(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => (0, false)
   }
 }
 
@@ -128,7 +128,7 @@ fn (var g: Gen) index_fact(v: Int) -> (Fact, Bool) {
   if x.op != ssa.Op.Call {
     return (none, false)
   }
-  match aux_str(x.aux) {
+  match g.f.name_of(x) {
     "bytes.index" => (Fact{x: x.args[1], y: -1, op: ssa.Op.Param, idx: true, lim: MAX_STR_LEN, next: -1}, true)
     "list.index" | "list.take" => (Fact{x: x.args[1], y: -1, op: ssa.Op.Param, idx: true, lim: MAX_INT, next: -1}, true)
     _ => (none, false)
@@ -187,8 +187,8 @@ fn (var g: Gen) entry_facts(b: Int, base0: Int, exit: List[Int]) -> Int {
     return base
   }
   let tv = g.f.values[t]
-  let yes = g.f.edges[tv.succs[0]].to == b
-  let no = g.f.edges[tv.succs[1]].to == b
+  let yes = g.f.edges[ssa.succ(tv, 0)].to == b
+  let no = g.f.edges[ssa.succ(tv, 1)].to == b
   if yes == no {
     return base
   }
@@ -385,8 +385,8 @@ fn (var g: Gen) less_on_entry(d: Int, a: Int, b: Int) -> Bool {
     return false
   }
   let tv = g.f.values[t]
-  let yes = g.f.edges[tv.succs[0]].to == d
-  let no = g.f.edges[tv.succs[1]].to == d
+  let yes = g.f.edges[ssa.succ(tv, 0)].to == d
+  let no = g.f.edges[ssa.succ(tv, 1)].to == d
   if yes == no {
     return false
   }
@@ -631,7 +631,7 @@ fn (var g: Gen) range_of(v: Int, fs: Int) -> (Interval, Bool) {
   let none = (Interval{lo: 0, hi: 0}, false)
   match x.op {
     Add | Sub | Mul => {
-      if aux_str(x.aux) == "wrap" {
+      if g.f.name_is(x, "wrap") {
         return (full_interval(), true)
       }
       let (a, ok1) = g.narrow(x.args[0], fs)
@@ -723,7 +723,7 @@ fn (var g: Gen) range_of(v: Int, fs: Int) -> (Interval, Bool) {
       (Interval{lo: -a.hi, hi: -a.lo}, true)
     }
     Call => {
-      match aux_str(x.aux) {
+      match g.f.name_of(x) {
         "list.len" => (Interval{lo: 0, hi: MAX_INT}, true)
         "Str.len" => (Interval{lo: 0, hi: MAX_STR_LEN}, true)
         "bytes.index" => (Interval{lo: 0, hi: 255}, true)
@@ -808,8 +808,8 @@ fn (var g: Gen) inline_walk(sites: Map[Str, Int], fi: Int, var state: Map[Str, I
       }
       var ci = -1
       if x.op == ssa.Op.Call {
-        ci = g.by_name.get(aux_str(x.aux)) ?? -1
-        if aux_str(x.aux) == "rt.frame_addr" {
+        ci = g.by_name.get(g.m.funcs[fi].name_of(x)) ?? -1
+        if g.m.funcs[fi].name_is(x, "rt.frame_addr") {
           // its frame is the function's own (decision 0233)
           c.bad = true
         }
@@ -859,7 +859,7 @@ fn (var g: Gen) inlinable_set() {
       for v in bl.instrs {
         let x = f.values[v]
         if x.op == ssa.Op.Call {
-          let name = aux_str(x.aux)
+          let name = f.name_of(x)
           if name != f.name {
             sites[name] = (sites.get(name) ?? 0) + 1
           }

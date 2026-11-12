@@ -87,7 +87,7 @@ pub fn std_facts(m: Module, b: Builder, plan: RcPlan) -> List[StdFact] {
         for v in bl.instrs {
           let x = f.values[v]
           if x.op == Op.Call || x.op == Op.Closure {
-            if let S(s) = x.aux {
+            if let S(s) = f.aux(x) {
               hit = hit || conc.contains(s)
             }
           }
@@ -229,7 +229,7 @@ pub fn encode_std_facts(fs: List[StdFact]) -> Bytes {
         w.bytes(v)
       }
       None => w.uv(0)
-      P(tag: _, field: _) => w.uv(0)
+      P(tag: _, field: _) | E(..) => w.uv(0)
     }
     w.bytes(x.inline)
   }
@@ -452,7 +452,7 @@ pub fn diff_std_facts(want: List[StdFact], got: List[StdFact]) -> FactsDiff {
           d.errors.push("${n}: a known result the whole program's lacks")
         }
       }
-      I(..) | F(..) | B(..) | S(..) | Bs(..) | P(..) => {
+      I(..) | F(..) | B(..) | S(..) | Bs(..) | P(..) | E(..) => {
         if g.known == Aux.None {
           note_cons(d, "known", n)
         } else if g.known != w.known {

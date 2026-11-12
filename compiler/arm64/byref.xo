@@ -152,7 +152,7 @@ fn (var g: G) plan_sret_tmp() {
       if x.op != ssa.Op.Call {
         continue
       }
-      let ci = g.by_name.get(aux_str(x.aux)) ?? -1
+      let ci = g.by_name.get(g.f.name_of(x)) ?? -1
       if ci < 0 || !g.sret_of(ci) || g.sret_fwd.contains(v) || g.sret_slots.contains(v) || g.sret_out_ok(ci) {
         continue
       }
@@ -208,7 +208,7 @@ fn (var g: G) plan_sret_forward(calls: List[Int]) {
       }
       if is_call.contains(a) && !g.sret_tuple(a) {
         c = a
-      } else if g.op(a) == ssa.Op.Field && aux_int(g.f.values[a].aux) == 0 {
+      } else if g.op(a) == ssa.Op.Field && ssa.auxw_int(g.f.values[a].aux) == 0 {
         let u = g.f.values[a].args[0]
         if is_call.contains(u) && g.sret_tuple(u) {
           c = u
@@ -217,7 +217,7 @@ fn (var g: G) plan_sret_forward(calls: List[Int]) {
       if c < 0 {
         continue
       }
-      let ci = g.by_name.get(aux_str(g.f.values[c].aux)) ?? -1
+      let ci = g.by_name.get(g.f.name_of(g.f.values[c])) ?? -1
       if ci < 0 || g.m.funcs[ci].results[0] != rt {
         continue
       }
@@ -409,7 +409,7 @@ fn (var g: G) plan_sret_lazy(calls: List[Int]) {
 /// Whether call v (an sret call) returns a tuple: its result and its
 /// `var` parameters' new values.
 fn (var g: G) sret_tuple(v: Int) -> Bool {
-  let ci = g.by_name.get(aux_str(g.f.values[v].aux)) ?? -1
+  let ci = g.by_name.get(g.f.name_of(g.f.values[v])) ?? -1
   ci >= 0 && g.m.funcs[ci].results.len() > 1
 }
 
@@ -429,7 +429,7 @@ fn (var g: G) plan_sret_slots() {
       if x.op != ssa.Op.Call {
         continue
       }
-      let ci = g.by_name.get(aux_str(x.aux)) ?? -1
+      let ci = g.by_name.get(g.f.name_of(x)) ?? -1
       if ci >= 0 && g.sret_of(ci) {
         calls.push(v)
         root[v] = v
@@ -463,7 +463,7 @@ fn (var g: G) plan_sret_slots() {
         let x = g.f.values[v]
         if (x.op == ssa.Op.Field || x.op == ssa.Op.Payload) && !root.contains(v) && !x.args.is_empty() {
           if let Some(r) = root.get(x.args[0]) {
-            if x.args[0] == r && g.sret_tuple(r) && aux_int(x.aux) != 0 {
+            if x.args[0] == r && g.sret_tuple(r) && ssa.auxw_int(x.aux) != 0 {
               continue
             }
             root[v] = r
@@ -642,7 +642,7 @@ fn (var g: G) plan_sret_slots() {
     var ss: List[Int] = []
     let t = g.f.term(b)
     if t >= 0 {
-      for e in g.f.values[t].succs {
+      for e in g.f.values[t].succs() {
         ss.push(g.f.edges[e].to)
       }
     }
@@ -682,7 +682,7 @@ fn (var g: G) plan_sret_slots() {
       // the arguments of the block's out edges are read at its end
       let t = g.f.term(b)
       if t >= 0 {
-        for e in g.f.values[t].succs {
+        for e in g.f.values[t].succs() {
           for a in g.f.edges[e].args {
             if a >= 0 && a < nv && rk[a] >= 0 {
               live[rk[a]] = true
@@ -953,7 +953,7 @@ fn h_bot() -> HKey {
 fn (g: G) key_of(v: Int) -> HKey {
   let x = g.f.values[v]
   if x.op == ssa.Op.Field && g.op(x.args[0]) == ssa.Op.Call {
-    return HKey{v: x.args[0], k: aux_int(x.aux)}
+    return HKey{v: x.args[0], k: ssa.auxw_int(x.aux)}
   }
   HKey{v: v, k: -1}
 }
@@ -1049,7 +1049,7 @@ fn (var g: G) compute_held(mems: List[HMem]) {
         let x = g.f.values[v]
         match x.op {
           Call => {
-            let ci = g.by_name.get(aux_str(x.aux)) ?? -1
+            let ci = g.by_name.get(g.f.name_of(x)) ?? -1
             if ci >= 0 {
               let sm = g.slot_mems(v, ci)
               for (i, m) in sm.indexed() {
@@ -1083,7 +1083,7 @@ fn (var g: G) compute_held(mems: List[HMem]) {
                 } else if g.held.fstore.contains((v, i)) {
                   g.held.fstore.remove((v, i))
                 }
-                let (off, _n) = g.field_words(g.vty(c), aux_int(g.f.values[a].aux))
+                let (off, _n) = g.field_words(g.vty(c), ssa.auxw_int(g.f.values[a].aux))
                 g.held.fslot[(v, i)] = (m, off)
                 g.held.fbase[(v, i)] = g.key_of(c)
                 fs.push(m)
@@ -1129,28 +1129,28 @@ fn (var g: G) compute_held(mems: List[HMem]) {
                 g.held_uses()
                 let us = g.held.us.get(v) ?? []
                 if us.len() == 1 && g.op(us[0]) == ssa.Op.SetField && g.f.values[us[0]].args[0] == c &&
-                  g.f.values[us[0]].args[1] == v && aux_int(g.f.values[us[0]].aux) == aux_int(g.f.values[u].aux) {
-                  let (fo, _fn) = g.field_words(g.vty(c), aux_int(g.f.values[u].aux))
-                  let (ko, _kn) = g.field_words(g.vty(u), aux_int(x.aux))
+                  g.f.values[us[0]].args[1] == v && ssa.auxw_int(g.f.values[us[0]].aux) == ssa.auxw_int(g.f.values[u].aux) {
+                  let (fo, _fn) = g.field_words(g.vty(c), ssa.auxw_int(g.f.values[u].aux))
+                  let (ko, _kn) = g.field_words(g.vty(u), ssa.auxw_int(x.aux))
                   g.held.nested[v] = (mc, fo + ko)
                   st[mc] = HKey{v: v, k: -5}
                 }
               }
             }
           }
-          Jump => changed = g.set_edge(x.succs[0], st) || changed
+          Jump => changed = g.set_edge(ssa.succ(x, 0), st) || changed
           Branch => {
             let l = x.args[0]
             if g.op(l) == ssa.Op.Call && g.vname(l) == "rt.landing" {
               if let Some(ps) = landed.get(l) {
-                changed = g.set_edge(x.succs[0], ps) || changed
+                changed = g.set_edge(ssa.succ(x, 0), ps) || changed
               } else {
-                changed = g.set_edge(x.succs[0], st) || changed
+                changed = g.set_edge(ssa.succ(x, 0), st) || changed
               }
-              changed = g.set_edge(x.succs[1], st) || changed
+              changed = g.set_edge(ssa.succ(x, 1), st) || changed
             } else {
-              changed = g.set_edge(x.succs[0], st) || changed
-              changed = g.set_edge(x.succs[1], st) || changed
+              changed = g.set_edge(ssa.succ(x, 0), st) || changed
+              changed = g.set_edge(ssa.succ(x, 1), st) || changed
             }
           }
           _ => {}
@@ -1299,7 +1299,7 @@ fn (var g: G) find_mem_only() {
           None => bad[a] = true
         }
       }
-      for e in x.succs {
+      for e in x.succs() {
         let to = g.f.edges[e].to
         for (pi, a) in g.f.edges[e].args.indexed() {
           let m = cands.get(a) ?? -1
@@ -1338,7 +1338,7 @@ fn (var g: G) held_uses() {
         for a in g.f.values[x].args {
           us.update(a, [], fn(var l) { l.push(x) })
         }
-        for e in g.f.values[x].succs {
+        for e in g.f.values[x].succs() {
           for a in g.f.edges[e].args {
             us.update(a, [], fn(var l) { l.push(x) })
           }
@@ -1518,7 +1518,7 @@ fn (var g: G) frame_homes_of(var mems: List[HMem], var seen: Map[Int, Bool]) {
       if x.op != ssa.Op.Call {
         continue
       }
-      let ci = g.by_name.get(aux_str(x.aux)) ?? -1
+      let ci = g.by_name.get(g.f.name_of(x)) ?? -1
       if ci < 0 {
         continue
       }
@@ -1581,7 +1581,7 @@ fn (g: G) other_field(v: Int, a: Int, m: Int) -> Bool {
     return false
   }
   let fa = g.f.values[k.v].args[i]
-  aux_int(g.f.values[fa].aux) != aux_int(g.f.values[v].aux)
+  ssa.auxw_int(g.f.values[fa].aux) != ssa.auxw_int(g.f.values[v].aux)
 }
 
 /// Whether value v (a large part of the value memory m holds, key k)
@@ -1599,8 +1599,8 @@ fn (var g: G) read_in_place(v: Int, m: Int, k: HKey) -> Bool {
     seen[w] = true
     for u in g.held.us.get(w) ?? [] {
       let x = g.f.values[u]
-      if !x.succs.is_empty() {
-        for e in x.succs {
+      if ssa.succ_n(x) > 0 {
+        for e in x.succs() {
           if g.f.edges[e].args.contains(w) {
             return false
           }
@@ -1634,10 +1634,10 @@ fn (g: G) field_done(v: Int, k: HKey) -> Bool {
     return false
   }
   let a = g.f.values[k.v].args[i]
-  if aux_int(g.f.values[a].aux) != aux_int(x.aux) {
+  if ssa.auxw_int(g.f.values[a].aux) != ssa.auxw_int(x.aux) {
     return false
   }
-  let ci = g.by_name.get(aux_str(g.f.values[k.v].aux)) ?? -1
+  let ci = g.by_name.get(g.f.name_of(g.f.values[k.v])) ?? -1
   if ci < 0 {
     return false
   }
@@ -1718,7 +1718,7 @@ fn (var g: G) find_take_args() {
     if x.op != ssa.Op.Call {
       continue
     }
-    let ci = g.by_name.get(aux_str(x.aux)) ?? -1
+    let ci = g.by_name.get(g.f.name_of(x)) ?? -1
     if ci < 0 {
       continue
     }
@@ -1727,12 +1727,12 @@ fn (var g: G) find_take_args() {
       continue
     }
     for (i, a) in x.args.indexed() {
-      if !br[i] || !g.is_var_param(ci, i) || g.nuses[a] != 1 || g.op(a) != ssa.Op.Field || aux_int(g.f.values[a].aux) != 1 {
+      if !br[i] || !g.is_var_param(ci, i) || g.nuses[a] != 1 || g.op(a) != ssa.Op.Field || ssa.auxw_int(g.f.values[a].aux) != 1 {
         continue
       }
       let t = g.f.values[a].args[0]
       let tx = g.f.values[t]
-      if tx.op != ssa.Op.Call || aux_str(tx.aux) != "list.take" || g.take_ptr.contains(t) {
+      if tx.op != ssa.Op.Call || !g.f.name_is(tx, "list.take") || g.take_ptr.contains(t) {
         continue
       }
       let s = g.take_store(t, v, ci, i)
@@ -1761,7 +1761,7 @@ fn (g: G) take_store(t: Int, v: Int, ci: Int, i: Int) -> Int {
     return -1
   }
   for (s, y) in g.f.values.indexed() {
-    if y.op != ssa.Op.Call || aux_str(y.aux) != "list.set" || y.args.len() != 3 || !g.after_take(s) {
+    if y.op != ssa.Op.Call || !g.f.name_is(y, "list.set") || y.args.len() != 3 || !g.after_take(s) {
       continue
     }
     let l = y.args[0]
@@ -1770,7 +1770,7 @@ fn (g: G) take_store(t: Int, v: Int, ci: Int, i: Int) -> Int {
     }
     let r = y.args[2]
     let rx = g.f.values[r]
-    if rx.op != ssa.Op.Field || aux_int(rx.aux) != k || rx.args[0] != v || g.nuses[r] != 1 {
+    if rx.op != ssa.Op.Field || ssa.auxw_int(rx.aux) != k || rx.args[0] != v || g.nuses[r] != 1 {
       return -1
     }
     return s

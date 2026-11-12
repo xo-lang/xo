@@ -63,7 +63,7 @@ fn (var g: Gen) apre_mark() {
         p = true
       }
       if v.op == ssa.Op.Call {
-        let name = aux_str(v.aux)
+        let name = f.name_of(v)
         if name is "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" {
           r = true
         } else if name is "rt.sched_run_task" | "rt.stack_switch" | "rt.frame_addr" {

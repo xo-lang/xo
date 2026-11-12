@@ -56,21 +56,21 @@ pub fn fn_sum(f: ssa.Func) -> FnSum {
       // INLINE_ONE_PADDED_INSTRS, and the trims 18 to 26% slower)
       let pv = prev
       prev = v
-      if f.values[v].op == ssa.Op.Retain && pv >= 0 && f.values[v].args == [pv] && f.values[pv].op == ssa.Op.Call && aux_str(f.values[pv].aux) == "rt.str_borrow" {
+      if f.values[v].op == ssa.Op.Retain && pv >= 0 && f.values[v].args == [pv] && f.values[pv].op == ssa.Op.Call && f.name_is(f.values[pv], "rt.str_borrow") {
         continue
       }
       if f.values[v].op == ssa.Op.Call {
         s.tails.push(tail_at(f, v))
       }
       let x = f.values[v]
-      if ssa.pad_of(x.pi) >= 0 && x.op == ssa.Op.Call && (aux_str(x.aux) is "list.set" | "list.take") && ssa.has_pos(x.lp) {
+      if ssa.pad_of(x.pi) >= 0 && x.op == ssa.Op.Call && (f.name_of(x) is "list.set" | "list.take") && ssa.has_pos(x.lp) {
         s.badpad = true
       }
       if ssa.pad_of(x.pi) >= 0 {
         s.pads = true
       }
       if x.op == ssa.Op.Call {
-        s.calls.push(aux_str(x.aux))
+        s.calls.push(f.name_of(x))
       } else if x.op == ssa.Op.Const || const_value(f, v) is Some(_) {
         s.consts += 1
       } else {
@@ -80,7 +80,7 @@ pub fn fn_sum(f: ssa.Func) -> FnSum {
   }
   var seen: Map[Str, Bool] = {}
   for x in f.values {
-    let n = aux_str(x.aux)
+    let n = f.name_of(x)
     if !n.is_empty() && !seen.contains(n) {
       seen[n] = true
       s.names.push(n)

@@ -15,7 +15,8 @@ fn facts_module() -> (Module, Int) {
   let _a = f.add(0, Op.FuncAddr, it, Aux.S(s: "h"), [])
   let _x = f.add(0, Op.Fault, -1, Aux.None, [])
   // a value no block holds (as a pass leaves a removed call)
-  f.values.push(Value{op: Op.Call, tb: pack_tb(-1, -1), aux: Aux.S(s: "g")})
+  let gw = f.pack(Aux.S(s: "g"))
+  f.values.push(Value{op: Op.Call, tb: pack_tb(-1, -1), aux: gw})
   m.funcs[fi] = f
   (m, fi)
 }

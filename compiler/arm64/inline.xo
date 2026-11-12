@@ -143,7 +143,7 @@ fn adc_pairs(f: ssa.Func, instrs: List[Int]) -> Int {
     if x.op != ssa.Op.Call {
       continue
     }
-    let n = aux_str(x.aux)
+    let n = f.name_of(x)
     if n == "rt.u64_adc" {
       let k = args_key(f, x.args)
       sums[k] = (sums.get(k) ?? 0) + 1
@@ -619,7 +619,7 @@ fn devirtualize(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) {
       if c.op != ssa.Op.Closure || !c.args.is_empty() {
         continue
       }
-      let name = aux_str(c.aux)
+      let name = f.name_of(c)
       // only a function made to be called through values (parameter 0
       // the closure: a literal, or a named function's `.value` thunk)
       let ci = by_name.get(name) ?? -1
@@ -628,7 +628,7 @@ fn devirtualize(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) {
       // copy goes to that landing (decision 0317)
       if ci >= 0 && m.funcs[ci].indirect && (!m.funcs[ci].catches || ssa.pad_of(x.pi) >= 0) {
         f.values[v].op = ssa.Op.Call
-        f.values[v].aux = ssa.Aux.S(s: name)
+        f.values[v].aux = f.pack(ssa.Aux.S(s: name))
       }
     }
   }
@@ -719,7 +719,7 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
     if v < 0 {
       break
     }
-    let ci = st.by_name.get(aux_str(f.values[v].aux)) ?? -1
+    let ci = st.by_name.get(f.name_of(f.values[v])) ?? -1
     inline_call(f, v, guarded_callee(m, m.funcs[ci]))
     ch = true
     here = true
@@ -742,7 +742,7 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
     if z < 0 {
       break
     }
-    let zi = st.by_name.get(aux_str(f.values[z].aux)) ?? -1
+    let zi = st.by_name.get(f.name_of(f.values[z])) ?? -1
     inline_call(f, z, guarded_callee(m, m.funcs[zi]))
     ch = true
     here = true
@@ -860,7 +860,7 @@ fn block_calls(f: ssa.Func) -> List[Bool] {
     var c = false
     for v in bl.instrs {
       let x = f.values[v]
-      c = c || (x.op == ssa.Op.Call && !inline_intrinsic(aux_str(x.aux)))
+      c = c || (x.op == ssa.Op.Call && !inline_intrinsic(f.name_of(x)))
     }
     out.push(c)
   }
@@ -893,7 +893,7 @@ fn fold_consts(var f: ssa.Func, types: List[ssa.SType]) {
           continue
         }
         if let Some(r) = fold_value(f, x) {
-          f.values[v] = ssa.Value{op: ssa.Op.Const, tb: ssa.pack_tb(ssa.ty_of(x.tb), ssa.block_of(x.tb)), aux: ssa.Aux.I(n: r)}
+          f.values[v] = ssa.Value{op: ssa.Op.Const, tb: ssa.pack_tb(ssa.ty_of(x.tb), ssa.block_of(x.tb)), aux: f.pack(ssa.Aux.I(n: r))}
           again = true
         }
       }
@@ -949,19 +949,19 @@ fn const_int(f: ssa.Func, v: Int) -> Int? {
 /// The constant value of x when its operands are constants and the
 /// operation cannot fault.
 fn fold_value(f: ssa.Func, x: ssa.Value) -> Int? {
-  if x.op == ssa.Op.Call && aux_str(x.aux) == "Str.len" && x.args.len() == 1 {
+  if x.op == ssa.Op.Call && f.name_is(x, "Str.len") && x.args.len() == 1 {
     // a literal's length (a callee's p.len() of a literal argument:
     // scan.eq_text's word count, 2026-10-23)
     let s = f.values[param_source(f, x.args[0])]
     if s.op == ssa.Op.Const {
-      if let Some(bs) = const_bytes(s.aux) {
+      if let Some(bs) = const_bytes(f.aux(s)) {
         return Some(bs.len())
       }
     }
     return None
   }
   if x.op == ssa.Op.Call {
-    if aux_str(x.aux) != "rt.int_wrap" || x.args.len() != 3 {
+    if !f.name_is(x, "rt.int_wrap") || x.args.len() != 3 {
       return None
     }
     let op = const_int(f, x.args[0])?
@@ -1023,10 +1023,10 @@ fn tail_at(f: ssa.Func, v: Int) -> Bool {
   if t.op == ssa.Op.Return {
     return t.args.len() == 1 && t.args[0] == v
   }
-  if t.op != ssa.Op.Jump || t.succs.len() != 1 {
+  if t.op != ssa.Op.Jump || ssa.succ_n(t) != 1 {
     return false
   }
-  let e = f.edges[t.succs[0]]
+  let e = f.edges[ssa.succ(t, 0)]
   if e.args.len() != 1 || e.args[0] != v {
     return false
   }
@@ -1045,7 +1045,7 @@ fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], tailbig: Map[Str
       if x.op != ssa.Op.Call {
         continue
       }
-      let name = aux_str(x.aux)
+      let name = f.name_of(x)
       // never f itself, as find_closure_call and find_loop_call: a call of
       // f appears in f once a closure that calls it is inlined (generics'
       // count[T] through fold's callback), which the inlinable sets' cycle
@@ -1082,10 +1082,10 @@ fn find_zero_join(f: ssa.Func, by_name: Map[Str, Int]) -> Int {
     }
     for v in b.instrs {
       let x = f.values[v]
-      if x.op != ssa.Op.Call || ssa.pad_of(x.pi) >= 0 || !aux_str(x.aux).starts_with("zero_val.") || !by_name.contains(aux_str(x.aux)) {
+      if x.op != ssa.Op.Call || ssa.pad_of(x.pi) >= 0 || !f.name_starts(x, "zero_val.") || !by_name.contains(f.name_of(x)) {
         continue
       }
-      for e in f.values[t].succs {
+      for e in f.values[t].succs() {
         if f.edges[e].args.contains(v) {
           return v
         }
@@ -1110,7 +1110,7 @@ fn find_zero_ret(f: ssa.Func, by_name: Map[Str, Int]) -> Int {
     }
     for v in b.instrs {
       let x = f.values[v]
-      if x.op != ssa.Op.Call || ssa.pad_of(x.pi) >= 0 || !aux_str(x.aux).starts_with("zero_val.") || !by_name.contains(aux_str(x.aux)) {
+      if x.op != ssa.Op.Call || ssa.pad_of(x.pi) >= 0 || !f.name_starts(x, "zero_val.") || !by_name.contains(f.name_of(x)) {
         continue
       }
       for (k, a) in f.values[t].args.indexed() {
@@ -1131,7 +1131,7 @@ fn find_closure_call(f: ssa.Func, m: ssa.Module, padded: Map[Str, Bool], tailbig
   for bl in f.blocks {
     for v in bl.instrs {
       let x = f.values[v]
-      if x.op != ssa.Op.Call || !padded.contains(aux_str(x.aux)) || aux_str(x.aux) == f.name || (tailbig.contains(aux_str(x.aux)) && tail_at(f, v)) {
+      if x.op != ssa.Op.Call || !padded.contains(f.name_of(x)) || f.name_of(x) == f.name || (tailbig.contains(f.name_of(x)) && tail_at(f, v)) {
         continue
       }
       var closure = false
@@ -1142,7 +1142,7 @@ fn find_closure_call(f: ssa.Func, m: ssa.Module, padded: Map[Str, Bool], tailbig
       if !closure {
         continue
       }
-      let ci = by_name.get(aux_str(x.aux)) ?? -1
+      let ci = by_name.get(f.name_of(x)) ?? -1
       if ci >= 0 && m.funcs[ci].catches && !catch_inlinable(x, m.funcs[ci], m) {
         continue
       }
@@ -1164,7 +1164,7 @@ fn find_loop_call(f: ssa.Func, m: ssa.Module, loopy: Map[Str, Bool], tailbig: Ma
     var looped = -1
     for v in bl.instrs {
       let x = f.values[v]
-      if x.op != ssa.Op.Call || !loopy.contains(aux_str(x.aux)) || aux_str(x.aux) == f.name || (tailbig.contains(aux_str(x.aux)) && tail_at(f, v)) {
+      if x.op != ssa.Op.Call || !loopy.contains(f.name_of(x)) || f.name_of(x) == f.name || (tailbig.contains(f.name_of(x)) && tail_at(f, v)) {
         continue
       }
       if looped < 0 {
@@ -1173,7 +1173,7 @@ fn find_loop_call(f: ssa.Func, m: ssa.Module, loopy: Map[Str, Bool], tailbig: Ma
       if looped == 0 {
         break
       }
-      let ci = by_name.get(aux_str(x.aux)) ?? -1
+      let ci = by_name.get(f.name_of(x)) ?? -1
       if ci >= 0 && m.funcs[ci].catches && !catch_inlinable(x, m.funcs[ci], m) {
         continue
       }
@@ -1221,7 +1221,7 @@ fn catch_inlinable(x: ssa.Value, g: ssa.Func, m: ssa.Module) -> Bool {
     let y = g.values[v]
     let pure = match y.op {
       Const | Struct | Tuple | Variant | Undef | Field | Return => true
-      Call => aux_str(y.aux).starts_with("rt.") && aux_str(y.aux).ends_with("_empty")
+      Call => g.name_starts(y, "rt.") && g.name_ends(y, "_empty")
       _ => false
     }
     if !pure {
@@ -1254,7 +1254,7 @@ fn hands_back(g: ssa.Func, p: Int) -> Bool {
     for v in bl.instrs {
       let y = g.values[v]
       if y.op == ssa.Op.Branch && y.args.len() >= 1 && y.args[0] == p {
-        start = g.edges[y.succs[0]].to
+        start = g.edges[ssa.succ(y, 0)].to
       }
     }
   }
@@ -1267,10 +1267,10 @@ fn hands_back(g: ssa.Func, p: Int) -> Bool {
       return true
     }
     let ins = g.blocks[b].instrs
-    if ins.len() != 1 || !g.blocks[b].params.is_empty() || g.values[ins[0]].op != ssa.Op.Jump || !g.edges[g.values[ins[0]].succs[0]].args.is_empty() {
+    if ins.len() != 1 || !g.blocks[b].params.is_empty() || g.values[ins[0]].op != ssa.Op.Jump || !g.edges[g.values[ins[0]].succs()[0]].args.is_empty() {
       return false
     }
-    b = g.edges[g.values[ins[0]].succs[0]].to
+    b = g.edges[g.values[ins[0]].succs()[0]].to
   }
   false
 }
@@ -1311,7 +1311,7 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
   f.blocks[b].instrs = ins[0..at]
   for v in rest {
     f.values[v].tb = ssa.with_block(f.values[v].tb, cont)
-    for e in f.values[v].succs {
+    for e in f.values[v].succs() {
       f.edges[e].from = cont
     }
   }
@@ -1387,23 +1387,23 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
       let x = callee.values[v]
       match x.op {
         Jump => {
-          let to = callee.edges[x.succs[0]].to
+          let to = callee.edges[ssa.succ(x, 0)].to
           let t = f.jump(nb, bm.get(to) ?? -1, [])
-          edges.push(Pending{e: f.values[t].succs[0], args: callee.edges[x.succs[0]].args})
+          edges.push(Pending{e: ssa.succ(f.values[t], 0), args: callee.edges[ssa.succ(x, 0)].args})
         }
         Branch => {
-          let s0 = callee.edges[x.succs[0]]
-          let s1 = callee.edges[x.succs[1]]
+          let s0 = callee.edges[ssa.succ(x, 0)]
+          let s1 = callee.edges[ssa.succ(x, 1)]
           let t = f.branch(nb, vm.get(x.args[0]) ?? x.args[0], bm.get(s0.to) ?? -1, bm.get(s1.to) ?? -1)
-          edges.push(Pending{e: f.values[t].succs[0], args: s0.args})
-          edges.push(Pending{e: f.values[t].succs[1], args: s1.args})
+          edges.push(Pending{e: ssa.succ(f.values[t], 0), args: s0.args})
+          edges.push(Pending{e: ssa.succ(f.values[t], 1), args: s1.args})
         }
         Return => {
           let t = f.jump(nb, cont, [])
           if direct {
             ret_arg = x.args[0]
           } else {
-            edges.push(Pending{e: f.values[t].succs[0], args: x.args})
+            edges.push(Pending{e: ssa.succ(f.values[t], 0), args: x.args})
           }
         }
         _ => {
@@ -1416,7 +1416,7 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
           for a in x.args {
             args.push(vm.get(a) ?? a)
           }
-          let nv = f.add(nb, x.op, ssa.ty_of(x.tb), x.aux, args)
+          let nv = f.add(nb, x.op, ssa.ty_of(x.tb), callee.aux(x), args)
           f.set_pos(nv, callee.pos_of(x))
           // the callee's own line in its file, at its site (decision
           // 0239); a value with no line, or of generated code, takes the
@@ -1488,7 +1488,7 @@ fn replace_uses(var f: ssa.Func, old: Int, x: Int) {
           f.values[v].args[i] = x
         }
       }
-      for e in f.values[v].succs {
+      for e in f.values[v].succs() {
         for i in 0..f.edges[e].args.len() {
           if f.edges[e].args[i] == old {
             f.edges[e].args[i] = x
@@ -1509,7 +1509,7 @@ fn block_calls_inline(f: ssa.Func) -> List[Bool] {
     var c = false
     for v in bl.instrs {
       let x = f.values[v]
-      let n = aux_str(x.aux)
+      let n = f.name_of(x)
       c = c || (x.op == ssa.Op.Call && !inline_intrinsic(n) && !(n is "list.index" | "list.len" | "list.get" | "rt.landing" | "rt.unwinding"))
     }
     out.push(c)

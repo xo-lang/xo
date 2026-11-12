@@ -74,7 +74,7 @@ fn insert_after(var f: ssa.Func, u: Int, w: Int) {
 /// A new value not yet in any block's instructions.
 fn new_value(var f: ssa.Func, b: Int, op: ssa.Op, t: Int, aux: ssa.Aux, args: List[Int]) -> Int {
   let v = f.values.len()
-  f.values.push(ssa.Value{op: op, tb: ssa.pack_tb(t, b), args: args, aux: aux})
+  f.values.push(ssa.Value{op: op, tb: ssa.pack_tb(t, b), args: args, aux: f.pack(aux)})
   v
 }
 
@@ -191,7 +191,7 @@ fn succ_blocks(f: ssa.Func, b: Int) -> List[Int] {
   if is.is_empty() {
     return out
   }
-  for e in f.values[is[is.len() - 1]].succs {
+  for e in f.values[is[is.len() - 1]].succs() {
     out.push(f.edges[e].to)
   }
   out
@@ -396,7 +396,7 @@ fn param_keeps(f: ssa.Func, m: ssa.Module, p: Int, fx: SsFacts) -> List[(Int, In
         // a reuse copies a list whose count is not 1, as a frame list's is
         ssa.Op.Reuse => true
         ssa.Op.Call => {
-          let name = aux_str(y.aux)
+          let name = f.name_of(y)
           // its guard already (a body guarded before it was inlined,
           // guarded_callee): copying again would copy the copy
           (list_read_call(name) && y.args.len() > 0 && y.args[0] == a && count_of(y.args, a) == 1) || module_call(m, name) || name == "rt.rl_unstack"
@@ -428,10 +428,10 @@ fn landing_block(f: ssa.Func, u: Int) -> Int {
     return -1
   }
   let t = f.values[is[is.len() - 1]]
-  if t.op != ssa.Op.Branch || t.args.is_empty() || t.args[0] != l || t.succs.is_empty() {
+  if t.op != ssa.Op.Branch || t.args.is_empty() || t.args[0] != l || ssa.succ_n(t) == 0 {
     return -1
   }
-  f.edges[t.succs[0]].to
+  f.edges[ssa.succ(t, 0)].to
 }
 
 // ---------------------------------------------------------------------------
@@ -453,7 +453,7 @@ struct StackLit {
 /// crosses an edge.
 fn stack_lit(f: ssa.Func, m: ssa.Module, v: Int, fx: SsFacts) -> StackLit? {
   let x = f.values[v]
-  if x.op != ssa.Op.Call || aux_str(x.aux) != "list.new" || !stack_list_type(m, ssa.ty_of(x.tb)) {
+  if x.op != ssa.Op.Call || !f.name_is(x, "list.new") || !stack_list_type(m, ssa.ty_of(x.tb)) {
     return None
   }
   let n = if x.args.len() >= 1 { const_through(f, x.args[0], fx) } else { 1 }
@@ -474,7 +474,7 @@ fn stack_lit(f: ssa.Func, m: ssa.Module, v: Int, fx: SsFacts) -> StackLit? {
         mids.push((u, pushes.len()))
         continue
       }
-      if next >= 0 || y.op != ssa.Op.Call || aux_str(y.aux) != "list.push" || y.args.len() != 2 || y.args[0] != cur || y.args[1] == cur {
+      if next >= 0 || y.op != ssa.Op.Call || !f.name_is(y, "list.push") || y.args.len() != 2 || y.args[0] != cur || y.args[1] == cur {
         return None
       }
       next = u
@@ -503,7 +503,7 @@ fn stack_lit_ends(f: ssa.Func, m: ssa.Module, l: Int, fx: SsFacts) -> (List[Int]
     match y.op {
       ssa.Op.Release | ssa.Op.Drop => rels.push(u)
       ssa.Op.Call => {
-        let name = aux_str(y.aux)
+        let name = f.name_of(y)
         if list_read_call(name) && y.args.len() > 0 && y.args[0] == l && count_of(y.args, l) == 1 {
           continue
         }
@@ -539,7 +539,7 @@ fn stack_lists(var f: ssa.Func, m: ssa.Module) -> Bool {
   for b in 0..f.blocks.len() {
     for v in f.blocks[b].instrs {
       let x = f.values[v]
-      if x.op != ssa.Op.Call || aux_str(x.aux) != "list.new" {
+      if x.op != ssa.Op.Call || !f.name_is(x, "list.new") {
         continue
       }
       if fx is None {
@@ -557,19 +557,19 @@ fn stack_lists(var f: ssa.Func, m: ssa.Module) -> Bool {
   for (lit, rels, owned) in lits {
     let n = lit.pushes.len()
     let l = lit.pushes[n - 1]
-    f.values[lit.new].aux = ssa.Aux.S("rt.rl_stack ${n}")
+    f.values[lit.new].aux = f.pack(ssa.Aux.S("rt.rl_stack ${n}"))
     f.values[lit.new].args = []
     for (i, p) in lit.pushes.indexed() {
-      f.values[p].aux = ssa.Aux.S("rt.rl_stack_put ${i}")
+      f.values[p].aux = f.pack(ssa.Aux.S("rt.rl_stack_put ${i}"))
     }
     for u in rels {
       f.values[u].op = ssa.Op.Call
-      f.values[u].aux = ssa.Aux.S("rt.rl_stack_drop ${n}")
+      f.values[u].aux = f.pack(ssa.Aux.S("rt.rl_stack_drop ${n}"))
       f.values[u].tb = ssa.pack_tb(-1, ssa.block_of(f.values[u].tb))
     }
     for (u, k) in lit.mids {
       f.values[u].op = ssa.Op.Call
-      f.values[u].aux = ssa.Aux.S("rt.rl_stack_drop ${k}")
+      f.values[u].aux = f.pack(ssa.Aux.S("rt.rl_stack_drop ${k}"))
       f.values[u].tb = ssa.pack_tb(-1, ssa.block_of(f.values[u].tb))
     }
     for u in owned {
@@ -590,7 +590,7 @@ fn stack_list_violations(f: ssa.Func, m: ssa.Module) -> List[Str] {
   for b in 0..f.blocks.len() {
     for v in f.blocks[b].instrs {
       let x = f.values[v]
-      if x.op != ssa.Op.Call || !aux_str(x.aux).starts_with("rt.rl_stack ") {
+      if x.op != ssa.Op.Call || !f.name_starts(x, "rt.rl_stack ") {
         continue
       }
       if fx is None {
@@ -613,7 +613,7 @@ fn stack_list_violations(f: ssa.Func, m: ssa.Module) -> List[Str] {
         var next = -1
         var others = false
         for u in facts.vuses[cur] {
-          let name = aux_str(f.values[u].aux)
+          let name = f.name_of(f.values[u])
           if name.starts_with("rt.rl_stack_put ") && f.values[u].args[0] == cur && next < 0 {
             next = u
           } else if !name.starts_with("rt.rl_stack_drop ") {
@@ -640,7 +640,7 @@ fn stack_list_violations(f: ssa.Func, m: ssa.Module) -> List[Str] {
             why = "v${u} ${ssa.op_name(y.op)} uses v${cur}"
             break
           }
-          let name = aux_str(y.aux)
+          let name = f.name_of(y)
           if name.starts_with("rt.rl_stack_drop ") || (list_read_call(name) && y.args[0] == cur && count_of(y.args, cur) == 1) {
             continue
           }

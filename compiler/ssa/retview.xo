@@ -34,7 +34,7 @@ pub fn return_views(funcs: List[Func], types: List[SType], fidx: Map[Str, Int], 
   for f in funcs {
     for v in f.values {
       if v.op is Op.FuncAddr | Op.Closure | Op.CodeOf {
-        let k = fidx.get(aux_name(v.aux)) ?? -1
+        let k = fidx.get(f.name_of(v)) ?? -1
         if k >= 0 {
           cand[k] = false
         }
@@ -115,7 +115,7 @@ fn view_of(f: Func, v: Int, rvp: List[Int], fidx: Map[Str, Int], var seen: Map[I
       f.blocks[0].params.index_of(v) ?? -1
     }
     Op.Call => {
-      let n = aux_name(x.aux)
+      let n = f.name_of(x)
       if n is "rt.str_view" | "rt.str_borrow" {
         if x.args.is_empty() {
           return -1

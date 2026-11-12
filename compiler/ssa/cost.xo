@@ -71,7 +71,7 @@ fn loop_blocks(f: Func) -> List[Bool] {
     if bl.instrs.is_empty() {
       continue
     }
-    for e in f.values[bl.instrs[bl.instrs.len() - 1]].succs {
+    for e in f.values[bl.instrs[bl.instrs.len() - 1]].succs() {
       let h = f.edges[e].to
       if !udom(idom, h, b) {
         continue
@@ -130,13 +130,13 @@ fn copy_feeds_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   // the copy only for a forked view: its line has an eachpos call
   var walked: Map[Int, Bool] = {}
   for x in f.values {
-    if x.op == Op.Call && aux_name(x.aux).starts_with("xo.mlog.eachpos[") {
+    if x.op == Op.Call && f.name_starts(x, "xo.mlog.eachpos[") {
       walked[line_of(x.lp) / 4096] = true
     }
   }
   var seen: Map[Int, Bool] = {}
   for (vi, x) in f.values.indexed() {
-    if x.op != Op.Call || !copies_entries(aux_name(x.aux)) || walked.contains(line_of(x.lp) / 4096) {
+    if x.op != Op.Call || !copies_entries(f.name_of(x)) || walked.contains(line_of(x.lp) / 4096) {
       continue
     }
     // the copy, or what carries it (a tuple's fields, a block parameter),
@@ -238,7 +238,7 @@ fn elem_count_per_iter(f: Func, inloop: List[Bool]) -> List[CostNote] {
               // a field the RC pass made has no position: the call's
               at = u
             }
-          } else if ux.op == Op.Call && aux_name(ux.aux) != "list.index" && aux_name(ux.aux) != "list.len" || ux.op is Op.Struct | Op.Tuple | Op.Variant | Op.Box | Op.Return | Op.SetField | Op.Closure {
+          } else if ux.op == Op.Call && !f.name_is(ux, "list.index") && !f.name_is(ux, "list.len") || ux.op is Op.Struct | Op.Tuple | Op.Variant | Op.Box | Op.Return | Op.SetField | Op.Closure {
             stored = true
           }
         }
@@ -294,7 +294,7 @@ fn callback_walks(m: Module, f: Func) -> List[CostNote] {
       if x.op != Op.Call {
         continue
       }
-      let (walks, acc) = callback_walk(aux_name(x.aux))
+      let (walks, acc) = callback_walk(f.name_of(x))
       if !walks {
         continue
       }
@@ -334,7 +334,7 @@ fn elem_of_outside(f: Func, x0: Int, inloop: List[Bool]) -> Bool {
       x = v.args[0]
       continue
     }
-    if v.op == Op.Call && aux_name(v.aux) == "list.index" && !v.args.is_empty() {
+    if v.op == Op.Call && f.name_is(v, "list.index") && !v.args.is_empty() {
       elem = true
       x = v.args[0]
       continue
@@ -589,7 +589,7 @@ fn large_copies(m: Module, f: Func, inloop: List[Bool], var nw: Map[Int, Int]) -
         continue
       }
       var msg = ""
-      if x.op == Op.Closure && aux_name(x.aux).starts_with("${f.name}.fn") {
+      if x.op == Op.Closure && f.name_starts(x, "${f.name}.fn") {
         for a in x.args {
           let t = ty_of(f.values[a].tb)
           let n = type_words(m, nw, t, 0)
@@ -623,7 +623,7 @@ fn list_elem_in_loop(f: Func, x0: Int, inloop: List[Bool]) -> Bool {
     return false
   }
   let v = f.values[x]
-  if v.op != Op.Call || aux_name(v.aux) != "list.index" || v.args.is_empty() || block_of(v.tb) < 0 || !inloop[block_of(v.tb)] {
+  if v.op != Op.Call || !f.name_is(v, "list.index") || v.args.is_empty() || block_of(v.tb) < 0 || !inloop[block_of(v.tb)] {
     return false
   }
   let l = below_fields(f, v.args[0])
@@ -631,7 +631,7 @@ fn list_elem_in_loop(f: Func, x0: Int, inloop: List[Bool]) -> Bool {
     return false
   }
   let lv = f.values[l]
-  if lv.op == Op.Call && aux_name(lv.aux) == "list.index" {
+  if lv.op == Op.Call && f.name_is(lv, "list.index") {
     return false
   }
   lv.op == Op.Param || block_of(lv.tb) < 0 || !inloop[block_of(lv.tb)]
@@ -701,7 +701,7 @@ fn param_view_at(f: Func, x: Int, depth: Int) -> Bool {
   if v.op != Op.Call || v.args.is_empty() {
     return false
   }
-  let name = aux_name(v.aux)
+  let name = f.name_of(v)
   if view_call(name) {
     return param_text(f, v.args[0], depth)
   }
@@ -710,7 +710,7 @@ fn param_view_at(f: Func, x: Int, depth: Int) -> Bool {
     if l < 0 || l >= f.values.len() || f.values[l].op != Op.Call || f.values[l].args.is_empty() {
       return false
     }
-    let ln = aux_name(f.values[l].aux)
+    let ln = f.name_of(f.values[l])
     if named(ln, "prelude.str_split") || named(ln, "prelude.str_split_n") || named(ln, "prelude.str_split_after") || named(ln, "prelude.str_split_after_n") || named(ln, "prelude.str_fields") || named(ln, "prelude.str_split_where") || named(ln, "prelude.str_lines") || named(ln, "prelude.bytes_split") || named(ln, "prelude.bytes_split_n") || named(ln, "prelude.bytes_split_after") || named(ln, "prelude.bytes_split_after_n") || named(ln, "prelude.bytes_fields") || named(ln, "prelude.bytes_split_where") {
       return param_text(f, f.values[l].args[0], depth)
     }
@@ -733,7 +733,7 @@ fn view_stored(m: Module, f: Func, x0: Int, users: List[List[Int]]) -> Bool {
     seen[x] = true
     for u in users[x] {
       let w = f.values[u]
-      let name = aux_name(w.aux)
+      let name = f.name_of(w)
       if w.op is Op.Struct | Op.Variant | Op.Box {
         work.push((u, true))
       } else if w.op is Op.Tuple | Op.Rebind {
@@ -815,7 +815,7 @@ fn view_stores(m: Module, f: Func, inloop: List[Bool]) -> List[CostNote] {
     // parser-shaped: the view is made in a loop (a tokenizer's slices) or is
     // an element of a split; one slice of an argument (a path, a name) is
     // too common and too small to note
-    let tokenizer = x.op == Op.Call && (aux_name(x.aux) == "list.index" || (block_of(x.tb) >= 0 && block_of(x.tb) < inloop.len() && inloop[block_of(x.tb)]))
+    let tokenizer = x.op == Op.Call && (f.name_is(x, "list.index") || (block_of(x.tb) >= 0 && block_of(x.tb) < inloop.len() && inloop[block_of(x.tb)]))
     if line <= 0 || seen.contains(line) || !tokenizer || !param_view(f, vi) || !view_stored(m, f, vi, users) {
       continue
     }
@@ -870,13 +870,13 @@ fn slices_read_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   let (users, edge) = cost_uses(f)
   for (vi, x) in f.values.indexed() {
     let line = line_of(x.lp) / 4096
-    if x.op != Op.Call || !(named(aux_name(x.aux), "rt.str_view") || named(aux_name(x.aux), "rt.str_borrow")) || block_of(x.tb) < 0 || block_of(x.tb) >= inloop.len() || !inloop[block_of(x.tb)] || line <= 0 || seen.contains(line) || edge[vi] || users[vi].is_empty() {
+    if x.op != Op.Call || !(named(f.name_of(x), "rt.str_view") || named(f.name_of(x), "rt.str_borrow")) || block_of(x.tb) < 0 || block_of(x.tb) >= inloop.len() || !inloop[block_of(x.tb)] || line <= 0 || seen.contains(line) || edge[vi] || users[vi].is_empty() {
       continue
     }
     var reads = true
     for u in users[vi] {
       let w = f.values[u]
-      if !(w.op == Op.Call && read_only_call(aux_name(w.aux))) && !(w.op is Op.Eq | Op.Ne | Op.Retain | Op.Release | Op.Drop) {
+      if !(w.op == Op.Call && read_only_call(f.name_of(w))) && !(w.op is Op.Eq | Op.Ne | Op.Retain | Op.Release | Op.Drop) {
         reads = false
       }
     }
@@ -900,12 +900,12 @@ fn small_lists_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   let (users, edge) = cost_uses(f)
   for (vi, x) in f.values.indexed() {
     let line = line_of(x.lp) / 4096
-    if x.op != Op.Call || aux_name(x.aux) != "list.new" || x.args.is_empty() || block_of(x.tb) < 0 || block_of(x.tb) >= inloop.len() || !inloop[block_of(x.tb)] || line <= 0 || seen.contains(line) {
+    if x.op != Op.Call || !f.name_is(x, "list.new") || x.args.is_empty() || block_of(x.tb) < 0 || block_of(x.tb) >= inloop.len() || !inloop[block_of(x.tb)] || line <= 0 || seen.contains(line) {
       continue
     }
     let c = f.values[x.args[0]]
     let n = match c.aux {
-      Aux.I(k) => k
+      AuxW.I(k) => k
       _ => -1
     }
     if c.op != Op.Const || n < 1 || n > 8 {
@@ -926,7 +926,7 @@ fn small_lists_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
       }
       for u in users[l] {
         let w = f.values[u]
-        let name = aux_name(w.aux)
+        let name = f.name_of(w)
         if w.op is Op.Retain | Op.Release | Op.Drop {
           continue
         }
@@ -1014,12 +1014,12 @@ fn freed_addresses_rv(f: Func, rv: Map[Str, Int]) -> List[CostNote] {
         }
         continue
       }
-      let p = if x.op != Op.Call { -1 } else if aux_name(x.aux) == "rt.str_borrow" { 0 } else { rv.get(aux_name(x.aux)) ?? -1 }
+      let p = if x.op != Op.Call { -1 } else if f.name_is(x, "rt.str_borrow") { 0 } else { rv.get(f.name_of(x)) ?? -1 }
       if p >= 0 && p < x.args.len() {
         // a view of a borrowed view points into the first one's text
         addr_of[v] = addr_of.get(x.args[p]) ?? x.args[p]
         views[v] = true
-      } else if x.op == Op.Call && addr_of_call(aux_name(x.aux)) && !x.args.is_empty() {
+      } else if x.op == Op.Call && addr_of_call(f.name_of(x)) && !x.args.is_empty() {
         addr_of[v] = x.args[0]
       } else if (x.op == Op.Add || x.op == Op.Sub) && x.args.len() == 2 {
         for a in x.args {

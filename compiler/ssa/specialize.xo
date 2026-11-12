@@ -67,9 +67,9 @@ fn (var b: Builder) specialize_pass(var clones: Map[Str, Int], var callee_ok: Li
     }
     for v in calls[fi] {
       let x = b.m.funcs[fi].values[v]
-      let name = match x.aux {
+      let name = match b.m.funcs[fi].aux(x) {
         S(s) => s
-        None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
+        None | I(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => ""
       }
       let ci = b.m.func_at.get(name) ?? -1
       if ci < 0 || ci == fi || !b.spec_callee_at(callee_ok, ci) {
@@ -89,10 +89,10 @@ fn (var b: Builder) specialize_pass(var clones: Map[Str, Int], var callee_ok: Li
           if clones.len() >= SPEC_MAX_CLONES {
             break
           }
-          c = b.m.add_clone(spec_clone(b.m.funcs[ci], k, b.m.funcs[fi].values[a], b.spec_name(name, ck)))
+          c = b.m.add_clone(spec_clone(b.m.funcs[ci], k, b.m.funcs[fi].values[a], b.m.funcs[fi].aux(b.m.funcs[fi].values[a]), b.spec_name(name, ck)))
           clones[ck] = c
         }
-        b.m.funcs[fi].values[v].aux = Aux.S(s: b.m.funcs[c].name)
+        b.m.funcs[fi].values[v].aux = b.m.funcs[fi].pack(Aux.S(s: b.m.funcs[c].name))
         if fi < b.m.body_ids.len() {
           b.m.body_ids[fi] = ""
         }
@@ -133,7 +133,7 @@ fn spec_callee(f: Func) -> Bool {
     for v in bl.instrs {
       let x = f.values[v]
       if x.op == Op.Call {
-        if let S(s) = x.aux {
+        if let S(s) = f.aux(x) {
           if s == f.name {
             return false
           }
@@ -182,9 +182,9 @@ fn spec_uses(m: Module, fi: Int, k: Int, depth: Int) -> Int {
       if !x.args.contains(p) {
         continue
       }
-      let name = match x.aux {
+      let name = match f.aux(x) {
         S(s) => s
-        None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
+        None | I(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => ""
       }
       if x.op is Op.Eq | Op.Ne || (x.op == Op.Call && name is "str.eq" | "str.cmp") {
         r = 1
@@ -223,32 +223,33 @@ fn spec_uses(m: Module, fi: Int, k: Int, depth: Int) -> Int {
 fn spec_key(f: Func, a: Int) -> Str {
   let x = f.values[a]
   if x.op == Op.Closure && x.args.is_empty() {
-    return match x.aux {
+    return match f.aux(x) {
       S(s) => "fn ${s}"
-      None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
+      None | I(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => ""
     }
   }
   if x.op != Op.Const {
     return ""
   }
-  match x.aux {
+  match f.aux(x) {
     S(s) => "s${s.len()} ${s}"
     Bs(bs) => "b${bs.len()} ${bs.to_hex()}"
-    None | I(..) | B(..) | F(..) | P(..) => ""
+    None | I(..) | B(..) | F(..) | P(..) | E(..) => ""
   }
 }
 
 /// f with parameter k the constant c (a copy of c's operation at the start
 /// of the entry block, every use of the parameter its use); the parameter
 /// stays, unused, so the calls keep their arguments.
-fn spec_clone(f: Func, k: Int, c: Value, name: Str) -> Func {
+/// c is the caller's constant, ca its payload (read in the caller's tables).
+fn spec_clone(f: Func, k: Int, c: Value, ca: Aux, name: Str) -> Func {
   var g = f
   g.name = name
   // its own cache keys (the original's name another body)
   g.ckey = ""
   let p = g.blocks[0].params[k]
   let nv = g.values.len()
-  g.values.push(Value{op: c.op, tb: pack_tb(ty_of(c.tb), 0), aux: c.aux, args: []})
+  g.values.push(Value{op: c.op, tb: pack_tb(ty_of(c.tb), 0), aux: g.pack(ca), args: []})
   g.blocks[0].instrs = [nv] + g.blocks[0].instrs
   for i in 0..g.values.len() {
     for j in 0..g.values[i].args.len() {

@@ -41,9 +41,9 @@ fn cancel_rc_pairs(var f: ssa.Func) -> Bool {
             done = true
             break
           }
-          if y.op == ssa.Op.Jump && j == cins.len() - 1 && y.succs.len() == 1 {
-            let to = f.edges[y.succs[0]].to
-            if f.blocks[to].preds.len() == 1 && f.edges[y.succs[0]].args.is_empty() {
+          if y.op == ssa.Op.Jump && j == cins.len() - 1 && ssa.succ_n(y) == 1 {
+            let to = f.edges[ssa.succ(y, 0)].to
+            if f.blocks[to].preds.len() == 1 && f.edges[ssa.succ(y, 0)].args.is_empty() {
               cb = to
               j = -1
               hops += 1
@@ -105,12 +105,12 @@ fn sink_retains(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) -> Bool 
         continue
       }
       let t = f.values[ins[ins.len() - 1]]
-      if !((t.op == ssa.Op.Branch && t.succs.len() == 2) || (t.op == ssa.Op.Jump && t.succs.len() == 1)) {
+      if !((t.op == ssa.Op.Branch && ssa.succ_n(t) == 2) || (t.op == ssa.Op.Jump && ssa.succ_n(t) == 1)) {
         continue
       }
       var tos: List[Int] = []
       var ok_edges = true
-      for e in t.succs {
+      for e in t.succs() {
         let to = f.edges[e].to
         if to == b || tos.contains(to) || f.blocks[to].preds.len() != 1 || !f.edges[e].args.is_empty() {
           ok_edges = false
@@ -180,7 +180,7 @@ fn sink_past(f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int], x: ssa.Value, a
   if x.op != ssa.Op.Call {
     return false
   }
-  let name = aux_str(x.aux)
+  let name = f.name_of(x)
   if name == "rt.landing" {
     return true
   }
@@ -251,7 +251,7 @@ fn sink_root_ok(f: ssa.Func, by_name: Map[Str, Int], a0: Int, depth: Int) -> Boo
     if x.op is ssa.Op.Field | ssa.Op.Payload {
       a = x.args[0]
     } else if x.op == ssa.Op.Call {
-      let name = aux_str(x.aux)
+      let name = f.name_of(x)
       if (name is "list.index" | "list.get") && x.args.len() == 2 {
         a = x.args[0]
       } else {
@@ -276,7 +276,7 @@ fn leaf_key(f: ssa.Func, v: Int) -> Str {
     if xv.op != ssa.Op.Field || xv.args.len() != 1 {
       return "v${x}${path}"
     }
-    path = ".${aux_int(xv.aux)}${path}"
+    path = ".${ssa.auxw_int(xv.aux)}${path}"
     x = xv.args[0]
   }
   ""
@@ -312,7 +312,7 @@ fn imm_post(f: ssa.Func, v: Int, depth: Int, walking: List[Int]) -> Bool {
       }
       return false
     }
-    Call => return (aux_str(x.aux) is "rt.str_view" | "rt.str_borrow") && x.args.len() >= 1 && imm_post(f, x.args[0], depth + 1, walking)
+    Call => return (f.name_of(x) is "rt.str_view" | "rt.str_borrow") && x.args.len() >= 1 && imm_post(f, x.args[0], depth + 1, walking)
     Variant => {
       for a in x.args {
         if !imm_post(f, a, depth + 1, walking) {
@@ -322,7 +322,7 @@ fn imm_post(f: ssa.Func, v: Int, depth: Int, walking: List[Int]) -> Bool {
       return true
     }
     Payload => {
-      if let P(tag: tg, field: fd) = x.aux {
+      if let P(tag: tg, field: fd) = f.aux(x) {
         return payload_imm(f, x.args[0], tg, fd, depth + 1, walking)
       }
       return false
@@ -356,7 +356,7 @@ fn payload_imm(f: ssa.Func, o: Int, tg: Int, fd: Int, depth: Int, walking: List[
   }
   let x = f.values[o]
   if x.op == ssa.Op.Variant {
-    if aux_int(x.aux) != tg {
+    if ssa.auxw_int(x.aux) != tg {
       return true
     }
     return fd < x.args.len() && imm_post(f, x.args[fd], depth + 1, walking)

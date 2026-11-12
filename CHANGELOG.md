@@ -13,6 +13,8 @@ the text of every entry is unchanged).
 - Performance (native, LLVM, wasm; decision 0613 step 5 option B): an interface value holds its methods as code addresses and the concrete value in one heap object, where it held a closure per method. Building interface values is about 18% faster (bench/perf/iface build, linux/arm64), holding a million values of an 8 method interface takes a third less memory (209.9 to 139.7 MB), and calls through an interface cost the same. `XO_ITAB=0` builds the old form, for bisecting.
 
 - Fix (native crash reports, Linux and macOS): when two threads fault at the same moment, the report keeps its frames and traceback. The handlers were installed with SA_RESETHAND, so the second fault ended the process while the first was still being reported.
+- perf (build memory, decision 0448): an SSA value is 7 words, was 9: a Jump's or Branch's edges live in its payload, and every payload is one word (names and constant bytes index the function's tables, a variant field packs its tag and field). aiplatform/apiv1's cold test build on linux/arm64 peaks at about 4.50 GB, was 4.79 (max RSS 0.946 for the first step, 0.972 for the second), with wall 0.967 and CPU 0.952 for the second step; xo's self build 0.971 for the first.
+- Interfaces (decision 0613 step 5, Go backend): a `var self` method can be called through an interface value (`var l: Loader = Box{}; l.load(3)`), updating the value in its place; a copy of the interface value is unaffected (`let b = l` before the call keeps the old value). The native backends still report XO1201 for it until stage 4.
 
 ## v0.50.1 (2026-11-12)
 

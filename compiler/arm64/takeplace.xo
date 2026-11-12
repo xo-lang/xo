@@ -41,7 +41,7 @@ fn take_uses(f: ssa.Func) -> TUses {
         us.push(v)
         vals[a] = us
       }
-      for e in x.succs {
+      for e in x.succs() {
         for a in f.edges[e].args {
           var es = edges.get(a) ?? []
           es.push(e)
@@ -85,7 +85,7 @@ fn take_in_place(var f: ssa.Func, m: ssa.Module) -> Bool {
     for v in bl.instrs {
       let x = f.values[v]
       if x.op == ssa.Op.Call && x.args.len() >= 2 {
-        let n = aux_str(x.aux)
+        let n = f.name_of(x)
         if n == "list.take" && x.args.len() == 2 {
           takes.push(v)
         } else if n == "list.set" && x.args.len() == 3 {
@@ -130,7 +130,7 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
     if wx.op != ssa.Op.Field || wx.args.len() != 1 {
       return false
     }
-    let k = aux_int(wx.aux)
+    let k = ssa.auxw_int(wx.aux)
     if k == 0 && f0 < 0 {
       f0 = w
     } else if k == 1 {
@@ -153,7 +153,7 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
   }
   let s = s0[0]
   let sx = f.values[s]
-  if sx.op != ssa.Op.Call || aux_str(sx.aux) != "list.set" || sx.args.len() != 3 || sx.args[0] != f0 || sx.args[1] != tx.args[1] || sx.args[2] == f0 {
+  if sx.op != ssa.Op.Call || !f.name_is(sx, "list.set") || sx.args.len() != 3 || sx.args[0] != f0 || sx.args[1] != tx.args[1] || sx.args[2] == f0 {
     return false
   }
   // the element's way from the take to the set: set fields, and block
@@ -269,7 +269,7 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
     // holds the old one twice
     let cx = f.values[c]
     if cx.op == ssa.Op.SetField && m.heap(ssa.ty_of(f.values[cx.args[1]].tb)) {
-      let (r, z) = take_old_released(f, u, chain, others, ci, aux_int(cx.aux))
+      let (r, z) = take_old_released(f, u, chain, others, ci, ssa.auxw_int(cx.aux))
       if r < 0 {
         return false
       }
@@ -282,7 +282,7 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
   let l = tx.args[0]
   let i = tx.args[1]
   let lt = ssa.ty_of(f.values[l].tb)
-  f.values[t].aux = ssa.Aux.S(s: "list.index")
+  f.values[t].aux = f.pack(ssa.Aux.S(s: "list.index"))
   f.values[t].tb = ssa.with_ty(f.values[t].tb, et)
   var lst: Map[Int, Int] = {}
   lst[f1] = l
@@ -290,11 +290,11 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
     let cx = f.values[c]
     if c != f1 {
       if cx.op == ssa.Op.SetField {
-        let k = aux_int(cx.aux)
+        let k = ssa.auxw_int(cx.aux)
         f.values[c].op = ssa.Op.Call
         f.values[c].tb = ssa.with_ty(cx.tb, lt)
         f.values[c].args = [lst.get(cx.args[0]) ?? l, i, cx.args[1]]
-        f.values[c].aux = ssa.Aux.S(s: "list.setf ${k}")
+        f.values[c].aux = f.pack(ssa.Aux.S(s: "list.setf ${k}"))
       } else {
         // a block parameter: the list now, passed by its predecessor
         let pb = ssa.block_of(cx.tb)
@@ -319,7 +319,7 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
       if vx.op == ssa.Op.Field && !dropped.contains(v) {
         f.values[v].op = ssa.Op.Call
         f.values[v].args = [lst.get(c) ?? l, i]
-        f.values[v].aux = ssa.Aux.S(s: "list.getf ${aux_int(vx.aux)}")
+        f.values[v].aux = f.pack(ssa.Aux.S(s: "list.getf ${ssa.auxw_int(vx.aux)}"))
       }
     }
   }
@@ -345,7 +345,7 @@ fn take_old_released(f: ssa.Func, u: TUses, chain: List[Int], others: List[Int],
   var srcs: List[Int] = []
   for j in 0..ci {
     let cj = f.values[chain[j]]
-    if j > 0 && cj.op == ssa.Op.SetField && aux_int(cj.aux) == k {
+    if j > 0 && cj.op == ssa.Op.SetField && ssa.auxw_int(cj.aux) == k {
       return (-1, -1)
     }
     srcs.push(chain[j])
@@ -354,7 +354,7 @@ fn take_old_released(f: ssa.Func, u: TUses, chain: List[Int], others: List[Int],
   for c in srcs {
     for r in u.vals.get(c) ?? [] {
       let rx = f.values[r]
-      if rx.op != ssa.Op.Field || aux_int(rx.aux) != k || !(u.edges.get(r) ?? []).is_empty() {
+      if rx.op != ssa.Op.Field || ssa.auxw_int(rx.aux) != k || !(u.edges.get(r) ?? []).is_empty() {
         continue
       }
       let zs = u.vals.get(r) ?? []

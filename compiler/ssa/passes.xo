@@ -10,13 +10,13 @@
 // builder's renumber gives (block order, parameters first).
 
 /// Whether the value x can raise a fault by itself (selfFaults).
-fn value_self_faults(x: Value) -> Bool {
+fn value_self_faults(f: Func, x: Value) -> Bool {
   match x.op {
     Fault => true
     Add | Sub | Mul | Neg | Div | Rem | Shl | Shr | FloatToInt => has_pos(x.lp)
     CallValue => true
     Call => {
-      let name = aux_name(x.aux)
+      let name = f.name_of(x)
       if name is "list.index" | "list.set" | "list.take" | "bytes.index" | "Int.abs" {
         return has_pos(x.lp)
       }
@@ -30,16 +30,16 @@ fn value_self_faults(x: Value) -> Bool {
 fn aux_name(a: Aux) -> Str {
   match a {
     S(s) => s
-    None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
+    None | I(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => ""
   }
 }
 
 /// The index of the module's function x calls, or -1 (isUserCall).
-fn user_callee(m: Module, x: Value) -> Int {
+fn user_callee(m: Module, f: Func, x: Value) -> Int {
   if x.op != Op.Call {
     return -1
   }
-  m.func_index(aux_name(x.aux))
+  m.func_index(f.name_of(x))
 }
 
 /// The functions that can fault: those with an operation that faults,
@@ -127,16 +127,16 @@ fn fault_scans(m: Module) -> List[(Bool, List[Int])] {
 /// Whether value x of function f, once built, can fault (raises).
 fn raises(m: Module, f: Func, x: Value, faults: List[Bool]) -> Bool {
   if x.op == Op.CallValue && f.values[x.args[0]].op == Op.Closure {
-    let g = m.func_index(aux_name(f.values[x.args[0]].aux))
+    let g = m.func_index(f.name_of(f.values[x.args[0]]))
     if g >= 0 && m.funcs[g].catches {
       // it returns on a fault
       return false
     }
   }
-  if value_self_faults(x) {
+  if value_self_faults(f, x) {
     return true
   }
-  let g = user_callee(m, x)
+  let g = user_callee(m, f, x)
   if g >= 0 {
     return faults[g]
   }
@@ -218,7 +218,7 @@ pub fn (var b: Builder) prune_unwind() {
       continue
     }
     if c.callee.is_empty() || (g >= 0 && faults[g]) {
-      b.m.funcs[c.fi].values[c.u].aux = Aux.S(s: "rt.landing")
+      b.m.funcs[c.fi].values[c.u].aux = b.m.funcs[c.fi].pack(Aux.S(s: "rt.landing"))
       continue
     }
     b.drop_check(c.fi, c.u, c.w)
@@ -252,7 +252,7 @@ fn walk_literal(m: Module, c: UCheck) -> Int {
     return -1
   }
   let x = f.values[c.w]
-  if x.op != Op.Call || aux_name(x.aux) != c.callee || x.args.is_empty() {
+  if x.op != Op.Call || f.name_of(x) != c.callee || x.args.is_empty() {
     return -1
   }
   // the function value is the method's last parameter
@@ -260,7 +260,7 @@ fn walk_literal(m: Module, c: UCheck) -> Int {
   if a.op != Op.Closure {
     return -1
   }
-  m.func_index(aux_name(a.aux))
+  m.func_index(f.name_of(a))
 }
 
 /// The prelude methods outside callback_walk whose only call that may
@@ -316,8 +316,8 @@ fn (var b: Builder) drop_check(fi: Int, u: Int, w: Int) {
   }
   let bl = block_of(b.m.funcs[fi].values[u].tb)
   let br = b.m.funcs[fi].term(bl)
-  let yes = b.m.funcs[fi].values[br].succs[0]
-  let no = b.m.funcs[fi].values[br].succs[1]
+  let yes = succ(b.m.funcs[fi].values[br], 0)
+  let no = succ(b.m.funcs[fi].values[br], 1)
   let to = b.m.funcs[fi].edges[yes].to
   var preds: List[Int] = []
   for e in b.m.funcs[fi].blocks[to].preds {
@@ -328,7 +328,7 @@ fn (var b: Builder) drop_check(fi: Int, u: Int, w: Int) {
   b.m.funcs[fi].blocks[to].preds = preds
   b.m.funcs[fi].values[br].op = Op.Jump
   b.m.funcs[fi].values[br].args = []
-  b.m.funcs[fi].values[br].succs = [no]
+  b.m.funcs[fi].values[br].set_succs([no])
   var ins: List[Int] = []
   for v in b.m.funcs[fi].blocks[bl].instrs {
     if v != u {
@@ -373,9 +373,9 @@ pub fn (var b: Builder) fold_known_calls() {
       if v.op != Op.Call || !v.args.is_empty() || pad_of(v.pi) >= 0 || block_of(v.tb) < 0 {
         continue
       }
-      if let Some(a) = known.get(user_callee(b.m, v)) {
+      if let Some(a) = known.get(user_callee(b.m, b.m.funcs[fi], v)) {
         b.m.funcs[fi].values[vi].op = Op.Const
-        b.m.funcs[fi].values[vi].aux = a
+        b.m.funcs[fi].values[vi].aux = b.m.funcs[fi].pack(a)
         hit = true
       }
     }
@@ -412,7 +412,7 @@ fn known_result(f: Func) -> Option[Aux] {
     let t = f.values[ins[ins.len() - 1]]
     match t.op {
       Op.Jump => {
-        let e = f.edges[t.succs[0]]
+        let e = f.edges[succ(t, 0)]
         let ps = f.blocks[e.to].params
         if e.args.len() != ps.len() {
           return None
@@ -476,7 +476,7 @@ fn fold_const_branches(var f: Func) -> Bool {
     if v.op == Op.Not && block_of(v.tb) >= 0 && v.args.len() == 1 && f.values[v.args[0]].op == Op.Const {
       if let B(x) = f.values[v.args[0]].aux {
         f.values[vi].op = Op.Const
-        f.values[vi].aux = Aux.B(b: !x)
+        f.values[vi].aux = f.pack(Aux.B(b: !x))
         f.values[vi].args = []
       }
       continue
@@ -502,14 +502,14 @@ fn fold_const_branches(var f: Func) -> Bool {
           _ => x >= y
         }
         f.values[vi].op = Op.Const
-        f.values[vi].aux = Aux.B(b: r)
+        f.values[vi].aux = f.pack(Aux.B(b: r))
         f.values[vi].args = []
       }
     }
   }
   for bl in 0..f.blocks.len() {
     let t = f.term(bl)
-    if t < 0 || f.values[t].op != Op.Branch || f.values[t].succs.len() != 2 {
+    if t < 0 || f.values[t].op != Op.Branch || succ_n(f.values[t]) != 2 {
       continue
     }
     let cv = f.values[f.values[t].args[0]]
@@ -523,8 +523,8 @@ fn fold_const_branches(var f: Func) -> Bool {
     if taken < 0 {
       continue
     }
-    let keep = f.values[t].succs[taken]
-    let drop = f.values[t].succs[1 - taken]
+    let keep = f.values[t].succs()[taken]
+    let drop = f.values[t].succs()[1 - taken]
     if !pads_reached(f, t, keep) {
       continue
     }
@@ -538,7 +538,7 @@ fn fold_const_branches(var f: Func) -> Bool {
     f.blocks[to].preds = preds
     f.values[t].op = Op.Jump
     f.values[t].args = []
-    f.values[t].succs = [keep]
+    f.values[t].set_succs([keep])
     changed = true
   }
   changed
@@ -560,7 +560,7 @@ pub fn pads_reached(f: Func, t: Int, keep: Int) -> Bool {
     let bl = stack.pop() ?? 0
     let tt = f.term(bl)
     if tt >= 0 {
-      let ss = if tt == t { [keep] } else { f.values[tt].succs }
+      let ss = if tt == t { [keep] } else { f.values[tt].succs() }
       for e in ss {
         let to = f.edges[e].to
         if !reach[to] {
@@ -672,7 +672,7 @@ pub fn (var b: Builder) add_landings_with(faults: List[Bool], skip: Map[Int, Boo
         for k in off..end {
           let v = src[k]
           b.s.f.values[v].tb = with_block(b.s.f.values[v].tb, bi)
-          for e in b.s.f.values[v].succs {
+          for e in b.s.f.values[v].succs() {
             b.s.f.edges[e].from = bi
           }
         }
@@ -790,7 +790,7 @@ pub fn land_func(var f: Func, bool_t: Int) {
       for k in off..end {
         let v = src[k]
         f.values[v].tb = with_block(f.values[v].tb, bi)
-        for e in f.values[v].succs {
+        for e in f.values[v].succs() {
           f.edges[e].from = bi
         }
       }
@@ -868,7 +868,7 @@ fn prune_func(var f: Func) {
     let bl = stack.pop() ?? 0
     let t = f.term(bl)
     if t >= 0 {
-      for e in f.values[t].succs {
+      for e in f.values[t].succs() {
         let to = f.edges[e].to
         if !reach[to] {
           reach[to] = true
@@ -927,7 +927,7 @@ pub fn merge_straight(var f: Func, m: Module, calls: List[Bool]) -> Bool {
       if t < 0 || f.values[t].op != Op.Jump {
         break
       }
-      let e = f.values[t].succs[0]
+      let e = succ(f.values[t], 0)
       let b = f.edges[e].to
       if b == a || b == 0 || b < 0 || !keep[b] || f.blocks[b].preds.len() != 1 || b == f.unwind_exit || f.land_rest.contains(b) || calls[a] || calls[b] {
         break
@@ -950,7 +950,7 @@ pub fn merge_straight(var f: Func, m: Module, calls: List[Bool]) -> Bool {
       var ins = f.blocks[a].instrs[0..n - 1]
       for v in f.blocks[b].instrs {
         f.values[v].tb = with_block(f.values[v].tb, a)
-        for se in f.values[v].succs {
+        for se in f.values[v].succs() {
           f.edges[se].from = a
         }
         ins.push(v)
@@ -975,7 +975,7 @@ pub fn merge_straight(var f: Func, m: Module, calls: List[Bool]) -> Bool {
         for i in 0..f.values[v].args.len() {
           f.values[v].args[i] = find_repl(repl, f.values[v].args[i])
         }
-        for se in f.values[v].succs {
+        for se in f.values[v].succs() {
           for i in 0..f.edges[se].args.len() {
             f.edges[se].args[i] = find_repl(repl, f.edges[se].args[i])
           }
@@ -1024,7 +1024,7 @@ pub fn cse(var f: Func, m: Module) -> Bool {
     i -= 1
     for v in f.blocks[b].instrs {
       let x = f.values[v]
-      let call = if x.op == Op.Call { cse_call(x.aux) } else { "" }
+      let call = if x.op == Op.Call { cse_call(f.aux(x)) } else { "" }
       if call.is_empty() && (!cse_op(x.op) || ty_of(x.tb) < 0 || m.heap(ty_of(x.tb))) {
         continue
       }
@@ -1044,7 +1044,7 @@ pub fn cse(var f: Func, m: Module) -> Bool {
       // it may still be the twin a later one takes
       let lands = pad_of(x.pi) >= 0
       var key = "${op_name(x.op)} ${ty_of(x.tb)}"
-      match x.aux {
+      match f.aux(x) {
         None => {}
         I(n) => key = "${key} #${n}"
         P(t, fl) => key = "${key} #${t}.${fl}"
@@ -1053,7 +1053,7 @@ pub fn cse(var f: Func, m: Module) -> Bool {
         } else {
           key = "${key} ${n}"
         }
-        F(..) | B(..) | Bs(..) => continue
+        F(..) | B(..) | Bs(..) | E(..) => continue
       }
       // a constant operand by its value: each use site has its own Const
       var args: List[Str] = []
@@ -1065,7 +1065,7 @@ pub fn cse(var f: Func, m: Module) -> Bool {
           match y.aux {
             I(n) => args.push("k${ty_of(y.tb)}=${n}")
             B(t) => args.push("k${ty_of(y.tb)}=${t}")
-            None | F(..) | S(..) | Bs(..) | P(..) => ok = false
+            None | F(..) | S(..) | Bs(..) | P(..) | E(..) => ok = false
           }
         } else {
           args.push("v${a}")
@@ -1112,7 +1112,7 @@ pub fn cse(var f: Func, m: Module) -> Bool {
       for k in 0..f.values[v].args.len() {
         f.values[v].args[k] = find_repl(repl, f.values[v].args[k])
       }
-      for se in f.values[v].succs {
+      for se in f.values[v].succs() {
         for k in 0..f.edges[se].args.len() {
           f.edges[se].args[k] = find_repl(repl, f.edges[se].args[k])
         }
@@ -1158,7 +1158,7 @@ pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
           us.update(a, [], fn(var l) { l.push(v) })
         }
       }
-      for e in f.values[v].succs {
+      for e in f.values[v].succs() {
         for a in f.edges[e].args {
           if a >= 0 && f.values[a].op == Op.Tuple {
             us.update(a, [], fn(var l) { l.push(-1) })
@@ -1194,7 +1194,7 @@ pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
         }
         let i = match f.values[u].aux {
           I(n) => n
-          None | F(..) | B(..) | S(..) | Bs(..) | P(..) => -1
+          None | F(..) | B(..) | S(..) | Bs(..) | P(..) | E(..) => -1
         }
         if i < 0 || i >= x.args.len() {
           ok = false
@@ -1207,7 +1207,7 @@ pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
       for u in tu {
         let i = match f.values[u].aux {
           I(n) => n
-          None | F(..) | B(..) | S(..) | Bs(..) | P(..) => 0
+          None | F(..) | B(..) | S(..) | Bs(..) | P(..) | E(..) => 0
         }
         repl[u] = x.args[i]
         dead[u] = true
@@ -1228,7 +1228,7 @@ pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
       for k in 0..f.values[v].args.len() {
         f.values[v].args[k] = find_repl(repl, f.values[v].args[k])
       }
-      for se in f.values[v].succs {
+      for se in f.values[v].succs() {
         for k in 0..f.edges[se].args.len() {
           f.edges[se].args[k] = find_repl(repl, f.edges[se].args[k])
         }
@@ -1251,7 +1251,7 @@ fn tuple_operand_owned(f: Func, m: Module, a: Int) -> Bool {
   match x.op {
     Param => block_of(x.tb) != 0
     Const | Payload | Capture | Unbox | Field | Bind => false
-    Call => !is_proj_call(aux_name(x.aux))
+    Call => !is_proj_call(f.name_of(x))
     _ => true
   }
 }
@@ -1267,7 +1267,7 @@ fn cse_op(op: Op) -> Bool {
 fn cse_call(aux: Aux) -> Str {
   match aux {
     S(n) => if n is "list.len" | "Str.len" | "bytes.len" | "list.index" { n } else { "" }
-    None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
+    None | I(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => ""
   }
 }
 
@@ -1280,13 +1280,13 @@ fn read_only_uses(f: Func) -> Map[Int, Bool] {
   for b in f.blocks {
     for v in b.instrs {
       let x = f.values[v]
-      let name = if x.op == Op.Call { cse_call(x.aux) } else { "" }
+      let name = if x.op == Op.Call { cse_call(f.aux(x)) } else { "" }
       for (k, a) in x.args.indexed() {
         if k > 0 || name.is_empty() {
           out[a] = true
         }
       }
-      for se in x.succs {
+      for se in x.succs() {
         for a in f.edges[se].args {
           out[a] = true
         }
@@ -1405,7 +1405,7 @@ fn remove_trivial_params(var f: Func) {
       for k in 0..f.values[v].args.len() {
         f.values[v].args[k] = find_repl(repl, f.values[v].args[k])
       }
-      for e in f.values[v].succs {
+      for e in f.values[v].succs() {
         for k in 0..f.edges[e].args.len() {
           f.edges[e].args[k] = find_repl(repl, f.edges[e].args[k])
         }

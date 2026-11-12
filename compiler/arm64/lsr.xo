@@ -51,7 +51,7 @@ fn (var g: G) plan_lsr(blocks: List[Int], idom: List[Int]) {
     if t < 0 {
       continue
     }
-    for e in g.f.values[t].succs {
+    for e in g.f.values[t].succs() {
       let h = g.f.edges[e].to
       if !dominates_b(idom, entry, h, b) || h == entry {
         continue
@@ -139,7 +139,7 @@ fn (var g: G) plan_lsr(blocks: List[Int], idom: List[Int]) {
         if x.op != ssa.Op.Call || x.args.len() < 2 {
           continue
         }
-        let name = aux_str(x.aux)
+        let name = g.f.name_of(x)
         if name != "list.index" && name != "list.set" {
           continue
         }
@@ -265,7 +265,7 @@ fn (g: G) stable_list(xs: Int, h: Int, body: List[Bool], latches: List[Int]) -> 
 /// Follows list.set results to the list they update.
 fn (g: G) strip_set(v0: Int) -> Int {
   var v = v0
-  while g.f.values[v].op == ssa.Op.Call && aux_str(g.f.values[v].aux) == "list.set" {
+  while g.f.values[v].op == ssa.Op.Call && g.f.name_is(g.f.values[v], "list.set") {
     v = g.f.values[v].args[0]
   }
   v

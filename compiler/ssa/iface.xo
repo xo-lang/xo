@@ -1184,7 +1184,7 @@ fn (var b: Builder) str_eq_br(l: Int, r: Int, fail: Int) {
 fn (var b: Builder) str_len_of(s: Int) -> Int {
   let v = b.s.f.values[s]
   if v.op == Op.Const {
-    if let Aux.S(s: t) = v.aux {
+    if let Aux.S(s: t) = b.s.f.aux(v) {
       return b.cint(t.len())
     }
   }

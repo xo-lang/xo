@@ -276,7 +276,7 @@ fn inline_break(var m: ssa.Module) -> Bool {
   for fi in 0..m.funcs.len() {
     for b in m.funcs[fi].blocks {
       for v in b.instrs {
-        let succs = m.funcs[fi].values[v].succs
+        let succs = m.funcs[fi].values[v].succs()
         if !done && !succs.is_empty() {
           m.funcs[fi].edges[succs[0]].args.push(v)
           m.funcs[fi].ckey = ""

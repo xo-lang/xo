@@ -445,7 +445,7 @@ fn (r: Rc) is_alias(f: Func, v: Int) -> Bool {
 fn aux_int(a: Aux) -> Int {
   match a {
     I(n) => n
-    None | S(..) | F(..) | B(..) | Bs(..) | P(..) => 0
+    None | S(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => 0
   }
 }
 
@@ -454,7 +454,7 @@ fn (var r: Rc) base(f: Func, v: Int) -> Leaf {
   if r.is_alias(f, v) {
     let x = f.values[v]
     let b = r.base(f, x.args[0])
-    let i = aux_int(x.aux)
+    let i = auxw_int(x.aux)
     let key = (b.pid << 24) + i
     if let Some(n) = r.pfield.get(key) {
       return r.leaf_n(b.root, n)
@@ -562,10 +562,10 @@ fn (var r: Rc) kind(f: Func, v: Int) -> RootKind {
       // the object at an address, with no count (rt.obj_peek: a C export's
       // handle parameter's list, kept alive by the wrapper's read epoch;
       // decision 0574)
-      if aux_name(x.aux) == "rt.obj_peek" {
+      if f.name_is(x, "rt.obj_peek") {
         return RootKind.Borrowed
       }
-      if is_proj_call(aux_name(x.aux)) || aux_name(x.aux) == "rt.str_borrow" || (r.view_proj && aux_name(x.aux) == "rt.str_view") || r.ret_view_at(x) >= 0 {
+      if is_proj_call(f.name_of(x)) || f.name_is(x, "rt.str_borrow") || (r.view_proj && f.name_is(x, "rt.str_view")) || r.ret_view_at(f, x) >= 0 {
         return r.proj_kind(f, v)
       }
     }
@@ -591,7 +591,7 @@ fn (var r: Rc) parent(f: Func, v: Int) -> Leaf {
   let x = f.values[v]
   // a call of a function that returns a view of its argument p (decision
   // 0465 step 2): that argument's
-  let p = if x.op == Op.Call { r.ret_view_at(x) } else if x.op == Op.Bind { 1 } else { -1 }
+  let p = if x.op == Op.Call { r.ret_view_at(f, x) } else if x.op == Op.Bind { 1 } else { -1 }
   r.leaves(f, x.args[if p > 0 && p < x.args.len() { p } else { 0 }])[0]
 }
 
@@ -599,7 +599,7 @@ fn (var r: Rc) parent(f: Func, v: Int) -> Leaf {
 /// (Rc.rvp), or -1. Only a Str result can be one, and the name is looked
 /// up only then, in the few names that qualify: kind asks for every
 /// call value.
-fn (r: Rc) ret_view_at(x: Value) -> Int {
+fn (r: Rc) ret_view_at(f: Func, x: Value) -> Int {
   if r.rvn.is_empty() {
     return -1
   }
@@ -607,7 +607,7 @@ fn (r: Rc) ret_view_at(x: Value) -> Int {
   if t < 0 || t >= r.types.len() || r.types[t].kind != Kind.Str {
     return -1
   }
-  r.rvn.get(aux_name(x.aux)) ?? -1
+  r.rvn.get(f.name_of(x)) ?? -1
 }
 
 fn (var r: Rc) tracked(f: Func, l: Leaf) -> Bool {
@@ -629,7 +629,7 @@ fn (var r: Rc) modes(f: Func, v: Int) -> List[Mode] {
       if x.op == Op.Closure {
         // decision 0507: a borrowed capture stays its variable's, which
         // the scope keeps alive past its join
-        if let Some(ci) = r.fidx.get(aux_name(x.aux)) {
+        if let Some(ci) = r.fidx.get(f.name_of(x)) {
           if ci < r.capb.len() {
             for (i, bw) in r.capb[ci].indexed() {
               if bw && i < n {
@@ -658,9 +658,9 @@ fn (var r: Rc) modes(f: Func, v: Int) -> List[Mode] {
       if c.op == Op.Closure {
         // the body's convention is its parameter 0's type: the same
         // type as the closure's, or one side takes what the other lent
-        if let Some(ci) = r.fidx.get(aux_name(c.aux)) {
+        if let Some(ci) = r.fidx.get(f.name_of(c)) {
           if ci < r.fparam0.len() && r.fparam0[ci] >= 0 && r.fparam0[ci] != ft {
-            fault("internal: a call of closure ${aux_name(c.aux)} through a value of another function type (decision 0337)")
+            fault("internal: a call of closure ${f.name_of(c)} through a value of another function type (decision 0337)")
           }
         }
       }
@@ -680,7 +680,7 @@ fn (var r: Rc) modes(f: Func, v: Int) -> List[Mode] {
       ms[1] = Mode.Consume
     }
     Call => {
-      let name = aux_name(x.aux)
+      let name = f.name_of(x)
       if let Some(ci) = r.fidx.get(name) {
         let bs = r.borrowed[ci]
         for i in 0..n {
@@ -719,9 +719,9 @@ pub fn (m: Module) consumed_operands(f: Func, v: Int) -> List[Bool] {
   var r = Rc{types: m.types}
   let x = f.values[v]
   if x.op == Op.Call || x.op == Op.Closure {
-    let fi = m.func_index(aux_name(x.aux))
+    let fi = m.func_index(f.name_of(x))
     if fi >= 0 {
-      r.fidx[aux_name(x.aux)] = 0
+      r.fidx[f.name_of(x)] = 0
       r.borrowed.push(m.funcs[fi].borrowed)
       r.capb.push(m.funcs[fi].cap_borrowed)
     }
@@ -801,7 +801,7 @@ fn (var r: Rc) leaf_uses_fresh(f: Func, v: Int) -> List[Use] {
     if x.op == Op.SetField && i == 0 {
       // the replaced field is not used
       let b = r.base(f, a)
-      let pre = "${b.path}.${aux_int(x.aux)}"
+      let pre = "${b.path}.${auxw_int(x.aux)}"
       let pre_dot = "${pre}."
       let n0 = out.len()
       for l in ls {
@@ -852,7 +852,7 @@ fn (var r: Rc) owner_use(var out: List[Use], f: Func, a: Int, at: Int) {
 /// A new value of f placed nowhere yet (newValue / mk).
 fn new_value(var f: Func, bl: Int, op: Op, t: Int, aux: Aux, args: List[Int]) -> Int {
   let v = f.values.len()
-  f.values.push(Value{op: op, tb: pack_tb(t, bl), args: args, aux: aux})
+  f.values.push(Value{op: op, tb: pack_tb(t, bl), args: args, aux: f.pack(aux)})
   v
 }
 
@@ -862,7 +862,7 @@ fn reuse_var_params(var f: Func, types: List[SType]) {
   var updates = false
   for bl in f.blocks {
     for v in bl.instrs {
-      if f.values[v].op == Op.Call && is_update_call(aux_name(f.values[v].aux)) {
+      if f.values[v].op == Op.Call && is_update_call(f.name_of(f.values[v])) {
         updates = true
       }
     }
@@ -886,7 +886,7 @@ fn reuse_var_params(var f: Func, types: List[SType]) {
             f.values[v].args[k] = u
           }
         }
-        for e in f.values[v].succs {
+        for e in f.values[v].succs() {
           for k in 0..f.edges[e].args.len() {
             if f.edges[e].args[k] == p {
               f.edges[e].args[k] = u
@@ -999,7 +999,7 @@ fn borrow_callers(r: Rc, funcs: List[Func]) -> List[List[Int]] {
   for (fi, f) in funcs.indexed() {
     var seen: Map[Int, Bool] = {}
     for x in f.values {
-      if let S(s) = x.aux {
+      if let S(s) = f.aux(x) {
         if let Some(ci) = r.fidx.get(s) {
           if ci != fi && !seen.contains(ci) {
             seen[ci] = true
@@ -1157,7 +1157,7 @@ fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
           r.consumed_path(f, u.l, cpaths)
         }
       }
-      for e in f.values[v].succs {
+      for e in f.values[v].succs() {
         for a in f.edges[e].args {
           for l in r.leaves(f, a) {
             cons = r.consumed(f, l, bi, cons)
@@ -1266,7 +1266,7 @@ fn consumed_on_every_path(f: Func, cons: List[Bool]) -> Bool {
       let t = f.term(i)
       var succs: List[Int] = []
       if t >= 0 {
-        succs = f.values[t].succs
+        succs = f.values[t].succs()
         let (_, u) = landing_site(f, i)
         if u >= 0 && succs.len() == 2 {
           succs = succs[1..2]
@@ -1302,7 +1302,7 @@ fn landing_site(f: Func, bl: Int) -> (Int, Int) {
   if f.values[u].op != Op.Call || block_of(f.values[u].tb) != bl {
     return (-1, -1)
   }
-  let name = aux_name(f.values[u].aux)
+  let name = f.name_of(f.values[u])
   if name != "rt.landing" && name != "rt.unwinding" {
     return (-1, -1)
   }
@@ -1706,7 +1706,7 @@ fn (var r: Rc) liveness(f: Func, var c: RcFunc) {
   for i in 0..n {
     let t = f.term(i)
     if t >= 0 {
-      for e in f.values[t].succs {
+      for e in f.values[t].succs() {
         preds[f.edges[e].to].push(i)
       }
     }
@@ -1725,7 +1725,7 @@ fn (var r: Rc) liveness(f: Func, var c: RcFunc) {
           }
         }
       }
-      for e in f.values[v].succs {
+      for e in f.values[v].succs() {
         for a in f.edges[e].args {
           for l in r.leaves(f, a) {
             if r.tracked(f, l) && block_of(f.values[l.root].tb) != bi {
@@ -1875,7 +1875,7 @@ fn imm_at(f: Func, v: Int, path: Str, k: Int, sums: Map[Str, List[Bool]], depth:
       }
       return true
     }
-    return imm_value(x) || const_list(f, x)
+    return imm_value(f, x) || const_list(f, x)
   }
   let e = part_end(path, k)
   let idx = Int.parse(path[k..e]) ?? -1
@@ -1886,7 +1886,7 @@ fn imm_at(f: Func, v: Int, path: Str, k: Int, sums: Map[Str, List[Bool]], depth:
     return imm_at(f, x.args[idx], path, e + 1, sums, depth + 1, walking)
   }
   if x.op == Op.SetField {
-    if aux_int(x.aux) == idx {
+    if auxw_int(x.aux) == idx {
       return imm_at(f, x.args[1], path, e + 1, sums, depth + 1, walking)
     }
     return imm_at(f, x.args[0], path, k, sums, depth + 1, walking)
@@ -1894,7 +1894,7 @@ fn imm_at(f: Func, v: Int, path: Str, k: Int, sums: Map[Str, List[Bool]], depth:
   if x.op == Op.Call && e == path.len() {
     // a field of a call of a function whose one return is a struct
     // literal with that field immortal (immortal_returns)
-    if let Some(fs) = sums.get(aux_name(x.aux)) {
+    if let Some(fs) = sums.get(f.name_of(x)) {
       return idx >= 0 && idx < fs.len() && fs[idx]
     }
   }
@@ -1903,7 +1903,7 @@ fn imm_at(f: Func, v: Int, path: Str, k: Int, sums: Map[Str, List[Bool]], depth:
 
 /// Whether value x is an immortal object: a Str or Bytes constant, the
 /// empty list, the zero handle, or a closure of nothing.
-fn imm_value(x: Value) -> Bool {
+fn imm_value(f: Func, x: Value) -> Bool {
   match x.op {
     Const => {
       if let S(_) = x.aux {
@@ -1916,7 +1916,7 @@ fn imm_value(x: Value) -> Bool {
     }
     // decision 0554's frame list (compiler/arm64 stacklist.xo) is
     // uncounted as the empty list is
-    Call => aux_name(x.aux) is "rt.rl_empty" | "rt.h_zero" || aux_name(x.aux).starts_with("rt.rl_stack ") || aux_name(x.aux).starts_with("rt.rl_stack_put ")
+    Call => f.name_of(x) is "rt.rl_empty" | "rt.h_zero" || f.name_starts(x, "rt.rl_stack ") || f.name_starts(x, "rt.rl_stack_put ")
     Closure => x.args.is_empty()
     _ => false
   }
@@ -1930,7 +1930,7 @@ fn const_list(f: Func, x: Value) -> Bool {
   if x.op != Op.Call {
     return false
   }
-  let n = aux_name(x.aux)
+  let n = f.name_of(x)
   if n == "rt.const_once" {
     return true
   }
@@ -1938,7 +1938,7 @@ fn const_list(f: Func, x: Value) -> Bool {
     return false
   }
   let t = f.values[x.args[0]]
-  t.op == Op.Call && aux_name(t.aux) == "rt.slot_load" && t.args.len() == 3 && const_int(f, t.args[1]) == Some(CONST_TABLE_WORD)
+  t.op == Op.Call && f.name_is(t, "rt.slot_load") && t.args.len() == 3 && const_int(f, t.args[1]) == Some(CONST_TABLE_WORD)
 }
 
 /// The functions of fs whose one return is a struct literal, with which
@@ -2001,7 +2001,7 @@ fn imm_return_of(f: Func) -> List[Bool] {
   var flags: List[Bool] = []
   var any = false
   for a in s.args {
-    let b = imm_value(f.values[a])
+    let b = imm_value(f, f.values[a])
     flags.push(b)
     any = any || b
   }
@@ -2112,7 +2112,7 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
   var rev = List[Int].with_capacity(ni + ni / 2 + 4)
   match f.values[term].op {
     Jump => {
-      let need = r.edge_need(f, c, f.values[term].succs[0])
+      let need = r.edge_need(f, c, succ(f.values[term], 0))
       var code: List[Int] = []
       for l in need.order() {
         var n = need.consumes(l)
@@ -2134,7 +2134,7 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
     Branch => {
       var needs: List[EdgeNeed] = []
       var hm: Map[Int, Leaf] = {}
-      for e in f.values[term].succs {
+      for e in f.values[term].succs() {
         let k = r.edge_need(f, c, e)
         for l in k.order() {
           if r.tracked(f, l) {
@@ -2148,7 +2148,7 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
       // on the cleanup path of a landing check, the operation checked
       // produced nothing (decision 0085)
       let (site, _) = landing_site(f, bl)
-      let succs = f.values[term].succs
+      let succs = f.values[term].succs()
       for (i, e) in succs.indexed() {
         r.edge_code(f, c, e, needs[i], held, i == 0, site)
       }
@@ -2368,7 +2368,7 @@ fn split_edge(var f: Func, e: Int, n: Int, x: List[Int]) {
   let j = new_value(f, n, Op.Jump, -1, Aux.None, [])
   let ne = f.edges.len()
   f.edges.push(Edge{from: n, to: to, args: f.edges[e].args})
-  f.values[j].succs = [ne]
+  f.values[j].set_succs([ne])
   f.blocks[n].instrs.push(j)
   for (i, p) in f.blocks[to].preds.indexed() {
     if p == e {
@@ -2668,7 +2668,7 @@ fn remove_dead_fields(var f: Func) {
           nuse[a] += 1
         }
       }
-      for e in f.values[v].succs {
+      for e in f.values[v].succs() {
         for a in f.edges[e].args {
           if a >= 0 {
             nuse[a] += 1
@@ -2744,7 +2744,7 @@ fn (var r: Rc) touches(f: Func, w: Int, an: List[Int]) -> Bool {
   }
   // the leaves of each edge argument read in place (edge_uses' list,
   // made for every edge of every instruction scanned, was an allocation)
-  for e in x.succs {
+  for e in x.succs() {
     for a in f.edges[e].args {
       for l in r.leaves(f, a) {
         if an.contains(l.root) {
@@ -2792,7 +2792,7 @@ fn (var r: Rc) uniq(f: Func, u: Uniq, l: Leaf) -> Bool {
   }
   match x.op {
     Call => {
-      let name = aux_name(x.aux)
+      let name = f.name_of(x)
       if name is "list.new" | "list.set" | "list.push" || name.starts_with("list.setf ") {
         return l.path.is_empty()
       }
@@ -2808,7 +2808,7 @@ fn (var r: Rc) uniq(f: Func, u: Uniq, l: Leaf) -> Bool {
       }
     }
     SetField => {
-      if idx == aux_int(x.aux) {
+      if idx == auxw_int(x.aux) {
         let b = r.base(f, x.args[1])
         return r.uniq(f, u, r.leaf(b.root, "${b.path}${rest}"))
       }
@@ -2839,7 +2839,7 @@ fn (var r: Rc) unique(f: Func) -> Uniq {
           u.retained[leaf_key(l)] = true
         }
       } else if x.op == Op.Call && !facts {
-        let ci = r.fidx.get(aux_name(x.aux)) ?? -1
+        let ci = r.fidx.get(f.name_of(x)) ?? -1
         facts = ci >= 0 && ci < r.uq.len() && !r.uq[ci].is_empty()
       }
     }
@@ -2890,7 +2890,7 @@ fn (var r: Rc) handed_unique(f: Func, u: Uniq, l: Leaf, at: Int) -> Bool {
   if x.op != Op.Call {
     return false
   }
-  let ci = r.fidx.get(aux_name(x.aux)) ?? -1
+  let ci = r.fidx.get(f.name_of(x)) ?? -1
   if ci < 0 || ci >= r.uq.len() {
     return false
   }
@@ -2997,7 +2997,7 @@ fn (var r: Rc) hoist_reuse(var f: Func) {
           }
           for v in f.blocks[b].instrs {
             let x = f.values[v]
-            if x.op == Op.Call && is_update_call(aux_name(x.aux)) && aux_name(x.aux) != "list.push" && (if k < 0 { x.args[0] == p } else { field_of(f, x.args[0], p, k) }) {
+            if x.op == Op.Call && is_update_call(f.name_of(x)) && !f.name_is(x, "list.push") && (if k < 0 { x.args[0] == p } else { field_of(f, x.args[0], p, k) }) {
               pushes = false
             }
           }
@@ -3013,7 +3013,7 @@ fn (var r: Rc) hoist_reuse(var f: Func) {
           }
           for v in f.blocks[b].instrs {
             let x = f.values[v]
-            if x.op == Op.Call && is_update_call(aux_name(x.aux)) && (if k < 0 { x.args[0] == p } else { field_of(f, x.args[0], p, k) }) {
+            if x.op == Op.Call && is_update_call(f.name_of(x)) && (if k < 0 { x.args[0] == p } else { field_of(f, x.args[0], p, k) }) {
               every = true
             }
           }
@@ -3068,7 +3068,7 @@ fn (var r: Rc) empty_literal(f: Func, l: Leaf) -> Bool {
   if l.path.is_empty() {
     // `[]` (list.new with no capacity) is the same list on the native
     // backends (xo_empty_list)
-    return x.op == Op.Call && (aux_name(x.aux) == "rt.rl_empty" || (aux_name(x.aux) == "list.new" && x.args.is_empty()))
+    return x.op == Op.Call && (f.name_is(x, "rt.rl_empty") || (f.name_is(x, "list.new") && x.args.is_empty()))
   }
   var head = l.path
   var rest = ""
@@ -3089,7 +3089,7 @@ fn (var r: Rc) empty_literal(f: Func, l: Leaf) -> Bool {
       }
     }
     SetField => {
-      if idx == aux_int(x.aux) {
+      if idx == auxw_int(x.aux) {
         let b = r.base(f, x.args[1])
         return r.empty_literal(f, r.leaf(b.root, "${b.path}${rest}"))
       }
@@ -3104,13 +3104,13 @@ fn (var r: Rc) empty_literal(f: Func, l: Leaf) -> Bool {
 /// Whether v reads field k of p, through setfields of p's other fields.
 fn field_of(f: Func, v: Int, p: Int, k: Int) -> Bool {
   let x = f.values[v]
-  if x.op != Op.Field || aux_int(x.aux) != k {
+  if x.op != Op.Field || auxw_int(x.aux) != k {
     return false
   }
   var s = x.args[0]
   while s != p {
     let sx = f.values[s]
-    if sx.op != Op.SetField || aux_int(sx.aux) == k {
+    if sx.op != Op.SetField || auxw_int(sx.aux) == k {
       return false
     }
     s = sx.args[0]
@@ -3126,7 +3126,7 @@ fn (var r: Rc) reuse(var f: Func) {
   for bl in 0..f.blocks.len() {
     var out: List[Int] = []
     for v in f.blocks[bl].instrs {
-      if f.values[v].op == Op.Call && is_update_call(aux_name(f.values[v].aux)) {
+      if f.values[v].op == Op.Call && is_update_call(f.name_of(f.values[v])) {
         let a = f.values[v].args[0]
         let l = r.leaves(f, a)[0]
         if !r.uniq(f, u, l) {
@@ -3163,7 +3163,7 @@ fn (var r: Rc) share_in(var f: Func) {
     for v in f.blocks[bl].instrs {
       let x = f.values[v]
       if x.op == Op.Call {
-        let nm = aux_name(x.aux)
+        let nm = f.name_of(x)
         let ei = if nm == "list.set" { 2 } else if nm == "list.push" { 1 } else { -1 }
         if ei > 0 && ei < x.args.len() && r.heap(ty_of(f.values[x.args[ei]].tb)) && !made_here(f, x.args[0], made) {
           out.push(new_value(f, bl, Op.ShareIn, -1, Aux.None, [x.args[0], x.args[ei]]))
@@ -3193,9 +3193,9 @@ fn made_here(f: Func, l: Int, var made: List[Int]) -> Bool {
       path.push(c)
       if x.op == Op.Reuse && x.args.len() == 1 {
         c = x.args[0]
-      } else if x.op == Op.Call && is_update_call(aux_name(x.aux)) && x.args.len() > 0 {
+      } else if x.op == Op.Call && is_update_call(f.name_of(x)) && x.args.len() > 0 {
         c = x.args[0]
-      } else if x.op == Op.Call && aux_name(x.aux) is "list.new" | "list.with_capacity" {
+      } else if x.op == Op.Call && f.name_of(x) is "list.new" | "list.with_capacity" {
         ans = 1
       } else {
         ans = 2
@@ -3215,8 +3215,8 @@ fn made_here(f: Func, l: Int, var made: List[Int]) -> Bool {
 
 /// An inline operation that faults before it consumes its operands
 /// (keepsOperands).
-fn keeps_operands(x: Value) -> Bool {
-  x.op == Op.Call && (aux_name(x.aux) is "list.set" | "list.take") && has_pos(x.lp)
+fn keeps_operands(f: Func, x: Value) -> Bool {
+  x.op == Op.Call && (f.name_of(x) is "list.set" | "list.take") && has_pos(x.lp)
 }
 
 fn is_rc_op(o: Op) -> Bool {
@@ -3232,7 +3232,7 @@ fn (var r: Rc) sink_landings(var f: Func) {
     if w < 0 || block_of(f.values[w].tb) != bl {
       continue
     }
-    if keeps_operands(f.values[w]) {
+    if keeps_operands(f, f.values[w]) {
       // the operation faults before it takes its operands: on the
       // cleanup path the function still owns them
       let t = f.term(bl)
@@ -3251,7 +3251,7 @@ fn (var r: Rc) sink_landings(var f: Func) {
           code.push(new_value(f, -1, Op.Release, -1, Aux.None, [v]))
         }
       }
-      edge_prepend(f, f.values[t].succs[0], code)
+      edge_prepend(f, succ(f.values[t], 0), code)
     }
     var wi = -1
     var ui = -1
@@ -3290,7 +3290,7 @@ fn (var r: Rc) sink_landings(var f: Func) {
               ok = false
             }
           }
-          for e in f.values[v].succs {
+          for e in f.values[v].succs() {
             for a in f.edges[e].args {
               if in_between.contains(a) {
                 ok = false
@@ -3308,8 +3308,8 @@ fn (var r: Rc) sink_landings(var f: Func) {
       continue
     }
     let t = f.term(bl)
-    let pad = f.values[t].succs[0]
-    let normal = f.values[t].succs[1]
+    let pad = succ(f.values[t], 0)
+    let normal = succ(f.values[t], 1)
     var pad_code: List[Int] = []
     var copies: Map[Int, Int] = {}
     for v in between {
@@ -3326,7 +3326,7 @@ fn (var r: Rc) sink_landings(var f: Func) {
         args.push(copies.get(a) ?? a)
       }
       let x = f.values[v]
-      let cv = new_value(f, -1, x.op, ty_of(x.tb), x.aux, args)
+      let cv = new_value(f, -1, x.op, ty_of(x.tb), f.aux(x), args)
       copies[v] = cv
       pad_code.push(cv)
     }
@@ -3394,11 +3394,11 @@ fn prune_landings(var f: Func) {
         continue
       }
       let u = f.values[t].args[0]
-      if f.values[u].op != Op.Call || aux_name(f.values[u].aux) != "rt.landing" || block_of(f.values[u].tb) != bl {
+      if f.values[u].op != Op.Call || !f.name_is(f.values[u], "rt.landing") || block_of(f.values[u].tb) != bl {
         continue
       }
-      let pad = f.values[t].succs[0]
-      let normal = f.values[t].succs[1]
+      let pad = succ(f.values[t], 0)
+      let normal = succ(f.values[t], 1)
       if !trivial_pad(f, f.edges[pad].to, exit) {
         continue
       }
@@ -3415,7 +3415,7 @@ fn prune_landings(var f: Func) {
       f.blocks[pto].preds = preds
       f.values[t].op = Op.Jump
       f.values[t].args = []
-      f.values[t].succs = [normal]
+      f.values[t].set_succs([normal])
       var ins: List[Int] = []
       for v in f.blocks[bl].instrs {
         if v != u {
@@ -3444,10 +3444,10 @@ fn trivial_pad(f: Func, b0: Int, exit: Int) -> Bool {
       return false
     }
     let t = f.term(b)
-    if t < 0 || f.values[t].op != Op.Jump || !f.edges[f.values[t].succs[0]].args.is_empty() {
+    if t < 0 || f.values[t].op != Op.Jump || !f.edges[succ(f.values[t], 0)].args.is_empty() {
       return false
     }
-    b = f.edges[f.values[t].succs[0]].to
+    b = f.edges[succ(f.values[t], 0)].to
   }
   false
 }
@@ -3477,7 +3477,7 @@ fn merge_jumps(var f: Func) {
       if t < 0 || f.values[t].op != Op.Jump {
         break
       }
-      let to = f.edges[f.values[t].succs[0]].to
+      let to = f.edges[succ(f.values[t], 0)].to
       if !f.land_rest.contains(to) || to == bl || to == 0 || f.blocks[to].preds.len() != 1 || !f.blocks[to].params.is_empty() || to == f.unwind_exit {
         break
       }
@@ -3496,7 +3496,7 @@ fn merge_jumps(var f: Func) {
       let m = if i + 1 < chain.len() { tin.len() - 1 } else { tin.len() }
       for (j, v) in tin.indexed() {
         f.values[v].tb = with_block(f.values[v].tb, bl)
-        for e in f.values[v].succs {
+        for e in f.values[v].succs() {
           f.edges[e].from = bl
         }
         if j < m {
@@ -3528,9 +3528,9 @@ fn (var r: Rc) movable(f: Func, v: Int, live: Set[Int]) -> Bool {
   if et < 0 || r.types[et].kind != Kind.Enum {
     return false
   }
-  let tag = match x.aux {
+  let tag = match f.aux(x) {
     P(tag, ..) => tag
-    None | I(..) | F(..) | B(..) | S(..) | Bs(..) => -1
+    None | I(..) | F(..) | B(..) | S(..) | Bs(..) | E(..) => -1
   }
   if tag < 0 || tag >= r.types[et].variants.len() || r.types[et].variants[tag].fields.len() != 1 {
     return false
@@ -3571,7 +3571,7 @@ fn keep_addr_values(var f: Func) {
   // operand is made before its uses)
   var into: Map[Int, Int] = {}
   for (v, x) in f.values.indexed() {
-    if x.op == Op.Call && addr_call(aux_name(x.aux)) && !x.args.is_empty() {
+    if x.op == Op.Call && addr_call(f.name_of(x)) && !x.args.is_empty() {
       into[v] = x.args[0]
     } else if (x.op == Op.Add || x.op == Op.Sub) && x.args.len() == 2 {
       for a in x.args {
@@ -3601,7 +3601,7 @@ fn keep_addr_values(var f: Func) {
           last[o] = k
         }
       }
-      for e in x.succs {
+      for e in x.succs() {
         for a in f.edges[e].args {
           if let Some(o) = into.get(a) {
             last[o] = k
@@ -3623,8 +3623,8 @@ fn keep_addr_values(var f: Func) {
       } else if k + 1 < nt && is_landing(f, ins[k + 1]) {
         // the landing's branch: yes goes to the pad, no continues
         let t = f.values[ins[nt]]
-        if t.op == Op.Branch && t.succs.len() == 2 {
-          let to = f.edges[t.succs[1]].to
+        if t.op == Op.Branch && succ_n(t) == 2 {
+          let to = f.edges[succ(t, 1)].to
           var l = first.get(to) ?? []
           l.push(o)
           first[to] = l
@@ -3668,7 +3668,7 @@ fn keep_addr_values(var f: Func) {
 /// after a call; landing_site's two).
 fn is_landing(f: Func, v: Int) -> Bool {
   let x = f.values[v]
-  x.op == Op.Call && aux_name(x.aux) is "rt.landing" | "rt.unwinding"
+  x.op == Op.Call && f.name_of(x) is "rt.landing" | "rt.unwinding"
 }
 
 /// Removes keep_addr_values' markers.
@@ -3678,7 +3678,7 @@ fn drop_addr_keeps(var f: Func) {
     var cut = false
     for v in f.blocks[bi].instrs {
       let x = f.values[v]
-      if x.op == Op.Call && aux_name(x.aux) == ADDR_KEEP {
+      if x.op == Op.Call && f.name_of(x) == ADDR_KEEP {
         cut = true
       } else {
         out.push(v)
@@ -3699,8 +3699,8 @@ fn drop_addr_keeps(var f: Func) {
 /// counted view as owned where the pass had treated it as a projection.)
 fn borrow_views(var f: Func) {
   for i in 0..f.values.len() {
-    if f.values[i].op == Op.Call && aux_name(f.values[i].aux) == "rt.str_view" {
-      f.values[i].aux = Aux.S("rt.str_borrow")
+    if f.values[i].op == Op.Call && f.name_is(f.values[i], "rt.str_view") {
+      f.values[i].aux = f.pack(Aux.S("rt.str_borrow"))
     }
   }
 }

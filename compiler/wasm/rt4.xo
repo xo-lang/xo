@@ -31,7 +31,7 @@ fn (var g: Gen) tz_table_fn(tz: List[tzsel.TZSel]) -> Str {
   for f in g.m.funcs {
     for x in f.values {
       if x.op == ssa.Op.Call {
-        match x.aux {
+        match f.aux(x) {
           S(s) => {
             if s == "rt.tz_table" {
               used = true

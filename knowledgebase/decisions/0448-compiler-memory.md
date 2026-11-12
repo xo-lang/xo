@@ -1352,3 +1352,57 @@ drop_and_replace; branch lang1-cse1): aiplatform/v1 --ab, 9 rounds, host 3:
 max RSS 1.002 (0.996 to 1.006), wall 1.003, CPU 0.999, all noise. Not
 landed: the old list keeps its capacity, and the peak is resident memory
 the allocator retains, which a smaller in-use figure does not lower.
+
+## Addendum: a terminator's edges in its payload (Xo Lang 1, 2026-11-12)
+
+The census after inline.apply (XO_SSA_CENSUS, extended with the words in
+use; the self build, 7.67 M values) found `succs` set on 1.10 M values
+(the Jumps and Branches), and those two ops have no payload. The edges
+move into `aux` as Aux.E (each edge + 1, the first in the low 32 bits,
+the second in the high), read through ssa.succ_n, ssa.succ and
+Value.succs() and written through Value.set_succs; Value.succs, a List
+word on every value, is gone, so a value is 8 words (64 bytes), was 9.
+The rc cache's entries and keys are unchanged (E is written as no
+payload, the edges as before).
+
+Census of the other words (same build): aux S 2.17 M, I 2.04 M, none
+2.0 M, E 1.10 M, B 260 k, Bs 79 k, P 24 k, F 431; pad 619 k, inline site
+780 k, pos 100 k, line 2.14 M. 
+xo bench --ab, stage2 xos (each built by itself), main 7f81b4cf4 against
+the change: aiplatform/apiv1 cold test build on linux/arm64 host 3, 9
+rounds (0 loaded): max RSS 0.946 (0.941 to 0.952; 4.79 to 4.53 GB), wall
+0.993 and CPU 0.998, within noise. The self build on linux/arm64 host 1,
+7 rounds: max RSS 0.971 (0.968 to 0.986; 4.32 to 4.20 GB), wall 1.003 and CPU
+0.995, within noise.
+
+### The payload in two words (Xo Lang 1, 2026-11-12)
+
+Aux took three words (a tag and S's two word Str). Value.aux is now an
+AuxW, every variant one word: S and Bs index the function's tables
+(Func.names, deduplicated through Func.name_ix, and Func.blobs), P packs
+its tag and field, E is the edges above. A value is 7 words (56 bytes).
+Code reads payloads as before through Func.aux(x), which decodes to the
+Aux enum (its matches are unchanged), and writes them through Func.pack
+and Func.set_aux; Func.add packs. Each S and Bs index carries the table's
+tag (Func.ntag, from the function's name), so a payload copied into
+another function without Func.pack(src.aux(x)) faults on its first read
+instead of naming another function's string. The audit of the copies
+between functions found three: the inliner's copy of a callee's values
+(callee.aux), specialize's constant from the caller (spec_clone takes the
+caller's payload) and an llvm ranges loop over another function's values.
+
+First form, every read decoding: aiplatform/apiv1 against the first cut,
+host 3, 9 rounds: max RSS 0.977, but CPU 1.089 and wall 1.046. The CPU
+profile (XO_PROF=cpu, the self build) put it on the decoded names: each
+is a counted copy of the table's Str (`drop Str` 4.1 to 9.6 s). Reads
+that test only a payload's kind or integer now match on the stored AuxW
+(ssa.auxw_int, the matches and `if let`s that bind no name, bytes or
+variant field: about 150 sites), and names are tested and read in place
+(Func.name_is, name_starts, name_ends, name_of: about 300). Then, same
+setup: wall 0.967 (0.963 to 0.972), CPU 0.952 (0.944 to 0.955), max RSS
+0.972 (0.944 to 0.99; 4.63 to 4.50 GB). The two cuts together:
+aiplatform/apiv1's cold test build about 4.79 to 4.50 GB.
+
+Left in Value: op, tb, args, aux (2), pi, lp. Next: pi (pad and inline
+site, set on at most 18% of values) and lp's pos half (1.3%).
+

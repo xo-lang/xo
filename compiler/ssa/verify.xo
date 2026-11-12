@@ -65,7 +65,7 @@ fn (var m: Module) verify_func(f: Func) -> List[Str] {
         // a landing: the check's call, which a branch on it ends its
         // block with (decision 0085)
         let x = f.values[p]
-        let name = aux_name(x.aux)
+        let name = f.name_of(x)
         let pb = block_of(x.tb)
         var ok = x.op == Op.Call && (name == "rt.landing" || name == "rt.unwinding") && pb >= 0 && pb < nb
         if ok {
@@ -94,7 +94,7 @@ fn (var m: Module) verify_func(f: Func) -> List[Str] {
       if x.op == Op.Param {
         errs.push("${pre}${bname(bi)}: parameter v${v} in the instruction list")
       }
-      for e in x.succs {
+      for e in x.succs() {
         let ed = f.edges[e]
         if ed.from != bi || ed.to < 0 || ed.to >= nb {
           errs.push("${pre}${bname(bi)}: edge to ${bname(ed.to)} is malformed")
@@ -121,7 +121,7 @@ fn (var m: Module) verify_func(f: Func) -> List[Str] {
       let t = if fr >= 0 { f.term(fr) } else { -1 }
       var found = false
       if t >= 0 {
-        found = f.values[t].succs.contains(e)
+        found = f.values[t].succs().contains(e)
       }
       if !found {
         errs.push("${pre}${bname(bi)}: predecessor edge from ${bname(fr)} is not a successor edge")
@@ -143,7 +143,7 @@ fn (var m: Module) verify_func(f: Func) -> List[Str] {
           errs.push("${pre}${bname(bi)}: v${v} uses v${a}, which does not dominate it")
         }
       }
-      for e in x.succs {
+      for e in x.succs() {
         for a in f.edges[e].args {
           if a < 0 {
             errs.push("${pre}${bname(bi)}: edge to ${bname(f.edges[e].to)} has a nil argument")
@@ -254,7 +254,7 @@ fn dom_walk(f: Func, b: Int, var seen: List[Bool], var post: List[Int]) {
   seen[b] = true
   let t = f.term(b)
   if t >= 0 {
-    for e in f.values[t].succs {
+    for e in f.values[t].succs() {
       let to = f.edges[e].to
       if !seen[to] {
         dom_walk(f, to, seen, post)
@@ -304,7 +304,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
         I(..) => Kind.Int
         F(..) => Kind.Float
         B(..) => Kind.Bool
-        S(..) | Bs(..) => Kind.Str
+        S(..) | Bs(..) | E(..) => Kind.Str
         None | P(..) => Kind.Unit
       }
       if ty_of(x.tb) < 0 || tk != want {
@@ -389,7 +389,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
     Variant => {
       let tag = match x.aux {
         I(n: t) => t
-        None | F(..) | B(..) | S(..) | Bs(..) | P(..) => -1
+        None | F(..) | B(..) | S(..) | Bs(..) | P(..) | E(..) => -1
       }
       if tag < 0 || tk != Kind.Enum || tag >= m.types[ty_of(x.tb)].variants.len() {
         return "variant of a non enum or a bad tag"
@@ -407,7 +407,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
     Field | SetField => {
       let i = match x.aux {
         I(n: t) => t
-        None | F(..) | B(..) | S(..) | Bs(..) | P(..) => -1000000
+        None | F(..) | B(..) | S(..) | Bs(..) | P(..) | E(..) => -1000000
       }
       if i == -1000000 || n == 0 {
         return "field needs an index and an operand"
@@ -438,9 +438,9 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       }
     }
     Payload => {
-      let (tag, fld) = match x.aux {
+      let (tag, fld) = match f.aux(x) {
         P(tag: t, field: fi) => (t, fi)
-        None | I(..) | F(..) | B(..) | S(..) | Bs(..) => (-1, -1)
+        None | I(..) | F(..) | B(..) | S(..) | Bs(..) | E(..) => (-1, -1)
       }
       if tag < 0 || n != 1 || k0 != Kind.Enum || tag >= m.types[a0].variants.len() || fld >= m.types[a0].variants[tag].fields.len() {
         return "payload of a non enum or a bad reference"
@@ -450,7 +450,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       }
     }
     Call => {
-      let name = aux_name(x.aux)
+      let name = f.name_of(x)
       let ci = m.func_index(name)
       if ci >= 0 {
         // the callee's parameters, from its body facts when it is not
@@ -475,7 +475,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       }
     }
     Closure => {
-      let ci = m.func_index(aux_name(x.aux))
+      let ci = m.func_index(f.name_of(x))
       if ci < 0 || !m.funcs[ci].indirect || ty_of(x.tb) < 0 || tk != Kind.Func {
         return "closure of a function that is not Indirect, or not of a function type"
       }
@@ -510,7 +510,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       }
     }
     Rebind => {
-      let ci = m.func_index(aux_name(x.aux))
+      let ci = m.func_index(f.name_of(x))
       if ci < 0 || !m.funcs[ci].indirect || ty_of(x.tb) < 0 || tk != Kind.Func || n != 1 || k0 != Kind.Func {
         return "rebind of a function that is not Indirect, or not of function types"
       }
@@ -535,7 +535,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       // the function's own closure's capture aux (decision 0613 step 5)
       let i = match x.aux {
         I(n: t) => t
-        None | F(..) | B(..) | S(..) | Bs(..) | P(..) => -1
+        None | F(..) | B(..) | S(..) | Bs(..) | P(..) | E(..) => -1
       }
       let want = if x.op == Op.CapTake { 1 } else { 2 }
       // operand 0 is a closure whose environment has this function's
@@ -549,13 +549,13 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       }
     }
     CodeOf => {
-      let ci = m.func_index(aux_name(x.aux))
+      let ci = m.func_index(f.name_of(x))
       if ci < 0 || !m.funcs[ci].indirect || n != 0 || tk != Kind.Int {
         return "codeof of a function that is not Indirect, or not an Int"
       }
     }
     FuncAddr => {
-      let fname = aux_name(x.aux)
+      let fname = f.name_of(x)
       if fname.starts_with("&") {
         // rt.sym_addr (decision 0234): a C level symbol by its exact name
         if fname.len() < 2 || n != 0 || ty_of(x.tb) < 0 || tk != Kind.Int {
@@ -582,7 +582,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
     Capture => {
       let i = match x.aux {
         I(n: t) => t
-        None | F(..) | B(..) | S(..) | Bs(..) | P(..) => -1000000
+        None | F(..) | B(..) | S(..) | Bs(..) | P(..) | E(..) => -1000000
       }
       // operand 0 is the function's own closure, or (the xo.eq function
       // of an interface value) another closure whose environment has the
@@ -606,12 +606,12 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       }
     }
     Branch => {
-      if n != 1 || a0 != bt || x.succs.len() != 2 {
+      if n != 1 || a0 != bt || succ_n(x) != 2 {
         return "br takes a Bool and two successors"
       }
     }
     Jump => {
-      if x.succs.len() != 1 {
+      if succ_n(x) != 1 {
         return "jump takes one successor"
       }
     }
@@ -902,7 +902,7 @@ fn (var r: Rc) carried_alive(f: Func, p: Leaf) -> Bool {
     return false
   }
   for (w, x) in f.values.indexed() {
-    if x.op == Op.SetField && !x.args.is_empty() && x.args[0] == p.root && !paths_overlap(".${aux_int(x.aux)}", p.path) {
+    if x.op == Op.SetField && !x.args.is_empty() && x.args[0] == p.root && !paths_overlap(".${auxw_int(x.aux)}", p.path) {
       let l = r.leaf(w, p.path)
       if r.alive(f, r.lid(l)) || r.carried_alive(f, l) {
         return true
@@ -975,7 +975,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
         }
         continue
       }
-      if x.op == Op.Call && is_update_call(aux_name(x.aux)) {
+      if x.op == Op.Call && is_update_call(f.name_of(x)) {
         let a = x.args[0]
         for i in r.lids(f, a) {
           let l = r.vleaves[i]
@@ -1020,7 +1020,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
             }
           }
         }
-        if keeps_operands(x) {
+        if keeps_operands(f, x) {
           for us1 in us {
             let l = r.vleaves[us1.id]
             if us1.m == Mode.Consume && r.tracked(f, l) && r.kind(f, l.root) == RootKind.Owned {
@@ -1067,7 +1067,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
       }
       if x.op is Op.Jump | Op.Branch {
         let (site, landing) = landing_site(f, b)
-        for (si, e) in x.succs.indexed() {
+        for (si, e) in x.succs().indexed() {
           let to = f.edges[e].to
           var est = RcState{}
           if si == 0 && landing >= 0 && x.op == Op.Branch {
@@ -1083,7 +1083,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
               est.ids.push(k)
               est.cs.push(st.cs[j])
             }
-            if site >= 0 && keeps_operands(f.values[site]) {
+            if site >= 0 && keeps_operands(f, f.values[site]) {
               // it faulted before taking its operands
               for us1 in r.luses(f, site) {
                 let l = r.vleaves[us1.id]
@@ -1389,7 +1389,7 @@ pub fn (var m: Module) check_assumptions() -> List[Str] {
         if op == Op.Call || op == Op.Closure || op == Op.Field || op == Op.SetField || op == Op.Payload {
           // a callee with neither a body nor body facts yet (a runtime
           // function the build adds later) has no signature to check
-          if (op == Op.Call || op == Op.Closure) && !m.signature_known(aux_name(f.values[v].aux)) {
+          if (op == Op.Call || op == Op.Closure) && !m.signature_known(f.name_of(f.values[v])) {
             continue
           }
           let msg = m.check_types(f, v)
@@ -1425,7 +1425,7 @@ pub fn (var m: Module) break_a_call() -> Bool {
     for b in m.funcs[fi].blocks {
       for v in b.instrs {
         let x = m.funcs[fi].values[v]
-        if x.op == Op.Call && ty_of(x.tb) >= 0 && m.signature_known(aux_name(x.aux)) {
+        if x.op == Op.Call && ty_of(x.tb) >= 0 && m.signature_known(m.funcs[fi].name_of(x)) {
           m.funcs[fi].values[v].tb = with_ty(m.funcs[fi].values[v].tb, if ty_of(x.tb) == bt { it } else { bt })
           return true
         }

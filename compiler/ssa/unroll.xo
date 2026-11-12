@@ -39,7 +39,7 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
   }
   let t = hb.instrs[1]
   let tv = f.values[t]
-  if tv.op != Op.Branch || tv.succs.len() != 2 {
+  if tv.op != Op.Branch || succ_n(tv) != 2 {
     return false
   }
   let cmp = hb.instrs[0]
@@ -56,8 +56,8 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
     None => return false
   }
   // the body: one block, entered only from the header, back to it
-  let yes = tv.succs[0]
-  let no = tv.succs[1]
+  let yes = succ(tv, 0)
+  let no = succ(tv, 1)
   let body = f.edges[yes].to
   if body == h || !f.edges[yes].args.is_empty() || f.blocks[body].preds.len() != 1 || !f.blocks[body].params.is_empty() {
     return false
@@ -67,17 +67,17 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
     return false
   }
   let bt = bins[bins.len() - 1]
-  if f.values[bt].op != Op.Jump || f.values[bt].succs.len() != 1 || f.edges[f.values[bt].succs[0]].to != h {
+  if f.values[bt].op != Op.Jump || succ_n(f.values[bt]) != 1 || f.edges[succ(f.values[bt], 0)].to != h {
     return false
   }
-  let latch = f.values[bt].succs[0]
+  let latch = succ(f.values[bt], 0)
   let pe = if hb.preds[0] == latch { hb.preds[1] } else { hb.preds[0] }
   if pe == latch {
     return false
   }
   let pre = f.edges[pe].from
   let pt = f.term(pre)
-  if pt < 0 || f.values[pt].op != Op.Jump || f.values[pt].succs.len() != 1 || f.values[pt].succs[0] != pe {
+  if pt < 0 || f.values[pt].op != Op.Jump || succ_n(f.values[pt]) != 1 || succ(f.values[pt], 0) != pe {
     return false
   }
   // i: a constant start, a step of 1
@@ -99,7 +99,7 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
   let pad = pad_of(f.values[cmp].pi)
   for v in bins {
     let x = f.values[v]
-    if (v != bt && pad_of(x.pi) != pad) || x.op == Op.Param || (v != bt && !x.succs.is_empty()) {
+    if (v != bt && pad_of(x.pi) != pad) || x.op == Op.Param || (v != bt && succ_n(x) > 0) {
       return false
     }
   }
@@ -216,7 +216,7 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
   }
   let t = hb.instrs[1]
   let tv = f.values[t]
-  if tv.op != Op.Branch || tv.succs.len() != 2 {
+  if tv.op != Op.Branch || succ_n(tv) != 2 {
     return false
   }
   let cmp = hb.instrs[0]
@@ -228,8 +228,8 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
   if pi < 0 {
     return false
   }
-  let yes = tv.succs[0]
-  let no = tv.succs[1]
+  let yes = succ(tv, 0)
+  let no = succ(tv, 1)
   let entry = f.edges[yes].to
   if entry == h || !f.edges[yes].args.is_empty() || f.blocks[entry].preds.len() != 1 || !f.blocks[entry].params.is_empty() {
     return false
@@ -253,7 +253,7 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
     if bt < 0 {
       continue
     }
-    for e in f.values[bt].succs {
+    for e in f.values[bt].succs() {
       let to = f.edges[e].to
       if to != entry && !outer[to] {
         outer[to] = true
@@ -272,7 +272,7 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
     if bt < 0 {
       return false
     }
-    for e in f.values[bt].succs {
+    for e in f.values[bt].succs() {
       let to = f.edges[e].to
       if to != h && !outer[to] && !fwd[to] {
         fwd[to] = true
@@ -355,12 +355,12 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
     if tv2.op == Op.Branch && tv2.args.len() == 1 {
       let cv2 = f.values[tv2.args[0]]
       if cv2.op == Op.Call {
-        if let S(s: nm) = cv2.aux {
+        if let S(s: nm) = f.aux(cv2) {
           landing = nm is "rt.landing" | "rt.unwinding"
         }
       }
     }
-    for e in tv2.succs {
+    for e in tv2.succs() {
       let to = f.edges[e].to
       if to != h && !inb[to] && !landing {
         let tt = f.term(to)
@@ -379,7 +379,7 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
   }
   let pre = f.edges[pe].from
   let pt = f.term(pre)
-  if pt < 0 || f.values[pt].op != Op.Jump || f.values[pt].succs.len() != 1 || f.values[pt].succs[0] != pe {
+  if pt < 0 || f.values[pt].op != Op.Jump || succ_n(f.values[pt]) != 1 || succ(f.values[pt], 0) != pe {
     return false
   }
   let c0 = match const_word(f, f.edges[pe].args[pi]) {
@@ -487,7 +487,9 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
       for v in f.blocks[b].instrs {
         var x = f.values[v]
         x.tb = with_block(x.tb, c)
-        x.succs = []
+        if succ_n(x) > 0 {
+          x.set_succs([])
+        }
         let nv = f.values.len()
         f.values.push(x)
         f.blocks[c].instrs.push(nv)
@@ -513,7 +515,7 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
       let ot = f.term(b)
       let ct = m.get(ot) ?? -1
       var succs: List[Int] = []
-      for e in f.values[ot].succs {
+      for e in f.values[ot].succs() {
         var args: List[Int] = []
         for a in f.edges[e].args {
           args.push(m.get(a) ?? a)
@@ -532,7 +534,7 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
         }
         succs.push(ce)
       }
-      f.values[ct].succs = succs
+      f.values[ct].set_succs(succs)
     }
     // the way in: the block before the loop, or the trip before's latch
     let ce = bm.get(entry) ?? -1

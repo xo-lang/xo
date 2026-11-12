@@ -78,7 +78,7 @@ test "a counted loop with an early exit is unrolled, each trip keeping its exit"
   var side_preds = -1
   for b in f.blocks {
     for v in b.instrs {
-      if f.values[v].op == Op.Const && f.values[v].aux == Aux.I(n: -1) {
+      if f.values[v].op == Op.Const && f.aux(f.values[v]) == Aux.I(n: -1) {
         side_preds = b.preds.len()
       }
     }

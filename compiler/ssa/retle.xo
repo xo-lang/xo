@@ -134,22 +134,22 @@ fn le_value(f: Func, v: Int, p: Int, ok: Map[Int, Bool], up: Bool) -> Bool {
 fn nonneg(f: Func, v: Int) -> Bool {
   let x = f.values[v]
   if x.op == Op.Const {
-    match x.aux {
+    match f.aux(x) {
       I(n) => return n >= 0
-      None | F(_) | B(_) | S(_) | Bs(_) | P(_, _) => return false
+      None | F(_) | B(_) | S(_) | Bs(_) | P(_, _) | E(..) => return false
     }
   }
   if x.op == Op.And && x.args.len() == 2 {
     for j in [0, 1] {
       let c = f.values[x.args[j]]
       if c.op == Op.Const {
-        match c.aux {
+        match f.aux(c) {
           I(n) => {
             if n >= 0 {
               return true
             }
           }
-          None | F(_) | B(_) | S(_) | Bs(_) | P(_, _) => {}
+          None | F(_) | B(_) | S(_) | Bs(_) | P(_, _) | E(..) => {}
         }
       }
     }
@@ -163,9 +163,9 @@ fn nonpos_const(f: Func, v: Int) -> Bool {
   if x.op != Op.Const {
     return false
   }
-  match x.aux {
+  match f.aux(x) {
     I(n) => n <= 0
-    None | F(_) | B(_) | S(_) | Bs(_) | P(_, _) => false
+    None | F(_) | B(_) | S(_) | Bs(_) | P(_, _) | E(..) => false
   }
 }
 

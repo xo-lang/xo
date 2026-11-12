@@ -159,7 +159,7 @@ fn (var g: Gen) is_update(f: ssa.Func, v: Int) -> Bool {
   if x.op != ssa.Op.Call || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.List {
     return false
   }
-  let n = aux_str(x.aux)
+  let n = f.name_of(x)
   n == "list.set" || n == "list.push"
 }
 
@@ -171,7 +171,7 @@ fn (var g: Gen) is_new_list(f: ssa.Func, v: Int) -> Bool {
   if x.op != ssa.Op.Call || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.List {
     return false
   }
-  let n = aux_str(x.aux)
+  let n = f.name_of(x)
   n == "list.new" || n == "rt.rl_empty"
 }
 
@@ -187,11 +187,11 @@ fn (var g: Gen) handed_back(f: ssa.Func, v: Int) -> Int {
   if c.op != ssa.Op.Call {
     return -1
   }
-  let callee = g.by_name.get(aux_str(c.aux)) ?? -1
+  let callee = g.by_name.get(f.name_of(c)) ?? -1
   if callee < 0 {
     return -1
   }
-  let j = aux_int(x.aux) - 1
+  let j = ssa.auxw_int(x.aux) - 1
   let same = g.same_var[callee]
   if j < 0 || j >= same.len() || !same[j] {
     return -1
@@ -394,7 +394,7 @@ fn (var g: Gen) scopes_of(fi: Int) {
       if x.op != ssa.Op.Call || x.args.is_empty() {
         continue
       }
-      let name = aux_str(x.aux)
+      let name = f.name_of(x)
       let w = scope_write(name)
       if !w && !scope_read(name) {
         continue

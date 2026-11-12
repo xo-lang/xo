@@ -680,7 +680,7 @@ fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
       (Interval{lo: lo, hi: hi}, true)
     }
     Call => {
-      if aux_str(x.aux) == "rt.u64_mul_hi" && x.args.len() == 2 {
+      if g.f.name_is(x, "rt.u64_mul_hi") && x.args.len() == 2 {
         // the high word of a product of two words not negative: 0 when
         // the product fits 63 bits (2026-10-23: portable u64's UInt64 `(h
         // % p) * 65599` kept its overflow test, the remainder below 2^32)
@@ -694,7 +694,7 @@ fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
         }
         return none
       }
-      if aux_str(x.aux) == "rt.int_wrap" && x.args.len() == 3 {
+      if g.f.name_is(x, "rt.int_wrap") && x.args.len() == 3 {
         // a logical shift right by a constant k >= 1: below 2^(64-k)
         // (portable u64's `(h >> 7) / 3` divides a value not negative)
         let (op, opk) = g.const_int(x.args[0])
@@ -708,7 +708,7 @@ fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
         }
         return none
       }
-      if aux_str(x.aux) == "rt.u64_divc" && x.args.len() == 3 {
+      if g.f.name_is(x, "rt.u64_divc") && x.args.len() == 3 {
         // a UInt64 by a constant d >= 2 (calls.xo u64_divc): a remainder
         // in [0, d), a quotient below 2^63 (2026-10-23: `Int(u % 1000)`
         // kept its sign check in portable conv)
@@ -726,12 +726,12 @@ fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
         }
         return (Interval{lo: 0, hi: MAX_INT}, true)
       }
-      if aux_str(x.aux) != "Str.len" || x.args.is_empty() {
+      if !g.f.name_is(x, "Str.len") || x.args.is_empty() {
         return none
       }
       let y = g.f.values[x.args[0]]
       if y.op == ssa.Op.Const {
-        if let Some(bs) = const_bytes(y.aux) {
+        if let Some(bs) = const_bytes(g.f.aux(y)) {
           return (Interval{lo: bs.len(), hi: bs.len()}, true)
         }
       }
@@ -900,8 +900,8 @@ fn (var g: G) branch_facts(b: Int) {
     return
   }
   let tv = g.f.values[t]
-  let yes = g.f.edges[tv.succs[0]].to == b
-  let no = g.f.edges[tv.succs[1]].to == b
+  let yes = g.f.edges[ssa.succ(tv, 0)].to == b
+  let no = g.f.edges[ssa.succ(tv, 1)].to == b
   if yes == no {
     return
   }
@@ -926,8 +926,8 @@ fn (g: G) join_source(b: Int) -> (Int, Int, Bool, Bool) {
     return none
   }
   let tv = g.f.values[t]
-  let yes = g.f.edges[tv.succs[0]].to == b
-  let no = g.f.edges[tv.succs[1]].to == b
+  let yes = g.f.edges[ssa.succ(tv, 0)].to == b
+  let no = g.f.edges[ssa.succ(tv, 1)].to == b
   if yes == no {
     return none
   }
@@ -2937,7 +2937,7 @@ fn (var g: G) compute_ub() {
       if x.op != ssa.Op.Call {
         continue
       }
-      let ci = g.by_name.get(aux_str(x.aux)) ?? -1
+      let ci = g.by_name.get(g.f.name_of(x)) ?? -1
       if ci < 0 {
         continue
       }

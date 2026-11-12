@@ -768,12 +768,12 @@ fn aux_int(a: ssa.Aux) -> Int {
 
 /// The callee, closure, or function name of value v ("" for another aux).
 fn (g: G) vname(v: Int) -> Str {
-  aux_str(g.f.values[v].aux)
+  g.f.name_of(g.f.values[v])
 }
 
 /// The integer aux of value v (a field index, a tag, a capture).
 fn (g: G) vint(v: Int) -> Int {
-  aux_int(g.f.values[v].aux)
+  ssa.auxw_int(g.f.values[v].aux)
 }
 
 /// The Int constant v holds (constInt).
@@ -841,7 +841,7 @@ fn (g: G) is_param(v: Int) -> Bool {
 /// the branch on it (`v.Pad.Block.Term().Succs[0].To`).
 fn (g: G) pad_target(w: Int) -> Int {
   let t = g.f.term(ssa.block_of(g.f.values[w].tb))
-  g.f.edges[g.f.values[t].succs[0]].to
+  g.f.edges[ssa.succ(g.f.values[t], 0)].to
 }
 
 /// Whether t holds heap memory (Type.Heap), cached.

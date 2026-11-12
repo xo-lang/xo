@@ -192,7 +192,7 @@ fn (var b: Builder) check_no_alloc() {
       return
     }
     if v.op == Op.Call {
-      if let Aux.S(s: n) = v.aux {
+      if let Aux.S(s: n) = b.s.f.aux(v) {
         if !rc_callee_ok(n) && !n.starts_with(b.no_alloc_prefix()) {
           b.unsupported("`${fname}`: a call of `${n}` in a reference count or heap function (decision 0207: no allocation, no counting)")
           return

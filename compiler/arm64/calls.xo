@@ -311,7 +311,7 @@ fn (var g: G) one_leaf(t: Int) -> Leaf {
 /// copy (and the original loses a reference).
 fn (var g: G) reuse(v: Int) {
   let x = g.arg(v, 0)
-  if ssa.proved_reuse(g.f.values[v].aux) {
+  if ssa.proved_reuse(g.f.aux(g.f.values[v])) {
     // decision 0322: every call passes this list unique
     g.set(v, g.words(x))
     return
@@ -338,7 +338,7 @@ fn (var g: G) reuse(v: Int) {
   let es = g.esize(et)
   let dup = g.elem_fn("dup", et)
   let drop = g.elem_fn("drop", et)
-  if ssa.checked_reuse(g.f.values[v].aux) {
+  if ssa.checked_reuse(g.f.aux(g.f.values[v])) {
     // XO_RC_CHECK=1: decision 0322 proved this list unique
     let _n = g.rt("xo_x_obj_rl_not_unique", [rsrc(l)], [])
   }
@@ -437,7 +437,7 @@ fn (var g: G) addr_uses(base: Int, i: Int) -> (Int, Bool) {
     if y.op != ssa.Op.Call || y.args.len() < 3 || y.args[0] != base {
       continue
     }
-    let name = aux_str(y.aux)
+    let name = g.f.name_of(y)
     if name != "rt.mem_load" && name != "rt.mem_store" {
       continue
     }
@@ -1012,7 +1012,7 @@ fn (var g: G) str_eq_const(v: Int, x: ssa.Value, xd: Int, yd: Int) -> Bool {
     if cv.op != ssa.Op.Const {
       continue
     }
-    let bs = const_bytes(cv.aux) ?? b""
+    let bs = const_bytes(g.f.aux(cv)) ?? b""
     let n = bs.len()
     if n < 1 || n > 16 || !g.len_proved(ssa.block_of(x.tb), x.args[1 - k], n) {
       continue
@@ -1065,7 +1065,7 @@ fn (g: G) len_proved(blk: Int, s: Int, n: Int) -> Bool {
     return false
   }
   let t = g.f.values[ins[ins.len() - 1]]
-  if t.op != ssa.Op.Branch || t.succs.is_empty() || t.succs[0] != e || t.args.is_empty() {
+  if t.op != ssa.Op.Branch || ssa.succ_n(t) == 0 || ssa.succ(t, 0) != e || t.args.is_empty() {
     return false
   }
   let c = g.f.values[t.args[0]]
@@ -1075,7 +1075,7 @@ fn (g: G) len_proved(blk: Int, s: Int, n: Int) -> Bool {
   let st = g.through_params(s)
   for j in 0..2 {
     let o = g.f.values[c.args[1 - j]]
-    if g.len_is(c.args[j], n) && o.op == ssa.Op.Call && aux_str(o.aux) == "Str.len" && o.args.len() == 1 && g.through_params(o.args[0]) == st {
+    if g.len_is(c.args[j], n) && o.op == ssa.Op.Call && g.f.name_is(o, "Str.len") && o.args.len() == 1 && g.through_params(o.args[0]) == st {
       return true
     }
   }
@@ -1090,14 +1090,14 @@ fn (g: G) len_is(v: Int, n: Int) -> Bool {
     return k == n
   }
   let x = g.f.values[v]
-  if x.op != ssa.Op.Call || aux_str(x.aux) != "Str.len" || x.args.len() != 1 {
+  if x.op != ssa.Op.Call || !g.f.name_is(x, "Str.len") || x.args.len() != 1 {
     return false
   }
   let cv = g.f.values[g.through_params(x.args[0])]
   if cv.op != ssa.Op.Const {
     return false
   }
-  if let Some(bs) = const_bytes(cv.aux) {
+  if let Some(bs) = const_bytes(g.f.aux(cv)) {
     return bs.len() == n
   }
   false
@@ -1227,7 +1227,7 @@ fn (var g: G) mark_cold_call(name: Str) {
 
 fn (var g: G) call_op(v: Int) {
   let x = g.f.values[v]
-  let name = aux_str(x.aux)
+  let name = g.f.name_of(x)
   if name == "rt.landing" {
     // a check only a fault takes: no code (the branch on it, decision
     // 0085)
@@ -1612,7 +1612,7 @@ fn (var g: G) call_op(v: Int) {
       var k = -1
       let y = g.f.values[x.args[0]]
       if y.op == ssa.Op.Const {
-        if let Some(bs) = const_bytes(y.aux) {
+        if let Some(bs) = const_bytes(g.f.aux(y)) {
           k = bs.len()
         }
       }
@@ -1631,7 +1631,7 @@ fn (var g: G) call_op(v: Int) {
         g.less_fact(x.args[1], alen)
       }
       let bv = g.f.values[x.args[0]]
-      let borrowed = g.inl_str() && bv.op == ssa.Op.Call && aux_str(bv.aux) == "rt.str_bytes" && !g.escapes[x.args[0]]
+      let borrowed = g.inl_str() && bv.op == ssa.Op.Call && g.f.name_is(bv, "rt.str_bytes") && !g.escapes[x.args[0]]
       g.set(v, [g.bytes_load(a, x.args[1], i, borrowed)])
     }
     "Str.len" => g.set(v, [g.str_len(g.words(x.args[0]))])
@@ -1704,7 +1704,7 @@ fn (var g: G) u64_divc(v: Int) -> Bool {
 /// object with a new length); whether v was one (isel.go inlineRT).
 fn (var g: G) inline_rt(v: Int) -> Bool {
   let x = g.f.values[v]
-  match aux_str(x.aux) {
+  match g.f.name_of(x) {
     // in a loop only: a push outside one (a value formatted into ""
     // once) finds the string shared or immortal, and the check is four
     // instructions more before the same call (text/int_fmt 1.006x)
@@ -1797,7 +1797,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         return true
       }
       if !g.has_val[v] {
-        let sum = aux_str(x.aux) == "rt.u64_adc"
+        let sum = g.f.name_is(x, "rt.u64_adc")
         let other = g.adc_pair(v, if sum { "rt.u64_adc_carry" } else { "rt.u64_adc" })
         // a constant 0 addend is xzr (register 31 is the zero register in
         // adds, adcs, and adc): no mov of 0, and the pair stays one
@@ -1895,7 +1895,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
           us.push(g.real(g.word(a)))
         }
         let d = g.new_vreg(false)
-        let _i = g.add(Inst{kind: K_PLAIN, text: ssa.crc32_fold_x86_lines_of(aux_str(x.aux), "$u0", "$u1", "$u2", "$d0").join("\n"), defs: [d], us: us, fl: IF_X86, clobbers: cl})
+        let _i = g.add(Inst{kind: K_PLAIN, text: ssa.crc32_fold_x86_lines_of(g.f.name_of(x), "$u0", "$u1", "$u2", "$d0").join("\n"), defs: [d], us: us, fl: IF_X86, clobbers: cl})
         g.set(v, [d])
       }
     }
@@ -1911,7 +1911,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         // its other half's pmull gave it
         return true
       }
-      let lo = aux_str(x.aux) == "rt.clmul_lo"
+      let lo = g.f.name_is(x, "rt.clmul_lo")
       let other = g.clmul_pair(v, if lo { "rt.clmul_hi" } else { "rt.clmul_lo" })
       if g.x86 {
         // PCLMULQDQ (cpu.hw()'s HW_CLMUL): the operands in xmm15 and
@@ -1963,7 +1963,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     "rt.aes_dec10" | "rt.aes_dec12" | "rt.aes_dec14" if g.x86 => {
       // the last key added, nr - 1 aesdec with the middle keys through aesimc, aesdeclast with the first
-      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_dec")) ?? 10
+      let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_dec")) ?? 10
       var t = "movdqu ($u0), %xmm15\nmovdqu ${16 * nr}($u1), %xmm14\npxor %xmm14, %xmm15"
       for r in 1..nr {
         t = t + "\nmovdqu ${16 * (nr - r)}($u1), %xmm14\naesimc %xmm14, %xmm14\naesdec %xmm14, %xmm15"
@@ -1975,7 +1975,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.aes_enc10" | "rt.aes_enc12" | "rt.aes_enc14" if g.x86 => {
       // the block: the first key added, nr - 1 aesenc, aesenclast with
       // the last (round keys loaded with movdqu: no alignment assumed)
-      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_enc")) ?? 10
+      let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_enc")) ?? 10
       var t = "movdqu ($u0), %xmm15\nmovdqu ($u1), %xmm14\npxor %xmm14, %xmm15"
       for r in 1..nr {
         t = t + "\nmovdqu ${16 * r}($u1), %xmm14\naesenc %xmm14, %xmm15"
@@ -2094,7 +2094,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       for a in x.args {
         us.push(g.real(g.word(a)))
       }
-      let nm = aux_str(x.aux)
+      let nm = g.f.name_of(x)
       let ls = if nm.ends_with("8") { ssa.chacha_poly8_avx2_lines(nm == "rt.chacha_poly_seal8", "$u0", "$u1", "$u2", "$u3", "$u4") } else { ssa.chacha_poly4_x86_lines(nm == "rt.chacha_poly_seal4", "$u0", "$u1", "$u2", "$u3", "$u4") }
       let _i = g.add(Inst{kind: K_PLAIN, text: ls.join("\n"), us: us, fl: IF_X86, clobbers: cl})
       g.clobber()
@@ -2112,7 +2112,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       for a in x.args {
         us.push(g.real(g.word(a)))
       }
-      let n = if aux_str(x.aux) == "rt.chacha_stream4" { "$u3" } else { "" }
+      let n = if g.f.name_is(x, "rt.chacha_stream4") { "$u3" } else { "" }
       let _i = g.add(Inst{kind: K_PLAIN, text: ssa.chacha4_x86_lines("$u0", "$u1", "$u2", n).join("\n"), us: us, fl: IF_X86, clobbers: cl})
       g.clobber()
       g.set(v, [])
@@ -2144,7 +2144,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     "rt.ticks" | "rt.ticks_hz" => {
       // a read of the generic timer: kept, never merged or moved (keep)
-      let reg = if aux_str(x.aux) == "rt.ticks" { "cntvct_el0" } else { "cntfrq_el0" }
+      let reg = if g.f.name_is(x, "rt.ticks") { "cntvct_el0" } else { "cntfrq_el0" }
       let d = g.new_vreg(false)
       let _i = g.add(Inst{kind: K_PLAIN, text: "mrs $d0, ${reg}", defs: [d], fl: IF_KEEP})
       g.set(v, [d])
@@ -2163,7 +2163,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.aes_enc10" | "rt.aes_enc12" | "rt.aes_enc14" => {
       // the whole block unrolled, the state in v30, each round key
       // loaded once into v31
-      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_enc")) ?? 10
+      let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_enc")) ?? 10
       var t = "ldr q30, [$u0]"
       for r in 0..nr - 1 {
         t = t + "\nldr q31, [$u1, #${16 * r}]\naese v30.16b, v31.16b\naesmc v30.16b, v30.16b"
@@ -2175,7 +2175,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.aes_dec10" | "rt.aes_dec12" | "rt.aes_dec14" => {
       // the inverse cipher with the encryption round keys (see aes_dec10): AESD and AESIMC, each middle key
       // through AESIMC first (the state in v30, the key in v31)
-      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_dec")) ?? 10
+      let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_dec")) ?? 10
       var t = "ldr q30, [$u0]\nldr q31, [$u1, #${16 * nr}]\naesd v30.16b, v31.16b\naesimc v30.16b, v30.16b"
       for r in 1..nr - 1 {
         t = t + "\nldr q31, [$u1, #${16 * (nr - r)}]\naesimc v31.16b, v31.16b\naesd v30.16b, v31.16b\naesimc v30.16b, v30.16b"
@@ -2189,7 +2189,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // counter block, $u4 the length, $u5 the GHASH state, $u6 the H
       // powers; x9 to x11 its pointers and count (v8, v9 saved on the
       // stack and restored)
-      let name = aux_str(x.aux)
+      let name = g.f.name_of(x)
       let nr = Int.parse(name[name.len() - 2..name.len()]) ?? 10
       var cl = [9, 10, 11]
       for r in ssa.aes_gcm_vregs() {
@@ -2207,7 +2207,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // AES-NI and PCLMULQDQ, eight blocks a round (ssa.aes_gcm8_x86_lines):
       // rax, rcx, r8 to r10 and xmm0 to xmm13 clobbered, xmm14, xmm15 and
       // r11 the emitter's scratch
-      let name = aux_str(x.aux)
+      let name = g.f.name_of(x)
       let nr = Int.parse(name[name.len() - 2..name.len()]) ?? 10
       var cl = [XR_AX, XR_CX, 8, 9, 10]
       for r in 0..14 {
@@ -2226,7 +2226,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // ssa.aes_gcm8_lines: the arguments as aes_gcm_lines' (the H
       // powers eight); x9 to x11 its pointers and count (d8 to d15 saved
       // on the stack and restored)
-      let name = aux_str(x.aux)
+      let name = g.f.name_of(x)
       let nr = Int.parse(name[name.len() - 2..name.len()]) ?? 10
       var cl = [9, 10, 11]
       for r in ssa.aes_gcm8_vregs() {
@@ -2243,7 +2243,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.aes_ctr10" | "rt.aes_ctr12" | "rt.aes_ctr14" => {
       // ssa.aes_ctr_lines: $u0 dst, $u1 src, $u2 the round keys, $u3 the
       // counter block, $u4 the length; x9 to x11 its pointers and count
-      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_ctr")) ?? 10
+      let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_ctr")) ?? 10
       var cl = [9, 10, 11]
       for r in ssa.aes_ctr_vregs() {
         cl.push(FP_BASE + r)
@@ -2259,7 +2259,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.aes_cbc_enc10" | "rt.aes_cbc_enc12" | "rt.aes_cbc_enc14" => {
       // ssa.aes_cbc_enc_lines: $u0 dst, $u1 src, $u2 the round keys, $u3
       // the IV, $u4 the length; x9 to x11 its pointers and count
-      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_cbc_enc")) ?? 10
+      let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_cbc_enc")) ?? 10
       var cl = [9, 10, 11]
       for r in ssa.aes_cbc_enc_vregs() {
         cl.push(FP_BASE + r)
@@ -2276,7 +2276,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // four blocks in v26 to v29 (caller saved, never v8 to v15), each
       // round key loaded once into v31 and applied to the four in turn:
       // four independent AESE and AESMC chains instead of one
-      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_enc").trim_suffix("x4")) ?? 10
+      let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_enc").trim_suffix("x4")) ?? 10
       var t = "ldp q26, q27, [$u0]\nldp q28, q29, [$u0, #32]"
       for r in 0..nr - 1 {
         t = t + "\nldr q31, [$u1, #${16 * r}]"
@@ -2304,7 +2304,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       for r in ssa.mlkem_neon_vregs() {
         cl.push(FP_BASE + r)
       }
-      let name = aux_str(x.aux)
+      let name = g.f.name_of(x)
       let ls = if name == "rt.mlkem_ntt" { ssa.mlkem_ntt_neon_lines("$u0", "$u1") } else if name == "rt.mlkem_inverse_ntt" { ssa.mlkem_inverse_ntt_neon_lines("$u0", "$u1") } else { ssa.mlkem_mul_acc_neon_lines("$u0", "$u1", "$u2", "$u3") }
       var us: List[Int] = []
       for a in x.args {
@@ -2322,7 +2322,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       for r in 0..6 {
         cl.push(FP_BASE + r)
       }
-      let t = (if aux_str(x.aux) == "rt.mlkem_ntt" { ssa.mlkem_ntt_sse2_lines("$u0", "$u1") } else { ssa.mlkem_inverse_ntt_sse2_lines("$u0", "$u1") }).join("\n")
+      let t = (if g.f.name_is(x, "rt.mlkem_ntt") { ssa.mlkem_ntt_sse2_lines("$u0", "$u1") } else { ssa.mlkem_inverse_ntt_sse2_lines("$u0", "$u1") }).join("\n")
       let _i = g.add(Inst{kind: K_PLAIN, text: t, us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))], fl: IF_X86, clobbers: cl})
       g.clobber()
       g.set(v, [])
@@ -2480,7 +2480,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.i64_to_f32" | "rt.u64_to_f32" => {
       // the single form kept for the Float32 operations that read it
       // (decision 0361; the widen goes when only they do)
-      let cv = if aux_str(x.aux) == "rt.i64_to_f32" { "scvtf" } else { "ucvtf" }
+      let cv = if g.f.name_is(x, "rt.i64_to_f32") { "scvtf" } else { "ucvtf" }
       let s = g.def1(true, "${cv} $wd0, $u0", [g.word(x.args[0])])
       g.f32s[v] = s
       g.set(v, [g.def1(true, "fcvt $d0, $wu0", [s])])
@@ -2565,7 +2565,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // calls of the unwinder's trampolines (decision 0221), written with
       // the clone trampoline: only programs with no C library use either
       g.clone_ref = true
-      let _r = g.call(g.tramp(if aux_str(x.aux) == "rt.unwind_save" { "xo_unwind_save" } else { "xo_unwind_resume" }), [rsrc(g.word(x.args[0]))], [])
+      let _r = g.call(g.tramp(if g.f.name_is(x, "rt.unwind_save") { "xo_unwind_save" } else { "xo_unwind_resume" }), [rsrc(g.word(x.args[0]))], [])
       g.set(v, [])
     }
     "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" if (g.os is "linux" | "freebsd") || g.os == "darwin" || g.os == "windows" => {
@@ -2575,7 +2575,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // instructions (sched.xo still defines xo_tlocal)
       g.sched_ref = true
       let base = g.tl_base()
-      let op = aux_str(x.aux)
+      let op = g.f.name_of(x)
       if op == "rt.tlocal_addr" {
         g.set(v, [base])
       } else {
@@ -2641,9 +2641,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         g.set(v, [g.x86_bytes16(x, us)])
         return true
       }
-      let bits = aux_str(x.aux).ends_with("_bits")
+      let bits = g.f.name_ends(x, "_bits")
       var cmp = "cmlt v30.16b, v30.16b, #0"
-      if aux_str(x.aux) == "rt.bytes_eq16" || aux_str(x.aux) == "rt.bytes_eq16_bits" {
+      if g.f.name_is(x, "rt.bytes_eq16") || g.f.name_is(x, "rt.bytes_eq16_bits") {
         let (c, ok) = g.const_int(x.args[2])
         if ok {
           cmp = "movi v31.16b, #${c & 255}\ncmeq v30.16b, v30.16b, v31.16b"
@@ -2668,7 +2668,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let ws = g.words(x.args[0])
       let d = g.str_base_heap(ws)
       var us = [d, g.word(x.args[1])]
-      if aux_str(x.aux) == "rt.bytes_any_eq32" {
+      if g.f.name_is(x, "rt.bytes_any_eq32") {
         let (c, ok) = g.const_int(x.args[2])
         if !ok {
           us.push(g.word(x.args[2]))
@@ -2919,7 +2919,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
 /// object's address both ways; whether v was one.
 fn (var g: G) inline_raw(v: Int) -> Bool {
   let x = g.f.values[v]
-  let name = aux_str(x.aux)
+  let name = g.f.name_of(x)
   match name {
     "rt.mem_load" => {
       let (w, _) = g.const_int(x.args[2])
@@ -3440,7 +3440,7 @@ fn (var g: G) mul_long(x: Int, y: Int) -> (Str, List[Int], Bool) {
 /// (wrapOp).
 fn (g: G) wrap_op(v: Int) -> (Int, Bool) {
   let x = g.f.values[v]
-  if x.op != ssa.Op.Call || aux_str(x.aux) != "rt.int_wrap" {
+  if x.op != ssa.Op.Call || !g.f.name_is(x, "rt.int_wrap") {
     return (0, false)
   }
   g.const_int(x.args[0])
@@ -3516,7 +3516,7 @@ fn (var g: G) add_with_flag(v: Int, op: Int) -> Bool {
   while k < ins.len() && k <= g.cur_ix + 6 {
     let u = ins[k]
     let y = g.f.values[u]
-    if y.op == ssa.Op.Call && aux_str(y.aux) == want && !g.has_val[u] && y.args.len() == 2 {
+    if y.op == ssa.Op.Call && g.f.name_of(y) == want && !g.has_val[u] && y.args.len() == 2 {
       let same = (y.args[0] == a && y.args[1] == b) || (op == 0 && y.args[0] == b && y.args[1] == a)
       if same {
         let d = g.new_vreg(false)
@@ -3571,7 +3571,7 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
   var sums: List[Int] = []
   var cars: List[Int] = []
   let x = g.f.values[v]
-  let sum0 = aux_str(x.aux) == "rt.u64_adc"
+  let sum0 = g.f.name_is(x, "rt.u64_adc")
   let p0 = g.adc_pair(v, if sum0 { "rt.u64_adc_carry" } else { "rt.u64_adc" })
   if p0 < 0 {
     return false
@@ -3596,7 +3596,7 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
     let last = cars[cars.len() - 1]
     let u = ins[k]
     let y = g.f.values[u]
-    if y.op == ssa.Op.Call && aux_str(y.aux) == "rt.u64_adc" && !g.has_val[u] && y.args.len() == 3 && y.args[2] == last {
+    if y.op == ssa.Op.Call && g.f.name_is(y, "rt.u64_adc") && !g.has_val[u] && y.args.len() == 3 && y.args[2] == last {
       let c = g.adc_pair_at(u, k, "rt.u64_adc_carry")
       // the carry in used only by this pair, its operands defined
       // before the chain
@@ -3705,7 +3705,7 @@ fn (var g: G) chain_product(a: Int, ins: List[Int], k: Int, nu: Int) -> Bool {
   if x.op != ssa.Op.Call || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int {
     return false
   }
-  let n = aux_str(x.aux)
+  let n = g.f.name_of(x)
   if n == "rt.u64_mul_hi" && x.args.len() == 2 {
     return g.ready(x.args[0], ins) && g.ready(x.args[1], ins)
   }
@@ -3733,8 +3733,8 @@ fn (var g: G) adc_chain_split(sums: List[Int], cars: List[Int]) {
     let y = g.f.values[sums[i]]
     for a in [y.args[0], y.args[1]] {
       let p = g.f.values[a]
-      if !g.has_val[a] && p.op == ssa.Op.Call && aux_str(p.aux) is "rt.u64_mul_hi" | "rt.int_wrap" {
-        let op = if aux_str(p.aux) == "rt.u64_mul_hi" { "umulh" } else { "mul" }
+      if !g.has_val[a] && p.op == ssa.Op.Call && g.f.name_of(p) is "rt.u64_mul_hi" | "rt.int_wrap" {
+        let op = if g.f.name_is(p, "rt.u64_mul_hi") { "umulh" } else { "mul" }
         let n = p.args.len()
         g.set(a, [g.def1(false, "${op} $d0, $u0, $u1", [g.word(p.args[n - 2]), g.word(p.args[n - 1])])])
       }
@@ -3896,7 +3896,7 @@ fn (var g: G) adc_pair_at(u: Int, k: Int, want: Str) -> Int {
   while j < ins.len() && j <= k + 6 {
     let w = ins[j]
     let y = g.f.values[w]
-    if y.op == ssa.Op.Call && aux_str(y.aux) == want && !g.has_val[w] && y.args.len() == 3 && g.same_arg(y.args[0], xa[0]) && g.same_arg(y.args[1], xa[1]) && g.same_arg(y.args[2], xa[2]) {
+    if y.op == ssa.Op.Call && g.f.name_of(y) == want && !g.has_val[w] && y.args.len() == 3 && g.same_arg(y.args[0], xa[0]) && g.same_arg(y.args[1], xa[1]) && g.same_arg(y.args[2], xa[2]) {
       return w
     }
     j += 1
@@ -3917,7 +3917,7 @@ fn (var g: G) adc_pair(v: Int, want: Str) -> Int {
   while k < ins.len() && k <= g.cur_ix + 6 {
     let u = ins[k]
     let y = g.f.values[u]
-    if y.op == ssa.Op.Call && aux_str(y.aux) == want && !g.has_val[u] && y.args.len() == 3 && g.same_arg(y.args[0], xa[0]) && g.same_arg(y.args[1], xa[1]) && g.same_arg(y.args[2], xa[2]) {
+    if y.op == ssa.Op.Call && g.f.name_of(y) == want && !g.has_val[u] && y.args.len() == 3 && g.same_arg(y.args[0], xa[0]) && g.same_arg(y.args[1], xa[1]) && g.same_arg(y.args[2], xa[2]) {
       return u
     }
     k += 1
@@ -3971,7 +3971,7 @@ fn (var g: G) clmul_pair(v: Int, want: Str) -> Int {
   while k < ins.len() && k <= g.cur_ix + 6 {
     let u = ins[k]
     let y = g.f.values[u]
-    if y.op == ssa.Op.Call && aux_str(y.aux) == want && !g.has_val[u] && y.args.len() == 2 && y.args[0] == a[0] && y.args[1] == a[1] {
+    if y.op == ssa.Op.Call && g.f.name_of(y) == want && !g.has_val[u] && y.args.len() == 2 && y.args[0] == a[0] && y.args[1] == a[1] {
       return u
     }
     k += 1
@@ -4064,7 +4064,7 @@ fn (var g: G) atomic_result(v: Int, r: Int) {
   match g.kind(ssa.ty_of(x.tb)) {
     Int | Bool => g.set(v, [r])
     _ => {
-      g.fail("the atomic `${aux_str(x.aux)}` returns a `${g.tname(ssa.ty_of(x.tb))}`")
+      g.fail("the atomic `${g.f.name_of(x)}` returns a `${g.tname(ssa.ty_of(x.tb))}`")
       g.set(v, g.zeros(ssa.ty_of(x.tb)))
     }
   }
@@ -4107,7 +4107,7 @@ fn (var g: G) race_acquire(v: Int, ord: Int, a: Int) {
 /// (compiler/macho elflink.xo writes them when it links without cc).
 fn (var g: G) atomic(v: Int) {
   let x = g.f.values[v]
-  let name = aux_str(x.aux)
+  let name = g.f.name_of(x)
   if name == "rt.spin_hint" {
     g.store("yield", [])
     g.set(v, [])
@@ -4218,7 +4218,7 @@ fn (var g: G) atomic(v: Int) {
 /// xo_name, decision 0068): an Int, Bool, List, or handle is one word, a
 /// Str its bytes and length; the result is nothing or one word.
 fn (var g: G) rt_call(v: Int) {
-  if aux_str(g.f.values[v].aux).starts_with("rt.pc.") {
+  if g.f.name_starts(g.f.values[v], "rt.pc.") {
     g.platform_call(v)
     return
   }
@@ -4226,7 +4226,7 @@ fn (var g: G) rt_call(v: Int) {
     return
   }
   let x = g.f.values[v]
-  let name0 = aux_str(x.aux)
+  let name0 = g.f.name_of(x)
   var args: List[Src] = []
   // `rt.rs_*` functions take their Str operands as the string object
   // (the first is consumed, decision 0074); the others its bytes
@@ -4483,7 +4483,7 @@ fn (var g: G) sym_present(v: Int, sym: Str) {
 /// `match` on `target.os` the passes keep) is a trap.
 fn (var g: G) platform_call(v: Int) {
   let x = g.f.values[v]
-  let (os, sym, nfixed) = platform_parts(aux_str(x.aux))
+  let (os, sym, nfixed) = platform_parts(g.f.name_of(x))
   if os == "cp" {
     g.sym_present(v, sym)
     return
@@ -4622,9 +4622,9 @@ fn (var g: G) list_field(v: Int, name: Str) {
 fn (g: G) after_take(v: Int) -> Bool {
   let x = g.f.values[v]
   let l = g.f.values[x.args[0]]
-  if l.op != ssa.Op.Field || aux_int(l.aux) != 0 || l.args.len() != 1 {
+  if l.op != ssa.Op.Field || ssa.auxw_int(l.aux) != 0 || l.args.len() != 1 {
     return false
   }
   let t = g.f.values[l.args[0]]
-  t.op == ssa.Op.Call && aux_str(t.aux) == "list.take" && t.args.len() == 2 && t.args[1] == x.args[1]
+  t.op == ssa.Op.Call && g.f.name_is(t, "list.take") && t.args.len() == 2 && t.args[1] == x.args[1]
 }

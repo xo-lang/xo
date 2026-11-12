@@ -384,7 +384,7 @@ pub fn (var g: Gen) generate() -> Str {
       for v in bl.instrs {
         let op = g.m.funcs[fi].values[v].op
         if op is ssa.Op.Closure | ssa.Op.FuncAddr | ssa.Op.Rebind | ssa.Op.CodeOf {
-          if let S(s) = g.m.funcs[fi].values[v].aux {
+          if let S(s) = g.m.funcs[fi].aux(g.m.funcs[fi].values[v]) {
             g.addr_taken[s] = true
           }
         }

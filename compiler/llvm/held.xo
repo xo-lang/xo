@@ -65,7 +65,7 @@ fn bot_key() -> HKey {
 fn (var g: Gen) key_of(v: Int) -> HKey {
   let x = g.f.values[v]
   if x.op == ssa.Op.Field && g.f.values[x.args[0]].op == ssa.Op.Call {
-    return HKey{v: x.args[0], k: aux_int(x.aux)}
+    return HKey{v: x.args[0], k: ssa.auxw_int(x.aux)}
   }
   HKey{v: v, k: -1}
 }
@@ -143,7 +143,7 @@ fn (var g: Gen) stable(v: Int) -> Bool {
     Payload | Field => r = g.is_agg(ssa.ty_of(x.tb)) && g.stable(x.args[0])
     Unbox => r = g.is_agg(ssa.ty_of(x.tb)) && g.root_borrowed(x.args[0])
     Call => {
-      if aux_str(x.aux) == "list.index" {
+      if g.f.name_is(x, "list.index") {
         r = g.is_agg(ssa.ty_of(x.tb)) && g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Unit && g.root_borrowed(x.args[0])
       }
     }
@@ -171,7 +171,7 @@ fn (var g: Gen) find_take_args() {
     if x.op != ssa.Op.Call {
       continue
     }
-    let callee = g.by_name.get(aux_str(x.aux)) ?? -1
+    let callee = g.by_name.get(g.f.name_of(x)) ?? -1
     if callee < 0 {
       continue
     }
@@ -181,12 +181,12 @@ fn (var g: Gen) find_take_args() {
     }
     let sm = g.slot_mems(v, callee)
     for (i, a) in x.args.indexed() {
-      if !br[i] || sm[i] >= 0 || !g.is_var_param(callee, i) || g.f.values[a].op != ssa.Op.Field || aux_int(g.f.values[a].aux) != 1 || g.users(a) != [v] {
+      if !br[i] || sm[i] >= 0 || !g.is_var_param(callee, i) || g.f.values[a].op != ssa.Op.Field || ssa.auxw_int(g.f.values[a].aux) != 1 || g.users(a) != [v] {
         continue
       }
       let t = g.f.values[a].args[0]
       let tx = g.f.values[t]
-      if tx.op != ssa.Op.Call || aux_str(tx.aux) != "list.take" || g.take_ptr.contains(t) {
+      if tx.op != ssa.Op.Call || !g.f.name_is(tx, "list.take") || g.take_ptr.contains(t) {
         continue
       }
       let skip = g.take_store(t, v, callee, i)
@@ -219,7 +219,7 @@ fn (var g: Gen) take_store(t: Int, v: Int, callee: Int, i: Int) -> List[Int] {
   var r = -1
   for u in g.users(v) {
     let ux = g.f.values[u]
-    if ux.op == ssa.Op.Field && aux_int(ux.aux) == k {
+    if ux.op == ssa.Op.Field && ssa.auxw_int(ux.aux) == k {
       if r >= 0 {
         return []
       }
@@ -233,7 +233,7 @@ fn (var g: Gen) take_store(t: Int, v: Int, callee: Int, i: Int) -> List[Int] {
   var share = -1
   for u in g.users(r) {
     let ux = g.f.values[u]
-    if ux.op == ssa.Op.Call && aux_str(ux.aux) == "list.set" && ux.args.len() == 3 && ux.args[1] == g.f.values[t].args[1] && ux.args[2] == r && set < 0 {
+    if ux.op == ssa.Op.Call && g.f.name_is(ux, "list.set") && ux.args.len() == 3 && ux.args[1] == g.f.values[t].args[1] && ux.args[2] == r && set < 0 {
       set = u
     } else if ux.op == ssa.Op.ShareIn && ux.args[1] == r && share < 0 {
       share = u
@@ -251,7 +251,7 @@ fn (var g: Gen) take_store(t: Int, v: Int, callee: Int, i: Int) -> List[Int] {
     if ux.op != ssa.Op.Field {
       return []
     }
-    if aux_int(ux.aux) != 0 {
+    if ssa.auxw_int(ux.aux) != 0 {
       continue
     }
     for w in g.users(u) {
@@ -283,16 +283,16 @@ fn (var g: Gen) field_store_done(v: Int, k: HKey) -> Bool {
     None => return false
   }
   let x = g.f.values[v]
-  if x.args[0] != u || aux_int(x.aux) != idx {
+  if x.args[0] != u || ssa.auxw_int(x.aux) != idx {
     return false
   }
   let r = g.f.values[x.args[1]]
-  r.op == ssa.Op.Field && r.args[0] == k.v && aux_int(r.aux) == g.var_result(k.v, i)
+  r.op == ssa.Op.Field && r.args[0] == k.v && ssa.auxw_int(r.aux) == g.var_result(k.v, i)
 }
 
 /// The result index of call v's `var` argument i (-1: not a `var` one).
 fn (var g: Gen) var_result(v: Int, i: Int) -> Int {
-  let callee = g.by_name.get(aux_str(g.f.values[v].aux)) ?? -1
+  let callee = g.by_name.get(g.f.name_of(g.f.values[v])) ?? -1
   if callee < 0 {
     return -1
   }
@@ -321,7 +321,7 @@ fn (var g: Gen) field_home_read(v: Int, a: Int, k: HKey) -> Bool {
   }
   let x = g.f.values[v]
   if x.op == ssa.Op.Field {
-    return aux_int(x.aux) != idx
+    return ssa.auxw_int(x.aux) != idx
   }
   g.held.fdone.contains(v)
 }
@@ -334,7 +334,7 @@ fn (var g: Gen) res_only_stored(v: Int, k: Int) -> Bool {
     if x.op != ssa.Op.Field {
       return false
     }
-    if aux_int(x.aux) != k {
+    if ssa.auxw_int(x.aux) != k {
       continue
     }
     for w in g.users(u) {
@@ -387,7 +387,7 @@ fn (var g: Gen) compute_held(mems: List[HeldMem]) {
         let x = g.f.values[v]
         match x.op {
           Call => {
-            let callee = g.by_name.get(aux_str(x.aux)) ?? -1
+            let callee = g.by_name.get(g.f.name_of(x)) ?? -1
             if callee >= 0 {
               let sm = g.slot_mems(v, callee)
               for (i, m) in sm.indexed() {
@@ -411,7 +411,7 @@ fn (var g: Gen) compute_held(mems: List[HeldMem]) {
                 if m < 0 || sm.contains(m) || st[m] != g.key_of(u) || fs.any(fn(p) { p.0 == m }) {
                   continue
                 }
-                g.held.fslot[(v, i)] = (m, u, aux_int(g.f.values[a].aux))
+                g.held.fslot[(v, i)] = (m, u, ssa.auxw_int(g.f.values[a].aux))
                 fs.push((m, i))
               }
               for (m, i) in fs {
@@ -447,20 +447,20 @@ fn (var g: Gen) compute_held(mems: List[HeldMem]) {
               st[m] = HKey{v: v, k: -1}
             }
           }
-          Jump => g.set_edge(x.succs[0], st)
+          Jump => g.set_edge(ssa.succ(x, 0), st)
           Branch => {
             let l = x.args[0]
             let lx = g.f.values[l]
-            if lx.op == ssa.Op.Call && aux_str(lx.aux) == "rt.landing" {
+            if lx.op == ssa.Op.Call && g.f.name_is(lx, "rt.landing") {
               if let Some(ps) = landed.get(l) {
-                g.set_edge(x.succs[0], ps)
+                g.set_edge(ssa.succ(x, 0), ps)
               } else {
-                g.set_edge(x.succs[0], st)
+                g.set_edge(ssa.succ(x, 0), st)
               }
-              g.set_edge(x.succs[1], st)
+              g.set_edge(ssa.succ(x, 1), st)
             } else {
-              g.set_edge(x.succs[0], st)
-              g.set_edge(x.succs[1], st)
+              g.set_edge(ssa.succ(x, 0), st)
+              g.set_edge(ssa.succ(x, 1), st)
             }
           }
           _ => {}
@@ -599,7 +599,7 @@ fn (var g: Gen) find_mem_only() {
           bad[a] = true
         }
       }
-      for e in x.succs {
+      for e in x.succs() {
         let to = g.f.edges[e].to
         for (pi, a) in g.f.edges[e].args.indexed() {
           let m = cands[a]
@@ -658,7 +658,7 @@ fn (var g: Gen) lazy_result(v: Int, k: Int) -> Bool {
     if x.op != ssa.Op.Field {
       return false
     }
-    if aux_int(x.aux) == k && g.mem_only(u) < 0 {
+    if ssa.auxw_int(x.aux) == k && g.mem_only(u) < 0 {
       return false
     }
   }
@@ -679,7 +679,7 @@ fn (var g: Gen) users(v: Int) -> List[Int] {
         for a in g.f.values[x].args {
           g.users_of[a].push(x)
         }
-        for e in g.f.values[x].succs {
+        for e in g.f.values[x].succs() {
           for a in g.f.edges[e].args {
             g.users_of[a].push(x)
           }

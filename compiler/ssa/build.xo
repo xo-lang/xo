@@ -3940,7 +3940,7 @@ fn (var b: Builder) check_then(callee: Str, cleanup: Cleanup) {
     // given for an unwind, 2026-11-03)
     let fv = b.s.f.values[b.s.f.values[w].args[0]]
     if fv.op == Op.Closure {
-      c = aux_name(fv.aux)
+      c = b.s.f.name_of(fv)
     }
   }
   match cleanup {

@@ -96,7 +96,7 @@ fn (var g: Gen) func(fi: Int) {
         g.nuse[a] += 1
       }
     }
-    for e in x.succs {
+    for e in x.succs() {
       for a in f.edges[e].args {
         if a >= 0 {
           g.nuse[a] += 1
@@ -135,7 +135,7 @@ fn (var g: Gen) func(fi: Int) {
         let x = g.f.values[b.instrs[j]]
         var what = ssa.op_name(x.op)
         if x.op == ssa.Op.Call {
-          if let S(n) = x.aux {
+          if let S(n) = g.f.aux(x) {
             what = if g.by_name.contains(n) { "call ${if g.homes[g.by_name.get(n) ?? 0].is_empty() { "fn" } else { "fn_home" }}" } else { "call ${n}" }
           }
         }
@@ -698,7 +698,7 @@ fn (var g: Gen) plan_locals() {
       for a in f.values[x].args {
         us.push(a)
       }
-      for e in f.values[x].succs {
+      for e in f.values[x].succs() {
         for a in f.edges[e].args {
           us.push(a)
         }
@@ -981,7 +981,7 @@ fn (var g: Gen) fault_exit(v: Int) {
     g.e("i32.const 0")
     g.e("global.set $prop")
     let t = g.f.term(g.blk[pad])
-    let e = g.f.values[t].succs[0]
+    let e = ssa.succ(g.f.values[t], 0)
     g.goto(g.f.edges[e].to)
     return
   }
@@ -1037,7 +1037,7 @@ fn (var g: Gen) static_unwind(bi: Int) -> Bool {
         }
       }
       Call => {
-        let name = match x.aux {
+        let name = match g.f.aux(x) {
           S(s) => s
           _ => ""
         }
@@ -1146,7 +1146,7 @@ fn (var g: Gen) const_words(v: Int) -> List[Int]? {
   let x = g.f.values[v]
   match x.op {
     Const => {
-      match x.aux {
+      match g.f.aux(x) {
         I(n) => return Some([if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Float { float_bits(Float(n)) } else { n }])
         F(f) => return Some([float_bits(f)])
         B(b) => return Some([if b { 1 } else { 0 }])
@@ -1156,7 +1156,7 @@ fn (var g: Gen) const_words(v: Int) -> List[Int]? {
       }
     }
     Call => {
-      if let S(n) = x.aux {
+      if let S(n) = g.f.aux(x) {
         if n == "rt.rl_empty" && g.nleaves(ssa.ty_of(x.tb)) == 1 {
           return Some([g.empty_list])
         }
@@ -1239,7 +1239,7 @@ fn (var g: Gen) unwind_block(bi: Int) -> Bool {
         }
       }
       Call => {
-        let name = match x.aux {
+        let name = match g.f.aux(x) {
           S(s) => s
           _ => ""
         }
@@ -1632,7 +1632,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       g.def(v)
     }
     Payload => {
-      let (tag, fi) = match x.aux {
+      let (tag, fi) = match g.f.aux(x) {
         P(a, b) => (a, b)
         _ => (0, 0)
       }
@@ -1806,7 +1806,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
         return
       }
       let cp = g.lcopy_fn(at)
-      if ssa.proved_reuse(x.aux) {
+      if ssa.proved_reuse(g.f.aux(x)) {
         // decision 0322: every call passes this list unique
         g.push(a)
         g.def(v)
@@ -1824,10 +1824,10 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       g.e("end")
       g.def(v)
     }
-    Jump => g.edge(x.succs[0], bi)
+    Jump => g.edge(ssa.succ(x, 0), bi)
     Branch => {
-      let yes = x.succs[0]
-      let no = x.succs[1]
+      let yes = ssa.succ(x, 0)
+      let no = ssa.succ(x, 1)
       g.push(x.args[0])
       g.e("if")
       g.edge(yes, bi)
@@ -1879,7 +1879,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
     // (the function's table index, as an Int) and the call's function
     // value, that index with the show closure's environment
     CodeOf => {
-      let name = match x.aux {
+      let name = match g.f.aux(x) {
         S(s) => s
         _ => ""
       }
@@ -1929,7 +1929,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
     }
     Rebind => {
       // the function value of another code with the same environment
-      let name = match x.aux {
+      let name = match g.f.aux(x) {
         S(s) => s
         _ => ""
       }
@@ -1944,7 +1944,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
     }
     FuncAddr => {
       // a function's table index (task entry points, list drops)
-      let name = match x.aux {
+      let name = match g.f.aux(x) {
         S(s) => s
         _ => ""
       }
@@ -1966,7 +1966,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
 
 fn (var g: Gen) constant(v: Int) {
   let x = g.f.values[v]
-  match x.aux {
+  match g.f.aux(x) {
     I(n) => {
       if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Float {
         g.e("i64.const ${float_bits(Float(n))}")
@@ -1988,7 +1988,7 @@ fn (var g: Gen) constant(v: Int) {
       g.e("i32.const ${g.str_obj(b)}")
       g.e("i32.const ${b.len()}")
     }
-    None | P(..) => {
+    None | P(..) | E(..) => {
       if g.nleaves(ssa.ty_of(x.tb)) > 0 {
         g.fail("the wasm backend does not support a constant of `${g.m.types[ssa.ty_of(x.tb)].name}`")
       }
@@ -2061,7 +2061,7 @@ fn (var g: Gen) compare(v: Int) {
 
 fn (var g: Gen) closure(v: Int) {
   let x = g.f.values[v]
-  let name = match x.aux {
+  let name = match g.f.aux(x) {
     S(s) => s
     _ => ""
   }

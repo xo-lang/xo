@@ -55,7 +55,7 @@ fn uniq_candidates(funcs: List[Func], fidx: Map[Str, Int]) -> List[Bool] {
   }
   for f in funcs {
     for x in f.values {
-      let name = aux_name(x.aux)
+      let name = f.name_of(x)
       if name.is_empty() {
         continue
       }
@@ -188,7 +188,7 @@ fn succ_edges(f: Func, b: Int) -> List[Int] {
   if ins.is_empty() {
     return []
   }
-  f.values[ins[ins.len() - 1]].succs
+  f.values[ins[ins.len() - 1]].succs()
 }
 
 /// Whether use u of v reads it only (keeps no reference): a list read,
@@ -201,7 +201,7 @@ fn (r: Rc) reads_only(f: Func, u: UUse) -> Bool {
   if x.op != Op.Call {
     return false
   }
-  let name = aux_name(x.aux)
+  let name = f.name_of(x)
   if list_read(name) {
     return u.k == 0
   }
@@ -260,7 +260,7 @@ fn (r: Rc) origin1(funcs: List[Func], fi: Int, s: UFn, uf: UniqFacts, v: Int, va
   let x = f.values[v]
   match x.op {
     Call => {
-      let name = aux_name(x.aux)
+      let name = f.name_of(x)
       // without a size, list.new is the shared empty list, immortal:
       // as insert_rc's uniq, unique enough, since every update of an
       // empty list allocates (push) or faults (set, pop, take) before
@@ -279,8 +279,8 @@ fn (r: Rc) origin1(funcs: List[Func], fi: Int, s: UFn, uf: UniqFacts, v: Int, va
       if cx.op != Op.Call {
         return false
       }
-      let name = aux_name(cx.aux)
-      let k = aux_int(x.aux)
+      let name = f.name_of(cx)
+      let k = auxw_int(x.aux)
       if name is "list.pop" | "list.take" {
         return k == 0
       }
@@ -350,7 +350,7 @@ fn past_landing(f: Func, idom: List[Int], c: Int, b: Int) -> Bool {
     for v in ins {
       if v == c {
         after_c = true
-      } else if after_c && f.values[v].op == Op.Call && (aux_name(f.values[v].aux) is "rt.landing" | "rt.unwinding") {
+      } else if after_c && f.values[v].op == Op.Call && (f.name_of(f.values[v]) is "rt.landing" | "rt.unwinding") {
         var claimed = false
         for w in ins {
           claimed = claimed || pad_of(f.values[w].pi) == v
@@ -366,14 +366,14 @@ fn past_landing(f: Func, idom: List[Int], c: Int, b: Int) -> Bool {
     return udom(idom, cb, b)
   }
   let l = f.values[u]
-  if block_of(l.tb) != cb || l.op != Op.Call || aux_name(l.aux) != "rt.landing" {
+  if block_of(l.tb) != cb || l.op != Op.Call || !f.name_is(l, "rt.landing") {
     return false
   }
   let t = f.values[ins[ins.len() - 1]]
-  if t.op != Op.Branch || t.args.is_empty() || t.args[0] != u || t.succs.len() != 2 {
+  if t.op != Op.Branch || t.args.is_empty() || t.args[0] != u || succ_n(t) != 2 {
     return false
   }
-  udom(idom, f.edges[t.succs[1]].to, b)
+  udom(idom, f.edges[succ(t, 1)].to, b)
 }
 
 /// Whether the Return r0 of f is a fault exit (its block calls
@@ -381,7 +381,7 @@ fn past_landing(f: Func, idom: List[Int], c: Int, b: Int) -> Bool {
 fn fault_exit(f: Func, r0: Int) -> Bool {
   for v in f.blocks[block_of(f.values[r0].tb)].instrs {
     let x = f.values[v]
-    if x.op == Op.Call && aux_name(x.aux) == "rt.fault_continue" {
+    if x.op == Op.Call && f.name_is(x, "rt.fault_continue") {
       return true
     }
   }
@@ -419,7 +419,7 @@ fn (r: Rc) uniq_facts(funcs: List[Func]) -> UniqFacts {
       for v in bl.instrs {
         let x = f.values[v]
         if x.op == Op.Call {
-          let ci = r.fidx.get(aux_name(x.aux)) ?? -1
+          let ci = r.fidx.get(f.name_of(x)) ?? -1
           if ci >= 0 && cand[ci] {
             calls[ci].push((fi, v))
           }
@@ -583,7 +583,7 @@ fn mark_entry_reuse(var f: Func, es: List[Bool], mark: Int) {
       let p = x.args[0]
       let i = param_index(f, p)
       if f.values[p].op == Op.Param && block_of(f.values[p].tb) == 0 && i >= 0 && i < es.len() && es[i] {
-        f.values[v].aux = Aux.I(n: mark)
+        f.values[v].aux = f.pack(Aux.I(n: mark))
       }
     }
   }

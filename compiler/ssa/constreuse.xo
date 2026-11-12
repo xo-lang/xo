@@ -43,17 +43,17 @@ fn const_reads(f: Func) -> List[CRead] {
     }
     let tw = cv.args[0]
     let tv = f.values[tw]
-    if tv.op != Op.Call || block_of(tv.tb) != b || aux_name(tv.aux) != "rt.slot_load" || tv.args.len() != 3 || const_int(f, tv.args[1]) != Some(CONST_TABLE_WORD) {
+    if tv.op != Op.Call || block_of(tv.tb) != b || !f.name_is(tv, "rt.slot_load") || tv.args.len() != 3 || const_int(f, tv.args[1]) != Some(CONST_TABLE_WORD) {
       continue
     }
     let w = tv.args[0]
     let wv = f.values[w]
-    if wv.op != Op.Call || block_of(wv.tb) != b || aux_name(wv.aux) != "rt.mem_load" || wv.args.is_empty() {
+    if wv.op != Op.Call || block_of(wv.tb) != b || !f.name_is(wv, "rt.mem_load") || wv.args.is_empty() {
       continue
     }
     let sw = wv.args[0]
     let sv = f.values[sw]
-    if sv.op != Op.Call || block_of(sv.tb) != b || aux_name(sv.aux) != "rt.static_word" || sv.args.is_empty() || const_int(f, sv.args[0]) != Some(CONST_SVC_WORD) {
+    if sv.op != Op.Call || block_of(sv.tb) != b || !f.name_is(sv, "rt.static_word") || sv.args.is_empty() || const_int(f, sv.args[0]) != Some(CONST_SVC_WORD) {
       continue
     }
     // the slot's state read and the built list's load: t's other users
@@ -72,7 +72,7 @@ fn const_reads(f: Func) -> List[CRead] {
         ok = false
         continue
       }
-      let n = aux_name(x.aux)
+      let n = f.name_of(x)
       if n == "rt.slot_load" && x.args.len() == 3 {
         inner.push(block_of(x.tb))
         match const_int(f, x.args[1]) {
@@ -82,11 +82,11 @@ fn const_reads(f: Func) -> List[CRead] {
       } else if n == "rt.mem_load" {
         // the built path: its block jumps to the join with it
         let jt = f.term(block_of(x.tb))
-        if jt < 0 || f.values[jt].op != Op.Jump || f.values[jt].succs.len() != 1 {
+        if jt < 0 || f.values[jt].op != Op.Jump || succ_n(f.values[jt]) != 1 {
           ok = false
           continue
         }
-        let e = f.values[jt].succs[0]
+        let e = succ(f.values[jt], 0)
         let to = f.edges[e].to
         pi = f.edges[e].args.index_of(vi) ?? -1
         if pi < 0 || pi >= f.blocks[to].params.len() {
@@ -207,7 +207,7 @@ fn reachable(f: Func) -> List[Bool] {
     let bl = stack.pop() ?? 0
     let t = f.term(bl)
     if t >= 0 {
-      for e in f.values[t].succs {
+      for e in f.values[t].succs() {
         let to = f.edges[e].to
         if !reach[to] {
           reach[to] = true
@@ -261,7 +261,7 @@ fn preheader(f: Func, idom: List[Int], h: Int) -> Int {
   }
   let p = f.edges[outside].from
   let t = f.term(p)
-  if t < 0 || f.values[t].op != Op.Jump || f.values[t].succs.len() != 1 {
+  if t < 0 || f.values[t].op != Op.Jump || succ_n(f.values[t]) != 1 {
     return -1
   }
   outside
@@ -354,7 +354,7 @@ fn inner_loop(f: Func, idom: List[Int], s: Int) -> Int {
     if t < 0 {
       continue
     }
-    for e in f.values[t].succs {
+    for e in f.values[t].succs() {
       let to = f.edges[e].to
       if !seen[to] {
         seen[to] = true
@@ -418,7 +418,7 @@ fn split_read(var f: Func, r: CRead, p: Pre) -> Bool {
     f.values[v].tb = with_block(f.values[v].tb, s2)
   }
   // the read's branch now leaves the new block
-  for e in f.values[r.br].succs {
+  for e in f.values[r.br].succs() {
     f.edges[e].from = s2
   }
   f.blocks[r.start].instrs = ins[0..k]

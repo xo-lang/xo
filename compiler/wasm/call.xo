@@ -8,7 +8,7 @@ use github.com/xo-lang/xo/compiler/ssa
 
 fn (var g: Gen) call(v: Int) {
   let x = g.f.values[v]
-  let name = match x.aux {
+  let name = match g.f.aux(x) {
     S(s) => s
     _ => ""
   }
@@ -1040,7 +1040,7 @@ fn atomics_to_runtime(m0: ssa.Module) -> ssa.Module {
       if x.op != ssa.Op.Call {
         continue
       }
-      let name = match x.aux {
+      let name = match m.funcs[fi].aux(x) {
         S(s) => s
         _ => ""
       }
@@ -1066,7 +1066,7 @@ fn atomics_to_runtime(m0: ssa.Module) -> ssa.Module {
       if to.is_empty() {
         continue
       }
-      m.funcs[fi].values[vi].aux = ssa.Aux.S(s: to)
+      m.funcs[fi].values[vi].aux = m.funcs[fi].pack(ssa.Aux.S(s: to))
       m.funcs[fi].values[vi].args = args
     }
   }
@@ -1094,7 +1094,7 @@ fn (var g: Gen) def_word(v: Int) {
 /// functions, atomics_to_runtime); fences and the spin hint are nothing.
 fn (var g: Gen) slot_op(v: Int) {
   let x = g.f.values[v]
-  let name = match x.aux {
+  let name = match g.f.aux(x) {
     S(s) => s
     _ => ""
   }

@@ -531,6 +531,7 @@ fn aux_text(a: ssa.Aux) -> Str {
     S(s) => "s${s.len()}:${s}"
     Bs(x) => "y${x.len()}:${x.to_hex()}"
     P(tag, field) => "p${tag},${field}"
+    E(n) => "e${n}"
   }
 }
 
@@ -590,12 +591,12 @@ fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_na
       }
     }
     for (vi, x) in f.values.indexed() {
-      b.write("v${vi} ${ssa.op_name(x.op)} ${tk_of(tk, ssa.ty_of(x.tb))} ${ints_text(x.args)} ${aux_text(x.aux)} ${ssa.block_of(x.tb)} ${ints_text(x.succs)} ${ssa.pad_of(x.pi)} ${f.pos_of(x).len()}:${f.pos_of(x)}")
+      b.write("v${vi} ${ssa.op_name(x.op)} ${tk_of(tk, ssa.ty_of(x.tb))} ${ints_text(x.args)} ${aux_text(f.aux(x))} ${ssa.block_of(x.tb)} ${ints_text(x.succs())} ${ssa.pad_of(x.pi)} ${f.pos_of(x).len()}:${f.pos_of(x)}")
       if m.debug_info {
         b.write(" l${ssa.line_of(x.lp)} i${ssa.inl_of(x.pi)}")
       }
       b.write("\n")
-      match x.aux {
+      match f.aux(x) {
         S(s) => {
           if !seen.contains(s) {
             seen[s] = true

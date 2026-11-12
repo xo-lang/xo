@@ -344,9 +344,9 @@ fn (var b: Builder) self_faults(v: Int) -> Bool {
     Add | Sub | Mul | Neg | Div | Rem | Shl | Shr | FloatToInt => has_pos(x.lp)
     CallValue => true
     Call => {
-      let name = match x.aux {
+      let name = match b.s.f.aux(x) {
         S(s) => s
-        None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
+        None | I(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => ""
       }
       if name is "list.index" | "list.set" | "list.take" | "bytes.index" | "Int.abs" {
         return has_pos(x.lp)
@@ -363,9 +363,9 @@ fn (var b: Builder) is_user_call(v: Int) -> Bool {
   if x.op != Op.Call {
     return false
   }
-  match x.aux {
+  match b.s.f.aux(x) {
     S(s) => b.fidx(s) >= 0
-    None | I(..) | F(..) | B(..) | Bs(..) | P(..) => false
+    None | I(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => false
   }
 }
 
@@ -389,7 +389,7 @@ fn (var b: Builder) flush_landing() {
     return
   }
   if b.s.f.values[w].op == Op.Call {
-    if let S(name) = b.s.f.values[w].aux {
+    if let S(name) = b.s.f.aux(b.s.f.values[w]) {
       if name == "rt.shield_end" {
         // deferred code ends there: a landing would lower the outer
         // deferred code again for every level
@@ -401,7 +401,7 @@ fn (var b: Builder) flush_landing() {
   b.s.f.values[w].pi = with_pad(b.s.f.values[w].pi, u)
   var callee = ""
   if b.s.f.values[w].op == Op.Call && !b.self_faults(w) {
-    if let S(name) = b.s.f.values[w].aux {
+    if let S(name) = b.s.f.aux(b.s.f.values[w]) {
       callee = name
     }
   }

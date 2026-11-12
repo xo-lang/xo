@@ -27,7 +27,7 @@ pub fn tz_use(c: check.Checker, m: ssa.Module, root: Str) -> TZUse {
   var ssa_dynamic = false
   for f in m.funcs {
     for v in f.values {
-      let is_zone = match v.aux {
+      let is_zone = match f.aux(v) {
         ssa.Aux.S(s: s) => s == "time.zone"
         _ => false
       }
@@ -43,7 +43,7 @@ pub fn tz_use(c: check.Checker, m: ssa.Module, root: Str) -> TZUse {
       if v.args.len() > 0 && v.args[0] >= 0 && v.args[0] < f.values.len() {
         let a = f.values[v.args[0]]
         if a.op == ssa.Op.Const {
-          match a.aux {
+          match f.aux(a) {
             ssa.Aux.S(s: s) => {
               name = s
               known = true

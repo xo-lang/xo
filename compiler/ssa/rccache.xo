@@ -211,7 +211,7 @@ fn rc_key(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
   }
   var seen: Map[Str, Bool] = {}
   for x in f.values {
-    if let S(s) = x.aux {
+    if let S(s) = f.aux(x) {
       if !seen.contains(s) {
         seen[s] = true
         let ci = r.fidx.get(s) ?? -1
@@ -284,7 +284,7 @@ fn borrow_hash(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
   let _id = key_body(b, m, fi, f, tk)
   var seen: Map[Str, Bool] = {}
   for x in f.values {
-    if let S(s) = x.aux {
+    if let S(s) = f.aux(x) {
       if !seen.contains(s) {
         seen[s] = true
         b.write_str("name ${s.len()}:${s} ${r.fidx.contains(s)}\n")
@@ -408,11 +408,11 @@ fn key_blocks(var b: BytesBuilder, f: Func, tk: List[Str], var seen: Map[Int, In
     b.write_str(" [")
     write_ints(b, x.args)
     b.write_str("] ")
-    key_aux(b, x.aux)
+    key_aux(b, f.aux(x))
     b.write_byte(' ')
     write_int(b, block_of(x.tb))
     b.write_str(" [")
-    write_ints(b, x.succs)
+    write_ints(b, x.succs())
     b.write_str("] ")
     write_int(b, pad_of(x.pi))
     b.write_byte(' ')
@@ -456,7 +456,7 @@ fn key_replayed(var b: BytesBuilder, f: Func, tk: List[Str]) {
     b.write_byte(':')
     b.write_str(f.pos_of(x))
     b.write_byte(' ')
-    key_aux(b, x.aux)
+    key_aux(b, f.aux(x))
     b.write_byte(' ')
     tkey_w(b, tk, seen, ty_of(x.tb))
     b.write_byte('\n')
@@ -540,7 +540,9 @@ fn write_ints(var b: BytesBuilder, xs: List[Int]) {
 /// interpolated strings were a tenth of key_replayed (2026-11-07 profile).
 fn key_aux(var b: BytesBuilder, a: Aux) {
   match a {
-    None => b.write_byte('n')
+    // a terminator's edges are written as its succs (the key is the same
+    // as when they were a field of their own)
+    None | E(..) => b.write_byte('n')
     I(n) => {
       b.write_byte('i')
       write_int(b, n)
@@ -724,8 +726,8 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
     e.name(op_name(x.op))
     e.ty(m, ty_of(x.tb))
     e.ints(x.args)
-    match x.aux {
-      None => e.uv(0)
+    match f.aux(x) {
+      None | E(..) => e.uv(0)
       I(n) => {
         e.uv(1)
         e.sv(n)
@@ -753,7 +755,7 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
     e.sv(pad_of(x.pi))
     e.sv(line_of(x.lp))
     e.sv(inl_of(x.pi))
-    e.ints(x.succs)
+    e.ints(x.succs())
     e.str(f.pos_of(x))
   }
   e.uv(f.edges.len())
@@ -1023,7 +1025,7 @@ fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Op
     if !r.ok {
       return None
     }
-    f.values.push(Value{op: op, tb: pack_tb(ty, block), args: args, aux: aux, succs: succs, pi: pack_pi(pad, inl), lp: pack_lp(0, line)})
+    f.values.push(Value{op: op, tb: pack_tb(ty, block), args: args, aux: if succs.is_empty() { f.pack(aux) } else { succs_aux(succs) }, pi: pack_pi(pad, inl), lp: pack_lp(0, line)})
     f.set_pos(f.values.len() - 1, pos)
   }
   let ne = r.uv()

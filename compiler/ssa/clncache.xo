@@ -62,7 +62,7 @@ pub fn cln_key(m: Module, fi: Int, faults: List[Bool], tk: List[Str], id: Str, f
   }
   var seen: Map[Str, Bool] = {}
   for x in f.values {
-    if let S(s) = x.aux {
+    if let S(s) = f.aux(x) {
       if !seen.contains(s) {
         seen[s] = true
         let g = m.func_index(s)
@@ -90,7 +90,7 @@ fn cln_known(known: Map[Int, Aux], n: Int) -> List[Str] {
       out[g] = match a {
         I(x) => "i${x}"
         B(x) => "b${x}"
-        None | F(..) | S(..) | Bs(..) | P(..) => ""
+        None | F(..) | S(..) | Bs(..) | P(..) | E(..) => ""
       }
     }
   }

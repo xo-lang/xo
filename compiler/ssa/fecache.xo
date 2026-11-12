@@ -830,14 +830,14 @@ fn (b: Builder) numbered_body(d: Bytes, var clos: Map[Str, Str]) -> Option[Bytes
   var f = decode_func(b.m, d, op_names())?
   for i in 0..f.values.len() {
     if f.values[i].op is Op.Call | Op.FuncAddr | Op.Closure | Op.Rebind | Op.CodeOf {
-      if let S(s) = f.values[i].aux {
+      if let S(s) = f.aux(f.values[i]) {
         if closure_name(s) {
           if !clos.contains(s) {
             clos[s] = "closure#${clos.len()}"
           }
-          f.values[i].aux = Aux.S(s: clos.get(s) ?? s)
+          f.values[i].aux = f.pack(Aux.S(s: clos.get(s) ?? s))
         } else if s == "rt.const_once" && f.values[i].args.len() == 3 {
-          f.values[f.values[i].args[2]].aux = Aux.I(n: 0)
+          f.values[f.values[i].args[2]].aux = f.pack(Aux.I(n: 0))
         }
       }
     }
@@ -1400,9 +1400,9 @@ fn fe_rename(var f: Func, renames: Map[Str, Str]) {
   }
   for i in 0..f.values.len() {
     if f.values[i].op is Op.Call | Op.FuncAddr | Op.Closure | Op.Rebind | Op.CodeOf {
-      if let S(s) = f.values[i].aux {
+      if let S(s) = f.aux(f.values[i]) {
         if let Some(n) = renames.get(s) {
-          f.values[i].aux = Aux.S(s: n)
+          f.values[i].aux = f.pack(Aux.S(s: n))
         }
       }
     }
@@ -1416,11 +1416,11 @@ fn (b: Builder) fe_const_ids(var f: Func) {
     if f.values[i].op != Op.Call || f.values[i].args.len() != 3 {
       continue
     }
-    if let S(s) = f.values[i].aux {
+    if let S(s) = f.aux(f.values[i]) {
       if s == "rt.const_once" {
-        if let S(n) = f.values[f.values[i].args[0]].aux {
+        if let S(n) = f.aux(f.values[f.values[i].args[0]]) {
           if let Some(id) = b.consts.get(n) {
-            f.values[f.values[i].args[2]].aux = Aux.I(n: id)
+            f.values[f.values[i].args[2]].aux = f.pack(Aux.I(n: id))
           }
         }
       }
@@ -1438,12 +1438,12 @@ fn fe_site_ids(var f: Func, sites: Map[Int, Int]) {
     if f.values[i].op != Op.Call || f.values[i].args.len() != 8 {
       continue
     }
-    if let S(s) = f.values[i].aux {
+    if let S(s) = f.aux(f.values[i]) {
       if s is "rt.task_spawn_fn" | "rt.task_spawn" {
         let a = f.values[i].args[6]
         if let I(n) = f.values[a].aux {
           if let Some(id) = sites.get(n) {
-            f.values[a].aux = Aux.I(n: id)
+            f.values[a].aux = f.pack(Aux.I(n: id))
           }
         }
       }
@@ -1703,7 +1703,7 @@ fn names_file(f: Func, file: Str) -> Bool {
   }
   let pre = "${file}:"
   for x in f.values {
-    match x.aux {
+    match f.aux(x) {
       S(s) => {
         if x.op == Op.Const && s.contains(pre) {
           return true
@@ -1714,7 +1714,7 @@ fn names_file(f: Func, file: Str) -> Bool {
           return true
         }
       }
-      None | I(..) | F(..) | B(..) | P(..) => {}
+      None | I(..) | F(..) | B(..) | P(..) | E(..) => {}
     }
   }
   false

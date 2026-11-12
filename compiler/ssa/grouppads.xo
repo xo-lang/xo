@@ -28,7 +28,7 @@ fn (var r: Rc) group_pads(var f: Func) {
       continue
     }
     let t = ins[ins.len() - 1]
-    if f.values[t].op != Op.Jump || f.edges[f.values[t].succs[0]].to != exit || !f.edges[f.values[t].succs[0]].args.is_empty() {
+    if f.values[t].op != Op.Jump || f.edges[succ(f.values[t], 0)].to != exit || !f.edges[succ(f.values[t], 0)].args.is_empty() {
       continue
     }
     // the leaves each group's releases release, and how many times

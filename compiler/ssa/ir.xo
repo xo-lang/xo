@@ -200,7 +200,8 @@ pub fn is_terminator(o: Op) -> Bool {
 
 /// The payload of an instruction (ssa.Value.Aux): an integer (constant,
 /// tag, field index), a Float, a Bool, a name (callee, capability field,
-/// function), constant bytes, or a variant field (tag, field).
+/// function), constant bytes, a variant field (tag, field), or a
+/// terminator's edges (E: succs_of, with_succs).
 pub enum Aux {
   None
   I(n: Int)
@@ -209,6 +210,194 @@ pub enum Aux {
   S(s: Str)
   Bs(b: Bytes)
   P(tag: Int, field: Int)
+  /// A Jump's or Branch's edges (Func.edges), each + 1, the first in the
+  /// low 32 bits and the second (0 for none) in the high: a terminator
+  /// has no other payload, so its edges take no word of their own in
+  /// every value (decision 0448, Value size).
+  E(n: Int)
+}
+
+/// A value's payload as it is stored (Value.aux): every variant one word,
+/// so two words where Aux takes three (decision 0448, Value size). A name
+/// and constant bytes are indexes into the function's tables (Func.names,
+/// Func.blobs) tagged with Func.ntag, a variant field packs its tag and
+/// field. Func.aux reads it as an Aux, Func.pack makes one.
+pub enum AuxW {
+  None
+  I(n: Int)
+  F(f: Float)
+  B(b: Bool)
+  S(n: Int)
+  Bs(n: Int)
+  P(n: Int)
+  E(n: Int)
+}
+
+/// The tag a function's name tables give their indexes: from its name, so
+/// an index copied in from another function without Func.pack of its Aux
+/// fails its first read instead of naming another string.
+fn name_tag(name: Str) -> Int {
+  var h = 2166136261
+  for c in name.bytes() {
+    h = ((h ^ Int(c)) * 16777619) & 0x7fffffff
+  }
+  h | 1
+}
+
+fn (var f: Func) tag_names() {
+  if f.ntag == 0 {
+    f.ntag = name_tag(f.name)
+  }
+}
+
+/// The stored form of a, a payload of one of f's values (its name or
+/// bytes added to f's tables).
+pub fn (var f: Func) pack(a: Aux) -> AuxW {
+  match a {
+    None => AuxW.None
+    I(n) => AuxW.I(n: n)
+    F(x) => AuxW.F(f: x)
+    B(x) => AuxW.B(b: x)
+    S(s) => {
+      f.tag_names()
+      var i = f.name_ix.get(s) ?? -1
+      if i < 0 {
+        i = f.names.len()
+        f.names.push(s)
+        f.name_ix[s] = i
+      }
+      AuxW.S(n: (f.ntag << 32) | i)
+    }
+    Bs(x) => {
+      f.tag_names()
+      f.blobs.push(x)
+      AuxW.Bs(n: (f.ntag << 32) | (f.blobs.len() - 1))
+    }
+    P(tag, field) => {
+      if tag < 0 || field < 0 || tag > 0x7fffffff || field > 0xffffffff {
+        fault("internal: a variant field (${tag}, ${field}) out of range (decision 0448)")
+      }
+      AuxW.P(n: (tag << 32) | field)
+    }
+    E(n) => AuxW.E(n: n)
+  }
+}
+
+fn (f: Func) table_ix(n: Int, len: Int) -> Int {
+  let i = n & 0xffffffff
+  if n >> 32 != f.ntag || i >= len {
+    fault("internal: a payload of another function's tables read in `${f.name}` (decision 0448: copy a value's payload with Func.pack(src.aux(x)))")
+  }
+  i
+}
+
+/// x's payload, x one of f's values.
+pub fn (f: Func) aux(x: Value) -> Aux {
+  f.aux_w(x.aux)
+}
+
+/// The payload a stored payload of one of f's values holds.
+pub fn (f: Func) aux_w(w: AuxW) -> Aux {
+  match w {
+    None => Aux.None
+    I(n) => Aux.I(n: n)
+    F(x) => Aux.F(f: x)
+    B(x) => Aux.B(b: x)
+    S(n) => Aux.S(s: f.names[f.table_ix(n, f.names.len())])
+    Bs(n) => Aux.Bs(b: f.blobs[f.table_ix(n, f.blobs.len())])
+    P(n) => Aux.P(tag: n >> 32, field: n & 0xffffffff)
+    E(n) => Aux.E(n: n)
+  }
+}
+
+/// The integer of a stored payload (AuxW.I), 0 for any other: aux_int
+/// without decoding a name (decision 0448: a decoded name is a counted
+/// copy, and the reads that only test a payload's kind or integer were
+/// most of the cost of the two word payload).
+pub fn auxw_int(w: AuxW) -> Int {
+  match w {
+    I(n) => n
+    None | F(..) | B(..) | S(..) | Bs(..) | P(..) | E(..) => 0
+  }
+}
+
+/// Whether x (one of f's values) names s ("" when it holds no name), read
+/// in place.
+pub fn (f: Func) name_is(x: Value, s: Str) -> Bool {
+  match x.aux {
+    S(n) => f.names[f.table_ix(n, f.names.len())] == s
+    None | I(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => s.is_empty()
+  }
+}
+
+/// The name x (one of f's values) holds, "" for none: aux_name of
+/// f.aux(x) without building the Aux.
+pub fn (f: Func) name_of(x: Value) -> Str {
+  match x.aux {
+    S(n) => f.names[f.table_ix(n, f.names.len())]
+    None | I(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => ""
+  }
+}
+
+/// Whether the name x holds starts with p.
+pub fn (f: Func) name_starts(x: Value, p: Str) -> Bool {
+  match x.aux {
+    S(n) => f.names[f.table_ix(n, f.names.len())].starts_with(p)
+    None | I(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => p.is_empty()
+  }
+}
+
+/// Whether the name x holds ends with p.
+pub fn (f: Func) name_ends(x: Value, p: Str) -> Bool {
+  match x.aux {
+    S(n) => f.names[f.table_ix(n, f.names.len())].ends_with(p)
+    None | I(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => p.is_empty()
+  }
+}
+
+/// Sets the payload of f's value v.
+pub fn (var f: Func) set_aux(v: Int, a: Aux) {
+  f.values[v].aux = f.pack(a)
+}
+
+/// The number of edges (0 to 2) a value leaves its block by.
+pub fn succ_n(x: Value) -> Int {
+  match x.aux {
+    E(n) => if n >> 32 == 0 { 1 } else { 2 }
+    None | I(..) | F(..) | B(..) | S(..) | Bs(..) | P(..) => 0
+  }
+}
+
+/// Edge i (0 or 1) a value leaves its block by.
+pub fn succ(x: Value, i: Int) -> Int {
+  match x.aux {
+    E(n) => (if i == 0 { n & 0xffffffff } else { n >> 32 }) - 1
+    None | I(..) | F(..) | B(..) | S(..) | Bs(..) | P(..) => -1
+  }
+}
+
+/// The edges a value leaves its block by: a Jump's one, a Branch's two
+/// (taken, not taken), none for any other value.
+pub fn (x: Value) succs() -> List[Int] {
+  match x.aux {
+    E(n) => if n >> 32 == 0 { [(n & 0xffffffff) - 1] } else { [(n & 0xffffffff) - 1, (n >> 32) - 1] }
+    None | I(..) | F(..) | B(..) | S(..) | Bs(..) | P(..) => []
+  }
+}
+
+/// The payload of a terminator leaving by the edges ss (at most two).
+pub fn succs_aux(ss: List[Int]) -> AuxW {
+  match ss.len() {
+    0 => AuxW.None
+    1 => AuxW.E(n: ss[0] + 1)
+    2 => AuxW.E(n: (ss[0] + 1) | ((ss[1] + 1) << 32))
+    _ => fault("internal: a terminator with more than two edges (decision 0448)")
+  }
+}
+
+/// Sets the edges a value leaves its block by.
+pub fn (var x: Value) set_succs(ss: List[Int]) {
+  x.aux = succs_aux(ss)
 }
 
 /// An instruction or block parameter (ssa.Value); its ID is its index.
@@ -219,9 +408,8 @@ pub struct Value {
   /// (decision 0448 stage 3).
   pub tb: Int = -1
   pub args: List[Int] = []
-  pub aux: Aux = Aux.None
-  /// Terminators: their edges.
-  pub succs: List[Int] = []
+  /// Func.aux reads it, Func.set_aux and Func.pack write it.
+  pub aux: AuxW = AuxW.None
   /// The landing check of a call (Value.Pad, -1 for none) in the high half,
   /// and the inline site (Func.inl_sites) this value was copied in by the
   /// arm64 inliner (-1 for the function's own code; its line is then the
@@ -339,6 +527,13 @@ pub struct Func {
   pub values: List[Value] = []
   /// The positions of the values that can fault (Value.lp).
   pub poss: List[Str] = []
+  /// The names and constant bytes its values' payloads index (AuxW.S,
+  /// AuxW.Bs; decision 0448, Value size), name_ix finding a name's index,
+  /// and the tag their payloads carry (name_tag).
+  pub names: List[Str] = []
+  pub blobs: List[Bytes] = []
+  pub name_ix: Map[Str, Int] = {}
+  pub ntag: Int = 0
   pub edges: List[Edge] = []
   /// The indexes of the `var` parameters (returned after the result).
   pub var_params: List[Int] = []
@@ -428,7 +623,7 @@ pub fn (var f: Func) set_pos(v: Int, pos: Str) {
 }
 
 pub fn (f: Func) shell() -> Func {
-  Func{name: f.name, file: f.file, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, cap_borrowed: f.cap_borrowed, entry: f.entry, export: f.export, catches: f.catches, unwind_exit: f.unwind_exit, borrowed: f.borrowed, ret_view: f.ret_view, skip: f.skip, ckey: f.ckey, target: f.target, reader: f.reader, lazy_lands: f.lazy_lands}
+  Func{name: f.name, file: f.file, names: f.names, blobs: f.blobs, name_ix: f.name_ix, ntag: f.ntag, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, cap_borrowed: f.cap_borrowed, entry: f.entry, export: f.export, catches: f.catches, unwind_exit: f.unwind_exit, borrowed: f.borrowed, ret_view: f.ret_view, skip: f.skip, ckey: f.ckey, target: f.target, reader: f.reader, lazy_lands: f.lazy_lands}
 }
 
 /// A lowered program (ssa.Module).
@@ -998,7 +1193,8 @@ pub fn (var f: Func) add_param(b: Int, t: Int) -> Int {
 /// Appends an instruction to block b.
 pub fn (var f: Func) add(b: Int, op: Op, t: Int, aux: Aux, args: List[Int]) -> Int {
   let v = f.values.len()
-  f.values.push(Value{op: op, tb: pack_tb(t, b), args: args, aux: aux})
+  let w = f.pack(aux)
+  f.values.push(Value{op: op, tb: pack_tb(t, b), args: args, aux: w})
   f.blocks[b].instrs.push(v)
   v
 }
@@ -1014,7 +1210,7 @@ fn (var f: Func) link(from: Int, to: Int, args: List[Int]) -> Int {
 pub fn (var f: Func) jump(b: Int, to: Int, args: List[Int]) -> Int {
   let t = f.add(b, Op.Jump, -1, Aux.None, [])
   let e = f.link(b, to, args)
-  f.values[t].succs = [e]
+  f.values[t].set_succs([e])
   t
 }
 
@@ -1023,7 +1219,7 @@ pub fn (var f: Func) branch(b: Int, cond: Int, yes: Int, no: Int) -> Int {
   let t = f.add(b, Op.Branch, -1, Aux.None, [cond])
   let e1 = f.link(b, yes, [])
   let e2 = f.link(b, no, [])
-  f.values[t].succs = [e1, e2]
+  f.values[t].set_succs([e1, e2])
   t
 }
 
@@ -1113,7 +1309,7 @@ pub fn (m: Module) has_poison(f: Func) -> Bool {
     }
     if v.op != Op.Const {
       // a callee or closure named after one (`f[<unsupported: T>]`)
-      if let S(s) = v.aux {
+      if let S(s) = f.aux(v) {
         if s.contains("<unsupported: ") {
           return true
         }
@@ -1245,7 +1441,7 @@ fn (m: Module) write_value(var b: StrBuilder, f: Func, vi: Int) {
   }
   b.write(op_name(v.op))
   var ops: List[Str] = []
-  match v.aux {
+  match f.aux(v) {
     None => {}
     I(n) => ops.push("${n}")
     F(x) => ops.push(float_text(x))
@@ -1253,11 +1449,12 @@ fn (m: Module) write_value(var b: StrBuilder, f: Func, vi: Int) {
     S(s) => ops.push(if v.op == Op.Const { s.quote() } else { s })
     Bs(x) => ops.push(x.quote())
     P(tag, field) => ops.push("${tag}.${field}")
+    E(_) => {}
   }
   for a in v.args {
     ops.push(vname(a))
   }
-  for e in v.succs {
+  for e in v.succs() {
     var eas: List[Str] = []
     for a in f.edges[e].args {
       eas.push(vname(a))
