@@ -748,9 +748,25 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
   } else {
     let fa = b.add(Op.FuncAddr, it, Aux.S(s: name), [])
     let da = b.add(Op.FuncAddr, it, Aux.S(s: dl), [])
-    b.rt("const_once", lt, [fa, da, idv])
+    let r = b.rt("const_once", lt, [fa, da, idv])
+    b.const_wait_check()
+    r
   }
   b.call("list.index", t, "", [l, b.cint(0)])
+}
+
+/// After rt.const_once, in a program with concurrency: a reader canceled
+/// while it waits for another task to build the constant (a sibling
+/// failed: consts.xo slow) gets the empty list back with its context
+/// unwinding, and must unwind here, before list.index reads an element
+/// the empty list does not have. It went on and read past the static
+/// empty list: SIGSEGV at code bytes read as a pointer (2026-11-12,
+/// gotchas/const-read-canceled-waiter.md). Only the slow path pays: a
+/// built constant's inline read cannot be canceled.
+fn (var b: Builder) const_wait_check() {
+  if b.conc {
+    b.check_then("", Cleanup.None)
+  }
 }
 
 /// The first constant number this build gives: std's store numbers its
@@ -819,7 +835,9 @@ fn (var b: Builder) const_read(lt: Int, fname: Str, dname: Str, idv: Int) -> Int
   b.s.cur = slow
   let fa = b.add(Op.FuncAddr, it, Aux.S(s: fname), [])
   let da = b.add(Op.FuncAddr, it, Aux.S(s: dname), [])
-  b.jump(join, [b.rt("const_once", lt, [fa, da, idv])])
+  let r = b.rt("const_once", lt, [fa, da, idv])
+  b.const_wait_check()
+  b.jump(join, [r])
   b.seal(join)
   b.s.cur = join
   res

@@ -1,0 +1,47 @@
+// A task canceled while it waits for another task to build a constant
+// (a sibling failed) unwinds; it used to go on with the empty list
+// consts.once returns to a canceled waiter and read past it (SIGSEGV on
+// code bytes read as a pointer, 2026-11-12,
+// gotchas/const-read-canceled-waiter.md). The constant's initializer is
+// slow, so the readers park on it while the sibling fails.
+const SLOW: List[Str] = build()
+
+fn build() -> List[Str] {
+  var acc = 0
+  for i in 0..60000000 {
+    acc = (acc * 31 + i) % 1000003
+  }
+  var xs: List[Str] = []
+  for i in 0..64 {
+    xs.push("entry ${i} of the slow constant, ${acc % 7}")
+  }
+  xs
+}
+
+fn read(t: Int) -> Int {
+  var n = 0
+  for k in 0..64 {
+    n += SLOW[(t + k) % 64].len()
+  }
+  n
+}
+
+fn main(os: Os) ! {
+  let clock = os.clock
+  let total = scope s {
+    let fail = s.spawn(fn() -> Int ! Str {
+      clock.sleep(20ms)
+      Err("a sibling failed")
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..7 {
+      hs.push(s.spawn(fn() -> Int ! Str { read(t) }))
+    }
+    var total = fail.await?
+    for h in hs {
+      total += h.await?
+    }
+    total
+  }
+  os.stdio.println("${total}")
+}
