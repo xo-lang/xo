@@ -149,6 +149,28 @@ cabi.xo dit_held_switch). A temporary test that slept inside dit_on
 stopped with `xo: DIT held` on arm64 and LLVM; native/crypto,
 native/tls and rsa_test pass under XO_LOCKCHECK=1 on both.
 
+Correction (the same day, later): every dudect row above used the
+harness's first pool layout, the classes in alternating 128 byte slots,
+which puts each page's crossing block in one class
+(knowledgebase/gotchas/dudect-pool-layout.md). With the classes in
+alternating runs of 32 slots (rsa_test.xo since 64b3f4288), in the same
+runs where the old layout still failed: linux/arm64 native with DIT
+passes (the whole unpad max |t| 2.4, MGF1 alone A/A 3.1) and amd64 LLVM
+-O2 passes (2.1). So:
+
+- The step 4 paragraph's reading of the A/A pairs is withdrawn: a
+  failing A/A pair was the layout, not the zero position.
+- The amd64 -O0 rows (30.7 before, 5.33 with the fallback) are not
+  evidence for the -O2 fallback. A first balanced -O0 run without the
+  fallback passed its A/A pairs with one class pair at 4.54; the run
+  with the fallback was too noisy to read (A/A 46.8). Both are rerun,
+  with the constant floor, when the amd64 host is free; the fallback
+  stays until they decide.
+- The Mac rows (81.0 before, 3.80 with DIT at LLVM -O0) have not been
+  rerun with the balanced layout. DIT stays on either way: Arm documents
+  data dependent timing without it on these cores, which no layout
+  changes.
+
 ## Consequences
 
 - Constant time on arm64 no longer depends on the opt level or the
