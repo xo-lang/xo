@@ -16,7 +16,8 @@
 #            2026-10-18; see native_only below); XO_GATE_LLVM=1 runs it;
 #            with TestGoldenGoParity (XO_TEST_GO_PARITY=1) when the
 #            branch changes compiler/gen, std/rt, or a std module std/rt
-#            also implements (go_backend). Its
+#            also implements (go_backend), and else for the goldens the
+#            branch adds or edits (llvmgo; 2026-11-12). Its
 #            golden programs are only those the change touches (owner,
 #            2026-10-22; llvm_goldens below): XO_GATE_LLVM=all runs
 #            every one
@@ -446,6 +447,13 @@ llvm_goldens() {
   echo "$(echo "$names" | wc -l | tr -d ' ') of $total goldens, and the -O2 sample: $(echo "$names" | paste -sd' ' -)" >"$sel_note"
   echo "$names" | paste -sd, -
 }
+# golden_dirs_changed: internal/llvm's golden programs the branch adds or
+# edits (comma separated; empty when none)
+golden_dirs_changed() {
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  { git diff --name-only --diff-filter=AMR "$base" HEAD; git status --porcelain | cut -c4-; } |
+    sed -n 's|^internal/llvm/testdata/golden/\([^/]*\)/.*|\1|p' | sort -u | paste -sd, -
+}
 llvm_step() {
     if [ -z "${XO_GATE_LLVM:-}" ] && native_only; then
       echo "llvm: skipped (native backend only change; XO_GATE_LLVM=1 runs it)"
@@ -462,6 +470,16 @@ llvm_step() {
         XO_TEST_GO_PARITY=1 XO_GO_PARITY_SAMPLE=${XO_GO_PARITY_SAMPLE:-16} full llvm ./internal/llvm
       else
         full llvm ./internal/llvm
+        # a golden the change adds or edits runs on the Go backend too,
+        # whatever else changed: iface_wrap_eq reached main failing
+        # TestGoldenGoParity because its change touched neither
+        # compiler/gen nor std/rt (tier 71, 2026-11-12;
+        # gotchas/go-adapter-equality.md)
+        gdirs=$(golden_dirs_changed)
+        if [ -n "$gdirs" ]; then
+          echo "llvmgo goldens (Go parity, added or edited): $gdirs"
+          XO_TEST_GO_PARITY=1 XO_LLVM_GOLDENS=$gdirs full llvmgo ./internal/llvm -run '^TestGoldenGoParity$'
+        fi
       fi
       unset XO_LLVM_GOLDENS
     fi
