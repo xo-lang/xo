@@ -181,16 +181,21 @@ fn blocks(var d: Dud, lhash: Bytes, name: Str) -> List[Bytes] {
 fn dudect(os: testing.TestOs, a: Str, b: Str, n: Int) -> Float {
   var d = Dud{x: 0x2545F4914F6CDD1D, msglen: Int.parse(os.env.get("XO_DUDECT_MSGLEN") ?? "") ?? 0}
   let lhash = h256(b"")
-  // both classes' blocks in one buffer, interleaved at KK byte steps,
-  // so where a block sits in memory is the same for both classes (a
-  // block apiece made two sets of the same class differ: a layout effect
-  // the many measurements of each block brought out on LLVM)
+  // both classes' blocks in one buffer, so where a block sits in memory
+  // is the same for both classes (a block apiece made two sets of the
+  // same class differ: a layout effect the many measurements of each
+  // block brought out on LLVM), in alternating runs of 32 slots (4096 /
+  // KK): the block across each 4 KB page boundary (one slot in 32 when
+  // the buffer's base is not KK aligned) falls in each class equally.
+  // Alternate slots put every such block in one class, and a check that
+  // reads the whole block (MGF1, the scans) then failed every pair, A/A
+  // too (gotchas/dudect-pool-layout.md)
   let ca = blocks(d, lhash, a)
   let cb = blocks(d, lhash, b)
   var parts: List[Bytes] = []
-  for j in 0..128 {
-    parts.push(ca[j])
-    parts.push(cb[j])
+  for s in 0..256 {
+    let j = (s / 64) * 32 + s % 32
+    parts.push(if (s / 32) & 1 == 0 { ca[j] } else { cb[j] })
   }
   var pool = rt.rs_with_cap(256 * KK)
   for q in parts {
@@ -211,7 +216,8 @@ fn dudect(os: testing.TestOs, a: Str, b: Str, n: Int) -> Float {
   for i in 0..warm + n {
     let r = d.next()
     let c = r & 1
-    let off = ((r.shr_logical(8) & 127) * 2 + c) * KK
+    let k = r.shr_logical(8) & 127
+    let off = (64 * (k / 32) + 32 * c + k % 32) * KK
     let em = all[off..off + KK]
     let t0 = clock.now()
     for _ in 0..REPS {
