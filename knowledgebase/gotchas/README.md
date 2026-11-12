@@ -1332,3 +1332,6 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-adapter-equality.md](go-adapter-equality.md): Observed: a Go-backend interface adapter or cell compared equal only to the same wrapper type; XoInner + rt.UnwrapAny, and gate.sh runs Go parity on every added or edited golden.
 - [wd-flag-not-cwd.md](wd-flag-not-cwd.md): a native compiler/wasm with `--wd` other than the working directory checked nothing; now exits 2
 - [test-fe-dir-name-matches-shard.md](test-fe-dir-name-matches-shard.md): removing every `fe` directory also removed the `chk/fe` hex shard; anchor cache paths in tests (Observed)
+- [cabi-file-every-fn-exported.md](cabi-file-every-fn-exported.md): Observed 2026-11-12: every top-level function of a std/native/llrt cabi_*.xo file is a C ABI export (XO1201 for an Xo-typed result); keep helpers in an ordinary llrt module
+- [std-closure-in-pure-field-needs-launder.md](std-closure-in-pure-field-needs-launder.md): Observed 2026-11-12: a std closure with effects stored in a pure function field passed native builds but failed wasm's XO0701; rt.launder1/2 when the installer pays
+- [wasm-exit-hooks-need-guards.md](wasm-exit-hooks-need-guards.md): Observed 2026-11-12: an atexit hook via rt.fn_addr and atexit.run (rt.call_c2) does not build on wasm; guard both and release on replace there
