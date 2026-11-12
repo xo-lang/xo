@@ -311,7 +311,10 @@ and runs `gh release create`. The order:
 3a. on the Mac, in the version commit's tree with its bin/xo:
    `HUGO=~/xo-tools/hugo/hugo scripts/browser-memory.sh --record vX.Y.Z
    SITE_REPO` (under heavy.sh, HEAVY_CLASS=bulk HEAVY_DARWIN=1;
-   BROWSER_MEMORY_SITE_REV for a release's site branch). It must print ok;
+   BROWSER_MEMORY_SITE_REV for a release's site branch; a site revision
+   without the test takes it from the newest site ref that has it, or
+   BROWSER_MEMORY_TEST_REV; a run that cannot measure prints and records
+   "not run: REASON", exit 2, never FAIL). It must print ok;
    amend its row of bench/results/browser-memory.md into the version
    commit before pushing it (gotchas/release-kit-ordering.md), since
    release-publish.sh refuses a tag with no ok row (decision 0615, owner,
