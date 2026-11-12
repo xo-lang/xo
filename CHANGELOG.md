@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (Go backend): an interface value converted from another interface, or one holding a value with `var self` methods, equals any interface value holding an equal concrete value, as on the native backends; before, it equaled only values converted the same way (decision 0613).
 - Interfaces (decision 0613 step 5): a `var self` method can be called through an interface value (`var l: Loader = Box{}; l.load(3)`), updating the value in its place; a copy of the interface value is unaffected (`let b = l` before the call keeps the old value). On every backend; on the native ones the value is written in place while no other copy holds it (a million `load` calls through one value take 2 ms), and copied once when one does. An interface value converted to another interface is written in place the same way.
 - Performance (native, LLVM, wasm; decision 0613 step 5 option B): an interface value holds its methods as code addresses and the concrete value in one heap object, where it held a closure per method. Building interface values is about 18% faster (bench/perf/iface build, linux/arm64), holding a million values of an 8 method interface takes a third less memory (209.9 to 139.7 MB), and calls through an interface cost the same. `XO_ITAB=0` builds the old form, for bisecting.
 
