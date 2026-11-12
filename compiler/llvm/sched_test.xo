@@ -1,0 +1,18 @@
+// A fiber's outermost frame (xo_fiber_entry) ends a fault's unwind: on
+// ELF targets its entry has the return address undefined. Without it on
+// linux/amd64 the unwinder read the word past the fiber's stack and a
+// fault crashed with SIGSEGV instead of exit 70 (2026-11-12).
+
+test "the fiber entry's return address is undefined on ELF targets" {
+  let (_, la) = switch_asm("linux", "amd64")
+  expect(la.contains(".cfi_escape 0x07, 16")) == true
+  let (_, fa) = switch_asm("freebsd", "amd64")
+  expect(fa.contains(".cfi_escape 0x07, 16")) == true
+  let (_, l64) = switch_asm("linux", "arm64")
+  expect(l64.contains(".cfi_escape 0x07, 30")) == true
+  // Mach-O and Windows unwind by their own tables
+  let (_, da) = switch_asm("darwin", "amd64")
+  expect(da.contains(".cfi_escape 0x07, 16")) == false
+  let (_, wa) = switch_asm("windows", "amd64")
+  expect(wa.contains(".cfi_escape 0x07, 16")) == false
+}

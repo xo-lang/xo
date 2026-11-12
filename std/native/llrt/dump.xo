@@ -258,7 +258,7 @@ fn (var d: Dump) user_loc(saved: Int) -> Str {
     }
     cands.push((file, line))
     for (f, l) in cands {
-      if loc.is_empty() && !f.is_empty() && l > 0 && !f.contains("/std/") {
+      if loc.is_empty() && !f.is_empty() && l > 0 && !std_file(f) {
         loc = "${base(f)}:${l}"
       }
     }
@@ -306,11 +306,21 @@ fn (var d: Dump) pc_loc(pc: Int) -> Str {
   }
   cands.push((file, line))
   for (f, l) in cands {
-    if !f.is_empty() && l > 0 && !f.contains("/std/") {
+    if !f.is_empty() && l > 0 && !std_file(f) {
       return "${base(f)}:${l}"
     }
   }
   ""
+}
+
+/// Whether the line table's file p is std's (its runtime included), as
+/// compiler/debug tasks.xo tells: the native backends name it
+/// `./std/native/llrt/poll.xo` (directory `.`), the LLVM backend
+/// `std/native/llrt/poll.xo` with no directory, which `/std/` alone missed,
+/// so an LLVM build's dump named the runtime's park as the task's site
+/// (TestDump/native on linux/amd64, 2026-11-12).
+fn std_file(p: Str) -> Bool {
+  p.starts_with("std/") || p.contains("/std/")
 }
 
 fn base(p: Str) -> Str {

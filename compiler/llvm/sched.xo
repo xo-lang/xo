@@ -71,8 +71,10 @@ fn (var g: Gen) sched_switch() {
   let (sw, start) = switch_asm(g.goos, g.arch())
   // the fiber entry's .cfi_escape needs clang's CFI region around it: the
   // uwtable attribute is what asks for one from an IR level function
-  // (Linux clang leaves it out otherwise, switch_asm)
-  let uw = if g.goos == "linux" && g.arch() == "arm64" { " uwtable" } else { "" }
+  // (Linux clang leaves it out otherwise, switch_asm); on linux/amd64 and
+  // freebsd/amd64 too, whose entry has the same directive
+  let elf_amd64 = g.arch() == "amd64" && (g.goos == "linux" || g.goos == "freebsd")
+  let uw = if (g.goos == "linux" && g.arch() == "arm64") || elf_amd64 { " uwtable" } else { "" }
   g.helpers.push(naked_fn("void @xo_stack_switch(i64 %0, i64 %1)", sw))
   g.helpers.push(naked_fn("void @xo_fiber_entry()", start, uw))
 }
@@ -168,7 +170,17 @@ fn switch_asm(goos: Str, goarch: Str) -> (List[Str], List[Str]) {
     if goos == "windows" {
       return (amd64_win_switch(), ["subq $32, %rsp", "movq %rbx, %rcx", "callq *%r12", "ud2"])
     }
-    return (amd64_switch(), ["movq %rbx, %rdi", "callq *%r12", "ud2"])
+    let start = ["movq %rbx, %rdi", "callq *%r12", "ud2"]
+    if goos == "linux" || goos == "freebsd" {
+      // a fiber's outermost frame: its return address undefined (DW_CFA_undefined
+      // of rip, DWARF register 16), as on linux/arm64 below. Without it the
+      // FDE clang gives the naked function has the return address at CFA-8,
+      // one word past the fiber's stack, and a fault's unwind (unwind.xo
+      // raise, which walks to the end of the stack) read it: SIGSEGV at the
+      // stack's top instead of the fault's exit 70 (linux/amd64, 2026-11-12)
+      return (amd64_switch(), [".cfi_escape 0x07, 16"] + start)
+    }
+    return (amd64_switch(), start)
   }
   if goarch == "riscv64" {
     // decision 0571: s1 the fiber, s2 its main (std/native/llrt sched.xo
