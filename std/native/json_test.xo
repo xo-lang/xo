@@ -3326,3 +3326,19 @@ test "decode_go: null leaves the zero value and a missing field takes it (decisi
   // a wrong kind is still an error
   expect(json.decode_go_str[GoDecRow]("{\"id\":\"x\"}").is_err()) == true
 }
+
+struct GoDecMap {
+  m: Map[Str, Int]
+} derive Json
+
+test "decode_go: a type error under a non-ASCII key is Go's error, not a fault (0616 json review F1)" {
+  for k in ["é", "日本"] {
+    let a = json.decode_go_str[Map[Str, Int]]("{\"${k}\":\"x\"}")
+    expect(a.err().map(fn(e) { e.msg }) ?? "") == "json: cannot unmarshal string into Go value of type int"
+    let b = json.decode_go_str[GoDecMap]("{\"m\":{\"${k}\":\"x\"}}")
+    expect(b.err().map(fn(e) { e.msg }) ?? "") == "json: cannot unmarshal string into Go struct field GoDecMap.m.${k} of type int"
+  }
+  // an invalid UTF-8 key reads as U+FFFD
+  let c = json.decode_go[GoDecMap](b"{\"m\":{\"\xff\":\"x\"}}")
+  expect(c.err().map(fn(e) { e.msg }) ?? "") == "json: cannot unmarshal string into Go struct field GoDecMap.m.\u{FFFD} of type int"
+}
