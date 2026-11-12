@@ -122,3 +122,4 @@ amqp_tls_hostname # wasip1 # network: the network (`rt.net_listen`): WASI previe
 tls_verify_conn # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 otlp_export # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 os_literal_omitted # wasip1 wasip2 # processes: the `proc.run` of an omitted field: no processes in either WASI world (XO1515 on wasip2), and preview1 has no sockets for its denied dial
+proc_read_deadline # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.spawn)

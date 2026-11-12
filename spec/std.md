@@ -1441,7 +1441,7 @@ syscall's lazy DLLs.
 
 ```
 struct ProcOutput { code: Int, stdout: Bytes, stderr: Bytes, usage: ProcUsage = ProcUsage{user: 0s, system: 0s, max_rss: 0} }
-enum ProcErr { NotFound(cmd: Str), Io(msg: Str), Canceled, Denied(cmd: Str) }
+enum ProcErr { NotFound(cmd: Str), Io(msg: Str), Canceled, Denied(cmd: Str), Timeout }
 
 `display` prints `CMD: executable file not found`, MSG for `Io`, `canceled`,
 and `denied by Proc.only: CMD` (decision 0358).
@@ -1597,6 +1597,7 @@ fn (c: Child) close_stdin()
 fn (c: Child) read(max: Int) -> Bytes? ! ProcErr uses proc        // its output; None at the end
 fn (c: Child) read_err(max: Int) -> Bytes? ! ProcErr uses proc    // its error stream
 fn (c: Child) read_line() -> Str? ! ProcErr uses proc             // a line of its output
+fn (c: Child) set_read_deadline(clock: Clock, t: Time?) uses clock // decision 0611: Go's SetReadDeadline on its pipes
 fn (c: Child) wait() -> Int ! ProcErr uses proc                   // closes its input; the status
 fn (c: Child) wait_usage() -> (Int, ProcUsage) ! ProcErr uses proc // wait, and the child's own usage
 fn (c: Child) kill()
@@ -1646,6 +1647,18 @@ fn follow(p: Proc, out: Stdio) -> () ! ProcErr uses (proc, stdio) {
   (inherited or merged) is `Io`. A child that fills one pipe while the
   program waits on the other stops: read both from separate tasks, or
   merge them.
+- Read deadline (decision 0611; Go's `os.File.SetReadDeadline` on the
+  child's pipes, the shape of `Conn.set_read_deadline`, decision 0430):
+  `set_read_deadline(clock, Some(t))` makes `read`, `read_err` and
+  `read_line` fail with `Timeout` (`i/o timeout`) when they would wait
+  past `t`, and every later read too until the deadline moves; one whose
+  deadline has already passed fails at once, even with output waiting in
+  the pipe. Bytes `read_line` already read ahead (a whole line, or the
+  start of one read before a timeout) are still returned, so a timed out
+  `read_line` loses nothing. `None` removes the deadline; a deadline set
+  while a read waits applies to it. The child keeps running: a barge in
+  (stop a child that stays silent) is `Err(Timeout)` then `kill`. A
+  `FakeProc` child's reads never wait and ignore the deadline.
 - `pipeline(cmds)` connects each command's standard output to the next
   one's input, runs them together, and returns the last one's output,
   the error streams of all of them in command order, and the status of
@@ -5880,7 +5893,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-575 declarations.
+576 declarations.
 
 ### Range
 
@@ -6783,6 +6796,7 @@ fn (c: Child) close_stdin()
 fn (c: Child) read(max: Int) -> Bytes? ! ProcErr uses proc
 fn (c: Child) read_err(max: Int) -> Bytes? ! ProcErr uses proc
 fn (c: Child) read_line() -> Str? ! ProcErr uses proc
+fn (c: Child) set_read_deadline(clock: Clock, t: Time?) uses clock
 fn (c: Child) wait() -> Int ! ProcErr uses proc
 fn (c: Child) wait_usage() -> (Int, ProcUsage) ! ProcErr uses proc
 fn (c: Child) kill()

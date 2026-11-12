@@ -1945,10 +1945,13 @@ enum ProcErr {
   /// The command is outside an attenuated Proc (`Proc.only`, decision
   /// 0156).
   Denied(cmd: Str)
+  /// A child's read waited past its read deadline (`Child.set_read_deadline`,
+  /// decision 0611; Go's os.ErrDeadlineExceeded).
+  Timeout
 }
 
 /// Plain text (decision 0358): `CMD: executable file not found`, the message
-/// of an Io, `canceled`, `denied by Proc.only: CMD`.
+/// of an Io, `canceled`, `denied by Proc.only: CMD`, `i/o timeout`.
 fn (e: ProcErr) display() -> Str
 
 /// CPU time and peak memory of a process (Proc.usage, decision 0426;
@@ -2044,6 +2047,12 @@ fn (c: Child) read(max: Int) -> Bytes? ! ProcErr uses proc
 fn (c: Child) read_err(max: Int) -> Bytes? ! ProcErr uses proc
 /// One line of the child's output, without `\n` or `\r\n`.
 fn (c: Child) read_line() -> Str? ! ProcErr uses proc
+/// The deadline of the child's output and error stream reads (decision
+/// 0611; Go's os.File.SetReadDeadline on its pipes): a read that would
+/// wait past t is `Timeout`, and so is every later one until the deadline
+/// moves; None removes it. Bytes already read ahead by read_line are
+/// still returned.
+fn (c: Child) set_read_deadline(clock: Clock, t: Time?) uses clock
 /// Closes the child's input, waits for it, and returns its status.
 fn (c: Child) wait() -> Int ! ProcErr uses proc
 /// wait, with the child's own CPU time and peak memory (decision 0426's

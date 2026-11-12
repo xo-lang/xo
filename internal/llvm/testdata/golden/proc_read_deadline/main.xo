@@ -1,0 +1,67 @@
+// Child.set_read_deadline (decision 0611; Go's os.File.SetReadDeadline on
+// the child's pipes): a read_line, read or read_err waiting past the
+// deadline is Timeout, a deadline already passed fails at once, every later
+// read fails until the deadline moves, None removes it, and a line's start
+// read before a timeout is kept for the next read_line.
+
+fn show[T](r: Result[T?, ProcErr], f: fn(T) -> Str) -> Str {
+  match r {
+    Ok(Some(v)) => "ok ${f(v)}"
+    Ok(None) => "end"
+    Err(e) => match e {
+      ProcErr.Timeout => "timeout (${e})"
+      _ => "err ${e}"
+    }
+  }
+}
+
+fn line(s: Str) -> Str { s.quote() }
+
+fn bytes(b: Bytes) -> Str { (b.to_str() ?? "?").quote() }
+
+fn main(os: Os) ! {
+  let p = os.proc
+  let out = os.stdio
+  let clock = os.clock
+  // a line after 300 ms: a 30 ms deadline times out, and again while it
+  // stays; then None waits for the line
+  let c = p.cmd("sh", ["-c", "sleep 0.3; echo late"]).spawn()?
+  c.set_read_deadline(clock, Some(clock.now() + 30ms))
+  let t0 = clock.now()
+  out.println("first ${show(c.read_line(), line)}")
+  out.println("waited ${clock.now() - t0 >= 25ms} ${clock.now() - t0 < 250ms}")
+  out.println("again ${show(c.read_line(), line)}")
+  c.set_read_deadline(clock, None)
+  out.println("cleared ${show(c.read_line(), line)}")
+  out.println("eof ${show(c.read_line(), line)}")
+  out.println("code ${c.wait()?}")
+  // a deadline in the past fails at once, even with output waiting
+  let d = p.cmd("sh", ["-c", "echo ready; sleep 0.2"]).spawn()?
+  d.set_read_deadline(clock, Some(clock.now() - 1s))
+  out.println("past ${show(d.read(64), bytes)}")
+  d.set_read_deadline(clock, Some(clock.now() + 5s))
+  out.println("moved ${show(d.read_line(), line)}")
+  out.println("code ${d.wait()?}")
+  // the error stream has the same deadline
+  let e = p.cmd("sh", ["-c", "sleep 0.3; echo oops >&2"]).spawn()?
+  e.set_read_deadline(clock, Some(clock.now() + 30ms))
+  out.println("stderr ${show(e.read_err(64), bytes)}")
+  e.set_read_deadline(clock, None)
+  out.println("stderr cleared ${show(e.read_err(64), bytes)}")
+  out.println("code ${e.wait()?}")
+  // a half line before a timeout is kept for the next read_line
+  let h = p.cmd("sh", ["-c", "printf 'half'; sleep 0.3; echo ' done'"]).spawn()?
+  h.set_read_deadline(clock, Some(clock.now() + 100ms))
+  out.println("half ${show(h.read_line(), line)}")
+  h.set_read_deadline(clock, None)
+  out.println("whole ${show(h.read_line(), line)}")
+  out.println("code ${h.wait()?}")
+  // a barge in: kill a child that stays silent past its deadline
+  let k = p.cmd("sh", ["-c", "sleep 5"]).spawn()?
+  k.set_read_deadline(clock, Some(clock.now() + 20ms))
+  match k.read_line() {
+    Err(ProcErr.Timeout) => k.kill()
+    r => out.println("unexpected ${show(r, line)}")
+  }
+  out.println("killed ${k.wait()?}")
+}

@@ -79,6 +79,9 @@ func (v ProcErr) M_display(*Task) string {
 	case ProcErr_Denied:
 		return "denied by Proc.only: " + p.F_cmd
 	}
+	if v.Tag == 5 {
+		return "i/o timeout"
+	}
 	return "canceled"
 }
 

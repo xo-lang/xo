@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-11-11: feature: Child.set_read_deadline and ProcErr.Timeout (Go's SetReadDeadline on a child's pipes)
+
+- Kind: feature
+- Commit: this push
+- Found by: the scarlet session's field report (a barge in needed a pump task and a select to bound Child.read_line), decision 0611
+- Go reference: os.File.SetReadDeadline on os/exec pipes, os.ErrDeadlineExceeded (go1.26.1)
+- Test: golden proc_read_deadline (arm64, llvm, Go parity)
+- Timing: none (one word per child; a read with no deadline waits as before)
+- Shipped in: not yet released
+
+`read`, `read_err` and `read_line` fail with the new `ProcErr.Timeout` (`i/o timeout`) past the deadline, at once
+when it has passed, until it moves; a timed out `read_line` keeps its partial line for the next read. Breaking: a
+`match` on `ProcErr` needs a `Timeout` arm.
+
 ## 2026-11-11: feature: look_path(env, fs, name) (Go's exec.LookPath)
 
 - Kind: feature

@@ -3167,6 +3167,37 @@ Under `testing.run_main`, a third signal makes `run_main` return 130 after
 handled in memory by a fake network observe the stop state but are not
 cancelled by it.
 
+A blocking C call (`use c`, 4.5) is not a cancellation point: phase 2
+cancels the scope, but the task unwinds only when the C function returns
+to Xo, and a second SIGINT cannot interrupt it (the third still exits
+with 130). A long loop over C calls therefore does its work in chunks
+small enough to finish quickly and checks `task.stop_requested()` between
+them; it stays true once set, so the same check also covers phase 2:
+
+```
+use c "codec.h" link "codec"
+use std/task
+
+fn encode_all(input: Bytes) -> Bytes {
+  var out = BytesBuilder.new()
+  var at = 0
+  while at < input.len() {
+    if task.stop_requested() {
+      break                          // first signal: stop at a chunk boundary
+    }
+    let n = if input.len() - at < 4096 { input.len() - at } else { 4096 }
+    out.write(codec.encode_chunk(input[at..at + n]))   // C, about 1 ms
+    at += n
+  }
+  out.freeze()
+}
+```
+
+The same holds for a read with no cancellation point of its own: a
+child's output read with a deadline (`Child.set_read_deadline`, std.md
+3.8) returns `Timeout` in time to look at `task.stop_requested()` or a
+barge in, where a plain `read_line` would wait for the next line.
+
 
 ---
 

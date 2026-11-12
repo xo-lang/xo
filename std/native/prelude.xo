@@ -5314,6 +5314,7 @@ fn proc_err(st: Str, d: Str) -> ProcErr {
   match st {
     "1" => ProcErr.NotFound(d)
     "2" => ProcErr.Io(d)
+    "4" => ProcErr.Timeout
     _ => ProcErr.Canceled
   }
 }
@@ -5444,6 +5445,13 @@ fn child_read_line(c: Child) -> Str? ! ProcErr uses proc {
     return Err(proc_err(st, r.get(1) ?? ""))
   }
   Some(scan.text(r.get(1) ?? ""))
+}
+
+fn child_set_read_deadline(c: Child, clock: Clock, t: Time?) uses clock {
+  match t {
+    Some(at) => proc.child_set_read_deadline(c.h, true, (at - clock.now()).nanos())
+    None => proc.child_set_read_deadline(c.h, false, 0)
+  }
 }
 
 fn child_wait(c: Child) -> Int ! ProcErr uses proc {
@@ -6770,6 +6778,7 @@ fn procerr_display(e: ProcErr) -> Str {
     Io(msg) => msg
     Canceled => "canceled"
     Denied(cmd) => "denied by Proc.only: ${cmd}"
+    Timeout => "i/o timeout"
   }
 }
 

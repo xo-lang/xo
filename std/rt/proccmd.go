@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // Commands, children, and pipelines (std.md 3.7, decision 0161): `Proc.cmd`
@@ -300,6 +301,36 @@ type child struct {
 	err    error
 	usage  ProcUsage
 	fake   *fakeChild
+	rdl    time.Time // the read deadline of both pipes (decision 0611), zero none
+	part   string    // a line's start read before a failed read_line, kept for the next
+}
+
+// readDL is the child's read deadline.
+func (ch *child) readDL() time.Time {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	return ch.rdl
+}
+
+// M_set_read_deadline is `c.set_read_deadline(clock, t)` (decision 0611):
+// os.File.SetReadDeadline on the child's output and error pipes.
+func (c Child) M_set_read_deadline(tk *Task, clock Clock, t Option[Time]) {
+	var at time.Time
+	if t.Some {
+		at = time.Now().Add(time.Duration(int64(t.V) - int64(clock.M_now(tk))))
+	}
+	ch := c.c
+	ch.mu.Lock()
+	ch.rdl = at
+	ch.mu.Unlock()
+	if ch.fake != nil {
+		return
+	}
+	for _, f := range []*os.File{ch.stdout, ch.stderr} {
+		if f != nil {
+			f.SetReadDeadline(at)
+		}
+	}
 }
 
 // Child is `Child`: a started command (a handle).
@@ -416,7 +447,7 @@ func (c Child) M_close_stdin(*Task) {
 }
 
 // readPipe reads at most max bytes of f; None at the end.
-func readPipe(tk *Task, f *os.File, max int64, what string) Result[Option[Bytes], ProcErr] {
+func readPipe(tk *Task, ch *child, f *os.File, max int64, what string) Result[Option[Bytes], ProcErr] {
 	if tk.Canceled() {
 		return Err[Option[Bytes]](ProcErr{Tag: 3})
 	}
@@ -428,7 +459,7 @@ func readPipe(tk *Task, f *os.File, max int64, what string) Result[Option[Bytes]
 	}
 	buf := make([]byte, min(max, 1<<20))
 	var n int
-	canceled, err := interruptible(tk, f.SetReadDeadline, func() error {
+	canceled, err := interruptibleTo(tk, f.SetReadDeadline, ch.readDL(), func() error {
 		var e error
 		n, e = f.Read(buf)
 		return e
@@ -442,6 +473,9 @@ func readPipe(tk *Task, f *os.File, max int64, what string) Result[Option[Bytes]
 	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
 		return Ok[Option[Bytes], ProcErr](Option[Bytes]{})
 	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return Err[Option[Bytes]](ProcErr{Tag: 5})
+	}
 	return Err[Option[Bytes]](procIo(err.Error()))
 }
 
@@ -451,6 +485,13 @@ func (c Child) M_read(tk *Task, max int64) Result[Option[Bytes], ProcErr] {
 	}
 	c.c.mu.Lock()
 	lr := c.c.lines
+	if part := c.c.part; part != "" && max > 0 {
+		// a line's start kept by a timed out read_line comes first
+		k := min(int64(len(part)), max)
+		c.c.part = part[k:]
+		c.c.mu.Unlock()
+		return Ok[Option[Bytes], ProcErr](Some(Bytes(part[:k])))
+	}
 	c.c.mu.Unlock()
 	if lr != nil && lr.Buffered() > 0 {
 		// bytes read ahead by read_line come first
@@ -458,26 +499,27 @@ func (c Child) M_read(tk *Task, max int64) Result[Option[Bytes], ProcErr] {
 		n, _ := lr.Read(buf)
 		return Ok[Option[Bytes], ProcErr](Some(Bytes(buf[:n])))
 	}
-	return readPipe(tk, c.c.stdout, max, "output")
+	return readPipe(tk, c.c, c.c.stdout, max, "output")
 }
 
 func (c Child) M_read_err(tk *Task, max int64) Result[Option[Bytes], ProcErr] {
 	if c.c.fake != nil {
 		return c.c.fake.read(tk, true, max)
 	}
-	return readPipe(tk, c.c.stderr, max, "error stream")
+	return readPipe(tk, c.c, c.c.stderr, max, "error stream")
 }
 
 // pipeReader reads the child's output for read_line, through
 // readPipe (so a read is a cancellation point).
 type pipeReader struct {
 	tk *Task
+	ch *child
 	f  *os.File
 	e  *ProcErr
 }
 
 func (r *pipeReader) Read(p []byte) (int, error) {
-	res := readPipe(r.tk, r.f, int64(len(p)), "output")
+	res := readPipe(r.tk, r.ch, r.f, int64(len(p)), "output")
 	if !res.Ok {
 		r.e = &res.E
 		return 0, io.ErrUnexpectedEOF
@@ -497,7 +539,7 @@ func (c Child) M_read_line(tk *Task) Result[Option[string], ProcErr] {
 	}
 	c.c.mu.Lock()
 	if c.c.lines == nil {
-		c.c.pr = &pipeReader{f: c.c.stdout}
+		c.c.pr = &pipeReader{ch: c.c, f: c.c.stdout}
 		c.c.lines = bufio.NewReader(c.c.pr)
 	}
 	pr, lr := c.c.pr, c.c.lines
@@ -506,8 +548,11 @@ func (c Child) M_read_line(tk *Task) Result[Option[string], ProcErr] {
 	pr.tk, pr.e = tk, nil
 	line, err := lr.ReadString('\n')
 	if pr.e != nil {
+		// a timeout keeps the line's start (native keeps it read ahead)
+		c.c.part += line
 		return Err[Option[string]](*pr.e)
 	}
+	line, c.c.part = c.c.part+line, ""
 	if line == "" && err != nil {
 		return Ok[Option[string], ProcErr](Option[string]{})
 	}

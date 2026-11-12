@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+first timeout (i/o timeout)
+waited true true
+again timeout (i/o timeout)
+cleared ok "late"
+eof end
+code 0
+past timeout (i/o timeout)
+moved ok "ready"
+code 0
+stderr timeout (i/o timeout)
+stderr cleared ok "oops\n"
+code 0
+half timeout (i/o timeout)
+whole ok "half done"
+code 0
+killed 137
+--- stderr

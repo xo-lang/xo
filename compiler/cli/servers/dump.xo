@@ -65,6 +65,7 @@ pub fn run_dump(os: Os, args: List[Str]) -> Int uses (stdio, proc, env, fs, cloc
         ProcErr.NotFound(c) => c
         ProcErr.Denied(c) => "denied: ${c}"
         ProcErr.Canceled => "canceled"
+        ProcErr.Timeout => "i/o timeout"
       }
       os.stdio.eprintln("xo dump: ${msg}")
       return 1
