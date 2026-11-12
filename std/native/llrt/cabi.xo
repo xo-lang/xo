@@ -370,6 +370,8 @@ fn heap_unlock() { heapos.unlock() }
 // finds the heap itself (no hw).
 fn obj_rl_new_n(n: Int, esize: Int) -> Int { obj.rl_new_n(n, esize) }
 
+fn obj_rl_new_cap(n: Int, esize: Int) -> Int { obj.rl_new_cap(n, esize) }
+
 fn obj_rl_grow_n(l: Int, esize: Int) -> Int { obj.rl_grow_n(l, esize) }
 
 fn obj_rl_free_n(l: Int, esize: Int, drop: Int) { obj.rl_free_n(l, esize, drop) }

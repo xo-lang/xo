@@ -1301,3 +1301,54 @@ to 202 s; the self build 35.5 to 36.5, 38.7, 43.3, 52.3 s, CPU 239 to
 (CPU profiles at 12 and 8). Next for memory: the args lists (13.7 M
 arguments in 12.7 M lists after inline.apply, Lang 2's census) and cse's
 instruction lists.
+
+## Addendum: List.with_capacity holds exactly n word sized elements (Xo Lang 1, 2026-11-12)
+
+The args lists (13.7 M arguments in 12.7 M lists after aiplatform/v1's
+inline.apply, 9.6 M of them a `field` op's one) took 48 byte blocks:
+a 24 byte header and min_cap's 2 slots (decision 0452's addendum). The
+inliner's copies grew from `[]` by push, and renumber, which copies every
+value's args at `with_capacity(len)`, got min_cap too; it also allocated a
+block for each argless value (`with_capacity(0)` is not the empty literal).
+
+Change: `List.with_capacity(n)` and `Buf.with_capacity(n)` lower to
+`list.new(n, 1)`; the second argument selects the runtime's rl_new_cap
+(std/native/llrt/obj.xo; LLVM's list.new and wasm's $rl_new_cap state the
+same rule), which holds exactly n >= 1 elements of 8 bytes or less (a
+32 byte block for one Int). Literals and the compiler's own sized lists
+keep min_cap. The inliner copies args and edge args at their size, and it
+and renumber keep an empty list as the empty literal.
+
+First tried in rl_new_n itself, for every sized word list: bench/perf/alloc
+small (`[i]` then a push, 2 M times) ran 2.30x slower (2.167 to 2.364), since
+the literal's one slot grew at its push. Not landed.
+
+xo bench --ab on linux/arm64 host 1, stage2 (each side's xo built by itself),
+56f780325 against the change:
+
+| run | max RSS | wall | CPU |
+|---|---|---|---|
+| the self build, 7 rounds (5 loaded) | 0.974 (0.961 to 0.988; 4.38 to 4.26 GB) | 0.993, noise | 0.99, noise |
+| the earlier rl_new_n form, 7 rounds | 0.982 (0.974 to 0.991) | 0.985 (0.977 to 0.999) | 0.987 |
+| aiplatform/v1 cold test build, host 3, 9 rounds | 0.98 (0.968 to 0.984; 4.89 to 4.79 GB) | 1.0, noise | 1.002, noise |
+| bench/perf/alloc small, 5 rounds | 1.0 | 0.996, noise | |
+| alloc grow | 1.0 | 0.99, noise | |
+| alloc mixed | 1.0 | 0.993 (0.983 to 0.999) | |
+
+The aiplatform/v1 saving (about 99 MB) is below the 9.6 M one-argument
+lists times 16 bytes (about 150 MB) the census predicts: lists that the
+inliner's later passes rebuild by push (cse, the cleanup's rewrites) are
+not covered.
+
+In use at inline.apply's end with the change (aiplatform/apiv1, stage2,
+XO_PROF_HEAP_AT, 16 MiB rate, host 3): 2.98 GB in 20.7 M objects, max RSS
+4.92 GB: renumber's value tables (passes.xo, the `vals` list) 1.24 GB,
+inline_one's tables copied to their size 966 MB, cse's instruction lists
+304 MB. The args lists no longer show. So the values themselves (about
+85 bytes each, 14.6 M of them) are the next lever, not their lists.
+
+cse's lists compacted in place (cse and fold_tuple_fields share one
+drop_and_replace; branch lang1-cse1): aiplatform/v1 --ab, 9 rounds, host 3:
+max RSS 1.002 (0.996 to 1.006), wall 1.003, CPU 0.999, all noise. Not
+landed: the old list keeps its capacity, and the peak is resident memory
+the allocator retains, which a smaller in-use figure does not lower.

@@ -1446,11 +1446,16 @@ fn renumber(var f: Func) {
   var vals: List[Value] = List.with_capacity(order.len())
   for v in order {
     var x = f.values[v]
-    var args: List[Int] = List.with_capacity(x.args.len())
-    for a in x.args {
-      args.push(if a >= 0 { map[a] } else { -1 })
+    // a value with no arguments keeps its empty list: with_capacity(0)
+    // allocates a block (decision 0448, 2026-11-12: about 1.9 M such
+    // values after aiplatform/v1's inlining)
+    if !x.args.is_empty() {
+      var args: List[Int] = List.with_capacity(x.args.len())
+      for a in x.args {
+        args.push(if a >= 0 { map[a] } else { -1 })
+      }
+      x.args = args
     }
-    x.args = args
     if pad_of(x.pi) >= 0 {
       x.pi = with_pad(x.pi, map[pad_of(x.pi)])
     }
@@ -1470,7 +1475,10 @@ fn renumber(var f: Func) {
     f.blocks[bl].instrs = ins
   }
   for e in 0..f.edges.len() {
-    var args: List[Int] = []
+    if f.edges[e].args.is_empty() {
+      continue
+    }
+    var args: List[Int] = List.with_capacity(f.edges[e].args.len())
     for a in f.edges[e].args {
       args.push(if a >= 0 { map[a] } else { -1 })
     }

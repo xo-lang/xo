@@ -900,7 +900,7 @@ fn small_lists_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   let (users, edge) = cost_uses(f)
   for (vi, x) in f.values.indexed() {
     let line = line_of(x.lp) / 4096
-    if x.op != Op.Call || aux_name(x.aux) != "list.new" || x.args.len() != 1 || block_of(x.tb) < 0 || block_of(x.tb) >= inloop.len() || !inloop[block_of(x.tb)] || line <= 0 || seen.contains(line) {
+    if x.op != Op.Call || aux_name(x.aux) != "list.new" || x.args.is_empty() || block_of(x.tb) < 0 || block_of(x.tb) >= inloop.len() || !inloop[block_of(x.tb)] || line <= 0 || seen.contains(line) {
       continue
     }
     let c = f.values[x.args[0]]

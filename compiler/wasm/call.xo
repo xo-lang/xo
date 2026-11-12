@@ -158,11 +158,13 @@ fn (var g: Gen) call(v: Int) {
     }
     "list.new" => {
       let es = g.size(g.m.types[ssa.ty_of(x.tb)].elems[0])
-      if x.args.len() == 1 {
+      if x.args.len() >= 1 {
+        // a second argument is List.with_capacity's: exactly n >= 1 for
+        // word sized elements ($rl_new_cap, decision 0448)
         g.push(x.args[0])
         g.e("i32.wrap_i64")
         g.e("i32.const ${es}")
-        g.e("call $rl_new_n")
+        g.e(if x.args.len() == 2 { "call $rl_new_cap" } else { "call $rl_new_n" })
       } else {
         // `[]`: no room until the first push ($rl_grow takes a full list
         // of capacity 0 to 4), as native's shared empty list; with room

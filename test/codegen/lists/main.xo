@@ -103,11 +103,12 @@ fn fact_not_dominating(xs: List[Int], hi: Int, flag: Bool) -> Int {
 
 // Buf.with_capacity allocates room for its elements, as
 // List.with_capacity does (decision 0170): the size was dropped, so a
-// Buf of a million grew from empty (2026-11-05).
+// Buf of a million grew from empty (2026-11-05). It calls rl_new_cap,
+// which holds exactly n word sized elements (decision 0448, 2026-11-12).
 fn reserved(n: Int) -> Int {
-  // arm64: "xo_x_obj_rl_new_n"
-  // amd64: "xo_x_obj_rl_new_n"
-  // llvm: "@xo_x_obj_rl_new_n"
+  // arm64: "xo_x_obj_rl_new_cap"
+  // amd64: "xo_x_obj_rl_new_cap"
+  // llvm: "@xo_x_obj_rl_new_cap"
   var b = Buf[Int].with_capacity(n)
   b.push(n)
   b.freeze().len()

@@ -456,7 +456,7 @@ fn stack_lit(f: ssa.Func, m: ssa.Module, v: Int, fx: SsFacts) -> StackLit? {
   if x.op != ssa.Op.Call || aux_str(x.aux) != "list.new" || !stack_list_type(m, ssa.ty_of(x.tb)) {
     return None
   }
-  let n = if x.args.len() == 1 { const_through(f, x.args[0], fx) } else { 1 }
+  let n = if x.args.len() >= 1 { const_through(f, x.args[0], fx) } else { 1 }
   if n < 1 || n > STACK_LIST_MAX {
     return None
   }

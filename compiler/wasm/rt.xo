@@ -2388,6 +2388,26 @@ fn rt_text(var g: Gen) -> Str {
       local.get $es
       call $rl_new)
 
+    ;; List.with_capacity(n): exactly n >= 1 for elements of 8 bytes or
+    ;; less, else $rl_new_n (obj.xo rl_new_cap, decision 0448)
+    (func $rl_new_cap (param $n i32) (param $es i32) (result i32)
+      local.get $es
+      i32.const 8
+      i32.le_u
+      local.get $n
+      i32.const 1
+      i32.ge_s
+      i32.and
+      if (result i32)
+        local.get $n
+        local.get $es
+        call $rl_new
+      else
+        local.get $n
+        local.get $es
+        call $rl_new_n
+      end)
+
     ;; doubles the capacity of a unique full list
     (func $rl_grow (param $p i32) (param $es i32) (result i32) (local $cap i32) (local $q i32)
       ;; the step: twice the capacity, or a quarter more for a list of 1 MiB

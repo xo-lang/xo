@@ -1407,7 +1407,12 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
           }
         }
         _ => {
-          var args: List[Int] = []
+          // at the exact size: a list grown by push from empty takes room
+          // for 2 (a 48 byte block for one argument, 32 at its size), and
+          // the copies are most of the module's args lists after inline.apply
+          // (decision 0448); an empty one stays the empty literal, which
+          // with_capacity(0) is not
+          var args: List[Int] = if x.args.is_empty() { [] } else { List.with_capacity(x.args.len()) }
           for a in x.args {
             args.push(vm.get(a) ?? a)
           }
@@ -1437,7 +1442,7 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
     }
   }
   for p in edges {
-    var args: List[Int] = []
+    var args: List[Int] = if p.args.is_empty() { [] } else { List.with_capacity(p.args.len()) }
     for a in p.args {
       args.push(vm.get(a) ?? a)
     }

@@ -2160,7 +2160,7 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
         // room for n elements, as List.with_capacity (decision 0170): the
         // size was evaluated and dropped, so a Buf of 1,000,000 grew from
         // empty through about 40 copies (micro13 sort1M, 2026-11-05)
-        return b.call("list.new", nt, "", [b.value_as(args[0].value, it)])
+        return b.call("list.new", nt, "", [b.value_as(args[0].value, it), b.cint(1)])
       }
       if is_static && fname == "new" && b.tkind(nt) == Kind.List {
         return b.call("list.new", nt, "", [])
@@ -2226,8 +2226,10 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
     }
     "List" => {
       if is_static && fname == "with_capacity" && args.len() == 1 && b.tkind(nt) == Kind.List {
-        // list.new with a size: room for n elements (decision 0170)
-        return b.call("list.new", nt, "", [b.value_as(args[0].value, it)])
+        // list.new with a size: room for n elements (decision 0170); the
+        // second argument asks for exactly n (rt rl_new_cap, decision
+        // 0448), where a literal's size keeps the runtime's minimum
+        return b.call("list.new", nt, "", [b.value_as(args[0].value, it), b.cint(1)])
       }
       if b.c.objs[fo].recv_var {
         var p = b.place(ci.recv[0])

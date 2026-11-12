@@ -281,7 +281,23 @@ pub fn min_cap(esize: Int) -> Int { if esize > 256 { 1 } else if esize <= 8 { 2 
 /// esize bytes (xo_rl_new_n).
 pub fn rl_new_n(n: Int, esize: Int) -> Int {
   let m = min_cap(esize)
-  let cap = if n < m { m } else { n }
+  rl_new_c(if n < m { m } else { n }, esize)
+}
+
+/// List.with_capacity(n)'s list (xo_rl_new_cap): rl_new_n's, but exactly
+/// n >= 1 for elements of 8 bytes or less (decision 0448, 2026-11-12: the
+/// compiler's SSA args lists, mostly one Int, took 48 byte blocks for two
+/// slots, 32 with one). A literal keeps min_cap: `[i]` then a push grew
+/// at once (bench/perf/alloc small 2.3x).
+pub fn rl_new_cap(n: Int, esize: Int) -> Int {
+  if esize <= 8 && n >= 1 {
+    return rl_new_c(n, esize)
+  }
+  rl_new_n(n, esize)
+}
+
+/// A new empty list object with room for exactly cap elements.
+fn rl_new_c(cap: Int, esize: Int) -> Int {
   let h = rt.mem_load(rt.static_word(HEAP), 0, 8)
   if h != 0 {
     let l = try_new(h, cap, esize)

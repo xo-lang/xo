@@ -15,6 +15,24 @@ loop, LLVM everywhere), where it called `llrt_rs_write`, which called the push. 
 trap ("unreachable", exit 134); it is now the fault native backends raise (exit 70, the same text). `write_be` is as
 before.
 
+## 2026-11-12: perf: List.with_capacity(n) and Buf.with_capacity(n) of word sized elements hold exactly n
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0448 (xo's SSA args lists after inlining aiplatform/v1: 13.7 M arguments in 12.7 M lists, a 48 byte block for one Int)
+- Go reference: runtime.makeslice (make([]T, 0, n) has capacity n)
+- Timing: --ab on linux/arm64, 56f780325 against the change, each side's xo built by itself: aiplatform/v1's cold test build max RSS 0.98 (0.968 to 0.984, n=9, host 3), wall and CPU within noise; the self build max RSS 0.974 (0.961 to 0.988, n=7, host 1), wall and CPU within noise; bench/perf/alloc small, grow and mixed within noise (mixed 0.993)
+- Test: test/codegen/lists reserved (xo_x_obj_rl_new_cap on arm64, amd64 and LLVM); every arm64 golden; the LLVM goldens; wasm std modules; the fixed point
+- Shipped in: not yet released
+
+`List.with_capacity(n)` and `Buf.with_capacity(n)` lower to `list.new(n, 1)`,
+whose second operand selects the runtime's rl_new_cap (std/native/llrt/obj.xo;
+LLVM's list.new and the wasm runtime's $rl_new_cap state the same rule): for
+elements of 8 bytes or less and n of 1 or more, exactly n slots (a 32 byte
+block for one Int, where min_cap gave 2 slots in 48). Literals keep min_cap:
+the same rule for every sized list made `[i]` then a push 2.3x slower
+(bench/perf/alloc small). Capacity stays unobservable.
+
 ## 2026-11-12: perf: BytesBuilder.write_byte and StrBuilder pushes outside a loop store in place
 
 - Kind: perf
