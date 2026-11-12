@@ -92,6 +92,8 @@ func main() {
 		err = timing(os.Args[2:])
 	case "race":
 		err = race(os.Args[2:])
+	case "stress":
+		err = stress(os.Args[2:])
 	default:
 		usage()
 	}
@@ -102,7 +104,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] MODULE")
+	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] MODULE")
 	os.Exit(2)
 }
 
@@ -379,7 +381,9 @@ func timing(args []string) error {
 // race runs decision 0616's race kind for one module.
 func race(args []string) error {
 	fs := flag.NewFlagSet("race", flag.ExitOnError)
-	backend := fs.String("backend", "arm64", "the native backend that has --race")
+	// llvm: no ThreadSanitizer runtime ships for the native backend on
+	// linux/arm64 (xo: "--race: no ThreadSanitizer runtime for linux/arm64")
+	backend := fs.String("backend", "llvm", "the backend to run --race on")
 	hostLabel := fs.String("host", "", "the host's name in the evidence")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
@@ -453,4 +457,73 @@ func race(args []string) error {
 		return err
 	}
 	return os.WriteFile(out, []byte(b.String()), 0o644)
+}
+
+// stress runs decision 0616's stress kind: the module's stress program
+// std/evidence/MODULE/stress/main.xo, built on each backend and run for
+// -minutes with -tasks tasks. The program checks its own results and
+// memory and prints one summary line ending in ", pass".
+func stress(args []string) error {
+	fs := flag.NewFlagSet("stress", flag.ExitOnError)
+	minutes := fs.Int("minutes", 30, "run time per backend")
+	tasks := fs.Int("tasks", 64, "concurrent tasks")
+	backends := fs.String("backends", "arm64,llvm", "backends, comma separated")
+	hostLabel := fs.String("host", "", "the host's name in the evidence")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		usage()
+	}
+	module := fs.Arg(0)
+	dir := filepath.Join("std", "evidence", module, "stress")
+	if _, err := os.Stat(filepath.Join(dir, "main.xo")); err != nil {
+		return err
+	}
+	src, _, err := sourceHash(module)
+	if err != nil {
+		return err
+	}
+	commit, err := gitOut("rev-parse", "--short=9", "HEAD")
+	if err != nil {
+		return err
+	}
+	if dirty, _ := gitOut("status", "--porcelain", "--", "std", "compiler"); dirty != "" {
+		return errors.New("std or compiler has uncommitted changes: evidence names a commit")
+	}
+	tmp, err := os.MkdirTemp("", "stdproven-stress-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	start := time.Now()
+	var lines []string
+	for _, b := range strings.Split(*backends, ",") {
+		bin := filepath.Join(tmp, "s-"+b)
+		if out, err := exec.Command(filepath.Join("bin", "xo"), "build", "--backend="+b, "-o", bin, dir).CombinedOutput(); err != nil {
+			return fmt.Errorf("xo build --backend=%s %s: %v\n%s", b, dir, err, out)
+		}
+		t0 := time.Now()
+		out, err := exec.Command(bin, strconv.Itoa(*minutes), strconv.Itoa(*tasks)).CombinedOutput()
+		text := strings.TrimSpace(string(out))
+		last := text[strings.LastIndex(text, "\n")+1:]
+		if err != nil || !strings.HasSuffix(last, ", pass") {
+			if len(text) > 20000 {
+				text = text[len(text)-20000:]
+			}
+			return fmt.Errorf("%s stress: %v\n%s", b, err, text)
+		}
+		line := fmt.Sprintf("- %s: %s, %s", b, last, time.Since(t0).Round(time.Second))
+		fmt.Println(line)
+		lines = append(lines, line)
+	}
+	host := *hostLabel
+	if host == "" {
+		host = runtime.GOOS + "/" + runtime.GOARCH
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "kind: stress\nmodule: %s\nresult: pass\ncommit: %s\nsource: %s\ndate: %s\nhost: %s\n", module, commit, src, time.Now().UTC().Format("2006-01-02"), host)
+	fmt.Fprintf(&b, "command: go run ./scripts/stdproven stress -minutes %d -tasks %d -backends %s -host %q %s\n", *minutes, *tasks, *backends, host, module)
+	fmt.Fprintf(&b, "measure: %d tasks for %d min on each of %s, 0 mismatches, 0 faults, memory under 10%% growth after 5 min, %s\n\n", *tasks, *minutes, *backends, time.Since(start).Round(time.Second))
+	fmt.Fprintf(&b, "Stress evidence (decision 0616): the program %s, every result checked against Go's answer, the resident set sampled every 10 s.\n\n", dir)
+	b.WriteString(strings.Join(lines, "\n") + "\n")
+	return os.WriteFile(filepath.Join("std", "evidence", module, "stress.md"), []byte(b.String()), 0o644)
 }
