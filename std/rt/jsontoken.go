@@ -561,7 +561,8 @@ func (w *Json_JsonWriter) M_raw(tk *Task, text string) Result[Unit, Json_DecodeE
 	}
 	s := c.V
 	if w.html {
-		s = htmlEscaper.Replace(s)
+		// <, >, &, U+2028 and U+2029, as Go's compact with escaping
+		s = Json_html_escape(tk, s)
 	}
 	w.beginValue()
 	w.out = append(w.out, s...)

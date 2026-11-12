@@ -3342,3 +3342,12 @@ test "decode_go: a type error under a non-ASCII key is Go's error, not a fault (
   let c = json.decode_go[GoDecMap](b"{\"m\":{\"\xff\":\"x\"}}")
   expect(c.err().map(fn(e) { e.msg }) ?? "") == "json: cannot unmarshal string into Go struct field GoDecMap.m.\u{FFFD} of type int"
 }
+
+test "JsonWriter.raw escapes U+2028 and U+2029 with escape_html, as Go's Encoder (0616 json review F9)" {
+  var w = json.json_writer()
+  w.raw("[\"\u{2028}<\u{2029}\"]").or_fault("raw")
+  expect(w.finish().to_str() ?? "") == "[\"\\u2028\\u003c\\u2029\"]"
+  var p = json.json_writer(escape_html: false)
+  p.raw("[\"\u{2028}<\"]").or_fault("raw")
+  expect(p.finish().to_str() ?? "") == "[\"\u{2028}<\"]"
+}

@@ -1255,7 +1255,9 @@ fn (var w: JsonWriter) null() {
 fn (var w: JsonWriter) raw(text: Str) -> () ! json.DecodeErr {
   var c = compact(text)?
   if w.html {
-    c = c.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    // `<`, `>`, `&`, U+2028 and U+2029, as Go's compact with escaping
+    // (it left U+2028 and U+2029: the 0616 json review's F9)
+    c = html_escape(c)
   }
   w.begin_value()
   w.out.write_str(c)

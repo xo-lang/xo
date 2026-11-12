@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-12: fix: JsonWriter.raw escapes U+2028 and U+2029 with escape_html
+
+- Kind: fix
+- Commit: this commit
+- Found by: the decision 0616 security review of std/json (second reviewer, finding F9)
+- Go reference: encoding/json compact with escaping (Encoder.Encode of a RawMessage)
+- Test: std/native/json_test.xo "JsonWriter.raw escapes U+2028 and U+2029 ..." (arm64, LLVM); golden json_html_escape (arm64, LLVM, Go parity)
+- Shipped in: not yet released
+
+`JsonWriter.raw` with `escape_html` (the default) escaped `<`, `>` and `&` but wrote U+2028 and U+2029 as they were, where Go's Encoder writes `\u2028` and `\u2029`, which a JavaScript parser older than ES2019 reads as line ends inside a string. It now escapes all five, on every backend.
+
 ## 2026-11-12: security: nested duplicate keys parse in linear time
 
 - Kind: security
