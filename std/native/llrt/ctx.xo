@@ -106,10 +106,11 @@ pub const SV_DNS = 232
 pub const SV_STDIN_PUMP = 248
 /// The end functions optional features register (atexit.xo, decision
 /// 0233): cabi_time.xo's tz_free, cabi_http.xo's streams_free,
-/// cabi_tw.xo's tw_end; 0 until registered.
+/// cabi_tw.xo's tw_end, cabi_log.xo's log_free; 0 until registered.
 pub const SV_AT_TZ = 264
 pub const SV_AT_STREAMS = 272
 pub const SV_AT_TW_END = 280
+pub const SV_AT_LOG = 296
 /// The registry of root contexts (`xo dump`, decision 0251): a block of
 /// ROOTS_MAX words after a count word, made by the first root. (A static
 /// word of its own would not do: ctx.xo's range is 16 to 17, and 18 is
@@ -120,7 +121,7 @@ const SV_ROOTS = 288
 /// end, from 2026-10-17 to 2026-10-19; every Windows program faulted on
 /// the garbage there, gotchas/svc-roots-slot-index.md)
 const SV_ROOTS_SLOT = 36
-const SV_SIZE = 296
+const SV_SIZE = 304
 /// The fiber cache's record's size (pool.xo FS_*: its lock, list, count,
 /// stack size, page size, where a fiber starts, the count of takes and
 /// returns, XO_STACK_SHIFT).

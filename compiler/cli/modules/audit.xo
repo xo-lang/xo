@@ -75,11 +75,22 @@ struct AuditSummary {
   errors: Int = 0
 }
 
+/// A call that installs code run later under another effect (the
+/// installer pays, owner 2026-11-12): log.configure_handler, an http
+/// Client's with_jar; the effects it charges its caller.
+struct AuditInstall {
+  file: Str
+  line: Int
+  call: Str
+  effects: Str
+}
+
 struct AuditReport {
   module: Str = ""
   dir: Str
   deps: List[AuditDep] = []
   attenuations: List[AuditAttenuation] = []
+  installs: List[AuditInstall] = []
   caps: List[AuditCapability] = []
   unused: List[AuditVouch] = []
   summary: AuditSummary = AuditSummary{}
@@ -296,6 +307,9 @@ fn (var c: ModCtx) audit(root: Str, var chk: check.Checker, ds: List[check.Diag]
   }
   audit_calls(chk, rep)
   audit_logs(chk, rep)
+  for (file, line, call, set) in chk.installs {
+    rep.installs.push(AuditInstall{file: file, line: line, call: call, effects: chk.eff_text(set)})
+  }
   for cp in rep.caps {
     if !cp.attenuated {
       rep.summary.unattenuated += 1
@@ -815,7 +829,7 @@ fn audit_json(rep: AuditReport) -> J {
   let unused = rep.unused.map(fn(v) { J.O(fields: [("file", J.S(s: v.file)), ("line", J.I(n: v.line)), ("text", J.S(s: v.text))]) })
   let s = rep.summary
   let summary = J.O(fields: [("dependencies", J.I(n: s.dependencies)), ("unvouched_escape_hatches", J.I(n: s.unvouched)), ("widened", J.I(n: s.widened)), ("unlocked", J.I(n: s.unlocked)), ("unattenuated_capabilities_passed", J.I(n: s.unattenuated)), ("errors", J.I(n: s.errors))])
-  J.O(fields: [("module", J.S(s: rep.module)), ("dir", J.S(s: rep.dir)), ("dependencies", J.A(xs: deps)), ("attenuations", J.A(xs: atts)), ("capabilities_passed", J.A(xs: caps)), ("unused_vouches", J.A(xs: unused)), ("summary", summary), ("diagnostics", J.A(xs: rep.diags.map(diag_json)))])
+  J.O(fields: [("module", J.S(s: rep.module)), ("dir", J.S(s: rep.dir)), ("dependencies", J.A(xs: deps)), ("attenuations", J.A(xs: atts)), ("capabilities_passed", J.A(xs: caps)), ("unused_vouches", J.A(xs: unused)), ("installs", J.A(xs: rep.installs.map(fn(i) { J.O(fields: [("file", J.S(s: i.file)), ("line", J.I(n: i.line)), ("call", J.S(s: i.call)), ("effects", J.S(s: i.effects))]) }))), ("summary", summary), ("diagnostics", J.A(xs: rep.diags.map(diag_json)))])
 }
 
 fn jspan(file: Str, line: Int, col: Int, end_line: Int, end_col: Int) -> J {
@@ -913,6 +927,13 @@ fn (c: ModCtx) print_audit(rep: AuditReport) uses stdio {
     for a in rep.attenuations {
       let args = if a.constant { "[${a.args.join(", ")}]" } else { "(not constant)" }
       w.write("  ${a.file}:${a.line} ${a.capability}.${a.method} ${args}\n")
+    }
+  }
+  if !rep.installs.is_empty() {
+    w.write("\ninstalled code (the installer pays):\n")
+    for i in rep.installs {
+      let fx = if i.effects.is_empty() { "pure" } else { "uses ${i.effects}" }
+      w.write("  ${i.file}:${i.line} ${i.call}: ${fx}\n")
     }
   }
   if !rep.caps.is_empty() {

@@ -1,0 +1,46 @@
+// log.configure_handler (decision 0617 C): the built-in handlers write
+// configure's lines through sinks; multi sends a record to every handler
+// that takes it, level_range keeps one level's records; a record's
+// values carry their kinds (log.Value); configure puts the program back
+// on standard error.
+use std/log
+
+fn work() uses log {
+  log.debug("d", {"n": 0})
+  log.info("start", {"n": 1, "f": 2.5, "ok": true, "s": "a \"q\"", "d": 1500ms})
+  log.warn("slow", {"ms": 120})
+  log.with({"req": "r1"}).error("boom", {"code": 7})
+}
+
+struct Kinds {
+  out: Chan[Str]
+}
+
+fn (k: Kinds) enabled(level: log.Level) -> Bool { level is log.Level.Info }
+
+fn (k: Kinds) handle(r: log.Record) {
+  for (name, v) in r.values {
+    k.out.send("${name}: ${v:?}")
+  }
+}
+
+fn main(os: Os) {
+  let c: Chan[Str] = Chan.new(64)
+  let all = log.func_sink(fn(l: Str) { c.send(l) })
+  let errs = log.func_sink(fn(l: Str) { c.send("errors: " + l) })
+  log.configure_handler(log.multi([
+    log.text_handler(all, level: log.Level.Debug),
+    log.json_handler(all, level: log.Level.Warn),
+    log.level_range(log.text_handler(errs), log.Level.Error, log.Level.Error),
+  ]))
+  work()
+  log.configure_handler(Kinds{out: c})
+  work()
+  log.configure(os.stdio, format: log.Format.Json)
+  work()
+  c.close()
+  while let Some(l) = c.recv() {
+    os.stdio.eprintln(l)
+  }
+  os.stdio.println("dropped ${log.dropped()}")
+}

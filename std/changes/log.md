@@ -1,5 +1,16 @@
 # std/log changes
 
+## 2026-11-12: feature: log handlers, sinks and typed values
+
+- Kind: feature
+- Commit: this push
+- Found by: the owner's std features axis, high group (decision 0617 C)
+- Go reference: log/slog Handler, TextHandler, JSONHandler, Value
+- Test: golden log_handlers (arm64, LLVM, Go backend parity, wasm); cmd/xo TestAuditInstalls
+- Shipped in: not yet released
+
+`configure_handler(h)` sends every record to a `Handler[fx]`; `text_handler` and `json_handler` write `configure`'s lines to a `Sink[fx]` (`stderr_sink`, `stdout_sink`, `file_sink`, `conn_sink`, `func_sink`); `multi` and `level_range` combine them. A handled `Record` gains `time` and `values` (`log.Value`, log/slog's `Value`). A sink's write error drops the line and counts it (`dropped()`). The installing call performs the handler's effects (spec core 6.3); `xo audit` lists it. Times and durations arrive as `Value.Any` for now.
+
 ## 2026-11-11: docs: the header says what the module is for
 
 - Kind: docs

@@ -1003,7 +1003,52 @@ fn (var b: Builder) to_dyn(v: Int, ct0: Int, iface: Str) -> Int {
     dbg = b.append_debug(dbg, v, ct)
   }
   let rv = b.cbool(raw)
-  b.add(Op.Struct, b.dyn_type(), Aux.None, [acc, rv, dbg])
+  let (kind, bits) = b.dyn_kind_bits(v, vt, ct)
+  b.add(Op.Struct, b.dyn_type(), Aux.None, [acc, rv, dbg, b.cint(kind), bits])
+}
+
+/// The kinds of an interface value's static type (xo.dyn's kind field,
+/// read by rt.dyn_kind; std/native/log.xo's log.Value): its value is the
+/// bits field for Int, Float (its bits), Bool (0 or 1), Time and
+/// Duration (nanoseconds), UInt64 (its bits); Float32 and the others are
+/// their text.
+const DYN_ANY = 0
+const DYN_INT = 1
+const DYN_FLOAT = 2
+const DYN_BOOL = 3
+const DYN_TIME = 4
+const DYN_DUR = 5
+const DYN_STR = 6
+const DYN_FLOAT32 = 7
+const DYN_UINT = 8
+
+/// xo.dyn's kind and bits for v (of SSA type vt, checker type ct).
+fn (var b: Builder) dyn_kind_bits(v: Int, vt: Int, ct: Int) -> (Int, Int) {
+  let it = b.int_t()
+  if b.is_prelude_named(ct, ["Str"]) {
+    return (DYN_STR, b.cint(0))
+  }
+  if b.is_prelude_named(ct, ["Time"]) {
+    return (DYN_TIME, b.word_in(v, vt))
+  }
+  if b.is_prelude_named(ct, ["Duration"]) {
+    return (DYN_DUR, b.word_in(v, vt))
+  }
+  if b.is_prelude_named(ct, ["UInt64"]) {
+    return (DYN_UINT, b.word_in(v, vt))
+  }
+  match b.tkind(vt) {
+    Kind.Bool => return (DYN_BOOL, b.word_in(v, vt))
+    Kind.Float => {
+      if vt != b.float_t() {
+        return (DYN_FLOAT32, b.cint(0))
+      }
+      return (DYN_FLOAT, b.rt("float_bits", it, [v]))
+    }
+    Kind.Int => return (DYN_INT, b.word_in(v, vt))
+    _ => {}
+  }
+  (DYN_ANY, b.cint(0))
 }
 
 /// acc and the Debug text of the interface value v (xo.dyn): its dbg text,

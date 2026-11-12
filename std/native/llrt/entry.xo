@@ -140,6 +140,8 @@ pub fn main(argc: Int, argv: Int, envp: Int, entry: Int, n: Int) -> Int {
   // std/http's streamed responses and client state, and the values the
   // test world keeps, if the program has them (atexit.xo)
   atexit.run_streams()
+  // log.configure_handler's handler
+  atexit.run_log()
   atexit.run_tw_end()
   if prof.supported() {
     prof.finish()

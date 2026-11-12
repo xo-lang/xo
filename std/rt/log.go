@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,6 +22,44 @@ type logField struct {
 	k   string
 	v   string
 	raw any // the value for JSON records, when it is a number or a boolean
+	val Log_Value
+}
+
+// logValue is a field's log.Value (decision 0617 C), as std/native/log.xo
+// value_of makes it: numbers and booleans as themselves, a Str as Str,
+// every other type (Time and Duration too, until the native side reads
+// the static type's kind) as Any of its text.
+func logValue(s string, x any) Log_Value {
+	switch v := x.(type) {
+	case int64:
+		return Log_Value{Tag: 2, P: Log_Value_Int{F_n: v}}
+	case int32:
+		return Log_Value{Tag: 2, P: Log_Value_Int{F_n: int64(v)}}
+	case int16:
+		return Log_Value{Tag: 2, P: Log_Value_Int{F_n: int64(v)}}
+	case int8:
+		return Log_Value{Tag: 2, P: Log_Value_Int{F_n: int64(v)}}
+	case uint8:
+		return Log_Value{Tag: 2, P: Log_Value_Int{F_n: int64(v)}}
+	case uint16:
+		return Log_Value{Tag: 2, P: Log_Value_Int{F_n: int64(v)}}
+	case uint32:
+		return Log_Value{Tag: 2, P: Log_Value_Int{F_n: int64(v)}}
+	case uint64:
+		if v <= 1<<63-1 {
+			return Log_Value{Tag: 2, P: Log_Value_Int{F_n: int64(v)}}
+		}
+		return Log_Value{Tag: 3, P: Log_Value_UInt{F_n: v}}
+	case float64:
+		return Log_Value{Tag: 4, P: Log_Value_Float{F_f: v}}
+	case float32:
+		return Log_Value{Tag: 4, P: Log_Value_Float{F_f: float64(v)}}
+	case bool:
+		return Log_Value{Tag: 5, P: Log_Value_Bool{F_b: v}}
+	case string:
+		return Log_Value{Tag: 1, P: Log_Value_Str{F_s: v}}
+	}
+	return Log_Value{Tag: 8, P: Log_Value_Any{F_text: s}}
 }
 
 type logSink struct {
@@ -32,6 +71,9 @@ type logSink struct {
 	// written is kept for testing.logs(), and records with no configured
 	// output go to the test's buffer instead of standard error.
 	capture *logCapture
+	// handler is log.configure_handler's (decision 0617 C): every record
+	// goes to it instead of out; level is then the lowest level it takes
+	handler Log_Handler
 }
 
 // logCapture holds the records of one test.
@@ -82,7 +124,7 @@ func logRecord(tk *Task, level int, msg string, fields []logField, from string) 
 		s = tk.w.log
 	}
 	s.mu.Lock()
-	out, min, asJSON, capture := s.out, s.level, s.json, s.capture
+	out, min, asJSON, capture, h := s.out, s.level, s.json, s.capture, s.handler
 	s.mu.Unlock()
 	if level < min {
 		return
@@ -94,41 +136,25 @@ func logRecord(tk *Task, level int, msg string, fields []logField, from string) 
 		// an effect under record and replay (core 11.3)
 		now = fxNowTime(tk).UTC()
 	}
-	var line string
-	if asJSON {
-		m := map[string]any{"time": now.Format(time.RFC3339Nano), "level": levelNames[level], "msg": msg}
+	if h != nil {
+		if !h.M_enabled(tk, Log_Level{Tag: level}) {
+			return
+		}
+		var fm Map[string, string]
+		var vm Map[string, Log_Value]
 		for _, f := range fields {
-			if f.raw != nil {
-				m[f.k] = f.raw
-			} else {
-				m[f.k] = f.v
-			}
+			Map_put(nil, &fm, f.k, f.v)
+			Map_put(nil, &vm, f.k, f.val)
 		}
-		if from != "" {
-			m["module"] = from
+		if capture != nil {
+			s.mu.Lock()
+			capture.recs = append(capture.recs, Log_Record{F_level: Log_Level{Tag: level}, F_msg: msg, F_fields: fm, F_module: from})
+			s.mu.Unlock()
 		}
-		data, _ := json.Marshal(m)
-		line = string(data)
-	} else {
-		var b strings.Builder
-		b.WriteString(now.Format(time.RFC3339))
-		b.WriteString(" ")
-		b.WriteString(levelNames[level])
-		b.WriteString(" ")
-		if from != "" {
-			b.WriteString("[")
-			b.WriteString(from)
-			b.WriteString("] ")
-		}
-		b.WriteString(msg)
-		for _, f := range fields {
-			b.WriteString(" ")
-			b.WriteString(f.k)
-			b.WriteString("=")
-			b.WriteString(f.v)
-		}
-		line = b.String()
+		h.M_handle(tk, Log_Record{F_level: Log_Level{Tag: level}, F_msg: msg, F_fields: fm, F_module: from, F_time: Time(now.UnixNano()), F_values: vm})
+		return
 	}
+	line := logLine(level, msg, fields, from, now, asJSON)
 	if capture != nil {
 		var fm Map[string, string]
 		for _, f := range fields {
@@ -169,7 +195,11 @@ func logFields(tk *Task, m Map[string, IDebug]) []logField {
 				s = v.M_debug(tk)
 			}
 		}
-		out = append(out, logField{k: k, v: s, raw: raw})
+		var x any
+		if d, ok := v.(Dyn); ok {
+			x = d.V
+		}
+		out = append(out, logField{k: k, v: s, raw: raw, val: logValue(s, x)})
 	}
 	return out
 }
@@ -258,6 +288,30 @@ func Log_configure(tk *Task, out Stdio, level Log_Level, format Log_Format) {
 	s.out = out
 	s.level = level.Tag
 	s.json = format.Tag == 2
+	s.handler = nil
+	s.mu.Unlock()
+}
+
+// Log_configure_handler is `log.configure_handler(h)` (decision 0617 C):
+// every record goes to h; the call sites' guard lets through the lowest
+// level h takes, and each record asks h.enabled again.
+func Log_configure_handler(tk *Task, h Log_Handler) {
+	s := logger
+	if tk != nil && tk.w != nil {
+		if tk.w.log == nil {
+			tk.w.log = &logSink{level: levelInfo}
+		}
+		s = tk.w.log
+	}
+	min := 5
+	for n := 4; n >= 1; n-- {
+		if h.M_enabled(tk, Log_Level{Tag: n}) {
+			min = n
+		}
+	}
+	s.mu.Lock()
+	s.handler = h
+	s.level = min
 	s.mu.Unlock()
 }
 
@@ -322,3 +376,181 @@ func (l Log_Logger) M_warn(tk *Task, msg string, fields Map[string, IDebug]) {
 func (l Log_Logger) M_error(tk *Task, msg string, fields Map[string, IDebug]) {
 	logRecord(tk, levelError, msg, logFields(tk, logMerged(tk, l.fields, fields)), l.from)
 }
+
+// logLine is a record's line as configure writes it: text, or a JSON
+// object (encoding/json of a map: keys sorted).
+func logLine(level int, msg string, fields []logField, from string, now time.Time, asJSON bool) string {
+	var line string
+	if asJSON {
+		m := map[string]any{"time": now.Format(time.RFC3339Nano), "level": levelNames[level], "msg": msg}
+		for _, f := range fields {
+			if f.raw != nil {
+				m[f.k] = f.raw
+			} else {
+				m[f.k] = f.v
+			}
+		}
+		if from != "" {
+			m["module"] = from
+		}
+		data, _ := json.Marshal(m)
+		line = string(data)
+	} else {
+		var b strings.Builder
+		b.WriteString(now.Format(time.RFC3339))
+		b.WriteString(" ")
+		b.WriteString(levelNames[level])
+		b.WriteString(" ")
+		if from != "" {
+			b.WriteString("[")
+			b.WriteString(from)
+			b.WriteString("] ")
+		}
+		b.WriteString(msg)
+		for _, f := range fields {
+			b.WriteString(" ")
+			b.WriteString(f.k)
+			b.WriteString("=")
+			b.WriteString(f.v)
+		}
+		line = b.String()
+	}
+	return line
+}
+
+// The built-in sinks and handlers (decision 0617 C), as
+// std/native/log.xo's.
+
+var logDropped atomic.Int64
+
+type logStdSink struct {
+	out Stdio
+	err bool
+}
+
+func (s logStdSink) M_write_line(tk *Task, line string) Result[Unit, string] {
+	if s.err {
+		s.out.M_eprintln(tk, line)
+	} else {
+		s.out.M_println(tk, line)
+	}
+	return Ok[Unit, string](Unit{})
+}
+
+type logFileSink struct{ f File }
+
+func (s logFileSink) M_write_line(tk *Task, line string) Result[Unit, string] {
+	if r := s.f.M_write(tk, Bytes(line+"\n")); !r.Ok {
+		return Err[Unit, string](Display(tk, r.E))
+	}
+	return Ok[Unit, string](Unit{})
+}
+
+type logConnSink struct{ c Conn }
+
+func (s logConnSink) M_write_line(tk *Task, line string) Result[Unit, string] {
+	if r := s.c.M_write(tk, Bytes(line+"\n")); !r.Ok {
+		return Err[Unit, string](Display(tk, r.E))
+	}
+	return Ok[Unit, string](Unit{})
+}
+
+type logFuncSink struct {
+	f func(*Task, string) Result[Unit, Never]
+}
+
+func (s logFuncSink) M_write_line(tk *Task, line string) Result[Unit, string] {
+	s.f(tk, line)
+	return Ok[Unit, string](Unit{})
+}
+
+func Log_stderr_sink(_ *Task, out Stdio) Log_Sink { return logStdSink{out: out, err: true} }
+func Log_stdout_sink(_ *Task, out Stdio) Log_Sink { return logStdSink{out: out} }
+func Log_file_sink(_ *Task, f File) Log_Sink      { return logFileSink{f: f} }
+func Log_conn_sink(_ *Task, c Conn) Log_Sink      { return logConnSink{c: c} }
+func Log_func_sink(_ *Task, f func(*Task, string) Result[Unit, Never]) Log_Sink {
+	return logFuncSink{f: f}
+}
+
+type logLineHandler struct {
+	out  Log_Sink
+	min  int
+	json bool
+}
+
+func (h logLineHandler) M_enabled(_ *Task, level Log_Level) bool { return level.Tag >= h.min }
+
+func (h logLineHandler) M_handle(tk *Task, r Log_Record) {
+	var fields []logField
+	for k, v := range Map_All(r.F_fields) {
+		f := logField{k: k, v: v}
+		if o := Map_get(tk, r.F_values, k); o.Some {
+			x := o.V
+			switch x.Tag {
+			case 2:
+				f.raw = x.P.(Log_Value_Int).F_n
+			case 3:
+				f.raw = x.P.(Log_Value_UInt).F_n
+			case 4:
+				f.raw = x.P.(Log_Value_Float).F_f
+			case 5:
+				f.raw = x.P.(Log_Value_Bool).F_b
+			}
+		}
+		fields = append(fields, f)
+	}
+	line := logLine(r.F_level.Tag, r.F_msg, fields, r.F_module, time.Unix(0, int64(r.F_time)).UTC(), h.json)
+	if res := h.out.M_write_line(tk, line); !res.Ok {
+		logDropped.Add(1)
+	}
+}
+
+func Log_text_handler(_ *Task, out Log_Sink, level Log_Level) Log_Handler {
+	return logLineHandler{out: out, min: level.Tag}
+}
+
+func Log_json_handler(_ *Task, out Log_Sink, level Log_Level) Log_Handler {
+	return logLineHandler{out: out, min: level.Tag, json: true}
+}
+
+type logMulti struct{ hs List[Log_Handler] }
+
+func (m logMulti) M_enabled(tk *Task, level Log_Level) bool {
+	for h := range List_All(m.hs) {
+		if h.M_enabled(tk, level) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m logMulti) M_handle(tk *Task, r Log_Record) {
+	for h := range List_All(m.hs) {
+		if h.M_enabled(tk, r.F_level) {
+			h.M_handle(tk, r)
+		}
+	}
+}
+
+func Log_multi(_ *Task, hs List[Log_Handler]) Log_Handler { return logMulti{hs: hs} }
+
+type logRange struct {
+	h        Log_Handler
+	min, max int
+}
+
+func (g logRange) M_enabled(tk *Task, level Log_Level) bool {
+	return level.Tag >= g.min && level.Tag <= g.max && g.h.M_enabled(tk, level)
+}
+
+func (g logRange) M_handle(tk *Task, r Log_Record) {
+	if r.F_level.Tag >= g.min && r.F_level.Tag <= g.max {
+		g.h.M_handle(tk, r)
+	}
+}
+
+func Log_level_range(_ *Task, h Log_Handler, min, max Log_Level) Log_Handler {
+	return logRange{h: h, min: min.Tag, max: max.Tag}
+}
+
+func Log_dropped(_ *Task) int64 { return logDropped.Load() }

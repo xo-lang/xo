@@ -2934,6 +2934,21 @@ let plugin_os = Os{fs: os.fs.sub("plugins").read_only(), clock: os.clock, rand: 
 A library cannot open a file or a socket unless it is handed a capability. A
 dependency's reach is visible in its signatures.
 
+**Installed code: the installer pays** (owner, 2026-11-12; decision 0617).
+Some std calls install code that runs later, inside calls with another
+effect: `log.configure_handler(h)` runs `h` inside every `uses log` call,
+and `Client.with_jar(store, clock)` runs the store inside `send`. The
+installing call performs the installed code's effects, through an
+implicit effect variable (6.2): `configure_handler` with a handler that
+writes a file performs `fs.write` (and `stdio`), and `main`, or whatever
+function installs it, must declare them. The calls it later runs inside
+keep their own effects (`uses log`, `uses net.dial`), so a library that
+logs or sends is unchanged by what its program installs. The same rule
+covers what std already did implicitly: under `net.dial` and
+`net.listen`, TLS checks certificate expiry against the wall clock and
+the HTTP server writes its `Date` header from it, without `uses clock`.
+`xo audit` (10.1) lists every install site with the effects it charges.
+
 ### 6.4 Tests and fakes
 
 See section 9.2: every test block receives `os: TestOs` with fake capabilities.

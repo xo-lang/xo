@@ -8,6 +8,8 @@ arm64 atomic_max lowered by compiler/ssa itself (an intrinsic of the builder, no
 arm64 cast lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 arm64 duration_parse layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 arm64 duration_parse_ok layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 dyn_bits lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 dyn_kind lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 arm64 dyn_raw lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 arm64 dyn_text lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 arm64 env_get lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
@@ -115,6 +117,8 @@ llvm atomic_max lowered by compiler/ssa itself (an intrinsic of the builder, no 
 llvm cast lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm duration_parse layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 llvm duration_parse_ok layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm dyn_bits lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm dyn_kind lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm dyn_raw lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm dyn_text lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm env_get lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
@@ -219,6 +223,8 @@ llvm wasi_http_send the wasi:http component runtime is wasm only (compiler/wasm 
 llvm wasi_stdin_read the wasm stdin read is wasm only (compiler/wasm rt7.xo, decision 0447 stage 3); llrt stdin.xo calls it only in its Wasm32 arm
 wasm any_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 wasm cast lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm dyn_bits lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm dyn_kind lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 wasm dyn_raw lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 wasm dyn_text lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 wasm env_lists lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)

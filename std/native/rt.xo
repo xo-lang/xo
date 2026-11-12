@@ -316,6 +316,7 @@ fn prefetch(a: Int)
 /// here in the change that first uses it, after checking current main):
 ///
 ///   0-2 std/native/llrt/logstate.xo: the level, format, and output of log.configure
+///   105-107 std/native/llrt/logword.xo: log.configure_handler's handler (a shared List[log.Handler] of one, 0 for none), log.dropped's count, and the handler's lock (decision 0617 C)
 ///   3-6 std/native/llrt/stdio.xo: standard output's buffer, its length, its lock, the mode
 ///   7-9 std/native/llrt/process.xo: argc, argv, the environment
 ///   10-11 std/native/llrt/obj.xo: the single threaded heap record, heap_slow's address
@@ -699,6 +700,12 @@ fn sched_run_task(f: Int)
 fn dyn_raw(v: Debug) -> Bool
 /// The text of a log field value (its Display text, else its Debug text).
 fn dyn_text(v: Debug) -> Str
+/// The kind of a log field value's static type (compiler/ssa iface.xo
+/// DYN_*: 0 other, 1 Int, 2 Float, 3 Bool, 4 Time, 5 Duration, 6 Str,
+/// 7 Float32, 8 UInt64; decision 0617 C) and its value as a word (the
+/// Float's bits, nanoseconds; 0 for the kinds read from the text).
+fn dyn_kind(v: Debug) -> Int
+fn dyn_bits(v: Debug) -> Int
 
 // ---------------------------------------------------------------------------
 // Fs (decision 0102): an Fs value is its root and mode bits (1 a sub

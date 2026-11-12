@@ -49,8 +49,16 @@ type auditReport struct {
 	Attenuations  []auditAttenuation `json:"attenuations"`
 	Capabilities  []auditCapability  `json:"capabilities_passed"`
 	UnusedVouches []auditVouch       `json:"unused_vouches"`
+	Installs      []auditInstall     `json:"installs"`
 	Summary       auditSummary       `json:"summary"`
 	Diagnostics   []diagnostic       `json:"diagnostics"`
+}
+
+type auditInstall struct {
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	Call    string `json:"call"`
+	Effects string `json:"effects"`
 }
 
 type auditDep struct {

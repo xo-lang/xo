@@ -1531,7 +1531,11 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
   // effects
   c.check_ceiling(fo, span)
   if c.objs[fo].declared >= 0 {
-    c.perform(c.performed(c.subst_eff(c.objs[fo].declared, sm, 0), c.path, span, c.display_name(fo)))
+    let inst = c.subst_eff(c.objs[fo].declared, sm, 0)
+    if c.objs[fo].module >= 0 && c.cur_mod >= 0 && !c.mods[c.cur_mod].is_std && is_install(c.mods[c.objs[fo].module].path, text(c.objs[fo].name)) {
+      c.installs.push((c.path, span.start.line, "${c.mods[c.objs[fo].module].path.trim_prefix("std/")}.${text(c.objs[fo].name)}", inst))
+    }
+    c.perform(c.performed(inst, c.path, span, c.display_name(fo)))
     let caller = c.outer_fn()
     if caller >= 0 {
       var l = c.declared_callers.get(fo) ?? []
@@ -2008,4 +2012,10 @@ fn (var c: Checker) portable_check(m: Int, sel: Ident) {
     let d = c.error("XO0609", sel.span, "`rt.${n}` is not a portable intrinsic: a merged std module calls only ${PORTABLE_INTRINSICS.map(fn(x: Str) -> Str { "`rt.${x}`" }).join(", ")} of native/rt (decision 0597)")
     c.note(d, "keep the call in the module's std/native/M_native.xo behind a bodyless declaration, or write it with prelude operations")
   }
+}
+
+/// Whether module path's function name installs code that runs later
+/// under another effect (Checker.installs).
+fn is_install(path: Str, name: Str) -> Bool {
+  (path == "std/log" && name == "configure_handler") || (path == "std/http" && name == "with_jar")
 }

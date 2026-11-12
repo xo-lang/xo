@@ -15,6 +15,44 @@ fn error(msg: Str, fields: Map[Str, Debug] = {}) uses log
 fn enabled(level: Level) -> Bool uses log
 fn configure(out: Stdio, level: Level = Level.Info, format: Format = Format.Text) uses stdio
 
+/// Where records go (decision 0617 C), in place of configure's standard
+/// error: every record of the program at or above the level its enabled
+/// accepts. Its effects are checked where it is installed
+/// (configure_handler performs them), as configure performs stdio for the
+/// records of `uses log` code.
+interface Handler[fx: Effects] {
+  fn enabled(self, level: Level) -> Bool
+  fn handle(self, r: Record) uses fx
+}
+/// Sends every record from now on to h instead of configure's sink
+/// (configure sends them back). The installer pays (owner, 2026-11-12):
+/// the call performs h's effects (an implicit effect variable, core 6.2),
+/// and from then on `uses log` code runs them; xo audit lists the call
+/// with them.
+fn configure_handler(h: Handler) uses stdio
+
+/// Where text_handler and json_handler write their lines (decision 0617
+/// C). An error is not raised: the line is dropped and counted
+/// (dropped()), as Go's slog drops a handler's errors.
+interface Sink[fx: Effects] {
+  fn write_line(self, line: Str) -> () ! Str uses fx
+}
+/// Standard error, standard output, a file, a connection, a function.
+fn stderr_sink(out: Stdio) -> Sink[stdio]
+fn stdout_sink(out: Stdio) -> Sink[stdio]
+fn file_sink(f: File) -> Sink[fs.write]
+fn conn_sink(c: Conn) -> Sink[net.dial]
+fn func_sink[fx: Effects](f: fn(Str) uses fx) -> Sink[fx]
+/// configure's text and JSON lines, at level and above, to out.
+fn text_handler[fx: Effects](out: Sink[fx], level: Level = Level.Info) -> Handler[fx]
+fn json_handler[fx: Effects](out: Sink[fx], level: Level = Level.Info) -> Handler[fx]
+/// Each record to every handler of hs that is enabled for it.
+fn multi[fx: Effects](hs: List[Handler[fx]]) -> Handler[fx]
+/// h's records from min to max only (per level sinks).
+fn level_range[fx: Effects](h: Handler[fx], min: Level, max: Level) -> Handler[fx]
+/// How many lines the built-in handlers' sinks failed to write.
+fn dropped() -> Int uses log
+
 /// A logger that adds fields to every record it writes (log/slog's
 /// Logger.With; decision 0413): a value, so a handler can make one per
 /// request and pass it on. A record's own fields override a logger's of
@@ -48,4 +86,26 @@ struct Record {
   msg: Str
   fields: Map[Str, Str]
   module: Str
+  /// When it was written (decision 0617 C; the test world's clock in a
+  /// test).
+  time: Time = Time.UNIX_EPOCH
+  /// The fields' values with their kinds, in fields' order (decision 0617
+  /// C): what a handler encodes (JSON numbers, OpenTelemetry attributes).
+  values: Map[Str, Value] = {}
+}
+
+/// A field's value as its static type made it at the call (decision 0617
+/// C, log/slog's Value): numbers, booleans, times and durations as
+/// themselves, strings as text, any other type as its Display text (else
+/// its Debug text). configure's JSON writes Int, UInt, Float and Bool
+/// as JSON numbers and booleans, the others as strings.
+enum Value {
+  Str(s: Str)
+  Int(n: Int)
+  UInt(n: UInt64)
+  Float(f: Float)
+  Bool(b: Bool)
+  Time(t: Time)
+  Dur(d: Duration)
+  Any(text: Str)
 }

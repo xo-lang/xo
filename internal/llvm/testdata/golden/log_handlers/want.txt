@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+dropped 0
+--- stderr
+{"d":"1.5s","f":2.5,"level":"INFO","msg":"start","n":1,"ok":true,"s":"a \"q\"","time":"<time>"}
+{"level":"WARN","ms":120,"msg":"slow","time":"<time>"}
+{"code":7,"level":"ERROR","msg":"boom","req":"r1","time":"<time>"}
+<time> DEBUG d n=0
+<time> INFO start n=1 f=2.5 ok=true s=a "q" d=1.5s
+<time> WARN slow ms=120
+{"level":"WARN","ms":120,"msg":"slow","time":"<time>"}
+<time> ERROR boom req=r1 code=7
+{"code":7,"level":"ERROR","msg":"boom","req":"r1","time":"<time>"}
+errors: <time> ERROR boom req=r1 code=7
+n: Int(n: 1)
+f: Float(f: 2.5)
+ok: Bool(b: true)
+s: Str(s: "a \"q\"")
+d: Any(text: "1.5s")

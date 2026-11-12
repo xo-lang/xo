@@ -2863,6 +2863,46 @@ text and JSON records and `Record.module` on Go, arm64, and LLVM).
 `xo audit` lists each dependency's log
 call sites with the attribution its records carry.
 
+**Handlers** (decision 0617 C). A handler receives every record in place
+of `configure`'s standard error:
+
+```
+interface Handler[fx: Effects] {
+  fn enabled(self, level: Level) -> Bool
+  fn handle(self, r: Record) uses fx
+}
+pub fn configure_handler(h: Handler) uses stdio      // and h's fx (core 6.3)
+interface Sink[fx: Effects] { fn write_line(self, line: Str) -> () ! Str uses fx }
+pub fn stderr_sink(out: Stdio) -> Sink[stdio]        // also stdout_sink
+pub fn file_sink(f: File) -> Sink[fs.write]
+pub fn conn_sink(c: Conn) -> Sink[net.dial]
+pub fn func_sink[fx: Effects](f: fn(Str) uses fx) -> Sink[fx]
+pub fn text_handler[fx: Effects](out: Sink[fx], level: Level = Level.Info) -> Handler[fx]   // also json_handler
+pub fn multi[fx: Effects](hs: List[Handler[fx]]) -> Handler[fx]
+pub fn level_range[fx: Effects](h: Handler[fx], min: Level, max: Level) -> Handler[fx]
+pub fn dropped() -> Int uses log
+enum Value { Str(s: Str), Int(n: Int), UInt(n: UInt64), Float(f: Float), Bool(b: Bool), Time(t: Time), Dur(d: Duration), Any(text: Str) }
+```
+
+```
+let errs = log.level_range(log.text_handler(log.stderr_sink(os.stdio)), log.Level.Error, log.Level.Error)
+let all = log.json_handler(log.file_sink(f), log.Level.Debug)
+log.configure_handler(log.multi([errs, all]))   // main declares uses stdio, fs.write
+```
+
+The installer pays (core 6.3): `configure_handler` performs the
+handler's effects, and code that logs keeps `uses log`. `text_handler`
+and `json_handler` write the lines `configure` writes; a sink's error is
+not raised: the line is dropped and counted (`dropped()`), as Go's slog
+drops a handler's errors. A handled record carries `time` and
+`values`, each field as a `Value` (log/slog's `Value`): `Int`, `UInt`,
+`Float` and `Bool` by the field's static type, a string as `Str`, any
+other type as `Any` with its text. Times and durations arrive as `Any`
+until the runtime's kind intrinsics reach a seed (a later change).
+`configure` replaces a handler, and the handler is released at exit.
+Under `xo test` the records are still kept for `testing.logs()`. Golden
+`log_handlers` (every backend, Go parity).
+
 **[later]** The current span and the
 request id (core 11.6) are not attached yet. Without `configure`, logs go
 to standard error as text at `Info`.

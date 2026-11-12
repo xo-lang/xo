@@ -2277,7 +2277,10 @@ fn (var b: Builder) dyn_type() -> Int {
   if created {
     let st = b.str_t()
     let bt = b.bool_t()
-    b.m.types[t].fields = [SField{name: "text", ty: st}, SField{name: "raw", ty: bt}, SField{name: "dbg", ty: st}]
+    let it = b.int_t()
+    // kind and bits (decision 0617 C, log.Value): the static type's kind
+    // (DYN_* in iface.xo) and its value as a word where it has one
+    b.m.types[t].fields = [SField{name: "text", ty: st}, SField{name: "raw", ty: bt}, SField{name: "dbg", ty: st}, SField{name: "kind", ty: it}, SField{name: "bits", ty: it}]
   }
   t
 }

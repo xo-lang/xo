@@ -84,3 +84,41 @@ fn main(os: Os) {
 	// the text form is for a terminal only (stdout is a pipe here, so
 	// JSON); the Go printer this compared went with decision 0215
 }
+
+// TestAuditInstalls: xo audit lists the calls that install code run later
+// under another effect, with the effects they charge (the installer pays,
+// owner 2026-11-12; ADR 0617 C).
+func TestAuditInstalls(t *testing.T) {
+	t.Parallel()
+	app := t.TempDir()
+	modtest.WriteFiles(t, app, map[string]string{
+		"xo.mod": "module example.com/app\nedition preview\n",
+		"main.xo": `use std/log
+
+fn main(os: Os) uses stdio, fs.write, log {
+  log.configure_handler(log.text_handler(log.stderr_sink(os.stdio)))
+  let f = os.fs.create("x.log").ok() ?? fault("open")
+  log.configure_handler(log.json_handler(log.file_sink(f)))
+  log.info("hi")
+}
+`,
+	})
+	r := xo(t, "audit", "--json", "--dir", app).want(0)
+	var rep auditReport
+	if err := json.Unmarshal([]byte(r.out), &rep); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, r.out)
+	}
+	want := []auditInstall{
+		{File: "main.xo", Line: 4, Call: "log.configure_handler", Effects: "stdio"},
+		{File: "main.xo", Line: 6, Call: "log.configure_handler", Effects: "fs.write, stdio"},
+	}
+	if len(rep.Installs) != len(want) {
+		t.Fatalf("installs: %+v\n%s", rep.Installs, r.out)
+	}
+	for i, w := range want {
+		g := rep.Installs[i]
+		if filepath.Base(g.File) != w.File || g.Line != w.Line || g.Call != w.Call || g.Effects != w.Effects {
+			t.Errorf("install %d: got %+v, want %+v", i, g, w)
+		}
+	}
+}

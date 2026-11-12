@@ -6,16 +6,27 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Task, string, Map[string, IDebug])                 = Log_debug
-	_ func(*Task, string, Map[string, IDebug])                 = Log_info
-	_ func(*Task, string, Map[string, IDebug])                 = Log_warn
-	_ func(*Task, string, Map[string, IDebug])                 = Log_error
-	_ func(*Task, Log_Level) bool                              = Log_enabled
-	_ func(*Task, Stdio, Log_Level, Log_Format)                = Log_configure
-	_ func(*Task, Map[string, IDebug]) Log_Logger              = Log_with
-	_ func(*Log_Logger, *Task, Map[string, IDebug]) Log_Logger = (*Log_Logger).M_with
-	_ func(*Log_Logger, *Task, string, Map[string, IDebug])    = (*Log_Logger).M_debug
-	_ func(*Log_Logger, *Task, string, Map[string, IDebug])    = (*Log_Logger).M_info
-	_ func(*Log_Logger, *Task, string, Map[string, IDebug])    = (*Log_Logger).M_warn
-	_ func(*Log_Logger, *Task, string, Map[string, IDebug])    = (*Log_Logger).M_error
+	_ func(*Task, string, Map[string, IDebug])                      = Log_debug
+	_ func(*Task, string, Map[string, IDebug])                      = Log_info
+	_ func(*Task, string, Map[string, IDebug])                      = Log_warn
+	_ func(*Task, string, Map[string, IDebug])                      = Log_error
+	_ func(*Task, Log_Level) bool                                   = Log_enabled
+	_ func(*Task, Stdio, Log_Level, Log_Format)                     = Log_configure
+	_ func(*Task, Log_Handler)                                      = Log_configure_handler
+	_ func(*Task, Stdio) Log_Sink                                   = Log_stderr_sink
+	_ func(*Task, Stdio) Log_Sink                                   = Log_stdout_sink
+	_ func(*Task, File) Log_Sink                                    = Log_file_sink
+	_ func(*Task, Conn) Log_Sink                                    = Log_conn_sink
+	_ func(*Task, func(*Task, string) Result[Unit, Never]) Log_Sink = Log_func_sink
+	_ func(*Task, Log_Sink, Log_Level) Log_Handler                  = Log_text_handler
+	_ func(*Task, Log_Sink, Log_Level) Log_Handler                  = Log_json_handler
+	_ func(*Task, List[Log_Handler]) Log_Handler                    = Log_multi
+	_ func(*Task, Log_Handler, Log_Level, Log_Level) Log_Handler    = Log_level_range
+	_ func(*Task) int64                                             = Log_dropped
+	_ func(*Task, Map[string, IDebug]) Log_Logger                   = Log_with
+	_ func(*Log_Logger, *Task, Map[string, IDebug]) Log_Logger      = (*Log_Logger).M_with
+	_ func(*Log_Logger, *Task, string, Map[string, IDebug])         = (*Log_Logger).M_debug
+	_ func(*Log_Logger, *Task, string, Map[string, IDebug])         = (*Log_Logger).M_info
+	_ func(*Log_Logger, *Task, string, Map[string, IDebug])         = (*Log_Logger).M_warn
+	_ func(*Log_Logger, *Task, string, Map[string, IDebug])         = (*Log_Logger).M_error
 )

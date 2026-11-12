@@ -1,0 +1,14 @@
+// The static words of log.configure_handler (decision 0617 C), in a
+// module of their own since rt.xo's table gives each module one range
+// (logstate.xo has 0-2). logstate.xo reads and writes them.
+use native/rt
+
+/// The address of the installed handler: a shared List[log.Handler] of
+/// one holding a count for this word, or 0 for none.
+pub fn handler() -> Int { rt.static_word(105) }
+
+/// How many lines the built-in handlers' sinks failed to write (log.dropped).
+pub fn dropped() -> Int { rt.static_word(106) }
+
+/// The lock a reader takes to count the handler once more.
+pub fn hlock() -> Int { rt.static_word(107) }

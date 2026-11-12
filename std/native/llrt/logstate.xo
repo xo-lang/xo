@@ -4,7 +4,11 @@
 // dependency that writes the next record (decision 0173) a thread local
 // (rt.tlocal_get, decision 0212's table). This was std/llrt/xo_http.c's
 // `xlog` and its `__thread` xlog_from.
+use native/llrt/atexit
+use native/llrt/logword
+use native/llrt/pool
 use native/llrt/raw
+use native/llrt/rc
 use native/llrt/sysio
 use native/llrt/text
 use native/rt
@@ -42,6 +46,9 @@ pub fn configured() -> Bool { rt.slot_load[Int](rt.static_word(WORDS), OUT, ACQU
 
 /// No log.configure (a test of a batch starts so: twrun.xo next).
 pub fn reset() {
+  if target.arch != TargetArch.Wasm32 {
+    atexit.run_log()
+  }
   let w = rt.static_word(WORDS)
   rt.slot_store[Int](w, OUT, 0, RELEASE)
   rt.slot_store[Int](w, JSON, 0, RELEASE)
@@ -50,10 +57,76 @@ pub fn reset() {
 
 /// log.configure's level (1 to 4) and format.
 pub fn configure(level: Int, json: Bool) {
+  // configure replaces a handler (cabi_log.xo log_free releases it; a
+  // WASI module has no function addresses: std/native/log.xo configure
+  // releases it there)
+  if target.arch != TargetArch.Wasm32 {
+    atexit.run_log()
+  }
   let w = rt.static_word(WORDS)
   rt.slot_store[Int](w, OUT, 1, RELEASE)
   rt.slot_store[Int](w, JSON, if json { 1 } else { 0 }, RELEASE)
   rt.slot_store[Int](w, LEVEL, level, RELEASE)
+}
+
+/// One more line a sink failed to write.
+pub fn add_dropped() { let _n = rt.slot_add(logword.dropped(), 0, 1, RELEASE) }
+
+/// log.dropped's count.
+pub fn dropped() -> Int { rt.slot_load[Int](logword.dropped(), 0, ACQUIRE) }
+
+fn hlock() {
+  let l = logword.hlock()
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(l)
+  }
+  pool.held(1)
+}
+
+fn hunlock() {
+  let l = logword.hlock()
+  pool.held(-1)
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(l)
+  }
+}
+
+/// Whether a handler is installed (no count taken).
+pub fn has_handler() -> Bool { rt.slot_load[Int](logword.handler(), 0, ACQUIRE) != 0 }
+
+/// The handler list's address with one more count, which the caller
+/// gives back (cabi_log.xo); 0 for none.
+pub fn handler_take() -> Int {
+  hlock()
+  let a = rt.slot_load[Int](logword.handler(), 0, ACQUIRE)
+  if a != 0 {
+    rc.inc(a + rt.layout(5))
+  }
+  hunlock()
+  a
+}
+
+/// Installs the handler list at a (shared; this word takes a count), the
+/// call sites' guard at level min; the replaced list's address, whose
+/// count the caller gives back (0 for none).
+pub fn set_handler(a: Int, min: Int) -> Int {
+  rc.inc(a + rt.layout(5))
+  hlock()
+  let old = rt.slot_swap(logword.handler(), 0, a, RELEASE)
+  let w = rt.static_word(WORDS)
+  rt.slot_store[Int](w, OUT, 1, RELEASE)
+  rt.slot_store[Int](w, LEVEL, min, RELEASE)
+  hunlock()
+  old
+}
+
+/// Removes the handler; its list's address, whose count the caller gives
+/// back (0 for none).
+pub fn clear_handler() -> Int {
+  hlock()
+  let old = rt.slot_swap(logword.handler(), 0, 0, RELEASE)
+  hunlock()
+  old
 }
 
 /// Sets the dependency that writes the next record: s is a string

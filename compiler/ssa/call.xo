@@ -1575,13 +1575,18 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
     let a = b.value_as(es[0] ?? fault("arg"), b.m.types[t].fields[0].ty)
     return b.add(Op.Struct, t, Aux.None, b.lists_fields(t, a))
   }
-  if name is "dyn_text" | "dyn_raw" {
+  if name is "dyn_text" | "dyn_raw" | "dyn_kind" | "dyn_bits" {
     let v = b.expr(es[0] ?? fault("arg"))
     if !b.is_dyn(b.vty(v)) {
       b.unsupported("`${name}` of a value that is not an interface value")
       return b.undef(nt)
     }
-    let i = if name == "dyn_text" { 0 } else { 1 }
+    let i = match name {
+      "dyn_text" => 0
+      "dyn_raw" => 1
+      "dyn_kind" => 3
+      _ => 4
+    }
     return b.add(Op.Field, nt, Aux.I(n: i), [v])
   }
   var vs: List[Int] = []

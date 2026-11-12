@@ -1,0 +1,31 @@
+// log.configure_handler's handler list (decision 0617 C): counted reads
+// of logstate.xo's word and the giving back of a count (cabi_log.xo's
+// log_free, std/native/log.xo).
+use std/log
+use native/llrt/logstate
+use native/llrt/rc
+use native/rt
+
+/// Gives back a count of the handler list at a (logstate.xo's
+/// handler_take, set_handler, clear_handler); 0 does nothing.
+pub fn release(a: Int) {
+  if a == 0 {
+    return
+  }
+  // a value of the list (one more count), the count given back, then the
+  // value's when it dies: the list goes when nothing else holds it
+  let l = rt.obj_at[List[log.Handler]](a)
+  let _d = rc.dec(a + rt.layout(5))
+  let _n = l.len()
+}
+
+/// The installed handler, None for none.
+pub fn current() -> log.Handler? {
+  let a = logstate.handler_take()
+  if a == 0 {
+    return None
+  }
+  let l = rt.obj_at[List[log.Handler]](a)
+  let _d = rc.dec(a + rt.layout(5))
+  Some(l[0])
+}

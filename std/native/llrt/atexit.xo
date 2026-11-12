@@ -33,6 +33,13 @@ pub fn set_streams_if_unset(f: Int) {
 /// Registers cabi_tw.xo's tw_end (twrun.xo start).
 pub fn set_tw_end(f: Int) { rt.slot_store(word(ctx.SV_AT_TW_END), 0, f, RELAXED) }
 
+/// Registers cabi_log.xo's log_free (log.configure_handler).
+pub fn set_log(f: Int) { rt.slot_store(word(ctx.SV_AT_LOG), 0, f, RELAXED) }
+
+/// Calls log_free if registered (entry.xo main at exit, and logstate.xo
+/// configure and reset).
+pub fn run_log() { run(word(ctx.SV_AT_LOG)) }
+
 /// Calls tz_free if registered (entry.xo finish).
 pub fn run_tz() { run(word(ctx.SV_AT_TZ)) }
 

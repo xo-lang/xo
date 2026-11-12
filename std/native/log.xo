@@ -2,7 +2,12 @@
 // error as std/rt/log.go writes them (text: time, level, message, then
 // key=value fields; JSON: an object with sorted keys).
 use std/log
+use native/llrt/atexit
+use native/llrt/cabi_log
+use native/llrt/loghand
 use native/llrt/logstate
+use native/llrt/sysio
+use native/llrt/text
 use native/llrt/testworld
 use native/rt
 use native/rtjson
@@ -53,6 +58,11 @@ fn (l: Logger) warn(msg: Str, fields: Map[Str, Debug] = {}) { record(3, msg, mer
 fn (l: Logger) error(msg: Str, fields: Map[Str, Debug] = {}) { record(4, msg, merged(l.fields, fields), l.from) }
 
 fn enabled(level: log.Level) -> Bool {
+  if logstate.has_handler() {
+    if let Some(h) = loghand.current() {
+      return h.enabled(level)
+    }
+  }
   let n = match level {
     log.Level.Debug => 1
     log.Level.Info => 2
@@ -69,7 +79,72 @@ fn configure(out: Stdio, level: log.Level = log.Level.Info, format: log.Format =
     log.Level.Warn => 3
     log.Level.Error => 4
   }
+  loghand.release(logstate.clear_handler())
   logstate.configure(n, format is log.Format.Json)
+}
+
+fn configure_handler(h: log.Handler) uses stdio {
+  let l: List[log.Handler] = [h]
+  // Mutex.new shares what it holds, so every thread may read l
+  let _m = Mutex.new(l)
+  // the call sites' guard (llrt_log_enabled) lets through the lowest
+  // level the handler takes; record asks it again for each record
+  var min = 5
+  for n in [4, 3, 2, 1] {
+    if h.enabled(level_of(n)) {
+      min = n
+    }
+  }
+  // released at exit (entry.xo, decision 0233); a WASI module has no
+  // function addresses: log.configure releases it there
+  if target.arch != TargetArch.Wasm32 {
+    atexit.set_log(rt.fn_addr("log_free"))
+  }
+  loghand.release(logstate.set_handler(rt.obj_addr(l), min))
+}
+
+/// A field's log.Value from what the call site's interface value keeps:
+/// its raw flag (Int, Float, Bool, UInt64, set from the static type) and
+/// text, and its Debug text (a Str's is quoted). Time, Duration and
+/// other types are Any (their text). rt.dyn_kind and rt.dyn_bits carry
+/// the static type's kind and word for every kind; std reads them once a
+/// seed knows them (gotchas/seed-older-than-intrinsics.md).
+fn value_of(v: Debug) -> log.Value {
+  let t = rt.dyn_text(v)
+  if rt.dyn_raw(v) {
+    if t == "true" || t == "false" {
+      return log.Value.Bool(b: t == "true")
+    }
+    if let Some(n) = Int.parse(t) {
+      return log.Value.Int(n: n)
+    }
+    if t.len() == 20 && !t.starts_with("-") && !t.contains(".") {
+      // a UInt64 above Int's range: its 20 digits, wrapping
+      var w = 0
+      for c in t.bytes() {
+        w = w.wrapping_mul(10).wrapping_add(Int(c) - 48)
+      }
+      return log.Value.UInt(n: UInt64.from_bits(w))
+    }
+    if let Some(f) = Float.parse(t) {
+      return log.Value.Float(f: f)
+    }
+    return log.Value.Any(text: t)
+  }
+  let d = v.debug()
+  if d.len() >= 2 && d.starts_with("\"") && d != t {
+    return log.Value.Str(s: t)
+  }
+  log.Value.Any(text: t)
+}
+
+fn level_of(n: Int) -> log.Level {
+  match n {
+    1 => log.Level.Debug
+    2 => log.Level.Info
+    3 => log.Level.Warn
+    _ => log.Level.Error
+  }
 }
 
 fn level_name(level: Int) -> Str {
@@ -82,6 +157,30 @@ fn level_name(level: Int) -> Str {
 }
 
 fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
+  let cur = if logstate.has_handler() { loghand.current() } else { None }
+  if let Some(h) = cur {
+    let lv = level_of(level)
+    if h.enabled(lv) {
+      var fs: Map[Str, Str] = {}
+      var vs: Map[Str, log.Value] = {}
+      for (k, v) in fields {
+        fs.put(k, rt.dyn_text(v))
+        vs.put(k, value_of(v))
+      }
+      if testworld.on() {
+        // testing.logs keeps it (decision 0083); the handler writes it
+        var keys: List[Str] = []
+        var vals: List[Str] = []
+        for (k, v) in fs {
+          keys.push(k)
+          vals.push(v)
+        }
+        testworld.log(level, msg, from, keys, vals, "")
+      }
+      h.handle(log.Record{level: lv, msg: msg, fields: fs, module: from, time: Time.from_unix_nanos(sysio.clock_now()), values: vs})
+    }
+    return
+  }
   if level < logstate.level() {
     return
   }
@@ -177,3 +276,202 @@ fn format(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) -> Str {
   }
   line
 }
+
+// The built-in sinks and handlers (decision 0617 C). Their effects are
+// the declarations' (std/log.xo); here they are plain calls.
+
+struct StdSink {
+  out: Stdio
+  err: Bool
+}
+
+fn (s: StdSink) write_line(line: Str) -> () ! Str uses stdio {
+  if s.err {
+    s.out.eprintln(line)
+  } else {
+    s.out.println(line)
+  }
+  Ok(())
+}
+
+struct FileSink {
+  f: File
+}
+
+fn (s: FileSink) write_line(line: Str) -> () ! Str uses fs.write {
+  match s.f.write((line + "\n").bytes()) {
+    Ok(_) => Ok(())
+    Err(e) => Err("${e}")
+  }
+}
+
+struct ConnSink {
+  c: Conn
+}
+
+fn (s: ConnSink) write_line(line: Str) -> () ! Str uses net.dial {
+  match s.c.write((line + "\n").bytes()) {
+    Ok(_) => Ok(())
+    Err(e) => Err("${e}")
+  }
+}
+
+struct FuncSink[fx: Effects] {
+  f: fn(Str) uses fx
+}
+
+fn (s: FuncSink[fx]) write_line(line: Str) -> () ! Str uses fx {
+  s.f(line)
+  Ok(())
+}
+
+fn stderr_sink(out: Stdio) -> log.Sink[stdio] { StdSink{out: out, err: true} }
+
+fn stdout_sink(out: Stdio) -> log.Sink[stdio] { StdSink{out: out, err: false} }
+
+fn file_sink(f: File) -> log.Sink[fs.write] { FileSink{f: f} }
+
+fn conn_sink(c: Conn) -> log.Sink[net.dial] { ConnSink{c: c} }
+
+fn func_sink[fx: Effects](f: fn(Str) uses fx) -> log.Sink[fx] { FuncSink{f: f} }
+
+fn rank(level: log.Level) -> Int {
+  match level {
+    log.Level.Debug => 1
+    log.Level.Info => 2
+    log.Level.Warn => 3
+    log.Level.Error => 4
+  }
+}
+
+/// text_handler and json_handler: configure's lines.
+struct LineHandler[fx: Effects] {
+  out: log.Sink[fx]
+  min: Int
+  json: Bool
+}
+
+fn (h: LineHandler[fx]) enabled(level: log.Level) -> Bool { rank(level) >= h.min }
+
+fn (h: LineHandler[fx]) handle(r: log.Record) uses fx {
+  if let Err(_) = h.out.write_line(render(h.json, r)) {
+    logstate.add_dropped()
+  }
+}
+
+fn text_handler[fx: Effects](out: log.Sink[fx], level: log.Level = log.Level.Info) -> log.Handler[fx] { LineHandler{out: out, min: rank(level), json: false} }
+
+fn json_handler[fx: Effects](out: log.Sink[fx], level: log.Level = log.Level.Info) -> log.Handler[fx] { LineHandler{out: out, min: rank(level), json: true} }
+
+struct MultiHandler[fx: Effects] {
+  hs: List[log.Handler[fx]]
+}
+
+fn (m: MultiHandler[fx]) enabled(level: log.Level) -> Bool {
+  for h in m.hs {
+    if h.enabled(level) {
+      return true
+    }
+  }
+  false
+}
+
+fn (m: MultiHandler[fx]) handle(r: log.Record) uses fx {
+  for h in m.hs {
+    if h.enabled(r.level) {
+      h.handle(r)
+    }
+  }
+}
+
+fn multi[fx: Effects](hs: List[log.Handler[fx]]) -> log.Handler[fx] { MultiHandler{hs: hs} }
+
+struct RangeHandler[fx: Effects] {
+  h: log.Handler[fx]
+  min: Int
+  max: Int
+}
+
+fn (g: RangeHandler[fx]) enabled(level: log.Level) -> Bool { rank(level) >= g.min && rank(level) <= g.max && g.h.enabled(level) }
+
+fn (g: RangeHandler[fx]) handle(r: log.Record) uses fx {
+  if rank(r.level) >= g.min && rank(r.level) <= g.max {
+    g.h.handle(r)
+  }
+}
+
+fn level_range[fx: Effects](h: log.Handler[fx], min: log.Level, max: log.Level) -> log.Handler[fx] { RangeHandler{h: h, min: rank(min), max: rank(max)} }
+
+fn dropped() -> Int { logstate.dropped() }
+
+/// A record's line as configure writes it (format): text, or a JSON
+/// object with sorted keys whose Int, UInt, Float and Bool values are
+/// JSON numbers and booleans.
+fn render(json: Bool, r: log.Record) -> Str {
+  let level = rank(r.level)
+  let ns = r.time.unix_nanos()
+  if json {
+    var keys: List[Str] = ["time", "level", "msg"]
+    var vals: List[Str] = [rtjson.json_enc("", text.append_time("", ns)), rtjson.json_enc("", level_name(level)), rtjson.json_enc("", r.msg)]
+    for (k, t) in r.fields {
+      let raw = match r.values.get(k) {
+        Some(log.Value.Int(_)) | Some(log.Value.UInt(_)) | Some(log.Value.Float(_)) | Some(log.Value.Bool(_)) => true
+        _ => false
+      }
+      let j = if raw { t } else { rtjson.json_enc("", t) }
+      var found = false
+      for (i, x) in keys.indexed() {
+        if x == k {
+          vals.set(i, j)
+          found = true
+        }
+      }
+      if !found {
+        keys.push(k)
+        vals.push(j)
+      }
+    }
+    if r.module != "" {
+      var found = false
+      for (i, x) in keys.indexed() {
+        if x == "module" {
+          vals.set(i, rtjson.json_enc("", r.module))
+          found = true
+        }
+      }
+      if !found {
+        keys.push("module")
+        vals.push(rtjson.json_enc("", r.module))
+      }
+    }
+    var order: List[Int] = []
+    for i in 0..keys.len() {
+      var j = order.len()
+      order.push(i)
+      while j > 0 && keys[order[j - 1]] > keys[i] {
+        order.set(j, order[j - 1])
+        j -= 1
+      }
+      order.set(j, i)
+    }
+    var line = "{"
+    for (n, i) in order.indexed() {
+      if n > 0 {
+        line = line + ","
+      }
+      line = rtjson.json_enc(line, keys[i]) + ":" + vals[i]
+    }
+    return line + "}"
+  }
+  let secs = ns - (ns % 1000000000 + 1000000000) % 1000000000
+  var tag = ""
+  if r.module != "" {
+    tag = "[${r.module}] "
+  }
+  var line = "${text.append_time("", secs)} ${level_name(level)} ${tag}${r.msg}"
+  for (k, t) in r.fields {
+    line = line + " ${k}=${t}"
+  }
+  line
+}
+

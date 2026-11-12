@@ -1,0 +1,10 @@
+// The C ABI export of log.configure_handler (decision 0617 C): log_free
+// releases the handler at exit (entry.xo, through atexit.xo), when
+// log.configure replaces it, and between a batch's tests (logstate.xo
+// reset). Built in a program that builds std/log's native code (its
+// importer; compiler/ssa build.xo importer_built), which registers it.
+use native/llrt/loghand
+use native/llrt/logstate
+
+/// Releases the installed handler, if any.
+fn log_free() { loghand.release(logstate.clear_handler()) }

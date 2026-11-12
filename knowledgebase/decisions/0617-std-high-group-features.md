@@ -126,6 +126,9 @@ the specs lower to). Every backend gets it from the checker's lowering. Go
 
 ### C. Log handlers (third)
 
+(The sketch below is as proposed; what was built is in the amendment
+after it: an interface with an effect parameter, not a trait.)
+
 ```
 trait Handler {
   fn enabled(self, level: log.Level) -> Bool
@@ -149,6 +152,42 @@ fn configure_handler(h: Handler) uses stdio                           // replace
 - `Logger.with(fields)` attaches its fields to the Record, as now.
 - Go's `slog.Handler` has `WithAttrs` and `WithGroup` to pre-render
   fields. These are left out until a profile shows the per-record cost.
+
+### Amendment: the installer pays (owner, 2026-11-12)
+
+B.2 and C install code that runs later, under another effect: a jar's
+store runs inside `send` (`uses net.dial`), a handler inside every
+`uses log` call. The owner chose, for both, that **the call that
+installs the code performs its effects** (spec/core.md 6.3, "Installed
+code"):
+
+- **C.** `interface Handler[fx: Effects]` with `fn handle(self, r: Record)
+  uses fx`; `configure_handler(h: Handler) uses stdio` takes the
+  handler's `fx` implicitly (core 6.2), so the call performs `stdio` and
+  `fx`. `interface Sink[fx]` with `stderr_sink`/`stdout_sink` (`stdio`),
+  `file_sink` (`fs.write`), `conn_sink` (`net.dial`) and
+  `func_sink[fx](f)`. `log.Value` (log/slog's `Value`: `Str`, `Int`,
+  `UInt`, `Float`, `Bool`, `Time`, `Dur`, `Any`) gives a handler each
+  field as its static type made it, in `Record.values`, beside the text
+  `fields`; `Record.time` is the record's time. `uses log` stays the
+  effect of logging code: a library's log calls do not change.
+- **B.2.** A `CookieStore` interface in std/http (a `cookiejar.Jar`
+  satisfies it); `Client.with_jar(store, clock)` performs the store's
+  effects and reads the clock where it is called (`uses clock` at the
+  call site); `send` stays `uses net.dial`; the store's methods take
+  `now` explicitly, as `cookiejar.Jar`'s do.
+- The rule also names what was implicit: under `net.dial` and
+  `net.listen`, TLS checks certificate expiry against the wall clock
+  (std/native/llrt tlsio.xo) and the HTTP server writes the `Date`
+  header from it (http1w.xo, tlssrv.xo), with no `uses clock`.
+- `xo audit` lists every install site with the effects it charges
+  (`installs` in its JSON; cmd/xo TestAuditInstalls).
+
+Alternatives the owner did not take: a `log` effect parameterized by the
+handler (every `uses log` signature would change), `with_jar` raising
+`send`'s effects (option D: the type of a Client would carry them, and
+the 62 `: http.Client` annotations in the repository would break), and
+handlers limited to std's sinks (no forwarding).
 
 Order: A, then B, then C. Each lands with its spec text, goldens on every
 backend, Go parity tests where Go has the feature, std/changes entries,
