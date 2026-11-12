@@ -794,9 +794,9 @@ fn landings_cleanup_cached(os: Os, var b: ssa.Builder, release: Bool, settings: 
   }
 }
 
-/// Option B's interface form (decision 0613 step 5): XO_ITAB=1, off by
-/// default until it covers every backend and cache.
-fn itab_on(os: Os) -> Bool { (os.env.get("XO_ITAB") ?? "") == "1" }
+/// Option B's interface form (decision 0613 step 5): on by default since
+/// 2026-11-12; XO_ITAB=0 builds the closure form (for bisecting).
+fn itab_on(os: Os) -> Bool { (os.env.get("XO_ITAB") ?? "") != "0" }
 
 fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bool, real: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace: Bool, soft_cpu: Bool, heap_guard: Bool, phases: Bool, stamps: List[(Str, Str)]) -> ssa.Builder {
   let host = host_os(os)

@@ -163,7 +163,10 @@ direct `var` call costs. A stays rejected for the quadratic cost above.
 ## Addendum: option B stages 1 and 2 as built (2026-11-12)
 
 Behind `XO_ITAB=1` (off by default; the default flip is its own push
-with the default-change gate). Branch history: lang1-itab.
+with the default-change gate). Branch history: lang1-itab. Default on
+since 2026-11-12 (lang1-itabflip; `XO_ITAB=0` builds the closure form,
+FeCache.itab defaults to true so every driver path, the playground's too,
+builds B; the caches key the closure form apart, `itab=0`).
 
 **Layout, and how it differs from the accepted text.** An interface
 value keeps its struct of slots, but every method slot and `xo.eq` hold

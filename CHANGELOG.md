@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Performance (native, LLVM, wasm; decision 0613 step 5 option B): an interface value holds its methods as code addresses and the concrete value in one heap object, where it held a closure per method. Building interface values is about 18% faster (bench/perf/iface build, linux/arm64), holding a million values of an 8 method interface takes a third less memory (209.9 to 139.7 MB), and calls through an interface cost the same. `XO_ITAB=0` builds the old form, for bisecting.
+
 ## v0.50.1 (2026-11-12)
 
 The first public 0.50 release (0.50.0 was an internal seed). The release notes

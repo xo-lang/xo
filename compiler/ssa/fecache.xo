@@ -29,10 +29,11 @@ const FE_CACHE_VERSION = "xo front cache v17"
 /// entries to store, and counts.
 pub struct FeCache {
   pub on: Bool = false
-  /// interface values in option B's form (decision 0613 step 5 stage 1,
-  /// XO_ITAB=1, native backends only): method slots are code words
-  /// (CodeOf), calls Bind them to the show closure's environment
-  pub itab: Bool = false
+  /// interface values in option B's form (decision 0613 step 5; on by
+  /// default since 2026-11-12, XO_ITAB=0 in the driver turns it off):
+  /// method slots are code words (CodeOf), calls Bind them to the show
+  /// closure's environment
+  pub itab: Bool = true
   /// every body built and compared with its entry
   pub verify: Bool = false
   /// per function object: its key ("" when not cached)
@@ -197,9 +198,9 @@ pub fn fe_flags(line_root: Str, tests: Bool, release: Bool, real_tests: Bool, go
 
 /// The flags the builder sets itself, compared with an entry's.
 fn (var b: Builder) fe_own_flags() -> Str {
-  // option B's interface form (decision 0613 step 5) only when on, so the
-  // default's keys stay the same
-  let itab = if b.fe.itab { " itab=1" } else { "" }
+  // the closure interface form (XO_ITAB=0, decision 0613 step 5) only when
+  // asked for, so the default's keys carry nothing
+  let itab = if b.fe.itab { "" } else { " itab=0" }
   "conc=${b.conc} comp=${b.wasi_comp} budgets=${b.budgets} scan=${b.scan_budget} rt=${b.user_realtime()}${b.names_key}${itab}"
 }
 
