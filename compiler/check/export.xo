@@ -785,12 +785,11 @@ pub fn decode_std_export(d: Bytes) -> Option[StdExport] {
   b.evar_hi = r.uv()
   var e = StdExport{block: b}
   let no = r.uv()
-  // sized: the lists of every std object were most of a small build's
-  // large blocks (decision 0448 case (c)). The room is untouched pages:
-  // this block and relocate_export's are freed in turn and hold the
-  // lists after them, install_std's and force_body's copy (which adds
-  // the program's objects), and a block too small for those is not reused.
-  e.objs = List.with_capacity(no * 3 / 2)
+  // sized: this list is relocated in place and becomes the checker's
+  // (install_std puts the checker's own objects in front, a few percent),
+  // with room left for a program's own objects, which would otherwise
+  // copy the whole list at their first push (decision 0448 case (c))
+  e.objs = List.with_capacity(no * 9 / 8 + no / 32)
   e.trees = List.with_capacity(no)
   for _ in 0..no {
     if !r.ok {
@@ -1425,24 +1424,42 @@ fn (c: Checker) join_trees(x0: Obj, t: List[Int], owner: Option[Obj]) -> Option[
 /// Installs e, relocated for c (its block starting at the ends of c's
 /// tables), in place of the std phases: true when it did; false, with
 /// nothing changed, when a tree cannot be joined.
-pub fn (var c: Checker) install_std(e: StdExport) -> Bool {
+pub fn (var c: Checker) install_std(e0: StdExport) -> Bool {
+  var e = e0
   let lo = e.block.obj_lo
-  // the checker's objects so far, then std's: assigned whole below, so a
-  // failed install leaves c.objs as it was, with no second list of std's;
-  // the room is untouched pages for the program's own, which would
-  // otherwise copy the whole list at their first push (decision 0448)
-  var objs: List[Obj] = List.with_capacity((c.objs.len() + e.objs.len()) * 9 / 8)
-  for o in c.objs {
-    objs.push(o)
+  let n = e.objs.len()
+  let head = c.objs.len()
+  // the decoded list becomes the checker's (the caller hands over the
+  // record's last reference): std's objects move up by the checker's own,
+  // which go in front, in one pass from the end, each joined with its
+  // trees on the way. A copy beside it left a free block of several MB
+  // below the session's data (bench/results/browser-repl-page-2026-11-12.md).
+  // c.objs is assigned at the end, so a failed install leaves it as it was
+  var objs = e.objs
+  e.objs = []
+  // an interface's methods find their interface (decl_file and decl_idx,
+  // which joining keeps) before the pass moves it
+  var owners: Map[Int, Obj] = {}
+  for x in objs {
+    if x.iface && x.recv >= lo && x.recv - lo < n && !owners.contains(x.recv) {
+      owners[x.recv] = objs[x.recv - lo]
+    }
+  }
+  // room at the end for the move (placeholders, overwritten below)
+  for k in 0..head {
+    objs.push(c.objs[k])
   }
   var pending: List[(Int, List[Int], Int)] = []
-  for (i, x) in e.objs.indexed() {
+  var i = n - 1
+  while i >= 0 {
+    let x = objs[i]
     // an object of a file not parsed (trees_lazy): installed without
     // its trees, its counts kept for need_tree; an interface's method
     // (no file of its own) by its interface's file
+    let owner = if x.iface { owners.get(x.recv) } else { None }
     var tf = x.decl_file
-    if x.iface && x.recv >= lo && x.recv - lo < e.objs.len() {
-      tf = e.objs[x.recv - lo].decl_file
+    if let Some(ow) = owner {
+      tf = ow.decl_file
     }
     if c.trees_lazy && tf >= 0 && tf < c.files.len() && c.files[tf].unloaded {
       var has = false
@@ -1454,18 +1471,22 @@ pub fn (var c: Checker) install_std(e: StdExport) -> Bool {
       if has {
         pending.push((lo + i, e.trees[i], if x.iface { x.recv } else { -1 }))
       }
-      objs.push(x)
+      objs[i + head] = x
+      i -= 1
       continue
     }
-    let owner = if x.iface && x.recv >= lo && x.recv - lo < e.objs.len() { Some(e.objs[x.recv - lo]) } else { None }
     match c.join_trees(x, e.trees[i], owner) {
-      Some(y) => objs.push(y)
+      Some(y) => objs[i + head] = y
       None => {
         let fp = if x.decl_file >= 0 && x.decl_file < c.files.len() { "${c.files[x.decl_file].path} unloaded=${c.files[x.decl_file].unloaded}" } else { "file ${x.decl_file}" }
         c.std_export_why = "the trees of ${text(x.name)} (${fp}, counts ${e.trees[i].len()}) are not where the record says"
         return false
       }
     }
+    i -= 1
+  }
+  for (k, o) in c.objs.indexed() {
+    objs[k] = o
   }
   for (o, t, recv) in pending {
     c.tree_pending[o] = (t, recv)

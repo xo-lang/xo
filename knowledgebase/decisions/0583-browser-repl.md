@@ -349,6 +349,18 @@ the same as main's compiler's for the session, a Mutex and Chan session, and `:r
 back to no concurrency (TestPlayReplConc). Left: entry 1's 6.9 MB free block (install_std's object
 list beside the decoded one).
 
+## Memory: install_std takes the decoded object list (2026-11-12)
+
+install_std built a new object list (the checker's objects, then std's, each joined with its trees)
+beside the decoded one, which decode_std_export had sized at half again its length so that copy and
+later ones could reuse it; freed, it left the 6.9 MB block below the session's data. Now install_std
+takes the decoded list over (the caller hands the record's last reference): one pass from the end
+moves std's objects up by the checker's own and joins each, and the checker's go in front; c.objs is
+still assigned only at the end, so a failed install leaves it as it was. The decoded list is sized
+at 9/8 of its length plus 1/32 (the checker's objects and a program's). The session's compiler
+memory peaks at 37 MB (39 before; 32 MB after entry 1, was 33), values unchanged. Left: entry 1's two
+1.2 MB free blocks (the record's read buffer, and decode_std_entry's copy of its bytes).
+
 ## The playground page: a repl tab and std's record (2026-11-11)
 
 The lead asked (2026-11-11) for the owner's 50 MB bar on the real /play/ page, not the harness. The

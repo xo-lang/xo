@@ -171,8 +171,27 @@ session, and of `:reset` and `:undo` back to no concurrency, is the same as 8d40
 The renderer's RSS is not compared: one run each, and it ranged 1,370 to 1,581 MB across runs of the
 same page in this probe.
 
+## install_std takes the decoded object list (2026-11-12)
+
+The trace's entry 1 then showed install_std's new object list (4.3 MB) beside the decoded one (5.7
+MB, sized at half again its length for copies to reuse), freed into the 6.9 MB block. With
+install_std taking the decoded list over (decision 0583, "install_std takes the decoded object
+list"), the decoded list sized at 9/8 of its length plus 1/32, the same session in the same probe
+page:
+
+| | builder owns the checker | install_std takes the list |
+|---|---|---|
+| wasm memory after entry 1 | 33 MB | 32 MB |
+| free big blocks after entry 30 | 1.2, 6.9 MB | 1.2, 1.2, 4.3 MB |
+| heap top after entry 30 | 38.4 MB | 37.1 MB |
+| **compiler memory, peak** | **39 MB** | **37 MB** |
+
+All 30 values the same. The 4.3 MB block is each entry's copy of the object list (`var c = base`),
+freed after the entry and taken again by the next. The 1.2 MB blocks are the record's read buffer
+and decode_std_entry's copy of its bytes.
+
 ## Next
 
-The margin is now 11 MB. Next: (1) the 6.9 MB block entry 1 leaves (install_std builds a new
-object list beside the decoded one, which it could take over); (2) the warm session's 21.8 MB, by
-owner (the base checker's object list, its types, the record's trees).
+The margin is now 13 MB. Next: (1) decode_std_entry's 1.2 MB copy of the record's bytes (a view
+would do); (2) the warm session's 21.9 MB, by owner (the base checker's object list, its types,
+the record's trees); (3) the small blocks' free lists (6.9 MB free after entry 30).
