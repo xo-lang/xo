@@ -22,7 +22,7 @@ import (
 // The sweep checks every program (stdcoverage.Sweep, XO_STDCOV_JOBS at a
 // time, default 2; about an hour in tier 69 with NumCPU jobs, its time at 2
 // measured in the next tier), so it runs where XO_STDCOV_SWEEP=1 and XO_CLI name an xo:
-// gate.sh's stdcov step, which std pushes and the 8-hourly tier run.
+// gate.sh's stdcov step, run when named and by the 8-hourly tier.
 // `go run ./scripts/stdcoverage -sweep` prints the same list.
 func TestStdAPICovered(t *testing.T) {
 	if os.Getenv("XO_STDCOV_SWEEP") != "1" {

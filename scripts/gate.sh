@@ -66,10 +66,10 @@
 #            (`xo dev edges` over every program, XO_STDCOV_JOBS at once,
 #            default 2; 3636 s in tier 69 on the Mac beside other steps
 #            with NumCPU jobs; time and peak at 2 jobs measured in the next
-#            tier): also run after the steps named when the branch
-#            changes std, a program the sweep checks, internal/stdcoverage
-#            or `xo dev edges` (XO_GATE_STDCOV=0 skips that; owner,
-#            2026-11-11), except on darwin, where only a named stdcov runs
+#            tier). Only when named, and by the 8-hourly tier (tier.sh):
+#            never after other steps by path, since per push only the bare
+#            minimum runs (owner, via lead 2026-11-12; it auto-ran for std
+#            pushes from 2026-11-11 and outran a 90 minute gate lease)
 #   cross, codegen, wasm, selfbuild, seedbuild
 #            pushq.sh's proving checks (below; wasm also runs
 #            TestWasmCommandGoldens under wasmtime where the host has it): named, each runs after
@@ -335,7 +335,6 @@ check_change() {
   { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/(check|ssa|xo)/'
 }
 chkcache_ran=0
-stdcov_ran=0
 # the cross step (internal/arm64 TestAmd64CrossBuilds) runs when the
 # branch changes the native backend (compiler/arm64 holds the amd64
 # emitter and the shared MIR passes; lead, 2026-10-23: daed94d4d, a mir.xo
@@ -523,7 +522,6 @@ for step in "$@"; do
   repo) ;; # ran first, above
   short|arm64|llvm|corpora|cmd|gen|fuzz|corpora-all|alloff|fp|warm|chkcache|stdwasm|stdcov)
     [ "$step" = chkcache ] && chkcache_ran=1
-    [ "$step" = stdcov ] && stdcov_ran=1
     steps="$steps $step" ;;
   *) echo "gate.sh: unknown step $step"; failed=1 ;;
   esac
@@ -639,22 +637,14 @@ run_step() {
     fi ;;
   esac
 }
-# stdcov_change: the branch changes what the resolved std coverage reads:
-# a std module's source, a program the sweep checks (the corpora, the
-# goldens, the benchmark programs, the scripts' programs), the allowlist
-# and its checker, or `xo dev edges`. XO_GATE_STDCOV=0 skips it.
-stdcov_change() {
-  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
-  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^(std/|internal/stdtest/testdata/corpus/|internal/llvm/testdata/golden/|internal/arm64/testdata/|internal/gen/testdata/|cmd/xo/testdata/|bench/perf/|scripts/.*\.xo$|internal/stdcoverage/|compiler/xo/edgecache\.xo$|compiler/cli/servers/edges\.xo$)'
-}
 # stdcov_step: internal/repotest's TestStdAPICovered with the resolved
 # sweep (stdcoverage.Sweep: `xo dev edges --own` of every program and the
 # std graph once a bindings value), so a std declaration counts as covered
 # only when a call resolves to it (owner, 2026-11-11). Not a few minutes:
 # about an hour in tier 69 (NumCPU jobs, 32 GB peak on a 24 GB Mac beside
 # selfbuild gates); with XO_STDCOV_JOBS (default 2) its time and peak are
-# measured in the next tier. Not in the fast set: std pushes run it by path
-# (not on darwin) and the 8-hourly tier by name.
+# measured in the next tier. Not in the fast set: it runs when named and
+# in the 8-hourly tier, never by path.
 stdcov_step() {
   XO_STDCOV_SWEEP=1 full stdcov ./internal/repotest -run '^TestStdAPICovered$'
 }
@@ -671,15 +661,6 @@ after_steps() {
   fi
   if [ "${XO_GATE_STDSTORE:-1}" != 0 ] && stdstore_change; then
     full stdstore ./internal/arm64 -run '^TestStdStoreBuilds$'
-  fi
-  if [ "$stdcov_ran" = 0 ] && [ "${XO_GATE_STDCOV:-1}" != 0 ] && stdcov_change; then
-    # not a darwin check: on the Mac it ran beside selfbuild gates and
-    # starved them (2026-11-11); named, stdcov still runs anywhere
-    if [ "$(uname -s)" = Darwin ]; then
-      echo "stdcov: skipped on darwin, runs in the tier / an offload gate"
-    else
-      stdcov_step
-    fi
   fi
   if [ "${XO_GATE_RACE:-1}" != 0 ] && race_change; then
     full race ./internal/llvm -run '^TestRaceSyncTable(Arm64)?$'
