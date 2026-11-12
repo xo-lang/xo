@@ -786,6 +786,22 @@ yourself.
   to run"), so check the count of tests it ran (2026-10-24: a gate's
   `-run 'TestHelp'` matched nothing, TestCLIHelp/test failed on main).
 
+### Std maturity evidence (decision 0616)
+
+A module reaches Proven with evidence files under
+`std/evidence/MODULE/` (race, stress, fuzz, review), each with a header
+naming its commit and the module's source hash.
+`go run ./scripts/stdproven hash MODULE` prints the hash and the files it
+covers; `go run ./scripts/stdproven fuzz [-cases N] [-hours H] [-batch N]
+[-backends B] [-host LABEL] MODULE` runs every fuzz harness that names
+the module (scripts/stdproven harnesses) with fresh seeds until 1,000,000
+cases per backend or 8 hours, and writes `fuzz.md`. Long runs go to host 2
+outside the lane: `~/xo-lead/agents/stdproven-offload.sh WORKTREE NAME --
+fuzz -host "linux/arm64 host 2" MODULE` (run it from a commit on main, so
+the evidence names one). Security reviews follow
+[std-security-checklist.md](std-security-checklist.md). Last verified:
+2026-11-12.
+
 ## Measuring
 
 - Code size by cause (decision 0443): `xo dev size --by-cause PROG`

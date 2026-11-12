@@ -178,3 +178,19 @@ crypto; within it, a module that misses only the testing axis first.
   review against a fixed checklist, with a second agent signing it, gives
   a record now. An outside audit can replace it later under the same
   file name.
+
+## Progress
+
+- 2026-11-12 (Xo Lang 3): the runner's first kinds. `scripts/stdproven`
+  is a Go command rather than section 4's run.sh: `hash MODULE` (section
+  3's source hash: the module's std/MODULE.xo and std/native/MODULE.xo and
+  every std file their use lines reach, tests left out) and `fuzz` (section
+  2: fresh seeds of each harness's XO_<NAME>_SEED and _N, until 1,000,000
+  cases per backend or 8 hours, stopping at the first failing seed; a later
+  run starts past the seeds the module's fuzz.md records).
+  `scripts/lead/stdproven-offload.sh` sends a run to host 2 outside the
+  lane and copies the evidence file back. The checklist is
+  knowledgebase/infrastructure/std-security-checklist.md. A 4,000 case
+  json trial on host 2 wrote a correct fuzz.md (2,000 cases on arm64 and
+  LLVM in about 30 s, so a full run is about 4 hours). Next: race and
+  stress kinds, the generator into scripts/stdcov reading the evidence.
