@@ -361,3 +361,4 @@
 - [mlkem-vs-go-2026-11-11.md](mlkem-vs-go-2026-11-11.md): crypto ML-KEM-768 against Go's crypto/mlkem on linux/arm64 host 1 (decision 0604's timing row).
 - [aesmodes-vs-go-2026-11-11.md](aesmodes-vs-go-2026-11-11.md): crypto AES block, CBC and CTR against Go's crypto/aes and crypto/cipher on linux/arm64 host 1 (decision 0605's timing row).
 - [otlp-derive-2026-11-11.md](otlp-derive-2026-11-11.md): std/otlp traces as derive Proto structs vs the hand writer, 0.869 wall (decision 0549 item 3)
+- [timerep-2026-11-11.md](timerep-2026-11-11.md): Time as one word against Go's two (proxy, host 1 --ab): add 2.90, sub 1.61, sort 1.41 (RSS 1.43), now <=1.13, format within noise (decision 0614)
