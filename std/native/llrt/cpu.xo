@@ -2212,6 +2212,12 @@ pub fn mlkem_mul_acc_soft(h: Int, f: Int, g: Int, gp: Int) {
 /// nothing and returns 0.
 pub fn dit_set(on: Int) -> Int { 0 }
 
+/// Whether this CPU has HW_DIT: false, with no call of hw(), off arm64,
+/// so the scheduler's DIT checks (pool.xo) add no hw() call site to an
+/// amd64 program (2026-11-12: two more sites put hw past the few-sites
+/// inline rule, and Float.fma inlined hw's whole lookup into its callers).
+pub fn has_dit() -> Bool { target.arch == TargetArch.Arm64 && (hw() & HW_DIT) != 0 }
+
 /// A count of time for elapsed time thresholds (fiber run and wait
 /// stamps): on arm64 the generic timer's virtual count (cntvct_el0, a
 /// constant rate readable at EL0 on darwin, linux and windows; one

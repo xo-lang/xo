@@ -19,12 +19,12 @@ use native/rt
 /// DIT is the thread's, and a fiber switch does not carry it. Asynchronous
 /// preemption waits until the section ends.
 pub fn dit_on() -> Int {
-  if (cpu.hw() & cpu.HW_DIT) != 0 { cpu.dit_set(1) } else { 0 }
+  if cpu.has_dit() { cpu.dit_set(1) } else { 0 }
 }
 
 /// Restores the DIT bit dit_on returned (sections nest).
 pub fn dit_off(old: Int) {
-  if (cpu.hw() & cpu.HW_DIT) != 0 {
+  if cpu.has_dit() {
     let _ = cpu.dit_set(old)
   }
 }
