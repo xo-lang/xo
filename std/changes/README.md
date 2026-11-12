@@ -91,3 +91,4 @@ entries yet.
 - [sse.md](sse.md): std/sse (spec/std.md 79)
 - [jsonrpc.md](jsonrpc.md): std/jsonrpc (spec/std.md 80)
 - [httpproxy.md](httpproxy.md): std/httpproxy (spec/std.md 82)
+- [publicsuffix.md](publicsuffix.md): std/publicsuffix (spec/std.md 83)
