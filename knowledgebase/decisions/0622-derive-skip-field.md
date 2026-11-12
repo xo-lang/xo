@@ -74,8 +74,12 @@ the tag `-,` is the key `-`.
 6. **Breaking change** (spec core 2.2 and the CHANGELOG **Breaking**
    line): a struct that relied on `as "-"` as the JSON key or column `-`
    now loses the field; the migration is `as "-,"`. None in the
-   repository or in aws-43's and scarlet-ac's code (to be confirmed with
-   them before the push).
+   repository, and none in the consumers' code (confirmed 2026-11-12:
+   aws-43 found no `as "-"` or `as "-,` over its aws, azure, gcp and
+   openai SDKs; scarlet-03 none over scarlet, google-workspace-mcp and
+   the cached gcp modules). aws-43's gcp models carry the two lists today
+   as the keys `~forceSendFields` and `~nullFields` (its decision 0013)
+   and switch to `as "-"` when this lands.
 
 ## Implementation (when accepted)
 
