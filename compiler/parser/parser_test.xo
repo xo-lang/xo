@@ -154,8 +154,12 @@ test "`:?` asks for the Debug text of an interpolation (decision 0296)" {
   expect(accepts("fn f() {\n  \"\${a:?} \${a + b:?} \${a}\"\n}\n")) == true
   let text = dump("t.xo", b"fn f() {\n  \"x \${a:?}\"\n}\n", false)
   expect(text.contains("text=\"\" debug\n")) == true
-  expect(first_code("fn f() {\n  \"\${a:.2}\"\n}\n")) == "XO0160"
-  expect(first_code("fn f() {\n  \"\${a:?:?}\"\n}\n")) == "XO0160"
+  // a format spec since decision 0617 A, not an error
+  expect(accepts("fn f() {\n  \"\${a:.2} \${a:>8.2f}\"\n}\n")) == true
+  expect(dump("t.xo", b"fn f() {\n  \"\${a:.2}\"\n}\n", false).contains("spec=\".2\"")) == true
+  // text after the colon that is no spec is XO0180 (decision 0617 A)
+  expect(first_code("fn f() {\n  \"\${a:?:?}\"\n}\n")) == "XO0180"
+  expect(first_code("fn f() {\n  \"\${a:.}\"\n}\n")) == "XO0180"
   // Rust's `{:?}` and `{name:?}`, and Python's `{x!r}`, recover as `${x:?}`
   let rs = parse("fn f() {\n  format!(\"{:?} {b:?}\", a)\n}\n")
   expect(rs.diags[0].fixes[0].edits[0].replace) == b"\"\${a:?} \${b:?}\""

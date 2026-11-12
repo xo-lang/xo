@@ -112,6 +112,8 @@
 #            2026-11-08), and internal/llvm
 #            TestFieldGeneratorsInSync for scripts/gen or a file holding a
 #            generated block (its table; "fieldgen", lead, 2026-11-08),
+#            `xo test compiler/...` for a compiler/ .xo change ("xounit",
+#            lead, 2026-11-12),
 #            printing the PUSHQ_RAN
 #            value to push with (XO_GATE_PUSHQ=0 skips them; lead,
 #            2026-11-06)
@@ -531,7 +533,7 @@ fi
 steps=""
 for step in "$@"; do
   case $step in
-  codegen|selfbuild|seedbuild|wasm|cross|fieldgen)
+  codegen|selfbuild|seedbuild|wasm|cross|fieldgen|xounit)
     # pushq's proving checks: run after the named steps with the ones the
     # change's paths require (gate_plan), each once, and named in the
     # PUSHQ_RAN line when they pass (lead, 2026-11-08: a named `cross
@@ -779,6 +781,16 @@ prove_fieldgen() {
   [ "$failed" = 0 ] && ran="$ran fieldgen"
   [ "$f0" = 1 ] && failed=1
 }
+# the compiler's own xo tests (compiler/..._test.xo) with this xo (lead,
+# 2026-11-12: a parser change broke compiler/parser's test, which only
+# hourly.sh ran); a few seconds
+prove_xounit() {
+  if "$XO_CLI" test --count=1 compiler/... >"$logs/xounit.txt" 2>&1; then
+    echo "xounit: $(tail -1 "$logs/xounit.txt")"; ran="$ran xounit"
+  else
+    failed=1; echo "xounit: FAIL ($logs/xounit.txt: $(grep -m1 -- '--- FAIL' "$logs/xounit.txt"))"
+  fi
+}
 # The concurrent jobs (conc=1): job KEY CMD... starts CMD in the
 # background once fewer than gjobs jobs run, with its output buffered in
 # $logs/.job-KEY.out and printed when it ends; its failed and ran go to
@@ -851,7 +863,7 @@ fi
 plan=" $(gate_plan "$req" $named) "
 echo "gate.sh: proving checks:${plan% }${plan:+ }(required by the paths: ${req:-none}; named:${named:- none})"
 if [ "$conc" = 1 ]; then
-  for p in codegen wasm cross fieldgen; do
+  for p in codegen wasm cross fieldgen xounit; do
     [[ "$plan" == *" $p "* ]] && job "$p" "prove_$p"
   done
   pool_wait
@@ -859,7 +871,7 @@ if [ "$conc" = 1 ]; then
   [[ "$plan" == *" seedbuild "* ]] && prove_seedbuild
   # PUSHQ_RAN in the serial order
   r2=""
-  for p in codegen wasm cross selfbuild seedbuild fieldgen; do
+  for p in codegen wasm cross selfbuild seedbuild fieldgen xounit; do
     [[ " $ran " == *" $p "* ]] && r2="$r2 $p"
   done
   ran=$r2
@@ -871,6 +883,7 @@ else
   [[ "$plan" == *" selfbuild "* ]] && prove_selfbuild
   [[ "$plan" == *" seedbuild "* ]] && prove_seedbuild
   [[ "$plan" == *" fieldgen "* ]] && prove_fieldgen
+  [[ "$plan" == *" xounit "* ]] && prove_xounit
   echo "gate.sh: steps took $(($(date +%s) - tsteps)) s"
 fi
 [ -n "$ran" ] && echo "pushq: PUSHQ_RAN=\"$(echo $ran)\""
