@@ -62,7 +62,7 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
   and `0..=n`, `xs.indexed()`, `while`, `while { }`, labeled loops with
   `break label`, and `bound N` loop contracts.
 - `defer stmt` / `defer { ... }` at block exit (3.5).
-- Strings: interpolation `"${x}"`, Debug interpolation `"${x:?}"`, raw
+- Strings: interpolation `"${x}"`, Debug interpolation `"${x:?}"`, format specs `"${x:>8.2f}"`, `"${n:06}"`, `"${n:x}"` (core 1.6, decision 0617 A), raw
   multi-line strings `r"""..."""` and `r#"""..."""#` (0320).
 - Slices of `Str` and `Bytes` are O(1) views on native targets (0330):
   `s[a..b]`, `split`, `lines`, `trim*`, `trim_prefix/suffix`,

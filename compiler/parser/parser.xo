@@ -26,6 +26,9 @@ pub type Edit = lexer.Edit
 pub type Comment = lexer.Comment
 
 const UNEXPECTED_TOKEN = "XO0160"
+/// `${x:SPEC}` with a spec that does not parse, or that the value's type
+/// does not take (decision 0617 A; the checker reports the second).
+pub const SPEC_BAD = "XO0180"
 const MISSING_COMMA = "XO0161"
 const ELSE_ON_NEW_LINE = "XO0162"
 const STRUCT_LIT_IN_CONDITION = "XO0163"

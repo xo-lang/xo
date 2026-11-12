@@ -1,0 +1,12 @@
+// Format specs a value's type does not take (decision 0617 A, core 1.6).
+fn main(os: Os) {
+  let n = 42
+  let f = 1.5
+  let s = "hi"
+  let big: UInt64 = 7
+  os.stdio.println("${n:.2}") // ERROR XO0180 "a precision does not format an integer"
+  os.stdio.println("${f:x}") // ERROR XO0180 "does not format a Float"
+  os.stdio.println("${s:+}") // ERROR XO0180 "format numbers, not"
+  os.stdio.println("${n:<08}") // ERROR XO0180 "takes no alignment"
+  os.stdio.println("${big:x}") // ERROR XO0180 "may not fit"
+}

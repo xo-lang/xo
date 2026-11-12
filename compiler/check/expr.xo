@@ -491,6 +491,10 @@ fn (var c: Checker) infer0(e: Expr, hint: Int) -> Int {
             want = c.named("Str")
           }
           let t = c.infer(x, want)
+          if let Some(spec) = p.spec {
+            c.check_spec(x, t, spec)
+            continue
+          }
           if p.debug {
             // `${x:?}` (decision 0296): every type implements Debug
             // (std.md 1), so this reports only what has no text at all
@@ -2264,4 +2268,49 @@ fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
     eff = declared
   }
   c.mk_func(params, pvars, cx.result, err_t, eff)
+}
+
+/// `${x:SPEC}` (decision 0617 A): picks the lowering for x's type t,
+/// reports a spec the type does not take (XO0180), and checks the
+/// lowering (parser.spec_expr), which the backends build again from the
+/// recorded kind.
+fn (var c: Checker) check_spec(x: Expr, t: Int, spec: parser.FmtSpec) {
+  if t < 0 || c.is_bad(t) {
+    return
+  }
+  let sp = Span{start: parser.expr_span(x).start, end: spec.span.end}
+  let what = c.show(t)
+  var kind = parser.SPEC_TEXT
+  if c.is_prelude(t, "Int") {
+    kind = parser.SPEC_INT
+  } else if c.is_int(t) {
+    if parser.spec_needs_number(spec) {
+      if c.is_prelude(t, "UInt64") {
+        let d = c.error(parser.SPEC_BAD, sp, "a base, sign or zero padding formats an Int; `UInt64` may not fit one")
+        c.note(d, "convert first where the value fits, `${"$"}{Int(x):${spec.raw.to_str() ?? ""}}`, or pad its text only (core 1.6)")
+        return
+      }
+      kind = parser.SPEC_INT_CONV
+    }
+  } else if c.is_prelude(t, "Float") {
+    kind = parser.SPEC_FLOAT
+  } else if c.is_float(t) {
+    kind = parser.SPEC_FLOAT_CONV
+  } else if c.is_prelude(t, "Str") {
+    kind = parser.SPEC_STR
+  }
+  // an integer type other than Int with only a width pads its text
+  let check_kind = if kind == parser.SPEC_TEXT && c.is_int(t) { parser.SPEC_INT } else { kind }
+  let why = parser.spec_misfit(spec, check_kind, what)
+  if why != "" {
+    let d = c.error(parser.SPEC_BAD, sp, "format spec `:${spec.raw.to_str() ?? ""}`: ${why}")
+    c.note(d, "a spec is ${parser.SPEC_FORMS} (core 1.6)")
+    return
+  }
+  if kind == parser.SPEC_TEXT && !c.implements_name(t, "Display", parser.expr_span(x)) {
+    c.error("XO0404", parser.expr_span(x), "`${what}` does not implement `Display`, so it cannot be interpolated")
+    return
+  }
+  c.spec_at[c.expr_key(x)] = kind
+  c.infer(parser.spec_expr(x, spec, kind), -1)
 }

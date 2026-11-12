@@ -64,6 +64,12 @@ pub fn (c: Checker) type_in(f: Int, e: Expr) -> Int {
   }
 }
 
+/// The lowering the checker picked for a format spec on x (`${x:SPEC}`,
+/// decision 0617 A: parser.SPEC_INT and the rest), or -1.
+pub fn (c: Checker) spec_kind_in(f: Int, x: Expr) -> Int {
+  c.spec_at.get(c.expr_key_in(f, x)) ?? -1
+}
+
 /// The type of e before implicit conversion (Info.NaturalType), or -1.
 pub fn (c: Checker) nat_in(f: Int, e: Expr) -> Int {
   c.nat_at.get(c.expr_key_in(f, e)) ?? -1

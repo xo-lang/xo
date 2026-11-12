@@ -9,7 +9,7 @@
 use github.com/xo-lang/xo/compiler/lexer
 
 /// The version of the form: a change to the AST or this file changes it.
-pub const AST_CODEC_VERSION = "xo ast codec v9"
+pub const AST_CODEC_VERSION = "xo ast codec v10"
 
 struct Enc {
   b: BytesBuilder = BytesBuilder.new()
@@ -551,6 +551,14 @@ fn (var e: Enc) strlit(s: StringLit) {
     e.bytes(p.text)
     e.oexpr(p.expr)
     e.bool(p.debug)
+    match p.spec {
+      Some(s) => {
+        e.bool(true)
+        e.bytes(s.raw)
+        e.span(s.span)
+      }
+      None => e.bool(false)
+    }
   }
 }
 
@@ -1583,7 +1591,17 @@ fn (var r: Dec) strlit() -> StringLit {
     let t = r.bytes()
     let x = r.oexpr()
     let db = r.bool()
-    ps.push(StringPart{text: t, expr: x, debug: db})
+    var spec: FmtSpec? = None
+    if r.bool() {
+      let raw = r.bytes()
+      let ssp = r.span()
+      if let Some(s) = parse_spec(raw) {
+        spec = Some(s with {span: ssp})
+      } else {
+        r.bad = true
+      }
+    }
+    ps.push(StringPart{text: t, expr: x, debug: db, spec: spec})
   }
   StringLit{span: s, kind: k, parts: ps}
 }

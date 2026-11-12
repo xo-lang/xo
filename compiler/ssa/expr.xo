@@ -1275,10 +1275,23 @@ fn (var b: Builder) string_lit_pre(x: parser.StringLit) -> List[Int] {
   var pre: List[Int] = []
   for p in x.parts {
     if let Some(pe) = p.expr {
-      pre.push(b.expr(pe))
+      pre.push(b.expr(b.part_expr(p, pe)))
     }
   }
   pre
+}
+
+/// The expression a piece's value comes from: pe, or with a format spec
+/// (`${x:>8.2f}`, decision 0617 A) the Str lowering the checker picked and
+/// checked (parser.spec_expr).
+fn (var b: Builder) part_expr(p: parser.StringPart, pe: Expr) -> Expr {
+  if let Some(spec) = p.spec {
+    let k = b.c.spec_kind_in(b.s.file, pe)
+    if k > 0 {
+      return parser.spec_expr(pe, spec, k)
+    }
+  }
+  pe
 }
 
 /// acc0 + x's text, its expressions' values pre (string_lit_pre) or, when
@@ -1296,7 +1309,8 @@ fn (var b: Builder) string_lit_append(acc0: Int, x: parser.StringLit, pre: List[
         }
         continue
       }
-      Some(pe) => {
+      Some(pe0) => {
+        let pe = b.part_expr(p, pe0)
         let ct = b.nat_check(pe)
         var v = if !pre.is_empty() { pre[j] } else { b.expr(pe) }
         j += 1
@@ -1359,6 +1373,14 @@ fn (var b: Builder) pure_pieces(x: parser.StringLit) -> Bool {
     if let Some(pe) = p.expr {
       if p.debug {
         return false
+      }
+      if p.spec is Some(_) {
+        // the spec's lowering calls std's padding and number methods;
+        // a value's own Display (SPEC_TEXT) runs user code
+        if b.c.spec_kind_in(b.s.file, pe) == parser.SPEC_TEXT {
+          return false
+        }
+        continue
       }
       let ct = b.nat_check(pe)
       if !b.is_prelude_named(ct, ["Duration", "Time", "Bytes", "UInt64", "Rune"]) && !b.is_builtin_kind(b.nat_of(pe)) {

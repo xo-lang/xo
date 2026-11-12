@@ -1144,8 +1144,8 @@ fn (var p: Parser) parse_string() -> StringLit {
       s.parts.push(StringPart{text: part.text, expr: None})
       continue
     }
-    let (e, debug) = p.parse_interp_part(part.span)
-    s.parts.push(StringPart{text: b"", expr: Some(e), debug: debug})
+    let (e, debug, spec) = p.parse_interp_spec(part.span)
+    s.parts.push(StringPart{text: b"", expr: Some(e), debug: debug, spec: spec})
   }
   s
 }
@@ -1161,6 +1161,26 @@ fn (var p: Parser) parse_interp(sp: Span) -> Expr {
 /// parse_interp, and whether the expression ends with `:?`, the Debug
 /// text's form `${x:?}` (decision 0296).
 fn (var p: Parser) parse_interp_part(sp: Span) -> (Expr, Bool) {
+  let (e, debug, _) = p.parse_interp_spec(sp)
+  (e, debug)
+}
+
+/// parse_interp_part, and the format spec after the expression
+/// (`${x:>8.2f}`, decision 0617 A), split off the source before it is
+/// lexed (fmtspec.xo split_spec).
+fn (var p: Parser) parse_interp_spec(sp0: Span) -> (Expr, Bool, FmtSpec?) {
+  var sp = sp0
+  var spec: FmtSpec? = None
+  let k = split_spec(p.src[sp0.start.offset..sp0.end.offset])
+  if k >= 0 {
+    let co = sp0.start.offset + k
+    // a spec has no newline, so the colon is on the end's line
+    let cpos = lexer.Pos{offset: co, line: sp0.end.line, col: sp0.end.col - (sp0.end.offset - co)}
+    if let Some(s) = parse_spec(p.src[co + 1..sp0.end.offset]) {
+      spec = Some(s with {span: Span{start: cpos, end: sp0.end}})
+    }
+    sp = Span{start: sp0.start, end: cpos}
+  }
   let r = lexer.lex_range(p.src, sp.start, sp.end.offset)
   var sub = Parser{file: p.file, src: p.src, toks: r.tokens, tok: r.tokens[0], sig: p.sig, diags: r.diags}
   let e = sub.parse_expr()
@@ -1170,7 +1190,12 @@ fn (var p: Parser) parse_interp_part(sp: Span) -> (Expr, Bool) {
     sub.next()
     sub.next()
   }
-  if !sub.failed() && !sub.at(Kind.Eof) {
+  if !sub.failed() && sub.at(Kind.Colon) && spec is None {
+    // text after the colon that is not a spec (decision 0617 A)
+    let tail = p.src[sub.tok.span.start.offset + 1..sp.end.offset].to_str() ?? ""
+    let d = sub.fail(SPEC_BAD, Span{start: sub.tok.span.start, end: sp.end}, "`:${tail}` is not a format spec")
+    sub.add_note(d, "a spec is ${SPEC_FORMS} (core 1.6)")
+  } else if !sub.failed() && !sub.at(Kind.Eof) {
     sub.fail(UNEXPECTED_TOKEN, sub.tok.span, "unexpected ${describe(sub.tok)} in interpolation; expected `}`")
   }
   for d in sub.diags {
@@ -1179,7 +1204,7 @@ fn (var p: Parser) parse_interp_part(sp: Span) -> (Expr, Bool) {
   if sub.hard {
     p.hard = true
   }
-  (e, debug)
+  (e, debug, spec)
 }
 
 /// Python's `[elem for pat in iter if cond]`.

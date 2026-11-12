@@ -1167,6 +1167,11 @@ fn (var c: Enc) string_lit(var b: BytesBuilder, s: parser.StringLit) {
     if p.debug {
       open(b, "Debug")
     }
+    if let Some(spec) = p.spec {
+      // `${x:>8}` (decision 0617 A): the spec changes the text
+      open(b, "Spec")
+      str(b, spec.raw)
+    }
   }
 }
 

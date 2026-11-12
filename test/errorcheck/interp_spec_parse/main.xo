@@ -1,0 +1,6 @@
+// Text after an interpolation's colon that is not a format spec
+// (decision 0617 A, core 1.6).
+fn main(os: Os) {
+  let x = 1.5
+  os.stdio.println("${x:.}") // ERROR XO0180 "is not a format spec"
+}

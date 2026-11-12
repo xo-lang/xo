@@ -456,6 +456,9 @@ fn string_json(s: parser.StringLit) -> Str {
     if p.debug {
       po.put("debug", "true")
     }
+    if let Some(spec) = p.spec {
+      po.str("spec", spec.raw)
+    }
     po.done()
   }))
   o.done()

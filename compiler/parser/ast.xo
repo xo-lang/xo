@@ -390,6 +390,8 @@ pub struct StringPart {
   /// `${x:?}`: the Debug text of expr instead of its Display text
   /// (decision 0296).
   pub debug: Bool = false
+  /// `${x:>8.2f}`: a format spec (decision 0617 A, fmtspec.xo).
+  pub spec: FmtSpec? = None
 }
 
 pub struct MapEntry {

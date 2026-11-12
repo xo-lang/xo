@@ -154,6 +154,17 @@ Order: A, then B, then C. Each lands with its spec text, goldens on every
 backend, Go parity tests where Go has the feature, std/changes entries,
 and coverage rows.
 
+## Implementation
+
+- A, format specs (2026-11-12, Xo Lang 3): the parser splits the spec
+  off the `${...}` text (compiler/parser/fmtspec.xo), the checker picks
+  the lowering by the value's type and reports XO0180, and SSA and the Go
+  generator lower the checked tree (parser.spec_expr) to decision 0410's
+  methods. Golden fmt_specs (every backend; its integer and float rows
+  equal go1.26.1's fmt for the same verbs), errorcheck interp_spec_parse
+  and interp_spec_misfit; core 1.6, the code table and `xo explain
+  XO0180`.
+
 ## Consequences
 
 - Format specs make Go and Rust style table output one expression, with

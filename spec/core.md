@@ -120,6 +120,9 @@ says; the changes of those releases are listed together here, and
   text of `x`, as `x.debug()` does, so a `Result`, `List`, or `Option`
   needs no `.debug()`. `xo vet` notes `${x.debug()}` with the fix
   (`XO0535`).
+- **Format specs** (1.6, decision 0617 A): `${x:>8.2f}`, `${n:06}`,
+  `${n:x}`, `${s:*^10}`, Python's and Rust's spec mini language with Go's
+  `fmt` output; a spec the type does not take is `XO0180`.
 - **Discarded pure results** (2.6, decision 0258): an expression statement
   that drops the value of a call that only computes it (`xs.reverse()`,
   `s.trim()`, a function with no effects) is error `XO0209`, fixed by
@@ -642,9 +645,30 @@ b"raw bytes\x00"                          // Bytes, escapes but no interpolation
   is `Err(NotFound)`, `"${name:?}"` is `"ann"` with its quotes. Every type
   implements `Debug` (std.md 1), so any expression may be formatted this
   way; a type with no Debug text is `XO0404` ("`T` does not implement
-  `Debug`, so `:?` cannot format it"). `:?` is the only format spec: it
-  follows the whole expression, so `${a + b:?}` formats the sum, and any
-  other text after the expression (`${x:.2}`) is `XO0160`.
+  `Debug`, so `:?` cannot format it"). `:?` follows the whole expression,
+  so `${a + b:?}` formats the sum.
+- `${expr:SPEC}` formats `expr` with a format spec (decision 0617 A):
+  `[[fill]align][+][0][width][.prec][type]`. `align` is `<` (left), `>`
+  (right) or `^` (center), with an optional one rune `fill` before it
+  (default a space); `+` shows a sign on a positive number; `0` pads a
+  number with zeros after its sign to `width` (and takes no alignment);
+  `width` is the least width in runes; `prec` is the digits after the
+  point for `f` and `e`, and the significant digits for `g`; `type` is
+  `d` (decimal, the default), `x`, `X`, `o` or `b` for integers, `f`, `e`
+  or `g` for floats, and `s` for text. Numbers are right aligned by
+  default, text left aligned. A spec lowers to the decision 0410 methods
+  (`to_str_width`, `to_fixed`, `to_exp`, `to_general`, `pad_left`,
+  `pad_right`, `center`) on every backend, with Go's `fmt` output for the
+  same verbs: `"${n:>6}"` is `"    42"`, `"${n:06}"` `"000042"`,
+  `"${n:x}"` `"2a"`, `"${f:.2f}"` `"3.14"`, `"${f:e}"` `"3.141590e+00"`,
+  `"${s:*<5}"` `"hi***"`. Integer types other than `Int` are converted
+  with `Int(x)` for a base, sign or zero padding (`UInt64` is refused
+  there, since it may not fit), `Float32` with `Float(x)`; any other
+  `Display` value is padded as its text. The spec is the text after the
+  last colon whose rest parses as a whole spec, so `${m[k]:>4}` and
+  `${a ?? b:x}` work. A spec the value's type does not take, and text
+  after a colon that is not a spec (`${x:.}`), is `XO0180` with the
+  forms in a note.
 - Raw strings `r"..."` have no escapes and no interpolation. `r#"..."#` may
   also contain `"`, which makes JSON fixtures easy to write.
 - A raw multi-line string `r"""..."""` (decision 0320) has no escapes and
@@ -3869,6 +3893,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0176` | error | parser | `pub` before something that cannot be exported |
 | `XO0177` | error | parser | syntax from another language (Go, Rust, TypeScript, Python, Swift, Kotlin); names the habit and the Xo form (decision 0087) |
 | `XO0178` | error | parser | a line starts with a binary operator (`\|\|`, `&&`, `+`, `==`, ...); end the previous line with it (core 1.3, decision 0136) |
+| `XO0180` | error | parser, checker | a format spec in an interpolation (`${x:SPEC}`, core 1.6, decision 0617 A) that does not parse, or that the value's type does not take (a precision on an integer, `x` on a Float, `+` on text, `0` with an alignment, a base on `UInt64`); the note lists the spec forms |
 | `XO0179` | error | parser | retired, never reported; was: `var` with a tuple or list pattern; decision 0384 allows `var PATTERN = e` (the code stays reserved) |
 | `XO0201` | error | checker | Result value is never used (core 2.6) |
 | `XO0202` | error | checker | error type does not convert to the enclosing error type (core 2.6) |
@@ -4701,8 +4726,11 @@ Parsing rules the grammar alone does not settle:
 - Only `while { }` (no condition) may appear in expression position.
 - Triple quoted strings support escapes and interpolation; a blank first and
   last line are dropped; the common indentation is measured on the source.
-- An interpolation is `"${" Expr [ ":?" ] "}"` (1.6): `:?` asks for the
-  Debug text (decision 0296).
+- An interpolation is `"${" Expr [ ":?" | ":" Spec ] "}"` (1.6): `:?`
+  asks for the Debug text (decision 0296), a Spec formats the value
+  (decision 0617 A), `Spec = [[fill] ("<" | ">" | "^")] ["+"] ["0"]
+  [digits] ["." digits] ["d" | "x" | "X" | "o" | "b" | "f" | "e" | "g" |
+  "s"]`.
 
 ---
 

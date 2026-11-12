@@ -457,9 +457,16 @@ fn (var g: Gen) string_lit(x: parser.StringLit) -> Str {
             }
           }
         }
+        let k = if p.spec is Some(_) { g.c.spec_kind_in(g.f.file, pe) } else { -1 }
         if p.debug {
           // `${x:?}` (decision 0296): as `x.debug()`
           code = g.rt() + "Debug(" + g.val(pe) + ")"
+        } else if k > 0 {
+          // `${x:>8.2f}` (decision 0617 A): the Str lowering the checker
+          // picked and checked (parser.spec_expr)
+          if let Some(spec) = p.spec {
+            code = g.val(parser.spec_expr(pe, spec, k))
+          }
         } else if g.borrow_ok(pe, others) {
           // only formatted: a borrow (own.xo)
           let b = g.borrow(pe)

@@ -1,0 +1,313 @@
+// Format specs in interpolation (decision 0617 A): `${expr:SPEC}`.
+//
+//   SPEC   := [[FILL] ALIGN] [SIGN] ["0"] [WIDTH] ["." PREC] [TYPE] | "?"
+//   ALIGN  := "<" | ">" | "^"
+//   SIGN   := "+"
+//   TYPE   := "d" | "x" | "X" | "o" | "b" | "f" | "e" | "g" | "s"
+//
+// The parser splits the spec off the `${...}` text (split_spec) and keeps
+// it on the StringPart. The checker picks a lowering by the value's type
+// (SPEC_INT and the rest) and records it; spec_expr builds that lowering,
+// calls of the decision 0410 methods (to_str_width, to_fixed, to_exp,
+// to_general, pad_left, pad_right, center), the same tree for the checker
+// and every backend, so the backends lower an ordinary expression.
+
+use github.com/xo-lang/xo/compiler/lexer
+
+/// A parsed format spec. align, sign and typ are ASCII codes (0: absent);
+/// width and prec are -1 when absent; fill is one rune's bytes, empty for
+/// the default space.
+pub struct FmtSpec {
+  pub raw: Bytes
+  /// From the colon to the end of the `${...}` text.
+  pub span: Span
+  pub fill: Bytes = b""
+  pub align: Int = 0
+  pub plus: Bool = false
+  pub zero: Bool = false
+  pub width: Int = -1
+  pub prec: Int = -1
+  pub typ: Int = 0
+}
+
+/// The lowerings the checker picks from (StringPart.spec).
+pub const SPEC_INT = 1
+/// An integer type other than Int: converted with Int(x) first.
+pub const SPEC_INT_CONV = 2
+pub const SPEC_FLOAT = 3
+/// Any Display value but Str: its text, `"${x}"`, then padded.
+pub const SPEC_TEXT = 4
+pub const SPEC_STR = 5
+/// Float32: converted with Float(x) first.
+pub const SPEC_FLOAT_CONV = 6
+
+/// The spec forms, for XO0180's note.
+pub const SPEC_FORMS = "[[fill]align][+][0][width][.prec][type]: align `<` `>` `^`; type `d` `x` `X` `o` `b` for integers, `f` `e` `g` for Float, `s` for text; `?` alone for the Debug text"
+
+fn is_align(c: Int) -> Bool { c == 60 || c == 62 || c == 94 }
+
+fn is_digit(c: Int) -> Bool { c >= 48 && c <= 57 }
+
+fn in_set(set: Str, c: Int) -> Bool {
+  for b in set.bytes() {
+    if Int(b) == c {
+      return true
+    }
+  }
+  false
+}
+
+/// The byte length of the UTF-8 rune starting with lead byte c.
+fn rune_len(c: Int) -> Int {
+  if c < 0x80 { 1 } else if c < 0xE0 { 2 } else if c < 0xF0 { 3 } else { 4 }
+}
+
+/// raw (the text after the colon) as a spec, or None when it is not one.
+/// `?` is not a spec here (the Debug form is parsed on its own).
+pub fn parse_spec(raw: Bytes) -> FmtSpec? {
+  let n = raw.len()
+  if n == 0 {
+    return None
+  }
+  var s = FmtSpec{raw: raw, span: Span{start: lexer.Pos{offset: 0, line: 0, col: 0}, end: lexer.Pos{offset: 0, line: 0, col: 0}}}
+  var i = 0
+  let r0 = rune_len(Int(raw[0]))
+  if r0 < n && is_align(Int(raw[r0])) {
+    let f = raw[0..r0]
+    if f == b"{" || f == b"}" || Int(raw[0]) < 32 {
+      return None
+    }
+    s.fill = f
+    s.align = Int(raw[r0])
+    i = r0 + 1
+  } else if is_align(Int(raw[0])) {
+    s.align = Int(raw[0])
+    i = 1
+  }
+  if i < n && raw[i] == 43 {
+    s.plus = true
+    i += 1
+  }
+  if i < n && raw[i] == 48 {
+    s.zero = true
+    i += 1
+  }
+  var w = -1
+  while i < n && is_digit(Int(raw[i])) {
+    w = (if w < 0 { 0 } else { w * 10 }) + Int(raw[i]) - 48
+    if w > 100000 {
+      return None
+    }
+    i += 1
+  }
+  s.width = w
+  if i < n && raw[i] == 46 {
+    i += 1
+    var p = -1
+    while i < n && is_digit(Int(raw[i])) {
+      p = (if p < 0 { 0 } else { p * 10 }) + Int(raw[i]) - 48
+      if p > 1000 {
+        return None
+      }
+      i += 1
+    }
+    if p < 0 {
+      return None
+    }
+    s.prec = p
+  }
+  if i < n && in_set("dxXobfegs", Int(raw[i])) {
+    s.typ = Int(raw[i])
+    i += 1
+  }
+  if i != n {
+    return None
+  }
+  Some(s)
+}
+
+/// The offset in text (the source of a `${...}`, without the braces) of
+/// the colon that starts its format spec, or -1: the first colon after
+/// which the rest is a whole spec. An expression never ends in `:` and
+/// spec characters, so the split is unambiguous.
+pub fn split_spec(text: Bytes) -> Int {
+  for i in 1..text.len() {
+    if text[i] == 58 && i + 1 < text.len() {
+      let rest = text[i + 1..]
+      if rest != b"?" && parse_spec(rest) is Some(_) {
+        return i
+      }
+    }
+  }
+  -1
+}
+
+/// Why spec s does not suit a value of the lowering kind, or "" when it
+/// does. what names the value's type.
+pub fn spec_misfit(s: FmtSpec, kind: Int, what: Str) -> Str {
+  let t = s.typ
+  match kind {
+    SPEC_INT | SPEC_INT_CONV => {
+      if t != 0 && !in_set("dxXob", t) {
+        return "type `${Rune(t)}` does not format an integer (`${what}`); it takes `d`, `x`, `X`, `o` or `b`"
+      }
+      if s.prec >= 0 {
+        return "a precision does not format an integer (`${what}`)"
+      }
+    }
+    SPEC_FLOAT | SPEC_FLOAT_CONV => {
+      if t != 0 && !in_set("feg", t) {
+        return "type `${Rune(t)}` does not format a Float; it takes `f`, `e` or `g`"
+      }
+    }
+    _ => {
+      if t != 0 && t != 115 {
+        return "type `${Rune(t)}` formats numbers, not `${what}`; text takes `s` or no type"
+      }
+      if s.prec >= 0 || s.plus || s.zero {
+        return "`+`, `0` and a precision format numbers, not `${what}`"
+      }
+    }
+  }
+  if s.zero && s.align != 0 {
+    return "`0` pads a number on the left after its sign; it takes no alignment (use a fill, `0>8`, to pad with zeros as text)"
+  }
+  ""
+}
+
+/// Whether s, on an integer type other than Int, needs the number itself
+/// (a base, sign or zero padding) rather than only its text padded.
+pub fn spec_needs_number(s: FmtSpec) -> Bool {
+  s.plus || s.zero || (s.typ != 0 && s.typ != 100)
+}
+
+fn pos_at(p: lexer.Pos, k: Int) -> lexer.Pos { lexer.Pos{offset: p.offset + k, line: p.line, col: p.col + k} }
+
+fn int_lit(sp: Span, n: Int) -> Expr {
+  if n < 0 {
+    return Expr.UnaryExpr(span: sp, op: lexer.Kind.Minus, x: int_lit(sp, -n))
+  }
+  let d = "${n}".bytes()
+  Expr.IntLit(span: sp, raw: d, value: d)
+}
+
+/// x.name(args), its call and selector at span csp, the name at span at
+/// (the colon: no source identifier starts there, so the checker's
+/// records of these names never meet a real one's).
+fn method(x: Expr, name: Str, csp: Span, at: Span, args: List[Arg]) -> Expr {
+  Expr.CallExpr(span: csp, fun: Expr.SelectorExpr(span: csp, x: x, sel: Ident{span: at, name: name.bytes()}), args: args)
+}
+
+fn arg(sp: Span, v: Expr) -> Arg { Arg{span: sp, name: None, value: v} }
+
+fn flag_arg(sp: Span, name: Str) -> Arg {
+  let at = Span{start: sp.start, end: sp.start}
+  Arg{span: sp, name: Some(Ident{span: at, name: name.bytes()}), value: Expr.Ident(id: Ident{span: at, name: b"true"})}
+}
+
+/// The lowering of `${x:s}` for the kind the checker picked (SPEC_INT and
+/// the rest): an expression of type Str. Its nodes take spans of their
+/// own inside x's and the spec's source, distinct per node kind, so the
+/// checker's records for them never collide with x's or each other's.
+pub fn spec_expr(x: Expr, s: FmtSpec, kind: Int) -> Expr {
+  let xs = expr_span(x).start
+  let c = s.span.start
+  let c1 = pos_at(c, 1)
+  let e = s.span.end
+  let whole = Span{start: xs, end: e}      // the outer call (pad)
+  let tail = Span{start: c, end: e}        // to_upper, the fill text
+  let head = Span{start: xs, end: c1}      // the core call, a text wrap
+  let colon = Span{start: c, end: c1}      // Int(x), the literals
+  let colon0 = Span{start: c, end: c}      // the method and argument names
+  var core = x
+  var padded = s.width >= 0
+  var default_right = true
+  match kind {
+    SPEC_INT | SPEC_INT_CONV => {
+      if kind == SPEC_INT_CONV {
+        let at = Span{start: c1, end: c1}
+        core = Expr.CallExpr(span: colon, fun: Expr.Ident(id: Ident{span: at, name: b"Int"}), args: [arg(colon, x)])
+      }
+      let base = match s.typ {
+        120 | 88 => 16
+        111 => 8
+        98 => 2
+        _ => 10
+      }
+      if s.zero || base != 10 || s.plus {
+        var args = [arg(colon, int_lit(colon, if s.zero { s.width } else { 0 })), arg(colon, int_lit(colon, base))]
+        if s.zero {
+          args.push(flag_arg(colon, "zero"))
+          padded = false
+        }
+        if s.plus {
+          args.push(flag_arg(colon, "plus"))
+        }
+        core = method(core, "to_str_width", head, colon0, args)
+        if s.typ == 88 {
+          core = method(core, "to_upper", tail, colon0, [])
+        }
+      } else {
+        core = text_of(core, head)
+      }
+    }
+    SPEC_FLOAT | SPEC_FLOAT_CONV => {
+      if kind == SPEC_FLOAT_CONV {
+        let at = Span{start: c1, end: c1}
+        core = Expr.CallExpr(span: colon, fun: Expr.Ident(id: Ident{span: at, name: b"Float"}), args: [arg(colon, x)])
+      }
+      var name = match s.typ {
+        102 => "to_fixed"
+        101 => "to_exp"
+        103 => "to_general"
+        _ => ""
+      }
+      if name == "" && s.prec >= 0 {
+        name = "to_fixed"
+      }
+      if name == "" && (s.plus || s.zero) {
+        name = "to_general"
+      }
+      if name == "" {
+        core = text_of(core, head)
+      } else {
+        // Go's %f and %e default to 6 digits; %g to the shortest
+        let prec = if s.prec >= 0 { s.prec } else if s.typ == 103 || s.typ == 0 { -1 } else { 6 }
+        var args = [arg(colon, int_lit(colon, prec))]
+        if s.zero {
+          args.push(Arg{span: colon, name: Some(Ident{span: Span{start: c, end: c}, name: b"width"}), value: int_lit(colon, s.width)})
+          args.push(flag_arg(colon, "zero"))
+          padded = false
+        }
+        if s.plus {
+          args.push(flag_arg(colon, "plus"))
+        }
+        core = method(core, name, head, colon0, args)
+      }
+    }
+    SPEC_STR => default_right = false
+    _ => {
+      default_right = false
+      core = text_of(core, head)
+    }
+  }
+  if !padded {
+    return core
+  }
+  let align = if s.align != 0 { s.align } else if default_right { 62 } else { 60 }
+  let pad = match align {
+    60 => "pad_right"
+    94 => "center"
+    _ => "pad_left"
+  }
+  var args = [arg(colon, int_lit(colon, s.width))]
+  if !s.fill.is_empty() {
+    args.push(arg(colon, Expr.StringLit(s: StringLit{span: tail, kind: StringKind.Plain, parts: [StringPart{text: s.fill, expr: None}]})))
+  }
+  method(core, pad, whole, colon0, args)
+}
+
+/// `"${x}"` at span sp: x's Display text.
+fn text_of(x: Expr, sp: Span) -> Expr {
+  Expr.StringLit(s: StringLit{span: sp, kind: StringKind.Plain, parts: [StringPart{text: b"", expr: Some(x)}]})
+}

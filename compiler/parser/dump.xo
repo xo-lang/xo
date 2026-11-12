@@ -547,6 +547,9 @@ fn dump_string_lit(var out: StrBuilder, depth: Int, label: Str, s: StringLit) {
     if part.debug {
       out.write(" debug")
     }
+    if let Some(spec) = part.spec {
+      attr(out, "spec", spec.raw)
+    }
     out.write("\n")
     dump_expr_opt(out, depth + 2, "expr", part.expr)
   }
