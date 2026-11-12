@@ -133,7 +133,9 @@ func TestMapping(t *testing.T) {
 		"fn cut(s: Str, sep: Str) -> (Str, Str, Bool) uses go",
 		"fn map[fx: Effects](mapping: fn(Rune) -> Rune uses fx, s: Str) -> Str uses go, fx",
 		"fn lines(s: Str) -> List[Str] uses go",
-		"fn new_replacer(oldnew: List[Str]) -> Replacer uses go",
+		// the prelude's Replacer (decision 0594) takes the name, so Go's is
+		// prefixed with its package
+		"fn new_replacer(oldnew: List[Str]) -> StringsReplacer uses go",
 		"fn (static: Builder) new() -> Builder uses go",
 	} {
 		if !strings.Contains(decl, want) {
