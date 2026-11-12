@@ -125,6 +125,7 @@ var generators = map[string]func() string{
 	"timego":     timegoCorpus,
 	"sse":        sseCorpus,
 	"jsonrpc":    jsonrpcCorpus,
+	"httpproxy":  httpproxyCorpus,
 }
 
 func main() {

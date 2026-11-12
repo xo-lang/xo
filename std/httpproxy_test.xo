@@ -1,0 +1,126 @@
+// Ported from golang.org/x/net/http/httpproxy proxy_test.go (x/net
+// v0.47.0, Copyright 2017 The Go Authors, BSD-style license). Rows Xo
+// answers differently are marked: a proxy URL of another scheme than http
+// or https is ignored (socks5, foo), and an http request under CGI
+// connects directly where Go's ProxyFunc returns an error.
+
+use std/http
+use std/testing
+
+fn url(s: Str) -> http.Url { http.parse_url(s).ok() ?? fault("bad url ${s}") }
+
+fn shown(u: http.Url?) -> Str {
+  match u {
+    Some(p) => p.display().trim_suffix("/")
+    None => "<nil>"
+  }
+}
+
+test "proxy_func: Go's proxyForURLTests" {
+  let cases: List[(Config, Str, Str)] = [
+    (Config{http_proxy: "127.0.0.1:8080"}, "", "http://127.0.0.1:8080"),
+    (Config{http_proxy: "cache.corp.example.com:1234"}, "", "http://cache.corp.example.com:1234"),
+    (Config{http_proxy: "cache.corp.example.com"}, "", "http://cache.corp.example.com"),
+    (Config{http_proxy: "localhost"}, "", "http://localhost"),
+    (Config{http_proxy: "https://cache.corp.example.com"}, "", "https://cache.corp.example.com"),
+    (Config{http_proxy: "http://127.0.0.1:8080"}, "", "http://127.0.0.1:8080"),
+    (Config{http_proxy: "https://127.0.0.1:8080"}, "", "https://127.0.0.1:8080"),
+    // Go: socks5://127.0.0.1 and foo://host; Xo's client speaks http only
+    (Config{http_proxy: "socks5://127.0.0.1"}, "", "<nil>"),
+    (Config{http_proxy: "foo://host"}, "", "<nil>"),
+    (Config{http_proxy: "http.proxy.tld", https_proxy: "secure.proxy.tld"}, "http://insecure.tld/", "http://http.proxy.tld"),
+    (Config{http_proxy: "http.proxy.tld", https_proxy: "secure.proxy.tld"}, "https://secure.tld/", "http://secure.proxy.tld"),
+    (Config{http_proxy: "http.proxy.tld", https_proxy: "https://secure.proxy.tld"}, "https://secure.tld/", "https://secure.proxy.tld"),
+    (Config{http_proxy: "http.proxy.tld"}, "https://secure.tld/", "<nil>"),
+    // Go: an error (refusing to use HTTP_PROXY value in CGI environment)
+    (Config{http_proxy: "http://10.1.2.3:8080", cgi: true}, "", "<nil>"),
+    (Config{https_proxy: "https://secure.proxy.tld", cgi: true}, "https://secure.tld/", "https://secure.proxy.tld"),
+    (Config{}, "", "<nil>"),
+    (Config{no_proxy: "example.com", http_proxy: "proxy"}, "http://example.com/", "<nil>"),
+    (Config{no_proxy: ".example.com", http_proxy: "proxy"}, "http://example.com/", "http://proxy"),
+    (Config{no_proxy: "ample.com", http_proxy: "proxy"}, "http://example.com/", "http://proxy"),
+    (Config{no_proxy: "example.com", http_proxy: "proxy"}, "http://foo.example.com/", "<nil>"),
+    (Config{no_proxy: ".foo.com", http_proxy: "proxy"}, "http://example.com/", "http://proxy"),
+    (Config{no_proxy: ".示例.com", http_proxy: "proxy"}, "http://www.示例.com", "<nil>"),
+    (Config{no_proxy: "xn--fsq092h.com", http_proxy: "proxy"}, "http://www.示例.com", "<nil>"),
+    (Config{no_proxy: "示例.com", http_proxy: "proxy"}, "http://www.xn--fsq092h.com", "<nil>"),
+  ]
+  var bad: List[Str] = []
+  for (cfg, req0, want) in cases {
+    let req = if req0.is_empty() { "http://example.com" } else { req0 }
+    let got = shown(cfg.proxy_func()(url(req)))
+    if got != want {
+      bad.push("${cfg:?} req=${req}: got ${got}, want ${want}")
+    }
+  }
+  expect(bad.join("\n")) == ""
+}
+
+const NO_PROXY: Str = "foobar.com, .barbaz.net, *.wildcard.io, 192.168.1.1, 192.168.1.2:81, 192.168.1.3:80, 10.0.0.0/30, 2001:db8::52:0:1, [2001:db8::52:0:2]:443, [2001:db8::52:0:3]:80, 2002:db8:a::45/64"
+
+const USE_PROXY: List[(Str, Bool)] = [
+  ("localhost", false),
+  ("127.0.0.1", false),
+  ("127.0.0.2", false),
+  ("[::1]", false),
+  ("[::2]", true),
+  ("192.168.1.1", false),
+  ("192.168.1.2", true),
+  ("192.168.1.3", false),
+  ("192.168.1.4", true),
+  ("10.0.0.2", false),
+  ("[2001:db8::52:0:1]", false),
+  ("[2001:db8::52:0:2]", true),
+  ("[2001:db8::52:0:3]", false),
+  ("[2002:db8:a::123]", false),
+  ("[fe80::424b:c8be:1643:a1b6]", true),
+  ("barbaz.net", true),
+  ("www.barbaz.net", false),
+  ("foobar.com", false),
+  ("www.foobar.com", false),
+  ("foofoobar.com", true),
+  ("baz.com", true),
+  ("localhost.net", true),
+  ("local.localhost", true),
+  ("barbarbaz.net", true),
+  ("wildcard.io", true),
+  ("nested.wildcard.io", false),
+  ("awildcard.io", true),
+]
+
+test "use_proxy: Go's UseProxyTests" {
+  let r = rules_of(Config{no_proxy: NO_PROXY})
+  var bad: List[Str] = []
+  for (host, want) in USE_PROXY {
+    if r.use_proxy(host + ":80") != want {
+      bad.push(host)
+    }
+  }
+  expect(bad) == []
+}
+
+test "use_proxy: an invalid NO_PROXY entry is skipped (TestInvalidNoProxy)" {
+  expect(rules_of(Config{no_proxy: ":1"}).use_proxy("example.com:80")) == true
+}
+
+test "use_proxy: NO_PROXY=* bypasses every host (TestAllNoProxy)" {
+  let r = rules_of(Config{no_proxy: "*"})
+  for (host, _) in USE_PROXY {
+    expect(r.use_proxy(host + ":80")) == false
+  }
+}
+
+test "from_env: upper case first, then lower case, cgi from REQUEST_METHOD" uses env {
+  // the test's environment, as Go's TestFromEnvironment sets it, is not
+  // settable here: from_env's reads are checked on what is set
+  let c = from_env(os.env)
+  expect(c.cgi) == !(os.env.get("REQUEST_METHOD") ?? "").is_empty()
+}
+
+test "a request's port and the scheme's default port pick NO_PROXY port entries" {
+  let r = rules_of(Config{http_proxy: "proxy", https_proxy: "proxy", no_proxy: "a.test:443, 10.0.0.1:8080"})
+  expect(shown(r.proxy_for(url("https://a.test/")))) == "<nil>"
+  expect(shown(r.proxy_for(url("http://a.test/")))) == "http://proxy"
+  expect(shown(r.proxy_for(url("http://10.0.0.1:8080/")))) == "<nil>"
+  expect(shown(r.proxy_for(url("http://10.0.0.1/")))) == "http://proxy"
+}

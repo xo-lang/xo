@@ -9201,3 +9201,33 @@ end with `r.int(0, i + 1)`, as Go's Shuffle; a negative `n` faults
 random.normal(r)`, `random.exp(r) / rate`. Checked against Go on its
 recorded PCG streams replayed draw for draw, and by the moments of 10^6
 draws (testdata/corpus/random).
+
+## 82. std/httpproxy
+
+Which proxy an HTTP client request goes through (decision 0617 B), Go's
+`http.ProxyFromEnvironment` and `golang.org/x/net/http/httpproxy`. Pure
+but for `from_env` (a merged module).
+
+```xo
+struct Config { http_proxy: Str = "", https_proxy: Str = "", no_proxy: Str = "", cgi: Bool = false }
+fn from_env(env: Env) -> Config uses env      // HTTP_PROXY, HTTPS_PROXY, NO_PROXY, else lower case; cgi: REQUEST_METHOD set
+fn (c: Config) proxy_func() -> fn(http.Url) -> http.Url?   // None: connect directly
+fn proxy_from_env(env: Env) -> (fn(http.Url) -> http.Url?) uses env
+fn parse_proxy(s: Str) -> http.Url?           // `host:port` gets http://
+```
+
+An https request uses `https_proxy`, an http one `http_proxy`; other
+schemes, and a request whose host `no_proxy` lists, connect directly.
+`no_proxy` is comma separated: a name matches itself and its subdomains,
+`.name` and `*.name` only subdomains, an IP address or a CIDR block the
+addresses, each with an optional `:port` (the URL's, else its scheme's
+default); `*` matches every host. `localhost` and loopback addresses
+never use a proxy. Names compare in lower case and in their IDNA ASCII
+form. Two differences from Go: a proxy whose scheme is not http or https
+is ignored (Go also returns socks5 and other schemes); and with `cgi`
+(the program runs as CGI, where a request's `Proxy` header can arrive as
+HTTP_PROXY) an http request connects directly, where Go's function
+returns an error. The environment is read only when the program passes
+its `Env`. Checked against net/http's ProxyFromEnvironment on 48 seeded
+settings and 1,920 request URLs (testdata/corpus/httpproxy) and Go's
+own tests (std/httpproxy_test.xo).

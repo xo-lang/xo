@@ -1,0 +1,272 @@
+// std/httpproxy (spec/std.md 82, decision 0617 B). Which proxy an HTTP
+// client request goes through, from HTTP_PROXY, HTTPS_PROXY and NO_PROXY:
+// golang.org/x/net/http/httpproxy (proxy.go of x/net v0.47.0, Copyright
+// 2017 The Go Authors, BSD-style license; THIRD_PARTY_NOTICES), the rules
+// Go's http.ProxyFromEnvironment applies. Pure but for from_env, which
+// reads the environment only when the program passes its Env (Go's
+// DefaultTransport reads it implicitly).
+//
+// Origin: go
+//
+// Differences from Go: a proxy URL must be http or https (http.parse_url's
+// schemes; Go also accepts socks5 and any other scheme, which Xo's client
+// cannot speak, so such a value is ignored as Go ignores one that does not
+// parse); under CGI (REQUEST_METHOD set) an http request's HTTP_PROXY is
+// ignored, the request connecting directly, where Go's ProxyFunc returns
+// an error (both refuse the httpoxy value, golang.org/s/cgihttpproxy).
+
+use std/http
+use std/idna
+use std/netip
+
+/// The proxy settings (Go's httpproxy.Config).
+pub struct Config {
+  /// The proxy for http requests, unless no_proxy excludes them.
+  pub http_proxy: Str = ""
+  /// The proxy for https requests, unless no_proxy excludes them.
+  pub https_proxy: Str = ""
+  /// Comma separated hosts that bypass the proxy: a name (and its
+  /// subdomains), `.name` or `*.name` (subdomains only), an IP address,
+  /// a CIDR block, each optionally with `:port`; `*` bypasses it for
+  /// every host. localhost and loopback addresses never use a proxy.
+  pub no_proxy: Str = ""
+  /// The program runs as CGI: HTTP_PROXY may come from a request's
+  /// `Proxy` header, so it is not used for http requests.
+  pub cgi: Bool = false
+}
+
+/// The settings of the environment (Go's FromEnvironment): HTTP_PROXY,
+/// HTTPS_PROXY and NO_PROXY, else their lower case names; cgi when
+/// REQUEST_METHOD is set.
+pub fn from_env(env: Env) -> Config uses env {
+  Config{
+    http_proxy: env_any(env, "HTTP_PROXY", "http_proxy"),
+    https_proxy: env_any(env, "HTTPS_PROXY", "https_proxy"),
+    no_proxy: env_any(env, "NO_PROXY", "no_proxy"),
+    cgi: !(env.get("REQUEST_METHOD") ?? "").is_empty(),
+  }
+}
+
+fn env_any(env: Env, a: Str, b: Str) -> Str uses env {
+  let v = env.get(a) ?? ""
+  if !v.is_empty() {
+    return v
+  }
+  env.get(b) ?? ""
+}
+
+/// The proxy for each request URL, None to connect directly (Go's
+/// Config.ProxyFunc); for `http.Client.with_proxy_for`. The settings are
+/// parsed once, here.
+pub fn (c: Config) proxy_func() -> fn(http.Url) -> http.Url? {
+  let r = rules_of(c)
+  fn(u: http.Url) { r.proxy_for(u) }
+}
+
+/// The proxy for requests of the environment's settings:
+/// `from_env(env).proxy_func()`.
+pub fn proxy_from_env(env: Env) -> (fn(http.Url) -> http.Url?) uses env { from_env(env).proxy_func() }
+
+/// The proxy URL of a setting (Go's parseProxy): the URL, or with
+/// `http://` before it when it has no scheme; None when empty, when it
+/// does not parse, or when its scheme is not http or https.
+pub fn parse_proxy(s: Str) -> http.Url? {
+  if s.is_empty() {
+    return None
+  }
+  if s.contains("://") {
+    // a scheme: Go parses it as given; parse_url takes http and https only
+    return http.parse_url(s).ok()
+  }
+  match http.parse_url("http://" + s) {
+    Ok(u) => Some(u)
+    Err(_) => None
+  }
+}
+
+/// One NO_PROXY entry (Go's matchers).
+pub enum Matcher {
+  All
+  Cidr(p: netip.Prefix)
+  Ip(ip: netip.Addr, port: Str)
+  /// host starts with `.`; match_host: the entry had no leading dot, so
+  /// the name itself matches too
+  Domain(host: Str, port: Str, match_host: Bool)
+}
+
+/// The parsed settings (Go's config).
+pub struct Rules {
+  pub cfg: Config
+  pub http: http.Url?
+  pub https: http.Url?
+  pub ips: List[Matcher]
+  pub domains: List[Matcher]
+}
+
+/// Go's config.init.
+pub fn rules_of(c: Config) -> Rules {
+  var r = Rules{cfg: c, http: parse_proxy(c.http_proxy), https: parse_proxy(c.https_proxy), ips: [], domains: []}
+  for p0 in c.no_proxy.split(",") {
+    let p = p0.trim().to_lower()
+    if p.is_empty() {
+      continue
+    }
+    if p == "*" {
+      r.ips = [Matcher.All]
+      r.domains = [Matcher.All]
+      return r
+    }
+    if p.contains("/") {
+      if let Ok(pre) = netip.parse_prefix(p) {
+        r.ips.push(Matcher.Cidr(p: pre.masked()))
+        continue
+      }
+    }
+    var phost = p
+    var pport = ""
+    match netip.split_host_port(p) {
+      Ok((h, port)) => {
+        if h.is_empty() {
+          continue
+        }
+        phost = h
+        pport = port
+        if phost.starts_with("[") && phost.ends_with("]") {
+          phost = phost[1..phost.len() - 1]
+        }
+      }
+      Err(_) => ()
+    }
+    if let Some(ip) = parse_ip(phost) {
+      r.ips.push(Matcher.Ip(ip: ip, port: pport))
+      continue
+    }
+    if phost.is_empty() {
+      continue
+    }
+    if phost.starts_with("*.") {
+      phost = phost[1..]
+    }
+    var match_host = false
+    if !phost.starts_with(".") {
+      match_host = true
+      phost = "." + phost
+    }
+    phost = ascii_name(phost)
+    r.domains.push(Matcher.Domain(host: phost, port: pport, match_host: match_host))
+  }
+  r
+}
+
+/// net.ParseIP: an address without a zone, an IPv4 one unmapped.
+fn parse_ip(s: Str) -> netip.Addr? {
+  if s.contains("%") {
+    return None
+  }
+  match netip.parse_addr(s) {
+    Ok(a) => Some(a.unmap())
+    Err(_) => None
+  }
+}
+
+/// Go's idnaASCII: s unchanged when ASCII, else its IDNA lookup form, or s
+/// when that fails.
+fn ascii_name(s: Str) -> Str {
+  for b in s.bytes() {
+    if b >= 0x80 {
+      return idna.to_ascii(s).ok() ?? s
+    }
+  }
+  s
+}
+
+const PORTS: Map[Str, Str] = {"http": "80", "https": "443", "socks5": "1080"}
+
+/// Go's canonicalAddr: the host in ASCII and the port, the scheme's when
+/// the URL has none.
+pub fn canonical_addr(u: http.Url) -> Str {
+  var host = u.host
+  if host.starts_with("[") && host.ends_with("]") {
+    host = host[1..host.len() - 1]
+  }
+  let port = match u.port {
+    Some(p) => "${p}"
+    None => PORTS.get(u.scheme) ?? ""
+  }
+  netip.join_host_port(ascii_name(host), port)
+}
+
+/// The proxy for u (Go's proxyForURL).
+pub fn (r: Rules) proxy_for(u: http.Url) -> http.Url? {
+  let proxy = match u.scheme {
+    "https" => r.https
+    "http" => if r.cfg.cgi { None } else { r.http }
+    _ => None
+  }
+  if proxy is None {
+    return None
+  }
+  if !r.use_proxy(canonical_addr(u)) {
+    return None
+  }
+  proxy
+}
+
+/// Whether a request to addr (`host:port`) goes through the proxy (Go's
+/// useProxy).
+pub fn (r: Rules) use_proxy(addr: Str) -> Bool {
+  if addr.is_empty() {
+    return true
+  }
+  let (host, port) = match netip.split_host_port(addr) {
+    Ok(hp) => hp
+    Err(_) => return false
+  }
+  if host == "localhost" {
+    return false
+  }
+  var ip: netip.Addr? = None
+  if let Ok(a) = netip.parse_addr(host) {
+    if a.is_loopback() {
+      return false
+    }
+    ip = Some(a.unmap().with_zone(""))
+  }
+  let name = host.trim().to_lower()
+  if ip is Some(_) {
+    for m in r.ips {
+      if matches(m, name, port, ip) {
+        return false
+      }
+    }
+  }
+  for m in r.domains {
+    if matches(m, name, port, ip) {
+      return false
+    }
+  }
+  true
+}
+
+fn matches(m: Matcher, host: Str, port: Str, ip: netip.Addr?) -> Bool {
+  match m {
+    Matcher.All => true
+    Matcher.Cidr(p) => match ip {
+      Some(a) => p.contains(a)
+      None => false
+    }
+    Matcher.Ip(want, wport) => match ip {
+      Some(a) => a == want && (wport.is_empty() || wport == port)
+      None => false
+    }
+    Matcher.Domain(h, wport, match_host) => {
+      if let Some(_) = ip {
+        return false
+      }
+      if host.ends_with(h) || (match_host && host == h[1..]) {
+        return wport.is_empty() || wport == port
+      }
+      false
+    }
+  }
+}

@@ -39,3 +39,4 @@ htmlparse
 image
 sse
 jsonrpc
+httpproxy

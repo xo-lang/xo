@@ -21,6 +21,9 @@ LICENSE and std/LICENSE.
        Copyright 2016 The Go Authors, BSD-style license)
      std/native/cookiejar.xo (Go 1.26.1, package net/http/cookiejar,
        ported to Xo)
+     std/httpproxy.xo (golang.org/x/net v0.47.0, package
+       http/httpproxy, ported to Xo; Copyright 2017 The Go Authors,
+       BSD-style license)
 
    Ported to Xo or modeled on Go's standard library (the files say which
    Go code they follow): parts of std/ and std/native/, including the
