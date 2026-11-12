@@ -13,6 +13,11 @@ pub struct BuildErr {
   pub span: Span
   pub feature: Str
   pub impossible: Bool
+  /// The position is the closure literal's or the function's, not the
+  /// construct's own (record_err's fallback): the grouping below treats
+  /// such a record as one with no position (a `use go` package's type,
+  /// listed in its package's diagnostic, not counted as a use).
+  pub borrowed: Bool = false
 }
 
 /// Records what at the expression being lowered, once per position and
@@ -23,7 +28,15 @@ fn (var b: Builder) record_err(what: Str, never: Bool) {
   if b.at_file >= 0 && b.at_file < b.c.files.len() {
     file = b.c.files[b.at_file].path
   }
-  if file.is_empty() || sp.start.line == 0 {
+  // once per own position, as before the fallback (a type recorded with
+  // no position is one record, not one per function)
+  let key = "${file}:${sp.start.line}:${sp.start.col}:${what}"
+  if b.seen_err.contains(key) {
+    return
+  }
+  b.seen_err[key] = true
+  let borrowed = file.is_empty() || sp.start.line == 0
+  if borrowed {
     // no expression position: the closure literal or the function being
     // built, so every XO1201 names a place (the scarlet session,
     // 2026-11-11: one at "" 0:0 in a 5,000 line module was found only by
@@ -40,12 +53,7 @@ fn (var b: Builder) record_err(what: Str, never: Bool) {
       }
     }
   }
-  let key = "${file}:${sp.start.line}:${sp.start.col}:${what}"
-  if b.seen_err.contains(key) {
-    return
-  }
-  b.seen_err[key] = true
-  b.errs.push(BuildErr{file: file, span: sp, feature: what, impossible: never})
+  b.errs.push(BuildErr{file: file, span: sp, feature: what, impossible: never, borrowed: borrowed})
 }
 
 /// A span of one position, line and column (record_err's fallback).
@@ -92,11 +100,11 @@ pub fn nogc_diags(b: Builder) -> List[check.Diag] {
     // empty block (`()` where an Int is due), a mistyped call as an
     // unsupported conversion, and an XO1201 printed first hid the real
     // error (owner, 2026-11-05, from the agents' survey; core 10.2)
-    if !lazy_files.is_empty() && (e.file.is_empty() || lazy_files.contains(e.file)) {
+    if !lazy_files.is_empty() && (e.file.is_empty() || e.borrowed || lazy_files.contains(e.file)) {
       continue
     }
     let gp = go_package_of(e)
-    if !gp.is_empty() && e.file.is_empty() {
+    if !gp.is_empty() && (e.file.is_empty() || e.borrowed) {
       let nm = go_type_name(e)
       var l = go_types.get(gp) ?? []
       if l.is_empty() {
@@ -115,7 +123,7 @@ pub fn nogc_diags(b: Builder) -> List[check.Diag] {
       std_go.push(e)
       continue
     }
-    if !gp.is_empty() && !e.file.is_empty() {
+    if !gp.is_empty() && !e.file.is_empty() && !e.borrowed {
       let key = "${e.file}\n${gp}"
       if let Some(n) = go_uses.get(key) {
         go_uses[key] = n + 1
