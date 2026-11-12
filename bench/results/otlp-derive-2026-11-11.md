@@ -130,3 +130,19 @@ where the tag was pushed alone. Found with XO_PROF=cpu at main 99c339dfc (host 1
 | otlp traces | 284.9 ms | 262.8 ms | 0.923 (0.918 to 0.925) |
 | otlp metrics | 144.1 ms | 139.7 ms | 0.969 (0.958 to 0.986) |
 
+## BytesBuilder.write_le without llrt_rs_write (2026-11-12)
+
+The profile at c756874c8 (host 1, protobuf marshal) had `prelude.llrt_rs_write` at 33% cumulative. Its frame was not
+the cost (moving its fault out of line cut the saved registers from nine to five and changed nothing, --ab 0.987),
+nor the runtime call under it (a fast path in `cabi.obj_rs_push_word`: 0.985): the inliner reported it "padded", so
+every `write_le` was two calls. The SSA lowering now checks the width in line and emits `rt.rs_push_word`.
+linux/arm64 host 1, `ab-host.sh` (xo bench --ab, 7 rounds), A main 1337b4adc, B 86e428f3b:
+
+| workload | A wall | B wall | B / A (95%) |
+|---|---|---|---|
+| protobuf marshal | 12.97 ms | 10.73 ms | 0.827 (0.817 to 0.839) |
+| jsontoken write | 70.0 ms | 69.61 ms | 0.994 (0.976 to 1.003), within noise |
+| the self build | 31922 ms | 31703 ms | 0.993 (0.928 to 1.001), within noise |
+
+With ffd6ba84e and c756874c8, protobuf marshal went from 17.64 ms (main 591a43ea2) to 10.73 ms.
+

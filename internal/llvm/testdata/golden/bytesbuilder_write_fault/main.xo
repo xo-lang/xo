@@ -1,0 +1,14 @@
+// BytesBuilder.write_le with a width outside 0 to 8 is a fault (decision
+// 0561), checked where the call is since 2026-11-12 (the push itself is
+// rt.rs_push_word); widths from the arguments so no check folds away.
+fn main(os: Os) {
+  let k = os.env.args().len() + 1
+  var b = BytesBuilder.new()
+  b.write_le(0x41, k)
+  b.write_le(0x4342, k + 1)
+  b.write_le(0x44, k - k)
+  os.stdio.println("${b.freeze().to_str() ?? "?"} ${k}")
+  b = BytesBuilder.new()
+  b.write_le(1, k + 8)
+  os.stdio.println("not reached")
+}

@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-11-12: perf, fix: BytesBuilder.write_le pushes in place; a bad width faults on wasm
+
+- Kind: perf, fix (wasm)
+- Commit: this push
+- Found by: XO_PROF=cpu of bench/perf/protobuf marshal on linux/arm64 host 1 (prelude.llrt_rs_write a third of it; XO_INLINE_REPORT: "padded", its fault call's landing pads kept it a call at every site)
+- Go reference: encoding/binary.LittleEndian.AppendUint64 (an append the compiler inlines)
+- Timing: --ab on linux/arm64 host 1 against 1337b4adc: bench/perf/protobuf marshal 0.827 (0.817 to 0.839); bench/perf/jsontoken write 0.994 and the self build 0.993 (within noise); xo __text +1440 bytes (the width checks at its write_le sites)
+- Test: golden bytesbuilder_write_fault (widths 0 to 2, then 9: arm64, llvm, Go parity, wasm); bytesbuilder_write; every arm64 golden; the codegen patterns; the amd64 sample (51 ok)
+- Shipped in: not yet released
+
+`write_le` checks its width where it is called and pushes with `rt.rs_push_word` itself (arm64 inlines the push in a
+loop, LLVM everywhere), where it called `llrt_rs_write`, which called the push. On wasm a width outside 0 to 8 was a
+trap ("unreachable", exit 134); it is now the fault native backends raise (exit 70, the same text). `write_be` is as
+before.
+
 ## 2026-11-12: perf: BytesBuilder.write_byte and StrBuilder pushes outside a loop store in place
 
 - Kind: perf

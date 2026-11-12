@@ -2563,6 +2563,18 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
           b.place_set(p, b.rt("rs_put", st, [cb, at, v, n, be]))
         }
       }
+      "write_le" if !b.wasm => {
+        // decision 0561: the n low bytes of v appended, one word push. The
+        // width's check here, then rt.rs_push_word itself (arm64's push_fast
+        // in a loop, LLVM's inline fast path): llrt_rs_write, whose fault
+        // call gave it landing pads, was never inlined (XO_INLINE_REPORT
+        // "padded"), and its call and the push's were a third of protobuf
+        // marshal on host 1 (2026-11-12)
+        let v = b.io_arg(fo, es, 0, it)
+        let n = b.io_arg(fo, es, 1, it)
+        b.write_width_check(n, pos)
+        b.place_set(p, b.rt("rs_push_word", st, [cur, v, n]))
+      }
       "write_le" | "write_be" => {
         // decision 0561: the n low bytes of v appended, one word push
         let v = b.io_arg(fo, es, 0, it)
@@ -2571,7 +2583,9 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
         if let Some(r) = b.llrt_or_none("rs_write", st, [cur, v, n, be, b.const_str(pos)]) {
           b.place_set(p, r)
         } else {
-          // wasm: $rs_write in rt.xo
+          // wasm: $rs_write in rt.xo, after the width's check here (its
+          // own was a trap, "unreachable", where native faults; 2026-11-12)
+          b.write_width_check(n, pos)
           b.place_set(p, b.rt("rs_write", st, [cur, v, n, be]))
         }
       }
@@ -2725,6 +2739,24 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
 /// 0399; the native prelude's llrt_rs_put and std/rt's put do their own):
 /// n is 1, 2, 4 or 8 and at..at + n lies within the builder, else the
 /// fault text they raise.
+/// BytesBuilder.write_le's width check in line (0 to 8, llrt_rs_write's
+/// fault and text): the fault where n is outside it.
+fn (var b: Builder) write_width_check(n: Int, pos: Str) {
+  let bt = b.bool_t()
+  let bad = b.new_block()
+  let (neg, nn) = b.branch(b.add(Op.Lt, bt, Aux.None, [n, b.cint(0)]))
+  b.s.cur = neg
+  b.jump(bad, [])
+  b.s.cur = nn
+  let (over, ok) = b.branch(b.add(Op.Gt, bt, Aux.None, [n, b.cint(8)]))
+  b.s.cur = over
+  b.jump(bad, [])
+  b.seal(bad)
+  b.s.cur = bad
+  b.fault(b.const_str("BytesBuilder.write_le and write_be: width must be 0 to 8"), pos)
+  b.s.cur = ok
+}
+
 fn (var b: Builder) put_check_wasm(cur: Int, at: Int, n: Int, pos: Str) {
   let it = b.int_t()
   let bt = b.bool_t()
