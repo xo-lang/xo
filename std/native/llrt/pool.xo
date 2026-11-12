@@ -1588,6 +1588,15 @@ pub fn preempt() {
     // the request stays, for the next poll after the release
     return
   }
+  if (cpu.hw() & cpu.HW_DIT) != 0 {
+    // a constant time section's DIT (decision 0619): read by setting it
+    // and putting the old value back; the request stays for after it
+    let o = cpu.dit_set(1)
+    let _ = cpu.dit_set(o)
+    if o != 0 {
+      return
+    }
+  }
   // the ask served: the poll flag counts the asks still out (decision
   // 0286 step 3), so the other workers' polls stop calling the stub
   let a = rt.slot_load(w, W_PREEMPT_I, RELAXED)
@@ -1884,6 +1893,10 @@ pub fn async_signal(uc: Int) {
   // rip 16)
   var pc = 0
   var sp = 0
+  // arm64's PSTATE as interrupted (darwin cpsr, Linux pstate, FreeBSD
+  // spsr): a constant time section holds DIT (bit 24, decision 0619) and
+  // is not preempted until it clears it
+  var pstate = 0
   if target.arch == TargetArch.Riscv64 {
     // riscv64 Linux: struct sigcontext at 176, the pc then x1 to x31 (sp
     // is x2); it shares arm64's layer, not its layout (decision 0571)
@@ -1896,6 +1909,7 @@ pub fn async_signal(uc: Int) {
     if layer_arch() == 1 {
       sp = rt.mem_load(uc, 16 + 248, 8)
       pc = rt.mem_load(uc, 16 + 256, 8)
+      pstate = rt.mem_load(uc, 16 + 264, 4)
     } else {
       pc = rt.mem_load(uc, 16 + 160, 8)
       sp = rt.mem_load(uc, 16 + 184, 8)
@@ -1905,9 +1919,11 @@ pub fn async_signal(uc: Int) {
       let ss = rt.mem_load(uc, 48, 8) + 16
       sp = rt.mem_load(ss, 248, 8)
       pc = rt.mem_load(ss, 256, 8) & 281474976710655
+      pstate = rt.mem_load(ss, 264, 4)
     } else {
       sp = rt.mem_load(uc, 432, 8)
       pc = rt.mem_load(uc, 440, 8)
+      pstate = rt.mem_load(uc, 448, 8)
     }
   } else if layer() == 2 {
     let ss = rt.mem_load(uc, 48, 8) + 16
@@ -1918,7 +1934,7 @@ pub fn async_signal(uc: Int) {
     pc = rt.mem_load(uc, 168, 8)
   }
   let mem = rt.mem_load(f, F_MEM, 8)
-  if mem == 0 || sp.wrapping_sub(mem) < ASYNC_ROOM || !async_pc_ok(pc) {
+  if mem == 0 || sp.wrapping_sub(mem) < ASYNC_ROOM || !async_pc_ok(pc) || (pstate.shr_logical(24) & 1) != 0 {
     return
   }
   // the ask served (preempt's accounting)

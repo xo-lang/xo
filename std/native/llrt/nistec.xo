@@ -2623,6 +2623,14 @@ pub fn generate(curve: Int) -> Bytes {
 /// The public key (uncompressed point) of the private key priv; empty
 /// when priv is not a scalar in [1, n).
 pub fn public_key(curve: Int, priv: Bytes) -> Bytes {
+  // under Arm's DIT (decision 0619)
+  let dit = ct.dit_on()
+  let r = public_key_dit(curve, priv)
+  ct.dit_off(dit)
+  r
+}
+
+fn public_key_dit(curve: Int, priv: Bytes) -> Bytes {
   let w = workspace(curve)
   let c = base(w)
   if !scalar(c, sk(c, 0), priv, curve) {
@@ -2640,6 +2648,14 @@ pub fn public_key(curve: Int, priv: Bytes) -> Bytes {
 /// key priv and the peer's uncompressed point; none when either is
 /// invalid or the product is the identity (crypto/ecdh's ECDH).
 pub fn ecdh(curve: Int, priv: Bytes, peer: Bytes) -> Bytes? {
+  // under Arm's DIT (decision 0619)
+  let dit = ct.dit_on()
+  let r = ecdh_dit(curve, priv, peer)
+  ct.dit_off(dit)
+  r
+}
+
+fn ecdh_dit(curve: Int, priv: Bytes, peer: Bytes) -> Bytes? {
   let w = workspace(curve)
   let c = base(w)
   if !scalar(c, sk(c, 0), priv, curve) || !pt_decode(c, at(c, PA), peer, curve) {
@@ -2799,6 +2815,14 @@ fn right_shift(b: Bytes, sh: Int) -> Bytes {
 /// construction from the entropy z (size(curve) bytes); empty when priv
 /// is not a scalar in [1, n).
 pub fn sign_hedged(curve: Int, priv: Bytes, hash: Bytes, z: Bytes) -> Bytes {
+  // under Arm's DIT (decision 0619)
+  let dit = ct.dit_on()
+  let r = sign_hedged_dit(curve, priv, hash, z)
+  ct.dit_off(dit)
+  r
+}
+
+fn sign_hedged_dit(curve: Int, priv: Bytes, hash: Bytes, z: Bytes) -> Bytes {
   let w = workspace(curve)
   let c = base(w)
   let d = sk(c, 0)

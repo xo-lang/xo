@@ -59,6 +59,11 @@ pub const HW_SHA1: Int = 2048
 /// arm64 CPU, Linux's AT_HWCAP SHA512 bit). x86-64 runs the software
 /// compression.
 pub const HW_SHA512: Int = 4096
+/// Arm's FEAT_DIT (Armv8.4, decision 0619): PSTATE.DIT, which makes the
+/// time of the data processing instructions independent of their data.
+/// Every Apple arm64 CPU; Linux's AT_HWCAP DIT bit (Graviton2 and other
+/// Armv8.2 cores have none, where dit_set's instructions are undefined).
+pub const HW_DIT: Int = 8192
 /// The bit hw() keeps in its word once it has looked.
 const HW_KNOWN = 4
 /// rt.static_word: hw()'s word (0 until the first call).
@@ -72,6 +77,7 @@ const HWCAP_SHA1 = 32
 const HWCAP_SHA512 = 2097152
 const HWCAP_SHA2 = 64
 const HWCAP_CRC32 = 128
+const HWCAP_DIT = 16777216
 
 /// 1 when the emitter lowers this module's calls to instructions, else 0
 /// (the body: a wasm module, or code an xo older than decision 0231
@@ -111,7 +117,7 @@ pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)
   if k != 0 {
-    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32 | HW_SHA3 | HW_CRC32C | HW_VPCLMUL | HW_SHA1 | HW_SHA512)
+    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32 | HW_SHA3 | HW_CRC32C | HW_VPCLMUL | HW_SHA1 | HW_SHA512 | HW_DIT)
   }
   let f = if lowered() != 0 { detect() } else { 0 }
   rt.slot_store[Int](p, 0, f | HW_KNOWN, 0)
@@ -121,10 +127,10 @@ pub fn hw() -> Int {
 fn detect() -> Int {
   match target.arch {
     TargetArch.Arm64 => match target.os {
-      TargetOs.Darwin => HW_AES | HW_CLMUL | HW_SHA256 | HW_CRC32 | HW_SHA3 | HW_SHA1 | HW_SHA512
+      TargetOs.Darwin => HW_AES | HW_CLMUL | HW_SHA256 | HW_CRC32 | HW_SHA3 | HW_SHA1 | HW_SHA512 | HW_DIT
       TargetOs.Linux => {
         let h = linux.auxval(AT_HWCAP)
-        (if (h & HWCAP_AES) != 0 { HW_AES } else { 0 }) | (if (h & HWCAP_PMULL) != 0 { HW_CLMUL } else { 0 }) | (if (h & HWCAP_SHA2) != 0 { HW_SHA256 } else { 0 }) | (if (h & HWCAP_CRC32) != 0 { HW_CRC32 } else { 0 }) | (if (h & HWCAP_SHA1) != 0 { HW_SHA1 } else { 0 }) | (if (h & HWCAP_SHA512) != 0 { HW_SHA512 } else { 0 })
+        (if (h & HWCAP_AES) != 0 { HW_AES } else { 0 }) | (if (h & HWCAP_PMULL) != 0 { HW_CLMUL } else { 0 }) | (if (h & HWCAP_SHA2) != 0 { HW_SHA256 } else { 0 }) | (if (h & HWCAP_CRC32) != 0 { HW_CRC32 } else { 0 }) | (if (h & HWCAP_SHA1) != 0 { HW_SHA1 } else { 0 }) | (if (h & HWCAP_SHA512) != 0 { HW_SHA512 } else { 0 }) | (if (h & HWCAP_DIT) != 0 { HW_DIT } else { 0 })
       }
       _ => 0
     }
@@ -2198,6 +2204,13 @@ pub fn mlkem_mul_acc_soft(h: Int, f: Int, g: Int, gp: Int) {
     gi = gi.wrapping_add(8)
   }
 }
+
+/// Sets Arm's PSTATE.DIT to on (0 or 1) and returns its value before
+/// (decision 0619): `mrs` and `msr` of DIT (s3_3_c4_c2_5) on arm64, kept
+/// in place by both emitters. Call it only when hw() has HW_DIT (ct.dit_on
+/// does); the body, which amd64, wasm, riscv64 and an older xo run, does
+/// nothing and returns 0.
+pub fn dit_set(on: Int) -> Int { 0 }
 
 /// A count of time for elapsed time thresholds (fiber run and wait
 /// stamps): on arm64 the generic timer's virtual count (cntvct_el0, a

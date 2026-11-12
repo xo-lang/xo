@@ -65,7 +65,8 @@ DIT cost in that loop: +25% at -O0, +11% at -O2.
      faults when DIT is set (`mrs` in a test build only);
    - asynchronous preemption (decision 0318) declines while the
      interrupted code has DIT set: pool.async_signal reads PSTATE from the
-     ucontext (darwin arm_thread_state64.cpsr, Linux sigcontext.pstate;
+     ucontext (darwin arm_thread_state64.cpsr at 264, Linux
+     sigcontext.pstate at 448 in the ucontext, FreeBSD's spsr at 16 + 264;
      bit 24) and returns, as it does for a runtime lock; the monitor asks
      again at its next scan. A section is short (an RSA-2048 private
      operation, the longest, is about 1.5 ms), so a fiber holding DIT is
@@ -89,6 +90,31 @@ DIT cost in that loop: +25% at -O0, +11% at -O2.
    linux/arm64 host 1 measures DIT's cost on the wrapped paths (RSA
    decrypt and sign, ECDH P-256, X25519, Ed25519 sign, ML-KEM decaps,
    AES-GCM software path): reported in this ADR before it is Accepted.
+
+## Results
+
+Step 1 (2026-11-12, Xo Lang 3): cpu.dit_set, HW_DIT, ct.dit_on/dit_off,
+the preemption declines, and RSA's private_op, pkcs1_unpad and
+oaep_unpad wrapped. rsa_test.xo's dudect, 10^5 a pair on the Mac (M
+series), max |t| over 8 class pairs and 3 A/A pairs:
+
+| build | before | with DIT | control |
+|---|---|---|---|
+| LLVM -O0 (xo test) | 81.0 | 3.80 | 2678 |
+| native arm64 | 2.34 | 1.95 | 1127 |
+| LLVM -O2 | 1.67 | 3.15 | 15.6 |
+
+Step 2 (the same day): x25519.scalar_mult and base, nistec.public_key,
+ecdh and sign_hedged, ed25519.public_key and sign, mlkem's encaps_k and
+decaps_k wrapped; native/crypto, native/tls and cpu module tests pass on
+arm64 and LLVM (and cpu on wasm). Not wrapped: ct.bytes_eq (called per
+compare; Go's subtle.ConstantTimeCompare sets no DIT either) and the
+software AES and GHASH paths (every CPU with FEAT_DIT has the AES
+instructions, so they never run under it).
+
+Still to do before Accepted: the --ab
+cost on host 1, the linux/arm64 and amd64 rows, the test build check in
+fiber_yield.
 
 ## Consequences
 

@@ -2142,6 +2142,15 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.clobber()
       g.set(v, [])
     }
+    "rt.dit_set" => {
+      // decision 0619: PSTATE.DIT (s3_3_c4_c2_5, bit 24) set to the
+      // argument, its old value the result; kept, never merged or moved.
+      // d1 is written before d0 so d1 may share u0's register
+      let d = g.new_vreg(false)
+      let t = g.new_vreg(false)
+      let _i = g.add(Inst{kind: K_PLAIN, text: "lsl $d1, $u0, #24\nmrs $d0, s3_3_c4_c2_5\nmsr s3_3_c4_c2_5, $d1\nubfx $d0, $d0, #24, #1", defs: [d, t], us: [g.real(g.word(x.args[0]))], fl: IF_KEEP})
+      g.set(v, [d])
+    }
     "rt.ticks" | "rt.ticks_hz" => {
       // a read of the generic timer: kept, never merged or moved (keep)
       let reg = if g.f.name_is(x, "rt.ticks") { "cntvct_el0" } else { "cntfrq_el0" }

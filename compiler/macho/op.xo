@@ -990,6 +990,10 @@ pub fn encode_op_fix(o: Op, elf: Bool) -> Enc {
       if k == RX && o.m == "mrs" && sr == "cntfrq_el0" {
         return Enc{w: 0xd53be000 | r}
       }
+      // Arm's DIT (decision 0619, cpu.dit_set) by its generic name
+      if k == RX && sr == "s3_3_c4_c2_5" {
+        return Enc{w: (if o.m == "mrs" { 0xd53b42a0 } else { 0xd51b42a0 }) | r}
+      }
     }
     return none
   }

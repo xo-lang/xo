@@ -1,5 +1,22 @@
 # std/crypto changes
 
+## 2026-11-12: security: secret key operations under Arm's DIT
+
+- Kind: security
+- Commit: this push
+- Found by: the 0616 RSA review's dudect of the padding checks alone (std/native/llrt/rsa_test.xo): LLVM's -O0 test build leaked on Apple silicon (|t| 81 between PKCS #1 v1.5 padding classes) with no data dependent branch (gotchas/dudect-o0-llvm.md)
+- Go reference: crypto/subtle WithDataIndependentTiming and crypto/internal/fips140deps/cpu (go1.24, DIT on arm64)
+- Test: native/llrt/cpu_test.xo (dit_set sets and returns the bit); rsa_test.xo's dudect, 10^5 a pair on the Mac: LLVM -O0 max |t| 3.8 (was 81), native 1.9, LLVM -O2 3.1, controls seen
+- Shipped in: not yet released
+
+On arm64 CPUs with FEAT_DIT, the RSA private key operation (the CRT
+exponentiation and its check) and OAEP's and PKCS #1 v1.5's padding checks
+set Arm's DIT bit (cpu.dit_set through ct.dit_on and dit_off, decision
+0619) and restore it after; so do X25519 (scalar_mult, base), the NIST
+curves' public_key, ecdh and sign_hedged, Ed25519's public_key and sign,
+and ML-KEM's encapsulation and decapsulation. A fiber is not preempted
+while it holds DIT.
+
 ## 2026-11-12: feature: RSA encryption, OAEP and legacy PKCS #1 v1.5 (Go's crypto/rsa)
 
 - Kind: feature

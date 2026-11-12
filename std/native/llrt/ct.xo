@@ -9,7 +9,25 @@
 // the masked pick into a branch (test/codegen/consttime checks the code on
 // arm64 and LLVM, internal/llvm's TestConstantTimeLLVM the optimized
 // LLVM output on arm64 and x86-64).
+use native/llrt/cpu
 use native/rt
+
+/// Sets Arm's DIT bit for a constant time section and returns the old
+/// value for dit_off (decision 0619); 0 and nothing done on a CPU without
+/// FEAT_DIT, amd64 and wasm. The section between dit_on and dit_off makes
+/// no call that can park or yield (no I/O, channel, lock, sleep or spawn):
+/// DIT is the thread's, and a fiber switch does not carry it. Asynchronous
+/// preemption waits until the section ends.
+pub fn dit_on() -> Int {
+  if (cpu.hw() & cpu.HW_DIT) != 0 { cpu.dit_set(1) } else { 0 }
+}
+
+/// Restores the DIT bit dit_on returned (sections nest).
+pub fn dit_off(old: Int) {
+  if (cpu.hw() & cpu.HW_DIT) != 0 {
+    let _ = cpu.dit_set(old)
+  }
+}
 
 /// x, which the compiler may not reason about.
 pub fn barrier(x: Int) -> Int { rt.ct_barrier(x) }

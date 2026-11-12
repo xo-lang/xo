@@ -1001,6 +1001,9 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       clob = clob + ",~{memory},~{cc}"
       g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])}, i64 ${g.op(x.args[4])})")
     }
+    // decision 0619: PSTATE.DIT set to the argument, its old value the
+    // result (arm64 only, ssa call.xo)
+    "rt.dit_set" => g.set(v, "call i64 asm sideeffect \"lsl x9, $1, #24\\0Amrs $0, s3_3_c4_c2_5\\0Amsr s3_3_c4_c2_5, x9\\0Aubfx $0, $0, #24, #1\", \"=&r,r,~{x9}\"(i64 ${g.op(x.args[0])})")
     "rt.ticks" => g.set(v, "call i64 asm sideeffect \"mrs $0, cntvct_el0\", \"=r\"()")
     "rt.ticks_hz" => g.set(v, "call i64 asm sideeffect \"mrs $0, cntfrq_el0\", \"=r\"()")
     "rt.chacha_poly_seal4" | "rt.chacha_poly_open4" | "rt.chacha_poly_seal8" | "rt.chacha_poly_open8" => {

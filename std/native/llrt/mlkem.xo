@@ -503,6 +503,14 @@ pub fn encapsulate(ek: Bytes, m: Bytes) -> (Bytes, Bytes)? { encaps_k(ek, m, K76
 pub fn encapsulate_1024(ek: Bytes, m: Bytes) -> (Bytes, Bytes)? { encaps_k(ek, m, K1024) }
 
 fn encaps_k(ek: Bytes, m: Bytes, k: Int) -> (Bytes, Bytes)? {
+  // under Arm's DIT (decision 0619)
+  let dit = ct.dit_on()
+  let r = encaps_k_dit(ek, m, k)
+  ct.dit_off(dit)
+  r
+}
+
+fn encaps_k_dit(ek: Bytes, m: Bytes, k: Int) -> (Bytes, Bytes)? {
   if ek.len() != ek_size(k) || m.len() != 32 {
     return None
   }
@@ -525,6 +533,14 @@ pub fn decapsulate(seed: Bytes, c: Bytes) -> Bytes? { decaps_k(seed, c, K768) }
 pub fn decapsulate_1024(seed: Bytes, c: Bytes) -> Bytes? { decaps_k(seed, c, K1024) }
 
 fn decaps_k(seed: Bytes, c: Bytes, k: Int) -> Bytes? {
+  // under Arm's DIT (decision 0619)
+  let dit = ct.dit_on()
+  let r = decaps_k_dit(seed, c, k)
+  ct.dit_off(dit)
+  r
+}
+
+fn decaps_k_dit(seed: Bytes, c: Bytes, k: Int) -> Bytes? {
   let n = ct_size(k)
   if seed.len() != SEED_SIZE || c.len() != n {
     return None

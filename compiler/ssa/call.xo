@@ -298,6 +298,9 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     // the generic timer on arm64; elsewhere the body (mono_ns, 1e9 a
     // second)
     "ticks" | "ticks_hz" => if b.goarch == "arm64" { b.obj_name(fo) } else { "" }
+    // decision 0619: Arm's DIT bit; amd64, wasm and riscv64 run the body
+    // (no user mode equivalent)
+    "dit_set" => if b.goarch == "arm64" { "dit_set" } else { "" }
     // decision 0339: NEON on arm64; amd64 runs the portable body
     "ghash4" => if b.goarch == "arm64" { "ghash4" } else { "" }
     // the decision 0231 addendum's CRC-32 (IEEE): arm64 only; x86-64's

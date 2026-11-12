@@ -88,6 +88,14 @@ fn cswap(f: Int, g: Int, mask: Int) {
 /// The u coordinate of [scalar]point: scalar and point are 32 bytes each
 /// (RFC 7748 5, X25519).
 pub fn scalar_mult(scalar: Bytes, point: Bytes) -> Bytes {
+  // under Arm's DIT (decision 0619)
+  let dit = ct.dit_on()
+  let r = scalar_mult_dit(scalar, point)
+  ct.dit_off(dit)
+  r
+}
+
+fn scalar_mult_dit(scalar: Bytes, point: Bytes) -> Bytes {
   let w = raw.zero_ints(EXTRA)
   let e = addr(w)
   let x1 = e.wrapping_add(X1)
@@ -213,6 +221,14 @@ fn fe64_inv(h: Int, z: Int, s0: Int, s1: Int, s2: Int, s3: Int, s4: Int) {
 /// Y). Constant time in the scalar as scalar_mult; about 120,000
 /// instructions where the ladder took 390,000 (2026-10-18).
 pub fn base(scalar: Bytes) -> Bytes {
+  // under Arm's DIT (decision 0619)
+  let dit = ct.dit_on()
+  let r = base_dit(scalar)
+  ct.dit_off(dit)
+  r
+}
+
+fn base_dit(scalar: Bytes) -> Bytes {
   let w = raw.zero_ints(BEXTRA)
   let e = addr(w)
   // clamped as scalar_mult

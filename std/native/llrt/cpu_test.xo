@@ -97,3 +97,19 @@ test "keccak_f1600 is its body (the SHA3 extension where the CPU has it)" {
     }
   }
 }
+
+test "dit_set sets Arm's DIT bit and returns the old one, where the CPU has it (decision 0619)" {
+  if (hw() & HW_DIT) == 0 {
+    // the body: nothing set, 0 back
+    expect(dit_set(1)) == 0
+    expect(dit_set(0)) == 0
+    return
+  }
+  let start = dit_set(0)
+  expect(dit_set(1)) == 0
+  expect(dit_set(1)) == 1
+  expect(dit_set(0)) == 1
+  expect(dit_set(0)) == 0
+  let _ = dit_set(start)
+  expect(target.os != TargetOs.Darwin || target.arch != TargetArch.Arm64 || (hw() & HW_DIT) != 0) == true
+}

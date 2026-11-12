@@ -651,6 +651,14 @@ fn expand(seed: Bytes) -> (List[Int], List[Int]) {
 
 /// crypto.ed25519_public_key: seed is 32 bytes (crypto.xo checks it).
 pub fn public_key(seed: Bytes) -> Bytes {
+  // under Arm's DIT (decision 0619)
+  let dit = ct.dit_on()
+  let r = public_key_dit(seed)
+  ct.dit_off(dit)
+  r
+}
+
+fn public_key_dit(seed: Bytes) -> Bytes {
   let (a, _) = expand(seed)
   words_bytes(x25519.ed_base(a))
 }
@@ -659,6 +667,14 @@ pub fn public_key(seed: Bytes) -> Bytes {
 /// key (the seed, then its public key, used as stored, as Go's Sign
 /// does, which saves a base multiplication); crypto.xo checks the length.
 pub fn sign(key: Bytes, msg: Bytes) -> Bytes {
+  // under Arm's DIT (decision 0619)
+  let dit = ct.dit_on()
+  let r = sign_dit(key, msg)
+  ct.dit_off(dit)
+  r
+}
+
+fn sign_dit(key: Bytes, msg: Bytes) -> Bytes {
   let stored = key.len() == 64
   let (a, prefix) = expand(if stored { key[0..32] } else { key })
   let pk = if stored { words(key, 32) } else { x25519.ed_base(a) }

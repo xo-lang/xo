@@ -184,6 +184,14 @@ fn public_op(k: PublicKey, s: Bytes) -> Bytes? {
 /// c^dq mod q, h = qinv (m1 - m2) mod p, m = m2 + h q; then m^e = c is
 /// checked (none when not).
 fn private_op(k: PrivateKey, c: Bytes) -> Bytes? {
+  // under Arm's DIT (decision 0619): the exponentiation and the check
+  let dit = ct.dit_on()
+  let r = private_op_dit(k, c)
+  ct.dit_off(dit)
+  r
+}
+
+fn private_op_dit(k: PrivateKey, c: Bytes) -> Bytes? {
   let pl = limbs_of(k.p)
   let ql = limbs_of(k.q)
   let pm = bigmod.modulus(pl)
@@ -556,6 +564,7 @@ pub fn decrypt_oaep_fn(k: PrivateKey, hl: Int, hf: fn(Bytes) -> Bytes, c: Bytes,
 /// Go's fips140/rsa decryptOAEP; it is its own function so its timing is
 /// tested alone (rsa_test.xo's dudect, the 0616 RSA review's F1).
 pub fn oaep_unpad(hl: Int, hf: fn(Bytes) -> Bytes, em: Bytes, lhash: Bytes) -> (Int, Bytes, Int) {
+  let dit = ct.dit_on()
   let kk = em.len()
   let first_zero = ct.mask_eq(Int(em[0]), 0)
   let masked_seed = em[1..1 + hl]
@@ -575,6 +584,7 @@ pub fn oaep_unpad(hl: Int, hf: fn(Bytes) -> Bytes, em: Bytes, lhash: Bytes) -> (
     looking = ct.pick(eq1, 0, looking)
     invalid = ct.pick(looking & ~eq0, -1, invalid)
   }
+  ct.dit_off(dit)
   (first_zero & lhash_ok & ~invalid & ~looking, db, index)
 }
 
@@ -617,6 +627,7 @@ pub fn decrypt_pkcs1v15(k: PrivateKey, c: Bytes) -> Bytes? {
 /// its timing is tested alone (rsa_test.xo's dudect, the 0616 RSA review's
 /// F1).
 pub fn pkcs1_unpad(em: Bytes) -> (Int, Int) {
+  let dit = ct.dit_on()
   let kk = em.len()
   let first_zero = ct.mask_eq(Int(em[0]), 0)
   let second_two = ct.mask_eq(Int(em[1]), 2)
@@ -629,5 +640,6 @@ pub fn pkcs1_unpad(em: Bytes) -> (Int, Int) {
     looking = ct.pick(eq0, 0, looking)
   }
   let ps_ok = ~ct.mask_lt(index.wrapping_sub(2), 8)
+  ct.dit_off(dit)
   (first_zero & second_two & ~looking & ps_ok, index)
 }

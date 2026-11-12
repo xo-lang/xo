@@ -3929,6 +3929,16 @@ pub fn generate_key(r: Rand, alg: KeyAlg, bits: Int = 2048) -> PrivateKey ! KeyE
   On the Go backend the ciphertext comes from Go's `crypto/rsa`, which
   since Go 1.26 draws its own randomness (`r` gives up the same number of
   bytes).
+- Constant time on the CPU (decision 0619): on arm64 CPUs with FEAT_DIT
+  (every Apple CPU; Linux reports it in AT_HWCAP), the RSA private key
+  operation and decryption's padding checks, X25519, the NIST curves' key
+  generation, ECDH and ECDSA signing, Ed25519's key and signing, and
+  ML-KEM's encapsulation and decapsulation run with Arm's DIT bit set, as
+  Go 1.24's crypto does, so their timing does not follow the data in any
+  build (native or LLVM, any optimization level). x86-64 has no user mode
+  equivalent (Intel's DOITM is set by the kernel; AMD has none), nor do
+  arm64 CPUs without FEAT_DIT and wasm: there the constant time property
+  rests on the code alone (no branch, select or index on a secret).
 - RSA keys verify and sign from 1024 bits (Go 1.24's minimum: `crypto/rsa:
   512-bit keys are insecure (see ...)`), and a key's public values are
   checked as Go checks them (`crypto/rsa: public exponent is even`, ...);
