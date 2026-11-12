@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-12: fix: encrypt_pkcs1v15 refuses a small key before a long message
+
+- Kind: fix
+- Commit: this push
+- Found by: the 0616 RSA review's second reader (F11)
+- Go reference: crypto/rsa EncryptPKCS1v15 (checkPublicKeySize, then ErrMessageTooLong), go1.26.1
+- Test: std/native/crypto_test.xo "rsa: a key below 1024 bits parses but every operation refuses it" (native, LLVM); internal/stdtest TestRsaFuzz now also tries every ciphertext length from 0 to k + 2 (F4)
+- Shipped in: not yet released
+
+`crypto.encrypt_pkcs1v15` with a key below 1024 bits and a message too long for it returned "message too long"; it now returns the insecure key error, as Go and as `encrypt_oaep` do.
+
 ## 2026-11-12: security: secret key operations under Arm's DIT
 
 - Kind: security

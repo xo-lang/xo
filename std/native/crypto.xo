@@ -1601,6 +1601,12 @@ fn encrypt_pkcs1v15(r: Rand, k: PublicKey, msg: Bytes) -> Bytes ! crypto.KeyErr 
   if k.kind != crypto.KeyAlg.Rsa {
     return Err(key_err("crypto: encrypt_pkcs1v15 needs an RSA key"))
   }
+  // the key before the message's length, as Go's EncryptPKCS1v15
+  // (checkPublicKeySize first; the 0616 RSA review's F11)
+  let e = rsa_public_err(k.n, k.e)
+  if !e.is_empty() {
+    return Err(key_err(e))
+  }
   let n = rsa.size(k.n) - msg.len() - 3
   if n < 8 {
     return Err(key_err("crypto/rsa: message too long for RSA key size"))

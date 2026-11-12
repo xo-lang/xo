@@ -3050,6 +3050,10 @@ test "rsa: a key below 1024 bits parses but every operation refuses it, as Go (0
     } else {
       expect(enc.is_ok()) == true
     }
+    // the key is refused before the message's length, as Go's
+    // EncryptPKCS1v15 (the 0616 RSA review's F11)
+    let long = encrypt_pkcs1v15(os.rand, k, b"m".repeat(200)).map_err(fn(e) { e.msg })
+    expect(long) == Err(if bits < 1024 { "crypto/rsa: 1020-bit keys are insecure (see https://go.dev/pkg/crypto/rsa#hdr-Minimum_key_size)" } else { "crypto/rsa: message too long for RSA key size" })
   }
 }
 

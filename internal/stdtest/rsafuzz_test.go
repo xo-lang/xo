@@ -11,7 +11,8 @@ package stdtest
 // bytes; and valid ones of every length), plus ciphertexts at and above
 // the modulus. Every case must decrypt to Go's outcome, the message or
 // the error text, on each backend. XO_RSAFUZZ_SEED (default 2),
-// XO_RSAFUZZ_N cases (default 600) and XO_RSAFUZZ_BACKENDS (default arm64
+// XO_RSAFUZZ_N random cases (default 600) after one of every ciphertext
+// length from 0 to k + 2, and XO_RSAFUZZ_BACKENDS (default arm64
 // and llvm) as the json fuzz's knobs.
 
 import (
@@ -108,8 +109,21 @@ func rsfCases(r *mrand.Rand, k *rsa.PrivateKey, n int) []rsfCase {
 		}
 		cs = append(cs, rsfCase{scheme, hn, label, c, want})
 	}
+	// every ciphertext length from 0 to k + 2 once, the schemes taking
+	// turns (the 0616 RSA review's F4: the random cases below reach only
+	// some lengths): bytes at random, so most are not below the modulus
+	// at length k and every one fails Go's checks as Xo's must
+	for l := 0; l <= ks+2; l++ {
+		c := make([]byte, l)
+		r.Read(c)
+		if l%2 == 0 {
+			add("oaep", "Sha256", "", c)
+		} else {
+			add("pkcs1v15", "Sha256", "", c)
+		}
+	}
 	labels := []string{"", "l", "a longer label"}
-	for len(cs) < n {
+	for len(cs) < n+ks+3 {
 		hx := rsfHashes[r.Intn(len(rsfHashes))]
 		hl := hx.new().Size()
 		label := labels[r.Intn(len(labels))]

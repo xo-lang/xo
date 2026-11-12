@@ -2572,6 +2572,10 @@ klauspost/compress's gzhttp:
 ## 5. std/json
 
 ```
+/// encode does not escape `<`, `>` and `&` (Go's Marshal does: Xo writes
+/// what Go's Encoder writes with SetEscapeHTML(false)); JSON put into an
+/// HTML `<script>` element by hand goes through html_escape first
+/// (std/template's html mode escapes JSON data itself).
 pub fn encode[T: Json](v: T) -> Bytes
 pub fn encode_str[T: Json](v: T) -> Str
 pub fn decode[T: Json](data: Bytes) -> T ! DecodeErr
