@@ -128,7 +128,7 @@ A 2xx answer to an HTTP/1 CONNECT turns the connection into a tunnel for the cli
 
 An HTTP/2 response's Connection, Keep-Alive, Proxy-Connection, Transfer-Encoding and Upgrade fields, and a Content-Length of any form, reached the program as received. A reverse proxy could then write a malformed Content-Length to an HTTP/1 client of a HEAD request or of HTTP/1.0 (a response smuggling class). These fields are now dropped, as in Go; Content-Length stays only as one run of digits all its values agree on.
 
-- Remote trigger: an HTTP/2 server the program talks to.
+- Remote trigger: an HTTP/2 server the program talks to. A Content-Length is kept only as Go's ParseUint(v, 10, 63) takes it: digits whose value is at most 2^63 - 1 (Lang 2's review: a longer run of digits passed before).
 
 ## 2026-11-13: security: a streamed request's declared trailer names are capped at 64
 

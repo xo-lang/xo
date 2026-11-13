@@ -5029,6 +5029,18 @@ fn h2_framing_fields(hk: List[Str], hv: List[Str]) -> (List[Str], List[Str]) {
           digits = false
         }
       }
+      if digits {
+        // Go's ParseUint(v, 10, 63): at most 2^63 - 1, leading zeros
+        // allowed
+        var z = 0
+        while z < v.len() - 1 && v.bytes()[z] == 48 {
+          z += 1
+        }
+        let d = v[z..]
+        if d.len() > 19 || (d.len() == 19 && d > "9223372036854775807") {
+          digits = false
+        }
+      }
       if !digits || (cl_n > 0 && v != cl) {
         cl_ok = false
       }
