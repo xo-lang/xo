@@ -25,7 +25,14 @@ const IFACE_TID = "xo.tid"
 fn (var b: Builder) iface_type(t: Int, obj: Int) -> Int {
   let name = "xo.iface[${b.type_name(b.impl_named(t))}]"
   let (st, created) = b.m.named(name, Kind.Struct)
-  if !created {
+  // a type a replayed front end cache entry made (fecache.xo's named
+  // types, made before the entry's bodies decode) has its shape but none
+  // of this builder's side tables: its methods (ifaces) and, in option
+  // B's form, each slot's function type (itab_ft); they are made here
+  // the first time the builder lowers it, the same fields set again
+  // (2026-11-13: log.record built from source after a replay saw each
+  // slot as its Int code word, XO1201 on windows/amd64)
+  if !created && b.ifaces.contains(st) {
     return st
   }
   b.ifaces[st] = t

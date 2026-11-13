@@ -3934,3 +3934,45 @@ func TestHollowWholeHitTexts(t *testing.T) {
 		t.Errorf("the kept text of a whole hit differs from a cold build's (%d bytes against %d)", len(warm), len(cold))
 	}
 }
+
+// TestFrontCacheReplayMadeInterface: an interface value type a replayed
+// front end cache entry made (fecache.xo makes an entry's named types
+// before its bodies decode) is lowered again by the builder, with its
+// methods and slot function types (iface_type's ifaces, itab_ft), when a
+// body built from source uses it. On an empty cache, log_state's build
+// records entries that make xo.iface[log.Handler]; log_error's then
+// replays them and builds log.record from source, which saw each slot as
+// its Int code word: XO1201 at std/native/log.xo (2026-11-13, the
+// 2-hourly windows/amd64 cross build; the host target too; 0.51.0).
+func TestFrontCacheReplayMadeInterface(t *testing.T) {
+	t.Parallel()
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-feiface-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(work) })
+	for _, target := range [][]string{{"--backend=arm64"}, {"--backend=amd64", "--target=windows/amd64"}} {
+		cache := filepath.Join(work, "cache-"+strings.ReplaceAll(target[len(target)-1], "/", "-"))
+		for _, prog := range []string{"log_state", "log_error"} {
+			args := append([]string{"build"}, target...)
+			args = append(args, "-o", filepath.Join(work, "out", prog+progExe), ".")
+			cmd := testtmp.Guard(exec.Command(xo, args...))
+			cmd.Dir = filepath.Join("..", "llvm", "testdata", "golden", prog)
+			cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_FE_KEEP_DIR="+filepath.Join(work, "fe-bad"))
+			log, err := cmd.CombinedOutput()
+			if err != nil || strings.Contains(string(log), "did not replay") {
+				t.Errorf("%v: xo build %s after the cache was filled: %v\n%s", target, prog, err, log)
+			}
+		}
+	}
+}

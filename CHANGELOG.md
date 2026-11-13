@@ -16,6 +16,7 @@ Go 1.26.11 for the Go backend). The release notes (the GitHub release) group
 these entries; the two breaking changes (fields named `-` on the wire, decision
 0622; protocol error text quoted, GO-2026-5039) come first, each with its migration.
 
+- Fix (xo build, every backend): a build after another program's build filled the front end cache no longer fails with XO1201 at std/native/log.xo (`a call of the interface method Handler.enabled with a missing or var argument`): a replayed function's interface value type gets its method tables made again (compiler/ssa iface_type; regression test internal/arm64 TestFrontCacheReplayMadeInterface). The failure was an error, never wrong code. Affected: 0.51.0 before this respin only.
 - Security (std/http, native backends): a server closes the connection after a request with both Transfer-Encoding and Content-Length, framing it by chunked as RFC 9112 6.3 requires (request smuggling class). Affected: 0.50.1 and earlier.
 - Security (std/http, native backends): a client refuses a Host with CR or LF (`http: invalid Host header`) and writes a User-Agent's CR and LF as spaces, as Go (GO-2023-1878). Affected: 0.50.1 and earlier.
 - Security (std/http, all backends): a CONNECT ends HTTP on its connection, as Go 1.26.11 (GO-2026-6613, GO-2026-6605): the server closes after any answer and sends a 2xx one without framing fields, the client never pools the connection (send or open), and ReverseProxy answers CONNECT 405. Affected: 0.50.1 and earlier.
