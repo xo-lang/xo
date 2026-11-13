@@ -7,7 +7,7 @@
 #           (CONFIGS "go xo-arm64 xo-llvm", REPS runs, medians):
 #           requests per second and the server's CPU microseconds per
 #           request, p99 latency shown beside them
-#   proxy   bench/perf/httpproxy/measure.sh: a 100 MB body through Xo's
+#   proxy   bench/perf/httpproxy/measure.sh: a 1 GiB body through Xo's
 #           reverse_proxy and Go's httputil.ReverseProxy (best wall of 5)
 #   stream  bench/perf/httpstream/measure.sh: a 100 MB body read by Xo's
 #           client and Go's, streamed and whole (best wall of 5)
@@ -48,7 +48,8 @@ awk -F'|' '
 	}' "$OUT/crud.txt"
 
 # proxy: "<proxy> <min wall s> <peak RSS bytes>", gotwin is Go's
-sh "$here/../httpproxy/measure.sh" "$XO" "$OUT/proxy" arm64 llvm >"$OUT/proxy.txt"
+# (1 GiB: 100 MB crosses loopback in about 25 ms, too short to judge)
+SIZE=${PROXY_SIZE:-1073741824} sh "$here/../httpproxy/measure.sh" "$XO" "$OUT/proxy" arm64 llvm >"$OUT/proxy.txt"
 awk '{ w[$1] = $2 } END { print "row proxy arm64 wall_s", w["gotwin"], w["arm64"]; print "row proxy llvm wall_s", w["gotwin"], w["llvm"] }' "$OUT/proxy.txt"
 
 # stream: "<client> <mode> <min wall s> <min peak RSS bytes>"
