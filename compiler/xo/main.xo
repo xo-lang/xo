@@ -2264,7 +2264,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // XO_WINSYSROOT's headers, its libraries' import libraries read by
       // the linker); no --race or PDB yet
       if o.race {
-        fail(os, "windows/arm64 is experimental (decision 0569): it links no --race yet")
+        fail(os, "--race: windows/arm64 has no race runtime: ThreadSanitizer has no windows/aarch64 platform (decision 0569)")
       }
       let xo_as = o.assembler != "cc"
       let clang = find_clang(os)
@@ -2436,13 +2436,8 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // another target that links with cc (a `use c` source, --ld=cc):
       // the host's cc does not link it, and the build stopped at its
       // assembly with exit 0 and no binary (Intel field report b04)
-      let why = if march == "arm64" && tgoos == "windows" {
-        // decision 0569 stage 1: the assembly (clang -target
-        // aarch64-windows-msvc assembles it); pelink's arm64 is next
-        "windows/arm64 is experimental (decision 0569): xo writes its assembly but does not link it yet: ${s}"
-      } else {
-        "${tg} links with a C compiler (a `use c` source, --ld=cc, or a ${tgoos} program from ${cc_host}), and xo does not cross link with one: build it on ${tg} (its assembly: ${s})"
-      }
+      // (windows/arm64 never gets here: Xo's PE linker links it above)
+      let why = "${tg} links with a C compiler (a `use c` source, --ld=cc, or a ${tgoos} program from ${cc_host}), and xo does not cross link with one: build it on ${tg} (its assembly: ${s})"
       if o.skip_unsupported {
         return Native{skipped: why}
       }
