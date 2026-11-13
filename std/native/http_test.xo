@@ -1858,3 +1858,15 @@ test "a bare Listener's chunked and close delimited responses, and the request i
     expect(req.starts_with("GET /one?x=1 HTTP/1.1\r\nHost: ")) == true
   }
 }
+
+test "a bad escape in the user stops at the colon before the password, as Go's url.Parse" {
+  // http URL fuzz seed 2 (decision 0616): Go unescapes the user and the
+  // password apart, so its error names "%s", not "%s:"
+  match http.parse_url("https://%s:er@h/a") {
+    Ok(_) => expect("parsed") == "an error"
+    Err(e) => {
+      expect(e.msg.contains("invalid URL escape \"%s\"")) == true
+      expect(e.msg.contains("\"%s:\"")) == false
+    }
+  }
+}

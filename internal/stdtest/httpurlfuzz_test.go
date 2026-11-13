@@ -305,6 +305,28 @@ func ufCoverage(t *testing.T, cases []ufURL) {
 	}
 }
 
+// ufRegress are inputs a fuzz run found a mismatch on, shrunk; every run
+// checks them first, whatever its seed (decision 0616: a defect's case
+// joins the module's corpus with its fix).
+var ufRegress = []string{
+	// seed 2 (2026-11-14): Go unescapes the user and the password apart,
+	// so a bad escape's quoted bytes stop at the colon ("%s", not "%s:")
+	"https://%s:er@h/a",
+	// seed 2: netip's "(at ...)" of a rest that is not UTF-8, quoted byte
+	// for byte as Go does
+	"http://[fe\xff0::1%25eth0]/",
+}
+
+// ufRegressions is ufRegress with Go's answers.
+func ufRegressions() []ufURL {
+	var out []ufURL
+	for _, r := range ufRegress {
+		raw := []byte(r)
+		out = append(out, ufURL{raw: raw, want: ufGo(raw, false), wantReq: ufGo(raw, true)})
+	}
+	return out
+}
+
 // TestHttpUrlFuzz runs the generated cases with url_parse on arm64 and LLVM
 // and expects Go's net/url answer for each. XO_URLFUZZ_SEED sets the seed
 // (default 68), XO_URLFUZZ_N the case count (default 2000),
@@ -315,7 +337,7 @@ func TestHttpUrlFuzz(t *testing.T) {
 	}
 	n := envInt(t, "XO_URLFUZZ_N", 2000)
 	backends := envBackends("XO_URLFUZZ_BACKENDS", []string{"arm64", "llvm"})
-	cases := ufCases(rand.New(rand.NewSource(int64(envInt(t, "XO_URLFUZZ_SEED", 68)))), n)
+	cases := append(ufRegressions(), ufCases(rand.New(rand.NewSource(int64(envInt(t, "XO_URLFUZZ_SEED", 68)))), n)...)
 	ufCoverage(t, cases)
 	for i, c := range cases {
 		// the generated test names a failure by case number; this line is

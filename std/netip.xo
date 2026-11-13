@@ -58,10 +58,10 @@ pub fn parse_addr(s: Str) -> Addr ! ParseErr {
       return parse_ipv6(s)
     }
     if c == 37 {
-      return Err(addr_err(s, "missing IPv6 address", ""))
+      return Err(addr_err(s, "missing IPv6 address", b""))
     }
   }
-  Err(addr_err(s, "unable to parse IP", ""))
+  Err(addr_err(s, "unable to parse IP", b""))
 }
 
 /// The addresses of host, in the order Net.dial tries them (Go's
@@ -483,7 +483,10 @@ pub fn (p: Prefix) overlaps(o: Prefix) -> Bool {
 /// Go's Prefix.IsSingleIP: the length is the family's.
 pub fn (p: Prefix) is_single_ip() -> Bool { p.addr.bits != 0 && p.len == p.addr.bits }
 
-fn addr_err(input: Str, msg: Str, at: Str) -> ParseErr {
+/// at is the input's rest from where parsing stopped, as bytes: Go quotes
+/// it byte for byte (an invalid byte as \xHH), so a rest that is not UTF-8
+/// keeps its "(at ...)" (fuzz seed 2: ParseAddr("fe\xff0::1%eth0")).
+fn addr_err(input: Str, msg: Str, at: Bytes) -> ParseErr {
   if at.is_empty() {
     return ParseErr{msg: "ParseAddr(${input.quote()}): ${msg}"}
   }
@@ -616,31 +619,31 @@ fn ipv4_fields(input: Str, off: Int, end: Int) -> Int ! ParseErr {
     let c = s[i]
     if c >= 48 && c <= 57 {
       if dig == 1 && val == 0 {
-        return Err(addr_err(input, "IPv4 field has octet with leading zero", ""))
+        return Err(addr_err(input, "IPv4 field has octet with leading zero", b""))
       }
       val = val * 10 + Int(c) - 48
       dig += 1
       if val > 255 {
-        return Err(addr_err(input, "IPv4 field has value >255", ""))
+        return Err(addr_err(input, "IPv4 field has value >255", b""))
       }
     } else if c == 46 {
       if i == 0 || i == s.len() - 1 || s[i - 1] == 46 {
-        return Err(addr_err(input, "IPv4 field must have at least one digit", s[i..].to_str() ?? ""))
+        return Err(addr_err(input, "IPv4 field must have at least one digit", s[i..]))
       }
       if pos == 3 {
-        return Err(addr_err(input, "IPv4 address too long", ""))
+        return Err(addr_err(input, "IPv4 address too long", b""))
       }
       fields = (fields << 8) | val
       pos += 1
       val = 0
       dig = 0
     } else {
-      return Err(addr_err(input, "unexpected character", s[i..].to_str() ?? ""))
+      return Err(addr_err(input, "unexpected character", s[i..]))
     }
     i += 1
   }
   if pos < 3 {
-    return Err(addr_err(input, "IPv4 address too short", ""))
+    return Err(addr_err(input, "IPv4 address too short", b""))
   }
   (fields << 8) | val
 }
@@ -658,7 +661,7 @@ fn hexval(c: UInt8) -> Int {
 }
 
 /// The text of b from p (an error's `at`).
-fn rest_text(b: Bytes, p: Int) -> Str { b[p..].to_str() ?? "" }
+fn rest_text(b: Bytes, p: Int) -> Bytes { b[p..] }
 
 fn parse_ipv6(input: Str) -> Addr ! ParseErr {
   var s = input
@@ -672,7 +675,7 @@ fn parse_ipv6(input: Str) -> Addr ! ParseErr {
     s = input[0..pz]
     zone = input[pz + 1..]
     if zone.is_empty() {
-      return Err(addr_err(input, "zone must be a non-empty string", ""))
+      return Err(addr_err(input, "zone must be a non-empty string", b""))
     }
   }
   // the groups read so far, as the words of the 16 bytes (group g at
@@ -772,7 +775,7 @@ fn parse_ipv6(input: Str) -> Addr ! ParseErr {
   }
   if i < 16 {
     if ellipsis < 0 {
-      return Err(addr_err(input, "address string too short", ""))
+      return Err(addr_err(input, "address string too short", b""))
     }
     // the groups from the :: on move right by the missing zeros
     let mh = bits_mask(8 * ellipsis)
@@ -791,7 +794,7 @@ fn parse_ipv6(input: Str) -> Addr ! ParseErr {
     return mk(128, (th & mh) | nh, (tl & ml) | nl, zone)
   }
   if ellipsis >= 0 {
-    return Err(addr_err(input, "the :: must expand to at least one field of zeros", ""))
+    return Err(addr_err(input, "the :: must expand to at least one field of zeros", b""))
   }
   mk(128, th, tl, zone)
 }

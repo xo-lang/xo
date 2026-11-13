@@ -509,10 +509,14 @@ pub fn url_parse(s: Str, via_request: Bool) -> Url {
         }
         u += 1
       }
+      // Go unescapes the user and the password apart, so a bad escape's
+      // three bytes stop at the `:` between them ("%s" of "%s:er@h")
+      let ucolon = find(s, 58, a, at)
       u = a
       while u < at {
         if b[u] == 37 {
-          let left = at - u
+          let seg_end = if ucolon >= 0 && u < ucolon { ucolon } else { at }
+          let left = seg_end - u
           if left < 3 || (cls(Int(b[u + 1])) & HEX) == 0 || (cls(Int(b[u + 2])) & HEX) == 0 {
             let kk = if left < 3 { left } else { 3 }
             return url_fail("invalid URL escape " + go_quote_c(rawb.str_slice(s, u, u + kk)))
