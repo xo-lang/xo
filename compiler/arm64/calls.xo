@@ -1278,7 +1278,9 @@ fn (var g: G) call_op(v: Int) {
   }
   if ci >= 0 {
     var args: List[Src] = []
-    for a in g.f.args_iter(x.args) {
+    let (sp1, ep1) = g.f.args_span(x.args)
+    for ak1 in sp1..ep1 {
+      let a = g.f.argpool[ak1]
       for w in g.words(a) {
         args.push(rsrc(w))
       }
@@ -1901,7 +1903,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
           cl.push(FP_BASE + r)
         }
         var us: List[Int] = []
-        for a in g.f.args_iter(x.args) {
+        let (sp2, ep2) = g.f.args_span(x.args)
+        for ak2 in sp2..ep2 {
+          let a = g.f.argpool[ak2]
           us.push(g.real(g.word(a)))
         }
         let d = g.new_vreg(false)
@@ -2021,7 +2025,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         cl.push(FP_BASE + r)
       }
       var us: List[Int] = []
-      for a in g.f.args_iter(x.args) {
+      let (sp3, ep3) = g.f.args_span(x.args)
+      for ak3 in sp3..ep3 {
+        let a = g.f.argpool[ak3]
         us.push(g.real(g.word(a)))
       }
       let _i = g.add(Inst{kind: K_PLAIN, text: ssa.sha256_ni_loop_lines("$u0", "$u1", "$u2", "$u3", "%r9", "%r10").join("\n"), us: us, fl: IF_X86, clobbers: cl})
@@ -2049,7 +2055,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         cl.push(FP_BASE + r)
       }
       var us: List[Int] = []
-      for a in g.f.args_iter(x.args) {
+      let (sp4, ep4) = g.f.args_span(x.args)
+      for ak4 in sp4..ep4 {
+        let a = g.f.argpool[ak4]
         us.push(g.real(g.word(a)))
       }
       let _i = g.add(Inst{kind: K_PLAIN, text: ssa.sha1_ni_loop_lines("$u0", "$u1", "$u2", "%r9", "%r10").join("\n"), us: us, fl: IF_X86, clobbers: cl})
@@ -2101,7 +2109,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         cl.push(FP_BASE + r)
       }
       var us: List[Int] = []
-      for a in g.f.args_iter(x.args) {
+      let (sp5, ep5) = g.f.args_span(x.args)
+      for ak5 in sp5..ep5 {
+        let a = g.f.argpool[ak5]
         us.push(g.real(g.word(a)))
       }
       let nm = g.f.name_of(x)
@@ -2119,7 +2129,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         cl.push(FP_BASE + r)
       }
       var us: List[Int] = []
-      for a in g.f.args_iter(x.args) {
+      let (sp6, ep6) = g.f.args_span(x.args)
+      for ak6 in sp6..ep6 {
+        let a = g.f.argpool[ak6]
         us.push(g.real(g.word(a)))
       }
       let n = if g.f.name_is(x, "rt.chacha_stream4") { "$u3" } else { "" }
@@ -2233,7 +2245,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         cl.push(FP_BASE + r)
       }
       var us: List[Int] = []
-      for a in g.f.args_iter(x.args) {
+      let (sp7, ep7) = g.f.args_span(x.args)
+      for ak7 in sp7..ep7 {
+        let a = g.f.argpool[ak7]
         us.push(g.real(g.word(a)))
       }
       let t = ssa.aes_gcm8_x86_lines(nr, name.contains("enc"), "$u0", "$u1", "$u2", "$u3", "$u4", "$u5", "$u6").join("\n")
@@ -2326,7 +2340,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let name = g.f.name_of(x)
       let ls = if name == "rt.mlkem_ntt" { ssa.mlkem_ntt_neon_lines("$u0", "$u1") } else if name == "rt.mlkem_inverse_ntt" { ssa.mlkem_inverse_ntt_neon_lines("$u0", "$u1") } else { ssa.mlkem_mul_acc_neon_lines("$u0", "$u1", "$u2", "$u3") }
       var us: List[Int] = []
-      for a in g.f.args_iter(x.args) {
+      let (sp8, ep8) = g.f.args_span(x.args)
+      for ak8 in sp8..ep8 {
+        let a = g.f.argpool[ak8]
         us.push(g.real(g.word(a)))
       }
       let _i = g.add(Inst{kind: K_PLAIN, text: ls.join("\n"), us: us, clobbers: cl})
@@ -4250,7 +4266,9 @@ fn (var g: G) rt_call(v: Int) {
   // `rt.rs_*` functions take their Str operands as the string object
   // (the first is consumed, decision 0074); the others its bytes
   let obj = name0.starts_with("rt.rs_")
-  for a in g.f.args_iter(x.args) {
+  let (sp9, ep9) = g.f.args_span(x.args)
+  for ak9 in sp9..ep9 {
+    let a = g.f.argpool[ak9]
     let ws = g.words(a)
     match g.vkind(a) {
       Int | Bool | List | Handle | Float => args.push(rsrc(ws[0]))
@@ -4311,7 +4329,9 @@ fn (var g: G) rt_call(v: Int) {
     // a thunk, as a platform call (x86win.xo); its words as passed above,
     // and a Str result's length slot last
     var sig = StrBuilder.new()
-    for a in g.f.args_iter(x.args) {
+    let (sp10, ep10) = g.f.args_span(x.args)
+    for ak10 in sp10..ep10 {
+      let a = g.f.argpool[ak10]
       sig.write(match g.vkind(a) {
         Float => "f"
         Str | Func => "ii"
@@ -4517,7 +4537,9 @@ fn (var g: G) platform_call(v: Int) {
   }
   var args: List[Src] = []
   var us: List[Int] = []
-  for a in g.f.args_iter(x.args) {
+  let (sp11, ep11) = g.f.args_span(x.args)
+  for ak11 in sp11..ep11 {
+    let a = g.f.argpool[ak11]
     let ws = g.words(a)
     match g.vkind(a) {
       Int | Float => {
@@ -4554,7 +4576,9 @@ fn (var g: G) platform_call(v: Int) {
     }
     // Win64 through a thunk (x86win.xo)
     var sig = StrBuilder.new()
-    for a in g.f.args_iter(x.args) {
+    let (sp12, ep12) = g.f.args_span(x.args)
+    for ak12 in sp12..ep12 {
+      let a = g.f.argpool[ak12]
       sig.write(if g.vkind(a) == ssa.Kind.Float { "f" } else { "i" })
     }
     call_sym = g.w64_sym(sym, sig.freeze())

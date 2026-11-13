@@ -1634,7 +1634,9 @@ fn (var g: G) instr1(v: Int) {
         // is loaded and kept until the Return (0564 (k): fuzz_check's
         // `return (c, ...)` spilled c's 608 words)
         var w0 = 0
-        for a in g.f.args_iter(x.args) {
+        let (sp1, ep1) = g.f.args_span(x.args)
+        for ak1 in sp1..ep1 {
+          let a = g.f.argpool[ak1]
           let n = g.nwords(g.vty(a))
           let (ptr, ok) = g.mem_of(a)
           if ok && n >= RET_MEMCPY_MIN && !g.x86 && g.os != "windows" {
@@ -1654,7 +1656,9 @@ fn (var g: G) instr1(v: Int) {
         return
       }
       var ws: List[Int] = []
-      for a in g.f.args_iter(x.args) {
+      let (sp2, ep2) = g.f.args_span(x.args)
+      for ak2 in sp2..ep2 {
+        let a = g.f.argpool[ak2]
         for w in g.words(a) {
           ws.push(w)
         }
@@ -2195,7 +2199,9 @@ fn (var g: G) decided(c: Int) -> Bool? {
   if !(x.op is ssa.Op.Eq | ssa.Op.Ne | ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge) || x.args.len() != 2 {
     return None
   }
-  for a in g.f.args_iter(x.args) {
+  let (sp3, ep3) = g.f.args_span(x.args)
+  for ak3 in sp3..ep3 {
+    let a = g.f.argpool[ak3]
     let t = ssa.ty_of(g.f.values[a].tb)
     if t < 0 || g.kind(t) != ssa.Kind.Int {
       return None
@@ -2277,7 +2283,9 @@ fn (var g: G) nonzero_or(v: Int) -> Bool {
   if x.op != ssa.Op.Or || x.args.len() != 2 {
     return false
   }
-  for a in g.f.args_iter(x.args) {
+  let (sp4, ep4) = g.f.args_span(x.args)
+  for ak4 in sp4..ep4 {
+    let a = g.f.argpool[ak4]
     let (k, ok) = g.const_int(a)
     if ok && k != 0 {
       return true
@@ -2517,7 +2525,9 @@ fn (g: G) join_tests(j: Int) -> Bool {
       continue
     }
     var hit = false
-    for a in g.f.args_iter(x.args) {
+    let (sp5, ep5) = g.f.args_span(x.args)
+    for ak5 in sp5..ep5 {
+      let a = g.f.argpool[ak5]
       hit = hit || known.contains(a)
     }
     if !hit {
@@ -3042,7 +3052,9 @@ fn (g: G) from_memory(v: Int, depth: Int) -> Bool {
   if depth == 0 || x.op is ssa.Op.Param | ssa.Op.Const {
     return false
   }
-  for a in g.f.args_iter(x.args) {
+  let (sp6, ep6) = g.f.args_span(x.args)
+  for ak6 in sp6..ep6 {
+    let a = g.f.argpool[ak6]
     if a >= 0 && g.from_memory(a, depth - 1) {
       return true
     }
@@ -3052,7 +3064,9 @@ fn (g: G) from_memory(v: Int, depth: Int) -> Bool {
 
 /// Whether compare c has an operand that is a division or a remainder.
 fn (g: G) divides(c: Int) -> Bool {
-  for a in g.f.args_iter(g.f.values[c].args) {
+  let (sp7, ep7) = g.f.args_span(g.f.values[c].args)
+  for ak7 in sp7..ep7 {
+    let a = g.f.argpool[ak7]
     if g.op(g.through_params(a)) is ssa.Op.Div | ssa.Op.Rem {
       return true
     }
@@ -3981,7 +3995,9 @@ fn (var g: G) dead_from(a: Int) -> Int {
   }
   let t = g.vty(a)
   var k = 1
-  for p in g.f.args_iter(g.f.values[a].args) {
+  let (sp8, ep8) = g.f.args_span(g.f.values[a].args)
+  for ak8 in sp8..ep8 {
+    let p = g.f.argpool[ak8]
     k += g.nwords(g.vty(p))
   }
   if k >= g.nwords(t) { -1 } else { k }
@@ -4017,7 +4033,9 @@ fn (var g: G) dead_mask_into(a: Int, var m: List[Bool], depth: Int) -> Bool {
   if (op is ssa.Op.Struct | ssa.Op.Tuple) && depth < 4 {
     let start = m.len()
     var any = false
-    for p in g.f.args_iter(g.f.values[a].args) {
+    let (sp9, ep9) = g.f.args_span(g.f.values[a].args)
+    for ak9 in sp9..ep9 {
+      let p = g.f.argpool[ak9]
       if g.dead_mask_into(p, m, depth + 1) {
         any = true
       }

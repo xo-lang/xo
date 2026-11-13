@@ -201,7 +201,9 @@ fn (var r: Rc) pad_of(f: Func, bl: Int, exit: Int) -> Pad? {
     if !(x.op is Op.Field | Op.Release) {
       return None
     }
-    for a in f.args_iter(x.args) {
+    let (sp1, ep1) = f.args_span(x.args)
+    for ak1 in sp1..ep1 {
+      let a = f.argpool[ak1]
       if !mine.contains(a) {
         p.ext.add(a)
       }

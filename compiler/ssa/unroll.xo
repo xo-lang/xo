@@ -118,7 +118,9 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
       }
       var x = f.values[v]
       var args: List[Int] = []
-      for a in f.args_iter(x.args) {
+      let (sp1, ep1) = f.args_span(x.args)
+      for ak1 in sp1..ep1 {
+        let a = f.argpool[ak1]
         args.push(m.get(a) ?? a)
       }
       x.args = f.mk_args(args)
@@ -163,12 +165,16 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
       continue
     }
     var hit = false
-    for a in f.args_iter(x.args) {
+    let (sp2, ep2) = f.args_span(x.args)
+    for ak2 in sp2..ep2 {
+      let a = f.argpool[ak2]
       hit = hit || fin.contains(a)
     }
     if hit {
       var args: List[Int] = []
-      for a in f.args_iter(x.args) {
+      let (sp3, ep3) = f.args_span(x.args)
+      for ak3 in sp3..ep3 {
+        let a = f.argpool[ak3]
         args.push(fin.get(a) ?? a)
       }
       f.set_args(vi, args)
@@ -434,7 +440,9 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
     if block_of(x.tb) < 0 || block_of(x.tb) == h || inb[block_of(x.tb)] {
       continue
     }
-    for a in f.args_iter(x.args) {
+    let (sp4, ep4) = f.args_span(x.args)
+    for ak4 in sp4..ep4 {
+      let a = f.argpool[ak4]
       if mine.contains(a) {
         return false
       }
@@ -499,7 +507,9 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
     }
     for nv in made {
       var args: List[Int] = []
-      for a in f.args_iter(f.values[nv].args) {
+      let (sp5, ep5) = f.args_span(f.values[nv].args)
+      for ak5 in sp5..ep5 {
+        let a = f.argpool[ak5]
         args.push(m.get(a) ?? a)
       }
       f.set_args(nv, args)
@@ -565,7 +575,9 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
         continue
       }
       var args: List[Int] = []
-      for a in f.args_iter(f.values[vi].args) {
+      let (sp6, ep6) = f.args_span(f.values[vi].args)
+      for ak6 in sp6..ep6 {
+        let a = f.argpool[ak6]
         args.push(fin.get(a) ?? a)
       }
       f.set_args(vi, args)

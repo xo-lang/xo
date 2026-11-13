@@ -181,7 +181,9 @@ fn (var g: G) plan_sret_forward(calls: List[Int]) {
   var nuse: Map[Int, Int] = {}
   for bl in g.f.blocks {
     for w in bl.instrs {
-      for a in g.f.args_iter(g.f.values[w].args) {
+      let (sp1, ep1) = g.f.args_span(g.f.values[w].args)
+      for ak1 in sp1..ep1 {
+        let a = g.f.argpool[ak1]
         nuse[a] = (nuse.get(a) ?? 0) + 1
       }
     }
@@ -410,7 +412,9 @@ fn (var g: G) plan_sret_lazy(calls: List[Int]) {
   var bad: Map[Int, Bool] = {}
   for (bi, bl) in g.f.blocks.indexed() {
     for (i, w) in bl.instrs.indexed() {
-      for a in g.f.args_iter(g.f.values[w].args) {
+      let (sp2, ep2) = g.f.args_span(g.f.values[w].args)
+      for ak2 in sp2..ep2 {
+        let a = g.f.argpool[ak2]
         if let Some(r) = root.get(a) {
           if root.get(w) == Some(r) {
             continue // a field or payload of it: its own uses decide
@@ -453,7 +457,9 @@ fn (var g: G) stack_args_op(w: Int) -> Bool {
     return false
   }
   var n = 0
-  for a in g.f.args_iter(y.args) {
+  let (sp3, ep3) = g.f.args_span(y.args)
+  for ak3 in sp3..ep3 {
+    let a = g.f.argpool[ak3]
     n += g.nwords(g.vty(a))
   }
   n > 8
@@ -555,7 +561,9 @@ fn (var g: G) plan_sret_slots() {
   for bl in g.f.blocks {
     for w in bl.instrs {
       let y = g.f.values[w]
-      for a in g.f.args_iter(y.args) {
+      let (sp4, ep4) = g.f.args_span(y.args)
+      for ak4 in sp4..ep4 {
+        let a = g.f.argpool[ak4]
         if let Some(r) = root.get(a) {
           // read in place only when read by parts (fields, payloads, a
           // call's argument passed at its address): a use of the result,
@@ -752,7 +760,9 @@ fn (var g: G) plan_sret_slots() {
           // defined here: whatever is live after it interferes with it,
           // and so do its own arguments (one passed in place is read
           // while the callee writes the result)
-          for a in g.f.args_iter(g.f.values[v].args) {
+          let (sp5, ep5) = g.f.args_span(g.f.values[v].args)
+          for ak5 in sp5..ep5 {
+            let a = g.f.argpool[ak5]
             if a >= 0 && a < nv && rk[a] >= 0 {
               live[rk[a]] = true
             }
@@ -764,7 +774,9 @@ fn (var g: G) plan_sret_slots() {
           }
           live[k] = false
         }
-        for a in g.f.args_iter(g.f.values[v].args) {
+        let (sp6, ep6) = g.f.args_span(g.f.values[v].args)
+        for ak6 in sp6..ep6 {
+          let a = g.f.argpool[ak6]
           if a >= 0 && a < nv && rk[a] >= 0 {
             live[rk[a]] = true
           }
@@ -1388,7 +1400,9 @@ fn (var g: G) held_uses() {
     var us: Map[Int, List[Int]] = {}
     for b in 0..g.f.blocks.len() {
       for x in g.f.blocks[b].instrs {
-        for a in g.f.args_iter(g.f.values[x].args) {
+        let (sp7, ep7) = g.f.args_span(g.f.values[x].args)
+        for ak7 in sp7..ep7 {
+          let a = g.f.argpool[ak7]
           us.update(a, [], fn(var l) { l.push(x) })
         }
         for e in g.f.values[x].succs() {

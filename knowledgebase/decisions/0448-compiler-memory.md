@@ -1506,3 +1506,42 @@ scattered holes of the heap, so emit's MIR allocations come from fresh,
 contiguous memory. Next: an emit-scoped arena (decision 0435's arena
 mode was never merged; refs/recover/xl91-arena) or an allocator policy
 that carves a function's MIR from fresh memory.
+
+### The CPU follow-up: what was tried (Xo Lang 1, 2026-11-13)
+
+Every row is `xo bench --ab` of aiplatform/apiv1's cold test build on
+linux/arm64 host 1, n=9, against its parent unless noted; CPU B/A.
+
+| probe | CPU | max RSS | verdict |
+|---|---|---|---|
+| warm the free lists before isel (above) | 1.000 | 1.014 | no effect |
+| regalloc merges a register's ranges in place (one block per list) | 1.002 | 1.006 | no effect |
+| each function's pool starts at 256 entries | 1.002 | 1.009 | no effect |
+| regalloc: one candidate buffer, no one-range list per cold call check (4% of all allocations) | 1.001 | 1.004 | no effect |
+| every Inst's defs and us copied into fresh memory, in order, before regalloc | 1.002 | 1.005 | no effect |
+| huge pages everywhere (XO_THP=kernel), base against pool | 1.129 | 0.821 | the gap stays (default 1.137) |
+| each build laid out by its own profile (`--layout`, decision 0403) | 1.146 (loaded) | 0.835 | the gap stays; layout alone 0.994 on the base |
+| loops over a value's arguments index the pool (Func.args_span) | 0.990 (self build 0.983) | 0.992 (self 0.988) | landed |
+
+The phases (`--phase-times`, XO_EMIT_JOBS=1, host 1, 3 rounds): emit
+72.6 to 73.4 s on the base, 80.5 to 82.3 s with the pool (+10.5%);
+inline.verify +5%; every other phase equal, so it is per thread work in
+emit, not contention between emit threads. A 1 kHz profile of that run
+gives +8.3 s: about 1.6 s the pool's accessors (ArgsIter.next was a call
+per element, its landing pads keeping it out of the inliner: the
+args_span row), the rest unchanged code reading only MIR (regalloc +0.8
+s, overlaps_sorted +0.5 s, hoist_invariants +0.4 s, gen_kill +0.3 s).
+The kept-live variant's 448 G above did not hold in three interleaved
+Mac rounds (base 435 to 499 G, kept live 436 to 483 G, pool 451 to 494
+G: Mac cycles vary 15% between runs; best of three, kept live equals
+the base). XO_HEAPSTATS at exit: the base holds 1,669 MB of free 32 and
+48 byte blocks (the per-value lists) against the pool's 151 MB, and 650
+heap chunks against 383, so the pool does not carve more fresh memory.
+
+Not done: an allocator policy (a bracket in which a thread's frees go to
+a side list, as rtsec.xo's real-time sections defer them) would change
+every Xo program's allocator; it needs its own ADR and an `--ab` on an
+allocation heavy user program as well as the compiler (lead,
+2026-11-13), and the fresh-memory probe gives it little to go on. The
+trade stands: aiplatform's build about 1.12 CPU for 0.82 max RSS, the
+self build better on both.

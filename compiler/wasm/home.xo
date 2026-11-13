@@ -382,7 +382,9 @@ fn (var g: Gen) plan_homes(pos: List[Int], hi: List[Int], bend: List[Int]) {
     g.inedge.push(false)
   }
   for (w, y) in f.values.indexed() {
-    for a in f.args_iter(y.args) {
+    let (sp1, ep1) = f.args_span(y.args)
+    for ak1 in sp1..ep1 {
+      let a = f.argpool[ak1]
       if a >= 0 {
         g.users[a].push(w)
       }
@@ -544,7 +546,9 @@ fn (var g: Gen) local_home_struct(v: Int, h: Int) {
   let p = g.local_home_block(h)
   var zero: List[Bool] = []
   var nz = 0
-  for a in g.f.args_iter(x.args) {
+  let (sp2, ep2) = g.f.args_span(x.args)
+  for ak2 in sp2..ep2 {
+    let a = g.f.argpool[ak2]
     var z = false
     if let Some(w) = g.const_words(a) {
       z = w.all(fn(n: Int) -> Bool { n == 0 })
@@ -1262,7 +1266,9 @@ fn (g: Gen) quiet_between(v: Int, u: Int, h: Int) -> Bool {
       return on
     }
     if on {
-      for a in g.f.args_iter(g.f.values[w].args) {
+      let (sp3, ep3) = g.f.args_span(g.f.values[w].args)
+      for ak3 in sp3..ep3 {
+        let a = g.f.argpool[ak3]
         if a >= 0 && (g.held[a] == h || g.mfield[a] == h) {
           return false
         }
@@ -1316,7 +1322,9 @@ fn (var g: Gen) plan_fields(pos: List[Int]) {
     for v in b.instrs {
       let x = f.values[v]
       var us: List[Int] = []
-      for a in f.args_iter(x.args) {
+      let (sp4, ep4) = f.args_span(x.args)
+      for ak4 in sp4..ep4 {
+        let a = f.argpool[ak4]
         us.push(a)
       }
       for e in x.succs() {
@@ -1862,7 +1870,9 @@ fn (g: Gen) quiet_through(v: Int, r: Int, u: Int, h: Int) -> Bool {
         break
       }
       if on && w != r {
-        for a in f.args_iter(f.values[w].args) {
+        let (sp5, ep5) = f.args_span(f.values[w].args)
+        for ak5 in sp5..ep5 {
+          let a = f.argpool[ak5]
           if a >= 0 && (g.held[a] == h || g.mfield[a] == h) {
             return false
           }

@@ -38,7 +38,9 @@ fn view_lens(var f: ssa.Func) -> Bool {
   }
   for b in 0..f.blocks.len() {
     for u in f.blocks[b].instrs {
-      for a in f.args_iter(f.values[u].args) {
+      let (sp1, ep1) = f.args_span(f.values[u].args)
+      for ak1 in sp1..ep1 {
+        let a = f.argpool[ak1]
         vuses[a].push(u)
       }
       for e in f.values[u].succs() {

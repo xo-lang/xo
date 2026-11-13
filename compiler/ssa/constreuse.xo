@@ -174,7 +174,9 @@ pub fn reuse_const_reads(var f: Func) -> Bool {
       continue
     }
     var args: List[Int] = []
-    for a in f.args_iter(f.values[vi].args) {
+    let (sp1, ep1) = f.args_span(f.values[vi].args)
+    for ak1 in sp1..ep1 {
+      let a = f.argpool[ak1]
       args.push(repl.get(a) ?? a)
     }
     f.set_args(vi, args)

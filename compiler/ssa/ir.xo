@@ -1249,6 +1249,19 @@ pub fn (f: Func) arg(r: Args, k: Int) -> Int {
   f.argpool[((w >> 16) & 0xffffffff) + k]
 }
 
+/// The pool indices of the arguments r, start and end, for `let (s, e) =
+/// f.args_span(x.args)` and `for k in s..e { let a = f.argpool[k] ... }`:
+/// args_iter's next was a call per element (landing pads kept it from
+/// inlining; 0.67 s of the aiplatform/v1 test build's emit, decision 0448
+/// follow-up).
+pub fn (f: Func) args_span(r: Args) -> (Int, Int) {
+  if r.is_empty() {
+    return (0, 0)
+  }
+  let s = f.args_start(r)
+  (s, s + r.len())
+}
+
 /// The arguments r in order, for `for a in f.args_iter(x.args)`.
 pub fn (f: Func) args_iter(r: Args) -> ArgsIter {
   if r.is_empty() {
@@ -1270,7 +1283,9 @@ pub fn (f: Func) args_indexed(r: Args) -> ArgsIndexed {
 
 /// Whether a is one of the arguments r.
 pub fn (f: Func) args_has(r: Args, a: Int) -> Bool {
-  for x in f.args_iter(r) {
+  let (sp1, ep1) = f.args_span(r)
+  for ak1 in sp1..ep1 {
+    let x = f.argpool[ak1]
     if x == a {
       return true
     }
@@ -1634,7 +1649,9 @@ fn (m: Module) write_value(var b: StrBuilder, f: Func, vi: Int) {
     P(tag, field) => ops.push("${tag}.${field}")
     E(_) => {}
   }
-  for a in f.args_iter(v.args) {
+  let (sp2, ep2) = f.args_span(v.args)
+  for ak2 in sp2..ep2 {
+    let a = f.argpool[ak2]
     ops.push(vname(a))
   }
   for e in v.succs() {

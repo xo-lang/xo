@@ -173,7 +173,9 @@ fn (g: G) keeps_memory(u: Int, chain: Map[Int, Bool], root: Int) -> Bool {
   let x = g.f.values[u]
   if root >= 0 {
     if x.op is ssa.Op.Release | ssa.Op.Drop | ssa.Op.Reuse | ssa.Op.SetField | ssa.Op.Call | ssa.Op.CallValue | ssa.Op.Share | ssa.Op.ShareIn | ssa.Op.Box {
-      for a in g.f.args_iter(x.args) {
+      let (sp1, ep1) = g.f.args_span(x.args)
+      for ak1 in sp1..ep1 {
+        let a = g.f.argpool[ak1]
         if g.part_of(a, root) && !(x.op == ssa.Op.Call && g.reads_only(x)) {
           return false
         }

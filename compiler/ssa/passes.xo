@@ -1058,7 +1058,9 @@ pub fn cse(var f: Func, m: Module) -> Bool {
       // a constant operand by its value: each use site has its own Const
       var args: List[Str] = []
       var ok = true
-      for a0 in f.args_iter(x.args) {
+      let (sp1, ep1) = f.args_span(x.args)
+      for ak1 in sp1..ep1 {
+        let a0 = f.argpool[ak1]
         let a = find_repl(repl, a0)
         let y = f.values[a]
         if y.op == Op.Const {
@@ -1153,7 +1155,9 @@ pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
   var us: Map[Int, List[Int]] = {}
   for bl in f.blocks {
     for v in bl.instrs {
-      for a in f.args_iter(f.values[v].args) {
+      let (sp2, ep2) = f.args_span(f.values[v].args)
+      for ak2 in sp2..ep2 {
+        let a = f.argpool[ak2]
         if a >= 0 && f.values[a].op == Op.Tuple {
           us.update(a, [], fn(var l) { l.push(v) })
         }
@@ -1182,7 +1186,9 @@ pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
       }
       let tu = us.get(t) ?? []
       var ok = !tu.is_empty()
-      for a in f.args_iter(x.args) {
+      let (sp3, ep3) = f.args_span(x.args)
+      for ak3 in sp3..ep3 {
+        let a = f.argpool[ak3]
         if !tuple_operand_owned(f, m, a) {
           ok = false
         }

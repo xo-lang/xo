@@ -136,7 +136,9 @@ fn (var m: Module) verify_func(f: Func) -> List[Str] {
   for bi in 0..nb {
     for (i, v) in f.blocks[bi].instrs.indexed() {
       let x = f.values[v]
-      for a in f.args_iter(x.args) {
+      let (sp1, ep1) = f.args_span(x.args)
+      for ak1 in sp1..ep1 {
+        let a = f.argpool[ak1]
         if a < 0 {
           errs.push("${pre}${bname(bi)}: v${v} has a nil operand")
         } else if !usable(idom, def, a, bi, i) {
@@ -285,7 +287,9 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
   let n = x.args.len()
   let bt = m.builtin(Kind.Bool)
   var ats: List[Int] = []
-  for a in f.args_iter(x.args) {
+  let (sp2, ep2) = f.args_span(x.args)
+  for ak2 in sp2..ep2 {
+    let a = f.argpool[ak2]
     ats.push(if a >= 0 { ty_of(f.values[a].tb) } else { -1 })
   }
   let a0 = if n > 0 { ats[0] } else { -1 }

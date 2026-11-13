@@ -112,7 +112,9 @@ fn copy_feeds_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   }
   for bl in f.blocks {
     for v in bl.instrs {
-      for a in f.args_iter(f.values[v].args) {
+      let (sp1, ep1) = f.args_span(f.values[v].args)
+      for ak1 in sp1..ep1 {
+        let a = f.argpool[ak1]
         if a >= 0 && a < users.len() {
           users[a].push(block_of(f.values[v].tb))
         }
@@ -202,7 +204,9 @@ fn elem_count_per_iter(f: Func, inloop: List[Bool]) -> List[CostNote] {
   }
   for bl in f.blocks {
     for v in bl.instrs {
-      for a in f.args_iter(f.values[v].args) {
+      let (sp2, ep2) = f.args_span(f.values[v].args)
+      for ak2 in sp2..ep2 {
+        let a = f.argpool[ak2]
         if a >= 0 && a < used_by.len() {
           used_by[a].push(v)
         }
@@ -299,7 +303,9 @@ fn callback_walks(m: Module, f: Func) -> List[CostNote] {
         continue
       }
       var heap = false
-      for a in f.args_iter(x.args) {
+      let (sp3, ep3) = f.args_span(x.args)
+      for ak3 in sp3..ep3 {
+        let a = f.argpool[ak3]
         let t = ty_of(f.values[a].tb)
         if t < 0 || t >= m.types.len() || m.types[t].kind != Kind.Func {
           continue
@@ -590,7 +596,9 @@ fn large_copies(m: Module, f: Func, inloop: List[Bool], var nw: Map[Int, Int]) -
       }
       var msg = ""
       if x.op == Op.Closure && f.name_starts(x, "${f.name}.fn") {
-        for a in f.args_iter(x.args) {
+        let (sp4, ep4) = f.args_span(x.args)
+        for ak4 in sp4..ep4 {
+          let a = f.argpool[ak4]
           let t = ty_of(f.values[a].tb)
           let n = type_words(m, nw, t, 0)
           if n > LARGE_WORDS && msg.is_empty() {
@@ -801,7 +809,9 @@ fn view_stores(m: Module, f: Func, inloop: List[Bool]) -> List[CostNote] {
   }
   for bl in f.blocks {
     for v in bl.instrs {
-      for a in f.args_iter(f.values[v].args) {
+      let (sp5, ep5) = f.args_span(f.values[v].args)
+      for ak5 in sp5..ep5 {
+        let a = f.argpool[ak5]
         if a >= 0 && a < users.len() {
           users[a].push(v)
         }
@@ -842,7 +852,9 @@ fn cost_uses(f: Func) -> (List[List[Int]], List[Bool]) {
   }
   for bl in f.blocks {
     for v in bl.instrs {
-      for a in f.args_iter(f.values[v].args) {
+      let (sp6, ep6) = f.args_span(f.values[v].args)
+      for ak6 in sp6..ep6 {
+        let a = f.argpool[ak6]
         if a >= 0 && a < users.len() {
           users[a].push(v)
         }
@@ -990,7 +1002,9 @@ fn freed_addresses_rv(f: Func, rv: Map[Str, Int]) -> List[CostNote] {
       }
       // a use of an address whose value is gone
       var hit = -1
-      for a in f.args_iter(x.args) {
+      let (sp7, ep7) = f.args_span(x.args)
+      for ak7 in sp7..ep7 {
+        let a = f.argpool[ak7]
         if let Some(into) = addr_of.get(a) {
           if released.contains(into) {
             hit = a
@@ -1022,7 +1036,9 @@ fn freed_addresses_rv(f: Func, rv: Map[Str, Int]) -> List[CostNote] {
       } else if x.op == Op.Call && addr_of_call(f.name_of(x)) && !x.args.is_empty() {
         addr_of[v] = f.arg(x.args, 0)
       } else if (x.op == Op.Add || x.op == Op.Sub) && x.args.len() == 2 {
-        for a in f.args_iter(x.args) {
+        let (sp8, ep8) = f.args_span(x.args)
+        for ak8 in sp8..ep8 {
+          let a = f.argpool[ak8]
           if let Some(into) = addr_of.get(a) {
             addr_of[v] = into
           }

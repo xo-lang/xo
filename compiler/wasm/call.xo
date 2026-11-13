@@ -28,7 +28,9 @@ fn (var g: Gen) call(v: Int) {
     let lh = if wide && g.held[v] >= 0 && g.lroot.get(v) == Some(g.held[v]) { g.held[v] } else { -1 }
     let blk = if lh >= 0 { g.local_home_block(lh) } else if wide { g.sret_block(ci) } else { -1 }
     let id = if g.susp.len() > ci && g.susp[ci] { g.resume_point() } else { -1 }
-    for a in g.f.args_iter(x.args) {
+    let (sp1, ep1) = g.f.args_span(x.args)
+    for ak1 in sp1..ep1 {
+      let a = g.f.argpool[ak1]
       g.push(a)
     }
     if wide {
@@ -527,7 +529,9 @@ fn (var g: Gen) call(v: Int) {
           // the request's task can wait there (rt10.xo): the call
           // repeats when it runs again
           let id = g.resume_point()
-          for a in g.f.args_iter(g.f.values[v].args) {
+          let (sp2, ep2) = g.f.args_span(g.f.values[v].args)
+          for ak2 in sp2..ep2 {
+            let a = g.f.argpool[ak2]
             g.push(a)
           }
           g.e("call $${op}")
@@ -970,7 +974,9 @@ fn (var g: Gen) rt3_call(v: Int, name: Str, fname0: Str = "", wait: Bool = false
 
 /// A runtime function on the operands' leaves, its results v's.
 fn (var g: Gen) rt_call(v: Int, fname: Str) {
-  for a in g.f.args_iter(g.f.values[v].args) {
+  let (sp3, ep3) = g.f.args_span(g.f.values[v].args)
+  for ak3 in sp3..ep3 {
+    let a = g.f.argpool[ak3]
     g.push(a)
   }
   g.e("call ${fname}")

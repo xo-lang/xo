@@ -91,7 +91,9 @@ fn (var g: Gen) func(fi: Int) {
     g.nuse.push(0)
   }
   for x in f.values {
-    for a in f.args_iter(x.args) {
+    let (sp1, ep1) = f.args_span(x.args)
+    for ak1 in sp1..ep1 {
+      let a = f.argpool[ak1]
       if a >= 0 {
         g.nuse[a] += 1
       }
@@ -695,7 +697,9 @@ fn (var g: Gen) plan_locals() {
     for x in b.instrs {
       let xp = pos[x]
       var us: List[Int] = []
-      for a in f.args_iter(f.values[x].args) {
+      let (sp2, ep2) = f.args_span(f.values[x].args)
+      for ak2 in sp2..ep2 {
+        let a = f.argpool[ak2]
         us.push(a)
       }
       for e in f.values[x].succs() {
@@ -1165,7 +1169,9 @@ fn (var g: Gen) const_words(v: Int) -> List[Int]? {
     }
     Struct | Tuple => {
       var out: List[Int] = []
-      for a in g.f.args_iter(x.args) {
+      let (sp3, ep3) = g.f.args_span(x.args)
+      for ak3 in sp3..ep3 {
+        let a = g.f.argpool[ak3]
         let wo = g.const_words(a)
         if wo == None {
           return None
@@ -1188,7 +1194,9 @@ fn (var g: Gen) const_words(v: Int) -> List[Int]? {
         I(n) => n
         _ => return None
       }]
-      for a in g.f.args_iter(x.args) {
+      let (sp4, ep4) = g.f.args_span(x.args)
+      for ak4 in sp4..ep4 {
+        let a = g.f.argpool[ak4]
         let wo = g.const_words(a)
         if wo == None {
           return None
@@ -1517,7 +1525,9 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
         g.local_home_struct(v, g.held[v])
         return
       }
-      for a in g.f.args_iter(x.args) {
+      let (sp5, ep5) = g.f.args_span(x.args)
+      for ak5 in sp5..ep5 {
+        let a = g.f.argpool[ak5]
         g.push(a)
       }
       g.def(v)
@@ -1613,7 +1623,9 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       }
       g.e("i64.const ${tag}")
       var used = 0
-      for a in g.f.args_iter(x.args) {
+      let (sp6, ep6) = g.f.args_span(x.args)
+      for ak6 in sp6..ep6 {
+        let a = g.f.argpool[ak6]
         let ls = g.leaves(g.vty(a))
         let b = g.loc(a)
         for (k, l) in ls.indexed() {
@@ -2080,7 +2092,9 @@ fn (var g: Gen) closure(v: Int) {
     return
   }
   var n = 0
-  for a in g.f.args_iter(x.args) {
+  let (sp7, ep7) = g.f.args_span(x.args)
+  for ak7 in sp7..ep7 {
+    let a = g.f.argpool[ak7]
     n += g.size(g.vty(a))
   }
   let drop = g.envdrop_fn(ci)
@@ -2095,7 +2109,9 @@ fn (var g: Gen) closure(v: Int) {
   g.e("i32.const ${g.table_index(drop)}")
   g.e("i32.store offset=4")
   var off = 0
-  for a in g.f.args_iter(x.args) {
+  let (sp8, ep8) = g.f.args_span(x.args)
+  for ak8 in sp8..ep8 {
+    let a = g.f.argpool[ak8]
     let ls = g.leaves(g.vty(a))
     if !ls.is_empty() {
       g.store_leaves(env, 8 + off, g.loc(a), ls)

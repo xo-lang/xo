@@ -1876,7 +1876,9 @@ fn imm_at(f: Func, v: Int, path: Str, k: Int, sums: Map[Str, List[Bool]], depth:
       // of nothing but immortal fields (None, Some of a constant string)
       // is immortal (2026-10-24: view_lens hands an option of a view the
       // empty string, and drops its releases)
-      for a in f.args_iter(x.args) {
+      let (sp1, ep1) = f.args_span(x.args)
+      for ak1 in sp1..ep1 {
+        let a = f.argpool[ak1]
         if !imm_at(f, a, path, k, sums, depth + 1, walking) {
           return false
         }
@@ -2008,7 +2010,9 @@ fn imm_return_of(f: Func) -> List[Bool] {
   }
   var flags: List[Bool] = []
   var any = false
-  for a in f.args_iter(s.args) {
+  let (sp2, ep2) = f.args_span(s.args)
+  for ak2 in sp2..ep2 {
+    let a = f.argpool[ak2]
     let b = imm_value(f, f.values[a])
     flags.push(b)
     any = any || b
@@ -2671,7 +2675,9 @@ fn remove_dead_fields(var f: Func) {
   }
   for bl in f.blocks {
     for v in bl.instrs {
-      for a in f.args_iter(f.values[v].args) {
+      let (sp3, ep3) = f.args_span(f.values[v].args)
+      for ak3 in sp3..ep3 {
+        let a = f.argpool[ak3]
         if a >= 0 {
           nuse[a] += 1
         }
@@ -2705,7 +2711,9 @@ fn remove_dead_fields(var f: Func) {
     }
     dead[v] = true
     any = true
-    for a in f.args_iter(f.values[v].args) {
+    let (sp4, ep4) = f.args_span(f.values[v].args)
+    for ak4 in sp4..ep4 {
+      let a = f.argpool[ak4]
       if a >= 0 {
         nuse[a] -= 1
         if nuse[a] == 0 && f.values[a].op == Op.Field {
@@ -3293,7 +3301,9 @@ fn (var r: Rc) sink_landings(var f: Func) {
           if in_between.contains(v) {
             continue
           }
-          for a in f.args_iter(f.values[v].args) {
+          let (sp5, ep5) = f.args_span(f.values[v].args)
+          for ak5 in sp5..ep5 {
+            let a = f.argpool[ak5]
             if in_between.contains(a) {
               ok = false
             }
@@ -3330,7 +3340,9 @@ fn (var r: Rc) sink_landings(var f: Func) {
         continue
       }
       var args: List[Int] = []
-      for a in f.args_iter(f.values[v].args) {
+      let (sp6, ep6) = f.args_span(f.values[v].args)
+      for ak6 in sp6..ep6 {
+        let a = f.argpool[ak6]
         args.push(copies.get(a) ?? a)
       }
       let x = f.values[v]
@@ -3582,7 +3594,9 @@ fn keep_addr_values(var f: Func) {
     if x.op == Op.Call && addr_call(f.name_of(x)) && !x.args.is_empty() {
       into[v] = f.arg(x.args, 0)
     } else if (x.op == Op.Add || x.op == Op.Sub) && x.args.len() == 2 {
-      for a in f.args_iter(x.args) {
+      let (sp7, ep7) = f.args_span(x.args)
+      for ak7 in sp7..ep7 {
+        let a = f.argpool[ak7]
         if let Some(o) = into.get(a) {
           into[v] = o
         }
@@ -3604,7 +3618,9 @@ fn keep_addr_values(var f: Func) {
     var last: Map[Int, Int] = {}
     for (k, v) in ins.indexed() {
       let x = f.values[v]
-      for a in f.args_iter(x.args) {
+      let (sp8, ep8) = f.args_span(x.args)
+      for ak8 in sp8..ep8 {
+        let a = f.argpool[ak8]
         if let Some(o) = into.get(a) {
           last[o] = k
         }

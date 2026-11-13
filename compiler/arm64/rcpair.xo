@@ -314,7 +314,9 @@ fn imm_post(f: ssa.Func, v: Int, depth: Int, walking: List[Int]) -> Bool {
     }
     Call => return (f.name_of(x) is "rt.str_view" | "rt.str_borrow") && x.args.len() >= 1 && imm_post(f, f.arg(x.args, 0), depth + 1, walking)
     Variant => {
-      for a in f.args_iter(x.args) {
+      let (sp1, ep1) = f.args_span(x.args)
+      for ak1 in sp1..ep1 {
+        let a = f.argpool[ak1]
         if !imm_post(f, a, depth + 1, walking) {
           return false
         }

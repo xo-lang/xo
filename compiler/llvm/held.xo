@@ -589,7 +589,9 @@ fn (var g: Gen) find_mem_only() {
   for b in 0..g.f.blocks.len() {
     for v in g.f.blocks[b].instrs {
       let x = g.f.values[v]
-      for a in g.f.args_iter(x.args) {
+      let (sp1, ep1) = g.f.args_span(x.args)
+      for ak1 in sp1..ep1 {
+        let a = g.f.argpool[ak1]
         let m = cands[a]
         if m < 0 {
           continue
@@ -676,7 +678,9 @@ fn (var g: Gen) users(v: Int) -> List[Int] {
     }
     for b in 0..g.f.blocks.len() {
       for x in g.f.blocks[b].instrs {
-        for a in g.f.args_iter(g.f.values[x].args) {
+        let (sp2, ep2) = g.f.args_span(g.f.values[x].args)
+        for ak2 in sp2..ep2 {
+          let a = g.f.argpool[ak2]
           g.users_of[a].push(x)
         }
         for e in g.f.values[x].succs() {

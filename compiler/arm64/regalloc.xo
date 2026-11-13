@@ -855,51 +855,56 @@ fn (var g: G) regalloc() {
       }
       wocc0[j] = merge_ranges(rs)
     }
+    var cands: List[Int] = []
     for v in by_prio {
       let fp = g.fp[v]
       // a wide value (decision 0323): caller saved V registers only (a
       // callee keeps the low halves of v8 to v15, not the upper)
       let wide = g.wide.contains(v)
       // one allocation per register (concatenating made three)
-      var cands: List[Int] = List.with_capacity(fixed[v].len() + partners[v].len() + gp_c.len() + gp_e.len() + fp_c.len() + fp_e.len())
+      // the candidates in cands[0..nk] (one buffer for every value: a
+      // list per value was 2.3% of the aiplatform/v1 test build's
+      // allocations, decision 0448 follow-up)
+      var nk = 0
       for r in fixed[v] {
         if (r >= FP_BASE) == fp && !(wide && g.is_callee_t(r)) {
-          cands.push(r)
+          nk = put_at(cands, nk, r)
         }
       }
       for p in partners[v] {
         let r = g.loc[find_leader(leader, p)].reg
         if r >= 0 && !(wide && g.is_callee_t(r)) {
-          cands.push(r)
+          nk = put_at(cands, nk, r)
         }
       }
       if fp {
         for r in fp_c {
-          cands.push(r)
+          nk = put_at(cands, nk, r)
         }
         if !wide {
           for r in fp_e {
-            cands.push(r)
+            nk = put_at(cands, nk, r)
           }
         }
       } else {
         for r in gp_c {
-          cands.push(r)
+          nk = put_at(cands, nk, r)
         }
         for r in gp_e {
-          cands.push(r)
+          nk = put_at(cands, nk, r)
         }
       }
       let nc = bits_has(no_caller, v)
       var chosen = -1
-      for r0 in cands {
-        var r = r0
+      for ci in 0..nk {
+        var r = cands[ci]
         if overlaps_sorted(occ[r], ranges[v]) || (nc && !g.is_callee_t(r)) || barred[v].contains(r) {
           continue
         }
         if g.is_callee_t(r) && !used_callee[r] {
           // a callee saved register already saved before a fresh one
-          for r2 in cands {
+          for cj in 0..nk {
+            let r2 = cands[cj]
             if g.is_callee_t(r2) && used_callee[r2] && !overlaps_sorted(occ[r2], ranges[v]) && !barred[v].contains(r2) {
               r = r2
               break
@@ -1017,7 +1022,7 @@ fn (var g: G) regalloc() {
       var sv: List[(Int, Int)] = []
       for v in order {
         let r = g.loc[v].reg
-        if r < 0 || r >= FP_BASE || g.is_callee_t(r) || !overlaps_sorted(ranges[v], [rng(c, c)]) {
+        if r < 0 || r >= FP_BASE || g.is_callee_t(r) || !covers(ranges[v], c) {
           continue
         }
         var have = false
@@ -1186,6 +1191,34 @@ fn insert_ranges(var lists: List[List[Int]], i: Int, rs: List[Int]) {
     lists[i].insert(lo, q)
     from = lo + 1
   }
+}
+
+/// Sets l[k] to x (pushing when l is that short) and returns k + 1: a
+/// buffer reused with its own count instead of a new list each time.
+fn put_at(var l: List[Int], k: Int, x: Int) -> Int {
+  if k < l.len() {
+    l[k] = x
+  } else {
+    l.push(x)
+  }
+  k + 1
+}
+
+/// Whether a range of rs (sorted and disjoint) holds position c; as
+/// overlaps_sorted(rs, [rng(c, c)]) without the list (a list per check
+/// was 1.8% of the aiplatform/v1 test build's allocations).
+fn covers(rs: List[Int], c: Int) -> Bool {
+  var lo = 0
+  var hi = rs.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if rng_e(rs[mid]) < c {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  lo < rs.len() && rng_s(rs[lo]) <= c
 }
 
 /// Whether a range of rs overlaps one of occ, both disjoint and sorted

@@ -138,7 +138,9 @@ fn (var g: G) closure_fill(v: Int, ci: Int, env: Int) {
   let s = g.sym_addr(g.env_share(ci))
   g.store("str $u0, [$u1, #16]", [s, env])
   var k = 0
-  for a in g.f.args_iter(x.args) {
+  let (sp1, ep1) = g.f.args_span(x.args)
+  for ak1 in sp1..ep1 {
+    let a = g.f.argpool[ak1]
     for w in g.store_words(a) {
       let (base, off) = g.mem_at(env, ENV_HDR + 8 * k)
       g.store("str $u0, [$u1, #${off}]", [w, base])
@@ -207,7 +209,9 @@ fn (var g: G) stack_closures() -> Map[Int, Bool] {
 
 /// Whether closure value v captures a value holding something counted.
 fn (var g: G) counted_env(v: Int) -> Bool {
-  for a in g.f.args_iter(g.f.values[v].args) {
+  let (sp2, ep2) = g.f.args_span(g.f.values[v].args)
+  for ak2 in sp2..ep2 {
+    let a = g.f.argpool[ak2]
     if g.m.heap(g.vty(a)) {
       return true
     }
@@ -306,7 +310,9 @@ fn (var g: G) cap_put_op(v: Int) {
 fn (var g: G) call_value_op(v: Int) {
   let x = g.f.values[v]
   var args: List[Src] = []
-  for a in g.f.args_iter(x.args) {
+  let (sp3, ep3) = g.f.args_span(x.args)
+  for ak3 in sp3..ep3 {
+    let a = g.f.argpool[ak3]
     args = args + regs(g.words(a))
   }
   let defs = g.new_vregs(g.layout(ssa.ty_of(x.tb)))

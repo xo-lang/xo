@@ -36,7 +36,9 @@ fn take_uses(f: ssa.Func) -> TUses {
   for bl in f.blocks {
     for v in bl.instrs {
       let x = f.values[v]
-      for a in f.args_iter(x.args) {
+      let (sp1, ep1) = f.args_span(x.args)
+      for ak1 in sp1..ep1 {
+        let a = f.argpool[ak1]
         var us = vals.get(a) ?? []
         us.push(v)
         vals[a] = us

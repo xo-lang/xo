@@ -323,7 +323,9 @@ fn (var g: Gen) const_text(a: Int) -> Str {
   } else if (x.op == ssa.Op.Struct || x.op == ssa.Op.Tuple) && !x.args.is_empty() && !g.ll(t).starts_with("<") {
     var fs: List[Str] = []
     var ok = true
-    for f in g.f.args_iter(x.args) {
+    let (sp1, ep1) = g.f.args_span(x.args)
+    for ak1 in sp1..ep1 {
+      let f = g.f.argpool[ak1]
       let ft = g.vty(f)
       let fl = g.ll(ft)
       if g.is_void(ft) {

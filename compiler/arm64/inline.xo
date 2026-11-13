@@ -1009,7 +1009,9 @@ fn tail_at(f: ssa.Func, v: Int) -> Bool {
   // a closure literal passed on: inlined, the callee's call of it
   // becomes direct (devirtualize) and is inlined in turn (callbacks' any,
   // filter and fold were 1.03 times the instructions with these kept)
-  for a in f.args_iter(x.args) {
+  let (sp1, ep1) = f.args_span(x.args)
+  for ak1 in sp1..ep1 {
+    let a = f.argpool[ak1]
     if f.values[a].op == ssa.Op.Closure {
       return false
     }
@@ -1135,7 +1137,9 @@ fn find_closure_call(f: ssa.Func, m: ssa.Module, padded: Map[Str, Bool], tailbig
         continue
       }
       var closure = false
-      for a in f.args_iter(x.args) {
+      let (sp2, ep2) = f.args_span(x.args)
+      for ak2 in sp2..ep2 {
+        let a = f.argpool[ak2]
         let y = f.values[a]
         closure = closure || (y.op == ssa.Op.Closure && y.args.is_empty())
       }
@@ -1413,7 +1417,9 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
           // (decision 0448); an empty one stays the empty literal, which
           // with_capacity(0) is not
           var args: List[Int] = if x.args.is_empty() { [] } else { List.with_capacity(x.args.len()) }
-          for a in callee.args_iter(x.args) {
+          let (sp3, ep3) = callee.args_span(x.args)
+          for ak3 in sp3..ep3 {
+            let a = callee.argpool[ak3]
             args.push(vm.get(a) ?? a)
           }
           let nv = f.add(nb, x.op, ssa.ty_of(x.tb), callee.aux(x), args)

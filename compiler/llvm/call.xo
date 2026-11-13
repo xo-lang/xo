@@ -1292,7 +1292,9 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let ls = if name == "rt.mlkem_ntt" { ssa.mlkem_ntt_neon_lines("$0", "$1") } else if name == "rt.mlkem_inverse_ntt" { ssa.mlkem_inverse_ntt_neon_lines("$0", "$1") } else { ssa.mlkem_mul_acc_neon_lines("$0", "$1", "$2", "$3") }
       var ops: List[Str] = []
       var clob = ""
-      for a in g.f.args_iter(x.args) {
+      let (sp1, ep1) = g.f.args_span(x.args)
+      for ak1 in sp1..ep1 {
+        let a = g.f.argpool[ak1]
         ops.push("ptr ${g.raw_ptr(a)}")
         clob = clob + (if clob.is_empty() { "r" } else { ",r" })
       }
@@ -1482,7 +1484,9 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // a Linux system call (decision 0206): inline asm with the number
       // and six arguments in the registers of the target's convention
       var ops: List[Str] = []
-      for a in g.f.args_iter(x.args) {
+      let (sp2, ep2) = g.f.args_span(x.args)
+      for ak2 in sp2..ep2 {
+        let a = g.f.argpool[ak2]
         ops.push("i64 ${g.op(a)}")
       }
       let cons = if g.arch() == "amd64" {
@@ -1535,7 +1539,9 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.sys_clone" => {
       g.clone_tramp()
       var ops: List[Str] = []
-      for a in g.f.args_iter(x.args) {
+      let (sp3, ep3) = g.f.args_span(x.args)
+      for ak3 in sp3..ep3 {
+        let a = g.f.argpool[ak3]
         ops.push("i64 ${g.op(a)}")
       }
       g.set(v, "call i64 @xo_clone(${ops.join(", ")})")
@@ -2205,7 +2211,9 @@ fn (var g: Gen) rt_call(v: Int) {
   let obj = name.starts_with("rt.rs_")
   var params: List[Str] = []
   var args: List[Str] = []
-  for a in g.f.args_iter(x.args) {
+  let (sp4, ep4) = g.f.args_span(x.args)
+  for ak4 in sp4..ep4 {
+    let a = g.f.argpool[ak4]
     let at = g.vty(a)
     match g.kind(at) {
       Int => {
@@ -2391,7 +2399,9 @@ fn (var g: Gen) platform_call(v: Int) {
   }
   var params: List[Str] = []
   var args: List[Str] = []
-  for a in g.f.args_iter(x.args) {
+  let (sp5, ep5) = g.f.args_span(x.args)
+  for ak5 in sp5..ep5 {
+    let a = g.f.argpool[ak5]
     let at = g.vty(a)
     match g.kind(at) {
       Int => {
