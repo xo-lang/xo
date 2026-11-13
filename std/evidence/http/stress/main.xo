@@ -6,6 +6,11 @@
 // heads, resets mid request, oversized heads (431), Content-Length with
 // Transfer-Encoding (framed by chunked and closed after, RFC 9112 6.3) and
 // garbage. A background task
+// The clients are spread over one listener per two client tasks: the
+// client keeps at most 2 idle connections per address (Go's
+// MaxIdleConnsPerHost), so 64 tasks on one address closed about 62
+// connections per round of requests and filled a shared host's ephemeral
+// ports with TIME_WAIT (gotchas/loopback-stress-ephemeral-ports.md).
 // samples the resident set every 10 s (Linux /proc/self/status). Pass: no
 // mismatch, no fault, every hostile answer as expected, and the resident
 // set at the end within 10% or 4 MB of its sample at 5 minutes.
@@ -187,13 +192,17 @@ fn main(os: Os) ! {
   let end = start + Duration.from_secs(Float(minutes * 60))
   let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
   let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
-  let srv = http.server(os.net.listen("127.0.0.1:0")?, routes()).with_read_header_timeout(2s).with_idle_timeout(30s).with_max_header_bytes(65536)
-  let addr = srv.addr()
-  let base = "http://${addr}"
+  var srvs: List[http.Server] = []
+  for _l in 0..(tasks + 1) / 2 {
+    srvs.push(http.server(os.net.listen("127.0.0.1:0")?, routes()).with_read_header_timeout(2s).with_idle_timeout(30s).with_max_header_bytes(65536))
+  }
+  let addr = srvs[0].addr()
   let (ops, hops) = scope s {
-    s.spawn_background(fn() {
-      srv.serve().or_fault("serve")
-    })
+    for srv in srvs {
+      s.spawn_background(fn() {
+        srv.serve().or_fault("serve")
+      })
+    }
     s.spawn_background(fn() {
       var marked = false
       while true {
@@ -213,6 +222,7 @@ fn main(os: Os) ! {
     for t in 0..tasks {
       hs.push(s.spawn(fn() -> Int ! Str {
         let c = http.client(os.net, 30s)
+        let base = "http://${srvs[t / 2].addr()}"
         var n = 0
         var i = 0
         while clock.now() < end {
