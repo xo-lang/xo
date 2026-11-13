@@ -49,6 +49,15 @@ before the RC pass, so the releases stay on the edges).
 darwin/arm64 __text, every build with XO_INLINE_STRICT=1 (a module that
 fails to verify otherwise builds without inlining and looks smaller):
 
+Every row is a whole-program link: a split link against the prebuilt std
+store puts the program's own code in _ptext (ELF .text.xoprog) as well,
+but these xo builds had no store, so _ptext was 0 and __text is all the
+code. Re-measured on 2026-11-12 as __text + _ptext, with xo at the
+parent (5910cb428) and at 267e8bdb4, gcp 991353d: calendar 2,107,744
+to 2,011,240 (-4.6%), bigquery 5,449,972 to 4,815,172 (-11.6%), aws
+presign 2,414,996 to 2,412,996. Those are the table's changes; the
+absolute sizes drifted with main between the two runs.
+
 | binary | before | after | change |
 |---|---|---|---|
 | gcp calendar sample (aws-43's kit, gcp 991353d) | 2,095,656 | 1,998,912 | -4.6% |
