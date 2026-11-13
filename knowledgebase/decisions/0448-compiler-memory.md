@@ -1545,3 +1545,9 @@ allocation heavy user program as well as the compiler (lead,
 2026-11-13), and the fresh-memory probe gives it little to go on. The
 trade stands: aiplatform's build about 1.12 CPU for 0.82 max RSS, the
 self build better on both.
+
+The kept-live variant measured on linux/arm64 host 1 against the pool
+(n=9): CPU 0.913, wall 0.968, max RSS 1.214, so the remaining cost is
+where emit's allocations land. Two allocator probes to get it without
+the memory (a free list stash around each function's emit; address
+sorted small free lists) did not pay: decision 0627 (Rejected).
