@@ -6005,6 +6005,20 @@ fn llrt_json_path_push(acc: Str, seg: Str) -> Str { jsontext.path_push(acc, seg)
 
 /// The segment segs[lo..hi]: a derived decoder's shared error block
 /// (compiler/ssa json.xo dec_fields_in, decision 0623).
+/// acc and the n-th space separated word of names (derived Debug of an
+/// enum of unit variants, compiler/ssa/show.xo).
+fn llrt_append_nth_word(acc: Str, names: Str, n: Int) -> Str {
+  var lo = 0
+  for _ in 0..n {
+    lo = scan.find(names, " ", lo) + 1
+  }
+  var hi = scan.find(names, " ", lo)
+  if hi < 0 {
+    hi = names.len()
+  }
+  "${acc}${names[lo..hi]}"
+}
+
 fn llrt_json_path_push_at(acc: Str, segs: Str, lo: Int, hi: Int) -> Str { jsontext.path_push(acc, segs[lo..hi]) }
 
 fn llrt_json_range_msg(src: Bytes, tape: List[Int], i: Int, ty: Str) -> Str { jsontext.range_msg(src, tape, i, ty) }

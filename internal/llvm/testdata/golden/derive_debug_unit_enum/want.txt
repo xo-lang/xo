@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+Red
+Green
+Blue
+Indigo
+Violet
+Model{name: "m", colors: [Violet, Red], pair: Off, mixed: Some2(n: 3)}
+Model{name: "", colors: [], pair: On, mixed: Other}
+--- stderr

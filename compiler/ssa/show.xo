@@ -160,6 +160,37 @@ fn (var b: Builder) debug_func(ct: Int, t: Int) -> Str {
   b.gen_func(name, [st, t], [st], Gen.Debug(ct: ct, t: t))
 }
 
+/// An enum with this many unit variants or more prints its Debug name
+/// from a table (debug_body).
+const DEBUG_NAME_TABLE_MIN = 3
+
+/// The names of enum obj's variants in tag order when every variant has
+/// no fields and each tag 0..n has one, else none.
+fn (var b: Builder) unit_variant_names(obj: Int, t: Int) -> List[Str] {
+  let n = b.m.types[t].variants.len()
+  var names: List[Str] = []
+  for _ in 0..n {
+    names.push("")
+  }
+  var seen = 0
+  for vo in b.c.objs[obj].variants {
+    if !vo.fields.is_empty() {
+      return []
+    }
+    let vname = check.text(vo.name)
+    let vi = b.m.variant_index(t, vname)
+    if vi < 0 || vi >= n || !names[vi].is_empty() || vname.is_empty() {
+      return []
+    }
+    names[vi] = vname
+    seen += 1
+  }
+  if seen != n {
+    return []
+  }
+  names
+}
+
 fn (var b: Builder) debug_body(ct: Int, t: Int) {
   let st = b.str_t()
   let it = b.int_t()
@@ -381,10 +412,9 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
     }
     var a = b.lit(acc, "${oname}{")
     for (i, f) in b.c.objs[obj].fields.indexed() {
-      if i > 0 {
-        a = b.lit(a, ", ")
-      }
-      a = b.lit(a, "${check.text(f.name)}: ")
+      // one constant for the separator and the name: a call each was
+      // half of a field's code
+      a = b.lit(a, "${if i > 0 { ", " } else { "" }}${check.text(f.name)}: ")
       let fi = b.m.field_index(t, check.text(f.name))
       if fi < 0 {
         b.unsupported("the Debug text of `${b.c.show(ct)}`")
@@ -399,6 +429,15 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
   if b.tkind(t) == Kind.Enum && tk == "enum" {
     let tag = b.add(Op.Tag, it, Aux.None, [v])
     let is_opt = b.is_prelude_named(ct, ["Option", "Result"])
+    // an enum of unit variants only: its name from one constant of the
+    // names in tag order, where one compare and return a variant made
+    // the function grow with the enum (aws-43's gcp sample, 2026-11-12:
+    // the `*Field` enums of BigQuery's skipped lists, 112 KB)
+    let names = b.unit_variant_names(obj, t)
+    if names.len() >= DEBUG_NAME_TABLE_MIN {
+      b.retv(b.llrt("append_nth_word", st, [acc, b.const_str(names.join(" ")), tag]))
+      return
+    }
     for vo in b.c.objs[obj].variants {
       let vname = check.text(vo.name)
       let vi = b.m.variant_index(t, vname)

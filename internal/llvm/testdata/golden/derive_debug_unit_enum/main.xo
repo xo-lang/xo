@@ -1,0 +1,39 @@
+// Derived Debug of an enum of unit variants prints from one table of the
+// names (compiler/ssa/show.xo), here every position, in a List and a
+// struct, beside an enum with a payload and a two variant one (the
+// compare path), all as before.
+enum Color {
+  Red
+  Green
+  Blue
+  Indigo
+  Violet
+}
+
+enum Pair {
+  On
+  Off
+}
+
+enum Mixed {
+  None2
+  Some2(n: Int)
+  Other
+}
+
+struct Model {
+  name: Str
+  colors: List[Color]
+  pair: Pair
+  mixed: Mixed
+}
+
+fn main(os: Os) {
+  for c in [Color.Red, Color.Green, Color.Blue, Color.Indigo, Color.Violet] {
+    os.stdio.println(c.debug())
+  }
+  let m = Model{name: "m", colors: [Color.Violet, Color.Red], pair: Pair.Off, mixed: Mixed.Some2(n: 3)}
+  os.stdio.println("${m:?}")
+  let e = Model{name: "", colors: [], pair: Pair.On, mixed: Mixed.Other}
+  os.stdio.println(e.debug())
+}
