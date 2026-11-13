@@ -91,8 +91,19 @@ Conditions (lead):
   against +shareret on darwin/arm64 (47 from returns, 10 from the
   element stores' zero pairs); the same output in the three modes,
   XO_LEAKCHECK=1 0 live.
-- Struct fields holding an enum (a dead word inside a wider value) need
-  a per-word mask instead of dead_from; not done.
+
+## Implementation (stage 3b, structs and tuples, Xo Lang 1, 2026-11-13)
+
+- isel.xo dead_mask: one Bool per word, a Variant's from dead_from and
+  a Struct's or Tuple's from its fields' in order (followed to a depth
+  of 4; a layout that is not its fields' words in order has none). The
+  Return's operands, ret_sret, the sret_mk field stores (byref.xo
+  store_live_at: each run of live words by store_words_at, the dead runs
+  poisoned with +deadw_poison) and store_elem take the mask.
+- enum_dead_words returns and pushes a Holder and a Pair built from
+  variant literals and returns a tuple: 95 fewer lines than +shareret on
+  darwin/arm64, 143 on linux/amd64; the same output in the three modes
+  and on LLVM, XO_LEAKCHECK=1 0 live.
 
 ## Consequences
 

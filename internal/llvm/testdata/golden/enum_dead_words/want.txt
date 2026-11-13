@@ -16,5 +16,7 @@ equal 12 of 12, map 9 keys
 dot 9, line 4 4
 pushed p0,set,dot,dot,p2,dot,p3,dot,p4,dot,p5,dot
 eq true false xy1z
+held dot/0,lit0/0,h1/1,lit1/-1,dot/2,lit2/-2,h3/3,lit3/-3
+pair pa7 dot 7 4 pa2; tuple t3 6
 done
 --- stderr

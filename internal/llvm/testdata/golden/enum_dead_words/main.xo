@@ -32,6 +32,29 @@ fn wrap(i: Int) -> Shape ! Str {
   Ok(make(i))
 }
 
+/// A struct and a tuple built from variant literals (their dead words
+/// sit inside the wider value), returned.
+fn hold(i: Int) -> Holder {
+  if i % 2 == 0 {
+    return Holder{s: Shape.Dot, n: i}
+  }
+  Holder{s: Shape.Line(a: "h${i}"), n: i}
+}
+
+struct Pair {
+  a: Shape
+  b: Shape
+  k: Int
+}
+
+fn pair(i: Int) -> Pair {
+  Pair{a: Shape.Line(a: "pa${i}"), b: Shape.Dot, k: i}
+}
+
+fn tup(i: Int) -> (Shape, Int) {
+  (Shape.Line(a: "t${i}"), i * 2)
+}
+
 fn name(s: Shape) -> Str {
   match s {
     Dot => "dot"
@@ -85,6 +108,24 @@ fn run(out: Stdio) uses stdio {
     var zs = ys.clone()
     zs[0] = Shape.Box(a: "x", b: "y", c: [1], d: "z")
     os.stdio.println("eq ${zs[1] == ys[1]} ${zs[0] == ys[0]} ${name(zs[0])}")
+  }
+  {
+    // structs and tuples holding variant literals: returned, pushed
+    var hs: List[Holder] = []
+    var ps: List[Pair] = []
+    for i in 0..4 {
+      hs.push(hold(i))
+      hs.push(Holder{s: Shape.Line(a: "lit${i}"), n: -i})
+      ps.push(pair(i))
+    }
+    var parts: List[Str] = []
+    for h in hs {
+      parts.push("${name(h.s)}/${h.n}")
+    }
+    os.stdio.println("held ${parts.join(",")}")
+    let p = pair(7)
+    let (ts, tn) = tup(3)
+    os.stdio.println("pair ${name(p.a)} ${name(p.b)} ${p.k} ${ps.len()} ${name(ps[2].a)}; tuple ${name(ts)} ${tn}")
   }
 }
 

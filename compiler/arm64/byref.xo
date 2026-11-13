@@ -257,20 +257,37 @@ fn (var g: G) ret_sret(a: Int) {
     g.clobber()
     return
   }
-  let from = g.dead_from(a)
-  if from < 0 {
+  let dm = g.dead_mask(a)
+  if dm.is_empty() {
     g.store_words_at(g.sret_ptr, 0, g.words(a))
     return
   }
-  // an enum Variant: its dead words are not stored (decision 0624)
-  let ws = g.words(a)
-  g.store_words_at(g.sret_ptr, 0, ws[0..from])
-  if g.m.passes_on.contains("deadw_poison") {
-    var ps: List[Int] = []
-    for _ in from..ws.len() {
-      ps.push(g.imm(DEAD_POISON))
+  // an enum's dead words are not stored (decision 0624)
+  g.store_live_at(g.sret_ptr, 0, g.words(a), dm)
+}
+
+/// Stores ws at base from word w0 but the words dm marks dead (decision 0624), each
+/// run of live words by store_words_at; with +deadw_poison the dead runs
+/// get the poison pattern.
+fn (var g: G) store_live_at(base: Int, w0: Int, ws: List[Int], dm: List[Bool]) {
+  let poison = g.m.passes_on.contains("deadw_poison")
+  var k = 0
+  while k < ws.len() {
+    let dead = k < dm.len() && dm[k]
+    var e = k + 1
+    while e < ws.len() && (e < dm.len() && dm[e]) == dead {
+      e += 1
     }
-    g.store_words_at(g.sret_ptr, from, ps)
+    if !dead {
+      g.store_words_at(base, w0 + k, ws[k..e])
+    } else if poison {
+      var ps: List[Int] = []
+      for _ in k..e {
+        ps.push(g.imm(DEAD_POISON))
+      }
+      g.store_words_at(base, w0 + k, ps)
+    }
+    k = e
   }
 }
 

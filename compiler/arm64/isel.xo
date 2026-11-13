@@ -1641,7 +1641,12 @@ fn (var g: G) instr1(v: Int) {
             let _r = g.rt("memcpy", regs([g.addr_at(g.sret_ptr, 8 * w0), ptr, g.imm(8 * n)]), [])
             g.clobber()
           } else {
-            g.store_words_at(g.sret_ptr, w0, g.words(a))
+            let dm = g.dead_mask(a)
+            if dm.is_empty() {
+              g.store_words_at(g.sret_ptr, w0, g.words(a))
+            } else {
+              g.store_live_at(g.sret_ptr, w0, g.words(a), dm)
+            }
           }
           w0 += n
         }
@@ -1817,9 +1822,9 @@ fn (var g: G) instr1(v: Int) {
           g.ret_sret(a)
           continue
         }
-        let from = g.dead_from(a)
+        let dm = g.dead_mask(a)
         for (i, w) in g.words(a).indexed() {
-          if from >= 0 && i >= from {
+          if i < dm.len() && dm[i] {
             srcs.push(g.dead_src())
             continue
           }
@@ -3980,6 +3985,55 @@ fn (var g: G) dead_from(a: Int) -> Int {
     k += g.nwords(g.vty(p))
   }
   if k >= g.nwords(t) { -1 } else { k }
+}
+
+/// The dead words of value a, one Bool per word (decision 0624): an enum
+/// Variant's words past its payload, and a Struct's or Tuple's fields'
+/// own dead words where it is built from them; [] when none is dead or
+/// the deadw pass is off.
+fn (var g: G) dead_mask(a: Int) -> List[Bool] {
+  if !g.m.passes_on.contains("deadw") {
+    return []
+  }
+  var m: List[Bool] = []
+  if !g.dead_mask_into(a, m, 0) {
+    return []
+  }
+  m
+}
+
+/// Appends a's per-word dead flags to m; true when any is dead. Struct
+/// and Tuple fields are followed to a depth of 4.
+fn (var g: G) dead_mask_into(a: Int, var m: List[Bool], depth: Int) -> Bool {
+  let n = g.nwords(g.vty(a))
+  let op = g.op(a)
+  if op == ssa.Op.Variant {
+    let from = g.dead_from(a)
+    for k in 0..n {
+      m.push(from >= 0 && k >= from)
+    }
+    return from >= 0
+  }
+  if (op is ssa.Op.Struct | ssa.Op.Tuple) && depth < 4 {
+    let start = m.len()
+    var any = false
+    for p in g.f.args_iter(g.f.values[a].args) {
+      if g.dead_mask_into(p, m, depth + 1) {
+        any = true
+      }
+    }
+    if m.len() - start == n {
+      return any
+    }
+    // a layout that is not its fields' words in order: no dead words
+    while m.len() > start {
+      let _p = m.pop()
+    }
+  }
+  for _ in 0..n {
+    m.push(false)
+  }
+  false
 }
 
 /// The operand of a dead word: nothing written, or with +deadw_poison an
