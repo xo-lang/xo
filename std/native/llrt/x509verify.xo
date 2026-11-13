@@ -26,6 +26,16 @@ pub const UNHANDLED_CRITICAL: Int = 8
 pub const CHECK_LIMIT: Int = 9
 pub const NO_VALID_CHAINS: Int = 10
 
+/// Go's containsDistrustedSPKIHash (x509cert.spki_distrusted).
+fn distrusted(ch: List[x509.Cert]) -> Bool {
+  for c in ch {
+    if x509.spki_distrusted(c.spki) {
+      return true
+    }
+  }
+  false
+}
+
 // Go's limit on signature checks in one verification
 const MAX_CHECKS: Int = 100
 
@@ -172,6 +182,9 @@ fn run(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: S
       if names_err == "" {
         names_err = e
       }
+    } else if distrusted(ch) {
+      // dropped uncounted, as Go: alone, NoValidChains with no details
+      continue
     } else {
       if !all {
         return (Outcome{code: OK, chain: ch, bad: leaf, hint: ""}, [ch])

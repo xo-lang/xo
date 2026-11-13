@@ -10,6 +10,7 @@ use native/llrt/process
 use native/llrt/raw
 use native/llrt/sysio
 use native/llrt/tlsname
+use native/llrt/x509cert as x509
 use native/rt
 use native/sys_darwin
 use native/sys_windows
@@ -377,8 +378,52 @@ fn apple_trust_darwin(ders: List[Bytes], host: Str) -> AppleRes {
     } else {
       AppleRes{code: 10, msg: "x509: ${desc}"}
     }
+  } else if apple_chain_distrusted(trust) {
+    // the framework's chain holds a key Go 1.27.4 distrusts: Go's
+    // root_darwin.go gives NoValidChains (GO-2026-6809)
+    res = AppleRes{code: 10, msg: "x509: no valid chains built"}
   }
   release(out)
   let _rt = rt.call_c2(cf_release, trust, 0)
   res
+}
+
+/// Whether the chain the framework built for a trust it accepted holds a
+/// certificate whose key Go 1.27.4 distrusts (x509cert.spki_distrusted),
+/// as Go's systemVerify on macOS checks SecTrustCopyCertificateChain's.
+/// A chain that cannot be read is distrusted (Go: an error).
+fn apple_chain_distrusted(trust: Int) -> Bool {
+  let copy_chain = fw("SecTrustCopyCertificateChain")
+  if copy_chain == 0 {
+    return true
+  }
+  let chain = rt.call_c2(copy_chain, trust, 0)
+  if chain == 0 {
+    return true
+  }
+  let cf_release = fw("CFRelease")
+  let n = rt.call_c2(fw("CFArrayGetCount"), chain, 0)
+  let at = fw("CFArrayGetValueAtIndex")
+  let copy_data = fw("SecCertificateCopyData")
+  let get_len = fw("CFDataGetLength")
+  let get_ptr = fw("CFDataGetBytePtr")
+  var bad = n <= 0
+  var i = 0
+  while i < n && !bad {
+    let c = rt.call_c2(at, chain, i)
+    let d = if c != 0 { rt.call_c2(copy_data, c, 0) } else { 0 }
+    if d == 0 {
+      bad = true
+    } else {
+      let der = raw.str_at(rt.call_c2(get_ptr, d, 0), rt.call_c2(get_len, d, 0)).bytes()
+      let p = x509.parse(der)
+      if p.err != "" || x509.spki_distrusted(p.cert.spki) {
+        bad = true
+      }
+      let _r = rt.call_c2(cf_release, d, 0)
+    }
+    i += 1
+  }
+  let _r = rt.call_c2(cf_release, chain, 0)
+  bad
 }
