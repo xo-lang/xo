@@ -2570,7 +2570,11 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
   - `XO_HTTP_MAX_BODY=<bytes>` (native backends): the largest request
     body the server reads (default 64 MiB; a longer one is cut short as
     a body whose client went away). Go has no such limit. A
-    `handle_stream` route's body has none either (decision 0310).
+    `handle_stream` route's body has none either (decision 0310). On
+    HTTP/2 the unfinished bodies one connection buffers for streams not
+    yet handed to a handler are capped together at four times this
+    limit; the stream whose data would cross the cap is reset with
+    REFUSED_STREAM before any handler sees it, so a client may retry it.
 
 ### 4.7 Response compression
 

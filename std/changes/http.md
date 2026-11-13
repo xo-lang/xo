@@ -9,7 +9,7 @@
 - Affected: every release up to 0.50.1 (native and LLVM backends; the Go backend is net/http's)
 - Shipped in: not yet released
 
-A route that takes its body whole buffered each HTTP/2 request body until it ended, and gave the flow control window back at once, so one connection could hold max_concurrent_streams (250) bodies of up to the body limit (64 MiB) each. The bodies a connection buffers for streams no handler has yet are now capped at four times the body limit; the stream that would pass the cap is refused with RST_STREAM REFUSED_STREAM, which tells the client no handler saw it and it may retry. Routes with handle_stream are unchanged (their window comes back as the handler reads).
+A route that takes its body whole buffered each HTTP/2 request body until it ended, and gave the flow control window back at once, so one connection could hold max_concurrent_streams (250) bodies of up to the body limit (64 MiB) each. The unfinished bodies a connection buffers for streams no handler has yet are now capped together at four times the body limit (XO_HTTP_MAX_BODY, spec/std.md 4.6); the stream that would pass the cap is refused with RST_STREAM REFUSED_STREAM, which tells the client no handler saw it and it may retry. Routes with handle_stream are unchanged (their window comes back as the handler reads).
 
 ## 2026-11-13: security: an HTTP/1.1 server reads a slowly sent request head in linear time
 
