@@ -7,7 +7,7 @@ source: bfc4fc502052681b685fe9eb23baef48faa325e32adec1cf843881b3dcf4ce0c
 date: 2026-11-13
 host: darwin/arm64 (probes against go1.27.4), linux/arm64 host 1 (gates)
 command: read against knowledgebase/infrastructure/std-security-checklist.md; Go vulnerability database sweep (crypto/x509, encoding/pem, encoding/asn1 and crypto/tls name handling entries), each compared with go1.27.4's source and checked by a probe; probes under the session scratchpad (x509nc, x509lim, x509nq, x509pool, pemq, x509host, x509ip, x509ext, x509pg, x509em, asnw, x509dd)
-measure: 25 Go advisories checked: 10 affected the native backends, 9 fixed with go1.27.4's behaviour and a test that fails without the fix; 8 more defects found by the readers and fixed (2 constraint bypasses: an IPv4-mapped SAN and constraints with host bits; 5 quadratic costs; 1 timing leak); 1 open (GO-2022-0171, darwin trust settings, owner go needed to test); 0 fault sites reachable from input in 1000 PEM and 1000 certificate fuzz corpus cases
+measure: 25 Go advisories checked: 10 affected the native backends, 9 fixed with go1.27.4's behaviour and a test that fails without the fix; 8 more defects found by the readers and fixed (2 constraint bypasses: an IPv4-mapped SAN and constraints with host bits; 5 quadratic costs; 1 timing leak); the tenth, GO-2022-0171 (darwin trust settings), fixed after the owner's go in bd314f4ab with Go 1.16's rule; 0 fault sites reachable from input in 1000 PEM and 1000 certificate fuzz corpus cases
 
 Security review of std/x509 for decision 0616, by Xo Lang 3. First
 reader: a read-only subagent's advisory sweep; second reader: another
@@ -35,7 +35,7 @@ release is with the owner (before 0.51).
 | GO-2026-6809 | distrusted intermediates accepted | no list | b9ff07cfc (x509cert.spki_distrusted, x509verify, and the macOS framework's chain) |
 | GO-2026-4599 (CVE-2026-27137) | email constraints of one kind | not affected | 615 cases equal to go1.27.4 (78 in x509_test.xo); the error text for an empty host URI fixed in d9bc11905 |
 | GO-2026-4600 (CVE-2026-27138) | fault on malformed names in constraint checks | not affected | the same 615 cases: no fault, Go's errors |
-| GO-2022-0171 | darwin roots without their trust settings | system_roots lists the default anchors | OPEN: documented in spec/std.md system_roots; the fix (anchors with a Deny setting dropped) needs a throwaway keychain test, which waits for the owner's go (ADR 0584) |
+| GO-2022-0171 | darwin roots without their trust settings | system_roots listed the default anchors | bd314f4ab (Go 1.16's loadSystemRoots: a Deny for SSL drops an anchor, TrustRoot adds one, user over admin); std/native/llrt/tlscert_test.xo, six trust settings files from Apple's `security` (a throwaway keychain, deleted; no trust domain changed); a control ignoring Deny fails it |
 
 Not affected (first reader's evidence, spot checked by probe): GO-2022-0223,
 0191, 0229, 0433, 0434, 0535, 2598, 3373, 3421, 3749, 4011, 4013, 4175.
@@ -91,7 +91,7 @@ land: fuzz 10^6, race, stress (std/evidence/x509/stress/main.xo), perf.
 - SHA-1 and MD5 signatures refused with Go's text; an unhandled critical
   extension refused; ML-DSA keys are not implemented and fail closed.
 - The distrust list is always on, as Go's (no switch).
-- system_roots: GO-2022-0171 above.
+- system_roots: GO-2022-0171 above (fixed in bd314f4ab).
 
 ## 6. Second reader's findings
 
