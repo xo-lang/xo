@@ -65,6 +65,36 @@ test "a CertPool verifies as the lists do (decision 0626)" {
   expect(bad) == []
 }
 
+test "a list of roots verifies as a pool of the same roots: only the roots named as an issuer are parsed (Go's lazyCert)" {
+  // every case's roots in one list (their subjects repeat across cases,
+  // with other keys): the list, parsed lazily by subject, against a pool
+  // of the same roots, parsed whole
+  var all: List[x509.Certificate] = []
+  for c in CASES {
+    for x in x509.parse_pem(c.1.bytes()).ok() ?? [] {
+      all.push(x)
+    }
+  }
+  let pool = x509.cert_pool(all).ok() ?? fault("pool")
+  var bad: List[Str] = []
+  for (name, _root, inter, leaf, _want) in CASES {
+    let i = x509.parse_pem(inter.bytes()).ok() ?? []
+    let l = x509.parse_pem(leaf.bytes()).ok() ?? []
+    let a = match l[0].verify(x509.VerifyOptions{roots: all, intermediates: i, at: Time.from_unix(1780272000), key_usages: [x509.ExtKeyUsage.Any]}) {
+      Ok(chains) => "ok ${chains.len()}"
+      Err(e) => "error: ${e.display()}"
+    }
+    let b = match l[0].verify(x509.VerifyOptions{root_pool: Some(pool), intermediates: i, at: Time.from_unix(1780272000), key_usages: [x509.ExtKeyUsage.Any]}) {
+      Ok(chains) => "ok ${chains.len()}"
+      Err(e) => "error: ${e.display()}"
+    }
+    if a != b {
+      bad.push("${name}: list ${a}, pool ${b}")
+    }
+  }
+  expect(bad) == []
+}
+
 test "a CertPool keeps one of each DER, in order; no roots trust nothing; a hand-made DER is an error" {
   let (root, inter, leaf, _w) = (CASES[0].1, CASES[0].2, CASES[0].3, CASES[0].4)
   let r = x509.parse_pem(root.bytes()).ok() ?? []

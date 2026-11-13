@@ -7515,9 +7515,11 @@ fn check(os: Os, pem: Bytes, roots: Bytes) -> () ! Error uses clock {
 ```
 
 - A `CertPool` (Go's CertPool, decision 0626) holds certificates parsed
-  once: `verify` parses `roots` and `intermediates` on every call, a
-  pool's certificates never again (with 150 roots, about half a call's
-  time). `verify` trusts `roots` and `root_pool`'s together, and may
+  once: `verify` parses `intermediates` on every call, and of `roots`
+  only those whose `subject.raw` is the issuer of the leaf or of an
+  intermediate (Go's lazyCert: parents are found by raw subject, and a
+  root ends a chain), so a root that is no candidate is not parsed; a
+  pool's certificates are never parsed again. `verify` trusts `roots` and `root_pool`'s together, and may
   pass through `intermediates` and `intermediate_pool`'s; neither roots
   nor a pool trusts nothing (`x509: certificate signed by unknown
   authority`). `cert_pool` and `add` keep one certificate per DER, in

@@ -353,10 +353,37 @@ fn parsed_of(pool: CertPool?, list: List[x509.Certificate]) -> List[lx.Cert] ! x
   Ok(out)
 }
 
+/// The roots verify may use: a pool's, then those of the list whose
+/// subject is the issuer of the leaf or of an intermediate, parsed now
+/// (Go's lazyCert: a pool finds parents by their raw subject and parses
+/// only those). A root ends a chain, so no other root's subject is ever
+/// looked up; with 150 roots, verify parsed all 150 per call. A root
+/// without its raw subject (a Certificate built by hand) is parsed.
+fn roots_of(pool: CertPool?, list: List[x509.Certificate], leaf: lx.Cert, inters: List[lx.Cert]) -> List[lx.Cert] ! x509.CertErr {
+  if list.is_empty() {
+    return parsed_of(pool, list)
+  }
+  var wanted: Map[Bytes, Bool] = {}
+  wanted[leaf.issuer] = true
+  for i in inters {
+    wanted[i.issuer] = true
+  }
+  var out: List[lx.Cert] = match pool {
+    Some(p) => p.parsed
+    None => []
+  }
+  for x in list {
+    if x.subject.raw.is_empty() || wanted.contains(x.subject.raw) {
+      out.push(lcert(x)?)
+    }
+  }
+  Ok(out)
+}
+
 fn certificate_verify(c: x509.Certificate, opts: x509.VerifyOptions) -> List[List[x509.Certificate]] ! x509.CertErr {
   let leaf = lcert(c)?
   let inters = parsed_of(rt.cast[x509.CertPool?, CertPool?](opts.intermediate_pool), opts.intermediates)?
-  let roots = parsed_of(rt.cast[x509.CertPool?, CertPool?](opts.root_pool), opts.roots)?
+  let roots = roots_of(rt.cast[x509.CertPool?, CertPool?](opts.root_pool), opts.roots, leaf, inters)?
   var usages: List[Str] = []
   for u in opts.key_usages {
     usages.push(eku_oid(u))

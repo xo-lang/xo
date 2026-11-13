@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Perf (std/x509, native backends): `verify` parses only the roots of `roots` whose subject issues the leaf or an intermediate, as Go's lazy pool: 150 roots in a list, verify150 0.399 of before (551.5 to 220.1 ms, `--ab` on linux/arm64 host 1). A root that does not parse fails verify only when it is a candidate.
 - Feature (std/x509, all backends, decision 0626): `x509.CertPool` (`cert_pool(certs)`, `add`, `certificates`, `len`) holds certificates parsed once, and `VerifyOptions.root_pool` and `intermediate_pool` take one, as Go's CertPool; `roots` now defaults to empty. Verifying against 150 roots with a pool takes 0.525 of the time with a list (bench/perf/x509 pool150 against verify150, linux/arm64 host 2, 615.7 to 323.4 ms). Existing calls compile and behave as before.
 - Perf (std/time, std/timego, native backends): `time.format` with a layout text, `Layout.format`, and timego's RFC 3339 parse and format are faster, as Go's nextStdChunk and appendInt: `--ab` on linux/arm64 host 1, format 0.805 then 0.880 (70.0 to 49.3 ms over both), format_layout 0.938, timego parse 0.819 and format 0.912. Output unchanged.
 - Fix (std/url, native backends): an IP literal holding an escape of a byte from 0x80 (`[fe80::1%A5eth0]`) fails with Go's ParseAddr error instead of parsing the escape as a zone.
