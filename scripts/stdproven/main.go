@@ -65,6 +65,7 @@ type harness struct {
 // input gets a harness first, its Solid requirement).
 var harnesses = map[string][]harness{
 	"json": {{"TestJsonFuzz", "XO_JSONFUZZ"}},
+	"time": {{"TestTimeFuzz", "XO_TIMEFUZZ"}},
 }
 
 func main() {
