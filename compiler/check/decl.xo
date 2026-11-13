@@ -221,6 +221,10 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
           var seen_omit = false
           var seen_str = false
           for o in opts {
+            if o.is_empty() {
+              // `-,` is the key `-` (Go's spelling, decision 0622)
+              continue
+            }
             if o == b"omitempty" && !seen_omit {
               omit = true
               seen_omit = true
@@ -256,6 +260,9 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
             var seen_omit = false
             var seen_str = false
             for o in opts {
+              if o.is_empty() {
+                continue
+              }
               if o == b"omitempty" && !seen_omit {
                 omit = true
                 seen_omit = true
@@ -269,17 +276,33 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
           } else if fw.format == b"sql" {
             sql_wire = key
             for o in opts {
+              if o.is_empty() {
+                continue
+              }
               c.error("XO0422", fw.span, "unknown wire name option `${text(o)}` of field `${text(fl.name.name)}`; a `sql` column name takes no options")
             }
           } else {
             xml_wire = fw.wire
           }
         }
+        // `-` alone leaves the field out (decision 0622): the format's own
+        // string, else the shared one, as written
+        var json_raw = fl.wire
+        var sql_raw = fl.wire
+        for fw in fl.formats {
+          if fw.format == b"json" {
+            json_raw = Some(fw.wire)
+          } else if fw.format == b"sql" {
+            sql_raw = Some(fw.wire)
+          }
+        }
+        let json_skip = json_raw == Some(b"-")
+        let sql_skip = sql_raw == Some(b"-")
         if qstr && !c.json_string_type(ft) {
           c.error("XO0437", fl.wire_span ?? fl.name.span, "the `string` option applies to scalar fields only: field `${text(fl.name.name)}` is not a Bool, Int, Float, Str or an Option of one (decision 0555)")
           qstr = false
         }
-        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || (c.exports_all(c.objs[t].module) && !c.objs[t].flags.std_internal()), default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit, json_string: qstr, json_wire: json_wire, sql_wire: sql_wire, xml_wire: xml_wire})
+        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || (c.exports_all(c.objs[t].module) && !c.objs[t].flags.std_internal()), default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit, json_string: qstr, json_wire: json_wire, sql_wire: sql_wire, xml_wire: xml_wire, json_skip: json_skip, sql_skip: sql_skip})
       }
       c.objs[t].derives = c.derives_of(sd.derive)
       c.objs[t].fields = c.wire_keys(t, sd, fields, c.objs[t].derives)
@@ -451,12 +474,29 @@ fn (var c: Checker) wire_keys(t: Int, sd: parser.StructDecl, fields0: List[Field
       }
     }
   }
+  // a field left out still gets a value when a decoder builds the
+  // struct: its default, else its type's zero (decision 0622)
+  for d in WIRE_DERIVES {
+    if !derives.contains(d) {
+      continue
+    }
+    for (i, f) in fields.indexed() {
+      let skip = if d == "Json" { f.json_skip } else { f.sql_skip }
+      if skip && f.default.is_empty() && !c.skip_zeroable(f.ty) {
+        let fl = sd.fields[i]
+        c.error("XO0440", fl.wire_span ?? fl.name.span, "field `${text(f.name)}` is left out of derive ${d} (`-`) and needs a default: its type `${c.show(f.ty)}` has no zero value; add `= VALUE`, or use `-,` for the key `-` (decision 0622)")
+      }
+    }
+  }
   for d in WIRE_DERIVES {
     if !derives.contains(d) {
       continue
     }
     var seen: Map[Bytes, Int] = {}
     for (i, f) in fields.indexed() {
+      if (d == "Json" && f.json_skip) || (d != "Json" && f.sql_skip) {
+        continue
+      }
       let key = if d == "Json" { f.json_key } else { f.sql_key }
       if let Some(j) = seen.get(key) {
         let sp = sd.fields[i].wire_span ?? sd.fields[i].name.span
@@ -602,6 +642,17 @@ pub fn variant_json_name(vo: VariantInfo) -> Bytes {
 /// A variant field's JSON key (decision 0478).
 pub fn vfield_json_key(f: VFieldInfo) -> Bytes {
   if f.json_key.is_empty() { f.name } else { f.json_key }
+}
+
+/// Whether a decoder can fill a field of type t that it does not read
+/// (decision 0622): an Option (None), Bool, integer, float, Str, Bytes,
+/// List, Map or Set.
+fn (c: Checker) skip_zeroable(t: Int) -> Bool {
+  if c.option_elem(t) >= 0 {
+    return true
+  }
+  let r = c.resolve(t)
+  c.is_int(r) || c.is_float(r) || c.is_prelude(r, "Bool") || c.is_prelude(r, "Str") || c.is_prelude(r, "Bytes") || c.is_prelude(r, "List") || c.is_prelude(r, "Map") || c.is_prelude(r, "Set")
 }
 
 /// A PascalCase name in snake_case: a word starts at a capital after a

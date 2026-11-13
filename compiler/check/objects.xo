@@ -56,6 +56,12 @@ pub struct FieldInfo {
   /// the `xml` string as written (Go's tag text), for derive Xml
   pub xml_wire: Bytes = b""
   pub sql_key: Bytes = b""
+  /// its json (or shared `as`) string is exactly `-`: derive Json, and
+  /// Toml through it, never write or read it (decision 0622)
+  pub json_skip: Bool = false
+  /// its sql (or shared `as`) string is exactly `-`: derive SqlRow never
+  /// reads it (decision 0622)
+  pub sql_skip: Bool = false
 }
 
 /// A field of an enum variant; a `from` field has no name.

@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-12: behavior (breaking): `sql "-"` or `as "-"` leaves a field out of derive SqlRow
+
+- Kind: behavior
+- Commit: this commit
+- Found by: decision 0622
+- Go reference: none (database/sql has no struct scanning; the rule follows encoding/json's `-`)
+- Test: golden derive_skip
+- Shipped in: not yet released
+
+A `derive SqlRow` field whose sql (else shared) wire string is exactly `-` has no column: a row read fills its default, else its zero, and its type need not be a column type. It was the column `-`; write `as "-,"` for that column.
+
 ## 2026-11-11: feature: Rows.column_types and Row.column_types, Go's ColumnTypes
 
 - Kind: feature

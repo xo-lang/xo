@@ -1,5 +1,16 @@
 # std/yaml changes
 
+## 2026-11-12: fix: a field with the key `-` (`as "-,"`) is read back
+
+- Kind: fix
+- Commit: this commit
+- Found by: Xo Lang 3 (decision 0622's derive_skip golden)
+- Go reference: gopkg.in/yaml.v3: a field tagged `yaml:"-,"` has the key `-`
+- Test: golden derive_skip
+- Shipped in: not yet released
+
+`derive Yaml` wrote a field tagged `-,` under the key `-`, as yaml.v3 does, but its decoder took the key text `-` for its own skip marker and never read the field (a round trip lost it). The marker is now internal, and the field reads back.
+
 ## 2026-11-11: fix: time.Civil fields read and write years outside 1677 to 2262
 
 - Kind: fix

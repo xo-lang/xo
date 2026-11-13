@@ -2742,6 +2742,9 @@ pub fn from_value[T: Json](v: Value) -> T ! DecodeErr
 - `derive Json` fields marked `as "key,omitempty"` (core 2.2) are left
   out of `encode`'s output when empty.
 - Goldens `json_stream` and `json_omitempty` (every backend).
+- A field whose wire string is exactly `-` (`as "-"`, `json "-"`) is
+  left out of `encode` and `decode`, as Go's `json:"-"` (core 2.2,
+  decision 0622); `-,` is the key `-`. Golden `derive_skip`.
 - The wire option `string` (decision 0555, core 2.2), `as "n,string"`,
   writes a scalar field (`Bool`, an integer, `Float`, `Float32`, `Str`,
   or an `Option` of one) as a JSON string holding its literal, as Go's

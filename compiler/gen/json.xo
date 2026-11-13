@@ -27,6 +27,10 @@ fn (var g: Gen) gen_json_struct(t: Int) {
   if has_patch {
     g.pl("\tw.ObjStart()")
     for (i, f) in fields.indexed() {
+      if f.json_skip {
+        // `-`: left out (decision 0622)
+        continue
+      }
       let n = check.text(f.name)
       // its key: the wire name or its case rule (decision 0277)
       let k = check.text(f.json_key)
@@ -45,37 +49,45 @@ fn (var g: Gen) gen_json_struct(t: Int) {
     }
     g.pl("\tw.ObjEnd()\n}\n")
   } else {
-    if fields.is_empty() {
-      g.pl("\tw.Raw(${"{}".quote()})")
-    }
+    var written = 0
     for (i, f) in fields.indexed() {
-      let key = if i == 0 { "{" } else { "," }
+      if f.json_skip {
+        // `-`: left out (decision 0622)
+        continue
+      }
+      let key = if written == 0 { "{" } else { "," }
+      written += 1
       let n = check.text(f.name)
       g.pl("\tw.Raw(${(key + json_key_text(f.json_key) + ":").quote()})")
       g.pl("\t${g.json_enc_value(t, i, "v." + go_field(n))}")
     }
-    if !fields.is_empty() {
-      g.pl("\tw.Raw(${"}".quote()})")
-    }
+    g.pl("\tw.Raw(${(if written == 0 { "{}" } else { "}" }).quote()})")
     g.pl("}\n")
   }
   g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path ${rt}JsonPath) *${rt}Json_DecodeErr {\n\treturn ${rt}JsonGoTag(tk, v.xoJsonDec0(tk, x, path), ${check.text(g.c.objs[t].name).quote()}, path)\n}\n")
   g.pl("func (v *${self}) xoJsonDec0(tk *${rt}Task, x any, path ${rt}JsonPath) *${rt}Json_DecodeErr {")
   // an empty struct reads no field, and Go rejects an unused obj
-  let obj = if fields.is_empty() { "_" } else { "obj" }
   var keys: List[Str] = []
   for f in fields {
-    keys.push(check.text(f.json_key))
+    if !f.json_skip {
+      keys.push(check.text(f.json_key))
+    }
   }
+  let obj = if keys.is_empty() { "_" } else { "obj" }
   g.pl("\t${obj}, err := ${g.json_object(t, "x", "path", keys)}")
   g.pl("\tif err != nil {\n\t\treturn err\n\t}")
-  let fold = g.c.objs[t].flags.json_fold() && !fields.is_empty()
+  let fold = g.c.objs[t].flags.json_fold() && !keys.is_empty()
   if fold {
     g.pl("\tvar fe ${rt}JsonFoldErr")
   }
   for (i, f) in fields.indexed() {
     let n = check.text(f.name)
     let d = g.json_default(t, i)
+    if f.json_skip {
+      // `-`: never read; its default, else its zero (decision 0622)
+      g.pl("\t${g.skip_value(f.ty, n, d)}")
+      continue
+    }
     if fold {
       g.json_field_fold(i, check.text(f.json_key), go_field(n), f.ty, d, f.json_string)
     } else {
@@ -261,6 +273,16 @@ fn (g: Gen) has_json_enc_method(t: Int) -> Bool {
   !g.ostd(o) && g.derives(o, "Json")
 }
 
+/// The statement that sets field n (type t) a decoder does not read
+/// (decision 0622): its default d (json_default's statement), else the
+/// zero of its Go type.
+fn (var g: Gen) skip_value(t: Int, n: Str, d: Str) -> Str {
+  if !d.is_empty() {
+    return d
+  }
+  "v.${go_field(n)} = *new(${g.go_type(t)})"
+}
+
 /// XoJsonRead: the direct decoder (genJSONRead).
 fn (var g: Gen) gen_json_read(t: Int) {
   let rt = g.rt()
@@ -291,6 +313,9 @@ fn (var g: Gen) gen_json_read(t: Int) {
   } else {
     g.pl("\t\tswitch string(k) {")
     for (i, f) in fields.indexed() {
+      if f.json_skip {
+        continue
+      }
       let n = check.text(f.name)
       g.pl("\t\tcase ${check.text(f.json_key).quote()}:")
       g.pl("\t\t\tif !${rt}JsonRead(tk, r, &v.${go_field(n)}) {\n\t\t\t\treturn false\n\t\t\t}")
@@ -303,7 +328,9 @@ fn (var g: Gen) gen_json_read(t: Int) {
     let n = check.text(f.name)
     var set = ""
     let d = g.json_default(t, i)
-    if !d.is_empty() {
+    if f.json_skip {
+      set = g.skip_value(f.ty, n, d)
+    } else if !d.is_empty() {
       set = g.json_default(t, i)
     } else if g.option_elem(f.ty) >= 0 {
       set = "v.${go_field(n)} = ${g.go_type(f.ty)}{}"
@@ -579,8 +606,13 @@ fn (var g: Gen) gen_json_newtype(t: Int) {
 fn (var g: Gen) gen_sql_row_struct(t: Int) {
   let rt = g.rt()
   g.pl("func (v *${g.self_type(t)}) XoSqlRowDec(tk *${rt}Task, r ${rt}Sql_Row) *${rt}Sql_SqlErr {")
-  for f in g.c.objs[t].fields {
+  for (i, f) in g.c.objs[t].fields.indexed() {
     let n = check.text(f.name)
+    if f.sql_skip {
+      // `-`: no column; its default, else its zero (decision 0622)
+      g.pl("\t${g.skip_value(f.ty, n, g.json_default(t, i))}")
+      continue
+    }
     // its column: the wire name or its case rule (decision 0277)
     g.pl("\tif e := ${rt}SqlRowField(r, ${check.text(f.sql_key).quote()}, &v.${go_field(n)}); e != nil {\n\t\treturn e\n\t}")
   }

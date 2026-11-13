@@ -713,7 +713,7 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
     readers.push(rd)
     zeros.push("${text(fl.name.name)}: ${zero}")
     let yo = yaml_opts(fl)
-    var key = if yo.skip { "-" } else if yo.inline { "<<inline>>" } else { yo.key }
+    var key = if yo.skip { "<<skip>>" } else if yo.inline { "<<inline>>" } else { yo.key }
     var vrd = ""
     if yo.inline {
       if let Some(vt) = yaml_map_value(fl.typ) {
@@ -747,7 +747,7 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
   var inl: List[Int] = []
   var first = true
   for (j, fl) in sd.fields.indexed() {
-    if keys[j] == "-" {
+    if keys[j] == "<<skip>>" {
       continue
     }
     if keys[j] == "<<inline>>" {
@@ -797,7 +797,7 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
   e.ln("}", sp)
   var known: List[Str] = []
   for (j, fl) in sd.fields.indexed() {
-    if keys[j] == "-" {
+    if keys[j] == "<<skip>>" {
       continue
     }
     if keys[j] == "<<inlinemap>>" {
@@ -814,7 +814,7 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
   e.ln("  var b = base", sp)
   var firstk = true
   for (j, fl) in sd.fields.indexed() {
-    if keys[j] == "-" || keys[j] == "<<inline>>" || keys[j] == "<<inlinemap>>" {
+    if keys[j] == "<<skip>>" || keys[j] == "<<inline>>" || keys[j] == "<<inlinemap>>" {
       continue
     }
     e.ln("  ${if firstk { "" } else { "} else " }}if k == ${quote_str(keys[j])} {", fl.name.span)
@@ -1723,7 +1723,8 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
 /// A field's protobuf tag, `proto "N,options"`: the number and the options zigzag and
 /// fixed (decision 0530); bad is the first other option, num 0 when missing.
 struct ProtoOpts {
-  /// 0 when missing, -1 for a oneof (`proto "oneof"`), -2 for the unknown field bytes (`proto "unknown"`)
+  /// 0 when missing, -1 for a oneof (`proto "oneof"`), -2 for the unknown field bytes (`proto "unknown"`),
+  /// -3 for a field left out (`proto "-"`, decision 0622)
   num: Int
   zigzag: Bool
   fixed: Bool
@@ -1735,7 +1736,7 @@ fn proto_opts(fl: parser.Field) -> ProtoOpts {
   for fw in fl.formats {
     if fw.format == b"proto" {
       let parts = text(fw.wire).split(",")
-      o.num = if parts[0] == "oneof" { -1 } else if parts[0] == "unknown" { -2 } else { Int.parse(parts[0]) ?? 0 }
+      o.num = if text(fw.wire) == "-" { -3 } else if parts[0] == "oneof" { -1 } else if parts[0] == "unknown" { -2 } else { Int.parse(parts[0]) ?? 0 }
       for opt in parts[1..] {
         if opt == "zigzag" {
           o.zigzag = true
@@ -1748,6 +1749,33 @@ fn proto_opts(fl: parser.Field) -> ProtoOpts {
     }
   }
   o
+}
+
+/// The zero of a field type written as text, for a field a derive leaves
+/// out (decision 0622), or "" when the type has none it can spell.
+fn skip_zero_text(tx: Str) -> Str {
+  if tx.ends_with("?") || tx.starts_with("Option[") {
+    return "None"
+  }
+  if tx.starts_with("List[") {
+    return "[]"
+  }
+  if tx.starts_with("Map[") {
+    return "{}"
+  }
+  if tx.starts_with("Set[") {
+    return "#{}"
+  }
+  match tx {
+    "Str" => "\"\""
+    "Bytes" => "b\"\""
+    "Bool" => "false"
+    "Int" => "0"
+    "Float" => "0.0"
+    "Int8" | "Int16" | "Int32" | "UInt8" | "UInt16" | "UInt32" => "${tx}.wrapping_from(0)"
+    "UInt64" => "UInt64.from_bits(0)"
+    _ => ""
+  }
 }
 
 /// How derive Proto writes and reads one element type: wire type, the expression that appends the
@@ -1904,6 +1932,22 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
   for fl in sd.fields {
     let f = text(fl.name.name)
     let po = proto_opts(fl)
+    if po.num == -3 {
+      // `proto "-"`: no number and not on the wire; a decoded message
+      // holds its default (the literal leaves it out), else its zero
+      // (decision 0622)
+      if fl.default == None {
+        let tx0 = proto_type_text(fl.typ) ?? ""
+        let z = skip_zero_text(tx0)
+        if z.is_empty() {
+          c.error_at(file, "XO0440", fl.name.span, "field `${f}` is left out of derive Proto (`proto \"-\"`) and needs a default: its type has no zero value; add `= VALUE` (decision 0622)")
+          ok = false
+        } else {
+          zeros.push("${f}: ${z}")
+        }
+      }
+      continue
+    }
     if po.num == -2 {
       if unknown_f != "" || (proto_type_text(fl.typ) ?? "") != "Bytes" {
         c.error_at(file, "XO0422", fl.name.span, "`proto \"unknown\"` marks one `Bytes` field that keeps the unknown fields of a message (decision 0530)")

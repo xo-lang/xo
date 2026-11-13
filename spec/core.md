@@ -835,8 +835,17 @@ pub struct User {
   zero number, `""`, or an empty `List`, `Map`, `Set`, or `Bytes`. A
   struct or an enum value is never empty. Decoding is unchanged: a
   missing key takes the field's default. Another option, or a repeated
-  one, is `XO0422`. Unlike Go, `as "-"` is the key `-`, not a skipped
-  field.
+  one, is `XO0422`.
+- As in Go, a wire string that is exactly `-` leaves the field out
+  (decision 0622): `force_send_fields as "-": List[Str] = []`. Every
+  derive that reads the string skips it: the encoder never writes it,
+  the decoder never reads it (a `-` key in the input is unknown like any
+  other), and a decoded value holds the field's default, else its type's
+  zero (`None`, `false`, `0`, `""`, an empty `List`, `Map`, `Set` or
+  `Bytes`). A skipped field of another type with no default is
+  `XO0440`. A format's own string skips it for that format only (`json
+  "-"`); `proto "-"` leaves it out of `derive Proto` (2.9). The key `-`
+  is written `-,` (Go's spelling), `-,omitempty` with the option.
 - The option `string` (decision 0555), `n as "n,omitempty,string": Int?`
   or `as ",string"`, makes `derive Json` write a scalar field as a JSON
   string holding the value's literal (`5` as `"5"`, `true` as `"true"`,
@@ -3959,6 +3968,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0436` | error | checker | `for` over a type with `next()` whose `?` does not match it: `for x in v` where `next()` can fail (write `for x? in v`), `for x? in v` where it cannot or over a builtin iteration, or a `next()` that does not return `T?` (core 3.5, decision 0494) |
 | `XO0437` | error | checker | the `string` wire option on a field that is not a Bool, integer, float or Str, or an Option of one (core 2.2, decision 0555) |
 | `XO0438` | warning | checker | an argument of a `log.debug`, `log.info`, `log.warn` or `log.error` call (or a Logger's) performs an effect other than `log`; it runs only when the record is at or above the configured level (decision 0558, std.md 6) |
+| `XO0440` | error | checker | a field left out of a derive with `-` (decision 0622) has no default and its type no zero value (a struct, an enum, a function); add a default, or write `-,` for the key `-` (core 2.2) |
 | `XO0439` | error | checker | a type's `var` method where an interface's method of its name takes a plain `self`: the type does not implement the interface, since a call through it would lose the update; declare the interface method `var self` or make the method plain (core 2.4, decision 0613) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding, to a captured variable, or to an element of `Bytes` (core 5.2, 3.3) |

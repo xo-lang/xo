@@ -1023,6 +1023,10 @@ fn (var c: Checker) check_derives(t: Int, ids: List[Ident], args: List[parser.De
     var fts: List[Int] = []
     var names: List[Str] = []
     for f in c.objs[t].fields {
+      if f.json_skip && n is "Json" | "Toml" {
+        // `-`: never encoded or decoded (decision 0622)
+        continue
+      }
       fts.push(f.ty)
       names.push(text(f.name))
     }
@@ -1053,7 +1057,7 @@ fn (var c: Checker) check_sql_row_derive(t: Int, id: Ident) {
     return
   }
   for f in c.objs[t].fields {
-    if !c.is_sql_column(f.ty) {
+    if !f.sql_skip && !c.is_sql_column(f.ty) {
       let d = c.error("XO0404", id.span, "`derive SqlRow` needs every field to be a column type, but `${text(f.name)}` has type `${c.show(f.ty)}`")
       c.note(d, "column types are Int, Float, Str, Bool, Time, and Bytes, an Option of one for a column that may be NULL, and List[Int] and List[Str] for arrays (std.md 10.4)")
     }

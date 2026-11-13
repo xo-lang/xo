@@ -1,7 +1,7 @@
 # 0622: Leaving a field out of a derive (`as "-"`, Go's `json:"-"`)
 
-Status: Proposed (Xo Lang 3, 2026-11-12, at aws-43's request through the
-lead; the owner decides).
+Status: Accepted (owner, 2026-11-12, relayed by the lead; Xo Lang 3
+implemented it the same day, at aws-43's request).
 
 ## Context
 
@@ -124,3 +124,24 @@ the tag `-,` is the key `-`.
 - **Only Json** (fix `-` in Json, leave SqlRow and Proto): smaller, but
   SqlRow would then be the one derive where `as "-"` is a name, and
   Proto would still have no way to leave a field out.
+
+## Implementation notes (2026-11-12)
+
+- check: FieldInfo.json_skip and sql_skip (exported with the module), set
+  when the json or sql string (else the shared `as`) is exactly `-`; an
+  empty option is accepted, so `-,` is the key `-`. A skipped field is
+  out of the duplicate key check, the Json field type requirement and
+  SqlRow's column type check. XO0440 is reported for Json, SqlRow and
+  Proto (`proto "-"`, check derive.xo proto_opts -3, skip_zero_text).
+- Lowering: compiler/ssa json.xo (encoder, decoder: default else zero,
+  SqlRow), jsonval.xo (to_value), compiler/gen json.xo (Go backend
+  encoder, tree and direct decoders, SqlRow; skip_value).
+- Yaml: `-,` was already the key `-` when writing, but the decoder used
+  the key text `-` as its own skip marker and left the field unread;
+  the marker is now `<<skip>>` (found by the golden).
+- XO0441 is not added: the case it named (a wire string on a struct
+  that derives no format reading it) is XO0414's existing warning.
+- Tests: golden derive_skip (arm64, llvm, go parity, wasm; the JSON bytes
+  are encoding/json's), errorcheck derive_skip_default, `xo explain
+  XO0440`.
+

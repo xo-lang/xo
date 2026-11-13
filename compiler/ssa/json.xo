@@ -606,6 +606,10 @@ fn (var b: Builder) json_struct_obj(acc: Int, v: Int, t: Int, obj: Int, sb: Map[
     if fi < 0 {
       continue
     }
+    if f.json_skip {
+      // `-`: left out of the JSON (decision 0622)
+      continue
+    }
     // its key: the field's wire name or its case rule (decision 0277),
     // escaped for the literal
     let fname = json_key_text(f.json_key)
@@ -1340,10 +1344,16 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     let d = Dec{src: d.src, tape: d.tape, i: d.i, rt: d.rt, t: d.t, kind: d.kind, gt: d.gt, sname: if b.dec_go { check.text(b.c.objs[obj].name) } else { "" }}
     var fs: List[JField] = []
     let df = b.decl_file(obj)
+    var skipped: List[(Int, List[Expr])] = []
     for f in b.c.objs[obj].fields {
       let fname = check.text(f.name)
       let fi = b.m.field_index(t, fname)
       if fi < 0 {
+        continue
+      }
+      if f.json_skip {
+        // `-`: never read; its default, else its zero (decision 0622)
+        skipped.push((fi, f.default))
         continue
       }
       fs.push(JField{name: fname, key: check.text(f.json_key), ct: b.c.subst(f.ty, sb), st: b.m.types[t].fields[fi].ty, dflt: f.default, dfile: df, strq: f.json_string})
@@ -1356,6 +1366,11 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     }
     for (k, f) in fs.indexed() {
       sargs[b.m.field_index(t, f.name)] = vals[k]
+    }
+    for (fi, dflt) in skipped {
+      if !dflt.is_empty() {
+        sargs[fi] = b.foreign_value(dflt[0], df, b.m.types[t].fields[fi].ty, b.s.sub)
+      }
     }
     for k in 0..sargs.len() {
       if sargs[k] < 0 {
@@ -2072,7 +2087,14 @@ fn (var b: Builder) sql_body(ct: Int, row_ct: Int, rt: Int) {
     return
   }
   var vals: List[Int] = []
+  let df = b.decl_file(obj)
   for f in b.c.objs[obj].fields {
+    if f.sql_skip {
+      // `-`: no column; its default, else its zero (decision 0622)
+      let ft = b.m.types[t].fields[vals.len()].ty
+      vals.push(if f.default.is_empty() { b.zero(ft, []) } else { b.foreign_value(f.default[0], df, ft, b.s.sub) })
+      continue
+    }
     // its column: the wire name or its case rule (decision 0277)
     let col = b.const_str(check.text(f.sql_key))
     let acc = b.sql_accessor(f.ty)

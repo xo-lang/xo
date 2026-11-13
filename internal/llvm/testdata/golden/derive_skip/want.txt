@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+json {"id":1,"-":2}
+json back 3 0 0 4 unset
+cbor back 1 0 2 s
+yaml id: 1
+'-': 2
+secret: s
+yaml back 1 0 2 s
+proto 2 5 kept 0
+sql 7 0 none
+--- stderr

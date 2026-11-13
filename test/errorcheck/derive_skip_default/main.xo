@@ -1,0 +1,35 @@
+// A field left out of a derive with `-` (decision 0622) needs a default
+// when its type has no zero value: the decoder fills it.
+
+struct Inner {
+  n: Int
+}
+
+enum Mode { A, B }
+
+struct Bad {
+  id: Int
+  inner as "-": Inner // ERROR XO0440 "field `inner` is left out of derive Json"
+  mode json "-": Mode // ERROR XO0440 "field `mode` is left out of derive Json"
+} derive Json
+
+struct Good {
+  id: Int
+  inner as "-": Inner = Inner{n: 1}
+  tags as "-": List[Str]
+  key as "-,": Int
+} derive Json
+
+struct BadRow {
+  id: Int
+  inner sql "-": Inner // ERROR XO0440 "field `inner` is left out of derive SqlRow"
+} derive SqlRow
+
+struct BadProto {
+  id proto "1": Int
+  inner proto "-": Inner // ERROR XO0440 "left out of derive Proto"
+} derive Proto
+
+fn main(os: Os) {
+  os.stdio.println("${Good{id: 1, tags: [], key: 2}.id}")
+}

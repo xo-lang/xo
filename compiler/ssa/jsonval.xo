@@ -364,6 +364,10 @@ fn (var b: Builder) val_struct_fields(lv: Int, v: Int, t: Int, obj: Int, sb: Map
     if fi < 0 {
       continue
     }
+    if f.json_skip {
+      // `-`: left out (decision 0622)
+      continue
+    }
     let key = check.text(f.json_key)
     let ft = b.c.subst(f.ty, sb)
     let fv = b.unbox(b.add(Op.Field, b.m.types[t].fields[fi].ty, Aux.I(n: fi), [v]))

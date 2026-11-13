@@ -372,6 +372,8 @@ fn (var w: ExW) obj(x: Obj, t: List[Int]) {
     w.bytes(f.sql_wire)
     w.bytes(f.xml_wire)
     w.bytes(f.sql_key)
+    w.bool(f.json_skip)
+    w.bool(f.sql_skip)
   }
   w.uv(x.variants.len())
   for v in x.variants {
@@ -502,7 +504,7 @@ fn (var r: ExR) obj() -> (Obj, List[Int]) {
     trees.push(r.uv())
     let line = r.uv()
     let col = r.uv()
-    x.fields.push(FieldInfo{name: name, ty: ty, is_pub: is_pub, line: line, col: col, wire: r.bytes(), json_key: r.bytes(), omit_empty: r.bool(), json_string: r.bool(), json_wire: r.bytes(), sql_wire: r.bytes(), xml_wire: r.bytes(), sql_key: r.bytes()})
+    x.fields.push(FieldInfo{name: name, ty: ty, is_pub: is_pub, line: line, col: col, wire: r.bytes(), json_key: r.bytes(), omit_empty: r.bool(), json_string: r.bool(), json_wire: r.bytes(), sql_wire: r.bytes(), xml_wire: r.bytes(), sql_key: r.bytes(), json_skip: r.bool(), sql_skip: r.bool()})
   }
   let nv = r.uv()
   for _ in 0..nv {

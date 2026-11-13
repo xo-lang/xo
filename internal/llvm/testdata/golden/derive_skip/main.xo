@@ -1,0 +1,61 @@
+// `-` leaves a field out of every derive (decision 0622): the encoders
+// never write it, the decoders never read it (a `-` key in the input is
+// unknown) and fill its default, else its zero; `-,` is the key `-`.
+// The JSON bytes are encoding/json's for the same Go struct tags.
+use std/json
+use std/cbor
+use std/yaml
+use std/protobuf
+use std/sql
+
+struct Call {
+  id: Int
+  force_send_fields as "-": List[Str] = []
+  null_fields as "-": List[Str]
+  dash as "-,": Int
+  secret json "-": Str = "unset"
+} derive Json, Cbor, Yaml
+
+struct Msg {
+  id proto "1": Int
+  note proto "-": Str = "kept"
+  extra proto "-": List[Int]
+} derive Proto
+
+struct Row {
+  id: Int
+  cache as "-": Map[Str, Int]
+  label sql "-": Str = "none"
+} derive SqlRow
+
+fn main(os: Os) uses (stdio, net.dial) {
+  let c = Call{id: 1, force_send_fields: ["A"], null_fields: ["B"], dash: 2, secret: "s"}
+  let js = json.encode(c)
+  os.stdio.println("json ${js.to_str() ?? "?"}")
+  match json.decode_str[Call]("{\"id\": 3, \"-\": 4, \"force_send_fields\": [\"x\"], \"secret\": \"y\"}") {
+    Ok(d) => os.stdio.println("json back ${d.id} ${d.force_send_fields.len()} ${d.null_fields.len()} ${d.dash} ${d.secret}")
+    Err(e) => os.stdio.println("json err ${e}")
+  }
+  let cb = cbor.marshal(c).ok() ?? fault("cbor")
+  match cbor.unmarshal[Call](cb, true) {
+    Ok(d) => os.stdio.println("cbor back ${d.id} ${d.force_send_fields.len()} ${d.dash} ${d.secret}")
+    Err(e) => os.stdio.println("cbor err ${e}")
+  }
+  let yt = yaml.encode_value(c).ok() ?? "ERR"
+  os.stdio.print("yaml ${yt}")
+  match yaml.decode[Call](yt) {
+    Ok(d) => os.stdio.println("yaml back ${d.id} ${d.force_send_fields.len()} ${d.dash} ${d.secret}")
+    Err(e) => os.stdio.println("yaml err ${e}")
+  }
+  let pb = protobuf.marshal(Msg{id: 5, note: "n", extra: [1]})
+  match protobuf.unmarshal[Msg](pb) {
+    Ok(m) => os.stdio.println("proto ${pb.len()} ${m.id} ${m.note} ${m.extra.len()}")
+    Err(e) => os.stdio.println("proto err ${e}")
+  }
+  let db = sql.memory("CREATE TABLE r (id INT, cache TEXT, label TEXT)").ok() ?? fault("schema")
+  let _n = db.exec("INSERT INTO r (id, cache, label) VALUES (7, 'c', 'l')").ok() ?? fault("insert")
+  match db.query_as[Row]("SELECT id FROM r") {
+    Ok(rs) => os.stdio.println("sql ${rs[0].id} ${rs[0].cache.len()} ${rs[0].label}")
+    Err(e) => os.stdio.println("sql err ${e}")
+  }
+}

@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-12: behavior (breaking): a `-` wire string leaves the field out, as Go's json:"-"
+
+- Kind: behavior
+- Commit: this commit
+- Found by: aws-43 (gcp models: Go's ForceSendFields and NullFields are `json:"-"`), decision 0622
+- Go reference: encoding/json: a field tagged `json:"-"` is ignored; `json:"-,"` has the key `-`
+- Test: golden derive_skip (arm64, llvm, go parity, wasm), errorcheck derive_skip_default
+- Shipped in: not yet released
+
+`as "-"` or `json "-"` on a field of a `derive Json` (and Toml) struct now leaves it out: the encoder never writes it, the decoder never reads it (a `-` key in the input is unknown) and fills its default, else its type's zero. It was the key `-`; write `as "-,"` for that key. A skipped field whose type has no zero and no default is XO0440. The encoder's bytes are encoding/json's for the same tags.
+
 ## 2026-11-12: security: the Go backend builds a decode path only for an error
 
 - Kind: security
