@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [fuzz-harness-go-representation.md](fuzz-harness-go-representation.md): Observed 2026-11-13: the x509 1M fuzz failed twice on URIs: the harness printed Go's url.URL.String() (re-escaped), then counted a constructed [6] Go skips; compare the field std keeps, read with Go's tag rules
 - [dudect-pool-layout.md](dudect-pool-layout.md): Observed 2026-11-12: OAEP dudect failed every pair, A/A too, on arm64 and amd64: the pool alternated the classes slot by slot, so the block across each page boundary was always one class; alternate runs of 4096 / KK slots instead
 - [dudect-o0-llvm.md](dudect-o0-llvm.md): Observed 2026-11-12: RSA unpad dudect failed only on LLVM (|t| 81, and an A/A pair 5.7): `xo test` builds LLVM at -O0, whose stack reloads leaked on Apple silicon; run timing tests with XO_LLVM_OPT=O2 (all pass, max |t| 1.7)
 - [selinux-untarred-binary-203-exec.md](selinux-untarred-binary-203-exec.md): Observed 2026-11-12: a new xo untarred in a mktemp dir and moved under /srv/xomod failed systemd 203/EXEC on the SELinux Enforcing sumdb host (label var_lib_t, mv keeps labels); `chcon -R --reference=` the old build (bin_t) before the restart
