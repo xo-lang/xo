@@ -35,6 +35,7 @@ package stdtest
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -47,6 +48,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/xo-lang/xo/internal/testtmp"
@@ -337,6 +339,15 @@ func jfXoFile(seed int64, cases []jfCase) string {
 		fmt.Fprintf(&b, "test \"json typed %d\" {\n  let raw = %s\n", i, ufBytes([]byte(in)))
 		fmt.Fprintf(&b, "  expect(jf_rec(raw)) == %s\n  expect(jf_one(raw)) == %s\n  expect(jf_map(raw)) == %s\n}\n\n", xoStr(rec), xoStr(one), xoStr(m))
 	}
+	// typed fields whose text other parsers read: Time (RFC 3339), Bytes
+	// (base64), Duration (its text, as Go's ParseDuration reads it), one
+	// record for every 10 cases, from a stream of the seed's own
+	b.WriteString(jfFieldsXo)
+	r := rand.New(rand.NewSource(seed*7919 + 3))
+	for i := 0; i < (len(cases)+9)/10; i++ {
+		in := jfFieldsText(r)
+		fmt.Fprintf(&b, "test \"json fields %d\" {\n  expect(jf_fields(%s)) == %s\n}\n\n", i, ufBytes([]byte(in)), xoStr(jfFieldsGo([]byte(in))))
+	}
 	return b.String()
 }
 
@@ -574,3 +585,130 @@ func runFuzzDir(t *testing.T, file, content string, backends []string, cases int
 		t.Logf("%s: %d passed of %d tests (%d generated cases)", b, passed, tests, cases)
 	}
 }
+
+// jfFieldsText is a record of a Time, a Bytes and a Duration field, each
+// valid text a Go value prints, or that text changed the way a hostile
+// body would (a byte replaced, deleted, inserted, cut), or null, or left
+// out.
+func jfFieldsText(r *rand.Rand) string {
+	field := func(valid string, alpha string) string {
+		switch r.Intn(8) {
+		case 0:
+			return "null"
+		case 1:
+			return ""
+		case 2, 3:
+			b := []byte(valid)
+			if len(b) > 0 {
+				switch r.Intn(4) {
+				case 0:
+					b[r.Intn(len(b))] = alpha[r.Intn(len(alpha))]
+				case 1:
+					i := r.Intn(len(b))
+					b = append(b[:i], b[i+1:]...)
+				case 2:
+					i := r.Intn(len(b) + 1)
+					b = append(b[:i], append([]byte{alpha[r.Intn(len(alpha))]}, b[i:]...)...)
+				default:
+					b = b[:r.Intn(len(b))]
+				}
+			}
+			return strconv.Quote(string(b))
+		}
+		return strconv.Quote(valid)
+	}
+	// 1700 to 2200 (inside what a Time holds, decision 0364), any
+	// nanosecond, offsets of whole minutes up to 18 hours
+	secs := r.Int63n(500*365*24*3600) - 270*365*24*3600
+	t := time.Unix(secs, r.Int63n(1e9))
+	offs := []int{0, 0, 3600, -18000, 19800, -34200, 45900, 86340, -86340}
+	t = t.In(time.FixedZone("", offs[r.Intn(len(offs))]))
+	layouts := []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000Z07:00"}
+	when := t.Format(layouts[r.Intn(len(layouts))])
+	raw := make([]byte, r.Intn(12))
+	r.Read(raw)
+	data := base64.StdEncoding.EncodeToString(raw)
+	if r.Intn(6) == 0 {
+		data = base64.RawStdEncoding.EncodeToString(raw)
+	}
+	durs := []string{time.Duration(r.Int63n(1 << 50)).String(), time.Duration(-r.Int63n(1 << 40)).String(), "1.5h", "300ms", "-2h45m", "1us", "2\u00b5s", "0", "1h1m1.000000001s", "9223372036854775807ns"}
+	dur := durs[r.Intn(len(durs))]
+	parts := []string{}
+	for _, f := range []struct{ k, v string }{
+		{"when", field(when, "0123456789:-+ZT.zt ")},
+		{"data", field(data, "AZaz09+/=-_\n ")},
+		{"dur", field(dur, "0123456789.hmsun-+ ")},
+	} {
+		if f.v != "" {
+			parts = append(parts, strconv.Quote(f.k)+":"+f.v)
+		}
+	}
+	r.Shuffle(len(parts), func(i, j int) { parts[i], parts[j] = parts[j], parts[i] })
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+// jfFieldsGo is Go's answer for jfFieldsText's record: "err" or each field
+// as the Xo side prints it (Unix nanoseconds, hex, nanoseconds; "none"
+// for null or missing). Go has no Duration that decodes from text, so
+// the field is a string run through time.ParseDuration, as Xo's decoder
+// reads it; a Time outside what a Time holds (1677 to 2262) is an error
+// in Xo (decision 0364).
+func jfFieldsGo(in []byte) string {
+	var rec struct {
+		When *time.Time `json:"when"`
+		Data []byte     `json:"data"`
+		Dur  *string    `json:"dur"`
+	}
+	if json.Unmarshal(in, &rec) != nil {
+		return "err"
+	}
+	w := "none"
+	if rec.When != nil {
+		if y := rec.When.UTC().Year(); y < 1678 || y > 2261 {
+			return "err"
+		}
+		w = strconv.FormatInt(rec.When.UnixNano(), 10)
+	}
+	d := "none"
+	if rec.Data != nil {
+		d = fmt.Sprintf("%x", rec.Data)
+	}
+	u := "none"
+	if rec.Dur != nil {
+		x, err := time.ParseDuration(*rec.Dur)
+		if err != nil {
+			return "err"
+		}
+		u = strconv.FormatInt(int64(x), 10)
+	}
+	return "when=" + w + "|data=" + d + "|dur=" + u
+}
+
+const jfFieldsXo = `struct JfFields {
+  when: Time?
+  data: Bytes?
+  dur: Duration?
+} derive Json
+
+fn jf_fields(raw: Bytes) -> Str {
+  match json.decode[JfFields](raw) {
+    Ok(r) => {
+      let w = match r.when {
+        Some(t) => "${t.unix_nanos()}"
+        None => "none"
+      }
+      let d = match r.data {
+        Some(b) => b.to_hex()
+        None => "none"
+      }
+      let u = match r.dur {
+        Some(x) => "${x.nanos()}"
+        None => "none"
+      }
+      "when=${w}|data=${d}|dur=${u}"
+    }
+    Err(_) => "err"
+  }
+}
+
+`

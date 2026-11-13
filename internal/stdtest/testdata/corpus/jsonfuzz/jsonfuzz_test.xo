@@ -21806,3 +21806,834 @@ test "json typed 18" {
   expect(jf_map(raw)) == ""
 }
 
+struct JfFields {
+  when: Time?
+  data: Bytes?
+  dur: Duration?
+} derive Json
+
+fn jf_fields(raw: Bytes) -> Str {
+  match json.decode[JfFields](raw) {
+    Ok(r) => {
+      let w = match r.when {
+        Some(t) => "${t.unix_nanos()}"
+        None => "none"
+      }
+      let d = match r.data {
+        Some(b) => b.to_hex()
+        None => "none"
+      }
+      let u = match r.dur {
+        Some(x) => "${x.nanos()}"
+        None => "none"
+      }
+      "when=${w}|data=${d}|dur=${u}"
+    }
+    Err(_) => "err"
+  }
+}
+
+test "json fields 0" {
+  expect(jf_fields(b"{\x22dur\x22:\x229223372036854775807ns\x22,\x22when\x22:null}")) == "when=none|data=none|dur=9223372036854775807"
+}
+
+test "json fields 1" {
+  expect(jf_fields(b"{\x22data\x22:\x22cgoAGg\x22,\x22dur\x22:null,\x22when\x22:\x221971-04-23T05:08:40+05:30\x22}")) == "err"
+}
+
+test "json fields 2" {
+  expect(jf_fields(b"{\x22data\x22:\x22Y4nxFQ==\x22,\x22when\x22:\x222051-08-02T08:29:03-0:5:00\x22,\x22dur\x22:\x221h1m1.000000\x22}")) == "err"
+}
+
+test "json fields 3" {
+  expect(jf_fields(b"{\x22when\x22:\x222185-09-01T19:46:21.271791103-09:30\x22,\x22data\x22:\x22D/N7R/BUrOiZ\x22,\x22dur\x22:null}")) == "when=6805919781271791103|data=0ff37b47f054ace899|dur=none"
+}
+
+test "json fields 4" {
+  expect(jf_fields(b"{\x22when\x22:\x221702-03-11T19:23:21.192064267Z\x22,\x22data\x22:\x22YAmU52Rm\x22,\x22dur\x22:\x2265h58m19.067879686s\x22}")) == "when=-8451232598807935733|data=600994e76466|dur=237499067879686"
+}
+
+test "json fields 5" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-2h45m\x22,\x22when\x22:\x221712-10-04T04:48:47-09:30\x22,\x22data\x22:\x229G\x22}")) == "err"
+}
+
+test "json fields 6" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-2h45m\x22,\x22when\x22:\x222036-03-28T07:17:10.858096503+12:45\x22,\x22data\x22:\x22Mg\x22}")) == "err"
+}
+
+test "json fields 7" {
+  expect(jf_fields(b"{\x22dur\x22:\x221h1m1.000000001s\x22,\x22when\x22:\x222157-08-19T09:07:51+0\x22,\x22data\x22:\x22SkMK\x22}")) == "err"
+}
+
+test "json fields 8" {
+  expect(jf_fields(b"{\x22data\x22:\x22MXmTuBupwIs=\x22}")) == "when=none|data=317993b81ba9c08b|dur=none"
+}
+
+test "json fields 9" {
+  expect(jf_fields(b"{\x22when\x22:\x221961-08-25T16:41:49+01:00\x22,\x22data\x22:null}")) == "when=-263549891000000000|data=none|dur=none"
+}
+
+test "json fields 10" {
+  expect(jf_fields(b"{\x22when\x22:\x222120-03-04T21:07:27Z\x22,\x22dur\x22:\x22-2h45m\x22,\x22data\x22:\x2298aHJA==\x22}")) == "when=4739029647000000000|data=f7c68724|dur=-9900000000000"
+}
+
+test "json fields 11" {
+  expect(jf_fields(b"{\x22when\x22:\x222110-10-14T08:50:29.896402168-05:00\x22,\x22data\x22:null,\x22dur\x22:\x22-2h45m\x22}")) == "when=4442737829896402168|data=none|dur=-9900000000000"
+}
+
+test "json fields 12" {
+  expect(jf_fields(b"{\x22when\x22:\x221871-12-15T22:03:03.803684508+01:00\x22,\x22data\x22:null}")) == "when=-3093994616196315492|data=none|dur=none"
+}
+
+test "json fields 13" {
+  expect(jf_fields(b"{\x22dur\x22:\x2230ms\x22,\x22when\x22:\x221936-11-21T04:34:37.185799646-05:00\x22,\x22data\x22:\x22\x22}")) == "when=-1044887122814200354|data=|dur=30000000"
+}
+
+test "json fields 14" {
+  expect(jf_fields(b"{\x22dur\x22:null,\x22when\x22:\x221870-04-02T17:48:45-09:30\x22,\x22data\x22:null}")) == "when=-3147712875000000000|data=none|dur=none"
+}
+
+test "json fields 15" {
+  expect(jf_fields(b"{\x22when\x22:\x221951-03-16T04:14:33Z\x22,\x22data\x22:\x22x1Yqgk=\x22,\x22dur\x22:\x22-10m27.438112158s\x22}")) == "err"
+}
+
+test "json fields 16" {
+  expect(jf_fields(b"{\x22data\x22:\x22/RA=\x22,\x22when\x22:\x221740-09-06T09:52:04.416022461+12:45\x22,\x22dur\x22:\x221h1m1.000000001s\x22}")) == "when=-7236615175583977539|data=fd10|dur=3661000000001"
+}
+
+test "json fields 17" {
+  expect(jf_fields(b"{\x22when\x22:\x222193-06-03T04:12:09.224923309+23:59\x22,\x22data\x22:\x22zXnIA==\x22,\x22dur\x22:\x22\x22}")) == "err"
+}
+
+test "json fields 18" {
+  expect(jf_fields(b"{\x22dur\x22:\x222\xc2\xb5s\x22,\x22data\x22:\x22bQ0D7A==\x22,\x22when\x22:\x221750-07-02T17:34:01.176930852+23:59\x22}")) == "when=-6926797498823069148|data=6d0d03ec|dur=2000"
+}
+
+test "json fields 19" {
+  expect(jf_fields(b"{\x22when\x22:\x222106-05-21T01:56:49.260+23:59\x22,\x22data\x22:\x221IJGSaggEA==\x22}")) == "when=4303763869260000000|data=d4824649a82010|dur=none"
+}
+
+test "json fields 20" {
+  expect(jf_fields(b"{\x22when\x22:\x221775-06-17T405:47:53.133+01:00\x22}")) == "err"
+}
+
+test "json fields 21" {
+  expect(jf_fields(b"{\x22data\x22:\x22j4M=\x22,\x22when\x22:\x221970-07-23T20:47:35.096283475Z\x22}")) == "when=17614055096283475|data=8f83|dur=none"
+}
+
+test "json fields 22" {
+  expect(jf_fields(b"{\x22data\x22:\x22SqOgIwOPSN1\x22,\x22when\x22:\x222088-10-12T21:32:44.535Z\x22,\x22dur\x22:null}")) == "err"
+}
+
+test "json fields 23" {
+  expect(jf_fields(b"{\x22when\x22:\x221887-04-21T07:39:58.518+12:45\x22,\x22dur\x22:\x221h1m1.00000\x22,\x22data\x22:\x22ht88mwc0F/o=\x22}")) == "err"
+}
+
+test "json fields 24" {
+  expect(jf_fields(b"{\x22data\x22:null,\x22when\x22:\x222067-03-17T18:20:10+05:30\x22}")) == "when=3067591810000000000|data=none|dur=none"
+}
+
+test "json fields 25" {
+  expect(jf_fields(b"{\x22data\x22:null,\x22dur\x22:\x222\x5cxc2s\x22,\x22when\x22:\x222163-05-24T17:20:00Z\x22}")) == "err"
+}
+
+test "json fields 26" {
+  expect(jf_fields(b"{\x22dur\x22:\x221h1m1.000000001s\x22,\x22data\x22:\x22EOl\x22,\x22when\x22:\x221824-09-26T06:30:28.225-23:59\x22}")) == "err"
+}
+
+test "json fields 27" {
+  expect(jf_fields(b"{\x22when\x22:\x221779-10-02T22:04:489.253502046+01:00\x22,\x22dur\x22:\x222\xc2\xb5s\x22,\x22data\x22:\x22\x22}")) == "err"
+}
+
+test "json fields 28" {
+  expect(jf_fields(b"{\x22dur\x22:\x22234h8m58\x22,\x22data\x22:\x22lg==Z\x22,\x22when\x22:\x222078-07-01T19:12:25Z\x22}")) == "err"
+}
+
+test "json fields 29" {
+  expect(jf_fields(b"{\x22data\x22:\x22G5po\x22,\x22when\x22:\x222037-10-12T16:12:18.887+12:45\x22}")) == "when=2138930838887000000|data=1b9a68|dur=none"
+}
+
+test "json fields 30" {
+  expect(jf_fields(b"{\x22when\x22:null,\x22data\x22:\x220Fwzphh/97X3daE\x22,\x22dur\x22:null}")) == "err"
+}
+
+test "json fields 31" {
+  expect(jf_fields(b"{\x22dur\x22:null,\x22when\x22:null,\x22data\x22:\x22ckuFfq+q\x22}")) == "when=none|data=724b857eafaa|dur=none"
+}
+
+test "json fields 32" {
+  expect(jf_fields(b"{\x22when\x22:\x221804-11-04T10:53:49-05:00\x22,\x22dur\x22:\x22254hn16m9.919368691s\x22}")) == "err"
+}
+
+test "json fields 33" {
+  expect(jf_fields(b"{\x22when\x22:\x222042-06-08T17:56:+42Z\x22,\x22data\x22:\x22nHKEstCL\x22,\x22dur\x22:\x229223372036854775807ns\x22}")) == "err"
+}
+
+test "json fields 34" {
+  expect(jf_fields(b"{\x22data\x22:\x22l5EnO/M=\x22,\x22when\x22:\x221-767-03-23T21:08:28.986Z\x22,\x22dur\x22:\x221us\x22}")) == "err"
+}
+
+test "json fields 35" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-2m40.5307821.3s\x22,\x22when\x22:null}")) == "err"
+}
+
+test "json fields 36" {
+  expect(jf_fields(b"{\x22when\x22:\x222188-01-25T11:01:02.453817309-05:00\x22,\x22dur\x22:\x22-1m43.581854136s\x22,\x22data\x22:\x22\x22}")) == "when=6881558462453817309|data=|dur=-103581854136"
+}
+
+test "json fields 37" {
+  expect(jf_fields(b"{\x22when\x22:\x221937-01-30T03:20:12.113+12:45\x22,\x22data\x22:\x22JpMUpSHnOV4=\x22}")) == "when=-1038907487887000000|data=269314a521e7395e|dur=none"
+}
+
+test "json fields 38" {
+  expect(jf_fields(b"{\x22when\x22:\x221867-05-22T15:29:952+12:45\x22,\x22dur\x22:\x223007s\x22,\x22data\x22:\x22\x22}")) == "err"
+}
+
+test "json fields 39" {
+  expect(jf_fields(b"{\x22dur\x22:\x221.5h\x22,\x22when\x22:null}")) == "when=none|data=none|dur=5400000000000"
+}
+
+test "json fields 40" {
+  expect(jf_fields(b"{\x22data\x22:\x220bXC\x22}")) == "when=none|data=d1b5c2|dur=none"
+}
+
+test "json fields 41" {
+  expect(jf_fields(b"{\x22dur\x22:\x22u83h50m56.028687805s\x22,\x22when\x22:null,\x22data\x22:\x225MgirwM=\x22}")) == "err"
+}
+
+test "json fields 42" {
+  expect(jf_fields(b"{\x22dur\x22:\x221.s5h\x22,\x22data\x22:\x22eyH1l/7gaku6\x22,\x22when\x22:\x222161-12-05T19:11:37.09043113+12:45\x22}")) == "when=6056663197090431130|data=7b21f597fee06a4bba|dur=18001000000000"
+}
+
+test "json fields 43" {
+  expect(jf_fields(b"{\x22when\x22:\x222035-12-19T20:15:10Z\x22,\x22data\x22:\x22NVosF5F6lGs=\x22,\x22dur\x22:\x222\xc2\xb5s\x22}")) == "when=2081708110000000000|data=355a2c17917a946b|dur=2000"
+}
+
+test "json fields 44" {
+  expect(jf_fields(b"{\x22dur\x22:\x222h45m\x22,\x22data\x22:\x22z9z6IhdRuHY\x22,\x22when\x22:\x221835-09-06T12:21:07-23:59\x22}")) == "err"
+}
+
+test "json fields 45" {
+  expect(jf_fields(b"{\x22when\x22:\x222132-09-20T16:06:19Z\x22,\x22data\x22:\x22ff3QNogqyw==\x22,\x22dur\x22:\x222\xc2\xb5s\x22}")) == "when=5134982779000000000|data=7dfdd036882acb|dur=2000"
+}
+
+test "json fields 46" {
+  expect(jf_fields(b"{\x22data\x22:\x22tAfmA/kLGRhYzB\x22,\x22when\x22:\x221770-05-05T22:28:36.475-09:30\x22,\x22dur\x22:\x22300ms\x22}")) == "err"
+}
+
+test "json fields 47" {
+  expect(jf_fields(b"{\x22when\x22:\x221\x22,\x22data\x22:\x22ubbN4Po=\x22,\x22dur\x22:\x2264h49m5.520360568s\x22}")) == "err"
+}
+
+test "json fields 48" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-13m40.792159988s\x22,\x22data\x22:\x22Mg==\x22}")) == "when=none|data=32|dur=-820792159988"
+}
+
+test "json fields 49" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-7m45.011418857s\x22,\x22when\x22:\x221873-03-16T12:25:15.538+23:59\x22,\x22data\x22:\x22IUocssGtO+f/Pw==\x22}")) == "when=-3054627224462000000|data=214a1cb2c1ad3be7ff3f|dur=-465011418857"
+}
+
+test "json fields 50" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-2h45m\x22,\x22data\x22:\x22zO+\x22,\x22when\x22:null}")) == "err"
+}
+
+test "json fields 51" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-2h45m\x22,\x22data\x22:\x22fABxw==\x22,\x22when\x22:\x222108-04-03T20:13:56.45620251Z\x22}")) == "err"
+}
+
+test "json fields 52" {
+  expect(jf_fields(b"{\x22dur\x22:\x222\xc2\xb5s\x22,\x22data\x22:\x22RiILCXuQJfW6EA==\x22,\x22when\x22:\x221747-01-27T20:1z:23.848978348+23:59\x22}")) == "err"
+}
+
+test "json fields 53" {
+  expect(jf_fields(b"{\x22data\x22:\x22rKNTsdet\x22,\x22when\x22:\x221830-08-16T06:27:04.84392902Z\x22,\x22dur\x22:\x220\x22}")) == "when=-4398341575156070980|data=aca353b1d7ad|dur=0"
+}
+
+test "json fields 54" {
+  expect(jf_fields(b"{\x22dur\x22:\x221h39m11.53031928s\x22,\x22data\x22:\x223kTOQJjOVjA=\x22}")) == "when=none|data=de44ce4098ce5630|dur=5951530319280"
+}
+
+test "json fields 55" {
+  expect(jf_fields(b"{\x22when\x22:\x221703902-28T21:38:13.099863973-09:30\x22,\x22data\x22:null,\x22dur\x22:\x221h1m1.000000001s\x22}")) == "err"
+}
+
+test "json fields 56" {
+  expect(jf_fields(b"{\x22when\x22:\x221856-03-22T07:13:58.72212759+01:00:\x22,\x22data\x22:\x22jZs=\x22,\x22dur\x22:\x221us\x22}")) == "err"
+}
+
+test "json fields 57" {
+  expect(jf_fields(b"{\x22data\x22:\x22/oH1W9qGXbbCPw===\x22}")) == "err"
+}
+
+test "json fields 58" {
+  expect(jf_fields(b"{\x22dur\x22:\x22140h39m41.270422024s\x22,\x22data\x22:\x22mVg\x22,\x22when\x22:\x22\x22}")) == "err"
+}
+
+test "json fields 59" {
+  expect(jf_fields(b"{\x22data\x22:\x22j5NW\x22,\x22dur\x22:\x221.5h\x22,\x22when\x22:\x221750-06-11T14:44:13.413269872+23:59\x22}")) == "when=-6928622086586730128|data=8f9356|dur=5400000000000"
+}
+
+test "json fields 60" {
+  expect(jf_fields(b"{\x22when\x22:\x221975-08-12T18:21:52.109-09:30\x22,\x22data\x22:null}")) == "when=177133912109000000|data=none|dur=none"
+}
+
+test "json fields 61" {
+  expect(jf_fields(b"{\x22dur\x22:\x229223372036854775807ns\x22,\x22when\x22:\x221950-03-31T17:38:29.41417605-09:30\x22}")) == "when=-623364690585823950|data=none|dur=9223372036854775807"
+}
+
+test "json fields 62" {
+  expect(jf_fields(b"{\x22when\x22:\x221971-11-13T00:36:29.041-05:00\x22,\x22dur\x22:\x221us\x22}")) == "when=58858589041000000|data=none|dur=1000"
+}
+
+test "json fields 63" {
+  expect(jf_fields(b"{\x22when\x22:null,\x22data\x22:null}")) == "when=none|data=none|dur=none"
+}
+
+test "json fields 64" {
+  expect(jf_fields(b"{\x22when\x22:\x221705-10-12T08:14:20.550-23:59\x22,\x22dur\x22:\x222\xc2\xb5s\x22,\x22data\x22:\x22UyJ/lH0Rlg==\x22}")) == "when=-8337915999450000000|data=53227f947d1196|dur=2000"
+}
+
+test "json fields 65" {
+  expect(jf_fields(b"{\x22when\x22:\x221894-08-02T18:46:25.004898534+23:59\x22,\x22data\x22:null,\x22dur\x22:\x221h1n1.000000001s\x22}")) == "err"
+}
+
+test "json fields 66" {
+  expect(jf_fields(b"{\x22data\x22:\x222vjxV8v4\x22,\x22dur\x22:\x221.5h\x22,\x22when\x22:\x222010-08-02T13:24:14.668+501:00\x22}")) == "err"
+}
+
+test "json fields 67" {
+  expect(jf_fields(b"{\x22data\x22:\x221rbb5\x22,\x22when\x22:\x22174-03-30T10:31:35.579Z\x22,\x22dur\x22:\x22+us\x22}")) == "err"
+}
+
+test "json fields 68" {
+  expect(jf_fields(b"{\x22when\x22:\x221855-10-07T21:00:16+01:00\x22,\x22data\x22:\x22+ds2kbAaQ==\x22,\x22dur\x22:\x221.\x22}")) == "err"
+}
+
+test "json fields 69" {
+  expect(jf_fields(b"{\x22dur\x22:\x22291h14m19.545448667s\x22,\x22data\x22:\x22CuQ\x22}")) == "err"
+}
+
+test "json fields 70" {
+  expect(jf_fields(b"{\x22when\x22:\x222026-05\x22,\x22dur\x22:\x220\x22}")) == "err"
+}
+
+test "json fields 71" {
+  expect(jf_fields(b"{\x22data\x22:\x22Aw==\x22,\x22dur\x22:\x22-10m40.234535433s\x22,\x22when\x22:\x221961-09-26T12:05:58.954+01:00\x22}")) == "when=-260801641046000000|data=03|dur=-640234535433"
+}
+
+test "json fields 72" {
+  expect(jf_fields(b"{\x22data\x22:\x22\x22,\x22dur\x22:null}")) == "when=none|data=|dur=none"
+}
+
+test "json fields 73" {
+  expect(jf_fields(b"{\x22data\x22:null,\x22when\x22:\x221882-01-26T08:20:57+12:45\x22}")) == "when=-2774838243000000000|data=none|dur=none"
+}
+
+test "json fields 74" {
+  expect(jf_fields(b"{\x22dur\x22:null,\x22data\x22:\x22lNEuhg3/v3rsYKI=\x22}")) == "when=none|data=94d12e860dffbf7aec60a2|dur=none"
+}
+
+test "json fields 75" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-13m12.132318396s\x22,\x22when\x22:\x221780-03-18T18:02:56.623893472+01:00\x22}")) == "when=-5989100223376106528|data=none|dur=-792132318396"
+}
+
+test "json fields 76" {
+  expect(jf_fields(b"{\x22dur\x22:\x221h1m1.000000001s\x22,\x22data\x22:\x22\x22}")) == "when=none|data=|dur=3661000000001"
+}
+
+test "json fields 77" {
+  expect(jf_fields(b"{\x22data\x22:\x227rZ/\x22,\x22dur\x22:null,\x22when\x22:\x221841-06-29T21:33:08.534847483Z\x22}")) == "when=-4055279211465152517|data=eeb67f|dur=none"
+}
+
+test "json fields 78" {
+  expect(jf_fields(b"{\x22data\x22:null,\x22when\x22:\x222085-10-19T22:59:06+05:30\x22,\x22dur\x22:\x220\x22}")) == "when=3654350946000000000|data=none|dur=0"
+}
+
+test "json fields 79" {
+  expect(jf_fields(b"{\x22data\x22:null,\x22when\x22:null,\x22dur\x22:\x229223372036854775807ns\x22}")) == "when=none|data=none|dur=9223372036854775807"
+}
+
+test "json fields 80" {
+  expect(jf_fields(b"{\x22dur\x22:\x222\xc2\xb5s\x22,\x22when\x22:null}")) == "when=none|data=none|dur=2000"
+}
+
+test "json fields 81" {
+  expect(jf_fields(b"{\x22data\x22:\x22VS7cHAw=\x22,\x22when\x22:\x221937-10-27T15:42:06+23:59\x22,\x22dur\x22:null}")) == "when=-1015575414000000000|data=552edc1c0c|dur=none"
+}
+
+test "json fields 82" {
+  expect(jf_fields(b"{\x22when\x22:\x222107-06-22T08:08:16+23:59\x22,\x22data\x22:\x22vmrW0nIeMg==\x22,\x22dur\x22:\x221.5h\x22}")) == "when=4338086956000000000|data=be6ad6d2721e32|dur=5400000000000"
+}
+
+test "json fields 83" {
+  expect(jf_fields(b"{\x22when\x22:\x222193-08-30T19:24:26.593Z\x22,\x22data\x22:\x22F3zkW20=\x22}")) == "when=7058172266593000000|data=177ce45b6d|dur=none"
+}
+
+test "json fields 84" {
+  expect(jf_fields(b"{\x22when\x22:\x221906-02-14T21:16:03.005-23:9\x22}")) == "err"
+}
+
+test "json fields 85" {
+  expect(jf_fields(b"{\x22dur\x22:\x222\xc2\xb5\x22,\x22data\x22:\x22yK7Y2+ETVr8ITzA\x22,\x22when\x22:\x221980-01-10T14:45:2+8-23:59\x22}")) == "err"
+}
+
+test "json fields 86" {
+  expect(jf_fields(b"{\x22when\x22:\x221981-01-19T00:09:10.390+01:00\x22,\x22data\x22:\x222B2OAzWdvw==\x22,\x22dur\x22:null}")) == "when=348707350390000000|data=d81d8e03359dbf|dur=none"
+}
+
+test "json fields 87" {
+  expect(jf_fields(b"{\x22when\x22:\x222138-10-27T04:23:33.453+12:45\x22,\x22dur\x22:\x221us\x22}")) == "when=5327393913453000000|data=none|dur=1000"
+}
+
+test "json fields 88" {
+  expect(jf_fields(b"{\x22dur\x22:\x22u2h45m\x22,\x22when\x22:\x221769-11-07T02:05:15.341253774+01:00\x22,\x22data\x22:\x22MbYaazEKreZt\x22}")) == "err"
+}
+
+test "json fields 89" {
+  expect(jf_fields(b"{\x22when\x22:\x221882-05-20T08:02:20.725+01:00\x22,\x22dur\x22:\x22300ms\x22,\x22data\x22:\x22ACPhrSgsoS4=\x22}")) == "when=-2764947459275000000|data=0023e1ad282ca12e|dur=300000000"
+}
+
+test "json fields 90" {
+  expect(jf_fields(b"{\x22when\x22:\x221722-05-02T22:39:09.759249283Z\x22,\x22data\x22:\x22\x22,\x22dur\x22:\x22..5h\x22}")) == "err"
+}
+
+test "json fields 91" {
+  expect(jf_fields(b"{\x22when\x22:\x222128-06-18T00:18:03.549187581Z\x22,\x22data\x22:null,\x22dur\x22:null}")) == "when=5000573883549187581|data=none|dur=none"
+}
+
+test "json fields 92" {
+  expect(jf_fields(b"{\x22dur\x22:\x229223372036854775807ns\x22,\x22data\x22:\x22Nx6jFN9l\x22,\x22when\x22:\x222194-02-13T16:35:13.982152608-05:00\x22}")) == "when=7072608913982152608|data=371ea314df65|dur=9223372036854775807"
+}
+
+test "json fields 93" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-18m17.991731052s\x22,\x22data\x22:\x223eBGiLKtwGE7jK=\x22,\x22when\x22:\x221991-01-03T20:09:01.778+23:59\x22}")) == "err"
+}
+
+test "json fields 94" {
+  expect(jf_fields(b"{\x22data\x22:\x22+OE\x22,\x22dur\x22:\x22-5m41.932521495s\x22}")) == "err"
+}
+
+test "json fields 95" {
+  expect(jf_fields(b"{\x22when\x22:\x221904-04-25T11:15:5\x22,\x22dur\x22:\x22-2m44.903429439s\x22}")) == "err"
+}
+
+test "json fields 96" {
+  expect(jf_fields(b"{\x22when\x22:\x221832-07-26T05:29:39.593+23:59\x22,\x22data\x22:\x22Pr\x22,\x22dur\x22:\x22-2h4hm\x22}")) == "err"
+}
+
+test "json fields 97" {
+  expect(jf_fields(b"{\x22when\x22:\x221985-04-17T18:31:34.574538516+12:45\x22,\x22dur\x22:\x22300ms\x22,\x22data\x22:\x22\x22}")) == "when=482564794574538516|data=|dur=300000000"
+}
+
+test "json fields 98" {
+  expect(jf_fields(b"{\x22dur\x22:\x220\x22,\x22data\x22:\x22MR7k/la3OXQ=\x22,\x22when\x22:\x221890-01-02T05:09:11z.740178426Z\x22}")) == "err"
+}
+
+test "json fields 99" {
+  expect(jf_fields(b"{\x22when\x22:\x221721-05-06T13:48:04Z\x22,\x22dur\x22:\x229223372036854775807ns\x22,\x22data\x22:\x22y94wbWPLi/U=\x22}")) == "when=-7846798316000000000|data=cbde306d63cb8bf5|dur=9223372036854775807"
+}
+
+test "json fields 100" {
+  expect(jf_fields(b"{\x22when\x22:\x221839-03-28T14:20:56-09:30\x22,\x22dur\x22:\x229223372036854775807ns\x22,\x22data\x22:\x22lLha0hZctMQZlFlg=\x22}")) == "err"
+}
+
+test "json fields 101" {
+  expect(jf_fields(b"{\x22data\x22:\x22uJZQbrcZ\x22,\x22when\x22:\x221872-02-15T02:33:50.118+12:5\x22,\x22dur\x22:\x22195h42m37.579553941s\x22}")) == "err"
+}
+
+test "json fields 102" {
+  expect(jf_fields(b"{\x22dur\x22:\x221u\x22,\x22data\x22:\x22m6dJL6oar\x22,\x22when\x22:\x221770-02-1T08:18:39Z\x22}")) == "err"
+}
+
+test "json fields 103" {
+  expect(jf_fields(b"{\x22data\x22:\x22/GNXYNbCGsA=\x22,\x22when\x22:\x221758-07-14T20:39:20.42740968-23:59\x22}")) == "when=-6673116099572590320|data=fc635760d6c21ac0|dur=none"
+}
+
+test "json fields 104" {
+  expect(jf_fields(b"{\x22dur\x22:\x220\x22,\x22data\x22:\x22rITE8TJZG8a90TA=\x22}")) == "when=none|data=ac84c4f132591bc6bdd130|dur=0"
+}
+
+test "json fields 105" {
+  expect(jf_fields(b"{\x22dur\x22:null,\x22when\x22:\x221728-2-21T23:11:15Z\x22,\x22data\x22:\x22jHiC97WlHw==\x22}")) == "err"
+}
+
+test "json fields 106" {
+  expect(jf_fields(b"{\x22when\x22:null,\x22dur\x22:\x22\x22,\x22data\x22:\x22xC7tBpGYxZw=\x22}")) == "err"
+}
+
+test "json fields 107" {
+  expect(jf_fields(b"{\x22when\x22:null,\x22data\x22:\x22+FF8Ff\x5cnA\x22,\x22dur\x22:\x221us\x22}")) == "err"
+}
+
+test "json fields 108" {
+  expect(jf_fields(b"{\x22dur\x22:\x220\x22,\x22when\x22:null,\x22data\x22:\x22RH4dDREy\x22}")) == "when=none|data=447e1d0d1132|dur=0"
+}
+
+test "json fields 109" {
+  expect(jf_fields(b"{\x22data\x22:\x22f-vjiuGP5GSjqIB4=\x22,\x22when\x22:\x222145-07-08T22:09:43-23:59\x22,\x22dur\x22:\x220\x22}")) == "err"
+}
+
+test "json fields 110" {
+  expect(jf_fields(b"{\x22when\x22:\x221983-01-04T20:56:16.792438453-05:00\x22,\x22data\x22:null}")) == "when=410579776792438453|data=none|dur=none"
+}
+
+test "json fields 111" {
+  expect(jf_fields(b"{\x22data\x22:\x22GUOzNeVyAZM=\x22,\x22dur\x22:null}")) == "when=none|data=1943b335e5720193|dur=none"
+}
+
+test "json fields 112" {
+  expect(jf_fields(b"{\x22when\x22:\x221721-10-24T23:16:34.426+12:45\x22,\x22dur\x22:null,\x22data\x22:\x22Y5aHm+BPP1H+7rc=\x22}")) == "when=-7832035705574000000|data=6396879be04f3f51feeeb7|dur=none"
+}
+
+test "json fields 113" {
+  expect(jf_fields(b"{\x22when\x22:null,\x22data\x22:\x22yTDE\x22}")) == "when=none|data=c930c4|dur=none"
+}
+
+test "json fields 114" {
+  expect(jf_fields(b"{\x22when\x22:\x221989-05-08T13:32:34+23:59\x22,\x22data\x22:\x22aQ=\x5cn\x22}")) == "err"
+}
+
+test "json fields 115" {
+  expect(jf_fields(b"{\x22when\x22:\x221899-02-11T00:45:58.775575923Z\x22,\x22data\x22:\x22K0=\x22,\x22dur\x22:\x22-2h45m\x22}")) == "err"
+}
+
+test "json fields 116" {
+  expect(jf_fields(b"{\x22when\x22:null,\x22data\x22:\x22KhC\x22,\x22dur\x22:\x22-2h45m\x22}")) == "err"
+}
+
+test "json fields 117" {
+  expect(jf_fields(b"{\x22when\x22:\x222198-09-24T02:55:54.294010543-23:59\x22,\x22dur\x22:\x229223372036854775807ns\x22,\x22data\x22:\x22XYYPFkQT3LYPYg==\x22}")) == "when=7218125694294010543|data=5d860f164413dcb60f62|dur=9223372036854775807"
+}
+
+test "json fields 118" {
+  expect(jf_fields(b"{\x22dur\x22:\x221h1m1.000000001s\x22,\x22data\x22:\x22xeUwqN2xT58=\x22}")) == "when=none|data=c5e530a8ddb14f9f|dur=3661000000001"
+}
+
+test "json fields 119" {
+  expect(jf_fields(b"{\x22when\x22:\x22171908-06T19:32:55.02458533+01:00\x22,\x22data\x22:\x22RQ==\x22,\x22dur\x22:\x22300ms\x22}")) == "err"
+}
+
+test "json fields 120" {
+  expect(jf_fields(b"{\x22dur\x22:\x22262h49m57.55469324s\x22,\x22when\x22:\x222009-05-07T20:12:38+05:30\x22}")) == "when=1241707358000000000|data=none|dur=946197554693240"
+}
+
+test "json fields 121" {
+  expect(jf_fields(b"{\x22data\x22:\x22V=g=\x22,\x22dur\x22:null,\x22when\x22:\x221871-11-22T03:39:46.337911566-0:30\x22}")) == "err"
+}
+
+test "json fields 122" {
+  expect(jf_fields(b"{\x22data\x22:null,\x22when\x22:\x222130-07-27T12:07:21-09:30\x22}")) == "when=5067092241000000000|data=none|dur=none"
+}
+
+test "json fields 123" {
+  expect(jf_fields(b"{\x22dur\x22:\x229223372036854775807ns\x22,\x22when\x22:\x222116-11-29T02:58:56.325-09:30\x22}")) == "when=4636096136325000000|data=none|dur=9223372036854775807"
+}
+
+test "json fields 124" {
+  expect(jf_fields(b"{\x22when\x22:null,\x22data\x22:\x22jtVEW/61-Mai+AM8=\x22}")) == "err"
+}
+
+test "json fields 125" {
+  expect(jf_fields(b"{\x22data\x22:\x22RPaI0Wsty8g=\x22,\x22dur\x22:\x22-6m29.7864393718s\x22,\x22when\x22:\x221762-08-05T09:19:53.748-23:59\x22}")) == "when=-6545025666252000000|data=44f688d16b2dcbc8|dur=-389786439371"
+}
+
+test "json fields 126" {
+  expect(jf_fields(b"{\x22dur\x22:null,\x22data\x22:\x22LtOD1pg=\x22,\x22when\x22:\x222155-10-10T12:20:17.6195118+05:30\x22}")) == "when=5862437417619511800|data=2ed383d698|dur=none"
+}
+
+test "json fields 127" {
+  expect(jf_fields(b"{\x22data\x22:\x22XW7Bmg\x22,\x22dur\x22:\x22300ms\x22,\x22when\x22:\x221755-11-23T22:46:34+23:59\x22}")) == "err"
+}
+
+test "json fields 128" {
+  expect(jf_fields(b"{\x22data\x22:\x22RQRCTYQCjA==\x22,\x22when\x22:\x221984-02-17T12:43:40.18057093-23:59\x22,\x22dur\x22:\x22261h55m17.344756988s\x22}")) == "when=445956160180570930|data=4504424d84028c|dur=942917344756988"
+}
+
+test "json fields 129" {
+  expect(jf_fields(b"{\x22data\x22:\x22+rD8zkWB\x22,\x22when\x22:\x221948-07-10T01:38:47Z\x22}")) == "when=-677802073000000000|data=fab0fcce4581|dur=none"
+}
+
+test "json fields 130" {
+  expect(jf_fields(b"{\x22when\x22:null,\x22dur\x22:\x221h1m1.00000\x22}")) == "err"
+}
+
+test "json fields 131" {
+  expect(jf_fields(b"{\x22data\x22:\x22rwg8E8SPHoo0Q\x22,\x22when\x22:\x221724-06-26T20:\x22,\x22dur\x22:\x229223372036854775n807ns\x22}")) == "err"
+}
+
+test "json fields 132" {
+  expect(jf_fields(b"{\x22when\x22:\x221959-06-24T07:30:28.475632292-09:30\x22}")) == "when=-332060371524367708|data=none|dur=none"
+}
+
+test "json fields 133" {
+  expect(jf_fields(b"{\x22when\x22:\x222132-05-25T08:28:49-05:00\x22,\x22dur\x22:\x22296h44m30.633273387s\x22,\x22data\x22:null}")) == "when=5124778129000000000|data=none|dur=1068270633273387"
+}
+
+test "json fields 134" {
+  expect(jf_fields(b"{\x22data\x22:\x22bEOGBo=\x22,\x22dur\x22:null,\x22when\x22:\x222020-12-07T09:521:15Z\x22}")) == "err"
+}
+
+test "json fields 135" {
+  expect(jf_fields(b"{\x22when\x22:\x222179-08-08T23:17:50.262739056+12:45\x22,\x22dur\x22:\x221h1m1.000000001s\x22,\x22data\x22:\x22AI8=\x22}")) == "when=6614389970262739056|data=008f|dur=3661000000001"
+}
+
+test "json fields 136" {
+  expect(jf_fields(b"{\x22data\x22:\x22qg==\x22,\x22dur\x22:\x22-2h45m\x22,\x22when\x22:\x221837-02-18T15:28:49.365258254+12:45\x22}")) == "when=-4192895770634741746|data=aa|dur=-9900000000000"
+}
+
+test "json fields 137" {
+  expect(jf_fields(b"{\x22dur\x22:\x2212s\x22,\x22when\x22:null,\x22data\x22:\x223o+a\x22}")) == "when=none|data=de8f9a|dur=12000000000"
+}
+
+test "json fields 138" {
+  expect(jf_fields(b"{\x22dur\x22:\x221.5h\x22,\x22data\x22:\x224y5y5taQHjjm\x22,\x22when\x22:\x221746-12-11T11:45:2.132151347-23:59\x22}")) == "err"
+}
+
+test "json fields 139" {
+  expect(jf_fields(b"{\x22data\x22:\x22ObDdbiA1wDK T\x22,\x22dur\x22:null}")) == "err"
+}
+
+test "json fields 140" {
+  expect(jf_fields(b"{\x22data\x22:\x22vBxR\x22,\x22when\x22:\x222064-03-18T16:114:52-23:59\x22,\x22dur\x22:\x222\xc2\xb5s\x22}")) == "err"
+}
+
+test "json fields 141" {
+  expect(jf_fields(b"{\x22when\x22:\x221760-06-12T15:26:21.148+05:30\x22,\x22data\x22:\x22Quim\x22,\x22dur\x22:\x222\xc2\xb5s\x22}")) == "when=-6612847418852000000|data=42e8a6|dur=2000"
+}
+
+test "json fields 142" {
+  expect(jf_fields(b"{\x22when\x22:\x222:174-11-28T08:01:47.763-23:59\x22,\x22data\x22:\x22thP2NlH/\x22}")) == "err"
+}
+
+test "json fields 143" {
+  expect(jf_fields(b"{\x22data\x22:\x22oJVmoQ==\x22,\x22when\x22:\x221918-08-27T04:04:02.440Z\x22,\x22dur\x22:\x221h1m1.000000001s\x22}")) == "when=-1620417357560000000|data=a09566a1|dur=3661000000001"
+}
+
+test "json fields 144" {
+  expect(jf_fields(b"{\x22dur\x22:null,\x22data\x22:\x220ZY\x22,\x22when\x22:\x222058-08-15T13:35:42-23:59\x22}")) == "err"
+}
+
+test "json fields 145" {
+  expect(jf_fields(b"{\x22data\x22:\x22+Qf1RMmvUL0=\x22,\x22when\x22:\x222166-09-27T02:28:16.924+01:00\x22,\x22dur\x22:\x221h1m1.000000001s\x22}")) == "when=6208450096924000000|data=f907f544c9af50bd|dur=3661000000001"
+}
+
+test "json fields 146" {
+  expect(jf_fields(b"{\x22data\x22:null,\x22dur\x22:\x22-1m32.734670.49s\x22,\x22when\x22:\x2218 0-03-07T23:56:12+01:00\x22}")) == "err"
+}
+
+test "json fields 147" {
+  expect(jf_fields(b"{\x22data\x22:\x22VGKtA\x22,\x22when\x22:\x221827-10-20T00:21:13.604Z\x22}")) == "err"
+}
+
+test "json fields 148" {
+  expect(jf_fields(b"{\x22data\x22:\x22vz4DxJqlDfVvSmU=\x22,\x22when\x22:\x221722-10-16T09:16:19+05:30\x22,\x22dur\x22:\x222\xc2\xb5s\x22}")) == "when=-7801215221000000000|data=bf3e03c49aa50df56f4a65|dur=2000"
+}
+
+test "json fields 149" {
+  expect(jf_fields(b"{\x22dur\x22:null,\x22data\x22:\x22Ew==\x22,\x22when\x22:\x221719-07-03T19:48:38.507-23:59\x22}")) == "when=-7904837541493000000|data=13|dur=none"
+}
+
+test "json fields 150" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-2h45m\x22,\x22data\x22:\x22Ric7iWNEJhrFL9Y=\x22,\x22when\x22:\x222104-04-21T04:02:16-09:30\x22}")) == "when=4238227936000000000|data=46273b896344261ac52fd6|dur=-9900000000000"
+}
+
+test "json fields 151" {
+  expect(jf_fields(b"{\x22when\x22:\x221788-02-02T20:39:18.517513279+05:30\x22,\x22dur\x22:\x221.h\x22}")) == "when=-5740534241482486721|data=none|dur=3600000000000"
+}
+
+test "json fields 152" {
+  expect(jf_fields(b"{\x22dur\x22:\x222\xc2\xb5s\x22,\x22when\x22:null}")) == "when=none|data=none|dur=2000"
+}
+
+test "json fields 153" {
+  expect(jf_fields(b"{\x22when\x22:\x221817-03-29T01:53:31.734Z\x22,\x22data\x22:\x22zgrhCHMBnvLbkfU=\x22}")) == "when=-4820681188266000000|data=ce0ae10873019ef2db91f5|dur=none"
+}
+
+test "json fields 154" {
+  expect(jf_fields(b"{\x22data\x22:\x22DFAr\x22,\x22dur\x22:\x22300ms\x22}")) == "when=none|data=0c502b|dur=300000000"
+}
+
+test "json fields 155" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-2h456\x22,\x22data\x22:\x22RaUAA3hIX1mg\x22,\x22when\x22:\x222095-01-06T22:41:57.721-09:30\x22}")) == "err"
+}
+
+test "json fields 156" {
+  expect(jf_fields(b"{\x22when\x22:\x222016-09-05T07:47:32.841030529-09:30\x22,\x22data\x22:\x22Kwm9\x22}")) == "when=1473095852841030529|data=2b09bd|dur=none"
+}
+
+test "json fields 157" {
+  expect(jf_fields(b"{\x22data\x22:\x22/dAH7Y-Ybfg==\x22,\x22when\x22:\x221954-10-22T08:18558+12:45\x22,\x22dur\x22:null}")) == "err"
+}
+
+test "json fields 158" {
+  expect(jf_fields(b"{\x22when\x22:null,\x22data\x22:\x22B9k=\x22}")) == "when=none|data=07d9|dur=none"
+}
+
+test "json fields 159" {
+  expect(jf_fields(b"{\x22data\x22:null,\x22when\x22:\x221829-06-05T01:26:23.658147555-23:59\x22,\x22dur\x22:\x220\x22}")) == "when=-4436030076341852445|data=none|dur=0"
+}
+
+test "json fields 160" {
+  expect(jf_fields(b"{\x22dur\x22:\x229223372036854775807ns\x22,\x22data\x22:\x22IHH4Hl8eEw==\x22,\x22when\x22:\x221895-03-01T6:16:55.662Z\x22}")) == "when=-2361634984338000000|data=2071f81e5f1e13|dur=9223372036854775807"
+}
+
+test "json fields 161" {
+  expect(jf_fields(b"{\x22data\x22:\x22iBd=\x22,\x22when\x22:\x222102-03-19T22:40:49.3249355-23:59\x22}")) == "when=4172337589324935500|data=8817|dur=none"
+}
+
+test "json fields 162" {
+  expect(jf_fields(b"{\x22dur\x22:\x222\xc2\xb5s\x22,\x22data\x22:\x22vnVDAMg=\x22,\x22when\x22:\x222199-03-10T01:17:03+01:00\x22}")) == "when=7232458623000000000|data=be754300c8|dur=2000"
+}
+
+test "json fields 163" {
+  expect(jf_fields(b"{\x22dur\x22:\x221h1m1.070000001s\x22,\x22data\x22:\x22AXV40hFdRmCj69g\x22,\x22when\x22:\x221798-04-29\x22}")) == "err"
+}
+
+test "json fields 164" {
+  expect(jf_fields(b"{\x22data\x22:\x22nNU6znurbXtp\x22,\x22when\x22:\x222144-07-18T10:22:28+01:00\x22,\x22dur\x22:\x22-17m44.457365582s\x22}")) == "when=5508120148000000000|data=9cd53ace7bab6d7b69|dur=-1064457365582"
+}
+
+test "json fields 165" {
+  expect(jf_fields(b"{\x22when\x22:\x22862-08-14T12:13:34-05:00\x22,\x22data\x22:\x22sllYjQ==\x22}")) == "err"
+}
+
+test "json fields 166" {
+  expect(jf_fields(b"{\x22data\x22:\x221w==\x22,\x22dur\x22:\x221us\x22,\x22when\x22:\x221822-08-29T17:19:58+05:30\x22}")) == "when=-4649659802000000000|data=d7|dur=1000"
+}
+
+test "json fields 167" {
+  expect(jf_fields(b"{\x22dur\x22:\x22300ms\x22,\x22when\x22:null,\x22data\x22:\x22gqJcSg==\x22}")) == "when=none|data=82a25c4a|dur=300000000"
+}
+
+test "json fields 168" {
+  expect(jf_fields(b"{\x22data\x22:\x22d5GNmA==\x22,\x22dur\x22:\x22248h19m42.466793145s\x22}")) == "when=none|data=77918d98|dur=893982466793145"
+}
+
+test "json fields 169" {
+  expect(jf_fields(b"{\x22dur\x22:\x22.5h\x22,\x22when\x22:\x222085-08-21T08:29:49+01:00\x22,\x22data\x22:\x22xkAPFxTOQp1HOY4=\x22}")) == "when=3649217389000000000|data=c6400f1714ce429d47398e|dur=1800000000000"
+}
+
+test "json fields 170" {
+  expect(jf_fields(b"{\x22data\x22:null,\x22dur\x22:\x221us\x22,\x22when\x22:\x222111-08-17T08:19:14+23:59\x22}")) == "when=4469156414000000000|data=none|dur=1000"
+}
+
+test "json fields 171" {
+  expect(jf_fields(b"{\x22data\x22:\x22RxDeOZw=\x22,\x22when\x22:\x222069-03-03T12:52:04+23:59\x22,\x22dur\x22:\x221h1m1.000000001s\x22}")) == "when=3129454384000000000|data=4710de399c|dur=3661000000001"
+}
+
+test "json fields 172" {
+  expect(jf_fields(b"{\x22dur\x22:\x222\xc2\xb5s\x22,\x22data\x22:null,\x22when\x22:null}")) == "when=none|data=none|dur=2000"
+}
+
+test "json fields 173" {
+  expect(jf_fields(b"{\x22dur\x22:\x221.50\x22,\x22when\x22:\x221780-02-28T00:11:17.678+01:00\x22,\x22data\x22:null}")) == "err"
+}
+
+test "json fields 174" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-164m6.443225236s\x22,\x22when\x22:\x221904-06-04T02:2:48.887993037+05:30\x22,\x22data\x22:\x22NA==\x22}")) == "err"
+}
+
+test "json fields 175" {
+  expect(jf_fields(b"{\x22data\x22:\x22em4=\x22,\x22dur\x22:\x220\x22,\x22when\x22:\x222041-04-02T04:21:06+23:59\x22}")) == "when=2248402926000000000|data=7a6e|dur=0"
+}
+
+test "json fields 176" {
+  expect(jf_fields(b"{\x22data\x22:\x22nzqM\x22,\x22dur\x22:\x220\x22}")) == "when=none|data=9f3a8c|dur=0"
+}
+
+test "json fields 177" {
+  expect(jf_fields(b"{\x22when\x22:\x222055-02-28T01:59:04+23:59\x22,\x22data\x22:\x22tpIUDvyd1qFL\x22}")) == "when=2687306404000000000|data=b692140efc9dd6a14b|dur=none"
+}
+
+test "json fields 178" {
+  expect(jf_fields(b"{\x22when\x22:\x221702-05-26T22:49:53.553762742+01:00\x22,\x22dur\x22:null,\x22data\x22:\x22sJKghXfKJQUguNA\x22}")) == "err"
+}
+
+test "json fields 179" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-2h45m\x22,\x22when\x22:null}")) == "when=none|data=none|dur=-9900000000000"
+}
+
+test "json fields 180" {
+  expect(jf_fields(b"{\x22data\x22:\x22s5uf5g6izmZr\x22,\x22when\x22:null}")) == "when=none|data=b39b9fe60ea2ce666b|dur=none"
+}
+
+test "json fields 181" {
+  expect(jf_fields(b"{\x22when\x22:\x221816-09-03T02:06:52.089-2:3:59\x22,\x22data\x22:null,\x22dur\x22:\x221u\x22}")) == "err"
+}
+
+test "json fields 182" {
+  expect(jf_fields(b"{\x22data\x22:\x22PLtnJw==\x22,\x22when\x22:\x222079-07-24T19:12:41Z\x22,\x22dur\x22:\x222\xc2\xb5s\x22}")) == "when=3457451561000000000|data=3cbb6727|dur=2000"
+}
+
+test "json fields 183" {
+  expect(jf_fields(b"{\x22dur\x22:null,\x22when\x22:\x222004-01-25T11:50:53.43630367-23:59\x22,\x22data\x22:\x22F0Pg\x22}")) == "when=1075117793436303670|data=1743e0|dur=none"
+}
+
+test "json fields 184" {
+  expect(jf_fields(b"{\x22data\x22:\x22/oMuZl4=\x22}")) == "when=none|data=fe832e665e|dur=none"
+}
+
+test "json fields 185" {
+  expect(jf_fields(b"{\x22data\x22:null}")) == "when=none|data=none|dur=none"
+}
+
+test "json fields 186" {
+  expect(jf_fields(b"{\x22dur\x22:\x221.5h\x22,\x22when\x22:\x222163-08-17T03:57:47+23:59\x22,\x22data\x22:\x22\x22}")) == "when=6110135927000000000|data=|dur=5400000000000"
+}
+
+test "json fields 187" {
+  expect(jf_fields(b"{\x22dur\x22:\x22922u3372036854775807ns\x22,\x22data\x22:null}")) == "err"
+}
+
+test "json fields 188" {
+  expect(jf_fields(b"{\x22data\x22:\x22XaZTkkjYbDvT\x22,\x22when\x22:\x221846-05-30T18:35:46-05:00\x22,\x22dur\x22:null}")) == "when=-3900097454000000000|data=5da6539248d86c3bd3|dur=none"
+}
+
+test "json fields 189" {
+  expect(jf_fields(b"{\x22when\x22:\x221797-01-22T02:01:01.185372405-05:00\x22,\x22dur\x22:\x221us\x22}")) == "when=-5457430738814627595|data=none|dur=1000"
+}
+
+test "json fields 190" {
+  expect(jf_fields(b"{\x22when\x22:\x222135-08-01T18:10:40.283Z\x22,\x22dur\x22:\x22300ms\x22,\x22data\x22:\x22E-U=\x22}")) == "err"
+}
+
+test "json fields 191" {
+  expect(jf_fields(b"{\x22data\x22:\x22n9k4q+SQWrOU\x22,\x22when\x22:\x221991-03-2\x22,\x22dur\x22:\x221.5h\x22}")) == "err"
+}
+
+test "json fields 192" {
+  expect(jf_fields(b"{\x22data\x22:\x22jXGPGAJJnu86AZE\x22,\x22dur\x22:\x22300m\x22,\x22when\x22:\x222143-06-02T00:47:08+05:30\x22}")) == "err"
+}
+
+test "json fields 193" {
+  expect(jf_fields(b"{\x22when\x22:\x221T09-10-25T06:03:05+12:45\x22,\x22dur\x22:\x22143h28m11.364349753s\x22}")) == "err"
+}
+
+test "json fields 194" {
+  expect(jf_fields(b"{\x22data\x22:null,\x22when\x22:\x221951-09-24T07:44:02.341027091+01:00\x22}")) == "when=-576609357658972909|data=none|dur=none"
+}
+
+test "json fields 195" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-1h7m55.984208147s\x22,\x22when\x22:null,\x22data\x22:\x22aGKXpdNd0GgM\x22}")) == "when=none|data=686297a5d35dd0680c|dur=-4075984208147"
+}
+
+test "json fields 196" {
+  expect(jf_fields(b"{\x22when\x22:null,\x22dur\x22:\x22-2h45m\x22,\x22data\x22:\x22MNKd0HeiO\x22}")) == "err"
+}
+
+test "json fields 197" {
+  expect(jf_fields(b"{\x22when\x22:\x222159-09-18T23:15:13+01:00\x22,\x22data\x22:\x22PxSvzLIvgb1zg\x22,\x22dur\x22:\x2230ms\x22}")) == "err"
+}
+
+test "json fields 198" {
+  expect(jf_fields(b"{\x22dur\x22:\x22-2h45m\x22,\x22data\x22:\x22\x22,\x22when\x22:\x221759-11-28T02:48:46+12:45\x22}")) == "when=-6629939774000000000|data=|dur=-9900000000000"
+}
+
+test "json fields 199" {
+  expect(jf_fields(b"{\x22dur\x22:\x22300ms\x22}")) == "when=none|data=none|dur=300000000"
+}
+
+test "json fields 200" {
+  expect(jf_fields(b"{\x22dur\x22:\x221.5h\x22,\x22data\x22:\x22RoFHYD8EuhY\x22}")) == "err"
+}
+
