@@ -2,7 +2,7 @@ kind: review
 module: x509
 part: certificate and PEM parsing, chain building, name constraints, policies, host names (std/x509.xo, std/native/x509.xo, std/native/llrt/x509cert.xo, x509verify.xo, tlsname.xo's PEM and host name code, cbyte.xo), std/asn1.xo, PKCS #12 (pkcs12.xo)
 result: pass
-commit: a1ae2ec87
+commit: df9112a76
 source: bfc4fc502052681b685fe9eb23baef48faa325e32adec1cf843881b3dcf4ce0c
 date: 2026-11-13
 host: darwin/arm64 (probes against go1.27.4), linux/arm64 host 1 (gates)
@@ -33,7 +33,7 @@ release is with the owner (before 0.51).
 | GO-2026-5037 | host split per SAN | per SAN | 5a3af268f (once) |
 | GO-2025-4007 (CVE-2025-58187) | name constraints quadratic | 4000 by 4000: 62 ms (Go 1.8 ms) | 598637444 (sorted sets, maps): 1 ms |
 | GO-2026-6809 | distrusted intermediates accepted | no list | b9ff07cfc (x509cert.spki_distrusted, x509verify, and the macOS framework's chain) |
-| GO-2026-4599 (CVE-2026-27137) | email constraints of one kind | not affected | 615 cases equal to go1.27.4 (78 in x509_test.xo); the error text for an empty host URI fixed in 83a4aa114 |
+| GO-2026-4599 (CVE-2026-27137) | email constraints of one kind | not affected | 615 cases equal to go1.27.4 (78 in x509_test.xo); the error text for an empty host URI fixed in d9bc11905 |
 | GO-2026-4600 (CVE-2026-27138) | fault on malformed names in constraint checks | not affected | the same 615 cases: no fault, Go's errors |
 | GO-2022-0171 | darwin roots without their trust settings | system_roots lists the default anchors | OPEN: documented in spec/std.md system_roots; the fix (anchors with a Deny setting dropped) needs a throwaway keychain test, which waits for the owner's go (ADR 0584) |
 
@@ -62,7 +62,7 @@ parse_pem and asn1.parse.
 - Chain building: 100 signature checks counting every candidate (Go's
   maxChainSignatureChecks); candidates deduplicated among each
   certificate's parents (284287b6c; 8000 identical intermediates: 7 ms).
-- Name constraints: sorted sets and maps (n log n); IP subtrees masked first (a1ae2ec87).
+- Name constraints: sorted sets and maps (n log n); IP subtrees masked first (df9112a76).
 - Policy graph: insertion ordered maps (4f7eed8bb; 3000 policies and
   3000 mappings: 29 ms before, 1 ms after, Go 1.9 ms).
 - Host name errors: 100 names at most.
@@ -107,7 +107,7 @@ land: fuzz 10^6, race, stress (std/evidence/x509/stress/main.xo), perf.
    and searched them: an excluded 10.0.0.255/24 next to 10.0.0.1/32 did
    not exclude 10.0.0.5. The first probes missed it because Go's
    CreateCertificate masks what it encodes. Confirmed with hand-made
-   constraint DER (go1.26.1 shares it); fixed in a1ae2ec87 as go1.27.4's
+   constraint DER (go1.26.1 shares it); fixed in df9112a76 as go1.27.4's
    newIPNetConstraints. x509_test.xo H1 to H8.
 5. Notes kept: in_chain is stricter than Go's alreadyInChain (it refuses
    more, never less); parse_ip refuses zones (fails closed); the macOS
@@ -120,4 +120,4 @@ land: fuzz 10^6, race, stress (std/evidence/x509/stress/main.xo), perf.
 
 ## Sign-off
 
-Signed by a second agent (Xo Lang 3 subagent), 2026-11-13: read at 79278fb32, with the fixes 97ce69bc8, 3f456d5c7, 4f7eed8bb, 284287b6c, 83a4aa114 and a1ae2ec87 (then 5ac7a1e11; only a test label changed since). I checked these against go1.27.4's crypto/x509 (parser.go, verify.go, constraints.go, x509.go, root_darwin.go), encoding/pem, encoding/asn1, cryptobyte and x/crypto pkcs12: x509cert.xo (the parser, extensions, SANs, name constraints, policies, the signature algorithm checks), x509verify.xo (chain building and its signature check limit, alreadyInChain, the constraint sets, the policy graph, the distrust list), tlsname.xo (pem_next, the host name match and its error text), tlscert.xo (apple_chain_distrusted), std/asn1.xo and pkcs12.xo. My findings, all fixed: an IPv4-mapped IPv6 SAN escaped IPv4 excluded ranges, now a parse error with Go's text in a SAN and in an IP constraint (97ce69bc8; E3, E4); IP constraints with host bits were sorted and searched unmasked, which the first probe missed because Go's CreateCertificate masks what it encodes (x509.go:1401-1402), now masked as Go's newIPNetConstraints (a1ae2ec87; I decoded H1 to H8, confirmed their DER carries host bits, and their verdicts match my trace of the masked sets); duplicate extensions and policies were found by scans quadratic in their number before any signature check, now maps; the policy graph's list scans are insertion ordered maps (4f7eed8bb), and since valid policies are unique per stratum the lookups and results match the old code and verify.go:1065-1192; the PKCS #12 MAC compared with `!=`, now ct.bytes_equal as Go's hmac.Equal; asn1 sliced each nesting level, which copies on the WebAssembly and Go backends, now reads by offset (3f456d5c7) with every byte read bounded by lim and the depth cap unchanged at 10000; three wrong hashes in section 1's table were corrected and an OID figure without a committed source dropped. I agree with the not-affected verdicts I spot-checked (GO-2023-2598, GO-2024-3373, GO-2025-3749), and the review's figures match the commit messages and std/changes/x509.md and asn1.md. Notes kept, none a bypass: in_chain is stricter than Go's alreadyInChain; parse_ip refuses IPv6 zones (fails closed); the macOS framework chain's parse failure text differs from Go's (both refuse); MD5 and SHA-1 signatures are refused with Go's text; ML-DSA certificates fail closed. The result is the review's; the fuzz 10^6, race, stress and perf runs of section 4 are follow-ups with their own evidence files.
+Signed by a second agent (Xo Lang 3 subagent), 2026-11-13: read at 79278fb32 (a lang3-x509review branch commit before its rebase onto main), with the fixes 97ce69bc8, 3f456d5c7, 4f7eed8bb, 284287b6c, d9bc11905 and df9112a76 (pushed as df9112a76 after a rebase; only a test label changed). I checked these against go1.27.4's crypto/x509 (parser.go, verify.go, constraints.go, x509.go, root_darwin.go), encoding/pem, encoding/asn1, cryptobyte and x/crypto pkcs12: x509cert.xo (the parser, extensions, SANs, name constraints, policies, the signature algorithm checks), x509verify.xo (chain building and its signature check limit, alreadyInChain, the constraint sets, the policy graph, the distrust list), tlsname.xo (pem_next, the host name match and its error text), tlscert.xo (apple_chain_distrusted), std/asn1.xo and pkcs12.xo. My findings, all fixed: an IPv4-mapped IPv6 SAN escaped IPv4 excluded ranges, now a parse error with Go's text in a SAN and in an IP constraint (97ce69bc8; E3, E4); IP constraints with host bits were sorted and searched unmasked, which the first probe missed because Go's CreateCertificate masks what it encodes (x509.go:1401-1402), now masked as Go's newIPNetConstraints (df9112a76; I decoded H1 to H8, confirmed their DER carries host bits, and their verdicts match my trace of the masked sets); duplicate extensions and policies were found by scans quadratic in their number before any signature check, now maps; the policy graph's list scans are insertion ordered maps (4f7eed8bb), and since valid policies are unique per stratum the lookups and results match the old code and verify.go:1065-1192; the PKCS #12 MAC compared with `!=`, now ct.bytes_equal as Go's hmac.Equal; asn1 sliced each nesting level, which copies on the WebAssembly and Go backends, now reads by offset (3f456d5c7) with every byte read bounded by lim and the depth cap unchanged at 10000; three wrong hashes in section 1's table were corrected and an OID figure without a committed source dropped. I agree with the not-affected verdicts I spot-checked (GO-2023-2598, GO-2024-3373, GO-2025-3749), and the review's figures match the commit messages and std/changes/x509.md and asn1.md. Notes kept, none a bypass: in_chain is stricter than Go's alreadyInChain; parse_ip refuses IPv6 zones (fails closed); the macOS framework chain's parse failure text differs from Go's (both refuse); MD5 and SHA-1 signatures are refused with Go's text; ML-DSA certificates fail closed. The result is the review's; the fuzz 10^6, race, stress and perf runs of section 4 are follow-ups with their own evidence files.
