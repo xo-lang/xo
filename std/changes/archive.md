@@ -1,5 +1,18 @@
 # std/archive changes
 
+## 2026-11-13: security: an old GNU sparse map is read to 1 MiB at most (untar, native)
+
+- Kind: security
+- Commit: this commit
+- Found by: Go 1.26.11's archive/tar changes (Lang 2's toolchain bump list), reviewed against the port
+- Go reference: archive/tar reader.go readOldGNUSparseMap (go1.26.11: maxSpecialFileSize, errSparseTooLong)
+- Affected: Xo 0.50.1 and earlier, native backends: untar
+- Test: std/native/archive_test.xo: 2047 extended blocks read, 2048 are "sparse map too long", as go1.27.4 (fails without the change)
+- Timing: none
+- Shipped in: not yet released
+
+The extended blocks of an old GNU sparse header were read to the end of the chain however long; past 1 MiB of map (the header's 97 bytes and 512 a block) untar now stops with `archive/tar: sparse map too long`, as Go. No list was built, so this bounds work, not memory.
+
 ## 2026-11-10: refactor: integer bounds as `Int.max` and `Int.min` (decision 0587 point 4)
 
 - Kind: refactor

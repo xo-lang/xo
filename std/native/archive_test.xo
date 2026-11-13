@@ -563,3 +563,81 @@ test "unzip keeps a directory's contract: a directory mode with data reads as a 
     fault("got ${es.len()} entries")
   }
 }
+
+/// v in octal, zero padded to fill w - 1 bytes and a NUL (Go's tar octal fields).
+fn tar_octal(v: Int, w: Int) -> Bytes {
+  var digits = ""
+  var x = v
+  while x > 0 {
+    digits = "${x % 8}" + digits
+    x = x / 8
+  }
+  ("0".repeat(w - 1 - digits.len()) + digits).bytes() + b"\x00"
+}
+
+/// An old GNU sparse entry with ext extended blocks of 21 entries each
+/// (offsets 0, 2, 4, ...; length 1), then the end of the archive.
+fn old_gnu_sparse(ext: Int) -> Bytes {
+  var k = 0
+  var map4 = BytesBuilder.new()
+  for _ in 0..4 {
+    map4.write(tar_octal(2 * k, 12))
+    map4.write(tar_octal(1, 12))
+    k += 1
+  }
+  var h = BytesBuilder.new()
+  h.write(b"sparse")
+  h.write(b"\x00".repeat(94))
+  h.write(tar_octal(420, 8))
+  h.write(tar_octal(0, 8))
+  h.write(tar_octal(0, 8))
+  h.write(tar_octal(0, 12))
+  h.write(tar_octal(0, 12))
+  h.write(b"        ")
+  h.write(b"S")
+  h.write(b"\x00".repeat(100))
+  h.write(b"ustar  \x00")
+  h.write(b"\x00".repeat(386 - 265))
+  h.write(map4.freeze())
+  h.write(if ext > 0 { b"\x01" } else { b"\x00" })
+  h.write(tar_octal(1073741824, 12))
+  h.write(b"\x00".repeat(512 - 495))
+  var hb = h.freeze()
+  var sum = 0
+  for c in hb {
+    sum += Int(c)
+  }
+  var chk = BytesBuilder.new()
+  chk.write(hb[0..148])
+  chk.write(tar_octal(sum, 7))
+  chk.write(b" ")
+  chk.write(hb[156..512])
+  var out = BytesBuilder.new()
+  out.write(chk.freeze())
+  for e in 0..ext {
+    for _ in 0..21 {
+      out.write(tar_octal(2 * k, 12))
+      out.write(tar_octal(1, 12))
+      k += 1
+    }
+    out.write(if e < ext - 1 { b"\x01" } else { b"\x00" })
+    out.write(b"\x00".repeat(7))
+  }
+  out.write(b"\x00".repeat(1024))
+  out.freeze()
+}
+
+test "an old GNU sparse map past 1 MiB is too long (Go 1.26.11's readOldGNUSparseMap)" {
+  // 97 + 512 * 2047 bytes is under 1 MiB, 2048 extended blocks are not
+  // (go1.27.4: 2047 reads the map, 2048 is errSparseTooLong)
+  let short = match untar_entries(old_gnu_sparse(2047)) {
+    Ok(_) => "ok"
+    Err(e) => e
+  }
+  expect(short.contains("sparse map too long")) == false
+  let long = match untar_entries(old_gnu_sparse(2048)) {
+    Ok(_) => "ok"
+    Err(e) => e
+  }
+  expect(long) == "untar: archive/tar: sparse map too long"
+}

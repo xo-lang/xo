@@ -1038,6 +1038,9 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
       var ext = 482
       var pre_end = 0
       var ok = real >= 0
+      // the map's bytes read so far, at most 1 MiB (Go 1.26.11's
+      // readOldGNUSparseMap: the header's 97 bytes, then 512 a block)
+      var total = 97
       while true {
         var k = 0
         while k < count {
@@ -1070,6 +1073,10 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
         at = 0
         count = 21
         ext = 504
+        total += 512
+        if total >= 1048576 {
+          return Err("untar: archive/tar: sparse map too long")
+        }
       }
       if !ok {
         return Err(ERR_HEADER)
