@@ -7,7 +7,13 @@ Corrected 2026-10-29: slicing no longer copies. Before decision 0330
 (2026-10-22) a `Str` or `Bytes` slice `s[a..b]` copied its bytes (Go's
 slices share), and the first ports below paid for it; since 0330 a slice is
 a view on arm64, x86 and LLVM (a count on the parent, the offset in the
-length word's high half, no copy; wasm still copies). What a slice costs now
+length word's high half, no copy; wasm still copies). A recursive or
+looping parser that slices the rest of its input per level or per element
+(`parse(rest[n..])`) is therefore linear on native and quadratic on wasm
+and the Go backend, which copy: std/asn1 nested 800 KB ran wasm out of
+memory (Observed 2026-11-13, fixed by passing offsets: std/asn1.xo
+prefix_in). Parsers of untrusted input pass offsets into one input, as Go's
+do, and slice only what they return. What a slice costs now
 is its range and UTF-8 boundary check (prelude llrt_str_slice_chk, 16% of
 path's parts profile, 2026-10-26), the count and the drop, so index-based
 loops still win in hot paths, by less. Writing a slice into a builder

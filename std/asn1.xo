@@ -114,19 +114,31 @@ pub fn parse_prefix(der: Bytes) -> (Value, Bytes) ! Asn1Err {
 const MAX_DEPTH: Int = 10000
 
 fn prefix_at(der: Bytes, depth: Int) -> (Value, Bytes) ! Asn1Err {
+  let (v, end) = prefix_in(der, 0, der.len(), depth)?
+  (v, der[end..])
+}
+
+/// The value at offset at of der, reading below lim, and the offset after
+/// it. The reader passes offsets, not slices: the WebAssembly and Go
+/// backends copy a slice (spec 2.2, decision 0330), so a slice per level
+/// was quadratic there (an 800 KB nest ran wasm out of memory).
+fn prefix_in(der: Bytes, at: Int, lim: Int, depth: Int) -> (Value, Int) ! Asn1Err {
   if depth >= MAX_DEPTH {
     return Err(Asn1Err.Structure(msg: "nesting depth exceeded"))
   }
-  if der.is_empty() {
+  if at >= lim {
     return Err(Asn1Err.Syntax(msg: "sequence truncated"))
   }
-  let h = header(der, 0)?
-  if h.len > der.len() - h.off {
+  let h = header_in(der, at, lim)?
+  if h.len > lim - h.off {
     return Err(Asn1Err.Syntax(msg: "data truncated"))
   }
   let end = h.off + h.len
-  let v = value_of(h, der[h.off..end], depth)?
-  (v, der[end..])
+  if h.class == Class.Universal && h.constructed && (h.tag == TAG_SEQUENCE || h.tag == TAG_SET) {
+    let items = child_in(der, h.off, end, depth + 1)?
+    return (if h.tag == TAG_SEQUENCE { Value.Sequence(items: items) } else { Value.Set(items: items) }, end)
+  }
+  (value_of(h, der[h.off..end], depth)?, end)
 }
 
 /// An OID from its dotted form (`1.2.840.113549`): at least two arcs, the
@@ -231,20 +243,23 @@ fn class_bits(c: Class) -> Int {
 }
 
 /// Go's parseTagAndLength at offset i of b (i < b.len()).
-fn header(b: Bytes, i0: Int) -> Header ! Asn1Err {
+fn header(b: Bytes, i0: Int) -> Header ! Asn1Err { header_in(b, i0, b.len()) }
+
+/// header for the value at i0 of b, reading no byte at lim or past it.
+fn header_in(b: Bytes, i0: Int, lim: Int) -> Header ! Asn1Err {
   var i = i0
   let x = Int(b[i])
   i += 1
   var tag = x & 0x1f
   if tag == 0x1f {
-    let (t, next) = read_base128(b, i)?
+    let (t, next) = read_base128_in(b, i, lim)?
     tag = t
     i = next
     if tag < 0x1f {
       return Err(Asn1Err.Syntax(msg: "non-minimal tag"))
     }
   }
-  if i >= b.len() {
+  if i >= lim {
     return Err(Asn1Err.Syntax(msg: "truncated tag or length"))
   }
   let l = Int(b[i])
@@ -258,7 +273,7 @@ fn header(b: Bytes, i0: Int) -> Header ! Asn1Err {
       return Err(Asn1Err.Syntax(msg: "indefinite length found (not DER)"))
     }
     for _ in 0..n {
-      if i >= b.len() {
+      if i >= lim {
         return Err(Asn1Err.Syntax(msg: "truncated tag or length"))
       }
       let c = Int(b[i])
@@ -280,11 +295,13 @@ fn header(b: Bytes, i0: Int) -> Header ! Asn1Err {
 
 /// Go's parseBase128Int: a base 128 number at offset i of b and the offset
 /// after it.
-fn read_base128(b: Bytes, i0: Int) -> (Int, Int) ! Asn1Err {
+fn read_base128(b: Bytes, i0: Int) -> (Int, Int) ! Asn1Err { read_base128_in(b, i0, b.len()) }
+
+fn read_base128_in(b: Bytes, i0: Int, lim: Int) -> (Int, Int) ! Asn1Err {
   var i = i0
   var r = 0
   var shifted = 0
-  while i < b.len() {
+  while i < lim {
     if shifted == 5 {
       return Err(Asn1Err.Structure(msg: "base 128 integer too large"))
     }
@@ -347,13 +364,16 @@ fn value_of(h: Header, c: Bytes, depth: Int) -> Value ! Asn1Err {
   }
 }
 
-fn child_values(c: Bytes, depth: Int) -> List[Value] ! Asn1Err {
+fn child_values(c: Bytes, depth: Int) -> List[Value] ! Asn1Err { child_in(c, 0, c.len(), depth) }
+
+/// The values from lo to hi of der.
+fn child_in(der: Bytes, lo: Int, hi: Int, depth: Int) -> List[Value] ! Asn1Err {
   var out: List[Value] = []
-  var rest = c
-  while !rest.is_empty() {
-    let (v, r) = prefix_at(rest, depth)?
+  var pos = lo
+  while pos < hi {
+    let (v, e) = prefix_in(der, pos, hi, depth)?
     out.push(v)
-    rest = r
+    pos = e
   }
   out
 }

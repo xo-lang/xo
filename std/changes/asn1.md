@@ -1,5 +1,18 @@
 # std/asn1 changes
 
+## 2026-11-13: security: parse reads nested values by offset, linear on every backend
+
+- Kind: security
+- Commit: this commit
+- Found by: the second reader of the decision 0616 x509 review (asn1's depth on wasm), then a probe
+- Go reference: encoding/asn1 parseField works on offsets into one slice (Go slices share memory)
+- Affected: Xo 0.50.1 and earlier on the WebAssembly and Go backends, which copy a slice (spec/core.md 2.2, decision 0330); the native backends' slices are views
+- Test: std/asn1_test.xo on arm64, llvm and wasm (the depth test timed out on wasm before); corpora asn1, x509, x509create, pkcs12 on go, arm64, llvm
+- Timing: on wasm (node), 20000 nested SEQUENCEs: 2201 ms before, 0 ms after; 200000 (800 KB): out of memory before, 0 ms after
+- Shipped in: not yet released
+
+parse and parse_prefix sliced the contents of each nested value before reading it, which on the WebAssembly and Go backends copies the rest of the input at each level: memory and time quadratic in the depth, up to the 10000 level cap. The reader now passes offsets into the one input and slices only a leaf's contents.
+
 ## 2026-11-13: security: nesting deeper than 10000 levels is a structure error
 
 - Kind: security
