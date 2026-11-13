@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-12: perf: hardware AES, PMULL and SHA on windows/arm64
+
+- Kind: perf
+- Commit: this push
+- Found by: aws-43's windows/arm64 std run (cpu_test's DIT case), which showed std/native/llrt/cpu.xo detected no features there
+- Go reference: golang.org/x/sys/cpu cpu_windows_arm64.go (IsProcessorFeaturePresent; Go's internal/cpu detects nothing on windows/arm64), x/sys v0.49.0
+- Test: std/native/crypto_test.xo (24 pass) and llrt/cpu_test.xo (5 pass) on the windows/arm64 offload host; bench/perf aesgcm, sha1, sha512 timed there, A at the parent, 4 rounds after a warm-up, medians
+- Shipped in: not yet released
+
+Windows on arm64 now reads the CPU's features with IsProcessorFeaturePresent (PF 30: AES, PMULL, SHA-1, SHA-256; 64 SHA-3; 65 SHA-512), where it found none and ran every cipher and hash in software. On the windows/arm64 offload host: AES-GCM 2270 to 158 ms (14.4x), SHA-1 2750 to 635 ms (4.3x), SHA-512 795 to 497 ms (1.6x). Arm's DIT stays off on Windows (no PF constant names it), as in Go.
+
 ## 2026-11-12: security: the RSA private operation's fault check compares in constant time
 
 - Kind: security

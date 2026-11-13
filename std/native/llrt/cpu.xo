@@ -13,6 +13,7 @@
 // instruction.
 use native/llrt/linux
 use native/llrt/sysio
+use native/sys_windows
 use native/rt
 
 /// hw()'s bits: the AES rounds (aes_round, aes_last), the carry-less
@@ -111,8 +112,8 @@ pub fn fma_hw(x: Float, y: Float, z: Float) -> Float { x * y + z }
 /// HW_CLMUL, and HW_SHA256, looked up once a process (macOS on arm64:
 /// always; Linux on arm64: AT_HWCAP; x86-64: CPUID leaf 1 for AES and
 /// CLMUL, leaf 7 for SHA-256 (SHA-NI; checked on linux/amd64 in Docker
-/// and under qemu -cpu max, 2026-10-17); otherwise none; UNTESTED on
-/// Linux arm64 and on Windows).
+/// and under qemu -cpu max, 2026-10-17); Windows on arm64:
+/// IsProcessorFeaturePresent (win_arm64_hw, 2026-11-12); otherwise none).
 pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)
@@ -124,6 +125,23 @@ pub fn hw() -> Int {
   f
 }
 
+/// Windows' processor features (winnt.h PF_*), as golang.org/x/sys/cpu's
+/// cpu_windows_arm64.go reads them (BSD license): user mode cannot read
+/// the ID registers there. No PF_ constant names DIT, so HW_DIT stays off
+/// on Windows, as in Go (internal/cpu reads nothing on windows/arm64).
+const PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE = 30
+const PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE = 31
+const PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE = 64
+const PF_ARM_SHA512_INSTRUCTIONS_AVAILABLE = 65
+
+fn win_feature(f: Int) -> Bool { Int(sys_windows.IsProcessorFeaturePresent(f)) != 0 }
+
+/// HW_ bits of a windows/arm64 CPU: the v8 crypto extension is AES,
+/// PMULL, SHA-1 and SHA-256 together.
+fn win_arm64_hw() -> Int {
+  (if win_feature(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE) { HW_AES | HW_CLMUL | HW_SHA1 | HW_SHA256 } else { 0 }) | (if win_feature(PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE) { HW_CRC32 } else { 0 }) | (if win_feature(PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE) { HW_SHA3 } else { 0 }) | (if win_feature(PF_ARM_SHA512_INSTRUCTIONS_AVAILABLE) { HW_SHA512 } else { 0 })
+}
+
 fn detect() -> Int {
   match target.arch {
     TargetArch.Arm64 => match target.os {
@@ -132,6 +150,7 @@ fn detect() -> Int {
         let h = linux.auxval(AT_HWCAP)
         (if (h & HWCAP_AES) != 0 { HW_AES } else { 0 }) | (if (h & HWCAP_PMULL) != 0 { HW_CLMUL } else { 0 }) | (if (h & HWCAP_SHA2) != 0 { HW_SHA256 } else { 0 }) | (if (h & HWCAP_CRC32) != 0 { HW_CRC32 } else { 0 }) | (if (h & HWCAP_SHA1) != 0 { HW_SHA1 } else { 0 }) | (if (h & HWCAP_SHA512) != 0 { HW_SHA512 } else { 0 }) | (if (h & HWCAP_DIT) != 0 { HW_DIT } else { 0 })
       }
+      TargetOs.Windows => win_arm64_hw()
       _ => 0
     }
     TargetArch.Amd64 => {

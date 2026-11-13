@@ -1,5 +1,16 @@
 # std/crc32 changes
 
+## 2026-11-12: perf: hardware CRC32 on windows/arm64
+
+- Kind: perf
+- Commit: this push
+- Found by: aws-43's windows/arm64 std run (cpu_test's DIT case), which showed std/native/llrt/cpu.xo detected no features there
+- Go reference: golang.org/x/sys/cpu cpu_windows_arm64.go (IsProcessorFeaturePresent; Go's internal/cpu detects nothing on windows/arm64), x/sys v0.49.0
+- Test: std/native/llrt/cpu_test.xo on the windows/arm64 offload host
+- Shipped in: not yet released
+
+Windows on arm64 detects the CRC32 instructions (PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE, 31), where it ran the table code.
+
 ## 2026-10-29: perf: IEEE with x86-64's PCLMULQDQ and VPCLMULQDQ
 
 - Kind: perf
