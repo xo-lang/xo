@@ -1,0 +1,13 @@
+// A std declaration file's field default that names a static constant:
+// std/log's Record leaves out `time`, whose default is `Time.UNIX_EPOCH`.
+// The file is not checked as a body, so the native builder found no
+// reference for the selector and reported XO1201 for `Time` (Lang 3,
+// 2026-11-12); the Go backend printed the epoch.
+use std/log
+
+fn main(os: Os) {
+  let r = log.Record{level: log.Level.Info, msg: "m", fields: {"k": "v"}, module: "app"}
+  os.stdio.println("${r.msg} ${r.module} ${r.time.unix()} ${r.time == Time.UNIX_EPOCH} ${r.values.len()}")
+  let late = r with {time: Time.from_unix_millis(1000)}
+  os.stdio.println("${late.time.unix()} ${late.time == Time.UNIX_EPOCH}")
+}
