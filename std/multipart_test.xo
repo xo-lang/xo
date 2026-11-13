@@ -1524,3 +1524,19 @@ test "a bad value byte's error shows the key canonical, as Go's" {
     Err(e) => expect(e.msg) == "malformed MIME header line: \"Content-Type: a\\x01b\""
   }
 }
+
+test "a streamed header line stops at the header limit while it is read (GO-2024-2599)" {
+  // 64 MiB of a header line with no newline, in 4 KiB pieces: the reader
+  // fails after about MAX_HEADER_SIZE (10 MiB), not at the end
+  let calls = Atomic[Int].new(0)
+  let piece = "a".repeat(4096).bytes()
+  var r = reader(fn() -> Bytes? ! Str {
+    let n = calls.add(1)
+    if n == 1 { Some(b"--b\r\nX: ") } else if n * 4096 > 64 * 1048576 { None } else { Some(piece) }
+  }, "b")
+  match r.next_part() {
+    Ok(_) => expect("a part") == "message too large"
+    Err(e) => expect(e.msg.contains("message too large")) == true
+  }
+  expect(calls.get() * 4096 < 11 * 1048576) == true
+}

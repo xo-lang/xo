@@ -1,5 +1,19 @@
 # std/multipart changes
 
+## 2026-11-13: security: a streamed reader's header line stops at the header limit while it is read
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), against GO-2024-2599 (CVE-2023-45290)
+- Go reference: net/textproto reader.go readLineSlice(lim) (the limit applied while the line is read), fixed in go1.22.1
+- Test: std/multipart_test.xo "a streamed header line stops at the header limit while it is read" (fails before the fix: all 64 MiB read)
+- Affected: releases with multipart.reader (decision 0310 phase 3) up to 0.50.1, all backends
+- Shipped in: not yet released
+
+`multipart.reader` read a part's header line until its newline whatever its length, copying what it had so far with each piece the source gave, and only then checked the 10 MiB header limit. A client streaming one long header line made the server hold and copy all of it (a denial of service class). The line now stops just past the limit, and a long line is gathered once instead of being copied again with each piece.
+
+- Remote trigger: any client of a `handle_stream` route that reads a multipart body with `multipart.reader`.
+
 ## 2026-11-13: behavior: a malformed header's error quotes the line, as Go 1.26.2 and later
 
 - Kind: behavior

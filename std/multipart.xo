@@ -453,37 +453,51 @@ fn (var r: R) read_part() -> (Bytes, Str) {
 }
 
 /// bufio ReadLine for textproto: the line without its `\n` or `\r\n`;
-/// None at the end of the body.
-fn (var r: R) read_line() -> Bytes? {
+/// None at the end of the body. A line still going past max bytes comes
+/// back cut there, longer than max, for the caller's "message too large"
+/// (GO-2024-2599, Go's fix: the limit holds while the line is read): a
+/// streamed line is gathered once, not copied again with every refill.
+fn (var r: R) read_line(max: Int) -> Bytes? {
   if r.pos >= r.buf.len() && !r.more() {
     return None
   }
   var i = r.pos
-  while true {
-    while i < r.buf.len() && r.buf[i] != 10 {
-      i += 1
-    }
-    if i < r.buf.len() {
-      break
-    }
-    let off = i - r.pos
-    if !r.more() {
-      break
-    }
-    i = r.pos + off
+  while i < r.buf.len() && r.buf[i] != 10 {
+    i += 1
   }
-  if i == r.buf.len() {
-    let line = r.buf[r.pos..]
-    r.pos = i
+  if i < r.buf.len() {
+    var e = i
+    if e > r.pos && r.buf[e - 1] == 13 {
+      e -= 1
+    }
+    let line = r.buf[r.pos..e]
+    r.pos = i + 1
     return Some(line)
   }
-  var e = i
-  if e > r.pos && r.buf[e - 1] == 13 {
-    e -= 1
+  // no newline in what is buffered: the rest gathered piece by piece
+  var acc = BytesBuilder.new()
+  acc.write(r.buf[r.pos..])
+  r.pos = r.buf.len()
+  while acc.len() <= max {
+    if !r.more() {
+      return Some(acc.freeze())
+    }
+    var k = r.pos
+    while k < r.buf.len() && r.buf[k] != 10 {
+      k += 1
+    }
+    acc.write(r.buf[r.pos..k])
+    if k < r.buf.len() {
+      r.pos = k + 1
+      let line = acc.freeze()
+      if line.len() > 0 && line[line.len() - 1] == 13 {
+        return Some(line[0..line.len() - 1])
+      }
+      return Some(line)
+    }
+    r.pos = r.buf.len()
   }
-  let line = r.buf[r.pos..e]
-  r.pos = i + 1
-  Some(line)
+  Some(acc.freeze())
 }
 
 fn trim_lwsp(b: Bytes) -> Bytes {
@@ -574,7 +588,7 @@ fn (h: Header) count() -> Int {
 /// readContinuedLineSlice: the logical line (continuations joined by one
 /// space), or the error ("EOF" at the end of the body).
 fn (var r: R) read_continued(lim0: Int) -> Bytes ! Str {
-  let line = match r.read_line() {
+  let line = match r.read_line(if lim0 >= 0 { lim0 } else { Int.max }) {
     Some(l) => l
     None => return Err("EOF")
   }
@@ -600,7 +614,7 @@ fn (var r: R) read_continued(lim0: Int) -> Bytes ! Str {
     if n >= lim {
       return Err("message too large")
     }
-    match r.read_line() {
+    match r.read_line(lim - n) {
       Some(l) => {
         if l.len() > lim - n {
           return Err("message too large")
@@ -622,7 +636,7 @@ fn (var r: R) read_header(max_memory0: Int, max_headers0: Int) -> Header ! Str {
   var max_memory = if max_memory0 - 400 < 0 { 0 } else { max_memory0 - 400 }
   var max_headers = max_headers0
   if r.at_lwsp() {
-    let line = r.read_line() ?? b""
+    let line = r.read_line(80) ?? b""
     if line.len() > 80 {
       return Err("message too large")
     }
