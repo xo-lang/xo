@@ -571,7 +571,10 @@ fn dns_set(l: List[Str], permitted: Bool) -> DnsSet? {
   var keys: List[Str] = []
   var vals: List[Str] = []
   if !permitted {
-    for name in set {
+    for set_name in set {
+      // keys and values lower-cased, as the query (Go 1.27's fix of
+      // GO-2026-4866: `*.EXAMPLE.com` passed an excluded `test.example.com`)
+      let name = set_name.to_lower()
       let t = trim_label(name)
       if t == "" {
         continue
@@ -633,7 +636,7 @@ fn dns_query(d: DnsSet, s: Str) -> Str? {
     return Some(c)
   }
   if !d.permitted && s.starts_with("*") {
-    let t = trim_label(s)
+    let t = trim_label(s.to_lower())
     for (k, key) in d.parent_keys.indexed() {
       if key == t {
         return Some(d.parent_vals[k])
