@@ -1540,3 +1540,18 @@ test "a streamed header line stops at the header limit while it is read (GO-2024
   }
   expect(calls.get() * 4096 < 11 * 1048576) == true
 }
+
+test "a part's header of many fields keeps every value in order (read linearly)" {
+  var b = BytesBuilder.new()
+  b.write(b"--B\r\nContent-Disposition: form-data; name=\"f\"\r\nX-A: 1\r\nX-B: 2\r\nx-a: 3\r\n")
+  for i in 0..9000 {
+    b.write("K${i % 300}: ${i}\r\n".bytes())
+  }
+  b.write(b"\r\ndata\r\n--B--\r\n")
+  let ps = parse(b.freeze(), "B").ok() ?? []
+  expect(ps.len()) == 1
+  expect(ps[0].data) == b"data"
+  expect(ps[0].headers.get("X-A")) == Some("1")
+  expect(ps[0].headers.get("K7")) == Some("7")
+  expect(ps[0].headers.len()) == 303
+}

@@ -164,80 +164,80 @@ func Task_deadline(tk *Task, v_clock Clock) Option[Time] {
 }
 
 func Task_map_concurrent[tp_T any, tp_R any, tp_E any](tk *Task, v_items List[tp_T], v_limit int64, v_f func(*Task, tp_T) Result[tp_R, tp_E], v_at Rt_Loc) List[Result[tp_R, tp_E]] {
-	var x_ret2219 List[Result[tp_R, tp_E]]
+	var x_ret2256 List[Result[tp_R, tp_E]]
 	if v_limit <= int64(0) {
 		Rt_fault_at(tk, ("map_concurrent needs a positive limit, got " + IntStr(v_limit)), func(v Rt_Loc) Rt_Loc { MarkP(&v); return v }(v_at))
 	}
 	var v_free *Chan[Unit] = Task_permit_chan(tk, Max(Min(v_limit, List_len[tp_T](tk, v_items)), int64(1)))
 	_ = v_free
-	x_scope2203 := NewScope(tk)
-	x_ctl2204 := func() (x_ctl2204r int) {
-		tk := x_scope2203.Body()
+	x_scope2240 := NewScope(tk)
+	x_ctl2241 := func() (x_ctl2241r int) {
+		tk := x_scope2240.Body()
 		_ = tk
-		x_done2205 := false
-		defer func() { x_ctl2204r = x_scope2203.Close(recover(), x_done2205, x_ctl2204r) }()
+		x_done2242 := false
+		defer func() { x_ctl2241r = x_scope2240.Close(recover(), x_done2242, x_ctl2241r) }()
 		var v_tasks List[*Handle[Result[tp_R, tp_E], Never]] = List[*Handle[Result[tp_R, tp_E], Never]]{}
 		_ = v_tasks
-		x_it2206 := v_items
-		for _, x_e2208 := range List_Items(x_it2206) {
-			x_el2209 := x_e2208
-			_ = x_el2209
-			var v_x tp_T = x_el2209
+		x_it2243 := v_items
+		for _, x_e2245 := range List_Items(x_it2243) {
+			x_el2246 := x_e2245
+			_ = x_el2246
+			var v_x tp_T = x_el2246
 			_ = v_x
 			{
-				x_m2210 := Chan_recv[Unit](tk, v_free)
-				_ = x_m2210
+				x_m2247 := Chan_recv[Unit](tk, v_free)
+				_ = x_m2247
 				switch {
 				default:
 					{
 						_ = Map[Unit, Unit]{}
 					}
 				}
-				x_a2212 := x_scope2203
+				x_a2249 := x_scope2240
 				MarkP(&v_x)
-				x_pv2213 := Spawn(tk, x_a2212, func(tk *Task) Result[Result[tp_R, tp_E], Never] {
+				x_pv2250 := Spawn(tk, x_a2249, func(tk *Task) Result[Result[tp_R, tp_E], Never] {
 					defer tk.Shielded("std/task.xo:86:9", func() {
 						Chan_send[Unit](tk, v_free, Unit{})
 					})
 					return Ok[Result[tp_R, tp_E], Never](Own(v_f(tk, Own(v_x))))
 				}, false, false)
 				if List_CanPush(v_tasks) {
-					v_tasks = List_PushFast(v_tasks, x_pv2213)
+					v_tasks = List_PushFast(v_tasks, x_pv2250)
 				} else {
-					v_tasks = List_PushSlow(v_tasks, x_pv2213)
+					v_tasks = List_PushSlow(v_tasks, x_pv2250)
 				}
 				_ = Unit{}
 			}
 		}
 		var v_out List[Result[tp_R, tp_E]] = List[Result[tp_R, tp_E]]{}
 		_ = v_out
-		x_it2214 := v_tasks
-		for _, x_e2216 := range List_Items(x_it2214) {
-			x_el2217 := x_e2216
-			_ = x_el2217
-			var v_t *Handle[Result[tp_R, tp_E], Never] = x_el2217
+		x_it2251 := v_tasks
+		for _, x_e2253 := range List_Items(x_it2251) {
+			x_el2254 := x_e2253
+			_ = x_el2254
+			var v_t *Handle[Result[tp_R, tp_E], Never] = x_el2254
 			_ = v_t
 			{
-				x_pv2218 := Own(Await(tk, v_t).V)
+				x_pv2255 := Own(Await(tk, v_t).V)
 				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv2218)
+					v_out = List_PushFast(v_out, x_pv2255)
 				} else {
-					v_out = List_PushSlow(v_out, x_pv2218)
+					v_out = List_PushSlow(v_out, x_pv2255)
 				}
 				_ = Unit{}
 			}
 		}
-		x_done2205 = true
-		x_ret2219 = List_Own(v_out)
+		x_done2242 = true
+		x_ret2256 = List_Own(v_out)
 		return 1
 	}()
-	if x_ctl2204 == CtlScopeFail {
-		x_fe2220, _ := x_scope2203.Failure()
-		panic(AsFault(Display(tk, x_fe2220)))
+	if x_ctl2241 == CtlScopeFail {
+		x_fe2257, _ := x_scope2240.Failure()
+		panic(AsFault(Display(tk, x_fe2257)))
 	}
-	switch x_ctl2204 {
+	switch x_ctl2241 {
 	case 1:
-		return x_ret2219
+		return x_ret2256
 	}
 	panic("unreachable: missing return")
 }
@@ -248,16 +248,16 @@ func Task_map_concurrent_until[tp_T any, tp_R any, tp_E any](tk *Task, v_clock C
 	}
 	var v_empty List[Option[Result[tp_R, tp_E]]] = List[Option[Result[tp_R, tp_E]]]{}
 	_ = v_empty
-	x_it2222 := v_items
-	for _, x_e2224 := range List_Items(x_it2222) {
-		x_el2225 := x_e2224
-		_ = x_el2225
+	x_it2259 := v_items
+	for _, x_e2261 := range List_Items(x_it2259) {
+		x_el2262 := x_e2261
+		_ = x_el2262
 		{
-			x_pv2226 := Own(None[Result[tp_R, tp_E]]())
+			x_pv2263 := Own(None[Result[tp_R, tp_E]]())
 			if List_CanPush(v_empty) {
-				v_empty = List_PushFast(v_empty, x_pv2226)
+				v_empty = List_PushFast(v_empty, x_pv2263)
 			} else {
-				v_empty = List_PushSlow(v_empty, x_pv2226)
+				v_empty = List_PushSlow(v_empty, x_pv2263)
 			}
 			_ = Unit{}
 		}
@@ -266,11 +266,11 @@ func Task_map_concurrent_until[tp_T any, tp_R any, tp_E any](tk *Task, v_clock C
 	_ = v_done
 	var v_indexed List[Tuple2[int64, tp_T]] = List_indexed[tp_T](tk, v_items)
 	_ = v_indexed
-	x_a2228 := v_clock
-	x_a2229 := v_d
+	x_a2265 := v_clock
+	x_a2266 := v_d
 	v_indexed.XoMark()
 	MarkP(&v_at)
-	x_m2230 := Task_with_timeout[Unit, Never](tk, x_a2228, x_a2229, func(tk *Task) Result[Unit, Never] {
+	x_m2267 := Task_with_timeout[Unit, Never](tk, x_a2265, x_a2266, func(tk *Task) Result[Unit, Never] {
 		var v__all List[Result[Unit, Never]] = List_Own(Task_map_concurrent[Tuple2[int64, tp_T], Unit, Never](tk, List_Own(v_indexed), v_limit, func(tk *Task, v_p Tuple2[int64, tp_T]) Result[Unit, Never] {
 			_ = v_p
 			if Task_is_canceled(tk) {
@@ -284,77 +284,77 @@ func Task_map_concurrent_until[tp_T any, tp_R any, tp_E any](tk *Task, v_clock C
 			} else {
 				MarkP(&v_r.E)
 			}
-			x_a2227 := func(tk *Task, v_rs *List[Option[Result[tp_R, tp_E]]]) Result[Unit, Never] {
+			x_a2264 := func(tk *Task, v_rs *List[Option[Result[tp_R, tp_E]]]) Result[Unit, Never] {
 				_ = (*v_rs)
 				List_set[Option[Result[tp_R, tp_E]]](tk, &(*v_rs), v_p.F0, Some[Result[tp_R, tp_E]](Own(v_r)))
 				return Ok[Unit, Never](Unit{})
 			}
-			_ = Mutex_with[List[Option[Result[tp_R, tp_E]]], Unit, Never](tk, v_done, x_a2227).V
+			_ = Mutex_with[List[Option[Result[tp_R, tp_E]]], Unit, Never](tk, v_done, x_a2264).V
 			return Ok[Unit, Never](Unit{})
 		}, func(v Rt_Loc) Rt_Loc { MarkP(&v); return v }(v_at)))
 		_ = v__all
 		return Ok[Unit, Never](Unit{})
 	})
-	_ = x_m2230
+	_ = x_m2267
 	switch {
 	default:
 		{
 			_ = Map[Unit, Unit]{}
 		}
 	}
-	x_a2232 := func(tk *Task, v_rs_1 *List[Option[Result[tp_R, tp_E]]]) Result[List[Option[Result[tp_R, tp_E]]], Never] {
+	x_a2269 := func(tk *Task, v_rs_1 *List[Option[Result[tp_R, tp_E]]]) Result[List[Option[Result[tp_R, tp_E]]], Never] {
 		_ = (*v_rs_1)
 		return Ok[List[Option[Result[tp_R, tp_E]]], Never](List_Own((*v_rs_1)))
 	}
-	var v_rs_2 List[Option[Result[tp_R, tp_E]]] = List_Own(Mutex_with[List[Option[Result[tp_R, tp_E]]], List[Option[Result[tp_R, tp_E]]], Never](tk, v_done, x_a2232).V)
+	var v_rs_2 List[Option[Result[tp_R, tp_E]]] = List_Own(Mutex_with[List[Option[Result[tp_R, tp_E]]], List[Option[Result[tp_R, tp_E]]], Never](tk, v_done, x_a2269).V)
 	_ = v_rs_2
 	var v_out List[Result[tp_R, Task_Timed[tp_E]]] = List[Result[tp_R, Task_Timed[tp_E]]]{}
 	_ = v_out
-	x_it2233 := v_rs_2
-	for _, x_e2235 := range List_Items(x_it2233) {
-		x_el2236 := x_e2235
-		_ = x_el2236
-		var v_r_1 Option[Result[tp_R, tp_E]] = x_el2236
+	x_it2270 := v_rs_2
+	for _, x_e2272 := range List_Items(x_it2270) {
+		x_el2273 := x_e2272
+		_ = x_el2273
+		var v_r_1 Option[Result[tp_R, tp_E]] = x_el2273
 		_ = v_r_1
 		{
-			x_m2237 := Own(v_r_1)
-			_ = x_m2237
-		x_M2238:
+			x_m2274 := Own(v_r_1)
+			_ = x_m2274
+		x_M2275:
 			switch {
 			default:
-				if !x_m2237.Some {
-					x_pv2239 := Err[tp_R, Task_Timed[tp_E]](Task_Timed[tp_E]{Tag: 1})
+				if !x_m2274.Some {
+					x_pv2276 := Err[tp_R, Task_Timed[tp_E]](Task_Timed[tp_E]{Tag: 1})
 					if List_CanPush(v_out) {
-						v_out = List_PushFast(v_out, x_pv2239)
+						v_out = List_PushFast(v_out, x_pv2276)
 					} else {
-						v_out = List_PushSlow(v_out, x_pv2239)
+						v_out = List_PushSlow(v_out, x_pv2276)
 					}
 					_ = Unit{}
-					break x_M2238
+					break x_M2275
 				}
-				if x_m2237.Some && x_m2237.V.Ok {
-					var v_v tp_R = x_m2237.V.V
+				if x_m2274.Some && x_m2274.V.Ok {
+					var v_v tp_R = x_m2274.V.V
 					_ = v_v
-					x_pv2240 := Ok[tp_R, Task_Timed[tp_E]](Own(v_v))
+					x_pv2277 := Ok[tp_R, Task_Timed[tp_E]](Own(v_v))
 					if List_CanPush(v_out) {
-						v_out = List_PushFast(v_out, x_pv2240)
+						v_out = List_PushFast(v_out, x_pv2277)
 					} else {
-						v_out = List_PushSlow(v_out, x_pv2240)
+						v_out = List_PushSlow(v_out, x_pv2277)
 					}
 					_ = Unit{}
-					break x_M2238
+					break x_M2275
 				}
-				if x_m2237.Some && !x_m2237.V.Ok {
-					var v_e tp_E = x_m2237.V.E
+				if x_m2274.Some && !x_m2274.V.Ok {
+					var v_e tp_E = x_m2274.V.E
 					_ = v_e
-					x_pv2241 := Err[tp_R, Task_Timed[tp_E]](Task_Timed[tp_E]{Tag: 2, P: Task_Timed_Failed[tp_E]{F0: Own(v_e)}})
+					x_pv2278 := Err[tp_R, Task_Timed[tp_E]](Task_Timed[tp_E]{Tag: 2, P: Task_Timed_Failed[tp_E]{F0: Own(v_e)}})
 					if List_CanPush(v_out) {
-						v_out = List_PushFast(v_out, x_pv2241)
+						v_out = List_PushFast(v_out, x_pv2278)
 					} else {
-						v_out = List_PushSlow(v_out, x_pv2241)
+						v_out = List_PushSlow(v_out, x_pv2278)
 					}
 					_ = Unit{}
-					break x_M2238
+					break x_M2275
 				}
 				panic(Unreachable("std/task.xo:126:5"))
 			}
@@ -402,8 +402,8 @@ func Task_semaphore(tk *Task, v_permits int64, v_at Rt_Loc) Task_Semaphore {
 }
 
 func Task_Semaphore_with[tp_R any, tp_E any](tk *Task, v_s Task_Semaphore, v_f func(*Task) Result[tp_R, tp_E]) Result[tp_R, tp_E] {
-	x_m2242 := Chan_recv[Unit](tk, v_s.F_permits)
-	_ = x_m2242
+	x_m2279 := Chan_recv[Unit](tk, v_s.F_permits)
+	_ = x_m2279
 	switch {
 	default:
 		{
@@ -413,11 +413,11 @@ func Task_Semaphore_with[tp_R any, tp_E any](tk *Task, v_s Task_Semaphore, v_f f
 	defer tk.Shielded("std/task.xo:156:3", func() {
 		Chan_send[Unit](tk, v_s.F_permits, Unit{})
 	})
-	x_r2244 := Own(v_f(tk))
-	if !x_r2244.Ok {
-		return ErrTr[tp_R](x_r2244.E, Frame2(x_r2244.Tr, "task.Semaphore.with", "std/task.xo:157", "s f", v_s, v_f))
+	x_r2281 := Own(v_f(tk))
+	if !x_r2281.Ok {
+		return ErrTr[tp_R](x_r2281.E, Frame2(x_r2281.Tr, "task.Semaphore.with", "std/task.xo:157", "s f", v_s, v_f))
 	}
-	return Ok[tp_R, tp_E](x_r2244.V)
+	return Ok[tp_R, tp_E](x_r2281.V)
 }
 
 type Task_Once[tp_T any, tp_E any] struct {
@@ -431,10 +431,10 @@ func Task_once[tp_T any, tp_E any](tk *Task) Task_Once[tp_T, tp_E] {
 func Task_permit_chan(tk *Task, v_n int64) *Chan[Unit] {
 	var v_ch *Chan[Unit] = Chan_new[Unit](tk, v_n)
 	_ = v_ch
-	x_it2252 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-	for x_i2254 := x_it2252.Lo; x_i2254 < x_it2252.Hi; x_i2254++ {
-		x_el2255 := x_i2254
-		_ = x_el2255
+	x_it2289 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+	for x_i2291 := x_it2289.Lo; x_i2291 < x_it2289.Hi; x_i2291++ {
+		x_el2292 := x_i2291
+		_ = x_el2292
 		{
 			Chan_send[Unit](tk, v_ch, Unit{})
 		}

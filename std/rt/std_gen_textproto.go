@@ -111,12 +111,12 @@ func Textproto_pad3(tk *Task, v_n int64) string {
 }
 
 func Textproto_field_byte(tk *Task, v_c uint8) bool {
-	x_b2258 := ((((v_c >= uint8(97)) && (v_c <= uint8(122))) || ((v_c >= uint8(65)) && (v_c <= uint8(90)))) || ((v_c >= uint8(48)) && (v_c <= uint8(57))))
-	if !x_b2258 {
-		x_t2257 := v_c
-		x_b2258 = ((x_t2257 == uint8(33)) || (x_t2257 == uint8(35)) || (x_t2257 == uint8(36)) || (x_t2257 == uint8(37)) || (x_t2257 == uint8(38)) || (x_t2257 == uint8(39)) || (x_t2257 == uint8(42)) || (x_t2257 == uint8(43)) || (x_t2257 == uint8(45)) || (x_t2257 == uint8(46)) || (x_t2257 == uint8(94)) || (x_t2257 == uint8(95)) || (x_t2257 == uint8(96)) || (x_t2257 == uint8(124)) || (x_t2257 == uint8(126)))
+	x_b2295 := ((((v_c >= uint8(97)) && (v_c <= uint8(122))) || ((v_c >= uint8(65)) && (v_c <= uint8(90)))) || ((v_c >= uint8(48)) && (v_c <= uint8(57))))
+	if !x_b2295 {
+		x_t2294 := v_c
+		x_b2295 = ((x_t2294 == uint8(33)) || (x_t2294 == uint8(35)) || (x_t2294 == uint8(36)) || (x_t2294 == uint8(37)) || (x_t2294 == uint8(38)) || (x_t2294 == uint8(39)) || (x_t2294 == uint8(42)) || (x_t2294 == uint8(43)) || (x_t2294 == uint8(45)) || (x_t2294 == uint8(46)) || (x_t2294 == uint8(94)) || (x_t2294 == uint8(95)) || (x_t2294 == uint8(96)) || (x_t2294 == uint8(124)) || (x_t2294 == uint8(126)))
 	}
-	return x_b2258
+	return x_b2295
 }
 
 func Textproto_value_byte(tk *Task, v_c uint8) bool {
@@ -141,14 +141,14 @@ func Textproto_canonical_key(tk *Task, v_s string) string {
 				return v_s
 			}
 			if ((v_upper && (v_c >= uint8(97))) && (v_c <= uint8(122))) || ((!(v_upper) && (v_c >= uint8(65))) && (v_c <= uint8(90))) {
-				x_t2260 := Textproto_line_key(tk, v_b)
-				var x_c2261 string
-				if x_t2260.Some {
-					x_c2261 = x_t2260.V
+				x_t2297 := Textproto_line_key(tk, v_b)
+				var x_c2298 string
+				if x_t2297.Some {
+					x_c2298 = x_t2297.V
 				} else {
-					x_c2261 = v_s
+					x_c2298 = v_s
 				}
-				return x_c2261
+				return x_c2298
 			}
 			v_upper = (v_c == uint8(45))
 			v_i = (v_i + int64(1))
@@ -162,11 +162,11 @@ func Textproto_canon(tk *Task, v_b Bytes) string {
 	_ = v_out
 	var v_upper bool = true
 	_ = v_upper
-	x_it2262 := v_b
-	for x_bi2264 := 0; x_bi2264 < len(x_it2262); x_bi2264++ {
-		x_el2265 := x_it2262[x_bi2264]
-		_ = x_el2265
-		var v_c0 uint8 = x_el2265
+	x_it2299 := v_b
+	for x_bi2301 := 0; x_bi2301 < len(x_it2299); x_bi2301++ {
+		x_el2302 := x_it2299[x_bi2301]
+		_ = x_el2302
+		var v_c0 uint8 = x_el2302
 		_ = v_c0
 		{
 			var v_c uint8 = v_c0
@@ -191,11 +191,11 @@ func Textproto_line_key(tk *Task, v_k Bytes) Option[string] {
 	}
 	var v_spaces bool = false
 	_ = v_spaces
-	x_it2266 := v_k
-	for x_bi2268 := 0; x_bi2268 < len(x_it2266); x_bi2268++ {
-		x_el2269 := x_it2266[x_bi2268]
-		_ = x_el2269
-		var v_c uint8 = x_el2269
+	x_it2303 := v_k
+	for x_bi2305 := 0; x_bi2305 < len(x_it2303); x_bi2305++ {
+		x_el2306 := x_it2303[x_bi2305]
+		_ = x_el2306
+		var v_c uint8 = x_el2306
 		_ = v_c
 		{
 			if v_c == uint8(32) {
@@ -335,8 +335,8 @@ func (v_h Textproto_Header) M_index(tk *Task, v_key string) int64 {
 }
 
 func (v_h Textproto_Header) M_get(tk *Task, v_key string) Option[string] {
-	x_a2275 := v_key
-	var v_i int64 = Addr(func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(v_h)).M_index(tk, x_a2275)
+	x_a2312 := v_key
+	var v_i int64 = Addr(func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(v_h)).M_index(tk, x_a2312)
 	_ = v_i
 	if (v_i < int64(0)) || List_is_empty[string](tk, List_At(v_h.F_vals, v_i, "std/textproto.xo:171:15")) {
 		return None[string]()
@@ -345,8 +345,8 @@ func (v_h Textproto_Header) M_get(tk *Task, v_key string) Option[string] {
 }
 
 func (v_h Textproto_Header) M_values(tk *Task, v_key string) List[string] {
-	x_a2276 := v_key
-	var v_i int64 = Addr(func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(v_h)).M_index(tk, x_a2276)
+	x_a2313 := v_key
+	var v_i int64 = Addr(func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(v_h)).M_index(tk, x_a2313)
 	_ = v_i
 	if v_i < int64(0) {
 		return List[string]{}
@@ -363,44 +363,44 @@ func (v_h Textproto_Header) M_len(tk *Task) int64 {
 }
 
 func (v_h Textproto_Header) M_add(tk *Task, v_key string, v_value string) Textproto_Header {
-	x_a2277 := v_key
-	var v_i int64 = Addr(func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(v_h)).M_index(tk, x_a2277)
+	x_a2314 := v_key
+	var v_i int64 = Addr(func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(v_h)).M_index(tk, x_a2314)
 	_ = v_i
 	if v_i < int64(0) {
 		return Textproto_Header{F_keys: List_Concat(v_h.F_keys, ListOf[string](Textproto_canonical_key(tk, v_key))), F_vals: List_Concat(v_h.F_vals, ListOf[List[string]](ListOf[string](v_value)))}
 	}
 	var v_vals List[List[string]] = List_Own(v_h.F_vals)
 	_ = v_vals
-	x_ix2278 := v_i
+	x_ix2315 := v_i
 	if !List_Mine(v_vals) {
 		v_vals = List_Unshared(v_vals)
 	}
-	List_PutM(v_vals, x_ix2278, List_Concat(List_At(v_vals, v_i, "std/textproto.xo:199:13"), ListOf[string](v_value)), "std/textproto.xo:199:3")
+	List_PutM(v_vals, x_ix2315, List_Concat(List_At(v_vals, v_i, "std/textproto.xo:199:13"), ListOf[string](v_value)), "std/textproto.xo:199:3")
 	return Textproto_Header{F_keys: List_Own(v_h.F_keys), F_vals: List_Own(v_vals)}
 }
 
 func (v_h Textproto_Header) M_set(tk *Task, v_key string, v_value string) Textproto_Header {
-	x_a2279 := v_key
-	var v_i int64 = Addr(func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(v_h)).M_index(tk, x_a2279)
+	x_a2316 := v_key
+	var v_i int64 = Addr(func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(v_h)).M_index(tk, x_a2316)
 	_ = v_i
 	if v_i < int64(0) {
-		x_a2280 := v_key
-		x_a2281 := v_value
-		return func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(Addr(func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(v_h)).M_add(tk, x_a2280, x_a2281))
+		x_a2317 := v_key
+		x_a2318 := v_value
+		return func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(Addr(func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(v_h)).M_add(tk, x_a2317, x_a2318))
 	}
 	var v_vals List[List[string]] = List_Own(v_h.F_vals)
 	_ = v_vals
-	x_ix2282 := v_i
+	x_ix2319 := v_i
 	if !List_Mine(v_vals) {
 		v_vals = List_Unshared(v_vals)
 	}
-	List_PutM(v_vals, x_ix2282, ListOf[string](v_value), "std/textproto.xo:210:3")
+	List_PutM(v_vals, x_ix2319, ListOf[string](v_value), "std/textproto.xo:210:3")
 	return Textproto_Header{F_keys: List_Own(v_h.F_keys), F_vals: List_Own(v_vals)}
 }
 
 func (v_h Textproto_Header) M_del(tk *Task, v_key string) Textproto_Header {
-	x_a2283 := v_key
-	var v_i int64 = Addr(func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(v_h)).M_index(tk, x_a2283)
+	x_a2320 := v_key
+	var v_i int64 = Addr(func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(v_h)).M_index(tk, x_a2320)
 	_ = v_i
 	if v_i < int64(0) {
 		return func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(v_h)
@@ -498,12 +498,12 @@ func (v_r *Textproto_Reader) M_line_bytes(tk *Task) Option[Bytes] {
 	}
 	var v_start int64 = (*v_r).F_at
 	_ = v_start
-	x_m2285 := Bytes_find(tk, BytesSlice((*v_r).F_b, v_start, 0, true, false, "std/textproto.xo:272:9"), Bytes("\n"))
-	_ = x_m2285
+	x_m2322 := Bytes_find(tk, BytesSlice((*v_r).F_b, v_start, 0, true, false, "std/textproto.xo:272:9"), Bytes("\n"))
+	_ = x_m2322
 	switch {
 	default:
-		if x_m2285.Some {
-			var v_k int64 = x_m2285.V
+		if x_m2322.Some {
+			var v_k int64 = x_m2322.V
 			_ = v_k
 			{
 				(*v_r).F_at = AddIUp(AddS(v_start, v_k, "std/textproto.xo:274:14"), int64(1), "std/textproto.xo:274:14")
@@ -515,7 +515,7 @@ func (v_r *Textproto_Reader) M_line_bytes(tk *Task) Option[Bytes] {
 				return Some[Bytes](BytesSlice((*v_r).F_b, v_start, v_end, true, true, "std/textproto.xo:279:12"))
 			}
 		}
-		if !x_m2285.Some {
+		if !x_m2322.Some {
 			{
 				(*v_r).F_at = v_n
 				return Some[Bytes](BytesSlice((*v_r).F_b, v_start, v_n, true, true, "std/textproto.xo:283:12"))
@@ -526,16 +526,16 @@ func (v_r *Textproto_Reader) M_line_bytes(tk *Task) Option[Bytes] {
 }
 
 func (v_r *Textproto_Reader) M_read_line(tk *Task) Result[string, Textproto_TextErr] {
-	x_m2287 := (*v_r).M_line_bytes(tk)
-	_ = x_m2287
+	x_m2324 := (*v_r).M_line_bytes(tk)
+	_ = x_m2324
 	switch {
 	default:
-		if x_m2287.Some {
-			var v_l Bytes = x_m2287.V
+		if x_m2324.Some {
+			var v_l Bytes = x_m2324.V
 			_ = v_l
 			return Ok[string, Textproto_TextErr](Bytes_to_str_lossy(tk, v_l))
 		}
-		if !x_m2287.Some {
+		if !x_m2324.Some {
 			return Err[string](Textproto_TextErr{Tag: 3})
 		}
 		panic(Unreachable("std/textproto.xo:290:3"))
@@ -558,59 +558,59 @@ func (v_r *Textproto_Reader) M_skip_space(tk *Task) int64 {
 }
 
 func (v_r *Textproto_Reader) M_continued(tk *Task, v_check bool) Result[Bytes, Textproto_TextErr] {
-	var x_v2290 Bytes
-	x_m2291 := (*v_r).M_line_bytes(tk)
-	_ = x_m2291
-x_M2292:
+	var x_v2327 Bytes
+	x_m2328 := (*v_r).M_line_bytes(tk)
+	_ = x_m2328
+x_M2329:
 	switch {
 	default:
-		if x_m2291.Some {
-			var v_l Bytes = x_m2291.V
+		if x_m2328.Some {
+			var v_l Bytes = x_m2328.V
 			_ = v_l
-			x_v2290 = v_l
-			break x_M2292
+			x_v2327 = v_l
+			break x_M2329
 		}
-		if !x_m2291.Some {
+		if !x_m2328.Some {
 			return Err[Bytes](Textproto_TextErr{Tag: 3})
 		}
 		panic(Unreachable("std/textproto.xo:310:14"))
 	}
-	var v_line Bytes = x_v2290
+	var v_line Bytes = x_v2327
 	_ = v_line
 	if Bytes_is_empty(tk, v_line) {
 		return Ok[Bytes, Textproto_TextErr](v_line)
 	}
-	x_b2294 := v_check
-	if x_b2294 {
-		x_a2293 := Bytes(":")
-		x_b2294 = Option_is_none[int64](tk, Bytes_find(tk, v_line, x_a2293))
+	x_b2331 := v_check
+	if x_b2331 {
+		x_a2330 := Bytes(":")
+		x_b2331 = Option_is_none[int64](tk, Bytes_find(tk, v_line, x_a2330))
 	}
-	if x_b2294 {
+	if x_b2331 {
 		return Err[Bytes](Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("malformed MIME header: missing colon: " + Bytes_quote(tk, v_line))}})
 	}
 	var v_buf BytesBuilder = BytesBuilder_new(tk)
 	_ = v_buf
 	v_buf.M_write(tk, Textproto_trim_bytes(tk, v_line))
-x_L2295:
+x_L2332:
 	for {
 		if !((*v_r).M_skip_space(tk) > int64(0)) {
 			break
 		}
 		{
 			v_buf.M_write_byte(tk, uint8(32))
-			x_m2296 := (*v_r).M_line_bytes(tk)
-			_ = x_m2296
-		x_M2297:
+			x_m2333 := (*v_r).M_line_bytes(tk)
+			_ = x_m2333
+		x_M2334:
 			switch {
 			default:
-				if x_m2296.Some {
-					var v_l_1 Bytes = x_m2296.V
+				if x_m2333.Some {
+					var v_l_1 Bytes = x_m2333.V
 					_ = v_l_1
 					v_buf.M_write(tk, Textproto_trim_bytes(tk, v_l_1))
-					break x_M2297
+					break x_M2334
 				}
-				if !x_m2296.Some {
-					break x_L2295
+				if !x_m2333.Some {
+					break x_L2332
 				}
 				panic(Unreachable("std/textproto.xo:324:5"))
 			}
@@ -620,11 +620,11 @@ x_L2295:
 }
 
 func (v_r *Textproto_Reader) M_read_continued_line(tk *Task) Result[string, Textproto_TextErr] {
-	x_r2298 := (*v_r).M_continued(tk, false)
-	if !x_r2298.Ok {
-		return ErrTr[string](x_r2298.E, Frame1(x_r2298.Tr, "textproto.Reader.read_continued_line", "std/textproto.xo:335", "r", (*v_r)))
+	x_r2335 := (*v_r).M_continued(tk, false)
+	if !x_r2335.Ok {
+		return ErrTr[string](x_r2335.E, Frame1(x_r2335.Tr, "textproto.Reader.read_continued_line", "std/textproto.xo:335", "r", (*v_r)))
 	}
-	return Ok[string, Textproto_TextErr](Bytes_to_str_lossy(tk, x_r2298.V))
+	return Ok[string, Textproto_TextErr](Bytes_to_str_lossy(tk, x_r2335.V))
 }
 
 func (v_r *Textproto_Reader) M_read_header(tk *Task) Result[Textproto_Header, Textproto_TextErr] {
@@ -638,22 +638,22 @@ func (v_r *Textproto_Reader) M_read_header(tk *Task) Result[Textproto_Header, Te
 	var v_at Map[string, int64] = Map[string, int64]{}
 	_ = v_at
 	if ((*v_r).F_at < Bytes_len(tk, (*v_r).F_b)) && ((BytesAt((*v_r).F_b, (*v_r).F_at, "std/textproto.xo:353:27") == uint8(32)) || (BytesAt((*v_r).F_b, (*v_r).F_at, "std/textproto.xo:353:47") == uint8(9))) {
-		x_t2299 := (*v_r).M_line_bytes(tk)
-		var x_c2300 Bytes
-		if x_t2299.Some {
-			x_c2300 = x_t2299.V
+		x_t2336 := (*v_r).M_line_bytes(tk)
+		var x_c2337 Bytes
+		if x_t2336.Some {
+			x_c2337 = x_t2336.V
 		} else {
-			x_c2300 = Bytes("")
+			x_c2337 = Bytes("")
 		}
-		var v_l Bytes = x_c2300
+		var v_l Bytes = x_c2337
 		_ = v_l
-		var x_v2301 Bytes
+		var x_v2338 Bytes
 		if Bytes_len(tk, v_l) > int64(80) {
-			x_v2301 = BytesSlice(v_l, int64(0), int64(80), true, true, "std/textproto.xo:356:35")
+			x_v2338 = BytesSlice(v_l, int64(0), int64(80), true, true, "std/textproto.xo:356:35")
 		} else {
-			x_v2301 = v_l
+			x_v2338 = v_l
 		}
-		var v_shown Bytes = x_v2301
+		var v_shown Bytes = x_v2338
 		_ = v_shown
 		return Err[Textproto_Header](Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("malformed MIME header initial line: " + Bytes_quote(tk, v_shown))}})
 	}
@@ -662,19 +662,19 @@ func (v_r *Textproto_Reader) M_read_header(tk *Task) Result[Textproto_Header, Te
 			break
 		}
 		{
-			var x_v2303 Bytes
-			x_m2304 := (*v_r).M_continued(tk, true)
-			_ = x_m2304
-		x_M2305:
+			var x_v2340 Bytes
+			x_m2341 := (*v_r).M_continued(tk, true)
+			_ = x_m2341
+		x_M2342:
 			switch {
 			default:
-				if x_m2304.Ok {
-					var v_x Bytes = x_m2304.V
+				if x_m2341.Ok {
+					var v_x Bytes = x_m2341.V
 					_ = v_x
-					x_v2303 = v_x
-					break x_M2305
+					x_v2340 = v_x
+					break x_M2342
 				}
-				if !x_m2304.Ok && x_m2304.E.Tag == 3 {
+				if !x_m2341.Ok && x_m2341.E.Tag == 3 {
 					{
 						if List_len[string](tk, v_keys) == int64(0) {
 							return Err[Textproto_Header](Textproto_TextErr{Tag: 3})
@@ -683,66 +683,66 @@ func (v_r *Textproto_Reader) M_read_header(tk *Task) Result[Textproto_Header, Te
 						return Ok[Textproto_Header, Textproto_TextErr](func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(Textproto_grouped(tk, List_Own(v_keys), List_Own(v_fk), List_Own(v_fv))))
 					}
 				}
-				if !x_m2304.Ok {
-					var v_e Textproto_TextErr = x_m2304.E
+				if !x_m2341.Ok {
+					var v_e Textproto_TextErr = x_m2341.E
 					_ = v_e
 					return Err[Textproto_Header](v_e)
 				}
 				panic(Unreachable("std/textproto.xo:360:14"))
 			}
-			var v_kv Bytes = x_v2303
+			var v_kv Bytes = x_v2340
 			_ = v_kv
 			if Bytes_is_empty(tk, v_kv) {
 				return Ok[Textproto_Header, Textproto_TextErr](func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(Textproto_grouped(tk, List_Own(v_keys), List_Own(v_fk), List_Own(v_fv))))
 			}
 			var v_bad Textproto_TextErr = Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("malformed MIME header line: " + Bytes_quote(tk, v_kv))}}
 			_ = v_bad
-			var x_v2306 int64
-			x_a2307 := Bytes(":")
-			x_m2308 := Bytes_find(tk, v_kv, x_a2307)
-			_ = x_m2308
-		x_M2309:
+			var x_v2343 int64
+			x_a2344 := Bytes(":")
+			x_m2345 := Bytes_find(tk, v_kv, x_a2344)
+			_ = x_m2345
+		x_M2346:
 			switch {
 			default:
-				if x_m2308.Some {
-					var v_i int64 = x_m2308.V
+				if x_m2345.Some {
+					var v_i int64 = x_m2345.V
 					_ = v_i
-					x_v2306 = v_i
-					break x_M2309
+					x_v2343 = v_i
+					break x_M2346
 				}
-				if !x_m2308.Some {
+				if !x_m2345.Some {
 					return Err[Textproto_Header](v_bad)
 				}
 				panic(Unreachable("std/textproto.xo:375:13"))
 			}
-			var v_c int64 = x_v2306
+			var v_c int64 = x_v2343
 			_ = v_c
-			var x_v2310 string
-			x_m2311 := Textproto_line_key(tk, BytesSlice(v_kv, int64(0), v_c, true, true, "std/textproto.xo:379:30"))
-			_ = x_m2311
-		x_M2312:
+			var x_v2347 string
+			x_m2348 := Textproto_line_key(tk, BytesSlice(v_kv, int64(0), v_c, true, true, "std/textproto.xo:379:30"))
+			_ = x_m2348
+		x_M2349:
 			switch {
 			default:
-				if x_m2311.Some {
-					var v_k string = x_m2311.V
+				if x_m2348.Some {
+					var v_k string = x_m2348.V
 					_ = v_k
-					x_v2310 = v_k
-					break x_M2312
+					x_v2347 = v_k
+					break x_M2349
 				}
-				if !x_m2311.Some {
+				if !x_m2348.Some {
 					return Err[Textproto_Header](v_bad)
 				}
 				panic(Unreachable("std/textproto.xo:379:15"))
 			}
-			var v_key string = x_v2310
+			var v_key string = x_v2347
 			_ = v_key
 			var v_v Bytes = BytesSlice(v_kv, AddIUp(v_c, int64(1), "std/textproto.xo:383:16"), 0, true, false, "std/textproto.xo:383:13")
 			_ = v_v
-			x_it2313 := v_v
-			for x_bi2315 := 0; x_bi2315 < len(x_it2313); x_bi2315++ {
-				x_el2316 := x_it2313[x_bi2315]
-				_ = x_el2316
-				var v_x_1 uint8 = x_el2316
+			x_it2350 := v_v
+			for x_bi2352 := 0; x_bi2352 < len(x_it2350); x_bi2352++ {
+				x_el2353 := x_it2350[x_bi2352]
+				_ = x_el2353
+				var v_x_1 uint8 = x_el2353
 				_ = v_x_1
 				{
 					if !(Textproto_value_byte(tk, v_x_1)) {
@@ -760,50 +760,50 @@ func (v_r *Textproto_Reader) M_read_header(tk *Task) Result[Textproto_Header, Te
 					v_s = (v_s + int64(1))
 				}
 			}
-			var x_v2318 int64
-			x_a2319 := v_key
-			x_m2320 := Map_get[string, int64](tk, v_at, x_a2319)
-			_ = x_m2320
-		x_M2321:
+			var x_v2355 int64
+			x_a2356 := v_key
+			x_m2357 := Map_get[string, int64](tk, v_at, x_a2356)
+			_ = x_m2357
+		x_M2358:
 			switch {
 			default:
-				if x_m2320.Some {
-					var v_i_1 int64 = x_m2320.V
+				if x_m2357.Some {
+					var v_i_1 int64 = x_m2357.V
 					_ = v_i_1
-					x_v2318 = v_i_1
-					break x_M2321
+					x_v2355 = v_i_1
+					break x_M2358
 				}
-				if !x_m2320.Some {
+				if !x_m2357.Some {
 					{
-						x_ix2322 := v_key
-						Map_put(tk, &v_at, x_ix2322, List_len[string](tk, v_keys))
-						x_pv2323 := v_key
+						x_ix2359 := v_key
+						Map_put(tk, &v_at, x_ix2359, List_len[string](tk, v_keys))
+						x_pv2360 := v_key
 						if List_CanPush(v_keys) {
-							v_keys = List_PushFast(v_keys, x_pv2323)
+							v_keys = List_PushFast(v_keys, x_pv2360)
 						} else {
-							v_keys = List_PushSlow(v_keys, x_pv2323)
+							v_keys = List_PushSlow(v_keys, x_pv2360)
 						}
 						_ = Unit{}
-						x_v2318 = (List_len[string](tk, v_keys) - int64(1))
+						x_v2355 = (List_len[string](tk, v_keys) - int64(1))
 					}
-					break x_M2321
+					break x_M2358
 				}
 				panic(Unreachable("std/textproto.xo:395:14"))
 			}
-			var v_ki int64 = x_v2318
+			var v_ki int64 = x_v2355
 			_ = v_ki
-			x_pv2324 := v_ki
+			x_pv2361 := v_ki
 			if List_CanPush(v_fk) {
-				v_fk = List_PushFast(v_fk, x_pv2324)
+				v_fk = List_PushFast(v_fk, x_pv2361)
 			} else {
-				v_fk = List_PushSlow(v_fk, x_pv2324)
+				v_fk = List_PushSlow(v_fk, x_pv2361)
 			}
 			_ = Unit{}
-			x_pv2325 := Bytes_to_str_lossy(tk, BytesSlice(v_v, v_s, 0, true, false, "std/textproto.xo:404:13"))
+			x_pv2362 := Bytes_to_str_lossy(tk, BytesSlice(v_v, v_s, 0, true, false, "std/textproto.xo:404:13"))
 			if List_CanPush(v_fv) {
-				v_fv = List_PushFast(v_fv, x_pv2325)
+				v_fv = List_PushFast(v_fv, x_pv2362)
 			} else {
-				v_fv = List_PushSlow(v_fv, x_pv2325)
+				v_fv = List_PushSlow(v_fv, x_pv2362)
 			}
 			_ = Unit{}
 		}
@@ -814,56 +814,56 @@ func (v_r *Textproto_Reader) M_read_header(tk *Task) Result[Textproto_Header, Te
 func Textproto_grouped(tk *Task, v_keys List[string], v_fk List[int64], v_fv List[string]) Textproto_Header {
 	var v_start List[int64] = List[int64]{}
 	_ = v_start
-	x_it2326 := Range[int64]{Lo: int64(0), Hi: (List_len[string](tk, v_keys) + int64(1)), Incl: false}
-	for x_i2328 := x_it2326.Lo; x_i2328 < x_it2326.Hi; x_i2328++ {
-		x_el2329 := x_i2328
-		_ = x_el2329
+	x_it2363 := Range[int64]{Lo: int64(0), Hi: (List_len[string](tk, v_keys) + int64(1)), Incl: false}
+	for x_i2365 := x_it2363.Lo; x_i2365 < x_it2363.Hi; x_i2365++ {
+		x_el2366 := x_i2365
+		_ = x_el2366
 		{
-			x_pv2330 := int64(0)
+			x_pv2367 := int64(0)
 			if List_CanPush(v_start) {
-				v_start = List_PushFast(v_start, x_pv2330)
+				v_start = List_PushFast(v_start, x_pv2367)
 			} else {
-				v_start = List_PushSlow(v_start, x_pv2330)
+				v_start = List_PushSlow(v_start, x_pv2367)
 			}
 			_ = Unit{}
 		}
 	}
-	x_it2331 := v_fk
-	for _, x_e2333 := range List_Items(x_it2331) {
-		x_el2334 := x_e2333
-		_ = x_el2334
-		var v_k int64 = x_el2334
+	x_it2368 := v_fk
+	for _, x_e2370 := range List_Items(x_it2368) {
+		x_el2371 := x_e2370
+		_ = x_el2371
+		var v_k int64 = x_el2371
 		_ = v_k
 		{
-			x_ix2335 := AddIUp(v_k, int64(1), "std/textproto.xo:417:11")
+			x_ix2372 := AddIUp(v_k, int64(1), "std/textproto.xo:417:11")
 			if !List_Mine(v_start) {
 				v_start = List_Unshared(v_start)
 			}
-			List_PutM(v_start, x_ix2335, AddIUp(List_At(v_start, AddIUp(v_k, int64(1), "std/textproto.xo:417:26"), "std/textproto.xo:417:20"), int64(1), "std/textproto.xo:417:20"), "std/textproto.xo:417:5")
+			List_PutM(v_start, x_ix2372, AddIUp(List_At(v_start, AddIUp(v_k, int64(1), "std/textproto.xo:417:26"), "std/textproto.xo:417:20"), int64(1), "std/textproto.xo:417:20"), "std/textproto.xo:417:5")
 		}
 	}
-	x_it2336 := Range[int64]{Lo: int64(0), Hi: List_len[string](tk, v_keys), Incl: false}
-	for x_i2338 := x_it2336.Lo; x_i2338 < x_it2336.Hi; x_i2338++ {
-		x_el2339 := x_i2338
-		_ = x_el2339
-		var v_i int64 = x_el2339
+	x_it2373 := Range[int64]{Lo: int64(0), Hi: List_len[string](tk, v_keys), Incl: false}
+	for x_i2375 := x_it2373.Lo; x_i2375 < x_it2373.Hi; x_i2375++ {
+		x_el2376 := x_i2375
+		_ = x_el2376
+		var v_i int64 = x_el2376
 		_ = v_i
 		{
-			x_ix2340 := (v_i + int64(1))
+			x_ix2377 := (v_i + int64(1))
 			if !List_Mine(v_start) {
 				v_start = List_Unshared(v_start)
 			}
-			List_PutM(v_start, x_ix2340, AddS(List_At(v_start, (v_i+int64(1)), "std/textproto.xo:420:20"), List_At(v_start, v_i, "std/textproto.xo:420:35"), "std/textproto.xo:420:20"), "std/textproto.xo:420:5")
+			List_PutM(v_start, x_ix2377, AddS(List_At(v_start, (v_i+int64(1)), "std/textproto.xo:420:20"), List_At(v_start, v_i, "std/textproto.xo:420:35"), "std/textproto.xo:420:20"), "std/textproto.xo:420:5")
 		}
 	}
 	var v_next List[int64] = List_Own(v_start)
 	_ = v_next
 	var v_flat List[string] = List[string]{}
 	_ = v_flat
-	x_it2341 := Range[int64]{Lo: int64(0), Hi: List_len[string](tk, v_fv), Incl: false}
-	for x_i2343 := x_it2341.Lo; x_i2343 < x_it2341.Hi; x_i2343++ {
-		x_el2344 := x_i2343
-		_ = x_el2344
+	x_it2378 := Range[int64]{Lo: int64(0), Hi: List_len[string](tk, v_fv), Incl: false}
+	for x_i2380 := x_it2378.Lo; x_i2380 < x_it2378.Hi; x_i2380++ {
+		x_el2381 := x_i2380
+		_ = x_el2381
 		{
 			if List_CanPush(v_flat) {
 				v_flat = List_PushFast(v_flat, "")
@@ -873,41 +873,41 @@ func Textproto_grouped(tk *Task, v_keys List[string], v_fk List[int64], v_fv Lis
 			_ = Unit{}
 		}
 	}
-	x_it2345 := Range[int64]{Lo: int64(0), Hi: List_len[int64](tk, v_fk), Incl: false}
-	for x_i2347 := x_it2345.Lo; x_i2347 < x_it2345.Hi; x_i2347++ {
-		x_el2348 := x_i2347
-		_ = x_el2348
-		var v_j int64 = x_el2348
+	x_it2382 := Range[int64]{Lo: int64(0), Hi: List_len[int64](tk, v_fk), Incl: false}
+	for x_i2384 := x_it2382.Lo; x_i2384 < x_it2382.Hi; x_i2384++ {
+		x_el2385 := x_i2384
+		_ = x_el2385
+		var v_j int64 = x_el2385
 		_ = v_j
 		{
 			var v_k_1 int64 = List_AtU(v_fk, v_j)
 			_ = v_k_1
-			x_ix2349 := List_At(v_next, v_k_1, "std/textproto.xo:429:10")
+			x_ix2386 := List_At(v_next, v_k_1, "std/textproto.xo:429:10")
 			if !List_Mine(v_flat) {
 				v_flat = List_Unshared(v_flat)
 			}
-			List_PutM(v_flat, x_ix2349, List_At(v_fv, v_j, "std/textproto.xo:429:21"), "std/textproto.xo:429:5")
-			x_ix2350 := v_k_1
+			List_PutM(v_flat, x_ix2386, List_At(v_fv, v_j, "std/textproto.xo:429:21"), "std/textproto.xo:429:5")
+			x_ix2387 := v_k_1
 			if !List_Mine(v_next) {
 				v_next = List_Unshared(v_next)
 			}
-			List_PutM(v_next, x_ix2350, AddIUp(List_At(v_next, v_k_1, "std/textproto.xo:430:15"), int64(1), "std/textproto.xo:430:15"), "std/textproto.xo:430:5")
+			List_PutM(v_next, x_ix2387, AddIUp(List_At(v_next, v_k_1, "std/textproto.xo:430:15"), int64(1), "std/textproto.xo:430:15"), "std/textproto.xo:430:5")
 		}
 	}
 	var v_vals List[List[string]] = List[List[string]]{}
 	_ = v_vals
-	x_it2351 := Range[int64]{Lo: int64(0), Hi: List_len[string](tk, v_keys), Incl: false}
-	for x_i2353 := x_it2351.Lo; x_i2353 < x_it2351.Hi; x_i2353++ {
-		x_el2354 := x_i2353
-		_ = x_el2354
-		var v_i_1 int64 = x_el2354
+	x_it2388 := Range[int64]{Lo: int64(0), Hi: List_len[string](tk, v_keys), Incl: false}
+	for x_i2390 := x_it2388.Lo; x_i2390 < x_it2388.Hi; x_i2390++ {
+		x_el2391 := x_i2390
+		_ = x_el2391
+		var v_i_1 int64 = x_el2391
 		_ = v_i_1
 		{
-			x_pv2355 := List_Own(List_SliceRange(v_flat, List_At(v_start, v_i_1, "std/textproto.xo:434:20"), List_At(v_start, (v_i_1+int64(1)), "std/textproto.xo:434:30"), true, true, "std/textproto.xo:434:15"))
+			x_pv2392 := List_Own(List_SliceRange(v_flat, List_At(v_start, v_i_1, "std/textproto.xo:434:20"), List_At(v_start, (v_i_1+int64(1)), "std/textproto.xo:434:30"), true, true, "std/textproto.xo:434:15"))
 			if List_CanPush(v_vals) {
-				v_vals = List_PushFast(v_vals, x_pv2355)
+				v_vals = List_PushFast(v_vals, x_pv2392)
 			} else {
-				v_vals = List_PushSlow(v_vals, x_pv2355)
+				v_vals = List_PushSlow(v_vals, x_pv2392)
 			}
 			_ = Unit{}
 		}
@@ -977,14 +977,14 @@ func Textproto_code_line(tk *Task, v_line string, v_expect int64) Textproto_Code
 	_ = v_more
 	var v_parsed Option[int64] = Int_parse(tk, StrSlice(v_line, int64(0), int64(3), true, true, "std/textproto.xo:458:26"))
 	_ = v_parsed
-	x_t2356 := v_parsed
-	var x_c2357 int64
-	if x_t2356.Some {
-		x_c2357 = x_t2356.V
+	x_t2393 := v_parsed
+	var x_c2394 int64
+	if x_t2393.Some {
+		x_c2394 = x_t2393.V
 	} else {
-		x_c2357 = int64(0)
+		x_c2394 = int64(0)
 	}
-	var v_code int64 = x_c2357
+	var v_code int64 = x_c2394
 	_ = v_code
 	if Option_is_none[int64](tk, v_parsed) || (v_code < int64(100)) {
 		return Textproto_CodeLine{F_code: v_code, F_more: v_more, F_msg: "", F_err: Some[Textproto_TextErr](Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("invalid response code: " + Str_quote(tk, v_line))}})}
@@ -998,15 +998,15 @@ func Textproto_code_line(tk *Task, v_line string, v_expect int64) Textproto_Code
 }
 
 func (v_r *Textproto_Reader) M_read_code_line(tk *Task, v_expect int64) Result[Tuple2[int64, string], Textproto_TextErr] {
-	x_r2358 := (*v_r).M_read_line(tk)
-	if !x_r2358.Ok {
-		return ErrTr[Tuple2[int64, string]](x_r2358.E, Frame2(x_r2358.Tr, "textproto.Reader.read_code_line", "std/textproto.xo:473", "r expect", (*v_r), v_expect))
+	x_r2395 := (*v_r).M_read_line(tk)
+	if !x_r2395.Ok {
+		return ErrTr[Tuple2[int64, string]](x_r2395.E, Frame2(x_r2395.Tr, "textproto.Reader.read_code_line", "std/textproto.xo:473", "r expect", (*v_r), v_expect))
 	}
-	var v_cl Textproto_CodeLine = Textproto_code_line(tk, x_r2358.V, v_expect)
+	var v_cl Textproto_CodeLine = Textproto_code_line(tk, x_r2395.V, v_expect)
 	_ = v_cl
-	x_l2359 := v_cl.F_err
-	if x_l2359.Some {
-		var v_e Textproto_TextErr = x_l2359.V
+	x_l2396 := v_cl.F_err
+	if x_l2396.Some {
+		var v_e Textproto_TextErr = x_l2396.V
 		_ = v_e
 		return Err[Tuple2[int64, string]](v_e)
 	}
@@ -1017,11 +1017,11 @@ func (v_r *Textproto_Reader) M_read_code_line(tk *Task, v_expect int64) Result[T
 }
 
 func (v_r *Textproto_Reader) M_read_response(tk *Task, v_expect int64) Result[Tuple2[int64, string], Textproto_TextErr] {
-	x_r2360 := (*v_r).M_read_line(tk)
-	if !x_r2360.Ok {
-		return ErrTr[Tuple2[int64, string]](x_r2360.E, Frame2(x_r2360.Tr, "textproto.Reader.read_response", "std/textproto.xo:489", "r expect", (*v_r), v_expect))
+	x_r2397 := (*v_r).M_read_line(tk)
+	if !x_r2397.Ok {
+		return ErrTr[Tuple2[int64, string]](x_r2397.E, Frame2(x_r2397.Tr, "textproto.Reader.read_response", "std/textproto.xo:489", "r expect", (*v_r), v_expect))
 	}
-	var v_first Textproto_CodeLine = Textproto_code_line(tk, x_r2360.V, v_expect)
+	var v_first Textproto_CodeLine = Textproto_code_line(tk, x_r2397.V, v_expect)
 	_ = v_first
 	var v_more bool = v_first.F_more
 	_ = v_more
@@ -1033,11 +1033,11 @@ func (v_r *Textproto_Reader) M_read_response(tk *Task, v_expect int64) Result[Tu
 			break
 		}
 		{
-			x_r2362 := (*v_r).M_read_line(tk)
-			if !x_r2362.Ok {
-				return ErrTr[Tuple2[int64, string]](x_r2362.E, Frame2(x_r2362.Tr, "textproto.Reader.read_response", "std/textproto.xo:494", "r expect", (*v_r), v_expect))
+			x_r2399 := (*v_r).M_read_line(tk)
+			if !x_r2399.Ok {
+				return ErrTr[Tuple2[int64, string]](x_r2399.E, Frame2(x_r2399.Tr, "textproto.Reader.read_response", "std/textproto.xo:494", "r expect", (*v_r), v_expect))
 			}
-			var v_line string = x_r2362.V
+			var v_line string = x_r2399.V
 			_ = v_line
 			v_msg.M_write(tk, "\n")
 			var v_cl Textproto_CodeLine = Textproto_code_line(tk, v_line, int64(0))
@@ -1053,9 +1053,9 @@ func (v_r *Textproto_Reader) M_read_response(tk *Task, v_expect int64) Result[Tu
 	}
 	var v_text string = v_msg.M_freeze(tk)
 	_ = v_text
-	x_l2363 := v_first.F_err
-	if x_l2363.Some {
-		var v_e Textproto_TextErr = x_l2363.V
+	x_l2400 := v_first.F_err
+	if x_l2400.Some {
+		var v_e Textproto_TextErr = x_l2400.V
 		_ = v_e
 		if v_first.F_more && !(Str_is_empty(tk, v_text)) {
 			return Err[Tuple2[int64, string]](Textproto_TextErr{Tag: 2, P: Textproto_TextErr_Code{F_code: v_first.F_code, F_msg: v_text}})
@@ -1080,7 +1080,7 @@ func (v_r *Textproto_Reader) M_read_dot_bytes(tk *Task) Result[Bytes, Textproto_
 	_ = v_st
 	var v_out BytesBuilder = BytesBuilder_new(tk)
 	_ = v_out
-x_L2364:
+x_L2401:
 	for {
 		if !(true) {
 			break
@@ -1095,18 +1095,18 @@ x_L2364:
 			if v_st == v_begin {
 				if v_c == uint8(46) {
 					v_st = v_dot
-					continue x_L2364
+					continue x_L2401
 				}
 				if v_c == uint8(13) {
 					v_st = v_cr
-					continue x_L2364
+					continue x_L2401
 				}
 				v_st = v_data
 			} else {
 				if v_st == v_dot {
 					if v_c == uint8(13) {
 						v_st = v_dot_cr
-						continue x_L2364
+						continue x_L2401
 					}
 					if v_c == uint8(10) {
 						return Ok[Bytes, Textproto_TextErr](v_out.M_freeze(tk))
@@ -1132,7 +1132,7 @@ x_L2364:
 						} else {
 							if v_c == uint8(13) {
 								v_st = v_cr
-								continue x_L2364
+								continue x_L2401
 							}
 							if v_c == uint8(10) {
 								v_st = v_begin
@@ -1155,47 +1155,47 @@ func (v_r *Textproto_Reader) M_read_dot_lines(tk *Task) Result[List[string], Tex
 			break
 		}
 		{
-			var x_v2366 string
-			x_m2367 := (*v_r).M_read_line(tk)
-			_ = x_m2367
-		x_M2368:
+			var x_v2403 string
+			x_m2404 := (*v_r).M_read_line(tk)
+			_ = x_m2404
+		x_M2405:
 			switch {
 			default:
-				if x_m2367.Ok {
-					var v_l string = x_m2367.V
+				if x_m2404.Ok {
+					var v_l string = x_m2404.V
 					_ = v_l
-					x_v2366 = v_l
-					break x_M2368
+					x_v2403 = v_l
+					break x_M2405
 				}
-				if !x_m2367.Ok && x_m2367.E.Tag == 3 {
+				if !x_m2404.Ok && x_m2404.E.Tag == 3 {
 					return Err[List[string]](Textproto_TextErr{Tag: 4})
 				}
-				if !x_m2367.Ok {
-					var v_e Textproto_TextErr = x_m2367.E
+				if !x_m2404.Ok {
+					var v_e Textproto_TextErr = x_m2404.E
 					_ = v_e
 					return Err[List[string]](v_e)
 				}
 				panic(Unreachable("std/textproto.xo:587:16"))
 			}
-			var v_line string = x_v2366
+			var v_line string = x_v2403
 			_ = v_line
 			if Str_starts_with(tk, v_line, ".") {
 				if Str_len(tk, v_line) == int64(1) {
 					return Ok[List[string], Textproto_TextErr](List_Own(v_out))
 				}
-				x_pv2369 := StrSlice(v_line, int64(1), 0, true, false, "std/textproto.xo:596:16")
+				x_pv2406 := StrSlice(v_line, int64(1), 0, true, false, "std/textproto.xo:596:16")
 				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv2369)
+					v_out = List_PushFast(v_out, x_pv2406)
 				} else {
-					v_out = List_PushSlow(v_out, x_pv2369)
+					v_out = List_PushSlow(v_out, x_pv2406)
 				}
 				_ = Unit{}
 			} else {
-				x_pv2370 := v_line
+				x_pv2407 := v_line
 				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv2370)
+					v_out = List_PushFast(v_out, x_pv2407)
 				} else {
-					v_out = List_PushSlow(v_out, x_pv2370)
+					v_out = List_PushSlow(v_out, x_pv2407)
 				}
 				_ = Unit{}
 			}
@@ -1217,11 +1217,11 @@ func Textproto_dot_encode(tk *Task, v_b Bytes) Bytes {
 	_ = v_st
 	var v_out BytesBuilder = BytesBuilder_with_capacity(tk, ((Bytes_len(tk, v_b) + (Bytes_len(tk, v_b) / int64(16))) + int64(5)))
 	_ = v_out
-	x_it2371 := v_b
-	for x_bi2373 := 0; x_bi2373 < len(x_it2371); x_bi2373++ {
-		x_el2374 := x_it2371[x_bi2373]
-		_ = x_el2374
-		var v_c uint8 = x_el2374
+	x_it2408 := v_b
+	for x_bi2410 := 0; x_bi2410 < len(x_it2408); x_bi2410++ {
+		x_el2411 := x_it2408[x_bi2410]
+		_ = x_el2411
+		var v_c uint8 = x_el2411
 		_ = v_c
 		{
 			if (v_st == v_begin) || (v_st == v_begin_line) {

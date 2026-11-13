@@ -630,7 +630,12 @@ fn (var r: R) read_continued(lim0: Int) -> Bytes ! Str {
 }
 
 fn (var r: R) read_header(max_memory0: Int, max_headers0: Int) -> Header ! Str {
-  var h = Header{keys: [], values: []}
+  // the fields in order, grouped by key once at the end: linear in the
+  // number of fields (Header.add per field searched the keys)
+  var keys: List[Str] = []
+  var at: Map[Str, Int] = {}
+  var fk: List[Int] = []
+  var fv: List[Str] = []
   // never below 0 (GO-2026-6608): a negative limit read as none, so a
   // form's last part could read a header line of any length
   var max_memory = if max_memory0 - 400 < 0 { 0 } else { max_memory0 - 400 }
@@ -645,7 +650,7 @@ fn (var r: R) read_header(max_memory0: Int, max_headers0: Int) -> Header ! Str {
   while {
     let kv = r.read_continued(max_memory)?
     if kv.is_empty() {
-      return h
+      return grouped(keys, fk, fv)
     }
     let c = index_of(kv, 0, b":")
     if c < 0 {
@@ -671,16 +676,53 @@ fn (var r: R) read_header(max_memory0: Int, max_headers0: Int) -> Header ! Str {
       return Err("message too large")
     }
     let value = skip_lwsp(v)
-    if !h.keys.contains(key) {
-      max_memory -= key.len() + 200
+    let ki = match at.get(key) {
+      Some(i) => i
+      None => {
+        max_memory -= key.len() + 200
+        at[key] = keys.len()
+        keys.push(key)
+        keys.len() - 1
+      }
     }
     max_memory -= value.len()
     if max_memory < 0 {
       return Err("message too large")
     }
-    h.add(key, text_of(value))
+    fk.push(ki)
+    fv.push(text_of(value))
   }
-  h
+  grouped(keys, fk, fv)
+}
+
+/// The Header of keys whose field j has key fk[j] and value fv[j], each
+/// key's values in the order they came (a counting sort by key).
+fn grouped(keys: List[Str], fk: List[Int], fv: List[Str]) -> Header {
+  var start: List[Int] = []
+  for _ in 0..keys.len() + 1 {
+    start.push(0)
+  }
+  for k in fk {
+    start[k + 1] = start[k + 1] + 1
+  }
+  for i in 0..keys.len() {
+    start[i + 1] = start[i + 1] + start[i]
+  }
+  var next = start
+  var flat: List[Str] = []
+  for _ in 0..fv.len() {
+    flat.push("")
+  }
+  for j in 0..fk.len() {
+    let k = fk[j]
+    flat[next[k]] = fv[j]
+    next[k] = next[k] + 1
+  }
+  var values: List[List[Str]] = []
+  for i in 0..keys.len() {
+    values.push(flat[start[i]..start[i + 1]])
+  }
+  Header{keys: keys, values: values}
 }
 
 fn qp_hex(c: UInt8) -> Int {

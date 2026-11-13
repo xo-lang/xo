@@ -1,5 +1,17 @@
 # std/multipart changes
 
+## 2026-11-13: security: a part's header is read in time linear in its fields
+
+- Kind: security
+- Commit: this push
+- Found by: Lang 2's review of the std/http security fixes (decision 0616); no Go advisory (Go's textproto keeps a map)
+- Test: std/multipart_test.xo "a part's header of many fields keeps every value in order (read linearly)"; measured on arm64: a 989 KB form of 10 parts of 9999 fields, 1364 ms before, 13 ms after
+- Affected: every release up to 0.50.1 (all backends: parse, parse_form, Reader)
+- Shipped in: not yet released
+- Remote trigger: any client posting a multipart body to a route that parses it (a denial of service: CPU)
+
+Each field of a part's header searched the keys found so far, so a part of up to the 10000 field limit cost time quadratic in its fields, about 1.4 s of CPU per MB of form. The fields are now recorded in order and grouped by key once; keys and values come out in the same order as before.
+
 ## 2026-11-13: security: a streamed reader's header line stops at the header limit while it is read
 
 - Kind: security
