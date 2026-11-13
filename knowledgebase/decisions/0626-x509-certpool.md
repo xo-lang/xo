@@ -1,6 +1,6 @@
 # 0626: a parsed certificate pool for std/x509
 
-Status: Proposed (Xo Lang 3, 2026-11-13; adds public API, so the owner decides)
+Status: Accepted (owner, 2026-11-13; Xo Lang 3). The code lands right after the 0.51 cut, so it ships in 0.52 and 0.51 stays security only.
 
 ## Context
 
