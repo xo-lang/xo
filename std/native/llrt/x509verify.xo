@@ -773,7 +773,11 @@ fn ip_set(l: List[Bytes]) -> IpSet? {
   }
   var a: List[Bytes] = []
   var b: List[Bytes] = []
-  for n in l {
+  for n0 in l {
+    // a subtree may carry host bits: sort and search on the masked
+    // network, as Go's newIPNetConstraints (an unmasked 10.0.0.255/24
+    // sorted after 10.0.0.1/32, and 10.0.0.5 was not excluded)
+    let n = net_masked(n0)
     if n.len() == 8 { a.push(n) } else { b.push(n) }
   }
   Some(IpSet{v4: ip_sorted(a), v6: ip_sorted(b)})
@@ -1314,4 +1318,15 @@ fn empty_host_uri_text(u: Str) -> Str {
     return u[0..i + 1] + u[after..]
   }
   u
+}
+
+/// An IP constraint (address, then mask) with the address masked.
+fn net_masked(n: Bytes) -> Bytes {
+  let h = n.len() / 2
+  var out = BytesBuilder.with_capacity(n.len())
+  for i in 0..h {
+    out.write_byte(n[i] & n[h + i])
+  }
+  out.write(n[h..n.len()])
+  out.freeze()
 }
