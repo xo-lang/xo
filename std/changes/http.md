@@ -1,5 +1,13 @@
 # std/http changes
 
+## 2026-11-13: behavior: a server answer that closes after a request body too large: Connection: close after the handler's fields, and none on HTTP/1.0, as Go 1.26.11
+
+- Kind: behavior
+- Commit: this push
+- Found by: TestHTTPParseDiff and TestHTTP1ParseDiff against the go1.26.11 oracle (every host on 1.26.11 since 2026-11-13)
+- Go reference: net/http chunkWriter.writeHeader and requestTooLarge (go1.26.11: requestTooLarge no longer sets the handler's Connection header; a closing HTTP/1.0 answer sets setHeader.connection = "")
+- Test: TestHTTPParseDiff (POST HTTP/1.0 keep-alive with Content-Length 1000000), TestHTTP1ParseDiff (OPTIONS * with Content-Length 5000); arm64, llvm
+
 ## 2026-11-13: behavior: a response with a malformed header field: the error quotes the line, as Go 1.26.2 and later
 
 - Kind: behavior

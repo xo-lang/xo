@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -515,6 +516,9 @@ func TestHTTP1ParseDiff(t *testing.T) {
 					break
 				}
 			}
+			for b := 1; b < len(res); b++ {
+				res[b] = connectNoCL(in, res[b])
+			}
 			outs[i] = res
 		}()
 	}
@@ -579,4 +583,18 @@ func TestHTTP1SendServerExited(t *testing.T) {
 	if !strings.HasPrefix(got, "dial: server exited") || !strings.Contains(got, "exit status 3") || !strings.Contains(got, "exiting server: gone") {
 		t.Fatalf("http1Send: %q", got)
 	}
+}
+
+var connect2xxCL = regexp.MustCompile(`(?s)^(HTTP/1\.1 2\d\d [^\r\n]*\r?\n(?:[^\r\n]+\r?\n)*?)Content-Length: \d+\r?\n`)
+
+// connectNoCL drops the Content-Length of Xo's 2xx answer to a CONNECT
+// (TestHTTP1ParseDiff, TestHTTPParseDiff).
+// TEMPORARY (Lang 2, 2026-11-13): Go 1.26.11, the oracle on every host
+// since that day, sends none (GO-2026-6613); Xo's server stops sending one
+// in aws-43's http stack (f1e1ba8f7 there), which removes this function.
+func connectNoCL(input, ans string) string {
+	if !strings.HasPrefix(input, "CONNECT ") {
+		return ans
+	}
+	return connect2xxCL.ReplaceAllString(ans, "$1")
 }

@@ -2132,8 +2132,11 @@ fn (var r: Reader) read_one() -> Int {
     // 4 KiB of its body
     hdr_set(x, "Content-Length", "0")
     if xl(x, X_BODY_N) > 4096 {
-      // MaxBytesReader: requestTooLarge sets the handler's header
-      hdr_set(x, "Connection", "close")
+      // MaxBytesReader: requestTooLarge closes the connection; Go 1.26.11
+      // (1.26.1 still did) no longer sets the handler's Connection header, so
+      // Connection: close comes after the handler's fields, from the
+      // writer (chunkWriter's setHeader.connection)
+      xs(x, X_FLAGS, xl(x, X_FLAGS) | http1w.F_TOO_BIG)
     }
     let k = write(h, x, 200, 0, 0, 0)
     hdr_clear(x)

@@ -846,14 +846,15 @@ pub fn response(d: Int, ha: Int, hn: Int, status0: Int, body: Int, bn: Int, flag
     close = true
     set_conn = ""
   }
-  var too_large = false
   if (flags & F_HAS_BODY) != 0 && !close {
     // what remains of the request body is discarded
     if (flags & F_BODY_BAD) != 0 {
       close = true
     } else if (flags & F_TOO_BIG) != 0 {
+      // requestTooLarge: the connection closes; Go 1.26.11 no longer sets
+      // the handler's Connection header, so the close below writes
+      // Connection: close on HTTP/1.1 only, after the handler's fields
       close = true
-      too_large = true
     }
   }
   if body_ok {
@@ -899,14 +900,14 @@ pub fn response(d: Int, ha: Int, hn: Int, status0: Int, body: Int, bn: Int, flag
   let cn = val_len(ha, conni)
   let upi = find(ha, hn, "Upgrade")
   let proto_switch = status == 101 && val_len(ha, upi) > 0 && conni >= 0 && has_token(cp, cn, "upgrade")
-  if too_large {
-    excl = excl | X_CONNECTION
-    set_conn = "close"
-  }
   if close && !server_token(cp, cn, "close") && !proto_switch {
     excl = excl | X_CONNECTION
     if is11 {
       set_conn = "close"
+    } else {
+      // net/http: setHeader.connection = "" (an HTTP/1.0 keep-alive
+      // answer that closes, e.g. a request body too large, gets none)
+      set_conn = ""
     }
   }
   at = status_line(d, at, is11, status)
