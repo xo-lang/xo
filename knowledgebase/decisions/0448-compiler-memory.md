@@ -1406,3 +1406,49 @@ aiplatform/apiv1's cold test build about 4.79 to 4.50 GB.
 Left in Value: op, tb, args, aux (2), pi, lp. Next: pi (pad and inline
 site, set on at most 18% of values) and lp's pos half (1.3%).
 
+
+## Addendum (2026-11-12, Xo Lang 1): argument lists in one pool per function
+
+Measured: a heap profile at the end of inlining (XO_PROF=heap,
+XO_PROF_HEAP_AT=inline.apply, 16 MiB rate) of aiplatform/apiv1's cold
+test build at main 8196c2260 on host 3: 4.13 GB in use, of it 1.55 GB
+(37%) the values' argument lists (`Value.args`, last rebuilt by
+ssa.renumber), 1.22 GB arm64.inline_one and 592 MB cse's block lists.
+Each argument list is its own heap block: a 24 byte header (count,
+length, capacity) and the elements, so the common lists of one and two
+Ints are 32 and 40 byte blocks for 8 and 16 bytes of arguments.
+
+Negative result first: rebuilding the block lists at exact capacity in
+cse, the dead value sweep and renumber (lang1-exactcap) left max RSS
+within noise (0.996, 0.979 to 1.013, host 3, 9 rounds); not landed.
+
+Decision (Proposed): a function's argument lists live in one List[Int]
+per function (Func.argpool), and Value.args is one word holding the
+range's start and length (start << 16 | length; a list of 65536 or more
+arguments faults at Func.add). Expected: about 0.9 GB less at the peak
+above, from the headers and the blocks' rounding.
+
+Lists are not views when sliced (only Str and Bytes are, decision 0330),
+so the accessors are by index, not by a List: Func.nargs(v), Func.arg(v,
+k), Func.set_arg(v, k, a), Func.set_args(v, list) (a new range at the
+pool's end when the length changes; the old range is garbage until
+renumber rebuilds the pool in value order), Func.args_iter(v) (a `next()`
+iterator over the range, decision 0138's `for`, no copy) and
+Func.args_list(v) (a copy, for the few readers that keep the list).
+Copies between functions (the inliner, specialize, clones) go through
+the source function's accessors, as payloads do (Func.aux).
+
+Stages:
+1. The accessors over today's layout, and every reader and writer of
+   Value.args (about 1,920 references, `xo refs Value.args`; 1,620 are
+   `x.args` of a copied Value, so the value's index is passed along)
+   moved to them, package by package (ssa, arm64, llvm, wasm, gen). No
+   change in output or memory; a mechanical swap, checked by the self
+   build's identity.
+2. The pool behind the accessors, one change in compiler/ssa ir.xo plus
+   renumber's compaction.
+
+Measured before stage 2 lands: max RSS on aiplatform/apiv1's cold test
+build and on xo's self build, and a self build --ab for compile time (an
+extra indirection on each argument read), both on the linux/arm64
+offload hosts.
