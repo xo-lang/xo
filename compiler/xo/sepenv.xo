@@ -61,8 +61,8 @@ fn sepcomp_store(os: Os, conc: Bool) -> Str {
 /// with XO_SEPCOMP and std's variants (both concurrency settings, the
 /// build picks one) when this build can take it, else os unchanged.
 /// XO_SEPCOMP set (1 or 0) is the user's choice and wins. Only a native
-/// darwin or linux, arm64 or amd64, or windows/amd64, build or run for
-/// the host, not
+/// darwin, linux or windows, arm64 or amd64, build or run for the host,
+/// not
 /// --release, --race, a cc link or a C library (--lib),
 /// with the passes as they are; std's variants from the std cache
 /// (std_variant_peek: a release's prebuilt ones, else the cache's; a
@@ -82,9 +82,10 @@ fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
   }
   let host = host_os(os)
   let arch = host_arch()
-  // darwin and linux, arm64 and amd64, and windows/amd64 (std's Mach-O,
-  // ELF and COFF stores, decision 0388)
-  let served = ((host is "darwin" | "linux") && (arch is "arm64" | "amd64")) || (host == "windows" && arch == "amd64")
+  // darwin, linux and windows, arm64 and amd64 (std's Mach-O, ELF and
+  // COFF stores, decision 0388; windows/arm64's ARM64 COFF store since
+  // 2026-11-12, milestone 9)
+  let served = (host is "darwin" | "linux" | "windows") && (arch is "arm64" | "amd64")
   // `xo test` links std's test variant (decision 0436: std built in test
   // mode, its Fs and Os calls routed to the test world, with the test
   // world's roots); --std-module too, with its module and their

@@ -902,3 +902,27 @@ std's store has about 300, and the driver fails a std object of 2048 or more), l
 constants of collection types. Native backends only (LLVM, wasm and Go builds compile std with the program).
 internal/arm64 TestSepcompConstIds; gotchas/sepcomp-const-ids-shared-with-std.md.
 
+
+## windows/arm64 by default (2026-11-12, Xo Lang 2; milestone 9)
+
+sepenv.xo sepcomp_default serves a windows/arm64 host too (darwin, linux and windows, arm64 and
+amd64). The pieces were already in: `xo dev stdobj` names the arm64 backend for windows/arm64
+(2998c07a9), Xo's ARM64 COFF assembler relocates a branch to another atom of std's store parts
+(58601f87b), and pe_link takes a concurrent program's conc=true store (cb07179c9). Checked on the
+winarm VM (Windows 11 ARM) with an xo.exe cross built from the change: scripts/ci/windows-sepcomp.sh
+with --backend=arm64 passes every check but cdb's (no Windows SDK debugger on the VM): the default
+build is the explicit separate build's bytes and not the whole program's, an edit loads std's
+record, and the stripped and unstripped separate builds of async_preempt_alloc/regs, fault_unwind,
+fault_defer_chain, fault_tasks, json_text and conc_scopes match want.txt; the 52 http_* goldens pass
+built by default; TestStdFailedMarkerPerTree passes there (its marker comparison now takes xo's `/`
+paths). Timings, the same xo.exe, XO_SEPCOMP_DEFAULT=0 against the default, std's variants already
+in the cache, ms per round (two clean rounds; round 3's default builds failed on an output file my
+harness's still-running program held, its whole program rounds match the first two):
+
+| program | whole cold | default cold | whole warm | default warm |
+|---|---|---|---|---|
+| hello | 1571, 1782 | 778, 843 | 664, 727 | 612, 682 |
+| examples/notes-service (HTTP) | 3069, 3213 | 1138, 1233 | 1050, 1040 | 937, 1002 |
+
+A machine's first build (no variants yet) is the whole program's either way (http 3043 against
+3005 ms) and starts the variants' build in the background.

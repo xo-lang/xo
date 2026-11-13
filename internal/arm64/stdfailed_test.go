@@ -108,7 +108,8 @@ func TestStdFailedMarkerPerTree(t *testing.T) {
 	}
 	// the copy that failed: the warning, naming the marker
 	marker = fail()
-	if out := build(a); !strings.Contains(out, off) || !strings.Contains(out, marker) {
+	// (the warning writes the path with /, std.md 3.1; Glob's has \ on Windows)
+	if out := build(a); !strings.Contains(out, off) || !strings.Contains(out, filepath.ToSlash(marker)) {
 		t.Fatalf("the failed std's build did not warn with its marker %s:\n%s", marker, out)
 	}
 	// past its hour the marker is tried again (the build goes on whole
@@ -158,15 +159,13 @@ func copyTreeTimes(t *testing.T, src, dst string) {
 
 // sepcompDefaultHost reports whether a build for this host takes std's
 // separately compiled variants by default: the hosts compiler/xo
-// sepenv.xo sepcomp_default serves (darwin and linux on arm64 and amd64,
-// and windows/amd64). windows/arm64 builds the whole program, so its
-// builds never read a store's failure marker (2026-11-12, the winarm VM).
+// sepenv.xo sepcomp_default serves: darwin, linux and windows on arm64
+// and amd64 (windows/arm64 since 2026-11-12). Elsewhere a build compiles
+// the whole program and never reads a store's failure marker.
 func sepcompDefaultHost() bool {
 	switch runtime.GOOS {
-	case "darwin", "linux":
+	case "darwin", "linux", "windows":
 		return runtime.GOARCH == "arm64" || runtime.GOARCH == "amd64"
-	case "windows":
-		return runtime.GOARCH == "amd64"
 	}
 	return false
 }

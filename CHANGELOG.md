@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- xo build (windows/arm64, decision 0388): separate compilation is on by default on a windows/arm64 host, as on darwin, linux and windows/amd64: a build links the program against std's prebuilt ARM64 COFF store, so a cold build of a program whose std variants are cached takes about half the time (hello 1.6 to 0.8 s, an HTTP service 3.1 to 1.2 s on a Windows 11 ARM VM). `XO_SEPCOMP_DEFAULT=0` turns it off.
 - **Breaking** (decision 0622): a field whose wire string is exactly `-` (`as "-"`, `json "-"`, `sql "-"`) is now left out of `derive Json`, Toml and `SqlRow`, as Go's `json:"-"` is and as Cbor, Yaml and Xml already did; it was the JSON key or column `-`. Migration: write `as "-,"` for the key `-`. `proto "-"` leaves a field out of `derive Proto`. A decoder fills a skipped field with its default, else its type's zero; one with neither (a struct or enum type) is the new error XO0440. Fix: derive Yaml now reads a `-,` field (the key `-`) it already wrote.
 - Fix (native and LLVM backends): a std struct whose field defaults to `Time.UNIX_EPOCH` (std/log's `Record.time`) can be built without that field; it failed with XO1201 ("the name `Time` here") while the Go backend printed the epoch.
 - `xo test --run='a|b'` selects the tests whose name contains either text, as Go's `-run` alternation reads (a `|` was taken literally and matched nothing), on every backend.
