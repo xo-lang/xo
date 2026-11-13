@@ -22,9 +22,9 @@
 #      "unsupported", not as failures; `xo build` with the default (Go)
 #      backend must say Go is missing.
 #      Also without Go, the checks of bugs 0.25.2 shipped (lead,
-#      2026-10-22): `xo build --targets=all` of hello gives the six
-#      binaries a native backend builds, NAME-OS-ARCH (windows/arm64 needs
-#      the Go backend); `xo build --race` and a run with no clang on PATH
+#      2026-10-22): `xo build --targets=all` of hello gives the seven
+#      binaries, NAME-OS-ARCH (windows/arm64 with the arm64 backend since
+#      decision 0569's default, 2026-11-09); `xo build --race` and a run with no clang on PATH
 #      report the planted race with a main.xo line (where lib/xo/race
 #      ships for the host); the time_civil golden (daylight saving gaps
 #      and overlaps, Earlier never after Later) matches; on darwin, atos
@@ -227,10 +227,10 @@ done
     if [ "$hit" != 0 ] && "$sc/b2" | grep -q "edit $hit"; then pass "sepcomp-first-use (the variant ready after about $((hit * 2)) s, then an edit linked through it)"
     else fail sepcomp-first-use; tail -3 "$sc/2.txt" | sed 's/^/  /'; fi
   fi
-  # --targets=all: the six binaries a native backend builds
+  # --targets=all: the seven binaries (windows/arm64 since decision 0569)
   check native-targets-all "$xo" build --targets=all -o "$out/all/" "$out/hello"
   missing=""
-  for f in hello-linux-amd64 hello-linux-arm64 hello-darwin-amd64 hello-darwin-arm64 hello-windows-amd64.exe hello-wasip1-wasm.wasm; do
+  for f in hello-linux-amd64 hello-linux-arm64 hello-darwin-amd64 hello-darwin-arm64 hello-windows-amd64.exe hello-windows-arm64.exe hello-wasip1-wasm.wasm; do
     [ -s "$out/all/$f" ] || missing="$missing $f"
   done
   if [ -z "$missing" ]; then pass native-targets-all-binaries; else fail "native-targets-all-binaries (missing:$missing)"; fi
