@@ -655,8 +655,11 @@ func jfFieldsText(r *rand.Rand) string {
 // in Xo (decision 0364). A Time text Go accepts that is not RFC 3339's
 // grammar (Go's time.Parse takes a one digit hour, `T6:16:55Z`) is an error
 // in Xo, whose parse_rfc3339 refuses text that is not RFC 3339 (spec/std.md
-// 2, Time; the 0616 json review's defaults).
-var jfRFC3339 = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$`)
+// 2, Time; the 0616 json review's defaults). Nor is a zone offset past
+// 23:59: Go's strict parser refuses `-09:60`, then its lenient time.Parse
+// fallback (go.dev/issue/54580) takes zone minutes to 60 and hours to 24
+// (jsonfuzz seed 254, 2026-11-13).
+var jfRFC3339 = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$`)
 
 func jfFieldsGo(in []byte) string {
 	var rec struct {
