@@ -120,7 +120,7 @@ fn patch_apply_opt[T](p: json.Patch[T], current: T?) -> T? {
 
 /// None when a number is out of Float's range (strconv.ParseFloat's
 /// range error, which decode reports as "cannot unmarshal number N into
-/// Float"); bad_path names it.
+/// Float"); bad_at and path_text name it.
 fn value_at(src: Bytes, tape: List[Int], i: Int) -> json.Value? {
   let k = tape[i]
   if k == 0 {
@@ -160,7 +160,8 @@ fn value_at(src: Bytes, tape: List[Int], i: Int) -> json.Value? {
   // first bad number from the root.
   if ms.len() < 2 * tape[i + 1] {
     for r in jsontext.replaced(src, tape, i) {
-      if bad_path(src, tape, r) != None {
+      var none: List[Int] = []
+      if bad_at(src, tape, r, none) != None {
         return None
       }
     }
@@ -174,15 +175,19 @@ fn value_at(src: Bytes, tape: List[Int], i: Int) -> json.Value? {
   Some(json.Value.Object(fields: fields))
 }
 
-/// The decode path (".key", "[2]") of the first number at or under node i
-/// that is out of Float's range, with that number's node, or None. An
-/// object's members are walked as written, a duplicate key's earlier
-/// values too, as Go's decode reads them.
-fn bad_path(src: Bytes, tape: List[Int], i: Int) -> (Str, Int)? {
+/// The node of the first number at or under node i that is out of
+/// Float's range, or None; steps gets that number's path from i, deepest
+/// first: an array index n as -(n + 1), an object member as its key's node.
+/// An object's members are walked as written, a duplicate key's earlier
+/// values too, as Go's decode reads them. The path is joined once by
+/// path_text (building it level by level copied the path below at every
+/// level: O(depth x path) for deep long keys, the 0616 json review's second
+/// reader).
+fn bad_at(src: Bytes, tape: List[Int], i: Int, var steps: List[Int]) -> Int? {
   let k = tape[i]
   if k == 3 {
     if !jsontext.int_ok(src, tape, i) && jsontext.float_opt(src, tape, i) == None {
-      return Some(("", i))
+      return Some(i)
     }
     return None
   }
@@ -190,8 +195,9 @@ fn bad_path(src: Bytes, tape: List[Int], i: Int) -> (Str, Int)? {
     var j = i + 3
     var n = 0
     while j < tape[i + 2] {
-      if let Some((p, at)) = bad_path(src, tape, j) {
-        return Some(("[${n}]" + p, at))
+      if let Some(at) = bad_at(src, tape, j, steps) {
+        steps.push(-(n + 1))
+        return Some(at)
       }
       j = jsontext.next(tape, j)
       n += 1
@@ -203,14 +209,32 @@ fn bad_path(src: Bytes, tape: List[Int], i: Int) -> (Str, Int)? {
     var j = i + 3
     var m = 0
     while m < tape[i + 1] {
-      if let Some((p, at)) = bad_path(src, tape, j + 3) {
-        return Some(("." + jsontext.str_at(src, tape, j) + p, at))
+      if let Some(at) = bad_at(src, tape, j + 3, steps) {
+        steps.push(j)
+        return Some(at)
       }
       j = jsontext.next(tape, j + 3)
       m += 1
     }
   }
   None
+}
+
+/// The decode path (".key", "[2]") of steps from bad_at, root first.
+fn path_text(src: Bytes, tape: List[Int], steps: List[Int]) -> Str {
+  var b = StrBuilder.new()
+  var s = steps.len()
+  while s > 0 {
+    s -= 1
+    let x = steps[s]
+    if x < 0 {
+      b.write("[${-x - 1}]")
+    } else {
+      b.write(".")
+      b.write(jsontext.str_at(src, tape, x))
+    }
+  }
+  b.freeze()
 }
 
 fn parse_value(text: Str) -> json.Value ! json.DecodeErr { parse_bytes(text.bytes()) }
@@ -226,8 +250,9 @@ fn parse_bytes(src: Bytes) -> json.Value ! json.DecodeErr {
     Some(v) => Ok(v)
     None => {
       // Go's wording (encoding/json's UnmarshalTypeError), Xo's type
-      let (p, at) = bad_path(src, tape, 0) ?? ("", 0)
-      Err(json.DecodeErr{path: "$" + p, msg: jsontext.range_msg(src, tape, at, "Float")})
+      var steps: List[Int] = []
+      let at = bad_at(src, tape, 0, steps) ?? 0
+      Err(json.DecodeErr{path: "$" + path_text(src, tape, steps), msg: jsontext.range_msg(src, tape, at, "Float")})
     }
   }
 }

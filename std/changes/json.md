@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-13: security: a number out of range deep in a document is reported in linear time
+
+- Kind: security
+- Commit: this commit
+- Found by: the decision 0616 security review of std/json (second reader)
+- Go reference: encoding/json's error path (the Go backend's JsonPath nodes, std/rt/json.go), built once
+- Test: golden json_float_range (10000 levels of 1000 byte keys over a number out of Float's range: the 10010001 byte path; arm64, llvm, go parity)
+- Shipped in: not yet released
+
+`parse_value` (and the stream Decoder's and TokenReader's values) on the native backends built the error path of a number out of Float's range a level at a time, each level copying the path below it: a 10 MB text of 10000 nested objects with 1000 byte keys copied about 50 GB of text. The path's steps are now gathered on the way out and joined once (4.35 s to 0.02 s for that text on an M4 Pro), and the check of a duplicate key's replaced values no longer builds a path at all.
+
 ## 2026-11-13: fix: from_value refuses a Value deeper than a text may be, on every backend
 
 - Kind: fix

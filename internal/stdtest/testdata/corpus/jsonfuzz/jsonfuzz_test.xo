@@ -22474,7 +22474,7 @@ test "json fields 159" {
 }
 
 test "json fields 160" {
-  expect(jf_fields(b"{\x22dur\x22:\x229223372036854775807ns\x22,\x22data\x22:\x22IHH4Hl8eEw==\x22,\x22when\x22:\x221895-03-01T6:16:55.662Z\x22}")) == "when=-2361634984338000000|data=2071f81e5f1e13|dur=9223372036854775807"
+  expect(jf_fields(b"{\x22dur\x22:\x229223372036854775807ns\x22,\x22data\x22:\x22IHH4Hl8eEw==\x22,\x22when\x22:\x221895-03-01T6:16:55.662Z\x22}")) == "err"
 }
 
 test "json fields 161" {

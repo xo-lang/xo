@@ -48,4 +48,13 @@ fn main(os: Os) {
     Ok(f) => os.stdio.println("decode Float 1e999 => ok ${f}")
     Err(e) => os.stdio.println("decode Float 1e999 => at ${e.path}: ${e.msg}")
   }
+  // the error path is joined once: built a level at a time it copied the
+  // path below at every level, about 50 GB for this 10 MB text (0616 json
+  // review, second reader)
+  let key = "k".repeat(1000)
+  let deep = "{\"${key}\":".repeat(10000) + "1e999" + "}".repeat(10000)
+  match json.parse_value(deep) {
+    Ok(_) => os.stdio.println("10000 levels of 1000 byte keys => ok")
+    Err(e) => os.stdio.println("10000 levels of 1000 byte keys => at a ${e.path.len()} byte path, ${e.path.starts_with("$.kkk")}: ${e.msg}")
+  }
 }

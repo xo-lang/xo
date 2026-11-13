@@ -21,4 +21,5 @@ decode Int, 1000001 digits => at $: 16 byte message
 123456789012345678901234567890 => ok 1.2345678901234568e+29
 99999999999999999999e290 => at $: cannot unmarshal number 99999999999999999999e290 into Float
 decode Float 1e999 => at $: cannot unmarshal number 1e999 into Float
+10000 levels of 1000 byte keys => at a 10010001 byte path, true: cannot unmarshal number 1e999 into Float
 --- stderr

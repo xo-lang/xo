@@ -650,9 +650,14 @@ func jfFieldsText(r *rand.Rand) string {
 // jfFieldsGo is Go's answer for jfFieldsText's record: "err" or each field
 // as the Xo side prints it (Unix nanoseconds, hex, nanoseconds; "none"
 // for null or missing). Go has no Duration that decodes from text, so
-// the field is a string run through time.ParseDuration, as Xo's decoder
-// reads it; a Time outside what a Time holds (1677 to 2262) is an error
-// in Xo (decision 0364).
+// the field is a string run through time.ParseDuration after
+// strings.TrimSpace, as Xo's decoder (Duration.parse) reads it; a Time outside what a Time holds (1677 to 2262) is an error
+// in Xo (decision 0364). A Time text Go accepts that is not RFC 3339's
+// grammar (Go's time.Parse takes a one digit hour, `T6:16:55Z`) is an error
+// in Xo, whose parse_rfc3339 refuses text that is not RFC 3339 (spec/std.md
+// 2, Time; the 0616 json review's defaults).
+var jfRFC3339 = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$`)
+
 func jfFieldsGo(in []byte) string {
 	var rec struct {
 		When *time.Time `json:"when"`
@@ -664,6 +669,12 @@ func jfFieldsGo(in []byte) string {
 	}
 	w := "none"
 	if rec.When != nil {
+		var raw struct {
+			When string `json:"when"`
+		}
+		if json.Unmarshal(in, &raw) != nil || !jfRFC3339.MatchString(raw.When) {
+			return "err"
+		}
 		if y := rec.When.UTC().Year(); y < 1678 || y > 2261 {
 			return "err"
 		}
@@ -675,7 +686,8 @@ func jfFieldsGo(in []byte) string {
 	}
 	u := "none"
 	if rec.Dur != nil {
-		x, err := time.ParseDuration(*rec.Dur)
+		// Duration.parse trims white space first (spec/std.md 2)
+		x, err := time.ParseDuration(strings.TrimSpace(*rec.Dur))
 		if err != nil {
 			return "err"
 		}
