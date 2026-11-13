@@ -33,7 +33,7 @@ fn logs() -> List[log.Record] {
       3 => log.Level.Warn
       _ => log.Level.Error
     }
-    out.push(log.Record{level: level, msg: testworld.log_msg(i), fields: fields, module: testworld.log_module(i)})
+    out.push(log.Record{level: level, msg: testworld.log_msg(i), fields: fields, module: testworld.log_module(i), time: Time.UNIX_EPOCH, values: {}})
   }
   out
 }
