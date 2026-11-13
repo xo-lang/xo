@@ -1,0 +1,18 @@
+use std/http
+
+// file_server over a sub Fs never opens a Windows device name or a path
+// with a colon under its root (GO-2022-1143): each is 404 on every
+// system, and a real file is served.
+
+fn main(os: Os) ! {
+  let dir = os.fs.create_temp(".", "fsdev")?
+  os.fs.remove(dir)?
+  os.fs.create_dir_all("${dir}/a")?
+  os.fs.write("${dir}/ok.txt", b"ok\n")?
+  let serve = http.file_server(os.fs.sub(dir))
+  for p in ["/ok.txt", "/COM1", "/nul", "/NUL.txt", "/a/CON.txt", "/a/aux", "/lpt9", "/conin$", "/x:y", "/ok.txt:stream"] {
+    let r = serve(http.new_request("GET", "http://x${p}"))
+    os.stdio.println("${p}: ${r.status}")
+  }
+  os.fs.remove_all(dir)?
+}

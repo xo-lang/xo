@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+/ok.txt: 200
+/COM1: 404
+/nul: 404
+/NUL.txt: 404
+/a/CON.txt: 404
+/a/aux: 404
+/lpt9: 404
+/conin$: 404
+/x:y: 404
+/ok.txt:stream: 404
+--- stderr

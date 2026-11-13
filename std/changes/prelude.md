@@ -6,7 +6,7 @@
 - Commit: this push
 - Found by: the std/http security review (decision 0616), against GO-2022-1143 (CVE-2022-41720)
 - Go reference: os.DirFS and http.Dir (internal/filepathlite isReservedName, IsLocal), go1.26.1
-- Test: std/native/prelude_test.xo "win_reserved: the Windows device names a sub Fs denies" (every host); the denial itself on a Windows host
+- Test: std/native/prelude_test.xo "win_reserved: the Windows device names a sub Fs denies"; golden http_file_server_devices (want_windows.txt: every device name and colon path 403 on the winarm VM, Windows 11 ARM; before the fix `/nul` reached the NUL device and answered 500)
 - Affected: every release up to 0.50.1 on Windows, native and LLVM backends
 - Shipped in: not yet released
 
