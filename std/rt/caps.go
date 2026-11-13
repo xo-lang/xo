@@ -127,6 +127,11 @@ func (f *realFs) resolve(p string) (string, bool) {
 			}
 		}
 	}
+	if runtime.GOOS == "windows" && clean != "/" && !filepath.IsLocal(filepath.FromSlash(clean[1:])) {
+		// a Windows device name (NUL, COM1, CONIN$, ...) or a colon names
+		// no file under the root (GO-2022-1143, as the native resolve)
+		return "", false
+	}
 	return filepath.Join(f.root, filepath.FromSlash(clean)), true
 }
 
