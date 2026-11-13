@@ -4,7 +4,7 @@ CL with TE: HTTP/1.1 200 OK
 CL with TE: body echo [abc]
 CL with TE: Connection: close false
 CL with TE: pipelined request answered true
-CONNECT: HTTP/1.1 200 OK, request after it answered true
+CONNECT: HTTP/1.1 200 OK, request after it answered false
 proxy CONNECT: HTTP/1.1 405 Method Not Allowed
 proxy "a=1&b=%zz&c=1;d=2": hook saw "a=1", upstream got "GET /proxy/p?a=1 HTTP/1.1"
 proxy "x=1&y=2": hook saw "x=1&y=2", upstream got "GET /proxy/p?x=1&y=2 HTTP/1.1"

@@ -6,7 +6,7 @@ use std/http
 // after the answer (RFC 9112 6.3), so a request pipelined after it is not
 // read. Go's net/http keeps the connection open (want_go.txt).
 // A server: a 2xx answer to CONNECT closes the connection after it, as
-// Go's fix for GO-2026-6613 (the Go backend's go1.26.1 still reads on).
+// Go's fix for GO-2026-6613 (Go 1.26.11 and later, every backend).
 // A client: a CR or LF in with_host or User-Agent never reaches the wire
 // (GO-2023-1878): an invalid Host fails before connecting (Go's HTTP/1
 // sends an empty Host instead, want_go.txt), and User-Agent's newlines
