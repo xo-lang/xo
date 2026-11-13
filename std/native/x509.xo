@@ -253,7 +253,7 @@ fn cert_of(c: lx.Cert) -> x509.Certificate {
     }
   }
   var eku: List[x509.ExtKeyUsage] = []
-  for o in c.ext_usage {
+  for o in c.ext_usage_der {
     eku.push(eku_of(o))
   }
   var exts: List[x509.Extension] = []

@@ -87,8 +87,13 @@ pub struct Cert {
   pub max_path: Int
   /// KeyUsage's flags, -1 without the extension.
   pub key_usage: Int
-  /// The ExtendedKeyUsage OIDs (dotted), none without the extension.
+  /// The ExtendedKeyUsage OIDs (dotted), none without the extension: the
+  /// ones Go names first, then the others (Go's ExtKeyUsage, then
+  /// UnknownExtKeyUsage), as verify reads them.
   pub ext_usage: List[Str]
+  /// The same OIDs in the extension's order (x509.Certificate's
+  /// ext_key_usage, spec/std.md 41).
+  pub ext_usage_der: List[Str]
   pub has_eku: Bool
   pub ski: Bytes
   pub aki: Bytes
@@ -142,7 +147,7 @@ pub struct Cert {
 }
 
 fn empty() -> Cert {
-  Cert{raw: b"", tbs: b"", version: 0, serial: b"", sig_alg: SIG_UNKNOWN, signature: b"", issuer: b"", subject: b"", cn: "", not_before: 0, not_after: 0, key_alg: KEY_UNKNOWN, key: b"", spki: b"", dns: [], ips: [], has_san: false, has_bc: false, is_ca: false, max_path: -1, key_usage: -1, ext_usage: [], has_eku: false, ski: b"", aki: b"", permitted_dns: [], excluded_dns: [], unhandled: 0, san_other: 0, other_constraints: 0, sig_oid: "", san_raw: b"", has_key: false, org: "", has_nc: false, permitted_ips: [], excluded_ips: [], permitted_emails: [], excluded_emails: [], permitted_uris: [], excluded_uris: [], emails: [], uris: [], uri_hosts: [], policies: [], policy_maps: [], has_req_explicit: false, req_explicit: 0, has_inhibit_mapping: false, inhibit_mapping: 0, has_inhibit_any: false, inhibit_any: 0, extensions: []}
+  Cert{raw: b"", tbs: b"", version: 0, serial: b"", sig_alg: SIG_UNKNOWN, signature: b"", issuer: b"", subject: b"", cn: "", not_before: 0, not_after: 0, key_alg: KEY_UNKNOWN, key: b"", spki: b"", dns: [], ips: [], has_san: false, has_bc: false, is_ca: false, max_path: -1, key_usage: -1, ext_usage: [], ext_usage_der: [], has_eku: false, ski: b"", aki: b"", permitted_dns: [], excluded_dns: [], unhandled: 0, san_other: 0, other_constraints: 0, sig_oid: "", san_raw: b"", has_key: false, org: "", has_nc: false, permitted_ips: [], excluded_ips: [], permitted_emails: [], excluded_emails: [], permitted_uris: [], excluded_uris: [], emails: [], uris: [], uri_hosts: [], policies: [], policy_maps: [], has_req_explicit: false, req_explicit: 0, has_inhibit_mapping: false, inhibit_mapping: 0, has_inhibit_any: false, inhibit_any: 0, extensions: []}
 }
 
 /// The result of parse: the certificate, or the error text (Go's).
@@ -938,7 +943,10 @@ fn process_extensions(list: List[Ext], var c: Cert) -> Str {
         c.has_eku = true
         while !cbyte.empty(ekus) {
           match cbyte.read_oid(ekus) {
-            Some(o) => if known_eku(o) { c.ext_usage.push(o) } else { unknown_eku.push(o) }
+            Some(o) => {
+              c.ext_usage_der.push(o)
+              if known_eku(o) { c.ext_usage.push(o) } else { unknown_eku.push(o) }
+            }
             None => return "x509: invalid extended key usages"
           }
         }

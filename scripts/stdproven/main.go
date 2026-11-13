@@ -66,6 +66,7 @@ type harness struct {
 var harnesses = map[string][]harness{
 	"json": {{"TestJsonFuzz", "XO_JSONFUZZ"}},
 	"time": {{"TestTimeFuzz", "XO_TIMEFUZZ"}},
+	"x509": {{"TestX509Fuzz", "XO_X509FUZZ"}},
 }
 
 func main() {
