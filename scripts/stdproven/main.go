@@ -94,6 +94,8 @@ func main() {
 		err = race(os.Args[2:])
 	case "stress":
 		err = stress(os.Args[2:])
+	case "perf":
+		err = perf(os.Args[2:])
 	default:
 		usage()
 	}
@@ -104,7 +106,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] [-stress-minutes M] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] MODULE")
+	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] [-stress-minutes M] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] MODULE | stdproven perf [-rounds N] MODULE")
 	os.Exit(2)
 }
 
@@ -558,4 +560,108 @@ func stress(args []string) error {
 	fmt.Fprintf(&b, "Stress evidence (decision 0616): the program %s, every result checked against Go's answer, the resident set sampled every 10 s.\n\n", dir)
 	b.WriteString(strings.Join(lines, "\n") + "\n")
 	return os.WriteFile(filepath.Join("std", "evidence", module, "stress.md"), []byte(b.String()), 0o644)
+}
+
+// perf times the module's Go twins: every bench/perf/MODULE* directory with
+// a twin.txt (scripts/twincheck checks their outputs agree, then -time
+// runs each case's Xo and Go programs -rounds times, alternating, at full
+// size) and writes std/evidence/MODULE/perf.md, a table of the medians
+// with Xo over Go, the performance axis's evidence (decision 0461:
+// Proven at or under 1.05 of Go in every row). Rows under 5 ms on both
+// sides are listed but marked: startup decides them.
+func perf(args []string) error {
+	fs := flag.NewFlagSet("perf", flag.ExitOnError)
+	rounds := fs.Int("rounds", 9, "timed runs of each program")
+	hostLabel := fs.String("host", "", "the host's name in the evidence")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		usage()
+	}
+	module := fs.Arg(0)
+	src, _, err := sourceHash(module)
+	if err != nil {
+		return err
+	}
+	commit, err := gitOut("rev-parse", "--short=9", "HEAD")
+	if err != nil {
+		return err
+	}
+	if dirty, _ := gitOut("status", "--porcelain", "--", "std", "compiler", "bench/perf"); dirty != "" {
+		return errors.New("std, compiler or bench/perf has uncommitted changes: evidence names a commit")
+	}
+	cands, _ := filepath.Glob(filepath.Join("bench", "perf", module+"*"))
+	var dirs []string
+	for _, d := range cands {
+		if _, err := os.Stat(filepath.Join(d, "twin.txt")); err == nil {
+			dirs = append(dirs, d)
+		}
+	}
+	if len(dirs) == 0 {
+		return fmt.Errorf("no bench/perf/%s* directory has a twin.txt", module)
+	}
+	start := time.Now()
+	cmd := exec.Command("go", append([]string{"run", "./scripts/twincheck", "-time", strconv.Itoa(*rounds)}, dirs...)...)
+	cmd.Env = append(os.Environ(), "XO_CLI="+filepath.Join("bin", "xo"))
+	out, err := cmd.CombinedOutput()
+	text := string(out)
+	if err != nil {
+		if len(text) > 20000 {
+			text = text[len(text)-20000:]
+		}
+		return fmt.Errorf("twincheck: %v\n%s", err, text)
+	}
+	type row struct {
+		name    string
+		xo, gom float64
+		ratio   float64
+	}
+	var rows []row
+	for _, l := range strings.Split(text, "\n") {
+		f := strings.Fields(l)
+		if len(f) != 8 || f[0] != "time" || f[2] != "xo" || f[4] != "go" || f[6] != "ratio" {
+			continue
+		}
+		x, e1 := strconv.ParseFloat(f[3], 64)
+		g, e2 := strconv.ParseFloat(f[5], 64)
+		r, e3 := strconv.ParseFloat(f[7], 64)
+		if e1 != nil || e2 != nil || e3 != nil {
+			continue
+		}
+		rows = append(rows, row{f[1], x, g, r})
+	}
+	if len(rows) == 0 {
+		return fmt.Errorf("twincheck timed no case\n%s", text)
+	}
+	worst := 0.0
+	var b strings.Builder
+	host := *hostLabel
+	if host == "" {
+		host = runtime.GOOS + "/" + runtime.GOARCH
+	}
+	var tb strings.Builder
+	tb.WriteString("| workload | Go ms | Xo ms | Xo / Go |\n|---|---|---|---|\n")
+	for _, r := range rows {
+		mark := ""
+		if r.xo < 5 && r.gom < 5 {
+			mark = " (under 5 ms: startup)"
+		} else if r.ratio > worst {
+			worst = r.ratio
+		}
+		fmt.Fprintf(&tb, "| %s%s | %.1f | %.1f | %.3f |\n", r.name, mark, r.gom, r.xo, r.ratio)
+	}
+	result := "pass"
+	if worst > 1.05 {
+		result = "fail"
+	}
+	fmt.Fprintf(&b, "kind: perf\nmodule: %s\nresult: %s\ncommit: %s\nsource: %s\ndate: %s\nhost: %s\n", module, result, commit, src, time.Now().UTC().Format("2006-01-02"), host)
+	fmt.Fprintf(&b, "command: go run ./scripts/stdproven perf -rounds %d -host %q %s\n", *rounds, host, module)
+	fmt.Fprintf(&b, "measure: %d cases of %d twin directories, worst Xo / Go %.3f over the cases above 5 ms (Proven at or under 1.05), %s\n\n", len(rows), len(dirs), worst, time.Since(start).Round(time.Second))
+	fmt.Fprintf(&b, "Performance against Go (decisions 0461, 0616): scripts/twincheck -time %d over %s; medians of wall time, the two programs alternating.\n\n", *rounds, strings.Join(dirs, ", "))
+	b.WriteString(tb.String())
+	outp := filepath.Join("std", "evidence", module, "perf.md")
+	if err := os.MkdirAll(filepath.Dir(outp), 0o755); err != nil {
+		return err
+	}
+	fmt.Print(tb.String())
+	return os.WriteFile(outp, []byte(b.String()), 0o644)
 }
