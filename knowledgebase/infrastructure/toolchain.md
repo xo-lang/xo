@@ -330,7 +330,11 @@ and runs `gh release create`. The order:
    xo comes from the seed (lead, 2026-11-12; XO_RELEASE_WARM=1 keeps the
    caches for a rehearsal). Without HEAVY_JOB, release.sh refuses with exit 64 (as
    `go run ./scripts/xobuild` does), unless it is a dry run or
-   XO_UNGUARDED=1 is set (2026-11-05);
+   XO_UNGUARDED=1 is set (2026-11-05). It also refuses, before building,
+   when VERSION (its v and any -suffix dropped) is not compiler/cli/core
+   VERSION, compiler/cli/servers XO_VERSION and std/VERSION, and before
+   packaging when the built xo reports another version, so the release
+   commit bumps all three (2026-11-13, gotchas/release-version-not-bumped.md);
 5. the owner runs `publish.sh push`;
 6. the owner runs `release-publish.sh`;
 6a. the lead runs `~/xo-lead/agents/seed-hosts.sh X.Y.Z`: every offload

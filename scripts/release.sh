@@ -149,6 +149,22 @@ cd "$repo"
 # the version xo1 prints (compiler/cli/core VERSION)
 version="${1:-v$(sed -n 's/^pub const VERSION = "\(.*\)"$/\1/p' compiler/cli/core/cli.xo)}"
 
+# the version the release is named for must be the one xo prints and std
+# names (gotchas/release-version-not-bumped.md: a 0.51 dry run at main built
+# an xo that said 0.50.1): its leading v and any -suffix (v0.51.0-dry)
+# dropped, it must equal compiler/cli/core VERSION, compiler/cli/servers
+# XO_VERSION and std/VERSION; xo1's `xo version --json` is checked after it
+# is built
+want_version="${version#v}"
+want_version="${want_version%%-*}"
+src_cli="$(sed -n 's/^pub const VERSION = "\(.*\)"$/\1/p' compiler/cli/core/cli.xo)"
+src_srv="$(sed -n 's/^pub const XO_VERSION = "\(.*\)"$/\1/p' compiler/cli/servers/servers.xo)"
+src_std="$(tr -d '[:space:]' < std/VERSION)"
+if [ "$src_cli" != "$want_version" ] || [ "$src_srv" != "$want_version" ] || [ "$src_std" != "$want_version" ]; then
+	echo "release.sh: release $version wants version $want_version, but compiler/cli/core/cli.xo VERSION is '$src_cli', compiler/cli/servers/servers.xo XO_VERSION is '$src_srv' and std/VERSION is '$src_std'; bump all three in the release commit first" >&2
+	exit 1
+fi
+
 if [ "$(uname -s)/$(uname -m)" != "Darwin/arm64" ]; then
 	echo "release.sh: run on darwin/arm64 (the darwin xo1 is built by the host)" >&2
 	exit 1
@@ -411,6 +427,13 @@ echo "== darwin/arm64: xo1 builds xo again (--trimpath, on by default)" >&2
 run "$xo1" build --backend=arm64 --std="$repo/std" "${stamp[@]}" -o "$darwin/bin/xo.next" compiler/xo >&2
 run mv "$darwin/bin/xo.next" "$darwin/bin/xo"
 xo1="$darwin/bin/xo"
+if [ "$dry" != 1 ]; then
+	built_version="$("$xo1" version --json | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+	if [ "$built_version" != "$want_version" ]; then
+		echo "release.sh: the built xo says version '$built_version', release $version wants $want_version" >&2
+		exit 1
+	fi
+fi
 # no runtime packs since decision 0234: a program has no C runtime
 
 echo "== linux/arm64: xo1 cross builds xo1 (compiler/macho's ELF link, no cc)" >&2
