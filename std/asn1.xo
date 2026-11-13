@@ -105,6 +105,18 @@ pub fn parse(der: Bytes) -> Value ! Asn1Err {
 /// The DER value at the start of der and the bytes after it (Go's
 /// Unmarshal and its rest).
 pub fn parse_prefix(der: Bytes) -> (Value, Bytes) ! Asn1Err {
+  prefix_at(der, 0)
+}
+
+/// The deepest nesting parse reads, as Go's parseField
+/// (maxDecodeDepth; GO-2026-5972: a deeply nested value ran the stack
+/// out). A deeper value is `asn1: structure error: nesting depth exceeded`.
+const MAX_DEPTH: Int = 10000
+
+fn prefix_at(der: Bytes, depth: Int) -> (Value, Bytes) ! Asn1Err {
+  if depth >= MAX_DEPTH {
+    return Err(Asn1Err.Structure(msg: "nesting depth exceeded"))
+  }
   if der.is_empty() {
     return Err(Asn1Err.Syntax(msg: "sequence truncated"))
   }
@@ -113,7 +125,7 @@ pub fn parse_prefix(der: Bytes) -> (Value, Bytes) ! Asn1Err {
     return Err(Asn1Err.Syntax(msg: "data truncated"))
   }
   let end = h.off + h.len
-  let v = value_of(h, der[h.off..end])?
+  let v = value_of(h, der[h.off..end], depth)?
   (v, der[end..])
 }
 
@@ -178,7 +190,7 @@ pub fn (v: Value) tagged_as(explicit: Bool, tag: Int = -1, constructed: Bool = f
         return Value.Tagged(class: c, tag: t, explicit: true, v: inner)
       }
       let h = Header{class: Class.Universal, tag: tag, constructed: constructed, off: 0, len: b.len()}
-      Value.Tagged(class: c, tag: t, explicit: false, v: value_of(h, b)?)
+      Value.Tagged(class: c, tag: t, explicit: false, v: value_of(h, b, 0)?)
     }
     _ => Err(Asn1Err.Structure(msg: "tags don't match"))
   }
@@ -296,16 +308,16 @@ fn read_base128(b: Bytes, i0: Int) -> (Int, Int) ! Asn1Err {
 
 /// The value of header h with contents c (Go's parseField into an `any`,
 /// with a tree for SEQUENCE and SET and a BigInt for INTEGER).
-fn value_of(h: Header, c: Bytes) -> Value ! Asn1Err {
+fn value_of(h: Header, c: Bytes, depth: Int) -> Value ! Asn1Err {
   if h.class != Class.Universal {
     return Value.Raw(class: h.class, tag: h.tag, constructed: h.constructed, bytes: c)
   }
   if h.constructed {
     if h.tag == TAG_SEQUENCE {
-      return Value.Sequence(items: child_values(c)?)
+      return Value.Sequence(items: child_values(c, depth + 1)?)
     }
     if h.tag == TAG_SET {
-      return Value.Set(items: child_values(c)?)
+      return Value.Set(items: child_values(c, depth + 1)?)
     }
     return Value.Raw(class: h.class, tag: h.tag, constructed: true, bytes: c)
   }
@@ -335,11 +347,11 @@ fn value_of(h: Header, c: Bytes) -> Value ! Asn1Err {
   }
 }
 
-fn child_values(c: Bytes) -> List[Value] ! Asn1Err {
+fn child_values(c: Bytes, depth: Int) -> List[Value] ! Asn1Err {
   var out: List[Value] = []
   var rest = c
   while !rest.is_empty() {
-    let (v, r) = parse_prefix(rest)?
+    let (v, r) = prefix_at(rest, depth)?
     out.push(v)
     rest = r
   }

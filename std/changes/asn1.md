@@ -1,5 +1,18 @@
 # std/asn1 changes
 
+## 2026-11-13: security: nesting deeper than 10000 levels is a structure error
+
+- Kind: security
+- Commit: this commit
+- Found by: the decision 0616 security review of std/x509 (Go advisory sweep: GO-2026-5972)
+- Go reference: encoding/asn1 parseField's maxDecodeDepth (10000)
+- Affected: Xo 0.50.1 and earlier, every backend (std/asn1 is Xo code)
+- Test: std/asn1_test.xo (9999 levels parse; 10000 and 200000 are `asn1: structure error: nesting depth exceeded`; fails without the cap)
+- Timing: none (one comparison per value)
+- Shipped in: not yet released
+
+`parse` and `parse_prefix` read SEQUENCE and SET values recursively with no depth limit, so a small input of deeply nested headers could exhaust the task's stack. They now stop at Go's limit of 10000 levels with `asn1: structure error: nesting depth exceeded`.
+
 ## 2026-11-11: feature (Breaking): WideTime for times outside 1678 to 2261
 
 - Kind: feature
