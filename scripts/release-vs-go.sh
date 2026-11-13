@@ -152,22 +152,33 @@ settle() {
 	load1
 }
 
-# compile SIDE NAME SRCDIR MAINFILE: cold, second, warm and edit builds of a copy
-# of SRCDIR; prints a table row and leaves the binary at $work/NAME.SIDE
+# compile SIDE NAME SRCDIR MAINFILE [MODE]: cold, second, warm and edit builds of a
+# copy of SRCDIR; prints a table row and leaves the binary at $work/NAME.SIDE
+# (MODE default) or $work/NAME.SIDE.nc (MODE nocache).
+# MODE default (owner, 2026-11-13: the like-for-like comparison): each tool
+# with its default caches, in directories of this run so cold empties them
+# all: Go's GOCACHE, xo's back-end caches and its whole-build run cache
+# (decision 0360, on by default; XO_BIN_CACHE names its directory, the user
+# cache's otherwise), so second and warm are what a user sees from each.
+# MODE nocache (xo only): the run cache off (XO_BIN_CACHE=off), so second
+# and warm are compiles through the back-end caches: the compiler's own
+# path, a diagnostic (the headline table before 2026-11-13).
 compile() {
-	local side=$1 name=$2 src=$3 mainf=$4
-	local d=$work/src-$side-$name
+	local side=$1 name=$2 src=$3 mainf=$4 mode=${5:-default}
+	local sfx=
+	[ "$mode" = nocache ] && sfx=.nc
+	local d=$work/src-$side-$name$sfx
 	rm -rf "${d:?}"
 	cp -R "$src" "$d"
-	local bin=$work/$name.$side
-	local cache=$work/cache-$side-$name
+	local bin=$work/$name.$side$sfx
+	local cache=$work/cache-$side-$name$sfx
+	rm -rf "${cache:?}"
 	mkdir -p "$cache"
 	local build
-	if [ "$side" = xo ]; then
-		# XO_BIN_CACHE=off: no whole-build run cache, which lives in the user
-		# cache and served a second run of this script with the same OUT its
-		# cold row in 70 ms (2026-10-29)
+	if [ "$side" = xo ] && [ "$mode" = nocache ]; then
 		build=(env XO_BACKEND_CACHE_DIR="$cache/backend" XO_BIN_CACHE=off "$XO" build -o "$bin" .)
+	elif [ "$side" = xo ]; then
+		build=(env XO_BACKEND_CACHE_DIR="$cache/backend" XO_BIN_CACHE="$cache/bin" "$XO" build -o "$bin" .)
 	else
 		build=(env GOCACHE="$cache/go" GOFLAGS=-trimpath go build -o "$bin" .)
 	fi
@@ -254,9 +265,11 @@ compile() {
 	echo "The edit's path is what xo's cache statistics say an untimed build of another edit did: separate (against"
 	echo "std's variants, built after the cold row as a user's second build would have them),"
 	echo "with the std records, or whole (the whole program)."
-	echo "xo's builds run with the whole-build run cache off (XO_BIN_CACHE=off), so the second and"
-	echo "warm rows are compiles through the back-end caches, not a cached result (before 2026-10-29"
-	echo "they could be the run cache's 10 to 20 ms)."
+	echo "The compile table runs both tools with their default caches (owner, 2026-11-13): xo's"
+	echo "run cache on, Go as is; cold empties both. Reports from 2026-10-29 to 2026-11-12 ran xo"
+	echo "with the run cache off (XO_BIN_CACHE=off) in the headline table, so their second and warm"
+	echo "rows were xo's compile path against Go's up-to-date check; that table is now the"
+	echo "\"xo compile path (run cache off)\" diagnostic below it."
 	echo "Size is the default build's binary."
 	fi
 } >"$report"
@@ -282,9 +295,57 @@ for w in spawn fanout pingpong mutex rwmutex pmap; do
 done
 {
 	echo
-	echo "The Go column builds one binary per group (llvm, coll, conc); the Xo"
-	echo "programs are one per workload except coll."
+	echo "Both tools with their default caches (owner, 2026-11-13): cold empties every cache of each"
+	echo "(Go's GOCACHE; xo's back-end caches and its run cache), so second and warm are what a user"
+	echo "sees: Go's up-to-date check, xo's run cache. The Go column builds one binary per group"
+	echo "(llvm, coll, conc); the Xo programs are one per workload except coll."
+	echo
+	echo "## xo compile path (run cache off)"
+	echo
+	echo "A diagnostic, not a comparison with Go: xo with its whole-build run cache off"
+	echo "(XO_BIN_CACHE=off), so second and warm compile through the back-end caches (the"
+	echo "headline table of the reports before 2026-11-13)."
+	echo
+	echo "| program | side | cold ms | second ms | warm ms | edit ms | peak MB (c/w/e) | size MB | edit's path |"
+	echo "|---|---|---|---|---|---|---|---|---|"
 } >>"$report"
+for w in fib sieve nbody sort interp collatz strings; do
+	compile xo "llvm-$w" "$perf/llvm/xo/$w" main.xo nocache >>"$report"
+done
+compile xo coll "$perf/xo" main.xo nocache >>"$report"
+for w in spawn fanout pingpong mutex rwmutex pmap; do
+	compile xo "conc-$w" "$perf/conc/xo/$w" main.xo nocache >>"$report"
+done
+# where xo's warm memory goes (owner, 2026-11-13: why Go wins warm memory):
+# coll's warm build, run cache off, in its nocache copy: the bare process,
+# the phases' heap figures (--phase-times), and the heap in use at the
+# front end's peak (XO_PROF=heap at fe.build, every byte sampled)
+warm_mem() {
+	local d=$work/src-xo-coll.nc cache=$work/cache-xo-coll.nc
+	local pk
+	pk() { if [ "$(uname)" = Darwin ]; then /usr/bin/time -l "$@" 2>&1 >/dev/null | awk '/maximum resident/{printf "%.1f", $1/1048576}'; else /usr/bin/time -v "$@" 2>&1 >/dev/null | awk '/Maximum resident/{printf "%.1f", $6/1024}'; fi; }
+	local b=(env XO_BACKEND_CACHE_DIR="$cache/backend" XO_BIN_CACHE=off "$XO" build -o "$work/coll.xo.nc" .)
+	echo
+	echo "### Where xo's warm memory goes (coll, run cache off)"
+	echo
+	echo "- the bare process (\`xo version\`): $(pk "$XO" version) MB peak RSS"
+	echo "- the warm build: $(cd "$d" && pk "${b[@]}") MB peak RSS; with the run cache on (its own directory, a hit) $(cd "$d" && env XO_BACKEND_CACHE_DIR="$cache/backend" XO_BIN_CACHE="$work/warm-mem-bin" "$XO" build -o "$work/coll.wm" . >/dev/null 2>&1; pk env XO_BACKEND_CACHE_DIR="$cache/backend" XO_BIN_CACHE="$work/warm-mem-bin" "$XO" build -o "$work/coll.wm" .) MB"
+	echo
+	echo "The warm build's phases (heap in use and the peak so far, --phase-times), the steps that move them:"
+	echo
+	echo '```'
+	(cd "$d" && env XO_BACKEND_CACHE_DIR="$cache/backend" XO_BIN_CACHE=off "$XO" build --phase-times -o "$work/coll.xo.nc" . 2>&1) | awk '/^phase /{h=$0; sub(/.*heap /,"",h); sub(/ MB.*/,"",h); if (h!=last || /fe.build|front_end_freed|^phase link /) print; last=h} /^cache (fe|functions|parts|stdx)/{print}' | head -30
+	echo '```'
+	echo
+	echo "The heap in use at the front end's peak (XO_PROF=heap at fe.build, every byte sampled), the top 12:"
+	echo
+	echo '```'
+	(cd "$d" && env XO_PROF=heap XO_PROF_HEAP_RATE=1 XO_PROF_HEAP_AT=fe.build XO_PROF_HEAP_OUT="$OUT/warm-mem-fe.xoraw" "${b[@]}" >/dev/null 2>&1)
+	"$XO" prof "$OUT/warm-mem-fe.xoraw" >/dev/null 2>&1
+	sed -n '1,2p;5,17p' "$OUT/warm-mem-fe.heap.txt" 2>/dev/null || echo "(no heap profile)"
+	echo '```'
+}
+warm_mem >>"$report"
 fi
 
 if section run; then
