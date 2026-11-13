@@ -34,6 +34,8 @@ until grep -q ready "$OUT/serve.txt" 2>/dev/null; do
 	fi
 	sleep 0.01
 done
+# a wall clock in microseconds (time -p rounds to 10 ms)
+now() { perl -MTime::HiRes=time -e 'printf "%.6f\n", time'; }
 for c in "$@" gotwin; do
 	for mode in stream send; do
 		best_w=""
@@ -41,18 +43,20 @@ for c in "$@" gotwin; do
 		for _ in 1 2 3 4 5; do
 			# darwin's time -l prints "N real" and the peak RSS in bytes;
 			# GNU time (Linux) gets a format giving the same two lines
+			t0=$(now)
 			if [ "$(uname)" = Darwin ]; then
 				ADDR=127.0.0.1:$PORT SIZE=$SIZE MODE=$mode /usr/bin/time -l "$OUT/c-$c" >"$OUT/run.txt" 2>"$OUT/time.txt"
 			else
 				ADDR=127.0.0.1:$PORT SIZE=$SIZE MODE=$mode /usr/bin/time -f "%e real
 %M maximum resident set size" "$OUT/c-$c" >"$OUT/run.txt" 2>"$OUT/time.txt"
 			fi
+			t1=$(now)
 			got=$(cat "$OUT/run.txt")
 			if [ "$got" != "$SIZE" ]; then
 				echo "$c $mode: read $got bytes, want $SIZE" >&2
 				exit 1
 			fi
-			w=$(awk '/ real /{print $1}' "$OUT/time.txt")
+			w=$(awk "BEGIN{printf \"%.6f\", $t1 - $t0}")
 			r=$(awk '/maximum resident set size/{print $1}' "$OUT/time.txt")
 			if [ "$(uname)" != Darwin ]; then r=$((r * 1024)); fi
 			if [ -z "$best_w" ] || awk "BEGIN{exit !($w < $best_w)}"; then best_w=$w; fi

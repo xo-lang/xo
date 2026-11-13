@@ -25,6 +25,8 @@ for be in "$@"; do
 	cp "$SRC/main.xo" "$SRC/xo.mod" "$OUT/src-$be/"
 	(cd "$OUT/src-$be" && "$XO" build --backend="$be" -o "$OUT/p-$be" . >/dev/null)
 done
+# a wall clock in microseconds (time -p rounds to 10 ms)
+now() { perl -MTime::HiRes=time -e 'printf "%.6f\n", time'; }
 wait_ready() {
 	i=0
 	until grep -q ready "$1" 2>/dev/null; do
@@ -52,7 +54,8 @@ for p in "$@" gotwin; do
 	best_w=""
 	peak=0
 	for _ in 1 2 3 4 5; do
-		ADDR=127.0.0.1:$PX SIZE=$SIZE MODE=stream /usr/bin/time -p "$OUT/client" >"$OUT/run.txt" 2>"$OUT/time.txt" &
+		t0=$(now)
+		ADDR=127.0.0.1:$PX SIZE=$SIZE MODE=stream "$OUT/client" >"$OUT/run.txt" 2>"$OUT/time.txt" &
 		cpid=$!
 		while kill -0 $cpid 2>/dev/null; do
 			r=$(ps -o rss= -p $ppid | tr -d ' ')
@@ -60,12 +63,13 @@ for p in "$@" gotwin; do
 			sleep 0.005
 		done
 		wait $cpid
+		t1=$(now)
 		got=$(cat "$OUT/run.txt")
 		if [ "$got" != "$SIZE" ]; then
 			echo "$p: read $got bytes, want $SIZE" >&2
 			exit 1
 		fi
-		w=$(awk '/^real/{print $2}' "$OUT/time.txt")
+		w=$(awk "BEGIN{printf \"%.6f\", $t1 - $t0}")
 		if [ -z "$best_w" ] || awk "BEGIN{exit !($w < $best_w)}"; then best_w=$w; fi
 	done
 	kill $ppid 2>/dev/null || true

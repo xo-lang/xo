@@ -735,7 +735,11 @@ func serverPerf(args []string) error {
 		switch f[3] {
 		case "rps":
 			c.ratio = g / x
-		case "cpu_us", "wall_s":
+		case "cpu_us":
+		case "wall_s":
+			if g < 0.05 || x < 0.05 {
+				return fmt.Errorf("%s: %q: a wall under 50 ms is too short to judge (raise the workload's size)", script, l)
+			}
 		case "p99_us":
 			c.judged = false
 		default:
