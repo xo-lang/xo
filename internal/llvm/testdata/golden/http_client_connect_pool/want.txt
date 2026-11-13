@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+open CONNECT: 403 no
+GET after it: 403
+send CONNECT: 403
+GET after that: 403
+GET reusing: 403
+connections: 3
+--- stderr

@@ -36,6 +36,7 @@ fs_ops_edges # wasip1 wasip2 # files: WASI has no times before 1970
 handle_drop_leak # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.spawn)
 http_client # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_client_body_reader # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_connect_pool # wasip1 # network: the network (`rt.net_status`): WASI preview1 has no sockets
 http_client_keepalive # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_client_pool_body # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_client_policy # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets

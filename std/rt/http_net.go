@@ -432,6 +432,11 @@ func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool) 
 	if err != nil {
 		return nil, nil, head, clientErr(1, err.Error())
 	}
+	if hr.Method == "CONNECT" {
+		// never pooled after a CONNECT (GO-2026-6605; Go 1.26.11's
+		// transport does it itself)
+		hr.Close = true
+	}
 	if req.XHost != "" {
 		// with_host (decision 0541): Go's Request.Host
 		hr.Host = req.XHost

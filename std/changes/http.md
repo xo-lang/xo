@@ -41,11 +41,11 @@ A handler whose response head went out before it read an `Expect: 100-continue` 
 - Commit: this push
 - Found by: the std/http security review (decision 0616), against GO-2026-6605 (CVE-2026-56866), with Go 1.26.11's server rule for GO-2026-6613
 - Go reference: go1.26.11 net/http server.go (closeAfterReply after any CONNECT; a 2xx answer without Content-Length, Transfer-Encoding or Connection), transport.go (no keep-alive after CONNECT), httputil reverseproxy.go (CONNECT answered 405)
-- Test: golden http_request_guards (a GET after a CONNECT is not read; ReverseProxy answers CONNECT 405 on arm64, llvm and the Go backend)
-- Affected: every release up to 0.50.1; the server and client parts native and LLVM backends, the ReverseProxy part all backends
+- Test: golden http_request_guards (a GET after a CONNECT is not read; ReverseProxy answers CONNECT 405 on arm64, llvm and the Go backend); golden http_client_connect_pool (a request after a CONNECT, sent or opened as a stream, dials anew on every backend)
+- Affected: every release up to 0.50.1; the server part native and LLVM backends, the client and ReverseProxy parts all backends (the Go backend's client sets Close on a CONNECT, which Go 1.26.1's transport did not do itself)
 - Shipped in: not yet released
 
-A CONNECT request turns its connection into something other than HTTP, but the client pooled the connection after the answer, and ReverseProxy forwarded CONNECT upstream like any request; a body sent with it could then be read as a request of its own (a desynchronization class). The client now closes the connection after a CONNECT whatever the answer, ReverseProxy answers CONNECT 405 as Go 1.26.11 does, and the server, which since the entry below closed only after a 2xx answer, closes after any answer to CONNECT and sends a 2xx one without framing or Connection fields.
+A CONNECT request turns its connection into something other than HTTP, but the client pooled the connection after the answer, and ReverseProxy forwarded CONNECT upstream like any request; a body sent with it could then be read as a request of its own (a desynchronization class). The client now closes the connection after a CONNECT whatever the answer, with send and with open, ReverseProxy answers CONNECT 405 as Go 1.26.11 does, and the server, which since the entry below closed only after a 2xx answer, closes after any answer to CONNECT and sends a 2xx one without framing or Connection fields.
 
 - Remote trigger: an upstream or client in a position to desynchronize the connection; a program sending CONNECT itself.
 

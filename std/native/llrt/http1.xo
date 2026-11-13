@@ -4900,6 +4900,11 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
               headers = without_fields(headers, "Content-Encoding", "Content-Length")
             }
           }
+          if method == "CONNECT" {
+            // never back to the pool after a CONNECT (GO-2026-6605), as
+            // h1_round: the stream's reader closes it when done
+            hb.keep = false
+          }
           return CResult{err: 0, msg: "", status: status, headers: headers, body: b"", open: true, conn: Some(r), read: hb, https: conn_https, addr: conn_addr, name: conn_name, gz: gz, h2: h2x}
         }
         // a redirect: its body read and dropped, its connection pooled

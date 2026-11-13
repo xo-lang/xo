@@ -1,0 +1,55 @@
+use std/http
+
+// A client never returns a connection to its pool after a CONNECT
+// (GO-2026-6605, Go 1.26.11's transport), whether it sent it with send
+// or opened it as a stream, even when the answer is a 4xx with a
+// Content-Length: the next request dials anew.
+
+fn main(os: Os) ! {
+  let raw = os.net.listen("127.0.0.1:0")?
+  let base = "http://${raw.addr()}"
+  let accepts = Mutex.new(0)
+  scope s {
+    s.spawn_background(fn() {
+      while true {
+        let c = match raw.accept() {
+          Ok(c) => c
+          Err(_) => return
+        }
+        accepts.with(fn(var n) { n += 1 })
+        s.spawn_background(fn() {
+          // keep-alive: one answer per request head
+          var buf = ""
+          while true {
+            match c.read(4096) {
+              Ok(Some(b)) => buf = buf + b.to_str_lossy()
+              _ => break
+            }
+            while buf.contains("\r\n\r\n") {
+              let at = buf.find("\r\n\r\n") ?? 0
+              buf = buf[at + 4..]
+              c.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 2\r\n\r\nno").ignore_err("answer")
+            }
+          }
+          c.close()
+        })
+      }
+    })
+    let c = http.client(os.net, timeout: 5s)
+    let st = c.open(http.new_request("CONNECT", "${base}/a"))?
+    let body = st.read_all()?
+    st.close()
+    os.stdio.println("open CONNECT: ${st.head().status} ${body.to_str() ?? "?"}")
+    let g = c.get("${base}/b")?
+    os.stdio.println("GET after it: ${g.status}")
+    let r = c.send(http.new_request("CONNECT", "${base}/c"))?
+    os.stdio.println("send CONNECT: ${r.status}")
+    let g2 = c.get("${base}/d")?
+    os.stdio.println("GET after that: ${g2.status}")
+    let g3 = c.get("${base}/e")?
+    os.stdio.println("GET reusing: ${g3.status}")
+    // CONNECT, GET (new), CONNECT (pooled GET's connection), GET (new),
+    // GET (reuses the last)
+    os.stdio.println("connections: ${accepts.with_read(fn(n) { n })}")
+  }
+}
