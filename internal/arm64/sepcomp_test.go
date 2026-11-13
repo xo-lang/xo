@@ -204,8 +204,10 @@ fn main(os: Os) {
 // XO_SEPCOMP=0 is never answered from the separately compiled entries.
 func TestSepcompDefault(t *testing.T) {
 	t.Parallel()
-	if !native() {
-		t.Skip("the host is not arm64")
+	// an arm64 host whose builds take std's variants by default: darwin,
+	// linux and (since 2026-11-12) windows
+	if runtime.GOARCH != "arm64" || !sepcompDefaultHost() {
+		t.Skip("the host is not arm64 with separate compilation by default")
 	}
 	if testing.Short() {
 		t.Skip("builds std's variants")
