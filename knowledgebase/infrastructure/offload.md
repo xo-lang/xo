@@ -232,7 +232,8 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
 
 ## The host's setup
 
-A plain `golang:1.26.1-trixie` container (Go 1.26.1, Debian trixie, 12
+A plain `golang:1.26.1-trixie` container (Go 1.26.1, since 2026-11-13 go1.26.11 in
+`/usr/local/go` with the image's tree kept as `/usr/local/go.go1.26.1`; Debian trixie, 12
 CPUs, 39 GB) with ssh on a mapped port and password login, set up by hand
 on 2026-10-29. Recreated by the owner on 2026-10-30 after its ext4 /work
 went emergency read only (at 60% of 453 GB, a filesystem error, not a
@@ -397,7 +398,8 @@ WSL2 Ubuntu 24.04 distribution for that user (28 CPUs, 62 GB from its
 600) with `OFF_KIND=wsl` and `OFF_SEED` the WSL path of the 0.37.0
 linux-amd64 seed (`~/xo-ci/seed-0.37.0/xo/bin/xo`; Windows itself uses
 `~/xo-ci/seed-0.37.0/xo/bin/xo.exe`; last verified: 2026-11-03); WSL has clang 18, lld,
-llvm, build-essential, expect and Go 1.26.0 in `~/go-sdk` (on PATH from
+llvm, build-essential, expect and Go 1.26.11 in `~/go-sdk/go` (since 2026-11-13, 1.26.0 kept as
+`~/go-sdk/go.go1.26.0`; last verified: 2026-11-13; on PATH from
 `~/.profile`). Windows' own shell is cmd.exe, so offload.sh sends a job
 there as a file: scp (`-O`, the legacy protocol, which both hosts take)
 to `%USERPROFILE%\xo-ci\off`, then `wsl -e bash -l` on it under
@@ -445,7 +447,7 @@ CPU-bound timings; HTTP throughput needs bare Linux. Last verified: 2026-11-02
   http_wire and http_stream red on every backend.
 - Windows itself (`~/xo-lead/offload-win.env`, `OFF_KIND=win`): Git Bash
   from PortableGit 2.56.0 in `%USERPROFILE%\tools\git` runs the job, Go
-  1.26.0 in `tools\go`, the 0.34.0 windows-amd64 seed in
+  1.26.11 in `tools\go` (since 2026-11-13; 1.26.0 kept as `tools\go.go1.26.0`; last verified: 2026-11-13), the 0.34.0 windows-amd64 seed in
   `C:\Users\xo\xo-ci\seed\xo`. `OFFLOAD_ENV=offload-win.env
   scripts/lead/amd64-run.sh REV NAME [sample|all|GOLDEN...]` builds xo
   natively on Windows (229 s cold, 14 s cached) and runs the goldens
@@ -627,7 +629,7 @@ logs in with the key `~/.ssh/xo_winarm` (in
 administrator); offload.sh uses the password. Developer mode is on (git
 symlinks without elevation). Installed: OpenSSH Server, PortableGit
 2.56.0.4 arm64 in `%USERPROFILE%\tools\git`, Go 1.26.1 windows/arm64 in
-`tools\go` (both checked against their published SHA-256), `xo-ci\off`. Then (2026-11-09
+`tools\go` (go1.26.11 since 2026-11-13, 1.26.1 kept as `tools\go.go1.26.1`) (both checked against their published SHA-256), `xo-ci\off`. Then (2026-11-09
 evening): LLVM 23.1.3 aarch64-pc-windows-msvc (clang, lld-link, llvm-mc)
 unpacked in `tools\llvm` (release SHA-256 checked); Visual Studio Build
 Tools 2022 by winget (`--source winget` is required: the id is also in

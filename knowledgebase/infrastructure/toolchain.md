@@ -88,8 +88,10 @@ Last verified: 2026-10-12
   is never asked for a newer Go than itself (no automatic toolchain
   download) and a newer Go keeps 1.26 semantics until adopted.
   `XO_GO_LINE` overrides the line. Last verified: 2026-10-12.
-- Toolchains present on the development host (2026-10-12): go1.26.1 at
-  `/usr/local/go`; go1.26.3, go1.26.6, and go1.27.2 in the module cache
+- Toolchains present on the development host: go1.26.11 at `/usr/local/go`
+  (since 2026-11-13, owner item 9: Go's net/textproto quoting, GO-2026-5039, and
+  its x509 fixes; the previous tree is `/usr/local/go.go1.26.1`; Last verified:
+  2026-11-13); from 2026-10-12: go1.26.3, go1.26.6, and go1.27.2 in the module cache
   (`~/go/pkg/mod/golang.org/toolchain@v0.0.1-goX.Y.Z.darwin-arm64`),
   usable with `GOTOOLCHAIN=goX.Y.Z` without a download.
 - **New Go release procedure:**
@@ -4422,7 +4424,7 @@ SYSTEM: first the lifetime (`shutdown /s /f /t` and a scheduled task at
 `XO_REMOTE_MAX_MIN` minutes, default 240; instance-initiated shutdown
 terminates), then OpenSSH Server with the xo-ci public key in
 `C:\ProgramData\ssh\administrators_authorized_keys` and Git Bash as the
-default shell, then Git for Windows (latest release), Go 1.26.1 (msi),
+default shell, then Git for Windows (latest release), Go 1.26.11 (msi),
 LLVM (latest release msi: 23.1.3 on 2026-10-12, clang, lld-link,
 llvm-ar), and the VS 2022 Build Tools (VCTools workload, x64 and ARM64
 compilers, the recommended Windows SDK); `C:\xo-ready` marks the end
