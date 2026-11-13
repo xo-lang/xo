@@ -1191,6 +1191,83 @@ pub fn (var f: Func) add_param(b: Int, t: Int) -> Int {
 }
 
 /// Appends an instruction to block b.
+// Argument lists (decision 0448 addendum, 2026-11-12): every reader and
+// writer of Value.args goes through these, so that the lists can move
+// into one pool per function (stage 2) behind them. Each takes the
+// Value's args (x.args, f.values[v].args) and must be called on the
+// function that value belongs to (stage 2 tags each range with it).
+
+/// Argument k of a value whose arguments are r (r = x.args).
+pub fn (f: Func) arg(r: List[Int], k: Int) -> Int {
+  r[k]
+}
+
+/// The arguments r in order, for `for a in f.args_iter(x.args)`.
+pub fn (f: Func) args_iter(r: List[Int]) -> ArgsIter {
+  ArgsIter{xs: r, i: 0}
+}
+
+/// The arguments r with their positions, for `for (k, a) in
+/// f.args_indexed(x.args)`.
+pub fn (f: Func) args_indexed(r: List[Int]) -> ArgsIndexed {
+  ArgsIndexed{xs: r, i: 0}
+}
+
+/// Whether a is one of the arguments r.
+pub fn (f: Func) args_has(r: List[Int], a: Int) -> Bool {
+  r.contains(a)
+}
+
+/// The arguments r as a List of their own (a copy in stage 2: for the
+/// readers that keep or pass the whole list).
+pub fn (f: Func) args_copy(r: List[Int]) -> List[Int] {
+  r
+}
+
+/// The args field for a value with arguments xs (Value{args: ...}, x.args
+/// = ...): the list itself now, a range of the pool in stage 2.
+pub fn (var f: Func) mk_args(xs: List[Int]) -> List[Int] {
+  xs
+}
+
+/// Sets argument k of value v to a.
+pub fn (var f: Func) set_arg(v: Int, k: Int, a: Int) {
+  f.values[v].args[k] = a
+}
+
+/// Sets the arguments of value v to xs.
+pub fn (var f: Func) set_args(v: Int, xs: List[Int]) {
+  f.values[v].args = f.mk_args(xs)
+}
+
+/// Func.args_iter's iterator.
+pub struct ArgsIter {
+  xs: List[Int]
+  i: Int
+}
+
+pub fn (var it: ArgsIter) next() -> Int? {
+  if it.i >= it.xs.len() {
+    return None
+  }
+  it.i += 1
+  Some(it.xs[it.i - 1])
+}
+
+/// Func.args_indexed's iterator.
+pub struct ArgsIndexed {
+  xs: List[Int]
+  i: Int
+}
+
+pub fn (var it: ArgsIndexed) next() -> (Int, Int)? {
+  if it.i >= it.xs.len() {
+    return None
+  }
+  it.i += 1
+  Some((it.i - 1, it.xs[it.i - 1]))
+}
+
 pub fn (var f: Func) add(b: Int, op: Op, t: Int, aux: Aux, args: List[Int]) -> Int {
   let v = f.values.len()
   let w = f.pack(aux)
