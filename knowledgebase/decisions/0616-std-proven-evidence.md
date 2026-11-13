@@ -109,6 +109,21 @@ regression case, then a new run.
   goes stale with the module (source hash) and is redone when its module
   changes in a security relevant file.
 
+### 2a. Servers (addendum, 2026-11-13)
+
+A module whose Go twins are servers (http first; tls, websocket and
+grpc after it) has no twincheck case, so its perf.md comes from
+`stdproven serverperf MODULE`, which runs bench/perf/MODULE/proven.sh.
+That script runs each twin against Go on the native backends and prints
+`row WORKLOAD BACKEND METRIC GO XO`. Each judged metric is a cost ratio
+of Xo to Go: Go's requests per second over Xo's, and Xo's CPU time per
+request or wall time over Go's. A workload's figure on a backend is the
+worse of its throughput and CPU (or wall) ratios, and the module meets
+the 1.05 threshold when every figure does. Latency percentiles are shown
+beside them and not judged. The runs take a whole host (an exclusive
+lease), with REPS 5 by default, the medians of run.sh for load and the
+best of 5 for a single transfer.
+
 ### 3. Staleness
 
 A module's source hash is the SHA-256 the runner computes over the paths
@@ -204,3 +219,7 @@ crypto; within it, a module that misses only the testing axis first.
   1.05, decision 0461's Proven), so the performance axis has a
   rerunnable record beside the testing kinds; the coverage generator
   reads it when it moves into the repository (section 5).
+- 2026-11-13 (aws-43, lead's ruling): section 2a, servers. `stdproven
+  serverperf MODULE` reads bench/perf/MODULE/proven.sh's rows; http's
+  runs the CRUD server under loadgen (rps, CPU per request, p99 shown),
+  the reverse proxy and the streaming client against Go's twins.

@@ -99,6 +99,8 @@ func main() {
 		err = stress(os.Args[2:])
 	case "perf":
 		err = perf(os.Args[2:])
+	case "serverperf":
+		err = serverPerf(os.Args[2:])
 	default:
 		usage()
 	}
@@ -109,7 +111,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] [-stress-minutes M] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] MODULE | stdproven perf [-rounds N] MODULE")
+	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] [-stress-minutes M] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] MODULE | stdproven perf [-rounds N] MODULE | stdproven serverperf [-reps N] MODULE")
 	os.Exit(2)
 }
 
@@ -660,6 +662,134 @@ func perf(args []string) error {
 	fmt.Fprintf(&b, "command: go run ./scripts/stdproven perf -rounds %d -host %q %s\n", *rounds, host, module)
 	fmt.Fprintf(&b, "measure: %d cases of %d twin directories, worst Xo / Go %.3f over the cases above 5 ms (Proven at or under 1.05), %s\n\n", len(rows), len(dirs), worst, time.Since(start).Round(time.Second))
 	fmt.Fprintf(&b, "Performance against Go (decisions 0461, 0616): scripts/twincheck -time %d over %s; medians of wall time, the two programs alternating.\n\n", *rounds, strings.Join(dirs, ", "))
+	b.WriteString(tb.String())
+	outp := filepath.Join("std", "evidence", module, "perf.md")
+	if err := os.MkdirAll(filepath.Dir(outp), 0o755); err != nil {
+		return err
+	}
+	fmt.Print(tb.String())
+	return os.WriteFile(outp, []byte(b.String()), 0o644)
+}
+
+// serverPerf is the perf evidence of a module whose twins are servers
+// (decision 0616, "Servers"): bench/perf/MODULE/proven.sh runs them
+// against Go and prints "row WORKLOAD BACKEND METRIC GO XO" lines. Each
+// metric becomes a cost ratio, Xo's over Go's (Go's over Xo's for rps,
+// where more is better); a workload's figure on a backend is the worst
+// of its judged ratios (rps, cpu_us, wall_s; p99_us is shown only), and
+// the module passes when every figure is at or under 1.05.
+func serverPerf(args []string) error {
+	fs := flag.NewFlagSet("serverperf", flag.ExitOnError)
+	reps := fs.Int("reps", 5, "runs of each load benchmark (proven.sh's REPS)")
+	hostLabel := fs.String("host", "", "the host's name in the evidence")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		usage()
+	}
+	module := fs.Arg(0)
+	src, _, err := sourceHash(module)
+	if err != nil {
+		return err
+	}
+	commit, err := gitOut("rev-parse", "--short=9", "HEAD")
+	if err != nil {
+		return err
+	}
+	if dirty, _ := gitOut("status", "--porcelain", "--", "std", "compiler", "bench/perf"); dirty != "" {
+		return errors.New("std, compiler or bench/perf has uncommitted changes: evidence names a commit")
+	}
+	script := filepath.Join("bench", "perf", module, "proven.sh")
+	if _, err := os.Stat(script); err != nil {
+		return fmt.Errorf("no %s: a server module's perf evidence needs one", script)
+	}
+	xo, err := filepath.Abs(filepath.Join("bin", "xo"))
+	if err != nil {
+		return err
+	}
+	start := time.Now()
+	cmd := exec.Command("sh", script)
+	cmd.Env = append(os.Environ(), "XO="+xo, "REPS="+strconv.Itoa(*reps))
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("%s: %v\n%s", script, err, out)
+	}
+	type key struct{ work, be string }
+	type cell struct {
+		goV, xoV, ratio float64
+		judged          bool
+	}
+	cells := map[key]map[string]cell{}
+	var order []key
+	for _, l := range strings.Split(string(out), "\n") {
+		f := strings.Fields(l)
+		if len(f) != 6 || f[0] != "row" {
+			continue
+		}
+		g, e1 := strconv.ParseFloat(f[4], 64)
+		x, e2 := strconv.ParseFloat(f[5], 64)
+		if e1 != nil || e2 != nil || g <= 0 || x <= 0 {
+			return fmt.Errorf("%s: bad row %q", script, l)
+		}
+		c := cell{goV: g, xoV: x, ratio: x / g, judged: true}
+		switch f[3] {
+		case "rps":
+			c.ratio = g / x
+		case "cpu_us", "wall_s":
+		case "p99_us":
+			c.judged = false
+		default:
+			return fmt.Errorf("%s: unknown metric in %q", script, l)
+		}
+		k := key{f[1], f[2]}
+		if cells[k] == nil {
+			cells[k] = map[string]cell{}
+			order = append(order, k)
+		}
+		cells[k][f[3]] = c
+	}
+	if len(order) == 0 {
+		return fmt.Errorf("%s printed no rows", script)
+	}
+	host := *hostLabel
+	if host == "" {
+		host = runtime.GOOS + "/" + runtime.GOARCH
+	}
+	metrics := []string{"rps", "cpu_us", "wall_s", "p99_us"}
+	var tb strings.Builder
+	tb.WriteString("| workload | backend | metric | Go | Xo | cost Xo / Go |\n|---|---|---|---|---|---|\n")
+	worst := 0.0
+	var figs []string
+	for _, k := range order {
+		fig := 0.0
+		for _, m := range metrics {
+			c, ok := cells[k][m]
+			if !ok {
+				continue
+			}
+			note := ""
+			if !c.judged {
+				note = " (shown)"
+			} else if c.ratio > fig {
+				fig = c.ratio
+			}
+			fmt.Fprintf(&tb, "| %s | %s | %s%s | %g | %g | %.3f |\n", k.work, k.be, m, note, c.goV, c.xoV, c.ratio)
+		}
+		figs = append(figs, fmt.Sprintf("%s %s %.3f", k.work, k.be, fig))
+		if fig > worst {
+			worst = fig
+		}
+	}
+	result := "pass"
+	if worst > 1.05 {
+		result = "fail"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "kind: perf\nmodule: %s\nresult: %s\ncommit: %s\nsource: %s\ndate: %s\nhost: %s\n", module, result, commit, src, time.Now().UTC().Format("2006-01-02"), host)
+	fmt.Fprintf(&b, "command: go run ./scripts/stdproven serverperf -reps %d -host %q %s\n", *reps, host, module)
+	fmt.Fprintf(&b, "measure: %d workload and backend figures, worst Xo / Go cost %.3f (the worse of throughput and CPU or wall per figure; Proven at or under 1.05), %s\n\n", len(order), worst, time.Since(start).Round(time.Second))
+	fmt.Fprintf(&b, "Server performance against Go (decision 0616, Servers): %s against Go twins on the native backends. A figure is the worst of its judged cost ratios (Go's rps over Xo's; Xo's CPU per request or wall over Go's); p99 is shown, not judged.\n\n", script)
+	b.WriteString("Figures: " + strings.Join(figs, ", ") + "\n\n")
 	b.WriteString(tb.String())
 	outp := filepath.Join("std", "evidence", module, "perf.md")
 	if err := os.MkdirAll(filepath.Dir(outp), 0o755); err != nil {

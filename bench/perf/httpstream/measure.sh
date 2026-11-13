@@ -3,7 +3,7 @@
 # (SIZE) read by Xo's client as a stream and whole (send), on each backend
 # named, beside the Go twin's two modes. Runs each 5 times under
 # /usr/bin/time -l and prints "<client> <mode> <min wall s> <min peak
-# RSS bytes>" (darwin).
+# RSS bytes>" (darwin; on Linux GNU time, its KiB times 1024).
 #
 # usage: bench/perf/httpstream/measure.sh <xo binary> <out dir> <backend...>
 set -e
@@ -39,7 +39,14 @@ for c in "$@" gotwin; do
 		best_w=""
 		best_r=""
 		for _ in 1 2 3 4 5; do
-			ADDR=127.0.0.1:$PORT SIZE=$SIZE MODE=$mode /usr/bin/time -l "$OUT/c-$c" >"$OUT/run.txt" 2>"$OUT/time.txt"
+			# darwin's time -l prints "N real" and the peak RSS in bytes;
+			# GNU time (Linux) gets a format giving the same two lines
+			if [ "$(uname)" = Darwin ]; then
+				ADDR=127.0.0.1:$PORT SIZE=$SIZE MODE=$mode /usr/bin/time -l "$OUT/c-$c" >"$OUT/run.txt" 2>"$OUT/time.txt"
+			else
+				ADDR=127.0.0.1:$PORT SIZE=$SIZE MODE=$mode /usr/bin/time -f "%e real
+%M maximum resident set size" "$OUT/c-$c" >"$OUT/run.txt" 2>"$OUT/time.txt"
+			fi
 			got=$(cat "$OUT/run.txt")
 			if [ "$got" != "$SIZE" ]; then
 				echo "$c $mode: read $got bytes, want $SIZE" >&2
@@ -47,6 +54,7 @@ for c in "$@" gotwin; do
 			fi
 			w=$(awk '/ real /{print $1}' "$OUT/time.txt")
 			r=$(awk '/maximum resident set size/{print $1}' "$OUT/time.txt")
+			if [ "$(uname)" != Darwin ]; then r=$((r * 1024)); fi
 			if [ -z "$best_w" ] || awk "BEGIN{exit !($w < $best_w)}"; then best_w=$w; fi
 			if [ -z "$best_r" ] || [ "$r" -lt "$best_r" ]; then best_r=$r; fi
 		done
