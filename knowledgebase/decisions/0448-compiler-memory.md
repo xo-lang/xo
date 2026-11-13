@@ -1496,3 +1496,13 @@ Follow-up (open): win the CPU back by allocating what emit allocates
 per function from per-function memory (an arena, or the pool's buffer
 reused across functions), so a function's MIR lands in recently freed
 blocks; measure with `--ab` on aiplatform and the self build.
+
+First probe (2026-11-13): small lists sized like the function's
+argument lists, allocated and dropped just before isel (warming the
+allocator's free lists without keeping them live): aiplatform `--ab` on
+host 1, n=9, CPU 1.000, wall 0.998, RSS 1.014, no effect. So the live
+blocks matter, not warm free lists: kept live, they likely fill the
+scattered holes of the heap, so emit's MIR allocations come from fresh,
+contiguous memory. Next: an emit-scoped arena (decision 0435's arena
+mode was never merged; refs/recover/xl91-arena) or an allocator policy
+that carves a function's MIR from fresh memory.
