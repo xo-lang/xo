@@ -3633,7 +3633,6 @@ test "list_sort_in_place_by: a failing key propagates and leaves the list alone"
   expect(xs[1].tag == "b")
 }
 
-
 // list_sort's Int path: Go's pdqsort (pdq_sort_ints), checked against
 // the stable in-place merge on the inputs its branches handle (insertion
 // below 13, ninther pivots from 50, a sorted run's partial insertion, a
@@ -4462,22 +4461,54 @@ test "create_temp_dir makes new directories in a MemFs through its methods" {
   expect(create_temp_dir(os.fs.read_only(), "work", "r-").is_err()) == true
 }
 
+fn lp_windows() -> Bool {
+  match target.os {
+    TargetOs.Windows => true
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.FreeBSD | TargetOs.Wasi => false
+  }
+}
+
+test "look_path on Windows through a MemFs: PATHEXT extensions, not the mode, directories, ErrDot, a name with a slash" {
+  if lp_windows() {
+    os.fs.create_dir_all("/bin1/d")?
+    os.fs.create_dir_all("/bin2")?
+    os.fs.write("/bin1/tool.exe", b"x")?
+    os.fs.write("/bin2/tool", b"x")?
+    os.fs.set_mode("/bin2/tool", 0o755)?
+    os.fs.write("/bin2/run.bat", b"x")?
+    os.env.set("PATH", "/bin2;/bin1")
+    // an executable is a file with a PATHEXT extension, whatever its mode
+    expect(look_path(os.env, os.fs, "tool")) == Ok("/bin1/tool.exe")
+    expect(look_path(os.env, os.fs, "run")) == Ok("/bin2/run.bat")
+    expect(look_path(os.env, os.fs, "d").is_err()) == true
+    expect(look_path(os.env, os.fs, "nope")) == Err(ProcErr.NotFound(cmd: "nope"))
+    expect(look_path(os.env, os.fs, "/bin1/tool")) == Ok("/bin1/tool.exe")
+    expect(look_path(os.env, os.fs, "/bin1/tool.exe")) == Ok("/bin1/tool.exe")
+    os.env.set("PATH", "bin1")
+    os.fs.create_dir_all("bin1")?
+    os.fs.write("bin1/tool.exe", b"x")?
+    expect(look_path(os.env, os.fs, "tool")) == Err(ProcErr.NotFound(cmd: "tool"))
+  }
+}
+
 test "look_path searches PATH through a MemFs: execute bit, directories, ErrDot, a name with a slash" {
-  os.fs.create_dir_all("/bin1/d")?
-  os.fs.create_dir_all("/bin2")?
-  os.fs.write("/bin1/tool", b"x")?
-  os.fs.set_mode("/bin1/tool", 0o755)?
-  os.fs.write("/bin2/tool", b"x")?
-  os.fs.set_mode("/bin2/tool", 0o644)?
-  os.env.set("PATH", "/bin2:/bin1")
-  expect(look_path(os.env, os.fs, "tool")) == Ok("/bin1/tool")
-  expect(look_path(os.env, os.fs, "d").is_err()) == true
-  expect(look_path(os.env, os.fs, "nope")) == Err(ProcErr.NotFound(cmd: "nope"))
-  expect(look_path(os.env, os.fs, "/bin1/tool")) == Ok("/bin1/tool")
-  expect(look_path(os.env, os.fs, "/bin2/tool").is_err()) == true
-  os.env.set("PATH", "bin1")
-  os.fs.create_dir_all("bin1")?
-  os.fs.write("bin1/tool", b"x")?
-  os.fs.set_mode("bin1/tool", 0o755)?
-  expect(look_path(os.env, os.fs, "tool")) == Err(ProcErr.NotFound(cmd: "tool"))
+  if !lp_windows() {
+    os.fs.create_dir_all("/bin1/d")?
+    os.fs.create_dir_all("/bin2")?
+    os.fs.write("/bin1/tool", b"x")?
+    os.fs.set_mode("/bin1/tool", 0o755)?
+    os.fs.write("/bin2/tool", b"x")?
+    os.fs.set_mode("/bin2/tool", 0o644)?
+    os.env.set("PATH", "/bin2:/bin1")
+    expect(look_path(os.env, os.fs, "tool")) == Ok("/bin1/tool")
+    expect(look_path(os.env, os.fs, "d").is_err()) == true
+    expect(look_path(os.env, os.fs, "nope")) == Err(ProcErr.NotFound(cmd: "nope"))
+    expect(look_path(os.env, os.fs, "/bin1/tool")) == Ok("/bin1/tool")
+    expect(look_path(os.env, os.fs, "/bin2/tool").is_err()) == true
+    os.env.set("PATH", "bin1")
+    os.fs.create_dir_all("bin1")?
+    os.fs.write("bin1/tool", b"x")?
+    os.fs.set_mode("bin1/tool", 0o755)?
+    expect(look_path(os.env, os.fs, "tool")) == Err(ProcErr.NotFound(cmd: "tool"))
+  }
 }

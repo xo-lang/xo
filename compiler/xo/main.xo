@@ -2359,6 +2359,16 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
             cobjs.push(k32)
           }
         }
+        // ucrt.lib, the C library MSVC's linker adds (as a windows/amd64
+        // `use c` link with the C runtime has it): <ctype.h>, strtol,
+        // atoi, the stdio family; after the runtime's own exports, so
+        // malloc, calloc, realloc and free stay Xo's heap's (cabi_wincrt)
+        if !ci.flags.any(fn(f) { f.trim_prefix("-l").to_lower() == "ucrt" }) {
+          let ucrt = win_find_lib(os, libdirs, "ucrt")
+          if !ucrt.is_empty() {
+            cobjs.push(ucrt)
+          }
+        }
       }
       var wobjs: List[Str] = []
       if xo_as {

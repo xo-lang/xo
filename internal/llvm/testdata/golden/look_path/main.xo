@@ -2,7 +2,10 @@
 // with a program's own Env giving PATH: the first executable file wins, a
 // file without an execute bit and a directory are skipped, a name with a
 // slash is tried as it is, an empty or relative PATH entry that finds it
-// is refused (Go's ErrDot), and a missing name is NotFound.
+// is refused (Go's ErrDot), and a missing name is NotFound. On Windows
+// (want_windows.txt) PATH is ";" separated and an executable is a file
+// with a PATHEXT extension (.com .exe .bat .cmd), whatever its mode, as
+// Go's LookPath there: the files get .exe and .bat, b2's tool wins.
 struct PathEnv {
   path: Str
 }
@@ -18,7 +21,17 @@ fn (e: PathEnv) cache_dir() -> Str ! EnvErr uses env { Err(EnvErr.Missing(name: 
 fn (e: PathEnv) hostname() -> Str uses env { "" }
 fn (e: PathEnv) local_app_data() -> Str ! EnvErr uses env { Err(EnvErr.Missing(name: "LocalAppData")) }
 
+fn win() -> Bool {
+  match target.os {
+    TargetOs.Windows => true
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.FreeBSD | TargetOs.Wasi => false
+  }
+}
+
 fn main(os: Os) ! {
+  let exe = if win() { ".exe" } else { "" }
+  let bat = if win() { ".bat" } else { "" }
+  let sep = if win() { ";" } else { ":" }
   let cwd = os.fs.cwd()
   let top = create_temp_dir(cwd, ".", "lp-")?
   defer {
@@ -27,19 +40,19 @@ fn main(os: Os) ! {
   let abs = cwd.cwd_path()? + "/" + top
   cwd.create_dir_all("${top}/b1/d")?
   cwd.create_dir_all("${top}/b2")?
-  cwd.write("${top}/b1/tool", b"#!/bin/sh\n")?
-  cwd.set_mode("${top}/b1/tool", 0o755)?
-  cwd.write("${top}/b2/tool", b"#!/bin/sh\n")?
-  cwd.set_mode("${top}/b2/tool", 0o644)?
-  cwd.write("${top}/b2/other", b"#!/bin/sh\n")?
-  cwd.set_mode("${top}/b2/other", 0o700)?
+  cwd.write("${top}/b1/tool${exe}", b"#!/bin/sh\n")?
+  cwd.set_mode("${top}/b1/tool${exe}", 0o755)?
+  cwd.write("${top}/b2/tool${exe}", b"#!/bin/sh\n")?
+  cwd.set_mode("${top}/b2/tool${exe}", 0o644)?
+  cwd.write("${top}/b2/other${bat}", b"#!/bin/sh\n")?
+  cwd.set_mode("${top}/b2/other${bat}", 0o700)?
   let show = fn(r: Result[Str, ProcErr]) -> Str {
     match r {
       Ok(p) => if p.starts_with(abs) { "ok " + p[abs.len()..p.len()] } else { "ok " + p }
       Err(e) => "err " + "${e}".replace(abs, "")
     }
   }
-  let env = PathEnv{path: "${abs}/b2:${abs}/b1"}
+  let env = PathEnv{path: "${abs}/b2${sep}${abs}/b1"}
   os.stdio.println("tool: ${show(look_path(env, os.fs, "tool"))}")
   os.stdio.println("other: ${show(look_path(env, os.fs, "other"))}")
   os.stdio.println("dir: ${show(look_path(env, os.fs, "d"))}")

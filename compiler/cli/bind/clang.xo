@@ -25,15 +25,61 @@ fn find_clang(os: Os) -> Str ! Str uses (env, fs.read) {
 /// first file of that name in a directory of $PATH; "" when there is
 /// none.
 fn look_path(os: Os, name: Str) -> Str uses (env, fs.read) {
+  if hostpath.windows() {
+    return look_path_windows(os, name)
+  }
   if name.contains("/") {
     return if is_file(os, name) { name } else { "" }
   }
-  // ";" separates on Windows, where ":" follows a drive letter
-  for d0 in (os.env.get("PATH") ?? "").split(if hostpath.windows() { ";" } else { ":" }) {
+  for d0 in (os.env.get("PATH") ?? "").split(":") {
     let d = if d0.is_empty() { "." } else { d0 }
     let p = "${d}/${name}"
     if is_file(os, p) {
       return p
+    }
+  }
+  ""
+}
+
+/// exec.LookPath on Windows (compiler/xo tools.xo's look_path_windows):
+/// a name holding \, / or : is a path; else each directory of %PATH% (;
+/// separated, since : follows a drive letter) in turn, each candidate
+/// tried as written when its last element has an extension and with each
+/// extension of %PATHEXT%, so clang finds clang.exe. The result uses /
+/// separators.
+fn look_path_windows(os: Os, name: Str) -> Str uses (env, fs.read) {
+  let n = name.replace("\\", "/")
+  if n.contains("/") || n.contains(":") {
+    return find_exe_windows(os, n)
+  }
+  for d0 in (os.env.get("PATH") ?? "").split(";") {
+    let d = d0.trim_prefix("\"").trim_suffix("\"").replace("\\", "/").trim_suffix("/")
+    if d.is_empty() {
+      continue
+    }
+    let p = find_exe_windows(os, "${d}/${n}")
+    if !p.is_empty() {
+      return p
+    }
+  }
+  ""
+}
+
+/// exec's findExecutable on Windows: p when its last element has an
+/// extension and is a file, else p with the first extension of %PATHEXT%
+/// that is; "" when none is.
+fn find_exe_windows(os: Os, p: Str) -> Str uses (env, fs.read) {
+  let last = match p.rfind("/") {
+    Some(i) => p[i + 1..]
+    None => p
+  }
+  if last.contains(".") && is_file(os, p) {
+    return p
+  }
+  let pe = os.env.get("PATHEXT") ?? ""
+  for e in (if pe.is_empty() { ".com;.exe;.bat;.cmd" } else { pe }).split(";") {
+    if !e.is_empty() && is_file(os, p + e.to_lower()) {
+      return p + e.to_lower()
     }
   }
   ""

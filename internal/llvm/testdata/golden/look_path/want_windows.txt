@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+tool: ok /b2/tool.exe
+other: ok /b2/other.bat
+dir: err d: executable file not found
+missing: err missing: executable file not found
+slash: ok /b2/other.bat
+slash, not executable: ok /b2/tool.exe
+relative entry: err tool: executable file not found
+empty PATH: err tool: executable file not found
+--- stderr

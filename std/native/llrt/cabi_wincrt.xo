@@ -55,6 +55,14 @@ fn malloc(n: Int) -> Int { libcmem.malloc(n) }
 
 fn free(p: Int) { libcmem.free(p) }
 
+/// calloc and realloc on the same heap, for a windows/arm64 `use c`
+/// binding (decision 0569): the rest of its C library is the UCRT's
+/// (ucrt.lib, linked beside kernel32.lib), whose heap free would not
+/// know.
+fn calloc(n: Int, m: Int) -> Int { libcmem.calloc(n, m) }
+
+fn realloc(p: Int, n: Int) -> Int { libcmem.realloc(p, n) }
+
 /// abort (SQLite's, on a broken invariant): the process ends with
 /// status 3, as MSVC's abort ends it.
 fn abort() {

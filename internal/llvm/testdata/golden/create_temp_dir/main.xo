@@ -2,6 +2,8 @@
 // directories under the prefix, distinct, mode 0o700 (before a umask,
 // which leaves the owner's bits), relative to the capability root, and
 // usable as a sub capability; a read-only Fs is denied.
+// On Windows (want_windows.txt) a directory's mode is 0o777 as Go's
+// os.Stat reports it there: Windows has no group or other bits.
 fn main(os: Os) ! {
   let cwd = os.fs.cwd()
   let top = create_temp_dir(cwd, ".", "ctd-")?

@@ -2,6 +2,8 @@
 // realloc, strtol, atoi, ...). On FreeBSD an Xo program links no C
 // library, and Xo's runtime defines these (decision 0573, `use c` stage
 // 2: std/native/llrt/cabi_cbind.xo); elsewhere the system's C library.
+// Windows is LLP64: strtol returns a 32-bit long, so it saturates at
+// 2^31-1 there (want_windows.txt).
 use c "libcc.h" link "libcc.c"
 
 fn main(os: Os) {

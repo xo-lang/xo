@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+fmt 0: 42|   -7|3    |00012|+9| 4
+fmt 1: ff|BEE|0xff|10|010|4000000000
+fmt 2: -1912276171|9223372036854775807|77|4464|44
+fmt 3: [abc]|[   right]|[left    ]|[tru]|[Z]|[%]
+fmt 4: 3.14|  -2.500|1.3     |0.100000|3|+7.0
+fmt 5:      1|2   |xy
+fmt 6: n=11 small=overflo
+fmt 7: 5-five len 6
+ctype HaEaLaLaOa,p sWaOaRaLaDa s4d2d!p	s
+eprint returned 14
+--- stderr
+eprint 7 done
