@@ -1,3 +1,4 @@
+use std/crypto
 use std/x509
 
 // Chain verification as Go 1.27.4's crypto/x509, found by the decision
@@ -66,3 +67,40 @@ const HOST_CASES: List[(Str, Str, Str, Str)] = [
   ("150 IP SANs", "-----BEGIN CERTIFICATE-----\nMIIEaDCCBBqgAwIBAgIBBzAFBgMrZXAwDzENMAsGA1UEAxMEbWFueTAeFw0yMzEx\nMTQyMjEzMjBaFw0zMDAzMTcxNzQ2NDBaMA8xDTALBgNVBAMTBG1hbnkwKjAFBgMr\nZXADIQA7aie8zrakLWKjqNAqbw1zZTIVdx3iQ6Y6wEihi1naKaOCA5kwggOVMIID\nkQYDVR0RBIIDiDCCA4SHBAoAAACHBAoAAAGHBAoAAAKHBAoAAAOHBAoAAASHBAoA\nAAWHBAoAAAaHBAoAAAeHBAoAAAiHBAoAAAmHBAoAAAqHBAoAAAuHBAoAAAyHBAoA\nAA2HBAoAAA6HBAoAAA+HBAoAABCHBAoAABGHBAoAABKHBAoAABOHBAoAABSHBAoA\nABWHBAoAABaHBAoAABeHBAoAABiHBAoAABmHBAoAABqHBAoAABuHBAoAAByHBAoA\nAB2HBAoAAB6HBAoAAB+HBAoAACCHBAoAACGHBAoAACKHBAoAACOHBAoAACSHBAoA\nACWHBAoAACaHBAoAACeHBAoAACiHBAoAACmHBAoAACqHBAoAACuHBAoAACyHBAoA\nAC2HBAoAAC6HBAoAAC+HBAoAADCHBAoAADGHBAoAADKHBAoAADOHBAoAADSHBAoA\nADWHBAoAADaHBAoAADeHBAoAADiHBAoAADmHBAoAADqHBAoAADuHBAoAADyHBAoA\nAD2HBAoAAD6HBAoAAD+HBAoAAECHBAoAAEGHBAoAAEKHBAoAAEOHBAoAAESHBAoA\nAEWHBAoAAEaHBAoAAEeHBAoAAEiHBAoAAEmHBAoAAEqHBAoAAEuHBAoAAEyHBAoA\nAE2HBAoAAE6HBAoAAE+HBAoAAFCHBAoAAFGHBAoAAFKHBAoAAFOHBAoAAFSHBAoA\nAFWHBAoAAFaHBAoAAFeHBAoAAFiHBAoAAFmHBAoAAFqHBAoAAFuHBAoAAFyHBAoA\nAF2HBAoAAF6HBAoAAF+HBAoAAGCHBAoAAGGHBAoAAGKHBAoAAGOHBAoAAGSHBAoA\nAGWHBAoAAGaHBAoAAGeHBAoAAGiHBAoAAGmHBAoAAGqHBAoAAGuHBAoAAGyHBAoA\nAG2HBAoAAG6HBAoAAG+HBAoAAHCHBAoAAHGHBAoAAHKHBAoAAHOHBAoAAHSHBAoA\nAHWHBAoAAHaHBAoAAHeHBAoAAHiHBAoAAHmHBAoAAHqHBAoAAHuHBAoAAHyHBAoA\nAH2HBAoAAH6HBAoAAH+HBAoAAICHBAoAAIGHBAoAAIKHBAoAAIOHBAoAAISHBAoA\nAIWHBAoAAIaHBAoAAIeHBAoAAIiHBAoAAImHBAoAAIqHBAoAAIuHBAoAAIyHBAoA\nAI2HBAoAAI6HBAoAAI+HBAoAAJCHBAoAAJGHBAoAAJKHBAoAAJOHBAoAAJSHBAoA\nAJUwBQYDK2VwA0EAvAO3B3N35j2393oIzezQ1tNIS9anWPiSXsQRhBlNhrJ956TI\n9vPisj7rj8Vf81iq/6QMGgzWtxOl30bCOy2CBA==\n-----END CERTIFICATE-----\n", "10.0.0.149", "ok"),
   ("150 IP SANs", "-----BEGIN CERTIFICATE-----\nMIIEaDCCBBqgAwIBAgIBBzAFBgMrZXAwDzENMAsGA1UEAxMEbWFueTAeFw0yMzEx\nMTQyMjEzMjBaFw0zMDAzMTcxNzQ2NDBaMA8xDTALBgNVBAMTBG1hbnkwKjAFBgMr\nZXADIQA7aie8zrakLWKjqNAqbw1zZTIVdx3iQ6Y6wEihi1naKaOCA5kwggOVMIID\nkQYDVR0RBIIDiDCCA4SHBAoAAACHBAoAAAGHBAoAAAKHBAoAAAOHBAoAAASHBAoA\nAAWHBAoAAAaHBAoAAAeHBAoAAAiHBAoAAAmHBAoAAAqHBAoAAAuHBAoAAAyHBAoA\nAA2HBAoAAA6HBAoAAA+HBAoAABCHBAoAABGHBAoAABKHBAoAABOHBAoAABSHBAoA\nABWHBAoAABaHBAoAABeHBAoAABiHBAoAABmHBAoAABqHBAoAABuHBAoAAByHBAoA\nAB2HBAoAAB6HBAoAAB+HBAoAACCHBAoAACGHBAoAACKHBAoAACOHBAoAACSHBAoA\nACWHBAoAACaHBAoAACeHBAoAACiHBAoAACmHBAoAACqHBAoAACuHBAoAACyHBAoA\nAC2HBAoAAC6HBAoAAC+HBAoAADCHBAoAADGHBAoAADKHBAoAADOHBAoAADSHBAoA\nADWHBAoAADaHBAoAADeHBAoAADiHBAoAADmHBAoAADqHBAoAADuHBAoAADyHBAoA\nAD2HBAoAAD6HBAoAAD+HBAoAAECHBAoAAEGHBAoAAEKHBAoAAEOHBAoAAESHBAoA\nAEWHBAoAAEaHBAoAAEeHBAoAAEiHBAoAAEmHBAoAAEqHBAoAAEuHBAoAAEyHBAoA\nAE2HBAoAAE6HBAoAAE+HBAoAAFCHBAoAAFGHBAoAAFKHBAoAAFOHBAoAAFSHBAoA\nAFWHBAoAAFaHBAoAAFeHBAoAAFiHBAoAAFmHBAoAAFqHBAoAAFuHBAoAAFyHBAoA\nAF2HBAoAAF6HBAoAAF+HBAoAAGCHBAoAAGGHBAoAAGKHBAoAAGOHBAoAAGSHBAoA\nAGWHBAoAAGaHBAoAAGeHBAoAAGiHBAoAAGmHBAoAAGqHBAoAAGuHBAoAAGyHBAoA\nAG2HBAoAAG6HBAoAAG+HBAoAAHCHBAoAAHGHBAoAAHKHBAoAAHOHBAoAAHSHBAoA\nAHWHBAoAAHaHBAoAAHeHBAoAAHiHBAoAAHmHBAoAAHqHBAoAAHuHBAoAAHyHBAoA\nAH2HBAoAAH6HBAoAAH+HBAoAAICHBAoAAIGHBAoAAIKHBAoAAIOHBAoAAISHBAoA\nAIWHBAoAAIaHBAoAAIeHBAoAAIiHBAoAAImHBAoAAIqHBAoAAIuHBAoAAIyHBAoA\nAI2HBAoAAI6HBAoAAI+HBAoAAJCHBAoAAJGHBAoAAJKHBAoAAJOHBAoAAJSHBAoA\nAJUwBQYDK2VwA0EAvAO3B3N35j2393oIzezQ1tNIS9anWPiSXsQRhBlNhrJ956TI\n9vPisj7rj8Vf81iq/6QMGgzWtxOl30bCOy2CBA==\n-----END CERTIFICATE-----\n", "other.example.com", "error: x509: certificate is not valid for any names, but wanted to match other.example.com"),
 ]
+
+test "pathological intermediate pools stop at the signature check limit (Go's TestPathologicalChains)" {
+  // 100 intermediates, each signed by the one before, with the same or
+  // different subjects and keys, and no root: every case is Go 1.27.4's
+  // errSignatureLimit, quickly (all the same subject and key is the worst
+  // case: each appears to have signed every other)
+  let now = os.clock.now()
+  let shared = crypto.generate_key(os.rand, crypto.KeyAlg.Ed25519).or_fault("key")
+  for (same_subject, same_key) in [(false, false), (true, false), (false, true), (true, true)] {
+    var inters: List[x509.Certificate] = []
+    var parent: x509.Certificate? = None
+    var signer = shared
+    for i in 0..100 {
+      let k = if same_key { shared } else { crypto.generate_key(os.rand, crypto.KeyAlg.Ed25519).or_fault("key") }
+      let cn = if same_subject { "Intermediate CA" } else { "Intermediate CA #${i}" }
+      let t = x509.Template{subject: x509.Name{common_name: cn}, not_before: now - 1h, not_after: now + 8760h, is_ca: true, key_usage: [x509.KeyUsage.CertSign]}
+      let c = match parent {
+        Some(p) => x509.create_certificate(os.rand, t, k.public_key(), Some(p), signer).or_fault("inter")
+        None => x509.create_certificate(os.rand, t, k.public_key(), None, k).or_fault("inter")
+      }
+      inters.push(c)
+      parent = Some(c)
+      signer = k
+    }
+    let lk = crypto.generate_key(os.rand, crypto.KeyAlg.Ed25519).or_fault("key")
+    let lt = x509.Template{subject: x509.Name{common_name: "Leaf"}, not_before: now - 1h, not_after: now + 8760h, ext_key_usage: [x509.ExtKeyUsage.ServerAuth]}
+    let leaf = x509.create_certificate(os.rand, lt, lk.public_key(), parent, signer).or_fault("leaf")
+    let t0 = os.clock.now()
+    let got = match leaf.verify(x509.VerifyOptions{roots: [], intermediates: inters, at: now}) {
+      Ok(_) => "ok"
+      Err(e) => e.display()
+    }
+    let ms = (os.clock.now() - t0).millis()
+    expect((same_subject, same_key, got)) == (same_subject, same_key, "x509: signature check attempts limit reached while verifying certificate chain")
+    expect(ms < 5000) == true
+  }
+}
