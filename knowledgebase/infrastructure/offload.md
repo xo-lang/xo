@@ -630,10 +630,14 @@ libraries in `Windows Kits\10\Lib\10.0.26100.0\um\arm64`); WinDbg
 1.2611 by winget, whose package carries `arm64\cdb.exe` under
 `C:\Program Files\WindowsApps\Microsoft.WinDbg_*` (the SDK's own
 Debugging Tools feature was not installed: winget only upgrades an SDK
-that is already present).
+that is already present). Windows refuses to run that cdb.exe by its path
+("Permission denied"), so its `arm64` directory is copied to
+`~/tools/windbg-arm64` (cdb 10.0.29680.1004), which runs and which
+scripts/ci/windows-sepcomp.sh finds (Last verified: 2026-11-12).
 Git Bash's runtime is x64 under emulation (`uname -m` says x86_64); Go and
 the jobs' programs run natively. No xo seed for windows/arm64 yet, so it
-runs programs cross-built on the Mac. Fusion's "vmware-vdiskmanager -x"
+runs programs cross-built on the Mac. (Since 2026-11-12 it has seed
+0.50.1-6d0a9dc7's windows-arm64 xo, OFF_SEED in offload-winarm.env.) Fusion's "vmware-vdiskmanager -x"
 cannot grow a disk of an encrypted VM ("Failed to analyze snapshot
 chain"); an empty disk was replaced with a new 200 GB one instead.
 Last verified: 2026-11-09.

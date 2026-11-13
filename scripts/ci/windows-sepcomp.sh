@@ -1,7 +1,8 @@
 #!/bin/bash
-# scripts/ci/windows-sepcomp.sh: separate compilation on windows/amd64
-# (decision 0388) on the xo-windows runner, before it is the default there
-# (owner-approved runs, 2026-10-28):
+# scripts/ci/windows-sepcomp.sh: separate compilation on windows/amd64 and
+# windows/arm64 (decision 0388; the backend is the host's: arm64 on a
+# Windows on ARM machine, 2026-11-12) on the xo-windows runner, before it
+# was the default there (owner-approved runs, 2026-10-28):
 #   gh workflow run ci.yml -f suite=script -f runner=xo-windows \
 #     -f ref=BRANCH -f packages="scripts/ci/windows-sepcomp.sh"
 # 1. The default: after `xo dev stdcache` (both concurrency settings), a
@@ -36,6 +37,11 @@ check() { # NAME CONDITION-RESULT(0 ok) DETAIL
   if [ "$2" = 0 ]; then note "ok   $1"; else note "FAIL $1: $3"; fail=1; fi
 }
 export XO_STD=${XO_CI_STD:-$(dirname "$(dirname "$xo")")/std}
+# the backend of xo's own pair (`xo version`: "xo X.Y.Z windows/arm64");
+# not PROCESSOR_ARCHITECTURE, which an x64 Git Bash under emulation on
+# Windows on ARM reads as AMD64 (the winarm VM, 2026-11-12)
+case "$("$xo" version 2>&1 | head -1 | tr -d '\r')" in *windows/arm64) be=arm64 dbgarch=arm64 ;; *) be=amd64 dbgarch=x64 ;; esac
+note "backend $be"
 note "xo $("$xo" version 2>&1 | head -1); std $XO_STD"
 # a cache of the run's own
 export XO_BACKEND_CACHE_DIR
@@ -88,7 +94,7 @@ EOF
 build() { # DIR OUT [ARGS...]: with $BENV
   local d=$1 x=$2
   shift 2
-  (cd "$d" && env "${BENV[@]}" "$xo" build --backend=amd64 "$@" -o "$(np "$x")" .) > "$x.log" 2>&1
+  (cd "$d" && env "${BENV[@]}" "$xo" build --backend=$be "$@" -o "$(np "$x")" .) > "$x.log" 2>&1
 }
 # one output name in three directories (the version resource and the
 # PDB record name the executable: CI 40818979768 compared default.exe
@@ -107,7 +113,7 @@ cmp -s "$w/bd/prog.exe" "$w/bw/prog.exe"; [ $? != 0 ]; check "and not the whole 
 # an edit, built by default: std's records (XO_STD_EXPORT, on by default
 # for a separate build since ac45dea60) are loaded, not std parsed
 sed -i 's/"sum /"total sum /' "$p/main.xo"
-(cd "$p" && XO_CACHE_STATS=1 "$xo" build --backend=amd64 -o "$(np "$w/bd/prog")" .) > "$w/edit.log" 2>&1; re2=$?
+(cd "$p" && XO_CACHE_STATS=1 "$xo" build --backend=$be -o "$(np "$w/bd/prog")" .) > "$w/edit.log" 2>&1; re2=$?
 grep -q "cache stdx record loaded" "$w/edit.log"; check "an edit's default build loads std's record ($(grep -m1 'cache stdx' "$w/edit.log"))" $((re2 + $?)) "$(grep 'cache stdx\|error' "$w/edit.log" | head -3)"
 "$w/bd/prog.exe" > "$w/edit.out" 2>&1
 grep -q "^total sum 15" "$w/edit.out"; check "the edited program prints its new line ($(head -1 "$w/edit.out"))" $? "$(head -2 "$w/edit.out")"
@@ -116,8 +122,14 @@ cmp -s "$w/be.out" "$w/bw.out"; check "separate and whole print the same ($(head
 note "separate prog.pdb $(wc -c < "$w/be/prog.pdb" 2>/dev/null) bytes, whole $(wc -c < "$w/bw/prog.pdb" 2>/dev/null)"
 
 cdb=""
-for c in "/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe" "/c/Program Files/Windows Kits/10/Debuggers/x64/cdb.exe"; do
-  [ -x "$c" ] && cdb=$c && break
+# XO_CDB, else the Windows SDK's, else a copy of WinDbg's in
+# ~/tools/windbg-<arch> (WinDbg from the Store or winget is under
+# C:/Program Files/WindowsApps/Microsoft.WinDbg_<version>_<arch>__<id>/<arch>,
+# where Windows refuses to run cdb.exe by its path, "Permission denied";
+# its directory copied out runs: the winarm VM, 2026-11-12). The one that
+# runs is taken (arm64's cdb for an arm64 program).
+for c in "${XO_CDB:-}" "/c/Program Files (x86)/Windows Kits/10/Debuggers/$dbgarch/cdb.exe" "/c/Program Files/Windows Kits/10/Debuggers/$dbgarch/cdb.exe" "$HOME/tools/windbg-$dbgarch/cdb.exe"; do
+  [ -n "$c" ] && [ -x "$c" ] && "$c" -version > /dev/null 2>&1 && cdb=$c && break
 done
 dbg() { # NAME EXE COMMANDS: cdb's transcript in $o/cdb-NAME.txt
   "$cdb" -lines -y "$(np "$(dirname "$2")")" -c "$3" "$(np "$2")" > "$o/cdb-$1.txt" 2>&1

@@ -910,7 +910,7 @@ amd64). The pieces were already in: `xo dev stdobj` names the arm64 backend for 
 (2998c07a9), Xo's ARM64 COFF assembler relocates a branch to another atom of std's store parts
 (58601f87b), and pe_link takes a concurrent program's conc=true store (cb07179c9). Checked on the
 winarm VM (Windows 11 ARM) with an xo.exe cross built from the change: scripts/ci/windows-sepcomp.sh
-with --backend=arm64 passes every check but cdb's (no Windows SDK debugger on the VM): the default
+with --backend=arm64 passes every check but cdb's (no Windows SDK debugger on the VM; later the same day the whole script passed there, cdb's steps too, with WinDbg 1.2611's arm64 cdb copied out of WindowsApps, gotchas/windows-arm64-git-bash-and-windowsapps.md): the default
 build is the explicit separate build's bytes and not the whole program's, an edit loads std's
 record, and the stripped and unstripped separate builds of async_preempt_alloc/regs, fault_unwind,
 fault_defer_chain, fault_tasks, json_text and conc_scopes match want.txt; the 52 http_* goldens pass
