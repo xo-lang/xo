@@ -94,12 +94,16 @@ func TestAuditInstalls(t *testing.T) {
 	modtest.WriteFiles(t, app, map[string]string{
 		"xo.mod": "module example.com/app\nedition preview\n",
 		"main.xo": `use std/log
+use std/http
+use std/cookiejar
 
-fn main(os: Os) uses stdio, fs.write, log {
+fn main(os: Os) uses stdio, fs.write, log, clock {
   log.configure_handler(log.text_handler(log.stderr_sink(os.stdio)))
   let f = os.fs.create("x.log").ok() ?? fault("open")
   log.configure_handler(log.json_handler(log.file_sink(f)))
   log.info("hi")
+  let c = http.client(os.net).with_jar(cookiejar.new_with(), os.clock)
+  let _ = c
 }
 `,
 	})
@@ -109,8 +113,9 @@ fn main(os: Os) uses stdio, fs.write, log {
 		t.Fatalf("bad JSON: %v\n%s", err, r.out)
 	}
 	want := []auditInstall{
-		{File: "main.xo", Line: 4, Call: "log.configure_handler", Effects: "stdio"},
-		{File: "main.xo", Line: 6, Call: "log.configure_handler", Effects: "fs.write, stdio"},
+		{File: "main.xo", Line: 6, Call: "log.configure_handler", Effects: "stdio"},
+		{File: "main.xo", Line: 8, Call: "log.configure_handler", Effects: "fs.write, stdio"},
+		{File: "main.xo", Line: 10, Call: "http.with_jar", Effects: "clock"},
 	}
 	if len(rep.Installs) != len(want) {
 		t.Fatalf("installs: %+v\n%s", rep.Installs, r.out)
