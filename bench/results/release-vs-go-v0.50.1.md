@@ -138,8 +138,10 @@ first build); the second is the first program a fresh install builds: its cold b
 variants exist, so it compiles the whole program, none of its entries serve separate compilation, and
 since second and warm are run-cache hits its first edit is the program's first separate build (fe 0/57
 bodies, chk 0/9 modules, functions 0/450 reused); the next edit reuses them (fe 49/57, chk 8/9,
-functions 175/450). The edit's comparison with Go is the first row's (226 against 304 ms); the second
-row's first edit is a one-time fill. A first run of this row wrote its logs inside the workspace's
+functions 175/450). The edit's comparison with Go is the first row's (226 against 304 ms). The second
+row ran under heavy.sh (XO_SEPCOMP_BG=0) with the variants built by hand, which skips the background
+build's warm step: on a user's install that step refills these caches about 29 s after the cold build,
+and the first edit took 233 ms / 160 MB (decision 0625, gotchas/heavy-runs-no-background-std-fill.md). A first run of this row wrote its logs inside the workspace's
 directory, which the run cache keys (a directory listing that changes can add an xo.mod or xo.work), so
 every build missed: keep logs outside the program's tree when timing.
 
