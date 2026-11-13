@@ -2615,6 +2615,15 @@ klauspost/compress's gzhttp:
 /// what Go's Encoder writes with SetEscapeHTML(false)); JSON put into an
 /// HTML `<script>` element by hand goes through html_escape first
 /// (std/template's html mode escapes JSON data itself).
+///
+/// Security (owner, 2026-11-13; the decision 0616 json review, R1): the
+/// minimal escaping is the default on purpose, as Go's encoding/json/v2
+/// (HTML escaping is opt-in there, jsontext.EscapeForHTML; v1's Marshal
+/// escapes only for compatibility). A JSON text embedded in an HTML
+/// `<script>` element must be written with `json_writer()` (escape_html
+/// is true by default), passed through `html_escape`, or put in through
+/// std/template's HTML mode; written raw, a value holding `</script>`
+/// closes the element.
 pub fn encode[T: Json](v: T) -> Bytes
 pub fn encode_str[T: Json](v: T) -> Str
 pub fn decode[T: Json](data: Bytes) -> T ! DecodeErr

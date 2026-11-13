@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-13: security: encode's HTML escaping stays opt-in (documented)
+
+- Kind: security
+- Commit: this commit
+- Found by: the decision 0616 security review of std/json (finding R1), decided by the owner
+- Go reference: encoding/json/v2 and encoding/json/jsontext: HTML escaping is opt-in (jsontext.EscapeForHTML); v1's Marshal escapes `<`, `>`, `&` by default for compatibility
+- Test: none (no behavior change); golden json_html_escape covers the escaping writer and html_escape
+- Shipped in: not yet released
+
+`json.encode` keeps writing `<`, `>` and `&` as they are, as Go's v2 does; spec/std.md 5 now says, next to encode, that a JSON text embedded in an HTML `<script>` element must use `json_writer()` (escaping by default), `html_escape`, or std/template's HTML mode. No output changes.
+
 ## 2026-11-12: behavior (breaking): a `-` wire string leaves the field out, as Go's json:"-"
 
 - Kind: behavior
