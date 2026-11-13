@@ -7437,8 +7437,14 @@ fn parse(der: Bytes) -> Certificate ! CertErr
 fn parse_pem(pem: Bytes) -> List[Certificate] ! CertErr
 struct Pkcs12 { key: crypto.PrivateKey, certificate: Certificate, ca: List[Certificate] }
 fn parse_pkcs12(data: Bytes, password: Str) -> Pkcs12 ! CertErr
+struct CertPool {}                                        // handle (decision 0626)
+fn cert_pool(certs: List[Certificate]) -> CertPool ! CertErr
+fn (var p: CertPool) add(c: Certificate) -> () ! CertErr
+fn (p: CertPool) certificates() -> List[Certificate]
+fn (p: CertPool) len() -> Int
 struct VerifyOptions {
-  roots: List[Certificate], intermediates: List[Certificate] = [],
+  roots: List[Certificate] = [], root_pool: CertPool? = None,
+  intermediates: List[Certificate] = [], intermediate_pool: CertPool? = None,
   dns_name: Str = "", at: Time, key_usages: List[ExtKeyUsage] = []   // [] is [ServerAuth]
 }
 fn (c: Certificate) verify(opts: VerifyOptions) -> List[List[Certificate]] ! CertErr
@@ -7508,6 +7514,16 @@ fn check(os: Os, pem: Bytes, roots: Bytes) -> () ! Error uses clock {
 }
 ```
 
+- A `CertPool` (Go's CertPool, decision 0626) holds certificates parsed
+  once: `verify` parses `roots` and `intermediates` on every call, a
+  pool's certificates never again (with 150 roots, about half a call's
+  time). `verify` trusts `roots` and `root_pool`'s together, and may
+  pass through `intermediates` and `intermediate_pool`'s; neither roots
+  nor a pool trusts nothing (`x509: certificate signed by unknown
+  authority`). `cert_pool` and `add` keep one certificate per DER, in
+  the order added, and fail on a DER that does not parse (a Certificate
+  built by hand). A pool is a value: a copy does not see the other's
+  later adds.
 - `parse` is Go's ParseCertificate, with its checks and its error texts
   (`CertErr("x509: malformed certificate")`, ...). `parse_pem` parses
   each CERTIFICATE block of a PEM text in order (other blocks are

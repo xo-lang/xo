@@ -36,6 +36,57 @@ test "chains verify as Go 1.27.4: name constraint case and the signature check l
   expect(bad) == []
 }
 
+test "a CertPool verifies as the lists do (decision 0626)" {
+  var bad: List[Str] = []
+  for (name, root, inter, leaf, want) in CASES {
+    let r = x509.parse_pem(root.bytes()).ok() ?? []
+    let i = x509.parse_pem(inter.bytes()).ok() ?? []
+    let l = x509.parse_pem(leaf.bytes()).ok() ?? []
+    let rp = x509.cert_pool(r).ok() ?? fault("roots")
+    let ip = x509.cert_pool(i).ok() ?? fault("inters")
+    let got = match l[0].verify(x509.VerifyOptions{root_pool: Some(rp), intermediate_pool: Some(ip), at: Time.from_unix(1780272000), key_usages: [x509.ExtKeyUsage.Any]}) {
+      Ok(_) => "ok"
+      Err(e) => "error: ${e.display()}"
+    }
+    if got != want {
+      bad.push("${name}: got ${got}")
+    }
+    // half in the pool, half in the list
+    let half = r.len() / 2
+    let rp2 = x509.cert_pool(r[0..half]).ok() ?? fault("half")
+    let got2 = match l[0].verify(x509.VerifyOptions{roots: r[half..r.len()], root_pool: Some(rp2), intermediates: i, at: Time.from_unix(1780272000), key_usages: [x509.ExtKeyUsage.Any]}) {
+      Ok(_) => "ok"
+      Err(e) => "error: ${e.display()}"
+    }
+    if got2 != want {
+      bad.push("${name} (pool and list): got ${got2}")
+    }
+  }
+  expect(bad) == []
+}
+
+test "a CertPool keeps one of each DER, in order; no roots trust nothing; a hand-made DER is an error" {
+  let (root, inter, leaf, _w) = (CASES[0].1, CASES[0].2, CASES[0].3, CASES[0].4)
+  let r = x509.parse_pem(root.bytes()).ok() ?? []
+  let i = x509.parse_pem(inter.bytes()).ok() ?? []
+  let l = x509.parse_pem(leaf.bytes()).ok() ?? []
+  var p = x509.cert_pool(r + r).ok() ?? fault("pool")
+  expect(p.len()) == r.len()
+  p.add(r[0]).ok() ?? fault("add")
+  expect(p.len()) == r.len()
+  p.add(l[0]).ok() ?? fault("add leaf")
+  expect(p.len()) == r.len() + 1
+  expect(p.certificates()[p.len() - 1].raw == l[0].raw) == true
+  let none = match l[0].verify(x509.VerifyOptions{intermediates: i, at: Time.from_unix(1780272000), key_usages: [x509.ExtKeyUsage.Any]}) {
+    Ok(_) => "ok"
+    Err(e) => e.display()
+  }
+  expect(none) == "x509: certificate signed by unknown authority"
+  var forged = x509.parse(l[0].raw).ok() ?? fault("parse")
+  forged.raw = b"\x30\x00"
+  expect(x509.cert_pool([forged]).is_err()) == true
+}
+
 // Certificate.verify_hostname as Go 1.27.4's VerifyHostname, found by the
 // decision 0616 x509 review: the host is split once (GO-2026-5037), and a
 // certificate with 100 or more names is not listed in the error

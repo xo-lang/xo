@@ -1,6 +1,8 @@
-# twincheck: x509: five workloads (none is the setup alone); Go is crypto/x509.
+# twincheck: x509: seven workloads (none is the setup alone); Go is crypto/x509.
 - - none
 - - parse
 - - verify
+- - verify150
+- - pool150
 - - create
 - - crl

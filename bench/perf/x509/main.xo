@@ -2,10 +2,11 @@
 // certificate chain (www.google.com, GTS CA 1C3, GTS Root R1, from Go's
 // verify_test.go, Copyright 2009 The Go Authors, BSD-style license) from
 // PEM 20,000 times, and verify it 5,000 times at Go's test time with its
-// DNS name, make an Ed25519 self-signed certificate 20,000 times, and
+// DNS name (verify150: 2,000 times among 150 roots; pool150: the same
+// roots in a CertPool), make an Ed25519 self-signed certificate 20,000 times, and
 // parse a CRL of 100 revoked certificates (derCRLBase64 of Go's
 // x509_test.go) 20,000 times; `none` is the setup alone. Usage:
-// `<program> none|parse|verify|create|crl`. Prints `<workload> <checksum>`; the twin prints the
+// `<program> none|parse|verify|verify150|pool150|create|crl`. Prints `<workload> <checksum>`; the twin prints the
 // same.
 use std/base64
 use std/crypto
@@ -43,6 +44,57 @@ fn main(os: Os) uses stdio, env, rand {
     for _ in 0..20000 {
       let c = x509.create_certificate(os.rand, t, k.public_key(), None, k).ok() ?? fault("create")
       s += c.raw.len()
+    }
+  } else if w == "verify150" {
+    // the chain's root among 149 others (Ed25519 CAs, one key each), as
+    // a system pool of about 150 roots: verify is called on lists, so
+    // each call sees every root
+    let cs = x509.parse_pem(chain).ok() ?? fault("parse")
+    var roots: List[x509.Certificate] = []
+    for i in 0..149 {
+      var seed = BytesBuilder.new()
+      seed.write_byte(UInt8(i % 256))
+      seed.write_byte(UInt8(i / 256))
+      seed.write(b"\x07".repeat(30))
+      let k = crypto.parse_private_key(KEY[0..16] + seed.freeze()).ok() ?? fault("key")
+      var serial = BytesBuilder.new()
+      serial.write_byte(1)
+      serial.write_byte(UInt8(i % 256))
+      let t = x509.Template{serial: serial.freeze(), subject: x509.Name{common_name: "Bench Root ${i}", organization: ["Xo Bench"]}, not_before: Time.from_unix(1600000000), not_after: Time.from_unix(1900000000), is_ca: true, key_usage: [x509.KeyUsage.CertSign]}
+      roots.push(x509.create_certificate(os.rand, t, k.public_key(), None, k).ok() ?? fault("root"))
+      if i == 74 {
+        roots.push(cs[2])
+      }
+    }
+    let opts = x509.VerifyOptions{roots: roots, intermediates: [cs[1]], dns_name: "www.google.com", at: Time.from_unix(1677615892)}
+    for _ in 0..2000 {
+      let chains = cs[0].verify(opts).ok() ?? fault("verify")
+      s += chains.len() + chains[0].len()
+    }
+  } else if w == "pool150" {
+    // verify150 with the roots in a CertPool (decision 0626)
+    let cs = x509.parse_pem(chain).ok() ?? fault("parse")
+    var roots: List[x509.Certificate] = []
+    for i in 0..149 {
+      var seed = BytesBuilder.new()
+      seed.write_byte(UInt8(i % 256))
+      seed.write_byte(UInt8(i / 256))
+      seed.write(b"\x07".repeat(30))
+      let k = crypto.parse_private_key(KEY[0..16] + seed.freeze()).ok() ?? fault("key")
+      var serial = BytesBuilder.new()
+      serial.write_byte(1)
+      serial.write_byte(UInt8(i % 256))
+      let t = x509.Template{serial: serial.freeze(), subject: x509.Name{common_name: "Bench Root ${i}", organization: ["Xo Bench"]}, not_before: Time.from_unix(1600000000), not_after: Time.from_unix(1900000000), is_ca: true, key_usage: [x509.KeyUsage.CertSign]}
+      roots.push(x509.create_certificate(os.rand, t, k.public_key(), None, k).ok() ?? fault("root"))
+      if i == 74 {
+        roots.push(cs[2])
+      }
+    }
+    let pool = x509.cert_pool(roots).ok() ?? fault("pool")
+    let opts = x509.VerifyOptions{root_pool: Some(pool), intermediates: [cs[1]], dns_name: "www.google.com", at: Time.from_unix(1677615892)}
+    for _ in 0..2000 {
+      let chains = cs[0].verify(opts).ok() ?? fault("verify")
+      s += chains.len() + chains[0].len()
     }
   } else if w == "crl" {
     let der = base64.decode(CRL).ok() ?? fault("base64")

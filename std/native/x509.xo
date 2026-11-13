@@ -9,6 +9,7 @@ use native/llrt/pkcs12
 use native/llrt/tlscert
 use native/llrt/x509cert as lx
 use native/llrt/x509verify as xv
+use native/rt
 
 fn certerr_display(e: x509.CertErr) -> Str { e.msg }
 
@@ -310,16 +311,52 @@ fn parse_pem(pem: Bytes) -> List[x509.Certificate] ! x509.CertErr {
   Ok(out)
 }
 
+/// The parsed certificates and the public ones they came from, each DER
+/// once.
+struct CertPool {
+  parsed: List[lx.Cert]
+  certs: List[x509.Certificate]
+  seen: Map[Bytes, Bool]
+}
+
+fn cert_pool(certs: List[x509.Certificate]) -> CertPool ! x509.CertErr {
+  var p = CertPool{parsed: [], certs: [], seen: {}}
+  for c in certs {
+    p.add(c)?
+  }
+  Ok(p)
+}
+
+fn (var p: CertPool) add(c: x509.Certificate) -> () ! x509.CertErr {
+  if p.seen.contains(c.raw) {
+    return Ok(())
+  }
+  p.parsed.push(lcert(c)?)
+  p.certs.push(c)
+  p.seen.put(c.raw, true)
+  Ok(())
+}
+
+fn (p: CertPool) certificates() -> List[x509.Certificate] { p.certs }
+
+fn (p: CertPool) len() -> Int { p.certs.len() }
+
+/// A pool's parsed certificates, then those of a list parsed now.
+fn parsed_of(pool: CertPool?, list: List[x509.Certificate]) -> List[lx.Cert] ! x509.CertErr {
+  var out: List[lx.Cert] = match pool {
+    Some(p) => p.parsed
+    None => []
+  }
+  for x in list {
+    out.push(lcert(x)?)
+  }
+  Ok(out)
+}
+
 fn certificate_verify(c: x509.Certificate, opts: x509.VerifyOptions) -> List[List[x509.Certificate]] ! x509.CertErr {
   let leaf = lcert(c)?
-  var inters: List[lx.Cert] = []
-  for x in opts.intermediates {
-    inters.push(lcert(x)?)
-  }
-  var roots: List[lx.Cert] = []
-  for x in opts.roots {
-    roots.push(lcert(x)?)
-  }
+  let inters = parsed_of(rt.cast[x509.CertPool?, CertPool?](opts.intermediate_pool), opts.intermediates)?
+  let roots = parsed_of(rt.cast[x509.CertPool?, CertPool?](opts.root_pool), opts.roots)?
   var usages: List[Str] = []
   for u in opts.key_usages {
     usages.push(eku_oid(u))

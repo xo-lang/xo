@@ -159,6 +159,40 @@ func main() {
 			}
 			s += len(chains) + len(chains[0])
 		}
+	case "verify150", "pool150":
+		cs := parsePEM(chain)
+		roots := x509.NewCertPool()
+		for i := 0; i < 149; i++ {
+			seed := make([]byte, 32)
+			seed[0], seed[1] = byte(i%256), byte(i/256)
+			for j := 2; j < 32; j++ {
+				seed[j] = 7
+			}
+			k := ed25519.NewKeyFromSeed(seed)
+			t := &x509.Certificate{SerialNumber: big.NewInt(int64(256 + i%256)), Subject: pkix.Name{CommonName: fmt.Sprintf("Bench Root %d", i), Organization: []string{"Xo Bench"}},
+				NotBefore: time.Unix(1600000000, 0), NotAfter: time.Unix(1900000000, 0), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+			der, err := x509.CreateCertificate(rand.Reader, t, t, k.Public(), k)
+			if err != nil {
+				panic(err)
+			}
+			c, err := x509.ParseCertificate(der)
+			if err != nil {
+				panic(err)
+			}
+			roots.AddCert(c)
+			if i == 74 {
+				roots.AddCert(cs[2])
+			}
+		}
+		inters := x509.NewCertPool()
+		inters.AddCert(cs[1])
+		for i := 0; i < 2000; i++ {
+			chains, err := cs[0].Verify(x509.VerifyOptions{Roots: roots, Intermediates: inters, DNSName: "www.google.com", CurrentTime: time.Unix(1677615892, 0)})
+			if err != nil {
+				panic(err)
+			}
+			s += len(chains) + len(chains[0])
+		}
 	case "create":
 		seed := make([]byte, 32)
 		for i := range seed {

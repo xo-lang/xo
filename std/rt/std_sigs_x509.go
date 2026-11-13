@@ -12,6 +12,10 @@ var (
 	_ func(*Task, Bytes) Result[X509_Certificate, X509_CertErr]                                                                              = X509_parse
 	_ func(*Task, Bytes, string) Result[X509_Pkcs12, X509_CertErr]                                                                           = X509_parse_pkcs12
 	_ func(*Task, Bytes) Result[List[X509_Certificate], X509_CertErr]                                                                        = X509_parse_pem
+	_ func(*Task, List[X509_Certificate]) Result[X509_CertPool, X509_CertErr]                                                                = X509_cert_pool
+	_ func(*X509_CertPool, *Task, X509_Certificate) Result[Unit, X509_CertErr]                                                               = (*X509_CertPool).M_add
+	_ func(*X509_CertPool, *Task) List[X509_Certificate]                                                                                     = (*X509_CertPool).M_certificates
+	_ func(*X509_CertPool, *Task) int64                                                                                                      = (*X509_CertPool).M_len
 	_ func(*X509_Certificate, *Task, X509_VerifyOptions) Result[List[List[X509_Certificate]], X509_CertErr]                                  = (*X509_Certificate).M_verify
 	_ func(*X509_Certificate, *Task, string) Result[Unit, X509_CertErr]                                                                      = (*X509_Certificate).M_verify_hostname
 	_ func(*X509_Certificate, *Task, X509_Certificate) Result[Unit, X509_CertErr]                                                            = (*X509_Certificate).M_check_signature_from

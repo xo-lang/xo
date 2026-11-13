@@ -214,12 +214,86 @@ func x509Go(c X509_Certificate) (*x509.Certificate, error) {
 	return x509.ParseCertificate([]byte(c.F_raw))
 }
 
+// X509_CertPool is `x509.CertPool` (decision 0626): certificates parsed
+// once. The store is shared and only appended to; a pool is a view of
+// its first n entries, so a copy that adds after another copy did
+// copies the store first (Xo values do not alias).
+type X509_CertPool struct {
+	d *x509PoolData
+	n int
+}
+
+type x509PoolData struct {
+	certs []X509_Certificate
+	gos   []*x509.Certificate
+	at    map[string]int
+}
+
+func (X509_CertPool) XoDebug(b *strings.Builder) { b.WriteString("<certpool>") }
+
+func X509_cert_pool(tk *Task, certs List[X509_Certificate]) Result[X509_CertPool, X509_CertErr] {
+	var p X509_CertPool
+	for _, c := range certs.s {
+		if r := p.M_add(tk, c); !r.Ok {
+			return Err[X509_CertPool](r.E)
+		}
+	}
+	return Ok[X509_CertPool, X509_CertErr](p)
+}
+
+func (p *X509_CertPool) M_add(_ *Task, c X509_Certificate) Result[Unit, X509_CertErr] {
+	if p.d != nil {
+		if i, ok := p.d.at[string(c.F_raw)]; ok && i < p.n {
+			return Ok[Unit, X509_CertErr](Unit{})
+		}
+	}
+	g, err := x509Go(c)
+	if err != nil {
+		return Err[Unit](x509Err(textOf(err.Error())))
+	}
+	if p.d == nil || p.n != len(p.d.certs) {
+		d := &x509PoolData{at: map[string]int{}}
+		if p.d != nil {
+			d.certs = append([]X509_Certificate(nil), p.d.certs[:p.n]...)
+			d.gos = append([]*x509.Certificate(nil), p.d.gos[:p.n]...)
+			for i, x := range d.certs {
+				d.at[string(x.F_raw)] = i
+			}
+		}
+		p.d = d
+	}
+	p.d.at[string(c.F_raw)] = len(p.d.certs)
+	p.d.certs = append(p.d.certs, c)
+	p.d.gos = append(p.d.gos, g)
+	p.n++
+	return Ok[Unit, X509_CertErr](Unit{})
+}
+
+func (p *X509_CertPool) M_certificates(*Task) List[X509_Certificate] {
+	if p.d == nil {
+		return ListFromSlice[X509_Certificate](nil)
+	}
+	return ListFromSlice(append([]X509_Certificate(nil), p.d.certs[:p.n]...))
+}
+
+func (p *X509_CertPool) M_len(*Task) int64 { return int64(p.n) }
+
+// x509PoolAdd adds a pool's parsed certificates to a Go pool.
+func x509PoolAdd(to *x509.CertPool, p Option[X509_CertPool]) {
+	if p.Some && p.V.d != nil {
+		for _, g := range p.V.d.gos[:p.V.n] {
+			to.AddCert(g)
+		}
+	}
+}
+
 func (c *X509_Certificate) M_verify(tk *Task, o X509_VerifyOptions) Result[List[List[X509_Certificate]], X509_CertErr] {
 	leaf, err := x509Go(*c)
 	if err != nil {
 		return Err[List[List[X509_Certificate]]](x509Err(textOf(err.Error())))
 	}
 	roots := x509.NewCertPool()
+	x509PoolAdd(roots, o.F_root_pool)
 	for _, r := range o.F_roots.s {
 		g, err := x509Go(r)
 		if err != nil {
@@ -228,6 +302,7 @@ func (c *X509_Certificate) M_verify(tk *Task, o X509_VerifyOptions) Result[List[
 		roots.AddCert(g)
 	}
 	inters := x509.NewCertPool()
+	x509PoolAdd(inters, o.F_intermediate_pool)
 	for _, r := range o.F_intermediates.s {
 		g, err := x509Go(r)
 		if err != nil {

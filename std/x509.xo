@@ -122,12 +122,31 @@ fn parse_pkcs12(data: Bytes, password: Str) -> Pkcs12 ! CertErr
 /// first that does not parse.
 fn parse_pem(pem: Bytes) -> List[Certificate] ! CertErr
 
+/// Certificates parsed once for verify (Go's CertPool): a pool keeps each
+/// certificate's checked form, so verify does not parse it again on every
+/// call (decision 0626). A certificate already in the pool (the same DER)
+/// is added once.
+struct CertPool {}
+
+/// A pool of certs; Err when one's DER does not parse (a Certificate
+/// built by hand rather than by parse).
+fn cert_pool(certs: List[Certificate]) -> CertPool ! CertErr
+/// Adds c (Go's AddCert); a certificate with the same DER is kept once.
+fn (var p: CertPool) add(c: Certificate) -> () ! CertErr
+/// The pool's certificates, in the order added.
+fn (p: CertPool) certificates() -> List[Certificate]
+fn (p: CertPool) len() -> Int
+
 /// What verify checks a chain against (Go's VerifyOptions).
 struct VerifyOptions {
-  /// The trusted roots.
-  roots: List[Certificate]
+  /// The trusted roots: these and root_pool's.
+  roots: List[Certificate] = []
+  /// Trusted roots parsed once (decision 0626).
+  root_pool: CertPool? = None
   /// Certificates a chain may pass through.
   intermediates: List[Certificate] = []
+  /// Intermediates parsed once (decision 0626).
+  intermediate_pool: CertPool? = None
   /// The host name the leaf must be valid for; "" checks none.
   dns_name: Str = ""
   /// When every certificate must be valid.
