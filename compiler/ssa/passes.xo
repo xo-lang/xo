@@ -1444,24 +1444,23 @@ fn renumber(var f: Func) {
     }
   }
   var vals: List[Value] = List.with_capacity(order.len())
+  // the argument pool rebuilt in the new order, without the ranges
+  // set_args replaced (decision 0448 addendum)
+  var live = 0
+  for v in order {
+    live += f.values[v].args.len()
+  }
+  var np: List[Int] = List.with_capacity(live)
   for v in order {
     var x = f.values[v]
-    // a value with no arguments keeps its empty list: with_capacity(0)
-    // allocates a block (decision 0448, 2026-11-12: about 1.9 M such
-    // values after aiplatform/v1's inlining)
-    if !x.args.is_empty() {
-      var args: List[Int] = List.with_capacity(x.args.len())
-      for a in f.args_iter(x.args) {
-        args.push(if a >= 0 { map[a] } else { -1 })
-      }
-      x.args = f.mk_args(args)
-    }
+    x.args = f.args_mapped_into(x.args, map, np)
     if pad_of(x.pi) >= 0 {
       x.pi = with_pad(x.pi, map[pad_of(x.pi)])
     }
     vals.push(x)
   }
   f.values = vals
+  f.argpool = np
   for bl in 0..f.blocks.len() {
     var ps: List[Int] = []
     for p in f.blocks[bl].params {

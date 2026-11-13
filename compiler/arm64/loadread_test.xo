@@ -5,7 +5,9 @@ use github.com/xo-lang/xo/compiler/ssa
 
 /// Outer{x: Int, inner: Inner{f0..f9: Int}}; v0 an Outer, v1 its inner,
 /// v2 and v3 inner's fields 3 and 7, then extra.
-fn loadread_g(extra: List[ssa.Value]) -> G {
+/// extra: values added after the field reads, each with its arguments
+/// (made in the function's argument pool, decision 0448 addendum).
+fn loadread_g(extra: List[(ssa.Value, List[Int])]) -> G {
   var m = ssa.Module{}
   m.types.push(ssa.SType{kind: ssa.Kind.Int, name: "Int"})
   var fs: List[ssa.SField] = []
@@ -16,13 +18,18 @@ fn loadread_g(extra: List[ssa.Value]) -> G {
   m.types.push(ssa.SType{kind: ssa.Kind.Struct, name: "Outer", fields: [ssa.SField{name: "x", ty: 0}, ssa.SField{name: "inner", ty: 1}]})
   var f = ssa.Func{name: "pkg.f"}
   f.values.push(ssa.Value{op: ssa.Op.Param, tb: ssa.pack_tb(2, 0)})
-  f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(1, 0), args: [0], aux: ssa.AuxW.I(1)})
-  f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(0, 0), args: [1], aux: ssa.AuxW.I(3)})
-  f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(0, 0), args: [1], aux: ssa.AuxW.I(7)})
+  let a0 = f.mk_args([0])
+  f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(1, 0), args: a0, aux: ssa.AuxW.I(1)})
+  let a1 = f.mk_args([1])
+  f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(0, 0), args: a1, aux: ssa.AuxW.I(3)})
+  let a2 = f.mk_args([1])
+  f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(0, 0), args: a2, aux: ssa.AuxW.I(7)})
   var instrs = [1, 2, 3]
-  for x in extra {
+  for (x, xa) in extra {
     instrs.push(f.values.len())
-    f.values.push(x)
+    var y = x
+    y.args = f.mk_args(xa)
+    f.values.push(y)
   }
   f.blocks.push(ssa.Block{params: [0], instrs: instrs})
   var g = new_gen(m, "darwin")
@@ -43,7 +50,7 @@ test "a field read only read by field reads loads the words they read" {
 }
 
 test "a field read with another use loads whole" {
-  var g = loadread_g([ssa.Value{op: ssa.Op.Release, args: [1], tb: ssa.pack_tb(-1, 0)}])
+  var g = loadread_g([(ssa.Value{op: ssa.Op.Release, tb: ssa.pack_tb(-1, 0)}, [1])])
   expect(g.words_read(1, 10).is_empty()) == true
 }
 

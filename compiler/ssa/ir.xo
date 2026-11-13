@@ -407,7 +407,9 @@ pub struct Value {
   /// none) in the low: ty_of, block_of, with_ty, with_block, pack_tb
   /// (decision 0448 stage 3).
   pub tb: Int = -1
-  pub args: List[Int] = []
+  /// The arguments: a range of the function's argpool (Func.arg,
+  /// args_iter, ...; decision 0448 addendum).
+  pub args: Args = Args{}
   /// Func.aux reads it, Func.set_aux and Func.pack write it.
   pub aux: AuxW = AuxW.None
   /// The landing check of a call (Value.Pad, -1 for none) in the high half,
@@ -534,6 +536,11 @@ pub struct Func {
   pub blobs: List[Bytes] = []
   pub name_ix: Map[Str, Int] = {}
   pub ntag: Int = 0
+  /// Every value's arguments, each value's a range (Value.args, Args;
+  /// decision 0448 addendum): one list for the function instead of a heap
+  /// block per value. A range replaced by set_args stays as garbage until
+  /// renumber rebuilds the pool.
+  pub argpool: List[Int] = []
   pub edges: List[Edge] = []
   /// The indexes of the `var` parameters (returned after the result).
   pub var_params: List[Int] = []
@@ -1197,57 +1204,153 @@ pub fn (var f: Func) add_param(b: Int, t: Int) -> Int {
 // Value's args (x.args, f.values[v].args) and must be called on the
 // function that value belongs to (stage 2 tags each range with it).
 
-/// Argument k of a value whose arguments are r (r = x.args).
-pub fn (f: Func) arg(r: List[Int], k: Int) -> Int {
-  r[k]
+/// A value's arguments: a range of its function's argpool, packed as
+/// (tag << 48) | (start << 16) | length, the tag the function's name tag's
+/// low 15 bits (Func.ntag, as payloads carry it), so that a range read in
+/// another function faults; 0 for none.
+pub struct Args {
+  pub w: Int = 0
+}
+
+/// The number of arguments.
+pub fn (r: Args) len() -> Int {
+  r.w & 0xffff
+}
+
+pub fn (r: Args) is_empty() -> Bool {
+  r.w & 0xffff == 0
+}
+
+fn (f: Func) args_start(r: Args) -> Int {
+  if r.w >> 48 != f.ntag & 0x7fff {
+    args_fault(f.name, r, 0)
+  }
+  (r.w >> 16) & 0xffffffff
+}
+
+/// The fault of a bad argument read, out of line so that the readers stay
+/// small enough to inline (decision 0448 addendum: with the message in
+/// line, Func.arg's callers in arm64 isel and emit grew past the inliner's
+/// limit and aiplatform's build took 12% more CPU).
+fn args_fault(name: Str, r: Args, k: Int) -> Never {
+  if r.w >> 48 != 0 && k < r.len() {
+    fault("internal: the arguments of another function's value read in `${name}` (decision 0448: copy a value's arguments with Func.mk_args(src.args_copy(x.args)))")
+  }
+  fault("internal: argument ${k} of a value with ${r.len()} in `${name}`")
+}
+
+/// Argument k of a value whose arguments are r (r = x.args): one check for
+/// the range's function and k's bounds.
+pub fn (f: Func) arg(r: Args, k: Int) -> Int {
+  let w = r.w
+  if w >> 48 != f.ntag & 0x7fff || k < 0 || k >= w & 0xffff {
+    args_fault(f.name, r, k)
+  }
+  f.argpool[((w >> 16) & 0xffffffff) + k]
 }
 
 /// The arguments r in order, for `for a in f.args_iter(x.args)`.
-pub fn (f: Func) args_iter(r: List[Int]) -> ArgsIter {
-  ArgsIter{xs: r, i: 0}
+pub fn (f: Func) args_iter(r: Args) -> ArgsIter {
+  if r.is_empty() {
+    return ArgsIter{xs: [], i: 0, end: 0}
+  }
+  let s = f.args_start(r)
+  ArgsIter{xs: f.argpool, i: s, end: s + r.len()}
 }
 
 /// The arguments r with their positions, for `for (k, a) in
 /// f.args_indexed(x.args)`.
-pub fn (f: Func) args_indexed(r: List[Int]) -> ArgsIndexed {
-  ArgsIndexed{xs: r, i: 0}
+pub fn (f: Func) args_indexed(r: Args) -> ArgsIndexed {
+  if r.is_empty() {
+    return ArgsIndexed{xs: [], i: 0, s: 0, end: 0}
+  }
+  let s = f.args_start(r)
+  ArgsIndexed{xs: f.argpool, i: s, s: s, end: s + r.len()}
 }
 
 /// Whether a is one of the arguments r.
-pub fn (f: Func) args_has(r: List[Int], a: Int) -> Bool {
-  r.contains(a)
+pub fn (f: Func) args_has(r: Args, a: Int) -> Bool {
+  for x in f.args_iter(r) {
+    if x == a {
+      return true
+    }
+  }
+  false
 }
 
-/// The arguments r as a List of their own (a copy in stage 2: for the
-/// readers that keep or pass the whole list).
-pub fn (f: Func) args_copy(r: List[Int]) -> List[Int] {
-  r
+/// The arguments r as a List of their own (a copy: for the readers that
+/// keep or pass the whole list).
+pub fn (f: Func) args_copy(r: Args) -> List[Int] {
+  if r.is_empty() {
+    return []
+  }
+  let s = f.args_start(r)
+  f.argpool[s..s + r.len()]
 }
 
-/// The args field for a value with arguments xs (Value{args: ...}, x.args
-/// = ...): the list itself now, a range of the pool in stage 2.
-pub fn (var f: Func) mk_args(xs: List[Int]) -> List[Int] {
-  xs
+/// The range for a value with arguments xs (Value{args: ...}, x.args =
+/// ...), added at the pool's end.
+pub fn (var f: Func) mk_args(xs: List[Int]) -> Args {
+  if xs.is_empty() {
+    return Args{}
+  }
+  f.tag_names()
+  let s = f.argpool.len()
+  if xs.len() > 0xffff || s > 0xffffffff {
+    args_overflow(xs.len(), s)
+  }
+  for x in xs {
+    f.argpool.push(x)
+  }
+  Args{w: ((f.ntag & 0x7fff) << 48) | (s << 16) | xs.len()}
 }
 
-/// Sets argument k of value v to a.
+fn args_overflow(n: Int, s: Int) -> Never {
+  fault("internal: ${n} arguments at ${s} (decision 0448 argument pool)")
+}
+
+/// Sets argument k of value v to a (in place: every copy of v's Value
+/// sees it).
 pub fn (var f: Func) set_arg(v: Int, k: Int, a: Int) {
-  f.values[v].args[k] = a
+  let r = f.values[v].args
+  if r.w >> 48 != f.ntag & 0x7fff || k < 0 || k >= r.w & 0xffff {
+    args_fault(f.name, r, k)
+  }
+  let i = ((r.w >> 16) & 0xffffffff) + k
+  f.argpool[i] = a
 }
 
-/// Sets the arguments of value v to xs.
+/// Sets the arguments of value v to xs (a new range; the old one is
+/// garbage until renumber).
 pub fn (var f: Func) set_args(v: Int, xs: List[Int]) {
-  f.values[v].args = f.mk_args(xs)
+  let r = f.mk_args(xs)
+  f.values[v].args = r
+}
+
+/// r's arguments, each a mapped through map (-1 kept), as a range of np
+/// (renumber's rebuilt pool).
+pub fn (f: Func) args_mapped_into(r: Args, map: List[Int], var np: List[Int]) -> Args {
+  if r.is_empty() {
+    return r
+  }
+  let s = f.args_start(r)
+  let ns = np.len()
+  for k in s..s + r.len() {
+    let a = f.argpool[k]
+    np.push(if a >= 0 { map[a] } else { -1 })
+  }
+  Args{w: (r.w & (0x7fff << 48)) | (ns << 16) | r.len()}
 }
 
 /// Func.args_iter's iterator.
 pub struct ArgsIter {
   xs: List[Int]
   i: Int
+  end: Int
 }
 
 pub fn (var it: ArgsIter) next() -> Int? {
-  if it.i >= it.xs.len() {
+  if it.i >= it.end {
     return None
   }
   it.i += 1
@@ -1258,14 +1361,16 @@ pub fn (var it: ArgsIter) next() -> Int? {
 pub struct ArgsIndexed {
   xs: List[Int]
   i: Int
+  s: Int
+  end: Int
 }
 
 pub fn (var it: ArgsIndexed) next() -> (Int, Int)? {
-  if it.i >= it.xs.len() {
+  if it.i >= it.end {
     return None
   }
   it.i += 1
-  Some((it.i - 1, it.xs[it.i - 1]))
+  Some((it.i - 1 - it.s, it.xs[it.i - 1]))
 }
 
 pub fn (var f: Func) add(b: Int, op: Op, t: Int, aux: Aux, args: List[Int]) -> Int {

@@ -3976,7 +3976,7 @@ fn (var g: G) dead_from(a: Int) -> Int {
   }
   let t = g.vty(a)
   var k = 1
-  for p in g.f.values[a].args {
+  for p in g.f.args_iter(g.f.values[a].args) {
     k += g.nwords(g.vty(p))
   }
   if k >= g.nwords(t) { -1 } else { k }
