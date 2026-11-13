@@ -4190,6 +4190,9 @@ struct Context {
   url_part: Int = 0
   js_ctx: Int = 0
   js_brace_depth: List[Int] = []
+  /// whether js_brace_depth was ever pushed (Go's non-nil slice: mangle
+  /// names an emptied one "[]", a never set one not at all)
+  js_brace_set: Bool = false
   attr: Int = 0
   element: Int = 0
   err: EscErr? = None
@@ -4200,13 +4203,15 @@ fn (c: Context) text() -> Str {
     Some(e) => e.display()
     None => "<nil>"
   }
-  "{${STATE_NAMES[c.state]} ${DELIM_NAMES[c.delim]} ${URL_PART_NAMES[c.url_part]} ${JS_CTX_NAMES[c.js_ctx]} ${ATTR_NAMES[c.attr]} ${ELEMENT_NAMES[c.element]} ${err}}"
+  "{${STATE_NAMES[c.state]} ${DELIM_NAMES[c.delim]} ${URL_PART_NAMES[c.url_part]} ${JS_CTX_NAMES[c.js_ctx]} ${brace_text(c.js_brace_depth)} ${ATTR_NAMES[c.attr]} ${ELEMENT_NAMES[c.element]} ${err}}"
 }
 
-/// context.eq: the fields but js_brace_depth (Go compares the error
-/// pointer; here the errors' values).
+/// context.eq (Go compares the error pointer; here the errors' values).
+/// js_brace_depth is compared as Go 1.26.11's slices.Equal: two branches
+/// that leave a template literal at different brace depths do not join
+/// (CVE-2026-56858).
 fn (c: Context) eq(d: Context) -> Bool {
-  c.state == d.state && c.delim == d.delim && c.url_part == d.url_part && c.js_ctx == d.js_ctx && c.attr == d.attr && c.element == d.element && c.err == d.err
+  c.state == d.state && c.delim == d.delim && c.url_part == d.url_part && c.js_ctx == d.js_ctx && c.js_brace_depth == d.js_brace_depth && c.attr == d.attr && c.element == d.element && c.err == d.err
 }
 
 /// context.mangle: the derived template's name for a context.
@@ -4224,6 +4229,9 @@ fn (c: Context) mangle(template_name: Str) -> Str {
   if c.js_ctx != JS_CTX_REGEXP {
     s = s + "_" + JS_CTX_NAMES[c.js_ctx]
   }
+  if c.js_brace_set {
+    s = s + "_jsBraceDepth(" + brace_text(c.js_brace_depth) + ")"
+  }
   if c.attr != ATTR_NONE {
     s = s + "_" + ATTR_NAMES[c.attr]
   }
@@ -4231,6 +4239,11 @@ fn (c: Context) mangle(template_name: Str) -> Str {
     s = s + "_" + ELEMENT_NAMES[c.element]
   }
   s
+}
+
+/// A brace depth list as Go's %v of an []int: "[0 1]".
+fn brace_text(l: List[Int]) -> Str {
+  "[" + l.map(fn(x) { "${x}" }).join(" ") + "]"
 }
 
 fn is_comment(s: Int) -> Bool {
@@ -4551,9 +4564,19 @@ fn t_js(c0: Context, s: Bytes) -> (Context, Int) {
       if i + 1 < s.len() && s[i + 1] == 33 {
         c.state = STATE_JS_LINE_CMT
         i += 1
+      } else {
+        // a private identifier such as #yield is never a keyword and
+        // precedes a div op (go.dev/issue/81823)
+        while i + 1 < s.len() && is_js_ident_part(Int(s[i + 1])) {
+          i += 1
+        }
+        c.js_ctx = JS_CTX_DIV_OP
       }
     }
     123 => {
+      // a brace sets the JS context as any other punctuation (Go 1.26.11,
+      // CVE-2026-56858: `{/x/}` read the regexp as a division)
+      c.js_ctx = next_js_ctx(s[i..i + 1], c.js_ctx)
       if c.js_brace_depth.is_empty() {
         return (c, i + 1)
       }
@@ -4562,11 +4585,13 @@ fn t_js(c0: Context, s: Bytes) -> (Context, Int) {
     }
     125 => {
       if c.js_brace_depth.is_empty() {
+        c.js_ctx = next_js_ctx(s[i..i + 1], c.js_ctx)
         return (c, i + 1)
       }
       let last = c.js_brace_depth.len() - 1
       c.js_brace_depth[last] = c.js_brace_depth[last] - 1
       if c.js_brace_depth[last] >= 0 {
+        c.js_ctx = next_js_ctx(s[i..i + 1], c.js_ctx)
         return (c, i + 1)
       }
       c.js_brace_depth = c.js_brace_depth[0..last]
@@ -4613,7 +4638,10 @@ fn t_js_tmpl(c0: Context, s: Bytes) -> (Context, Int) {
       36 => {
         if s.len() >= i + 2 && s[i + 1] == 123 {
           c.js_brace_depth.push(0)
+          c.js_brace_set = true
+          // `${` starts an expression: a regexp may follow (go.dev/issue/81821)
           c.state = STATE_JS
+          c.js_ctx = JS_CTX_REGEXP
           return (c, i + 2)
         }
       }
@@ -4786,10 +4814,15 @@ fn t_css_str(c0: Context, s: Bytes) -> (Context, Int) {
 }
 
 fn t_meta_content(c: Context, s: Bytes) -> (Context, Int) {
+  // `url`, white space, then `=` (Go 1.26.11: "url =" was not seen, so the
+  // URL went unfiltered)
   var i = 0
   while i < s.len() {
-    if i + 3 <= s.len() - 1 && s[i..i + 4].to_lower() == b"url=" {
-      return (c with {state: STATE_META_CONTENT_URL}, i + 4)
+    if i + 3 <= s.len() - 1 && s[i..i + 3].to_lower() == b"url" {
+      let j = eat_white_space(s, i + 3)
+      if j < s.len() && s[j] == 61 {
+        return (c with {state: STATE_META_CONTENT_URL}, j + 1)
+      }
     }
     i += 1
   }
@@ -5769,7 +5802,8 @@ fn css_value_filter(s: Str, t: Int) -> Str {
 
 const JS_WHITESPACE: Str = "\u{0C}\n\r\t\u{0B}\u{20}\u{A0}\u{1680}\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}\u{FEFF}"
 
-const REGEXP_PRECEDER_KEYWORDS: List[Str] = ["break", "case", "continue", "delete", "do", "else", "finally", "in", "instanceof", "return", "throw", "try", "typeof", "void"]
+/// It treats the context-sensitive keyword yield as a keyword (Go 1.26.11).
+const REGEXP_PRECEDER_KEYWORDS: List[Str] = ["break", "case", "continue", "delete", "do", "else", "finally", "in", "instanceof", "return", "throw", "try", "typeof", "void", "yield"]
 
 /// nextJSCtx: whether a `/` after s starts a regexp or divides.
 fn next_js_ctx(s0: Bytes, preceding: Int) -> Int {
@@ -5802,7 +5836,9 @@ fn next_js_ctx(s0: Bytes, preceding: Int) -> Int {
   while j > 0 && is_js_ident_part(Int(s[j - 1])) {
     j -= 1
   }
-  if REGEXP_PRECEDER_KEYWORDS.contains(s[j..].to_str() ?? "") {
+  // a name after a property access dot is a property, which precedes a
+  // div op (`x.return /y/`)
+  if REGEXP_PRECEDER_KEYWORDS.contains(s[j..].to_str() ?? "") && !trim_right_runes(s[0..j], JS_WHITESPACE).ends_with(b".") {
     return JS_CTX_REGEXP
   }
   JS_CTX_DIV_OP
@@ -5926,7 +5962,7 @@ fn is_js_ident_part(r: Int) -> Bool {
   r == 36 || (r >= 48 && r <= 57) || (r >= 65 && r <= 90) || r == 95 || (r >= 97 && r <= 122)
 }
 
-const JS_MIME_TYPES: List[Str] = ["application/ecmascript", "application/javascript", "application/json", "application/ld+json", "application/x-ecmascript", "application/x-javascript", "module", "text/ecmascript", "text/javascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2", "text/javascript1.3", "text/javascript1.4", "text/javascript1.5", "text/jscript", "text/livescript", "text/x-ecmascript", "text/x-javascript"]
+const JS_MIME_TYPES: List[Str] = ["", "application/ecmascript", "application/javascript", "application/json", "application/ld+json", "application/x-ecmascript", "application/x-javascript", "module", "text/ecmascript", "text/javascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2", "text/javascript1.3", "text/javascript1.4", "text/javascript1.5", "text/jscript", "text/livescript", "text/x-ecmascript", "text/x-javascript"]
 
 /// isJSType: whether a script type attribute names JavaScript (or JSON).
 fn is_js_type(mime0: Str) -> Bool {

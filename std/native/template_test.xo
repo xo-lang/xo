@@ -403,6 +403,9 @@ const HTML_CASES: List[(Str, Str, Str)] = [
   ("JS template lit, nested JS", "<script>var a = `\${ var a = \"{{\"a \\\" d\"}}\" }`</script>", "<script>var a = `\${ var a = \"a \\u0022 d\" }`</script>"),
   ("meta content attribute url", "<meta http-equiv=\"refresh\" content=\"asd; url={{\"javascript:alert(1)\"}}; asd; url={{\"vbscript:alert(1)\"}}; asd\">", "<meta http-equiv=\"refresh\" content=\"asd; url=#ZgotmplZ; asd; url=#ZgotmplZ; asd\">"),
   ("meta content string", "<meta http-equiv=\"refresh\" content=\"{{\"asd: 123\"}}\">", "<meta http-equiv=\"refresh\" content=\"asd: 123\">"),
+  ("meta content url with whitespace before equals", "<meta http-equiv=\"refresh\" content=\"0;url ={{\"javascript:alert(1)\"}}\">", "<meta http-equiv=\"refresh\" content=\"0;url =#ZgotmplZ\">"),
+  ("meta content url with tab before equals", "<meta http-equiv=\"refresh\" content=\"0;url\t={{\"javascript:alert(1)\"}}\">", "<meta http-equiv=\"refresh\" content=\"0;url\t=#ZgotmplZ\">"),
+  ("scriptTypeEmpty", "<script type=\"\">{{.H}}</script>", "<script type=\"\">\"\\u003cHello\\u003e\"</script>"),
 ]
 
 test "html mode: Go's TestEscape cases over DATA (W trusted html)" {
@@ -833,4 +836,40 @@ test "the context machine (transition_test.go TestFindEndTag and escape_test.go 
   expect(c7.state) == STATE_TEXT
   let (c8, _) = escape_text(c, "<a onclick='")
   expect((c8.state, c8.delim)) == (STATE_JS, DELIM_SINGLE_QUOTE)
+}
+
+/// Go 1.26.11's html/template fixes (CVE-2026-56858, go.dev/issue/81821
+/// and 81823, jsBraceDepth in the context): (name, template, dot, Go
+/// 1.27.4's output, or "err " and the start of its error)
+const JS_CTX_CASES: List[(Str, Str, Str, Str)] = [
+  ("issue 81821", "<script>const s = `\${1}\${/{{.}}/g}`</script>", "x/.exec(alert(1))}", "<script>const s = `\${1}\${/x\\/\\.exec\\(alert\\(1\\)\\)\\}/g}`</script>"),
+  ("regexp after open brace in if block", "<script>if(true){/{{.}}/g.test(\"x\")}</script>", "a.b", "<script>if(true){/a\\.b/g.test(\"x\")}</script>"),
+  ("regexp after close brace", "<script>if(true){x=1}/{{.}}/g.test(\"x\")</script>", "a.b", "<script>if(true){x=1}/a\\.b/g.test(\"x\")</script>"),
+  ("regexp pathological attacker input", "<script>if(true){/{{.}}/g.test(\"x\")}</script>", "./;alert(1);var q=/.", "<script>if(true){/\\.\\/;alert\\(1\\);var q=\\/\\./g.test(\"x\")}</script>"),
+  ("regexp after open brace in template literal", "<script>`\${ (function(){/{{.}}/g.test(x)}) }`</script>", "a.b", "<script>`\${ (function(){/a\\.b/g.test(x)}) }`</script>"),
+  ("regexp after close brace in template literal", "<script>`\${ (function(){}/{{.}}/g.test(x)) }`</script>", "a.b", "<script>`\${ (function(){}/a\\.b/g.test(x)) }`</script>"),
+  ("yield", "<script>function* rules(){yield /{{.}}/g}</script>", "/;alert(1)//", "<script>function* rules(){yield /\\/;alert\\(1\\)\\/\\//g}</script>"),
+  ("property yield", "<script>const pct = bond.yield / 100;\nconst user = {{.}}; // state\n</script>", "1;pwned=1;0", "<script>const pct = bond.yield / 100;\nconst user = \"1;pwned=1;0\"; \n</script>"),
+  ("private yield", "<script>class Bond { #yield = 4; pct() { return this.#yield / 100; } }\nconst user = {{.}}; // state\n</script>", "1;pwned=1;0", "<script>class Bond { #yield = 4; pct() { return this.#yield / 100; } }\nconst user = \"1;pwned=1;0\"; \n</script>"),
+  ("property in", "<script>const kb = traffic.in / 1024;\nconst user = {{.}}; // state\n</script>", "1;pwned=1;0", "<script>const kb = traffic.in / 1024;\nconst user = \"1;pwned=1;0\"; \n</script>"),
+  ("brace depth join", "<script>`\${ {{if .}}{{else}}}`{{end}} {{.}}</script>", "x", "err {{if}} branches end in different contexts"),
+  ("brace depth if same", "<script>`\${ {{if .}}a{{else}}b{{end}} }` {{.}}</script>", "x", "<script>`\${ a }` \"x\"</script>"),
+]
+
+test "html mode: JS regexp and division contexts after braces, \${, yield, a property and #private (Go 1.26.11)" {
+  var bad: List[(Str, Str, Str)] = []
+  for (name, src, dot, want) in JS_CTX_CASES {
+    let got = match template.parse_html("test", src) {
+      Ok(t) => match t.render(json.Value.Str(s: dot)) {
+        Ok(out) => out
+        Err(e) => "err ${e.msg}"
+      }
+      Err(e) => "err ${e.msg}"
+    }
+    let ok = if want.starts_with("err ") { got.starts_with("err ") && got.contains(want[4..]) } else { got == want }
+    if !ok {
+      bad.push((name, got, want))
+    }
+  }
+  expect(bad) == []
 }

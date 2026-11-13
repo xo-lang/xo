@@ -1,5 +1,18 @@
 # std/template changes
 
+## 2026-11-13: security: html mode tracks JS contexts after braces, `${`, yield, properties and private names; `<script type="">` is JS; `url =` in a meta refresh (native)
+
+- Kind: security
+- Commit: this commit
+- Found by: Go 1.26.11's html/template changes (Lang 2's toolchain bump list), reviewed against the port
+- Go reference: html/template (go1.26.11): transition.go tJS and tJSTmpl, js.go nextJSCtx, regexpPrecederKeywords and isJSType, context.go eq and mangle; CVE-2026-56858, go.dev/issue/81821 and 81823
+- Affected: Xo 0.50.1 and earlier, native backends (the Go backend follows its Go toolchain: go1.26.1 is affected)
+- Test: std/native/template_test.xo: Go's TestCVE202656858, TestIssue81821 and TestIssue81823 cases and two jsBraceDepth cases with go1.27.4's output; TestEscape's scriptTypeEmpty and the two meta refresh rows (both tests fail without the change)
+- Timing: none
+- Shipped in: not yet released
+
+A `{` or `}` in a script did not update whether a `/` starts a regular expression or a division, so a value in `if(x){/{{.}}/}` was escaped as a division's operand and could close the regexp and run code; `${` in a template literal, `yield`, a keyword used as a property (`a.in / 2`) and a `#private` name were misread the same way. `<script type="">` was not treated as JavaScript, and `content="0;url =..."` in a meta refresh left the URL unfiltered. Two branches of an `{{if}}` that end at different brace depths inside a template literal are now an error, as Go's, and the derived template names and error contexts include the depth.
+
 ## 2026-11-10: refactor: integer bounds as `Int.max` and `Int.min` (decision 0587 point 4)
 
 - Kind: refactor
