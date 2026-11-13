@@ -168,6 +168,9 @@ pub fn conf(certs: List[Bytes], key: Bytes) -> Conf {
 /// whether a HelloRetryRequest was sent); and the bytes in and out, the
 /// handshake transcript and keys.
 pub struct Server {
+  /// consecutive records that did not advance the connection (Go's
+  /// retryCount, at most MAX_USELESS: Go's maxUselessRecords)
+  useless: Int = 0
   pub conf: Conf
   /// the leaf's key algorithm, set once the handshake parses the leaf
   key_alg: Int
@@ -316,7 +319,9 @@ fn record(var s: Server, buf: Bytes, n: Int) {
     // handshake only (RFC 8446 5)
     if s.state == DONE || n != 1 || buf[5] != 1 {
       fail(s, ALERT_UNEXPECTED_MESSAGE, "local error: tls: unexpected message")
+      return
     }
+    ignored(s)
     return
   }
   if s.rk.on && ct != tlsrec.CT_APP {
@@ -355,6 +360,9 @@ fn record(var s: Server, buf: Bytes, n: Int) {
       fail(s, ALERT_UNEXPECTED_MESSAGE, "local error: tls: unexpected message")
       return
     }
+    if s.state != DONE {
+      s.useless = 0
+    }
     s.hs = tls13.cat2(s.hs, inner.data)
     while s.state != FAILED && s.state != HANDOFF && s.hs.len() >= 4 {
       let t = Int(s.hs[0])
@@ -377,10 +385,23 @@ fn record(var s: Server, buf: Bytes, n: Int) {
       fail(s, ALERT_UNEXPECTED_MESSAGE, "local error: tls: unexpected message")
       return
     }
+    if inner.data.is_empty() {
+      ignored(s)
+      return
+    }
+    s.useless = 0
     s.app = tls13.cat2(s.app, inner.data)
     return
   }
   fail(s, ALERT_UNEXPECTED_MESSAGE, "local error: tls: unexpected message")
+}
+
+/// A record dropped without advancing (Go's retryReadRecord).
+fn ignored(var s: Server) {
+  s.useless += 1
+  if s.useless > tls13.MAX_USELESS {
+    fail(s, ALERT_UNEXPECTED_MESSAGE, "tls: too many ignored records")
+  }
 }
 
 /// One handshake message of type t.
@@ -400,6 +421,12 @@ fn handshake(var s: Server, t: Int, msg: Bytes) {
   } else if s.state == WAIT_FIN && t == HS_FINISHED {
     finished(s, msg)
   } else if s.state == DONE && t == HS_KEY_UPDATE {
+    // Go's handlePostHandshakeMessage counts it (Go 1.26.11)
+    s.useless += 1
+    if s.useless > tls13.MAX_USELESS {
+      fail(s, ALERT_UNEXPECTED_MESSAGE, "tls: too many non-advancing records")
+      return
+    }
     key_update(s, msg)
   } else {
     let want = if s.state == WAIT_CCERT { "*tls.certificateMsgTLS13" } else if s.state == WAIT_CVERIFY { "*tls.certificateVerifyMsg" } else if s.state == WAIT_FIN { "*tls.finishedMsg" } else if s.state == DONE { "*tls.keyUpdateMsg" } else { "*tls.clientHelloMsg" }

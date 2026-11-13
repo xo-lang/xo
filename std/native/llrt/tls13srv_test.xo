@@ -1,0 +1,84 @@
+// Tests of tls13srv.xo with an in-memory client (tls13.xo): Go's cap on
+// records and post-handshake messages that do not advance the connection
+// (maxUselessRecords, 16; Go 1.26.11 counts KeyUpdates too).
+
+use native/llrt/tls13
+use native/llrt/tlsrec
+use native/llrt/x509cert as x509
+
+/// A self-signed Ed25519 certificate for x.test (Go's CreateCertificate)
+/// and its key's seed.
+const CERT_HEX: Str = "3082013a3081eda003020102020101300506032b65703011310f300d06035504031306782e74657374301e170d3233313131343232313332305a170d3330303331373137343634305a3011310f300d06035504031306782e74657374302a300506032b6570032100a2fa2f4a355ba2e907a53009e9e37caddf7ac7e66a08ba07631f553072b3f24ca36a3068300e0603551d0f0101ff04040302028430130603551d25040c300a06082b06010505070301300f0603551d130101ff040530030101ff301d0603551d0e041604144e40120b721f4d3b2353db38e447488f776fb4f130110603551d11040a30088206782e74657374300506032b6570034100636f1a3c7e39833bb9cc6c5f2b01cf2ca889e9072460942fafc093a2f918b50f1245a8aeb084fba76d5699334bc03abd6b31229e5a40abd0abe2eb33108f3205"
+const SEED_HEX: Str = "0700000000000000000000000000000000000000000000000000000000000000"
+
+/// A client and a server that finished their handshake in memory.
+fn mem_pair() -> (tls13.Client, Server) {
+  let der = Bytes.from_hex(CERT_HEX) ?? fault("cert")
+  let p = x509.parse(der)
+  var c = tls13.client(tls13.conf("x.test", [p.cert], 1800000000))
+  var s = server(conf([der], Bytes.from_hex(SEED_HEX) ?? fault("seed")))
+  for _ in 0..8 {
+    feed(s, tls13.take(c))
+    tls13.feed(c, take(s))
+  }
+  expect(tls13.ready(c) && ready(s)) == true
+  (c, s)
+}
+
+/// The server's KeyUpdate (not requesting one back), as key_update sends it.
+fn send_key_update(var s: Server) {
+  s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, tls13.message(HS_KEY_UPDATE, b"\x00"), 0x0303))
+  s.wk = tlsrec.update(s.wk)
+}
+
+test "16 KeyUpdates are read, the 17th is one too many (Go's TestKeyUpdateSpamPostHandshakeTLS13)" {
+  var (c, s) = mem_pair()
+  for _ in 0..16 {
+    send_key_update(s)
+  }
+  tls13.feed(c, take(s))
+  expect(c.err) == ""
+  send(s, b"x")
+  tls13.feed(c, take(s))
+  expect(tls13.recv(c)) == b"x"
+  // application data resets the count
+  for _ in 0..16 {
+    send_key_update(s)
+  }
+  tls13.feed(c, take(s))
+  expect(c.err) == ""
+  send_key_update(s)
+  tls13.feed(c, take(s))
+  expect(c.err) == "tls: too many non-advancing records"
+}
+
+test "17 empty application data records are one too many, in both directions" {
+  var (c, s) = mem_pair()
+  for _ in 0..16 {
+    tls13.send(c, b"")
+  }
+  feed(s, tls13.take(c))
+  expect(s.err) == ""
+  tls13.send(c, b"")
+  feed(s, tls13.take(c))
+  expect(s.err) == "tls: too many ignored records"
+  var (c2, s2) = mem_pair()
+  for _ in 0..17 {
+    send(s2, b"")
+  }
+  tls13.feed(c2, take(s2))
+  expect(c2.err) == "tls: too many ignored records"
+}
+
+test "a client's KeyUpdates past 16 are one too many for the server" {
+  var (_c, s) = mem_pair()
+  // the client's write keys are the server's read keys: seal with a copy
+  var k = s.rk
+  var recs = b""
+  for _ in 0..17 {
+    recs = tls13.cat2(recs, tlsrec.seal(k, tlsrec.CT_HANDSHAKE, tls13.message(HS_KEY_UPDATE, b"\x00"), 0x0303))
+    k = tlsrec.update(k)
+  }
+  feed(s, recs)
+  expect(s.err) == "tls: too many non-advancing records"
+}

@@ -1,6 +1,19 @@
 # std/tls changes
 
 
+## 2026-11-13: security: at most 16 records or post-handshake messages in a row that do not advance the connection (native)
+
+- Kind: security
+- Commit: this commit
+- Found by: Go 1.26.11's crypto/tls changes (Lang 2's toolchain bump list), reviewed against the port
+- Go reference: crypto/tls conn.go retryReadRecord and handlePostHandshakeMessage, maxUselessRecords (go1.26.11 also counts post-handshake KeyUpdates and resets only on application data or a handshake record before the handshake completes)
+- Affected: Xo 0.50.1 and earlier, native backends: clients and servers, TLS 1.2 and 1.3
+- Test: std/native/llrt/tls13srv_test.xo (in-memory client and server): Go's TestKeyUpdateSpamPostHandshakeTLS13 in both directions, empty application data records in both directions (all fail without the change)
+- Timing: none
+- Shipped in: not yet released
+
+A peer could send without limit records that do not advance the connection: empty application data, TLS 1.2 warning alerts, TLS 1.3 compatibility ChangeCipherSpecs, and after the handshake TLS 1.3 KeyUpdates (each a key derivation, and a reply when requested) and session tickets. The 17th in a row now fails the connection with an unexpected_message alert and Go's text, `tls: too many ignored records` or `tls: too many non-advancing records`.
+
 ## 2026-11-12: security: a peer's RSA key over 8192 bits is refused (CVE-2023-29409)
 
 - Kind: security

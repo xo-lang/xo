@@ -173,6 +173,9 @@ pub fn client_groups() -> List[Int] {
 /// negotiated, the server's certificates; and the bytes in and out, the
 /// handshake transcript and keys.
 pub struct Client {
+  /// consecutive records that did not advance the connection (Go's
+  /// retryCount, at most MAX_USELESS: Go's maxUselessRecords)
+  useless: Int = 0
   pub conf: Conf
   pub state: Int
   pub err: Str
@@ -320,7 +323,9 @@ fn record(var c: Client, buf: Bytes, n: Int) {
     // handshake only (RFC 8446 5)
     if c.state == DONE || n != 1 || buf[5] != 1 {
       fail(c, ALERT_UNEXPECTED_MESSAGE, "tls: unexpected message")
+      return
     }
+    ignored(c)
     return
   }
   if c.rk.on && ct != tlsrec.CT_APP {
@@ -359,6 +364,9 @@ fn record(var c: Client, buf: Bytes, n: Int) {
       fail(c, ALERT_UNEXPECTED_MESSAGE, "local error: tls: unexpected message")
       return
     }
+    if c.state != DONE {
+      c.useless = 0
+    }
     c.hs = cat2(c.hs, inner.data)
     while c.state != FAILED && c.hs.len() >= 4 {
       let t = Int(c.hs[0])
@@ -388,10 +396,41 @@ fn record(var c: Client, buf: Bytes, n: Int) {
       fail(c, ALERT_UNEXPECTED_MESSAGE, "local error: tls: unexpected message")
       return
     }
+    if inner.data.is_empty() {
+      ignored(c)
+      return
+    }
+    c.useless = 0
     c.app = cat2(c.app, inner.data)
     return
   }
   fail(c, ALERT_UNEXPECTED_MESSAGE, "local error: tls: unexpected message")
+}
+
+/// Go's maxUselessRecords: consecutive records or post-handshake messages
+/// that do not advance the connection (empty application data, an ignored
+/// ChangeCipherSpec, a KeyUpdate, a ticket) before it fails (Go 1.26.11
+/// counts KeyUpdates too: one costs a key derivation and, when asked, a
+/// reply).
+pub const MAX_USELESS: Int = 16
+
+/// A record dropped without advancing (Go's retryReadRecord).
+fn ignored(var c: Client) {
+  c.useless += 1
+  if c.useless > MAX_USELESS {
+    fail(c, ALERT_UNEXPECTED_MESSAGE, "tls: too many ignored records")
+  }
+}
+
+/// A post-handshake message (Go's handlePostHandshakeMessage): false when
+/// it is one too many.
+fn post_handshake(var c: Client) -> Bool {
+  c.useless += 1
+  if c.useless > MAX_USELESS {
+    fail(c, ALERT_UNEXPECTED_MESSAGE, "tls: too many non-advancing records")
+    return false
+  }
+  true
 }
 
 /// One handshake message of type t.
@@ -410,8 +449,11 @@ fn handshake(var c: Client, t: Int, msg: Bytes) {
     finished(c, msg)
   } else if c.state == DONE && t == HS_NEW_SESSION_TICKET {
     // no resumption: tickets are dropped
+    let _ok = post_handshake(c)
   } else if c.state == DONE && t == HS_KEY_UPDATE {
-    key_update(c, msg)
+    if post_handshake(c) {
+      key_update(c, msg)
+    }
   } else {
     fail(c, ALERT_UNEXPECTED_MESSAGE, "tls: unexpected message")
   }
