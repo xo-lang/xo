@@ -194,3 +194,13 @@ crypto; within it, a module that misses only the testing axis first.
   json trial on host 2 wrote a correct fuzz.md (2,000 cases on arm64 and
   LLVM in about 30 s, so a full run is about 4 hours). Next: race and
   stress kinds, the generator into scripts/stdcov reading the evidence.
+- 2026-11-13 (Xo Lang 3): the race kind also runs the module's stress
+  program under --race (`-stress-minutes`, default 10), which section 2
+  requires and the first race kind lacked; json's race.md is the first
+  with it (10 minutes, 64 tasks, 0 races). A `perf` kind: `stdproven perf
+  MODULE` runs `scripts/twincheck -time` over every bench/perf/MODULE*
+  directory with a twin.txt and writes std/evidence/MODULE/perf.md (the
+  medians, Xo over Go; result pass when every case above 5 ms is at most
+  1.05, decision 0461's Proven), so the performance axis has a
+  rerunnable record beside the testing kinds; the coverage generator
+  reads it when it moves into the repository (section 5).
