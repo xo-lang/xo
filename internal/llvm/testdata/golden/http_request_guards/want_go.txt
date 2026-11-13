@@ -1,0 +1,6 @@
+CL with TE: HTTP/1.1 200 OK
+CL with TE: body echo [abc]
+CL with TE: Connection: close false
+CL with TE: pipelined request answered true
+bad Host: sent, injected field false
+User-Agent: invalid header field value

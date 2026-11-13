@@ -1,0 +1,81 @@
+use std/http
+
+// Two request smuggling guards (std/changes/http.md, 2026-11-13).
+// A server: a request with both Transfer-Encoding: chunked and
+// Content-Length is framed by chunked alone, and the connection closes
+// after the answer (RFC 9112 6.3), so a request pipelined after it is not
+// read. Go's net/http keeps the connection open (want_go.txt).
+// A client: a CR or LF in with_host or User-Agent never reaches the wire
+// (GO-2023-1878): an invalid Host fails before connecting (Go's HTTP/1
+// sends an empty Host instead, want_go.txt), and User-Agent's newlines
+// become spaces, as every other field's do (Go's Transport rejects the
+// value, want_go.txt).
+
+fn read_to_close(os: Os, c: Conn) -> Str {
+  c.set_read_deadline(os.clock, Some(os.clock.now() + 5s))
+  var got = b""
+  while true {
+    match c.read(4096) {
+      Ok(Some(b)) => got = got + b
+      _ => break
+    }
+  }
+  got.to_str_lossy()
+}
+
+fn main(os: Os) ! {
+  var r = http.router()
+  r.handle("POST /echo", fn(req) { http.text(200, "echo [${req.body.to_str_lossy()}]") })
+  r.handle("GET /next", fn(_req) { http.text(200, "next") })
+  let srv = http.server(os.net.listen("127.0.0.1:0")?, r)
+  let raw = os.net.listen("127.0.0.1:0")?
+  let seen: Chan[Str] = Chan.new(4)
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    s.spawn_background(fn() {
+      while true {
+        let c = match raw.accept() {
+          Ok(c) => c
+          Err(_) => return
+        }
+        var buf = b""
+        while !buf.to_str_lossy().contains("\r\n\r\n") {
+          match c.read(4096) {
+            Ok(Some(b)) => buf = buf + b
+            _ => break
+          }
+        }
+        c.write(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").ignore_err("probe answer")
+        c.close()
+        seen.send(buf.to_str_lossy())
+      }
+    })
+
+    let c = os.net.dial(srv.addr())?
+    c.write(b"POST /echo HTTP/1.1\r\nHost: s\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\nGET /next HTTP/1.1\r\nHost: s\r\n\r\n")?
+    let text = read_to_close(os, c)
+    c.close()
+    let first = text.split("\r\n").first() ?? ""
+    os.stdio.println("CL with TE: ${first}")
+    os.stdio.println("CL with TE: body ${if text.contains("echo [abc]") { "echo [abc]" } else { "missing" }}")
+    os.stdio.println("CL with TE: Connection: close ${text.contains("\r\nConnection: close\r\n")}")
+    os.stdio.println("CL with TE: pipelined request answered ${text.contains("\r\n\r\nnext")}")
+
+    let cl = http.client(os.net, 5s)
+    match cl.send(http.new_request("GET", "http://${raw.addr()}/a").with_host("h\r\nX-Injected: 1")) {
+      Ok(_) => {
+        let w = seen.recv() ?? ""
+        os.stdio.println("bad Host: sent, injected field ${w.contains("\r\nX-Injected:")}")
+      }
+      Err(e) => os.stdio.println("bad Host: ${if "${e}".contains("invalid Host header") { "invalid Host header" } else { "${e}" }}")
+    }
+    match cl.send(http.new_request("GET", "http://${raw.addr()}/b", {"User-Agent": "ua\r\nX-Injected: 2"})) {
+      Ok(_) => {
+        let w = seen.recv() ?? ""
+        let ua = w.split("\r\n").filter(fn(l) { l.starts_with("User-Agent:") }).first() ?? "none"
+        os.stdio.println("User-Agent: ${ua.quote()}, injected field ${w.contains("\r\nX-Injected:")}")
+      }
+      Err(e) => os.stdio.println("User-Agent: ${if "${e}".contains("invalid header field value") { "invalid header field value" } else { "${e}" }}")
+    }
+  }
+}

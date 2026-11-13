@@ -6,7 +6,7 @@
 - Commit: this push
 - Found by: the std/http security review (decision 0616), against GO-2023-1878 (CVE-2023-29406)
 - Go reference: net/http request.go (Request.write: httpguts.ValidHostHeader, and headerNewlineToSpace on User-Agent), go1.26.1
-- Test: std/native/http_test.xo "a client never writes a CR or LF from with_host or User-Agent into the request"
+- Test: golden http_request_guards (arm64 and llvm want.txt; on the Go backend Go's net/http sends an empty Host and rejects the User-Agent value, want_go.txt)
 - Affected: every release up to 0.50.1, native and LLVM backends (the Go backend sends with Go's net/http)
 - Shipped in: not yet released
 
@@ -20,7 +20,7 @@ A request's Host (`Request.with_host`) and its `User-Agent` value were written i
 - Commit: this push
 - Found by: the std/http stress program (decision 0616, std/evidence/http/stress); the lead asked for RFC 9112's rule over Go's (2026-11-13)
 - Go reference: net/http server.go (readTransfer drops Content-Length under chunked and keeps the connection open), go1.26.1; RFC 9112 6.3 item 3 (the server MUST close the connection after responding)
-- Test: std/native/http_test.xo "Content-Length with chunked is framed by chunked and closes the connection after the answer" (a pipelined GET after the request is not answered); internal/stdtest/httpsmuggle_test.go keeps the framing equal to Go's
+- Test: golden http_request_guards (a GET pipelined after the request is not answered; arm64 and llvm want.txt, the Go backend want_go.txt); internal/stdtest/httpsmuggle_test.go keeps the framing equal to Go's
 - Affected: every release up to 0.50.1, native and LLVM backends; the Go backend serves with Go's net/http and still keeps the connection open
 - Shipped in: not yet released
 
