@@ -133,7 +133,14 @@ Wall ms / peak RSS MB, one build each (Mac, 2026-11-13).
 | xo | 3317 / 545 | 44 / 20 | 41 / 20 | 476 / 288 | 6.11 |
 
 xo's edit compiles through the back-end caches (the run cache misses on any changed file), so its edit is
-slower than Go's and peaks higher; second and warm are run-cache hits. A first run of this row wrote its
+slower than Go's and peaks higher; second and warm are run-cache hits.
+
+Why the edit is slower: the cold build ran before std's variants existed, so it compiled the whole
+program, and none of its entries serve separate compilation; the second and warm builds were run-cache
+hits, so the edit was the program's first separate build (fe 0/57 bodies, chk 0/9 modules, functions
+0/450 reused). Measured after (Mac, 2026-11-13): with the variants built before the cold build, cold
+takes 727 ms, the first edit 234 ms (fe 49/57, chk 8/9, functions 175/450) and the next 213 ms, against
+Go's 305 ms; a second edit after this table's sequence took 182 to 197 ms. A first run of this row wrote its
 logs inside the workspace's directory, which the run cache keys (a directory listing that changes can add
 an xo.mod or xo.work), so every build missed: keep logs outside the program's tree when timing.
 
