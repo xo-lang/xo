@@ -1291,6 +1291,13 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
   // Connection close / keep-alive wishes (Header.get: the first value)
   let wants10ka = major == 1 && minor == 0 && server_token(cv, "keep-alive")
   var wantsclose = close || server_token(cv, "close")
+  if chunked && cls_n > 0 {
+    // Transfer-Encoding with Content-Length: framed by chunked, and the
+    // connection closes after the answer (RFC 9112 6.3 item 3, a MUST;
+    // Go keeps it open), so no request after it is read from a stream
+    // another hop may have framed by the Content-Length
+    wantsclose = true
+  }
   if h2up {
     clen = 0 // its Body is NoBody (std/rt reads none)
     close = true

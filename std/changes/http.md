@@ -1,5 +1,20 @@
 # std/http changes
 
+## 2026-11-13: security: a native server closes the connection after a request with both Transfer-Encoding and Content-Length
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http stress program (decision 0616, std/evidence/http/stress); the lead asked for RFC 9112's rule over Go's (2026-11-13)
+- Go reference: net/http server.go (readTransfer drops Content-Length under chunked and keeps the connection open), go1.26.1; RFC 9112 6.3 item 3 (the server MUST close the connection after responding)
+- Test: std/native/http_test.xo "Content-Length with chunked is framed by chunked and closes the connection after the answer" (a pipelined GET after the request is not answered); internal/stdtest/httpsmuggle_test.go keeps the framing equal to Go's
+- Affected: every release up to 0.50.1, native and LLVM backends; the Go backend serves with Go's net/http and still keeps the connection open
+- Shipped in: not yet released
+
+A request with both `Transfer-Encoding: chunked` and `Content-Length` was already framed by chunked alone, as in Go. The server now also answers it with `Connection: close` and closes the connection, so any bytes after the request on that connection are never read as another request. A front proxy that framed the same request by its Content-Length could otherwise have the bytes it took as body served as a request of their own (request smuggling).
+
+- Remote trigger: any client.
+- Behavior change: a client that pipelines requests after such a request gets no answer to them and must reconnect.
+
 ## 2026-11-12: feature: Client.with_jar and CookieStore
 
 - Kind: feature
