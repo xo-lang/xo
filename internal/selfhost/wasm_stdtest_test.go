@@ -36,7 +36,7 @@ func TestWasmStdTests(t *testing.T) {
 		{"base32", "ok: 9 passed, 0 failed, 0 skipped"},
 		{"native/time", "ok: 10 passed, 0 failed, 0 skipped"},
 		{"uuid", "ok: 4 passed, 0 failed, 0 skipped"},
-		{"native/prelude", "ok: 58 passed, 0 failed, 0 skipped"},
+		{"native/prelude", "ok: 60 passed, 0 failed, 0 skipped"},
 		{"amqp", "skipped (28 wasm: WASI preview 1 has no sockets)"},
 		{"native/llrt/raw", "ok: 6 passed, 0 failed, 1 skipped (1 wasm: a native Str view"},
 	} {
