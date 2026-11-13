@@ -156,7 +156,31 @@ fn days_from_civil(year: Int, m: Int, d: Int) -> Int {
   era * 146097 + doe - 719468
 }
 
+/// The civil date of days since 1970-01-01: Go's absDays.date (Neri and
+/// Schneider's algorithm, time.go: one 32 bit multiply and shift for the
+/// year of the century, one for the month), over days counted from
+/// -10000-03-01 so every quantity is non-negative; earlier days take
+/// date_of_era.
 fn date_of(days: Int) -> time.Date {
+  // 719468 days from 0000-03-01 to 1970-01-01, 25 eras of 146097 days
+  let a = days + 719468 + 3652425
+  if a < 0 {
+    return date_of_era(days)
+  }
+  let d = 4 * a + 3
+  let century = d / 146097
+  let cd = (d % 146097) | 3
+  let prod = 2939745 * cd
+  let cyear = prod >> 32
+  let ayday = (prod & 0xFFFFFFFF) / 2939745 / 4
+  let dm = 2141 * ayday + 197913
+  let jf = if ayday >= 306 { 1 } else { 0 }
+  time.Date{year: century * 100 - 10000 + cyear + jf, month: (dm >> 16) - jf * 12, day: 1 + (dm & 0xFFFF) / 2141}
+}
+
+/// date_of by eras of 400 years (Hinnant's days_from_civil inverse), for
+/// any day.
+fn date_of_era(days: Int) -> time.Date {
   let z = days + 719468
   let era = floor_div(z, 146097)
   let doe = z - era * 146097
