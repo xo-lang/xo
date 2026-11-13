@@ -18,15 +18,24 @@ fn lower(s: Str) -> Str {
   b.freeze().to_str() ?? s
 }
 
+/// splitHostname: host lower-cased, without a trailing dot, split at its
+/// dots (once per host, not per name it is matched against: GO-2026-5037).
+pub fn split_hostname(host: Str) -> List[Str] {
+  lower(host.trim_suffix(".")).split(".")
+}
+
 /// matchHostnames: the pattern (with a leftmost "*") against host.
 pub fn match_hostnames(pattern0: Str, host0: Str) -> Bool {
+  match_host_parts(pattern0, split_hostname(host0))
+}
+
+/// matchHostnames against a host already split (split_hostname).
+pub fn match_host_parts(pattern0: Str, hp: List[Str]) -> Bool {
   let pattern = lower(pattern0)
-  let host = lower(host0.trim_suffix("."))
-  if pattern.is_empty() || host.is_empty() {
+  if pattern.is_empty() || hp.is_empty() || (hp.len() == 1 && hp[0].is_empty()) {
     return false
   }
   let pp = pattern.split(".")
-  let hp = host.split(".")
   if pp.len() != hp.len() {
     return false
   }
@@ -338,9 +347,10 @@ pub fn host_ok(nm: Names, h: Str) -> Bool {
   }
   let name = lower(h)
   let valid = valid_hostname(name, false)
+  let parts = split_hostname(name)
   for m in nm.dns {
     if valid && valid_hostname(m, true) {
-      if match_hostnames(m, name) {
+      if match_host_parts(m, parts) {
         return true
       }
     } else if match_exactly(m, name) {
@@ -364,18 +374,29 @@ pub fn hostname_msg(nm: Names, has_san: Bool, cn: Str, h: Str) -> Str {
   if !has_san && match_hostnames(cn, host) {
     return "x509: certificate relies on legacy Common Name field, use SANs instead"
   }
+  // at most 99 names in the text, as Go (GO-2025-4155: a certificate
+  // with many names made each failed check build a text quadratic in them)
+  let max_names = 100
   var valid = ""
   if let Some(_) = parse_ip(host) {
     if nm.ips.is_empty() {
       return "x509: cannot validate certificate for ${host} because it doesn't contain any IP SANs"
     }
-    for ip in nm.ips {
-      if !valid.is_empty() {
-        valid = valid + ", "
-      }
-      valid = valid + ip_string(ip)
+    if nm.ips.len() >= max_names {
+      return "x509: certificate is valid for ${nm.ips.len()} IP SANs, but none matched ${host}"
     }
+    var b = StrBuilder.new()
+    for ip in nm.ips {
+      if b.len() > 0 {
+        b.write(", ")
+      }
+      b.write(ip_string(ip))
+    }
+    valid = b.freeze()
   } else {
+    if nm.dns.len() >= max_names {
+      return "x509: certificate is valid for ${nm.dns.len()} names, but none matched ${host}"
+    }
     valid = nm.dns.join(", ")
   }
   if valid.is_empty() {
