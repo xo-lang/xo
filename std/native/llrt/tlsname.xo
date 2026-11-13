@@ -455,78 +455,115 @@ fn find_at(p: Int, i0: Int, end: Int, s: Str) -> Int {
 /// load a byte in place of b64's comparisons).
 const B64_CLASS: Bytes = b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x40\x40\xff\xff\x40\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x40\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x3e\xff\xff\xff\x3f\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\xff\xff\xff\x41\xff\xff\xff\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\xff\xff\xff\xff\xff\xff\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
 
+/// The index of the last bytes of s in the memory at p from lo to end
+/// (wholly inside), or -1.
+fn rfind_at(p: Int, lo: Int, end: Int, s: Str) -> Int {
+  let k = s.len()
+  let d = raw.data(s)
+  let first = raw.byte_at(d, 0)
+  var i = end - k
+  while i >= lo {
+    if raw.byte_at(p, i) == first && raw.mem_eq(p + i, d, k) {
+      return i
+    }
+    i -= 1
+  }
+  -1
+}
+
+/// Go's getLine from i: the line's end with a \r before its \n and
+/// trailing spaces and tabs dropped, and the position after its \n (n
+/// when there is none).
+fn pem_line(p: Int, i: Int, n: Int) -> (Int, Int) {
+  var nl = i
+  while nl < n && raw.byte_at(p, nl) != 10 {
+    nl += 1
+  }
+  let next = if nl < n { nl + 1 } else { n }
+  var e = nl
+  if nl < n && e > i && raw.byte_at(p, e - 1) == 13 {
+    e -= 1
+  }
+  while e > i && (raw.byte_at(p, e - 1) is 32 | 9) {
+    e -= 1
+  }
+  (e, next)
+}
+
 /// The next PEM block of the n bytes at p from pos: its end position, its
 /// type, and its decoded bytes written at der (at least n bytes); the
-/// length, or -1 when there is none (the end position is then n). A block
-/// that does not decode is skipped, as pem.Decode does; a type of 80 bytes
-/// or more is one.
+/// length, or -1 when there is none (the end position is then n). Go's
+/// pem.Decode (go1.26.1, its fix of GO-2025-4009): the first END line, then
+/// the last BEGIN line before it, so a run of BEGIN lines without an END is
+/// read once (searching each BEGIN's END to the end of the text was
+/// quadratic: 1 MB of BEGIN lines took 45 s); a block that does not parse
+/// or decode is skipped past its END line.
 pub fn pem_next(p: Int, n: Int, pos0: Int, der: Int) -> (Int, Str, Int) {
   var pos = pos0
-  while true {
-    let begin = find_at(p, pos, n, "-----BEGIN ")
-    if begin < 0 {
+  while pos < n {
+    let e = find_at(p, pos, n, "\n-----END ")
+    if e < 0 {
       return (n, "", -1)
     }
-    // pem.Decode requires BEGIN at the start of a line
-    if begin != pos && raw.byte_at(p, begin - 1) != 10 {
-      pos = begin + 11
+    let trailer = e + 10
+    let b = rfind_at(p, pos, e, "-----BEGIN ")
+    if b < 0 || (b > pos && raw.byte_at(p, b - 1) != 10) {
+      pos = trailer
       continue
     }
-    let t = begin + 11
-    let tend = find_at(p, t, n, "-----")
-    pos = begin + 11
-    if tend < 0 || tend - t >= 80 {
+    let t = b + 11
+    let (tl, body) = pem_line(p, t, n)
+    if tl - t < 5 || !raw.mem_eq(p + tl - 5, raw.data("-----"), 5) {
+      pos = trailer
       continue
     }
-    var nl = tend + 5
-    while nl < n && (raw.byte_at(p, nl) is 32 | 9 | 13) {
-      nl += 1
-    }
-    if nl < n && raw.byte_at(p, nl) != 10 {
-      continue
-    }
-    let ty = raw.str_at(p + t, tend - t)
-    let endline = "-----END ${ty}-----"
-    let body = if nl < n { nl + 1 } else { n }
-    let stop = find_at(p, body, n, endline)
-    if stop < 0 {
-      continue
-    }
-    // headers ("Key: value" lines up to an empty line) are skipped
+    let ty = raw.str_at(p + t, tl - 5 - t)
+    // headers ("Key: value" lines) are skipped
     var q = body
-    var line_end = q
-    while line_end < stop && raw.byte_at(p, line_end) != 10 {
-      line_end += 1
-    }
-    if line_end < stop {
-      var colon = false
-      for i in q..line_end {
-        if raw.byte_at(p, i) == 58 {
-          colon = true
-        }
+    var headers = 0
+    while true {
+      if q >= n {
+        return (n, "", -1)
       }
-      if colon {
-        var blank = find_at(p, q, stop, "\n\n")
-        let blank2 = find_at(p, q, stop, "\n\r\n")
-        if blank2 >= 0 && (blank < 0 || blank2 < blank) {
-          blank = blank2 + 1
-        }
-        if blank < 0 {
-          continue
-        }
-        q = blank + 2
+      let (le, next) = pem_line(p, q, n)
+      if find_at(p, q, le, ":") < 0 {
+        break
       }
+      headers += 1
+      q = next
     }
+    if headers > 0 && e < q {
+      pos = trailer
+      continue
+    }
+    // the END line: the type, five dashes, then only white space
+    let k = ty.len()
+    if n - trailer < k + 5 || !raw.mem_eq(p + trailer, raw.data(ty), k) || !raw.mem_eq(p + trailer + k, raw.data("-----"), 5) {
+      pos = trailer
+      continue
+    }
+    let (le, _) = pem_line(p, trailer + k + 5, n)
+    if le != trailer + k + 5 {
+      pos = trailer
+      continue
+    }
+    // the body: base64 with its padding (StdEncoding), white space skipped
     var out = 0
     var acc = 0
     var bits = 0
+    var digits = 0
     var pad = 0
     var bad = false
     var c = q
-    while c < stop {
+    while c < e {
       let v = Int(B64_CLASS[raw.byte_at(p, c)])
       c += 1
-      if v < 64 && pad == 0 {
+      if v < 64 {
+        if pad > 0 {
+          bad = true
+          break
+        }
+        digits += 1
         acc = ((acc << 6) | v) & 0xFFFFFFFF
         bits += 6
         if bits >= 8 {
@@ -546,10 +583,12 @@ pub fn pem_next(p: Int, n: Int, pos0: Int, der: Int) -> (Int, Str, Int) {
       bad = true
       break
     }
-    if bad || pad > 2 {
+    if bad || pad > 2 || (digits + pad) % 4 != 0 {
+      pos = trailer
       continue
     }
-    return (stop + endline.len(), ty, out)
+    let (_, after) = pem_line(p, e + 9, n)
+    return (after, ty, out)
   }
   (n, "", -1)
 }
