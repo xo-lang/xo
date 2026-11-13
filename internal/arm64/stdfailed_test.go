@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,9 @@ func TestStdFailedMarkerPerTree(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
+	}
+	if !sepcompDefaultHost() {
+		t.Skip("separate compilation is not on by default for " + runtime.GOOS + "/" + runtime.GOARCH + " (compiler/xo sepenv.xo sepcomp_default): a build never reads std's store or its markers")
 	}
 	xo, err := xotool.Path()
 	if err != nil {
@@ -150,4 +154,19 @@ func copyTreeTimes(t *testing.T, src, dst string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+// sepcompDefaultHost reports whether a build for this host takes std's
+// separately compiled variants by default: the hosts compiler/xo
+// sepenv.xo sepcomp_default serves (darwin and linux on arm64 and amd64,
+// and windows/amd64). windows/arm64 builds the whole program, so its
+// builds never read a store's failure marker (2026-11-12, the winarm VM).
+func sepcompDefaultHost() bool {
+	switch runtime.GOOS {
+	case "darwin", "linux":
+		return runtime.GOARCH == "arm64" || runtime.GOARCH == "amd64"
+	case "windows":
+		return runtime.GOARCH == "amd64"
+	}
+	return false
 }
