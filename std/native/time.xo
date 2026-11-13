@@ -915,7 +915,17 @@ fn layout_debug(l: Layout) -> Str { "Layout(${l.text.quote()})" }
 
 fn (l: Layout) format(t: Time, z: Zone) -> Str { format_items(l.items, t, z) }
 
-fn (l: Layout) parse(s: Str, z: Zone) -> Time ! time.ParseErr { parse_items(l.items, s, l.text, z) }
+fn (l: Layout) parse(s: Str, z: Zone) -> Time ! time.ParseErr {
+  // the RFC 3339 layout reads its common shapes in place, as time.parse
+  // does (parse_stream); anything else, and every error, goes to the items
+  if l.text == ISO_LAYOUT {
+    let fast = parse_iso_fast(s.bytes())
+    if fast != MIN_TIME_SECS {
+      return Ok(time_of(fast * 1000000000))
+    }
+  }
+  parse_items(l.items, s, l.text, z)
+}
 
 fn layouterr_display(e: time.LayoutErr) -> Str { "bad layout ${e.layout.quote()}: ${e.msg}" }
 

@@ -1254,6 +1254,24 @@ test "a Layout formats and parses as its text" {
   expect(got) == time.parse("2023-11-14T22:13:20Z", time.RFC3339, time.utc())
 }
 
+const ISO_SECONDS_TEXT: Str = "{year}-{month}-{day}T{hour}:{minute}:{second}{offset}"
+const ISO_SECONDS: time.Layout = time.layout("{year}-{month}-{day}T{hour}:{minute}:{second}{offset}")
+
+test "the RFC 3339 seconds Layout parses as time.parse with its text, fast path or not" {
+  // Layout.parse reads the common shapes in place (parse_iso_fast); every
+  // text must give time.parse's instant or error, in two zones
+  let texts = ["2023-11-14T22:13:20Z", "2023-11-14T22:13:20+05:30", "2023-11-14T22:13:20-00:00", "1678-01-01T00:00:00Z",
+    "2262-04-11T23:47:16Z", "1677-09-21T00:12:43Z", "2024-02-29T12:00:00Z", "2023-02-29T12:00:00Z", "2023-11-14T24:00:00Z",
+    "2023-11-14T22:13:60Z", "2023-11-14T22:13:20+24:00", "2023-11-14T22:13:20+05:60", "2023-11-14T22:13:20.5Z",
+    "2023-11-14T22:13:20.123456789-07:00", "2023-11-14 22:13:20Z", "2023-11-14T22:13:20", "2023-1-14T22:13:20Z",
+    "+2023-11-14T22:13:20Z", "2023-11-14T22:13:20z", "2023-11-14T22:13:20+0530", ""]
+  for z in [time.utc(), time.fixed("X", Duration.from_secs_int(-12600))] {
+    for s in texts {
+      expect((s, ISO_SECONDS.parse(s, z))) == (s, time.parse(s, ISO_SECONDS_TEXT, z))
+    }
+  }
+}
+
 test "every format field and argument form" {
   // the output of the Str layout formatter before the byte buffer rewrite
   // (2,625 combinations of layouts, zones, times and nanoseconds agreed)
