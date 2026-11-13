@@ -53,6 +53,10 @@ import (
 
 // xzSummary is scripts/stdcorpus x509Summary: every Certificate field
 // std/x509 has, on one line.
+//
+// URIs are the SAN's text as written, which std/x509 keeps: Go keeps a
+// parsed url.URL, whose String() re-escapes (a mutated `n{/a` prints as
+// `n%7B/a`; seed 2 of the 2026-11-13 1M run).
 func xzSummary(c *x509.Certificate) string {
 	var ips []string
 	for _, ip := range c.IPAddresses {
@@ -60,10 +64,7 @@ func xzSummary(c *x509.Certificate) string {
 			ips = append(ips, a.String())
 		}
 	}
-	var uris []string
-	for _, u := range c.URIs {
-		uris = append(uris, u.String())
-	}
+	uris := xzRawURIs(c)
 	mpl := "none"
 	if c.BasicConstraintsValid && (c.MaxPathLen > 0 || c.MaxPathLenZero) {
 		mpl = strconv.Itoa(c.MaxPathLen)
@@ -569,4 +570,26 @@ func TestX509Fuzz(t *testing.T) {
 	n := envInt(t, "XO_X509FUZZ_N", 1000)
 	ders := xzCases(t, rand.New(rand.NewSource(seed)), n)
 	runFuzzDir(t, "x509fuzz_test.xo", xzXoFile(seed, ders), envBackends("XO_X509FUZZ_BACKENDS", []string{"arm64", "llvm"}), len(ders))
+}
+
+// xzRawURIs is the text of each uniformResourceIdentifier in c's subject
+// alternative name extension, in order (Go parsed each with url.Parse,
+// so this runs only for a certificate Go accepted).
+func xzRawURIs(c *x509.Certificate) []string {
+	var out []string
+	for _, e := range c.Extensions {
+		if !e.Id.Equal(asn1.ObjectIdentifier{2, 5, 29, 17}) {
+			continue
+		}
+		var names []asn1.RawValue
+		if _, err := asn1.Unmarshal(e.Value, &names); err != nil {
+			return nil
+		}
+		for _, n := range names {
+			if n.Class == asn1.ClassContextSpecific && n.Tag == 6 {
+				out = append(out, string(n.Bytes))
+			}
+		}
+	}
+	return out
 }

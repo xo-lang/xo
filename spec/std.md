@@ -7496,7 +7496,9 @@ fn check(os: Os, pem: Bytes, roots: Bytes) -> () ! Error uses clock {
   `signature_algorithm` is Go's `SignatureAlgorithm.String()`
   (`"SHA256-RSA"`, `"ECDSA-SHA256"`, `"SHA256-RSAPSS"`, `"Ed25519"`, `"0"`
   for one Go does not know); `public_key` is None for a key std/crypto
-  has none for (DSA, X25519, an unknown algorithm); `max_path_len` is None
+  has none for (DSA, X25519, an unknown algorithm); `uris` are each URI
+  name's text as written (Go keeps a parsed url.URL, whose String()
+  re-escapes: `a{b` prints as `a%7Bb`); `max_path_len` is None
   without a path length constraint; `key_usage` and `ext_key_usage` list
   what the extensions allow, extended usages in the extension's order;
   `extensions` is every extension in order, the value the DER inside its
