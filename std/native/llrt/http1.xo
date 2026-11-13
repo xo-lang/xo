@@ -27,6 +27,7 @@ use native/llrt/http1_tables
 use native/llrt/http1w
 use native/llrt/netpolicy
 use native/llrt/neturl
+use native/llrt/pool
 use native/llrt/process
 use native/llrt/raw
 use native/llrt/scan
@@ -2234,11 +2235,14 @@ pub fn body_next(h: rthttp.HConn, seq: Int, max: Int) -> BodyPart {
   if mode == S_ERR {
     return BodyPart{data: "", end: false, err: "http: read on a failed body"}
   }
-  if xl(x, X_S100) == 1 {
-    // (2: sent, 3: the response head went first and none is sent;
-    // body_finish asks whether one was expected)
-    xs(x, X_S100, 2)
+  // (2: sent, 3: the response head went first and none is sent, 4:
+  // being sent; body_finish asks whether one was expected). The claim is
+  // atomic and write waits out a send in progress, as net/http's
+  // writeContinueMu: a full duplex handler may read in one task while it
+  // writes in another
+  if rt.slot_cas[Int](x, X_S100 / 8, 1, 4, 3) {
     let _c = send_str(h, "HTTP/1.1 100 Continue\r\n\r\n")
+    rt.slot_store[Int](x, X_S100 / 8, 2, 2)
   }
   while true {
     let have = xl(x, X_N) - xl(x, X_OFF)
@@ -2375,11 +2379,17 @@ fn write(h: rthttp.HConn, x: Int, status: Int, body: Int, bn: Int, stream: Int) 
   let d = rt.heap_large(room + 8)
   let res = d + room
   rt.mem_store(res, 0, 0, 8)
-  if xl(x, X_S100) == 1 {
-    // the response head goes out first: a 100 Continue may no longer
-    // follow it (net/http's canWriteContinue, GO-2021-0224); 3 still
-    // tells body_finish that one was expected
-    xs(x, X_S100, 3)
+  // the response head goes out first: a 100 Continue may no longer
+  // follow it (net/http's canWriteContinue, GO-2021-0224); 3 still tells
+  // body_finish that one was expected. One being sent (4) finishes first.
+  // (on wasm a server's tasks run one at a time, decision 0447 R2a, so
+  // no send is ever seen in progress, and fibers do not yield there)
+  if target.arch == TargetArch.Wasm32 {
+    let _set = rt.slot_cas[Int](x, X_S100 / 8, 1, 3, 3)
+  } else if !rt.slot_cas[Int](x, X_S100 / 8, 1, 3, 3) {
+    while rt.slot_load[Int](x, X_S100 / 8, 1) == 4 {
+      pool.yield_now()
+    }
   }
   var f = xl(x, X_FLAGS) | (if stream != 0 { http1w.F_STREAM } else { 0 })
   if hconn.stopping(h) {

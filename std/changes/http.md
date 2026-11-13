@@ -57,8 +57,9 @@ The server looked for the end of an incomplete head from its start and parsed al
 - Test: golden http_continue_after_head (fails before the fix: a 100 Continue followed the 200 head)
 - Affected: every release up to 0.50.1 (native and LLVM backends; full duplex and streamed responses that read the body after their head)
 - Shipped in: not yet released
+- Remote trigger: any client sending `Expect: 100-continue` to a route whose response head goes out before it reads the body.
 
-A handler whose response head went out before it read an `Expect: 100-continue` body made the server write `HTTP/1.1 100 Continue` after the final head, where the client reads it as body bytes. Writing the head now ends the chance of a 100 Continue, as in net/http.
+A handler whose response head went out before it read an `Expect: 100-continue` body made the server write `HTTP/1.1 100 Continue` after the final head, where the client reads it as body bytes. Writing the head now ends the chance of a 100 Continue, as in net/http; the change of state is atomic, and a head waits for a 100 Continue already being sent (net/http's writeContinueMu), since a full duplex handler may read and write from two tasks.
 
 ## 2026-11-13: security: CONNECT ends HTTP on its connection: the server after any answer, the client after sending it, and ReverseProxy refuses it
 
