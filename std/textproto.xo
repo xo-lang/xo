@@ -344,7 +344,12 @@ pub fn (var r: Reader) read_continued_line() -> Str ! TextErr {
 /// with none it is Eof.
 pub fn (var r: Reader) read_header() -> Header ! TextErr {
   r.eof_header = false
-  var h = header()
+  // the fields in order, then grouped by key once at the end: linear in
+  // the number of fields (adding each to a Header in turn was quadratic)
+  var fk: List[Int] = []
+  var fv: List[Str] = []
+  var keys: List[Str] = []
+  var at: Map[Str, Int] = {}
   if r.at < r.b.len() && (r.b[r.at] == ' ' || r.b[r.at] == '\t') {
     // Go quotes at most 80 bytes of the line (%q since Go 1.26.2)
     let l = r.line_bytes() ?? b""
@@ -355,16 +360,16 @@ pub fn (var r: Reader) read_header() -> Header ! TextErr {
     let kv = match r.continued(true) {
       Ok(x) => x
       Err(TextErr.Eof) => {
-        if h.len() == 0 {
+        if keys.len() == 0 {
           return Err(TextErr.Eof)
         }
         r.eof_header = true
-        return Ok(h)
+        return Ok(grouped(keys, fk, fv))
       }
       Err(e) => return Err(e)
     }
     if kv.is_empty() {
-      return Ok(h)
+      return Ok(grouped(keys, fk, fv))
     }
     let bad = TextErr.Protocol(msg: "malformed MIME header line: ${kv.quote()}")
     let c = match kv.find(b":") {
@@ -387,24 +392,48 @@ pub fn (var r: Reader) read_header() -> Header ! TextErr {
     while s < v.len() && (v[s] == ' ' || v[s] == '\t') {
       s += 1
     }
-    h = h.add_canonical(key, v[s..].to_str_lossy())
+    let ki = match at.get(key) {
+      Some(i) => i
+      None => {
+        at[key] = keys.len()
+        keys.push(key)
+        keys.len() - 1
+      }
+    }
+    fk.push(ki)
+    fv.push(v[s..].to_str_lossy())
   }
-  Ok(h)
+  Ok(grouped(keys, fk, fv))
 }
 
-/// h with value added to key, which is already canonical (a key with a
-/// space stays as it came, as Go's map key does).
-fn (h: Header) add_canonical(key: Str, value: Str) -> Header {
-  var i = 0
-  while i < h.keys.len() {
-    if h.keys[i] == key {
-      var vals = h.vals
-      vals[i] = vals[i] + [value]
-      return Header{keys: h.keys, vals: vals}
-    }
-    i += 1
+/// The Header of keys whose field j has key fk[j] and value fv[j]: each
+/// key's values in the order they came (a counting sort by key).
+fn grouped(keys: List[Str], fk: List[Int], fv: List[Str]) -> Header {
+  var start: List[Int] = []
+  for _ in 0..keys.len() + 1 {
+    start.push(0)
   }
-  Header{keys: h.keys + [key], vals: h.vals + [[value]]}
+  for k in fk {
+    start[k + 1] = start[k + 1] + 1
+  }
+  for i in 0..keys.len() {
+    start[i + 1] = start[i + 1] + start[i]
+  }
+  var next = start
+  var flat: List[Str] = []
+  for _ in 0..fv.len() {
+    flat.push("")
+  }
+  for j in 0..fk.len() {
+    let k = fk[j]
+    flat[next[k]] = fv[j]
+    next[k] = next[k] + 1
+  }
+  var vals: List[List[Str]] = []
+  for i in 0..keys.len() {
+    vals.push(flat[start[i]..start[i + 1]])
+  }
+  Header{keys: keys, vals: vals}
 }
 
 /// A reply line `NNN message` or `NNN-message` (Go's parseCodeLine,

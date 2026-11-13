@@ -248,3 +248,23 @@ test "errors display" {
   expect(TextErr.Eof.display()) == "EOF"
   expect(TextErr.UnexpectedEof.display()) == "unexpected EOF"
 }
+
+test "read_header groups interleaved and repeated keys in first-seen order, also at 50000 fields" {
+  var r = reader(b"b: 1\r\nA: 2\r\nb: 3\r\nc:4\r\nA: 5\r\n\r\nrest")
+  let h = r.read_header().ok() ?? header()
+  expect(h.keys() == ["B", "A", "C"])
+  expect(h.values("b") == ["1", "3"])
+  expect(h.values("a") == ["2", "5"])
+  expect(h.values("C") == ["4"])
+  expect(r.rest() == b"rest")
+  var big = BytesBuilder.new()
+  for i in 0..50000 {
+    big.write("K${i % 1000}: ${i}\r\n".bytes())
+  }
+  big.write(b"\r\n")
+  var r2 = reader(big.freeze())
+  let h2 = r2.read_header().ok() ?? header()
+  expect(h2.len() == 1000)
+  expect(h2.values("K7").len() == 50)
+  expect(h2.values("K7")[49] == "49007")
+}

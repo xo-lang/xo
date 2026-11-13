@@ -1,5 +1,16 @@
 # std/textproto changes
 
+## 2026-11-13: security: read_header is linear in the number of fields
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), an extra finding (Go's ReadMIMEHeader keeps a map and is linear)
+- Test: std/textproto_test.xo "read_header groups interleaved and repeated keys in first-seen order, also at 50000 fields"; measured on arm64: 40000 repeated fields 5771 ms before, 3 ms after
+- Affected: every release up to 0.50.1 (all backends); reached by std/mail, std/multipart and std/smtp on untrusted input
+- Shipped in: not yet released
+
+read_header added each field to the Header it was building by searching the keys found so far and copying the lists, so a header block of many fields cost time quadratic in their number (a denial of service for a program reading mail or multipart headers it did not write). It now records the fields in order and groups them by key once at the end; keys and values come out in the same order as before.
+
 ## 2026-11-13: behavior: protocol errors quote the line, as Go 1.26.2 and later
 
 - Kind: behavior
