@@ -135,6 +135,7 @@ var componentGoldensNotRun = map[string]string{
 	"http_duplex_h2tls":         "http_duplex over HTTP/2 on TLS; a component serves neither",
 	"http_ipv6_url":             "listens on [::1] and requests it; a component serves no sockets",
 	"http_h2_config":            "HTTP/2 server settings, which the host owns",
+	"http_request_guards":       "raw connections to its own socket (request smuggling and header guards of the native server and client), which a component cannot open",
 	"http_h2_max_header_bytes":  "HTTP/2 frames on the wire, which the host owns",
 	"http_h2c":                  "HTTP/2 on the wire, which the host owns",
 	"http_h2c_sniff":            "HTTP/2 on the wire, which the host owns",
