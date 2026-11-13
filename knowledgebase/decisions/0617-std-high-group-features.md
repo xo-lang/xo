@@ -206,6 +206,16 @@ and coverage rows.
 
 - B, proxies, public suffix list and the jar: see below.
 
+- C, the field value kinds (2026-11-12, Xo Lang 3): the compiler's
+  rt.dyn_kind and rt.dyn_bits (8995c7368) give a log field's static
+  kind and word. std/native/log.xo's value_of switches to them only
+  after 0.51's seed is cut, because std code that calls a new intrinsic
+  needs a seed that has it, and an internal 0.51.0 seed would push the
+  public release to 0.51.1 (lead, 2026-11-12). Until then a Time or
+  Duration field is log.Value.Any(text) and numbers are read back from
+  their text. The switch is ready as branch lang3-logdyn (07a5d4592)
+  and is on the 0.51 checklist.
+
 ### Implementation of B (Xo Lang 3, 2026-11-12)
 
 - Proxies: `with_proxy`, `with_proxy_for`, and `std/httpproxy`
