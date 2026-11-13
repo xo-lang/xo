@@ -54,20 +54,27 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   `OFF_MAX_MIN` minutes holding the lock (default 180, exit 124, with a
   message; tier.sh's job 300), so a hung run cannot hold the one slot
   while the queue grows (lead, 2026-10-30: 9 jobs queued behind one run).
-  Before each arm64 job, when /work has under 30 GB free, offload.sh
-  deletes xo cache files idle over 6 hours (1 hour under 15 GB free;
-  gocache, backend, testcc, testbin, build under ~xo/.cache/xo), then
-  the empty directories idle as long (2026-11-03: with no age it removed
-  running builds' fresh work directories, gotchas/empty-dir-prune-removes-live-build-dir.md),
-  and prints the free space after (lead, 2026-10-30: the cache regrew
-  to 55 to 61 GB and filled /work three times that day).
-  The same pass removes whole checkout/ entries (xo builds, about
-  88 MB each) when none of their files was read or written for 12 hours
-  (owner, 2026-11-07: about 90 of them held 8 GB on host 1 while /work
-  fell to 5.7 GB free).
-  It also removes `/work/in/*.bundle` files neither read nor written for
-  6 hours (lead, 2026-11-07: about 140 bundles of about 100 MB each held
-  14 GB on host 2 at 12 GB free).
+  Before each arm64 job, offload.sh runs scripts/lead/offload-prune.sh
+  (2026-11-13, owner go on Lang 2's cache cap design; it replaced the age
+  prune of 2026-10-30 to 2026-11-07). It deletes the least recently used
+  files (the later of atime and mtime) until /work has OFF_FREE_TARGET GB
+  free (30; 25 on host 1, whose disk is 89 GB), cheapest to lose first:
+  ~/.cache/xo build, testcc and testbin, this user's /tmp `Test*` and
+  `xo-*` dirs idle 3 hours, backend, gocache, checkout entries (idle 12
+  hours, or past the newest 8), Go's build cache, then `/work/in/*.bundle`
+  files idle 6 hours. Then each cache is held under a cap (gocache 8 GB,
+  backend 4, testbin 2, build 1, go-build 3). Nothing touched in the last
+  60 minutes goes (an age prune of hour old files during a long sweep broke
+  its later builds, 2026-11-02), and empty directories go only when as old
+  (gotchas/empty-dir-prune-removes-live-build-dir.md). While the job runs
+  a watcher checks /work every 60 s and, under 8 GB free, runs the cheap
+  passes (build, testcc, testbin, /tmp, backend) to 12 GB with a 20 minute
+  floor; it logs to /work/offload-prune.log. Why: measured 2026-11-13, the
+  caches churn (host 2 wrote 11 GB of gocache and 4.5 GB of testbin in one
+  hour, with under 20% of either read back), so an age prune before the
+  job found nothing old while one gate filled the disk. /work job
+  directories are never touched. Tests: scripts/lead/offload-prune_test.sh
+  (a tmpfs tree in a local Linux container). Last verified: 2026-11-13.
   The arm64 container runs 2 jobs at once (OFF_SLOTS=2 in offload.env;
   owner, 2026-10-30): slot 1 is `/work/offload.lock`, slot 2
   `/work/offload.lock.2`. A job that measures time or memory sets
