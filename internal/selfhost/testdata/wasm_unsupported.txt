@@ -129,4 +129,5 @@ http_client_proxy # wasip1 wasip2 # network: WASI preview1 has no sockets, and a
 http_client_jar # wasip1 # network: WASI preview1 has no sockets
 http_continue_after_head # wasip1 # network: the network (`rt.net_status`): WASI preview1 has no sockets
 http_h2_body_budget # wasip1 # network: the network (`rt.net_status`): WASI preview1 has no sockets
+http_h2_empty_continuation # wasip1 # network: the network (`rt.net_status`): WASI preview1 has no sockets
 http_request_guards # wasip1 # network: the network (`rt.net_status`): WASI preview1 has no sockets

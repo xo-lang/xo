@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+result: headers
+within a second: true
+empty HEADERS then CONTINUATION: headers
+--- stderr

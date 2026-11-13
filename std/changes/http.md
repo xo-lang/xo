@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-13: security: an empty CONTINUATION frame costs the HTTP/2 server only its read
+
+- Kind: security
+- Commit: this push
+- Found by: Lang 2's review of the GO-2023-1571 fix (decision 0616); no Go advisory (Go's hpack Decoder.Write returns at once on an empty write)
+- Test: golden http_h2_empty_continuation (50000 empty frames after 800 KB of a field's value: 2.2 s before the fix, 3 ms after, on arm64; the request still answered)
+- Affected: every release up to 0.50.1 (native and LLVM backends)
+- Shipped in: not yet released
+- Remote trigger: any HTTP/2 client (a denial of service: CPU)
+
+Each CONTINUATION frame asked HPACK to decode again and copied the header bytes already waiting, even when the frame brought no bytes, so empty frames cost time in proportion to what was waiting. An empty fragment that does not end the block is now read and dropped.
+
 ## 2026-11-13: security: Request.query_all counts the parameters before splitting, and is empty past 10000
 
 - Kind: security

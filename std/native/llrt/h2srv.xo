@@ -1702,6 +1702,14 @@ fn (var h: H2Conn) frame(hp: Int, p: Int) {
       conn_err(c, E_PROTOCOL)
       return
     }
+    if ty == T_CONT && dn == 0 && (flags & F_END_HEADERS) == 0 {
+      // an empty CONTINUATION that does not end the block completes no
+      // field: nothing to decode (Go's Decoder.Write returns at once),
+      // so the bytes already waiting are not copied again. Only a
+      // CONTINUATION: an empty HEADERS still opens its block
+      // (block_end's C_HB_ON)
+      return
+    }
     // HPACK decodes the fields the fragment completes (after the bytes
     // of a field the last one cut; fragment)
     put(c, C_HB, data, dn)

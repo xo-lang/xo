@@ -1,0 +1,172 @@
+use std/http
+
+// Empty CONTINUATION frames that do not end a header block cost the
+// HTTP/2 server nothing more than reading them, whatever is already
+// waiting (Lang 2's review of the GO-2023-1571 fix; Go's hpack
+// Decoder.Write returns at once on an empty write): 50000 of them after
+// 800 KB of a field's value, then the rest of the block, answered within
+// a second (2.2 s before the fix on an M-series Mac), and the request
+// still answered. An empty HEADERS frame still opens its block.
+
+fn frame(ty: Int, flags: Int, sid: Int, payload: Bytes) -> Bytes {
+  let n = payload.len()
+  var b = BytesBuilder.new()
+  b.write_byte(UInt8((n >> 16) & 255))
+  b.write_byte(UInt8((n >> 8) & 255))
+  b.write_byte(UInt8(n & 255))
+  b.write_byte(UInt8(ty))
+  b.write_byte(UInt8(flags))
+  b.write_byte(UInt8((sid >> 24) & 127))
+  b.write_byte(UInt8((sid >> 16) & 255))
+  b.write_byte(UInt8((sid >> 8) & 255))
+  b.write_byte(UInt8(sid & 255))
+  b.write(payload)
+  b.freeze()
+}
+
+fn fields(kv: List[(Str, Str)]) -> Bytes {
+  var b = BytesBuilder.new()
+  for (k, v) in kv {
+    b.write_byte(0)
+    b.write_byte(UInt8(k.len()))
+    b.write(k.bytes())
+    b.write_byte(UInt8(v.len()))
+    b.write(v.bytes())
+  }
+  b.freeze()
+}
+
+/// HPACK integer with a 7 bit prefix (H bit 0).
+fn int7(v: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  if v < 127 {
+    b.write_byte(UInt8(v))
+    return b.freeze()
+  }
+  b.write_byte(127)
+  var r = v - 127
+  while r >= 128 {
+    b.write_byte(UInt8((r & 127) | 128))
+    r = r >> 7
+  }
+  b.write_byte(UInt8(r))
+  b.freeze()
+}
+
+fn main(os: Os) ! {
+  let pre = 800000
+  let empties = 50000
+  let total = 900000
+  var r = http.router()
+  r.handle("GET /x", fn(_req) { http.text(200, "ok") })
+  let srv = http.server(os.net.listen("127.0.0.1:0")?, r).with_protocols(#{http.Protocol.Http1, http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let c = os.net.dial(srv.addr())?
+    c.write(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")?
+    c.write(frame(4, 0, 0, b""))?
+    let got = Mutex.new(b"")
+    s.spawn_background(fn() {
+      while true {
+        match c.read(65536) {
+          Ok(Some(b)) => got.with(fn(var g) { g = g + b })
+          _ => break
+        }
+      }
+    })
+    // the pseudo fields, then a literal "x" whose value is total bytes
+    var hb = BytesBuilder.new()
+    hb.write(fields([(":method", "GET"), (":scheme", "http"), (":authority", "s"), (":path", "/x")]))
+    hb.write_byte(0)
+    hb.write_byte(1)
+    hb.write(b"x")
+    hb.write(int7(total))
+    c.write(frame(1, 1, 1, hb.freeze()))?
+    let chunk = Bytes.from_hex("61".repeat(16000)) ?? b""
+    var sent = 0
+    while sent + 16000 <= pre {
+      c.write(frame(9, 0, 1, chunk))?
+      sent += 16000
+    }
+    if sent < pre {
+      c.write(frame(9, 0, 1, Bytes.from_hex("61".repeat(pre - sent)) ?? b""))?
+      sent = pre
+    }
+    os.clock.sleep(300ms)
+    let t0 = os.clock.now()
+    let e = frame(9, 0, 1, b"")
+    var batch = BytesBuilder.new()
+    for i in 0..empties {
+      batch.write(e)
+      if (i + 1) % 1000 == 0 {
+        c.write(batch.freeze())?
+        batch = BytesBuilder.new()
+      }
+    }
+    c.write(batch.freeze())?
+    // the rest of the value, END_HEADERS
+    while sent < total {
+      let k = if total - sent > 16000 { 16000 } else { total - sent }
+      let fl = if sent + k == total { 4 } else { 0 }
+      c.write(frame(9, fl, 1, Bytes.from_hex("61".repeat(k)) ?? b""))?
+      sent += k
+    }
+    // wait for a HEADERS (or GOAWAY) frame back on stream 1
+    var done = ""
+    while done.is_empty() {
+      let all = got.with_read(fn(g) { g })
+      var at = 0
+      while at + 9 <= all.len() {
+        let n = (Int(all[at]) << 16) | (Int(all[at + 1]) << 8) | Int(all[at + 2])
+        let sid = Int(all[at + 8])
+        if all[at + 3] == 1 && sid == 1 {
+          done = "headers"
+        }
+        if all[at + 3] == 3 && sid == 1 {
+          done = "rst"
+        }
+        if all[at + 3] == 7 {
+          done = "goaway"
+        }
+        at += 9 + n
+      }
+      if os.clock.since(t0) > 30s {
+        done = "timeout"
+      }
+      os.clock.sleep(1ms)
+    }
+    os.stdio.println("result: ${done}")
+    os.stdio.println("within a second: ${os.clock.since(t0) < 1s}")
+    c.close()
+    // an empty HEADERS (RFC 9113 allows an empty fragment) still opens
+    // its block: the CONTINUATION after it, carrying every field and
+    // END_HEADERS, makes a request that is answered
+    let c2 = os.net.dial(srv.addr())?
+    c2.write(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")?
+    c2.write(frame(4, 0, 0, b""))?
+    c2.write(frame(1, 1, 1, b""))?
+    c2.write(frame(9, 4, 1, fields([(":method", "GET"), (":scheme", "http"), (":authority", "s"), (":path", "/x")])))?
+    c2.set_read_deadline(os.clock, Some(os.clock.now() + 5s))
+    var got2 = b""
+    var answer = "none"
+    while answer == "none" {
+      match c2.read(65536) {
+        Ok(Some(b)) => got2 = got2 + b
+        _ => break
+      }
+      var at = 0
+      while at + 9 <= got2.len() {
+        let n = (Int(got2[at]) << 16) | (Int(got2[at + 1]) << 8) | Int(got2[at + 2])
+        if got2[at + 3] == 1 && got2[at + 8] == 1 {
+          answer = "headers"
+        }
+        if got2[at + 3] == 7 {
+          answer = "goaway"
+        }
+        at += 9 + n
+      }
+    }
+    c2.close()
+    os.stdio.println("empty HEADERS then CONTINUATION: ${answer}")
+  }
+}
