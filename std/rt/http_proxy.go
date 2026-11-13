@@ -159,6 +159,10 @@ func (p Http_ReverseProxy) M_with_rewrite(_ *Task, f func(*Task, Http_Request, H
 // M_serve is `p.serve(req, body)`.
 func (p Http_ReverseProxy) M_serve(tk *Task, req Http_Request, body Http_BodyReader) Http_Response {
 	c, target := p.c, p.target
+	// a CONNECT is not proxied (Go 1.26.11's ReverseProxy, GO-2026-6605)
+	if req.F_method == "CONNECT" {
+		return proxyRefuseConnect(tk)
+	}
 	u := target
 	u.F_path = joiningSlash(target.F_path, req.F_url.F_path)
 	q := target.F_query
@@ -281,4 +285,11 @@ func proxyQueryClean(s string) bool {
 
 func isHexDigit(c byte) bool {
 	return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F'
+}
+
+// proxyRefuseConnect is ReverseProxy's answer to a CONNECT (Go 1.26.11:
+// "client sent unsupported CONNECT request", 405).
+func proxyRefuseConnect(tk *Task) Http_Response {
+	logRecord(tk, levelError, "http: proxy error", []logField{{k: "error", v: "client sent unsupported CONNECT request"}}, "")
+	return Http_empty(tk, 405)
 }

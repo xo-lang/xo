@@ -4010,7 +4010,9 @@ fn h1_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str],
     return sx
   }
   let x = read_response(r, method)
-  hclient.end_keep(r, x.keep, https, addr, name, roots, x.s, x.why)
+  // no keep-alive after a CONNECT, whatever the answer (GO-2026-6605,
+  // Go 1.26.11's transport): its body or tunnel may still be in flight
+  hclient.end_keep(r, x.keep && method != "CONNECT", https, addr, name, roots, x.s, x.why)
   x
 }
 
@@ -4869,7 +4871,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
             return cfail(hclient.err(r), hclient.msg(r))
           }
         }
-        hclient.end_keep(r, hb.keep, conn_https, conn_addr, conn_name, roots, CC_OK, "")
+        hclient.end_keep(r, hb.keep && method != "CONNECT", conn_https, conn_addr, conn_name, roots, CC_OK, "")
       }
     }
     // a gzip body the request asked for (hclient.request and h2_exchange

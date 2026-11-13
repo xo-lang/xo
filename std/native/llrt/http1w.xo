@@ -756,9 +756,10 @@ pub const F_STREAM: Int = 512
 /// the response says so (net/http: Shutdown turns keep-alives off, so
 /// closeAfterReply adds Connection: close).
 pub const F_STOPPING: Int = 1024
-/// The request is a CONNECT: a 2xx answer makes the connection a tunnel
-/// to the peer, so the server closes it after the answer instead of
-/// reading more requests from it (GO-2026-6613, Go's fix).
+/// The request is a CONNECT: the server closes the connection after the
+/// answer instead of reading more requests from it, and a 2xx answer, a
+/// tunnel's start, carries no framing or Connection field (GO-2026-6613,
+/// Go 1.26.11's server).
 pub const F_CONNECT: Int = 2048
 
 // What response stores at res.
@@ -846,7 +847,8 @@ pub fn response(d: Int, ha: Int, hn: Int, status0: Int, body: Int, bn: Int, flag
   if val_is(ha, conni, "close") || (flags & F_EXPECT_UNREAD) != 0 {
     close = true
   }
-  if (flags & F_CONNECT) != 0 && status >= 200 && status <= 299 {
+  let connect_ok = (flags & F_CONNECT) != 0 && status >= 200 && status <= 299
+  if (flags & F_CONNECT) != 0 {
     close = true
   }
   if (flags & F_STOPPING) != 0 {
@@ -881,8 +883,14 @@ pub fn response(d: Int, ha: Int, hn: Int, status0: Int, body: Int, bn: Int, flag
     set_cl = -1
     has_cl = false
   }
+  if connect_ok {
+    // the tunnel's bytes follow the head: no length, no chunking
+    excl = excl | X_CONTENT_LENGTH | X_TRANSFER_ENCODING
+    set_cl = -1
+    has_cl = false
+  }
   var chunking = false
-  if head || !body_ok || status == 204 || has_cl {
+  if head || !body_ok || status == 204 || has_cl || connect_ok {
     excl = excl | X_TRANSFER_ENCODING
   } else if is11 {
     if has_te && val_is(ha, tei, "identity") {
@@ -909,13 +917,17 @@ pub fn response(d: Int, ha: Int, hn: Int, status0: Int, body: Int, bn: Int, flag
   let proto_switch = status == 101 && val_len(ha, upi) > 0 && conni >= 0 && has_token(cp, cn, "upgrade")
   if close && !server_token(cp, cn, "close") && !proto_switch {
     excl = excl | X_CONNECTION
-    if is11 {
+    if is11 && !connect_ok {
       set_conn = "close"
     } else {
       // net/http: setHeader.connection = "" (an HTTP/1.0 keep-alive
       // answer that closes, e.g. a request body too large, gets none)
       set_conn = ""
     }
+  }
+  if connect_ok {
+    excl = excl | X_CONNECTION
+    set_conn = ""
   }
   at = status_line(d, at, is11, status)
   at = fields(d, at, ha, hn, excl)

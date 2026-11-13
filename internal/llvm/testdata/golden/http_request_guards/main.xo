@@ -29,7 +29,7 @@ fn main(os: Os) ! {
   var r = http.router()
   r.handle("POST /echo", fn(req) { http.text(200, "echo [${req.body.to_str_lossy()}]") })
   r.handle("GET /next", fn(_req) { http.text(200, "next") })
-  r.wrap(fn(q: http.Request, next: http.Next) -> http.Response { if q.method == "CONNECT" { http.text(200, "tunnel") } else { next(q) } })
+  r.wrap(fn(q: http.Request, next: http.Next) -> http.Response { if q.method == "CONNECT" && !q.path.starts_with("/proxy/") { http.text(200, "tunnel") } else { next(q) } })
   let raw = os.net.listen("127.0.0.1:0")?
   // a ReverseProxy forwards only the query its parse and rewrite hook
   // saw (GO-2022-1038, GO-2026-4976)
@@ -84,6 +84,13 @@ fn main(os: Os) ! {
     let t2 = read_to_close(os, c2)
     c2.close()
     os.stdio.println("CONNECT: ${t2.split("\r\n").first() ?? ""}, request after it answered ${t2.contains("\r\n\r\nnext")}")
+
+    // a ReverseProxy refuses CONNECT (Go 1.26.11, GO-2026-6605)
+    let c3 = os.net.dial(srv.addr())?
+    c3.write(b"CONNECT /proxy/p HTTP/1.1\r\nHost: s\r\n\r\n")?
+    let t3 = read_to_close(os, c3)
+    c3.close()
+    os.stdio.println("proxy CONNECT: ${t3.split("\r\n").first() ?? ""}")
 
     let cl = http.client(os.net, 5s)
     for q in ["a=1&b=%zz&c=1;d=2", "x=1&y=2"] {

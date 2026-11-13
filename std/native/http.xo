@@ -5782,6 +5782,12 @@ fn (p: ReverseProxy) serve(req0: http.Request, body: http.BodyReader) -> http.Re
   let target = p.target
   let c = p.c
   let req = rt.cast[http.Request, Request](req0)
+  // a CONNECT is not proxied (Go 1.26.11's ReverseProxy, GO-2026-6605):
+  // its body or tunnel has no place on a pooled upstream connection
+  if req.method == "CONNECT" {
+    log.error("http: proxy error", {"error": "client sent unsupported CONNECT request"})
+    return http.empty(405)
+  }
   // SetURL: the target's scheme and host, its path joined before the
   // request's, the queries merged; Host is the target's
   var u = target
