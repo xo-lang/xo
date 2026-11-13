@@ -110,7 +110,7 @@ After a GOAWAY of an error the server drops what the peer sends and closes a sec
 - Affected: releases with http.reverse_proxy (decision 0404 stage D) up to 0.50.1, all backends
 - Shipped in: not yet released
 
-`ReverseProxy.serve` forwarded the incoming raw query as written while its parse matched what the request's query showed. Parameters the parse dropped (a semicolon, a bad percent escape, or any past the 10,000 parameter limit) were invisible to the rewrite hook but still reached the upstream (a query smuggling class). Such a query is now rebuilt from the parsed parameters, as Go's cleanQueryParams does; a clean query is still forwarded as written, keeping repeated keys and their order.
+`ReverseProxy.serve` forwarded the incoming raw query as written while its parse matched what the request's query showed. Parameters the parse dropped (a semicolon, a bad percent escape, or any past the 10,000 parameter limit) were invisible to the rewrite hook but still reached the upstream (a query smuggling class). Such a query is now rebuilt from the parsed parameters, as Go's cleanQueryParams does; a clean query is still forwarded as written, keeping repeated keys and their order, as Go forwards it. `url.query` holds each key's first value only, so a hook that checks a key which may repeat reads `query_all` or `raw_query` (Lang 2's review; ReverseProxy's documentation says so).
 
 - Remote trigger: any client of a server using `reverse_proxy`.
 

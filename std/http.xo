@@ -584,6 +584,11 @@ struct ReverseProxy {}
 /// The proxy applying f(in, out) to each outgoing request out after its
 /// own rewrite, in being the request received (httputil's Rewrite with
 /// ProxyRequest.In and Out).
+/// A query that parses is forwarded as written, every value of a repeated
+/// key included (as Go's); `url.query` shows each key's first value only,
+/// so f checks a key that may repeat with query_all or raw_query. A query
+/// that does not parse is forwarded rebuilt from what parsed (Go's
+/// cleanQueryParams).
 fn (p: ReverseProxy) with_rewrite(f: fn(Request, Request) -> Request) -> ReverseProxy
 /// Forwards req, its body read from body, and returns the target's
 /// response with its body streamed back.
