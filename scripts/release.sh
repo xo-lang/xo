@@ -110,7 +110,14 @@
 # xo1), XO_RELEASE_ALLOW_DIRTY=1 (build from a
 # modified tree, for trying the script), XO_RELEASE_WINDOWS=0 (no
 # windows/amd64 archive) or llvm with XO_WIN_CLANG and XO_WINSYSROOT
-# (above),
+# (above), XO_RELEASE_WINDOWS_ARM64=1 (a sixth default archive,
+# windows/arm64: the darwin xo1 with the arm64 backend,
+# --targets=windows/arm64, Xo's COFF writer and PE linker, no C runtime
+# and no Microsoft SDK, as windows/amd64; decision 0569 stage 4, off
+# until the owner's stage 6 go; no race runtime, since ThreadSanitizer
+# has no windows/aarch64 platform, and no prebuilt sqlite object yet: a
+# windows/arm64 std/sqlite build compiles sqlite3.c with clang against
+# the installed SDK or XO_WINSYSROOT),
 # XO_RELEASE_DRY_RUN=1 (run the checks, then print each step's command
 # instead of running it: nothing is built, written, or deleted).
 set -euo pipefail
@@ -172,6 +179,8 @@ elif [ "${XO_RELEASE_NO_NOTARIZE:-}" != 1 ] && [ -n "${XO_NOTARY_PROFILE:-}" ] &
 	exit 1
 fi
 win=${XO_RELEASE_WINDOWS:-native}
+winarm=${XO_RELEASE_WINDOWS_ARM64:-0}
+case $winarm in 0|1) ;; *) echo "release.sh: XO_RELEASE_WINDOWS_ARM64 is 0 (the default) or 1" >&2; exit 1 ;; esac
 [ "$win" = 1 ] && win=native
 case $win in native|llvm|0) ;; *) echo "release.sh: XO_RELEASE_WINDOWS is native (the default), llvm, or 0" >&2; exit 1 ;; esac
 # win_sign ARGS...: scripts/sign-windows.sh, which reads the Azure
@@ -181,7 +190,7 @@ win_sign() {
 	bash scripts/sign-windows.sh "$@"
 }
 winsign=0
-if [ "$win" != 0 ] && [ "$sign" = 1 ] && [ "${XO_RELEASE_WIN_UNSIGNED:-}" != 1 ]; then
+if { [ "$win" != 0 ] || [ "$winarm" = 1 ]; } && [ "$sign" = 1 ] && [ "${XO_RELEASE_WIN_UNSIGNED:-}" != 1 ]; then
 	winsign=1
 	if ! win_sign --check-auth >&2; then
 		echo "release.sh: Windows signing needs working Azure Artifact Signing credentials: the five AZURE_* settings (the environment or XO_AZURE_ENV's file) and the client secret (AZURE_CLIENT_SECRET or the keychain item xo-azure-signing), JSIGN_JAR and JAVA (code-signing.md \"Windows\"); XO_RELEASE_WIN_UNSIGNED=1 builds unsigned Windows executables" >&2
@@ -340,6 +349,7 @@ layout() {
 
 targets="darwin/arm64 darwin/amd64 linux/arm64 linux/amd64"
 [ "$win" != 0 ] && targets="$targets windows/amd64"
+[ "$winarm" = 1 ] && targets="$targets windows/arm64"
 for target in $targets; do
 	layout "$target"
 done
@@ -428,6 +438,12 @@ elif [ "$win" = llvm ]; then
 		-o "$(stage_of windows/amd64)/bin/xo.exe" compiler/xo >&2
 fi
 
+if [ "$winarm" = 1 ]; then
+	echo "== windows/arm64: xo1 cross builds xo1 with the arm64 backend and Xo's PE linker (decision 0569)" >&2
+	run "$xo1" build --backend=arm64 "${stamp[@]}" --targets=windows/arm64 \
+		-o "$(stage_of windows/arm64)/bin/xo.exe" compiler/xo >&2
+fi
+
 if [ "$wasi" = 1 ]; then
 	echo "== wasip1/wasm: xo1 builds xo for WASI (decision 0405)" >&2
 	run "$xo1" build "${stamp[@]}" --targets=wasip1/wasm \
@@ -437,7 +453,10 @@ fi
 # no executable of the release holds the path of this checkout or of the
 # home directory (the build information's dir, the DWARF directories)
 if [ "$dry" != 1 ]; then
-	for f in "$darwin/bin/xo" "$darwin_amd64/bin/xo" "$linux_arm64/bin/xo" "$linux_amd64/bin/xo"; do
+	trim_check=("$darwin/bin/xo" "$darwin_amd64/bin/xo" "$linux_arm64/bin/xo" "$linux_amd64/bin/xo")
+	[ "$win" != 0 ] && trim_check+=("$(stage_of windows/amd64)/bin/xo.exe")
+	[ "$winarm" = 1 ] && trim_check+=("$(stage_of windows/arm64)/bin/xo.exe")
+	for f in "${trim_check[@]}"; do
 		for p in "$repo" "$HOME"; do
 			if grep -aqF -- "$p" "$f"; then
 				echo "release.sh: $f holds the path $p (--trimpath)" >&2
@@ -448,7 +467,8 @@ if [ "$dry" != 1 ]; then
 fi
 
 # decision 0388: std's prebuilt stores for the targets that have a store
-# adapter (Mach-O and ELF arm64, COFF amd64 with its PDB parts beside the
+# adapter (Mach-O and ELF arm64, COFF amd64 and, with
+# XO_RELEASE_WINDOWS_ARM64=1, COFF arm64, with its PDB parts beside the
 # store), both concurrency variants, built by the
 # release's xo from the staged std into lib/xo/stdstore with the code
 # generation key they belong to, so a user's first separately compiled
@@ -461,14 +481,16 @@ fi
 if [ "${XO_RELEASE_STDSTORES:-0}" != 1 ]; then
 	echo "+ lib/xo/stdstore: not shipped (XO_RELEASE_STDSTORES=1 ships them)" >&2
 elif [ "$dry" = 1 ]; then
-	echo "+ lib/xo/stdstore/{darwin,linux}-arm64-conc{0,1}.{store,stdf,id}, windows-amd64-conc{0,1}.{store,store.pdb,stdf,id}: $xo1 dev stdcache --target=darwin/arm64|linux/arm64|windows/amd64 --conc=0|1" >&2
+	echo "+ lib/xo/stdstore/{darwin,linux}-arm64-conc{0,1}.{store,stdf,id}, windows-amd64-conc{0,1}.{store,store.pdb,stdf,id}$([ "$winarm" = 1 ] && echo ", windows-arm64-conc{0,1}.{store,store.pdb,stdf,id}"): $xo1 dev stdcache --target=darwin/arm64|linux/arm64|windows/amd64 --conc=0|1" >&2
 else
 	codegen="" driver=""
 	for a in "${stamp[@]}"; do
 		case "$a" in XO_CODEGEN_KEY=*) codegen="${a#XO_CODEGEN_KEY=}" ;; XO_DRIVER_KEY=*) driver="${a#XO_DRIVER_KEY=}" ;; esac
 	done
 	[ -n "$codegen" ] || { echo "release.sh: no XO_CODEGEN_KEY in the stamps: no std stores" >&2; exit 1; }
-	for st_t in darwin/arm64 linux/arm64 windows/amd64; do
+	st_targets="darwin/arm64 linux/arm64 windows/amd64"
+	[ "$winarm" = 1 ] && st_targets="$st_targets windows/arm64"
+	for st_t in $st_targets; do
 		st=$(stage_of "$st_t")
 		name="${st_t%/*}-${st_t#*/}"
 		mkdir -p "$st/lib/xo/stdstore"
@@ -479,7 +501,7 @@ else
 			paths=$(XO_STD="$st/lib/xo/std" XO_BACKEND_CACHE=on XO_BACKEND_CACHE_DIR="$sc/cache" "$xo1" dev stdcache --conc=$c --target="$st_t") ||
 				{ echo "release.sh: no std store for $st_t conc$c" >&2; exit 1; }
 			cp "$(echo "$paths" | sed -n 1p)" "$st/lib/xo/stdstore/$name-conc$c.store"
-			# windows/amd64: the store's PDB parts beside it (pe_link reads
+			# windows: the store's PDB parts beside it (pe_link reads
 			# STORE.pdb)
 			if [ -f "$(echo "$paths" | sed -n 1p).pdb" ]; then
 				cp "$(echo "$paths" | sed -n 1p).pdb" "$st/lib/xo/stdstore/$name-conc$c.store.pdb"
@@ -510,9 +532,13 @@ fi
 # sign the windows executables (Authenticode, RFC 3161 timestamp), before
 # they are archived; sign-windows.sh checks each signature it made
 if [ "$winsign" = 1 ]; then
-	wst=$(stage_of windows/amd64)
-	echo "== windows: sign bin/xo.exe and bin/xo-gobind.exe (Azure Artifact Signing)" >&2
-	run win_sign "$wst/bin/xo.exe" "$wst/bin/xo-gobind.exe" >&2
+	wsigned=()
+	[ "$win" != 0 ] && wsigned+=("$(stage_of windows/amd64)/bin/xo.exe" "$(stage_of windows/amd64)/bin/xo-gobind.exe")
+	[ "$winarm" = 1 ] && wsigned+=("$(stage_of windows/arm64)/bin/xo.exe" "$(stage_of windows/arm64)/bin/xo-gobind.exe")
+	if [ ${#wsigned[@]} -gt 0 ]; then
+		echo "== windows: sign ${#wsigned[@]} executables, bin/xo.exe and bin/xo-gobind.exe of each windows archive (Azure Artifact Signing)" >&2
+		run win_sign "${wsigned[@]}" >&2
+	fi
 fi
 
 [ "$wasi" = 1 ] && targets="$targets wasip1/wasm"
