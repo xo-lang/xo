@@ -1,5 +1,15 @@
 # std/url changes
 
+## 2026-11-13: fix: an escape of a byte from 0x80 in an IP literal fails as Go's ParseAddr of that byte
+
+- Kind: fix
+- Commit: this push
+- Found by: the std/http long fuzz (decision 0616, TestHttpUrlFuzz seed 11 against go1.26.11)
+- Go reference: net/url url.go parseHost: the bracketed host is unescaped, and only %25 starts a zone, so `[fe80::1%A5eth0]` gives netip.ParseAddr("fe80::1\xa5eth0"), which fails
+- Test: internal/stdtest/httpurlfuzz_test.go regressions `https://[fe80::1%A5eth0]/...`, `http://[%C3%A9::1]/`, `http://[::1%A5]/`
+- Affected: native and LLVM backends; such a byte stayed escaped (decision 0259: not UTF-8), and netip read `%A5eth0` as a zone, so the URL parsed
+- Shipped in: not yet released
+
 ## 2026-11-13: fix: a host's port starts at the last colon for every scheme but http and https, as Go 1.26.11
 
 - Kind: fix

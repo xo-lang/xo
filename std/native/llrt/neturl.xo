@@ -305,6 +305,12 @@ fn parse_host(b: Bytes, s: Str, lo: Int, hi: Int, last_colon: Bool) -> (Bool, St
         return (false, "", he)
       }
       name = h
+      if scan.find(h, "%", 0) >= 0 {
+        // an escape of a byte from 0x80 stays escaped (not UTF-8,
+        // decision 0259), which netip would read as a zone; Go parses
+        // the byte itself, which no address holds
+        return (false, "", "invalid host: " + raw_addr_err(h))
+      }
     }
     match netip.parse_addr(name) {
       Err(e) => return (false, "", "invalid host: " + e.msg)
@@ -617,3 +623,43 @@ fn host_escapes(c: Int) -> Bool {
 }
 
 fn is_hex(c: Int) -> Bool { (c >= 48 && c <= 57) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70) }
+
+/// netip.ParseAddr's error for the bytes h stands for, h holding escapes
+/// of bytes from 0x80 that Go's unescape decodes (no escape below 0x80
+/// reaches here: U_HOST refuses them, and %25 starts a zone). Such a byte
+/// takes the path of any letter past f in every state of Go's parser, so
+/// h with a g for each is parsed, and the error's input and "(at ...)"
+/// are quoted from the real bytes, byte for byte as Go's %q.
+fn raw_addr_err(h: Str) -> Str {
+  let b = h.bytes()
+  var raw = BytesBuilder.with_capacity(b.len())
+  var ph = BytesBuilder.with_capacity(b.len())
+  var i = 0
+  while i < b.len() {
+    if b[i] == 37 && i + 2 < b.len() {
+      raw.write_byte(UInt8((unhex(Int(b[i + 1])) << 4) | unhex(Int(b[i + 2]))))
+      ph.write_byte(103)
+      i += 3
+    } else {
+      raw.write_byte(b[i])
+      ph.write_byte(b[i])
+      i += 1
+    }
+  }
+  let rb = raw.freeze()
+  let ps = ph.freeze().to_str() ?? ""
+  let msg = match netip.parse_addr(ps) {
+    Ok(_) => return "ParseAddr(${rb.quote()}): unexpected character"
+    Err(e) => e.msg
+  }
+  let head = "ParseAddr(${ps.quote()}): "
+  var rest = msg.trim_prefix(head)
+  let n = ps.len()
+  for l in 1..n + 1 {
+    let tail = " (at ${ps[n - l..].quote()})"
+    if rest.ends_with(tail) {
+      return "ParseAddr(${rb.quote()}): ${rest.trim_suffix(tail)} (at ${rb[rb.len() - l..].quote()})"
+    }
+  }
+  "ParseAddr(${rb.quote()}): ${rest}"
+}

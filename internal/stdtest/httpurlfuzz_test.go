@@ -309,6 +309,11 @@ func ufCoverage(t *testing.T, cases []ufURL) {
 // checks them first, whatever its seed (decision 0616: a defect's case
 // joins the module's corpus with its fix).
 var ufRegress = []string{
+	// seed 11 (2026-11-13): an escape of a byte from 0x80 in an IP
+	// literal is that byte to Go's ParseAddr, not a zone
+	"https://[fe80::1%A5eth0]/a b?\u00e9=1#",
+	"http://[%C3%A9::1]/",
+	"http://[::1%A5]/",
 	// seed 2 (2026-11-13, Go 1.26.11): only http and https keep strict
 	// colons; another scheme's port starts at the last colon
 	// (go.dev/issue/78077), so "h:8:" is a host with an empty port, and a
