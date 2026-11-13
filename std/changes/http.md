@@ -10,7 +10,7 @@
 - Shipped in: not yet released
 - Remote trigger: any HTTP/2 client (a denial of service: CPU)
 
-Each CONTINUATION frame asked HPACK to decode again and copied the header bytes already waiting, even when the frame brought no bytes, so empty frames cost time in proportion to what was waiting. An empty fragment that does not end the block is now read and dropped.
+Each CONTINUATION frame asked HPACK to decode again and copied the header bytes already waiting, even when the frame brought no bytes, so empty frames cost time in proportion to what was waiting. An empty CONTINUATION that does not end the block is now read and dropped; an empty HEADERS frame still opens its block (golden case: empty HEADERS, then one CONTINUATION with the whole block, answered 200; Lang 2's review).
 
 ## 2026-11-13: security: Request.query_all counts the parameters before splitting, and is empty past 10000
 
