@@ -364,6 +364,11 @@ test "Add and Set build Go's MIMEHeader, to_map holds each key's first value" {
     if got != want {
       bad.push((ops, got, want))
     }
+    // len: Go's len(MIMEHeader), the keys of want
+    let n = if want.is_empty() { 0 } else { want.split("|").len() }
+    if h.len() != n {
+      bad.push((ops, "len ${h.len()}", "len ${n}"))
+    }
     let m = h.to_map()
     let gf = m.keys().sort().map(fn(k) { "${k}=${m.get(k) ?? "-"}" }).join("|")
     if gf != first {
