@@ -25,3 +25,9 @@ as `+shareret` (any pass on by default): enum_dead_words is 377,972 there
 and 377,840 with `+deadw` (-132 bytes). A size or speed claim for a pass
 names both settings. An unset `XO_PASSES` against `+PASS` measures the
 cache path, not the pass.
+
+Scope: only builds that use those caches. A whole program build
+(`XO_SEPCOMP=0`, as the gcp size samples) is the same with and without
+`XO_PASSES`: BigQuery, Calendar and aws presign were byte-identical with
+`XO_PASSES` unset and `+reltail` (2026-11-13), so shareret's and deadw's
+sample sizes, measured that way, stand.
