@@ -833,11 +833,17 @@ fn (var d: Decoder) finish() -> List[json.Value] ! json.DecodeErr { d.take(b"", 
 // with its strings placed as they are and its numbers' text) with the
 // decoder generated for T, as decode reads v's text: every decode rule
 // and error is the same, without the escaping and the lexing of a text
-// (it was decode(value_encode(v).bytes())).
+// (it was decode(value_encode(v).bytes())). A Value nested deeper than
+// a text may be (jsontext.MAX_DEPTH) is refused with the scanner's error,
+// as decode refuses its text and as the Go backend answers (the decision
+// 0616 json review).
 fn from_value[T: Json](v: json.Value) -> T ! json.DecodeErr {
   var src = BytesBuilder.new()
   var tape: List[Int] = []
-  value_tape(src, tape, v)
+  let deep = value_tape(src, tape, v, 1)
+  if deep != 0 {
+    return Err(json.DecodeErr{path: "$", msg: "invalid JSON: invalid character '${if deep == 91 { "[" } else { "{" }}' exceeded max depth"})
+  }
   match rtjson.json_dec[T](src.freeze(), tape, 0) {
     Ok(x) => Ok(x)
     Err(e) => Err(json.DecodeErr{path: jsontext.path_final(e.path), msg: e.msg})
@@ -845,8 +851,10 @@ fn from_value[T: Json](v: json.Value) -> T ! json.DecodeErr {
 }
 
 /// Appends v's nodes to tape (three words each: kind, a, b; jsontext's
-/// format) and the text they point at to src.
-fn value_tape(var src: BytesBuilder, var tape: List[Int], v: json.Value) {
+/// format) and the text they point at to src; v is at depth (1 for the
+/// root). The byte that opens the first container past
+/// jsontext.MAX_DEPTH (`[` or `{`), else 0.
+fn value_tape(var src: BytesBuilder, var tape: List[Int], v: json.Value, depth: Int) -> Int {
   match v {
     // kinds: 0 null, 1 false, 2 true, 3 number, 4 string, 5 array, 6 object
     Null => tape_node(tape, 0, 0, 0)
@@ -864,23 +872,36 @@ fn value_tape(var src: BytesBuilder, var tape: List[Int], v: json.Value) {
     Str(s) => tape_text(src, tape, 4, s)
     Trusted(_, s) => tape_text(src, tape, 4, s)
     List(items) => {
+      if depth > jsontext.MAX_DEPTH {
+        return 91
+      }
       let at = tape.len()
       tape_node(tape, 5, items.len(), 0)
       for x in items {
-        value_tape(src, tape, x)
+        let d = value_tape(src, tape, x, depth + 1)
+        if d != 0 {
+          return d
+        }
       }
       tape[at + 2] = tape.len()
     }
     Object(fields) => {
+      if depth > jsontext.MAX_DEPTH {
+        return 123
+      }
       let at = tape.len()
       tape_node(tape, 6, fields.len(), 0)
       for f in fields {
         tape_text(src, tape, 4, f.0)
-        value_tape(src, tape, f.1)
+        let d = value_tape(src, tape, f.1, depth + 1)
+        if d != 0 {
+          return d
+        }
       }
       tape[at + 2] = tape.len()
     }
   }
+  0
 }
 
 fn tape_node(var tape: List[Int], kind: Int, a: Int, b: Int) {

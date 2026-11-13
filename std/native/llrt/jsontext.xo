@@ -85,7 +85,7 @@ const C_TOP: Int = 13
 const C_DEPTH: Int = 14
 
 /// The deepest nesting of arrays and objects (encoding/json's maxNestingDepth).
-const MAX_DEPTH: Int = 10000
+pub const MAX_DEPTH: Int = 10000
 const C_LIT: Int = 16
 
 /// Decoder.tokenError's context per state (0 to 8). encoding/json has

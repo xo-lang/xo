@@ -11,7 +11,35 @@ fn show(text: Str) -> Str {
   }
 }
 
+/// show for a text too long to print: the first 72 bytes of the answer
+/// and its length (a refused number's error repeats the number)
+fn brief(text: Str) -> Str {
+  let a = show(text)
+  if a.len() <= 72 { a } else { "${a[0..72]}... (${a.len()} bytes)" }
+}
+
 fn main(os: Os) {
+  // hostile numbers (the decision 0616 json review): exponents far past
+  // the range, a million digits, a million digits scaled back by the
+  // exponent (Go's ParseFloat answers 0 there too: its slow path keeps
+  // 800 digits), and 2^63 into an Int
+  for t in ["1e999999999", "1e-999999999", "1e99999999999999999999", "-1e-99999999999999999999"] {
+    os.stdio.println("${t} => ${show(t)}")
+  }
+  let big = "1" + "0".repeat(1000000)
+  os.stdio.println("1 and 1000000 zeros => ${brief(big)}")
+  os.stdio.println("0. and 1000000 ones => ${brief("0." + "1".repeat(1000000))}")
+  os.stdio.println("1 and 1000000 zeros, e-1000000 => ${brief(big + "e-1000000")}")
+  let ri: Result[Int, json.DecodeErr] = json.decode_str("9223372036854775808")
+  match ri {
+    Ok(n) => os.stdio.println("decode Int 2^63 => ok ${n}")
+    Err(e) => os.stdio.println("decode Int 2^63 => at ${e.path}: ${e.msg}")
+  }
+  let rb: Result[Int, json.DecodeErr] = json.decode_str(big)
+  match rb {
+    Ok(n) => os.stdio.println("decode Int, 1000001 digits => ok ${n}")
+    Err(e) => os.stdio.println("decode Int, 1000001 digits => at ${e.path}: ${e.msg.len()} byte message")
+  }
   for t in ["1e308", "-1e308", "1e309", "-1e999", "1e400", "1e-999", "-1e-999", "[1, 1e999]", "{\"a\": [0, {\"b\": 2e309}]}", "123456789012345678901234567890", "99999999999999999999e290"] {
     os.stdio.println("${t} => ${show(t)}")
   }

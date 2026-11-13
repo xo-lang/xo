@@ -16,6 +16,10 @@ from_value Node 10001: no value, invalid JSON: invalid character '{' exceeded ma
 tokens skip 10001: err invalid JSON: invalid character '{' exceeded max depth
 tokens value 10001: err invalid JSON: invalid character '{' exceeded max depth
 decoder 10001: err invalid JSON: invalid character '{' exceeded max depth
+built 10001: encode 20002 bytes
+built 10001: == true
+built 10001: writer ok, 20002 bytes
+built 10001: from_value Node err invalid JSON: invalid character '{' exceeded max depth
 max_token 16, 16 bytes of an unfinished string: ok
 max_token 16, 17 bytes of an unfinished string: err invalid JSON: token exceeds max_token (16 bytes)
 max_value 16, a 16 byte value in two writes: ok

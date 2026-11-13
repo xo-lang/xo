@@ -70,6 +70,24 @@ fn checks() -> List[Str] {
     }
     out.push("decoder ${what}: ${got}")
   }
+  // a Value built in code is not bounded by the scanner: encode, ==, the
+  // writer and from_value walk it, one past the text limit
+  var v = json.Value.List(items: [])
+  var w = json.Value.List(items: [])
+  var nv = json.Value.Object(fields: [("c", json.Value.List(items: []))])
+  for _ in 0..10000 {
+    v = json.Value.List(items: [v])
+    w = json.Value.List(items: [w])
+    nv = json.Value.Object(fields: [("c", json.Value.List(items: [nv]))])
+  }
+  out.push("built 10001: encode ${json.encode_str(v).len()} bytes")
+  out.push("built 10001: == ${v == w}")
+  var jw = json.json_writer()
+  out.push("built 10001: writer ${show(jw.value(v))}, ${jw.finish().len()} bytes")
+  match json.from_value[Node](nv) {
+    Ok(n) => out.push("built 10001: from_value Node ok, ${depth_of(n) + 1} Nodes")
+    Err(e) => out.push("built 10001: from_value Node err ${e.msg}")
+  }
   // max_token bounds the bytes of a token not yet complete: exactly the
   // bound waits for more, one byte past it is the error
   for n in [16, 17] {

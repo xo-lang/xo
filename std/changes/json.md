@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-13: fix: from_value refuses a Value deeper than a text may be, on every backend
+
+- Kind: fix
+- Commit: this commit
+- Found by: the decision 0616 security review of std/json (second reader)
+- Go reference: encoding/json's maxNestingDepth (10000), which the Go backend's from_value already applied through its text
+- Test: golden json_depth_limits (a Value built in code 10001 deep through encode, ==, the writer and from_value, on the main task and in a spawned one; arm64, llvm, go parity)
+- Shipped in: not yet released
+
+`json.from_value` on the native backends read a Value built in code at any depth, where the Go backend refused one past 10000 levels with the scanner's error, as `decode` refuses its text. The native backends now refuse it the same way (`invalid JSON: invalid character '[' exceeded max depth`), so `from_value(v)` answers as `decode(encode(v))` everywhere. encode, `==` and the writer still take any depth.
+
 ## 2026-11-13: security: encode's HTML escaping stays opt-in (documented)
 
 - Kind: security

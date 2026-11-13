@@ -1,5 +1,14 @@
 exit 0
 --- stdout
+1e999999999 => at $: cannot unmarshal number 1e999999999 into Float
+1e-999999999 => ok 0
+1e99999999999999999999 => at $: cannot unmarshal number 1e99999999999999999999 into Float
+-1e-99999999999999999999 => ok -0
+1 and 1000000 zeros => at $: cannot unmarshal number 100000000000000000000000000000000000000000... (1000042 bytes)
+0. and 1000000 ones => ok 0.1111111111111111
+1 and 1000000 zeros, e-1000000 => ok 0
+decode Int 2^63 => at $: expected integer
+decode Int, 1000001 digits => at $: 16 byte message
 1e308 => ok 1e+308
 -1e308 => ok -1e+308
 1e309 => at $: cannot unmarshal number 1e309 into Float
