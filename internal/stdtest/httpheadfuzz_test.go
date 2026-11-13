@@ -231,14 +231,15 @@ func hfXoFile(cases []headCase) string {
 
 // TestHttpHeadFuzz runs the generated cases with parse_head on the native
 // backends and expects Go's net/http.ReadRequest answer for each.
-// XO_HEADFUZZ_N sets the case count (default 300) and XO_HEADFUZZ_BACKENDS
-// the backends (default arm64).
+// XO_HEADFUZZ_SEED sets the seed (default 64), XO_HEADFUZZ_N the case
+// count (default 300) and XO_HEADFUZZ_BACKENDS the backends (default
+// arm64), for scripts/stdproven fuzz (decision 0616).
 func TestHttpHeadFuzz(t *testing.T) {
 	if testing.Short() {
 		t.Skip("the raw header block fuzz is a heavy test")
 	}
 	n := envInt(t, "XO_HEADFUZZ_N", 300)
 	backends := envBackends("XO_HEADFUZZ_BACKENDS", []string{"arm64"})
-	cases := hfHeadCases(rand.New(rand.NewSource(64)), n)
+	cases := hfHeadCases(rand.New(rand.NewSource(int64(envInt(t, "XO_HEADFUZZ_SEED", 64)))), n)
 	probeModule(t, "native/llrt/http1", filepath.Join("native", "llrt", "http1_test.xo"), hfXoFile(cases), backends, len(cases))
 }

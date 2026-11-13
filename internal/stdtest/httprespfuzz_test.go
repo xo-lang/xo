@@ -253,14 +253,16 @@ func rfXoFile(cases []rfCase) string {
 
 // TestHttpResponseFuzz runs the generated response heads with
 // parse_response on the native backends and expects Go's
-// net/http.ReadResponse answer for each. XO_RESPFUZZ_N sets the case count
-// (default 300) and XO_RESPFUZZ_BACKENDS the backends (default arm64).
+// net/http.ReadResponse answer for each. XO_RESPFUZZ_SEED sets the seed
+// (default 65), XO_RESPFUZZ_N the case count (default 300) and
+// XO_RESPFUZZ_BACKENDS the backends (default arm64), for scripts/stdproven
+// fuzz (decision 0616).
 func TestHttpResponseFuzz(t *testing.T) {
 	if testing.Short() {
 		t.Skip("the raw response block fuzz is a heavy test")
 	}
 	n := envInt(t, "XO_RESPFUZZ_N", 300)
 	backends := envBackends("XO_RESPFUZZ_BACKENDS", []string{"arm64"})
-	cases := rfCases(rand.New(rand.NewSource(65)), n)
+	cases := rfCases(rand.New(rand.NewSource(int64(envInt(t, "XO_RESPFUZZ_SEED", 65)))), n)
 	probeModule(t, "native/llrt/http1", "native/llrt/http1_test.xo", rfXoFile(cases), backends, len(cases))
 }

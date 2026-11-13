@@ -306,15 +306,16 @@ func ufCoverage(t *testing.T, cases []ufURL) {
 }
 
 // TestHttpUrlFuzz runs the generated cases with url_parse on arm64 and LLVM
-// and expects Go's net/url answer for each. XO_URLFUZZ_N sets the case count
-// (default 2000), XO_URLFUZZ_BACKENDS the backends.
+// and expects Go's net/url answer for each. XO_URLFUZZ_SEED sets the seed
+// (default 68), XO_URLFUZZ_N the case count (default 2000),
+// XO_URLFUZZ_BACKENDS the backends.
 func TestHttpUrlFuzz(t *testing.T) {
 	if testing.Short() {
 		t.Skip("the URL parse fuzz is a heavy test")
 	}
 	n := envInt(t, "XO_URLFUZZ_N", 2000)
 	backends := envBackends("XO_URLFUZZ_BACKENDS", []string{"arm64", "llvm"})
-	cases := ufCases(rand.New(rand.NewSource(68)), n)
+	cases := ufCases(rand.New(rand.NewSource(int64(envInt(t, "XO_URLFUZZ_SEED", 68)))), n)
 	ufCoverage(t, cases)
 	for i, c := range cases {
 		// the generated test names a failure by case number; this line is
