@@ -1258,7 +1258,51 @@ fn (var b: Builder) lower_kind(t: Int) -> Str {
   "int"
 }
 
-fn (var b: Builder) string_lit(x: parser.StringLit) -> Int { b.string_lit_into(-1, x) }
+fn (var b: Builder) string_lit(x: parser.StringLit) -> Int { b.string_lit_into(b.string_lit_buf(x), x) }
+
+/// An interpolation of a number between texts (`"2026-10-${d}T12:00Z"`)
+/// starts from a Str of the size it will need, so its pieces append in
+/// place: from the first literal piece, appending the number copied that
+/// text into a Str of its own and the text after it grew that Str again
+/// (bench/perf/timego parse, 2026-11-13: alloc.resize 81% of its
+/// profile). Each literal byte counts, a number 24, any other value 16.
+/// -1 (the pieces alone, as before) for a literal of one piece, with no
+/// number, or with nothing after its numbers, whose first pieces already
+/// make the Str.
+fn (var b: Builder) string_lit_buf(x: parser.StringLit) -> Int {
+  if x.parts.len() < 2 {
+    return -1
+  }
+  var n = 0
+  var nums = 0
+  // a piece appended after a number: without one, appending the number
+  // to the first text makes the Str once already (`"fib = ${n}"`)
+  var after = false
+  for p in x.parts {
+    if nums > 0 && (p.expr != None || !p.text.is_empty()) {
+      after = true
+    }
+    match p.expr {
+      None => n += p.text.len()
+      Some(pe) => {
+        if p.debug || p.spec.is_some() {
+          return -1
+        }
+        let k = b.tkind(b.type_of(pe))
+        if k is Kind.Int | Kind.Float {
+          nums += 1
+          n += 24
+        } else {
+          n += 16
+        }
+      }
+    }
+  }
+  if nums == 0 || !after {
+    return -1
+  }
+  b.rt("rs_with_cap", b.str_t(), [b.cint(n)])
+}
 
 /// acc0 + the text of the string literal x (acc0 < 0: the text alone):
 /// each piece appended to acc0 in turn, so a builder's write of an
