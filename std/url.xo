@@ -47,10 +47,18 @@ pub fn values() -> Values { Values{ks: [], vs: []} }
 /// `a=1&b=2&a=3` into Values; a `;` separator, a bad escape, or more than
 /// 10000 parameters is an error, as url.ParseQuery.
 pub fn parse_query(s: Str) -> Values ! EscapeErr {
-  let parts = s.split("&")
-  if parts.len() > MAX_PARAMS {
-    return Err(EscapeErr{msg: "number of URL query parameters exceeded limit"})
+  // the separators counted before any part is made (GO-2026-4341, Go's
+  // fix): a long run of `&` costs no list of empty parts
+  var seps = 0
+  for b in s.bytes() {
+    if b == 38 {
+      seps += 1
+      if seps + 1 > MAX_PARAMS {
+        return Err(EscapeErr{msg: "number of URL query parameters exceeded limit"})
+      }
+    }
   }
+  let parts = s.split("&")
   let big = s.len() > OWN_MIN
   // the keys' positions in a Map, so many distinct keys stay linear
   var at: Map[Str, Int] = {}

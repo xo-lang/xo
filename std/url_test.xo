@@ -327,3 +327,15 @@ test "encode round trips" for pairs: List[(Str, Str)] {
     }
   }
 }
+
+test "parse_query counts the separators before it splits (GO-2026-4341)" {
+  match parse_query("&".repeat(10000)) {
+    Ok(_) => expect("parsed") == "an error"
+    Err(e) => expect(e.msg) == "number of URL query parameters exceeded limit"
+  }
+  expect(parse_query("&".repeat(9999)).map(fn(v) { v.encode() })) == Ok("")
+  match parse_query("a=1&".repeat(3000000)) {
+    Ok(_) => expect("parsed") == "an error"
+    Err(e) => expect(e.msg) == "number of URL query parameters exceeded limit"
+  }
+}
