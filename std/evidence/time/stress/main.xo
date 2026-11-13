@@ -1,0 +1,204 @@
+// time stress program (decision 0616 section 2): 64 tasks run std/time's
+// main operations (format with a layout text and with a parsed Layout,
+// parse of what format printed, civil, weekday, RFC 3339 text and parse,
+// adding a Duration) over 64 cases for a fixed time, each result checked
+// against Go's time package (tstressgen). A background task samples the
+// resident set every 10 s (Linux /proc/self/status). Pass: no mismatch, no
+// fault, and the resident set at the end within 10% or 4 MB of its sample
+// at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/time
+
+fn zone_for(off: Int) -> time.Zone {
+  if off == 0 { time.utc() } else { time.fixed("ZZ", Duration.from_secs_int(off)) }
+}
+
+/// Go's weekday number (Sunday 0) of an Xo Weekday.
+fn go_weekday(w: time.Weekday) -> Int {
+  match w {
+    Sunday => 0
+    Monday => 1
+    Tuesday => 2
+    Wednesday => 3
+    Thursday => 4
+    Friday => 5
+    Saturday => 6
+  }
+}
+
+/// One pass over the cases from offset start: the operations done, or the
+/// first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  var ops = 0
+  for k in 0..CASES.len() {
+    let i = (start + k) % CASES.len()
+    let (layout, ns, off, text, rfc, year, month, day, wd, later) = CASES[i]
+    let z = zone_for(off)
+    let t = Time.from_unix_nanos(ns)
+    let f = time.format(t, z, layout)
+    if f != text {
+      return Err("format of case ${i}: got ${f}")
+    }
+    let l = time.layout(layout)
+    if l.format(t, z) != text {
+      return Err("Layout.format of case ${i}")
+    }
+    // what format printed parses back to an instant that prints the same
+    let back = time.parse(text, layout, z).map_err(fn(e) { "parse of case ${i}: ${e.display()}" })?
+    if time.format(back, z, layout) != text {
+      return Err("parse of case ${i}: prints ${time.format(back, z, layout)}")
+    }
+    if t.format_rfc3339() != rfc {
+      return Err("RFC 3339 of case ${i}: got ${t.format_rfc3339()}")
+    }
+    let p = Time.parse_rfc3339(rfc) ?? return Err("parse_rfc3339 of case ${i}")
+    if p.unix_nanos() != ns {
+      return Err("parse_rfc3339 of case ${i}: ${p.unix_nanos()}")
+    }
+    let c = time.civil(t, z)
+    if c.date.year != year || c.date.month != month || c.date.day != day || go_weekday(c.date.weekday()) != wd {
+      return Err("civil of case ${i}: ${c.date.year}-${c.date.month}-${c.date.day}")
+    }
+    let lt = t + Duration.from_secs_int(45 * 24 * 3600)
+    if lt.format_rfc3339() != later {
+      return Err("45 days after case ${i}: got ${lt.format_rfc3339()}")
+    }
+    ops += 8
+  }
+  ops
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("time stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+// Written by tstressgen (Xo Lang 3, 2026-11-13) from Go's time package (go1.26.1):
+// Xo layout, Unix nanoseconds, zone offset, Go's Format with the twin layout, Go's RFC 3339 nano text in UTC,
+// the date's year, month, day and weekday (0 Sunday) in that zone, and the instant 45 days later's RFC 3339 text in UTC.
+const CASES: List[(Str, Int, Int, Str, Str, Int, Int, Int, Int, Str)] = [
+  ("{month}/{day:1}/{year}T{hour}:{minute}:{second}{frac:6}{offset:compact}", -7743388279343456246, 19800, "08/15/1724T16:18:40.656543+0530", "1724-08-15T10:48:40.656543754Z", 1724, 8, 15, 2, "1724-09-29T10:48:40.656543754Z"),
+  ("{weekday:name}, {month:short} {day} {year} at {hour}:{minute}:{second}{frac}{offset:compact}", 723724968171916172, 50400, "Tuesday, Dec 08 1992 at 00:42:48.171916172+1400", "1992-12-07T10:42:48.171916172Z", 1992, 12, 8, 2, "1993-01-21T10:42:48.171916172Z"),
+  ("{weekday:name}, {year}/{month}/{day} {hour}:{minute}:{second}{frac}{offset}", 3683935884375689437, 45900, "Friday, 2086/09/27 16:16:24.375689437+12:45", "2086-09-27T03:31:24.375689437Z", 2086, 9, 27, 5, "2086-11-11T03:31:24.375689437Z"),
+  ("{weekday:short}, {day:1}.{month:1}.{year}T{hour}:{minute}:{second}{offset}", -522784217314508525, 0, "Mon, 8.6.1953T06:09:42Z", "1953-06-08T06:09:42.685491475Z", 1953, 6, 8, 1, "1953-07-23T06:09:42.685491475Z"),
+  ("{day}/{month}/{year} {hour}:{minute}:{second}{frac:4}", -1670426237641733184, -43200, "24/01/1917 20:42:42.3582", "1917-01-25T08:42:42.358266816Z", 1917, 1, 24, 3, "1917-03-11T08:42:42.358266816Z"),
+  ("{month:1}/{day:1}/{year}T{hour}:{minute}:{second}{offset}", 5693337276366176268, 19800, "6/1/2150T08:04:36+05:30", "2150-06-01T02:34:36.366176268Z", 2150, 6, 1, 1, "2150-07-16T02:34:36.366176268Z"),
+  ("{weekday:short}, {year}/{month:short}/{day:1}T{hour12}:{minute}:{second}{frac:8} {ampm}{offset}", 3480667778059996324, -34200, "Thu, 2080/Apr/18T02:39:38.05999632 AM-09:30", "2080-04-18T12:09:38.059996324Z", 2080, 4, 18, 4, "2080-06-02T12:09:38.059996324Z"),
+  ("{month:short} {day:1} {year} at {hour}:{minute}:{second}{frac:7}{offset}", 4657027990770008447, -34200, "Jul 29 2117 at 09:23:10.7700084-09:30", "2117-07-29T18:53:10.770008447Z", 2117, 7, 29, 4, "2117-09-12T18:53:10.770008447Z"),
+  ("{weekday:short}, {year}-{month:short}-{day}T{hour}:{minute}:{second}{frac}{offset:compact}", 1155377209641330788, 50400, "Sun, 2006-Aug-13T00:06:49.641330788+1400", "2006-08-12T10:06:49.641330788Z", 2006, 8, 13, 0, "2006-09-26T10:06:49.641330788Z"),
+  ("{day}-{month:name}-{year} at {hour}:{minute}:{second}{offset}", -5268311424107554668, 19800, "21-January-1803 at 09:39:35+05:30", "1803-01-21T04:09:35.892445332Z", 1803, 1, 21, 5, "1803-03-07T04:09:35.892445332Z"),
+  ("{day}-{month}-{year} {hour}:{minute}:{second}{frac:4}", -7408981843209381452, -43200, "21-03-1735 09:29:16.7906", "1735-03-21T21:29:16.790618548Z", 1735, 3, 21, 1, "1735-05-05T21:29:16.790618548Z"),
+  ("{month}-{day:1}-{year}T{hour}:{minute}:{second}", 183732702647319585, 45900, "10-29-1975T01:36:42", "1975-10-28T12:51:42.647319585Z", 1975, 10, 29, 3, "1975-12-12T12:51:42.647319585Z"),
+  ("{month:short}/{day:1}/{year} {hour12}:{minute}:{second}{frac:8} {ampm}", -903610175248855585, -34200, "May/14/1941 03:40:24.75114441 AM", "1941-05-14T13:10:24.751144415Z", 1941, 5, 14, 3, "1941-06-28T13:10:24.751144415Z"),
+  ("{day:1} {month:1} {year} at {hour12}:{minute}:{second} {ampm}", -8016486946290779618, 19800, "20 12 1715 at 07:34:13 PM", "1715-12-20T14:04:13.709220382Z", 1715, 12, 20, 5, "1716-02-03T14:04:13.709220382Z"),
+  ("{day:1}/{month:1}/{year}T{hour12}:{minute}:{second} {ampm}{offset}", -7292054004163562368, -34200, "3/12/1738T07:56:35 PM-09:30", "1738-12-04T05:26:35.836437632Z", 1738, 12, 3, 3, "1739-01-18T05:26:35.836437632Z"),
+  ("{weekday:short}, {year}-{month:1}-{day:1} at {hour12}:{minute}:{second} {ampm}", -4673264912767508433, 19800, "Thu, 1821-11-29 at 12:21:27 PM", "1821-11-29T06:51:27.232491567Z", 1821, 11, 29, 4, "1822-01-13T06:51:27.232491567Z"),
+  ("{weekday:name}, {day:1}/{month:short}/{year}T{hour}:{minute}:{second}{offset:compact}", -3531366543305467788, 0, "Thursday, 4/Feb/1858T16:50:56+0000", "1858-02-04T16:50:56.694532212Z", 1858, 2, 4, 4, "1858-03-21T16:50:56.694532212Z"),
+  ("{day:1} {month:short} {year} {hour12}:{minute}:{second} {ampm}", -3355586759130170125, -34200, "31 Aug 1863 07:04:00 PM", "1863-09-01T04:34:00.869829875Z", 1863, 8, 31, 1, "1863-10-16T04:34:00.869829875Z"),
+  ("{day:1}/{month:short}/{year}T{hour}:{minute}:{second}", 600971293595393081, 19800, "16/Jan/1989T21:58:13", "1989-01-16T16:28:13.595393081Z", 1989, 1, 16, 1, "1989-03-02T16:28:13.595393081Z"),
+  ("{year}-{month:1}-{day:1}T{hour}:{minute}:{second}{frac:7}{offset:compact}", 1678266203023030408, 3600, "2023-3-8T10:03:23.0230304+0100", "2023-03-08T09:03:23.023030408Z", 2023, 3, 8, 3, "2023-04-22T09:03:23.023030408Z"),
+  ("{day}/{month:name}/{year}T{hour12}:{minute}:{second} {ampm}{offset}", 4353587702733566983, 3600, "17/December/2107T06:55:02 PM+01:00", "2107-12-17T17:55:02.733566983Z", 2107, 12, 17, 6, "2108-01-31T17:55:02.733566983Z"),
+  ("{day:1}/{month:name}/{year}T{hour12}:{minute}:{second}{frac:8} {ampm}{offset}", 6860675486968715839, 0, "28/May/2187T11:11:26.96871583 PMZ", "2187-05-28T23:11:26.968715839Z", 2187, 5, 28, 1, "2187-07-12T23:11:26.968715839Z"),
+  ("{month}-{day:1}-{year} {hour12}:{minute}:{second} {ampm}{offset:compact}", 6644567863411112854, 19800, "07-22-2180 10:47:43 PM+0530", "2180-07-22T17:17:43.411112854Z", 2180, 7, 22, 6, "2180-09-05T17:17:43.411112854Z"),
+  ("{weekday:name}, {day:1}-{month:name}-{year} {hour}:{minute}:{second}{frac:3}", -3201668908901961944, 0, "Friday, 17-July-1868 15:31:31.098", "1868-07-17T15:31:31.098038056Z", 1868, 7, 17, 5, "1868-08-31T15:31:31.098038056Z"),
+  ("{year}.{month:name}.{day:1} {hour12}:{minute}:{second} {ampm}{offset:compact}", -1065994409552164384, -34200, "1936.March.21 04:56:30 PM-0930", "1936-03-22T02:26:30.447835616Z", 1936, 3, 21, 6, "1936-05-06T02:26:30.447835616Z"),
+  ("{year}/{month:1}/{day} at {hour}:{minute}:{second}", -7539607986417055489, 3600, "1731/1/30 at 01:26:53", "1731-01-30T00:26:53.582944511Z", 1731, 1, 30, 2, "1731-03-16T00:26:53.582944511Z"),
+  ("{month:short}.{day}.{year} at {hour12}:{minute}:{second}{frac:6} {ampm}{offset:compact}", 405177690767159695, 19800, "Nov.03.1982 at 06:51:30.767159 PM+0530", "1982-11-03T13:21:30.767159695Z", 1982, 11, 3, 3, "1982-12-18T13:21:30.767159695Z"),
+  ("{year}/{month:short}/{day:1} at {hour}:{minute}:{second}{frac}", -7775054650675696919, -34200, "1723/Aug/14 at 13:05:49.324303081", "1723-08-14T22:35:49.324303081Z", 1723, 8, 14, 6, "1723-09-28T22:35:49.324303081Z"),
+  ("{month}/{day}/{year} at {hour}:{minute}:{second}{frac:2}{offset}", 1248597940844417237, -43200, "07/25/2009 at 20:45:40.84-12:00", "2009-07-26T08:45:40.844417237Z", 2009, 7, 25, 6, "2009-09-09T08:45:40.844417237Z"),
+  ("{day} {month:1} {year}T{hour}:{minute}:{second}{frac}{offset}", -7174186694664174879, 19800, "29 8 1742T15:51:45.335825121+05:30", "1742-08-29T10:21:45.335825121Z", 1742, 8, 29, 3, "1742-10-13T10:21:45.335825121Z"),
+  ("{month:name} {day:1} {year}T{hour12}:{minute}:{second}{frac} {ampm}{offset:compact}", 3813382443479916527, -34200, "November 2 2090T11:24:03.479916527 PM-0930", "2090-11-03T08:54:03.479916527Z", 2090, 11, 2, 4, "2090-12-18T08:54:03.479916527Z"),
+  ("{year}/{month}/{day}T{hour}:{minute}:{second}", -7525755333690039048, -34200, "1731/07/08T22:54:26", "1731-07-09T08:24:26.309960952Z", 1731, 7, 8, 0, "1731-08-23T08:24:26.309960952Z"),
+  ("{year}.{month}.{day}T{hour}:{minute}:{second}{frac:3}{offset}", -3444722838533138532, 3600, "1860.11.03T13:32:41.466+01:00", "1860-11-03T12:32:41.466861468Z", 1860, 11, 3, 6, "1860-12-18T12:32:41.466861468Z"),
+  ("{day:1}.{month}.{year} {hour12}:{minute}:{second}{frac:7} {ampm}", 5320864995943145540, -34200, "11.08.2138 04:33:15.9431455 PM", "2138-08-12T02:03:15.94314554Z", 2138, 8, 11, 1, "2138-09-26T02:03:15.94314554Z"),
+  ("{day:1}-{month:name}-{year} at {hour}:{minute}:{second}", 5928681496808136319, 0, "14-November-2157 at 23:58:16", "2157-11-14T23:58:16.808136319Z", 2157, 11, 14, 1, "2157-12-29T23:58:16.808136319Z"),
+  ("{month:short}-{day:1}-{year} at {hour}:{minute}:{second}{frac:3}{offset}", 1126717630755737790, -43200, "Sep-14-2005 at 05:07:10.755-12:00", "2005-09-14T17:07:10.75573779Z", 2005, 9, 14, 3, "2005-10-29T17:07:10.75573779Z"),
+  ("{weekday:name}, {month}-{day:1}-{year} {hour}:{minute}:{second}{frac:6}{offset}", -612668814672876268, 3600, "Wednesday, 08-2-1950 23:13:05.327123+01:00", "1950-08-02T22:13:05.327123732Z", 1950, 8, 2, 3, "1950-09-16T22:13:05.327123732Z"),
+  ("{weekday:short}, {year} {month:1} {day:1} {hour}:{minute}:{second}{frac:3}{offset:compact}", 1937193401528927720, -34200, "Wed, 2031 5 21 19:46:41.528-0930", "2031-05-22T05:16:41.52892772Z", 2031, 5, 21, 3, "2031-07-06T05:16:41.52892772Z"),
+  ("{day:1}/{month:name}/{year} {hour12}:{minute}:{second} {ampm}", -3142798073358697083, 0, "30/May/1870 12:32:06 AM", "1870-05-30T00:32:06.641302917Z", 1870, 5, 30, 1, "1870-07-14T00:32:06.641302917Z"),
+  ("{month:name}-{day}-{year}T{hour12}:{minute}:{second} {ampm}{offset:compact}", 6277078360194577643, 50400, "November-29-2168T10:52:40 PM+1400", "2168-11-29T08:52:40.194577643Z", 2168, 11, 29, 2, "2169-01-13T08:52:40.194577643Z"),
+  ("{month:name}-{day:1}-{year}T{hour}:{minute}:{second}{frac:6}", 5812333349809973838, 50400, "March-9-2154T23:02:29.809973", "2154-03-09T09:02:29.809973838Z", 2154, 3, 9, 6, "2154-04-23T09:02:29.809973838Z"),
+  ("{month:1}/{day}/{year}T{hour}:{minute}:{second}{offset:compact}", 1548134871525353570, -43200, "1/21/2019T17:27:51-1200", "2019-01-22T05:27:51.52535357Z", 2019, 1, 21, 1, "2019-03-08T05:27:51.52535357Z"),
+  ("{weekday:name}, {day:1}/{month}/{year} {hour12}:{minute}:{second}{frac} {ampm}", 4288428306424379721, 0, "Monday, 23/11/2105 02:05:06.424379721 PM", "2105-11-23T14:05:06.424379721Z", 2105, 11, 23, 1, "2106-01-07T14:05:06.424379721Z"),
+  ("{year} {month} {day:1}T{hour}:{minute}:{second}{offset}", -1902737474195295821, 45900, "1909 09 16T02:33:45+12:45", "1909-09-15T13:48:45.804704179Z", 1909, 9, 16, 4, "1909-10-30T13:48:45.804704179Z"),
+  ("{year}-{month:short}-{day:1} {hour}:{minute}:{second}{offset}", -3407942750685178549, 0, "1862-Jan-3 05:14:09Z", "1862-01-03T05:14:09.314821451Z", 1862, 1, 3, 5, "1862-02-17T05:14:09.314821451Z"),
+  ("{year} {month:1} {day:1}T{hour}:{minute}:{second}{offset:compact}", 6616070423878461942, 19800, "2179 8 28T02:50:23+0530", "2179-08-27T21:20:23.878461942Z", 2179, 8, 28, 6, "2179-10-11T21:20:23.878461942Z"),
+  ("{day:1}/{month:name}/{year}T{hour12}:{minute}:{second}{frac} {ampm}{offset:compact}", 3449469844276889853, 45900, "23/April/2079T10:49:04.276889853 PM+1245", "2079-04-23T10:04:04.276889853Z", 2079, 4, 23, 0, "2079-06-07T10:04:04.276889853Z"),
+  ("{weekday:short}, {month}-{day:1}-{year} {hour}:{minute}:{second}{frac:4}{offset}", 226850339868605598, 0, "Thu, 03-10-1977 13:58:59.8686Z", "1977-03-10T13:58:59.868605598Z", 1977, 3, 10, 4, "1977-04-24T13:58:59.868605598Z"),
+  ("{month:short}.{day}.{year}T{hour}:{minute}:{second}{frac:2}{offset}", 1605856008828175724, 50400, "Nov.20.2020T21:06:48.82+14:00", "2020-11-20T07:06:48.828175724Z", 2020, 11, 20, 5, "2021-01-04T07:06:48.828175724Z"),
+  ("{month:short}-{day}-{year}T{hour}:{minute}:{second}{frac:1}{offset:compact}", -5234056870462111142, 0, "Feb-21-1804T15:18:49.5+0000", "1804-02-21T15:18:49.537888858Z", 1804, 2, 21, 2, "1804-04-06T15:18:49.537888858Z"),
+  ("{weekday:name}, {day} {month:short} {year} at {hour12}:{minute}:{second}{frac} {ampm}{offset}", -5168573061633157766, 45900, "Friday, 21 Mar 1806 at 02:00:38.366842234 AM+12:45", "1806-03-20T13:15:38.366842234Z", 1806, 3, 21, 5, "1806-05-04T13:15:38.366842234Z"),
+  ("{month:short}-{day}-{year}T{hour12}:{minute}:{second} {ampm}", -931435743342920830, 3600, "Jun-26-1940T12:50:56 PM", "1940-06-26T11:50:56.65707917Z", 1940, 6, 26, 3, "1940-08-10T11:50:56.65707917Z"),
+  ("{year}.{month:name}.{day} {hour}:{minute}:{second}{offset}", 2708826269256011946, -18000, "2055.November.02 22:44:29-05:00", "2055-11-03T03:44:29.256011946Z", 2055, 11, 2, 2, "2055-12-18T03:44:29.256011946Z"),
+  ("{year} {month:short} {day:1}T{hour12}:{minute}:{second}{frac:5} {ampm}{offset}", -3151407641028002229, 45900, "1870 Feb 19T09:44:18.97199 PM+12:45", "1870-02-19T08:59:18.971997771Z", 1870, 2, 19, 6, "1870-04-05T08:59:18.971997771Z"),
+  ("{weekday:short}, {day:1}-{month:name}-{year}T{hour12}:{minute}:{second}{frac} {ampm}", -4074928143577205055, 0, "Sat, 14-November-1840T11:30:56.422794945 AM", "1840-11-14T11:30:56.422794945Z", 1840, 11, 14, 6, "1840-12-29T11:30:56.422794945Z"),
+  ("{month:short}/{day:1}/{year} {hour12}:{minute}:{second}{frac:8} {ampm}", 2525613255243917910, -43200, "Jan/12/2050 03:14:15.24391791 AM", "2050-01-12T15:14:15.24391791Z", 2050, 1, 12, 3, "2050-02-26T15:14:15.24391791Z"),
+  ("{day:1}/{month:1}/{year} at {hour12}:{minute}:{second}{frac:4} {ampm}{offset}", 217397438867697619, 50400, "21/11/1976 at 06:10:38.8676 PM+14:00", "1976-11-21T04:10:38.867697619Z", 1976, 11, 21, 0, "1977-01-05T04:10:38.867697619Z"),
+  ("{day:1} {month:name} {year}T{hour}:{minute}:{second}{frac:8}{offset}", -5121153347720184252, 0, "20 September 1807T09:24:12.27981574Z", "1807-09-20T09:24:12.279815748Z", 1807, 9, 20, 0, "1807-11-04T09:24:12.279815748Z"),
+  ("{weekday:name}, {year}.{month:short}.{day:1} {hour12}:{minute}:{second}{frac:4} {ampm}{offset:compact}", -4741159934208531118, 45900, "Tuesday, 1819.Oct.5 11:52:45.7914 PM+1245", "1819-10-05T11:07:45.791468882Z", 1819, 10, 5, 2, "1819-11-19T11:07:45.791468882Z"),
+  ("{day}-{month:1}-{year} at {hour}:{minute}:{second}{frac:6}{offset}", -795747796071639497, 3600, "13-10-1944 at 23:56:43.928360+01:00", "1944-10-13T22:56:43.928360503Z", 1944, 10, 13, 5, "1944-11-27T22:56:43.928360503Z"),
+  ("{day:1}/{month}/{year} at {hour12}:{minute}:{second}{frac} {ampm}{offset}", -3728136930737146638, 3600, "11/11/1851 at 07:24:29.262853362 AM+01:00", "1851-11-11T06:24:29.262853362Z", 1851, 11, 11, 2, "1851-12-26T06:24:29.262853362Z"),
+  ("{month} {day:1} {year} {hour12}:{minute}:{second}{frac} {ampm}{offset}", -6958781880713182170, -34200, "06 26 1749 03:31:59.28681783 AM-09:30", "1749-06-26T13:01:59.28681783Z", 1749, 6, 26, 4, "1749-08-10T13:01:59.28681783Z"),
+  ("{day} {month:1} {year}T{hour}:{minute}:{second}{frac}{offset}", 5089024264875337249, 0, "07 4 2131T17:51:04.875337249Z", "2131-04-07T17:51:04.875337249Z", 2131, 4, 7, 6, "2131-05-22T17:51:04.875337249Z"),
+  ("{weekday:short}, {year}.{month:1}.{day} at {hour}:{minute}:{second}{frac}", 5489338697733309592, -43200, "Fri, 2143.12.13 at 12:18:17.733309592", "2143-12-14T00:18:17.733309592Z", 2143, 12, 13, 5, "2144-01-28T00:18:17.733309592Z"),
+]
