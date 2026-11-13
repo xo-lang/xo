@@ -1347,6 +1347,12 @@ pub fn (var h: H2Conn) next() -> H2Req? {
       if !h.feed() {
         break
       }
+      // after a GOAWAY of an error the input is dropped, and a peer that
+      // keeps sending does not hold the connection past the linger's
+      // deadline (GO-2022-0969: the close is not left to an idle read)
+      if on(c, C_FAILED) && now() >= ld(c, C_DEADLINE) {
+        break
+      }
       continue
     }
     if r != -2 {

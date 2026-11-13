@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-13: fix: an HTTP/2 server closes a failed connection at its linger deadline while input still arrives
+
+- Kind: fix
+- Commit: this push
+- Found by: the std/http security review (decision 0616), against GO-2022-0969 (CVE-2022-27664)
+- Go reference: net/http h2_bundle.go goAwayTimeout (the connection closes a second after a GOAWAY of an error)
+- Test: none fails before the fix: a loopback client flooding a failed connection still left the server idle reads, where the deadline was already checked (arm64, llvm); the review records the run
+- Affected: none shown
+- Shipped in: not yet released
+
+After a GOAWAY of an error the server drops what the peer sends and closes a second later, but it checked that deadline only when a read found nothing. The deadline is now also checked after each read that brought data, so a peer that never pauses cannot hold the connection open.
+
 ## 2026-11-13: security: serve_content ignores a Range header of more than 200 ranges
 
 - Kind: security
