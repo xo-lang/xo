@@ -4013,6 +4013,17 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
         let b = hclient.take(r, h.clen)
         return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: b, keep: open && hclient.avail(r) == 0, none: false}
       }
+      if h.clen - have >= 65536 && target.arch != TargetArch.Wasm32 {
+        // a large body of known length: read into its own allocation
+        let (s, b) = hclient.take_exact(r, h.clen)
+        if s == CC_OK {
+          return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: b, keep: open && hclient.avail(r) == 0, none: false}
+        }
+        if s == CC_EOF {
+          return ex_fail(CC_ERR, "\u{1}unexpected EOF")
+        }
+        return ex_fail(s, "")
+      }
       if hclient.eof(r) {
         if h.clen >= 0 {
           return ex_fail(CC_ERR, "\u{1}unexpected EOF")

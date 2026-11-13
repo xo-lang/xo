@@ -187,6 +187,84 @@ fn fill_plain(c: Int, fd: Int, p: Int, n: Int, cap: Int) -> Int {
   CC_ERR
 }
 
+/// Reads into p (room bytes free) from connection c, not through its
+/// buffer: the count, 0 at the end of input, or minus the failure (CC_*).
+/// Not on wasm (take_exact's caller checks).
+fn recv_at(c: Int, p: Int, room: Int) -> Int {
+  if (rt.mem_load(c, C_FD, 4) & 4294967295) == 4294967295 {
+    return 0
+  }
+  let tls = ld(c, C_TLS)
+  if tls != 0 {
+    if poll.canceled() {
+      return -CC_CANCELED
+    }
+    // a count, 0 at the end, or minus the failure, as recv_at's own
+    return tlsio.read(tls, p, room)
+  }
+  let pd = ld(c, C_PD)
+  if !poll.pd_begin(pd) {
+    return -CC_ERR
+  }
+  let fd = rt.mem_load(c, C_FD, 4)
+  var res = -CC_ERR
+  while true {
+    if poll.canceled() {
+      res = -CC_CANCELED
+      break
+    }
+    let r = sock.read(fd, p, room)
+    if r >= 0 {
+      res = r
+      break
+    }
+    if r == -sock.EINTR {
+      continue
+    }
+    if !would_block(r) {
+      break
+    }
+    let w = poll.pd_wait(pd, false, ld(c, C_WHEN))
+    if w != poll.READY {
+      res = -wait_res(w)
+      break
+    }
+  }
+  poll.pd_end(pd)
+  res
+}
+
+/// The n bytes of a body whose Content-Length is n, in one allocation: the
+/// bytes already buffered first, the rest read from the connection
+/// straight into it, so neither the connection's buffer grows to the
+/// body's size nor the body is copied out of it (io.ReadAll's growth in
+/// Go's twin; std/evidence/http/perf.md, stream-send). (CC_OK, the body),
+/// (CC_EOF, b"") when the input ends first, or (the failure, b"").
+pub fn take_exact(r: rthttp.CResp, n: Int) -> (Int, Bytes) {
+  let c = rec(r) + R_C
+  let b = raw.bytes_buf(n)
+  let dst = raw.bytes_addr(b)
+  let buffered = ld(c, C_N) - ld(c, C_OFF)
+  let have = if buffered < n { buffered } else { n }
+  if have > 0 {
+    rt.mem_copy(dst, ld(c, C_BUF) + ld(c, C_OFF), have)
+    st(c, C_OFF, ld(c, C_OFF) + have)
+  }
+  var got = have
+  while got < n {
+    let k = recv_at(c, dst + got, n - got)
+    if k > 0 {
+      got = got + k
+    } else if k == 0 {
+      rt.mem_store(c, C_EOF, 1, 4)
+      return (CC_EOF, b"")
+    } else {
+      return (-k, b"")
+    }
+  }
+  (CC_OK, b)
+}
+
 /// fill on wasm: R1's connection (its record's address in C_PD; decision
 /// 0447 R2b), with the buffer grown as fill grows it.
 fn fill_wasm(c: Int) -> Int {
