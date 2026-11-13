@@ -163,21 +163,41 @@ func loadELF(path, name string) (*execFile, error) {
 		return nil, err
 	}
 	defer f.Close()
-	var sec *elf.Section
-	secIdx := -1
+	// .text, and a split link's .text.xoprog (the program's own code past
+	// std's, compiler/macho/elflink.xo O_PTEXT)
+	var text TextInfo
+	var code []byte
+	var regions []Region
+	idx := map[elf.SectionIndex]bool{}
 	for i, s := range f.Sections {
+		if (s.Name != ".text" && s.Name != ".text.xoprog") || s.Size == 0 {
+			continue
+		}
+		data, err := s.Data()
+		if err != nil {
+			return nil, fmt.Errorf("%s: %s", path, err)
+		}
+		idx[elf.SectionIndex(i)] = true
+		regions = append(regions, Region{Name: s.Name, Addr: s.Addr, Size: s.Size, Code: data})
 		if s.Name == ".text" {
-			sec, secIdx = s, i
+			text = TextInfo{Addr: s.Addr, Size: s.Size}
+			code = data
 		}
 	}
-	if sec == nil || sec.Size == 0 {
+	if text.Size == 0 {
 		return nil, fmt.Errorf("%s: no .text section", path)
 	}
-	code, err := sec.Data()
-	if err != nil {
-		return nil, fmt.Errorf("%s: %s", path, err)
+	sort.Slice(regions, func(i, j int) bool { return regions[i].Addr < regions[j].Addr })
+	if len(regions) > 1 {
+		var total uint64
+		for _, r := range regions {
+			total += r.Size
+		}
+		text.Size = total
+	} else {
+		regions = nil
 	}
-	text := TextInfo{Addr: sec.Addr, Size: sec.Size}
+	rs := regionsOf(&execFile{Text: text, Code: code, Regions: regions})
 	arch := "unknown"
 	switch f.Machine {
 	case elf.EM_AARCH64:
@@ -191,21 +211,22 @@ func loadELF(path, name string) (*execFile, error) {
 	}
 	var out []Symbol
 	for _, s := range syms {
-		if s.Name == "" || s.Section != elf.SectionIndex(secIdx) {
+		if s.Name == "" || !idx[s.Section] {
 			continue
 		}
-		if s.Value < text.Addr || s.Value >= text.Addr+text.Size {
+		if _, ok := regionEnd(rs, s.Value); !ok {
 			continue
 		}
 		out = append(out, Symbol{Name: s.Name, Addr: s.Value})
 	}
 	return &execFile{
-		Name:   name,
-		Format: fmt.Sprintf("ELF %s/%s", elfOS(f.OSABI), arch),
-		Arch:   arch,
-		Text:   text,
-		Syms:   out,
-		Code:   code,
+		Name:    name,
+		Format:  fmt.Sprintf("ELF %s/%s", elfOS(f.OSABI), arch),
+		Arch:    arch,
+		Text:    text,
+		Syms:    out,
+		Code:    code,
+		Regions: regions,
 	}, nil
 }
 

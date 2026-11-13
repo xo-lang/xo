@@ -943,8 +943,9 @@ the evidence names one). Security reviews follow
   [-reach] BINARY` (Mach-O and ELF; use it through heavy.sh like any build
   or test): it sizes every text symbol by the gap to the next one, checks
   the gaps against the code size and fails when they do not cover it
-  (on Mach-O the code is `__text` plus a split link's `_ptext`, which
-  holds the program's own modules past std's: `__text` alone missed
+  (the code is `__text` plus a split link's `_ptext`, ELF's
+  `.text.xoprog`, which holds the program's own modules past std's when
+  it links against the std store; xo's own build has none: `__text` alone missed
   0.42 of a gcp Calendar program's 2.02 MB, aws-43 2026-11-13; quote the
   `code` line, and `size -m`'s `__text` alone only for a program with no
   `_ptext`),
