@@ -13,6 +13,30 @@
 
 The integer part's slow path for 19 or more digits checked the range before each digit but not after it, so a sum that wrapped past -2^63 went on with the next digit and could wrap back into range: 92233720368547758097 (5 times 2^64, plus 17) parsed as 17. A wrapped sum now ends the parse with the error.
 
+## 2026-11-13: perf: civil dates from days with Neri and Schneider's method
+
+- Kind: perf
+- Commit: this push
+- Found by: xo prof of bench/perf/time format (date_of 20% flat)
+- Go reference: time/time.go absDays.date (go1.26: the Neri and Schneider algorithm)
+- Test: std/native/time_test.xo checks every day from -106751 to 106750 against the old method; corpora time, timego, timeformat
+- Timing: bench/perf/time format_layout on linux/arm64 host 1, --ab against the parent (3 rounds): 0.941 (0.932 to 0.967; 48.3 to 45.5 ms)
+- Shipped in: not yet released
+
+date_of turned a day count into a year, month and day with the 400, 100 and 4 year cycle divisions; it now uses Go's absDays.date (one multiply and shift chain over a shifted day count), with the old method kept for days outside its range.
+
+## 2026-11-13: perf: Layout.parse reads the RFC 3339 seconds layout without walking it
+
+- Kind: perf
+- Commit: this push
+- Found by: xo prof of bench/perf/time parse_layout
+- Go reference: time/format.go parseRFC3339 (Go's Parse takes it for RFC3339 and RFC3339Nano)
+- Test: std/native/time_test.xo: 21 texts in 2 zones against time.parse (the general path); corpora time, timego, timeformat
+- Timing: bench/perf/time parse_layout on linux/arm64 host 1, --ab against the parent (3 rounds): 0.601 (0.593 to 0.631; 34.0 to 20.4 ms)
+- Shipped in: not yet released
+
+A Layout whose text is the ISO layout now goes to the fixed-position reader that time.parse already used for that layout, as Go's Parse does for RFC 3339; other layouts are unchanged.
+
 ## 2026-11-11: feature: parse_civil, Civil.format, Civil.unix, Civil.to_time (years outside 1677 to 2262)
 
 - Kind: feature
