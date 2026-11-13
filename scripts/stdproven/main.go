@@ -104,7 +104,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] MODULE")
+	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] [-stress-minutes M] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] MODULE")
 	os.Exit(2)
 }
 
@@ -384,6 +384,7 @@ func race(args []string) error {
 	// llvm: no ThreadSanitizer runtime ships for the native backend on
 	// linux/arm64 (xo: "--race: no ThreadSanitizer runtime for linux/arm64")
 	backend := fs.String("backend", "llvm", "the backend to run --race on")
+	stressMin := fs.Int("stress-minutes", 10, "minutes the stress program runs under --race (0 skips it)")
 	hostLabel := fs.String("host", "", "the host's name in the evidence")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
@@ -442,15 +443,46 @@ func race(args []string) error {
 		fmt.Println(line)
 		lines = append(lines, line)
 	}
+	// decision 0616: the stress program of the stress kind, also under
+	// --race, for -stress-minutes
+	if dir := filepath.Join("std", "evidence", module, "stress"); *stressMin > 0 {
+		if _, err := os.Stat(filepath.Join(dir, "main.xo")); err == nil {
+			tmp, err := os.MkdirTemp("", "stdproven-race-")
+			if err != nil {
+				return err
+			}
+			defer os.RemoveAll(tmp)
+			bin := filepath.Join(tmp, "s-race")
+			bc := exec.Command(xo, "build", "--race", "--backend="+*backend, "-o", bin, dir)
+			bc.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
+			if out, err := bc.CombinedOutput(); err != nil {
+				return fmt.Errorf("xo build --race --backend=%s %s: %v\n%s", *backend, dir, err, out)
+			}
+			t0 := time.Now()
+			out, err := exec.Command(bin, strconv.Itoa(*stressMin), "64").CombinedOutput()
+			text := strings.TrimSpace(string(out))
+			last := text[strings.LastIndex(text, "\n")+1:]
+			if err != nil || strings.Contains(text, "DATA RACE") || !strings.HasSuffix(last, ", pass") {
+				if len(text) > 20000 {
+					text = text[len(text)-20000:]
+				}
+				return fmt.Errorf("stress under --race: %v\n%s", err, text)
+			}
+			line := fmt.Sprintf("- stress program under --race, 64 tasks: %s, %s", last, time.Since(t0).Round(time.Second))
+			fmt.Println(line)
+			lines = append(lines, line)
+			runs = append(runs, run{"stress", dir})
+		}
+	}
 	host := *hostLabel
 	if host == "" {
 		host = runtime.GOOS + "/" + runtime.GOARCH
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "kind: race\nmodule: %s\nresult: pass\ncommit: %s\nsource: %s\ndate: %s\nhost: %s\n", module, commit, src, time.Now().UTC().Format("2006-01-02"), host)
-	fmt.Fprintf(&b, "command: go run ./scripts/stdproven race -backend %s -host %q %s\n", *backend, host, module)
+	fmt.Fprintf(&b, "command: go run ./scripts/stdproven race -backend %s -stress-minutes %d -host %q %s\n", *backend, *stressMin, host, module)
 	fmt.Fprintf(&b, "measure: %d runs under --race on %s, 0 data races, 0 failures, %s\n\n", len(runs), *backend, time.Since(start).Round(time.Second))
-	fmt.Fprintf(&b, "Race evidence (decision 0616): std/%s's tests and corpora under xo test --race (ThreadSanitizer).\n\n", module)
+	fmt.Fprintf(&b, "Race evidence (decision 0616): std/%s's tests, corpora and stress program under --race (ThreadSanitizer).\n\n", module)
 	b.WriteString(strings.Join(lines, "\n") + "\n")
 	out := filepath.Join("std", "evidence", module, "race.md")
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
