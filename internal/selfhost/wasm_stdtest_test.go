@@ -34,7 +34,7 @@ func TestWasmStdTests(t *testing.T) {
 	runner := filepath.Join(root, "compiler", "wasm", "run.mjs")
 	for _, c := range []struct{ mod, want string }{
 		{"base32", "ok: 9 passed, 0 failed, 0 skipped"},
-		{"native/time", "ok: 8 passed, 0 failed, 0 skipped"},
+		{"native/time", "ok: 10 passed, 0 failed, 0 skipped"},
 		{"uuid", "ok: 4 passed, 0 failed, 0 skipped"},
 		{"native/prelude", "ok: 58 passed, 0 failed, 0 skipped"},
 		{"amqp", "skipped (28 wasm: WASI preview 1 has no sockets)"},
