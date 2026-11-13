@@ -90,7 +90,7 @@ func TestH2Diff(t *testing.T) {
 	want := h2Intended(outs[0])
 	t.Logf("go backend:\n%s", outs[0])
 	for i, be := range backends[1:] {
-		if got := h2DropKeepAlive(outs[i+1]); got != want {
+		if got := outs[i+1]; got != want {
 			t.Errorf("%s backend differs from the Go backend\n%s", be, lineDiff(want, got))
 		}
 	}
@@ -1261,12 +1261,4 @@ func TestH2Sanitizers(t *testing.T) {
 // 2026-11-13).
 func h2Intended(goOut string) string {
 	return strings.ReplaceAll(goOut, "raw header list far too large: open", "raw header list far too large: GOAWAY last=1 PROTOCOL_ERROR, closed")
-}
-
-// h2DropKeepAlive drops the Keep-Alive field that Xo's HTTP/2 client still
-// passes on in a response's fields. TEMPORARY (Lang 2, 2026-11-13): Go
-// 1.26.11 drops connection specific fields (GO-2026-6610), and so does Xo
-// once aws-43's http stack lands (67a8c9b20 there), which removes this.
-func h2DropKeepAlive(out string) string {
-	return strings.ReplaceAll(out, " Keep-Alive=no ", " ")
 }

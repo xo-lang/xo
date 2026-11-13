@@ -6,7 +6,7 @@
 - Commit: this push
 - What: a HEADERS or CONTINUATION fragment more than twice the size the header list may still hold ends the connection with GOAWAY PROTOCOL_ERROR (h2srv.xo, since the HTTP/2 server's first release). Go up to 1.26.1 did the same (readMetaFrame); Go 1.26.11 keeps the connection open and keeps reading the block.
 - Why Xo keeps it: such a fragment can never complete a field the server will accept, so reading on only spends the server's CPU and the connection's time on a block that ends in 431 at best (the CONTINUATION flood class, CVE-2024-27316). Closing bounds what one client can make the server do; a client within the limit is not affected.
-- Test: TestH2Diff's "header list far too large" case expects Xo's GOAWAY on every backend, recorded there as an intended difference from the Go oracle.
+- Test: TestH2Diff's "header list far too large" case, where h2Intended (internal/llvm/h2_diff_test.go) maps the Go oracle's "open" to Xo's GOAWAY.
 - Affected: none (no Xo behavior changed)
 
 ## 2026-11-13: security: an empty CONTINUATION frame costs the HTTP/2 server only its read

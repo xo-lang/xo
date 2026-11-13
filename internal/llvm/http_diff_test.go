@@ -533,7 +533,7 @@ func TestHTTPParseDiff(t *testing.T) {
 			wg.Wait()
 			bad := 0
 			for i, in := range inputs {
-				if normDate(connectNoCL(in, got[i])) != normDate(want[i]) {
+				if normDate(got[i]) != normDate(want[i]) {
 					bad++
 					if bad <= 15 {
 						shown := in
@@ -605,7 +605,7 @@ func FuzzHTTPDiff(f *testing.F) {
 		c.mu.Lock()
 		goAns := c.out.String()
 		c.mu.Unlock()
-		if normDate(connectNoCL(string(input), native)) != normDate(goAns) {
+		if normDate(native) != normDate(goAns) {
 			t.Errorf("input %q:\n--- native\n%s\n--- net/http\n%s", input, native, goAns)
 		}
 	})
