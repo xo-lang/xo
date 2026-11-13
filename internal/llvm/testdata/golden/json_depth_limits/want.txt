@@ -24,5 +24,13 @@ max_token 16, 16 bytes of an unfinished string: ok
 max_token 16, 17 bytes of an unfinished string: err invalid JSON: token exceeds max_token (16 bytes)
 max_value 16, a 16 byte value in two writes: ok
 max_value 16, a 17 byte value in two writes: err invalid JSON: value exceeds max_value (16 bytes)
+decode L 10000: ok
+compact objects 10000: ok
+indent arrays 10000: ok
+decode L 10001: err invalid JSON: invalid character '{' exceeded max depth
+compact objects 10001: err invalid JSON: invalid character '{' exceeded max depth
+indent arrays 10001: err invalid JSON: invalid character '[' exceeded max depth
+decode M 10000: ok
+decode M 10001: err invalid JSON: invalid character '{' exceeded max depth
 the same in a spawned task
 --- stderr

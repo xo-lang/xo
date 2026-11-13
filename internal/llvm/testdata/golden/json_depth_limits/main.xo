@@ -10,6 +10,24 @@ struct Node {
   c: List[Node] = []
 } derive Json
 
+/// An Option on the same JSON node as its value: the derived decoder
+/// takes a frame for the Option and one for L at each level (the 0616 json
+/// review's second reader), so 10000 levels cost two frames each.
+struct L {
+  n: L? = None
+} derive Json
+
+/// A List of Options: three decoder frames for two levels of nesting.
+struct M {
+  m: List[M?] = []
+} derive Json
+
+fn ls(n: Int) -> Str { "{\"n\":".repeat(n - 1) + "{}" + "}".repeat(n - 1) }
+
+fn ms(levels: Int, extra: Bool) -> Str {
+  "{\"m\":[".repeat(levels) + (if extra { "{}" } else { "" }) + "]}".repeat(levels)
+}
+
 fn arrays(n: Int) -> Str { "[".repeat(n) + "]".repeat(n) }
 
 fn objects(n: Int) -> Str { "{\"a\":".repeat(n) + "1" + "}".repeat(n) }
@@ -104,6 +122,14 @@ fn checks() -> List[Str] {
       res = show(d.write(s.bytes()[n - 1..]))
     }
     out.push("max_value 16, a ${s.len()} byte value in two writes: ${res}")
+  }
+  for n in [10000, 10001] {
+    out.push("decode L ${n}: ${show(json.decode_str[L](ls(n)))}")
+    out.push("compact objects ${n}: ${show(json.compact(objects(n)))}")
+    out.push("indent arrays ${n}: ${show(json.indent(arrays(n), "", " "))}")
+  }
+  for extra in [false, true] {
+    out.push("decode M ${if extra { "10001" } else { "10000" }}: ${show(json.decode_str[M](ms(5000, extra)))}")
   }
   out
 }
