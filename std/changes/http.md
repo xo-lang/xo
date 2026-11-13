@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-11-13: security: an HTTP/2 server's SETTINGS and connection WINDOW_UPDATE frames no longer walk every open stream
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), against GO-2026-6611 (CVE-2026-78669)
+- Go reference: Go's fix (go.dev/cl/847186, go1.26.9): an INITIAL_WINDOW_SIZE change is O(1), each stream's window relative to it, an overflow a FLOW_CONTROL_ERROR when next used
+- Test: the HTTP/2 goldens (http_h2_config, http_h2c, http_h2c_sniff, http_stream_body_h2, http_duplex_h2tls, grpc_calls and the other http_ and grpc_ programs, 52 of them on arm64 and llvm)
+- Affected: every release with the native HTTP/2 server up to 0.50.1, native and LLVM backends
+- Shipped in: not yet released
+
+Each SETTINGS frame with SETTINGS_INITIAL_WINDOW_SIZE updated every open stream's send window, and each SETTINGS frame and connection WINDOW_UPDATE then visited every open stream again to wake it. A peer with many streams open could make each small frame cost work for every stream (a denial of service class). A stream's window is now kept relative to the peer's initial window, so the change is one store; a window it pushes past 2^31-1 fails the connection with FLOW_CONTROL_ERROR when next used, as in Go. Streams are woken only when one stopped on the window that grew.
+
+- Remote trigger: any HTTP/2 client.
+
 ## 2026-11-13: security: an HTTP/2 server decodes a header field cut across CONTINUATION frames once
 
 - Kind: security

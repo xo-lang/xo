@@ -201,9 +201,14 @@ const C_HLIST = 704
 /// wasm only (decision 0447 R2f): the park word the connection's fiber
 /// waits on (wake, the reader task) and the one its reader task waits on
 /// for the fiber to have read; past the native record's end (c_size)
-const C_WPARK = 712
-const C_WREAD = 720
-const C_SIZE = 712 // own: this module\'s connection record, not the context
+/// why a stream stopped sending since the last wake: 1 its own window
+/// used up (a larger SETTINGS_INITIAL_WINDOW_SIZE wakes the streams), 2
+/// the connection's (a connection WINDOW_UPDATE does); otherwise neither
+/// walks the open streams (GO-2026-6611)
+const C_WBLK = 712
+const C_WPARK = 720
+const C_WREAD = 728
+const C_SIZE = 720 // own: this module\'s connection record, not the context
 
 /// The connection record's size: wasm's has the park words after it.
 fn c_size() -> Int { if target.arch == TargetArch.Wasm32 { C_SIZE + 16 } else { C_SIZE } }
@@ -1884,7 +1889,7 @@ fn (var h: H2Conn) on_headers(sid: Int, flags: Int, prio: Bool, dep: Int) {
   sto(st, S_REFS, 1)
   sto(st, S_IN_TABLE, 1)
   sto(st, S_STATE, if end_stream { ST_HCR } else { ST_OPEN })
-  sto(st, S_WIN, ld(c, C_PEER_WIN))
+  sto(st, S_WIN, 0) // relative to C_PEER_WIN (swin)
   sto(st, S_IN, ld(c, C_WINSTR))
   sto(st, S_DECLEN, -1)
   room(c, C_TAB, 8)
@@ -2142,6 +2147,7 @@ fn (var h: H2Conn) on_data(sid: Int, flags: Int, flen: Int, p: Int, dn: Int) {
 /// Applies the peer's SETTINGS frame of n bytes at p.
 fn (var h: H2Conn) on_settings(flags: Int, p: Int, n: Int) {
   let c = h.c
+  var wake = false
   if (flags & F_ACK) != 0 {
     if n > 0 {
       conn_err(c, E_FRAME_SIZE)
@@ -2176,23 +2182,28 @@ fn (var h: H2Conn) on_settings(flags: Int, p: Int, n: Int) {
       // applied by the encoder before its next block
       h.sizes = word(h.sizes, v)
     } else if id == S_INITIAL_WINDOW {
-      let growth = v - ld(c, C_PEER_WIN)
-      sto(c, C_PEER_WIN, v)
-      for s in 0..ntab(c) {
-        let st = tab_at(c, s)
-        inc(st, S_WIN, growth)
-        if ld(st, S_WIN) > 0x7fffffff {
-          conn_err(c, E_FLOW)
-          return
-        }
+      // one store, not a walk of the open streams (GO-2026-6611, Go's
+      // fix): a stream's window is its S_WIN plus this, and a window
+      // the change pushes past 2^31-1 fails the connection when it is
+      // next used (swin_ok)
+      if v > ld(c, C_PEER_WIN) && (ld(c, C_WBLK) & 1) != 0 {
+        wake = true
       }
+      sto(c, C_PEER_WIN, v)
     } else if id == S_MAX_FRAME {
       sto(c, C_PEER_FRAME, v)
     }
   }
   fh(c, 0, T_SETTINGS, F_ACK, 0)
-  enqueue_pending(c)
+  if wake {
+    sto(c, C_WBLK, ld(c, C_WBLK) & 2)
+    enqueue_pending(c)
+  }
 }
+
+/// A stream's send window: its S_WIN, relative to the peer's
+/// SETTINGS_INITIAL_WINDOW_SIZE.
+fn swin(c: Int, st: Int) -> Int { ld(st, S_WIN) + ld(c, C_PEER_WIN) }
 
 /// Handles a frame other than HEADERS and CONTINUATION that parsed (the
 /// dn bytes at data its payload without padding).
@@ -2228,7 +2239,10 @@ fn (var h: H2Conn) frame_rest(ty: Int, flags: Int, sid: Int, len: Int, p: Int, d
         conn_err(c, E_FLOW)
         return
       }
-      enqueue_pending(c)
+      if (ld(c, C_WBLK) & 2) != 0 {
+        sto(c, C_WBLK, ld(c, C_WBLK) & 1)
+        enqueue_pending(c)
+      }
       return
     }
     let st = find(c, sid)
@@ -2238,8 +2252,13 @@ fn (var h: H2Conn) frame_rest(ty: Int, flags: Int, sid: Int, len: Int, p: Int, d
       }
       return
     }
+    if swin(c, st) > 0x7fffffff {
+      // an earlier SETTINGS pushed it past the limit: RFC 9113 6.9.2
+      conn_err(c, E_FLOW)
+      return
+    }
     inc(st, S_WIN, n)
-    if ld(st, S_WIN) > 0x7fffffff {
+    if swin(c, st) > 0x7fffffff {
       stream_err(c, sid, E_FLOW)
       return
     }
@@ -2393,8 +2412,18 @@ fn (var h: H2Conn) schedule() {
       if k > fmax {
         k = fmax
       }
-      if k > ld(st, S_WIN) {
-        k = ld(st, S_WIN)
+      let w = swin(c, st)
+      if w > 0x7fffffff {
+        conn_err(c, E_FLOW) // RFC 9113 6.9.2, as in on_settings before
+        break
+      }
+      if k > w {
+        k = w
+      }
+      if w <= 0 {
+        sto(c, C_WBLK, ld(c, C_WBLK) | 1)
+      } else if ld(c, C_WIN) <= 0 {
+        sto(c, C_WBLK, ld(c, C_WBLK) | 2)
       }
       if k > ld(c, C_WIN) {
         k = ld(c, C_WIN)
