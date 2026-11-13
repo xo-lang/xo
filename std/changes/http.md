@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-11-13: security: a native server closes the connection after a 2xx answer to CONNECT
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), against GO-2026-6613 (CVE-2026-94439)
+- Go reference: GO-2026-6613 (net/http server kept reading requests after a 2xx CONNECT answer), fixed in go1.26.9
+- Test: golden http_request_guards (a GET after a CONNECT answered 200 is not read; the Go backend's go1.26.1 still reads it, want_go.txt)
+- Affected: every release up to 0.50.1, native and LLVM backends
+- Shipped in: not yet released
+
+A 2xx answer to an HTTP/1 CONNECT turns the connection into a tunnel for the client and any proxy in front, but the server went on reading HTTP requests from it. A proxy that forwarded the tunnel's bytes could have them served as requests (a request smuggling class). The server now closes the connection after such an answer; std/http has no server side tunnel, so nothing is lost.
+
+- Remote trigger: any client, when a handler answers CONNECT with 2xx.
+
 ## 2026-11-13: security: an HTTP/2 client drops a response's connection specific fields and a malformed Content-Length
 
 - Kind: security

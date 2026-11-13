@@ -4,6 +4,7 @@ CL with TE: HTTP/1.1 200 OK
 CL with TE: body echo [abc]
 CL with TE: Connection: close true
 CL with TE: pipelined request answered false
+CONNECT: HTTP/1.1 200 OK, request after it answered false
 bad Host: invalid Host header
 User-Agent: "User-Agent: ua  X-Injected: 2", injected field false
 --- stderr

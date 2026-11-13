@@ -2009,6 +2009,9 @@ fn (var r: Reader) read_one() -> Int {
   if q.method == "HEAD" {
     f = f | http1w.F_HEAD
   }
+  if q.method == "CONNECT" {
+    f = f | http1w.F_CONNECT
+  }
   if q.h2up {
     f = f | http1w.F_H2UP
   }

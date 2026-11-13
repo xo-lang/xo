@@ -5,6 +5,8 @@ use std/http
 // Content-Length is framed by chunked alone, and the connection closes
 // after the answer (RFC 9112 6.3), so a request pipelined after it is not
 // read. Go's net/http keeps the connection open (want_go.txt).
+// A server: a 2xx answer to CONNECT closes the connection after it, as
+// Go's fix for GO-2026-6613 (the Go backend's go1.26.1 still reads on).
 // A client: a CR or LF in with_host or User-Agent never reaches the wire
 // (GO-2023-1878): an invalid Host fails before connecting (Go's HTTP/1
 // sends an empty Host instead, want_go.txt), and User-Agent's newlines
@@ -27,6 +29,7 @@ fn main(os: Os) ! {
   var r = http.router()
   r.handle("POST /echo", fn(req) { http.text(200, "echo [${req.body.to_str_lossy()}]") })
   r.handle("GET /next", fn(_req) { http.text(200, "next") })
+  r.wrap(fn(q: http.Request, next: http.Next) -> http.Response { if q.method == "CONNECT" { http.text(200, "tunnel") } else { next(q) } })
   let srv = http.server(os.net.listen("127.0.0.1:0")?, r)
   let raw = os.net.listen("127.0.0.1:0")?
   let seen: Chan[Str] = Chan.new(4)
@@ -60,6 +63,14 @@ fn main(os: Os) ! {
     os.stdio.println("CL with TE: body ${if text.contains("echo [abc]") { "echo [abc]" } else { "missing" }}")
     os.stdio.println("CL with TE: Connection: close ${text.contains("\r\nConnection: close\r\n")}")
     os.stdio.println("CL with TE: pipelined request answered ${text.contains("\r\n\r\nnext")}")
+
+    // a 2xx answer to CONNECT makes the connection a tunnel: the server
+    // closes it rather than read the GET after it (GO-2026-6613)
+    let c2 = os.net.dial(srv.addr())?
+    c2.write(b"CONNECT a.test:443 HTTP/1.1\r\nHost: a.test:443\r\n\r\nGET /next HTTP/1.1\r\nHost: s\r\n\r\n")?
+    let t2 = read_to_close(os, c2)
+    c2.close()
+    os.stdio.println("CONNECT: ${t2.split("\r\n").first() ?? ""}, request after it answered ${t2.contains("\r\n\r\nnext")}")
 
     let cl = http.client(os.net, 5s)
     match cl.send(http.new_request("GET", "http://${raw.addr()}/a").with_host("h\r\nX-Injected: 1")) {
