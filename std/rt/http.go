@@ -779,6 +779,11 @@ func (r Http_Request) M_query_all(tk *Task, name string) List[string] {
 	// request_query_all (std/native/http.xo): Go's ParseQuery returned a
 	// map, so two keys naming one field (`a=1&%61=2`) came back in map
 	// order
+	// over 10000 parameters Go's Query() is empty (ParseQuery's limit,
+	// GO-2026-4341): counted before any part is made
+	if strings.Count(r.XRawQuery, "&")+1 > 10000 {
+		return ListOf[string]()
+	}
 	var out []string
 	for _, pair := range strings.Split(r.XRawQuery, "&") {
 		if pair == "" || strings.Contains(pair, ";") {

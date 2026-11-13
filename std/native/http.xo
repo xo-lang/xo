@@ -1360,6 +1360,17 @@ fn request_query_all(r: Request, name: Str) -> List[Str] {
       None => []
     }
   }
+  // over 10000 parameters Go's Query() is empty (ParseQuery's limit,
+  // GO-2026-4341): counted before any part is made
+  var seps = 0
+  for b in r.raw_query.bytes() {
+    if b == 38 {
+      seps += 1
+      if seps + 1 > 10000 {
+        return []
+      }
+    }
+  }
   var out: List[Str] = []
   for pair in r.raw_query.split("&") {
     if pair.is_empty() || pair.contains(";") {

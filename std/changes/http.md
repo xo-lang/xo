@@ -1,5 +1,18 @@
 # std/http changes
 
+## 2026-11-13: security: Request.query_all counts the parameters before splitting, and is empty past 10000
+
+- Kind: security
+- Commit: this push
+- Found by: Lang 2's review of the std/http security fixes (decision 0616), the query_all half of GO-2026-4341 (CVE-2025-61726)
+- Go reference: net/url ParseQuery (the parameter count checked before any part is made; Request.URL.Query() is then empty)
+- Test: golden http_form (query_all of 10000 parameters gives 10000 values, of 10001 none; fails before the fix with 10001)
+- Affected: every release up to 0.50.1, all backends
+- Shipped in: not yet released
+- Remote trigger: any client of a route that calls query_all (a denial of service: memory and CPU for a long run of `&`)
+
+query_all split the raw query on every `&` before looking at any pair, and returned values past the 10000 parameter limit where Go's Query() returns none. It now counts the separators first and answers [] past the limit, as url.parse_query does since its own fix.
+
 ## 2026-11-13: security: an HTTP/2 connection buffers at most four bodies' worth of unfinished request bodies
 
 - Kind: security

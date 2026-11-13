@@ -18,6 +18,7 @@ fn routes() -> http.Router {
     let f = req.form().map_err(fn(e) { BadForm{msg: "${e}"} })?
     http.text(200, "user=${f.get("user") ?? "-"} tags=${f.all("tag").join(",")} keys=${f.keys().join(",")}")
   })
+  r.handle("GET /count", fn(req) { http.text(200, "${req.query_all("q").len()}") })
   r.handle("GET /search", fn(req) {
     http.text(200, "q=${req.query("q") ?? "-"} all=${req.query_all("q").join("|")}")
   })
@@ -39,11 +40,14 @@ fn raw(n: Net, addr: Str, request: Str) -> Str ! NetErr {
 
 fn main(os: Os) ! {
   let r = routes()
-  let form = http.new_request("POST", "http://x/login", headers: {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"},
-    body: b"user=ann+lee&tag=a&tag=b%26c")
+  let form = http.new_request("POST", "http://x/login", headers: {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"}, body: b"user=ann+lee&tag=a&tag=b%26c")
   os.stdio.println(r.call(form).text() ?? "?")
   os.stdio.println(r.call(http.new_request("POST", "http://x/login", body: b"user=x")).text() ?? "?")
   os.stdio.println(r.call(http.new_request("GET", "http://x/search?q=1&q=two+words&q=%E2%82%AC")).text() ?? "?")
+  // past 10000 parameters Go's Query() is empty (GO-2026-4341)
+  let at_limit = r.call(http.new_request("GET", "http://x/count?${"q=1&".repeat(9999)}q=1")).text() ?? "?"
+  let over = r.call(http.new_request("GET", "http://x/count?${"q=1&".repeat(10000)}q=1")).text() ?? "?"
+  os.stdio.println("query_all of 10000 parameters: ${at_limit}, of 10001: ${over}")
   let bad = http.new_request("POST", "http://x/login", headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: b"user=%zz")
   let resp = r.call(bad)
   os.stdio.println("${resp.status} ${resp.text() ?? "?"}")

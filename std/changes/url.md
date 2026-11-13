@@ -7,7 +7,7 @@
 - Found by: the std/http security review (decision 0616), against GO-2026-4341 (CVE-2025-61726)
 - Go reference: net/url url.go parseQuery (the limit checked on a count of separators before any parameter is made), fixed in go1.25.6
 - Test: std/url_test.xo "parse_query counts the separators before it splits"
-- Affected: every release up to 0.50.1, native and LLVM backends (the Go backend uses Go's url.ParseQuery)
+- Affected: every release up to 0.50.1, all backends (the Go backend runs the generated port of parse_query, std/rt/std_gen_url.go, so Request.form there split first too; the regeneration fixes it)
 - Shipped in: not yet released
 
 `parse_query` split the whole text on `&` before it checked the 10,000 parameter limit, so a long query or form body (`Request.form`, up to the server's 64 MiB body limit) made one list entry per separator first, costing far more memory than its bytes (a denial of service class). The separators are now counted first and the limit fails before any part is made.
