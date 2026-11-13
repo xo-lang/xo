@@ -1,0 +1,297 @@
+// Shared release tails (decision 0623): after the reference counting
+// pass, return blocks that release nested sets of values jump to a
+// ladder of tails instead, each tail releasing the values its set adds
+// to the next smaller one. A derived Json decoder's field k returns on an
+// error releasing the k values decoded before it, twice a field: O(n^2)
+// releases in one function, about two thirds of a 60 field decoder's
+// code (aws-43's gcp models, 2026-11-12); with the tails each value is
+// released in one place.
+//
+// A value released in a tail is released by every exit that reaches the
+// tail (a tail's set is contained in each of its exits' sets), so its
+// definition dominates each of them and so the tail. A release moves
+// after the instructions that build the return value: it only frees
+// later, and an exit with an instruction that can fault after its first
+// release is left alone (the fault would leave the moved value held). XO_PASSES=-reltail turns the pass off.
+
+/// An exit is rewritten only with at least this many releases to share.
+const RELTAIL_MIN = 2
+
+/// An exit the pass can rewrite: its block, its movable releases (their
+/// values), the released values as a set, its terminator (a Return, or a
+/// Jump to `to`), and the values the terminator passes on.
+struct RtExit {
+  bl: Int
+  rels: List[Int]
+  set: Set[Int]
+  ret: Int
+  to: Int
+  args: List[Int]
+}
+
+/// A tail: its block and the set of values released from it down.
+struct RtTail {
+  bl: Int
+  set: Set[Int]
+  params: List[Int]
+}
+
+/// The release in block bl that only releases a value defined in another
+/// block, with no landing pad: a release the pass can move.
+fn movable_release(f: Func, bl: Int, v: Int) -> Bool {
+  let x = f.values[v]
+  if x.op != Op.Release || x.args.len() != 1 || pad_of(x.pi) >= 0 {
+    return false
+  }
+  let a = x.args[0]
+  a >= 0 && block_of(f.values[a].tb) != bl
+}
+
+/// Whether x may fault, as far as one function can tell: an operation
+/// that faults itself, or a call of anything but a runtime function that
+/// cannot fault (a user function's faults are the module's, which the
+/// pass does not see).
+fn may_raise_here(f: Func, x: Value) -> Bool {
+  if value_self_faults(f, x) {
+    return true
+  }
+  x.op == Op.Call && !f.name_starts(x, "rt.")
+}
+
+/// Whether value a may hold a statically immortal part (immortal_leaf):
+/// a literal aggregate, a parameter, or an immortal value itself.
+fn may_be_immortal(f: Func, a: Int, sums: Map[Str, List[Bool]]) -> Bool {
+  let o = f.values[a].op
+  if o is Op.Struct | Op.Tuple | Op.Variant | Op.Param | Op.Const | Op.Closure {
+    return !is_scalar_const(f, a)
+  }
+  immortal_leaf(f, Leaf{root: a, path: ""}, sums)
+}
+
+/// An Int, Bool or Float constant: nothing to count.
+fn is_scalar_const(f: Func, a: Int) -> Bool {
+  let x = f.values[a]
+  x.op == Op.Const && (f.aux(x) is Aux.I(..) | Aux.B(..) | Aux.F(..))
+}
+
+/// The rewritable return blocks of f.
+fn reltail_exits(f: Func, sums: Map[Str, List[Bool]]) -> List[RtExit] {
+  var out: List[RtExit] = []
+  for bl in 0..f.blocks.len() {
+    let ins = f.blocks[bl].instrs
+    if ins.is_empty() {
+      continue
+    }
+    let t = ins[ins.len() - 1]
+    var to = -1
+    var targs: List[Int] = []
+    if f.values[t].op == Op.Return {
+      targs = f.values[t].args
+    } else if f.values[t].op == Op.Jump {
+      let e = f.values[t].succs()[0]
+      to = f.edges[e].to
+      targs = f.edges[e].args
+      if targs.contains(-1) {
+        continue
+      }
+    } else {
+      continue
+    }
+    var ok = true
+    for a in targs {
+      if may_be_immortal(f, a, sums) {
+        // a constant passed down the ladder of tails: the reference
+        // counting proves it immortal only so many parameters deep
+        // (imm_at), past which its uncounted uses no longer verify
+        ok = false
+      }
+    }
+    var rels: List[Int] = []
+    var set: Set[Int] = #{}
+    for v in ins {
+      let x = f.values[v]
+      if pad_of(x.pi) >= 0 {
+        // a landing check in the block: leave it
+        ok = false
+        break
+      }
+      if !rels.is_empty() && v != t && x.op != Op.Release && may_raise_here(f, x) {
+        // it can fault after a release the pass would move past it: its
+        // fault would leave the moved value held
+        ok = false
+        break
+      }
+      if movable_release(f, bl, v) {
+        let a = x.args[0]
+        if set.contains(a) {
+          // two releases of one value (two counts): left as they are
+          ok = false
+          break
+        }
+        rels.push(v)
+        set.add(a)
+      }
+    }
+    if ok && rels.len() >= RELTAIL_MIN {
+      out.push(RtExit{bl: bl, rels: rels, set: set, ret: t, to: to, args: targs})
+    }
+  }
+  out
+}
+
+fn set_within(a: Set[Int], b: Set[Int]) -> Bool {
+  if a.len() > b.len() {
+    return false
+  }
+  for v in a {
+    if !b.contains(v) {
+      return false
+    }
+  }
+  true
+}
+
+/// Rewrites f's nested release exits into shared tails; whether it
+/// changed anything.
+pub fn share_release_tails(var f: Func, sums: Map[Str, List[Bool]]) -> Bool {
+  let all = reltail_exits(f, sums)
+  var targets: List[Int] = []
+  for e in all {
+    if !targets.contains(e.to) {
+      targets.push(e.to)
+    }
+  }
+  var changed = false
+  for to in targets {
+    var group: List[RtExit] = []
+    for e in all {
+      if e.to == to {
+        group.push(e)
+      }
+    }
+    if group.len() >= 2 && share_tails_to(f, common_releases(f, group)) {
+      changed = true
+    }
+  }
+  changed
+}
+
+/// The exits with only the releases of values another exit of the group
+/// releases too: a value only one exit releases (the error of the call
+/// that exit follows) stays released where it is, and the rest nest.
+fn common_releases(f: Func, group: List[RtExit]) -> List[RtExit] {
+  var seen: Map[Int, Int] = {}
+  for e in group {
+    for a in e.set {
+      seen[a] = (seen.get(a) ?? 0) + 1
+    }
+  }
+  var out: List[RtExit] = []
+  for e in group {
+    var rels: List[Int] = []
+    var set: Set[Int] = #{}
+    for rv in e.rels {
+      let a = f.values[rv].args[0]
+      if (seen.get(a) ?? 0) >= 2 {
+        rels.push(rv)
+        set.add(a)
+      }
+    }
+    if rels.len() >= RELTAIL_MIN {
+      out.push(RtExit{bl: e.bl, rels: rels, set: set, ret: e.ret, to: e.to, args: e.args})
+    }
+  }
+  out
+}
+
+/// share_release_tails for the exits that end at one place (one jump
+/// target, or a return).
+fn share_tails_to(var f: Func, exits: List[RtExit]) -> Bool {
+  if exits.len() < 2 {
+    return false
+  }
+  // smaller sets first, so each exit finds the tails below it
+  var order: List[Int] = []
+  for k in 0..exits.len() {
+    order.push(k)
+  }
+  order = order.sort_by(fn(k) { exits[k].set.len() })
+  // a set is worth a tail when it is contained in another exit's set
+  // (the ladder shares it) or another exit has the same set
+  var tails: List[RtTail] = []
+  var changed = false
+  for k in order {
+    let e = exits[k]
+    var shared = false
+    for k2 in 0..exits.len() {
+      if k2 != k && set_within(e.set, exits[k2].set) {
+        shared = true
+        break
+      }
+    }
+    // the largest tail below this exit's set
+    var below = -1
+    for (ti, t) in tails.indexed() {
+      if set_within(t.set, e.set) && (below < 0 || t.set.len() > tails[below].set.len()) {
+        below = ti
+      }
+    }
+    if !shared && (below < 0 || tails[below].set.len() < RELTAIL_MIN) {
+      continue
+    }
+    var target = -1
+    if below >= 0 && tails[below].set.len() == e.set.len() {
+      target = below
+    } else {
+      // a new tail: this exit's releases above the one below, then that
+      // tail (or the return)
+      let rx = f.values[e.ret]
+      let tb = f.new_block()
+      var params: List[Int] = []
+      for a in e.args {
+        params.push(f.add_param(tb, ty_of(f.values[a].tb)))
+      }
+      for rv in e.rels {
+        let x = f.values[rv]
+        if below < 0 || !tails[below].set.contains(x.args[0]) {
+          let nv = f.add(tb, Op.Release, ty_of(x.tb), f.aux(x), [x.args[0]])
+          f.values[nv].lp = x.lp
+        }
+      }
+      if below >= 0 {
+        let _j = f.jump(tb, tails[below].bl, params)
+      } else if e.to >= 0 {
+        let _j = f.jump(tb, e.to, params)
+      } else {
+        let nr = f.add(tb, Op.Return, ty_of(rx.tb), f.aux(rx), params)
+        f.values[nr].lp = rx.lp
+      }
+      tails.push(RtTail{bl: tb, set: e.set, params: params})
+      target = tails.len() - 1
+    }
+    // the exit: its instructions but the moved releases and the Return,
+    // then a jump to the tail with the return's values
+    let args = e.args
+    if e.to >= 0 {
+      // the exit's own edge to the target goes
+      let oe = f.values[e.ret].succs()[0]
+      var ps: List[Int] = []
+      for pe in f.blocks[e.to].preds {
+        if pe != oe {
+          ps.push(pe)
+        }
+      }
+      f.blocks[e.to].preds = ps
+    }
+    var keep: List[Int] = []
+    for v in f.blocks[e.bl].instrs {
+      if v != e.ret && !e.rels.contains(v) {
+        keep.push(v)
+      }
+    }
+    f.blocks[e.bl].instrs = keep
+    let _j2 = f.jump(e.bl, tails[target].bl, args)
+    changed = true
+  }
+  changed
+}

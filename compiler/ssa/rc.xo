@@ -84,6 +84,8 @@ struct Rc {
   addr_drop: Bool = true
   /// decision 0465: rt.str_view a projection (view_proj)
   view_proj: Bool = false
+  /// decision 0623: nested release exits share their tails (reltail.xo)
+  reltail: Bool = true
   /// decision 0465 step 2: per function, the parameter whose view it
   /// returns uncounted (return_views), or -1; empty when view_proj is off
   rvp: List[Int] = []
@@ -1403,6 +1405,7 @@ pub fn (var b: Builder) rc_prepare(jobs: Int) -> Rc {
   r.addr_keep = !b.m.passes_off.contains("addr_keep")
   r.addr_drop = !b.m.passes_off.contains("addr_keep_drop")
   r.view_proj = view_proj_on(b.m)
+  r.reltail = !b.m.passes_off.contains("reltail")
   r.rvp = r.ret_views(b.m)
   r.rvn = ret_view_names(r.fidx, r.rvp)
   r
@@ -1448,6 +1451,7 @@ pub fn (var b: Builder) rc_prepare_incr(jobs: Int, id: Str, prev: Map[Str, List[
   r.addr_keep = !b.m.passes_off.contains("addr_keep")
   r.addr_drop = !b.m.passes_off.contains("addr_keep_drop")
   r.view_proj = view_proj_on(b.m)
+  r.reltail = !b.m.passes_off.contains("reltail")
   r.rvp = r.ret_views(b.m)
   r.rvn = ret_view_names(r.fidx, r.rvp)
   (r, rec, nd, !check || r.borrowed == full)
@@ -1676,6 +1680,9 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   }
   if r.view_proj {
     borrow_views(f)
+  }
+  if r.reltail {
+    let _ = share_release_tails(f, r.imm_ret)
   }
   renumber(f)
   r.lm_fi = -1

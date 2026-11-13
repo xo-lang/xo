@@ -795,3 +795,14 @@ writes the string as it is when there is none, and otherwise escapes from that b
 - Shipped in: not yet released
 
 `json.encode`, `derive Json` and `json.to_value` wrote a Float32 as the float64 shortest text of its value (`1.100000023841858`). They now write the shortest digits that read back as the same float32 (`1.1`), in Go's layout; reading already matched. The native encoder uses a port of Go's Dragonbox float32 path (`llrt/num.xo` dbox32), the Go backend `json.Marshal(float32)`. `to_value` of a Float32 holds the double nearest those digits, as the encoder's text read back gives.
+
+## 2026-11-12: perf: derived Json decoders are smaller (shared error exits)
+
+- Kind: perf
+- Commit: this commit
+- Found by: aws-43 (gcp models after its decision 0013: bigquery's sample 4.44 to 5.43 MB of __text)
+- Go reference: none (code size of Xo's generated decoders)
+- Test: TestStdCorpora json, jsontoken, cbor, yaml, protojson on go, arm64, llvm; compiler/ssa reltail_test.xo
+- Shipped in: not yet released
+
+A `derive Json` decoder's member errors now jump to one error block per struct, which adds the field's path segment once, and the shared release tails pass (decision 0623) releases each decoded field once on the error paths instead of at every later field's two error exits (O(n^2)). gcp's samples (darwin/arm64 __text): calendar 2095656 to 1998912 bytes, bigquery 5434292 to 4799276; a 60 field struct's decoder 65296 to 22704. Decoding output and errors are unchanged.

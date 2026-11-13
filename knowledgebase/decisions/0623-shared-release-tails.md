@@ -1,7 +1,7 @@
 # 0623: Shared release tails for nested error exits
 
-Status: Proposed (Xo Lang 3, 2026-11-12; internal codegen, no semantics
-change; the lead asked for the prototype and the numbers first).
+Status: Accepted (lead, 2026-11-12: an internal codegen change with no
+semantics change, recorded with its numbers; Xo Lang 3).
 
 ## Context
 
@@ -23,23 +23,68 @@ before the RC pass, so the releases stay on the edges).
 
 ## Decision (proposed)
 
-A pass after the RC pass (compiler/ssa/reltail.xo) finds exits that
-release nested sets of values (each exit's set is the previous exit's
-set plus some values) and rewrites them as a ladder: an exit jumps to a
-shared tail that releases its own values and falls into the tail of the
-smaller set. Each value is released in one place. The values dominate
-their tails (a tail is reached only from exits after the value's
-definition), so the result is valid SSA.
+1. A pass at the end of insert_rc (compiler/ssa/reltail.xo,
+   share_release_tails; XO_PASSES=-reltail turns it off) groups the
+   exits that end at one place (a return, or a jump to one block) and
+   holds, of each exit's releases, the values another exit of the group
+   also releases. Sorted by set size, each exit jumps to a tail that
+   releases what its set adds to the largest tail below it and jumps on
+   to that tail (or the exit's target). Each shared value is released in
+   one place. A tail's values are released by every exit reaching it, so
+   their definitions dominate it.
+2. An exit is left alone when, after its first moved release, it holds
+   an operation that can fault (a self-faulting op, or a call of
+   anything but a runtime `rt.` function: a user callee's faults are the
+   module's table, which the pass does not see), or when its terminator
+   passes a value that may be immortal (a constant, a literal
+   aggregate, a parameter): insert_rc proves immortality through only 24
+   parameter hops (imm_at), and a ladder adds one a tail.
+3. Derived Json decoders (compiler/ssa json.xo dec_fields_in) send every
+   member's error to one error block per struct, with the segment as two
+   Int offsets into one constant (prelude llrt_json_path_push_at), so a
+   field's error exit is a run of releases and a jump.
 
 ## Results
 
-To be filled: __text of the gcp calendar and bigquery samples, an aws
-sample and xo; callgrind and one --ab on jsontoken decode and on xo's
-self build; the fixed point.
+darwin/arm64 __text, every build with XO_INLINE_STRICT=1 (a module that
+fails to verify otherwise builds without inlining and looks smaller):
+
+| binary | before | after | change |
+|---|---|---|---|
+| gcp calendar sample (aws-43's kit, gcp 991353d) | 2,095,656 | 1,998,912 | -4.6% |
+| gcp bigquery sample | 5,434,292 | 4,799,276 | -11.7% |
+| aws presign sample | 2,395,748 | 2,393,420 | -0.1% |
+| xo itself (the pass off against on, same sources) | 42,535,628 | 42,001,668 | -1.3% |
+| a 60 Str field struct's dec[T] | 65,296 | 22,704 | -65% |
+
+The bigquery growth of aws-43's 0013 models (from 4,437,856) falls from
++996 KB to +361 KB.
+
+Speed (linux/arm64 host 1, `xo bench --ab`, 3 rounds):
+- xo's self build (stage2 self, base 3d7578e84): cpu 0.977 (0.977 to
+  0.997), max RSS 0.968: better.
+- bench/perf/json `invalid` (base c3637aae0, the change's parent): wall
+  0.952 (0.926 to 0.98), better; `small`: wall 1.008 (1.008 to 1.012).
+- Callgrind (linux/arm64 in Docker, same parent): `small` 241,188,143
+  to 240,793,143 instructions (-0.16%), `invalid` 171,953,571 to
+  171,958,101 (+0.003%): the `small` wall difference is not more
+  instructions (13 ms runs; layout).
+
+Correctness: arm64 TestGoldenRun (all), xo dev codegen arm64 and llvm
+(334 patterns), llvm json and derive goldens, wasm json goldens, the
+json, jsontoken, cbor, yaml and protojson corpora on go, arm64 and llvm,
+xo unit tests (with reltail_test.xo), the amd64 sample on the linux/amd64
+host (52 ok), and the offload gate with the fixed point.
 
 ## Consequences
 
-To be filled.
+- Error paths with many live values are smaller everywhere (xo -534 KB);
+  the error path runs a few more jumps, the success path is unchanged.
+- An exit with a faulting call after its releases, or a constant passed
+  on, keeps its releases; a decoder generator that wants the gain keeps
+  calls off its error exits (json.xo does).
+- Every dump of an affected function shows the tails as new blocks at
+  the end.
 
 ## Alternatives
 

@@ -1,0 +1,87 @@
+// Shared release tails (decision 0623, reltail.xo): return blocks that
+// release nested sets of values share one ladder of release blocks.
+
+/// f: n values made in block 0 by calls, then n exits, exit k releasing
+/// values 0..=k and, when own, a value only it releases, then returning;
+/// fault_at >= 0 puts a call of a user function after the releases of that
+/// exit.
+fn ladder_func(n: Int, own: Bool, fault_at: Int) -> Func {
+  var m = Module{}
+  let fi = m.new_func("f", [], [])
+  var f = m.funcs[fi]
+  var vs: List[Int] = []
+  for _ in 0..n {
+    vs.push(f.add(0, Op.Call, -1, Aux.S(s: "make"), []))
+  }
+  for k in 0..n {
+    let b = f.new_block()
+    if own {
+      let x = f.add(0, Op.Call, -1, Aux.S(s: "make"), [])
+      let _r = f.add(b, Op.Release, -1, Aux.None, [x])
+    }
+    for i in 0..(k + 1) {
+      let _r = f.add(b, Op.Release, -1, Aux.None, [vs[i]])
+    }
+    if k == fault_at {
+      let _c = f.add(b, Op.Call, -1, Aux.S(s: "user.may_fault"), [])
+    }
+    let _t = f.add(b, Op.Return, -1, Aux.None, [])
+  }
+  m.funcs[fi] = f
+  m.funcs[fi]
+}
+
+/// The releases of f, as a count per released value.
+fn release_counts(f: Func) -> Map[Int, Int] {
+  var out: Map[Int, Int] = {}
+  for bl in f.blocks {
+    for v in bl.instrs {
+      if f.values[v].op == Op.Release {
+        let a = f.values[v].args[0]
+        out[a] = (out.get(a) ?? 0) + 1
+      }
+    }
+  }
+  out
+}
+
+fn release_total(f: Func) -> Int {
+  var n = 0
+  for (_, c) in release_counts(f) {
+    n += c
+  }
+  n
+}
+
+test "nested exits release each value once" {
+  var f = ladder_func(5, false, -1)
+  expect(release_total(f)) == 15
+  expect(share_release_tails(f, {})) == true
+  // exit 0 releases one value (below RELTAIL_MIN) and keeps it; the
+  // tails: {0, 1}, then one value a step up to {0..=4}
+  expect(release_total(f)) == 6
+  let counts = release_counts(f)
+  for (v, c) in counts {
+    expect(c) == if v == 0 { 2 } else { 1 }
+  }
+}
+
+test "a value only one exit releases stays in that exit" {
+  var f = ladder_func(4, true, -1)
+  expect(share_release_tails(f, {})) == true
+  // tails {0, 1}, {0..=2}, {0..=3}: 4; exit 0 keeps its two (one shared
+  // value is below RELTAIL_MIN), exits 1 to 3 their own value
+  expect(release_total(f)) == 9
+}
+
+test "an exit that can fault after its releases is left alone" {
+  var f = ladder_func(4, false, 3)
+  expect(share_release_tails(f, {})) == true
+  // exit 3 keeps its 4 releases, exit 0 its one; exits 1 and 2 share 3
+  expect(release_total(f)) == 8
+}
+
+test "one exit: nothing to share" {
+  var f = ladder_func(1, false, -1)
+  expect(share_release_tails(f, {})) == false
+}

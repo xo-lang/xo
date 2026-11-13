@@ -943,7 +943,13 @@ fn (var b: Builder) dec_child_at(d: Dec, xt: Int, j: Int, seg0: Int, idx: Int) -
 }
 
 /// dec_child_at for a field with the `string` option when q (decision 0555).
-fn (var b: Builder) dec_child_q(d: Dec, xt: Int, j: Int, seg0: Int, idx: Int, q: Bool) -> Int {
+/// With fail >= 0 an error jumps to block fail (dec_fields_in's shared
+/// error block) with the child's path, its message and the Int offsets
+/// fail_at of its segment in that block's segment constant, instead of
+/// returning here (Ints, not the segment: a constant Str passed down a
+/// long ladder of release tails is past the depth the reference counting
+/// proves immortal, decision 0623).
+fn (var b: Builder) dec_child_q(d: Dec, xt: Int, j: Int, seg0: Int, idx: Int, q: Bool, fail: Int = -1, fail_at: (Int, Int) = (0, 0)) -> Int {
   let st = b.str_t()
   let it = b.int_t()
   let bt = b.bool_t()
@@ -963,6 +969,13 @@ fn (var b: Builder) dec_child_q(d: Dec, xt: Int, j: Int, seg0: Int, idx: Int, q:
   if idx >= 0 {
     let s1 = b.call("str.concat_int", st, "", [b.const_str("["), idx])
     seg = b.call("str.concat", st, "", [s1, b.const_str("]")])
+  }
+  if fail >= 0 {
+    b.jump(fail, [b.add(Op.Field, st, Aux.I(n: 0), [e]), b.add(Op.Field, st, Aux.I(n: 1), [e]), b.cint(fail_at.0), b.cint(fail_at.1)])
+    b.dead()
+    b.if_then_end(no, join)
+    let co0 = b.m.variant_index(crt, "Ok")
+    return b.add(Op.Payload, b.m.types[crt].variants[co0].fields[0].ty, Aux.P(tag: co0, field: 0), [r])
   }
   // the path is kept reversed while the error unwinds (jsontext.path_push)
   let p = b.json_rt("json_path_push", st, [b.add(Op.Field, st, Aux.I(n: 0), [e]), seg])
@@ -1895,6 +1908,24 @@ fn (var b: Builder) dec_fields_in(d: Dec, o: Int, seg: Str, fs: List[JField], wi
     idx = b.json_rt("json_find_all", lt, [d.src, d.tape, o, b.const_str(keys), b.cint(fs.len())])
     nidx = b.call("list.len", it, "", [idx])
   }
+  // every member's error jumps to one block that adds the field's path
+  // segment and returns, so a field's exit holds no call that can fault
+  // and its releases are a run the shared release tails can take
+  // (compiler/ssa reltail.xo, decision 0623)
+  let st = b.str_t()
+  let fail = b.new_block()
+  let fp0 = b.s.f.add_param(fail, st)
+  let fmsg = b.s.f.add_param(fail, st)
+  let flo = b.s.f.add_param(fail, b.int_t())
+  let fhi = b.s.f.add_param(fail, b.int_t())
+  // every field's segment, one after another, and each one's offsets
+  var segs = ""
+  var seg_at: List[(Int, Int)] = []
+  for f in fs {
+    let s1 = "${seg}.${f.key}"
+    seg_at.push((segs.len(), segs.len() + s1.len()))
+    segs = segs + s1
+  }
   for (fk, f) in fs.indexed() {
     let j = if all { b.call("list.index", it, "", [idx, b.cint(fk)]) } else { b.json_rt("json_find", it, [d.src, d.tape, o, b.const_str(f.key)]) }
     let join = b.new_block()
@@ -1916,7 +1947,7 @@ fn (var b: Builder) dec_fields_in(d: Dec, o: Int, seg: Str, fs: List[JField], wi
       let fi = b.call("list.index", it, "", [idx, at])
       let (nom, joinm) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [fi, b.cint(fk)]))
       let dn = b.call("list.index", it, "", [idx, b.add(Op.Add, it, Aux.None, [at, b.cint(1)])])
-      let _dup = b.dec_child_q(d, f.ct, dn, fseg, -1, f.strq)
+      let _dup = b.dec_child_q(d, f.ct, dn, fseg, -1, f.strq, fail, seg_at[fk])
       b.if_then_end(nom, joinm)
       b.for_up_to_end(q, dv, headd, exitd)
       b.if_then_end(nod, joind)
@@ -1925,10 +1956,10 @@ fn (var b: Builder) dec_fields_in(d: Dec, o: Int, seg: Str, fs: List[JField], wi
       let dv = b.local()
       let (q, headd, exitd) = b.for_up_to_begin(b.call("list.len", it, "", [dups]), dv)
       let dn = b.call("list.index", it, "", [dups, q])
-      let _dup = b.dec_child_q(d, f.ct, dn, fseg, -1, f.strq)
+      let _dup = b.dec_child_q(d, f.ct, dn, fseg, -1, f.strq, fail, seg_at[fk])
       b.for_up_to_end(q, dv, headd, exitd)
     }
-    let v = b.dec_child_q(d, f.ct, j, fseg, -1, f.strq)
+    let v = b.dec_child_q(d, f.ct, j, fseg, -1, f.strq, fail, seg_at[fk])
     let cv = b.coerce(v, f.st)
     b.jump(join, [cv])
     b.s.cur = missing
@@ -1954,6 +1985,12 @@ fn (var b: Builder) dec_fields_in(d: Dec, o: Int, seg: Str, fs: List[JField], wi
     b.s.cur = join
     out.push(res)
   }
+  let cont = b.s.cur
+  b.seal(fail)
+  b.s.cur = fail
+  let fp = b.json_rt("json_path_push_at", st, [fp0, b.const_str(segs), flo, fhi])
+  b.retv(b.dec_err(d, fp, fmsg))
+  b.s.cur = cont
   out
 }
 

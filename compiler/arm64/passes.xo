@@ -38,6 +38,9 @@ pub fn passes() -> List[Str] {
     // be owned and borrowed (no count) where its source outlives it; it
     // is emitted as rt.str_borrow, which takes no count
     "view_proj",
+    // compiler/ssa reltail.xo (decision 0623): return blocks releasing
+    // nested sets of values share a ladder of release tails
+    "reltail",
     // compiler/llvm func.xo (decision 0338): Float loops marked for a
     // full unroll; off for a clang before LLVM 19 (compiler/xo clang.xo
     // unroll_cap_ok)
