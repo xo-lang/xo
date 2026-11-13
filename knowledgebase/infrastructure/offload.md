@@ -643,11 +643,11 @@ chain"); an empty disk was replaced with a new 200 GB one instead.
 Last verified: 2026-11-09.
 LLVM (aws-43, 2026-11-13): clang 23.1.3 aarch64-pc-windows-msvc, the
 Linux hosts' and CI's version, is in `C:\Users\xo\tools\llvm\bin`
-(clang, clang-cl, lld-link, ld.lld, llvm-mc, llvm-ar, llvm-lib); it is
-not on the user's Path yet (the owner's change, pending), so a job puts
-`$HOME/tools/llvm/bin` on its own PATH, and until xo's `use c` binder
-finds `clang.exe` there (bind's look_path with PATHEXT) also sets
-`XO_CLANG=$HOME/tools/llvm/bin/clang.exe`. Not `C:\Program Files\LLVM`:
+(clang, clang-cl, lld-link, ld.lld, llvm-mc, llvm-ar, llvm-lib), first
+on the user's Path (the lead, owner's go, 2026-11-13; new logins see it),
+so jobs need neither a PATH entry of their own nor XO_CLANG. `use c`
+finds clang.exe through PATHEXT and the installed MSVC and Windows SDK
+without XO_WINSYSROOT (a17e2430e). Not `C:\Program Files\LLVM`:
 nothing is installed there. Last verified: 2026-11-13.
 
 ## Windows build hosts: Defender and indexing (2026-11-09)
