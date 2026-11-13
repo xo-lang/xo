@@ -136,7 +136,7 @@ A 2xx answer to an HTTP/1 CONNECT turns the connection into a tunnel for the cli
 - Found by: the std/http security review (decision 0616), against GO-2026-6610 (CVE-2026-78660)
 - Go reference: net/http/internal/http2 transport.go (go.dev/cl/835145): connHeaders deleted from the response, Content-Length kept once only when every value agrees and parses
 - Test: std/native/llrt/http1_test.xo "an HTTP/2 response's framing fields as Go's fix for GO-2026-6610 leaves them"; the HTTP/2 and reverse proxy goldens
-- Affected: releases with the native HTTP/2 client up to 0.50.1, native and LLVM backends
+- Affected: releases with the native HTTP/2 client up to 0.50.1, native and LLVM backends; the Go backend's HTTP/2 client too (Go 1.26.1's transport passed these fields; std/rt now drops them)
 - Shipped in: not yet released
 
 An HTTP/2 response's Connection, Keep-Alive, Proxy-Connection, Transfer-Encoding and Upgrade fields, and a Content-Length of any form, reached the program as received. A reverse proxy could then write a malformed Content-Length to an HTTP/1 client of a HEAD request or of HTTP/1.0 (a response smuggling class). These fields are now dropped, as in Go; Content-Length stays only as one run of digits all its values agree on.

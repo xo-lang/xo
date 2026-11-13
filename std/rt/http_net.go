@@ -565,7 +565,17 @@ func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool) 
 func responseFields(tk *Task, resp *http.Response) (Map[string, string], []string) {
 	var h Map[string, string]
 	var fields []string
+	// HTTP/2 only by ALPN: the client has no cleartext HTTP/2, and an
+	// HTTP/1 answer whose status line says HTTP/2.0 (ProtoMajor 2) keeps
+	// its fields, as the native client keeps them
+	h2 := resp.TLS != nil && resp.TLS.NegotiatedProtocol == "h2"
 	for k, vs := range resp.Header {
+		if h2 && h2ConnectionField(k) {
+			// connection specific fields mean nothing on HTTP/2 and are
+			// dropped, as Go 1.26.11's transport and the native client do
+			// (GO-2026-6610); Go 1.26.1's transport still passed them
+			continue
+		}
 		// a response's fields: outside bytes (decision 0259); a repeated
 		// name keeps each field (decision 0288), Set-Cookie is not joined
 		Map_put(tk, &h, textOf(k), textOf(fieldView(k, vs)))
@@ -574,6 +584,16 @@ func responseFields(tk *Task, resp *http.Response) (Map[string, string], []strin
 		}
 	}
 	return h, fields
+}
+
+// h2ConnectionField reports a field HTTP/2 forbids in a message (RFC
+// 9113 8.2.2), which an HTTP/2 response's fields leave out.
+func h2ConnectionField(k string) bool {
+	switch http.CanonicalHeaderKey(k) {
+	case "Connection", "Keep-Alive", "Proxy-Connection", "Transfer-Encoding", "Upgrade":
+		return true
+	}
+	return false
 }
 
 // handshakeLogFilter is the ErrorLog of serve: net/http's log lines on
