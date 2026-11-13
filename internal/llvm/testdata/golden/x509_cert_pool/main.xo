@@ -1,0 +1,39 @@
+use std/x509
+
+// x509.CertPool (decision 0626): cert_pool, add, len, certificates, and
+// verify through a pool and through lists, as Go's CertPool.
+
+const ROOT: Str = "-----BEGIN CERTIFICATE-----\nMIIBFDCBx6ADAgECAgEBMAUGAytlcDASMRAwDgYDVQQDEwdOQyBSb290MB4XDTI2\nMDEwMTAwMDAwMFoXDTM2MDEwMTAwMDAwMFowEjEQMA4GA1UEAxMHTkMgUm9vdDAq\nMAUGAytlcAMhAM7MFQfcHd1ylZUcKQiI8JWtuQRNG3PWlubfBl1oO9T8o0IwQDAO\nBgNVHQ8BAf8EBAMCAgQwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQU+k2Gw7VR\nqmzXw3WdBAwDfvLGN58wBQYDK2VwA0EAXYu/vE/IE0sxHPZhg5bE9yfHcfSZaMMU\nOcS3VqPnATPsdYh/DZHHpH8aUnjVGGgQLgO+Zq2WMVxZAA8CUS9+Dg==\n-----END CERTIFICATE-----\n"
+const INTER: Str = "-----BEGIN CERTIFICATE-----\nMIIBWjCCAQygAwIBAgIBAjAFBgMrZXAwEjEQMA4GA1UEAxMHTkMgUm9vdDAeFw0y\nNjAxMDEwMDAwMDBaFw0zMTAxMDEwMDAwMDBaMBMxETAPBgNVBAMTCE5DIEludGVy\nMCowBQYDK2VwAyEAa3nFfmoJUjkoLASBjpYRLz8DpAAbqXpWTCOFKj8epfyjgYUw\ngYIwDgYDVR0PAQH/BAQDAgIEMA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0OBBYEFOPB\ns2LA3zb2s3C4sUebZ9rZY5KyMB8GA1UdIwQYMBaAFPpNhsO1Uaps18N1nQQMA37y\nxjefMB8GA1UdHgQYMBahFDASghB0ZXN0LmV4YW1wbGUuY29tMAUGAytlcANBAEhF\nWDB05Z1h2ppzUNc5VdqmSysEU+F+Pd56Ti6rBPBubRJeRD+JoVtZ+W97QxNGDRI6\nI73oEEVnnKX1FFD68w4=\n-----END CERTIFICATE-----\n"
+const LEAF: Str = "-----BEGIN CERTIFICATE-----\nMIIBJTCB2KADAgECAgEDMAUGAytlcDATMREwDwYDVQQDEwhOQyBJbnRlcjAeFw0y\nNjAxMDEwMDAwMDBaFw0yNzAxMDEwMDAwMDBaMA8xDTALBgNVBAMTBGxlYWYwKjAF\nBgMrZXADIQDa29GEotUm8evdXAb9rZNZsih1m01/edZmifolSq2FRqNVMFMwEwYD\nVR0lBAwwCgYIKwYBBQUHAwEwHwYDVR0jBBgwFoAU48GzYsDfNvazcLixR5tn2tlj\nkrIwGwYDVR0RBBQwEoIQVEVTVC5FWEFNUExFLkNPTTAFBgMrZXADQQBAE2mKumIK\nFf3IVK7ziWMqFbTYv1S1cAxd8xjbSqhaNCnhmSuoHpaFdZZV7qHRJGEh0cCvcPJb\nu+cxqtb2MtMN\n-----END CERTIFICATE-----\n"
+
+fn verdict(r: Result[List[List[x509.Certificate]], x509.CertErr]) -> Str {
+  match r {
+    Ok(chains) => "ok ${chains.len()} chain(s) of ${chains[0].len()}"
+    Err(e) => "error: ${e.display()}"
+  }
+}
+
+fn main(os: Os) uses stdio {
+  let r = x509.parse_pem(ROOT.bytes()).ok() ?? fault("root")
+  let i = x509.parse_pem(INTER.bytes()).ok() ?? fault("inter")
+  let l = x509.parse_pem(LEAF.bytes()).ok() ?? fault("leaf")
+  var pool = x509.cert_pool(r).ok() ?? fault("pool")
+  os.stdio.println("roots ${pool.len()}")
+  pool.add(r[0]).ok() ?? fault("add again")
+  os.stdio.println("after adding the same root ${pool.len()}")
+  pool.add(i[0]).ok() ?? fault("add inter")
+  os.stdio.println("after adding the intermediate ${pool.len()}")
+  for c in pool.certificates() {
+    os.stdio.println("  ${c.subject.display()} serial ${c.serial.to_hex()}")
+  }
+  let roots = x509.cert_pool(r).ok() ?? fault("roots")
+  let inters = x509.cert_pool(i).ok() ?? fault("inters")
+  let at = Time.from_unix(1780272000)
+  let any = [x509.ExtKeyUsage.Any]
+  os.stdio.println("pools: ${verdict(l[0].verify(x509.VerifyOptions{root_pool: Some(roots), intermediate_pool: Some(inters), at: at, key_usages: any}))}")
+  os.stdio.println("lists: ${verdict(l[0].verify(x509.VerifyOptions{roots: r, intermediates: i, at: at, key_usages: any}))}")
+  let empty = x509.cert_pool([]).ok() ?? fault("empty")
+  os.stdio.println("empty pool ${empty.len()} ${empty.certificates().len()}: ${verdict(l[0].verify(x509.VerifyOptions{root_pool: Some(empty), intermediates: i, at: at, key_usages: any}))}")
+  os.stdio.println("no roots: ${verdict(l[0].verify(x509.VerifyOptions{intermediates: i, at: at, key_usages: any}))}")
+}

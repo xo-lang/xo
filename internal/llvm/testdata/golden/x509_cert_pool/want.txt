@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+roots 1
+after adding the same root 1
+after adding the intermediate 2
+  CN=NC Root serial 01
+  CN=NC Inter serial 02
+pools: error: x509: a root or intermediate certificate is not authorized to sign for this name: DNS name "TEST.EXAMPLE.COM" is excluded by constraint "test.example.com"
+lists: error: x509: a root or intermediate certificate is not authorized to sign for this name: DNS name "TEST.EXAMPLE.COM" is excluded by constraint "test.example.com"
+empty pool 0 0: error: x509: certificate signed by unknown authority
+no roots: error: x509: certificate signed by unknown authority
+--- stderr
