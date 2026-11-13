@@ -2194,7 +2194,8 @@ pub fn body_next(h: rthttp.HConn, seq: Int, max: Int) -> BodyPart {
     return BodyPart{data: "", end: false, err: "http: read on a failed body"}
   }
   if xl(x, X_S100) == 1 {
-    // (2: sent; body_finish asks whether one was expected)
+    // (2: sent, 3: the response head went first and none is sent;
+    // body_finish asks whether one was expected)
     xs(x, X_S100, 2)
     let _c = send_str(h, "HTTP/1.1 100 Continue\r\n\r\n")
   }
@@ -2333,6 +2334,12 @@ fn write(h: rthttp.HConn, x: Int, status: Int, body: Int, bn: Int, stream: Int) 
   let d = rt.heap_large(room + 8)
   let res = d + room
   rt.mem_store(res, 0, 0, 8)
+  if xl(x, X_S100) == 1 {
+    // the response head goes out first: a 100 Continue may no longer
+    // follow it (net/http's canWriteContinue, GO-2021-0224); 3 still
+    // tells body_finish that one was expected
+    xs(x, X_S100, 3)
+  }
   var f = xl(x, X_FLAGS) | (if stream != 0 { http1w.F_STREAM } else { 0 })
   if hconn.stopping(h) {
     f = f | http1w.F_STOPPING

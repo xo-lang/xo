@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-13: security: an HTTP/1.1 server never sends a 100 Continue after the response head
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), against GO-2021-0224 (CVE-2020-28362 class: net/http's canWriteContinue)
+- Go reference: net/http server.go (expectContinueReader.Read writes 100 Continue only while canWriteContinue; WriteHeader clears it)
+- Test: golden http_continue_after_head (fails before the fix: a 100 Continue followed the 200 head)
+- Affected: every release up to 0.50.1 (native and LLVM backends; full duplex and streamed responses that read the body after their head)
+- Shipped in: not yet released
+
+A handler whose response head went out before it read an `Expect: 100-continue` body made the server write `HTTP/1.1 100 Continue` after the final head, where the client reads it as body bytes. Writing the head now ends the chance of a 100 Continue, as in net/http.
+
 ## 2026-11-13: security: CONNECT ends HTTP on its connection: the server after any answer, the client after sending it, and ReverseProxy refuses it
 
 - Kind: security

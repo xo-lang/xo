@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+final head: true
+100 Continue after it: false
+body read: true
+--- stderr

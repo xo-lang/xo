@@ -1,0 +1,50 @@
+use std/http
+
+// A full duplex response whose head goes out before the handler reads
+// the body never sends a 100 Continue after that head (GO-2021-0224:
+// an interim response after the final one would be read as body bytes).
+
+fn main(os: Os) ! {
+  var r = http.router()
+  r.handle_stream("POST /up", fn(_req, b) {
+    http.stream(200, fn(w) {
+      w.write(b"head first;")?
+      w.flush()?
+      var n = 0
+      while true {
+        match b.read()? {
+          Some(d) => n += d.len()
+          None => break
+        }
+      }
+      w.write("read ${n}".bytes())?
+    }).with_full_duplex()
+  })
+  let srv = http.server(os.net.listen("127.0.0.1:0")?, r)
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let c = os.net.dial(srv.addr())?
+    c.write(b"POST /up HTTP/1.1\r\nHost: s\r\nContent-Length: 5\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n")?
+    c.set_read_deadline(os.clock, Some(os.clock.now() + 5s))
+    var got = ""
+    while !got.contains("head first;") {
+      match c.read(4096) {
+        Ok(Some(b)) => got = got + b.to_str_lossy()
+        _ => break
+      }
+    }
+    c.write(b"hello")?
+    while true {
+      match c.read(4096) {
+        Ok(Some(b)) => got = got + b.to_str_lossy()
+        _ => break
+      }
+    }
+    c.close()
+    let final_at = got.find("HTTP/1.1 200") ?? -1
+    let after = if final_at >= 0 { got[final_at..] } else { got }
+    os.stdio.println("final head: ${final_at >= 0}")
+    os.stdio.println("100 Continue after it: ${after.contains("100 Continue")}")
+    os.stdio.println("body read: ${got.contains("read 5")}")
+  }
+}
