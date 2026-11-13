@@ -269,6 +269,7 @@ xo_f_sieve:
 	bl xo_hG9GOmRI4zL
 .LpGL1jtk_f2_x1_dc12:
 	mov x0, x20
+.LpGL1jtk_f2_ep:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x24, x23, [sp, #48]
@@ -307,11 +308,7 @@ xo_f_sieve:
 	bl xo_x_fault_continue
 	mov x0, #0
 .LpGL1jtk_f2_x1_dc17:
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x24, x23, [sp, #48]
-	ldp x29, x30, [sp], #64
-	ret
+	b .LpGL1jtk_f2_ep
 .LpGL1jtk_f2_x4_dc2:
 .LpGL1jtk_f2_fault1:
 	mov x0, x22

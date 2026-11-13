@@ -41,6 +41,9 @@ pub fn passes() -> List[Str] {
     // compiler/ssa reltail.xo (decision 0623): return blocks releasing
     // nested sets of values share a ladder of release tails
     "reltail",
+    // emit.xo ret_epilogue: a function's framed returns share one
+    // epilogue
+    "shareret",
     // compiler/llvm func.xo (decision 0338): Float loops marked for a
     // full unroll; off for a clang before LLVM 19 (compiler/xo clang.xo
     // unroll_cap_ok)

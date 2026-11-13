@@ -485,6 +485,10 @@ struct G {
   /// a leaf's pad entries, placed after its fault stubs (emit.xo
   /// leaf_pad_entry)
   leaf_pes: List[Str] = []
+  /// the label of the function's shared epilogue, once its first framed
+  /// return wrote it; later framed returns branch there (emit.xo, the
+  /// shareret pass)
+  ret_ep: Str = ""
   /// large `var` parameters passed by reference (byref.xo)
   held: Held = Held{}
   has_held: Bool = false
@@ -689,6 +693,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.stub_sites = []
   g.pad_entries = {}
   g.leaf_pes = []
+  g.ret_ep = ""
   g.held = Held{}
   g.has_held = false
   g.ref_ptr = {}

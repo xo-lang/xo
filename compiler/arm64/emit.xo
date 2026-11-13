@@ -977,6 +977,28 @@ fn (g: G) saves(var b: List[Str], one: Str, two: Str) {
   }
 }
 
+/// A return's epilogue: in a framed block, the function's first one is
+/// written with a label and the others branch to it (the shareret pass:
+/// a decoder's dozens of returns each repeated its loads of the saved
+/// registers and the frame record, 2026-11-12). Not on windows/arm64,
+/// whose epilogues carry their unwind codes, nor in an unframed block
+/// (shrink wrapping), whose return is a plain ret. The return's moves
+/// into the result registers and the caller's stack argument area come
+/// before, and the epilogue changes neither.
+fn (var g: G) ret_epilogue(var b: List[Str]) {
+  if !g.framed_here() || g.win_a64() || !pass_on(g.m, "shareret") {
+    g.epilogue(b)
+    return
+  }
+  if !g.ret_ep.is_empty() {
+    b.push("\tb ${g.ret_ep}\n")
+    return
+  }
+  g.ret_ep = g.local("${g.lbl_prefix()}_ep")
+  b.push("${g.ret_ep}:\n")
+  g.epilogue(b)
+}
+
 fn (g: G) epilogue(var b: List[Str]) {
   g.unframe(b)
   b.push("\tret\n")
@@ -1172,7 +1194,7 @@ fn (var g: G) emit_inst(var b: List[Str], inst: Inst, next: Int) {
       ms.push(Move{dst: dst, src: g.msrc_of(inst.srcs[k])})
     }
     g.parallel(b, ms)
-    g.epilogue(b)
+    g.ret_epilogue(b)
   } else if inst.kind == K_JUMP {
     if g.shrink && g.fedge[g.cur] == 2 {
       // a way out of the blocks that need the frame (shrink.xo)
