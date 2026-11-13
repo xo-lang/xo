@@ -537,19 +537,11 @@ fn dns_suffix(a0: Str, b0: Str) -> Bool {
   true
 }
 
-/// A sorted (insertion sort: the sets are small) and pruned DNS set.
+/// A sorted and pruned DNS set (a stable n log n sort, as the insertion
+/// sort it replaces kept equal names in order; GO-2025-4007: that sort was
+/// quadratic in a certificate's constraints).
 fn dns_sorted(l: List[Str]) -> List[Str] {
-  var xs: List[Str] = []
-  for x in l {
-    xs.push(x)
-    var k = xs.len() - 1
-    while k > 0 && dns_cmp(xs[k - 1], xs[k]) > 0 {
-      let t = xs[k]
-      xs[k] = xs[k - 1]
-      xs[k - 1] = t
-      k -= 1
-    }
-  }
+  let xs = l.sort_with(fn(a, b) { dns_cmp(a, b).cmp(0) })
   if xs.len() < 2 {
     return xs
   }
@@ -567,8 +559,8 @@ struct DnsSet {
   all: Bool
   permitted: Bool
   set: List[Str]
-  parent_keys: List[Str]
-  parent_vals: List[Str]
+  // the excluded names by their parent domain (trim_label), for wildcards
+  parents: Map[Str, Str]
 }
 
 fn dns_set(l: List[Str], permitted: Bool) -> DnsSet? {
@@ -577,12 +569,11 @@ fn dns_set(l: List[Str], permitted: Bool) -> DnsSet? {
   }
   for n in l {
     if n.is_empty() {
-      return Some(DnsSet{all: true, permitted: permitted, set: [], parent_keys: [], parent_vals: []})
+      return Some(DnsSet{all: true, permitted: permitted, set: [], parents: {}})
     }
   }
   let set = dns_sorted(l)
-  var keys: List[Str] = []
-  var vals: List[Str] = []
+  var parents: Map[Str, Str] = {}
   if !permitted {
     for set_name in set {
       // keys and values lower-cased, as the query (Go 1.27's fix of
@@ -592,22 +583,11 @@ fn dns_set(l: List[Str], permitted: Bool) -> DnsSet? {
       if t == "" {
         continue
       }
-      // a map: the last name for a key wins
-      var at = -1
-      for (k, key) in keys.indexed() {
-        if key == t {
-          at = k
-        }
-      }
-      if at >= 0 {
-        vals[at] = name
-      } else {
-        keys.push(t)
-        vals.push(name)
-      }
+      // the last name for a key wins, as Go's map
+      parents.put(t, name)
     }
   }
-  Some(DnsSet{all: false, permitted: permitted, set: set, parent_keys: keys, parent_vals: vals})
+  Some(DnsSet{all: false, permitted: permitted, set: set, parents: parents})
 }
 
 /// Go's trimFirstLabel (the dot kept).
@@ -650,10 +630,8 @@ fn dns_query(d: DnsSet, s: Str) -> Str? {
   }
   if !d.permitted && s.starts_with("*") {
     let t = trim_label(s.to_lower())
-    for (k, key) in d.parent_keys.indexed() {
-      if key == t {
-        return Some(d.parent_vals[k])
-      }
+    if let Some(v) = d.parents.get(t) {
+      return Some(v)
     }
   }
   None
@@ -753,17 +731,7 @@ fn net_cmp(a: Bytes, b: Bytes) -> Int {
 }
 
 fn ip_sorted(l: List[Bytes]) -> List[Bytes] {
-  var xs: List[Bytes] = []
-  for x in l {
-    xs.push(x)
-    var k = xs.len() - 1
-    while k > 0 && net_cmp(xs[k - 1], xs[k]) > 0 {
-      let t = xs[k]
-      xs[k] = xs[k - 1]
-      xs[k - 1] = t
-      k -= 1
-    }
-  }
+  let xs = l.sort_with(fn(a, b) { net_cmp(a, b).cmp(0) })
   if xs.len() < 2 {
     return xs
   }
@@ -865,15 +833,21 @@ fn net_text(n: Bytes) -> Str {
 /// Go's emailConstraints: full mailboxes ([local, lower case domain]) and
 /// the domains' DNS set.
 struct EmailSet {
-  exact: List[List[Str]]
+  // the mailboxes by mbox_key (a map, as Go's: GO-2025-4007)
+  exact: Map[Str, Bool]
   dns: DnsSet?
+}
+
+/// A mailbox's map key: the local part's length keeps it unambiguous.
+fn mbox_key(local: Str, domain: Str) -> Str {
+  "${local.len()}:${local}@${domain}"
 }
 
 fn email_set(l: List[Str], permitted: Bool) -> EmailSet? {
   if l.is_empty() {
     return None
   }
-  var exact: List[List[Str]] = []
+  var exact: Map[Str, Bool] = {}
   var doms: List[Str] = []
   for c in l {
     if !c.contains("@") {
@@ -881,7 +855,7 @@ fn email_set(l: List[Str], permitted: Bool) -> EmailSet? {
       continue
     }
     match x509.mailbox(c.bytes()) {
-      Some(mb) => exact.push([mb[0], mb[1].to_lower()])
+      Some(mb) => exact.put(mbox_key(mb[0], mb[1].to_lower()), true)
       None => ()
     }
   }
@@ -889,10 +863,8 @@ fn email_set(l: List[Str], permitted: Bool) -> EmailSet? {
 }
 
 fn email_query(e: EmailSet, local: Str, domain: Str) -> Str? {
-  for x in e.exact {
-    if x[0] == local && x[1] == domain {
-      return Some("${local}@${domain}")
-    }
+  if e.exact.contains(mbox_key(local, domain)) {
+    return Some("${local}@${domain}")
   }
   match e.dns {
     Some(d) => dns_query(d, domain)
