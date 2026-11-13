@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-13: security: an HTTP/2 connection buffers at most four bodies' worth of unfinished request bodies
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), an extra finding (no Go advisory: net/http hands a body to its handler as it arrives and returns the window as the handler reads)
+- Test: golden http_h2_body_budget (fails before the fix: eight unfinished uploads on one connection all buffered)
+- Affected: every release up to 0.50.1 (native and LLVM backends; the Go backend is net/http's)
+- Shipped in: not yet released
+
+A route that takes its body whole buffered each HTTP/2 request body until it ended, and gave the flow control window back at once, so one connection could hold max_concurrent_streams (250) bodies of up to the body limit (64 MiB) each. The bodies a connection buffers for streams no handler has yet are now capped at four times the body limit; the stream that would pass the cap is refused with RST_STREAM REFUSED_STREAM, which tells the client no handler saw it and it may retry. Routes with handle_stream are unchanged (their window comes back as the handler reads).
+
 ## 2026-11-13: security: an HTTP/1.1 server reads a slowly sent request head in linear time
 
 - Kind: security

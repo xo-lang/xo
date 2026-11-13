@@ -198,17 +198,20 @@ const C_ETAB = 696
 /// SETTINGS_MAX_HEADER_LIST_SIZE: the server's with_max_header_bytes plus
 /// 320 (Go's maxHeaderListSize), MAX_HLIST when it set none
 const C_HLIST = 704
-/// wasm only (decision 0447 R2f): the park word the connection's fiber
-/// waits on (wake, the reader task) and the one its reader task waits on
-/// for the fiber to have read; past the native record's end (c_size)
 /// why a stream stopped sending since the last wake: 1 its own window
 /// used up (a larger SETTINGS_INITIAL_WINDOW_SIZE wakes the streams), 2
 /// the connection's (a connection WINDOW_UPDATE does); otherwise neither
 /// walks the open streams (GO-2026-6611)
 const C_WBLK = 712
-const C_WPARK = 720
-const C_WREAD = 728
-const C_SIZE = 720 // own: this module\'s connection record, not the context
+/// the bytes of request bodies buffered for streams not yet handed to a
+/// handler (S_BUFC each); at most BODY_BUDGET_MUL bodies' limit
+const C_BUFD = 720
+/// wasm only (decision 0447 R2f): the park word the connection's fiber
+/// waits on (wake, the reader task) and the one its reader task waits on
+/// for the fiber to have read; past the native record's end (c_size)
+const C_WPARK = 728
+const C_WREAD = 736
+const C_SIZE = 728 // own: this module\'s connection record, not the context
 
 /// The connection record's size: wasm's has the park words after it.
 fn c_size() -> Int { if target.arch == TargetArch.Wasm32 { C_SIZE + 16 } else { C_SIZE } }
@@ -278,8 +281,10 @@ const S_TRL = 368
 const S_OTRL = 392
 /// wasm only: the park word a stream's task waits on (S_WAITER holds its
 /// address while it waits); past the native record's end (s_size)
-const S_WPARK = 416
-const S_SIZE = 416
+/// the bytes of S_BODY counted in the connection's C_BUFD
+const S_BUFC = 416
+const S_WPARK = 424
+const S_SIZE = 424
 
 /// The stream record's size: wasm's has the park word after it.
 fn s_size() -> Int { if target.arch == TargetArch.Wasm32 { S_SIZE + 8 } else { S_SIZE } }
@@ -450,9 +455,24 @@ fn wake(c: Int) {
   }
 }
 
+/// The connection's buffered request bodies (C_BUFD) may hold this many
+/// times a body's limit: one connection's streams cannot buffer
+/// max_concurrent_streams whole bodies at once.
+const BODY_BUDGET_MUL = 4
+
+/// Frees st's buffered body and takes it off its connection's C_BUFD.
+fn body_release(st: Int) {
+  let n = ld(st, S_BUFC)
+  if n > 0 {
+    inc(ld(st, S_C), C_BUFD, -n)
+    sto(st, S_BUFC, 0)
+  }
+  bfree(st, S_BODY)
+}
+
 fn stream_free(st: Int) {
   req_free(st)
-  bfree(st, S_BODY)
+  body_release(st)
   bfree(st, S_TRL)
   bfree(st, S_OTRL)
   bfree(st, S_RH)
@@ -1209,7 +1229,7 @@ fn (h: H2Conn) request_of(st: Int) -> H2Req {
   var body = b""
   if !streamed {
     body = bstr(st, S_BODY).bytes()
-    bfree(st, S_BODY)
+    body_release(st)
   }
   http1.fault_probe(p.path, "frame")
   H2Req{conn: hconn.stream(h.h, st), method: p.method, path: p.path, scheme: p.scheme, urlhost: p.urlhost, host: p.host, headers: p.headers, query: p.query, rawquery: p.rawquery, body: body, fields: p.fields, trailer: p.trailer, streamed: streamed}
@@ -2121,7 +2141,21 @@ fn (var h: H2Conn) on_data(sid: Int, flags: Int, flen: Int, p: Int, dn: Int) {
         k = max - ld(st, S_BODY + 8)
         sto(st, S_OVER, 1)
       }
+      if ld(c, C_BUFD) + k > BODY_BUDGET_MUL * max {
+        // the connection's buffered bodies are at their budget: this
+        // stream is refused before any handler saw it (RFC 9113 8.7, a
+        // client may retry it), and its window comes back
+        let u = inflow_add(c, C_IN, flen)
+        if u > 0 {
+          put_winup(c, 0, u)
+        }
+        body_release(st)
+        stream_err(c, sid, E_REFUSED)
+        return
+      }
       put(st, S_BODY, p, k)
+      inc(c, C_BUFD, k)
+      inc(st, S_BUFC, k)
     }
     // the body is read at once: its window comes back now (the
     // stream's while it is wanted)

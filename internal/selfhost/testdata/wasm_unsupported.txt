@@ -127,4 +127,5 @@ proc_read_deadline # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0
 http_client_proxy # wasip1 wasip2 # network: WASI preview1 has no sockets, and a CONNECT tunnel is not supported on wasm (decision 0617 B)
 http_client_jar # wasip1 # network: WASI preview1 has no sockets
 http_continue_after_head # wasip1 # network: the network (`rt.net_status`): WASI preview1 has no sockets
+http_h2_body_budget # wasip1 # network: the network (`rt.net_status`): WASI preview1 has no sockets
 http_request_guards # wasip1 # network: the network (`rt.net_status`): WASI preview1 has no sockets

@@ -1,0 +1,88 @@
+use std/http
+
+// One HTTP/2 connection's buffered request bodies are capped at four
+// times the body limit (XO_HTTP_MAX_BODY, 1 MiB here): a raw client
+// opens eight uploads of 900 KB on one connection and sends 600 KB of
+// each; the streams past the budget are refused (RST_STREAM
+// REFUSED_STREAM) before a handler sees them, and the server keeps
+// serving. The Go backend (net/http) bounds the memory by flow control
+// instead: its handlers read the bodies as they come, so none is refused.
+
+/// A frame header: length, type, flags, stream id.
+fn frame(ty: Int, flags: Int, sid: Int, payload: Bytes) -> Bytes {
+  let n = payload.len()
+  var b = BytesBuilder.new()
+  b.write_byte(UInt8((n >> 16) & 255))
+  b.write_byte(UInt8((n >> 8) & 255))
+  b.write_byte(UInt8(n & 255))
+  b.write_byte(UInt8(ty))
+  b.write_byte(UInt8(flags))
+  b.write_byte(UInt8((sid >> 24) & 127))
+  b.write_byte(UInt8((sid >> 16) & 255))
+  b.write_byte(UInt8((sid >> 8) & 255))
+  b.write_byte(UInt8(sid & 255))
+  b.write(payload)
+  b.freeze()
+}
+
+/// HPACK literal fields without indexing, new names.
+fn fields(kv: List[(Str, Str)]) -> Bytes {
+  var b = BytesBuilder.new()
+  for (k, v) in kv {
+    b.write_byte(0)
+    b.write_byte(UInt8(k.len()))
+    b.write(k.bytes())
+    b.write_byte(UInt8(v.len()))
+    b.write(v.bytes())
+  }
+  b.freeze()
+}
+
+fn main(os: Os) ! {
+  var r = http.router()
+  r.handle("POST /up", fn(req) { http.text(200, "${req.body.len()}") })
+  r.handle("GET /ok", fn(_req) { http.text(200, "ok") })
+  let srv = http.server(os.net.listen("127.0.0.1:0")?, r).with_protocols(#{http.Protocol.Http1, http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let c = os.net.dial(srv.addr())?
+    c.write(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")?
+    c.write(frame(4, 0, 0, b""))?
+    // the server's frames are read and dropped as they come
+    let got = Mutex.new(b"")
+    s.spawn_background(fn() {
+      while true {
+        match c.read(65536) {
+          Ok(Some(b)) => got.with(fn(var g) { g = g + b })
+          _ => break
+        }
+      }
+    })
+    let chunk = Bytes.from_hex("61".repeat(15000)) ?? b""
+    for i in 0..8 {
+      let sid = 2 * i + 1
+      c.write(frame(1, 4, sid, fields([(":method", "POST"), (":scheme", "http"), (":authority", "s"), (":path", "/up"), ("content-length", "900000")])))?
+    }
+    // 600 KB of each stream, interleaved
+    for _ in 0..40 {
+      for i in 0..8 {
+        c.write(frame(0, 0, 2 * i + 1, chunk))?
+      }
+    }
+    os.clock.sleep(1s)
+    let all = got.with_read(fn(g) { g })
+    var refused = 0
+    var at = 0
+    while at + 9 <= all.len() {
+      let n = (Int(all[at]) << 16) | (Int(all[at + 1]) << 8) | Int(all[at + 2])
+      if all[at + 3] == 3 && at + 13 <= all.len() && all[at + 12] == 7 {
+        refused += 1
+      }
+      at += 9 + n
+    }
+    c.close()
+    os.stdio.println("streams refused: ${refused > 0 && refused < 8}")
+    let after = http.client(os.net, timeout: 5s).get("http://${srv.addr()}/ok")?
+    os.stdio.println("serves after: ${after.status}")
+  }
+}
