@@ -17,7 +17,7 @@ the text of every entry is unchanged).
 - Security (std/http, native backends): an HTTP/2 server decodes a header field cut across CONTINUATION frames once (GO-2023-1571), and an empty CONTINUATION frame that does not end the block is not decoded at all. Affected: 0.50.1 and earlier.
 - Security (std/http, native backends): an HTTP/2 server's SETTINGS and connection WINDOW_UPDATE frames no longer walk every open stream (GO-2026-6611). Affected: 0.50.1 and earlier.
 - Security (std/http, native backends): a streamed request's declared trailer names are capped at 64 and deduplicated (GO-2026-6603). Affected: 0.50.1 and earlier.
-- Security (std/http, native backends): an HTTP/2 client drops a response's connection specific fields and a Content-Length that is not one value of at most 2^63 - 1 (GO-2026-6610). Affected: 0.50.1 and earlier.
+- Security (std/http, all backends): an HTTP/2 client drops a response's connection specific fields and a Content-Length that is not one value of at most 2^63 - 1 (GO-2026-6610). Affected: 0.50.1 and earlier.
 - Security (std/http, native backends): serve_content ignores a Range header of more than 200 ranges, as Go 1.26.11 (GO-2026-6609). Affected: 0.50.1 and earlier.
 - Security (std/http, native backends): an HTTP/1.1 server never sends a 100 Continue after the response head, and the head waits out one being sent (GO-2021-0224). Affected: 0.50.1 and earlier.
 - Security (std/http, native backends): an HTTP/1.1 server reads a slowly sent request head in linear time; it rescanned and reparsed the whole head on every read. Affected: 0.50.1 and earlier.
