@@ -3548,7 +3548,8 @@ fn mime_header(s: Str, b: Bytes, i0: Int, end: Int) -> (List[Str], List[Str], St
   var i = i0
   if i < end && is_sp(Int(b[i])) {
     let (_, e0, _) = line_at(s, b, i, end, true)
-    return (keys, vals, "malformed MIME header initial line: " + text_of(s, i, e0))
+    // Go 1.26.2 and later quote the line (fmt %q), as the missing colon
+    return (keys, vals, "malformed MIME header initial line: " + go_quote(rawb.str_slice(s, i, e0)))
   }
   while true {
     if i >= end {
@@ -3600,15 +3601,15 @@ fn mime_header(s: Str, b: Bytes, i0: Int, end: Int) -> (List[Str], List[Str], St
       x += 1
     }
     if !ok {
-      return (keys, vals, "malformed MIME header line: " + text_of(kv, 0, kb.len()))
+      return (keys, vals, "malformed MIME header line: " + go_quote(kv))
     }
     x = colon + 1
     while x < kb.len() {
       let ch = Int(kb[x])
       if (ch < 32 && ch != 9) || ch == 127 {
         // canonicalMIMEHeaderKey rewrote the name in the line already
-        let shown = if spaced { text_of(kv, 0, colon) } else { canonical_key(rawb.str_slice(kv, 0, colon)) }
-        return (keys, vals, "malformed MIME header line: " + shown + text_of(kv, colon, kb.len()))
+        let shown = if spaced { rawb.str_slice(kv, 0, colon) } else { canonical_key(rawb.str_slice(kv, 0, colon)) }
+        return (keys, vals, "malformed MIME header line: " + go_quote(shown + rawb.str_slice(kv, colon, kb.len())))
       }
       x += 1
     }

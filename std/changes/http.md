@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-13: behavior: a response with a malformed header field: the error quotes the line, as Go 1.26.2 and later
+
+- Kind: behavior
+- Commit: this push
+- Found by: the Go 1.26.1 to 1.26.11 toolchain trial (owner item 9, 2026-11-13: TestGoldenGoParity's http_client_responses differed)
+- Go reference: net/textproto readMIMEHeader as net/http's ReadResponse reports it (go1.26.11; go1.26.1 printed the text raw)
+- Test: goldens http_client_responses (want.txt) and TestHTTP1ClientDiff (testdata/http1_client.txt) rewritten from the Go backend on go1.26.11; arm64, llvm, Go parity
+- Timing: none (error text only)
+- Shipped in: not yet released
+
+The native client's `malformed MIME header line` and `malformed MIME header initial line` errors show the field line as a Go quoted string (`"X-Ctl: a\x01b"`), as net/http's do with Go 1.26.2 and later.
 ## 2026-11-13: security: a client never writes a CR or LF from with_host or User-Agent into the request
 
 - Kind: security

@@ -88,7 +88,7 @@ func (v_e Textproto_TextErr) M_display(tk *Task) string {
 			_ = v_c
 			var v_m_1 string = v_e.P.(Textproto_TextErr_Code).F_msg
 			_ = v_m_1
-			return (Textproto_pad3(tk, v_c) + " " + v_m_1)
+			return (Textproto_pad3(tk, v_c) + " " + Str_quote(tk, v_m_1))
 		}
 		if v_e.Tag == 3 {
 			return "EOF"
@@ -649,7 +649,7 @@ func (v_r *Textproto_Reader) M_read_header(tk *Task) Result[Textproto_Header, Te
 		}
 		var v_shown Bytes = x_v2299
 		_ = v_shown
-		return Err[Textproto_Header](Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("malformed MIME header initial line: " + Bytes_to_str_lossy(tk, v_shown))}})
+		return Err[Textproto_Header](Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("malformed MIME header initial line: " + Bytes_quote(tk, v_shown))}})
 	}
 	for {
 		if !(true) {
@@ -689,7 +689,7 @@ func (v_r *Textproto_Reader) M_read_header(tk *Task) Result[Textproto_Header, Te
 			if Bytes_is_empty(tk, v_kv) {
 				return Ok[Textproto_Header, Textproto_TextErr](func(v Textproto_Header) Textproto_Header { v.XoMark(); return v }(v_h))
 			}
-			var v_bad Textproto_TextErr = Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("malformed MIME header line: " + Bytes_to_str_lossy(tk, v_kv))}}
+			var v_bad Textproto_TextErr = Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("malformed MIME header line: " + Bytes_quote(tk, v_kv))}}
 			_ = v_bad
 			var x_v2304 int64
 			x_a2305 := Bytes(":")
@@ -740,7 +740,7 @@ func (v_r *Textproto_Reader) M_read_header(tk *Task) Result[Textproto_Header, Te
 				_ = v_x_1
 				{
 					if !(Textproto_value_byte(tk, v_x_1)) {
-						return Err[Textproto_Header](Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("malformed MIME header line: " + v_key + ":" + Bytes_to_str_lossy(tk, v_v))}})
+						return Err[Textproto_Header](Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("malformed MIME header line: " + Bytes_quote(tk, (Str_bytes(tk, (v_key+":"))+v_v)))}})
 					}
 				}
 			}
@@ -842,7 +842,7 @@ func Textproto_code_line(tk *Task, v_line string, v_expect int64) Textproto_Code
 	var v_b Bytes = Str_bytes(tk, v_line)
 	_ = v_b
 	if (Bytes_len(tk, v_b) < int64(4)) || ((BytesAt(v_b, int64(3), "std/textproto.xo:425:22") != uint8(32)) && (BytesAt(v_b, int64(3), "std/textproto.xo:425:37") != uint8(45))) {
-		return Textproto_CodeLine{F_code: int64(0), F_more: false, F_msg: "", F_err: Some[Textproto_TextErr](Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("short response: " + v_line)}})}
+		return Textproto_CodeLine{F_code: int64(0), F_more: false, F_msg: "", F_err: Some[Textproto_TextErr](Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("short response: " + Str_quote(tk, v_line))}})}
 	}
 	var v_more bool = (BytesAt(v_b, int64(3), "std/textproto.xo:428:14") == uint8(45))
 	_ = v_more
@@ -858,7 +858,7 @@ func Textproto_code_line(tk *Task, v_line string, v_expect int64) Textproto_Code
 	var v_code int64 = x_c2321
 	_ = v_code
 	if Option_is_none[int64](tk, v_parsed) || (v_code < int64(100)) {
-		return Textproto_CodeLine{F_code: v_code, F_more: v_more, F_msg: "", F_err: Some[Textproto_TextErr](Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("invalid response code: " + v_line)}})}
+		return Textproto_CodeLine{F_code: v_code, F_more: v_more, F_msg: "", F_err: Some[Textproto_TextErr](Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("invalid response code: " + Str_quote(tk, v_line))}})}
 	}
 	var v_msg string = StrSlice(v_line, int64(4), 0, true, false, "std/textproto.xo:434:13")
 	_ = v_msg
@@ -882,7 +882,7 @@ func (v_r *Textproto_Reader) M_read_code_line(tk *Task, v_expect int64) Result[T
 		return Err[Tuple2[int64, string]](v_e)
 	}
 	if v_cl.F_more {
-		return Err[Tuple2[int64, string]](Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("unexpected multi-line response: " + v_cl.F_msg)}})
+		return Err[Tuple2[int64, string]](Textproto_TextErr{Tag: 1, P: Textproto_TextErr_Protocol{F_msg: ("unexpected multi-line response: " + Str_quote(tk, v_cl.F_msg))}})
 	}
 	return Ok[Tuple2[int64, string], Textproto_TextErr](Tuple2[int64, string]{F0: v_cl.F_code, F1: v_cl.F_msg})
 }

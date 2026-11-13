@@ -1,5 +1,17 @@
 # std/textproto changes
 
+## 2026-11-13: behavior: protocol errors quote the line, as Go 1.26.2 and later
+
+- Kind: behavior
+- Commit: this push
+- Found by: the Go 1.26.1 to 1.26.11 toolchain trial (owner item 9, 2026-11-13: TestGoldenGoParity's http_client_responses differed)
+- Go reference: net/textproto reader.go (readCodeLine, ReadCodeLine, readMIMEHeader) and textproto.go (Error.Error: `%03d %q`) (go1.26.11; go1.26.1 printed the text raw)
+- Test: the textproto corpus regenerated with go1.26.11, on go, arm64, llvm
+- Timing: none (error text only)
+- Shipped in: not yet released
+
+`malformed MIME header line`, `malformed MIME header initial line`, `short response`, `invalid response code` and `unexpected multi-line response` show the line as a Go quoted string (`": v"`, a control byte as `\x01`), and a reply's error reads `550 "5.1.1 no such user"`, as Go's net/textproto does since its quoting fix. A program that matched the old text must match the quoted one.
+
 ## 2026-11-11: feature: std/textproto, Go's net/textproto over bytes in memory
 
 - Kind: feature

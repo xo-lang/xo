@@ -1,5 +1,17 @@
 # std/smtp changes
 
+## 2026-11-13: behavior: a reply's error quotes its text, as Go 1.26.2 and later
+
+- Kind: behavior
+- Commit: this push
+- Found by: the Go 1.26.1 to 1.26.11 toolchain trial (owner item 9, 2026-11-13: TestGoldenGoParity's http_client_responses differed)
+- Go reference: net/textproto textproto.go Error.Error and reader.go readCodeLine (go1.26.11; go1.26.1 printed the text raw)
+- Test: the smtp corpus regenerated with go1.26.11, on go, arm64, llvm
+- Timing: none (error text only)
+- Shipped in: not yet released
+
+`SmtpErr.display()` of a reply reads `550 "5.1.1 no such user"` (net/textproto's Error is `%03d %q` since Go's quoting fix), and `short response` and `invalid response code` quote the line.
+
 ## 2026-11-11: fix: DATA dot-encodes as Go's DotWriter (std/textproto.dot_encode)
 
 - Kind: fix

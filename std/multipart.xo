@@ -626,7 +626,7 @@ fn (var r: R) read_header(max_memory0: Int, max_headers0: Int) -> Header ! Str {
     if line.len() > 80 {
       return Err("message too large")
     }
-    return Err("malformed MIME header initial line: ${text_of(line)}")
+    return Err("malformed MIME header initial line: ${go_q(line)}")
   }
   while {
     let kv = r.read_continued(max_memory)?
@@ -635,18 +635,21 @@ fn (var r: R) read_header(max_memory0: Int, max_headers0: Int) -> Header ! Str {
     }
     let c = index_of(kv, 0, b":")
     if c < 0 {
-      return Err("malformed MIME header line: ${text_of(kv)}")
+      return Err("malformed MIME header line: ${go_q(kv)}")
     }
     let key = match canonical_key(kv[0..c]) {
       Some(k) => k
-      None => return Err("malformed MIME header line: ${text_of(kv)}")
+      None => return Err("malformed MIME header line: ${go_q(kv)}")
     }
     let v = kv[c + 1..]
     for b in v {
       if !valid_value_byte(b) {
         // Go canonicalizes the key in place first, so its text shows
-        // the key canonical
-        return Err("malformed MIME header line: ${key}:${text_of(v)}")
+        // the key canonical; Go 1.26.2 and later quote the line (%q)
+        var line = BytesBuilder.new()
+        line.write_str("${key}:")
+        line.write(v)
+        return Err("malformed MIME header line: ${go_q(line.freeze())}")
       }
     }
     max_headers -= 1

@@ -62,10 +62,10 @@ test "ReadCodeLine" {
 }
 
 test "ReadCodeLine errors" {
-  expect(code1("12 x\n", 0)) == Err(TextErr.Protocol(msg: "short response: 12 x"))
-  expect(code1("abc x\n", 0)) == Err(TextErr.Protocol(msg: "invalid response code: abc x"))
-  expect(code1("099 x\n", 0)) == Err(TextErr.Protocol(msg: "invalid response code: 099 x"))
-  expect(code1("250-more\n", 0)) == Err(TextErr.Protocol(msg: "unexpected multi-line response: more"))
+  expect(code1("12 x\n", 0)) == Err(TextErr.Protocol(msg: "short response: \"12 x\""))
+  expect(code1("abc x\n", 0)) == Err(TextErr.Protocol(msg: "invalid response code: \"abc x\""))
+  expect(code1("099 x\n", 0)) == Err(TextErr.Protocol(msg: "invalid response code: \"099 x\""))
+  expect(code1("250-more\n", 0)) == Err(TextErr.Protocol(msg: "unexpected multi-line response: \"more\""))
 }
 
 test "ReadDotLines" {
@@ -131,8 +131,8 @@ test "ReadMIMEHeader malformed" {
 
 test "ReadMIMEHeader error texts" {
   expect(hd("No colon\r\n\r\n")) == Err(TextErr.Protocol(msg: "malformed MIME header: missing colon: \"No colon\""))
-  expect(hd(" lead: x\r\n\r\n")) == Err(TextErr.Protocol(msg: "malformed MIME header initial line:  lead: x"))
-  expect(hd("Fo\to: x\r\n\r\n")) == Err(TextErr.Protocol(msg: "malformed MIME header line: Fo\to: x"))
+  expect(hd(" lead: x\r\n\r\n")) == Err(TextErr.Protocol(msg: "malformed MIME header initial line: \" lead: x\""))
+  expect(hd("Fo\to: x\r\n\r\n")) == Err(TextErr.Protocol(msg: "malformed MIME header line: \"Fo\\to: x\""))
 }
 
 test "ReadMIMEHeader bytes" {
@@ -188,7 +188,7 @@ test "ReadResponse multi-line error" {
   let got = x.read_response(250)
   expect(got) == Err(TextErr.Code(code: 550, msg: want))
   match got {
-    Err(e) => expect(e.display()) == "550 " + want
+    Err(e) => expect(e.display()) == "550 " + want.quote()
     Ok(_) => fault("no error")
   }
 }
@@ -244,7 +244,7 @@ test "dot round trip" {
 }
 
 test "errors display" {
-  expect(TextErr.Code(code: 5, msg: "x").display()) == "005 x"
+  expect(TextErr.Code(code: 5, msg: "x").display()) == "005 \"x\""
   expect(TextErr.Eof.display()) == "EOF"
   expect(TextErr.UnexpectedEof.display()) == "unexpected EOF"
 }

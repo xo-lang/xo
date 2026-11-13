@@ -1,5 +1,16 @@
 # std/multipart changes
 
+## 2026-11-13: behavior: a malformed header's error quotes the line, as Go 1.26.2 and later
+
+- Kind: behavior
+- Commit: this push
+- Found by: the Go 1.26.1 to 1.26.11 toolchain trial (owner item 9, 2026-11-13: TestGoldenGoParity's http_client_responses differed)
+- Go reference: net/textproto readMIMEHeader (go1.26.11; go1.26.1 printed the text raw)
+- Test: the multipart corpus regenerated with go1.26.11, on go, arm64, llvm
+- Timing: none (error text only)
+- Shipped in: not yet released
+
+A part header's `malformed MIME header line` and `malformed MIME header initial line` errors show the line as a Go quoted string (`"Content-Type: a\x01b"`), the key still canonical.
 ## 2026-11-13: security: parse_form's header limit never goes below zero (GO-2026-6608)
 
 - Kind: security

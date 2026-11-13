@@ -41,10 +41,10 @@
 40 Protocol Head "http://ADDR/r/40": net/http: HTTP/1.x transport connection broken: bad Content-Length "+2"
 41 Protocol Get "http://ADDR/r/41": net/http: HTTP/1.x transport connection broken: http: message cannot contain multiple Content-Length headers; got ["2" "3"]
 42 Protocol Get "http://ADDR/r/42": net/http: HTTP/1.x transport connection broken: bad Content-Length "x"
-43 Protocol Get "http://ADDR/r/43": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : empty
+43 Protocol Get "http://ADDR/r/43": net/http: HTTP/1.x transport connection broken: malformed MIME header line: ": empty"
 44 200 [Content-Length: 0|X-Long: a b] 0 
 45 Protocol Get "http://ADDR/r/45": net/http: HTTP/1.x transport connection broken: malformed HTTP response ""
-46 Protocol Get "http://ADDR/r/46": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-Ctl: ab
+46 Protocol Get "http://ADDR/r/46": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "X-Ctl: a\x01b"
 47 200 [] 0 
 48 Protocol Head "http://ADDR/r/48": net/http: HTTP/1.x transport connection broken: malformed HTTP status code "\x00malformed"
 49 Protocol Get "/r/49": stopped after 10 redirects
@@ -120,7 +120,7 @@
 119 404 [Connection: v60|Content-Length: 6|Content-Type: v15|X-B: v86, v93] 6 7a7a7a7a7a7a
 120 400 [X-A: v19] 0 
 121 204 [Content-Type: v71] 0 
-122 Protocol Get "http://ADDR/r/122": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Con ent-Length: 51
+122 Protocol Get "http://ADDR/r/122": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Con\x00ent-Length: 51"
 123 204 [] 0 
 124 Protocol Head "http://ADDR/r/124": net/http: HTTP/1.x transport connection broken: malformed MIME header: missing colon: "Tra"
 125 302 [Content-Length: 30] 30 727272727272727272727272727272727272727272727272727272727272
@@ -130,7 +130,7 @@
 129 404 [Content-Type: v42|X-A: v81|X-B: v33] 58 6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a
 130 Protocol unexpected EOF
 131 302 [] 57 717171717171717171717171717171717171717171717171717171717171717171717171717171717171717171717171717171717171717171
-132 Protocol Head "http://ADDR/r/132": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Cache-Control: v90Content-Length: 15
+132 Protocol Head "http://ADDR/r/132": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Cache-Control: v90\rContent-Length: 15"
 133 200 [Content-Length: 24] 24 676767676767676767676767676767676767676767676767
 134 Protocol Get "http://ADDR/r/134": net/http: HTTP/1.x transport connection broken: malformed HTTP status code "04"
 135 418 [Content-Length: 45|Content-Type: v86|Etag: v62|Set-Cookie: v85] 45 616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161
@@ -138,13 +138,13 @@
 137 418 [Content-Length: 46] 46 6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a
 138 Protocol Get "http://ADDR/r/138": net/http: HTTP/1.x transport connection broken: malformed HTTP status code "\xff18"
 139 200 [] 3 616263
-140 Protocol Head "http://ADDR/r/140": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Transfer-Encoding: chunked"
+140 Protocol Head "http://ADDR/r/140": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Transfer-Encoding: chunked\r\""
 141 200 [X-A: v36] 60 737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373
 142 Protocol Get "http://ADDR/r/142": net/http: HTTP/1.x transport connection broken: malformed HTTP status code "4118"
 143 400 [Cache-Control: v36|Content-Length: 4|Content-Type: v75, v99|Etag: v9] 4 79797979
 144 200 [] 0 
 145 200 [] 39 676767676767676767676767676767676767676767676767676767676767676767676767676767
-146 Protocol Get "http://ADDR/r/146": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Transfer-Encoding: chun ked
+146 Protocol Get "http://ADDR/r/146": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Transfer-Encoding: chun\x00ked"
 147 301 [] 67 72727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272
 148 Protocol Head "http://ADDR/r/148": net/http: HTTP/1.x transport connection broken: malformed HTTP status code "Reason"
 149 418 [] 14 7777777777777777777777777777
@@ -164,7 +164,7 @@
 163 304 [Content-Length: 59] 0 
 164 418 [Etag: v11|Location: /r/p] 0 
 165 201 [Cache-Control: v41|Content-Type: v80|Location: /r/8|Set-Cookie: v37] 32 6666666666666666666666666666666666666666666666666666666666666666
-166 Protocol Get "http://ADDR/r/166": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Transfer-Encoding:  chunked
+166 Protocol Get "http://ADDR/r/166": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Transfer-Encoding:\x00 chunked"
 167 200 [Cache-Control: v96, v96|Connection: v93] 28 78787878787878787878787878787878787878787878787878787878
 168 400 [] 0 
 169 304 [Cache-Control: v16|Connection: v5|Content-Type: v59] 0 
@@ -178,9 +178,9 @@
 177 404 [Content-Type: v26|Location: /r/5|X-A: v38] 58 77777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777
 178 Protocol Get "http://ADDR/r/178": net/http: HTTP/1.x transport connection broken: malformed HTTP version "HT\x7fTP/1.1"
 179 404 [Content-Length: 21] 21 6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e
-180 Protocol Head "http://ADDR/r/180": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Content�-Type: v52
+180 Protocol Head "http://ADDR/r/180": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Content\xff-Type: v52"
 181 200 [Cache-Control: v90|Connection: v36|Set-Cookie: v94] 23 7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a
-182 Protocol Get "http://ADDR/r/182": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Content-Type: v56
+182 Protocol Get "http://ADDR/r/182": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Co\rntent-Type: v56"
 183 400 [] 69 6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b
 184 204 [Etag: v59|X-B: v37] 0 
 185 302 [Content-Length: 48|Etag: v98] 48 787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878
@@ -188,9 +188,9 @@
 187 204 [Content-Length: 67] 0 
 188 Protocol Head "http://ADDR/r/188": EOF
 189 200 [Content-Length: 66] 66 626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262
-190 Protocol Get "http://ADDR/r/190": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Content-Lenth: 23
+190 Protocol Get "http://ADDR/r/190": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Content-Lenth: 23\r"
 191 200 [Content-Length: 67] 67 6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d
-192 Protocol Head "http://ADDR/r/192": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Content-Ype: v10t
+192 Protocol Head "http://ADDR/r/192": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Content-Ype: v10\rt"
 193 500 [Content-Length: 67|Location: /r/30|Set-Cookie: v0|X-A: v13] 67 68686868686868686868686868686868686868686868686868686868686868686868686868686868686868686868686868686868686868686868686868686868686868
 194 Protocol Get "http://ADDR/r/194": net/http: HTTP/1.x transport connection broken: unexpected EOF
 195 200 [Content-Length: 58] 58 6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a
@@ -218,9 +218,9 @@
 217 302 [Cache-Control: v84|Content-Length: 38|Etag: v83|Set-Cookie: v63] 38 6161616161616161616161616161616161616161616161616161616161616161616161616161
 218 200 [Connection: v41] 27 646464646464646464646464646464646464646464646464646464
 219 418 [Content-Type: v93|X-B: v87] 55 74747474747474747474747474747474747474747474747474747474747474747474747474747474747474747474747474747474747474
-220 Protocol Head "http://ADDR/r/220": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Content-Type: v13
+220 Protocol Head "http://ADDR/r/220": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Content-Type: v13\r"
 221 302 [] 39 6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f
-222 Protocol Get "http://ADDR/r/222": net/http: HTTP/1.x transport connection broken: malformed MIME header line: S=t-Cookie: v69
+222 Protocol Get "http://ADDR/r/222": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "S=t-Cookie: v69"
 223 200 [Cache-Control: v90|Content-Length: 45|Content-Type: v89] 45 797979797979797979797979797979797979797979797979797979797979797979797979797979797979797979
 224 302 [Content-L0ength: 14] 0 
 225 200 [] 67 7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a
@@ -250,7 +250,7 @@
 249 400 [] 35 6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d
 250 Protocol unexpected EOF
 251 200 [Content-Length: 37|Location: /r/27|X-A: v92] 37 61616161616161616161616161616161616161616161616161616161616161616161616161
-252 Protocol Head "http://ADDR/r/252": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Content-Length: 63P
+252 Protocol Head "http://ADDR/r/252": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Content-Length: 63\rP"
 253 200 [Content-Length: 64|Set-Cookie: v34] 64 6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a
 254 Protocol Get "http://ADDR/r/254": net/http: HTTP/1.x transport connection broken: malformed HTTP version "HTTP%1{.0"
 255 200 [Cache-Control: v54|Content-Length: 62|X-A: v96|X-B: v76] 62 7575757575757575757575757575757575757575757575757575757575757575757575757575757575757575757575757575757575757575757575757575
@@ -262,7 +262,7 @@
 261 200 [Cache-Control: v93|X-A: v22|X-B: v65] 53 7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a
 262 500 [Connection: v50, v89|Content-Type: v66|Set-Cookie: v52] 8 340d0a656565650d
 263 200 [X-B: 2] 13 756e74696c2074686520656e64
-264 Protocol Head "http://ADDR/r/264": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Content Type: v87
+264 Protocol Head "http://ADDR/r/264": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Content\x00Type: v87"
 265 301 [Cache-Control: v67|Content-Length: 45|Content-Type: v61] 45 686868686868686868686868686868686868686868686868686868686868686868686868686868686868686868
 266 Protocol Get "http://ADDR/r/266": net/http: HTTP/1.x transport connection broken: malformed MIME header: missing colon: "Conten"
 267 302 [Content-Length: 51|Etag: v55|X-A: v32] 51 737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373
@@ -306,7 +306,7 @@
 305 400 [Set-Cookie: v92, v29|X-B: v26] 10 64646464646464646464
 306 Protocol Get "http://ADDR/r/306": net/http: HTTP/1.x transport connection broken: malformed HTTP version "TTP/1.0"
 307 200 [] 55 68686868686868686868686868686868686868686868686868686868686868686868686868686868686868686868686868686868686868
-308 Protocol Head "http://ADDR/r/308": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Content	Length: 26
+308 Protocol Head "http://ADDR/r/308": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Content\tLength: 26"
 309 201 [Connection: v5, v85, v22|Content-Length: 61] 61 73737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373
 310 404 [Set-Cookie: v54] 19 31340d0a747474747474747474747474747474
 311 200 [Cache-Control: v95|X-B: v8] 24 616161616161616161616161616161616161616161616161
@@ -316,7 +316,7 @@
 315 500 [Cache-Control: v19|X-A: v24] 38 6868686868686868686868686868686868686868686868686868686868686868686868686868
 316 Protocol Head "http://ADDR/r/316": net/http: HTTP/1.x transport connection broken: malformed HTTP response "HTTP"
 317 400 [Cache-Control: v81|Content-Length: 21|Content-Type: v92|Location: /r/31|X-A: v60] 21 696969696969696969696969696969696969696969
-318 Protocol Get "http://ADDR/r/318": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Etag: v68
+318 Protocol Get "http://ADDR/r/318": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Etag: v68\r"
 319 200 [Cache-Control: v62|Connection: v73|Content-Type: v55|Location: /r/28] 66 616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161
 320 Protocol Head "http://ADDR/r/320": net/http: HTTP/1.x transport connection broken: unexpected EOF
 321 301 [Content-Length: 33|X-A: v85|X-B: v0] 33 777777777777777777777777777777777777777777777777777777777777777777
@@ -336,7 +336,7 @@
 335 418 [Connection: v60|Content-Length: 59|Content-Type: v31|X-A: v29|X-B: v71] 59 6969696969696969696969696969696969696969696969696969696969696969696969696969696969696969696969696969696969696969696969
 336 418 [Cache-Control: v28|Location: /r/25, /r/11|Set-Cookie: v10] 0 
 337 200 [X-A: v5] 24 737373737373737373737373737373737373737373737373
-338 Protocol Get "http://ADDR/r/338": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Content-Leng h: 67
+338 Protocol Get "http://ADDR/r/338": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Content-Leng\x00h: 67"
 339 418 [Content-Length: 47|Content-Type: v45|Set-Cookie: v60] 47 6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d
 340 302 [Cache-Control: v75|Content-Length: 43|Etag: v39] 0 
 341 301 [Connection: v96] 2 7878
@@ -370,7 +370,7 @@
 369 302 [Content-Type: v57] 53 6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d
 370 400 [Cache-Control: v42|Location: /r/33|X-A: v77, v33] 49 63636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363
 371 200 [Content-Type: v43|X-A: v90] 7 70707070707070
-372 Protocol Head "http://ADDR/r/372": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Connection: v62{
+372 Protocol Head "http://ADDR/r/372": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Connection: v62\r{"
 373 200 [Content-Type: v22|Etag: v65|Set-Cookie: v38] 32 7474747474747474747474747474747474747474747474747474747474747474
 374 Protocol Get "http://ADDR/r/374": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: "}chunked"
 375 304 [Content-Length: 0|Content-Type: v56] 0 
@@ -406,7 +406,7 @@
 405 200 [Cache-Control: v35|Content-Length: 41|X-B: v18] 41 7777777777777777777777777777777777777777777777777777777777777777777777777777777777
 406 Protocol Get "http://ADDR/r/406": net/http: HTTP/1.x transport connection broken: malformed HTTP version "HTTP1.1"
 407 204 [Cache-Control: v67, v44|Content-Length: 50|Etag: v88] 0 
-408 Protocol Head "http://ADDR/r/408": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Cache-Con;trol: v40
+408 Protocol Head "http://ADDR/r/408": net/http: HTTP/1.x transport connection broken: malformed MIME header line: "Cache-Con;trol: v40"
 409 418 [] 18 737373737373737373737373737373737373
 410 200 [Set-Cookie: v28|X-A: v34] 25 320d0a66660d0a320d0a66660d0a310d0a660d0a300d0a0d0a
 411 404 [X-B: v93] 63 6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e

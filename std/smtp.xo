@@ -25,12 +25,13 @@ pub struct SmtpErr {
   pub msg: Str
 }
 
-/// `CODE MSG` (net/textproto's Error), or MSG alone for code 0 (decision 0358).
+/// `CODE "MSG"` (net/textproto's Error, which quotes MSG since Go 1.26.2),
+/// or MSG alone for code 0 (decision 0358).
 pub fn (e: SmtpErr) display() -> Str {
   if e.code == 0 {
     return e.msg
   }
-  "${e.code} ${e.msg}"
+  "${e.code} ${e.msg.quote()}"
 }
 
 /// How the client authenticates (net/smtp PlainAuth, CRAMMD5Auth).
@@ -149,11 +150,11 @@ fn (var c: Client) line() -> Str ! SmtpErr uses net.dial {
 fn parse_code_line(l: Str) -> (Int, Bool, Str, Str) {
   let b = l.bytes()
   if b.len() < 4 || !(b[3] == ' ' || b[3] == '-') {
-    return (0, false, "", "short response: ${l}")
+    return (0, false, "", "short response: ${l.quote()}")
   }
   let n = Int.parse(l[0..3]) ?? -1
   if n < 100 {
-    return (0, false, "", "invalid response code: ${l}")
+    return (0, false, "", "invalid response code: ${l.quote()}")
   }
   (n, b[3] == '-', l[4..], "")
 }

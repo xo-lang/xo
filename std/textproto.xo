@@ -15,12 +15,12 @@ pub enum TextErr {
   UnexpectedEof
 }
 
-/// Go's text: the protocol error's own, `NNN message` for a reply's
+/// Go's text: the protocol error's own, `NNN "message"` for a reply's
 /// code, `EOF` and `unexpected EOF`.
 pub fn (e: TextErr) display() -> Str {
   match e {
     TextErr.Protocol(m) => m
-    TextErr.Code(c, m) => "${pad3(c)} ${m}"
+    TextErr.Code(c, m) => "${pad3(c)} ${m.quote()}"
     TextErr.Eof => "EOF"
     TextErr.UnexpectedEof => "unexpected EOF"
   }
@@ -346,10 +346,10 @@ pub fn (var r: Reader) read_header() -> Header ! TextErr {
   r.eof_header = false
   var h = header()
   if r.at < r.b.len() && (r.b[r.at] == ' ' || r.b[r.at] == '\t') {
-    // Go quotes at most 80 bytes of the line
+    // Go quotes at most 80 bytes of the line (%q since Go 1.26.2)
     let l = r.line_bytes() ?? b""
     let shown = if l.len() > 80 { l[0..80] } else { l }
-    return Err(TextErr.Protocol(msg: "malformed MIME header initial line: ${shown.to_str_lossy()}"))
+    return Err(TextErr.Protocol(msg: "malformed MIME header initial line: ${shown.quote()}"))
   }
   while true {
     let kv = match r.continued(true) {
@@ -366,7 +366,7 @@ pub fn (var r: Reader) read_header() -> Header ! TextErr {
     if kv.is_empty() {
       return Ok(h)
     }
-    let bad = TextErr.Protocol(msg: "malformed MIME header line: ${kv.to_str_lossy()}")
+    let bad = TextErr.Protocol(msg: "malformed MIME header line: ${kv.quote()}")
     let c = match kv.find(b":") {
       Some(i) => i
       None => return Err(bad)
@@ -380,7 +380,7 @@ pub fn (var r: Reader) read_header() -> Header ! TextErr {
       if !value_byte(x) {
         // Go canonicalizes the key in place, so its text shows the key
         // canonical
-        return Err(TextErr.Protocol(msg: "malformed MIME header line: ${key}:${v.to_str_lossy()}"))
+        return Err(TextErr.Protocol(msg: "malformed MIME header line: ${("${key}:".bytes() + v).quote()}"))
       }
     }
     var s = 0
@@ -423,13 +423,13 @@ struct CodeLine {
 fn code_line(line: Str, expect: Int) -> CodeLine {
   let b = line.bytes()
   if b.len() < 4 || (b[3] != ' ' && b[3] != '-') {
-    return CodeLine{code: 0, more: false, msg: "", err: Some(TextErr.Protocol(msg: "short response: ${line}"))}
+    return CodeLine{code: 0, more: false, msg: "", err: Some(TextErr.Protocol(msg: "short response: ${line.quote()}"))}
   }
   let more = b[3] == '-'
   let parsed = Int.parse(line[0..3])
   let code = parsed ?? 0
   if parsed.is_none() || code < 100 {
-    return CodeLine{code: code, more: more, msg: "", err: Some(TextErr.Protocol(msg: "invalid response code: ${line}"))}
+    return CodeLine{code: code, more: more, msg: "", err: Some(TextErr.Protocol(msg: "invalid response code: ${line.quote()}"))}
   }
   let msg = line[4..]
   if (1 <= expect && expect < 10 && code / 100 != expect) || (10 <= expect && expect < 100 && code / 10 != expect) || (100 <= expect && expect < 1000 && code != expect) {
@@ -446,7 +446,7 @@ pub fn (var r: Reader) read_code_line(expect: Int) -> (Int, Str) ! TextErr {
     return Err(e)
   }
   if cl.more {
-    return Err(TextErr.Protocol(msg: "unexpected multi-line response: ${cl.msg}"))
+    return Err(TextErr.Protocol(msg: "unexpected multi-line response: ${cl.msg.quote()}"))
   }
   Ok((cl.code, cl.msg))
 }
