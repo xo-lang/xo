@@ -1,0 +1,251 @@
+// http stress program (decision 0616 section 2, the server form): one
+// std/http server on loopback, 64 client tasks sending requests through
+// std/http's client (GET of a text and of a JSON page, POST echo of bodies
+// from 0 to 64 KiB) and checking every answer against the one computed
+// here, plus hostile clients on raw connections: slow readers, half sent
+// heads, resets mid request, oversized heads (431), conflicting
+// Content-Length and Transfer-Encoding (400) and garbage. A background task
+// samples the resident set every 10 s (Linux /proc/self/status). Pass: no
+// mismatch, no fault, every hostile answer as expected, and the resident
+// set at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/http
+
+struct Item {
+  id: Int
+  name: Str
+  tags: List[Str]
+  score: Float
+  active: Bool
+} derive Json
+
+struct Page {
+  total: Int
+  items: List[Item]
+} derive Json
+
+/// The JSON page of n items (n up to 63).
+fn page(n: Int) -> Page {
+  var items: List[Item] = []
+  for i in 0..n {
+    items.push(Item{id: i, name: "item-${i}", tags: ["t${i % 7}", "g${i % 5}"], score: Float(i) * 0.5, active: i % 2 == 0})
+  }
+  Page{total: n, items: items}
+}
+
+/// The body of size n that request k posts.
+fn body(k: Int, n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    b.write_byte(UInt8((k * 31 + i * 7) % 251))
+  }
+  b.freeze()
+}
+
+const SIZES: List[Int] = [0, 1, 17, 1024, 4096, 16384, 65536]
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /hello/{n}", fn(req) { http.text(200, "hello ${req.param("n")}\n") })
+  r.handle("GET /page/{n}", fn(req) { http.json(200, page(req.param_int("n") % 64)) })
+  r.handle("POST /echo", fn(req) { http.Response{status: 200, headers: {"Content-Type": "application/octet-stream"}, body: req.body} })
+  r
+}
+
+/// One pass of a client task: three requests whose answers it checks.
+fn client_pass(c: http.Client, base: Str, t: Int, i: Int) -> Int ! Str {
+  let k = t * 1000003 + i
+  let h = c.get("${base}/hello/${k}").map_err(fn(e) { "get hello: ${e}" })?
+  if h.status != 200 || h.body != "hello ${k}\n".bytes() {
+    return Err("hello ${k}: status ${h.status} body ${h.body.quote()}")
+  }
+  let n = k % 64
+  let p = c.get("${base}/page/${n}").map_err(fn(e) { "get page: ${e}" })?
+  let want = http.json(200, page(n)).body
+  if p.status != 200 || p.body != want {
+    return Err("page ${n}: status ${p.status}, ${p.body.len()} bytes, want ${want.len()}")
+  }
+  let b = body(k, SIZES[k % SIZES.len()])
+  let e = c.send(http.new_request("POST", "${base}/echo", {"Content-Type": "application/octet-stream"}, b)).map_err(fn(e) { "post echo: ${e}" })?
+  if e.status != 200 || e.body != b {
+    return Err("echo ${b.len()} bytes: status ${e.status}, ${e.body.len()} bytes back")
+  }
+  3
+}
+
+/// The status line's code of a raw answer, or 0 when there is none.
+fn status_of(b: Bytes) -> Int {
+  let s = b.to_str_lossy()
+  if !s.starts_with("HTTP/1.1 ") || s.len() < 12 {
+    return 0
+  }
+  Int.parse(s[9..12]) ?? 0
+}
+
+/// Reads what the server sends until it closes, up to max bytes, or the
+/// deadline passes.
+fn read_all(os: Os, c: Conn, max: Int, wait: Duration) -> Bytes {
+  c.set_read_deadline(os.clock, Some(os.clock.now() + wait))
+  var out = b""
+  while out.len() < max {
+    match c.read(4096) {
+      Ok(Some(b)) => out = out + b
+      _ => break
+    }
+  }
+  out
+}
+
+/// One hostile client's turn, kind i % 6: the operations done, or an
+/// answer other than the one wanted.
+fn hostile(os: Os, addr: Str, i: Int) -> Int ! Str {
+  let c = os.net.dial(addr).map_err(fn(e) { "dial: ${e}" })?
+  let kind = i % 6
+  if kind == 0 {
+    // a slow reader: asks for a page and reads it a few bytes at a time
+    c.write("GET /page/63 HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n".bytes()).map_err(fn(e) { "write: ${e}" })?
+    var got = 0
+    c.set_read_deadline(os.clock, Some(os.clock.now() + 30s))
+    while got < 4096 {
+      match c.read(16) {
+        Ok(Some(b)) => got += b.len()
+        _ => break
+      }
+      os.clock.sleep(5ms)
+    }
+    c.close()
+    if got == 0 {
+      return Err("slow reader: nothing read")
+    }
+  } else if kind == 1 {
+    // a half sent head, then silence: the server's header timeout closes it
+    c.write("GET /hello/1 HTTP/1.1\r\nHost: s\r\nX-Partial: ".bytes()).map_err(fn(e) { "write: ${e}" })?
+    let got = read_all(os, c, 4096, 10s)
+    c.close()
+    if got.len() > 0 && status_of(got) != 408 && status_of(got) != 400 {
+      return Err("half sent head: answered ${got.to_str_lossy().lines().first() ?? ""}")
+    }
+  } else if kind == 2 {
+    // a reset in the middle of a POST body
+    c.write("POST /echo HTTP/1.1\r\nHost: s\r\nContent-Length: 100000\r\n\r\npartial".bytes()).map_err(fn(e) { "write: ${e}" })?
+    c.close()
+  } else if kind == 3 {
+    // a head over the server's limit (64 KiB here): 431
+    let big = "a".repeat(70000)
+    c.write("GET /hello/1 HTTP/1.1\r\nHost: s\r\nX-Big: ${big}\r\n\r\n".bytes()).map_err(fn(e) { "write: ${e}" })?
+    let got = read_all(os, c, 4096, 10s)
+    c.close()
+    if status_of(got) != 431 {
+      return Err("oversized head: answered ${got.to_str_lossy().lines().first() ?? "nothing"}, want 431")
+    }
+  } else if kind == 4 {
+    // Content-Length and chunked together (request smuggling): 400
+    c.write("POST /echo HTTP/1.1\r\nHost: s\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\nGET /hello/2 HTTP/1.1\r\nHost: s\r\n\r\n".bytes()).map_err(fn(e) { "write: ${e}" })?
+    let got = read_all(os, c, 65536, 10s)
+    c.close()
+    if status_of(got) != 400 {
+      return Err("CL with TE: answered ${got.to_str_lossy().lines().first() ?? "nothing"}, want 400")
+    }
+    if got.to_str_lossy().contains("hello 2") {
+      return Err("CL with TE: the smuggled request was served")
+    }
+  } else {
+    // garbage: 400 or a close, never a fault
+    c.write(b"\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03garbage\r\n\r\n").map_err(fn(e) { "write: ${e}" })?
+    let got = read_all(os, c, 4096, 10s)
+    c.close()
+    if got.len() > 0 && status_of(got) != 400 {
+      return Err("garbage: answered ${got.to_str_lossy().lines().first() ?? ""}")
+    }
+  }
+  1
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let hostiles = 8
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let srv = http.server(os.net.listen("127.0.0.1:0")?, routes()).with_read_header_timeout(2s).with_idle_timeout(30s).with_max_header_bytes(65536)
+  let addr = srv.addr()
+  let base = "http://${addr}"
+  let (ops, hops) = scope s {
+    s.spawn_background(fn() {
+      srv.serve().or_fault("serve")
+    })
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        let c = http.client(os.net, 30s)
+        var n = 0
+        var i = 0
+        while clock.now() < end {
+          n += client_pass(c, base, t, i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var hh: List[Task[Int, Str]] = []
+    for t in 0..hostiles {
+      hh.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += hostile(os, addr, i)?
+          i += hostiles
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a client: ${e}" })?
+    }
+    var htotal = 0
+    for h in hh {
+      htotal += h.await.map_err(fn(e) { "a hostile client: ${e}" })?
+    }
+    (total, htotal)
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("http stress: ${ops} requests by ${tasks} clients and ${hops} hostile connections by ${hostiles} in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
