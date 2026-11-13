@@ -57,10 +57,10 @@ func reachability(bin *execFile) *ReachReport {
 		uniq = append(uniq, s)
 	}
 	syms = uniq
-	textEnd := bin.Text.Addr + bin.Text.Size
+	rs := regionsOf(bin)
 	for i := range syms {
-		end := textEnd
-		if i+1 < len(syms) {
+		end, _ := regionEnd(rs, syms[i].Addr)
+		if i+1 < len(syms) && syms[i+1].Addr < end {
 			end = syms[i+1].Addr
 		}
 		syms[i].Size = end - syms[i].Addr
@@ -83,52 +83,56 @@ func reachability(bin *execFile) *ReachReport {
 			edges[from] = append(edges[from], to)
 		}
 	}
-	code := bin.Code
 	cur := -1
 	addrOf := map[uint32]uint64{}
-	for off := 0; off+4 <= len(code); off += 4 {
-		pc := bin.Text.Addr + uint64(off)
-		for cur+1 < len(syms) && syms[cur+1].Addr <= pc {
-			cur++
-			addrOf = map[uint32]uint64{}
-		}
-		insn := binary.LittleEndian.Uint32(code[off:])
-		target := func(imm int64) {
-			t := pc + uint64(imm)
-			if to, ok := at[t]; ok {
-				addEdge(cur, to)
+	// each code section's instructions, in address order (__text, then a
+	// split link's _ptext)
+	for _, rg := range rs {
+		code := rg.Code
+		for off := 0; off+4 <= len(code); off += 4 {
+			pc := rg.Addr + uint64(off)
+			for cur+1 < len(syms) && syms[cur+1].Addr <= pc {
+				cur++
+				addrOf = map[uint32]uint64{}
 			}
-		}
-		switch {
-		case insn&0xfc000000 == 0x94000000, insn&0xfc000000 == 0x14000000: // BL, B
-			imm := int64(insn & 0x03ffffff)
-			if imm&0x02000000 != 0 {
-				imm -= 0x04000000
-			}
-			target(imm << 2)
-		case insn&0x9f000000 == 0x90000000: // ADRP
-			rd := insn & 0x1f
-			imm := int64((insn>>5)&0x7ffff)<<2 | int64((insn>>29)&3)
-			if imm&(1<<20) != 0 {
-				imm -= 1 << 21
-			}
-			addrOf[rd] = (pc &^ 0xfff) + uint64(imm<<12)
-		case insn&0x7f000000 == 0x11000000 && insn>>31&1 == 1: // ADD (immediate), 64 bit
-			rd := insn & 0x1f
-			rn := (insn >> 5) & 0x1f
-			imm := uint64((insn >> 10) & 0xfff)
-			if insn>>22&1 == 1 {
-				imm <<= 12
-			}
-			if a, ok := addrOf[rn]; ok {
-				addrOf[rd] = a + imm
-				if to, ok := at[addrOf[rd]]; ok {
+			insn := binary.LittleEndian.Uint32(code[off:])
+			target := func(imm int64) {
+				t := pc + uint64(imm)
+				if to, ok := at[t]; ok {
 					addEdge(cur, to)
 				}
 			}
+			switch {
+			case insn&0xfc000000 == 0x94000000, insn&0xfc000000 == 0x14000000: // BL, B
+				imm := int64(insn & 0x03ffffff)
+				if imm&0x02000000 != 0 {
+					imm -= 0x04000000
+				}
+				target(imm << 2)
+			case insn&0x9f000000 == 0x90000000: // ADRP
+				rd := insn & 0x1f
+				imm := int64((insn>>5)&0x7ffff)<<2 | int64((insn>>29)&3)
+				if imm&(1<<20) != 0 {
+					imm -= 1 << 21
+				}
+				addrOf[rd] = (pc &^ 0xfff) + uint64(imm<<12)
+			case insn&0x7f000000 == 0x11000000 && insn>>31&1 == 1: // ADD (immediate), 64 bit
+				rd := insn & 0x1f
+				rn := (insn >> 5) & 0x1f
+				imm := uint64((insn >> 10) & 0xfff)
+				if insn>>22&1 == 1 {
+					imm <<= 12
+				}
+				if a, ok := addrOf[rn]; ok {
+					addrOf[rd] = a + imm
+					if to, ok := at[addrOf[rd]]; ok {
+						addEdge(cur, to)
+					}
+				}
+			}
 		}
-	}
 
+	}
 	reached := make([]bool, len(syms))
 	var queue []int
 	for _, name := range roots {

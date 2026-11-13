@@ -14,8 +14,16 @@ type Symbol struct {
 	Size uint64 `json:"size"`
 }
 
-// TextInfo is the text section the symbols are measured against.
+// TextInfo is the text section the symbols are measured against (with
+// Sections, the code sections' total size from __text's address).
 type TextInfo struct {
+	Addr uint64 `json:"addr"`
+	Size uint64 `json:"size"`
+}
+
+// SectionInfo is one code section of a binary with more than one.
+type SectionInfo struct {
+	Name string `json:"name"`
 	Addr uint64 `json:"addr"`
 	Size uint64 `json:"size"`
 }
@@ -45,16 +53,17 @@ type Family struct {
 
 // Report is everything the tool measured.
 type Report struct {
-	Binary   string       `json:"binary"`
-	Format   string       `json:"format"`
-	Text     TextInfo     `json:"text"`
-	Sum      uint64       `json:"sum"`
-	Symbols  int          `json:"symbols"`
-	Aliases  int          `json:"aliases"`
-	Groups   []Group      `json:"groups"`
-	Families []Family     `json:"map_families"`
-	Top      []Symbol     `json:"top"`
-	Reach    *ReachReport `json:"reach,omitempty"`
+	Binary   string        `json:"binary"`
+	Format   string        `json:"format"`
+	Text     TextInfo      `json:"text"`
+	Sections []SectionInfo `json:"sections,omitempty"`
+	Sum      uint64        `json:"sum"`
+	Symbols  int           `json:"symbols"`
+	Aliases  int           `json:"aliases"`
+	Groups   []Group       `json:"groups"`
+	Families []Family      `json:"map_families"`
+	Top      []Symbol      `json:"top"`
+	Reach    *ReachReport  `json:"reach,omitempty"`
 }
 
 // Hidden is the group of the compiler's hidden helpers (_xo_h*), which carry
@@ -214,6 +223,7 @@ func displayName(name string) string {
 // check that says the symbol table and the section agree.
 func analyze(bin *execFile) (*Report, error) {
 	text := bin.Text
+	rs := regionsOf(bin)
 	syms := make([]Symbol, len(bin.Syms))
 	copy(syms, bin.Syms)
 	sort.Slice(syms, func(i, j int) bool {
@@ -227,7 +237,7 @@ func analyze(bin *execFile) (*Report, error) {
 	uniq := syms[:0]
 	aliases := 0
 	for _, s := range syms {
-		if s.Addr < text.Addr || s.Addr >= text.Addr+text.Size {
+		if _, ok := regionEnd(rs, s.Addr); !ok {
 			continue
 		}
 		if n := len(uniq); n > 0 && uniq[n-1].Addr == s.Addr {
@@ -238,8 +248,8 @@ func analyze(bin *execFile) (*Report, error) {
 	}
 	var sum uint64
 	for i := range uniq {
-		end := text.Addr + text.Size
-		if i+1 < len(uniq) {
+		end, _ := regionEnd(rs, uniq[i].Addr)
+		if i+1 < len(uniq) && uniq[i+1].Addr < end {
 			end = uniq[i+1].Addr
 		}
 		uniq[i].Size = end - uniq[i].Addr
@@ -251,12 +261,13 @@ func analyze(bin *execFile) (*Report, error) {
 	}
 
 	rep := &Report{
-		Binary:  bin.Name,
-		Format:  bin.Format,
-		Text:    text,
-		Sum:     sum,
-		Symbols: len(uniq),
-		Aliases: aliases,
+		Binary:   bin.Name,
+		Format:   bin.Format,
+		Text:     text,
+		Sections: sectionsOf(bin),
+		Sum:      sum,
+		Symbols:  len(uniq),
+		Aliases:  aliases,
 	}
 	groups := map[string]*Group{}
 	fams := map[string]*Family{}
@@ -331,9 +342,29 @@ func analyze(bin *execFile) (*Report, error) {
 	return rep, nil
 }
 
+// sectionsOf lists bin's code sections when it has more than one.
+func sectionsOf(bin *execFile) []SectionInfo {
+	var out []SectionInfo
+	for _, r := range bin.Regions {
+		out = append(out, SectionInfo{Name: r.Name, Addr: r.Addr, Size: r.Size})
+	}
+	return out
+}
+
 // printReport writes the human report.
 func printReport(w io.Writer, r *Report) {
-	fmt.Fprintf(w, "%s: %s, __text %d B at 0x%x, %d symbols", r.Binary, r.Format, r.Text.Size, r.Text.Addr, r.Symbols)
+	if len(r.Sections) > 1 {
+		fmt.Fprintf(w, "%s: %s, code %d B (", r.Binary, r.Format, r.Text.Size)
+		for i, s := range r.Sections {
+			if i > 0 {
+				fmt.Fprint(w, ", ")
+			}
+			fmt.Fprintf(w, "%s %d B at 0x%x", s.Name, s.Size, s.Addr)
+		}
+		fmt.Fprintf(w, "), %d symbols", r.Symbols)
+	} else {
+		fmt.Fprintf(w, "%s: %s, __text %d B at 0x%x, %d symbols", r.Binary, r.Format, r.Text.Size, r.Text.Addr, r.Symbols)
+	}
 	if r.Aliases > 0 {
 		fmt.Fprintf(w, " (%d aliases)", r.Aliases)
 	}

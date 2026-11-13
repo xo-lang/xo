@@ -65,6 +65,38 @@ func TestGapFails(t *testing.T) {
 	}
 }
 
+// TestSplitLinkSections: a split link's _ptext is code too (the program's
+// own modules, past std's __text with data between): every symbol is sized
+// within its own section, the gap after __text's last symbol is not
+// counted, and the sections' total is the text measured.
+func TestSplitLinkSections(t *testing.T) {
+	bin := &execFile{
+		Name: "prog",
+		Text: TextInfo{Addr: 0x1000, Size: 0x100 + 0x80},
+		Syms: []Symbol{
+			{Name: "_xo_f_json_2eparse", Addr: 0x1000},
+			{Name: "_xo_f_http1_2eread", Addr: 0x1040},
+			{Name: "_xo_f_apiv3_2eEvent_2ebody__mark", Addr: 0x4000},
+			{Name: "_xo_f_apiv3_2eEventsService_2epatch", Addr: 0x4030},
+		},
+		Regions: []Region{{Name: "__text", Addr: 0x1000, Size: 0x100}, {Name: "_ptext", Addr: 0x4000, Size: 0x80}},
+	}
+	r, err := analyze(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Sum != 0x180 || len(r.Sections) != 2 {
+		t.Fatalf("sum %#x, %d sections; want 0x180 and 2", r.Sum, len(r.Sections))
+	}
+	sizes := map[string]uint64{}
+	for _, g := range r.Groups {
+		sizes[g.Name] = g.Bytes
+	}
+	if sizes["http1"] != 0xc0 || sizes["apiv3"] != 0x80 || sizes["json"] != 0x40 {
+		t.Errorf("groups %v; want json 0x40, http1 0xc0 (to __text's end), apiv3 0x80", sizes)
+	}
+}
+
 // TestMangling: module, demangling and the Map element type.
 func TestMangling(t *testing.T) {
 	cases := []struct {

@@ -733,7 +733,7 @@ yourself.
   twice, and its GOOD failed, before the repro showed it predates the
   range).
 - `scripts/progen-batches.sh`, the amd64 progen runner, TestArithOracle.
-- `scripts/codesize.py BINARY`: where a darwin/arm64 build's `__text` goes (functions, modules, generic copies, instruction kinds, whole value word copies, release runs, constant addresses); bench/results/xo-code-size-2026-10-18.md.
+- `scripts/codesize.py BINARY` (`__text` only: a split link's `_ptext`, the program's own modules, is not in it; sizebreak counts both): where a darwin/arm64 build's `__text` goes (functions, modules, generic copies, instruction kinds, whole value word copies, release runs, constant addresses); bench/results/xo-code-size-2026-10-18.md.
 - `scripts/docker-newest-go.sh DARWIN_XO ARCH WORK` (owner, 2026-10-27;
   decision 0393): `use go` against the newest Go release, read from
   go.dev/VERSION when it runs and printed first, in its official golang
@@ -942,7 +942,12 @@ the evidence names one). Security reviews follow
 - Code size is measured with `go run ./scripts/sizebreak [-top=N] [-json]
   [-reach] BINARY` (Mach-O and ELF; use it through heavy.sh like any build
   or test): it sizes every text symbol by the gap to the next one, checks
-  the gaps against the `__text` size and fails when they do not cover it,
+  the gaps against the code size and fails when they do not cover it
+  (on Mach-O the code is `__text` plus a split link's `_ptext`, which
+  holds the program's own modules past std's: `__text` alone missed
+  0.42 of a gcp Calendar program's 2.02 MB, aws-43 2026-11-13; quote the
+  `code` line, and `size -m`'s `__text` alone only for a program with no
+  `_ptext`),
   groups the symbols by module from the `_xo_f_<module>_2e<name>` mangling
   (an ELF binary's symbols have no leading underscore: `xo_f_...`, `xo_h*`;
   the Map families xo.map, xo.mlog and xo.maph broken out per element
