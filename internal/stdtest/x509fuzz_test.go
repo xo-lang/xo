@@ -574,7 +574,10 @@ func TestX509Fuzz(t *testing.T) {
 
 // xzRawURIs is the text of each uniformResourceIdentifier in c's subject
 // alternative name extension, in order (Go parsed each with url.Parse,
-// so this runs only for a certificate Go accepted).
+// so this runs only for a certificate Go accepted). Only the primitive
+// [6] counts: Go's parseSANExtension switches on the tag ^ 0x80, so a
+// constructed [6] (0xa6, seed 10 of the 2026-11-13 1M run) is skipped,
+// by Go and std/x509 alike.
 func xzRawURIs(c *x509.Certificate) []string {
 	var out []string
 	for _, e := range c.Extensions {
@@ -586,7 +589,7 @@ func xzRawURIs(c *x509.Certificate) []string {
 			return nil
 		}
 		for _, n := range names {
-			if n.Class == asn1.ClassContextSpecific && n.Tag == 6 {
+			if n.Class == asn1.ClassContextSpecific && n.Tag == 6 && !n.IsCompound {
 				out = append(out, string(n.Bytes))
 			}
 		}
