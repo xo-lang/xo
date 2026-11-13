@@ -9,6 +9,13 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+## v0.51.0 (2026-11-13)
+
+A security release (std/http, std/x509, std/tls, std/json, std/template and more;
+Go 1.26.11 for the Go backend). The release notes (the GitHub release) group
+these entries; the two breaking changes (fields named `-` on the wire, decision
+0622; protocol error text quoted, GO-2026-5039) come first, each with its migration.
+
 - Security (std/http, native backends): a server closes the connection after a request with both Transfer-Encoding and Content-Length, framing it by chunked as RFC 9112 6.3 requires (request smuggling class). Affected: 0.50.1 and earlier.
 - Security (std/http, native backends): a client refuses a Host with CR or LF (`http: invalid Host header`) and writes a User-Agent's CR and LF as spaces, as Go (GO-2023-1878). Affected: 0.50.1 and earlier.
 - Security (std/http, all backends): a CONNECT ends HTTP on its connection, as Go 1.26.11 (GO-2026-6613, GO-2026-6605): the server closes after any answer and sends a 2xx one without framing fields, the client never pools the connection (send or open), and ReverseProxy answers CONNECT 405. Affected: 0.50.1 and earlier.
