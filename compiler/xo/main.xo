@@ -2318,14 +2318,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       }
       var cobjs: List[Str] = []
       if !ci.srcs.is_empty() || !ci.flags.is_empty() {
-        let wroot = os.env.get("XO_WINSYSROOT") ?? ""
-        if wroot.is_empty() {
-          fail(os, "windows/arm64 compiles a `use c` source with clang against the Windows SDK's headers and links its libraries' import libraries: set XO_WINSYSROOT to a Windows sysroot (xwin splat --use-winsysroot-style --preserve-ms-arch-notation, with --arch aarch64)")
+        // XO_WINSYSROOT's SDK, else (on a Windows host) the installed one
+        let (incs, libdirs, wroot, swhy) = win_sdk(os, "arm64")
+        if !swhy.is_empty() {
+          fail(os, "windows/arm64 compiles a `use c` source with clang against the Windows SDK's headers and links its libraries' import libraries: ${swhy}")
         }
         if clang.is_empty() {
           fail(os, "windows/arm64 compiles a `use c` source with clang (decision 0569): install LLVM's clang or set XO_CLANG")
         }
-        let (incs, libdirs) = win_sdk_dirs(os, wroot, "arm64")
         var cflags = ["--target=aarch64-pc-windows-msvc", "-fno-stack-protector"]
         // std/sqlite's amalgamation with the defines of its windows/amd64
         // prebuilt object (scripts/sqlite-prebuilt.sh, decision 0534 stage
@@ -2346,7 +2346,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
           let lname = f.trim_prefix("-l")
           let lp = win_find_lib(os, libdirs, lname)
           if lp.is_empty() {
-            fail(os, "`link \"${lname}\"`: no ${lname}.lib for arm64 in XO_WINSYSROOT ${wroot} (${libdirs.join(", ")})")
+            fail(os, "`link \"${lname}\"`: no ${lname}.lib for arm64 in ${wroot} (${libdirs.join(", ")})")
           }
           cobjs.push(lp)
         }

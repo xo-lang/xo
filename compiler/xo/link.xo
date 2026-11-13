@@ -511,18 +511,24 @@ fn win_arm64_atomics(os: Os, dir: Str) -> Str ! FsErr {
 /// library directories (the SDK's um and ucrt, then MSVC's), the newest
 /// version of each first (decision 0569: `use c` on windows/arm64).
 fn win_sdk_dirs(os: Os, root: Str, arch: Str) -> (List[Str], List[Str]) {
+  win_sdk_parts(os, sub_dirs(os, "${root}/VC/Tools/MSVC"), "${root}/Windows Kits/10", arch)
+}
+
+/// win_sdk_dirs' directories from MSVC's version directories (each
+/// VC/Tools/MSVC/<version>, newest first) and the Windows SDK's root
+/// (its Include and Lib hold a directory per version).
+fn win_sdk_parts(os: Os, msvc: List[Str], kits: Str, arch: Str) -> (List[Str], List[Str]) {
   var inc: List[Str] = []
   var lib: List[Str] = []
-  let msvc = sub_dirs(os, "${root}/VC/Tools/MSVC")
   for m in msvc {
     inc.push("${m}/include")
   }
-  for k in sub_dirs(os, "${root}/Windows Kits/10/Include") {
+  for k in sub_dirs(os, "${kits}/Include") {
     for part in ["ucrt", "um", "shared"] {
       inc.push("${k}/${part}")
     }
   }
-  for k in sub_dirs(os, "${root}/Windows Kits/10/Lib") {
+  for k in sub_dirs(os, "${kits}/Lib") {
     lib.push("${k}/um/${arch}")
     lib.push("${k}/ucrt/${arch}")
   }
@@ -530,6 +536,64 @@ fn win_sdk_dirs(os: Os, root: Str, arch: Str) -> (List[Str], List[Str]) {
     lib.push("${m}/lib/${arch}")
   }
   (inc, lib)
+}
+
+/// The Windows SDK and MSVC a `use c` source compiles and links against
+/// for arch (arm64 or x64): XO_WINSYSROOT's when it is set (a cross
+/// build's, or a host's by choice); else, on a Windows host, the
+/// installed ones: MSVC of the newest Visual Studio installation that
+/// vswhere names (VC/Tools/MSVC/<version>) and the Windows SDK at the
+/// registry's KitsRoot10 (HKLM\SOFTWARE\Microsoft\Windows Kits\Installed
+/// Roots), else at %ProgramFiles(x86)%\Windows Kits\10. Returns the
+/// include and library directories, where they came from (for
+/// messages), and why there are none ("" when found), naming what is
+/// missing.
+fn win_sdk(os: Os, arch: Str) -> (List[Str], List[Str], Str, Str) {
+  let wroot = os.env.get("XO_WINSYSROOT") ?? ""
+  if !wroot.is_empty() {
+    let (inc, lib) = win_sdk_dirs(os, wroot, arch)
+    return (inc, lib, "XO_WINSYSROOT ${wroot}", "")
+  }
+  if !is_windows() {
+    return ([], [], "", "set XO_WINSYSROOT to a Windows sysroot (xwin splat --use-winsysroot-style --preserve-ms-arch-notation, with --arch ${if arch == "arm64" { "aarch64" } else { "x86_64" }})")
+  }
+  let pf86 = (os.env.get("ProgramFiles(x86)") ?? "C:/Program Files (x86)").replace("\\", "/")
+  let vswhere = "${pf86}/Microsoft Visual Studio/Installer/vswhere.exe"
+  var vs = ""
+  let (vout, verr) = combined(os, vswhere, ["-latest", "-products", "*", "-property", "installationPath"])
+  if verr.is_empty() {
+    vs = vout.trim().split("\n")[0].trim().replace("\\", "/")
+  }
+  if vs.is_empty() {
+    return ([], [], "", "no Visual Studio installation with MSVC found (${vswhere}${if verr.is_empty() { " names none" } else { ": ${verr}" }}): install Visual Studio or its Build Tools with the C++ tools for ${arch}, or set XO_WINSYSROOT")
+  }
+  let msvc = sub_dirs(os, "${vs}/VC/Tools/MSVC").filter(fn(m) { is_dir(os, "${m}/lib/${arch}") })
+  if msvc.is_empty() {
+    return ([], [], "", "Visual Studio at ${vs} has no MSVC libraries for ${arch} (VC/Tools/MSVC/<version>/lib/${arch}): add its C++ tools for ${arch} (Microsoft.VisualStudio.Component.VC.Tools.${if arch == "arm64" { "ARM64" } else { "x86.x64" }}), or set XO_WINSYSROOT")
+  }
+  let (rout, rerr) = combined(os, "reg", ["query", "HKLM\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots", "/v", "KitsRoot10"])
+  var kits = if rerr.is_empty() { kits_root(rout) } else { "" }
+  if kits.is_empty() || !is_dir(os, "${kits}/Lib") {
+    kits = "${pf86}/Windows Kits/10"
+  }
+  let (inc, lib) = win_sdk_parts(os, msvc, kits, arch)
+  if !lib.any(fn(d) { is_dir(os, d) && d.ends_with("/um/${arch}") }) {
+    return ([], [], "", "no Windows SDK with ${arch} import libraries at ${kits} (Lib/<version>/um/${arch}; the registry's KitsRoot10 ${if rerr.is_empty() { "names it" } else { "is not set" }}): install the Windows 10 or 11 SDK with its ${arch} libraries, or set XO_WINSYSROOT")
+  }
+  (inc, lib, "the installed MSVC ${msvc[0]} and Windows SDK ${kits}", "")
+}
+
+/// KitsRoot10's value in `reg query`'s output (its line is
+/// "    KitsRoot10    REG_SZ    C:\\Program Files (x86)\\Windows Kits\\10\\"),
+/// with / separators and no trailing one; "" when the output has none.
+fn kits_root(out: Str) -> Str {
+  for line in out.split("\n") {
+    if line.contains("KitsRoot10") && line.contains("REG_SZ") {
+      let parts = line.split("REG_SZ")
+      return parts[parts.len() - 1].trim().replace("\\", "/").trim_suffix("/")
+    }
+  }
+  ""
 }
 
 /// The directories in dir by path, the greatest name (the newest

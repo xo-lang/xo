@@ -1,0 +1,9 @@
+// A Windows host's installed SDK (link.xo win_sdk): the registry's
+// KitsRoot10 line, as `reg query` prints it.
+
+test "kits_root reads KitsRoot10 from reg query's output" {
+  let out = "\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots\r\n    KitsRoot10    REG_SZ    C:\\Program Files (x86)\\Windows Kits\\10\\\r\n\r\n"
+  expect(kits_root(out)) == "C:/Program Files (x86)/Windows Kits/10"
+  expect(kits_root("ERROR: The system was unable to find the specified registry key or value.\r\n")) == ""
+  expect(kits_root("")) == ""
+}
