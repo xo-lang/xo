@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+file: INFO to a file n=3
+conn: INFO to a conn n=4
+proxy settings read
+--- stderr
+<time> WARN to stderr n=2

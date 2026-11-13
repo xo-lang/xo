@@ -428,7 +428,10 @@ fn (g: Gen) call_chain(name: Str) -> Str {
     var up = ""
     for f in g.m.funcs {
       if !chain.contains(f.name) && f.values.any(fn(x) {
-        match g.f.aux(x) {
+        // f's own value: its aux from f's tables, not the current
+        // function's (decision 0448; tier 72 faulted here once a caller's
+        // aux was in a table)
+        match f.aux(x) {
           S(s) => s == at
           _ => false
         }

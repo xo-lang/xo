@@ -19,6 +19,7 @@
 
 cmd_inherit # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.exec)
 copy_stream # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+log_sinks # wasip1 # network: the network (`rt.net_status`, log.conn_sink's connection): WASI preview1 has no sockets
 url_userinfo # wasip1 # network: WASI preview1 has no sockets
 conn_deadline # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 conn_iface # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets

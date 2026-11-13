@@ -1,0 +1,79 @@
+// The built-in sinks (decision 0617 C): stdout_sink and stderr_sink
+// write each line to the stream, file_sink appends to a file, conn_sink
+// writes to a connection (read back here on the accepted side); and
+// httpproxy's environment settings (decision 0617 B), whose values this
+// golden does not print since they follow the environment.
+use std/http
+use std/httpproxy
+use std/log
+
+fn drain(s: Stream) -> Str uses net {
+  var out = ""
+  while true {
+    match s.read(4096) {
+      Ok(Some(b)) => out = out + b.to_str_lossy()
+      _ => break
+    }
+  }
+  out
+}
+
+/// A text line without its leading time.
+fn untimed(l: Str) -> Str {
+  let t = l.trim()
+  match t.find(" ") {
+    Some(i) => t[i + 1..]
+    None => t
+  }
+}
+
+fn main(os: Os) {
+  // stdout's lines carry the time, which the golden test normalizes only
+  // on stderr: an Info record below the handler's level writes nothing
+  log.configure_handler(log.text_handler(log.stdout_sink(os.stdio), level: log.Level.Error))
+  log.info("to stdout", {"n": 1})
+  log.configure_handler(log.text_handler(log.stderr_sink(os.stdio)))
+  log.warn("to stderr", {"n": 2})
+
+  let path = os.fs.create_temp(".", "log-sink-") ?? _ => return
+  let f = os.fs.create(path) ?? _ => return
+  log.configure_handler(log.text_handler(log.file_sink(f)))
+  log.info("to a file", {"n": 3})
+  log.configure_handler(log.text_handler(log.stderr_sink(os.stdio)))
+  f.close() ?? _ => ()
+  let back = os.fs.read(path) ?? _ => Bytes.zeroed(0)
+  os.stdio.println("file: ${untimed(back.to_str_lossy())}")
+  os.fs.remove(path) ?? _ => ()
+
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let got = Chan[Str].new(cap: 1)
+      scope s {
+        s.spawn(fn() {
+          match l.accept() {
+            Ok(sc) => got.send(drain(sc))
+            Err(e) => got.send("accept: ${e}")
+          }
+        })
+        let c = os.net.dial(l.addr()) ?? e => {
+          os.stdio.println("dial: ${e}")
+          return
+        }
+        log.configure_handler(log.text_handler(log.conn_sink(c)))
+        log.info("to a conn", {"n": 4})
+        log.configure_handler(log.text_handler(log.stderr_sink(os.stdio)))
+        c.close()
+        os.stdio.println("conn: ${untimed(got.recv() ?? "")}")
+      }
+      l.close()
+    }
+    Err(e) => os.stdio.println("listen: ${e}")
+  }
+
+  let cfg = httpproxy.from_env(os.env)
+  let _ = cfg.proxy_func()
+  let pf = httpproxy.proxy_from_env(os.env)
+  let u = http.parse_url("http://127.0.0.1/") ?? _ => return
+  let _ = pf(u)
+  os.stdio.println("proxy settings read")
+}
