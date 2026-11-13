@@ -1,0 +1,60 @@
+// Tests of hpack.xo's decoder on header blocks cut across fragments
+// (decision 0616 review, GO-2023-1571): a field whose end a fragment cuts
+// waits whole for the next fragment, and the fields decoded from a block
+// fed one cut at a time are those of the whole block.
+
+use native/llrt/raw
+
+fn block() -> Str {
+  var e = encoder()
+  var out = ""
+  out = e.field(out, ":method", "GET")
+  out = e.field(out, "x-long-name-for-the-test", "a value long enough to be huffman coded")
+  out = e.field(out, "x-n", "v")
+  out
+}
+
+fn fields_of(f: Fields) -> List[Str] {
+  var out: List[Str] = []
+  var at = 0
+  for l in f.lens {
+    let nl = l & 0xffffffff
+    let vl = l >> 32
+    out.push(raw.str_slice(f.data, at, at + nl) + ": " + raw.str_slice(f.data, at + nl, at + nl + vl))
+    at += nl + vl
+  }
+  out
+}
+
+test "a block fed in two fragments at every cut decodes as the whole block" {
+  let b = block()
+  var d0 = decoder(4096)
+  let whole = d0.decode_part(b, true, 1 << 20)
+  expect(whole.ok) == 1
+  expect(whole.used) == b.bytes().len()
+  let want = fields_of(whole)
+  expect(want.len()) == 3
+  for cut in 1..b.bytes().len() {
+    var d = decoder(4096)
+    let p1 = d.decode_part(raw.str_slice(b, 0, cut), true, 1 << 20)
+    expect(p1.ok) == 1
+    let rest = raw.str_slice(b, p1.used, b.bytes().len())
+    let p2 = d.decode_part(rest, p1.first, 1 << 20)
+    expect(p2.ok) == 1
+    expect(fields_of(p1) + fields_of(p2)) == want
+  }
+}
+
+test "a literal cut before its value ends decodes nothing of it yet" {
+  let b = block()
+  var d0 = decoder(4096)
+  let whole = d0.decode_part(b, true, 1 << 20)
+  let n = b.bytes().len()
+  // the last field's value cut: the fragment's used ends before that field
+  var d = decoder(4096)
+  let p = d.decode_part(raw.str_slice(b, 0, n - 1), true, 1 << 20)
+  expect(p.ok) == 1
+  expect(p.lens.len()) == 2
+  expect(p.used < n - 1) == true
+  expect(whole.lens.len()) == 3
+}

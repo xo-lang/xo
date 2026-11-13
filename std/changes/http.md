@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-11-13: security: an HTTP/2 server decodes a header field cut across CONTINUATION frames once
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), against GO-2023-1571 (CVE-2022-41723)
+- Go reference: golang.org/x/net/http2/hpack Decoder.parseFieldLiteral (the fix: both strings whole before either is decoded)
+- Test: std/native/llrt/hpack_test.xo (a block fed at every cut decodes as the whole block; a field cut before its value ends decodes nothing of it)
+- Affected: every release with the native HTTP/2 server up to 0.50.1, native and LLVM backends (the Go backend serves with Go's net/http)
+- Shipped in: not yet released
+
+The server's HPACK decoder decoded a literal field's name before it knew the value had arrived, and decoded it again with each later fragment while the value was incomplete. The CPU cost of a header block could grow with the square of its size (a denial of service class). A field is now decoded only once both of its strings are whole.
+
+- Remote trigger: any HTTP/2 client.
+
 ## 2026-11-13: behavior: a server answer that closes after a request body too large: Connection: close after the handler's fields, and none on HTTP/1.0, as Go 1.26.11
 
 - Kind: behavior

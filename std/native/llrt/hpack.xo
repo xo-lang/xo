@@ -270,6 +270,23 @@ fn get_str(b: Bytes, n: Int, i: Int, out: Str, max: Int) -> (Int, Str, Int) {
   (1, rt.rs_append_bytes(out, b, j, j + len, 0), j + len)
 }
 
+/// Where the string literal at i ends, without decoding it: (1, end),
+/// (-1, i) when its bytes have not all arrived, (0, i) when its length is
+/// bad (get_str's checks).
+fn str_end(b: Bytes, n: Int, i: Int, max: Int) -> (Int, Int) {
+  let (g, len, j) = get_int(b, n, i, 7)
+  if g != 1 {
+    return (g, i)
+  }
+  if len < 0 || len > max {
+    return (0, i)
+  }
+  if len > n - j {
+    return (-1, i)
+  }
+  (1, j + len)
+}
+
 /// out + v with a prefix of the given bits whose other bits are first.
 fn put_int(out: Str, first: Int, prefix: Int, v: Int) -> Str {
   let max = (1 << (prefix & 7)) - 1
@@ -383,6 +400,23 @@ pub fn (var d: Dec) decode_part(blk: Str, first0: Bool, maxstr: Int) -> Fields {
       return Fields{ok: 1, used: start, data: data, lens: lens, first: first}
     }
     if g == 0 || idx < 0 {
+      return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
+    }
+    // both strings whole before either is decoded (GO-2023-1571, Go's
+    // fix): a field cut across fragments is decoded once, when its last
+    // byte arrives, not again for every CONTINUATION
+    let (gn, jv) = if idx == 0 { str_end(b, n, j0, maxstr) } else { (1, j0) }
+    if gn < 0 {
+      return Fields{ok: 1, used: start, data: data, lens: lens, first: first}
+    }
+    if gn == 0 {
+      return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
+    }
+    let (gv, _) = str_end(b, n, jv, maxstr)
+    if gv < 0 {
+      return Fields{ok: 1, used: start, data: data, lens: lens, first: first}
+    }
+    if gv == 0 {
       return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
     }
     let mark = data.len()
