@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-11-13: perf: zones list their rules' transitions until 2038, so lookups binary search (native)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the std/time speed work of decision 0616 (XO_PROF of bench/perf/time format: tzset 14% for New York)
+- Go reference: time.Location.lookup over a zoneinfo file built fat (zic -b fat, the Linux and macOS hosts' files), where tzset runs only past 2037
+- Test: std/native/llrt/tzrules_test.xo (17 zones of every rule kind, every hour from 1990 to 2045 and around every transition: the same offset and name with and without the listed transitions); TestStdCorpora time, timefuzz on arm64 and llvm
+- Timing: --ab on linux/arm64 host 1, 9 rounds: bench/perf/time format (New York and UTC) 0.767 (50.6 to 38.8 ms, n=9), civil (New York) 0.820 (9.5 to 7.8 ms, n=6)
+- Shipped in: not yet released
+
+The program's zone table is slim: its transitions stop where the footer's rules take over (2007 for the United States), so every later lookup ran tzset's year arithmetic. Loading a zone now lists the rules' transitions until 2038 (found with tzset itself, so every time keeps its zone), and lookups binary search them, as Go's do over a fat file.
+
 ## 2026-11-13: perf: format reads a text layout's fields a word at a time, and writes short literals as stores (native)
 
 - Kind: perf

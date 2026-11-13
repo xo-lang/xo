@@ -1,0 +1,86 @@
+// Tests of tzrules.xo's expand: the program's zone table is slim (its
+// transitions stop where the footer's rules take over), and parse lists
+// the rules' transitions until 2038 as a fat file does, so a lookup binary
+// searches where it ran tzset. The zone of every time must not change.
+
+use native/llrt/tztable
+use std/time
+
+/// Zones whose rules differ in kind: northern and southern daylight
+/// saving, a negative save (Dublin), a 30 minute save (Lord Howe), odd
+/// offsets (Chatham), rules ending (Sao Paulo, Tehran), a zone with a
+/// rule only (Troll).
+const NAMES: List[Str] = ["America/New_York", "Europe/London", "Europe/Berlin", "Australia/Sydney", "Pacific/Auckland", "America/Santiago", "Europe/Dublin", "Australia/Lord_Howe", "Pacific/Chatham", "America/Sao_Paulo", "Asia/Tehran", "Antarctica/Troll", "America/Havana", "Asia/Gaza", "Africa/Casablanca", "America/Nuuk", "Asia/Tokyo"]
+
+/// The zone names as constants, so that the program's zone table holds
+/// their data (the linker keeps the zones a program names).
+fn named() {
+  time.zone("America/New_York").ignore_err("only named, for the table")
+  time.zone("Europe/London").ignore_err("only named, for the table")
+  time.zone("Europe/Berlin").ignore_err("only named, for the table")
+  time.zone("Australia/Sydney").ignore_err("only named, for the table")
+  time.zone("Pacific/Auckland").ignore_err("only named, for the table")
+  time.zone("America/Santiago").ignore_err("only named, for the table")
+  time.zone("Europe/Dublin").ignore_err("only named, for the table")
+  time.zone("Australia/Lord_Howe").ignore_err("only named, for the table")
+  time.zone("Pacific/Chatham").ignore_err("only named, for the table")
+  time.zone("America/Sao_Paulo").ignore_err("only named, for the table")
+  time.zone("Asia/Tehran").ignore_err("only named, for the table")
+  time.zone("Antarctica/Troll").ignore_err("only named, for the table")
+  time.zone("America/Havana").ignore_err("only named, for the table")
+  time.zone("Asia/Gaza").ignore_err("only named, for the table")
+  time.zone("Africa/Casablanca").ignore_err("only named, for the table")
+  time.zone("America/Nuuk").ignore_err("only named, for the table")
+  time.zone("Asia/Tokyo").ignore_err("only named, for the table")
+}
+
+/// lookup's zone at sec as offset and name text.
+fn zone_text(w: List[Int], sec: Int) -> Str {
+  let (off, pos) = lookup(of(w), sec)
+  "${off} ${name(of(w), pos)}"
+}
+
+test "parse with the rules' transitions listed gives every time the zone it gave before" {
+  named()
+  var bad: List[Str] = []
+  var grew = 0
+  for nm in NAMES {
+    let datas = tztable.data(nm, false)
+    if datas.is_empty() {
+      bad.push("${nm}: no data")
+      continue
+    }
+    for now in [0, 1794600000] {
+      let slim = parse_with(datas[0], now, false) ?? fault("slim ${nm}")
+      let fat = parse_with(datas[0], now, true) ?? fault("fat ${nm}")
+      if fat[H_NTX] > slim[H_NTX] {
+        grew += 1
+      }
+      // every hour from 1990 to 2045, and around every transition fat lists
+      var secs: List[Int] = []
+      var t = 631152000
+      while t < 2366841600 {
+        secs.push(t)
+        t += 3600
+      }
+      for k in 0..fat[H_NTX] {
+        let x = fat[H_LEN + 2 * k]
+        if x > Int.min + 2 {
+          secs.push(x - 1)
+          secs.push(x)
+          secs.push(x + 1)
+        }
+      }
+      for s in secs {
+        let a = zone_text(slim, s)
+        let b = zone_text(fat, s)
+        if a != b && bad.len() < 10 {
+          bad.push("${nm} now=${now} at ${s}: slim ${a}, fat ${b}")
+        }
+      }
+    }
+  }
+  expect(bad) == []
+  // the zones with daylight saving rules today gained transitions
+  expect(grew >= 16) == true
+}

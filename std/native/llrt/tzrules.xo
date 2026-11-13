@@ -285,6 +285,90 @@ fn name_at(w: List[Int], p: Int) -> Str {
   s
 }
 
+/// The start of 2038 (UTC): a zoneinfo file built fat (zic -b fat, as the
+/// Linux and macOS hosts' are) lists its rules' transitions until then,
+/// so Go's lookups there binary search them; a slim file (the program's
+/// zone table) lists them only until the rules took over, and lookup ran
+/// tzset for every later time.
+const FAT_END: Int = 2145916800
+
+/// w with the transitions its footer's daylight saving rules make from
+/// its last listed transition until FAT_END, each to the zone among w's
+/// of the same offset and name, found with tzset itself: lookup gives
+/// every time the zone it gave before (each added transition starts a
+/// range over which tzset gives one zone), from a binary search instead
+/// of tzset's year arithmetic. w unchanged when the footer has no
+/// daylight saving rules, or names a zone that is not among w's.
+fn expand(w: List[Int]) -> List[Int] {
+  if w[H_EXT] != 2 {
+    return w
+  }
+  let ntx = w[H_NTX]
+  let last = w[H_LEN + 2 * (ntx - 1)]
+  if last == ALPHA || last >= FAT_END {
+    return w
+  }
+  var times: List[Int] = []
+  var zones: List[Int] = []
+  var t = last
+  while t < FAT_END {
+    let (name, off, _, end) = tzset(w, last, t)
+    let z = zone_of(w, off, name)
+    if z < 0 {
+      return w
+    }
+    if zones.is_empty() || zones[zones.len() - 1] != z {
+      times.push(t)
+      zones.push(z)
+    }
+    // tzset's range for the end of a leap year stops a day short of it
+    t = if end > t { end } else { t + 86400 }
+  }
+  let added = times.len() - 1
+  if added <= 0 {
+    return w
+  }
+  let nzone = w[H_NZONE]
+  let delta = 2 * added
+  var out: List[Int] = []
+  for k in 0..H_LEN {
+    out.push(w[k])
+  }
+  out[H_NTX] = ntx + added
+  for k in 0..ntx - 1 {
+    out.push(w[H_LEN + 2 * k])
+    out.push(w[H_LEN + 2 * k + 1])
+  }
+  for k in 0..times.len() {
+    out.push(times[k])
+    out.push(zones[k])
+  }
+  // the zones, then the names: every name position moves by delta
+  let zstart = H_LEN + 2 * ntx
+  for k in zstart..w.len() {
+    out.push(w[k])
+  }
+  for z in 0..nzone {
+    let zp = H_LEN + 2 * (ntx + added) + 2 * z
+    out[zp + 1] = out[zp + 1] + delta
+  }
+  out[H_STD_NAME] = w[H_STD_NAME] + delta
+  out[H_DST_NAME] = w[H_DST_NAME] + delta
+  out
+}
+
+/// The zone of w with offset off and the name at position name, or -1.
+fn zone_of(w: List[Int], off: Int, name: Int) -> Int {
+  let want = name_at(w, name)
+  for z in 0..w[H_NZONE] {
+    let zp = zone_at(w, z)
+    if w[zp] == off && name_at(w, w[zp + 1]) == want {
+      return z
+    }
+  }
+  -1
+}
+
 /// The last transition at or before sec, or -1 when sec is before the
 /// first (Go's binary search).
 fn tx_at(w: List[Int], sec: Int) -> Int {
@@ -759,7 +843,12 @@ fn signed32(v: Int) -> Int {
 /// The zone of the TZif data, now being the time of the load in seconds
 /// (Go fills its cache with the zone in effect then), or None when the
 /// data is not TZif.
-fn parse(data: Bytes, now: Int) -> List[Int]? {
+fn parse(data: Bytes, now: Int) -> List[Int]? { parse_with(data, now, true) }
+
+/// parse, with the footer's transitions until FAT_END listed when fat
+/// (expand); parse_with(data, now, false) is the data as it is, for the
+/// tests that compare the two.
+fn parse_with(data: Bytes, now: Int, fat: Bool) -> List[Int]? {
   let len = data.len()
   if len < 44 || data[0] != 84 || data[1] != 90 || data[2] != 105 || data[3] != 102 {
     // not "TZif" and a header
@@ -866,19 +955,24 @@ fn parse(data: Bytes, now: Int) -> List[Int]? {
   if len - end > 2 && data[end] == 10 && data[len - 1] == 10 {
     parse_ext(w, data[end + 1..len - 1])
   }
+  if fat {
+    w = expand(w)
+  }
   // Go fills a cache with the zone in effect now; lookups inside its
   // range return it
+  // the count after expand
+  let ntx_all = w[H_NTX]
   var j = 0
-  while j < ntx {
+  while j < ntx_all {
     let tj = w[H_LEN + 2 * j]
-    if tj <= now && (j + 1 == ntx || now < w[H_LEN + 2 * j + 2]) {
+    if tj <= now && (j + 1 == ntx_all || now < w[H_LEN + 2 * j + 2]) {
       let zp = zone_at(w, w[H_LEN + 2 * j + 1])
       w[H_CACHE] = 1
       w[H_CSTART] = tj
       w[H_CEND] = OMEGA
       w[H_COFF] = w[zp]
       w[H_CNAME] = w[zp + 1]
-      if j + 1 < ntx {
+      if j + 1 < ntx_all {
         w[H_CEND] = w[H_LEN + 2 * j + 2]
       } else if w[H_EXT] != 0 {
         let (cn, co, cs, ce) = tzset(w, tj, now)
