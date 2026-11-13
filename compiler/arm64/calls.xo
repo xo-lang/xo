@@ -733,7 +733,7 @@ fn (var g: G) store_words(v: Int) -> List[Int] {
   g.words(v)
 }
 
-fn (var g: G) store_elem(a: ElemAt, et: Int, ws: List[Int]) {
+fn (var g: G) store_elem(a: ElemAt, et: Int, ws: List[Int], dead: Int = -1) {
   let _mi = g.m_()
   let nw = g.narrow_w(et)
   if nw > 0 && g.kind(et) == ssa.Kind.Float {
@@ -760,7 +760,17 @@ fn (var g: G) store_elem(a: ElemAt, et: Int, ws: List[Int]) {
     let _mk = g.m_()
     skip.push(g.same_loaded(ws[k], at_mem(a, k, g.cm.epoch)))
   }
+  // an enum Variant's words past its payload (decision 0624): not
+  // stored, or the poison pattern with +deadw_poison
+  let poison = dead >= 0 && g.m.passes_on.contains("deadw_poison")
   for k in 0..lay.len() {
+    if dead >= 0 && k >= dead {
+      if poison {
+        let (op, rs) = g.at_word(a, k, 1)
+        g.store("str $u0, ${op}", [g.imm(DEAD_POISON)] + rs)
+      }
+      continue
+    }
     if !skip[k] {
       let (op, rs) = g.at_word(a, k, 1)
       g.store("str $u0, ${op}", [ws[k]] + rs)
@@ -1380,7 +1390,7 @@ fn (var g: G) call_op(v: Int) {
         let old = g.load_elem(base, et, false)
         g.release(et, old)
       }
-      g.store_elem(base, et, w)
+      g.store_elem(base, et, w, g.dead_from(g.f.arg(x.args, 2)))
       g.set(v, [l])
     }
     "list.push" => {
@@ -1406,7 +1416,7 @@ fn (var g: G) call_op(v: Int) {
       g.inherit(before)
       g.clobber()
       if g.esize(et) > 0 {
-        g.store_elem(at_base(g.elem_base(lm, n, g.esize(et))), et, w)
+        g.store_elem(at_base(g.elem_base(lm, n, g.esize(et))), et, w, g.dead_from(g.f.arg(x.args, 1)))
       }
       let n1 = g.def1(false, "add $d0, $u0, #1", [n])
       g.store("str $u0, [$u1, #8]", [n1, lm])
@@ -1427,7 +1437,7 @@ fn (var g: G) call_op(v: Int) {
         let old = g.load_elem(base, et, false)
         g.release(et, old)
       }
-      g.store_elem(base, et, w)
+      g.store_elem(base, et, w, g.dead_from(g.f.arg(x.args, 2)))
     }
     "log.push" => {
       // decision 0291: list.push into a borrowed list with room (a Map
@@ -1437,7 +1447,7 @@ fn (var g: G) call_op(v: Int) {
       let w = g.store_words(g.f.arg(x.args, 1))
       let n = g.list_len(l)
       if g.esize(et) > 0 {
-        g.store_elem(at_base(g.elem_base(l, n, g.esize(et))), et, w)
+        g.store_elem(at_base(g.elem_base(l, n, g.esize(et))), et, w, g.dead_from(g.f.arg(x.args, 1)))
       }
       let n1 = g.def1(false, "add $d0, $u0, #1", [n])
       g.store("str $u0, [$u1, #8]", [n1, l])

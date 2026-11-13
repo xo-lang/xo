@@ -1,8 +1,9 @@
 // Enum values whose active variant is smaller than the largest one
 // (decision 0624: the words past the payload may be left unwritten, or
 // hold +deadw_poison's pattern): returned from functions (registers and
-// the stack), stored in a List, a Map and a struct, copied, compared,
-// hashed and dropped (XO_LEAKCHECK=1 checks the heap after).
+// the stack), stored in a List (pushed and set, from calls and from
+// variant literals), a Map and a struct, copied, compared, hashed and
+// dropped (XO_LEAKCHECK=1 checks the heap after).
 enum Shape {
   Dot
   Line(a: Str)
@@ -66,6 +67,24 @@ fn run(out: Stdio) uses stdio {
     os.stdio.println("dot ${m.get(Shape.Dot) ?? -1}, line 4 ${m.get(Shape.Line(a: "line 4")) ?? -1}")
     xs = []
     hs = []
+  }
+  {
+    // variant literals stored into list elements (pushed and set)
+    var ys: List[Shape] = []
+    for i in 0..6 {
+      ys.push(Shape.Line(a: "p${i}"))
+      ys.push(Shape.Dot)
+    }
+    ys[1] = Shape.Line(a: "set")
+    ys[2] = Shape.Dot
+    var names: List[Str] = []
+    for y in ys {
+      names.push(name(y))
+    }
+    os.stdio.println("pushed ${names.join(",")}")
+    var zs = ys.clone()
+    zs[0] = Shape.Box(a: "x", b: "y", c: [1], d: "z")
+    os.stdio.println("eq ${zs[1] == ys[1]} ${zs[0] == ys[0]} ${name(zs[0])}")
   }
 }
 

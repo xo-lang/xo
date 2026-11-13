@@ -80,6 +80,20 @@ Conditions (lead):
   per-push sample (scripts/docker-amd64-sample.txt).
 - Still off by default, returns only.
 
+## Implementation (stage 3a, list elements, Xo Lang 1, 2026-11-13)
+
+- calls.xo store_elem takes the first dead word (dead_from of the stored
+  argument) for list.set, list.push, log.set and log.push: an element
+  stored from a Variant literal writes only its live words (or the
+  poison pattern). A value from a call or a load is not a Variant op, so
+  it still stores every word.
+- enum_dead_words pushes and sets Line and Dot literals: 57 fewer lines
+  against +shareret on darwin/arm64 (47 from returns, 10 from the
+  element stores' zero pairs); the same output in the three modes,
+  XO_LEAKCHECK=1 0 live.
+- Struct fields holding an enum (a dead word inside a wider value) need
+  a per-word mask instead of dead_from; not done.
+
 ## Consequences
 
 - Stored bytes in list elements and result areas become run dependent;
