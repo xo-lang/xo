@@ -1039,86 +1039,68 @@ fn chain_constraints(chain: List[x509.Cert]) -> Str {
 fn any_policy() -> Bytes { b"\x55\x1d\x20\x00" }
 
 /// A node of the policy graph: its valid policy, expected policies,
-/// parents and children (node ids), whether it is still in the graph.
+/// parents and children (node ids, insertion ordered sets).
 struct PNode {
   valid: Bytes
   expected: List[Bytes]
-  parents: List[Int]
-  children: List[Int]
+  parents: Map[Int, Bool]
+  children: Map[Int, Bool]
 }
 
-/// The graph: the nodes, the strata (node ids per depth), the parent
-/// index of the current depth (expected policy, then node ids).
+/// The graph: the nodes, the strata (node ids per depth, insertion
+/// ordered), each stratum's node by valid policy, and the parent index of
+/// the current depth (expected policy to node ids). Maps, as Go's
+/// policyGraph: a list scan per lookup was quadratic in a certificate's
+/// policies and mappings (the 0616 x509 review's second reader).
 struct PGraph {
   nodes: List[PNode]
-  strata: List[List[Int]]
+  strata: List[Map[Int, Bool]]
+  by_valid: List[Map[Bytes, Int]]
   depth: Int
-  index_keys: List[Bytes]
-  index_vals: List[List[Int]]
+  index: Map[Bytes, List[Int]]
 }
 
 fn pg_new() -> PGraph {
-  PGraph{nodes: [PNode{valid: any_policy(), expected: [any_policy()], parents: [], children: []}], strata: [[0]], depth: 0, index_keys: [], index_vals: []}
-}
-
-fn ids_without(xs: List[Int], x: Int) -> List[Int] {
-  var out: List[Int] = []
-  for y in xs {
-    if y != x {
-      out.push(y)
-    }
-  }
-  out
-}
-
-fn has_id(xs: List[Int], x: Int) -> Bool {
-  for y in xs {
-    if y == x {
-      return true
-    }
-  }
-  false
+  let root = PNode{valid: any_policy(), expected: [any_policy()], parents: {}, children: {}}
+  PGraph{nodes: [root], strata: [{0: true}], by_valid: [{any_policy(): 0}], depth: 0, index: {}}
 }
 
 /// A new node with its parents (newPolicyGraphNode); its id.
 fn pg_node(var g: PGraph, valid: Bytes, parents: List[Int]) -> Int {
   let id = g.nodes.len()
-  g.nodes.push(PNode{valid: valid, expected: [valid], parents: [], children: []})
+  var ps: Map[Int, Bool] = {}
   for p in parents {
-    if !has_id(g.nodes[p].children, id) {
-      g.nodes[p].children.push(id)
-    }
-    if !has_id(g.nodes[id].parents, p) {
-      g.nodes[id].parents.push(p)
-    }
+    ps.put(p, true)
+    g.nodes[p].children.put(id, true)
   }
+  g.nodes.push(PNode{valid: valid, expected: [valid], parents: ps, children: {}})
   id
 }
 
 fn pg_insert(var g: PGraph, id: Int) {
-  g.strata[g.depth].push(id)
+  g.strata[g.depth].put(id, true)
+  g.by_valid[g.depth].put(g.nodes[id].valid, id)
 }
 
 /// The node of stratum d with the valid policy, -1 for none.
 fn pg_find(g: PGraph, d: Int, valid: Bytes) -> Int {
-  for id in g.strata[d] {
-    if g.nodes[id].valid == valid {
-      return id
-    }
-  }
-  -1
+  g.by_valid[d].get(valid) ?? -1
 }
 
 fn pg_parents_with_expected(g: PGraph, e: Bytes) -> List[Int] {
   if g.depth == 0 {
     return []
   }
-  for (k, key) in g.index_keys.indexed() {
-    if key == e {
-      return g.index_vals[k]
-    }
+  g.index.get(e) ?? []
+}
+
+/// Removes node id from stratum d and its parents' children.
+fn pg_remove(var g: PGraph, d: Int, id: Int) {
+  for p in g.nodes[id].parents.keys() {
+    let _ = g.nodes[p].children.remove(id)
   }
-  []
+  let _ = g.strata[d].remove(id)
+  let _ = g.by_valid[d].remove(g.nodes[id].valid)
 }
 
 fn pg_delete_leaf(var g: PGraph, valid: Bytes) {
@@ -1126,25 +1108,22 @@ fn pg_delete_leaf(var g: PGraph, valid: Bytes) {
   if id < 0 {
     return
   }
-  for p in g.nodes[id].parents {
-    g.nodes[p].children = ids_without(g.nodes[p].children, id)
+  for ch in g.nodes[id].children.keys() {
+    let _ = g.nodes[ch].parents.remove(id)
   }
-  for ch in g.nodes[id].children {
-    g.nodes[ch].parents = ids_without(g.nodes[ch].parents, id)
-  }
-  g.strata[g.depth] = ids_without(g.strata[g.depth], id)
+  pg_remove(g, g.depth, id)
 }
 
 fn pg_valid_nodes(g: PGraph) -> List[Int] {
   var out: List[Int] = []
   var i = g.depth
   while i >= 0 {
-    for id in g.strata[i] {
+    for id in g.strata[i].keys() {
       let n = g.nodes[id]
       if n.valid == any_policy() {
         continue
       }
-      if n.parents.len() == 1 && g.nodes[n.parents[0]].valid == any_policy() {
+      if n.parents.len() == 1 && g.nodes[n.parents.keys()[0]].valid == any_policy() {
         out.push(id)
       }
     }
@@ -1156,12 +1135,9 @@ fn pg_valid_nodes(g: PGraph) -> List[Int] {
 fn pg_prune(var g: PGraph) {
   var i = g.depth - 1
   while i > 0 {
-    for id in g.strata[i] {
+    for id in g.strata[i].keys() {
       if g.nodes[id].children.is_empty() {
-        for p in g.nodes[id].parents {
-          g.nodes[p].children = ids_without(g.nodes[p].children, id)
-        }
-        g.strata[i] = ids_without(g.strata[i], id)
+        pg_remove(g, i, id)
       }
     }
     i -= 1
@@ -1169,28 +1145,16 @@ fn pg_prune(var g: PGraph) {
 }
 
 fn pg_incr(var g: PGraph) {
-  var keys: List[Bytes] = []
-  var vals: List[List[Int]] = []
-  for id in g.strata[g.depth] {
+  var index: Map[Bytes, List[Int]] = {}
+  for id in g.strata[g.depth].keys() {
     for e in g.nodes[id].expected {
-      var at = -1
-      for (k, key) in keys.indexed() {
-        if key == e {
-          at = k
-        }
-      }
-      if at >= 0 {
-        vals[at].push(id)
-      } else {
-        keys.push(e)
-        vals.push([id])
-      }
+      index.update(e, [], fn(var ids) { ids.push(id) })
     }
   }
-  g.index_keys = keys
-  g.index_vals = vals
+  g.index = index
   g.depth += 1
-  g.strata.push([])
+  g.strata.push({})
+  g.by_valid.push({})
 }
 
 /// Go's policiesValid with its default options.
@@ -1236,36 +1200,22 @@ fn policies_ok(chain: List[x509.Cert]) -> Bool {
       }
       if has_any && (inhibit_any > 0 || (n - i < n && self_signed)) {
         // the expected policies of the parents that no leaf has
-        var miss_keys: List[Bytes] = []
-        var miss_vals: List[List[Int]] = []
-        for p in g.strata[g.depth - 1] {
+        var miss: Map[Bytes, List[Int]] = {}
+        for p in g.strata[g.depth - 1].keys() {
           for e in g.nodes[p].expected {
-            if pg_find(g, g.depth, e) >= 0 {
-              continue
-            }
-            var at = -1
-            for (k, key) in miss_keys.indexed() {
-              if key == e {
-                at = k
-              }
-            }
-            if at >= 0 {
-              miss_vals[at].push(p)
-            } else {
-              miss_keys.push(e)
-              miss_vals.push([p])
+            if pg_find(g, g.depth, e) < 0 {
+              miss.update(e, [], fn(var ids) { ids.push(p) })
             }
           }
         }
-        for (k, key) in miss_keys.indexed() {
-          let id = pg_node(g, key, miss_vals[k])
+        for (key, ps) in miss.entries() {
+          let id = pg_node(g, key, ps)
           pg_insert(g, id)
         }
       }
       pg_prune(g)
       if i != 0 && !cert.policy_maps.is_empty() {
-        var map_keys: List[Bytes] = []
-        var map_vals: List[List[Bytes]] = []
+        var maps: Map[Bytes, List[Bytes]] = {}
         var m = 0
         while m + 1 < cert.policy_maps.len() {
           let iss = cert.policy_maps[m]
@@ -1274,18 +1224,7 @@ fn policies_ok(chain: List[x509.Cert]) -> Bool {
             if iss == any_policy() || sub == any_policy() {
               return false
             }
-            var at = -1
-            for (k, key) in map_keys.indexed() {
-              if key == iss {
-                at = k
-              }
-            }
-            if at >= 0 {
-              map_vals[at].push(sub)
-            } else {
-              map_keys.push(iss)
-              map_vals.push([sub])
-            }
+            maps.update(iss, [], fn(var subs) { subs.push(sub) })
           } else {
             pg_delete_leaf(g, iss)
           }
@@ -1294,15 +1233,15 @@ fn policies_ok(chain: List[x509.Cert]) -> Bool {
         // 6.1.4 (b) (3) (ii): once after the deletions, as go1.27
         // (GO-2026-4946: a prune per mapping was quadratic in them)
         pg_prune(g)
-        for (k, iss) in map_keys.indexed() {
+        for (iss, subs) in maps.entries() {
           let matching = pg_find(g, g.depth, iss)
           if matching >= 0 {
-            g.nodes[matching].expected = map_vals[k]
+            g.nodes[matching].expected = subs
           } else {
             let a = pg_find(g, g.depth, any_policy())
             if a >= 0 {
               let id = pg_node(g, iss, [a])
-              g.nodes[id].expected = map_vals[k]
+              g.nodes[id].expected = subs
               pg_insert(g, id)
             }
           }
