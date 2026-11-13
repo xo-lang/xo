@@ -156,7 +156,7 @@ fn run(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: S
   if in_roots {
     s.chains.push([leaf])
   } else {
-    let err = build(s, [leaf], dedup(inters), dedup(roots), now)
+    let err = build(s, [leaf], inters, roots, now)
     if err.code != OK {
       return (Outcome{code: err.code, chain: [], bad: err.bad, hint: err.hint}, [])
     }
@@ -212,10 +212,15 @@ fn run(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: S
   (Outcome{code: NO_VALID_CHAINS, chain: [], bad: leaf, hint: details.join(", ")}, [])
 }
 
-/// A pool's certificates once each (CertPool.AddCert skips one it has).
+/// Candidates once each (CertPool.AddCert skips one it has). Applied to
+/// the parents found, not the whole pool: hashing every root's DER per
+/// verify cost 100 us with 150 system roots; duplicates share a subject,
+/// so they are among the same parents, in the same order. A map, not a
+/// scan of the earlier ones (8000 identical intermediates took 80 ms).
 fn dedup(xs: List[x509.Cert]) -> List[x509.Cert] {
-  // a map of the DERs, as CertPool.AddCert's (a scan of the earlier ones
-  // was quadratic in the pool: 8000 intermediates took 80 ms)
+  if xs.len() < 2 {
+    return xs
+  }
   var seen: Map[Bytes, Bool] = {}
   var out: List[x509.Cert] = []
   for x in xs {
@@ -252,7 +257,7 @@ fn parents(c: x509.Cert, pool: List[x509.Cert]) -> List[x509.Cert] {
   for x in d {
     a.push(x)
   }
-  a
+  dedup(a)
 }
 
 /// Go's alreadyInChain: a certificate of the chain with the candidate's
