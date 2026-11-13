@@ -1,5 +1,15 @@
 # std/url changes
 
+## 2026-11-13: fix: a host's port starts at the last colon for every scheme but http and https, as Go 1.26.11
+
+- Kind: fix
+- Commit: this push
+- Found by: the std/http long fuzz (decision 0616, TestHttpUrlFuzz seed 2 against go1.26.11)
+- Go reference: net/url url.go parseHost (go.dev/issue/75223 and 78077): strict colon checking for http and https only; any other scheme takes the last colon as the start of the port, so comma-separated database host lists parse
+- Test: internal/stdtest/httpurlfuzz_test.go regressions `a://h:8:/π#` (a host with an empty port) and `ftp://#fe80::1%25eth0]/π?a=%zz` (invalid port ":1%25eth0]")
+- Affected: native and LLVM backends; before, only postgres and postgresql took the last colon (Go 1.26's rule), so `a://h:8:/` failed with invalid port ":8:"
+- Shipped in: not yet released
+
 ## 2026-11-13: security: parse_query counts its separators before it splits
 
 - Kind: security

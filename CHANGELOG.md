@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/url, native backends): a host's port starts at the last colon for every scheme but http and https, as Go 1.26.11's parseHost (go.dev/issue/78077); before, only postgres URLs did.
 - Security (std/http, native backends): a server closes the connection after a request with both Transfer-Encoding and Content-Length, framing it by chunked as RFC 9112 6.3 requires (request smuggling class). Affected: 0.50.1 and earlier.
 - Security (std/http, native backends): a client refuses a Host with CR or LF (`http: invalid Host header`) and writes a User-Agent's CR and LF as spaces, as Go (GO-2023-1878). Affected: 0.50.1 and earlier.
 - Security (std/http, all backends): a CONNECT ends HTTP on its connection, as Go 1.26.11 (GO-2026-6613, GO-2026-6605): the server closes after any answer and sends a 2xx one without framing fields, the client never pools the connection (send or open), and ReverseProxy answers CONNECT 405. Affected: 0.50.1 and earlier.
