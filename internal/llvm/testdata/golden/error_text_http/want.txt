@@ -11,7 +11,7 @@ url invalid port
 cookie bad name
 http tls bad pem
 tls no certificates
-smtp 550 5.1.1 no such user
+smtp 550 "5.1.1 no such user"
 smtp0 smtp: server doesn't support STARTTLS
 template template: t:1: function "nope" not defined
 --- stderr
