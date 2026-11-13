@@ -641,3 +641,78 @@ test "an old GNU sparse map past 1 MiB is too long (Go 1.26.11's readOldGNUSpars
   }
   expect(long) == "untar: archive/tar: sparse map too long"
 }
+
+/// A ustar header: name, type flag, data size; mode 0644, checksum set.
+fn ustar_header(name: Str, typ: Int, size: Int) -> Bytes {
+  var h = BytesBuilder.new()
+  h.write(name.bytes())
+  h.write(b"\x00".repeat(100 - name.len()))
+  h.write(tar_octal(420, 8))
+  h.write(tar_octal(0, 8))
+  h.write(tar_octal(0, 8))
+  h.write(tar_octal(size, 12))
+  h.write(tar_octal(0, 12))
+  h.write(b"        ")
+  h.write_byte(UInt8(typ))
+  h.write(b"\x00".repeat(100))
+  h.write(b"ustar\x0000")
+  h.write(b"\x00".repeat(512 - 265))
+  let hb = h.freeze()
+  var sum = 0
+  for c in hb {
+    sum += Int(c)
+  }
+  var out = BytesBuilder.new()
+  out.write(hb[0..148])
+  out.write(tar_octal(sum, 7))
+  out.write(b" ")
+  out.write(hb[156..512])
+  out.freeze()
+}
+
+/// b padded with zeros to a whole number of 512 byte blocks.
+fn blocks(b: Bytes) -> Bytes {
+  let pad = (512 - b.len() % 512) % 512
+  b + b"\x00".repeat(pad)
+}
+
+/// A PAX record ("LEN key=value\n", LEN counting itself).
+fn pax_rec(k: Str, v: Str) -> Str {
+  let body = " ${k}=${v}\n"
+  var n = body.len() + 1
+  while "${n}".len() + body.len() != n {
+    n += 1
+  }
+  "${n}${body}"
+}
+
+/// A GNU 1.0 PAX sparse file of logical size `size` with no fragments
+/// (all holes), `count` times, then the end of the archive.
+fn pax_sparse(size: Int, count: Int) -> Bytes {
+  let recs = pax_rec("GNU.sparse.major", "1") + pax_rec("GNU.sparse.minor", "0") + pax_rec("GNU.sparse.size", "${size}") + pax_rec("GNU.sparse.name", "f")
+  let map = b"0\n"
+  var out = BytesBuilder.new()
+  for _ in 0..count {
+    out.write(ustar_header("./PaxHeader", 120, recs.len()))
+    out.write(blocks(recs.bytes()))
+    out.write(ustar_header("f", 48, 512))
+    out.write(blocks(map))
+  }
+  out.write(b"\x00".repeat(1024))
+  out.freeze()
+}
+
+test "untar's sparse holes are 1 GiB at most in all (Go reads them lazily; untar returns them whole)" {
+  // 8 GiB of holes from a 3 KB archive: refused before anything is allocated
+  let big = match untar_entries(pax_sparse(8589934592, 1)) {
+    Ok(es) => "ok ${es.len()}"
+    Err(e) => e
+  }
+  expect(big) == "untar: archive/tar: sparse files expand past 1 GiB"
+  // a small one is expanded to its declared size
+  let small = untar_entries(pax_sparse(1048576, 3)).ok() ?? fault("small")
+  expect(small.len()) == 3
+  expect(small[2].path) == "f"
+  expect(small[2].data.len()) == 1048576
+  expect(small[2].data == Bytes.zeroed(1048576)) == true
+}

@@ -1,5 +1,18 @@
 # std/archive changes
 
+## 2026-11-13: security: untar's sparse holes are 1 GiB at most per archive (native)
+
+- Kind: security
+- Commit: this commit
+- Found by: Xo Lang 2's second read of the Go 1.26.11 tar port (a 10 KB archive took untar to 8.2 GB of memory)
+- Go reference: none (archive/tar's sparse reader is lazy: Go returns no buffer)
+- Affected: Xo 0.50.1 and earlier, native backends: untar
+- Test: std/native/archive_test.xo: an 8 GiB sparse file is refused before any allocation, a 1 MiB one is expanded to its size (fails without the change)
+- Timing: an exactly 1 GiB sparse file reads in 68 ms on the Mac (the zeros are written 64 KiB at a time, where they were written a byte at a time)
+- Shipped in: not yet released
+
+A PAX sparse entry declares its logical size, and untar built that many bytes in memory, so a small archive could declare terabytes. The holes of all sparse files in one archive now add at most 1 GiB (std/compress's max_size default); past it untar fails with `archive/tar: sparse files expand past 1 GiB`. Above some sizes the old code also returned an empty entry instead of its data.
+
 ## 2026-11-13: security: an old GNU sparse map is read to 1 MiB at most (untar, native)
 
 - Kind: security

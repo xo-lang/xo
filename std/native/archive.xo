@@ -663,7 +663,12 @@ fn sparse_int(s: Str) -> Int? {
 /// validateSparseEntries, and the sparse reader: None when the records
 /// describe no sparse file, else its name ("" to keep the header's) and
 /// its logical data made from the physical data phys.
-fn sparse_pax(records: Map[Str, Str], phys: Bytes) -> (Str, Bytes)? ! Str {
+/// The zero bytes a sparse file's holes may add to an archive's entries in
+/// all (std/compress's max_size default): Go reads a sparse file lazily,
+/// untar returns it whole, so a few KB of headers could declare terabytes.
+const SPARSE_HOLES_MAX: Int = 1073741824
+
+fn sparse_pax(records: Map[Str, Str], phys: Bytes, holes_left: Int) -> (Str, Bytes)? ! Str {
   let major = records.get("GNU.sparse.major") ?? ""
   let minor = records.get("GNU.sparse.minor") ?? ""
   var is1x0 = false
@@ -775,7 +780,12 @@ fn sparse_pax(records: Map[Str, Str], phys: Bytes) -> (Str, Bytes)? ! Str {
     k += 2
   }
   // the logical data: the fragments from the physical data in order,
-  // zeros between them
+  // zeros between them; the zeros are at least size less the physical
+  // data, which the archive's budget bounds
+  if size - phys.len() > holes_left {
+    return Err("untar: archive/tar: sparse files expand past 1 GiB")
+  }
+  let zeros = Bytes.zeroed(65536)
   var out = BytesBuilder.with_capacity(size)
   var at = 0
   var src = data_at
@@ -788,8 +798,9 @@ fn sparse_pax(records: Map[Str, Str], phys: Bytes) -> (Str, Bytes)? ! Str {
       continue
     }
     while at < off {
-      out.write_byte(0)
-      at += 1
+      let z = if off - at < 65536 { off - at } else { 65536 }
+      out.write(zeros[0..z])
+      at += z
     }
     if phys.len() - src < len {
       return Err("untar: archive/tar: sparse file references non-existent data")
@@ -802,8 +813,9 @@ fn sparse_pax(records: Map[Str, Str], phys: Bytes) -> (Str, Bytes)? ! Str {
     return Err("untar: archive/tar: sparse file contains unreferenced data")
   }
   while at < size {
-    out.write_byte(0)
-    at += 1
+    let z = if size - at < 65536 { size - at } else { 65536 }
+    out.write(zeros[0..z])
+    at += z
   }
   Some((name, out.freeze()))
 }
@@ -821,6 +833,7 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
   var out: List[archive.Entry] = []
   var pax: Map[Str, Str] = {}
   var long_name = ""
+  var holes_left = SPARSE_HOLES_MAX
   while true {
     // readHeader
     if pos == n {
@@ -1095,8 +1108,9 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
       }
       e.data = sub(data, pos, pos + nb)
       // a GNU sparse file described by PAX records (handleSparseFile)
-      match sparse_pax(records, e.data) {
+      match sparse_pax(records, e.data, holes_left) {
         Ok(Some((sname, logical))) => {
+          holes_left -= logical.len() - e.data.len()
           if sname != "" {
             e.path = match archive_path(sname) {
               Some(x) => x

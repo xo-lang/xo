@@ -4991,6 +4991,13 @@ struct ZipFile { path: Str, size: Int, compressed: Int, mode: Int, is_dir: Bool,
   returns it under that name. Reading follows Go's archive/tar and
   archive/zip errors exactly; internal/stdtest/archivefuzz_test.go checks
   hostile archives against them on every backend.
+- `untar` returns a GNU sparse file (PAX 0.0, 0.1 and 1.0 maps) whole,
+  its holes as zeros, where Go's reader is lazy; so the holes of all of
+  an archive's sparse files add at most 1 GiB (std/compress's `max_size`
+  default), past which `untar` fails with `archive/tar: sparse files
+  expand past 1 GiB` (2026-11-13). An old GNU sparse header (type `S`)
+  is refused as neither a file nor a directory, after its map is read
+  to Go's 1 MiB limit.
 - `tar` writes PAX headers with the entries' modes (`0o7777`) and times;
   `zip` deflates files and stores their modes and times (with Unix
   extended timestamps, so times before 1980 survive).
