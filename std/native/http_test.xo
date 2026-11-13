@@ -1870,3 +1870,16 @@ test "a bad escape in the user stops at the colon before the password, as Go's u
     }
   }
 }
+
+test "a request's declared trailer names are each kept once, at most 64 of them (GO-2026-6603)" {
+  expect(declared_trailers("x-a, X-B ,x-a,,Content-Length, x-c")) == ["X-A", "X-B", "X-C"]
+  var many: List[Str] = []
+  for i in 0..100000 {
+    many.push("t${i}")
+  }
+  let got = declared_trailers(many.join(","))
+  expect(got.len()) == 64
+  expect(got[0]) == "T0"
+  expect(got[63]) == "T63"
+  expect(declared_trailers("a,".repeat(50000)).len()) == 1
+}

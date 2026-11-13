@@ -263,13 +263,25 @@ struct BodyState {
 }
 
 /// The canonical trailer names declared by a request's Trailer field
-/// value (names a trailer may not carry dropped).
+/// value (names a trailer may not carry dropped), each once and at most
+/// http1.MAX_TRAILER_COUNT of them, the most trailer fields a body may
+/// end with: the scan stops there, so a Trailer value of many short names
+/// costs no list or string per name past it (GO-2026-6603).
 fn declared_trailers(trailer: Str) -> List[Str] {
   var out: List[Str] = []
-  for part in trailer.split(",") {
-    if let Some(k) = http1.trailer_key(part.trim()) {
-      out.push(k)
+  let tb = trailer.bytes()
+  var start = 0
+  var i = 0
+  while i <= tb.len() && out.len() < http1.MAX_TRAILER_COUNT {
+    if i == tb.len() || tb[i] == 44 {
+      if let Some(k) = http1.trailer_key((tb[start..i].to_str() ?? "").trim()) {
+        if !out.contains(k) {
+          out.push(k)
+        }
+      }
+      start = i + 1
     }
+    i += 1
   }
   out
 }

@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-11-13: security: a streamed request's declared trailer names are capped at 64
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), against GO-2026-6603
+- Go reference: GO-2026-6603 (HTTP/2 server memory from Trailer declarations), fixed in go1.26.9
+- Test: std/native/http_test.xo "a request's declared trailer names are each kept once, at most 64 of them"
+- Affected: releases with handle_stream trailers (decision 0433) up to 0.50.1, native and LLVM backends
+- Shipped in: not yet released
+
+A `handle_stream` route's body kept one string per name in the request's `Trailer` field. Over HTTP/2, many streams could each declare a header list's worth of short names, costing far more memory than the header bytes (a denial of service class). Names are now kept once each and at most 64 of them, the most trailer fields a body may end with, and the scan stops there.
+
+- Remote trigger: any client of a server with a `handle_stream` route.
+
 ## 2026-11-13: security: an HTTP/2 server's SETTINGS and connection WINDOW_UPDATE frames no longer walk every open stream
 
 - Kind: security
