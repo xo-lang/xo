@@ -3242,6 +3242,17 @@ fn fs_resolve(f: Fs, p: Str) -> Str? {
     return Some(p)
   }
   let clean = fs_clean("/" + p.replace("\\", "/"))
+  // a Windows device name (COM1, NUL, CON.txt, ...) or a colon (a drive
+  // or a stream) under the root names no file of it: denied, as Go's
+  // os.DirFS and http.Dir do since GO-2022-1143 (stricter: a reserved
+  // name with an extension too, a device on Windows 10)
+  if fs_windows() {
+    for seg in clean.split("/") {
+      if seg.contains(":") || win_reserved(seg) {
+        return None
+      }
+    }
+  }
   if p.contains("..") {
     var depth = 0
     for seg in p.split("/") {
@@ -3256,6 +3267,25 @@ fn fs_resolve(f: Fs, p: Str) -> Str? {
     }
   }
   Some(fs_join(rt.fs_root(f), clean))
+}
+
+// win_reserved reports a Windows reserved device name, with or without an
+// extension or trailing spaces (internal/filepathlite isReservedName).
+fn win_reserved(seg: Str) -> Bool {
+  var base = seg
+  if let Some(i) = base.find(".") {
+    base = base[0..i]
+  }
+  base = base.trim_end()
+  let u = base.to_upper()
+  if u == "CON" || u == "PRN" || u == "AUX" || u == "NUL" || u == "CONIN$" || u == "CONOUT$" {
+    return true
+  }
+  if u.starts_with("COM") || u.starts_with("LPT") {
+    let rest = u[3..]
+    return (rest.len() == 1 && rest >= "1" && rest <= "9") || rest == "\u{b9}" || rest == "\u{b2}" || rest == "\u{b3}"
+  }
+  false
 }
 
 // fs_rel is the path of the OS path op relative to the root (op itself

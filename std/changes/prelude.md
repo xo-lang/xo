@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-11-13: security: a sub Fs on Windows denies device names and colons under its root
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), against GO-2022-1143 (CVE-2022-41720)
+- Go reference: os.DirFS and http.Dir (internal/filepathlite isReservedName, IsLocal), go1.26.1
+- Test: std/native/prelude_test.xo "win_reserved: the Windows device names a sub Fs denies" (every host); the denial itself on a Windows host
+- Affected: every release up to 0.50.1 on Windows, native and LLVM backends
+- Shipped in: not yet released
+
+A sub capability (`fs.sub(dir)`, and so `http.file_server` over one) resolved a path under its root by refusing only `..` escapes. On Windows a segment such as `COM1`, `NUL` or `CON.txt` names a device whatever directory it is in, and a colon names a drive or a stream, so a request path could open a device through a file server. Such a path is now denied, as Go's os.DirFS and http.Dir do; a reserved name with an extension is denied too, since Windows 10 still treats it as a device.
+
+- Remote trigger: any client of `file_server` on a Windows host.
+
 ## 2026-11-12: perf, fix: BytesBuilder.write_le pushes in place; a bad width faults on wasm
 
 - Kind: perf, fix (wasm)

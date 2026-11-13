@@ -4512,3 +4512,12 @@ test "look_path searches PATH through a MemFs: execute bit, directories, ErrDot,
     expect(look_path(os.env, os.fs, "tool")) == Err(ProcErr.NotFound(cmd: "tool"))
   }
 }
+
+test "win_reserved: the Windows device names a sub Fs denies (GO-2022-1143)" {
+  for n in ["CON", "con", "Nul", "AUX", "PRN", "COM1", "lpt9", "COM\u{b9}", "CONIN$", "conout$", "NUL.txt", "con.tar.gz", "COM1 ", "aux .x"] {
+    expect("${n}: ${win_reserved(n)}") == "${n}: true"
+  }
+  for n in ["CONSOLE", "COM0", "COM10", "LPT", "nul2", "a.con", "file.txt", "", "C0N"] {
+    expect("${n}: ${win_reserved(n)}") == "${n}: false"
+  }
+}
