@@ -1,5 +1,19 @@
 # std/multipart changes
 
+## 2026-11-13: security: parse_form's header limit never goes below zero (GO-2026-6608)
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), against GO-2026-6608
+- Go reference: net/textproto reader.go readMIMEHeader and mime/multipart formdata.go readForm (the fix for GO-2026-6608)
+- Test: none fails before the fix (the result is the same "message too large"); std/multipart_test.xo's parse_form tests cover the limits
+- Affected: every release up to 0.50.1, all backends
+- Shipped in: not yet released
+
+When fewer than 400 bytes of `parse_form`'s memory budget were left at the start of a part, the part's header lines were read with no length limit, as in Go before its fix. In Xo the form is already in memory (at most the server's 64 MiB body), so the cost was one extra copy of that line before the same "message too large" error. The limit is now clamped at zero.
+
+- Remote trigger: a client posting a multipart form, with a bounded cost.
+
 ## 2026-11-11: fix: a bad header value's error shows the key canonical, as Go's
 
 - Kind: fix

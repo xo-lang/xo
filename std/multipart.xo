@@ -617,7 +617,9 @@ fn (var r: R) read_continued(lim0: Int) -> Bytes ! Str {
 
 fn (var r: R) read_header(max_memory0: Int, max_headers0: Int) -> Header ! Str {
   var h = Header{keys: [], values: []}
-  var max_memory = max_memory0 - 400
+  // never below 0 (GO-2026-6608): a negative limit read as none, so a
+  // form's last part could read a header line of any length
+  var max_memory = if max_memory0 - 400 < 0 { 0 } else { max_memory0 - 400 }
   var max_headers = max_headers0
   if r.at_lwsp() {
     let line = r.read_line() ?? b""
