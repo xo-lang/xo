@@ -100,6 +100,12 @@ test "keccak_f1600 is its body (the SHA3 extension where the CPU has it)" {
 
 test "dit_set sets Arm's DIT bit and returns the old one, where the CPU has it (decision 0619)" {
   if (hw() & HW_DIT) == 0 {
+    if target.arch == TargetArch.Arm64 {
+      // the instruction itself, which a CPU without FEAT_DIT does not
+      // have; the detection found none (windows/arm64 reads no feature
+      // registers yet), so it is not run
+      return
+    }
     // the body: nothing set, 0 back
     expect(dit_set(1)) == 0
     expect(dit_set(0)) == 0
