@@ -4,7 +4,8 @@
 // from 0 to 64 KiB) and checking every answer against the one computed
 // here, plus hostile clients on raw connections: slow readers, half sent
 // heads, resets mid request, oversized heads (431), Content-Length with
-// Transfer-Encoding (framed by chunked, as Go) and garbage. A background task
+// Transfer-Encoding (framed by chunked and closed after, RFC 9112 6.3) and
+// garbage. A background task
 // samples the resident set every 10 s (Linux /proc/self/status). Pass: no
 // mismatch, no fault, every hostile answer as expected, and the resident
 // set at the end within 10% or 4 MB of its sample at 5 minutes.
@@ -140,19 +141,18 @@ fn hostile(os: Os, addr: Str, i: Int) -> Int ! Str {
       return Err("oversized head: answered ${got.to_str_lossy().lines().first() ?? "nothing"}, want 431")
     }
   } else if kind == 4 {
-    // Content-Length and chunked together: framed by chunked alone, as
-    // Go's net/http does (RFC 9112 6.1), so the echo is empty and the
-    // pipelined GET after the last chunk is answered; framing by the
-    // Content-Length (4 bytes) would desynchronize the connection
-    c.write("POST /echo HTTP/1.1\r\nHost: s\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\nGET /hello/2 HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n".bytes()).map_err(fn(e) { "write: ${e}" })?
+    // Content-Length and chunked together: framed by chunked alone, and
+    // the connection closed after the answer (RFC 9112 6.3), so the GET
+    // sent after it on the same connection is never answered
+    c.write("POST /echo HTTP/1.1\r\nHost: s\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\nGET /hello/2 HTTP/1.1\r\nHost: s\r\n\r\n".bytes()).map_err(fn(e) { "write: ${e}" })?
     let got = read_all(os, c, 65536, 10s).to_str_lossy()
     c.close()
     let first = got.split("\r\n\r\n").first() ?? ""
-    if status_of(got.bytes()) != 200 || !first.to_lower().contains("content-length: 0") {
-      return Err("CL with TE: first answer ${first.quote()}, want 200 with an empty body (chunked framing)")
+    if status_of(got.bytes()) != 200 || !first.to_lower().contains("content-length: 0") || !first.to_lower().contains("connection: close") {
+      return Err("CL with TE: answer ${first.quote()}, want 200, an empty body (chunked framing) and Connection: close")
     }
-    if !got.contains("hello 2\n") {
-      return Err("CL with TE: the pipelined GET was not answered: ${got.quote()}")
+    if got.contains("hello 2") {
+      return Err("CL with TE: the GET after it was answered on the same connection")
     }
   } else {
     // garbage: 400 or a close, never a fault
