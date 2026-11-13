@@ -7570,9 +7570,13 @@ fn check(os: Os, pem: Bytes, roots: Bytes) -> () ! Error uses clock {
 - `system_roots(fs)` is the roots std/tls verifies servers against when
   given none (27): Linux's CA bundle and directories (`SSL_CERT_FILE`,
   `SSL_CERT_DIR`), Windows's ROOT store, and on macOS the system's anchor
-  certificates (SecTrustCopyAnchorCertificates; TLS there asks the
-  Security framework, which also applies user and admin trust settings
-  that a list cannot hold). Certificates that do not parse are left out.
+  certificates (SecTrustCopyAnchorCertificates) with the user and admin
+  trust settings applied as Go 1.16's loadSystemRoots: a certificate
+  whose settings deny it for SSL is left out, one they trust as a root
+  (TrustRoot or TrustAsRoot) is added, user settings override admin
+  ones, and a setting for another policy or limited to a host name does
+  not count. TLS on macOS asks the Security framework, which applies the
+  same settings. Certificates that do not parse are left out.
 - Tests: the corpus `x509create` makes every template both in Xo and in
   Go (equal bytes for Ed25519 and RSA, equal fields for ECDSA), and
   parses Go's requests and CRLs and mutated copies against Go's fields

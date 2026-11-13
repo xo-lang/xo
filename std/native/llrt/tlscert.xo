@@ -71,8 +71,10 @@ pub fn system_ders() -> List[Bytes] {
 /// The roots a client checks servers against, as DER (std/x509's
 /// system_roots): system_ders on Linux and Windows; on macOS, where TLS
 /// asks the Security framework to evaluate trust and reads no list, the
-/// framework's anchor certificates (SecTrustCopyAnchorCertificates: the
-/// roots it trusts by default, without user or admin trust settings).
+/// framework's anchor certificates with the user and admin trust settings
+/// applied as Go 1.16's loadSystemRoots (GO-2022-0171): an anchor they
+/// deny for SSL is left out, and a certificate they trust as a root is
+/// added.
 pub fn root_ders() -> List[Bytes] {
   if target.os == TargetOs.Darwin {
     return anchor_ders()
@@ -115,7 +117,232 @@ fn anchor_ders() -> List[Bytes] {
     let _r = rt.call_c2(cf_release, d, 0)
   }
   let _r = rt.call_c2(cf_release, arr, 0)
-  ders
+  let (denied, trusted) = ts_domains()
+  var roots: List[Bytes] = []
+  var seen: Map[Bytes, Bool] = {}
+  for d in ders {
+    if !denied.contains(d) && !seen.contains(d) {
+      seen[d] = true
+      roots.push(d)
+    }
+  }
+  for d in trusted {
+    if !denied.contains(d) && !seen.contains(d) {
+      seen[d] = true
+      roots.push(d)
+    }
+  }
+  roots
+}
+
+// ---------------------------------------------------------------------------
+// macOS trust settings (Go 1.16's root_darwin.go, before Go moved to
+// SecTrustEvaluate for verification and kept no root list)
+
+/// SecTrustSettingsResult values (SecTrustSettings.h).
+const TS_TRUST_ROOT = 1
+const TS_TRUST_AS_ROOT = 2
+const TS_DENY = 3
+const TS_UNSPECIFIED = 4
+
+/// The DER contents of the SSL policy's OID, 1.2.840.113635.100.1.3, as a
+/// trust settings file stores kSecTrustSettingsPolicy.
+const SSL_POLICY_OID_HEX: Str = "2a864886f763640103"
+
+/// A CFString of s, to release; 0 when it could not be made.
+fn cf_str(s: Str) -> Int {
+  let c = "${s}\x00".bytes()
+  rt.call_c4(fw("CFStringCreateWithCString"), 0, raw.bytes_addr(c), CF_UTF8, 0)
+}
+
+/// The value under key in a CFDictionary, or 0. The trust settings keys
+/// (kSecTrustSettingsPolicy and the others) are CFSTR constants of their
+/// own names, so the framework's dictionaries and a settings file's share
+/// them.
+fn cf_get(dict: Int, key: Str) -> Int {
+  let k = cf_str(key)
+  if k == 0 || dict == 0 {
+    return 0
+  }
+  let v = rt.call_c2(fw("CFDictionaryGetValue"), dict, k)
+  let _r = rt.call_c2(fw("CFRelease"), k, 0)
+  v
+}
+
+/// Whether a trust setting's policy is SSL: the OID's DER in a settings
+/// file, or a SecPolicy (the framework's settings) whose kSecPolicyOid is
+/// kSecPolicyAppleSSL (Go's isSSLPolicy).
+fn ts_ssl_policy(p: Int) -> Bool {
+  if rt.call_c2(fw("CFGetTypeID"), p, 0) == rt.call_c2(fw("CFDataGetTypeID"), 0, 0) {
+    let n = rt.call_c2(fw("CFDataGetLength"), p, 0)
+    let at = rt.call_c2(fw("CFDataGetBytePtr"), p, 0)
+    return n > 0 && at != 0 && raw.str_at(at, n).bytes().to_hex() == SSL_POLICY_OID_HEX
+  }
+  let oid_key = fw("kSecPolicyOid")
+  let ssl = fw("kSecPolicyAppleSSL")
+  if oid_key == 0 || ssl == 0 {
+    return false
+  }
+  let props = rt.call_c2(fw("SecPolicyCopyProperties"), p, 0)
+  if props == 0 {
+    return false
+  }
+  let v = rt.call_c2(fw("CFDictionaryGetValue"), props, rt.mem_load(oid_key, 0, 8))
+  let ok = v != 0 && rt.call_c2(fw("CFEqual"), v, rt.mem_load(ssl, 0, 8)) & 255 != 0
+  let _r = rt.call_c2(fw("CFRelease"), props, 0)
+  ok
+}
+
+/// Go's sslTrustSettingsResult over one certificate's trust settings (a
+/// CFArray of dictionaries): an empty array is TrustRoot; a setting for
+/// another policy, or limited to a host name (a policy string), is
+/// skipped; a setting without a result is TrustRoot; the first TrustRoot,
+/// TrustAsRoot or Deny decides; otherwise Unspecified.
+fn ts_result(arr: Int) -> Int {
+  let n = rt.call_c2(fw("CFArrayGetCount"), arr, 0)
+  if n == 0 {
+    return TS_TRUST_ROOT
+  }
+  let num = block(8)
+  var res = TS_UNSPECIFIED
+  var i = 0
+  while i < n && res == TS_UNSPECIFIED {
+    let s = rt.call_c2(fw("CFArrayGetValueAtIndex"), arr, i)
+    i += 1
+    let pol = cf_get(s, "kSecTrustSettingsPolicy")
+    if pol != 0 && !ts_ssl_policy(pol) {
+      continue
+    }
+    if cf_get(s, "kSecTrustSettingsPolicyString") != 0 {
+      continue
+    }
+    let r = cf_get(s, "kSecTrustSettingsResult")
+    if r == 0 {
+      res = TS_TRUST_ROOT
+      continue
+    }
+    rt.mem_store(num, 0, 0, 8)
+    // kCFNumberSInt32Type
+    let _g = rt.call_c4(fw("CFNumberGetValue"), r, 3, num, 0)
+    let v = rt.mem_load(num, 0, 4)
+    if v == TS_TRUST_ROOT || v == TS_TRUST_AS_ROOT || v == TS_DENY {
+      res = v
+    }
+  }
+  release(num)
+  res
+}
+
+/// A certificate's result: its user domain settings, else its admin
+/// domain's (user settings override admin, as Apple's and Go's), else
+/// Unspecified.
+fn ts_cert_result(cert: Int) -> Int {
+  let copy = fw("SecTrustSettingsCopyTrustSettings")
+  if copy == 0 {
+    return TS_UNSPECIFIED
+  }
+  let out = block(8)
+  var res = TS_UNSPECIFIED
+  // kSecTrustSettingsDomainUser, kSecTrustSettingsDomainAdmin
+  var domain = 0
+  while domain < 2 {
+    rt.mem_store(out, 0, 0, 8)
+    let st = rt.call_c4(copy, cert, domain, out, 0) & 4294967295
+    let arr = rt.mem_load(out, 0, 8)
+    domain += 1
+    if st == 0 && arr != 0 {
+      res = ts_result(arr)
+      let _r = rt.call_c2(fw("CFRelease"), arr, 0)
+      domain = 2
+    }
+  }
+  release(out)
+  res
+}
+
+/// The certificates the user and admin trust settings deny for SSL, and
+/// those they trust as roots (TrustRoot or TrustAsRoot), as DER (Go
+/// 1.16's loadSystemRoots). Certificates with Unspecified settings are
+/// neither (Go keeps them out of the roots too).
+fn ts_domains() -> (Map[Bytes, Bool], List[Bytes]) {
+  var denied: Map[Bytes, Bool] = {}
+  var trusted: List[Bytes] = []
+  let copy = fw("SecTrustSettingsCopyCertificates")
+  if copy == 0 {
+    return (denied, trusted)
+  }
+  let out = block(8)
+  var domain = 0
+  while domain < 2 {
+    rt.mem_store(out, 0, 0, 8)
+    let st = rt.call_c2(copy, domain, out) & 4294967295
+    let arr = rt.mem_load(out, 0, 8)
+    domain += 1
+    if st != 0 || arr == 0 {
+      continue
+    }
+    let n = rt.call_c2(fw("CFArrayGetCount"), arr, 0)
+    for i in 0..n {
+      let cert = rt.call_c2(fw("CFArrayGetValueAtIndex"), arr, i)
+      let d = if cert != 0 { rt.call_c2(fw("SecCertificateCopyData"), cert, 0) } else { 0 }
+      if d == 0 {
+        continue
+      }
+      let der = raw.str_at(rt.call_c2(fw("CFDataGetBytePtr"), d, 0), rt.call_c2(fw("CFDataGetLength"), d, 0)).bytes()
+      let _rd = rt.call_c2(fw("CFRelease"), d, 0)
+      let r = ts_cert_result(cert)
+      if r == TS_DENY {
+        denied[der] = true
+      } else if r == TS_TRUST_ROOT || r == TS_TRUST_AS_ROOT {
+        trusted.push(der)
+      }
+    }
+    let _r = rt.call_c2(fw("CFRelease"), arr, 0)
+  }
+  release(out)
+  (denied, trusted)
+}
+
+/// For tests (darwin): Go's result for each certificate of a trust
+/// settings file (`security add-trusted-cert -o FILE`, the plist the
+/// domains store), as "SHA1 RESULT" lines (the file's keys are the
+/// certificates' SHA-1). An entry without trustSettings is an empty
+/// array: TrustRoot. Empty when the file does not load.
+pub fn plist_results(plist: Bytes) -> List[Str] {
+  var lines: List[Str] = []
+  let data = rt.call_c4(fw("CFDataCreate"), 0, raw.bytes_addr(plist), plist.len(), 0)
+  if data == 0 {
+    return lines
+  }
+  let root = rt.call_c4(fw("CFPropertyListCreateFromXMLData"), 0, data, 0, 0)
+  let _rd = rt.call_c2(fw("CFRelease"), data, 0)
+  if root == 0 {
+    return lines
+  }
+  let list = cf_get(root, "trustList")
+  let n = if list != 0 { rt.call_c2(fw("CFDictionaryGetCount"), list, 0) } else { 0 }
+  if n > 0 {
+    let keys = block(8 * n)
+    let vals = block(8 * n)
+    let _g = rt.call_c4(fw("CFDictionaryGetKeysAndValues"), list, keys, vals, 0)
+    let buf = block(256)
+    for i in 0..n {
+      let k = rt.mem_load(keys, 8 * i, 8)
+      let v = rt.mem_load(vals, 8 * i, 8)
+      var name = "?"
+      if rt.call_c4(fw("CFStringGetCString"), k, buf, 256, CF_UTF8) & 255 != 0 {
+        name = raw.str_at(buf, raw.cstr_len(buf))
+      }
+      let ts = cf_get(v, "trustSettings")
+      let r = if ts == 0 { TS_TRUST_ROOT } else { ts_result(ts) }
+      lines.push("${name} ${r}")
+    }
+    release(buf)
+    release(keys)
+    release(vals)
+  }
+  let _rr = rt.call_c2(fw("CFRelease"), root, 0)
+  lines
 }
 
 /// The DER of each CERTIFICATE block of a PEM text.
