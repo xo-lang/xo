@@ -1896,3 +1896,27 @@ test "Content-Length with chunked is framed by chunked and closes the connection
     expect(text.contains("next")) == false
   }
 }
+
+test "a client never writes a CR or LF from with_host or User-Agent into the request (GO-2023-1878)" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let seen: Chan[Str] = Chan.new(1)
+  scope s {
+    s.group().spawn(fn() {
+      let c = l.accept().or_fault("accept")
+      let q = c.read(4096).or_fault("read") ?? b""
+      seen.send(q.to_str_lossy())
+      c.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").or_fault("write")
+      c.close()
+    })
+    let c = http.client(os.net)
+    match c.send(http.new_request("GET", "http://${l.addr()}/a").with_host("h\r\nX-Injected: 1")) {
+      Ok(_) => expect("sent") == "an invalid Host header error"
+      Err(e) => expect("${e}".contains("invalid Host header")) == true
+    }
+    let r = c.send(http.new_request("GET", "http://${l.addr()}/b", {"User-Agent": "ua\r\nX-Injected: 2"})).or_fault("send")
+    expect(r.status) == 200
+    let q = seen.recv() ?? ""
+    expect(q.contains("\r\nUser-Agent: ua  X-Injected: 2\r\n")) == true
+    expect(q.contains("\r\nX-Injected:")) == false
+  }
+}

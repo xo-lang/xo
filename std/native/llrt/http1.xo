@@ -4610,6 +4610,14 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     let (name, uport) = split_hostport(u.host)
     // the Host sent: the override while the request is for the first host
     let sent_host = if !host_over.is_empty() && (!has_ihost || ihost == u.host) { host_over } else { u.host }
+    // httpguts.ValidHostHeader (GO-2023-1878): a Host with a byte outside
+    // its set (CR, LF, a space) is never written; the request fails before
+    // it connects, as Go's does through a proxy and over HTTP/2 (Go's
+    // HTTP/1 without a proxy sends an empty Host instead, for Unix socket
+    // addresses, which this client does not dial)
+    if !valid_host_header(sent_host) {
+      return cfail(1, op + " " + go_quote(raw) + ": http: invalid Host header")
+    }
     let https = u.scheme == "https"
     let port = if !uport.is_empty() { uport } else if https { "443" } else { "80" }
     if redirects > 0 && !lists.is_empty() {
@@ -4927,4 +4935,15 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     redirects += 1
   }
   cfail(4, "")
+}
+
+/// httpguts.ValidHostHeader: every byte in the Host header's set (the
+/// server's malformed Host check uses the same class).
+fn valid_host_header(h: Str) -> Bool {
+  for b in h.bytes() {
+    if (cls(Int(b)) & HOSTHDR) == 0 {
+      return false
+    }
+  }
+  true
 }

@@ -424,7 +424,10 @@ pub fn request(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List
   if ua < 0 {
     head = head + "User-Agent: Go-http-client/1.1\r\n"
   } else if !values[ua].is_empty() {
-    head = head + "User-Agent: " + values[ua] + "\r\n"
+    // headerNewlineToSpace and textproto.TrimString, as Go's Request.write
+    // (GO-2023-1878): a CR or LF in the value never ends the field
+    let v = values[ua].replace("\r", " ").replace("\n", " ").trim()
+    head = head + "User-Agent: " + v + "\r\n"
   }
   let bn = body.len()
   if chunked {

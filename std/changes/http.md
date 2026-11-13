@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-11-13: security: a client never writes a CR or LF from with_host or User-Agent into the request
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), against GO-2023-1878 (CVE-2023-29406)
+- Go reference: net/http request.go (Request.write: httpguts.ValidHostHeader, and headerNewlineToSpace on User-Agent), go1.26.1
+- Test: std/native/http_test.xo "a client never writes a CR or LF from with_host or User-Agent into the request"
+- Affected: every release up to 0.50.1, native and LLVM backends (the Go backend sends with Go's net/http)
+- Shipped in: not yet released
+
+A request's Host (`Request.with_host`) and its `User-Agent` value were written into the HTTP/1 request head as given, outside the header writer that turns CR and LF into spaces. A program that put untrusted text into either could have it add header fields or a second request. A Host with a byte outside Go's ValidHostHeader set now fails the request with `http: invalid Host header` before it connects (Go sends an empty Host on plain HTTP/1, for Unix socket addresses this client does not dial). A User-Agent's CR and LF become spaces and the value is trimmed, as in Go.
+
+- Remote trigger: none by itself; the program must pass untrusted text to `with_host` or the User-Agent header.
+
 ## 2026-11-13: security: a native server closes the connection after a request with both Transfer-Encoding and Content-Length
 
 - Kind: security
