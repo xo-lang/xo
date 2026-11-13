@@ -67,6 +67,19 @@ Conditions (lead):
 - gcp BigQuery sample (whole program, XO_INLINE_STRICT=1): 4,259,996 to
   4,213,288 (-1.1%) with +deadw; Calendar -6.2 KB, aws presign -8.6 KB.
 
+## Implementation (stage 2, x86, Xo Lang 1, 2026-11-13)
+
+- dead_from no longer returns -1 on x86; x86emit.xo's K_RET skips S_DEAD
+  words as emit.xo does (x86_res_locs counts them as GP words, as
+  abi_locs does, so later words keep their registers and stack slots);
+  ret_sret's stores are machine independent MIR, shared with arm64.
+- enum_dead_words on linux/amd64 (xo asm --backend=amd64, against
+  XO_PASSES=+shareret, gotchas/xo-passes-baseline.md): 47 fewer lines
+  with +deadw (the `movl $0` of dead result registers and stack words);
+  +deadw_poison writes the pattern instead. The golden joins the amd64
+  per-push sample (scripts/docker-amd64-sample.txt).
+- Still off by default, returns only.
+
 ## Consequences
 
 - Stored bytes in list elements and result areas become run dependent;
