@@ -1002,7 +1002,7 @@ fn chain_constraints(chain: List[x509.Cert]) -> Str {
     for (k, u) in c.uris.indexed() {
       var host = c.uri_hosts[k].to_lower()
       if host.is_empty() {
-        return "URI with empty host (${u.quote()}) cannot be matched against constraints"
+        return "URI with empty host (${empty_host_uri_text(u).quote()}) cannot be matched against constraints"
       }
       if host.contains(":") && !host.ends_with("]") {
         let hb = host.bytes()
@@ -1291,4 +1291,27 @@ fn policies_ok(chain: List[x509.Cert]) -> Bool {
     }
   }
   !(explicit == 0 && valid_n == 0)
+}
+
+/// A URI with an empty host as Go's url.URL.String writes it, for the
+/// error text: after a scheme, an empty authority ("//" then the end, a
+/// query or a fragment) is dropped (`http://` is `http:`); any other text
+/// is kept.
+fn empty_host_uri_text(u: Str) -> Str {
+  let b = u.bytes()
+  var i = 0
+  while i < b.len() && b[i] != 58 {
+    if b[i] == 47 || b[i] == 63 || b[i] == 35 {
+      return u
+    }
+    i += 1
+  }
+  if i == 0 || i + 2 >= b.len() || b[i + 1] != 47 || b[i + 2] != 47 {
+    return u
+  }
+  let after = i + 3
+  if after == b.len() || b[after] == 63 || b[after] == 35 {
+    return u[0..i + 1] + u[after..]
+  }
+  u
 }
