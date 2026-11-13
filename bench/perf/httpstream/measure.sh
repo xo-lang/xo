@@ -12,6 +12,9 @@ OUT=$2
 shift 2
 SRC=$(cd "$(dirname "$0")" && pwd)
 SIZE=${SIZE:-104857600}
+# STREAM_SIZE and SEND_SIZE set one mode's body alone (send holds it all)
+STREAM_SIZE=${STREAM_SIZE:-$SIZE}
+SEND_SIZE=${SEND_SIZE:-$SIZE}
 PORT=${PORT:-18097}
 mkdir -p "$OUT"
 (cd "$SRC/serve" && go build -o "$OUT/serve" .)
@@ -40,20 +43,21 @@ for c in "$@" gotwin; do
 	for mode in stream send; do
 		best_w=""
 		best_r=""
+		if [ $mode = stream ]; then n=$STREAM_SIZE; else n=$SEND_SIZE; fi
 		for _ in 1 2 3 4 5; do
 			# darwin's time -l prints "N real" and the peak RSS in bytes;
 			# GNU time (Linux) gets a format giving the same two lines
 			t0=$(now)
 			if [ "$(uname)" = Darwin ]; then
-				ADDR=127.0.0.1:$PORT SIZE=$SIZE MODE=$mode /usr/bin/time -l "$OUT/c-$c" >"$OUT/run.txt" 2>"$OUT/time.txt"
+				ADDR=127.0.0.1:$PORT SIZE=$n MODE=$mode /usr/bin/time -l "$OUT/c-$c" >"$OUT/run.txt" 2>"$OUT/time.txt"
 			else
-				ADDR=127.0.0.1:$PORT SIZE=$SIZE MODE=$mode /usr/bin/time -f "%e real
+				ADDR=127.0.0.1:$PORT SIZE=$n MODE=$mode /usr/bin/time -f "%e real
 %M maximum resident set size" "$OUT/c-$c" >"$OUT/run.txt" 2>"$OUT/time.txt"
 			fi
 			t1=$(now)
 			got=$(cat "$OUT/run.txt")
-			if [ "$got" != "$SIZE" ]; then
-				echo "$c $mode: read $got bytes, want $SIZE" >&2
+			if [ "$got" != "$n" ]; then
+				echo "$c $mode: read $got bytes, want $n" >&2
 				exit 1
 			fi
 			w=$(awk "BEGIN{printf \"%.6f\", $t1 - $t0}")

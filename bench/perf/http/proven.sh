@@ -9,8 +9,8 @@
 #           request, p99 latency shown beside them
 #   proxy   bench/perf/httpproxy/measure.sh: a 1 GiB body through Xo's
 #           reverse_proxy and Go's httputil.ReverseProxy (best wall of 5)
-#   stream  bench/perf/httpstream/measure.sh: a 100 MB body read by Xo's
-#           client and Go's, streamed and whole (best wall of 5)
+#   stream  bench/perf/httpstream/measure.sh: a body read by Xo's client
+#           and Go's, 2 GiB streamed and 512 MiB whole (best wall of 5)
 #
 # Prints one line per measure:
 #   row WORKLOAD BACKEND METRIC GO XO
@@ -53,7 +53,8 @@ SIZE=${PROXY_SIZE:-1073741824} sh "$here/../httpproxy/measure.sh" "$XO" "$OUT/pr
 awk '{ w[$1] = $2 } END { print "row proxy arm64 wall_s", w["gotwin"], w["arm64"]; print "row proxy llvm wall_s", w["gotwin"], w["llvm"] }' "$OUT/proxy.txt"
 
 # stream: "<client> <mode> <min wall s> <min peak RSS bytes>"
-sh "$here/../httpstream/measure.sh" "$XO" "$OUT/stream" arm64 llvm >"$OUT/stream.txt"
+# (2 GiB streamed, 512 MiB whole: 100 MB streams in about 11 ms)
+STREAM_SIZE=${STREAM_SIZE:-2147483648} SEND_SIZE=${SEND_SIZE:-536870912} sh "$here/../httpstream/measure.sh" "$XO" "$OUT/stream" arm64 llvm >"$OUT/stream.txt"
 awk '{ w[$1 " " $2] = $3 }
 	END {
 		split("stream send", ms, " ")
