@@ -1,28 +1,21 @@
 kind: perf
 module: x509
-result: fail
-commit: 16beb59d9
-source: 7372ce42930af6d0aae0471de38e283308d8ce5de66c7e32c76d7a703dd46047
+result: pass
+commit: 3f7c914b2
+source: eef73db425ba8ed2fb9394257cf00b4e4a4a635fef903c0060aa87ec10819dd3
 date: 2026-11-13
 host: linux/arm64 host 1
 command: go run ./scripts/stdproven perf -rounds 9 -host "linux/arm64 host 1" x509
-measure: 7 cases of 1 twin directories, worst Xo / Go 1.998 over the cases above 5 ms (Proven at or under 1.05), 1m2s
+measure: 7 cases of 1 twin directories, worst Xo / Go 0.940 over the cases above 5 ms (Proven at or under 1.05), 58s
 
 Performance against Go (decisions 0461, 0616): scripts/twincheck -time 9 over bench/perf/x509; medians of wall time, the two programs alternating.
 
 | workload | Go ms | Xo ms | Xo / Go |
 |---|---|---|---|
-| bench/perf/x509/none (under 5 ms: startup) | 0.8 | 0.5 | 0.599 |
-| bench/perf/x509/parse | 445.1 | 415.7 | 0.934 |
-| bench/perf/x509/verify | 666.0 | 507.0 | 0.761 |
-| bench/perf/x509/verify150 | 281.5 | 562.5 | 1.998 |
-| bench/perf/x509/pool150 | 282.7 | 226.9 | 0.803 |
-| bench/perf/x509/create | 1064.0 | 856.1 | 0.805 |
-| bench/perf/x509/crl | 460.3 | 155.2 | 0.337 |
-
-verify150 verifies against a List of 150 roots, which the native backend
-parses on every call; Go's twin always passes a CertPool (Go's
-VerifyOptions take only pools), so the row compares two different
-APIs. The same verify through an x509.CertPool (decision 0626,
-16beb59d9) is pool150: 0.803 of Go. Next: parse a list's roots
-lazily, by subject, as Go's lazyCert does, so verify150 needs no pool.
+| bench/perf/x509/none (under 5 ms: startup) | 0.8 | 0.5 | 0.598 |
+| bench/perf/x509/parse | 444.5 | 417.7 | 0.940 |
+| bench/perf/x509/verify | 668.4 | 507.2 | 0.759 |
+| bench/perf/x509/verify150 | 281.9 | 221.2 | 0.785 |
+| bench/perf/x509/pool150 | 281.8 | 226.2 | 0.803 |
+| bench/perf/x509/create | 1066.6 | 858.8 | 0.805 |
+| bench/perf/x509/crl | 461.3 | 154.9 | 0.336 |
