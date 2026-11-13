@@ -214,15 +214,13 @@ fn run(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: S
 
 /// A pool's certificates once each (CertPool.AddCert skips one it has).
 fn dedup(xs: List[x509.Cert]) -> List[x509.Cert] {
+  // a map of the DERs, as CertPool.AddCert's (a scan of the earlier ones
+  // was quadratic in the pool: 8000 intermediates took 80 ms)
+  var seen: Map[Bytes, Bool] = {}
   var out: List[x509.Cert] = []
   for x in xs {
-    var have = false
-    for y in out {
-      if y.raw == x.raw {
-        have = true
-      }
-    }
-    if !have {
+    if !seen.contains(x.raw) {
+      seen.put(x.raw, true)
       out.push(x)
     }
   }
