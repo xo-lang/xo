@@ -2012,7 +2012,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         Some(r) => r.undef
         None => arm64.undefined_xo(if p.parts.len() > 1 { p.parts } else { [p.asm] })
       }
-      let und = sepcomp_undefined(os, und0, sep_objs, b.conc)
+      let und = sepcomp_undefined(os, ctx, und0, sep_objs, b.conc)
       if !und.is_empty() {
         let (sym, at) = und[0]
         let rt = if sym.starts_with("_xo_x_") { "" } else { " (the runtime call rt.${sym.trim_prefix("_xo_")}: no backend lowers it, so call it through its std wrapper)" }
@@ -3718,7 +3718,7 @@ fn sepcomp_objs(os: Os, conc: Bool) -> (List[Str], Str) {
 /// und without the names std's object files define (decision 0388): a
 /// program's call of a std function is an undefined symbol its object
 /// leaves to std's.
-fn sepcomp_undefined(os: Os, und: List[(Str, Str)], objs: List[Str], conc: Bool) -> List[(Str, Str)] {
+fn sepcomp_undefined(os: Os, ctx: Ctx, und: List[(Str, Str)], objs: List[Str], conc: Bool) -> List[(Str, Str)] {
   if und.is_empty() {
     return und
   }
@@ -3726,8 +3726,12 @@ fn sepcomp_undefined(os: Os, und: List[(Str, Str)], objs: List[Str], conc: Bool)
   let store = sepcomp_store(os, conc)
   if !store.is_empty() {
     // mapped, not copied, as the link reads it (decision 0402): the copy
-    // was a warm build's peak, 35 MB over the phase before (decision 0448)
-    match read_mapped(os.fs, store) {
+    // was a warm build's peak, 35 MB over the phase before (decision 0448).
+    // Through the real Fs, as the link's read (ld.xo): the run cache's
+    // recording Fs is a user Fs, which read_mapped reads whole, and the
+    // store is under the back-end cache it does not record (an edit's peak
+    // with the run cache on was 87 MB against 46 off, 2026-11-13)
+    match read_mapped(ctx.real_fs ?? os.fs, store) {
       Ok(b) => {
         match macho.store_defs(b) {
           Ok(ss) => {
