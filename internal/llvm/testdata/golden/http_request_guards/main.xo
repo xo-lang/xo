@@ -30,8 +30,21 @@ fn main(os: Os) ! {
   r.handle("POST /echo", fn(req) { http.text(200, "echo [${req.body.to_str_lossy()}]") })
   r.handle("GET /next", fn(_req) { http.text(200, "next") })
   r.wrap(fn(q: http.Request, next: http.Next) -> http.Response { if q.method == "CONNECT" { http.text(200, "tunnel") } else { next(q) } })
-  let srv = http.server(os.net.listen("127.0.0.1:0")?, r)
   let raw = os.net.listen("127.0.0.1:0")?
+  // a ReverseProxy forwards only the query its parse and rewrite hook
+  // saw (GO-2022-1038, GO-2026-4976)
+  let p = http.reverse_proxy(http.client(os.net, 5s), http.parse_url("http://${raw.addr()}/").or_fault("url"))
+  let hook_saw: Chan[Str] = Chan.new(4)
+  let rp = p.with_rewrite(fn(inq: http.Request, out: http.Request) -> http.Request {
+    var keys: List[Str] = []
+    for (k, v) in inq.url.query {
+      keys.push("${k}=${v}")
+    }
+    hook_saw.send(keys.sort().join("&"))
+    out
+  })
+  r.handle_stream("/proxy/{rest...}", fn(req, body) { rp.serve(req, body) })
+  let srv = http.server(os.net.listen("127.0.0.1:0")?, r)
   let seen: Chan[Str] = Chan.new(4)
   scope s {
     s.spawn_background(fn() { srv.serve().or_fault("serve") })
@@ -73,6 +86,13 @@ fn main(os: Os) ! {
     os.stdio.println("CONNECT: ${t2.split("\r\n").first() ?? ""}, request after it answered ${t2.contains("\r\n\r\nnext")}")
 
     let cl = http.client(os.net, 5s)
+    for q in ["a=1&b=%zz&c=1;d=2", "x=1&y=2"] {
+      cl.send(http.new_request("GET", "http://${srv.addr()}/proxy/p?${q}")).ignore_err("proxy probe")
+      let w = seen.recv() ?? ""
+      let line = w.split("\r\n").first() ?? ""
+      os.stdio.println("proxy ${q.quote()}: hook saw ${(hook_saw.recv() ?? "").quote()}, upstream got ${line.quote()}")
+    }
+
     match cl.send(http.new_request("GET", "http://${raw.addr()}/a").with_host("h\r\nX-Injected: 1")) {
       Ok(_) => {
         let w = seen.recv() ?? ""

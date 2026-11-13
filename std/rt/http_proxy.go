@@ -194,6 +194,12 @@ func (p Http_ReverseProxy) M_serve(tk *Task, req Http_Request, body Http_BodyRea
 	Map_remove(tk, &h, "Host")
 	out := req
 	out.F_url = u
+	// cleanQueryParams (GO-2022-1038, GO-2026-4976): a raw query whose
+	// parse dropped parts is rebuilt from what the parse and the rewrite
+	// hook saw, not forwarded as written (the native serve's query_clean)
+	if !proxyQueryClean(req.XRawQuery) {
+		out.XRawQuery = ""
+	}
 	out.F_headers = h
 	out.XFields = nil
 	out.F_body = ""
@@ -244,4 +250,35 @@ func (p Http_ReverseProxy) M_serve(tk *Task, req Http_Request, body Http_BodyRea
 	})
 	resp.F_headers = rh
 	return resp
+}
+
+// proxyQueryClean reports whether a raw query parses whole, as httputil's
+// cleanQueryParams decides: no semicolon, every % a valid escape, and at
+// most 10,000 parameters.
+func proxyQueryClean(s string) bool {
+	parts := 1
+	for i := 0; i < len(s); {
+		switch s[i] {
+		case '&':
+			parts++
+			if parts > 10000 {
+				return false
+			}
+			i++
+		case ';':
+			return false
+		case '%':
+			if i+2 >= len(s) || !isHexDigit(s[i+1]) || !isHexDigit(s[i+2]) {
+				return false
+			}
+			i += 3
+		default:
+			i++
+		}
+	}
+	return true
+}
+
+func isHexDigit(c byte) bool {
+	return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F'
 }

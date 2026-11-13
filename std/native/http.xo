@@ -4482,6 +4482,38 @@ fn header_lists(req: Request) -> (List[Str], List[Str]) {
   (names, values)
 }
 
+/// Whether a raw query parses whole (httputil's cleanQueryParams): no
+/// semicolon, every % starting a valid escape, and within the parameter
+/// limit http1.query_parts keeps.
+fn query_clean(raw: Str) -> Bool {
+  let b = raw.bytes()
+  var parts = 1
+  var i = 0
+  while i < b.len() {
+    let c = b[i]
+    if c == 38 {
+      parts += 1
+      if parts > 10000 {
+        return false // query_parts keeps none past its limit
+      }
+    }
+    if c == 59 {
+      return false
+    }
+    if c == 37 {
+      if i + 2 >= b.len() || !is_hex_byte(b[i + 1]) || !is_hex_byte(b[i + 2]) {
+        return false
+      }
+      i += 3
+      continue
+    }
+    i += 1
+  }
+  true
+}
+
+fn is_hex_byte(c: UInt8) -> Bool { (c >= 48 && c <= 57) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70) }
+
 /// The query map raw parses to: each key's first value (parse_url_loose's).
 fn query_map(raw: Str) -> Map[Str, Str] {
   var m: Map[Str, Str] = {}
@@ -5767,7 +5799,12 @@ fn (p: ReverseProxy) serve(req0: http.Request, body: http.BodyReader) -> http.Re
   }
   h.put("X-Forwarded-Proto", if req.url.scheme.is_empty() { "http" } else { req.url.scheme })
   let _ = h.remove("Host")
-  var out = rt.cast[Request, http.Request](req with {url: u, headers: h, fields: [], body: b""})
+  // cleanQueryParams (GO-2022-1038, GO-2026-4976): a raw query whose
+  // parse dropped parts (a semicolon, a bad escape, past the parameter
+  // limit) is not forwarded as written but rebuilt from what the parse
+  // and the rewrite hook saw
+  let rq = if query_clean(req.raw_query) { req.raw_query } else { "" }
+  var out = rt.cast[Request, http.Request](req with {url: u, raw_query: rq, headers: h, fields: [], body: b""})
   if let Some(f) = p.rewrite.get(0) {
     out = f(req0, out)
   }

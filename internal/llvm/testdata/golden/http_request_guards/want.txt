@@ -5,6 +5,8 @@ CL with TE: body echo [abc]
 CL with TE: Connection: close true
 CL with TE: pipelined request answered false
 CONNECT: HTTP/1.1 200 OK, request after it answered false
+proxy "a=1&b=%zz&c=1;d=2": hook saw "a=1", upstream got "GET /proxy/p?a=1 HTTP/1.1"
+proxy "x=1&y=2": hook saw "x=1&y=2", upstream got "GET /proxy/p?x=1&y=2 HTTP/1.1"
 bad Host: invalid Host header
 User-Agent: "User-Agent: ua  X-Injected: 2", injected field false
 --- stderr

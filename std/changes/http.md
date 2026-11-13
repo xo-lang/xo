@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-11-13: security: ReverseProxy forwards only the query its parse and rewrite hook saw
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), against GO-2022-1038 (CVE-2022-2880) and GO-2026-4976 (CVE-2026-39825)
+- Go reference: net/http/httputil reverseproxy.go cleanQueryParams (applied before Rewrite), go1.26.1
+- Test: golden http_request_guards (a query with a bad escape and a semicolon reaches the upstream as the parsed `a=1`, a clean one as written; arm64, llvm and the Go backend)
+- Affected: releases with http.reverse_proxy (decision 0404 stage D) up to 0.50.1, all backends
+- Shipped in: not yet released
+
+`ReverseProxy.serve` forwarded the incoming raw query as written while its parse matched what the request's query showed. Parameters the parse dropped (a semicolon, a bad percent escape, or any past the 10,000 parameter limit) were invisible to the rewrite hook but still reached the upstream (a query smuggling class). Such a query is now rebuilt from the parsed parameters, as Go's cleanQueryParams does; a clean query is still forwarded as written, keeping repeated keys and their order.
+
+- Remote trigger: any client of a server using `reverse_proxy`.
+
 ## 2026-11-13: security: a native server closes the connection after a 2xx answer to CONNECT
 
 - Kind: security
