@@ -6,6 +6,7 @@
 // names and of others.
 
 use native/llrt/raw
+use native/rt
 
 const CN_NAMES: List[Str] = ["Host", "Accept", "Cookie", "User-Agent", "Connection", "Content-Type", "Authorization", "Content-Length", "Accept-Encoding", "Accept-Language", "X-Request-Id", "Etag", "Hostname", "Accept-Charset", "Content-Types", "Te", "a", "x-a-b-c"]
 
@@ -105,4 +106,31 @@ test "an HTTP/2 response's framing fields as Go's fix for GO-2026-6610 leaves th
     let (k, _) = h2_framing_fields(bad.map(fn(_v) { "Content-Length" }), bad)
     expect(k) == []
   }
+}
+
+test "a head sent a byte at a time is scanned and parsed a bounded number of times" {
+  let head = "GET / HTTP/1.1\r\nHost: s\r\nX-Long: ${"a".repeat(100000)}\r\nX-Two: b\n\r\n"
+  let x = rt.heap_large(X_SIZE)
+  rt.mem_set(x, 0, X_SIZE)
+  x_room(x, X_BUF, head.len() + 16)
+  var parses = 0
+  var done_at = -1
+  for i in 0..head.len() {
+    rt.mem_store(xl(x, X_BUF), i, Int(head.bytes()[i]), 1)
+    xs(x, X_N, i + 1)
+    let hl = head_len(x)
+    let complete = xl(x, X_HSCAN_OFF) == 0
+    if head_parse_due(x, hl, false) {
+      parses += 1
+    }
+    if complete && done_at < 0 {
+      done_at = i + 1
+      expect(hl == head.len())
+    } else if !complete {
+      expect(hl == i + 1)
+    }
+  }
+  expect(done_at == head.len())
+  // 63 short prefixes, then one parse per doubling, then the whole head
+  expect(parses < 100)
 }

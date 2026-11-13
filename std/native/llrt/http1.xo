@@ -1534,7 +1534,13 @@ const X_HEAD_NS = 192
 const X_READ_NS = 200
 const X_DEADLINE = 208
 const X_HDR_DEADLINE = 216
-const X_SIZE = 224
+/// head_len's memo of an incomplete head: X_OFF + 1 when it holds (0:
+/// none), the bytes scanned with no end found, and the length parse_head
+/// last saw, so a head sent a byte at a time costs linear time
+const X_HSCAN_OFF = 224
+const X_HSCAN_N = 232
+const X_HPARSED = 240
+const X_SIZE = 248
 
 /// The modes of a streamed body: none (read before the handler), a
 /// Content-Length body, a chunked one, read to its end, failed, closed
@@ -1710,6 +1716,7 @@ fn fill(h: rthttp.HConn, x: Int) -> Int {
   if xl(x, X_OFF) > 0 && xl(x, X_OFF) == xl(x, X_N) {
     xs(x, X_OFF, 0)
     xs(x, X_N, 0)
+    head_found(x)
   }
   if xl(x, X_CAP) - xl(x, X_N) < 4096 {
     let off = xl(x, X_OFF)
@@ -1762,23 +1769,57 @@ fn head_len(x: Int) -> Int {
   let p = xl(x, X_BUF) + xl(x, X_OFF)
   let n = xl(x, X_N) - xl(x, X_OFF)
   // from one \n to the next, eight bytes a step (a byte at a time was
-  // the largest cost of read_one)
+  // the largest cost of read_one); a head still incomplete at the last
+  // call resumes near where that scan ended
   var i = 0
+  if xl(x, X_HSCAN_OFF) == xl(x, X_OFF) + 1 && xl(x, X_HSCAN_N) <= n {
+    i = xl(x, X_HSCAN_N) - 3
+    if i < 0 {
+      i = 0
+    }
+  } else {
+    xs(x, X_HPARSED, 0)
+  }
   while true {
     let nl = scan.mem_byte(p, i, n, 10)
     if nl < 0 {
+      xs(x, X_HSCAN_OFF, xl(x, X_OFF) + 1)
+      xs(x, X_HSCAN_N, n)
       return n
     }
     let e = nl + 1
     if e < n && rt.mem_load(p, e, 1) == 10 {
+      head_found(x)
       return e + 1
     }
     if e + 1 < n && rt.mem_load(p, e, 1) == 13 && rt.mem_load(p, e + 1, 1) == 10 {
+      head_found(x)
       return e + 2
     }
     i = e
   }
   n
+}
+
+/// Clears head_len's memo: the head is complete.
+fn head_found(x: Int) {
+  xs(x, X_HSCAN_OFF, 0)
+  xs(x, X_HSCAN_N, 0)
+  xs(x, X_HPARSED, 0)
+}
+
+/// Whether the unread input of hl bytes is worth a parse: a complete
+/// head, the end of the stream, or an incomplete head twice the length
+/// of the last one parsed (its early errors still found, at linear cost).
+fn head_parse_due(x: Int, hl: Int, eof: Bool) -> Bool {
+  if eof || xl(x, X_HSCAN_OFF) == 0 {
+    return true
+  }
+  if hl >= 2 * xl(x, X_HPARSED) || hl < 64 {
+    xs(x, X_HPARSED, hl)
+    return true
+  }
+  false
 }
 
 /// The HTTP/1.1 requests of a server connection.
@@ -1957,7 +1998,7 @@ fn (var r: Reader) read_one() -> Int {
         // over with_max_header_bytes (std.md 4.4): 431, as MAX_HEAD's
         p = fail(TOO_LARGE)
         res = TOO_LARGE
-      } else {
+      } else if head_parse_due(x, hl, eof) {
         p = parse_head(input(x, hl), eof)
         res = p.res
       }

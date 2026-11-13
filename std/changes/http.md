@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-13: security: an HTTP/1.1 server reads a slowly sent request head in linear time
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), an extra finding (no Go advisory: net/http reads a head line by line)
+- Test: std/native/llrt/http1_test.xo "a head sent a byte at a time is scanned and parsed a bounded number of times"
+- Affected: every release up to 0.50.1 (native and LLVM backends)
+- Shipped in: not yet released
+- Remote trigger: any client of the server (a denial of service: CPU)
+
+The server looked for the end of an incomplete head from its start and parsed all of it again after every read, so a client sending a head of up to the 1 MiB limit a few bytes at a time cost the server time quadratic in its length. The scan now resumes where the last one ended, and an incomplete head is parsed again only when it has doubled (its early errors are still answered).
+
 ## 2026-11-13: security: an HTTP/1.1 server never sends a 100 Continue after the response head
 
 - Kind: security
