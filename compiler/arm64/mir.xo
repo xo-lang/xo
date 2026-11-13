@@ -47,6 +47,9 @@ const S_MEM = 4
 /// the address of byte imm of the calls' outgoing area (an sret call's
 /// result past its stack arguments, byref.xo sret_slot)
 const S_OUTW = 5
+/// a word of an enum past its active variant's payload (decision 0624):
+/// a return writes nothing for it
+const S_DEAD = 6
 
 /// An operand of a call, a fault stub, or a parallel move.
 struct Src {

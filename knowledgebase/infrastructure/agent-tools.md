@@ -174,6 +174,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   darwin/amd64 too since 2026-10-26);
   `xo dev bisect-pass
   DIR` finds the first pass that changes a program's output.
+- `XO_PASSES=+deadw,+deadw_poison` (decision 0624, 2026-11-13): with
+  +deadw a returned enum's words past its active variant are not
+  written; +deadw_poison writes 0xDEADBEEFDEADBEEF there instead. Run a
+  suspect program or golden under it when a crash or a wrong value
+  might come from code reading an enum word it should not: the poison
+  faults when followed as a pointer and shows up in printed values.
 - `XO_LOWER=-name,...` turns optional SSA builder lowerings off
   (2026-10-21; compiler/ssa lowerings.xo lists them: `eq_lower`, the
   `a.to_lower() == b.to_lower()` rewrite, and `user_cap_call`, decision

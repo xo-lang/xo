@@ -1810,23 +1810,26 @@ fn (var g: G) instr1(v: Int) {
         g.by_ref_return(v)
         return
       }
-      var us: List[Int] = []
+      var srcs: List[Src] = []
+      var nz: List[Int] = []
       for (k, a) in g.f.args_indexed(x.args) {
         if k == 0 && g.sret_ptr != 0 {
           g.ret_sret(a)
           continue
         }
-        for w in g.words(a) {
-          us.push(w)
+        let from = g.dead_from(a)
+        for (i, w) in g.words(a).indexed() {
+          if from >= 0 && i >= from {
+            srcs.push(g.dead_src())
+            continue
+          }
+          srcs.push(rsrc(w))
+          if w != 0 {
+            nz.push(w)
+          }
         }
       }
-      var nz: List[Int] = []
-      for u in us {
-        if u != 0 {
-          nz.push(u)
-        }
-      }
-      let _r = g.add(Inst{kind: K_RET, srcs: regs(us), us: nz})
+      let _r = g.add(Inst{kind: K_RET, srcs: srcs, us: nz})
     }
     Unreachable => {
       let _t = g.add(Inst{kind: K_TRAP})
@@ -3963,6 +3966,35 @@ fn (var g: G) safe_shl(a: Int, khi: Int) -> Bool {
   let lim = 1 << (63 - khi)
   lo >= -lim && hi <= lim - 1
 }
+
+/// The first word of value a that is dead (decision 0624): a is an enum
+/// Variant, so the words past its payload are not part of the value; -1
+/// for none, or when the deadw pass is off (+deadw turns it on) or the
+/// target is x86.
+fn (var g: G) dead_from(a: Int) -> Int {
+  if g.x86 || !g.m.passes_on.contains("deadw") || g.op(a) != ssa.Op.Variant {
+    return -1
+  }
+  let t = g.vty(a)
+  var k = 1
+  for p in g.f.values[a].args {
+    k += g.nwords(g.vty(p))
+  }
+  if k >= g.nwords(t) { -1 } else { k }
+}
+
+/// The operand of a dead word: nothing written, or with +deadw_poison an
+/// odd pattern no pointer has (0xDEADBEEFDEADBEEF), so a reader of a dead
+/// word faults or prints it.
+fn (var g: G) dead_src() -> Src {
+  if g.m.passes_on.contains("deadw_poison") {
+    return Src{kind: S_IMM, imm: DEAD_POISON}
+  }
+  Src{kind: S_DEAD}
+}
+
+/// The +deadw_poison word (0xDEADBEEFDEADBEEF as an Int).
+const DEAD_POISON = -2401053088876216593
 
 /// The words of variant tag of enum t.
 fn (var g: G) variant(t: Int, tag: Int, args: List[Int]) -> List[Int] {

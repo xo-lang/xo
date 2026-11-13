@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+0 err bad 0
+1 ok line 1 same=true
+2 ok a2b22d same=true
+3 ok dot same=true
+4 err bad 4
+5 ok a5b52d same=true
+6 ok dot same=true
+7 ok line 7 same=true
+8 err bad 8
+9 ok dot same=true
+10 ok line 10 same=true
+11 ok a11b112d same=true
+equal 12 of 12, map 9 keys
+dot 9, line 4 4
+done
+--- stderr

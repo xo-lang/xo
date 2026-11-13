@@ -1,0 +1,31 @@
+// plain_words (closures.xo) decides when a value compares by its bytes;
+// an enum's words past its active variant may be unwritten (decision
+// 0624), so no type holding an enum may be plain.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// A module with Int (0), an enum Shape (1: Dot, Box(Int, Int)), a
+/// struct of two Ints (2), a struct holding a Shape (3) and a tuple of
+/// an Int and a Shape (4).
+fn plain_module() -> ssa.Module {
+  var m = ssa.Module{}
+  m.types.push(ssa.SType{kind: ssa.Kind.Int, name: "Int"})
+  m.types.push(ssa.SType{kind: ssa.Kind.Enum, name: "Shape", variants: [ssa.SVariant{name: "Dot"}, ssa.SVariant{name: "Box", fields: [ssa.SField{name: "a", ty: 0}, ssa.SField{name: "b", ty: 0}]}]})
+  m.types.push(ssa.SType{kind: ssa.Kind.Struct, name: "Pair", fields: [ssa.SField{name: "x", ty: 0}, ssa.SField{name: "y", ty: 0}]})
+  m.types.push(ssa.SType{kind: ssa.Kind.Struct, name: "Holder", fields: [ssa.SField{name: "n", ty: 0}, ssa.SField{name: "s", ty: 1}]})
+  m.types.push(ssa.SType{kind: ssa.Kind.Tuple, name: "(Int, Shape)", elems: [0, 1]})
+  m
+}
+
+test "Ints and structs of them are plain words" {
+  var g = G{m: plain_module(), os: "darwin"}
+  expect(g.plain_words(0)) == true
+  expect(g.plain_words(2)) == true
+}
+
+test "an enum, and a struct or tuple holding one, is never plain words (decision 0624)" {
+  var g = G{m: plain_module(), os: "darwin"}
+  expect(g.plain_words(1)) == false
+  expect(g.plain_words(3)) == false
+  expect(g.plain_words(4)) == false
+}

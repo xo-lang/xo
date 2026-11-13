@@ -46,6 +46,27 @@ Conditions (lead):
    copies raw words. A later byte-level serializer, or struct passing
    through `use c`, must zero or skip dead words.
 
+## Implementation (stage 1, Xo Lang 3, 2026-11-13)
+
+- compiler/arm64 isel.xo `dead_from`: a Return's argument that is an
+  Op.Variant has its words from 1 + the payload's words on dead; the
+  K_RET operand is S_DEAD (mir.xo), which emit.xo's return moves skip
+  (register and stack result words), and byref.xo `ret_sret` stores only
+  the live words. arm64 only for now (dead_from is -1 on x86), returns
+  only: list elements and struct fields still store every word.
+- XO_PASSES=+deadw turns it on (passes.xo, off by default);
+  +deadw_poison stores 0xDEADBEEFDEADBEEF in each dead word instead, as a
+  pass name rather than a new environment variable, so it needs no new
+  codegen input and is in the cache keys already.
+- golden enum_dead_words (returns of each variant in registers and on
+  the stack, List, Map and struct stores, copy, eq, hash, drop): the same
+  output off, +deadw and +deadw_poison, on LLVM and Go, and XO_LEAKCHECK=1
+  reports 0 live objects.
+- closures.xo plain_words says why an Enum is never plain;
+  plain_words_test.xo pins it.
+- gcp BigQuery sample (whole program, XO_INLINE_STRICT=1): 4,259,996 to
+  4,213,288 (-1.1%) with +deadw; Calendar -6.2 KB, aws presign -8.6 KB.
+
 ## Consequences
 
 - Stored bytes in list elements and result areas become run dependent;

@@ -44,6 +44,12 @@ pub fn passes() -> List[Str] {
     // emit.xo ret_epilogue: a function's framed returns share one
     // epilogue
     "shareret",
+    // decision 0624, off unless XO_PASSES=+deadw: a returned enum
+    // Variant's words past its payload are not written (isel.xo
+    // dead_from); +deadw_poison writes 0xDEADBEEFDEADBEEF there instead,
+    // to catch a reader
+    "deadw",
+    "deadw_poison",
     // compiler/llvm func.xo (decision 0338): Float loops marked for a
     // full unroll; off for a clang before LLVM 19 (compiler/xo clang.xo
     // unroll_cap_ok)

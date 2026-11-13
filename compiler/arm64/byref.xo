@@ -257,7 +257,21 @@ fn (var g: G) ret_sret(a: Int) {
     g.clobber()
     return
   }
-  g.store_words_at(g.sret_ptr, 0, g.words(a))
+  let from = g.dead_from(a)
+  if from < 0 {
+    g.store_words_at(g.sret_ptr, 0, g.words(a))
+    return
+  }
+  // an enum Variant: its dead words are not stored (decision 0624)
+  let ws = g.words(a)
+  g.store_words_at(g.sret_ptr, 0, ws[0..from])
+  if g.m.passes_on.contains("deadw_poison") {
+    var ps: List[Int] = []
+    for _ in from..ws.len() {
+      ps.push(g.imm(DEAD_POISON))
+    }
+    g.store_words_at(g.sret_ptr, from, ps)
+  }
 }
 
 /// The fewest words of a field held in memory that a Return's make

@@ -1,0 +1,79 @@
+// Enum values whose active variant is smaller than the largest one
+// (decision 0624: the words past the payload may be left unwritten, or
+// hold +deadw_poison's pattern): returned from functions (registers and
+// the stack), stored in a List, a Map and a struct, copied, compared,
+// hashed and dropped (XO_LEAKCHECK=1 checks the heap after).
+enum Shape {
+  Dot
+  Line(a: Str)
+  Box(a: Str, b: Str, c: List[Int], d: Str)
+}
+
+struct Holder {
+  s: Shape
+  n: Int
+}
+
+fn make(i: Int) -> Shape {
+  if i % 3 == 0 {
+    return Shape.Dot
+  }
+  if i % 3 == 1 {
+    return Shape.Line(a: "line ${i}")
+  }
+  Shape.Box(a: "a${i}", b: "b${i}", c: [i, i + 1], d: "d")
+}
+
+fn wrap(i: Int) -> Shape ! Str {
+  if i % 4 == 0 {
+    return Err("bad ${i}")
+  }
+  Ok(make(i))
+}
+
+fn name(s: Shape) -> Str {
+  match s {
+    Dot => "dot"
+    Line(a) => a
+    Box(a, b, c, d) => "${a}${b}${c.len()}${d}"
+  }
+}
+
+fn run(out: Stdio) uses stdio {
+  let os = Os2{stdio: out}
+  {
+    var xs: List[Shape] = []
+    var m: Map[Shape, Int] = {}
+    var hs: List[Holder] = []
+    for i in 0..12 {
+      let s = make(i)
+      xs.push(s)
+      m[s] = i
+      hs.push(Holder{s: s, n: i})
+      match wrap(i) {
+        Ok(w) => os.stdio.println("${i} ok ${name(w)} same=${w == s}")
+        Err(e) => os.stdio.println("${i} err ${e}")
+      }
+    }
+    let copy = xs.clone()
+    var eq = 0
+    for i in 0..xs.len() {
+      if copy[i] == xs[i] && hs[i].s == xs[i] {
+        eq += 1
+      }
+    }
+    os.stdio.println("equal ${eq} of ${xs.len()}, map ${m.len()} keys")
+    os.stdio.println("dot ${m.get(Shape.Dot) ?? -1}, line 4 ${m.get(Shape.Line(a: "line 4")) ?? -1}")
+    xs = []
+    hs = []
+  }
+}
+
+struct Os2 {
+  stdio: Stdio
+}
+
+fn main(os: Os) {
+  run(os.stdio)
+  os.stdio.println("done")
+}

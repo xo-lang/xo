@@ -1185,6 +1185,9 @@ fn (var g: G) emit_inst(var b: List[Str], inst: Inst, next: Int) {
   } else if inst.kind == K_RET {
     var ms: List[Move] = []
     for (k, l) in g.abi_locs(inst.srcs).indexed() {
+      if inst.srcs[k].kind == S_DEAD {
+        continue // decision 0624: a dead enum word is not written
+      }
       var dst = MLoc{reg: l.reg}
       if l.reg < 0 {
         // past the registers: into the caller's stack argument area (its

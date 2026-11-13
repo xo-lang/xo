@@ -44,6 +44,11 @@ fn (g: G) part_types(t: Int) -> List[Int] {
 /// Whether a value of type t is plain words, equal exactly when its bytes
 /// are: Int, Bool, and structs and tuples of them (no Float: NaN is not
 /// equal to itself; nothing counted or tagged).
+///
+/// An Enum is never plain (decision 0624): the words past its active
+/// variant's payload may be unwritten (XO_PASSES=+deadw), so a byte
+/// compare or byte hash of a value holding one would read run dependent
+/// bytes. plain_words_test.xo pins this.
 fn (var g: G) plain_words(t: Int) -> Bool {
   match g.m.types[t].kind {
     Int | Bool | Unit | Cap => true
