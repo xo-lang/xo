@@ -1,7 +1,7 @@
 # 0624: Dead enum words are not written
 
 Status: Accepted (lead, 2026-11-12, with the conditions below; Xo Lang 3).
-Implementation pending: behind a pass flag, off by default.
+On by default since stage 4 (Xo Lang 1, after the 0.51 seed); `XO_PASSES=-deadw` turns it off.
 
 ## Context
 
@@ -104,6 +104,28 @@ Conditions (lead):
   variant literals and returns a tuple: 95 fewer lines than +shareret on
   darwin/arm64, 143 on linux/amd64; the same output in the three modes
   and on LLVM, XO_LEAKCHECK=1 0 live.
+
+## Default on (stage 4, Xo Lang 1)
+
+`pass_on(g.m, "deadw")` replaces the opt-in check in isel.xo dead_from
+and dead_mask, as view_proj flipped (decision 0465); deadw_poison stays
+opt in. Gate (host 2, on main an unpublished build after the 0.51 seed): repo,
+fp, codegen 46/46, cross, xounit 608, cmd, the full arm64 package,
+selfbuild, seedbuild (xo 0.50.1); amd64 all 707 of 707. Poison sweep of
+the landing commit (deadw on, deadw_poison forced, never pushed, host
+1): the full arm64 package, internal/gen, TestStdModules for every std
+module, fp, codegen, xounit, and the amd64 sample (53 of 53); for
+stages 3a and 3b also amd64 all, TestStdCorpora native and progen.
+Sizes (__text, whole program, XO_SEPCOMP=0, XO_INLINE_STRICT=1,
+darwin/arm64, -deadw against the default, on the landing commit
+4e7779f1f, 2026-11-13):
+
+| program | off | on | change |
+|---|---|---|---|
+| gcp calendar | 2,028,688 | 2,022,252 | -0.32% |
+| gcp BigQuery sample | 4,281,956 | 4,234,800 | -1.10% |
+| aws presign | 2,434,924 | 2,425,328 | -0.39% |
+| xo | 37,806,884 | 37,753,724 | -0.14% |
 
 ## Consequences
 

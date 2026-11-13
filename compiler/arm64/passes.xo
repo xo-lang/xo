@@ -44,9 +44,10 @@ pub fn passes() -> List[Str] {
     // emit.xo ret_epilogue: a function's framed returns share one
     // epilogue
     "shareret",
-    // decision 0624, off unless XO_PASSES=+deadw: a returned enum
+    // decision 0624, on by default (XO_PASSES=-deadw turns it off): an enum
     // Variant's words past its payload are not written (isel.xo
-    // dead_from); +deadw_poison writes 0xDEADBEEFDEADBEEF there instead,
+    // dead_mask: returns, sret stores, list elements, struct and tuple
+    // literals); +deadw_poison writes 0xDEADBEEFDEADBEEF there instead,
     // to catch a reader
     "deadw",
     "deadw_poison",
