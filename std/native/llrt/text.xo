@@ -368,10 +368,13 @@ pub fn parse_duration(s: Str) -> Int? {
           return None
         }
         nv = nv.wrapping_mul(10).wrapping_sub(c)
+        // a sum past -2^63 wraps positive; checked at each digit, since
+        // the next digit's guard above passes a positive value and the
+        // product can wrap back (92233720368547758097ns was 17 ns)
+        if nv > 0 {
+          return None
+        }
         j += 1
-      }
-      if nv > 0 {
-        return None
       }
     }
     let pre = i != pl

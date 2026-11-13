@@ -35,3 +35,38 @@ test "the integer part guards 2^63" {
   expect(nanos("-9223372036854775809ns") == -1)
   expect(nanos("9999999999999999999999ns") == -1)
 }
+
+test "durations with 19 or more digits are out of range as Go's ParseDuration" {
+  // a fuzz case (jsonfuzz seed 325): 92233720368547758097ns wrapped to 17
+  // ns; the cases and verdicts are go1.27.4's time.ParseDuration
+  var bad: List[Str] = []
+  for (s, want) in LONG_DURATIONS {
+    let got = match parse_duration(s) {
+      Some(v) => "${v}"
+      None => "err"
+    }
+    if got != want {
+      bad.push("${s}: got ${got}")
+    }
+  }
+  expect(bad) == []
+}
+
+const LONG_DURATIONS: List[(Str, Str)] = [
+  ("92233720368547758097ns", "err"),
+  ("18446744073709551633ns", "err"),
+  ("9223372036854775807ns", "9223372036854775807"),
+  ("9223372036854775808ns", "err"),
+  ("-9223372036854775808ns", "-9223372036854775808"),
+  ("-9223372036854775809ns", "err"),
+  ("99999999999999999999ns", "err"),
+  ("00000000000000000000001ns", "1"),
+  ("000000000000000000009223372036854775807ns", "9223372036854775807"),
+  ("92233720368547758070ns", "err"),
+  ("184467440737095516160ns", "err"),
+  ("9223372036854775809ns", "err"),
+  ("27670116110564327424ns", "err"),
+  ("1000000000000000000000h", "err"),
+  ("92233720368547758097us", "err"),
+  ("+92233720368547758097ns", "err"),
+]

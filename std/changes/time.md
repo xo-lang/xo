@@ -1,5 +1,18 @@
 # std/time changes
 
+## 2026-11-13: fix: a duration of 20 or more digits past the range is an error, not a wrapped value (native)
+
+- Kind: fix
+- Commit: this commit
+- Found by: the json fuzz of decision 0616 (jsonfuzz seed 325, case 615000: `"92233720368547758097ns"` decoded to 17 ns)
+- Go reference: time.ParseDuration (go1.27.4): "time: invalid duration"
+- Affected: Xo 0.50.1 and earlier, native backends: Duration.parse and everything that reads a duration's text (json Duration fields, flags, config)
+- Test: std/native/llrt/text_test.xo, 16 long durations with go1.27.4's results (3 fail without the change)
+- Timing: none (the check is on the path for 19 or more digits only)
+- Shipped in: not yet released
+
+The integer part's slow path for 19 or more digits checked the range before each digit but not after it, so a sum that wrapped past -2^63 went on with the next digit and could wrap back into range: 92233720368547758097 (5 times 2^64, plus 17) parsed as 17. A wrapped sum now ends the parse with the error.
+
 ## 2026-11-11: feature: parse_civil, Civil.format, Civil.unix, Civil.to_time (years outside 1677 to 2262)
 
 - Kind: feature
