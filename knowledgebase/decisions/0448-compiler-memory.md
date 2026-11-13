@@ -1452,3 +1452,47 @@ Measured before stage 2 lands: max RSS on aiplatform/apiv1's cold test
 build and on xo's self build, and a self build --ab for compile time (an
 extra indirection on each argument read), both on the linux/arm64
 offload hosts.
+
+### Stage 2 landed: the trade (Xo Lang 1, 2026-11-13)
+
+Stage 1 landed as 1636dce5d (identity 60 programs, 0 differ). Stage 2
+puts the pool behind the accessors: Value.args is `Args{w}`, one word
+packing the function's tag, the range's start and its length
+((tag << 48) | (start << 16) | len); Func.arg checks the tag and the
+bounds in one comparison and faults out of line (args_fault), so it
+inlines (1,557 sites in xo). Output unchanged: identity 60/0, and
+aiplatform's test build assembly identical to the base (330 files,
+118,087,548 lines).
+
+`xo bench --ab` against the base 3976a831a (linux/arm64 offload hosts):
+
+| program | host | wall | CPU | max RSS |
+|---|---|---|---|---|
+| self build (stage2) | host 2, n=3 | 0.958 | 0.953 | 0.885 |
+| self build | host 1 | 0.978 | 0.973 | 0.873 |
+| aiplatform/apiv1 test build | host 3, n=9 | 1.044 to 1.047 | 1.12 to 1.123 | 0.818 to 0.823 |
+| aiplatform/apiv1 test build | host 1, n=9 | 1.053 | 1.137 | 0.829 |
+| aiplatform/apiv1 test build | host 2, n=9 (loaded, spread 14-31%) | 1.095 | 1.117 | 0.800 |
+
+The lead took the trade (2026-11-13): memory is the binding limit on the
+hosts and on laptops, and the self build improves on every axis.
+
+Where aiplatform's CPU goes (Mac, single threaded emit, XO_EMIT_JOBS=1,
+`time -l`): instructions +1.4% (1,816 to 1,841 G), cycles +8 to 10% (452
+to 492 G), so it is stalls, not work. The direct cost is about 1.3 s
+(ArgsIter.next 0.67, Func.arg 0.49, args_start 0.16 of a single
+threaded profile); the rest is in arm64 regalloc, overlaps_sorted and
+word_hints, which read only MIR, run the same code (regalloc at the same
+address), and slow down by where their data lands. Throwaway variants,
+cycles (G): base 468, pool 486, pool with an unused Value word 485 (not
+the Value's size), pool with per-value lists allocated and dropped at
+renumber 496 (not a filled free list), pool with per-value lists kept
+live until the function is freed 448 (faster than the base), pool with
+the function's SSA body freed after isel, before regalloc 476 on the Mac
+but no gain on host 2 (CPU 1.152). So small blocks that live as long as
+the function and are freed with it make the next function's emit faster.
+
+Follow-up (open): win the CPU back by allocating what emit allocates
+per function from per-function memory (an arena, or the pool's buffer
+reused across functions), so a function's MIR lands in recently freed
+blocks; measure with `--ab` on aiplatform and the self build.
