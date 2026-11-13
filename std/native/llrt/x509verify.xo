@@ -329,14 +329,23 @@ fn build(var s: Search, chain: List[x509.Cert], inters: List[x509.Cert], roots: 
   let before = s.chains.len()
   var err = LevelErr{code: -1, bad: cur, hint: ""}
   var hint = ""
+  var stop = false
   for kind in [ROOT, INTERMEDIATE] {
+    if stop {
+      break
+    }
     for c in parents(cur, if kind == ROOT { roots } else { inters }) {
-      if !c.has_key || in_chain(c, chain) {
-        continue
-      }
+      // every candidate counts, and the limit ends the whole search, as
+      // go1.27's buildChains (GO-2026-4947: candidates skipped before the
+      // count, and the search going on past the limit, let a crafted pool
+      // cost far more than the limit's work)
       s.checks += 1
       if s.checks > MAX_CHECKS {
         err = LevelErr{code: CHECK_LIMIT, bad: cur, hint: ""}
+        stop = true
+        break
+      }
+      if !c.has_key || in_chain(c, chain) {
         continue
       }
       let why = x509.check_from(cur, c)
@@ -357,6 +366,10 @@ fn build(var s: Search, chain: List[x509.Cert], inters: List[x509.Cert], roots: 
         s.chains.push(next)
       } else {
         err = build(s, next, inters, roots, now)
+        if err.code == CHECK_LIMIT {
+          stop = true
+          break
+        }
       }
     }
   }
@@ -1292,10 +1305,12 @@ fn policies_ok(chain: List[x509.Cert]) -> Bool {
             }
           } else {
             pg_delete_leaf(g, iss)
-            pg_prune(g)
           }
           m += 2
         }
+        // 6.1.4 (b) (3) (ii): once after the deletions, as go1.27
+        // (GO-2026-4946: a prune per mapping was quadratic in them)
+        pg_prune(g)
         for (k, iss) in map_keys.indexed() {
           let matching = pg_find(g, g.depth, iss)
           if matching >= 0 {
