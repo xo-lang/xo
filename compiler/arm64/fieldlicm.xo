@@ -196,18 +196,18 @@ fn hoist_loop(var f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body: 
         continue
       }
       let k = ssa.auxw_int(x.aux)
-      let e = f.values[x.args[0]]
+      let e = f.values[f.arg(x.args, 0)]
       if e.op != ssa.Op.Call || !f.name_is(e, "list.index") || e.args.len() != 2 {
         continue
       }
-      let idx = e.args[1]
+      let idx = f.arg(e.args, 1)
       let ib = ssa.block_of(f.values[idx].tb)
       if ib < 0 || body[ib] {
         continue
       }
       // the list at the loop's entry that field k of the element is read
       // from in every iteration
-      let l = field_root(f, e.args[0], k, h, body, [], FIELD_DEPTH)
+      let l = field_root(f, f.arg(e.args, 0), k, h, body, [], FIELD_DEPTH)
       if l < 0 {
         continue
       }
@@ -242,9 +242,11 @@ fn hoist_loop(var f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body: 
       var nu = made.get((idx, lp, k)) ?? -1
       if nu < 0 {
         let ne = f.values.len()
-        f.values.push(ssa.Value{op: ssa.Op.Call, tb: ssa.pack_tb(ssa.ty_of(e.tb), p), args: [lp, idx], aux: f.pack(f.aux(e)), lp: ssa.pack_lp(0, ssa.line_of(e.lp)), pi: ssa.pack_pi(-1, ssa.inl_of(e.pi))})
+        let pa = f.mk_args([lp, idx])
+        f.values.push(ssa.Value{op: ssa.Op.Call, tb: ssa.pack_tb(ssa.ty_of(e.tb), p), args: pa, aux: f.pack(f.aux(e)), lp: ssa.pack_lp(0, ssa.line_of(e.lp)), pi: ssa.pack_pi(-1, ssa.inl_of(e.pi))})
         nu = f.values.len()
-        f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(ssa.ty_of(x.tb), p), args: [ne], aux: f.pack(f.aux(x)), lp: ssa.pack_lp(0, ssa.line_of(x.lp)), pi: ssa.pack_pi(-1, ssa.inl_of(x.pi))})
+        let pb = f.mk_args([ne])
+        f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(ssa.ty_of(x.tb), p), args: pb, aux: f.pack(f.aux(x)), lp: ssa.pack_lp(0, ssa.line_of(x.lp)), pi: ssa.pack_pi(-1, ssa.inl_of(x.pi))})
         moved.push(ne)
         moved.push(nu)
         made[(idx, lp, k)] = nu
@@ -260,9 +262,9 @@ fn hoist_loop(var f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body: 
   f.blocks[p].instrs = ins[0..n - 1] + moved + [ins[n - 1]]
   for b in 0..nb {
     for v in f.blocks[b].instrs {
-      for (i, a) in f.values[v].args.indexed() {
+      for (i, a) in f.args_indexed(f.values[v].args) {
         if let Some(r) = repl.get(a) {
-          f.values[v].args[i] = r
+          f.set_arg(v, i, r)
         }
       }
     }
@@ -327,13 +329,13 @@ fn field_root(f: ssa.Func, x: Int, k: Int, h: Int, body: List[Bool], seen: List[
     return r
   }
   if xv.op == ssa.Op.Reuse && xv.args.len() == 1 {
-    return field_root(f, xv.args[0], k, h, body, seen, d - 1)
+    return field_root(f, f.arg(xv.args, 0), k, h, body, seen, d - 1)
   }
   if xv.op == ssa.Op.Call && f.name_is(xv, "list.set") && xv.args.len() == 3 {
     // the stored element: element j of the same list with other fields
     // set
     var s = -1
-    s = xv.args[2]
+    s = f.arg(xv.args, 2)
     for _ in 0..16 {
       let sv = f.values[s]
       if sv.op != ssa.Op.SetField {
@@ -342,13 +344,13 @@ fn field_root(f: ssa.Func, x: Int, k: Int, h: Int, body: List[Bool], seen: List[
       if ssa.auxw_int(sv.aux) == k {
         return -1
       }
-      s = sv.args[0]
+      s = f.arg(sv.args, 0)
     }
     let sv = f.values[s]
-    if sv.op != ssa.Op.Call || !f.name_is(sv, "list.index") || sv.args.len() != 2 || sv.args[0] != xv.args[0] || sv.args[1] != xv.args[1] {
+    if sv.op != ssa.Op.Call || !f.name_is(sv, "list.index") || sv.args.len() != 2 || f.arg(sv.args, 0) != f.arg(xv.args, 0) || f.arg(sv.args, 1) != f.arg(xv.args, 1) {
       return -1
     }
-    return field_root(f, xv.args[0], k, h, body, seen, d - 1)
+    return field_root(f, f.arg(xv.args, 0), k, h, body, seen, d - 1)
   }
   -1
 }
@@ -403,7 +405,7 @@ fn new_proof(f: ssa.Func, rpo: List[Int]) -> Proof {
     if x.op != ssa.Op.Call || x.args.len() != 1 || !(f.name_of(x) is "list.len" | "Str.len") {
       continue
     }
-    let r = len_root(f, x.args[0], [], FIELD_DEPTH)
+    let r = len_root(f, f.arg(x.args, 0), [], FIELD_DEPTH)
     if r < 0 {
       continue
     }
@@ -419,7 +421,7 @@ fn new_proof(f: ssa.Func, rpo: List[Int]) -> Proof {
     if x.op != ssa.Op.Call || x.args.is_empty() || !shrinks(f, x) {
       continue
     }
-    let r = len_root(f, x.args[0], [], FIELD_DEPTH)
+    let r = len_root(f, f.arg(x.args, 0), [], FIELD_DEPTH)
     if r >= 0 {
       pr.facts[fact_key(FACT_UNSTABLE, r)] = [(0, 0)]
     }
@@ -432,7 +434,7 @@ fn new_proof(f: ssa.Func, rpo: List[Int]) -> Proof {
     if tv.op != ssa.Op.Branch || tv.args.is_empty() || ssa.succ_n(tv) != 2 {
       continue
     }
-    let c = f.values[tv.args[0]]
+    let c = f.values[f.arg(tv.args, 0)]
     if c.args.len() != 2 {
       continue
     }
@@ -442,11 +444,11 @@ fn new_proof(f: ssa.Func, rpo: List[Int]) -> Proof {
     var x = -1
     var n = -1
     if c.op == ssa.Op.Lt {
-      x = c.args[0]
-      n = c.args[1]
+      x = f.arg(c.args, 0)
+      n = f.arg(c.args, 1)
     } else if c.op == ssa.Op.Gt {
-      x = c.args[1]
-      n = c.args[0]
+      x = f.arg(c.args, 1)
+      n = f.arg(c.args, 0)
     }
     if x >= 0 && f.blocks[tb].preds.len() == 1 {
       pr.lt_fact(x, n, tb)
@@ -466,15 +468,15 @@ fn new_proof(f: ssa.Func, rpo: List[Int]) -> Proof {
     } else if c.op == ssa.Op.Gt {
       // !(x > n), which is x <= n: x is the first argument here (the
       // second one is n, the pair the true edge fact above uses)
-      var ls = pr.facts.get(fact_key(FACT_LE, c.args[0])) ?? []
-      ls.push((c.args[1], fb))
-      pr.facts[fact_key(FACT_LE, c.args[0])] = ls
+      var ls = pr.facts.get(fact_key(FACT_LE, f.arg(c.args, 0))) ?? []
+      ls.push((f.arg(c.args, 1), fb))
+      pr.facts[fact_key(FACT_LE, f.arg(c.args, 0))] = ls
     } else if c.op == ssa.Op.Ge {
       // !(x >= n) is x < n
-      pr.lt_fact(c.args[0], c.args[1], fb)
+      pr.lt_fact(f.arg(c.args, 0), f.arg(c.args, 1), fb)
     } else if c.op == ssa.Op.Le {
       // !(x <= n) is n < x
-      pr.lt_fact(c.args[1], c.args[0], fb)
+      pr.lt_fact(f.arg(c.args, 1), f.arg(c.args, 0), fb)
     }
   }
   pr
@@ -528,11 +530,11 @@ fn (var pr: Proof) min_fact(f: ssa.Func, c: ssa.Value, tb: Int, fb: Int) {
     return
   }
   var op = c.op
-  var lv = c.args[0]
-  var kv = c.args[1]
+  var lv = f.arg(c.args, 0)
+  var kv = f.arg(c.args, 1)
   if f.values[kv].op != ssa.Op.Const {
-    lv = c.args[1]
-    kv = c.args[0]
+    lv = f.arg(c.args, 1)
+    kv = f.arg(c.args, 0)
     op = match c.op {
       ssa.Op.Lt => ssa.Op.Gt
       ssa.Op.Gt => ssa.Op.Lt
@@ -562,7 +564,7 @@ fn (var pr: Proof) min_fact(f: ssa.Func, c: ssa.Value, tb: Int, fb: Int) {
   if blk < 0 || f.blocks[blk].preds.len() != 1 {
     return
   }
-  let r = len_root(f, l.args[0], [], FIELD_DEPTH)
+  let r = len_root(f, f.arg(l.args, 0), [], FIELD_DEPTH)
   if r < 0 {
     return
   }
@@ -671,7 +673,7 @@ fn (pr: Proof) sub_index(f: ssa.Func, at: Int, idx: Int, r: Int) -> Bool {
   if x.op != ssa.Op.Sub || x.args.len() != 2 {
     return false
   }
-  let kv = f.values[x.args[1]]
+  let kv = f.values[f.arg(x.args, 1)]
   if kv.op != ssa.Op.Const {
     return false
   }
@@ -684,7 +686,7 @@ fn (pr: Proof) sub_index(f: ssa.Func, at: Int, idx: Int, r: Int) -> Bool {
   if !(pr.facts.get(fact_key(FACT_UNSTABLE, r)) ?? []).is_empty() {
     return false
   }
-  let v = x.args[0]
+  let v = f.arg(x.args, 0)
   if pr.low_at(f, at, v) < k {
     return false
   }
@@ -706,7 +708,7 @@ fn (pr: Proof) bound_at_most(f: ssa.Func, n: Int, r: Int, at: Int) -> Bool {
 /// container root r.
 fn (pr: Proof) len_is(f: ssa.Func, v: Int, r: Int) -> Bool {
   let x = f.values[v]
-  x.op == ssa.Op.Call && x.args.len() == 1 && (f.name_of(x) is "list.len" | "Str.len") && len_root(f, x.args[0], [], FIELD_DEPTH) == r
+  x.op == ssa.Op.Call && x.args.len() == 1 && (f.name_of(x) is "list.len" | "Str.len") && len_root(f, f.arg(x.args, 0), [], FIELD_DEPTH) == r
 }
 
 /// The container root of value v when v is a `list.len`, else -1.
@@ -715,7 +717,7 @@ fn len_value_root(f: ssa.Func, v: Int) -> Int {
   if x.op != ssa.Op.Call || x.args.len() != 1 || !(f.name_of(x) is "list.len" | "Str.len") {
     return -1
   }
-  len_root(f, x.args[0], [], FIELD_DEPTH)
+  len_root(f, f.arg(x.args, 0), [], FIELD_DEPTH)
 }
 
 /// Whether call x can change the length of the list it takes first: any
@@ -755,9 +757,9 @@ fn (pr: Proof) at_most(f: ssa.Func, v: Int, n: Int, at: Int, seen: List[Int], d:
   // wrap: checked (it has a position, so an overflow faults) or w never
   // negative (a loop's `n -= 1` back edge)
   if x.op == ssa.Op.Sub && x.args.len() == 2 {
-    let kv = f.values[x.args[1]]
-    if kv.op == ssa.Op.Const && ssa.auxw_int(kv.aux) >= 0 && (ssa.has_pos(x.lp) || pr.nonneg(f, x.args[0], [], FIELD_DEPTH)) {
-      return pr.at_most(f, x.args[0], n, at, seen, d - 1)
+    let kv = f.values[f.arg(x.args, 1)]
+    if kv.op == ssa.Op.Const && ssa.auxw_int(kv.aux) >= 0 && (ssa.has_pos(x.lp) || pr.nonneg(f, f.arg(x.args, 0), [], FIELD_DEPTH)) {
+      return pr.at_most(f, f.arg(x.args, 0), n, at, seen, d - 1)
     }
     return false
   }
@@ -808,12 +810,12 @@ fn (pr: Proof) rem_of_len(f: ssa.Func, idx: Int, l: Int) -> Bool {
   if x.op != ssa.Op.Rem || x.args.len() != 2 {
     return false
   }
-  let nv = f.values[x.args[1]]
+  let nv = f.values[f.arg(x.args, 1)]
   if nv.op != ssa.Op.Call || !f.name_is(nv, "list.len") || nv.args.len() != 1 {
     return false
   }
   let r = len_root(f, l, [], FIELD_DEPTH)
-  r >= 0 && len_root(f, nv.args[0], [], FIELD_DEPTH) == r && pr.nonneg(f, x.args[0], [], FIELD_DEPTH)
+  r >= 0 && len_root(f, f.arg(nv.args, 0), [], FIELD_DEPTH) == r && pr.nonneg(f, f.arg(x.args, 0), [], FIELD_DEPTH)
 }
 
 /// The values n with `x < n` known in block at.
@@ -849,7 +851,7 @@ fn (pr: Proof) div_of_len(f: ssa.Func, at: Int, idx: Int, sv: Int) -> Bool {
   if (x.op != ssa.Op.Shr && x.op != ssa.Op.Div) || x.args.len() != 2 {
     return false
   }
-  let kv = f.values[x.args[1]]
+  let kv = f.values[f.arg(x.args, 1)]
   if kv.op != ssa.Op.Const {
     return false
   }
@@ -863,11 +865,11 @@ fn (pr: Proof) div_of_len(f: ssa.Func, at: Int, idx: Int, sv: Int) -> Bool {
   } else if k < 2 {
     return false
   }
-  if !is_len_call(f, x.args[0]) {
+  if !is_len_call(f, f.arg(x.args, 0)) {
     return false
   }
   let r = len_root(f, sv, [], FIELD_DEPTH)
-  r >= 0 && len_root(f, f.values[x.args[0]].args[0], [], FIELD_DEPTH) == r && pr.len_pos(f, at, sv)
+  r >= 0 && len_root(f, f.arg(f.values[f.arg(x.args, 0)].args, 0), [], FIELD_DEPTH) == r && pr.len_pos(f, at, sv)
 }
 
 /// Whether the length of container sv is at least 1 at block at: a len
@@ -894,7 +896,7 @@ fn (pr: Proof) len_pos(f: ssa.Func, at: Int, sv: Int) -> Bool {
       if !dominates_b(pr.idom, pr.entry, tb, at) || !is_len_call(f, n) {
         continue
       }
-      if len_root(f, f.values[n].args[0], [], FIELD_DEPTH) == r {
+      if len_root(f, f.arg(f.values[n].args, 0), [], FIELD_DEPTH) == r {
         return true
       }
     }
@@ -911,10 +913,10 @@ fn len_root(f: ssa.Func, x: Int, seen: List[Int], d: Int) -> Int {
   }
   let xv = f.values[x]
   if xv.op == ssa.Op.Reuse && xv.args.len() == 1 {
-    return len_root(f, xv.args[0], seen, d - 1)
+    return len_root(f, f.arg(xv.args, 0), seen, d - 1)
   }
   if xv.op == ssa.Op.Call && f.name_is(xv, "list.set") && xv.args.len() == 3 {
-    return len_root(f, xv.args[0], seen, d - 1)
+    return len_root(f, f.arg(xv.args, 0), seen, d - 1)
   }
   if xv.op == ssa.Op.Param && ssa.block_of(xv.tb) > 0 {
     if seen.contains(x) {
@@ -993,19 +995,19 @@ fn (pr: Proof) nonneg(f: ssa.Func, v: Int, seen: List[Int], d: Int) -> Bool {
       if x.args.len() != 2 {
         return false
       }
-      if !pr.nonneg(f, x.args[0], seen, d - 1) || !pr.nonneg(f, x.args[1], seen, d - 1) {
+      if !pr.nonneg(f, f.arg(x.args, 0), seen, d - 1) || !pr.nonneg(f, f.arg(x.args, 1), seen, d - 1) {
         return false
       }
       if ssa.has_pos(x.lp) {
         return true
       }
       for j in 0..2 {
-        let c = f.values[x.args[1 - j]]
+        let c = f.values[f.arg(x.args, 1 - j)]
         let small = c.op == ssa.Op.Const && (ssa.auxw_int(c.aux) is 0 | 1)
         if !small {
           continue
         }
-        if !pr.bounds(ssa.block_of(x.tb), x.args[j]).is_empty() {
+        if !pr.bounds(ssa.block_of(x.tb), f.arg(x.args, j)).is_empty() {
           return true
         }
       }
@@ -1045,13 +1047,15 @@ fn promote_loop(var f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body
   // the preheader loads the fields
   var moved: List[Int] = []
   let e0 = f.values.len()
-  f.values.push(ssa.Value{op: ssa.Op.Call, tb: ssa.pack_tb(elem, p), args: [lp, idx], aux: f.pack(ssa.Aux.S(s: "list.index"))})
+  let pa = f.mk_args([lp, idx])
+  f.values.push(ssa.Value{op: ssa.Op.Call, tb: ssa.pack_tb(elem, p), args: pa, aux: f.pack(ssa.Aux.S(s: "list.index"))})
   moved.push(e0)
   var accs: List[Int] = []
   for k in plan.fields {
     let ft = types[elem].fields[k].ty
     let a0 = f.values.len()
-    f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(ft, p), args: [e0], aux: f.pack(ssa.Aux.I(n: k))})
+    let pa = f.mk_args([e0])
+    f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(ft, p), args: pa, aux: f.pack(ssa.Aux.I(n: k))})
     moved.push(a0)
     let acc = f.add_param(h, ft)
     accs.push(acc)
@@ -1068,14 +1072,14 @@ fn promote_loop(var f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body
   for t in 0..plan.chain.len() {
     let x = plan.chain[t]
     let xv = f.values[x]
-    if xv.op == ssa.Op.Call && xv.args[1] == idx {
-      let sv = f.values[xv.args[2]]
+    if xv.op == ssa.Op.Call && f.arg(xv.args, 1) == idx {
+      let sv = f.values[f.arg(xv.args, 2)]
       let fi = plan.fields.index_of(ssa.auxw_int(sv.aux)) ?? -1
       if fi >= 0 {
         var c2 = cur
-        c2[fi] = sv.args[1]
+        c2[fi] = f.arg(sv.args, 1)
         cur = c2
-        repl[x] = repl.get(xv.args[0]) ?? xv.args[0]
+        repl[x] = repl.get(f.arg(xv.args, 0)) ?? f.arg(xv.args, 0)
         remove_op(f, x)
       }
     }
@@ -1091,15 +1095,15 @@ fn promote_loop(var f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body
       if x.op != ssa.Op.Field {
         continue
       }
-      let e = f.values[x.args[0]]
-      if e.op != ssa.Op.Call || !f.name_is(e, "list.index") || e.args[1] != idx {
+      let e = f.values[f.arg(x.args, 0)]
+      if e.op != ssa.Op.Call || !f.name_is(e, "list.index") || f.arg(e.args, 1) != idx {
         continue
       }
       let fi = plan.fields.index_of(ssa.auxw_int(x.aux)) ?? -1
       if fi < 0 {
         continue
       }
-      if let Some(vs) = at.get(e.args[0]) {
+      if let Some(vs) = at.get(f.arg(e.args, 0)) {
         repl[v] = vs[fi]
       }
     }
@@ -1150,9 +1154,9 @@ fn promote_loop(var f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body
       continue
     }
     for v in f.blocks[b].instrs {
-      for (i, a) in f.values[v].args.indexed() {
+      for (i, a) in f.args_indexed(f.values[v].args) {
         if a == l {
-          f.values[v].args[i] = l2
+          f.set_arg(v, i, l2)
         }
       }
       for e in f.values[v].succs() {
@@ -1230,7 +1234,7 @@ fn promote_plan(f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body: Li
       if body[f.edges[e].to] {
         continue
       }
-      if x.op == ssa.Op.Branch && si == 0 && is_landing(f, x.args[0]) {
+      if x.op == ssa.Op.Branch && si == 0 && is_landing(f, f.arg(x.args, 0)) {
         continue
       }
       if ex >= 0 {
@@ -1262,10 +1266,10 @@ fn promote_plan(f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body: Li
         ok = false
       } else if xv.op == ssa.Op.Call && f.name_is(xv, "list.set") && xv.args.len() == 3 {
         chain.push(x)
-        x = xv.args[0]
+        x = f.arg(xv.args, 0)
       } else if xv.op == ssa.Op.Reuse && xv.args.len() == 1 {
         chain.push(x)
-        x = xv.args[0]
+        x = f.arg(xv.args, 0)
       } else {
         ok = false
       }
@@ -1279,9 +1283,9 @@ fn promote_plan(f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body: Li
     for c in chain {
       let cv = f.values[c]
       if cv.op == ssa.Op.Call {
-        let ib = ssa.block_of(f.values[cv.args[1]].tb)
+        let ib = ssa.block_of(f.values[f.arg(cv.args, 1)].tb)
         if ib >= 0 && !body[ib] && idx < 0 {
-          idx = cv.args[1]
+          idx = f.arg(cv.args, 1)
         }
       }
     }
@@ -1295,14 +1299,14 @@ fn promote_plan(f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body: Li
       if cv.op != ssa.Op.Call {
         continue
       }
-      if cv.args[1] == idx {
-        let sv = f.values[cv.args[2]]
-        if sv.op != ssa.Op.SetField || !scalar(types, ssa.ty_of(f.values[sv.args[1]].tb)) {
+      if f.arg(cv.args, 1) == idx {
+        let sv = f.values[f.arg(cv.args, 2)]
+        if sv.op != ssa.Op.SetField || !scalar(types, ssa.ty_of(f.values[f.arg(sv.args, 1)].tb)) {
           ok = false
           break
         }
-        let base = f.values[sv.args[0]]
-        if base.op != ssa.Op.Call || !f.name_is(base, "list.index") || base.args[0] != cv.args[0] || base.args[1] != idx {
+        let base = f.values[f.arg(sv.args, 0)]
+        if base.op != ssa.Op.Call || !f.name_is(base, "list.index") || f.arg(base.args, 0) != f.arg(cv.args, 0) || f.arg(base.args, 1) != idx {
           ok = false
           break
         }
@@ -1310,7 +1314,7 @@ fn promote_plan(f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body: Li
         if !fields.contains(k) {
           fields.push(k)
         }
-      } else if !distinct(f, pr, h, body, cv.args[1], idx) {
+      } else if !distinct(f, pr, h, body, f.arg(cv.args, 1), idx) {
         ok = false
         break
       }
@@ -1342,7 +1346,7 @@ fn versions_ok(f: ssa.Func, pr: Proof, h: Int, body: List[Bool], versions: List[
     let inside = b < body.len() && body[b]
     for v in f.blocks[b].instrs {
       let x = f.values[v]
-      for (ai, a) in x.args.indexed() {
+      for (ai, a) in f.args_indexed(x.args) {
         if !versions.contains(a) {
           continue
         }
@@ -1367,13 +1371,13 @@ fn versions_ok(f: ssa.Func, pr: Proof, h: Int, body: List[Bool], versions: List[
             continue
           }
           if name == "list.index" && x.args.len() == 2 {
-            if x.args[1] == idx {
+            if f.arg(x.args, 1) == idx {
               if index_uses_ok(f, v, chain) {
                 continue
               }
               return false
             }
-            if distinct(f, pr, h, body, x.args[1], idx) {
+            if distinct(f, pr, h, body, f.arg(x.args, 1), idx) {
               continue
             }
           }
@@ -1409,18 +1413,18 @@ fn index_uses_ok(f: ssa.Func, v: Int, chain: List[Int]) -> Bool {
   for bl in f.blocks {
     for u in bl.instrs {
       let x = f.values[u]
-      if !x.args.contains(v) {
+      if !f.args_has(x.args, v) {
         continue
       }
       if x.op == ssa.Op.Field {
         continue
       }
-      if x.op == ssa.Op.SetField && x.args[0] == v {
+      if x.op == ssa.Op.SetField && f.arg(x.args, 0) == v {
         // the stored element of a set of the chain
         var used = false
         for c in chain {
           let cv = f.values[c]
-          used = used || (cv.op == ssa.Op.Call && cv.args.len() == 3 && cv.args[2] == u)
+          used = used || (cv.op == ssa.Op.Call && cv.args.len() == 3 && f.arg(cv.args, 2) == u)
         }
         if used {
           continue
@@ -1477,10 +1481,10 @@ fn step_of(f: ssa.Func, pr: Proof, a: Int, base: Int, least: Int) -> Bool {
     return false
   }
   for k in 0..2 {
-    if x.args[k] != base {
+    if f.arg(x.args, k) != base {
       continue
     }
-    let c = f.values[x.args[1 - k]]
+    let c = f.values[f.arg(x.args, 1 - k)]
     if c.op != ssa.Op.Const {
       continue
     }
@@ -1549,7 +1553,7 @@ fn drop_proven_pads(var f: ssa.Func, pr: Proof) -> Bool {
       if x.op != ssa.Op.Call || !f.name_is(x, "list.index") || x.args.len() != 2 || !ssa.has_pos(x.lp) {
         continue
       }
-      if (ssa.pad_of(x.pi) >= 0 && !pad_droppable(f, b, ssa.pad_of(x.pi))) || !pr.proven(f, b, x.args[1], x.args[0]) {
+      if (ssa.pad_of(x.pi) >= 0 && !pad_droppable(f, b, ssa.pad_of(x.pi))) || !pr.proven(f, b, f.arg(x.args, 1), f.arg(x.args, 0)) {
         continue
       }
       f.values[v].lp = ssa.pack_lp(0, ssa.line_of(f.values[v].lp))
@@ -1596,7 +1600,7 @@ fn pad_droppable(f: ssa.Func, b: Int, w: Int) -> Bool {
     return false
   }
   let tv = f.values[t]
-  tv.op == ssa.Op.Branch && !tv.args.is_empty() && tv.args[0] == w && ssa.succ_n(tv) == 2 && ssa.block_of(f.values[w].tb) == b
+  tv.op == ssa.Op.Branch && !tv.args.is_empty() && f.arg(tv.args, 0) == w && ssa.succ_n(tv) == 2 && ssa.block_of(f.values[w].tb) == b
 }
 
 /// The landing check w (already out of block b's instructions) goes: the
@@ -1606,7 +1610,7 @@ fn pad_droppable(f: ssa.Func, b: Int, w: Int) -> Bool {
 fn drop_pad(var f: ssa.Func, b: Int, w: Int) {
   let t = f.term(b)
   let tv = f.values[t]
-  if tv.op != ssa.Op.Branch || tv.args.is_empty() || tv.args[0] != w || ssa.succ_n(tv) != 2 {
+  if tv.op != ssa.Op.Branch || tv.args.is_empty() || f.arg(tv.args, 0) != w || ssa.succ_n(tv) != 2 {
     return
   }
   let cleanup = ssa.succ(tv, 0)
@@ -1647,7 +1651,7 @@ fn replace_all_uses(var f: ssa.Func, repl: Map[Int, Int]) {
   }
   for b in 0..f.blocks.len() {
     for v in f.blocks[b].instrs {
-      for (i, a) in f.values[v].args.indexed() {
+      for (i, a) in f.args_indexed(f.values[v].args) {
         var r = a
         for _ in 0..64 {
           match repl.get(r) {
@@ -1656,7 +1660,7 @@ fn replace_all_uses(var f: ssa.Func, repl: Map[Int, Int]) {
           }
         }
         if r != a {
-          f.values[v].args[i] = r
+          f.set_arg(v, i, r)
         }
       }
     }

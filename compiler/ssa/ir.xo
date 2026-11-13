@@ -1271,7 +1271,8 @@ pub fn (var it: ArgsIndexed) next() -> (Int, Int)? {
 pub fn (var f: Func) add(b: Int, op: Op, t: Int, aux: Aux, args: List[Int]) -> Int {
   let v = f.values.len()
   let w = f.pack(aux)
-  f.values.push(Value{op: op, tb: pack_tb(t, b), args: args, aux: w})
+  let pa = f.mk_args(args)
+  f.values.push(Value{op: op, tb: pack_tb(t, b), args: pa, aux: w})
   f.blocks[b].instrs.push(v)
   v
 }
@@ -1528,7 +1529,7 @@ fn (m: Module) write_value(var b: StrBuilder, f: Func, vi: Int) {
     P(tag, field) => ops.push("${tag}.${field}")
     E(_) => {}
   }
-  for a in v.args {
+  for a in f.args_iter(v.args) {
     ops.push(vname(a))
   }
   for e in v.succs() {

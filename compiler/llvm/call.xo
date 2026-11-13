@@ -56,7 +56,7 @@ fn (g: Gen) race_keeps_call(callee: Int) -> Bool {
 fn (var g: Gen) call(v: Int) {
   let x = g.f.values[v]
   let name = g.f.name_of(x)
-  let args = x.args
+  let args = g.f.args_copy(x.args)
   let vt = ssa.ty_of(x.tb)
   // the alias scopes of a list access (decision 0211, noalias.xo)
   let md = g.sc_md(v)
@@ -554,7 +554,7 @@ fn (var g: Gen) user_call(v: Int, callee: Int) {
   // the argument values, for a wide one (store_value)
   var st_as: List[Int] = []
   var st_ps: List[Str] = []
-  for (i, a) in x.args.indexed() {
+  for (i, a) in g.f.args_indexed(x.args) {
     slots.push("")
     if let Some(t) = g.take_arg.get((v, i)) {
       // a list element home: its slot in the list (decision 0498)
@@ -767,7 +767,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
   let x = g.f.values[v]
   match g.f.name_of(x) {
     "rt.int_wrap" => {
-      let c = g.f.values[x.args[0]]
+      let c = g.f.values[g.f.arg(x.args, 0)]
       if c.op != ssa.Op.Const {
         return false
       }
@@ -778,8 +778,8 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       if op < 0 || op > 7 {
         return false
       }
-      let a = g.op(x.args[1])
-      var b = g.op(x.args[2])
+      let a = g.op(g.f.arg(x.args, 1))
+      var b = g.op(g.f.arg(x.args, 2))
       if op == 5 {
         g.llvm_decl("@llvm.fshr.i64", "declare i64 @llvm.fshr.i64(i64, i64, i64)")
         g.set(v, "call i64 @llvm.fshr.i64(i64 ${a}, i64 ${a}, i64 ${b})")
@@ -805,25 +805,25 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     // decision 0222: a value barrier, as BoringSSL's value_barrier_w: an
     // empty asm the optimizer cannot see through, with no side effect
     // (it may still be merged or dropped when unused)
-    "rt.ct_barrier" => g.set(v, "call i64 asm \"\", \"=r,0\"(i64 ${g.op(x.args[0])})")
+    "rt.ct_barrier" => g.set(v, "call i64 asm \"\", \"=r,0\"(i64 ${g.op(g.f.arg(x.args, 0))})")
     // ssa show.xo u64_div_const: a UInt64 by a constant
     "rt.u64_divc" => {
-      let rem = match g.f.values[x.args[2]].aux {
+      let rem = match g.f.values[g.f.arg(x.args, 2)].aux {
         I(n) => n == 1
         _ => false
       }
-      g.set(v, "${if rem { "urem" } else { "udiv" }} i64 ${g.op(x.args[0])}, ${g.op(x.args[1])}")
+      g.set(v, "${if rem { "urem" } else { "udiv" }} i64 ${g.op(g.f.arg(x.args, 0))}, ${g.op(g.f.arg(x.args, 1))}")
     }
     "rt.u64_mul_hi" => {
-      let a = g.def("zext i64 ${g.op(x.args[0])} to i128")
-      let b = g.def("zext i64 ${g.op(x.args[1])} to i128")
+      let a = g.def("zext i64 ${g.op(g.f.arg(x.args, 0))} to i128")
+      let b = g.def("zext i64 ${g.op(g.f.arg(x.args, 1))} to i128")
       let p = g.def("mul i128 ${a}, ${b}")
       g.set(v, "trunc i128 ${g.def("lshr i128 ${p}, 64")} to i64")
     }
     // cpu.mul_hi_signed (2026-10-21): a sign extended i128 multiply
     "rt.i64_mul_hi" => {
-      let a = g.def("sext i64 ${g.op(x.args[0])} to i128")
-      let b = g.def("sext i64 ${g.op(x.args[1])} to i128")
+      let a = g.def("sext i64 ${g.op(g.f.arg(x.args, 0))} to i128")
+      let b = g.def("sext i64 ${g.op(g.f.arg(x.args, 1))} to i128")
       let p = g.def("mul i128 ${a}, ${b}")
       g.set(v, "trunc i128 ${g.def("ashr i128 ${p}, 64")} to i64")
     }
@@ -832,7 +832,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.u64_carry" | "rt.u64_borrow" => {
       let f = if g.f.name_is(x, "rt.u64_carry") { "uadd" } else { "usub" }
       g.llvm_decl("@llvm.${f}.with.overflow.i64", "declare {i64, i1} @llvm.${f}.with.overflow.i64(i64, i64)")
-      let r = g.def("call {i64, i1} @llvm.${f}.with.overflow.i64(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
+      let r = g.def("call {i64, i1} @llvm.${f}.with.overflow.i64(i64 ${g.op(g.f.arg(x.args, 0))}, i64 ${g.op(g.f.arg(x.args, 1))})")
       g.set(v, "zext i1 ${g.def("extractvalue {i64, i1} ${r}, 1")} to i64")
     }
     // decision 0231's addendum: x + y + cin and its carry as one chain
@@ -840,9 +840,9 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     // LLVM merges and turns into adds/adcs)
     "rt.u64_adc" | "rt.u64_adc_carry" => {
       g.llvm_decl("@llvm.uadd.with.overflow.i64", "declare {i64, i1} @llvm.uadd.with.overflow.i64(i64, i64)")
-      let r1 = g.def("call {i64, i1} @llvm.uadd.with.overflow.i64(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
+      let r1 = g.def("call {i64, i1} @llvm.uadd.with.overflow.i64(i64 ${g.op(g.f.arg(x.args, 0))}, i64 ${g.op(g.f.arg(x.args, 1))})")
       let s1 = g.def("extractvalue {i64, i1} ${r1}, 0")
-      let r2 = g.def("call {i64, i1} @llvm.uadd.with.overflow.i64(i64 ${s1}, i64 ${g.op(x.args[2])})")
+      let r2 = g.def("call {i64, i1} @llvm.uadd.with.overflow.i64(i64 ${s1}, i64 ${g.op(g.f.arg(x.args, 2))})")
       if g.f.name_is(x, "rt.u64_adc") {
         g.set(v, "extractvalue {i64, i1} ${r2}, 0")
       } else {
@@ -856,8 +856,8 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     // target feature is needed on the function; a pure asm, so the two
     // halves of one product share the instruction
     "rt.clmul_lo" | "rt.clmul_hi" => {
-      let a = g.def("insertelement <2 x i64> undef, i64 ${g.op(x.args[0])}, i32 0")
-      let b = g.def("insertelement <2 x i64> undef, i64 ${g.op(x.args[1])}, i32 0")
+      let a = g.def("insertelement <2 x i64> undef, i64 ${g.op(g.f.arg(x.args, 0))}, i32 0")
+      let b = g.def("insertelement <2 x i64> undef, i64 ${g.op(g.f.arg(x.args, 1))}, i32 0")
       let asm = if g.arch() == "amd64" { "asm \"pclmulqdq $$0, $2, $0\", \"=x,0,x\"" } else { "asm \".arch_extension crypto\\0Apmull $0.1q, $1.1d, $2.1d\", \"=w,w,w\"" }
       let r = g.def("call <2 x i64> ${asm}(<2 x i64> ${a}, <2 x i64> ${b})")
       g.set(v, "extractelement <2 x i64> ${r}, i32 ${if g.f.name_is(x, "rt.clmul_lo") { 0 } else { 1 }}")
@@ -865,13 +865,13 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     // decision 0231 addendum: arm64's crc32x as inline asm (no target
     // feature on the function); the w result is zero extended
     "rt.crc32x" => {
-      g.set(v, "call i64 asm \".arch_extension crc\\0Acrc32x \${0:w}, \${1:w}, $2\", \"=r,r,r\"(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
+      g.set(v, "call i64 asm \".arch_extension crc\\0Acrc32x \${0:w}, \${1:w}, $2\", \"=r,r,r\"(i64 ${g.op(g.f.arg(x.args, 0))}, i64 ${g.op(g.f.arg(x.args, 1))})")
     }
     "rt.crc32cx" => {
       if g.arch() == "amd64" {
-        g.set(v, "call i64 asm \"crc32q $2, $0\", \"=r,0,r\"(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
+        g.set(v, "call i64 asm \"crc32q $2, $0\", \"=r,0,r\"(i64 ${g.op(g.f.arg(x.args, 0))}, i64 ${g.op(g.f.arg(x.args, 1))})")
       } else {
-        g.set(v, "call i64 asm \".arch_extension crc\\0Acrc32cx \${0:w}, \${1:w}, $2\", \"=r,r,r\"(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
+        g.set(v, "call i64 asm \".arch_extension crc\\0Acrc32cx \${0:w}, \${1:w}, $2\", \"=r,r,r\"(i64 ${g.op(g.f.arg(x.args, 0))}, i64 ${g.op(g.f.arg(x.args, 1))})")
       }
     }
     "rt.crc32_fold" | "rt.crc32_fold_ymm" => {
@@ -889,9 +889,9 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{xmm${r}}"
       }
       clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
-      g.set(v, "call i64 asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])}, i64 ${g.op(x.args[2])})")
+      g.set(v, "call i64 asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(i64 ${g.op(g.f.arg(x.args, 0))}, i64 ${g.op(g.f.arg(x.args, 1))}, i64 ${g.op(g.f.arg(x.args, 2))})")
     }
-    "rt.chacha_blocks4" => g.chacha4(g.raw_ptr(x.args[0]), g.raw_ptr(x.args[1]), g.raw_ptr(x.args[2]))
+    "rt.chacha_blocks4" => g.chacha4(g.raw_ptr(g.f.arg(x.args, 0)), g.raw_ptr(g.f.arg(x.args, 1)), g.raw_ptr(g.f.arg(x.args, 2)))
     "rt.ghash4" => {
       // arm64 only (ssa cpu_call, decision 0339): ssa.ghash4_neon_lines
       // as inline asm, its V registers clobbered
@@ -904,7 +904,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{q${r}}"
       }
       clob = clob + ",~{memory}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))})")
     }
     "rt.aes_gcm_enc10" | "rt.aes_gcm_enc12" | "rt.aes_gcm_enc14" | "rt.aes_gcm_dec10" | "rt.aes_gcm_dec12" | "rt.aes_gcm_dec14" => {
       // arm64 only (ssa call.xo): ssa.aes_gcm_lines as inline asm, x9 to
@@ -920,7 +920,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{q${r}}"
       }
       clob = clob + ",~{memory},~{cc}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])}, i64 ${g.op(x.args[4])}, ptr ${g.raw_ptr(x.args[5])}, ptr ${g.raw_ptr(x.args[6])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))}, i64 ${g.op(g.f.arg(x.args, 4))}, ptr ${g.raw_ptr(g.f.arg(x.args, 5))}, ptr ${g.raw_ptr(g.f.arg(x.args, 6))})")
     }
     "rt.aes_gcm8_enc10" | "rt.aes_gcm8_enc12" | "rt.aes_gcm8_enc14" | "rt.aes_gcm8_dec10" | "rt.aes_gcm8_dec12" | "rt.aes_gcm8_dec14" if g.arch() == "amd64" => {
       // ssa.aes_gcm8_x86_lines as inline asm (AT&T: its immediates' `$`
@@ -939,7 +939,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{xmm${r}}"
       }
       clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])}, i64 ${g.op(x.args[4])}, ptr ${g.raw_ptr(x.args[5])}, ptr ${g.raw_ptr(x.args[6])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))}, i64 ${g.op(g.f.arg(x.args, 4))}, ptr ${g.raw_ptr(g.f.arg(x.args, 5))}, ptr ${g.raw_ptr(g.f.arg(x.args, 6))})")
     }
     "rt.aes_gcm8_enc10" | "rt.aes_gcm8_enc12" | "rt.aes_gcm8_enc14" | "rt.aes_gcm8_dec10" | "rt.aes_gcm8_dec12" | "rt.aes_gcm8_dec14" => {
       // arm64 only (ssa call.xo): ssa.aes_gcm8_lines as inline asm, x9 to
@@ -955,7 +955,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{q${r}}"
       }
       clob = clob + ",~{memory},~{cc}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])}, i64 ${g.op(x.args[4])}, ptr ${g.raw_ptr(x.args[5])}, ptr ${g.raw_ptr(x.args[6])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))}, i64 ${g.op(g.f.arg(x.args, 4))}, ptr ${g.raw_ptr(g.f.arg(x.args, 5))}, ptr ${g.raw_ptr(g.f.arg(x.args, 6))})")
     }
     "rt.keccak_f1600" => {
       // arm64 only (ssa call.xo): ssa.keccak_neon_lines as inline asm, x9
@@ -969,7 +969,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{q${r}}"
       }
       clob = clob + ",~{memory},~{cc}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))})")
     }
     "rt.aes_ctr10" | "rt.aes_ctr12" | "rt.aes_ctr14" => {
       // arm64 only (ssa call.xo): ssa.aes_ctr_lines as inline asm, x9 to
@@ -984,7 +984,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{q${r}}"
       }
       clob = clob + ",~{memory},~{cc}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])}, i64 ${g.op(x.args[4])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))}, i64 ${g.op(g.f.arg(x.args, 4))})")
     }
     "rt.aes_cbc_enc10" | "rt.aes_cbc_enc12" | "rt.aes_cbc_enc14" => {
       // arm64 only (ssa call.xo): ssa.aes_cbc_enc_lines as inline asm, x9
@@ -999,11 +999,11 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{q${r}}"
       }
       clob = clob + ",~{memory},~{cc}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])}, i64 ${g.op(x.args[4])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))}, i64 ${g.op(g.f.arg(x.args, 4))})")
     }
     // decision 0619: PSTATE.DIT set to the argument, its old value the
     // result (arm64 only, ssa call.xo)
-    "rt.dit_set" => g.set(v, "call i64 asm sideeffect \"lsl x9, $1, #24\\0Amrs $0, s3_3_c4_c2_5\\0Amsr s3_3_c4_c2_5, x9\\0Aubfx $0, $0, #24, #1\", \"=&r,r,~{x9}\"(i64 ${g.op(x.args[0])})")
+    "rt.dit_set" => g.set(v, "call i64 asm sideeffect \"lsl x9, $1, #24\\0Amrs $0, s3_3_c4_c2_5\\0Amsr s3_3_c4_c2_5, x9\\0Aubfx $0, $0, #24, #1\", \"=&r,r,~{x9}\"(i64 ${g.op(g.f.arg(x.args, 0))})")
     "rt.ticks" => g.set(v, "call i64 asm sideeffect \"mrs $0, cntvct_el0\", \"=r\"()")
     "rt.ticks_hz" => g.set(v, "call i64 asm sideeffect \"mrs $0, cntfrq_el0\", \"=r\"()")
     "rt.chacha_poly_seal4" | "rt.chacha_poly_open4" | "rt.chacha_poly_seal8" | "rt.chacha_poly_open8" => {
@@ -1029,7 +1029,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{ymm0},~{ymm1},~{ymm2},~{ymm3},~{ymm4},~{ymm5},~{ymm6},~{ymm7},~{ymm8},~{ymm9},~{ymm12},~{ymm13}"
       }
       clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, i64 ${g.op(x.args[3])}, ptr ${g.raw_ptr(x.args[4])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, i64 ${g.op(g.f.arg(x.args, 3))}, ptr ${g.raw_ptr(g.f.arg(x.args, 4))})")
     }
     "rt.chacha_stream4" if g.arch() == "amd64" => {
       // ssa.chacha4_x86_lines' loop as inline asm (AT&T: its immediates'
@@ -1046,7 +1046,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{xmm${r}}"
       }
       clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, i64 ${g.op(x.args[3])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, i64 ${g.op(g.f.arg(x.args, 3))})")
     }
     "rt.chacha_stream4" => {
       // arm64 only (ssa call.xo): ssa.chacha4_neon_lines' loop as inline
@@ -1060,7 +1060,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{q${r}}"
       }
       clob = clob + ",~{memory},~{cc}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, i64 ${g.op(x.args[3])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, i64 ${g.op(g.f.arg(x.args, 3))})")
     }
     "rt.sha256_blocks" if g.arch() == "amd64" => {
       // SHA-NI: ssa.sha256_ni_loop_lines as inline asm, r9 to r11 and
@@ -1074,7 +1074,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{xmm${r}}"
       }
       clob = clob + ",~{r9},~{r10},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, i64 ${g.op(x.args[2])}, ptr ${g.raw_ptr(x.args[3])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, i64 ${g.op(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))})")
     }
     "rt.sha256_blocks" => {
       // arm64 (ssa call.xo): ssa.sha256_loop_lines as inline asm,
@@ -1088,7 +1088,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{q${r}}"
       }
       clob = clob + ",~{memory},~{cc}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, i64 ${g.op(x.args[2])}, ptr ${g.raw_ptr(x.args[3])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, i64 ${g.op(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))})")
     }
     "rt.sha1_blocks" if g.arch() == "amd64" => {
       // SHA-NI: ssa.sha1_ni_loop_lines as inline asm, r9 to r11 and xmm0
@@ -1102,7 +1102,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{xmm${r}}"
       }
       clob = clob + ",~{r9},~{r10},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, i64 ${g.op(x.args[2])}, ptr ${g.raw_ptr(x.args[3])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, i64 ${g.op(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))})")
     }
     "rt.sha1_blocks" => {
       // arm64 (ssa call.xo): ssa.sha1_a64_loop_lines as inline asm, x9,
@@ -1116,7 +1116,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{q${r}}"
       }
       clob = clob + ",~{memory},~{cc}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, i64 ${g.op(x.args[2])}, ptr ${g.raw_ptr(x.args[3])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, i64 ${g.op(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))})")
     }
     "rt.sha512_blocks" => {
       // arm64 only (ssa call.xo): ssa.sha512_a64_loop_lines as inline asm,
@@ -1131,7 +1131,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{q${r}}"
       }
       clob = clob + ",~{memory},~{cc}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, i64 ${g.op(x.args[2])}, ptr ${g.raw_ptr(x.args[3])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, i64 ${g.op(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))})")
     }
     "rt.ghash_blocks" => {
       // arm64 only (ssa call.xo): ssa.ghash_loop_lines as inline asm, x9,
@@ -1145,12 +1145,12 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{q${r}}"
       }
       clob = clob + ",~{memory},~{cc}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, i64 ${g.op(x.args[3])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, i64 ${g.op(g.f.arg(x.args, 3))})")
     }
     "rt.aes_sub_word" => {
       // the word in each of the four columns, one AESE (arm64) or
       // AESENCLAST (amd64) with a zero key; the low 8 bytes
-      let w = g.def("trunc i64 ${g.op(x.args[0])} to i32")
+      let w = g.def("trunc i64 ${g.op(g.f.arg(x.args, 0))} to i32")
       let c = g.def("insertelement <4 x i32> undef, i32 ${w}, i32 0")
       let s = g.def("bitcast <4 x i32> ${g.def("shufflevector <4 x i32> ${c}, <4 x i32> undef, <4 x i32> zeroinitializer")} to <16 x i8>")
       let asm = if g.arch() == "amd64" { "asm \"aesenclast $2, $0\", \"=x,0,x\"" } else { "asm \".arch_extension crypto\\0Aaese $0.16b, $2.16b\", \"=w,0,w\"" }
@@ -1159,23 +1159,23 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     }
     "rt.aes_round" | "rt.aes_last" => {
       let last = g.f.name_is(x, "rt.aes_last")
-      let p = g.raw_ptr(x.args[0])
+      let p = g.raw_ptr(g.f.arg(x.args, 0))
       let s = g.def("load <16 x i8>, ptr ${p}, align 1")
-      let k = g.def("load <16 x i8>, ptr ${g.raw_ptr(x.args[1])}, align 1")
+      let k = g.def("load <16 x i8>, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, align 1")
       var r = ""
       if g.arch() == "amd64" {
         // AESENC's key is after the round: the key xored before, a zero
         // key after (AESENCLAST: the next key)
         let sk = g.def("xor <16 x i8> ${s}, ${k}")
         if last {
-          let k2 = g.def("load <16 x i8>, ptr ${g.raw_ptr(x.args[2])}, align 1")
+          let k2 = g.def("load <16 x i8>, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, align 1")
           r = g.def("call <16 x i8> asm \"aesenclast $2, $0\", \"=x,0,x\"(<16 x i8> ${sk}, <16 x i8> ${k2})")
         } else {
           r = g.def("call <16 x i8> asm \"aesenc $2, $0\", \"=x,0,x\"(<16 x i8> ${sk}, <16 x i8> zeroinitializer)")
         }
       } else if last {
         let e = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaese $0.16b, $2.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${k})")
-        let k2 = g.def("load <16 x i8>, ptr ${g.raw_ptr(x.args[2])}, align 1")
+        let k2 = g.def("load <16 x i8>, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, align 1")
         r = g.def("xor <16 x i8> ${e}, ${k2}")
       } else {
         r = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaese $0.16b, $2.16b\\0Aaesmc $0.16b, $0.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${k})")
@@ -1186,8 +1186,8 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // four blocks (arm64 only, ssa call.xo): the rounds of each, the
       // four states SSA values the backend interleaves
       let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_enc").trim_suffix("x4")) ?? 10
-      let p = g.raw_ptr(x.args[0])
-      let kp = g.raw_ptr(x.args[1])
+      let p = g.raw_ptr(g.f.arg(x.args, 0))
+      let kp = g.raw_ptr(g.f.arg(x.args, 1))
       var ks: List[Str] = []
       for r in 0..nr + 1 {
         let q = g.def("getelementptr i8, ptr ${kp}, i64 ${16 * r}")
@@ -1215,8 +1215,8 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // the whole block unrolled, the state an SSA value (the rounds of
       // rt.aes_round without the loads and stores between them)
       let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_enc")) ?? 10
-      let p = g.raw_ptr(x.args[0])
-      let kp = g.raw_ptr(x.args[1])
+      let p = g.raw_ptr(g.f.arg(x.args, 0))
+      let kp = g.raw_ptr(g.f.arg(x.args, 1))
       var ks: List[Str] = []
       for r in 0..nr + 1 {
         let q = g.def("getelementptr i8, ptr ${kp}, i64 ${16 * r}")
@@ -1243,8 +1243,8 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // (inverse shift rows and sub bytes, the next key with InvMixColumns, InvMixColumns of the state)
       // as AESD with AESIMC on arm64 and AESDEC with AESIMC on x86
       let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_dec")) ?? 10
-      let p = g.raw_ptr(x.args[0])
-      let kp = g.raw_ptr(x.args[1])
+      let p = g.raw_ptr(g.f.arg(x.args, 0))
+      let kp = g.raw_ptr(g.f.arg(x.args, 1))
       var ks: List[Str] = []
       for r in 0..nr + 1 {
         let q = g.def("getelementptr i8, ptr ${kp}, i64 ${16 * r}")
@@ -1284,7 +1284,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{xmm${r}}"
       }
       clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))})")
     }
     "rt.mlkem_ntt" | "rt.mlkem_inverse_ntt" | "rt.mlkem_mul_acc" if g.arch() == "arm64" => {
       // ssa a64mlkem.xo's lines as inline asm, its registers clobbered
@@ -1292,7 +1292,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let ls = if name == "rt.mlkem_ntt" { ssa.mlkem_ntt_neon_lines("$0", "$1") } else if name == "rt.mlkem_inverse_ntt" { ssa.mlkem_inverse_ntt_neon_lines("$0", "$1") } else { ssa.mlkem_mul_acc_neon_lines("$0", "$1", "$2", "$3") }
       var ops: List[Str] = []
       var clob = ""
-      for a in x.args {
+      for a in g.f.args_iter(x.args) {
         ops.push("ptr ${g.raw_ptr(a)}")
         clob = clob + (if clob.is_empty() { "r" } else { ",r" })
       }
@@ -1320,7 +1320,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{xmm${r}}"
       }
       clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))})")
     }
     "rt.sha512_block" => {
       // arm64 only (ssa cpu_call): ssa sha512hw.xo's sequence as one inline
@@ -1334,7 +1334,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         clob = clob + ",~{q${r}}"
       }
       clob = clob + ",~{memory}"
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))})")
     }
     "rt.sha1_block" => {
       // ssa sha1hw.xo's sequence as one inline asm, its registers
@@ -1358,7 +1358,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         }
         clob = clob + ",~{memory}"
       }
-      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])})")
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))})")
     }
     "rt.sha256_block" => {
       // arm64: the state as two <4 x i32> SSA values (abcd, efgh) through
@@ -1376,14 +1376,14 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
           clob = clob + ",~{xmm${r}}"
         }
         clob = clob + ",~{r11},~{memory},~{dirflag},~{fpsr},~{flags}"
-        let sp = g.raw_ptr(x.args[0])
-        let bp = g.raw_ptr(x.args[1])
-        let kp = g.raw_ptr(x.args[2])
+        let sp = g.raw_ptr(g.f.arg(x.args, 0))
+        let bp = g.raw_ptr(g.f.arg(x.args, 1))
+        let kp = g.raw_ptr(g.f.arg(x.args, 2))
         g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${sp}, ptr ${bp}, ptr ${kp})")
       } else {
-        let sp = g.raw_ptr(x.args[0])
-        let bp = g.raw_ptr(x.args[1])
-        let kp = g.raw_ptr(x.args[2])
+        let sp = g.raw_ptr(g.f.arg(x.args, 0))
+        let bp = g.raw_ptr(g.f.arg(x.args, 1))
+        let kp = g.raw_ptr(g.f.arg(x.args, 2))
         let w8 = g.def("load <8 x i64>, ptr ${sp}, align 8")
         let s8 = g.def("trunc <8 x i64> ${w8} to <8 x i32>")
         let a0 = g.def("shufflevector <8 x i32> ${s8}, <8 x i32> poison, <4 x i32> <i32 0, i32 1, i32 2, i32 3>")
@@ -1446,9 +1446,9 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     // decision 0385 stage 3: amd64 only (compiler/ssa), behind HW_FMA; an
     // asm call, since llvm.fma without +fma would call libm's fma
     "rt.fma_hw" => {
-      let a0 = g.op(x.args[0])
-      let a1 = g.op(x.args[1])
-      let a2 = g.op(x.args[2])
+      let a0 = g.op(g.f.arg(x.args, 0))
+      let a1 = g.op(g.f.arg(x.args, 1))
+      let a2 = g.op(g.f.arg(x.args, 2))
       g.set(v, "call double asm \"vfmadd231sd $2, $1, $0\", \"=x,x,x,0\"(double ${a0}, double ${a1}, double ${a2})")
     }
     "rt.cpuid1_ecx" => {
@@ -1460,29 +1460,29 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       }
     }
     // decision 0195: the conversions of UInt64 and Float32
-    "rt.u64_to_float" => g.set(v, "uitofp i64 ${g.op(x.args[0])} to double")
+    "rt.u64_to_float" => g.set(v, "uitofp i64 ${g.op(g.f.arg(x.args, 0))} to double")
     "rt.f32_round" => {
       if g.arch() == "riscv64" {
         // a NaN keeps its payload (f32_narrow)
-        g.alias(v, g.f32_widen(g.f32_narrow(g.op(x.args[0]))))
+        g.alias(v, g.f32_widen(g.f32_narrow(g.op(g.f.arg(x.args, 0)))))
       } else {
-        g.set(v, "fpext float ${g.def("fptrunc double ${g.op(x.args[0])} to float")} to double")
+        g.set(v, "fpext float ${g.def("fptrunc double ${g.op(g.f.arg(x.args, 0))} to float")} to double")
       }
     }
-    "rt.i64_to_f32" => g.set(v, "fpext float ${g.def("sitofp i64 ${g.op(x.args[0])} to float")} to double")
-    "rt.u64_to_f32" => g.set(v, "fpext float ${g.def("uitofp i64 ${g.op(x.args[0])} to float")} to double")
-    "rt.float_bits" => g.set(v, "bitcast double ${g.op(x.args[0])} to i64")
-    "rt.float_from_bits" => g.set(v, "bitcast i64 ${g.op(x.args[0])} to double")
+    "rt.i64_to_f32" => g.set(v, "fpext float ${g.def("sitofp i64 ${g.op(g.f.arg(x.args, 0))} to float")} to double")
+    "rt.u64_to_f32" => g.set(v, "fpext float ${g.def("uitofp i64 ${g.op(g.f.arg(x.args, 0))} to float")} to double")
+    "rt.float_bits" => g.set(v, "bitcast double ${g.op(g.f.arg(x.args, 0))} to i64")
+    "rt.float_from_bits" => g.set(v, "bitcast i64 ${g.op(g.f.arg(x.args, 0))} to double")
     "rt.bytes_word" => {
-      let (_, d, _) = g.str_parts(g.op(x.args[0]))
-      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
+      let (_, d, _) = g.str_parts(g.op(g.f.arg(x.args, 0)))
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(g.f.arg(x.args, 1))}")
       g.set(v, "load i64, ptr ${p}, align 1${g.sc_md(v)}")
     }
     "rt.sys6" => {
       // a Linux system call (decision 0206): inline asm with the number
       // and six arguments in the registers of the target's convention
       var ops: List[Str] = []
-      for a in x.args {
+      for a in g.f.args_iter(x.args) {
         ops.push("i64 ${g.op(a)}")
       }
       let cons = if g.arch() == "amd64" {
@@ -1501,12 +1501,12 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     }
     "rt.call_c2" => {
       // a C ABI call of an address (decision 0206 stage 2)
-      let p = g.def("inttoptr i64 ${g.op(x.args[0])} to ptr")
-      g.set(v, "call i64 ${p}(i64 ${g.op(x.args[1])}, i64 ${g.op(x.args[2])})")
+      let p = g.def("inttoptr i64 ${g.op(g.f.arg(x.args, 0))} to ptr")
+      g.set(v, "call i64 ${p}(i64 ${g.op(g.f.arg(x.args, 1))}, i64 ${g.op(g.f.arg(x.args, 2))})")
     }
     "rt.call_c4" => {
-      let p = g.def("inttoptr i64 ${g.op(x.args[0])} to ptr")
-      g.set(v, "call i64 ${p}(i64 ${g.op(x.args[1])}, i64 ${g.op(x.args[2])}, i64 ${g.op(x.args[3])}, i64 ${g.op(x.args[4])})")
+      let p = g.def("inttoptr i64 ${g.op(g.f.arg(x.args, 0))} to ptr")
+      g.set(v, "call i64 ${p}(i64 ${g.op(g.f.arg(x.args, 1))}, i64 ${g.op(g.f.arg(x.args, 2))}, i64 ${g.op(g.f.arg(x.args, 3))}, i64 ${g.op(g.f.arg(x.args, 4))})")
     }
     "rt.sys_words" => {
       // 16 words of process state (decision 0206 stage 2): weak, one
@@ -1529,13 +1529,13 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         let tables = if g.apre.is_empty() { "" } else { g.apre_tables() }
         g.helpers.push("${tables}${g.comdat_decl("@.xo.static")}@.xo.static = weak global [256 x i64] ${g.apre_static_init()}${g.comdat()}, align 128${dbg}\n\n")
       }
-      let p = g.def("getelementptr [256 x i64], ptr @.xo.static, i64 0, i64 ${g.op(x.args[0])}")
+      let p = g.def("getelementptr [256 x i64], ptr @.xo.static, i64 0, i64 ${g.op(g.f.arg(x.args, 0))}")
       g.set(v, "ptrtoint ptr ${p} to i64")
     }
     "rt.sys_clone" => {
       g.clone_tramp()
       var ops: List[Str] = []
-      for a in x.args {
+      for a in g.f.args_iter(x.args) {
         ops.push("i64 ${g.op(a)}")
       }
       g.set(v, "call i64 @xo_clone(${ops.join(", ")})")
@@ -1570,17 +1570,17 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     // defines them)
     "rt.rl_empty" => g.alias(v, g.empty_list())
     "rt.h_zero" => g.alias(v, g.zero_handle())
-    "rt.popcount" => g.set(v, "call i64 @llvm.ctpop.i64(i64 ${g.op(x.args[0])})")
-    "rt.ctz" => g.set(v, "call i64 @llvm.cttz.i64(i64 ${g.op(x.args[0])}, i1 false)")
-    "rt.clz" => g.set(v, "call i64 @llvm.ctlz.i64(i64 ${g.op(x.args[0])}, i1 false)")
+    "rt.popcount" => g.set(v, "call i64 @llvm.ctpop.i64(i64 ${g.op(g.f.arg(x.args, 0))})")
+    "rt.ctz" => g.set(v, "call i64 @llvm.cttz.i64(i64 ${g.op(g.f.arg(x.args, 0))}, i1 false)")
+    "rt.clz" => g.set(v, "call i64 @llvm.ctlz.i64(i64 ${g.op(g.f.arg(x.args, 0))}, i1 false)")
     "rt.bytes_eq16_bits" | "rt.bytes_high16_bits" => {
       // one bit a byte (pmovmskb on x86_64)
-      let (_, d, _) = g.str_parts(g.op(x.args[0]))
-      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
+      let (_, d, _) = g.str_parts(g.op(g.f.arg(x.args, 0)))
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(g.f.arg(x.args, 1))}")
       let w = g.def("load <16 x i8>, ptr ${p}, align 1${g.sc_md(v)}")
       var e = ""
       if g.f.name_is(x, "rt.bytes_eq16_bits") {
-        let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
+        let c = g.def("trunc i64 ${g.op(g.f.arg(x.args, 2))} to i8")
         var r = g.def("insertelement <16 x i8> poison, i8 ${c}, i64 0")
         r = g.def("shufflevector <16 x i8> ${r}, <16 x i8> poison, <16 x i32> zeroinitializer")
         e = g.def("icmp eq <16 x i8> ${w}, ${r}")
@@ -1597,7 +1597,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // LLVM 1.7 percent more instructions on the ASCII rows, because
       // clang no longer widened them itself once the loop stepped 16 bytes
       // (bench/results/case-fold16-2026-10-25.md)
-      let mode = match g.f.values[x.args[3]].aux {
+      let mode = match g.f.values[g.f.arg(x.args, 3)].aux {
         I(n) => n
         _ => 1
       }
@@ -1606,8 +1606,8 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // the inttoptr that raw_at gives before a getelementptr: an i64
       // operand where clang wants a ptr is what it refused
       // ("%v0 defined with type 'i64' but expected 'ptr'", 2026-10-25)
-      let dp = g.raw_at(x.args[0], x.args[2])
-      let sp = g.raw_at(x.args[1], x.args[2])
+      let dp = g.raw_at(g.f.arg(x.args, 0), g.f.arg(x.args, 2))
+      let sp = g.raw_at(g.f.arg(x.args, 1), g.f.arg(x.args, 2))
       let c = g.def("load <16 x i8>, ptr ${sp}, align 1")
       // d = c - first, wrapping, so the case is the unsigned range 0 to 25
       // for exactly the letters, and no byte at 0x80 or above lands in it
@@ -1628,21 +1628,21 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // both loaded before either is stored so i == j writes back what it
       // read; the call's type is Unit, so nothing is set
       let md = g.sc_md(v)
-      let et = g.m.types[g.vty(x.args[0])].elems[0]
-      let l = g.op(x.args[0])
+      let et = g.m.types[g.vty(g.f.arg(x.args, 0))].elems[0]
+      let l = g.op(g.f.arg(x.args, 0))
       if ssa.has_pos(x.lp) {
         let n = g.list_len(l, md)
         for k in 1..3 {
-          let ak = g.op(x.args[k])
+          let ak = g.op(g.f.arg(x.args, k))
           let bad = g.def("icmp uge i64 ${ak}, ${n}")
-          let bk = g.op(x.args[k])
+          let bk = g.op(g.f.arg(x.args, k))
           let lc = g.loc(v)
           g.fault_if(bad, "@xo_x_fault_raise_index(i64 ${bk}, i64 ${n}, ${lc})")
         }
       }
       if g.kind(et) != ssa.Kind.Unit {
-        let pa = g.elem_ptr(et, l, g.op(x.args[1]))
-        let pb = g.elem_ptr(et, l, g.op(x.args[2]))
+        let pa = g.elem_ptr(et, l, g.op(g.f.arg(x.args, 1)))
+        let pb = g.elem_ptr(et, l, g.op(g.f.arg(x.args, 2)))
         // the elements as registers, so a packed element (decision 0369)
         // is loaded at its width and widened, stored back narrowed: a raw
         // i64 access would overwrite a packed element's neighbours
@@ -1659,26 +1659,26 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // before either is stored so a == b with i == j writes back what it
       // read; the call's type is Unit, so nothing is set
       let md = g.sc_md(v)
-      let et = g.m.types[g.vty(x.args[0])].elems[0]
-      let l1 = g.op(x.args[0])
-      let l2 = g.op(x.args[2])
+      let et = g.m.types[g.vty(g.f.arg(x.args, 0))].elems[0]
+      let l1 = g.op(g.f.arg(x.args, 0))
+      let l2 = g.op(g.f.arg(x.args, 2))
       if ssa.has_pos(x.lp) {
         let n1 = g.list_len(l1, md)
-        let a1 = g.op(x.args[1])
+        let a1 = g.op(g.f.arg(x.args, 1))
         let bad1 = g.def("icmp uge i64 ${a1}, ${n1}")
-        let b1 = g.op(x.args[1])
+        let b1 = g.op(g.f.arg(x.args, 1))
         let lc1 = g.loc(v)
         g.fault_if(bad1, "@xo_x_fault_raise_index(i64 ${b1}, i64 ${n1}, ${lc1})")
         let n2 = g.list_len(l2, md)
-        let a2 = g.op(x.args[3])
+        let a2 = g.op(g.f.arg(x.args, 3))
         let bad2 = g.def("icmp uge i64 ${a2}, ${n2}")
-        let b2 = g.op(x.args[3])
+        let b2 = g.op(g.f.arg(x.args, 3))
         let lc2 = g.loc(v)
         g.fault_if(bad2, "@xo_x_fault_raise_index(i64 ${b2}, i64 ${n2}, ${lc2})")
       }
       if g.kind(et) != ssa.Kind.Unit {
-        let pa = g.elem_ptr(et, l1, g.op(x.args[1]))
-        let pb = g.elem_ptr(et, l2, g.op(x.args[3]))
+        let pa = g.elem_ptr(et, l1, g.op(g.f.arg(x.args, 1)))
+        let pb = g.elem_ptr(et, l2, g.op(g.f.arg(x.args, 3)))
         // as list_swap's: a packed element (decision 0369) is loaded at
         // its width and widened, stored back narrowed
         let va = g.elem_load(et, pa, md)
@@ -1689,12 +1689,12 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     }
     "rt.bytes_any_eq32" | "rt.bytes_any_high32" => {
       // a <32 x i8> compare as an i32, nonzero when a byte matched
-      let (_, d, _) = g.str_parts(g.op(x.args[0]))
-      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
+      let (_, d, _) = g.str_parts(g.op(g.f.arg(x.args, 0)))
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(g.f.arg(x.args, 1))}")
       let w = g.def("load <32 x i8>, ptr ${p}, align 1${g.sc_md(v)}")
       var e = ""
       if g.f.name_is(x, "rt.bytes_any_eq32") {
-        let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
+        let c = g.def("trunc i64 ${g.op(g.f.arg(x.args, 2))} to i8")
         var r = g.def("insertelement <32 x i8> poison, i8 ${c}, i64 0")
         r = g.def("shufflevector <32 x i8> ${r}, <32 x i8> poison, <32 x i32> zeroinitializer")
         e = g.def("icmp eq <32 x i8> ${w}, ${r}")
@@ -1706,10 +1706,10 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     }
     "rt.bytes_count_eq32" => {
       // a <32 x i8> compare as an i32, its bits counted
-      let (_, d, _) = g.str_parts(g.op(x.args[0]))
-      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
+      let (_, d, _) = g.str_parts(g.op(g.f.arg(x.args, 0)))
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(g.f.arg(x.args, 1))}")
       let w = g.def("load <32 x i8>, ptr ${p}, align 1${g.sc_md(v)}")
-      let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
+      let c = g.def("trunc i64 ${g.op(g.f.arg(x.args, 2))} to i8")
       var r = g.def("insertelement <32 x i8> poison, i8 ${c}, i64 0")
       r = g.def("shufflevector <32 x i8> ${r}, <32 x i8> poison, <32 x i32> zeroinitializer")
       let e = g.def("icmp eq <32 x i8> ${w}, ${r}")
@@ -1720,10 +1720,10 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.bytes_skip32" => {
       // bytes_any_eq32's steps as a loop: j from i while 32 bytes remain
       // before to and the <32 x i8> compare finds no c
-      let (_, d, _) = g.str_parts(g.op(x.args[0]))
-      let i0 = g.op(x.args[1])
-      let to = g.op(x.args[2])
-      let c = g.def("trunc i64 ${g.op(x.args[3])} to i8")
+      let (_, d, _) = g.str_parts(g.op(g.f.arg(x.args, 0)))
+      let i0 = g.op(g.f.arg(x.args, 1))
+      let to = g.op(g.f.arg(x.args, 2))
+      let c = g.def("trunc i64 ${g.op(g.f.arg(x.args, 3))} to i8")
       var r = g.def("insertelement <32 x i8> poison, i8 ${c}, i64 0")
       r = g.def("shufflevector <32 x i8> ${r}, <32 x i8> poison, <32 x i32> zeroinitializer")
       let pre = g.label
@@ -1749,10 +1749,10 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     }
     "rt.bytes_count_below32" => {
       // a <32 x i8> signed compare with lo as an i32, its bits counted
-      let (_, d, _) = g.str_parts(g.op(x.args[0]))
-      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
+      let (_, d, _) = g.str_parts(g.op(g.f.arg(x.args, 0)))
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(g.f.arg(x.args, 1))}")
       let w = g.def("load <32 x i8>, ptr ${p}, align 1${g.sc_md(v)}")
-      let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
+      let c = g.def("trunc i64 ${g.op(g.f.arg(x.args, 2))} to i8")
       var r = g.def("insertelement <32 x i8> poison, i8 ${c}, i64 0")
       r = g.def("shufflevector <32 x i8> ${r}, <32 x i8> poison, <32 x i32> zeroinitializer")
       let e = g.def("icmp slt <32 x i8> ${w}, ${r}")
@@ -1762,12 +1762,12 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     }
     "rt.bytes_any_stop32" => {
       // c1 or c2 equal, or below lo as a signed byte, as an i32 mask
-      let (_, d, _) = g.str_parts(g.op(x.args[0]))
-      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
+      let (_, d, _) = g.str_parts(g.op(g.f.arg(x.args, 0)))
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(g.f.arg(x.args, 1))}")
       let w = g.def("load <32 x i8>, ptr ${p}, align 1${g.sc_md(v)}")
       var es: List[Str] = []
       for k in 2..5 {
-        let c = g.def("trunc i64 ${g.op(x.args[k])} to i8")
+        let c = g.def("trunc i64 ${g.op(g.f.arg(x.args, k))} to i8")
         var r = g.def("insertelement <32 x i8> poison, i8 ${c}, i64 0")
         r = g.def("shufflevector <32 x i8> ${r}, <32 x i8> poison, <32 x i32> zeroinitializer")
         es.push(g.def("icmp ${if k == 4 { "slt" } else { "eq" }} <32 x i8> ${w}, ${r}"))
@@ -1779,10 +1779,10 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     }
     "rt.mem_any_eq32" => {
       // rt.bytes_any_eq32 at an address: a <32 x i8> compare as an i32
-      let a = g.def("add i64 ${g.op(x.args[0])}, ${g.op(x.args[1])}")
+      let a = g.def("add i64 ${g.op(g.f.arg(x.args, 0))}, ${g.op(g.f.arg(x.args, 1))}")
       let p = g.def("inttoptr i64 ${a} to ptr")
       let w = g.def("load <32 x i8>, ptr ${p}, align 1")
-      let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
+      let c = g.def("trunc i64 ${g.op(g.f.arg(x.args, 2))} to i8")
       var r = g.def("insertelement <32 x i8> poison, i8 ${c}, i64 0")
       r = g.def("shufflevector <32 x i8> ${r}, <32 x i8> poison, <32 x i32> zeroinitializer")
       let e = g.def("icmp eq <32 x i8> ${w}, ${r}")
@@ -1791,16 +1791,16 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     }
     "rt.mem_ne64" => {
       // a <64 x i8> compare as an i64, nonzero when a byte differs
-      let pa = g.def("inttoptr i64 ${g.op(x.args[0])} to ptr")
-      let pb = g.def("inttoptr i64 ${g.op(x.args[1])} to ptr")
+      let pa = g.def("inttoptr i64 ${g.op(g.f.arg(x.args, 0))} to ptr")
+      let pb = g.def("inttoptr i64 ${g.op(g.f.arg(x.args, 1))} to ptr")
       let wa = g.def("load <64 x i8>, ptr ${pa}, align 1")
       let wb = g.def("load <64 x i8>, ptr ${pb}, align 1")
       let e = g.def("icmp ne <64 x i8> ${wa}, ${wb}")
       g.set(v, "bitcast <64 x i1> ${e} to i64")
     }
     "rt.mem_ne32" => {
-      let pa = g.def("inttoptr i64 ${g.op(x.args[0])} to ptr")
-      let pb = g.def("inttoptr i64 ${g.op(x.args[1])} to ptr")
+      let pa = g.def("inttoptr i64 ${g.op(g.f.arg(x.args, 0))} to ptr")
+      let pb = g.def("inttoptr i64 ${g.op(g.f.arg(x.args, 1))} to ptr")
       let wa = g.def("load <32 x i8>, ptr ${pa}, align 1")
       let wb = g.def("load <32 x i8>, ptr ${pb}, align 1")
       let e = g.def("icmp ne <32 x i8> ${wa}, ${wb}")
@@ -1808,12 +1808,12 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       g.set(v, "zext i32 ${m} to i64")
     }
     "rt.bytes_eq16" | "rt.bytes_high16" => {
-      let (_, d, _) = g.str_parts(g.op(x.args[0]))
-      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
+      let (_, d, _) = g.str_parts(g.op(g.f.arg(x.args, 0)))
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(g.f.arg(x.args, 1))}")
       let w = g.def("load <16 x i8>, ptr ${p}, align 1${g.sc_md(v)}")
       var e = ""
       if g.f.name_is(x, "rt.bytes_eq16") {
-        let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
+        let c = g.def("trunc i64 ${g.op(g.f.arg(x.args, 2))} to i8")
         var r = g.def("insertelement <16 x i8> poison, i8 ${c}, i64 0")
         r = g.def("shufflevector <16 x i8> ${r}, <16 x i8> poison, <16 x i32> zeroinitializer")
         e = g.def("icmp eq <16 x i8> ${w}, ${r}")
@@ -1827,15 +1827,15 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       g.set(v, "bitcast <8 x i8> ${n} to i64")
     }
     "rt.rs_put_word" => {
-      let x0 = g.op(x.args[0])
+      let x0 = g.op(g.f.arg(x.args, 0))
       let (_, d, _) = g.str_parts(x0)
-      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
-      g.emit("store i64 ${g.op(x.args[2])}, ptr ${p}, align 1")
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(g.f.arg(x.args, 1))}")
+      g.emit("store i64 ${g.op(g.f.arg(x.args, 2))}, ptr ${p}, align 1")
       g.alias(v, x0)
     }
     "rt.rs_set_len" => {
-      let obj = g.def("extractvalue %xo.str ${g.op(x.args[0])}, 0")
-      g.mk_str(v, obj, g.op(x.args[1]))
+      let obj = g.def("extractvalue %xo.str ${g.op(g.f.arg(x.args, 0))}, 0")
+      g.mk_str(v, obj, g.op(g.f.arg(x.args, 1)))
     }
     "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.slot_addr" | "rt.fence" | "rt.spin_hint" | "rt.preempt_poll" => g.atomic(v)
     _ => return g.inline_raw(v)
@@ -1862,11 +1862,11 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
   let name = g.f.name_of(x)
   match name {
     "rt.mem_load" => {
-      let w = match g.f.values[x.args[2]].aux {
+      let w = match g.f.values[g.f.arg(x.args, 2)].aux {
         I(n) => n
         _ => 8
       }
-      let p = g.raw_at(x.args[0], x.args[1])
+      let p = g.raw_at(g.f.arg(x.args, 0), g.f.arg(x.args, 1))
       if w == 8 && g.kind(ssa.ty_of(x.tb)) is ssa.Kind.List | ssa.Kind.Handle {
         // a word read as a list (ssa show.xo const_read)
         g.set(v, "load ptr, ptr ${p}, align 8")
@@ -1878,12 +1878,12 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
       }
     }
     "rt.mem_store" => {
-      let w = match g.f.values[x.args[3]].aux {
+      let w = match g.f.values[g.f.arg(x.args, 3)].aux {
         I(n) => n
         _ => 8
       }
-      let p = g.raw_at(x.args[0], x.args[1])
-      let y = g.op(x.args[2])
+      let p = g.raw_at(g.f.arg(x.args, 0), g.f.arg(x.args, 1))
+      let y = g.op(g.f.arg(x.args, 2))
       if w == 8 {
         g.emit("store i64 ${y}, ptr ${p}, align 1")
       } else {
@@ -1894,17 +1894,17 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
     "rt.mem_copy" | "rt.mem_move" => {
       let f = if name == "rt.mem_move" { "@llvm.memmove.p0.p0.i64" } else { "@llvm.memcpy.p0.p0.i64" }
       g.llvm_decl(f, "declare void ${f}(ptr, ptr, i64, i1)")
-      let d = g.raw_ptr(x.args[0])
-      let s = g.raw_ptr(x.args[1])
-      g.emit("call void ${f}(ptr ${d}, ptr ${s}, i64 ${g.op(x.args[2])}, i1 false)")
+      let d = g.raw_ptr(g.f.arg(x.args, 0))
+      let s = g.raw_ptr(g.f.arg(x.args, 1))
+      g.emit("call void ${f}(ptr ${d}, ptr ${s}, i64 ${g.op(g.f.arg(x.args, 2))}, i1 false)")
     }
     "rt.mem_copy_block" => {
       // the loop libcstr.copy_words had (two words loaded, then stored,
       // twice per 32 bytes), which LLVM vectorizes; llvm.memcpy would call
       // memcpy, this function's caller
-      let d = g.raw_ptr(x.args[0])
-      let s = g.raw_ptr(x.args[1])
-      let n = g.op(x.args[2])
+      let d = g.raw_ptr(g.f.arg(x.args, 0))
+      let s = g.raw_ptr(g.f.arg(x.args, 1))
+      let n = g.op(g.f.arg(x.args, 2))
       let pre = g.label
       let head = g.new_label("cbh")
       let body = g.new_label("cbb")
@@ -1934,27 +1934,27 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
     }
     "rt.mem_set" => {
       g.llvm_decl("@llvm.memset.p0.i64", "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
-      let d = g.raw_ptr(x.args[0])
-      let b = g.def("trunc i64 ${g.op(x.args[1])} to i8")
-      g.emit("call void @llvm.memset.p0.i64(ptr ${d}, i8 ${b}, i64 ${g.op(x.args[2])}, i1 false)")
+      let d = g.raw_ptr(g.f.arg(x.args, 0))
+      let b = g.def("trunc i64 ${g.op(g.f.arg(x.args, 1))} to i8")
+      g.emit("call void @llvm.memset.p0.i64(ptr ${d}, i8 ${b}, i64 ${g.op(g.f.arg(x.args, 2))}, i1 false)")
     }
     "rt.prefetch" => {
       // read, high locality, data (decision 0207 stage 3)
       g.llvm_decl("@llvm.prefetch.p0", "declare void @llvm.prefetch.p0(ptr, i32, i32, i32)")
-      let p = g.raw_ptr(x.args[0])
+      let p = g.raw_ptr(g.f.arg(x.args, 0))
       g.emit("call void @llvm.prefetch.p0(ptr ${p}, i32 0, i32 3, i32 1)")
     }
     "rt.mem_cmp" => {
       g.llvm_decl("@memcmp", "declare i32 @memcmp(ptr, ptr, i64)")
-      let a = g.raw_ptr(x.args[0])
-      let b = g.raw_ptr(x.args[1])
-      let r = g.def("call i32 @memcmp(ptr ${a}, ptr ${b}, i64 ${g.op(x.args[2])})")
+      let a = g.raw_ptr(g.f.arg(x.args, 0))
+      let b = g.raw_ptr(g.f.arg(x.args, 1))
+      let r = g.def("call i32 @memcmp(ptr ${a}, ptr ${b}, i64 ${g.op(g.f.arg(x.args, 2))})")
       g.set(v, "sext i32 ${r} to i64")
     }
-    "rt.list_esize" => g.alias(v, "${g.esize(g.m.types[g.vty(x.args[0])].elems[0])}")
+    "rt.list_esize" => g.alias(v, "${g.esize(g.m.types[g.vty(g.f.arg(x.args, 0))].elems[0])}")
     "rt.obj_addr" => {
-      var o = g.op(x.args[0])
-      if g.m.types[g.vty(x.args[0])].kind == ssa.Kind.Str {
+      var o = g.op(g.f.arg(x.args, 0))
+      if g.m.types[g.vty(g.f.arg(x.args, 0))].kind == ssa.Kind.Str {
         let whole = o
         o = g.def("extractvalue %xo.str ${o}, 0")
         if STR_VIEWS {
@@ -1969,11 +1969,11 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
     "rt.str_view" | "rt.str_borrow" => {
       // s[lo..hi] with the range already checked (decision 0330 step 3), as
       // arm64; rt.str_borrow (decision 0465) takes no count
-      let s = g.op(x.args[0])
+      let s = g.op(g.f.arg(x.args, 0))
       let obj = g.def("extractvalue %xo.str ${s}, 0")
       let w1 = g.def("extractvalue %xo.str ${s}, 1")
-      let lo = g.op(x.args[1])
-      let hi = g.op(x.args[2])
+      let lo = g.op(g.f.arg(x.args, 1))
+      let hi = g.op(g.f.arg(x.args, 2))
       if name == "rt.str_view" {
         g.emit("call void ${g.rc_fn("dup", ssa.ty_of(x.tb))}(ptr ${obj})")
       }
@@ -1985,17 +1985,17 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
       g.mk_str(v, obj, nw)
     }
     "rt.obj_at" => {
-      let p = g.raw_ptr(x.args[0])
+      let p = g.raw_ptr(g.f.arg(x.args, 0))
       g.emit("call void ${g.rc_fn("dup", ssa.ty_of(x.tb))}(ptr ${p})")
       g.alias(v, p)
     }
     "rt.obj_peek" => {
       // rt.obj_at with no count (a borrowed root, ssa rc.xo)
-      g.alias(v, g.raw_ptr(x.args[0]))
+      g.alias(v, g.raw_ptr(g.f.arg(x.args, 0)))
     }
     "rt.str_at" => {
       // the two words as a Str, no count taken (decision 0402), as arm64
-      g.mk_str(v, g.raw_ptr(x.args[0]), g.op(x.args[1]))
+      g.mk_str(v, g.raw_ptr(g.f.arg(x.args, 0)), g.op(g.f.arg(x.args, 1)))
     }
     _ => return false
   }
@@ -2031,7 +2031,7 @@ fn (var g: Gen) ord_arg(v: Int, k: Int) -> Int {
   if k >= x.args.len() {
     return 4
   }
-  let c = g.f.values[x.args[k]]
+  let c = g.f.values[g.f.arg(x.args, k)]
   if c.op != ssa.Op.Const {
     return 4
   }
@@ -2046,20 +2046,20 @@ fn (var g: Gen) ord_arg(v: Int, k: Int) -> Int {
 /// words, then words; cellAddr).
 fn (var g: Gen) cell_addr(v: Int) -> Str {
   let x = g.f.values[v]
-  let l = g.op(x.args[0])
-  if g.kind(g.vty(x.args[0])) == ssa.Kind.Int {
+  let l = g.op(g.f.arg(x.args, 0))
+  if g.kind(g.vty(g.f.arg(x.args, 0))) == ssa.Kind.Int {
     // the address form (decision 0207): word i from the address
     let p = g.def("inttoptr i64 ${l} to ptr")
-    let o = g.def("shl i64 ${g.op(x.args[1])}, 3")
+    let o = g.def("shl i64 ${g.op(g.f.arg(x.args, 1))}, 3")
     return g.def("getelementptr i8, ptr ${p}, i64 ${o}")
   }
-  let c = g.f.values[x.args[1]]
+  let c = g.f.values[g.f.arg(x.args, 1)]
   if c.op == ssa.Op.Const {
     if let I(k) = c.aux {
       return g.def("getelementptr i8, ptr ${l}, i64 ${24 + 8 * k}")
     }
   }
-  let o = g.def("shl i64 ${g.op(x.args[1])}, 3")
+  let o = g.def("shl i64 ${g.op(g.f.arg(x.args, 1))}, 3")
   let o2 = g.def("add i64 ${o}, 24")
   g.def("getelementptr i8, ptr ${l}, i64 ${o2}")
 }
@@ -2095,7 +2095,7 @@ fn (var g: Gen) atomic(v: Int) {
     // decision 0286 step 3: the flag's word; set, a call of the stub that
     // keeps every register (the asm writes x16 and lr)
     g.preempt_stub()
-    let a = g.op(x.args[0])
+    let a = g.op(g.f.arg(x.args, 0))
     let stub = if g.goos == "darwin" { "_xo_preempt_stub" } else { "xo_preempt_stub" }
     if g.arch() == "amd64" {
       // the call steps over System V's red zone (Windows has none)
@@ -2156,16 +2156,16 @@ fn (var g: Gen) atomic(v: Int) {
     }
     "rt.slot_store" => {
       let so = if o == 0 { "monotonic" } else if o == 2 { "release" } else { "seq_cst" }
-      g.emit("store atomic i64 ${g.word_of(x.args[2])}, ptr ${p} ${so}, align 8")
+      g.emit("store atomic i64 ${g.word_of(g.f.arg(x.args, 2))}, ptr ${p} ${so}, align 8")
     }
     "rt.slot_swap" | "rt.slot_add" => {
       let op = if name == "rt.slot_swap" { "xchg" } else { "add" }
-      g.atomic_result(v, g.def("atomicrmw ${op} ptr ${p}, i64 ${g.word_of(x.args[2])} ${ord}, align 8"))
+      g.atomic_result(v, g.def("atomicrmw ${op} ptr ${p}, i64 ${g.word_of(g.f.arg(x.args, 2))} ${ord}, align 8"))
     }
     _ => {
       // rt.slot_cas, strong
-      let old = g.word_of(x.args[2])
-      let new = g.word_of(x.args[3])
+      let old = g.word_of(g.f.arg(x.args, 2))
+      let new = g.word_of(g.f.arg(x.args, 3))
       let fail = ["monotonic", "acquire", "monotonic", "acquire", "seq_cst"][o]
       let r = g.def("cmpxchg ptr ${p}, i64 ${old}, i64 ${new} ${ord} ${fail}, align 8")
       g.set(v, "extractvalue { i64, i1 } ${r}, 1")
@@ -2205,7 +2205,7 @@ fn (var g: Gen) rt_call(v: Int) {
   let obj = name.starts_with("rt.rs_")
   var params: List[Str] = []
   var args: List[Str] = []
-  for a in x.args {
+  for a in g.f.args_iter(x.args) {
     let at = g.vty(a)
     match g.kind(at) {
       Int => {
@@ -2391,7 +2391,7 @@ fn (var g: Gen) platform_call(v: Int) {
   }
   var params: List[Str] = []
   var args: List[Str] = []
-  for a in x.args {
+  for a in g.f.args_iter(x.args) {
     let at = g.vty(a)
     match g.kind(at) {
       Int => {

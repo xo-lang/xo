@@ -43,7 +43,7 @@ fn movable_release(f: Func, bl: Int, v: Int) -> Bool {
   if x.op != Op.Release || x.args.len() != 1 || pad_of(x.pi) >= 0 {
     return false
   }
-  let a = x.args[0]
+  let a = f.arg(x.args, 0)
   a >= 0 && block_of(f.values[a].tb) != bl
 }
 
@@ -86,7 +86,7 @@ fn reltail_exits(f: Func, sums: Map[Str, List[Bool]]) -> List[RtExit] {
     var to = -1
     var targs: List[Int] = []
     if f.values[t].op == Op.Return {
-      targs = f.values[t].args
+      targs = f.args_copy(f.values[t].args)
     } else if f.values[t].op == Op.Jump {
       let e = f.values[t].succs()[0]
       to = f.edges[e].to
@@ -122,7 +122,7 @@ fn reltail_exits(f: Func, sums: Map[Str, List[Bool]]) -> List[RtExit] {
         break
       }
       if movable_release(f, bl, v) {
-        let a = x.args[0]
+        let a = f.arg(x.args, 0)
         if set.contains(a) {
           // two releases of one value (two counts): left as they are
           ok = false
@@ -191,7 +191,7 @@ fn common_releases(f: Func, group: List[RtExit]) -> List[RtExit] {
     var rels: List[Int] = []
     var set: Set[Int] = #{}
     for rv in e.rels {
-      let a = f.values[rv].args[0]
+      let a = f.arg(f.values[rv].args, 0)
       if (seen.get(a) ?? 0) >= 2 {
         rels.push(rv)
         set.add(a)
@@ -253,8 +253,8 @@ fn share_tails_to(var f: Func, exits: List[RtExit]) -> Bool {
       }
       for rv in e.rels {
         let x = f.values[rv]
-        if below < 0 || !tails[below].set.contains(x.args[0]) {
-          let nv = f.add(tb, Op.Release, ty_of(x.tb), f.aux(x), [x.args[0]])
+        if below < 0 || !tails[below].set.contains(f.arg(x.args, 0)) {
+          let nv = f.add(tb, Op.Release, ty_of(x.tb), f.aux(x), [f.arg(x.args, 0)])
           f.values[nv].lp = x.lp
         }
       }

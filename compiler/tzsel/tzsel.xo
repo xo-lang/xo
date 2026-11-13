@@ -40,8 +40,8 @@ pub fn tz_use(c: check.Checker, m: ssa.Module, root: Str) -> TZUse {
       }
       var name = ""
       var known = false
-      if v.args.len() > 0 && v.args[0] >= 0 && v.args[0] < f.values.len() {
-        let a = f.values[v.args[0]]
+      if v.args.len() > 0 && f.arg(v.args, 0) >= 0 && f.arg(v.args, 0) < f.values.len() {
+        let a = f.values[f.arg(v.args, 0)]
         if a.op == ssa.Op.Const {
           match f.aux(a) {
             ssa.Aux.S(s: s) => {

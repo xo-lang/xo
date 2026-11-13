@@ -64,8 +64,8 @@ fn bot_key() -> HKey {
 /// The key of value v (keyOf).
 fn (var g: Gen) key_of(v: Int) -> HKey {
   let x = g.f.values[v]
-  if x.op == ssa.Op.Field && g.f.values[x.args[0]].op == ssa.Op.Call {
-    return HKey{v: x.args[0], k: ssa.auxw_int(x.aux)}
+  if x.op == ssa.Op.Field && g.f.values[g.f.arg(x.args, 0)].op == ssa.Op.Call {
+    return HKey{v: g.f.arg(x.args, 0), k: ssa.auxw_int(x.aux)}
   }
   HKey{v: v, k: -1}
 }
@@ -99,7 +99,7 @@ fn (var g: Gen) held_at(v: Int, u: Int) -> Int {
 /// stored into (-1 for none), as user_call lowers it (slotMems).
 fn (var g: Gen) slot_mems(v: Int, callee: Int) -> List[Int] {
   let br = g.by_ref_of(callee)
-  let args = g.f.values[v].args
+  let args = g.f.args_copy(g.f.values[v].args)
   var out: List[Int] = []
   var used: List[Str] = []
   for (i, x) in args.indexed() {
@@ -140,11 +140,11 @@ fn (var g: Gen) stable(v: Int) -> Bool {
         }
       }
     }
-    Payload | Field => r = g.is_agg(ssa.ty_of(x.tb)) && g.stable(x.args[0])
-    Unbox => r = g.is_agg(ssa.ty_of(x.tb)) && g.root_borrowed(x.args[0])
+    Payload | Field => r = g.is_agg(ssa.ty_of(x.tb)) && g.stable(g.f.arg(x.args, 0))
+    Unbox => r = g.is_agg(ssa.ty_of(x.tb)) && g.root_borrowed(g.f.arg(x.args, 0))
     Call => {
       if g.f.name_is(x, "list.index") {
-        r = g.is_agg(ssa.ty_of(x.tb)) && g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Unit && g.root_borrowed(x.args[0])
+        r = g.is_agg(ssa.ty_of(x.tb)) && g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Unit && g.root_borrowed(g.f.arg(x.args, 0))
       }
     }
     _ => {}
@@ -180,11 +180,11 @@ fn (var g: Gen) find_take_args() {
       continue
     }
     let sm = g.slot_mems(v, callee)
-    for (i, a) in x.args.indexed() {
+    for (i, a) in g.f.args_indexed(x.args) {
       if !br[i] || sm[i] >= 0 || !g.is_var_param(callee, i) || g.f.values[a].op != ssa.Op.Field || ssa.auxw_int(g.f.values[a].aux) != 1 || g.users(a) != [v] {
         continue
       }
-      let t = g.f.values[a].args[0]
+      let t = g.f.arg(g.f.values[a].args, 0)
       let tx = g.f.values[t]
       if tx.op != ssa.Op.Call || !g.f.name_is(tx, "list.take") || g.take_ptr.contains(t) {
         continue
@@ -233,9 +233,9 @@ fn (var g: Gen) take_store(t: Int, v: Int, callee: Int, i: Int) -> List[Int] {
   var share = -1
   for u in g.users(r) {
     let ux = g.f.values[u]
-    if ux.op == ssa.Op.Call && g.f.name_is(ux, "list.set") && ux.args.len() == 3 && ux.args[1] == g.f.values[t].args[1] && ux.args[2] == r && set < 0 {
+    if ux.op == ssa.Op.Call && g.f.name_is(ux, "list.set") && ux.args.len() == 3 && g.f.arg(ux.args, 1) == g.f.arg(g.f.values[t].args, 1) && g.f.arg(ux.args, 2) == r && set < 0 {
       set = u
-    } else if ux.op == ssa.Op.ShareIn && ux.args[1] == r && share < 0 {
+    } else if ux.op == ssa.Op.ShareIn && g.f.arg(ux.args, 1) == r && share < 0 {
       share = u
     } else {
       return []
@@ -260,8 +260,8 @@ fn (var g: Gen) take_store(t: Int, v: Int, callee: Int, i: Int) -> List[Int] {
       }
     }
   }
-  let sl = g.f.values[g.f.values[set].args[0]]
-  if sl.op != ssa.Op.Field || sl.args[0] != t || (share >= 0 && g.f.values[share].args[0] != g.f.values[set].args[0]) {
+  let sl = g.f.values[g.f.arg(g.f.values[set].args, 0)]
+  if sl.op != ssa.Op.Field || g.f.arg(sl.args, 0) != t || (share >= 0 && g.f.arg(g.f.values[share].args, 0) != g.f.arg(g.f.values[set].args, 0)) {
     return []
   }
   if share >= 0 {
@@ -283,11 +283,11 @@ fn (var g: Gen) field_store_done(v: Int, k: HKey) -> Bool {
     None => return false
   }
   let x = g.f.values[v]
-  if x.args[0] != u || ssa.auxw_int(x.aux) != idx {
+  if g.f.arg(x.args, 0) != u || ssa.auxw_int(x.aux) != idx {
     return false
   }
-  let r = g.f.values[x.args[1]]
-  r.op == ssa.Op.Field && r.args[0] == k.v && ssa.auxw_int(r.aux) == g.var_result(k.v, i)
+  let r = g.f.values[g.f.arg(x.args, 1)]
+  r.op == ssa.Op.Field && g.f.arg(r.args, 0) == k.v && ssa.auxw_int(r.aux) == g.var_result(k.v, i)
 }
 
 /// The result index of call v's `var` argument i (-1: not a `var` one).
@@ -392,7 +392,7 @@ fn (var g: Gen) compute_held(mems: List[HeldMem]) {
               let sm = g.slot_mems(v, callee)
               for (i, m) in sm.indexed() {
                 if m >= 0 {
-                  st[m] = g.key_of(x.args[i])
+                  st[m] = g.key_of(g.f.arg(x.args, i))
                 }
               }
               // a `var` argument that is a field of a value held in a
@@ -400,13 +400,13 @@ fn (var g: Gen) compute_held(mems: List[HeldMem]) {
               // field's address there (field homes)
               var fs: List[(Int, Int)] = []
               let cb = g.by_ref_of(callee)
-              for (i, a) in x.args.indexed() {
+              for (i, a) in g.f.args_indexed(x.args) {
                 // the dataflow runs to a fixed point: a pass decides again
                 g.held.fslot.remove((v, i))
                 if cb.is_empty() || !cb[i] || sm[i] >= 0 || !g.is_var_param(callee, i) || g.f.values[a].op != ssa.Op.Field {
                   continue
                 }
-                let u = g.f.values[a].args[0]
+                let u = g.f.arg(g.f.values[a].args, 0)
                 let m = g.mem_of(g.ll(g.vty(u)))
                 if m < 0 || sm.contains(m) || st[m] != g.key_of(u) || fs.any(fn(p) { p.0 == m }) {
                   continue
@@ -436,7 +436,7 @@ fn (var g: Gen) compute_held(mems: List[HeldMem]) {
           }
           SetField => {
             g.held.fdone.remove(v)
-            let u = x.args[0]
+            let u = g.f.arg(x.args, 0)
             let m = g.mem_of(g.ll(g.vty(u)))
             if m >= 0 && st[m] == g.key_of(u) {
               g.held.in_place[v] = m
@@ -449,7 +449,7 @@ fn (var g: Gen) compute_held(mems: List[HeldMem]) {
           }
           Jump => g.set_edge(ssa.succ(x, 0), st)
           Branch => {
-            let l = x.args[0]
+            let l = g.f.arg(x.args, 0)
             let lx = g.f.values[l]
             if lx.op == ssa.Op.Call && g.f.name_is(lx, "rt.landing") {
               if let Some(ps) = landed.get(l) {
@@ -574,7 +574,7 @@ fn (var g: Gen) find_mem_only() {
     }
     for v in g.f.blocks[b].instrs {
       let x = g.f.values[v]
-      if x.op == ssa.Op.Field && g.f.values[x.args[0]].op == ssa.Op.Call {
+      if x.op == ssa.Op.Field && g.f.values[g.f.arg(x.args, 0)].op == ssa.Op.Call {
         let m = g.mem_of(g.ll(ssa.ty_of(x.tb)))
         if m >= 0 {
           cands[v] = m
@@ -589,7 +589,7 @@ fn (var g: Gen) find_mem_only() {
   for b in 0..g.f.blocks.len() {
     for v in g.f.blocks[b].instrs {
       let x = g.f.values[v]
-      for a in x.args {
+      for a in g.f.args_iter(x.args) {
         let m = cands[a]
         if m < 0 {
           continue
@@ -676,7 +676,7 @@ fn (var g: Gen) users(v: Int) -> List[Int] {
     }
     for b in 0..g.f.blocks.len() {
       for x in g.f.blocks[b].instrs {
-        for a in g.f.values[x].args {
+        for a in g.f.args_iter(g.f.values[x].args) {
           g.users_of[a].push(x)
         }
         for e in g.f.values[x].succs() {

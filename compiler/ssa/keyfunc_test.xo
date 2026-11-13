@@ -35,7 +35,7 @@ fn key_func_ref(var b: BytesBuilder, f: Func, tk: List[Str]) {
   }
   for (vi, x) in f.values.indexed() {
     let k = tkey_ref(tk, seen, ty_of(x.tb))
-    b.write_str("v${vi} ${op_name(x.op)} ${k} [${ints_line(x.args)}] ")
+    b.write_str("v${vi} ${op_name(x.op)} ${k} [${ints_line(f.args_copy(x.args))}] ")
     key_aux(b, f.aux(x))
     b.write_str(" ${block_of(x.tb)} [${ints_line(x.succs())}] ${pad_of(x.pi)} ${line_of(x.lp)} ${f.pos_of(x).len()}:${f.pos_of(x)}\n")
   }

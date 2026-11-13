@@ -202,7 +202,7 @@ fn (var g: Gen) dies_except(a: Int, v: Int, skip: List[Int], to: Int) -> Bool {
   var after = false
   for w in b.instrs {
     if after {
-      if f.values[w].args.contains(a) && !skip.contains(w) {
+      if f.args_has(f.values[w].args, a) && !skip.contains(w) {
         return false
       }
       for e in f.values[w].succs() {
@@ -382,7 +382,7 @@ fn (var g: Gen) plan_homes(pos: List[Int], hi: List[Int], bend: List[Int]) {
     g.inedge.push(false)
   }
   for (w, y) in f.values.indexed() {
-    for a in y.args {
+    for a in f.args_iter(y.args) {
       if a >= 0 {
         g.users[a].push(w)
       }
@@ -465,7 +465,7 @@ fn (var g: Gen) add_local_homes() {
       // field of a struct literal (stored a field at a time), that may
       // be in the block would be read after the block is written
       var alias = false
-      for (i, a) in x.args.indexed() {
+      for (i, a) in f.args_indexed(x.args) {
         if (ci < 0 || g.homes[ci].contains(i)) && a >= 0 {
           let ba = g.field_base(a)
           if ba >= 0 && ssa.ty_of(f.values[ba].tb) == t {
@@ -483,7 +483,7 @@ fn (var g: Gen) add_local_homes() {
           continue
         }
         for pi in g.m.funcs[cw].var_params {
-          if g.homes[cw].contains(pi) && !g.rhomes[cw].contains(pi) && pi < f.values[w].args.len() && f.values[w].args[pi] == v && !passed.contains(t) {
+          if g.homes[cw].contains(pi) && !g.rhomes[cw].contains(pi) && pi < f.values[w].args.len() && f.arg(f.values[w].args, pi) == v && !passed.contains(t) {
             passed.push(t)
           }
         }
@@ -544,7 +544,7 @@ fn (var g: Gen) local_home_struct(v: Int, h: Int) {
   let p = g.local_home_block(h)
   var zero: List[Bool] = []
   var nz = 0
-  for a in x.args {
+  for a in g.f.args_iter(x.args) {
     var z = false
     if let Some(w) = g.const_words(a) {
       z = w.all(fn(n: Int) -> Bool { n == 0 })
@@ -561,7 +561,7 @@ fn (var g: Gen) local_home_struct(v: Int, h: Int) {
     g.e("i32.const ${g.size(t)}")
     g.e("memory.fill")
   }
-  for (i, a) in x.args.indexed() {
+  for (i, a) in g.f.args_indexed(x.args) {
     if fill && zero[i] {
       continue
     }
@@ -585,7 +585,7 @@ fn (var g: Gen) local_home_struct(v: Int, h: Int) {
 fn (g: Gen) field_base(v: Int) -> Int {
   var a = v
   while a >= 0 && g.f.values[a].op == ssa.Op.Field && g.f.values[a].args.len() > 0 {
-    a = g.f.values[a].args[0]
+    a = g.f.arg(g.f.values[a].args, 0)
   }
   a
 }
@@ -664,7 +664,7 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
         continue
       }
       for (j, pi) in g.m.funcs[ci].var_params.indexed() {
-        if !g.homes[ci].contains(pi) || pi >= x.args.len() || x.args[pi] < 0 || ssa.ty_of(f.values[x.args[pi]].tb) != ht {
+        if !g.homes[ci].contains(pi) || pi >= x.args.len() || f.arg(x.args, pi) < 0 || ssa.ty_of(f.values[f.arg(x.args, pi)].tb) != ht {
           continue
         }
         // every use of the call's tuple must be a field read
@@ -718,7 +718,7 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
       for v in b.instrs {
         let x = f.values[v]
         if x.op == ssa.Op.SetField && chain[v] {
-          let a = x.args[0]
+          let a = f.arg(x.args, 0)
           if !chain[a] || !g.gives_up(a, v, g.members(a, partof, cparts), -1) {
             chain[v] = false
             changed = true
@@ -728,7 +728,7 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
           }
         }
         if cpar[v] >= 0 {
-          let a = x.args[cpar[v]]
+          let a = f.arg(x.args, cpar[v])
           let ok = chain[a] && g.gives_up(a, v, g.members(a, partof, cparts), -1)
           for w in cparts[v] {
             if chain[w] && !ok {
@@ -805,10 +805,10 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
     for v in b.instrs {
       let x = f.values[v]
       if x.op == ssa.Op.SetField && chain[v] {
-        gone.push((x.args[0], v, -1))
+        gone.push((f.arg(x.args, 0), v, -1))
       }
       if cpar[v] >= 0 {
-        gone.push((x.args[cpar[v]], v, -1))
+        gone.push((f.arg(x.args, cpar[v]), v, -1))
       }
     }
     for (a, at, to) in gone {
@@ -934,7 +934,7 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
     for v in b.instrs {
       before[v] = st
       let x = f.values[v]
-      for (k, a) in x.args.indexed() {
+      for (k, a) in f.args_indexed(x.args) {
         if snapped[v] {
           continue
         }
@@ -1009,7 +1009,7 @@ fn (var g: Gen) plan_sret_home(h: Int, chain: List[Bool], before: List[Int]) {
       if x.op != ssa.Op.Return || x.args.len() != 1 {
         continue
       }
-      let a = x.args[0]
+      let a = f.arg(x.args, 0)
       if a < 0 {
         return
       }
@@ -1172,7 +1172,7 @@ fn (var g: Gen) plan_nested() {
       if g.inhome[v] || x.op != ssa.Op.SetField || g.held[v] >= 0 || x.args.len() < 2 {
         continue
       }
-      let mv = x.args[0]
+      let mv = f.arg(x.args, 0)
       if mv < 0 || g.mfield[mv] < 0 || f.values[mv].op != ssa.Op.Field {
         continue
       }
@@ -1181,7 +1181,7 @@ fn (var g: Gen) plan_nested() {
       }
       let u = g.users[v][0]
       let ux = f.values[u]
-      if ux.op != ssa.Op.SetField || ux.args.len() < 2 || ux.args[1] != v || ux.args[0] != f.values[mv].args[0] {
+      if ux.op != ssa.Op.SetField || ux.args.len() < 2 || f.arg(ux.args, 1) != v || f.arg(ux.args, 0) != f.arg(f.values[mv].args, 0) {
         continue
       }
       let fi = match f.values[mv].aux {
@@ -1262,7 +1262,7 @@ fn (g: Gen) quiet_between(v: Int, u: Int, h: Int) -> Bool {
       return on
     }
     if on {
-      for a in g.f.values[w].args {
+      for a in g.f.args_iter(g.f.values[w].args) {
         if a >= 0 && (g.held[a] == h || g.mfield[a] == h) {
           return false
         }
@@ -1288,7 +1288,7 @@ fn (var g: Gen) plan_fields(pos: List[Int]) {
       if x.op != ssa.Op.Field || g.held[v] >= 0 || g.mfield[v] >= 0 || pos[v] < 0 || g.nleaves(ssa.ty_of(x.tb)) == 0 || g.snapped(v) {
         continue
       }
-      let a = x.args[0]
+      let a = f.arg(x.args, 0)
       let r = g.mem_root(a)
       if r < 0 || !(g.kind(g.vty(a)) is ssa.Kind.Struct | ssa.Kind.Tuple) {
         continue
@@ -1316,7 +1316,7 @@ fn (var g: Gen) plan_fields(pos: List[Int]) {
     for v in b.instrs {
       let x = f.values[v]
       var us: List[Int] = []
-      for a in x.args {
+      for a in f.args_iter(x.args) {
         us.push(a)
       }
       for e in x.succs() {
@@ -1342,7 +1342,7 @@ fn (var g: Gen) plan_fields(pos: List[Int]) {
   while demoted {
     demoted = false
     for v in 0..nv {
-      if g.mfield[v] >= 0 && (!ok[v] || (g.mfield[f.values[v].args[0]] < 0 && g.held[f.values[v].args[0]] < 0)) {
+      if g.mfield[v] >= 0 && (!ok[v] || (g.mfield[f.arg(f.values[v].args, 0)] < 0 && g.held[f.arg(f.values[v].args, 0)] < 0)) {
         g.mfield[v] = -1
         g.mroot[v] = -1
         demoted = true
@@ -1393,7 +1393,7 @@ fn (var g: Gen) take_snaps(d: Int) {
   if let Some(reps) = g.snapat.get(d) {
     for rep in reps {
       let x = g.f.values[rep]
-      let a = x.args[0]
+      let a = g.f.arg(x.args, 0)
       let i = match x.aux {
         I(n) => n
         _ => 0
@@ -1759,14 +1759,14 @@ fn (var g: Gen) plan_field_calls() {
       if !g.homes[ci].contains(pi) || g.rhomes[ci].contains(pi) || pi >= x.args.len() {
         continue
       }
-      let a = x.args[pi]
+      let a = f.arg(x.args, pi)
       if a < 0 || g.pass.contains(v * 4096 + pi) || g.mfield[a] < 0 || f.values[a].op != ssa.Op.Field {
         continue
       }
       if g.users[a].len() != 1 || g.users[a][0] != v {
         continue
       }
-      let c = f.values[a].args[0]
+      let c = f.arg(f.values[a].args, 0)
       let h = g.mfield[a]
       if c < 0 || g.held[c] != h {
         continue
@@ -1794,7 +1794,7 @@ fn (var g: Gen) plan_field_calls() {
       }
       let u = g.users[r][0]
       let ux = f.values[u]
-      if ux.op != ssa.Op.SetField || ux.args.len() < 2 || ux.args[0] != c || ux.args[1] != r || g.held[u] != h {
+      if ux.op != ssa.Op.SetField || ux.args.len() < 2 || f.arg(ux.args, 0) != c || f.arg(ux.args, 1) != r || g.held[u] != h {
         continue
       }
       let ui = match ux.aux {
@@ -1862,7 +1862,7 @@ fn (g: Gen) quiet_through(v: Int, r: Int, u: Int, h: Int) -> Bool {
         break
       }
       if on && w != r {
-        for a in f.values[w].args {
+        for a in f.args_iter(f.values[w].args) {
           if a >= 0 && (g.held[a] == h || g.mfield[a] == h) {
             return false
           }

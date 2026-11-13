@@ -86,7 +86,7 @@ fn uses_of(f: Func) -> List[List[UUse]] {
   }
   for bl in f.blocks {
     for v in bl.instrs {
-      for (k, a) in f.values[v].args.indexed() {
+      for (k, a) in f.args_indexed(f.values[v].args) {
         if a >= 0 && a < us.len() {
           us[a].push(UUse{v: v, e: -1, k: k})
         }
@@ -274,7 +274,7 @@ fn (r: Rc) origin1(funcs: List[Func], fi: Int, s: UFn, uf: UniqFacts, v: Int, va
     // the copy-on-write check's result: a list held only here
     Reuse => return true
     Field => {
-      let c = x.args[0]
+      let c = f.arg(x.args, 0)
       let cx = f.values[c]
       if cx.op != Op.Call {
         return false
@@ -288,7 +288,7 @@ fn (r: Rc) origin1(funcs: List[Func], fi: Int, s: UFn, uf: UniqFacts, v: Int, va
       return ci >= 0 && call_hands_unique(f, s.idom, uf.facts(ci), c, k, block_of(x.tb))
     }
     Rebind => {
-      let a = x.args[0]
+      let a = f.arg(x.args, 0)
       return r.owned_at(f, s, a, UUse{v: v, e: -1, k: 0}) && r.origin(funcs, fi, s, uf, a, memo)
     }
     Param => {
@@ -370,7 +370,7 @@ fn past_landing(f: Func, idom: List[Int], c: Int, b: Int) -> Bool {
     return false
   }
   let t = f.values[ins[ins.len() - 1]]
-  if t.op != Op.Branch || t.args.is_empty() || t.args[0] != u || succ_n(t) != 2 {
+  if t.op != Op.Branch || t.args.is_empty() || f.arg(t.args, 0) != u || succ_n(t) != 2 {
     return false
   }
   udom(idom, f.edges[succ(t, 1)].to, b)
@@ -450,7 +450,7 @@ fn (r: Rc) uniq_facts(funcs: List[Func]) -> UniqFacts {
         for (ci, cv) in calls[fi] {
           let sc = ufn_of(funcs, ci, st)
           var memo = memos.get(ci) ?? zeros(funcs[ci].values.len())
-          let a = funcs[ci].values[cv].args[i]
+          let a = funcs[ci].arg(funcs[ci].values[cv].args, i)
           let mine = r.owned_at(funcs[ci], sc, a, UUse{v: cv, e: -1, k: i})
           let good = mine && r.origin(funcs, ci, sc, uf, a, memo)
           memos[ci] = memo
@@ -512,7 +512,7 @@ fn (r: Rc) returned_unique(funcs: List[Func], fi: Int, s: UFn, uf: UniqFacts, v:
   if k >= x.args.len() {
     return false
   }
-  let a = x.args[k]
+  let a = f.arg(x.args, k)
   r.owned_at(f, s, a, UUse{v: v, e: -1, k: k}) && r.origin(funcs, fi, s, uf, a, memo)
 }
 
@@ -580,7 +580,7 @@ fn mark_entry_reuse(var f: Func, es: List[Bool], mark: Int) {
   for v in f.blocks[0].instrs {
     let x = f.values[v]
     if x.op == Op.Reuse && x.args.len() == 1 {
-      let p = x.args[0]
+      let p = f.arg(x.args, 0)
       let i = param_index(f, p)
       if f.values[p].op == Op.Param && block_of(f.values[p].tb) == 0 && i >= 0 && i < es.len() && es[i] {
         f.values[v].aux = f.pack(Aux.I(n: mark))

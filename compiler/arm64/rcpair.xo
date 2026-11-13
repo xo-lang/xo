@@ -21,7 +21,7 @@ fn cancel_rc_pairs(var f: ssa.Func) -> Bool {
       if x.op != ssa.Op.Retain || x.args.len() != 1 || gone.contains(v) {
         continue
       }
-      let key = leaf_key(f, x.args[0])
+      let key = leaf_key(f, f.arg(x.args, 0))
       if key.is_empty() {
         continue
       }
@@ -35,7 +35,7 @@ fn cancel_rc_pairs(var f: ssa.Func) -> Bool {
         let cins = f.blocks[cb].instrs
         while j < cins.len() {
           let y = f.values[cins[j]]
-          if y.op == ssa.Op.Release && y.args.len() == 1 && !gone.contains(cins[j]) && leaf_key(f, y.args[0]) == key {
+          if y.op == ssa.Op.Release && y.args.len() == 1 && !gone.contains(cins[j]) && leaf_key(f, f.arg(y.args, 0)) == key {
             gone[v] = true
             gone[cins[j]] = true
             done = true
@@ -126,10 +126,10 @@ fn sink_retains(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) -> Bool 
       var r = -1
       while k >= 0 {
         let x = f.values[ins[k]]
-        if x.op == ssa.Op.Retain && x.args.len() == 1 && sink_root_ok(f, by_name, x.args[0], 4) {
+        if x.op == ssa.Op.Retain && x.args.len() == 1 && sink_root_ok(f, by_name, f.arg(x.args, 0), 4) {
           var ok = true
           for j in k + 1..ins.len() - 1 {
-            if !sink_past(f, m, by_name, f.values[ins[j]], x.args[0]) {
+            if !sink_past(f, m, by_name, f.values[ins[j]], f.arg(x.args, 0)) {
               ok = false
               break
             }
@@ -145,7 +145,7 @@ fn sink_retains(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) -> Bool 
         continue
       }
       let rv = ins[r]
-      let a = f.values[rv].args[0]
+      let a = f.arg(f.values[rv].args, 0)
       var out: List[Int] = []
       for (i, v) in ins.indexed() {
         if i != r {
@@ -189,7 +189,7 @@ fn sink_past(f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int], x: ssa.Value, a
     return false
   }
   let cf = m.funcs[ci]
-  for (i, v) in x.args.indexed() {
+  for (i, v) in f.args_indexed(x.args) {
     if v == a {
       if i >= cf.borrowed.len() || !cf.borrowed[i] {
         return false
@@ -249,11 +249,11 @@ fn sink_root_ok(f: ssa.Func, by_name: Map[Str, Int], a0: Int, depth: Int) -> Boo
       return true
     }
     if x.op is ssa.Op.Field | ssa.Op.Payload {
-      a = x.args[0]
+      a = f.arg(x.args, 0)
     } else if x.op == ssa.Op.Call {
       let name = f.name_of(x)
       if (name is "list.index" | "list.get") && x.args.len() == 2 {
-        a = x.args[0]
+        a = f.arg(x.args, 0)
       } else {
         return by_name.contains(name) || name.starts_with("list.")
       }
@@ -277,7 +277,7 @@ fn leaf_key(f: ssa.Func, v: Int) -> Str {
       return "v${x}${path}"
     }
     path = ".${ssa.auxw_int(xv.aux)}${path}"
-    x = xv.args[0]
+    x = f.arg(xv.args, 0)
   }
   ""
 }
@@ -312,9 +312,9 @@ fn imm_post(f: ssa.Func, v: Int, depth: Int, walking: List[Int]) -> Bool {
       }
       return false
     }
-    Call => return (f.name_of(x) is "rt.str_view" | "rt.str_borrow") && x.args.len() >= 1 && imm_post(f, x.args[0], depth + 1, walking)
+    Call => return (f.name_of(x) is "rt.str_view" | "rt.str_borrow") && x.args.len() >= 1 && imm_post(f, f.arg(x.args, 0), depth + 1, walking)
     Variant => {
-      for a in x.args {
+      for a in f.args_iter(x.args) {
         if !imm_post(f, a, depth + 1, walking) {
           return false
         }
@@ -323,7 +323,7 @@ fn imm_post(f: ssa.Func, v: Int, depth: Int, walking: List[Int]) -> Bool {
     }
     Payload => {
       if let P(tag: tg, field: fd) = f.aux(x) {
-        return payload_imm(f, x.args[0], tg, fd, depth + 1, walking)
+        return payload_imm(f, f.arg(x.args, 0), tg, fd, depth + 1, walking)
       }
       return false
     }
@@ -359,7 +359,7 @@ fn payload_imm(f: ssa.Func, o: Int, tg: Int, fd: Int, depth: Int, walking: List[
     if ssa.auxw_int(x.aux) != tg {
       return true
     }
-    return fd < x.args.len() && imm_post(f, x.args[fd], depth + 1, walking)
+    return fd < x.args.len() && imm_post(f, f.arg(x.args, fd), depth + 1, walking)
   }
   if x.op == ssa.Op.Param && ssa.block_of(x.tb) > 0 {
     if walking.contains(o) {

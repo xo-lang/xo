@@ -46,9 +46,9 @@ fn ssa_census(os: Os, m: ssa.Module, at: Str) {
           fheap += 1
         }
         let fk = match f.aux(v) {
-          I(n) => "${v.args[0]} #${n}"
-          P(a, b) => "${v.args[0]} #${a}.${b}"
-          _ => "${v.args[0]} ?"
+          I(n) => "${f.arg(v.args, 0)} #${n}"
+          P(a, b) => "${f.arg(v.args, 0)} #${a}.${b}"
+          _ => "${f.arg(v.args, 0)} ?"
         }
         if fseen.contains(fk) {
           fdup += 1

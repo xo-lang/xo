@@ -126,8 +126,8 @@ fn fault_scans(m: Module) -> List[(Bool, List[Int])] {
 
 /// Whether value x of function f, once built, can fault (raises).
 fn raises(m: Module, f: Func, x: Value, faults: List[Bool]) -> Bool {
-  if x.op == Op.CallValue && f.values[x.args[0]].op == Op.Closure {
-    let g = m.func_index(f.name_of(f.values[x.args[0]]))
+  if x.op == Op.CallValue && f.values[f.arg(x.args, 0)].op == Op.Closure {
+    let g = m.func_index(f.name_of(f.values[f.arg(x.args, 0)]))
     if g >= 0 && m.funcs[g].catches {
       // it returns on a fault
       return false
@@ -256,7 +256,7 @@ fn walk_literal(m: Module, c: UCheck) -> Int {
     return -1
   }
   // the function value is the method's last parameter
-  let a = f.values[x.args[x.args.len() - 1]]
+  let a = f.values[f.arg(x.args, x.args.len() - 1)]
   if a.op != Op.Closure {
     return -1
   }
@@ -293,8 +293,8 @@ fn hand_back_zero(var f: Func) {
   if f.values[ret].op != Op.Return || f.values[ret].args.len() != 1 {
     return
   }
-  let t = f.values[ret].args[0]
-  if f.values[t].op != Op.Tuple || f.values[t].args.len() != 2 || f.values[t].args[1] != orig {
+  let t = f.arg(f.values[ret].args, 0)
+  if f.values[t].op != Op.Tuple || f.values[t].args.len() != 2 || f.arg(f.values[t].args, 1) != orig {
     return
   }
   for v in ins {
@@ -302,7 +302,7 @@ fn hand_back_zero(var f: Func) {
       return
     }
     if v != orig && ty_of(f.values[v].tb) == ty_of(f.values[orig].tb) {
-      f.values[t].args[1] = v
+      f.set_arg(t, 1, v)
       return
     }
   }
@@ -327,7 +327,7 @@ fn (var b: Builder) drop_check(fi: Int, u: Int, w: Int) {
   }
   b.m.funcs[fi].blocks[to].preds = preds
   b.m.funcs[fi].values[br].op = Op.Jump
-  b.m.funcs[fi].values[br].args = []
+  b.m.funcs[fi].set_args(br, [])
   b.m.funcs[fi].values[br].set_succs([no])
   var ins: List[Int] = []
   for v in b.m.funcs[fi].blocks[bl].instrs {
@@ -430,7 +430,7 @@ fn known_result(f: Func) -> Option[Aux] {
         if t.args.len() != 1 {
           return None
         }
-        let r = f.values[bound.get(t.args[0]) ?? t.args[0]]
+        let r = f.values[bound.get(f.arg(t.args, 0)) ?? f.arg(t.args, 0)]
         if r.op != Op.Const {
           return None
         }
@@ -473,19 +473,19 @@ fn fold_const_branches(var f: Func) -> Bool {
   var changed = false
   for vi in 0..f.values.len() {
     let v = f.values[vi]
-    if v.op == Op.Not && block_of(v.tb) >= 0 && v.args.len() == 1 && f.values[v.args[0]].op == Op.Const {
-      if let B(x) = f.values[v.args[0]].aux {
+    if v.op == Op.Not && block_of(v.tb) >= 0 && v.args.len() == 1 && f.values[f.arg(v.args, 0)].op == Op.Const {
+      if let B(x) = f.values[f.arg(v.args, 0)].aux {
         f.values[vi].op = Op.Const
         f.values[vi].aux = f.pack(Aux.B(b: !x))
-        f.values[vi].args = []
+        f.set_args(vi, [])
       }
       continue
     }
     if block_of(v.tb) < 0 || v.args.len() != 2 || !(v.op is Op.Eq | Op.Ne | Op.Lt | Op.Le | Op.Gt | Op.Ge) {
       continue
     }
-    if let Some(x) = const_word(f, v.args[0]) {
-      if let Some(y) = const_word(f, v.args[1]) {
+    if let Some(x) = const_word(f, f.arg(v.args, 0)) {
+      if let Some(y) = const_word(f, f.arg(v.args, 1)) {
         // an ordering only of two constants at least 0, which order the
         // same signed or not (an unsigned type's word above 2^63 is
         // negative as Int's; 2026-10-20: ints.u64_rem's `b > 0` stayed a
@@ -503,7 +503,7 @@ fn fold_const_branches(var f: Func) -> Bool {
         }
         f.values[vi].op = Op.Const
         f.values[vi].aux = f.pack(Aux.B(b: r))
-        f.values[vi].args = []
+        f.set_args(vi, [])
       }
     }
   }
@@ -512,7 +512,7 @@ fn fold_const_branches(var f: Func) -> Bool {
     if t < 0 || f.values[t].op != Op.Branch || succ_n(f.values[t]) != 2 {
       continue
     }
-    let cv = f.values[f.values[t].args[0]]
+    let cv = f.values[f.arg(f.values[t].args, 0)]
     if cv.op != Op.Const {
       continue
     }
@@ -537,7 +537,7 @@ fn fold_const_branches(var f: Func) -> Bool {
     }
     f.blocks[to].preds = preds
     f.values[t].op = Op.Jump
-    f.values[t].args = []
+    f.set_args(t, [])
     f.values[t].set_succs([keep])
     changed = true
   }
@@ -596,7 +596,7 @@ fn const_word(f: Func, v: Int) -> Option[Int] {
     if f.values[x].op != Op.IntConv || f.values[x].args.len() != 1 {
       break
     }
-    x = f.values[x].args[0]
+    x = f.arg(f.values[x].args, 0)
   }
   const_int(f, x)
 }
@@ -973,7 +973,7 @@ pub fn merge_straight(var f: Func, m: Module, calls: List[Bool]) -> Bool {
       }
       for v in f.blocks[bl].instrs {
         for i in 0..f.values[v].args.len() {
-          f.values[v].args[i] = find_repl(repl, f.values[v].args[i])
+          f.set_arg(v, i, find_repl(repl, f.arg(f.values[v].args, i)))
         }
         for se in f.values[v].succs() {
           for i in 0..f.edges[se].args.len() {
@@ -1058,7 +1058,7 @@ pub fn cse(var f: Func, m: Module) -> Bool {
       // a constant operand by its value: each use site has its own Const
       var args: List[Str] = []
       var ok = true
-      for a0 in x.args {
+      for a0 in f.args_iter(x.args) {
         let a = find_repl(repl, a0)
         let y = f.values[a]
         if y.op == Op.Const {
@@ -1110,7 +1110,7 @@ pub fn cse(var f: Func, m: Module) -> Bool {
       }
       keep.push(v)
       for k in 0..f.values[v].args.len() {
-        f.values[v].args[k] = find_repl(repl, f.values[v].args[k])
+        f.set_arg(v, k, find_repl(repl, f.arg(f.values[v].args, k)))
       }
       for se in f.values[v].succs() {
         for k in 0..f.edges[se].args.len() {
@@ -1153,7 +1153,7 @@ pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
   var us: Map[Int, List[Int]] = {}
   for bl in f.blocks {
     for v in bl.instrs {
-      for a in f.values[v].args {
+      for a in f.args_iter(f.values[v].args) {
         if a >= 0 && f.values[a].op == Op.Tuple {
           us.update(a, [], fn(var l) { l.push(v) })
         }
@@ -1182,13 +1182,13 @@ pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
       }
       let tu = us.get(t) ?? []
       var ok = !tu.is_empty()
-      for a in x.args {
+      for a in f.args_iter(x.args) {
         if !tuple_operand_owned(f, m, a) {
           ok = false
         }
       }
       for u in tu {
-        if u < 0 || f.values[u].op != Op.Field || f.values[u].args[0] != t {
+        if u < 0 || f.values[u].op != Op.Field || f.arg(f.values[u].args, 0) != t {
           ok = false
           break
         }
@@ -1209,7 +1209,7 @@ pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
           I(n) => n
           None | F(..) | B(..) | S(..) | Bs(..) | P(..) | E(..) => 0
         }
-        repl[u] = x.args[i]
+        repl[u] = f.arg(x.args, i)
         dead[u] = true
       }
       dead[t] = true
@@ -1226,7 +1226,7 @@ pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
       }
       keep.push(v)
       for k in 0..f.values[v].args.len() {
-        f.values[v].args[k] = find_repl(repl, f.values[v].args[k])
+        f.set_arg(v, k, find_repl(repl, f.arg(f.values[v].args, k)))
       }
       for se in f.values[v].succs() {
         for k in 0..f.edges[se].args.len() {
@@ -1281,7 +1281,7 @@ fn read_only_uses(f: Func) -> Map[Int, Bool] {
     for v in b.instrs {
       let x = f.values[v]
       let name = if x.op == Op.Call { cse_call(f.aux(x)) } else { "" }
-      for (k, a) in x.args.indexed() {
+      for (k, a) in f.args_indexed(x.args) {
         if k > 0 || name.is_empty() {
           out[a] = true
         }
@@ -1403,7 +1403,7 @@ fn remove_trivial_params(var f: Func) {
   for bl in 0..f.blocks.len() {
     for v in f.blocks[bl].instrs {
       for k in 0..f.values[v].args.len() {
-        f.values[v].args[k] = find_repl(repl, f.values[v].args[k])
+        f.set_arg(v, k, find_repl(repl, f.arg(f.values[v].args, k)))
       }
       for e in f.values[v].succs() {
         for k in 0..f.edges[e].args.len() {
@@ -1451,10 +1451,10 @@ fn renumber(var f: Func) {
     // values after aiplatform/v1's inlining)
     if !x.args.is_empty() {
       var args: List[Int] = List.with_capacity(x.args.len())
-      for a in x.args {
+      for a in f.args_iter(x.args) {
         args.push(if a >= 0 { map[a] } else { -1 })
       }
-      x.args = args
+      x.args = f.mk_args(args)
     }
     if pad_of(x.pi) >= 0 {
       x.pi = with_pad(x.pi, map[pad_of(x.pi)])

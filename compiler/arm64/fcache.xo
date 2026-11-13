@@ -591,7 +591,7 @@ fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_na
       }
     }
     for (vi, x) in f.values.indexed() {
-      b.write("v${vi} ${ssa.op_name(x.op)} ${tk_of(tk, ssa.ty_of(x.tb))} ${ints_text(x.args)} ${aux_text(f.aux(x))} ${ssa.block_of(x.tb)} ${ints_text(x.succs())} ${ssa.pad_of(x.pi)} ${f.pos_of(x).len()}:${f.pos_of(x)}")
+      b.write("v${vi} ${ssa.op_name(x.op)} ${tk_of(tk, ssa.ty_of(x.tb))} ${ints_text(f.args_copy(x.args))} ${aux_text(f.aux(x))} ${ssa.block_of(x.tb)} ${ints_text(x.succs())} ${ssa.pad_of(x.pi)} ${f.pos_of(x).len()}:${f.pos_of(x)}")
       if m.debug_info {
         b.write(" l${ssa.line_of(x.lp)} i${ssa.inl_of(x.pi)}")
       }

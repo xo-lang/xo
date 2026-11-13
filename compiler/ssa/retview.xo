@@ -78,7 +78,7 @@ fn returned_view(f: Func, rvp: List[Int], fidx: Map[Str, Int]) -> Int {
       return -1
     }
     var seen: Map[Int, Bool] = {}
-    let q = view_of(f, t.args[0], rvp, fidx, seen)
+    let q = view_of(f, f.arg(t.args, 0), rvp, fidx, seen)
     if q == -1 || (q >= 0 && any && q != p) {
       return -1
     }
@@ -120,7 +120,7 @@ fn view_of(f: Func, v: Int, rvp: List[Int], fidx: Map[Str, Int], var seen: Map[I
         if x.args.is_empty() {
           return -1
         }
-        let q = view_of(f, x.args[0], rvp, fidx, seen)
+        let q = view_of(f, f.arg(x.args, 0), rvp, fidx, seen)
         // a view of a constant is a constant's: not a parameter's
         return if q == -2 { -1 } else { q }
       }
@@ -128,7 +128,7 @@ fn view_of(f: Func, v: Int, rvp: List[Int], fidx: Map[Str, Int], var seen: Map[I
       if g < 0 || rvp[g] < 0 || rvp[g] >= x.args.len() {
         return -1
       }
-      let q = view_of(f, x.args[rvp[g]], rvp, fidx, seen)
+      let q = view_of(f, f.arg(x.args, rvp[g]), rvp, fidx, seen)
       if q == -2 { -1 } else { q }
     }
     _ => -1

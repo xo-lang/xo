@@ -36,24 +36,24 @@ fn const_reads(f: Func) -> List[CRead] {
     if t < 0 || f.values[t].op != Op.Branch || f.values[t].args.len() != 1 {
       continue
     }
-    let cmp = f.values[t].args[0]
+    let cmp = f.arg(f.values[t].args, 0)
     let cv = f.values[cmp]
-    if cv.op != Op.Ne || block_of(cv.tb) != b || cv.args.len() != 2 || const_int(f, cv.args[1]) != Some(0) {
+    if cv.op != Op.Ne || block_of(cv.tb) != b || cv.args.len() != 2 || const_int(f, f.arg(cv.args, 1)) != Some(0) {
       continue
     }
-    let tw = cv.args[0]
+    let tw = f.arg(cv.args, 0)
     let tv = f.values[tw]
-    if tv.op != Op.Call || block_of(tv.tb) != b || !f.name_is(tv, "rt.slot_load") || tv.args.len() != 3 || const_int(f, tv.args[1]) != Some(CONST_TABLE_WORD) {
+    if tv.op != Op.Call || block_of(tv.tb) != b || !f.name_is(tv, "rt.slot_load") || tv.args.len() != 3 || const_int(f, f.arg(tv.args, 1)) != Some(CONST_TABLE_WORD) {
       continue
     }
-    let w = tv.args[0]
+    let w = f.arg(tv.args, 0)
     let wv = f.values[w]
     if wv.op != Op.Call || block_of(wv.tb) != b || !f.name_is(wv, "rt.mem_load") || wv.args.is_empty() {
       continue
     }
-    let sw = wv.args[0]
+    let sw = f.arg(wv.args, 0)
     let sv = f.values[sw]
-    if sv.op != Op.Call || block_of(sv.tb) != b || !f.name_is(sv, "rt.static_word") || sv.args.is_empty() || const_int(f, sv.args[0]) != Some(CONST_SVC_WORD) {
+    if sv.op != Op.Call || block_of(sv.tb) != b || !f.name_is(sv, "rt.static_word") || sv.args.is_empty() || const_int(f, f.arg(sv.args, 0)) != Some(CONST_SVC_WORD) {
       continue
     }
     // the slot's state read and the built list's load: t's other users
@@ -65,7 +65,7 @@ fn const_reads(f: Func) -> List[CRead] {
     var inner: List[Int] = []
     var ok = true
     for (vi, x) in f.values.indexed() {
-      if block_of(x.tb) < 0 || x.args.is_empty() || x.args[0] != tw || vi == cmp {
+      if block_of(x.tb) < 0 || x.args.is_empty() || f.arg(x.args, 0) != tw || vi == cmp {
         continue
       }
       if x.op != Op.Call {
@@ -75,7 +75,7 @@ fn const_reads(f: Func) -> List[CRead] {
       let n = f.name_of(x)
       if n == "rt.slot_load" && x.args.len() == 3 {
         inner.push(block_of(x.tb))
-        match const_int(f, x.args[1]) {
+        match const_int(f, f.arg(x.args, 1)) {
           Some(k) => idx = k
           None => ok = false
         }
@@ -104,7 +104,7 @@ fn const_reads(f: Func) -> List[CRead] {
     // the loads used only within the read
     for v in [sw, w] {
       for (vi, x) in f.values.indexed() {
-        if block_of(x.tb) >= 0 && x.args.contains(v) && vi != w && vi != tw {
+        if block_of(x.tb) >= 0 && f.args_has(x.args, v) && vi != w && vi != tw {
           ok = false
         }
       }
@@ -174,10 +174,10 @@ pub fn reuse_const_reads(var f: Func) -> Bool {
       continue
     }
     var args: List[Int] = []
-    for a in f.values[vi].args {
+    for a in f.args_iter(f.values[vi].args) {
       args.push(repl.get(a) ?? a)
     }
-    f.values[vi].args = args
+    f.set_args(vi, args)
   }
   // the removed reads' paths are unreachable now: their edges pass
   // nothing (prune keeps the edges of the blocks it drops, and the

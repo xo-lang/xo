@@ -2218,7 +2218,7 @@ fn (var b: Builder) known_none(w: Int, idx: Int) -> Bool {
   let f = b.s.f
   let wv = f.values[w]
   if wv.op == Op.Struct && idx < wv.args.len() {
-    let a = f.values[wv.args[idx]]
+    let a = f.values[f.arg(wv.args, idx)]
     if a.op == Op.Variant && a.args.is_empty() {
       if let I(n) = a.aux {
         return n == 0
@@ -3941,7 +3941,7 @@ fn (var b: Builder) check_then(callee: Str, cleanup: Cleanup) {
     // so whether this one may be canceled is the literal's, not assumed
     // (prune_unwind; cookiejar's with closures kept the value they were
     // given for an unwind, 2026-11-03)
-    let fv = b.s.f.values[b.s.f.values[w].args[0]]
+    let fv = b.s.f.values[b.s.f.arg(b.s.f.values[w].args, 0)]
     if fv.op == Op.Closure {
       c = b.s.f.name_of(fv)
     }

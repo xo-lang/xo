@@ -37,7 +37,7 @@ fn release_counts(f: Func) -> Map[Int, Int] {
   for bl in f.blocks {
     for v in bl.instrs {
       if f.values[v].op == Op.Release {
-        let a = f.values[v].args[0]
+        let a = f.arg(f.values[v].args, 0)
         out[a] = (out.get(a) ?? 0) + 1
       }
     }

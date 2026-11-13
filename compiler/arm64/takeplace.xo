@@ -36,7 +36,7 @@ fn take_uses(f: ssa.Func) -> TUses {
   for bl in f.blocks {
     for v in bl.instrs {
       let x = f.values[v]
-      for a in x.args {
+      for a in f.args_iter(x.args) {
         var us = vals.get(a) ?? []
         us.push(v)
         vals[a] = us
@@ -89,14 +89,14 @@ fn take_in_place(var f: ssa.Func, m: ssa.Module) -> Bool {
         if n == "list.take" && x.args.len() == 2 {
           takes.push(v)
         } else if n == "list.set" && x.args.len() == 3 {
-          set_idx.add(x.args[1])
+          set_idx.add(f.arg(x.args, 1))
         }
       }
     }
   }
   var cand: List[Int] = []
   for t in takes {
-    if set_idx.contains(f.values[t].args[1]) {
+    if set_idx.contains(f.arg(f.values[t].args, 1)) {
       cand.push(t)
     }
   }
@@ -153,13 +153,13 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
   }
   let s = s0[0]
   let sx = f.values[s]
-  if sx.op != ssa.Op.Call || !f.name_is(sx, "list.set") || sx.args.len() != 3 || sx.args[0] != f0 || sx.args[1] != tx.args[1] || sx.args[2] == f0 {
+  if sx.op != ssa.Op.Call || !f.name_is(sx, "list.set") || sx.args.len() != 3 || f.arg(sx.args, 0) != f0 || f.arg(sx.args, 1) != f.arg(tx.args, 1) || f.arg(sx.args, 2) == f0 {
     return false
   }
   // the element's way from the take to the set: set fields, and block
   // parameters of blocks with one predecessor
   var back: List[Int] = []
-  var w = sx.args[2]
+  var w = f.arg(sx.args, 2)
   for _ in 0..64 {
     if f1s.contains(w) {
       break
@@ -167,7 +167,7 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
     let wx = f.values[w]
     if wx.op == ssa.Op.SetField && wx.args.len() == 2 {
       back.push(w)
-      w = wx.args[0]
+      w = f.arg(wx.args, 0)
     } else if wx.op == ssa.Op.Param {
       let pb = ssa.block_of(wx.tb)
       if pb <= 0 || f.blocks[pb].preds.len() != 1 {
@@ -230,10 +230,10 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
     for v in readers {
       let vx = f.values[v]
       if v == next && !to_param {
-        if vx.op == ssa.Op.SetField && (vx.args[0] != c || vx.args[1] == c) {
+        if vx.op == ssa.Op.SetField && (f.arg(vx.args, 0) != c || f.arg(vx.args, 1) == c) {
           return false
         }
-        if vx.op == ssa.Op.Call && (sx.args[2] != c || sx.args[0] == c) {
+        if vx.op == ssa.Op.Call && (f.arg(sx.args, 2) != c || f.arg(sx.args, 0) == c) {
           return false
         }
         nexts += 1
@@ -268,7 +268,7 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
     // released, so the slot's store moves the new one in and nothing
     // holds the old one twice
     let cx = f.values[c]
-    if cx.op == ssa.Op.SetField && m.heap(ssa.ty_of(f.values[cx.args[1]].tb)) {
+    if cx.op == ssa.Op.SetField && m.heap(ssa.ty_of(f.values[f.arg(cx.args, 1)].tb)) {
       let (r, z) = take_old_released(f, u, chain, others, ci, ssa.auxw_int(cx.aux))
       if r < 0 {
         return false
@@ -279,8 +279,8 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
   }
   // the rewrite: the take is the bounds check, each member the list
   // value with its fields stored
-  let l = tx.args[0]
-  let i = tx.args[1]
+  let l = f.arg(tx.args, 0)
+  let i = f.arg(tx.args, 1)
   let lt = ssa.ty_of(f.values[l].tb)
   f.values[t].aux = f.pack(ssa.Aux.S(s: "list.index"))
   f.values[t].tb = ssa.with_ty(f.values[t].tb, et)
@@ -293,7 +293,7 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
         let k = ssa.auxw_int(cx.aux)
         f.values[c].op = ssa.Op.Call
         f.values[c].tb = ssa.with_ty(cx.tb, lt)
-        f.values[c].args = [lst.get(cx.args[0]) ?? l, i, cx.args[1]]
+        f.set_args(c, [lst.get(f.arg(cx.args, 0)) ?? l, i, f.arg(cx.args, 1)])
         f.values[c].aux = f.pack(ssa.Aux.S(s: "list.setf ${k}"))
       } else {
         // a block parameter: the list now, passed by its predecessor
@@ -318,7 +318,7 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
       let vx = f.values[v]
       if vx.op == ssa.Op.Field && !dropped.contains(v) {
         f.values[v].op = ssa.Op.Call
-        f.values[v].args = [lst.get(c) ?? l, i]
+        f.set_args(v, [lst.get(c) ?? l, i])
         f.values[v].aux = f.pack(ssa.Aux.S(s: "list.getf ${ssa.auxw_int(vx.aux)}"))
       }
     }

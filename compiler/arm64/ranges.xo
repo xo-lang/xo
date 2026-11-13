@@ -70,7 +70,7 @@ fn (var g: G) compute_ranges(blocks: List[Int], idom: List[Int]) {
     for v in g.f.blocks[b].instrs {
       let x = g.f.values[v]
       if (x.op == ssa.Op.Rem || x.op == ssa.Op.And) && ssa.ty_of(x.tb) >= 0 && g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Int {
-        let (k0, ok) = g.const_int(x.args[1])
+        let (k0, ok) = g.const_int(g.f.arg(x.args, 1))
         if ok && k0 != MIN_INT {
           var k = k0
           if k < 0 {
@@ -210,11 +210,11 @@ fn (g: G) mid_of(v: Int) -> (Int, Int, Bool) {
     return (-1, -1, false)
   }
   for k in 0..2 {
-    let a = x.args[k]
-    let h = g.f.values[x.args[1 - k]]
+    let a = g.f.arg(x.args, k)
+    let h = g.f.values[g.f.arg(x.args, 1 - k)]
     var half = false
     if h.args.len() == 2 {
-      let (n, is_k) = g.const_int(h.args[1])
+      let (n, is_k) = g.const_int(g.f.arg(h.args, 1))
       if is_k {
         half = (h.op == ssa.Op.Div && n == 2) || (h.op == ssa.Op.Shr && n == 1)
       }
@@ -222,9 +222,9 @@ fn (g: G) mid_of(v: Int) -> (Int, Int, Bool) {
     if !half {
       continue
     }
-    let d = g.f.values[h.args[0]]
-    if d.op == ssa.Op.Sub && d.args[1] == a {
-      return (a, d.args[0], true)
+    let d = g.f.values[g.f.arg(h.args, 0)]
+    if d.op == ssa.Op.Sub && g.f.arg(d.args, 1) == a {
+      return (a, g.f.arg(d.args, 0), true)
     }
   }
   (-1, -1, false)
@@ -247,12 +247,12 @@ fn (g: G) less_on_entry(d: Int, a: Int, b: Int) -> Bool {
   if yes == no {
     return false
   }
-  let c = g.f.values[tv.args[0]]
+  let c = g.f.values[g.f.arg(tv.args, 0)]
   if c.args.len() != 2 {
     return false
   }
-  let x = c.args[0]
-  let y = c.args[1]
+  let x = g.f.arg(c.args, 0)
+  let y = g.f.arg(c.args, 1)
   if (yes && c.op == ssa.Op.Lt) || (no && c.op == ssa.Op.Ge) {
     return x == a && y == b
   }
@@ -329,8 +329,8 @@ fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
   let none = (Interval{lo: 0, hi: 0}, false)
   match x.op {
     Add | Sub | Mul => {
-      let (a, ok1) = g.range_get(x.args[0])
-      let (b, ok2) = g.range_get(x.args[1])
+      let (a, ok1) = g.range_get(g.f.arg(x.args, 0))
+      let (b, ok2) = g.range_get(g.f.arg(x.args, 1))
       if !ok1 || !ok2 {
         return none
       }
@@ -354,7 +354,7 @@ fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
       // (2026-10-17: collatz's 3 * n + 1 kept its check, though 3 * n is
       // at most MAX - 1; LLVM drops it)
       var k = 0
-      for c in [x.args[0], x.args[1]] {
+      for c in [g.f.arg(x.args, 0), g.f.arg(x.args, 1)] {
         let (kc, is_k) = g.const_int(c)
         if is_k {
           k = kc
@@ -369,8 +369,8 @@ fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
       (r, true)
     }
     Div => {
-      let (a, ok) = g.range_get(x.args[0])
-      let (k, is_k) = g.const_int(x.args[1])
+      let (a, ok) = g.range_get(g.f.arg(x.args, 0))
+      let (k, is_k) = g.const_int(g.f.arg(x.args, 1))
       if !ok {
         return none
       }
@@ -380,11 +380,11 @@ fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
       (Interval{lo: a.lo / k, hi: a.hi / k}, true)
     }
     Rem => {
-      let (a, ok) = g.range_get(x.args[0])
+      let (a, ok) = g.range_get(g.f.arg(x.args, 0))
       if !ok {
         return none
       }
-      let (k0, is_k) = g.const_int(x.args[1])
+      let (k0, is_k) = g.const_int(g.f.arg(x.args, 1))
       if !is_k || k0 == 0 || k0 == MIN_INT {
         return (full_interval(), true)
       }
@@ -399,8 +399,8 @@ fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
       (Interval{lo: imax(a.lo, -m), hi: imin(a.hi, m)}, true)
     }
     And => {
-      let (a, ok1) = g.range_get(x.args[0])
-      let (b, ok2) = g.range_get(x.args[1])
+      let (a, ok1) = g.range_get(g.f.arg(x.args, 0))
+      let (b, ok2) = g.range_get(g.f.arg(x.args, 1))
       if !ok1 || !ok2 {
         return none
       }
@@ -420,8 +420,8 @@ fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
       // larger bound (2026-10-25: text.digits_word's
       // `(w << 8) | (48 + x % 10)` once unrolled; its masks and its
       // shift checks wait on these bounds)
-      let (a, ok1) = g.range_get(x.args[0])
-      let (b, ok2) = g.range_get(x.args[1])
+      let (a, ok1) = g.range_get(g.f.arg(x.args, 0))
+      let (b, ok2) = g.range_get(g.f.arg(x.args, 1))
       if !ok1 || !ok2 {
         return none
       }
@@ -438,8 +438,8 @@ fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
     }
     Shl => {
       // by a constant that loses no bit of a nonnegative operand
-      let (a, ok) = g.range_get(x.args[0])
-      let (k, is_k) = g.const_int(x.args[1])
+      let (a, ok) = g.range_get(g.f.arg(x.args, 0))
+      let (k, is_k) = g.const_int(g.f.arg(x.args, 1))
       if !ok {
         return none
       }
@@ -449,8 +449,8 @@ fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
       (full_interval(), true)
     }
     Shr => {
-      let (a, ok) = g.range_get(x.args[0])
-      let (k, is_k) = g.const_int(x.args[1])
+      let (a, ok) = g.range_get(g.f.arg(x.args, 0))
+      let (k, is_k) = g.const_int(g.f.arg(x.args, 1))
       if !ok {
         return none
       }
@@ -460,7 +460,7 @@ fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
       (Interval{lo: a.lo >> k, hi: a.hi >> k}, true)
     }
     Neg => {
-      let (a, ok) = g.range_get(x.args[0])
+      let (a, ok) = g.range_get(g.f.arg(x.args, 0))
       if !ok {
         return none
       }
@@ -484,7 +484,7 @@ fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
         // byte at a time (2026-10-30: text.parse_duration's fraction
         // digits, a `subs` and a `b.vs` each)
         "rt.mem_load" => {
-          let (w, wc) = g.const_int(x.args[2])
+          let (w, wc) = g.const_int(g.f.arg(x.args, 2))
           if wc && (w == 1 || w == 2 || w == 4) {
             (Interval{lo: 0, hi: (1 << (8 * w)) - 1}, true)
           } else {
@@ -494,7 +494,7 @@ fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
         _ => g.call_bound(x)
       }
     }
-    IntConv => g.range_get(x.args[0])
+    IntConv => g.range_get(g.f.arg(x.args, 0))
     _ => (full_interval(), true)
   }
 }
@@ -537,14 +537,14 @@ fn (var g: G) call_bound(x: ssa.Value) -> (Interval, Bool) {
   }
   let lk = g.ret_ge_of(ci)
   if lk >= 0 && lk < x.args.len() {
-    let (a, ok) = g.range_get(x.args[lk])
+    let (a, ok) = g.range_get(g.f.arg(x.args, lk))
     if ok {
       r = Interval{lo: a.lo, hi: r.hi}
     }
   }
   let hk = g.ret_le_of(ci)
   if hk >= 0 && hk < x.args.len() {
-    let (a, ok) = g.range_get(x.args[hk])
+    let (a, ok) = g.range_get(g.f.arg(x.args, hk))
     if ok && a.hi >= r.lo {
       r = Interval{lo: r.lo, hi: a.hi}
     }
@@ -586,12 +586,12 @@ fn (var g: G) acc_bounds(blocks: List[Int], idom: List[Int]) -> Map[Int, Interva
       continue
     }
     let tv = g.f.values[t]
-    let cv = g.f.values[tv.args[0]]
+    let cv = g.f.values[g.f.arg(tv.args, 0)]
     if cv.args.len() != 2 || !(cv.op is ssa.Op.Lt | ssa.Op.Gt) {
       continue
     }
-    let iv = if cv.op == ssa.Op.Lt { cv.args[0] } else { cv.args[1] }
-    let nv = if cv.op == ssa.Op.Lt { cv.args[1] } else { cv.args[0] }
+    let iv = if cv.op == ssa.Op.Lt { g.f.arg(cv.args, 0) } else { g.f.arg(cv.args, 1) }
+    let nv = if cv.op == ssa.Op.Lt { g.f.arg(cv.args, 1) } else { g.f.arg(cv.args, 0) }
     let pi = hb.params.index_of(iv) ?? -1
     if pi < 0 || !g.plain_int(iv) {
       continue
@@ -610,8 +610,8 @@ fn (var g: G) acc_bounds(blocks: List[Int], idom: List[Int]) -> Map[Int, Interva
       let a = g.f.edges[e].args[pi]
       let x = g.f.values[a]
       var k = 0
-      if x.op == ssa.Op.Add && x.args.len() == 2 && (x.args[0] == iv || x.args[1] == iv) {
-        let (k1, ok1) = g.const_int(x.args[if x.args[0] == iv { 1 } else { 0 }])
+      if x.op == ssa.Op.Add && x.args.len() == 2 && (g.f.arg(x.args, 0) == iv || g.f.arg(x.args, 1) == iv) {
+        let (k1, ok1) = g.const_int(g.f.arg(x.args, if g.f.arg(x.args, 0) == iv { 1 } else { 0 }))
         if ok1 {
           k = k1
         }
@@ -703,11 +703,11 @@ fn (g: G) acc_step(v: Int, s: Int, depth: Int) -> (Int, Int, Bool) {
     if j == 1 && x.op == ssa.Op.Sub {
       break // s - ... only, not ... - s
     }
-    let (lo, hi, ok) = g.acc_step(x.args[j], s, depth - 1)
+    let (lo, hi, ok) = g.acc_step(g.f.arg(x.args, j), s, depth - 1)
     if !ok {
       continue
     }
-    let (r, rok) = g.range_get(x.args[1 - j])
+    let (r, rok) = g.range_get(g.f.arg(x.args, 1 - j))
     if !rok {
       return (0, 0, false)
     }

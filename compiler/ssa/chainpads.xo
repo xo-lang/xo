@@ -132,7 +132,7 @@ fn (var r: Rc) home_types(f: Func) -> Set[Int] {
       }
       for i in r.vparams.get(f.name_of(x)) ?? [] {
         if i < x.args.len() {
-          r.add_home(out, ty_of(f.values[x.args[i]].tb))
+          r.add_home(out, ty_of(f.values[f.arg(x.args, i)].tb))
         }
       }
     }
@@ -201,7 +201,7 @@ fn (var r: Rc) pad_of(f: Func, bl: Int, exit: Int) -> Pad? {
     if !(x.op is Op.Field | Op.Release) {
       return None
     }
-    for a in x.args {
+    for a in f.args_iter(x.args) {
       if !mine.contains(a) {
         p.ext.add(a)
       }
@@ -209,7 +209,7 @@ fn (var r: Rc) pad_of(f: Func, bl: Int, exit: Int) -> Pad? {
     mine.add(v)
     if x.op == Op.Release {
       var ks: List[Str] = []
-      for l in r.leaves(f, x.args[0]) {
+      for l in r.leaves(f, f.arg(x.args, 0)) {
         let k = leaf_skey(l)
         if p.all.contains(k) {
           return None // released twice: not a plain pad
@@ -285,11 +285,11 @@ fn order_pad_releases(var f: Func) {
     for v in b.instrs[0..n - 1] {
       let x = f.values[v]
       if x.op == Op.Field {
-        let a = x.args[0]
+        let a = f.arg(x.args, 0)
         let base = mine.get(a) ?? "v${a}"
         mine[v] = "${base}.${auxw_int(x.aux)}"
       } else if x.op == Op.Release {
-        let a = x.args[0]
+        let a = f.arg(x.args, 0)
         keys[v] = mine.get(a) ?? "v${a}"
         rels += 1
       } else {

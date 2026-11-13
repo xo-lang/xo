@@ -837,7 +837,7 @@ fn (b: Builder) numbered_body(d: Bytes, var clos: Map[Str, Str]) -> Option[Bytes
           }
           f.values[i].aux = f.pack(Aux.S(s: clos.get(s) ?? s))
         } else if s == "rt.const_once" && f.values[i].args.len() == 3 {
-          f.values[f.values[i].args[2]].aux = f.pack(Aux.I(n: 0))
+          f.values[f.arg(f.values[i].args, 2)].aux = f.pack(Aux.I(n: 0))
         }
       }
     }
@@ -1418,9 +1418,9 @@ fn (b: Builder) fe_const_ids(var f: Func) {
     }
     if let S(s) = f.aux(f.values[i]) {
       if s == "rt.const_once" {
-        if let S(n) = f.aux(f.values[f.values[i].args[0]]) {
+        if let S(n) = f.aux(f.values[f.arg(f.values[i].args, 0)]) {
           if let Some(id) = b.consts.get(n) {
-            f.values[f.values[i].args[2]].aux = f.pack(Aux.I(n: id))
+            f.values[f.arg(f.values[i].args, 2)].aux = f.pack(Aux.I(n: id))
           }
         }
       }
@@ -1440,7 +1440,7 @@ fn fe_site_ids(var f: Func, sites: Map[Int, Int]) {
     }
     if let S(s) = f.aux(f.values[i]) {
       if s is "rt.task_spawn_fn" | "rt.task_spawn" {
-        let a = f.values[i].args[6]
+        let a = f.arg(f.values[i].args, 6)
         if let I(n) = f.values[a].aux {
           if let Some(id) = sites.get(n) {
             f.values[a].aux = f.pack(Aux.I(n: id))

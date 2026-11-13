@@ -78,7 +78,7 @@ fn le_holds(f: Func, p: Int, up: Bool) -> Bool {
       continue
     }
     any = true
-    if t.args.len() < 1 || !le_value(f, t.args[0], p, ok, up) {
+    if t.args.len() < 1 || !le_value(f, f.arg(t.args, 0), p, ok, up) {
       return false
     }
   }
@@ -100,8 +100,8 @@ fn le_value(f: Func, v: Int, p: Int, ok: Map[Int, Bool], up: Bool) -> Bool {
     if x.args.len() != 2 || !(x.op == Op.Add || x.op == Op.Sub) {
       return false
     }
-    let a = x.args[0]
-    let b = x.args[1]
+    let a = f.arg(x.args, 0)
+    let b = f.arg(x.args, 1)
     var nxt = -1
     if x.op == Op.Sub {
       // u - c: below u for c >= 0, above it for c <= 0
@@ -141,7 +141,7 @@ fn nonneg(f: Func, v: Int) -> Bool {
   }
   if x.op == Op.And && x.args.len() == 2 {
     for j in [0, 1] {
-      let c = f.values[x.args[j]]
+      let c = f.values[f.arg(x.args, j)]
       if c.op == Op.Const {
         match f.aux(c) {
           I(n) => {

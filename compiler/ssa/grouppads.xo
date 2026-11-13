@@ -43,7 +43,7 @@ fn (var r: Rc) group_pads(var f: Func) {
       if f.values[v].op != Op.Release {
         continue
       }
-      let ls = r.leaves(f, f.values[v].args[0])
+      let ls = r.leaves(f, f.arg(f.values[v].args, 0))
       var mine: Set[Int] = #{}
       for l in ls {
         let (g, root, comp) = r.leaf_group(f, l)

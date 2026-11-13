@@ -157,12 +157,12 @@ fn (var g: G) plan_lsr(blocks: List[Int], idom: List[Int]) {
         if !every {
           continue
         }
-        let iv = x.args[1]
+        let iv = g.f.arg(x.args, 1)
         let k = iv_idx.get(iv) ?? -1
         if k < 0 {
           continue
         }
-        let (l, li) = g.stable_list(x.args[0], h, body, lp.latches)
+        let (l, li) = g.stable_list(g.f.arg(x.args, 0), h, body, lp.latches)
         if l < 0 {
           continue
         }
@@ -190,15 +190,15 @@ fn (var g: G) plan_lsr(blocks: List[Int], idom: List[Int]) {
 /// move; and its parameter index. The list is -1 when none.
 fn (var g: G) data_list(h: Int, v: Int, body: List[Bool], latches: List[Int]) -> (Int, Int) {
   let x = g.f.values[v]
-  let (_, kc) = g.const_int(x.args[1])
+  let (_, kc) = g.const_int(g.f.arg(x.args, 1))
   if kc {
     return (-1, 0)
   }
-  let et = g.m.types[g.vty(x.args[0])].elems[0]
+  let et = g.m.types[g.vty(g.f.arg(x.args, 0))].elems[0]
   if g.kind(et) != ssa.Kind.Bool && (g.esize(et) != 8 || g.layout(et).len() != 1) {
     return (-1, 0)
   }
-  g.stable_list(x.args[0], h, body, latches)
+  g.stable_list(g.f.arg(x.args, 0), h, body, latches)
 }
 
 /// Whether every back edge passes parameter iv (index k) as iv, iv + c,
@@ -222,9 +222,9 @@ fn (g: G) step_of(iv: Int, a: Int) -> (Int, Bool) {
   if (x.op != ssa.Op.Add && x.op != ssa.Op.Sub) || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int {
     return (0, false)
   }
-  let swap = x.op == ssa.Op.Add && x.args[1] == iv
-  let p = if swap { x.args[1] } else { x.args[0] }
-  let q = if swap { x.args[0] } else { x.args[1] }
+  let swap = x.op == ssa.Op.Add && g.f.arg(x.args, 1) == iv
+  let p = if swap { g.f.arg(x.args, 1) } else { g.f.arg(x.args, 0) }
+  let q = if swap { g.f.arg(x.args, 0) } else { g.f.arg(x.args, 1) }
   let (c, ok) = g.const_int(q)
   if p != iv || !ok || c == MIN_INT {
     return (0, false)
@@ -266,7 +266,7 @@ fn (g: G) stable_list(xs: Int, h: Int, body: List[Bool], latches: List[Int]) -> 
 fn (g: G) strip_set(v0: Int) -> Int {
   var v = v0
   while g.f.values[v].op == ssa.Op.Call && g.f.name_is(g.f.values[v], "list.set") {
-    v = g.f.values[v].args[0]
+    v = g.f.arg(g.f.values[v].args, 0)
   }
   v
 }

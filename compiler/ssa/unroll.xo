@@ -44,14 +44,14 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
   }
   let cmp = hb.instrs[0]
   let cv = f.values[cmp]
-  if cv.op != Op.Lt || cv.args.len() != 2 || tv.args.len() != 1 || tv.args[0] != cmp {
+  if cv.op != Op.Lt || cv.args.len() != 2 || tv.args.len() != 1 || f.arg(tv.args, 0) != cmp {
     return false
   }
-  let pi = hb.params.index_of(cv.args[0]) ?? -1
+  let pi = hb.params.index_of(f.arg(cv.args, 0)) ?? -1
   if pi < 0 {
     return false
   }
-  let k = match const_word(f, cv.args[1]) {
+  let k = match const_word(f, f.arg(cv.args, 1)) {
     Some(x) => x
     None => return false
   }
@@ -86,7 +86,7 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
     None => return false
   }
   let step = f.values[f.edges[latch].args[pi]]
-  if step.op != Op.Add || block_of(step.tb) != body || step.args.len() != 2 || step.args[0] != hb.params[pi] || const_word(f, step.args[1]) != Some(1) {
+  if step.op != Op.Add || block_of(step.tb) != body || step.args.len() != 2 || f.arg(step.args, 0) != hb.params[pi] || const_word(f, f.arg(step.args, 1)) != Some(1) {
     return false
   }
   let n = k - c0
@@ -118,10 +118,10 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
       }
       var x = f.values[v]
       var args: List[Int] = []
-      for a in x.args {
+      for a in f.args_iter(x.args) {
         args.push(m.get(a) ?? a)
       }
-      x.args = args
+      x.args = f.mk_args(args)
       x.tb = with_block(x.tb, pre)
       let c = f.values.len()
       f.values.push(x)
@@ -163,15 +163,15 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
       continue
     }
     var hit = false
-    for a in x.args {
+    for a in f.args_iter(x.args) {
       hit = hit || fin.contains(a)
     }
     if hit {
       var args: List[Int] = []
-      for a in x.args {
+      for a in f.args_iter(x.args) {
         args.push(fin.get(a) ?? a)
       }
-      f.values[vi].args = args
+      f.set_args(vi, args)
     }
   }
   for e in 0..f.edges.len() {
@@ -221,10 +221,10 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
   }
   let cmp = hb.instrs[0]
   let cv = f.values[cmp]
-  if cv.op != Op.Lt || cv.args.len() != 2 || tv.args.len() != 1 || tv.args[0] != cmp {
+  if cv.op != Op.Lt || cv.args.len() != 2 || tv.args.len() != 1 || f.arg(tv.args, 0) != cmp {
     return false
   }
-  let pi = hb.params.index_of(cv.args[0]) ?? -1
+  let pi = hb.params.index_of(f.arg(cv.args, 0)) ?? -1
   if pi < 0 {
     return false
   }
@@ -353,7 +353,7 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
     let tv2 = f.values[bt]
     var landing = false
     if tv2.op == Op.Branch && tv2.args.len() == 1 {
-      let cv2 = f.values[tv2.args[0]]
+      let cv2 = f.values[f.arg(tv2.args, 0)]
       if cv2.op == Op.Call {
         if let S(s: nm) = f.aux(cv2) {
           landing = nm is "rt.landing" | "rt.unwinding"
@@ -388,7 +388,7 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
   }
   // the bound: a constant, or a header parameter the loop passes on
   // unchanged whose value coming in is one
-  var kv = cv.args[1]
+  var kv = f.arg(cv.args, 1)
   let ki = hb.params.index_of(kv) ?? -1
   if ki >= 0 {
     if through(f, inb, f.edges[latch].args[ki], 8) != kv {
@@ -402,7 +402,7 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
   }
   // i + 1, i possibly passed on through the body's joins
   let step = f.values[f.edges[latch].args[pi]]
-  if step.op != Op.Add || block_of(step.tb) < 0 || !inb[block_of(step.tb)] || step.args.len() != 2 || through(f, inb, step.args[0], 8) != hb.params[pi] || const_word(f, step.args[1]) != Some(1) {
+  if step.op != Op.Add || block_of(step.tb) < 0 || !inb[block_of(step.tb)] || step.args.len() != 2 || through(f, inb, f.arg(step.args, 0), 8) != hb.params[pi] || const_word(f, f.arg(step.args, 1)) != Some(1) {
     return false
   }
   let n = k - c0
@@ -434,7 +434,7 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
     if block_of(x.tb) < 0 || block_of(x.tb) == h || inb[block_of(x.tb)] {
       continue
     }
-    for a in x.args {
+    for a in f.args_iter(x.args) {
       if mine.contains(a) {
         return false
       }
@@ -499,10 +499,10 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
     }
     for nv in made {
       var args: List[Int] = []
-      for a in f.values[nv].args {
+      for a in f.args_iter(f.values[nv].args) {
         args.push(m.get(a) ?? a)
       }
-      f.values[nv].args = args
+      f.set_args(nv, args)
       let pd = pad_of(f.values[nv].pi)
       if pd >= 0 {
         f.values[nv].pi = with_pad(f.values[nv].pi, m.get(pd) ?? pd)
@@ -565,10 +565,10 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
         continue
       }
       var args: List[Int] = []
-      for a in f.values[vi].args {
+      for a in f.args_iter(f.values[vi].args) {
         args.push(fin.get(a) ?? a)
       }
-      f.values[vi].args = args
+      f.set_args(vi, args)
     }
     for e in 0..f.edges.len() {
       if f.edges[e].from != ex {

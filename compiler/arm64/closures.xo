@@ -133,7 +133,7 @@ fn (var g: G) closure_fill(v: Int, ci: Int, env: Int) {
   let s = g.sym_addr(g.env_share(ci))
   g.store("str $u0, [$u1, #16]", [s, env])
   var k = 0
-  for a in x.args {
+  for a in g.f.args_iter(x.args) {
     for w in g.store_words(a) {
       let (base, off) = g.mem_at(env, ENV_HDR + 8 * k)
       g.store("str $u0, [$u1, #${off}]", [w, base])
@@ -176,7 +176,7 @@ fn (var g: G) stack_closures() -> Map[Int, Bool] {
   for b in 0..g.f.blocks.len() {
     for u in g.f.blocks[b].instrs {
       let y = g.f.values[u]
-      for (k, a) in y.args.indexed() {
+      for (k, a) in g.f.args_indexed(y.args) {
         if !cand.contains(a) {
           continue
         }
@@ -202,7 +202,7 @@ fn (var g: G) stack_closures() -> Map[Int, Bool] {
 
 /// Whether closure value v captures a value holding something counted.
 fn (var g: G) counted_env(v: Int) -> Bool {
-  for a in g.f.values[v].args {
+  for a in g.f.args_iter(g.f.values[v].args) {
     if g.m.heap(g.vty(a)) {
       return true
     }
@@ -242,7 +242,7 @@ fn (var g: G) stack_env_release(v: Int) {
 /// environment of the closure parameter (a projection: no counting).
 fn (var g: G) capture_op(v: Int) {
   let x = g.f.values[v]
-  let env = g.real(g.words(x.args[0])[1])
+  let env = g.real(g.words(g.f.arg(x.args, 0))[1])
   let (off, _) = g.capture_words(g.fi, ssa.auxw_int(x.aux))
   var ws: List[Int] = []
   for (k, fp) in g.layout(ssa.ty_of(x.tb)).indexed() {
@@ -257,7 +257,7 @@ fn (var g: G) capture_op(v: Int) {
 /// a shared one, its SHARED bit set, are not).
 fn (var g: G) env_unique_op(v: Int) {
   let x = g.f.values[v]
-  let env = g.real(g.words(x.args[0])[1])
+  let env = g.real(g.words(g.f.arg(x.args, 0))[1])
   let rc = g.def1(false, "ldr $d0, [$u0]", [env])
   g.set(v, [g.def1(false, "cmp $u0, #1\ncset $d0, eq", [rc])])
 }
@@ -266,7 +266,7 @@ fn (var g: G) env_unique_op(v: Int) {
 /// zero, so a later release of the environment releases nothing there.
 fn (var g: G) cap_take_op(v: Int) {
   let x = g.f.values[v]
-  let env = g.real(g.words(x.args[0])[1])
+  let env = g.real(g.words(g.f.arg(x.args, 0))[1])
   let (off, _) = g.capture_words(g.fi, ssa.auxw_int(x.aux))
   var ws: List[Int] = []
   for (k, fp) in g.layout(ssa.ty_of(x.tb)).indexed() {
@@ -285,10 +285,10 @@ fn (var g: G) cap_take_op(v: Int) {
 /// environment (the slot CapTake emptied).
 fn (var g: G) cap_put_op(v: Int) {
   let x = g.f.values[v]
-  let env = g.real(g.words(x.args[0])[1])
+  let env = g.real(g.words(g.f.arg(x.args, 0))[1])
   let (off, _) = g.capture_words(g.fi, ssa.auxw_int(x.aux))
   var k = 0
-  for w in g.store_words(x.args[1]) {
+  for w in g.store_words(g.f.arg(x.args, 1)) {
     let (base, o) = g.mem_at(env, ENV_HDR + 8 * (off + k))
     g.store("str $u0, [$u1, #${o}]", [w, base])
     k += 1
@@ -301,7 +301,7 @@ fn (var g: G) cap_put_op(v: Int) {
 fn (var g: G) call_value_op(v: Int) {
   let x = g.f.values[v]
   var args: List[Src] = []
-  for a in x.args {
+  for a in g.f.args_iter(x.args) {
     args = args + regs(g.words(a))
   }
   let defs = g.new_vregs(g.layout(ssa.ty_of(x.tb)))
@@ -456,7 +456,7 @@ fn (var g: G) dec_or_defer(p0: Int, drop: DropFn) -> Int {
 /// Lowers a box: copies a value (consumed) into a new cell.
 fn (var g: G) box_op(v: Int) {
   let x = g.f.values[v]
-  let a = x.args[0]
+  let a = g.f.arg(x.args, 0)
   let n = g.nwords(g.vty(a))
   let p = g.rt("xo_x_obj_rc_alloc", [isrc(BOX_HDR + 8 * n)], [false])[0]
   g.store("str $u0, [$u1]", [g.cimm(1), p])
@@ -472,7 +472,7 @@ fn (var g: G) box_op(v: Int) {
 /// Lowers an unbox: loads the box's words (a projection: no counting).
 fn (var g: G) unbox_op(v: Int) {
   let x = g.f.values[v]
-  let p = g.word(x.args[0])
+  let p = g.word(g.f.arg(x.args, 0))
   var ws: List[Int] = []
   for (k, fp) in g.layout(ssa.ty_of(x.tb)).indexed() {
     let (base, off) = g.mem_at(p, BOX_HDR + 8 * k)
@@ -499,7 +499,7 @@ fn (var g: G) release_box(t: Int, p: Int) {
 /// whether it did.
 fn (var g: G) eq_aggregate(v: Int) -> Bool {
   let x = g.f.values[v]
-  let t = g.vty(x.args[0])
+  let t = g.vty(g.f.arg(x.args, 0))
   let k = g.kind(t)
   if !(k is ssa.Kind.Str | ssa.Kind.Struct | ssa.Kind.Tuple | ssa.Kind.Enum | ssa.Kind.List | ssa.Kind.Box) {
     return false
@@ -511,29 +511,29 @@ fn (var g: G) eq_aggregate(v: Int) -> Bool {
   }
   var r = 0
   if k == ssa.Kind.Str {
-    let a = g.words(x.args[0])
-    let b = g.words(x.args[1])
+    let a = g.words(g.f.arg(x.args, 0))
+    let b = g.words(g.f.arg(x.args, 1))
     let xd = g.str_data(a)
     let yd = g.str_data(b)
     let res = g.rt("xo_x_obj_str_eq", regs([xd, g.str_len(a), yd, g.str_len(b)]), [false])
     r = g.def1(false, "cmp $wu0, #0\ncset $d0, ne", [res[0]])
   } else if k is ssa.Kind.List | ssa.Kind.Box {
     let h = g.eq_helper(t)
-    let a = g.word(x.args[0])
-    let b = g.word(x.args[1])
+    let a = g.word(g.f.arg(x.args, 0))
+    let b = g.word(g.f.arg(x.args, 1))
     r = g.call(h, regs([a, b]), [false])[0]
   } else if g.eq_by_ref(t) {
     // a wide value: the helper reads both in place
-    let pa = g.eq_addr(x.args[0], 0)
-    let pb = g.eq_addr(x.args[1], 1)
+    let pa = g.eq_addr(g.f.arg(x.args, 0), 0)
+    let pb = g.eq_addr(g.f.arg(x.args, 1), 1)
     r = g.call(g.eq_helper(t), regs([pa, pb]), [false])[0]
   } else {
     let lay = g.layout(t)
     if lay.is_empty() {
       r = g.imm(1)
     } else {
-      let a = g.to_int(g.words(x.args[0]), lay)
-      let b = g.to_int(g.words(x.args[1]), lay)
+      let a = g.to_int(g.words(g.f.arg(x.args, 0)), lay)
+      let b = g.to_int(g.words(g.f.arg(x.args, 1)), lay)
       if !g.x86 && g.tag_only_enum(t, lay) {
         // the tag is the whole value: one compare, where the helper call
         // made `x.op == ssa.Op.Call` 1.8% of the aiplatform/v1 test

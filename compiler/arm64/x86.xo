@@ -1670,12 +1670,12 @@ fn (var g: G) x86_def1(text: Str, us: List[Int]) -> Int {
 fn (var g: G) x86_disp(off: Int) -> (Int, Int)? {
   let y = g.f.values[off]
   if y.op == ssa.Op.Call && g.f.name_is(y, "rt.int_wrap") && y.args.len() == 3 {
-    let (op, ok) = g.const_int(y.args[0])
+    let (op, ok) = g.const_int(g.f.arg(y.args, 0))
     if ok && op == 0 {
       for j in [2, 1] {
-        let (c, cc) = g.const_int(y.args[j])
+        let (c, cc) = g.const_int(g.f.arg(y.args, j))
         if cc && imm32(c) {
-          return Some((y.args[3 - j], c))
+          return Some((g.f.arg(y.args, 3 - j), c))
         }
       }
     }
@@ -1683,9 +1683,9 @@ fn (var g: G) x86_disp(off: Int) -> (Int, Int)? {
   }
   if y.op == ssa.Op.Add && !ssa.has_pos(y.lp) && g.kind(ssa.ty_of(y.tb)) == ssa.Kind.Int {
     for j in [1, 0] {
-      let (c, cc) = g.const_int(y.args[j])
+      let (c, cc) = g.const_int(g.f.arg(y.args, j))
       if cc && imm32(c) {
-        return Some((y.args[1 - j], c))
+        return Some((g.f.arg(y.args, 1 - j), c))
       }
     }
   }
@@ -1809,13 +1809,13 @@ fn (var g: G) x86_bytes16(x: ssa.Value, var us: List[Int]) -> Int {
   }
   var cmp: List[Str] = []
   if name == "rt.bytes_eq16" || name == "rt.bytes_eq16_bits" {
-    let (c, ok) = g.const_int(x.args[2])
+    let (c, ok) = g.const_int(g.f.arg(x.args, 2))
     if ok {
       cmp.push("movl $${(c & 255) * 16843009}, %r11d")
     } else {
       cmp.push("movzbl $bu2, %r11d")
       cmp.push("imull $16843009, %r11d, %r11d")
-      us.push(g.word(x.args[2]))
+      us.push(g.word(g.f.arg(x.args, 2)))
     }
     cmp = cmp + ["movd %r11d, %xmm14", "pshufd $0, %xmm14, %xmm14", "pcmpeqb %xmm14, %xmm15"]
   } else {

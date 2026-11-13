@@ -112,7 +112,7 @@ fn copy_feeds_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   }
   for bl in f.blocks {
     for v in bl.instrs {
-      for a in f.values[v].args {
+      for a in f.args_iter(f.values[v].args) {
         if a >= 0 && a < users.len() {
           users[a].push(block_of(f.values[v].tb))
         }
@@ -172,7 +172,7 @@ fn reaches_loop(f: Func, v: Int, users: List[List[Int]], inloop: List[Bool]) -> 
     }
     // the values that take x apart or carry it on
     for (wi, w) in f.values.indexed() {
-      if w.op is Op.Field | Op.Rebind && w.args.contains(x) {
+      if w.op is Op.Field | Op.Rebind && f.args_has(w.args, x) {
         work.push(wi)
       }
     }
@@ -202,7 +202,7 @@ fn elem_count_per_iter(f: Func, inloop: List[Bool]) -> List[CostNote] {
   }
   for bl in f.blocks {
     for v in bl.instrs {
-      for a in f.values[v].args {
+      for a in f.args_iter(f.values[v].args) {
         if a >= 0 && a < used_by.len() {
           used_by[a].push(v)
         }
@@ -216,7 +216,7 @@ fn elem_count_per_iter(f: Func, inloop: List[Bool]) -> List[CostNote] {
       if rx.op != Op.Retain || rx.args.is_empty() || block_of(rx.tb) < 0 || !inloop[block_of(rx.tb)] {
         continue
       }
-      let x = rx.args[0]
+      let x = f.arg(rx.args, 0)
       if !elem_of_outside(f, x, inloop) {
         continue
       }
@@ -245,7 +245,7 @@ fn elem_count_per_iter(f: Func, inloop: List[Bool]) -> List[CostNote] {
         if f.values[c].op != Op.Field {
           break
         }
-        c = f.values[c].args[0]
+        c = f.arg(f.values[c].args, 0)
       }
       if !dropped || stored {
         continue
@@ -299,7 +299,7 @@ fn callback_walks(m: Module, f: Func) -> List[CostNote] {
         continue
       }
       var heap = false
-      for a in x.args {
+      for a in f.args_iter(x.args) {
         let t = ty_of(f.values[a].tb)
         if t < 0 || t >= m.types.len() || m.types[t].kind != Kind.Func {
           continue
@@ -331,12 +331,12 @@ fn elem_of_outside(f: Func, x0: Int, inloop: List[Bool]) -> Bool {
   while x >= 0 && x < f.values.len() {
     let v = f.values[x]
     if v.op == Op.Field {
-      x = v.args[0]
+      x = f.arg(v.args, 0)
       continue
     }
     if v.op == Op.Call && f.name_is(v, "list.index") && !v.args.is_empty() {
       elem = true
-      x = v.args[0]
+      x = f.arg(v.args, 0)
       continue
     }
     break
@@ -368,7 +368,7 @@ fn reuse_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
     if x.op != Op.Reuse || x.args.is_empty() || block_of(x.tb) < 0 || !inloop[block_of(x.tb)] {
       continue
     }
-    let root = below_fields(f, x.args[0])
+    let root = below_fields(f, f.arg(x.args, 0))
     if root < 0 || root >= f.values.len() || f.values[root].op != Op.Param || block_of(f.values[root].tb) < 0 {
       continue
     }
@@ -386,7 +386,7 @@ fn reuse_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
     // a holder made in the loop: the same list counted up in its blocks
     var kept = false
     for y in f.values {
-      if y.op == Op.Retain && !y.args.is_empty() && block_of(y.tb) >= 0 && inl[block_of(y.tb)] && below_fields(f, y.args[0]) == root {
+      if y.op == Op.Retain && !y.args.is_empty() && block_of(y.tb) >= 0 && inl[block_of(y.tb)] && below_fields(f, f.arg(y.args, 0)) == root {
         kept = true
       }
     }
@@ -395,7 +395,7 @@ fn reuse_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
     }
     // the update call that takes the Reuse: its line is the note's
     for (ui, u) in f.values.indexed() {
-      if u.op != Op.Call || u.args.is_empty() || u.args[0] != vi {
+      if u.op != Op.Call || u.args.is_empty() || f.arg(u.args, 0) != vi {
         continue
       }
       let line = line_of(u.lp) / 4096
@@ -440,7 +440,7 @@ fn carried_back(f: Func, root: Int, inl: List[Bool], u: Int) -> Bool {
       }
     }
     for (wi, w) in f.values.indexed() {
-      if w.op is Op.Rebind | Op.Field && w.args.contains(x) {
+      if w.op is Op.Rebind | Op.Field && f.args_has(w.args, x) {
         work.push(wi)
       }
     }
@@ -590,15 +590,15 @@ fn large_copies(m: Module, f: Func, inloop: List[Bool], var nw: Map[Int, Int]) -
       }
       var msg = ""
       if x.op == Op.Closure && f.name_starts(x, "${f.name}.fn") {
-        for a in x.args {
+        for a in f.args_iter(x.args) {
           let t = ty_of(f.values[a].tb)
           let n = type_words(m, nw, t, 0)
           if n > LARGE_WORDS && msg.is_empty() {
             msg = "the closure copies a `${type_label(m, t)}` (${n} words) into its environment when it is made, sharing each of its heap fields; bind the fields the body reads first and capture those"
           }
         }
-      } else if x.op == Op.Variant && x.args.len() == 1 && list_elem_in_loop(f, x.args[0], inloop) {
-        let n = type_words(m, nw, ty_of(f.values[x.args[0]].tb), 0)
+      } else if x.op == Op.Variant && x.args.len() == 1 && list_elem_in_loop(f, f.arg(x.args, 0), inloop) {
+        let n = type_words(m, nw, ty_of(f.values[f.arg(x.args, 0)].tb), 0)
         if n > LARGE_WORDS {
           msg = "this `${type_label(m, ty_of(x.tb))}` holds ${n} words inline: making it copies them and shares each heap field of the payload, and every copy of it does again; return or keep what the caller needs (an index, a field) instead"
         }
@@ -626,7 +626,7 @@ fn list_elem_in_loop(f: Func, x0: Int, inloop: List[Bool]) -> Bool {
   if v.op != Op.Call || !f.name_is(v, "list.index") || v.args.is_empty() || block_of(v.tb) < 0 || !inloop[block_of(v.tb)] {
     return false
   }
-  let l = below_fields(f, v.args[0])
+  let l = below_fields(f, f.arg(v.args, 0))
   if l < 0 || l >= f.values.len() {
     return false
   }
@@ -641,7 +641,7 @@ fn list_elem_in_loop(f: Func, x0: Int, inloop: List[Bool]) -> Bool {
 fn below_fields(f: Func, x0: Int) -> Int {
   var x = x0
   while x >= 0 && x < f.values.len() && f.values[x].op == Op.Field {
-    x = f.values[x].args[0]
+    x = f.arg(f.values[x].args, 0)
   }
   x
 }
@@ -677,7 +677,7 @@ fn view_call(name: Str) -> Bool {
 fn below_rebinds(f: Func, x0: Int) -> Int {
   var x = x0
   while x >= 0 && x < f.values.len() && f.values[x].op is Op.Field | Op.Rebind | Op.Payload && !f.values[x].args.is_empty() {
-    x = f.values[x].args[0]
+    x = f.arg(f.values[x].args, 0)
   }
   x
 }
@@ -703,16 +703,16 @@ fn param_view_at(f: Func, x: Int, depth: Int) -> Bool {
   }
   let name = f.name_of(v)
   if view_call(name) {
-    return param_text(f, v.args[0], depth)
+    return param_text(f, f.arg(v.args, 0), depth)
   }
   if name == "list.index" {
-    let l = below_rebinds(f, v.args[0])
+    let l = below_rebinds(f, f.arg(v.args, 0))
     if l < 0 || l >= f.values.len() || f.values[l].op != Op.Call || f.values[l].args.is_empty() {
       return false
     }
     let ln = f.name_of(f.values[l])
     if named(ln, "prelude.str_split") || named(ln, "prelude.str_split_n") || named(ln, "prelude.str_split_after") || named(ln, "prelude.str_split_after_n") || named(ln, "prelude.str_fields") || named(ln, "prelude.str_split_where") || named(ln, "prelude.str_lines") || named(ln, "prelude.bytes_split") || named(ln, "prelude.bytes_split_n") || named(ln, "prelude.bytes_split_after") || named(ln, "prelude.bytes_split_after_n") || named(ln, "prelude.bytes_fields") || named(ln, "prelude.bytes_split_where") {
-      return param_text(f, f.values[l].args[0], depth)
+      return param_text(f, f.arg(f.values[l].args, 0), depth)
     }
   }
   false
@@ -757,13 +757,13 @@ fn view_stored(m: Module, f: Func, x0: Int, users: List[List[Int]]) -> Bool {
           return true
         }
       } else if w.op == Op.SetField {
-        if w.args.len() >= 2 && w.args[1] == x {
+        if w.args.len() >= 2 && f.arg(w.args, 1) == x {
           return true
         }
       } else if w.op == Op.Call && (name == "list.push" || name == "list.set" || name.starts_with("xo.map.put[") || name.starts_with("xo.set.add[")) {
         // the collection now holds x: stored long-lived when it is returned
         // or set in a field (a list used and dropped here is not)
-        for (k, a) in w.args.indexed() {
+        for (k, a) in f.args_indexed(w.args) {
           if a != x {
             continue
           }
@@ -801,7 +801,7 @@ fn view_stores(m: Module, f: Func, inloop: List[Bool]) -> List[CostNote] {
   }
   for bl in f.blocks {
     for v in bl.instrs {
-      for a in f.values[v].args {
+      for a in f.args_iter(f.values[v].args) {
         if a >= 0 && a < users.len() {
           users[a].push(v)
         }
@@ -842,7 +842,7 @@ fn cost_uses(f: Func) -> (List[List[Int]], List[Bool]) {
   }
   for bl in f.blocks {
     for v in bl.instrs {
-      for a in f.values[v].args {
+      for a in f.args_iter(f.values[v].args) {
         if a >= 0 && a < users.len() {
           users[a].push(v)
         }
@@ -903,7 +903,7 @@ fn small_lists_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
     if x.op != Op.Call || !f.name_is(x, "list.new") || x.args.is_empty() || block_of(x.tb) < 0 || block_of(x.tb) >= inloop.len() || !inloop[block_of(x.tb)] || line <= 0 || seen.contains(line) {
       continue
     }
-    let c = f.values[x.args[0]]
+    let c = f.values[f.arg(x.args, 0)]
     let n = match c.aux {
       AuxW.I(k) => k
       _ => -1
@@ -930,9 +930,9 @@ fn small_lists_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
         if w.op is Op.Retain | Op.Release | Op.Drop {
           continue
         }
-        if w.op == Op.Call && (name == "list.push" || name == "list.set") && w.args.len() > 0 && w.args[0] == l {
+        if w.op == Op.Call && (name == "list.push" || name == "list.set") && w.args.len() > 0 && f.arg(w.args, 0) == l {
           work.push(u)
-        } else if !(w.op == Op.Call && read_only_call(name) && w.args.len() > 0 && w.args[0] == l) {
+        } else if !(w.op == Op.Call && read_only_call(name) && w.args.len() > 0 && f.arg(w.args, 0) == l) {
           local = false
         }
       }
@@ -977,20 +977,20 @@ fn freed_addresses_rv(f: Func, rv: Map[Str, Int]) -> List[CostNote] {
     var views: Map[Int, Bool] = {}
     for v in bl.instrs {
       let x = f.values[v]
-      if x.op == Op.Retain && !x.args.is_empty() && views.contains(x.args[0]) {
+      if x.op == Op.Retain && !x.args.is_empty() && views.contains(f.arg(x.args, 0)) {
         // a retained view owns a count of its text from here on
-        let _r = addr_of.remove(x.args[0])
+        let _r = addr_of.remove(f.arg(x.args, 0))
         continue
       }
       if x.op == Op.Release || x.op == Op.Drop {
         if !x.args.is_empty() {
-          released[x.args[0]] = v
+          released[f.arg(x.args, 0)] = v
         }
         continue
       }
       // a use of an address whose value is gone
       var hit = -1
-      for a in x.args {
+      for a in f.args_iter(x.args) {
         if let Some(into) = addr_of.get(a) {
           if released.contains(into) {
             hit = a
@@ -1017,12 +1017,12 @@ fn freed_addresses_rv(f: Func, rv: Map[Str, Int]) -> List[CostNote] {
       let p = if x.op != Op.Call { -1 } else if f.name_is(x, "rt.str_borrow") { 0 } else { rv.get(f.name_of(x)) ?? -1 }
       if p >= 0 && p < x.args.len() {
         // a view of a borrowed view points into the first one's text
-        addr_of[v] = addr_of.get(x.args[p]) ?? x.args[p]
+        addr_of[v] = addr_of.get(f.arg(x.args, p)) ?? f.arg(x.args, p)
         views[v] = true
       } else if x.op == Op.Call && addr_of_call(f.name_of(x)) && !x.args.is_empty() {
-        addr_of[v] = x.args[0]
+        addr_of[v] = f.arg(x.args, 0)
       } else if (x.op == Op.Add || x.op == Op.Sub) && x.args.len() == 2 {
-        for a in x.args {
+        for a in f.args_iter(x.args) {
           if let Some(into) = addr_of.get(a) {
             addr_of[v] = into
           }

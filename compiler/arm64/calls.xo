@@ -58,10 +58,10 @@ fn (var g: G) rc_thunk_here() -> Bool {
 
 fn (var g: G) push_fast(v: Int, word: Bool) {
   let x = g.f.values[v]
-  let ws = g.words(x.args[0])
+  let ws = g.words(g.f.arg(x.args, 0))
   let a = g.real(ws[0])
   let an = g.real(ws[1])
-  let b = g.word(x.args[1])
+  let b = g.word(g.f.arg(x.args, 1))
   let rp = g.new_vreg(false)
   let rn = g.new_vreg(false)
   let slow = g.new_block(true)
@@ -91,7 +91,7 @@ fn (var g: G) push_fast(v: Int, word: Bool) {
   var n1 = 0
   if word {
     g.store("str $u0, [$u1, #16]", [b, at])
-    n1 = g.def1(false, "add $d0, $u0, $u1", [an, g.word(x.args[2])])
+    n1 = g.def1(false, "add $d0, $u0, $u1", [an, g.word(g.f.arg(x.args, 2))])
   } else {
     g.store("strb $wu0, [$u1, #16]", [b, at])
     n1 = g.def1(false, "add $d0, $u0, #1", [an])
@@ -101,7 +101,7 @@ fn (var g: G) push_fast(v: Int, word: Bool) {
   g.cur = slow
   var args = [rsrc(a), rsrc(an), rsrc(b)]
   if word {
-    args.push(rsrc(g.word(x.args[2])))
+    args.push(rsrc(g.word(g.f.arg(x.args, 2))))
   }
   let o = g.rt(if word { "xo_x_obj_rs_push_word" } else { "xo_x_obj_rs_push_byte" }, args + [framesrc()], [false])
   let n = g.def1(false, "ldr $d0, [sp, #$OUT]", [])
@@ -357,11 +357,11 @@ fn (var g: G) reuse(v: Int) {
 /// is about to store is shared with it; a thread local list skips.
 fn (var g: G) share_in(v: Int) {
   let x = g.f.values[v]
-  let e = x.args[1]
+  let e = g.f.arg(x.args, 1)
   if g.op(e) == ssa.Op.Const || !g.heap(g.vty(e)) {
     return
   }
-  let l = g.word(x.args[0])
+  let l = g.word(g.f.arg(x.args, 0))
   let c = g.def1(false, "ldr $d0, [$u0]", [l])
   let before = g.m_()
   let sh = g.new_block(true)
@@ -434,14 +434,14 @@ fn (var g: G) addr_uses(base: Int, i: Int) -> (Int, Bool) {
   var imm = false
   for u in g.f.blocks[g.cur_sb].instrs {
     let y = g.f.values[u]
-    if y.op != ssa.Op.Call || y.args.len() < 3 || y.args[0] != base {
+    if y.op != ssa.Op.Call || y.args.len() < 3 || g.f.arg(y.args, 0) != base {
       continue
     }
     let name = g.f.name_of(y)
     if name != "rt.mem_load" && name != "rt.mem_store" {
       continue
     }
-    let off = y.args[1]
+    let off = g.f.arg(y.args, 1)
     let (j, c) = match g.x86_disp(off) {
       Some((j1, c1)) => (j1, c1)
       None => (off, 0)
@@ -979,8 +979,8 @@ fn (var g: G) bytes_load(ws: List[Int], iv: Int, i: Int, borrowed: Bool) -> Int 
   let d = if borrowed { g.str_base_inl(ws) } else { g.str_base_heap(ws) }
   let x = g.f.values[iv]
   if x.op == ssa.Op.Add {
-    let (c, is_k) = g.const_int(x.args[1])
-    let j = x.args[0]
+    let (c, is_k) = g.const_int(g.f.arg(x.args, 1))
+    let j = g.f.arg(x.args, 0)
     if is_k && c > 0 && c < 4096 && g.has_val[j] && g.vals[j].len() == 1 && g.vals[j][0] != 0 {
       let jw = g.vals[j][0]
       let _mk = g.m_()
@@ -1008,13 +1008,13 @@ fn (var g: G) bytes_load(ws: List[Int], iv: Int, i: Int, borrowed: Bool) -> Int 
 /// a load could read past a shorter Str, so it stays a call.
 fn (var g: G) str_eq_const(v: Int, x: ssa.Value, xd: Int, yd: Int) -> Bool {
   for k in 0..2 {
-    let cv = g.f.values[g.through_params(x.args[k])]
+    let cv = g.f.values[g.through_params(g.f.arg(x.args, k))]
     if cv.op != ssa.Op.Const {
       continue
     }
     let bs = const_bytes(g.f.aux(cv)) ?? b""
     let n = bs.len()
-    if n < 1 || n > 16 || !g.len_proved(ssa.block_of(x.tb), x.args[1 - k], n) {
+    if n < 1 || n > 16 || !g.len_proved(ssa.block_of(x.tb), g.f.arg(x.args, 1 - k), n) {
       continue
     }
     let data = if k == 0 { yd } else { xd }
@@ -1068,14 +1068,14 @@ fn (g: G) len_proved(blk: Int, s: Int, n: Int) -> Bool {
   if t.op != ssa.Op.Branch || ssa.succ_n(t) == 0 || ssa.succ(t, 0) != e || t.args.is_empty() {
     return false
   }
-  let c = g.f.values[t.args[0]]
+  let c = g.f.values[g.f.arg(t.args, 0)]
   if c.op != ssa.Op.Eq || c.args.len() != 2 {
     return false
   }
   let st = g.through_params(s)
   for j in 0..2 {
-    let o = g.f.values[c.args[1 - j]]
-    if g.len_is(c.args[j], n) && o.op == ssa.Op.Call && g.f.name_is(o, "Str.len") && o.args.len() == 1 && g.through_params(o.args[0]) == st {
+    let o = g.f.values[g.f.arg(c.args, 1 - j)]
+    if g.len_is(g.f.arg(c.args, j), n) && o.op == ssa.Op.Call && g.f.name_is(o, "Str.len") && o.args.len() == 1 && g.through_params(g.f.arg(o.args, 0)) == st {
       return true
     }
   }
@@ -1093,7 +1093,7 @@ fn (g: G) len_is(v: Int, n: Int) -> Bool {
   if x.op != ssa.Op.Call || !g.f.name_is(x, "Str.len") || x.args.len() != 1 {
     return false
   }
-  let cv = g.f.values[g.through_params(x.args[0])]
+  let cv = g.f.values[g.through_params(g.f.arg(x.args, 0))]
   if cv.op != ssa.Op.Const {
     return false
   }
@@ -1246,9 +1246,9 @@ fn (var g: G) call_op(v: Int) {
     // is its input's, the same object until the run's last push grows it
     // (pushrun.xo push_alias)
     if g.push_alias.contains(v) {
-      var r = x.args[0]
+      var r = g.f.arg(x.args, 0)
       while g.push_skip.contains(r) {
-        r = g.f.values[r].args[0]
+        r = g.f.arg(g.f.values[r].args, 0)
       }
       g.set(v, g.words(r))
     }
@@ -1268,7 +1268,7 @@ fn (var g: G) call_op(v: Int) {
   }
   if ci >= 0 {
     var args: List[Src] = []
-    for a in x.args {
+    for a in g.f.args_iter(x.args) {
       for w in g.words(a) {
         args.push(rsrc(w))
       }
@@ -1310,7 +1310,7 @@ fn (var g: G) call_op(v: Int) {
         // rl_new_n through its export, with no C level; a second argument
         // is List.with_capacity's, rl_new_cap (exactly n >= 1 for word
         // sized elements, decision 0448)
-        let n = g.word(x.args[0])
+        let n = g.word(g.f.arg(x.args, 0))
         let fname = if x.args.len() == 2 { "xo_x_obj_rl_new_cap" } else { "xo_x_obj_rl_new_n" }
         g.set(v, g.rt(fname, [rsrc(n), isrc(es)], [false]))
         return
@@ -1320,13 +1320,13 @@ fn (var g: G) call_op(v: Int) {
       // (bench/results/xo1-speed-2026-10-13.md)
       g.set(v, [g.sym_addr(g.sym("xo_empty_list"))])
     }
-    "list.len" => g.set(v, [g.list_len(g.word(x.args[0]))])
+    "list.len" => g.set(v, [g.list_len(g.word(g.f.arg(x.args, 0)))])
     "list.index" => {
-      let l = g.word(x.args[0])
-      let i = g.word(x.args[1])
-      g.bounds_check(v, l, i, x.args[0], x.args[1])
+      let l = g.word(g.f.arg(x.args, 0))
+      let i = g.word(g.f.arg(x.args, 1))
+      g.bounds_check(v, l, i, g.f.arg(x.args, 0), g.f.arg(x.args, 1))
       let et = ssa.ty_of(x.tb)
-      let base = g.elem_addr(l, i, x.args[1], et)
+      let base = g.elem_addr(l, i, g.f.arg(x.args, 1), et)
       if base.idx == 0 && g.elem_in_place(v) {
         // only read: its parts load from the list where used (inplace.xo)
         g.stable[v] = g.addr_at(base.base, base.off)
@@ -1337,11 +1337,11 @@ fn (var g: G) call_op(v: Int) {
     "list.take" => {
       // element i moves out (decision 0169); its slot gets a
       // placeholder that releasing ignores until list.set stores back
-      let l = g.word(x.args[0])
-      let i = g.word(x.args[1])
-      g.bounds_check(v, l, i, x.args[0], x.args[1])
+      let l = g.word(g.f.arg(x.args, 0))
+      let i = g.word(g.f.arg(x.args, 1))
+      g.bounds_check(v, l, i, g.f.arg(x.args, 0), g.f.arg(x.args, 1))
       let et = g.m.types[ssa.ty_of(x.tb)].elems[1]
-      let base = g.elem_addr(l, i, x.args[1], et)
+      let base = g.elem_addr(l, i, g.f.arg(x.args, 1), et)
       if g.take_ptr.contains(v) {
         // a list element home (byref.xo find_take_args): the call gets
         // the slot's address, the element stays
@@ -1358,24 +1358,24 @@ fn (var g: G) call_op(v: Int) {
       g.set(v, [l] + e)
     }
     "list.get" => {
-      let l = g.word(x.args[0])
-      let i = g.word(x.args[1])
-      let et = g.m.types[g.vty(x.args[0])].elems[0]
+      let l = g.word(g.f.arg(x.args, 0))
+      let i = g.word(g.f.arg(x.args, 1))
+      let et = g.m.types[g.vty(g.f.arg(x.args, 0))].elems[0]
       let n = g.list_len(l)
-      g.set(v, g.option(ssa.ty_of(x.tb), "cmp $u0, $u1", [i, n], "lo", [], OptSome.Get(l: l, i: i, iv: x.args[1], et: et), []))
+      g.set(v, g.option(ssa.ty_of(x.tb), "cmp $u0, $u1", [i, n], "lo", [], OptSome.Get(l: l, i: i, iv: g.f.arg(x.args, 1), et: et), []))
     }
     "list.set" => {
       if g.take_set.contains(v) {
         // the callee wrote the element at its slot (find_take_args)
-        g.set(v, [g.word(x.args[0])])
+        g.set(v, [g.word(g.f.arg(x.args, 0))])
         return
       }
-      let l = g.word(x.args[0])
-      let i = g.word(x.args[1])
-      let et = g.vty(x.args[2])
-      let w = g.store_words(x.args[2])
-      g.bounds_check(v, l, i, x.args[0], x.args[1])
-      let base = g.elem_addr(l, i, x.args[1], et)
+      let l = g.word(g.f.arg(x.args, 0))
+      let i = g.word(g.f.arg(x.args, 1))
+      let et = g.vty(g.f.arg(x.args, 2))
+      let w = g.store_words(g.f.arg(x.args, 2))
+      g.bounds_check(v, l, i, g.f.arg(x.args, 0), g.f.arg(x.args, 1))
+      let base = g.elem_addr(l, i, g.f.arg(x.args, 1), et)
       if g.heap(et) && !g.after_take(v) {
         let old = g.load_elem(base, et, false)
         g.release(et, old)
@@ -1384,9 +1384,9 @@ fn (var g: G) call_op(v: Int) {
       g.set(v, [l])
     }
     "list.push" => {
-      let l = g.word(x.args[0])
-      let et = g.vty(x.args[1])
-      let w = g.store_words(x.args[1])
+      let l = g.word(g.f.arg(x.args, 0))
+      let et = g.vty(g.f.arg(x.args, 1))
+      let w = g.store_words(g.f.arg(x.args, 1))
       let n = g.list_len(l)
       let c = g.def1(false, "ldr $d0, [$u0, #16]", [l])
       let lm = g.new_vreg(false)
@@ -1418,11 +1418,11 @@ fn (var g: G) call_op(v: Int) {
       // decision 0291: list.set into a borrowed list (a Map log's chunk
       // that only its Map's owner holds, maplog.xo's put fast path): the
       // old element released, the new one stored; no result
-      let l = g.word(x.args[0])
-      let i = g.word(x.args[1])
-      let et = g.vty(x.args[2])
-      let w = g.store_words(x.args[2])
-      let base = g.elem_addr(l, i, x.args[1], et)
+      let l = g.word(g.f.arg(x.args, 0))
+      let i = g.word(g.f.arg(x.args, 1))
+      let et = g.vty(g.f.arg(x.args, 2))
+      let w = g.store_words(g.f.arg(x.args, 2))
+      let base = g.elem_addr(l, i, g.f.arg(x.args, 1), et)
       if g.heap(et) {
         let old = g.load_elem(base, et, false)
         g.release(et, old)
@@ -1432,9 +1432,9 @@ fn (var g: G) call_op(v: Int) {
     "log.push" => {
       // decision 0291: list.push into a borrowed list with room (a Map
       // log's chunk, made with its capacity): no growth, no result
-      let l = g.word(x.args[0])
-      let et = g.vty(x.args[1])
-      let w = g.store_words(x.args[1])
+      let l = g.word(g.f.arg(x.args, 0))
+      let et = g.vty(g.f.arg(x.args, 1))
+      let w = g.store_words(g.f.arg(x.args, 1))
       let n = g.list_len(l)
       if g.esize(et) > 0 {
         g.store_elem(at_base(g.elem_base(l, n, g.esize(et))), et, w)
@@ -1449,8 +1449,8 @@ fn (var g: G) call_op(v: Int) {
       let _r = g.cm.len_at.remove(l)
     }
     "list.pop" => {
-      let l = g.word(x.args[0])
-      let et = g.m.types[g.vty(x.args[0])].elems[0]
+      let l = g.word(g.f.arg(x.args, 0))
+      let et = g.m.types[g.vty(g.f.arg(x.args, 0))].elems[0]
       let ot = g.m.types[ssa.ty_of(x.tb)].elems[1]
       let n = g.list_len(l)
       // a new register for the shorter list (what is known about l, its
@@ -1463,8 +1463,8 @@ fn (var g: G) call_op(v: Int) {
       g.set(v, [l2] + o)
     }
     "str.concat" | "str.concat_obj" => {
-      let a = g.words(x.args[0])
-      let b = g.words(x.args[1])
+      let a = g.words(g.f.arg(x.args, 0))
+      let b = g.words(g.f.arg(x.args, 1))
       let n = g.def1(false, "add $d0, $u0, $u1", [g.str_len(a), g.str_len(b)])
       if g.inl_str() && name == "str.concat" {
         // a short result is an inline Str (decision 0370): the runtime
@@ -1479,8 +1479,8 @@ fn (var g: G) call_op(v: Int) {
       }
     }
     "str.concat_int" | "str.concat_float" => {
-      let a = g.words(x.args[0])
-      let b = g.words(x.args[1])
+      let a = g.words(g.f.arg(x.args, 0))
+      let b = g.words(g.f.arg(x.args, 1))
       // obj.xo and cabi.xo through their exports (the C entries stay for
       // code of earlier compilers)
       let fname = if name == "str.concat_float" { "xo_x_obj_rs_concat_float" } else { "xo_x_obj_rs_concat_int" }
@@ -1490,13 +1490,13 @@ fn (var g: G) call_op(v: Int) {
     }
     "str.of_int" | "str.of_float" => {
       let fname = if name == "str.of_float" { "xo_x_obj_rs_of_float" } else { "xo_x_obj_rs_of_int" }
-      let a = g.words(x.args[0])
+      let a = g.words(g.f.arg(x.args, 0))
       let obj = g.rt(fname, [rsrc(a[0]), framesrc()], [false])
       let n = g.def1(false, "ldr $d0, [sp, #$OUT]", [])
       g.set(v, [obj[0], n])
     }
     "str.of_bool" => {
-      let b = g.word(x.args[0])
+      let b = g.word(g.f.arg(x.args, 0))
       let t = g.sym_addr(g.str_obj("true".bytes()))
       let f = g.sym_addr(g.str_obj("false".bytes()))
       let obj = g.def1(false, "cmp $u0, #0\ncsel $d0, $u1, $u2, ne", [b, t, f])
@@ -1506,8 +1506,8 @@ fn (var g: G) call_op(v: Int) {
       g.set(v, [obj, n])
     }
     "str.eq" | "str.cmp" => {
-      let a = g.words(x.args[0])
-      let b = g.words(x.args[1])
+      let a = g.words(g.f.arg(x.args, 0))
+      let b = g.words(g.f.arg(x.args, 1))
       let xd = g.str_data(a)
       let yd = g.str_data(b)
       if name == "str.cmp" && g.x86 {
@@ -1556,34 +1556,34 @@ fn (var g: G) call_op(v: Int) {
       g.set(v, [g.def1(false, "cmp $wu0, #0\ncset $d0, ne", [r[0]])])
     }
     "Stdio.print" | "Stdio.println" | "Stdio.eprint" | "Stdio.eprintln" => {
-      let a = g.words(x.args[1])
+      let a = g.words(g.f.arg(x.args, 1))
       let d = g.str_data(a)
       let _r = g.rt("xo_${name.trim_prefix("Stdio.")}", regs([d, g.str_len(a)]), [])
       g.set(v, [])
     }
     "Int.min" | "Int.max" => {
       let c = if name == "Int.min" { "lt" } else { "gt" }
-      let a = g.word(x.args[0])
-      let b = g.word(x.args[1])
+      let a = g.word(g.f.arg(x.args, 0))
+      let b = g.word(g.f.arg(x.args, 1))
       g.set(v, [g.def1(false, "cmp $u0, $u1\ncsel $d0, $u0, $u1, ${c}", [a, b])])
     }
     "Float.min" | "Float.max" => {
       // the total order, the receiver on a tie (std.md 1, decisions/0053):
       // min is `b < a ? b : a`, max `a < b ? b : a`
-      var p = x.args[0]
-      var q = x.args[1]
+      var p = g.f.arg(x.args, 0)
+      var q = g.f.arg(x.args, 1)
       if name == "Float.min" {
-        p = x.args[1]
-        q = x.args[0]
+        p = g.f.arg(x.args, 1)
+        q = g.f.arg(x.args, 0)
       }
       let c = g.float_order(ssa.Op.Lt, p, q)
-      let ra = g.word(x.args[0])
-      let rb = g.word(x.args[1])
+      let ra = g.word(g.f.arg(x.args, 0))
+      let rb = g.word(g.f.arg(x.args, 1))
       let n = c.us.len()
       g.set(v, [g.def1(true, "${c.text}\nfcsel $d0, $u${n + 1}, $u${n}, ${c.cond}", c.us + [ra, rb])])
     }
     "Int.abs" => {
-      let a = g.word(x.args[0])
+      let a = g.word(g.f.arg(x.args, 0))
       if ssa.has_pos(x.lp) {
         let mn = g.imm(MIN_INT)
         g.check("cmp $u0, $u1", [a, mn], "eq", "xo_fault_abs", [rsrc(a)] + g.loc_args(g.f.pos_of(x)))
@@ -1599,18 +1599,18 @@ fn (var g: G) call_op(v: Int) {
         "Float.round" => "frinta"
         _ => "fabs"
       }
-      g.set(v, [g.def1(true, "${ins} $d0, $u0", [g.word(x.args[0])])])
+      g.set(v, [g.def1(true, "${ins} $d0, $u0", [g.word(g.f.arg(x.args, 0))])])
     }
-    "Float.is_nan" => g.set(v, [g.def1(false, "fcmp $u0, $u0\ncset $d0, vs", [g.word(x.args[0])])])
+    "Float.is_nan" => g.set(v, [g.def1(false, "fcmp $u0, $u0\ncset $d0, vs", [g.word(g.f.arg(x.args, 0))])])
     // f * y + z rounded once (decision 0385): fmadd d, n, m, a is n * m + a
-    "Float.fma" => g.set(v, [g.def1(true, "fmadd $d0, $u0, $u1, $u2", [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])])
+    "Float.fma" => g.set(v, [g.def1(true, "fmadd $d0, $u0, $u1, $u2", [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1)), g.word(g.f.arg(x.args, 2))])])
     "bytes.index" => {
       // b[i] on Bytes (decision 0081): the data is 16 bytes into the
       // string object
-      let a = g.words(x.args[0])
-      let i = g.word(x.args[1])
+      let a = g.words(g.f.arg(x.args, 0))
+      let i = g.word(g.f.arg(x.args, 1))
       var k = -1
-      let y = g.f.values[x.args[0]]
+      let y = g.f.values[g.f.arg(x.args, 0)]
       if y.op == ssa.Op.Const {
         if let Some(bs) = const_bytes(g.f.aux(y)) {
           k = bs.len()
@@ -1618,24 +1618,24 @@ fn (var g: G) call_op(v: Int) {
       }
       let alen = g.str_len(a)
       // len >> k and len / C are below len once len is at least 1 (2026-10-26)
-      let short = g.proof.div_of_len(g.f, ssa.block_of(x.tb), x.args[1], x.args[0])
+      let short = g.proof.div_of_len(g.f, ssa.block_of(x.tb), g.f.arg(x.args, 1), g.f.arg(x.args, 0))
       // and what the function's branches prove (Proof: a decreasing index
       // under `n > 0`, 2026-11-08)
-      if ssa.has_pos(x.lp) && !short && !g.proved_index(x.args[1], alen, k) && !g.proof.proven(g.f, ssa.block_of(x.tb), x.args[1], x.args[0]) {
+      if ssa.has_pos(x.lp) && !short && !g.proved_index(g.f.arg(x.args, 1), alen, k) && !g.proof.proven(g.f, ssa.block_of(x.tb), g.f.arg(x.args, 1), g.f.arg(x.args, 0)) {
         g.check("cmp $u0, $u1", [i, alen], "hs", "xo_fault_bytes_index", [rsrc(i), rsrc(alen)] + g.loc_args(g.f.pos_of(x)))
       }
       if ssa.has_pos(x.lp) {
         // what the check (or the proof) says holds after it
         g.index_facts(i)
         g.bytes_index_cap(i)
-        g.less_fact(x.args[1], alen)
+        g.less_fact(g.f.arg(x.args, 1), alen)
       }
-      let bv = g.f.values[x.args[0]]
-      let borrowed = g.inl_str() && bv.op == ssa.Op.Call && g.f.name_is(bv, "rt.str_bytes") && !g.escapes[x.args[0]]
-      g.set(v, [g.bytes_load(a, x.args[1], i, borrowed)])
+      let bv = g.f.values[g.f.arg(x.args, 0)]
+      let borrowed = g.inl_str() && bv.op == ssa.Op.Call && g.f.name_is(bv, "rt.str_bytes") && !g.escapes[g.f.arg(x.args, 0)]
+      g.set(v, [g.bytes_load(a, g.f.arg(x.args, 1), i, borrowed)])
     }
-    "Str.len" => g.set(v, [g.str_len(g.words(x.args[0]))])
-    "Str.is_empty" => g.set(v, [g.def1(false, "cmp $u0, #0\ncset $d0, eq", [g.real(g.str_len(g.words(x.args[0])))])])
+    "Str.len" => g.set(v, [g.str_len(g.words(g.f.arg(x.args, 0)))])
+    "Str.is_empty" => g.set(v, [g.def1(false, "cmp $u0, #0\ncset $d0, eq", [g.real(g.str_len(g.words(g.f.arg(x.args, 0))))])])
     _ => {
       g.fail("runtime call `${name}`")
       g.set(v, g.zeros(ssa.ty_of(x.tb)))
@@ -1651,16 +1651,16 @@ fn (var g: G) call_op(v: Int) {
 /// multiply high.
 fn (var g: G) u64_divc(v: Int) -> Bool {
   let x = g.f.values[v]
-  let (d, dok) = g.const_int(x.args[1])
-  let (rem, rok) = g.const_int(x.args[2])
+  let (d, dok) = g.const_int(g.f.arg(x.args, 1))
+  let (rem, rok) = g.const_int(g.f.arg(x.args, 2))
   if !dok || !rok || d < 2 {
     return false
   }
-  let a = g.word(x.args[0])
-  let (lo, _) = g.bounds(x.args[0])
+  let a = g.word(g.f.arg(x.args, 0))
+  let (lo, _) = g.bounds(g.f.arg(x.args, 0))
   var q = 0
   if lo >= 0 {
-    q = g.sdiv_quot(x.args[0], a, d)
+    q = g.sdiv_quot(g.f.arg(x.args, 0), a, d)
   } else {
     let (form, m, pre, post) = u64_magic(d)
     if form == 0 {
@@ -1712,17 +1712,17 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.rs_push_word" if g.f.values[v].args.len() == 3 && g.push_loops() => g.push_fast(v, true)
     "rt.u64_divc" => g.u64_divc(v)
     "rt.int_wrap" => {
-      let (op, ok) = g.const_int(x.args[0])
+      let (op, ok) = g.const_int(g.f.arg(x.args, 0))
       if !ok || op < 0 || op > 7 {
         return false
       }
-      let a = g.word(x.args[1])
+      let a = g.word(g.f.arg(x.args, 1))
       if op == 7 {
         g.set(v, [g.def1(false, "rev $d0, $u0", [a])])
         return true
       }
       if op == 5 || op == 6 {
-        let (k, kc) = g.const_int(x.args[2])
+        let (k, kc) = g.const_int(g.f.arg(x.args, 2))
         if kc {
           if op == 5 {
             g.set(v, [g.def1(false, "ror $d0, $u0, #${k & 63}", [a])])
@@ -1732,14 +1732,14 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
           return true
         }
         if op == 5 {
-          g.set(v, [g.def1(false, "ror $d0, $u0, $u1", [a, g.word(x.args[2])])])
+          g.set(v, [g.def1(false, "ror $d0, $u0, $u1", [a, g.word(g.f.arg(x.args, 2))])])
         } else {
-          g.set(v, [g.def1(false, "ror $wd0, $wu0, $wu1", [a, g.word(x.args[2])])])
+          g.set(v, [g.def1(false, "ror $wd0, $wu0, $wu1", [a, g.word(g.f.arg(x.args, 2))])])
         }
         return true
       }
       if op == 2 {
-        let (text, us, ok2) = g.mul_long(x.args[1], x.args[2])
+        let (text, us, ok2) = g.mul_long(g.f.arg(x.args, 1), g.f.arg(x.args, 2))
         if ok2 {
           g.set(v, [g.def1(false, text, us)])
           return true
@@ -1758,15 +1758,15 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         return true
       }
       if op == 1 {
-        let (z, zc) = g.const_int(x.args[1])
+        let (z, zc) = g.const_int(g.f.arg(x.args, 1))
         if zc && z == 0 {
           // 0 - b: neg (ct.mask_bit's mask; no mov of 0, 2026-10-16)
-          g.set(v, [g.def1(false, "neg $d0, $u0", [g.word(x.args[2])])])
+          g.set(v, [g.def1(false, "neg $d0, $u0", [g.word(g.f.arg(x.args, 2))])])
           return true
         }
       }
       let ins = ["add", "sub", "mul", "lsl", "lsr"][op]
-      let (k, kc) = g.const_int(x.args[2])
+      let (k, kc) = g.const_int(g.f.arg(x.args, 2))
       if kc && op <= 1 && addsub_imm(k) {
         // a constant addend is the immediate (decision 0207 stage 3)
         g.set(v, [g.def1(false, "${ins} $d0, $u0, #${k}", [a])])
@@ -1776,18 +1776,18 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         g.set(v, [g.def1(false, "${ins} $d0, $u0, #${k & 63}", [a])])
         return true
       }
-      g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1", [a, g.word(x.args[2])])])
+      g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1", [a, g.word(g.f.arg(x.args, 2))])])
     }
-    "rt.u64_mul_hi" => g.set(v, [g.def1(false, "umulh $d0, $u0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
+    "rt.u64_mul_hi" => g.set(v, [g.def1(false, "umulh $d0, $u0, $u1", [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])])
     // cpu.mul_hi_signed (2026-10-21): smulh; imulq's high half on x86_64
     // (x86.xo)
-    "rt.i64_mul_hi" => g.set(v, [g.def1(false, "smulh $d0, $u0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
+    "rt.i64_mul_hi" => g.set(v, [g.def1(false, "smulh $d0, $u0, $u1", [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])])
     // decision 0231: the carry out of a + b and the borrow out of a - b
     // (std/native/llrt/cpu.xo), the flag of one instruction
     "rt.u64_carry" => {
       // set already when its add was selected (add_with_flag)
       if !g.has_val[v] {
-        g.set(v, [g.def1(false, "cmn $u0, $u1\ncset $d0, cs", [g.word(x.args[0]), g.word(x.args[1])])])
+        g.set(v, [g.def1(false, "cmn $u0, $u1\ncset $d0, cs", [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])])
       }
     }
     // decision 0231's addendum: x + y + cin (cin 0 or 1, moved into the
@@ -1803,8 +1803,8 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         // adds, adcs, and adc): no mov of 0, and the pair stays one
         // instruction (2026-10-16, x25519.fe64_mul)
         var zus: List[Int] = []
-        let a0 = g.adc_op(x.args[0], zus)
-        let a1 = g.adc_op(x.args[1], zus)
+        let a0 = g.adc_op(g.f.arg(x.args, 0), zus)
+        let a1 = g.adc_op(g.f.arg(x.args, 1), zus)
         if other >= 0 {
           // one pair, at most three uses and two defs: marked early (the
           // sum is written before cset) and keep, so that a template the
@@ -1812,11 +1812,11 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
           // instead of sharing x15 (gotchas/arm64-template-scratch-reuse.md)
           let d = g.new_vreg(false)
           let c = g.new_vreg(false)
-          let (cin, cin_k) = g.const_int(x.args[2])
+          let (cin, cin_k) = g.const_int(g.f.arg(x.args, 2))
           let ii = if cin_k && cin == 0 {
             g.plain("adds $d0, ${a0}, ${a1}\ncset $d1, cs", [d, c], zus)
           } else {
-            let ct = g.carry_in(x.args[2], zus)
+            let ct = g.carry_in(g.f.arg(x.args, 2), zus)
             g.plain("${ct}adcs $d0, ${a0}, ${a1}\ncset $d1, cs", [d, c], zus)
           }
           g.blocks[g.cur].insts[ii].fl = g.blocks[g.cur].insts[ii].fl | IF_EARLY
@@ -1824,7 +1824,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
           g.set(v, [if sum { d } else { c }])
           g.set(other, [if sum { c } else { d }])
         } else {
-          let (cin, cin_k) = g.const_int(x.args[2])
+          let (cin, cin_k) = g.const_int(g.f.arg(x.args, 2))
           if cin_k && cin == 0 {
             // x + 0 is x, and its carry 0 (no add of xzr: some encodings
             // read register 31 as sp)
@@ -1837,10 +1837,10 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
               g.set(v, [g.def1(false, "cmn ${a0}, ${a1}\ncset $d0, cs", zus)])
             }
           } else if sum {
-            let ct = g.carry_in(x.args[2], zus)
+            let ct = g.carry_in(g.f.arg(x.args, 2), zus)
             g.set(v, [g.def1(false, "${ct}adc $d0, ${a0}, ${a1}", zus)])
           } else {
-            let ct = g.carry_in(x.args[2], zus)
+            let ct = g.carry_in(g.f.arg(x.args, 2), zus)
             g.set(v, [g.def1(false, "${ct}adcs xzr, ${a0}, ${a1}\ncset $d0, cs", zus)])
           }
         }
@@ -1852,7 +1852,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     // header (the immortal count, then the capacity; obj.xo S_HDR) and
     // its bytes in the frame's memory, the Str its address and length 0
     "rt.rs_stack" => {
-      let (cap, _k) = g.const_int(x.args[0])
+      let (cap, _k) = g.const_int(g.f.arg(x.args, 0))
       let off = g.mem_bytes
       g.mem_bytes += 16 + 8 * ((cap + 7) / 8)
       let a = g.area_addr(off)
@@ -1865,7 +1865,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     "rt.crc32x" => {
       if !g.has_val[v] {
-        g.set(v, [g.def1(false, "crc32x $wd0, $wu0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
+        g.set(v, [g.def1(false, "crc32x $wd0, $wu0, $u1", [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])])
       }
     }
     "rt.crc32cx" => {
@@ -1874,9 +1874,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
           // SSE4.2 crc32q (cpu.hw()'s HW_CRC32C) in the scratch %r11, whose
           // 64 bit form is the 32 bit CRC zero extended; the definition
           // written last, so it may share a register with a use
-          g.set(v, [g.x86_def1("movq $u0, %r11\ncrc32q $u1, %r11\nmovq %r11, $d0", [g.word(x.args[0]), g.word(x.args[1])])])
+          g.set(v, [g.x86_def1("movq $u0, %r11\ncrc32q $u1, %r11\nmovq %r11, $d0", [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])])
         } else {
-          g.set(v, [g.def1(false, "crc32cx $wd0, $wu0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
+          g.set(v, [g.def1(false, "crc32cx $wd0, $wu0, $u1", [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])])
         }
       }
     }
@@ -1891,7 +1891,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
           cl.push(FP_BASE + r)
         }
         var us: List[Int] = []
-        for a in x.args {
+        for a in g.f.args_iter(x.args) {
           us.push(g.real(g.word(a)))
         }
         let d = g.new_vreg(false)
@@ -1901,7 +1901,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     "rt.u64_borrow" => {
       if !g.has_val[v] {
-        g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, cc", [g.word(x.args[0]), g.word(x.args[1])])])
+        g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, cc", [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])])
       }
     }
     // the carry-less product's halves and the AES rounds (cpu.xo, run
@@ -1916,7 +1916,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       if g.x86 {
         // PCLMULQDQ (cpu.hw()'s HW_CLMUL): the operands in xmm15 and
         // xmm14, the product's halves out of xmm15
-        let us = [g.word(x.args[0]), g.word(x.args[1])]
+        let us = [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))]
         let mul = "movq $u0, %xmm15\nmovq $u1, %xmm14\npclmulqdq $0, %xmm14, %xmm15"
         if other >= 0 {
           let ds = g.x86_defs("${mul}\nmovq %xmm15, $d0\npextrq $1, %xmm15, $d1", 2, us)
@@ -1932,33 +1932,33 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         // one pmull for both halves of the product
         let d = g.new_vreg(false)
         let e = g.new_vreg(false)
-        let _i = g.plain("fmov d30, $u0\nfmov d31, $u1\npmull v30.1q, v30.1d, v31.1d\nfmov $d0, d30\numov $d1, v30.d[1]", [d, e], [g.word(x.args[0]), g.word(x.args[1])])
+        let _i = g.plain("fmov d30, $u0\nfmov d31, $u1\npmull v30.1q, v30.1d, v31.1d\nfmov $d0, d30\numov $d1, v30.d[1]", [d, e], [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])
         g.set(if lo { v } else { other }, [d])
         g.set(if lo { other } else { v }, [e])
         return true
       }
       let out = if lo { "fmov $d0, d30" } else { "umov $d0, v30.d[1]" }
-      g.set(v, [g.def1(false, "fmov d30, $u0\nfmov d31, $u1\npmull v30.1q, v30.1d, v31.1d\n${out}", [g.word(x.args[0]), g.word(x.args[1])])])
+      g.set(v, [g.def1(false, "fmov d30, $u0\nfmov d31, $u1\npmull v30.1q, v30.1d, v31.1d\n${out}", [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])])
     }
     "rt.aes_sub_word" => {
       // the word in each of a block's four columns, AESENCLAST (x86-64)
       // or AESE (arm64) with a zero key: SubWord twice in the low 8 bytes
       if g.x86 {
-        g.set(v, [g.x86_def1("movq $u0, %xmm15\npshufd $0, %xmm15, %xmm15\npxor %xmm14, %xmm14\naesenclast %xmm14, %xmm15\nmovq %xmm15, $d0", [g.word(x.args[0])])])
+        g.set(v, [g.x86_def1("movq $u0, %xmm15\npshufd $0, %xmm15, %xmm15\npxor %xmm14, %xmm14\naesenclast %xmm14, %xmm15\nmovq %xmm15, $d0", [g.word(g.f.arg(x.args, 0))])])
       } else {
-        g.set(v, [g.def1(false, "fmov d30, $u0\ndup v30.4s, v30.s[0]\nmovi v31.16b, #0\naese v30.16b, v31.16b\nfmov $d0, d30", [g.word(x.args[0])])])
+        g.set(v, [g.def1(false, "fmov d30, $u0\ndup v30.4s, v30.s[0]\nmovi v31.16b, #0\naese v30.16b, v31.16b\nfmov $d0, d30", [g.word(g.f.arg(x.args, 0))])])
       }
     }
     "rt.aes_round" if g.x86 => {
       // AES-NI (cpu.hw()'s HW_AES): arm64's aese then aesmc is
       // MixColumns(ShiftRows(SubBytes(st ^ rk))), aesenc's rounds with
       // the key added first and a zero key after
-      g.x86_store("movdqu ($u0), %xmm15\nmovdqu ($u1), %xmm14\npxor %xmm14, %xmm15\npxor %xmm14, %xmm14\naesenc %xmm14, %xmm15\nmovdqu %xmm15, ($u0)", [g.word(x.args[0]), g.word(x.args[1])])
+      g.x86_store("movdqu ($u0), %xmm15\nmovdqu ($u1), %xmm14\npxor %xmm14, %xmm15\npxor %xmm14, %xmm14\naesenc %xmm14, %xmm15\nmovdqu %xmm15, ($u0)", [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])
       g.set(v, [])
     }
     "rt.aes_last" if g.x86 => {
       // ShiftRows(SubBytes(st ^ rk)) ^ rk2: aesenclast with rk2
-      g.x86_store("movdqu ($u0), %xmm15\nmovdqu ($u1), %xmm14\npxor %xmm14, %xmm15\nmovdqu ($u2), %xmm14\naesenclast %xmm14, %xmm15\nmovdqu %xmm15, ($u0)", [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])
+      g.x86_store("movdqu ($u0), %xmm15\nmovdqu ($u1), %xmm14\npxor %xmm14, %xmm15\nmovdqu ($u2), %xmm14\naesenclast %xmm14, %xmm15\nmovdqu %xmm15, ($u0)", [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1)), g.word(g.f.arg(x.args, 2))])
       g.set(v, [])
     }
     "rt.aes_dec10" | "rt.aes_dec12" | "rt.aes_dec14" if g.x86 => {
@@ -1969,7 +1969,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         t = t + "\nmovdqu ${16 * (nr - r)}($u1), %xmm14\naesimc %xmm14, %xmm14\naesdec %xmm14, %xmm15"
       }
       t = t + "\nmovdqu ($u1), %xmm14\naesdeclast %xmm14, %xmm15\nmovdqu %xmm15, ($u0)"
-      g.x86_store(t, [g.word(x.args[0]), g.word(x.args[1])])
+      g.x86_store(t, [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])
       g.set(v, [])
     }
     "rt.aes_enc10" | "rt.aes_enc12" | "rt.aes_enc14" if g.x86 => {
@@ -1981,15 +1981,15 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         t = t + "\nmovdqu ${16 * r}($u1), %xmm14\naesenc %xmm14, %xmm15"
       }
       t = t + "\nmovdqu ${16 * nr}($u1), %xmm14\naesenclast %xmm14, %xmm15\nmovdqu %xmm15, ($u0)"
-      g.x86_store(t, [g.word(x.args[0]), g.word(x.args[1])])
+      g.x86_store(t, [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])
       g.set(v, [])
     }
     "rt.aes_round" => {
-      g.store("ldr q30, [$u0, xzr]\nldr q31, [$u1, xzr]\naese v30.16b, v31.16b\naesmc v30.16b, v30.16b\nstr q30, [$u0, xzr]", [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
+      g.store("ldr q30, [$u0, xzr]\nldr q31, [$u1, xzr]\naese v30.16b, v31.16b\naesmc v30.16b, v30.16b\nstr q30, [$u0, xzr]", [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1)))])
       g.set(v, [])
     }
     "rt.aes_last" => {
-      g.store("ldr q30, [$u0, xzr]\nldr q31, [$u1, xzr]\naese v30.16b, v31.16b\nldr q31, [$u2, xzr]\neor v30.16b, v30.16b, v31.16b\nstr q30, [$u0, xzr]", [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))])
+      g.store("ldr q30, [$u0, xzr]\nldr q31, [$u1, xzr]\naese v30.16b, v31.16b\nldr q31, [$u2, xzr]\neor v30.16b, v30.16b, v31.16b\nstr q30, [$u0, xzr]", [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2)))])
       g.set(v, [])
     }
     "rt.ghash4" => {
@@ -1999,7 +1999,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       for r in ssa.ghash4_neon_vregs() {
         cl.push(FP_BASE + r)
       }
-      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.ghash4_neon_lines("$u0", "$u1", "$u2").join("\n"), us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))], clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.ghash4_neon_lines("$u0", "$u1", "$u2").join("\n"), us: [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2)))], clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -2011,7 +2011,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         cl.push(FP_BASE + r)
       }
       var us: List[Int] = []
-      for a in x.args {
+      for a in g.f.args_iter(x.args) {
         us.push(g.real(g.word(a)))
       }
       let _i = g.add(Inst{kind: K_PLAIN, text: ssa.sha256_ni_loop_lines("$u0", "$u1", "$u2", "$u3", "%r9", "%r10").join("\n"), us: us, fl: IF_X86, clobbers: cl})
@@ -2026,7 +2026,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       for r in ssa.sha256_loop_vregs() {
         cl.push(FP_BASE + r)
       }
-      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.sha256_loop_lines("$u0", "$u1", "$u2", "$u3", "x9", "x10").join("\n"), us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2])), g.real(g.word(x.args[3]))], clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.sha256_loop_lines("$u0", "$u1", "$u2", "$u3", "x9", "x10").join("\n"), us: [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2))), g.real(g.word(g.f.arg(x.args, 3)))], clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -2039,7 +2039,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         cl.push(FP_BASE + r)
       }
       var us: List[Int] = []
-      for a in x.args {
+      for a in g.f.args_iter(x.args) {
         us.push(g.real(g.word(a)))
       }
       let _i = g.add(Inst{kind: K_PLAIN, text: ssa.sha1_ni_loop_lines("$u0", "$u1", "$u2", "%r9", "%r10").join("\n"), us: us, fl: IF_X86, clobbers: cl})
@@ -2054,7 +2054,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       for r in ssa.sha1_a64_loop_vregs() {
         cl.push(FP_BASE + r)
       }
-      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.sha1_a64_loop_lines("$u0", "$u1", "$u2", "$u3", "x9", "x10").join("\n"), us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2])), g.real(g.word(x.args[3]))], clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.sha1_a64_loop_lines("$u0", "$u1", "$u2", "$u3", "x9", "x10").join("\n"), us: [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2))), g.real(g.word(g.f.arg(x.args, 3)))], clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -2066,7 +2066,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       for r in ssa.sha512_loop_vregs() {
         cl.push(FP_BASE + r)
       }
-      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.sha512_a64_loop_lines("$u0", "$u1", "$u2", "$u3", "x9", "x10").join("\n"), us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2])), g.real(g.word(x.args[3]))], clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.sha512_a64_loop_lines("$u0", "$u1", "$u2", "$u3", "x9", "x10").join("\n"), us: [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2))), g.real(g.word(g.f.arg(x.args, 3)))], clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -2078,7 +2078,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       for r in ssa.ghash_loop_vregs() {
         cl.push(FP_BASE + r)
       }
-      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.ghash_loop_lines("$u0", "$u1", "$u2", "$u3", "x9", "x10").join("\n"), us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2])), g.real(g.word(x.args[3]))], clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.ghash_loop_lines("$u0", "$u1", "$u2", "$u3", "x9", "x10").join("\n"), us: [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2))), g.real(g.word(g.f.arg(x.args, 3)))], clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -2091,7 +2091,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         cl.push(FP_BASE + r)
       }
       var us: List[Int] = []
-      for a in x.args {
+      for a in g.f.args_iter(x.args) {
         us.push(g.real(g.word(a)))
       }
       let nm = g.f.name_of(x)
@@ -2109,7 +2109,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         cl.push(FP_BASE + r)
       }
       var us: List[Int] = []
-      for a in x.args {
+      for a in g.f.args_iter(x.args) {
         us.push(g.real(g.word(a)))
       }
       let n = if g.f.name_is(x, "rt.chacha_stream4") { "$u3" } else { "" }
@@ -2126,7 +2126,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       for r in ssa.chacha4_neon_vregs() {
         cl.push(FP_BASE + r)
       }
-      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.chacha4_neon_lines("$u0", "$u1", "$u2", "", "x9", "x10", "").join("\n"), us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))], clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.chacha4_neon_lines("$u0", "$u1", "$u2", "", "x9", "x10", "").join("\n"), us: [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2)))], clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -2138,7 +2138,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       for r in ssa.keccak_neon_vregs() {
         cl.push(FP_BASE + r)
       }
-      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.keccak_neon_lines("$u0", "$u1", "x9", "x10").join("\n"), us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))], clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.keccak_neon_lines("$u0", "$u1", "x9", "x10").join("\n"), us: [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1)))], clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -2148,7 +2148,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // d1 is written before d0 so d1 may share u0's register
       let d = g.new_vreg(false)
       let t = g.new_vreg(false)
-      let _i = g.add(Inst{kind: K_PLAIN, text: "lsl $d1, $u0, #24\nmrs $d0, s3_3_c4_c2_5\nmsr s3_3_c4_c2_5, $d1\nubfx $d0, $d0, #24, #1", defs: [d, t], us: [g.real(g.word(x.args[0]))], fl: IF_KEEP})
+      let _i = g.add(Inst{kind: K_PLAIN, text: "lsl $d1, $u0, #24\nmrs $d0, s3_3_c4_c2_5\nmsr s3_3_c4_c2_5, $d1\nubfx $d0, $d0, #24, #1", defs: [d, t], us: [g.real(g.word(g.f.arg(x.args, 0)))], fl: IF_KEEP})
       g.set(v, [d])
     }
     "rt.ticks" | "rt.ticks_hz" => {
@@ -2165,7 +2165,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       for r in ssa.chacha4_neon_vregs() {
         cl.push(FP_BASE + r)
       }
-      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.chacha4_neon_lines("$u0", "$u1", "$u2", "$u3", "x9", "x10", "x11").join("\n"), us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2])), g.real(g.word(x.args[3]))], clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.chacha4_neon_lines("$u0", "$u1", "$u2", "$u3", "x9", "x10", "x11").join("\n"), us: [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2))), g.real(g.word(g.f.arg(x.args, 3)))], clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -2178,7 +2178,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         t = t + "\nldr q31, [$u1, #${16 * r}]\naese v30.16b, v31.16b\naesmc v30.16b, v30.16b"
       }
       t = t + "\nldr q31, [$u1, #${16 * (nr - 1)}]\naese v30.16b, v31.16b\nldr q31, [$u1, #${16 * nr}]\neor v30.16b, v30.16b, v31.16b\nstr q30, [$u0]"
-      g.store(t, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
+      g.store(t, [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1)))])
       g.set(v, [])
     }
     "rt.aes_dec10" | "rt.aes_dec12" | "rt.aes_dec14" => {
@@ -2190,7 +2190,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         t = t + "\nldr q31, [$u1, #${16 * (nr - r)}]\naesimc v31.16b, v31.16b\naesd v30.16b, v31.16b\naesimc v30.16b, v30.16b"
       }
       t = t + "\nldr q31, [$u1, #16]\naesimc v31.16b, v31.16b\naesd v30.16b, v31.16b\nldr q31, [$u1]\neor v30.16b, v30.16b, v31.16b\nstr q30, [$u0]"
-      g.store(t, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
+      g.store(t, [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1)))])
       g.set(v, [])
     }
     "rt.aes_gcm_enc10" | "rt.aes_gcm_enc12" | "rt.aes_gcm_enc14" | "rt.aes_gcm_dec10" | "rt.aes_gcm_dec12" | "rt.aes_gcm_dec14" => {
@@ -2206,7 +2206,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       var us: List[Int] = []
       for k in 0..7 {
-        us.push(g.real(g.word(x.args[k])))
+        us.push(g.real(g.word(g.f.arg(x.args, k))))
       }
       let _i = g.add(Inst{kind: K_PLAIN, text: ssa.aes_gcm_lines(nr, name.contains("enc"), "$u0", "$u1", "$u2", "$u3", "$u4", "$u5", "$u6", "x9", "x10", "x11").join("\n"), us: us, clobbers: cl})
       g.clobber()
@@ -2223,7 +2223,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         cl.push(FP_BASE + r)
       }
       var us: List[Int] = []
-      for a in x.args {
+      for a in g.f.args_iter(x.args) {
         us.push(g.real(g.word(a)))
       }
       let t = ssa.aes_gcm8_x86_lines(nr, name.contains("enc"), "$u0", "$u1", "$u2", "$u3", "$u4", "$u5", "$u6").join("\n")
@@ -2243,7 +2243,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       var us: List[Int] = []
       for k in 0..7 {
-        us.push(g.real(g.word(x.args[k])))
+        us.push(g.real(g.word(g.f.arg(x.args, k))))
       }
       let _i = g.add(Inst{kind: K_PLAIN, text: ssa.aes_gcm8_lines(nr, name.contains("enc"), "$u0", "$u1", "$u2", "$u3", "$u4", "$u5", "$u6", "x9", "x10", "x11").join("\n"), us: us, clobbers: cl})
       g.clobber()
@@ -2259,7 +2259,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       var us: List[Int] = []
       for k in 0..5 {
-        us.push(g.real(g.word(x.args[k])))
+        us.push(g.real(g.word(g.f.arg(x.args, k))))
       }
       let _i = g.add(Inst{kind: K_PLAIN, text: ssa.aes_ctr_lines(nr, "$u0", "$u1", "$u2", "$u3", "$u4", "x9", "x10", "x11").join("\n"), us: us, clobbers: cl})
       g.clobber()
@@ -2275,7 +2275,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       var us: List[Int] = []
       for k in 0..5 {
-        us.push(g.real(g.word(x.args[k])))
+        us.push(g.real(g.word(g.f.arg(x.args, k))))
       }
       let _i = g.add(Inst{kind: K_PLAIN, text: ssa.aes_cbc_enc_lines(nr, "$u0", "$u1", "$u2", "$u3", "$u4", "x9", "x10", "x11").join("\n"), us: us, clobbers: cl})
       g.clobber()
@@ -2302,7 +2302,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       for r in 26..32 {
         cl.push(FP_BASE + r)
       }
-      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))], clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1)))], clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -2316,7 +2316,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let name = g.f.name_of(x)
       let ls = if name == "rt.mlkem_ntt" { ssa.mlkem_ntt_neon_lines("$u0", "$u1") } else if name == "rt.mlkem_inverse_ntt" { ssa.mlkem_inverse_ntt_neon_lines("$u0", "$u1") } else { ssa.mlkem_mul_acc_neon_lines("$u0", "$u1", "$u2", "$u3") }
       var us: List[Int] = []
-      for a in x.args {
+      for a in g.f.args_iter(x.args) {
         us.push(g.real(g.word(a)))
       }
       let _i = g.add(Inst{kind: K_PLAIN, text: ls.join("\n"), us: us, clobbers: cl})
@@ -2332,7 +2332,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         cl.push(FP_BASE + r)
       }
       let t = (if g.f.name_is(x, "rt.mlkem_ntt") { ssa.mlkem_ntt_sse2_lines("$u0", "$u1") } else { ssa.mlkem_inverse_ntt_sse2_lines("$u0", "$u1") }).join("\n")
-      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))], fl: IF_X86, clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1)))], fl: IF_X86, clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -2344,7 +2344,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         cl.push(FP_BASE + r)
       }
       let t = ssa.mlkem_mul_acc_sse2_lines("$u0", "$u1", "$u2", "$u3").join("\n")
-      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2])), g.real(g.word(x.args[3]))], fl: IF_X86, clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2))), g.real(g.word(g.f.arg(x.args, 3)))], fl: IF_X86, clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -2361,7 +2361,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         t.push("movdqu ${16 * r}(%rsp), %xmm${r}")
       }
       t.push("addq $176, %rsp")
-      g.x86_store(t.join("\n"), [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])
+      g.x86_store(t.join("\n"), [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1)), g.word(g.f.arg(x.args, 2))])
       g.set(v, [])
     }
     "rt.sha1_block" if g.x86 => {
@@ -2376,7 +2376,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         t.push("movdqu ${16 * r}(%rsp), %xmm${r}")
       }
       t.push("addq $176, %rsp")
-      g.x86_store(t.join("\n"), [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])
+      g.x86_store(t.join("\n"), [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1)), g.word(g.f.arg(x.args, 2))])
       g.set(v, [])
     }
     "rt.sha512_block" => {
@@ -2393,7 +2393,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         t.push("ldr q${r}, [sp, #${16 * i}]")
       }
       t.push("add sp, sp, #${16 * saved.len()}")
-      g.store(t.join("\n"), [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))])
+      g.store(t.join("\n"), [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2)))])
       g.set(v, [])
     }
     "rt.sha1_block" => {
@@ -2403,7 +2403,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       var t: List[Str] = ["sub sp, sp, #80", "str q16, [sp]", "str q17, [sp, #16]", "str q18, [sp, #32]", "str q19, [sp, #48]", "str q20, [sp, #64]"]
       t = t + ssa.sha1_a64_lines("$u0", "$u1", "$u2")
       t = t + ["ldr q16, [sp]", "ldr q17, [sp, #16]", "ldr q18, [sp, #32]", "ldr q19, [sp, #48]", "ldr q20, [sp, #64]", "add sp, sp, #80"]
-      g.store(t.join("\n"), [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))])
+      g.store(t.join("\n"), [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2)))])
       g.set(v, [])
     }
     "rt.sha256_block" => {
@@ -2434,7 +2434,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       t = t + "\nushll v18.2d, v16.2s, #0\nushll2 v31.2d, v16.4s, #0\nstr q18, [$u0]\nstr q31, [$u0, #16]"
       t = t + "\nushll v18.2d, v17.2s, #0\nushll2 v31.2d, v17.4s, #0\nstr q18, [$u0, #32]\nstr q31, [$u0, #48]"
       t = t + "\nldr q16, [sp]\nldr q17, [sp, #16]\nldr q18, [sp, #32]\nldr q19, [sp, #48]\nldr q20, [sp, #64]\nadd sp, sp, #80"
-      g.store(t, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))])
+      g.store(t, [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2)))])
       g.set(v, [])
     }
     // x86-64's CPUID (cpu.xo cpuid1_ecx): never on arm64
@@ -2464,7 +2464,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     // cpu.fma_hw (decision 0385 stage 3): reached on amd64 only (ssa
     // cpu_call); the x86 retargeting turns fmadd into vfmadd231sd
-    "rt.fma_hw" => g.set(v, [g.def1(true, "fmadd $d0, $u0, $u1, $u2", [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])])
+    "rt.fma_hw" => g.set(v, [g.def1(true, "fmadd $d0, $u0, $u1, $u2", [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1)), g.word(g.f.arg(x.args, 2))])])
     // and on x86-64 CPUID leaf 1's ECX; rbx (callee saved) kept in r11
     "rt.cpuid1_ecx" => {
       if g.x86 {
@@ -2476,30 +2476,30 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     // decision 0222: the value barrier is the operand itself (this
     // emitter neither folds through a call's result nor turns masks
     // into branches; test/codegen/consttime checks it)
-    "rt.ct_barrier" => g.set(v, [g.word(x.args[0])])
+    "rt.ct_barrier" => g.set(v, [g.word(g.f.arg(x.args, 0))])
     // decision 0195: the conversions of UInt64 and Float32
-    "rt.u64_to_float" => g.set(v, [g.def1(true, "ucvtf $d0, $u0", [g.word(x.args[0])])])
+    "rt.u64_to_float" => g.set(v, [g.def1(true, "ucvtf $d0, $u0", [g.word(g.f.arg(x.args, 0))])])
     "rt.f32_round" => {
-      if g.f32_lazy(x.args[0]) {
-        g.f32_op(v, x.args[0])
+      if g.f32_lazy(g.f.arg(x.args, 0)) {
+        g.f32_op(v, g.f.arg(x.args, 0))
       } else {
-        g.set(v, [g.def1(true, "fcvt $wd0, $u0\nfcvt $d0, $wd0", [g.word(x.args[0])])])
+        g.set(v, [g.def1(true, "fcvt $wd0, $u0\nfcvt $d0, $wd0", [g.word(g.f.arg(x.args, 0))])])
       }
     }
     "rt.i64_to_f32" | "rt.u64_to_f32" => {
       // the single form kept for the Float32 operations that read it
       // (decision 0361; the widen goes when only they do)
       let cv = if g.f.name_is(x, "rt.i64_to_f32") { "scvtf" } else { "ucvtf" }
-      let s = g.def1(true, "${cv} $wd0, $u0", [g.word(x.args[0])])
+      let s = g.def1(true, "${cv} $wd0, $u0", [g.word(g.f.arg(x.args, 0))])
       g.f32s[v] = s
       g.set(v, [g.def1(true, "fcvt $d0, $wu0", [s])])
     }
-    "rt.float_bits" => g.set(v, [g.def1(false, "fmov $d0, $u0", [g.word(x.args[0])])])
-    "rt.float_from_bits" => g.set(v, [g.def1(true, "fmov $d0, $u0", [g.word(x.args[0])])])
+    "rt.float_bits" => g.set(v, [g.def1(false, "fmov $d0, $u0", [g.word(g.f.arg(x.args, 0))])])
+    "rt.float_from_bits" => g.set(v, [g.def1(true, "fmov $d0, $u0", [g.word(g.f.arg(x.args, 0))])])
     "rt.bytes_word" => {
-      let ws = g.words(x.args[0])
+      let ws = g.words(g.f.arg(x.args, 0))
       let d = g.str_base_heap(ws)
-      g.set(v, [g.def1(false, "ldr $d0, [$u0, $u1]", [d, g.word(x.args[1])])])
+      g.set(v, [g.def1(false, "ldr $d0, [$u0, $u1]", [d, g.word(g.f.arg(x.args, 1))])])
     }
     "rt.sys6" => {
       // a call whose `bl` is `svc #0` (decision 0206): the arguments in
@@ -2508,7 +2508,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       var args: List[Src] = []
       var us: List[Int] = []
       for k in [1, 2, 3, 4, 5, 6, 0] {
-        let r = g.word(x.args[k])
+        let r = g.word(g.f.arg(x.args, k))
         args.push(rsrc(r))
         us.push(r)
       }
@@ -2529,7 +2529,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       var us: List[Int] = []
       let order = if x.args.len() == 5 { [1, 2, 3, 4, 0] } else { [1, 2, 0] }
       for k in order {
-        let r = g.word(x.args[k])
+        let r = g.word(g.f.arg(x.args, k))
         args.push(rsrc(r))
         us.push(r)
       }
@@ -2555,7 +2555,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // word k of the process globals (decision 0207, work item B02): the
       // table's address plus 8 * k (k a constant the SSA builder checked)
       g.static_ref = true
-      let (k, _) = g.const_int(x.args[0])
+      let (k, _) = g.const_int(g.f.arg(x.args, 0))
       // one constant (konst) with its offset: loop invariant, so a loop's
       // preemption poll loads the flag through a hoisted address instead
       // of adrp, add, add each iteration (2026-10-21: sieve +25%)
@@ -2566,7 +2566,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.clone_ref = true
       var args: List[Src] = []
       for k in 0..4 {
-        args.push(rsrc(g.word(x.args[k])))
+        args.push(rsrc(g.word(g.f.arg(x.args, k))))
       }
       g.set(v, g.call(g.tramp("xo_clone"), args, [false]))
     }
@@ -2574,7 +2574,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // calls of the unwinder's trampolines (decision 0221), written with
       // the clone trampoline: only programs with no C library use either
       g.clone_ref = true
-      let _r = g.call(g.tramp(if g.f.name_is(x, "rt.unwind_save") { "xo_unwind_save" } else { "xo_unwind_resume" }), [rsrc(g.word(x.args[0]))], [])
+      let _r = g.call(g.tramp(if g.f.name_is(x, "rt.unwind_save") { "xo_unwind_save" } else { "xo_unwind_resume" }), [rsrc(g.word(g.f.arg(x.args, 0)))], [])
       g.set(v, [])
     }
     "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" if (g.os is "linux" | "freebsd") || g.os == "darwin" || g.os == "windows" => {
@@ -2588,19 +2588,19 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       if op == "rt.tlocal_addr" {
         g.set(v, [base])
       } else {
-        let (k, kok) = g.const_int(x.args[0])
+        let (k, kok) = g.const_int(g.f.arg(x.args, 0))
         let konst = kok && k >= 0 && k < 4096
         if op == "rt.tlocal_get" {
           if konst {
             g.set(v, [g.def1(false, "ldr $d0, [$u0, #${k * 8}]", [base])])
           } else {
-            g.set(v, [g.def1(false, "ldr $d0, [$u0, $u1, lsl #3]", [base, g.word(x.args[0])])])
+            g.set(v, [g.def1(false, "ldr $d0, [$u0, $u1, lsl #3]", [base, g.word(g.f.arg(x.args, 0))])])
           }
         } else {
           if konst {
-            let _i = g.plain("str $u1, [$u0, #${k * 8}]", [], [base, g.word(x.args[1])])
+            let _i = g.plain("str $u1, [$u0, #${k * 8}]", [], [base, g.word(g.f.arg(x.args, 1))])
           } else {
-            let _i = g.plain("str $u2, [$u0, $u1, lsl #3]", [], [base, g.word(x.args[0]), g.word(x.args[1])])
+            let _i = g.plain("str $u2, [$u0, $u1, lsl #3]", [], [base, g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])
           }
           g.set(v, [])
         }
@@ -2616,7 +2616,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.set(v, [g.sym_addr(g.sym("xo_fiber_entry"))])
     }
     "rt.str_inline" => {
-      let ws = g.words(x.args[0])
+      let ws = g.words(g.f.arg(x.args, 0))
       g.set(v, [g.def1(false, "and $d0, $u0, #1", [g.real(ws[0])])])
     }
     "rt.frame_addr" => {
@@ -2635,17 +2635,17 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.h_zero" => g.set(v, [g.sym_addr(g.sym("xo_zero_handle"))])
     "rt.popcount" => {
       if g.x86 {
-        g.set(v, [g.x86_def1("popcntq $u0, $d0", [g.word(x.args[0])])])
+        g.set(v, [g.x86_def1("popcntq $u0, $d0", [g.word(g.f.arg(x.args, 0))])])
       } else {
-        g.set(v, [g.def1(false, "fmov d30, $u0\ncnt v30.8b, v30.8b\naddv b30, v30.8b\nfmov $d0, d30", [g.word(x.args[0])])])
+        g.set(v, [g.def1(false, "fmov d30, $u0\ncnt v30.8b, v30.8b\naddv b30, v30.8b\nfmov $d0, d30", [g.word(g.f.arg(x.args, 0))])])
       }
     }
-    "rt.ctz" => g.set(v, [g.def1(false, "rbit $d0, $u0\nclz $d0, $d0", [g.word(x.args[0])])])
-    "rt.clz" => g.set(v, [g.def1(false, "clz $d0, $u0", [g.word(x.args[0])])])
+    "rt.ctz" => g.set(v, [g.def1(false, "rbit $d0, $u0\nclz $d0, $d0", [g.word(g.f.arg(x.args, 0))])])
+    "rt.clz" => g.set(v, [g.def1(false, "clz $d0, $u0", [g.word(g.f.arg(x.args, 0))])])
     "rt.bytes_eq16" | "rt.bytes_high16" | "rt.bytes_eq16_bits" | "rt.bytes_high16_bits" => {
-      let ws = g.words(x.args[0])
+      let ws = g.words(g.f.arg(x.args, 0))
       let d = g.str_base_heap(ws)
-      var us = [d, g.word(x.args[1])]
+      var us = [d, g.word(g.f.arg(x.args, 1))]
       if g.x86 {
         g.set(v, [g.x86_bytes16(x, us)])
         return true
@@ -2653,12 +2653,12 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let bits = g.f.name_ends(x, "_bits")
       var cmp = "cmlt v30.16b, v30.16b, #0"
       if g.f.name_is(x, "rt.bytes_eq16") || g.f.name_is(x, "rt.bytes_eq16_bits") {
-        let (c, ok) = g.const_int(x.args[2])
+        let (c, ok) = g.const_int(g.f.arg(x.args, 2))
         if ok {
           cmp = "movi v31.16b, #${c & 255}\ncmeq v30.16b, v30.16b, v31.16b"
         } else {
           cmp = "dup v31.16b, $wu2\ncmeq v30.16b, v30.16b, v31.16b"
-          us.push(g.word(x.args[2]))
+          us.push(g.word(g.f.arg(x.args, 2)))
         }
       }
       let nib = g.def1(false, "ldr q30, [$u0, $u1]\n${cmp}\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", us)
@@ -2674,13 +2674,13 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // 32 bytes as two lanes, their compares or'ed before the one move
       // to a general register: one fmov a 32 byte step where two 16 byte
       // masks took two (bench/results/simd-survey-2026-11-06.md)
-      let ws = g.words(x.args[0])
+      let ws = g.words(g.f.arg(x.args, 0))
       let d = g.str_base_heap(ws)
-      var us = [d, g.word(x.args[1])]
+      var us = [d, g.word(g.f.arg(x.args, 1))]
       if g.f.name_is(x, "rt.bytes_any_eq32") {
-        let (c, ok) = g.const_int(x.args[2])
+        let (c, ok) = g.const_int(g.f.arg(x.args, 2))
         if !ok {
-          us.push(g.word(x.args[2]))
+          us.push(g.word(g.f.arg(x.args, 2)))
         }
         if g.x86 {
           g.set(v, [g.x86_any_eq32(us, c, ok)])
@@ -2701,11 +2701,11 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // 2): the byte broadcast once, x16 the address and x17 the bytes
       // left less 32 (the emitter's scratch); the result is early, so it
       // is the mask in the loop and the operands stay for the end
-      let ws = g.words(x.args[0])
-      var us = [g.str_base_heap(ws), g.word(x.args[1]), g.word(x.args[2])]
-      let (c, ok) = g.const_int(x.args[3])
+      let ws = g.words(g.f.arg(x.args, 0))
+      var us = [g.str_base_heap(ws), g.word(g.f.arg(x.args, 1)), g.word(g.f.arg(x.args, 2))]
+      let (c, ok) = g.const_int(g.f.arg(x.args, 3))
       if !ok {
-        us.push(g.word(x.args[3]))
+        us.push(g.word(g.f.arg(x.args, 3)))
       }
       var rs: List[Int] = []
       for u in us {
@@ -2728,10 +2728,10 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.mem_any_eq32" => {
       // rt.bytes_any_eq32 at an address (a buffer that is not a Bytes):
       // the same two lanes and one move, the base a plain word
-      var us = [g.word(x.args[0]), g.word(x.args[1])]
-      let (c, ok) = g.const_int(x.args[2])
+      var us = [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))]
+      let (c, ok) = g.const_int(g.f.arg(x.args, 2))
       if !ok {
-        us.push(g.word(x.args[2]))
+        us.push(g.word(g.f.arg(x.args, 2)))
       }
       if g.x86 {
         g.set(v, [g.x86_any_eq32(us, c, ok)])
@@ -2744,11 +2744,11 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // each lane's cmeq is -1 a match: the two lanes added (-2 to 0 a
       // byte) and addv'ed give minus the count modulo 256, so neg and a
       // mask of the low byte leave the count (0 to 32), with no branch
-      let ws = g.words(x.args[0])
-      var us = [g.str_base_heap(ws), g.word(x.args[1])]
-      let (c, ok) = g.const_int(x.args[2])
+      let ws = g.words(g.f.arg(x.args, 0))
+      var us = [g.str_base_heap(ws), g.word(g.f.arg(x.args, 1))]
+      let (c, ok) = g.const_int(g.f.arg(x.args, 2))
       if !ok {
-        us.push(g.word(x.args[2]))
+        us.push(g.word(g.f.arg(x.args, 2)))
       }
       if g.x86 {
         g.set(v, [g.x86_count_eq32(us, c, ok)])
@@ -2759,12 +2759,12 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     "rt.bytes_count_below32" => {
       // as bytes_count_eq32 with a signed cmgt (lo > the byte) a lane
-      let (lo, ok) = g.const_int(x.args[2])
+      let (lo, ok) = g.const_int(g.f.arg(x.args, 2))
       if !ok {
         return false
       }
-      let ws = g.words(x.args[0])
-      let us = [g.str_base_heap(ws), g.word(x.args[1])]
+      let ws = g.words(g.f.arg(x.args, 0))
+      let us = [g.str_base_heap(ws), g.word(g.f.arg(x.args, 1))]
       if g.x86 {
         g.set(v, [g.x86_count_below32(us, lo)])
         return true
@@ -2776,14 +2776,14 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // bytes (cmgt), or'ed into v31; v29 to v31 are the emitter's only
       // scratch, so each constant is rebuilt per lane (movi is free of
       // dependencies). rt.xo: the three are constants.
-      let (c1, ok1) = g.const_int(x.args[2])
-      let (c2, ok2) = g.const_int(x.args[3])
-      let (lo, ok3) = g.const_int(x.args[4])
+      let (c1, ok1) = g.const_int(g.f.arg(x.args, 2))
+      let (c2, ok2) = g.const_int(g.f.arg(x.args, 3))
+      let (lo, ok3) = g.const_int(g.f.arg(x.args, 4))
       if !ok1 || !ok2 || !ok3 {
         return false
       }
-      let ws = g.words(x.args[0])
-      let us = [g.str_base_heap(ws), g.word(x.args[1])]
+      let ws = g.words(g.f.arg(x.args, 0))
+      let us = [g.str_base_heap(ws), g.word(g.f.arg(x.args, 1))]
       if g.x86 {
         g.set(v, [g.x86_any_stop32(us, c1, c2, lo)])
         return true
@@ -2802,7 +2802,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.set(v, [g.def1(false, t.join("\n"), us)])
     }
     "rt.mem_ne32" => {
-      let us = [g.word(x.args[0]), g.word(x.args[1])]
+      let us = [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))]
       if g.x86 {
         // each lane's equal bytes to a mask, the two masks and'ed: r11 is
         // the emitter's scratch, xmm14 and xmm15 its only vector ones
@@ -2816,7 +2816,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // the one move to a general register (the move is the cost of a
       // 32 byte step, bench/results/simd-survey-2026-11-06.md); v29 to
       // v31 are the emitter's only vector scratch registers
-      let us = [g.word(x.args[0]), g.word(x.args[1])]
+      let us = [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))]
       if g.x86 {
         // pmovmskb is cheap on x86_64: each lane's mask and'ed in r11d
         // and the result (xmm14 and xmm15 are the only vector scratch)
@@ -2847,14 +2847,14 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // logic. v29 to v31 are the emitter's scratch registers
       // (regalloc.xo:13). mode is the constant 1 or 2 of the two call
       // sites in std/native/llrt/obj.xo (rt.xo says so).
-      let (mode, ok) = g.const_int(x.args[3])
+      let (mode, ok) = g.const_int(g.f.arg(x.args, 3))
       if !ok || (mode != 1 && mode != 2) {
         return false
       }
       let lo = if mode == 1 { 0x41 } else { 0x61 }
       let d = if mode == 1 { "add" } else { "sub" }
       let text = "ldr q30, [$u1, $u2]\nmovi v29.16b, #${lo}\nmovi v31.16b, #0x19\nsub v30.16b, v30.16b, v29.16b\ncmhs v31.16b, v31.16b, v30.16b\nushr v31.16b, v31.16b, #7\nshl v31.16b, v31.16b, #5\n${d} v30.16b, v30.16b, v31.16b\nadd v30.16b, v30.16b, v29.16b\nstr q30, [$u0, $u2]"
-      let us = [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])]
+      let us = [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1)), g.word(g.f.arg(x.args, 2))]
       if g.x86 {
         g.x86_case_fold16(us, mode)
       } else {
@@ -2863,12 +2863,12 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.set(v, [])
     }
     "rt.rs_put_word" => {
-      let ws = g.words(x.args[0])
+      let ws = g.words(g.f.arg(x.args, 0))
       let d = g.str_base_heap(ws)
-      let _i = g.plain("str $u2, [$u0, $u1]", [], [d, g.word(x.args[1]), g.word(x.args[2])])
+      let _i = g.plain("str $u2, [$u0, $u1]", [], [d, g.word(g.f.arg(x.args, 1)), g.word(g.f.arg(x.args, 2))])
       g.set(v, ws)
     }
-    "rt.rs_set_len" => g.set(v, [g.words(x.args[0])[0], g.word(x.args[1])])
+    "rt.rs_set_len" => g.set(v, [g.words(g.f.arg(x.args, 0))[0], g.word(g.f.arg(x.args, 1))])
     "rt.list_swap" => {
       // decision 0374: the two elements trade places as words, with no
       // count or release. A permutation of a list's elements leaves each
@@ -2876,14 +2876,14 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // two elements are loaded before either is stored, so a list of one
       // element (i == j) writes back what it read. inline_rt, not call_op:
       // "rt." reaches rt_call before call_op's name match
-      let l = g.word(x.args[0])
-      let i = g.word(x.args[1])
-      let j = g.word(x.args[2])
-      let et = g.m.types[g.vty(x.args[0])].elems[0]
-      g.bounds_check(v, l, i, x.args[0], x.args[1])
-      g.bounds_check(v, l, j, x.args[0], x.args[2])
-      let a = g.elem_addr(l, i, x.args[1], et)
-      let b = g.elem_addr(l, j, x.args[2], et)
+      let l = g.word(g.f.arg(x.args, 0))
+      let i = g.word(g.f.arg(x.args, 1))
+      let j = g.word(g.f.arg(x.args, 2))
+      let et = g.m.types[g.vty(g.f.arg(x.args, 0))].elems[0]
+      g.bounds_check(v, l, i, g.f.arg(x.args, 0), g.f.arg(x.args, 1))
+      g.bounds_check(v, l, j, g.f.arg(x.args, 0), g.f.arg(x.args, 2))
+      let a = g.elem_addr(l, i, g.f.arg(x.args, 1), et)
+      let b = g.elem_addr(l, j, g.f.arg(x.args, 2), et)
       let wa = g.load_elem(a, et, false)
       let wb = g.load_elem(b, et, false)
       g.store_elem(a, et, wb)
@@ -2900,15 +2900,15 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // same T, so one et serves the two sides, a packed or a multi word
       // element included. inline_rt, not call_op: "rt." reaches rt_call
       // before call_op's name match
-      let l1 = g.word(x.args[0])
-      let i = g.word(x.args[1])
-      let l2 = g.word(x.args[2])
-      let j = g.word(x.args[3])
-      let et = g.m.types[g.vty(x.args[0])].elems[0]
-      g.bounds_check(v, l1, i, x.args[0], x.args[1])
-      g.bounds_check(v, l2, j, x.args[2], x.args[3])
-      let a = g.elem_addr(l1, i, x.args[1], et)
-      let b = g.elem_addr(l2, j, x.args[3], et)
+      let l1 = g.word(g.f.arg(x.args, 0))
+      let i = g.word(g.f.arg(x.args, 1))
+      let l2 = g.word(g.f.arg(x.args, 2))
+      let j = g.word(g.f.arg(x.args, 3))
+      let et = g.m.types[g.vty(g.f.arg(x.args, 0))].elems[0]
+      g.bounds_check(v, l1, i, g.f.arg(x.args, 0), g.f.arg(x.args, 1))
+      g.bounds_check(v, l2, j, g.f.arg(x.args, 2), g.f.arg(x.args, 3))
+      let a = g.elem_addr(l1, i, g.f.arg(x.args, 1), et)
+      let b = g.elem_addr(l2, j, g.f.arg(x.args, 3), et)
       let wa = g.load_elem(a, et, false)
       let wb = g.load_elem(b, et, false)
       g.store_elem(a, et, wb)
@@ -2931,17 +2931,17 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
   let name = g.f.name_of(x)
   match name {
     "rt.mem_load" => {
-      let (w, _) = g.const_int(x.args[2])
-      let (off, oc) = g.const_int(x.args[1])
+      let (w, _) = g.const_int(g.f.arg(x.args, 2))
+      let (off, oc) = g.const_int(g.f.arg(x.args, 1))
       if oc {
-        if let Some(k) = g.literal_load(x.args[0], off, w) {
+        if let Some(k) = g.literal_load(g.f.arg(x.args, 0), off, w) {
           // bytes of a string literal: the value itself
           g.set(v, [g.cimm(k)])
           return true
         }
       }
       if g.x86 && !oc {
-        if let Some((i, c)) = g.x86_disp(x.args[1]) {
+        if let Some((i, c)) = g.x86_disp(g.f.arg(x.args, 1)) {
           // decision 0254: i + c folded into the displacement
           let ins = match w {
             1 => "ldrb $wd0, [$u0, $u1, #${c}]"
@@ -2949,7 +2949,7 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
             4 => "ldr $wd0, [$u0, $u1, #${c}]"
             _ => "ldr $d0, [$u0, $u1, #${c}]"
           }
-          g.set(v, [g.def1(false, ins, [g.real(g.word(x.args[0])), g.real(g.word(i))])])
+          g.set(v, [g.def1(false, ins, [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(i))])])
           return true
         }
       }
@@ -2962,10 +2962,10 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
           4 => "ldr $wd0, [$u0, #${off}]"
           _ => "ldr $d0, [$u0, #${off}]"
         }
-        g.set(v, [g.def1(false, ins, [g.real(g.word(x.args[0]))])])
+        g.set(v, [g.def1(false, ins, [g.real(g.word(g.f.arg(x.args, 0)))])])
         return true
       }
-      if let Some((p, c)) = g.addr_fold(x.args[0], x.args[1], w) {
+      if let Some((p, c)) = g.addr_fold(g.f.arg(x.args, 0), g.f.arg(x.args, 1), w) {
         // base + i once, i + c as the immediate (addr_fold)
         let ins = match w {
           1 => "ldrb $wd0, [$u0, #${c}]"
@@ -2982,20 +2982,20 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
         4 => "ldr $wd0, [$u0, $u1]"
         _ => "ldr $d0, [$u0, $u1]"
       }
-      g.set(v, [g.def1(false, ins, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])])
+      g.set(v, [g.def1(false, ins, [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1)))])])
     }
     "rt.mem_store" => {
-      let (w, _) = g.const_int(x.args[3])
-      let (off, oc) = g.const_int(x.args[1])
+      let (w, _) = g.const_int(g.f.arg(x.args, 3))
+      let (off, oc) = g.const_int(g.f.arg(x.args, 1))
       if g.x86 && !oc {
-        if let Some((i, c)) = g.x86_disp(x.args[1]) {
+        if let Some((i, c)) = g.x86_disp(g.f.arg(x.args, 1)) {
           let ins = match w {
             1 => "strb $wu0, [$u1, $u2, #${c}]"
             2 => "strh $wu0, [$u1, $u2, #${c}]"
             4 => "str $wu0, [$u1, $u2, #${c}]"
             _ => "str $u0, [$u1, $u2, #${c}]"
           }
-          g.store(ins, [g.real(g.word(x.args[2])), g.word(x.args[0]), g.word(i)])
+          g.store(ins, [g.real(g.word(g.f.arg(x.args, 2))), g.word(g.f.arg(x.args, 0)), g.word(i)])
           g.set(v, [])
           return true
         }
@@ -3007,18 +3007,18 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
           4 => "str $wu0, [$u1, #${off}]"
           _ => "str $u0, [$u1, #${off}]"
         }
-        g.store(ins, [g.real(g.word(x.args[2])), g.word(x.args[0])])
+        g.store(ins, [g.real(g.word(g.f.arg(x.args, 2))), g.word(g.f.arg(x.args, 0))])
         g.set(v, [])
         return true
       }
-      if let Some((p, c)) = g.addr_fold(x.args[0], x.args[1], w) {
+      if let Some((p, c)) = g.addr_fold(g.f.arg(x.args, 0), g.f.arg(x.args, 1), w) {
         let ins = match w {
           1 => "strb $wu0, [$u1, #${c}]"
           2 => "strh $wu0, [$u1, #${c}]"
           4 => "str $wu0, [$u1, #${c}]"
           _ => "str $u0, [$u1, #${c}]"
         }
-        g.store(ins, [g.real(g.word(x.args[2])), p])
+        g.store(ins, [g.real(g.word(g.f.arg(x.args, 2))), p])
         g.set(v, [])
         return true
       }
@@ -3028,14 +3028,14 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
         4 => "str $wu0, [$u1, $u2]"
         _ => "str $u0, [$u1, $u2]"
       }
-      g.store(ins, [g.real(g.word(x.args[2])), g.word(x.args[0]), g.word(x.args[1])])
+      g.store(ins, [g.real(g.word(g.f.arg(x.args, 2))), g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])
       g.set(v, [])
     }
     "rt.mem_set" if g.zero_inline(x) => {
       // a known small length of zeros: stores of xzr, no call
       // (2026-10-16: the scheduler's 320 byte context, 14M instructions
       // of memset in spawn)
-      let (n, _) = g.const_int(x.args[2])
+      let (n, _) = g.const_int(g.f.arg(x.args, 2))
       var lines: List[Str] = []
       var off = 0
       while off + 16 <= n {
@@ -3057,7 +3057,7 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       if off < n {
         lines.push("strb wzr, [$u0, #${off}]")
       }
-      g.store(lines.join("\n"), [g.real(g.word(x.args[0]))])
+      g.store(lines.join("\n"), [g.real(g.word(g.f.arg(x.args, 0)))])
       g.set(v, [])
     }
     "rt.mem_copy" if g.copy_inline(x) => {
@@ -3065,9 +3065,9 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       // (2026-10-17: nistec's point functions copied 32 bytes through
       // libc's memcpy; bench/perf/tls spent 3x LLVM's instructions in
       // memcpy, which inlines them)
-      let (n, _) = g.const_int(x.args[2])
-      let dst = g.real(g.word(x.args[0]))
-      let src = g.real(g.word(x.args[1]))
+      let (n, _) = g.const_int(g.f.arg(x.args, 2))
+      let dst = g.real(g.word(g.f.arg(x.args, 0)))
+      let src = g.real(g.word(g.f.arg(x.args, 1)))
       var off = 0
       while off + 16 <= n {
         let a = g.new_vreg(false)
@@ -3095,7 +3095,7 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
         t = t + ["movups ${o}($u1,%r11), %xmm14", "movups ${o + 16}($u1,%r11), %xmm15", "movups %xmm14, ${o}($u0,%r11)", "movups %xmm15, ${o + 16}($u0,%r11)"]
       }
       t = t + ["addq $64, %r11", "cmpq $u2, %r11", "jb 2b", "3:"]
-      g.x86_store(t.join("\n"), [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])
+      g.x86_store(t.join("\n"), [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1)), g.word(g.f.arg(x.args, 2))])
       g.set(v, [])
     }
     "rt.mem_copy_block" => {
@@ -3107,7 +3107,7 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       // vectorized one 5.5 times faster on bench/perf/xo branch)
       let t = "mov x16, $u1\nmov x17, $u0\nsubs $d0, $u2, #64\nb.lt 2f\n1:\nldp q30, q31, [x16], #32\nstp q30, q31, [x17], #32\nldp q30, q31, [x16], #32\nstp q30, q31, [x17], #32\nsubs $d0, $d0, #64\nb.ge 1b\n2:\ntbz $d0, #5, 3f\nldp q30, q31, [x16]\nstp q30, q31, [x17]\n3:"
       let c = g.new_vreg(false)
-      let i = g.plain(t, [c], [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))])
+      let i = g.plain(t, [c], [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2)))])
       // a store: not dropped for its dead count
       g.blocks[g.cur].insts[i].fl = g.blocks[g.cur].insts[i].fl | IF_KEEP
       g.clobber()
@@ -3119,7 +3119,7 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
         "rt.mem_move" => "memmove"
         _ => "memset"
       }
-      let _r = g.rt(fname, regs([g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])]), [])
+      let _r = g.rt(fname, regs([g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1)), g.word(g.f.arg(x.args, 2))]), [])
       g.clobber()
       g.set(v, [])
     }
@@ -3130,7 +3130,7 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       // synchronization, which calls); what a poll does change, the
       // thread the task runs on, ends the thread local base's reuse
       // (tl_base checks for a poll)
-      let _i = g.add(Inst{kind: K_PLAIN, text: "ldr w16, [$u0]", us: [g.real(g.word(x.args[0]))], fl: IF_POLL})
+      let _i = g.add(Inst{kind: K_PLAIN, text: "ldr w16, [$u0]", us: [g.real(g.word(g.f.arg(x.args, 0)))], fl: IF_POLL})
       if g.x86 {
         // amd64 keeps it until measured there
         g.clobber()
@@ -3139,22 +3139,22 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
     }
     "rt.prefetch" => {
       // decision 0207 stage 3: the heap's free list pops
-      g.store("prfm pldl1keep, [$u0]", [g.real(g.word(x.args[0]))])
+      g.store("prfm pldl1keep, [$u0]", [g.real(g.word(g.f.arg(x.args, 0)))])
       g.set(v, [])
     }
     "rt.mem_cmp" => {
-      let r = g.rt("memcmp", regs([g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])]), [false])
+      let r = g.rt("memcmp", regs([g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1)), g.word(g.f.arg(x.args, 2))]), [false])
       g.set(v, [g.def1(false, "sxtw $d0, $wu0", [r[0]])])
     }
     "rt.list_esize" => {
-      let et = g.m.types[g.vty(x.args[0])].elems[0]
+      let et = g.m.types[g.vty(g.f.arg(x.args, 0))].elems[0]
       g.set(v, [g.imm(g.esize(et))])
     }
     "rt.obj_addr" => {
       // the address of a Str's object, plus a view's offset (decision 0330), so
       // llrt's raw.data and bytes_addr need no offset of their own; the header
       // reads on a builder (capacity, count) see off 0
-      let ws = g.words(x.args[0])
+      let ws = g.words(g.f.arg(x.args, 0))
       if STR_VIEWS && ws.len() == 2 {
         g.set(v, [g.str_obj_at(ws)])
       } else {
@@ -3165,7 +3165,7 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       // Str.bytes() under --inline-str (decision 0370): the same words,
       // counted once more, for a Str with an object; an inline Str becomes
       // a string object (the runtime), since Bytes holds none inline
-      let ws = g.words(x.args[0])
+      let ws = g.words(g.f.arg(x.args, 0))
       let obj = g.real(ws[0])
       let w1 = g.real(ws[1])
       let rp = g.new_vreg(false)
@@ -3199,9 +3199,9 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       // rt.str_borrow (decision 0465's view_proj) takes no count: the
       // reference counting retains it where it must be owned
       let counted = name == "rt.str_view"
-      let ws = g.words(x.args[0])
-      let lo = g.real(g.word(x.args[1]))
-      let hi = g.real(g.word(x.args[2]))
+      let ws = g.words(g.f.arg(x.args, 0))
+      let lo = g.real(g.word(g.f.arg(x.args, 1)))
+      let hi = g.real(g.word(g.f.arg(x.args, 2)))
       let obj = g.real(ws[0])
       let w1 = g.real(ws[1])
       if g.inl_str() {
@@ -3225,7 +3225,7 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
         g.pmove([rp, rn], regs([obj, wn]))
         let _j = g.add(Inst{kind: K_JUMP, targets: [cont]})
         g.cur = slow
-        let (klo, lo_const) = g.const_int(x.args[1])
+        let (klo, lo_const) = g.const_int(g.f.arg(x.args, 1))
         if !lo_const || klo < 0 || klo > 10 {
           // a variable start: the runtime (inlstr.view), one call
           let o = g.rt("xo_x_inl_view", [rsrc(obj), rsrc(w1), rsrc(lo), rsrc(hi), framesrc()], [false])
@@ -3275,18 +3275,18 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       g.set(v, [obj, g.def1(false, "orr $d0, $u0, $u1", [sh, n])])
     }
     "rt.obj_at" => {
-      let a = g.real(g.word(x.args[0]))
+      let a = g.real(g.word(g.f.arg(x.args, 0)))
       g.retain(ssa.ty_of(x.tb), [a])
       g.set(v, [a])
     }
     "rt.obj_peek" => {
       // rt.obj_at with no count (a borrowed root, ssa rc.xo)
-      g.set(v, [g.real(g.word(x.args[0]))])
+      g.set(v, [g.real(g.word(g.f.arg(x.args, 0)))])
     }
     "rt.str_at" => {
       // the two words as a Str, no count taken (decision 0402): the caller's
       // reference becomes the value's
-      g.set(v, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
+      g.set(v, [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1)))])
     }
     _ => return false
   }
@@ -3379,13 +3379,13 @@ fn (var g: G) tl_base() -> Int {
 /// Whether rt.mem_copy x has a known length of at most 128 bytes (the
 /// copy inline: at most 8 ldp and stp, and one of each tail width).
 fn (g: G) copy_inline(x: ssa.Value) -> Bool {
-  let (n, nok) = g.const_int(x.args[2])
+  let (n, nok) = g.const_int(g.f.arg(x.args, 2))
   nok && n > 0 && n <= 128
 }
 
 fn (g: G) zero_inline(x: ssa.Value) -> Bool {
-  let (b, bok) = g.const_int(x.args[1])
-  let (n, nok) = g.const_int(x.args[2])
+  let (b, bok) = g.const_int(g.f.arg(x.args, 1))
+  let (n, nok) = g.const_int(g.f.arg(x.args, 2))
   bok && nok && b & 255 == 0 && n > 0 && n <= 512
 }
 
@@ -3406,17 +3406,17 @@ fn (var g: G) half32(v: Int, signed: Bool) -> (Int, Bool, Bool) {
   }
   if !signed && x.op == ssa.Op.And {
     for j in 0..2 {
-      let (k, kc) = g.const_int(x.args[j])
+      let (k, kc) = g.const_int(g.f.arg(x.args, j))
       if kc && k == 0xFFFFFFFF {
-        return (g.word(x.args[1 - j]), true, true)
+        return (g.word(g.f.arg(x.args, 1 - j)), true, true)
       }
     }
   }
-  if signed && x.op == ssa.Op.Shr && g.f.values[x.args[0]].op == ssa.Op.Shl {
-    let (k1, ok1) = g.const_int(x.args[1])
-    let (k2, ok2) = g.const_int(g.f.values[x.args[0]].args[1])
+  if signed && x.op == ssa.Op.Shr && g.f.values[g.f.arg(x.args, 0)].op == ssa.Op.Shl {
+    let (k1, ok1) = g.const_int(g.f.arg(x.args, 1))
+    let (k2, ok2) = g.const_int(g.f.arg(g.f.values[g.f.arg(x.args, 0)].args, 1))
     if ok1 && ok2 && k1 == 32 && k2 == 32 {
-      return (g.word(g.f.values[x.args[0]].args[0]), true, true)
+      return (g.word(g.f.arg(g.f.values[g.f.arg(x.args, 0)].args, 0)), true, true)
     }
   }
   let (lo, hi) = g.bounds(v)
@@ -3452,14 +3452,14 @@ fn (g: G) wrap_op(v: Int) -> (Int, Bool) {
   if x.op != ssa.Op.Call || !g.f.name_is(x, "rt.int_wrap") {
     return (0, false)
   }
-  g.const_int(x.args[0])
+  g.const_int(g.f.arg(x.args, 0))
 }
 
 /// Lowers rt.int_wrap(0, a, b) when a or b, used only there, is a long
 /// multiply (umaddl, smaddl), another wrapping multiply (madd), or a
 /// shift left by a constant (an add with a shifted operand; fusedAdd).
 fn (var g: G) fused_add(v: Int) -> Bool {
-  let args = g.f.values[v].args
+  let args = g.f.args_copy(g.f.values[v].args)
   for j in 1..3 {
     // through an inlined helper's result parameter (num.addw(num.mulw(..)))
     let x = g.through_params(args[j])
@@ -3468,7 +3468,7 @@ fn (var g: G) fused_add(v: Int) -> Bool {
     if !ok || g.nuses[x] != 1 || g.nuses[args[j]] != 1 {
       continue
     }
-    let xa = g.f.values[x].args
+    let xa = g.f.args_copy(g.f.values[x].args)
     if op == 2 {
       let (text, us, ok2) = g.mul_long(xa[1], xa[2])
       if ok2 {
@@ -3495,13 +3495,13 @@ fn (var g: G) fused_add(v: Int) -> Bool {
 /// Lowers rt.int_wrap(1, a, b) when b, used only there, is a wrapping
 /// multiply: msub.
 fn (var g: G) fused_sub(v: Int) -> Bool {
-  let args = g.f.values[v].args
+  let args = g.f.args_copy(g.f.values[v].args)
   let x = g.through_params(args[2])
   let (op, ok) = g.wrap_op(x)
   if !ok || op != 2 || g.nuses[x] != 1 || g.nuses[args[2]] != 1 {
     return false
   }
-  let xa = g.f.values[x].args
+  let xa = g.f.args_copy(g.f.values[x].args)
   let m1 = g.word(xa[1])
   let m2 = g.word(xa[2])
   g.set(v, [g.def1(false, "msub $d0, $u0, $u1, $u2", [m1, m2, g.word(args[1])])])
@@ -3517,8 +3517,8 @@ fn (var g: G) add_with_flag(v: Int, op: Int) -> Bool {
   if g.cur_sb < 0 {
     return false
   }
-  let a = g.f.values[v].args[1]
-  let b = g.f.values[v].args[2]
+  let a = g.f.arg(g.f.values[v].args, 1)
+  let b = g.f.arg(g.f.values[v].args, 2)
   let want = if op == 0 { "rt.u64_carry" } else { "rt.u64_borrow" }
   let ins = g.f.blocks[g.cur_sb].instrs
   var k = g.cur_ix + 1
@@ -3526,7 +3526,7 @@ fn (var g: G) add_with_flag(v: Int, op: Int) -> Bool {
     let u = ins[k]
     let y = g.f.values[u]
     if y.op == ssa.Op.Call && g.f.name_of(y) == want && !g.has_val[u] && y.args.len() == 2 {
-      let same = (y.args[0] == a && y.args[1] == b) || (op == 0 && y.args[0] == b && y.args[1] == a)
+      let same = (g.f.arg(y.args, 0) == a && g.f.arg(y.args, 1) == b) || (op == 0 && g.f.arg(y.args, 0) == b && g.f.arg(y.args, 1) == a)
       if same {
         let d = g.new_vreg(false)
         let c = g.new_vreg(false)
@@ -3590,7 +3590,7 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
   // at most ADC_CHAIN_PAIRS pairs (one fewer after cmp, which reads the
   // carry in as a third use); a longer chain goes on in the next
   // instruction, its carry in from this one's cset
-  let (_, cin0_k) = g.const_int(x.args[2])
+  let (_, cin0_k) = g.const_int(g.f.arg(x.args, 2))
   var cap = ADC_CHAIN_PAIRS
   if g.m.arm64_regs > 0 {
     // the spill test ($XO_ARM64_REGS = N, N caller and N callee saved
@@ -3605,7 +3605,7 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
     let last = cars[cars.len() - 1]
     let u = ins[k]
     let y = g.f.values[u]
-    if y.op == ssa.Op.Call && g.f.name_is(y, "rt.u64_adc") && !g.has_val[u] && y.args.len() == 3 && y.args[2] == last {
+    if y.op == ssa.Op.Call && g.f.name_is(y, "rt.u64_adc") && !g.has_val[u] && y.args.len() == 3 && g.f.arg(y.args, 2) == last {
       let c = g.adc_pair_at(u, k, "rt.u64_adc_carry")
       // the carry in used only by this pair, its operands defined
       // before the chain
@@ -3613,7 +3613,7 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
       // (a constant operand is defined anywhere: 0 is xzr, any other is
       // made by a mov before the chain's instruction, 2026-10-16:
       // nistec.sub_p256's t + ~p + 1 broke at every pair)
-      if g.nuses[last] == nu && g.chain_operand(y.args[0], ins, k, nu) && g.chain_operand(y.args[1], ins, k, nu) {
+      if g.nuses[last] == nu && g.chain_operand(g.f.arg(y.args, 0), ins, k, nu) && g.chain_operand(g.f.arg(y.args, 1), ins, k, nu) {
         sums.push(u)
         cars.push(c)
         if c < 0 {
@@ -3633,20 +3633,20 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
   let x0 = g.f.values[sums[0]]
   var us: List[Int] = []
   var text = ""
-  let (cin, cin_k) = g.const_int(x0.args[2])
-  let b0 = g.adc_op(x0.args[0], us)
-  let b1 = g.adc_op(x0.args[1], us)
+  let (cin, cin_k) = g.const_int(g.f.arg(x0.args, 2))
+  let b0 = g.adc_op(g.f.arg(x0.args, 0), us)
+  let b1 = g.adc_op(g.f.arg(x0.args, 1), us)
   if cin_k && cin == 0 {
     text = "adds $d0, ${b0}, ${b1}"
   } else {
-    let ct = g.carry_in(x0.args[2], us)
+    let ct = g.carry_in(g.f.arg(x0.args, 2), us)
     text = "${ct}adcs $d0, ${b0}, ${b1}"
   }
   var defs = [g.new_vreg(false)]
   for i in 1..sums.len() {
     let y = g.f.values[sums[i]]
-    let c0 = g.adc_op(y.args[0], us)
-    let c1 = g.adc_op(y.args[1], us)
+    let c0 = g.adc_op(g.f.arg(y.args, 0), us)
+    let c1 = g.adc_op(g.f.arg(y.args, 1), us)
     defs.push(g.new_vreg(false))
     text = "${text}\nadcs $d${i}, ${c0}, ${c1}"
   }
@@ -3716,11 +3716,11 @@ fn (var g: G) chain_product(a: Int, ins: List[Int], k: Int, nu: Int) -> Bool {
   }
   let n = g.f.name_of(x)
   if n == "rt.u64_mul_hi" && x.args.len() == 2 {
-    return g.ready(x.args[0], ins) && g.ready(x.args[1], ins)
+    return g.ready(g.f.arg(x.args, 0), ins) && g.ready(g.f.arg(x.args, 1), ins)
   }
   if n == "rt.int_wrap" && x.args.len() == 3 {
-    let (op, opk) = g.const_int(x.args[0])
-    return opk && op == 2 && g.ready(x.args[1], ins) && g.ready(x.args[2], ins)
+    let (op, opk) = g.const_int(g.f.arg(x.args, 0))
+    return opk && op == 2 && g.ready(g.f.arg(x.args, 1), ins) && g.ready(g.f.arg(x.args, 2), ins)
   }
   false
 }
@@ -3740,23 +3740,23 @@ fn (var g: G) adc_chain_split(sums: List[Int], cars: List[Int]) {
   let lastc = cars[cars.len() - 1]
   for i in 0..sums.len() {
     let y = g.f.values[sums[i]]
-    for a in [y.args[0], y.args[1]] {
+    for a in [g.f.arg(y.args, 0), g.f.arg(y.args, 1)] {
       let p = g.f.values[a]
       if !g.has_val[a] && p.op == ssa.Op.Call && g.f.name_of(p) is "rt.u64_mul_hi" | "rt.int_wrap" {
         let op = if g.f.name_is(p, "rt.u64_mul_hi") { "umulh" } else { "mul" }
         let n = p.args.len()
-        g.set(a, [g.def1(false, "${op} $d0, $u0, $u1", [g.word(p.args[n - 2]), g.word(p.args[n - 1])])])
+        g.set(a, [g.def1(false, "${op} $d0, $u0, $u1", [g.word(g.f.arg(p.args, n - 2)), g.word(g.f.arg(p.args, n - 1))])])
       }
     }
     // a + ~b with carry in is a - b with the borrow its complement:
     // sbcs a, b sets the carry flag as adcs a, ~b (a constant -1 is ~0:
     // xzr; a Not's operand needs no mvn)
-    var a0 = y.args[0]
-    var a1 = y.args[1]
+    var a0 = g.f.arg(y.args, 0)
+    var a1 = g.f.arg(y.args, 1)
     var neg = g.inverted(a1) >= -1
     if !neg && g.inverted(a0) >= -1 {
-      a0 = y.args[1]
-      a1 = y.args[0]
+      a0 = g.f.arg(y.args, 1)
+      a1 = g.f.arg(y.args, 0)
       neg = true
     }
     var us: List[Int] = []
@@ -3771,7 +3771,7 @@ fn (var g: G) adc_chain_split(sums: List[Int], cars: List[Int]) {
         b1 = "$u${us.len() - 1}"
       }
     }
-    let (cin, cin_k) = g.const_int(y.args[2])
+    let (cin, cin_k) = g.const_int(g.f.arg(y.args, 2))
     let (k1, k1ok) = g.const_int(a1)
     var text = ""
     if i == 0 && cin_k && cin == 0 && !neg && k1ok && k1 > 0 && k1 < 4096 {
@@ -3789,7 +3789,7 @@ fn (var g: G) adc_chain_split(sums: List[Int], cars: List[Int]) {
       }
       let op = if neg { "sbcs" } else { "adcs" }
       if i == 0 && !(cin_k && cin == 0) {
-        let ct = g.carry_in(y.args[2], us)
+        let ct = g.carry_in(g.f.arg(y.args, 2), us)
         text = "${ct}${op} $d0, ${b0}, ${b1}"
       } else if i == 0 {
         text = "adds $d0, ${b0}, ${b1}"
@@ -3824,7 +3824,7 @@ fn (g: G) inverted(a: Int) -> Int {
   }
   let x = g.f.values[a]
   if x.op == ssa.Op.Not && x.args.len() == 1 && g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Int {
-    return x.args[0]
+    return g.f.arg(x.args, 0)
   }
   -2
 }
@@ -3882,7 +3882,7 @@ fn (g: G) same_arg(a: Int, b: Int) -> Bool {
   // two Not values of one operand
   let va = g.f.values[a]
   let vb = g.f.values[b]
-  va.op == ssa.Op.Not && vb.op == ssa.Op.Not && va.args.len() == 1 && vb.args.len() == 1 && g.same_arg(va.args[0], vb.args[0])
+  va.op == ssa.Op.Not && vb.op == ssa.Op.Not && va.args.len() == 1 && vb.args.len() == 1 && g.same_arg(g.f.arg(va.args, 0), g.f.arg(vb.args, 0))
 }
 
 /// Whether value a is defined before the current value: in an earlier
@@ -3899,13 +3899,13 @@ fn (g: G) before_ix(a: Int, ins: List[Int]) -> Bool {
 /// adc_pair for the value u at index k of the block: the call want of
 /// u's three operands among the next few values, else -1.
 fn (var g: G) adc_pair_at(u: Int, k: Int, want: Str) -> Int {
-  let xa = g.f.values[u].args
+  let xa = g.f.args_copy(g.f.values[u].args)
   let ins = g.f.blocks[g.cur_sb].instrs
   var j = k + 1
   while j < ins.len() && j <= k + 6 {
     let w = ins[j]
     let y = g.f.values[w]
-    if y.op == ssa.Op.Call && g.f.name_of(y) == want && !g.has_val[w] && y.args.len() == 3 && g.same_arg(y.args[0], xa[0]) && g.same_arg(y.args[1], xa[1]) && g.same_arg(y.args[2], xa[2]) {
+    if y.op == ssa.Op.Call && g.f.name_of(y) == want && !g.has_val[w] && y.args.len() == 3 && g.same_arg(g.f.arg(y.args, 0), xa[0]) && g.same_arg(g.f.arg(y.args, 1), xa[1]) && g.same_arg(g.f.arg(y.args, 2), xa[2]) {
       return w
     }
     j += 1
@@ -3920,13 +3920,13 @@ fn (var g: G) adc_pair(v: Int, want: Str) -> Int {
   if g.cur_sb < 0 {
     return -1
   }
-  let xa = g.f.values[v].args
+  let xa = g.f.args_copy(g.f.values[v].args)
   let ins = g.f.blocks[g.cur_sb].instrs
   var k = g.cur_ix + 1
   while k < ins.len() && k <= g.cur_ix + 6 {
     let u = ins[k]
     let y = g.f.values[u]
-    if y.op == ssa.Op.Call && g.f.name_of(y) == want && !g.has_val[u] && y.args.len() == 3 && g.same_arg(y.args[0], xa[0]) && g.same_arg(y.args[1], xa[1]) && g.same_arg(y.args[2], xa[2]) {
+    if y.op == ssa.Op.Call && g.f.name_of(y) == want && !g.has_val[u] && y.args.len() == 3 && g.same_arg(g.f.arg(y.args, 0), xa[0]) && g.same_arg(g.f.arg(y.args, 1), xa[1]) && g.same_arg(g.f.arg(y.args, 2), xa[2]) {
       return u
     }
     k += 1
@@ -3949,11 +3949,11 @@ fn (var g: G) add_w32(v: Int, op: Int) -> Bool {
     let y = g.f.values[u]
     if y.op == ssa.Op.And && !g.has_val[u] && y.args.len() == 2 {
       for j in 0..2 {
-        if y.args[j] == v {
-          let (n, nc) = g.const_int(y.args[1 - j])
+        if g.f.arg(y.args, j) == v {
+          let (n, nc) = g.const_int(g.f.arg(y.args, 1 - j))
           if nc && n == 0xFFFFFFFF {
-            let a = g.word(g.f.values[v].args[1])
-            let b = g.word(g.f.values[v].args[2])
+            let a = g.word(g.f.arg(g.f.values[v].args, 1))
+            let b = g.word(g.f.arg(g.f.values[v].args, 2))
             let d = g.def1(false, if op == 0 { "add $wd0, $wu0, $wu1" } else { "sub $wd0, $wu0, $wu1" }, [a, b])
             g.set(v, [d])
             g.set(u, [d])
@@ -3974,13 +3974,13 @@ fn (var g: G) clmul_pair(v: Int, want: Str) -> Int {
   if g.cur_sb < 0 {
     return -1
   }
-  let a = g.f.values[v].args
+  let a = g.f.args_copy(g.f.values[v].args)
   let ins = g.f.blocks[g.cur_sb].instrs
   var k = g.cur_ix + 1
   while k < ins.len() && k <= g.cur_ix + 6 {
     let u = ins[k]
     let y = g.f.values[u]
-    if y.op == ssa.Op.Call && g.f.name_of(y) == want && !g.has_val[u] && y.args.len() == 2 && y.args[0] == a[0] && y.args[1] == a[1] {
+    if y.op == ssa.Op.Call && g.f.name_of(y) == want && !g.has_val[u] && y.args.len() == 2 && g.f.arg(y.args, 0) == a[0] && g.f.arg(y.args, 1) == a[1] {
       return u
     }
     k += 1
@@ -3996,7 +3996,7 @@ fn (g: G) ord_arg(v: Int, k: Int) -> Int {
   if k >= x.args.len() {
     return 4
   }
-  let (o, ok) = g.const_int(x.args[k])
+  let (o, ok) = g.const_int(g.f.arg(x.args, k))
   if !ok || o < 0 || o > 4 {
     return 4
   }
@@ -4008,20 +4008,20 @@ fn (g: G) ord_arg(v: Int, k: Int) -> Int {
 /// words, then words).
 fn (var g: G) cell_addr(v: Int) -> Int {
   let x = g.f.values[v]
-  let l = g.word(x.args[0])
-  if g.kind(g.vty(x.args[0])) == ssa.Kind.Int {
+  let l = g.word(g.f.arg(x.args, 0))
+  if g.kind(g.vty(g.f.arg(x.args, 0))) == ssa.Kind.Int {
     // the address form (decision 0207): word i from the address
-    let (k0, kc0) = g.const_int(x.args[1])
+    let (k0, kc0) = g.const_int(g.f.arg(x.args, 1))
     if kc0 && k0 >= 0 && 8 * k0 < 4096 {
       return g.def1(false, "add $d0, $u0, #${8 * k0}", [g.real(l)])
     }
-    return g.def1(false, "add $d0, $u0, $u1, lsl #3", [g.real(l), g.word(x.args[1])])
+    return g.def1(false, "add $d0, $u0, $u1, lsl #3", [g.real(l), g.word(g.f.arg(x.args, 1))])
   }
-  let (k, kc) = g.const_int(x.args[1])
+  let (k, kc) = g.const_int(g.f.arg(x.args, 1))
   if kc && k >= 0 && LIST_HDR + 8 * k < 4096 {
     return g.def1(false, "add $d0, $u0, #${LIST_HDR + 8 * k}", [l])
   }
-  let b = g.def1(false, "add $d0, $u0, $u1, lsl #3", [l, g.word(x.args[1])])
+  let b = g.def1(false, "add $d0, $u0, $u1, lsl #3", [l, g.word(g.f.arg(x.args, 1))])
   g.def1(false, "add $d0, $u0, #${LIST_HDR}", [b])
 }
 
@@ -4030,16 +4030,16 @@ fn (var g: G) cell_addr(v: Int) -> Int {
 /// str's scaled immediate; else (-1, 0).
 fn (var g: G) cell_base_off(v: Int) -> (Int, Int) {
   let x = g.f.values[v]
-  let (k, kc) = g.const_int(x.args[1])
+  let (k, kc) = g.const_int(g.f.arg(x.args, 1))
   if !kc || k < 0 {
     return (-1, 0)
   }
-  let int_form = g.kind(g.vty(x.args[0])) == ssa.Kind.Int
+  let int_form = g.kind(g.vty(g.f.arg(x.args, 0))) == ssa.Kind.Int
   let off = if int_form { 8 * k } else { LIST_HDR + 8 * k }
   if off > 32760 {
     return (-1, 0)
   }
-  let l = g.word(x.args[0])
+  let l = g.word(g.f.arg(x.args, 0))
   (if int_form { g.real(l) } else { l }, off)
 }
 
@@ -4144,7 +4144,7 @@ fn (var g: G) atomic(v: Int) {
       if name == "rt.slot_load" {
         g.atomic_result(v, g.atomic_def("ldr $d0, [$u0, #${off}]", [base]))
       } else {
-        g.store("str $u0, [$u1, #${off}]", [g.word(x.args[2]), base])
+        g.store("str $u0, [$u1, #${off}]", [g.word(g.f.arg(x.args, 2)), base])
         g.set(v, [])
       }
       return
@@ -4155,13 +4155,13 @@ fn (var g: G) atomic(v: Int) {
     // words, then ldr [t, a, lsl #3], where cell_addr's add of the
     // scaled index, add of the header and ldr were three (2026-11-03:
     // Blowfish's S box reads through slot_load, each `S1 + byte`)
-    let int_form = g.kind(g.vty(x.args[0])) == ssa.Kind.Int
-    let ir = g.word(x.args[1])
+    let int_form = g.kind(g.vty(g.f.arg(x.args, 0))) == ssa.Kind.Int
+    let ir = g.word(g.f.arg(x.args, 1))
     let o = g.offs.get(ir) ?? Offset{a: -1, c: 0}
     let (ia, c) = if o.a >= 0 && o.c > -512 && o.c < 512 { (o.a, o.c) } else { (ir, 0) }
     let off = (if int_form { 0 } else { LIST_HDR }) + 8 * c
     if off >= 0 && off < 4096 {
-      let l = g.word(x.args[0])
+      let l = g.word(g.f.arg(x.args, 0))
       let base = if int_form { g.real(l) } else { l }
       let t = if off == 0 { base } else { g.def1(false, "add $d0, $u0, #${off}", [base]) }
       g.atomic_result(v, g.atomic_def("ldr $d0, [$u0, $u1, lsl #3]", [t, ia]))
@@ -4180,11 +4180,11 @@ fn (var g: G) atomic(v: Int) {
     }
     "rt.slot_store" => {
       let ins = if ord == 0 { "str" } else { "stlr" }
-      g.store("${ins} $u0, [$u1]", [g.word(x.args[2]), a])
+      g.store("${ins} $u0, [$u1]", [g.word(g.f.arg(x.args, 2)), a])
       g.set(v, [])
     }
     "rt.slot_swap" | "rt.slot_add" => {
-      let val = g.word(x.args[2])
+      let val = g.word(g.f.arg(x.args, 2))
       let op = if name == "rt.slot_swap" { "swp" } else { "ldadd" }
       if g.x86 {
         // xchg and lock xadd: sequentially consistent, every order's
@@ -4205,8 +4205,8 @@ fn (var g: G) atomic(v: Int) {
     }
     _ => {
       // rt.slot_cas: the old value seen, compared with the expected one
-      let old = g.word(x.args[2])
-      let new = g.word(x.args[3])
+      let old = g.word(g.f.arg(x.args, 2))
+      let new = g.word(g.f.arg(x.args, 3))
       if g.x86 {
         g.race_release(v, ord, a)
         g.set(v, [g.x86_atomic_def("movq $u0, %rax\nlock cmpxchgq $u1, ($u2)\nsete $bd0\nmovzbl $bd0, $wd0", [old, new, a], [0])])
@@ -4240,7 +4240,7 @@ fn (var g: G) rt_call(v: Int) {
   // `rt.rs_*` functions take their Str operands as the string object
   // (the first is consumed, decision 0074); the others its bytes
   let obj = name0.starts_with("rt.rs_")
-  for a in x.args {
+  for a in g.f.args_iter(x.args) {
     let ws = g.words(a)
     match g.vkind(a) {
       Int | Bool | List | Handle | Float => args.push(rsrc(ws[0]))
@@ -4301,7 +4301,7 @@ fn (var g: G) rt_call(v: Int) {
     // a thunk, as a platform call (x86win.xo); its words as passed above,
     // and a Str result's length slot last
     var sig = StrBuilder.new()
-    for a in x.args {
+    for a in g.f.args_iter(x.args) {
       sig.write(match g.vkind(a) {
         Float => "f"
         Str | Func => "ii"
@@ -4507,7 +4507,7 @@ fn (var g: G) platform_call(v: Int) {
   }
   var args: List[Src] = []
   var us: List[Int] = []
-  for a in x.args {
+  for a in g.f.args_iter(x.args) {
     let ws = g.words(a)
     match g.vkind(a) {
       Int | Float => {
@@ -4544,7 +4544,7 @@ fn (var g: G) platform_call(v: Int) {
     }
     // Win64 through a thunk (x86win.xo)
     var sig = StrBuilder.new()
-    for a in x.args {
+    for a in g.f.args_iter(x.args) {
       sig.write(if g.vkind(a) == ssa.Kind.Float { "f" } else { "i" })
     }
     call_sym = g.w64_sym(sym, sig.freeze())
@@ -4590,10 +4590,10 @@ fn (var g: G) platform_call(v: Int) {
 fn (var g: G) list_field(v: Int, name: Str) {
   let x = g.f.values[v]
   let k = Int.parse(name[10..name.len()]) ?? 0
-  let l = g.word(x.args[0])
-  let i = g.word(x.args[1])
-  let et = g.m.types[g.vty(x.args[0])].elems[0]
-  let base = g.elem_addr(l, i, x.args[1], et)
+  let l = g.word(g.f.arg(x.args, 0))
+  let i = g.word(g.f.arg(x.args, 1))
+  let et = g.m.types[g.vty(g.f.arg(x.args, 0))].elems[0]
+  let base = g.elem_addr(l, i, g.f.arg(x.args, 1), et)
   let (off, n) = g.field_words(et, k)
   let lay = g.layout(et)
   if name.starts_with("list.getf") {
@@ -4604,7 +4604,7 @@ fn (var g: G) list_field(v: Int, name: Str) {
     g.set(v, out)
     return
   }
-  let ws = g.store_words(x.args[2])
+  let ws = g.store_words(g.f.arg(x.args, 2))
   // a field holding a reference: the old value released after the store
   // (takeplace.xo took its read and release into this)
   let ft = g.m.types[et].fields[k].ty
@@ -4630,10 +4630,10 @@ fn (var g: G) list_field(v: Int, name: Str) {
 /// in it, hoist_consts) is left out (2026-10-17, grid).
 fn (g: G) after_take(v: Int) -> Bool {
   let x = g.f.values[v]
-  let l = g.f.values[x.args[0]]
+  let l = g.f.values[g.f.arg(x.args, 0)]
   if l.op != ssa.Op.Field || ssa.auxw_int(l.aux) != 0 || l.args.len() != 1 {
     return false
   }
-  let t = g.f.values[l.args[0]]
-  t.op == ssa.Op.Call && g.f.name_is(t, "list.take") && t.args.len() == 2 && t.args[1] == x.args[1]
+  let t = g.f.values[g.f.arg(l.args, 0)]
+  t.op == ssa.Op.Call && g.f.name_is(t, "list.take") && t.args.len() == 2 && g.f.arg(t.args, 1) == g.f.arg(x.args, 1)
 }

@@ -183,7 +183,7 @@ fn (var g: Gen) handed_back(f: ssa.Func, v: Int) -> Int {
   if x.op != ssa.Op.Field || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.List {
     return -1
   }
-  let c = f.values[x.args[0]]
+  let c = f.values[f.arg(x.args, 0)]
   if c.op != ssa.Op.Call {
     return -1
   }
@@ -200,7 +200,7 @@ fn (var g: Gen) handed_back(f: ssa.Func, v: Int) -> Int {
   if i >= c.args.len() {
     return -1
   }
-  c.args[i]
+  f.arg(c.args, i)
 }
 
 /// Groups the values of function fi (classesOf).
@@ -237,7 +237,7 @@ fn (var g: Gen) classes_of(fi: Int) -> Classes {
       }
       let x = f.values[v]
       if x.op == ssa.Op.Reuse {
-        let i = params.index_of(x.args[0]) ?? -1
+        let i = params.index_of(f.arg(x.args, 0)) ?? -1
         if i >= 0 {
           c.def(v, CL_W | CL_ROOT, i)
         } else {
@@ -277,7 +277,7 @@ fn (var g: Gen) classes_of(fi: Int) -> Classes {
       }
       let x = f.values[v]
       if x.op == ssa.Op.Reuse {
-        let a = x.args[0]
+        let a = f.arg(x.args, 0)
         if params.contains(a) {
           // the reuses of one parameter are one class
           if let Some(r) = reuse_of.get(a) {
@@ -289,7 +289,7 @@ fn (var g: Gen) classes_of(fi: Int) -> Classes {
           c.union(v, a)
         }
       } else if g.is_update(f, v) {
-        c.union(v, x.args[0])
+        c.union(v, f.arg(x.args, 0))
       } else {
         let a = g.handed_back(f, v)
         if a >= 0 {
@@ -317,7 +317,7 @@ fn (var g: Gen) same_var_of(fi: Int) -> List[Bool] {
       if !ok || t < 0 || f.values[t].op != ssa.Op.Return {
         continue
       }
-      let targs = f.values[t].args
+      let targs = f.args_copy(f.values[t].args)
       if 1 + j >= targs.len() {
         ok = false
         break
@@ -399,7 +399,7 @@ fn (var g: Gen) scopes_of(fi: Int) {
       if !w && !scope_read(name) {
         continue
       }
-      let a = x.args[0]
+      let a = f.arg(x.args, 0)
       if !g.scoped(f, a) {
         continue
       }

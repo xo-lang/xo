@@ -67,7 +67,7 @@ test "a counted loop with an early exit is unrolled, each trip keeping its exit"
   var lts = 0
   for v in f.values {
     if v.op == Op.Lt && block_of(v.tb) >= 0 && v.args.len() == 2 {
-      if let Some(n) = const_word(f, v.args[1]) {
+      if let Some(n) = const_word(f, f.arg(v.args, 1)) {
         if n == 2 {
           lts += 1
         }
@@ -99,7 +99,7 @@ test "unroll_region leaves a loop whose body value is used past it" {
             c = vi
           }
         }
-        f.values[v].args = [c]
+        f.set_args(v, [c])
       }
     }
   }

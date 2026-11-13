@@ -75,7 +75,7 @@ fn (var b: Builder) specialize_pass(var clones: Map[Str, Int], var callee_ok: Li
       if ci < 0 || ci == fi || !b.spec_callee_at(callee_ok, ci) {
         continue
       }
-      for (k, a) in x.args.indexed() {
+      for (k, a) in b.m.funcs[fi].args_indexed(x.args) {
         let key = spec_key(b.m.funcs[fi], a)
         if key.is_empty() || key.starts_with("fn ") != closures || !spec_param(b.m.funcs[ci], k) {
           continue
@@ -179,7 +179,7 @@ fn spec_uses(m: Module, fi: Int, k: Int, depth: Int) -> Int {
   for bl in f.blocks {
     for v in bl.instrs {
       let x = f.values[v]
-      if !x.args.contains(p) {
+      if !f.args_has(x.args, p) {
         continue
       }
       let name = match f.aux(x) {
@@ -200,7 +200,7 @@ fn spec_uses(m: Module, fi: Int, k: Int, depth: Int) -> Int {
       if ci < 0 || ci == fi || m.funcs[ci].blocks.is_empty() {
         return -1
       }
-      for (j, a) in x.args.indexed() {
+      for (j, a) in f.args_indexed(x.args) {
         if a == p {
           let u = spec_uses(m, ci, j, depth - 1)
           if u < 0 {
@@ -249,12 +249,12 @@ fn spec_clone(f: Func, k: Int, c: Value, ca: Aux, name: Str) -> Func {
   g.ckey = ""
   let p = g.blocks[0].params[k]
   let nv = g.values.len()
-  g.values.push(Value{op: c.op, tb: pack_tb(ty_of(c.tb), 0), aux: g.pack(ca), args: []})
+  g.values.push(Value{op: c.op, tb: pack_tb(ty_of(c.tb), 0), aux: g.pack(ca)})
   g.blocks[0].instrs = [nv] + g.blocks[0].instrs
   for i in 0..g.values.len() {
     for j in 0..g.values[i].args.len() {
-      if g.values[i].args[j] == p {
-        g.values[i].args[j] = nv
+      if g.arg(g.values[i].args, j) == p {
+        g.set_arg(i, j, nv)
       }
     }
   }

@@ -1028,7 +1028,7 @@ fn (var b: Builder) llrt_call(name: Str, args: List[Int]) -> Int {
 fn (var b: Builder) const_word(v0: Int) -> (Int, Bool) {
   var v = v0
   while b.vop(v) == Op.IntConv {
-    v = b.s.f.values[v].args[0]
+    v = b.s.f.arg(b.s.f.values[v].args, 0)
   }
   if b.vop(v) != Op.Const {
     return (0, false)

@@ -730,7 +730,7 @@ fn (g: G) vty(v: Int) -> Int {
 }
 
 fn (g: G) arg(v: Int, i: Int) -> Int {
-  g.f.values[v].args[i]
+  g.f.arg(g.f.values[v].args, i)
 }
 
 fn (g: G) nargs(v: Int) -> Int {
@@ -802,7 +802,7 @@ fn (g: G) const_word(v0: Int) -> (Int, Bool) {
   let v = g.through_params(v0)
   let x = g.f.values[v]
   if x.op == ssa.Op.IntConv && x.args.len() == 1 && g.m.types[ssa.ty_of(x.tb)].kind == ssa.Kind.Int && g.m.types[ssa.ty_of(x.tb)].bits == 0 {
-    return g.const_int(x.args[0])
+    return g.const_int(g.f.arg(x.args, 0))
   }
   g.const_int(v)
 }
@@ -815,7 +815,7 @@ fn (g: G) neg_const(v: Int) -> (Int, Bool) {
   if x.op != ssa.Op.Neg || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int {
     return (0, false)
   }
-  let (n, ok) = g.const_int(x.args[0])
+  let (n, ok) = g.const_int(g.f.arg(x.args, 0))
   if !ok || n == MIN_INT {
     return (0, false)
   }

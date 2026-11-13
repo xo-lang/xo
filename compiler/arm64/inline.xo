@@ -145,10 +145,10 @@ fn adc_pairs(f: ssa.Func, instrs: List[Int]) -> Int {
     }
     let n = f.name_of(x)
     if n == "rt.u64_adc" {
-      let k = args_key(f, x.args)
+      let k = args_key(f, f.args_copy(x.args))
       sums[k] = (sums.get(k) ?? 0) + 1
     } else if n == "rt.u64_adc_carry" {
-      let k = args_key(f, x.args)
+      let k = args_key(f, f.args_copy(x.args))
       carries[k] = (carries.get(k) ?? 0) + 1
     }
   }
@@ -169,7 +169,7 @@ fn args_key(f: ssa.Func, args: List[Int]) -> Str {
       parts.push("k${n}")
     } else if f.values[a].op == ssa.Op.Not && f.values[a].args.len() == 1 {
       // ~v written for the sum and again for the carry
-      parts.push("~${f.values[a].args[0]}")
+      parts.push("~${f.arg(f.values[a].args, 0)}")
     } else {
       parts.push("${a}")
     }
@@ -612,7 +612,7 @@ fn devirtualize(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) {
       if x.op != ssa.Op.CallValue || x.args.is_empty() {
         continue
       }
-      let c = f.values[x.args[0]]
+      let c = f.values[f.arg(x.args, 0)]
       // a closure with captures stays a value call: its function's
       // capture ops must read their own environment (an inlined copy
       // would read the caller's closure value; the verifier refuses it)
@@ -952,7 +952,7 @@ fn fold_value(f: ssa.Func, x: ssa.Value) -> Int? {
   if x.op == ssa.Op.Call && f.name_is(x, "Str.len") && x.args.len() == 1 {
     // a literal's length (a callee's p.len() of a literal argument:
     // scan.eq_text's word count, 2026-10-23)
-    let s = f.values[param_source(f, x.args[0])]
+    let s = f.values[param_source(f, f.arg(x.args, 0))]
     if s.op == ssa.Op.Const {
       if let Some(bs) = const_bytes(f.aux(s)) {
         return Some(bs.len())
@@ -964,9 +964,9 @@ fn fold_value(f: ssa.Func, x: ssa.Value) -> Int? {
     if !f.name_is(x, "rt.int_wrap") || x.args.len() != 3 {
       return None
     }
-    let op = const_int(f, x.args[0])?
-    let a = const_int(f, x.args[1])?
-    let b = const_int(f, x.args[2])?
+    let op = const_int(f, f.arg(x.args, 0))?
+    let a = const_int(f, f.arg(x.args, 1))?
+    let b = const_int(f, f.arg(x.args, 2))?
     return match op {
       0 => Some(a.wrapping_add(b))
       1 => Some(a.wrapping_sub(b))
@@ -975,14 +975,14 @@ fn fold_value(f: ssa.Func, x: ssa.Value) -> Int? {
     }
   }
   if x.op == ssa.Op.Neg && x.args.len() == 1 {
-    let a = const_int(f, x.args[0])?
+    let a = const_int(f, f.arg(x.args, 0))?
     return 0.checked_sub(a)
   }
   if x.args.len() != 2 || !(x.op is ssa.Op.Add | ssa.Op.Sub | ssa.Op.Mul | ssa.Op.And | ssa.Op.Or | ssa.Op.Xor | ssa.Op.Shl | ssa.Op.Shr) {
     return None
   }
-  let a = const_int(f, x.args[0])?
-  let b = const_int(f, x.args[1])?
+  let a = const_int(f, f.arg(x.args, 0))?
+  let b = const_int(f, f.arg(x.args, 1))?
   match x.op {
     Add => a.checked_add(b)
     Sub => a.checked_sub(b)
@@ -1009,7 +1009,7 @@ fn tail_at(f: ssa.Func, v: Int) -> Bool {
   // a closure literal passed on: inlined, the callee's call of it
   // becomes direct (devirtualize) and is inlined in turn (callbacks' any,
   // filter and fold were 1.03 times the instructions with these kept)
-  for a in x.args {
+  for a in f.args_iter(x.args) {
     if f.values[a].op == ssa.Op.Closure {
       return false
     }
@@ -1021,7 +1021,7 @@ fn tail_at(f: ssa.Func, v: Int) -> Bool {
   }
   let t = f.values[ins[n - 1]]
   if t.op == ssa.Op.Return {
-    return t.args.len() == 1 && t.args[0] == v
+    return t.args.len() == 1 && f.arg(t.args, 0) == v
   }
   if t.op != ssa.Op.Jump || ssa.succ_n(t) != 1 {
     return false
@@ -1035,7 +1035,7 @@ fn tail_at(f: ssa.Func, v: Int) -> Bool {
     return false
   }
   let r = f.values[tb.instrs[0]]
-  r.op == ssa.Op.Return && r.args.len() == 1 && r.args[0] == tb.params[0]
+  r.op == ssa.Op.Return && r.args.len() == 1 && f.arg(r.args, 0) == tb.params[0]
 }
 
 fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], tailbig: Map[Str, Bool], by_name: Map[Str, Int]) -> Int {
@@ -1113,7 +1113,7 @@ fn find_zero_ret(f: ssa.Func, by_name: Map[Str, Int]) -> Int {
       if x.op != ssa.Op.Call || ssa.pad_of(x.pi) >= 0 || !f.name_starts(x, "zero_val.") || !by_name.contains(f.name_of(x)) {
         continue
       }
-      for (k, a) in f.values[t].args.indexed() {
+      for (k, a) in f.args_indexed(f.values[t].args) {
         if a == v && k >= first {
           return v
         }
@@ -1135,7 +1135,7 @@ fn find_closure_call(f: ssa.Func, m: ssa.Module, padded: Map[Str, Bool], tailbig
         continue
       }
       var closure = false
-      for a in x.args {
+      for a in f.args_iter(x.args) {
         let y = f.values[a]
         closure = closure || (y.op == ssa.Op.Closure && y.args.is_empty())
       }
@@ -1253,7 +1253,7 @@ fn hands_back(g: ssa.Func, p: Int) -> Bool {
   for bl in g.blocks {
     for v in bl.instrs {
       let y = g.values[v]
-      if y.op == ssa.Op.Branch && y.args.len() >= 1 && y.args[0] == p {
+      if y.op == ssa.Op.Branch && y.args.len() >= 1 && g.arg(y.args, 0) == p {
         start = g.edges[ssa.succ(y, 0)].to
       }
     }
@@ -1364,7 +1364,7 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
   var vm: Map[Int, Int] = {}
   let cparams = callee.blocks[0].params
   for (i, p) in cparams.indexed() {
-    vm[p] = f.values[call].args[i]
+    vm[p] = f.arg(f.values[call].args, i)
   }
   let order = rpo_of(callee)
   var bm: Map[Int, Int] = {}
@@ -1394,16 +1394,16 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
         Branch => {
           let s0 = callee.edges[ssa.succ(x, 0)]
           let s1 = callee.edges[ssa.succ(x, 1)]
-          let t = f.branch(nb, vm.get(x.args[0]) ?? x.args[0], bm.get(s0.to) ?? -1, bm.get(s1.to) ?? -1)
+          let t = f.branch(nb, vm.get(callee.arg(x.args, 0)) ?? callee.arg(x.args, 0), bm.get(s0.to) ?? -1, bm.get(s1.to) ?? -1)
           edges.push(Pending{e: ssa.succ(f.values[t], 0), args: s0.args})
           edges.push(Pending{e: ssa.succ(f.values[t], 1), args: s1.args})
         }
         Return => {
           let t = f.jump(nb, cont, [])
           if direct {
-            ret_arg = x.args[0]
+            ret_arg = callee.arg(x.args, 0)
           } else {
-            edges.push(Pending{e: ssa.succ(f.values[t], 0), args: x.args})
+            edges.push(Pending{e: ssa.succ(f.values[t], 0), args: callee.args_copy(x.args)})
           }
         }
         _ => {
@@ -1413,7 +1413,7 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
           // (decision 0448); an empty one stays the empty literal, which
           // with_capacity(0) is not
           var args: List[Int] = if x.args.is_empty() { [] } else { List.with_capacity(x.args.len()) }
-          for a in x.args {
+          for a in callee.args_iter(x.args) {
             args.push(vm.get(a) ?? a)
           }
           let nv = f.add(nb, x.op, ssa.ty_of(x.tb), callee.aux(x), args)
@@ -1484,8 +1484,8 @@ fn replace_uses(var f: ssa.Func, old: Int, x: Int) {
   for bl in 0..f.blocks.len() {
     for v in f.blocks[bl].instrs {
       for i in 0..f.values[v].args.len() {
-        if f.values[v].args[i] == old {
-          f.values[v].args[i] = x
+        if f.arg(f.values[v].args, i) == old {
+          f.set_arg(v, i, x)
         }
       }
       for e in f.values[v].succs() {

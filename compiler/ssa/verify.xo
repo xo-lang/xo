@@ -70,7 +70,7 @@ fn (var m: Module) verify_func(f: Func) -> List[Str] {
         var ok = x.op == Op.Call && (name == "rt.landing" || name == "rt.unwinding") && pb >= 0 && pb < nb
         if ok {
           let t = f.term(pb)
-          ok = t >= 0 && f.values[t].op == Op.Branch && f.values[t].args[0] == p
+          ok = t >= 0 && f.values[t].op == Op.Branch && f.arg(f.values[t].args, 0) == p
         }
         if !ok {
           errs.push("${pre}${bname(bi)}: v${v} lands on v${p}, which is not a check")
@@ -136,7 +136,7 @@ fn (var m: Module) verify_func(f: Func) -> List[Str] {
   for bi in 0..nb {
     for (i, v) in f.blocks[bi].instrs.indexed() {
       let x = f.values[v]
-      for a in x.args {
+      for a in f.args_iter(x.args) {
         if a < 0 {
           errs.push("${pre}${bname(bi)}: v${v} has a nil operand")
         } else if !usable(idom, def, a, bi, i) {
@@ -285,7 +285,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
   let n = x.args.len()
   let bt = m.builtin(Kind.Bool)
   var ats: List[Int] = []
-  for a in x.args {
+  for a in f.args_iter(x.args) {
     ats.push(if a >= 0 { ty_of(f.values[a].tb) } else { -1 })
   }
   let a0 = if n > 0 { ats[0] } else { -1 }
@@ -587,7 +587,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       // operand 0 is the function's own closure, or (the xo.eq function
       // of an interface value) another closure whose environment has the
       // same layout
-      if i == -1000000 || n != 1 || !f.indirect || (x.args[0] != f.blocks[0].params[0] && k0 != Kind.Func) || i < 0 || i >= f.captures.len() || ty_of(x.tb) != f.captures[i] {
+      if i == -1000000 || n != 1 || !f.indirect || (f.arg(x.args, 0) != f.blocks[0].params[0] && k0 != Kind.Func) || i < 0 || i >= f.captures.len() || ty_of(x.tb) != f.captures[i] {
         return "capture must read the environment of its own function"
       }
     }
@@ -902,7 +902,7 @@ fn (var r: Rc) carried_alive(f: Func, p: Leaf) -> Bool {
     return false
   }
   for (w, x) in f.values.indexed() {
-    if x.op == Op.SetField && !x.args.is_empty() && x.args[0] == p.root && !paths_overlap(".${auxw_int(x.aux)}", p.path) {
+    if x.op == Op.SetField && !x.args.is_empty() && f.arg(x.args, 0) == p.root && !paths_overlap(".${auxw_int(x.aux)}", p.path) {
       let l = r.leaf(w, p.path)
       if r.alive(f, r.lid(l)) || r.carried_alive(f, l) {
         return true
@@ -950,7 +950,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
     for v in f.blocks[b].instrs {
       let x = f.values[v]
       if x.op == Op.Retain {
-        for i in r.lids(f, x.args[0]) {
+        for i in r.lids(f, f.arg(x.args, 0)) {
           if !r.alive(f, i) {
             if !immortal_leaf(f, r.vleaves[i], r.imm_ret) {
               errs.push("${bp}retain of ${leaf_text(r.vleaves[i])}, which is not alive")
@@ -963,7 +963,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
         continue
       }
       if x.op == Op.Release {
-        for i in r.lids(f, x.args[0]) {
+        for i in r.lids(f, f.arg(x.args, 0)) {
           if r.cur[i] < 1 {
             if !immortal_leaf(f, r.vleaves[i], r.imm_ret) {
               errs.push("${bp}release of ${leaf_text(r.vleaves[i])}, which is not held")
@@ -976,7 +976,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
         continue
       }
       if x.op == Op.Call && is_update_call(f.name_of(x)) {
-        let a = x.args[0]
+        let a = f.arg(x.args, 0)
         for i in r.lids(f, a) {
           let l = r.vleaves[i]
           if r.cur[i] != 1 {
@@ -1033,7 +1033,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
       }
       if f.moved.contains(v) {
         // the payload takes its enum's ownership (rc.xo movable)
-        for i in r.lids(f, f.values[v].args[0]) {
+        for i in r.lids(f, f.arg(f.values[v].args, 0)) {
           if r.cur[i] < 1 {
             if !immortal_leaf(f, r.vleaves[i], r.imm_ret) {
               errs.push("${bp}v${v} moves out of ${leaf_text(r.vleaves[i])}, which is not held")

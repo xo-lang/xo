@@ -1587,14 +1587,14 @@ fn (var g: Gen) find_susp() {
     var cv: List[Str] = []
     for x in f.values {
       if x.op == ssa.Op.CallValue && blocks {
-        cv.push(g.args_key(f, x.args))
+        cv.push(g.args_key(f, f.args_copy(x.args)))
       }
       if x.op == ssa.Op.Call && blocks {
         // a C ABI export through its table index (call.xo): its targets
         // take only the Ints after the index
         if let S(n) = f.aux(x) {
           if n is "rt.call_c2" | "rt.call_c4" {
-            cv.push(g.args_key(f, x.args[1..x.args.len()]))
+            cv.push(g.args_key(f, f.args_copy(x.args)[1..x.args.len()]))
           }
         }
       }

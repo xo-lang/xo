@@ -1855,10 +1855,10 @@ fn (b: Builder) known_variant(v: Int) -> Int {
     return -1
   }
   if x.op == Op.Field && x.args.len() == 1 {
-    let s = b.s.f.values[x.args[0]]
+    let s = b.s.f.values[b.s.f.arg(x.args, 0)]
     if let I(n) = x.aux {
       if s.op == Op.Struct && n >= 0 && n < s.args.len() {
-        return b.known_variant(s.args[n])
+        return b.known_variant(b.s.f.arg(s.args, n))
       }
     }
   }

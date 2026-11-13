@@ -406,7 +406,7 @@ fn key_blocks(var b: BytesBuilder, f: Func, tk: List[Str], var seen: Map[Int, In
     b.write_byte(' ')
     tkey_w(b, tk, seen, ty_of(x.tb))
     b.write_str(" [")
-    write_ints(b, x.args)
+    write_ints(b, f.args_copy(x.args))
     b.write_str("] ")
     key_aux(b, f.aux(x))
     b.write_byte(' ')
@@ -725,7 +725,7 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
   for x in f.values {
     e.name(op_name(x.op))
     e.ty(m, ty_of(x.tb))
-    e.ints(x.args)
+    e.ints(f.args_copy(x.args))
     match f.aux(x) {
       None | E(..) => e.uv(0)
       I(n) => {
@@ -1025,7 +1025,8 @@ fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Op
     if !r.ok {
       return None
     }
-    f.values.push(Value{op: op, tb: pack_tb(ty, block), args: args, aux: if succs.is_empty() { f.pack(aux) } else { succs_aux(succs) }, pi: pack_pi(pad, inl), lp: pack_lp(0, line)})
+    let pa = f.mk_args(args)
+    f.values.push(Value{op: op, tb: pack_tb(ty, block), args: pa, aux: if succs.is_empty() { f.pack(aux) } else { succs_aux(succs) }, pi: pack_pi(pad, inl), lp: pack_lp(0, line)})
     f.set_pos(f.values.len() - 1, pos)
   }
   let ne = r.uv()

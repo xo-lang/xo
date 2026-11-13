@@ -60,7 +60,7 @@ fn (var r: Rc) borrow_projections(f: Func) {
       }
       for (k, m) in r.modes(f, v).indexed() {
         if m == Mode.Consume {
-          add_site(st.cons, r.base(f, x.args[k]).root, BSite{b: bl, i: i})
+          add_site(st.cons, r.base(f, f.arg(x.args, k)).root, BSite{b: bl, i: i})
         }
       }
       for e in x.succs() {
@@ -214,7 +214,7 @@ fn (var r: Rc) decide_borrow(f: Func, var st: Borrows, v: Int) {
 /// the leaf at path that root held (owner_chain).
 fn (r: Rc) carries(f: Func, w: Int, root: Int, path: Str) -> Bool {
   let x = f.values[w]
-  if x.op != Op.SetField || x.args[0] != root || path.is_empty() {
+  if x.op != Op.SetField || f.arg(x.args, 0) != root || path.is_empty() {
     return false
   }
   !paths_overlap(".${auxw_int(x.aux)}", path)

@@ -40,7 +40,7 @@ fn (var g: G) elem_in_place(v: Int) -> Bool {
         return false // passed on through a block edge
       }
       if ux.op is ssa.Op.Field | ssa.Op.Payload {
-        if ux.args[0] == w && g.big_by_ref(ssa.ty_of(ux.tb)) {
+        if g.f.arg(ux.args, 0) == w && g.big_by_ref(ssa.ty_of(ux.tb)) {
           work.push(u) // read in place too (field_op, payload_op)
         }
       } else if !(ux.op is ssa.Op.Tag | ssa.Op.Retain | ssa.Op.Release) {
@@ -88,7 +88,7 @@ fn (var g: G) elem_in_place(v: Int) -> Bool {
   // can write it (value semantics) and the caller keeps it alive, so
   // only this function's own release, move, or update of the parameter
   // can change it (byref.xo reads such parameters in place)
-  let root = g.read_only_root(x.args[0])
+  let root = g.read_only_root(g.f.arg(x.args, 0))
   // the read's own block from the read on
   var after = false
   for u in g.f.blocks[db].instrs {
@@ -120,7 +120,7 @@ fn (g: G) read_only_root(l: Int) -> Int {
   for _ in 0..16 {
     let x = g.f.values[v]
     if x.op is ssa.Op.Field | ssa.Op.Payload {
-      v = x.args[0]
+      v = g.f.arg(x.args, 0)
       continue
     }
     if x.op == ssa.Op.Param && ssa.block_of(x.tb) == 0 {
@@ -146,7 +146,7 @@ fn (g: G) part_of(v0: Int, root: Int) -> Bool {
     if !(x.op is ssa.Op.Field | ssa.Op.Payload) {
       return false
     }
-    v = x.args[0]
+    v = g.f.arg(x.args, 0)
   }
   false
 }
@@ -173,7 +173,7 @@ fn (g: G) keeps_memory(u: Int, chain: Map[Int, Bool], root: Int) -> Bool {
   let x = g.f.values[u]
   if root >= 0 {
     if x.op is ssa.Op.Release | ssa.Op.Drop | ssa.Op.Reuse | ssa.Op.SetField | ssa.Op.Call | ssa.Op.CallValue | ssa.Op.Share | ssa.Op.ShareIn | ssa.Op.Box {
-      for a in x.args {
+      for a in g.f.args_iter(x.args) {
         if g.part_of(a, root) && !(x.op == ssa.Op.Call && g.reads_only(x)) {
           return false
         }
@@ -184,7 +184,7 @@ fn (g: G) keeps_memory(u: Int, chain: Map[Int, Bool], root: Int) -> Bool {
   match x.op {
     Call => g.reads_only(x)
     CallValue | SetField | Drop | Reuse | Share | ShareIn | Box => false
-    Release => chain.contains(x.args[0]) || g.from_chain(x.args[0], chain)
+    Release => chain.contains(g.f.arg(x.args, 0)) || g.from_chain(g.f.arg(x.args, 0), chain)
     _ => true
   }
 }
@@ -203,7 +203,7 @@ fn (g: G) from_chain(v0: Int, chain: Map[Int, Bool]) -> Bool {
     if !(x.op is ssa.Op.Field | ssa.Op.Payload) {
       return false
     }
-    v = x.args[0]
+    v = g.f.arg(x.args, 0)
     if chain.contains(v) {
       return true
     }

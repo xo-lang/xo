@@ -54,7 +54,7 @@ fn ss_facts(f: ssa.Func) -> SsFacts {
   }
   for b in 0..f.blocks.len() {
     for u in f.blocks[b].instrs {
-      for a in f.values[u].args {
+      for a in f.args_iter(f.values[u].args) {
         vuses[a].push(u)
       }
       for e in f.values[u].succs() {
@@ -162,7 +162,7 @@ fn stack_small(var f: ssa.Func) -> Bool {
         fx = Some(ss_facts(f))
       }
       let facts = fx ?? ss_facts(f)
-      let cap = const_through(f, x.args[0], facts)
+      let cap = const_through(f, f.arg(x.args, 0), facts)
       if cap < 0 || cap > STACK_SMALL_MAX {
         continue
       }
@@ -201,7 +201,7 @@ fn escapes(f: ssa.Func, v: Int, fx: SsFacts) -> Bool {
         ssa.Op.Retain | ssa.Op.Release | ssa.Op.Drop => {}
         ssa.Op.Call => {
           let name = f.name_of(y)
-          if same_object_call(name) && y.args.len() > 0 && y.args[0] == a {
+          if same_object_call(name) && y.args.len() > 0 && f.arg(y.args, 0) == a {
             work.push(u)
           } else if !read_call(name) {
             return true

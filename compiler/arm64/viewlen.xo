@@ -21,7 +21,7 @@ fn view_lens(var f: ssa.Func) -> Bool {
   for x in f.values {
     if x.op == ssa.Op.Call && f.name_is(x, "Str.len") && x.args.len() == 1 && ssa.block_of(x.tb) >= 0 {
       it = ssa.ty_of(x.tb)
-      st = ssa.ty_of(f.values[x.args[0]].tb)
+      st = ssa.ty_of(f.values[f.arg(x.args, 0)].tb)
       break
     }
   }
@@ -38,7 +38,7 @@ fn view_lens(var f: ssa.Func) -> Bool {
   }
   for b in 0..f.blocks.len() {
     for u in f.blocks[b].instrs {
-      for a in f.values[u].args {
+      for a in f.args_iter(f.values[u].args) {
         vuses[a].push(u)
       }
       for e in f.values[u].succs() {
@@ -79,7 +79,7 @@ fn view_lens(var f: ssa.Func) -> Bool {
   var otys: Map[Int, Bool] = {}
   for v in 0..n {
     let x = f.values[v]
-    if ssa.block_of(x.tb) >= 0 && x.op == ssa.Op.Variant && x.args.len() == 1 && ssa.ty_of(f.values[x.args[0]].tb) == st {
+    if ssa.block_of(x.tb) >= 0 && x.op == ssa.Op.Variant && x.args.len() == 1 && ssa.ty_of(f.values[f.arg(x.args, 0)].tb) == st {
       otys[ssa.ty_of(x.tb)] = true
     }
   }
@@ -97,9 +97,9 @@ fn view_lens(var f: ssa.Func) -> Bool {
       for v in f.blocks[b].instrs {
         let x = f.values[v]
         if x.op == ssa.Op.Variant && otys.contains(ssa.ty_of(x.tb)) {
-          ocand[v] = x.args.is_empty() || cand[x.args[0]]
+          ocand[v] = x.args.is_empty() || cand[f.arg(x.args, 0)]
         }
-        if x.op == ssa.Op.Payload && ssa.ty_of(x.tb) == st && x.args.len() == 1 && otys.contains(ssa.ty_of(f.values[x.args[0]].tb)) {
+        if x.op == ssa.Op.Payload && ssa.ty_of(x.tb) == st && x.args.len() == 1 && otys.contains(ssa.ty_of(f.values[f.arg(x.args, 0)].tb)) {
           cand[v] = true
         }
       }
@@ -115,7 +115,7 @@ fn view_lens(var f: ssa.Func) -> Bool {
       }
       var ok = true
       let xv = f.values[v]
-      if xv.op == ssa.Op.Payload && !ocand[xv.args[0]] {
+      if xv.op == ssa.Op.Payload && !ocand[f.arg(xv.args, 0)] {
         ok = false
       }
       for u in vuses[v] {
@@ -149,7 +149,7 @@ fn view_lens(var f: ssa.Func) -> Bool {
       }
       var ok = true
       let x = f.values[v]
-      if x.op == ssa.Op.Variant && !x.args.is_empty() && !cand[x.args[0]] {
+      if x.op == ssa.Op.Variant && !x.args.is_empty() && !cand[f.arg(x.args, 0)] {
         ok = false
       }
       // a parameter: every value coming in is a candidate too (its length
@@ -198,10 +198,10 @@ fn view_lens(var f: ssa.Func) -> Bool {
   }
   for v in 0..n {
     if cand[v] && f.values[v].op == ssa.Op.Call {
-      let a = f.values[v].args
+      let a = f.args_copy(f.values[v].args)
       f.values[v].op = ssa.Op.Sub
       f.values[v].aux = f.pack(ssa.Aux.None)
-      f.values[v].args = [a[2], a[1]]
+      f.set_args(v, [a[2], a[1]])
       f.values[v].pi = ssa.with_pad(f.values[v].pi, -1)
       f.values[v].tb = ssa.with_ty(f.values[v].tb, it)
       view[v] = true
@@ -232,8 +232,8 @@ fn view_lens(var f: ssa.Func) -> Bool {
         } else {
           let e = f.add(b, ssa.Op.Const, st, ssa.Aux.S(s: ""), [])
           ins.push(e)
-          olen[v] = x.args[0]
-          f.values[v].args = [e]
+          olen[v] = f.arg(x.args, 0)
+          f.set_args(v, [e])
         }
       }
       ins.push(v)
@@ -243,7 +243,7 @@ fn view_lens(var f: ssa.Func) -> Bool {
   for v in 0..n {
     let x = f.values[v]
     if cand[v] && x.op == ssa.Op.Payload {
-      let l = olen.get(x.args[0]) ?? -1
+      let l = olen.get(f.arg(x.args, 0)) ?? -1
       let z = f.add(ssa.block_of(x.tb), ssa.Op.Const, it, ssa.Aux.I(n: 0), [])
       // before v in its block
       var ins: List[Int] = []
@@ -259,7 +259,7 @@ fn view_lens(var f: ssa.Func) -> Bool {
       f.blocks[ssa.block_of(x.tb)].instrs = ins
       f.values[v].op = ssa.Op.Add
       f.values[v].aux = f.pack(ssa.Aux.None)
-      f.values[v].args = [l, z]
+      f.set_args(v, [l, z])
       f.values[v].tb = ssa.with_ty(f.values[v].tb, it)
       f.values[v].pi = ssa.with_pad(f.values[v].pi, -1)
       view[v] = true
@@ -372,7 +372,7 @@ fn view_lens(var f: ssa.Func) -> Bool {
         continue
       }
       out.push(u)
-      var args = f.values[u].args
+      var args = f.args_copy(f.values[u].args)
       var ch = false
       for k in 0..args.len() {
         if let Some(r) = repl.get(args[k]) {
@@ -381,7 +381,7 @@ fn view_lens(var f: ssa.Func) -> Bool {
         }
       }
       if ch {
-        f.values[u].args = args
+        f.set_args(u, args)
       }
       for e in f.values[u].succs() {
         for k in 0..f.edges[e].args.len() {

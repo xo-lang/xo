@@ -441,7 +441,7 @@ fn (var r: Rc) leaf_paths(t: Int) -> List[Str] {
 /// Whether v is a field read of a struct or tuple (isAlias).
 fn (r: Rc) is_alias(f: Func, v: Int) -> Bool {
   let x = f.values[v]
-  x.op == Op.Field && r.decomposable(ty_of(f.values[x.args[0]].tb))
+  x.op == Op.Field && r.decomposable(ty_of(f.values[f.arg(x.args, 0)].tb))
 }
 
 fn aux_int(a: Aux) -> Int {
@@ -455,7 +455,7 @@ fn aux_int(a: Aux) -> Int {
 fn (var r: Rc) base(f: Func, v: Int) -> Leaf {
   if r.is_alias(f, v) {
     let x = f.values[v]
-    let b = r.base(f, x.args[0])
+    let b = r.base(f, f.arg(x.args, 0))
     let i = auxw_int(x.aux)
     let key = (b.pid << 24) + i
     if let Some(n) = r.pfield.get(key) {
@@ -594,7 +594,7 @@ fn (var r: Rc) parent(f: Func, v: Int) -> Leaf {
   // a call of a function that returns a view of its argument p (decision
   // 0465 step 2): that argument's
   let p = if x.op == Op.Call { r.ret_view_at(f, x) } else if x.op == Op.Bind { 1 } else { -1 }
-  r.leaves(f, x.args[if p > 0 && p < x.args.len() { p } else { 0 }])[0]
+  r.leaves(f, f.arg(x.args, if p > 0 && p < x.args.len() { p } else { 0 }))[0]
 }
 
 /// The parameter whose view call x's function returns uncounted
@@ -655,8 +655,8 @@ fn (var r: Rc) modes(f: Func, v: Int) -> List[Mode] {
       // the closure borrowed; each argument borrowed unless its type is
       // the result's (decision 0337, fv_arg_owned)
       ms = fill_modes(n, Mode.Borrow)
-      let ft = ty_of(f.values[x.args[0]].tb)
-      let c = f.values[x.args[0]]
+      let ft = ty_of(f.values[f.arg(x.args, 0)].tb)
+      let c = f.values[f.arg(x.args, 0)]
       if c.op == Op.Closure {
         // the body's convention is its parameter 0's type: the same
         // type as the closure's, or one side takes what the other lent
@@ -790,7 +790,7 @@ fn (var r: Rc) leaf_uses_fresh(f: Func, v: Int) -> List[Use] {
   var n = 0
   for (i, m) in ms.indexed() {
     if m != Mode.No {
-      n += r.leaves(f, x.args[i]).len() + 1
+      n += r.leaves(f, f.arg(x.args, i)).len() + 1
     }
   }
   var out = List[Use].with_capacity(n)
@@ -798,7 +798,7 @@ fn (var r: Rc) leaf_uses_fresh(f: Func, v: Int) -> List[Use] {
     if m == Mode.No {
       continue
     }
-    let a = x.args[i]
+    let a = f.arg(x.args, i)
     let ls = r.leaves(f, a)
     if x.op == Op.SetField && i == 0 {
       // the replaced field is not used
@@ -854,7 +854,8 @@ fn (var r: Rc) owner_use(var out: List[Use], f: Func, a: Int, at: Int) {
 /// A new value of f placed nowhere yet (newValue / mk).
 fn new_value(var f: Func, bl: Int, op: Op, t: Int, aux: Aux, args: List[Int]) -> Int {
   let v = f.values.len()
-  f.values.push(Value{op: op, tb: pack_tb(t, bl), args: args, aux: f.pack(aux)})
+  let pa = f.mk_args(args)
+  f.values.push(Value{op: op, tb: pack_tb(t, bl), args: pa, aux: f.pack(aux)})
   v
 }
 
@@ -884,8 +885,8 @@ fn reuse_var_params(var f: Func, types: List[SType]) {
     for bl in 0..f.blocks.len() {
       for v in f.blocks[bl].instrs {
         for k in 0..f.values[v].args.len() {
-          if f.values[v].args[k] == p {
-            f.values[v].args[k] = u
+          if f.arg(f.values[v].args, k) == p {
+            f.set_arg(v, k, u)
           }
         }
         for e in f.values[v].succs() {
@@ -1300,7 +1301,7 @@ fn landing_site(f: Func, bl: Int) -> (Int, Int) {
   if t < 0 || f.values[t].op != Op.Branch {
     return (-1, -1)
   }
-  let u = f.values[t].args[0]
+  let u = f.arg(f.values[t].args, 0)
   if f.values[u].op != Op.Call || block_of(f.values[u].tb) != bl {
     return (-1, -1)
   }
@@ -1875,7 +1876,7 @@ fn imm_at(f: Func, v: Int, path: Str, k: Int, sums: Map[Str, List[Bool]], depth:
       // of nothing but immortal fields (None, Some of a constant string)
       // is immortal (2026-10-24: view_lens hands an option of a view the
       // empty string, and drops its releases)
-      for a in x.args {
+      for a in f.args_iter(x.args) {
         if !imm_at(f, a, path, k, sums, depth + 1, walking) {
           return false
         }
@@ -1890,13 +1891,13 @@ fn imm_at(f: Func, v: Int, path: Str, k: Int, sums: Map[Str, List[Bool]], depth:
     if idx < 0 || idx >= x.args.len() {
       return false
     }
-    return imm_at(f, x.args[idx], path, e + 1, sums, depth + 1, walking)
+    return imm_at(f, f.arg(x.args, idx), path, e + 1, sums, depth + 1, walking)
   }
   if x.op == Op.SetField {
     if auxw_int(x.aux) == idx {
-      return imm_at(f, x.args[1], path, e + 1, sums, depth + 1, walking)
+      return imm_at(f, f.arg(x.args, 1), path, e + 1, sums, depth + 1, walking)
     }
-    return imm_at(f, x.args[0], path, k, sums, depth + 1, walking)
+    return imm_at(f, f.arg(x.args, 0), path, k, sums, depth + 1, walking)
   }
   if x.op == Op.Call && e == path.len() {
     // a field of a call of a function whose one return is a struct
@@ -1941,11 +1942,11 @@ fn const_list(f: Func, x: Value) -> Bool {
   if n == "rt.const_once" {
     return true
   }
-  if n != "rt.mem_load" || x.args.is_empty() || x.args[0] < 0 {
+  if n != "rt.mem_load" || x.args.is_empty() || f.arg(x.args, 0) < 0 {
     return false
   }
-  let t = f.values[x.args[0]]
-  t.op == Op.Call && f.name_is(t, "rt.slot_load") && t.args.len() == 3 && const_int(f, t.args[1]) == Some(CONST_TABLE_WORD)
+  let t = f.values[f.arg(x.args, 0)]
+  t.op == Op.Call && f.name_is(t, "rt.slot_load") && t.args.len() == 3 && const_int(f, f.arg(t.args, 1)) == Some(CONST_TABLE_WORD)
 }
 
 /// The functions of fs whose one return is a struct literal, with which
@@ -2001,13 +2002,13 @@ fn imm_return_of(f: Func) -> List[Bool] {
   if block_of(f.values[ret].tb) >= 0 && block_of(f.values[ret].tb) == f.unwind_exit {
     return []
   }
-  let s = f.values[f.values[ret].args[0]]
+  let s = f.values[f.arg(f.values[ret].args, 0)]
   if s.op != Op.Struct {
     return []
   }
   var flags: List[Bool] = []
   var any = false
-  for a in s.args {
+  for a in f.args_iter(s.args) {
     let b = imm_value(f, f.values[a])
     flags.push(b)
     any = any || b
@@ -2166,7 +2167,7 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
       // decision 0465 step 2: a function that returns a view of a borrowed
       // parameter (Rc.rvp) hands its result back uncounted
       let rv = r.fi >= 0 && r.fi < r.rvp.len() && r.rvp[r.fi] >= 0
-      for (ai, a) in f.values[term].args.indexed() {
+      for (ai, a) in f.args_indexed(f.values[term].args) {
         for l in r.leaves(f, a) {
           k.add(l, if rv && ai == 0 { Mode.Borrow } else { Mode.Consume })
         }
@@ -2425,7 +2426,7 @@ fn (var r: Rc) cancel(var f: Func) {
         j += 1
         continue
       }
-      let key = r.leaves(f, f.values[v].args[0])[0]
+      let key = r.leaves(f, f.arg(f.values[v].args, 0))[0]
       let an = r.anchors(f, key.root)
       var k = j - 1
       var hit = -1
@@ -2435,7 +2436,7 @@ fn (var r: Rc) cancel(var f: Func) {
           continue
         }
         let w = ins[k]
-        if f.values[w].op == Op.Retain && leaf_key(r.leaves(f, f.values[w].args[0])[0]) == leaf_key(key) {
+        if f.values[w].op == Op.Retain && leaf_key(r.leaves(f, f.arg(f.values[w].args, 0))[0]) == leaf_key(key) {
           hit = k
           break
         }
@@ -2522,7 +2523,7 @@ fn (var r: Rc) group_releases(var f: Func) {
       var nleaves = 0
       for k in i..j {
         if f.values[ins[k]].op == Op.Release {
-          nleaves += r.leaves(f, f.values[ins[k]].args[0]).len()
+          nleaves += r.leaves(f, f.arg(f.values[ins[k]].args, 0)).len()
         }
       }
       if nleaves < GROUP_LEAVES {
@@ -2549,7 +2550,7 @@ fn (var r: Rc) group_releases(var f: Func) {
         if f.values[v].op != Op.Release {
           continue
         }
-        let a = f.values[v].args[0]
+        let a = f.arg(f.values[v].args, 0)
         let ls = r.leaves(f, a)
         var g0 = -1
         var mixed = false
@@ -2603,7 +2604,7 @@ fn (var r: Rc) group_releases(var f: Func) {
       for k in i..j {
         let v = ins[k]
         if f.values[v].op == Op.Release {
-          let ls = r.leaves(f, f.values[v].args[0])
+          let ls = r.leaves(f, f.arg(f.values[v].args, 0))
           let (g, root, comp) = r.leaf_group(f, ls[0])
           if joined.contains(g) {
             if !placed.contains(g) {
@@ -2670,7 +2671,7 @@ fn remove_dead_fields(var f: Func) {
   }
   for bl in f.blocks {
     for v in bl.instrs {
-      for a in f.values[v].args {
+      for a in f.args_iter(f.values[v].args) {
         if a >= 0 {
           nuse[a] += 1
         }
@@ -2704,7 +2705,7 @@ fn remove_dead_fields(var f: Func) {
     }
     dead[v] = true
     any = true
-    for a in f.values[v].args {
+    for a in f.args_iter(f.values[v].args) {
       if a >= 0 {
         nuse[a] -= 1
         if nuse[a] == 0 && f.values[a].op == Op.Field {
@@ -2742,7 +2743,7 @@ fn remove_dead_fields(var f: Func) {
 fn (var r: Rc) touches(f: Func, w: Int, an: List[Int]) -> Bool {
   let x = f.values[w]
   if x.op is Op.Retain | Op.Release | Op.Reuse {
-    return an.contains(r.base(f, x.args[0]).root)
+    return an.contains(r.base(f, f.arg(x.args, 0)).root)
   }
   for u in r.leaf_uses(f, w) {
     if u.m == Mode.Consume && an.contains(u.l.root) {
@@ -2810,16 +2811,16 @@ fn (var r: Rc) uniq(f: Func, u: Uniq, l: Leaf) -> Bool {
     Reuse => return l.path.is_empty()
     Struct | Tuple => {
       if idx >= 0 {
-        let b = r.base(f, x.args[idx])
+        let b = r.base(f, f.arg(x.args, idx))
         return r.uniq(f, u, r.leaf(b.root, "${b.path}${rest}"))
       }
     }
     SetField => {
       if idx == auxw_int(x.aux) {
-        let b = r.base(f, x.args[1])
+        let b = r.base(f, f.arg(x.args, 1))
         return r.uniq(f, u, r.leaf(b.root, "${b.path}${rest}"))
       }
-      let b = r.base(f, x.args[0])
+      let b = r.base(f, f.arg(x.args, 0))
       return r.uniq(f, u, r.leaf(b.root, "${b.path}${l.path}"))
     }
     Param => {
@@ -2842,7 +2843,7 @@ fn (var r: Rc) unique(f: Func) -> Uniq {
     for v in bl.instrs {
       let x = f.values[v]
       if x.op == Op.Retain {
-        for l in r.leaves(f, x.args[0]) {
+        for l in r.leaves(f, f.arg(x.args, 0)) {
           u.retained[leaf_key(l)] = true
         }
       } else if x.op == Op.Call && !facts {
@@ -3004,7 +3005,7 @@ fn (var r: Rc) hoist_reuse(var f: Func) {
           }
           for v in f.blocks[b].instrs {
             let x = f.values[v]
-            if x.op == Op.Call && is_update_call(f.name_of(x)) && !f.name_is(x, "list.push") && (if k < 0 { x.args[0] == p } else { field_of(f, x.args[0], p, k) }) {
+            if x.op == Op.Call && is_update_call(f.name_of(x)) && !f.name_is(x, "list.push") && (if k < 0 { f.arg(x.args, 0) == p } else { field_of(f, f.arg(x.args, 0), p, k) }) {
               pushes = false
             }
           }
@@ -3020,7 +3021,7 @@ fn (var r: Rc) hoist_reuse(var f: Func) {
           }
           for v in f.blocks[b].instrs {
             let x = f.values[v]
-            if x.op == Op.Call && is_update_call(f.name_of(x)) && (if k < 0 { x.args[0] == p } else { field_of(f, x.args[0], p, k) }) {
+            if x.op == Op.Call && is_update_call(f.name_of(x)) && (if k < 0 { f.arg(x.args, 0) == p } else { field_of(f, f.arg(x.args, 0), p, k) }) {
               every = true
             }
           }
@@ -3091,16 +3092,16 @@ fn (var r: Rc) empty_literal(f: Func, l: Leaf) -> Bool {
   match x.op {
     Struct => {
       if idx < x.args.len() {
-        let b = r.base(f, x.args[idx])
+        let b = r.base(f, f.arg(x.args, idx))
         return r.empty_literal(f, r.leaf(b.root, "${b.path}${rest}"))
       }
     }
     SetField => {
       if idx == auxw_int(x.aux) {
-        let b = r.base(f, x.args[1])
+        let b = r.base(f, f.arg(x.args, 1))
         return r.empty_literal(f, r.leaf(b.root, "${b.path}${rest}"))
       }
-      let b = r.base(f, x.args[0])
+      let b = r.base(f, f.arg(x.args, 0))
       return r.empty_literal(f, r.leaf(b.root, "${b.path}${l.path}"))
     }
     _ => {}
@@ -3114,13 +3115,13 @@ fn field_of(f: Func, v: Int, p: Int, k: Int) -> Bool {
   if x.op != Op.Field || auxw_int(x.aux) != k {
     return false
   }
-  var s = x.args[0]
+  var s = f.arg(x.args, 0)
   while s != p {
     let sx = f.values[s]
     if sx.op != Op.SetField || auxw_int(sx.aux) == k {
       return false
     }
-    s = sx.args[0]
+    s = f.arg(sx.args, 0)
   }
   true
 }
@@ -3134,7 +3135,7 @@ fn (var r: Rc) reuse(var f: Func) {
     var out: List[Int] = []
     for v in f.blocks[bl].instrs {
       if f.values[v].op == Op.Call && is_update_call(f.name_of(f.values[v])) {
-        let a = f.values[v].args[0]
+        let a = f.arg(f.values[v].args, 0)
         let l = r.leaves(f, a)[0]
         if !r.uniq(f, u, l) {
           // a list its callee handed back unique: the reuse stays (the
@@ -3144,7 +3145,7 @@ fn (var r: Rc) reuse(var f: Func) {
           let ax = if hu { Aux.I(n: r.uq_mark) } else { Aux.None }
           let x = new_value(f, bl, Op.Reuse, ty_of(f.values[a].tb), ax, [a])
           out.push(x)
-          f.values[v].args[0] = x
+          f.set_arg(v, 0, x)
         }
       }
       out.push(v)
@@ -3172,8 +3173,8 @@ fn (var r: Rc) share_in(var f: Func) {
       if x.op == Op.Call {
         let nm = f.name_of(x)
         let ei = if nm == "list.set" { 2 } else if nm == "list.push" { 1 } else { -1 }
-        if ei > 0 && ei < x.args.len() && r.heap(ty_of(f.values[x.args[ei]].tb)) && !made_here(f, x.args[0], made) {
-          out.push(new_value(f, bl, Op.ShareIn, -1, Aux.None, [x.args[0], x.args[ei]]))
+        if ei > 0 && ei < x.args.len() && r.heap(ty_of(f.values[f.arg(x.args, ei)].tb)) && !made_here(f, f.arg(x.args, 0), made) {
+          out.push(new_value(f, bl, Op.ShareIn, -1, Aux.None, [f.arg(x.args, 0), f.arg(x.args, ei)]))
         }
       }
       out.push(v)
@@ -3199,9 +3200,9 @@ fn made_here(f: Func, l: Int, var made: List[Int]) -> Bool {
       let x = f.values[c]
       path.push(c)
       if x.op == Op.Reuse && x.args.len() == 1 {
-        c = x.args[0]
+        c = f.arg(x.args, 0)
       } else if x.op == Op.Call && is_update_call(f.name_of(x)) && x.args.len() > 0 {
-        c = x.args[0]
+        c = f.arg(x.args, 0)
       } else if x.op == Op.Call && f.name_of(x) is "list.new" | "list.with_capacity" {
         ans = 1
       } else {
@@ -3292,7 +3293,7 @@ fn (var r: Rc) sink_landings(var f: Func) {
           if in_between.contains(v) {
             continue
           }
-          for a in f.values[v].args {
+          for a in f.args_iter(f.values[v].args) {
             if in_between.contains(a) {
               ok = false
             }
@@ -3322,14 +3323,14 @@ fn (var r: Rc) sink_landings(var f: Func) {
     for v in between {
       var root = r.base(f, v).root
       if is_rc_op(f.values[v].op) {
-        root = r.base(f, f.values[v].args[0]).root
+        root = r.base(f, f.arg(f.values[v].args, 0)).root
       }
       if root == w {
         // the site's own results: they do not exist there
         continue
       }
       var args: List[Int] = []
-      for a in f.values[v].args {
+      for a in f.args_iter(f.values[v].args) {
         args.push(copies.get(a) ?? a)
       }
       let x = f.values[v]
@@ -3400,7 +3401,7 @@ fn prune_landings(var f: Func) {
       if t < 0 || f.values[t].op != Op.Branch {
         continue
       }
-      let u = f.values[t].args[0]
+      let u = f.arg(f.values[t].args, 0)
       if f.values[u].op != Op.Call || !f.name_is(f.values[u], "rt.landing") || block_of(f.values[u].tb) != bl {
         continue
       }
@@ -3421,7 +3422,7 @@ fn prune_landings(var f: Func) {
       }
       f.blocks[pto].preds = preds
       f.values[t].op = Op.Jump
-      f.values[t].args = []
+      f.set_args(t, [])
       f.values[t].set_succs([normal])
       var ins: List[Int] = []
       for v in f.blocks[bl].instrs {
@@ -3531,7 +3532,7 @@ fn (var r: Rc) movable(f: Func, v: Int, live: Set[Int]) -> Bool {
   if x.op != Op.Payload || x.args.len() != 1 {
     return false
   }
-  let et = ty_of(f.values[x.args[0]].tb)
+  let et = ty_of(f.values[f.arg(x.args, 0)].tb)
   if et < 0 || r.types[et].kind != Kind.Enum {
     return false
   }
@@ -3542,7 +3543,7 @@ fn (var r: Rc) movable(f: Func, v: Int, live: Set[Int]) -> Bool {
   if tag < 0 || tag >= r.types[et].variants.len() || r.types[et].variants[tag].fields.len() != 1 {
     return false
   }
-  let ls = r.leaves(f, x.args[0])
+  let ls = r.leaves(f, f.arg(x.args, 0))
   if ls.len() != 1 {
     return false
   }
@@ -3579,9 +3580,9 @@ fn keep_addr_values(var f: Func) {
   var into: Map[Int, Int] = {}
   for (v, x) in f.values.indexed() {
     if x.op == Op.Call && addr_call(f.name_of(x)) && !x.args.is_empty() {
-      into[v] = x.args[0]
+      into[v] = f.arg(x.args, 0)
     } else if (x.op == Op.Add || x.op == Op.Sub) && x.args.len() == 2 {
-      for a in x.args {
+      for a in f.args_iter(x.args) {
         if let Some(o) = into.get(a) {
           into[v] = o
         }
@@ -3603,7 +3604,7 @@ fn keep_addr_values(var f: Func) {
     var last: Map[Int, Int] = {}
     for (k, v) in ins.indexed() {
       let x = f.values[v]
-      for a in x.args {
+      for a in f.args_iter(x.args) {
         if let Some(o) = into.get(a) {
           last[o] = k
         }
