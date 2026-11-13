@@ -1883,3 +1883,17 @@ test "a request's declared trailer names are each kept once, at most 64 of them 
   expect(got[63]) == "T63"
   expect(declared_trailers("a,".repeat(50000)).len()) == 1
 }
+
+test "a Range header of more than 200 ranges is ignored, as Go 1.26.11 (GO-2026-6609)" {
+  var r200: List[Str] = []
+  for i in 0..200 {
+    r200.push("${2 * i}-${2 * i}")
+  }
+  expect(sc_parse_range("bytes=" + r200.join(","), 1000).map(fn(l) { l.len() })) == Ok(200)
+  r200.push("500-500")
+  expect(sc_parse_range("bytes=" + r200.join(","), 1000).map(fn(l) { l.len() })) == Ok(0)
+  let req = http.new_request("GET", "http://x/f", {"Range": "bytes=" + "0-0,".repeat(300) + "1-1"})
+  let resp = http.serve_content(req, "f.txt", None, "0123456789".bytes())
+  expect(resp.status) == 200
+  expect(resp.body.len()) == 10
+}

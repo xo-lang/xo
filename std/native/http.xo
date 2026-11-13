@@ -2285,6 +2285,10 @@ fn sc_if_range(req: http.Request, h: Map[Str, Str], mt: Time?) -> Int {
   if t.unix() == m.unix() { 1 } else { 2 }
 }
 
+/// The most ranges a Range header may ask for (Go's
+/// defaultMaxContentRanges, go1.26.11); a header with more is ignored.
+const SC_MAX_RANGES = 200
+
 /// parseRange: the (start, length) ranges of s for a content of size,
 /// or the error's text.
 fn sc_parse_range(s: Str, size: Int) -> List[(Int, Int)] ! Str {
@@ -2293,6 +2297,17 @@ fn sc_parse_range(s: Str, size: Int) -> List[(Int, Int)] ! Str {
   }
   if !s.starts_with("bytes=") {
     return Err("invalid range")
+  }
+  // a header of more than 200 ranges is ignored, counted before any is
+  // parsed (GO-2026-6609; Go 1.26.11's defaultMaxContentRanges)
+  var n_ranges = 1
+  for b in s.bytes() {
+    if b == 44 {
+      n_ranges += 1
+      if n_ranges > SC_MAX_RANGES {
+        return Ok([])
+      }
+    }
   }
   var out: List[(Int, Int)] = []
   var no_overlap = false

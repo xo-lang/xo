@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-11-13: security: serve_content ignores a Range header of more than 200 ranges
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), against GO-2026-6609 (CVE-2026-78667)
+- Go reference: net/http fs.go parseRange (defaultMaxContentRanges 200, counted before parsing), go1.26.11
+- Test: std/native/http_test.xo "a Range header of more than 200 ranges is ignored, as Go 1.26.11"
+- Affected: releases with serve_content and file_server (decision 0306) up to 0.50.1, native and LLVM backends; the Go backend gets Go's limit with its move to go1.26.11
+- Shipped in: not yet released
+
+`serve_content` (and so `file_server`) parsed every range of a Range header, so one request could ask for a header's worth of tiny ranges and make the server parse and answer them all (a denial of service class). A header of more than 200 ranges is now ignored and the whole content is served, as in Go 1.26.11.
+
+- Remote trigger: any client of `serve_content` or `file_server`.
+
 ## 2026-11-13: security: ReverseProxy forwards only the query its parse and rewrite hook saw
 
 - Kind: security
