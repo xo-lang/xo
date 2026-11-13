@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-11-13: security: an HTTP/2 client drops a response's connection specific fields and a malformed Content-Length
+
+- Kind: security
+- Commit: this push
+- Found by: the std/http security review (decision 0616), against GO-2026-6610 (CVE-2026-78660)
+- Go reference: net/http/internal/http2 transport.go (go.dev/cl/835145): connHeaders deleted from the response, Content-Length kept once only when every value agrees and parses
+- Test: std/native/llrt/http1_test.xo "an HTTP/2 response's framing fields as Go's fix for GO-2026-6610 leaves them"; the HTTP/2 and reverse proxy goldens
+- Affected: releases with the native HTTP/2 client up to 0.50.1, native and LLVM backends
+- Shipped in: not yet released
+
+An HTTP/2 response's Connection, Keep-Alive, Proxy-Connection, Transfer-Encoding and Upgrade fields, and a Content-Length of any form, reached the program as received. A reverse proxy could then write a malformed Content-Length to an HTTP/1 client of a HEAD request or of HTTP/1.0 (a response smuggling class). These fields are now dropped, as in Go; Content-Length stays only as one run of digits all its values agree on.
+
+- Remote trigger: an HTTP/2 server the program talks to.
+
 ## 2026-11-13: security: a streamed request's declared trailer names are capped at 64
 
 - Kind: security

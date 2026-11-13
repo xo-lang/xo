@@ -3110,7 +3110,8 @@ fn (var x: H2X) block_done(r: rthttp.CResp) -> (Bool, Str) {
     hv.push(values[i])
     i += 1
   }
-  hclient.h2_response(r, code, hk, hv)
+  let (fk, fv) = h2_framing_fields(hk, hv)
+  hclient.h2_response(r, code, fk, fv)
   if end {
     x.ended = true
   }
@@ -4950,4 +4951,48 @@ fn valid_host_header(h: Str) -> Bool {
     }
   }
   true
+}
+
+/// A response's fields over HTTP/2 without the framing ones it may not
+/// carry (Go's fix for GO-2026-6610, go.dev/cl/835145): the connection
+/// specific fields dropped, and Content-Length kept once only when every
+/// value is the same run of digits, else dropped, so a reverse proxy
+/// never passes a malformed one on to an HTTP/1 client.
+fn h2_framing_fields(hk: List[Str], hv: List[Str]) -> (List[Str], List[Str]) {
+  var cl = ""
+  var cl_ok = true
+  var cl_n = 0
+  for (i, k) in hk.indexed() {
+    if k == "Content-Length" {
+      let v = hv[i]
+      var digits = !v.is_empty()
+      for c in v.bytes() {
+        if c < 48 || c > 57 {
+          digits = false
+        }
+      }
+      if !digits || (cl_n > 0 && v != cl) {
+        cl_ok = false
+      }
+      cl = v
+      cl_n += 1
+    }
+  }
+  var ok: List[Str] = []
+  var ov: List[Str] = []
+  var cl_done = false
+  for (i, k) in hk.indexed() {
+    if k == "Connection" || k == "Keep-Alive" || k == "Proxy-Connection" || k == "Transfer-Encoding" || k == "Upgrade" {
+      continue
+    }
+    if k == "Content-Length" {
+      if !cl_ok || cl_done {
+        continue
+      }
+      cl_done = true
+    }
+    ok.push(k)
+    ov.push(hv[i])
+  }
+  (ok, ov)
 }
