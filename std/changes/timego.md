@@ -1,5 +1,17 @@
 # std/timego changes
 
+## 2026-11-13: perf: RFC 3339 parse reads digit pairs, and format writes small numbers in one store
+
+- Kind: perf
+- Commit: this commit
+- Found by: the std/time speed work of decision 0616 (bench/perf/timego against Go: parse 1.74, format 1.23 on linux/arm64 host 2)
+- Go reference: time.parseRFC3339 (fixed positions read two digits at a time), appendInt
+- Test: std/timego_test.xo; TestStdCorpora timego on arm64 and llvm
+- Timing: bench/perf/timego --ab on linux/arm64 host 1, 9 rounds: parse 0.819 (16.9 to 13.9 ms, n=6); put_int format 0.912 (46.1 to 42.1 ms, n=6)
+- Shipped in: not yet released
+
+The RFC 3339 fast path read each number a digit at a time through a bounds checked helper per byte; after its length check it now reads two digits per call. `put_int` writes a number of one or two digits, and a four digit year, as one little endian store. Output unchanged.
+
 ## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
 
 - Kind: refactor

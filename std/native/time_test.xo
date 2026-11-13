@@ -1351,3 +1351,26 @@ test "civil dates agree with the era algorithm on every day of Time's range" {
   }
   expect(bad) == []
 }
+
+test "field_fast gives field_scan's answer for every field it knows, and 0 for near misses" {
+  let fields = ["{year}", "{hour}", "{zone}", "{ampm}", "{frac}", "{day}", "{month}", "{minute}", "{second}", "{offset}", "{hour12}", "{month:1}", "{day:1}", "{weekday:short}", "{weekday:name}", "{month:short}", "{month:name}", "{offset:compact}"]
+  let misses = ["{yearx}", "{years}", "{day:2}", "{dayy}", "{month:}", "{month:12}", "{weekday}", "{weekday:shortx}", "{weekday:nam}", "{month:shor}", "{offset:compac}", "{frac:3}", "{hour1}", "{minutes}", "{zone{}", "{ye}r}"]
+  var bad: List[Str] = []
+  for f in fields {
+    // padded so that both word loads are in bounds; the tail never matters
+    for tail in ["................", "}}}}}}}}}}}}}}}}", "{{{{{{{{{{{{{{{{"] {
+      let b = "${f}${tail}".bytes()
+      let got = field_fast(b, 0, b.len())
+      if got == 0 || got != field_scan(b, 0, b.len()) {
+        bad.push("${f}${tail}: ${got} against ${field_scan(b, 0, b.len())}")
+      }
+    }
+  }
+  for f in misses {
+    let b = "${f}................".bytes()
+    if field_fast(b, 0, b.len()) != 0 {
+      bad.push("${f}: matched")
+    }
+  }
+  expect(bad) == []
+}

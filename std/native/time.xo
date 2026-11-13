@@ -998,7 +998,16 @@ fn format_local(items: List[Item], local: Int, nanos: Int, off: Int, z: Zone, na
   var out = BytesBuilder.with_capacity(40)
   for it in items {
     match it.code {
-      0 => out.write_str(it.lit)
+      0 => {
+        let lb = it.lit.bytes()
+        if lb.len() == 1 {
+          out.write_byte(lb[0])
+        } else if lb.len() == 2 {
+          out.write_le(Int(lb[0]) | (Int(lb[1]) << 8), 2)
+        } else {
+          out.write_str(it.lit)
+        }
+      }
       1 => put_num(out, d.year, 4)
       2 => {
         if it.mode == 0 {
@@ -1119,6 +1128,95 @@ fn format_civil_items(items: List[Item], c: time.Civil) -> Str {
 
 fn (l: Layout) format_civil(c: time.Civil) -> Str { format_civil_items(l.items, c) }
 
+/// field_scan's answer for the common fields from one or two word loads
+/// (rt.bytes_word, unchecked: the caller has 8 bytes past b[i] and this
+/// checks 16 for a second word), 0 when b[i..] is none of them: the
+/// field's name, argument and `}` compared as little endian words, as
+/// Go's nextStdChunk switches on a layout's bytes instead of scanning.
+fn field_fast(b: Bytes, i: Int, n: Int) -> Int {
+  let w = rt.bytes_word(b, i + 1)
+  let w4 = (w & 0xffffffff)
+  if w4 == 0x7d796164 {
+    // "day}"
+    return 3 | (2 << 8) | ((i + 5) << 16)
+  }
+  let w5 = (w & 0xffffffffff)
+  if w5 == 0x7d72616579 {
+    // "year}"
+    return 1 | (2 << 8) | ((i + 6) << 16)
+  }
+  if w5 == 0x7d72756f68 {
+    // "hour}"
+    return 5 | (2 << 8) | ((i + 6) << 16)
+  }
+  if w5 == 0x7d656e6f7a {
+    // "zone}"
+    return 12 | (2 << 8) | ((i + 6) << 16)
+  }
+  if w5 == 0x7d6d706d61 {
+    // "ampm}"
+    return 7 | (2 << 8) | ((i + 6) << 16)
+  }
+  if w5 == 0x7d63617266 {
+    // "frac}"
+    return 10 | (1 << 8) | ((i + 6) << 16)
+  }
+  let w6 = (w & 0xffffffffffff)
+  if w6 == 0x7d68746e6f6d {
+    // "month}"
+    return 2 | (2 << 8) | ((i + 7) << 16)
+  }
+  if w6 == 0x7d313a796164 {
+    // "day:1}"
+    return 3 | (3 << 8) | ((i + 7) << 16)
+  }
+  let w7 = (w & 0xffffffffffffff)
+  if w7 == 0x7d6574756e696d {
+    // "minute}"
+    return 8 | (2 << 8) | ((i + 8) << 16)
+  }
+  if w7 == 0x7d646e6f636573 {
+    // "second}"
+    return 9 | (2 << 8) | ((i + 8) << 16)
+  }
+  if w7 == 0x7d74657366666f {
+    // "offset}"
+    return 11 | (2 << 8) | ((i + 8) << 16)
+  }
+  if w7 == 0x7d323172756f68 {
+    // "hour12}"
+    return 6 | (2 << 8) | ((i + 8) << 16)
+  }
+  if w == 0x7d313a68746e6f6d {
+    // "month:1}"
+    return 2 | (3 << 8) | ((i + 9) << 16)
+  }
+  if i + 17 > n {
+    return 0
+  }
+  let v = rt.bytes_word(b, i + 9)
+  if w == 0x3a7961646b656577 && (v & 0xffffffffffff) == 0x7d74726f6873 {
+    // "weekday:short}"
+    return 4 | (3 << 8) | ((i + 15) << 16)
+  }
+  if w == 0x3a7961646b656577 && (v & 0xffffffffff) == 0x7d656d616e {
+    // "weekday:name}"
+    return 4 | (2 << 8) | ((i + 14) << 16)
+  }
+  if w == 0x68733a68746e6f6d && (v & 0xffffffff) == 0x7d74726f {
+    // "month:short}"
+    return 2 | (4 << 8) | ((i + 13) << 16)
+  }
+  if w == 0x616e3a68746e6f6d && (v & 0xffffff) == 0x7d656d {
+    // "month:name}"
+    return 2 | (5 << 8) | ((i + 12) << 16)
+  }
+  if w == 0x633a74657366666f && (v & 0xffffffffffffff) == 0x7d746361706d6f {
+    // "offset:compact}"
+    return 11 | (3 << 8) | ((i + 16) << 16)
+  }
+  0
+}
 /// The field at b[i] (a `{`): code, mode + 2 and the position after its
 /// `}` packed as code | (mode + 2) << 8 | end << 16, or -1 when it is not
 /// a well formed field (an unmatched brace, an unknown name or argument).
@@ -1231,10 +1329,18 @@ fn format_stream(layout: Str, t: Time, z: Zone) -> Str? {
       i += 1
       continue
     }
-    if i > start {
+    if i == start + 1 {
+      // the one byte separators (`-`, `:`, `T`, ` `) without a slice
+      out.write_byte(b[start])
+    } else if i == start + 2 {
+      out.write_le(Int(b[start]) | (Int(b[start + 1]) << 8), 2)
+    } else if i > start {
       out.write_str(layout[start..i])
     }
-    let fs = field_scan(b, i, n)
+    var fs = if i + 9 <= n { field_fast(b, i, n) } else { 0 }
+    if fs == 0 {
+      fs = field_scan(b, i, n)
+    }
     if fs < 0 {
       return None
     }

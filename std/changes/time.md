@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-11-13: perf: format reads a text layout's fields a word at a time, and writes short literals as stores (native)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the std/time speed work of decision 0616 (bench/perf/time against Go: format 1.90, format_layout 1.19 on linux/arm64 host 2)
+- Go reference: time.nextStdChunk (a layout's elements recognized by a switch on their bytes, not a scan), appendInt's one store per small number
+- Test: std/native/time_test.xo (field_fast against field_scan for every field it knows, at the layout's end, and near misses); TestStdCorpora time and timefuzz on arm64 and llvm
+- Timing: bench/perf/time format --ab on linux/arm64 host 1, 9 rounds: field_fast 0.805 (70.0 to 56.4 ms, n=6), then the literal stores 0.880 (56.1 to 49.3 ms, n=6) and on format_layout 0.938 (44.8 to 42.0 ms, n=6). A word load for a field among the layout's last 8 bytes measured within noise (1.019) and was left out
+- Shipped in: not yet released
+
+`time.format` with a layout text recognized each `{field}` by scanning to its `}` and comparing the name; the common fields (and their `short`, `name`, `1` and `compact` forms) are now matched by comparing one or two little endian words of the layout, with the scan kept for anything else. A one or two byte literal between fields (`-`, `:`, `, `) is written as one store on both the text and the Layout paths, not as a slice of the layout. Output unchanged.
+
 ## 2026-11-13: fix: a duration of 20 or more digits past the range is an error, not a wrapped value (native)
 
 - Kind: fix

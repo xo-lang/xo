@@ -853,6 +853,27 @@ fn std_at(b: Bytes, i: Int) -> (Int, Int, Int) {
 
 fn put_int(out: BytesBuilder, n: Int, width: Int, pad: Int) -> BytesBuilder {
   var o = out
+  // the common fields in one store, as Go's appendInt writes small numbers
+  // from its two digit table: a month, day, hour, minute or second, and a
+  // four digit year
+  if n >= 0 && n < 100 && width <= 2 {
+    if n < 10 {
+      if width == 2 {
+        o.write_le(pad + ((48 + n) << 8), 2)
+      } else {
+        o.write_byte(UInt8.wrapping_from(48 + n))
+      }
+    } else {
+      o.write_le(0x3030 + n / 10 + ((n % 10) << 8), 2)
+    }
+    return o
+  }
+  if n >= 1000 && n < 10000 && width <= 4 {
+    let hi = n / 100
+    let lo = n % 100
+    o.write_le(0x30303030 + hi / 10 + ((hi % 10) << 8) + ((lo / 10) << 16) + ((lo % 10) << 24), 4)
+    return o
+  }
   var nd = 1
   var div = 1
   while n / div >= 10 {
@@ -1187,19 +1208,41 @@ fn skip_lit(v: Bytes, p0: Int, lit: Bytes) -> Int {
   p
 }
 
+/// The two digits at v[p] and v[p + 1] as a number, -1 when either is not a digit (digits_at(v, p, 2) for a caller
+/// that has checked the length: one subtraction and range check a byte, no call per byte).
+fn two_digits(v: Bytes, p: Int) -> Int {
+  let a = Int(v[p]) - 48
+  let b = Int(v[p + 1]) - 48
+  if a < 0 || a > 9 || b < 0 || b > 9 {
+    return -1
+  }
+  a * 10 + b
+}
+
+/// digits_at(v, p, 4) for a caller that has checked the length.
+fn four_digits(v: Bytes, p: Int) -> Int {
+  let hi = two_digits(v, p)
+  let lo = two_digits(v, p + 2)
+  if hi < 0 || lo < 0 {
+    return -1
+  }
+  hi * 100 + lo
+}
+
 /// Go's RFC 3339 fast path: the text of the two reference layouts when it is plain, otherwise a failure the general
 /// parser then explains (as in Go, the result is the general parser's).
 fn parse_rfc3339(v: Bytes, z: time.Zone) -> Time? {
   let n = v.len()
-  if n < 20 || !digit_at(v, 0) || Int(v[4]) != 45 || Int(v[7]) != 45 || Int(v[10]) != 84 || Int(v[13]) != 58 || Int(v[16]) != 58 {
+  if n < 20 || Int(v[4]) != 45 || Int(v[7]) != 45 || Int(v[10]) != 84 || Int(v[13]) != 58 || Int(v[16]) != 58 {
     return None
   }
-  let year = digits_at(v, 0, 4)
-  let month = digits_at(v, 5, 2)
-  let day = digits_at(v, 8, 2)
-  let hour = digits_at(v, 11, 2)
-  let minute = digits_at(v, 14, 2)
-  let sec = digits_at(v, 17, 2)
+  // n >= 20: every digit below is in bounds
+  let year = four_digits(v, 0)
+  let month = two_digits(v, 5)
+  let day = two_digits(v, 8)
+  let hour = two_digits(v, 11)
+  let minute = two_digits(v, 14)
+  let sec = two_digits(v, 17)
   if year < 0 || month < 1 || month > 12 || day < 1 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || sec < 0 || sec > 59 {
     return None
   }
@@ -1223,8 +1266,8 @@ fn parse_rfc3339(v: Bytes, z: time.Zone) -> Time? {
   if p == n - 1 && Int(v[p]) == 90 {
     off = 0
   } else if p == n - 6 && (Int(v[p]) == 43 || Int(v[p]) == 45) && Int(v[p + 3]) == 58 {
-    let hh = digits_at(v, p + 1, 2)
-    let mm = digits_at(v, p + 4, 2)
+    let hh = two_digits(v, p + 1)
+    let mm = two_digits(v, p + 4)
     if hh < 0 || mm < 0 || hh > 24 || mm > 60 {
       return None
     }
