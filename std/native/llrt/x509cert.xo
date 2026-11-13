@@ -314,7 +314,9 @@ pub fn parse(der: Bytes) -> Parsed {
           None => return fail("x509: malformed extensions")
         }
         var list: List[Ext] = []
-        var seen: List[Str] = []
+        // a map, as Go's seenExts: a scan of the earlier OIDs was quadratic
+        // in a certificate's extensions, before any signature check
+        var seen: Map[Str, Bool] = {}
         while !cbyte.empty(exts) {
           let one = match cbyte.read(exts, cbyte.SEQUENCE) {
             Some(x) => x
@@ -324,12 +326,10 @@ pub fn parse(der: Bytes) -> Parsed {
           if e.err != "" {
             return fail(e.err)
           }
-          for s in seen {
-            if s == e.oid {
-              return fail("x509: certificate contains duplicate extension with OID ${e.oid.quote()}")
-            }
+          if seen.contains(e.oid) {
+            return fail("x509: certificate contains duplicate extension with OID ${e.oid.quote()}")
           }
-          seen.push(e.oid)
+          seen.put(e.oid, true)
           list.push(e)
         }
         c.extensions = list
@@ -1059,6 +1059,11 @@ fn san(v0: cbyte.Win, var c: Cert) -> Str {
       if d.len() != 4 && d.len() != 16 {
         return "x509: cannot parse IP address of length ${d.len()}"
       }
+      if v4_mapped(d) {
+        // Go 1.27.4: a mapped address matched an IPv4 host but was checked
+        // against the IPv6 constraints, so an excluded IPv4 range missed it
+        return "x509: SAN iPAddress contains IPv4-mapped IPv6 address"
+      }
       c.ips.push(d)
     }
   }
@@ -1318,6 +1323,9 @@ fn name_constraints(value: Bytes, var c: Cert) -> Nc {
         if !mask_ok(d[d.len() / 2..d.len()]) {
           return nc_err("x509: IP constraint contained invalid mask ${d[d.len() / 2..d.len()].to_hex()}")
         }
+        if d.len() == 32 && v4_mapped(d[0..16]) {
+          return nc_err("x509: IP constraint contained IPv4-mapped IPv6 address")
+        }
         if k == 0 { c.permitted_ips.push(d) } else { c.excluded_ips.push(d) }
         c.other_constraints += 1
       } else if base.tag == 0x81 {
@@ -1400,7 +1408,8 @@ fn policies(v0: cbyte.Win, var c: Cert) -> Str {
     Some(x) => x
     None => return "x509: invalid certificate policies"
   }
-  var seen: List[Bytes] = []
+  // a map, as Go's seenOIDs (a scan was quadratic in the policies)
+  var seen: Map[Bytes, Bool] = {}
   while !cbyte.empty(ps) {
     var cp = match cbyte.read(ps, cbyte.SEQUENCE) {
       Some(x) => x
@@ -1410,12 +1419,10 @@ fn policies(v0: cbyte.Win, var c: Cert) -> Str {
       Some(x) => cbyte.bytes(x)
       None => return "x509: invalid certificate policies"
     }
-    for s in seen {
-      if s == ob {
-        return "x509: invalid certificate policies"
-      }
+    if seen.contains(ob) {
+      return "x509: invalid certificate policies"
     }
-    seen.push(ob)
+    seen.put(ob, true)
     c.policies.push(ob)
     // newOIDFromDER: not empty, the last byte ends an arc, no arc starts
     // with 0x80
@@ -2248,4 +2255,19 @@ pub fn spki_distrusted(spki: Bytes) -> Bool {
     }
   }
   false
+}
+
+
+/// Whether 16 address bytes are an IPv4-mapped IPv6 address
+/// (::ffff:a.b.c.d; Go's net.IP.To4 of a 16 byte IP).
+fn v4_mapped(b: Bytes) -> Bool {
+  if b.len() != 16 || b[10] != 255 || b[11] != 255 {
+    return false
+  }
+  for i in 0..10 {
+    if b[i] != 0 {
+      return false
+    }
+  }
+  true
 }

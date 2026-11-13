@@ -7,6 +7,7 @@
 // two), unencrypted key bags too, and the leaf certificate is the one whose
 // localKeyID names the key. Input must be DER, as Go's encoding/asn1 requires.
 use native/llrt/asn1
+use native/llrt/ct
 use native/llrt/des
 use native/llrt/rc2
 use native/llrt/sha1
@@ -152,7 +153,8 @@ fn verify_mac(mac: Bytes, m: asn1.Tlv, message: Bytes, password: Bytes) -> Str {
   let key = pbkdf(asn1.contents(mac, kids[1]), password, iterations, 3, 20)
   let want = sha1.mac(key, message)
   let got = asn1.contents(mac, di[1])
-  if want != got {
+  // in constant time, as Go's hmac.Equal
+  if !ct.bytes_equal(want, got) {
     return ERR_PASSWORD
   }
   ""
