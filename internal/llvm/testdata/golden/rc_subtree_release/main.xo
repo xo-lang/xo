@@ -1,0 +1,70 @@
+// decision 0628: a struct tree dropped after part of it was used is
+// released subtree by subtree (group_releases), every leaf once.
+
+struct Core {
+  name: Str
+  tags: List[Str]
+  hdrs: Map[Str, Str]
+  base: Str
+}
+
+struct Ops {
+  core: Core
+  path: Str
+}
+
+fn (o: Ops) cancel(id: Str) -> Str {
+  "${o.core.name}:${o.path}/${id}:${o.core.tags.len()}"
+}
+
+struct Jobs {
+  core: Core
+  ops: Ops
+}
+
+struct Models {
+  core: Core
+  ops: Ops
+}
+
+struct Service {
+  core: Core
+  jobs: Jobs
+  models: Models
+  extra: List[Str]
+}
+
+fn core(n: Int) -> Core {
+  Core{name: "svc${n}", tags: ["a${n}", "b"], hdrs: {"k": "v${n}"}, base: "https://x/${n}"}
+}
+
+fn new_service(n: Int) -> Service {
+  let c = core(n)
+  Service{core: c, jobs: Jobs{core: c, ops: Ops{core: c, path: "jobs/ops"}}, models: Models{core: c, ops: Ops{core: c, path: "models/ops"}}, extra: ["e${n}"]}
+}
+
+fn use_one(n: Int) -> Str {
+  let svc = new_service(n)
+  svc.jobs.ops.cancel("id${n}")
+}
+
+fn move_one(n: Int) -> Ops {
+  let svc = new_service(n)
+  svc.models.ops
+}
+
+fn use_two(n: Int) -> Str {
+  var s = new_service(n)
+  let a = s.jobs.ops.cancel("x")
+  s.extra.push("more")
+  "${a} ${s.models.ops.cancel("y")} ${s.extra.len()}"
+}
+
+fn main(os: Os) {
+  for i in 0..3 {
+    os.stdio.println(use_one(i))
+    let o = move_one(i)
+    os.stdio.println(o.cancel("m"))
+    os.stdio.println(use_two(i))
+  }
+}

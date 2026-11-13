@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+svc0:jobs/ops/id0:2
+svc0:models/ops/m:2
+svc0:jobs/ops/x:2 svc0:models/ops/y:2 2
+svc1:jobs/ops/id1:2
+svc1:models/ops/m:2
+svc1:jobs/ops/x:2 svc1:models/ops/y:2 2
+svc2:jobs/ops/id2:2
+svc2:models/ops/m:2
+svc2:jobs/ops/x:2 svc2:models/ops/y:2 2
+--- stderr

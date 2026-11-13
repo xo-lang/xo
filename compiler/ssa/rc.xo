@@ -2582,6 +2582,8 @@ fn (var r: Rc) group_releases(var f: Func) {
         }
       }
       var joined: Map[Int, Bool] = {}
+      var plans: Map[Int, List[Str]] = {}
+      var covered: Map[Int, Set[Int]] = {}
       for (n, g) in groups.indexed() {
         let ks = keys[n]
         if ks.len() < GROUP_LEAVES {
@@ -2589,7 +2591,32 @@ fn (var r: Rc) group_releases(var f: Func) {
         }
         let (root, comp) = gsite[n]
         let all = r.group_leaves(f, root, comp)
-        if bad.contains(g) || all.len() < GROUP_LEAVES || ks.len() != all.len() {
+        if bad.contains(g) || all.len() < GROUP_LEAVES {
+          continue
+        }
+        if ks.len() != all.len() {
+          // not every leaf of the root: release each complete subtree of
+          // GROUP_LEAVES leaves or more whole (a struct held partly used,
+          // decision 0628: the drop of a client's service tree after one
+          // method call was 13.5K field reads and 1.85K releases)
+          if ks.len() >= GROUP_LEAVES {
+            var got: Set[Int] = #{}
+            for s0 in ks {
+              got.add(s0)
+            }
+            var pres: List[Str] = []
+            r.sub_cover(root, ty_of(f.values[root].tb), "", got, pres)
+            if !pres.is_empty() {
+              var cov: Set[Int] = #{}
+              for pre in pres {
+                for lp in r.leaf_paths(r.path_type(ty_of(f.values[root].tb), pre)) {
+                  cov.add(leaf_key(r.leaf(root, "${pre}${lp}")))
+                }
+              }
+              plans[g] = pres
+              covered[g] = cov
+            }
+          }
           continue
         }
         var want: Set[Int] = #{}
@@ -2604,12 +2631,55 @@ fn (var r: Rc) group_releases(var f: Func) {
           joined[g] = true
         }
       }
+      // a release covering part of a subtree (some of its leaves in one,
+      // some not) keeps its group's releases as they are
+      if !plans.is_empty() {
+        for k in i..j {
+          let v = ins[k]
+          if f.values[v].op != Op.Release {
+            continue
+          }
+          let ls = r.leaves(f, f.arg(f.values[v].args, 0))
+          let g = r.leaf_group(f, ls[0]).0
+          if let Some(cov) = covered.get(g) {
+            var nin = 0
+            for l in ls {
+              if cov.contains(leaf_key(l)) {
+                nin += 1
+              }
+            }
+            if nin != 0 && nin != ls.len() {
+              plans.remove(g)
+            }
+          }
+        }
+      }
       var placed: Set[Int] = #{}
       for k in i..j {
         let v = ins[k]
         if f.values[v].op == Op.Release {
           let ls = r.leaves(f, f.arg(f.values[v].args, 0))
           let (g, root, comp) = r.leaf_group(f, ls[0])
+          if let Some(pres) = plans.get(g) {
+            if (covered.get(g) ?? #{}).contains(leaf_key(ls[0])) {
+              if !placed.contains(g) {
+                placed.add(g)
+                for pre in pres {
+                  var w = root
+                  var t = ty_of(f.values[root].tb)
+                  for ix in path_indexes(pre) {
+                    let ft = r.field_type(t, ix)
+                    w = new_value(f, bl, Op.Field, ft, Aux.I(n: ix), [w])
+                    out.push(w)
+                    t = ft
+                  }
+                  out.push(new_value(f, bl, Op.Release, -1, Aux.None, [w]))
+                }
+                any = true
+              }
+              continue
+            }
+          }
           if joined.contains(g) {
             if !placed.contains(g) {
               placed.add(g)
@@ -2645,6 +2715,53 @@ fn (r: Rc) leaf_group(f: Func, l: Leaf) -> (Int, Int, Int) {
     return (l.root * 4294967296 + comp + 1, l.root, comp)
   }
   (l.root * 4294967296, l.root, -1)
+}
+
+/// The paths under pre (a subtree of root's type t) whose every leaf
+/// got holds, largest first, each of GROUP_LEAVES leaves or more.
+fn (var r: Rc) sub_cover(root: Int, t: Int, pre: Str, got: Set[Int], var out: List[Str]) {
+  let lps = r.leaf_paths(t)
+  if lps.len() < GROUP_LEAVES {
+    return
+  }
+  if !pre.is_empty() {
+    var all = true
+    for lp in lps {
+      if !got.contains(leaf_key(r.leaf(root, "${pre}${lp}"))) {
+        all = false
+        break
+      }
+    }
+    if all {
+      out.push(pre)
+      return
+    }
+  }
+  if r.decomposable(t) {
+    for i in 0..r.num_fields(t) {
+      r.sub_cover(root, r.field_type(t, i), "${pre}.${i}", got, out)
+    }
+  }
+}
+
+/// The type at path pre (".i.j") of t.
+fn (r: Rc) path_type(t: Int, pre: Str) -> Int {
+  var u = t
+  for ix in path_indexes(pre) {
+    u = r.field_type(u, ix)
+  }
+  u
+}
+
+/// The field indexes of a path ".i.j".
+fn path_indexes(pre: Str) -> List[Int] {
+  var out: List[Int] = []
+  for part in pre.split(".") {
+    if !part.is_empty() {
+      out.push(Int.parse(part) ?? 0)
+    }
+  }
+  out
 }
 
 /// Every heap leaf of a group of group_releases.
