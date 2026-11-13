@@ -171,6 +171,28 @@ passes (the whole unpad max |t| 2.4, MGF1 alone A/A 3.1) and amd64 LLVM
   data dependent timing without it on these cores, which no layout
   changes.
 
+Windows on arm64 (2026-11-12, Xo Lang 3) runs without DIT, as amd64
+does: user mode there cannot read ID_AA64PFR0_EL1, and
+IsProcessorFeaturePresent has no PF_ constant for DIT, so hw() never
+has HW_DIT (77c9a6894 added the PF_ detection of AES, PMULL, SHA and
+CRC32, as golang.org/x/sys/cpu does; Go's internal/cpu detects nothing
+there). The same dudect on the windows/arm64 offload host (a Windows
+11 arm64 VM, native backend, balanced layout, 10^5 a pair, at
+77c9a6894), max |t|:
+
+| run | class pairs | A/A pairs | control |
+|---|---|---|---|
+| whole decryption | 2.82 | 2.46 | 3274 |
+| piece=const (the floor) | 2.58 | 1.92 | 3904 |
+| piece=lhash | 2.26 | 1.09 | 3404 |
+| piece=sep | 3.58 | 3.69 | 4766 |
+| piece=first | 3.79 | 4.27 | 3395 |
+
+Every pair passes (below 4.5), and the pieces stay near the const
+floor, so the code's own constant time holds there without DIT. The
+pieces come from a throwaway rsa_test.xo knob (XO_DUDECT_PIECE, never
+pushed; ~/xo-lead/notes/lang3/dud-winarm*.log).
+
 ## Consequences
 
 - Constant time on arm64 no longer depends on the opt level or the
@@ -183,7 +205,7 @@ passes (the whole unpad max |t| 2.4, MGF1 alone A/A 3.1) and amd64 LLVM
 - A fiber in a section is not preempted until it leaves it.
 - Seeds: the body is a no-op, so an older xo builds a std that calls
   dit_set (it just does not set DIT); no seed cut is needed.
-- Linux arm64 without FEAT_DIT and amd64 get no DIT; their constant time
+- Linux arm64 without FEAT_DIT, Windows on arm64 and amd64 get no DIT; their constant time
   rests on the code (and, if needed, the -O2 module fallback).
 
 ## Alternatives

@@ -4023,7 +4023,9 @@ pub fn generate_key(r: Rand, alg: KeyAlg, bits: Int = 2048) -> PrivateKey ! KeyE
   Go 1.24's crypto does, so their timing does not follow the data in any
   build (native or LLVM, any optimization level). x86-64 has no user mode
   equivalent (Intel's DOITM is set by the kernel; AMD has none), nor do
-  arm64 CPUs without FEAT_DIT and wasm: there the constant time property
+  arm64 CPUs without FEAT_DIT, Windows on arm64 (whose user mode can read
+  no feature register and has no PF_ constant for DIT, as in Go), and
+  wasm: there the constant time property
   rests on the code alone (no branch, select or index on a secret).
 - RSA keys verify and sign from 1024 bits (Go 1.24's minimum: `crypto/rsa:
   512-bit keys are insecure (see ...)`), and a key's public values are
