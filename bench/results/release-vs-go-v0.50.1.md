@@ -124,25 +124,24 @@ in use: 31.32MB in 75089 objects; allocated: 65.81MB in 195615 objects
 A program that links armcompute and makes its VirtualMachines client: Xo's port (xo-lang/azure
 resourcemanager/compute/armcompute, 63 files, built in its workspace) against Go's armcompute v9.0.0
 (module cache, offline, -trimpath). Each tool with its default caches in this run's directories: cold
-empties them all; xo's std variants are built after the cold row; edit appends one function to main.
+empties them all except, in the first xo row, std's variants; edit appends one function to main.
 Wall ms / peak RSS MB, one build each (Mac, 2026-11-13).
 
-| side | cold | second | warm | edit | size MB |
-|---|---|---|---|---|---|
-| go | 4473 / 829 | 106 / 45 | 107 / 43 | 305 / 213 | 9.28 |
-| xo | 3317 / 545 | 44 / 20 | 41 / 20 | 476 / 288 | 6.11 |
+| side | cold | second | warm | edit | second edit | size MB |
+|---|---|---|---|---|---|---|
+| go | 4577 / 924 | 104 / 43 | 106 / 43 | 304 / 216 | - | 9.28 |
+| xo, std's variants already built | 664 / 262 | 38 / 17 | 38 / 17 | 226 / 162 | 196 / 155 | 6.11 |
+| xo, the first program after install | 3449 / 545 | 43 / 20 | 46 / 20 | 471 / 268 | 242 / 158 | 6.11 |
 
-xo's edit compiles through the back-end caches (the run cache misses on any changed file), so its edit is
-slower than Go's and peaks higher; second and warm are run-cache hits.
-
-Why the edit is slower: the cold build ran before std's variants existed, so it compiled the whole
-program, and none of its entries serve separate compilation; the second and warm builds were run-cache
-hits, so the edit was the program's first separate build (fe 0/57 bodies, chk 0/9 modules, functions
-0/450 reused). Measured after (Mac, 2026-11-13): with the variants built before the cold build, cold
-takes 727 ms, the first edit 234 ms (fe 49/57, chk 8/9, functions 175/450) and the next 213 ms, against
-Go's 305 ms; a second edit after this table's sequence took 182 to 197 ms. A first run of this row wrote its
-logs inside the workspace's directory, which the run cache keys (a directory listing that changes can add
-an xo.mod or xo.work), so every build missed: keep logs outside the program's tree when timing.
+The first xo row is a user whose earlier builds made std's variants (built in the background after a
+first build); the second is the first program a fresh install builds: its cold build runs before the
+variants exist, so it compiles the whole program, none of its entries serve separate compilation, and
+since second and warm are run-cache hits its first edit is the program's first separate build (fe 0/57
+bodies, chk 0/9 modules, functions 0/450 reused); the next edit reuses them (fe 49/57, chk 8/9,
+functions 175/450). The edit's comparison with Go is the first row's (226 against 304 ms); the second
+row's first edit is a one-time fill. A first run of this row wrote its logs inside the workspace's
+directory, which the run cache keys (a directory listing that changes can add an xo.mod or xo.work), so
+every build missed: keep logs outside the program's tree when timing.
 
 ## Run (xo bench --ab, A = Go, B = Xo, 3 rounds)
 
