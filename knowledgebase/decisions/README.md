@@ -627,3 +627,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0635](0635-decompressor-bounded-write.md): Proposed (Xo Lang 2): a Decompressor write bounded by the caller, as Go's Read (0.52; 0.51.1 bounds std/http's client by 4 KiB writes)
 - [0636](0636-parallel-inline.md): Accepted (Xo Lang 1): the inliner runs in waves on the task pool, with the function order walk's result (byte-identical output)
 - [0637](0637-parallel-front-end.md): Accepted (owner): the front end builds function bodies on the task pool, with the serial order's result (byte-identical output)
+- [0638](0638-public-runtime-checks-threads-metrics.md): Proposed (Xo Lang 2): public memory checks (--check=free,guard,leak), XO_THREADS and the container CPU quota, runtime metrics in std/metrics
