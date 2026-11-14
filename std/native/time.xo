@@ -140,7 +140,10 @@ fn offset_secs(z: Zone, sec: Int) -> Int {
 
 fn abbr_at(z: Zone, sec: Int) -> Str {
   if z.fixed {
-    return z.label
+    // a view of the label (no copy) reads the zone rather than consuming
+    // it, so abbr_at and its callers borrow their Zone: Layout.parse
+    // retained and released the zone's label and rules per call
+    return z.label[0..]
   }
   tz.abbr(z.rules, sec)
 }
@@ -368,15 +371,14 @@ fn instant(d: time.Date, c: time.ClockTime, z: Zone, ambiguity: time.Ambiguity =
   }
   let local = days_from_civil(d.year, d.month, d.day) * 86400 + c.hour * 3600 + c.minute * 60 + c.second
   let (early, late, kind) = civil_instant(local, z)
-  let at = "${pad(d.year, 4)}-${pad(d.month, 2)}-${pad(d.day, 2)}T${pad(c.hour, 2)}:${pad(c.minute, 2)}:${pad(c.second, 2)} ${z.label}"
   var secs = early
   if kind != 0 {
     match ambiguity {
       time.Ambiguity.Reject => {
         if kind == 2 {
-          return Err(time.CivilErr.Skipped(at: at))
+          return Err(time.CivilErr.Skipped(at: instant_at(d, c, z)))
         }
-        return Err(time.CivilErr.Repeated(at: at))
+        return Err(time.CivilErr.Repeated(at: instant_at(d, c, z)))
       }
       time.Ambiguity.Later => {
         secs = late
@@ -385,9 +387,15 @@ fn instant(d: time.Date, c: time.ClockTime, z: Zone, ambiguity: time.Ambiguity =
     }
   }
   if secs < MIN_TIME_SECS || secs > MAX_TIME_SECS {
-    return Err(time.CivilErr.Invalid(msg: "${at} is outside the range of Time (1678 to 2262)"))
+    return Err(time.CivilErr.Invalid(msg: "${instant_at(d, c, z)} is outside the range of Time (1678 to 2262)"))
   }
   Ok(time_of(secs * 1000000000 + c.nanos))
+}
+
+/// The civil time and zone an instant error names, made only on an error
+/// path (instant built it for every call: seven pads and an interpolation).
+fn instant_at(d: time.Date, c: time.ClockTime, z: Zone) -> Str {
+  "${pad(d.year, 4)}-${pad(d.month, 2)}-${pad(d.day, 2)}T${pad(c.hour, 2)}:${pad(c.minute, 2)}:${pad(c.second, 2)} ${z.label}"
 }
 
 fn civilerr_display(e: time.CivilErr) -> Str {

@@ -1,5 +1,17 @@
 # std/timego changes
 
+## 2026-11-14: perf: format writes one and two byte separators in one store; parse borrows its layout, input and zone (native)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the std/time speed work of decision 0616 (std/evidence/time/perf.md at da2ba49a9: timego/format 1.237 and timego/parse 1.210 of Go; XO_PROF: rs_append's copy 9% of format; drop List[Int] 11% of parse)
+- Go reference: time.appendFormat (a layout's separators appended as bytes); time.Parse takes its strings by reference
+- Test: TestStdCorpora time, timefuzz and timego on go, arm64 and llvm; std/timego tests on arm64 and llvm; the rc stage of `xo dev dump ssa` shows Layout.parse's three parameters borrowed
+- Timing: --ab on linux/arm64 host 1, 9 rounds: bench/perf/timego format 0.755 for the separators (41.21 to 31.1 ms, n=6); bench/perf/timego parse 0.806 for the borrowed parameters (10.27 to 8.28 ms, n=9); put_int and put_zone writing in place through a var parameter 0.993 (within noise, n=9), kept for its shape
+- Shipped in: not yet released
+
+Layout.format wrote each literal through BytesBuilder.write, a general copy; the one and two byte separators of the common layouts (`-`, `:`, `T`, `, `) are now one store. Layout.parse's error paths moved its input and the layout's text into the ParseErr they return, so the compiler passed the layout, the input and the zone as owned values and released them on every call; the error values now copy their texts (only when an error is made), and a fixed zone's abbreviation is a view of its label instead of the label moved out, so all three are borrowed.
+
 ## 2026-11-14: perf: Layout.format counts the days once, and writes a fractional second's digits in place (native)
 
 - Kind: perf

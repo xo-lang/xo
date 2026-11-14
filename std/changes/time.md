@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-11-14: perf: a fixed zone's abbreviation borrows the zone, and instant makes its error text only on an error (native)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the std/timego parse profile (std/changes/timego.md, the same day): abbr_at moved a fixed zone's label out, so every caller of Zone.abbreviation_at owned its zone
+- Go reference: time.Location's lookup returns its zone's name without copying it
+- Test: std/native/time and std/time tests on arm64 and llvm; TestStdCorpora time and timefuzz on go, arm64 and llvm; the rc stage of `xo dev dump ssa` shows abbr_at and Zone.abbreviation_at borrowing their Zone
+- Timing: --ab on linux/arm64 host 1, 9 rounds: bench/perf/time parse_layout 1.019 and civil 0.986 (within noise) for instant's error text; the borrowed zone is part of timego parse's 0.806 (std/changes/timego.md)
+- Shipped in: not yet released
+
+time.instant built the civil time and zone text its errors name (seven pads and an interpolation) on every call; it is now made only on an error path.
+
 ## 2026-11-13: perf: zones list their rules' transitions until 2038, so lookups binary search (native)
 
 - Kind: perf
