@@ -52,6 +52,41 @@ test "bad input is an error, never a fault" {
   }
 }
 
+test "compound counts are bounded as go-amqp's are" {
+  // go-amqp's TestArray32CountExceedingMaxIsRejected,
+  // TestArray32CountExceedingBodyIsRejected, TestArray8CountChecksApplied
+  // and TestList32CountBoundsChecked: an array of nulls declaring more
+  // elements than its body has bytes, or more than 65536, is refused
+  for s in [
+    "f0" + "00000009" + "7fffffff" + "40" + "00000000",
+    "f0" + "0000000a" + "00000064" + "40" + "0000000000",
+    "e0" + "05" + "c8" + "40" + "000000",
+    "d0" + "00000009" + "7fffffff" + "0000000000",
+    "f0" + "00000005" + "ffffffff" + "40",
+  ] {
+    expect(decode(hb(s)).is_err()) == true
+  }
+  // TestArray32AtMaxCountSucceeds: 65536 one byte elements decode
+  var body = BytesBuilder.new()
+  body.write(hb("f0" + "00010005" + "00010000" + "52"))
+  body.write(Bytes.zeroed(65536))
+  match decode(body.freeze()) {
+    Ok((v, n)) => {
+      expect(n) == 9 + 1 + 65536
+      match v {
+        Value.Array(items) => expect(items.len()) == 65536
+        _ => expect(true) == false
+      }
+    }
+    Err(_) => expect(true) == false
+  }
+  // one past the cap, with the bytes for it, is refused
+  var over = BytesBuilder.new()
+  over.write(hb("f0" + "00010006" + "00010001" + "52"))
+  over.write(Bytes.zeroed(65537))
+  expect(decode(over.freeze()).is_err()) == true
+}
+
 test "nesting is bounded" {
   var s = ""
   for _ in 0..100 {

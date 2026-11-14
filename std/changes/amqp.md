@@ -1,5 +1,17 @@
 # std/amqp changes
 
+## 2026-11-14: security: compound counts are bounded as go-amqp's are
+
+- Kind: security
+- Commit: this push
+- Found by: Xo Lang 3's sweep of std for allocations sized from a decoded header (after the std/jpeg review's F1)
+- Go reference: go-amqp v1.7.0 internal/encoding readArrayHeader, readListHeader and readMap8Header/readMap32Header: a count above maxCompoundCount (65536) or above the body's bytes after the count field is refused, an array's too
+- Before: get_value refused a count above the body's bytes for a list or map but not for an array (0xe0, 0xf0), and had no count cap, so an array of a zero width constructor (null, true, false, the zero forms) decoded as many values as its count asked: 10 bytes asking for 10 million took 43 ms and 244 MB, and the 32-bit count's largest about 100 GB; Mac, native
+- Fix: MAX_COMPOUND_COUNT (65536) refuses a larger count first, and the body check applies to every compound
+- Test: std/amqp_test.xo "compound counts are bounded as go-amqp's are" (go-amqp's four count tests' frames, the 32-bit count's largest, 65536 one byte elements decoding and 65537 refused); xo test --std-module=amqp
+- Affected: every backend, 0.41.0 to 0.51.1
+- Shipped in: not yet released
+
 ## 2026-11-11: refactor: std/amqp is one file (decisions 0588, 0597)
 
 - Kind: refactor

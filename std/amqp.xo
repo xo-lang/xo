@@ -1590,8 +1590,16 @@ fn get_value(b: Bytes, pos: Int, depth: Int) -> (Value, Int) ! AmqpErr {
     }
     let end = p + lw + size
     need(b, p + lw, size)?
-    // every element takes at least a byte
-    if count > end - start && c != 0xe0 && c != 0xf0 {
+    // go-amqp's maxCompoundCount: a list, map or array of more elements
+    // is refused, so a small frame cannot hold the decoder in a long loop
+    if count > MAX_COMPOUND_COUNT {
+      return Err(dec_err("compound count exceeds ${MAX_COMPOUND_COUNT}"))
+    }
+    // as go-amqp, the count may not exceed the body's bytes, an array's
+    // too: an array of a zero width constructor (null, true, false, the
+    // zero forms) has no bytes per element, so its count alone would
+    // otherwise decide how many values decode
+    if count > end - start {
       return Err(dec_err("compound count exceeds its size"))
     }
     if c == 0xc0 || c == 0xd0 {
@@ -1650,6 +1658,10 @@ fn get_value(b: Bytes, pos: Int, depth: Int) -> (Value, Int) ! AmqpErr {
   }
   Err(dec_err("unknown type code 0x${hex2(c)}"))
 }
+
+/// go-amqp's maxCompoundCount (internal/encoding/decode.go): the most
+/// elements a decoded list, map or array may declare.
+const MAX_COMPOUND_COUNT = 65536
 
 fn hex2(c: Int) -> Str {
   let h = "0123456789abcdef"
