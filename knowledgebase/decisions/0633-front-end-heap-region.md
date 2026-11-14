@@ -46,14 +46,15 @@ the front end is released.
 2. Frees route by address: a block inside the region's range goes to the freeing thread's region
    record (one compare on the free path, predictable), so a front end block never enters a normal
    free list and no later allocation reuses it from there.
-3. Per chunk live counts for the region only (an increment on a region carve, a decrement on a region
-   free, atomic since frees cross threads). A region chunk whose count is 0 after the release has no
-   live block.
+3. The release works by 4 KiB page, not by chunk (step 0: the survivors left outside literals touch
+   every 4 MiB chunk). With the region's own lists walked at the release (decision 0630's walk, which
+   finds the pages free byte for byte; in the region nearly all of them are), its free pages form
+   long runs: those are advised and pooled as runs (0630 v2's runs) that the normal heap's next bump
+   runs take first.
 4. The release (an explicit call, as decision 0630's scoping: xo calls it once the release task of
-   0352 has ended, before insert_rc): the region's lists are dropped, every chunk at count 0 is given
-   to the normal chunk list as a fresh chunk (advised: MADV_FREE_REUSABLE on darwin, MADV_DONTNEED on
-   Linux, until the normal heap carves it), and the region retires (a later free of a survivor only
-   decrements its chunk's count; a chunk reaching 0 then is given back the same way).
+   0352 has ended, before insert_rc): the walk of point 3, then the region retires: its remaining
+   free blocks (in pinned pages) stay on the region's lists for later front end use or none, and a
+   later free of a survivor goes to them.
 5. xo enters region mode around the check (check_program, the parse) and around the SSA builder's
    lazy checks and parses (check_lazy, force_body); it leaves it around the allocations that
    survive: string literals the SSA keeps (lexer.string_lit and cook) and the file sources, which
@@ -66,9 +67,26 @@ footprint by 20 to 30%, if the literals do not pin. On xo's own build the peak i
 3.98 GB against 2.08 at fe.build); step 0 measures how much of its front end memory the same split
 would return.
 
+## Step 0 (measured 2026-11-14)
+
+The same attribution on xo's own build (Mac, cold, caches off): front end allocated 1,150 MB live at
+fe.build, 18.8 MB after the release (98.4% dies); other data 920 MB, then 783 MB. The survivors by
+count (heap samples, inuse_objects, estimates):
+
+| | aiplatform test build | xo self build |
+|---|---|---|
+| surviving objects | 199,000 | 169,000 |
+| string literals (lexer.string_lit, cook) | 186,000 | 161,000 |
+| others | 13,000 (display_name, scan.to_hex) | 8,000 (hostpath.clean_w) |
+
+Pins: about 280,000 4 KiB pages of front end memory. With the literals in the region nearly every
+page holds one, so they are allocated outside it (point 5). Without them, 8,000 to 13,000 survivors
+pin at most 3 to 5% of the pages, but touch every 4 MiB chunk: hence the release by page (point 3),
+and those three call sites allocated outside the region too where cheap.
+
 ## Steps
 
-0. Measure before code: the same profile attribution on xo's self build and on the HTTP CRUD
+0. (Done, above.) Measure before code: the same profile attribution on xo's self build and on the HTTP CRUD
    server's build; and where the survivors would sit: with the front end's allocations in their own
    chunks, how many 16 KiB pages and 4 MiB chunks the 186,000 literals would pin (a probe that tags
    blocks by allocation mode).
