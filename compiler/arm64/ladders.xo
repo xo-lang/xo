@@ -101,9 +101,11 @@ fn ladder_key(ls: List[Str], a: Int, b: Int) -> Str {
 
 /// Outlines the repeated ladders of one function's text (lines, after
 /// the line passes). Off for x86 (a call moves sp), windows/arm64 (its
-/// unwind codes), far frames (slots through x28) and XO_PASSES=-ladders.
+/// unwind codes) and XO_PASSES=-ladders. A far frame's slots past sp's
+/// reach are read through x28 by then (far_slots_l), which no ladder
+/// line matches; its near slots are sp's as elsewhere.
 fn (var g: G) outline_ladders(lines: List[Str]) -> List[Str] {
-  if g.x86 || g.win_a64() || g.base != 0 || !g.on("ladders") || !any_has(lines, "\tldr x0, [sp, #") {
+  if g.x86 || g.win_a64() || !g.on("ladders") || !any_has(lines, "\tldr x0, [sp, #") {
     return lines
   }
   let ls = flat_lines(lines)
