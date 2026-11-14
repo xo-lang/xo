@@ -96,7 +96,13 @@ exact repeats (otool -tV, ~/xo-lead/notes/lang1/ladders-bin.py).
 - Tests: test/codegen/ladders (one `_ld0` subroutine, every arm calling it), compiler/debug
   ladder_test.xo (the fold and the frames it must keep), the arm64 and LLVM codegen patterns (48
   pass), compiler/debug and compiler/arm64 unit tests (103 pass), TestPassesListed.
-- The --ab trio and aiplatform's __text: in the push's commit message.
+- --ab (ab-host, B/A, 2026-11-14): xo's self build on linux/arm64 host 1, 7 rounds: wall 0.995
+  (better), CPU 0.995 (within noise, 0.992 to 1.004), max RSS 1.007 (within noise); a 3 round run
+  before it read CPU 1.004 "worse" with a 3.2% B spread. bench/perf/alloc, 3 rounds: arm64 wall
+  1.002, CPU 1.003, RSS 1.0; amd64 wall 0.996, CPU 0.993, RSS one page more. The HTTP server as
+  bench/perf/httpkeep (bench/perf/http needs loadgen, which ab-host's PROG mode does not run), 3
+  rounds: arm64 wall 0.984 (better), CPU 1.004 (noise); amd64 wall 1.015, CPU 1.01 (both noise).
+  LADDER_MIN stays 16.
 
 ## Steps
 
