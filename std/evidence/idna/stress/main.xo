@@ -1,0 +1,170 @@
+// idna stress program (decision 0616 section 2): 64 tasks run std/idna's
+// to_ascii and to_unicode on the Lookup and Registration profiles over 64
+// names (half valid for Lookup, half not: random xn-- labels, joiners,
+// bidi text, marks) and check each against golang.org/x/net v0.60.0's
+// idna (istressgen), for a fixed time. A background task samples the
+// resident set every 10 s (Linux /proc/self/status). Pass: no mismatch,
+// no fault, and the resident set at the end within 10% or 4 MB of its
+// sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/idna
+
+fn answer(r: Result[Str, idna.IdnaErr]) -> Str {
+  match r {
+    Ok(v) => "ok ${v}"
+    Err(e) => "err ${e.code}"
+  }
+}
+
+/// One pass over the cases from offset start: the operations done, or the
+/// first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  var ops = 0
+  for k in 0..CASES.len() {
+    let i = (start + k) % CASES.len()
+    let (s, la, lu, ra, ru) = CASES[i]
+    if answer(idna.to_ascii(s, idna.Profile.Lookup)) != la || answer(idna.to_unicode(s, idna.Profile.Lookup)) != lu {
+      return Err("lookup of case ${i}")
+    }
+    if answer(idna.to_ascii(s, idna.Profile.Registration)) != ra || answer(idna.to_unicode(s, idna.Profile.Registration)) != ru {
+      return Err("registration of case ${i}")
+    }
+    ops += 4
+  }
+  ops
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("idna stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+// Written by istressgen (Xo Lang 3, 2026-11-14) from golang.org/x/net v0.60.0's idna
+// (go1.26.11): the name, then for Lookup and Registration ToASCII and ToUnicode:
+// ok RESULT or err CODE.
+const CASES: List[(Str, Str, Str, Str, Str)] = [
+  ("d\u{64b}\u{64b}\u{301}", "ok xn--d-xbb93wa", "ok d\u{64b}\u{64b}\u{301}", "ok xn--d-xbb93wa", "ok d\u{64b}\u{64b}\u{301}"),
+  ("XN--on8u.\u{5de}\u{5d4}\u{308}\u{64b}\u{64b}\u{64b}", "err V6", "err V6", "err V1", "err V1"),
+  ("i\u{308}\u{308}\u{94d}\u{323}\u{300}\u{94d}\u{300}\u{301}\u{300}\u{301}\u{308}\u{308}\u{300}\u{300}\u{323}\u{301}\u{308}\u{308}\u{308}\u{300}\u{300}\u{308}\u{323}\u{323}\u{64b}\u{308}", "ok xn--ksaaaaaaadbc3eafadaaca53caa596p85qa4614l", "ok \u{1ecb}\u{94d}\u{94d}\u{64b}\u{323}\u{323}\u{323}\u{308}\u{308}\u{300}\u{300}\u{301}\u{300}\u{301}\u{308}\u{308}\u{300}\u{300}\u{301}\u{308}\u{308}\u{308}\u{300}\u{300}\u{308}\u{308}", "err V1", "err V1"),
+  ("\u{62c}\u{627}\u{5d2}\u{5d1}\u{5d0}\u{ad}.m\u{300}\u{323}\u{94d}\u{323}\u{64b}\u{94d}\u{301}\u{94d}\u{300}\u{323}\u{323}\u{64b}\u{94d}\u{64b}\u{301}\u{308}\u{308}\u{308}\u{301}\u{323}.\u{661}\u{660}\u{6f1}\u{661}\u{200d}upw.\u{62e}\u{628}\u{627}\u{62a} ", "err P1", "err P1", "err V1", "err V1"),
+  (".389\u{ff0e}\u{1f4a9}", "ok .389.xn--ls8h", "ok .389.\u{1f4a9}", "err P1", "err P1"),
+  ("\u{fc}\u{e9}\u{f1}\u{d55c}\u{f1}.PWHDBMS.\u{3c2}\u{3c2}\u{e7}\u{300}F.\u{fc}\u{f1}\u{30ab}imtn\u{661}yxbibnkBQDMKIBWYJZTSMlxholhMZI\u{64b}\u{300}\u{301}\u{200c}\u{94d}\u{200d}\u{64b}SG_- -__ !__!_! \u{308}\u{ff21}\u{fb01}\u{ad}\u{ff21}\u{fffd}", "err P1", "err P1", "err V1", "err V1"),
+  ("CGVMWW", "ok cgvmww", "ok cgvmww", "err P1", "err P1"),
+  ("h\u{301}\u{64b}\u{64b}\u{64b}\u{300}\u{323}\u{300}\u{94d}\u{308}\u{94d}\u{94d}\u{94d}\u{94d}\u{300}\u{64b}\u{323}\u{301}\u{308}\u{308}\u{94d}\u{94d}\u{94d}.xn---bewxkc1ofrxi.zb4\u{301}\u{661}\u{5d2}\u{5d3}\u{5d2}.725--!!", "err P1", "err P1", "err V1", "err V1"),
+  ("xus.XN--", "ok xus.", "ok xus.", "err P1", "err P1"),
+  ("\u{5d0}.xn--z0r.\u{2028}x", "err P1", "err P1", "err P1", "err P1"),
+  ("\u{6f1}TRJU", "ok xn--trju-uzg", "ok \u{6f1}trju", "err P1", "err P1"),
+  ("xn--v4herzvn7wtih.mwhig5829v!!  !odepkzyneakk\u{672c}\u{30ab}\u{8a9e}\u{8a9e}\u{44f}\u{e7}\u{431}\u{30ab}\u{df}EOXB8261946\u{672c}\u{3a3}\u{3a3}\u{65e5}\u{e7}\u{62c}zhsl\u{94d}\u{200d}\u{661}\u{6f1}\u{6f1}\u{6f1}\u{6f1}\u{661}\u{661}\u{6f1}\u{6f1}", "err P1", "err P1", "err P1", "err P1"),
+  ("Saapq", "ok saapq", "ok saapq", "err P1", "err P1"),
+  ("uhufSMRPXEREYM\u{5de}\u{5d0}\u{5d1}c\u{62d}\u{5d4}\u{5d1}\u{5d2}lqu\u{62a}\u{627}\u{62a}\u{628}\u{62b}\u{62b}\u{62d}\u{62a}\u{62b}7539942031868912269334535673783656\u{5d2}\u{5d0}.xn--v09-j0swx8g6tdbtip.n\u{308}\u{308}\u{308}\u{64b}\u{64b}\u{308}\u{308}\u{64b}\u{300}\u{64b}\u{94d}\u{300}\u{308}\u{300}\u{64b}.XN--ydwwi", "err B", "err B", "err V1", "err V1"),
+  ("y.072", "ok y.072", "ok y.072", "ok y.072", "ok y.072"),
+  ("\u{6f1}\u{660}\u{660}j", "err B", "err B", "err B", "err B"),
+  ("\u{436}\u{672c}\u{436}\u{431}\u{fc}\u{3089}", "ok xn--tda55noaa1587cxr0d", "ok \u{436}\u{672c}\u{436}\u{431}\u{fc}\u{3089}", "ok xn--tda55noaa1587cxr0d", "ok \u{436}\u{672c}\u{436}\u{431}\u{fc}\u{3089}"),
+  ("OXG -681656060825_826457\u{3bb}XKXFZQIWXR\u{661}\u{660}\u{6f1}\u{661}\u{661}\u{6f1}\u{661}\u{660}\u{661}\u{660}phw\u{323}\u{323}\u{308}\u{323}\u{64b}\u{200d}\u{301}\u{200d}\u{300}\u{64b}\u{323}\u{300}\u{300}\u{64b}\u{62e}\u{62a}tjxspt..h\u{5d1}\u{323}.61", "err P1", "err P1", "err V1", "err V1"),
+  ("ibho", "ok ibho", "ok ibho", "ok ibho", "ok ibho"),
+  ("xn--6ldu.XN--2dxk3nl0n8g8a2-x2.\u{65e5}zgrgd", "err A3", "err A3", "err P1", "err P1"),
+  ("xn--pwuxukf.\u{628}\u{62e}\u{62e}\u{628}", "ok xn--pwuxukf.xn--ngbara", "ok \u{6470}\u{6437}\u{6345}.\u{628}\u{62e}\u{62e}\u{628}", "ok xn--pwuxukf.xn--ngbara", "ok \u{6470}\u{6437}\u{6345}.\u{628}\u{62e}\u{62e}\u{628}"),
+  ("u477\u{5d3}\u{5d4}.\u{661}\u{6f1}\u{660}\u{661}", "err B", "err B", "err B", "err B"),
+  ("\u{19a3}.\u{3002}\u{ff0e}\u{1f4a9}\u{fb01}", "ok xn--4if...xn--fi-7t72a", "ok \u{19a3}...\u{1f4a9}fi", "err P1", "err P1"),
+  ("7438.\u{431}\u{3c2}\u{431}\u{3bb}\u{fc}\u{661}\u{6f1}99532gl\u{3002}jshb\u{627}\u{62c}\u{62e}\u{62e}\u{62d}\u{2126}\u{2126}\u{ad}\u{fffd}\u{1f4a9}\u{ff0e}\u{ff0e}\u{2028}\u{3002}\u{5d0}\u{5d0}\u{5d1}\u{5d1}\u{5d2}\u{5d1}ag\u{5d0}\u{5d1}!!! --!07631052.\u{f1}\u{e5}.", "err P1", "err P1", "err V1", "err V1"),
+  ("\u{436}\u{3072}\u{8a9e}KEA", "ok xn--kea-udd4377cjc3g", "ok \u{436}\u{3072}\u{8a9e}kea", "err P1", "err P1"),
+  (" -_-  \u{ff21}\u{fb01}.\u{5d0}\u{5d1}\u{5d4}\u{5d0}nz\u{200c}\u{301}\u{301}\u{1f4a9}\u{ad}\u{2126}\u{ff0e}\u{6f1}\u{661}\u{661}\u{6f1}\u{660}vpny\u{3a3}\u{431}\u{3bb}\u{f1}\u{f1}\u{3072}\u{2028}\u{ff21}\u{ff21}\u{2028}\u{1f4a9}\u{8a9e}\u{f1}\u{d55c}\u{df}\u{3bb}\u{436}\u{3072}\u{627}\u{62a}\u{62b}\u{627}\u{62a}IKVZYFP600.eizrd!i.XN--e7e82o8g013bk", "err P1", "err P1", "err V1", "err V1"),
+  ("xn--wmd", "ok xn--wmd", "ok \u{1095}", "ok xn--wmd", "ok \u{1095}"),
+  ("xn--pjzvrors30mrz3o7qo...\u{44f}\u{3089}\u{df}vjdyyndvma\u{3002}\u{ff21}\u{3002}\u{ad}\u{ad}\u{ad}\u{436}\u{e5}\u{3072}2\u{5d2}\u{5d1}\u{5d0}\u{5d4}\u{5d2}\u{5d1}\u{628}\u{62b}\u{627}\u{62d}\u{628}\u{62b}\u{62c}\u{62c}W\u{62c}\u{628}\u{62a}\u{62d}\u{62c}\u{62e}\u{62b}\u{3bb}\u{df}\u{3bb}\u{44f}\u{3089}\u{e7}\u{3bb}\u{3072}\u{d55c}\u{e9}pgq\u{94d}\u{200c}FEPD", "err A3", "err A3", "err P1", "err P1"),
+  ("\u{62c}\u{62c}\u{62a}.CPMRP", "ok xn--pgbda.cpmrp", "ok \u{62c}\u{62c}\u{62a}.cpmrp", "err P1", "err P1"),
+  ("\u{6f1}\u{661}\u{200d}ixab.\u{ff0e}\u{ad}\u{ff0e}\u{fffd}\u{ff0e}\u{2028}\u{3002}\u{fb01}", "err P1", "err P1", "err P1", "err P1"),
+  ("\u{e9}\u{e9}\u{f8}jp", "ok xn--jp-9iaa9e", "ok \u{e9}\u{e9}\u{f8}jp", "ok xn--jp-9iaa9e", "ok \u{e9}\u{e9}\u{f8}jp"),
+  ("j\u{301}\u{64b}\u{94d}\u{308}\u{64b}\u{323}\u{323}\u{323}.XN--tynrbsv30-v-n", "err A3", "err A3", "err V1", "err V1"),
+  ("\u{5d1}\u{5d3}\u{5de}", "ok xn--5dbe7a", "ok \u{5d1}\u{5d3}\u{5de}", "ok xn--5dbe7a", "ok \u{5d1}\u{5d3}\u{5de}"),
+  ("XN--g17vwjw4ymx0..xn--hm4o-1i9bkpf92e9", "err A3", "err A3", "err P1", "err P1"),
+  ("v\u{301}\u{301}\u{94d}\u{308}\u{301}\u{300}\u{300}\u{94d}\u{94d}\u{64b}\u{300}\u{300}\u{64b}\u{308}\u{308}\u{323}\u{64b}\u{308}\u{94d}\u{323}\u{301}\u{64b}\u{300}\u{300}\u{301}\u{301}\u{64b}\u{64b}\u{94d}\u{323}\u{308}", "ok xn--ksaaaaaabaaeca5ffaaf38ba01g417baaaaa898raaaa1474o", "ok \u{1e7f}\u{94d}\u{94d}\u{94d}\u{94d}\u{94d}\u{64b}\u{64b}\u{64b}\u{64b}\u{64b}\u{64b}\u{323}\u{323}\u{301}\u{301}\u{308}\u{301}\u{300}\u{300}\u{300}\u{300}\u{308}\u{308}\u{308}\u{301}\u{300}\u{300}\u{301}\u{301}\u{34f}\u{308}", "err V1", "err V1"),
+  ("cys.n\u{308}\u{200d}\u{323}\u{64b}\u{323}\u{300}\u{1f4a9}\u{2028}\u{3002}\u{2028} -!!_- _\u{300}2PNAW42\u{5d4}90\u{62e}opin_\u{62a}\u{661}\u{660}\u{62c}\u{627}\u{62d}\u{62e}\u{62d}\u{62d}qmewqbvqz\u{5d4}\u{5d4}\u{5de}\u{5d3}\u{5d1}\u{5d2}\u{660}\u{660}\u{660}\u{5d3}\u{5d1}\u{628}", "err P1", "err P1", "err V1", "err V1"),
+  ("\u{5d3}\u{5d2}", "ok xn--6dbb", "ok \u{5d3}\u{5d2}", "ok xn--6dbb", "ok \u{5d3}\u{5d2}"),
+  ("ruswo\u{2028}\u{ad}\u{fffd}\u{ff21}\u{ad}\u{2028}\u{2028}1\u{5d4}\u{5d0}\u{5d0}\u{5d3}\u{5d0}\u{5d2}\u{200c}\u{200c}\u{300}\u{308}\u{64b}\u{323}\u{300}\u{94d}\u{6f1}\u{660}\u{660}\u{661}twafcdfmyflkiq\u{661}\u{6f1}\u{661}\u{30ab}\u{8a9e}\u{3bb}\u{8a9e}\u{30ab}\u{e5}\u{65e5}\u{436}\u{fc}\u{fc}\u{672c}\u{df}\u{f8}\u{30ab}", "err P1", "err P1", "err V1", "err V1"),
+  ("xn--nsr.hqni", "ok xn--nsr.hqni", "ok \u{545c}.hqni", "ok xn--nsr.hqni", "ok \u{545c}.hqni"),
+  ("\u{5d1}\u{628}q.xn--rou.\u{628}\u{62a}\u{628}\u{62d}.\u{5d0}\u{5d2}\u{5d0}-!-!!", "err P1", "err P1", "err P1", "err P1"),
+  ("H.QXJRX.c\u{64b}\u{301}\u{323}\u{300}\u{300}\u{300}\u{64b}\u{323}\u{64b}\u{94d}\u{301}\u{301}\u{300}\u{64b}\u{301}\u{323}", "ok h.qxjrx.xn--4da42haaafab31aaa708gaaa034j", "ok h.qxjrx.\u{107}\u{94d}\u{64b}\u{64b}\u{64b}\u{64b}\u{323}\u{323}\u{323}\u{300}\u{300}\u{300}\u{301}\u{301}\u{300}\u{301}", "err V1", "err V1"),
+  ("\u{b6ee3}\u{eff48}\u{dc949}\u{6f36e}\u{f017e}\u{6eae6}.\u{2ca15}\u{106f8d}\u{db6b2}.g\u{301}\u{323}\u{94d}\u{94d}\u{300}\u{94d}\u{308}\u{301}\u{300}\u{300}\u{301}\u{94d}\u{308}", "err P1", "err P1", "err V1", "err V1"),
+  ("y.\u{3002}\u{1f4a9}\u{3002}.\u{ff0e}\u{ad}", "ok y..xn--ls8h...", "ok y..\u{1f4a9}...", "err P1", "err P1"),
+  ("\u{b707}\u{f45b6}\u{432e3}\u{40614}\u{42f4}.ldo.xn---0veb1leyuzgdsdadv", "err P1", "err P1", "err P1", "err P1"),
+  ("\u{6f1}", "ok xn--emb", "ok \u{6f1}", "ok xn--emb", "ok \u{6f1}"),
+  ("\u{5d3}\u{5de}.\u{757a3}\u{240de}\u{6e426}\u{1043bd}\u{c9cfc}.xn--iz-o4lj4b3wob6z", "err P1", "err P1", "err P1", "err P1"),
+  ("\u{5d3}00504.j\u{301}\u{94d}\u{323}\u{323}\u{64b}\u{94d}\u{300}", "ok xn--00504-xxg.xn--j-vbbc9ka069b87fa", "ok \u{5d3}00504.j\u{94d}\u{94d}\u{64b}\u{323}\u{323}\u{301}\u{300}", "err V1", "err V1"),
+  ("\u{3c2}\u{62c}\u{62a}vus.u\u{300}\u{300}\u{323}\u{301}\u{64b}\u{94d}\u{94d}\u{300}\u{64b}\u{94d}\u{64b}\u{323}\u{64b}\u{323}\u{323}\u{308}\u{323}\u{323}\u{64b}.xn--vbs2e", "err B", "err B", "err V1", "err V1"),
+  ("19959804", "ok 19959804", "ok 19959804", "ok 19959804", "ok 19959804"),
+  (".\u{627}\u{62a}\u{5d3}\u{5d2}\u{5de}\u{62e}\u{62d}.t\u{64b}\u{308}\u{300}\u{300}\u{308}\u{308}.xn--x", "err A3", "err A3", "err V1", "err V1"),
+  ("e\u{94d}\u{94d}\u{323}\u{300}\u{300}\u{64b}\u{94d}\u{300}\u{300}\u{323}\u{64b}\u{323}\u{308}\u{308}\u{94d}\u{308}", "ok xn--ksaaaa4baa3sa291fa253gaaa4588f", "ok \u{1eb9}\u{94d}\u{94d}\u{94d}\u{94d}\u{64b}\u{64b}\u{323}\u{323}\u{300}\u{300}\u{300}\u{300}\u{308}\u{308}\u{308}", "err V1", "err V1"),
+  ("\u{6f1}\u{660}\u{6f1}\u{660}.l\u{308}\u{323}\u{308}.\u{5d4}\u{5d4}\u{5de}\u{5d4}hk", "err B", "err B", "err V1", "err V1"),
+  ("", "ok ", "ok ", "err A4", "err A4"),
+  ("\u{7fc41}\u{2dbc}\u{2bfe2}\u{a6c92}.\u{5d4}\u{5de}\u{5de}\u{5d3}\u{5d3}\u{5d2}\u{5d2}.VP\u{3c2}.\u{10e152}", "err P1", "err P1", "err P1", "err P1"),
+  ("3", "ok 3", "ok 3", "ok 3", "ok 3"),
+  ("\u{8a9e}r\u{431}VYD\u{6f1}.l\u{300}\u{64b}\u{308}\u{301}\u{64b}\u{308}\u{94d}\u{308}\u{308}\u{323}\u{64b}\u{323}\u{300}\u{300}\u{301}\u{323}\u{94d}\u{94d}\u{301}\u{308}\u{308}\u{94d}\u{300}\u{64b}\u{301}\u{300}\u{308}\u{94d}\u{308}\u{301}\u{323}.IU.\u{301}\u{200d}\u{64b}", "err V5", "err V5", "err V1", "err V1"),
+  ("o\u{308}\u{94d}\u{64b}\u{323}\u{300}\u{308}\u{308}.\u{ff0e}\u{ad}.e\u{300}", "ok xn--ksapba582b8qf1u9b...xn--8ca", "ok \u{1ecd}\u{94d}\u{64b}\u{308}\u{300}\u{308}\u{308}...\u{e8}", "err V1", "err V1"),
+  ("hg\u{5d3}\u{660}gh", "err B", "err B", "err B", "err B"),
+  ("c\u{323}\u{301}\u{308}\u{64b}\u{300}\u{323}\u{301}\u{308}\u{308}\u{94d}\u{308}\u{308}\u{94d}\u{301}\u{308}\u{300}\u{301}\u{308}\u{64b}\u{64b}\u{300}\u{300}\u{64b}\u{308}\u{300}\u{94d}\u{64b}\u{64b}\u{300}\u{308}\u{301}", "ok xn--4da42haaaaadabe8ecaaabccc36ca44hk73caaaaa802uaa", "ok \u{107}\u{94d}\u{94d}\u{94d}\u{64b}\u{64b}\u{64b}\u{64b}\u{64b}\u{64b}\u{323}\u{323}\u{308}\u{300}\u{301}\u{308}\u{308}\u{308}\u{308}\u{301}\u{308}\u{300}\u{301}\u{308}\u{300}\u{300}\u{308}\u{300}\u{300}\u{308}\u{34f}\u{301}", "err V1", "err V1"),
+  ("\u{3ecea}\u{15417}\u{35799}\u{859c0}.wf", "err P1", "err P1", "err P1", "err P1"),
+  ("u\u{308}\u{323}\u{301}\u{323}\u{308}\u{64b}\u{64b}\u{301}\u{308}\u{64b}\u{323}\u{300}\u{300}\u{64b}\u{323}\u{300}\u{323}\u{308}\u{94d}\u{323}\u{300}\u{308}\u{301}\u{323}\u{94d}\u{323}\u{300}\u{94d}\u{323}", "ok xn--ksaaaaabae0dbbdb18aaaaaaaa288oaaa031raa3241n", "ok \u{1ee5}\u{94d}\u{94d}\u{94d}\u{64b}\u{64b}\u{64b}\u{64b}\u{323}\u{323}\u{323}\u{323}\u{323}\u{323}\u{323}\u{323}\u{308}\u{301}\u{308}\u{301}\u{308}\u{300}\u{300}\u{300}\u{308}\u{300}\u{308}\u{301}\u{300}", "err V1", "err V1"),
+  ("\u{10e6bf}\u{c88bb}\u{10702f}\u{47c66}\u{d51b7}.XN--ragifm6qn6.\u{200d}\u{94d}\u{64b}\u{301}\u{323}\u{308}\u{94d}\u{200c}\u{300}\u{300}\u{2028}\u{fb01}\u{fb01}\u{ff0e}\u{1f4a9}\u{627}\u{62c}MMDNxioqvpmnsapq\u{200d}pjv\u{62e}\u{62c}\u{62e}\u{627}\u{62b}\u{62d}\u{6f1}\u{661}\u{661}\u{62b}\u{62c}\u{62c}410677.xn--73r1nrky9k", "err P1", "err P1", "err V1", "err V1"),
+  ("pkgkfBN.xn--iomsr163hvod", "ok pkgkfbn.xn--iomsr163hvod", "ok pkgkfbn.\u{69e1}\u{3bde}\u{65ca}\u{3c80}", "err P1", "err P1"),
+  ("sy..-!-!.XN--h", "err P1", "err P1", "err P1", "err P1"),
+]
