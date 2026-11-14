@@ -2,7 +2,8 @@
 
 Status: Accepted (owner, 2026-11-14, on the lead's recommendation; the open question answered: a
 native-internal entry that only compiler/xo imports, no std/debug surface). Compiler and runtime only: no
-language or std surface.
+language or std surface. Built 2026-11-14 (steps 1 and 2 below): max RSS on linux/arm64 0.914
+(aiplatform test build) and 0.961 (xo self build), wall within noise.
 
 ## Context
 
@@ -98,9 +99,69 @@ and those three call sites allocated outside the region too where cheap.
    the self build with the new xo, TestRuntime*, alloc and http --ab (no change expected: they never
    enter the mode), the amd64 sample, aiplatform and self max RSS --ab on linux/arm64 host 1.
 
+## Steps 1 and 2 as built (2026-11-14)
+
+- Records: region mode swaps the thread's heap record word to a region record (its own lists,
+  magazines and bump, flagged H_RFLAG) whose central table is the region's (main central word 150).
+  A pool thread entering the mode makes its normal record first.
+- Range: a 16 GiB reservation (PROT_NONE), aligned to its size, from which region records carve
+  their chunks. Each record carries the range's tag (address >> 34), or alloc.NO_TAG (2^40) when
+  routing is off. The free fast path folds the test into the sign check it already makes:
+  `(hdr | ((p >> 34) ^ tag) - 1) < 0`. free_mt and resize push a region block onto the freeing
+  record's inbox (a CAS list) instead.
+- Hooks in xo: check_program, the parse_prefetch tasks, Builder.check_lazy, and the builder's
+  unparse of a body (region mode: trees parsed in the region must be freed into it, or the
+  footprint got worse, 2.61 against 2.25 GB); Lexer.string_lit pauses the mode (internal ops 5
+  and 6) so literals stay out.
+- Release: at the strip point in lower, region mode drops the checker's last references, then a
+  task beside the passes releases (ops 30 to 34). It takes hlock and stops the routing (every
+  record's tag to NO_TAG), drains the inboxes, then walks: a per 4 KiB unit array over the carved
+  range counts each unit's free bytes from every region list and central magazine (items taken in
+  turns by XO_HEAP_REGION_WORKERS tasks, default 4, with atomic adds), unlinks the blocks of whole
+  free units on the same workers, pools those units in address order as runs (advised a run at a
+  time on Linux, not advised on darwin), and gives every other free block to the normal central
+  lists. XO_HEAP_REGION=0 turns the region off (0352's release task as before);
+  XO_HEAP_REGION_STATS=1 prints the release's counts.
+
+Measured (Mac, aiplatform test build, cold):
+
+| release | peak footprint, region on | region off | on/off | wall |
+|---|---|---|---|---|
+| synchronous, one walker | 2.01 to 2.04 GB | 2.19 to 2.21 GB | 0.92 | +300 ms |
+| on a task, one walker | 2.118, 2.122 GB | 2.233, 2.243 GB | 0.946 | none |
+| on a task, 4 walkers | 2.051, 2.090 GB | 2.261, 2.266 GB | 0.915 | none |
+
+The region carves about 640 MB on aiplatform and pools 639 MB of it (survivors pin almost
+nothing). The walk is about 385,000 free blocks on the region record's lists and 400 MB in the
+region's central magazines; 4 walkers take it from 314 ms to 118 ms (a late release lets the
+passes map new chunks first, which is why the one-walker task release lost against the
+synchronous one). xo's self build: 0.98 (its peak is emit's).
+
+Linux/arm64, host 1, max RSS, cold, region on (4 walkers) against XO_HEAP_REGION=0, alternating,
+medians of 5 (d47611f11; the ranges do not overlap):
+
+| | region on | region off | on/off |
+|---|---|---|---|
+| aiplatform test build | 2.078 GB (2.058 to 2.124) | 2.274 GB (2.252 to 2.302) | 0.914 |
+| xo self build | 3.855 GB (3.828 to 3.900) | 4.012 GB (3.956 to 4.047) | 0.961 |
+
+Release 117 to 178 ms on aiplatform, 164 to 233 ms on the self build (the wall times of the
+alternated runs above overlap and decide nothing).
+
+`xo bench --ab` on host 1, main (719edcf26) against the region branch (517dfdd6a):
+
+| program | wall B/A | cpu B/A | max RSS B/A |
+|---|---|---|---|
+| xo's self build (stage2 self=a: each side's xo built by itself, both build main's compiler), 5 rounds | 1.006, within noise (0.993 to 1.007) | 0.996 | 0.964, better (0.947 to 0.975) |
+| bench/perf/alloc (never in region mode: the free path's folded test), 15 rounds | 0.981, within noise (0.95 to 1.041) | 0.982 | 1.0 |
+
+The self build ran with the host at load about 6 (the bench warned); a quiet rerun is a check, not
+a gate.
+
 ## Consequences
 
-- One compare on every free; a region block's free also decrements a counter.
+- One test on every free, folded into the sign test the fast path already makes (alloc and an
+  HTTP keep-alive server within noise under --ab).
 - A survivor left in region mode by mistake pins its chunk (4 MiB) until it is freed: a missed
   survivor costs memory, never correctness. The probe of step 0 and XO_HEAPSTATS (pinned region
   chunks) watch it.

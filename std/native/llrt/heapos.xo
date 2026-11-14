@@ -627,6 +627,946 @@ pub fn trim_thread(explicit: Bool) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Free small units (decision 0630's pool, filled by decision 0633's region
+// release): a unit is PUNIT bytes, PUNIT aligned. The release gives the
+// region's whole free units, in address order as runs, to the central pool
+// (CPOOL), from which heap_grow takes a new bump run for any class before it
+// carves a chunk (cabi.xo). The records' own pools (H_PPOOL) are kept for a
+// later filler; nothing fills them now.
+
+/// A unit: 4 KiB, Linux's page (a quarter of darwin's 16 KiB); the
+/// largest small block (8 KiB with its prefix) spans up to three.
+const PUNIT = 4096
+const PUNIT_SH = 12
+/// The central table's word that turns the pool off (XO_PAGE_POOL=0).
+const POOL_OFF = 1088
+/// The central table's count of units every record's trims pooled (word
+/// index: POOL_OFF + 8 is byte 1096).
+const POOLED_I = 137
+
+/// XO_PAGE_POOL=0: the release pools no units (its blocks all go back to
+/// the central lists).
+pub fn set_pool_off() {
+  let cen = rt.mem_load(heaps_head(), H_CENTRAL, 8)
+  rt.mem_store(cen, POOL_OFF, 1, 8)
+}
+
+/// Whether the pool runs here: darwin, and Linux with pages that a unit
+/// covers exactly (pg divides PUNIT; pg 0, the page size not known, skips).
+fn pool_on(pg: Int) -> Bool {
+  if !pages_on() {
+    return false
+  }
+  let h0 = heaps_head()
+  if h0 == 0 {
+    return false
+  }
+  let cen = rt.mem_load(h0, H_CENTRAL, 8)
+  if cen == 0 || rt.mem_load(cen, POOL_OFF, 8) != 0 {
+    return false
+  }
+  match target.os {
+    TargetOs.Darwin => true
+    TargetOs.Linux => pg > 0 && pg <= PUNIT && PUNIT % pg == 0
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
+  }
+}
+
+
+/// The central table's pool (decision 0630): its array, count and capacity
+/// (bytes 1104, 1112, 1120), under the lock word of pseudo class CPOOL_C.
+const CPOOL = 1104
+const CPOOL_C = 95
+
+/// The longest run of units an entry holds (its low bits).
+const RUN_MAX = 4095
+
+/// arr[n0..n) (sorted unit addresses) rewritten in place as runs from
+/// n0: the new count.
+fn pool_runs(arr: Int, n0: Int, n: Int) -> Int {
+  var w = n0
+  var i = n0
+  while i < n {
+    let a = rt.mem_load(arr, i.wrapping_shl(3), 8)
+    var len = 1
+    while i.wrapping_add(len) < n && len < RUN_MAX && rt.mem_load(arr, i.wrapping_add(len).wrapping_shl(3), 8) == a.wrapping_add(len.wrapping_shl(PUNIT_SH)) {
+      len = len.wrapping_add(1)
+    }
+    rt.mem_store(arr, w.wrapping_shl(3), a | len, 8)
+    w = w.wrapping_add(1)
+    i = i.wrapping_add(len)
+  }
+  w
+}
+
+/// The entry of pool arr (count at cnt) with a run of need units or more,
+/// looked for among the last 64, removed: the entry, or 0.
+fn pool_pick(arr: Int, cnt: Int, need: Int) -> Int {
+  let k = rt.mem_load(cnt, 0, 8)
+  var i = k
+  let lo = if k > 64 { k.wrapping_sub(64) } else { 0 }
+  while i > lo {
+    i = i.wrapping_sub(1)
+    let e = rt.mem_load(arr, i.wrapping_shl(3), 8)
+    if e & RUN_MAX >= need {
+      rt.mem_store(arr, i.wrapping_shl(3), rt.mem_load(arr, k.wrapping_sub(1).wrapping_shl(3), 8), 8)
+      rt.mem_store(cnt, 0, k.wrapping_sub(1), 8)
+      return e
+    }
+  }
+  0
+}
+
+/// Whether the pool at base + off has room for nw more units, grown (a new
+/// mapping, the old copied) when not; the central pool's lock held while
+/// it grows.
+fn pool_room(base: Int, off: Int, nw: Int) -> Bool {
+  let central = off == CPOOL
+  let cen = if central { base } else { 0 }
+  if central {
+    clock(cen, CPOOL_C)
+  }
+  let n0 = rt.mem_load(base, off.wrapping_add(8), 8)
+  let cap0 = rt.mem_load(base, off.wrapping_add(16), 8)
+  var ok = true
+  if n0.wrapping_add(nw) > cap0 {
+    var cap = if cap0 == 0 { 2048 } else { cap0 }
+    while cap < n0.wrapping_add(nw) {
+      cap = cap.wrapping_shl(1)
+    }
+    let a2 = map_os(cap.wrapping_shl(3))
+    if a2 == 0 {
+      ok = false
+    } else {
+      let arr = rt.mem_load(base, off, 8)
+      var k = 0
+      while k < n0 {
+        rt.mem_store(a2, k.wrapping_shl(3), rt.mem_load(arr, k.wrapping_shl(3), 8), 8)
+        k = k.wrapping_add(1)
+      }
+      if arr != 0 {
+        unmap_os(arr, cap0.wrapping_shl(3))
+      }
+      rt.mem_store(base, off, a2, 8)
+      rt.mem_store(base, off.wrapping_add(16), cap, 8)
+    }
+  }
+  if central {
+    cunlock(cen, CPOOL_C)
+  }
+  ok
+}
+
+/// heap_grow's first source once the bump chunk cannot grow in place: a
+/// pooled unit, the record's own first, then the central pool's, as
+/// record h's bump run (decision 0630). The chunk's reservation is dropped
+/// (H_BLIM 1), so extend never grows the unit.
+pub fn pool_take(h: Int, n: Int) -> Bool {
+  let need = alloc.class_size(alloc.class_of_any(n)).wrapping_add(8).wrapping_add(PUNIT).wrapping_sub(1).shr_logical(PUNIT_SH)
+  var e = 0
+  if rt.mem_load(h, H_PPOOLN, 8) != 0 {
+    e = pool_pick(rt.mem_load(h, H_PPOOL, 8), h.wrapping_add(H_PPOOLN), need)
+  }
+  if e == 0 {
+    let cen = rt.mem_load(h, H_CENTRAL, 8)
+    if cen == 0 || rt.mem_load(cen, CPOOL.wrapping_add(8), 8) == 0 {
+      return false
+    }
+    clock(cen, CPOOL_C)
+    e = pool_pick(rt.mem_load(cen, CPOOL, 8), cen.wrapping_add(CPOOL).wrapping_add(8), need)
+    cunlock(cen, CPOOL_C)
+    if e == 0 {
+      return false
+    }
+  }
+  let a = e.wrapping_sub(e & RUN_MAX)
+  let len = e & RUN_MAX
+  rt.mem_store(h, 24, a, 8)
+  rt.mem_store(h, 32, a.wrapping_add(len.wrapping_shl(PUNIT_SH)), 8)
+  let _t = rt.slot_add(rt.mem_load(heaps_head(), H_CENTRAL, 8), 141, len, RELAXED)
+  rt.mem_store(h, H_BLIM, 1, 8)
+  true
+}
+
+/// The units taken from the pool so far (XO_HEAPSTATS).
+pub fn taken_units() -> Int {
+  rt.slot_load(rt.mem_load(heaps_head(), H_CENTRAL, 8), 141, RELAXED)
+}
+
+pub fn pooled_units() -> Int {
+  let h0 = heaps_head()
+  if h0 == 0 {
+    return 0
+  }
+  let cen = rt.mem_load(h0, H_CENTRAL, 8)
+  if cen == 0 { 0 } else { rt.slot_load(cen, POOLED_I, RELAXED) }
+}
+
+// ---------------------------------------------------------------------------
+// Decision 0633: a heap region for a phase whose allocations die together
+// (xo's front end). A thread in region mode allocates from its region
+// record (its thread local heap word swapped), whose chunks, free lists and
+// central lists (a table of their own) are the region's alone. The release,
+// once no thread is in region mode, walks every region record's lists and
+// the region's central magazines as one source: whole free 4 KiB units go
+// to the system and to the central pool any record's next bump run takes
+// first (decision 0630's walk and pool), and every other free block of the
+// region goes to the normal central lists as magazines, so the region keeps
+// nothing. A block allocated in the region and freed out of it goes to the
+// freeing thread's normal record (no routing by address yet). Only
+// memory placement changes: a block is a block on any record's lists.
+
+/// The main central table's words (indexes) for the region: its central
+/// table, the head of its records' list, the threads in region mode, the
+/// units its releases pooled, the blocks they gave back, the releases.
+const RGN_CEN_I = 150
+const RGN_LIST_I = 151
+const RGN_ACTIVE_I = 152
+const RGN_POOLED_I = 153
+const RGN_BACK_I = 154
+const RGN_REL_I = 155
+/// The last release's walk: free bytes on the records' lists, on the
+/// region's central magazines, in bump rests, units touched, records.
+const RGN_FB_I = 156
+const RGN_CFB_I = 157
+const RGN_BUMP_I = 158
+const RGN_TOUCH_I = 159
+const RGN_NREC_I = 161
+/// The last release's blocks taken from the records' inboxes.
+const RGN_INBOX_I = 165
+
+fn main_central() -> Int {
+  let h0 = heaps_head()
+  if h0 == 0 { 0 } else { rt.mem_load(h0, H_CENTRAL, 8) }
+}
+
+/// Whether the region can run here: per thread records (a program with
+/// threads), page blocks on, no sanitizer, --race or user mode.
+fn region_ok() -> Bool {
+  let cen0 = main_central()
+  pages_on() && obj.solo_heap() == 0 && cen0 != 0 && rt.mem_load(cen0, RGN_OFF, 8) == 0
+}
+
+/// The main central table's byte that turns the region off
+/// (XO_HEAP_REGION=0): region_on does nothing.
+const RGN_OFF = 1280
+
+pub fn set_region_off() {
+  let cen0 = main_central()
+  if cen0 != 0 {
+    rt.mem_store(cen0, RGN_OFF, 1, 8)
+  }
+}
+
+/// The region record of normal record h, made (and listed) on first use;
+/// the region's central table on the first.
+fn region_record(h: Int) -> Int {
+  let cen0 = main_central()
+  hlock_take()
+  var rc = rt.slot_load(cen0, RGN_CEN_I, ACQUIRE)
+  if rc == 0 {
+    rc = map(8192)
+    region_reserve(cen0)
+    rt.slot_store(cen0, RGN_CEN_I, rc, RELEASE)
+  }
+  let r = map(rt.mem_load(rt.static_word(W_HSIZE), 0, 8))
+  mag_caps(r)
+  rt.mem_store(r, H_MID_MAX, rt.mem_load(h, H_MID_MAX, 8), 8)
+  rt.mem_store(r, H_PAGES, rt.mem_load(h, H_PAGES, 8), 8)
+  rt.mem_store(r, H_CENTRAL, rc, 8)
+  rt.mem_store(r, H_COUNT, rt.mem_load(h, H_COUNT, 8), 8)
+  rt.mem_store(r, H_TKEY, rt.mem_load(h, H_TKEY, 8), 8)
+  let prof = rt.mem_load(h, H_PROF, 8)
+  rt.mem_store(r, H_PROF, prof, 8)
+  rt.mem_store(r, H_SAMPLE_AT, if prof != 0 { 0 } else { NEVER }, 8)
+  rt.mem_store(r, H_RGN, h, 8)
+  rt.mem_store(r, H_RFLAG, 1, 8)
+  // a region record keeps the region's blocks it frees on its own lists
+  rt.mem_store(r, H_RTAG, alloc.NO_TAG, 8)
+  rt.mem_store(r, H_RNEXT, rt.slot_load(cen0, RGN_LIST_I, RELAXED), 8)
+  rt.slot_store(cen0, RGN_LIST_I, r, RELEASE)
+  rt.mem_store(h, H_RGN, r, 8)
+  hlock_give()
+  r
+}
+
+/// The calling thread enters region mode: 1 when it did (or already was),
+/// 0 when the region cannot run here.
+pub fn region_on() -> Int {
+  if !region_ok() {
+    return 0
+  }
+  // a pool thread's record is made on its first allocation: made here
+  // when the task enters region mode first
+  let h = thread_heap()
+  if rt.mem_load(h, H_RFLAG, 8) != 0 {
+    return 1
+  }
+  var r = rt.mem_load(h, H_RGN, 8)
+  if r == 0 {
+    r = region_record(h)
+  }
+  let _a = rt.slot_add(main_central(), RGN_ACTIVE_I, 1, RELAXED)
+  rt.tlocal_set(TLS_HEAP, r)
+  1
+}
+
+/// The calling thread leaves region mode (nothing when it is not in it).
+pub fn region_off() {
+  let r = rt.tlocal_get(TLS_HEAP)
+  if r == 0 || rt.mem_load(r, H_RFLAG, 8) == 0 {
+    return
+  }
+  rt.tlocal_set(TLS_HEAP, rt.mem_load(r, H_RGN, 8))
+  let _a = rt.slot_add(main_central(), RGN_ACTIVE_I, -1, RELAXED)
+}
+
+/// Region mode paused on the calling thread for allocations that outlive
+/// the region (string literals the SSA keeps): 1 when it was in region
+/// mode (region_resume then goes back), else 0. Not counted: a pause and
+/// its resume run on one thread with no yield between.
+pub fn region_pause() -> Int {
+  let r = rt.tlocal_get(TLS_HEAP)
+  if r == 0 || rt.mem_load(r, H_RFLAG, 8) == 0 {
+    return 0
+  }
+  rt.tlocal_set(TLS_HEAP, rt.mem_load(r, H_RGN, 8))
+  1
+}
+
+pub fn region_resume() {
+  let h = rt.tlocal_get(TLS_HEAP)
+  if h != 0 && rt.mem_load(h, H_RFLAG, 8) == 0 && rt.mem_load(h, H_RGN, 8) != 0 {
+    rt.tlocal_set(TLS_HEAP, rt.mem_load(h, H_RGN, 8))
+  }
+}
+
+/// The region's address range (decision 0633): 2^RGN_SH bytes aligned to
+/// their size, reserved without access when the first region record is
+/// made; region records carve their chunks from it, so a block's address
+/// tells whether it is the region's (p >> RGN_SH is the range's tag).
+const RGN_SH = alloc.RGN_SH
+const RGN_BASE_I = 162
+const RGN_NEXT_I = 163
+const RGN_TAG_I = 164
+
+fn region_reserve(cen0: Int) {
+  let size = (1).wrapping_shl(RGN_SH)
+  var m = 0
+  match target.os {
+    TargetOs.Linux => {
+      // PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE
+      m = linux.mmap(0, size.wrapping_shl(1), 0, 16418, -1, 0)
+      if m < 0 && m > -4096 {
+        m = 0
+      }
+    }
+    TargetOs.Darwin => {
+      m = sys_darwin.mmap(0, size.wrapping_shl(1), 0, 4098, -1, 0)
+      if m == -1 {
+        m = 0
+      }
+    }
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
+  }
+  if m == 0 {
+    return
+  }
+  let a = m.wrapping_add(size).wrapping_sub(1) & (0).wrapping_sub(size)
+  if a > m {
+    unmap_os(m, a.wrapping_sub(m))
+  }
+  let end = m.wrapping_add(size.wrapping_shl(1))
+  if end > a.wrapping_add(size) {
+    unmap_os(a.wrapping_add(size), end.wrapping_sub(a.wrapping_add(size)))
+  }
+  rt.slot_store(cen0, RGN_BASE_I, a, RELAXED)
+  rt.slot_store(cen0, RGN_NEXT_I, a, RELAXED)
+  rt.slot_store(cen0, RGN_TAG_I, a.shr_logical(RGN_SH), RELEASE)
+  // every normal record routes the region's blocks from now (the caller
+  // holds the record list's lock, so no record is added meanwhile)
+  region_route(a.shr_logical(RGN_SH))
+}
+
+/// Sets every normal record's routing tag (NO_TAG stops the routing).
+fn region_route(tag: Int) {
+  var h = heaps_head()
+  while h != 0 {
+    rt.slot_store(h.wrapping_add(H_RTAG), 0, tag, RELEASE)
+    h = rt.mem_load(h, H_NEXT, 8)
+  }
+}
+
+/// A region record's new chunk from the range: whether there was room.
+fn region_chunk(h: Int) -> Bool {
+  let cen0 = main_central()
+  let base = rt.slot_load(cen0, RGN_BASE_I, ACQUIRE)
+  if base == 0 {
+    return false
+  }
+  let c = rt.slot_add(cen0, RGN_NEXT_I, CHUNK, RELAXED)
+  if c.wrapping_add(CHUNK).wrapping_sub(base) > (1).wrapping_shl(RGN_SH) {
+    return false
+  }
+  set_prot(c, CHUNK, 3)
+  mapped(CHUNK)
+  let _n = rt.slot_add(rt.static_word(W_CHUNKS), 0, 1, RELAXED)
+  rt.mem_store(h, 24, c, 8)
+  rt.mem_store(h, 32, c.wrapping_add(CHUNK), 8)
+  rt.mem_store(h, H_BLIM, 1, 8)
+  true
+}
+
+/// Whether the calling thread is in region mode.
+pub fn region_in() -> Bool {
+  let r = rt.tlocal_get(TLS_HEAP)
+  r != 0 && rt.mem_load(r, H_RFLAG, 8) != 0
+}
+
+/// A region counter (RGN_*_I) for the statistics and the tests.
+pub fn region_stat(i: Int) -> Int {
+  let cen0 = main_central()
+  if cen0 == 0 { 0 } else { rt.slot_load(cen0, i, RELAXED) }
+}
+
+/// The next block of a class's list (a page block's link is in its
+/// chunk's table).
+fn blk_next(pg: Bool, p: Int) -> Int {
+  if pg { rt.mem_load(pword(p, PT_LINK), 0, 8) } else { rt.mem_load(p, 0, 8) }
+}
+
+fn blk_set_next(pg: Bool, p: Int, n: Int) {
+  if pg { rt.mem_store(pword(p, PT_LINK), 0, n, 8) } else { rt.mem_store(p, 0, n, 8) }
+}
+
+/// Puts magazine m (a list of class c) on central table cen's list.
+fn central_push(cen: Int, c: Int, pg: Bool, m: Int) {
+  clock(cen, c)
+  if pg {
+    rt.mem_store(pword(m, PT_CLINK), 0, rt.slot_load(cen, c, RELAXED), 8)
+  } else {
+    rt.mem_store(m, 8, rt.slot_load(cen, c, RELAXED), 8)
+  }
+  rt.slot_store(cen, c, m, RELAXED)
+  cunlock(cen, c)
+}
+
+/// Gives list p0 of class c to central table cen as magazines of the
+/// class's size (cap blocks each, the last shorter); the blocks given.
+fn give_list(cen: Int, c: Int, pg: Bool, cap: Int, p0: Int) -> Int {
+  var n = 0
+  var p = p0
+  while p != 0 {
+    let m = p
+    var k = 1
+    while k < cap && blk_next(pg, p) != 0 {
+      p = blk_next(pg, p)
+      k = k.wrapping_add(1)
+    }
+    let next = blk_next(pg, p)
+    blk_set_next(pg, p, 0)
+    central_push(cen, c, pg, m)
+    n = n.wrapping_add(k)
+    p = next
+  }
+  n
+}
+
+/// The release (decision 0633 step 1): when no thread is in region mode,
+/// the region's whole free units to the system and the central pool, its
+/// other free blocks to the normal central lists; the units pooled, or -1
+/// when a thread is still in region mode (nothing done).
+pub fn region_release() -> Int {
+  let b = region_rel_begin()
+  if b <= 0 {
+    return b
+  }
+  region_rel_cover()
+  if region_rel_mid() != 0 {
+    region_rel_unlink()
+  }
+  region_rel_finish()
+}
+
+/// The release's control block (word RGN_CTL_I of the main central
+/// table, made by region_rel_begin): its words.
+const RC_ARR = 0
+const RC_ASZ = 1
+const RC_BASE = 2
+const RC_NU = 3
+const RC_NITEMS = 4
+const RC_NEXT = 5
+const RC_NEXT2 = 6
+const RC_ITEMS = 7
+const RC_ISZ = 8
+const RC_FB0 = 9
+const RC_FB = 10
+const RC_NW = 11
+const RC_RC = 12
+const RC_WORDS = 16
+const RGN_CTL_I = 169
+/// An item of the release's work: a list's head, its class, its kind
+/// (IK_FREE a record's class list, IK_MAG a record's spare magazine,
+/// IK_CEN one of the region's central magazines) and for a record's the
+/// address of its class's free list words (fl).
+const IK_FREE = 0
+const IK_MAG = 1
+const IK_CEN = 2
+const ITEM_SH = 5
+
+/// The release's first step (decision 0633, op 30): the routing stops and
+/// the inboxes drain (region_release's order), then the work of the walk
+/// is listed: every record's class lists and spare magazines and every
+/// central magazine of the region, one item each, which region_rel_cover
+/// and region_rel_unlink take in turns from any number of tasks. 1 when
+/// that work is to do, 0 when the release is done (nothing to pool: the
+/// free blocks were given back), -1 while a thread is in region mode.
+pub fn region_rel_begin() -> Int {
+  let cen0 = main_central()
+  if cen0 == 0 {
+    return 0
+  }
+  let rc = rt.slot_load(cen0, RGN_CEN_I, ACQUIRE)
+  if rc == 0 {
+    return 0
+  }
+  if rt.slot_load(cen0, RGN_ACTIVE_I, ACQUIRE) != 0 {
+    return -1
+  }
+  if rt.slot_load(cen0, RGN_CTL_I, ACQUIRE) != 0 {
+    return -1
+  }
+  let _r = rt.slot_add(cen0, RGN_REL_I, 1, RELAXED)
+  // the routing stops (the region's blocks freed from now go to normal
+  // lists: the pool's units are the normal heap's), then each normal
+  // record's inbox goes onto its region record's lists. A free that read
+  // the tag just before leaves its block in an inbox: never on a list
+  // the walk reads, so its unit is not pooled
+  hlock_take()
+  region_route(alloc.NO_TAG)
+  var h = heaps_head()
+  var inbox = 0
+  while h != 0 {
+    var p = rt.slot_swap(h.wrapping_add(H_RINBOX), 0, 0, ACQUIRE)
+    var r0 = rt.mem_load(h, H_RGN, 8)
+    if r0 == 0 && p != 0 {
+      r0 = rt.slot_load(cen0, RGN_LIST_I, ACQUIRE)
+    }
+    while p != 0 {
+      let next = rt.mem_load(p, 0, 8)
+      let c = rt.mem_load(p.wrapping_sub(8), 0, 8)
+      let fl = r0.wrapping_add(c.wrapping_shl(3))
+      rt.mem_store(p, 0, rt.mem_load(fl, H_FREE_LISTS, 8), 8)
+      rt.mem_store(fl, H_FREE_LISTS, p, 8)
+      rt.mem_store(fl, H_NFREE, rt.mem_load(fl, H_NFREE, 8).wrapping_add(1), 8)
+      inbox = inbox.wrapping_add(1)
+      p = next
+    }
+    h = rt.mem_load(h, H_NEXT, 8)
+  }
+  hlock_give()
+  rt.slot_store(cen0, RGN_INBOX_I, inbox, RELAXED)
+  let pg0 = match target.os {
+    TargetOs.Linux => linux.auxval(linux.AT_PAGESZ)
+    _ => 0
+  }
+  let base = rt.slot_load(cen0, RGN_BASE_I, ACQUIRE)
+  let nu = if base == 0 { 0 } else { rt.slot_load(cen0, RGN_NEXT_I, ACQUIRE).wrapping_sub(base).shr_logical(PUNIT_SH) }
+  if !pool_on(pg0) || nu <= 0 {
+    region_give(cen0, rc)
+    return 0
+  }
+  let head = rt.slot_load(cen0, RGN_LIST_I, ACQUIRE)
+  var n = 0
+  var r = head
+  while r != 0 {
+    n = n.wrapping_add(PAGE_CLASS.wrapping_sub(1).wrapping_shl(1))
+    r = rt.mem_load(r, H_RNEXT, 8)
+  }
+  for c in 1..PAGE_CLASS {
+    var m = rt.slot_load(rc, c, RELAXED)
+    while m != 0 {
+      n = n.wrapping_add(1)
+      m = alloc.cnext(false, m)
+    }
+  }
+  let asz = nu.wrapping_shl(3)
+  let isz = n.wrapping_shl(ITEM_SH).wrapping_add(8)
+  let ctl = map_os(RC_WORDS.wrapping_shl(3))
+  let arr0 = if ctl == 0 { 0 } else { map_os(asz) }
+  let items = if arr0 == 0 { 0 } else { map_os(isz) }
+  if items == 0 {
+    if arr0 != 0 {
+      unmap_os(arr0, asz)
+    }
+    if ctl != 0 {
+      unmap_os(ctl, RC_WORDS.wrapping_shl(3))
+    }
+    region_give(cen0, rc)
+    return 0
+  }
+  var i = 0
+  var bump = 0
+  var nrec = 0
+  r = head
+  while r != 0 {
+    for c in 1..PAGE_CLASS {
+      let fl = r.wrapping_add(c.wrapping_shl(3))
+      i = item_put(items, i, rt.mem_load(fl, H_FREE_LISTS, 8), c, IK_FREE, fl)
+      i = item_put(items, i, rt.mem_load(fl, H_MAG, 8), c, IK_MAG, fl)
+    }
+    bump = bump.wrapping_add(ra_range(arr0, base, nu, rt.mem_load(r, 24, 8), rt.mem_load(r, 32, 8)))
+    nrec = nrec.wrapping_add(1)
+    r = rt.mem_load(r, H_RNEXT, 8)
+  }
+  for c in 1..PAGE_CLASS {
+    var m = rt.slot_load(rc, c, RELAXED)
+    while m != 0 {
+      let next = alloc.cnext(false, m)
+      i = item_put(items, i, m, c, IK_CEN, 0)
+      m = next
+    }
+  }
+  rt.slot_store(cen0, RGN_BUMP_I, bump, RELAXED)
+  rt.slot_store(cen0, RGN_NREC_I, nrec, RELAXED)
+  rt.slot_store(ctl, RC_ARR, arr0, RELAXED)
+  rt.slot_store(ctl, RC_ASZ, asz, RELAXED)
+  rt.slot_store(ctl, RC_BASE, base, RELAXED)
+  rt.slot_store(ctl, RC_NU, nu, RELAXED)
+  rt.slot_store(ctl, RC_NITEMS, i, RELAXED)
+  rt.slot_store(ctl, RC_ITEMS, items, RELAXED)
+  rt.slot_store(ctl, RC_ISZ, isz, RELAXED)
+  rt.slot_store(ctl, RC_RC, rc, RELAXED)
+  rt.slot_store(cen0, RGN_CTL_I, ctl, RELEASE)
+  1
+}
+
+fn item_put(items: Int, i: Int, head: Int, c: Int, kind: Int, fl: Int) -> Int {
+  let at = i.wrapping_shl(ITEM_SH)
+  rt.mem_store(items, at, head, 8)
+  rt.mem_store(items, at.wrapping_add(8), c, 8)
+  rt.mem_store(items, at.wrapping_add(16), kind, 8)
+  rt.mem_store(items, at.wrapping_add(24), fl, 8)
+  i.wrapping_add(1)
+}
+
+fn rel_ctl() -> Int {
+  let cen0 = main_central()
+  if cen0 == 0 { 0 } else { rt.slot_load(cen0, RGN_CTL_I, ACQUIRE) }
+}
+
+/// The walk's cover (op 31), on any number of tasks at once: items taken
+/// in turns, each list's free bytes added to its units' (atomically: two
+/// lists' blocks share a unit).
+pub fn region_rel_cover() {
+  let ctl = rel_ctl()
+  if ctl == 0 {
+    return
+  }
+  let arr = rt.slot_load(ctl, RC_ARR, RELAXED)
+  let base = rt.slot_load(ctl, RC_BASE, RELAXED)
+  let nu = rt.slot_load(ctl, RC_NU, RELAXED)
+  let n = rt.slot_load(ctl, RC_NITEMS, RELAXED)
+  let items = rt.slot_load(ctl, RC_ITEMS, RELAXED)
+  var fb0 = 0
+  var fb = 0
+  var i = rt.slot_add(ctl, RC_NEXT, 1, RELAXED)
+  while i < n {
+    let at = i.wrapping_shl(ITEM_SH)
+    let c = rt.mem_load(items, at.wrapping_add(8), 8)
+    let k = ra_cover(arr, base, nu, rt.mem_load(items, at, 8), c)
+    if rt.mem_load(items, at.wrapping_add(16), 8) == IK_CEN { fb = fb.wrapping_add(k) } else { fb0 = fb0.wrapping_add(k) }
+    i = rt.slot_add(ctl, RC_NEXT, 1, RELAXED)
+  }
+  let _a = rt.slot_add(ctl, RC_FB0, fb0, RELAXED)
+  let _b = rt.slot_add(ctl, RC_FB, fb, RELAXED)
+}
+
+/// After every cover (op 32): the whole free units counted; 1 when they
+/// are to be pooled (region_rel_unlink takes their blocks off the lists),
+/// else 0.
+pub fn region_rel_mid() -> Int {
+  let cen0 = main_central()
+  let ctl = rel_ctl()
+  if ctl == 0 {
+    return 0
+  }
+  let arr = rt.slot_load(ctl, RC_ARR, RELAXED)
+  let nu = rt.slot_load(ctl, RC_NU, RELAXED)
+  var nw = 0
+  var touched = 0
+  for u in 0..nu {
+    let v = rt.mem_load(arr, u.wrapping_shl(3), 8)
+    if v != 0 {
+      touched = touched.wrapping_add(1)
+      if v == PUNIT {
+        nw = nw.wrapping_add(1)
+      }
+    }
+  }
+  rt.slot_store(cen0, RGN_FB_I, rt.slot_load(ctl, RC_FB0, RELAXED), RELAXED)
+  rt.slot_store(cen0, RGN_CFB_I, rt.slot_load(ctl, RC_FB, RELAXED), RELAXED)
+  rt.slot_store(cen0, RGN_TOUCH_I, touched, RELAXED)
+  if nw == 0 || !pool_room(cen0, CPOOL, nw) {
+    nw = 0
+  }
+  rt.slot_store(ctl, RC_NW, nw, RELEASE)
+  if nw > 0 { 1 } else { 0 }
+}
+
+/// The walk's unlink (op 33), on any number of tasks at once: each list
+/// without the blocks that touch a whole free unit, its new head kept in
+/// its item (region_rel_finish puts it back).
+pub fn region_rel_unlink() {
+  let ctl = rel_ctl()
+  if ctl == 0 {
+    return
+  }
+  let arr = rt.slot_load(ctl, RC_ARR, RELAXED)
+  let base = rt.slot_load(ctl, RC_BASE, RELAXED)
+  let nu = rt.slot_load(ctl, RC_NU, RELAXED)
+  let n = rt.slot_load(ctl, RC_NITEMS, RELAXED)
+  let items = rt.slot_load(ctl, RC_ITEMS, RELAXED)
+  var i = rt.slot_add(ctl, RC_NEXT2, 1, RELAXED)
+  while i < n {
+    let at = i.wrapping_shl(ITEM_SH)
+    let c = rt.mem_load(items, at.wrapping_add(8), 8)
+    let m = rt.mem_load(items, at, 8)
+    // a central magazine's link to the next (word 1 of its head) is
+    // rebuilt by the finish from the items' order
+    rt.mem_store(items, at, ra_unlink(arr, base, nu, m, c), 8)
+    i = rt.slot_add(ctl, RC_NEXT2, 1, RELAXED)
+  }
+}
+
+/// The release's last step (op 34), after every unlink: the lists' new
+/// heads put back, the whole free units pooled (on Linux advised a run at
+/// a time) in address order, the region's other free blocks given to the
+/// normal central lists; the units pooled.
+pub fn region_rel_finish() -> Int {
+  let cen0 = main_central()
+  let ctl = rel_ctl()
+  if ctl == 0 {
+    return 0
+  }
+  let arr0 = rt.slot_load(ctl, RC_ARR, RELAXED)
+  let base = rt.slot_load(ctl, RC_BASE, RELAXED)
+  let nu = rt.slot_load(ctl, RC_NU, RELAXED)
+  let n = rt.slot_load(ctl, RC_NITEMS, RELAXED)
+  let items = rt.slot_load(ctl, RC_ITEMS, RELAXED)
+  let rc = rt.slot_load(ctl, RC_RC, RELAXED)
+  let nw = rt.slot_load(ctl, RC_NW, ACQUIRE)
+  if nw > 0 {
+    // the heads back: a record's lists (its free list's count again), the
+    // central magazines chained per class in their old order
+    var prev = 0
+    var pc = 0
+    for i in 0..n {
+      let at = i.wrapping_shl(ITEM_SH)
+      let head = rt.mem_load(items, at, 8)
+      let c = rt.mem_load(items, at.wrapping_add(8), 8)
+      let kind = rt.mem_load(items, at.wrapping_add(16), 8)
+      let fl = rt.mem_load(items, at.wrapping_add(24), 8)
+      if kind == IK_FREE {
+        rt.mem_store(fl, H_FREE_LISTS, head, 8)
+        var k = 0
+        var p = head
+        while p != 0 {
+          k = k.wrapping_add(1)
+          p = rt.mem_load(p, 0, 8)
+        }
+        rt.mem_store(fl, H_NFREE, k, 8)
+      } else if kind == IK_MAG {
+        rt.mem_store(fl, H_MAG, head, 8)
+      } else {
+        if c != pc {
+          if prev != 0 {
+            rt.mem_store(prev, 8, 0, 8)
+          }
+          rt.slot_store(rc, c, 0, RELAXED)
+          prev = 0
+          pc = c
+        }
+        if head != 0 {
+          if prev == 0 { rt.slot_store(rc, c, head, RELAXED) } else { rt.mem_store(prev, 8, head, 8) }
+          prev = head
+        }
+      }
+    }
+    if prev != 0 {
+      rt.mem_store(prev, 8, 0, 8)
+    }
+    // the bump chunks' rests are given up (their whole units pooled): a
+    // record's next allocation carves a new chunk
+    var r = rt.slot_load(cen0, RGN_LIST_I, ACQUIRE)
+    while r != 0 {
+      rt.mem_store(r, 24, 0, 8)
+      rt.mem_store(r, 32, 0, 8)
+      rt.mem_store(r, H_BLIM, 0, 8)
+      r = rt.mem_load(r, H_RNEXT, 8)
+    }
+    clock(cen0, CPOOL_C)
+    let arr = rt.mem_load(cen0, CPOOL, 8)
+    var k = rt.mem_load(cen0, CPOOL.wrapping_add(8), 8)
+    let k0 = k
+    var run = 0
+    var rlen = 0
+    for u in 0..nu {
+      if rt.mem_load(arr0, u.wrapping_shl(3), 8) == PUNIT {
+        let a = base.wrapping_add(u.wrapping_shl(PUNIT_SH))
+        if rlen > 0 && run.wrapping_add(rlen.wrapping_shl(PUNIT_SH)) == a {
+          rlen = rlen.wrapping_add(1)
+        } else {
+          advise_run(run, rlen)
+          run = a
+          rlen = 1
+        }
+        rt.mem_store(arr, k.wrapping_shl(3), a, 8)
+        k = k.wrapping_add(1)
+      }
+    }
+    advise_run(run, rlen)
+    // already in address order: neighbours merged into runs
+    k = pool_runs(arr, k0, k)
+    rt.mem_store(cen0, CPOOL.wrapping_add(8), k, 8)
+    cunlock(cen0, CPOOL_C)
+    let _p = rt.slot_add(cen0, RGN_POOLED_I, nw, RELAXED)
+    let _q = rt.slot_add(cen0, POOLED_I, nw, RELAXED)
+  }
+  region_give(cen0, rc)
+  unmap_os(arr0, rt.slot_load(ctl, RC_ASZ, RELAXED))
+  unmap_os(items, rt.slot_load(ctl, RC_ISZ, RELAXED))
+  rt.slot_store(cen0, RGN_CTL_I, 0, RELEASE)
+  unmap_os(ctl, RC_WORDS.wrapping_shl(3))
+  nw
+}
+
+/// [a, a + len units) advised away on Linux (one call a run: a call a
+/// unit was 160,000 calls for the gcp aiplatform client's release).
+fn advise_run(a: Int, len: Int) {
+  if len <= 0 {
+    return
+  }
+  match target.os {
+    TargetOs.Linux => {
+      let _a = linux.madvise(a, len.wrapping_shl(PUNIT_SH), 4)
+    }
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
+  }
+}
+
+/// Every free block of the region left (each record's lists and spare
+/// magazines, the region's central magazines) to the normal central lists.
+fn region_give(cen0: Int, rc: Int) {
+  var back = 0
+  var r = rt.slot_load(cen0, RGN_LIST_I, ACQUIRE)
+  while r != 0 {
+    for c in 1..NCLASS1 {
+      let pg = c >= PAGE_CLASS && rt.mem_load(r, H_PAGES, 8) != 0
+      let cap = rt.mem_load(r, H_MAG_CAP.wrapping_add(c.wrapping_shl(3)), 8)
+      let fl = r.wrapping_add(c.wrapping_shl(3))
+      back = back.wrapping_add(give_list(cen0, c, pg, cap, rt.mem_load(fl, H_FREE_LISTS, 8)))
+      back = back.wrapping_add(give_list(cen0, c, pg, cap, rt.mem_load(fl, H_MAG, 8)))
+      rt.mem_store(fl, H_FREE_LISTS, 0, 8)
+      rt.mem_store(fl, H_NFREE, 0, 8)
+      rt.mem_store(fl, H_MAG, 0, 8)
+    }
+    r = rt.mem_load(r, H_RNEXT, 8)
+  }
+  for c in 1..NCLASS1 {
+    let pg = c >= PAGE_CLASS && pages_on()
+    var m = rt.slot_load(rc, c, RELAXED)
+    rt.slot_store(rc, c, 0, RELAXED)
+    while m != 0 {
+      let next = cnext(pg, m)
+      central_push(cen0, c, pg, m)
+      back = back.wrapping_add(1)
+      m = next
+    }
+  }
+  let _b = rt.slot_add(cen0, RGN_BACK_I, back, RELAXED)
+}
+
+fn cnext(pg: Bool, m: Int) -> Int {
+  if pg { rt.mem_load(pword(m, PT_CLINK), 0, 8) } else { rt.mem_load(m, 8, 8) }
+}
+
+/// The free bytes of each unit list p0 of class c covers in the range
+/// (prefixes included); the list's bytes in the range.
+fn ra_cover(arr: Int, base: Int, nu: Int, p0: Int, c: Int) -> Int {
+  let size = alloc.class_size(c).wrapping_add(8)
+  var n = 0
+  var p = p0
+  while p != 0 {
+    let s0 = p.wrapping_sub(8).wrapping_sub(base)
+    if s0 >= 0 && s0.shr_logical(PUNIT_SH) < nu {
+      n = n.wrapping_add(size)
+      let _x = ra_add(arr, nu, s0, s0.wrapping_add(size))
+    }
+    p = rt.mem_load(p, 0, 8)
+  }
+  n
+}
+
+/// [s, e) (offsets in the range) added to their units' free bytes.
+fn ra_add(arr: Int, nu: Int, s0: Int, e: Int) -> Int {
+  var s = s0
+  while s < e {
+    let u = s.shr_logical(PUNIT_SH)
+    let ue = u.wrapping_add(1).wrapping_shl(PUNIT_SH)
+    let end = if e < ue { e } else { ue }
+    if u < nu {
+      // atomic: the walk's tasks cover lists whose blocks share units
+      let _v = rt.slot_add(arr, u, end.wrapping_sub(s), RELAXED)
+    }
+    s = end
+  }
+  0
+}
+
+/// A bump chunk's rest [s, e) as free bytes; its length.
+fn ra_range(arr: Int, base: Int, nu: Int, s: Int, e: Int) -> Int {
+  if s == 0 || e <= s || s.wrapping_sub(base) < 0 {
+    return 0
+  }
+  let _x = ra_add(arr, nu, s.wrapping_sub(base), e.wrapping_sub(base))
+  e.wrapping_sub(s)
+}
+
+/// List p0 of class c without the blocks that touch a whole free unit:
+/// its new head.
+fn ra_unlink(arr: Int, base: Int, nu: Int, p0: Int, c: Int) -> Int {
+  let size = alloc.class_size(c).wrapping_add(8)
+  var head = 0
+  var tail = 0
+  var p = p0
+  while p != 0 {
+    let next = rt.mem_load(p, 0, 8)
+    var keep = true
+    let s0 = p.wrapping_sub(8).wrapping_sub(base)
+    if s0 >= 0 {
+      var u = s0.shr_logical(PUNIT_SH)
+      let u1 = s0.wrapping_add(size).wrapping_sub(1).shr_logical(PUNIT_SH)
+      while u <= u1 && keep {
+        if u < nu && rt.mem_load(arr, u.wrapping_shl(3), 8) == PUNIT {
+          keep = false
+        }
+        u = u.wrapping_add(1)
+      }
+    }
+    if keep {
+      if tail == 0 { head = p } else { rt.mem_store(tail, 0, p, 8) }
+      tail = p
+    }
+    p = next
+  }
+  if tail != 0 {
+    rt.mem_store(tail, 0, 0, 8)
+  }
+  head
+}
+
 /// debug.mem_trim's walk of the central lists' magazines of page blocks
 /// (decision 0505's addendum): a class's full magazines wait there owned by
 /// no thread, under the class's lock, so the caller advises them. The 16
@@ -831,6 +1771,9 @@ fn clock_give() {
 /// at 24 and 32, alloc.xo BUMP_CUR and BUMP_END).
 pub fn chunk(h: Int) {
   if extend(h, 32, H_BLIM) {
+    return
+  }
+  if rt.mem_load(h, H_RFLAG, 8) != 0 && region_chunk(h) {
     return
   }
   // aligned to its size, so a page aligned prefixed block's chunk word is
@@ -1427,7 +2370,22 @@ const W_HSIZE = 29
 /// 0484); then (decision 0506, 85 classes) each class's free list, its
 /// length, its spare magazine and its magazine size (alloc.xo FREE_LISTS,
 /// NFREE, MAG, MAG_CAP; the 73 class arrays before them are unused).
-const H_SIZE = H_CBUF + 8
+/// Decision 0630: the record's pool of free small-block units (a side array
+/// of unit addresses mapped by map_os, never written into the units, which
+/// stay advised), its count, and its capacity in units.
+const H_PPOOL = H_CBUF + 8
+const H_PPOOLN = H_PPOOL + 8
+const H_PPOOLC = H_PPOOLN + 8
+/// Decision 0633: a record's partner (a normal record's region record, a
+/// region record's normal one; 0 none), whether the record is a region
+/// record, and the link of the list of region records.
+const H_RGN = H_PPOOLC + 8
+const H_RFLAG = H_RGN + 8
+const H_RNEXT = H_RFLAG + 8
+/// The record's routing words (alloc.xo RTAG, RINBOX).
+const H_RTAG = H_RNEXT + 8
+const H_RINBOX = H_RTAG + 8
+const H_SIZE = H_RINBOX + 8
 /// A C library's (decision 0574): 1 while the record's thread has exited,
 /// so a new thread takes it (thread_heap; orphan); the pthread key of the
 /// thread exit hook plus 1 (0 none), which each record copies from the
@@ -1485,6 +2443,7 @@ pub fn main_record() -> Int {
   rt.mem_store(h, H_COUNT, 1, 8)
   rt.mem_store(h, H_SAMPLE_AT, NEVER, 8)
   rt.mem_store(h, H_CENTRAL, map(8192), 8)
+  rt.mem_store(h, H_RTAG, alloc.NO_TAG, 8)
   heaps_set(h)
   rt.mem_store(rt.static_word(W_HSIZE), 0, H_SIZE, 8)
   h
@@ -1841,6 +2800,8 @@ pub fn thread_heap() -> Int {
   rt.mem_store(h, H_CENTRAL, rt.mem_load(first, H_CENTRAL, 8), 8)
   rt.mem_store(h, H_COUNT, rt.mem_load(first, H_COUNT, 8), 8)
   rt.mem_store(h, H_TKEY, rt.mem_load(first, H_TKEY, 8), 8)
+  // routes the region's blocks as the other records do (decision 0633)
+  rt.mem_store(h, H_RTAG, rt.mem_load(first, H_RTAG, 8), 8)
   if rt.mem_load(first, H_FQ, 8) != 0 {
     check_record(h)
   }

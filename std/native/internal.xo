@@ -216,6 +216,38 @@ fn rt_queued() -> Int uses realtime { obj.rt_queued() }
 
 fn rt_allocs() -> Int uses realtime { rtsec.allocs() }
 
+fn heap_region(op: Int) -> Int {
+  if target.arch == TargetArch.Wasm32 {
+    return 0
+  }
+  match op {
+    1 => heapos.region_on()
+    2 => {
+      heapos.region_off()
+      0
+    }
+    3 => heapos.region_release()
+    4 => if heapos.region_in() { 1 } else { 0 }
+    5 => heapos.region_pause()
+    30 => heapos.region_rel_begin()
+    31 => {
+      heapos.region_rel_cover()
+      0
+    }
+    32 => heapos.region_rel_mid()
+    33 => {
+      heapos.region_rel_unlink()
+      0
+    }
+    34 => heapos.region_rel_finish()
+    6 => {
+      heapos.region_resume()
+      0
+    }
+    _ => if op >= 10 && op <= 29 { heapos.region_stat(op + 142) } else { 0 }
+  }
+}
+
 fn rt_probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int {
   match op {
     "live" | "total" => {

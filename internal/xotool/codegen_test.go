@@ -122,6 +122,8 @@ var codegenEnv = map[string]inputClass{
 	"XO_IFC_CACHE":            {"none", ""},                                    // std's parses from the back-end cache (decision 0380): the same trees
 	"XO_FE_CACHE":             {"none", ""},
 	"XO_FE_STATS":             {"none", ""},
+	"XO_HEAP_REGION_STATS":    {"none", ""}, // decision 0633: the heap region release's counts on stderr
+	"XO_HEAP_REGION_WORKERS":  {"none", ""}, // decision 0633: the tasks the release walks on; where xo's memory goes, not what it makes
 	"XO_LAZY_PARSE":           {"none", ""},
 	"XO_DEP_LAZY":             {"none", ""}, // 0: decision 0517 off (on by default): when a dependency's bodies are checked, not what they compile to; the module check cache keys it (mod_flags)
 	"XO_GET_CHECK":            {"none", ""}, // 0: xo get does not check a newly required version (decision 0517); no build reads it

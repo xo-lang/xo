@@ -7,6 +7,7 @@
 // skipped (Func.skip) and the build goes on, as the Go builder goes on
 // after an unsupported construct.
 
+use std/internal
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/parser
 
@@ -1296,7 +1297,14 @@ fn (var b: Builder) run_job(j: Job) {
   // fe.build, the generic trees were about 129 MB of a cold aiplatform
   // test build (2,046 bodies, 0.94 MB of source, 2026-11-14)
   if let Body(fo, ..) = j {
-    if b.c.unparse_body(fo) {
+    // decision 0633: the tree was made in the heap region (check_lazy):
+    // its blocks go back to the region's lists, not the builder's
+    let rg = if internal.heap_region(4) == 0 { internal.heap_region(1) } else { 0 }
+    let gone = b.c.unparse_body(fo)
+    if rg == 1 {
+      let _r = internal.heap_region(2)
+    }
+    if gone {
       b.fe_stats["unparsed"] = (b.fe_stats.get("unparsed") ?? 0) + 1
     }
   }

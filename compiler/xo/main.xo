@@ -54,6 +54,7 @@
 
 use std/crypto
 use std/debug
+use std/internal
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/macho
 use github.com/xo-lang/xo/compiler/ssa
@@ -785,7 +786,13 @@ fn llrt_c_names(os: Os, std: Str) -> List[Str] {
 /// fails prints its diagnostics (or, with --json on build, the JSON
 /// result) and exits 1. Warnings are printed and the build goes on.
 fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
+  // decision 0633: a native build's check allocates in the heap region,
+  // released once the checker is gone (lower)
+  let rg = if native { internal.heap_region(1) } else { 0 }
   let (c, _) = check_program_ov(os, o, native, {})
+  if rg == 1 {
+    let _r = internal.heap_region(2)
+  }
   c
 }
 
@@ -3021,10 +3028,51 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
       // The last reference is the task's: the release (7 ms of an edit of
       // llvm-fib, 20 of the HTTP server's, on the build's thread) runs
       // beside the passes
-      let old = c
-      c = c.link_view(o.reuse_parse)
-      b.c = c
-      let _f = s.spawn(fn() -> Int { old.mods.len() })
+      let lv = c.link_view(o.reuse_parse)
+      if internal.heap_region(1) == 1 {
+        // decision 0633: the checker's last references go here, in region
+        // mode, so its blocks return to the region's lists, and the
+        // region's whole free units go to the pool the passes' growth
+        // takes first (XO_HEAP_REGION=0: the release task below)
+        c = lv
+        b.c = lv
+        let _r = internal.heap_region(2)
+        // the release walks the region's lists on a task beside the passes
+        // (no thread is in region mode, and the routing stops first); the
+        // passes' growth takes the pool's units as they arrive
+        let st = (os.env.get("XO_HEAP_REGION_STATS") ?? "") == "1"
+        let _g = s.spawn(fn() -> Int {
+          let tw = os.clock.now()
+          // the release's walk on rel_workers tasks (ops 30 to 34: the
+          // lists and magazines taken in turns)
+          var pooled = internal.heap_region(30)
+          if pooled > 0 {
+            let nw = rel_workers(os)
+            scope w {
+              for _ in 0..nw {
+                let _c = w.spawn(fn() -> Int { internal.heap_region(31) })
+              }
+            }
+            if internal.heap_region(32) != 0 {
+              scope w2 {
+                for _ in 0..nw {
+                  let _u = w2.spawn(fn() -> Int { internal.heap_region(33) })
+                }
+              }
+            }
+            pooled = internal.heap_region(34)
+          }
+          if st {
+            os.stdio.eprintln("xo heap region: release ${ms2(os.clock.since(tw))} ms; pooled ${pooled} units, ${internal.heap_region(12)} blocks back, ${internal.heap_region(10)} threads in region mode; walked ${internal.heap_region(14) / 1048576} MB on records, ${internal.heap_region(15) / 1048576} MB central, ${internal.heap_region(16) / 1048576} MB bump rests, ${internal.heap_region(17)} units touched, ${internal.heap_region(19)} records; ${internal.heap_region(23)} routed frees; region carved ${(internal.heap_region(21) - internal.heap_region(20)) / 1048576} MB; ${rel_workers(os)} workers")
+          }
+          pooled
+        })
+      } else {
+        let old = c
+        c = lv
+        b.c = c
+        let _f = s.spawn(fn() -> Int { old.mods.len() })
+      }
       // the marker TestFrontEndFreedByDefault looks for in --phase-times
       t = lap(os, o.phases, "front_end_freed", t)
     }
@@ -3883,4 +3931,13 @@ fn test_per_member(os: Os, o: Opts, args: List[Str], base: List[Str], members: L
 /// or None for an executable.
 fn win_dll(o: Opts) -> List[Str]? {
   if o.lib == "shared" { Some(c_runtime_exports() + o.lib_exports) } else { None }
+}
+
+/// The release's workers (decision 0633): $XO_HEAP_REGION_WORKERS, else
+/// 4 (1 walks on the release's own task).
+fn rel_workers(os: Os) -> Int {
+  match Int.parse(os.env.get("XO_HEAP_REGION_WORKERS") ?? "") {
+    Some(n) => if n < 1 { 1 } else if n > 16 { 16 } else { n }
+    None => 4
+  }
 }

@@ -50,6 +50,14 @@ const BUMP_END = 32
 const RT_DEPTH = 40
 const RT_ALLOCS = 48
 const MID_MAX = 56
+/// Decision 0633's routing words of a heap record (heapos.xo H_RTAG,
+/// H_RINBOX): the tag of the region's address range (p >> RGN_SH of its
+/// blocks; NO_TAG, which no address has, when frees are not routed), and
+/// the inbox where free_mt puts the region's blocks this record frees.
+pub const RTAG = 13824
+pub const RINBOX = 13832
+pub const RGN_SH = 34
+pub const NO_TAG = 1099511627776
 /// The size classes' limit at most (heapos.xo MID_MAX: the 256 KiB class
 /// is the last), and a heap record's limit, read and set: for the llrt
 /// tests (obj_test raises this thread's to the limit for the page classes
@@ -762,6 +770,7 @@ fn mag_count(size: Int) -> Int {
 /// block, a page aligned one, a list that fills a magazine). 2026-10-21: free_mt, at 58
 /// instructions with its calls, was a call on every free in a program
 /// with threads.
+
 pub fn free_push(h: Int, p: Int) -> Bool {
   // a page aligned block (a page block, decision 0425, or the one
   // prefixed block in 2048 that is) and a big block (a negative header;
@@ -770,7 +779,13 @@ pub fn free_push(h: Int, p: Int) -> Bool {
   // put it over the inliner's limits (42 instructions, 13 blocks of 40
   // and 12) and left it a call in obj.rl_free_n_slow, 14 instructions a
   // free in the alloc bench's tasks (2026-10-30)
-  if (p & 16383) == 0 || rt.mem_load(p.wrapping_sub(8), 0, 8) < 0 {
+  //
+  // a block of the heap region (decision 0633) takes free_mt too, which
+  // routes it: p >> RGN_SH xor the record's tag is 0 for one (else
+  // positive: NO_TAG and the shifted address are under 2^41), so its
+  // minus 1 is negative, folded into the header's sign test with no
+  // branch of its own (this function stays within the inliner's limits)
+  if (p & 16383) == 0 || (rt.mem_load(p.wrapping_sub(8), 0, 8) | (p.shr_logical(RGN_SH) ^ rt.mem_load(h, RTAG, 8)).wrapping_sub(1)) < 0 {
     return false
   }
   let c = rt.mem_load(p.wrapping_sub(8), 0, 8)
@@ -793,6 +808,16 @@ pub fn free_push(h: Int, p: Int) -> Bool {
 /// free_mt): as free, then a class's list that reached a magazine's
 /// size becomes the heap's spare magazine, and the spare it replaces
 /// goes to the central list.
+/// Pushes block p of the heap region onto record h's inbox (decision 0633).
+fn inbox_push(h: Int, p: Int) {
+  var old = rt.slot_load(h.wrapping_add(RINBOX), 0, RELAXED)
+  rt.mem_store(p, 0, old, 8)
+  while !rt.slot_cas(h.wrapping_add(RINBOX), 0, old, p, RELEASE) {
+    old = rt.slot_load(h.wrapping_add(RINBOX), 0, RELAXED)
+    rt.mem_store(p, 0, old, 8)
+  }
+}
+
 pub fn free_mt(h: Int, p: Int) {
   if rt.mem_load(h, COUNT, 8) != 0 {
     rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
@@ -802,6 +827,13 @@ pub fn free_mt(h: Int, p: Int) {
       let _q = rt.heap_grow(h, FHOLD)
       return
     }
+  }
+  if p.shr_logical(RGN_SH) == rt.mem_load(h, RTAG, 8) {
+    // a block of the heap region (decision 0633): onto this record's
+    // inbox (a stack other threads never push to, but the region's
+    // release takes it whole), so it never serves this record's
+    // allocations; the release puts it on the region's lists
+    return inbox_push(h, p)
   }
   var c = 0
   var pg = false
@@ -1000,10 +1032,15 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
   if rt.mem_load(h, COUNT, 8) != 0 {
     rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
   }
-  let pl = h.wrapping_add(hdr.wrapping_shl(3))
-  rt.mem_store(p, 0, rt.mem_load(pl, FREE_LISTS, 8), 8)
-  rt.mem_store(pl, FREE_LISTS, p, 8)
-  rt.mem_store(pl, NFREE, rt.mem_load(pl, NFREE, 8).wrapping_add(1), 8)
+  if p.shr_logical(RGN_SH) == rt.mem_load(h, RTAG, 8) {
+    // a block of the heap region: routed as free_mt does
+    inbox_push(h, p)
+  } else {
+    let pl = h.wrapping_add(hdr.wrapping_shl(3))
+    rt.mem_store(p, 0, rt.mem_load(pl, FREE_LISTS, 8), 8)
+    rt.mem_store(pl, FREE_LISTS, p, 8)
+    rt.mem_store(pl, NFREE, rt.mem_load(pl, NFREE, 8).wrapping_add(1), 8)
+  }
   if due {
     rt.mem_store(h, PSAMPLE, q, 8)
     return rt.heap_grow(h, n.wrapping_add(SAMPLE))

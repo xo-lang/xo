@@ -320,6 +320,11 @@ fn heap_grow(h: Int, n: Int) -> Int {
     heapos.pchunk(h)
     return alloc.alloc(h, n)
   }
+  // decision 0630: a unit an explicit trim pooled, before a cut or a new
+  // chunk
+  if heapos.pool_take(h, n) {
+    return alloc.alloc(h, n)
+  }
   // decision 0383 (a): a cut of the central magazines of a larger class
   // before a new chunk
   if !heapos.can_extend(h) && heapos.cut_for(h, n) {

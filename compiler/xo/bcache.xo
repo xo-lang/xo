@@ -2106,6 +2106,8 @@ fn parse_prefetch(os: Os, var c: check.Checker, dir: Str, shape: Str) -> Int {
     for _ in 0..small_jobs(os, 2 + n / 64).min(n).max(1) {
       ts.push(s.spawn(fn() -> List[(Str, check.ParseEntry, Int)] {
         var mine: List[(Str, check.ParseEntry, Int)] = []
+        // decision 0633: the trees die with the checker
+        let rg = internal.heap_region(1)
         while true {
           let i = next.add(1) - 1
           if i >= n {
@@ -2118,6 +2120,9 @@ fn parse_prefetch(os: Os, var c: check.Checker, dir: Str, shape: Str) -> Int {
             continue
           }
           mine.push((path, check.parse_entry(path, src, sig, lazy), 0))
+        }
+        if rg == 1 {
+          let _r = internal.heap_region(2)
         }
         mine
       }))

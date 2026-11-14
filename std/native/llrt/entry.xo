@@ -279,6 +279,17 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
     // XO_CUT=N: at most N KiB of magazines are cut a growth (the default 1024)
     heapos.set_cut_kb(atoll(cutv))
   }
+  // XO_HEAP_REGION=0: no thread enters the heap region (decision 0633)
+  let hrv = process.env_real_at("XO_HEAP_REGION")
+  if hrv != 0 && atoll(hrv) == 0 {
+    heapos.set_region_off()
+  }
+  // XO_PAGE_POOL=0: the heap region's release pools no free small units
+  // (decisions 0630, 0633)
+  let ppv = process.env_real_at("XO_PAGE_POOL")
+  if ppv != 0 && atoll(ppv) == 0 {
+    heapos.set_pool_off()
+  }
   // XO_THP (decisions 0454, 0456): off advises MADV_NOHUGEPAGE on the
   // heap's mappings; kernel leaves the kernel's policy (the default before
   // 0456); dense, Linux's default, gives huge pages to the chunks a thread
@@ -620,7 +631,12 @@ pub fn heapstats() {
   at = put_int(b, at, ch * CHUNK_MB)
   at = put(b, at, " MB), on free lists ")
   at = put_int(b, at, sum.shr_logical(20))
-  at = put(b, at, " MB\n")
+  at = put(b, at, " MB, pooled units ")
+  // decision 0630: the units explicit trims gave to records' pools
+  at = put_int(b, at, heapos.pooled_units())
+  at = put(b, at, ", taken ")
+  at = put_int(b, at, heapos.taken_units())
+  at = put(b, at, "\n")
   emit(b, at)
   release(b)
 }

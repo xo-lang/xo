@@ -165,3 +165,10 @@ to is decision 0633.
   It is compiler work per pass, not runtime work, and complements this.
 - Lower the floor to zero: every program would walk its lists at every trim, which is the cost the
   floor exists to avoid.
+
+## Addendum (2026-11-14): the pool ships under decision 0633
+
+The central pool of 4 KiB units (CPOOL, runs, heap_grow taking a pooled run before a new chunk)
+lands with decision 0633, whose region release fills it. This decision's walk (pool_walk and the
+union-find helpers), the per-record trim and `debug.mem_trim_pool` do not ship. XO_PAGE_POOL=0
+turns the pool off.

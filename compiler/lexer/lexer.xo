@@ -10,6 +10,7 @@
 //
 // Source text is Bytes, and a byte is a UInt8: a rune literal where a byte
 // is expected is its code point (`c == '"'`, core 1.6).
+use std/internal
 
 /// Marks an interpolation in the flattened text of a triple quoted string.
 const MARKER: UInt8 = 0x01
@@ -959,7 +960,18 @@ fn is_blank(b: Bytes) -> Bool {
   true
 }
 
+/// A string literal's token: its pieces live as long as the SSA that keeps
+/// the literal, so they are made outside xo's front end heap region
+/// (decision 0633: about 186,000 of them would pin its pages).
 fn (var l: Lexer) string_lit(start: Pos) {
+  let paused = internal.heap_region(5)
+  l.string_lit0(start)
+  if paused == 1 {
+    let _r = internal.heap_region(6)
+  }
+}
+
+fn (var l: Lexer) string_lit0(start: Pos) {
   let triple = l.peek(1) == '"' && l.peek(2) == '"'
   if triple {
     l.advance_n(3)
