@@ -142,14 +142,32 @@ spawn, pingpong, fanout, httpkeep, httppost (15 rounds) and xo's own build
 (stage 2) within noise; bench/perf/alloc 1.022 (1.0 to 1.065, 15 rounds),
 a program that never schedules (mon_tick, wake and defer 0 on both) whose
 allocator (obj_rc_alloc) moved 136 bytes with pool.xo's growth. The runs
-with 1 throttle (0.2 to 0.8 ms) remain. Six more runs sampling each
-thread's /proc schedstat every 125 ms (1, 2, 0, 0, 1, 0 throttles, 0.4 to
-3 ms in 12 s): in the windows where a throttle lands, the monitor and the
-poller use 0.2 to 0.6 ms between them and the two threads running tasks
-112 to 123 ms each, up to 197% together. The work fills the quota, not the
-monitor (Go 1.26 at c=128 runs about 190%: 90k rps at 21.1 us of CPU a
-request, 0 throttles). The next experiment for 0 is spinning less when
-every worker slot is in use under a quota (34,000 spin rounds a run).
+with 1 throttle (0.2 to 0.8 ms) remain.
+
+What remains is a floor of CFS's bandwidth control, not a thread of Xo's.
+Six runs sampling each thread's /proc schedstat every 125 ms, the threads
+named per role in an experiment build (1, 0, 0, 0, 2, 0 throttles): in every
+window a throttle lands in, the root and the one worker run 96% each and the
+monitor and the poller thread about 0.2 ms each, their steady 10 ms ticks.
+Removing them does not remove it: with the poller's fallback poll done by
+the monitor (decision 0641's experiment; the poller thread's CPU 2 ticks to
+0), 8 alternated pairs throttled 3 against 2 times; with no monitor at all
+(XO_DEFER_WAKE=0), 8 runs a side throttled 1 and 3 times. About one throttle
+of 0.1 to 0.5 ms in a quarter of 12 s runs is left whatever helper threads
+run, once two threads use 96% of a 2 CPU quota: the kernel hands the quota
+to each CPU in 5 ms slices (sched_cfs_bandwidth_slice_us 5000 on the host),
+and a brief run on a third CPU strands part of one. Go 1.26 shows 0 at about
+190% (90k rps at 21.1 us of CPU a request), short of saturating. 0 at
+saturation would need headroom, fewer requests served.
+
+At Go's throughput the floor does not show (a fixed rate, loadgen paced to
+the target across its 128 workers, an experiment copy; 6 runs a side,
+alternated, the same quota): at 70,000 rps Xo served 69.0k to 69.2k with 0
+throttles at 115% to 122% CPU, p50 0.48 to 0.50 ms, p99 3.5 to 3.8 ms, Go
+1.26 69.7k to 69.8k with 0 throttles at 169% to 172%, p99 3.7 to 4.1 ms; at
+88,000 rps Xo 87.4k to 87.6k, 0 throttles, 147% to 150%, p99 3.7 to 4.0 ms,
+Go 86.7k to 87.5k, 2 throttles in 6 runs (0.1 and 1.6 ms), 188%, p99 5.1 to
+5.2 ms. The residual is saturation's alone.
 
 ## Alternatives
 

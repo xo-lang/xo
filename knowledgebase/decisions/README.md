@@ -632,3 +632,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0640](0640-root-helper-takes-worker-slot.md): Proposed (Xo Lang 2): a root thread that helps run tasks takes one of the pool's worker slots, so XO_THREADS=N means at most N threads run Xo work (Go's Ps)
 - [0642](0642-std-url-type.md): Accepted (Xo Lang 3): std/url gets Go's URL type (parse, resolve_reference, userinfo, display), beside http.Url
 - [0640](0640-root-helper-takes-worker-slot.md): Accepted (Xo Lang 2): a root thread that helps run tasks takes one of the pool's worker slots, so XO_THREADS=N means at most N threads run Xo work (Go's Ps)
+- [0641](0641-monitor-polls-network.md): Rejected (Xo Lang 2, measured): the monitor doing the poller thread's fallback poll left the throttles under a CPU quota as they were; the residual is CFS's slice floor at saturation
