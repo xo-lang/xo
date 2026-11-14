@@ -147,3 +147,9 @@ cmd/xo TestDevEdges ^compiler/xo/(dev|edgecache)\.xo$|^compiler/check/
 cmd/xo TestDevEdgesStdGraphSameForEveryProgram ^compiler/xo/(dev|edgecache)\.xo$|^compiler/check/
 cmd/xo TestDevEdgesOwnStd ^compiler/xo/(dev|edgecache)\.xo$|^compiler/check/
 cmd/xo TestVetCostStd ^compiler/xo/vetcost\.xo$|^compiler/check/
+# the attacks against modules and effects, each in its own world, and their
+# run time rows on the native backends (782 s on host 2 beside the arm64 and
+# llvm steps, 2026-11-14); its scenarios without the native rows also run in
+# -short (hourly.sh on main)
+cmd/xo TestSupplyChainAttacks ^compiler/(check|xo)/|^compiler/cli/(modules|core)/|^internal/mod/|^std/native/llrt/(cabi_proc|cabi_net|cabi_libc|fsops|fspath|host|sys|proc|net|sock)[a-z0-9_]*\.xo$|^std/native/sys_[a-z]*\.xo$|^std/prelude\.xo$
+cmd/xo TestRepl ^compiler/cli/repl/|^compiler/(check|parser|lexer)/|^compiler/xo/(run|main)\.xo$
