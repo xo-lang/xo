@@ -625,3 +625,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0633](0633-front-end-heap-region.md): Proposed (Xo Lang 1): the compiler's front end allocates in its own heap region, so its memory comes back whole once the front end is released
 - [0634](0634-release-ladder-outlining.md): Proposed (Xo Lang 1): a release ladder repeated verbatim in a function becomes one local subroutine that each copy calls (7.4% of xo's arm64 instructions are such repeats); instead of splitting build_native
 - [0635](0635-decompressor-bounded-write.md): Proposed (Xo Lang 2): a Decompressor write bounded by the caller, as Go's Read (0.52; 0.51.1 bounds std/http's client by 4 KiB writes)
+- [0636](0636-parallel-inline.md): Proposed (Xo Lang 1): the inliner runs in waves on the task pool, with the function order walk's result (byte-identical output)
