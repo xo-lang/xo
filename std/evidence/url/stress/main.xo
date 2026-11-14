@@ -1,0 +1,198 @@
+// url stress program (decision 0616 section 2): 64 tasks run std/url's
+// operations (query_escape, path_escape, their inverses, parse_query and
+// Values.encode, and Values edits) over 64 cases for a fixed time, each
+// result checked against Go's net/url (ustressgen). A background task
+// samples the resident set every 10 s (Linux /proc/self/status). Pass: no
+// mismatch, no fault, and the resident set at the end within 10% or 4 MB
+// of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/url
+
+fn unescaped(r: Result[Str, url.EscapeErr]) -> Str {
+  match r {
+    Ok(s) => "ok ${s}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+/// One pass over the cases from offset start: the operations done, or the
+/// first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  var ops = 0
+  for k in 0..CASES.len() {
+    let i = (start + k) % CASES.len()
+    let (text, qe, pe, qu, pu, qv) = CASES[i]
+    if url.query_escape(text) != qe {
+      return Err("query_escape of case ${i}: got ${url.query_escape(text)}")
+    }
+    if url.path_escape(text) != pe {
+      return Err("path_escape of case ${i}: got ${url.path_escape(text)}")
+    }
+    if unescaped(url.query_unescape(text)) != qu {
+      return Err("query_unescape of case ${i}")
+    }
+    if unescaped(url.path_unescape(text)) != pu {
+      return Err("path_unescape of case ${i}")
+    }
+    // what an escape printed unescapes back to the text
+    if url.query_unescape(qe).ok() != Some(text) || url.path_unescape(pe).ok() != Some(text) {
+      return Err("round trip of case ${i}")
+    }
+    let got = match url.parse_query(text) {
+      Ok(v) => "ok ${v.encode()}"
+      Err(e) => "err ${e.display()}"
+    }
+    if got != qv {
+      return Err("parse_query of case ${i}: got ${got}")
+    }
+    // edits: the text under two keys, one replaced, one removed
+    var v = url.values()
+    v.add("k", text)
+    v.add("k", qe)
+    v.add("x y", pe)
+    v.set("z", text)
+    v.remove("z")
+    let want = "k=${qe}&k=${url.query_escape(qe)}&x+y=${url.query_escape(pe)}"
+    if v.encode() != want {
+      return Err("Values edits of case ${i}: got ${v.encode()}")
+    }
+    ops += 9
+  }
+  ops
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("url stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+// Written by ustressgen (Xo Lang 3, 2026-11-14) from Go's net/url (go1.26.11):
+// text, QueryEscape, PathEscape, QueryUnescape and PathUnescape (`ok TEXT`, a
+// decoded byte that is not UTF-8 as its %XX escape, or `err TEXT`), and
+// ParseQuery (`ok` and Encode of the Values, or `err TEXT`).
+const CASES: List[(Str, Str, Str, Str, Str, Str)] = [
+  ("%2+%C3%A9", "%252%2B%25C3%25A9", "%252+%25C3%25A9", "err invalid URL escape \"%2+\"", "err invalid URL escape \"%2+\"", "err invalid URL escape \"%2+\""),
+  ("&b=%e6%97%a5%20 @&b=/%ff0", "%26b%3D%25e6%2597%25a5%2520+%40%26b%3D%2F%25ff0", "&b=%25e6%2597%25a5%2520%20@&b=%2F%25ff0", "ok &b=日  @&b=/%FF0", "ok &b=日  @&b=/%FF0", "ok b=%E6%97%A5++%40&b=%2F%25FF0"),
+  ("&b=%e6%97%a5%2_%ff@%2%C3%A9", "%26b%3D%25e6%2597%25a5%252_%25ff%40%252%25C3%25A9", "&b=%25e6%2597%25a5%252_%25ff@%252%25C3%25A9", "err invalid URL escape \"%2_\"", "err invalid URL escape \"%2_\"", "err invalid URL escape \"%2_\""),
+  ("_😀\$_Za=1a_ a=1%41%zz", "_%F0%9F%98%80%24_Za%3D1a_+a%3D1%2541%25zz", "_%F0%9F%98%80\$_Za=1a_%20a=1%2541%25zz", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\""),
+  ("😀.%e6%97%a5a.", "%F0%9F%98%80.%25e6%2597%25a5a.", "%F0%9F%98%80.%25e6%2597%25a5a.", "ok 😀.日a.", "ok 😀.日a.", "ok %F0%9F%98%80.%E6%97%A5a.="),
+  ("é%zz&b=\$%😀", "%C3%A9%25zz%26b%3D%24%25%F0%9F%98%80", "%C3%A9%25zz&b=\$%25%F0%9F%98%80", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\""),
+  ("%ff!@?_!?%zz日\$", "%25ff%21%40%3F_%21%3F%25zz%E6%97%A5%24", "%25ff%21@%3F_%21%3F%25zz%E6%97%A5\$", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\""),
+  ("%ffq=hello+world+%zz日a_~.q=hello+world", "%25ffq%3Dhello%2Bworld%2B%25zz%E6%97%A5a_~.q%3Dhello%2Bworld", "%25ffq=hello+world+%25zz%E6%97%A5a_~.q=hello+world", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\""),
+  ("%😀%25%41/.%25:#日=x", "%25%F0%9F%98%80%2525%2541%2F.%2525%3A%23%E6%97%A5%3Dx", "%25%F0%9F%98%80%2525%2541%2F.%2525:%23%E6%97%A5=x", "err invalid URL escape \"%\\xf0\\x9f\"", "err invalid URL escape \"%\\xf0\\x9f\"", "err invalid URL escape \"%\\xf0\\x9f\""),
+  ("%C3%A9Z日&k=v&k=w\$%2", "%25C3%25A9Z%E6%97%A5%26k%3Dv%26k%3Dw%24%252", "%25C3%25A9Z%E6%97%A5&k=v&k=w\$%252", "err invalid URL escape \"%2\"", "err invalid URL escape \"%2\"", "err invalid URL escape \"%2\""),
+  ("a=1Z\$a=1", "a%3D1Z%24a%3D1", "a=1Z\$a=1", "ok a=1Z\$a=1", "ok a=1Z\$a=1", "ok a=1Z%24a%3D1"),
+  ("&b= %zz%", "%26b%3D+%25zz%25", "&b=%20%25zz%25", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\""),
+  ("😀~=x", "%F0%9F%98%80~%3Dx", "%F0%9F%98%80~=x", "ok 😀~=x", "ok 😀~=x", "ok %F0%9F%98%80~=x"),
+  ("!q=hello+world0%C3%A9:", "%21q%3Dhello%2Bworld0%25C3%25A9%3A", "%21q=hello+world0%25C3%25A9:", "ok !q=hello world0é:", "ok !q=hello+world0é:", "ok %21q=hello+world0%C3%A9%3A"),
+  ("&b=//:%20+%zz", "%26b%3D%2F%2F%3A%2520%2B%25zz", "&b=%2F%2F:%2520+%25zz", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\""),
+  (".?é+!a", ".%3F%C3%A9%2B%21a", ".%3F%C3%A9+%21a", "ok .?é !a", "ok .?é+!a", "ok .%3F%C3%A9+%21a="),
+  ("/", "%2F", "%2F", "ok /", "ok /", "ok %2F="),
+  ("\$", "%24", "\$", "ok \$", "ok \$", "ok %24="),
+  ("q=hello+world+", "q%3Dhello%2Bworld%2B", "q=hello+world+", "ok q=hello world ", "ok q=hello+world+", "ok q=hello+world+"),
+  ("+!&/-=Z=", "%2B%21%26%2F-%3DZ%3D", "+%21&%2F-=Z=", "ok  !&/-=Z=", "ok +!&/-=Z=", "ok +%21=&%2F-=Z%3D"),
+  ("é日:.=x%20!q=hello+world", "%C3%A9%E6%97%A5%3A.%3Dx%2520%21q%3Dhello%2Bworld", "%C3%A9%E6%97%A5:.=x%2520%21q=hello+world", "ok é日:.=x !q=hello world", "ok é日:.=x !q=hello+world", "ok %C3%A9%E6%97%A5%3A.=x+%21q%3Dhello+world"),
+  ("%41=x%2B", "%2541%3Dx%252B", "%2541=x%252B", "ok A=x+", "ok A=x+", "ok A=x%2B"),
+  ("?%25", "%3F%2525", "%3F%2525", "ok ?%", "ok ?%", "ok %3F%25="),
+  ("%zzé%20/:&b=", "%25zz%C3%A9%2520%2F%3A%26b%3D", "%25zz%C3%A9%2520%2F:&b=", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\""),
+  ("?#%20", "%3F%23%2520", "%3F%23%2520", "ok ?# ", "ok ?# ", "ok %3F%23+="),
+  ("日%C3%A9", "%E6%97%A5%25C3%25A9", "%E6%97%A5%25C3%25A9", "ok 日é", "ok 日é", "ok %E6%97%A5%C3%A9="),
+  ("=a=1&%2\$0~%41+%25&k=v&k=w", "%3Da%3D1%26%252%240~%2541%2B%2525%26k%3Dv%26k%3Dw", "=a=1&%252\$0~%2541+%2525&k=v&k=w", "err invalid URL escape \"%2\$\"", "err invalid URL escape \"%2\$\"", "err invalid URL escape \"%2\$\""),
+  ("éZ%25:k=v&k=w=x\$&%C3%A9a=1.", "%C3%A9Z%2525%3Ak%3Dv%26k%3Dw%3Dx%24%26%25C3%25A9a%3D1.", "%C3%A9Z%2525:k=v&k=w=x\$&%25C3%25A9a=1.", "ok éZ%:k=v&k=w=x\$&éa=1.", "ok éZ%:k=v&k=w=x\$&éa=1.", "ok k=w%3Dx%24&%C3%A9Z%25%3Ak=v&%C3%A9a=1."),
+  ("q=hello+world😀日++~%2Z/Z@", "q%3Dhello%2Bworld%F0%9F%98%80%E6%97%A5%2B%2B~%252Z%2FZ%40", "q=hello+world%F0%9F%98%80%E6%97%A5++~%252Z%2FZ@", "err invalid URL escape \"%2Z\"", "err invalid URL escape \"%2Z\"", "err invalid URL escape \"%2Z\""),
+  ("%41_a=1!😀?", "%2541_a%3D1%21%F0%9F%98%80%3F", "%2541_a=1%21%F0%9F%98%80%3F", "ok A_a=1!😀?", "ok A_a=1!😀?", "ok A_a=1%21%F0%9F%98%80%3F"),
+  ("%ffa", "%25ffa", "%25ffa", "ok %FFa", "ok %FFa", "ok %25FFa="),
+  ("\$\$", "%24%24", "\$\$", "ok \$\$", "ok \$\$", "ok %24%24="),
+  ("a=1!++a=a%C3%A9%41", "a%3D1%21%2B%2Ba%3Da%25C3%25A9%2541", "a=1%21++a=a%25C3%25A9%2541", "ok a=1!  a=aéA", "ok a=1!++a=aéA", "ok a=1%21++a%3Da%C3%A9A"),
+  ("%e6%97%a5=x", "%25e6%2597%25a5%3Dx", "%25e6%2597%25a5=x", "ok 日=x", "ok 日=x", "ok %E6%97%A5=x"),
+  ("%%e6%97%a5&", "%25%25e6%2597%25a5%26", "%25%25e6%2597%25a5&", "err invalid URL escape \"%%e\"", "err invalid URL escape \"%%e\"", "err invalid URL escape \"%%e\""),
+  ("?é-k=v&k=w=.&b=@日é%41.", "%3F%C3%A9-k%3Dv%26k%3Dw%3D.%26b%3D%40%E6%97%A5%C3%A9%2541.", "%3F%C3%A9-k=v&k=w=.&b=@%E6%97%A5%C3%A9%2541.", "ok ?é-k=v&k=w=.&b=@日éA.", "ok ?é-k=v&k=w=.&b=@日éA.", "ok %3F%C3%A9-k=v&b=%40%E6%97%A5%C3%A9A.&k=w%3D."),
+  ("\$%41é&b=%ffé&!-", "%24%2541%C3%A9%26b%3D%25ff%C3%A9%26%21-", "\$%2541%C3%A9&b=%25ff%C3%A9&%21-", "ok \$Aé&b=%FFé&!-", "ok \$Aé&b=%FFé&!-", "ok %21-=&%24A%C3%A9=&b=%25FF%C3%A9"),
+  ("%25!%ff@éé", "%2525%21%25ff%40%C3%A9%C3%A9", "%2525%21%25ff@%C3%A9%C3%A9", "ok %!%FF@éé", "ok %!%FF@éé", "ok %25%21%25FF%40%C3%A9%C3%A9="),
+  ("%ff%C3%A9%C3%A9=+=", "%25ff%25C3%25A9%25C3%25A9%3D%2B%3D", "%25ff%25C3%25A9%25C3%25A9=+=", "ok %FFéé= =", "ok %FFéé=+=", "ok %25FF%C3%A9%C3%A9=+%3D"),
+  ("a+&%2", "a%2B%26%252", "a+&%252", "err invalid URL escape \"%2\"", "err invalid URL escape \"%2\"", "err invalid URL escape \"%2\""),
+  ("=x=x 😀/éq=hello+worldé", "%3Dx%3Dx+%F0%9F%98%80%2F%C3%A9q%3Dhello%2Bworld%C3%A9", "=x=x%20%F0%9F%98%80%2F%C3%A9q=hello+world%C3%A9", "ok =x=x 😀/éq=hello worldé", "ok =x=x 😀/éq=hello+worldé", "ok =x%3Dx+%F0%9F%98%80%2F%C3%A9q%3Dhello+world%C3%A9"),
+  ("%zz+a=1%2\$\$@_ ?", "%25zz%2Ba%3D1%252%24%24%40_+%3F", "%25zz+a=1%252\$\$@_%20%3F", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\""),
+  ("_😀%2B%zz~%\$@%e6%97%a5 日%20", "_%F0%9F%98%80%252B%25zz~%25%24%40%25e6%2597%25a5+%E6%97%A5%2520", "_%F0%9F%98%80%252B%25zz~%25\$@%25e6%2597%25a5%20%E6%97%A5%2520", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\""),
+  ("%a=1%ff日日%e6%97%a5%日0", "%25a%3D1%25ff%E6%97%A5%E6%97%A5%25e6%2597%25a5%25%E6%97%A50", "%25a=1%25ff%E6%97%A5%E6%97%A5%25e6%2597%25a5%25%E6%97%A50", "err invalid URL escape \"%a=\"", "err invalid URL escape \"%a=\"", "err invalid URL escape \"%a\""),
+  ("=x/Z-_+a& ", "%3Dx%2FZ-_%2Ba%26+", "=x%2FZ-_+a&%20", "ok =x/Z-_ a& ", "ok =x/Z-_+a& ", "ok =x%2FZ-_+a&+="),
+  ("%zz%ff/!%a=1&k=v&k=w 😀=x/", "%25zz%25ff%2F%21%25a%3D1%26k%3Dv%26k%3Dw+%F0%9F%98%80%3Dx%2F", "%25zz%25ff%2F%21%25a=1&k=v&k=w%20%F0%9F%98%80=x%2F", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\""),
+  ("%e6%97%a5%41%41_:a=1", "%25e6%2597%25a5%2541%2541_%3Aa%3D1", "%25e6%2597%25a5%2541%2541_:a=1", "ok 日AA_:a=1", "ok 日AA_:a=1", "ok %E6%97%A5AA_%3Aa=1"),
+  (".=😀&~#!", ".%3D%F0%9F%98%80%26~%23%21", ".=%F0%9F%98%80&~%23%21", "ok .=😀&~#!", "ok .=😀&~#!", "ok .=%F0%9F%98%80&~%23%21="),
+  ("%e6%97%a5%41%41日q=hello+world=\$%%41+é.", "%25e6%2597%25a5%2541%2541%E6%97%A5q%3Dhello%2Bworld%3D%24%25%2541%2B%C3%A9.", "%25e6%2597%25a5%2541%2541%E6%97%A5q=hello+world=\$%25%2541+%C3%A9.", "err invalid URL escape \"%%4\"", "err invalid URL escape \"%%4\"", "err invalid URL escape \"%%4\""),
+  ("k=v&k=w", "k%3Dv%26k%3Dw", "k=v&k=w", "ok k=v&k=w", "ok k=v&k=w", "ok k=v&k=w"),
+  ("q=hello+world", "q%3Dhello%2Bworld", "q=hello+world", "ok q=hello world", "ok q=hello+world", "ok q=hello+world"),
+  ("%zzq=hello+world😀k=v&k=w\$%ff%2@%C3%A9.", "%25zzq%3Dhello%2Bworld%F0%9F%98%80k%3Dv%26k%3Dw%24%25ff%252%40%25C3%25A9.", "%25zzq=hello+world%F0%9F%98%80k=v&k=w\$%25ff%252@%25C3%25A9.", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\""),
+  ("%zz?%e6%97%a5 + %C3%A9", "%25zz%3F%25e6%2597%25a5+%2B+%25C3%25A9", "%25zz%3F%25e6%2597%25a5%20+%20%25C3%25A9", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\"", "err invalid URL escape \"%zz\""),
+  ("😀%2&b=日", "%F0%9F%98%80%252%26b%3D%E6%97%A5", "%F0%9F%98%80%252&b=%E6%97%A5", "err invalid URL escape \"%2&\"", "err invalid URL escape \"%2&\"", "err invalid URL escape \"%2\""),
+  ("/-%%a=1@\$k=v&k=w", "%2F-%25%25a%3D1%40%24k%3Dv%26k%3Dw", "%2F-%25%25a=1@\$k=v&k=w", "err invalid URL escape \"%%a\"", "err invalid URL escape \"%%a\"", "err invalid URL escape \"%%a\""),
+  ("@=😀..%41#é%ff=", "%40%3D%F0%9F%98%80..%2541%23%C3%A9%25ff%3D", "@=%F0%9F%98%80..%2541%23%C3%A9%25ff=", "ok @=😀..A#é%FF=", "ok @=😀..A#é%FF=", "ok %40=%F0%9F%98%80..A%23%C3%A9%25FF%3D"),
+  ("=~q=hello+world日_q=hello+worldq=hello+world=x", "%3D~q%3Dhello%2Bworld%E6%97%A5_q%3Dhello%2Bworldq%3Dhello%2Bworld%3Dx", "=~q=hello+world%E6%97%A5_q=hello+worldq=hello+world=x", "ok =~q=hello world日_q=hello worldq=hello world=x", "ok =~q=hello+world日_q=hello+worldq=hello+world=x", "ok =~q%3Dhello+world%E6%97%A5_q%3Dhello+worldq%3Dhello+world%3Dx"),
+  ("%2B", "%252B", "%252B", "ok +", "ok +", "ok %2B="),
+  ("0./@\$#a%+=x", "0.%2F%40%24%23a%25%2B%3Dx", "0.%2F@\$%23a%25+=x", "err invalid URL escape \"%+=\"", "err invalid URL escape \"%+=\"", "err invalid URL escape \"%+\""),
+  ("~?%2B %2:~?", "~%3F%252B+%252%3A~%3F", "~%3F%252B%20%252:~%3F", "err invalid URL escape \"%2:\"", "err invalid URL escape \"%2:\"", "err invalid URL escape \"%2:\""),
+  ("ék=v&k=w_-\$aq=hello+world-\$ !", "%C3%A9k%3Dv%26k%3Dw_-%24aq%3Dhello%2Bworld-%24+%21", "%C3%A9k=v&k=w_-\$aq=hello+world-\$%20%21", "ok ék=v&k=w_-\$aq=hello world-\$ !", "ok ék=v&k=w_-\$aq=hello+world-\$ !", "ok k=w_-%24aq%3Dhello+world-%24+%21&%C3%A9k=v"),
+  (".", ".", ".", "ok .", "ok .", "ok .="),
+  ("+/%!.", "%2B%2F%25%21.", "+%2F%25%21.", "err invalid URL escape \"%!.\"", "err invalid URL escape \"%!.\"", "err invalid URL escape \"%!.\""),
+  ("Z", "Z", "Z", "ok Z", "ok Z", "ok Z="),
+]
