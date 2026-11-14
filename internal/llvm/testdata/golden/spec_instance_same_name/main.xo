@@ -1,0 +1,30 @@
+// Generic instances whose SSA names collide (decision 0637 stage 3): Str
+// and Bytes lower to one SSA type name, so firsts[Str] and its Bytes
+// instance are firsts[Str] and firsts[Str]#2 (and the prelude's sorts
+// likewise), the `#2` going to whichever the builder declares second. A
+// speculative worker names its own first one bare, so its entries are
+// keyed by declare0's key (the implementing types' names), not by the SSA
+// name: keyed by the name, a worker's prelude.result_map_err[Str, FsErr,
+// Str] was replayed for the other instance in xo's own build (XO1510,
+// 2026-11-14). env.txt makes the workers deterministic and verifies each
+// replay against the body lowered here.
+
+fn firsts[T: Ord](xs: List[T]) -> (T?, Int) {
+  let s = xs.sort()
+  (s.get(0), s.len())
+}
+
+fn strs() -> Str {
+  let (f, n) = firsts(["b", "a", "c"])
+  "${f ?? ""} ${n}"
+}
+
+fn bytes() -> Str {
+  let (f, n) = firsts(["yy".bytes(), "x".bytes()])
+  "${(f ?? b"").len()} ${n}"
+}
+
+fn main(os: Os) uses stdio {
+  os.stdio.println(strs())
+  os.stdio.println(bytes())
+}

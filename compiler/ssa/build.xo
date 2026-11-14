@@ -384,6 +384,8 @@ pub struct Builder {
   /// the one-way flags a recorded body set (set_flag): 1 need_conc, 2
   /// uses_net; a builder that had them already would otherwise hide it
   fe_flagbits: Int = 0
+  /// a speculative worker's copy (decision 0637 stage 3, run_queue_crawl)
+  spec_worker: Bool = false
 }
 
 /// logFrom: the attribution of the record the std/log function fo writes
@@ -1245,11 +1247,24 @@ fn (var b: Builder) check_c_result(fi: Int) {
 /// Builds the queued bodies (and the generated functions they ask for).
 fn (var b: Builder) run_queue() {
   b.run_gens()
+  // decision 0637 stage 3: workers lower bodies ahead (run_queue_crawl);
+  // an empty queue (a later run with nothing queued) takes no copy
+  if b.fe.on && !b.fe.verify && b.fe.spec_jobs > 1 && !b.queue.is_empty() {
+    let w = b.spec_workers()
+    if w > 1 {
+      b.run_queue_crawl(w)
+      return
+    }
+  }
   var i = 0
   while i < b.queue.len() {
     let j = b.queue[i]
     i += 1
+    let h0 = (b.fe_stats.get("spec.hit") ?? 0) + (b.fe_stats.get("spec.hit.inst") ?? 0) + b.fe.hits
     b.run_job(j)
+    if b.fe.spec_diag {
+      b.spec_diag_job(j, h0)
+    }
     b.run_gens()
   }
   // built: a later run (the exports, declare_exports) starts empty
@@ -1257,6 +1272,549 @@ fn (var b: Builder) run_queue() {
   if b.need_conc && !b.conc && b.fe.conc_fixed < 0 {
     b.why = "concurrency: built again with unwinding checks"
   }
+}
+
+/// Decision 0637 stage 3 (crawling workers): run_queue's loop while
+/// spec_workers' workers, each on one copy of this builder taken now, lower
+/// keyed bodies ahead into entries: a shared list of function objects,
+/// fed by the main builder's queue and by the callees each worker's own
+/// lowering declares, each object taken once (claimed). A body's turn
+/// replays the entry a worker made for it when there is one (run_job_fe,
+/// as a hit) and lowers it as before when not; the main builder never
+/// waits for a worker (but under XO_FE_SPEC_WAIT) and takes no lock per
+/// job (the entries come on a channel, claims and offers go in batches
+/// of SPEC_CLAIM). Generic instances are made ahead under spec_inst_key
+/// and replayed in this build only. fe_replay gives the serial build's numbering
+/// whatever the worker's builder held, and an entry whose checks miss
+/// is lowered at its turn, so the output is the serial build's.
+fn (var b: Builder) run_queue_crawl(w: Int) {
+  b.fe_stats["spec.workers"] = w
+  b.fe_stats["spec.crawls"] = (b.fe_stats.get("spec.crawls") ?? 0) + 1
+  let work = Chan[Int].new(cap: b.c.objs.len() + 16)
+  let claimed = Mutex[Map[Int, Bool]].new({})
+  // the entries the workers made, read here without a lock (try_recv)
+  let results = Chan[(Str, Bytes)].new(cap: b.c.objs.len() + 1024)
+  var got: Map[Str, Bytes] = {}
+  let stop = Atomic[Int].new(0)
+  var offered = 0
+  var i = 0
+  // queue[..claimed_to] is claimed by this builder, queue[offer_from..]
+  // not offered yet: both move once per SPEC_CLAIM jobs (one lock), or
+  // when the workers ran out of work
+  var claimed_to = 0
+  var offer_from = 0
+  // the workers' copy: the main builder's first write to each table it
+  // shares copies that table (a fixed cost, about 0.2 to 0.35 s on the
+  // aiplatform client, decision 0637 stage 3)
+  let snap = b
+  scope s {
+    var ts = []
+    for _ in 0..w {
+      ts.push(s.spawn(fn() -> Int {
+        var wb = snap
+        wb.spec_worker = true
+        wb.spec_crawl(work, claimed, results, stop)
+      }))
+    }
+    while i < b.queue.len() {
+      if b.fe.spec_wait && w > 0 {
+        // XO_FE_SPEC_WAIT: every keyed body goes to the workers, and its
+        // turn waits for them (a test's deterministic speculation)
+        if offer_from < b.queue.len() {
+          offered += b.spec_claim_offer(0, 0, offer_from, work, claimed, stop)
+          offer_from = b.queue.len()
+        }
+      } else if i >= claimed_to || (offer_from < b.queue.len() && work.len() == 0) {
+        let end = (i + SPEC_CLAIM).min(b.queue.len())
+        offered += b.spec_claim_offer(i.max(claimed_to), end, offer_from.max(end), work, claimed, stop)
+        claimed_to = end
+        offer_from = b.queue.len()
+      }
+      let j = b.queue[i]
+      i += 1
+      b.fe.spec_entry = None
+      if let Body(fo, _fi, sub) = j {
+        var k = ""
+        if !sub.is_empty() && b.fe_spec_key(fo, sub) != None {
+          k = b.spec_inst_key(fo, sub)
+        } else if sub.is_empty() {
+          k = b.fe_spec_key(fo, sub) ?? ""
+        }
+        if !k.is_empty() {
+          if b.fe.spec_wait && w > 0 && sub.is_empty() {
+            let dk = "done ${fo}"
+            while !got.contains(dk) {
+              match results.recv() {
+                Some((rk, re)) => got[rk] = re
+                None => break
+              }
+            }
+          }
+          while let Some((rk, re)) = results.try_recv() {
+            got[rk] = re
+          }
+          b.fe.spec_entry = got.get(k)
+          if b.fe.spec_entry != None {
+            got.remove(k)
+          }
+        }
+      }
+      let h0 = (b.fe_stats.get("spec.hit") ?? 0) + (b.fe_stats.get("spec.hit.inst") ?? 0) + b.fe.hits
+      b.run_job(j)
+      if b.fe.spec_diag {
+        b.spec_diag_job(j, h0)
+      }
+      b.fe.spec_entry = None
+      b.run_gens()
+    }
+    claimed.with(fn(var m: Map[Int, Bool]) -> Bool {
+      stop.set(1)
+      work.close()
+      true
+    })
+    var n = 0
+    for t in ts {
+      n += t.await
+    }
+    b.fe_stats["spec.made"] = (b.fe_stats.get("spec.made") ?? 0) + n
+    if b.fe.spec_diag {
+      let c = b.fe_stats.get("spec.crawls") ?? 0
+      b.fe_stats["spec.crawl${c}.jobs"] = i
+      b.fe_stats["spec.crawl${c}.made"] = n
+    }
+  }
+  b.fe_stats["spec.offered"] = (b.fe_stats.get("spec.offered") ?? 0) + offered
+  b.queue = []
+  if b.need_conc && !b.conc && b.fe.conc_fixed < 0 {
+    b.why = "concurrency: built again with unwinding checks"
+  }
+}
+
+/// The crawling workers for this build: fe.spec_jobs, but SPEC_FEW (none:
+/// the serial loop, with no snapshot) when the source of the bodies left to lower is under
+/// SPEC_SRC_PER_TABLE bytes per entry of the tables each worker copies at
+/// its first writes (spec_tables: the checker's objects and types, the
+/// module's functions and types). A program whose checker holds hundreds
+/// of thousands of types for little code (a generated API client: the
+/// aiplatform and compute clients, 6.4 and 5.2 bytes per entry, against
+/// 12 to 49 for xo, the http and json benchmarks, and the bigquery and
+/// storage clients, 2026-11-14) spends more on the copies than the
+/// workers save: on linux/arm64 host 1, 2 workers made aiplatform's
+/// fe.build 3356 ms against 3172 serial (medians of 3) and compute's 5.1
+/// to 7.3 s against 4.3 to 4.9, the snapshot's fixed cost, so such a
+/// program builds serially. An XO_FE_SPEC the user set is taken as it is.
+fn (var b: Builder) spec_workers() -> Int {
+  let w = b.fe.spec_jobs
+  if !b.fe.spec_auto || w <= SPEC_FEW {
+    return w
+  }
+  var src = 0
+  for (fo, _) in b.fe.keys {
+    if b.fe_spec_key(fo, {}) != None {
+      let sp = b.c.objs[fo].fn_decl[0].span
+      src += sp.end.offset - sp.start.offset
+    }
+  }
+  let tables = b.spec_tables()
+  if b.fe.spec_diag {
+    b.fe_stats["spec.keyed_src"] = src
+    b.fe_stats["spec.tables"] = tables
+  }
+  if src < SPEC_SRC_PER_TABLE * tables { SPEC_FEW } else { w }
+}
+
+/// spec_workers' bound: the keyed source bytes per table entry under
+/// which a build takes SPEC_FEW workers (1: serial).
+const SPEC_SRC_PER_TABLE = 9
+const SPEC_FEW = 1
+
+/// The jobs whose bodies run_queue_crawl claims (and offers the queue's
+/// new ones) under one lock.
+const SPEC_CLAIM = 32
+
+/// Under one lock: claims the plain bodies of queue[from..to] for this
+/// builder (a worker that has not started one skips it) and offers the
+/// keyed Body jobs of queue[offer..] no one claimed to the workers; the
+/// number offered.
+fn (var b: Builder) spec_claim_offer(from: Int, to: Int, offer: Int, work: Chan[Int], claimed: Mutex[Map[Int, Bool]], stop: Atomic[Int]) -> Int {
+  var own: List[Int] = []
+  for k in from..to {
+    if let Body(fo, _fi, sub) = b.queue[k] {
+      if sub.is_empty() {
+        own.push(fo)
+      }
+    }
+  }
+  var fos: List[Int] = []
+  for k in offer..b.queue.len() {
+    if let Body(fo, _fi, sub) = b.queue[k] {
+      if sub.is_empty() {
+        if let Some(key) = b.fe_spec_key(fo, sub) {
+          if !key.is_empty() {
+            fos.push(fo)
+          }
+        }
+      }
+    }
+  }
+  if own.is_empty() && fos.is_empty() {
+    return 0
+  }
+  claimed.with(fn(var m: Map[Int, Bool]) -> Int {
+    for fo in own {
+      m[fo] = true
+    }
+    var n = 0
+    if stop.get() != 0 {
+      return 0
+    }
+    for fo in fos {
+      if !m.contains(fo) {
+        m[fo] = true
+        if work.try_send(fo) {
+          n += 1
+        }
+      }
+    }
+    n
+  })
+}
+
+/// XO_FE_SPEC_VERIFY: after the main builder lowered function fi itself,
+/// replays the entry a worker made ahead for it (spec) in its place and
+/// compares the two functions (values, types, names, positions, debug
+/// records) and their unwinding checks: the function a hit would have
+/// built against the one the build built, so an encoding difference that
+/// replays to the same code (a worker's pinned lines, an instance named
+/// `#2` here) passes, and a different body (another instance's, XO1510
+/// 2026-11-14) is a mismatch named what. Restores what the replay changed.
+fn (var b: Builder) spec_verify_replay(spec: Bytes, fi: Int, what: Str) {
+  let mine = b.m.funcs[fi]
+  let nchk = b.checks.len()
+  let nq = b.queue.len()
+  let sites = b.sites
+  let nvar = b.nvar
+  let nclos = b.nclos
+  b.fe.last_miss = ""
+  b.fe.spec_replay = true
+  let ok = b.fe_replay(spec, fi)
+  b.fe.spec_replay = false
+  var bad = ""
+  if b.fe.broken {
+    bad = "broken: ${b.fe.broken_why}"
+    b.fe.broken = false
+    b.fe.broken_why = ""
+  } else if !ok {
+    b.fe_stats["spec.verify.miss"] = (b.fe_stats.get("spec.verify.miss") ?? 0) + 1
+  } else {
+    let theirs = b.m.funcs[fi]
+    let d = fe_func_diff(theirs, mine)
+    if !(d == "other" || d.starts_with("names ")) || theirs.values.len() != mine.values.len() {
+      bad = "${d} (values ${theirs.values.len()}/${mine.values.len()})"
+    } else {
+      var a: List[(Int, Str, Int)] = []
+      for c in b.checks[0..nchk] {
+        if c.fi == fi {
+          a.push((c.u, c.callee, c.w))
+        }
+      }
+      var e: List[(Int, Str, Int)] = []
+      for c in b.checks[nchk..b.checks.len()] {
+        e.push((c.u, c.callee, c.w))
+      }
+      if a != e {
+        bad = "checks ${a.len()}/${e.len()}"
+      }
+    }
+  }
+  if bad.is_empty() {
+    b.fe_stats["spec.verify.same"] = (b.fe_stats.get("spec.verify.same") ?? 0) + 1
+  } else {
+    b.fe.mismatches.push("made ahead: ${what}: ${bad}")
+  }
+  b.m.funcs[fi] = mine
+  b.checks = b.checks[0..nchk]
+  b.queue = b.queue[0..nq]
+  b.sites = sites
+  b.nvar = nvar
+  b.nclos = nclos
+}
+
+/// XO_FE_SPEC_DIAG: counts the jobs the main builder lowered itself
+/// (not replayed) by kind, and their SSA values as a cost proxy.
+fn (var b: Builder) spec_diag_job(j: Job, h0: Int) {
+  let h1 = (b.fe_stats.get("spec.hit") ?? 0) + (b.fe_stats.get("spec.hit.inst") ?? 0) + b.fe.hits
+  if h1 != h0 {
+    return
+  }
+  var kind = "other"
+  var fi = -1
+  match j {
+    Body(fo, f, sub) => {
+      fi = f
+      if !sub.is_empty() {
+        kind = if b.fe_spec_key(fo, sub) == None { "inst.nokey" } else { "inst" }
+      } else {
+        let k0 = b.fe.keys.get(fo) ?? ""
+        let md = b.c.mods[b.obj_mod(fo)]
+        let sk = if md.is_std || md.is_prelude || md.native { if b.c.sep_source.contains(md.path) { "std.src" } else { "std" } } else { "prog" }
+        var why = ""
+        let o = b.c.objs[fo]
+        if k0.is_empty() {
+          if o.fn_decl.is_empty() { why = ".nodecl" } else if o.decl_file < 0 { why = ".nofile" } else if o.module < 0 { why = ".nomod" } else if !o.tparams.is_empty() { why = ".tparams" } else if o.recv >= 0 && !b.c.objs[o.recv].tparams.is_empty() { why = ".grecv" } else if o.fn_decl[0].body == None && o.fn_decl[0].lazy == None { why = ".nobody" } else if o.fn_decl[0].span.end.offset > b.c.files[o.decl_file].src.len() || o.fn_decl[0].span.start.offset < 0 { why = ".span" } else { why = ".late" }
+        }
+        kind = if k0.is_empty() { "body.nokey.${sk}${why}" } else if b.fe_spec_key(fo, sub) == None { "body.nospec" } else { "body" }
+      }
+    }
+    Inner(_, f, _) => {
+      fi = f
+      kind = "inner"
+    }
+    Test(f, _, _) => {
+      fi = f
+      kind = "test"
+    }
+    Closure(f, _, _, _, _, _, _, _, _, _, _, _) => {
+      fi = f
+      kind = "closure"
+    }
+    ClosureReplay(f, _, _) => {
+      fi = f
+      kind = "creplay"
+    }
+    Wrap(f, _, _) => {
+      fi = f
+      kind = "wrap"
+    }
+  }
+  let v = if fi >= 0 && fi < b.m.funcs.len() { b.m.funcs[fi].values.len() } else { 0 }
+  if kind.ends_with("tparams") && (b.fe_stats.get("ser.${kind}") ?? 0) < 6 {
+    b.fe_stats["ser.name.${b.m.funcs[fi].name}"] = b.m.funcs[fi].values.len()
+  }
+  b.fe_stats["ser.${kind}"] = (b.fe_stats.get("ser.${kind}") ?? 0) + 1
+  b.fe_stats["ser.${kind}.vals"] = (b.fe_stats.get("ser.${kind}.vals") ?? 0) + v
+}
+
+/// Sends each of fos no one claimed to the workers' list, claiming it
+/// (under the claim lock, so nothing is sent once the list is closed);
+/// the number sent.
+fn spec_send(fos: List[Int], work: Chan[Int], claimed: Mutex[Map[Int, Bool]], stop: Atomic[Int]) -> Int {
+  if fos.is_empty() {
+    return 0
+  }
+  claimed.with(fn(var m: Map[Int, Bool]) -> Int {
+    var n = 0
+    if stop.get() != 0 {
+      return 0
+    }
+    for fo in fos {
+      if !m.contains(fo) {
+        m[fo] = true
+        if work.try_send(fo) {
+          n += 1
+        }
+      }
+    }
+    n
+  })
+}
+
+/// The key of the generic instance of fo under sub whose entry is made
+/// ahead (in this build only): declare0's own key for it, the function's
+/// name with its type arguments' and their implementing types' names. Not
+/// the SSA function's name alone: two instances whose type arguments
+/// lower to types of one name share it, the first declared bare and the
+/// next with `#2`, so it depends on the builder's order (2026-11-14: a
+/// worker's prelude.result_map_err[Str, FsErr, Str] replayed for another
+/// instance of that name, XO1510).
+fn (var b: Builder) spec_inst_key(fo: Int, sub: Map[Int, Int]) -> Str {
+  var ns: List[Str] = []
+  var cs: List[Str] = []
+  for tp in b.type_params(fo) {
+    let t = sub.get(tp) ?? -1
+    if t < 0 {
+      return ""
+    }
+    ns.push(b.m.types[b.typ(t)].name)
+    cs.push(b.type_name(b.impl_named(t)))
+  }
+  "inst ${b.fe_own_flags()} ${fo}:${b.func_name(fo)}[${ns.join(", ")}]|${cs.join(", ")}"
+}
+
+/// f without its body: block 0 with its parameters, and every field a
+/// caller's lowering reads (results, var_params, indirect, captures,
+/// cap_borrowed, entry, export, catches, borrowed, ret_view, skip, file).
+fn spec_shell(f: Func) -> Func {
+  var g = f
+  var ps: List[Value] = []
+  for p in f.blocks[0].params {
+    ps.push(f.values[p])
+  }
+  g.blocks = [Block{}]
+  g.values = []
+  for v in ps {
+    g.blocks[0].params.push(g.values.len())
+    g.values.push(v)
+  }
+  g.poss = []
+  g.names = []
+  g.blobs = []
+  g.name_ix = {}
+  g.argpool = []
+  g.edges = []
+  g.inl_sites = []
+  g.dvars = []
+  g.dbinds = []
+  g.moved = {}
+  g.land_rest = {}
+  g
+}
+
+/// A crawling worker (run_queue_crawl) on its own copy of the builder:
+/// lowers each function object it takes into an entry under its key in
+/// made, and offers the callees the lowering declared; the entries made.
+fn (var b: Builder) spec_crawl(work: Chan[Int], claimed: Mutex[Map[Int, Bool]], results: Chan[(Str, Bytes)], stop: Atomic[Int]) -> Int {
+  var n = 0
+  for fo in work {
+    if stop.get() != 0 {
+      break
+    }
+    let key = b.fe_spec_key(fo, {}) ?? ""
+    if key.is_empty() {
+      if b.fe.spec_wait {
+        results.send(("done ${fo}", b""))
+      }
+      continue
+    }
+    let nq = b.queue.len()
+    let fi = b.declare(fo, [])
+    if let Some(e) = b.spec_one(Job.Body(fo: fo, fi: fi, sub: {})) {
+      results.send((key, e))
+      n += 1
+    }
+    // its body is in the entry: the function keeps what a caller's
+    // lowering reads (the signature and the facts), so the worker's copy
+    // does not grow by every body it lowers
+    if fi < b.m.funcs.len() {
+      b.m.funcs[fi] = spec_shell(b.m.funcs[fi])
+    }
+    let _ = b.c.unparse_body(fo)
+    // the callees its lowering declared (and fo's own job, if declare
+    // made it here): plain ones go to the shared list; generic instances
+    // (their type arguments are this checker's) are lowered here, keyed
+    // by their function's name, and what they declare is taken the same
+    // way. This builder runs none of its queue
+    var fos: List[Int] = []
+    var k = nq
+    while k < b.queue.len() {
+      let j = b.queue[k]
+      k += 1
+      if let Body(f2, i2, s2) = j {
+        if s2.is_empty() {
+          if f2 != fo {
+            fos.push(f2)
+          }
+        } else if stop.get() == 0 && b.fe_spec_key(f2, s2) != None {
+          let ik = b.spec_inst_key(f2, s2)
+          if ik.is_empty() {
+            continue
+          }
+          if let Some(e) = b.spec_one(j) {
+            results.send((ik, e))
+            n += 1
+          }
+          let _ = b.c.unparse_body(f2)
+          if i2 < b.m.funcs.len() {
+            b.m.funcs[i2] = spec_shell(b.m.funcs[i2])
+          }
+        }
+      }
+    }
+    b.queue = []
+    let _ = spec_send(fos, work, claimed, stop)
+    if b.fe.spec_wait {
+      results.send(("done ${fo}", b""))
+    }
+  }
+  n
+}
+
+/// The cache key of a Body job a worker lowers ahead (run_queue_crawl), or None: a body the
+/// cache records (keyed, not generic) and holds no entry for (a hit
+/// replays it anyway), whose source is checked here (not a skipped
+/// module's, not a std extern, not one known not to parse, its tree
+/// joined).
+fn (var b: Builder) fe_spec_key(fo: Int, sub: Map[Int, Int]) -> Option[Str] {
+  if b.c.objs[fo].fn_decl.is_empty() || b.c.lazy_bad.contains(fo) || b.c.tree_pending.contains(fo) {
+    return None
+  }
+  let m = b.obj_mod(fo)
+  if m < 0 || b.c.mod_skip.contains(m) {
+    return None
+  }
+  if !sub.is_empty() {
+    // a generic instance: the cache keys none (its key would need its
+    // type arguments, which the build finds as it goes), so its entry
+    // is made ahead and replayed in this build only, never stored
+    return Some("")
+  }
+  let k0 = b.fe.keys.get(fo) ?? ""
+  if k0.is_empty() {
+    return None
+  }
+  let key = fe_variant(k0, b.fe_own_flags())
+  if b.fe.entries.contains(key) {
+    return None
+  }
+  if !b.c.sepcomp_facts.is_empty() && b.c.mods[m].std_tree && !b.c.sep_source.contains(b.c.mods[m].path) {
+    return None
+  }
+  Some(key)
+}
+
+/// On a worker's copy of the builder (spec_crawl): the sealed entry of Body
+/// job j as run_job_fe's miss would record it, or None when it records
+/// none, makes closures, or the lowering reported anything.
+fn (var b: Builder) spec_one(j: Job) -> Option[Bytes] {
+  var fo = -1
+  var fi = -1
+  if let Body(o, f, _) = j {
+    fo = o
+    fi = f
+  }
+  if fo < 0 {
+    return None
+  }
+  b.fe.cur_line = b.c.objs[fo].fn_decl[0].span.start.line
+  let before = b.spec_reports()
+  b.check_lazy(fo)
+  if b.c.lazy_bad.contains(fo) || b.spec_reports() != before {
+    return None
+  }
+  let r = b.fe_begin()
+  b.run_job0(j)
+  let e = b.fe_entry(r, fi)?
+  // a body that makes closures is lowered at its turn: its closures'
+  // jobs run at the end of the serial queue, so an entry a task records
+  // for one would see the module as it was at its owner's turn, and a
+  // closure's entry cannot fall back to its source when it misses
+  if !b.fe_made_closures().is_empty() || b.spec_reports() != before {
+    return None
+  }
+  b.fe_seal(e, [], r.nt)
+}
+
+/// The entries of the tables a task's copy of the builder copies at its
+/// first writes (the checker's objects, types, records and contexts, the
+/// module's functions and types): what a speculative batch costs.
+fn (b: Builder) spec_tables() -> Int {
+  b.c.objs.len() + b.c.tys.len() + b.c.types.len() + b.c.names.len() + b.m.funcs.len() + b.m.types.len()
+}
+
+/// What a speculative lowering must leave as it found it: anything that
+/// reports, or builds the program again.
+fn (b: Builder) spec_reports() -> Str {
+  "${b.c.diags.len()} ${b.lazy_diags.len()} ${b.errs.len()} ${b.need_conc} ${b.trees_missing} ${b.why} ${b.skip_src.len()} ${b.gens.len()}"
 }
 
 fn (var b: Builder) run_job(j: Job) {
@@ -1330,8 +1888,68 @@ fn (var b: Builder) run_job_fe(j: Job) {
     // body differs by them, and programs of either kind share the cache
     let k0 = b.fe.keys.get(fo) ?? ""
     let key = if k0.is_empty() { "" } else { fe_variant(k0, b.fe_own_flags()) }
+    if !sub.is_empty() && b.fe.spec_entry != None {
+      // decision 0637 stage 3: a generic instance a task lowered ahead,
+      // replayed as a hit; not stored (an instance has no key), and noted
+      // as built without an entry, as its lowering here would be
+      let e = b.fe.spec_entry ?? b""
+      if b.fe.spec_verify {
+        // XO_FE_SPEC_VERIFY: lowered here and compared with the worker's
+        b.check_lazy(fo)
+        b.run_job0(j)
+        b.fe.cur_key = "instance ${b.m.funcs[fi].name}"
+        b.spec_verify_replay(e, fi, b.fe.cur_key)
+        b.nofe_fo(fo)
+        return
+      }
+      b.fe.cur_key = "instance ${b.m.funcs[fi].name}"
+      b.fe.spec_replay = true
+      let ok_i = b.fe_replay(e, fi)
+      b.fe.spec_replay = false
+      if ok_i && !b.fe.broken {
+        b.fe_stats["spec.hit.inst"] = (b.fe_stats.get("spec.hit.inst") ?? 0) + 1
+        b.nofe_fo(fo)
+        return
+      }
+      if b.fe.broken {
+        b.fe.broken = false
+        b.fe.bad.push("${b.fe.cur_key} (made ahead: ${b.fe.broken_why})")
+        b.fe.broken_why = ""
+        return
+      }
+      b.fe_stats["spec.miss.inst"] = (b.fe_stats.get("spec.miss.inst") ?? 0) + 1
+    }
     if sub.is_empty() && !key.is_empty() {
       let entry = b.fe.entries.get(key)
+      // XO_FE_SPEC_VERIFY: the worker's entry, compared with the one this
+      // miss records
+      let sv = if b.fe.spec_verify && entry == None { b.fe.spec_entry } else { None }
+      if entry == None && b.fe.spec_entry != None && !b.fe.spec_verify {
+        // decision 0637 stage 3: the entry a task lowered this body into
+        // ahead of its turn (spec_crawl), replayed as a hit; stored as the
+        // miss would have stored it
+        let e = b.fe.spec_entry ?? b""
+        b.fe.cur_key = key
+        b.fe.spec_replay = true
+        let ok_s = b.fe_replay(e, fi)
+        b.fe.spec_replay = false
+        if ok_s && !b.fe.broken {
+          b.fe.misses += 1
+          b.fe_stats["spec.hit"] = (b.fe_stats.get("spec.hit") ?? 0) + 1
+          b.fe.stores.push((key, e))
+          b.fe.body_entries[fi] = e
+          return
+        }
+        if b.fe.broken {
+          // half committed: the driver builds again without the cache's
+          // entry, and this one is a front end cache bug to report
+          b.fe.broken = false
+          b.fe.bad.push("${key} (${b.m.funcs[fi].name}, made ahead: ${b.fe.broken_why})")
+          b.fe.broken_why = ""
+          return
+        }
+        b.fe_stats["spec.miss"] = (b.fe_stats.get("spec.miss") ?? 0) + 1
+      }
       if !b.fe.verify {
         if let Some(e) = entry {
           b.fe.cur_key = key
@@ -1390,6 +2008,10 @@ fn (var b: Builder) run_job_fe(j: Job) {
             b.fe.body_entries[fi] = x
           }
         }
+      }
+      if let Some(se) = sv {
+        b.fe.cur_key = key
+        b.spec_verify_replay(se, fi, "${key} (${b.m.funcs[fi].name})")
       }
       return
     }
@@ -2872,13 +3494,23 @@ fn (var b: Builder) declare0(fo: Int, targs: List[Int]) -> Int {
       }
       return f
     }
-    // a new instance: not replayed (fecache.xo)
-    b.fe_gen = true
+    // a new instance: not replayed (fecache.xo). A speculative worker's
+    // is read as a found one is (decision 0637 stage 3): the main
+    // builder, which runs the bodies in order, has usually made it by
+    // this body's turn, and a commit that does not find it by its key
+    // misses, so the body is lowered there
+    let spec_read = b.spec_worker && b.fe_rec && !was
+    if !spec_read {
+      b.fe_gen = true
+    }
     var n = 2
     while b.fidx(name) >= 0 {
       let base = name.split("#")[0]
       name = "${base}#${n}"
       n += 1
+    }
+    if spec_read {
+      b.fe_greads.push((key, name))
     }
   }
   if let Some(f) = b.funcs.get(key) {

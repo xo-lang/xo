@@ -794,6 +794,23 @@ fn landings_cleanup_cached(os: Os, var b: ssa.Builder, release: Bool, settings: 
   }
 }
 
+/// The workers the SSA builder lowers queued bodies on ahead of their
+/// turn into front end cache entries (decision 0637 stage 3): XO_FE_SPEC=N
+/// sets them (0 or 1 lowers each body at its turn); by default emit_jobs
+/// up to SPEC_JOBS_MAX, which the builder lowers to 2 for a program whose
+/// tables are large for its code (ssa spec_workers). Each worker holds its
+/// copy of the tables it writes: xo's own build peaks about 750 MB higher
+/// at 6 workers, 1.7 GB at 12, for no more speed.
+fn fe_spec_jobs(os: Os) -> Int {
+  match Int.parse(os.env.get("XO_FE_SPEC") ?? "") {
+    Some(n) => n.max(1)
+    None => emit_jobs(os).min(SPEC_JOBS_MAX)
+  }
+}
+
+/// The default speculative front end tasks (fe_spec_jobs).
+const SPEC_JOBS_MAX = 6
+
 /// Option B's interface form (decision 0613 step 5): on by default since
 /// 2026-11-12; XO_ITAB=0 builds the closure form (for bisecting).
 fn itab_on(os: Os) -> Bool { (os.env.get("XO_ITAB") ?? "") != "0" }
@@ -816,7 +833,7 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
     return ssa.build_program_fe(c, root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard, ssa.FeCache{conc_fixed: conc_fixed, itab: itab})
   }
   var t = os.clock.now()
-  var fe = ssa.FeCache{on: true, itab: itab, verify: backend_cache_mode(os) == "verify", break_name: os.env.get("XO_FE_BREAK") ?? "", recorder: self_id(os)}
+  var fe = ssa.FeCache{on: true, itab: itab, verify: backend_cache_mode(os) == "verify", break_name: os.env.get("XO_FE_BREAK") ?? "", recorder: self_id(os), spec_jobs: fe_spec_jobs(os), spec_auto: Int.parse(os.env.get("XO_FE_SPEC") ?? "") == None, spec_wait: (os.env.get("XO_FE_SPEC_WAIT") ?? "") == "1", spec_verify: (os.env.get("XO_FE_SPEC_VERIFY") ?? "") == "1", spec_diag: (os.env.get("XO_FE_SPEC_DIAG") ?? "") == "1"}
   // separate compilation keys no std body (ssa fe_keys), so std's sum,
   // which parses every std file the memo lacks, is not needed
   let std_sum = if ssa.fe_std_keyed(c) { std_tree_sum(os, c.std_root(), dir) } else { "" }
@@ -887,6 +904,9 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
     if tries >= 3 {
       fe.entries = {}
     }
+    // the bodies lowered at their turns (decision 0637 stage 3): an
+    // entry made ahead that did not replay is not made again
+    fe.spec_jobs = 1
     pk.compact = true
     b = ssa.build_program_fe(c, root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard, fe)
   }
@@ -914,7 +934,13 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
     os.stdio.eprintln("cache fe ${b.fe.hits}/${b.fe.hits + b.fe.misses} bodies")
   }
   if !b.fe.mismatches.is_empty() {
-    fail(os, "XO_BACKEND_CACHE=verify: ${b.fe.mismatches.len()} function bodies' SSA differs from their front end cache entries, the first ${b.fe.mismatches[0]}")
+    let mode = if b.fe.spec_verify { "XO_FE_SPEC_VERIFY=1" } else { "XO_BACKEND_CACHE=verify" }
+    if b.fe.spec_verify {
+      for m in b.fe.mismatches[0..b.fe.mismatches.len().min(40)] {
+        os.stdio.eprintln("spec verify: ${m}")
+      }
+    }
+    fail(os, "${mode}: ${b.fe.mismatches.len()} function bodies' SSA differs from their front end cache entries, the first ${b.fe.mismatches[0]}")
   }
   // the module check cache's entries: the modules checked in full now,
   // only when a build reads them (XO_CHK_CACHE=1 or auto, or verify):

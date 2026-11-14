@@ -626,7 +626,7 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0634](0634-release-ladder-outlining.md): Proposed (Xo Lang 1): a release ladder repeated verbatim in a function becomes one local subroutine that each copy calls (7.4% of xo's arm64 instructions are such repeats); instead of splitting build_native
 - [0635](0635-decompressor-bounded-write.md): Proposed (Xo Lang 2): a Decompressor write bounded by the caller, as Go's Read (0.52; 0.51.1 bounds std/http's client by 4 KiB writes)
 - [0636](0636-parallel-inline.md): Accepted (Xo Lang 1): the inliner runs in waves on the task pool, with the function order walk's result (byte-identical output)
-- [0637](0637-parallel-front-end.md): Accepted (owner): the front end builds function bodies on the task pool, with the serial order's result (byte-identical output)
+- [0637](0637-parallel-front-end.md): Accepted (owner): the front end builds function bodies on the task pool, with the serial order's result (byte-identical output); stage 3 built 2026-11-14: crawling workers make front end cache entries ahead, replayed in queue order (default 6 workers, serial for a program with little source per checker table entry)
 - [0638](0638-public-runtime-checks-threads-metrics.md): Accepted (owner): public memory checks (--check=free,guard,leak), XO_THREADS and the container CPU quota, runtime metrics in std/metrics
 - [0639](0639-rc-dense-liveness.md): Accepted (Xo Lang 1): reference count liveness runs on bit sets over a function's leaves numbered in sorted order
 - [0640](0640-root-helper-takes-worker-slot.md): Proposed (Xo Lang 2): a root thread that helps run tasks takes one of the pool's worker slots, so XO_THREADS=N means at most N threads run Xo work (Go's Ps)

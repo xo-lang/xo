@@ -75,6 +75,13 @@ pub struct FeCache {
   /// the last replay check that missed, and the name it missed on (a
   /// closure's entry that misses names it in the warning)
   last_miss: Str = ""
+  /// A replay of an entry a speculative worker made (decision 0637 stage
+  /// 3): its misses count as spec.miss.WHY, not miss.WHY. A worker lowers
+  /// from a snapshot older than the body's turn, so its entry can make a
+  /// function the main builder has made since (a std body's zero_val,
+  /// TestFrontCacheConsts 2026-11-14); the main builder then lowers the
+  /// body itself, and the cache's own entries are not the cause.
+  spec_replay: Bool = false
   /// a test hook (XO_FE_BREAK): the commit of this function's entry
   /// fails, as an entry that does not replay does
   pub break_name: Str = ""
@@ -94,6 +101,26 @@ pub struct FeCache {
   pub cur_line: Int = 0
   /// qualified name to function object, built on the first replay
   by_ident: Map[Str, Int] = {}
+  /// the workers that lower queued bodies ahead of their turn (decision
+  /// 0637 stage 3, run_queue_crawl; XO_FE_SPEC in the driver, 0 or 1 off):
+  /// each makes entries on its own copy of the builder, and a body's turn
+  /// replays its entry as a hit
+  pub spec_jobs: Int = 1
+  /// spec_jobs is the default (XO_FE_SPEC unset): spec_workers may lower it
+  pub spec_auto: Bool = false
+  /// XO_FE_SPEC_WAIT=1: every keyed body goes to the workers and its turn
+  /// waits for them, so which entries are made does not depend on timing
+  /// (tests)
+  pub spec_wait: Bool = false
+  /// XO_FE_SPEC_VERIFY=1: each entry made ahead is replayed over the body
+  /// lowered here and compared (spec_verify_replay)
+  pub spec_verify: Bool = false
+  /// XO_FE_SPEC_DIAG=1: what the main builder lowered itself, by kind
+  /// (spec_diag_job), and spec_workers' inputs, in the fe stats
+  pub spec_diag: Bool = false
+  /// the entry a speculative lowering made for the job about to run
+  /// (run_job_fe takes it as a hit's when the cache has none)
+  spec_entry: Option[Bytes] = None
 }
 
 /// Whether fe_keys keys std's bodies: not under separate compilation
@@ -757,6 +784,69 @@ fn (b: Builder) fe_same_numbered(a: Bytes, e: Bytes) -> Bool {
     }
     _ => false
   }
+}
+
+/// A value's payload as text, for fe_func_diff's report.
+fn aux_text(f: Func, v: Value) -> Str {
+  match f.aux(v) {
+    None => "-"
+    I(n) => "i${n}"
+    S(s) => "s${s}"
+    B(x) => "b${x}"
+    E(n) => "e${n}"
+    P(t, x) => "p${t}.${x}"
+    _ => "?"
+  }
+}
+
+/// The first field where functions a and e differ (spec_verify_replay):
+/// "other" when none of these does.
+fn fe_func_diff(a: Func, e: Func) -> Str {
+  for i in 0..a.values.len().min(e.values.len()) {
+    let x = a.values[i]
+    let y = e.values[i]
+    if x.op != y.op || x.tb != y.tb || aux_text(a, x) != aux_text(e, y) || a.args_copy(x.args) != e.args_copy(y.args) {
+      return "v${i}: ${op_name(x.op)} tb=${x.tb} ${aux_text(a, x)} ${a.args_copy(x.args)} | ${op_name(y.op)} tb=${y.tb} ${aux_text(e, y)} ${e.args_copy(y.args)}"
+    }
+  }
+  if a.blocks.len() != e.blocks.len() { return "blocks ${a.blocks.len()}/${e.blocks.len()}" }
+  if a.poss != e.poss {
+    for i in 0..a.poss.len().min(e.poss.len()) {
+      if a.poss[i] != e.poss[i] {
+        return "poss[${i}] ${a.poss[i]} | ${e.poss[i]}"
+      }
+    }
+    return "poss ${a.poss.len()}/${e.poss.len()}"
+  }
+  if a.blobs != e.blobs { return "blobs" }
+  if a.dvars.len() != e.dvars.len() { return "dvars ${a.dvars.len()}/${e.dvars.len()}" }
+  if a.dbinds.len() != e.dbinds.len() { return "dbinds ${a.dbinds.len()}/${e.dbinds.len()}" }
+  if a.results != e.results { return "results" }
+  if a.edges.len() != e.edges.len() { return "edges" }
+  if a.land_rest != e.land_rest { return "land_rest" }
+  if a.moved != e.moved { return "moved" }
+  if a.captures != e.captures || a.var_params != e.var_params { return "params" }
+  if a.catches != e.catches || a.unwind_exit != e.unwind_exit || a.lazy_lands != e.lazy_lands { return "unwind ${a.unwind_exit}/${e.unwind_exit} ${a.lazy_lands}/${e.lazy_lands}" }
+  for i in 0..a.dvars.len() {
+    let x = a.dvars[i]
+    let y = e.dvars[i]
+    if x.name != y.name || x.ty != y.ty || x.line != y.line || x.param != y.param || x.inl != y.inl {
+      return "dvar[${i}] ${x.name} ty=${x.ty} l=${x.line} inl=${x.inl} | ${y.name} ty=${y.ty} l=${y.line} inl=${y.inl}"
+    }
+  }
+  for i in 0..a.dbinds.len() {
+    let x = a.dbinds[i]
+    let y = e.dbinds[i]
+    if x.dvar != y.dvar || x.value != y.value || x.line != y.line {
+      return "dbind[${i}] ${x.dvar}/${x.value}/${x.line} | ${y.dvar}/${y.value}/${y.line}"
+    }
+  }
+  if a.file != e.file { return "file ${a.file} | ${e.file}" }
+  if a.inl_sites.len() != e.inl_sites.len() { return "inl_sites" }
+  // the payload table: a replay's rename leaves the old name unused, so
+  // two tables differ though every value names the same (compared above)
+  if a.names != e.names || a.name_ix != e.name_ix { return "names ${a.names.len()}/${e.names.len()}" }
+  "other"
 }
 
 /// An entry's version and flags (what fe_same compares of its head) and
@@ -1488,7 +1578,8 @@ fn (var b: Builder) fe_miss(why: Str) -> Bool {
   if b.fe.last_miss.is_empty() {
     b.fe.last_miss = why
   }
-  b.fe_stats["miss.${why}"] = (b.fe_stats.get("miss.${why}") ?? 0) + 1
+  let k = if b.fe.spec_replay { "spec.miss.${why}" } else { "miss.${why}" }
+  b.fe_stats[k] = (b.fe_stats.get(k) ?? 0) + 1
   false
 }
 

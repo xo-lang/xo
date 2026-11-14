@@ -78,6 +78,100 @@ Stages 1 and 2 give byte-identical output by construction (the same trees, the s
   11,897 (the rest are generic instances, which have no key, fecache.xo) and skips 999 (gen 993), so
   about 46%. Stage 3 needs generic instances keyed (the generic body's key and the type arguments
   by name) to cover aiplatform.
+- Stage 3, a first design (branch lang1-fespec, not pushed): batches of queued bodies, each worker
+  copying the builder per batch and lowering every w-th body. Two traps (gotcha
+  fe-spec-copies-and-closures.md): closure-making bodies' entries did not replay and the driver's
+  retry made them again without end, and batches of a few bodies copied the builder thousands of
+  times (fe.build 4.3 s against 3.3 s serial). It covered no generic instance, so aiplatform could
+  not gain.
+- Stage 3 as built (branch lang1-fespec3; ssa/build.xo run_queue_crawl, spec_crawl, spec_workers,
+  spec_claim_offer, spec_one, spec_inst_key, spec_verify_replay): crawling workers. The builder is
+  copied once per run_queue (`let snap = b`), and each worker takes function objects from a shared
+  work channel, lowers the body on its copy (check_lazy, run_job0, fe_entry, fe_seal), sends the
+  entry on a results channel, then lowers right away the generic instances that body declared
+  (keyed for this build only by spec_inst_key: the generic's object and its type arguments' names,
+  plus the source names, since Str and Bytes lower to one SSA type and `f[Str]`, `f[Str]#2` both
+  arise) and offers the plain callees it declared to the work channel. So the workers run ahead of
+  the queue by following the call graph, instead of waiting for the main builder to declare. The
+  main builder claims its next 32 queued bodies under one lock (SPEC_CLAIM; a body a worker has not
+  started is the main builder's) and offers the rest; at each Body job it drains the results without
+  a lock and replays the entry as a hit (a miss, or no entry, lowers it as before). fe_replay gives
+  every type, function, closure and site the serial build's number whatever the worker held, so the
+  output is the serial build's. Excluded and lowered at their turn: a body that makes closures or
+  reports anything (spec_one, spec_reports), a skipped module's or std extern's body, one with a
+  cache entry already.
+- The snapshot's fixed cost: the main builder's first write to each table it shares with the
+  workers' copy copies that table. About 0.24 s on the Mac and 0.35 s on host 1 for aiplatform
+  (bisected: the checker 90 ms, the module 23 ms, the rest over the builder's maps); it shows in
+  neither CPU profiles nor sys time. Each worker likewise copies the tables it writes (c.tys first):
+  for a program whose checker holds 300,000 or more types, more workers cost more than they save.
+- The worker count (spec_workers, the default when XO_FE_SPEC is unset): min(emit jobs, 6), but
+  none (the serial loop, no snapshot) when the keyed bodies' source is under 9 bytes per entry of
+  the tables a worker copies
+  (spec_tables: the checker's objects, types, records and names, the module's functions and types;
+  both are known when run_queue starts, a sum over fe.keys). 8 programs on the Mac (cold, fe.build
+  ms, XO_FE_SPEC=0, 2, 6; ratio = keyed source bytes per table entry):
+
+  | program | checker types | ratio | off | 2 | 6 |
+  |---|---|---|---|---|---|
+  | gcp aiplatform/apiv1 tests | 305k | 6.4 | 2299 | 2336 | 2538 |
+  | gcp compute/apiv1 tests | 484k | 5.2 | 2202 | 2200 | 2723 |
+  | xo (compiler/xo) | 78k | 12.1 | 3324 | 2130 | 1491 |
+  | gcp bigquery tests | 39k | 13.7 | 911 | 782 | 653 |
+  | gcp bigquery/apiv2 tests | 33k | 15.2 | 867 | 820 | 702 |
+  | gcp storage tests | 32k | 13.8 | 924 | 864 | 684 |
+  | bench http server | 7k | 24.9 | 812 | 634 | 493 |
+  | std json tests | 3k | 49 | 155 | 119 | 93 |
+
+  The two programs below 9 lose at 6 workers and are about neutral at 2 on the Mac; every program
+  at 12 or more gains at 6. On host 1, 2 workers lost on both (below), so they build serially. An
+  XO_FE_SPEC the user sets is taken as it is.
+- Equivalence: XO_FE_SPEC_VERIFY=1 lowers every body on the main builder, replays the worker's
+  entry over it and compares the two functions (fe_func_diff: values, types, aux, args, positions,
+  debug records; the names table aside), then restores what the replay changed. A byte comparison
+  of the entries (fe_same_numbered) reports benign differences: a worker's entry pins the helper
+  lines it made that the main builder already had, and an instance named `#2` on one side. The
+  replay comparison passes on aiplatform at 6 workers (10,611 same, 1,814 entries miss and are
+  lowered) and on xo at 2 (13,411 same, 357 miss) and 6 (13,396, 548); with the source names left
+  out of spec_inst_key it reports the wrong instance replayed (result_map_err's parameter type, xo,
+  XO1510 before the fix). XO_FE_SPEC_WAIT=1 makes the speculation deterministic for tests (every
+  keyed body goes to the workers and its turn waits for them). The golden spec_instance_same_name
+  (internal/llvm/testdata/golden, env XO_FE_SPEC=4 WAIT VERIFY) and
+  TestFrontCacheSpecSameNameInstances (internal/arm64) build two instances whose SSA names collide
+  (a generic over Str and Bytes): same output, verify passes, instance hits, and the binary equals
+  XO_FE_SPEC=0's.
+- Host 1 (linux/arm64, cold, default caches each fresh, ~/xo-lead/notes/lang1/spec-h1c.txt, branch
+  at 04c22ee54 where a program under the bound took 2 workers): fe.build ms, runs and median, and
+  max RSS:
+
+  | program | XO_FE_SPEC | fe.build (median) | max RSS |
+  |---|---|---|---|
+  | xo (compiler/xo) | 1 | 4392, 5399, 4966 (4966) | 3.68 to 3.81 GB |
+  | | 2 | 3259, 3419, 3910 (3419) | 3.77 to 3.88 GB |
+  | | 6 | 2538, 2360, 2102 (2360) | 3.80 to 3.96 GB |
+  | | 12 | 3110, 2900, 2765 (2900) | 3.88 to 3.91 GB |
+  | | default (6) | 2497, 2312, 2202 (2312) | 3.81 to 3.86 GB |
+  | aiplatform/apiv1 tests | 1 | 3172, 3110, 3847 (3172) | 2.16 to 2.24 GB |
+  | | 2 | 3393, 3323, 3146 (3323) | 2.18 to 2.22 GB |
+  | | 6 | 4184, 4186, 3458 (4184) | 2.79 to 2.83 GB |
+  | | 12 | 4461, 4415, 4467 (4461) | 3.95 to 4.00 GB |
+  | | default (2 then) | 4107, 3346, 3356 (3356) | 2.17 to 2.22 GB |
+
+  The other programs (serial, then the default; two runs each): http 1207, 1607 to 1217, 907; json
+  243, 268 to 200, 209; bigquery 1638, 2396 to 1216, 1227; bigquery/apiv2 1757, 1719 to 1219, 1838;
+  storage 1874, 3323 to 1077, 1171; compute 4862, 4255 to 5073, 7322 (2 workers then). The host's
+  noise is wide (xo serial 4.4 to 5.4 s), but aiplatform and compute at 2 workers are slower in
+  every pairing, so a program under the bound now builds serially (c9d14eaeb) and is the serial
+  build by construction. Every program's output is byte-identical in every run (one SHA-256 per
+  program over 81 builds): the worker counts, the determinism set of 0636 (5 cold runs, XO_EMIT_JOBS=1,
+  2, 7, XO_THREADS=3, XO_MUTEX_YIELD=1), XO_FE_SPEC_WAIT, XO_FE_SPEC_VERIFY at the default and at 6
+  workers (30.8 to 40.8 s, all same), and the self build under XO_MAX_MEM=8G (fe.build 2032 ms,
+  max RSS 3.85 GB).
+- Not in this stage: generic instances' entries are kept for this build only (the cache keys no
+  instance; effect-only generics, which the cache could key, are a separate
+  commit with its own measurement). A worker's entries pin the helper lines it made, so a warm build after an edit can miss
+  more than a serial cold build's entries would; a chunked c.tys would cut the per-worker copies
+  that keep the generated clients serial; verify mode takes 31 to 41 s on linux/arm64.
 
 ## Consequences
 

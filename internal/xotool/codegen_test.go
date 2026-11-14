@@ -124,6 +124,10 @@ var codegenEnv = map[string]inputClass{
 	"XO_FE_STATS":             {"none", ""},
 	"XO_HEAP_REGION_STATS":    {"none", ""}, // decision 0633: the heap region release's counts on stderr
 	"XO_HEAP_REGION_WORKERS":  {"none", ""}, // decision 0633: the tasks the release walks on; where xo's memory goes, not what it makes
+	"XO_FE_SPEC":              {"none", ""}, // N tasks lower bodies ahead (decision 0637 stage 3; 0 or 1 off); entries replay to the same module
+	"XO_FE_SPEC_WAIT":         {"none", ""}, // each body waits for the workers that lower it ahead (decision 0637 stage 3; tests)
+	"XO_FE_SPEC_VERIFY":       {"none", ""}, // replays each entry made ahead over the body lowered here and compares (decision 0637 stage 3)
+	"XO_FE_SPEC_DIAG":         {"none", ""}, // fe stats of what the main builder lowered itself (decision 0637 stage 3)
 	"XO_LAZY_PARSE":           {"none", ""},
 	"XO_DEP_LAZY":             {"none", ""}, // 0: decision 0517 off (on by default): when a dependency's bodies are checked, not what they compile to; the module check cache keys it (mod_flags)
 	"XO_GET_CHECK":            {"none", ""}, // 0: xo get does not check a newly required version (decision 0517); no build reads it

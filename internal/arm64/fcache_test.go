@@ -3983,3 +3983,66 @@ func TestFrontCacheReplayMadeInterface(t *testing.T) {
 		}
 	}
 }
+
+// TestFrontCacheSpecSameNameInstances: generic instances whose SSA names
+// collide (Str's and Bytes' firsts[Str] and firsts[Str]#2, and the
+// prelude's sorts) made ahead by speculative workers (decision 0637 stage
+// 3) replay as the instance they were made for: with the workers
+// deterministic (XO_FE_SPEC_WAIT) and each replay checked against the
+// body lowered here (XO_FE_SPEC_VERIFY), the build passes, replays
+// instances, and makes the binary the speculation-off build makes. An
+// instance keyed by its SSA name replayed another instance in xo's own
+// build (XO1510, 2026-11-14).
+func TestFrontCacheSpecSameNameInstances(t *testing.T) {
+	t.Parallel()
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-fespec-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(work) })
+	dir := filepath.Join("..", "llvm", "testdata", "golden", "spec_instance_same_name")
+	out := filepath.Join(work, "prog"+progExe)
+	build := func(name string, env ...string) ([]byte, string) {
+		t.Helper()
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, "."))
+		cmd.Dir = dir
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache-"+name), "XO_BACKEND_CACHE=on", "XO_FE_STATS=1"), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build (%s): %v\n%s", name, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run := testtmp.Guard(exec.Command(out))
+		got, err := run.CombinedOutput()
+		if err != nil || string(got) != "a 3\n1 2\n" {
+			t.Fatalf("the program built with %s printed %q (%v), want \"a 3\\n1 2\\n\"", name, got, err)
+		}
+		return b, string(log)
+	}
+	_, log := build("spec", "XO_FE_SPEC=4", "XO_FE_SPEC_WAIT=1", "XO_FE_SPEC_VERIFY=1")
+	m := regexp.MustCompile(`fe spec\.verify\.same (\d+)`).FindStringSubmatch(log)
+	if m == nil || m[1] == "0" {
+		t.Fatalf("no entry made ahead was replayed and verified:\n%s", log)
+	}
+	spec2, log2 := build("spec2", "XO_FE_SPEC=4", "XO_FE_SPEC_WAIT=1")
+	if !regexp.MustCompile(`fe spec\.hit\.inst [1-9]`).MatchString(log2) {
+		t.Errorf("no generic instance made ahead was replayed:\n%s", log2)
+	}
+	off, _ := build("off", "XO_FE_SPEC=0")
+	if !bytes.Equal(spec2, off) {
+		t.Error("the build replaying the workers' entries differs from the build without workers")
+	}
+}
