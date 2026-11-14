@@ -15,30 +15,42 @@
 // the copy that ran, not the first copy's. Its pcs lie past the
 // function's line rows. The run's slots are read 16 bytes further, past
 // the record.
+//
+// x86_64 the same (step 3: 4.7% of xo's amd64 instructions were
+// repeats of 16 or more pairs): `movq N(%rsp), %rdi; callq H` pairs, a
+// subroutine that pushes rbp (the call pushed the return address, so the
+// slots are N + 16 there too), and `callq` to it.
 
 /// The fewest pairs a run has to be outlined.
 const LADDER_MIN = 16
 
 /// The farthest slot offset a ladder may read: [sp, #N + 16] stays in
-/// the scaled ldr's reach.
+/// the scaled ldr's reach (x86's disp32 reaches it too).
 const LADDER_MAX_OFF = 32744
 
-/// The slot offset of a ladder line `\tldr x0, [sp, #N]`, or -1.
-fn ladder_load(l: Str) -> Int {
-  let p = "\tldr x0, [sp, #"
-  if !l.starts_with(p) || !l.ends_with("]") {
+/// The slot offset of a ladder line, `\tldr x0, [sp, #N]` (x86:
+/// `\tmovq N(%rsp), %rdi`), or -1.
+fn ladder_load(l: Str, x86: Bool) -> Int {
+  let (p, q) = if x86 { ("\tmovq ", "(%rsp), %rdi") } else { ("\tldr x0, [sp, #", "]") }
+  if !l.starts_with(p) || !l.ends_with(q) || l.len() <= p.len() + q.len() {
     return -1
   }
-  let n = parse_int(l[p.len()..l.len() - 1]) ?? -1
+  let n = parse_int(l[p.len()..l.len() - q.len()]) ?? -1
   if n < 0 || n % 8 != 0 || n > LADDER_MAX_OFF {
     return -1
   }
   n
 }
 
-/// Whether l is a call `\tbl SYM` (a symbol only).
-fn ladder_call(l: Str) -> Bool {
-  l.starts_with("\tbl ") && l.len() > 4 && !l.contains(",") && !l[4..l.len()].contains(" ")
+/// A ladder line reading slot n.
+fn ladder_load_text(n: Int, x86: Bool) -> Str {
+  if x86 { "\tmovq ${n}(%rsp), %rdi" } else { "\tldr x0, [sp, #${n}]" }
+}
+
+/// Whether l is a call of a symbol, `\tbl SYM` (x86: `\tcallq SYM`).
+fn ladder_call(l: Str, x86: Bool) -> Bool {
+  let p = if x86 { "\tcallq " } else { "\tbl " }
+  l.starts_with(p) && l.len() > p.len() && !l.contains(",") && !l.contains("*") && !l[p.len()..l.len()].contains(" ")
 }
 
 /// Whether l is a label a run may hold (moved before its `bl` when the
@@ -62,7 +74,7 @@ fn ladder_label(l: Str) -> Bool {
 
 /// The run that starts at ls[i]: its pairs and the index past its last
 /// call (labels inside it included).
-fn ladder_run(ls: List[Str], i: Int) -> (Int, Int) {
+fn ladder_run(ls: List[Str], i: Int, x86: Bool) -> (Int, Int) {
   var n = 0
   var j = i
   var end = i
@@ -71,14 +83,14 @@ fn ladder_run(ls: List[Str], i: Int) -> (Int, Int) {
     while k < ls.len() && ladder_label(ls[k]) {
       k += 1
     }
-    if k >= ls.len() || ladder_load(ls[k]) < 0 {
+    if k >= ls.len() || ladder_load(ls[k], x86) < 0 {
       break
     }
     var c = k + 1
     while c < ls.len() && ladder_label(ls[c]) {
       c += 1
     }
-    if c >= ls.len() || !ladder_call(ls[c]) {
+    if c >= ls.len() || !ladder_call(ls[c], x86) {
       break
     }
     n += 1
@@ -99,13 +111,22 @@ fn ladder_key(ls: List[Str], a: Int, b: Int) -> Str {
   out.join("\n")
 }
 
+/// outline_ladders on x86_64's text (x86_emit, after its text passes).
+fn (var g: G) outline_ladders_x86(text: Str) -> Str {
+  if !g.x86 || g.os == "windows" || !g.on("ladders") || !text.contains("(%rsp), %rdi\n") {
+    return text
+  }
+  g.outline_ladders(text.split("\n")).join("\n")
+}
+
 /// Outlines the repeated ladders of one function's text (lines, after
-/// the line passes). Off for x86 (a call moves sp), windows/arm64 (its
-/// unwind codes) and XO_PASSES=-ladders. A far frame's slots past sp's
-/// reach are read through x28 by then (far_slots_l), which no ladder
+/// the line passes). Off for windows (its unwind codes describe one
+/// prologue a region) and XO_PASSES=-ladders. A far frame's slots past
+/// sp's reach are read through x28 by then (far_slots_l), which no ladder
 /// line matches; its near slots are sp's as elsewhere.
 fn (var g: G) outline_ladders(lines: List[Str]) -> List[Str] {
-  if g.x86 || g.win_a64() || !g.on("ladders") || !any_has(lines, "\tldr x0, [sp, #") {
+  let x86 = g.x86
+  if g.os == "windows" || !g.on("ladders") || !any_has(lines, if x86 { "(%rsp), %rdi" } else { "\tldr x0, [sp, #" }) {
     return lines
   }
   let ls = flat_lines(lines)
@@ -114,11 +135,11 @@ fn (var g: G) outline_ladders(lines: List[Str]) -> List[Str] {
   var count: Map[Str, Int] = {}
   var i = 0
   while i < ls.len() {
-    if ladder_load(ls[i]) < 0 {
+    if ladder_load(ls[i], x86) < 0 {
       i += 1
       continue
     }
-    let (n, end) = ladder_run(ls, i)
+    let (n, end) = ladder_run(ls, i, x86)
     if n == 0 {
       i += 1
       continue
@@ -167,21 +188,36 @@ fn (var g: G) outline_ladders(lines: List[Str]) -> List[Str] {
           lab = g.local("${g.lbl_prefix()}_ld${subs.len()}")
           subs[key] = lab
           sub_text.push("${lab}:")
-          sub_text.push("\tstp x29, x30, [sp, #-16]!")
-          sub_text.push("\t.cfi_def_cfa_offset 16")
-          sub_text.push("\t.cfi_offset w30, -8")
-          sub_text.push("\t.cfi_offset w29, -16")
-          sub_text.push("\tmov x29, sp")
-          sub_text.push("\t.cfi_def_cfa w29, 16")
-          for l in key.split("\n") {
-            let off = ladder_load(l)
-            sub_text.push(if off >= 0 { "\tldr x0, [sp, #${off + 16}]" } else { l })
+          if x86 {
+            sub_text.push("\tpushq %rbp")
+            sub_text.push("\t.cfi_def_cfa_offset 16")
+            sub_text.push("\t.cfi_offset %rbp, -16")
+            sub_text.push("\tmovq %rsp, %rbp")
+            sub_text.push("\t.cfi_def_cfa_register %rbp")
+          } else {
+            sub_text.push("\tstp x29, x30, [sp, #-16]!")
+            sub_text.push("\t.cfi_def_cfa_offset 16")
+            sub_text.push("\t.cfi_offset w30, -8")
+            sub_text.push("\t.cfi_offset w29, -16")
+            sub_text.push("\tmov x29, sp")
+            sub_text.push("\t.cfi_def_cfa w29, 16")
           }
-          sub_text.push("\tldp x29, x30, [sp], #16")
-          sub_text.push("\t.cfi_def_cfa sp, 0")
-          sub_text.push("\t.cfi_restore w30")
-          sub_text.push("\t.cfi_restore w29")
-          sub_text.push("\tret")
+          for l in key.split("\n") {
+            let off = ladder_load(l, x86)
+            sub_text.push(if off >= 0 { ladder_load_text(off + 16, x86) } else { l })
+          }
+          if x86 {
+            sub_text.push("\tpopq %rbp")
+            sub_text.push("\t.cfi_def_cfa %rsp, 8")
+            sub_text.push("\t.cfi_restore %rbp")
+            sub_text.push("\tretq")
+          } else {
+            sub_text.push("\tldp x29, x30, [sp], #16")
+            sub_text.push("\t.cfi_def_cfa sp, 0")
+            sub_text.push("\t.cfi_restore w30")
+            sub_text.push("\t.cfi_restore w29")
+            sub_text.push("\tret")
+          }
         }
         // the run's labels stay, at the call
         for k in i..end {
@@ -189,7 +225,7 @@ fn (var g: G) outline_ladders(lines: List[Str]) -> List[Str] {
             out.push(ls[k])
           }
         }
-        out.push("\tbl ${lab}")
+        out.push(if x86 { "\tcallq ${lab}" } else { "\tbl ${lab}" })
         i = end
         continue
       }
