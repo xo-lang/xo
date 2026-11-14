@@ -181,6 +181,20 @@ src="$work/src/$top"
 rm -rf "${work:?}/src"
 mkdir -p "$work/src"
 tar -C "$work/src" -xf "$tarball" "$top/compiler-rt" "$top/cmake" "$top/llvm/cmake"
+# The C flavor's trace parts at Go's size, 128 KB instead of 256 KB
+# (decision 0616 section 2a, 2026-11-13): every finished task leaves its
+# parts in a recycle pool that grew to about 1.8 GB on linux/arm64 before
+# it was reused (Go's flavor, built from the same source at 128 KB, holds
+# half). kByteSize sets only the events per part (kSize) and a
+# static_assert; the 0xff0 alignment mask and kMaxFrames < kSize / 2 hold
+# at 128 KB. A release whose race runtimes predate this change rebuilds
+# and re-signs them (darwin and linux; windows-amd64 is the Go flavor,
+# 128 KB already). The patch fails loudly when an LLVM bump moves the line.
+trace_h="$src/compiler-rt/lib/tsan/rtl/tsan_trace.h"
+grep -q 'kByteSize = (SANITIZER_GO ? 128 : 256) << 10;' "$trace_h" ||
+  { echo "race-runtime.sh: $trace_h has no 'kByteSize = (SANITIZER_GO ? 128 : 256) << 10;' to patch (LLVM $LLVM_VERSION): see decision 0616 section 2a" >&2; exit 1; }
+sed -i.orig 's/kByteSize = (SANITIZER_GO ? 128 : 256) << 10;/kByteSize = 128 << 10;  \/\/ xo: Go'"'"'s size (race-runtime.sh)/' "$trace_h"
+grep -q 'kByteSize = 128 << 10;' "$trace_h" || { echo "race-runtime.sh: patching $trace_h failed" >&2; exit 1; }
 
 if ! command -v cmake >/dev/null || ! command -v ninja >/dev/null; then
   if [ -x "$work/venv/bin/cmake" ] || { python3 -m venv "$work/venv" && "$work/venv/bin/pip" install -q cmake ninja; } 2>/dev/null; then

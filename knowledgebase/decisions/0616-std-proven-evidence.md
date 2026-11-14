@@ -146,6 +146,20 @@ resident set is shown in race.md and not judged; race.md's header names
 the Go version of the twin (`go:`). Measured on host 2:
 Xo 296 B per task after the pool is full, Go 255 B (1.16).
 
+The pool was still filling over 6 to 10 million tasks with the stock
+runtime (352 B per task, 1.41 of Go's, 2026-11-13), so Xo's runtime
+now builds its trace parts at Go's 128 KB (scripts/race-runtime.sh
+patches tsan_trace.h's kByteSize; nothing else depends on it, and Go's
+flavor compiles the same source at 128 KB). Same churn, same host:
+266 B per task against Go's 253 B (1.05), 2122 MB resident at 6
+million tasks against 3136 MB. Detection is unchanged: the race
+tests of internal/llvm (the race_sync table: every unsynchronized case
+reports a race and no synchronized one does, on both backends) and
+TestGoldenRace pass with the 128 KB runtime on linux/arm64 and
+darwin/arm64. A release whose race runtimes were built before this
+change rebuilds and re-signs them (darwin and linux; windows/amd64 is
+the Go flavor, 128 KB already).
+
 ### 3. Staleness
 
 A module's source hash is the SHA-256 the runner computes over the paths
