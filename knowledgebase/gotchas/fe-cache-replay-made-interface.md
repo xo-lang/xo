@@ -54,3 +54,19 @@ log_with (fails before the fix on arm64 and windows/amd64).
 Avoid: any builder path that returns a type from its own side table
 (not through a Module maker) calls `b.m.fe_seen` on it, or the front end
 cache cannot know an entry depends on it.
+
+Second sibling (2026-11-14, TestWarmBuildSequence's XO_WARMSEQ=modules
+set): websocket_deadline then websocket (or http_reverse_proxy_ws) warned
+"closure http.Server.serve.fn15 ...: its entry missed: read type
+Chan[()]". A missing read type makes a function's entry miss quietly,
+but a closure's entry replays only as part of its owner's, which had
+already committed, so its miss is a failed build that falls back.
+websocket_deadline's build had made Chan[()] before http.Server.serve;
+websocket's had not. Fix (front cache v18): fe_seal appends the types the
+owner's closures, at any depth, read from before the owner's body began
+(type numbers below the owner's FeRec.nt), and the owner's replay checks
+them before it changes anything, so the owner misses quietly instead.
+
+Avoid: a check that can only fail after a commit (a closure's, a
+helper's) must be hoisted to its owner's lookup, or a read that was
+there at recording turns into a failed replay where it is not.

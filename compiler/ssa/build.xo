@@ -1365,8 +1365,8 @@ fn (var b: Builder) run_job_fe(j: Job) {
         let clos = b.fe_made_closures()
         if !clos.is_empty() {
           // its closures' entries follow it once their jobs ran
-          b.fe.pending.push((key, e, clos))
-        } else if let Some(x) = b.fe_seal(e, []) {
+          b.fe.pending.push((key, e, clos, r.nt))
+        } else if let Some(x) = b.fe_seal(e, [], r.nt) {
           if entry == None || entry != Some(x) {
             b.fe.stores.push((key, x))
           }

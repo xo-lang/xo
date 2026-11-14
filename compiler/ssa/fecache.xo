@@ -23,7 +23,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v17"
+const FE_CACHE_VERSION = "xo front cache v18"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -80,7 +80,7 @@ pub struct FeCache {
   pub break_name: Str = ""
   /// the entries of bodies that made closures, waiting for their
   /// closures' entries (fe_finalize): key, entry, the closures in order
-  pub pending: List[(Str, Bytes, List[Int])] = []
+  pub pending: List[(Str, Bytes, List[Int], Int)] = []
   /// a closure's entry when its job recorded one, and the closures it
   /// made in turn; a closure in no_clos recorded none
   pub clos_rec: Map[Int, (Bytes, List[Int])] = {}
@@ -1182,6 +1182,19 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
   for _ in 0..ns {
     subs.push(r.bytes())
   }
+  // the types its closures read from before its body (fe_seal): their
+  // replays cannot miss, so a missing one misses here, before any change
+  let nx = r.uv()
+  if !r.ok || nx > d.len() {
+    return b.fe_miss("malformed")
+  }
+  for _ in 0..nx {
+    let n = r.str()
+    if r.ok && !b.m.type_at.contains(n) && b.m.int_type(n) < 0 && !(n == "Float32" && b.m.float32() >= 0) {
+      b.fe.last_miss = "a closure's read type ${n}"
+      return b.fe_miss("read")
+    }
+  }
   if !r.ok {
     return b.fe_miss("malformed")
   }
@@ -1510,18 +1523,26 @@ fn (b: Builder) fe_made_closures() -> List[Int] {
 }
 
 /// Entry e with its closures' entries after it (each sealed in turn),
-/// none when one of them recorded none.
-fn (b: Builder) fe_seal(e: Bytes, clos: List[Int]) -> Option[Bytes] {
+/// then the types its closures (at any depth) read that were there before
+/// its owner's body began (type numbers below nt): none when one of them
+/// recorded none. A closure cannot fall back to its source, so its
+/// owner's replay checks these first and misses quietly when one is
+/// absent (2026-11-14: websocket_deadline then websocket, closure
+/// http.Server.serve.fn15's entry missed: read type Chan[()], which
+/// websocket_deadline's build had made before http.Server.serve).
+fn (b: Builder) fe_seal(e: Bytes, clos: List[Int], nt: Int) -> Option[Bytes] {
   var w = EntryW{b: BytesBuilder.new()}
   w.b.write(e)
   w.uv(clos.len())
+  var ext: Map[Str, Bool] = {}
   for cf in clos {
     if b.fe.no_clos.contains(cf) {
       return None
     }
     match b.fe.clos_rec.get(cf) {
       Some((ce, sub)) => {
-        match b.fe_seal(ce, sub) {
+        b.fe_closure_reads(cf, nt, ext)
+        match b.fe_seal(ce, sub, nt) {
           Some(x) => w.bytes(x)
           None => return None
         }
@@ -1529,14 +1550,64 @@ fn (b: Builder) fe_seal(e: Bytes, clos: List[Int]) -> Option[Bytes] {
       None => return None
     }
   }
+  var names: List[Str] = []
+  for (n, _) in ext {
+    names.push(n)
+  }
+  w.uv(names.len())
+  for n in names.sort() {
+    w.str(n)
+  }
   Some(w.b.freeze())
+}
+
+/// Into ext, the types closure cf's entry and its closures' entries read
+/// that were there before type number nt.
+fn (b: Builder) fe_closure_reads(cf: Int, nt: Int, var ext: Map[Str, Bool]) {
+  match b.fe.clos_rec.get(cf) {
+    Some((ce, sub)) => {
+      for n in entry_type_reads(ce) {
+        let t = b.m.type_at.get(n) ?? -1
+        if t >= 0 && t < nt {
+          ext[n] = true
+        }
+      }
+      for c in sub {
+        b.fe_closure_reads(c, nt, ext)
+      }
+    }
+    None => {}
+  }
+}
+
+/// The types entry d reads ("t NAME" reads), as fe_replay reads them.
+fn entry_type_reads(d: Bytes) -> List[Str] {
+  var r = EntryR{d: d}
+  let _v = r.str()
+  let _flags = r.str()
+  let _recorder = r.str()
+  let _line = r.uv()
+  let _pinned = r.bool()
+  let _tail = r.bytes()
+  let nr = r.uv()
+  var out: List[Str] = []
+  if !r.ok || nr > d.len() {
+    return out
+  }
+  for _ in 0..nr {
+    let k = r.str()
+    if k.starts_with("t ") {
+      out.push(k[2..k.len()])
+    }
+  }
+  out
 }
 
 /// The entries waiting for their closures', sealed and stored (after the
 /// build: every closure job has run).
 pub fn (var b: Builder) fe_finalize() {
-  for (key, e, clos) in b.fe.pending {
-    if let Some(x) = b.fe_seal(e, clos) {
+  for (key, e, clos, nt) in b.fe.pending {
+    if let Some(x) = b.fe_seal(e, clos, nt) {
       b.fe.stores.push((key, x))
     }
   }

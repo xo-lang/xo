@@ -217,11 +217,7 @@ var noReplayRE = regexp.MustCompile(`front end cache entry [0-9a-f]+ \(([^,]+), 
 // knownNoReplay are the functions whose entries are known not to replay,
 // with who is fixing it; the build falls back (no wrong code) and the test
 // logs them instead of failing. Remove an entry in its fix's commit.
-var knownNoReplay = map[string]string{
-	"log.record":                     "fn(log.Level) -> Bool not made before the body decodes; Xo Lang 3, 2026-11-14",
-	"closure http.Server.serve.fn13": "read type Chan[()] missed after websocket_deadline; reported to Xo Lang 3, 2026-11-14",
-	"closure http.Server.serve.fn15": "read type Chan[()] missed after websocket_deadline; reported to Xo Lang 3, 2026-11-14",
-}
+var knownNoReplay = map[string]string{}
 
 // warmSeqEnv is the environment with every cache setting removed, so xo
 // uses its defaults, as a user's build does (a gate may export
