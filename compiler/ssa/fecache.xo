@@ -155,10 +155,14 @@ pub fn fe_keys(c: check.Checker, flags: Str, root: Str, stamped: Str, std_sum: S
   let rootsk = std_roots.sort().join(",")
   var keys: Map[Int, Str] = {}
   for (fo, o) in c.objs.indexed() {
-    if o.kind != check.ObjKind.Func || o.fn_decl.is_empty() || o.decl_file < 0 || o.module < 0 || !o.tparams.is_empty() {
+    // a function generic only over effects is lowered once, its effects
+    // erased (type_params), as a plain one is: keyed (2026-11-14: the
+    // aiplatform client's 2,021 `[fx: Effects]` service bodies, a fifth
+    // of its lowering, were built from source on every build)
+    if o.kind != check.ObjKind.Func || o.fn_decl.is_empty() || o.decl_file < 0 || o.module < 0 || !effects_only(c, o.tparams) {
       continue
     }
-    if o.recv >= 0 && !c.objs[o.recv].tparams.is_empty() {
+    if o.recv >= 0 && !effects_only(c, c.objs[o.recv].tparams) {
       continue
     }
     let fd = o.fn_decl[0]
@@ -195,6 +199,12 @@ pub fn fe_keys(c: check.Checker, flags: Str, root: Str, stamped: Str, std_sum: S
     keys[fo] = crypto.sha256(h.freeze()).to_hex()
   }
   keys
+}
+
+/// Whether every one of type parameters ps is an effect parameter (none
+/// has a run time form, so the builder lowers one body for them all).
+fn effects_only(c: check.Checker, ps: List[Int]) -> Bool {
+  ps.all(fn(p) { c.objs[p].flags.effect() })
 }
 
 /// The key of body key's entry for a builder of own flags own

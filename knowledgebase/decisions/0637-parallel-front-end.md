@@ -168,10 +168,28 @@ Stages 1 and 2 give byte-identical output by construction (the same trees, the s
   workers (30.8 to 40.8 s, all same), and the self build under XO_MAX_MEM=8G (fe.build 2032 ms,
   max RSS 3.85 GB).
 - Not in this stage: generic instances' entries are kept for this build only (the cache keys no
-  instance; effect-only generics, which the cache could key, are a separate
-  commit with its own measurement). A worker's entries pin the helper lines it made, so a warm build after an edit can miss
+  instance; effect-only generics are keyed since, below). A worker's entries pin the helper lines it made, so a warm build after an edit can miss
   more than a serial cold build's entries would; a chunked c.tys would cut the per-worker copies
   that keep the generated clients serial; verify mode takes 31 to 41 s on linux/arm64.
+
+### Effect-only generics keyed (2026-11-14)
+
+A function generic only over effects (`[fx: Effects]`, and a method of a type generic only over
+effects) is lowered once with its effects erased, as a plain function is, so fe_keys now keys it
+(effects_only in compiler/ssa/fecache.xo). The gcp aiplatform/apiv1 client has 2,021 such service
+bodies, about a fifth of its lowering, which every build lowered from source before.
+
+- Output: the same module (31,419 lines, 17,336 functions) and the same aiplatform test binary
+  (SHA-256 658ad0d1...) with and without the change.
+- Warm (linux/arm64 host 1, 5 rounds, aiplatform): fe.build 991 to 893 ms serial (-10%), 1270 to
+  1080 ms at the default (-15%).
+- Cold: the 2,021 bodies are lowered while recording entries and their entries encoded (+0.22 s of
+  encoding). On host 2 (a VM: task-clock only), paired cold serial builds took +5.2%, +0.7% and
+  +4.7% CPU (medians 116.6 to 119.3 s, +2.3%), fe.build slower in each pair. Host 1's single runs
+  showed cold fe.build +40%, but phases the change does not touch swung by 50% in the same runs.
+- The trade: a warm build (the common one in an edit loop) gains 10 to 15% of fe.build; a cold
+  build pays a few percent of CPU once. Moving entry encoding off the builder thread would take
+  back about 0.2 s of the cold cost.
 
 ## Consequences
 
