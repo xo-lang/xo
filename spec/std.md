@@ -5209,9 +5209,14 @@ fn (u: Url) join_path(elems: List[Str]) -> Url
   default: an `http` or `https` host has at most one colon outside
   brackets (`invalid port ":1:2" after host`); other schemes split
   at the last colon.
-- Decoded parts (path, fragment, user, password, host) follow section
-  0's rule: a byte sequence that is not UTF-8 keeps each invalid byte
-  as its `%XX` escape.
+- Decoded parts (path, fragment, user, password, host, query keys and
+  values) follow section 0's rule: a byte sequence that is not UTF-8
+  keeps each invalid byte as its `%XX` escape. For the path and the
+  fragment, `raw_path` and `raw_fragment` then hold the escaped text
+  Go's EscapedPath and EscapedFragment give (the text as written when it
+  is a valid encoding, else Go's escape of the bytes), so `display`
+  writes what Go writes. The host and the userinfo have no raw field:
+  `display` escapes their `%` again (`%25FF` where Go writes `%FF`).
 - `query` drops a pair that does not decode and returns no error, as
   URL.Query drops ParseQuery's; `parse_query` gives the error.
 - `join_path` returns a path that does not decode as `UrlErr` with an

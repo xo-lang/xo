@@ -751,6 +751,24 @@ fn escape_in(s: Str, mode: Int) -> Str {
   out.freeze().to_str() ?? ""
 }
 
+/// The bytes with every one mode does not keep as `%XX`, as text (Go's
+/// escape of a string holding them, which may not be UTF-8).
+fn escape_bytes(b: Bytes, mode: Int) -> Str {
+  let hex = UPPER_HEX.bytes()
+  var out = BytesBuilder.with_capacity(b.len() * 3)
+  for c in b {
+    let v = Int(c)
+    if (Int(MODES[v]) & mode) != 0 {
+      out.write_byte(c)
+    } else {
+      out.write_byte(37)
+      out.write_byte(hex[v >> 4])
+      out.write_byte(hex[v & 15])
+    }
+  }
+  out.freeze().to_str() ?? ""
+}
+
 /// The index of the first byte of b that mode escapes, or -1.
 fn escape_at(b: Bytes, mode: Int) -> Int {
   for i in 0..b.len() {
@@ -771,6 +789,18 @@ fn unescape_in(s: Str, mode: Int) -> Str ! EscapeErr {
   if !hostish && s.find("%") == None {
     return Ok(s)
   }
+  let raw = unescape_bytes(s, mode)?
+  if raw.len() == s.len() {
+    // no escape decoded (a host checked byte by byte)
+    return Ok(s)
+  }
+  Ok(text_of(raw))
+}
+
+/// unescape_in's bytes as decoded, before section 0's rule for bytes
+/// that are not UTF-8.
+fn unescape_bytes(s: Str, mode: Int) -> Bytes ! EscapeErr {
+  let hostish = mode == M_HOST || mode == M_ZONE
   let b = s.bytes()
   var n = 0
   var i = 0
@@ -801,7 +831,7 @@ fn unescape_in(s: Str, mode: Int) -> Str ! EscapeErr {
     }
   }
   if n == 0 {
-    return Ok(s)
+    return Ok(b)
   }
   var out = BytesBuilder.with_capacity(b.len())
   i = 0
@@ -814,7 +844,7 @@ fn unescape_in(s: Str, mode: Int) -> Str ! EscapeErr {
       i += 1
     }
   }
-  Ok(text_of(out.freeze()))
+  Ok(out.freeze())
 }
 
 /// Whether raw decodes to want: 1 yes, 0 no, 2 unknown (an escape gives
@@ -892,10 +922,22 @@ fn (var u: Url) set_path(p: Str) -> EscapeErr? {
     u.raw_path = ""
     return None
   }
-  match unescape_in(p, M_PATH) {
-    Ok(path) => {
-      u.raw_path = if escape_in(path, M_PATH) == p { "" } else { p }
-      u.path = path
+  match unescape_bytes(p, M_PATH) {
+    Ok(bytes) => {
+      match bytes.to_str() {
+        Some(d) => {
+          u.raw_path = if escape_in(d, M_PATH) == p { "" } else { p }
+          u.path = d
+        }
+        None => {
+          // bytes that are not UTF-8: the path keeps them as escapes
+          // (section 0's rule), and raw_path is the text Go's escaped form
+          // gives (the written text when it is a valid encoding, else
+          // Go's escape of the bytes), so display writes what Go writes
+          u.path = text_of(bytes)
+          u.raw_path = if valid_encoded(p, M_PATH) { p } else { escape_bytes(bytes, M_PATH) }
+        }
+      }
       None
     }
     Err(e) => Some(e)
@@ -909,10 +951,22 @@ fn (var u: Url) set_fragment(f: Str) -> EscapeErr? {
     u.raw_fragment = ""
     return None
   }
-  match unescape_in(f, M_FRAG) {
-    Ok(frag) => {
-      u.raw_fragment = if escape_in(frag, M_FRAG) == f { "" } else { f }
-      u.fragment = frag
+  match unescape_bytes(f, M_FRAG) {
+    Ok(bytes) => {
+      match bytes.to_str() {
+        Some(d) => {
+          u.raw_fragment = if escape_in(d, M_FRAG) == f { "" } else { f }
+          u.fragment = d
+        }
+        None => {
+          // bytes that are not UTF-8: the fragment keeps them as escapes
+          // (section 0's rule), and raw_fragment is the text Go's escaped form
+          // gives (the written text when it is a valid encoding, else
+          // Go's escape of the bytes), so display writes what Go writes
+          u.fragment = text_of(bytes)
+          u.raw_fragment = if valid_encoded(f, M_FRAG) { f } else { escape_bytes(bytes, M_FRAG) }
+        }
+      }
       None
     }
     Err(e) => Some(e)

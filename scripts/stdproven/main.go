@@ -70,7 +70,7 @@ var harnesses = map[string][]harness{
 	"time":     {{"TestTimeFuzz", "XO_TIMEFUZZ"}},
 	"http":     {{"TestHttpHeadFuzz", "XO_HEADFUZZ"}, {"TestHttpResponseFuzz", "XO_RESPFUZZ"}, {"TestHttpUrlFuzz", "XO_URLFUZZ"}},
 	"x509":     {{"TestX509Fuzz", "XO_X509FUZZ"}},
-	"url":      {{"TestUrlFuzz", "XO_URLQFUZZ"}},
+	"url":      {{"TestUrlFuzz", "XO_URLQFUZZ"}, {"TestUrlTypeFuzz", "XO_URLTFUZZ"}},
 	"html":     {{"TestHtmlFuzz", "XO_HTMLFUZZ"}},
 	"fnv":      {{"TestFnvFuzz", "XO_FNVFUZZ"}},
 	"uuid":     {{"TestUuidFuzz", "XO_UUIDFUZZ"}},

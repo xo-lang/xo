@@ -1,5 +1,17 @@
 # std/url changes
 
+## 2026-11-14: fix: a path or fragment whose decoded bytes are not UTF-8 displays as Go's
+
+- Kind: fix
+- Commit: this push
+- Found by: internal/stdtest/urltypefuzz_test.go (new, decision 0616's fuzz kind for the URL type): `http://example.com/%ff#f` through parse_request_uri displayed `%25FF%23f` where Go writes `%FF%23f`
+- Go reference: net/url setPath, EscapedPath, setFragment, EscapedFragment
+- Change: set_path and set_fragment keep the decoded bytes' escaped form in raw_path and raw_fragment when those bytes are not UTF-8 (the text as written when it is a valid encoding, else Go's escape of the bytes), so display, request_uri, resolve_reference and join_path write Go's text; the path itself still holds each invalid byte as its `%XX` escape (spec std 20.1)
+- Measured: no change to the common path (no escapes)
+- Test: TestUrlTypeFuzz (seed 7, 20,000 cases, arm64 and llvm) and its seed 1 corpus urltypefuzz on go, arm64 and llvm; xo test --std-module=url
+- Affected: every backend, e2feedd59 only (the URL type's first push)
+- Shipped in: not yet released
+
 ## 2026-11-14: feature: the URL type (Go's url.URL)
 
 - Kind: feature
