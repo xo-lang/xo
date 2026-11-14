@@ -1360,15 +1360,37 @@ test "field_fast gives field_scan's answer for every field it knows, and 0 for n
     // padded so that both word loads are in bounds; the tail never matters
     for tail in ["................", "}}}}}}}}}}}}}}}}", "{{{{{{{{{{{{{{{{"] {
       let b = "${f}${tail}".bytes()
-      let got = field_fast(b, 0, b.len())
+      let got = field_word_fast(b, 0, b.len())
       if got == 0 || got != field_scan(b, 0, b.len()) {
         bad.push("${f}${tail}: ${got} against ${field_scan(b, 0, b.len())}")
       }
     }
   }
+  // a field ending the layout: the word ending at the end, after a prefix
+  // of 0 to 9 bytes
+  for f in fields {
+    for pre in ["", "a", "ab", "abcdefg", "abcdefgh", "abcdefghi"] {
+      let b = "${pre}${f}".bytes()
+      let i = pre.len()
+      let got = field_word_fast(b, i, b.len())
+      // a field of 8 bytes or more after its `{`, or a layout under 8
+      // bytes, is left to field_scan (0)
+      if got != 0 && got != field_scan(b, i, b.len()) || got == 0 && f.len() <= 8 && b.len() >= 8 {
+        bad.push("${pre}${f} at the end: ${got} against ${field_scan(b, i, b.len())}")
+      }
+    }
+  }
+  for f in misses {
+    for pre in ["", "abcdefgh"] {
+      let b = "${pre}${f}".bytes()
+      if field_word_fast(b, pre.len(), b.len()) != 0 {
+        bad.push("${pre}${f} at the end: matched")
+      }
+    }
+  }
   for f in misses {
     let b = "${f}................".bytes()
-    if field_fast(b, 0, b.len()) != 0 {
+    if field_word_fast(b, 0, b.len()) != 0 {
       bad.push("${f}: matched")
     }
   }

@@ -1147,8 +1147,7 @@ fn (l: Layout) format_civil(c: time.Civil) -> Str { format_civil_items(l.items, 
 /// checks 16 for a second word), 0 when b[i..] is none of them: the
 /// field's name, argument and `}` compared as little endian words, as
 /// Go's nextStdChunk switches on a layout's bytes instead of scanning.
-fn field_fast(b: Bytes, i: Int, n: Int) -> Int {
-  let w = rt.bytes_word(b, i + 1)
+fn field_fast(b: Bytes, i: Int, n: Int, w: Int) -> Int {
   let w4 = (w & 0xffffffff)
   if w4 == 0x7d796164 {
     // "day}"
@@ -1231,6 +1230,22 @@ fn field_fast(b: Bytes, i: Int, n: Int) -> Int {
   }
   0
 }
+/// field_fast at b[i] with the word after the `{`; a field ending the
+/// layout (`{offset}`, `{zone}`: fewer than 8 bytes after the `{`) takes
+/// the word ending at the layout's end, shifted down so the bytes past
+/// the end are zero, which match no field's `}` (it took field_scan
+/// once per call of either bench/perf/time format layout). 0 when b is
+/// shorter than a word.
+fn field_word_fast(b: Bytes, i: Int, n: Int) -> Int {
+  if i + 9 <= n {
+    return field_fast(b, i, n, rt.bytes_word(b, i + 1))
+  }
+  if n >= 8 && i + 1 < n {
+    return field_fast(b, i, n, rt.bytes_word(b, n - 8).shr_logical(8 * (8 - (n - i - 1))))
+  }
+  0
+}
+
 /// The field at b[i] (a `{`): code, mode + 2 and the position after its
 /// `}` packed as code | (mode + 2) << 8 | end << 16, or -1 when it is not
 /// a well formed field (an unmatched brace, an unknown name or argument).
@@ -1351,7 +1366,7 @@ fn format_stream(layout: Str, t: Time, z: Zone) -> Str? {
     } else if i > start {
       out.write_str(layout[start..i])
     }
-    var fs = if i + 9 <= n { field_fast(b, i, n) } else { 0 }
+    var fs = field_word_fast(b, i, n)
     if fs == 0 {
       fs = field_scan(b, i, n)
     }

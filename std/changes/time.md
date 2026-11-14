@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-11-14: perf: a field ending a format layout is recognized from one word load (native)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the std/time speed work of decision 0616 (std/evidence/time/perf.md at da2ba49a9: time/format 1.117 of Go; XO_PROF: field_code_b's string compare 17% of bench/perf/time format)
+- Go reference: time.nextStdChunk (a layout's elements recognized by a switch on their bytes)
+- Test: std/native/time_test.xo (field_word_fast against field_scan for every field it knows at the end of a layout after 0 to 9 bytes, and near misses there); TestStdCorpora time, timefuzz and timego on go, arm64 and llvm
+- Timing: --ab on linux/arm64 host 1, 9 rounds: bench/perf/time format 0.963 (38.28 to 36.87 ms, n=9)
+- Shipped in: not yet released
+
+field_fast reads the word after a field's `{`, so it needs 8 bytes after it; a field ending the layout (both bench layouts end with one: `{offset}`, `{zone}`) fell back to field_scan's byte scan and name compare on every call. It now takes the word ending at the layout's end, shifted so the bytes past the end are zero.
+
 ## 2026-11-14: perf: a fixed zone's abbreviation borrows the zone, and instant makes its error text only on an error (native)
 
 - Kind: perf
