@@ -24,3 +24,8 @@ recover finished steps of a stopped batch, fetch them from the host:
 /work/sp<NAME>/std/evidence/MOD/KIND.md LOCAL` (the run directory is
 named after the batch; check its commit and source lines against the
 module's current hash before committing).
+
+The run directory is not always there to fetch from: after round 2
+(`l3-round2`, stopped at 180 minutes the same day) `/work/spl3-round2`
+was gone from host 2, so its two passed uuid steps were lost and reran.
+Treat `--get` as a chance, not a plan: keep each batch inside its limit.
