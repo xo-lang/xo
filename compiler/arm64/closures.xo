@@ -139,10 +139,28 @@ fn (var g: G) closure_fill(v: Int, ci: Int, env: Int) {
   g.store("str $u0, [$u1, #16]", [s, env])
   var k = 0
   let (sp1, ep1) = g.f.args_span(x.args)
+  var far = (0, -1)
   for ak1 in sp1..ep1 {
     let a = g.f.argpool[ak1]
+    // a large captured value in memory (a by reference parameter: a
+    // fault frame's parameters, the generated GCP services' request
+    // structs, 6,700 words each at every `?`, 2026-11-14) copied with
+    // memcpy, not loaded and stored word by word
+    let n = g.nwords(g.vty(a))
+    if n >= RET_MEMCPY_MIN && !g.x86 && g.os != "windows" {
+      let (ptr, ok) = g.mem_of(a)
+      if ok {
+        let dst = g.addr_at(env, ENV_HDR + 8 * k)
+        let _r = g.rt("memcpy", regs([dst, ptr, g.imm(8 * n)]), [])
+        g.clobber()
+        far = (0, -1)
+        k += n
+        continue
+      }
+    }
     for w in g.store_words(a) {
-      let (base, off) = g.mem_at(env, ENV_HDR + 8 * k)
+      let (base, off, f2) = g.mem_at_run(env, ENV_HDR + 8 * k, far)
+      far = f2
       g.store("str $u0, [$u1, #${off}]", [w, base])
       k += 1
     }
