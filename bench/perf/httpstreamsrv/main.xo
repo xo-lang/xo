@@ -1,5 +1,7 @@
 // A loopback HTTP server's streamed responses (http.stream) under keep-alive
-// clients: BodyWriter's write and flush path, for `xo bench --ab`.
+// clients: BodyWriter's write and flush path, for `xo bench --ab`. One
+// listener per two clients, so each client keeps its connection (the
+// client pool keeps 2 idle per address; bench/perf/httpkeep).
 use std/http
 
 const CLIENTS = 8
@@ -24,14 +26,21 @@ fn routes() -> http.Router {
 }
 
 fn main(os: Os) {
-  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
-  let srv = http.server(l, routes())
-  let url = "http://${l.addr()}/s"
+  var srvs: List[http.Server] = []
+  var urls: List[Str] = []
+  for _ in 0..(CLIENTS + 1) / 2 {
+    let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+    srvs.push(http.server(l, routes()))
+    urls.push("http://${l.addr()}/s")
+  }
   let total = Mutex[Int].new(0)
   scope s {
-    s.spawn_background(fn() { srv.serve().ignore_err("the bench's server") })
+    for srv in srvs {
+      s.spawn_background(fn() { srv.serve().ignore_err("the bench's server") })
+    }
     scope c {
-      for _ in 0..CLIENTS {
+      for k in 0..CLIENTS {
+        let url = urls[k / 2]
         c.spawn(fn() {
           let cl = http.client(os.net, timeout: 30s)
           for _ in 0..REQUESTS {
