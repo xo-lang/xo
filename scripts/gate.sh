@@ -88,6 +88,9 @@
 #            (XO_GATE_CROSS=0 skips that); and internal/arm64
 #            TestSwitch65535Arms when it changes compiler/arm64/jumptab.xo
 #            (the match lowering; XO_GATE_SCALE=0 skips that); and
+#            cmd/xo TestCLIHelp (about 2 s) when it changes xo's help text
+#            (compiler/cli/cmdhelp) or its goldens (cmd/xo/testdata/clihelp,
+#            clihelp_test.go; XO_GATE_HELP=0 skips that); and
 #            internal/arm64's cache tests (-run 'Cache|BinCache',
 #            TestMachoBinCache among them) when it changes compiler/xo's
 #            bcache.xo, parallel.xo, packseg.xo or cache.xo
@@ -386,6 +389,16 @@ scale_change() {
 stdstore_change() {
   base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
   { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^std/([a-z0-9_]+\.xo|native/[a-z0-9_]+\.xo|native/[a-z0-9_]+/)'
+}
+# help_change: the branch changes xo's help text (compiler/cli/cmdhelp) or
+# its goldens (cmd/xo/testdata/clihelp, cmd/xo/clihelp_test.go), so cmd/xo's
+# TestCLIHelp (about 2 s) runs after the steps named (lead, 2026-11-14:
+# 3c7227589 added --check to xo build, run and test's help but not the
+# goldens, its gate ran no cmd/xo test, and main's -short check failed at
+# 9dea0a645 until a4b46f321). XO_GATE_HELP=0 skips it.
+help_change() {
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^(compiler/cli/cmdhelp/|cmd/xo/testdata/clihelp/|cmd/xo/clihelp_test\.go$)'
 }
 # race_change: the branch changes llrt's task, scheduler or TSan runtime
 # (tasks.xo, sched.xo, racesym.xo, cabi_race*.xo), so on darwin, where the
@@ -721,6 +734,9 @@ after_steps() {
   fi
   if [ "${XO_GATE_STDSTORE:-1}" != 0 ] && stdstore_change; then
     full stdstore ./internal/arm64 -run '^TestStdStoreBuilds$'
+  fi
+  if [ "${XO_GATE_HELP:-1}" != 0 ] && help_change; then
+    full clihelp ./cmd/xo -run '^TestCLIHelp$'
   fi
   if [ "${XO_GATE_RACE:-1}" != 0 ] && race_change; then
     full race ./internal/llvm -run '^TestRaceSyncTable(Arm64)?$'
