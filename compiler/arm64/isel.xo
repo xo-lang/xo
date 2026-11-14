@@ -1064,8 +1064,20 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
     }
     let pw = g.vals[p]
     let aw = g.words(g.f.edges[e].args[i])
+    // an enum's dead words are not moved (decision 0624): a struct of
+    // None fields passed to a block parameter moved hundreds of zeros
+    // into its spill homes
+    let dm = g.dead_mask(g.f.edges[e].args[i])
+    let dead_ok = dm.len() == pw.len()
     for k in 0..pw.len() {
       if pw[k] == aw[k] {
+        continue
+      }
+      if dead_ok && dm[k] {
+        // still a def of the word for the register allocator and the
+        // verifier; emit writes nothing for it
+        dsts.push(pw[k])
+        srcs.push(g.dead_src())
         continue
       }
       dsts.push(pw[k])

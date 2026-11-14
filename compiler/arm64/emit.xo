@@ -1135,6 +1135,9 @@ fn (var g: G) emit_inst(var b: List[Str], inst: Inst, next: Int) {
   } else if inst.kind == K_PMOVE {
     var ms: List[Move] = []
     for (k, d) in inst.defs.indexed() {
+      if inst.srcs[k].kind == S_DEAD {
+        continue // decision 0624: a dead enum word is not moved
+      }
       let (l, ok) = g.vloc(d)
       if !ok {
         continue
