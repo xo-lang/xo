@@ -1,7 +1,8 @@
 # 0633: A heap region for the compiler front end
 
-Status: Proposed (Xo Lang 1, 2026-11-14). Compiler and runtime only: no language surface beyond the
-std/debug hook named in Open questions.
+Status: Accepted (owner, 2026-11-14, on the lead's recommendation; the open question answered: a
+native-internal entry that only compiler/xo imports, no std/debug surface). Compiler and runtime only: no
+language or std surface.
 
 ## Context
 
@@ -124,4 +125,5 @@ and those three call sites allocated outside the region too where cheap.
 - The hook's surface: a std/debug function (debug.heap_region(on: Bool) and debug.region_release(),
   spec std.md, nothing on the Go and wasm backends) usable by any program with phase lifetimes, or a
   native-only internal entry that only compiler/xo imports. The first is simpler to test; the second
-  keeps std's surface unchanged.
+  keeps std's surface unchanged. Answered (owner, 2026-11-14): the native-internal entry, no std/debug
+  surface.

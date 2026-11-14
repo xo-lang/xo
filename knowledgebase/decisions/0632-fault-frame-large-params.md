@@ -1,7 +1,8 @@
 # 0632: A fault frame formats a large parameter's Debug text when it is captured, instead of keeping a copy
 
-Status: Proposed (Xo Lang 1, 2026-11-14). It changes the cost model that spec section 11.1 describes, not the
-text a trace prints. The lead may take it to the owner.
+Status: Accepted (owner, 2026-11-14, on the lead's recommendation): the 64-byte Debug prefix is formatted at
+capture for parameters of 256 bytes or more; the text a trace prints is unchanged. It changes the cost model
+that spec section 11.1 describes, which the change updates.
 
 ## Context
 
@@ -24,7 +25,7 @@ environment.
   most 64 bytes of it. A request that fails through three `?` levels copies its request three times.
   The success path is unaffected.
 
-## Decision (proposed)
+## Decision
 
 A parameter whose value is 256 bytes or more (decision 0151's by-reference threshold) gets its 64-byte `Debug`
 prefix formatted when the frame is captured, as `Buf` and `Atomic` already are. The frame keeps that text, not
