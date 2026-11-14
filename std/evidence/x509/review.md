@@ -91,7 +91,7 @@ land: fuzz 10^6, race, stress (std/evidence/x509/stress/main.xo), perf.
 - SHA-1 and MD5 signatures refused with Go's text; an unhandled critical
   extension refused; ML-DSA keys are not implemented and fail closed.
 - The distrust list is always on, as Go's (no switch).
-- system_roots: GO-2022-0171 above (fixed in bd314f4ab).
+- system_roots: GO-2022-0171 above (fixed in bd314f4ab). Live check (owner's go, 2026-11-13, darwin/arm64): a test-only CA (SHA-1 A38A1A47...6496, 2 days) given a user-domain Deny with `security add-trusted-cert -r deny`: Xo's trust settings reader (tlscert.xo ts_domains) reported it denied on arm64 and llvm, and not trusted; before the Deny, not denied. macOS's SecTrustSettingsCopyCertificates (Go's call too) lists a setting only for a certificate in a keychain on the search list: with the CA in a throwaway keychain the Deny was stored (trust-settings-export) but listed by neither `security dump-trust-settings` nor Xo; the system anchors are always findable. Cleanup: the setting removed, the CA deleted from login, the throwaway keychain deleted; search list and both trust domains as before (no trust settings).
 
 ## 6. Second reader's findings
 
