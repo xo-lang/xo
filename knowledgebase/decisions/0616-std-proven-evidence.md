@@ -160,6 +160,15 @@ darwin/arm64. A release whose race runtimes were built before this
 change rebuilds and re-signs them (darwin and linux; windows/amd64 is
 the Go flavor, 128 KB already).
 
+The race kind measures the runtime users get (lead, 2026-11-13): it
+links xo's own runtime from lib/xo/race, and refuses to run without it
+(`-stock-runtime` allows clang's, and race.md then says so). race.md's
+`race runtime:` line names it: the hash of scripts/race-runtime.sh and
+the trace part size. On an offload host, scripts/lead/race-rt.sh builds
+that runtime once per race-runtime.sh (on the Mac, in Docker) and copies
+it once per host, and race-rt-host.sh installs it in the checkout of
+every gate, tier and stdproven job, failing the job if it is missing.
+
 ### 3. Staleness
 
 A module's source hash is the SHA-256 the runner computes over the paths

@@ -38,6 +38,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -394,11 +395,16 @@ func race(args []string) error {
 	stressMin := fs.Int("stress-minutes", 10, "minutes the stress program runs under --race (0 skips it)")
 	churnRounds := fs.Int("churn-rounds", 50, "rounds of 200000 tasks of the task churn against Go's race build (0 skips it; decision 0616 section 2a)")
 	hostLabel := fs.String("host", "", "the host's name in the evidence")
+	stockRT := fs.Bool("stock-runtime", false, "allow clang's own ThreadSanitizer runtime when lib/xo/race has none (not the runtime users get; race.md says so)")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
 		usage()
 	}
 	module := fs.Arg(0)
+	rtLabel, err := raceRuntimeLabel(*stockRT)
+	if err != nil {
+		return err
+	}
 	src, _, err := sourceHash(module)
 	if err != nil {
 		return err
@@ -517,6 +523,7 @@ func race(args []string) error {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "kind: race\nmodule: %s\nresult: %s\ncommit: %s\nsource: %s\ndate: %s\nhost: %s\n", module, result, commit, src, time.Now().UTC().Format("2006-01-02"), host)
+	fmt.Fprintf(&b, "race runtime: %s\n", rtLabel)
 	if *churnRounds > 0 {
 		gv, err := exec.Command("go", "env", "GOVERSION").Output()
 		if err != nil {
@@ -537,6 +544,37 @@ func race(args []string) error {
 		return err
 	}
 	return os.WriteFile(out, []byte(b.String()), 0o644)
+}
+
+// raceRuntimeLabel names the ThreadSanitizer runtime the race kind's
+// builds link (lead, 2026-11-13: evidence measures the runtime users
+// get): xo's own in lib/xo/race (built by scripts/race-runtime.sh, whose
+// hash and trace part size it gives; scripts/lead/race-rt-host.sh
+// installs it on an offload host), or $XO_RACE_RUNTIME. Without either it
+// refuses, unless stock allows clang's own runtime (256 KB trace parts).
+func raceRuntimeLabel(stock bool) (string, error) {
+	if env := os.Getenv("XO_RACE_RUNTIME"); env != "" {
+		return "XO_RACE_RUNTIME " + env, nil
+	}
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+		dir := filepath.Join("lib", "xo", "race", runtime.GOOS+"-"+runtime.GOARCH)
+		if ents, err := os.ReadDir(dir); err == nil && len(ents) > 0 {
+			b, err := os.ReadFile(filepath.Join("scripts", "race-runtime.sh"))
+			if err != nil {
+				return "", err
+			}
+			sum := sha256.Sum256(b)
+			kb := 256
+			if bytes.Contains(b, []byte("kByteSize = 128 << 10;")) {
+				kb = 128
+			}
+			return fmt.Sprintf("xo's (lib/xo/race/%s-%s from scripts/race-runtime.sh %x, TracePart %d KB)", runtime.GOOS, runtime.GOARCH, sum[:8], kb), nil
+		}
+	}
+	if !stock {
+		return "", fmt.Errorf("race: no xo ThreadSanitizer runtime in lib/xo/race/%s-%s (scripts/race-runtime.sh builds it; on an offload host scripts/lead/race-rt-host.sh installs it): refusing to measure clang's (-stock-runtime allows it)", runtime.GOOS, runtime.GOARCH)
+	}
+	return "clang's stock runtime (TracePart 256 KB; not the runtime xo ships)", nil
 }
 
 // churnPer is the tasks of one round of the race kind's task churn.
