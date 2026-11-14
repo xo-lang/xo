@@ -1,0 +1,83 @@
+// std/compress against Go's GO-2022-0524 (CVE-2022-30631: compress/gzip's
+// Reader recursed once per concatenated member, so many empty members
+// exhausted the stack) and at its max_size limits (security review,
+// decision 0616, 2026-11-14).
+use std/compress
+
+fn feed(f: compress.Format, data: Bytes, chunk: Int, max: Int) -> Str {
+  var d = compress.decompressor(f, max_size: max)
+  var n = 0
+  var i = 0
+  while i < data.len() {
+    let j = if i + chunk < data.len() { i + chunk } else { data.len() }
+    match d.write(data[i..j]) {
+      Ok(b) => n += b.len()
+      Err(e) => return "error ${e.display()}"
+    }
+    i = j
+  }
+  match d.finish() {
+    Ok(b) => n += b.len()
+    Err(e) => return "error ${e.display()}"
+  }
+  "${n} bytes"
+}
+
+fn show(r: Result[Bytes, compress.CompressErr]) -> Str {
+  match r {
+    Ok(b) => "${b.len()} bytes"
+    Err(e) => "error ${e.display()}"
+  }
+}
+
+fn members(n: Int) -> Bytes {
+  let one = compress.gzip(b"")
+  var b = BytesBuilder.with_capacity(one.len() * n + 32)
+  for _ in 0..n {
+    b.write(one)
+  }
+  b.write(compress.gzip(b"end"))
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio {
+  let many = members(1000000)
+  os.stdio.println("1000000 empty members then one of 3 bytes (${many.len()} bytes): gunzip ${show(compress.gunzip(many))}; streamed in 4096 byte writes ${feed(compress.Format.Gzip, many, 4096, 1073741824)}")
+  // a spawned task's stack is smaller than the main task's
+  let r = scope s {
+    let t = s.spawn(fn() -> Str ! Str { "gunzip ${show(compress.gunzip(many))}; streamed ${feed(compress.Format.Gzip, many, 65536, 1073741824)}" })
+    t.await
+  }
+  os.stdio.println("in a spawned task: ${r.ok() ?? "failed"}")
+  // max_size at the output's length and one byte under, for every decoder
+  var big = BytesBuilder.new()
+  for i in 0..100000 {
+    big.write_byte(UInt8(i % 7 + 97))
+  }
+  let data = big.freeze()
+  let n = data.len()
+  for f in ["gzip", "deflate", "zlib"] {
+    let (c, fmt) = match f {
+      "gzip" => (compress.gzip(data), compress.Format.Gzip)
+      "deflate" => (compress.deflate(data), compress.Format.Deflate)
+      _ => (compress.zlib(data), compress.Format.Zlib)
+    }
+    let un = fn(max: Int) -> Str {
+      match f {
+        "gzip" => show(compress.gunzip(c, max_size: max))
+        "deflate" => show(compress.inflate(c, max_size: max))
+        _ => show(compress.unzlib(c, max_size: max))
+      }
+    }
+    os.stdio.println("${f} of ${n} bytes (${c.len()} compressed): max_size ${n}: ${un(n)}; ${n - 1}: ${un(n - 1)}; streamed ${n}: ${feed(fmt, c, 1000, n)}; ${n - 1}: ${feed(fmt, c, 1000, n - 1)}")
+  }
+  let l = compress.lzw_encode(data, compress.LzwOrder.LSB, 8).ok() ?? b""
+  os.stdio.println("lzw of ${n} bytes: max_size ${n}: ${show(compress.lzw_decode(l, compress.LzwOrder.LSB, 8, max_size: n))}; ${n - 1}: ${show(compress.lzw_decode(l, compress.LzwOrder.LSB, 8, max_size: n - 1))}")
+  // the largest ratio: 10 MB of zeros at BestCompression
+  var z = BytesBuilder.new()
+  for _ in 0..10485760 {
+    z.write_byte(0)
+  }
+  let zc = compress.deflate(z.freeze(), level: compress.Level.BestCompression)
+  os.stdio.println("10 MB of zeros deflate to ${zc.len()} bytes (ratio ${10485760 / zc.len()}); inflate with max_size 1 MB: ${show(compress.inflate(zc, max_size: 1048576))}")
+}

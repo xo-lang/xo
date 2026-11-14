@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+gzip name of 300 bytes in 200 and the rest: 5 bytes
+gzip in 7 byte writes: 5 bytes
+two members, the first trailer cut 7 + 1: 10 bytes
+zlib then junk: 2 bytes; one shot: 2 bytes
+deflate then junk: 2 bytes; one shot: 2 bytes
+gzip comment of 511 bytes: one shot 5 bytes; streamed 5 bytes
+gzip comment of 512 bytes: one shot error gzip: invalid header; streamed error gzip: invalid header after 0 bytes
+dynamic HLIT 29 (286 codes) HDIST 29 (30): one shot error flate: corrupt input before offset 4; streamed error flate: corrupt input before offset 4 after 0 bytes
+dynamic HLIT 30 (287 codes) HDIST 0 (1): one shot error flate: corrupt input before offset 3; streamed error flate: corrupt input before offset 3 after 0 bytes
+dynamic HLIT 31 (288 codes) HDIST 0 (1): one shot error flate: corrupt input before offset 3; streamed error flate: corrupt input before offset 3 after 0 bytes
+dynamic HLIT 0 (257 codes) HDIST 30 (31): one shot error flate: corrupt input before offset 3; streamed error flate: corrupt input before offset 3 after 0 bytes
+dynamic HLIT 0 (257 codes) HDIST 31 (32): one shot error flate: corrupt input before offset 3; streamed error flate: corrupt input before offset 3 after 0 bytes
+10 bytes, max_size 9, bad CRC: one shot error gzip: invalid checksum; streamed error gzip: invalid checksum after 0 bytes
+10 bytes, max_size 9, good CRC: one shot error gzip: output exceeds max_size (9 bytes); streamed error gzip: output exceeds max_size (9 bytes) after 0 bytes
+--- stderr

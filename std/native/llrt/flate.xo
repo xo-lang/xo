@@ -1397,6 +1397,26 @@ pub fn list_bytes(l: List[UInt8]) -> Bytes {
   b
 }
 
+/// The bytes of l[from..to] as Bytes, copied once.
+pub fn list_range_bytes(l: List[UInt8], from: Int, to: Int) -> Bytes {
+  let n = to - from
+  if target.arch == TargetArch.Wasm32 {
+    var bb = BytesBuilder.with_capacity(n)
+    var i = from
+    while i < to {
+      bb.write_byte(l[i])
+      i += 1
+    }
+    return bb.freeze()
+  }
+  let b = raw.bytes_buf(n)
+  if n > 0 {
+    rt.mem_copy(raw.bytes_addr(b), rt.obj_addr(l).wrapping_add(rt.layout(2)).wrapping_add(from), n)
+  }
+  keep_bytes(l)
+  b
+}
+
 /// A use of l after its last raw access (bigmod.keep).
 fn keep_bytes(l: List[UInt8]) {
   if l.len() < 0 {
@@ -2537,6 +2557,29 @@ pub fn gzip_header(data: Bytes, pos: Int, t: List[Int]) -> Int ! Str {
   p
 }
 
+/// For a gzip header at pos that is not all there: the input length at
+/// which reading it again can get further (the fixed 10 bytes, FEXTRA's
+/// length and then its whole field; one more byte in a name or comment,
+/// which Go caps at 511 bytes, so rereading them stays cheap).
+pub fn gzip_need(data: Bytes, pos: Int) -> Int {
+  let n = data.len()
+  if n - pos < 10 {
+    return pos + 10
+  }
+  let flg = byte_of(data, pos + 3)
+  var p = pos + 10
+  if (flg & 4) != 0 {
+    if n - p < 2 {
+      return p + 2
+    }
+    p += 2 + get_u16(data, p)
+    if n < p {
+      return p
+    }
+  }
+  n + 1
+}
+
 /// gzip.Reader over data's members (concatenated, multistream): the
 /// output, or Go's error text (LIMIT past limit, -1 for none).
 pub fn gunzip_members(data: Bytes, limit: Int) -> Bytes ! Str {
@@ -2620,19 +2663,15 @@ pub fn new_instream(format: Int, limit: Int) -> InStream {
   InStream{format: format, f: Inflater{data: b"", pos: 0, start: 0, end: 0, b: 0, nb: 0, out: [], out_start: 0, limit: limit}, t: crc_table(), fixed: fx, state: if format == 0 { 1 } else { 0 }, sum: 0, size: 0, ab: 1, emit: 0, any: false, mid: 0, mlast: false, mhl: fx, mhd: fx, mfixed: false, mleft: 0, pend: [], npend: 0, want: 0}
 }
 
-/// The bytes decoded since the last call, with the member's running sum
-/// updated; the window of back references kept, the rest dropped.
-fn (var s: InStream) drain() -> List[Int] {
-  var out: List[Int] = []
-  var i = s.emit
+/// The bytes decoded since the last call (copied once, a byte a byte:
+/// they were a List[Int] of 8 bytes each, std/compress review sign-off
+/// item 2), with the member's running sum updated; the window of back
+/// references kept, the rest dropped.
+fn (var s: InStream) drain() -> Bytes {
   let n = s.f.out.len()
-  while i < n {
-    out.push(Int(s.f.out[i]))
-    i += 1
-  }
+  let b = list_range_bytes(s.f.out, s.emit, n)
   s.emit = n
-  if !out.is_empty() {
-    let b = bytes_of(out)
+  if !b.is_empty() {
     if s.format == 1 {
       s.sum = crc32(s.t, s.sum, b)
       s.size += b.len()
@@ -2660,8 +2699,11 @@ fn (var s: InStream) drain() -> List[Int] {
     s.f.out_start = if s.f.out_start > k { s.f.out_start - k } else { 0 }
     s.emit -= k
   }
-  out
+  b
 }
+
+/// a then b, without a copy when a is empty.
+fn cat(a: Bytes, b: Bytes) -> Bytes { if a.is_empty() { b } else if b.is_empty() { a } else { a + b } }
 
 /// The input pushed since the last try joined after the input not yet
 /// consumed, the consumed input dropped (positions shifted; corruption
@@ -2688,16 +2730,22 @@ fn be32(b: Bytes, i: Int) -> Int { (byte_of(b, i) << 24) | (byte_of(b, i + 1) <<
 
 /// Decodes what the input allows: the output, or the error. last: no more
 /// input will come (unexpected EOF then ends it).
-pub fn (var s: InStream) push(data: Bytes, last: Bool) -> List[Int] ! Str {
+pub fn (var s: InStream) push(data: Bytes, last: Bool) -> Bytes ! Str {
+  if s.state == 3 {
+    // the stream ended: what follows is not read (Go's readers stop at
+    // the end), and not kept (sign-off item 3)
+    return b""
+  }
   if !data.is_empty() {
     s.any = true
     s.pend.push(data)
     s.npend += data.len()
   }
-  var out: List[Int] = []
+  var out = b""
   if !last && s.npend < s.want {
     return out
   }
+  s.want = 0
   s.join()
   while s.state != 3 {
     let n = s.f.end
@@ -2720,6 +2768,10 @@ pub fn (var s: InStream) push(data: Bytes, last: Bool) -> List[Int] ! Str {
             break
           }
           if !last && (e == "EOF" || e == unexpected_eof()) {
+            // wait for the bytes the header still needs at least (a whole
+            // FEXTRA field), not for the waiting input to double, which
+            // held back a stream already complete (sign-off item 1)
+            s.want = gzip_need(s.f.data, s.f.pos) - s.f.end
             break
           }
           return Err(e)
@@ -2794,9 +2846,7 @@ pub fn (var s: InStream) push(data: Bytes, last: Bool) -> List[Int] ! Str {
       } else {
         done = s.f.huffman_part(s.mhl, s.mhd, s.mfixed)?
       }
-      for x in s.drain() {
-        out.push(x)
-      }
+      out = cat(out, s.drain())
       if !done {
         if last {
           return Err(unexpected_eof())
@@ -2835,9 +2885,6 @@ pub fn (var s: InStream) push(data: Bytes, last: Bool) -> List[Int] ! Str {
     s.f.pos += 4
     s.state = 3
   }
-  // mid-block every new byte goes on from where this push stopped; a
-  // header waits for as much input again as is waiting now
-  s.want = if s.state == 1 && s.mid != 0 { 0 } else { s.f.end - s.f.pos }
   if last && s.state != 3 {
     if s.format == 1 && !s.any {
       return Err("EOF")

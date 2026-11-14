@@ -285,6 +285,8 @@ struct Decompressor {
   format: compress.Format
   st: flate.InStream
   max: Int
+  /// The bytes given out so far, against max.
+  total: Int
 }
 
 fn decompressor(format: compress.Format, max_size: Int) -> Decompressor {
@@ -293,7 +295,10 @@ fn decompressor(format: compress.Format, max_size: Int) -> Decompressor {
     Gzip => 1
     Zlib => 2
   }
-  Decompressor{format: format, st: flate.new_instream(f, if max_size < 0 { 0 } else { max_size }), max: max_size}
+  // the one shot decoders' limit, max_size + 1, so the bytes past max_size
+  // meet a bad checksum first as one shot (sign-off item 8); a write that
+  // would give out more than max_size fails instead
+  Decompressor{format: format, st: flate.new_instream(f, limit_of(max_size)), max: max_size, total: 0}
 }
 
 fn (d: Decompressor) name() -> Str {
@@ -304,16 +309,19 @@ fn (d: Decompressor) name() -> Str {
   }
 }
 
-fn (var d: Decompressor) write(data: Bytes) -> Bytes ! compress.CompressErr {
-  match d.st.push(data, false) {
-    Ok(out) => bytes_of(out)
-    Err(e) => Err(fail(d.name(), e, d.max))
-  }
-}
+fn (var d: Decompressor) write(data: Bytes) -> Bytes ! compress.CompressErr { d.give(d.st.push(data, false)) }
 
-fn (var d: Decompressor) finish() -> Bytes ! compress.CompressErr {
-  match d.st.push(b"", true) {
-    Ok(out) => bytes_of(out)
+fn (var d: Decompressor) finish() -> Bytes ! compress.CompressErr { d.give(d.st.push(b"", true)) }
+
+fn (var d: Decompressor) give(r: Result[Bytes, Str]) -> Bytes ! compress.CompressErr {
+  match r {
+    Ok(out) => {
+      d.total += out.len()
+      if over(d.total, d.max) {
+        return Err(fail(d.name(), flate.LIMIT, d.max))
+      }
+      out
+    }
     Err(e) => Err(fail(d.name(), e, d.max))
   }
 }
