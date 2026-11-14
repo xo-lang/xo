@@ -628,3 +628,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0636](0636-parallel-inline.md): Accepted (Xo Lang 1): the inliner runs in waves on the task pool, with the function order walk's result (byte-identical output)
 - [0637](0637-parallel-front-end.md): Accepted (owner): the front end builds function bodies on the task pool, with the serial order's result (byte-identical output)
 - [0638](0638-public-runtime-checks-threads-metrics.md): Accepted (owner): public memory checks (--check=free,guard,leak), XO_THREADS and the container CPU quota, runtime metrics in std/metrics
+- [0639](0639-rc-dense-liveness.md): Proposed (Xo Lang 1): reference count liveness runs on bit sets over a function's leaves numbered in sorted order
