@@ -123,6 +123,19 @@ ceiling is the census's 210 MB (about 7% of the footprint) for about 1 s per tri
 lifetime (part-local allocations in their own chunks, freed whole after the part), which makes whole free
 units by construction instead of finding them.
 
+### Version 2 (2026-11-14): 4 KiB units, runs, one walk after the release; negative
+
+Branch lang1-0630 at 602766e2b (unpushed). Units of 4 KiB with no taint rule (a block that touches a taken unit
+leaves its list), the pool sorted and kept as runs (addr | length, up to 4,095 units), heap_grow taking a run of
+the units it needs before the bump extends, and one explicit trim (debug.mem_trim_pool) that xo calls at
+"specialize_args", after the front end's release (decision 0352) has run. On the Mac it pooled and reused 223 MB;
+436 of the 659 MB free at that point lay in units that still held a live block.
+
+gcp aiplatform/apiv1 test build, linux/arm64 host 1, `--ab` against its base, 9 rounds, 0 loaded: max RSS 0.995
+(0.981 to 1.014, within noise), wall 1.097 (within noise), CPU 1.089 (1.01 to 1.141, worse). A free block taken
+into the pool would mostly have been reused by its own class anyway. Not merged; the lifetime split this points
+to is decision 0633.
+
 ## Consequences
 
 - It lowers xo's peak where the free memory sits in whole pages: estimated 0.13 to 0.21 GB on
