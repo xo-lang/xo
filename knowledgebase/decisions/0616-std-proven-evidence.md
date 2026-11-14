@@ -124,6 +124,24 @@ beside them and not judged. The runs take a whole host (an exclusive
 lease), with REPS 5 by default, the medians of run.sh for load and the
 best of 5 for a single transfer.
 
+Memory under `--race` (lead, 2026-11-13). A server spawns a task per
+connection, and ThreadSanitizer keeps state for every finished task, as
+Go's race runtime does for every finished goroutine (about 250 B each on
+linux/arm64, never reclaimed). So a server's stress program grows under
+`--race` with no leak, and Go's own server would fail the 10% rule there
+too. The race kind therefore judges races, not the stress program's
+memory: a stress run under `--race` whose only failure is memory growth,
+with 0 mismatches, counts as clean, and its line says memory was not
+judged. Memory stays the stress kind's, without `--race`. What the race
+kind judges instead is the cost per task: a task churn (10 million
+tasks spawned and awaited, scripts/stdproven/racechurn, and its Go twin
+under `-race`) whose growth per finished task over the last 4 million
+must be within 1.25 times Go's. The first 6 million are a warm-up: Xo's
+C-flavor ThreadSanitizer fills a pool of 256 KB trace parts (Go's flavor
+uses 128 KB parts) to about 1.8 GB before it recycles them. That
+resident set is shown in race.md and not judged. Measured on host 2:
+Xo 296 B per task after the pool is full, Go 255 B (1.16).
+
 ### 3. Staleness
 
 A module's source hash is the SHA-256 the runner computes over the paths

@@ -392,6 +392,7 @@ func race(args []string) error {
 	// linux/arm64 (xo: "--race: no ThreadSanitizer runtime for linux/arm64")
 	backend := fs.String("backend", "llvm", "the backend to run --race on")
 	stressMin := fs.Int("stress-minutes", 10, "minutes the stress program runs under --race (0 skips it)")
+	churnRounds := fs.Int("churn-rounds", 50, "rounds of 200000 tasks of the task churn against Go's race build (0 skips it; decision 0616 section 2a)")
 	hostLabel := fs.String("host", "", "the host's name in the evidence")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
@@ -469,7 +470,17 @@ func race(args []string) error {
 			out, err := exec.Command(bin, strconv.Itoa(*stressMin), "64").CombinedOutput()
 			text := strings.TrimSpace(string(out))
 			last := text[strings.LastIndex(text, "\n")+1:]
-			if err != nil || strings.Contains(text, "DATA RACE") || !strings.HasSuffix(last, ", pass") {
+			// decision 0616 section 2a: under --race the resident set
+			// grows with every finished task (ThreadSanitizer keeps each
+			// task's context, as Go's race runtime keeps each
+			// goroutine's), so the program's own memory check is not this
+			// kind's: memory is the stress kind's, and the task churn
+			// below compares the growth per task with Go's
+			memOnly := err != nil && strings.HasSuffix(last, ", FAIL (memory grew)") && strings.Contains(last, " 0 mismatches")
+			if memOnly {
+				last = strings.TrimSuffix(last, ", FAIL (memory grew)") + ", memory not judged under --race"
+			}
+			if (err != nil && !memOnly) || strings.Contains(text, "DATA RACE") || !(memOnly || strings.HasSuffix(last, ", pass")) {
 				if len(text) > 20000 {
 					text = text[len(text)-20000:]
 				}
@@ -481,13 +492,21 @@ func race(args []string) error {
 			runs = append(runs, run{"stress", dir})
 		}
 	}
+	if *churnRounds > 0 {
+		line, err := raceChurn(xo, *backend, root, *churnRounds)
+		if err != nil {
+			return err
+		}
+		fmt.Println(line)
+		lines = append(lines, line)
+	}
 	host := *hostLabel
 	if host == "" {
 		host = runtime.GOOS + "/" + runtime.GOARCH
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "kind: race\nmodule: %s\nresult: pass\ncommit: %s\nsource: %s\ndate: %s\nhost: %s\n", module, commit, src, time.Now().UTC().Format("2006-01-02"), host)
-	fmt.Fprintf(&b, "command: go run ./scripts/stdproven race -backend %s -stress-minutes %d -host %q %s\n", *backend, *stressMin, host, module)
+	fmt.Fprintf(&b, "command: go run ./scripts/stdproven race -backend %s -stress-minutes %d -churn-rounds %d -host %q %s\n", *backend, *stressMin, *churnRounds, host, module)
 	fmt.Fprintf(&b, "measure: %d runs under --race on %s, 0 data races, 0 failures, %s\n\n", len(runs), *backend, time.Since(start).Round(time.Second))
 	fmt.Fprintf(&b, "Race evidence (decision 0616): std/%s's tests, corpora and stress program under --race (ThreadSanitizer).\n\n", module)
 	b.WriteString(strings.Join(lines, "\n") + "\n")
@@ -496,6 +515,83 @@ func race(args []string) error {
 		return err
 	}
 	return os.WriteFile(out, []byte(b.String()), 0o644)
+}
+
+// churnPer is the tasks of one round of the race kind's task churn.
+const churnPer = 200000
+
+// raceChurn runs decision 0616 section 2a's task churn: rounds rounds of
+// churnPer tasks spawned and awaited (scripts/stdproven/racechurn/xo)
+// under --race, and the same goroutines under Go's -race
+// (racechurn/gotwin). Each finished task leaves ThreadSanitizer state
+// behind in both (a thread context, about 250 B), and Xo's C flavor fills
+// a trace part pool first (256 KB parts against Go's 128 KB; about 1.8 GB
+// on linux/arm64, full after about 6 million tasks). The judged figure is
+// the growth per task over the last two fifths of the rounds, after that
+// pool is full: Xo's within 1.25 times Go's. The resident set at three
+// fifths is shown, not judged.
+func raceChurn(xo, backend, root string, rounds int) (string, error) {
+	if rounds < 5 {
+		return "", fmt.Errorf("-churn-rounds %d: at least 5", rounds)
+	}
+	tmp, err := os.MkdirTemp("", "stdproven-churn-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmp)
+	xbin, gbin := filepath.Join(tmp, "churn-xo"), filepath.Join(tmp, "churn-go")
+	bc := exec.Command(xo, "build", "--race", "--backend="+backend, "-o", xbin, filepath.Join(root, "scripts", "stdproven", "racechurn", "xo"))
+	bc.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
+	if out, err := bc.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("xo build --race the task churn: %v\n%s", err, out)
+	}
+	gc := exec.Command("go", "build", "-race", "-o", gbin, ".")
+	gc.Dir = filepath.Join(root, "scripts", "stdproven", "racechurn", "gotwin")
+	if out, err := gc.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("go build -race the task churn: %v\n%s", err, out)
+	}
+	t0 := time.Now()
+	from := rounds * 3 / 5
+	run := func(bin string) ([]int, error) {
+		out, err := exec.Command(bin, strconv.Itoa(rounds), strconv.Itoa(churnPer)).CombinedOutput()
+		text := string(out)
+		if err != nil || strings.Contains(text, "DATA RACE") {
+			return nil, fmt.Errorf("%s: %v\n%s", filepath.Base(bin), err, text)
+		}
+		var rss []int
+		for _, l := range strings.Split(strings.TrimSpace(text), "\n") {
+			f := strings.Fields(l)
+			if len(f) == 4 && f[0] == "round" && f[2] == "rss" {
+				n, _ := strconv.Atoi(f[3])
+				rss = append(rss, n)
+			}
+		}
+		if len(rss) != rounds || rss[rounds-1] == 0 {
+			return nil, fmt.Errorf("%s printed %d rounds with a resident set, want %d (Linux /proc)", filepath.Base(bin), len(rss), rounds)
+		}
+		return rss, nil
+	}
+	xr, err := run(xbin)
+	if err != nil {
+		return "", err
+	}
+	gr, err := run(gbin)
+	if err != nil {
+		return "", err
+	}
+	tasks := float64((rounds - 1 - from) * churnPer)
+	per := func(r []int) float64 { return float64(r[rounds-1]-r[from]) * 1024 / tasks }
+	xp, gp := per(xr), per(gr)
+	ratio := xp / gp
+	if gp <= 0 {
+		ratio = 0
+	}
+	line := fmt.Sprintf("- task churn under --race, %d million tasks: %.0f B per finished task after %d million (Go's race build: %.0f B), %.2f of Go's (at most 1.25); resident set at %d million %d MB (Go's %d MB, shown), %s",
+		rounds*churnPer/1000000, xp, from*churnPer/1000000, gp, ratio, from*churnPer/1000000, xr[from]/1024, gr[from]/1024, time.Since(t0).Round(time.Second))
+	if ratio > 1.25 {
+		return "", fmt.Errorf("task churn under --race: %s", strings.TrimPrefix(line, "- "))
+	}
+	return line, nil
 }
 
 // stress runs decision 0616's stress kind: the module's stress program

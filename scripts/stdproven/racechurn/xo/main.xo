@@ -1,0 +1,40 @@
+// The race kind's task churn (decision 0616 section 2a): ROUNDS rounds of
+// PER trivial tasks, spawned and awaited 1000 at a time, under --race;
+// prints each round's resident set (Linux VmRSS, KiB). Go's twin is
+// ../gotwin. Their growth per finished task after the warm-up is the
+// race build's memory per task the kind compares.
+//
+//   main ROUNDS PER
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let rounds = if args.len() > 0 { Int.parse(args[0]) ?? 50 } else { 50 }
+  let per = if args.len() > 1 { Int.parse(args[1]) ?? 200000 } else { 200000 }
+  for r in 0..rounds {
+    var total = 0
+    scope s {
+      var hs: List[Task[Int, Never]] = []
+      for i in 0..per {
+        hs.push(s.spawn(fn() -> Int { i + 1 }))
+        if hs.len() >= 1000 {
+          for h in hs { total += h.await }
+          hs = []
+        }
+      }
+      for h in hs { total += h.await }
+    }
+    if total != per * (per + 1) / 2 {
+      return Err("round ${r}: sum ${total}")
+    }
+    os.stdio.println("round ${r} rss ${rss_kib(os)}")
+  }
+}
