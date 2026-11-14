@@ -4024,6 +4024,10 @@ struct StreamState {
   buffered: Bytes
   off: Int
   gz: compress.Decompressor?
+  /// received bytes not yet given to gz: they go in GZ_SLICE at a time,
+  /// so one write's output (at most about 1032 times its input in
+  /// DEFLATE) stays near 4 MB however large a chunk the peer sent
+  gz_in: Bytes = b""
   /// the decoded bytes read returns next
   pending: Bytes
   done: Bool
@@ -4350,6 +4354,13 @@ fn end_duplex(var x: StreamState) {
   }
 }
 
+/// The most compressed bytes of a gzip response body one Decompressor
+/// write takes (0.51.1): DEFLATE gives at most about 1032 bytes a byte, so
+/// a hostile body cannot make one write hold more than about 4 MB of
+/// output (twice that while it is copied), where a 64 KB read of a 1 MB
+/// hostile body asked for 66 MB at once.
+const GZ_SLICE = 4096
+
 fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! http.ClientErr uses net.dial {
   let lim = if max > 0 { max } else { 32768 }
   let r = s.st.with(fn(var x: StreamState) -> Result[Bytes?, http.ClientErr] {
@@ -4359,6 +4370,17 @@ fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! http.ClientErr uses net.
         let out = x.pending[0..n]
         x.pending = x.pending[n..x.pending.len()]
         return Ok(Some(out))
+      }
+      if x.gz_in.len() > 0 {
+        let n = if x.gz_in.len() < GZ_SLICE { x.gz_in.len() } else { GZ_SLICE }
+        let b = x.gz_in[0..n]
+        x.gz_in = x.gz_in[n..x.gz_in.len()]
+        if let Err(e) = gz_step(x, b, false) {
+          x.gz_in = b""
+          x.done = true
+          return Err(e)
+        }
+        continue
       }
       if x.done {
         return Ok(None)
@@ -4382,10 +4404,7 @@ fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! http.ClientErr uses net.
         }
         Ok(Some(b)) => {
           if x.gz is Some(_) {
-            if let Err(e) = gz_step(x, b, false) {
-              x.done = true
-              return Err(e)
-            }
+            x.gz_in = b
             continue
           }
           return Ok(Some(b))
@@ -4478,6 +4497,7 @@ fn (s: ClientStream) close() {
     }
     x.buffered = b""
     x.pending = b""
+    x.gz_in = b""
     x.gz = None
     x.done = true
   })
