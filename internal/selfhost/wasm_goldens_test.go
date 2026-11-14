@@ -144,6 +144,7 @@ var componentGoldensNotRun = map[string]string{
 	"http_h2c":                   "HTTP/2 on the wire, which the host owns",
 	"http_h2c_sniff":             "HTTP/2 on the wire, which the host owns",
 	"http_handler_fault":         "its router only faults; http_fault covers that",
+	"time_hostile_date":          "it calls its router in process to check std/time's Date methods, which TestSelfhostWasm's std/time modules cover",
 	"http_reverse_proxy_ws":      "needs the client and an upgrade",
 	"http_stream_body_h2":        "HTTP/2 on the wire, which the host owns; http_stream_body covers the routes",
 	"http_tls":                   "TLS, which the host owns",

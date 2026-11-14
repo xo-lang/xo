@@ -1351,3 +1351,171 @@ test "civil dates agree with the era algorithm on every day of Time's range" {
   }
   expect(bad) == []
 }
+
+test "floor_div rounds down for every sign, exact multiples and the Int range's ends" {
+  var bad: List[Str] = []
+  for b in [1, 7, 12, 400, 86400, 146097, 1000000000] {
+    for a in [0, 1, -1, b - 1, b, b + 1, -b + 1, -b, -b - 1, 3 * b, -3 * b, -3 * b + 1, 9223372036854775807, -9223372036854775807, -9223372036854775807 - 1] {
+      let q = floor_div(a, b)
+      // q * b <= a < q * b + b, without overflow: a - q * b in [0, b)
+      let r = a.wrapping_sub(q.wrapping_mul(b))
+      if r < 0 || r >= b {
+        bad.push("${a} / ${b} = ${q}")
+      }
+    }
+  }
+  expect(floor_div(-7, -2)) == 3
+  expect(floor_div(7, -2)) == -4
+  expect(bad) == []
+}
+
+// ---- a Date or Civil of any fields (a struct literal, a JSON body) ----
+
+fn rfc3339_items() -> List[Item] { layout_items(time.RFC3339).ok() ?? fault("RFC3339") }
+
+/// The day number by the formulas split_days replaced, which are right
+/// wherever they do not overflow.
+fn ref_days(d: time.Date) -> Int {
+  let t = d.year * 12 + (d.month - 1)
+  let y = floor_div(t, 12)
+  let m = t - y * 12 + 1
+  days_from_civil(y, m, 1) + d.day - 1
+}
+
+fn ref_local(c: time.Civil) -> Int {
+  ref_days(c.date) * 86400 + c.time.hour * 3600 + c.time.minute * 60 + c.time.second
+}
+
+test "Date and Civil arithmetic agrees with the direct formulas wherever they do not overflow" {
+  var bad: List[Str] = []
+  var x = 12345
+  for i in 0..200000 {
+    // a small generator of its own: years -5000 to 5000, months and days
+    // out of their range too, clock fields past theirs
+    x = (x * 1103515245 + 12345) % 2147483648
+    let y = x % 10001 - 5000
+    x = (x * 1103515245 + 12345) % 2147483648
+    let m = x % 61 - 24
+    x = (x * 1103515245 + 12345) % 2147483648
+    let dd = x % 801 - 400
+    x = (x * 1103515245 + 12345) % 2147483648
+    let n = x % 4000001 - 2000000
+    let d = time.Date{year: y, month: m, day: dd}
+    let o = time.Date{year: y + n % 300, month: m - n % 7, day: dd + n}
+    if date_days(d) != ref_days(d) && bad.len() < 10 {
+      bad.push("days ${y} ${m} ${dd}: ${date_days(d)}, want ${ref_days(d)}")
+    }
+    if date_weekday(d) != weekday_of(weekday_index(ref_days(d))) && bad.len() < 10 {
+      bad.push("weekday ${y} ${m} ${dd}")
+    }
+    if date_add_days(d, n) != date_of(ref_days(d) + n) && bad.len() < 10 {
+      bad.push("add_days ${y} ${m} ${dd} + ${n}")
+    }
+    if date_days_until(d, o) != ref_days(o) - ref_days(d) && bad.len() < 10 {
+      bad.push("days_until ${y} ${m} ${dd}")
+    }
+    // add_months by the old normalization
+    let t = y * 12 + (m + n % 1000 - 1)
+    let ry = floor_div(t, 12)
+    let rm = t - ry * 12 + 1
+    var rd = if dd < 1 { 1 } else { dd }
+    if rd > days_in(ry, rm) {
+      rd = days_in(ry, rm)
+    }
+    let wm = time.Date{year: ry, month: rm, day: rd}
+    if date_add_months(d, n % 1000) != wm && bad.len() < 10 {
+      bad.push("add_months ${y} ${m} ${dd} + ${n % 1000}")
+    }
+    if i % 10 == 0 {
+      x = (x * 1103515245 + 12345) % 2147483648
+      let c = time.Civil{date: d, time: time.ClockTime{hour: x % 100 - 30, minute: x % 7000 - 3000, second: x % 300000 - 100000, nanos: x % 1000000000}, offset: Duration.from_secs_int(x % 172801 - 86400), zone: "X"}
+      let want = ref_local(c) - floor_div(c.offset.nanos(), 1000000000)
+      if civil_unix(c) != want && bad.len() < 10 {
+        bad.push("unix ${y} ${m} ${dd}: ${civil_unix(c)}, want ${want}")
+      }
+      let wt = if want <= MIN_TIME_SECS || want >= MAX_TIME_SECS { None } else { Some(time_of(want * 1000000000 + c.time.nanos)) }
+      if civil_to_time(c) != wt && bad.len() < 10 {
+        bad.push("to_time ${y} ${m} ${dd}")
+      }
+      let f = c.format(time.RFC3339)
+      let wf = format_local(rfc3339_items(), ref_local(c), c.time.nanos, floor_div(c.offset.nanos(), 1000000000), utc(), -1, true)
+      if f != wf && bad.len() < 10 {
+        bad.push("format ${y} ${m} ${dd}: ${f}, want ${wf}")
+      }
+    }
+  }
+  expect(bad) == []
+}
+
+test "a Date or Civil of extreme fields gives its weekday, text and to_time without a fault" {
+  let ends = [Int.min, Int.min + 1, Int.min + 399, -9223372036854775000, -1, 0, 1, 9223372036854775000, Int.max - 399, Int.max - 1, Int.max]
+  var seen = 0
+  for y in ends {
+    for m in [Int.min, -13, 0, 1, 12, 13, Int.max] {
+      for dd in [Int.min, 0, 1, 31, Int.max] {
+        let d = time.Date{year: y, month: m, day: dd}
+        let _w = d.weekday()
+        let _s = d.display()
+        for h in [Int.min, 0, 23, Int.max] {
+          let c = time.Civil{date: d, time: time.ClockTime{hour: h, minute: h, second: h, nanos: h}, offset: Duration.from_nanos(h), zone: "X"}
+          // outside Time's range for every field here but the zeros
+          let tt = c.to_time()
+          if y != 0 && y != 1 && y != -1 {
+            expect(tt.is_none()) == true
+          }
+          seen += 1
+        }
+      }
+    }
+  }
+  expect(seen) == 1540
+  // the weekday repeats every 400 years, for the Int range's ends too
+  let a = time.Date{year: Int.max, month: 6, day: 15}
+  let b = time.Date{year: Int.max - 400, month: 6, day: 15}
+  expect(a.weekday()) == b.weekday()
+  let e = time.Date{year: Int.min, month: 1, day: 1}
+  expect(e.weekday()) == time.Date{year: Int.min + 400, month: 1, day: 1}.weekday()
+  expect(e.display()) == "-9223372036854775808-01-01"
+  expect(time.Date{year: 5, month: Int.min, day: 1}.display()) == "0005--9223372036854775808-01"
+  // a Civil of any year formats with its year
+  let c = time.Civil{date: time.Date{year: Int.max, month: 12, day: 31}, time: time.ClockTime{hour: 23, minute: 59, second: 59, nanos: 0}, offset: Duration.from_nanos(0), zone: "UTC"}
+  expect(c.format(time.RFC3339)) == "9223372036854775807-12-31T23:59:59Z"
+  let cm = time.Civil{date: time.Date{year: Int.min, month: 1, day: 1}, time: time.ClockTime{hour: 0, minute: 0, second: 0, nanos: 0}, offset: Duration.from_nanos(0), zone: "UTC"}
+  expect(cm.format(time.RFC3339)) == "-9223372036854775808-01-01T00:00:00Z"
+  expect(cm.to_time()) == None
+  // the Int range's ends within one day still add
+  expect(time.Date{year: Int.max, month: 12, day: 30}.add_days(1)) == time.Date{year: Int.max, month: 12, day: 31}
+  expect(time.Date{year: Int.min, month: 1, day: 2}.add_days(-1)) == time.Date{year: Int.min, month: 1, day: 1}
+  expect(time.Date{year: Int.max, month: 11, day: 30}.add_months(1)) == time.Date{year: Int.max, month: 12, day: 30}
+  expect(time.Date{year: Int.max, month: 1, day: 1}.days_until(time.Date{year: Int.max, month: 12, day: 31})) == 364
+}
+
+test "hostile texts give errors, not faults: long digit runs, huge years, offsets, durations, zone names" {
+  let utc = time.utc()
+  let nines = "9".repeat(1000000)
+  // parse: every field is fixed width or checked; a fraction of any
+  // length is read in one pass
+  expect(time.parse("9999999999999999999-01-01", time.DATE, utc).is_err()) == true
+  expect(time.parse("${nines}-01-01", time.DATE, utc).is_err()) == true
+  expect(time.parse_civil("-999999999999999999-01-01", time.DATE, utc).is_err()) == true
+  // (an answer either way: the corpora hold parse's answers to Go's)
+  time.parse("2020-01-01T00:00:00.${nines}Z", time.RFC3339, utc).ignore_err("either answer; only no fault is checked")
+  expect(time.parse("2020-01-01T00:00:00.${nines}", time.RFC3339, utc).is_err()) == true
+  expect(time.parse("2020-01-01T00:00:00+99:99", time.RFC3339, utc).is_err()) == true
+  expect(time.parse("1".repeat(99999), "{day}".repeat(50000), utc).is_err()) == true
+  // Duration.parse: overflow is an error
+  expect(Duration.parse("9999999999999999999h").is_err()) == true
+  expect(Duration.parse("2562048h").is_err()) == true
+  expect(Duration.parse("2562047h").is_ok()) == true
+  expect(Duration.parse("${nines}ns").is_err()) == true
+  expect(Duration.parse("-9223372036854775808ns").is_ok()) == true
+  expect(Duration.parse("-9223372036854775809ns").is_err()) == true
+  expect(Duration.parse("1h".repeat(500000)).is_ok()) == true
+  // zone names: Go's checks (no "..", "\", NUL, leading "/", over 255)
+  for n in ["../../../../etc/passwd", "/etc/passwd", "Europe/../../x", "a\\b", "A".repeat(256), "Local", ""] {
+    expect(time.zone(n).is_err()) == true
+  }
+  // instant refuses fields outside the calendar
+  expect(time.instant(time.Date{year: Int.max, month: 1, day: 1}, time.ClockTime{hour: 0, minute: 0, second: 0, nanos: 0}, utc).is_err()) == true
+  expect(time.instant(time.Date{year: 2020, month: 99, day: 99}, time.ClockTime{hour: 99, minute: 99, second: 99, nanos: -5}, utc).is_err()) == true
+}

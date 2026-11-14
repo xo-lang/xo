@@ -66,13 +66,75 @@ func daysIn(y, m int64) int64 {
 // counted from the first of the month, so a Date built with a struct
 // literal and out of range fields still has a meaning.
 func dateDays(d Time_Date) int64 {
-	y, m := normMonth(d.F_year, d.F_month)
-	return daysFromCivil(y, m, 1) + d.F_day - 1
+	q, r := splitDays(d)
+	return q*eraDays + r
 }
 
-func normMonth(y, m int64) (int64, int64) {
-	t := y*12 + (m - 1)
-	return floorDiv(t, 12), t - floorDiv(t, 12)*12 + 1
+// eraDays is the days of 400 Gregorian years, a whole number of weeks.
+const eraDays = 146097
+
+// splitDays is the native backend's split_days (std/native/time.xo): d's
+// day number as q*eraDays + r with r near 1970, without multiplying a
+// field, so any fields (a struct literal, a decoded JSON body) give the
+// native answers; Go's int64 arithmetic would wrap to wrong ones.
+func splitDays(d Time_Date) (int64, int64) {
+	k, mon := monthCarry(d.F_month)
+	yr := d.F_year%400 + k%400
+	r := daysFromCivil(yr, mon, 1) + d.F_day%eraDays - 1
+	return d.F_year/400 + k/400 + d.F_day/eraDays, r
+}
+
+// monthCarry is a month field as (years, month 1 to 12).
+func monthCarry(m int64) (int64, int64) {
+	q, r := m/12, m%12
+	if r <= 0 {
+		return q - 1, r + 12
+	}
+	return q, r
+}
+
+// splitFloor is (n floor k, n mod k) for k > 0.
+func splitFloor(n, k int64) (int64, int64) {
+	q, r := n/k, n%k
+	if r < 0 {
+		return q - 1, r + k
+	}
+	return q, r
+}
+
+func normSplit(q, r int64) (int64, int64) {
+	c, rr := splitFloor(r, eraDays)
+	return q + c, rr
+}
+
+// eraYear is q*400 + y for y in 1970 to 2369, in the native order.
+func eraYear(q, y int64) int64 {
+	if q < 0 {
+		return (q+6)*400 + (y - 2400)
+	}
+	return q*400 + y
+}
+
+func dateOfSplit(q, r int64) Time_Date {
+	q2, r2 := normSplit(q, r)
+	d := dateOf(r2)
+	d.F_year = eraYear(q2, d.F_year)
+	return d
+}
+
+// civilSplit is the native civil_split: c's wall clock as q*eraDays + r
+// days and s seconds.
+func civilSplit(c Time_Civil) (int64, int64, int64) {
+	q, r := splitDays(c.F_date)
+	hd, hr := splitFloor(c.F_time.F_hour, 24)
+	md, mr := splitFloor(c.F_time.F_minute, 1440)
+	sd, sr := splitFloor(c.F_time.F_second, 86400)
+	secs := hr*3600 + mr*60 + sr
+	extra := floorDiv(secs, 86400)
+	q2 := q + hd/eraDays + md/eraDays + sd/eraDays
+	r2 := r + hd%eraDays + md%eraDays + sd%eraDays + extra
+	q3, r3 := normSplit(q2, r2)
+	return q3, r3, secs - extra*86400
 }
 
 func dateOf(days int64) Time_Date {
@@ -217,30 +279,41 @@ func Time_instant(_ *Task, d Time_Date, c Time_ClockTime, z Time_Zone, amb Time_
 // M_weekday is `d.weekday()`.
 func (d Time_Date) M_weekday(*Task) Time_Weekday {
 	// 1970-01-01 was a Thursday (tag 4; Monday is 1)
-	w := dateDays(d) + 3
+	_, r := splitDays(d)
+	w := r + 3
 	return Time_Weekday{Tag: int(w-floorDiv(w, 7)*7) + 1}
 }
 
 // M_add_days is `d.add_days(n)`.
 func (d Time_Date) M_add_days(_ *Task, n int64) Time_Date {
-	return dateOf(dateDays(d) + n)
+	q, r := splitDays(d)
+	return dateOfSplit(q+n/eraDays, r+n%eraDays)
 }
 
 // M_add_months is `d.add_months(n)`: the day is clamped to the
 // length of the resulting month.
 func (d Time_Date) M_add_months(_ *Task, n int64) Time_Date {
-	y, m := normMonth(d.F_year, d.F_month+n)
+	mq, mon := monthCarry(d.F_month)
+	idx := mon - 1 + n%12
+	c := floorDiv(idx, 12)
+	y := d.F_year + mq + n/12 + c
+	m := idx - c*12 + 1
 	day := min(max(d.F_day, 1), daysIn(y, m))
 	return Time_Date{F_year: y, F_month: m, F_day: day}
 }
 
 // M_days_until is `d.days_until(o)`.
-func (d Time_Date) M_days_until(_ *Task, o Time_Date) int64 { return dateDays(o) - dateDays(d) }
+func (d Time_Date) M_days_until(_ *Task, o Time_Date) int64 {
+	q1, r1 := splitDays(d)
+	q2, r2 := splitDays(o)
+	return (q2-q1)*eraDays + (r2 - r1)
+}
 
 // M_display is "2026-10-09".
 func (d Time_Date) M_display(*Task) string {
 	if d.F_year < 0 {
-		return fmt.Sprintf("-%04d-%02d-%02d", -d.F_year, d.F_month, d.F_day)
+		// strconv's digits of the year, so Int.min (whose negation wraps) prints too
+		return fmt.Sprintf("-%04s-%02d-%02d", fmt.Sprint(d.F_year)[1:], d.F_month, d.F_day)
 	}
 	return fmt.Sprintf("%04d-%02d-%02d", d.F_year, d.F_month, d.F_day)
 }

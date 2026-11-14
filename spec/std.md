@@ -4331,6 +4331,15 @@ fn (c: Civil) to_time() -> Time?                 // None outside Time's 1677 to 
 fn (c: Civil) format(layout: Str) -> Str         // format's text for any year; faults on a bad layout
 ```
 
+A `Date`, `ClockTime` or `Civil` may hold any fields (a struct literal,
+or a JSON body through `derive Json`): the methods normalize them (month
+13 is January of the next year, hour 25 the next day's 01). `weekday`,
+`display`, `to_time` and `format` never fault on a field's size;
+`add_days`, `add_months`, `days_until` and `unix` fault only when their
+answer does not fit `Int` (a year past `Int`'s range, more days or
+seconds than `Int` holds). A server that decodes a `Date` from a peer
+and does arithmetic on it checks its range first, as with any `Int`.
+
 `instant` with `Reject` returns `Skipped` for a time inside a spring
 forward gap and `Repeated` for one inside a fall back overlap; `Earlier`
 and `Later` pick the first or second instant (for a gap, the instant the
