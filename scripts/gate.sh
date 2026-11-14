@@ -168,6 +168,7 @@ if [ -f "$gp" ] && read -r op <"$gp" && [ -n "$op" ] && [ "$op" != $$ ] &&
 fi
 echo $$ >"$gp"
 trap 'rm -f "$gp"' EXIT
+rm -f "$logs/times.tsv"
 cd "$wt" || exit 1
 # gate_required_steps and gate_plan: the proving checks, as pushq.sh asks
 # for them (the tree's own copy, so a gate and its pushq agree)
@@ -215,6 +216,32 @@ for el, act, t in sorted(rows, reverse=True)[:40]:
     print(f"{el:9.2f} {act:4} {t}")
 PY
 }
+# gate_times NAME JSON: each top-level test of a go test -json log that
+# took a second or more, as "NAME<TAB>TEST<TAB>SECONDS<TAB>ACTION" lines
+# in $logs/times.tsv, and the package's own wall time as TEST "-"
+# (lead, 2026-11-14, owner's test-time plan: the daily check
+# scripts/lead/gatetime.sh reads every gate's lines to find a step or
+# a test that grew)
+gate_times() {
+  python3 - "$1" "$2" >>"$logs/times.tsv" 2>/dev/null <<'PY'
+import json, sys
+n, rows, pk = sys.argv[1], [], None
+for line in open(sys.argv[2], errors="replace"):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    t, a = e.get("Test"), e.get("Action")
+    if a in ("pass", "fail", "skip"):
+        if t and "/" not in t and e.get("Elapsed", 0) >= 1:
+            rows.append(f"{n}\t{t}\t{e.get('Elapsed', 0):.1f}\t{a}")
+        elif not t:
+            pk = e.get("Elapsed")
+if pk is not None:
+    rows.append(f"{n}\t-\t{pk:.1f}\tpackage")
+print("\n".join(rows))
+PY
+}
 full() { # NAME PKG [go test args]: one package's full tests
   n=$1; p=$2; shift 2
   # -json keeps every test's time ($logs/NAME.json, the 40 slowest in
@@ -228,6 +255,7 @@ for l in open(sys.argv[1], errors="replace"):
     sys.stdout.write(e.get("Output", ""))' "$logs/$n.json" >"$logs/$n.txt"
   cat "$logs/$n.err" >>"$logs/$n.txt"
   slowest "$logs/$n.json" >"$logs/$n.slow.txt"
+  gate_times "$n" "$logs/$n.json"
   if [ "$rc" = 0 ]; then
     echo "$n: $(tail -1 "$logs/$n.txt")"
   else
@@ -506,8 +534,10 @@ llvm_step() {
     if [ -z "${XO_GATE_LLVM:-}" ] && native_only; then
       echo "llvm: skipped (native backend only change; XO_GATE_LLVM=1 runs it)"
     else
+      t_sel=$(date +%s)
       sel=$(llvm_goldens)
-      echo "llvm goldens: $(cat "$logs/llvm-select.txt")"
+      printf 'llvm\t(select)\t%s\tselect\n' "$(($(date +%s) - t_sel))" >>"$logs/times.tsv"
+      echo "llvm goldens: $(cat "$logs/llvm-select.txt") ($(($(date +%s) - t_sel)) s to select)"
       if [ "$sel" = all ]; then unset XO_LLVM_GOLDENS; else export XO_LLVM_GOLDENS=$sel; fi
       if go_backend; then
         # every 16th golden on the Go backend too: the selection above
@@ -593,7 +623,17 @@ for step in "$@"; do
   *) echo "gate.sh: unknown step $step"; failed=1 ;;
   esac
 done
+# run_step: one named step, its wall time recorded in times.tsv as
+# "STEP<TAB>=<TAB>SECONDS<TAB>step"
 run_step() {
+  local t1 rc
+  t1=$(date +%s)
+  run_step_body "$1"
+  rc=$?
+  printf '%s\t=\t%s\tstep\n' "$1" "$(($(date +%s) - t1))" >>"$logs/times.tsv"
+  return $rc
+}
+run_step_body() {
   case $1 in
   short)
     # -p and -parallel capped (2026-11-07): uncapped, -short's parallel
@@ -951,6 +991,19 @@ pr=$(git rev-parse --git-dir 2>/dev/null)/pushq-ran
 if [ "$failed" = 0 ] && [ -n "$ran" ]; then
   pid=$(git diff "$(git merge-base HEAD origin/main)" HEAD | git patch-id --stable | cut -d' ' -f1)
   [ -n "$pid" ] && echo "$pid $(echo $ran)" >"$pr"
+fi
+# the gate's test times (gate_times): kept for the daily check in the
+# lead's directory when this machine has one, else printed as GATE-TIME
+# lines (an offload host; offload-gate.sh files them on the Mac)
+if [ -s "$logs/times.tsv" ]; then
+  gt_head="# $(date -u +%FT%TZ) $(uname -sm) $(git rev-parse --short HEAD) $(basename "$wt") failed=$failed"
+  gtd=${XO_LEAD_DIR:-$HOME/xo-lead}
+  if [ -d "$gtd" ] && [ -z "${XO_GATE_TIMES_PRINT:-}" ]; then
+    mkdir -p "$gtd/notes/gate-times"
+    { echo "$gt_head"; cat "$logs/times.tsv"; } >"$gtd/notes/gate-times/$(date -u +%Y%m%dT%H%M%S)-$(basename "$wt")-$$.tsv"
+  else
+    { echo "$gt_head"; cat "$logs/times.tsv"; } | sed 's/^/GATE-TIME	/'
+  fi
 fi
 echo GATE-DONE
 exit $failed
