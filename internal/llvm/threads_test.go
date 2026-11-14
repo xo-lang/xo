@@ -397,6 +397,7 @@ func TestGoldenTasks(t *testing.T) {
 			if why, ok := tsanTimingSkips[filepath.Base(dir)]; ok {
 				t.Skip(why)
 			}
+			skipUnselectedSan(t, dir)
 			t.Parallel()
 			want, err := os.ReadFile(wantFile(dir))
 			if err != nil {

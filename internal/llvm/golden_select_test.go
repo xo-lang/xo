@@ -40,6 +40,21 @@ func goldenSelected(name string) bool {
 	return o2Goldens[name]
 }
 
+// skipUnselectedSan is skipUnselected for the sanitizer builds
+// (TestGoldenTasks, TestGoldenASan), unless XO_LLVM_SAN_ALL=1: gate.sh sets
+// it when the change touches the runtime, the scheduler, the race
+// instrumentation, HTTP or the LLVM backend, whose sanitizer behavior the
+// plain IR the selection compares may not show. Before 2026-11-14 they ran
+// every golden in every gate: 2,610 and 1,251 s of subtest time in a host 2
+// gate that selected none (bench/results/gate-time-2026-11-14.md).
+func skipUnselectedSan(t *testing.T, dir string) {
+	t.Helper()
+	if os.Getenv("XO_LLVM_SAN_ALL") == "1" {
+		return
+	}
+	skipUnselected(t, dir)
+}
+
 // skipUnselected skips a golden's subtest that XO_LLVM_GOLDENS leaves out.
 func skipUnselected(t *testing.T, dir string) {
 	t.Helper()

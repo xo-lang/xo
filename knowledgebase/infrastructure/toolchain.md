@@ -2238,6 +2238,13 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   (times.tsv kind `subtests`): a parent's own Elapsed leaves them out.
   HEAD's IR manifest builds with `-parallel` a third of the CPUs (at least
   4; `XO_GATE_IR_PARALLEL`) and is kept by commit for a re-gate.
+  The llvm step runs the package's tests that do not read the selection
+  (all but TestGolden, TestGoldenSplit, TestGoldenGoParity,
+  TestDebugInfoSameOutputLLVM, TestGoldenTasks, TestGoldenASan) while the
+  selection is made (log `llvmpre.*`; `XO_GATE_LLVM_OVERLAP=0` turns it
+  off). The sanitizer goldens (TestGoldenTasks, TestGoldenASan) follow
+  the selection unless the change touches @rt, @sched, @race, @http,
+  @llvmbe or @driver, when gate.sh sets `XO_LLVM_SAN_ALL=1` (every one).
   The full tier (`XO_GATE_LLVM=all`, as tier.sh and offload-tier.sh set,
   or `XO_GATE_TESTS=all`) runs every test. internal/repotest
   TestGateAreasValid fails when a listed test no longer exists, an area

@@ -600,6 +600,22 @@ llvm_step() {
     if [ -z "${XO_GATE_LLVM:-}" ] && native_only; then
       echo "llvm: skipped (native backend only change; XO_GATE_LLVM=1 runs it)"
     else
+      # the package's tests that do not follow the golden selection run
+      # while it is made (lead, 2026-11-14: the selection took 1,014 to
+      # 2,186 s of a host 2 gate, and the 800 to 1,350 s of package tests
+      # waited for it; bench/results/gate-time-2026-11-14.md); the tests
+      # that read XO_LLVM_GOLDENS (goldenSelected) run after it.
+      # XO_GATE_LLVM_OVERLAP=0 runs them all after it, as before.
+      sel_tests='TestGolden|TestGoldenSplit|TestGoldenGoParity|TestDebugInfoSameOutputLLVM|TestGoldenTasks|TestGoldenASan'
+      pre_pid=""
+      sk=$(gate_skip internal/llvm)
+      [ -s "$logs/internal-llvm-areas.txt" ] && echo "llvm areas: $(cat "$logs/internal-llvm-areas.txt")"
+      if [ "${XO_GATE_LLVM_OVERLAP:-1}" != 0 ]; then
+        presk="^($sel_tests)\$"
+        [ -n "$sk" ] && presk="^($sel_tests|${sk#^(}"
+        ( failed=0; full llvmpre ./internal/llvm -skip "$presk"; echo "$failed" >"$logs/llvmpre.failed" ) >"$logs/llvmpre.out" 2>&1 &
+        pre_pid=$!
+      fi
       t_sel=$(date +%s)
       sel=$(llvm_goldens)
       printf 'llvm\t(select)\t%s\tselect\n' "$(($(date +%s) - t_sel))" >>"$logs/times.tsv"
@@ -607,17 +623,30 @@ llvm_step() {
       printf 'llvm\t(goldens)\t%s\tcount\n' "$ng" >>"$logs/times.tsv"
       echo "llvm goldens: $(cat "$logs/llvm-select.txt") ($(($(date +%s) - t_sel)) s to select)"
       if [ "$sel" = all ]; then unset XO_LLVM_GOLDENS; else export XO_LLVM_GOLDENS=$sel; fi
-      sk=$(gate_skip internal/llvm)
-      [ -s "$logs/internal-llvm-areas.txt" ] && echo "llvm areas: $(cat "$logs/internal-llvm-areas.txt")"
+      # the sanitizer goldens (TestGoldenTasks, TestGoldenASan) follow the
+      # selection too, except for a change in an area whose sanitizer
+      # behavior the plain IR may not show (internal/llvm skipUnselectedSan)
+      unset XO_LLVM_SAN_ALL
+      if { git diff --name-only "${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}" HEAD; git status --porcelain | cut -c4-; } |
+        python3 scripts/gate-areas.py --touches scripts/gate-areas.txt @rt @sched @race @http @llvmbe @driver; then
+        export XO_LLVM_SAN_ALL=1; echo "llvm sanitizer goldens: every one (the change touches the runtime, scheduler, race, HTTP or LLVM backend areas)"
+      fi
+      # with the overlap, the tests after the selection are only those
+      # that read it
+      if [ -n "$pre_pid" ]; then
+        sk=""; set -- -run "^($sel_tests)\$"
+      else
+        set -- ${sk:+-skip "$sk"}
+      fi
       if go_backend; then
         # every 16th golden on the Go backend too: the selection above
         # follows the LLVM IR, which a Go backend change leaves alone, so
         # TestGoldenGoParity ran none and passed (2026-11-06,
         # gotchas/go-parity-selected-by-llvm-ir.md); it now fails when it
         # runs none
-        XO_TEST_GO_PARITY=1 XO_GO_PARITY_SAMPLE=${XO_GO_PARITY_SAMPLE:-16} full llvm ./internal/llvm ${sk:+-skip "$sk"}
+        XO_TEST_GO_PARITY=1 XO_GO_PARITY_SAMPLE=${XO_GO_PARITY_SAMPLE:-16} full llvm ./internal/llvm "$@"
       else
-        full llvm ./internal/llvm ${sk:+-skip "$sk"}
+        full llvm ./internal/llvm "$@"
         # a golden the change adds or edits runs on the Go backend too,
         # whatever else changed: iface_wrap_eq reached main failing
         # TestGoldenGoParity because its change touched neither
@@ -630,6 +659,11 @@ llvm_step() {
         fi
       fi
       unset XO_LLVM_GOLDENS
+      if [ -n "$pre_pid" ]; then
+        wait "$pre_pid"
+        cat "$logs/llvmpre.out"
+        [ "$(cat "$logs/llvmpre.failed" 2>/dev/null)" = 0 ] || failed=1
+      fi
     fi
 }
 # XO_GATE_CONCURRENT=1 (opt in; arm64 beside llvm since 2026-10-26,

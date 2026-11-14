@@ -35,6 +35,7 @@ func TestGoldenASan(t *testing.T) {
 	for _, dir := range dirs {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
+			skipUnselectedSan(t, dir)
 			t.Parallel()
 			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
 			if err != nil {

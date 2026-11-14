@@ -48,4 +48,15 @@ func TestGateAreasValid(t *testing.T) {
 	if s := sel("internal/arm64", "compiler/ssa/inline.xo"); !strings.Contains(s, "TestModuleCheckAuto") {
 		t.Errorf("TestModuleCheckAuto: want it skipped in the arm64 step (the chkcache step runs it), skip pattern %q", s)
 	}
+	// gate.sh's XO_LLVM_SAN_ALL: every sanitizer golden for a scheduler
+	// change, the selection's for a compiler pass
+	touches := func(changed string) bool {
+		c := exec.Command("python3", "scripts/gate-areas.py", "--touches", "scripts/gate-areas.txt", "@rt", "@sched", "@race", "@http", "@llvmbe", "@driver")
+		c.Dir = root
+		c.Stdin = strings.NewReader(changed + "\n")
+		return c.Run() == nil
+	}
+	if !touches("std/native/llrt/sched.xo") || touches("compiler/ssa/inline.xo") {
+		t.Errorf("--touches: want std/native/llrt/sched.xo in the areas and compiler/ssa/inline.xo not")
+	}
 }

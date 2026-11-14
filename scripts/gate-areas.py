@@ -6,6 +6,8 @@
 # --check it validates AREAS against the repository instead (every named
 # test exists in its package, every area is defined, every regex compiles)
 # and exits 1 on a problem: internal/repotest TestGateAreasValid runs it.
+# With --touches AREAS AREA... it exits 0 when a changed path on stdin is
+# in one of the AREAs.
 import os
 import re
 import sys
@@ -78,6 +80,13 @@ def check(path):
 def main():
     if sys.argv[1] == "--check":
         sys.exit(check(sys.argv[2]))
+    if sys.argv[1] == "--touches":
+        # --touches AREAS AREA... < changed paths: exit 0 when a changed
+        # path is in one of the AREAs (gate.sh's XO_LLVM_SAN_ALL)
+        areas, _ = parse(sys.argv[2])
+        rs = area_regexes(areas, sys.argv[3:], "--touches")
+        changed = [l.strip() for l in sys.stdin if l.strip()]
+        sys.exit(0 if any(r.search(c) for r in rs for c in changed) else 1)
     pkg, path, note = sys.argv[1], sys.argv[2], sys.argv[3]
     changed = [l.strip() for l in sys.stdin if l.strip()]
     areas, rules = parse(path)
