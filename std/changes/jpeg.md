@@ -1,5 +1,16 @@
 # std/jpeg changes
 
+## 2026-11-14: perf: a baseline block whose scan wrote no AC term skips the inverse DCT
+
+- Kind: perf
+- Commit: this push
+- Found by: the decision 0616 std/jpeg review's G1 (a flat 10000x10000 gray file, 1.17 MB, decoded in 1.76 times Go's time) and an XO_PROF profile of it (idct_rows and idct_cols about 42%, the dequantization 10%)
+- Go reference: image/jpeg idct's row pass: "If all the AC components are zero, then the IDCT is trivial"
+- Before: every baseline block was dequantized (64 multiplies) and run through both passes of the inverse DCT, though a block of a flat area has only its DC term
+- Fix: process_sos notes whether a baseline block's scan wrote an AC term; a block with none goes to reconstruct_dc, which computes its one value as the two passes reduce to with seven of eight inputs zero (the DC term dequantized, << 17 and wrapped to 32 bits, then + 524288, wrapped, >> 20) and stores it, so the output is unchanged. A per row or per column zero test inside the passes was tried first and cost photos about 1 to 3%. The flat file decodes in 184 ms, was 393 ms (Go 223 ms; Mac). bench/perf/jpeg on linux/arm64 host 1, --ab against main, 11 rounds: decode within noise (0.994, n=11), rgba 0.986 (0.972 to 0.992, n=6).
+- Test: xo test --std-module=jpeg native and llvm; TestStdCorpora jpeg, jpegenc, jpegfuzz, image on go, arm64, llvm (CRCs of each decoded plane and of the RGBA conversion against Go's)
+- Shipped in: not yet released
+
 ## 2026-11-14: perf: decode stores a block row and an RGBA pixel in one store each, and a progressive image's coefficient store is made in one list again
 
 - Kind: perf

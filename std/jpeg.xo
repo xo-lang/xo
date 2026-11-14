@@ -1209,6 +1209,20 @@ fn reconstruct_block(var d: Dec, var b: List[Int], bx: Int, by: Int, ci: Int) {
   store_block(d, b, bx, by, ci)
 }
 
+/// Reconstructs a block holding only its DC term: idct_rows gives the
+/// first row DC << 17 (wrapped to 32 bits) in every place and the other
+/// rows zero, and idct_cols then gives every pixel (that + 524288,
+/// wrapped) >> 20, so the 64 values are one (Go's idct computes the same
+/// through its all AC zero row shortcut and its column pass).
+fn reconstruct_dc(var d: Dec, var b: List[Int], bx: Int, by: Int, ci: Int) {
+  let dq = w32(b[0] * d.quant[d.ctq[ci] * 64])
+  let v = w32(w32(dq << 17) + 524288) >> 20
+  for k in 0..64 {
+    b[k] = v
+  }
+  store_block(d, b, bx, by, ci)
+}
+
 /// Stores block b, already through the inverse DCT, at (bx, by) of
 /// component ci's plane.
 fn store_block(var d: Dec, b: List[Int], bx: Int, by: Int, ci: Int) {
@@ -1528,6 +1542,9 @@ fn process_sos(var d: Dec, n: Int, max_pixels: Int) -> () ! JpegErr {
             }
           }
           var pb = 0
+          // a baseline block whose scan wrote no AC term (a flat area's)
+          // reconstructs without the inverse DCT
+          var any_ac = false
           if d.progressive {
             pb = coef_at(d, ci, bx, by)
           } else {
@@ -1583,6 +1600,7 @@ fn process_sos(var d: Dec, n: Int, max_pixels: Int) -> () ! JpegErr {
                     coef_set(d, pb + UNZIG[zig], w32(ac << al))
                   } else {
                     b[UNZIG[zig]] = w32(ac << al)
+                    any_ac = true
                   }
                 } else {
                   if val0 != 15 {
@@ -1606,7 +1624,11 @@ fn process_sos(var d: Dec, n: Int, max_pixels: Int) -> () ! JpegErr {
           if d.progressive {
             continue
           }
-          reconstruct_block(d, b, bx, by, ci)
+          if any_ac {
+            reconstruct_block(d, b, bx, by, ci)
+          } else {
+            reconstruct_dc(d, b, bx, by, ci)
+          }
         }
       }
       mcu += 1
