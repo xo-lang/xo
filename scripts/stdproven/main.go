@@ -65,10 +65,11 @@ type harness struct {
 // none has no fuzz evidence to run (decision 0461: a parser of untrusted
 // input gets a harness first, its Solid requirement).
 var harnesses = map[string][]harness{
-	"json": {{"TestJsonFuzz", "XO_JSONFUZZ"}},
-	"time": {{"TestTimeFuzz", "XO_TIMEFUZZ"}},
-	"http": {{"TestHttpHeadFuzz", "XO_HEADFUZZ"}, {"TestHttpResponseFuzz", "XO_RESPFUZZ"}, {"TestHttpUrlFuzz", "XO_URLFUZZ"}},
-	"x509": {{"TestX509Fuzz", "XO_X509FUZZ"}},
+	"compress": {{"TestCompressFuzz", "XO_COMPRESSFUZZ"}, {"TestLzwFuzz", "XO_LZWFUZZ"}},
+	"json":     {{"TestJsonFuzz", "XO_JSONFUZZ"}},
+	"time":     {{"TestTimeFuzz", "XO_TIMEFUZZ"}},
+	"http":     {{"TestHttpHeadFuzz", "XO_HEADFUZZ"}, {"TestHttpResponseFuzz", "XO_RESPFUZZ"}, {"TestHttpUrlFuzz", "XO_URLFUZZ"}},
+	"x509":     {{"TestX509Fuzz", "XO_X509FUZZ"}},
 }
 
 func main() {
