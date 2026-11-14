@@ -164,6 +164,9 @@ cd "$wt" || exit 1
 # gate_required_steps and gate_plan: the proving checks, as pushq.sh asks
 # for them (the tree's own copy, so a gate and its pushq agree)
 . scripts/lead/gatelib.sh || exit 1
+# a base that lacks main's test-input commits from over an hour ago fails
+# on diffs main already fixed: refused (GATE_STALE_OK=1 gates anyway)
+gate_stale_check . || exit 2
 t0=$(date +%s)
 rm -f bin/xo
 go run ./scripts/xobuild >"$logs/xobuild.txt" 2>&1 || { echo "XOBUILD-FAIL ($logs/xobuild.txt)"; exit 1; }
