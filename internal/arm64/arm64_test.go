@@ -324,6 +324,7 @@ func TestGoldenRun(t *testing.T) {
 	for _, dir := range goldenDirs(t) {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
+			skipUnselectedArm64(t, dir)
 			t.Parallel()
 			got, err := buildRun(t, dir)
 			if err != nil {
@@ -630,6 +631,7 @@ func TestGoldenRunSpill(t *testing.T) {
 			}
 			regs, dir := regs, dir
 			t.Run(regs+"/"+name, func(t *testing.T) {
+				skipUnselectedArm64(t, dir)
 				t.Parallel()
 				got, err := buildRunWith(t, dir, xotool.Options{Backend: xotool.BackendArm64, Env: []string{"XO_ARM64_REGS=" + regs, "XO_BACKEND_CACHE=off"}})
 				if err != nil {

@@ -2246,6 +2246,16 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   off). The sanitizer goldens (TestGoldenTasks, TestGoldenASan) follow
   the selection unless the change touches @rt, @sched, @race, @http,
   @llvmbe or @driver, when gate.sh sets `XO_LLVM_SAN_ALL=1` (every one).
+  The arm64 step's tests that build every golden (TestGoldenRun,
+  TestGoldenRunSpill, TestGoldenRunHeapGuard, TestGoldenPassesOff,
+  TestDebugInfoSameCode) follow the llvm step's selection
+  (`XO_ARM64_GOLDENS`, from `$logs/golden-sel.txt`; log line `arm64
+  goldens:`, test log `arm64sel.*`) when the gate runs llvm in the same
+  concurrent gate and the change touches none of compiler/arm64, macho,
+  ssa, xo, internal/arm64, internal/xotool, scripts/xobuild, go.mod or an
+  OS or arch specific llrt file; otherwise every golden
+  (`XO_GATE_ARM64_SELECT=0` forces that). The LLVM IR comes from the same
+  SSA module, so an unchanged IR means unchanged arm64 input.
   The full tier (`XO_GATE_LLVM=all`, as tier.sh and offload-tier.sh set,
   or `XO_GATE_TESTS=all`) runs every test. internal/repotest
   TestGateAreasValid fails when a listed test no longer exists, an area

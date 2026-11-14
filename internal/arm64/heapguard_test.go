@@ -130,6 +130,7 @@ func TestGoldenRunHeapGuard(t *testing.T) {
 			continue
 		}
 		t.Run(filepath.Base(dir), func(t *testing.T) {
+			skipUnselectedArm64(t, dir)
 			t.Parallel()
 			got, err := buildRunWith(t, dir, xotool.Options{Backend: xotool.BackendArm64, Env: []string{"XO_HEAP_GUARD=1"}})
 			if err != nil {

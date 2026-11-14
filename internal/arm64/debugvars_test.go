@@ -297,6 +297,7 @@ func TestDebugInfoSameCode(t *testing.T) {
 	for _, dir := range goldenDirs(t) {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
+			skipUnselectedArm64(t, dir)
 			t.Parallel()
 			// build is one build of the pair: shared, the default build is
 			// TestGoldenRun's (sharedBuild); otherwise its own, removed after

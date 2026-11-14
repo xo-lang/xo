@@ -168,7 +168,7 @@ if [ -f "$gp" ] && read -r op <"$gp" && [ -n "$op" ] && [ "$op" != $$ ] &&
 fi
 echo $$ >"$gp"
 trap 'rm -f "$gp"' EXIT
-rm -f "$logs/times.tsv"
+rm -f "$logs/times.tsv" "$logs/golden-sel.txt"
 cd "$wt" || exit 1
 # gate_required_steps and gate_plan: the proving checks, as pushq.sh asks
 # for them (the tree's own copy, so a gate and its pushq agree)
@@ -599,6 +599,7 @@ golden_dirs_changed() {
 llvm_step() {
     if [ -z "${XO_GATE_LLVM:-}" ] && native_only; then
       echo "llvm: skipped (native backend only change; XO_GATE_LLVM=1 runs it)"
+      echo all >"$logs/golden-sel.txt"
     else
       # the package's tests that do not follow the golden selection run
       # while it is made (lead, 2026-11-14: the selection took 1,014 to
@@ -623,6 +624,8 @@ llvm_step() {
       printf 'llvm\t(goldens)\t%s\tcount\n' "$ng" >>"$logs/times.tsv"
       echo "llvm goldens: $(cat "$logs/llvm-select.txt") ($(($(date +%s) - t_sel)) s to select)"
       if [ "$sel" = all ]; then unset XO_LLVM_GOLDENS; else export XO_LLVM_GOLDENS=$sel; fi
+      # for the arm64 step's golden tests (arm64_goldens)
+      echo "$sel" >"$logs/golden-sel.txt.tmp" && mv "$logs/golden-sel.txt.tmp" "$logs/golden-sel.txt"
       # the sanitizer goldens (TestGoldenTasks, TestGoldenASan) follow the
       # selection too, except for a change in an area whose sanitizer
       # behavior the plain IR may not show (internal/llvm skipUnselectedSan)
@@ -727,6 +730,35 @@ for step in "$@"; do
   *) echo "gate.sh: unknown step $step"; failed=1 ;;
   esac
 done
+# arm64's golden selection (lead, 2026-11-14, owner's test-time plan:
+# TestGoldenRun was 3,523 s of subtests in a host 2 gate): the arm64 tests
+# that build every golden of internal/llvm follow the llvm step's selection
+# (the goldens whose LLVM IR or directory the change alters) when the
+# change leaves the native backend's own code alone: the LLVM IR is made
+# from the same SSA module, so a golden whose IR is unchanged has the same
+# SSA, and the arm64 output changes only with the native backend, the
+# shared SSA passes, the driver or the arm64 tests. They need the llvm step
+# in the same concurrent gate (its selection is written to
+# $logs/golden-sel.txt); otherwise, or with XO_GATE_ARM64_SELECT=0, every
+# golden runs.
+arm64_sel_tests='TestGoldenRun|TestGoldenRunSpill|TestGoldenRunHeapGuard|TestGoldenPassesOff|TestDebugInfoSameCode'
+arm64_select_ok() {
+  [ "${XO_GATE_ARM64_SELECT:-1}" != 0 ] || return 1
+  [ "$conc" = 1 ] || return 1
+  case " $steps " in *" llvm "*) ;; *) return 1 ;; esac
+  [ "${XO_GATE_LLVM:-}" != all ] && [ "${XO_GATE_TESTS:-}" != all ] || return 1
+  ! { git diff --name-only "${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}" HEAD; git status --porcelain | cut -c4-; } |
+    grep -q -E '^(compiler/(arm64|macho|ssa|xo)/|internal/arm64/|internal/xotool/|scripts/xobuild/|go\.mod$|std/native/llrt/[a-z0-9_]*(arm64|a64|darwin|macho|elf|linux)[a-z0-9_]*\.xo$)'
+}
+# arm64_goldens: the llvm step's selection, once it is written (at most
+# XO_GATE_ARM64_SEL_WAIT seconds, default 3600; then every golden)
+arm64_goldens() {
+  local w=0
+  while [ ! -s "$logs/golden-sel.txt" ] && [ "$w" -lt "${XO_GATE_ARM64_SEL_WAIT:-3600}" ]; do
+    sleep 5; w=$((w + 5))
+  done
+  if [ -s "$logs/golden-sel.txt" ]; then cat "$logs/golden-sel.txt"; else echo all; fi
+}
 # run_step: one named step, its wall time recorded in times.tsv as
 # "STEP<TAB>=<TAB>SECONDS<TAB>step"
 run_step() {
@@ -750,7 +782,21 @@ run_step_body() {
   arm64)
     sk=$(gate_skip internal/arm64)
     [ -s "$logs/internal-arm64-areas.txt" ] && echo "arm64 areas: $(cat "$logs/internal-arm64-areas.txt")"
-    full arm64 ./internal/arm64 ${sk:+-skip "$sk"} ;;
+    if arm64_select_ok; then
+      # the tests that build every golden run after the others, on the
+      # llvm step's selection (arm64_goldens)
+      presk="^($arm64_sel_tests)\$"
+      [ -n "$sk" ] && presk="^($arm64_sel_tests|${sk#^(}"
+      full arm64 ./internal/arm64 -skip "$presk"
+      asel=$(arm64_goldens)
+      echo "arm64 goldens: $asel"
+      case $asel in
+        all) full arm64sel ./internal/arm64 -run "^($arm64_sel_tests)\$" ${sk:+-skip "$sk"} ;;
+        *) XO_ARM64_GOLDENS=$asel full arm64sel ./internal/arm64 -run "^($arm64_sel_tests)\$" ${sk:+-skip "$sk"} ;;
+      esac
+    else
+      full arm64 ./internal/arm64 ${sk:+-skip "$sk"}
+    fi ;;
   llvm) llvm_step ;;
   stdcov) stdcov_step ;;
   corpora)

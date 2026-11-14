@@ -101,6 +101,7 @@ func TestGoldenPassesOff(t *testing.T) {
 		for label, passes := range sets {
 			name, dir, label, passes := name, dir, label, passes
 			t.Run(name+"/"+label, func(t *testing.T) {
+				skipUnselectedArm64(t, dir)
 				t.Parallel()
 				got, err := buildRunWith(t, dir, xotool.Options{Backend: xotool.BackendArm64, Env: []string{"XO_PASSES=" + passes, "XO_BACKEND_CACHE=off"}})
 				if err != nil {
