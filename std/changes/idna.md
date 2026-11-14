@@ -1,5 +1,17 @@
 # std/idna changes
 
+## 2026-11-14: perf, security: punycode encodes a long label in n log n
+
+- Kind: perf, security
+- Commit: this push
+- Found by: the decision 0616 std/idna review (Xo Lang 3): RFC 3492's encode scans the label once per distinct non-ASCII code point, so a label of n distinct runes cost n squared steps; the Lookup profile (to_ascii's default, std/httpproxy's) has no length limit
+- Go reference: golang.org/x/net/idna punycode.go encode, the same quadratic loop (64,000 distinct runes: x/net v0.60.0 20.4 s on a Mac); no vulndb entry
+- Change: a label over 64 runes encodes through encode_long, which takes the runes in order of code point then position and counts the runes below the current code point between two emissions with a Fenwick tree over positions: the same deltas, output and int32 overflow errors in n log n. Shorter labels keep RFC 3492's loop
+- Measured (Mac, native, distinct CJK runes): 16,000 runes 260 ms to 1 ms; 64,000 runes 1.27 s to 6 ms; bench/perf/idna (short names) on linux/arm64 host 1, --ab against the stream-safe norm commit, 11 rounds: enc 1.005 (0.989 to 1.028), mixed 1.003 (0.988 to 1.019), long 1.01 (0.999 to 1.05), within noise
+- Test: std/idna_test.xo (x/net's answers for 6 labels of 65 to 464 runes, the 64,000 rune label, and decode's 1024 rune cap at and past it, as x/net); TestIdnaFuzz on arm64, llvm and go; TestStdCorpora idna on go, arm64, llvm
+- Affected: every backend; bounded by what a caller passes (Registration refuses a label over 63 bytes, after encoding it)
+- Shipped in: not yet released
+
 ## 2026-11-11: refactor: std/idna is one file (decisions 0588, 0597)
 
 - Kind: refactor

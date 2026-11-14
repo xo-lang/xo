@@ -570,6 +570,9 @@ fn encode(prefix: Str, s: Str) -> Str ! IdnaErr {
   if b > 0 {
     out.write_byte(45)
   }
+  if rs.len() > FAST_ENCODE {
+    return encode_long(out, s, rs, b)
+  }
   while remaining != 0 {
     var m = MAX_I32
     for r in rs {
@@ -595,23 +598,7 @@ fn encode(prefix: Str, s: Str) -> Str ! IdnaErr {
       if x > n {
         continue
       }
-      var q = delta
-      var k = BASE
-      while true {
-        var t = k - bias
-        if k <= bias {
-          t = TMIN
-        } else if k >= bias + TMAX {
-          t = TMAX
-        }
-        if q < t {
-          break
-        }
-        out.write_byte(UInt8(encode_digit(t + (q - t) % (BASE - t))))
-        q = (q - t) / (BASE - t)
-        k += BASE
-      }
-      out.write_byte(UInt8(encode_digit(q)))
+      write_delta(out, delta, bias)
       bias = adapt(delta, h + 1, h == b)
       delta = 0
       h += 1
@@ -621,6 +608,122 @@ fn encode(prefix: Str, s: Str) -> Str ! IdnaErr {
     n += 1
   }
   rt.cast[Bytes, Str](out.freeze())
+}
+
+/// Labels longer than this many runes encode through encode_long.
+const FAST_ENCODE: Int = 64
+
+/// q as RFC 3492's variable-length integer at bias.
+fn write_delta(var out: BytesBuilder, q0: Int, bias: Int) {
+  var q = q0
+  var k = BASE
+  while true {
+    var t = k - bias
+    if k <= bias {
+      t = TMIN
+    } else if k >= bias + TMAX {
+      t = TMAX
+    }
+    if q < t {
+      break
+    }
+    out.write_byte(UInt8(encode_digit(t + (q - t) % (BASE - t))))
+    q = (q - t) / (BASE - t)
+    k += BASE
+  }
+  out.write_byte(UInt8(encode_digit(q)))
+}
+
+/// encode's loop for a long label, with the same output and errors: RFC
+/// 3492 scans the label once per distinct code point, n squared steps for
+/// n distinct runes (x/net's encode too: 64,000 runes took 1.3 s, x/net
+/// 20 s). Here the runes are taken in order of code point then position,
+/// and a Fenwick tree over positions holding every rune below the current
+/// one gives the count encode's scan adds to delta between two emissions,
+/// so a label costs n log n.
+fn encode_long(var out: BytesBuilder, s: Str, rs: List[Rune], b: Int) -> Str ! IdnaErr {
+  let len = rs.len()
+  // every rune at or past U+80 as its code point * 2**32 + its position:
+  // sorted, the order encode emits them in
+  var keys: List[Int] = []
+  // tree[i] (1 based): Fenwick counts of positions whose rune is below n
+  var tree: List[Int] = List[Int].with_capacity(len + 1)
+  tree.push(0)
+  for _ in 0..len {
+    tree.push(0)
+  }
+  for i in 0..len {
+    let x = Int(rs[i])
+    if x < 0x80 {
+      fen_add(tree, i)
+    } else {
+      keys.push((x << 32) | i)
+    }
+  }
+  keys.sort_in_place()
+  var delta = 0
+  var n = INITIAL_N
+  var bias = INITIAL_BIAS
+  var h = b
+  var g = 0
+  while g < keys.len() {
+    let m = keys[g] >> 32
+    var e = g
+    while e < keys.len() && (keys[e] >> 32) == m {
+      e += 1
+    }
+    match madd(delta, m - n, h + 1) {
+      Some(v) => delta = v
+      None => return Err(puny_err(s))
+    }
+    n = m
+    // encode's scan over the label: delta counts the runes below n
+    // between one emission and the next
+    var prev = 0
+    for j in g..e {
+      let p = keys[j] & 0xFFFFFFFF
+      delta += fen_sum(tree, p) - fen_sum(tree, prev)
+      if delta > MAX_I32 {
+        return Err(puny_err(s))
+      }
+      write_delta(out, delta, bias)
+      bias = adapt(delta, h + 1, h == b)
+      delta = 0
+      h += 1
+      prev = p + 1
+    }
+    delta += fen_sum(tree, len) - fen_sum(tree, prev)
+    if delta > MAX_I32 {
+      return Err(puny_err(s))
+    }
+    for j in g..e {
+      fen_add(tree, keys[j] & 0xFFFFFFFF)
+    }
+    delta += 1
+    n += 1
+    g = e
+  }
+  Ok(rt.cast[Bytes, Str](out.freeze()))
+}
+
+/// Counts position p (0 based) in the Fenwick tree.
+fn fen_add(var tree: List[Int], p: Int) {
+  var i = p + 1
+  while i < tree.len() {
+    tree[i] = tree[i] + 1
+    i += i & -i
+  }
+}
+
+/// The number of counted positions below p.
+fn fen_sum(tree: List[Int], p: Int) -> Int {
+  var i = p
+  var c = 0
+  while i > 0 {
+    c += tree[i]
+    i -= i & -i
+  }
+  c
 }
 
 struct Mapped {

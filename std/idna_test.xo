@@ -1,0 +1,49 @@
+// golang.org/x/net v0.60.0's idna.Lookup.ToASCII on labels of 65 to 464
+// runes mixing ASCII, accented Latin, Cyrillic and CJK (some with many
+// distinct CJK runes): x/net's answers. They go through encode_long, the
+// n log n form of RFC 3492's encode, which must give the same output.
+const LONG: List[(Str, Str, Bool)] = [
+  ("語о2語6ö中2字語文оââвêчêûarоhèü漢日字äо文ëañ9字àеz漢7日à8ееöеqü字字sюю字ç日ää文èyñлво漢äоео漢ö文本ààûç漢語лк語1лв文日вö漢оä語овkчjâ語örееëäbч5語ûооüôàl字овmtоhю0о漢è字tв字вüюâ語ävëлôà字вô文ê3本юqwrвurc7üоñqс中本о文ëêxв中語лgокл9сàôa文еüçв字о漢文j1ю文hàëююçоeчккочéсyënhоûê本q漢字中漢о9лsejü中bл字л本еlою語i6ö日éâà文оpо漢е中語леozà3文5àupоо文оñ中日字è字中2äç語中вâàеxü2еâ本еñçë日日üûû96ñссее日üеèю文sлч字û15ô中文日日ê0xë漢本ë文文ю5日лкèñ中о", "xn--262arha9z78qsy1kjrb5lmth0tv3qwrurc7qxg9aj1heynhq9sejbli6poz35up2x296s150x5-74fceaghmendcd5hask7ald5ijabdek9b2qg8ae0afrnu3clg5em1ba8bjq1bryolle8aja68dna0b6bjel43amabr0d8itajee7dw3b1an2cxbafzm0ajqkuzff1247k2ahacogahgkh6b06aeablqa3cyaiaqdbjab06fzbpa7ezbic9avc0afak3bk44beiezbbmbnaedczcgkgdfdlgblaa9b78blau2ea28jwbj7ed3fy0ga9chl9ada5a8cm563301cudaf5bhrobd8al79573goagmad3ckck3b1al5ab9a01800era0alj8cspgd1clg2bjfa987znapz9l0avakpaj9055h7bap5cp6cyb03266cna1aehj8a3d3ac2a0fx6063kcaf5eckgj1a0b9doz", false),
+  ("ч中価僊éе堤к妫l本äл嗨ûà刔ñ嘺壵êc奵日юс厎漢вö俷е唈匓ñ日ее咎日唰à中匬堕本垏8匭日日qvлю哲字üе凍倲日嚴漢日匐漢ä中儙ôеs文唱2右7sсю吉à2本內嗞俉咸圸8св語唌5вч語n喞便噉本ôсy偨体ü5ñçèк倷乱ê塜佧cç囀ê妩字ло妍öоч叀е4вsf偞k匎äчвl6юé字omö文埔k听剆卡чñêлbvlèûö厞日日嗞倾w3к奫僶哫兀奜лсèä日üôö中噕с塵中овв咻y並вâ1ч字m中語分âf偊ä字嘎漢俿лc咞語堢86日嘠cовл語語y塧漢x5r語中叶充вкy侚文偢к本л噟文оè字刜ç5劲壇3哪語вx垚文ô字лi嚢е日о啦変語ê", "xn--lc8qvs27s285ny5c4sfkl6omkbvlw3y1mfc86cyx5ry53xi-y0dbh8jc3egqkg4mb6a0apcrg5a2btcl4a15bcqr2rj4av4g0akhf28avb6bn7a9305eqaboewabkef2sjbafcx2d91akb4azbqp2asjpfih51ab7aplk5yuadf7bf13eibshi1a70gmak2b87359tg0auai6ebkp244hho9a2sctulp1a10lhwbt1o6nbk3rgya59al9cp7ecvar2aw58b04g4mg2zh3za99ou3utkjilcc3b54oolvpip4ia4sr2mlfw30b5ni18cy4izzk0tan4iu8i3pv54cz2gktag60a8ds0d60jjyal4tpgs73b39kh4m8b38irwoy1d50gbvdqsdz2c43y4qdfqdb44b57qrmcmzuu8nn1c2h886bcqcjwebz1avrjb0e7sx0gdfxcv9izuh0k0726aybawa5ch5al99894deca5den793ukadiakb3hao9a6b9032e7a0bq2l5267u9ac9lpa07742qea2imjagyo", false),
+  ("büûpâеjоuл日лочk語оäjлäêллfюàч文éч漢2ô1漢5оèà字оеoо字本лüюèdôzéaô語qâû語日ô日本слyкñе日漢êвчсçâ語èfо中äppêièàölëo6èв5окôëiq9本о語x文tçч字äû46字日üеñ語çч文èöëлèôлé0еü本ü本ч本èxлчл中字", "xn--bpjukjf215odzaqyfppilo65iq9xt460x-qxcdk7cpb9dbpn9iqadrcifelabnj5anrh9del76a2a9mhdcup5jua91a2a5apu8bja6748dra5rqap8aj21bxa1badcalm9bcha6sdboccypg21ah74dlab6a6aimd56era39173utba15911aea1dey15005a8bao415jkbbg8b0875aqa3b4abb08440ada9a13315ggbads2ap", false),
+  ("юê文儔文啮乧âkô喒中字俢d啸本日о刱ê凜mnày奙вôeв俰侦ñв漢中語本ç咝文m嘦üñ勍本ñчо墄û凨以члd嗉文文è噒ôû埌乄ко5о漢i9cû儸âzч卨öе字垎aä中q夨ç嗻夝埶üt字文оuо本m儑乛日勄7坚代嗧中日偊中堎n嘆êf漢文喎哪兕е呆典ç偨0ë字9ümâ伅妆çà語è唺ç日к堗fü塽嚦厒чк乡办儷圬еu語q2ôo佞伧圲o仓嗼偭垏оо壜о吼à佒оt囜唳к中оeñ夓哀с8l漢兜ñèdô嘧兿ч漢堉5本z埞僂é語ñu冨ä1日ëю漢юè堧刲中éyñел日à文jв唚очс令8文еa", "xn--kdmnyemd5i9czaqtum7nf09mfuq2oote8ld5zu1yj8a-2pdugk6cnm5g1a5jlgeb8axmg2degdy4e0a77aca2bcfh4ngi5al8j0rde7etalh6224ecab7etmman2ae43b7acj4c5d7lqahbob2aaabcz83aya03dcp5azs36emda50721vna3aja8aw111ao6d8xaowr28bx6bdg7a507bn3fdqhrybfzvx1is6bsyy0iemwao81btylola17pedw1t76a49jq7a22qcmjr3bn0vviaq25dpzfbrbf34dingez5acqboz5a80ft7h19ikre08af6vwyb45gusav92azsfn7d7gt1el4k4i010ak2q80jtupr7aq5tz4kwh814bysdp8f0xex0a66cfzf40z4hbr55birkj2b69c4vrjxj204hzbam3a73967cba5aqa9at6hi151slcg4a1em6776etai6c4fv552v8a0c7dip18602o7cata4c", false),
+  ("é文字âo9méüôüоöеое漢日4çp日ô日語漢nоâ本êñè漢6rôûo中n漢еюлôàäcxëàz中tgо3лч日bлл本字7ô本字0ôlюé語в中в中ü中ûfе語éèo中本ôеюоê8語àà中é本中文сè字к漢лоk中漢оt文6hcqñлàxоü文ооàh文字е文日ñеèäüôüв5èвo語zвt文юmç中eöö本к漢2日àл日1i字yûкpè語ев文öе文кüvюôéо本сowоôч本v中nю漢3ëв漢日kвв文в日5â漢оô9jюsллbв漢еmj語vо日ñ4в日2к字о本сë漢о中日лоеfлêèävкf語ч中kçооiz3êëе日本ñ中ña本ч", "xn--o9m4pn6roncxztg3b70lfo8kt6hcqxh5oztme21iypvowvn3k59jsbmjv42fvfkiz3a-2lfclagbi9hg5czg0a5a9oqb4aosekcmtkexbf3a4bx6cjx8cmm35cfbe9aqa4udhcmbguqdh1nscah08cua5b1cb8avfbt5582ia5accombaahf93aapxesb0acyin12e7agg6ah5blbayh3a8aamc59acgwwibjba7bcmmfbbla78b6b9a78gzc0bn46jxam8bxaln982280bmarbbgibg9a6a9aml57756eqbac5av3a9c20314bpcakkecpvcx106tdab5a1ezac8afrdix0593f6adtk0d1ag4b3ae73905chahh8de2czbdjkr86895qpbajl6c1a8c3a", false),
+  ("л囿語сôâ匯éöо僱下漢m匊û嚍啥fg估üâ儻ê儇çч塭堵剴вök咓оô佴倧ñôск夲t本匷噛哝влrк勎漢儚咇оé字ê吭èç吖語еa仮本r厨ën1語文倂оlr凈語е兺ë刼c5л丝äсu境è中倳nüë亰圓保л中區â壇ö1ê語ûpûê倍妆к偄咯語日ë坊о勶юéü0еâ日о日嚰оâ塞о叾嚘3漢ск語9坃日ке吘中k呉嘤m夐中p本6êû中û啓о匫ç住俚塘各堗中ю漢ê咪y日çà到лx厢文iс偦ê日呏创侔本лh倛ü4fчеô唬文后夼仄們j勊壓êоюч俚e語本е呑ëю5û垳à卞叢圐啫佟y吒ëàвüv1", "xn--mfgktrarn1lrc5un1p039kmp6yxih4fje5yv1-88cib8bdnda8fvgdxbyl6air7afqbkbfezegfzd77a3gjb3czfg0a17a9abnarp2alvn8914ega1evmhvete63bd4aib2bvsg7ad9vlajkyfabms7wua0a1au47d0cf85fyaue88838vd8ba60cea1aced182pztc3wi90kire0wc09de2gxrm0a19av4qkyb6ss1c7zcg0cj8dz1hgyzhedn1dhshy2lh1mcon2id98be2rnyogqa64tnudk6hpqa29bj8bkxk84nd2a831ag4ew5az6crv5sun01kxzgb7aqlu15a9icm7gn0ai7w0lqphh5td6sbb49f25in8jpkcc1hiutcpdvov53abnbr34cywslwfrpix9a97f0wgb3r9qcssu53g9oc761a6h2hc1yz6cara082skabm4al8386eva1g9ay61939bgbazf7a81660o1bajg3ajz0f", false),
+]
+
+test "long labels encode as x/net's" {
+  for (s, want, fails) in LONG {
+    match to_ascii(s) {
+      Ok(a) => {
+        expect(fails) == false
+        expect(a) == want
+        // and back
+        expect(to_unicode(a) ?? e => "error ${e.display()}") == s
+      }
+      Err(_) => expect(fails) == true
+    }
+  }
+}
+
+test "a label of 64,000 distinct runes encodes in n log n" {
+  var b = StrBuilder.new()
+  for i in 0..64000 {
+    b.write("${Rune.try(0x4E00 + i % 20000).or_fault("rune")}")
+  }
+  let a = to_ascii(b.freeze()) ?? e => "error ${e.display()}"
+  expect(a.len()) == 188462
+}
+
+test "a punycode label decodes to at most 1024 runes, as x/net's" {
+  // x/net v0.60.0: 1024 runes round trip, 1025 are an invalid label
+  let at = "é".repeat(1024)
+  let a = to_ascii(at) ?? e => "error ${e.display()}"
+  expect(a.len()) == 1030
+  expect(to_unicode(a) ?? e => "error ${e.display()}") == at
+  let past = to_ascii("é".repeat(1025)) ?? e => "error ${e.display()}"
+  expect(past.len()) == 1031
+  match to_unicode(past) {
+    Ok(_) => expect("decoded") == "an error"
+    Err(e) => expect(e.display().starts_with("idna: invalid label \"9caaaa")) == true
+  }
+}
