@@ -65,6 +65,10 @@ The walk runs in waves with the order's result.
   ~/xo-lead/notes/lang1/pinl-ab-self.txt): wall 0.902 (0.895 to 0.903, better), CPU 1.023
   (1.018 to 1.023, worse: the second closure computation and the wave barriers), max RSS within
   noise (0.989). Five rounds ran at load 6 or more; the same slot ratios agree (0.904, 0.900).
+- `--ab` again (lead's request, host 1, main aabf645fd against cc00b6c3c, 7 rounds,
+  ~/xo-lead/notes/lang1/pinl-ab-self2.txt): wall 0.899 (0.887 to 0.906, better), CPU 1.023 (1.008 to
+  1.03, worse), max RSS within noise (0.99). Five rounds again at load 6 or more, from a quiet start
+  (load 0.97 before the first round): a 12-thread self build loads the host itself.
 
 ## Steps
 
