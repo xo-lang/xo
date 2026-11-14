@@ -6786,6 +6786,16 @@ test "reader over a file of invalid UTF-8 gives valid fields, each bad byte U+FF
   expect(csv.format([rec])) == "\"x\"\"\u{FFFD}\",a\u{FFFD}b\n"
 }
 
+test "reader with lazy quotes, a file ending inside quotes on bytes that are not UTF-8, gives U+FFFD (decision 0259)" {
+  expect(os.fs.write("reader_lazy_bad.csv", b"x,\"\xe2\x82").is_ok()) == true
+  let f = os.fs.open("reader_lazy_bad.csv").or_fault("open")
+  var r = csv.reader(f, lazy_quotes: true)
+  let rec = r.read().or_fault("read").or_fault("a record")
+  expect(rec) == ["x", "\u{FFFD}\u{FFFD}"]
+  // parse of valid text ending inside quotes keeps the field's text
+  expect(csv.parse("x,\"\u{20AC}", lazy_quotes: true).or_fault("parse")) == [["x", "\u{20AC}"]]
+}
+
 test "parse on a view of a longer text" {
   // error positions shift with the line before the text, so errors are
   // covered by the test above, on the text itself

@@ -269,7 +269,7 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
         if !o.lazy {
           return Err(csv.CsvErr{start_line: rec_line, line: pos_line, column: col, msg: ERR_QUOTE})
         }
-        fields.push(buf.to_str() ?? "")
+        fields.push(field_str(buf, r.f is Some(_)))
         return Ok(Some((fields, rec_line)))
       }
     }

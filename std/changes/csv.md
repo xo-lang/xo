@@ -1,5 +1,16 @@
 # std/csv changes
 
+## 2026-11-14: fix: a lazy_quotes Reader field ending inside quotes keeps its text, and the Reader's boundaries are checked
+
+- Kind: fix
+- Commit: this push
+- Found by: the second reader of the redone decision 0616 review of std/csv (std/evidence/csv/review.md, G1)
+- Go reference: encoding/csv readRecord's lazy end of text inside quotes (go1.26.1)
+- Before: with lazy_quotes, a Reader's text that ended inside quotes on bytes that are not UTF-8 gave an empty field on native backends (`buf.to_str() ?? ""`) and U+FFFD for each bad byte on the Go backend
+- Fix: that field goes through field_str as every other field does (U+FFFD for each bad byte on every backend; parse's valid text unchanged); TestOutsideBytesValidated lists native/csv.xo field_str and std/rt/csv.go's Reader M_read as boundaries, so dropping either check fails it
+- Test: corpus csv "reader with lazy quotes, a file ending inside quotes on bytes that are not UTF-8, gives U+FFFD" on arm64, LLVM and the Go backend; TestOutsideBytesValidated
+- Shipped in: not yet released
+
 ## 2026-11-14: security: a Reader's fields are valid UTF-8, and a long line reads in linear time
 
 - Kind: security

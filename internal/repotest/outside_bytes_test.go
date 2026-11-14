@@ -55,6 +55,8 @@ func TestOutsideBytesValidated(t *testing.T) {
 		{"std/rt/caps.go", "M_home", goRT},
 		{"std/rt/caps.go", "readLine", goRT},
 		{"std/rt/caps.go", "readAll", goRT},
+		{"std/native/csv.xo", "field_str", native},
+		{"std/rt/csv.go", "M_read", goRT},
 		{"std/rt/fsfile.go", "M_read_line", goRT},
 		{"std/rt/fsfile.go", "M_read_link", goRT},
 		{"std/rt/fsfile.go", "fsGlob", goRT},
