@@ -50,8 +50,10 @@ programs, 188 pairs, about 3 minutes); `all`.
   both falling back with a warning (no wrong code): `log.record` after
   log_error or log_lazy (an itab slot's function type not recorded as
   read; Lang 3's 715369420), and `http.Server.serve` closures after
-  websocket_deadline (`read type Chan[()]`). Both are listed as known
-  until their fixes land.
+  websocket_deadline (`read type Chan[()]`). Both were listed as known
+  until Xo Lang 3's fixes landed: 8c08c1f76 (slot_ft records its read)
+  and ed1ccadca (front cache v18: a closure's reads are checked at its
+  owner), which emptied knownNoReplay on 2026-11-14.
 - A sequence alone can miss a bug: in the reversed order a later std/log
   build repaired the entry before log_error read it, so the pre-fix xo
   passed the sequences and failed only the pairs.
