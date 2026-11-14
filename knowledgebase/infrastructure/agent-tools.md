@@ -805,9 +805,16 @@ the module (scripts/stdproven harnesses) with fresh seeds until 1,000,000
 cases per backend or 8 hours, and writes `fuzz.md`. Long runs go to host 2
 outside the lane: `~/xo-lead/agents/stdproven-offload.sh WORKTREE NAME --
 fuzz -host "linux/arm64 host 2" MODULE` (run it from a commit on main, so
-the evidence names one). Security reviews follow
+the evidence names one). Several runs go as one job, on one xo build:
+`stdproven-offload.sh WT NAME -- batch fuzz -host "linux/arm64 host 2" url
++ race url + stress url + fuzz html`; every evidence file comes back and a
+failing run does not stop the others. The runner's "commit first" checks
+leave std/evidence out, so one worktree serves run after run. The source
+hash follows std modules, their std/native files and module specific
+llrt files, and std/internal.xo, but stops at the runtime (decision 0616
+section 3, amended 2026-11-14). Security reviews follow
 [std-security-checklist.md](std-security-checklist.md). Last verified:
-2026-11-12.
+2026-11-14.
 
 ## Measuring
 

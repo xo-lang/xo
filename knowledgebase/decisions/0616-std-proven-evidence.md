@@ -316,3 +316,10 @@ crypto; within it, a module that misses only the testing axis first.
   matches goes stale once it is over 90 days old and a vX.Y.0 tag dated
   after the run exists (TestFresh). The perf table (PERF) stays until each
   module has a perf.md; std-twin results files already override it.
+- 2026-11-14 (Xo Lang 3): one batched job per round (lead's order for
+  the fnv, uuid, idna, norm and jpeg queue): `stdproven-offload.sh WT NAME
+  -- batch fuzz url + race url + stress url + ...` runs the groups in turn
+  on one xo build on host 2 and copies every evidence file back; a failing
+  run does not stop the others. The runner's "commit first" checks leave
+  std/evidence out, so a written evidence file no longer stops the next
+  run in the same worktree.
