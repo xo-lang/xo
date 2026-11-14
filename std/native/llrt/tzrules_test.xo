@@ -40,6 +40,30 @@ fn zone_text(w: List[Int], sec: Int) -> Str {
   "${off} ${name(of(w), pos)}"
 }
 
+/// Whether two rules give the same zone at sec, without building texts
+/// (the loop below makes about 33 million lookups, which under qemu-user
+/// for linux/riscv64 took past xo test's 60 s when each built two texts):
+/// the offsets, and the names' lengths and first words (a name of up to
+/// 8 bytes is its one word; a longer one is compared as text).
+fn same_zone(a: Rules, b: Rules, sec: Int) -> Bool {
+  let (oa, pa) = lookup(a, sec)
+  let (ob, pb) = lookup(b, sec)
+  if oa != ob {
+    return false
+  }
+  if pa < 0 || pb < 0 {
+    return pa == pb
+  }
+  let n = a.w[pa]
+  if n != b.w[pb] {
+    return false
+  }
+  if n > 8 {
+    return name(a, pa) == name(b, pb)
+  }
+  n == 0 || a.w[pa + 1] == b.w[pb + 1]
+}
+
 test "parse with the rules' transitions listed gives every time the zone it gave before" {
   named()
   var bad: List[Str] = []
@@ -71,11 +95,11 @@ test "parse with the rules' transitions listed gives every time the zone it gave
           secs.push(x + 1)
         }
       }
+      let rs = of(slim)
+      let rf = of(fat)
       for s in secs {
-        let a = zone_text(slim, s)
-        let b = zone_text(fat, s)
-        if a != b && bad.len() < 10 {
-          bad.push("${nm} now=${now} at ${s}: slim ${a}, fat ${b}")
+        if !same_zone(rs, rf, s) && bad.len() < 10 {
+          bad.push("${nm} now=${now} at ${s}: slim ${zone_text(slim, s)}, fat ${zone_text(fat, s)}")
         }
       }
     }
