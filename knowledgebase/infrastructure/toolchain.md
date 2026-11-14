@@ -2234,6 +2234,10 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   `PKG *` line runs them all (internal/llvm's for compiler/xo and
   internal/xotool, as the golden selection does), and `tier` keeps a
   test out of the step (TestModuleCheckAuto: the chkcache step runs it).
+  Parents of parallel subtests are listed by their subtests' summed time
+  (times.tsv kind `subtests`): a parent's own Elapsed leaves them out.
+  HEAD's IR manifest builds with `-parallel` a third of the CPUs (at least
+  4; `XO_GATE_IR_PARALLEL`) and is kept by commit for a re-gate.
   The full tier (`XO_GATE_LLVM=all`, as tier.sh and offload-tier.sh set,
   or `XO_GATE_TESTS=all`) runs every test. internal/repotest
   TestGateAreasValid fails when a listed test no longer exists, an area

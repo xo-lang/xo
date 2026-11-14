@@ -35,8 +35,22 @@ change and left the part that did not.
   checks a day of them once a day, including this floor (an llvm step over
   900 s with at most 5 goldens selected).
 
+## A second hidden cost: parents of parallel subtests
+
+After the fix the arm64 step still took about 29 minutes while its
+top-level tests of a second or more summed to 970 s. go test -json's
+Elapsed for a parent leaves out its parallel subtests, so the slowest
+tests did not show in any per-test list: in tier 915's arm64.json,
+TestDebugInfoSameCode reported a few seconds and its subtests summed to
+5,290 s (TestNoLeafWithPads 2,951 s, TestIfaceLexMatchesParse 2,100 s).
+gate.sh's times.tsv now records each parent's subtest sum (kind
+`subtests`, the largest per depth) and gatetime.sh flags an unscoped one
+of 600 s or more.
+
 ## How to avoid
 
 When a step gains a selection, measure the step with an empty selection:
 what remains is the floor, and it is what every unrelated change pays.
+Rank a package's tests by their subtests' summed time, not by the parent's
+Elapsed.
 toolchain.md "Gate test areas"; bench/results/gate-time-2026-11-14.md.
