@@ -146,12 +146,13 @@ fn index_byte(b: Bytes, c: UInt8) -> Int { scan.find_byte(b, 0, b.len(), Int(c))
 
 /// The Str of b, a slice of the text at field boundaries (a separator, a
 /// quote, a line end): parse's text is a Str, valid UTF-8, so its fields
-/// are not checked again; a Reader's come from a file (`file`), outside
-/// bytes (decision 0259), and each byte of an invalid sequence becomes
-/// U+FFFD after the parse, so positions stay Go's byte columns (a file
-/// holding `"x""\x82"` read and written back faulted on a split
-/// sequence; review F1, std/evidence/csv/review.md).
-fn field_str(b: Bytes, file: Bool) -> Str { if file { scan.text_of(b) } else { rt.cast[Bytes, Str](b) } }
+/// are not checked again, nor are those of a Reader's record whose lines
+/// read_record found valid; a field of a record holding bytes that are
+/// not UTF-8 (`bad`, outside bytes, decision 0259) has each byte of an
+/// invalid sequence made U+FFFD after the parse, so positions stay Go's
+/// byte columns (a file holding `"x""\x82"` read and written back
+/// faulted on a split sequence; review F1, std/evidence/csv/review.md).
+fn field_str(b: Bytes, bad: Bool) -> Str { if bad { scan.text_of(b) } else { rt.cast[Bytes, Str](b) } }
 
 struct Opts {
   sep: Rune
@@ -182,6 +183,11 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
   if eof {
     return None
   }
+  // a Reader's lines are outside bytes (decision 0259): each line is
+  // checked once, and only a record holding a line that is not UTF-8
+  // checks its fields one by one (a field cut at an ASCII separator,
+  // quote or line end from valid lines is valid)
+  var bad = r.f is Some(_) && !scan.utf8_valid(line)
   let sep_len = rune_text(o.sep).len()
   let rec_line = r.num_line
   var fields: List[Str] = []
@@ -216,7 +222,7 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
           return Err(csv.CsvErr{start_line: rec_line, line: r.num_line, column: col + j, msg: ERR_BARE_QUOTE})
         }
       }
-      fields.push(field_str(field, r.f is Some(_)))
+      fields.push(field_str(field, bad))
       if i >= 0 {
         line = line[i + sep_len..]
         col += i + sep_len
@@ -245,10 +251,10 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
         } else if !line.is_empty() && rn == o.sep {
           line = line[sep_len..]
           col += sep_len
-          fields.push(field_str(if buf.is_empty() { seg } else { buf + seg }, r.f is Some(_)))
+          fields.push(field_str(if buf.is_empty() { seg } else { buf + seg }, bad))
           done = true
         } else if length_nl(line) == line.len() {
-          fields.push(field_str(if buf.is_empty() { seg } else { buf + seg }, r.f is Some(_)))
+          fields.push(field_str(if buf.is_empty() { seg } else { buf + seg }, bad))
           return Ok(Some((fields, rec_line)))
         } else if o.lazy {
           buf = buf + seg + b"\""
@@ -260,6 +266,9 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
         col += line.len()
         let (l, _) = r.read_line()
         line = l
+        if !bad && r.f is Some(_) && !scan.utf8_valid(line) {
+          bad = true
+        }
         if line.len() > 0 {
           pos_line += 1
           col = 1
@@ -269,7 +278,7 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
         if !o.lazy {
           return Err(csv.CsvErr{start_line: rec_line, line: pos_line, column: col, msg: ERR_QUOTE})
         }
-        fields.push(field_str(buf, r.f is Some(_)))
+        fields.push(field_str(buf, bad))
         return Ok(Some((fields, rec_line)))
       }
     }

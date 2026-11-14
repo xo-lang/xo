@@ -1,5 +1,16 @@
 # std/csv changes
 
+## 2026-11-14: perf: a Reader checks each line's UTF-8 once
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0616 perf evidence for std/csv (bench/perf/csv reader 1.533 of Go on linux/arm64 host 1); 742fd0387's per field check cost it 1.175 (host 1 --ab, e170aa4a0 against 48d129239)
+- Go reference: none (Go's strings hold any bytes)
+- Test: corpus csv and csvfuzz on arm64, LLVM and Go (the invalid UTF-8 Reader tests among them); TestOutsideBytesValidated; the csv stress program with --check=all
+- Shipped in: not yet released
+
+read_record checks each line a Reader reads with utf8_valid once; only a record holding a line that is not UTF-8 makes its fields valid one by one (a field cut at an ASCII separator, quote or line end from valid lines is valid). bench/perf/csv reader on linux/arm64 host 1, --ab against its parent, 6 rounds: 0.913 (0.900 to 0.933).
+
 ## 2026-11-14: fix: a lazy_quotes Reader field ending inside quotes keeps its text, and the Reader's boundaries are checked
 
 - Kind: fix
