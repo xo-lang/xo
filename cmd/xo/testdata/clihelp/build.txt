@@ -6,7 +6,7 @@ usage: xo build [--targets=all|os/arch,...] [--backend=native|go|llvm|arm64|amd6
                 [--trimpath=on|off] [-s] [--dsym] [--ld=macho|cc] [--race]
                 [--stamp NAME=VALUE]... [--entitlement=KEY]... [--hybrid] [--pack-lists=on|off]
                 [--versioninfo=FILE.json] [--icon=FILE.ico]... [--manifest=FILE]
-                [--inline-str] [--json] [-o out] <dirs...>
+                [--inline-str] [--check=free,guard,leak|all] [--json] [-o out] <dirs...>
 
 Compile to static binaries (default: the host). The directories are one
 program. The default backend is native (decisions 0248 and 0270): arm64
@@ -21,7 +21,11 @@ the Go toolchain, and a program with `use go` needs it. A linux/arm64
 target links with Xo's own linker, from any host (decision 0243).
 --no-gc (also on run and test) reports every construct, std API, or
 effect the native backends do not support as XO1201 before code
-generation (decision 0083). --backend=wasm builds a WASI preview1 module;
+generation (decision 0083). --check=free,guard,leak (decision 0638; xo
+help run) builds the memory checks in: guard into the code, and free and
+leak as the binary's defaults, which XO_FREE_CHECK and XO_LEAKCHECK set
+in its environment override (0 turns a check off), so a binary run
+outside xo keeps them. --backend=wasm builds a WASI preview1 module;
 --targets=wasip2/wasm, named alone, builds a program that calls
 http.serve_component as a wasi:http 0.2 component (decision 0447);
 --targets=wasip3/wasm builds it as a WASI 0.3 one (stage 5).
