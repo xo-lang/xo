@@ -2166,6 +2166,7 @@ fn (c: Client) send(req: Request) -> Response ! ClientErr uses net.dial
 fn (c: Client) post_json[T: Json](url: Str, v: T) -> Response ! ClientErr uses net.dial
 fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr   // 4.6
 fn (c: Client) with_redirects(max: Int) -> Client          // decision 0404
+fn (c: Client) with_max_idle_per_host(n: Int) -> Client     // Go's MaxIdleConnsPerHost
 fn (c: Client) with_proxy(url: Url) -> Client              // decision 0617 B
 fn (c: Client) with_proxy_for(f: fn(Url) -> Url?) -> Client  // None: direct
 fn (c: Client) with_jar(store: CookieStore, clock: Clock) -> Client uses clock   // and store's fx
@@ -2282,7 +2283,11 @@ then as `url.query` builds it. The client does not retry. It follows up to 10 re
 many as `with_redirects(max)` says: `with_redirects(0)` returns a 3xx
 response as it came, its `Location` as the server sent it (Go's
 `ErrUseLastResponse`), and past `max` the request fails with `Protocol`
-(`stopped after MAX redirects`). A redirect to another host does not
+(`stopped after MAX redirects`). Between requests the client keeps
+idle HTTP/1.1 connections for reuse: up to 2 per host (its address, and
+for https its server name) as Go's `DefaultMaxIdleConnsPerHost`, or
+`n` with `with_max_idle_per_host(n)` (0 the default, negative none), and
+at most 100 in all (Go's `MaxIdleConns`). A redirect to another host does not
 carry `Authorization`, `Cookie`, or their proxy forms (Go drops them
 only for a host that is not the same or a subdomain). A request's
 `with_timeout(d)` limits its whole exchange, the body included, in place

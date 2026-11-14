@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+default: 4 requests, 1 connections, 0 failed
+none: 4 requests, 4 connections, 0 failed
+eight: 2 rounds of 8, at most 8 connections: true, 0 failed
+--- stderr

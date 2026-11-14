@@ -719,6 +719,7 @@ func clientTransport(c Http_Client) any {
 	if c.h2.Some {
 		t.HTTP2 = h2ConfigOf(c.h2.V)
 	}
+	t.MaxIdleConnsPerHost = int(c.maxIdle)
 	if c.proxy.Some {
 		f := c.proxy.V
 		o, only := c.net.(*onlyNet)

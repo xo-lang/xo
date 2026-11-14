@@ -621,6 +621,14 @@ fn (s: ClientStream) trailers() -> Map[Str, Str]
 /// a 3xx response as it came, its Location as the server sent it (Go's
 /// ErrUseLastResponse; decision 0404).
 fn (c: Client) with_redirects(max: Int) -> Client
+/// The client keeping up to n idle HTTP/1.1 connections per host (its
+/// address, and for https its server name) between requests (Go's
+/// Transport.MaxIdleConnsPerHost): 0 is the default, 2 as Go's
+/// DefaultMaxIdleConnsPerHost; a negative n keeps none. A service making
+/// many concurrent calls to one backend raises it so connections are
+/// reused instead of redialed. At most 100 idle connections are kept in
+/// all (Go's MaxIdleConns).
+fn (c: Client) with_max_idle_per_host(n: Int) -> Client
 /// The client sending every request through the proxy at url (decision
 /// 0617 B; Go's http.ProxyURL): plain http in absolute form, https
 /// through a CONNECT tunnel with TLS to the server inside; the URL's

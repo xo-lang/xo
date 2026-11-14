@@ -1,0 +1,82 @@
+// Client.with_max_idle_per_host (Go's Transport.MaxIdleConnsPerHost):
+// a raw HTTP/1.1 server counts the connections it accepts. Each phase
+// has its own listener, so the process-wide pool never hands one phase
+// another's connection. Default (2): sequential requests reuse one
+// connection. -1: none is kept, so every request dials. 8: two rounds of
+// 8 concurrent requests reuse the first round's connections (at most 8).
+use std/http
+
+fn serve_conn(c: ServerConn) {
+  var buf = b""
+  while true {
+    let got = match c.read(4096) {
+      Ok(Some(b)) => b
+      _ => break
+    }
+    buf = buf + got
+    while true {
+      let s = buf.to_str() ?? ""
+      let end = match s.find("\r\n\r\n") {
+        Some(i) => i
+        None => break
+      }
+      buf = buf[end + 4..]
+      if c.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").is_err() {
+        break
+      }
+    }
+  }
+  c.close()
+}
+
+fn get(client: http.Client, url: Str) -> Bool {
+  match client.get(url) {
+    Ok(r) => r.status == 200
+    Err(_) => false
+  }
+}
+
+fn phase(os: Os, name: Str, client: http.Client, rounds: Int, width: Int) ! {
+  let l = os.net.listen("127.0.0.1:0")?
+  let url = "http://${l.addr()}/"
+  let accepts = Atomic.new(0)
+  let fails = Atomic.new(0)
+  scope s {
+    s.spawn_background(fn() {
+      while true {
+        match l.accept() {
+          Ok(c) => {
+            let _ = accepts.add(1)
+            s.spawn_background(fn() { serve_conn(c) })
+          }
+          Err(_) => break
+        }
+      }
+    })
+    for _ in 0..rounds {
+      scope r {
+        for _ in 0..width {
+          r.spawn(fn() {
+            if !get(client, url) {
+              let _ = fails.add(1)
+            }
+          })
+        }
+      }
+    }
+    l.close()
+  }
+  let n = accepts.get()
+  if width == 1 {
+    os.stdio.println("${name}: ${rounds} requests, ${n} connections, ${fails.get()} failed")
+  } else {
+    os.stdio.println("${name}: ${rounds} rounds of ${width}, at most ${width} connections: ${n <= width}, ${fails.get()} failed")
+  }
+}
+
+fn main(os: Os) ! {
+  let c = http.client(os.net, timeout: 5s)
+  phase(os, "default", c, 4, 1)?
+  phase(os, "none", c.with_max_idle_per_host(-1), 4, 1)?
+  phase(os, "eight", c.with_max_idle_per_host(8), 2, 8)?
+}

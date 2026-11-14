@@ -4636,7 +4636,7 @@ fn jar_keep(put: List[fn(Str, List[Str])], raw: Str, headers: List[Str]) {
 }
 
 /// defaultCheckRedirect, the headers a redirect drops, refererForURL).
-pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], h2cfg: List[Int] = [], expect: Int = 0, proxy: List[fn(Str) -> Str] = [], jar_get: List[fn(Str) -> Str] = [], jar_put: List[fn(Str, List[Str])] = []) -> CResult {
+pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], h2cfg: List[Int] = [], expect: Int = 0, proxy: List[fn(Str) -> Str] = [], jar_get: List[fn(Str) -> Str] = [], jar_put: List[fn(Str, List[Str])] = [], max_idle: Int = 0) -> CResult {
   if !valid_method(m) {
     return cfail(1, "net/http: invalid method " + go_quote(m))
   }
@@ -4843,7 +4843,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       rbody = x.body
       jar_keep(jar_put, cut, headers)
     } else {
-      var r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, true, hop_h2c, alpn, h2cfg)
+      var r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, true, hop_h2c, alpn, h2cfg, max_idle)
       // stream over HTTP/2 (decision 0404 stage B2): the exchange kept open
       // after the head
       var h2x: H2X? = None
@@ -4857,7 +4857,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
         if hclient.retry(r) {
           // the server did not take the request on the pooled connection:
           // it goes on a new one, as Transport retries it
-          r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, false, hop_h2c, alpn, h2cfg)
+          r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, false, hop_h2c, alpn, h2cfg, max_idle)
           if hclient.h2(r) {
             h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn)
           }
@@ -4878,7 +4878,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
           // the pooled connection was dead (the server closed it): the
           // request goes once more on a new one, as Transport retries it
           // (decision 0303)
-          r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, false, hop_h2c, alpn, h2cfg)
+          r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, false, hop_h2c, alpn, h2cfg, max_idle)
           h1 = hclient.reading(r)
           if hclient.h2(r) {
             h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn)

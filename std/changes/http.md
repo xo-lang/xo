@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-14: feature: Client.with_max_idle_per_host (Go's Transport.MaxIdleConnsPerHost)
+
+- Kind: feature
+- Commit: this push
+- Found by: Xo Lang 1 (32 concurrent clients to one backend on a 28-core host left about 27,500 TIME_WAIT sockets per benchmark run: the client kept at most 2 idle HTTP/1.1 connections per host and redialed the rest); owner decision 2026-11-14: Go's name and default
+- Go reference: net/http Transport.MaxIdleConnsPerHost, DefaultMaxIdleConnsPerHost (2; 0 the default, negative keeps none)
+- Test: golden http_max_idle (arm64, LLVM, Go parity): a raw server counts accepts; 4 sequential requests use 1 connection by default and 4 with -1; two rounds of 8 concurrent requests use at most 8 with 8 (the default makes more: 3 of 3 control runs, darwin/arm64)
+- Timing: none
+- Shipped in: not yet released
+
+`with_max_idle_per_host(n)` sets how many idle HTTP/1.1 connections the client keeps per host (its address, and for https its server name) between requests: 0 is the default, 2, and a negative n keeps none. The native pool is process-wide; each connection carries the limit of the client that returned it (hclient P_MAX_IDLE), and the whole pool still keeps at most 100 (MaxIdleConns). HTTP/2 connections are multiplexed and not affected.
+
 ## 2026-11-14: security: a streaming client decodes a gzip response 4 KiB of input at a time
 
 - Kind: security

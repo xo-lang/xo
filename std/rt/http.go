@@ -1456,6 +1456,9 @@ type Http_Client struct {
 	// with_redirects (decision 0404): the redirects followed at most; 0
 	// returns the 3xx itself
 	redirects int64
+	// with_max_idle_per_host: Transport.MaxIdleConnsPerHost (0 Go's
+	// default, 2; negative none)
+	maxIdle int64
 	// with_proxy and with_proxy_for (decision 0617 B): the chooser asked
 	// for each request's proxy
 	proxy Option[func(*Task, Http_Url) Result[Option[Http_Url], Never]]
@@ -1492,6 +1495,14 @@ func (c Http_Client) M_with_redirects(_ *Task, max int64) Http_Client {
 		max = 0
 	}
 	c.redirects = max
+	return c
+}
+
+// M_with_max_idle_per_host is `c.with_max_idle_per_host(n)`: the
+// transport's MaxIdleConnsPerHost.
+func (c Http_Client) M_with_max_idle_per_host(_ *Task, n int64) Http_Client {
+	c.maxIdle = n
+	c.tr = clientTransport(c)
 	return c
 }
 

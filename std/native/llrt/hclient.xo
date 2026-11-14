@@ -780,7 +780,10 @@ const P_CFG_DT = 176
 const P_CFG_MF = 184
 const P_CFG_PI = 192
 const P_CFG_PT = 200
-const P_SIZE = 208 // own: an HTTP/2 connection record's size, not the pool record's
+/// an HTTP/1.1 connection's limit of idle ones for its key (the client's
+/// with_max_idle_per_host: 0 the default, H1_PER_HOST; negative none)
+const P_MAX_IDLE = 208
+const P_SIZE = 216 // own: an HTTP/2 connection record's size, not the pool record's
 
 /// An exchange on a connection (r's h2, an obj.xo object): the
 /// connection, whether it came from the pool (a failure before an answer
@@ -1005,7 +1008,8 @@ fn pool_take_kind(h1: Int, roots: Int, kp: Int, kn: Int) -> Int {
 
 /// Keeps pc for the next request, or closes it (xo_h2.c h2_pool_put):
 /// at most 100 stay, the oldest goes (MaxIdleConns); an HTTP/1.1 one
-/// closes when 2 for its key are idle already (MaxIdleConnsPerHost).
+/// closes when its client's limit for its key are idle already
+/// (MaxIdleConnsPerHost: P_MAX_IDLE, 0 for H1_PER_HOST).
 fn pool_put(pc: Int) {
   if ld4(pc, P_BROKEN) != 0 || ld4(pc, P_GOAWAY) != 0 || ld4(pc, P_SPENT) != 0 {
     conn_free(pc)
@@ -1025,7 +1029,8 @@ fn pool_put(pc: Int) {
       q = ld(q, P_NEXT)
     }
     pool.unlock(pl + PL_MU)
-    if same >= H1_PER_HOST {
+    let lim = ld(pc, P_MAX_IDLE)
+    if same >= if lim == 0 { H1_PER_HOST } else { lim } {
       conn_free(pc)
       return
     }
@@ -1058,7 +1063,8 @@ fn pool_put(pc: Int) {
   conn_free(drop)
 }
 
-/// Idle HTTP/1.1 connections kept per key (MaxIdleConnsPerHost).
+/// Idle HTTP/1.1 connections kept per key by default (Go's
+/// DefaultMaxIdleConnsPerHost).
 const H1_PER_HOST = 2
 
 /// Whether the idle connection at c (a ccon) is still usable: no input
@@ -1101,6 +1107,7 @@ fn h1_put(a: Int, roots: Int, kp: Int, kn: Int) {
   rt.mem_store(key, kn, 0, 1)
   st(pc, P_KEY, key)
   st4(pc, P_H1, 1)
+  st(pc, P_MAX_IDLE, ld(a, R_MAX_IDLE))
   rt.mem_set(a + R_C, 0, 72)
   st(a, R_CN, 0)
   st4(a, R_READING, 0)
@@ -1550,7 +1557,9 @@ const R_REUSED = 192
 /// whether a full duplex request's body was sent in full (a word: the
 /// sender task stores 1 with release order after its last write)
 const R_SENT = 200
-const R_SIZE = 208
+/// the client's with_max_idle_per_host (h1_put gives it to the pool record)
+const R_MAX_IDLE = 208
+const R_SIZE = 216
 
 /// The deadline of a client's timeout (ns, > 0): the timers' clock.
 pub fn cl_deadline(timeout: Int) -> Int { hconn.deadline(timeout) }
@@ -1567,10 +1576,11 @@ pub fn cl_deadline(timeout: Int) -> Int { hconn.deadline(timeout) }
 /// Xo reads the response, and end closes. A failure sets r's error. The
 /// method, target, Host and header are the writers' (request,
 /// h2_exchange).
-pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: rthttp.Roots, prefix: Str, pool: Bool, h2c: Bool = false, alpn: List[Str] = [], cfg: List[Int] = []) -> rthttp.CResp {
+pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: rthttp.Roots, prefix: Str, pool: Bool, h2c: Bool = false, alpn: List[Str] = [], cfg: List[Int] = [], max_idle: Int = 0) -> rthttp.CResp {
   if target.arch == TargetArch.Wasm32 {
     let w = rt.wasi_handle_new(R_SIZE, rt.wasi_hook("cresp_free"))
     st(w, R_PREFIX, cstr_dup(prefix))
+    st(w, R_MAX_IDLE, max_idle)
     start_wasm(w, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, pool, h2c, alpn, cfg)
     let hw = rt.obj_at[rthttp.CResp](w)
     tasks.h_release(w)
@@ -1578,6 +1588,7 @@ pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roo
   }
   let r = tasks.new_handle(R_SIZE, rt.fn_addr("cresp_free"))
   st(r, R_PREFIX, cstr_dup(prefix))
+  st(r, R_MAX_IDLE, max_idle)
   start(r, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, pool, h2c, alpn, cfg)
   let h = rt.obj_at[rthttp.CResp](r)
   tasks.h_release(r)

@@ -176,6 +176,9 @@ struct Client {
   /// the redirects followed at most (with_redirects, decision 0404); 0
   /// returns the 3xx itself
   redirects: Int = 10
+  /// with_max_idle_per_host: idle HTTP/1.1 connections kept per host (0
+  /// the default, 2; negative none)
+  max_idle: Int = 0
   /// with_proxy and with_proxy_for (decision 0617 B): the chooser
   /// http1.client_do asks for each hop's URL, empty for none
   proxy: List[fn(Str) -> Str] = []
@@ -3752,6 +3755,8 @@ fn proxy_choice(f: fn(http.Url) -> http.Url?, raw: Str) -> Str {
 
 fn (c: Client) with_redirects(max: Int) -> Client { c with {redirects: if max < 0 { 0 } else { max }} }
 
+fn (c: Client) with_max_idle_per_host(n: Int) -> Client { c with {max_idle: n} }
+
 /// The request sent with Host (HTTP/1.1) and :authority (HTTP/2) host in place of the URL's (Go's Request.Host); the
 /// connection and the TLS name stay the URL's. "" is the URL's host.
 fn (r: Request) with_host(host: Str) -> Request { r with {host_over: host} }
@@ -4165,7 +4170,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   }
   let ta = trailer_args(req)
   let dsrc = if duplex.is_empty() || ta.src.is_empty() { ta.src } else { [ta.src[0], poll_source(ta.src[0], duplex[0])] }
-  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, dsrc, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put)
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, dsrc, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put, max_idle: c.max_idle)
   match r.err {
     0 => ()
     _ => {
@@ -4664,7 +4669,7 @@ fn (c: Client) send(req0: Request) -> http.Response ! http.ClientErr uses net.di
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
   // a wasi:http component sends a whole body (decision 0447)
   let ta = trailer_args(if wasiworld.component() { src_whole(req)? } else { req })
-  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), expect: req.expect_ns, proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put)
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), expect: req.expect_ns, proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put, max_idle: c.max_idle)
   // done with the request: its body's reader closes (net/http closes
   // the request body), so a later write fails instead of waiting
   close_src(req.src)
