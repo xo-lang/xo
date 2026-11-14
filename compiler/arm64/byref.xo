@@ -1466,12 +1466,30 @@ fn (var g: G) mem_at(base: Int, off: Int) -> (Int, Int) {
   (r, off - hi)
 }
 
+/// mem_at in a run over one base: far is the page base made last (its
+/// page and register; register -1 for none), reused while the run stays
+/// on that page (2026-11-14: a copy of a large aggregate added the page
+/// before every word).
+fn (var g: G) mem_at_run(base: Int, off: Int, far: (Int, Int)) -> (Int, Int, (Int, Int)) {
+  if off <= 32760 {
+    return (base, off, far)
+  }
+  let hi = off & ~4095
+  if far.1 >= 0 && far.0 == hi {
+    return (far.1, off - hi, far)
+  }
+  let r = g.def1(false, "add $d0, $u0, #${hi >> 12}, lsl #12", [base])
+  (r, off - hi, (hi, r))
+}
+
 /// Loads the words of layout lay starting at word w0 of the memory at
 /// base.
 fn (var g: G) load_words(base: Int, w0: Int, lay: List[Bool]) -> List[Int] {
   var out: List[Int] = List.with_capacity(lay.len())
+  var far = (0, -1)
   for k in 0..lay.len() {
-    let (b, off) = g.mem_at(base, 8 * (w0 + k))
+    let (b, off, f2) = g.mem_at_run(base, 8 * (w0 + k), far)
+    far = f2
     let text = g.word_text(true, off)
     out.push(g.def1(lay[k], text, [b]))
   }
@@ -1522,8 +1540,10 @@ fn (var g: G) store_words_at(base: Int, w0: Int, ws: List[Int]) {
       return
     }
   }
+  var far = (0, -1)
   for (k, w) in ws.indexed() {
-    let (b, off) = g.mem_at(base, 8 * (w0 + k))
+    let (b, off, f2) = g.mem_at_run(base, 8 * (w0 + k), far)
+    far = f2
     let text = g.word_text(false, off)
     g.store(text, [w, b])
   }

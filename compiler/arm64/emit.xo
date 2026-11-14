@@ -739,14 +739,25 @@ fn (g: G) far_slots_l(lines: List[Str]) -> List[Str] {
     return lines
   }
   var b: List[Str] = []
+  // the page x28 holds (sp + hi) since the last far reference, -1 when
+  // unknown: a run of far references to one page sets it once, not per
+  // reference (2026-11-14: 27% of the aiplatform test build's function
+  // text was `add x28, sp, #k, lsl #12` before each spill reload)
+  var x28 = -1
   for (i, l) in lines.indexed() {
     if i > 0 {
       b.push("\n")
     }
     let (ok, op, rs, off) = parse_sp_ref(l)
     if !ok {
+      if !far_keeps_x28(l) {
+        x28 = -1
+      }
       b.push(l)
       continue
+    }
+    if rs.contains("x28") || rs.contains("w28") {
+      x28 = -1
     }
     let (scale, pair) = mem_scale(op, rs)
     var reach = 4095 * scale
@@ -759,14 +770,50 @@ fn (g: G) far_slots_l(lines: List[Str]) -> List[Str] {
     }
     let hi = off & ~4095
     var lo = off & 4095
-    b.push("\tadd x28, sp, #${hi >> 12}, lsl #12\n")
     if lo > reach || lo % scale != 0 {
-      b.push("\tadd x28, x28, #${lo}\n")
+      b.push("\tadd x28, sp, #${hi >> 12}, lsl #12\n\tadd x28, x28, #${lo}\n")
       lo = 0
+      x28 = -1
+    } else if x28 != hi {
+      b.push("\tadd x28, sp, #${hi >> 12}, lsl #12\n")
+      x28 = hi
     }
     b.push("\t${op} ${rs}, [x28, #${lo}]")
+    if is_load_op(op) && (rs.contains("x28") || rs.contains("w28")) {
+      x28 = -1
+    }
   }
   b.join("").split("\n")
+}
+
+/// Whether a line between far references leaves x28 = sp + hi as it was:
+/// a plain load, store or arithmetic instruction that names neither x28
+/// nor w28 and does not write sp; a label, branch, call, directive other
+/// than a .loc or .cfi line, or anything else makes x28 unknown.
+fn far_keeps_x28(l: Str) -> Bool {
+  if l.contains("\n") {
+    return false
+  }
+  let t = l.trim()
+  if t.is_empty() || t.starts_with(".loc") || t.starts_with(".cfi_") || t.starts_with("//") || t.starts_with(";") {
+    return true
+  }
+  if !l.starts_with("\t") || t.ends_with(":") || t.contains("x28") || t.contains("w28") {
+    return false
+  }
+  let sp = t.find(" ") ?? t.len()
+  let m = t[0..sp]
+  if !(m is "ldr" | "str" | "ldp" | "stp" | "ldrb" | "strb" | "ldrh" | "strh" | "ldrsw" | "ldrsb" | "ldrsh" | "ldur" | "stur" | "add" | "sub" | "mov" | "movz" | "movk" | "orr" | "and" | "eor" | "lsl" | "lsr" | "asr" | "mul" | "madd" | "fmov") {
+    return false
+  }
+  // sp written: `add sp, ...`, `mov sp, ...`, or a pre or post index on sp
+  let rest = t[sp..t.len()].trim()
+  !(rest.starts_with("sp,") || rest.starts_with("sp ") || t.contains("[sp, #-") && t.ends_with("!") || t.contains("[sp], "))
+}
+
+/// Whether op loads (its first registers are written).
+fn is_load_op(op: Str) -> Bool {
+  op.starts_with("ldr") || op.starts_with("ldp") || op.starts_with("ldur")
 }
 
 /// Whether l is `\t<op> <regs>, [sp, #<off>]` with op a load or store

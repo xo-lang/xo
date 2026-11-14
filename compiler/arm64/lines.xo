@@ -587,8 +587,15 @@ fn (g: G) far_slots_ops(xs: List[Line]) -> List[Line] {
     return xs
   }
   var out: List[Line] = List.with_capacity(xs.len())
+  // far_slots_l's x28 page
+  var x28 = -1
   for x in xs {
     let o = if let Some(op) = x.op { op } else {
+      for t in line_texts([x]) {
+        if !far_keeps_x28(t) {
+          x28 = -1
+        }
+      }
       out.push(x)
       continue
     }
@@ -606,6 +613,11 @@ fn (g: G) far_slots_ops(xs: List[Line]) -> List[Line] {
       ok = false
     }
     if !ok {
+      for t in line_texts([x]) {
+        if !far_keeps_x28(t) {
+          x28 = -1
+        }
+      }
       out.push(x)
       continue
     }
@@ -614,6 +626,9 @@ fn (g: G) far_slots_ops(xs: List[Line]) -> List[Line] {
       regs.push(macho.print_operand(o.ops[k]))
     }
     let rs = regs.join(", ")
+    if rs.contains("x28") || rs.contains("w28") {
+      x28 = -1
+    }
     let (scale, pair) = mem_scale(o.m, rs)
     var reach = 4095 * scale
     if pair {
@@ -625,12 +640,20 @@ fn (g: G) far_slots_ops(xs: List[Line]) -> List[Line] {
     }
     let hi = off & ~4095
     var lo = off & 4095
-    var ls: List[Str] = ["\tadd x28, sp, #${hi >> 12}, lsl #12"]
+    var ls: List[Str] = []
     if lo > reach || lo % scale != 0 {
+      ls.push("\tadd x28, sp, #${hi >> 12}, lsl #12")
       ls.push("\tadd x28, x28, #${lo}")
       lo = 0
+      x28 = -1
+    } else if x28 != hi {
+      ls.push("\tadd x28, sp, #${hi >> 12}, lsl #12")
+      x28 = hi
     }
     ls.push("\t${o.m} ${rs}, [x28, #${lo}]")
+    if is_load_op(o.m) && (rs.contains("x28") || rs.contains("w28")) {
+      x28 = -1
+    }
     for y in to_lines(ls) {
       out.push(y)
     }
