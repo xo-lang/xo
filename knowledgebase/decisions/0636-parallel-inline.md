@@ -1,8 +1,5 @@
 # 0636: The inliner runs in waves on the task pool
 
-Status: Proposed (Xo Lang 1, 2026-11-14). Stub: the full text lands with the change.
-# 0636: The inliner runs in waves on the task pool
-
 Status: Accepted (lead, 2026-11-14: the first of the re-profile's three time cuts; gate:
 byte-identical output across worker counts and repeated runs, and the fixed point). Compiler
 internal: no language or output change.
