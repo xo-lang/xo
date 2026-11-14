@@ -7,7 +7,8 @@
 // a worker with a 1 GiB stack (deep recursion of the goldens), its exit
 // status is the program's, and a trap prints `wasm trap: <message>` with
 // status 134. With XO_LEAKCHECK set, the allocations still live at exit
-// are printed as the native runtime prints them (xo_live, xo_total).
+// are printed as the native runtime prints them (xo_live, xo_total);
+// XO_LEAKCHECK=fail (`--check=leak`) also ends with status 1 if any are.
 //
 // Debugging switches (gotchas/wasm-regexp-table-intermittent-trap.md):
 // XO_WASM_SEED=N seeds random_get (else a fresh seed); the seed, the
@@ -178,7 +179,12 @@ function runModule(file, args) {
     process.stderr.write(`xo wasm seed: ${seed}; memory ${inst.exports.memory.buffer.byteLength} bytes; calls: ${cs}\n`);
   }
   if (process.env.XO_LEAKCHECK && inst.exports.xo_live) {
-    process.stderr.write(`xo leakcheck: ${inst.exports.xo_live()} live of ${inst.exports.xo_total()} allocations\n`);
+    const live = inst.exports.xo_live();
+    process.stderr.write(`xo leakcheck: ${live} live of ${inst.exports.xo_total()} allocations\n`);
+    // --check=leak (decision 0638): live blocks fail a program that passed
+    if (process.env.XO_LEAKCHECK === 'fail' && live != 0 && code === 0) {
+      return 1;
+    }
   }
   return code;
 }

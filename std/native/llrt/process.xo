@@ -16,6 +16,7 @@
 // the code instead (FakeProc.exit_code, twrun.xo exit), and in
 // testing.run_main the call returns with the context unwinding (decision
 // 0108).
+use native/llrt/checkdef
 use native/llrt/freebsd
 use native/llrt/linux
 use native/llrt/raw
@@ -43,7 +44,7 @@ pub fn exit(code: Int) {
     // held by running tasks are not on them)
     let _h = rt.call_c2(rt.fn_addr("heapstats_finish"), 0, 0)
   }
-  if !env_get("XO_LEAKCHECK").is_empty() {
+  if leak_mode() != 0 {
     // the leak report runs only when main returns (the C runtime's end
     // of main): here live frames still hold values, so say it was
     // skipped rather than print nothing (gotchas/leakcheck-skipped-at-exit.md)
@@ -377,4 +378,45 @@ pub fn env_vars() -> List[Str] {
     k = k.wrapping_add(1)
   }
   out.sort()
+}
+
+/// Whether the free check runs (decision 0484): XO_FREE_CHECK set and
+/// not "" or "0", else what the build embedded (`xo build --check=free`,
+/// decision 0638): a variable set at run time wins.
+pub fn free_check_wanted() -> Bool {
+  let v = env_real_at("XO_FREE_CHECK")
+  if v != 0 {
+    return !off_value(v)
+  }
+  if checkdef.free() {
+    return true
+  }
+  false
+}
+
+/// The leak check's mode: 0 off, 1 report, 2 report and end with status 1
+/// when blocks are live (XO_LEAKCHECK=fail, `--check=leak`; decision
+/// 0638). XO_LEAKCHECK set wins ("" or "0" off, "fail" 2, else 1); unset,
+/// what the build embedded (`xo build --check=leak`: 2).
+pub fn leak_mode() -> Int {
+  let v = env_real_at("XO_LEAKCHECK")
+  if v != 0 {
+    if off_value(v) {
+      return 0
+    }
+    if rt.mem_load(v, 0, 1) == 0x66 && rt.mem_load(v, 1, 1) == 0x61 && rt.mem_load(v, 2, 1) == 0x69 && rt.mem_load(v, 3, 1) == 0x6c && rt.mem_load(v, 4, 1) == 0 {
+      return 2
+    }
+    return 1
+  }
+  if checkdef.leak() {
+    return 2
+  }
+  0
+}
+
+/// Whether the variable value at v (env_real_at's address) is "" or "0".
+fn off_value(v: Int) -> Bool {
+  let b = rt.mem_load(v, 0, 1)
+  b == 0 || (b == 0x30 && rt.mem_load(v, 1, 1) == 0)
 }

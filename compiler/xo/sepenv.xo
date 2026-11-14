@@ -134,7 +134,7 @@ fn std_code_changed(os: Os, o: Opts) -> Bool {
   if STD_CODE_ENV.any(fn(n) { !(os.env.get(n) ?? "").is_empty() }) {
     return true
   }
-  o.topts.seed != 0 || o.explore > 0 || o.no_mono || o.no_arenas || o.no_preempt || o.no_gc || o.holes || o.hybrid || !o.opt.is_empty() || !o.profile.is_empty() || !o.record.is_empty() || o.error_args != -1 || o.debug_contracts != -1 || o.dbg != -1 || o.trace_support != -1 || o.profile_support != -1 || !o.pack_lists || o.inline_str
+  o.topts.seed != 0 || o.check_guard || (o.cmd == "build" && (o.check_free || o.check_leak)) || o.explore > 0 || o.no_mono || o.no_arenas || o.no_preempt || o.no_gc || o.holes || o.hybrid || !o.opt.is_empty() || !o.profile.is_empty() || !o.record.is_empty() || o.error_args != -1 || o.debug_contracts != -1 || o.dbg != -1 || o.trace_support != -1 || o.profile_support != -1 || !o.pack_lists || o.inline_str
 }
 
 /// The Secrets of the Os values the compiler wraps (decision 0584): no

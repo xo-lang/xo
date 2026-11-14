@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-11-14: feature: --check=free,guard,leak; XO_LEAKCHECK=fail and =0; a build's embedded checks
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0638 (owner request through the lead: the runtime's memory checks only the toolchain's own tests used, made public)
+- Go reference: none (Go has a garbage collector; the closest is `go test -race` and GODEBUG beside runtime settings)
+- Test: cmd/xo TestCheckFlag and TestCheckFlagTest (a Mutex cycle: run, test, build, the variable overrides, the refusals); internal/arm64 TestCheckFlagPlants (native/llrt libcmem's guarded overrun, heapos's new "a write after free ends the program under the free check")
+- Timing: none when off (the flags fold at build time; the variables were already read at start)
+- Shipped in: not yet released
+
+The native runtime (std/native/llrt process.xo, entry.xo, and the new
+checkdef.xo) reads XO_LEAKCHECK=fail as the leak check that also ends a
+program with status 1 when blocks are live at exit, and XO_LEAKCHECK or
+XO_FREE_CHECK set to "" or "0" as off (any value turned them on before).
+A binary built with `xo build --check=free` or `--check=leak` runs those
+checks when its environment does not set the variable. The wasm runner
+(compiler/wasm/run.mjs) reads XO_LEAKCHECK=fail the same way.
+
 ## 2026-11-13: security: a sub Fs on Windows denies device names and colons under its root
 
 - Kind: security

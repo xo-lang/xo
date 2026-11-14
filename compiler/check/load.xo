@@ -257,6 +257,11 @@ pub struct Checker {
   /// declares std/native/llrt/cabi_race.xo's exports, the functions the
   /// instrumented code calls
   pub race: Bool = false
+  /// `xo build --check=free` and `--check=leak` (decision 0638): a call
+  /// of native/llrt/checkdef.free() (leak()) is this, so the binary runs
+  /// the check when its environment does not set the variable
+  pub check_free: Bool = false
+  pub check_leak: Bool = false
   /// The functions of the native modules whose bodies run left to
   /// check_lazy (true), and those it checked (false).
   pub lazy_fns: Map[Int, Bool] = {}

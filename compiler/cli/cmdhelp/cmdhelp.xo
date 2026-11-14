@@ -268,7 +268,7 @@ usage: xo build [--targets=all|os/arch,...] [--backend=native|go|llvm|arm64|amd6
                 [--trimpath=on|off] [-s] [--dsym] [--ld=macho|cc] [--race]
                 [--stamp NAME=VALUE]... [--entitlement=KEY]... [--hybrid] [--pack-lists=on|off]
                 [--versioninfo=FILE.json] [--icon=FILE.ico]... [--manifest=FILE]
-                [--inline-str] [--json] [-o out] <dirs...>
+                [--inline-str] [--check=free,guard,leak|all] [--json] [-o out] <dirs...>
 
 Compile to static binaries (default: the host). The directories are one
 program. The default backend is native (decisions 0248 and 0270): arm64
@@ -283,7 +283,11 @@ the Go toolchain, and a program with `use go` needs it. A linux/arm64
 target links with Xo's own linker, from any host (decision 0243).
 --no-gc (also on run and test) reports every construct, std API, or
 effect the native backends do not support as XO1201 before code
-generation (decision 0083). --backend=wasm builds a WASI preview1 module;
+generation (decision 0083). --check=free,guard,leak (decision 0638; xo
+help run) builds the memory checks in: guard into the code, and free and
+leak as the binary's defaults, which XO_FREE_CHECK and XO_LEAKCHECK set
+in its environment override (0 turns a check off), so a binary run
+outside xo keeps them. --backend=wasm builds a WASI preview1 module;
 --targets=wasip2/wasm, named alone, builds a program that calls
 http.serve_component as a wasi:http 0.2 component (decision 0447);
 --targets=wasip3/wasm builds it as a WASI 0.3 one (stage 5).
@@ -338,6 +342,7 @@ fn run_text() -> Str {
 usage: xo run [--seed=N] [--record=trace.xotrace] [--holes] [--backend=native|go|llvm|arm64|amd64]
               [--no-gc] [--no-mono] [--no-arenas] [--tzdata=embedded|system]
               [--profile=cpu|heap|cpu,heap] [--trace=FILE] [--race]
+              [--check=free,guard,leak|all]
               [--stamp NAME=VALUE]... [--watch [--grace=D]] [dir] [-- args...]
 
 Build for the host and run the program in dir (default .) with args.
@@ -357,7 +362,16 @@ allocations into xo-heap.pprof and xo-heap.txt; cpu,heap takes both. A
 profile file that exists is not overwritten. --trace=FILE records the
 scheduler's execution trace (XO_TRACE, a native backend; decision 0240)
 into FILE, then writes FILE.json for ui.perfetto.dev and prints a summary
-(xo trace). --watch rebuilds after a change to the module's sources and
+(xo trace). --check=free,guard,leak (or all; decision 0638) turns on the
+native runtime's memory checks: free poisons freed blocks and holds them
+back from reuse, so a use after free faults or ends the program with
+status 70 (XO_FREE_CHECK); guard builds the runtime's records against a
+guard page, so an overrun faults (XO_HEAP_GUARD); leak reports the
+blocks still live when main returns and then exits 1 if any are
+(XO_LEAKCHECK=fail). They need the arm64 or amd64 backend (LLVM: leak
+only; wasm: leak only; the Go backend has a garbage collector); free is
+refused with --race.
+--watch rebuilds after a change to the module's sources and
 restarts the program only when the built binary changed (an edit to a
 test, or a comment that moves no line, does not restart it): SIGTERM, up to --grace (5s) for
 it to exit, then SIGKILL; a failed build keeps the old program running.
@@ -372,7 +386,7 @@ fn test_text() -> Str {
 usage: xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N]
                [--timeout=D] [--json] [-v] [--backend=native|go|llvm|arm64|amd64] [--no-gc]
                [--profile=cpu|heap|cpu,heap] [--trace=FILE] [--watch] [--fail-empty]
-               [--count=1] <dirs...>
+               [--check=free,guard,leak|all] [--count=1] <dirs...>
 
 Run test blocks, property tests, and contract fuzzing on the
 deterministic scheduler. --run selects the tests whose name contains
@@ -386,7 +400,9 @@ module's regressions_test.xo. --profile=cpu (heap, cpu,heap) samples
 each test process (not property cases) into xo-cpu-<pid>.pprof
 (xo-heap-<pid>.pprof) and .txt in the working directory; go tool pprof
 merges several. --trace=FILE writes an execution trace per test process
-(FILE.<pid>, or FILE with %p); read one with xo trace. --watch runs
+(FILE.<pid>, or FILE with %p); read one with xo trace. --check runs
+each test process with the memory checks, as xo run (xo help run): a
+test that leaves blocks live, or writes a freed one, fails. --watch runs
 the tests, then after each change to the sources only the tests it
 reaches (a new or edited test, the tests of a changed _test.xo file,
 and the tests that name a function whose definition, or one it uses,

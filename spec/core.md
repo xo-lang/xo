@@ -12,7 +12,7 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.52
 
-None yet.
+- 5.5 and 10.1: `--check=free,guard,leak|all` on `xo run`, `xo test` and `xo build` turns on the native runtime's memory checks (decision 0638); the variables under it (XO_FREE_CHECK, XO_HEAP_GUARD, XO_LEAKCHECK) are documented, and `XO_LEAKCHECK=fail` ends a program that leaves blocks live with status 1.
 
 ## Changes in 0.51
 
@@ -2769,6 +2769,31 @@ program stores, sends, captures, returns, or hands to Go, is ordinary garbage
 collected memory, so arenas are invisible: a program prints the same with and
 without them. A user written `arena scope` block remains **[P2]**.
 
+**Memory checks** (decision 0638). `--check=free,guard,leak` (`all` for
+the three) on `xo run`, `xo test` and `xo build` turns on the native
+runtime's checks, for finding memory errors in a program, std, or the
+compiler. Each is also a variable, which is the mechanism under the flag
+and what a built binary run outside `xo` reads:
+
+| check | variable | what it does | backends |
+|---|---|---|---|
+| `free` | `XO_FREE_CHECK=1` | a freed block is filled with a poison value and held back from reuse (65,536 per thread); a load through it faults, and one written after its free ends the program with status 70 when it leaves the ring or at the end (decision 0484) | arm64, amd64 |
+| `guard` | `XO_HEAP_GUARD=1` at build time | the runtime's records end against an inaccessible page, so an overrun faults at its first access | arm64, amd64 |
+| `leak` | `XO_LEAKCHECK=fail` (`=1` reports only) | when `main` returns, `xo leakcheck: N live of M allocations` on standard error; with `fail`, status 1 if N is not 0 | arm64, amd64, llvm, wasm |
+
+`xo run` and `xo test` set the variables for the program (a test that
+leaves blocks live or writes a freed one fails); `xo build` builds guard
+in and makes free and leak the binary's defaults (arm64, amd64, llvm), which the variables
+in its environment override (`0` turns a check off). The Go backend
+refuses the flag (it has a garbage collector), as wasm and LLVM refuse
+free and guard and `--race` refuses free (a usage error, exit 2). A leak
+report is skipped when the program ends through `os.proc.exit`. The
+checks cost time and memory and are for testing, not for production:
+measured on linux/arm64 (allocation workloads and a JSON parse, decision
+0638), free took 1.1 to 3 times the CPU and up to about 60 MB more memory
+(its rings of freed blocks), leak 1.0 to 1.1 times the CPU, and guard was
+within noise.
+
 ---
 
 ## 6. Effects and capabilities [P1 checking, P2 replay]
@@ -3543,7 +3568,7 @@ test "retries after 503" {
 | Command | Purpose |
 |---|---|
 | `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci] [--release] [--debug-contracts\|--dbg\|--error-args\|--profile-support\|--trace-support=on\|off] [--debug-info=on\|off\|split] [--opt=O0..O3] [--stamp NAME=VALUE]...` | Build static binaries; `--stamp` (repeatable, also `xo run`) sets a `const NAME: Str = "..."` of the main module to VALUE for this build, else `XO1501`, and is recorded in the build information so `xo replay` rebuilds the same program (decision 0165); `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4); `--release` is the release preset (8, decision 0354): `requires(debug)` and `ensures(debug)` compiled out, `dbg` off, no debug information, the native runtime's profiler and execution trace recorder left out, `--opt=O2`; each of those settings has its own flag, in any build, that wins over the preset; `--error-args=off` drops parameter values from error frames (11.1); `-s` leaves debug information and local symbols out of a native binary. Builds are debug builds otherwise, and `xo run` and `xo test` always are |
-| `xo run [DIR]` | Build and run for the host the program in exactly DIR (default `.`), never one below it (decision 0345); `--profile=cpu\|heap\|cpu,heap` (XO_PROF, decision 0238) and `--trace=FILE` (XO_TRACE, decision 0240) on a native backend; `--watch [--grace=D]` rebuilds after a source change and restarts the program only when the built binary changed (its builds record no source digests in the build information, so an edit that changes no code, such as a comment that moves no line, leaves it running; `xo version -m` of such a binary shows `-` for each source; a restart sends SIGTERM, up to `--grace`, default 5s, then SIGKILL; decision 0267). A stop request `xo run` gets (SIGINT or SIGTERM, 7.5) is sent on to the program as SIGTERM when standard input is not a terminal; on a terminal, Ctrl-C reaches the program through the process group |
+| `xo run [DIR]` | Build and run for the host the program in exactly DIR (default `.`), never one below it (decision 0345); `--profile=cpu\|heap\|cpu,heap` (XO_PROF, decision 0238) and `--trace=FILE` (XO_TRACE, decision 0240) on a native backend; `--check=free,guard,leak\|all` the memory checks (5.5, decision 0638); `--watch [--grace=D]` rebuilds after a source change and restarts the program only when the built binary changed (its builds record no source digests in the build information, so an edit that changes no code, such as a comment that moves no line, leaves it running; `xo version -m` of such a binary shows `-` for each source; a restart sends SIGTERM, up to `--grace`, default 5s, then SIGKILL; decision 0267). A stop request `xo run` gets (SIGINT or SIGTERM, 7.5) is sent on to the program as SIGTERM when standard input is not a terminal; on a terminal, Ctrl-C reaches the program through the process group |
 | `xo trace FILE [--json OUT] [--text]` | The execution trace a native program wrote under XO_TRACE as Chrome trace event JSON (Perfetto) and a summary (decision 0240) |
 | `xo check [--backend=go] [--support[=false]] [--support-all] [--fix]` | Parse and type check all targets, no codegen, by the rules of the backend a build uses: the native backends' by default (`use c` is valid), the Go backend's with `--backend=go`; when the check finds no error, the native backends' support check (XO1201) follows by default, lowering every function of the named directories' modules, a library's too, so a `use go` program fails it as a native build would (decision 0523); a walk (`DIR/...`) runs it only with `--support` (then on every walked module), `--support=false` skips it, `--support-all` runs it on every module of the workspace; `--fix` first applies the machine fixes (below) |
 | `xo test [--seed=N] [--explore=N] [--cases=N] [--timeout=D] [--real] [--watch]` | Tests, contract fuzzing, property tests (`--cases` per property test and fuzzed function, default 100; `--timeout` the real time each test may take, default 60s, 0 for none, 9.2); deterministic scheduling. `--watch` reruns, after each change, only the tests the change reaches (decision 0267). Doc comment examples are [P2] (1.2) |

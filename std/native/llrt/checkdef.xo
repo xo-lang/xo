@@ -1,0 +1,15 @@
+// The memory checks a build embeds (decision 0638): `xo build
+// --check=free` and `--check=leak` make a binary that runs with
+// XO_FREE_CHECK and XO_LEAKCHECK=fail on when its environment does not
+// set them (a deployed binary, run outside xo). The SSA builders fold a
+// call of free() or leak() to the build's answer (compiler/ssa expr.xo
+// target_test, the Checker's check_free and check_leak), so a build
+// without them keeps nothing of the checks' start-up code beyond what
+// the variables already need.
+
+/// Whether the build embeds the free check (`xo build --check=free`).
+pub fn free() -> Bool { false }
+
+/// Whether the build embeds the failing leak check (`xo build
+/// --check=leak`).
+pub fn leak() -> Bool { false }

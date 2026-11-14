@@ -56,6 +56,50 @@ func TestHeapGuard(t *testing.T) {
 	}
 }
 
+// TestCheckFlagPlants: xo test --check=guard and --check=free (decision
+// 0638) find the bugs native/llrt's tests plant for them: the overrun of
+// a guarded record (libcmem) and a block written after its free
+// (heapos), which pass without the flag. Not parallel: TestHeapGuard
+// builds libcmem's tests with other settings into the same binary.
+func TestCheckFlagPlants(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds and runs programs")
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(module, sub string, flags ...string) (string, error) {
+		args := append([]string{"test", "--std-module=" + module, "--backend=arm64", "--run=" + sub}, flags...)
+		cmd := testtmp.Guard(exec.Command(xo, args...))
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+root)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	for _, c := range []struct{ module, sub, flag, want string }{
+		{"native/llrt/libcmem", "an overrun", "--check=guard", ""},
+		{"native/llrt/heapos", "write after free", "--check=free", "fault: XO_FREE_CHECK: a freed block was written after its free"},
+	} {
+		if out, err := run(c.module, c.sub); err != nil {
+			t.Errorf("%s %q without %s: %v\n%s", c.module, c.sub, c.flag, err, out)
+		}
+		out, err := run(c.module, c.sub, c.flag)
+		if err == nil {
+			t.Errorf("%s %q with %s ran to the end:\n%s", c.module, c.sub, c.flag, out)
+		} else if !strings.Contains(out, c.want) {
+			t.Errorf("%s %q with %s: no %q in the output:\n%s", c.module, c.sub, c.flag, c.want, out)
+		}
+	}
+}
+
 // TestGoldenRunHeapGuard runs golden programs built with
 // XO_HEAP_GUARD=1 (every runtime record against a guard page, the
 // rt.slot_* on a List checked): a correct runtime never reads or writes

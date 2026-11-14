@@ -106,6 +106,11 @@ struct Opts {
   /// --profile: the sampling profiles run and test take (decision 0238:
   /// "cpu", "heap", or "cpu,heap"; XO_PROF for the program), "" for none.
   profile: Str = ""
+  /// --check=free,guard,leak|all (decision 0638): the runtime's memory
+  /// checks, XO_FREE_CHECK, XO_HEAP_GUARD and XO_LEAKCHECK behind a flag.
+  check_free: Bool = false
+  check_guard: Bool = false
+  check_leak: Bool = false
   /// --trace=FILE (decision 0240): XO_TRACE for the program, then `xo
   /// trace FILE` after it ran; "" for none.
   trace: Str = ""
@@ -177,7 +182,7 @@ struct Opts {
 
 /// The flags that take a value (every other known flag is a boolean).
 fn value_flags() -> List[Str] {
-  ["o", "trace", "targets", "target", "backend", "tzdata", "layout", "stamp", "versioninfo", "icon", "manifest", "entitlement", "seed", "explore", "record", "run", "cases", "count", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "lib", "profile", "std-module", "grace", "opt"]
+  ["o", "trace", "targets", "target", "backend", "tzdata", "layout", "stamp", "versioninfo", "icon", "manifest", "entitlement", "seed", "explore", "record", "run", "cases", "count", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "lib", "profile", "check", "std-module", "grace", "opt"]
 }
 
 /// The boolean flags.
@@ -189,7 +194,7 @@ fn bool_flags() -> List[Str] {
 /// build, run, and test print `xo`'s usage (compiler/cli/cmdhelp), which
 /// leaves out xo1's own flags.
 fn usage_line() -> Str {
-  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=native|arm64|amd64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho --lib=shared|static -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --versioninfo=FILE.json --icon=FILE.ico --manifest=FILE --entitlement=KEY --no-mono --no-arenas --no-preempt --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real --std-module=MODULE -v --phase-times"
+  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=native|arm64|amd64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho --lib=shared|static -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --versioninfo=FILE.json --icon=FILE.ico --manifest=FILE --entitlement=KEY --no-mono --no-arenas --no-preempt --no-gc --holes --race --profile=cpu|heap|cpu,heap --check=free,guard,leak|all --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real --std-module=MODULE -v --phase-times"
 }
 
 /// usage prints why and the usage of the command cmd on standard error
@@ -698,6 +703,25 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
     }
     o.profile = v
     o.topts.profile = v
+  } else if name == "check" {
+    // decision 0638: the memory checks, a comma list or all
+    for w in v.split(",") {
+      if w == "all" {
+        o.check_free = true
+        o.check_guard = true
+        o.check_leak = true
+      } else if w == "free" {
+        o.check_free = true
+      } else if w == "guard" {
+        o.check_guard = true
+      } else if w == "leak" {
+        o.check_leak = true
+      } else {
+        usage(os, o.cmd, "invalid value \"${v}\" for flag -check: want free, guard, leak, or all, comma separated")
+      }
+    }
+    o.topts.check_free = o.check_free
+    o.topts.check_leak = o.check_leak
   } else if name == "run" {
     o.topts.run = v
   } else if name == "std" {

@@ -184,6 +184,39 @@ the same push, then a note to the lead to broadcast it (owner,
 3. `metrics.runtime`: the collectors and names, the Go backend mapping, a
    scrape cost row, an otlp golden.
 
+## Step 1 shipped (Xo Lang 2, 2026-11-14)
+
+- `--check=free,guard,leak|all` on run, test and build (compiler/xo
+  opts.xo, main.xo check_refusal, test.xo check_words); guard sets the
+  build's heap guard (and counts as a std code change, sepenv.xo);
+  `xo build` embeds free and leak through std/native/llrt/checkdef.xo,
+  whose calls the SSA builder folds to the Checker's check_free and
+  check_leak (in the front end key only when set).
+- The runtime (process.xo free_check_wanted, leak_mode): a variable set
+  wins, "" or "0" is off (any value was on before), XO_LEAKCHECK=fail
+  reports and ends with status 1 when blocks are live (entry.xo finish;
+  run.mjs on wasm).
+- The free check's fault text went into a test binary's test world and
+  was lost at os_exit; it now writes to descriptor 2 (heapos.xo).
+- Tests: cmd/xo TestCheckFlag, TestCheckFlagTest (a Mutex cycle, the one
+  leak Xo values can form); internal/arm64 TestCheckFlagPlants (libcmem's
+  guarded overrun, heapos's new planted write after free).
+- Cost, linux/arm64 host 1, seed 0.51.1, `xo bench --ab` 5 rounds, one
+  binary with and without the variable (guard: two builds); the
+  workloads run tens of ms, so the CPU rows are indicative ("too coarse"
+  at n=5):
+
+  | workload | free CPU | free RSS | leak CPU | guard CPU |
+  |---|---|---|---|---|
+  | alloc small | 1.13 | 1.0 | 1.12 | 1.00 |
+  | alloc mixed | 3.00 | 3.7 (8.6 to 31.6 MB) | 1.02 | 1.02 |
+  | alloc maps | 1.34 | 16 (1.0 to 15.6 MB) | 1.21 (noise) | 1.03 |
+  | alloc tasks | 2.91 | 24.5 (2.5 to 61.5 MB) | 1.12 | 1.00 |
+  | json small | 1.49 | 1.96 (9.1 to 17.9 MB) | 1.03 | 0.98 |
+
+- LLVM keeps leak only: free and guard under the LLVM goldens are not
+  run yet (a later step lifts the refusal when they pass).
+
 ## Consequences
 
 - Users get the memory checks that only the toolchain's own tests used,

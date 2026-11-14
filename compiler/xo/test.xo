@@ -195,6 +195,10 @@ struct TestOpts {
   /// cases), each writing xo-cpu-<pid>.pprof (and xo-heap-<pid>.pprof)
   /// in the directory xo test ran in (decision 0238).
   profile: Str = ""
+  /// --check=free and --check=leak (decision 0638): XO_FREE_CHECK=1 and
+  /// XO_LEAKCHECK=fail for the test processes.
+  check_free: Bool = false
+  check_leak: Bool = false
   /// --trace=FILE (decision 0240): XO_TRACE for the test processes, each
   /// writing FILE with its process id for %p (FILE.%p when FILE has none),
   /// relative to profile_dir.
@@ -993,6 +997,20 @@ fn prof_words(o: TestOpts) -> List[Str] {
   }
   if !o.trace.is_empty() {
     w.push("XO_TRACE=${trace_path(o)}")
+  }
+  w + check_words(o.check_free, o.check_leak)
+}
+
+/// The environment of --check (decision 0638): free and leak are read by
+/// the program at start (guard is a build setting); leak's "fail" makes a
+/// program whose blocks are live at exit end with status 1.
+fn check_words(free: Bool, leak: Bool) -> List[Str] {
+  var w: List[Str] = []
+  if free {
+    w.push("XO_FREE_CHECK=1")
+  }
+  if leak {
+    w.push("XO_LEAKCHECK=fail")
   }
   w
 }

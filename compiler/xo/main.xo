@@ -293,6 +293,11 @@ fn main(os0: Os) ! {
     os.stdio.eprintln("xo ${what}: --profile needs a native backend (arm64, amd64, or llvm); a Go backend program profiles with runtime/pprof")
     os.proc.exit(2)
   }
+  // --check (decision 0638): the checks each backend has
+  if let Some(why) = check_refusal(o, backend) {
+    os.stdio.eprintln("xo ${what}: ${why}")
+    os.proc.exit(2)
+  }
   // --opt (decision 0354): the LLVM backend's levels; the native
   // backends have none
   if !o.opt.is_empty() && (backend is "arm64" | "amd64") {
@@ -543,6 +548,32 @@ fn wait_pdbs(os: Os, what: Str, ch: Chan[Str]?) {
   }
 }
 
+/// Why --check cannot run on backend (decision 0638), None when it can:
+/// the Go backend has a garbage collector, wasm has no page blocks or
+/// guard pages, a --race build has no page blocks, and LLVM builds take
+/// leak only until its goldens pass under free and guard.
+fn check_refusal(o: Opts, backend: Str) -> Str? {
+  let name = if o.check_free { "free" } else if o.check_guard { "guard" } else if o.check_leak { "leak" } else { "" }
+  if name.is_empty() {
+    return None
+  }
+  if backend == "go" {
+    return Some("--check=${name}: native backends only; the Go backend has a garbage collector")
+  }
+  if backend == "wasm" && (o.check_free || o.check_guard) {
+    let n = if o.check_free { "free" } else { "guard" }
+    return Some("--check=${n}: native backends only (arm64, amd64, llvm); wasm has leak")
+  }
+  if o.race && o.check_free {
+    return Some("--check=free: not with --race (a race build has no page blocks); guard and leak work")
+  }
+  if backend == "llvm" && (o.check_free || o.check_guard) {
+    let n = if o.check_free { "free" } else { "guard" }
+    return Some("--check=${n}: the arm64 and amd64 backends only for now; LLVM builds have leak")
+  }
+  None
+}
+
 /// Runs a built program for `xo run`: its arguments, --profile's and
 /// --trace's files and conversions, --seed; the program's exit code.
 fn run_built(os: Os, o: Opts, bin: Str) -> Int {
@@ -562,6 +593,8 @@ fn run_built(os: Os, o: Opts, bin: Str) -> Int {
     // the deterministic scheduler's seed (decision 0350, det.xo)
     pe.push("XO_SEED=${o.topts.seed}")
   }
+  // --check (decision 0638)
+  pe = pe + check_words(o.check_free, o.check_leak)
   let code = exec_binary(os, bin, o.prog_args, pe)
   if !o.profile.is_empty() {
     // xo:allow XO0903 a path it cannot stat is not a file argument
@@ -833,6 +866,10 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // --race: the builder declares a windows program's race exports
   // (native/llrt/cabi_race)
   c.race = o.race
+  // --check (decision 0638): xo build embeds free and leak as the binary's
+  // defaults; run and test set the variables for the program instead
+  c.check_free = o.cmd == "build" && o.check_free
+  c.check_leak = o.cmd == "build" && o.check_leak
   // decision 0318: SIGURG's preemption instead of loop polls
   c.async_preempt_ok = (o.backend is "arm64" | "amd64" | "llvm") && !o.race && (os.env.get("XO_ASYNC_PREEMPT") ?? "") != "0"
   c.async_preempt_llvm = o.backend == "llvm"
@@ -2915,7 +2952,7 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
   // the amd64 backend lowers only cpu.xo's carry arithmetic yet
   let soft_cpu = o.backend == "amd64"
   // the runtime's overrun check (XO_HEAP_GUARD=1, ssa Builder.heap_guard)
-  let heap_guard = !wasm && (os.env.get("XO_HEAP_GUARD") ?? "") == "1"
+  let heap_guard = !wasm && ((os.env.get("XO_HEAP_GUARD") ?? "") == "1" || o.check_guard)
   var b = fe_cached_build(os, c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, trace_support_eff(o, release), soft_cpu, heap_guard, o.phases, o.stamps)
   let b0_fn = b.trees_missing_fn
   if b.trees_missing {

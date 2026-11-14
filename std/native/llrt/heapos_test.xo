@@ -61,3 +61,14 @@ test "an age pass marks a free page block and the next gives its pages back" {
   expect(rt.mem_load(cw, 0, 8) & (alloc.PSEEN | alloc.PADVISED)) == 0
   alloc.free(h, q)
 }
+
+test "a write after free ends the program under the free check" {
+  // decision 0638's planted bug for `--check=free` (decision 0484): a
+  // block of a class written after its free; without the check the
+  // block is not freed into a ring and nothing is planted
+  if rt.mem_load(heaps_head(), H_FQ, 8) != 0 {
+    let p = obj.alloc_obj(32)
+    obj.free_obj(p)
+    rt.mem_store(p, 8, 1, 8)
+  }
+}

@@ -96,6 +96,10 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
 - Native preemption (signals, 0318; LLVM too) and `--race` (0273): arm64
   and amd64 on darwin and linux, LLVM, and windows/amd64 (ThreadSanitizer's
   Go flavor, untested with threads until a Windows CI run).
+- Memory checks (5.5, decision 0638): `--check=free,guard,leak|all` on
+  run, test and build (use after free, record overrun, blocks live at
+  exit with status 1); the variables XO_FREE_CHECK, XO_HEAP_GUARD,
+  XO_LEAKCHECK under it. arm64 and amd64; LLVM and wasm leak only.
 
 ## Effects, faults, contracts, tests (core 6, 8, 9)
 

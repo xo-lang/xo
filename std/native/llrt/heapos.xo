@@ -1619,9 +1619,12 @@ fn held_written(q: Int) -> Bool {
 }
 
 /// "fault: XO_FREE_CHECK: ..." and the end of the process (status 70).
+/// Straight to descriptor 2: stdio.err writes a test binary's standard
+/// error into its test world, which os_exit never prints (2026-11-14:
+/// `xo test --check=free` showed only "the test exited with status 70").
 fn written_after_free() {
-  let m = "fault: XO_FREE_CHECK: a freed block was written after its free (a use after free: a store, or a reference count changed, through a pointer to it)"
-  stdio.err(raw.data(m), m.len(), true)
+  let m = "fault: XO_FREE_CHECK: a freed block was written after its free (a use after free: a store, or a reference count changed, through a pointer to it)\n"
+  stdio.write_all(2, raw.data(m), m.len())
   process.os_exit(70)
 }
 

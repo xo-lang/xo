@@ -764,6 +764,13 @@ fn (var b: Builder) target_test(e: Expr) -> Bool? {
   if b.guard_call(e) {
     return Some(b.heap_guard)
   }
+  // the memory checks `xo build --check` embeds (decision 0638)
+  if b.llrt_flag_call(e, "native/llrt/checkdef", "free") {
+    return Some(b.c.check_free)
+  }
+  if b.llrt_flag_call(e, "native/llrt/checkdef", "leak") {
+    return Some(b.c.check_leak)
+  }
   if b.llrt_flag_call(e, "native/llrt/det", "built") {
     // a deterministic run's scheduler (decision 0350)
     return Some(b.m.det)

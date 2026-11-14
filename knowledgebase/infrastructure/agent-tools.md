@@ -148,6 +148,15 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Debugging a wrong program or a fault
 
+- Memory errors (decision 0638, 2026-11-14): `xo run --check=all .` or
+  `xo test --check=all ./...` (arm64 or amd64) runs with the free check
+  (a use after free faults, a write after free ends with status 70), the
+  guarded records (an overrun faults) and the failing leak check (blocks
+  live when main returns: the report, then status 1; a test that leaks
+  fails). Use the flag rather than exporting the variables: an exported
+  XO_LEAKCHECK also makes xo itself report. `xo build --check=leak`
+  keeps the check in a binary run elsewhere (XO_LEAKCHECK=0 turns it
+  off there). LLVM and wasm take leak only.
 - `xo debug` (decisions 0253, 0504; in 0.40.0, macOS arm64, Linux and
   Windows amd64) is Xo's own debugger: reach for it before adding
   println or rerunning with guesses (lead, 2026-11-05). Scripted for
