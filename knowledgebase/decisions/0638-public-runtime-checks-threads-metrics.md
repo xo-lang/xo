@@ -1,6 +1,6 @@
 # 0638: public memory checks, XO_THREADS, and a runtime collector in std/metrics
 
-Status: Proposed (Xo Lang 2, 2026-11-14; owner request through the lead)
+Status: Accepted (owner, 2026-11-14, through the lead; proposed by Xo Lang 2 the same day)
 
 ## Context
 
@@ -122,6 +122,10 @@ default changes.
   `cpu.cfs_quota_us` and `cpu.cfs_period_us` as Go reads them. Read once
   at pool setup (Go 1.25 also rechecks it periodically; Xo's pool does not
   resize, so that is a later decision if ever). XO_THREADS set wins.
+- Owner (2026-11-14): step 2 runs the p99 latency measurement on host 2
+  (Docker `--cpus=2`, the default's 12 workers against 2) and makes the
+  default follow `cpu.max`, as Go, if the 12 workers show any cost; the
+  result is recorded here either way.
 - No call to set the worker count at run time (Go's
   runtime.GOMAXPROCS(n)): Xo's pool is sized once.
 - Windows: count the process affinity mask too (today every group), so a
