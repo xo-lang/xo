@@ -1,0 +1,166 @@
+// html stress program (decision 0616 section 2): 64 tasks run std/html's
+// escape_string, unescape_string and their round trip over 64 cases for a
+// fixed time, each result checked against Go's html package (hstressgen).
+// A background task samples the resident set every 10 s (Linux
+// /proc/self/status). Pass: no mismatch, no fault, and the resident set at
+// the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/html
+
+/// One pass over the cases from offset start: the operations done, or the
+/// first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  var ops = 0
+  for k in 0..CASES.len() {
+    let i = (start + k) % CASES.len()
+    let (text, esc, unesc) = CASES[i]
+    let e = html.escape_string(text)
+    if e != esc {
+      return Err("escape_string of case ${i}: got ${e}")
+    }
+    let u = html.unescape_string(text)
+    if u != unesc {
+      return Err("unescape_string of case ${i}: got ${u}")
+    }
+    // what escape printed unescapes back to the text
+    if html.unescape_string(e) != text {
+      return Err("round trip of case ${i}")
+    }
+    ops += 3
+  }
+  ops
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("html stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+// Written by hstressgen (Xo Lang 3, 2026-11-14) from Go's html package
+// (go1.26.11): text, EscapeString and UnescapeString.
+const CASES: List[(Str, Str, Str)] = [
+  ("&&&lt;&#x3bb;&notit;a0", "&amp;&amp;&amp;lt;&amp;#x3bb;&amp;notit;a0", "&&<λ¬it;a0"),
+  ("&copy&lt;&#128;", "&amp;copy&amp;lt;&amp;#128;", "©<€"),
+  ("&lt;&gt&nbsp;&gt &#4294967361;&gt&#99999999999999999999;&lt;>&#x110000;#&#x110000;", "&amp;lt;&amp;gt&amp;nbsp;&amp;gt &amp;#4294967361;&amp;gt&amp;#99999999999999999999;&amp;lt;&gt;&amp;#x110000;#&amp;#x110000;", "<> > A>�<>�#�"),
+  (";日&ampx&#x3bb;&#39;&#128;Z&#x;", ";日&amp;ampx&amp;#x3bb;&amp;#39;&amp;#128;Z&amp;#x;", ";日&xλ'€Z�"),
+  ("&#xD800;&ampx&#xD800;é&#x110000;&#x3bb;0&", "&amp;#xD800;&amp;ampx&amp;#xD800;é&amp;#x110000;&amp;#x3bb;0&amp;", "�&x�é�λ0&"),
+  ("><&ampa&lt;&#916;&#xD800;&lt;&notit;&#39;é&#x;", "&gt;&lt;&amp;ampa&amp;lt;&amp;#916;&amp;#xD800;&amp;lt;&amp;notit;&amp;#39;é&amp;#x;", "><&a<Δ�<¬it;'é�"),
+  ("#'&notit;&#916;Z&#916;'&gt&#99999999999999999999;&#128;&gt>😀&#99999999999999999999;", "#&#39;&amp;notit;&amp;#916;Z&amp;#916;&#39;&amp;gt&amp;#99999999999999999999;&amp;#128;&amp;gt&gt;😀&amp;#99999999999999999999;", "#'¬it;ΔZΔ'>�€>>😀�"),
+  ("\">&#99999999999999999999;&amp;&#39;&#39;", "&#34;&gt;&amp;#99999999999999999999;&amp;amp;&amp;#39;&amp;#39;", "\">�&''"),
+  ("\"0é", "&#34;0é", "\"0é"),
+  ("&unknown;&#xD800;😀\"&#x110000;&#x;😀&amp&#99999999999999999999;&#x110000;#&#x;&copy", "&amp;unknown;&amp;#xD800;😀&#34;&amp;#x110000;&amp;#x;😀&amp;amp&amp;#99999999999999999999;&amp;#x110000;#&amp;#x;&amp;copy", "&unknown;�😀\"��😀&��#�©"),
+  ("&gt&notin;&#39;😀&copy&unknown;&#x3bb;&amp\"<&notit;&notin;é", "&amp;gt&amp;notin;&amp;#39;😀&amp;copy&amp;unknown;&amp;#x3bb;&amp;amp&#34;&lt;&amp;notit;&amp;notin;é", ">∉'😀©&unknown;λ&\"<¬it;∉é"),
+  ("<&amp&#99999999999999999999;😀&quot&amp&amp;&#xD800;<&#99999999999999999999;'&&nbsp;", "&lt;&amp;amp&amp;#99999999999999999999;😀&amp;quot&amp;amp&amp;amp;&amp;#xD800;&lt;&amp;#99999999999999999999;&#39;&amp;&amp;nbsp;", "<&�😀\"&&�<�'& "),
+  (";&quot&#9 &#x3bb;&#xD800;Z ", ";&amp;quot&amp;#9 &amp;#x3bb;&amp;#xD800;Z ", ";\"&#9 λ�Z "),
+  ("&gesl;x<;Z&#39;", "&amp;gesl;x&lt;;Z&amp;#39;", "⋛︀x<;Z'"),
+  ("x'", "x&#39;", "x'"),
+  ("&#xD800;&#916;'#&gtx", "&amp;#xD800;&amp;#916;&#39;#&amp;gtx", "�Δ'#>x"),
+  ("'&notit;<&quot&#x110000;é&gesl;;&#xD800;&unknown;x&notit;", "&#39;&amp;notit;&lt;&amp;quot&amp;#x110000;é&amp;gesl;;&amp;#xD800;&amp;unknown;x&amp;notit;", "'¬it;<\"�é⋛︀;�&unknown;x¬it;"),
+  ("&quot&#x3bb;;", "&amp;quot&amp;#x3bb;;", "\"λ;"),
+  (" \"&copy ;#", " &#34;&amp;copy ;#", " \"© ;#"),
+  ("&#x;&#x;&#128;&#x110000;&quotZ&#9 a", "&amp;#x;&amp;#x;&amp;#128;&amp;#x110000;&amp;quotZ&amp;#9 a", "��€�\"Z&#9 a"),
+  (">&#x110000;&amp;x", "&gt;&amp;#x110000;&amp;amp;x", ">�&x"),
+  ("日&copyZ&quot", "日&amp;copyZ&amp;quot", "日©Z\""),
+  ("&#x;&lt;", "&amp;#x;&amp;lt;", "�<"),
+  ("&ampx&#99999999999999999999;&#x;;&lt;a#a&#99999999999999999999;&#99999999999999999999;&#916;#😀é", "&amp;ampx&amp;#99999999999999999999;&amp;#x;;&amp;lt;a#a&amp;#99999999999999999999;&amp;#99999999999999999999;&amp;#916;#😀é", "&x��;<a#a��Δ#😀é"),
+  ("&notin;&quot&#39;&notin;&#x3bb;é", "&amp;notin;&amp;quot&amp;#39;&amp;notin;&amp;#x3bb;é", "∉\"'∉λé"),
+  ("0a>&#x;&<&gesl;&#39;😀", "0a&gt;&amp;#x;&amp;&lt;&amp;gesl;&amp;#39;😀", "0a>�&<⋛︀'😀"),
+  ("&#4294967361;&#x;&#xD800;😀&#x110000;&#9 &#xD800;#&lt;\"日", "&amp;#4294967361;&amp;#x;&amp;#xD800;😀&amp;#x110000;&amp;#9 &amp;#xD800;#&amp;lt;&#34;日", "A��😀�&#9 �#<\"日"),
+  ("&lt;0\";😀\"", "&amp;lt;0&#34;;😀&#34;", "<0\";😀\""),
+  ("日'<x&#x;a&0&amp", "日&#39;&lt;x&amp;#x;a&amp;0&amp;amp", "日'<x�a&0&"),
+  (";&#9 😀&#x;&copy&nbsp;&#x3bb;&#x3bb;&#99999999999999999999;&notin;&#xD800;", ";&amp;#9 😀&amp;#x;&amp;copy&amp;nbsp;&amp;#x3bb;&amp;#x3bb;&amp;#99999999999999999999;&amp;notin;&amp;#xD800;", ";&#9 😀�© λλ�∉�"),
+  ("&#x;&#39;é日&#9 &ampx&#9 &#x110000;", "&amp;#x;&amp;#39;é日&amp;#9 &amp;ampx&amp;#9 &amp;#x110000;", "�'é日&#9 &x&#9 �"),
+  ("日''a&notit;", "日&#39;&#39;a&amp;notit;", "日''a¬it;"),
+  ("&quot&unknown;", "&amp;quot&amp;unknown;", "\"&unknown;"),
+  ("&quoté&#99999999999999999999; &quota", "&amp;quoté&amp;#99999999999999999999; &amp;quota", "\"é� \"a"),
+  ("&#39;&gt&nbsp;&#9 &#x;&#x;>😀", "&amp;#39;&amp;gt&amp;nbsp;&amp;#9 &amp;#x;&amp;#x;&gt;😀", "'> &#9 ��>😀"),
+  (";😀&#916;x&#x3bb;Z", ";😀&amp;#916;x&amp;#x3bb;Z", ";😀ΔxλZ"),
+  ("&gt&nbsp;&", "&amp;gt&amp;nbsp;&amp;", "> &"),
+  ("😀>&unknown;", "😀&gt;&amp;unknown;", "😀>&unknown;"),
+  (";&#9 &#9 😀&gesl;<'", ";&amp;#9 &amp;#9 😀&amp;gesl;&lt;&#39;", ";&#9 &#9 😀⋛︀<'"),
+  ("#&notin;", "#&amp;notin;", "#∉"),
+  ("a😀&notin;&amp;#0&#x110000;#", "a😀&amp;notin;&amp;amp;#0&amp;#x110000;#", "a😀∉&#0�#"),
+  ("&nbsp;&ampx&amp;<", "&amp;nbsp;&amp;ampx&amp;amp;&lt;", " &x&<"),
+  ("&#x;&#128;x&#99999999999999999999;&#x3bb;", "&amp;#x;&amp;#128;x&amp;#99999999999999999999;&amp;#x3bb;", "�€x�λ"),
+  ("&#916;&gesl;&quot>\"&#128;&ampx&#916;&#99999999999999999999;", "&amp;#916;&amp;gesl;&amp;quot&gt;&#34;&amp;#128;&amp;ampx&amp;#916;&amp;#99999999999999999999;", "Δ⋛︀\">\"€&xΔ�"),
+  (">&copy&#39;", "&gt;&amp;copy&amp;#39;", ">©'"),
+  ("&quotx&lt;Za&notin;", "&amp;quotx&amp;lt;Za&amp;notin;", "\"x<Za∉"),
+  ("&nbsp;&<&#99999999999999999999;&gesl;&amp&notin;>&notit;&#x;&amp&nbsp;", "&amp;nbsp;&amp;&lt;&amp;#99999999999999999999;&amp;gesl;&amp;amp&amp;notin;&gt;&amp;notit;&amp;#x;&amp;amp&amp;nbsp;", " &<�⋛︀&∉>¬it;�& "),
+  ("<&#128;&#x3bb;&#xD800;&#x3bb;&#9 &#x110000;&unknown;&#x;日&notit;😀", "&lt;&amp;#128;&amp;#x3bb;&amp;#xD800;&amp;#x3bb;&amp;#9 &amp;#x110000;&amp;unknown;&amp;#x;日&amp;notit;😀", "<€λ�λ&#9 �&unknown;�日¬it;😀"),
+  ("ZxZ0é0'&amp;a", "ZxZ0é0&#39;&amp;amp;a", "ZxZ0é0'&a"),
+  ("&unknown;&notit;&amp;<&gesl;x&copy&#128;&#916; &copy&#128;", "&amp;unknown;&amp;notit;&amp;amp;&lt;&amp;gesl;x&amp;copy&amp;#128;&amp;#916; &amp;copy&amp;#128;", "&unknown;¬it;&<⋛︀x©€Δ ©€"),
+  ("&#4294967361;>\"&copy#&ampé&copy&nbsp;&gta&notit;&#4294967361;&#128;", "&amp;#4294967361;&gt;&#34;&amp;copy#&amp;ampé&amp;copy&amp;nbsp;&amp;gta&amp;notit;&amp;#4294967361;&amp;#128;", "A>\"©#&é© >a¬it;A€"),
+  ("😀&gt<é&#x;&amp😀é", "😀&amp;gt&lt;é&amp;#x;&amp;amp😀é", "😀><é�&😀é"),
+  ("&#x3bb;a", "&amp;#x3bb;a", "λa"),
+  ("&gt&gesl;&#4294967361;&#x110000;;", "&amp;gt&amp;gesl;&amp;#4294967361;&amp;#x110000;;", ">⋛︀A�;"),
+  ("<", "&lt;", "<"),
+  ("&unknown;", "&amp;unknown;", "&unknown;"),
+  ("0", "0", "0"),
+  ("&#xD800;a", "&amp;#xD800;a", "�a"),
+  ("&#39;&copy", "&amp;#39;&amp;copy", "'©"),
+  (";&nbsp;&copy", ";&amp;nbsp;&amp;copy", "; ©"),
+  ("&quot&copy#&copy &notit;&gesl;&amp;\"", "&amp;quot&amp;copy#&amp;copy &amp;notit;&amp;gesl;&amp;amp;&#34;", "\"©#© ¬it;⋛︀&\""),
+  ("😀&#9 a", "😀&amp;#9 a", "😀&#9 a"),
+  ("x'&amp;>&notit;>&unknown;#&gt", "x&#39;&amp;amp;&gt;&amp;notit;&gt;&amp;unknown;#&amp;gt", "x'&>¬it;>&unknown;#>"),
+  ("&#9 ", "&amp;#9 ", "&#9 "),
+]
