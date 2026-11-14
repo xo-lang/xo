@@ -19,7 +19,8 @@ environment.
   was 3.97 MB of text, and 27% of the build's function text was those adds. The farcopy and farcopy4 codegen
   fixes (far page kept in x28, the page base made once per run, large captures copied with memcpy) cut the
   build's instructions 47%, 23.06 M to 12.28 M. What remains per `?` is one memcpy call.
-- **Runtime, on the error path only**: one 53 KB allocation and copy per frame per propagated error, to show at
+- **Runtime, on the error path only** (verified: compiler/ssa/call.xo's `?` lowering calls push_frame only in the
+  failure branch, before the error return, so a success path builds no frame and copies nothing): one 53 KB allocation and copy per frame per propagated error, to show at
   most 64 bytes of it. A request that fails through three `?` levels copies its request three times.
   The success path is unaffected.
 
@@ -45,10 +46,25 @@ a copy of the value. Smaller parameters keep the copy and the lazy format.
 
 ## Alternatives
 
-- **Keep copies (status quo with farcopy4)**: the code-size problem is solved, but the runtime copy stays.
-- **Reference instead of copy**: a by-reference parameter lives in the caller's frame memory, which ends
-  before the trace prints. It would need boxing at the call, a cost on the success path. Rejected.
-- **Omit large parameters** (print `(...)` for them): loses information the trace shows today. Rejected
+Each option's effect on the trace text and on code size (aiplatform test build, after farcopy4):
+
+- **(a) Capture large parameters by reference instead of copying.** Trace text: the same while the memory lives.
+  But the memory does not live: a by-reference parameter is in a caller's frame (0151). The trace is printed
+  after every function it passes through has returned (main's report, a handler's log), so the frame's
+  closure runs after that memory is gone. Making it valid needs a heap box at the call, a cost on the
+  success path. Code size: smallest (one pointer). Rejected: unsound without the box, and the box costs every call.
+- **(b) Capture a size-capped summary above a threshold.** This is the proposed decision, with the summary being the
+  64-byte Debug prefix the trace would print anyway (type name and first fields), made at capture. The trace text
+  is unchanged. A shorter fixed summary (type name only) would change the text and lose the field values. Code
+  size: the closure captures a Str. The per-`?` memcpy call (8 instructions) becomes a call to the formatter, about
+  the same. Runtime on errors: a bounded format instead of a 53 KB allocation and copy.
+- **(c) Build the closure only on the error path.** Already so (Context). Nothing to gain.
+- **Keep copies (status quo with farcopy4).** Trace text unchanged. Code size is already solved by the memcpy. The
+  cost left is 53 KB per frame on errors only.
+- **Omit large parameters** (print `(...)` for them): the trace text loses what it shows today. Rejected
   unless the eager format proves costly.
-- **Pass large request structs by reference in the SDK generator** (an API change of the generated SDKs): the
-  value semantics already pass them by reference (0151). Only the frame copy remains, so this does not help.
+- **Pass request structs by reference in the SDK generator**: the backend already passes them by reference
+  (0151), and only the frame's copy remains. No gain.
+
+Since the copy is error-path only, this is not a success-path speed issue. It matters for services whose errors
+are frequent (retries, validation failures), each paying a 53 KB copy per frame.
