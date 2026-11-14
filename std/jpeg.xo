@@ -553,8 +553,22 @@ struct Dec {
   pcb: BytesBuilder = BytesBuilder.new()
   pcr: BytesBuilder = BytesBuilder.new()
   pk: BytesBuilder = BytesBuilder.new()
+  // a progressive image's coefficients, in MCU order (every component's
+  // blocks of one MCU together, coff[ci] the first of ci's), grown only
+  // to the last block a scan writes (ensure_coef): a header that asks for
+  // a large image allocates as much as its scans fill, not the frame
   pcoef: List[Int32] = []
   pbase: List[Int] = []
+  coff: List[Int] = []
+  bpm: Int = 0
+  ptotal: Int = 0
+  zc: List[Int32] = []
+  // each plane's full size; the builders are written up to the block
+  // being stored (ensure_plane) and padded to it in finish
+  ysz: Int = 0
+  csz: Int = 0
+  ksz: Int = 0
+  zb: Bytes = b""
   mxx: Int = 0
   myy: Int = 0
 }
@@ -1051,35 +1065,125 @@ fn process_sof(var d: Dec, n: Int) -> () ! JpegErr {
   }
 }
 
-/// Allocates the planes (Go's makeImg).
+/// Sizes the planes and the coefficient store (Go's makeImg). Nothing is
+/// written yet: Go's make returns pages the system zeroes on first touch,
+/// so a frame header asking for a large image costs Go nothing until its
+/// scans decode; the planes and coefficients here grow to the blocks the
+/// scans reach (ensure_plane, ensure_coef), and a decode that fails early
+/// touches no more.
 fn make_img(var d: Dec, mxx: Int, myy: Int) {
   d.mxx = mxx
   d.myy = myy
   d.made = true
+  d.zb = Bytes.zeroed(ZCHUNK)
   if d.progressive {
-    // every component's blocks, so the coefficient list grows once
-    var total = 0
+    d.coff = zlist(4)
+    var bpm = 0
     for i in 0..d.n_comp {
-      total += mxx * myy * d.ch[i] * d.cv[i] * 64
+      d.coff[i] = bpm
+      bpm += d.ch[i] * d.cv[i]
     }
-    d.pcoef = List[Int32].with_capacity(total)
+    d.bpm = bpm
+    d.ptotal = mxx * myy * bpm * 64
   }
   if d.n_comp == 1 {
     d.ystride = 8 * mxx
-    d.py.write(Bytes.zeroed(8 * mxx * 8 * myy))
+    d.ysz = 8 * mxx * 8 * myy
+    d.py = BytesBuilder.with_capacity(d.ysz)
     return
   }
   let h0 = d.ch[0]
   let v0 = d.cv[0]
   d.ystride = 8 * h0 * mxx
   d.cstride = 8 * d.ch[1] * mxx
-  d.py.write(Bytes.zeroed(d.ystride * 8 * v0 * myy))
-  d.pcb.write(Bytes.zeroed(d.cstride * 8 * d.cv[1] * myy))
-  d.pcr.write(Bytes.zeroed(d.cstride * 8 * d.cv[1] * myy))
+  d.ysz = d.ystride * 8 * v0 * myy
+  d.csz = d.cstride * 8 * d.cv[1] * myy
+  d.py = BytesBuilder.with_capacity(d.ysz)
+  d.pcb = BytesBuilder.with_capacity(d.csz)
+  d.pcr = BytesBuilder.with_capacity(d.csz)
   if d.n_comp == 4 {
     d.kstride = 8 * d.ch[3] * mxx
-    d.pk.write(Bytes.zeroed(d.kstride * 8 * d.cv[3] * myy))
+    d.ksz = d.kstride * 8 * d.cv[3] * myy
+    d.pk = BytesBuilder.with_capacity(d.ksz)
   }
+}
+
+/// Zero bytes and coefficients a store grows by at a time.
+const ZCHUNK: Int = 65536
+
+/// Writes zero bytes to p until it holds need bytes (at most full): the
+/// rows before a block are zero until a scan stores them, as in Go's
+/// fresh planes.
+fn ensure_plane(var p: BytesBuilder, zb: Bytes, need: Int, full: Int) {
+  if p.len() >= need {
+    return
+  }
+  // doubling, so a plane filled block by block is written once over
+  var target = p.len() * 2
+  if target < need {
+    target = need
+  }
+  if target > full {
+    target = full
+  }
+  while p.len() < target {
+    let k = if target - p.len() < ZCHUNK { target - p.len() } else { ZCHUNK }
+    p.write(zb[0..k])
+  }
+}
+
+/// The index of the first coefficient of block (bx, by) of component ci
+/// in the MCU ordered store: block (bx, by) is in MCU (bx / h, by / v).
+fn coef_at(d: Dec, ci: Int, bx: Int, by: Int) -> Int {
+  let h = d.ch[ci]
+  let v = d.cv[ci]
+  let mcu = (by / v) * d.mxx + bx / h
+  (mcu * d.bpm + d.coff[ci] + (by % v) * h + bx % h) * 64
+}
+
+/// Coefficient u: 0 past the store's end (a block no scan has written).
+fn coef_get(d: Dec, u: Int) -> Int {
+  if u >= d.pcoef.len() { 0 } else { Int(d.pcoef[u]) }
+}
+
+/// Sets coefficient u to v, growing the store to u's block first: only a
+/// scan that writes a block grows the store (an end-of-band run skips
+/// blocks without a write, so it touches none).
+fn coef_set(var d: Dec, u: Int, v: Int) {
+  if u >= d.pcoef.len() {
+    ensure_coef(d, (u / 64 + 1) * 64)
+  }
+  d.pcoef[u] = Int32(v)
+}
+
+/// Grows the coefficient store to need entries (doubling, at most the
+/// frame's), with zeros.
+fn ensure_coef(var d: Dec, need: Int) {
+  let n = d.pcoef.len()
+  if n >= need {
+    return
+  }
+  if d.zc.is_empty() {
+    var z: List[Int32] = List[Int32].with_capacity(ZCHUNK)
+    for _ in 0..ZCHUNK {
+      z.push(Int32(0))
+    }
+    d.zc = z
+  }
+  var target = n * 2
+  if target < need {
+    target = need
+  }
+  if target > d.ptotal {
+    target = d.ptotal
+  }
+  var parts: List[List[Int32]] = [d.pcoef]
+  var have = n
+  while have < target {
+    parts.push(d.zc)
+    have += ZCHUNK
+  }
+  d.pcoef = List.concat(parts)
 }
 
 /// Dequantizes, runs the inverse DCT and stores the block (Go's
@@ -1091,6 +1195,12 @@ fn reconstruct_block(var d: Dec, var b: List[Int], bx: Int, by: Int, ci: Int) {
   }
   idct_rows(b)
   idct_cols(b)
+  store_block(d, b, bx, by, ci)
+}
+
+/// Stores block b, already through the inverse DCT, at (bx, by) of
+/// component ci's plane.
+fn store_block(var d: Dec, b: List[Int], bx: Int, by: Int, ci: Int) {
   var stride = d.ystride
   if d.n_comp != 1 {
     if ci == 1 || ci == 2 {
@@ -1100,6 +1210,16 @@ fn reconstruct_block(var d: Dec, var b: List[Int], bx: Int, by: Int, ci: Int) {
     }
   }
   let base = 8 * (by * stride + bx)
+  let need = base + 7 * stride + 8
+  if d.n_comp == 1 || ci == 0 {
+    ensure_plane(d.py, d.zb, need, d.ysz)
+  } else if ci == 1 {
+    ensure_plane(d.pcb, d.zb, need, d.csz)
+  } else if ci == 2 {
+    ensure_plane(d.pcr, d.zb, need, d.csz)
+  } else {
+    ensure_plane(d.pk, d.zb, need, d.ksz)
+  }
   for y in 0..8 {
     var hi = 0
     var lo = 0
@@ -1140,7 +1260,7 @@ fn refine_nonzeroes(var d: Dec, pb: Int, zig0: Int, zig_end: Int, nz0: Int, delt
   var nz = nz0
   while zig <= zig_end {
     let u = pb + UNZIG[zig]
-    let cur = Int(d.pcoef[u])
+    let cur = coef_get(d, u)
     if cur == 0 {
       if nz == 0 {
         break
@@ -1155,9 +1275,9 @@ fn refine_nonzeroes(var d: Dec, pb: Int, zig0: Int, zig_end: Int, nz0: Int, delt
     }
     if bit != 0 {
       if cur >= 0 {
-        d.pcoef[u] = Int32(w32(cur + delta))
+        coef_set(d, u, w32(cur + delta))
       } else {
-        d.pcoef[u] = Int32(w32(cur - delta))
+        coef_set(d, u, w32(cur - delta))
       }
     }
     zig += 1
@@ -1174,7 +1294,7 @@ fn refine(var d: Dec, pb: Int, ta: Int, zig_start: Int, zig_end: Int, delta: Int
       return Err(bit_err(d.ec))
     }
     if bit != 0 {
-      d.pcoef[pb] = Int32(w32(Int(d.pcoef[pb]) | delta))
+      coef_set(d, pb, w32(coef_get(d, pb) | delta))
     }
     return
   }
@@ -1222,7 +1342,7 @@ fn refine(var d: Dec, pb: Int, ta: Int, zig_start: Int, zig_end: Int, delta: Int
           return Err(fmt_err("too many coefficients"))
         }
         if z != 0 {
-          d.pcoef[pb + UNZIG[zig]] = Int32(z)
+          coef_set(d, pb + UNZIG[zig], z)
         }
         zig += 1
       }
@@ -1271,6 +1391,13 @@ fn find_rst(var d: Dec, expected: Int, t0_in: Int, t1_in: Int) -> () ! JpegErr {
 }
 
 fn load_block(d: Dec, base: Int, var b: List[Int]) {
+  // a block past the store's end was never written: zero
+  if base >= d.pcoef.len() {
+    for k in 0..64 {
+      b[k] = 0
+    }
+    return
+  }
   for k in 0..64 {
     b[k] = Int(d.pcoef[base + k])
   }
@@ -1358,13 +1485,9 @@ fn process_sos(var d: Dec, n: Int, max_pixels: Int) -> () ! JpegErr {
   if d.progressive {
     for i in 0..n_comp {
       let ci = scan_ci[i]
-      if d.pbase[ci] < 0 {
-        d.pbase[ci] = d.pcoef.len()
-        let blocks = mxx * myy * d.ch[ci] * d.cv[ci]
-        for _ in 0..(blocks * 64) {
-          d.pcoef.push(Int32(0))
-        }
-      }
+      // the component has coefficients (its blocks are written as its
+      // scans reach them, ensure_coef)
+      d.pbase[ci] = 0
     }
   }
   d.ba = 0
@@ -1398,7 +1521,7 @@ fn process_sos(var d: Dec, n: Int, max_pixels: Int) -> () ! JpegErr {
           }
           var pb = 0
           if d.progressive {
-            pb = d.pbase[ci] + (by * mxx * hi + bx) * 64
+            pb = coef_at(d, ci, bx, by)
           } else {
             for k in 0..64 {
               b[k] = 0
@@ -1423,7 +1546,7 @@ fn process_sos(var d: Dec, n: Int, max_pixels: Int) -> () ! JpegErr {
               }
               dc[ci] = w32(dc[ci] + dc_delta)
               if d.progressive {
-                d.pcoef[pb] = Int32(w32(dc[ci] << al))
+                coef_set(d, pb, w32(dc[ci] << al))
               } else {
                 b[0] = w32(dc[ci] << al)
               }
@@ -1449,7 +1572,7 @@ fn process_sos(var d: Dec, n: Int, max_pixels: Int) -> () ! JpegErr {
                     return Err(bit_err(d.ec))
                   }
                   if d.progressive {
-                    d.pcoef[pb + UNZIG[zig]] = Int32(w32(ac << al))
+                    coef_set(d, pb + UNZIG[zig], w32(ac << al))
                   } else {
                     b[UNZIG[zig]] = w32(ac << al)
                   }
@@ -1508,22 +1631,29 @@ fn process_sos(var d: Dec, n: Int, max_pixels: Int) -> () ! JpegErr {
 /// Dequantizes and stores every block a progressive image gathered (Go's
 /// reconstructProgressiveImage).
 fn reconstruct_progressive(var d: Dec) {
-  let h0 = d.ch[0]
-  let mxx = (d.w + 8 * h0 - 1) / (8 * h0)
   var b = zlist(64)
+  // a block no scan wrote is all zero, whatever its quantization: its
+  // inverse DCT, computed once, is stored without the work per block
+  var flat = zlist(64)
+  idct_rows(flat)
+  idct_cols(flat)
   for i in 0..d.n_comp {
     if d.pbase[i] < 0 {
       continue
     }
     let v = 8 * d.cv[0] / d.cv[i]
     let h = 8 * d.ch[0] / d.ch[i]
-    let stride = mxx * d.ch[i]
     var by = 0
     while by * v < d.h {
       var bx = 0
       while bx * h < d.w {
-        load_block(d, d.pbase[i] + (by * stride + bx) * 64, b)
-        reconstruct_block(d, b, bx, by, i)
+        let base = coef_at(d, i, bx, by)
+        if base >= d.pcoef.len() {
+          store_block(d, flat, bx, by, i)
+        } else {
+          load_block(d, base, b)
+          reconstruct_block(d, b, bx, by, i)
+        }
         bx += 1
       }
       by += 1
@@ -1622,6 +1752,15 @@ fn finish(var d: Dec) -> Image ! JpegErr {
   }
   if !d.made {
     return Err(fmt_err("missing SOS marker"))
+  }
+  // the rows no scan stored are zero, as in Go's planes
+  ensure_plane(d.py, d.zb, d.ysz, d.ysz)
+  if d.n_comp != 1 {
+    ensure_plane(d.pcb, d.zb, d.csz, d.csz)
+    ensure_plane(d.pcr, d.zb, d.csz, d.csz)
+    if d.n_comp == 4 {
+      ensure_plane(d.pk, d.zb, d.ksz, d.ksz)
+    }
   }
   let w = d.w
   let h = d.h

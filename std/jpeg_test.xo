@@ -1,0 +1,40 @@
+// Go's image/jpeg (go1.26.11) on frame headers that ask for a large image
+// whose scan data runs out: Go's errors. Go's make returns pages the system
+// zeroes on first touch, so such a file costs Go almost nothing; std/jpeg
+// grows its planes and coefficients only as far as the scans reach, so it
+// fails as early (a 20 KB progressive file asking for 10000x10000 touched
+// 1.5 GB and took 1.1 s before; 4 MB and under 1 ms after, on a Mac).
+
+/// Go's encoding of a 16x16 gray image at quality 75 with its SOF0 frame
+/// header changed to 10000x10000.
+const BASELINE_BIG: Str = "ffd8ffdb008400080606070605080707070909080a0c140d0c0b0b0c1912130f141d1a1f1e1d1a1c1c20242e2720222c231c1c2837292c30313434341f27393d38323c2e333432010909090c0b0c180d0d1832211c213232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232ffc0000b082710271001011100ffc400d20000010501010101010100000000000000000102030405060708090a0b100002010303020403050504040000017d01020300041105122131410613516107227114328191a1082342b1c11552d1f02433627282090a161718191a25262728292a3435363738393a434445464748494a535455565758595a636465666768696a737475767778797a838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae1e2e3e4e5e6e7e8e9eaf1f2f3f4f5f6f7f8f9faffda0008010100003f00a696fe17beb78e2b78f4dd39c38632dac568cc460fca7ccb8718e73d33c0e7ae649a07d2fceb8b692c6eac63dbb5f7da199b3807f7514321ea7b13c0c9c738d193c9d5f32e2fa0ba1118e2685ee628d4f24168e2b740dc9e79048e3238c0b67e26b0f23eccd7da96fceefb24578be5e318cf9b3a75cf6cf439c719ffd9"
+
+/// Go's video-001.progressive.jpeg (image/testdata) cut 64 bytes into its
+/// first scan, with its SOF2 frame header changed to 10000x10000.
+const PROGRESSIVE_BIG: Str = "ffd8ffe000104a46494600010102001c001c0000ffdb00430001010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101ffdb00430101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101ffc20011082710271003011100021101031101ffc4001e0000000603010100000000000000000000030406070809010205000affc4001c0100000701010000000000000000000000000102030405060708ffda000c03010002100310000001abee27ee2112e68a922207811e61ac927748f022cebd905c3b5c6ac68346109003af8a83056d6e444df90222b076d4225c2b21e3915069a6b7480d4b0d666d82"
+
+fn hb(s: Str) -> Bytes { Bytes.from_hex(s).or_fault("hex") }
+
+test "a large frame whose scan data runs out fails as Go's decoder does" {
+  match decode(hb(BASELINE_BIG)) {
+    Ok(_) => expect("decoded") == "an error"
+    Err(e) => expect(e.display()) == "invalid JPEG format: missing 0xff00 sequence"
+  }
+  match decode(hb(PROGRESSIVE_BIG)) {
+    Ok(_) => expect("decoded") == "an error"
+    Err(e) => expect(e.display()) == "invalid JPEG format: short Huffman data"
+  }
+  let c = decode_config(hb(PROGRESSIVE_BIG)) ?? e => return expect(e.display()) == "a config"
+  expect((c.width, c.height)) == (10000, 10000)
+}
+
+test "max_pixels refuses a frame one pixel past it" {
+  match decode(hb(PROGRESSIVE_BIG), 99999999) {
+    Ok(_) => expect("decoded") == "an error"
+    Err(e) => expect(e.display()) == "invalid JPEG format: image too large"
+  }
+  match decode(hb(BASELINE_BIG), 99999999) {
+    Ok(_) => expect("decoded") == "an error"
+    Err(e) => expect(e.display()) == "invalid JPEG format: image too large"
+  }
+}

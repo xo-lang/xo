@@ -1,5 +1,17 @@
 # std/jpeg changes
 
+## 2026-11-14: security: a frame header asking for a large image allocates only what the scans fill
+
+- Kind: security
+- Commit: this push
+- Found by: the decision 0616 std/jpeg review (Xo Lang 3): a probe of a frame header asking for 10000x10000 with little scan data behind it
+- Go reference: image/jpeg makeImg and processSOS allocate the planes and a progressive image's coefficient blocks from the frame header with make, whose pages the system zeroes on first touch, so a file whose scans fail early costs Go almost nothing
+- Before: std/jpeg wrote every plane's zero bytes (Bytes.zeroed, then copied into its builder) and pushed every coefficient of a progressive component one at a time when its first scan began, so the cost followed the header, not the data: Go's video-001.progressive.jpeg (20 KB) with its header changed to 10000x10000 took 1.08 s and 1.5 GB resident before failing (Go: 3 ms, 8.6 MB); a 496 byte baseline file 27 ms and 204 MB (Go: under 1 ms, 5.9 MB); Mac, native
+- Fix: the planes are reserved (with_capacity) and written with zeros only up to the block being stored, doubling (ensure_plane), and padded to their size in finish; a progressive image's coefficients are kept in MCU order (every component's blocks of one MCU together, coef_at), so every scan writes in MCU row order, and the store grows by doubling only when a scan writes a coefficient past its end (coef_set, ensure_coef, a 64 Ki zero chunk concatenated), so an end-of-band run touches nothing; a coefficient past its end reads as zero (coef_get), and a block no scan wrote is stored as the inverse DCT of zero computed once (reconstruct_progressive), not dequantized and transformed. Both files above now fail in under 1 ms with 4 MB resident, with Go's errors; a valid 10000x10000 gray file (1.17 MB, Go's encoder) decodes in 460 ms and 105 MB, was 512 ms and 205 MB (Go: 226 ms, 108 MB)
+- Test: std/jpeg_test.xo "a large frame whose scan data runs out fails as Go's decoder does" (baseline and progressive, Go's error texts, decode_config 10000x10000) and "max_pixels refuses a frame one pixel past it"; TestStdCorpora jpeg, jpegenc, jpegfuzz on go, arm64, llvm; TestJpegFuzz and TestJpegEncFuzz on arm64 and llvm
+- Affected: every backend, 0.38.0 to 0.51.1; bounded by max_pixels (100,000,000 by default), so a cost per decode, not unbounded
+- Shipped in: not yet released
+
 ## 2026-11-11: refactor: std/jpeg is one file (decisions 0588, 0597)
 
 - Kind: refactor
