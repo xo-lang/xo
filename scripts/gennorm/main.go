@@ -73,6 +73,32 @@ func decomps(keys, offs, runes []int) (recs, pool []byte) {
 	return
 }
 
+// ssProps is x/text's stream-safe count of r (UAX #15 section 13, its
+// nLeadingNonStarters and nTrailingNonStarters, not exported): found by
+// where NFD puts U+034F after runs of U+0301. One set of counts serves every
+// form (checked against NFKD for every rune, 2026-11-14).
+func ssProps(r rune) (lead, trail int) {
+	cgj := func(s string) bool { return strings.Contains(norm.NFD.String(s), "\u034f") }
+	minK := func(pred func(int) bool) int {
+		lo, hi := 0, 31
+		for lo < hi {
+			m := (lo + hi) / 2
+			if pred(m) {
+				hi = m
+			} else {
+				lo = m + 1
+			}
+		}
+		return lo
+	}
+	rs := string(r)
+	lead = 31 - minK(func(k int) bool { return k <= 30 && cgj("a"+strings.Repeat("\u0301", k)+rs) })
+	if lead > 0 {
+		return lead, lead
+	}
+	return 0, 31 - minK(func(k int) bool { return k <= 30 && cgj(rs+strings.Repeat("\u0301", k)) })
+}
+
 func main() {
 	path := os.Args[1]
 	var ck, co, cr, kk, ko, kr, cc, pk, pv []int
@@ -90,10 +116,17 @@ func main() {
 		}
 		s := string(r)
 		if r >= 0xC0 {
-			if norm.NFC.String(s) != s || !norm.NFC.PropertiesString(s).BoundaryBefore() {
+			// a rune with a leading stream-safe count is unstable too, so
+			// std/norm counts only within a run (U+FF9E and U+FF9F are
+			// NFC's own and count; flush_run)
+			lead := 0
+			if norm.NFKD.String(s) != s || norm.NFD.PropertiesString(s).CCC() != 0 {
+				lead, _ = ssProps(r)
+			}
+			if norm.NFC.String(s) != s || !norm.NFC.PropertiesString(s).BoundaryBefore() || lead > 0 {
 				uc = add(uc, int(r))
 			}
-			if norm.NFKC.String(s) != s || !norm.NFKC.PropertiesString(s).BoundaryBefore() {
+			if norm.NFKC.String(s) != s || !norm.NFKC.PropertiesString(s).BoundaryBefore() || lead > 0 {
 				uk = add(uk, int(r))
 			}
 		}
@@ -212,7 +245,48 @@ func main() {
 	w.WriteString("/// Per first rune up to U+400 (and one more), 2 bytes: the first record of COMP whose first rune is at least that.\nconst COMP_IDX: Bytes = " + lit(compIdx) + "\n\n")
 	w.WriteString("/// Canonical combining classes as 7 byte records, ascending: the first rune (3 bytes), the last rune (3 bytes), the class.\nconst CCC: Bytes = " + lit(ccb) + "\n\n")
 	w.WriteString("/// Primary composition pairs, ascending by first * 2**21 + second, 9 bytes each: that key (6 bytes) and the rune it composes to (3 bytes).\nconst COMP: Bytes = " + lit(cmb) + "\n\n")
-	// sort pairs by key
+	// stream-safe counts (Hangul syllables and Jamo V and T are arithmetic
+	// in std/norm), as ranges of runes with the same counts
+	type ssr struct {
+		lo, hi rune
+		v      int
+	}
+	var ss []ssr
+	for r := rune(0xA0); r <= 0x10FFFF; r++ {
+		if r >= 0xD800 && r <= 0xDFFF || (r >= 0xAC00 && r <= 0xD7A3) || (r >= 0x1161 && r <= 0x1175) || (r >= 0x11A8 && r <= 0x11C2) {
+			continue
+		}
+		s := string(r)
+		if norm.NFKD.String(s) == s && norm.NFD.PropertiesString(s).CCC() == 0 {
+			continue
+		}
+		l, t := ssProps(r)
+		if l == 0 && t == 0 {
+			continue
+		}
+		v := l<<4 | t
+		if n := len(ss); n > 0 && ss[n-1].hi+1 == r && ss[n-1].v == v && r-ss[n-1].lo < 255 {
+			ss[n-1].hi = r
+			continue
+		}
+		ss = append(ss, ssr{r, r, v})
+	}
+	var ssb, ssIdx []byte
+	for _, g := range ss {
+		ssb = append(ssb, byte(g.lo), byte(g.lo>>8), byte(g.lo>>16), byte(g.hi-g.lo), byte(g.v))
+	}
+	for blk := 0; blk <= 0x200; blk++ {
+		first := len(ss)
+		for i, g := range ss {
+			if int(g.hi) >= blk<<8 {
+				first = i
+				break
+			}
+		}
+		ssIdx = append(ssIdx, idx16(first)...)
+	}
+	w.WriteString("/// Stream-safe counts (UAX #15 section 13, x/text's nLeadingNonStarters and nTrailingNonStarters) of the runes from U+A0 that have any, but Hangul syllables and Jamo V and T, as 5 byte records ascending: the first rune (3 bytes), the length minus one, and the leading count times 16 plus the trailing count.\nconst STREAM_SAFE: Bytes = " + lit(ssb) + "\n\n")
+	w.WriteString("/// Per block of 256 runes up to U+20000 (and one more), 2 bytes: the first record of STREAM_SAFE that ends at or after the block's first rune.\nconst SS_IDX: Bytes = " + lit(ssIdx) + "\n\n")
 	b, err := os.ReadFile(path)
 	if err != nil {
 		panic(err)

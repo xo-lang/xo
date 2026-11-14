@@ -1,0 +1,53 @@
+// std/norm's own tests; the x/text corpus is internal/stdtest's
+// testdata/corpus/norm and TestNormFuzz.
+
+fn marks(n: Int, m: Str) -> Str {
+  var b = StrBuilder.new()
+  for _ in 0..n {
+    b.write(m)
+  }
+  b.freeze()
+}
+
+fn cgj_at(s: Str) -> List[Int] {
+  var at: List[Int] = []
+  var i = 0
+  for r in s.runes() {
+    if Int(r) == 0x34F {
+      at.push(i)
+    }
+    i += 1
+  }
+  at
+}
+
+test "past 30 non-starters a U+034F goes in, as x/text's stream-safe text" {
+  // golang.org/x/text/unicode/norm v0.43.0's answers (the rune offsets of U+034F)
+  for n in [29, 30] {
+    let s = "a" + marks(n, "\u{301}")
+    expect(cgj_at(normalize(s, Form.Nfd))) == []
+    expect(is_normalized(s, Form.Nfd)) == true
+  }
+  let s31 = "a" + marks(31, "\u{301}")
+  expect(cgj_at(normalize(s31, Form.Nfd))) == [31]
+  expect(cgj_at(normalize(s31, Form.Nfc))) == [30]
+  expect(is_normalized(s31, Form.Nfd)) == false
+  expect(cgj_at(normalize("a" + marks(61, "\u{301}"), Form.Nfc))) == [30, 61]
+  // Jamo V counts as a non-starter, U+0344 as two, a starter sets the count to its trailing marks
+  expect(cgj_at(normalize("a" + marks(29, "\u{301}") + "\u{1161}\u{301}\u{301}", Form.Nfd))) == [31]
+  expect(cgj_at(normalize("a" + marks(29, "\u{301}") + "\u{344}", Form.Nfd))) == [30]
+  expect(cgj_at(normalize("a" + marks(28, "\u{301}") + "\u{1e08}" + marks(29, "\u{301}"), Form.Nfd))) == [60]
+  expect(cgj_at(normalize(marks(16, "\u{344}"), Form.Nfkc))) == [30]
+  // U+FF9E counts in every form (x/text takes one set of counts)
+  expect(cgj_at(normalize("a" + marks(29, "\u{301}") + "\u{ff9e}\u{301}", Form.Nfc))) == [30]
+  // a U+034F already in the text is a starter
+  expect(cgj_at(normalize("a" + marks(20, "\u{301}") + "\u{34f}" + marks(20, "\u{301}"), Form.Nfd))) == [21]
+}
+
+test "a long run of marks normalizes in linear time" {
+  // 200,000 alternating marks of classes 230 and 220: canonical ordering of
+  // one run was quadratic (32,000 took 88 ms on a Mac)
+  let s = "a" + marks(100000, "\u{301}\u{323}")
+  let out = normalize(s, Form.Nfc)
+  expect(cgj_at(out).len()) == 6666
+}
