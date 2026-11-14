@@ -1349,6 +1349,9 @@ fn (var b: Builder) part_expr(p: parser.StringPart, pe: Expr) -> Expr {
 /// pre is empty, each evaluated where its piece is appended.
 fn (var b: Builder) string_lit_append(acc0: Int, x: parser.StringLit, pre: List[Int]) -> Int {
   let st = b.str_t()
+  if acc0 < 0 && pre.is_empty() && b.presizable(x) {
+    return b.string_lit_presized(x)
+  }
   var acc = acc0
   var j = 0
   for p in x.parts {
@@ -1398,6 +1401,79 @@ fn (var b: Builder) string_lit_append(acc0: Int, x: parser.StringLit, pre: List[
   }
   if acc < 0 {
     return b.const_str("")
+  }
+  acc
+}
+
+/// Whether x is three or more pieces, each literal text or a plain Str
+/// value (no `${x:?}`, no format spec), so string_lit_presized can size
+/// its result once. Not with inline strings, whose short results stay
+/// inline.
+fn (var b: Builder) presizable(x: parser.StringLit) -> Bool {
+  if b.c.inline_str {
+    return false
+  }
+  var n = 0
+  for p in x.parts {
+    match p.expr {
+      None => {
+        if !p.text.is_empty() {
+          n += 1
+        }
+      }
+      Some(pe) => {
+        if p.debug || p.spec is Some(_) {
+          return false
+        }
+        let ct = b.nat_check(pe)
+        if b.tkind(b.nat_of(pe)) != Kind.Str || b.is_prelude_named(ct, ["Duration", "Time", "Bytes", "UInt64", "Rune"]) {
+          return false
+        }
+        n += 1
+      }
+    }
+  }
+  n >= 3
+}
+
+/// x (presizable) as one string of the pieces' total length, then each
+/// piece appended in place: an interpolation of 13 Str pieces
+/// (url.Url.display) regrew its result from its first piece, 30% of its
+/// time, where Go's URL.String builds into one buffer.
+fn (var b: Builder) string_lit_presized(x: parser.StringLit) -> Int {
+  let st = b.str_t()
+  let it = b.int_t()
+  var vals: List[Int] = []
+  var lits = 0
+  for p in x.parts {
+    match p.expr {
+      None => {
+        if !p.text.is_empty() {
+          vals.push(b.add(Op.Const, st, Aux.Bs(b: p.text), []))
+          lits += p.text.len()
+        }
+      }
+      Some(pe) => vals.push(b.expr(pe))
+    }
+  }
+  var total = b.cint(lits)
+  var k = 0
+  for p in x.parts {
+    match p.expr {
+      None => {
+        if !p.text.is_empty() {
+          k += 1
+        }
+      }
+      Some(_) => {
+        total = b.add(Op.Add, it, Aux.None, [total, b.call("Str.len", it, "", [vals[k]])])
+        k += 1
+      }
+    }
+  }
+  var acc = b.rt("rs_with_cap", st, [total])
+  for v in vals {
+    acc = b.call("str.concat", st, "", [acc, v])
   }
   acc
 }

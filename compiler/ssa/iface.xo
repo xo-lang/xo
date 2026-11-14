@@ -1221,6 +1221,12 @@ fn (var b: Builder) eq_values(l: Int, r: Int) -> Int {
 /// on amd64 against LLVM's 6, which inlines str_eq's length test).
 fn (var b: Builder) str_eq(l: Int, r: Int) -> Int {
   let bt = b.bool_t()
+  // `s == ""`: the length alone, no call (url.Url.display tests six
+  // optional parts so, 4% of its time in obj.str_eq)
+  if b.const_empty(l) || b.const_empty(r) {
+    let other = if b.const_empty(l) { r } else { l }
+    return b.add(Op.Eq, bt, Aux.None, [b.str_len_of(other), b.cint(0)])
+  }
   let join = b.new_block()
   let res = b.s.f.add_param(join, bt)
   let (yes, no) = b.branch(b.add(Op.Eq, bt, Aux.None, [b.str_len_of(l), b.str_len_of(r)]))
@@ -1238,7 +1244,23 @@ fn (var b: Builder) str_eq(l: Int, r: Int) -> Int {
 fn (var b: Builder) str_eq_br(l: Int, r: Int, fail: Int) {
   let bt = b.bool_t()
   b.test_br(b.add(Op.Eq, bt, Aux.None, [b.str_len_of(l), b.str_len_of(r)]), fail)
+  if b.const_empty(l) || b.const_empty(r) {
+    return
+  }
   b.test_br(b.call("str.eq", bt, "", [l, r]), fail)
+}
+
+/// Whether value s is the constant empty Str.
+fn (var b: Builder) const_empty(s: Int) -> Bool {
+  let v = b.s.f.values[s]
+  if v.op != Op.Const {
+    return false
+  }
+  match b.s.f.aux(v) {
+    Aux.S(s: t) => t.is_empty()
+    Aux.Bs(b: t) => t.is_empty()
+    _ => false
+  }
 }
 
 /// A Str's length: a constant for a literal, else Str.len.

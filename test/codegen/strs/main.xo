@@ -178,9 +178,34 @@ fn uuid_byte(u: uuid.Uuid, k: Int) -> Int {
   Int(b[k % 16]) + b.len()
 }
 
+// A Str compared with "" is its length alone: no call of obj.str_eq once
+// the lengths are equal (ssa iface.xo str_eq, 2026-11-14: url.Url.display
+// tested six optional parts so).
+fn count_empty(hs: List[Str]) -> Int {
+  // arm64: -"_?xo_x_obj_str_eq"
+  // amd64: -"_xo_x_obj_str_eq"
+  var n = 0
+  for h in hs {
+    if h != "" {
+      n += 1
+    }
+  }
+  n
+}
+
+// An interpolation of three or more Str pieces is one string of their
+// total length, then each appended in place (ssa expr.xo
+// string_lit_presized, 2026-11-14), where it regrew from its first piece.
+fn joined(a: Str, b: Str, c: Str) -> Str {
+  // arm64: "xo_x_obj_rs_with_cap"
+  // amd64: "xo_x_obj_rs_with_cap"
+  "${a}://${b}/${c}"
+}
+
 fn main(os: Os) {
   let hs = ["Bearer abc", "x", "Bearer", "nobody"]
   os.stdio.println("${token_len(hs)} ${count_nobody(hs)} ${count_long(hs)} ${cut_len(hs.len())}")
+  os.stdio.println("${count_empty(["", "a", ""])} ${joined("http", "h", "p")}")
   let b = "abcde".bytes()
   os.stdio.println("${half_byte(b)} ${half_shift(b)} ${half_unguarded(b)} ${half_none(b, 2)} ${half_elem(hs)}")
   os.stdio.println("${half_other(b, b)} ${half_else(b)} ${half_after(b)} ${count_ab(hs)} ${uuid_byte(uuid.nil(), b.len())}")

@@ -457,6 +457,12 @@ fn len_over() {
 }
 
 fn obj_rs_concat(a: Int, an: Int, b: Int, bn: Int) -> Int {
+  // a + "" is a, its reference handed back as reserve_slow would have
+  // consumed it (an interpolation of optional parts, url.Url.display,
+  // appends several empty ones)
+  if (bn & 4294967295) == 0 && an >> 32 == 0 && !(inlstr.built() && inlstr.is_inline(a)) {
+    return a
+  }
   if (an & 4294967295).wrapping_add(bn & 4294967295) > 4294967295 {
     len_over()
   }
