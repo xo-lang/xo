@@ -75,13 +75,34 @@ fn fill(var r: Rd) uses fs.read {
 /// The next line, and whether the text had nothing left (io.EOF).
 fn (var r: Rd) read_line() -> (Bytes, Bool) uses fs.read {
   r.num_line += 1
-  while !r.f_done && scan.find_byte(r.b, r.at, r.b.len(), 10) < 0 {
-    fill(r)
+  var found = scan.find_byte(r.b, r.at, r.b.len(), 10)
+  if found < 0 && !r.f_done {
+    // a line past the buffer: the chunks go to a builder and each new one
+    // alone is searched (Go's bufio grows its buffer the same way); a
+    // rescan of the buffered line and a copy of it after every fill made a
+    // line with no break quadratic (128 MB took 1.5 s; review F2,
+    // std/evidence/csv/review.md)
+    var bb = BytesBuilder.new()
+    bb.write(r.b[r.at..])
+    while found < 0 && !r.f_done {
+      let before = bb.len()
+      r.b = b""
+      r.at = 0
+      fill(r)
+      if r.b.len() > 0 {
+        let k = scan.find_byte(r.b, 0, r.b.len(), 10)
+        bb.write(r.b)
+        if k >= 0 {
+          found = before + k
+        }
+      }
+    }
+    r.b = bb.freeze()
+    r.at = 0
   }
   if r.at >= r.b.len() {
     return (b"", true)
   }
-  let found = scan.find_byte(r.b, r.at, r.b.len(), 10)
   let j = if found >= 0 { found } else { r.b.len() }
   var line = b""
   if j < r.b.len() {
@@ -124,8 +145,13 @@ fn index_rune(b: Bytes, r: Rune) -> Int {
 fn index_byte(b: Bytes, c: UInt8) -> Int { scan.find_byte(b, 0, b.len(), Int(c)) }
 
 /// The Str of b, a slice of the text at field boundaries (a separator, a
-/// quote, a line end): valid UTF-8 as the text is, so not checked again.
-fn field_str(b: Bytes) -> Str { rt.cast[Bytes, Str](b) }
+/// quote, a line end): parse's text is a Str, valid UTF-8, so its fields
+/// are not checked again; a Reader's come from a file (`file`), outside
+/// bytes (decision 0259), and each byte of an invalid sequence becomes
+/// U+FFFD after the parse, so positions stay Go's byte columns (a file
+/// holding `"x""\x82"` read and written back faulted on a split
+/// sequence; review F1, std/evidence/csv/review.md).
+fn field_str(b: Bytes, file: Bool) -> Str { if file { scan.text_of(b) } else { rt.cast[Bytes, Str](b) } }
 
 struct Opts {
   sep: Rune
@@ -190,7 +216,7 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
           return Err(csv.CsvErr{start_line: rec_line, line: r.num_line, column: col + j, msg: ERR_BARE_QUOTE})
         }
       }
-      fields.push(field_str(field))
+      fields.push(field_str(field, r.f is Some(_)))
       if i >= 0 {
         line = line[i + sep_len..]
         col += i + sep_len
@@ -219,10 +245,10 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
         } else if !line.is_empty() && rn == o.sep {
           line = line[sep_len..]
           col += sep_len
-          fields.push(field_str(if buf.is_empty() { seg } else { buf + seg }))
+          fields.push(field_str(if buf.is_empty() { seg } else { buf + seg }, r.f is Some(_)))
           done = true
         } else if length_nl(line) == line.len() {
-          fields.push(field_str(if buf.is_empty() { seg } else { buf + seg }))
+          fields.push(field_str(if buf.is_empty() { seg } else { buf + seg }, r.f is Some(_)))
           return Ok(Some((fields, rec_line)))
         } else if o.lazy {
           buf = buf + seg + b"\""

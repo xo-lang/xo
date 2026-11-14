@@ -3637,6 +3637,27 @@ test "reader over a file larger than its read chunk, with quoted line breaks acr
   expect(reader_of(os.fs, bad, ',', '\0', -1, false, false)) == read_of(bad, ',', '\0', -1, false, false)
 }
 
+test "reader of lines longer than several read chunks (review F2: linear, not a rescan per chunk)" {
+  var long = ""
+  var n = 0
+  while n < 30000 {
+    long = long + "field${n};"
+    n += 1
+  }
+  let text = long + "\nx,\"" + long + "\"\nz"
+  expect(text.len() > 3 * 131072) == true
+  expect(reader_of(os.fs, text, ',', '\0', -1, false, false)) == read_of(text, ',', '\0', -1, false, false)
+}
+
+test "reader over a file of invalid UTF-8 gives valid fields, each bad byte U+FFFD (decision 0259, review F1)" {
+  expect(os.fs.write("reader_bad.csv", b"\"x\"\"\x82\",a\xffb\n").is_ok()) == true
+  let f = os.fs.open("reader_bad.csv").or_fault("open")
+  var r = csv.reader(f)
+  let rec = r.read().or_fault("read").or_fault("a record")
+  expect(rec) == ["x\"\u{FFFD}", "a\u{FFFD}b"]
+  expect(csv.format([rec])) == "\"x\"\"\u{FFFD}\",a\u{FFFD}b\n"
+}
+
 test "parse on a view of a longer text" {
   // error positions shift with the line before the text, so errors are
   // covered by the test above, on the text itself

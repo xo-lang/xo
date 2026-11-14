@@ -188,5 +188,7 @@ func (x *Csv_Reader) M_read(tk *Task) Result[Option[List[string]], Csv_CsvErr] {
 		}
 		return Err[Option[List[string]]](Csv_CsvErr{F_msg: err.Error()})
 	}
-	return Ok[Option[List[string]], Csv_CsvErr](Some(ListOf(rec...)))
+	// a file's bytes (decision 0259): invalid UTF-8 becomes U+FFFD, as
+	// the native Reader's read_line does
+	return Ok[Option[List[string]], Csv_CsvErr](Some(ListOf(textsOf(rec)...)))
 }
