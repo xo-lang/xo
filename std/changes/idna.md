@@ -1,5 +1,16 @@
 # std/idna changes
 
+## 2026-11-14: perf: the rune table's block index covers the whole BMP
+
+- Kind: perf
+- Commit: this push
+- Found by: the stdproven perf run for std/idna (linux/arm64 host 1: dec 1.060 of Go's wall, the only case over 1.05) and an XO_PROF profile of dec (lookup about 24%)
+- Go reference: golang.org/x/net/idna reads its trie, a constant number of steps a rune
+- Before: lookup's block index (BLOCKS) stopped at U+3400, so a rune above it (CJK, Hangul, the compatibility forms) binary searched all 7,380 ranges, several times a rune (mapping, validation, Bidi)
+- Fix: BLOCKS covers every 64 rune block to U+10000 (2 KB more); scripts/genidna writes it, and std/idna.xo regains its END GENERATED marker, which the one-file merge (decision 0597) dropped, so genidna runs again. The other tables are unchanged. bench/perf/idna dec on linux/arm64 host 1, --ab against 7c0857749: 0.948 (0.92 to 0.975, n=6; 14.06 to 13.34 ms).
+- Test: xo test --std-module=idna; TestStdCorpora idna and norm on go, arm64, llvm; TestIdnaFuzz
+- Shipped in: not yet released
+
 ## 2026-11-14: perf, security: punycode encodes a long label in n log n
 
 - Kind: perf, security

@@ -1,10 +1,11 @@
 // Command genidna writes the Unicode tables of std/idna into
-// std/native/idna.xo (between its BEGIN GENERATED and END GENERATED lines)
+// std/idna.xo (between its BEGIN GENERATED and END GENERATED lines)
 // from golang.org/x/net's idna package (the tables for Unicode 15.0.0, which
 // go1.26 builds), and prints nothing else. It copies idna's tables, trie and
 // trieval files next to dump.go.txt in a temporary module so the dump can read
 // their unexported trie, then runs it with the module cache only.
-// Usage: go run ./scripts/genidna NETDIR TEXTVERSION FILE
+// Usage: go run ./scripts/genidna NETDIR TEXTVERSION FILE (FILE absolute:
+// the dump runs in a temporary module; e.g. $PWD/std/idna.xo)
 // (NETDIR: the golang.org/x/net@VERSION directory in the module cache;
 // TEXTVERSION: the golang.org/x/text version the dump builds with).
 package main
