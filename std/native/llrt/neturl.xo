@@ -299,6 +299,10 @@ fn parse_host(b: Bytes, s: Str, lo: Int, hi: Int, last_colon: Bool) -> (Bool, St
         return (false, "", ze)
       }
       name = h + zp
+      if scan.find(h, "%", 0) >= 0 {
+        // as below, with the zone (fuzz seed 38: [%e80::1%25eth0])
+        return (false, "", "invalid host: " + raw_addr_err(h, zp))
+      }
     } else {
       let (h, he) = go_unescape(hostname, U_HOST)
       if !he.is_empty() {
@@ -309,7 +313,7 @@ fn parse_host(b: Bytes, s: Str, lo: Int, hi: Int, last_colon: Bool) -> (Bool, St
         // an escape of a byte from 0x80 stays escaped (not UTF-8,
         // decision 0259), which netip would read as a zone; Go parses
         // the byte itself, which no address holds
-        return (false, "", "invalid host: " + raw_addr_err(h))
+        return (false, "", "invalid host: " + raw_addr_err(h, ""))
       }
     }
     match netip.parse_addr(name) {
@@ -629,8 +633,11 @@ fn is_hex(c: Int) -> Bool { (c >= 48 && c <= 57) || (c >= 97 && c <= 102) || (c 
 /// reaches here: U_HOST refuses them, and %25 starts a zone). Such a byte
 /// takes the path of any letter past f in every state of Go's parser, so
 /// h with a g for each is parsed, and the error's input and "(at ...)"
-/// are quoted from the real bytes, byte for byte as Go's %q.
-fn raw_addr_err(h: Str) -> Str {
+/// are quoted from the real bytes, byte for byte as Go's %q. zone is the
+/// unescaped zone with its '%' ("" for none): no escape stays in it (a
+/// zone's escape from 0x80 is refused), and netip quotes the whole input
+/// but takes "(at ...)" from the address before it.
+fn raw_addr_err(h: Str, zone: Str) -> Str {
   let b = h.bytes()
   var raw = BytesBuilder.with_capacity(b.len())
   var ph = BytesBuilder.with_capacity(b.len())
@@ -646,19 +653,21 @@ fn raw_addr_err(h: Str) -> Str {
       i += 1
     }
   }
-  let rb = raw.freeze()
-  let ps = ph.freeze().to_str() ?? ""
+  let ra = raw.freeze()
+  let pa = ph.freeze().to_str() ?? ""
+  let rb = ra + zone.bytes()
+  let ps = pa + zone
   let msg = match netip.parse_addr(ps) {
     Ok(_) => return "ParseAddr(${rb.quote()}): unexpected character"
     Err(e) => e.msg
   }
   let head = "ParseAddr(${ps.quote()}): "
   var rest = msg.trim_prefix(head)
-  let n = ps.len()
+  let n = pa.len()
   for l in 1..n + 1 {
-    let tail = " (at ${ps[n - l..].quote()})"
+    let tail = " (at ${pa[n - l..].quote()})"
     if rest.ends_with(tail) {
-      return "ParseAddr(${rb.quote()}): ${rest.trim_suffix(tail)} (at ${rb[rb.len() - l..].quote()})"
+      return "ParseAddr(${rb.quote()}): ${rest.trim_suffix(tail)} (at ${ra[ra.len() - l..].quote()})"
     }
   }
   "ParseAddr(${rb.quote()}): ${rest}"

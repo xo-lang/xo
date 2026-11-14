@@ -326,6 +326,11 @@ var ufRegress = []string{
 	// seed 2: netip's "(at ...)" of a rest that is not UTF-8, quoted byte
 	// for byte as Go does
 	"http://[fe\xff0::1%25eth0]/",
+	// seed 38 (1M-case run, 2026-11-13): such an escape before a %25
+	// zone; Go quotes the zone too and takes "(at ...)" from the address
+	"HTTP://[%e80::1%25eth0]/%2F?a=1",
+	"http://[fe80::%e9%25en%2525]/",
+	"http://[%c3%a9::1%25x]/",
 }
 
 // ufRegressions is ufRegress with Go's answers.

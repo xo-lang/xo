@@ -1,5 +1,14 @@
 # std/url changes
 
+## 2026-11-13: fix: such an escape before a %25 zone fails with Go's ParseAddr error too
+
+- Kind: fix
+- Commit: this push
+- Found by: the std/http 1M-case fuzz (decision 0616, TestHttpUrlFuzz seed 38 against go1.26.11)
+- Go reference: net/url url.go parseHost unescapes the address before %25 and the zone after it, and netip.ParseAddr quotes both, taking "(at ...)" from the address alone
+- Test: internal/stdtest/httpurlfuzz_test.go regressions `HTTP://[%e80::1%25eth0]/...`, `http://[fe80::%e9%25en%2525]/`, `http://[%c3%a9::1%25x]/`
+- Shipped in: not yet released
+
 ## 2026-11-13: fix: an escape of a byte from 0x80 in an IP literal fails as Go's ParseAddr of that byte
 
 - Kind: fix
