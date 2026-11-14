@@ -1,8 +1,8 @@
 kind: review
 module: html
 result: pass
-commit: 53ab9cb30
-source: 0cc505576e1f0622c0cd2e3605368377c0fd7839e2d090ae6c2851976f217da3
+commit: 67ba54a24
+source: 5747b639da584a7ec48020992f3b0645191623cb176c4d06ef908f4d699be444
 date: 2026-11-14
 host: darwin/arm64 (probes and tests), linux/arm64 host 1 (perf), host 2 (fuzz, stress), host 3 (race)
 command: none (section 3 does not apply: no secret); read against knowledgebase/infrastructure/std-security-checklist.md
@@ -38,7 +38,7 @@ The Go vulnerability database (vuln.go.dev, the 182 stdlib entries read on
 | Input a peer controls | Limit | Where | Test at and past it |
 |---|---|---|---|
 | Text to escape_string | linear; output sized by a first pass (n plus the extra bytes counted), a word at a time to the next special byte | html_native.xo:41-85 (size :70, skip :85) | 4 MB of `<` 10.8 ms (Go backend 9.0) |
-| Text to unescape_string | linear: each `&` reads its name or digits once; the legacy prefix search tries at most 5 lengths (from min(name length - 1, LONGEST_ENTITY_WITHOUT_SEMICOLON = 6) down to 2) | html.xo:37-221 (digits :32-35 and :148, prefix search :196-213) | 4 MB of `&amp;` 2.3 ms, of `&` 22 ms, one 4 MB name 2.5 ms, one 4 MB number 6.3 ms, `&#65;` 7.1 ms, `&ampx` (legacy prefixes) 308 ms (the Go backend's Go code 85 ms: linear, 3.6 times Go, a perf item, not a bound; per reference the cost is a binary search of the entity table, entity2_of's scan of the whole two character table (htmlent.xo:39) and up to 5 prefix searches, a constant per reference); corpus htmlfuzz |
+| Text to unescape_string | linear: each `&` reads its name or digits once; the legacy prefix search tries at most 5 lengths (from min(name length - 1, LONGEST_ENTITY_WITHOUT_SEMICOLON = 6) down to 2) | html.xo:37-221 (digits :32-35 and :148, prefix search :196-213) | 4 MB of `&amp;` 2.3 ms, of `&` 22 ms, one 4 MB name 2.5 ms, one 4 MB number 6.3 ms, `&#65;` 7.1 ms, `&ampx` (legacy prefixes) 308 ms (the Go backend's Go code 85 ms: linear, 3.6 times Go; a perf item, fixed in 67ba54a24: entity2_of no longer scans the two character table for a name without `;`, and a name without `;` searches the 106 legacy names, not all 2,138; 2.4 MB of `&ampx` three times 930 to 165 ms native on the Mac, Go 48 ms; per reference still a constant: two binary searches and up to 5 prefix searches); corpus htmlfuzz |
 
 ## 3. Constant time
 

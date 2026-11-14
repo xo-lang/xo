@@ -1,8 +1,8 @@
 kind: review
 module: idna
 result: pass
-commit: 6e5bce7d2
-source: 0b14d448528d9742b598ef3e9b20902aaf9e933e31a8126034b6bf53a86d95de
+commit: 5a23d3a84
+source: 42f8c8ab1b0739a36a2e892fcd6d33c315ce2529171ec83ec0380997fe313450
 date: 2026-11-14
 host: darwin/arm64 (probes and tests), linux/arm64 host 2 (fuzz, stress, race), host 1 (perf)
 command: none (section 3 does not apply: no secret); read against knowledgebase/infrastructure/std-security-checklist.md
@@ -16,7 +16,7 @@ UTS 46 mapping and validation, RFC 3492 punycode, the hyphen, joiner and
 Bidi rules (spec/std.md 61, decision 0476). It reads names a peer can
 send: a host in a URL or header that a program converts, and std's
 httpproxy converts a non-ASCII request host before matching NO_PROXY
-(httpproxy.xo:174-180, on the outgoing request's URL, which a program
+(httpproxy.xo:175-181, on the outgoing request's URL, which a program
 may build from a peer's input).
 
 ## 1. Go's CVE history
@@ -41,7 +41,7 @@ Sibling classes, checked:
 - Quadratic decoding (GO-2025-4009 encoding/pem, GO-2026-4977
   net/mail): G1 below.
 - Integer overflow in punycode: decode and encode keep x/net's int32
-  limits; madd (idna.xo:441-447) refuses any step past 2^31 - 1, and its
+  limits; madd (idna.xo:442-448) refuses any step past 2^31 - 1, and its
   product (a digit up to 35 or a code point gap up to 0x10FFFF times a
   weight or count at most 2^31) fits an Int. A label past them is A3,
   as in Go.
@@ -52,8 +52,8 @@ Sibling classes, checked:
 
 | Input a peer may control | Limit | Where | Test |
 |---|---|---|---|
-| A name to to_ascii or to_unicode | Registration (dns_len): each label 1 to 63 bytes, the name at most 253, after mapping; Lookup: no length limit, as x/net | idna.xo process (1017-1127; labels :1109-1111, name :1117-1123) | fuzz TestIdnaFuzz (names past 253 bytes and labels past 63, on the four profiles, against x/net v0.60.0); corpus testdata/corpus/idna |
-| A punycode label to decode (`xn--`) | at most 1024 output runes (x/net's cap, idna.xo:529-531, A3 past it), int32 overflow refused (A3); one pass of digits and one insertion into at most 1024 runes per decoded rune | idna.xo decode (475-550), madd (441) | std/idna_test.xo: 1024 runes round trip, 1025 are x/net's invalid label; longer labels are refused at the cap or the overflow check in about 1 ms (probe, 193 KB and 832 KB labels) |
+| A name to to_ascii or to_unicode | Registration (dns_len): each label 1 to 63 bytes, the name at most 253, after mapping; Lookup: no length limit, as x/net | idna.xo process (1018-1128; labels :1110-1112, name :1118-1124) | fuzz TestIdnaFuzz (names past 253 bytes and labels past 63, on the four profiles, against x/net v0.60.0); corpus testdata/corpus/idna |
+| A punycode label to decode (`xn--`) | at most 1024 output runes (x/net's cap, idna.xo:530-532, A3 past it), int32 overflow refused (A3); one pass of digits and one insertion into at most 1024 runes per decoded rune | idna.xo decode (476-551), madd (442) | std/idna_test.xo: 1024 runes round trip, 1025 are x/net's invalid label; longer labels are refused at the cap or the overflow check in about 1 ms (probe, 193 KB and 832 KB labels) |
 | A label to encode | none on Lookup, as x/net; time n log n in the label's runes since G1's fix (labels over 64 runes take encode_long) | idna.xo encode, encode_long | std/idna_test.xo: 6 labels of 65 to 464 runes against x/net, and 64,000 distinct runes (x/net's output length) |
 
 ## 3. Constant time
@@ -91,9 +91,11 @@ length); TestIdnaFuzz on arm64, llvm and go; TestStdCorpora idna.
 ### Fault sites
 
 - None. idna.xo has no or_fault, unwrap or fault call. rune_at
-  (913-925) reads up to 3 bytes past p only for a lead byte of that
-  width in a Str, which is valid UTF-8. Table lookups (lookup, 229-254)
-  index generated tables by a code point at most 0x10FFFF.
+  (914-926) reads up to 3 bytes past p only for a lead byte of that
+  width in a Str, which is valid UTF-8. Table lookups (lookup, 230-255)
+  index generated tables by a code point at most 0x10FFFF; BLOCKS (to
+  U+10000 since 5a23d3a84) has 1,025 entries and a rune below 0x10000
+  reads entries r >> 6 and (r >> 6) + 1, at most 1,024.
 
 ## 5. Defaults
 

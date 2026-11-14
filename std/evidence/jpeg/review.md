@@ -1,8 +1,8 @@
 kind: review
 module: jpeg
 result: pass
-commit: 35a44e04f
-source: 2e801efdd96e82f9a5af096622d0c0e493cef618f2893ba9f26962ca703b701f
+commit: de2feac05
+source: 7fa1007c418147a9ece3d6e9ef541267fbdb9c35e9e94dc2e8b22d5e36fb8ee5
 date: 2026-11-14
 host: darwin/arm64 (probes and tests), linux/arm64 host 2 (fuzz, stress, race), host 1 (perf)
 command: none (section 3 does not apply: no secret); read against knowledgebase/infrastructure/std-security-checklist.md
@@ -35,7 +35,7 @@ Sibling classes, from the golang.org/x/image entries (read 2026-11-14):
   Go's reader.go); it gives no MCUs (mxx or myy 0) and an empty image at
   no cost; a scan's work is bounded by the blocks the frame declares
   (at most max_pixels / 64 per component, with sampling factors summing
-  to at most 10, jpeg.xo:1454 `total sampling factors too large`).
+  to at most 10, jpeg.xo:1462 `total sampling factors too large`).
 - Panics on out of range indexes (GO-2024-2937 tiff palette, GO-2026-5031
   bmp palette, GO-2026-5061 webp alpha): section 4, no reachable fault.
 
@@ -43,11 +43,11 @@ Sibling classes, from the golang.org/x/image entries (read 2026-11-14):
 
 | Input a peer controls | Limit | Where | Test at and past it |
 |---|---|---|---|
-| Pixels a frame header declares | max_pixels, 100,000,000 by default, checked before any plane or coefficient is allocated; after F1 the memory and time follow the scans actually decoded | jpeg.xo decode (150), the max_pixels check (1480-1482, `>`: a frame of exactly max_pixels passes), make_img (1074), ensure_plane (1117), coef_set and ensure_coef (1152, 1161) | std/jpeg_test.xo: 10000x10000 headers with little data at the limit (Go's errors; under 1 ms and 4 MB on a Mac) and one pixel past it (max_pixels 99,999,999: `image too large`); corpus jpeg |
-| Segment lengths (DHT, DQT, SOF, SOS, DRI, APPn, COM) | each read checks the bytes are there first (read_full, Go's readFull), and each segment's own length rules as Go (`DHT has wrong length`, `DQT has wrong length`, Huffman `excessive length`) | jpeg.xo segments (1831-1924), process_dht (806-889), process_dqt (891-938) | fuzz TestJpegFuzz (Go's test images and encodes with bytes changed, cut and repeated, 1000 per seed against Go's errors); corpus jpegfuzz |
-| Table and component indexes (Tc, Th, Tq, Td, Ta, component count) | refused past Go's bounds (`bad Tq value`, `bad Td value`, `bad Ta value`) | process_dht (816-821), process_dqt (901), process_sof (986-1066), process_sos (the Td and Ta checks before the max_pixels check) | fuzz above |
+| Pixels a frame header declares | max_pixels, 100,000,000 by default, checked before any plane or coefficient is allocated; after F1 the memory and time follow the scans actually decoded | jpeg.xo decode (144), the max_pixels check (1488-1490, `>`: a frame of exactly max_pixels passes), make_img (1068), ensure_plane (1117), coef_set and ensure_coef (1152, 1161) | std/jpeg_test.xo: 10000x10000 headers with little data at the limit (Go's errors; under 1 ms and 4 MB on a Mac) and one pixel past it (max_pixels 99,999,999: `image too large`); corpus jpeg |
+| Segment lengths (DHT, DQT, SOF, SOS, DRI, APPn, COM) | each read checks the bytes are there first (read_full, Go's readFull), and each segment's own length rules as Go (`DHT has wrong length`, `DQT has wrong length`, Huffman `excessive length`) | jpeg.xo segments (1839-1932), process_dht (800-883), process_dqt (885-932) | fuzz TestJpegFuzz (Go's test images and encodes with bytes changed, cut and repeated, 1000 per seed against Go's errors); corpus jpegfuzz |
+| Table and component indexes (Tc, Th, Tq, Td, Ta, component count) | refused past Go's bounds (`bad Tq value`, `bad Td value`, `bad Ta value`) | process_dht (810-815), process_dqt (895), process_sof (980-1060), process_sos (the Td and Ta checks before the max_pixels check) | fuzz above |
 | Huffman codes, EOB runs, successive approximation | Go's checks: `bad Huffman code`, `too many coefficients`, `excessive DC component`, `bad spectral selection bounds`, `bad successive approximation values`; values wrap to 32 bits where Go's int32 does | decode_huffman, refine, process_sos | fuzz above; stress std/evidence/jpeg/stress (64 files, half changed as the fuzz changes them) |
-| An image a program encodes from a peer's pixels | width and height below 1 << 16 (`image is too large to encode`, Go's) | encode (185-240) | fuzz TestJpegEncFuzz; corpus jpegenc |
+| An image a program encodes from a peer's pixels | width and height below 1 << 16 (`image is too large to encode`, Go's) | encode (179-234) | fuzz TestJpegEncFuzz; corpus jpegenc |
 
 ## 3. Constant time
 
@@ -72,12 +72,12 @@ backend.
 
 Fix: the planes are reserved and written with zeros only up to the
 block being stored (ensure_plane, 1117, doubling) and padded to their
-size in finish (1749); a progressive image's coefficients are stored in
+size in finish (1757); a progressive image's coefficients are stored in
 MCU order (coef_at, 1137), so each scan writes in MCU row order, and the
 store grows by doubling only when a scan writes past its end (coef_set
 and ensure_coef, 1152 and 1161), so an end-of-band run, which skips
 blocks without a write, touches nothing; a coefficient past the end
-reads as zero (coef_get, 1145; load_block, 1393). Both files now fail in under 1 ms with 4 MB resident.
+reads as zero (coef_get, 1145; load_block, 1401). Both files now fail in under 1 ms with 4 MB resident.
 Tests: std/jpeg_test.xo; TestStdCorpora jpeg, jpegenc and jpegfuzz on
 go, arm64 and llvm; TestJpegFuzz and TestJpegEncFuzz; std/changes/jpeg.md
 and the CHANGELOG security line.
@@ -89,9 +89,10 @@ file still costs its whole image: finish pads every plane to its size,
 and reconstruct_progressive stores every block (a block no scan wrote
 as the inverse DCT of zero, computed once, not per block). A file can
 be small for a large image (Go's encoder writes a flat 10000x10000 gray
-image in 1.17 MB): decoding it took 460 ms and 105 MB on the Mac, Go
-226 ms and 108 MB, so memory as Go's and time twice Go's on this image
-(a perf item; bench/perf/jpeg's photos decode at Go's speed). Go has no
+image in 1.17 MB): decoding it takes 393 ms and 108 MB on the Mac after de2feac05 (was
+460 ms), Go 223 ms and 105 MB, so memory as Go's and time 1.76 times
+Go's on this image (a perf item; bench/perf/jpeg's photos decode within
+1.022 of Go's wall on linux/arm64 host 1). Go has no
 limit; max_pixels bounds it here. The largest a decode can hold at the
 default 100,000,000 pixels: the planes (3 bytes a pixel at 4:4:4, 4 for
 CMYK) plus, for a progressive image, the Int32 coefficients (12 bytes a
@@ -107,13 +108,13 @@ F1's cost).
 
 ### Fault sites
 
-- encode (193, 196, 199, 239) faults when an Image's pixel or plane
+- encode (187, 190, 193, 233) faults when an Image's pixel or plane
   sizes disagree with its width and height, or a size is negative. An
   Image from decode always agrees; a program that builds one from a
   peer's dimensions and bytes must check them, as Go's encoder reads
   out of range on such an image. A caller contract, documented on
   Image (36-50).
-- Decode has no fault call: every byte_at (804) of a segment follows
+- Decode has no fault call: every byte_at (798) of a segment follows
   read_full's check, and read_byte_stuffed checks two bytes ahead before
   it reads; table indexes are checked as listed in section 2;
   `UNZIG[zig]` is read only for zig in 0..63 after the spectral bounds
