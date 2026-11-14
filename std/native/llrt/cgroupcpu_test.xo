@@ -38,6 +38,14 @@ test "the v1 cpu mount is the cgroup mount whose options include cpu" {
 test "mountinfo's escapes are decoded" {
   expect(unescape("/mnt/my\\040dir")) == "/mnt/my dir"
   expect(unescape("/plain")) == "/plain"
+  expect(unescape("a\\011b\\012c\\134d")) == "a\tb\nc\\d"
+  // an escape that is not one of the four, or cut short, stays as written
+  expect(unescape("a\\041b\\04")) == "a\\041b\\04"
+}
+
+test "only hierarchy 0 is v2's line" {
+  expect(cgroup_path("10::/x\n0::/y\n", true)) == Some("/y")
+  expect(cgroup_path("00::/x\n", true)) == None
 }
 
 test "fields and words" {
@@ -45,6 +53,8 @@ test "fields and words" {
   expect(field("a b c", 3)) == ""
   expect(has_word("rw,cpu,cpuacct", "cpu")) == true
   expect(has_word("rw,cpuacct", "cpu")) == false
+  expect(has_word("cpu", "cpu")) == true
+  expect(has_word("rw,cp", "cpu")) == false
 }
 
 test "the host's limit is read on Linux, none elsewhere" {

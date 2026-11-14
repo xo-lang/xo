@@ -137,11 +137,11 @@ fn cgroup_path(s: Str, v2: Bool) -> Str? {
       Some(i) => i
       None => continue
     }
-    let id = line[0..c1]
     let ctl = rest[0..c2]
     let path = rest[c2 + 1..rest.len()]
     if v2 {
-      if id == "0" && ctl.is_empty() {
+      // the hierarchy ID is "0" (read in place, not as a slice: vet --cost)
+      if c1 == 1 && bt(line, 0) == 48 && ctl.is_empty() {
         return Some(path)
       }
     } else if has_word(ctl, "cpu") {
@@ -197,6 +197,21 @@ fn field(line: Str, k: Int) -> Str {
 }
 
 /// Whether the comma separated list has the word w.
+/// Whether s's bytes i to j are w's, compared in place.
+fn same_at(s: Str, i: Int, j: Int, w: Str) -> Bool {
+  if j - i != w.len() {
+    return false
+  }
+  var k = 0
+  while k < w.len() {
+    if bt(s, i + k) != bt(w, k) {
+      return false
+    }
+    k += 1
+  }
+  true
+}
+
 fn has_word(list: Str, w: Str) -> Bool {
   var i = 0
   while i <= list.len() {
@@ -204,7 +219,7 @@ fn has_word(list: Str, w: Str) -> Bool {
       Some(x) => i + x
       None => list.len()
     }
-    if list[i..j] == w {
+    if same_at(list, i, j, w) {
       return true
     }
     i = j + 1
@@ -222,8 +237,8 @@ fn unescape(s: Str) -> Str {
   var i = 0
   while i < s.len() {
     if bt(s, i) == 92 && i + 3 < s.len() {
-      let code = s[i + 1..i + 4]
-      let c = if code == "040" { " " } else if code == "011" { "\t" } else if code == "012" { "\n" } else if code == "134" { "\\" } else { "" }
+      // the three octal digits, read in place
+      let c = if same_at(s, i + 1, i + 4, "040") { " " } else if same_at(s, i + 1, i + 4, "011") { "\t" } else if same_at(s, i + 1, i + 4, "012") { "\n" } else if same_at(s, i + 1, i + 4, "134") { "\\" } else { "" }
       if !c.is_empty() {
         out = out + c
         i += 4
