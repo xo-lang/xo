@@ -56,7 +56,7 @@ pub struct Program {
   /// into the program (generate_parallel), or none; with more than one,
   /// asm is empty (their text joined was xo's whole 1.1 GB again, which
   /// Xo's assembler does not read): text() joins them
-  pub parts: List[Str] = []
+  pub parts: List[PartText] = []
   /// functions' SSA and MIR text by name (G.dump_ir), for the driver to
   /// write to files
   pub dumps: List[(Str, Str)] = []
@@ -81,8 +81,8 @@ pub struct Program {
 }
 
 /// The program's whole assembly: asm, or its parts joined.
-pub fn (p: Program) text() -> Str {
-  if p.parts.len() > 1 { p.parts.join("") } else { p.asm }
+pub fn (p: Program) text() -> Str uses fs.read {
+  if p.parts.len() > 1 { p.parts.map(fn(t) { part_read(t) }).join("") } else { p.asm }
 }
 
 /// Lowers the module (after reference counting) to AArch64 assembly

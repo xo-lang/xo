@@ -1896,6 +1896,24 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if !fdir.is_empty() {
       t = lap(os, phases, "fn_keys", t)
     }
+    // decision 0629: past XO_TEXT_SPILL MB of the parts' text (256 by
+    // default; on: 0, off: never), each part's text goes to a file of its
+    // own as the part finishes, removed from the directory at once (only
+    // its handle names it, so a crash or a stop leaves nothing), and the
+    // passes after emit and the assembler read the parts back one at a
+    // time; the targets whose parts Xo's own passes and assembler read
+    // (darwin, linux, freebsd; not `xo asm`, --emit=asm or windows)
+    let tspill = os.env.get("XO_TEXT_SPILL") ?? ""
+    if tspill != "off" && (tgoos is "darwin" | "linux" | "freebsd") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && o.asm_path.is_empty() {
+      let keep = if tspill == "on" { 0 } else if tspill.is_empty() { 256 } else { Int.parse(tspill) ?? fail(os, "XO_TEXT_SPILL=${tspill}: want on, off, or a size in MB (decision 0629)") }
+      let td = "${dir}/${TEXT_SPILL_DIR}"
+      os.fs.remove_all(td).ignore_err("none from an earlier build")
+      if os.fs.create_dir_all(td).is_ok() {
+        fc.text_dir = td
+        fc.text_keep = keep * 1048576
+        fc.fs = Some(os.fs)
+      }
+    }
     // what the link needs of the module after the generation, read now so
     // the module's last use is the call: the parts take its functions'
     // bodies with them (arm64/parallel.xo generate_cached) and a copy
@@ -1973,7 +1991,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // link strips by symbol (every object path below assembles these)
     // (windows/amd64's COFF too: pelink strips by atom, pestrip.xo)
     if ((os.env.get("XO_STD_ROOTS") ?? "") == "1" || !std_obj_dir(os).is_empty() || gsep) && (tgoos is "darwin" | "windows" | "linux") {
-      p.parts = p.parts.map(fn(x) { "\t.subsections_via_symbols\n${x}" })
+      p.parts = p.parts.map(fn(x) { arm64.part_replace(x, "\t.subsections_via_symbols\n${arm64.part_read(x)}") })
     }
     // a split darwin build through the back-end cache, part by part
     // (asmparts.xo incr_hollow): only the parts an edit changed are
@@ -1992,12 +2010,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         // one is made (hollow_parts held both whole sets at once)
         // (a part's facts name its chunks by views of its text, so they go
         // with it)
-        var (hf, hl) = arm64.hollow_plan(p.parts, elf_os(tgoos))
+        // (decision 0629: each part read, scanned and rewritten in its
+        // place, its facts apart from its text, one text held at a time)
+        var (hf, hl) = arm64.hollow_plan_parts(p.parts, elf_os(tgoos))
         let trap = arm64.hollow_trap(march)
         for i in 0..p.parts.len() {
-          let (ht, _, _) = arm64.hollow_rewrite(p.parts[i], hf[i], hl[i], trap)
+          let (ht, _, _) = arm64.hollow_rewrite(arm64.part_read(p.parts[i]), hf[i], hl[i], trap)
           hf[i] = arm64.HFacts{}
-          p.parts[i] = ht
+          p.parts[i] = arm64.part_replace(p.parts[i], ht)
         }
       } else {
         p.asm = hollow_parts([p.asm], march, elf_os(tgoos))[0]
@@ -2010,7 +2030,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if tgoos == "darwin" && o.cmd != "asm" && !gstd_obj {
       let und0 = match inc {
         Some(r) => r.undef
-        None => arm64.undefined_xo(if p.parts.len() > 1 { p.parts } else { [p.asm] })
+        None => if p.parts.len() > 1 { arm64.undefined_xo_parts(p.parts) } else { arm64.undefined_xo([p.asm]) }
       }
       let und = sepcomp_undefined(os, ctx, und0, sep_objs, b.conc)
       if !und.is_empty() {
@@ -2095,7 +2115,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         for (i, part) in p.parts.indexed() {
           let ps = "${dir}/prog-${tgoos}.${i}.s"
           if keep_asm || o.assembler == "cc" {
-            write_or_fail(os, dir, ps, dw_real(gdw, part).bytes())
+            write_or_fail(os, dir, ps, dw_real(gdw, arm64.part_read(part)).bytes())
           }
           wsrcs.push(ps)
         }
@@ -2109,7 +2129,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         // then their real paths patched in, as the Mach-O parts: replacing
         // them in every part's text first was about 74 ms of the HTTP
         // server's edit, 2026-10-27)
-        let texts = if p.parts.len() > 1 { p.parts } else { [code] }
+        let texts = if p.parts.len() > 1 { p.parts } else { [arm64.part_mem(code)] }
         let (assembled, nasm, _) = cached_macho_objects(os, ctx, texts, false, true, true, jobs)
         // the PDB's GUID (ld.xo pdb_seed) from each part's content, not
         // its back-end cache key: the key carries cache_id, whose separate
@@ -2279,10 +2299,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         }
       }
       var asrcs: List[Str] = []
-      let texts = if p.parts.len() > 1 { p.parts } else { [code] }
+      let texts = if p.parts.len() > 1 { p.parts } else { [arm64.part_mem(code)] }
       for (i, part) in texts.indexed() {
         let ps = "${dir}/prog-${tgoos}.${i}.s"
-        let txt = dw_real(gdw, part)
+        let txt = dw_real(gdw, arm64.part_read(part))
         write_or_fail(os, dir, ps, txt.bytes())
         asrcs.push(ps)
       }
@@ -2380,7 +2400,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
             Err(e) => fail(os, "${a}: ${e}")
           }
         }
-        let (assembled, _, _) = cached_macho_objects(os, ctx, atexts, false, false, true, jobs)
+        let (assembled, _, _) = cached_macho_objects(os, ctx, atexts.map(fn(t) { arm64.part_mem(t) }), false, false, true, jobs)
         for (i, r) in assembled.indexed() {
           let obj = asrcs[i].trim_suffix(".s") + ".obj"
           match r {
@@ -2535,11 +2555,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         if by_part {
           let cid = cache_id(os)
           for (i, k) in pk.indexed() {
-            let subs = p.parts[i].starts_with("\t.subsections_via_symbols\n")
+            let subs = arm64.part_read(p.parts[i]).starts_with("\t.subsections_via_symbols\n")
             ids.push("part ${k}\nxo ${cid}\ndw ${gdw.0} ${gdw.1} ${gdw.2}\nsubs ${subs}\nlive ${if hollow_late { live[i] } else { "-" }}\n")
           }
         } else {
-          ids = p.parts.map(fn(x) { dw_real(gdw, x) })
+          ids = p.parts.map(fn(x) { dw_real(gdw, arm64.part_read(x)) })
         }
         cc_keys = cc_obj_keys(os, ctx, cc, flags + memo_sysroot(os, ctx), names, ids, jobs)
       }
@@ -2548,7 +2568,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         if lean && i < cc_keys.len() && cc_obj_held(os, ctx, cc_keys[i]) {
           write_or_fail(os, dir, ps, "${CC_OBJ_STUB}${cc_keys[i]}\n".bytes())
         } else if keep_asm || !macho_as {
-          write_or_fail(os, dir, ps, dw_real(gdw, part).bytes())
+          write_or_fail(os, dir, ps, dw_real(gdw, arm64.part_read(part)).bytes())
         }
         progs.push(ps)
       }
@@ -2556,7 +2576,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if macho_as {
       // the objects from compiler/macho (decision 0182), on parallel
       // tasks for the parts
-      let srcs = if p.parts.len() > 1 { p.parts } else { [code] }
+      let srcs = if p.parts.len() > 1 { p.parts } else { [arm64.part_mem(code)] }
       var objs: List[Str] = []
       var assembled: List[Result[Bytes, Str]] = []
       var nasm = 0
@@ -2708,8 +2728,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       var lsrcs = srcs
       if progs.len() > 1 && !macho_as {
         // the parts assembled by parallel cc processes, then linked
-        let parts = p.parts
-        let (objs, why, nasm) = cached_cc_assemble(os, ctx, cc, flags + memo_sysroot(os, ctx), progs, fn(i: Int) -> Str { dw_real(gdw, parts[i]) }, cc_keys, jobs)
+        // (read back whole: cc's path holds every text, decision 0629)
+        let parts = p.parts.map(fn(x) { dw_real(gdw, arm64.part_read(x)) })
+        let (objs, why, nasm) = cached_cc_assemble(os, ctx, cc, flags + memo_sysroot(os, ctx), progs, fn(i: Int) -> Str { parts[i] }, cc_keys, jobs)
         if !why.is_empty() {
           os.stdio.eprint(why)
           fail_stage(os, cst, "${cc} failed")

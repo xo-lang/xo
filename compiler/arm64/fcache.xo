@@ -40,6 +40,11 @@ pub struct FnCache {
   /// Part.spill) with this file system; "" keeps them in memory (verify,
   /// or no cache)
   pub spill_dir: Str = ""
+  /// decision 0629: each part's text goes to a file here (removed at
+  /// once, textspill.xo) as the part finishes; "" keeps it in memory
+  pub text_dir: Str = ""
+  /// the bytes of text kept in memory before parts spill (XO_TEXT_SPILL)
+  pub text_keep: Int = 0
   pub fs: Option[Fs] = None
 }
 

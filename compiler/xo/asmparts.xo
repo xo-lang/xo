@@ -10,12 +10,13 @@ use std/crypto
 /// The objects of the assembly files srcs (ELF when elf, else Mach-O; a
 /// windows COFF object when coff) by compiler/macho, on up to jobs
 /// tasks, in the order of srcs.
-fn macho_objects(srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool, jobs: Int) -> List[Result[Bytes, Str]] {
+fn macho_objects(srcs: List[arm64.PartText], elf: Bool, amd64: Bool, coff: Bool, jobs: Int) -> List[Result[Bytes, Str]] {
   let n = srcs.len()
   let w = jobs.min(n)
   if w <= 1 {
     var out: List[Result[Bytes, Str]] = []
-    for s in srcs {
+    for st in srcs {
+      let s = arm64.part_read(st)
       out.push(if coff { assemble_coff(s, amd64) } else { assemble_one(s, elf, amd64) })
     }
     return out
@@ -31,7 +32,9 @@ fn macho_objects(srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool, jobs: Int)
           if i >= n {
             break
           }
-          mine.push((i, if coff { assemble_coff(srcs[i], amd64) } else { assemble_one(srcs[i], elf, amd64) }))
+          // a spilled part read back here, one per task (decision 0629)
+          let src = arm64.part_read(srcs[i])
+          mine.push((i, if coff { assemble_coff(src, amd64) } else { assemble_one(src, elf, amd64) }))
         }
         mine
       }))
@@ -142,7 +145,7 @@ fn cc_assemble(os: Os, cc: Str, flags: List[Str], srcs: List[Str], jobs: Int) ->
 /// The back-end cache keys of srcs (bcache.xo): the SHA-256 of prefix,
 /// tags[i] (when given), and each source, on up to jobs tasks, in the
 /// order of srcs.
-fn part_keys(prefix: Str, tags: List[Str], srcs: List[Str], jobs: Int) -> List[Str] {
+fn part_keys(prefix: Str, tags: List[Str], srcs: List[arm64.PartText], jobs: Int) -> List[Str] {
   let n = srcs.len()
   let w = jobs.min(n).max(1)
   let next = Atomic[Int].new(0)
@@ -163,7 +166,7 @@ fn part_keys(prefix: Str, tags: List[Str], srcs: List[Str], jobs: Int) -> List[S
             b.write_str(tags[i])
           }
           b.write_str("\x00")
-          b.write_str(srcs[i])
+          b.write_str(arm64.part_read(srcs[i]))
           mine.push((i, crypto.sha256(b.freeze()).to_hex()))
         }
         mine
@@ -194,7 +197,7 @@ fn part_keys(prefix: Str, tags: List[Str], srcs: List[Str], jobs: Int) -> List[S
 /// computed with the cache on or off; [] for one part or no xo identity.
 /// windows/amd64's COFF objects since 2026-10-27 and windows/arm64's
 /// since 2026-11-08 (their own keys; the Mach-O and ELF keys as before).
-fn macho_object_keys(os: Os, srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool, jobs: Int) -> List[Str] {
+fn macho_object_keys(os: Os, srcs: List[arm64.PartText], elf: Bool, amd64: Bool, coff: Bool, jobs: Int) -> List[Str] {
   let id = cache_id(os)
   if srcs.len() < 2 || id.is_empty() {
     return []
@@ -202,7 +205,7 @@ fn macho_object_keys(os: Os, srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool
   part_keys("xo backend v1 obj macho elf=${elf}${if coff && amd64 { " coff=true" } else if coff { " coff=arm64" } else { "" }} ${id}", [], srcs, jobs)
 }
 
-fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool, jobs: Int) -> (List[Result[Bytes, Str]], Int, List[Str]) {
+fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[arm64.PartText], elf: Bool, amd64: Bool, coff: Bool, jobs: Int) -> (List[Result[Bytes, Str]], Int, List[Str]) {
   // $XO_SIZE_CAUSES=FILE (decision 0443, xo dev size --by-cause): every
   // arm64 or amd64 part (not windows' COFF) assembled again, past the cache, with its code's bytes per
   // function and cause written to FILE
@@ -221,7 +224,7 @@ fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Boo
   let keys = macho_object_keys(os, srcs, elf, amd64, coff, jobs)
   var out: List[Result[Bytes, Str]] = []
   var miss: List[Int] = []
-  var msrcs: List[Str] = []
+  var msrcs: List[arm64.PartText] = []
   for (i, k) in keys.indexed() {
     match entry_get(os, dir, "obj", k) {
       Some(b) => out.push(Ok(b))
@@ -285,7 +288,7 @@ struct IncrOut {
 /// nothing reaches emptied when hollow, through the back-end cache, and
 /// the undefined symbols; None without the cache (the build then hollows
 /// and assembles the whole text).
-fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], tags: List[Str], march: Str, hollow: Bool, elf: Bool, jobs: Int) -> IncrOut? {
+fn incr_hollow(os: Os, ctx: Ctx, parts: List[arm64.PartText], tags: List[Str], march: Str, hollow: Bool, elf: Bool, jobs: Int) -> IncrOut? {
   let dir = backend_cache_dir(os, ctx)
   let id = cache_id(os)
   if dir.is_empty() || id.is_empty() || parts.len() < 2 {
@@ -295,11 +298,11 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], tags: List[Str], march: Str, 
   // a part the part cache fixes (arm64 part_tags) by its tag, every
   // other by its text
   var ktags: List[Str] = []
-  var ksrcs: List[Str] = []
+  var ksrcs: List[arm64.PartText] = []
   for (i, t) in parts.indexed() {
     let g = if i < tags.len() { tags[i] } else { "" }
     ktags.push(g)
-    ksrcs.push(if g.is_empty() { t } else { "" })
+    ksrcs.push(if g.is_empty() { t } else { arm64.part_mem("") })
   }
   let tk = part_keys("${HOLLOW_INCR_VERSION} facts ${id} elf=${elf}", ktags, ksrcs, jobs)
   // ELF: an ELF part's scan reads the labels without the xo_ prefix that
@@ -318,7 +321,7 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], tags: List[Str], march: Str, 
           }
         }
         None => {
-          let ls = arm64.hollow_extra_of(parts[i])
+          let ls = arm64.hollow_extra_of(arm64.part_read(parts[i]))
           fstored += entry_put(os, dir, "hextra", k, ls.join("\n").bytes())
           labels = labels + ls
         }
@@ -374,7 +377,10 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], tags: List[Str], march: Str, 
               break
             }
             let i = miss[j]
-            mine.push((i, arm64.hollow_scan(parts[i], elf, extra, first)))
+            // its facts apart from the text (decision 0629: views of it
+            // kept every part's text to the assembly); the chunks are
+            // offsets, which the rewrite reads against the same text
+            mine.push((i, arm64.hfacts_detach(arm64.hollow_scan(arm64.part_read(parts[i]), elf, extra, first))))
           }
           mine
         }))
@@ -495,7 +501,7 @@ fn incr_live(facts: List[arm64.HFacts], elf: Bool, hollow: Bool) -> List[List[Bo
 /// amiss's order. Each task rewrites a part's text and drops it once its
 /// object is built: a list of every part's hollowed text beside the parts
 /// was the self build's peak (decision 0448 stage 3).
-fn hollow_objects(parts: List[Str], facts: List[arm64.HFacts], live: List[List[Bool]], amiss: List[Int], trap: Str, elf: Bool, amd64: Bool, jobs: Int) -> List[(Result[Bytes, Str], arm64.UFacts)] {
+fn hollow_objects(parts: List[arm64.PartText], facts: List[arm64.HFacts], live: List[List[Bool]], amiss: List[Int], trap: Str, elf: Bool, amd64: Bool, jobs: Int) -> List[(Result[Bytes, Str], arm64.UFacts)] {
   let n = amiss.len()
   let next = Atomic[Int].new(0)
   let done = scope sc {
@@ -509,10 +515,11 @@ fn hollow_objects(parts: List[Str], facts: List[arm64.HFacts], live: List[List[B
             break
           }
           let i = amiss[j]
-          let (t, _, _) = arm64.hollow_rewrite(parts[i], facts[i], live[i], trap)
+          let (t, _, _) = arm64.hollow_rewrite(arm64.part_read(parts[i]), facts[i], live[i], trap)
           let r = assemble_one(t, elf, amd64)
-          // the undefined-symbol check is Mach-O's (main.xo, darwin)
-          let u = if elf { arm64.UFacts{} } else { arm64.undef_scan(t) }
+          // the undefined-symbol check is Mach-O's (main.xo, darwin), its
+          // facts apart from the text (decision 0629)
+          let u = if elf { arm64.UFacts{} } else { arm64.ufacts_detach(arm64.undef_scan(t)) }
           mine.push((j, r, u))
         }
         mine
@@ -536,7 +543,8 @@ fn hollow_objects(parts: List[Str], facts: List[arm64.HFacts], live: List[List[B
 
 /// The hollowed texts of an incr_hollow build, for a tool that reads them
 /// (--ld=cc, XO_KEEP_ASM=1).
-fn incr_texts(parts: List[Str], inc: IncrOut, march: Str) -> List[Str] {
+fn incr_texts(parts0: List[arm64.PartText], inc: IncrOut, march: Str) -> List[arm64.PartText] {
+  let parts = parts0.map(fn(t) { arm64.part_read(t) })
   let trap = if march == "amd64" { arm64.HOLLOW_UD2 } else { "brk #${arm64.HOLLOW_BRK}" }
   var facts = inc.facts
   var live = inc.live
@@ -555,10 +563,10 @@ fn incr_texts(parts: List[Str], inc: IncrOut, march: Str) -> List[Str] {
     }
     live = incr_live(facts, inc.elf, inc.hollow)
   }
-  var out: List[Str] = []
+  var out: List[arm64.PartText] = []
   for (i, p) in parts.indexed() {
     let (t, _, _) = arm64.hollow_rewrite(p, facts[i], live[i], trap)
-    out.push(t)
+    out.push(arm64.part_replace(parts0[i], t))
   }
   out
 }
@@ -587,7 +595,7 @@ fn asm_cflags(flags: List[Str]) -> List[Str] {
 /// text.
 fn cc_obj_keys(os: Os, ctx: Ctx, cc: Str, flags: List[Str], names: List[Str], texts: List[Str], jobs: Int) -> List[Str] {
   let prefix = "xo backend v1 obj cc\x00${tool_id_memo(os, ctx, cc, ["--version"])}\x00${asm_cflags(flags).join("\x00")}"
-  part_keys(prefix, names, texts, jobs)
+  part_keys(prefix, names, texts.map(fn(t) { arm64.part_mem(t) }), jobs)
 }
 
 /// The first line of the .s a lean build writes for a part whose cc
@@ -670,7 +678,7 @@ fn cached_cc_assemble(os: Os, ctx: Ctx, cc: Str, flags: List[Str], srcs: List[St
 /// them, with the rows of their code's bytes per function and cause
 /// (macho.assemble_causes, decision 0443) written to path, a part's rows
 /// after the part before it.
-fn causes_objects(os: Os, srcs: List[Str], elf: Bool, amd64: Bool, jobs: Int, path: Str) -> List[Result[Bytes, Str]] {
+fn causes_objects(os: Os, srcs: List[arm64.PartText], elf: Bool, amd64: Bool, jobs: Int, path: Str) -> List[Result[Bytes, Str]] {
   let n = srcs.len()
   let w = jobs.min(n).max(1)
   let next = Atomic[Int].new(0)
@@ -684,7 +692,7 @@ fn causes_objects(os: Os, srcs: List[Str], elf: Bool, amd64: Bool, jobs: Int, pa
           if i >= n {
             break
           }
-          let src = srcs[i].bytes()
+          let src = arm64.part_read(srcs[i]).bytes()
           mine.push((i, if amd64 { macho.assemble_causes_amd64(src, elf) } else { macho.assemble_causes(src, elf) }))
         }
         mine

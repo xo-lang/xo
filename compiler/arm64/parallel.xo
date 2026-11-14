@@ -47,6 +47,8 @@ const PART_SMALL_DIV = 4
 /// wide code it needs.
 struct Part {
   asm: Str = ""
+  /// the text spilled to a file (decision 0629), asm then empty
+  text: PartText = PartText{}
   err: Str = ""
   dumps: List[(Str, Str)] = []
   skipped: List[Str] = []
@@ -340,7 +342,7 @@ fn part_names(m: ssa.Module, parts: List[List[Int]]) -> List[Str] {
 /// tasks: the assembly generate gives for a module of one part, else
 /// the parts' assembly in order, then the entry, the exports, and the
 /// program wide code once.
-pub fn generate_parallel(m0: ssa.Module, os: Str, jobs: Int) -> Program uses fs.write {
+pub fn generate_parallel(m0: ssa.Module, os: Str, jobs: Int) -> Program uses fs {
   var m = m0
   generate_cached(m, os, jobs, FnCache{})
 }
@@ -365,7 +367,7 @@ fn take_bodies(c: Mutex[Map[Int, ssa.Func]]) -> Map[Int, ssa.Func] {
 /// generate_parallel with the per-function cache fc (fcache.xo): a
 /// function whose key fc holds an entry for is placed from it instead of
 /// generated (with fc.verify, generated and compared with it).
-pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_limit: Int = 0) -> Program uses fs.write {
+pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_limit: Int = 0) -> Program uses (fs.read, fs.write) {
   // m is `var` so the caller's module is the one whose functions' bodies
   // the parts take (below): a copy would keep every body to the end
   var plist = part_lists(m)
@@ -448,10 +450,11 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_l
   }
   g.m = m
   var parts: List[Part] = []
+  let keep = Atomic[Int].new(fc.text_keep)
   let w = jobs.min(np)
   if w <= 1 {
     for p in 0..np {
-      parts.push(gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p), p, take_bodies(cells[p]), by_name))
+      parts.push(gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p), p, take_bodies(cells[p]), by_name, keep))
     }
   } else {
     // each task takes the next part until none is left, the largest
@@ -497,7 +500,7 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_l
               }
             }
             let _up = running.add(1)
-            mine.push((p, gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p), p, take_bodies(cells[p]), by_name)))
+            mine.push((p, gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p), p, take_bodies(cells[p]), by_name, keep)))
             let _down = running.add(-1)
             let _sent = finished.try_send(())
           }
@@ -526,7 +529,7 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_l
     g.entry(main)
   }
   g.exports()
-  var files: List[Str] = []
+  var files: List[PartText] = []
   var skipped: List[Str] = []
   var stores: List[(Str, Bytes)] = []
   var reused = 0
@@ -536,7 +539,7 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_l
   var parts_reused = 0
   var part_mismatches: List[Int] = []
   for (pi, part) in parts.indexed() {
-    files.push(part.asm)
+    files.push(if part_spilled(part.text) { part.text } else { part_mem(part.asm) })
     stores = stores + part.stores
     reused += part.reused
     mismatches = mismatches + part.mismatches
@@ -599,16 +602,16 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_l
   if own_rt {
     g.end_data(out)
   }
-  files.push(out.join(""))
+  files.push(part_mem(out.join("")))
   // the module's own symbols are not weak (weak_ref), each file on a
   // task (a serial pass over xo's 1.1 GB was 0.3 s of an edit build)
   // and windows' calls retargeted (win_text) on the same tasks
   // Each text goes as its copy is made: with the parts, files and the
   // argument all holding them, the copy of 1.1 GB was emit's peak (decision 0448)
   parts = []
-  var texts: List[Mutex[Str]] = []
+  var texts: List[Mutex[PartText]] = []
   for f in files {
-    texts.push(Mutex[Str].new(f))
+    texts.push(Mutex[PartText].new(f))
   }
   files = []
   let exports = g.own_exports()
@@ -616,7 +619,7 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_l
   let own = drop_weak_all(exports, g.os, texts, jobs, win)
   let tags = part_tags(fc, np, own.len(), exports, g.os, win)
   // with parts, no whole text (Program.text joins them when wanted)
-  Program{asm: if own.len() > 1 { "" } else { own.join("") }, err: g.err, skipped: skipped + g.skipped, dumps: g.dumps, parts: own, stores: stores, reused: reused, mismatches: mismatches, part_stores: part_stores, parts_reused: parts_reused, part_mismatches: part_mismatches, spills: spills, part_tags: tags}
+  Program{asm: if own.len() > 1 { "" } else { own.map(fn(t) { part_read(t) }).join("") }, err: g.err, skipped: skipped + g.skipped, dumps: g.dumps, parts: own, stores: stores, reused: reused, mismatches: mismatches, part_stores: part_stores, parts_reused: parts_reused, part_mismatches: part_mismatches, spills: spills, part_tags: tags}
 }
 
 /// The part cache's key of part p, "" for none.
@@ -628,7 +631,24 @@ fn part_key(fc: FnCache, p: Int) -> Str {
 /// namespace ns and its functions numbered from 0, as a file of its own.
 /// With pkey (partcache.xo), the part is read from its entry when the
 /// cache holds one (not with verify), else generated and encoded for it.
-fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], ns: Str, fc: FnCache, pkey: Str, pi: Int, bodies: Map[Int, ssa.Func], by_name: Map[Str, Int]) -> Part {
+fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], ns: Str, fc: FnCache, pkey: Str, pi: Int, bodies: Map[Int, ssa.Func], by_name: Map[Str, Int], keep: Atomic[Int]) -> Part {
+  var part = gen_part_text(m, os, taken, fis, ns, fc, pkey, pi, bodies, by_name)
+  // decision 0629: the text leaves the heap as the part finishes, read
+  // back part by part by the passes after emit and the assembler
+  // once the parts' text passes fc.text_keep bytes (a small program's
+  // never does)
+  if !fc.text_dir.is_empty() && part.err.is_empty() && keep.add(0 - part.asm.len()) < 0 {
+    if let Some(fs) = fc.fs {
+      part.text = part_spill(fs, "${fc.text_dir}/text-${pi}.s", part.asm)
+      if part_spilled(part.text) {
+        part.asm = ""
+      }
+    }
+  }
+  part
+}
+
+fn gen_part_text(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], ns: Str, fc: FnCache, pkey: Str, pi: Int, bodies: Map[Int, ssa.Func], by_name: Map[Str, Int]) -> Part {
   var g = new_gen_named(m, os, by_name)
   g.bodies = bodies
   let pentry = if pkey.is_empty() { None } else { fc.part_entries.get(pkey) }
@@ -760,12 +780,12 @@ fn spill_part(fs: Fs, path: Str, var part: Part) uses fs.write {
 }
 
 /// drop_weak_in over each of files, on up to jobs tasks, in order.
-fn drop_weak_all(own: Map[Str, Bool], os: Str, files: List[Mutex[Str]], jobs: Int, win: Map[Str, Str]) -> List[Str] {
+fn drop_weak_all(own: Map[Str, Bool], os: Str, files: List[Mutex[PartText]], jobs: Int, win: Map[Str, Str]) -> List[PartText] {
   let n = files.len()
   if (own.is_empty() && win.is_empty()) || jobs <= 1 || n < 2 {
-    var out: List[Str] = []
+    var out: List[PartText] = []
     for f in files {
-      out.push(win_retarget_both(drop_weak_in(own, os, take_text(f)), win))
+      out.push(drop_weak_one(own, os, take_part(f), win))
     }
     return out
   }
@@ -773,27 +793,44 @@ fn drop_weak_all(own: Map[Str, Bool], os: Str, files: List[Mutex[Str]], jobs: In
   let done = scope s {
     var ts = []
     for _ in 0..jobs.min(n) {
-      ts.push(s.spawn(fn() -> List[(Int, Str)] {
-        var mine: List[(Int, Str)] = []
+      ts.push(s.spawn(fn() -> List[(Int, PartText)] {
+        var mine: List[(Int, PartText)] = []
         while true {
           let i = next.add(1) - 1
           if i >= n {
             break
           }
-          mine.push((i, win_retarget_both(drop_weak_in(own, os, take_text(files[i])), win)))
+          mine.push((i, drop_weak_one(own, os, take_part(files[i]), win)))
         }
         mine
       }))
     }
-    var all: List[(Int, Str)] = []
+    var all: List[(Int, PartText)] = []
     for t in ts {
       all = all + t.await
     }
     all
   }
-  var out: List[Str] = []
+  var out: List[PartText] = []
   for (_, f) in done.sort_by(fn(x) { x.0 }) {
     out.push(f)
   }
   out
+}
+
+/// drop_weak_in and win_retarget_both over one part's text, in its place
+/// (a spilled part read back and rewritten, decision 0629).
+fn drop_weak_one(own: Map[Str, Bool], os: Str, t: PartText, win: Map[Str, Str]) -> PartText {
+  if !part_spilled(t) {
+    return part_mem(win_retarget_both(drop_weak_in(own, os, t.mem), win))
+  }
+  part_replace(t, win_retarget_both(drop_weak_in(own, os, part_read(t)), win))
+}
+
+fn take_part(c: Mutex[PartText]) -> PartText {
+  c.with(fn(var t: PartText) -> PartText {
+    let out = t
+    t = PartText{}
+    out
+  })
 }

@@ -89,6 +89,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_GO_PROTO":             {"content", ""}, // decision 0542: all keeps every protocol method; the generated Go's text says which
 	"XO_EMIT_JOBS":            {"none", ""},    // the parts never depend on the task count
 	"XO_EMIT_MEM":             {"none", ""},    // how many parts run at once (a memory bound, decision 0448 stage 3); the parts never depend on it, as XO_EMIT_JOBS
+	"XO_TEXT_SPILL":           {"none", ""},    // where the parts' text waits between emit and assembly (memory or an unlinked file, decision 0629); the text is the same
 	"XO_HOST_CORES":           {"none", ""},    // the cores probed once a process (split.xo host_counts): job counts only, as XO_EMIT_JOBS
 	"XO_BACKEND_CACHE":        {"none", ""},
 	"XO_BACKEND_CACHE_DIR":    {"none", ""},
@@ -249,6 +250,8 @@ var codegenFS = map[string]string{
 	"wasm/gen.xo":               "program input",
 	"arm64/race.xo":             "program input",
 	"arm64/parallel.xo":         "the per-part spill of new cache entries into the build's work directory (decision 0418, spill_part): written, read back only by the store",
+	"arm64/textspill.xo":        "a part's own text written to an unlinked file and read back by the build that wrote it (decision 0629): the text, not an input",
+	"arm64/gen.xo":              "Program.text reads the parts back from textspill.xo's files (decision 0629): the build's own text, not an input",
 	"ssa/fecache.xo":            "the front end cache itself",
 	"ssa/rccache.xo":            "the rc cache itself",
 	"cli/core/format/format.xo": "the formatter's own files",

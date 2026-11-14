@@ -1,0 +1,130 @@
+// A part's assembly text held in a file instead of the heap between the
+// emit and the assembly (decision 0629): a large program's parts' text
+// was most of what a build held at its peak (the gcp aiplatform/apiv1
+// test build: 906 MB of 932 MB live past emit, 2026-11-13). The file is
+// removed from its directory as soon as it is opened, so only its handle
+// names it: the system frees its blocks when the handle closes or the
+// process ends, a crash or a stop included, and nothing is left on disk.
+
+/// A part's text: in memory (file None) or in an open, already removed
+/// file of len bytes.
+pub struct PartText {
+  pub mem: Str = ""
+  pub file: Option[File] = None
+  pub len: Int = 0
+}
+
+/// text held in memory.
+pub fn part_mem(text: Str) -> PartText {
+  PartText{mem: text, len: text.len()}
+}
+
+/// text written to a new file at path (removed at once); in memory when
+/// the file cannot be made or written.
+pub fn part_spill(fs: Fs, path: Str, text: Str) -> PartText uses fs.write {
+  match fs.open_rw(path) {
+    Ok(f) => {
+      fs.remove(path).ignore_err("the handle names it (decision 0629); left in the build's text directory, which the next build empties")
+      let b = text.bytes()
+      if f.truncate(0).is_ok() && f.write_at(0, b).is_ok() {
+        return PartText{file: Some(f), len: b.len()}
+      }
+      f.close().ignore_err("a write failed; the text stays in memory")
+      part_mem(text)
+    }
+    Err(_) => part_mem(text)
+  }
+}
+
+/// The text of t (read from its file when spilled).
+pub fn part_read(t: PartText) -> Str uses fs.read {
+  match t.file {
+    None => t.mem
+    Some(f) => {
+      var b = BytesBuilder.new()
+      var off = 0
+      while off < t.len {
+        match f.read_at(off, t.len - off) {
+          Ok(Some(chunk)) => {
+            if chunk.is_empty() {
+              break
+            }
+            b.write(chunk)
+            off += chunk.len()
+          }
+          Ok(None) => break
+          Err(e) => fault("internal: a spilled part's text could not be read back (decision 0629): ${e.display()}")
+        }
+      }
+      if off != t.len {
+        fault("internal: a spilled part's text is ${off} bytes, want ${t.len} (decision 0629)")
+      }
+      b.freeze().to_str() ?? fault("internal: a spilled part's text is not UTF-8 (decision 0629)")
+    }
+  }
+}
+
+/// t holding text instead, in the same place (its file rewritten).
+pub fn part_replace(t: PartText, text: Str) -> PartText uses fs.write {
+  match t.file {
+    None => part_mem(text)
+    Some(f) => {
+      let b = text.bytes()
+      if f.write_at(0, b).is_err() || f.truncate(b.len()).is_err() {
+        fault("internal: a spilled part's text could not be rewritten (decision 0629)")
+      }
+      PartText{file: Some(f), len: b.len()}
+    }
+  }
+}
+
+/// Frees t's file (its blocks go back to the system).
+pub fn part_close(t: PartText) {
+  if let Some(f) = t.file {
+    f.close().ignore_err("closing frees the file's blocks; an error leaves them to the process's end")
+  }
+}
+
+/// Whether t is in a file.
+pub fn part_spilled(t: PartText) -> Bool {
+  t.file.is_some()
+}
+
+/// f with its names copied out of the part's text (an encode and decode,
+/// as the back-end cache stores them), so holding f does not hold the
+/// text; its chunks are offsets into the same text.
+pub fn hfacts_detach(f: HFacts) -> HFacts {
+  hfacts_decode(hfacts_encode(f)) ?? fault("internal: hollow facts did not decode (decision 0629)")
+}
+
+/// u with its names copied out of the part's text (see hfacts_detach).
+pub fn ufacts_detach(u: UFacts) -> UFacts {
+  ufacts_decode(ufacts_encode(u)) ?? fault("internal: undefined-symbol facts did not decode (decision 0629)")
+}
+
+/// hollow_plan over parts read one at a time, each part's facts apart from
+/// its text, so only one text is held at once.
+pub fn hollow_plan_parts(parts: List[PartText], elf: Bool) -> (List[HFacts], List[List[Bool]]) uses fs.read {
+  var labels: List[Str] = []
+  if elf {
+    for t in parts {
+      labels = labels + hollow_extra_of(part_read(t)).map(fn(l) { "${l}" })
+    }
+  }
+  let (extra, first) = hollow_extra_from(labels)
+  var facts: List[HFacts] = []
+  for t in parts {
+    facts.push(hfacts_detach(hollow_scan(part_read(t), elf, extra, first)))
+  }
+  let live = hollow_live(facts, elf)
+  (facts, live)
+}
+
+/// undefined_xo over parts read one at a time.
+pub fn undefined_xo_parts(parts: List[PartText]) -> List[(Str, Str)] uses fs.read {
+  var fs: List[UFacts] = []
+  for t in parts {
+    fs.push(ufacts_detach(undef_scan(part_read(t))))
+  }
+  undef_combine(fs)
+}
