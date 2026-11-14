@@ -1785,18 +1785,18 @@ func (v Task_Once[tp_T, tp_E]) XoDebug(b *strings.Builder) {
 func (v Task_Once[tp_T, tp_E]) M_debug(*Task) string { return Debug(v) }
 
 func (v_o Task_Once[tp_T, tp_E]) M_get(tk *Task, v_f func(*Task) Result[tp_T, tp_E]) Result[tp_T, tp_E] {
-	x_a2288 := func(tk *Task, v_st *Option[Result[tp_T, Task_Isolated[tp_E]]]) Result[Result[tp_T, Task_Isolated[tp_E]], Never] {
+	x_a2293 := func(tk *Task, v_st *Option[Result[tp_T, Task_Isolated[tp_E]]]) Result[Result[tp_T, Task_Isolated[tp_E]], Never] {
 		_ = (*v_st)
-		x_m2286 := Own((*v_st))
-		_ = x_m2286
+		x_m2291 := Own((*v_st))
+		_ = x_m2291
 		switch {
 		default:
-			if x_m2286.Some {
-				var v_done Result[tp_T, Task_Isolated[tp_E]] = x_m2286.V
+			if x_m2291.Some {
+				var v_done Result[tp_T, Task_Isolated[tp_E]] = x_m2291.V
 				_ = v_done
 				return Ok[Result[tp_T, Task_Isolated[tp_E]], Never](Own(v_done))
 			}
-			if !x_m2286.Some {
+			if !x_m2291.Some {
 				{
 					var v_fresh Result[tp_T, Task_Isolated[tp_E]] = Own(Task_isolate[tp_T, tp_E](tk, v_f))
 					_ = v_fresh
@@ -1807,39 +1807,39 @@ func (v_o Task_Once[tp_T, tp_E]) M_get(tk *Task, v_f func(*Task) Result[tp_T, tp
 			panic(Unreachable("std/task.xo:172:5"))
 		}
 	}
-	var v_r Result[tp_T, Task_Isolated[tp_E]] = Own(Mutex_with[Option[Result[tp_T, Task_Isolated[tp_E]]], Result[tp_T, Task_Isolated[tp_E]], Never](tk, v_o.F_st, x_a2288).V)
+	var v_r Result[tp_T, Task_Isolated[tp_E]] = Own(Mutex_with[Option[Result[tp_T, Task_Isolated[tp_E]]], Result[tp_T, Task_Isolated[tp_E]], Never](tk, v_o.F_st, x_a2293).V)
 	_ = v_r
-	var x_v2289 Result[tp_T, tp_E]
-	x_m2290 := Own(v_r)
-	_ = x_m2290
-x_M2291:
+	var x_v2294 Result[tp_T, tp_E]
+	x_m2295 := Own(v_r)
+	_ = x_m2295
+x_M2296:
 	switch {
 	default:
-		if x_m2290.Ok {
-			var v_v tp_T = x_m2290.V
+		if x_m2295.Ok {
+			var v_v tp_T = x_m2295.V
 			_ = v_v
-			x_v2289 = Ok[tp_T, tp_E](Own(v_v))
-			break x_M2291
+			x_v2294 = Ok[tp_T, tp_E](Own(v_v))
+			break x_M2296
 		}
-		if !x_m2290.Ok && x_m2290.E.Tag == 2 {
-			var v_e tp_E = x_m2290.E.P.(Task_Isolated_Failed[tp_E]).F0
+		if !x_m2295.Ok && x_m2295.E.Tag == 2 {
+			var v_e tp_E = x_m2295.E.P.(Task_Isolated_Failed[tp_E]).F0
 			_ = v_e
-			x_v2289 = Err[tp_T, tp_E](Own(v_e))
-			break x_M2291
+			x_v2294 = Err[tp_T, tp_E](Own(v_e))
+			break x_M2296
 		}
-		if !x_m2290.Ok && x_m2290.E.Tag == 1 {
-			var v_info Task_Fault = x_m2290.E.P.(Task_Isolated_Faulted[tp_E]).F_info
+		if !x_m2295.Ok && x_m2295.E.Tag == 1 {
+			var v_info Task_Fault = x_m2295.E.P.(Task_Isolated_Faulted[tp_E]).F_info
 			_ = v_info
-			x_v2289 = Absurd[Result[tp_T, tp_E]](Rt_fault_raise(tk, v_info.F_msg, v_info.F_location))
-			break x_M2291
+			x_v2294 = Absurd[Result[tp_T, tp_E]](Rt_fault_raise(tk, v_info.F_msg, v_info.F_location))
+			break x_M2296
 		}
 		panic(Unreachable("std/task.xo:181:27"))
 	}
-	var v_out Result[tp_T, tp_E] = x_v2289
+	var v_out Result[tp_T, tp_E] = x_v2294
 	_ = v_out
-	x_r2292 := Own(v_out)
-	if !x_r2292.Ok {
-		return ErrTr[tp_T](x_r2292.E, Frame2(x_r2292.Tr, "task.Once.get", "std/task.xo:186", "o f", FrameTextOf(v_o), v_f))
+	x_r2297 := Own(v_out)
+	if !x_r2297.Ok {
+		return ErrTr[tp_T](x_r2297.E, Frame2(x_r2297.Tr, "task.Once.get", "std/task.xo:186", "o f", FrameTextOf(v_o), v_f))
 	}
-	return Ok[tp_T, tp_E](x_r2292.V)
+	return Ok[tp_T, tp_E](x_r2297.V)
 }

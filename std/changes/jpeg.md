@@ -1,5 +1,16 @@
 # std/jpeg changes
 
+## 2026-11-14: perf: decode stores a block row and an RGBA pixel in one store each, and a progressive image's coefficient store is made in one list again
+
+- Kind: perf
+- Commit: this push
+- Found by: the stdproven perf run for std/jpeg (linux/arm64 host 1: decode 1.101, rgba 1.146 of Go's wall; the 2026-11-03 hand row's 1.01 and 1.04 were measured another way, as the same run before the security fix is within noise of this one) and XO_PROF profiles of decode and rgba
+- Go reference: image/jpeg's reconstructBlock writes each clamped row into the plane slice; color.YCbCrToRGB per pixel into an RGBA slice
+- Before: store_block built each 8 pixel row as two words and wrote them with two four byte stores; Image.to_rgba wrote four bytes a pixel one at a time; and the 2026-11-14 security fix's growing coefficient store built a 64 Ki zero chunk and concatenated it on every progressive decode, about 11% of decode, whose images hold far fewer coefficients than the chunk
+- Fix: a row is packed into one word, pixel x in byte x (the top byte as a signed byte, so the shift fits Int), and written with one eight byte put_le; a pixel's R, G, B and 255 go out in one four byte write_le (a gray pixel as g * 0x010101); a frame holding at most 64 coefficients per byte of the file (EAGER_COEFS_PER_BYTE; Go's test images hold 2 to 12, the security fix's hostile file about 14,500) gets its whole store at its first write, in one list, and doubling stays for a header asking for more than its data could fill. bench/perf/jpeg on linux/arm64 host 1, --ab against 7c0857749: decode 0.905 (0.891 to 0.923, n=6; 102.5 to 92.8 ms), rgba 0.910 (0.899 to 0.920, n=6; 117.6 to 107.0 ms); the coefficient store step alone decode 0.969 and rgba 0.973
+- Test: std/jpeg_test.xo (the hostile files still take the doubling path: Go's errors); TestStdCorpora jpeg, jpegenc, jpegfuzz and image on go, arm64, llvm; xo test --std-module=jpeg native and llvm
+- Shipped in: not yet released
+
 ## 2026-11-14: security: a frame header asking for a large image allocates only what the scans fill
 
 - Kind: security
