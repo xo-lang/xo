@@ -95,6 +95,12 @@ struct Sym {
   /// Mach-O `.weak_definition` (N_WEAK_DEF): another object may define
   /// it too, and the link keeps the first
   weak_def: Bool = false
+  /// Mach-O N_ALT_ENTRY (`.alt_entry`): a temporary label kept in the
+  /// symbol table as a local that does not start an atom, so a reference
+  /// past ARM64_RELOC_ADDEND's 8 MiB from its atom's symbol names it
+  /// directly (a const blob over 8 MiB, ld64 and the linker's strip split
+  /// no atom at it)
+  alt: Bool = false
   hidden: Bool = false
   size: Int = 0
   mapsym: Bool = false
@@ -1573,12 +1579,15 @@ fn (var a: Asm) reloc_to(si: Int, pc: Int, typ: Int, pcrel: Bool, sym: Int) {
       addend = s.off - a.syms[target].off
     }
   }
+  if addend < -8388608 || addend >= 8388608 {
+    // past the addend's 24 bits (a const blob over 8 MiB): the label
+    // itself, an alt entry of its atom (as clang's `.alt_entry`)
+    target = sym
+    addend = 0
+    a.syms[sym].alt = true
+  }
   a.syms[target].used = true
   if addend != 0 {
-    if addend < -8388608 || addend >= 8388608 {
-      a.fail("addend ${addend} does not fit ARM64_RELOC_ADDEND")
-      return
-    }
     a.sects[si].relocs.push(Reloc{addr: pc, typ: R_ADDEND, pcrel: false, len: 2, sym: addend & 0xffffff, sect: true})
   }
   a.sects[si].relocs.push(Reloc{addr: pc, typ: typ, pcrel: pcrel, len: 2, sym: target})

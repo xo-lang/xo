@@ -53,7 +53,8 @@ fn (var l: Linker) atomize(o: Int) {
     by_sect.push([])
   }
   for s in ob.syms {
-    if (s.typ & N_STAB) == 0 && (s.typ & N_TYPE) == 0x0e && s.sect >= 1 && s.sect <= ob.sects.len() {
+    // an N_ALT_ENTRY symbol (0x200) is inside its atom, as ld64 reads it
+    if (s.typ & N_STAB) == 0 && (s.typ & N_TYPE) == 0x0e && (s.desc & 0x200) == 0 && s.sect >= 1 && s.sect <= ob.sects.len() {
       by_sect[s.sect - 1].push(s.value)
     }
   }
