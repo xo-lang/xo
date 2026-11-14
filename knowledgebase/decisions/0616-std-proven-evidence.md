@@ -323,3 +323,12 @@ crypto; within it, a module that misses only the testing axis first.
   run does not stop the others. The runner's "commit first" checks leave
   std/evidence out, so a written evidence file no longer stops the next
   run in the same worktree.
+- 2026-11-14 (Xo Lang 3): the stress kind adds a run under decision
+  0638's memory checks: after the plain runs, `stdproven stress` builds
+  the program with `--check=all` on arm64 and runs it for
+  `-check-minutes` (default 5; 0 skips it). Pass also needs no fault (a
+  use after free or overrun faults) and `xo leakcheck: 0 live` at exit.
+  The plain runs stay, since the resident set is not sampled under the
+  check. uuid, fnv and html passed it on the Mac (1 minute each, 0 live
+  of 1.7 to 8.5 billion allocations); evidence written before this has
+  no such line and stays valid until its source hash changes.

@@ -123,7 +123,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] [-stress-minutes M] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] MODULE | stdproven perf [-rounds N] MODULE | stdproven serverperf [-reps N] MODULE")
+	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] [-stress-minutes M] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] [-check-minutes M] MODULE | stdproven perf [-rounds N] MODULE | stdproven serverperf [-reps N] MODULE")
 	os.Exit(2)
 }
 
@@ -739,6 +739,7 @@ func stress(args []string) error {
 	minutes := fs.Int("minutes", 30, "run time per backend")
 	tasks := fs.Int("tasks", 64, "concurrent tasks")
 	backends := fs.String("backends", "arm64,llvm", "backends, comma separated")
+	checkMin := fs.Int("check-minutes", 5, "minutes of a further arm64 run built with --check=all (decision 0638: use after free and overruns fault, a leak fails the run; 0 skips it)")
 	hostLabel := fs.String("host", "", "the host's name in the evidence")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
@@ -786,14 +787,47 @@ func stress(args []string) error {
 		fmt.Println(line)
 		lines = append(lines, line)
 	}
+	// decision 0638: the same program built with --check=all, so a use
+	// after free or an overrun faults and a block still live at exit
+	// fails the run (the leak report is the last line, after the
+	// program's own; the resident set is not sampled under the check,
+	// which is why the plain runs above stay)
+	checkNote := ""
+	if *checkMin > 0 {
+		bin := filepath.Join(tmp, "s-check")
+		if out, err := exec.Command(filepath.Join("bin", "xo"), "build", "--check=all", "--backend=arm64", "-o", bin, dir).CombinedOutput(); err != nil {
+			return fmt.Errorf("xo build --check=all --backend=arm64 %s: %v\n%s", dir, err, out)
+		}
+		t0 := time.Now()
+		out, err := exec.Command(bin, strconv.Itoa(*checkMin), strconv.Itoa(*tasks)).CombinedOutput()
+		text := strings.TrimSpace(string(out))
+		var passLine, leakLine string
+		for _, l := range strings.Split(text, "\n") {
+			if strings.HasPrefix(l, "xo leakcheck: ") {
+				leakLine = l
+			} else if strings.HasSuffix(l, ", pass") {
+				passLine = l
+			}
+		}
+		if err != nil || passLine == "" || !strings.HasPrefix(leakLine, "xo leakcheck: 0 live ") {
+			if len(text) > 20000 {
+				text = text[len(text)-20000:]
+			}
+			return fmt.Errorf("arm64 --check=all stress: %v\n%s", err, text)
+		}
+		line := fmt.Sprintf("- arm64 --check=all: %s; %s, %s", passLine, leakLine, time.Since(t0).Round(time.Second))
+		fmt.Println(line)
+		lines = append(lines, line)
+		checkNote = fmt.Sprintf(", %d min on arm64 under --check=all with 0 faults and 0 blocks live at exit", *checkMin)
+	}
 	host := *hostLabel
 	if host == "" {
 		host = runtime.GOOS + "/" + runtime.GOARCH
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "kind: stress\nmodule: %s\nresult: pass\ncommit: %s\nsource: %s\ndate: %s\nhost: %s\n", module, commit, src, time.Now().UTC().Format("2006-01-02"), host)
-	fmt.Fprintf(&b, "command: go run ./scripts/stdproven stress -minutes %d -tasks %d -backends %s -host %q %s\n", *minutes, *tasks, *backends, host, module)
-	fmt.Fprintf(&b, "measure: %d tasks for %d min on each of %s, 0 mismatches, 0 faults, memory under 10%% growth after 5 min, %s\n\n", *tasks, *minutes, *backends, time.Since(start).Round(time.Second))
+	fmt.Fprintf(&b, "command: go run ./scripts/stdproven stress -minutes %d -tasks %d -backends %s -check-minutes %d -host %q %s\n", *minutes, *tasks, *backends, *checkMin, host, module)
+	fmt.Fprintf(&b, "measure: %d tasks for %d min on each of %s, 0 mismatches, 0 faults, memory under 10%% growth after 5 min%s, %s\n\n", *tasks, *minutes, *backends, checkNote, time.Since(start).Round(time.Second))
 	fmt.Fprintf(&b, "Stress evidence (decision 0616): the program %s, every result checked against Go's answer, the resident set sampled every 10 s.\n\n", dir)
 	b.WriteString(strings.Join(lines, "\n") + "\n")
 	return os.WriteFile(filepath.Join("std", "evidence", module, "stress.md"), []byte(b.String()), 0o644)
