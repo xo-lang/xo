@@ -51,13 +51,16 @@ load 7 to 20 on 12 CPUs), so wall and CPU are noisy; max RSS is not.
 
 | build | n | max RSS | CPU | wall |
 |---|---|---|---|---|
-| aiplatform/apiv1 test build, default caches emptied before every run (headline) | 9 | 3.79 to 3.41 GB (0.901, 0.88 to 0.932) | 1.003 (noise) | 1.059 (noise) |
+| aiplatform/apiv1 test build, default caches, each run in a fresh cache (headline; rerun quiet, load under 4) | 9 | 3.74 to 3.36 GB (0.897, 0.883 to 0.918) | 1.009 (noise) | 1.015 (noise) |
+| the first run of that row (caches emptied by rm -rf, partly warm on a few rounds, host loaded) | 9 | 3.79 to 3.41 GB (0.901) | 1.003 | 1.059 |
 | aiplatform/apiv1, caches off (diagnostic) | 9 | 3.07 to 2.67 GB (0.869, 0.847 to 0.882) | 0.994 (noise) | 0.942 (noise) |
 | the self build (compiler/xo) | 3 | 3.87 to 3.64 GB (0.940) | 1.008 | 1.015 |
 
-The default-cache rows' guard (rm -rf of the cache directories) failed
-on a few rounds with "Directory not empty" (a write still landing from
-the round before), so those rounds were partly warm on both sides.
+The first default-cache run emptied the caches with rm -rf, which failed
+on a few rounds with "Directory not empty": the background std build of
+the round before was still writing (gotchas/cache-rm-under-background-writer.md).
+The headline row is the rerun: each run gets a fresh mktemp -d cache, switched
+once the round before's std/.bg.lock is free, on a quiet host (2026-11-13).
 
 Mac (darwin/arm64, a darwin footprint, not the headline):
 Mac (darwin/arm64), on 0628, caches off unless said, XO_TEXT_SPILL=off
