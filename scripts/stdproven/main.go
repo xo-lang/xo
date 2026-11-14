@@ -793,6 +793,24 @@ func stress(args []string) error {
 	return os.WriteFile(filepath.Join("std", "evidence", module, "stress.md"), []byte(b.String()), 0o644)
 }
 
+// perfOwner is the std module a bench/perf directory measures: the
+// longest std module name (std/NAME.xo) its name starts with, so
+// bench/perf/htmlparse is htmlparse's and bench/perf/jsontoken json's.
+func perfOwner(dir string) string {
+	best := ""
+	mods, _ := filepath.Glob(filepath.Join("std", "*.xo"))
+	for _, m := range mods {
+		n := strings.TrimSuffix(filepath.Base(m), ".xo")
+		if strings.HasSuffix(n, "_test") {
+			continue
+		}
+		if strings.HasPrefix(dir, n) && len(n) > len(best) {
+			best = n
+		}
+	}
+	return best
+}
+
 // perf times the module's Go twins: every bench/perf/MODULE* directory with
 // a twin.txt (scripts/twincheck checks their outputs agree, then -time
 // runs each case's Xo and Go programs -rounds times, alternating, at full
@@ -823,6 +841,9 @@ func perf(args []string) error {
 	cands, _ := filepath.Glob(filepath.Join("bench", "perf", module+"*"))
 	var dirs []string
 	for _, d := range cands {
+		if perfOwner(filepath.Base(d)) != module {
+			continue // another module's bench: bench/perf/htmlparse is not html's
+		}
 		if _, err := os.Stat(filepath.Join(d, "twin.txt")); err == nil {
 			dirs = append(dirs, d)
 		}
