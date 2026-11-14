@@ -56,6 +56,29 @@ Stages 1 and 2 give byte-identical output by construction (the same trees, the s
 3 needs the determinism runs of 0636 (XO_EMIT_JOBS=1, 2, 7, default, XO_THREADS=3, XO_MUTEX_YIELD=1,
 10 runs each, cold) and the fixed point.
 
+## Results (2026-11-14)
+
+- Stage 1 (parse ahead; branch lang1-pfe, 7036cfe70, XO_PARSE_AHEAD=0 to compare): output
+  byte-identical in all runs (host 2, cold: the self build 4b365f3b... in 10 runs, aiplatform/apiv1
+  cc7376ad... in 9, across XO_EMIT_JOBS=1, 2, 7, default, XO_THREADS=3, XO_MUTEX_YIELD=1; host 3
+  the same). It parses 13,558 of the self build's 13,766 lazy bodies ahead, but fe.build (Mac, cold,
+  three alternations) is 3.7 to 4.4 s without it and 3.6 to 4.1 s with it: within noise, for about
+  100 MB more heap (the tasks' own heap chunks, decision 0448; a batch of 64 bodies instead of 256
+  changes neither). parse_body is about 0.4 s of the Mac's 3.8 s. Not pushed alone: stage 3's
+  workers parse their bodies anyway.
+- Stage 2 (entry encoding off the main fiber): a second profile (host 3, main at 5e8afa8f5, the self
+  build cold, ~/xo-lead/notes/lang1/pfe3-h3.txt) puts fe_entry at 0.95 s of CPU, encode_func 0.32 s
+  of it; fe_seal is 6 ms and copy_words 71 ms, where the first profile showed 0.97 s and 0.9 s. The
+  part that can move (the body's encoding) is about 0.3 s of a 6 s fe.build: also below what the
+  stage is worth alone. Folded into stage 3 likewise (its workers encode their own entries).
+- So the first two stages do not reach the ranking's estimate; the time is in lowering (2.9 s) and
+  the lazy check (2.2 s), which only stage 3 runs in parallel. Its estimate starts from those two.
+- Stage 3's coverage, first step (XO_FE_STATS=1, cold): the self build keys 13,711 of 13,997 bodies
+  and skips 258 at recording (gen 238), so about 96% could replay; aiplatform/apiv1 keys 6,499 of
+  11,897 (the rest are generic instances, which have no key, fecache.xo) and skips 999 (gen 993), so
+  about 46%. Stage 3 needs generic instances keyed (the generic body's key and the type arguments
+  by name) to cover aiplatform.
+
 ## Consequences
 
 - Stages 1 and 2 together are expected to take about 20% of run_queue for aiplatform/apiv1 and 30%
