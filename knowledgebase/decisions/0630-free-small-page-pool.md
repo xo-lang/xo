@@ -1,6 +1,6 @@
 # 0630: Free small pages: whole free pages of the small classes leave their free lists for a pool every class carves from
 
-Status: Accepted (owner, 2026-11-14), scoped: the free small-page pool and trim ship in the runtime, and only an explicit call runs the scan (xo at its phase boundaries, after emit); no automatic trigger in user programs. Proposed by Xo Lang 1, 2026-11-13
+Status: Accepted (owner, 2026-11-14), scoped to an explicit call (xo after emit), no automatic trigger in user programs; built 2026-11-14, measured negative on xo (11 to 18 MB pooled, footprint unchanged, wall +12 to 19%), and not shipped (see "Built and measured"). Proposed by Xo Lang 1, 2026-11-13
 
 ## Context
 
