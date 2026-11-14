@@ -1024,7 +1024,7 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
   let ps = g.f.blocks[to].params
   // the memories this edge stores, after every argument is read: one
   // argument can be another's memory (two `var` parameters swapped)
-  var stores: List[(Int, List[Int])] = []
+  var stores: List[(Int, Int, List[Int])] = []
   for (i, p) in ps.indexed() {
     if let Some(off) = g.sret_pslot.get(p) {
       // the parameter's slot (sret_pslot); nothing to move when the
@@ -1032,7 +1032,7 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
       let a = g.f.edges[e].args[i]
       let same = (g.sret_slots.get(a) ?? -1) == off || (g.sret_pslot.get(a) ?? -1) == off
       if !same {
-        stores.push((g.area_addr(off), g.words(a)))
+        stores.push((g.area_addr(off), a, g.words(a)))
       }
       continue
     }
@@ -1043,7 +1043,7 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
       let a = g.f.edges[e].args[i]
       if let Some(es) = g.held.edge.get(e) {
         if es[m] != g.key_of(a) {
-          stores.push((g.held.mems[m].ptr, g.words(a)))
+          stores.push((g.held.mems[m].ptr, a, g.words(a)))
         }
       }
       continue
@@ -1058,7 +1058,7 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
       let a = g.f.edges[e].args[i]
       if let Some(es) = g.held.edge.get(e) {
         if es[hm] != g.key_of(a) {
-          stores.push((g.held.mems[hm].ptr, g.words(a)))
+          stores.push((g.held.mems[hm].ptr, a, g.words(a)))
         }
       }
     }
@@ -1074,8 +1074,8 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
     g.f32_param_move(p, g.f.edges[e].args[i], dsts, srcs)
     g.len_moves(p, pw, aw, dsts, srcs)
   }
-  for (ptr, ws) in stores {
-    g.edge_store_words(ptr, ws)
+  for (ptr, a, ws) in stores {
+    g.edge_store_words(ptr, a, ws)
   }
   g.lsr_moves(e, dsts, srcs)
 }
@@ -1368,14 +1368,15 @@ fn (var g: G) value_cause(v: Int) -> Int {
   C_BODY
 }
 
-/// store_words_at for an edge's argument (edge_moves): a copy when it
-/// is more than a word (decision 0443).
-fn (var g: G) edge_store_words(base: Int, ws: List[Int]) {
+/// store_words_at for an edge's argument a, its words ws (edge_moves): a
+/// copy when it is more than a word (decision 0443); a's dead words are
+/// not stored (decision 0624).
+fn (var g: G) edge_store_words(base: Int, a: Int, ws: List[Int]) {
   let c = g.cur_cause
   if c == C_BODY && ws.len() > 1 {
     g.cur_cause = C_COPY
   }
-  g.store_words_at(base, 0, ws)
+  g.store_val_at(base, 0, a, ws)
   g.cur_cause = c
 }
 
@@ -4272,7 +4273,8 @@ fn (var g: G) set_field_op(v: Int) {
     if let Some((m, at)) = g.held.nested.get(v) {
       // stored in place in the field of the held value; the outer set
       // field is then done
-      g.store_words_at(g.held.mems[m].ptr, at, g.words(g.f.arg(x.args, 1)))
+      let fv = g.f.arg(x.args, 1)
+      g.store_val_at(g.held.mems[m].ptr, at, fv, g.words(fv))
       return
     }
   }
@@ -4293,7 +4295,8 @@ fn (var g: G) set_field_op(v: Int) {
       if !u_only {
         old = g.words(g.f.arg(x.args, 0))
       }
-      g.store_words_at(ptr, off, g.words(g.f.arg(x.args, 1)))
+      let fv = g.f.arg(x.args, 1)
+      g.store_val_at(ptr, off, fv, g.words(fv))
       if g.mem_only(v) >= 0 {
         return
       }

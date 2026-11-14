@@ -268,6 +268,17 @@ fn (var g: G) ret_sret(a: Int) {
   g.store_live_at(g.sret_ptr, 0, g.words(a), dm)
 }
 
+/// Stores ws, the words of value a, at base from word w0, leaving out a's
+/// dead words (decision 0624, dead_mask).
+fn (var g: G) store_val_at(base: Int, w0: Int, a: Int, ws: List[Int]) {
+  let dm = g.dead_mask(a)
+  if dm.is_empty() || dm.len() != ws.len() {
+    g.store_words_at(base, w0, ws)
+    return
+  }
+  g.store_live_at(base, w0, ws, dm)
+}
+
 /// Stores ws at base from word w0 but the words dm marks dead (decision 0624), each
 /// run of live words by store_words_at; with +deadw_poison the dead runs
 /// get the poison pattern.
@@ -1939,7 +1950,7 @@ fn (var g: G) by_ref_call(v: Int, ci: Int) {
     if m >= 0 {
       let ptr = g.held.mems[m].ptr
       if has_words[i] {
-        g.store_words_at(ptr, 0, words[i])
+        g.store_val_at(ptr, 0, a, words[i])
       }
       srcs.push(rsrc(ptr))
       continue
@@ -1950,7 +1961,7 @@ fn (var g: G) by_ref_call(v: Int, ci: Int) {
     nth[t] = k + 1
     area[i] = off
     let ad = g.area_addr(off)
-    g.store_words_at(ad, 0, words[i])
+    g.store_val_at(ad, 0, a, words[i])
     srcs.push(rsrc(ad))
   }
   let kept = g.kept_results(ci)
@@ -2030,6 +2041,7 @@ fn (var g: G) by_ref_return(v: Int) {
   let args = g.f.args_copy(g.f.values[v].args)
   var ptrs: List[Int] = []
   var wss: List[List[Int]] = []
+  var wvals: List[Int] = []
   // read everything first: two parameters of one type may swap through
   // the home
   for (k, a) in args.indexed() {
@@ -2044,6 +2056,7 @@ fn (var g: G) by_ref_return(v: Int) {
     }
     ptrs.push(ptr)
     wss.push(g.words(a))
+    wvals.push(a)
   }
   var us: List[Int] = []
   for k in kept {
@@ -2053,7 +2066,7 @@ fn (var g: G) by_ref_return(v: Int) {
     g.ret_sret(args[0])
   }
   for (j, ptr) in ptrs.indexed() {
-    g.store_words_at(ptr, 0, wss[j])
+    g.store_val_at(ptr, 0, wvals[j], wss[j])
   }
   var nz: List[Int] = []
   for u in us {

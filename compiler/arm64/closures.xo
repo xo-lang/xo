@@ -612,7 +612,7 @@ fn (var g: G) eq_addr(v: Int, n: Int) -> Int {
     return ptr
   }
   let ad = g.area_addr(g.frame_area(g.vty(v), n))
-  g.store_words_at(ad, 0, g.words(v))
+  g.store_val_at(ad, 0, v, g.words(v))
   ad
 }
 
