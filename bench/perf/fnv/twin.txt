@@ -1,0 +1,8 @@
+# twincheck: fnv: seven workloads (none is the setup alone); Go is hash/fnv.
+- - none
+- - fnv32
+- - fnv32a
+- - fnv64
+- - fnv64a
+- - fnv128
+- - fnv128a

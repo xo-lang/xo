@@ -1,0 +1,45 @@
+// fnv: std/fnv against Go's hash/fnv (twin.go.txt), the six hashes over
+// 2,000,000 keys of 8 to 40 bytes, the size of a map or shard key (the
+// fnv rows of bench/perf/hash, decision 0616's perf kind for std/fnv);
+// `none` is the setup alone. Usage: `<program>
+// none|fnv32|fnv32a|fnv64|fnv64a|fnv128|fnv128a`. Prints `<workload>
+// <checksum>`; the twin prints the same.
+use std/fnv
+
+fn buffer(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  var x = 12345
+  for _ in 0..n {
+    x = (x * 1103515245 + 12345) % 2147483648
+    b.write_byte(UInt8((x >> 16) & 255))
+  }
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let keys = buffer(4096)
+  var sum = 0
+  if w == "none" {
+    sum = keys.len()
+  } else {
+    for i in 0..2000000 {
+      let at = i % 4000
+      let k = keys[at..at + 8 + i % 33]
+      if w == "fnv32" {
+        sum = sum ^ fnv.sum32(k)
+      } else if w == "fnv32a" {
+        sum = sum ^ fnv.sum32a(k)
+      } else if w == "fnv64" {
+        sum = sum ^ fnv.sum64(k)
+      } else if w == "fnv64a" {
+        sum = sum ^ fnv.sum64a(k)
+      } else if w == "fnv128" {
+        sum = sum ^ Int(fnv.sum128(k)[i % 16])
+      } else {
+        sum = sum ^ Int(fnv.sum128a(k)[i % 16])
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}
