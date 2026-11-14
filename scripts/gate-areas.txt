@@ -34,6 +34,7 @@
 @frontend ^compiler/(check|parser|lexer|ssa)/
 @arm64be ^compiler/arm64/|^compiler/macho/
 @winpe ^compiler/arm64/[a-z0-9_]*(pe|pdb|coff|win)[a-z0-9_]*\.xo$|^compiler/winres/
+@x86 ^compiler/arm64/(x86|amd64|elf)[a-z0-9_]*\.xo$|^compiler/arm64/[a-z0-9_]*win[a-z0-9_]*\.xo$
 @std ^std/
 @checkcache ^compiler/(check|ssa|xo)/
 
@@ -153,3 +154,13 @@ cmd/xo TestVetCostStd ^compiler/xo/vetcost\.xo$|^compiler/check/
 # -short (hourly.sh on main)
 cmd/xo TestSupplyChainAttacks ^compiler/(check|xo)/|^compiler/cli/(modules|core)/|^internal/mod/|^std/native/llrt/(cabi_proc|cabi_net|cabi_libc|fsops|fspath|host|sys|proc|net|sock)[a-z0-9_]*\.xo$|^std/native/sys_[a-z]*\.xo$|^std/prelude\.xo$
 cmd/xo TestRepl ^compiler/cli/repl/|^compiler/(check|parser|lexer)/|^compiler/xo/(run|main)\.xo$
+
+# parents of parallel subtests: their top-level Elapsed hides the work
+# (tier 915's arm64.json, subtest sums: TestDebugInfoSameCode 5290 s,
+# TestNoLeafWithPads 2951 s, TestIfaceLexMatchesParse 2100 s,
+# TestGoldenPassesOff 572 s, TestWindowsAmd64Identity 304 s of CPU time)
+internal/arm64 TestDebugInfoSameCode @debuginfo @arm64be @driver
+internal/arm64 TestNoLeafWithPads @debuginfo @arm64be @rt
+internal/arm64 TestIfaceLexMatchesParse @cache ^compiler/(lexer|parser|check)/
+internal/arm64 TestGoldenPassesOff @frontend @arm64be
+internal/arm64 TestWindowsAmd64Identity @winpe @x86

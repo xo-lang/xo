@@ -216,7 +216,8 @@ for el, act, t in sorted(rows, reverse=True)[:40]:
     print(f"{el:9.2f} {act:4} {t}")
 PY
 }
-# gate_times NAME JSON: each top-level test of a go test -json log that
+# gate_times NAME JSON (the sum of each parent's direct subtests too, as
+# kind "subtests"): each top-level test of a go test -json log that
 # took a second or more, as "NAME<TAB>TEST<TAB>SECONDS<TAB>ACTION" lines
 # in $logs/times.tsv, and the package's own wall time as TEST "-"
 # (lead, 2026-11-14, owner's test-time plan: the daily check
@@ -225,7 +226,7 @@ PY
 gate_times() {
   python3 - "$1" "$2" >>"$logs/times.tsv" 2>/dev/null <<'PY'
 import json, sys
-n, rows, pk = sys.argv[1], [], None
+n, rows, pk, sub = sys.argv[1], [], None, {}
 for line in open(sys.argv[2], errors="replace"):
     try:
         e = json.loads(line)
@@ -235,8 +236,19 @@ for line in open(sys.argv[2], errors="replace"):
     if a in ("pass", "fail", "skip"):
         if t and "/" not in t and e.get("Elapsed", 0) >= 1:
             rows.append(f"{n}\t{t}\t{e.get('Elapsed', 0):.1f}\t{a}")
+        elif t and "/" in t:
+            # a parent's Elapsed leaves out its parallel subtests' time (a
+            # subtest's leaves out its own): sum each depth, keep the most
+            k = (t.split("/")[0], t.count("/"))
+            sub[k] = sub.get(k, 0) + e.get("Elapsed", 0)
         elif not t:
             pk = e.get("Elapsed")
+most = {}
+for (p, _), v in sub.items():
+    most[p] = max(most.get(p, 0), v)
+for p, v in sorted(most.items()):
+    if v >= 10:
+        rows.append(f"{n}\t{p}\t{v:.1f}\tsubtests")
 if pk is not None:
     rows.append(f"{n}\t-\t{pk:.1f}\tpackage")
 print("\n".join(rows))
