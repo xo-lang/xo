@@ -1,0 +1,53 @@
+// Tests of vframes' fold of an outlined release ladder's frame (decision
+// 0634, session.xo ladder_frame): f's body has rows from 0x1000 to its
+// end at 0x1100, its ladder subroutine lies past the end (0x1100 to
+// 0x1140, no row), and g follows at 0x2000.
+
+fn ladder_lines() -> Lines {
+  Lines{
+    rows: [
+      Row{addr: 0x1000, file: 0, line: 10, stmt: true, end: false},
+      Row{addr: 0x1040, file: 0, line: 28, stmt: true, end: false},
+      Row{addr: 0x1100, file: 0, line: 0, stmt: false, end: true},
+      Row{addr: 0x2000, file: 0, line: 50, stmt: true, end: false},
+      Row{addr: 0x2100, file: 0, line: 0, stmt: false, end: true},
+    ],
+    files: ["/src/main.xo"],
+  }
+}
+
+fn ladder_tables() -> Tables {
+  Tables{syms: [(0x1000, "f"), (0x2000, "g")]}
+}
+
+fn shown_frames(pcs: List[Int]) -> Str {
+  var fs: List[UFrame] = []
+  for pc in pcs {
+    fs.push(UFrame{pc: pc, regs: {}, how: "test"})
+  }
+  var out: List[Str] = []
+  for v in vframes(Info{}, ladder_lines(), ladder_tables(), fs) {
+    out.push("${sym_base(v.name)}:${v.line}")
+  }
+  out.join(" ")
+}
+
+test "a ladder subroutine's frame folds into its caller's at the bl" {
+  // a pc in the subroutine (0x1110), then f's return past its bl (0x1048)
+  expect(shown_frames([0x1110, 0x1048, 0x2010])) == "f:28 g:50"
+  // the first frame too: the fault's own pc in the subroutine
+  expect(shown_frames([0x1104, 0x1044])) == "f:28"
+}
+
+test "frames with lines, or another function past them, stay" {
+  // a recursion: both of f's frames have lines
+  expect(shown_frames([0x1050, 0x1044])) == "f:28 f:28"
+  // a pc with no line whose next frame is another function
+  expect(shown_frames([0x1110, 0x2010])) == "f:0 g:50"
+  // without a line table nothing folds
+  var fs: List[UFrame] = []
+  for pc in [0x1110, 0x1048] {
+    fs.push(UFrame{pc: pc, regs: {}, how: "test"})
+  }
+  expect(vframes(Info{}, Lines{}, ladder_tables(), fs).len()) == 2
+}

@@ -1308,6 +1308,14 @@ fn cpu_section(var b: BytesBuilder, r: Int) -> Int {
     }
     samples.push(st)
   }
+  let syms = symbols(ld(r, R_TLO), ld(r, R_THI))
+  let lines = dwline.load(ld(r, R_TLO), ld(r, R_THI))
+  var names = syms.names
+  var folded: List[List[Int]] = []
+  for st in samples {
+    folded.push(fold_ladders(syms, lines, names, st))
+  }
+  samples = folded
   var o = BytesBuilder.new()
   put(o, hz)
   put(o, 1000000000 / hz)
@@ -1317,7 +1325,7 @@ fn cpu_section(var b: BytesBuilder, r: Int) -> Int {
   for st in samples {
     put_stack(o, st)
   }
-  put_table(o, table_of(samples, ld(r, R_TLO), ld(r, R_THI)))
+  put_table(o, table_with(samples, syms, lines))
   put_section(b, PS_CPU, o.freeze())
   samples.len()
 }
@@ -1336,6 +1344,34 @@ fn name_index(name: Str, var names: List[Str]) -> Int {
 
 /// The function of pc: the program's symbol holding it, else the name of
 /// what holds it outside the program (added to names once).
+/// Whether pc (a return address, or a leaf's pc plus 1) is in a local
+/// subroutine of the function next (the frame past it) is in: a release
+/// ladder outlined (decision 0634, compiler/arm64 ladders.xo) has no line
+/// of its own, and the next frame is the function at the `bl` of the copy
+/// that ran, at that copy's line. A recursion's frames each have a line,
+/// and a build without DWARF has none for next either, so neither folds.
+fn ladder_frame(syms: Syms, lines: dwline.Lines, var names: List[Str], pc: Int, next: Int) -> Bool {
+  let (_, l) = dwline.find(lines, pc - 1)
+  if l > 0 {
+    return false
+  }
+  let (_, nl) = dwline.find(lines, next - 1)
+  nl > 0 && func_of(syms, pc - 1, names) == func_of(syms, next - 1, names)
+}
+
+/// st (pcs, innermost first) without its ladder subroutines' frames
+/// (ladder_frame).
+fn fold_ladders(syms: Syms, lines: dwline.Lines, var names: List[Str], st: List[Int]) -> List[Int] {
+  var out: List[Int] = []
+  for (i, pc) in st.indexed() {
+    if i + 1 < st.len() && ladder_frame(syms, lines, names, pc, st[i + 1]) {
+      continue
+    }
+    out.push(pc)
+  }
+  out
+}
+
 fn func_of(syms: Syms, pc: Int, var names: List[Str]) -> Int {
   let f = sym_of(syms, pc)
   if f >= 0 {
@@ -1593,6 +1629,11 @@ pub fn trace_text_at(pcs: List[Int], regs: List[Int]) -> Str {
     if !started && (name.starts_with("fault.") || name.starts_with("fault_") || name.starts_with("cabi.fault") || name.starts_with("unwind.") || name.starts_with("xo_fault") || name.starts_with("xo_w64_")) {
       continue
     }
+    // an outlined release ladder (decision 0634): the next frame is its
+    // function at the line of the copy that ran
+    if fi + 1 < pcs.len() && ladder_frame(syms, lines, names, pc, pcs[fi + 1]) {
+      continue
+    }
     started = true
     // the callees inlined at the call, innermost first, then the
     // function itself at the outermost call's line
@@ -1746,8 +1787,11 @@ fn put_stack(var b: BytesBuilder, st: List[Int]) {
 /// profiles do; a pc outside the program is named by what holds it, a C
 /// library function or the dynamic loader).
 fn table_of(samples: List[List[Int]], lo: Int, hi: Int) -> Table {
-  let syms = symbols(lo, hi)
-  let lines = dwline.load(lo, hi)
+  table_with(samples, symbols(lo, hi), dwline.load(lo, hi))
+}
+
+/// table_of with the program's symbols and DWARF already read.
+fn table_with(samples: List[List[Int]], syms: Syms, lines: dwline.Lines) -> Table {
   var all: List[Int] = []
   for st in samples {
     for pc in st {

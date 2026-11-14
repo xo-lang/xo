@@ -1,0 +1,199 @@
+// Release ladders outlined (decision 0634): a run of `ldr x0, [sp, #N]`
+// and `bl H` pairs that a function repeats verbatim (the same slots, the
+// same helpers, the same order) is written once, after the function's
+// body, as a local subroutine with a frame record of its own, and each
+// copy becomes one `bl` to it. xo's own build had 1.33 M instructions
+// (7.1%) in such repeats, build_native 0.70 M of its 1.01 M
+// (2026-11-14): the releases of a scope with hundreds of owned values on
+// each of its exits, in the middle of a block, where neither reltail
+// (decision 0623) nor tail_merge_cold sees a common tail.
+//
+// The subroutine is an unwind region of its own (as a leaf's fault
+// stubs), with the frame record every function makes: the frame pointer
+// chain and the CFI both go from a pc inside it to its caller at the
+// `bl`, so the fault trace, the profiler and xo debug name the line of
+// the copy that ran, not the first copy's. Its pcs lie past the
+// function's line rows. The run's slots are read 16 bytes further, past
+// the record.
+
+/// The fewest pairs a run has to be outlined.
+const LADDER_MIN = 16
+
+/// The farthest slot offset a ladder may read: [sp, #N + 16] stays in
+/// the scaled ldr's reach.
+const LADDER_MAX_OFF = 32744
+
+/// The slot offset of a ladder line `\tldr x0, [sp, #N]`, or -1.
+fn ladder_load(l: Str) -> Int {
+  let p = "\tldr x0, [sp, #"
+  if !l.starts_with(p) || !l.ends_with("]") {
+    return -1
+  }
+  let n = parse_int(l[p.len()..l.len() - 1]) ?? -1
+  if n < 0 || n % 8 != 0 || n > LADDER_MAX_OFF {
+    return -1
+  }
+  n
+}
+
+/// Whether l is a call `\tbl SYM` (a symbol only).
+fn ladder_call(l: Str) -> Bool {
+  l.starts_with("\tbl ") && l.len() > 4 && !l.contains(",") && !l[4..l.len()].contains(" ")
+}
+
+/// Whether l is a label a run may hold (moved before its `bl` when the
+/// run is outlined): a line table row (`_dlN`), a variable range's
+/// boundary (`_dvN`) or a cause mark (`_xK_dcN`); no branch reaches
+/// them. A block's label, a call site's and the preemption spans' end a
+/// run.
+fn ladder_label(l: Str) -> Bool {
+  if !l.ends_with(":") || !(l.starts_with("L") || l.starts_with(".L")) {
+    return false
+  }
+  let name = l[0..l.len() - 1]
+  for m in ["_dl", "_dv", "_dc"] {
+    let at = name.rfind(m) ?? -1
+    if at >= 0 && at + 3 < name.len() && is_digits(name[at + 3..name.len()]) {
+      return true
+    }
+  }
+  false
+}
+
+/// The run that starts at ls[i]: its pairs and the index past its last
+/// call (labels inside it included).
+fn ladder_run(ls: List[Str], i: Int) -> (Int, Int) {
+  var n = 0
+  var j = i
+  var end = i
+  while true {
+    var k = j
+    while k < ls.len() && ladder_label(ls[k]) {
+      k += 1
+    }
+    if k >= ls.len() || ladder_load(ls[k]) < 0 {
+      break
+    }
+    var c = k + 1
+    while c < ls.len() && ladder_label(ls[c]) {
+      c += 1
+    }
+    if c >= ls.len() || !ladder_call(ls[c]) {
+      break
+    }
+    n += 1
+    j = c + 1
+    end = j
+  }
+  (n, end)
+}
+
+/// The instructions of ls[a..b] (its labels left out), one per line.
+fn ladder_key(ls: List[Str], a: Int, b: Int) -> Str {
+  var out: List[Str] = []
+  for k in a..b {
+    if !ladder_label(ls[k]) {
+      out.push(ls[k])
+    }
+  }
+  out.join("\n")
+}
+
+/// Outlines the repeated ladders of one function's text (lines, after
+/// the line passes). Off for x86 (a call moves sp), windows/arm64 (its
+/// unwind codes), far frames (slots through x28) and XO_PASSES=-ladders.
+fn (var g: G) outline_ladders(lines: List[Str]) -> List[Str] {
+  if g.x86 || g.win_a64() || g.base != 0 || !g.on("ladders") || !any_has(lines, "\tldr x0, [sp, #") {
+    return lines
+  }
+  let ls = flat_lines(lines)
+  // the runs, as (start, end, pairs), and how often each occurs
+  var runs: List[(Int, Int, Int)] = []
+  var count: Map[Str, Int] = {}
+  var i = 0
+  while i < ls.len() {
+    if ladder_load(ls[i]) < 0 {
+      i += 1
+      continue
+    }
+    let (n, end) = ladder_run(ls, i)
+    if n == 0 {
+      i += 1
+      continue
+    }
+    if n >= LADDER_MIN {
+      runs.push((i, end, n))
+      let key = ladder_key(ls, i, end)
+      count[key] = (count.get(key) ?? 0) + 1
+    }
+    i = end
+  }
+  var any = false
+  for (_, c) in count {
+    any = any || c >= 2
+  }
+  // the last region's end: the subroutines go before it
+  var endp = -1
+  for k in 0..ls.len() {
+    if ls[k] == "\t.cfi_endproc" {
+      endp = k
+    }
+  }
+  if !any || endp < 0 {
+    return lines
+  }
+  var subs: Map[Str, Str] = {}
+  var sub_text: List[Str] = []
+  var out: List[Str] = []
+  var r = 0
+  i = 0
+  while i < ls.len() {
+    if i == endp && !sub_text.is_empty() {
+      out.push("\t.cfi_endproc")
+      out.push("\t.cfi_startproc")
+      for l in sub_text {
+        out.push(l)
+      }
+    }
+    if r < runs.len() && runs[r].0 == i {
+      let (_, end, _) = runs[r]
+      r += 1
+      let key = ladder_key(ls, i, end)
+      if (count.get(key) ?? 0) >= 2 {
+        var lab = subs.get(key) ?? ""
+        if lab == "" {
+          lab = g.local("${g.lbl_prefix()}_ld${subs.len()}")
+          subs[key] = lab
+          sub_text.push("${lab}:")
+          sub_text.push("\tstp x29, x30, [sp, #-16]!")
+          sub_text.push("\t.cfi_def_cfa_offset 16")
+          sub_text.push("\t.cfi_offset w30, -8")
+          sub_text.push("\t.cfi_offset w29, -16")
+          sub_text.push("\tmov x29, sp")
+          sub_text.push("\t.cfi_def_cfa w29, 16")
+          for l in key.split("\n") {
+            let off = ladder_load(l)
+            sub_text.push(if off >= 0 { "\tldr x0, [sp, #${off + 16}]" } else { l })
+          }
+          sub_text.push("\tldp x29, x30, [sp], #16")
+          sub_text.push("\t.cfi_def_cfa sp, 0")
+          sub_text.push("\t.cfi_restore w30")
+          sub_text.push("\t.cfi_restore w29")
+          sub_text.push("\tret")
+        }
+        // the run's labels stay, at the call
+        for k in i..end {
+          if ladder_label(ls[k]) {
+            out.push(ls[k])
+          }
+        }
+        out.push("\tbl ${lab}")
+        i = end
+        continue
+      }
+    }
+    out.push(ls[i])
+    i += 1
+  }
+  out
+}

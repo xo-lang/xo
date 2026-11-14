@@ -113,6 +113,9 @@ pub fn passes() -> List[Str] {
     "zero_images",
     // tailmerge.xo: cold blocks (landing pads) that end alike share it
     "tail_merge_cold",
+    // ladders.xo: a release ladder a function repeats verbatim becomes a
+    // local subroutine (decision 0634)
+    "ladders",
     "reuse_loads",
     "reuse_flags",
     "tail_dup",

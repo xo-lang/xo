@@ -33,6 +33,9 @@ pub fn vframes(info: Info, l: Lines, tab: Tables, frames: List[UFrame]) -> List[
     // a caller's line is its call's: the instruction before the return
     // (pc - 1 is inside it on arm64 and x86_64 alike)
     let look = if k == 0 { f.pc } else { f.pc - 1 }
+    if k + 1 < frames.len() && ladder_frame(l, tab, look, frames[k + 1].pc - 1) {
+      continue
+    }
     var file = ""
     var path = ""
     var line = 0
@@ -72,6 +75,28 @@ pub fn vframes(info: Info, l: Lines, tab: Tables, frames: List[UFrame]) -> List[
     out.push(VFrame{pc: f.pc, name: name, file: file, path: path, line: line, inlined: false, vars: vars, regs: f.regs, how: f.how})
   }
   out
+}
+
+/// Whether look is in a local subroutine of the function next (the frame
+/// past it, its call's pc) is in: a release ladder outlined (decision
+/// 0634, compiler/arm64 ladders.xo) has no line of its own, and the next
+/// frame is the function at the `bl` of the copy that ran, at that copy's
+/// line. A recursion's frames each have a line, and without a line table
+/// next has none either, so neither folds (the runtime's traceback and
+/// profiles fold the same way, llrt prof.xo ladder_frame).
+fn ladder_frame(l: Lines, tab: Tables, look: Int, next: Int) -> Bool {
+  if l.at(look).is_some() || l.at(next).is_none() {
+    return false
+  }
+  sym_base(tab.sym_at(look)) == sym_base(tab.sym_at(next))
+}
+
+/// A symbol as sym_at gives it without its `+N` offset.
+fn sym_base(s: Str) -> Str {
+  if let Some(i) = s.find("+") {
+    return s[0..i]
+  }
+  s
 }
 
 fn base_of(p: Str) -> Str {

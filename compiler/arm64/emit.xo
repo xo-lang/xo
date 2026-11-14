@@ -568,11 +568,13 @@ fn (var g: G) emit() {
       g.fail("XO_OP_VERIFY: ${g.f.name}: far_tests_ops differs from far_tests_l")
     }
   }
-  let le = g.local_empty_l(ft)
+  // ladders.xo (decision 0634): repeated release ladders outlined
+  let ol = g.outline_ladders(ft)
+  let le = g.local_empty_l(ol)
   if g.m.op_verify && !g.x86 {
     // decision 0274 step 3: local_empty on items gives the text pass's
     // text
-    if g.local_empty_ops(to_lines(ft)) != le {
+    if g.local_empty_ops(to_lines(ol)) != le {
       g.fail("XO_OP_VERIFY: ${g.f.name}: local_empty_ops differs from local_empty_l")
     }
   }
