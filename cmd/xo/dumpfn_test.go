@@ -10,6 +10,13 @@ import (
 
 const dumpFnProg = `fn sq(x: Int) -> Int { x * x + 1 }
 
+// main never calls it: --fn=count_a makes it a root
+fn count_a(s: Str, n: Int) -> Int {
+  var c = n
+  for b in s.bytes() { if b == 97 { c += 1 } }
+  c
+}
+
 fn main(os: Os) {
   let n = (os.env.get("N") ?? "3").len()
   os.stdio.println("${sq(n)}")
@@ -20,7 +27,8 @@ fn main(os: Os) {
 // asm --ssa=rc|inline --fn=NAME`: only the named functions, a std function
 // main does not reach (declared as a root), the module after the passes
 // (rc shows the borrow inference), and after the inliner (the call of sq is
-// replaced by its body).
+// replaced by its body); a module function main does not reach, after
+// rc, shows the borrow inference on code std changes cannot move.
 func TestDumpFn(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -39,11 +47,17 @@ func TestDumpFn(t *testing.T) {
 		}
 		return out.String()
 	}
-	// a std function the program never calls, after rc: only it, with a
-	// borrowed parameter
+	// a std function the program never calls, after rc: only it (its
+	// parameters' borrow flags follow std's code, so they are checked on
+	// count_a below: flate.InStream.push lost its borrow in a4ec3ca1b)
 	s := dump("ssa", "--fn=flate.InStream.push", "--stage=rc", ".")
-	if !strings.HasPrefix(s, "== stage rc\nfunc flate.InStream.push(") || strings.Count(s, "\nfunc ") != 1 || !strings.Contains(s, "borrow v1") {
+	if !strings.HasPrefix(s, "== stage rc\nfunc flate.InStream.push(") || strings.Count(s, "\nfunc ") != 1 {
 		t.Errorf("std function after rc:\n%.600s", s)
+	}
+	// a module function main never calls, after rc: only it, with its
+	// read-only Str parameter borrowed
+	if s := dump("ssa", "--fn=count_a", "--stage=rc", "."); !strings.HasPrefix(s, "== stage rc\nfunc count_a(borrow v0: Str") || strings.Count(s, "\nfunc ") != 1 {
+		t.Errorf("module function after rc:\n%.600s", s)
 	}
 	// the build stage keeps the module's functions out of the answer too
 	if s := dump("ssa", "--fn=sq", "."); !strings.Contains(s, "func sq(") || strings.Contains(s, "func main(") {
