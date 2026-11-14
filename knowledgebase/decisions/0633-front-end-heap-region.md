@@ -127,3 +127,8 @@ and those three call sites allocated outside the region too where cheap.
   native-only internal entry that only compiler/xo imports. The first is simpler to test; the second
   keeps std's surface unchanged. Answered (owner, 2026-11-14): the native-internal entry, no std/debug
   surface.
+- Native-internal for now, revisited if the region proves itself (lead, 2026-11-14): the runtime's
+  entry keeps a stable shape (region on or off, and the release) so a later std/debug wrapper is
+  thin; after the footprint result, a follow-up ADR weighs a public hook against decision 0524's
+  request arenas. Stage 3 of decision 0637 lowers bodies on worker tasks, whose builder copies are
+  front end allocations too: the region covers the workers' threads while they run.
