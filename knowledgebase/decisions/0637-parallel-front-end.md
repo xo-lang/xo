@@ -1,9 +1,11 @@
 # 0637: The front end builds function bodies on the task pool
 
-Status: Proposed (Xo Lang 1, 2026-11-14: design; the second of the re-profile's three time cuts, the
-lead's ranking in ~/xo-lead/notes/lang1/retime-rank-2026-11-14.md). Gate as decision 0636: byte-identical
-output across worker counts and repeated runs, and the fixed point. Compiler internal: no language or
-output change.
+Status: Accepted (owner, 2026-11-14, through the lead: stages 1 and 2 under the build-time plan; stage 3
+approved after them, its first step measuring the replay hit share with XO_FE_STATS=1 on aiplatform/apiv1
+and the self build; gate: decision 0636's determinism runs (XO_EMIT_JOBS=1, 2, 7, default,
+XO_THREADS=3, XO_MUTEX_YIELD=1, 10 cold runs each), the fixed point, and the self build under
+XO_MAX_MEM with the checker copies' memory reported). The second of the re-profile's three time cuts
+(~/xo-lead/notes/lang1/retime-rank-2026-11-14.md). Compiler internal: no language or output change.
 
 ## Context
 
@@ -27,7 +29,7 @@ main 114f8dce2):
 | lazy parse (force_body's parser.parse_body) | 0.41 s | 0.92 s |
 | front end cache entry (fe_entry, fe_seal) | 0.27 s | 1.70 s |
 
-## Decision (proposed, in stages)
+## Decision (in stages)
 
 1. Parse ahead. parser.parse_body(path, src, span) reads only the file's text. When a Body job is
    queued for a function whose body is still lazy, a task of the pool parses it; force_body takes
