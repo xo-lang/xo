@@ -2214,7 +2214,42 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   crypto_keys, websocket, websocket_tls), and TestGolden, TestGoldenSplit
   and TestGoldenTasks failed on base64_basic, crypto_keys and websocket.
   The rest of the step's time is the package's other tests.
-  Last verified: 2026-10-22.
+  Last verified: 2026-10-22. Since 2026-11-14 (owner's test-time plan)
+  the base's manifest may be an ancestor's: main moves between almost
+  every gate, so the base's own manifest was nearly always missing and
+  the step built the base's xo and every golden's IR again (7 to 12
+  minutes); the newest cached manifest within `XO_LLVM_IR_BACK` (default
+  30) commits of the base is used instead, which selects the base's
+  goldens plus those the commits between changed (a superset), and the
+  log line names it. Each gate's selection time and golden count are in
+  its times.tsv (see "Gate test areas").
+- **Gate test areas** (owner's test-time plan, lead, 2026-11-14):
+  `scripts/gate-areas.txt` lists the slow top-level tests of
+  internal/llvm, internal/arm64 and cmd/xo with the changed paths that
+  can break them (named areas such as `@crypto`, `@sched`, `@cache`);
+  gate.sh's llvm, arm64 and cmd steps pass `go test -skip` for those whose
+  areas the change does not touch (scripts/gate-areas.py; the log line
+  `llvm areas: N scoped tests skipped, M run`). A test not listed always
+  runs, one whose own _test.go file the change edits always runs, a
+  `PKG *` line runs them all (internal/llvm's for compiler/xo and
+  internal/xotool, as the golden selection does), and `tier` keeps a
+  test out of the step (TestModuleCheckAuto: the chkcache step runs it).
+  The full tier (`XO_GATE_LLVM=all`, as tier.sh and offload-tier.sh set,
+  or `XO_GATE_TESTS=all`) runs every test. internal/repotest
+  TestGateAreasValid fails when a listed test no longer exists, an area
+  is undefined or a regex does not compile; add a line when a new test
+  takes a minute or more (the daily check names it). Every gate writes
+  each step's wall time and each top-level test of a second or more to
+  `$XO_GATE_LOGS/times.tsv`, kept in `~/xo-lead/notes/gate-times/` (on an
+  offload host printed as GATE-TIME lines, which offload-gate.sh files
+  there). `~/xo-lead/agents/gatetime.sh [HOURS]` (scripts/lead/gatetime.sh,
+  run once a day by hourly.sh) compares a day of them with
+  scripts/lead/gatetime-baseline.txt: a step whose median is over its
+  baseline by 25%, the llvm step over 900 s with at most 5 goldens
+  selected (the old fixed floor), or a new unscoped test of 60 s or more,
+  written to `~/xo-lead/notes/lead/test-time.log` and bottleneck.log.
+  Measurements: bench/results/gate-time-2026-11-14.md. Last verified:
+  2026-11-14.
 - **TestDebugInfoSameOutputLLVM**: o2Goldens as --release with and without
   --debug-info; the rest -s against a plain -O1 build (TestGolden's,
   from the cache).
