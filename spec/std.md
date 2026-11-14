@@ -5802,6 +5802,13 @@ fn (var d: Decompressor) finish() -> Bytes ! CompressErr      // the rest; moves
   - `finish` returns the rest, or `unexpected EOF` if the stream did not
     end.
   - More than `max_size` bytes in all is an error at once.
+  - An error is kept: every later `write` and `finish` returns the first
+    error without decoding, as Go's readers do.
+  - One `write` returns everything its input completes, so its output is
+    bounded by `max_size`, not by the size of the write (DEFLATE gives up
+    to about 1032 bytes a byte). A caller that must bound each step feeds
+    small writes, as std/http's client does (4 KiB at a time); a write
+    bounded by a caller's buffer, as Go's `Read`, is planned for 0.52.
 
 - `Level.Of(n)` is Go's level n, -2 (HuffmanOnly) to 9 (BestCompression);
   outside that range it is a fault (`compress: invalid compression level

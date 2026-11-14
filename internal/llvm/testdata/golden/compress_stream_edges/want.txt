@@ -14,4 +14,7 @@ dynamic HLIT 0 (257 codes) HDIST 30 (31): one shot error flate: corrupt input be
 dynamic HLIT 0 (257 codes) HDIST 31 (32): one shot error flate: corrupt input before offset 3; streamed error flate: corrupt input before offset 3 after 0 bytes
 10 bytes, max_size 9, bad CRC: one shot error gzip: invalid checksum; streamed error gzip: invalid checksum after 0 bytes
 10 bytes, max_size 9, good CRC: one shot error gzip: output exceeds max_size (9 bytes); streamed error gzip: output exceeds max_size (9 bytes) after 0 bytes
+deflate corrupt: first error "flate: corrupt input before offset 1"; the 3 calls after it give it: true
+zlib corrupt: first error "flate: corrupt input before offset 1"; the 3 calls after it give it: true
+gzip over max_size: first error "gzip: output exceeds max_size (1000 bytes)"; the 3 calls after it give it: true
 --- stderr

@@ -287,6 +287,9 @@ struct Decompressor {
   max: Int
   /// The bytes given out so far, against max.
   total: Int
+  /// The first error, which every later write and finish returns without
+  /// decoding (Go's readers return their first error forever).
+  err: compress.CompressErr? = None
 }
 
 fn decompressor(format: compress.Format, max_size: Int) -> Decompressor {
@@ -309,21 +312,39 @@ fn (d: Decompressor) name() -> Str {
   }
 }
 
-fn (var d: Decompressor) write(data: Bytes) -> Bytes ! compress.CompressErr { d.give(d.st.push(data, false)) }
+fn (var d: Decompressor) write(data: Bytes) -> Bytes ! compress.CompressErr {
+  if let Some(e) = d.err {
+    return Err(e)
+  }
+  d.give(d.st.push(data, false))
+}
 
-fn (var d: Decompressor) finish() -> Bytes ! compress.CompressErr { d.give(d.st.push(b"", true)) }
+fn (var d: Decompressor) finish() -> Bytes ! compress.CompressErr {
+  if let Some(e) = d.err {
+    return Err(e)
+  }
+  d.give(d.st.push(b"", true))
+}
 
 fn (var d: Decompressor) give(r: Result[Bytes, Str]) -> Bytes ! compress.CompressErr {
   match r {
     Ok(out) => {
       d.total += out.len()
       if over(d.total, d.max) {
-        return Err(fail(d.name(), flate.LIMIT, d.max))
+        return d.stop(fail(d.name(), flate.LIMIT, d.max))
       }
       out
     }
-    Err(e) => Err(fail(d.name(), e, d.max))
+    Err(e) => d.stop(fail(d.name(), e, d.max))
   }
+}
+
+/// Records e as the Decompressor's error and drops its decoder's state, so
+/// later writes neither decode nor keep their input.
+fn (var d: Decompressor) stop(e: compress.CompressErr) -> Bytes ! compress.CompressErr {
+  d.err = Some(e)
+  d.st = flate.new_instream(0, 1)
+  Err(e)
 }
 
 // LZW (decision 0578 step 4): Go's compress/lzw writer.go and reader.go over

@@ -1,5 +1,17 @@
 # std/compress changes
 
+## 2026-11-14: security: a Decompressor's first error is returned by every later write and finish
+
+- Kind: security
+- Commit: this push
+- Found by: Xo Lang 3's second read of the std/compress security review (decision 0616, G1)
+- Go reference: compress/flate, gzip and zlib readers (a reader's error is kept and returned by every later Read)
+- Test: golden compress_stream_edges (arm64, LLVM, Go parity): a corrupt deflate stream, a corrupt zlib stream and a gzip stream over max_size, each followed by a fresh valid gzip stream twice and finish: every call gives the first error (deflate and zlib failed without the change)
+- Timing: none
+- Shipped in: 0.51.1
+
+After an error the native Decompressor went on parsing whatever input later writes gave it, so the error changed from call to call, and nothing but the decoder's own state kept a later write from succeeding. It now keeps its first error, returns it from every later write and finish without decoding, and drops its decoder's buffers. The Go backend already behaved this way.
+
 ## 2026-11-14: security: a Decompressor write holds about twice its output, gives output as soon as the input holds it, and drops input after the end
 
 - Kind: security
