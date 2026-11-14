@@ -1,0 +1,7 @@
+# twincheck: crc32: six workloads (none is the setup alone); Go is hash/crc32.
+- - none
+- - crc32
+- - crc32c
+- - keys
+- - keysc
+- - update
