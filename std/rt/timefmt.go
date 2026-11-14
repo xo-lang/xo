@@ -206,16 +206,31 @@ func (c Time_Civil) M_format(_ *Task, layout string) string {
 }
 
 // M_unix is `c.unix()`: seconds since the epoch, any year.
-func (c Time_Civil) M_unix(*Task) int64 { return civilGo(c).Unix() }
+func (c Time_Civil) M_unix(*Task) int64 {
+	q, r, s := civilSplit(c)
+	return q*(eraDays*86400) + (r*86400 + s - floorDivI(int64(c.F_offset), 1e9))
+}
 
-// M_to_time is `c.to_time()`: None outside Time's range.
+// M_to_time is `c.to_time()`: None outside Time's range (the native
+// civil_to_time's arithmetic, so wide fields do not wrap into it).
 func (c Time_Civil) M_to_time(*Task) Option[Time] {
-	gt := civilGo(c)
-	s := gt.Unix()
+	q, r, s0 := civilSplit(c)
+	if q < -2 || q > 1 {
+		return Option[Time]{}
+	}
+	s := q*(eraDays*86400) + (r*86400 + s0 - floorDivI(int64(c.F_offset), 1e9))
 	if s <= minTimeSecs || s >= maxTimeSecs {
 		return Option[Time]{}
 	}
-	return Some(Time(s*1e9 + int64(gt.Nanosecond())))
+	ns := s * 1e9
+	sum := ns + c.F_time.F_nanos
+	if (c.F_time.F_nanos > 0 && sum < ns) || (c.F_time.F_nanos < 0 && sum > ns) {
+		return Option[Time]{}
+	}
+	if sum < minTimeSecs*1e9 || sum > maxTimeSecs*1e9 {
+		return Option[Time]{}
+	}
+	return Some(Time(sum))
 }
 
 // M_format_civil is `l.format_civil(c)`.

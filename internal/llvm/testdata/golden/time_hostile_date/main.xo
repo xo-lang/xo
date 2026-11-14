@@ -1,0 +1,32 @@
+// A server decodes a Date from a request body and answers with its
+// weekday, the date a year later and its text. A Date may hold any fields
+// (derive Json reads any Int), so the far ends of the Int range must give
+// answers, not handler faults (std/evidence/time/review.md section 4;
+// 0.51.0 faulted in weekday, add_months, display and Civil.to_time there,
+// a 500 per request). Arithmetic whose answer does not fit Int (a year
+// past Int.max) still faults; the handler checks the year first, as
+// spec/std.md 13.2 says. (Civil.format of such a year is left out: the Go
+// backend formats through Go's time.Time, whose years end near 2.9e11.)
+
+use std/http
+use std/time
+
+fn main(os: Os) uses stdio {
+  var r = http.router()
+  r.handle("POST /date", fn(req: http.Request) -> http.Response ! http.HttpErr {
+    let d = req.json[time.Date]() ?? e => return Ok(http.text(400, "bad date: ${e}"))
+    let later = if d.year < 9223372036854775807 - 1 { d.add_months(12).display() } else { "past Int" }
+    let c = time.Civil{date: d, time: time.ClockTime{hour: 12, minute: 0, second: 0, nanos: 0}, offset: Duration.from_secs_int(0), zone: "UTC"}
+    Ok(http.text(200, "${d.weekday()} ${d.display()} later ${later} to_time ${c.to_time().is_some()}"))
+  })
+  for body in [
+    "{\"year\": 2026, \"month\": 11, \"day\": 14}",
+    "{\"year\": 9223372036854775807, \"month\": 12, \"day\": 31}",
+    "{\"year\": -9223372036854775808, \"month\": 1, \"day\": 1}",
+    "{\"year\": 2026, \"month\": -9223372036854775808, \"day\": 9223372036854775807}",
+    "{\"year\": 99999999999999999, \"month\": 99, \"day\": -5}",
+  ] {
+    let resp = r.call(http.new_request("POST", "/date", {"content-type": "application/json"}, body.bytes()))
+    os.stdio.println("${resp.status} ${resp.body.to_str() ?? "?"}")
+  }
+}

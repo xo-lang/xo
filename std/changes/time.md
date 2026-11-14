@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-11-14: security: Date and Civil methods no longer fault on fields far outside the calendar (native)
+
+- Kind: security
+- Commit: this commit
+- Found by: Xo Lang 3's decision 0616 review of std/time (std/evidence/time/review.md, section 4)
+- Go reference: Go's time.Date normalizes any field without a panic (its arithmetic wraps)
+- Test: std/native/time_test.xo (200,000 random dates and clock fields against the direct formulas, every combination of the Int range's ends in each field, and hostile parse, duration and zone name texts); golden time_hostile_date on arm64, llvm and go
+- Timing: a security fix, measured by the std/evidence/time/perf.md run that follows it
+- Shipped in: not yet released; 0.51.0 and earlier have the fault
+
+A Date, ClockTime or Civil may hold any fields: a struct literal or a JSON body decoded through derive Json. With a year or another field far outside the calendar's range, Date.weekday, add_days, add_months, days_until and display, and Civil.unix, to_time and format faulted on an intermediate overflow, so a server calling one of them on a decoded value could be stopped by a request. The day number is now split into whole 400 year cycles (146097 days, a whole number of weeks) and a rest before any multiplication: weekday, display, to_time and format answer for every field, and add_days, add_months, days_until and unix fault only when the answer itself does not fit Int. The Go backend, whose int64 arithmetic wrapped to wrong answers for such fields (no fault), uses the same split for these methods (std/rt timecivil.go and timefmt.go); its Civil.format still goes through Go's time.Time, so a year outside about plus or minus 2.9e11 formats wrongly there (a known issue, std/evidence/time/review.md). Golden time_hostile_date: a server decoding a Date from a JSON body answers 200 for the Int range's ends on every backend (0.51.0's native backends answered 500).
+
 ## 2026-11-14: perf: a zone's abbreviation is written into the formatted text without making a Str (native)
 
 - Kind: perf
