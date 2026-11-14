@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Security (std/norm, every backend): `normalize` and `is_normalized` follow x/text's stream-safe text (a U+034F after 30 non-starters in a row), so a long run of combining marks normalizes in linear time (it was quadratic: about 22 s for 1 MB of marks) and such text normalizes as Go's does. Affected: 0.38.0 to 0.51.0.
+- Build speed (compiler): reference count liveness runs on bit sets over each function's leaves numbered once in sorted order (decision 0639), where it kept a map per block and sorted every block's set again; output is byte-identical. xo's own build (linux/arm64): CPU 0.939, wall 0.963, max RSS 0.958.
 - Error path speed (native backends, decision 0632): a `?` frame formats a parameter of 256 bytes or more when it is captured, only as far as the 64 bytes the trace shows, instead of copying the value: 20,000 errors through three frames with a 40 KB request struct take 19.7 ms, were 59.0 ms (linux/arm64). The printed trace is unchanged.
 - Security (std/uuid, native backends): `uuid.parse` of some texts holding multi-byte characters faulted while building its error, so a program parsing a peer's UUID text could be stopped; it now answers google/uuid's error. Affected: 0.51.0 and earlier.
 - Feature (std/http client): `Client.with_max_idle_per_host(n)` sets how many idle HTTP/1.1 connections are kept per host (Go's `Transport.MaxIdleConnsPerHost`; default 2 as Go, negative none), so a service making many concurrent calls to one backend reuses connections instead of redialing.

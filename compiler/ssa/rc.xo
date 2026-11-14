@@ -1355,6 +1355,12 @@ fn (k: Counted) borrows(l: Leaf) -> Int {
 /// The per function state of the pass (rcFunc).
 struct RcFunc {
   live_in: List[Map[Int, Leaf]] = []
+  /// the dense form (live_dense): each block's live in set as bits over
+  /// the function's tracked leaves numbered in sorted_leaves order, and
+  /// the leaves' keys to their numbers; live_in is then empty
+  dense: Bool = false
+  live_bits: List[List[Int]] = []
+  lid: Map[Int, Int] = {}
   /// live_in per block in sorted_leaves order, made once after liveness
   /// (edge_need read it for every edge, sorting again each time)
   live_sorted: List[List[Leaf]] = []
@@ -1657,8 +1663,10 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   r.borrow_projections(f)
   r.um_fi = -1
   r.liveness(f, c)
-  for s in c.live_in {
-    c.live_sorted.push(r.sorted_leaves(f, s))
+  if !c.dense {
+    for s in c.live_in {
+      c.live_sorted.push(r.sorted_leaves(f, s))
+    }
   }
   r.insert(f, c)
   r.cancel(f)
@@ -1692,7 +1700,131 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   f.ret_view = if fi < r.rvp.len() { r.rvp[fi] } else { -1 }
 }
 
+/// The most words live_dense's two bit sets may take for one function
+/// (blocks times the words of its leaf set, twice): 4 M words, 32 MB;
+/// past it the maps of liveness_sparse, whose size follows the leaves
+/// actually live.
+const LIVE_DENSE_MAX = 4194304
+
+/// Rc.liveness (cut 3 of the 2026-11-14 re-profile): the least fixed
+/// point in bit sets over the function's tracked leaves, numbered in
+/// sorted_leaves order (root, then path rank), so each block's sorted
+/// live in list is its bits in order, with no sort per block. The sets,
+/// and so every list and count made from them, are liveness_sparse's;
+/// the maps and sets of that form were 9.2 s (Map[Int, Leaf] puts), 7.8
+/// s (Set[Int]) and 5.8 s (sorted_leaves) of a cold self build's CPU.
 fn (var r: Rc) liveness(f: Func, var c: RcFunc) {
+  let n = f.blocks.len()
+  // the uses that seed the in sets, as liveness_sparse's first loop
+  var sb: List[Int] = []
+  var sl: List[Leaf] = []
+  var uni: Map[Int, Leaf] = {}
+  for bi in 0..n {
+    for v in f.blocks[bi].instrs {
+      for x in r.leaf_uses(f, v) {
+        if r.tracked(f, x.l) && block_of(f.values[x.l.root].tb) != bi {
+          sb.push(bi)
+          sl.push(x.l)
+          uni[leaf_key(x.l)] = x.l
+        }
+      }
+      for e in f.values[v].succs() {
+        for a in f.edges[e].args {
+          for l in r.leaves(f, a) {
+            if r.tracked(f, l) && block_of(f.values[l.root].tb) != bi {
+              sb.push(bi)
+              sl.push(l)
+              uni[leaf_key(l)] = l
+            }
+          }
+        }
+      }
+    }
+  }
+  let words = (uni.len() + 63) / 64
+  if n * words * 2 > LIVE_DENSE_MAX {
+    r.liveness_sparse(f, c)
+    return
+  }
+  // the leaves in sorted_leaves order: a leaf's number is its place
+  let table = r.sorted_leaves(f, uni)
+  var lid: Map[Int, Int] = {}
+  for (i, l) in table.indexed() {
+    lid[leaf_key(l)] = i
+  }
+  var preds: List[List[Int]] = List.with_capacity(n)
+  var bin: List[List[Int]] = List.with_capacity(n)
+  var bout: List[List[Int]] = List.with_capacity(n)
+  // one zero set shared until a block's first bit (copy on write)
+  var zero = List[Int].with_capacity(words)
+  for _ in 0..words {
+    zero.push(0)
+  }
+  for _ in 0..n {
+    preds.push([])
+    bin.push(zero)
+    bout.push(zero)
+  }
+  for i in 0..n {
+    let t = f.term(i)
+    if t >= 0 {
+      for e in f.values[t].succs() {
+        preds[f.edges[e].to].push(i)
+      }
+    }
+  }
+  var wb: List[Int] = []
+  var wl: List[Int] = []
+  for (k, bi) in sb.indexed() {
+    let id = lid.get(leaf_key(sl[k])) ?? 0
+    let w = id / 64
+    let bit = 1.wrapping_shl(id % 64)
+    if bin[bi][w] & bit == 0 {
+      bin[bi][w] = bin[bi][w] | bit
+      wb.push(bi)
+      wl.push(id)
+    }
+  }
+  while !wb.is_empty() {
+    let b = wb.pop() ?? 0
+    let id = wl.pop() ?? 0
+    let w = id / 64
+    let bit = 1.wrapping_shl(id % 64)
+    let rb = block_of(f.values[table[id].root].tb)
+    for p in preds[b] {
+      if bout[p][w] & bit != 0 {
+        continue
+      }
+      bout[p][w] = bout[p][w] | bit
+      if rb != p && bin[p][w] & bit == 0 {
+        bin[p][w] = bin[p][w] | bit
+        wb.push(p)
+        wl.push(id)
+      }
+    }
+  }
+  c.dense = true
+  c.lid = lid
+  c.live_in = []
+  c.live_sorted = List.with_capacity(n)
+  for bi in 0..n {
+    var s: List[Leaf] = []
+    for w in 0..words {
+      var x = bin[bi][w]
+      while x != 0 {
+        let t = x.trailing_zeros()
+        s.push(table[w * 64 + t])
+        x = x & x.wrapping_sub(1)
+      }
+    }
+    c.live_sorted.push(s)
+  }
+  c.live_bits = bin
+}
+
+/// liveness with maps and sets (the form before 2026-11-14), for a
+/// function whose bit sets would be too large (LIVE_DENSE_MAX).
+fn (var r: Rc) liveness_sparse(f: Func, var c: RcFunc) {
   // the least fixed point of in(b) = (used(b) | out(b)) without the
   // leaves whose root b defines, out(b) = the union of the successors'
   // ins: each leaf added to a block's in set is walked back to the
@@ -2046,6 +2178,11 @@ struct EdgeNeed {
   args: Counted = Counted{}
   live: Map[Int, Leaf] = {}
   sorted: List[Leaf] = []
+  /// the dense form (RcFunc.dense): the target's live in bits and the
+  /// leaves' numbers
+  dense: Bool = false
+  bits: List[Int] = []
+  lid: Map[Int, Int] = {}
 }
 
 fn (var r: Rc) edge_need(f: Func, c: RcFunc, e: Int) -> EdgeNeed {
@@ -2056,13 +2193,27 @@ fn (var r: Rc) edge_need(f: Func, c: RcFunc, e: Int) -> EdgeNeed {
     }
   }
   let to = f.edges[e].to
+  if c.dense {
+    return EdgeNeed{args: k, sorted: c.live_sorted[to], dense: true, bits: c.live_bits[to], lid: c.lid}
+  }
   EdgeNeed{args: k, live: c.live_in[to], sorted: c.live_sorted[to]}
 }
 
 /// The consumes of l on the edge: its arguments' and one if it is live
 /// into the target (Counted.consumes of the old merged count).
 fn (k: EdgeNeed) consumes(l: Leaf) -> Int {
-  k.args.consumes(l) + (if k.live.contains(leaf_key(l)) { 1 } else { 0 })
+  k.args.consumes(l) + (if k.live_has(leaf_key(l)) { 1 } else { 0 })
+}
+
+/// Whether the leaf of key lk is live into the edge's target.
+fn (k: EdgeNeed) live_has(lk: Int) -> Bool {
+  if !k.dense {
+    return k.live.contains(lk)
+  }
+  match k.lid.get(lk) {
+    Some(id) => k.bits[id / 64] & (1.wrapping_shl(id % 64)) != 0
+    None => false
+  }
 }
 
 /// The edge's leaves in the order the merged count had: the arguments'
