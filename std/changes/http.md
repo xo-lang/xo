@@ -9,7 +9,7 @@
 - Affected: Xo 0.51.0 and earlier, native backends: ClientStream.read and read_all of a gzip response the client asked for
 - Test: golden http_gzip_hostile (arm64, LLVM, Go parity): about 1 MB of gzip that inflates to 1000 MB, read through ClientStream.read(64 KiB) and read(1 MiB); heap peak under 50 MB (fails without the change: 1409 MB)
 - Timing: that response read whole in 0.82 s at 23 MB RSS on darwin/arm64 (0.81 s at 1064 MB before)
-- Shipped in: not yet released
+- Shipped in: 0.51.1
 
 The client gave its Decompressor each chunk it received in one write, and a write returns all the output its input completes: a body read whole or a large chunk of a hostile gzip response (DEFLATE gives up to about 1032 bytes a byte) became up to max_size (1 GiB) of output at once, held about twice while copied. The received bytes now go to the Decompressor at most 4 KiB at a time (GZ_SLICE), the next slice only once read has returned the last one's output, so one write's output stays near 4 MB. read_all still gathers up to its max_size (default 1 GiB) by design, as Go's io.ReadAll gathers all; a caller reading an untrusted response whole passes a smaller max_size.
 

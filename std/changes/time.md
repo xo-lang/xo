@@ -8,7 +8,7 @@
 - Go reference: Go's arithmetic wraps; its answers are right wherever they fit
 - Test: std/native/time_test.xo "answers within a cycle of Int's ends, and years past them, do not fault"
 - Timing: a security fix, measured by the std/evidence/time/perf.md run that follows it
-- Shipped in: not yet released; 0.51.0 and earlier fault on these and wider fields
+- Shipped in: 0.51.1; 0.51.0 and earlier fault on these and wider fields
 
 f0454f0a2 left three faults on fields a JSON body can hold: days_until faulted when its answer was within one 400 year cycle of Int's ends (a negative rest under a product past Int), Civil.unix the same when a positive offset brought the seconds back into range, and Civil.format on a year that normalizes past Int (month 13 of year Int.max). The cycles and the rest now meet in mul_add, which overflows only when the answer does not fit, and format prints a year past Int from its cycles.
 
@@ -20,7 +20,7 @@ f0454f0a2 left three faults on fields a JSON body can hold: days_until faulted w
 - Go reference: Go's time.Date normalizes any field without a panic (its arithmetic wraps)
 - Test: std/native/time_test.xo (200,000 random dates and clock fields against the direct formulas, every combination of the Int range's ends in each field, and hostile parse, duration and zone name texts); golden time_hostile_date on arm64, llvm and go
 - Timing: a security fix, measured by the std/evidence/time/perf.md run that follows it
-- Shipped in: not yet released; 0.51.0 and earlier have the fault
+- Shipped in: 0.51.1; 0.51.0 and earlier have the fault
 
 A Date, ClockTime or Civil may hold any fields: a struct literal or a JSON body decoded through derive Json. With a year or another field far outside the calendar's range, Date.weekday, add_days, add_months, days_until and display, and Civil.unix, to_time and format faulted on an intermediate overflow, so a server calling one of them on a decoded value could be stopped by a request. The day number is now split into whole 400 year cycles (146097 days, a whole number of weeks) and a rest before any multiplication: weekday, display, to_time and format answer for every field, and add_days, add_months, days_until and unix fault only when the answer itself does not fit Int. The Go backend, whose int64 arithmetic wrapped to wrong answers for such fields (no fault), uses the same split for these methods (std/rt timecivil.go and timefmt.go); its Civil.format still goes through Go's time.Time, so a year outside about plus or minus 2.9e11 formats wrongly there (a known issue, std/evidence/time/review.md). Golden time_hostile_date: a server decoding a Date from a JSON body answers 200 for the Int range's ends on every backend (0.51.0's native backends answered 500).
 

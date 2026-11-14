@@ -10,7 +10,7 @@
 - Fix: `&#x;` is U+FFFD and `&#9` before another byte stays text, as in Go (Xo unescaped any digit and kept `&#x;`); 215 of the fuzz's 2,000 seed 1 cases differed before
 - Test: std/html_test.xo "a numeric reference past Int answers as Go's rune does, not a fault" and "Go's three byte rule for numeric references"; corpus internal/stdtest/testdata/corpus/htmlfuzz on every corpus backend; TestHtmlFuzz seed 2 on arm64 and llvm
 - Affected: the fault on the native backends from 0.35.0 (std/html's first release) to 0.51.0, and on the Go backend from 0.49.0 (unescape_string compiled from std/html.xo, which wrapped to a different answer there rather than faulting); the three byte rule on every backend in those releases
-- Shipped in: not yet released
+- Shipped in: 0.51.1
 
 ## 2026-11-10: internal: merged, escape_string's fast path in std/native/html_native.xo
 
