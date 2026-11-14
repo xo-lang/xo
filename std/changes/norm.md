@@ -1,5 +1,16 @@
 # std/norm changes
 
+## 2026-11-14: perf: unstable runes found through a per block index
+
+- Kind: perf
+- Commit: this push
+- Found by: the stream-safe fix's --ab (2 to 3% slower on bench/perf/norm); every non-ASCII rune's unstable lookup binary searched the whole NFC_UNSTABLE or NFKC_UNSTABLE table
+- Go reference: x/text's norm looks properties up in a trie, one load per byte
+- Change: scripts/gennorm writes NFC_UIDX and NFKC_UIDX (per block of 256 runes up to U+20000, the first record ending in it, as SS_IDX does for STREAM_SAFE), and unstable reads the few records of the rune's block; gennorm also fails if a rune leads with more than 2 or trails more than 3 non-starters, which flush_run's 20 byte shortcut assumes. The other tables regenerate byte for byte
+- Measured: bench/perf/norm on linux/arm64 host 1, --ab against 33b6ee453: nfc 0.853 (0.84 to 0.855, n=6), nfkc 0.904 (0.896 to 0.913, n=6), nfd 1.004 (0.999 to 1.018, n=11, within noise)
+- Test: xo test --std-module=norm native and llvm; TestNormFuzz on arm64, llvm and go; TestStdCorpora norm and idna on go, arm64, llvm; stdgen -check
+- Shipped in: not yet released
+
 ## 2026-11-14: security: x/text's stream-safe text, so a long run of combining marks normalizes in linear time
 
 - Kind: security

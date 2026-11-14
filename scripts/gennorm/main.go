@@ -240,6 +240,27 @@ func main() {
 	}
 	w.WriteString("/// Runes from U+C0 on that NFC can change or reorder, or that combine with a rune before them, as 4 byte records ascending: the first rune (3 bytes) and the length minus one. Text of all other runes is its own NFC.\nconst NFC_UNSTABLE: Bytes = " + lit(unst(uc)) + "\n\n")
 	w.WriteString("/// The same for NFKC.\nconst NFKC_UNSTABLE: Bytes = " + lit(unst(uk)) + "\n\n")
+	// uidx: per block of 256 runes up to U+20000 (and one more), the first
+	// 4 byte record that ends at or after the block's first rune, so
+	// unstable reads the few records of one block, not a binary search
+	uidx := func(recs []byte) []byte {
+		var out []byte
+		n := len(recs) / 4
+		for blk := 0; blk <= 0x200; blk++ {
+			first := n
+			for i := 0; i < n; i++ {
+				st := int(recs[4*i]) | int(recs[4*i+1])<<8 | int(recs[4*i+2])<<16
+				if st+int(recs[4*i+3]) >= blk<<8 {
+					first = i
+					break
+				}
+			}
+			out = append(out, idx16(first)...)
+		}
+		return out
+	}
+	w.WriteString("/// Per block of 256 runes up to U+20000 (and one more), 2 bytes: the first record of NFC_UNSTABLE that ends at or after the block's first rune.\nconst NFC_UIDX: Bytes = " + lit(uidx(unst(uc))) + "\n\n")
+	w.WriteString("/// The same for NFKC_UNSTABLE.\nconst NFKC_UIDX: Bytes = " + lit(uidx(unst(uk))) + "\n\n")
 	w.WriteString("/// Per block of 64 runes up to U+3000 (and one more), 2 bytes: the last record of CANON that starts at or before the block's first rune, to bound the search.\nconst CANON_IDX: Bytes = " + lit(blockIdx(cr7)) + "\n\n")
 	w.WriteString("/// The same for COMPAT.\nconst COMPAT_IDX: Bytes = " + lit(blockIdx(kr7)) + "\n\n")
 	w.WriteString("/// Per first rune up to U+400 (and one more), 2 bytes: the first record of COMP whose first rune is at least that.\nconst COMP_IDX: Bytes = " + lit(compIdx) + "\n\n")
@@ -270,6 +291,14 @@ func main() {
 			continue
 		}
 		ss = append(ss, ssr{r, r, v})
+	}
+	// std/norm's flush_run counts only a run longer than 20 bytes, sound
+	// while no rune leads with more than 2 non-starters or trails more
+	// than 3 (a run of 20 bytes then reaches at most 21, under 30)
+	for _, g := range ss {
+		if g.v>>4 > 2 || g.v&15 > 3 {
+			panic(fmt.Sprintf("gennorm: U+%04X leads %d or trails %d non-starters; std/norm flush_run's 20 byte shortcut assumes at most 2 and 3", g.lo, g.v>>4, g.v&15))
+		}
 	}
 	var ssb, ssIdx []byte
 	for _, g := range ss {
