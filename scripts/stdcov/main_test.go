@@ -1,0 +1,58 @@
+package main
+
+import (
+	"reflect"
+	"testing"
+	"time"
+)
+
+func day(s string) time.Time {
+	t, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
+// TestFresh: decision 0616 section 3, "for 90 days and one minor release
+// after the run, whichever is later".
+func TestFresh(t *testing.T) {
+	minors, minorsRead = []time.Time{day("2026-08-01"), day("2026-11-10"), day("2027-03-01")}, true
+	today = day("2026-12-31")
+	for _, c := range []struct {
+		name, source, date string
+		want               bool
+	}{
+		{"hash matches, old", "h", "2025-01-01", true},
+		{"stale hash, 30 days", "x", "2026-12-01", true},
+		{"stale hash, 90 days exactly", "x", "2026-10-02", true},
+		{"stale hash, 120 days, a minor release after it", "x", "2026-09-01", false},
+		{"stale hash, 120 days, no minor release after it yet", "x", "2026-09-01", true},
+		{"stale hash, no date", "x", "", false},
+	} {
+		if c.name == "stale hash, 120 days, no minor release after it yet" {
+			minors = []time.Time{day("2026-08-01"), day("2027-03-01")} // the next one is after today
+		}
+		hdr := map[string]string{"source": c.source}
+		if c.date != "" {
+			hdr["date"] = c.date
+		}
+		if got := fresh(hdr, "h"); got != c.want {
+			t.Errorf("%s: fresh = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestDecimals(t *testing.T) {
+	for in, want := range map[string][]float64{
+		"decode 1.04, encode 0.94 of Go's wall": {1.04, 0.94},
+		"v0.35.0 and 2026-11-02 and 1/2.5":      {0.35},
+		"x1.25y -0.5 12.75":                     {1.25, 12.75},
+		"1.2.3":                                 {1.2},
+	} {
+		// the answers are Python's re.findall(r"(?<![\d./-])\d+\.\d+(?![\d])") on each
+		if got := decimals(in); !reflect.DeepEqual(got, want) {
+			t.Errorf("decimals(%q) = %v, want %v", in, got, want)
+		}
+	}
+}

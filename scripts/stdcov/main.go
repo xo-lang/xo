@@ -515,8 +515,11 @@ func evidence(m string) map[string]evFile {
 	return out
 }
 
-// fresh: the evidence's source hash matches the module's now, or it is within
-// 90 days of its date (decision 0616 section 3).
+// fresh: decision 0616 section 3. Evidence counts while its source hash
+// matches the module's now, or for 90 days and one minor release after the
+// run, whichever is later: a run with a stale hash goes stale only once it is
+// over 90 days old and a minor release (a vX.Y.0 tag dated on or before today)
+// has been tagged after its date.
 func fresh(hdr map[string]string, cur string) bool {
 	if hdr["source"] == cur {
 		return true
@@ -529,7 +532,38 @@ func fresh(hdr map[string]string, cur string) bool {
 	if err != nil {
 		return false
 	}
-	return int(today.Sub(d).Hours()/24) <= 90
+	if int(today.Sub(d).Hours()/24) <= 90 {
+		return true
+	}
+	for _, t := range minorReleases() {
+		if t.After(d) && !t.After(today) {
+			return false
+		}
+	}
+	return true
+}
+
+var minors []time.Time
+var minorsRead bool
+
+var reMinorTag = regexp.MustCompile(`^v\d+\.\d+\.0$`)
+
+// minorReleases returns the dates of the vX.Y.0 tags.
+func minorReleases() []time.Time {
+	if minorsRead {
+		return minors
+	}
+	minorsRead = true
+	for _, l := range strings.Split(sh("git", "for-each-ref", "refs/tags", "--format=%(refname:short) %(creatordate:short)"), "\n") {
+		f := strings.Fields(l)
+		if len(f) != 2 || !reMinorTag.MatchString(f[0]) {
+			continue
+		}
+		if t, err := time.Parse("2006-01-02", f[1]); err == nil {
+			minors = append(minors, t)
+		}
+	}
+	return minors
 }
 
 var evCache = map[string]map[string]evFile{}

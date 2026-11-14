@@ -268,3 +268,16 @@ crypto; within it, a module that misses only the testing axis first.
   serverperf MODULE` reads bench/perf/MODULE/proven.sh's rows; http's
   runs the CRUD server under loadgen (rps, CPU per request, p99 shown),
   the reverse proxy and the streaming client against Go's twins.
+- 2026-11-14 (Xo Lang 2): section 5 done. `go run ./scripts/stdcov [-o
+  FILE] [-today DATE]` writes the page; on main it reproduced
+  gen-stdcov.py's page byte for byte before the two changes below, and
+  the website's gen-stdcov.py becomes a wrapper that runs it. The FUZZ
+  table is gone: a fuzz harness is found by its path
+  (`internal/stdtest/STEMfuzz_test.go` names the longest module STEM
+  starts with, and a module of three letters or more STEM ends with, so
+  httpurlfuzz also names url); the same 15 parsers stay Solid and no mark
+  changed, their notes naming the harness files. Section 3's "and one
+  minor release" is now read too: evidence whose source hash no longer
+  matches goes stale once it is over 90 days old and a vX.Y.0 tag dated
+  after the run exists (TestFresh). The perf table (PERF) stays until each
+  module has a perf.md; std-twin results files already override it.
