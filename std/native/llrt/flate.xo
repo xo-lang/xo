@@ -325,6 +325,10 @@ pub fn crc32(t: List[Int], crc0: Int, b: Bytes) -> Int {
       c = cpu.crc32x(c, rt.bytes_word(b, i))
       i += 8
     }
+    if i < n && n >= 8 {
+      c = crc_tail(c, b, n, n - i, false)
+      i = n
+    }
   }
   // x86-64's PCLMULQDQ, 64 bytes a step (Go's ieeeCLMUL, for 64 bytes
   // and more, the length rounded down to 16)
@@ -349,6 +353,23 @@ pub fn crc32(t: List[Int], crc0: Int, b: Bytes) -> Int {
     i += 1
   }
   c ^ 0xffffffff
+}
+
+/// The CRC state c (inverted, as the loops keep it) carried over the last
+/// t bytes of b (1 to 7, b at least 8 bytes long) with one crc32x (or
+/// crc32cx when castagnoli): the word ending at b's end holds those bytes
+/// in its high t bytes; c's low t bytes are XORed onto them and its high
+/// bytes, which those t bytes do not shift out, are XORed onto the result.
+/// CRC is linear and a zero state stays zero over zero bytes, so this is
+/// the byte loop's answer in one instruction where Go's arm64 assembly
+/// takes a crc32cw, crc32ch and crc32cb (std/crc32 keys of 8 to 40 bytes
+/// were 1.25 and 1.50 of Go's time, std/evidence/crc32).
+pub fn crc_tail(c: Int, b: Bytes, n: Int, t: Int, castagnoli: Bool) -> Int {
+  let sh = 64 - 8 * t
+  let w = rt.bytes_word(b, n - 8).shr_logical(sh).wrapping_shl(sh)
+  let x = w ^ (c & ((1).wrapping_shl(8 * t) - 1)).wrapping_shl(sh)
+  let r = if castagnoli { cpu.crc32cx(0, x) } else { cpu.crc32x(0, x) }
+  c.shr_logical(8 * t) ^ r
 }
 
 /// crc32 of the bytes l[from..to] (each 0 to 255), without copying them.

@@ -1,5 +1,16 @@
 # std/crc32 changes
 
+## 2026-11-14: perf: the last 1 to 7 bytes of an input take one CRC instruction (arm64)
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0616 perf evidence for std/crc32 (bench/perf/crc32 keys 1.250 and keysc 1.498 of Go on linux/arm64 host 1)
+- Go reference: hash/crc32 crc32_arm64.s (castagnoliUpdate and ieeeUpdate finish with crc32cw/crc32ch/crc32cb), go1.26.1
+- Test: TestCrc32Fuzz seed 21 N=5000 on arm64 and LLVM; corpora crc32fuzz, pngfuzz and compressfuzz; bench/perf/crc32 twincheck
+- Shipped in: not yet released
+
+An input of 8 bytes or more finishes its last 1 to 7 bytes with one crc32x (IEEE, flate.crc_tail) or crc32cx (Castagnoli) over the word ending at the input's end, where a byte loop took a table step each. bench/perf/crc32 on linux/arm64 host 1, --ab against its parent, 6 rounds: keysc 0.868 (0.852 to 0.883), keys 0.978 (0.936 to 0.998); output unchanged.
+
 ## 2026-11-12: perf: hardware CRC32 on windows/arm64
 
 - Kind: perf

@@ -43,6 +43,11 @@ fn castagnoli(crc0: Int, b: Bytes) -> Int {
       c = cpu.crc32cx(c, rt.bytes_word(b, i))
       i += 8
     }
+    if i < n && n >= 8 {
+      // the last 1 to 7 bytes in one crc32cx (flate.crc_tail)
+      c = flate.crc_tail(c, b, n, n - i, true)
+      i = n
+    }
   }
   while i + 8 <= n {
     let w = rt.bytes_word(b, i)
