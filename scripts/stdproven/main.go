@@ -123,9 +123,11 @@ func usage() {
 var useLine = regexp.MustCompile(`^use\s+([a-z0-9_/]+)`)
 
 // sourceHash is the SHA-256 over the paths and contents, sorted by path, of
-// the module's std/MODULE.xo and std/native/MODULE.xo and of every std file
-// they reach through use lines (std/X, native/X, native/llrt/X), tests
-// left out.
+// the module's std/MODULE.xo, std/native/MODULE.xo and
+// std/native/MODULE_native.xo (the native bodies of std/MODULE.xo's
+// bodyless functions, as url's escape) and of every std file they reach
+// through use lines (std/X, native/X, native/llrt/X, each with its
+// _native.xo), tests left out.
 func sourceHash(module string) (string, []string, error) {
 	seen := map[string]bool{}
 	var queue []string
@@ -141,6 +143,7 @@ func sourceHash(module string) (string, []string, error) {
 	}
 	add(filepath.Join("std", module+".xo"))
 	add(filepath.Join("std", "native", module+".xo"))
+	add(filepath.Join("std", "native", module+"_native.xo"))
 	if len(queue) == 0 {
 		return "", nil, fmt.Errorf("no std/%s.xo or std/native/%s.xo (run from the repository root)", module, module)
 	}
@@ -161,6 +164,7 @@ func sourceHash(module string) (string, []string, error) {
 			case strings.HasPrefix(u, "std/"):
 				add(filepath.Join("std", u[4:]+".xo"))
 				add(filepath.Join("std", "native", u[4:]+".xo"))
+				add(filepath.Join("std", "native", u[4:]+"_native.xo"))
 			case strings.HasPrefix(u, "native/"):
 				add(filepath.Join("std", u+".xo"))
 			}

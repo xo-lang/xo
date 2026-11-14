@@ -173,8 +173,10 @@ every gate, tier and stdproven job, failing the job if it is missing.
 
 A module's source hash is the SHA-256 the runner computes over the paths
 and contents, sorted by path, of the module's std/MODULE.xo,
-std/native/MODULE.xo (and its std/native/llrt files) and the same files of
-every std module it imports, directly or not. Evidence counts while that
+std/native/MODULE.xo (and its std/native/llrt files), std/native/MODULE_native.xo
+(the native bodies of std/MODULE.xo's bodyless functions; added
+2026-11-14, when the url review found url_native.xo's escaper outside the
+hash) and the same files of every std module it imports, directly or not. Evidence counts while that
 hash matches its header's `source`, or
 for 90 days and one minor release after the run, whichever is later. The
 page shows the evidence's commit and date. Stale evidence moves the mark
