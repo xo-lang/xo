@@ -24,6 +24,16 @@ pub fn escape_string(s: Str) -> Str
 /// `&#916;` and hexadecimal `&#x3bb;` numeric references, the C1 control
 /// code points replaced as browsers do, invalid ones as U+FFFD);
 /// `unescape_string(escape_string(s)) == s` always, the converse not.
+/// x as Go's rune (int32) holds it: unescapeEntity accumulates a numeric
+/// reference's digits in a rune, which wraps, so a number past 2^31 is
+/// the code point it wraps to (a negative one becomes U+FFFD). Kept in
+/// int32's range after every digit, 16 * x + 15 never overflows Int,
+/// where the plain sum faulted on a long run of digits.
+fn rune32(x: Int) -> Int {
+  let w = x & 0xFFFFFFFF
+  if w >= 0x80000000 { w - 0x100000000 } else { w }
+}
+
 pub fn unescape_string(s: Str) -> Str {
   let b = s.bytes()
   let n = b.len()
@@ -109,27 +119,22 @@ pub fn unescape_string(s: Str) -> Str {
         j += 1
       }
       var x = 0
-      var digits = false
       while j < n {
         let d = b[j]
         j += 1
         if hex {
           if d >= 48 && d <= 57 {
-            x = 16 * x + (Int(d) - 48)
-            digits = true
+            x = rune32(16 * x + (Int(d) - 48))
             continue
           } else if d >= 97 && d <= 102 {
-            x = 16 * x + (Int(d) - 97) + 10
-            digits = true
+            x = rune32(16 * x + (Int(d) - 97) + 10)
             continue
           } else if d >= 65 && d <= 70 {
-            x = 16 * x + (Int(d) - 65) + 10
-            digits = true
+            x = rune32(16 * x + (Int(d) - 65) + 10)
             continue
           }
         } else if d >= 48 && d <= 57 {
-          x = 10 * x + (Int(d) - 48)
-          digits = true
+          x = rune32(10 * x + (Int(d) - 48))
           continue
         }
         if d != 59 {
@@ -137,7 +142,10 @@ pub fn unescape_string(s: Str) -> Str {
         }
         break
       }
-      if !digits {
+      // Go's test: nothing matched when the reference ends within three
+      // bytes of its `&`, so `&#x;` is consumed (as U+FFFD, x is 0) and
+      // `&#9` before another byte is kept as text
+      if j - i <= 3 {
         out.write_byte(c)
         i += 1
         continue

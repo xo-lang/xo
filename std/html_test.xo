@@ -89,3 +89,24 @@ test "escape_string: each special at each place of 0 to 40, and near misses" {
     }
   }
 }
+
+test "a numeric reference past Int answers as Go's rune does, not a fault" {
+  // Go accumulates into a rune (int32), which wraps: 2^32 + 65 is `A`
+  expect(unescape_string("&#99999999999999999999;")) == "\u{FFFD}"
+  expect(unescape_string("&#4294967361;")) == "A"
+  expect(unescape_string("&#x100000041;")) == "A"
+  expect(unescape_string("&#xFFFFFFFFFFFFFFFFFF;x")) == "\u{FFFD}x"
+  expect(unescape_string("&#" + "9".repeat(1000000) + ";").len()) == 3
+  expect(unescape_string("&#x" + "f".repeat(1000000))) == "\u{FFFD}"
+}
+
+test "Go's three byte rule for numeric references" {
+  // a reference that ends within three bytes of its & matched nothing
+  expect(unescape_string("&#x;")) == "\u{FFFD}"
+  expect(unescape_string("&#X;a")) == "\u{FFFD}a"
+  expect(unescape_string("&#;")) == "&#;"
+  expect(unescape_string("&#9 ")) == "&#9 "
+  expect(unescape_string("&#9;")) == "\t"
+  expect(unescape_string("&#99 ")) == "c "
+  expect(unescape_string("&#xg")) == "&#xg"
+}

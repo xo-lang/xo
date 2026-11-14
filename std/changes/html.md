@@ -1,5 +1,17 @@
 # std/html changes
 
+## 2026-11-14: security, fix: unescape_string answers a numeric reference of any length as Go, and follows Go's three byte rule
+
+- Kind: security, fix
+- Commit: this push
+- Found by: the new std/html fuzz harness (decision 0616, internal/stdtest/htmlfuzz_test.go, seed 1 against go1.26.11)
+- Go reference: html escape.go unescapeEntity: the digits accumulate in a rune (int32), which wraps, and nothing matched when the reference ends within three bytes of its `&` (`if i <= 3`)
+- Security: a long numeric character reference faulted on Int overflow, so unescaping a peer's text stopped the program, or answered 500 in an http handler; now its digits wrap as Go's rune does, and a reference of any length is read in one pass
+- Fix: `&#x;` is U+FFFD and `&#9` before another byte stays text, as in Go (Xo unescaped any digit and kept `&#x;`); 215 of the fuzz's 2,000 seed 1 cases differed before
+- Test: std/html_test.xo "a numeric reference past Int answers as Go's rune does, not a fault" and "Go's three byte rule for numeric references"; corpus internal/stdtest/testdata/corpus/htmlfuzz on every corpus backend; TestHtmlFuzz seed 2 on arm64 and llvm
+- Affected: the fault on the native backends from 0.35.0 (std/html's first release) to 0.51.0, and on the Go backend from 0.49.0 (unescape_string compiled from std/html.xo, which wrapped to a different answer there rather than faulting); the three byte rule on every backend in those releases
+- Shipped in: not yet released
+
 ## 2026-11-10: internal: merged, escape_string's fast path in std/native/html_native.xo
 
 - Kind: internal
