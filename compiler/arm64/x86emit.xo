@@ -1820,6 +1820,9 @@ fn movq_ops(l: Str) -> (Str, Str, Bool) {
   (ops[0], ops[1], true)
 }
 
+/// The fewest words a run of x86_copy_runs copies with rep movsq.
+const X86_REP_MIN = 32
+
 /// A function's text with each run of two or more word copies between
 /// memory, `pushq A; popq B` (the parallel moves' memory to memory copy,
 /// which keeps r11) or `movq A, %r11; movq %r11, B`, each next pair a
@@ -1879,6 +1882,35 @@ fn x86_copy_runs(text: Str, rsp_ph: Int) -> Str {
     }
     // the run's debug labels before it (its words are copies)
     x86_put_pre(out, pre, i, i + 2 * k)
+    // a long run: one rep movsq (a forward copy, as the word by word one),
+    // rdi, rsi and rcx saved around it on the stack as the pushq form's
+    // copies use it (an rsp based operand 24 bytes further). The generated
+    // GCP services copy their 6,700-word request structs this way at
+    // every `?`: 9.5 M of the 31.4 M lines of aiplatform/apiv1's test
+    // build were such runs (2026-11-14; arm64 calls memcpy for them,
+    // RET_MEMCPY_MIN). Not when the source is in rdi and the destination
+    // in rsi (each lea would clobber the other's base)
+    if k >= X86_REP_MIN && !(ab == "%rdi" && bb == "%rsi") {
+      let sa = if ab == "%rsp" { ao + 24 } else { ao }
+      let sb = if bb == "%rsp" { bo + 24 } else { bo }
+      out.push("\tpushq %rdi")
+      out.push("\tpushq %rsi")
+      out.push("\tpushq %rcx")
+      if bb == "%rsi" {
+        out.push("\tleaq ${x86_mem_at(bb, sb)}, %rdi")
+        out.push("\tleaq ${x86_mem_at(ab, sa)}, %rsi")
+      } else {
+        out.push("\tleaq ${x86_mem_at(ab, sa)}, %rsi")
+        out.push("\tleaq ${x86_mem_at(bb, sb)}, %rdi")
+      }
+      out.push("\tmovl $${k}, %ecx")
+      out.push("\trep movsq")
+      out.push("\tpopq %rcx")
+      out.push("\tpopq %rsi")
+      out.push("\tpopq %rdi")
+      i += 2 * k
+      continue
+    }
     var j = 0
     if bb == "%rsp" && (bo + rsp_ph) & 15 == 8 {
       out.push(ls[i])
