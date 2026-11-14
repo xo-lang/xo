@@ -1,5 +1,16 @@
 # std/html changes
 
+## 2026-11-14: perf: unescape_string's entity lookups search less
+
+- Kind: perf
+- Commit: this push
+- Found by: the decision 0616 std/html review (a perf item: `&ampx` legacy prefixes ran 3.6 times Go on the Go backend, 17 times Go native on the Mac)
+- Go reference: html.UnescapeString looks names up in its entity maps
+- Before: entity2_of scanned all 93 two character entities for every reference that was not a one character entity, and entity_of's binary search over 2,138 names bound each (name, character) pair, copying and dropping both Strs a step
+- Fix: entity2_of returns at once for a name without `;` (every two character entity has one) and binary searches otherwise; a name without `;` is looked up in LEGACY, the 106 names a reference may use without its semicolon (std/htmlent_test.xo checks it is exactly ENTITY's subset); the searches compare the name field alone, one compare a step. 2.4 MB of `&ampx` unescaped three times: 930 ms to 165 ms on the Mac (Go 48 ms); bench/perf/html unescape on linux/arm64 host 1, --ab against 7c0857749: 0.893 (0.881 to 0.898, n=11; 155.1 to 138.6 ms).
+- Test: std/htmlent_test.xo (both tables sorted, LEGACY the subset, every entity found); xo test --std-module=html, htmlent and htmltok on native and llvm; TestStdCorpora htmlfuzz, htmltok, htmlparse on go, arm64, llvm
+- Shipped in: not yet released
+
 ## 2026-11-14: security, fix: unescape_string answers a numeric reference of any length as Go, and follows Go's three byte rule
 
 - Kind: security, fix

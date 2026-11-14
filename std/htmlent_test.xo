@@ -1,0 +1,37 @@
+test "ENTITY and ENTITY2 are sorted for their binary searches, ENTITY2's names end with ;" {
+  for i in 1..ENTITY.len() {
+    expect(ENTITY[i - 1].0 < ENTITY[i].0) == true
+  }
+  for i in 1..ENTITY2.len() {
+    expect(ENTITY2[i - 1].0 < ENTITY2[i].0) == true
+  }
+  for (n, _) in ENTITY2 {
+    expect(n.ends_with(";")) == true
+  }
+}
+
+test "entity2_of finds every two character entity and nothing else" {
+  for (n, ch) in ENTITY2 {
+    expect(entity2_of(n)) == ch
+  }
+  expect(entity2_of("NotEqualTilde")) == ""
+  expect(entity2_of("amp;")) == ""
+  expect(entity2_of("")) == ""
+}
+
+test "LEGACY is exactly ENTITY's names without ;, sorted" {
+  var want: List[(Str, Str)] = []
+  for (n, ch) in ENTITY {
+    if !n.ends_with(";") {
+      want.push((n, ch))
+      expect(n.len() <= LONGEST_ENTITY_WITHOUT_SEMICOLON) == true
+    }
+  }
+  expect(LEGACY) == want
+  for (n, ch) in ENTITY {
+    expect(entity_of(n)) == ch
+  }
+  expect(entity_of("ampx")) == ""
+  expect(entity_of("amp")) == "&"
+  expect(entity_of("notin")) == ""
+}
