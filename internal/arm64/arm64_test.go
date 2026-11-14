@@ -263,7 +263,15 @@ func buildRunWith(t *testing.T, dir string, opts xotool.Options) (runResult, err
 	if res.Failed {
 		t.Fatalf("build failed:\n%s", res.Output)
 	}
-	cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()], progArgs(dir)...))
+	return runBinary(t, dir, res.Binaries[xotool.Host()]), nil
+}
+
+// runBinary runs the golden program of dir built as bin with
+// XO_LEAKCHECK=1 (its args.txt, env.txt and stdin.txt), and fails t on a
+// timeout or an allocation live at exit.
+func runBinary(t *testing.T, dir, bin string) runResult {
+	t.Helper()
+	cmd := testtmp.Guard(exec.Command(bin, progArgs(dir)...))
 	cmd.Dir = dir
 	cmd.Env = append(append(os.Environ(), progEnv(dir)...), "XO_LEAKCHECK=1")
 	cmd.Stdin = progStdin(dir)
@@ -288,7 +296,7 @@ func buildRunWith(t *testing.T, dir string, opts xotool.Options) (runResult, err
 			t.Errorf("%s allocations still live at exit (of %s)", m[1], m[2])
 		}
 	}
-	return runResult{exit: code, stdout: stdout.String(), stderr: stableStderr(stderr.String())}, nil
+	return runResult{exit: code, stdout: stdout.String(), stderr: stableStderr(stderr.String())}
 }
 
 // goldenDirs returns every program of internal/llvm/testdata/golden.

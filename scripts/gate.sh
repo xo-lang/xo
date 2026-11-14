@@ -50,6 +50,11 @@
 #            (XO_PASSES, compiler/arm64 passes.xo)
 #   fp       the self rebuild fixed point (scripts/bootstrap-xo.sh); its
 #            output (about 3 GB) is removed after
+#   warmseq  std goldens built through caches other programs filled, with
+#            the default cache settings (internal/arm64
+#            TestWarmBuildSequence, gate subset): run after the steps
+#            named when the branch changes compiler/ (warmseq_change);
+#            XO_WARMSEQ=modules or all for wider sets
 #   chkcache the module check cache's auto mode against a cold check
 #            (internal/arm64 TestModuleCheckAuto, ...Generic, ...Zones):
 #            run after the steps named when the branch changes
@@ -404,6 +409,20 @@ cache_change() {
   base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
   { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/xo/(bcache|parallel|packseg|cache)\.xo$'
 }
+# warmseq_change: the branch changes the compiler (compiler/, but not
+# compiler/macho, compiler/wasm or a _test.xo file), so internal/arm64's
+# TestWarmBuildSequence (its gate subset, about 50 s) runs after the steps
+# named: std goldens built through caches other programs filled, with the
+# default cache settings, each the same file as its cold build (0.51.0
+# respin, 2026-11-13: building one std/log program after another failed
+# with XO1201, and no gate built two programs through one default cache).
+# XO_GATE_WARMSEQ=0 skips it; the 2-hourly main check runs its modules
+# set (XO_WARMSEQ=modules, about 3 minutes).
+warmseq_change() {
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -v -E '^compiler/(macho|wasm)/|_test\.xo$' | grep -q -E '^compiler/'
+}
+warmseq_ran=0
 # llvm_goldens: the golden programs the llvm step runs (owner,
 # 2026-10-22: the whole package cost 46 to 56 minutes a gate), "all" or
 # XO_LLVM_GOLDENS's list (internal/llvm golden_select_test.go): those
@@ -554,8 +573,9 @@ for step in "$@"; do
     # codegen` ran neither, then pushq refused the push for cross)
     named="$named $step" ;;
   repo) ;; # ran first, above
-  short|arm64|llvm|corpora|cmd|gen|fuzz|corpora-all|alloff|fp|warm|chkcache|stdwasm|stdcov)
+  short|arm64|llvm|corpora|cmd|gen|fuzz|corpora-all|alloff|fp|warm|chkcache|warmseq|stdwasm|stdcov)
     [ "$step" = chkcache ] && chkcache_ran=1
+    [ "$step" = warmseq ] && warmseq_ran=1
     steps="$steps $step" ;;
   *) echo "gate.sh: unknown step $step"; failed=1 ;;
   esac
@@ -646,6 +666,8 @@ run_step() {
     rm -rf "${pw:?}" ;;
   chkcache)
     full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$' ;;
+  warmseq)
+    full warmseq ./internal/arm64 -run '^TestWarmBuildSequence$' ;;
   stdwasm)
     # every std test module under `xo test --backend=wasm` (decision 0610),
     # Node's WASI as the runner: a module passes when its summary line is
@@ -687,6 +709,9 @@ stdcov_step() {
 after_steps() {
   if [ "$chkcache_ran" = 0 ] && [ "${XO_GATE_CHKCACHE:-1}" != 0 ] && check_change; then
     full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$'
+  fi
+  if [ "$warmseq_ran" = 0 ] && [ "${XO_GATE_WARMSEQ:-1}" != 0 ] && warmseq_change; then
+    full warmseq ./internal/arm64 -run '^TestWarmBuildSequence$'
   fi
   if [ "${XO_GATE_SCALE:-1}" != 0 ] && scale_change; then
     full scale ./internal/arm64 -run '^TestSwitch65535Arms$'
