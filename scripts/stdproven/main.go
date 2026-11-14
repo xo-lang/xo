@@ -74,6 +74,8 @@ var harnesses = map[string][]harness{
 	"html":     {{"TestHtmlFuzz", "XO_HTMLFUZZ"}},
 	"fnv":      {{"TestFnvFuzz", "XO_FNVFUZZ"}},
 	"uuid":     {{"TestUuidFuzz", "XO_UUIDFUZZ"}},
+	"norm":     {{"TestNormFuzz", "XO_NORMFUZZ"}},
+	"jpeg":     {{"TestJpegFuzz", "XO_JPEGFUZZ"}, {"TestJpegEncFuzz", "XO_JPEGENC"}},
 }
 
 func main() {
