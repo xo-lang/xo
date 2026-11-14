@@ -171,6 +171,17 @@ t0=$(date +%s)
 rm -f bin/xo
 go run ./scripts/xobuild >"$logs/xobuild.txt" 2>&1 || { echo "XOBUILD-FAIL ($logs/xobuild.txt)"; exit 1; }
 echo "xobuild $(($(date +%s) - t0)) s"
+# darwin: xo's own race runtime in lib/xo/race, so the race tests link
+# the runtime xo ships, not clang's dylib (scripts/lead/race-rt.sh
+# --local; lead, 2026-11-14); a failed build stops the gate. Off the
+# lead's Mac (no ~/xo-lead) it says so and the tests use clang's.
+if [ "$(uname -s)" = Darwin ]; then
+  if [ -d "${XO_LEAD_DIR:-$HOME/xo-lead}" ]; then
+    bash scripts/lead/race-rt.sh --local "$PWD" || { echo "RACE-RT-FAIL: no xo darwin race runtime"; exit 1; }
+  else
+    echo "gate: no lead directory: darwin race tests link clang's ThreadSanitizer runtime"
+  fi
+fi
 # the xo every step runs is the one this tree's sources key (owner,
 # 2026-11-08): xobuild serves a cached build by key, so this confirms the
 # cache entry, in a second or two
