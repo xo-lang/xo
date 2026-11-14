@@ -935,6 +935,30 @@ fn meta_refs(t: Str) -> List[Str] {
   out
 }
 
+/// split_compile_flags: the link flags that compiling a split module needs
+/// too: a cross build's target (the IR names none, so clang would compile
+/// the modules for the host) with its architecture, ABI and CPU (riscv64's
+/// `-march=rv64gc -mabi=lp64d -mcpu=generic-rv64`, llvm_cross_flags: without
+/// them a host clang.cfg's `-mcpu=generic` is refused, "unsupported argument
+/// 'generic'", linux/riscv64 on 2026-11-14), and --race's ThreadSanitizer
+/// pass and its option (`-mllvm` and the next flag).
+fn split_compile_flags(flags: List[Str]) -> List[Str] {
+  var target: List[Str] = []
+  var i = 0
+  while i < flags.len() {
+    let f = flags[i]
+    if f.starts_with("--target=") || f.starts_with("-fsanitize=") || f.starts_with("-march=") || f.starts_with("-mabi=") || f.starts_with("-mcpu=") {
+      target.push(f)
+    } else if f == "-mllvm" && i + 1 < flags.len() {
+      target.push(f)
+      target.push(flags[i + 1])
+      i += 1
+    }
+    i += 1
+  }
+  target
+}
+
 /// splitBuild: compiles the modules lls in parallel (at most c.jobs
 /// clang processes), then links their objects with the other sources
 /// into bin through cc_build. The compiler's output of a failure, "" on
@@ -944,22 +968,7 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
   for ll in lls {
     objs.push(ll.trim_suffix(".ll") + ".o")
   }
-  // a cross build's target (the IR names none, so clang would compile
-  // the modules for the host), and --race's ThreadSanitizer pass and its
-  // option (`-mllvm` and the next flag), which compiling needs too
-  var target: List[Str] = []
-  var i = 0
-  while i < flags.len() {
-    let f = flags[i]
-    if f.starts_with("--target=") || f.starts_with("-fsanitize=") {
-      target.push(f)
-    } else if f == "-mllvm" && i + 1 < flags.len() {
-      target.push(f)
-      target.push(flags[i + 1])
-      i += 1
-    }
-    i += 1
-  }
+  let target = split_compile_flags(flags)
   // the modules whose objects the cache holds (by the IR, the clang and
   // its arguments) are not compiled
   var keys: List[Str] = []

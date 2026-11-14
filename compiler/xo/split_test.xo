@@ -66,3 +66,20 @@ test "a -O0 build's constant time functions go to a module of their own (decisio
   expect(ct_def("@\"x.rsa.pkcs1_unpad\"")) == true
   expect(ct_def("@\"x.rsakit.f\"")) == false
 }
+
+test "a split module compiles with a cross build's architecture, ABI and CPU" {
+  // riscv64's flags (llvm_cross_flags): a module compiled without them took
+  // a host clang.cfg's -mcpu=generic, which clang refuses for riscv64
+  let flags = ["--target=riscv64-linux-gnu", "--sysroot=/s", "-fuse-ld=lld", "-march=rv64gc", "-mabi=lp64d", "-mcpu=generic-rv64", "-mllvm", "-x=1", "-O2"]
+  expect(split_compile_flags(flags)) == ["--target=riscv64-linux-gnu", "-march=rv64gc", "-mabi=lp64d", "-mcpu=generic-rv64", "-mllvm", "-x=1"]
+  expect(split_compile_flags(["-fsanitize=thread", "-fuse-ld=lld"])) == ["-fsanitize=thread"]
+}
+
+test "riscv64 IR states its floating point ABI as a module flag, which every split module keeps" {
+  let ir = "define hidden i64 @a() #1 {\n  ret i64 0\n}\n!llvm.module.flags = !{!1000009, !1000010}\n!1000009 = !{i32 7, !\"Dwarf Version\", i32 5}\n!1000010 = !{i32 2, !\"Debug Info Version\", i32 3}\n"
+  let out = with_target_abi(ir, "lp64d")
+  expect(out.contains("!llvm.module.flags = !{!1000009, !1000010, !1000011}")) == true
+  expect(out.contains("!1000011 = !{i32 1, !\"target-abi\", !\"lp64d\"}")) == true
+  let bare = with_target_abi("define hidden i64 @a() #1 {\n  ret i64 0\n}\n", "lp64d")
+  expect(bare.contains("!llvm.module.flags = !{!1}\n!1 = !{i32 1, !\"target-abi\", !\"lp64d\"}")) == true
+}
