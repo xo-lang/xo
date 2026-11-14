@@ -102,6 +102,16 @@ return can reach:
 
 ## Alternatives
 
+- Explicit scan only (the lead's recommendation to the owner, 2026-11-13). The pool and the
+  trim code ship in the runtime, but only an explicit call runs the scan: debug.mem_trim, which xo
+  calls at its phase boundaries (after front_end_freed, emit and link). Nothing triggers it in a
+  user program, so 0533's age pass and pool.trim_all's idle trims do not scan. The reasons: user
+  programs gain under 5 MB (the alloc bench and the HTTP server above), while the scan has a real
+  cost. The prototype's walk takes 985 ms on aiplatform past emit, about 4.7% of that build's
+  21 s wall (Mac, caches off). The real pass is expected to cost less (per thread, a bitmap, one
+  page size) and is measured before it lands. A program that wants the memory back calls
+  debug.mem_trim itself, as xo does. This variant needs no free-bytes floor, because a program
+  that never calls the trim never pays anything.
 - Advise the free small pages in place, without taking their blocks off the lists: it breaks the
   lists (each block's link and prefix are in the page).
 - A shared page heap with size-segregated spans and coalescing (decision 0457, Rejected
