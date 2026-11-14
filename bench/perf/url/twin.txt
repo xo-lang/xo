@@ -1,9 +1,6 @@
-# twincheck: url: eight workloads (none is the setup alone), the same names on both sides.
+# twincheck: url: five workloads (none is the setup alone), the same names on both sides.
 - - none
 - - escape
 - - unescape
 - - query
 - - encode
-- - parse
-- - string
-- - resolve

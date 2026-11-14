@@ -1,0 +1,56 @@
+// urltype: std/url's URL type (decision 0642) against Go's net/url
+// (twin.go.txt): parse of six URLs (userinfo and a port, an IPv6 zone,
+// an opaque mailto, a relative path with dot segments, a fragment, an
+// escaped slash), display of them parsed, and resolve_reference of six
+// references against a base, 200,000 passes each. Usage:
+// `<program> none|parse|string|resolve`. Prints `<workload> <checksum>`;
+// the twin prints the same. (Apart from bench/perf/url so that program's
+// main, and what its calls inline, stay as they were.)
+use std/url
+
+const URLS: List[Str] = [
+  "https://user:pass@example.com:8443/a/b%20c/d?x=1&y=two#frag",
+  "http://[fe80::1%25en0]:8080/index.html",
+  "mailto:someone@example.org",
+  "/relative/path/../to/file.txt?q=a+b",
+  "https://go.dev/doc/effective_go.html#names",
+  "ftp://ftp.example.com/pub/file%2Fname.tar.gz",
+]
+
+const REFS: List[Str] = [
+  "../g",
+  "g/./h?y=1",
+  "//other.example/x",
+  "#s",
+  "../../../a/b/../c",
+  "?only=query",
+]
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var parsed: List[url.Url] = []
+  for u in URLS {
+    parsed.push(url.parse(u).ok() ?? url.Url{})
+  }
+  let base = url.parse("http://a.example/b/c/d;p?q").ok() ?? url.Url{}
+  var rels: List[url.Url] = []
+  for r in REFS {
+    rels.push(url.parse(r).ok() ?? url.Url{})
+  }
+  var sum = 0
+  for i in 0..200000 {
+    if w == "parse" {
+      match url.parse(URLS[i % 6]) {
+        Ok(u) => sum += u.host.len() + u.path.len() + u.raw_query.len()
+        Err(_) => sum += 1
+      }
+    } else if w == "string" {
+      sum += parsed[i % 6].display().len()
+    } else if w == "resolve" {
+      sum += base.resolve_reference(rels[i % 6]).path.len()
+    } else {
+      sum += URLS[i % 6].len() + i % 3
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

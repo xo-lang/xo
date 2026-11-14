@@ -492,56 +492,52 @@ pub fn (u: Url) is_abs() -> Bool { u.scheme != "" }
 
 /// The URL's text (URL.String).
 pub fn (u: Url) display() -> Str {
-  // one buffer sized from the parts, as Go's String grows its builder
-  var b = BytesBuilder.with_capacity(u.scheme.len() + u.opaque.len() + u.host.len() + u.path.len() + u.raw_query.len() + u.fragment.len() + 24)
-  if u.scheme != "" {
-    b.write_str(u.scheme)
-    b.write_str(":")
-  }
+  // the parts as Strs, empty when absent, joined by one interpolation
+  // (no validation of bytes; List.join of them was slower, 1.49 to 1.32
+  // of Go on the Mac)
+  let colon = if u.scheme != "" { ":" } else { "" }
+  let (qm, frag) = if u.force_query || u.raw_query != "" { ("?", u.raw_query) } else { ("", "") }
+  let (hash, efrag) = if u.fragment != "" { ("#", u.escaped_fragment()) } else { ("", "") }
   if u.opaque != "" {
-    b.write_str(u.opaque)
-  } else {
-    let has_user = has(u.user)
-    if u.scheme != "" || u.host != "" || has_user {
-      if !(u.omit_host && u.host == "" && !has_user) {
-        if u.host != "" || u.path != "" || has_user {
-          b.write_str("//")
-        }
-        if let Some(ui) = u.user {
-          b.write_str(ui.display())
-          b.write_str("@")
-        }
-        if u.host != "" {
-          b.write_str(escape_in(u.host, M_HOST))
-        }
-      }
-    }
-    let path = u.escaped_path()
-    if path != "" && !path.starts_with("/") && u.host != "" {
-      b.write_str("/")
-    }
-    if b.len() == 0 {
-      // a relative path whose first segment has a colon would read as a
-      // scheme: `./` keeps it a path
-      let seg = match path.cut("/") {
-        Some((a, _)) => a
-        None => path
-      }
-      if seg.contains(":") {
-        b.write_str("./")
-      }
-    }
-    b.write_str(path)
+    return "${u.scheme}${colon}${u.opaque}${qm}${frag}${hash}${efrag}"
   }
-  if u.force_query || u.raw_query != "" {
-    b.write_str("?")
-    b.write_str(u.raw_query)
+  var slashes = ""
+  var name = ""
+  var pw = ""
+  var at = ""
+  var host = ""
+  let has_user = has(u.user)
+  if u.scheme != "" || u.host != "" || has_user {
+    if !(u.omit_host && u.host == "" && !has_user) {
+      if u.host != "" || u.path != "" || has_user {
+        slashes = "//"
+      }
+      if let Some(ui) = u.user {
+        name = escape_in(ui.username, M_USER)
+        if let Some(p) = ui.password {
+          pw = ":" + escape_in(p, M_USER)
+        }
+        at = "@"
+      }
+      host = escape_in(u.host, M_HOST)
+    }
   }
-  if u.fragment != "" {
-    b.write_str("#")
-    b.write_str(u.escaped_fragment())
+  let path = u.escaped_path()
+  var lead = ""
+  if path != "" && !path.starts_with("/") && u.host != "" {
+    lead = "/"
+  } else if u.scheme == "" && slashes == "" {
+    // nothing before the path: a first segment with a colon would read
+    // as a scheme, so `./` keeps it a path
+    let seg = match path.cut("/") {
+      Some((x, _)) => x
+      None => path
+    }
+    if seg.contains(":") {
+      lead = "./"
+    }
   }
-  b.freeze().to_str() ?? ""
+  "${u.scheme}${colon}${slashes}${name}${pw}${at}${host}${lead}${path}${qm}${frag}${hash}${efrag}"
 }
 
 /// display with a set password as `xxxxx` (URL.Redacted).
@@ -605,36 +601,26 @@ pub fn (u: Url) parse_ref(r: Str) -> Url ! UrlErr { Ok(u.resolve_reference(parse
 /// r resolved against u as a base, RFC 3986 section 5.2 (dot segments
 /// removed; URL.ResolveReference).
 pub fn (u: Url) resolve_reference(r: Url) -> Url {
-  var url = r
-  if r.scheme == "" {
-    url.scheme = u.scheme
-  }
+  // each case builds its result from the fields it keeps, where Go copies
+  // ref and overwrites (a copy here is a reference count per Str)
+  let scheme = if r.scheme == "" { u.scheme } else { r.scheme }
   if r.scheme != "" || r.host != "" || has(r.user) {
+    var url = Url{scheme: scheme, opaque: r.opaque, user: r.user, host: r.host, omit_host: r.omit_host, force_query: r.force_query, raw_query: r.raw_query, fragment: r.fragment, raw_fragment: r.raw_fragment}
     let _e = url.set_path(resolve_path(r.escaped_path(), ""))
     return url
   }
   if r.opaque != "" {
-    url.user = None
-    url.host = ""
-    url.path = ""
-    return url
+    return Url{scheme: scheme, opaque: r.opaque, raw_path: r.raw_path, omit_host: r.omit_host, force_query: r.force_query, raw_query: r.raw_query, fragment: r.fragment, raw_fragment: r.raw_fragment}
   }
-  if r.path == "" && !r.force_query && r.raw_query == "" {
-    url.raw_query = u.raw_query
-    if r.fragment == "" {
-      url.fragment = u.fragment
-      url.raw_fragment = u.raw_fragment
-    }
-  }
+  // an empty ref keeps the base's query, and its fragment too when ref
+  // has none
+  let keep_q = r.path == "" && !r.force_query && r.raw_query == ""
+  let raw_query = if keep_q { u.raw_query } else { r.raw_query }
+  let (fragment, raw_fragment) = if keep_q && r.fragment == "" { (u.fragment, u.raw_fragment) } else { (r.fragment, r.raw_fragment) }
   if r.path == "" && u.opaque != "" {
-    url.opaque = u.opaque
-    url.user = None
-    url.host = ""
-    url.path = ""
-    return url
+    return Url{scheme: scheme, opaque: u.opaque, raw_path: r.raw_path, omit_host: r.omit_host, force_query: r.force_query, raw_query: raw_query, fragment: fragment, raw_fragment: raw_fragment}
   }
-  url.host = u.host
-  url.user = u.user
+  var url = Url{scheme: scheme, user: u.user, host: u.host, omit_host: r.omit_host, force_query: r.force_query, raw_query: raw_query, fragment: fragment, raw_fragment: raw_fragment}
   let _e = url.set_path(resolve_path(u.escaped_path(), r.escaped_path()))
   url
 }
@@ -727,28 +713,24 @@ fn escape_in(s: Str, mode: Int) -> Str {
   if first < 0 {
     return s
   }
-  var n = 0
+  // runs of kept bytes as slices of s and each escape as a slice of
+  // PCT, appended to one Str in place: no UTF-8 check of the result
+  var out = s[0..first]
+  var start = first
   for i in first..b.len() {
-    let k = Int(b[i])
-    if (Int(MODES[k]) & mode) == 0 {
-      n += 1
+    let v = Int(b[i])
+    if (Int(MODES[v]) & mode) == 0 {
+      if i > start {
+        out += s[start..i]
+      }
+      out += PCT[3 * v..3 * v + 3]
+      start = i + 1
     }
   }
-  let hex = UPPER_HEX.bytes()
-  var out = BytesBuilder.with_capacity(b.len() + 2 * n)
-  out.write(b[0..first])
-  for i in first..b.len() {
-    let c = b[i]
-    let v = Int(c)
-    if (Int(MODES[v]) & mode) != 0 {
-      out.write_byte(c)
-    } else {
-      out.write_byte(37)
-      out.write_byte(hex[v >> 4])
-      out.write_byte(hex[v & 15])
-    }
+  if start < b.len() {
+    out += s[start..b.len()]
   }
-  out.freeze().to_str() ?? ""
+  out
 }
 
 /// The bytes with every one mode does not keep as `%XX`, as text (Go's
@@ -768,6 +750,9 @@ fn escape_bytes(b: Bytes, mode: Int) -> Str {
   }
   out.freeze().to_str() ?? ""
 }
+
+/// `%00` to `%FF`, three bytes each.
+const PCT: Str = "%00%01%02%03%04%05%06%07%08%09%0A%0B%0C%0D%0E%0F%10%11%12%13%14%15%16%17%18%19%1A%1B%1C%1D%1E%1F%20%21%22%23%24%25%26%27%28%29%2A%2B%2C%2D%2E%2F%30%31%32%33%34%35%36%37%38%39%3A%3B%3C%3D%3E%3F%40%41%42%43%44%45%46%47%48%49%4A%4B%4C%4D%4E%4F%50%51%52%53%54%55%56%57%58%59%5A%5B%5C%5D%5E%5F%60%61%62%63%64%65%66%67%68%69%6A%6B%6C%6D%6E%6F%70%71%72%73%74%75%76%77%78%79%7A%7B%7C%7D%7E%7F%80%81%82%83%84%85%86%87%88%89%8A%8B%8C%8D%8E%8F%90%91%92%93%94%95%96%97%98%99%9A%9B%9C%9D%9E%9F%A0%A1%A2%A3%A4%A5%A6%A7%A8%A9%AA%AB%AC%AD%AE%AF%B0%B1%B2%B3%B4%B5%B6%B7%B8%B9%BA%BB%BC%BD%BE%BF%C0%C1%C2%C3%C4%C5%C6%C7%C8%C9%CA%CB%CC%CD%CE%CF%D0%D1%D2%D3%D4%D5%D6%D7%D8%D9%DA%DB%DC%DD%DE%DF%E0%E1%E2%E3%E4%E5%E6%E7%E8%E9%EA%EB%EC%ED%EE%EF%F0%F1%F2%F3%F4%F5%F6%F7%F8%F9%FA%FB%FC%FD%FE%FF"
 
 /// The index of the first byte of b that mode escapes, or -1.
 fn escape_at(b: Bytes, mode: Int) -> Int {
@@ -1149,8 +1134,7 @@ fn valid_userinfo(s: Str) -> Bool {
 /// (base up to its last `/`, then ref) is walked as its two parts, whose
 /// elements are those of base before that `/` and then ref's.
 fn resolve_path(base: Str, r: Str) -> Str {
-  // the parts walked in turn: (first, second), second "" when there is
-  // one part (two is set only when both are walked)
+  // the parts walked in turn: one, then two when both is set
   var one = r
   var two = ""
   var both = false
@@ -1166,15 +1150,18 @@ fn resolve_path(base: Str, r: Str) -> Str {
       both = true
     }
   }
-  var elems: List[Str] = []
+  let b1 = one.bytes()
+  let b2 = two.bytes()
+  // the kept elements as (part, start, end) offsets, three Ints each: no
+  // Str per element
+  var kept: List[Int] = List.with_capacity(3 * (b1.len() + b2.len()) / 2 + 3)
   var bare = false
   var first = true
   // the kind of the last element: 0 a name, 1 `.`, 2 `..`
   var last = 0
   var size = 2
   for k in 0..(if both { 2 } else { 1 }) {
-    let s = if k == 0 { one } else { two }
-    let b = s.bytes()
+    let b = if k == 0 { b1 } else { b2 }
     let n = b.len()
     var from = 0
     while from <= n {
@@ -1188,16 +1175,21 @@ fn resolve_path(base: Str, r: Str) -> Str {
         first = false
       } else if len == 2 && b[from] == 46 && b[from + 1] == 46 {
         last = 2
-        if let Some(x) = elems.pop() {
-          size -= x.len() + 1
+        if kept.len() > 0 {
+          let e = kept.pop() ?? 0
+          let st = kept.pop() ?? 0
+          let _p = kept.pop()
+          size -= e - st + 1
         }
-        first = elems.is_empty()
+        first = kept.is_empty()
       } else {
         last = 0
-        if elems.is_empty() {
+        if kept.is_empty() {
           bare = first
         }
-        elems.push(s[from..i])
+        kept.push(k)
+        kept.push(from)
+        kept.push(i)
         size += len + 1
         first = false
       }
@@ -1206,11 +1198,17 @@ fn resolve_path(base: Str, r: Str) -> Str {
   }
   var out = BytesBuilder.with_capacity(size)
   out.write_byte(47)
-  for i in 0..elems.len() {
-    if i > 0 || !bare {
+  var j = 0
+  while j < kept.len() {
+    if j > 0 || !bare {
       out.write_byte(47)
     }
-    out.write_str(elems[i])
+    if kept[j] == 0 {
+      out.write(b1[kept[j + 1]..kept[j + 2]])
+    } else {
+      out.write(b2[kept[j + 1]..kept[j + 2]])
+    }
+    j += 3
   }
   if last != 0 {
     out.write_byte(47)

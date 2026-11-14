@@ -1,5 +1,17 @@
 # std/url changes
 
+## 2026-11-14: perf: the URL type's display, escape and resolve_reference
+
+- Kind: perf
+- Commit: this push
+- Found by: the decision 0616 perf kind on linux/arm64 host 1 at e2feedd59: parse 1.157, string 1.325, resolve 1.215 of Go, and escape 1.167 (bench/perf/url's main had grown the URL type's workloads, slowing its old ones)
+- Go reference: net/url URL.String, escape, resolvePath, ResolveReference
+- Change: the URL type's workloads move to bench/perf/urltype, so bench/perf/url is as it was; escape_in appends the runs it keeps and each `%XX` to one Str (no UTF-8 check of its result); resolve_path keeps each element as offsets in a list sized up front and writes them as slices; resolve_reference builds each result directly; display is one interpolation (presized by the compiler since the commit before)
+- Measured: Mac, scripts/twincheck -time 9, Xo / Go: urltype parse 0.99, string 1.04, resolve 0.83; url escape 1.06, unescape 0.87, query 0.84, encode 0.69 (noisy; the Proven perf kind runs on host 1 after this push)
+- Test: xo test --std-module=url (598); the urlfuzz and urltypefuzz corpora; twincheck output identical
+- Affected: every backend
+- Shipped in: not yet released
+
 ## 2026-11-14: fix: a path or fragment whose decoded bytes are not UTF-8 displays as Go's
 
 - Kind: fix

@@ -1,0 +1,5 @@
+# twincheck: urltype: four workloads (none is the setup alone), the same names on both sides.
+- - none
+- - parse
+- - string
+- - resolve
