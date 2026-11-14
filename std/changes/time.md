@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-11-14: security: days_until, unix and format answer near and past Int's ends (native)
+
+- Kind: security
+- Commit: this commit
+- Found by: the second reader of std/evidence/time/review.md, after f0454f0a2
+- Go reference: Go's arithmetic wraps; its answers are right wherever they fit
+- Test: std/native/time_test.xo "answers within a cycle of Int's ends, and years past them, do not fault"
+- Timing: a security fix, measured by the std/evidence/time/perf.md run that follows it
+- Shipped in: not yet released; 0.51.0 and earlier fault on these and wider fields
+
+f0454f0a2 left three faults on fields a JSON body can hold: days_until faulted when its answer was within one 400 year cycle of Int's ends (a negative rest under a product past Int), Civil.unix the same when a positive offset brought the seconds back into range, and Civil.format on a year that normalizes past Int (month 13 of year Int.max). The cycles and the rest now meet in mul_add, which overflows only when the answer does not fit, and format prints a year past Int from its cycles.
+
 ## 2026-11-14: security: Date and Civil methods no longer fault on fields far outside the calendar (native)
 
 - Kind: security
