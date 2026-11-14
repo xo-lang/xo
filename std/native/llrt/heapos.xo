@@ -1010,11 +1010,14 @@ fn region_chunk(h: Int) -> Bool {
     return false
   }
   set_prot(c, CHUNK, 3)
-  mapped(CHUNK)
   let _n = rt.slot_add(rt.static_word(W_CHUNKS), 0, 1, RELAXED)
   rt.mem_store(h, 24, c, 8)
   rt.mem_store(h, 32, c.wrapping_add(CHUNK), 8)
   rt.mem_store(h, H_BLIM, 1, 8)
+  // counted once the record holds the chunk: a budget stop here
+  // allocates from it (counted first, the stop's allocation carved
+  // another chunk, and that one's count stopped it again, 2026-11-14)
+  mapped(CHUNK)
   true
 }
 
@@ -1852,8 +1855,8 @@ fn extend(h: Int, end: Int, lim: Int) -> Bool {
   let more = used.wrapping_mul(3)
   let g = if more < l.wrapping_sub(e) { more } else { l.wrapping_sub(e) }
   set_prot(e, g, 3)
-  mapped(g)
   rt.mem_store(h, end, e.wrapping_add(g), 8)
+  mapped(g)
   true
 }
 

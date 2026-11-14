@@ -53,18 +53,26 @@ fn main(os: Os) {
 		}
 	}
 	// xo itself: a build under 16 MB stops in its first phases
-	setenvCmd := func() (int, string) {
+	setenvCmd := func(budget string) (int, string) {
 		w := xoCmd(t, "build", "-o", filepath.Join(t.TempDir(), "app"), app)
 		cmd := command(t, w[0], w[1:]...)
-		cmd.Env = append(cmd.Environ(), "XO_MAX_MEM=16M", "XO_BACKEND_CACHE=off", "XO_FE_CACHE=off")
+		cmd.Env = append(cmd.Environ(), "XO_MAX_MEM="+budget, "XO_BACKEND_CACHE=off", "XO_FE_CACHE=off")
 		var out bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &out
 		err := cmd.Run()
 		return cmd.ProcessState.ExitCode(), out.String() + errText(err)
 	}
-	code, out := setenvCmd()
-	if code != 70 || !strings.Contains(out, "fatal error: memory budget exceeded") || !strings.Contains(out, "  while: ") {
-		t.Errorf("xo build under XO_MAX_MEM=16M: exit %d\n%s", code, out)
+	// one report and status 70 at every budget: the stop ran again from
+	// its own allocation when the mapping past the budget was a heap
+	// region chunk (decision 0633), and repeated to a stack overflow
+	// (gotchas/budget-stop-reentered.md); these budgets stop xo in its
+	// front end, in region mode (host 3, cold: 8M repeated the report in
+	// every build with the region on or off, 12M overflowed the stack)
+	for _, budget := range []string{"8M", "12M", "16M", "24M"} {
+		code, out := setenvCmd(budget)
+		if code != 70 || strings.Count(out, "fatal error: memory budget exceeded") != 1 || !strings.Contains(out, "  while: ") {
+			t.Errorf("xo build under XO_MAX_MEM=%s: exit %d\n%s", budget, code, out)
+		}
 	}
 }
 

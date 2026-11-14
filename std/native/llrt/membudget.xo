@@ -1,8 +1,9 @@
 // The memory budget (decision 0349): the bytes the heap uses (heapos.xo:
 // its chunks and records as mapped, its large blocks as handed out), the
 // budget past which the process stops, and the label its report prints.
-// A leaf of heapos.xo: nothing here maps or allocates, so the stop can
-// run while the heap is full; heapos.xo maps the label's buffer and
+// A leaf of heapos.xo: nothing here maps or allocates (stdio.err only
+// without a newline, which allocates), so the stop can run while the
+// heap is full; heapos.xo maps the label's buffer and
 // hands it over.
 use native/llrt/process
 use native/llrt/stdio
@@ -33,7 +34,12 @@ pub fn add(d: Int) {
       rt.slot_store(rt.static_word(W_PEAK), 0, total, RELAXED)
     }
     let b = rt.slot_load(rt.static_word(W_BUDGET), 0, RELAXED)
-    if b > 0 && total > b {
+    // the first mapping past the budget takes the budget (sets it to 0)
+    // and stops the process: a mapping the stop itself makes, or one on
+    // another thread meanwhile, sees no budget and goes on, so the stop
+    // runs once (it re-entered itself, 2026-11-14: TestMemBudget's xo
+    // build printed "18 MB ... 22 ... 26 ..." to a stack overflow)
+    if b > 0 && total > b && rt.slot_cas(rt.static_word(W_BUDGET), 0, b, 0, ACQ_REL) {
       over_budget(total, b)
     }
   }
@@ -79,13 +85,17 @@ fn over_budget(total: Int, b: Int) {
   let mid = " MB mapped, more than XO_MAX_MEM ("
   stdio.err(raw_data(mid), mid.len(), false)
   write_mb(b)
-  let tail = " MB)"
-  stdio.err(raw_data(tail), tail.len(), true)
+  // nl stays false: stdio.err with a newline copies the line into a
+  // buffer it allocates, and the heap may map for it
+  let tail = " MB)\n"
+  stdio.err(raw_data(tail), tail.len(), false)
   let buf = label_buf()
   if buf != 0 && rt.mem_load(buf, 0, 1) > 0 {
     let w = "  while: "
     stdio.err(raw_data(w), w.len(), false)
-    stdio.err(buf + 1, rt.mem_load(buf, 0, 1), true)
+    stdio.err(buf + 1, rt.mem_load(buf, 0, 1), false)
+    let nl = "\n"
+    stdio.err(raw_data(nl), nl.len(), false)
   }
   process.os_exit(70)
 }
