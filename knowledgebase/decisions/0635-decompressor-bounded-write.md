@@ -31,3 +31,5 @@ To be written.
 - Keep feeding small writes in each caller (0.51.1): works, but every
   caller must know DEFLATE's ratio.
 - A per-write output cap in the Decompressor's constructor.
+
+With this change: update the section comment above InStream in std/native/llrt/flate.xo (about line 2622), which still describes the header reread of before F3 ("only once the input waiting has doubled"; gzip_need replaced it, and a dynamic header is read again on every push). Found by aws-43, std/evidence/compress/review.md; held back so a comment alone does not change the source hash the compress evidence names.
