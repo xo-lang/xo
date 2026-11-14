@@ -217,6 +217,47 @@ the same push, then a note to the lead to broadcast it (owner,
 - LLVM keeps leak only: free and guard under the LLVM goldens are not
   run yet (a later step lifts the refusal when they pass).
 
+## Step 2 results (Xo Lang 2, 2026-11-14)
+
+Measured on the amd64 offload host (28 CPUs; host 2 has no Docker and a
+read-only cgroup), in a systemd user scope with CPUQuota=200% (cpu.max
+200000 100000, what `docker --cpus=2` writes; nproc still 28): the
+bench/perf/http CRUD server built by seed 0.51.1, loaded by its loadgen
+from outside the scope for 10 s after 2 s, 3 interleaved repetitions,
+medians (the first repetition's c=8 Xo rows ran cold and are left out);
+Go 1.26.11's GOMAXPROCS follows the quota (2):
+
+| connections | config | rps | p50 | p99 | p999 | CPU/request |
+|---|---|---|---|---|---|---|
+| 8 | Xo, 28 workers (default) | 33.7k | 206 us | 0.91 ms | 1.62 ms | 51 us |
+| 8 | Xo, XO_THREADS=2 | 33.2k | 205 us | 0.98 ms | 1.71 ms | 45 us |
+| 8 | Go | 34.2k | 202 us | 0.90 ms | 1.57 ms | 43 us |
+| 32 | Xo, 28 workers | 54.2k | 246 us | 5.24 ms | 31.0 ms | 36.9 us |
+| 32 | Xo, XO_THREADS=2 | 75.8k | 237 us | 4.08 ms | 7.55 ms | 26.3 us |
+| 32 | Go | 71.5k | 286 us | 3.07 ms | 5.71 ms | 24.1 us |
+| 128 | Xo, 28 workers | 61.7k | 589 us | 58.2 ms | 62.8 ms | 32.4 us |
+| 128 | Xo, XO_THREADS=2 | 106.3k | 637 us | 26.6 ms | 32.7 ms | 18.8 us |
+| 128 | Go | 88.3k | 1.18 ms | 5.03 ms | 7.51 ms | 21.6 us |
+
+The 28 workers cost 29% (32 connections) to 42% (128) of the throughput
+and up to twice the p99, so the default follows the quota (the owner's
+rule): std/native/llrt/cgroupcpu.xo, Go 1.25's reading (the lowest
+cpu.max, or v1 CFS quota, from the process's cgroup to the mount root;
+max(2, ceil(limit)) workers, Go's floor of 2 where this ADR first said 1).
+Checked on the same host: no quota 28 workers, 200% 2, 50% 2, 650% 7,
+XO_THREADS=5 5, taskset 0-3 under 800% 4. Windows' affinity mask and
+FreeBSD's cpuset stay open in step 2 (step 2b).
+
+Separate finding, queued by the lead as its own item: under overload (128
+connections on 2 CPUs) Xo with 2 workers serves more than Go (106k against
+88k requests per second, p50 0.64 against 1.18 ms) but its tail is far
+longer: p99 26.6 ms against 5.0 ms, p999 32.7 against 7.5 ms. Its cause
+(found 2026-11-14): N workers ran N + 1 threads of Xo work, the root
+thread that runs main helping beside them (decision 0077), so the quota
+throttled every 100 ms period (119 throttles, 7.3 to 7.8 s stalled in 12
+s). Decision 0640 counts the root as one of the N and lands with this
+step: p99 3.94 ms against Go's 4.9 to 5.2, 129k requests per second.
+
 ## Consequences
 
 - Users get the memory checks that only the toolchain's own tests used,

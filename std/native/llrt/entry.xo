@@ -21,6 +21,7 @@ use native/llrt/fault
 use native/llrt/freebsd
 use native/llrt/heapos
 use native/llrt/ints
+use native/llrt/layout
 use native/llrt/linux
 use native/llrt/obj
 use native/llrt/poll
@@ -657,6 +658,10 @@ pub fn rt_stats() {
   let p = raw.data(STAT_NAMES)
   let n = STAT_NAMES.len()
   var at = put(b, 0, "xo rtstats:")
+  // the pool's worker count (0 when no task ever ran on it): XO_THREADS,
+  // the CPUs, or a cgroup's CPU quota (decision 0638 step 2)
+  at = put(b, at, " workers=")
+  at = put_int(b, at, rt.slot_load(ctx.pool() + layout.P_NCPU, 0, 1))
   emit(b, at)
   at = 0
   var k = 0

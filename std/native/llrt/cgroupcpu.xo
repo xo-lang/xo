@@ -1,0 +1,282 @@
+// The CPU quota of the process's cgroup on Linux (decision 0638 step 2),
+// as Go 1.25's runtime reads it for GOMAXPROCS (internal/runtime/cgroup):
+// the process's cgroup from /proc/self/cgroup, the cgroup file system's
+// mount from /proc/self/mountinfo, then the limit of each cgroup from
+// the process's up to the mount's root: cgroup v2's cpu.max ("QUOTA
+// PERIOD", or "max"), v1's cpu.cfs_quota_us and cpu.cfs_period_us (-1
+// for none). The lowest quota / period on that path is the limit; the
+// pool's default worker count is min(the CPUs, max(2, ceil(limit))), as
+// Go's (a fraction of a CPU still gets 2 workers, so one blocked thread
+// does not stall the rest). Read once at the pool's setup; Xo's pool does
+// not resize, so a limit changed later is not followed (Go rechecks).
+use native/llrt/linux
+use native/llrt/raw
+use native/rt
+
+/// The workers a CPU limit of the process's cgroup allows (max(2,
+/// ceil(quota / period)) of the lowest limit on its path), 0 when there
+/// is none or it cannot be read. Linux only; 0 elsewhere.
+pub fn limit_workers() -> Int {
+  if target.os != TargetOs.Linux {
+    return 0
+  }
+  let cg = read_file("/proc/self/cgroup")
+  let mi = read_file("/proc/self/mountinfo")
+  if cg.is_empty() || mi.is_empty() {
+    return 0
+  }
+  // cgroup v2: the line "0::PATH"
+  let v2 = cgroup_path(cg, true)
+  if let Some(path) = v2 {
+    if let Some((root, at)) = mount_of(mi, true) {
+      let w = walk(path, root, at, true)
+      if w > 0 {
+        return w
+      }
+    }
+  }
+  // cgroup v1: the hierarchy whose controllers include cpu
+  let v1 = cgroup_path(cg, false)
+  if let Some(path) = v1 {
+    if let Some((root, at)) = mount_of(mi, false) {
+      return walk(path, root, at, false)
+    }
+  }
+  0
+}
+
+/// The workers of the lowest limit from the cgroup at path up to the
+/// mount's root (root: the mount's root in the hierarchy; at: where it is
+/// mounted), 0 for none.
+fn walk(path: Str, root: Str, at: Str, v2: Bool) -> Int {
+  // the cgroup's place below the mount's root (a container without its
+  // own cgroup namespace sees the host's path; its mount's root is the
+  // container's cgroup)
+  var rel = path
+  if root != "/" {
+    if !path.starts_with(root) {
+      return 0
+    }
+    rel = path[root.len()..path.len()]
+  }
+  var best = 0.0
+  var found = false
+  while true {
+    let dir = if rel.is_empty() || rel == "/" { at } else { at + rel }
+    let l = if v2 { limit_v2(dir) } else { limit_v1(dir) }
+    if l > 0.0 && (!found || l < best) {
+      best = l
+      found = true
+    }
+    if rel.is_empty() || rel == "/" {
+      break
+    }
+    match last_slash(rel) {
+      Some(i) => rel = rel[0..i]
+      None => break
+    }
+  }
+  if !found {
+    return 0
+  }
+  var w = Int(best)
+  if Float(w) < best {
+    w += 1
+  }
+  if w < 2 { 2 } else { w }
+}
+
+/// cpu.max in dir: QUOTA / PERIOD, 0 for "max" or no file.
+fn limit_v2(dir: Str) -> Float {
+  let s = read_file(dir + "/cpu.max")
+  let sp = match s.find(" ") {
+    Some(i) => i
+    None => return 0.0
+  }
+  let q = s[0..sp]
+  if q == "max" {
+    return 0.0
+  }
+  ratio(num(q), num(s[sp + 1..s.len()]))
+}
+
+/// cpu.cfs_quota_us / cpu.cfs_period_us in dir, 0 for -1 or no file.
+fn limit_v1(dir: Str) -> Float {
+  let q = read_file(dir + "/cpu.cfs_quota_us")
+  let p = read_file(dir + "/cpu.cfs_period_us")
+  if q.is_empty() || p.is_empty() || q.starts_with("-") {
+    return 0.0
+  }
+  ratio(num(q), num(p))
+}
+
+fn ratio(q: Int, p: Int) -> Float {
+  if q <= 0 || p <= 0 {
+    return 0.0
+  }
+  Float(q) / Float(p)
+}
+
+/// The cgroup path of the process in /proc/self/cgroup's text s: v2's
+/// "0::PATH" line, or v1's line whose controllers include cpu.
+fn cgroup_path(s: Str, v2: Bool) -> Str? {
+  var start = 0
+  while start < s.len() {
+    let end = match s[start..s.len()].find("\n") {
+      Some(i) => start + i
+      None => s.len()
+    }
+    let line = s[start..end]
+    start = end + 1
+    let c1 = match line.find(":") {
+      Some(i) => i
+      None => continue
+    }
+    let rest = line[c1 + 1..line.len()]
+    let c2 = match rest.find(":") {
+      Some(i) => i
+      None => continue
+    }
+    let id = line[0..c1]
+    let ctl = rest[0..c2]
+    let path = rest[c2 + 1..rest.len()]
+    if v2 {
+      if id == "0" && ctl.is_empty() {
+        return Some(path)
+      }
+    } else if has_word(ctl, "cpu") {
+      return Some(path)
+    }
+  }
+  None
+}
+
+/// The root and mount point of the cgroup file system in
+/// /proc/self/mountinfo's text s: v2's cgroup2, or v1's cgroup mount whose
+/// super options include cpu. A line is "ID PARENT MAJ:MIN ROOT POINT
+/// OPTIONS [TAGS...] - FSTYPE SOURCE SUPER".
+fn mount_of(s: Str, v2: Bool) -> (Str, Str)? {
+  var start = 0
+  while start < s.len() {
+    let end = match s[start..s.len()].find("\n") {
+      Some(i) => start + i
+      None => s.len()
+    }
+    let line = s[start..end]
+    start = end + 1
+    let dash = match line.find(" - ") {
+      Some(i) => i
+      None => continue
+    }
+    let tail = line[dash + 3..line.len()]
+    let fs = field(tail, 0)
+    let ok = if v2 { fs == "cgroup2" } else { fs == "cgroup" && has_word(field(tail, 2), "cpu") }
+    if ok {
+      return Some((unescape(field(line, 3)), unescape(field(line, 4))))
+    }
+  }
+  None
+}
+
+/// Field k (from 0) of the space separated line, "" past the end.
+fn field(line: Str, k: Int) -> Str {
+  var i = 0
+  var n = 0
+  while i <= line.len() {
+    let j = match line[i..line.len()].find(" ") {
+      Some(x) => i + x
+      None => line.len()
+    }
+    if n == k {
+      return line[i..j]
+    }
+    n += 1
+    i = j + 1
+  }
+  ""
+}
+
+/// Whether the comma separated list has the word w.
+fn has_word(list: Str, w: Str) -> Bool {
+  var i = 0
+  while i <= list.len() {
+    let j = match list[i..list.len()].find(",") {
+      Some(x) => i + x
+      None => list.len()
+    }
+    if list[i..j] == w {
+      return true
+    }
+    i = j + 1
+  }
+  false
+}
+
+/// mountinfo's escapes decoded: \040 (a space), \011 (a tab), \012 (a
+/// newline) and \134 (a backslash), as the kernel writes them.
+fn unescape(s: Str) -> Str {
+  if s.find("\\") == None {
+    return s
+  }
+  var out = ""
+  var i = 0
+  while i < s.len() {
+    if bt(s, i) == 92 && i + 3 < s.len() {
+      let code = s[i + 1..i + 4]
+      let c = if code == "040" { " " } else if code == "011" { "\t" } else if code == "012" { "\n" } else if code == "134" { "\\" } else { "" }
+      if !c.is_empty() {
+        out = out + c
+        i += 4
+        continue
+      }
+    }
+    out = out + s[i..i + 1]
+    i += 1
+  }
+  out
+}
+
+fn last_slash(s: Str) -> Int? {
+  var i = s.len() - 1
+  while i >= 0 {
+    if bt(s, i) == 47 {
+      return Some(i)
+    }
+    i -= 1
+  }
+  None
+}
+
+/// The decimal number at the start of s, 0 when there is none.
+fn num(s: Str) -> Int {
+  var v = 0
+  var i = 0
+  while i < s.len() && bt(s, i) >= 48 && bt(s, i) <= 57 && v < 1000000000000 {
+    v = v * 10 + bt(s, i) - 48
+    i += 1
+  }
+  v
+}
+
+fn bt(s: Str, i: Int) -> Int { raw.byte_at(raw.data(s), i) }
+
+/// The whole of a small file (up to 1 MiB), "" when it cannot be read.
+fn read_file(path: Str) -> Str {
+  let fd = linux.open(path, 0, 0)
+  if fd < 0 {
+    return ""
+  }
+  let n = 8192
+  let b = rt.heap_large(n)
+  var s = ""
+  while s.len() < 1048576 {
+    let k = linux.read_at(fd, b, n)
+    if k <= 0 {
+      break
+    }
+    s = s + raw.str_at(b, k)
+  }
+  let _c = linux.close(fd)
+  rt.heap_release(b - 8)
+  s
+}

@@ -18,6 +18,23 @@ A binary built with `xo build --check=free` or `--check=leak` runs those
 checks when its environment does not set the variable. The wasm runner
 (compiler/wasm/run.mjs) reads XO_LEAKCHECK=fail the same way.
 
+## 2026-11-14: perf: the worker pool follows a Linux cgroup CPU quota (Go's GOMAXPROCS rule)
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0638 step 2 (owner: follow cpu.max as Go if the measurement shows any cost)
+- Go reference: internal/runtime/cgroup and runtime's adjustCgroupGOMAXPROCS (Go 1.25): the lowest cpu.max (v1 cfs quota/period) on the cgroup's path to the mount root, max(2, ceil(limit))
+- Test: std/native/llrt/cgroupcpu_test.xo (the /proc/self/cgroup and mountinfo lines of a host, a container with and without its own cgroup namespace, cgroup v1); on the amd64 offload host under systemd scopes: no quota 28 workers, CPUQuota=200% 2, 50% 2, 650% 7, XO_THREADS=5 5, taskset 0-3 with 800% 4
+- Timing: bench/perf/http CRUD server, 28 CPUs, CPUQuota=200%, 3 reps: 32 connections 54.2k to 75.8k rps (p99 5.2 to 4.1 ms), 128 connections 61.7k to 106.3k rps (p99 58 to 27 ms); 8 connections unchanged (decision 0638 Results). With decision 0640 (the root thread counts as one of the N): 32 connections 79k to 83k rps, p99 3.5 to 3.7 ms; 128 connections 129k to 130k rps, p99 3.9 to 4.0 ms (Go 1.26: 88k, 4.9 to 5.2 ms), throttles 119 to 2 to 3
+- Shipped in: not yet released
+
+std/native/llrt/cgroupcpu.xo reads the process's cgroup and the cgroup
+mount once at the pool's setup (poolsetup.xo); the pool's default worker
+count is the lower of the CPUs it may use and the quota's. XO_THREADS still
+sets it. XO_RTSTATS=1's line now starts with `workers=N`. The count includes
+the root thread that runs main and helps while main waits (decision 0640),
+so the pool starts N - 1 workers (at least 1) beside it.
+
 ## 2026-11-13: security: a sub Fs on Windows denies device names and colons under its root
 
 - Kind: security

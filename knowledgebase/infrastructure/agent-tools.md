@@ -827,6 +827,19 @@ section 3, amended 2026-11-14). Security reviews follow
 
 ## Measuring
 
+- Worker count (decision 0638 step 2, 2026-11-14): the offload hosts
+  run in containers, and a native Xo program there follows the
+  container's cgroup CPU quota (as Go's GOMAXPROCS); `XO_RTSTATS=1 PROG`
+  prints `workers=N` first. Pin `XO_THREADS=N` in a measurement that
+  compares hosts. To run under a quota without Docker, the amd64 host
+  has a writable cgroup v2: `systemd-run --user --scope -q -p
+  CPUQuota=200% PROG` (cpu.max 200000 100000, as `docker --cpus=2`);
+  host 1 and host 2 have read-only cgroups and no Docker. Per-thread
+  CPU and the scope's throttles: read /proc/PID/task/*/stat (fields 14
+  and 15) and the scope's cpu.stat nr_throttled each 100 ms (decision
+  0640's residual: ~/xo-lead/notes/xo-lang-2/thr/thr100-remote.sh).
+  `XO_THREADS=N` counts main's helping thread since decision 0640, so
+  a run with N workers plus main is now XO_THREADS=N+1.
 - Code size by cause (decision 0443): `xo dev size --by-cause PROG`
   builds PROG native (arm64, or amd64 with
   `--flags=--target=linux/amd64`; not windows) and splits its code bytes into body,

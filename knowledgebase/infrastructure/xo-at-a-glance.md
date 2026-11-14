@@ -101,6 +101,11 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
   exit with status 1); the variables XO_FREE_CHECK, XO_HEAP_GUARD,
   XO_LEAKCHECK under it. arm64 and amd64; LLVM and wasm leak only.
 
+- Worker pool size (7.4, decision 0638): one per usable CPU, lowered by a
+  Linux cgroup CPU quota as Go's GOMAXPROCS; `XO_THREADS=N` wins;
+  `XO_RTSTATS=1` prints `workers=N`. N counts main's thread, which helps
+  run tasks (decision 0640): at most N threads run tasks, as Go's Ps.
+
 ## Effects, faults, contracts, tests (core 6, 8, 9)
 
 - Effects in signatures (`uses (...)`), capability values (`Os`, `Fs`,

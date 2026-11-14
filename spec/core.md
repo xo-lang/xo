@@ -13,6 +13,7 @@ programs for any OS with fast, structured, unambiguous feedback.
 ## Changes in 0.52
 
 - 5.5 and 10.1: `--check=free,guard,leak|all` on `xo run`, `xo test` and `xo build` turns on the native runtime's memory checks (decision 0638); the variables under it (XO_FREE_CHECK, XO_HEAP_GUARD, XO_LEAKCHECK) are documented, and `XO_LEAKCHECK=fail` ends a program that leaves blocks live with status 1.
+- 7.4: the native worker pool follows a Linux cgroup CPU quota (`cpu.max`; v1's CFS quota) as Go 1.25's GOMAXPROCS does, max(2, ceil(quota / period)) workers when that is fewer than the CPUs; `XO_THREADS` is documented and still wins (decision 0638); the count includes the thread that runs `main` and helps while it waits, as Go's Ps, so N is at most N threads running tasks (decision 0640).
 
 ## Changes in 0.51
 
@@ -3221,6 +3222,24 @@ seeds that expose a race differ from the Go backend's (its generator and
 scheduling points differ). Other native tests still run on the thread pool
 until decision 0350's stage 3; `xo run --record` still uses the Go backend.
 The rest of core 7 means the same on every backend.
+
+The pool's size (decision 0638), as Go's GOMAXPROCS: a native program
+runs tasks on one worker thread per CPU it may use, the CPUs of its
+affinity mask on Linux (taskset, a cpuset), its active processors on
+macOS and Windows. On Linux a cgroup CPU quota lowers it (cgroup v2
+`cpu.max`, v1 `cpu.cfs_quota_us` and `cpu.cfs_period_us`, the lowest
+limit from the process's cgroup up to its mount's root, as `docker
+--cpus` or a Kubernetes CPU limit sets): the workers are max(2,
+ceil(quota / period)) when that is fewer, as Go 1.25's. `XO_THREADS=N`
+(1 to 256) sets the count and wins over both. The count is of threads
+running tasks at once, as Go's Ps (decision 0640): the thread that runs
+`main` helps run tasks while main waits, and it is one of the N, so the
+pool starts N - 1 workers beside it; `XO_THREADS=1` keeps one worker
+beside it (two threads), since no thread takes over the slot of one
+blocked in the system. The count is read once,
+when the first task is spawned; a limit changed later is not followed.
+`XO_RTSTATS=1` prints it (`workers=N`) with the scheduler's counts at
+exit.
 
 ### 7.5 Process signals and graceful shutdown
 

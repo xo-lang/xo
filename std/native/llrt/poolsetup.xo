@@ -5,6 +5,7 @@
 // thread's record, which it makes on first use. Not in pool.xo: these
 // read the environment through process.xo, which stdio.xo's imports
 // reach, and stdio.xo imports pool.xo.
+use native/llrt/cgroupcpu
 use native/llrt/det
 use native/llrt/layout
 use native/llrt/ctx
@@ -44,8 +45,8 @@ const RELEASE = 2
 
 /// Sets the pool p up once, before its first use (pool_init): the
 /// runtime switches to several threads, the statistics' switch is read
-/// (XO_RTSTATS), and the worker count (one per CPU, or XO_THREADS, 1 to
-/// 256), the spin rounds (0, or XO_SPIN_ROUNDS), and the fiber stacks'
+/// (XO_RTSTATS), and the worker count (one per CPU, fewer under a
+/// cgroup CPU quota as Go's GOMAXPROCS, or XO_THREADS, 1 to 256), the spin rounds (0, or XO_SPIN_ROUNDS), and the fiber stacks'
 /// settings are set; P_NCPU, stored last, tells that it ran. The
 /// services record's lock orders the threads that get here at once.
 pub fn ready(p: Int) {
@@ -78,6 +79,13 @@ fn setup(p: Int) {
     det.start(if s != 0 { s } else { env_int("XO_TEST_SEED") })
   }
   var n = cpu_count()
+  // a container's CPU quota (cgroup cpu.max, decision 0638 step 2: 28
+  // workers under a 2 CPU quota served an HTTP load at 0.58 to 0.71 of the
+  // throughput of 2 workers, with twice the p99), as Go 1.25's GOMAXPROCS
+  let q = cgroupcpu.limit_workers()
+  if q > 0 && q < n {
+    n = q
+  }
   let th = env_int("XO_THREADS")
   if th > 0 {
     n = th

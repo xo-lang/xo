@@ -1,0 +1,58 @@
+// Tests of cgroupcpu.xo's readers of /proc/self/cgroup and
+// /proc/self/mountinfo (`xo test --std-module=native/llrt/cgroupcpu`),
+// on the lines a host, a Docker container with and without its own
+// cgroup namespace, and a cgroup v1 host write.
+
+test "the v2 cgroup path is the 0:: line" {
+  let s = "0::/user.slice/user-1000.slice/run-r1.scope\n"
+  expect(cgroup_path(s, true)) == Some("/user.slice/user-1000.slice/run-r1.scope")
+  expect(cgroup_path(s, false)) == None
+}
+
+test "a container's own namespace sees its cgroup as the root" {
+  expect(cgroup_path("0::/\n", true)) == Some("/")
+}
+
+test "the v1 cgroup path is the line whose controllers include cpu" {
+  let s = "12:pids:/docker/abc\n4:cpu,cpuacct:/docker/abc\n1:name=systemd:/docker/abc\n"
+  expect(cgroup_path(s, false)) == Some("/docker/abc")
+  expect(cgroup_path("3:cpuset:/x\n", false)) == None
+}
+
+test "the cgroup2 mount's root and point come from mountinfo" {
+  let s = "22 1 0:21 / /sys rw - sysfs sysfs rw\n30 22 0:26 / /sys/fs/cgroup rw,nosuid shared:9 - cgroup2 cgroup2 rw,nsdelegate\n"
+  expect(mount_of(s, true)) == Some(("/", "/sys/fs/cgroup"))
+}
+
+test "a container without its own namespace mounts its cgroup as the root" {
+  let s = "700 690 0:26 /docker/abc /sys/fs/cgroup ro,nosuid - cgroup2 cgroup rw\n"
+  expect(mount_of(s, true)) == Some(("/docker/abc", "/sys/fs/cgroup"))
+}
+
+test "the v1 cpu mount is the cgroup mount whose options include cpu" {
+  let s = "40 30 0:35 / /sys/fs/cgroup/cpuset rw - cgroup cgroup rw,cpuset\n41 30 0:36 / /sys/fs/cgroup/cpu,cpuacct rw - cgroup cgroup rw,cpu,cpuacct\n"
+  expect(mount_of(s, false)) == Some(("/", "/sys/fs/cgroup/cpu,cpuacct"))
+  expect(mount_of(s, true)) == None
+}
+
+test "mountinfo's escapes are decoded" {
+  expect(unescape("/mnt/my\\040dir")) == "/mnt/my dir"
+  expect(unescape("/plain")) == "/plain"
+}
+
+test "fields and words" {
+  expect(field("a b c", 1)) == "b"
+  expect(field("a b c", 3)) == ""
+  expect(has_word("rw,cpu,cpuacct", "cpu")) == true
+  expect(has_word("rw,cpuacct", "cpu")) == false
+}
+
+test "the host's limit is read on Linux, none elsewhere" {
+  // a host or container may or may not have a quota: the count is 0 or
+  // at least 2
+  let w = limit_workers()
+  expect(w == 0 || w >= 2) == true
+  if target.os != TargetOs.Linux {
+    expect(w) == 0
+  }
+}
