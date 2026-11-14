@@ -47,6 +47,7 @@ http_escaped_path # wasip1 # network: the network (`rt.net_listen`): WASI previe
 http_fault # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_form # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_gzip # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_gzip_hostile # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_gzip_responses # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_header_fields # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_multipart_stream # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets

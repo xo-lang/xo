@@ -125,6 +125,7 @@ var componentGoldens = []struct {
 var componentGoldensNotRun = map[string]string{
 	"http_escaped_path":          "it listens on a socket of its own for new_request's client to call, which a component cannot; TestWasmComponentClient runs the client",
 	"http_raw_path":              "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
+	"http_gzip_hostile":          "it listens on a socket of its own for the client to call, which a component cannot (the client's gzip slicing is native std/http)",
 	"http_client":                "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
 	"http_client_body_reader":    "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
 	"http_client_proxy":          "it listens on sockets of its own (the proxy and the target) for the client to call, which a component cannot",

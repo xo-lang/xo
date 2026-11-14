@@ -1,0 +1,67 @@
+// A hostile gzip response to a streaming HTTP client (0.51.1, 2026-11-14):
+// about 1 MB of gzip (1000 members of 1 MiB of zeros) that inflates to
+// 1000 MB. The client hands the body to its Decompressor at most 4 KiB at
+// a time (http.xo GZ_SLICE), so one write's output stays near 4 MB however
+// much the client reads at once; before, the whole body went in one write
+// (heap peak 1409 MB, RSS 1064 MB; now 23 MB). The heap's high-water mark
+// must stay under 50 MB while the client reads all 1000 MB, twice (std/debug
+// mem_peak; 0 on the Go backend, whose client is Go's own).
+use std/compress
+use std/debug
+use std/http
+
+const OUT = 1048576000
+
+/// OUT / 1 MiB gzip members of 1 MiB of zeros each, one after another (a
+/// gzip stream may hold many members; the client decodes them all, as Go).
+fn hostile() -> Bytes {
+  let one = compress.gzip(Bytes.zeroed(1048576))
+  var b = BytesBuilder.with_capacity(one.len() * (OUT / 1048576))
+  for _ in 0..(OUT / 1048576) {
+    b.write(one)
+  }
+  b.freeze()
+}
+
+fn main(os: Os) {
+  let body = hostile()
+  os.stdio.println("gzip body: about ${(body.len() + 512) / 1024} KB for ${OUT / 1048576} MB")
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  var r = http.router()
+  r.handle("GET /bomb", fn(_req) { http.Response{status: 200, headers: {"Content-Encoding": "gzip", "Content-Type": "text/plain"}, body: body} })
+  let srv = http.server(l, r)
+  let c = http.client(os.net, timeout: 60s)
+  scope s {
+    s.spawn_background(fn() { srv.serve().ignore_err("test server") })
+    for size in [65536, 1048576] {
+      // no Accept-Encoding of its own: the client asks for gzip and
+      // decodes it (Go's Transport rule)
+      let req = http.new_request("GET", "http://${l.addr()}/bomb")
+      match c.open(req) {
+        Ok(st) => {
+          var total = 0
+          var biggest = 0
+          var bad = 0
+          while let Some(b) = st.read(size).or_fault("read") {
+            total += b.len()
+            if b.len() > biggest {
+              biggest = b.len()
+            }
+            for i in [0, b.len() - 1] {
+              if b[i] != 0 {
+                bad += 1
+              }
+            }
+          }
+          os.stdio.println("read(${size}): ${total} bytes, no read over ${size}: ${biggest <= size}, nonzero ${bad}")
+        }
+        Err(e) => os.stdio.println("open: ${e}")
+      }
+    }
+  }
+  let peak = debug.mem_peak()
+  os.stdio.println("heap peak under 50 MB: ${peak < 52428800}")
+  if peak >= 52428800 {
+    os.stdio.eprintln("heap peak ${peak / 1048576} MB")
+  }
+}
