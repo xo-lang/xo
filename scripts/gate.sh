@@ -559,7 +559,26 @@ llvm_goldens() {
   fi
   nm="$logs/llvm-ir.txt"
   rm -f "$nm"
-  if [ ! -s "$bm" ] || ! XO_LLVM_IR_MANIFEST=$nm go test -count=1 -timeout 60m -parallel 4 -run '^TestGoldenIRManifest$' ./internal/llvm >"$logs/llvm-ir-head.txt" 2>&1 || [ ! -s "$nm" ]; then
+  # HEAD's manifest is kept by commit too, for a gate of the same commit
+  # again (a clean tree only), and built with more goldens at once: with
+  # -parallel 4 it took 1,419 s of a host 2 gate that selected no golden
+  # (bench/results/gate-time-2026-11-14.md). XO_GATE_IR_PARALLEL sets it;
+  # the default is a third of the CPUs (the gate runs 3 steps at once), at
+  # least 4.
+  hm=""
+  [ -z "$(git status --porcelain --untracked-files=no)" ] && hm="$cache/$(git rev-parse HEAD)-$mcode.txt"
+  ncpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+  irp=${XO_GATE_IR_PARALLEL:-$((ncpu / 3 > 4 ? ncpu / 3 : 4))}
+  if [ -n "$hm" ] && [ -s "$hm" ]; then
+    cp "$hm" "$nm"; echo "HEAD's manifest from $hm" >"$logs/llvm-ir-head.txt"
+  elif [ -s "$bm" ]; then
+    if XO_LLVM_IR_MANIFEST=$nm go test -count=1 -timeout 60m -parallel "$irp" -run '^TestGoldenIRManifest$' ./internal/llvm >"$logs/llvm-ir-head.txt" 2>&1; then
+      [ -s "$nm" ] && [ -n "$hm" ] && cp "$nm" "$hm.tmp$$" && mv "$hm.tmp$$" "$hm"
+    else
+      rm -f "$nm"
+    fi
+  fi
+  if [ ! -s "$bm" ] || [ ! -s "$nm" ]; then
     echo "every golden (no IR manifest: $logs/llvm-ir-base.txt, $logs/llvm-ir-head.txt)" >"$sel_note"; echo all; return
   fi
   names=$( { comm -3 "$bm" "$nm" | awk '{print $1}'; echo "$files" | sed -n 's|^internal/llvm/testdata/golden/\([^/]*\)/.*|\1|p'; } | sort -u | grep . )
