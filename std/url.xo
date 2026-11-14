@@ -1077,11 +1077,20 @@ fn parse_host(scheme: Str, host: Str) -> Str ! EscapeErr {
     }
     let ucp = unescape_in(colon_port, M_HOST)?
     let name = host[1..cb]
-    let uh = match name.find("%25") {
-      // RFC 6874: a zone after `%25`, with its own escapes
-      Some(z) => unescape_in(name[0..z], M_HOST)? + unescape_in(name[z..name.len()], M_ZONE)?
-      None => unescape_in(name, M_HOST)?
+    // RFC 6874: a zone after `%25`, with its own escapes
+    let (hpart, zpart) = match name.find("%25") {
+      Some(z) => (name[0..z], name[z..name.len()])
+      None => (name, "")
     }
+    let hb = unescape_bytes(hpart, M_HOST)?
+    let zb = if zpart == "" { b"" } else { unescape_bytes(zpart, M_ZONE)? }
+    if hb.to_str() is None {
+      // no address has a byte from 0x80: refused with Go's text, where
+      // the host as text (each such byte `%XX`) would read as a zone to
+      // netip and could parse (`[::1%80]` as ::1 in zone 80)
+      return Err(EscapeErr{msg: "invalid host: " + bracket_addr_err(hb, zb)})
+    }
+    let uh = (hb.to_str() ?? "") + text_of(zb)
     match netip.parse_addr(uh) {
       Ok(a) => if a.is_4() {
         return Err(EscapeErr{msg: "invalid IP-literal"})
@@ -1104,6 +1113,46 @@ fn parse_host(scheme: Str, host: Str) -> Str ! EscapeErr {
     }
   }
   unescape_in(host, M_HOST)
+}
+
+/// Go's ParseAddr error for an address of hb's bytes (some from 0x80,
+/// not UTF-8) and the zone zb: netip parses a stand in with each such
+/// byte as `g` (no address character, so the same error at the same
+/// offset, as Go's parser treats every byte that is not a digit, `.`,
+/// `:` or `%` alike), and the input and the rest it names are quoted
+/// from the bytes, as Go quotes them.
+fn bracket_addr_err(hb: Bytes, zb: Bytes) -> Str {
+  var sub = BytesBuilder.with_capacity(hb.len())
+  for c in hb {
+    sub.write_byte(if c >= 128 { 103 } else { c })
+  }
+  let st = (sub.freeze().to_str() ?? "") + text_of(zb)
+  let m = match netip.parse_addr(st) {
+    Ok(_) => return "ParseAddr(${go_q(hb)}): unable to parse IP"
+    Err(e) => e.msg
+  }
+  let head = "ParseAddr(${st.quote()}): "
+  if !m.starts_with(head) {
+    return m
+  }
+  let rest = m[head.len()..m.len()]
+  var reason = rest
+  var at = ""
+  if rest.ends_with("\")") {
+    if let Some(k) = rest.rfind(" (at \"") {
+      // the rest is the host part's tail: ASCII host bytes and `g`,
+      // which quote as themselves
+      let l = rest.len() - 1 - (k + 5) - 2
+      if l >= 0 && l <= hb.len() {
+        reason = rest[0..k]
+        at = " (at ${go_q(hb[hb.len() - l..hb.len()])})"
+      }
+    }
+  }
+  var all = BytesBuilder.with_capacity(hb.len() + zb.len())
+  all.write(hb)
+  all.write(zb)
+  "ParseAddr(${go_q(all.freeze())}): ${reason}${at}"
 }
 
 /// Letters, digits, and `-._:~!$&'()*+,;=%@` (validUserinfo).
@@ -1134,83 +1183,86 @@ fn valid_userinfo(s: Str) -> Bool {
 /// (base up to its last `/`, then ref) is walked as its two parts, whose
 /// elements are those of base before that `/` and then ref's.
 fn resolve_path(base: Str, r: Str) -> Str {
-  // the parts walked in turn: one, then two when both is set
-  var one = r
-  var two = ""
-  var both = false
+  // Go's full: the reference, or base up to its last `/` and the
+  // reference
+  var full = r
   if r == "" {
     if base == "" {
       return ""
     }
-    one = base
+    full = base
   } else if !r.starts_with("/") {
     if let Some(i) = base.rfind("/") {
-      one = base[0..i]
-      two = r
-      both = true
+      full = base[0..i + 1] + r
     }
   }
-  let b1 = one.bytes()
-  let b2 = two.bytes()
-  // the kept elements as (part, start, end) offsets, three Ints each: no
-  // Str per element
-  var kept: List[Int] = List.with_capacity(3 * (b1.len() + b2.len()) / 2 + 3)
-  var bare = false
-  var first = true
-  // the kind of the last element: 0 a name, 1 `.`, 2 `..`
-  var last = 0
+  let b = full.bytes()
+  let n = b.len()
+  // Backward, each element's fate as one byte (1 kept): a `..` cancels
+  // the nearest name before it that no later `..` cancelled, as Go's
+  // forward truncation pops it; `.` and `..` themselves are dropped. So
+  // the memory is a byte an element, not a stack of offsets
+  // (GO-2026-6218's class: Go writes into one buffer and truncates).
+  var fate = BytesBuilder.with_capacity(n + 1)
+  var skip = 0
   var size = 2
-  for k in 0..(if both { 2 } else { 1 }) {
-    let b = if k == 0 { b1 } else { b2 }
-    let n = b.len()
-    var from = 0
-    while from <= n {
-      var i = from
-      while i < n && b[i] != 47 {
-        i += 1
-      }
-      let len = i - from
-      if len == 1 && b[from] == 46 {
-        last = 1
-        first = false
-      } else if len == 2 && b[from] == 46 && b[from + 1] == 46 {
-        last = 2
-        if kept.len() > 0 {
-          let e = kept.pop() ?? 0
-          let st = kept.pop() ?? 0
-          let _p = kept.pop()
-          size -= e - st + 1
-        }
-        first = kept.is_empty()
-      } else {
-        last = 0
-        if kept.is_empty() {
-          bare = first
-        }
-        kept.push(k)
-        kept.push(from)
-        kept.push(i)
-        size += len + 1
-        first = false
-      }
-      from = i + 1
+  var end = n
+  while true {
+    var i = end - 1
+    while i >= 0 && b[i] != 47 {
+      i -= 1
     }
+    let len = end - (i + 1)
+    let k = elem_kind(b, i + 1, len)
+    if k == 1 {
+      fate.write_byte(0)
+    } else if k == 2 {
+      skip += 1
+      fate.write_byte(0)
+    } else if skip > 0 {
+      skip -= 1
+      fate.write_byte(0)
+    } else {
+      fate.write_byte(1)
+      size += len + 1
+    }
+    if i < 0 {
+      break
+    }
+    end = i
   }
+  let fl = fate.freeze()
+  let cnt = fl.len()
+  // Forward, the kept names written: a `/` before each but the first
+  // when it is bare (the path's first element, or one right after a
+  // `..`: Go's `first`), and a `/` after a last `.` or `..`
   var out = BytesBuilder.with_capacity(size)
   out.write_byte(47)
-  var j = 0
-  while j < kept.len() {
-    if j > 0 || !bare {
-      out.write_byte(47)
+  var any = false
+  var prev = 0
+  var e = 0
+  var from = 0
+  while true {
+    var i = from
+    while i < n && b[i] != 47 {
+      i += 1
     }
-    if kept[j] == 0 {
-      out.write(b1[kept[j + 1]..kept[j + 2]])
-    } else {
-      out.write(b2[kept[j + 1]..kept[j + 2]])
+    let k = elem_kind(b, from, i - from)
+    if fl[cnt - 1 - e] == 1 {
+      if any || !(e == 0 || prev == 2) {
+        out.write_byte(47)
+      }
+      out.write(b[from..i])
+      any = true
     }
-    j += 3
+    prev = k
+    e += 1
+    if i >= n {
+      break
+    }
+    from = i + 1
   }
-  if last != 0 {
+  if prev != 0 {
     out.write_byte(47)
   }
   let t = out.freeze().to_str() ?? ""
@@ -1219,6 +1271,18 @@ fn resolve_path(base: Str, r: Str) -> Str {
     return t[1..t.len()]
   }
   t
+}
+
+/// The kind of the len bytes of b at at as a path element: 1 `.`, 2
+/// `..`, 0 a name (the empty one too).
+fn elem_kind(b: Bytes, at: Int, len: Int) -> Int {
+  if len == 1 && b[at] == 46 {
+    return 1
+  }
+  if len == 2 && b[at] == 46 && b[at + 1] == 46 {
+    return 2
+  }
+  0
 }
 
 /// host and port of `host:port`; a port that is not digits stays in the
@@ -1285,21 +1349,76 @@ fn clean_path(p: Str) -> Str {
     return "."
   }
   let rooted = p.starts_with("/")
-  var out: List[Str] = []
-  for e in p.split("/") {
-    if e == "" || e == "." {
-      continue
+  let b = p.bytes()
+  let n = b.len()
+  // as resolve_path: each element's fate as one byte, found backward
+  // (an empty element and `.` dropped, each `..` cancelling the nearest
+  // name before it); the `..`s nothing cancels lead a relative path
+  var fate = BytesBuilder.with_capacity(n + 1)
+  var skip = 0
+  var end = n
+  while true {
+    var i = end - 1
+    while i >= 0 && b[i] != 47 {
+      i -= 1
     }
-    if e == ".." {
-      if out.len() > 0 && out[out.len() - 1] != ".." {
-        let _x = out.pop()
-      } else if !rooted {
-        out.push("..")
-      }
-      continue
+    let len = end - (i + 1)
+    let k = elem_kind(b, i + 1, len)
+    if len == 0 || k == 1 {
+      fate.write_byte(0)
+    } else if k == 2 {
+      skip += 1
+      fate.write_byte(0)
+    } else if skip > 0 {
+      skip -= 1
+      fate.write_byte(0)
+    } else {
+      fate.write_byte(1)
     }
-    out.push(e)
+    if i < 0 {
+      break
+    }
+    end = i
   }
-  let j = out.join("/")
-  if rooted { "/" + j } else if j == "" { "." } else { j }
+  let fl = fate.freeze()
+  let cnt = fl.len()
+  var out = BytesBuilder.with_capacity(n + 1)
+  if rooted {
+    out.write_byte(47)
+  }
+  var any = false
+  if !rooted {
+    for _ in 0..skip {
+      if any {
+        out.write_byte(47)
+      }
+      out.write_byte(46)
+      out.write_byte(46)
+      any = true
+    }
+  }
+  var e = 0
+  var from = 0
+  while true {
+    var i = from
+    while i < n && b[i] != 47 {
+      i += 1
+    }
+    if fl[cnt - 1 - e] == 1 {
+      if any {
+        out.write_byte(47)
+      }
+      out.write(b[from..i])
+      any = true
+    }
+    e += 1
+    if i >= n {
+      break
+    }
+    from = i + 1
+  }
+  if !rooted && !any {
+    return "."
+  }
+  out.freeze().to_str() ?? ""
 }

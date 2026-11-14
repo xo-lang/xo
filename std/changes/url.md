@@ -1,5 +1,17 @@
 # std/url changes
 
+## 2026-11-14: fix: a bracketed host byte from 0x80 is refused as Go refuses it; resolve and join in a byte an element
+
+- Kind: fix
+- Commit: this push
+- Found by: TestUrlTypeFuzz seed 11 (an error text that differed from Go's), then reading parse_host; resolve_path's memory by the review's second reader
+- Go reference: net/url parseHost, resolvePath (go1.26.11), path.Clean
+- Change: parse_host decodes a bracketed host's part before the zone as bytes; when they are not UTF-8 it refuses the URL with Go's ParseAddr text, where it turned them into `%XX` text first, which netip then read as a zone (`http://[::1%80]/` parsed as ::1 in zone 80; Go refuses it). resolve_path and clean_path (join_path's) find each element's fate in one backward pass, a byte an element, and write the kept ones once, where resolve_path kept three Ints an element in a list sized from the whole input (about 12 bytes a byte, 24 for a path of slashes) and clean_path a Str an element
+- Measured: Mac, 16 MB references: a path of slashes resolves in 76 ms at 70 MB maximum resident (the input itself is 16 MB, the full path and the result 32 MB more), dot segments in 39 ms at 46 MB; urltype resolve 0.91 of Go
+- Test: std/url_test.xo "parse refuses the hosts Go refuses, with Go's texts" (12 hosts and a port, Go's answers) and "resolve_reference and join_path stay linear on long dot segments"; TestUrlTypeFuzz seeds 11, 12 and 13 at 20,000 cases; xo test --std-module=url on native and llvm (600); corpora urlfuzz, urltypefuzz and httpurl on go, arm64 and llvm
+- Affected: every backend, the URL type only (e2feedd59, not released)
+- Shipped in: not yet released
+
 ## 2026-11-14: perf: the URL type's display, escape and resolve_reference
 
 - Kind: perf
