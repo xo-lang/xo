@@ -92,6 +92,37 @@ return can reach:
 - bench/perf/alloc (all workloads) and the HTTP server's rps and p99 under `--ab`, to show no
   cost where there is no gain.
 
+## Built and measured (2026-11-14): negative, not merged
+
+Branch lang1-0630 (unpushed). An explicit trim walks each thread's own lists (on its own thread, through
+pool.trim_all's epoch) and then the central magazines (from the mem_trim caller, every small class's lock
+taken in class order). It finds 16 KiB units that are free blocks byte for byte (a union-find over units that
+blocks straddle, since a block is never split), unlinks their blocks, advises the units, and pools them. The
+pool is a side array, never written into the advised units. heap_grow takes a pooled unit as a bump run before
+a cut or a new chunk (H_BLIM 1, so extend never grows it). XO_PAGE_POOL=0 turns it off.
+
+- Correct: two stress programs, single threaded and 16 tasks, over four rounds of a 1/97 keep. 0 bad
+  records; 13,578 and 18,986 units pooled; their memory reused by later allocations of other classes.
+- The cost is the walk: pointer chasing over every free small block, about 0.3 s per trim for 10 M blocks on
+  one thread. A first fixed-point pass over straddlers took 55 s (a propagation of one unit per full walk) and
+  was replaced by the union-find. With the central class locks held for the walk, workers block on them.
+- On xo (Mac, aiplatform test build, default caches cold, the same binary with XO_PAGE_POOL=0 and =1, two
+  rounds each): 729 and 1,122 units pooled (11 to 18 MB). Peak footprint 2.70/2.72 GB against 2.68/2.70 GB
+  (no change). Wall 20.2/21.1 s to 22.7/25.1 s (+12 to 19%): link 0.24 to 1.6 to 1.8 s, emit +1.3 to 2.3 s.
+- Why so few units: a thread's own lists hold at most about two magazines a class (under the 16 MiB floor,
+  so each thread's walk skips). Most free blocks are in the central magazines, but a unit qualifies only
+  when one source's blocks cover all of it. The census (which counted every list at once, from one thread,
+  unsafely) found 210 MB of whole units at 16 KiB. Walking every list together needs every thread
+  stopped for the walk.
+
+So the decision stands as scoped, but this build is not merged. Next, ranked by expected gain:
+(1) cut the live heap at emit directly: raw.str_join 255 MB, fcache.subst_tokens 227 MB and fcache.put_field
+251 MB at "emit start 100" (lang1 notes emit-stream-design.md), the allocations behind the peak; (2) a
+stop-the-world variant of this pass (every worker parked at xo's trim point, one walk over all lists), whose
+ceiling is the census's 210 MB (about 7% of the footprint) for about 1 s per trim; (3) segregating the bump by
+lifetime (part-local allocations in their own chunks, freed whole after the part), which makes whole free
+units by construction instead of finding them.
+
 ## Consequences
 
 - It lowers xo's peak where the free memory sits in whole pages: estimated 0.13 to 0.21 GB on
