@@ -1,0 +1,189 @@
+// uuid stress program (decision 0616 section 2): 64 tasks parse 64 texts
+// (half of them valid, half near a valid form: cut, recased, multi-byte)
+// and check each against github.com/google/uuid v1.6.0's answer
+// (ustressgen); for each valid one, bytes, display and from_bytes round
+// trip and order against the next; and each pass makes 4 v4 and 4 v7
+// UUIDs and checks their version and variant bits, for a fixed time. A
+// background task samples the resident set every 10 s (Linux
+// /proc/self/status). Pass: no mismatch, no fault, and the resident set at
+// the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/uuid
+
+/// One pass over the cases from offset start: the operations done, or the
+/// first mismatch.
+fn pass(start: Int, r: Rand, c: Clock) -> Int ! Str uses (rand, clock) {
+  var ops = 0
+  var prev: uuid.Uuid? = None
+  for k in 0..CASES.len() {
+    let i = (start + k) % CASES.len()
+    let (s, want) = CASES[i]
+    let got = match uuid.parse(s) {
+      Ok(u) => "ok ${u} ${u.version()} ${u.bytes().to_hex()}"
+      Err(e) => "err ${e.display()}"
+    }
+    if got != want {
+      return Err("case ${i}: ${got}")
+    }
+    if let Ok(u) = uuid.parse(s) {
+      if uuid.from_bytes(u.bytes()).ok() != Some(u) || uuid.parse(u.display()).ok() != Some(u) {
+        return Err("round trip of case ${i}")
+      }
+      if let Some(p) = prev {
+        let less = p.bytes().to_hex() < u.bytes().to_hex()
+        if (p < u) != less {
+          return Err("order at case ${i}")
+        }
+      }
+      prev = Some(u)
+      ops += 3
+    }
+    ops += 1
+  }
+  for _ in 0..4 {
+    let a = uuid.v4(r)
+    let b = uuid.v7(r, c)
+    let va = Int(a.bytes()[8]) >> 6
+    let vb = Int(b.bytes()[8]) >> 6
+    if a.version() != 4 || b.version() != 7 || va != 2 || vb != 2 || a == b {
+      return Err("v4 or v7 bits: ${a} ${b}")
+    }
+    ops += 2
+  }
+  ops
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let rng = os.rand
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i, rng, clock)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("uuid stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+// Written by ustressgen (Xo Lang 3, 2026-11-14) from github.com/google/uuid
+// v1.6.0 (go1.26.11): text, then Parse's answer: ok STRING VERSION BYTES or err TEXT.
+const CASES: List[(Str, Str)] = [
+  ("b696B922-e821-b139-ba67-D0F436A12900", "ok b696b922-e821-b139-ba67-d0f436a12900 11 b696b922e821b139ba67d0f436a12900"),
+  ("URN:UU\u{a0}D;732AB342-4 C5-973B-1665-FB557BA6EBE8", "err invalid UUID length: 46"),
+  ("Urn:Uuid:d39371bB-AD58-1EE9-1bcb-eBfceCa44930", "ok d39371bb-ad58-1ee9-1bcb-ebfceca44930 1 d39371bbad581ee91bcbebfceca44930"),
+  ("f44639fdF7e80796bed1aCebF3d0ffF4", "ok f44639fd-f7e8-0796-bed1-acebf3d0fff4 0 f44639fdf7e80796bed1acebf3d0fff4"),
+  ("{abC70F15-9cDA-0f70-5AcE-AAF7a7EAa2C3}", "ok abc70f15-9cda-0f70-5ace-aaf7a7eaa2c3 0 abc70f159cda0f705aceaaf7a7eaa2c3"),
+  ("{e0CcAebE-BdeD-A75b-Caef-F7e9d42acFcC}", "ok e0ccaebe-bded-a75b-caef-f7e9d42acfcc 10 e0ccaebebdeda75bcaeff7e9d42acfcc"),
+  ("3D1CDBcA0db4D1809e4aE81f1E1A3250", "ok 3d1cdbca-0db4-d180-9e4a-e81f1e1a3250 13 3d1cdbca0db4d1809e4ae81f1e1a3250"),
+  ("(4dafA622-5D😀Ede-6DCD-86dCF696771F)", "err invalid UUID format"),
+  ("{A3a39044-abba-EfCa-0e46-ACB3bb9DBa56}", "ok a3a39044-abba-efca-0e46-acb3bb9dba56 14 a3a39044abbaefca0e46acb3bb9dba56"),
+  ("(06250f7c-aF50-c3aB-d3ef-A6c3dE9afaaf)", "ok 06250f7c-af50-c3ab-d3ef-a6c3de9afaaf 12 06250f7caf50c3abd3efa6c3de9afaaf"),
+  ("(A72725ef-3487-e2AB-7028-C6B52C2BB1AC)", "ok a72725ef-3487-e2ab-7028-c6b52c2bb1ac 14 a72725ef3487e2ab7028c6b52c2bb1ac"),
+  ("urn-uuid:b0aC0CAE-a8Ad-CF3D-dFcB-6D9efEe7CEFF", "err invalid urn prefix: \"urn-uuid:\""),
+  ("(215df655-AbAb-05C9-AC71-dD339a996DEC)", "ok 215df655-abab-05c9-ac71-dd339a996dec 0 215df655abab05c9ac71dd339a996dec"),
+  ("dccF6AAF-50f7-3f4C-3BDe-64ffC54C3ABb", "ok dccf6aaf-50f7-3f4c-3bde-64ffc54c3abb 3 dccf6aaf50f73f4c3bde64ffc54c3abb"),
+  ("(C283B286-1F82-DF88-b1bF-5B7d6e5Acb7f)", "ok c283b286-1f82-df88-b1bf-5b7d6e5acb7f 13 c283b2861f82df88b1bf5b7d6e5acb7f"),
+  ("245BfeB-Dfd2-567b-cD52-3fCfC6BC2A0a24", "err invalid UUID length: 37"),
+  ("Eedc3CBfaeFFCc71C8500acE3Fb8204F", "ok eedc3cbf-aeff-cc71-c850-0ace3fb8204f 12 eedc3cbfaeffcc71c8500ace3fb8204f"),
+  ("{2C1BADdE-3CBC-BB76-06C9-CCe24fA40B99}", "ok 2c1badde-3cbc-bb76-06c9-cce24fa40b99 11 2c1badde3cbcbb7606c9cce24fa40b99"),
+  ("D82815D4DE78DA6B5EA8D14EC5E5B2AC", "ok d82815d4-de78-da6b-5ea8-d14ec5e5b2ac 13 d82815d4de78da6b5ea8d14ec5e5b2ac"),
+  ("URN-UUID:C5B77BD2-BDaB-6BB1-C7D8-CF4EAFDCAF6F", "err invalid urn prefix: \"URN-UUID:\""),
+  ("CCABBF41-FCA4-662B-0AE3-C0A1BF18743C", "ok ccabbf41-fca4-662b-0ae3-c0a1bf18743c 6 ccabbf41fca4662b0ae3c0a1bf18743c"),
+  ("(c2DcEDD7-5Be{-EbE6-2Bff-009155d78Dcf)", "err invalid UUID format"),
+  ("(1334817e-0Fb3-F9a6-DAcd-D5e9aDA3574f)", "ok 1334817e-0fb3-f9a6-dacd-d5e9ada3574f 15 1334817e0fb3f9a6dacdd5e9ada3574f"),
+  ("3F22C05B-1984-1756-DE90-F0C0{FBA6DCF3F", "err invalid UUID format"),
+  ("38ba5f3cf7dcdc9daac62adfafcd940d", "ok 38ba5f3c-f7dc-dc9d-aac6-2adfafcd940d 13 38ba5f3cf7dcdc9daac62adfafcd940d"),
+  ("2éfDb2faEF6-62BD-DF1E-a0AC7acDff5f22", "err invalid UUID length: 37"),
+  ("AC7709E49Ed8b6a9225D91c8a0FfCf1A", "ok ac7709e4-9ed8-b6a9-225d-91c8a0ffcf1a 11 ac7709e49ed8b6a9225d91c8a0ffcf1a"),
+  ("Cd556fA9-62d5-aDF4-99eA-9786F0EAdF8b", "ok cd556fa9-62d5-adf4-99ea-9786f0eadf8b 10 cd556fa962d5adf499ea9786f0eadf8b"),
+  ("{a7FF98a1-3182-C3B3-0Adb-91b31c2e8895}", "ok a7ff98a1-3182-c3b3-0adb-91b31c2e8895 12 a7ff98a13182c3b30adb91b31c2e8895"),
+  ("AAabEecb-EA76-941A-0Efd-a43c8461B0A6", "ok aaabeecb-ea76-941a-0efd-a43c8461b0a6 9 aaabeecbea76941a0efda43c8461b0a6"),
+  ("{8a19A8aB-f7cc-2B45-AaCF-46c60fb15C1E}", "ok 8a19a8ab-f7cc-2b45-aacf-46c60fb15c1e 2 8a19a8abf7cc2b45aacf46c60fb15c1e"),
+  ("{04b09bd7-d4e3-e5cd-e55f-8af609b45bde}", "ok 04b09bd7-d4e3-e5cd-e55f-8af609b45bde 14 04b09bd7d4e3e5cde55f8af609b45bde"),
+  ("CCED1BFFAEDF76C93B3BE3DDBBBAB5D1", "ok cced1bff-aedf-76c9-3b3b-e3ddbbbab5d1 7 cced1bffaedf76c93b3be3ddbbbab5d1"),
+  ("b3121FA4-4fEa-B8eB-8f92-C7E37A155e6cb3", "err invalid UUID format"),
+  ("(B56a0EcF-A10A-80bA-52ab-6aaFEb4DdDCb)", "ok b56a0ecf-a10a-80ba-52ab-6aafeb4dddcb 8 b56a0ecfa10a80ba52ab6aafeb4dddcb"),
+  ("(d70Ecb6F-bEee-dDeE-99Df-AceDc17faCc)", "err invalid UUID length: 37"),
+  ("(a4a9c68e-b07c-cec3-8c9a-2b6cef5d30fa)", "ok a4a9c68e-b07c-cec3-8c9a-2b6cef5d30fa 12 a4a9c68eb07ccec38c9a2b6cef5d30fa"),
+  ("27b1D0d-3D3CDdC7-6C10-D00ccB29816d", "err invalid UUID length: 34"),
+  ("c4096a2F03fa9F297D9A86D77Cb5f411", "ok c4096a2f-03fa-9f29-7d9a-86d77cb5f411 9 c4096a2f03fa9f297d9a86d77cb5f411"),
+  ("1A0D1AD5eF4996F:ADEEB0FDF2EFBE1D", "err invalid UUID format"),
+  ("CeFdFaCa-2DF6-c0a8-e83A-42Df439c9EC2", "ok cefdfaca-2df6-c0a8-e83a-42df439c9ec2 12 cefdfaca2df6c0a8e83a42df439c9ec2"),
+  ("{B761CA8E-d2c9-8FA8-7B0C-A3b5CfBE180E}", "ok b761ca8e-d2c9-8fa8-7b0c-a3b5cfbe180e 8 b761ca8ed2c98fa87b0ca3b5cfbe180e"),
+  ("{80Cbdb80-48D7-c64F-F1aC-401eEd38C44E}", "ok 80cbdb80-48d7-c64f-f1ac-401eed38c44e 12 80cbdb8048d7c64ff1ac401eed38c44e"),
+  ("8f\u{7f}4bb8e-EB67-DBE8-E4f240fb41C8eDAb8f", "err invalid UUID length: 37"),
+  ("(99A5E5eE-DBb7-2Ae9-ceb9-b3Ac63ECb49F)", "ok 99a5e5ee-dbb7-2ae9-ceb9-b3ac63ecb49f 2 99a5e5eedbb72ae9ceb9b3ac63ecb49f"),
+  ("(8E6E881D😀07d4-8E10-23fB-eC2b8A5ae5a)", "err invalid UUID length: 40"),
+  ("eB2859be-525E-Ec34-1aA1-dd6a7e7d12f2", "ok eb2859be-525e-ec34-1aa1-dd6a7e7d12f2 14 eb2859be525eec341aa1dd6a7e7d12f2"),
+  ("88b4A6é-6AFf-87ec-3dBA-C7460C20FFCD88", "err invalid UUID format"),
+  ("DBbC6eA3-98BF-Ce2f-6CC5-7D66fd21c123", "ok dbbc6ea3-98bf-ce2f-6cc5-7d66fd21c123 12 dbbc6ea398bfce2f6cc57d66fd21c123"),
+  ("758Dd2c7de8D16E0007Dea7D2😀AXe", "err invalid UUID format"),
+  ("ef9c57b11faab28f659fd96be60a069f", "ok ef9c57b1-1faa-b28f-659f-d96be60a069f 11 ef9c57b11faab28f659fd96be60a069f"),
+  ("bE62EEaB-8BBf-34fd-4D8b-Ef67b61Ca458", "ok be62eeab-8bbf-34fd-4d8b-ef67b61ca458 3 be62eeab8bbf34fd4d8bef67b61ca458"),
+  ("b0E34d89-985a-E6A8-8aff-bd5c0B108058", "ok b0e34d89-985a-e6a8-8aff-bd5c0b108058 14 b0e34d89985ae6a88affbd5c0b108058"),
+  ("b3eD0552-8:C6-1aba-bB5é872F9déad2B", "err invalid UUID format"),
+  ("ddA49c5D8Adcb48BCb07EC7EA6f1348a", "ok dda49c5d-8adc-b48b-cb07-ec7ea6f1348a 11 dda49c5d8adcb48bcb07ec7ea6f1348a"),
+  ("3dE8d3A1-Ef7c-0976-DFee-6BB270Ff4F893d", "err invalid UUID format"),
+  ("6B7DF8bC4B4c1dFc0EF230674aA1CE82", "ok 6b7df8bc-4b4c-1dfc-0ef2-30674aa1ce82 1 6b7df8bc4b4c1dfc0ef230674aa1ce82"),
+  ("2A5FDA76-b1FA-E04C-EA6D-5aCDbFCéC9", "err invalid UUID length: 35"),
+  ("68D376e8-AeCA-21fb-944A-98cb141ccDFB", "ok 68d376e8-aeca-21fb-944a-98cb141ccdfb 2 68d376e8aeca21fb944a98cb141ccdfb"),
+  ("(E3E34DF9-A691-9788-a214-c日BaABD日)", "err invalid UUID format"),
+  ("005B37EE-e33d-C2FE-F65C-e0b9BAAA98B5", "ok 005b37ee-e33d-c2fe-f65c-e0b9baaa98b5 12 005b37eee33dc2fef65ce0b9baaa98b5"),
+  ("(cea73699-Ea2E-2fC8-96C1-6f55484CE45)", "err invalid UUID length: 37"),
+  ("7E8CEECAF35E5D0F7BB34DB6DBCFFA9C", "ok 7e8ceeca-f35e-5d0f-7bb3-4db6dbcffa9c 5 7e8ceecaf35e5d0f7bb34db6dbcffa9c"),
+  ("778a14a7日0D6693eb2aEA1a3A81xE", "err invalid UUID length: 31"),
+]
