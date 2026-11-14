@@ -123,7 +123,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] [-stress-minutes M] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] [-check-minutes M] MODULE | stdproven perf [-rounds N] MODULE | stdproven serverperf [-reps N] MODULE")
+	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] [-stress-minutes M] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] [-check-minutes M] [-check-only] MODULE | stdproven perf [-rounds N] MODULE | stdproven serverperf [-reps N] MODULE")
 	os.Exit(2)
 }
 
@@ -740,6 +740,7 @@ func stress(args []string) error {
 	tasks := fs.Int("tasks", 64, "concurrent tasks")
 	backends := fs.String("backends", "arm64,llvm", "backends, comma separated")
 	checkMin := fs.Int("check-minutes", 5, "minutes of a further arm64 run built with --check=all (decision 0638: use after free and overruns fault, a leak fails the run; 0 skips it)")
+	checkOnly := fs.Bool("check-only", false, "run only the --check=all run and add it to the module's stress.md, which must pass at the current source hash")
 	hostLabel := fs.String("host", "", "the host's name in the evidence")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
@@ -749,6 +750,16 @@ func stress(args []string) error {
 	dir := filepath.Join("std", "evidence", module, "stress")
 	if _, err := os.Stat(filepath.Join(dir, "main.xo")); err != nil {
 		return err
+	}
+	if *checkOnly {
+		host := *hostLabel
+		if host == "" {
+			host = runtime.GOOS + "/" + runtime.GOARCH
+		}
+		if *checkMin <= 0 {
+			return errors.New("-check-only needs -check-minutes above 0")
+		}
+		return stressCheckOnly(module, dir, *checkMin, *tasks, host)
 	}
 	src, _, err := sourceHash(module)
 	if err != nil {
@@ -794,31 +805,12 @@ func stress(args []string) error {
 	// which is why the plain runs above stay)
 	checkNote := ""
 	if *checkMin > 0 {
-		bin := filepath.Join(tmp, "s-check")
-		if out, err := exec.Command(filepath.Join("bin", "xo"), "build", "--check=all", "--backend=arm64", "-o", bin, dir).CombinedOutput(); err != nil {
-			return fmt.Errorf("xo build --check=all --backend=arm64 %s: %v\n%s", dir, err, out)
+		line, note, err := stressCheck(dir, tmp, *checkMin, *tasks)
+		if err != nil {
+			return err
 		}
-		t0 := time.Now()
-		out, err := exec.Command(bin, strconv.Itoa(*checkMin), strconv.Itoa(*tasks)).CombinedOutput()
-		text := strings.TrimSpace(string(out))
-		var passLine, leakLine string
-		for _, l := range strings.Split(text, "\n") {
-			if strings.HasPrefix(l, "xo leakcheck: ") {
-				leakLine = l
-			} else if strings.HasSuffix(l, ", pass") {
-				passLine = l
-			}
-		}
-		if err != nil || passLine == "" || !strings.HasPrefix(leakLine, "xo leakcheck: 0 live ") {
-			if len(text) > 20000 {
-				text = text[len(text)-20000:]
-			}
-			return fmt.Errorf("arm64 --check=all stress: %v\n%s", err, text)
-		}
-		line := fmt.Sprintf("- arm64 --check=all: %s; %s, %s", passLine, leakLine, time.Since(t0).Round(time.Second))
-		fmt.Println(line)
 		lines = append(lines, line)
-		checkNote = fmt.Sprintf(", %d min on arm64 under --check=all with 0 faults and 0 blocks live at exit", *checkMin)
+		checkNote = note
 	}
 	host := *hostLabel
 	if host == "" {
@@ -831,6 +823,90 @@ func stress(args []string) error {
 	fmt.Fprintf(&b, "Stress evidence (decision 0616): the program %s, every result checked against Go's answer, the resident set sampled every 10 s.\n\n", dir)
 	b.WriteString(strings.Join(lines, "\n") + "\n")
 	return os.WriteFile(filepath.Join("std", "evidence", module, "stress.md"), []byte(b.String()), 0o644)
+}
+
+// stressCheck runs the stress program built with --check=all (decision
+// 0638) on arm64 for minutes: a use after free or an overrun faults and
+// a block still live at exit fails the run. The leak report is the last
+// line, after the program's own; the resident set is not sampled under
+// the check, so the plain runs stay beside it. It returns the evidence
+// line and the measure's note.
+func stressCheck(dir, tmp string, minutes, tasks int) (string, string, error) {
+	bin := filepath.Join(tmp, "s-check")
+	if out, err := exec.Command(filepath.Join("bin", "xo"), "build", "--check=all", "--backend=arm64", "-o", bin, dir).CombinedOutput(); err != nil {
+		return "", "", fmt.Errorf("xo build --check=all --backend=arm64 %s: %v\n%s", dir, err, out)
+	}
+	t0 := time.Now()
+	out, err := exec.Command(bin, strconv.Itoa(minutes), strconv.Itoa(tasks)).CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	var passLine, leakLine string
+	for _, l := range strings.Split(text, "\n") {
+		if strings.HasPrefix(l, "xo leakcheck: ") {
+			leakLine = l
+		} else if strings.HasSuffix(l, ", pass") {
+			passLine = l
+		}
+	}
+	if err != nil || passLine == "" || !strings.HasPrefix(leakLine, "xo leakcheck: 0 live ") {
+		if len(text) > 20000 {
+			text = text[len(text)-20000:]
+		}
+		return "", "", fmt.Errorf("arm64 --check=all stress: %v\n%s", err, text)
+	}
+	line := fmt.Sprintf("- arm64 --check=all: %s; %s, %s", passLine, leakLine, time.Since(t0).Round(time.Second))
+	fmt.Println(line)
+	return line, fmt.Sprintf(", %d min on arm64 under --check=all with 0 faults and 0 blocks live at exit", minutes), nil
+}
+
+// stressCheckOnly adds the --check=all run to a stress.md written before
+// the stress kind had it (decision 0616's 2026-11-14 amendment): the
+// file must pass at the module's current source hash; the run's command,
+// commit and date go in a check: line, its note in measure, and its line
+// below the others.
+func stressCheckOnly(module, dir string, minutes, tasks int, host string) error {
+	path := filepath.Join("std", "evidence", module, "stress.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	text := string(data)
+	src, _, err := sourceHash(module)
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(text, "\nresult: pass\n") || !strings.Contains(text, "\nsource: "+src+"\n") {
+		return fmt.Errorf("%s: not a pass at the current source %s; run the whole stress kind", path, src)
+	}
+	if strings.Contains(text, "--check=all") {
+		return fmt.Errorf("%s already has the --check=all run", path)
+	}
+	commit, err := gitOut("rev-parse", "--short=9", "HEAD")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.MkdirTemp("", "stdproven-stress-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	line, note, err := stressCheck(dir, tmp, minutes, tasks)
+	if err != nil {
+		return err
+	}
+	var out []string
+	for _, l := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+		if strings.HasPrefix(l, "measure: ") {
+			if i := strings.LastIndex(l, ", "); i > 0 {
+				l = l[:i] + note + l[i:]
+			}
+		}
+		out = append(out, l)
+		if strings.HasPrefix(l, "command: ") {
+			out = append(out, fmt.Sprintf("check: go run ./scripts/stdproven stress -check-only -check-minutes %d -tasks %d -host %q %s (commit %s, %s)", minutes, tasks, host, module, commit, time.Now().UTC().Format("2006-01-02")))
+		}
+	}
+	out = append(out, line)
+	return os.WriteFile(path, []byte(strings.Join(out, "\n")+"\n"), 0o644)
 }
 
 // perfOwner is the std module a bench/perf directory measures: the

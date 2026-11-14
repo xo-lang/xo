@@ -68,7 +68,9 @@ regression case, then a new run.
   host 2. Each task checks every result against a precomputed answer. It
   samples resident memory every 10 s. Pass: no mismatch, no fault, and
   resident memory after the first 5 minutes grows by under 10% (no leak
-  under load). For servers (http, tls, websocket, grpc, smtp): 64
+  under load), and (amended 2026-11-14) a further 5 minute arm64 run of
+  the program built with `--check=all` (decision 0638) ends with no
+  fault and `xo leakcheck: 0 live`. For servers (http, tls, websocket, grpc, smtp): 64
   concurrent clients against the module's server over loopback, with
   hostile clients mixed in (slow readers, half sent heads, resets).
 - **fuzz** ("long"): every fuzz harness that names the module runs on
@@ -330,5 +332,13 @@ crypto; within it, a module that misses only the testing axis first.
   use after free or overrun faults) and `xo leakcheck: 0 live` at exit.
   The plain runs stay, since the resident set is not sampled under the
   check. uuid, fnv and html passed it on the Mac (1 minute each, 0 live
-  of 1.7 to 8.5 billion allocations); evidence written before this has
-  no such line and stays valid until its source hash changes.
+  of 1.7 to 8.5 billion allocations).
+- 2026-11-14 (lead's ruling, amendment): the --check=all run is part of
+  the stress kind's pass (section 2's stress bullet). A stress.md that
+  passes at the current source hash but predates it gets the run alone:
+  `stdproven stress -check-only [-check-minutes 5] MODULE` runs it and
+  adds a `check:` line (command, commit, date), the measure's note and
+  the run's line to the file. url, fnv, uuid, html, idna, norm and jpeg
+  carry it from this batch; compress, json, time and x509 (and Lang 2's
+  modules) at their next evidence refresh, until which their stress.md
+  stands as written.
