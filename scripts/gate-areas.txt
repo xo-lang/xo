@@ -164,3 +164,7 @@ internal/arm64 TestNoLeafWithPads @debuginfo @arm64be @rt
 internal/arm64 TestIfaceLexMatchesParse @cache ^compiler/(lexer|parser|check)/
 internal/arm64 TestGoldenPassesOff @frontend @arm64be
 internal/arm64 TestWindowsAmd64Identity @winpe @x86
+# xo check and xo fix on 211 habit programs (decision 0087): the front end,
+# the CLI's check and fix, the prelude, and the four std modules the cases
+# use (1,688 s of subtests in the after-v2 host 2 gate, every gate)
+cmd/xo TestHabitGolden ^compiler/(check|parser|lexer|cli)/|^compiler/xo/|^std/(native/)?prelude\.xo$|^std/(time|json|http)\.xo$|^cmd/xo/testdata/habits/|^internal/gobind/|^cmd/xo-gobind/
