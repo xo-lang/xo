@@ -35,3 +35,22 @@ windows/amd64.
 Avoid: a builder table keyed by a type the module can already hold (made
 by a replay, by another builder) must not be filled only when the type is
 created; check the table, not `created`.
+
+Sibling (2026-11-14, found by Xo Lang 2's TestWarmCacheSequence): built
+from a fresh cache, log_error then log_with warned "the front end cache
+entry ... (log.record ...: its body did not decode: no fn(log.Level) ->
+Bool, fn(log.Record) -> () here) did not replay"; the build fell back
+and its binary matched the cold one, but every user's second std/log
+program warned (0.51.0 too). Cause: an entry lists the types its body
+reads through `Module.fe_seen` (func_type, named and the other makers
+call it for a type that exists), and a replay where a read type is
+missing is skipped quietly. `slot_ft` returned a slot's function type
+from `itab_ft` without `fe_seen`, so log_error's entry for log.record did
+not list Handler's slot function types, and log_with, where nothing had
+made them yet, tried it and failed to decode. Fix: `slot_ft` records the
+read; TestFrontCacheReplayMadeInterface also builds log_error then
+log_with (fails before the fix on arm64 and windows/amd64).
+
+Avoid: any builder path that returns a type from its own side table
+(not through a Module maker) calls `b.m.fe_seen` on it, or the front end
+cache cannot know an entry depends on it.

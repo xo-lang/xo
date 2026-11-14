@@ -3944,6 +3944,11 @@ func TestHollowWholeHitTexts(t *testing.T) {
 // replays them and builds log.record from source, which saw each slot as
 // its Int code word: XO1201 at std/native/log.xo (2026-11-13, the
 // 2-hourly windows/amd64 cross build; the host target too; 0.51.0).
+// log_error then log_with: log.record's entry reads Handler's slot
+// function types from iface_type's side table (slot_ft), which another
+// function's lowering made; unrecorded, log_with (where nothing had made
+// them yet) tried the entry and warned "its body did not decode: no
+// fn(log.Level) -> Bool" (2026-11-14, Xo Lang 2's TestWarmCacheSequence).
 func TestFrontCacheReplayMadeInterface(t *testing.T) {
 	t.Parallel()
 	if !native() {
@@ -3961,17 +3966,19 @@ func TestFrontCacheReplayMadeInterface(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(work) })
-	for _, target := range [][]string{{"--backend=arm64"}, {"--backend=amd64", "--target=windows/amd64"}} {
-		cache := filepath.Join(work, "cache-"+strings.ReplaceAll(target[len(target)-1], "/", "-"))
-		for _, prog := range []string{"log_state", "log_error"} {
-			args := append([]string{"build"}, target...)
-			args = append(args, "-o", filepath.Join(work, "out", prog+progExe), ".")
-			cmd := testtmp.Guard(exec.Command(xo, args...))
-			cmd.Dir = filepath.Join("..", "llvm", "testdata", "golden", prog)
-			cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_FE_KEEP_DIR="+filepath.Join(work, "fe-bad"))
-			log, err := cmd.CombinedOutput()
-			if err != nil || strings.Contains(string(log), "did not replay") {
-				t.Errorf("%v: xo build %s after the cache was filled: %v\n%s", target, prog, err, log)
+	for si, seq := range [][]string{{"log_state", "log_error"}, {"log_error", "log_with"}} {
+		for _, target := range [][]string{{"--backend=arm64"}, {"--backend=amd64", "--target=windows/amd64"}} {
+			cache := filepath.Join(work, fmt.Sprintf("cache-%d-%s", si, strings.ReplaceAll(target[len(target)-1], "/", "-")))
+			for _, prog := range seq {
+				args := append([]string{"build"}, target...)
+				args = append(args, "-o", filepath.Join(work, "out", fmt.Sprintf("%d-%s%s", si, prog, progExe)), ".")
+				cmd := testtmp.Guard(exec.Command(xo, args...))
+				cmd.Dir = filepath.Join("..", "llvm", "testdata", "golden", prog)
+				cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_FE_KEEP_DIR="+filepath.Join(work, "fe-bad"))
+				log, err := cmd.CombinedOutput()
+				if err != nil || strings.Contains(string(log), "did not replay") {
+					t.Errorf("%v: xo build %s after %v filled the cache: %v\n%s", target, prog, seq, err, log)
+				}
 			}
 		}
 	}

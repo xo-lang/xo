@@ -93,9 +93,16 @@ fn (var b: Builder) iface_type(t: Int, obj: Int) -> Int {
 
 /// The function type of slot j (a method, or xo.eq) of the interface
 /// value type t.
-fn (b: Builder) slot_ft(t: Int, j: Int) -> Int {
+fn (var b: Builder) slot_ft(t: Int, j: Int) -> Int {
   if let Some(fts) = b.itab_ft.get(t) {
     if j < fts.len() {
+      // a read of the slot's function type, as b.m.func_type records one:
+      // it came from the side table, made when another function first
+      // lowered the interface, so a front end cache entry whose body uses
+      // it lists it among its reads and is not replayed where the type
+      // was never made (2026-11-14: log_error then log_with, log.record's
+      // body did not decode: no fn(log.Level) -> Bool)
+      b.m.fe_seen(fts[j])
       return fts[j]
     }
   }
