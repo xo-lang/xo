@@ -133,6 +133,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_FE_KEEP_DIR":          {"none", ""},
 	"XO_BUILD_DIR":            {"none", ""},
 	"XO_INLINE_REPORT":        {"none", ""},
+	"XO_DEBUG_INLINE_WAVES":   {"none", ""}, // the parallel inliner's waves on standard error; order walks them one at a time: the same module
 	"XO_SSA_CENSUS":           {"none", ""},
 	"XO_PLAY_RECORD":          {"none", ""}, // --play only (decision 0583 (b)): std from a declaration record; the playground has no code cache and the output is byte identical
 	"XO_PLAY_RECORD_OUT":      {"none", ""}, // --play only: writes the record after a check

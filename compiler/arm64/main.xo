@@ -255,8 +255,11 @@ pub fn inline_check(var m: ssa.Module, jobs: Int, break_inline: Bool) -> List[St
 /// The first half of inline_check: inlines into m (and breaks it, with
 /// break_inline); false when m did not change, so it needs no
 /// verification.
-pub fn inline_apply(var m: ssa.Module, break_inline: Bool) -> Bool {
-  if !inline_module(m) && !break_inline {
+pub fn inline_apply(var m: ssa.Module, break_inline: Bool) -> Bool { inline_apply_jobs(m, break_inline, 1) }
+
+/// inline_apply on up to jobs tasks (inline_module_jobs): the same module.
+pub fn inline_apply_jobs(var m: ssa.Module, break_inline: Bool, jobs: Int) -> Bool {
+  if !inline_module_jobs(m, jobs) && !break_inline {
     return false
   }
   if break_inline {

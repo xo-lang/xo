@@ -37,6 +37,9 @@ pub struct InlineKeys {
   /// st was built (inline_keys); inline_keys_known leaves it to
   /// inline_cached, which builds it only when a function is computed
   st_built: Bool = false
+  /// the walk's order of the functions when not empty (a diagnostic:
+  /// inline_waves' order, which must give the same module)
+  pub order: List[Int] = []
 }
 
 /// The inline key of each function of m (before inlining), from the
@@ -349,29 +352,82 @@ pub fn inline_cached(var m: ssa.Module, ik: InlineKeys, entries: Map[Str, Bytes]
     }
   }
   var computed: List[(Int, Bool)] = []
-  for fi in 0..n {
-    if let Some((g, ch)) = post[fi] {
-      m.funcs[fi] = g
-      m.lazy.remove(fi)
-      m.funcs[fi].ckey = "inl ${keys[fi]}"
+  // the walk: in function order (inline_module's), or with jobs > 1 the
+  // waves of inline_waves, each on up to jobs tasks; the same module
+  var walk: List[Int] = ik.order
+  var lvl: List[Int] = []
+  if walk.len() != n && jobs > 1 && is_hit.len() < n {
+    lvl = inline_waves(st, n, jobs)
+    walk = wave_order(lvl)
+  }
+  if walk.len() != n {
+    walk = []
+    for fi in 0..n {
+      walk.push(fi)
+    }
+  }
+  var w0 = 0
+  while w0 < n {
+    // one wave: walk[w0..w1] (every function its own wave without lvl)
+    var w1 = w0 + 1
+    if !lvl.is_empty() {
+      while w1 < n && lvl[walk[w1]] == lvl[walk[w0]] {
+        w1 += 1
+      }
+    }
+    var todo: List[Int] = []
+    for fi in walk[w0..w1] {
+      if let Some((g, ch)) = post[fi] {
+        m.funcs[fi] = g
+        m.lazy.remove(fi)
+        m.funcs[fi].ckey = "inl ${keys[fi]}"
+        out.changed = out.changed || ch
+        out.reused += 1
+        continue
+      }
+      if let Some((shell, x, l, ch)) = shells[fi] {
+        m.funcs[fi] = shell
+        m.facts[fi] = x
+        m.lazy[fi] = l
+        out.changed = out.changed || ch
+        out.reused += 1
+        continue
+      }
+      todo.push(fi)
+    }
+    var res: List[(Int, Bool)] = []
+    if todo.len() == 1 || jobs <= 1 {
+      for fi in todo {
+        let f = m.funcs[fi]
+        m.funcs[fi] = ssa.Func{name: ""}
+        var (g, ch) = inline_body(m, st, fi, f)
+        set_inl_key(g, keys, fi)
+        m.funcs[fi] = g
+        res.push((fi, ch))
+      }
+    } else if !todo.is_empty() {
+      var ins: List[(Int, ssa.Func)] = []
+      for fi in todo {
+        ins.push((fi, m.funcs[fi]))
+        m.funcs[fi] = ssa.Func{name: ""}
+      }
+      var done = inline_wave(m, st, ins, jobs)
+      for k in 0..done.len() {
+        let fi = done[k].0
+        var g = done[k].1
+        done[k].1 = ssa.Func{name: ""}
+        set_inl_key(g, keys, fi)
+        m.funcs[fi] = g
+        res.push((fi, done[k].2))
+      }
+    }
+    for (fi, ch) in res {
       out.changed = out.changed || ch
-      out.reused += 1
-      continue
+      if fi < keys.len() && !keys[fi].is_empty() {
+        computed.push((fi, ch))
+      }
     }
-    if let Some((shell, x, l, ch)) = shells[fi] {
-      m.funcs[fi] = shell
-      m.facts[fi] = x
-      m.lazy[fi] = l
-      out.changed = out.changed || ch
-      out.reused += 1
-      continue
-    }
-    let ch = inline_one(m, st, fi)
-    out.changed = out.changed || ch
-    if fi < keys.len() && !keys[fi].is_empty() {
-      m.funcs[fi].ckey = "inl ${keys[fi]}"
-      computed.push((fi, ch))
-    }
+    w0 = w1
   }
   for (fi, enc) in encode_all(mt, m, computed, jobs) {
     let k = keys[fi]
@@ -563,4 +619,132 @@ fn get_uv(d: Bytes, at0: Int) -> (Int, Int) {
     sh += 7
   }
   (0, -1)
+}
+
+/// The ids of the functions named in function i's name closure (every
+/// body or callee fact inline_one can read for i), not i itself.
+fn closure_ids(st: InlineState, i: Int) -> List[Int] {
+  var out: List[Int] = []
+  for s in name_closure(st, i) {
+    let ci = st.by_name.get(s) ?? -1
+    if ci >= 0 && ci != i {
+      out.push(ci)
+    }
+  }
+  out
+}
+
+/// The wave of each of the n functions for a parallel inline walk that
+/// gives inline_module's result: two functions one of which names the
+/// other in its closure go to different waves, the lower index first, so
+/// a function reads the inlined body of each earlier one it names (an
+/// earlier wave) and the body before inlining of each later one (a later
+/// wave), as the walk in function order does; the members of one wave
+/// read nothing of each other.
+pub fn inline_waves(st: InlineState, n: Int, jobs: Int) -> List[Int] {
+  let next = Atomic[Int].new(0)
+  let cl: List[(Int, List[Int])] = scope s {
+    var ts = []
+    for _ in 0..jobs.min(n).max(1) {
+      ts.push(s.spawn(fn() -> List[(Int, List[Int])] {
+        var mine: List[(Int, List[Int])] = []
+        while true {
+          let i = next.add(64) - 64
+          if i >= n {
+            break
+          }
+          for j in i..(i + 64).min(n) {
+            mine.push((j, closure_ids(st, j)))
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, List[Int])] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var deps: List[List[Int]] = []
+  for _ in 0..n {
+    deps.push([])
+  }
+  for (k, ids) in cl {
+    for i in ids {
+      if i < k {
+        deps[k].push(i)
+      } else {
+        deps[i].push(k)
+      }
+    }
+  }
+  var lvl: List[Int] = []
+  for k in 0..n {
+    var l = 0
+    for i in deps[k] {
+      l = l.max(lvl[i] + 1)
+    }
+    lvl.push(l)
+  }
+  lvl
+}
+
+/// inline_waves of module m before inlining (a diagnostic: XO_DEBUG_INLINE_WAVES).
+pub fn inline_waves_of(m: ssa.Module, jobs: Int) -> List[Int] {
+  inline_waves(inline_state_jobs(m, jobs), m.funcs.len(), jobs)
+}
+
+/// The functions in wave order (inline_waves), by index within a wave.
+pub fn wave_order(lvl: List[Int]) -> List[Int] {
+  var ix: List[Int] = []
+  for i in 0..lvl.len() {
+    ix.push(i)
+  }
+  ix.sort_by(fn(i) { lvl[i] * 1048576 + i })
+}
+
+/// One inline wave (inline_waves): each function (index, body) of ins
+/// inlined with inline_body on up to jobs tasks, m holding the empty
+/// function for every one of them; (index, body after, changed) in no
+/// particular order.
+fn inline_wave(m: ssa.Module, st: InlineState, ins: List[(Int, ssa.Func)], jobs: Int) -> List[(Int, ssa.Func, Bool)] {
+  let n = ins.len()
+  // the largest first, so a large one does not start last
+  var ord: List[Int] = []
+  for i in 0..n {
+    ord.push(i)
+  }
+  ord = ord.sort_by(fn(i) { -ins[i].1.values.len() })
+  let next = Atomic[Int].new(0)
+  scope s {
+    var ts = []
+    for _ in 0..jobs.min(n).max(1) {
+      ts.push(s.spawn(fn() -> List[(Int, ssa.Func, Bool)] {
+        var mine: List[(Int, ssa.Func, Bool)] = []
+        while true {
+          let i = next.add(1) - 1
+          if i >= n {
+            break
+          }
+          let (fi, f) = ins[ord[i]]
+          let (g, ch) = inline_body(m, st, fi, f)
+          mine.push((fi, g, ch))
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, ssa.Func, Bool)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+}
+
+/// The inliner's cache key on g, function fi after inlining (inline_cached).
+fn set_inl_key(var g: ssa.Func, keys: List[Str], fi: Int) {
+  if fi < keys.len() && !keys[fi].is_empty() {
+    g.ckey = "inl ${keys[fi]}"
+  }
 }

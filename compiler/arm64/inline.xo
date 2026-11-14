@@ -668,15 +668,52 @@ fn inline_state_jobs(m: ssa.Module, jobs: Int) -> InlineState {
 
 /// Inlines the calls of small functions in m and reports whether it
 /// changed anything.
-fn inline_module(var m: ssa.Module) -> Bool {
+fn inline_module(var m: ssa.Module) -> Bool { inline_module_jobs(m, 1) }
+
+/// inline_module on up to jobs tasks: the waves of inline_waves, one
+/// after another, each wave's functions at once; the same module.
+fn inline_module_jobs(var m: ssa.Module, jobs: Int) -> Bool {
   // every body (none undecoded: inline_cached forces what it needs)
-  ssa.force_lazy(m, [], 1)
-  let st = inline_state(m)
+  ssa.force_lazy(m, [], jobs.max(1))
+  let st = inline_state_jobs(m, jobs.max(1))
+  let n = m.funcs.len()
   var changed = false
-  for fi in 0..m.funcs.len() {
-    if inline_one(m, st, fi) {
-      changed = true
+  if jobs <= 1 {
+    for fi in 0..n {
+      if inline_one(m, st, fi) {
+        changed = true
+      }
     }
+    return changed
+  }
+  let lvl = inline_waves(st, n, jobs)
+  let walk = wave_order(lvl)
+  var w0 = 0
+  while w0 < n {
+    var w1 = w0 + 1
+    while w1 < n && lvl[walk[w1]] == lvl[walk[w0]] {
+      w1 += 1
+    }
+    if w1 - w0 == 1 {
+      if inline_one(m, st, walk[w0]) {
+        changed = true
+      }
+    } else {
+      var ins: List[(Int, ssa.Func)] = []
+      for fi in walk[w0..w1] {
+        ins.push((fi, m.funcs[fi]))
+        m.funcs[fi] = ssa.Func{name: ""}
+      }
+      var done = inline_wave(m, st, ins, jobs)
+      for k in 0..done.len() {
+        let fi = done[k].0
+        var g = done[k].1
+        done[k].1 = ssa.Func{name: ""}
+        m.funcs[fi] = g
+        changed = changed || done[k].2
+      }
+    }
+    w0 = w1
   }
   changed
 }
@@ -685,9 +722,20 @@ fn inline_module(var m: ssa.Module) -> Bool {
 /// module's at that moment (functions before fi already inlined into);
 /// whether it changed fi.
 fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
-  var ch = false
-  var f = m.funcs[fi]
+  let f = m.funcs[fi]
   m.funcs[fi] = ssa.Func{name: ""}
+  let (g, ch) = inline_body(m, st, fi, f)
+  m.funcs[fi] = g
+  ch
+}
+
+/// inline_one's work on f0, function fi's body, with m read only: m's
+/// entry for fi is the empty function (inline_one's, or inline_waves'
+/// for a whole wave), the others what inline_one would see. f after
+/// inlining and whether the pass changed it.
+fn inline_body(m: ssa.Module, st: InlineState, fi: Int, f0: ssa.Func) -> (ssa.Func, Bool) {
+  var ch = false
+  var f = f0
   // its cache key no longer names it (inline_cached sets the inliner's)
   f.ckey = ""
   var here = false
@@ -848,8 +896,7 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
     }
     f.values = vs
   }
-  m.funcs[fi] = f
-  ch
+  (f, ch)
 }
 
 /// Per block of f, whether it makes a call (not an intrinsic emitted

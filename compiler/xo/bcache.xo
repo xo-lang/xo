@@ -1021,7 +1021,7 @@ fn inline_through_cache(os: Os, var mi: ssa.Module, rc_keys: List[Str], jobs: In
   let host = host_os(os)
   let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
   if dir.is_empty() || release || rc_keys.is_empty() {
-    return arm64.inline_apply(mi, brk)
+    return arm64.inline_apply_jobs(mi, brk, jobs)
   }
   var t = os.clock.now()
   let verify = backend_cache_mode(os) == "verify"
@@ -1056,7 +1056,19 @@ fn inline_through_cache(os: Os, var mi: ssa.Module, rc_keys: List[Str], jobs: In
   t = lap(os, phases, "inline.keys", t)
   let (entries, pk) = cache_get_packed(os, dir, "inl", mi.goarch, keys, jobs)
   t = lap(os, phases, "inline.read", t)
-  let out = arm64.inline_cached(mi, ik, entries, verify, brk, jobs, lazy)
+  let wdbg = os.env.get("XO_DEBUG_INLINE_WAVES") ?? ""
+  var lvl: List[Int] = []
+  var ik2 = ik
+  if !wdbg.is_empty() {
+    lvl = arm64.inline_waves_of(mi, jobs)
+    if wdbg == "order" {
+      ik2.order = arm64.wave_order(lvl)
+    }
+  }
+  let out = arm64.inline_cached(mi, ik2, entries, verify, brk, jobs, lazy)
+  if !wdbg.is_empty() {
+    inline_wave_report(os, mi, lvl)
+  }
   pack_store(os, pk, entries, StoreSrc{mem: out.stores})
   let n = store_entries(os, dir, "inl", pk, StoreSrc{mem: out.stores})
   if !out.stores.is_empty() {
@@ -2294,5 +2306,40 @@ fn no_std_facts_dump(os: Os) {
   let p = os.env.get("XO_STD_FACTS_DUMP") ?? os.env.get("XO_STD_FACTS_VERIFY") ?? ""
   if !p.is_empty() {
     fail(os, "XO_STD_FACTS_DUMP=${p} is not written by this build: its reference counting does not take the backend cache's path (XO_BACKEND_CACHE=off, XO_PASSES, --release, or a program of under 256 functions)")
+  }
+}
+
+/// XO_DEBUG_INLINE_WAVES: the inline waves' count and balance, with each
+/// function's size after inlining (values) as its cost.
+fn inline_wave_report(os: Os, mi: ssa.Module, lvl: List[Int]) {
+  var nw = 0
+  for l in lvl {
+    nw = nw.max(l + 1)
+  }
+  var cnt: List[Int] = []
+  var sum: List[Int] = []
+  var mx: List[Int] = []
+  for _ in 0..nw {
+    cnt.push(0)
+    sum.push(0)
+    mx.push(0)
+  }
+  var total = 0
+  for (i, l) in lvl.indexed() {
+    let c = mi.funcs[i].values.len()
+    cnt[l] += 1
+    sum[l] += c
+    mx[l] = mx[l].max(c)
+    total += c
+  }
+  var crit = 0
+  var t12 = 0
+  for w in 0..nw {
+    crit += mx[w]
+    t12 += mx[w].max((sum[w] + 11) / 12)
+  }
+  os.stdio.eprintln("inline waves ${nw} funcs ${lvl.len()} cost ${total} critical ${crit} at12 ${t12} speedup12 ${total * 100 / t12.max(1)}%")
+  for w in 0..nw.min(40) {
+    os.stdio.eprintln("inline wave ${w}: ${cnt[w]} funcs, cost ${sum[w]}, max ${mx[w]}")
   }
 }
