@@ -1,5 +1,17 @@
 # std/timego changes
 
+## 2026-11-14: perf: Layout.format counts the days once, and writes a fractional second's digits in place (native)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the std/time speed work of decision 0616 (XO_PROF of bench/perf/timego format: time.civil, floor_div and days_from_civil 42%; std/evidence/time/perf.md: timego/format 1.328 of Go)
+- Go reference: time.Time.appendFormat (absDate once; the weekday only for a layout naming it; appendNano writes the digits into the buffer)
+- Test: std/native/time_test.xo (floor_div against its definition for every sign, exact multiples and the Int range's ends); TestStdCorpora time, timefuzz and timego on go, arm64 and llvm (the timego corpus's .000, ,000 and run of nines layouts against Go's output)
+- Timing: --ab on linux/arm64 host 1, 9 rounds: bench/perf/timego format 0.951 (41.21 to 39.21 ms, n=6) for floor_div and the weekday, then 0.953 (41.57 to 39.6 ms, n=9) for the digits in place; bench/perf/time format 0.995 and civil 0.985 (within noise)
+- Shipped in: not yet released
+
+floor_div took a division and a remainder; with a positive divisor (every caller's) it now takes one division and a multiply. Layout.format computed the weekday from the date (another days count) for every layout; it now does so only for a layout with Mon or Monday. A fractional second built a nine digit Bytes of its own per call; its digits are now cut and written into the output.
+
 ## 2026-11-13: perf: RFC 3339 parse reads digit pairs, and format writes small numbers in one store
 
 - Kind: perf

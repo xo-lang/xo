@@ -116,6 +116,12 @@ fn time_of(ns: Int) -> Time { Time.UNIX_EPOCH + Duration.from_nanos(ns) }
 
 fn floor_div(a: Int, b: Int) -> Int {
   let q = a / b
+  if b > 0 {
+    // every caller's divisor: one division (the remainder was a second),
+    // and inlined with a constant divisor a multiply and shift; q * b
+    // passes a exactly when a is negative and not a multiple of b
+    return if a < q * b { q - 1 } else { q }
+  }
   if a % b != 0 && ((a < 0) != (b < 0)) {
     return q - 1
   }
