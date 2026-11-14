@@ -243,6 +243,23 @@ pub fn name(r: Rules, pos: Int) -> Str {
   name_at(r.w, pos)
 }
 
+/// Appends the name at the position lookup returned (-1 is UTC's), as
+/// name gives it, without making a Str: a name of up to 8 bytes is one
+/// word of the rules, written in one store.
+pub fn write_name(var out: BytesBuilder, r: Rules, pos: Int) {
+  if pos < 0 {
+    out.write_str("UTC")
+    return
+  }
+  let w = r.w
+  let n = w[pos]
+  if n <= 8 {
+    out.write_le(w[pos + 1], n)
+    return
+  }
+  out.write_str(name_at(w, pos))
+}
+
 /// The abbreviation of the zone at sec ("CET", "-05").
 pub fn abbr(r: Rules, sec: Int) -> Str {
   let w = r.w

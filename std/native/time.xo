@@ -1101,7 +1101,11 @@ fn format_local(items: List[Item], local: Int, nanos: Int, off: Int, z: Zone, na
         if civil {
           out.write_str(civil_zone_text(off))
         } else {
-          out.write_str(if z.fixed { z.label } else { tz.name(z.rules, name_pos) })
+          if z.fixed {
+            out.write_str(z.label)
+          } else {
+            tz.write_name(out, z.rules, name_pos)
+          }
         }
       }
     }
@@ -1464,7 +1468,13 @@ fn format_stream(layout: Str, t: Time, z: Zone) -> Str? {
             put_num(out, o / 60 % 60, 2)
           }
         }
-        _ => out.write_str(if z.fixed { z.label } else { tz.name(z.rules, name_pos) })
+        _ => {
+          if z.fixed {
+            out.write_str(z.label)
+          } else {
+            tz.write_name(out, z.rules, name_pos)
+          }
+        }
       }
     }
     i = j + 1

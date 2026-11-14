@@ -108,3 +108,45 @@ test "parse with the rules' transitions listed gives every time the zone it gave
   // the zones with daylight saving rules today gained transitions
   expect(grew >= 16) == true
 }
+
+test "write_name writes the text name gives, for every zone name of every listed zone" {
+  named()
+  var bad: List[Str] = []
+  var seen = 0
+  for nm in NAMES {
+    let datas = tztable.data(nm, false)
+    if datas.is_empty() {
+      continue
+    }
+    let w = parse_with(datas[0], 0, true) ?? fault("parse ${nm}")
+    var secs: List[Int] = [Int.min + 3, -2000000000, 0, 1794600000, 4000000000]
+    for k in 0..w[H_NTX] {
+      let x = w[H_LEN + 2 * k]
+      if x > Int.min + 2 {
+        secs.push(x)
+      }
+    }
+    for s in secs {
+      let (_, pos) = lookup(of(w), s)
+      var out = BytesBuilder.new()
+      out.write(b"<")
+      write_name(out, of(w), pos)
+      out.write(b">")
+      let got = out.freeze()
+      let want = "<${name(of(w), pos)}>"
+      seen += 1
+      if got != want.bytes() && bad.len() < 10 {
+        bad.push("${nm} at ${s}: ${got.to_hex()}, want ${want}")
+      }
+    }
+  }
+  // position -1 is UTC's, whatever the rules
+  let w0 = parse_with(tztable.data("America/New_York", false)[0], 0, true) ?? fault("parse")
+  var out = BytesBuilder.new()
+  write_name(out, of(w0), -1)
+  if out.freeze() != b"UTC" {
+    bad.push("pos -1: not UTC")
+  }
+  expect(bad) == []
+  expect(seen > 1000) == true
+}

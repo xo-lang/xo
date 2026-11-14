@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-11-14: perf: a zone's abbreviation is written into the formatted text without making a Str (native)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the std/time speed work of decision 0616 (XO_PROF of bench/perf/time format at 85d121b31: tzrules.name_at's rs_push_word, the Str's allocation and its drop about 8%)
+- Go reference: time.appendFormat appends the zone's name to the buffer
+- Test: std/native/llrt/tzrules_test.xo (write_name writes what name gives for every zone name of 17 zones at their transitions, and UTC for position -1); std/native/time and std/time tests on arm64 and llvm; TestStdCorpora time, timefuzz and timego on go, arm64 and llvm
+- Timing: --ab on linux/arm64 host 1, 9 rounds: bench/perf/time format 0.855 (36.52 to 31.23 ms, n=6), format_layout 0.85 (26.84 to 22.81 ms, n=6)
+- Shipped in: not yet released
+
+`{zone}` of a zone with rules built the abbreviation as a new Str from the rules' words (tzrules.name) and appended it; tzrules.write_name now writes the word holding a name of up to 8 bytes into the output in one store.
+
 ## 2026-11-14: perf: month and weekday names are written with one store (native)
 
 - Kind: perf
