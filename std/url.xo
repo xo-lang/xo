@@ -76,43 +76,62 @@ fn (var v: Values) grown() {
 /// `a=1&b=2&a=3` into Values; a `;` separator, a bad escape, or more than
 /// 10000 parameters is an error, as url.ParseQuery.
 pub fn parse_query(s: Str) -> Values ! EscapeErr {
-  // the separators counted before any part is made (GO-2026-4341, Go's
-  // fix): a long run of `&` costs no list of empty parts
+  // one pass counts the separators before any pair is made (GO-2026-4341,
+  // Go's fix: a long run of `&` costs nothing) and finds a semicolon,
+  // which wins over an escape error as in Go's parseQuery
+  let b = s.bytes()
   var seps = 0
-  for b in s.bytes() {
-    if b == 38 {
+  var semi = false
+  for c in b {
+    if c == 38 {
       seps += 1
       if seps + 1 > MAX_PARAMS {
         return Err(EscapeErr{msg: "number of URL query parameters exceeded limit"})
       }
+    } else if c == 59 {
+      semi = true
     }
   }
-  let parts = s.split("&")
-  let big = s.len() > OWN_MIN
-  var v = values()
-  // Go's parseQuery: a pair with a semicolon sets its error whatever came
-  // before, so it wins over an earlier escape error
-  if s.contains(";") {
+  if semi {
     return Err(EscapeErr{msg: "invalid semicolon separator in query"})
   }
-  for pair in parts {
-    if pair.is_empty() {
+  let big = s.len() > OWN_MIN
+  var v = values()
+  // each pair from start to the next `&`, its first `=` found on the way
+  // (Go's strings.Cut loop; no list of the parts)
+  // (kesc, xesc: a `%` or `+` in the key or the value, so unescape runs
+  // only on the parts that have one, not a second pass over every part)
+  var start = 0
+  var eq = -1
+  var kesc = false
+  var xesc = false
+  for i in 0..b.len() + 1 {
+    if i < b.len() && b[i] != 38 {
+      let c = b[i]
+      if c == 37 || c == 43 {
+        if eq < 0 { kesc = true } else { xesc = true }
+      } else if c == 61 && eq < 0 {
+        eq = i
+      }
       continue
     }
-    let (k0, x0) = match pair.find("=") {
-      Some(i) => (pair[0..i], pair[i + 1..])
-      None => (pair, "")
+    if i > start {
+      let (k0, x0) = if eq >= 0 { (s[start..eq], s[eq + 1..i]) } else { (s[start..i], "") }
+      // stored in the result: copies for a long s (decision 0330, Str.clone)
+      var k = if kesc { query_unescape(k0)? } else { k0 }
+      var x = if xesc { query_unescape(x0)? } else { x0 }
+      if big {
+        k = k.clone()
+        x = x.clone()
+      }
+      // lists up to SMALL keys (no Map for a small query), the Map past
+      // them; a value pushed in place either way
+      v.add(k, x)
     }
-    // stored in the result: copies for a long s (decision 0330, Str.clone)
-    var k = query_unescape(k0)?
-    var x = query_unescape(x0)?
-    if big {
-      k = k.clone()
-      x = x.clone()
-    }
-    // lists up to SMALL keys (no Map for a small query), the Map past
-    // them; a value pushed in place either way
-    v.add(k, x)
+    start = i + 1
+    eq = -1
+    kesc = false
+    xesc = false
   }
   v
 }
@@ -156,12 +175,18 @@ pub fn (v: Values) encode() -> Str {
   }
   // the keys sorted as indexes: a key's values are read at its index, no
   // lookup of the key by name for each
-  var order: List[Int] = []
-  for i in 0..v.ks.len() {
-    order.push(i)
-  }
+  // (at most SMALL of them: an insertion sort, no key function)
   let ks = v.ks
-  order = order.sort_by(fn(i) { ks[i] })
+  var order: List[Int] = []
+  for i in 0..ks.len() {
+    var j = order.len()
+    order.push(i)
+    while j > 0 && ks[order[j - 1]] > ks[i] {
+      order.set(j, order[j - 1])
+      j -= 1
+    }
+    order.set(j, i)
+  }
   for i in order {
     write_pairs(out, ks[i], v.vs[i])
   }

@@ -1,5 +1,17 @@
 # std/url changes
 
+## 2026-11-14: perf: parse_query finds each pair in one pass and unescapes only parts with an escape; encode sorts key indexes
+
+- Kind: perf
+- Commit: this push
+- Found by: the decision 0616 std/url perf round (Xo Lang 3; XO_PROF on bench/perf/url query: the split list and a second unescape scan of every key and value)
+- Go reference: net/url parseQuery (strings.Cut per pair, QueryUnescape per part) and Values.Encode (sorted keys)
+- Change: parse_query counts the `&` separators and finds a `;` in one byte pass (the 10,000 parameter check first, GO-2026-4341), then walks the pairs with their first `=` in a second, with no list of parts, and calls the unescape only for a key or value with a `%` or `+`; encode of up to 16 keys orders key indexes by an insertion sort, reading each key's values at its index
+- Measured: bench/perf/url on linux/arm64 host 1, --ab against 9799b18d0, 6 rounds each: query 0.81 (0.798 to 0.834), encode 0.729 (0.708 to 0.752); output unchanged
+- Test: xo test --std-module=url on native and llvm; TestUrlFuzz (seed 2, arm64 and llvm) and TestUrlFuzzCorpusCurrent
+- Affected: every backend
+- Shipped in: not yet released
+
 ## 2026-11-14: perf, security: Values is an insertion-ordered Map of each key's values
 
 - Kind: perf, security
