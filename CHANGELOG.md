@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Security (std/http, native backends): an HTTP/2 connection gives its flow control window back for a handle_stream body as the handler reads it (and for unread bytes when the stream closes), as Go does, so it holds at most 1 MiB of bodies no handler has read; before, 250 streams could park about 250 MiB. Affected: 0.51.1 and earlier.
 - Feature (std/url, every backend): `url.parse`, `url.parse_request_uri` and `url.join_path` give a `Url` with Go's url.URL methods (`display`, `redacted`, `resolve_reference`, `parse_ref`, `query`, `request_uri`, `hostname`, `port`, `join_path`, `escaped_path`) and Go's error texts (decision 0642, spec std 20.1).
 - Fix (compiler, darwin/arm64 native): a program with more than about 8 MB of constant data in one section (a large generated table) failed to assemble with "addend ... does not fit ARM64_RELOC_ADDEND"; a reference that far into a section now names its label, written as an N_ALT_ENTRY local symbol, as Apple's toolchain does. Affected: every release with the native darwin/arm64 backend.
 - Build memory (compiler, native xo): the front end allocates in a heap region of its own, whose whole free 4 KiB units go back to a pool the later passes carve from once the front end is released (decision 0633). Max RSS on linux/arm64, cold: the gcp aiplatform test build 2.274 to 2.078 GB, xo's own build 4.012 to 3.855 GB; wall and the alloc and HTTP benchmarks within noise. `XO_HEAP_REGION=0` turns it off.

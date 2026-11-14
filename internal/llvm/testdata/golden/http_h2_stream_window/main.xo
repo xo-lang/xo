@@ -1,0 +1,167 @@
+// HTTP/2 flow control for streamed request bodies: one connection holds
+// at most its window of bodies no handler has read. A raw h2c client
+// sends DATA to handle_stream handlers that do not read until it stops
+// granting the connection window; it then resets those streams, and
+// the window comes back (the native server's at the reset, net/http's
+// when the handler returns and its body is closed), and a new stream's
+// body is read and answered.
+use std/http
+
+/// A frame header: length, type, flags, stream id.
+fn frame(ty: Int, flags: Int, sid: Int, payload: Bytes) -> Bytes {
+  let n = payload.len()
+  var b = BytesBuilder.new()
+  b.write_byte(UInt8((n >> 16) & 255))
+  b.write_byte(UInt8((n >> 8) & 255))
+  b.write_byte(UInt8(n & 255))
+  b.write_byte(UInt8(ty))
+  b.write_byte(UInt8(flags))
+  b.write_byte(UInt8((sid >> 24) & 127))
+  b.write_byte(UInt8((sid >> 16) & 255))
+  b.write_byte(UInt8((sid >> 8) & 255))
+  b.write_byte(UInt8(sid & 255))
+  b.write(payload)
+  b.freeze()
+}
+
+/// HPACK literal fields without indexing, new names.
+fn fields(kv: List[(Str, Str)]) -> Bytes {
+  var b = BytesBuilder.new()
+  for (k, v) in kv {
+    b.write_byte(0)
+    b.write_byte(UInt8(k.len()))
+    b.write(k.bytes())
+    b.write_byte(UInt8(v.len()))
+    b.write(v.bytes())
+  }
+  b.freeze()
+}
+
+fn u32(b: Bytes, i: Int) -> Int { (Int(b[i]) << 24) | (Int(b[i + 1]) << 16) | (Int(b[i + 2]) << 8) | Int(b[i + 3]) }
+
+fn be32(v: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_byte(UInt8((v >> 24) & 255))
+  b.write_byte(UInt8((v >> 16) & 255))
+  b.write_byte(UInt8((v >> 8) & 255))
+  b.write_byte(UInt8(v & 255))
+  b.freeze()
+}
+
+/// The server's frames so far: (initial stream window, connection
+/// window granted, a HEADERS frame on `sid` seen).
+fn scan(all: Bytes, sid: Int) -> (Int, Int, Bool) {
+  var swin = 65535
+  var conn = 65535
+  var hdr = false
+  var at = 0
+  while at + 9 <= all.len() {
+    let n = (Int(all[at]) << 16) | (Int(all[at + 1]) << 8) | Int(all[at + 2])
+    if at + 9 + n > all.len() {
+      break
+    }
+    if all[at + 3] == 4 && (Int(all[at + 4]) & 1) == 0 {
+      var k = at + 9
+      while k + 6 <= at + 9 + n {
+        if ((Int(all[k]) << 8) | Int(all[k + 1])) == 4 { swin = u32(all, k + 2) }
+        k += 6
+      }
+    }
+    if all[at + 3] == 8 && u32(all, at + 5) == 0 { conn += u32(all, at + 9) }
+    if all[at + 3] == 1 && (u32(all, at + 5) & 0x7fffffff) == sid { hdr = true }
+    at += 9 + n
+  }
+  (swin, conn, hdr)
+}
+
+fn main(os: Os) ! {
+  var r = http.router()
+  r.handle_stream("POST /park", fn(_req, _b) {
+    os.clock.sleep(3s)
+    http.text(200, "late")
+  })
+  r.handle_stream("POST /read", fn(_req, b) {
+    var n = 0
+    while true {
+      match b.read(4096)? {
+        Some(d) => n += d.len()
+        None => break
+      }
+    }
+    http.text(200, "read ${n}")
+  })
+  let srv = http.server(os.net.listen("127.0.0.1:0")?, r).with_protocols(#{http.Protocol.Http1, http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let c = os.net.dial(srv.addr())?
+    c.write(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")?
+    c.write(frame(4, 0, 0, b""))?
+    let got = Mutex.new(b"")
+    s.spawn_background(fn() {
+      while true {
+        match c.read(65536) {
+          Ok(Some(b)) => got.with(fn(var g) { g = g + b })
+          _ => break
+        }
+      }
+    })
+    os.clock.sleep(300ms)
+    let chunk = Bytes.from_hex("61".repeat(16384)) ?? b""
+    // fill parked streams within the stream and connection windows
+    var sent = 0
+    var sid = 1
+    var stalled = false
+    var opened = 0
+    while !stalled && opened < 64 {
+      c.write(frame(1, 4, sid, fields([(":method", "POST"), (":scheme", "http"), (":authority", "s"), (":path", "/park")])))?
+      opened += 1
+      let (swin, _, _) = scan(got.with_read(fn(g) { g }), 0)
+      var left = swin
+      while left > 0 && !stalled {
+        let (_, conn, _) = scan(got.with_read(fn(g) { g }), 0)
+        let room = conn - sent
+        if room <= 0 {
+          // no grant for 1 s: the server withholds the window
+          var waited = 0
+          while waited < 20 && scan(got.with_read(fn(g) { g }), 0).1 == conn {
+            os.clock.sleep(50ms)
+            waited += 1
+          }
+          stalled = waited == 20
+          continue
+        }
+        let k = left.min(16384).min(room)
+        c.write(frame(0, 0, sid, chunk[0..k]))?
+        sent += k
+        left -= k
+      }
+      sid += 2
+    }
+    let (swin0, conn0, _) = scan(got.with_read(fn(g) { g }), 0)
+    os.stdio.println("stalled with unread bodies: ${stalled}")
+    os.stdio.println("unread bytes within the connection window: ${sent <= conn0 && sent > 0} (stream window ${swin0 > 0})")
+    // reset the parked streams: their unread bytes give the window back
+    var i = 1
+    while i < sid {
+      c.write(frame(3, 0, i, be32(8)))?
+      i += 2
+    }
+    var waited = 0
+    while waited < 200 && scan(got.with_read(fn(g) { g }), 0).1 - sent <= 0 {
+      os.clock.sleep(50ms)
+      waited += 1
+    }
+    let (_, conn1, _) = scan(got.with_read(fn(g) { g }), 0)
+    os.stdio.println("window back after reset: ${conn1 - sent > 0}")
+    // a new stream's body is read and answered
+    c.write(frame(1, 4, sid, fields([(":method", "POST"), (":scheme", "http"), (":authority", "s"), (":path", "/read")])))?
+    c.write(frame(0, 1, sid, chunk[0..1000]))?
+    waited = 0
+    while waited < 100 && !scan(got.with_read(fn(g) { g }), sid).2 {
+      os.clock.sleep(50ms)
+      waited += 1
+    }
+    os.stdio.println("serves after: ${scan(got.with_read(fn(g) { g }), sid).2}")
+    c.close()
+  }
+}

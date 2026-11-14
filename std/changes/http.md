@@ -59,6 +59,17 @@ Each CONTINUATION frame asked HPACK to decode again and copied the header bytes 
 
 query_all split the raw query on every `&` before looking at any pair, and returned values past the 10000 parameter limit where Go's Query() returns none. It now counts the separators first and answers [] past the limit, as url.parse_query does since its own fix.
 
+## 2026-11-14: security: an HTTP/2 connection holds at most its flow control window of unread streamed bodies
+
+- Kind: security
+- Commit: this push
+- Found by: aws-43, measuring the 2026-11-13 body budget fix for handle_stream routes (no Go advisory: net/http's server returns the connection window as the handler reads, and a closed stream's unread bytes when it closes)
+- Test: golden http_h2_stream_window (fails before the fix: the client never stalls, 200 parked streams held 200 MiB)
+- Affected: every release up to 0.51.1 (native and LLVM backends; the Go backend is net/http's)
+- Shipped in: not yet released
+
+A handle_stream route's body came back to the client's connection window as each DATA frame arrived, and only its stream window as the handler read, so a client could open max_concurrent_streams (250) streams to handlers that do not read yet and send each a full stream window (1 MiB): about 250 MiB buffered on one connection. The connection window now comes back as the handler reads, as Go's does, and a stream that closes or is reset gives back its unread bytes and drops them. One connection then holds at most its window (1 MiB) of unread streamed bodies; the 2026-11-13 entry's note that handle_stream routes were unchanged held for the stream window only.
+
 ## 2026-11-13: security: an HTTP/2 connection buffers at most four bodies' worth of unfinished request bodies
 
 - Kind: security

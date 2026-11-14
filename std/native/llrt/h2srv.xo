@@ -533,7 +533,26 @@ fn signal_stream(st: Int) {
 }
 
 /// Takes st out of the table (closed): nothing more is sent on it.
+/// A streamed body's bytes no handler will read (the stream closes or
+/// is reset): dropped, and their connection window given back (Go's
+/// closeStream). The lock held.
+fn drop_unread(c: Int, st: Int) {
+  if !on(st, S_STREAM) {
+    return
+  }
+  let n = ld(st, S_BODY + 8) - ld(st, S_BOFF)
+  sto(st, S_BOFF, 0)
+  sto(st, S_BODY + 8, 0)
+  if n > 0 && !on(c, C_DEAD) && !on(c, C_FAILED) {
+    let u = inflow_add(c, C_IN, n)
+    if u > 0 {
+      put_winup(c, 0, u)
+    }
+  }
+}
+
 fn close_stream(c: Int, st: Int) {
+  drop_unread(c, st)
   sto(st, S_DEAD, 1)
   signal_stream(st)
   if on(st, S_IN_TABLE) {
@@ -579,6 +598,7 @@ fn stream_err(c: Int, sid: Int, code: Int) {
     return
   }
   if !on(st, S_RST) {
+    drop_unread(c, st)
     sto(st, S_RST, code + 1)
     sto(st, S_DEAD, 1)
     signal_stream(st)
@@ -1256,6 +1276,14 @@ pub fn body_next(h: rthttp.HConn, max: Int) -> http1.BodyPart {
       if ld(st, S_BOFF) == ld(st, S_BODY + 8) {
         sto(st, S_BOFF, 0)
         sto(st, S_BODY + 8, 0)
+      }
+      if !on(c, C_DEAD) && !on(c, C_FAILED) {
+        // the connection's window for what the handler took
+        let u = inflow_add(c, C_IN, n)
+        if u > 0 {
+          put_winup(c, 0, u)
+          wake(c)
+        }
       }
       if ld(st, S_STATE) == ST_OPEN && !on(st, S_RST) && !on(st, S_DEAD) {
         let u = inflow_add(st, S_IN, n)
@@ -2112,9 +2140,13 @@ fn (var h: H2Conn) on_data(sid: Int, flags: Int, flen: Int, p: Int, dn: Int) {
     return
   }
   if flen > 0 && on(st, S_STREAM) {
-    // a streamed body (decision 0310): kept for body_next; the
-    // connection's window comes back now, the stream's as the handler
-    // reads (its padding now)
+    // a streamed body (decision 0310): kept for body_next. Both windows
+    // come back as the handler reads, and the connection's for what is
+    // left unread when the stream closes (drop_unread), as Go's server
+    // does (noteBodyRead, closeStream): one connection holds at most its
+    // window of unread bodies. Before, the connection's window came back
+    // on arrival, and 200 streams that no handler read held 200 MiB.
+    // The padding comes back now.
     if ld(c, C_IN) < flen || ld(st, S_IN) < flen {
       stream_err(c, sid, E_FLOW)
       return
@@ -2123,14 +2155,16 @@ fn (var h: H2Conn) on_data(sid: Int, flags: Int, flen: Int, p: Int, dn: Int) {
     inc(st, S_IN, -flen)
     inc(st, S_GOT, dn)
     put(st, S_BODY, p, dn)
-    var u = inflow_add(c, C_IN, flen)
-    if u > 0 {
-      put_winup(c, 0, u)
-    }
-    if flen > dn && (flags & F_END_STREAM) == 0 {
-      u = inflow_add(st, S_IN, flen - dn)
+    if flen > dn {
+      var u = inflow_add(c, C_IN, flen - dn)
       if u > 0 {
-        put_winup(c, sid, u)
+        put_winup(c, 0, u)
+      }
+      if (flags & F_END_STREAM) == 0 {
+        u = inflow_add(st, S_IN, flen - dn)
+        if u > 0 {
+          put_winup(c, sid, u)
+        }
       }
     }
     signal_stream(st)
