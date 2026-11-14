@@ -1,0 +1,16 @@
+xobuild 130 s
+gate.sh: concurrent, at most 3 jobs: arm64 llvm cmd
+gate.sh: cmd done in 1445 s
+gate.sh: proving checks: codegen cross selfbuild seedbuild xounit (required by the paths: codegen cross selfbuild seedbuild xounit; named: none)
+gate.sh: after done in 165 s
+gate.sh: codegen done in 20 s
+gate.sh: cross done in 11 s
+gate.sh: xounit done in 21 s
+gate.sh: arm64 done in 1803 s
+llvm goldens: 0 of 723 goldens (no golden's IR or directory changed) (2186 s to select)
+gate.sh: llvm done in 3533 s
+selfbuild: 36 s, peak 4446 MB
+gate.sh: steps took 3629 s (concurrent, at most 3 jobs)
+pushq: PUSHQ_RAN="codegen cross selfbuild seedbuild xounit"
+offload-gate: host memory peak 19854 MB in use of 23993 MB (2180 MB at the start)
+offload-gate: pass PUSHQ_RAN="codegen cross selfbuild seedbuild xounit" to pushq.sh --gated
