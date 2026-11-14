@@ -475,7 +475,7 @@ test "gzip gives Go's bytes" {
 test "gunzip of Go's streams, corrupted ones too" {
   var bad: List[(Int, Str, Str)] = []
   for (i, (z, want)) in GO_GUNZIP.indexed() {
-    let got = match gunzip(z) {
+    let got = match gunzip(z, 1073741824) {
       Ok(b) => "ok ${b.len()} ${sum(b)}"
       Err(e) => "err ${e.display()}"
     }
@@ -505,7 +505,7 @@ test "tar and zip give Go's bytes" {
 test "untar and unzip of Go's test archives" {
   var bad: List[(Str, Str, Str)] = []
   for (name, data, want) in GO_READ {
-    let got = if name.ends_with(".tar") { listing(untar(data)) } else { listing(unzip(data)) }
+    let got = if name.ends_with(".tar") { listing(untar(data)) } else { listing(unzip(data, 1073741824)) }
     if got != want {
       bad.push((name, got, want))
     }

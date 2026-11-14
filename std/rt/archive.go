@@ -43,14 +43,20 @@ func Archive_gzip(_ *Task, data Bytes) Bytes {
 
 // Archive_gunzip is `archive.gunzip(data)`; concatenated members are read
 // as one stream, as gzip(1) does.
-func Archive_gunzip(_ *Task, data Bytes) Result[Bytes, Archive_ArchiveErr] {
+func Archive_gunzip(_ *Task, data Bytes, max int64) Result[Bytes, Archive_ArchiveErr] {
+	if max < 0 {
+		max = 0
+	}
 	r, err := gzip.NewReader(strings.NewReader(string(data)))
 	if err != nil {
 		return Err[Bytes](archiveErr("gunzip: " + err.Error()))
 	}
-	out, err := io.ReadAll(r)
+	out, err := io.ReadAll(io.LimitReader(r, max+1))
 	if err != nil {
 		return Err[Bytes](archiveErr("gunzip: " + err.Error()))
+	}
+	if int64(len(out)) > max {
+		return Err[Bytes](archiveErr("gunzip: gzip: output exceeds max_size (" + strconv.FormatInt(max, 10) + " bytes)"))
 	}
 	return Ok[Bytes, Archive_ArchiveErr](Bytes(out))
 }
@@ -170,10 +176,22 @@ func Archive_zip(_ *Task, entries List[Archive_Entry]) Result[Bytes, Archive_Arc
 }
 
 // Archive_unzip is `archive.unzip(data)`.
-func Archive_unzip(_ *Task, data Bytes) Result[List[Archive_Entry], Archive_ArchiveErr] {
+func Archive_unzip(_ *Task, data Bytes, max int64) Result[List[Archive_Entry], Archive_ArchiveErr] {
+	if max < 0 {
+		max = 0
+	}
 	r, err := zip.NewReader(strings.NewReader(string(data)), int64(len(data)))
 	if err != nil {
 		return Err[List[Archive_Entry]](archiveErr("unzip: " + err.Error()))
+	}
+	// the declared sizes bound what reading may hold (Go's reader stops a
+	// file past its own with ErrFormat), so check their sum first
+	var declared uint64
+	for _, f := range r.File {
+		declared += f.UncompressedSize64
+		if declared > uint64(max) {
+			return Err[List[Archive_Entry]](archiveErr("unzip: zip: files exceed max_size (" + strconv.FormatInt(max, 10) + " bytes)"))
+		}
 	}
 	var out []Archive_Entry
 	for _, f := range r.File {

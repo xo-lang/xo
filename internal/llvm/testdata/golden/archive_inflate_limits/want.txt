@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+zip of 10499 bytes: unzip 2 entries, 10485765 bytes
+max_size 10485765: 2 entries, 10485765 bytes
+max_size 10485764: error unzip: zip: files exceed max_size (10485764 bytes)
+a file declaring 100 bytes that inflates to 10 MB: error unzip: zip: not a valid zip file
+gunzip of 10224 bytes: max_size 10485760: 10485760 bytes; 10485759: error gunzip: gzip: output exceeds max_size (10485759 bytes); 1 MB: error gunzip: gzip: output exceeds max_size (1048576 bytes)
+--- stderr

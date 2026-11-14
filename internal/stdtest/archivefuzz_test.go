@@ -402,7 +402,7 @@ func afCases(r *rand.Rand, n int) []afCase {
 			if r.Intn(3) != 0 {
 				c.data = afZipMutate(r, c.data)
 			}
-			c.want = afRender(rt.Archive_unzip(nil, rt.Bytes(c.data)))
+			c.want = afRender(rt.Archive_unzip(nil, rt.Bytes(c.data), 1<<30))
 		} else {
 			if r.Intn(4) == 0 {
 				c.data = afRawTar(r)

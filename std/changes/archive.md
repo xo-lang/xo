@@ -1,5 +1,18 @@
 # std/archive changes
 
+## 2026-11-14: security: unzip and gunzip bound what they inflate; xo mod caps a module zip as Go
+
+- Kind: security
+- Commit: this commit
+- Found by: Xo Lang 2, answering the lead's question on 0.51.0's callers of the flate decoders after the std/compress review
+- Go reference: archive/zip reader.go checksumReader (ErrFormat once a file passes UncompressedSize64); golang.org/x/mod/zip (MaxZipFile, MaxGoMod, MaxLICENSE)
+- Affected: Xo 0.51.0 and earlier: unzip and ZipReader.read inflated a deflated file to its end before comparing it with its declared size (native); unzip and gunzip had no output limit (every backend); `xo mod` fetches through a proxy
+- Test: golden archive_inflate_limits (unzip at its declared total and one byte under, a file declaring 100 bytes that inflates to 10 MB, gunzip at and past max_size); a 204 KB zip whose one file declares 100 bytes and inflates to 200 MB: 276 MB peak in 0.51.0, 3.6 MB now, both `zip: not a valid zip file`
+- Timing: none (the limits are checks on sizes already computed)
+- Shipped in: not yet released
+
+`unzip(data, max_size)` sums the sizes the central directory declares and fails with `unzip: zip: files exceed max_size (N bytes)` before inflating anything; each deflated file stops as its output passes its declared size, so a file cannot hold more than it declares. `gunzip(data, max_size)` stops as its output passes max_size (`gunzip: gzip: output exceeds max_size (N bytes)`), as std/compress's gunzip. Both default to 1 GiB. `xo mod` reads a module zip with max_size 500 MB (Go's MaxZipFile), and refuses an xo.mod or LICENSE over 16 MB (Go's MaxGoMod and MaxLICENSE).
+
 ## 2026-11-13: security: untar's sparse holes are 1 GiB at most per archive (native)
 
 - Kind: security

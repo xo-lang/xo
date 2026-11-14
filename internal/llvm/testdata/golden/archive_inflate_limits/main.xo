@@ -1,0 +1,70 @@
+// std/archive's inflation limits (0.51.1, 2026-11-14): a zip file that
+// inflates past the size it declares stops there with Go's ErrFormat
+// (before, it was inflated to its end first: a small hostile zip from a
+// module proxy could take gigabytes), unzip's max_size bounds the sum of
+// the declared sizes before anything is inflated, and gunzip's max_size
+// bounds its output as std/compress's does.
+use std/archive
+
+fn zeros(n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  for _ in 0..n {
+    b.write_byte(0)
+  }
+  b.freeze()
+}
+
+/// data with the 4 byte little endian value v at every offset `at` past a
+/// signature sig (a local file header 0x04034b50 has the uncompressed size
+/// at 22, a central directory header 0x02014b50 at 24).
+fn patch_u32(data: Bytes, sig: Int, at: Int, v: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(data.len())
+  var i = 0
+  while i < data.len() {
+    if i + 4 <= data.len() && (Int(data[i]) | (Int(data[i + 1]) << 8) | (Int(data[i + 2]) << 16) | (Int(data[i + 3]) << 24)) == sig && i + at + 4 <= data.len() {
+      b.write(data[i..i + at])
+      for k in 0..4 {
+        b.write_byte(UInt8((v >> (8 * k)) & 255))
+      }
+      i += at + 4
+      continue
+    }
+    b.write_byte(data[i])
+    i += 1
+  }
+  b.freeze()
+}
+
+fn show(r: Result[List[archive.Entry], archive.ArchiveErr]) -> Str {
+  match r {
+    Ok(es) => {
+      var n = 0
+      for e in es {
+        n += e.data.len()
+      }
+      "${es.len()} entries, ${n} bytes"
+    }
+    Err(e) => "error ${e.msg}"
+  }
+}
+
+fn main(os: Os) uses stdio {
+  let big = zeros(10 * 1024 * 1024)
+  let z = archive.zip([archive.file("m@v1/a.txt", b"hello"), archive.file("m@v1/zeros", big)]).ok() ?? b""
+  os.stdio.println("zip of ${z.len()} bytes: unzip ${show(archive.unzip(z))}")
+  let n = 5 + big.len()
+  os.stdio.println("max_size ${n}: ${show(archive.unzip(z, max_size: n))}")
+  os.stdio.println("max_size ${n - 1}: ${show(archive.unzip(z, max_size: n - 1))}")
+  // one 10 MB file that declares 100 bytes
+  let one = archive.zip([archive.file("m@v1/zeros", big)]).ok() ?? b""
+  let lied = patch_u32(patch_u32(one, 0x02014b50, 24, 100), 0x04034b50, 22, 100)
+  os.stdio.println("a file declaring 100 bytes that inflates to 10 MB: ${show(archive.unzip(lied))}")
+  let g = archive.gzip(big)
+  let gun = fn(max: Int) -> Str {
+    match archive.gunzip(g, max_size: max) {
+      Ok(b) => "${b.len()} bytes"
+      Err(e) => "error ${e.msg}"
+    }
+  }
+  os.stdio.println("gunzip of ${g.len()} bytes: max_size ${big.len()}: ${gun(big.len())}; ${big.len() - 1}: ${gun(big.len() - 1)}; 1 MB: ${gun(1048576)}")
+}
