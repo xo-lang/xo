@@ -1,5 +1,17 @@
 # std/compress changes
 
+## 2026-11-14: security: a Decompressor fed one long block in small writes costs linear time
+
+- Kind: security
+- Commit: this push
+- Found by: the std/compress security review (decision 0616, review F1, Xo Lang 2)
+- Go reference: compress/flate inflate.go (its decompressor keeps its place inside a block between reads: huffmanBlock's step state, the stored block's copyLen)
+- Test: internal/llvm/testdata/golden/compress_stream_hostile (arm64, LLVM, Go parity): a 1 MB fixed Huffman block in 64 byte writes, cut short, a 65535 byte FEXTRA, gzip names of 511, 512 and 1 MB bytes; the compress and compressfuzz corpora, TestCompressFuzz and TestLzwFuzz seed 7, http_gzip, http_gzip_responses and archive_formats goldens
+- Timing: a 4 MB block in 16 KB writes 2706 ms before, 56 ms after (one shot inflate 20 ms; 7 byte writes 106 ms); one shot gunzip, inflate and unzlib are unchanged
+- Shipped in: not yet released
+
+The native Decompressor decoded a block whose input had not all arrived again from the block's start on every `write`, and copied all the input waiting on each one: one DEFLATE block of n bytes sent in writes of k bytes cost n * n / k (a hostile 64 MB block about 11 minutes of CPU on the Mac). A block in progress now goes on from its last whole symbol (a stored block from its next byte), its output is given out as it is decoded, and a header still short (a dynamic block's codes, a gzip header with FEXTRA up to 64 KB) is read again only once the waiting input has doubled. The bytes written are unchanged; how much each `write` returns can now be less than a block.
+
 ## 2026-11-09: feature: std/compress lzw_encode and lzw_decode (decision 0578 step 4)
 
 - Kind: feature

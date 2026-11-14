@@ -60,7 +60,7 @@ fn (var c: Compressor) finish() -> Bytes
 
 /// A streaming decompressor: compressed bytes in, decoded bytes out as
 /// their input arrives (how much each write returns may differ between
-/// backends: natively each whole DEFLATE block, on the Go backend what Go's
+/// backends: natively everything decoded so far, on the Go backend what Go's
 /// reader returns); `finish` returns the rest, or `unexpected EOF` when
 /// the stream did not end. The concatenation of the outputs is what
 /// gunzip, inflate, or unzlib gives; more than max_size bytes in all is an
