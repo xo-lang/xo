@@ -57,9 +57,12 @@ exact repeats (otool -tV, ~/xo-lead/notes/lang1/ladders-bin.py).
    record) is the function at the `bl` of the copy that ran, at that copy's line. A recursion's
    frames each have a line, and a build without DWARF has none for either, so neither folds. Heap
    profiles are not folded: a ladder releases, it never allocates.
-4. x86 (amd64) and windows/arm64 keep their ladders: a `call` moves rsp (the slots would be N + 8
-   and the CFA rsp + 8), and windows/arm64's unwind codes describe one prologue per region. x86
-   follows only if xo's own amd64 binary shows more than 2% of its text in repeats (step 0).
+4. x86_64 the same (step 3, since xo's amd64 binary had 4.7% of its instructions in repeats of 16
+   or more pairs): pairs `movq N(%rsp), %rdi; callq SYM`, after x86_emit's text passes; the
+   subroutine pushes rbp (the `callq` pushed the return address, so the slots are N + 16 there as
+   on arm64) with `.cfi_def_cfa_offset 16`, `.cfi_offset %rbp, -16`, `.cfi_def_cfa_register %rbp`,
+   and pops it before `retq` (`.cfi_def_cfa %rsp, 8`). Windows (amd64 and arm64) keeps its ladders:
+   its unwind codes describe one prologue per region.
 
 ## Cost
 
@@ -85,6 +88,11 @@ exact repeats (otool -tV, ~/xo-lead/notes/lang1/ladders-bin.py).
   repeats of 16 or more pairs left: 20 pairs (from 219,527); repeats under 16 pairs: 29,107 pairs,
   unchanged (LADDER_MIN). build_native's repeats: 147,124 pairs to 1,093.
 - A first build skipped far frames (build_native's among them): -1.6%.
+- xo's linux/amd64 binary (cross built on the Mac, the same xo with the pass on and off): .text
+  89,107,456 to 84,780,000 bytes (-4.9%). Before: 15.55 M instructions, 760 K pairs in ladders,
+  406 K (5.2%) in repeats, 364 K (4.7%) in repeats of 16 or more pairs, the longest 864 pairs
+  (objdump; the assembler's 32 byte padding puts a `nopl` before some calls, which a count of the
+  binary skips and the text pass never sees).
 - Tests: test/codegen/ladders (one `_ld0` subroutine, every arm calling it), compiler/debug
   ladder_test.xo (the fold and the frames it must keep), the arm64 and LLVM codegen patterns (48
   pass), compiler/debug and compiler/arm64 unit tests (103 pass), TestPassesListed.
@@ -92,11 +100,12 @@ exact repeats (otool -tV, ~/xo-lead/notes/lang1/ladders-bin.py).
 
 ## Steps
 
-0. Measure xo's own amd64 binary (linux/amd64 host) with ladders-bin.py's x86 form; record it here.
+0. (Done, Results) xo's own amd64 binary.
 1. (Done) compiler/arm64 ladders.xo, the folds of point 3, the tests above.
 2. (Done in the push) gate as a codegen change: codegen patterns, fp, the self build, the --ab trio
    (HTTP CRUD server, alloc bench, xo's self build) on linux/arm64 host 1.
-3. x86, if step 0 shows more than 2% of xo's amd64 text in repeats.
+3. (Done) x86_64, point 4: the amd64 sample and the amd64 fixed point (scripts/bootstrap-xo.sh on
+   the linux/amd64 host, so the ladders run in xo's own amd64 code) in the push.
 
 ## Consequences
 
