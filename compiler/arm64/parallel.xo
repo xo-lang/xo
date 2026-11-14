@@ -670,6 +670,30 @@ fn gen_part_text(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], 
   var stores: List[(Str, Bytes)] = []
   var reused = 0
   var mismatches: List[Str] = []
+  // the part's new entries go to its spill file (decision 0418) as they
+  // are made, a megabyte at a time, not all at the part's end: a part in
+  // flight held every new entry (251 MB across the aiplatform test
+  // build's parts in flight, 2026-11-13); the store reads the file by
+  // its ranges as before
+  var sfile: Option[File] = None
+  var sp = Spill{}
+  var soff = 0
+  var pend: List[(Str, Bytes)] = []
+  var pend_n = 0
+  if !fc.spill_dir.is_empty() && !fc.keys.is_empty() {
+    if let Some(fs) = fc.fs {
+      let path = "${fc.spill_dir}/spill-${pi}.bin"
+      match fs.open_rw(path) {
+        Ok(f) => {
+          if f.truncate(0).is_ok() {
+            sfile = Some(f)
+            sp.path = path
+          }
+        }
+        Err(_) => {}
+      }
+    }
+  }
   if fc.keys.is_empty() {
     for fi in fis {
       g.function(fi)
@@ -717,15 +741,39 @@ fn gen_part_text(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], 
             mismatches.push(m.funcs[fi].name)
           }
         }
-        None => stores.push((key, enc))
+        None => {
+          if sfile.is_some() {
+            pend_n += enc.len()
+            pend.push((key, enc))
+            if pend_n >= SPILL_FLUSH {
+              let (o, ks) = spill_flush(sfile, soff, sp, pend)
+              soff = o
+              sp = ks.0
+              stores = stores + ks.1
+              pend = []
+              pend_n = 0
+            }
+          } else {
+            stores.push((key, enc))
+          }
+        }
       }
     }
     g.canon = false
   }
+  if !pend.is_empty() {
+    let (o, ks) = spill_flush(sfile, soff, sp, pend)
+    soff = o
+    sp = ks.0
+    stores = stores + ks.1
+    pend = []
+  }
   var out: List[Str] = []
   g.file_header(out)
   out.push(g.section("text"))
-  let text = g.text.join("")
+  var text = g.text.join("")
+  // each function's text dropped once joined (decision 0629's line)
+  g.text = []
   // decision 0318: the functions' text between two labels, and its unsafe
   // ranges' table
   let (ubase, uend, utbl) = if m.async_preempt && m.std_store { ("", "", g.unsafe_fn_tables(text)) } else if m.async_preempt { g.unsafe_table(text, ns) } else { ("", "", "") }
@@ -739,21 +787,69 @@ fn gen_part_text(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], 
   if (os is "linux" | "freebsd") {
     out.push("\t.section .note.GNU-stack,\"\",@progbits\n")
   }
-  var part = Part{asm: out.join(""), err: g.err, dumps: g.dumps, skipped: g.skipped, restorer_ref: g.restorer_ref, words_ref: g.words_ref, static_ref: g.static_ref, clone_ref: g.clone_ref, sched_ref: g.sched_ref, personality_ref: g.personality_ref, w64: g.w64, wsyms: g.wsyms, wants: g.wants, stores: stores, reused: reused, mismatches: mismatches}
+  let asm = out.join("")
+  out = []
+  text = ""
+  var part = Part{asm: asm, err: g.err, dumps: g.dumps, skipped: g.skipped, restorer_ref: g.restorer_ref, words_ref: g.words_ref, static_ref: g.static_ref, clone_ref: g.clone_ref, sched_ref: g.sched_ref, personality_ref: g.personality_ref, w64: g.w64, wsyms: g.wsyms, wants: g.wants, stores: stores, reused: reused, mismatches: mismatches}
   if !pkey.is_empty() {
     if let Some(enc) = encode_part(g, part) {
       match pentry {
         Some(e) => part.part_diff = e != enc
-        None => part.part_store = Some((pkey, enc))
+        None => {
+          // the part's entry into the same file, after its functions'
+          if let Some(f) = sfile {
+            if f.write_at(soff, enc).is_ok() {
+              sp.part = Some((pkey, soff, enc.len()))
+              soff += enc.len()
+            } else {
+              part.part_store = Some((pkey, enc))
+            }
+          } else {
+            part.part_store = Some((pkey, enc))
+          }
+        }
       }
     }
   }
-  if !fc.spill_dir.is_empty() && (!part.stores.is_empty() || part.part_store.is_some()) {
+  if let Some(f) = sfile {
+    f.close().ignore_err("the store reads the file by its path; a close error leaves the handle to the process's end")
+    if !sp.fns.is_empty() || sp.part.is_some() {
+      part.spill = sp
+    }
+  }
+  if !fc.spill_dir.is_empty() && part.spill.path.is_empty() && (!part.stores.is_empty() || part.part_store.is_some()) {
     if let Some(fs) = fc.fs {
       spill_part(fs, "${fc.spill_dir}/spill-${pi}.bin", part)
     }
   }
   part
+}
+
+/// The bytes of new entries a part gathers before it writes them to its
+/// spill file (above the 99th percentile of a function's text: 68 KB on
+/// the aiplatform test build, 122 KB on the self build, 2026-11-13).
+const SPILL_FLUSH = 1048576
+
+/// pend written to f at off (one write), their ranges added to sp: the
+/// new offset, sp, and the entries that stay in memory (all of pend when
+/// the write fails or there is no file).
+fn spill_flush(f: Option[File], off: Int, var sp: Spill, pend: List[(Str, Bytes)]) -> (Int, (Spill, List[(Str, Bytes)])) {
+  let fh = f ?? return (off, (sp, pend))
+  var b = BytesBuilder.new()
+  var rs: List[(Str, Int, Int)] = []
+  for (k, e) in pend {
+    rs.push((k, off + b.len(), e.len()))
+    b.write(e)
+  }
+  if fh.write_at(off, b.freeze()).is_err() {
+    return (off, (sp, pend))
+  }
+  var n = 0
+  for r in rs {
+    sp.fns.push(r)
+    n = r.1 + r.2
+  }
+  (n, (sp, []))
 }
 
 /// Writes part's new entries to path (decision 0418) and keeps their

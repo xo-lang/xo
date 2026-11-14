@@ -83,6 +83,35 @@ cache's incremental hollow path.
 Peak memory footprint (darwin keeps MADV_FREE_REUSABLE pages in max RSS,
 decision 0383), aiplatform caches off: 2.77 to 2.46 GB.
 
+## Step 2: a part's new cache entries streamed (2026-11-13)
+
+With the back-end cache on (the default), the emit peak was the parts in flight. Each held every
+new cache entry (fcache.xo encode_rec, 251 MB live across the aiplatform test build's parts at
+"emit start 100"), every function's text, and their join until the part ended (XO_EMIT_JOBS=2:
+2.39 GB footprint, the default: 2.92 GB). Now gen_part_text appends the part's new entries to its
+spill file (decision 0418's) every SPILL_FLUSH bytes, 1 MB. That is above the 99th percentile
+of a function's text: 68 KB on aiplatform, 122 KB on the self build. The part's own entry follows
+them in the same file, and the store reads them by their ranges as before. A failed write keeps
+the entries in memory, as before. The function texts and the part's pieces are dropped once
+joined. Output: byte for byte the same, cold, and warm from the streamed cache, with all 12,283
+functions reused.
+
+`xo bench --ab` on linux/arm64 host 1, e506ffeb7 against 6423aeb52, default caches, each run in a
+fresh cache (quiet, load under 4):
+
+| build | n | max RSS | CPU | wall |
+|---|---|---|---|---|
+| aiplatform/apiv1 test build | 9 | 3.35 to 2.71 GB (0.810, 0.807 to 0.829) | 1.001 (noise) | 1.001 (noise) |
+| the self build (compiler/xo) | 5 | 4.03 to 3.99 GB (0.990, 0.958 to 1.02, noise) | 1.002 (noise) | 1.003 (noise) |
+
+The self build's peak is not in emit, so it gains nothing; the aiplatform test build's peak is.
+
+Mac: emit peak mapped 3.39 to 2.81 GB, aiplatform's footprint 2.81 to 2.87 GB to 2.64 to 2.66 GB.
+Step 3, tried and not taken (2026-11-14): each part's text streamed to its unlinked file a megabyte at
+a time, and its cache entry copied from that file. Output was byte identical, but the Mac footprint did
+not change at the default keep, and fell only 1.4% with XO_TEXT_SPILL=on (2.44/2.46 to 2.41/2.43 GB). A part in
+flight holds about 7 MB of text (900 MB over 128 parts); the live gigabyte at emit is elsewhere.
+
 ## Consequences
 
 - The peak is now split between emit (the SSA still live, 2.69 GB heap
