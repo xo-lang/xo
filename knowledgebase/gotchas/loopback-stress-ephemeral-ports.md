@@ -36,3 +36,17 @@ client pools (2 for std/http, Go's default), or a pool sized for them.
 A program that churns connections on purpose stays under about 400 new
 connections a second per host, or runs on a lease that takes the whole
 host.
+
+## Again (2026-11-14): bench/perf/httpkeep on the amd64 host
+
+`xo bench --ab` of bench/perf/httpkeep (32 clients of one address) failed
+on the 28-core linux/amd64 offload host with exit 70, `listen tcp
+127.0.0.1:0: bind: address already in use`, at the base commit too: each
+run left about 27,500 sockets in TIME_WAIT (a redial every ~35 requests),
+so the fifth run found the port range full. On the Mac the same program
+left none: fewer workers, so rarely more than 2 of its connections were
+idle at once. Fixed as the stress program was (3f2134286: httpkeep and
+httpstreamsrv take one listener per two clients; 32 TIME_WAIT per run,
+the connections closed at exit). A count of TIME_WAIT before and after
+one run (`ss -tan state time-wait | wc -l`) tells this apart from a real
+keep-alive failure.
