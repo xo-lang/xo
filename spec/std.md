@@ -7382,6 +7382,13 @@ pub fn unescape_string(s: Str) -> Str    // html.UnescapeString: named (legacy n
 - Numeric references in 0x80 to 0x9F become what browsers substitute
   (`&#x87;` is U+2021); 0, surrogates and code points past U+10FFFF
   become U+FFFD; `&#` and `&#x` with no digits stay as they are.
+  As in Go's unescapeEntity, a numeric reference that ends within three
+  bytes of its `&` matched nothing (`&#9` before another byte stays as
+  it is), except that `&#x;` and `&#X;` are U+FFFD (a hexadecimal
+  reference of no digits closed by `;`); the digits accumulate as Go's
+  rune (int32) does, so any number of digits is read without a fault and
+  a value past 2^31 is the code point it wraps to (a negative one
+  U+FFFD).
 - html/template's contextual autoescaping is std/template's html mode
   (section 30, decision 0408), which uses this module for attribute
   values.
