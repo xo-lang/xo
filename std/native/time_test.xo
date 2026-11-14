@@ -1519,3 +1519,29 @@ test "hostile texts give errors, not faults: long digit runs, huge years, offset
   expect(time.instant(time.Date{year: Int.max, month: 1, day: 1}, time.ClockTime{hour: 0, minute: 0, second: 0, nanos: 0}, utc).is_err()) == true
   expect(time.instant(time.Date{year: 2020, month: 99, day: 99}, time.ClockTime{hour: 99, minute: 99, second: 99, nanos: -5}, utc).is_err()) == true
 }
+
+test "answers within a cycle of Int's ends, and years past them, do not fault (the review's second reader)" {
+  // D1: a negative rest no longer pushes the cycles' product past Int
+  expect(time.Date{year: 1970, month: 1, day: 1}.days_until(time.Date{year: 25252734927768400, month: 1, day: -1})) == 9223372036854730307
+  expect(time.Date{year: 25252734927768400, month: 1, day: -1}.days_until(time.Date{year: 1970, month: 1, day: 1})) == -9223372036854730307
+  // D2: a positive offset brings a wall clock past Int's seconds back
+  let c = time.Civil{date: time.Date{year: 1970, month: 1, day: 106751991230515}, time: time.ClockTime{hour: 0, minute: 0, second: 0, nanos: 0}, offset: Duration.from_secs_int(6000000000), zone: "X"}
+  expect(c.unix()) == 9223372036316409600
+  // D3: a year past Int.max or below Int.min formats from its cycles
+  let z = time.ClockTime{hour: 0, minute: 0, second: 0, nanos: 0}
+  let up = time.Civil{date: time.Date{year: Int.max, month: 12, day: 32}, time: z, offset: Duration.from_nanos(0), zone: "UTC"}
+  expect(up.format("{year}-{month}-{day}")) == "9223372036854775808-01-01"
+  let down = time.Civil{date: time.Date{year: Int.min, month: 1, day: 0}, time: z, offset: Duration.from_nanos(0), zone: "UTC"}
+  expect(down.format("{year}-{month}-{day}")) == "-9223372036854775809-12-31"
+  // and the text agrees with the Int path just inside the range
+  for k in 0..5 {
+    for y in [Int.max - 400 * k, Int.min + 400 * k + 1] {
+      for mo in [1, 12] {
+        let w = time.Civil{date: time.Date{year: y, month: mo, day: 1}, time: z, offset: Duration.from_nanos(0), zone: "UTC"}
+        expect(w.format("{year}")) == "${y}"
+      }
+    }
+  }
+  expect(wide_year_text(23058430092136940, 2208)) == "9223372036854778208"
+  expect(wide_year_text(-23058430092136946, 2100)) == "-9223372036854776300"
+}

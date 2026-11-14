@@ -218,7 +218,21 @@ fn days_in(y: Int, m: Int) -> Int {
 /// from the first of the month (a struct literal may hold any fields).
 fn date_days(d: time.Date) -> Int {
   let (q, r) = split_days(d)
-  q * ERA_DAYS + r
+  mul_add(q, r, ERA_DAYS)
+}
+
+/// q * p + r for p > 0, in an order that overflows only when the answer
+/// does not fit Int: r moved into 0 to p - 1 first, and for a negative q
+/// the product taken one step toward zero, (q + 1) * p + (r - p), so a
+/// negative rest never pushes a product past Int.min that the answer is
+/// above (the review's second reader, 2026-11-14).
+fn mul_add(q: Int, r: Int, p: Int) -> Int {
+  let (c, rr) = split_floor(r, p)
+  let q2 = q + c
+  if q2 < 0 {
+    return (q2 + 1) * p + (rr - p)
+  }
+  q2 * p + rr
 }
 
 /// The days of 400 Gregorian years: a whole number of weeks.
@@ -286,6 +300,27 @@ fn era_year(q: Int, y: Int) -> Int {
     return (q + 6) * 400 + (y - 2400)
   }
   q * 400 + y
+}
+
+/// era_year, None when the year does not fit Int.
+fn era_year_checked(q: Int, y: Int) -> Int? {
+  if q < 0 {
+    return ((q + 6).checked_mul(400) ?? return None).checked_add(y - 2400)
+  }
+  (q.checked_mul(400) ?? return None).checked_add(y)
+}
+
+/// The decimal text of q * 400 + y (y in 1970 to 2369) for a year past
+/// Int's range: q * 4 hundreds and y's, which fit (|q| is at most about
+/// 2.6e16).
+fn wide_year_text(q: Int, y: Int) -> Str {
+  if q >= 0 {
+    // q * 400 + y = (q * 4 + y / 100) hundreds + y % 100
+    return "${q * 4 + y / 100}${pad(y % 100, 2)}"
+  }
+  // -(q * 400 + y) = (-q * 4 - k) hundreds + (k * 100 - y), k = ceil(y / 100)
+  let k = (y + 99) / 100
+  "-${-q * 4 - k}${pad(k * 100 - y, 2)}"
 }
 
 /// n in decimal, at least w digits (fmt's %0*d).
@@ -625,7 +660,7 @@ fn date_add_months(d: time.Date, n: Int) -> time.Date {
 fn date_days_until(d: time.Date, o: time.Date) -> Int {
   let (q1, r1) = split_days(d)
   let (q2, r2) = split_days(o)
-  (q2 - q1) * ERA_DAYS + (r2 - r1)
+  mul_add(q2 - q1, r2 - r1, ERA_DAYS)
 }
 
 fn date_display(d: time.Date) -> Str {
@@ -1089,13 +1124,29 @@ fn format_local_years(items: List[Item], local: Int, nanos: Int, off: Int, z: Zo
   let days = floor_div(local, 86400)
   let rem = local - days * 86400
   let d0 = date_of(days)
-  let d = if eras == 0 { d0 } else { time.Date{year: era_year(eras, d0.year), month: d0.month, day: d0.day} }
+  // a Civil's year past Int's range (a field's carry: month 13 of year
+  // Int.max) is printed from its cycles, not formed as an Int
+  var wide = ""
+  var y = d0.year
+  if eras != 0 {
+    match era_year_checked(eras, d0.year) {
+      Some(v) => y = v
+      None => wide = wide_year_text(eras, d0.year)
+    }
+  }
+  let d = time.Date{year: y, month: d0.month, day: d0.day}
   let hour = rem / 3600
   var out = BytesBuilder.with_capacity(40)
   for it in items {
     match it.code {
       0 => out.write_str(it.lit)
-      1 => put_num(out, d.year, 4)
+      1 => {
+        if wide.is_empty() {
+          put_num(out, d.year, 4)
+        } else {
+          out.write_str(wide)
+        }
+      }
       2 => {
         if it.mode == 0 {
           put_num(out, d.month % 100, 2)
@@ -1216,12 +1267,14 @@ fn civil_split(c: time.Civil) -> (Int, Int, Int) {
 /// not fit Int.
 fn civil_local(c: time.Civil) -> Int {
   let (q, r, s) = civil_split(c)
-  q * (ERA_DAYS * 86400) + (r * 86400 + s)
+  mul_add(q, r * 86400 + s, ERA_DAYS * 86400)
 }
 
 fn civil_unix(c: time.Civil) -> Int {
   let (q, r, s) = civil_split(c)
-  q * (ERA_DAYS * 86400) + (r * 86400 + s - floor_div(c.offset.nanos(), 1000000000))
+  // the offset joins the rest before the cycles multiply: an offset can
+  // bring a wall clock past Int's seconds back into them
+  mul_add(q, r * 86400 + s - floor_div(c.offset.nanos(), 1000000000), ERA_DAYS * 86400)
 }
 
 fn civil_to_time(c: time.Civil) -> Time? {
