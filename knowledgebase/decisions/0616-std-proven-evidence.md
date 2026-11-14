@@ -176,12 +176,45 @@ and contents, sorted by path, of the module's std/MODULE.xo,
 std/native/MODULE.xo (and its std/native/llrt files), std/native/MODULE_native.xo
 (the native bodies of std/MODULE.xo's bodyless functions; added
 2026-11-14, when the url review found url_native.xo's escaper outside the
-hash) and the same files of every std module it imports, directly or not. Evidence counts while that
+hash) and the same files of every std module it imports, directly or not,
+with std/internal.xo (the declarations), but not the runtime (amended
+2026-11-14, below). Evidence counts while that
 hash matches its header's `source`, or
 for 90 days and one minor release after the run, whichever is later. The
 page shows the evidence's commit and date. Stale evidence moves the mark
 back to Solid until a new run lands. A reviewer can run any kind again
 from its header's command.
+
+**Amendment, 2026-11-14 (Xo Lang 3, lead's ruling): the hash stops at the
+runtime.** One rule for every module: the walk follows std modules, each
+module's own std/native files and the module specific std/native/llrt
+files they reach (tzrules, jsontext, flate, sha256), and std/internal.xo,
+but stops at the runtime: the entries std/native/rt.xo,
+std/native/internal.xo, std/prelude.xo and std/native/prelude.xo; the
+core std/native/llrt files alloc, obj, rc, pool, sched, tasks, poll,
+sysio, layout and raw and every file they reach (49 files: the allocator,
+scheduler, task, poll, I/O, thread local and OS layer); and every
+std/native/llrt/sys_*.xo. scripts/stdproven's runtimeEntries and
+runtimeCore name them. Reason: per-module evidence going stale on every
+runtime commit would make Proven mean nothing; runtime changes are
+covered by the runtime's own tests, the 2-hourly fixed point, the
+8-hourly tier and this section's 90-day grace. Found when uuid's hash
+(std/uuid.xo uses std/internal, whose native body reaches most of the
+runtime) covered 105 files. Files hashed before and after:
+
+| Module | Before | After |
+|---|---|---|
+| uuid | 105 | 2 (std/uuid.xo, std/internal.xo) |
+| time | 50 | 9 (time, rttime, the tz llrt files, cabi_time, atexit) |
+| json | 33 | 4 (json, native/json, rtjson, llrt/jsontext) |
+| x509 | 93 | 44 |
+| http | 158 | 109 |
+| url | 5 | 2 |
+| html | 6 | 3 |
+| fnv | 2 | 1 |
+
+Every module's hash changes once with it; the 90 days and one minor
+release keep existing evidence counting.
 
 ### 4. One runner, built once
 

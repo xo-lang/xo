@@ -128,11 +128,55 @@ var useLine = regexp.MustCompile(`^use\s+([a-z0-9_/]+)`)
 // bodyless functions, as url's escape) and of every std file they reach
 // through use lines (std/X, native/X, native/llrt/X, each with its
 // _native.xo), tests left out.
-func sourceHash(module string) (string, []string, error) {
+// runtimeEntries and runtimeCore are where the source hash stops
+// (decision 0616 section 3, amended 2026-11-14): the runtime every module
+// runs on (the entries, the core std/native/llrt files and every file they
+// reach, and the OS layer's llrt sys_* files). Its changes are covered by
+// its own tests, the fixed point and the full tier, not by every module's
+// evidence. Module specific llrt files (tzrules, jsontext, flate, sha256)
+// are still followed.
+var (
+	runtimeEntries = []string{"std/native/rt.xo", "std/native/internal.xo", "std/prelude.xo", "std/native/prelude.xo"}
+	runtimeCore    = []string{"alloc", "obj", "rc", "pool", "sched", "tasks", "poll", "sysio", "layout", "raw"}
+)
+
+// useFiles is the files a `use` path names that exist.
+func useFiles(u string) []string {
+	var c []string
+	switch {
+	case strings.HasPrefix(u, "std/"):
+		c = []string{filepath.Join("std", u[4:]+".xo"), filepath.Join("std", "native", u[4:]+".xo"), filepath.Join("std", "native", u[4:]+"_native.xo")}
+	case strings.HasPrefix(u, "native/"):
+		c = []string{filepath.Join("std", u+".xo")}
+	}
+	return c
+}
+
+// usesOf is the use paths a file names.
+func usesOf(p string) ([]string, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var us []string
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	for sc.Scan() {
+		if m := useLine.FindStringSubmatch(sc.Text()); m != nil {
+			us = append(us, m[1])
+		}
+	}
+	return us, sc.Err()
+}
+
+// closure walks use lines from seeds, skipping tests, missing files and
+// any file stop reports.
+func closure(seeds []string, stop func(string) bool) (map[string]bool, error) {
 	seen := map[string]bool{}
 	var queue []string
 	add := func(p string) {
-		if seen[p] || strings.HasSuffix(p, "_test.xo") {
+		if seen[p] || strings.HasSuffix(p, "_test.xo") || stop(p) {
 			return
 		}
 		if _, err := os.Stat(p); err != nil {
@@ -141,38 +185,53 @@ func sourceHash(module string) (string, []string, error) {
 		seen[p] = true
 		queue = append(queue, p)
 	}
-	add(filepath.Join("std", module+".xo"))
-	add(filepath.Join("std", "native", module+".xo"))
-	add(filepath.Join("std", "native", module+"_native.xo"))
-	if len(queue) == 0 {
-		return "", nil, fmt.Errorf("no std/%s.xo or std/native/%s.xo (run from the repository root)", module, module)
+	for _, s := range seeds {
+		add(s)
 	}
 	for i := 0; i < len(queue); i++ {
-		f, err := os.Open(queue[i])
+		us, err := usesOf(queue[i])
 		if err != nil {
-			return "", nil, err
+			return nil, err
 		}
-		sc := bufio.NewScanner(f)
-		sc.Buffer(make([]byte, 1<<20), 1<<20)
-		for sc.Scan() {
-			m := useLine.FindStringSubmatch(sc.Text())
-			if m == nil {
-				continue
-			}
-			u := m[1]
-			switch {
-			case strings.HasPrefix(u, "std/"):
-				add(filepath.Join("std", u[4:]+".xo"))
-				add(filepath.Join("std", "native", u[4:]+".xo"))
-				add(filepath.Join("std", "native", u[4:]+"_native.xo"))
-			case strings.HasPrefix(u, "native/"):
-				add(filepath.Join("std", u+".xo"))
+		for _, u := range us {
+			for _, f := range useFiles(u) {
+				add(f)
 			}
 		}
-		f.Close()
-		if err := sc.Err(); err != nil {
-			return "", nil, err
-		}
+	}
+	return seen, nil
+}
+
+// runtimeFiles is the set the source hash stops at.
+func runtimeFiles() (map[string]bool, error) {
+	var seeds []string
+	for _, c := range runtimeCore {
+		seeds = append(seeds, filepath.Join("std", "native", "llrt", c+".xo"))
+	}
+	rt, err := closure(seeds, func(string) bool { return false })
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range runtimeEntries {
+		rt[filepath.FromSlash(e)] = true
+	}
+	return rt, nil
+}
+
+func sourceHash(module string) (string, []string, error) {
+	rt, err := runtimeFiles()
+	if err != nil {
+		return "", nil, err
+	}
+	stop := func(p string) bool {
+		return rt[p] || (filepath.Dir(p) == filepath.Join("std", "native", "llrt") && strings.HasPrefix(filepath.Base(p), "sys_"))
+	}
+	seen, err := closure(useFiles("std/"+module), stop)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(seen) == 0 {
+		return "", nil, fmt.Errorf("no std/%s.xo or std/native/%s.xo (run from the repository root)", module, module)
 	}
 	files := make([]string, 0, len(seen))
 	for p := range seen {
