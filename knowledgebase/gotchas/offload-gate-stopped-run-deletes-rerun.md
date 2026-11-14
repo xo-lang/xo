@@ -20,7 +20,10 @@ and checkout, which by then belong to the rerun of the same name.
 
 ## Fix
 
-Do not rerun under the same name while a stopped run's host job may still be
+Fixed in scripts/lead/offload-gate.sh (2026-11-13): the bundle
+(`/work/in/gate-NAME-RUNID.bundle`) and the host checkout
+(`/work/gateNAME-RUNID`) carry the run's OFF_RUNID, so a stopped run's
+cleanup removes only its own. Before that fix the workaround was: do not rerun under the same name while a stopped run's host job may still be
 alive. Gate from a second worktree at the same commit (`git worktree add
 --detach ~/xo-wt/OTHER COMMIT`), whose basename gives a new gate name, or wait
 until the old job's log ends. Stop a queued run with the cancel file its lease
