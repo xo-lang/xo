@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Security (std/compress, native backends): a `Decompressor`'s first error is returned by every later `write` and `finish`, as Go's readers keep theirs; it went on decoding the input given after an error, so the error changed between calls. Affected: 0.51.0 and earlier.
 - Code size (amd64 native): a copy of 32 or more words between memory (a large value or a call's large arguments) is one `rep movsq` instead of 16 byte `movdqu` pairs: the gcp aiplatform/apiv1 test build has 33% fewer instructions (31.4 M to 21.1 M). The arm64 backend made the same copies compact in 53d136544 and 0631.
 - Security (std/http client, native backends): a streaming client read of a gzip response gave the whole received chunk to the decoder at once, so about 1 MB of hostile gzip could ask for up to 1 GiB of output in one step (1064 MB RSS for a 1000 MB bomb, now 23 MB); the body now goes to the decoder 4 KiB at a time, so one step's output stays near 4 MB. `read_all` still gathers up to its `max_size` (default 1 GiB): pass a smaller one for untrusted servers. Affected: 0.51.0 and earlier.
 - Build memory (compiler): a generic function's parsed body is given back after each instance is built (the next instance parses it again), where every generic body was kept to the end of the front end: the gcp aiplatform/apiv1 test build (Mac, cold, default caches) peaks at 2.48 GB footprint, was 2.53 GB; xo's own build is unchanged.
