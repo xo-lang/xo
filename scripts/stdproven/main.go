@@ -477,6 +477,12 @@ func race(args []string) error {
 			// kind's: memory is the stress kind's, and the task churn
 			// below compares the growth per task with Go's
 			memOnly := err != nil && strings.HasSuffix(last, ", FAIL (memory grew)") && strings.Contains(last, " 0 mismatches")
+			// only with the task churn in this run to judge memory per
+			// task instead (lead, 2026-11-13: else a race-build leak
+			// would pass unseen)
+			if memOnly && *churnRounds == 0 {
+				return fmt.Errorf("stress under --race grew in memory and -churn-rounds 0 skips the task churn that would judge it: run the churn\n%s", last)
+			}
 			if memOnly {
 				last = strings.TrimSuffix(last, ", FAIL (memory grew)") + ", memory not judged under --race"
 			}
@@ -506,6 +512,13 @@ func race(args []string) error {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "kind: race\nmodule: %s\nresult: pass\ncommit: %s\nsource: %s\ndate: %s\nhost: %s\n", module, commit, src, time.Now().UTC().Format("2006-01-02"), host)
+	if *churnRounds > 0 {
+		gv, err := exec.Command("go", "env", "GOVERSION").Output()
+		if err != nil {
+			return fmt.Errorf("go env GOVERSION: %v", err)
+		}
+		fmt.Fprintf(&b, "go: %s (the task churn's Go twin)\n", strings.TrimSpace(string(gv)))
+	}
 	fmt.Fprintf(&b, "command: go run ./scripts/stdproven race -backend %s -stress-minutes %d -churn-rounds %d -host %q %s\n", *backend, *stressMin, *churnRounds, host, module)
 	fmt.Fprintf(&b, "measure: %d runs under --race on %s, 0 data races, 0 failures, %s\n\n", len(runs), *backend, time.Since(start).Round(time.Second))
 	fmt.Fprintf(&b, "Race evidence (decision 0616): std/%s's tests, corpora and stress program under --race (ThreadSanitizer).\n\n", module)

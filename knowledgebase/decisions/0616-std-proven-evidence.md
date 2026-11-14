@@ -132,14 +132,18 @@ linux/arm64, never reclaimed). So a server's stress program grows under
 too. The race kind therefore judges races, not the stress program's
 memory: a stress run under `--race` whose only failure is memory growth,
 with 0 mismatches, counts as clean, and its line says memory was not
-judged. Memory stays the stress kind's, without `--race`. What the race
+judged, but only in a run whose task churn (below) passes: a
+memory-only failure with the churn skipped or failing fails the kind,
+so a real race-build leak cannot pass unseen. Memory stays the stress
+kind's, without `--race`. What the race
 kind judges instead is the cost per task: a task churn (10 million
 tasks spawned and awaited, scripts/stdproven/racechurn, and its Go twin
 under `-race`) whose growth per finished task over the last 4 million
 must be within 1.25 times Go's. The first 6 million are a warm-up: Xo's
 C-flavor ThreadSanitizer fills a pool of 256 KB trace parts (Go's flavor
 uses 128 KB parts) to about 1.8 GB before it recycles them. That
-resident set is shown in race.md and not judged. Measured on host 2:
+resident set is shown in race.md and not judged; race.md's header names
+the Go version of the twin (`go:`). Measured on host 2:
 Xo 296 B per task after the pool is full, Go 255 B (1.16).
 
 ### 3. Staleness
