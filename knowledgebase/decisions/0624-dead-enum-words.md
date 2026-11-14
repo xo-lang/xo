@@ -127,6 +127,39 @@ darwin/arm64, -deadw against the default, on the landing commit
 | aws presign | 2,434,924 | 2,425,328 | -0.39% |
 | xo | 37,806,884 | 37,753,724 | -0.14% |
 
+## Implementation (stage 5, the remaining sinks, Xo Lang 1, 2026-11-14)
+
+- Stores (byref.xo store_val_at, the value's dead_mask then
+  store_live_at): an edge's argument stored into a held memory or an sret
+  parameter slot (isel.xo edge_store_words), a set field stored in place
+  (set_field_op), eq_addr's frame area (closures.xo), a by-reference
+  call's argument areas and held memories, and a var parameter's write
+  back (byref.xo).
+- Moves: a call's argument words (calls.xo push_arg_srcs: S_DEAD
+  sources, skipped by emit.xo call_moves_v and x86emit.xo
+  x86_call_moves) and a block argument's words into its parameter
+  (isel.xo edge moves: S_DEAD sources in the edge's parallel move, which
+  keep the parameter's defs for the register allocator and the MIR
+  verifier, skipped by emit's K_PMOVE; dropping the moves instead left
+  the parameter read before written on that edge, which the verifier
+  rejects). With +deadw_poison each gets the pattern.
+- The block arguments are most of it: a struct whose fields are None
+  passed to a block parameter moved each of its words into the
+  parameter's spill homes (gcp bigquery Job.set_status: one run of 620
+  `str xzr`). Sizes (darwin/arm64 __text, whole program, XO_SEPCOMP=0,
+  XO_INLINE_STRICT=1; xo: the same compiler/xo source built by each xo,
+  backend cache off; main b91e3c451 against this stage):
+
+| program | main | stage 5 | change |
+|---|---|---|---|
+| gcp calendar | 2,021,524 | 2,005,604 | -0.79% |
+| gcp BigQuery sample | 4,047,448 | 3,965,552 | -2.02% |
+| aws presign | 2,434,344 | 2,422,704 | -0.48% |
+| xo | 37,271,884 | 36,768,348 | -1.35% |
+
+  The stores and call arguments alone gave xo -8.6 KB and the gcp
+  samples under 1 KB each; BigQuery's `str xzr` went from 26,248 to 8,879.
+
 ## Consequences
 
 - Stored bytes in list elements and result areas become run dependent;
