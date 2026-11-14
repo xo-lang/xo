@@ -1281,9 +1281,7 @@ fn (var g: G) call_op(v: Int) {
     let (sp1, ep1) = g.f.args_span(x.args)
     for ak1 in sp1..ep1 {
       let a = g.f.argpool[ak1]
-      for w in g.words(a) {
-        args.push(rsrc(w))
-      }
+      g.push_arg_srcs(args, a, g.words(a))
     }
     let sret = g.sret_of(ci)
     let sad = if sret { g.sret_slot(v, ci, args) } else { 0 }

@@ -268,6 +268,20 @@ fn (var g: G) ret_sret(a: Int) {
   g.store_live_at(g.sret_ptr, 0, g.words(a), dm)
 }
 
+/// Pushes the operands of call argument a, its words ws, to srcs: a dead
+/// word (decision 0624, dead_mask) as dead_src, which the call's moves
+/// skip (or, with +deadw_poison, the pattern).
+fn (var g: G) push_arg_srcs(var srcs: List[Src], a: Int, ws: List[Int]) {
+  let dm = g.dead_mask(a)
+  for (k, w) in ws.indexed() {
+    if k < dm.len() && dm[k] && dm.len() == ws.len() {
+      srcs.push(g.dead_src())
+    } else {
+      srcs.push(rsrc(w))
+    }
+  }
+}
+
 /// Stores ws, the words of value a, at base from word w0, leaving out a's
 /// dead words (decision 0624, dead_mask).
 fn (var g: G) store_val_at(base: Int, w0: Int, a: Int, ws: List[Int]) {
@@ -1928,7 +1942,7 @@ fn (var g: G) by_ref_call(v: Int, ci: Int) {
   var nth: Map[Int, Int] = {}
   for (i, a) in args.indexed() {
     if !br[i] {
-      srcs = srcs + regs(words[i])
+      g.push_arg_srcs(srcs, a, words[i])
       continue
     }
     if let Some(ptr) = in_place.get(i) {
