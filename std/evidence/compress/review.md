@@ -63,15 +63,15 @@ Sibling classes in Go's other decoders, checked:
 
 | Input a peer controls | Limit | Where | Test at and past it |
 |---|---|---|---|
-| Output of gunzip, inflate, unzlib | max_size (default 1 GiB); decoding stops as the output passes max_size + 1, as Go's LimitReader(max_size + 1) | compress.xo:61 limit_of, :63 over; flate.xo:1694, 1757, 1786 (one shot), 1868, 1912, 1974 (streaming) | compress_limits: max_size = length passes and length - 1 fails for gzip, deflate, zlib, one shot and streamed; a 1027:1 stream (10 MB of zeros in 10,206 bytes) stopped at 1 MB; compressfuzz corpus and harness at length - 1 for every stream that decodes |
-| Errors of a Decompressor | the first error is kept: every later write and finish returns it without decoding, and the decoder's buffers are dropped (G1) | compress.xo Decompressor.stop | compress_stream_edges: a corrupt deflate, a corrupt zlib and a gzip over max_size, then a fresh valid stream twice and finish |
-| Output of a Decompressor | max_size over all writes (the stream's limit max_size + 1, and the bytes given out counted against max_size) | compress.xo:316 give; flate.xo InStream (f.limit, f.dropped) | compress_limits streamed rows; compress_stream_edges: max_size + 1 bytes with a bad and a good CRC-32, as one shot |
+| Output of gunzip, inflate, unzlib | max_size (default 1 GiB); decoding stops as the output passes max_size + 1, as Go's LimitReader(max_size + 1) | std/native/compress.xo:61 limit_of, :63 over; flate.xo:1694, 1757, 1786 (one shot), 1868, 1912, 1974 (streaming) | compress_limits: max_size = length passes and length - 1 fails for gzip, deflate, zlib, one shot and streamed; a 1027:1 stream (10 MB of zeros in 10,206 bytes) stopped at 1 MB; compressfuzz corpus and harness at length - 1 for every stream that decodes |
+| Errors of a Decompressor | the first error is kept: every later write and finish returns it without decoding, and the decoder's buffers are dropped (G1) | std/native/compress.xo Decompressor.stop | compress_stream_edges: a corrupt deflate, a corrupt zlib and a gzip over max_size, then a fresh valid stream twice and finish |
+| Output of a Decompressor | max_size over all writes (the stream's limit max_size + 1, and the bytes given out counted against max_size) | std/native/compress.xo:329 give; flate.xo InStream (f.limit, f.dropped) | compress_limits streamed rows; compress_stream_edges: max_size + 1 bytes with a bad and a good CRC-32, as one shot |
 | Memory of one Decompressor write | about twice the output of that write (the decoder's list and one Bytes copy); the output of one write is bounded by max_size, not by the write's size (DEFLATE gives up to about 1032 bytes a byte: G2, spec/std.md); std/http's client feeds the decoder 4 KiB at a time (GZ_SLICE), so its steps stay near 4 MB; a write bounded by its caller is ADR 0635 (0.52) | flate.xo drain, list_range_bytes; std/native/http.xo GZ_SLICE | timing below: a write inflating 1.3 MB to 206 MB peaks at 420 MB (one shot 419 MB); http_gzip_hostile: read(64 KiB) and read(1 MiB) of about 1 MB of gzip that inflates to 1000 MB keep the heap under 50 MB (23 MB RSS; 0.51.0 6.4 GB) |
-| Output of lzw_decode | max_size | compress.xo:751 | compress_limits lzw row; TestLzwFuzz at length - 1 |
+| Output of lzw_decode | max_size | std/native/compress.xo:772 | compress_limits lzw row; TestLzwFuzz at length - 1 |
 | gzip FNAME and FCOMMENT | 511 bytes and the NUL (Go's 512 byte buffer) | flate.xo:2531 | compress_stream_hostile: FNAME 511, 512, 1 MB; compress_stream_edges: FCOMMENT 511, 512; one shot and streamed |
 | gzip FEXTRA | 65,535 bytes, skipped, not stored | flate.xo:2518 | compress_stream_hostile: 65,535 bytes in 64 byte writes and cut short |
 | Dynamic Huffman header | HLIT at most 286 codes, HDIST at most 30, complete codes | flate.xo:1604, 1609, 1328 | compress_stream_edges: HLIT 29 (286) passes the check, 30 and 31 refused; HDIST 29 (30) passes, 30 and 31 refused; compressfuzz (random and bit-changed headers) |
-| LZW codes | 12 bit, 4096 entries; a code above the table is `lzw: invalid code` | compress.xo:689 | lzw and lzwfuzz corpora, TestLzwFuzz |
+| LZW codes | 12 bit, 4096 entries; a code above the table is `lzw: invalid code` | std/native/compress.xo:710 | lzw and lzwfuzz corpora, TestLzwFuzz |
 | Concatenated gzip members; one DEFLATE block's length | none, as Go: linear time, no stack per member | flate.xo:2585, InStream huffman_part, stored_part | compress_limits (10^6 members); compress_stream_hostile (a 1 MB block in 64 byte writes); timings below |
 
 Timings (darwin/arm64, 2026-11-14; probe programs as in the goldens):
@@ -103,7 +103,7 @@ writes is about 16,000 writes).
   at most about 700 bytes, is reread on every write. Test:
   std/native/llrt/flate_test.xo (output on the push that completes the
   header, and a byte at a time).
-- G1 (822b84ef5, Lang 3's second read): after an error the native
+- G1 (b91e3c451, Lang 3's second read): after an error the native
   Decompressor parsed whatever later writes gave it, so the error changed
   between calls and only the decoder's state kept a later write from
   succeeding (none was seen to). It now keeps its first error, returns it
@@ -129,7 +129,7 @@ BREACH; that is the caller's protocol choice, as with Go's packages.)
 
 Fault sites:
 
-- compress.xo:20 level_of: `Level.Of(n)` outside -2 to 9 faults, as
+- std/native/compress.xo:20 level_of: `Level.Of(n)` outside -2 to 9 faults, as
   flate.NewWriter returns an error. The level is the caller's argument,
   never peer input; std/compress.xo's Level doc says so.
 - flate.xo load32 (fault on a read past the compressor's buffer): an
@@ -143,8 +143,8 @@ Huffman tables are built only from complete codes (flate.xo:1328) and
 indexed by at most 9 bits and the link mask; huff_sym reports a zero
 length code as corrupt; read_huffman refuses a
 repeat at index 0 and a run past the lengths; the LZW decoder rejects a
-code above its table (compress.xo:689), its prefix chains strictly
-decrease, and its 8192 byte buffer (compress.xo:588) holds a batch's 4096
+code above its table (std/native/compress.xo:710), its prefix chains strictly
+decrease, and its 8192 byte buffer (std/native/compress.xo:609) holds a batch's 4096
 bytes plus the longest chain (Go's 2 * maxCode).
 
 Unchecked memory operations on the decode path, and the invariant each
@@ -192,4 +192,6 @@ sites, file:line, placeholders, FCOMMENT and HLIT/HDIST tests, timings,
 the measure count) and 8 (output lost on a failing write; the max_size +
 1 order) answered in this text and compress_stream_edges.
 
-Second reader: Xo Lang 3, 2026-11-14, read at df1d65cd7, then 822b84ef5 (with main's bb3b79dce for std/http). Probed on arm64, llvm and go against the sections' claims. Findings: G1, native Decompressor errors were not sticky (later writes decoded on and the error changed; no Ok after an error was seen); fixed in 822b84ef5, which keeps the first error, drops the decoder's state, and is tested in compress_stream_edges (a corrupt deflate, a corrupt zlib, gzip over max_size, then fresh valid streams). G2, one write's output is bounded by max_size, not by the write (a 260 KB gzip of 256 MB of zeros in 32 KB writes returned up to 35.9 MB per write, 360 MB peak); std/http's client feeds the decoder GZ_SLICE (4 KiB) at a time and http_gzip_hostile holds read(64 KiB) and read(1 MiB) of a 1000 MB bomb under 50 MB of heap; the per-write bound is documented in spec/std.md and sections 2 and 5, and a bounded write is planned for 0.52 (ADR 0635). I agree with sections 1, 3, 4 and 5 and with F1 to F4.
+Second reader: Xo Lang 3, 2026-11-14, read at df1d65cd7, then 822b84ef5 [a branch commit; the same change is b91e3c451 on main] (with main's bb3b79dce for std/http). Probed on arm64, llvm and go against the sections' claims. Findings: G1, native Decompressor errors were not sticky (later writes decoded on and the error changed; no Ok after an error was seen); fixed in 822b84ef5, which keeps the first error, drops the decoder's state, and is tested in compress_stream_edges (a corrupt deflate, a corrupt zlib, gzip over max_size, then fresh valid streams). G2, one write's output is bounded by max_size, not by the write (a 260 KB gzip of 256 MB of zeros in 32 KB writes returned up to 35.9 MB per write, 360 MB peak); std/http's client feeds the decoder GZ_SLICE (4 KiB) at a time and http_gzip_hostile holds read(64 KiB) and read(1 MiB) of a 1000 MB bomb under 50 MB of heap; the per-write bound is documented in spec/std.md and sections 2 and 5, and a bounded write is planned for 0.52 (ADR 0635). I agree with sections 1, 3, 4 and 5 and with F1 to F4.
+
+Third reader: aws-43, 2026-11-14, read against main 849937377 (flate.xo and std/compress.xo as at b91e3c451). Probed: a differential of the streamed Decompressor against one shot decoding, 450 cases per backend on arm64 and llvm (8.7 MB of input; gzip, deflate and zlib at levels -2 to 9; data to 300 KB with copies 20 to 32 KB back, across the drain's window trim; writes of 1 byte to 70 KB mixed; streams cut short, with a bit flipped, two gzip members, trailing bytes; max_size = length passes and length - 1 fails), 0 mismatches and 0 differences in error text; 1 byte writes at 1 MB and 2 MB of output (stored 35 and 74 ms, Huffman only 33 and 74, level 6 35 and 69: linear). Agrees with sections 1 and 3 to 5, F1 to F4, G1 and G2. Text fixes: this file's G1 commit and std/native/compress.xo line numbers (made); the section comment above flate.xo InStream (std/native/llrt/flate.xo about line 2622) still describes the header reread of before F3 ("only once the input waiting has doubled"; gzip_need replaced it, and a dynamic header is read again on every push). That comment is fixed with the next change to InStream (decision 0635, bounded writes, 0.52), not alone, since a comment change alone changes the source hash this evidence names.
