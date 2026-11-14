@@ -314,6 +314,26 @@ const CRC_TABLE: List[Int] = [
 
 /// hash/crc32's slicing-by-8 update: eight bytes a step, read as one
 /// word (the first lowest).
+/// crc32 over the IEEE table: an input of 8 bytes or more on a CPU with
+/// arm64's crc32x never reads the table, so it is fetched only on the
+/// table path (std/crc32's short inputs paid a List inc and drop a call).
+pub fn crc32_ieee(crc0: Int, b: Bytes) -> Int {
+  let n = b.len()
+  if n >= 8 && (cpu.hw() & cpu.HW_CRC32) != 0 {
+    var c = crc0 ^ 0xffffffff
+    var i = 0
+    while i + 8 <= n {
+      c = cpu.crc32x(c, rt.bytes_word(b, i))
+      i += 8
+    }
+    if i < n {
+      c = crc_tail(c, b, n, n - i, false)
+    }
+    return c ^ 0xffffffff
+  }
+  crc32(CRC_TABLE, crc0, b)
+}
+
 pub fn crc32(t: List[Int], crc0: Int, b: Bytes) -> Int {
   var c = crc0 ^ 0xffffffff
   var i = 0

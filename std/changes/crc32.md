@@ -1,5 +1,16 @@
 # std/crc32 changes
 
+## 2026-11-14: perf: a short input on arm64 no longer fetches a table
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0616 perf evidence for std/crc32 (bench/perf/crc32 keys and keysc 1.308 of Go on linux/arm64 host 1 at 6781cd66a); XO_PROF on the Mac: the IEEE table's List inc and drop and flate.crc_table were about 12% of keys
+- Go reference: hash/crc32 crc32_arm64.go (ieeeUpdate and castagnoliUpdate read no table on CPUs with the CRC32 instructions), go1.26.1
+- Test: TestCrc32Fuzz on arm64 and LLVM; corpora crc32, crc32fuzz, pngfuzz and compressfuzz; bench/perf/crc32 twincheck
+- Shipped in: not yet released
+
+An input of 8 bytes or more on a CPU with arm64's CRC32 instructions runs the word loop and crc_tail without fetching the slicing-by-8 table (flate.crc32_ieee for IEEE; Castagnoli returns before its table), where each call took a List inc and drop of the table. bench/perf/crc32 on linux/arm64 host 1, --ab against its parent (2a48b9a4b), 9 rounds: keys 0.406 (0.394 to 0.411; 16.46 to 6.69 ms, Go 13.5 ms at 6781cd66a's perf evidence), keysc 0.717 (0.696 to 0.737; 12.25 to 8.78 ms, Go 9.7 ms). Output unchanged.
+
 ## 2026-11-14: perf: the last 1 to 7 bytes of an input take one CRC instruction (arm64)
 
 - Kind: perf
