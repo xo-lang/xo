@@ -1,0 +1,21 @@
+exit 0
+--- stdout
+ok http://u:p@[fe80::1%25en0]:8080/a/../b?x=1&y=%zz#f%20g host=fe80::1%en0 port=8080 ru=/a/../b?x=1&y=%zz red=http://u:xxxxx@[fe80::1%25en0]:8080/a/../b?x=1&y=%zz#f%20g q=x=1
+ok mailto:a@b.c host= port= ru=a@b.c red=mailto:a@b.c q=
+err parse "http://h:1:2/": invalid port ":1:2" after host
+ok ftp://h:1:2/ host=h:1 port=2 ru=/ red=ftp://h:1:2/ q=
+err parse "http://[::1": missing ']' in host
+ok x:y host= port= ru=y red=x:y q=
+ok /a%20b host= port= ru=/a%20b red=/a%20b q=
+ok http://A:B@h/p%2Fq host=h port= ru=/p%2Fq red=http://A:xxxxx@h/p%2Fq q=
+ok file:/x host= port= ru=/x red=file:/x q=
+ok https://a.com/b/c/d;p?q host=a.com port= ru=/b/c/d;p?q red=https://a.com/b/c/d;p?q q=q=
+g:h
+http://a/b/g
+http://a/g
+http://a/b/c/d;p?y
+http://a/b/c/d;p?q#s
+http://a/b/c/g/
+http://a/b/c/d;p?q
+https://x.com/b/c/
+--- stderr

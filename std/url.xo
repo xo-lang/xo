@@ -11,6 +11,7 @@
 // invalid byte as its `%XX` escape, so Str stays valid UTF-8 (Go returns
 // the raw bytes).
 
+use std/netip
 
 /// A malformed escape or query; displays as Go's text, for example
 /// `invalid URL escape "%zz"`.
@@ -384,3 +385,869 @@ fn text_of(b: Bytes) -> Str {
 /// raw query is a slice of the request target, itself a copy of the head's
 /// bytes (http1 parse_head, url_text_at), never of the read buffer.
 const OWN_MIN = 4096
+
+// The URL type (decision 0642): Go's url.URL, Parse, ParseRequestURI,
+// String, Redacted, ResolveReference, Query, RequestURI, Hostname, Port
+// and JoinPath, from url.go and encoding_table.go of go1.26, with the
+// same results and error texts (urlstrictcolons at its 1.26 default: an
+// http or https host has at most one colon outside brackets). Decoded
+// parts follow this file's rule for bytes that are not UTF-8: each such
+// byte stays as its `%XX` escape.
+
+/// A URL that did not parse: displays as Go's *url.Error,
+/// `parse "URL": reason`; op is empty for join_path's path errors, which
+/// Go returns bare.
+pub struct UrlErr {
+  pub op: Str
+  pub url: Str
+  pub msg: Str
+}
+
+pub fn (e: UrlErr) display() -> Str {
+  if e.op == "" { e.msg } else { "${e.op} ${go_q(e.url.bytes())}: ${e.msg}" }
+}
+
+/// A user name and an optional password (url.Userinfo; None is Go's
+/// password not set, Some("") an empty one).
+pub struct Userinfo {
+  pub username: Str
+  pub password: Str? = None
+}
+
+/// `user` or `user:password`, each escaped (Userinfo.String).
+pub fn (u: Userinfo) display() -> Str {
+  let s = escape_in(u.username, M_USER)
+  match u.password {
+    Some(p) => s + ":" + escape_in(p, M_USER)
+    None => s
+  }
+}
+
+/// A parsed URL, `[scheme:][//[userinfo@]host][/]path[?query][#fragment]`
+/// or `scheme:opaque[?query][#fragment]` (url.URL). path and fragment are
+/// decoded; raw_path and raw_fragment keep their text as written when
+/// escaping the decoded form gives something else (escaped_path and
+/// escaped_fragment read them). host is `host` or `host:port`, an IPv6
+/// address in brackets.
+pub struct Url {
+  pub scheme: Str = ""
+  /// encoded opaque data
+  pub opaque: Str = ""
+  pub user: Userinfo? = None
+  pub host: Str = ""
+  pub path: Str = ""
+  pub raw_path: Str = ""
+  /// a scheme followed by a path with no `//` (`file:/x`)
+  pub omit_host: Bool = false
+  /// a `?` with nothing after it
+  pub force_query: Bool = false
+  /// the query as written, without the `?` (query decodes it)
+  pub raw_query: Str = ""
+  pub fragment: Str = ""
+  pub raw_fragment: Str = ""
+}
+
+/// raw as a URL, absolute or relative, a fragment after the first `#`
+/// (url.Parse).
+pub fn parse(raw: Str) -> Url ! UrlErr {
+  let (u0, frag) = match raw.cut("#") {
+    Some((a, f)) => (a, f)
+    None => (raw, "")
+  }
+  var u = match parse_in(u0, false) {
+    Ok(x) => x
+    Err(e) => return Err(UrlErr{op: "parse", url: u0, msg: e.msg})
+  }
+  if frag == "" {
+    return Ok(u)
+  }
+  if let Some(e) = u.set_fragment(frag) {
+    return Err(UrlErr{op: "parse", url: raw, msg: e.msg})
+  }
+  Ok(u)
+}
+
+/// raw as an HTTP request target: absolute, or an absolute path, with no
+/// fragment (`#` is part of the path or query) (url.ParseRequestURI).
+pub fn parse_request_uri(raw: Str) -> Url ! UrlErr {
+  match parse_in(raw, true) {
+    Ok(u) => Ok(u)
+    Err(e) => Err(UrlErr{op: "parse", url: raw, msg: e.msg})
+  }
+}
+
+/// base parsed, the elements joined onto its path and cleaned, as text
+/// (url.JoinPath).
+pub fn join_path(base: Str, elems: List[Str]) -> Str ! UrlErr {
+  let u = parse(base)?
+  let (r, err) = u.joined(elems)
+  if let Some(e) = err {
+    return Err(UrlErr{op: "", url: "", msg: e.msg})
+  }
+  Ok(r.display())
+}
+
+/// Whether the URL has a scheme (URL.IsAbs).
+pub fn (u: Url) is_abs() -> Bool { u.scheme != "" }
+
+/// The URL's text (URL.String).
+pub fn (u: Url) display() -> Str {
+  // one buffer sized from the parts, as Go's String grows its builder
+  var b = BytesBuilder.with_capacity(u.scheme.len() + u.opaque.len() + u.host.len() + u.path.len() + u.raw_query.len() + u.fragment.len() + 24)
+  if u.scheme != "" {
+    b.write_str(u.scheme)
+    b.write_str(":")
+  }
+  if u.opaque != "" {
+    b.write_str(u.opaque)
+  } else {
+    let has_user = has(u.user)
+    if u.scheme != "" || u.host != "" || has_user {
+      if !(u.omit_host && u.host == "" && !has_user) {
+        if u.host != "" || u.path != "" || has_user {
+          b.write_str("//")
+        }
+        if let Some(ui) = u.user {
+          b.write_str(ui.display())
+          b.write_str("@")
+        }
+        if u.host != "" {
+          b.write_str(escape_in(u.host, M_HOST))
+        }
+      }
+    }
+    let path = u.escaped_path()
+    if path != "" && !path.starts_with("/") && u.host != "" {
+      b.write_str("/")
+    }
+    if b.len() == 0 {
+      // a relative path whose first segment has a colon would read as a
+      // scheme: `./` keeps it a path
+      let seg = match path.cut("/") {
+        Some((a, _)) => a
+        None => path
+      }
+      if seg.contains(":") {
+        b.write_str("./")
+      }
+    }
+    b.write_str(path)
+  }
+  if u.force_query || u.raw_query != "" {
+    b.write_str("?")
+    b.write_str(u.raw_query)
+  }
+  if u.fragment != "" {
+    b.write_str("#")
+    b.write_str(u.escaped_fragment())
+  }
+  b.freeze().to_str() ?? ""
+}
+
+/// display with a set password as `xxxxx` (URL.Redacted).
+pub fn (u: Url) redacted() -> Str {
+  var r = u
+  if let Some(ui) = u.user {
+    if has(ui.password) {
+      r.user = Some(Userinfo{username: ui.username, password: Some("xxxxx")})
+    }
+  }
+  r.display()
+}
+
+/// The path, escaped: raw_path when it is a valid encoding of path, else
+/// path escaped (URL.EscapedPath).
+pub fn (u: Url) escaped_path() -> Str {
+  if u.raw_path != "" && valid_encoded(u.raw_path, M_PATH) {
+    // the common answer without decoding into a new Str
+    let d = decodes_to(u.raw_path, u.path)
+    if d == 1 {
+      return u.raw_path
+    }
+    if d == 2 {
+      match unescape_in(u.raw_path, M_PATH) {
+        Ok(p) => if p == u.path {
+          return u.raw_path
+        }
+        Err(_) => {}
+      }
+    }
+  }
+  if u.path == "*" {
+    return "*"
+  }
+  escape_in(u.path, M_PATH)
+}
+
+/// The fragment, escaped, as escaped_path (URL.EscapedFragment).
+pub fn (u: Url) escaped_fragment() -> Str {
+  if u.raw_fragment != "" && valid_encoded(u.raw_fragment, M_FRAG) {
+    // the common answer without decoding into a new Str
+    let d = decodes_to(u.raw_fragment, u.fragment)
+    if d == 1 {
+      return u.raw_fragment
+    }
+    if d == 2 {
+      match unescape_in(u.raw_fragment, M_FRAG) {
+        Ok(f) => if f == u.fragment {
+          return u.raw_fragment
+        }
+        Err(_) => {}
+      }
+    }
+  }
+  escape_in(u.fragment, M_FRAG)
+}
+
+/// ref parsed and resolved against u (URL.Parse).
+pub fn (u: Url) parse_ref(r: Str) -> Url ! UrlErr { Ok(u.resolve_reference(parse(r)?)) }
+
+/// r resolved against u as a base, RFC 3986 section 5.2 (dot segments
+/// removed; URL.ResolveReference).
+pub fn (u: Url) resolve_reference(r: Url) -> Url {
+  var url = r
+  if r.scheme == "" {
+    url.scheme = u.scheme
+  }
+  if r.scheme != "" || r.host != "" || has(r.user) {
+    let _e = url.set_path(resolve_path(r.escaped_path(), ""))
+    return url
+  }
+  if r.opaque != "" {
+    url.user = None
+    url.host = ""
+    url.path = ""
+    return url
+  }
+  if r.path == "" && !r.force_query && r.raw_query == "" {
+    url.raw_query = u.raw_query
+    if r.fragment == "" {
+      url.fragment = u.fragment
+      url.raw_fragment = u.raw_fragment
+    }
+  }
+  if r.path == "" && u.opaque != "" {
+    url.opaque = u.opaque
+    url.user = None
+    url.host = ""
+    url.path = ""
+    return url
+  }
+  url.host = u.host
+  url.user = u.user
+  let _e = url.set_path(resolve_path(u.escaped_path(), r.escaped_path()))
+  url
+}
+
+/// raw_query decoded; a pair that does not decode is left out, as
+/// URL.Query drops ParseQuery's error.
+pub fn (u: Url) query() -> Values {
+  var v = values()
+  let q = u.raw_query
+  if q.count("&") + 1 > MAX_PARAMS {
+    return v
+  }
+  for pair in q.split("&") {
+    if pair == "" || pair.contains(";") {
+      continue
+    }
+    let (k0, x0) = match pair.cut("=") {
+      Some((a, x)) => (a, x)
+      None => (pair, "")
+    }
+    match query_unescape(k0) {
+      Ok(k) => match query_unescape(x0) {
+        Ok(x) => v.add(k, x)
+        Err(_) => {}
+      }
+      Err(_) => {}
+    }
+  }
+  v
+}
+
+/// The path and query an HTTP request line carries (URL.RequestURI).
+pub fn (u: Url) request_uri() -> Str {
+  var r = u.opaque
+  if r == "" {
+    r = u.escaped_path()
+    if r == "" {
+      r = "/"
+    }
+  } else if r.starts_with("//") {
+    r = u.scheme + ":" + r
+  }
+  if u.force_query || u.raw_query != "" {
+    r = r + "?" + u.raw_query
+  }
+  r
+}
+
+/// host without its port, an IPv6 address without brackets
+/// (URL.Hostname).
+pub fn (u: Url) hostname() -> Str { split_host_port(u.host).0 }
+
+/// The port after host's last colon, "" when none (URL.Port).
+pub fn (u: Url) port() -> Str { split_host_port(u.host).1 }
+
+/// u with the elements joined onto its path and the result cleaned, a
+/// trailing `/` kept from the last (URL.JoinPath; a path that does not
+/// decode leaves the path as it was).
+pub fn (u: Url) join_path(elems: List[Str]) -> Url { u.joined(elems).0 }
+
+/// Escape modes: Go's encoding values (encoding_table.go).
+const M_PATH = 1
+const M_SEG = 2
+const M_HOST = 4
+const M_ZONE = 8
+const M_USER = 16
+const M_QUERY = 32
+const M_FRAG = 64
+
+fn has[T](o: T?) -> Bool {
+  match o {
+    Some(_) => true
+    None => false
+  }
+}
+
+/// Per byte, the escape modes that keep it as it is (Go's
+/// encoding_table.go table, without its hexChar bit; checked against it
+/// when this was written).
+const MODES: Bytes = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x4c\x0c\x00\x5f\x00\x5f\x0c\x4c\x4c\x4c\x5f\x5d\x7f\x7f\x41\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x4f\x5d\x0c\x5f\x0c\x40\x43\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x0c\x00\x0c\x00\x7f\x00\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x00\x00\x00\x7f\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+
+/// Whether mode leaves c as it is (Go's table[c]&mode != 0).
+fn keeps_in(c: Int, mode: Int) -> Bool { (Int(MODES[c]) & mode) != 0 }
+
+/// s with every byte mode does not keep as `%XX` (escape for the modes
+/// but the query component).
+fn escape_in(s: Str, mode: Int) -> Str {
+  let b = s.bytes()
+  let first = escape_at(b, mode)
+  if first < 0 {
+    return s
+  }
+  var n = 0
+  for i in first..b.len() {
+    let k = Int(b[i])
+    if (Int(MODES[k]) & mode) == 0 {
+      n += 1
+    }
+  }
+  let hex = UPPER_HEX.bytes()
+  var out = BytesBuilder.with_capacity(b.len() + 2 * n)
+  out.write(b[0..first])
+  for i in first..b.len() {
+    let c = b[i]
+    let v = Int(c)
+    if (Int(MODES[v]) & mode) != 0 {
+      out.write_byte(c)
+    } else {
+      out.write_byte(37)
+      out.write_byte(hex[v >> 4])
+      out.write_byte(hex[v & 15])
+    }
+  }
+  out.freeze().to_str() ?? ""
+}
+
+/// The index of the first byte of b that mode escapes, or -1.
+fn escape_at(b: Bytes, mode: Int) -> Int {
+  for i in 0..b.len() {
+    let k = Int(b[i])
+    if (Int(MODES[k]) & mode) == 0 {
+      return i
+    }
+  }
+  -1
+}
+
+/// unescape for the modes but the query component: a host's escapes may
+/// only stand for bytes from 0x80 (or `%25`), a zone's for bytes a host
+/// keeps, a space, or `%25`, and a host or zone byte below 0x80 that the
+/// mode does not keep is an error.
+fn unescape_in(s: Str, mode: Int) -> Str ! EscapeErr {
+  let hostish = mode == M_HOST || mode == M_ZONE
+  if !hostish && s.find("%") == None {
+    return Ok(s)
+  }
+  let b = s.bytes()
+  var n = 0
+  var i = 0
+  while i < b.len() {
+    let c = Int(b[i])
+    if c == 37 {
+      n += 1
+      if i + 2 >= b.len() || !is_hex(b[i + 1]) || !is_hex(b[i + 2]) {
+        let end = if i + 3 < b.len() { i + 3 } else { b.len() }
+        return Err(escape_error(b[i..end]))
+      }
+      let pct = b[i + 1] == 50 && b[i + 2] == 53
+      if mode == M_HOST && unhex(b[i + 1]) < 8 && !pct {
+        return Err(escape_error(b[i..i + 3]))
+      }
+      if mode == M_ZONE {
+        let v = unhex(b[i + 1]) * 16 + unhex(b[i + 2])
+        if !pct && v != 32 && !keeps_in(v, M_HOST) {
+          return Err(escape_error(b[i..i + 3]))
+        }
+      }
+      i += 3
+    } else {
+      if hostish && c < 128 && !keeps_in(c, mode) {
+        return Err(EscapeErr{msg: "invalid character ${go_q(b[i..i + 1])} in host name"})
+      }
+      i += 1
+    }
+  }
+  if n == 0 {
+    return Ok(s)
+  }
+  var out = BytesBuilder.with_capacity(b.len())
+  i = 0
+  while i < b.len() {
+    if b[i] == 37 {
+      out.write_byte(UInt8(unhex(b[i + 1]) * 16 + unhex(b[i + 2])))
+      i += 3
+    } else {
+      out.write_byte(b[i])
+      i += 1
+    }
+  }
+  Ok(text_of(out.freeze()))
+}
+
+/// Whether raw decodes to want: 1 yes, 0 no, 2 unknown (an escape gives
+/// a byte from 0x80, whose decoded form depends on the UTF-8 around it,
+/// or an escape is malformed), so the caller decodes. No Str is made.
+fn decodes_to(raw: Str, want: Str) -> Int {
+  let b = raw.bytes()
+  let w = want.bytes()
+  var i = 0
+  var j = 0
+  while i < b.len() {
+    var c = b[i]
+    if c == 37 {
+      if i + 2 >= b.len() || !is_hex(b[i + 1]) || !is_hex(b[i + 2]) {
+        return 2
+      }
+      let v = unhex(b[i + 1]) * 16 + unhex(b[i + 2])
+      if v >= 128 {
+        return 2
+      }
+      c = UInt8(v)
+      i += 3
+    } else {
+      i += 1
+    }
+    if j >= w.len() || w[j] != c {
+      return 0
+    }
+    j += 1
+  }
+  if j == w.len() { 1 } else { 0 }
+}
+
+/// Whether s, as written, needs no escaping in mode beyond the reserved
+/// bytes it may hold as they are (url.go validEncoded).
+fn valid_encoded(s: Str, mode: Int) -> Bool {
+  for c in s.bytes() {
+    let v = Int(c)
+    let ok = match v {
+      33 | 36 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 59 | 61 | 58 | 64 | 91 | 93 | 37 => true
+      _ => keeps_in(v, mode)
+    }
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+/// "" or `:` and digits (validOptionalPort).
+fn valid_port(p: Str) -> Bool {
+  if p == "" {
+    return true
+  }
+  let b = p.bytes()
+  if b[0] != 58 {
+    return false
+  }
+  for i in 1..b.len() {
+    if b[i] < 48 || b[i] > 57 {
+      return false
+    }
+  }
+  true
+}
+
+/// The path set from its text as written: decoded, with raw_path kept
+/// when escaping gives something else (setPath); the error leaves the
+/// URL as it was.
+fn (var u: Url) set_path(p: Str) -> EscapeErr? {
+  // the common path: no escape and nothing to escape, so it is its own
+  // decoded and escaped form
+  if escape_at(p.bytes(), M_PATH) < 0 {
+    u.path = p
+    u.raw_path = ""
+    return None
+  }
+  match unescape_in(p, M_PATH) {
+    Ok(path) => {
+      u.raw_path = if escape_in(path, M_PATH) == p { "" } else { p }
+      u.path = path
+      None
+    }
+    Err(e) => Some(e)
+  }
+}
+
+/// The fragment set as set_path sets the path (setFragment).
+fn (var u: Url) set_fragment(f: Str) -> EscapeErr? {
+  if escape_at(f.bytes(), M_FRAG) < 0 {
+    u.fragment = f
+    u.raw_fragment = ""
+    return None
+  }
+  match unescape_in(f, M_FRAG) {
+    Ok(frag) => {
+      u.raw_fragment = if escape_in(frag, M_FRAG) == f { "" } else { f }
+      u.fragment = frag
+      None
+    }
+    Err(e) => Some(e)
+  }
+}
+
+/// url.go parse: rawURL without its fragment; via_request is
+/// ParseRequestURI's form.
+fn parse_in(raw: Str, via_request: Bool) -> Url ! EscapeErr {
+  for c in raw.bytes() {
+    if c < 32 || c == 127 {
+      return Err(EscapeErr{msg: "net/url: invalid control character in URL"})
+    }
+  }
+  if raw == "" && via_request {
+    return Err(EscapeErr{msg: "empty url"})
+  }
+  var u = Url{}
+  if raw == "*" {
+    u.path = "*"
+    return Ok(u)
+  }
+  // getScheme: letters, then letters, digits, `+`, `-`, `.`, up to `:`
+  let b = raw.bytes()
+  var rest = raw
+  for i in 0..b.len() {
+    let c = Int(b[i])
+    if (c >= 97 && c <= 122) || (c >= 65 && c <= 90) {
+      continue
+    }
+    if (c >= 48 && c <= 57) || c == 43 || c == 45 || c == 46 {
+      if i == 0 {
+        break
+      }
+      continue
+    }
+    if c == 58 {
+      if i == 0 {
+        return Err(EscapeErr{msg: "missing protocol scheme"})
+      }
+      u.scheme = raw[0..i].to_lower()
+      rest = raw[i + 1..raw.len()]
+    }
+    break
+  }
+  if rest.ends_with("?") && rest.count("?") == 1 {
+    u.force_query = true
+    rest = rest[0..rest.len() - 1]
+  } else if let Some((a, q)) = rest.cut("?") {
+    rest = a
+    u.raw_query = q
+  }
+  if !rest.starts_with("/") {
+    if u.scheme != "" {
+      // a scheme and no slash: the rest is opaque
+      u.opaque = rest
+      return Ok(u)
+    }
+    if via_request {
+      return Err(EscapeErr{msg: "invalid URI for request"})
+    }
+    let seg = match rest.cut("/") {
+      Some((a, _)) => a
+      None => rest
+    }
+    if seg.contains(":") {
+      return Err(EscapeErr{msg: "first path segment in URL cannot contain colon"})
+    }
+  }
+  if (u.scheme != "" || (!via_request && !rest.starts_with("///"))) && rest.starts_with("//") {
+    var authority = rest[2..rest.len()]
+    rest = ""
+    if let Some(i) = authority.find("/") {
+      rest = authority[i..authority.len()]
+      authority = authority[0..i]
+    }
+    let (user, host) = parse_authority(u.scheme, authority)?
+    u.user = user
+    u.host = host
+  } else if u.scheme != "" && rest.starts_with("/") {
+    u.omit_host = true
+  }
+  if let Some(e) = u.set_path(rest) {
+    return Err(e)
+  }
+  Ok(u)
+}
+
+/// `[userinfo@]host` (parseAuthority): the host after the last `@`.
+fn parse_authority(scheme: Str, authority: Str) -> (Userinfo?, Str) ! EscapeErr {
+  let at = authority.rfind("@")
+  let host = match at {
+    Some(i) => parse_host(scheme, authority[i + 1..authority.len()])?
+    None => parse_host(scheme, authority)?
+  }
+  let i = match at {
+    Some(i) => i
+    None => return Ok((None, host))
+  }
+  let ui = authority[0..i]
+  if !valid_userinfo(ui) {
+    return Err(EscapeErr{msg: "net/url: invalid userinfo"})
+  }
+  match ui.cut(":") {
+    Some((name, pw)) => Ok((Some(Userinfo{username: unescape_in(name, M_USER)?, password: Some(unescape_in(pw, M_USER)?)}), host))
+    None => Ok((Some(Userinfo{username: unescape_in(ui, M_USER)?}), host))
+  }
+}
+
+/// The host, decoded, an IPv6 literal checked (parseHost).
+fn parse_host(scheme: Str, host: Str) -> Str ! EscapeErr {
+  if let Some(o) = host.rfind("[") {
+    if o > 0 {
+      return Err(EscapeErr{msg: "invalid IP-literal"})
+    }
+    let cb = match host.rfind("]") {
+      Some(c) => c
+      None => return Err(EscapeErr{msg: "missing ']' in host"})
+    }
+    let colon_port = host[cb + 1..host.len()]
+    if !valid_port(colon_port) {
+      return Err(EscapeErr{msg: "invalid port ${go_q(colon_port.bytes())} after host"})
+    }
+    let ucp = unescape_in(colon_port, M_HOST)?
+    let name = host[1..cb]
+    let uh = match name.find("%25") {
+      // RFC 6874: a zone after `%25`, with its own escapes
+      Some(z) => unescape_in(name[0..z], M_HOST)? + unescape_in(name[z..name.len()], M_ZONE)?
+      None => unescape_in(name, M_HOST)?
+    }
+    match netip.parse_addr(uh) {
+      Ok(a) => if a.is_4() {
+        return Err(EscapeErr{msg: "invalid IP-literal"})
+      }
+      Err(e) => return Err(EscapeErr{msg: "invalid host: " + e.msg})
+    }
+    return Ok("[" + uh + "]" + ucp)
+  }
+  if let Some(first) = host.find(":") {
+    // urlstrictcolons (Go 1.26's default): an http or https host keeps
+    // its first colon, so a second makes the port invalid
+    var i = first
+    let last = host.rfind(":") ?? first
+    if last != first && scheme != "http" && scheme != "https" {
+      i = last
+    }
+    let colon_port = host[i..host.len()]
+    if !valid_port(colon_port) {
+      return Err(EscapeErr{msg: "invalid port ${go_q(colon_port.bytes())} after host"})
+    }
+  }
+  unescape_in(host, M_HOST)
+}
+
+/// Letters, digits, and `-._:~!$&'()*+,;=%@` (validUserinfo).
+fn valid_userinfo(s: Str) -> Bool {
+  for c in s.bytes() {
+    let v = Int(c)
+    if (v >= 97 && v <= 122) || (v >= 65 && v <= 90) || (v >= 48 && v <= 57) {
+      continue
+    }
+    let ok = match v {
+      45 | 46 | 95 | 58 | 126 | 33 | 36 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 59 | 61 | 37 | 64 => true
+      _ => false
+    }
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+/// base and ref merged and their dot segments removed (resolvePath).
+/// Go's buffer is `/` and the elements, each written with a `/` before
+/// it but one written right after that first `/`, and `..` cuts back to
+/// the last `/` after the first: that is the last element. So the
+/// elements are kept in a list, `..` pops one, and the text is written
+/// once at the end. Only the first element can lack its `/` (it is the
+/// only one written while the buffer is `/` alone). The merged path
+/// (base up to its last `/`, then ref) is walked as its two parts, whose
+/// elements are those of base before that `/` and then ref's.
+fn resolve_path(base: Str, r: Str) -> Str {
+  // the parts walked in turn: (first, second), second "" when there is
+  // one part (two is set only when both are walked)
+  var one = r
+  var two = ""
+  var both = false
+  if r == "" {
+    if base == "" {
+      return ""
+    }
+    one = base
+  } else if !r.starts_with("/") {
+    if let Some(i) = base.rfind("/") {
+      one = base[0..i]
+      two = r
+      both = true
+    }
+  }
+  var elems: List[Str] = []
+  var bare = false
+  var first = true
+  // the kind of the last element: 0 a name, 1 `.`, 2 `..`
+  var last = 0
+  var size = 2
+  for k in 0..(if both { 2 } else { 1 }) {
+    let s = if k == 0 { one } else { two }
+    let b = s.bytes()
+    let n = b.len()
+    var from = 0
+    while from <= n {
+      var i = from
+      while i < n && b[i] != 47 {
+        i += 1
+      }
+      let len = i - from
+      if len == 1 && b[from] == 46 {
+        last = 1
+        first = false
+      } else if len == 2 && b[from] == 46 && b[from + 1] == 46 {
+        last = 2
+        if let Some(x) = elems.pop() {
+          size -= x.len() + 1
+        }
+        first = elems.is_empty()
+      } else {
+        last = 0
+        if elems.is_empty() {
+          bare = first
+        }
+        elems.push(s[from..i])
+        size += len + 1
+        first = false
+      }
+      from = i + 1
+    }
+  }
+  var out = BytesBuilder.with_capacity(size)
+  out.write_byte(47)
+  for i in 0..elems.len() {
+    if i > 0 || !bare {
+      out.write_byte(47)
+    }
+    out.write_str(elems[i])
+  }
+  if last != 0 {
+    out.write_byte(47)
+  }
+  let t = out.freeze().to_str() ?? ""
+  // Go's dst[1:] when its second byte is `/`
+  if t.len() > 1 && t.bytes()[1] == 47 {
+    return t[1..t.len()]
+  }
+  t
+}
+
+/// host and port of `host:port`; a port that is not digits stays in the
+/// host, brackets come off an IPv6 host (splitHostPort).
+fn split_host_port(hp: Str) -> (Str, Str) {
+  var host = hp
+  var port = ""
+  if let Some(c) = hp.rfind(":") {
+    if valid_port(hp[c..hp.len()]) {
+      host = hp[0..c]
+      port = hp[c + 1..hp.len()]
+    }
+  }
+  if host.starts_with("[") && host.ends_with("]") {
+    host = host[1..host.len() - 1]
+  }
+  (host, port)
+}
+
+/// joinPath: u with the elements joined and the error setPath gave.
+fn (u: Url) joined(elems: List[Str]) -> (Url, EscapeErr?) {
+  var all = [u.escaped_path()]
+  for e in elems {
+    all.push(e)
+  }
+  var p = ""
+  if !all[0].starts_with("/") {
+    all.set(0, "/" + all[0])
+    let j = go_join(all)
+    p = j[1..j.len()]
+  } else {
+    p = go_join(all)
+  }
+  if all[all.len() - 1].ends_with("/") && !p.ends_with("/") {
+    p = p + "/"
+  }
+  var url = u
+  let err = url.set_path(p)
+  (url, err)
+}
+
+/// path.Join of the elements: the non-empty ones joined with `/` and
+/// cleaned, "" when all are empty.
+fn go_join(elems: List[Str]) -> Str {
+  var parts: List[Str] = []
+  for e in elems {
+    if e != "" {
+      parts.push(e)
+    }
+  }
+  if parts.is_empty() {
+    return ""
+  }
+  clean_path(parts.join("/"))
+}
+
+/// Go's path.Clean: repeated slashes and `.` elements dropped, each `..`
+/// with the element before it, a `..` at the start of a rooted path
+/// dropped, "." for nothing. (std/path's clean is not callable from here:
+/// the Go backend builds std/url into its runtime, where std/path is a
+/// program package.)
+fn clean_path(p: Str) -> Str {
+  if p == "" {
+    return "."
+  }
+  let rooted = p.starts_with("/")
+  var out: List[Str] = []
+  for e in p.split("/") {
+    if e == "" || e == "." {
+      continue
+    }
+    if e == ".." {
+      if out.len() > 0 && out[out.len() - 1] != ".." {
+        let _x = out.pop()
+      } else if !rooted {
+        out.push("..")
+      }
+      continue
+    }
+    out.push(e)
+  }
+  let j = out.join("/")
+  if rooted { "/" + j } else if j == "" { "." } else { j }
+}

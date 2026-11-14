@@ -1,5 +1,17 @@
 # std/url changes
 
+## 2026-11-14: feature: the URL type (Go's url.URL)
+
+- Kind: feature
+- Commit: this push
+- Found by: the decision 0616 features axis (lead, 2026-11-14): std/url's net/url row was partial, with no URL type
+- Go reference: net/url URL, Userinfo, Parse, ParseRequestURI, String, Redacted, ResolveReference, Query, RequestURI, Hostname, Port, JoinPath, and the escape modes of encoding_table.go (go1.26)
+- Change: `Url`, `Userinfo` and `UrlErr`, with `parse`, `parse_request_uri` and `join_path` and the methods above (decision 0642), ported from url.go: Go's results and error texts, urlstrictcolons at its 1.26 default, decoded bytes that are not UTF-8 kept as their `%XX` escapes. Fast paths Go's String and setPath do not need: one buffer sized up front for display, a path with nothing to escape set without decoding, raw_path compared with path as it decodes, and resolve_reference's dot segments kept in a list and written once
+- Measured: bench/perf/url gains parse, string and resolve workloads against Go's twin (scripts/twincheck -time 7 on the Mac, Xo / Go: parse 0.966, string 1.029, resolve 1.075 to 1.125 across runs; output identical); the Proven perf kind runs on linux/arm64 host 1 after this push
+- Test: 529 cases from Go's url_test.go tables with Go's answers (scripts/genurltest) in url_test.xo, xo test --std-module=url on native and llvm; the Go backend's generated file builds (stdsync), and a probe of parse, display, resolve and join_path prints the same on arm64, the Go backend and Go
+- Affected: every backend
+- Shipped in: not yet released
+
 ## 2026-11-14: perf: parse_query finds each pair in one pass and unescapes only parts with an escape; encode sorts key indexes
 
 - Kind: perf

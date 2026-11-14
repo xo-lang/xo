@@ -1,0 +1,24 @@
+// std/url's URL type (decision 0642): parse, display, hostname, port,
+// request_uri, redacted, query, parse_ref and join_path; the output is
+// Go's net/url on the same inputs.
+
+use std/url
+
+fn show(s: Str) -> Str {
+  match url.parse(s) {
+    Ok(u) => "ok ${u.display()} host=${u.hostname()} port=${u.port()} ru=${u.request_uri()} red=${u.redacted()} q=${u.query().encode()}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn main(os: Os) {
+  let xs = ["http://u:p@[fe80::1%25en0]:8080/a/../b?x=1&y=%zz#f%20g", "mailto:a@b.c", "http://h:1:2/", "ftp://h:1:2/", "http://[::1", "x:y", "/a b", "http://%41:%42@h/p%2Fq", "file:/x", "https://a.com/b/c/d;p?q"]
+  for s in xs {
+    os.stdio.println(show(s))
+  }
+  let base = url.parse("http://a/b/c/d;p?q").or_fault("base")
+  for r in ["g:h", "../g", "../../../g", "?y", "#s", "./g/.", ""] {
+    os.stdio.println(base.parse_ref(r).map(fn(u) { u.display() }).ok() ?? "err")
+  }
+  os.stdio.println(url.join_path("https://x.com/a/", ["../b", "c/"]).ok() ?? "err")
+}

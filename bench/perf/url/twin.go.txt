@@ -26,6 +26,24 @@ var queries = []string{
 	"a=1&a=2&a=3&b=&=c",
 }
 
+var urls = []string{
+	"https://user:pass@example.com:8443/a/b%20c/d?x=1&y=two#frag",
+	"http://[fe80::1%25en0]:8080/index.html",
+	"mailto:someone@example.org",
+	"/relative/path/../to/file.txt?q=a+b",
+	"https://go.dev/doc/effective_go.html#names",
+	"ftp://ftp.example.com/pub/file%2Fname.tar.gz",
+}
+
+var refs = []string{
+	"../g",
+	"g/./h?y=1",
+	"//other.example/x",
+	"#s",
+	"../../../a/b/../c",
+	"?only=query",
+}
+
 func main() {
 	w := "none"
 	if len(os.Args) > 1 {
@@ -34,6 +52,23 @@ func main() {
 	enc := make([]string, 0, len(texts))
 	for _, t := range texts {
 		enc = append(enc, url.QueryEscape(t))
+	}
+	parsed := make([]*url.URL, 0, len(urls))
+	for _, u := range urls {
+		p, err := url.Parse(u)
+		if err != nil {
+			p = &url.URL{}
+		}
+		parsed = append(parsed, p)
+	}
+	base, _ := url.Parse("http://a.example/b/c/d;p?q")
+	rels := make([]*url.URL, 0, len(refs))
+	for _, r := range refs {
+		p, err := url.Parse(r)
+		if err != nil {
+			p = &url.URL{}
+		}
+		rels = append(rels, p)
 	}
 	sum := 0
 	for i := 0; i < 200000; i++ {
@@ -57,6 +92,17 @@ func main() {
 			v.Add("tag", texts[(i+1)%8])
 			v.Add("tag", "x y")
 			sum += len(v.Encode())
+		case "parse":
+			u, err := url.Parse(urls[i%6])
+			if err != nil {
+				sum++
+			} else {
+				sum += len(u.Host) + len(u.Path) + len(u.RawQuery)
+			}
+		case "string":
+			sum += len(parsed[i%6].String())
+		case "resolve":
+			sum += len(base.ResolveReference(rels[i%6]).Path)
 		default:
 			sum += len(texts[i%8]) + i%3
 		}

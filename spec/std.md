@@ -5165,6 +5165,65 @@ c.send(http.new_request("POST", token_url,
   headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: body.encode().bytes()))?
 ```
 
+### 20.1 The URL type
+
+Status: implemented on every backend (decision 0642, 2026-11-14): Go's
+url.URL, Parse, ParseRequestURI, String, Redacted, ResolveReference,
+Query, RequestURI, Hostname, Port and JoinPath (url.go and
+encoding_table.go of go1.26) in `std/url.xo`; 529 cases from Go's
+url_test.go tables, generated with Go's answers by
+`scripts/genurltest`, in `url_test.xo`. http keeps its own lighter
+`http.Url` (section 18); this is the full type.
+
+```
+struct UrlErr { op: Str, url: Str, msg: Str }   // displays as Go's *url.Error: parse "URL": reason
+struct Userinfo { username: Str, password: Str? = None }
+fn (u: Userinfo) display() -> Str               // user or user:password, escaped
+
+struct Url {
+  scheme: Str = "", opaque: Str = "", user: Userinfo? = None,
+  host: Str = "",                 // host or host:port, IPv6 in brackets
+  path: Str = "", raw_path: Str = "",            // decoded; raw_path its text when that differs
+  omit_host: Bool = false, force_query: Bool = false,
+  raw_query: Str = "",            // without the ?
+  fragment: Str = "", raw_fragment: Str = "",
+}
+pub fn parse(raw: Str) -> Url ! UrlErr                 // absolute or relative, #fragment
+pub fn parse_request_uri(raw: Str) -> Url ! UrlErr     // a request target: no fragment
+pub fn join_path(base: Str, elems: List[Str]) -> Str ! UrlErr
+fn (u: Url) display() -> Str                    // URL.String
+fn (u: Url) redacted() -> Str                   // a set password as xxxxx
+fn (u: Url) is_abs() -> Bool
+fn (u: Url) escaped_path() -> Str
+fn (u: Url) escaped_fragment() -> Str
+fn (u: Url) parse_ref(r: Str) -> Url ! UrlErr   // URL.Parse: r resolved against u
+fn (u: Url) resolve_reference(r: Url) -> Url    // RFC 3986 5.2
+fn (u: Url) query() -> Values                   // raw_query decoded, bad pairs left out
+fn (u: Url) request_uri() -> Str
+fn (u: Url) hostname() -> Str
+fn (u: Url) port() -> Str
+fn (u: Url) join_path(elems: List[Str]) -> Url
+```
+
+- Results and error texts are Go's, with urlstrictcolons at Go 1.26's
+  default: an `http` or `https` host has at most one colon outside
+  brackets (`invalid port ":1:2" after host`); other schemes split
+  at the last colon.
+- Decoded parts (path, fragment, user, password, host) follow section
+  0's rule: a byte sequence that is not UTF-8 keeps each invalid byte
+  as its `%XX` escape.
+- `query` drops a pair that does not decode and returns no error, as
+  URL.Query drops ParseQuery's; `parse_query` gives the error.
+- `join_path` returns a path that does not decode as `UrlErr` with an
+  empty `op` (Go returns that error bare); the method keeps the path as
+  it was.
+
+```
+let base = url.parse("https://api.example.com/v1/items/")?
+let next = base.parse_ref("../users?page=2")?   // https://api.example.com/v1/users?page=2
+os.stdio.println(next.hostname() + " " + (next.query().get("page") ?? ""))
+```
+
 ---
 
 ## 21. std/base64 and std/base32
