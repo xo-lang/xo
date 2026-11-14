@@ -212,6 +212,9 @@ func (c *checker) buildGo(d *twincheck.Dir, prog string) (string, error) {
 		dir = target
 	} else {
 		dir = c.bin(key + "-module")
+		if err := os.RemoveAll(dir); err != nil {
+			return "", err
+		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return "", err
 		}
@@ -219,19 +222,31 @@ func (c *checker) buildGo(d *twincheck.Dir, prog string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		mod := "module twincheck.local/twin\n\ngo 1.21\n"
-		for _, r := range d.Requires {
-			mod += "\nrequire " + r + "\n"
-		}
-		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(mod), 0o644); err != nil {
-			return "", err
+		gv := filepath.Join(c.root, d.Path, "govendor")
+		if st, err := os.Stat(filepath.Join(gv, "vendor")); err == nil && st.IsDir() && len(d.Requires) > 0 {
+			// The twin's own vendored modules (govendor/go.mod, go.sum,
+			// vendor/ and any local packages): the build needs no module
+			// cache or network (2026-11-14: host 1's cache had no
+			// golang.org/x/net v0.60.0 for bench/perf/idna).
+			if err := os.CopyFS(dir, os.DirFS(gv)); err != nil {
+				return "", err
+			}
+			args = append(args, "-mod=vendor")
+		} else {
+			mod := "module twincheck.local/twin\n\ngo 1.21\n"
+			for _, r := range d.Requires {
+				mod += "\nrequire " + r + "\n"
+			}
+			if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(mod), 0o644); err != nil {
+				return "", err
+			}
+			if len(d.Requires) > 0 {
+				args = append(args, "-mod=mod")
+				env = append(env, "GOPROXY=off", "GOSUMDB=off", "GONOSUMDB=*")
+			}
 		}
 		if err := os.WriteFile(filepath.Join(dir, "main.go"), src, 0o644); err != nil {
 			return "", err
-		}
-		if len(d.Requires) > 0 {
-			args = append(args, "-mod=mod")
-			env = append(env, "GOPROXY=off", "GOSUMDB=off", "GONOSUMDB=*")
 		}
 	}
 	args = append(args, ".")
