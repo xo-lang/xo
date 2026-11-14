@@ -98,10 +98,23 @@ fn gzip(data: Bytes) -> Bytes {
   b.freeze()
 }
 
-fn gunzip(data: Bytes) -> Bytes ! archive.ArchiveErr {
-  match flate.gunzip_members(data, -1) {
-    Ok(out) => out
-    Err(e) => Err(archive_err("gunzip: ${e}"))
+fn gunzip(data: Bytes, max_size: Int) -> Bytes ! archive.ArchiveErr {
+  // the limit max_size + 1, as std/compress's gunzip (Go's LimitReader)
+  let max = if max_size < 0 { 0 } else { max_size }
+  let too_big = archive_err("gunzip: gzip: output exceeds max_size (${max} bytes)")
+  match flate.gunzip_members(data, max + 1) {
+    Ok(out) => {
+      if out.len() > max {
+        return Err(too_big)
+      }
+      out
+    }
+    Err(e) => {
+      if e == flate.LIMIT {
+        return Err(too_big)
+      }
+      Err(archive_err("gunzip: ${e}"))
+    }
   }
 }
 
@@ -1648,8 +1661,8 @@ fn zip_modified(zf: ZipHdr) -> Int {
   (days * 86400 + (zf.time >> 11) * 3600 + ((zf.time >> 5) & 63) * 60 + (zf.time & 31) * 2) * 1000000000
 }
 
-fn unzip(data: Bytes) -> List[archive.Entry] ! archive.ArchiveErr {
-  match unzip_entries(data) {
+fn unzip(data: Bytes, max_size: Int) -> List[archive.Entry] ! archive.ArchiveErr {
+  match unzip_entries(data, max_size) {
     Ok(l) => l
     Err(e) => Err(archive_err("unzip: ${e}"))
   }
@@ -1818,10 +1831,20 @@ fn zip_meta(zf: ZipHdr) -> (Str, Int, Bool) ! Str {
   Ok((p, perm, false))
 }
 
-fn unzip_entries(data: Bytes) -> List[archive.Entry] ! Str {
+fn unzip_entries(data: Bytes, max_size: Int) -> List[archive.Entry] ! Str {
   let t = flate.crc_table()
   let fixed = flate.fixed_decoder()
   let files = zip_directory(data)?
+  // the declared sizes bound what inflating may hold (zip_read stops an
+  // entry past its own), so check their sum first
+  let max = if max_size < 0 { 0 } else { max_size }
+  var declared = 0
+  for zf in files {
+    declared += zf.usize
+    if declared > max {
+      return Err("zip: files exceed max_size (${max} bytes)")
+    }
+  }
   var out: List[archive.Entry] = []
   for zf in files {
     let (p, perm, is_dir) = zip_meta(zf)?
@@ -1971,11 +1994,14 @@ fn zip_read(data: Bytes, zf: ZipHdr, t: List[Int], fixed: flate.HDec) -> Bytes !
       return Err(ERR_FORMAT)
     }
   } else if zf.method == 8 {
-    var f = flate.Inflater{data: data, pos: body, start: body, end: end, b: 0, nb: 0, out: [], out_start: 0}
+    // stop as the output passes the declared size (Go's checksumReader:
+    // ErrFormat once more than UncompressedSize64 is read), instead of
+    // inflating a hostile entry to the end first
+    var f = flate.Inflater{data: data, pos: body, start: body, end: end, b: 0, nb: 0, out: [], out_start: 0, limit: zf.usize}
     match f.inflate(fixed) {
       Ok(_) => ()
       Err(e) => {
-        if f.out.len() > zf.usize {
+        if e == flate.LIMIT || f.out.len() > zf.usize {
           return Err(ERR_FORMAT)
         }
         return Err(e)

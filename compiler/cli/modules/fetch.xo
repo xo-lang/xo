@@ -870,6 +870,9 @@ fn (var c: ModCtx) check_log(sum: SumClient, dir: Str, mod_path: Str, version: S
 
 /// Go's bound on a module zip and the files extracted from it.
 const MAX_ZIP = 524288000
+/// The most bytes a module's xo.mod or LICENSE may hold (Go's modzip
+/// MaxGoMod and MaxLICENSE, 16 MB).
+const MAX_SMALL = 16777216
 
 /// The reason phrase of an HTTP status, as Go's resp.Status shows it.
 fn status_text(code: Int) -> Str {
@@ -965,7 +968,11 @@ fn (c: ModCtx) proxy_fetch(base: Str, mod_path: Str, version: Str, dst: Str) -> 
 /// mod unzipModule: the regular files of a module zip, all under
 /// "<path>@<version>/", into dir; anything else fails.
 fn (c: ModCtx) unzip_module(data: Bytes, mod_path: Str, version: Str, dir: Str) -> () ! Str uses fs {
-  let entries = match archive.unzip(data) {
+  // inflate at most MAX_ZIP in all (the declared sizes, checked before
+  // any file is inflated; each file stops at its own), as Go's module zip
+  // limits; before, a small hostile zip from a proxy inflated without a
+  // bound (0.51.1)
+  let entries = match archive.unzip(data, max_size: MAX_ZIP) {
     Ok(es) => es
     Err(e) => return Err(e.msg)
   }
@@ -992,6 +999,10 @@ fn (c: ModCtx) unzip_module(data: Bytes, mod_path: Str, version: Str, dir: Str) 
     total += e.data.len()
     if total > MAX_ZIP {
       return Err("the module is larger than ${MAX_ZIP} bytes")
+    }
+    // Go's modzip MaxGoMod and MaxLICENSE
+    if (rel == "xo.mod" || rel == "LICENSE") && e.data.len() > MAX_SMALL {
+      return Err("${rel} is larger than ${MAX_SMALL} bytes")
     }
     let target = "${dir}/${clean(rel)}"
     c.os.fs.create_dir_all(dir_of(target)).map_err(fs_msg)?

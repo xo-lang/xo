@@ -4952,11 +4952,11 @@ struct ArchiveErr { msg: Str }           // displays as `archive: msg`
 pub fn file(path: Str, data: Bytes) -> Entry    // mode 0o644, modified at the Unix epoch
 pub fn dir(path: Str) -> Entry                  // mode 0o755
 pub fn gzip(data: Bytes) -> Bytes
-pub fn gunzip(data: Bytes) -> Bytes ! ArchiveErr
+pub fn gunzip(data: Bytes, max_size: Int = 1073741824) -> Bytes ! ArchiveErr   // more output is an error, found as it passes max_size
 pub fn tar(entries: List[Entry]) -> Bytes ! ArchiveErr
 pub fn untar(data: Bytes) -> List[Entry] ! ArchiveErr
 pub fn zip(entries: List[Entry]) -> Bytes ! ArchiveErr
-pub fn unzip(data: Bytes) -> List[Entry] ! ArchiveErr
+pub fn unzip(data: Bytes, max_size: Int = 1073741824) -> List[Entry] ! ArchiveErr   // the files' declared sizes in all, checked first; a file stops past its own (Go's ErrFormat)
 pub fn zip_reader(data: Bytes) -> ZipReader ! ArchiveErr   // decision 0479 step 3
 fn (r: ZipReader) files() -> List[ZipFile]
 fn (r: ZipReader) read(f: ZipFile) -> Bytes ! ArchiveErr

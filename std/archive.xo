@@ -28,7 +28,10 @@ fn dir(path: Str) -> Entry
 
 /// data compressed in the gzip format (RFC 1952), at the default level.
 fn gzip(data: Bytes) -> Bytes
-fn gunzip(data: Bytes) -> Bytes ! ArchiveErr
+/// More than max_size bytes of output is an error (`gunzip: gzip: output
+/// exceeds max_size (N bytes)`), found as it passes max_size, so a small
+/// hostile input cannot ask for more memory than max_size.
+fn gunzip(data: Bytes, max_size: Int = 1073741824) -> Bytes ! ArchiveErr
 /// A tar archive (POSIX ustar or PAX) of the entries, in order.
 fn tar(entries: List[Entry]) -> Bytes ! ArchiveErr
 /// The entries of a tar archive. An entry whose path is absolute or
@@ -36,8 +39,12 @@ fn tar(entries: List[Entry]) -> Bytes ! ArchiveErr
 fn untar(data: Bytes) -> List[Entry] ! ArchiveErr
 /// A zip archive of the entries (deflated), in order.
 fn zip(entries: List[Entry]) -> Bytes ! ArchiveErr
-/// The entries of a zip archive, with the same path rules as untar.
-fn unzip(data: Bytes) -> List[Entry] ! ArchiveErr
+/// The entries of a zip archive, with the same path rules as untar. An
+/// archive whose files declare more than max_size bytes in all is an error
+/// before any is inflated (`unzip: zip: files exceed max_size (N bytes)`),
+/// and a file that inflates past its declared size stops there with Go's
+/// `zip: not a valid zip file`.
+fn unzip(data: Bytes, max_size: Int = 1073741824) -> List[Entry] ! ArchiveErr
 
 /// One entry of a zip archive's central directory (decision 0479):
 /// `size` is the inflated length and `compressed` the stored one. The
