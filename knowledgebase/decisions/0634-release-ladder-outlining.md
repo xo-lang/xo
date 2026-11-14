@@ -1,7 +1,8 @@
 # 0634: Repeated release ladders become one local subroutine
 
-Status: Proposed (Xo Lang 1, 2026-11-14). Native code generation only: no language or
-output change.
+Status: Accepted (lead, 2026-11-14: compiler internal, with an off switch; on the condition that
+the fault trace and the profiler name the line of the copy that ran). Built by Xo Lang 1,
+2026-11-14. Native code generation only: no language or output change.
 
 ## Context
 
@@ -28,29 +29,37 @@ Decision 0623's shared release tails (SSA, reltail) and the tail merge of cold b
 (in build_native 440 of the repeats follow a call of an rc helper and 550 are followed by more
 code), and its exits go on to different blocks, so no block tail matches.
 
-## Decision (proposed)
+The asm counts above overstate the program (gotchas/kept-asm-counts-overstate-text.md): xo's
+linked binary has 9.32 M instructions, 0.53 M in ladders of 4 or more pairs and 0.50 M (5.3%) in
+exact repeats (otool -tV, ~/xo-lead/notes/lang1/ladders-bin.py).
 
-1. A pass on a function's final arm64 instructions (after register allocation and the tail merge,
-   so slots and helper names are fixed): it finds the ladders of at least LADDER_MIN pairs (16 to
-   start, measured in step 1) that occur two or more times verbatim (the same slots, the same
-   helpers, the same order), and the longest common suffixes among those that differ only in their
-   first pairs.
-2. The first copy of each becomes a local subroutine at the function's end: `str x30, [sp,
-   #LR_SLOT]`, the ladder, `ldr x30, [sp, #LR_SLOT]`, `ret`; each copy, the first included, is one
-   `bl` to it. LR_SLOT is one frame word added to a function that has a subroutine. A copy that
-   shares only a suffix runs its own first pairs and then `bl`s the suffix's subroutine.
-3. Only ladders whose calls cannot fault or unwind (the tail merge's tail_inst_ok rule: no landing
-   pad, no fault side exit, no poll), so the landing pad and fault tables need no row for the
-   subroutine's pcs. A ladder that holds anything else is left as it is.
-4. x86 (amd64): the same pass, later and only if its measurement warrants it (point 4 of the
-   cost). A `call` there pushes the return address, so the subroutine's slot offsets are each
-   N + 8, and the unwind row for its pcs needs CFA = rsp + frame + 8 (`.cfi_adjust_cfa_offset
-   8` around it, or the frame pointer if the function keeps one). Measured (above) amd64
-   ladders on aiplatform are 0.2%; xo's own amd64 build is measured in step 0 before any x86 code.
+## Decision
 
-Expected: xo's arm64 text about 7% smaller (1.2 to 1.38 M instructions, build_native about 0.69
-M); programs without large scopes of owned values (aiplatform, the HTTP CRUD server) nearly
-unchanged.
+1. A text pass on each function's final arm64 lines (compiler/arm64 ladders.xo outline_ladders,
+   after far_slots_l and far_tests_l, before local_empty_l; XO_PASSES=-ladders turns it off) finds
+   the runs of at least LADDER_MIN (16) pairs `ldr x0, [sp, #N]; bl SYM` that the function repeats
+   verbatim (the same slots, the same callees, the same order). A run may hold line table rows
+   (`_dl`), variable range boundaries (`_dv`) and cause marks (`_dc`), which no branch reaches; a
+   block's label, a call site's (a landing pad) or a preemption span's ends it, so no outlined call
+   has a landing pad. A slot past N = 32744 (whose N + 16 leaves the scaled ldr's reach) ends it;
+   a far frame's far slots go through x28 before the pass and never match.
+2. Each repeated run is written once past the function's body as a local subroutine with a frame
+   record of its own: `stp x29, x30, [sp, #-16]!; mov x29, sp`, the run with each slot read 16 bytes
+   further, `ldp x29, x30, [sp], #16; ret`, in an unwind region of its own (`.cfi_endproc` and
+   `.cfi_startproc` before the function's last `.cfi_endproc`, as a leaf's fault stubs, with exact
+   CFI rows for each instruction of its prologue and epilogue). Each copy becomes its labels and one
+   `bl` to it. Exact runs only: sharing common suffixes as well (a trie, as tail_merge_cold) was
+   estimated at about the same saving on xo (454 K instructions against the exact runs' 456 K), so
+   it is not done.
+3. The fault trace (llrt prof.xo trace_text_at), CPU profiles (cpu_section) and compiler/debug's
+   frames (vframes: xo debug and `xo dev symbolize`) drop a frame whose pc has no line when the next
+   frame is the same function at a line: the subroutine's, whose caller frame (from its frame
+   record) is the function at the `bl` of the copy that ran, at that copy's line. A recursion's
+   frames each have a line, and a build without DWARF has none for either, so neither folds. Heap
+   profiles are not folded: a ladder releases, it never allocates.
+4. x86 (amd64) and windows/arm64 keep their ladders: a `call` moves rsp (the slots would be N + 8
+   and the CFA rsp + 8), and windows/arm64's unwind codes describe one prologue per region. x86
+   follows only if xo's own amd64 binary shows more than 2% of its text in repeats (step 0).
 
 ## Cost
 
@@ -59,34 +68,41 @@ unchanged.
   eighth more instructions on that path, with fewer i-cache lines. The gate measures it: `xo bench
   --ab` of the HTTP CRUD server, the alloc bench, and xo's self build (wall and CPU) on linux/arm64
   host 1; LADDER_MIN goes up if any is slower.
-- Unwinding and debugging: the subroutine lies inside its function's range, so the function's FDE
-  covers it. The function saved x30 in its prologue (it calls drop helpers, so it is never a leaf),
-  so the CFI rows for the subroutine's pcs stay those of the function body: CFA and the saved
-  return address are unchanged, and the bl to the subroutine only overwrites the live x30, which no
-  unwinder reads mid function. The fault trace, the profiler (frame pointer walk) and xo debug see a
-  pc in the right function; its line is the first copy's (the line table maps the subroutine's pcs
-  to the ladder they came from), not the exit the program took. xo debug's step over a scope exit
-  lands in the subroutine: its stepping treats a bl to a pc inside the same function as a step into
-  that pc, which the gate checks with the debugger tests.
-- Compile time: one hash per ladder per function; a suffix search only among ladders in a function
-  that has a repeat.
+- Run time also: 16 bytes of stack below the function's frame while a subroutine runs, as any
+  callee's frame record.
+- Unwinding and debugging: the subroutine's frame record and CFI make it an ordinary frame for the
+  frame pointer walk and for a CFI unwinder; point 3 folds it away where frames are shown.
+  Checked: `xo dev symbolize` of a report whose first pc is in the subroutine prints only the
+  function at the copy's line; a CPU profile of a loop through test/codegen/ladders's subroutine
+  shows `pick main.xo:28` once under each drop (2026-11-14).
+- Compile time: one pass over each function's lines and a map of run texts; nothing for a function
+  without `ldr x0, [sp, #`.
+
+## Results (2026-11-14)
+
+- xo's own build, darwin/arm64, the same xo with the pass on and XO_PASSES=-ladders (both with the
+  backend cache off): __text 37,283,708 to 35,456,348 bytes (-4.9%; 456 K instructions). Exact
+  repeats of 16 or more pairs left: 20 pairs (from 219,527); repeats under 16 pairs: 29,107 pairs,
+  unchanged (LADDER_MIN). build_native's repeats: 147,124 pairs to 1,093.
+- A first build skipped far frames (build_native's among them): -1.6%.
+- Tests: test/codegen/ladders (one `_ld0` subroutine, every arm calling it), compiler/debug
+  ladder_test.xo (the fold and the frames it must keep), the arm64 and LLVM codegen patterns (48
+  pass), compiler/debug and compiler/arm64 unit tests (103 pass), TestPassesListed.
+- The --ab trio and aiplatform's __text: in the push's commit message.
 
 ## Steps
 
-0. Measure xo's own amd64 build (linux/amd64 host) with ladders.py; record it here.
-1. compiler/arm64: the pass behind XO_PASSES=-ladders (default on after the gate), LADDER_MIN, a
-   codegen pattern test (test/codegen) with a function whose scope of 20 owned Strs exits on three
-   paths: one subroutine, three bls.
-2. Gate as a codegen change: codegen patterns, the arm64 goldens (TestGoldenRun), fp and the self
-   build, the debugger tests (cmd/xo TestDebug*) and the fault trace goldens (the arm64 goldens with a fault trace in want.txt), the --ab runs of
-   Cost, xo's native __text before and after. The amd64 sample only if step 4 lands.
-3. Record the measured __text (xo, aiplatform) and the --ab in Results.
-4. x86, if step 0 shows more than 2% of xo's amd64 text in repeats.
+0. Measure xo's own amd64 binary (linux/amd64 host) with ladders-bin.py's x86 form; record it here.
+1. (Done) compiler/arm64 ladders.xo, the folds of point 3, the tests above.
+2. (Done in the push) gate as a codegen change: codegen patterns, fp, the self build, the --ab trio
+   (HTTP CRUD server, alloc bench, xo's self build) on linux/arm64 host 1.
+3. x86, if step 0 shows more than 2% of xo's amd64 text in repeats.
 
 ## Consequences
 
-- One frame word per function that has a subroutine.
-- The line of an outlined ladder's pcs is its first copy's.
+- An outlined ladder's pcs have no line; shown frames fold them (point 3), a raw pc lookup of one
+  (lldb, addr2line) names the function with no line.
+- The line at a `bl` to a subroutine is the run's last row (its rows all land on the `bl`).
 - Splitting build_native is not done: it would not remove the copies.
 
 ## Alternatives
