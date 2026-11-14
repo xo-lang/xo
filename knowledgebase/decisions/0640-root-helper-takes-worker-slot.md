@@ -104,6 +104,53 @@ past its 10 ms slice, a full park when nothing runs), with 0 throttles
 under the quota as its target and an --ab of the deferral latency it
 serves.
 
+Follow-up (2026-11-14, landed after the decision): the monitor sleeps as
+Go's sysmon does. pool.xo mon_main starts at DEFER_US (1 ms) between ticks
+and doubles the sleep after MON_BACKOFF_TICKS (50) ticks in a row that act
+on nothing, up to MON_MAX_US (10 ms); a tick that acts (wakes for a late
+deferral, asks a worker to yield, raises the cap: mon_scan returns 2)
+brings it back to 1 ms. A tick that finds nothing pending does not reset
+the sleep: under load the scan flips between pending and not as workers
+pass between items, and with that reset the backoff never took hold
+(10,900 ticks in a 14 s run). A wake by preempt_arm (every wakep that
+finds every worker busy) now first looks a slice (10 ms) later, since no
+fiber can need preempting before it has run one; a wake by a deferral
+still looks after 1 ms. The monitor still parks after MON_IDLE_TICKS quiet
+ticks.
+
+| CPUQuota=200%, c=128, 5 reps | base ((private commit)) | backoff |
+|---|---|---|
+| throttles a run | 4, 3, 2, 1, 6 | 0, 0, 0, 1, 1 |
+| throttled time | 0.5 to 9.9 ms | 0 to 0.8 ms |
+| monitor thread CPU (ticks of 10 ms) | 17 to 19 | 1 to 2 |
+| mon_tick (XO_RTSTATS, 10 s) | about 10,050 | about 1,135 |
+
+Throughput and p99 are unchanged: base and backoff alternated first and
+second over 6 pairs each, backoff had the higher rps in 5 of 6 under the
+quota (129k to 135k) and 4 of 6 without it (134k to 137k), within 1%
+(a first run with base always first showed base 1 to 2% ahead in 9 of 9
+pairs, the host's downward drift over the run). Deferral latency, from
+XO_TRACE: the HTTP server makes no deferred wakes; conc spawn and fanout's
+late wakes are all by the waker at a mean age of 50 to 58 us on both sides,
+pingpong's 200,000 deferred wakes run in a median 84 to 125 ns, p99 125 to
+167 ns, on both; the server's wake to run latency is the same (c=8 p99 120
+to 131 us, c=128 under the quota 555 to 600 us). The one wait it lengthens
+is a deferral only the monitor can serve (its waker blocked in the system)
+during a long busy stretch: up to 10 ms where it was 1 ms, as Go's sysmon
+retakes a P in a system call. --ab on host 1 against (private commit): conc
+spawn, pingpong, fanout, httpkeep, httppost (15 rounds) and xo's own build
+(stage 2) within noise; bench/perf/alloc 1.022 (1.0 to 1.065, 15 rounds),
+a program that never schedules (mon_tick, wake and defer 0 on both) whose
+allocator (obj_rc_alloc) moved 136 bytes with pool.xo's growth. The runs
+with 1 throttle (0.2 to 0.8 ms) remain. Six more runs sampling each
+thread's /proc schedstat every 125 ms (1, 2, 0, 0, 1, 0 throttles, 0.4 to
+3 ms in 12 s): in the windows where a throttle lands, the monitor and the
+poller use 0.2 to 0.6 ms between them and the two threads running tasks
+112 to 123 ms each, up to 197% together. The work fills the quota, not the
+monitor (Go 1.26 at c=128 runs about 190%: 90k rps at 21.1 us of CPU a
+request, 0 throttles). The next experiment for 0 is spinning less when
+every worker slot is in use under a quota (34,000 spin rounds a run).
+
 ## Alternatives
 
 - Defer wakes off under a quota (no monitor thread): 0 throttles, but no

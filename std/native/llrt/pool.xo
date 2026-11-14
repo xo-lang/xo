@@ -3528,9 +3528,14 @@ const DEFER_CHECK_NS = 50000
 /// W_NEXT_AT are ticks, not ns: a counter register read, not a clock call).
 fn defer_check_ticks() -> Int { cpu.ticks_hz() / 20000 }
 const MON_IDLE_TICKS = 10
+/// Go's sysmon: 50 ticks that do nothing before the sleep doubles, up to
+/// 10 ms (decision 0640's follow-up).
+const MON_BACKOFF_TICKS = 50
+const MON_MAX_US = 10000
 /// How long a fiber runs while work waits before the monitor asks its
 /// worker to yield (Go's forcePreemptNS).
 const SLICE_NS = 10000000
+const SLICE_US = 10000
 
 /// Defers the wake for work w just queued: whether it did (false without
 /// a monitor). With one worker (XO_THREADS=1) a root's deferral is not
@@ -3569,7 +3574,8 @@ fn preempt_arm(p: Int) {
     return
   }
   if rt.slot_load(m, M_ASLEEP, RELAXED) != 0 && rt.slot_cas(m, M_ASLEEP, 1, 0, SEQ_CST) {
-    rt.slot_store(m, M_WAKE, 1, RELEASE)
+    // 2: for a preemption, which no fiber needs before a slice
+    rt.slot_store(m, M_WAKE, 2, RELEASE)
     futex_wake(m.wrapping_add(M_WAKE_AT))
   }
 }
@@ -3613,12 +3619,38 @@ pub fn mon_main(p: Int) -> Int {
     m = rt.slot_load[Int](rt.static_word(W_MON), 0, ACQUIRE)
   }
   var quiet = 0
+  // the sleep between ticks, as Go's sysmon's delay (decision 0640's
+  // follow-up): DEFER_US while a tick acts (a late deferral woken, a
+  // worker asked to yield), doubled after MON_BACKOFF_TICKS ticks in a row
+  // that found work pending but did nothing, up to MON_MAX_US: under a
+  // steady load of short items every worker is busy and something is
+  // always queued, so the monitor ticked every 1 ms for nothing, the one
+  // thread past N under a CPU quota of N (2 to 6 throttles a 12 s run)
+  var delay = DEFER_US
+  var still = 0
   while true {
-    futex_wait_us(m.wrapping_add(M_WAKE_AT), 0, DEFER_US)
+    futex_wait_us(m.wrapping_add(M_WAKE_AT), 0, delay)
     stat(ST_MON_TICK)
-    let busy = mon_scan(p)
+    let r = mon_scan(p)
+    let busy = r != 0
     if tracerec.built() && tracerec.on() {
       tracerec.ev(tracerec.K_MON, if busy { 1 } else { 0 }, 0, 0)
+    }
+    // a tick that finds nothing pending does not reset it: under load the
+    // look flips between pending and not as workers pass between items
+    // (10,900 ticks in a 14 s HTTP run with the reset there)
+    if r == 2 {
+      delay = DEFER_US
+      still = 0
+    } else {
+      still = still.wrapping_add(1)
+      if still >= MON_BACKOFF_TICKS && delay < MON_MAX_US {
+        delay = delay.wrapping_shl(1)
+        if delay > MON_MAX_US {
+          delay = MON_MAX_US
+        }
+        still = 0
+      }
     }
     if busy {
       quiet = 0
@@ -3632,15 +3664,23 @@ pub fn mon_main(p: Int) -> Int {
     // it), looking once more after saying so
     rt.slot_store(m, M_WAKE, 0, RELAXED)
     rt.slot_store(m, M_ASLEEP, 1, SEQ_CST)
-    if mon_scan(p) && rt.slot_cas(m, M_ASLEEP, 1, 0, SEQ_CST) {
+    if mon_scan(p) != 0 && rt.slot_cas(m, M_ASLEEP, 1, 0, SEQ_CST) {
       quiet = 0
       continue
     }
     while rt.slot_load(m, M_WAKE, ACQUIRE) == 0 {
       futex_wait(m.wrapping_add(M_WAKE_AT), 0)
     }
+    // woken by preempt_arm (2): no fiber can need a preemption before it
+    // has run a slice, so the first look is a slice away (every wakep
+    // that found all workers busy woke it, and it ticked at 1 ms again
+    // and parked: 750 ticks a second under an HTTP load, none acting);
+    // by a deferral (1): DEFER_US, as before
+    let why = rt.slot_load(m, M_WAKE, ACQUIRE)
     rt.slot_store(m, M_WAKE, 0, RELAXED)
     quiet = 0
+    still = 0
+    delay = if why == 2 { SLICE_US } else { DEFER_US }
   }
   0
 }
@@ -3648,13 +3688,16 @@ pub fn mon_main(p: Int) -> Int {
 /// Wakes an idle worker for every deferral older than DEFER_NS whose
 /// worker still has work queued (clearing the rest), and with work queued
 /// asks every worker that has run its fiber SLICE_NS to yield (decision
-/// 0286 step 3; W_PREEMPT counts the asks out): whether any
-/// deferral was pending or any worker runs while work waits (the monitor
-/// keeps ticking).
-fn mon_scan(p: Int) -> Bool {
+/// 0286 step 3; W_PREEMPT counts the asks out): 0 when no deferral was
+/// pending and no worker runs while work waits (the monitor may sleep), 1
+/// when one did (it keeps ticking), 2 when it also acted: woke for a late
+/// deferral, asked a worker to yield, or raised the cap (its tick stays
+/// short).
+fn mon_scan(p: Int) -> Int {
   let n = rt.slot_load(p, P_NW, SEQ_CST)
   let now = sysio.mono_ns()
   var pending = false
+  var acted = false
   // work waits, no worker is idle to take it, and no other can start
   // (wakep wakes or starts one then: preempting then only moved the waiting task
   // onto the long runner's thread, TestRuntimeTasks' magazines, whose
@@ -3679,6 +3722,7 @@ fn mon_scan(p: Int) -> Bool {
       capped = false
       rt.slot_store(p, P_CAP, ncpu, SEQ_CST)
       stat(ST_CAP_GROW)
+      acted = true
       wakep(p)
     }
     if ask != 0 {
@@ -3695,6 +3739,7 @@ fn mon_scan(p: Int) -> Bool {
     } else if waiting && ra != 0 {
       pending = true
       if cpu.ticks_ns(cpu.ticks().wrapping_sub(ra)) >= SLICE_NS && rt.slot_cas(w, W_PREEMPT_I, 0, now, RELAXED) {
+        acted = true
         let _i = rt.slot_add[Int](rt.static_word(W_PREEMPT), 0, 1, RELEASE)
         if async {
           async_kick(w)
@@ -3707,6 +3752,7 @@ fn mon_scan(p: Int) -> Bool {
       if cpu.ticks_ns(cpu.ticks().wrapping_sub(at)) >= DEFER_NS && rt.slot_cas(w, W_DEFER_AT_W, at, 0, SEQ_CST) {
         let queued = rt.slot_load(w, W_NEXT_I, SEQ_CST) != 0 || rt.slot_load(w, 0, SEQ_CST) != rt.slot_load(w, RQ_TAIL, SEQ_CST)
         if queued {
+          acted = true
           stat(ST_MON_WAKE)
           if tracerec.built() && tracerec.on() {
             // a late wake by the monitor: the deferral's age
@@ -3718,7 +3764,7 @@ fn mon_scan(p: Int) -> Bool {
     }
     i = i.wrapping_add(1)
   }
-  pending
+  if acted { 2 } else if pending { 1 } else { 0 }
 }
 
 /// The tasks scope s's list holds, under its lock: std/internal
