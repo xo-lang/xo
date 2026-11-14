@@ -42,3 +42,24 @@ multiply, float operation and atomic to a libgcc call.
 
 A new LLVM target whose triple's default lacks base extensions (RV32,
 LoongArch, a soft float ARM) needs the same three checks.
+
+## Update 2026-11-14: split modules (Xo Lang 2)
+
+Symptom: from 2026-11-13 the riscv64 tier failed 12 std modules (every
+user of std's constant time crypto: crypto, tls, x509, http, pg, rsa and
+their llrt modules), first with the `-mcpu=generic` error above again,
+then, with that fixed, at the ThinLTO link: `cannot link object files
+with different floating-point ABI`.
+
+Cause: decision 0619 step 4 (f18ac3993) puts a -O0 build's constant
+time functions in a module of their own, so these builds became split
+builds. split_build passed only `--target=`, `-fsanitize=` and `-mllvm`
+to the module compiles, dropping llvm_cross_flags' `-march`, `-mabi` and
+`-mcpu`; and the IR named no `target-abi`, so ThinLTO gave each module
+LLVM's default for its own features, which differed between the two.
+
+Fix: split.xo split_compile_flags keeps `-march=`, `-mabi=` and
+`-mcpu=`; clang.xo with_target_abi adds the module flag
+`!{i32 1, !"target-abi", !"lp64d"}` to riscv64 IR, which every split
+module keeps. Any new per-target compile flag must pass through
+split_compile_flags too, or split builds silently drop it.
