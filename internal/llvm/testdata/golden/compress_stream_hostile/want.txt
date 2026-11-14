@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+one block, 64 byte writes: 1048576 bytes
+one block, cut short: error unexpected EOF
+gzip FEXTRA of 65535 bytes, 64 byte writes: 0 bytes
+gzip FEXTRA, cut short: error unexpected EOF
+gzip name of 511 bytes, 64 byte writes: 0 bytes; one shot: 0 bytes
+gzip name of 512 bytes, 64 byte writes: error gzip: invalid header; one shot: error gzip: invalid header
+gzip name of 1048576 bytes, 64 byte writes: error gzip: invalid header; one shot: error gzip: invalid header
+--- stderr

@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+1000000 empty members then one of 3 bytes (23000027 bytes): gunzip 3 bytes; streamed in 4096 byte writes 3 bytes
+in a spawned task: gunzip 3 bytes; streamed 3 bytes
+gzip of 100000 bytes (191 compressed): max_size 100000: 100000 bytes; 99999: error gzip: output exceeds max_size (99999 bytes); streamed 100000: 100000 bytes; 99999: error gzip: output exceeds max_size (99999 bytes)
+deflate of 100000 bytes (173 compressed): max_size 100000: 100000 bytes; 99999: error flate: output exceeds max_size (99999 bytes); streamed 100000: 100000 bytes; 99999: error flate: output exceeds max_size (99999 bytes)
+zlib of 100000 bytes (179 compressed): max_size 100000: 100000 bytes; 99999: error zlib: output exceeds max_size (99999 bytes); streamed 100000: 100000 bytes; 99999: error zlib: output exceeds max_size (99999 bytes)
+lzw of 100000 bytes: max_size 100000: 100000 bytes; 99999: error lzw: output exceeds max_size (99999 bytes)
+10 MB of zeros deflate to 10206 bytes (ratio 1027); inflate with max_size 1 MB: error flate: output exceeds max_size (1048576 bytes)
+--- stderr

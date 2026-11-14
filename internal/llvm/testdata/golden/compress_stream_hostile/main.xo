@@ -1,0 +1,93 @@
+// std/compress's Decompressor fed hostile streams in small writes (security
+// review F1, 2026-11-14): one fixed Huffman block of 1 MB of literals.
+// Before the fix every write decoded the unfinished block from its start,
+// quadratic in its length; now it goes on from its last whole symbol. Also
+// the longest gzip headers: a 65535 byte FEXTRA field (read again from the
+// header's start only when the input waiting doubles), and a name past Go's
+// 511 bytes (Go's gzip: invalid header).
+use std/compress
+
+/// Bits written from the low end of each byte, as DEFLATE packs them.
+struct Bits {
+  out: BytesBuilder
+  acc: Int
+  n: Int
+}
+
+fn (var w: Bits) put(v: Int, k: Int) {
+  w.acc = w.acc | (v << w.n)
+  w.n += k
+  while w.n >= 8 {
+    w.out.write_byte(UInt8(w.acc & 255))
+    w.acc = w.acc >> 8
+    w.n -= 8
+  }
+}
+
+/// One final fixed Huffman block of n literal zero bytes (code 00110000,
+/// sent from its high bit), then the end of block code (7 zero bits).
+fn long_block(n: Int) -> Bytes {
+  var w = Bits{out: BytesBuilder.with_capacity(n + 2), acc: 0, n: 0}
+  w.put(1, 1)
+  w.put(1, 2)
+  for _ in 0..n {
+    w.put(0x0c, 8)
+  }
+  w.put(0, 7)
+  if w.n > 0 {
+    w.put(0, 8 - w.n)
+  }
+  w.out.freeze()
+}
+
+fn feed(f: compress.Format, data: Bytes, chunk: Int) -> Str {
+  var d = compress.decompressor(f)
+  var n = 0
+  var i = 0
+  while i < data.len() {
+    let j = if i + chunk < data.len() { i + chunk } else { data.len() }
+    match d.write(data[i..j]) {
+      Ok(b) => n += b.len()
+      Err(e) => return "error ${e.display()}"
+    }
+    i = j
+  }
+  match d.finish() {
+    Ok(b) => n += b.len()
+    Err(e) => return "error ${e.display()}"
+  }
+  "${n} bytes"
+}
+
+fn main(os: Os) uses stdio {
+  let blk = long_block(1 << 20)
+  os.stdio.println("one block, 64 byte writes: ${feed(compress.Format.Deflate, blk, 64)}")
+  os.stdio.println("one block, cut short: ${feed(compress.Format.Deflate, blk[0..blk.len() - 1000], 64)}")
+  // gzip: magic, CM 8, FLG (FEXTRA 4 or FNAME 8), MTIME 0, XFL 0, OS 255,
+  // the field, an empty final stored block, CRC-32 0, size 0
+  let tail = b"\x01\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00"
+  var x = BytesBuilder.new()
+  x.write(b"\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\xff\xff")
+  for _ in 0..65535 {
+    x.write_byte(0x78)
+  }
+  x.write(tail)
+  let gx = x.freeze()
+  os.stdio.println("gzip FEXTRA of 65535 bytes, 64 byte writes: ${feed(compress.Format.Gzip, gx, 64)}")
+  os.stdio.println("gzip FEXTRA, cut short: ${feed(compress.Format.Gzip, gx[0..40000], 64)}")
+  for n in [511, 512, 1 << 20] {
+    var g = BytesBuilder.new()
+    g.write(b"\x1f\x8b\x08\x08\x00\x00\x00\x00\x00\xff")
+    for _ in 0..n {
+      g.write_byte(0x6e)
+    }
+    g.write(b"\x00")
+    g.write(tail)
+    let gz = g.freeze()
+    let one = match compress.gunzip(gz) {
+      Ok(b) => "${b.len()} bytes"
+      Err(e) => "error ${e.display()}"
+    }
+    os.stdio.println("gzip name of ${n} bytes, 64 byte writes: ${feed(compress.Format.Gzip, gz, 64)}; one shot: ${one}")
+  }
+}

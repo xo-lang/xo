@@ -5792,8 +5792,11 @@ fn (var d: Decompressor) finish() -> Bytes ! CompressErr      // the rest; moves
   bit writer buffers up to 240 bytes.
 - **Decompressor.** The concatenation of a Decompressor's outputs is what
   `gunzip`, `inflate`, or `unzlib` gives for the whole input.
-  - How much a `write` returns may differ by backend. Natively it is each
-    whole DEFLATE block once its input has arrived. On the Go backend it is
+  - How much a `write` returns may differ by backend. Natively it is
+    everything decoded from the input so far (a block in progress goes on
+    from its last whole symbol at the next `write`, so feeding one long
+    block in small writes costs linear time); input after the stream's
+    end is not read. On the Go backend it is
     what Go's reader returns, which can hold a member's last block until
     the next member or the end.
   - `finish` returns the rest, or `unexpected EOF` if the stream did not

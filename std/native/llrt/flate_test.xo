@@ -70,3 +70,71 @@ test "the constant fixed decoder is what hdec_init builds" {
   expect(a.links.len()) == b.links.len()
   expect(a.link_mask) == b.link_mask
 }
+
+/// A gzip member of body with a name of n bytes, from flate's own writer.
+fn gz_named(n: Int, body: Bytes) -> Bytes {
+  var g = BytesBuilder.new()
+  g.write(b"\x1f\x8b\x08\x08\x00\x00\x00\x00\x00\xff")
+  for _ in 0..n {
+    g.write_byte(0x6e)
+  }
+  g.write_byte(0)
+  g.write(deflate_level(body, -1))
+  let c = crc32(crc_table(), 0, body)
+  for k in 0..4 {
+    g.write_byte(UInt8((c >> (8 * k)) & 255))
+  }
+  for k in 0..4 {
+    g.write_byte(UInt8((body.len() >> (8 * k)) & 255))
+  }
+  g.freeze()
+}
+
+test "a stream cut across pushes gives its output as soon as the input holds it" {
+  // std/compress review sign-off item 1 (2026-11-14): a header cut short
+  // waited for the input to double, holding back a complete stream
+  let g = gz_named(300, b"hello")
+  var s = new_instream(1, -1)
+  expect(s.push(g[0..200], false).ok() ?? b"x") == b""
+  expect(s.push(g[200..g.len()], false).ok() ?? b"x") == b"hello"
+  expect(s.push(b"", true).ok() ?? b"x") == b""
+  // a byte at a time: the body comes out before finish
+  var t = new_instream(1, -1)
+  var got = BytesBuilder.new()
+  for i in 0..g.len() {
+    got.write(t.push(g[i..i + 1], false).ok() ?? b"x")
+  }
+  expect(got.freeze()) == b"hello"
+  // a dynamic block (Go's level 9 on varied text) cut inside its header:
+  // all the output by the end of the second push
+  var tb = BytesBuilder.new()
+  for i in 0..4000 {
+    tb.write_str("${i * 7919 % 1000} ")
+  }
+  let text = tb.freeze()
+  let d = deflate_level(text, 9)
+  expect((Int(d[0]) >> 1) & 3) == 2
+  var u = new_instream(0, -1)
+  let first = u.push(d[0..3], false).ok() ?? b"x"
+  expect(first) == b""
+  let second = u.push(d[3..d.len()], false).ok() ?? b"x"
+  expect(second) == text
+}
+
+test "input after the end of a stream is neither read nor kept" {
+  // sign-off item 3: it was joined to the input and held
+  let d = deflate_level(b"hi", -1)
+  var s = new_instream(0, -1)
+  expect(s.push(d, false).ok() ?? b"x") == b"hi"
+  var junk = BytesBuilder.new()
+  for _ in 0..100000 {
+    junk.write_byte(0x5a)
+  }
+  let j = junk.freeze()
+  for _ in 0..10 {
+    expect(s.push(j, false).ok() ?? b"x") == b""
+  }
+  expect(s.npend) == 0
+  expect(s.f.data.len() < 1000) == true
+  expect(s.push(b"", true).ok() ?? b"x") == b""
+}

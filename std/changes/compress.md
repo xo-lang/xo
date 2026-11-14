@@ -1,5 +1,29 @@
 # std/compress changes
 
+## 2026-11-14: security: a Decompressor write holds about twice its output, gives output as soon as the input holds it, and drops input after the end
+
+- Kind: security
+- Commit: this push
+- Found by: the std/compress security review's sign-off (decision 0616; items 1 to 3 and 8), on the change below
+- Go reference: compress/flate and compress/gzip readers (output returned as decoded; a gzip header's FEXTRA read as its bytes arrive; nothing read past a zlib or raw stream's end; LimitReader of max_size + 1)
+- Test: golden compress_stream_edges (arm64, LLVM, Go parity, wasm): streams cut across writes, junk after the end, FCOMMENT at 511 and 512, HLIT and HDIST at and past their limits, max_size + 1 bytes with a bad CRC-32; golden compress_limits; std/native/llrt/flate_test.xo (output on the push that completes a cut gzip header and a cut dynamic header, a byte at a time; junk after the end not kept); compress, compressfuzz and lzw corpora, TestCompressFuzz and TestLzwFuzz seed 11
+- Timing: one write that inflates 1.3 MB to 206 MB: peak RSS 3.34 GB before, 420 MB after (one shot 419 MB)
+- Shipped in: 0.51.1
+
+The native Decompressor gave each write's output through a List[Int] (8 bytes a byte, twice), so one write could hold about 16 bytes of memory per output byte above max_size's bound; it now copies the output once into Bytes. The change below, as first written (never released), waited, when a header was cut short, until the input waiting doubled, which held back a stream already complete (a gzip member cut inside its name gave its body only at `finish`); a short gzip header now waits for the bytes it still needs (a whole FEXTRA field, else one more byte, Go's names being at most 511 bytes) and a dynamic block's header is read again on every write (it is at most about 700 bytes). Input written after a zlib or raw DEFLATE stream ended was kept; it is now dropped, as Go's readers stop at the end. A Decompressor with max_size answers max_size + 1 bytes and a bad checksum with the checksum error, as one shot gunzip does (on the Go backend too).
+
+## 2026-11-14: security: a Decompressor fed one long block in small writes costs linear time
+
+- Kind: security
+- Commit: this push
+- Found by: the std/compress security review (decision 0616, review F1, Xo Lang 2)
+- Go reference: compress/flate inflate.go (its decompressor keeps its place inside a block between reads: huffmanBlock's step state, the stored block's copyLen)
+- Test: internal/llvm/testdata/golden/compress_stream_hostile (arm64, LLVM, Go parity): a 1 MB fixed Huffman block in 64 byte writes, cut short, a 65535 byte FEXTRA, gzip names of 511, 512 and 1 MB bytes; the compress and compressfuzz corpora, TestCompressFuzz and TestLzwFuzz seed 7, http_gzip, http_gzip_responses and archive_formats goldens
+- Timing: a 4 MB block in 16 KB writes 2706 ms before, 56 ms after (one shot inflate 20 ms; 7 byte writes 106 ms); one shot gunzip, inflate and unzlib are unchanged
+- Shipped in: 0.51.1
+
+The native Decompressor decoded a block whose input had not all arrived again from the block's start on every `write`, and copied all the input waiting on each one: one DEFLATE block of n bytes sent in writes of k bytes cost n * n / k (a hostile 64 MB block about 11 minutes of CPU on the Mac). A block in progress now goes on from its last whole symbol (a stored block from its next byte), its output is given out as it is decoded, and a header still short (a dynamic block's codes, a gzip header with FEXTRA up to 64 KB) is read again only once the waiting input has doubled. The bytes written are unchanged; how much each `write` returns can now be less than a block.
+
 ## 2026-11-09: feature: std/compress lzw_encode and lzw_decode (decision 0578 step 4)
 
 - Kind: feature

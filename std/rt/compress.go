@@ -237,7 +237,11 @@ func (f *compressFeed) run(format int) {
 		if n > 0 {
 			f.total += int64(n)
 			if f.total > f.max {
-				err = errCompressLimit
+				// a checksum or corruption error found in the same read wins,
+				// as compressRead's one shot (the limit is max_size + 1 there)
+				if err == nil || err == io.EOF {
+					err = errCompressLimit
+				}
 			} else {
 				f.out = append(f.out, buf[:n]...)
 			}
@@ -347,4 +351,3 @@ func Compress_lzw_decode(_ *Task, data Bytes, order Compress_LzwOrder, litWidth 
 	}
 	return Ok[Bytes, Compress_CompressErr](Bytes(out))
 }
-
