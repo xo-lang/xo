@@ -264,6 +264,23 @@ for l in open(sys.argv[1], errors="replace"):
     grep -E '^(    )?--- FAIL' "$logs/$n.txt" | head -10
   fi
 }
+# gate_skip PKG: the -skip pattern for PKG's tests that scripts/gate-areas.txt
+# scopes to areas the change does not touch (owner's test-time plan, lead,
+# 2026-11-14: the llvm step's TLS, crypto and runtime tests and the arm64
+# step's cache tests ran in every gate whatever it changed); empty for the
+# full tier (XO_GATE_LLVM=all or XO_GATE_TESTS=all) and when nothing is
+# scoped out. Writes a line for the log to $logs/PKG-areas.txt (PKG's
+# slashes as dashes).
+gate_skip() {
+  local pkg=$1 note
+  note="$logs/$(echo "$pkg" | tr / -)-areas.txt"
+  rm -f "$note"
+  [ "${XO_GATE_LLVM:-}" = all ] || [ "${XO_GATE_TESTS:-}" = all ] && return 0
+  [ -f scripts/gate-areas.txt ] || return 0
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | sort -u |
+    python3 scripts/gate-areas.py "$pkg" scripts/gate-areas.txt "$note"
+}
 # native_only: every changed file is one the LLVM backend never reads
 # (compiler/arm64, which holds the amd64 emitter too, compiler/macho,
 # internal/arm64's tests, documentation, bench results), so internal/llvm
@@ -495,7 +512,25 @@ llvm_goldens() {
   cache=${XO_LLVM_IR_CACHE:-$ucache/xo/llvm-ir}
   mkdir -p "$cache"
   # by commit and by the manifest code (its normalization) that made it
-  bm="$cache/$(git rev-parse "$base")-$(git hash-object internal/llvm/golden_select_test.go | cut -c1-12).txt"
+  mcode=$(git hash-object internal/llvm/golden_select_test.go | cut -c1-12)
+  bm="$cache/$(git rev-parse "$base")-$mcode.txt"
+  # an ancestor's manifest in place of the base's (lead, 2026-11-14,
+  # owner's test-time plan: main moves between almost every gate, so the
+  # base's manifest was nearly always missing, and making it built the
+  # base's xo and every golden's IR, about 7 to 12 minutes a gate): the
+  # goldens whose IR differs between an ancestor and HEAD are the base's
+  # plus those the commits between them changed, a superset, so nothing the
+  # base would select is lost. Within XO_LLVM_IR_BACK (default 30) commits
+  # of the base; an older one is replaced by the base's own.
+  ib=""
+  if [ ! -s "$bm" ]; then
+    for c in $(git rev-list --max-count="${XO_LLVM_IR_BACK:-30}" "$base"); do
+      if [ -s "$cache/$c-$mcode.txt" ]; then
+        bm="$cache/$c-$mcode.txt"; ib=" (manifest of $(git rev-parse --short "$c"), $(git rev-list --count "$c..$base") commits before the base)"
+        break
+      fi
+    done
+  fi
   if [ ! -s "$bm" ]; then
     pw=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-ir.XXXXXX")
     # the branch's manifest test in the base's tree: both sides hashed
@@ -518,9 +553,9 @@ llvm_goldens() {
   names=$( { comm -3 "$bm" "$nm" | awk '{print $1}'; echo "$files" | sed -n 's|^internal/llvm/testdata/golden/\([^/]*\)/.*|\1|p'; } | sort -u | grep . )
   total=$(wc -l <"$nm" | tr -d ' ')
   if [ -z "$names" ]; then
-    echo "0 of $total goldens (no golden's IR or directory changed)" >"$sel_note"; echo none; return
+    echo "0 of $total goldens (no golden's IR or directory changed$ib)" >"$sel_note"; echo none; return
   fi
-  echo "$(echo "$names" | wc -l | tr -d ' ') of $total goldens, and the -O2 sample: $(echo "$names" | paste -sd' ' -)" >"$sel_note"
+  echo "$(echo "$names" | wc -l | tr -d ' ') of $total goldens$ib, and the -O2 sample: $(echo "$names" | paste -sd' ' -)" >"$sel_note"
   echo "$names" | paste -sd, -
 }
 # golden_dirs_changed: internal/llvm's golden programs the branch adds or
@@ -537,17 +572,21 @@ llvm_step() {
       t_sel=$(date +%s)
       sel=$(llvm_goldens)
       printf 'llvm\t(select)\t%s\tselect\n' "$(($(date +%s) - t_sel))" >>"$logs/times.tsv"
+      case $sel in all) ng=all ;; none) ng=0 ;; *) ng=$(echo "$sel" | tr ',' '\n' | grep -c .) ;; esac
+      printf 'llvm\t(goldens)\t%s\tcount\n' "$ng" >>"$logs/times.tsv"
       echo "llvm goldens: $(cat "$logs/llvm-select.txt") ($(($(date +%s) - t_sel)) s to select)"
       if [ "$sel" = all ]; then unset XO_LLVM_GOLDENS; else export XO_LLVM_GOLDENS=$sel; fi
+      sk=$(gate_skip internal/llvm)
+      [ -s "$logs/internal-llvm-areas.txt" ] && echo "llvm areas: $(cat "$logs/internal-llvm-areas.txt")"
       if go_backend; then
         # every 16th golden on the Go backend too: the selection above
         # follows the LLVM IR, which a Go backend change leaves alone, so
         # TestGoldenGoParity ran none and passed (2026-11-06,
         # gotchas/go-parity-selected-by-llvm-ir.md); it now fails when it
         # runs none
-        XO_TEST_GO_PARITY=1 XO_GO_PARITY_SAMPLE=${XO_GO_PARITY_SAMPLE:-16} full llvm ./internal/llvm
+        XO_TEST_GO_PARITY=1 XO_GO_PARITY_SAMPLE=${XO_GO_PARITY_SAMPLE:-16} full llvm ./internal/llvm ${sk:+-skip "$sk"}
       else
-        full llvm ./internal/llvm
+        full llvm ./internal/llvm ${sk:+-skip "$sk"}
         # a golden the change adds or edits runs on the Go backend too,
         # whatever else changed: iface_wrap_eq reached main failing
         # TestGoldenGoParity because its change touched neither
@@ -643,7 +682,10 @@ run_step_body() {
     nf=$(grep -c '^--- FAIL' "$logs/short.txt")
     [ "$nf" -gt 0 ] && failed=1
     echo "short fails: $nf" ;;
-  arm64) full arm64 ./internal/arm64 ;;
+  arm64)
+    sk=$(gate_skip internal/arm64)
+    [ -s "$logs/internal-arm64-areas.txt" ] && echo "arm64 areas: $(cat "$logs/internal-arm64-areas.txt")"
+    full arm64 ./internal/arm64 ${sk:+-skip "$sk"} ;;
   llvm) llvm_step ;;
   stdcov) stdcov_step ;;
   corpora)
@@ -663,7 +705,10 @@ run_step_body() {
     else
       echo "corpora: skipped (no std/rt, compiler/gen or std module with a std/rt twin changed)"
     fi ;;
-  cmd) full cmd ./cmd/xo ;;
+  cmd)
+    sk=$(gate_skip cmd/xo)
+    [ -s "$logs/cmd-xo-areas.txt" ] && echo "cmd areas: $(cat "$logs/cmd-xo-areas.txt")"
+    full cmd ./cmd/xo ${sk:+-skip "$sk"} ;;
   # -parallel capped (2026-11-12, aws-43's tier): uncapped it is the
   # machine's CPU count, and internal/gen's tests each build a Go program
   # (about 1.3 GB apiece), so the Mac's 30 cores peaked at 39 GB; at 8 the

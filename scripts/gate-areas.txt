@@ -1,0 +1,149 @@
+# gate-areas.txt: the slow tests a per-push gate runs only when the change
+# touches their area (lead, 2026-11-14, owner's test-time plan;
+# scripts/gate.sh gate_skip, knowledgebase/infrastructure/toolchain.md
+# "Gate test areas"). The 8-hourly full tier (XO_GATE_LLVM=all, as tier.sh
+# and offload-tier.sh set it, or XO_GATE_TESTS=all) runs every test.
+#
+# Lines:
+#   @NAME REGEX            an area: an extended regex over the changed paths
+#   PKG TEST AREA...       TEST (a top-level test of PKG) runs in a gate when
+#                          a changed path matches one of the AREAs (@NAME or
+#                          a regex); "tier" alone: never in a gate (another
+#                          gate step or the tier runs it, said in a comment)
+#   PKG * AREA...          every listed test of PKG runs when one matches
+#
+# A test not listed here always runs. A test whose own _test.go file the
+# change edits always runs. Background: in 2 days of gates the llvm step took
+# 35 to 68 minutes even when it selected 0 or 1 golden programs (the TLS,
+# crypto and runtime tests ran every time), and the arm64 step 18 minutes
+# on average (bench/results/gate-time-2026-11-14.md).
+
+# the build driver and the test harness: every listed test runs, as
+# llvm_goldens selects every golden for them
+@driver ^compiler/xo/|^internal/xotool/|^scripts/xobuild/|^go\.mod$
+@llvmbe ^compiler/llvm/
+@rt ^std/native/llrt/|^std/native/rt[a-z]*\.xo$|^std/prelude\.xo$|^std/native/prelude\.xo$
+@sched ^std/native/llrt/(sched|task|park|pool|fiber|chan|atomic|mutex|preempt|timer|poll|thread|alloc|heap|budget|wake|ctx|entry|concflag|cpu|det|fault|crash|signal|stack|tw|race)[a-z0-9_]*\.xo$|^std/native/rt\.xo$|^std/task\.xo$
+@race race[a-z0-9_]*\.xo$|^scripts/lead/race-rt|^compiler/(llvm|arm64)/[a-z0-9_]*race
+@crypto ^std/(crypto|tls|x509|bcrypt|jwt|otp)\.xo$|^std/native/(crypto|rtcrypto|tls|x509)\.xo$|^std/native/(crypto|tls|x509)/|^std/native/llrt/(aes|asn1|bigmod|chacha|ct|des|digest|ed25519|hkdf|hmac|mlkem|nistec|p256|p384|p521|rsa|sha|x25519|curve|poly|gcm|keccak|tls|x509|crypt|ecdh|ecdsa|rand|cabi_tls)[a-z0-9_]*\.xo$
+@http ^std/(http|url|textproto|mime|multipart|websocket)\.xo$|^std/native/(http|rthttp|url_native|websocket)\.xo$|^std/native/http/|^std/native/llrt/(h2|hpack|hclient|hconn|http|cabi_h2|cabi_http|cabi_net|net|sock|poll)[a-z0-9_]*\.xo$
+@time ^std/(time|timego)\.xo$|^std/native/(time|rttime)\.xo$|^std/tzdata/|^std/native/llrt/(cabi_time|time|tz)[a-z0-9_]*\.xo$|^compiler/tzsel/
+@cabi ^std/native/llrt/cabi[a-z0-9_]*\.xo$|^std/native/sys_[a-z]*\.xo$|cbind|^compiler/xo/(cffi|clib|clang)\.xo$
+@debuginfo ^compiler/llvm/debug|^compiler/arm64/[a-z0-9_]*(dwarf|debug|unwind|frame|trace)|^compiler/macho/|^std/native/llrt/(dw|dbg|crash|trace|unwind|dump)[a-z0-9_]*\.xo$
+@cache ^compiler/xo/|^compiler/(check|parser|lexer|ssa)/[a-z0-9_]*(cache|fe|replay|seal|stamp|key)[a-z0-9_]*\.xo$
+@frontend ^compiler/(check|parser|lexer|ssa)/
+@arm64be ^compiler/arm64/|^compiler/macho/
+@winpe ^compiler/arm64/[a-z0-9_]*(pe|pdb|coff|win)[a-z0-9_]*\.xo$|^compiler/winres/
+@std ^std/
+@checkcache ^compiler/(check|ssa|xo)/
+
+# ---- internal/llvm (the llvm step; its goldens are chosen by llvm_goldens)
+internal/llvm * @driver
+internal/llvm TestConstantTimeLLVM @llvmbe @crypto
+internal/llvm TestRaceSyncTable @race @sched @llvmbe
+internal/llvm TestRaceSyncTableArm64 @race @sched @arm64be
+internal/llvm TestRaceBinaryOutlivesToolchain @race
+internal/llvm TestRaceRuntimeInlinedUnchecked @race @llvmbe
+internal/llvm TestUseCZlib @cabi @llvmbe
+internal/llvm TestCABIDiff @cabi @llvmbe
+internal/llvm TestTLSDiff @llvmbe @crypto
+internal/llvm TestTLSInteropMatrix @llvmbe @crypto
+internal/llvm TestTLS13ReplayDiff @llvmbe @crypto
+internal/llvm TestTLSServerReplayDiff @llvmbe @crypto
+internal/llvm TestRSADiff @llvmbe @crypto
+internal/llvm TestX509VerifyDiff @llvmbe @crypto
+internal/llvm TestX509ParseDiff @llvmbe @crypto
+internal/llvm TestNistecDiff @llvmbe @crypto
+internal/llvm TestSHA512HWDiff @llvmbe @crypto
+internal/llvm TestSHA1HWDiff @llvmbe @crypto
+internal/llvm TestSHA256HWDiff @llvmbe @crypto
+internal/llvm TestX25519Diff @llvmbe @crypto
+internal/llvm TestMLKEMAccumulated @llvmbe @crypto
+internal/llvm TestCryptoXoDiff @llvmbe @crypto
+internal/llvm TestLLVMAdcChain @llvmbe @crypto
+internal/llvm TestRootParkHandOff @sched @llvmbe
+internal/llvm TestDeferredWakeBound @sched @llvmbe
+internal/llvm TestPreemptMigrate @sched @llvmbe
+internal/llvm TestAsyncPreempt @sched @llvmbe
+internal/llvm TestRuntimeThreads @sched @llvmbe
+internal/llvm TestRuntimeAlloc @sched @llvmbe
+internal/llvm TestProfSpawnStress @sched @llvmbe
+internal/llvm TestHTTPFuzz @http @llvmbe
+internal/llvm TestH2Diff @http @llvmbe
+internal/llvm TestHTTP1ClientDiff @http @llvmbe
+internal/llvm TestHTTP1ParseDiff @http @llvmbe
+internal/llvm TestHTTPParseDiff @http @llvmbe
+internal/llvm TestTZDiff @time @llvmbe
+internal/llvm TestStrippedNoDWARF @debuginfo @llvmbe
+
+# ---- internal/arm64 (the arm64 step)
+# the chkcache step runs these when compiler/check, ssa or xo changes, and
+# the tier always: the arm64 step ran them a second time (532 s in tier 915)
+internal/arm64 TestModuleCheckAuto tier
+internal/arm64 TestModuleCheckAutoGeneric tier
+# gate.sh's scale check runs it for compiler/arm64/jumptab.xo
+internal/arm64 TestSwitch65535Arms ^compiler/arm64/jumptab\.xo$|^compiler/ssa/[a-z0-9_]*match
+internal/arm64 TestChainKeysSharedCache @cache
+internal/arm64 TestBackendCacheEditIdentity @cache @arm64be
+internal/arm64 TestBackendCacheModuleFacts @cache
+internal/arm64 TestBackendCacheCalleeSummary @cache
+internal/arm64 TestBackendCacheObjectsAcrossDirs @cache
+internal/arm64 TestFrontCacheAcrossPrograms @cache @frontend
+internal/arm64 TestFrontCacheStamps @cache @frontend
+internal/arm64 TestFrontCacheInterfaceEdits @cache @frontend
+internal/arm64 TestFrontCacheRootAndLibrary @cache @frontend
+internal/arm64 TestFrontCacheConsts @cache @frontend
+internal/arm64 TestFrontCacheSitesThunks @cache @frontend
+internal/arm64 TestFrontCacheClosures @cache @frontend
+internal/arm64 TestFrontCacheOneWayFlags @cache @frontend
+internal/arm64 TestFrontCacheClosureReadMadeType @cache @frontend
+internal/arm64 TestFrontCacheTypeNaming @cache @frontend
+internal/arm64 TestFrontCacheAbsentHelper @cache @frontend
+internal/arm64 TestFrontCacheClosureMadeMapHelper @cache @frontend
+internal/arm64 TestFirstEditAfterColdParts @cache
+internal/arm64 TestNoSharedScratchReload @cache
+internal/arm64 TestSharedPack @cache
+internal/arm64 TestSharedPackBounded @cache
+internal/arm64 TestLayoutStoreOrder @cache @arm64be
+internal/arm64 TestSepcompLinks @cache @arm64be
+internal/arm64 TestSepcompDefault @cache
+internal/arm64 TestSepcompSharedMade @cache
+internal/arm64 TestSepcompDebugInfo @cache @debuginfo
+internal/arm64 TestSepcompZeroValWeak @cache @arm64be
+internal/arm64 TestPDBGUIDFromContent @cache @winpe
+internal/arm64 TestWindowsPDBPartKeys @cache @winpe
+internal/arm64 TestWindowsPDBObjCheck @winpe
+internal/arm64 TestStdRecordTouchedStd @cache
+internal/arm64 TestStdRecordIdentity @cache
+internal/arm64 TestStdRecordDefaultArgs @cache
+internal/arm64 TestStdDebugMap @cache @debuginfo
+internal/arm64 TestStdHalfTools @cache
+internal/arm64 TestStdHalfCache @cache
+internal/arm64 TestStdTreesRebuild @cache
+internal/arm64 TestStdVariantKeyTouched @cache
+internal/arm64 TestStdFailedMarkerPerTree @cache
+internal/arm64 TestStdRecordBindRetry @cache
+internal/arm64 TestSepcompStdxKeepsFrontCache @cache @frontend
+# gate.sh's stdstore check runs it for a std module change
+internal/arm64 TestStdStoreBuilds @cache
+internal/arm64 TestXProtectRules ^compiler/macho/|^compiler/xo/(link|ld)\.xo$
+internal/arm64 TestDebugLineDarwinCC @debuginfo @cabi
+internal/arm64 TestDebugLineDarwin @debuginfo
+internal/arm64 TestDwarfReader @debuginfo
+internal/arm64 TestDebugVars @debuginfo @frontend
+internal/arm64 TestDebugTypes @debuginfo @frontend
+internal/arm64 TestDebugVarsAfterCall @debuginfo
+internal/arm64 TestUnwind @debuginfo @arm64be @sched
+internal/arm64 TestCrashReport @debuginfo @sched
+internal/arm64 TestTracebackContract @debuginfo @arm64be
+internal/arm64 TestTraceback @debuginfo @arm64be
+internal/arm64 TestTracebackInlined @debuginfo @arm64be
+internal/arm64 TestModuleCheckDiagnostics @checkcache
+
+# ---- cmd/xo (the cmd step)
+cmd/xo * ^cmd/xo/[^/]+$|^go\.mod$
+cmd/xo TestDevEdgesCache ^compiler/xo/(dev|edgecache)\.xo$|^compiler/check/
+cmd/xo TestDevEdges ^compiler/xo/(dev|edgecache)\.xo$|^compiler/check/
+cmd/xo TestDevEdgesStdGraphSameForEveryProgram ^compiler/xo/(dev|edgecache)\.xo$|^compiler/check/
+cmd/xo TestDevEdgesOwnStd ^compiler/xo/(dev|edgecache)\.xo$|^compiler/check/
+cmd/xo TestVetCostStd ^compiler/xo/vetcost\.xo$|^compiler/check/
