@@ -2,9 +2,11 @@
 // function repeats verbatim becomes one local subroutine. Each arm of
 // pick's match but the last releases, at its start, the 20 Lists it does
 // not use, the same slots in the same order: one `_ld0` subroutine (with
-// a frame record, its slots read 16 bytes further), and each arm calls it.
+// a frame record, its slots read 16 bytes further), and each arm calls it;
+// on amd64 the same with `callq` and a pushed rbp.
 fn pick(os: Os, k: Int, seed: Int) -> Int {
   // arm64: "(?s)bl \.?L[A-Za-z0-9_]*_ld0\n.*bl \.?L[A-Za-z0-9_]*_ld0\n.*bl \.?L[A-Za-z0-9_]*_ld0\n.*_ld0:\n\tstp x29, x30, \[sp, #-16\]!" -"_ld1:"
+  // amd64: "(?s)callq \.?L[A-Za-z0-9_]*_ld0\n.*callq \.?L[A-Za-z0-9_]*_ld0\n.*callq \.?L[A-Za-z0-9_]*_ld0\n.*_ld0:\n\tpushq %rbp\n" -"_ld1:"
   let a0 = [seed + 0, k]
   let a1 = [seed + 1, k]
   let a2 = [seed + 2, k]
