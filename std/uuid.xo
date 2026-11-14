@@ -94,7 +94,7 @@ pub fn parse(s0: Str) -> Uuid ! UuidErr {
     36 => {}
     45 => {
       if !urn_at(s, 0) {
-        return Err(fail("invalid urn prefix: ${s0[0..9].quote()}"))
+        return Err(fail("invalid urn prefix: ${s[0..9].quote()}"))
       }
       off = 9
     }

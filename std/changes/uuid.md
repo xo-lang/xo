@@ -1,5 +1,15 @@
 # std/uuid changes
 
+## 2026-11-14: security: parse answers google/uuid's error for multi-byte text instead of a fault
+
+- Kind: security
+- Commit: this push
+- Found by: the new std/uuid fuzz harness (decision 0616, TestUuidFuzz seed 1 against github.com/google/uuid v1.6.0)
+- Go reference: google/uuid Parse: `invalid urn prefix: %q` of the first 9 bytes, a cut UTF-8 sequence as \xHH
+- Test: std/uuid_test.xo "a 45 byte text with multi-byte text in its first 9 bytes is google/uuid's error, not a fault"; TestUuidFuzz on arm64, llvm and go
+- Affected: native and LLVM backends, 0.51.0 and earlier: the error text sliced the input as a Str, which faults when the cut splits a UTF-8 sequence, so a program parsing a peer's UUID text could be stopped (an http handler answered 500)
+- Shipped in: not yet released
+
 ## 2026-11-10: refactor: integer bounds as `Int.max` and `Int.min` (decision 0587 point 4)
 
 - Kind: refactor
