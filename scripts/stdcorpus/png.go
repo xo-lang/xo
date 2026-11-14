@@ -124,6 +124,19 @@ func pngDescribeConfig(data []byte) string {
 	return fmt.Sprintf("ok %s %dx%d", m, cfg.Width, cfg.Height)
 }
 
+// pngHeaderOnly is a PNG signature and an IHDR chunk for w x h of the
+// given depth, color type, and interlace method, and nothing after it.
+func pngHeaderOnly(w, h uint32, depth, ct, il byte) []byte {
+	var b bytes.Buffer
+	b.WriteString("\x89PNG\r\n\x1a\n")
+	body := []byte{'I', 'H', 'D', 'R', byte(w >> 24), byte(w >> 16), byte(w >> 8), byte(w), byte(h >> 24), byte(h >> 16), byte(h >> 8), byte(h), depth, ct, 0, 0, il}
+	b.Write([]byte{0, 0, 0, 13})
+	b.Write(body)
+	c := crc32.ChecksumIEEE(body)
+	b.Write([]byte{byte(c >> 24), byte(c >> 16), byte(c >> 8), byte(c)})
+	return b.Bytes()
+}
+
 // pngSeeds are the PNG files of Go's own tests small enough for a
 // corpus, by name.
 func pngSeeds() (names []string, files [][]byte) {
@@ -378,6 +391,30 @@ func pngCorpus() string {
 		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xbytes(c), xq(pngDescribe(c)), xq(pngDescribeConfig(c)))
 	}
 	o.WriteString("]\n\n")
+	// headers too large for an Int to hold the image, decoded with no
+	// max_pixels limit: Go refuses the pixel counts whose 8 bytes a pixel
+	// overflow; Xo also refuses what overflows its row sums, where Go reads
+	// on (and stops at the missing IDAT here)
+	o.WriteString("/// (header only PNG, Go's Decode result, Go's DecodeConfig result, whether Xo's decode refuses it as dimension overflow)\nconst HUGE: List[(Bytes, Str, Str, Bool)] = [\n")
+	for _, c := range []struct {
+		w, h          uint32
+		depth, ct, il byte
+		over          bool
+	}{
+		{2147483647, 2147483647, 16, 6, 0, true},
+		{2147483647, 2147483647, 8, 0, 0, true},
+		{2147483647, 2147483647, 7, 9, 0, true},
+		{1073741825, 1073741823, 16, 6, 0, true},
+		{1073741825, 1073741823, 16, 6, 1, true},
+		{1073741825, 1073741823, 8, 2, 0, false},
+		{1073741825, 1073741823, 8, 0, 0, false},
+		{1073741825, 1073741823, 1, 0, 1, false},
+		{2147483647, 536870911, 8, 0, 0, false},
+	} {
+		d := pngHeaderOnly(c.w, c.h, c.depth, c.ct, c.il)
+		fmt.Fprintf(&o, "  (%s, %s, %s, %v),\n", xbytes(d), xq(pngDescribe(d)), xq(pngDescribeConfig(d)), c.over)
+	}
+	o.WriteString("]\n\n")
 	o.WriteString("/// (model, width, height, pix, palette, level, Go's Encode output)\nconst ENCODE: List[(Int, Int, Int, Bytes, List[Int], Int, Bytes)] = [\n")
 	for i, im := range encs {
 		fmt.Fprintf(&o, "  (%d, %d, %d, %s, %s, %d, %s),\n", im.model, im.w, im.h, xbytes(im.pix), xwords(im.pal), levels[i], xbytes(wants[i]))
@@ -434,6 +471,18 @@ fn describe(data: Bytes) -> Str {
   }
 }
 
+fn describe_huge(data: Bytes) -> Str {
+  match png.decode(data, 9223372036854775807) {
+    Ok(_) => "ok"
+    Err(e) => match e {
+      png.PngErr.Format(_) => "err format ${e.display()}"
+      png.PngErr.Unsupported(_) => "err unsupported ${e.display()}"
+      png.PngErr.Truncated => "err truncated"
+      png.PngErr.Flate(_) => "err flate"
+    }
+  }
+}
+
 fn describe_config(data: Bytes) -> Str {
   match png.decode_config(data) {
     Ok(c) => "ok ${c.model} ${c.width}x${c.height}"
@@ -467,6 +516,22 @@ test "decode_config gives Go's size and image type or Go's error" {
     }
   }
   expect(bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]) == []
+}
+
+test "a header too large for an Int is refused, not overflowed" {
+  var bad: List[(Int, Str, Str)] = []
+  for (i, (data, want, want_config, over)) in HUGE.indexed() {
+    let got = describe_huge(data)
+    let w = if over { "err unsupported png: unsupported feature: dimension overflow" } else { want }
+    if got != w {
+      bad.push((i, got, w))
+    }
+    let gc = describe_config(data)
+    if gc != want_config {
+      bad.push((i, gc, want_config))
+    }
+  }
+  expect(bad) == []
 }
 
 test "encode writes Go's bytes" {

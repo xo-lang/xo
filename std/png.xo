@@ -518,6 +518,10 @@ fn parse_ihdr(var d: Dec, data: Bytes, at: Int, length: Int, max_pixels: Int) ->
   if w <= 0 || h <= 0 {
     return Err(format_err("non-positive dimension"))
   }
+  // as Go: a pixel count whose 8 bytes a pixel overflow an Int
+  if w * h > 1152921504606846975 {
+    return Err(unsupported("dimension overflow"))
+  }
   let depth = Int(data[at + 8])
   let ct = Int(data[at + 9])
   var cb = 0
@@ -1176,6 +1180,13 @@ fn walk(data: Bytes, config_only: Bool, max_pixels: Int) -> (Dec, Image?) ! PngE
       }
       d.stage = DS_IHDR
       parse_ihdr(d, data, at, length, max_pixels)?
+      // decoding sums the packed rows and their filter bytes (an
+      // interlaced image's seven passes come to under twice that); refuse
+      // what an Int cannot hold, where Go's row size check would
+      let row = 1 + (bits_per_pixel(d.cb, d.depth) * d.w + 7) / 8
+      if !config_only && d.h > 4611686018427387903 / row {
+        return Err(unsupported("dimension overflow"))
+      }
       handled = true
     } else if typ == 1347179589 {
       if d.stage != DS_IHDR {

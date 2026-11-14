@@ -1,5 +1,17 @@
 # std/png changes
 
+## 2026-11-14: security: a header too large for an Int is refused as dimension overflow, not overflowed
+
+- Kind: security
+- Commit: this push
+- Found by: the decision 0616 security review of std/png (std/evidence/png/review.md F1)
+- Go reference: image/png reader.go parseIHDR's two "dimension overflow" checks and readImagePass's row size check (go1.26.1)
+- Before: with max_pixels at or above about 2^60 (no limit), decode summed the packed rows in an Int that overflowed: a 2147483647 x 2147483647 16 bit RGBA header faulted (exit 70) where Go answers dimension overflow; Go's pixel count check alone is not enough, since (2^30+1) x (2^30-1) at 8 bytes a pixel still overflows the row sum. decode_config, which passes no limit, gave an image size for the headers Go refuses. The default max_pixels (100,000,000) refuses all of these first as image too large
+- Fix: parse_ihdr refuses a pixel count whose 8 bytes a pixel overflow an Int, where Go does (before the bit depth and color type), with Go's error; decode also refuses a header whose rows and filter bytes come past 2^62 (an interlaced image's passes stay under twice that), where an Int could no longer hold the image
+- Test: corpus png (scripts/stdcorpus png.go): "a header too large for an Int is refused, not overflowed", nine header only files with no limit, decode_config against Go's DecodeConfig exactly and decode against Go's Decode or dimension overflow, on arm64, LLVM and the Go backend
+- Affected: png.decode with max_pixels at or above about 2^60, and png.decode_config, on every backend, 0.38.0 to 0.51.1
+- Shipped in: not yet released
+
 ## 2026-11-11: refactor: std/png is one file (decisions 0588, 0597)
 
 - Kind: refactor
