@@ -1487,7 +1487,11 @@ const WEEKDAYS_SHORT: Str = "MonTueWedThuFriSatSun"
 
 /// The 3 byte name number i of names.
 fn put_name(var out: BytesBuilder, names: Str, i: Int) {
-  out.write_str(names[i * 3..i * 3 + 3])
+  // three byte loads and one store: the slice and its append were 19% of
+  // bench/perf/time format (llrt_str_slice_chk, rs_append's reserve)
+  let b = names.bytes()
+  let k = i * 3
+  out.write_le(Int(b[k]) | (Int(b[k + 1]) << 8) | (Int(b[k + 2]) << 16), 3)
 }
 
 /// The two digit texts 00 to 99, one append each.

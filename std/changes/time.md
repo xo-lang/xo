@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-11-14: perf: month and weekday names are written with one store (native)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the std/time speed work of decision 0616 (std/evidence/time/perf.md at 85d121b31: time/format 1.087 of Go; XO_PROF: put_name's slice and append 19% of bench/perf/time format)
+- Go reference: time.appendFormat appends the name's bytes
+- Test: std/native/time and std/time tests on arm64 and llvm; TestStdCorpora time, timefuzz and timego on go, arm64 and llvm
+- Timing: --ab on linux/arm64 host 1, 9 rounds: bench/perf/time format 0.982 (37.85 to 37.15 ms, n=9), format_layout 0.972 (28.8 to 27.99 ms, n=6)
+- Shipped in: not yet released
+
+put_name sliced the three letter name out of its table and appended the slice; it now loads the three bytes and writes them in one little endian store.
+
 ## 2026-11-14: perf: a field ending a format layout is recognized from one word load (native)
 
 - Kind: perf
