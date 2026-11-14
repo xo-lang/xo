@@ -162,23 +162,42 @@ var parsers = set("http", "url", "mime", "multipart", "mail", "smtp", "tls", "x5
 
 type evText struct{ path, text string }
 
-var fuzz = map[string]evText{
-	"http":     {"internal/stdtest/httpheadfuzz_test.go", "request head, response and URL fuzz tests"},
-	"url":      {"internal/stdtest/httpurlfuzz_test.go", "URL fuzz test"},
-	"x509":     {"internal/stdtest/testdata/corpus/x509/x509_test.xo", "fuzz cases in its corpus"},
-	"json":     {"internal/stdtest/testdata/corpus/jsonfuzz/jsonfuzz_test.xo", "fuzz corpus against encoding/json (2,022 cases; internal/stdtest/jsonfuzz_test.go runs fresh seeds)"},
-	"xml":      {"internal/stdtest/testdata/corpus/xmlfuzz/xmlfuzz_test.xo", "fuzz corpus against encoding/xml (2,000 documents through Token, Token not strict, and RawToken, error texts exact; internal/stdtest/xmlfuzz_test.go runs fresh seeds)"},
-	"csv":      {"internal/stdtest/testdata/corpus/csvfuzz/csvfuzz_test.xo", "fuzz corpus against encoding/csv (2,000 texts under random Reader options, error texts exact, and the Writer's output; internal/stdtest/csvfuzz_test.go runs fresh seeds)"},
-	"toml":     {"internal/stdtest/tomlfuzz_test.go", "toml-test v1.5.0 conformance (TOML 1.0.0: 179 valid, 364 invalid documents) and a 2,000-document invariant fuzz on every backend"},
-	"png":      {"internal/stdtest/pngfuzz_test.go", "1,000 seeded files from a chunk-level builder and Go-encoded images (every color type and depth, bad headers, palettes, tRNS, split IDATs, cuts, bit flips) against Go's Decode and DecodeConfig, plus 36,000 fresh cases over six seeds"},
-	"jpeg":     {"internal/stdtest/jpegfuzz_test.go", "350 seeded files from a segment-aware mutator over Go's test images and Go-encoded images (every chroma ratio, baseline and progressive, restart intervals, CMYK, YCCK, headers, tables, scan parameters, cuts, bit flips) against Go's Decode and DecodeConfig, plus 12,000 fresh cases on arm64 and LLVM"},
-	"cbor":     {"internal/stdtest/cborfuzz_test.go", "1,500 seeded inputs from a byte level builder (random head widths, indefinite lengths, floats of every width, tags, simple values, repeated keys, text that is not UTF-8, then bits flipped, cuts, insertions) against fxamacker/cbor v2 (Go has no CBOR in its standard library), plus 12,000 fresh cases on arm64 and LLVM and the RFC 8949 Appendix A examples"},
-	"compress": {"internal/stdtest/compressfuzz_test.go", "2,000 hostile DEFLATE, zlib and gzip streams (hand-built blocks and corrupted Go output) against Go's decoders, error texts exact, plus streaming and max_size, on every backend"},
-	"archive":  {"internal/stdtest/archivefuzz_test.go", "2,010 hostile tar and zip archives (Go-written and hand-built headers, cut and field-mutated) against Go's archive/tar and archive/zip readers on every backend"},
-	"time":     {"internal/stdtest/timefuzz_test.go", "2,000 random layouts of named fields against Go's time with their Go twins: format equal, Go's own text parsed to its instant, changed texts accepted only as Go accepts them, on every backend"},
-	"mime":     {"internal/stdtest/mimefuzz_test.go", "2,000 cases against Go's mime and net/http: hostile Content-Type headers (RFC 2231, continuations, duplicates), format_media_type, every DetectContentType signature, on every backend"},
-	"mail":     {"internal/stdtest/mailfuzz_test.go", "2,000 addresses, address lists, header blocks and dates against Go's net/mail (RFC 2047, groups, folds, zones) on every backend"},
+// fuzzHarnesses maps each module to its fuzz harnesses, from their paths
+// (decision 0616 section 5: no typed table): internal/stdtest/STEMfuzz_test.go
+// belongs to the longest module name STEM starts with (httpheadfuzz to http,
+// jpegencfuzz to jpeg) and to a module of three letters or more STEM ends with
+// (httpurlfuzz also to url).
+func fuzzHarnesses(mods []string) map[string][]string {
+	ents, err := os.ReadDir(filepath.Join(repo, "internal/stdtest"))
+	if err != nil {
+		die("%v", err)
+	}
+	out := map[string][]string{}
+	for _, e := range ents {
+		stem, ok := strings.CutSuffix(e.Name(), "fuzz_test.go")
+		if !ok || stem == "" {
+			continue
+		}
+		path := "internal/stdtest/" + e.Name()
+		best := ""
+		for _, m := range mods {
+			if strings.HasPrefix(stem, m) && len(m) > len(best) {
+				best = m
+			}
+		}
+		if best != "" {
+			out[best] = append(out[best], path)
+		}
+		for _, m := range mods {
+			if m != best && len(m) >= 3 && strings.HasSuffix(stem, m) {
+				out[m] = append(out[m], path)
+			}
+		}
+	}
+	return out
 }
+
+var fuzz map[string][]string
 
 var godiff = map[string]evText{
 	"tls":  {"internal/llvm/tls13_diff_test.go", "TLS 1.3 client and server differential against Go"},
@@ -552,8 +571,12 @@ func test(m string) mark {
 		evp, what = "internal/stdtest/testdata/corpus/"+m, "Go's tests ported"
 	}
 	if parsers[m] {
-		if fz, ok := fuzz[m]; ok {
-			return mark{"Solid", what + "; " + fz.text, fz.path}
+		if fz := fuzz[m]; len(fz) > 0 {
+			names := make([]string, len(fz))
+			for i, f := range fz {
+				names[i] = "`" + filepath.Base(f) + "`"
+			}
+			return mark{"Solid", what + "; fuzz tested (" + strings.Join(names, ", ") + ")", fz[0]}
 		}
 		return mark{"Early", what + "; parser with no fuzz harness", evp}
 	}
@@ -795,6 +818,7 @@ func main() {
 	for _, e := range cents {
 		corpus[e.Name()] = true
 	}
+	fuzz = fuzzHarnesses(mods)
 	applyResults()
 
 	type row struct {
@@ -860,7 +884,7 @@ func main() {
 	w("")
 	w("Each `std` module gets three marks, one per axis, and an overall level that is the weakest of the three (owner, 2026-11-02, decision 0461).")
 	w("")
-	w("%s", "| Axis | " + pill("Early", "", "", "") + " | " + pill("Solid", "", "", "") + " | " + pill("Proven", "", "", "") + " |")
+	w("%s", "| Axis | "+pill("Early", "", "", "")+" | "+pill("Solid", "", "", "")+" | "+pill("Proven", "", "", "")+" |")
 	w("|---|---|---|---|")
 	w("| Features, against Go's package or the domain | core uses | common uses, gaps listed | near full parity, or beyond Go |")
 	w("| Testing | own tests | Go's tests ported or a Go differential; parsers fuzzed | also `--race` and load stress clean, long fuzz runs, security reviewed where it applies (crypto, tls, http, x509) |")
@@ -964,7 +988,7 @@ func main() {
 	for i, m := range bg {
 		bg[i] = "`std/" + m + "` (" + beyondGo[m] + ")"
 	}
-	w("%s", "Modules with no Go standard library counterpart, or that go past it: " + strings.Join(bg, ", ") + ". Also in `std/crypto`: Argon2id password hashing, AES-GCM and ChaCha20-Poly1305 as public AEAD, HKDF.")
+	w("%s", "Modules with no Go standard library counterpart, or that go past it: "+strings.Join(bg, ", ")+". Also in `std/crypto`: Argon2id password hashing, AES-GCM and ChaCha20-Poly1305 as public AEAD, HKDF.")
 	w("")
 	w("## Function level checks")
 	w("")
