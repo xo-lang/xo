@@ -126,6 +126,10 @@ struct S {
 /// A generated function whose body is still to build (run_gens).
 enum Gen {
   Debug(ct: Int, t: Int)
+  /// xo.debugcap[T]: Debug's text, which stops adding a large struct's
+  /// fields once it is over 64 bytes (a fault frame's eager format,
+  /// decision 0632)
+  DebugCap(ct: Int, t: Int)
   Slice(lt: Int)
   Concat(t: Int)
   FrameArgs(names: List[Str], cts: List[Int], cap_ts: List[Int], elided: Bool)
@@ -4383,6 +4387,10 @@ fn (var b: Builder) build_gen(g: GenJob) {
   match g.gen {
     Debug(ct, t) => {
       b.debug_body(ct, t)
+      b.finish_fn()
+    }
+    DebugCap(ct, t) => {
+      b.debug_body(ct, t, cap: true)
       b.finish_fn()
     }
     Slice(lt) => {

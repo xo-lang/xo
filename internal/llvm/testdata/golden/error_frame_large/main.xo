@@ -1,0 +1,46 @@
+// Decision 0632: a parameter of 256 bytes or more gets its frame text
+// (the Debug text cut to 64 bytes) when the frame is captured, through a
+// Debug that stops adding a large struct's fields past 64 bytes; the
+// trace prints what it printed when the frame kept a copy. Covered: a
+// large struct, one nested in a small one, an Option of one, a newtype of
+// one, a struct of many short Options, and a small struct beside them.
+struct Small { a: Int, b: Str }
+struct Wide {
+  a0: Int, a1: Int, a2: Int, a3: Int, a4: Int, a5: Int, a6: Int, a7: Int,
+  a8: Int, a9: Int, b0: Int, b1: Int, b2: Int, b3: Int, b4: Int, b5: Int,
+  b6: Int, b7: Int, b8: Int, b9: Int, c0: Int, c1: Int, c2: Int, c3: Int,
+  c4: Int, c5: Int, c6: Int, c7: Int, c8: Int, c9: Int, d0: Int, d1: Int, d2: Int
+}
+struct Tiny { x: Wide }
+struct Outer { name: Str, inner: Wide?, more: Wide, tail: Small }
+struct Quiet { z0: Int?, z1: Int?, z2: Int?, z3: Int?, z4: Int?, z5: Int?, z6: Int?, z7: Int?, z8: Int?, z9: Int?, y0: Int?, y1: Int?, y2: Int?, y3: Int?, y4: Int?, y5: Int? }
+type Id struct(Wide)
+enum E { Bad(msg: Str) } derive Display
+
+fn wide(k: Int) -> Wide {
+  Wide{a0: k, a1: k, a2: k, a3: k, a4: k, a5: k, a6: k, a7: k, a8: k, a9: k, b0: 1, b1: 2, b2: 3, b3: 4, b4: 5, b5: 6, b6: 7, b7: 8, b8: 9, b9: 10, c0: 0, c1: 0, c2: 0, c3: 0, c4: 0, c5: 0, c6: 0, c7: 0, c8: 0, c9: 0, d0: 0, d1: 0, d2: 0}
+}
+fn fail(n: Int) -> Int ! E {
+  if n > 0 {
+    return Err(E.Bad(msg: "no"))
+  }
+  n
+}
+fn f1(w: Wide, s: Small) -> Int ! E { fail(w.a0)? }
+fn f2(o: Outer) -> Int ! E { f1(o.more, o.tail)? }
+fn f3(q: Quiet, id: Id) -> Int ! E { fail(1)? + (q.z0 ?? 0) + id.0.a0 }
+fn f4(o: Outer?) -> Int ! E { fail(1)? + (o.map(fn(x) { x.name.len() }) ?? 0) }
+fn f5(t: Tiny, w: Wide) -> Int ! E { fail(1)? + t.x.a0 + w.a1 }
+
+fn main(os: Os) ! {
+  let o = Outer{name: "n", inner: Some(wide(7)), more: wide(12345678901), tail: Small{a: 1, b: "s"}}
+  let q = Quiet{z0: None, z1: None, z2: None, z3: None, z4: None, z5: None, z6: None, z7: None, z8: None, z9: None, y0: None, y1: None, y2: None, y3: None, y4: None, y5: Some(5)}
+  let _ = chain(Some(o), q, Id(wide(2)), Tiny{x: wide(3)})?
+}
+
+fn chain(o: Outer?, q: Quiet, id: Id, t: Tiny) -> Int ! E {
+  let a = f3(q, id).ok() ?? 0
+  let b = f5(t, wide(4)).ok() ?? 0
+  let c = f4(o)?
+  a + b + c
+}

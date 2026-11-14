@@ -38,6 +38,22 @@ a copy of the value. Smaller parameters keep the copy and the lazy format.
   the case to check before this lands.
 - `--error-args=off` is unchanged.
 
+## Results (2026-11-14)
+
+- Debug did not stop at 64 bytes: the generated Debug functions build the whole text and the frame
+  cut it after (frame_args_body). So the change adds xo.debugcap[T] (Gen.DebugCap, show.xo
+  debug_body with cap): a struct adds each field only while the text is 64 bytes or less, and a
+  field (or an Option or enum payload, or a newtype's value) of 256 bytes or more goes through its
+  own capped function. Small fields format in full, as before. push_frame takes a parameter of 32
+  words or more (cost.xo type_words) through it and keeps the text (frameargs captures `text`).
+- Same text: the trace of golden error_frame_large (a large struct, one nested in a small one, an
+  Option of one, a newtype of one, a struct of many short Options, a small struct beside them) is
+  byte-identical from main's xo and the change's, arm64 and LLVM, as are five single-frame variants.
+- `--ab` (host 1, bench/perf/errframes, 3731d64fb against the change, 7 rounds, ~/xo-lead/notes/lang1/
+  ffp-ab-big.txt and ffp-ab-small.txt): big (20,000 errors through three `?` frames whose parameter
+  is a 40 KB struct) wall 0.334 (59.0 to 19.7 ms; 0.329 to 0.339, better, 0 of 6 rounds loaded);
+  small (a 4-word parameter) within noise (0.975).
+
 ## Consequences
 
 - The spec 11.1 sentence "A frame keeps a copy of each parameter value" gains the size rule.

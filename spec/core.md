@@ -4118,7 +4118,10 @@ LoadErr.Db(msg: "timeout")
   more of a value than the 64 bytes it shows. The text is what it would
   have been at the `?`: values are immutable or copied on write, and the
   few whose `Debug` text can change in place (`Buf`, `Atomic`) are
-  formatted when captured.
+  formatted when captured. A parameter of 256 bytes or more is formatted
+  when captured too, on the native backends (decision 0632): the frame
+  keeps its text, made only as far as the 64 bytes it shows, instead of
+  a copy of the value; the printed text is the same.
 - `--error-args=off` (any build, decision 0354; `--error-args=false`
   too) records the function and location only and prints `(...)` for
   the parameters: `at users.fetch_user(...)   users/fetch.xo:18`.

@@ -160,6 +160,42 @@ fn (var b: Builder) debug_func(ct: Int, t: Int) -> Str {
   b.gen_func(name, [st, t], [st], Gen.Debug(ct: ct, t: t))
 }
 
+/// xo.debugcap[ct](acc: Str, v: T) -> Str: as debug_func, but a struct
+/// (at any depth through large fields) stops adding fields once the text
+/// is over FRAME_TEXT bytes, which a fault frame cuts anyway (decision
+/// 0632): the frame's text is the same, the work bounded.
+fn (var b: Builder) debug_cap_func(ct: Int, t: Int) -> Str {
+  let st = b.str_t()
+  let name = "xo.debugcap[${b.type_name(ct)}]"
+  b.gen_func(name, [st, t], [st], Gen.DebugCap(ct: ct, t: t))
+}
+
+/// A fault frame shows this many bytes of a parameter's Debug text (spec
+/// 11.1); a longer text is cut to FRAME_TEXT - 3 and `...`.
+const FRAME_TEXT = 64
+
+/// A parameter of this many words or more (256 bytes, decision 0151's
+/// by-reference size) has its frame text made when the frame is
+/// captured, not a copy of its value kept (decision 0632).
+const FRAME_EAGER_WORDS = 32
+
+/// The words of a value of SSA type t (cost.xo type_words).
+fn (b: Builder) words_of(t: Int) -> Int {
+  var nw: Map[Int, Int] = {}
+  type_words(b.m, nw, t, 0)
+}
+
+/// debug_sub in a capped Debug: a large sub value through its own capped
+/// function, a small one through Debug's.
+fn (var b: Builder) debug_sub_cap(a: Int, x0: Int, xt: Int) -> Int {
+  let x = b.unbox(x0)
+  if b.words_of(b.vty(x)) < FRAME_EAGER_WORDS {
+    return b.debug_sub(a, x, xt)
+  }
+  let name = b.debug_cap_func(xt, b.vty(x))
+  b.call(name, b.str_t(), "", [a, x])
+}
+
 /// An enum with this many unit variants or more prints its Debug name
 /// from a table (debug_body).
 const DEBUG_NAME_TABLE_MIN = 3
@@ -191,7 +227,7 @@ fn (var b: Builder) unit_variant_names(obj: Int, t: Int) -> List[Str] {
   names
 }
 
-fn (var b: Builder) debug_body(ct: Int, t: Int) {
+fn (var b: Builder) debug_body(ct: Int, t: Int, cap: Bool = false) {
   let st = b.str_t()
   let it = b.int_t()
   let bt = b.bool_t()
@@ -394,7 +430,7 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
   if b.tkind(t) == Kind.Struct && tk == "newtype" && b.m.types[t].fields.len() == 1 {
     let a = b.lit(acc, "${oname}(")
     let f = b.add(Op.Field, b.m.types[t].fields[0].ty, Aux.I(n: 0), [v])
-    let a2 = b.debug_sub(a, f, b.c.subst(b.c.objs[obj].target, sb))
+    let a2 = if cap { b.debug_sub_cap(a, f, b.c.subst(b.c.objs[obj].target, sb)) } else { b.debug_sub(a, f, b.c.subst(b.c.objs[obj].target, sb)) }
     b.retv(b.lit(a2, ")"))
     return
   }
@@ -411,6 +447,28 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
       return
     }
     var a = b.lit(acc, "${oname}{")
+    if cap {
+      // each field only while the text is FRAME_TEXT bytes or less:
+      // past that the frame shows the first FRAME_TEXT - 3 (decision 0632)
+      let av = b.local()
+      b.write_var(av, a)
+      for (i, f) in b.c.objs[obj].fields.indexed() {
+        let fi = b.m.field_index(t, check.text(f.name))
+        if fi < 0 {
+          b.unsupported("the Debug text of `${b.c.show(ct)}`")
+          continue
+        }
+        let short = b.add(Op.Gt, bt, Aux.None, [b.cint(FRAME_TEXT + 1), b.call("Str.len", it, "", [b.read(av)])])
+        let (no, join) = b.if_then_begin(short)
+        var fa = b.lit(b.read(av), "${if i > 0 { ", " } else { "" }}${check.text(f.name)}: ")
+        let fv = b.add(Op.Field, b.m.types[t].fields[fi].ty, Aux.I(n: fi), [v])
+        fa = b.debug_sub_cap(fa, fv, b.c.subst(f.ty, sb))
+        b.write_var(av, fa)
+        b.if_then_end(no, join)
+      }
+      b.retv(b.lit(b.read(av), "}"))
+      return
+    }
     for (i, f) in b.c.objs[obj].fields.indexed() {
       // one constant for the separator and the name: a call each was
       // half of a field's code
@@ -462,7 +520,7 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
           }
           let ft = b.m.types[t].variants[vi].fields[fi].ty
           let pv = b.add(Op.Payload, ft, Aux.P(tag: vi, field: fi), [v])
-          a = b.debug_sub(a, pv, b.c.subst(f.ty, sb))
+          a = if cap { b.debug_sub_cap(a, pv, b.c.subst(f.ty, sb)) } else { b.debug_sub(a, pv, b.c.subst(f.ty, sb)) }
         }
         b.retv(b.lit(a, ")"))
       }
@@ -586,6 +644,12 @@ fn (var b: Builder) push_frame(tr: Int, sp: Span) -> Int {
       // its Debug text changes in place: taken now
       v = b.append_debug(b.const_str(""), v, ct)
       ct = -1
+    } else if b.words_of(b.vty(v)) >= FRAME_EAGER_WORDS {
+      // a large value (256 bytes or more): its text now, at most a little
+      // past FRAME_TEXT bytes, instead of a copy of the value (decision
+      // 0632: a 53 KB request struct copied per `?` to show 64 bytes)
+      v = b.debug_sub_cap(b.const_str(""), v, ct)
+      ct = -1
     }
     names.push(check.text(b.c.objs[vo].name))
     cts.push(ct)
@@ -650,9 +714,9 @@ fn (var b: Builder) frame_args_body(names: List[Str], cts: List[Int], cap_ts: Li
     }
     let cut = b.local()
     b.write_var(cut, text)
-    let long = b.add(Op.Gt, b.bool_t(), Aux.None, [b.call("Str.len", it, "", [text]), b.cint(64)])
+    let long = b.add(Op.Gt, b.bool_t(), Aux.None, [b.call("Str.len", it, "", [text]), b.cint(FRAME_TEXT)])
     let (no, join) = b.if_then_begin(long)
-    let short = b.llrt_or_rt("str_slice", st, [text, b.cint(0), b.cint(61)])
+    let short = b.llrt_or_rt("str_slice", st, [text, b.cint(0), b.cint(FRAME_TEXT - 3)])
     b.write_var(cut, b.call("str.concat", st, "", [short, b.const_str("...")]))
     b.if_then_end(no, join)
     acc = b.call("str.concat", st, "", [acc, b.read(cut)])
