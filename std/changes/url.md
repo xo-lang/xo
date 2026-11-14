@@ -1,5 +1,17 @@
 # std/url changes
 
+## 2026-11-14: perf, security: Values is an insertion-ordered Map of each key's values
+
+- Kind: perf, security
+- Commit: this push
+- Found by: the decision 0616 std/url review (Xo Lang 3): get, all, has, add, set and remove scanned a key list, and add and parse_query copied a key's values to add one, so a handler reading every key of a query a peer fills with up to 10,000 parameters, or one key's 10,000 values, did quadratic work
+- Go reference: net/url Values is a map[string][]string
+- Form: up to 16 keys the key and value lists (bench/perf/url encode: a Map for a few keys was 1.083 of them on host 1), past 16 the Map
+- Measured (Mac, native, 9,999 parameters): get of every key 65 ms to 0.15 ms (Go 0.17 ms); add of every key 78 ms to 0.56 ms (Go 4.5 ms); 9,999 values of one key parsed and added 189 ms to 0.54 ms; remove of every key 15 ms to 0.15 ms; parse_query and encode of distinct keys unchanged
+- Test: std/url_test.xo "Values finds keys through add, set, remove and parse_query, in first-appearance order" and "many values of one key, parsed and added"; goldens http_form, http_tls, parse_edge_formats, url_basic, views_parsers on arm64, llvm and go; TestStdCorpora url and urlfuzz
+- Affected: every backend; bounded by parse_query's 10,000 parameter limit (GO-2026-4341), so a cost per request, not unbounded
+- Shipped in: not yet released
+
 ## 2026-11-13: fix: such an escape before a %25 zone fails with Go's ParseAddr error too
 
 - Kind: fix

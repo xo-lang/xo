@@ -339,3 +339,58 @@ test "parse_query counts the separators before it splits (GO-2026-4341)" {
     Err(e) => expect(e.msg) == "number of URL query parameters exceeded limit"
   }
 }
+
+test "Values finds keys through add, set, remove and parse_query, in first-appearance order" {
+  // 40 keys; every answer is checked against keys()
+  var v = values()
+  for i in 0..40 {
+    v.add("k${i % 40}", "a${i}")
+    v.add("k${(i * 7) % 40}", "b${i}")
+  }
+  v.set("k3", "s")
+  v.set("new", "n")
+  v.remove("k0")
+  v.remove("k39")
+  v.remove("k20")
+  v.remove("absent")
+  for k in v.keys() {
+    expect(v.has(k)) == true
+    expect(v.get(k)) == v.all(k).first()
+  }
+  expect(v.has("k0")) == false
+  expect(v.all("k20")) == []
+  expect(v.get("k3")) == Some("s")
+  expect(v.get("new")) == Some("n")
+  expect(v.keys().len()) == 38
+  for i in 1..30 {
+    v.remove("k${i}")
+  }
+  expect(v.keys().sort()) == ["k30", "k31", "k32", "k33", "k34", "k35", "k36", "k37", "k38", "new"]
+  expect(v.get("k35")) == Some("b5")
+  v.add("k35", "again")
+  expect(v.all("k35")) == ["b5", "a35", "again"]
+  let p = parse_query(v.encode() + "&z=1&z=2").or_fault("parses")
+  expect(p.all("z")) == ["1", "2"]
+  expect(p.all("k35")) == ["b5", "a35", "again"]
+  var q = values()
+  for i in 0..10000 {
+    q.add("key${i}", "${i}")
+  }
+  var n = 0
+  for k in q.keys() {
+    n += (q.get(k) ?? "").len()
+  }
+  expect(n) == 38890
+}
+
+test "many values of one key, parsed and added" {
+  let v = parse_query("a=x&".repeat(9998) + "a=y").or_fault("parses")
+  expect(v.all("a").len()) == 9999
+  expect(v.all("a").last()) == Some("y")
+  var w = values()
+  for x in v.all("a") {
+    w.add("a", x)
+  }
+  expect(w.all("a")) == v.all("a")
+  expect(w.encode().len()) == 39995
+}

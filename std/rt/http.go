@@ -804,7 +804,7 @@ func (r Http_Request) M_query_all(tk *Task, name string) List[string] {
 // the media type is std/mime's parse_media_type of the Content-Type.
 func (r Http_Request) M_form(tk *Task) Result[Url_Values, Url_EscapeErr] {
 	if r.F_method != "POST" && r.F_method != "PUT" && r.F_method != "PATCH" {
-		return Ok[Url_Values, Url_EscapeErr](Url_Values{})
+		return Ok[Url_Values, Url_EscapeErr](Url_values(tk))
 	}
 	// Go's parsePostForm, through std/mime as the native code does
 	ct := headerGet(r.F_headers, "Content-Type").V
@@ -816,7 +816,7 @@ func (r Http_Request) M_form(tk *Task) Result[Url_Values, Url_EscapeErr] {
 		return Err[Url_Values](Url_EscapeErr{F_msg: m.E.F_msg})
 	}
 	if m.V.F_kind != "application/x-www-form-urlencoded" {
-		return Ok[Url_Values, Url_EscapeErr](Url_Values{})
+		return Ok[Url_Values, Url_EscapeErr](Url_values(tk))
 	}
 	return Url_parse_query(tk, urlText(string(r.F_body)))
 }

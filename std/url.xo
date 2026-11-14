@@ -38,11 +38,40 @@ pub fn path_unescape(s: Str) -> Str ! EscapeErr { unescape(s, false) }
 /// they first appeared, each with every value given for it. A value, not
 /// a handle.
 pub struct Values {
+  // up to SMALL keys: the keys in first-appearance order and each key's
+  // values, found by a scan (the common query, no Map); past SMALL, m
+  // holds them all, insertion ordered (decision 0091), and ks and vs
+  // are empty, so a key is found in constant time, as in Go's map, where
+  // a scan made reading every key of a query a peer fills with 10000
+  // quadratic (65 ms against Go's 0.2). The form depends only on the
+  // number of keys, so == compares contents.
   ks: List[Str]
   vs: List[List[Str]]
+  m: Map[Str, List[Str]]
 }
 
-pub fn values() -> Values { Values{ks: [], vs: []} }
+pub fn values() -> Values { Values{ks: [], vs: [], m: {}} }
+
+/// Keys a Values keeps in its lists before it moves them into its Map
+/// (bench/perf/url encode: a Map for a few keys was 1.083 of the lists).
+const SMALL = 16
+
+/// The Values of these keys and values (first-appearance order), in the
+/// form their number calls for.
+fn values_of(m: Map[Str, List[Str]]) -> Values {
+  if m.len() > SMALL { Values{ks: [], vs: [], m: m} } else { Values{ks: m.keys(), vs: m.values(), m: {}} }
+}
+
+/// Moves the lists into the Map once they pass SMALL keys.
+fn (var v: Values) grown() {
+  if v.ks.len() > SMALL {
+    for i in 0..v.ks.len() {
+      v.m.put(v.ks[i], v.vs[i])
+    }
+    v.ks = []
+    v.vs = []
+  }
+}
 
 /// `a=1&b=2&a=3` into Values; a `;` separator, a bad escape, or more than
 /// 10000 parameters is an error, as url.ParseQuery.
@@ -60,10 +89,7 @@ pub fn parse_query(s: Str) -> Values ! EscapeErr {
   }
   let parts = s.split("&")
   let big = s.len() > OWN_MIN
-  // the keys' positions in a Map, so many distinct keys stay linear
-  var at: Map[Str, Int] = {}
-  var ks: List[Str] = []
-  var vs: List[List[Str]] = []
+  var v = values()
   // Go's parseQuery: a pair with a semicolon sets its error whatever came
   // before, so it wins over an earlier escape error
   if s.contains(";") {
@@ -84,45 +110,50 @@ pub fn parse_query(s: Str) -> Values ! EscapeErr {
       k = k.clone()
       x = x.clone()
     }
-    match at.get(k) {
-      Some(i) => {
-        var xs = vs[i]
-        xs.push(x)
-        vs.set(i, xs)
-      }
-      None => {
-        at.put(k, ks.len())
-        ks.push(k)
-        vs.push([x])
-      }
-    }
+    // lists up to SMALL keys (no Map for a small query), the Map past
+    // them; a value pushed in place either way
+    v.add(k, x)
   }
-  Values{ks: ks, vs: vs}
+  v
 }
 
 /// The first value of key.
 pub fn (v: Values) get(key: Str) -> Str? {
+  if !v.m.is_empty() {
+    return v.m.get(key)?.first()
+  }
   let i = v.ks.index_of(key)?
   v.vs[i].first()
 }
 
 /// Every value of key, [] when missing.
 pub fn (v: Values) all(key: Str) -> List[Str] {
+  if !v.m.is_empty() {
+    return v.m.get(key) ?? []
+  }
   match v.ks.index_of(key) {
     Some(i) => v.vs[i]
     None => []
   }
 }
 
-pub fn (v: Values) has(key: Str) -> Bool { v.ks.contains(key) }
+pub fn (v: Values) has(key: Str) -> Bool {
+  if v.m.is_empty() { v.ks.contains(key) } else { v.m.contains(key) }
+}
 
 /// The keys in the order they first appeared.
-pub fn (v: Values) keys() -> List[Str] { v.ks }
+pub fn (v: Values) keys() -> List[Str] { if v.m.is_empty() { v.ks } else { v.m.keys() } }
 
 /// `a=1&b=2`, sorted by key, each value escaped with query_escape
 /// (Values.Encode).
 pub fn (v: Values) encode() -> Str {
   var out = StrBuilder.new()
+  if !v.m.is_empty() {
+    for (k, xs) in v.m.entries().sort_by(fn(e) { e.0 }) {
+      write_pairs(out, k, xs)
+    }
+    return out.freeze()
+  }
   // the keys sorted as indexes: a key's values are read at its index, no
   // lookup of the key by name for each
   var order: List[Int] = []
@@ -132,47 +163,66 @@ pub fn (v: Values) encode() -> Str {
   let ks = v.ks
   order = order.sort_by(fn(i) { ks[i] })
   for i in order {
-    let ek = query_escape(ks[i])
-    for x in v.vs[i] {
-      if out.len() > 0 {
-        out.write("&")
-      }
-      out.write(ek)
-      out.write("=")
-      out.write(query_escape(x))
-    }
+    write_pairs(out, ks[i], v.vs[i])
   }
   out.freeze()
 }
 
+/// `k=x` for each of xs, escaped, `&` between pairs.
+fn write_pairs(var out: StrBuilder, k: Str, xs: List[Str]) {
+  let ek = query_escape(k)
+  for x in xs {
+    if out.len() > 0 {
+      out.write("&")
+    }
+    out.write(ek)
+    out.write("=")
+    out.write(query_escape(x))
+  }
+}
+
 /// Adds a value after the key's others.
 pub fn (var v: Values) add(key: Str, value: Str) {
+  if !v.m.is_empty() {
+    v.m.update(key, [], fn(var xs) { xs.push(value) })
+    return
+  }
   match v.ks.index_of(key) {
-    Some(i) => {
-      var xs = v.vs[i]
-      xs.push(value)
-      v.vs.set(i, xs)
-    }
+    // in place: a copy of the key's values, changed and set back, copied
+    // them per value
+    Some(i) => v.vs[i].push(value)
     None => {
       v.ks.push(key)
       v.vs.push([value])
+      v.grown()
     }
   }
 }
 
 /// Replaces every value of key with value.
 pub fn (var v: Values) set(key: Str, value: Str) {
+  if !v.m.is_empty() {
+    v.m.put(key, [value])
+    return
+  }
   match v.ks.index_of(key) {
     Some(i) => v.vs.set(i, [value])
     None => {
       v.ks.push(key)
       v.vs.push([value])
+      v.grown()
     }
   }
 }
 
 /// Removes key and its values.
 pub fn (var v: Values) remove(key: Str) {
+  if !v.m.is_empty() {
+    if v.m.remove(key) != None && v.m.len() <= SMALL {
+      v = values_of(v.m)
+    }
+    return
+  }
   if let Some(i) = v.ks.index_of(key) {
     let _k = v.ks.remove_at(i)
     let _v = v.vs.remove_at(i)
