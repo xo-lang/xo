@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -161,12 +162,20 @@ func main() {
 			path = filepath.Join(out, m+"_test.xo")
 		}
 		text := []byte(gen())
+		old, oldErr := os.ReadFile(path)
+		// the header names the Go that generated the corpus; a different
+		// patch release alone is not staleness (81 corpora said go1.26.1 and
+		// 10 go1.26.11 on 2026-11-15, so -check failed nearly every corpus
+		// on either), and regenerating keeps the old header
+		same := oldErr == nil && sameButGoVersion(old, text)
 		if *check {
-			old, err := os.ReadFile(path)
-			if err != nil || !bytes.Equal(old, text) {
+			if !same {
 				fmt.Fprintf(os.Stderr, "stdcorpus: %s is stale: run go run ./scripts/stdcorpus %s\n", path, m)
 				bad = true
 			}
+			continue
+		}
+		if same {
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -180,6 +189,31 @@ func main() {
 	}
 	if bad {
 		os.Exit(1)
+	}
+}
+
+// goVersionRE is a Go release as a header names it: `(go1.26.11)`.
+var goVersionRE = regexp.MustCompile(`^\(go[0-9][^)]*\)`)
+
+// sameButGoVersion reports whether corpus text old equals the generated
+// text gen but for the Go release gen's headers name (runtime.Version()
+// where header put it, once a header; old may name another release in
+// each place).
+func sameButGoVersion(old, gen []byte) bool {
+	v := []byte("(" + runtime.Version() + ")")
+	for {
+		i := bytes.Index(gen, v)
+		if i < 0 {
+			return bytes.Equal(old, gen)
+		}
+		if len(old) < i || !bytes.Equal(old[:i], gen[:i]) {
+			return false
+		}
+		loc := goVersionRE.FindIndex(old[i:])
+		if loc == nil {
+			return false
+		}
+		old, gen = old[i+loc[1]:], gen[i+len(v):]
 	}
 }
 

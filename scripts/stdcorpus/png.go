@@ -101,6 +101,19 @@ func pngDescribe(data []byte) string {
 	return fmt.Sprintf("ok %s %dx%d pix=%d/%d pal=%d/%d", pngModelName(img), b.Dx(), b.Dy(), crc32.ChecksumIEEE(pix), len(pix), len(pal), pngPalCRC(pal))
 }
 
+// pngDecodeTooLarge reports whether Go's Decode of data would allocate an
+// image of more than 4 GiB: a mutated header (seed case: NRGBA64
+// 59x117440542, 55 GB) made a bare `stdcorpus -check` reach 46 GB on the
+// Mac (2026-11-15, gotchas/stdcorpus-png-huge-mutation.md). Such inputs
+// are left out of DECODE; HUGE covers the dimension overflow header only.
+func pngDecodeTooLarge(data []byte) bool {
+	cfg, err := png.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return false
+	}
+	return int64(cfg.Width)*int64(cfg.Height)*8 > 4<<30
+}
+
 func pngDescribeConfig(data []byte) string {
 	cfg, err := png.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
@@ -394,6 +407,9 @@ func pngCorpus() string {
 
 	o.WriteString("/// (PNG bytes, Go's Decode result: `ok MODEL WxH pix=CRC32/LEN pal=N/CRC32` or `err KIND [TEXT]`, Go's DecodeConfig result)\nconst DECODE: List[(Bytes, Str, Str)] = [\n")
 	for _, c := range cases {
+		if pngDecodeTooLarge(c) {
+			continue
+		}
 		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xbytes(c), xq(pngDescribe(c)), xq(pngDescribeConfig(c)))
 	}
 	o.WriteString("]\n\n")

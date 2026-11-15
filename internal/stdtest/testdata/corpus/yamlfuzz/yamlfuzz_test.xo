@@ -78,6 +78,23 @@ struct Top {
   n: Int
 } derive Yaml
 
+struct Im {
+  a: Int
+  base yaml ",inline": Base
+  rest yaml ",inline": Map[Str, Int]
+  b: Str
+} derive Yaml
+
+fn show_im(text: Str, strict: Bool) -> Str {
+  match yaml.decode[Im](text, strict) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(t) => match yaml.encode_value[Im](t) {
+      Ok(y) => "OK ${y}"
+      Err(e) => "ERR ${e.display().quote()}"
+    }
+  }
+}
+
 fn show_top(text: Str) -> Str {
   show_top_with(text, false)
 }
