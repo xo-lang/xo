@@ -72,7 +72,8 @@ fn c_header_path(out: Str) -> (Str, Str) {
 /// (c_ctor_asm), all joined into one object (cc -r: a C program's link
 /// takes an archive's member only for a symbol it needs, which would
 /// leave the constructor out); the error text, or "" when it was written.
-fn ar_static(os: Os, goos: Str, cc: Str, flags: List[Str], srcs: List[Str], out: Str) -> Str {
+/// ir_flags go only on the compiles of LLVM IR (a `.ll` source: isel_flags).
+fn ar_static(os: Os, goos: Str, cc: Str, flags: List[Str], ir_flags: List[Str], srcs: List[Str], out: Str) -> Str {
   var objs: List[Str] = []
   for (i, s) in srcs.indexed() {
     if s.ends_with(".o") || s.ends_with(".a") {
@@ -80,7 +81,7 @@ fn ar_static(os: Os, goos: Str, cc: Str, flags: List[Str], srcs: List[Str], out:
       continue
     }
     let obj = "${out}.${i}.o"
-    let why = cc_object(os, cc, flags + ["-fexceptions", "-funwind-tables"], s, obj)
+    let why = cc_object(os, cc, flags + (if s.ends_with(".ll") { ir_flags } else { [] }) + ["-fexceptions", "-funwind-tables"], s, obj)
     if !why.is_empty() {
       return why
     }

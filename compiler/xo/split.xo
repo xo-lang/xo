@@ -261,6 +261,21 @@ fn single_lto_flags(mode: Str) -> List[Str] {
   }
 }
 
+/// The instruction selector of a clang compile of xo's IR at opt for
+/// arch: SelectionDAG at -O0 on arm64 too (`-fno-global-isel`), where
+/// clang picks GlobalISel. The two lower a large first-class aggregate
+/// argument differently (Apple clang 21: a 59-field struct by value
+/// through a closure call put the next argument in another slot), so a
+/// -O0 module calling a -O2 one (a test build's module with a constant
+/// time function, decision 0619), or a GlobalISel function calling one
+/// that fell back to SelectionDAG, passed the wrong value
+/// (gotchas/llvm-globalisel-aggregate-args.md). Only on the compiles of
+/// xo's IR by clang, never on a C compile or a link (gcc has no such
+/// flag).
+fn isel_flags(opt: Str, arch: Str) -> List[Str] {
+  if opt == "-O0" && arch == "arm64" { ["-fno-global-isel"] } else { [] }
+}
+
 /// The limits of the loops the IR marks for full unrolling (decision
 /// 0338: the loops with Float arithmetic, llvm func.xo loop_md): an
 /// unrolled size of 300, -O3's unroll threshold, instead of LLVM's 16,384
@@ -959,6 +974,13 @@ fn split_compile_flags(flags: List[Str]) -> List[Str] {
   target
 }
 
+/// clang's flags of a split build's module compiled at opt (the object
+/// cache keys on them): the instruction selector (isel_flags), the LTO
+/// mode, the target's flags and the giant function options gf.
+fn module_args(opt: Str, c: SplitConfig, target: List[Str], gf: List[Str]) -> List[Str] {
+  [opt] + isel_flags(opt, c.arch) + lto_flags(c.lto) + target + gf + ["-Wno-override-module", "-fexceptions", "-funwind-tables"]
+}
+
 /// splitBuild: compiles the modules lls in parallel (at most c.jobs
 /// clang processes), then links their objects with the other sources
 /// into bin through cc_build. The compiler's output of a failure, "" on
@@ -997,7 +1019,7 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
     }
     giants.push(gf)
     opts.push(opt)
-    let args = [opt] + lto_flags(c.lto) + target + gf + ["-Wno-override-module", "-fexceptions", "-funwind-tables"]
+    let args = module_args(opt, c, target, gf)
     var k = ""
     if !c.objcache.is_empty() {
       match os.fs.read(ll) {
@@ -1033,7 +1055,7 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
       // its source file's name, which ThinLTO's names of promoted locals
       // hash, so the build's random directory made two builds of the same
       // IR differ (gotchas/windows-thinlto-module-path.md)
-      let args = [opts[next]] + lto_flags(c.lto) + target + giants[next] + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", base_name(lls[next]), "-o", base_name(objs[next])]
+      let args = module_args(opts[next], c, target, giants[next]) + ["-c", base_name(lls[next]), "-o", base_name(objs[next])]
       match os.proc.cmd(clang, args).dir(dir_name(lls[next])).merge_stderr().spawn() {
         Ok(ch) => running.push((next, ch))
         Err(e) => fails.push("${lls[next]}: ${e}\n")

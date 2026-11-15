@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [llvm-globalisel-aggregate-args.md](llvm-globalisel-aggregate-args.md): Observed 2026-11-15: an x509 closure saw an empty chain under the LLVM test split: arm64 GlobalISel (-O0) and SelectionDAG (-O2, a module with a constant time function, 0619) lower a 59-field aggregate argument differently; -fno-global-isel on every arm64 -O0 IR compile
 - [lock-slow-profile-not-wall.md](lock-slow-profile-not-wall.md): Observed 2026-11-15: moving the darwin large block cache's madvise out of its lock cut lock_slow in an XO_PROF profile from 2,218 to 64 ms, yet the Mac --ab showed no wall gain (self 1.006, aiplatform 0.993 with RSS 1.015 worse); parked waiters are not the critical path, so decide with --ab
 - [fuzz-harness-go-representation.md](fuzz-harness-go-representation.md): Observed 2026-11-13: the x509 1M fuzz failed twice on URIs: the harness printed Go's url.URL.String() (re-escaped), then counted a constructed [6] Go skips; compare the field std keeps, read with Go's tag rules
 - [dudect-pool-layout.md](dudect-pool-layout.md): Observed 2026-11-12: OAEP dudect failed every pair, A/A too, on arm64 and amd64: the pool alternated the classes slot by slot, so the block across each page boundary was always one class; alternate runs of 4096 / KK slots instead

@@ -1714,7 +1714,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       fail(os, "${cc} failed")
     }
     lk.srcs = cobjs
-    var mode_flags = ["llvm", split.opt]
+    // the instruction selector (isel_flags): a binary linked from objects
+    // of GlobalISel is not one of SelectionDAG
+    var mode_flags = ["llvm", split.opt] + isel_flags(split.opt, tgoarch)
     if multi {
       mode_flags = mode_flags + ["split", split.lto]
     } else {
@@ -1760,7 +1762,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       let msg = if o.lib == "static" {
         // a static library (decision 0574): each module compiled to an
         // object, no LTO, joined with the constructor in an archive
-        ar_static(os, lctx.tgoos, cc, [split.opt, "-Wno-override-module"] + lk.flags + memo_sysroot(os, ctx), srcs, st.bin)
+        ar_static(os, lctx.tgoos, cc, [split.opt, "-Wno-override-module"] + lk.flags + memo_sysroot(os, ctx), isel_flags(split.opt, tgoarch), srcs, st.bin)
       } else if split.stable {
         // beside dir, not in it: the binary cache's key hashes every
         // file of dir, and the modules are made only after its miss
@@ -1780,7 +1782,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       } else {
         // a giant function's module (split_build does the same per module)
         let gf = if tgoarch == "arm64" && split.opt != "-O0" && ir_has_giant_fn(code) { giant_fn_flags(lctx.tgoos, tgoarch, lto1) } else { [] }
-        cc_build(os, lctx, cc, [split.opt] + single_lto_flags(lto1) + ["-Wno-override-module"] + gf + lflags, srcs, st.bin)
+        cc_build(os, lctx, cc, [split.opt] + single_lto_flags(lto1) + ["-Wno-override-module"] + gf + (if lto1 == "none" { isel_flags(split.opt, tgoarch) } else { [] }) + lflags, srcs, st.bin)
       }
       if !msg.is_empty() {
         os.stdio.eprint(msg)
@@ -2791,7 +2793,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       let opad: List[Str] = if oso_prefix.is_empty() { [] } else { wl_path("-oso_prefix", oso_prefix) }
       // a static library (decision 0574): the objects in an archive, which
       // the C program's link joins with the C library
-      let msg = if o.lib == "static" { ar_static(os, tgoos, cc, flags + memo_sysroot(os, ctx), lsrcs, cst.bin) } else { cc_build(os, ctx, cc, flags + cpad + opad + lk.link_only, lsrcs, cst.bin) }
+      let msg = if o.lib == "static" { ar_static(os, tgoos, cc, flags + memo_sysroot(os, ctx), [], lsrcs, cst.bin) } else { cc_build(os, ctx, cc, flags + cpad + opad + lk.link_only, lsrcs, cst.bin) }
       if !msg.is_empty() {
         os.stdio.eprint(msg)
         fail_stage(os, cst, "${cc} failed")

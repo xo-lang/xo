@@ -83,3 +83,18 @@ test "riscv64 IR states its floating point ABI as a module flag, which every spl
   let bare = with_target_abi("define hidden i64 @a() #1 {\n  ret i64 0\n}\n", "lp64d")
   expect(bare.contains("!llvm.module.flags = !{!1}\n!1 = !{i32 1, !\"target-abi\", !\"lp64d\"}")) == true
 }
+
+test "arm64 -O0 compiles of IR use SelectionDAG, as -O1 and up" {
+  // GlobalISel (clang's arm64 -O0 default) and SelectionDAG lower a large
+  // aggregate argument differently: a -O0 module calling a -O2 one (a
+  // test build's module with a constant time function) passed the wrong
+  // value (gotchas/llvm-globalisel-aggregate-args.md)
+  expect(isel_flags("-O0", "arm64")) == ["-fno-global-isel"]
+  expect(isel_flags("-O2", "arm64")) == []
+  expect(isel_flags("-O0", "amd64")) == []
+  let c = SplitConfig{opt: "-O0", lto: "none", arch: "arm64"}
+  let o0 = module_args("-O0", c, [], [])
+  expect(o0.contains("-fno-global-isel")) == true
+  expect(module_args("-O2", c, [], []).contains("-fno-global-isel")) == false
+  expect(module_args("-O0", SplitConfig{opt: "-O0", lto: "none", arch: "amd64"}, [], []).contains("-fno-global-isel")) == false
+}
