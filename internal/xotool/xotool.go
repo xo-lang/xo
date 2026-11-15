@@ -339,13 +339,17 @@ func Command() ([]string, error) {
 
 // Key is the key of the xo built from root's sources on this host: a
 // hash of the host and Inputs.
-func Key(root string) (string, error) {
+func Key(root string) (string, error) { return KeyFor(root, runtime.GOOS, runtime.GOARCH) }
+
+// KeyFor is Key as a goos/goarch host computes it (scripts/xokey:
+// offload-gate.sh asks whether the offload host has that xo cached).
+func KeyFor(root, goos, goarch string) (string, error) {
 	names, err := Inputs(root)
 	if err != nil {
 		return "", err
 	}
 	h := sha256.New()
-	fmt.Fprintf(h, "xo checkout v1\n%s/%s\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Fprintf(h, "xo checkout v1\n%s/%s\n", goos, goarch)
 	if o := LLVMOpt(); o != "" {
 		// an LLVM built xo of another clang level is another build
 		fmt.Fprintf(h, "llvm opt %s\n", o)
