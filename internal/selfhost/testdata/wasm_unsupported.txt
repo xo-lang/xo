@@ -87,6 +87,7 @@ proc_children_load # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0
 proc_cmd # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.run)
 rt_addrs # wasip1 wasip2 # c: rt.fn_addr faults on wasm (native code paths name native-only exports through it: lowering it built the fiber switch into every wasm module, 2026-11-03), rt.sym_addr("strlen") needs the C library and auxv is Linux's
 signal_notify # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.run)
+sql_open_mysql_args # wasip1 # network: the network (`rt.net_status`): WASI preview1 has no sockets
 sys_c # wasip1 wasip2 # c: the platform call `getpid` of c on another OS
 tls_client # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_coalesced_finish # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
