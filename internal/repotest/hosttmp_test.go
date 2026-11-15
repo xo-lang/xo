@@ -11,12 +11,15 @@ import (
 // tmpAllowed are the Xo sources that may name TMPDIR or a literal /tmp:
 // hostpath.xo is the one temporary directory rule (TMPDIR, TEMP, TMP, then
 // the OS's own), the native runtime's dump.xo reads the same variables
-// itself (it cannot import the compiler), and the others use /tmp only as
-// the last cache directory of a machine with no home (not a temporary
-// directory).
+// itself (it cannot import the compiler), mysql.xo names MySQL's default
+// Unix socket /tmp/mysql.sock (go-sql-driver's default for unix() with no
+// path, decision 0648 item 2; a server's fixed address, not a temporary
+// directory), and the others use /tmp only as the last cache directory of
+// a machine with no home (not a temporary directory).
 var tmpAllowed = map[string]bool{
 	"compiler/hostpath/hostpath.xo": true,
 	"std/native/llrt/dump.xo":       true,
+	"std/native/llrt/mysql.xo":      true,
 	"compiler/check/deps.xo":        true,
 	"compiler/cli/modules/env.xo":   true,
 	"compiler/cli/dev/bisect.xo":    true,
