@@ -910,7 +910,16 @@ run_step_body() {
     hm="$cache/$(git rev-parse HEAD)-$mcode.txt"
     if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
       echo "irmanifest: FAIL (uncommitted changes: a manifest is kept by commit)"; failed=1
-    elif [ -s "$hm" ] || { ir_head_manifest "$hm.tmp$$" "${XO_GATE_IR_PARALLEL:-$(ir_jobs)}" && mv "$hm.tmp$$" "$hm"; }; then
+    elif [ -s "$hm" ] || {
+      # niced, with half ir_jobs' count, so the agents' gates on the same
+      # host keep their share (lead, 2026-11-15: host 3 is a container on
+      # the owner's Mac); its wall and CPU time are logged for irman.sh
+      irj=${XO_GATE_IR_PARALLEL:-$(( $(ir_jobs) / 2 ))}; [ "$irj" -lt 2 ] && irj=2
+      t0=$(date +%s); c0=$(awk '{print $14 + $15 + $16 + $17}' /proc/$$/stat 2>/dev/null)
+      export -f ir_head_manifest ir_jobs_why ir_avail_mb ir_mem_watch 2>/dev/null
+      logs=$logs nice -n 10 bash -c 'ir_head_manifest "$1" "$2"' _ "$hm.tmp$$" "$irj" && mv "$hm.tmp$$" "$hm" &&
+        echo "irmanifest: built in $(($(date +%s) - t0)) s wall, $(( ($(awk '{print $14 + $15 + $16 + $17}' /proc/$$/stat 2>/dev/null || echo 0) - ${c0:-0}) / $(getconf CLK_TCK) )) s CPU, -parallel $irj, niced"
+    }; then
       echo "irmanifest: $hm ($(wc -l <"$hm" | tr -d ' ') goldens)"
     else
       rm -f "$hm.tmp$$"; echo "irmanifest: FAIL ($logs/llvm-ir-head.txt)"; failed=1
