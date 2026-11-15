@@ -9,6 +9,6 @@ ingress:
   - hostname: sum.xolang.org
     service: http://127.0.0.1:7071
   - hostname: index.xolang.org
-    path: ^/index$
+    path: ^/(index)?$
     service: http://127.0.0.1:7071
   - service: http_status:404
