@@ -18,4 +18,11 @@ http://a/b/c/d;p?q#s
 http://a/b/c/g/
 http://a/b/c/d;p?q
 https://x.com/b/c/
+abs http://a/b true
+abs /rel/p false
+abs mailto:x@y true
+abs  false
+https://x.com/a/c/d/?q=1#f
+https://x.com/a/b/?q=1#f
+https://x.com/a/b/z?q=1#f
 --- stderr

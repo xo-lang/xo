@@ -1,5 +1,6 @@
 // std/url's URL type (decision 0642): parse, display, hostname, port,
-// request_uri, redacted, query, parse_ref and join_path; the output is
+// request_uri, redacted, query, parse_ref, is_abs, join_path and
+// Url.join_path; the output is
 // Go's net/url on the same inputs.
 
 use std/url
@@ -21,4 +22,11 @@ fn main(os: Os) {
     os.stdio.println(base.parse_ref(r).map(fn(u) { u.display() }).ok() ?? "err")
   }
   os.stdio.println(url.join_path("https://x.com/a/", ["../b", "c/"]).ok() ?? "err")
+  for s in ["http://a/b", "/rel/p", "mailto:x@y", ""] {
+    os.stdio.println("abs ${s} ${url.parse(s).or_fault("abs").is_abs()}")
+  }
+  let j = url.parse("https://x.com/a/b/?q=1#f").or_fault("join")
+  for e in [["../c", "d/"], [], ["x y", "..", "z"]] {
+    os.stdio.println(j.join_path(e).display())
+  }
 }
