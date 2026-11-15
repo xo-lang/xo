@@ -3323,7 +3323,8 @@ columns and values on every backend, `Row(a: 1, b: "x", c: null)`;
 struct Db {}                                 // handle: copies share the database
 
 pub fn open(net: Net, driver: Str, dsn: Str,
-            max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m)
+            max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m,
+            roots: Bytes = b"", loc: time.Zone = time.utc())   // roots: 10.8, 10.10; loc: 10.10
     -> Db ! SqlErr uses net.dial
 pub fn memory(schema: Str = "") -> Db ! SqlErr         // no capability, no effect
 // std/testing: fake_db(schema: Str) -> Db ! SqlErr    // same as memory(schema)
@@ -3794,18 +3795,31 @@ Status: stage A implemented natively (decision 0648, 2026-11-15): the
 wire protocol, authentication, go-sql-driver's DSN and the text
 protocol, TLS through std/tls's `tls.client`; checked against
 go-sql-driver v1.10.1 on MySQL 8.4 and 8.0 (scripts/mysql-diff.sh).
-Arguments are prepared on the server over the binary protocol (stage B,
-2026-11-15). RSA authentication, `loc` zones and `server_pub_key:` are
-the rest of stage B. The Go backend reports an
+Arguments are prepared on the server over the binary protocol and `loc`
+is a zone (stage B, 2026-11-15). RSA authentication and
+`server_pub_key:` are the rest of stage B. The Go backend reports an
 unknown driver.
 
 ```
 let db = sql.open(os.net, "mysql", "app:${pw}@tcp(db.internal:3306)/shop?parseTime=true", roots: ca)?
+let ny = sql.open(os.net, "mysql", "app:${pw}@tcp(db.internal:3306)/shop?parseTime=true&loc=America%2FNew_York",
+                  roots: ca, loc: time.zone("America/New_York")?)?
 ```
 
 `sql.open(net, "mysql", dsn, ...)` opens a MySQL database (5.7, 8.0 or
 later; MariaDB speaks the same protocol) through `net`, with 10.8's
-`roots` argument: PEM certificates trusted instead of the system's.
+`roots` argument: PEM certificates trusted instead of the system's, and
+`loc`, the zone DATE, DATETIME and TIMESTAMP are wall times in
+(go-sql-driver's `Loc`, UTC by default). The zone is a value, not looked
+up from the DSN: a name known only at run time would embed the whole
+zone database (about 400 KB, 13.1) in every std/sql program, and a
+constant name embeds one zone (a program opening MySQL measured 5,666,225
+bytes with no zone, 5,715,409 with `time.zone("Europe/Berlin")`, and
+6,112,129 with one run time `time.zone(name)`; darwin/arm64, 2026-11-15).
+The DSN's `loc`, when present, must name `loc`'s zone (`Param` error
+otherwise, never a silent pick). Any other driver refuses a `loc` other
+than UTC (`Param`): Postgres's `timestamptz` is an instant and its
+`timestamp` reads as UTC, as pgx, which has no zone setting.
 `open` connects and pings once before it returns.
 
 **Connection strings** are go-sql-driver's:
@@ -3823,8 +3837,13 @@ password runs to the last `@`, so it may hold `@` and `:`. Parameters:
   signed, so `tls=true` fails against a default install with a `Conn`
   error that names `tls=custom` (with `roots:`) and `tls=skip-verify`.
 - `parseTime` (`false`): DATE, DATETIME and TIMESTAMP as `At`, else
-  `Text`. `loc`: `UTC` only in stage A (`Local` is refused: there is no
-  process time zone without `env`).
+  `Text`. `loc` (`UTC`): the name of `open`'s `loc` zone (`Local` is
+  refused: there is no process time zone without `env`; pass
+  `time.local(os.env)`'s zone and its name). A wall time is read by Go's
+  `time.Date` rule: in a daylight saving gap it moves by the gap, in an
+  overlap it takes the first offset Go meets. An `At` argument is written
+  as its wall clock in the zone, its fraction to microseconds with
+  trailing zeros dropped, as go-sql-driver.
 - `charset`, `collation` (`utf8mb4_general_ci`), `allowNativePasswords`
   (`true`), `allowCleartextPasswords`, `allowPublicKeyRetrieval`,
   `multiStatements`, `interpolateParams`, `clientFoundRows`,
@@ -3885,7 +3904,7 @@ value.
 | CHAR, VARCHAR, TEXT, ENUM, SET | `Text` | `str` |
 | BINARY, VARBINARY, BLOB, BIT, GEOMETRY | `Blob` | `bytes` |
 | JSON | `JsonText` | `json[T]`, `str` |
-| DATE, DATETIME, TIMESTAMP | `At` (UTC) with `parseTime=true`, else `Text` | `time`, `str` |
+| DATE, DATETIME, TIMESTAMP | `At` (a wall time in `loc`) with `parseTime=true`, else `Text` | `time`, `str` |
 | TIME | `Text` (a duration up to 838 hours) | `str` |
 
 NULL is `Null`. A zero date (`0000-00-00 00:00:00`) and a year outside

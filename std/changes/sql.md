@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-15: feature: sql.open's `loc`, MySQL's zone
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0648 (stage B; the lead approved the argument)
+- Go reference: go-sql-driver/mysql v1.10.1 Config.Loc (parseDateTime's time.Date, appendDateTime's t.In(Loc)); Go 1.26 time.Date for gaps and overlaps
+- Test: golden sql_open_loc (native, llvm and Go backends: a zone other than UTC is refused for postgres and any other driver); mysql_test.xo (wall_in against Go's time.Date vectors for New York and Berlin gaps and overlaps, binds in a zone, a DSN loc that names another zone refused); scripts/mysql-diff.sh's two loc=America/New_York passes, equal to go-sql-driver on 8.4 and 8.0
+- Shipped in: not yet released
+
+`sql.open(..., loc: time.zone("America/New_York")?)` reads MySQL's DATE, DATETIME and TIMESTAMP as wall times in that zone and writes `At` arguments as its wall clock; the DSN's `loc` must name the same zone. A value, not a DSN lookup: a run time `time.zone(name)` embeds the 398 KB zone database in every std/sql program (measured: 5,666,225 bytes with no zone, 5,715,409 with one constant zone, 6,112,129 with a run time lookup). Every other driver refuses a zone other than UTC.
+
 ## 2026-11-15: feature: the MySQL driver (stage A, and stage B's prepared statements)
 
 - Kind: feature

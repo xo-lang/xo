@@ -3,6 +3,7 @@
 // printed as the go-sql-driver reference (scripts/mysqldiff/gomysql)
 // prints it.
 use std/sql
+use std/time
 
 fn first_line(s: Str) -> Str { s.lines().first() ?? "" }
 
@@ -65,7 +66,10 @@ fn main(os: Os) ! {
     return
   }
   let dsn = argv.first().or_err("usage: diff DSN < cases")?
-  let db = sql.open(os.net, "mysql", dsn, max_open: 1, roots: roots)?
+  // the reference's loc=America/New_York, as a value (a constant name
+  // embeds that zone alone)
+  let loc = if dsn.contains("loc=America%2FNew_York") { time.zone("America/New_York")? } else { time.utc() }
+  let db = sql.open(os.net, "mysql", dsn, max_open: 1, roots: roots, loc: loc)?
   for line in os.stdio.lines()? {
     if line.trim().is_empty() {
       continue

@@ -12,6 +12,7 @@
 // is registered).
 use std/json as js
 use std/sql
+use std/time
 use std/task
 use native/rt
 use native/rtsql
@@ -265,9 +266,14 @@ fn memory(schema: Str = "") -> Db ! sql.SqlErr {
   new_db(tables)
 }
 
-fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"") -> Db ! sql.SqlErr uses net.dial {
+fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"", loc: time.Zone = time.utc()) -> Db ! sql.SqlErr uses net.dial {
   if task.is_canceled() {
     return Err(sql.SqlErr.Canceled)
+  }
+  if driver != "mysql" && loc.name() != "UTC" {
+    // pgx has no Loc: timestamptz is an instant, timestamp's wall clock
+    // reads as UTC (decision 0648 item 8)
+    return Err(sql.SqlErr.Param(msg: "loc: only the mysql driver reads times in a zone (driver ${driver.quote()}, loc ${loc.name()})"))
   }
   if driver is "postgres" | "postgresql" {
     // the driver is Xo and dials through net, so Net.only applies (decision 0278)
@@ -275,7 +281,7 @@ fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, 
   }
   if driver == "mysql" {
     // the driver is Xo and dials through net, as Postgres's (decision 0648)
-    return open_driver(net, mysql.MysqlDriver{roots: roots}, dsn, max_open: max_open, max_idle: max_idle, max_lifetime: max_lifetime)
+    return open_driver(net, mysql.MysqlDriver{roots: roots, zone: loc}, dsn, max_open: max_open, max_idle: max_idle, max_lifetime: max_lifetime)
   }
   if !rt.net_lists(net).is_empty() {
     // the driver dials by itself, so an allowlist cannot be enforced:

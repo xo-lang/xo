@@ -14,8 +14,10 @@
 // link), mysql_clear_password and sha256_password over a secure link, the
 // text protocol, arguments interpolated into the text, values, errors,
 // transactions, copy_from as batched INSERTs. Stage B: server side
-// prepared statements and binary rows, RSA full authentication, loc.
+// prepared statements and binary rows (COM_STMT_PREPARE, EXECUTE, CLOSE),
+// loc zones; RSA full authentication to come.
 use std/sql
+use std/time
 use std/tls
 use native/llrt/mysqlwire as w
 use native/llrt/mysqlauth as auth
@@ -38,7 +40,10 @@ pub struct Config {
   /// "skip-verify", "preferred" or "false".
   pub tls: Str
   pub parse_time: Bool
+  /// loc's name and zone: DATE, DATETIME and TIMESTAMP are wall times
+  /// there (go-sql-driver's Loc, default UTC).
   pub loc: Str
+  pub zone: time.Zone
   /// The collation's number (utf8mb4_general_ci, 45, by default).
   pub collation: Int
   pub allow_native: Bool
@@ -119,7 +124,7 @@ fn bool_param(k: Str, v: Str) -> Bool ! sql.SqlErr {
 
 /// Parses `[user[:password]@][net[(addr)]]/dbname[?param1=value1&...]`.
 pub fn config(dsn: Str) -> Config ! sql.SqlErr {
-  var cfg = Config{user: "", password: "", net: "tcp", addr: "", database: "", tls: "true", parse_time: false, loc: "UTC", collation: 45, allow_native: true, allow_cleartext: false, allow_public_key: false, multi_statements: false, interpolate: false, client_found_rows: false, columns_with_alias: false, reject_read_only: false, max_allowed_packet: 67108864, attrs: [], vars: []}
+  var cfg = Config{user: "", password: "", net: "tcp", addr: "", database: "", tls: "true", parse_time: false, loc: "UTC", zone: time.utc(), collation: 45, allow_native: true, allow_cleartext: false, allow_public_key: false, multi_statements: false, interpolate: false, client_found_rows: false, columns_with_alias: false, reject_read_only: false, max_allowed_packet: 67108864, attrs: [], vars: []}
   // the database starts after the last /; the parameters after the first ?
   // that follows it
   let slash = dsn.rfind("/") ?? return Err(param_err("invalid DSN: missing the slash separating the database name"))
@@ -192,9 +197,9 @@ pub fn config(dsn: Str) -> Config ! sql.SqlErr {
           if v == "Local" {
             return Err(param_err("loc=Local: there is no process time zone without env; name the zone"))
           }
-          if v != "UTC" {
-            return Err(param_err("loc=${v}: only UTC yet (decision 0648 stage B)"))
-          }
+          // the zone itself comes from the driver (connect): a name looked
+          // up here, known only at run time, would embed the whole zone
+          // database in every std/sql program
           cfg.loc = v
         }
         "charset" => {
@@ -266,6 +271,9 @@ fn has_port(addr: Str) -> Bool {
 pub struct MysqlDriver {
   /// PEM roots for tls=custom (open's roots argument).
   pub roots: Bytes
+  /// The zone of loc (UTC unless given): DATE, DATETIME and TIMESTAMP
+  /// are wall times there. A DSN's loc must name it.
+  pub zone: time.Zone = time.utc()
 }
 
 /// A connection to the server: plain, or upgraded to TLS after the
@@ -318,7 +326,11 @@ fn net_err(e: NetErr) -> sql.SqlErr {
 }
 
 fn (d: MysqlDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr uses net.dial {
-  let cfg = config(dsn)?
+  var cfg = config(dsn)?
+  if cfg.loc != d.zone.name() {
+    return Err(param_err("loc=${cfg.loc}: the driver's zone is ${d.zone.name()}; a zone other than UTC is given as a value (time.zone(\"${cfg.loc}\") with a constant name), not looked up from the DSN, which would embed the whole zone database"))
+  }
+  cfg.zone = d.zone
   if cfg.tls == "custom" && d.roots.is_empty() {
     return Err(param_err("tls=custom needs roots: (PEM) on sql.open"))
   }
@@ -580,7 +592,7 @@ fn quoted_after(msg: Str, prefix: Str) -> Str {
 // Values
 
 /// A text row's value by its column (decision 0648 item 8).
-pub fn decode_text(c: w.Column, v: Bytes?, parse_time: Bool) -> sql.SqlValue {
+pub fn decode_text(c: w.Column, v: Bytes?, parse_time: Bool, z: time.Zone = time.utc()) -> sql.SqlValue {
   let b = v ?? return sql.SqlValue.Null
   let s = b.to_str_lossy()
   match c.kind {
@@ -594,7 +606,7 @@ pub fn decode_text(c: w.Column, v: Bytes?, parse_time: Bool) -> sql.SqlValue {
       Some(f) => sql.SqlValue.Real(f: f)
       None => sql.SqlValue.Text(s: s)
     }
-    7 | 10 | 12 | 14 => if parse_time { time_value(s) } else { sql.SqlValue.Text(s: s) }
+    7 | 10 | 12 | 14 => if parse_time { time_value(s, z) } else { sql.SqlValue.Text(s: s) }
     16 | 255 => sql.SqlValue.Blob(b: b)
     245 => sql.SqlValue.JsonText(s: s)
     15 | 247 | 248 | 249 | 250 | 251 | 252 | 253 | 254 => if c.charset == w.CHARSET_BINARY { sql.SqlValue.Blob(b: b) } else { sql.SqlValue.Text(s: s) }
@@ -607,12 +619,25 @@ pub fn decode_text(c: w.Column, v: Bytes?, parse_time: Bool) -> sql.SqlValue {
 /// allows 1000 to 9999) or a text that is not a date stays the server's
 /// Text, as the Postgres driver keeps infinity (Go's zero time is outside
 /// Time's range).
-fn time_value(s: Str) -> sql.SqlValue {
+fn time_value(s: Str, z: time.Zone) -> sql.SqlValue {
   let iso = if s.len() == 10 { "${s}T00:00:00Z" } else { "${s.replace(" ", "T")}Z" }
   match Time.parse_rfc3339(iso) {
-    Some(t) => sql.SqlValue.At(t: t)
+    Some(t) => sql.SqlValue.At(t: wall_in(t, z))
     None => sql.SqlValue.Text(s: s)
   }
+}
+
+/// The instant whose wall clock in z is naive's in UTC, by Go's
+/// time.Date rule (what go-sql-driver's parseDateTime gives): the offset
+/// at naive taken as an instant, and if the result leaves that offset's
+/// period, the offset at the result. So a wall time in a daylight saving
+/// gap moves by the gap, and one in an overlap takes one of its two
+/// offsets, as in Go.
+pub fn wall_in(naive: Time, z: time.Zone) -> Time {
+  let o1 = z.offset_at(naive)
+  let u = naive - o1
+  let o2 = z.offset_at(u)
+  if o2 == o1 { u } else { naive - o2 }
 }
 
 /// A Str as a quoted literal: backslash escapes, or with the server's
@@ -645,7 +670,7 @@ pub fn quote_bytes(b: Bytes, no_backslash: Bool) -> Str {
 }
 
 /// A value as SQL text.
-pub fn literal(v: sql.SqlValue, no_backslash: Bool) -> Str ! sql.SqlErr {
+pub fn literal(v: sql.SqlValue, no_backslash: Bool, z: time.Zone = time.utc()) -> Str ! sql.SqlErr {
   match v {
     Null => Ok("NULL")
     Integer(n) => Ok("${n}")
@@ -657,7 +682,7 @@ pub fn literal(v: sql.SqlValue, no_backslash: Bool) -> Str ! sql.SqlErr {
       Ok("${f}")
     }
     Flag(b) => Ok(if b { "1" } else { "0" })
-    At(t) => Ok(quote_bytes(datetime_text(t).bytes(), no_backslash))
+    At(t) => Ok(quote_bytes(datetime_text(t, z).bytes(), no_backslash))
     // _binary keeps the bytes out of the connection's character set
     Blob(b) => Ok("_binary" + quote_bytes(b, no_backslash))
     JsonText(s) => Ok(quote_bytes(s.bytes(), no_backslash))
@@ -665,15 +690,17 @@ pub fn literal(v: sql.SqlValue, no_backslash: Bool) -> Str ! sql.SqlErr {
   }
 }
 
-/// A time as DATETIME's text in UTC, with microseconds when it has them.
-pub fn datetime_text(t: Time) -> Str {
-  let r = t.format_rfc3339()
+/// A time as DATETIME's text, its wall clock in z (go-sql-driver formats
+/// t.In(Loc)), with its fraction to microseconds, trailing zeros dropped,
+/// as go-sql-driver writes it (found by scripts/mysql-diff.sh).
+pub fn datetime_text(t: Time, z: time.Zone = time.utc()) -> Str {
+  let r = (t + z.offset_at(t)).format_rfc3339()
   // 2026-11-15T03:04:05[.fraction]Z
   let body = r.trim_suffix("Z").replace("T", " ")
   match body.cut(".") {
     Some((sec, frac)) => {
-      let f = (frac + "000000")[0..6]
-      if f == "000000" { sec } else { "${sec}.${f}" }
+      let f = (frac + "000000")[0..6].trim_end_chars("0")
+      if f.is_empty() { sec } else { "${sec}.${f}" }
     }
     None => body
   }
@@ -681,7 +708,7 @@ pub fn datetime_text(t: Time) -> Str {
 
 /// q with each ? outside quotes and comments replaced by an argument's
 /// literal; Param when the counts differ.
-pub fn interpolate(q: Str, args: List[sql.SqlValue], no_backslash: Bool) -> Str ! sql.SqlErr {
+pub fn interpolate(q: Str, args: List[sql.SqlValue], no_backslash: Bool, z: time.Zone = time.utc()) -> Str ! sql.SqlErr {
   let b = q.bytes()
   var o = BytesBuilder.with_capacity(b.len() + 16 * args.len())
   var n = 0
@@ -732,7 +759,7 @@ pub fn interpolate(q: Str, args: List[sql.SqlValue], no_backslash: Bool) -> Str 
       if n >= args.len() {
         return Err(param_err("the statement has more ? placeholders than the ${args.len()} arguments"))
       }
-      o.write_str(literal(args[n], no_backslash)?)
+      o.write_str(literal(args[n], no_backslash, z)?)
       n += 1
       i += 1
       continue
@@ -853,7 +880,7 @@ fn read_result_set(p: MyConn, first: Bytes, binary: Bool) -> (Result1, Bool) ! s
     let vals = (if binary { w.parse_binary_row(pk, cols) } else { w.parse_text_row(pk, cols.len()) }).map_err(fn(e) { wire_err(p, e) })?
     var row: List[sql.SqlValue] = List.with_capacity(vals.len())
     for (i, v) in vals.indexed() {
-      row.push(decode_text(cols[i], v, p.cfg.parse_time))
+      row.push(decode_text(cols[i], v, p.cfg.parse_time, p.cfg.zone))
     }
     rows.push(row)
   }
@@ -879,8 +906,8 @@ fn read_defs(p: MyConn, n: Int) -> List[w.Column] ! sql.SqlErr uses net.dial {
 
 /// An argument in the binary protocol, go-sql-driver's types: Integer a
 /// LONGLONG, Real a DOUBLE, Flag a TINY, Text, JsonText and Blob a
-/// string's bytes, At a DATETIME's text in UTC.
-pub fn bin_param(v: sql.SqlValue) -> w.BinParam ! sql.SqlErr {
+/// string's bytes, At a DATETIME's text in loc.
+pub fn bin_param(v: sql.SqlValue, z: time.Zone = time.utc()) -> w.BinParam ! sql.SqlErr {
   let str = fn(b: Bytes) { w.BinParam{kind: w.TYPE_STRING, unsigned: false, null: false, value: w.lenenc_str(b)} }
   match v {
     Null => Ok(w.BinParam{kind: w.TYPE_NULL, unsigned: false, null: true, value: b""})
@@ -890,7 +917,7 @@ pub fn bin_param(v: sql.SqlValue) -> w.BinParam ! sql.SqlErr {
     Text(s) => Ok(str(s.bytes()))
     JsonText(s) => Ok(str(s.bytes()))
     Blob(b) => Ok(str(b))
-    At(t) => Ok(str(datetime_text(t).bytes()))
+    At(t) => Ok(str(datetime_text(t, z).bytes()))
     Array(_) => Err(param_err("MySQL has no array type"))
   }
 }
@@ -903,7 +930,7 @@ fn run_prepared(p: MyConn, q: Str, args: List[sql.SqlValue]) -> List[Result1] ! 
   }
   var ps: List[w.BinParam] = []
   for a in args {
-    ps.push(bin_param(a)?)
+    ps.push(bin_param(a, p.cfg.zone)?)
   }
   p.seq.set(0)
   p.send(w.command(w.COM_STMT_PREPARE, q.bytes()))?
@@ -947,7 +974,7 @@ fn text_of(p: MyConn, q: Str, args: List[sql.SqlValue]) -> Str ! sql.SqlErr {
   if args.is_empty() {
     return Ok(q)
   }
-  interpolate(q, args, no_backslash(p))
+  interpolate(q, args, no_backslash(p), p.cfg.zone)
 }
 
 fn col_name(p: MyConn, c: w.Column) -> Str {
@@ -1019,7 +1046,7 @@ fn (p: MyConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.
         }
         var t: List[Str] = []
         for v in vals {
-          t.push(literal(v, no_backslash(p))?)
+          t.push(literal(v, no_backslash(p), p.cfg.zone)?)
         }
         let one = "(${t.join(", ")})"
         if in_batch > 0 && batch.len() + one.len() + 2 > limit {

@@ -2096,8 +2096,10 @@ Last verified: 2026-10-21.
 
 - `scripts/mysql-diff.sh XO WORK [IMAGE...]` (decision 0648 item 12):
   the MySQL differential test of std/sql's driver: scripts/mysqldiff/
-  cases.txt (three times over `tls=true`: `interpolateParams=true`,
-  prepared, and prepared with `parseTime=true` and `clientFoundRows=true`)
+  cases.txt (five times over `tls=true`: `interpolateParams=true`,
+  prepared, prepared with `parseTime=true` and `clientFoundRows=true`, and
+  `parseTime=true&loc=America%2FNew_York` prepared and interpolated, the
+  Xo side passing the zone as `sql.open`'s `loc`)
   and multi.txt (`multiStatements=true`) through
   go-sql-driver (scripts/mysqldiff/gomysql, its own Go module pinned to
   v1.10.1, the only place go-sql-driver appears) and through the Xo

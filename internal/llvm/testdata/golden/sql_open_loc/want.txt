@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+postgres: loc: only the mysql driver reads times in a zone (driver "postgres", loc Europe/Berlin)
+nosuch: loc: only the mysql driver reads times in a zone (driver "nosuch", loc Europe/Berlin)
+nosuch utc: unknown driver nosuch
+--- stderr

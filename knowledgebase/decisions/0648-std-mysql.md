@@ -53,7 +53,20 @@ conformance tests and `xo bench --ab`.
    0278 item 2 did for Postgres: a TLS config registered by name and a
    server public key registered by name are `roots:` (PEM bytes) and
    `server_pub_key:` (PEM bytes) on `sql.open`, and `tls=custom` and
-   `serverPubKey=...` refer to them. No file or environment variable is
+   `serverPubKey=...` refer to them. Go's `Loc` is `loc: time.Zone =
+   time.utc()` on `sql.open` (stage B, 2026-11-15, the lead's approval):
+   `time.zone(name)` with a name known only at run time embeds the whole
+   zone database, and every std/sql program reaches the driver, so the
+   DSN's `loc` only names the zone passed, and a mismatch is a `Param`
+   error. Size, a program opening MySQL (darwin/arm64): 5,666,225 bytes
+   with no zone, 5,715,409 with `time.zone("Europe/Berlin")`, 6,112,129
+   with one run time `time.zone(name)` (the database). **Postgres and
+   `loc`:** not honoured, and a zone other than UTC is a `Param` error
+   for every driver but MySQL. pgx has no zone setting: `timestamptz` is
+   an instant (the zone changes only how it prints, and `At` has none),
+   and `timestamp` reads its wall clock as UTC (spec/std.md 10.9), so a
+   Postgres `loc` would make the driver differ from pgx; a user who
+   wants local wall times converts with `time.civil(t, z)`. No file or environment variable is
    read (no `~/.my.cnf`, no `MYSQL_PWD`).
 3. **Authentication.** The handshake's plugin, then AuthSwitchRequest
    and AuthMoreData as the server asks:
@@ -130,7 +143,10 @@ conformance tests and `xo bench --ab`.
    parseTime too, as the Postgres driver keeps `infinity`: go-sql-driver's
    Go zero time (year 1) is not a `Time` (stage A, found by
    scripts/mysql-diff.sh, where the first draft gave 1970-01-01). Binds: `Flag` as 1 or 0, `At` formatted in `loc` with
-   microseconds, `Blob` as bytes, `Array` refused (`Param`). Column
+   microseconds (trailing zeros dropped, as go-sql-driver), `Blob` as
+   bytes, `Array` refused (`Param`). A wall time in `loc` follows Go's
+   `time.Date` in a daylight saving gap or overlap (the tests' vectors
+   are Go's). Column
    types (decision 0609): go-sql-driver's `ColumnTypeDatabaseTypeName`,
    length, precision and scale for DECIMAL, nullable from the NOT_NULL
    flag.
@@ -182,10 +198,12 @@ conformance tests and `xo bench --ab`.
       same statements through Xo and through go-sql-driver in an oracle
       module (scripts/mysqldiff/gomysql, its own go.mod pinned to
       go-sql-driver v1.10.1, not a dependency of xo or std), compared row
-      by row and error by error (2026-11-15: 182 statements in four
+      by row and error by error (2026-11-15: 303 statements in six
       passes over verified TLS, interpolated, prepared (stage B's binary
-      protocol), prepared with parseTime and clientFoundRows, and
-      multiStatements, and 10 tls mode outcomes, equal on 8.4 and 8.0):
+      protocol), prepared with parseTime and clientFoundRows,
+      loc=America/New_York prepared and interpolated (with a daylight
+      saving gap and overlap), and multiStatements, and 10 tls mode
+      outcomes, equal on 8.4 and 8.0):
       every type of item 8 with parseTime on and off and three `loc`
       values, each plugin with TLS, a Unix socket and RSA, prepared and
       interpolated arguments, multi statements and results,

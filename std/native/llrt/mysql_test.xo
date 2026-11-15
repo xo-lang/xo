@@ -2,6 +2,7 @@
 // interpolation, error mapping, and conversations with fake servers on
 // FakeNet; the conformance run checks a real one.
 use std/sql
+use std/time
 use native/llrt/mysqlauth as auth
 use native/llrt/mysqlwire as w
 
@@ -30,6 +31,9 @@ test "DSNs: what is refused" {
   expect(config("u@/db?tls=maybe").is_err()) == true
   expect(config("u@/db?parseTime=yes").err()) == Some(sql.SqlErr.Param(msg: "parseTime: invalid bool \"yes\""))
   expect(config("u@/db?loc=Local").is_err()) == true
+  // loc's name is kept; its zone is the driver's (checked at connect)
+  let ny = config("u@/db?loc=America%2FNew_York") ?? e => fault("${e}")
+  expect((ny.loc, ny.zone.name())) == ("America/New_York", "UTC")
   expect(config("u@/db?allowOldPasswords=true").is_err()) == true
   expect(config("u@/db?collation=klingon").is_err()) == true
   expect(config("u@/db?x=%zz").is_err()) == true
@@ -70,7 +74,7 @@ test "literals and interpolation" {
   expect(interpolate("SELECT 1", [sql.int(1)], false).is_err()) == true
   expect(interpolate("SELECT ?", [sql.bytes(b"\x00\x01")], false)) == Ok("SELECT _binary'\\0\x01'")
   let t = Time.parse_rfc3339("2026-11-15T03:04:05.5Z") ?? Time.UNIX_EPOCH
-  expect(datetime_text(t)) == "2026-11-15 03:04:05.500000"
+  expect(datetime_text(t)) == "2026-11-15 03:04:05.5"
   expect(datetime_text(Time.parse_rfc3339("2026-11-15T03:04:05Z") ?? Time.UNIX_EPOCH)) == "2026-11-15 03:04:05"
 }
 
@@ -372,6 +376,38 @@ test "a fake server: full authentication over plain TCP is refused, TLS is requi
     // the default is tls=true, and this server has no TLS
     let d = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app")
     expect(d.err()) == Some(sql.SqlErr.Conn(msg: "the server does not support TLS (tls=true; tls=false to connect in plain text)"))
+    s.cancel()
+  }
+}
+
+fn utc(s: Str) -> Time { Time.parse_rfc3339(s) ?? fault("not a time: ${s}") }
+
+test "loc: wall times in a zone, Go's time.Date rule in gaps and overlaps" {
+  let ny = time.zone("America/New_York") ?? e => fault("${e}")
+  let be = time.zone("Europe/Berlin") ?? e => fault("${e}")
+  // the vectors are Go 1.26's time.Date(...).UTC()
+  for (z, wall, want) in [(ny, "2026-03-08T02:30:00Z", "2026-03-08T06:30:00Z"), (ny, "2026-11-01T01:30:00Z", "2026-11-01T05:30:00Z"), (ny, "2026-07-01T12:00:00Z", "2026-07-01T16:00:00Z"), (be, "2026-03-29T02:30:00Z", "2026-03-29T01:30:00Z"), (be, "2026-10-25T02:30:00Z", "2026-10-25T01:30:00Z")] {
+    expect(wall_in(utc(wall), z).format_rfc3339()) == want
+  }
+  expect(decode_text(col(12, 63, 0), Some(b"2026-07-01 12:00:00"), true, ny)) == sql.SqlValue.At(t: utc("2026-07-01T16:00:00Z"))
+  expect(decode_text(col(10, 63, 0), Some(b"2026-01-15"), true, be)) == sql.SqlValue.At(t: utc("2026-01-14T23:00:00Z"))
+  // binds: the wall clock in loc, in the text and in the binary protocol
+  expect(datetime_text(utc("2026-07-01T16:00:00.25Z"), ny)) == "2026-07-01 12:00:00.25"
+  expect(literal(sql.time(utc("2026-01-14T23:00:00Z")), false, be)) == Ok("'2026-01-15 00:00:00'")
+  expect(bin_param(sql.time(utc("2026-07-01T16:00:00Z")), ny).map(fn(p) { p.value })) == Ok(w.lenenc_str(b"2026-07-01 12:00:00"))
+}
+
+test "a fake server: loc's zone comes from the driver, and a DSN naming another is refused" {
+  let l = os.net.listen("db.test:3306")?
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_caps(true), "caching_sha2_password", fk_sha2_fast, fk_rows_server(false)).ignore_err("the server stops when the test ends") })
+    let ny = time.zone("America/New_York") ?? e => fault("${e}")
+    let db = sql.open_driver(os.net, MysqlDriver{roots: b"", zone: ny}, "app:pw@tcp(db.test:3306)/app?tls=false&parseTime=true&loc=America%2FNew_York")?
+    let rows = db.query("SELECT id, name, at FROM t")?
+    // 2026-11-15 03:04:05 in New York (EST) is 08:04:05 UTC
+    expect(rows[0].time("at").map(fn(t) { t.format_rfc3339() })) == Ok("2026-11-15T08:04:05Z")
+    let refused = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false&loc=America%2FNew_York")
+    expect(refused.err().map(fn(e) { "${e}".contains("the driver's zone is UTC") })) == Some(true)
     s.cancel()
   }
 }

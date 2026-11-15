@@ -16,6 +16,7 @@
 //   "postgres" natively, and other drivers implement Driver and are opened
 //   with `open_driver`.
 use std/json
+use std/time
 
 /// A query parameter. `$1` is `args[0]`.
 enum SqlValue {
@@ -104,10 +105,14 @@ struct Row {}
 struct Rows[fx: Effects] {}
 
 /// Opens a database: "postgres" (decision 0278; `roots` is PEM for
-/// sslmode verify-ca and verify-full) natively. `max_open` bounds concurrent
+/// sslmode verify-ca and verify-full) and "mysql" (decision 0648; `roots`
+/// for tls=true and tls=custom) natively. `max_open` bounds concurrent
 /// operations and open transactions (waiting is a cancellation point),
-/// `max_idle` and `max_lifetime` are passed to the driver.
-fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"") -> Db ! SqlErr uses net.dial
+/// `max_idle` and `max_lifetime` are passed to the driver. `loc` is
+/// MySQL's zone for DATE, DATETIME and TIMESTAMP (go-sql-driver's Loc; the
+/// DSN's `loc`, when it has one, must name it); a zone other than UTC is
+/// refused for any other driver.
+fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"", loc: time.Zone = time.utc()) -> Db ! SqlErr uses net.dial
 /// An in memory database, optionally created with `schema` (`;` separated
 /// statements). Needs no capability.
 fn memory(schema: Str = "") -> Db ! SqlErr
