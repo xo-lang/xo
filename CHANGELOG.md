@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (compiler): an unknown field or method suggests a name it abbreviates (`d.secs()` on a `Duration`: did you mean `seconds`?), as well as the nearest names by edit distance (XO0601's note; no `xo fix` edit for an abbreviation, since it is a guess).
 - Fix (compiler, native backends): a function that updates twenty or more fields of a struct from an inlined constructor and then updates one on only some paths (std's tlsio.client_with with ECH) is inlined again; the inlined module failed verification, so the build warned `built without inlining` and ran slower (XO_INLINE_STRICT=1 failed it). The output was always correct. 0.20.0 has the bug.
 - Feature (compiler/macho, decision 0645 stage 1): a riscv64 assembler and ELF linker in Xo, with no command yet. RV64IMAFD with Zicsr and Zifencei encodes to llvm-mc's bytes (595 forms). The objects are clang's byte for byte, and linked programs (static, and glibc 2.27) run under qemu-riscv64.
 - Feature (std/sql Postgres, native and llvm): a cancelled wait for the server sends a CancelRequest with the connection's key on a second connection (shielded, 1 s dial and 2 s exchange limits), as pgx, so the server stops the statement; the call still returns `Canceled` and drops the connection (decision 0278 item 7).

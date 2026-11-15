@@ -37,6 +37,25 @@ fn strip_verb(s: Str) -> Str {
   s
 }
 
+/// Whether a, three or more bytes, abbreviates b: the same first byte,
+/// a's other bytes in b in order, and b at most twice a's length plus two.
+fn is_abbrev(a: Str, b: Str) -> Bool {
+  let x = a.bytes()
+  let y = b.bytes()
+  if x.len() < 3 || y.len() <= x.len() || y.len() > x.len() * 2 + 2 || x[0] != y[0] {
+    return false
+  }
+  var i = 1
+  var j = 1
+  while i < x.len() && j < y.len() {
+    if x[i] == y[j] {
+      i += 1
+    }
+    j += 1
+  }
+  i == x.len()
+}
+
 /// Up to three candidates close to name, best first (check.go nearest).
 pub fn nearest(name: Str, cands: List[Str]) -> List[Str] {
   var best: List[(Str, Int)] = []
@@ -58,6 +77,14 @@ pub fn nearest(name: Str, cands: List[Str]) -> List[Str] {
     let bare = strip_verb(cnd.to_lower())
     if bare != cnd.to_lower() {
       d = d.min(edit_distance(lower, bare) + 1)
+    }
+    // `secs` for `seconds`, `len` for `length`: a name of three or more
+    // characters that is an abbreviation of the candidate (its first
+    // character, then the rest in order, at most twice as long plus two),
+    // at the limit (owner, 2026-11-15, from the agents' survey:
+    // `Duration.secs` got no suggestion, 3 edits from `seconds`)
+    if d > limit && is_abbrev(lower, cnd.to_lower()) {
+      d = limit
     }
     if d <= limit {
       best.push((cnd, d))
