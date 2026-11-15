@@ -55,6 +55,9 @@ fn (c: FakeConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sq
 
 fn (c: FakeConn) is_broken() -> Bool { c.broken.get() }
 
+/// No statements on the server: std/sql runs the text each time.
+fn (c: FakeConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr { None }
+
 fn main(os: Os) ! {
   let log = Log{lines: Mutex.new([]), next: Atomic.new(0)}
   match sql.open_driver(os.net, FakeDriver{log: log, fail_password: true}, "x") {

@@ -468,3 +468,58 @@ test "a fake server: RSA full authentication with the server's key or open's" {
     s.cancel()
   }
 }
+
+/// A server that logs each command (decision 0648 stage D): statement 3
+/// as fk_rows_server's, and "MULTI" as two result sets with an OK
+/// between them (SERVER_MORE_RESULTS_EXISTS).
+fn fk_stmt_server(log: Mutex[List[Str]]) -> fn(Bytes) -> List[Bytes] {
+  let rows = fk_rows_server(false)
+  fn(cmd) {
+    let kind = Int(cmd[0])
+    let q = cmd[1..cmd.len()].to_str_lossy()
+    if kind == w.COM_STMT_PREPARE {
+      log.with(fn(var xs) { xs.push("prepare ${q}") })
+    } else if kind == w.COM_STMT_EXECUTE {
+      log.with(fn(var xs) { xs.push("execute ${w.le(cmd, 1, 4)}") })
+    } else if kind == w.COM_STMT_CLOSE {
+      log.with(fn(var xs) { xs.push("close ${w.le(cmd, 1, 4)}") })
+    } else if kind == w.COM_QUERY {
+      log.with(fn(var xs) { xs.push("query ${q}") })
+    }
+    if kind == w.COM_QUERY && q == "MULTI" {
+      // SELECT 1 AS a; UPDATE ...; SELECT 'x' AS b
+      return [w.lenenc_int(1), fk_col("a", w.TYPE_LONGLONG, 63, 0), w.lenenc_str(b"1"), b"\xfe\x00\x00\x0a\x00\x00\x00", fk_ok(3, 0, 10), w.lenenc_int(1), fk_col("b", w.TYPE_VAR_STRING, 45, 0), w.lenenc_str(b"x"), w.lenenc_str(b"y"), b"\xfe\x00\x00\x02\x00\x00\x00"]
+    }
+    rows(cmd)
+  }
+}
+
+test "a fake server: a Stmt prepares once per connection, runs, and closes; query_all reads every result set" {
+  let l = os.net.listen("db.test:3306")?
+  let log: Mutex[List[Str]] = Mutex.new([])
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_caps(true), "caching_sha2_password", fk_sha2_fast, fk_stmt_server(log)).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false&multiStatements=true", max_open: 1)?
+    let st = db.prepare("SELECT name, n FROM t WHERE id = ?")?
+    expect(st.query([sql.int(1)])?.len()) == 2
+    expect(st.query_one([sql.int(1)])?.str("name")) == Ok("a")
+    // a count mismatch is refused before COM_STMT_EXECUTE
+    expect(st.query([]).err()) == Some(sql.SqlErr.Param(msg: "the statement has 1 placeholders and 0 arguments"))
+    st.close()
+    expect(st.query([sql.int(1)]).err()) == Some(sql.SqlErr.Closed)
+    // a prepare error is the call's
+    expect(db.prepare("SELECT * FROM missing").err()) == Some(sql.SqlErr.NoTable(name: "app.missing"))
+    let sets = db.query_all("MULTI")?
+    expect(sets.len()) == 2
+    expect(sets[0].columns()) == ["a"]
+    expect(sets[0].rows()[0].int("a")) == Ok(1)
+    expect(sets[1].columns()) == ["b"]
+    expect(sets[1].rows().map(fn(r) { r.str("b").or_fault("b") })) == ["x", "y"]
+    // query keeps the first set
+    expect(db.query("MULTI")?.len()) == 1
+    // in step after all of that (COM_STMT_CLOSE has no response)
+    expect(db.ping().is_ok()) == true
+    expect(log.with_read(fn(xs) { xs })) == ["prepare SELECT name, n FROM t WHERE id = ?", "execute 3", "execute 3", "close 3", "prepare SELECT * FROM missing", "query MULTI", "query MULTI"]
+    s.cancel()
+  }
+}

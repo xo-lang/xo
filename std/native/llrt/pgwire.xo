@@ -129,6 +129,9 @@ pub fn execute(portal: Str, max_rows: Int) -> Bytes { msg("E", cstr(portal) + be
 
 pub fn sync() -> Bytes { msg("S", b"") }
 
+/// Close: kind "S" a prepared statement, "P" a portal.
+pub fn close(kind: Str, name: Str) -> Bytes { msg("C", kind.bytes() + cstr(name)) }
+
 pub fn terminate() -> Bytes { msg("X", b"") }
 
 // ---- backend messages ----

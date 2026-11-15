@@ -50,6 +50,8 @@ struct Db[fx: Effects] {
   closed: Atomic[Bool]
   /// The connections of a driver (open_driver); None for the in memory one.
   pool: Pool[fx]? = None
+  /// The last Stmt id given out (prepare).
+  stmt_ids: Atomic[Int]
 }
 
 // ---------------------------------------------------------------------------
@@ -83,12 +85,28 @@ struct Idle[fx: Effects] {
   c: sql.DriverConn[fx]
   /// When it was connected (pool_now).
   born: Int
+  stmts: Mutex[List[Cached[fx]]]
 }
 
-/// A connection taken from the pool, with when it was connected.
+/// A connection taken from the pool, with when it was connected and the
+/// statements prepared on it.
 struct Taken[fx: Effects] {
   c: sql.DriverConn[fx]
   born: Int
+  stmts: Mutex[List[Cached[fx]]]
+}
+
+/// A Stmt as prepared on one connection (decision 0648 item 6).
+struct Cached[fx: Effects] {
+  /// The Stmt's id.
+  id: Int
+  /// None: the driver has no server statements, so the text runs.
+  ds: sql.DriverStmt[fx]?
+  /// The Stmt's flag: once set, the entry is closed and dropped at the
+  /// connection's next take or give.
+  closed: Atomic[Bool]
+  /// Made by a Tx's statement, closed when the transaction ends.
+  in_tx: Bool = false
 }
 
 fn (p: Pool) take() -> Taken ! sql.SqlErr uses net.dial {
@@ -105,13 +123,15 @@ fn (p: Pool) take() -> Taken ! sql.SqlErr uses net.dial {
           x.c.close()
           continue
         }
-        return Taken{c: x.c, born: x.born}
+        let t = Taken{c: x.c, born: x.born, stmts: x.stmts}
+        sweep(t.stmts)
+        return t
       }
       None => break
     }
   }
   match p.drv.connect(p.net, p.dsn) {
-    Ok(c) => Taken{c: c, born: now}
+    Ok(c) => Taken{c: c, born: now, stmts: Mutex.new([])}
     Err(e) => {
       p.permits.send(true)
       Err(e)
@@ -123,11 +143,14 @@ fn (p: Pool) take() -> Taken ! sql.SqlErr uses net.dial {
 /// else closed; then the permit.
 fn give[fx: Effects](p: Pool[fx], t: Taken[fx]) uses (net.dial, fx) {
   let keep = !t.c.is_broken() && (p.max_lifetime == 0 || pool_now() - t.born < p.max_lifetime)
+  if keep {
+    sweep(t.stmts)
+  }
   let kept = keep && p.idle.with(fn(var xs) -> Bool {
     if xs.len() >= p.max_idle {
       return false
     }
-    xs.push(Idle{c: t.c, born: t.born})
+    xs.push(Idle{c: t.c, born: t.born, stmts: t.stmts})
     true
   })
   if !kept {
@@ -255,7 +278,7 @@ fn array(items: List[sql.SqlValue]) -> sql.SqlValue { sql.SqlValue.Array(items: 
 fn new_db(tables: Map[Str, Table]) -> Db {
   let w: Chan[Bool] = Chan.new(cap: 1)
   w.send(true)
-  Db{st: Mutex.new(Store{tables: tables}), writer: w, closed: Atomic.new(false)}
+  Db{st: Mutex.new(Store{tables: tables}), writer: w, closed: Atomic.new(false), stmt_ids: Atomic.new(0)}
 }
 
 fn memory(schema: Str = "") -> Db ! sql.SqlErr {
@@ -519,6 +542,7 @@ fn (t: Tx) commit() -> () ! sql.SqlErr uses net.dial {
       return Err(sql.SqlErr.TxDone)
     }
     let r = tc.c.commit()
+    close_tx_stmts(tc)
     give(db.pool.or_fault("a driver's transaction has a pool"), tc)
     return r
   }
@@ -540,6 +564,7 @@ fn (t: Tx) rollback() -> () ! sql.SqlErr uses net.dial {
       return Ok(())
     }
     let r = tc.c.rollback()
+    close_tx_stmts(tc)
     give(db.pool.or_fault("a driver's transaction has a pool"), tc)
     return r
   }
@@ -807,6 +832,346 @@ fn (d: Db) each(q: Str, args: List[sql.SqlValue], f: fn(Row) -> () ! sql.SqlErr)
 
 fn (t: Tx) each(q: Str, args: List[sql.SqlValue], f: fn(Row) -> () ! sql.SqlErr) -> () ! sql.SqlErr uses net.dial {
   rows_each(t.rows(q, args)?, f)
+}
+
+// ---------------------------------------------------------------------------
+// Prepared statements and multi results (decision 0648 items 6 and 7)
+
+struct Stmt[fx: Effects] {
+  db: Db[fx]
+  /// The transaction of a Tx.prepare.
+  tx: Tx[fx]? = None
+  q: Str
+  id: Int
+  closed: Atomic[Bool]
+}
+
+/// Closes and drops the entries of closed statements: at a connection's
+/// take and give, and at a Stmt's close for the idle ones.
+fn sweep[fx: Effects](stmts: Mutex[List[Cached[fx]]]) uses (net.dial, fx) {
+  let gone = stmts.with(fn(var xs) -> List[Cached[fx]] {
+    var keep: List[Cached[fx]] = []
+    var out: List[Cached[fx]] = []
+    for x in xs {
+      if x.closed.get() {
+        out.push(x)
+      } else {
+        keep.push(x)
+      }
+    }
+    xs = keep
+    out
+  })
+  for x in gone {
+    if let Some(ds) = x.ds {
+      ds.close()
+    }
+  }
+}
+
+/// s as prepared on t, preparing it there on its first use.
+fn stmt_on[fx: Effects](t: Taken[fx], s: Stmt[fx]) -> sql.DriverStmt[fx]? ! sql.SqlErr uses (net.dial, fx) {
+  let found = t.stmts.with_read(fn(xs) -> Cached[fx]? {
+    for x in xs {
+      if x.id == s.id {
+        return Some(x)
+      }
+    }
+    None
+  })
+  if let Some(x) = found {
+    return x.ds
+  }
+  let ds = t.c.prepare(s.q)?
+  add_stmt(t.stmts, Cached{id: s.id, ds: ds, closed: s.closed, in_tx: s.tx.is_some()})
+  ds
+}
+
+/// Adds c to a taken connection's cache. Only the task holding the
+/// connection reads or changes its cache, so the lookup before this
+/// cannot go stale (a sweep of the idle list never sees a taken one).
+fn add_stmt[fx: Effects](stmts: Mutex[List[Cached[fx]]], c: Cached[fx]) {
+  stmts.with(fn(var xs) { xs.push(c) })
+}
+
+fn stmt_query[fx: Effects](t: Taken[fx], s: Stmt[fx], args: List[sql.SqlValue]) -> sql.DriverRows[fx] ! sql.SqlErr uses (net.dial, fx) {
+  match stmt_on(t, s)? {
+    Some(ds) => ds.query(args)
+    None => t.c.query(s.q, args)
+  }
+}
+
+fn stmt_exec[fx: Effects](t: Taken[fx], s: Stmt[fx], args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses (net.dial, fx) {
+  match stmt_on(t, s)? {
+    Some(ds) => ds.exec(args)
+    None => t.c.exec(s.q, args)
+  }
+}
+
+/// Marks the statements a transaction prepared on t closed, at its end:
+/// the give that follows closes them.
+fn close_tx_stmts[fx: Effects](t: Taken[fx]) {
+  t.stmts.with_read(fn(xs) {
+    for x in xs {
+      if x.in_tx {
+        x.closed.set(true)
+      }
+    }
+  })
+}
+
+fn (d: Db) prepare(q: Str) -> Stmt ! sql.SqlErr uses net.dial {
+  d.ready()?
+  let s = Stmt{db: d, q: q, id: d.stmt_ids.add(1), closed: Atomic.new(false)}
+  if let Some(p) = d.pool {
+    let t = p.take()?
+    let r = stmt_on(t, s)
+    give(p, t)
+    let _ = r?
+  }
+  s
+}
+
+fn (t: Tx) prepare(q: Str) -> Stmt ! sql.SqlErr uses net.dial {
+  if task.is_canceled() {
+    return Err(sql.SqlErr.Canceled)
+  }
+  let s = Stmt{db: t.db, tx: Some(t), q: q, id: t.db.stmt_ids.add(1), closed: Atomic.new(false)}
+  t.st.with(fn(var ts) -> () ! sql.SqlErr {
+    if ts.done {
+      return Err(sql.SqlErr.TxDone)
+    }
+    if let Some(tc) = t.conn {
+      let _ = stmt_on(tc, s)?
+    }
+  })?
+  s
+}
+
+fn (s: Stmt) text() -> Str { s.q }
+
+/// A Tx's statement: Canceled, TxDone after the transaction ended, then
+/// Closed after close; a Db's: Closed after close, then Db.ready (std/rt
+/// sqlstmt.go stmtRun).
+fn (s: Stmt) ready() -> () ! sql.SqlErr {
+  if let Some(tx) = s.tx {
+    if task.is_canceled() {
+      return Err(sql.SqlErr.Canceled)
+    }
+    if tx.st.with_read(fn(ts) { ts.done }) {
+      return Err(sql.SqlErr.TxDone)
+    }
+    if s.closed.get() {
+      return Err(sql.SqlErr.Closed)
+    }
+    return Ok(())
+  }
+  if s.closed.get() {
+    return Err(sql.SqlErr.Closed)
+  }
+  s.db.ready()
+}
+
+fn (s: Stmt) query(args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlErr uses net.dial {
+  s.ready()?
+  if let Some(tx) = s.tx {
+    if let Some(tc) = tx.conn {
+      let rows = tx.st.with(fn(var ts) -> sql.DriverRows ! sql.SqlErr {
+        if ts.done {
+          return Err(sql.SqlErr.TxDone)
+        }
+        drain_rows(stmt_query(tc, s, args)?)
+      })?
+      return to_rows(rows.columns, rows.column_types, rows.rows)
+    }
+    return tx.query(s.q, args)
+  }
+  if let Some(p) = s.db.pool {
+    let t = p.take()?
+    let r = match stmt_query(t, s, args) {
+      Ok(x) => drain_rows(x)
+      Err(e) => Err(e)
+    }
+    give(p, t)
+    let rows = r?
+    return to_rows(rows.columns, rows.column_types, rows.rows)
+  }
+  s.db.query(s.q, args)
+}
+
+fn (s: Stmt) query_one(args: List[sql.SqlValue] = []) -> Row ! sql.SqlErr uses net.dial {
+  let rows = s.query(args)?
+  if rows.is_empty() {
+    return Err(sql.SqlErr.NoRows)
+  }
+  rows[0]
+}
+
+fn (s: Stmt) exec(args: List[sql.SqlValue] = []) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  s.ready()?
+  if let Some(tx) = s.tx {
+    if let Some(tc) = tx.conn {
+      return tx.st.with(fn(var ts) -> sql.ExecResult ! sql.SqlErr {
+        if ts.done {
+          return Err(sql.SqlErr.TxDone)
+        }
+        stmt_exec(tc, s, args)
+      })
+    }
+    return tx.exec(s.q, args)
+  }
+  if let Some(p) = s.db.pool {
+    let t = p.take()?
+    let r = stmt_exec(t, s, args)
+    give(p, t)
+    return r
+  }
+  s.db.exec(s.q, args)
+}
+
+fn (s: Stmt) rows(args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses net.dial {
+  s.ready()?
+  if let Some(tx) = s.tx {
+    if let Some(tc) = tx.conn {
+      let x = tx.st.with(fn(var ts) -> sql.DriverRows ! sql.SqlErr {
+        if ts.done {
+          return Err(sql.SqlErr.TxDone)
+        }
+        stmt_query(tc, s, args)
+      })?
+      return new_rows(x.columns, x.column_types, RowsState{buf: x.rows, pos: 0, cursor: x.cursor})
+    }
+    return tx.rows(s.q, args)
+  }
+  if let Some(p) = s.db.pool {
+    let t = p.take()?
+    match stmt_query(t, s, args) {
+      Ok(x) => return pool_rows(p, t, x)
+      Err(e) => {
+        give(p, t)
+        return Err(e)
+      }
+    }
+  }
+  s.db.rows(s.q, args)
+}
+
+fn (s: Stmt) query_as[T: SqlRow](args: List[sql.SqlValue] = []) -> List[T] ! sql.SqlErr uses net.dial {
+  decode_all(s.query(args)?)
+}
+
+fn (s: Stmt) query_one_as[T: SqlRow](args: List[sql.SqlValue] = []) -> T ! sql.SqlErr uses net.dial {
+  s.query_one(args)?.decode[T]()
+}
+
+fn (s: Stmt) close() uses net.dial {
+  if s.closed.swap(true) {
+    return
+  }
+  if s.tx.is_some() {
+    // the transaction's connection closes it at the transaction's end
+    return
+  }
+  if let Some(p) = s.db.pool {
+    // the idle connections now; one in use at its give
+    let xs = p.idle.with(fn(var xs) {
+      let all = xs
+      xs = []
+      all
+    })
+    // they are this task's now, like a take; each goes back like a give
+    for x in xs {
+      sweep(x.stmts)
+      if !put_idle(p, x) {
+        x.c.close()
+      }
+    }
+  }
+}
+
+/// Puts x back on the idle list if it has room.
+fn put_idle[fx: Effects](p: Pool[fx], x: Idle[fx]) -> Bool {
+  p.idle.with(fn(var ys) -> Bool {
+    if ys.len() >= p.max_idle {
+      return false
+    }
+    ys.push(x)
+    true
+  })
+}
+
+struct ResultSet {
+  cols: List[Str]
+  types: List[sql.ColumnType]
+  rs: List[Row]
+}
+
+fn (s: ResultSet) columns() -> List[Str] { s.cols }
+
+fn (s: ResultSet) column_types() -> List[sql.ColumnType] { s.types }
+
+fn (s: ResultSet) rows() -> List[Row] { s.rs }
+
+/// The sets of a driver's result: the first, when it has columns, and
+/// the later ones.
+fn result_sets(x: sql.DriverRows) -> List[ResultSet] {
+  var out: List[ResultSet] = []
+  if !x.columns.is_empty() {
+    out.push(ResultSet{cols: x.columns, types: column_types_of(x.columns, x.column_types), rs: to_rows(x.columns, x.column_types, x.rows)})
+  }
+  for m in x.more {
+    out.push(ResultSet{cols: m.columns, types: column_types_of(m.columns, m.column_types), rs: to_rows(m.columns, m.column_types, m.rows)})
+  }
+  out
+}
+
+fn mem_sets(rs: List[MemRows]) -> List[ResultSet] {
+  rs.map(fn(r) { ResultSet{cols: r.cols, types: column_types_of(r.cols, r.types), rs: to_rows(r.cols, r.types, r.rows)} })
+}
+
+fn (d: Db) query_all(q: Str, args: List[sql.SqlValue] = []) -> List[ResultSet] ! sql.SqlErr uses net.dial {
+  d.ready()?
+  if let Some(p) = d.pool {
+    let t = p.take()?
+    let r = match t.c.query(q, args) {
+      Ok(x) => drain_rows(x)
+      Err(e) => Err(e)
+    }
+    give(p, t)
+    return result_sets(r?)
+  }
+  let rs = d.st.with(fn(var st) -> Result[List[MemRows], sql.SqlErr] { mem_run_all(st.tables, q, args) })?
+  mem_sets(rs)
+}
+
+fn (t: Tx) query_all(q: Str, args: List[sql.SqlValue] = []) -> List[ResultSet] ! sql.SqlErr uses net.dial {
+  if task.is_canceled() {
+    return Err(sql.SqlErr.Canceled)
+  }
+  if let Some(tc) = t.conn {
+    let x = t.st.with(fn(var ts) -> sql.DriverRows ! sql.SqlErr {
+      if ts.done {
+        return Err(sql.SqlErr.TxDone)
+      }
+      drain_rows(tc.c.query(q, args)?)
+    })?
+    return result_sets(x)
+  }
+  let rs = t.st.with(fn(var ts) -> List[MemRows] ! sql.SqlErr {
+    if ts.done {
+      return Err(sql.SqlErr.TxDone)
+    }
+    if ts.read_only {
+      if let Some(e) = read_only_refusal(q) {
+        return Err(e)
+      }
+    }
+    var work = ts.tables
+    let r = mem_run_all(work, q, args)?
+    ts.tables = work
+    r
+  })?
+  mem_sets(rs)
 }
 
 fn (r: Row) columns() -> List[Str] { r.cols }
@@ -2161,6 +2526,35 @@ fn mem_exec(var tables: Map[Str, Table], q: Str, args: List[sql.SqlValue]) -> sq
   }
   tables = work
   sql.ExecResult{rows_affected: total, last_insert_id: last_id}
+}
+
+/// query_all on the in memory database (decision 0648 item 7): each
+/// statement of q in order on a copy of tables, published when all
+/// succeed; a set for each SELECT and each write with RETURNING, none for
+/// the other statements. std/rt/sqlmem.go memRunAll is the same.
+fn mem_run_all(var tables: Map[Str, Table], q: Str, args: List[sql.SqlValue]) -> List[MemRows] ! sql.SqlErr {
+  let stmts = split_statements(lex(q)?)
+  if stmts.is_empty() {
+    return Err(syntax("empty statement"))
+  }
+  if stmts.len() > 1 && !args.is_empty() {
+    return Err(sql.SqlErr.Param(msg: "several statements cannot take arguments"))
+  }
+  var work = tables
+  var out: List[MemRows] = []
+  for st in stmts {
+    var p = Parser{toks: st}
+    if p.is_kw("select") {
+      out.push(mem_select(work, p, args)?)
+      continue
+    }
+    let w = exec_one(work, st, args)?
+    if w.returning {
+      out.push(MemRows{cols: w.cols, rows: w.rows, types: w.types})
+    }
+  }
+  tables = work
+  out
 }
 
 /// One write statement of mem_exec; it changes tables only when it

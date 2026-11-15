@@ -166,6 +166,8 @@ pub struct PgConn {
   broken: Atomic[Bool]
   /// BackendKeyData, for a CancelRequest.
   pid: Atomic[Int]
+  /// The last prepared statement's number (xo_s1, xo_s2, ...).
+  stmt_n: Atomic[Int]
 }
 
 fn conn_err(msg: Str) -> sql.SqlErr { sql.SqlErr.Conn(msg: msg) }
@@ -267,7 +269,7 @@ fn connect_link(net: Net, cfg: Config, roots: Bytes, host: Str, addr: Str, mode:
       return Err(conn_err("server responded to SSLRequest with ${answer.quote()}"))
     }
   }
-  let p = PgConn{c: link, buf: Mutex.new(b""), broken: Atomic.new(false), pid: Atomic.new(0)}
+  let p = PgConn{c: link, buf: Mutex.new(b""), broken: Atomic.new(false), pid: Atomic.new(0), stmt_n: Atomic.new(0)}
   match handshake(p, cfg) {
     Ok(_) => p
     Err(e) => {
@@ -594,21 +596,40 @@ struct Results {
   rows: List[List[sql.SqlValue]]
   tag: Str
   types: List[sql.ColumnType] = []
+  /// The result sets after the first, of a ; separated script (decision
+  /// 0648 item 7).
+  more: List[sql.DriverResult] = []
 }
 
 fn (p: PgConn) collect() -> Results ! sql.SqlErr uses net.dial {
   var res = Results{cols: [], oids: [], rows: [], tag: ""}
   var failed: sql.SqlErr? = None
+  // the set being read: the first goes in res, the later ones in more
+  var sets = 0
+  var cur = sql.DriverResult{columns: [], rows: []}
+  var oids: List[Int] = []
   while {
     match p.recv()? {
       RowDesc(fs) => {
-        res.cols = fs.map(fn(f) { f.name })
-        res.oids = fs.map(fn(f) { f.type_oid })
-        res.types = column_types(fs)
-        res.rows = []
+        if sets > 1 {
+          res.more.push(cur)
+        }
+        sets += 1
+        oids = fs.map(fn(f) { f.type_oid })
+        cur = sql.DriverResult{columns: fs.map(fn(f) { f.name }), rows: [], column_types: column_types(fs)}
+        if sets == 1 {
+          res.cols = cur.columns
+          res.oids = oids
+          res.types = cur.column_types
+        }
       }
       DataRow(vals) => {
-        res.rows.push(decode_row(res.oids, vals))
+        let row = decode_row(oids, vals)
+        if sets == 1 {
+          res.rows.push(row)
+        } else {
+          cur.rows.push(row)
+        }
       }
       CommandComplete(tag) => res.tag = tag
       Error(f) => {
@@ -619,6 +640,9 @@ fn (p: PgConn) collect() -> Results ! sql.SqlErr uses net.dial {
       Ready(_) => {
         if let Some(e) = failed {
           return Err(e)
+        }
+        if sets > 1 {
+          res.more.push(cur)
         }
         return res
       }
@@ -745,8 +769,9 @@ fn (p: PgConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.S
   }
   // a ; separated script runs through the simple protocol, whole
   if args.is_empty() && q.contains(";") {
+    // the first set; query_all reads the rest (decision 0648 item 7)
     let r = p.run(q, args)?
-    return sql.DriverRows{columns: r.cols, rows: r.rows, column_types: r.types}
+    return sql.DriverRows{columns: r.cols, rows: r.rows, column_types: r.types, more: r.more}
   }
   if args.is_empty() {
     // the simple query protocol, as run does (and as a server that only speaks it expects)
@@ -754,6 +779,12 @@ fn (p: PgConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.S
   } else {
     p.send(pgwire.parse("", q, []) + pgwire.bind("", "", args.map(param_of), [0]) + pgwire.describe("P", "") + pgwire.execute("", 0) + pgwire.sync())?
   }
+  p.cursor_result()
+}
+
+/// The result of the statement just sent, to its RowDescription: the
+/// rows as a cursor (decision 0479), or none.
+fn (p: PgConn) cursor_result() -> sql.DriverRows ! sql.SqlErr uses net.dial {
   var failed: sql.SqlErr? = None
   while {
     match p.recv()? {
@@ -983,6 +1014,84 @@ fn (p: PgConn) close() uses net.dial {
 }
 
 fn (p: PgConn) is_broken() -> Bool { p.broken.get() }
+
+/// A named statement (decision 0648 item 6, pgx's Prepare): Parse and
+/// Describe of xo_sN, then Sync.
+fn (p: PgConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr uses net.dial {
+  if p.broken.get() {
+    return Err(conn_err("the connection is broken"))
+  }
+  let name = "xo_s${p.stmt_n.add(1)}"
+  p.send(pgwire.parse(name, q, []) + pgwire.describe("S", name) + pgwire.sync())?
+  var failed: sql.SqlErr? = None
+  var params = 0
+  while {
+    match p.recv()? {
+      ParamDescription(oids) => params = oids.len()
+      Error(f) => {
+        if failed.is_none() {
+          failed = Some(server_err(f))
+        }
+      }
+      Ready(_) => {
+        if let Some(e) = failed {
+          return Err(e)
+        }
+        return Some(PgStmt{p: p, name: name, params: params})
+      }
+      _ => {}
+    }
+  }
+  None
+}
+
+/// A named statement of one connection: Bind and Execute of it on each
+/// run, Close at the end.
+pub struct PgStmt {
+  p: PgConn
+  name: Str
+  params: Int
+}
+
+fn (s: PgStmt) check(args: List[sql.SqlValue]) -> () ! sql.SqlErr {
+  if s.p.broken.get() {
+    return Err(conn_err("the connection is broken"))
+  }
+  if args.len() != s.params {
+    return Err(param_err("the statement has ${s.params} placeholders and ${args.len()} arguments"))
+  }
+}
+
+fn (s: PgStmt) query(args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  s.check(args)?
+  s.p.send(pgwire.bind("", s.name, args.map(param_of), [0]) + pgwire.describe("P", "") + pgwire.execute("", 0) + pgwire.sync())?
+  s.p.cursor_result()
+}
+
+fn (s: PgStmt) exec(args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  s.check(args)?
+  s.p.send(pgwire.bind("", s.name, args.map(param_of), [0]) + pgwire.execute("", 0) + pgwire.sync())?
+  let r = s.p.collect()?
+  sql.ExecResult{rows_affected: pgwire.rows_affected(r.tag), last_insert_id: 0}
+}
+
+/// Close of the statement, then Sync; nothing on a broken connection.
+fn (s: PgStmt) close() uses net.dial {
+  let p = s.p
+  if p.broken.get() {
+    return
+  }
+  if p.send(pgwire.close("S", s.name) + pgwire.sync()).is_err() {
+    return
+  }
+  while {
+    match p.recv() {
+      Ok(Ready(_)) => return
+      Ok(_) => {}
+      Err(_) => return
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Column types (decision 0609): pgx's stdlib Rows.ColumnType* (v5.12.0)

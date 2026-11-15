@@ -159,10 +159,8 @@ func (t *memTx) QueryTypes(q string, args []any) ([]string, []Sql_ColumnType, []
 
 func (t *memTx) Exec(q string, args []any) (int64, int64, error) {
 	if t.readOnly {
-		// Postgres's refusal; every statement but a SELECT writes here
-		w, _, _ := strings.Cut(strings.TrimSpace(q), " ")
-		if w = strings.ToUpper(w); w != "SELECT" {
-			return 0, 0, &sqlErrBox{sqlE(sqlTagServer, Sql_SqlErr_Server{F_code: "25006", F_msg: "cannot execute " + w + " in a read-only transaction"})}
+		if err := memReadOnly(q); err != nil {
+			return 0, 0, err
 		}
 	}
 	// a failed statement leaves the transaction as it was
@@ -173,6 +171,16 @@ func (t *memTx) Exec(q string, args []any) (int64, int64, error) {
 	}
 	t.tables = work
 	return n, id, nil
+}
+
+// memReadOnly is Postgres's refusal of a write in a read only
+// transaction; every statement but a SELECT writes here.
+func memReadOnly(q string) error {
+	w, _, _ := strings.Cut(strings.TrimSpace(q), " ")
+	if w = strings.ToUpper(w); w != "SELECT" {
+		return &sqlErrBox{sqlE(sqlTagServer, Sql_SqlErr_Server{F_code: "25006", F_msg: "cannot execute " + w + " in a read-only transaction"})}
+	}
+	return nil
 }
 
 func (t *memTx) Commit() error {
@@ -926,6 +934,59 @@ func memRun(tables map[string]*memTable, q string, args []any) ([]string, []Sql_
 		return nil, nil, nil, sqlErr(SqlSyntax, "query needs a SELECT statement or a write with RETURNING (use exec for other statements)")
 	}
 	return w.cols, w.types, w.rows, nil
+}
+
+// memRunAll is query_all on the in memory database (decision 0648 item
+// 7), as std/native/sql.xo mem_run_all: each statement in order on tables
+// (a private copy), a set for each SELECT and each write with RETURNING.
+func memRunAll(tables map[string]*memTable, q string, args []any) ([]sqlSet, error) {
+	toks, err := sqlLex(q)
+	if err != nil {
+		return nil, err
+	}
+	stmts := splitStatements(toks)
+	if len(stmts) == 0 {
+		return nil, sqlErr(SqlSyntax, "empty statement")
+	}
+	if len(stmts) > 1 && len(args) > 0 {
+		return nil, sqlErr(SqlParam, "several statements cannot take arguments")
+	}
+	var sets []sqlSet
+	for _, st := range stmts {
+		p := &sqlParser{toks: st}
+		var w memWrite
+		switch {
+		case p.isKw("select"):
+			cols, rows, err := memSelect(tables, p, args)
+			if err != nil {
+				return nil, err
+			}
+			sets = append(sets, sqlSet{cols: cols, types: p.types, rows: rows})
+			continue
+		case p.isKw("create"):
+			err = memCreate(tables, p)
+		case p.isKw("drop"):
+			err = memDrop(tables, p)
+		case p.isKw("insert"):
+			w, err = memInsert(tables, p, args)
+		case p.isKw("update"):
+			w, err = memUpdate(tables, p, args)
+		case p.isKw("delete"):
+			w, err = memDelete(tables, p, args)
+		default:
+			err = p.fail("a statement")
+		}
+		if err == nil && p.peek().k != tEOF {
+			err = p.fail("end of statement")
+		}
+		if err != nil {
+			return nil, err
+		}
+		if w.returning {
+			sets = append(sets, sqlSet{cols: w.cols, types: w.types, rows: w.rows})
+		}
+	}
+	return sets, nil
 }
 
 // memWrite is the outcome of an INSERT, UPDATE, or DELETE.

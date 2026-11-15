@@ -118,9 +118,6 @@ pub fn pem_public_key(pem: Bytes) -> rsa.PublicKey? {
 /// a 0, xored with the nonce) under RSAES-OAEP with SHA-1 and MGF1-SHA-1,
 /// as MySQL decrypts it (RSA_PKCS1_OAEP_PADDING), with seed (20 bytes).
 pub fn rsa_password_seeded(password: Bytes, nonce: Bytes, key: rsa.PublicKey, seed: Bytes) -> Bytes? {
-  // sha1.sum itself, not a closure over it: a closure literal here broke
-  // the darwin link of std/native/llrt/pg's native test (no FDE for the
-  // DWARF mode function; ~/xo-lead/notes/aws-43/fde-closure)
   rsa.encrypt_oaep_fn(key, 20, sha1.sum, rsa_plain(password, nonce), b"", seed)
 }
 

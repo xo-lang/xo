@@ -116,26 +116,53 @@ conformance tests and `xo bench --ab`.
    instead escapes the arguments into the text, go-sql-driver's
    algorithm, refused for a multi byte character set it cannot escape
    safely, as go-sql-driver.
-6. **Prepared statements as an API (stage D, std/sql).** std/sql has no
-   `Stmt` today. This stage adds `Db.prepare(q) -> Stmt[fx]` and
-   `Tx.prepare`, with `Stmt.query`, `exec` and `close`, and an optional
-   `DriverConn.prepare` (a driver without it gets a std/sql fallback
-   that runs the text each time). Statements are per connection, as in
-   Go's database/sql: a `Stmt` prepares again on each connection it
-   runs on. Postgres implements it with a named statement in the same
-   stage. A small per connection statement cache (`stmt_cache=N`,
-   default 0) is left for later.
+6. **Prepared statements as an API (stage D, std/sql).** `Db.prepare(q)
+   -> Stmt[fx]` and `Tx.prepare`, with `Stmt.query`, `query_one`,
+   `exec`, `rows`, `query_as`, `query_one_as`, `text` and `close`, and
+   `DriverConn.prepare(q) -> DriverStmt[fx]?` (a `DriverStmt` has
+   `query`, `exec` and `close`; `None` for a driver without server
+   statements, and std/sql runs the text each time). Statements are per
+   connection, as in Go's database/sql: std/sql keeps each pool
+   connection's prepared statements, and a `Stmt` prepares again on each
+   connection it first runs on. `Db.prepare` prepares on one connection
+   at once, so an error in `q` is the call's. `close` closes it on the
+   idle connections at once and on one in use when it is given back; a
+   `Tx`'s statement closes with the transaction (later runs `TxDone`),
+   and runs after `close` are `Closed`. Postgres implements it with a
+   named statement in the same stage (xo_sN per connection: Parse and
+   Describe, then Bind and Execute per run, Close), MySQL with
+   COM_STMT_PREPARE, COM_STMT_EXECUTE and COM_STMT_CLOSE whatever
+   `interpolateParams` says (go-sql-driver's Prepare); both refuse a
+   count of arguments that is not the placeholders before sending it.
+   A small per connection cache of unprepared texts (`stmt_cache=N`) is
+   left for later.
+   - Done (stage D, 2026-11-15). `prepare` is a required DriverConn
+     method, as `copy_from` became in decision 0479 (an interface has no
+     default methods): a driver adds the one line that returns `None`
+     (std/sqlite did, and renamed its own `prepare(q, at)` to
+     `prepare_at`). A closed Stmt is `Closed`, whose text is "database
+     is closed"; a new SqlErr variant would break every exhaustive match
+     of SqlErr, so it waits for a release that changes SqlErr anyway.
 7. **Multi results (stage D, std/sql).** With `multiStatements=true` a
    query can return several result sets. `Db.query` and `rows` keep
    returning the first (the rest are read and dropped, so the
    connection stays usable), and a new `Db.query_all(q, args) ->
-   List[ResultSet]` returns each set's columns and rows, Go's
-   `Rows.NextResultSet`. `DriverRows` gains `next: DriverRows[fx]? =
-   None` for the sets after the first; Postgres's simple query fills it
-   too. An error in a later set is the query's error (stage A, found by
-   scripts/mysql-diff.sh): go-sql-driver reports it only to a caller of
-   `NextResultSet`, so `SELECT 1; DELETE ...` whose DELETE fails looks
-   like success there; a failed statement is not dropped here.
+   List[ResultSet]` (and `Tx.query_all`) returns each set's columns,
+   column types and rows, Go's `Rows.NextResultSet`. A driver puts the
+   first set with columns in `DriverRows` and the later ones in
+   `DriverRows.more: List[DriverResult] = []`, read whole (not the
+   `next: DriverRows[fx]?` first written here: a recursive optional
+   struct, and the later sets of a streamed first set could not be in
+   hand when the cursor is). Only sets with columns count, as
+   go-sql-driver's NextResultSet skips the others. Postgres's simple
+   query fills `more` too; its `query` of a script, which gave the last
+   set until stage D, gives the first, as Go's drivers do. The in memory
+   database's `query_all` runs a script's statements in order and
+   publishes the tables when all succeed. An error in a later set is the
+   query's error (stage A, found by scripts/mysql-diff.sh): go-sql-driver
+   reports it only to a caller of `NextResultSet`, so `SELECT 1; DELETE
+   ...` whose DELETE fails looks like success there; a failed statement
+   is not dropped here.
 8. **Values.** By column type: TINYINT to BIGINT and YEAR `Integer`;
    BIGINT UNSIGNED above Int.max `Text` (its decimal digits, nothing
    rounded); DECIMAL `Text`; FLOAT and DOUBLE `Real`; CHAR, VARCHAR,

@@ -163,6 +163,9 @@ fn (c: FakeConn) is_broken() -> Bool {
   c.broken.get()
 }
 
+/// No statements on the server: std/sql runs the text each time.
+fn (c: FakeConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr { None }
+
 test "a Driver the program writes drives Db's pool: query, exec, begin, commit, rollback, ping and close" {
   let n = Mutex.new(0)
   let log: Mutex[List[Str]] = Mutex.new([])
@@ -240,6 +243,9 @@ fn (c: CurConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql
 }
 
 fn (c: CurConn) is_broken() -> Bool { false }
+
+/// No statements on the server: std/sql runs the text each time.
+fn (c: CurConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr { None }
 
 fn (c: Cur) next() -> List[sql.SqlValue]? ! sql.SqlErr uses net.dial {
   let n = c.at.with(fn(var v) -> Int {
@@ -444,6 +450,9 @@ fn (c: ModeConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sq
 }
 
 fn (c: ModeConn) is_broken() -> Bool { false }
+
+/// No statements on the server: std/sql runs the text each time.
+fn (c: ModeConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr { None }
 
 test "begin's isolation and read_only reach a driver as SET TRANSACTION after BEGIN" {
   let log: Mutex[List[Str]] = Mutex.new([])

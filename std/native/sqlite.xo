@@ -270,7 +270,7 @@ fn (c: SqliteConn) fail() -> sql.SqlErr {
 
 /// The statement at the start of q[at..]; None when only space or
 /// comments are left. at moves past it.
-fn (c: SqliteConn) prepare(q: Str, var at: Int) -> c3.Sqlite3Stmt? ! sql.SqlErr uses fs {
+fn (c: SqliteConn) prepare_at(q: Str, var at: Int) -> c3.Sqlite3Stmt? ! sql.SqlErr uses fs {
   let rest = q[at..q.len()]
   let st = c3.xo_sq_prepare(c.db, rest, UInt32(0))
   let used = c3.xo_sq_prepared_len(c.db)
@@ -355,7 +355,7 @@ fn (c: SqliteConn) run(q: Str, args: List[sql.SqlValue]) -> (sql.DriverRows, sql
   var rows: List[List[sql.SqlValue]] = []
   var res = sql.ExecResult{rows_affected: 0, last_insert_id: 0}
   var seen = false
-  while let Some(st) = c.prepare(q, at)? {
+  while let Some(st) = c.prepare_at(q, at)? {
     let last = c.prepare_left(q, at)
     cols = []
     types = []
@@ -452,7 +452,7 @@ fn (c: SqliteConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[
   let marks = columns.map(fn(_) { "?" }).join(", ")
   let q = "INSERT INTO ${quote_ident(table)} (${names}) VALUES (${marks})"
   var at = 0
-  let st = c.prepare(q, at)?.or_err(sql.SqlErr.Driver(msg: "sqlite: copy_from prepared no statement"))?
+  let st = c.prepare_at(q, at)?.or_err(sql.SqlErr.Driver(msg: "sqlite: copy_from prepared no statement"))?
   var n = 0
   let r = c.copy_rows(st, rows, n)
   c3.sqlite3_finalize(st)
@@ -480,6 +480,9 @@ fn (c: SqliteConn) close() uses fs {
 }
 
 fn (c: SqliteConn) is_broken() -> Bool { c.broken.get() }
+
+/// No statements on the server: std/sql runs the text each time.
+fn (c: SqliteConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr { None }
 
 /// The SQLite library's version, e.g. "3.54.1".
 pub fn version() -> Str uses fs {

@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-15: feature (breaking for drivers): prepared statements and query_all
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0648 (stage D, items 6 and 7)
+- Go reference: Go 1.26 database/sql (DB.Prepare, Tx.Prepare, Stmt per connection, Rows.NextResultSet); go-sql-driver/mysql v1.10.1 (mysqlStmt, NextResultSet skipping results without columns); pgx v5 (Prepare: Parse and Describe of a named statement)
+- Test: golden sql_prepare (native, llvm, split, Go parity and wasip1: the in memory database, and a driver in Xo with and without server statements, per connection preparation, close on idle and returned connections, a Tx's statement ending with it, query_all over DriverRows.more); mysql_test.xo and pg_test.xo (fake servers: one prepare and an execute per run, a count mismatch refused before sending, close, a script's first set and every set)
+- Shipped in: not yet released
+
+`db.prepare(q)?` returns a `Stmt` to run with `query(args)`, `exec(args)` and the rest, and `db.query_all(script)?` returns each result set (spec/std.md 10.3, 10.7). A driver written in Xo must add `fn prepare(self, q: Str) -> sql.DriverStmt? ! sql.SqlErr { None }` to its connection (and rename a method of its own named `prepare`; std/sqlite's became `prepare_at`); to use server statements it returns a `DriverStmt`. Postgres's `query` of a `;` separated script gave the script's last result set and now gives the first, as pgx and go-sql-driver do. A closed `Stmt` returns `Closed` ("database is closed"): a new SqlErr variant would break exhaustive matches.
+
 ## 2026-11-15: feature: MySQL RSA authentication and sql.open's `server_pub_key`
 
 - Kind: feature

@@ -968,15 +968,11 @@ pub fn bin_param(v: sql.SqlValue, z: time.Zone = time.utc()) -> w.BinParam ! sql
   }
 }
 
-/// q prepared on the server, run once with args, closed (decision 0648
-/// item 5: what go-sql-driver does for db.Query(q, args...)).
-fn run_prepared(p: MyConn, q: Str, args: List[sql.SqlValue]) -> List[Result1] ! sql.SqlErr uses net.dial {
+/// q prepared on the server (COM_STMT_PREPARE): its id and placeholder
+/// count.
+fn prepare_on(p: MyConn, q: Str) -> MyStmt ! sql.SqlErr uses net.dial {
   if p.broken.get() {
     return Err(conn_err("the connection is broken"))
-  }
-  var ps: List[w.BinParam] = []
-  for a in args {
-    ps.push(bin_param(a, p.cfg.zone)?)
   }
   p.seq.set(0)
   p.send(w.command(w.COM_STMT_PREPARE, q.bytes()))?
@@ -987,19 +983,58 @@ fn run_prepared(p: MyConn, q: Str, args: List[sql.SqlValue]) -> List[Result1] ! 
   let ok = w.prepare_ok(first).map_err(fn(e) { wire_err(p, e) })?
   let _ = read_defs(p, ok.params)?
   let _ = read_defs(p, ok.columns)?
-  if ok.params != args.len() {
-    p.seq.set(0)
-    p.send(w.stmt_close(ok.id))?
-    return Err(param_err("the statement has ${ok.params} placeholders and ${args.len()} arguments"))
+  MyStmt{p: p, id: ok.id, params: ok.params}
+}
+
+/// A statement prepared on the server (decision 0648 item 6, go-sql-driver's
+/// mysqlStmt): run with COM_STMT_EXECUTE, its rows in the binary protocol,
+/// freed with COM_STMT_CLOSE.
+pub struct MyStmt {
+  p: MyConn
+  id: Int
+  params: Int
+}
+
+/// Every result of one COM_STMT_EXECUTE of s with args; a count of
+/// arguments that is not the statement's placeholders is Param (the
+/// statement stays prepared).
+fn (s: MyStmt) run(args: List[sql.SqlValue]) -> List[Result1] ! sql.SqlErr uses net.dial {
+  let p = s.p
+  if p.broken.get() {
+    return Err(conn_err("the connection is broken"))
+  }
+  if s.params != args.len() {
+    return Err(param_err("the statement has ${s.params} placeholders and ${args.len()} arguments"))
+  }
+  var ps: List[w.BinParam] = []
+  for a in args {
+    ps.push(bin_param(a, p.cfg.zone)?)
   }
   p.seq.set(0)
-  p.send(w.stmt_execute(ok.id, ps))?
-  let rs = results(p, true)
-  // closed whatever the result, unless the connection broke
-  if !p.broken.get() {
-    p.seq.set(0)
-    p.send(w.stmt_close(ok.id))?
+  p.send(w.stmt_execute(s.id, ps))?
+  results(p, true)
+}
+
+fn (s: MyStmt) query(args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial { driver_rows(s.p, s.run(args)?) }
+
+fn (s: MyStmt) exec(args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial { exec_result(s.run(args)?) }
+
+/// COM_STMT_CLOSE, which has no response; nothing on a broken connection.
+fn (s: MyStmt) close() uses net.dial {
+  if s.p.broken.get() {
+    return
   }
+  s.p.seq.set(0)
+  s.p.send(w.stmt_close(s.id)).ignore_err("a failed send marks the connection broken, which the pool drops")
+}
+
+/// q prepared on the server, run once with args, closed (decision 0648
+/// item 5: what go-sql-driver does for db.Query(q, args...)).
+fn run_prepared(p: MyConn, q: Str, args: List[sql.SqlValue]) -> List[Result1] ! sql.SqlErr uses net.dial {
+  let st = prepare_on(p, q)?
+  let rs = st.run(args)
+  // closed whatever the result, unless the connection broke
+  st.close()
   rs
 }
 
@@ -1027,27 +1062,42 @@ fn col_name(p: MyConn, c: w.Column) -> Str {
   if p.cfg.columns_with_alias && !c.table.is_empty() { "${c.table}.${c.name}" } else { c.name }
 }
 
-fn (p: MyConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
-  let rs = run_args(p, q, args)?
-  // the first result set (the rest, with multiStatements, are read and
-  // dropped; std/sql's query_all is stage D)
+fn (p: MyConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial { driver_rows(p, run_args(p, q, args)?) }
+
+/// The result sets of rs (those with columns, as go-sql-driver's
+/// NextResultSet skips the others): the first, and the rest as `more`
+/// (decision 0648 item 7: query and rows drop them, query_all returns
+/// them).
+fn driver_rows(p: MyConn, rs: List[Result1]) -> sql.DriverRows {
+  var first: sql.DriverRows? = None
+  var more: List[sql.DriverResult] = []
   for r in rs {
-    if !r.cols.is_empty() {
-      return Ok(sql.DriverRows{columns: r.cols.map(fn(c) { col_name(p, c) }), rows: r.rows, column_types: column_types(r.cols)})
+    if r.cols.is_empty() {
+      continue
+    }
+    let names = r.cols.map(fn(c) { col_name(p, c) })
+    if first.is_none() {
+      first = Some(sql.DriverRows{columns: names, rows: r.rows, column_types: column_types(r.cols)})
+    } else {
+      more.push(sql.DriverResult{columns: names, rows: r.rows, column_types: column_types(r.cols)})
     }
   }
-  Ok(sql.DriverRows{columns: [], rows: []})
+  match first {
+    Some(f) => f with {more: more}
+    None => sql.DriverRows{columns: [], rows: []}
+  }
 }
 
-fn (p: MyConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
-  let rs = run_args(p, q, args)?
-  // the last statement's counts
+/// The last statement's counts.
+fn exec_result(rs: List[Result1]) -> sql.ExecResult {
   var res = sql.ExecResult{rows_affected: 0, last_insert_id: 0}
   for r in rs {
     res = sql.ExecResult{rows_affected: r.affected, last_insert_id: r.insert_id}
   }
-  Ok(res)
+  res
 }
+
+fn (p: MyConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial { exec_result(run_args(p, q, args)?) }
 
 fn (p: MyConn) begin() -> () ! sql.SqlErr uses net.dial {
   let _ = run(p, "START TRANSACTION")?
@@ -1123,6 +1173,10 @@ fn (p: MyConn) close() uses net.dial {
 }
 
 fn (p: MyConn) is_broken() -> Bool { p.broken.get() }
+
+/// COM_STMT_PREPARE (decision 0648 item 6): prepared on the server
+/// whatever interpolateParams says, as go-sql-driver's Prepare.
+fn (p: MyConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr uses net.dial { Some(prepare_on(p, q)?) }
 
 // ---------------------------------------------------------------------------
 // Column types (decision 0609)

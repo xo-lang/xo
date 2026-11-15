@@ -1,0 +1,75 @@
+exit 0
+--- stdout
+insert a: affected 1 id 1
+insert b: affected 1 id 2
+insert c: affected 1 id 3
+wrong count: statement has 1 placeholders but 0 arguments were given
+text: SELECT id, name FROM t WHERE id >= $1 ORDER BY id
+item 2 b
+item 3 c
+one: c
+none: no rows in result set
+rows: 3
+after close: database is closed
+script: 4 sets
+  ["id"] ["id"] rows [id=Integer(n: 1); id=Integer(n: 2); id=Integer(n: 3)]
+  ["name"] ["name"] rows [name=Text(s: "z")]
+  ["id"] ["id"] rows [id=Integer(n: 3)]
+  ["id"] ["id"] rows []
+one statement: 1 sets
+  ["n"] ["n"] rows [n=Integer(n: 2)]
+no rows: 0 sets
+script with args: several statements cannot take arguments
+failed script: syntax error: no such column nope
+after the failed script: z
+tx count: 3
+tx script: 2 sets
+  ["id"] ["id"] rows [id=Integer(n: 4)]
+  ["id", "name"] ["id", "name"] rows [id=Integer(n: 5) name=Text(s: "e")]
+after rollback: transaction already committed or rolled back
+prepare after rollback: transaction already committed or rolled back
+db closed: database is closed / database is closed
+stmt row: conn 1 s1
+stmt exec: 7
+bad: syntax error: near BAD
+on another connection: conn 2 s1
+tx stmt: 7
+after close: database is closed
+tx stmt after commit: transaction already committed or rolled back
+multi: 3 sets
+  ["a"] ["a"] rows [a=Integer(n: 1); a=Integer(n: 2)]
+  ["b", "c"] ["b", "c"] rows [b=Text(s: "x") c=Null]
+  ["d"] ["d"] rows []
+first without columns: 1 sets
+  ["e"] ["e"] rows [e=Flag(b: true)]
+query keeps the first: 2 rows
+text each time: SELECT plain
+exec: 1
+connect 1
+conn 1 ping
+conn 1 prepare SELECT ? as s1
+conn 1 s1 query (1 args)
+conn 1 s1 exec (2 args)
+conn 1 prepare BAD: refused
+conn 1 BEGIN
+connect 2
+conn 2 prepare SELECT ? as s1
+conn 2 s1 query (0 args)
+conn 1 prepare UPDATE x as s2
+conn 1 s2 exec (1 args)
+conn 2 s1 close
+conn 1 COMMIT
+conn 1 s1 close
+conn 1 s2 close
+conn 1 query MULTI (0 args)
+conn 1 query NONE (0 args)
+conn 1 query MULTI (0 args)
+conn 2 close
+conn 1 close
+connect 3
+conn 3 ping
+conn 3 prepare SELECT plain: none
+conn 3 query SELECT plain (1 args)
+conn 3 exec SELECT plain (1 args)
+conn 3 close
+--- stderr

@@ -35,8 +35,9 @@ type sqlErrBox struct{ e Sql_SqlErr }
 func (b *sqlErrBox) Error() string { return Debug(b.e) }
 
 type sqlIdle struct {
-	c    Sql_DriverConn
-	born time.Time
+	c     Sql_DriverConn
+	born  time.Time
+	stmts *sqlConnStmts // the statements prepared on c (sqlstmt.go)
 }
 
 type sqlDriverBackend struct {
@@ -72,18 +73,20 @@ func (b *sqlDriverBackend) take(tk *Task) (sqlIdle, error) {
 			x.c.M_close(tk)
 			continue
 		}
+		x.stmts.sweep(tk)
 		return x, nil
 	}
 	r := b.drv.M_connect(tk, b.net, b.dsn)
 	if !r.Ok {
 		return sqlIdle{}, &sqlErrBox{r.E}
 	}
-	return sqlIdle{c: r.V, born: now}, nil
+	return sqlIdle{c: r.V, born: now, stmts: &sqlConnStmts{}}, nil
 }
 
 func (b *sqlDriverBackend) give(tk *Task, x sqlIdle) {
 	keep := !x.c.M_is_broken(tk) && (b.maxLife == 0 || time.Since(x.born) < b.maxLife)
 	if keep {
+		x.stmts.sweep(tk)
 		b.mu.Lock()
 		if len(b.idle) < b.maxIdle {
 			b.idle = append(b.idle, x)
@@ -246,6 +249,14 @@ func (t *sqlDriverTx) FinishTk(tk *Task, commit bool) error {
 	} else {
 		err = driverUnit(t.x.c.M_rollback(tk))
 	}
+	// the transaction's statements end with it; give closes them
+	t.x.stmts.mu.Lock()
+	for _, c := range t.x.stmts.l {
+		if c.st.tx != nil {
+			c.closed.Store(true)
+		}
+	}
+	t.x.stmts.mu.Unlock()
 	t.b.give(tk, t.x)
 	return err
 }

@@ -1,0 +1,195 @@
+// std/sql's prepared statements and multi results (decision 0648 items 6
+// and 7). On the in memory database: a Stmt run with arguments, closed,
+// and in a transaction; query_all over a script. Through a driver written
+// in Xo: a Db's Stmt prepares on each pool connection it runs on, once,
+// and closes on every one (an idle one at close, one in use when it is
+// given back); a Tx's Stmt closes with the transaction; a driver without
+// server statements runs the text; query_all returns DriverRows.more.
+use std/sql
+
+struct Log {
+  lines: Mutex[List[Str]]
+  next: Atomic[Int]
+}
+
+fn (l: Log) add(s: Str) { l.lines.with(fn(var xs) { xs.push(s) }) }
+
+struct FakeDriver {
+  log: Log
+  /// false: prepare returns None
+  stmts: Bool
+}
+
+struct FakeConn {
+  id: Int
+  log: Log
+  stmts: Bool
+  n: Atomic[Int]
+}
+
+struct FakeStmt {
+  conn: Int
+  name: Str
+  log: Log
+}
+
+fn (d: FakeDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr uses net.dial {
+  let id = d.log.next.add(1)
+  d.log.add("connect ${id}")
+  FakeConn{id: id, log: d.log, stmts: d.stmts, n: Atomic.new(0)}
+}
+
+fn (c: FakeConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  c.log.add("conn ${c.id} query ${q} (${args.len()} args)")
+  if q == "MULTI" {
+    return sql.DriverRows{columns: ["a"], rows: [[sql.int(1)], [sql.int(2)]], more: [sql.DriverResult{columns: ["b", "c"], rows: [[sql.str("x"), sql.null()]]}, sql.DriverResult{columns: ["d"], rows: []}]}
+  }
+  if q == "NONE" {
+    return sql.DriverRows{columns: [], rows: [], more: [sql.DriverResult{columns: ["e"], rows: [[sql.bool(true)]]}]}
+  }
+  sql.DriverRows{columns: ["conn", "q"], rows: [[sql.int(c.id), sql.str(q)]]}
+}
+
+fn (c: FakeConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  c.log.add("conn ${c.id} exec ${q} (${args.len()} args)")
+  sql.ExecResult{rows_affected: args.len(), last_insert_id: 0}
+}
+
+fn (c: FakeConn) begin() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} BEGIN") }
+fn (c: FakeConn) commit() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} COMMIT") }
+fn (c: FakeConn) rollback() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} ROLLBACK") }
+fn (c: FakeConn) ping() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} ping") }
+fn (c: FakeConn) close() { c.log.add("conn ${c.id} close") }
+fn (c: FakeConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no COPY"))
+}
+
+fn (c: FakeConn) is_broken() -> Bool { false }
+
+fn (c: FakeConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr uses net.dial {
+  if q == "BAD" {
+    c.log.add("conn ${c.id} prepare BAD: refused")
+    return Err(sql.SqlErr.Syntax(msg: "near BAD"))
+  }
+  if !c.stmts {
+    c.log.add("conn ${c.id} prepare ${q}: none")
+    return None
+  }
+  let name = "s${c.n.add(1)}"
+  c.log.add("conn ${c.id} prepare ${q} as ${name}")
+  Some(FakeStmt{conn: c.id, name: name, log: c.log})
+}
+
+fn (s: FakeStmt) query(args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  s.log.add("conn ${s.conn} ${s.name} query (${args.len()} args)")
+  sql.DriverRows{columns: ["conn", "stmt"], rows: [[sql.int(s.conn), sql.str(s.name)]]}
+}
+
+fn (s: FakeStmt) exec(args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  s.log.add("conn ${s.conn} ${s.name} exec (${args.len()} args)")
+  sql.ExecResult{rows_affected: 7, last_insert_id: s.conn}
+}
+
+fn (s: FakeStmt) close() { s.log.add("conn ${s.conn} ${s.name} close") }
+
+fn err_text[T](r: Result[T, sql.SqlErr]) -> Str {
+  match r {
+    Ok(_) => "ok"
+    Err(e) => "${e}"
+  }
+}
+
+fn show_sets(os: Os, label: Str, sets: List[sql.ResultSet]) {
+  os.stdio.println("${label}: ${sets.len()} sets")
+  for s in sets {
+    let rows = s.rows().map(fn(r) { s.columns().map(fn(c) { "${c}=${r.value(c).or_fault("column"):?}" }).join(" ") })
+    os.stdio.println("  ${s.columns()} ${s.column_types().map(fn(t) { t.name })} rows [${rows.join("; ")}]")
+  }
+}
+
+struct Item {
+  id: Int
+  name: Str
+} derive SqlRow
+
+fn memory(os: Os) ! {
+  let db = sql.memory("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")?
+  let ins = db.prepare("INSERT INTO t (name) VALUES ($1)")?
+  for n in ["a", "b", "c"] {
+    let r = ins.exec([sql.str(n)])?
+    os.stdio.println("insert ${n}: affected ${r.rows_affected} id ${r.last_insert_id}")
+  }
+  os.stdio.println("wrong count: ${err_text(ins.exec([]))}")
+  let sel = db.prepare("SELECT id, name FROM t WHERE id >= $1 ORDER BY id")?
+  os.stdio.println("text: ${sel.text()}")
+  for it in sel.query_as[Item]([sql.int(2)])? {
+    os.stdio.println("item ${it.id} ${it.name}")
+  }
+  os.stdio.println("one: ${sel.query_one_as[Item]([sql.int(3)])?.name}")
+  os.stdio.println("none: ${err_text(sel.query_one([sql.int(9)]))}")
+  let rows = sel.rows([sql.int(1)])?
+  var n = 0
+  while let Some(_) = rows.next()? {
+    n += 1
+  }
+  os.stdio.println("rows: ${n}")
+  sel.close()
+  sel.close()
+  os.stdio.println("after close: ${err_text(sel.query([sql.int(1)]))}")
+  show_sets(os, "script", db.query_all("SELECT id FROM t ORDER BY id; UPDATE t SET name = 'z' WHERE id = 1; SELECT name FROM t WHERE id = 1; DELETE FROM t WHERE id = 3 RETURNING id; SELECT id FROM t WHERE id > 5")?)
+  show_sets(os, "one statement", db.query_all("SELECT count(*) AS n FROM t WHERE id < $1", [sql.int(3)])?)
+  show_sets(os, "no rows", db.query_all("UPDATE t SET name = 'y' WHERE id = 2")?)
+  os.stdio.println("script with args: ${err_text(db.query_all("SELECT 1; SELECT 2", [sql.int(1)]))}")
+  os.stdio.println("failed script: ${err_text(db.query_all("UPDATE t SET name = 'q'; SELECT nope FROM t"))}")
+  os.stdio.println("after the failed script: ${db.query_one("SELECT name FROM t WHERE id = 1")?.str("name")?}")
+  let tx = db.begin()?
+  let ts = tx.prepare("SELECT count(*) AS n FROM t")?
+  tx.exec("INSERT INTO t (name) VALUES ('d')")?
+  os.stdio.println("tx count: ${ts.query_one()?.int("n")?}")
+  show_sets(os, "tx script", tx.query_all("SELECT id FROM t WHERE name = 'd'; INSERT INTO t (name) VALUES ('e') RETURNING id, name")?)
+  tx.rollback()?
+  os.stdio.println("after rollback: ${err_text(ts.query())}")
+  os.stdio.println("prepare after rollback: ${err_text(tx.prepare("SELECT 1"))}")
+  db.close()?
+  os.stdio.println("db closed: ${err_text(ins.exec([sql.str("x")]))} / ${err_text(db.prepare("SELECT 1"))}")
+}
+
+fn driver(os: Os) ! {
+  let log = Log{lines: Mutex.new([]), next: Atomic.new(0)}
+  let db = sql.open_driver(os.net, FakeDriver{log: log, stmts: true}, "dsn", max_open: 2, max_idle: 2)?
+  let st = db.prepare("SELECT ?")?
+  let r = st.query_one([sql.int(1)])?
+  os.stdio.println("stmt row: conn ${r.int("conn")?} ${r.str("stmt")?}")
+  os.stdio.println("stmt exec: ${st.exec([sql.int(1), sql.int(2)])?.rows_affected}")
+  os.stdio.println("bad: ${err_text(db.prepare("BAD"))}")
+  // a transaction holds connection 1, so the statement runs on a second
+  let tx = db.begin()?
+  let r2 = st.query_one([])?
+  os.stdio.println("on another connection: conn ${r2.int("conn")?} ${r2.str("stmt")?}")
+  let ts = tx.prepare("UPDATE x")?
+  os.stdio.println("tx stmt: ${ts.exec([sql.str("v")])?.rows_affected}")
+  st.close()
+  os.stdio.println("after close: ${err_text(st.query([]))}")
+  tx.commit()?
+  os.stdio.println("tx stmt after commit: ${err_text(ts.exec([]))}")
+  show_sets(os, "multi", db.query_all("MULTI")?)
+  show_sets(os, "first without columns", db.query_all("NONE")?)
+  let first = db.query("MULTI")?
+  os.stdio.println("query keeps the first: ${first.len()} rows")
+  db.close()?
+  let plain = sql.open_driver(os.net, FakeDriver{log: log, stmts: false}, "dsn")?
+  let ps = plain.prepare("SELECT plain")?
+  let pr = ps.query_one([sql.int(5)])?
+  os.stdio.println("text each time: ${pr.str("q")?}")
+  os.stdio.println("exec: ${ps.exec([sql.int(5)])?.rows_affected}")
+  ps.close()
+  plain.close()?
+  for l in log.lines.with(fn(xs) { xs }) {
+    os.stdio.println(l)
+  }
+}
+
+fn main(os: Os) ! {
+  memory(os)?
+  driver(os)?
+}

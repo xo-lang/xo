@@ -103,6 +103,13 @@ struct Row {}
 /// A result read row by row (decision 0479, Go's *sql.Rows): holds a
 /// connection from `rows` to the last row or `close`.
 struct Rows[fx: Effects] {}
+/// A prepared statement (decision 0648 item 6, Go's *sql.Stmt): made by
+/// `Db.prepare` or `Tx.prepare`, run any number of times with arguments.
+/// A Db's statement prepares again on each pool connection it runs on.
+struct Stmt[fx: Effects] {}
+
+/// One result set of `query_all` (Go's Rows.NextResultSet).
+struct ResultSet {}
 
 /// Opens a database: "postgres" (decision 0278; `roots` is PEM for
 /// sslmode verify-ca and verify-full) and "mysql" (decision 0648; `roots`
@@ -150,6 +157,17 @@ fn (d: Db) query_one_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> T ! Sql
 /// database is serializable whatever the level, and refuses a write in a
 /// read only transaction with Server("25006", ...), as Postgres does.
 fn (d: Db) begin(isolation: Isolation = Isolation.Default, read_only: Bool = false) -> Tx ! SqlErr uses net.dial
+/// Prepares q (Go's DB.Prepare): on one pool connection now, so a syntax
+/// error is the call's, and on each other connection the statement first
+/// runs on. A driver whose `DriverConn.prepare` returns None, and the in
+/// memory database, run the text each time.
+fn (d: Db) prepare(q: Str) -> Stmt ! SqlErr uses net.dial
+/// Every result set of q (decision 0648 item 7): a `;` separated script
+/// (MySQL's multiStatements=true, Postgres's simple query, the in memory
+/// database's statements) gives one set per statement that returns rows;
+/// statements without rows run and give none. The first error is the
+/// call's.
+fn (d: Db) query_all(q: Str, args: List[SqlValue] = []) -> List[ResultSet] ! SqlErr uses net.dial
 fn (d: Db) ping() -> () ! SqlErr uses net.dial
 fn (d: Db) close() -> () ! SqlErr
 
@@ -163,8 +181,28 @@ fn (t: Tx) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net
 fn (t: Tx) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
 fn (t: Tx) query_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
 fn (t: Tx) query_one_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> T ! SqlErr uses net.dial
+/// Prepares q on the transaction's connection (Go's Tx.Prepare); the
+/// statement is closed when the transaction ends, and later runs return
+/// TxDone.
+fn (t: Tx) prepare(q: Str) -> Stmt ! SqlErr uses net.dial
+fn (t: Tx) query_all(q: Str, args: List[SqlValue] = []) -> List[ResultSet] ! SqlErr uses net.dial
 fn (t: Tx) commit() -> () ! SqlErr uses net.dial
 fn (t: Tx) rollback() -> () ! SqlErr uses net.dial
+
+fn (s: Stmt) query(args: List[SqlValue] = []) -> List[Row] ! SqlErr uses net.dial
+fn (s: Stmt) query_one(args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
+fn (s: Stmt) exec(args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
+/// `Db.rows` of the statement: the connection is held until the cursor
+/// ends or is closed.
+fn (s: Stmt) rows(args: List[SqlValue] = []) -> Rows ! SqlErr uses net.dial
+fn (s: Stmt) query_as[T: SqlRow](args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
+fn (s: Stmt) query_one_as[T: SqlRow](args: List[SqlValue] = []) -> T ! SqlErr uses net.dial
+/// The statement's text.
+fn (s: Stmt) text() -> Str
+/// Closes the statement on every connection (on an idle one now, on one in
+/// use when it comes back to the pool); later runs return Closed.
+/// Idempotent.
+fn (s: Stmt) close() uses net.dial
 
 fn (r: Rows) columns() -> List[Str]
 /// Each column's type (Go's Rows.ColumnTypes, decision 0609):
@@ -177,6 +215,11 @@ fn (r: Rows) next_as[T: SqlRow]() -> T? ! SqlErr uses net.dial
 /// Reads and discards the rest of the result and releases the connection;
 /// idempotent.
 fn (r: Rows) close() uses net.dial
+
+fn (s: ResultSet) columns() -> List[Str]
+/// As Rows.column_types.
+fn (s: ResultSet) column_types() -> List[ColumnType]
+fn (s: ResultSet) rows() -> List[Row]
 
 fn (r: Row) columns() -> List[Str]
 /// The result's column types, as Rows.column_types.
@@ -227,6 +270,10 @@ interface DriverConn[fx: Effects] {
   fn ping(self) -> () ! SqlErr uses (net.dial, fx)
   /// COPY FROM STDIN (decision 0479): a driver without it returns Driver.
   fn copy_from(self, table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses (net.dial, fx)
+  /// A statement prepared on the server (decision 0648 item 6); None when
+  /// the driver has none, and std/sql runs the text with `query` and
+  /// `exec` each time.
+  fn prepare(self, q: Str) -> DriverStmt[fx]? ! SqlErr uses (net.dial, fx)
   fn close(self) uses (net.dial, fx)
   /// True once the connection cannot be used again; the pool drops it.
   fn is_broken(self) -> Bool
@@ -243,6 +290,26 @@ struct DriverRows[fx: Effects] {
   /// the driver does not say, and Rows.column_types gives
   /// `ColumnType{name}` per column then.
   column_types: List[ColumnType] = []
+  /// The result sets after this one, of a `;` separated script (decision
+  /// 0648 item 7), read whole: `query_all` returns them, `query` and
+  /// `rows` drop them. Empty with a cursor.
+  more: List[DriverResult] = []
+}
+
+/// A later result set of DriverRows.
+struct DriverResult {
+  columns: List[Str]
+  rows: List[List[SqlValue]]
+  column_types: List[ColumnType] = []
+}
+
+/// A statement prepared on one connection (DriverConn.prepare), used by
+/// one task at a time with that connection.
+interface DriverStmt[fx: Effects] {
+  fn query(self, args: List[SqlValue]) -> DriverRows[fx] ! SqlErr uses (net.dial, fx)
+  fn exec(self, args: List[SqlValue]) -> ExecResult ! SqlErr uses (net.dial, fx)
+  /// Frees the statement on the server; the connection stays usable.
+  fn close(self) uses (net.dial, fx)
 }
 
 /// A result column's type as the driver reports it (Go's

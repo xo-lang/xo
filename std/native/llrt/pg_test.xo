@@ -336,3 +336,87 @@ test "column_types is pgx stdlib's ColumnType* from each field's OID and modifie
   expect(ts.map(fn(t) { t.kind })) == ["Text", "Text", "Text", "Text", "Integer", "Array", "Text", "Text", "Text"]
   expect(ts.all(fn(t) { t.nullable is None })) == true
 }
+
+/// The cstr of b at `at`, and where it ends.
+fn fk_cstr_at(b: Bytes, at: Int) -> (Str, Int) {
+  var i = at
+  while i < b.len() && b[i] != 0 {
+    i += 1
+  }
+  (b[at..i].to_str() ?? "", i + 1)
+}
+
+/// The extended protocol of a named statement (decision 0648 stage D), each
+/// message logged, and a ; separated script on the simple protocol giving
+/// two result sets around an UPDATE.
+fn fk_stmt_server(log: Mutex[List[Str]]) -> fn(Str, Bytes) -> Bytes {
+  fn(kind, body) {
+    match kind {
+      "P" => {
+        let (name, at) = fk_cstr_at(body, 0)
+        let (q, _) = fk_cstr_at(body, at)
+        log.with(fn(var xs) { xs.push("parse ${name} ${q}") })
+        if q.starts_with("BAD") {
+          return fk_error_resp("42601", "syntax error at or near \"BAD\"", "")
+        }
+        fk_m("1", b"")
+      }
+      "D" => {
+        let (name, _) = fk_cstr_at(body, 1)
+        if body[0..1] == b"S" {
+          // one int8 parameter, one text column
+          return fk_m("t", fk_be16(1) + fk_be32(20)) + fk_row_desc([("name", 25)])
+        }
+        let _ = name
+        fk_row_desc([("name", 25)])
+      }
+      "B" => {
+        let (portal, at) = fk_cstr_at(body, 0)
+        let (st, at2) = fk_cstr_at(body, at)
+        let nf = fk_get32(b"\x00\x00" + body[at2..at2 + 2], 0)
+        let at3 = at2 + 2 + 2 * nf
+        let np = fk_get32(b"\x00\x00" + body[at3..at3 + 2], 0)
+        log.with(fn(var xs) { xs.push("bind '${portal}' ${st} ${np} params") })
+        fk_m("2", b"")
+      }
+      "E" => fk_data_row([Some("a")]) + fk_complete("SELECT 1")
+      "C" => {
+        let (name, _) = fk_cstr_at(body, 1)
+        log.with(fn(var xs) { xs.push("close ${body[0..1].to_str() ?? "?"} ${name}") })
+        fk_m("3", b"")
+      }
+      "S" => fk_ready()
+      "Q" => {
+        let q = body[0..body.len() - 1].to_str() ?? ""
+        log.with(fn(var xs) { xs.push("query ${q}") })
+        fk_row_desc([("a", 23)]) + fk_data_row([Some("1")]) + fk_complete("SELECT 1") + fk_complete("UPDATE 3") +
+          fk_row_desc([("b", 25)]) + fk_data_row([Some("x")]) + fk_data_row([Some("y")]) + fk_complete("SELECT 2") + fk_ready()
+      }
+      _ => b""
+    }
+  }
+}
+
+test "a fake server: a named statement is parsed once, bound per run, and closed; a script's first set, and query_all's every set" {
+  let l = os.net.listen("db.test:5432")?
+  let log: Mutex[List[Str]] = Mutex.new([])
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_hello_trust(), fk_stmt_server(log)).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "postgres", fk_dsn("db.test:5432"), max_open: 1)?
+    let st = db.prepare("SELECT name FROM t WHERE id = $1")?
+    expect(st.query_one([sql.int(1)])?.str("name")) == Ok("a")
+    expect(st.exec([sql.int(2)])?.rows_affected) == 1
+    expect(st.query([]).err()) == Some(sql.SqlErr.Param(msg: "the statement has 1 placeholders and 0 arguments"))
+    st.close()
+    expect(db.prepare("BAD").err()) == Some(sql.SqlErr.Syntax(msg: "syntax error at or near \"BAD\""))
+    let q = "SELECT 1 AS a; UPDATE t SET n = 1; SELECT b FROM t"
+    let rows = db.query(q)?
+    expect(rows.len()) == 1
+    expect(rows[0].int("a")) == Ok(1)
+    let sets = db.query_all(q)?
+    expect(sets.map(fn(x) { x.columns() })) == [["a"], ["b"]]
+    expect(sets[1].rows().map(fn(r) { r.str("b").or_fault("b") })) == ["x", "y"]
+    expect(log.with_read(fn(xs) { xs })) == ["query -- ping", "parse xo_s1 SELECT name FROM t WHERE id = $1", "bind '' xo_s1 1 params", "bind '' xo_s1 1 params", "close S xo_s1", "parse xo_s2 BAD", "query ${q}", "query ${q}"]
+    s.cancel()
+  }
+}

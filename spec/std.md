@@ -3411,6 +3411,51 @@ path (an error from `f` ends the walk and is returned). On a `Tx` the
 transaction's connection is busy until the cursor ends or is closed.
 `query` and `query_as` are `rows` read to the end.
 
+**Prepared statements** (decision 0648 item 6, Go's `*sql.Stmt`):
+
+```
+fn (d: Db) prepare(q: Str) -> Stmt ! SqlErr uses net.dial
+fn (t: Tx) prepare(q: Str) -> Stmt ! SqlErr uses net.dial
+fn (s: Stmt) query(args: List[SqlValue] = []) -> List[Row] ! SqlErr uses net.dial   // also query_one, exec, rows
+fn (s: Stmt) query_as[T: SqlRow](args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial  // and query_one_as
+fn (s: Stmt) text() -> Str
+fn (s: Stmt) close() uses net.dial                 // idempotent
+```
+
+`Db.prepare` prepares `q` on one pool connection at once, so an error
+in it is the call's; a `Stmt` then runs on any connection, preparing
+again on each it first runs on, as Go's database/sql does (10.7). The
+Postgres driver uses a named statement (`xo_s1`, `xo_s2`, ... per
+connection: Parse and Describe, then Bind and Execute per run, Close at
+the end), the MySQL driver COM_STMT_PREPARE, COM_STMT_EXECUTE and
+COM_STMT_CLOSE whatever `interpolateParams` says. Both refuse a count of
+arguments that is not the statement's placeholders with `Param` (`the
+statement has N placeholders and M arguments`) before sending it. The
+in memory database, std/sqlite and the Go backend's drivers bound with
+`use go` run the text each time. `Tx.prepare` prepares on the
+transaction's connection; the statement ends with the transaction
+(later runs are `TxDone`). After `close`, runs are `Closed`.
+
+**Several result sets** (decision 0648 item 7, Go's
+`Rows.NextResultSet`):
+
+```
+fn (d: Db) query_all(q: Str, args: List[SqlValue] = []) -> List[ResultSet] ! SqlErr uses net.dial
+fn (t: Tx) query_all(q: Str, args: List[SqlValue] = []) -> List[ResultSet] ! SqlErr uses net.dial
+fn (s: ResultSet) columns() -> List[Str]
+fn (s: ResultSet) column_types() -> List[ColumnType]
+fn (s: ResultSet) rows() -> List[Row]
+```
+
+A `;` separated script (MySQL with `multiStatements=true`, Postgres's
+simple query protocol, the in memory database) gives one set per
+statement that returns columns, in order (a SELECT that matches nothing
+is a set with no rows); the other statements run and give none. The
+first error is the call's. `query` and `rows` of a script give its
+first set. On the in memory database the statements run in order and
+the tables change only when all succeed (as `exec`'s script); a script
+of more than one statement takes no arguments (`Param`).
+
 `copy_from` (decision 0479, pgx's `CopyFrom`) loads rows with COPY FROM
 STDIN in the text format:
 
@@ -3599,10 +3644,20 @@ interface DriverConn[fx: Effects] {
   fn exec(self, q: Str, args: List[SqlValue]) -> ExecResult ! SqlErr uses (net.dial, fx)
   fn begin(self) -> () ! SqlErr uses (net.dial, fx)      // also commit, rollback, ping
   fn copy_from(self, table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses (net.dial, fx)
+  fn prepare(self, q: Str) -> DriverStmt[fx]? ! SqlErr uses (net.dial, fx)   // None: no server statements
   fn close(self) uses (net.dial, fx)
   fn is_broken(self) -> Bool                       // dropped from the pool when true
 }
-struct DriverRows[fx: Effects] { columns: List[Str], rows: List[List[SqlValue]], cursor: DriverCursor[fx]? = None, column_types: List[ColumnType] = [] }
+interface DriverStmt[fx: Effects] {               // a statement prepared on one connection (decision 0648 item 6)
+  fn query(self, args: List[SqlValue]) -> DriverRows[fx] ! SqlErr uses (net.dial, fx)
+  fn exec(self, args: List[SqlValue]) -> ExecResult ! SqlErr uses (net.dial, fx)
+  fn close(self) uses (net.dial, fx)             // frees it on the server; the connection stays usable
+}
+struct DriverRows[fx: Effects] {
+  columns: List[Str], rows: List[List[SqlValue]], cursor: DriverCursor[fx]? = None, column_types: List[ColumnType] = [],
+  more: List[DriverResult] = [],                 // a script's later result sets, read whole (decision 0648 item 7)
+}
+struct DriverResult { columns: List[Str], rows: List[List[SqlValue]], column_types: List[ColumnType] = [] }
 struct ColumnType {                              // Go's sql.ColumnType (decision 0609)
   name: Str
   database_type: Str = ""                        // DatabaseTypeName, upper case; "" when unknown
@@ -3662,6 +3717,21 @@ the Go backend a driver bound with `use go` reports none.
   later operations are `Closed`.
 - A `DriverConn` is used by one task at a time; the driver's waits are
   cancellation points that return `Canceled`.
+- **Statements** (decision 0648 item 6). std/sql keeps each pool
+  connection's prepared statements: a `Stmt` calls `DriverConn.prepare`
+  the first time it runs on a connection, then the `DriverStmt`'s
+  `query` and `exec` there. A driver whose `prepare` returns `None` (no
+  server statements, std/sqlite's) has the text run with
+  `DriverConn.query` and `exec` each time. A closed `Stmt`'s
+  `DriverStmt` is closed on an idle connection at once, and on one in
+  use when it is given back; a connection closed for any reason takes
+  its statements with it. `prepare` is required since decision 0648
+  stage D: a driver adds `fn prepare(self, q: Str) -> sql.DriverStmt? !
+  sql.SqlErr { None }` (and renames a method of its own of that name).
+- **Result sets** (decision 0648 item 7): a driver puts the first result
+  set that has columns in `DriverRows` and the later ones in `more`;
+  `query`, `rows` and `query_one` use the first, `query_all` all of
+  them. A cursor and `more` are not used together.
 
 ### 10.8 Postgres
 
@@ -3734,7 +3804,10 @@ SCRAM-SHA-256-PLUS only) is `Conn("unsupported authentication method
 statement without arguments runs with the simple query protocol, so
 `exec` takes a `;` separated script (a schema); with arguments it is
 one statement on the extended protocol (Parse, Bind, Execute, Sync, an
-unnamed statement each time). Results are read whole into `List[Row]`.
+unnamed statement each time; `prepare` makes a named one, 10.3).
+Results are read whole into `List[Row]`. `query` of a script gives its
+first result set and `query_all` every one (before decision 0648 stage
+D, `query` gave the last).
 `exec`'s `rows_affected` is the count of the command tag (`INSERT 0
 3` is 3); `last_insert_id` is 0: use `RETURNING id` with `query_one`.
 Transactions run `BEGIN`, `COMMIT`, and `ROLLBACK` on one connection
@@ -3890,8 +3963,9 @@ the text instead: `?` outside quotes and comments is the next argument, `Flag` a
 NO_BACKSLASH_ESCAPES mode honoured. With
 `multiStatements=true` a statement may hold several; `query` and `rows`
 return the first result set and read the rest, an error in any of them
-being the call's error (go-sql-driver drops it), and `exec` counts the
-last. `LOAD DATA LOCAL INFILE` is refused. `begin` is `START
+being the call's error (go-sql-driver drops it), `query_all` returns each
+set with columns (go-sql-driver's NextResultSet skips the others), and
+`exec` counts the last. `prepare` is a server statement (10.3). `LOAD DATA LOCAL INFILE` is refused. `begin` is `START
 TRANSACTION`. `copy_from` sends batched multi row INSERTs, each under
 `maxAllowedPacket`. `ExecResult.last_insert_id` is the AUTO_INCREMENT
 value.
