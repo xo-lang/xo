@@ -1,5 +1,34 @@
 # std/asn1 changes
 
+## 2026-11-15: feature: struct fields: FieldReader, Field and with_field (decision 0661)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the std audit (decision 0655 features line): asn1.RawContent, MarshalWithParams and UnmarshalWithParams were gaps
+- Go reference: encoding/asn1 parseField, parseSequenceOf, parseFieldParameters, makeField and makeBody (go1.26)
+- Test: testdata/corpus/asn1fields (430 cases, go, arm64, llvm); std/asn1_test.xo
+
+`field(params, kind)` reads Go's struct tag options; `FieldReader.next`
+reads one field of a SEQUENCE as Go's parseField does (explicit and
+implicit tags, application and private classes, optional fields and
+defaults, every string type into a string field, both time types into a
+time field, SET OF and SEQUENCE OF through `open_list`, RawValue as
+KIND_ANY, RawContent through `last`), and `Value.with_field` writes a
+field as makeField does. `BitString` is the field type for a BIT STRING.
+These are what `derive Asn1` will generate calls to (decision 0661,
+Proposed); they work by hand today.
+
+## 2026-11-15: fix: a PrintableString with `*` encodes, as Go's Marshal
+
+- Kind: fix
+- Commit: this commit
+- Found by: decision 0661's corpus work (makePrintableString allows `*`)
+- Go reference: encoding/asn1 makePrintableString (allowAsterisk, rejectAmpersand)
+- Test: std/asn1_test.xo "printable allows * when asked"
+
+`Value.Printable(s).der()` refused `*`; Go's Marshal with `printable`
+writes it (certificates use `*.example.com`) and refuses only `&`.
+
 ## 2026-11-15: feature: `Asn1Err` is an open enum (decision 0649)
 
 - Kind: feature

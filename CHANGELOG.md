@@ -10,6 +10,8 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Feature (std/ui, Early): confirmed Msgs: `ui.app(init, update, view).confirming(fn(m) { ... })` marks Msgs a client must not predict (a payment, a booking); `Replica.awaiting()` lists them until the server answers. Breaking: an `ui.App{...}` literal now needs `confirm`; build Apps with `ui.app(init, update, view)`.
+- Feature (std/asn1, every backend): struct fields as Go's Unmarshal and Marshal read and write them: `asn1.field("optional,explicit,tag:0", kind)` reads Go's tag options, `FieldReader.next` reads one field of a SEQUENCE (explicit and implicit tags, optional fields, SET OF, RawValue, RawContent through `last`), `Value.with_field` writes one, and `BitString` is the field type for a BIT STRING (decision 0661).
+- Fix (std/asn1): `Value.Printable(s).der()` writes a `*`, as Go's Marshal does with `printable`; it refused it.
 - Feature (std/ui, Early): live updates: `mount` adds a websocket (`prefix/_xo/live`) that tells browsers when the server's model changes, so other tabs update in milliseconds instead of on the next 2 s poll.
 - Fix (std/crypto): RSA PSS (`sign_pss`, `verify_pss`, the `_pss_digest` pair) takes BLAKE2b and RSA-OAEP takes BLAKE2b and legacy Keccak (Keccak only as its own MGF1 hash), as Go; PKCS #1 v1.5 still refuses both. Timing row bench/perf/blake2b against x/crypto.
 - Feature (std/ui, Early): `ui.host(app, title, css).mount(router)` serves an App: the server-rendered page, a browser runtime and a JSON sync endpoint; `ui.field(name)` puts a form value in a Msg. Until decision 0659's stage 3 the browser is a thin client: it queues Msgs in localStorage while offline, sends them on reconnect, and shows the server's view. New example: examples/ui-todo.

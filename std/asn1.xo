@@ -766,6 +766,9 @@ fn check_str(s: Str, ok: fn(UInt8) -> Bool, kind: Str) -> () ! Asn1Err {
 /// Go's isPrintable as Marshal checks it: `*` and `&` refused.
 fn printable_strict(x: UInt8) -> Bool { x != '*' && x != '&' && printable_byte(x) }
 
+/// Go's makePrintableString: `*` allowed (certificates use it), `&` refused.
+fn printable_marshal(x: UInt8) -> Bool { x != '&' && printable_byte(x) }
+
 fn ia5_byte(x: UInt8) -> Bool { x < 0x80 }
 
 fn encode(v: Value, var out: BytesBuilder) -> () ! Asn1Err {
@@ -793,7 +796,7 @@ fn encode(v: Value, var out: BytesBuilder) -> () ! Asn1Err {
     Value.Enumerated(n) => prim(out, TAG_ENUM, int_bytes(n))
     Value.Utf8(s) => prim(out, TAG_UTF8, s.bytes())
     Value.Printable(s) => {
-      check_str(s, printable_strict, "PrintableString")?
+      check_str(s, printable_marshal, "PrintableString")?
       prim(out, TAG_PRINTABLE, s.bytes())
     }
     Value.Ia5(s) => {
@@ -856,4 +859,457 @@ fn encode(v: Value, var out: BytesBuilder) -> () ! Asn1Err {
       out.write(b)
     }
   }
+}
+
+// ---- Struct fields (decision 0661: what `derive Asn1` calls; usable by
+// hand to read or write a SEQUENCE field by field as Go's Unmarshal and
+// Marshal do for a struct).
+
+/// A BIT STRING field (Go's BitString): bit_len bits, the first in the
+/// high bit of bytes[0].
+pub struct BitString {
+  pub bytes: Bytes
+  pub bit_len: Int
+} derive Eq
+
+/// Bit i, the first bit 0 (Go's BitString.At); 0 out of range.
+pub fn (b: BitString) at(i: Int) -> Int { Value.BitString(bytes: b.bytes, bit_len: b.bit_len).bit_at(i) }
+
+/// The bits shifted right so the last bit ends a byte (Go's RightAlign).
+pub fn (b: BitString) right_align() -> Bytes { right_align(b.bytes, b.bit_len) }
+
+/// The kind of a field: the universal tag of its type as Go's
+/// getUniversalType gives it (KIND_STR for every string type, KIND_TIME
+/// for both time types, KIND_SEQUENCE for a struct or a list), or
+/// KIND_ANY for a field that takes any value as written (Go's RawValue).
+pub const KIND_ANY: Int = 0
+pub const KIND_BOOL: Int = 1
+pub const KIND_INT: Int = 2
+pub const KIND_BIT_STRING: Int = 3
+pub const KIND_BYTES: Int = 4
+pub const KIND_OID: Int = 6
+pub const KIND_ENUM: Int = 10
+pub const KIND_SEQUENCE: Int = 16
+pub const KIND_STR: Int = 19
+pub const KIND_TIME: Int = 23
+
+/// One field's kind and options: Go's struct tag `asn1:"..."` as `field`
+/// reads it. `tag` is -1 for none; explicit, application and private
+/// without one mean tag 0, as in Go.
+pub struct Field {
+  pub kind: Int = 0
+  pub optional: Bool = false
+  pub explicit: Bool = false
+  pub application: Bool = false
+  pub private: Bool = false
+  pub tag: Int = -1
+  pub default_value: Int? = None
+  pub string_type: Int = 0
+  pub time_type: Int = 0
+  pub set: Bool = false
+  pub omit_empty: Bool = false
+}
+
+/// The field of kind with Go's tag options in params (parseFieldParameters:
+/// comma separated `optional`, `explicit`, `application`, `private`,
+/// `tag:N`, `default:N`, `set`, `omitempty`, `utf8`, `ia5`, `printable`,
+/// `numeric`, `utc`, `generalized`; anything else is ignored, as in Go).
+pub fn field(params: Str, kind: Int = 0) -> Field {
+  var f = Field{kind: kind}
+  if params.is_empty() {
+    return f
+  }
+  for part in params.split(",") {
+    if part == "optional" {
+      f.optional = true
+    } else if part == "explicit" {
+      f.explicit = true
+      if f.tag < 0 {
+        f.tag = 0
+      }
+    } else if part == "generalized" {
+      f.time_type = TAG_GENERALIZED_TIME
+    } else if part == "utc" {
+      f.time_type = TAG_UTC_TIME
+    } else if part == "ia5" {
+      f.string_type = TAG_IA5
+    } else if part == "printable" {
+      f.string_type = TAG_PRINTABLE
+    } else if part == "numeric" {
+      f.string_type = TAG_NUMERIC
+    } else if part == "utf8" {
+      f.string_type = TAG_UTF8
+    } else if part.starts_with("default:") {
+      match Int.parse(part[8..]) {
+        Some(n) => f.default_value = Some(n)
+        None => {}
+      }
+    } else if part.starts_with("tag:") {
+      match Int.parse(part[4..]) {
+        Some(n) => f.tag = n
+        None => {}
+      }
+    } else if part == "set" {
+      f.set = true
+    } else if part == "application" {
+      f.application = true
+      if f.tag < 0 {
+        f.tag = 0
+      }
+    } else if part == "private" {
+      f.private = true
+      if f.tag < 0 {
+        f.tag = 0
+      }
+    } else if part == "omitempty" {
+      f.omit_empty = true
+    }
+  }
+  f
+}
+
+/// Reads the values of a SEQUENCE's contents one field at a time, as Go's
+/// parseField does for each field of a struct. Trailing values no field
+/// reads are not parsed (Go allows them: later X.509 versions add fields).
+pub struct FieldReader {
+  der: Bytes
+  at: Int
+  lim: Int
+  depth: Int
+  start: Int
+}
+
+/// A reader at the start of der: Unmarshal's input, whose first value is
+/// the top level field.
+pub fn field_reader(der: Bytes) -> FieldReader { FieldReader{der: der, at: 0, lim: der.len(), depth: 0, start: 0} }
+
+/// The bytes after what the reader has read (Unmarshal's rest).
+pub fn (r: FieldReader) rest() -> Bytes { r.der[r.at..r.lim] }
+
+/// Whether every byte has been read.
+pub fn (r: FieldReader) done() -> Bool { r.at >= r.lim }
+
+/// The whole encoding (header and contents, with an explicit tag's) of the
+/// value next last read (Go's RawContent and RawValue.FullBytes).
+pub fn (r: FieldReader) last() -> Bytes { r.der[r.start..r.at] }
+
+/// A reader over the contents of v, a SEQUENCE or SET that next returned
+/// for a struct field, one level deeper.
+pub fn (r: FieldReader) open(v: Value) -> FieldReader {
+  let b = match v {
+    Value.Raw(_, _, _, b) => b
+    _ => b""
+  }
+  FieldReader{der: b, at: 0, lim: b.len(), depth: r.depth + 1, start: 0}
+}
+
+/// A reader over the elements of v, a SEQUENCE OF or SET OF that next
+/// returned for a list field whose elements are of kind (Go's
+/// parseSequenceOf): every element's tag is checked first (all string
+/// types as one, both time types as one), then next(Field{kind: kind})
+/// reads each in turn.
+pub fn (r: FieldReader) open_list(v: Value, kind: Int) -> FieldReader ! Asn1Err {
+  let lr = r.open(v)
+  let compound = kind == KIND_SEQUENCE || kind == TAG_SET
+  var at = 0
+  while at < lr.lim {
+    let h = header_in(lr.der, at, lr.lim)?
+    var t = h.tag
+    if t == TAG_IA5 || t == 27 || t == TAG_T61 || t == TAG_UTF8 || t == TAG_NUMERIC || t == TAG_BMP {
+      t = TAG_PRINTABLE
+    } else if t == TAG_GENERALIZED_TIME {
+      t = TAG_UTC_TIME
+    }
+    if kind != KIND_ANY && (h.class != Class.Universal || h.constructed != compound || t != kind) {
+      return Err(Asn1Err.Structure(msg: "sequence tag mismatch"))
+    }
+    if h.len > lr.lim - h.off {
+      return Err(Asn1Err.Syntax(msg: "truncated sequence"))
+    }
+    at = h.off + h.len
+  }
+  lr
+}
+
+/// The next field's value, or None for an optional field that is absent
+/// (the reader does not move). The value is the field's: Bool, Int,
+/// Enumerated, BitString, OctetString, Oid, a string variant (any string
+/// type read into a string field), UtcTime, GeneralizedTime or WideTime,
+/// and `Raw` with the contents for a SEQUENCE or SET (read it with open
+/// or open_list) or, for KIND_ANY, the value as written (Go's RawValue).
+/// Errors are Go's parseField errors.
+pub fn (var r: FieldReader) next(f: Field) -> Value? ! Asn1Err {
+  if r.depth + 1 > MAX_DEPTH {
+    return Err(Asn1Err.Structure(msg: "nesting depth exceeded"))
+  }
+  let init = r.at
+  if init >= r.lim {
+    if f.optional {
+      return None
+    }
+    return Err(Asn1Err.Syntax(msg: "sequence truncated"))
+  }
+  var h = header_in(r.der, init, r.lim)?
+  let tag = if f.tag < 0 && (f.explicit || f.application || f.private) { 0 } else { f.tag }
+  if f.explicit {
+    let want = if f.application { Class.Application } else { Class.ContextSpecific }
+    if h.off == r.lim {
+      return Err(Asn1Err.Structure(msg: "explicit tag has no child"))
+    }
+    if h.class == want && h.tag == tag && (h.len == 0 || h.constructed) {
+      if f.kind != KIND_ANY {
+        if h.len == 0 {
+          return Err(Asn1Err.Structure(msg: "zero length explicit tag was not an asn1.Flag"))
+        }
+        h = header_in(r.der, h.off, r.lim)?
+      }
+    } else {
+      if f.optional {
+        return None
+      }
+      return Err(Asn1Err.Structure(msg: "explicitly tagged member didn't match"))
+    }
+  }
+  let any = f.kind == KIND_ANY
+  let compound = f.kind == KIND_SEQUENCE || f.kind == TAG_SET
+  var ut = f.kind
+  if ut == KIND_STR {
+    if h.class == Class.Universal {
+      if h.tag == TAG_IA5 || h.tag == 27 || h.tag == TAG_T61 || h.tag == TAG_UTF8 || h.tag == TAG_NUMERIC || h.tag == TAG_BMP {
+        ut = h.tag
+      }
+    } else if f.string_type != 0 {
+      ut = f.string_type
+    }
+  }
+  if ut == KIND_TIME {
+    if h.class == Class.Universal {
+      if h.tag == TAG_GENERALIZED_TIME {
+        ut = h.tag
+      }
+    } else if f.time_type != 0 {
+      ut = f.time_type
+    }
+  }
+  if f.set {
+    ut = TAG_SET
+  }
+  var any_tag = any
+  var want_class = Class.Universal
+  var want_tag = ut
+  if !f.explicit && tag >= 0 {
+    want_class = if f.private { Class.Private } else if f.application { Class.Application } else { Class.ContextSpecific }
+    want_tag = tag
+    any_tag = false
+  }
+  if !any_tag && (h.class != want_class || h.tag != want_tag) || !any && h.constructed != compound {
+    if f.optional {
+      return None
+    }
+    return Err(Asn1Err.Structure(msg: "tags don't match (${want_tag} vs {class:${class_bits(h.class)} tag:${h.tag} length:${h.len} isCompound:${h.constructed}}) @${h.off}"))
+  }
+  if h.len > r.lim - h.off {
+    return Err(Asn1Err.Syntax(msg: "data truncated"))
+  }
+  let end = h.off + h.len
+  let c = r.der[h.off..end]
+  r.start = init
+  r.at = end
+  if any || compound {
+    return Some(Value.Raw(class: h.class, tag: h.tag, constructed: h.constructed, bytes: c))
+  }
+  let v = match f.kind {
+    19 => match ut {
+      19 => Value.Printable(s: parse_printable(c)?)
+      18 => Value.Numeric(s: parse_numeric(c)?)
+      22 => Value.Ia5(s: parse_ia5(c)?)
+      20 => Value.T61(s: parse_t61(c))
+      27 => Value.T61(s: parse_t61(c))
+      12 => match c.to_str() {
+        Some(s) => Value.Utf8(s: s)
+        None => return Err(Asn1Err.Invalid(msg: "asn1: invalid UTF-8 string"))
+      }
+      30 => Value.Bmp(s: parse_bmp(c)?)
+      _ => return Err(Asn1Err.Syntax(msg: "internal error: unknown string type ${ut}"))
+    }
+    23 => if ut == TAG_UTC_TIME { parse_utc_time(c)? } else { parse_generalized_time(c)? }
+    10 => {
+      let n = parse_int64(c)?
+      if n < -2147483648 || n > 2147483647 {
+        return Err(Asn1Err.Structure(msg: "integer too large"))
+      }
+      Value.Enumerated(v: n)
+    }
+    4 => Value.OctetString(v: c)
+    _ => value_of(Header{class: Class.Universal, tag: f.kind, constructed: false, off: 0, len: c.len()}, c, r.depth)?
+  }
+  Some(v)
+}
+
+/// next for a field that is not optional: its value, or the error.
+pub fn (var r: FieldReader) need(f: Field) -> Value ! Asn1Err {
+  match r.next(f)? {
+    Some(v) => v
+    None => Err(Asn1Err.Syntax(msg: "sequence truncated"))
+  }
+}
+
+/// A BOOLEAN field's value.
+pub fn (v: Value) to_bool() -> Bool {
+  match v {
+    Value.Bool(b) => b
+    _ => false
+  }
+}
+
+/// An INTEGER or ENUMERATED field's value as an Int; a larger one is Go's
+/// `integer too large`.
+pub fn (v: Value) to_int() -> Int ! Asn1Err {
+  match v {
+    Value.Int(n) => match n.to_int() {
+      Some(i) => i
+      None => Err(Asn1Err.Structure(msg: "integer too large"))
+    }
+    Value.Enumerated(n) => n
+    _ => 0
+  }
+}
+
+/// An INTEGER field's value as a BigInt.
+pub fn (v: Value) to_big() -> big.BigInt {
+  match v {
+    Value.Int(n) => n
+    Value.Enumerated(n) => big.from_int(n)
+    _ => big.from_int(0)
+  }
+}
+
+/// An OCTET STRING field's bytes.
+pub fn (v: Value) to_bytes() -> Bytes {
+  match v {
+    Value.OctetString(b) => b
+    _ => b""
+  }
+}
+
+/// An OBJECT IDENTIFIER field's value.
+pub fn (v: Value) to_oid() -> Oid {
+  match v {
+    Value.Oid(o) => o
+    _ => Oid{arcs: []}
+  }
+}
+
+/// A BIT STRING field's value.
+pub fn (v: Value) to_bit_string() -> BitString {
+  match v {
+    Value.BitString(b, n) => BitString{bytes: b, bit_len: n}
+    _ => BitString{bytes: b"", bit_len: 0}
+  }
+}
+
+/// A string field's text, whatever string type it was written as.
+pub fn (v: Value) to_str() -> Str {
+  match v {
+    Value.Utf8(s) => s
+    Value.Printable(s) => s
+    Value.Ia5(s) => s
+    Value.Numeric(s) => s
+    Value.T61(s) => s
+    Value.Bmp(s) => s
+    _ => ""
+  }
+}
+
+/// A time field's instant; a time outside what a Time holds (WideTime)
+/// is an error here, where Go reads it.
+pub fn (v: Value) to_time() -> Time ! Asn1Err {
+  match v {
+    Value.UtcTime(t) => t
+    Value.GeneralizedTime(t) => t
+    _ => Err(Asn1Err.Invalid(msg: "asn1: time outside the years a Time holds"))
+  }
+}
+
+/// An INTEGER value of n.
+pub fn int_value(n: Int) -> Value { Value.Int(v: big.from_int(n)) }
+
+/// A BIT STRING value of b.
+pub fn bit_string_value(b: BitString) -> Value { Value.BitString(bytes: b.bytes, bit_len: b.bit_len) }
+
+/// s as Marshal writes a string field: string_type 0 is a PrintableString
+/// when every byte is printable (`*` and `&` refused) and a UTF8String
+/// otherwise; TAG_PRINTABLE (which allows `*`), TAG_IA5, TAG_NUMERIC and
+/// TAG_UTF8 force that type, its characters checked by der.
+pub fn str_value(s: Str, string_type: Int = 0) -> Value {
+  match string_type {
+    19 => Value.Printable(s: s)
+    22 => Value.Ia5(s: s)
+    18 => Value.Numeric(s: s)
+    12 => Value.Utf8(s: s)
+    _ => {
+      for x in s.bytes() {
+        if x >= 0x80 || !printable_strict(x) {
+          return Value.Utf8(s: s)
+        }
+      }
+      Value.Printable(s: s)
+    }
+  }
+}
+
+/// t as Marshal writes a time field: a UTCTime unless time_type is
+/// TAG_GENERALIZED_TIME or the year is before 1950 or after 2049.
+pub fn time_value(t: Time, time_type: Int = 0) -> Value {
+  let y = time.civil(t, time.utc()).date.year
+  if time_type == TAG_GENERALIZED_TIME || y < 1950 || y >= 2050 {
+    return Value.GeneralizedTime(t: t)
+  }
+  Value.UtcTime(t: t)
+}
+
+/// A struct written from its RawContent (Go's Marshal of a struct whose
+/// first field is a non-empty RawContent): full's contents, unchanged.
+pub fn raw_struct(full: Bytes) -> Value {
+  let c = match header(full, 0) {
+    Ok(h) if full.len() > 0 => full[h.off..]
+    _ => full
+  }
+  Value.Raw(class: Class.Universal, tag: TAG_SEQUENCE, constructed: true, bytes: c)
+}
+
+/// v, a field's value, under f's options as Go's makeField writes it: a
+/// struct (a Sequence) with `set` keeps its order under the SET tag, and
+/// a tag wraps it explicitly or replaces its own (context specific, or
+/// application or private).
+pub fn (v: Value) with_field(f: Field) -> Value ! Asn1Err {
+  if f.time_type != 0 && f.kind != KIND_TIME {
+    return Err(Asn1Err.Structure(msg: "explicit time type given to non-time member"))
+  }
+  if f.string_type != 0 && f.kind != KIND_STR {
+    return Err(Asn1Err.Structure(msg: "explicit string type given to non-string member"))
+  }
+  var x = v
+  if f.set {
+    if f.kind != KIND_SEQUENCE {
+      return Err(Asn1Err.Structure(msg: "non sequence tagged as set"))
+    }
+    x = match v {
+      Value.Sequence(items) => {
+        var b = BytesBuilder.new()
+        for it in items {
+          encode(it, b)?
+        }
+        Value.Raw(class: Class.Universal, tag: TAG_SET, constructed: true, bytes: b.freeze())
+      }
+      Value.Raw(Class.Universal, TAG_SEQUENCE, k, b) => Value.Raw(class: Class.Universal, tag: TAG_SET, constructed: k, bytes: b)
+      _ => v
+    }
+  }
+  let tag = if f.tag < 0 && (f.explicit || f.application || f.private) { 0 } else { f.tag }
+  if tag < 0 {
+    return x
+  }
+  let c = if f.application { Class.Application } else if f.private { Class.Private } else { Class.ContextSpecific }
+  Value.Tagged(class: c, tag: tag, explicit: f.explicit, v: x)
 }

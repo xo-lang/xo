@@ -10505,6 +10505,28 @@ fn oid(dotted: Str) -> Oid ! Asn1Err
 fn (v: Value) bit_at(i: Int) -> Int                // BitString.At; 0 out of range or for another value
 fn right_align(bytes: Bytes, bit_len: Int) -> Bytes   // BitString.RightAlign
 fn (v: Value) tagged_as(explicit: Bool, tag: Int = -1, constructed: Bool = false) -> Value ! Asn1Err
+
+// struct fields, as Go's Unmarshal and Marshal read and write a struct (decision 0661; what derive Asn1 calls)
+struct BitString { pub bytes: Bytes, pub bit_len: Int } derive Eq   // fn at(i) -> Int, fn right_align() -> Bytes
+const KIND_ANY: Int = 0                            // and KIND_BOOL 1, KIND_INT 2, KIND_BIT_STRING 3, KIND_BYTES 4,
+                                                   // KIND_OID 6, KIND_ENUM 10, KIND_SEQUENCE 16, KIND_STR 19, KIND_TIME 23
+struct Field { pub kind: Int = 0, pub optional: Bool = false, pub explicit: Bool = false, pub application: Bool = false,
+  pub private: Bool = false, pub tag: Int = -1, pub default_value: Int? = None, pub string_type: Int = 0,
+  pub time_type: Int = 0, pub set: Bool = false, pub omit_empty: Bool = false }
+fn field(params: Str, kind: Int = 0) -> Field      // Go's struct tag options: "optional,explicit,tag:0", ...
+fn field_reader(der: Bytes) -> FieldReader         // Unmarshal's input; its first value is the top level field
+fn (var r: FieldReader) next(f: Field) -> Value? ! Asn1Err   // Go's parseField; None: an optional field is absent
+fn (var r: FieldReader) need(f: Field) -> Value ! Asn1Err
+fn (r: FieldReader) open(v: Value) -> FieldReader              // a struct field's contents, one level deeper
+fn (r: FieldReader) open_list(v: Value, kind: Int) -> FieldReader ! Asn1Err   // Go's parseSequenceOf
+fn (r: FieldReader) last() -> Bytes                // the encoding next last read (RawContent)
+fn (r: FieldReader) rest() -> Bytes
+fn (r: FieldReader) done() -> Bool
+fn (v: Value) to_bool() -> Bool                    // and to_int() ! Asn1Err, to_big, to_bytes, to_oid,
+                                                   // to_bit_string, to_str, to_time() ! Asn1Err
+fn int_value(n: Int) -> Value                      // and bit_string_value(b), str_value(s, string_type = 0),
+                                                   // time_value(t, time_type = 0), raw_struct(full)
+fn (v: Value) with_field(f: Field) -> Value ! Asn1Err   // Go's makeField: `set`, then an explicit or implicit tag
 ```
 
 `parse` refuses what Go refuses, with Go's texts (`asn1: syntax error: ...` for a SyntaxError, `asn1: structure error:
@@ -10521,8 +10543,27 @@ fraction, as Marshal does. INTEGER is a `BigInt` of any size; ENUMERATED an `Int
 application or private tag, a constructed universal type other than SEQUENCE and SET, a NULL with contents and an
 unknown universal tag are `Raw`; `tagged_as` reads a `Raw` as explicit (one value inside; `explicit tag has no child`
 when it is not constructed) or implicit (the universal `tag` with its contents), giving `Tagged`, which `der` writes back
-the same way. Stage 2, `derive Asn1` for structs, is a later decision. Checked against Go's Unmarshal and Marshal
-(testdata/corpus/asn1, 1305 cases) and its own tests (std/asn1_test.xo).
+the same way.
+
+Struct fields (decision 0661): a `FieldReader` reads a SEQUENCE's contents one field at a time with Go's parseField
+rules, and `with_field` writes a field's value with Go's makeField rules, so a hand-written reader and writer of a
+struct (and, once its compiler part lands, `derive Asn1`) gives Go's bytes and errors. `next` takes the field's kind
+and options: an explicit tag's header is read before its tag is compared (an optional explicit field followed by an
+empty last element is `explicit tag has no child`, as in Go); a zero length explicit tag is an error (Go's
+`asn1.Flag` is not ported); a string field reads any string type (GeneralString as T61); a time field reads both
+time types; an implicit tag sets the class and tag compared; a mismatch is None for an optional field and
+`tags don't match` otherwise (Go's text continues with its parameters, which Xo's does not); a SEQUENCE or SET is
+`Raw` with its contents for `open` or `open_list`, and KIND_ANY is the value as written (Go's RawValue). Trailing
+elements of a SEQUENCE no field reads are not parsed, as in Go; a reader checks for trailing data after its struct's
+fields, so a field's error comes first, as in Go. A time outside what a `Time` holds is an error for a time field
+(`to_time`), where Go reads it. `str_value` writes a PrintableString when every byte is printable (`*` and `&`
+refused) and a UTF8String otherwise; a forced PrintableString allows `*`, as Go's makePrintableString. `time_value`
+writes a UTCTime unless `generalized` or the year is outside 1950 to 2049. Optional fields: Go omits a zero value
+(or the `default:N` integer) on Marshal; a writer does the same, and `Option` fields are the Xo form of "absent".
+
+Checked against Go's Unmarshal and Marshal (testdata/corpus/asn1, 1305 cases; testdata/corpus/asn1fields, 430
+cases over four struct types using every tag option, each with Go's Marshal of what it decoded) and its own tests
+(std/asn1_test.xo).
 
 ## 79. std/sse
 

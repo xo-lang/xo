@@ -59,7 +59,7 @@ test "a time outside a Time is WideTime; outside UTCTime an error" {
 }
 
 test "der refuses what Marshal refuses" {
-  expect(Value.Printable(s: "a*b").der().is_ok()) == false
+  expect(Value.Printable(s: "a*&b").der().is_ok()) == false
   expect(Value.Ia5(s: "é").der().is_ok()) == false
   expect(Value.Numeric(s: "1a").der().is_ok()) == false
   expect(Value.Oid(v: Oid{arcs: [1]}).der().is_ok()) == false
@@ -112,4 +112,90 @@ test "nesting deeper than Go's 10000 levels is a structure error (GO-2026-5972)"
   expect(parse(nested(9999)).is_ok()) == true
   expect(parse(nested(10000)).err().map(fn(e) { e.display() })) == Some("asn1: structure error: nesting depth exceeded")
   expect(parse(nested(200000)).err().map(fn(e) { e.display() })) == Some("asn1: structure error: nesting depth exceeded")
+}
+
+test "field reads Go's tag options" {
+  let f = field("optional,explicit,tag:3,default:7,utf8", KIND_STR)
+  expect(f.optional && f.explicit && f.tag == 3 && f.default_value == Some(7) && f.string_type == TAG_UTF8) == true
+  expect(field("application", KIND_INT).tag) == 0
+  expect(field("tag:x,bogus", KIND_INT).tag) == -1
+  expect(field("set,omitempty,generalized", KIND_SEQUENCE).set) == true
+}
+
+/// A SEQUENCE { INTEGER, [0] EXPLICIT UTF8String OPTIONAL, [1] IMPLICIT INTEGER OPTIONAL, SEQUENCE OF PrintableString }
+/// read and written field by field, as derive Asn1 does.
+struct Rec {
+  n: Int
+  name: Str?
+  k: Int
+  tags: List[Str]
+}
+
+fn rec_fields() -> List[Field] {
+  [field("", KIND_INT), field("optional,explicit,tag:0", KIND_STR), field("optional,tag:1", KIND_INT), field("", KIND_SEQUENCE)]
+}
+
+fn read_rec(der: Bytes) -> Rec ! Asn1Err {
+  let fs = rec_fields()
+  var top = field_reader(der)
+  let v = top.need(field("", KIND_SEQUENCE))?
+  var r = top.open(v)
+  let n = r.need(fs[0])?.to_int()?
+  let name = r.next(fs[1])?.map(fn(x: Value) -> Str { x.to_str() })
+  let k = match r.next(fs[2])? {
+    Some(x) => x.to_int()?
+    None => 0
+  }
+  var lr = r.open_list(r.need(fs[3])?, KIND_STR)?
+  var tags: List[Str] = []
+  while !lr.done() {
+    tags.push(lr.need(Field{kind: KIND_STR})?.to_str())
+  }
+  if !top.done() {
+    return Err(Asn1Err.Syntax(msg: "trailing data"))
+  }
+  Rec{n: n, name: name, k: k, tags: tags}
+}
+
+fn write_rec(x: Rec) -> Bytes ! Asn1Err {
+  let fs = rec_fields()
+  var items: List[Value] = [int_value(x.n).with_field(fs[0])?]
+  match x.name {
+    Some(s) => items.push(str_value(s).with_field(fs[1])?)
+    None => {}
+  }
+  if x.k != 0 {
+    items.push(int_value(x.k).with_field(fs[2])?)
+  }
+  items.push(Value.Sequence(items: x.tags.map(fn(s: Str) -> Value { str_value(s) })).with_field(fs[3])?)
+  Value.Sequence(items: items).der()
+}
+
+fn rec_err(r: Result[Rec, Asn1Err]) -> Str {
+  match r {
+    Ok(_) => "ok"
+    Err(e) => "${e}"
+  }
+}
+
+test "a struct reads and writes field by field" {
+  let x = Rec{n: 5, name: Some("é"), k: 9, tags: ["a", "b*"]}
+  let der = write_rec(x) ?? e => fault("${e}")
+  expect(der.to_hex()) == "3015020105a0040c02c3a981010930071301610c02622a"
+  let back = read_rec(der) ?? e => fault("${e}")
+  expect(back.n == 5 && back.name == Some("é") && back.k == 9 && back.tags == ["a", "b*"]) == true
+  let y = read_rec(b"\x30\x08\x02\x01\x01\x30\x03\x13\x01a") ?? e => fault("${e}")
+  expect(y.name == None && y.k == 0 && y.tags == ["a"]) == true
+  // Go's quirk: an explicit field's header is read before its tag is
+  // compared, so an empty last element ends an optional explicit field
+  expect(rec_err(read_rec(b"\x30\x05\x02\x01\x01\x30\x00"))) == "asn1: structure error: explicit tag has no child"
+  expect(rec_err(read_rec(b"\x30\x03\x02\x01\x01"))) == "asn1: syntax error: sequence truncated"
+  expect(rec_err(read_rec(b"\x30\x06\x02\x01\x01\x30\x01\x02"))) == "asn1: syntax error: truncated tag or length"
+  expect(rec_err(read_rec(b"\x30\x07\x02\x01\x01\x30\x02\x02\x00"))) == "asn1: structure error: sequence tag mismatch"
+}
+
+test "printable allows * when asked, as Go's makePrintableString" {
+  expect((Value.Printable(s: "*.example").der() ?? e => fault("${e}")).to_hex()) == "13092a2e6578616d706c65"
+  expect(Value.Printable(s: "a&b").der().is_ok()) == false
+  expect(str_value("*")) == Value.Utf8(s: "*")
 }
