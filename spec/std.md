@@ -4360,7 +4360,31 @@ fn cbc_decrypt(b: AesBlock, iv: Bytes, ciphertext: Bytes) -> Bytes
 struct Ctr {}        // Debug `<ctr>`; a copy continues on its own
 fn ctr(b: AesBlock, iv: Bytes) -> Ctr
 fn (var c: Ctr) xor(data: Bytes) -> Bytes                          // XORKeyStream
+fn (b: AesBlock) block_size() -> Int                               // 16
+interface Block {                                                  // Go's cipher.Block: AesBlock or a caller's type
+  fn block_size(self) -> Int
+  fn encrypt_block(self, src: Bytes) -> Bytes
+  fn decrypt_block(self, src: Bytes) -> Bytes
+}
+interface KeyStream { fn xor(var self, data: Bytes) -> Bytes }     // Go's cipher.Stream: Ctr, BlockCtr
+struct CbcMode {}    // Debug `<cbcmode>`; Go's BlockMode, a value as Ctr
+fn cbc_encrypter(b: Block, iv: Bytes) -> CbcMode
+fn cbc_decrypter(b: Block, iv: Bytes) -> CbcMode
+fn (m: CbcMode) block_size() -> Int
+fn (var m: CbcMode) crypt_blocks(src: Bytes) -> Bytes              // CryptBlocks, chained across calls
+struct BlockCtr {}   // Debug `<blockctr>`; Go's NewCTR over any Block
+fn block_ctr(b: Block, iv: Bytes) -> BlockCtr
+fn (var c: BlockCtr) xor(data: Bytes) -> Bytes
 ```
+
+`cbc_encrypter`, `cbc_decrypter` and `block_ctr` run CBC and CTR over
+any `Block`, a caller's cipher of any block size included (Go's generic
+modes; the Go backend runs them over the Block's methods). The IV is
+`block_size()` bytes, CTR's counter is the IV as a big endian number of
+that many bytes, wrapping, and a Block method that gives other than one
+block faults. `cbc_encrypt`, `cbc_decrypt` and `ctr` stay AES's fast
+paths. Go's StreamReader and StreamWriter have no counterpart: Xo has no
+io.Reader, and `xor` over each piece read or written does their work.
 
 A key of another size is KeyErr `crypto/aes: invalid key size N`. Where
 Go panics, Xo faults with Go's text: a block that is not 16 bytes
@@ -4370,7 +4394,7 @@ Go panics, Xo faults with Go's text: a block that is not 16 bytes
 `cipher.NewCBCDecrypter: ...`, `cipher.NewCTR: ...`). CTR's counter is
 the IV as a 128 bit big endian number and wraps at 2^128, as Go's. CBC
 padding (PKCS#7) is the caller's, as in Go. Checked against Go
-(testdata/corpus/aesmodes).
+(testdata/corpus/aesmodes and ciphermodes).
 
 ---
 

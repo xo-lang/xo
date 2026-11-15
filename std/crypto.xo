@@ -569,6 +569,52 @@ fn aes_block(key: Bytes) -> AesBlock ! KeyErr
 fn (b: AesBlock) encrypt_block(src: Bytes) -> Bytes
 /// One 16 byte block decrypted (Block.Decrypt).
 fn (b: AesBlock) decrypt_block(src: Bytes) -> Bytes
+/// 16 (Block.BlockSize).
+fn (b: AesBlock) block_size() -> Int
+
+/// A block cipher (Go's cipher.Block): AesBlock, or a caller's type with
+/// these methods, for cbc_encrypter, cbc_decrypter and block_ctr. Each
+/// method takes and gives one block of block_size() bytes.
+interface Block {
+  fn block_size(self) -> Int
+  fn encrypt_block(self, src: Bytes) -> Bytes
+  fn decrypt_block(self, src: Bytes) -> Bytes
+}
+
+/// A keystream (Go's cipher.Stream): Ctr and BlockCtr. xor gives data
+/// xored with the stream's next data.len() bytes.
+interface KeyStream {
+  fn xor(var self, data: Bytes) -> Bytes
+}
+
+/// CBC over any Block (Go's BlockMode from NewCBCEncrypter or
+/// NewCBCDecrypter): crypt_blocks chains from where the last call ended. A
+/// value: a copy goes on from the same place on its own. Debug text
+/// `<cbcmode>`.
+struct CbcMode {}
+
+/// CBC encryption under b from iv (b.block_size() bytes, else a fault:
+/// `cipher.NewCBCEncrypter: IV length must equal block size`).
+fn cbc_encrypter(b: Block, iv: Bytes) -> CbcMode
+/// CBC decryption under b from iv (faults as cbc_encrypter, with
+/// `cipher.NewCBCDecrypter: ...`).
+fn cbc_decrypter(b: Block, iv: Bytes) -> CbcMode
+/// The block's size (BlockMode.BlockSize).
+fn (m: CbcMode) block_size() -> Int
+/// src encrypted or decrypted, whole blocks (CryptBlocks; else a fault:
+/// `crypto/cipher: input not full blocks`); the next call chains on.
+fn (var m: CbcMode) crypt_blocks(src: Bytes) -> Bytes
+
+/// CTR over any Block (Go's NewCTR with a Block other than AES's): the
+/// counter is the IV as a block_size() byte big endian number, wrapping.
+/// A value, as Ctr. Debug text `<blockctr>`.
+struct BlockCtr {}
+
+/// A keystream under b from iv (b.block_size() bytes, else a fault:
+/// `cipher.NewCTR: IV length must equal block size`).
+fn block_ctr(b: Block, iv: Bytes) -> BlockCtr
+/// data xored with the keystream's next data.len() bytes (XORKeyStream).
+fn (var c: BlockCtr) xor(data: Bytes) -> Bytes
 /// CBC encryption (NewCBCEncrypter, CryptBlocks) of whole blocks, no
 /// padding; faults: `cipher.NewCBCEncrypter: IV length must equal block
 /// size`, `crypto/cipher: input not full blocks`.

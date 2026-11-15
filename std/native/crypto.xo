@@ -2610,6 +2610,108 @@ fn (b: AesBlock) decrypt_block(src: Bytes) -> Bytes {
   b.c.decrypt_block(src)
 }
 
+fn (b: AesBlock) block_size() -> Int { 16 }
+
+struct CbcMode {
+  b: crypto.Block
+  /// the last ciphertext block, which the next block chains on
+  iv: Bytes
+  decrypt: Bool
+}
+
+struct BlockCtr {
+  b: crypto.Block
+  /// the counter of the next keystream block
+  ctr: Bytes
+  /// the unused rest of the last keystream block
+  ks: Bytes
+}
+
+fn cbc_encrypter(b: crypto.Block, iv: Bytes) -> CbcMode {
+  if iv.len() != b.block_size() {
+    fault("cipher.NewCBCEncrypter: IV length must equal block size")
+  }
+  CbcMode{b: b, iv: iv, decrypt: false}
+}
+
+fn cbc_decrypter(b: crypto.Block, iv: Bytes) -> CbcMode {
+  if iv.len() != b.block_size() {
+    fault("cipher.NewCBCDecrypter: IV length must equal block size")
+  }
+  CbcMode{b: b, iv: iv, decrypt: true}
+}
+
+fn (m: CbcMode) block_size() -> Int { m.b.block_size() }
+
+/// A caller's Block's output, which must be one block.
+fn one_block(out: Bytes, bs: Int, what: Str) -> Bytes {
+  if out.len() != bs {
+    fault("crypto: the Block's ${what} gave ${out.len()} bytes for a ${bs} byte block")
+  }
+  out
+}
+
+fn (var m: CbcMode) crypt_blocks(src: Bytes) -> Bytes {
+  let bs = m.b.block_size()
+  if src.len() % bs != 0 {
+    fault("crypto/cipher: input not full blocks")
+  }
+  var w = BytesBuilder.with_capacity(src.len())
+  var prev = m.iv
+  for i in 0..src.len() / bs {
+    let blk = src[i * bs..(i + 1) * bs]
+    if m.decrypt {
+      w.write(xor(one_block(m.b.decrypt_block(blk), bs, "decrypt_block"), prev))
+      prev = blk
+    } else {
+      prev = one_block(m.b.encrypt_block(xor(blk, prev)), bs, "encrypt_block")
+      w.write(prev)
+    }
+  }
+  m.iv = prev
+  w.freeze()
+}
+
+fn block_ctr(b: crypto.Block, iv: Bytes) -> BlockCtr {
+  if iv.len() != b.block_size() {
+    fault("cipher.NewCTR: IV length must equal block size")
+  }
+  BlockCtr{b: b, ctr: iv, ks: b""}
+}
+
+/// n + 1 as a big endian number of n.len() bytes, wrapping.
+fn ctr_inc(n: Bytes) -> Bytes {
+  var w = BytesBuilder.with_capacity(n.len())
+  w.write(n)
+  var i = n.len() - 1
+  while i >= 0 {
+    let v = (Int(n[i]) + 1) & 0xff
+    w.put_le(i, v, 1)
+    if v != 0 {
+      break
+    }
+    i -= 1
+  }
+  w.freeze()
+}
+
+fn (var c: BlockCtr) xor(data: Bytes) -> Bytes {
+  let bs = c.b.block_size()
+  var w = BytesBuilder.with_capacity(data.len())
+  var at = 0
+  while at < data.len() {
+    if c.ks.is_empty() {
+      c.ks = one_block(c.b.encrypt_block(c.ctr), bs, "encrypt_block")
+      c.ctr = ctr_inc(c.ctr)
+    }
+    let n = c.ks.len().min(data.len() - at)
+    w.write(xor(data[at..at + n], c.ks[0..n]))
+    c.ks = c.ks[n..c.ks.len()]
+    at += n
+  }
+  w.freeze()
+}
+
 fn cbc_encrypt(b: AesBlock, iv: Bytes, plaintext: Bytes) -> Bytes {
   if iv.len() != 16 {
     fault("cipher.NewCBCEncrypter: IV length must equal block size")

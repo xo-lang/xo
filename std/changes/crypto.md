@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-15: feature: Block and KeyStream, and CBC and CTR over any Block
+
+- Kind: feature
+- Commit: this push
+- Found by: Lang 3's crypto and TLS gap audit (C6)
+- Go reference: crypto/cipher Block, Stream, BlockMode, NewCBCEncrypter, NewCBCDecrypter, NewCTR over a Block other than AES's; go1.26.11
+- Test: corpus ciphermodes (ctr_test.go's noopBlock at 1 to 128 bytes and TestCTR, an 8 byte toy cipher written the same in the generator, AES behind a wrapper for Go's generic modes and AES itself; CBC encryption and decryption over seeded pieces, chained across calls, and CTR over seeded pieces with the counter wrapping, against Go's NewCBCEncrypter, NewCBCDecrypter and NewCTR; copies going on by themselves), native, go and llvm
+- Shipped in: not yet released
+
+`Block` is Go's cipher.Block as an interface (block_size, encrypt_block, decrypt_block): AesBlock is one, with a new `block_size()`, and so is a caller's type. `KeyStream` is Go's cipher.Stream (`xor`): Ctr and the new BlockCtr. `cbc_encrypter(b, iv)` and `cbc_decrypter(b, iv)` give a `CbcMode` (Go's BlockMode) whose `crypt_blocks` chains across calls, and `block_ctr(b, iv)` a `BlockCtr`, both over any Block of any size, with Go's faults. Both are values: a copy goes on from where it was by itself. The Go backend runs Go's generic CBC and CTR over the Block's methods. Go's StreamReader and StreamWriter are not planned: Xo has no io.Reader or io.Writer.
+
 ## 2026-11-15: feature: crypto/subtle's integer helpers
 
 - Kind: feature

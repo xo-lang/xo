@@ -131,6 +131,13 @@ var (
 	_ func(*Task, Bytes) Result[Crypto_AesBlock, Crypto_KeyErr]                                                        = Crypto_aes_block
 	_ func(*Crypto_AesBlock, *Task, Bytes) Bytes                                                                       = (*Crypto_AesBlock).M_encrypt_block
 	_ func(*Crypto_AesBlock, *Task, Bytes) Bytes                                                                       = (*Crypto_AesBlock).M_decrypt_block
+	_ func(*Crypto_AesBlock, *Task) int64                                                                              = (*Crypto_AesBlock).M_block_size
+	_ func(*Task, Crypto_Block, Bytes) Crypto_CbcMode                                                                  = Crypto_cbc_encrypter
+	_ func(*Task, Crypto_Block, Bytes) Crypto_CbcMode                                                                  = Crypto_cbc_decrypter
+	_ func(*Crypto_CbcMode, *Task) int64                                                                               = (*Crypto_CbcMode).M_block_size
+	_ func(*Crypto_CbcMode, *Task, Bytes) Bytes                                                                        = (*Crypto_CbcMode).M_crypt_blocks
+	_ func(*Task, Crypto_Block, Bytes) Crypto_BlockCtr                                                                 = Crypto_block_ctr
+	_ func(*Crypto_BlockCtr, *Task, Bytes) Bytes                                                                       = (*Crypto_BlockCtr).M_xor
 	_ func(*Task, Crypto_AesBlock, Bytes, Bytes) Bytes                                                                 = Crypto_cbc_encrypt
 	_ func(*Task, Crypto_AesBlock, Bytes, Bytes) Bytes                                                                 = Crypto_cbc_decrypt
 	_ func(*Task, Crypto_AesBlock, Bytes) Crypto_Ctr                                                                   = Crypto_ctr
