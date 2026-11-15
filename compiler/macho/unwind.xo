@@ -243,7 +243,7 @@ fn (var l: Linker) unwind_info() {
         match fdes.get(func) {
           Some(f) => enc = (enc & 0xff000000) | f
           None => {
-            l.fail("${l.objs[o].path}: no FDE for the DWARF mode function at ${func}${l.names_at(func)}")
+            l.fail("${l.objs[o].path}: no FDE for the DWARF mode function at ${func}${l.names_at(func)}${l.cu_target(o, s, rs, at)}")
             return
           }
         }
@@ -348,5 +348,51 @@ fn (l: Linker) names_at(a: Int) -> Str {
       }
     }
   }
-  if ns.is_empty() { "" } else { " (${ns.join(", ")})" }
+  if !ns.is_empty() {
+    return " (${ns.join(", ")})"
+  }
+  // no symbol starts there (a closure body, an unnamed part): the nearest
+  // defined symbol below it in a live section, as name+offset
+  var best = -1
+  var bname = ""
+  for (o, ob) in l.objs.indexed() {
+    if !ob.live {
+      continue
+    }
+    for (i, s) in ob.syms.indexed() {
+      if !is_defined(s) || s.sect < 1 || (s.typ & N_TYPE) == N_ABS {
+        continue
+      }
+      let sa = l.sym_addr(o, i)
+      if sa != 0 && sa < a && sa > best {
+        best = sa
+        bname = "${bstr(s.name)}+${a - sa} in ${ob.path}"
+      }
+    }
+  }
+  if best < 0 { " (no symbol at or below it)" } else { " (no symbol there; nearest below: ${bname})" }
+}
+
+/// What the compact unwind entry at offset at of s names, for a message:
+/// its relocation's symbol, or its section and offset.
+fn (l: Linker) cu_target(o: Int, s: ISect, rs: Map[Int, IReloc], at: Int) -> Str {
+  match rs.get(at) {
+    Some(r) => {
+      let ob = l.objs[o]
+      if r.ext() {
+        if r.sym() >= 0 && r.sym() < ob.syms.len() {
+          return " [entry's relocation: symbol ${bstr(ob.syms[r.sym()].name)}]"
+        }
+        return " [entry's relocation: symbol #${r.sym()}]"
+      }
+      let k = r.sym()
+      if k >= 1 && k <= ob.sects.len() {
+        let t = ob.sects[k - 1]
+        let off = rd64(s.data, at) - t.addr
+        return " [entry's relocation: section ${t.seg},${t.name}+${off}${if t.dead { ", dead" } else { "" }}]"
+      }
+      " [entry's relocation: section ${k}]"
+    }
+    None => " [entry has no relocation]"
+  }
 }

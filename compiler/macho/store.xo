@@ -364,12 +364,12 @@ fn (l: Linker) uncoalesced_unwind(o: Int, s: ISect) -> ISect {
   // (an address alone: an object's sections do not overlap, and a store
   // object's symbols carry renumbered section ordinals while its section
   // relocations keep the original ones, decision 0596)
-  var gone: Set[Int] = #{}
+  var gone: List[(Int, Int)] = []
   for (i, y) in l.objs[o].syms.indexed() {
     if is_ext(y) && is_defined(y) && (y.desc & 0x80) != 0 && y.sect >= 1 {
       match l.globals.get(y.name) {
         Some(g) => if g != (o, i) {
-          gone.add(y.value)
+          gone.push((y.sect, y.value))
         }
         None => {}
       }
@@ -378,6 +378,33 @@ fn (l: Linker) uncoalesced_unwind(o: Int, s: ISect) -> ISect {
   if gone.is_empty() {
     return s
   }
+  // each one's extent, to the next symbol of its section: a function's
+  // later unwind regions (its fault stubs', DWARF mode when they name a
+  // personality) have entries of their own inside it, and their FDEs
+  // name the function too, so they resolve to the kept copy (2026-11-15,
+  // aws-43: mysql.handshake's stubs region in std's store, with the
+  // program defining handshake: no FDE for the DWARF mode function)
+  var starts: Map[Int, List[Int]] = {}
+  for y in l.objs[o].syms {
+    if (y.typ & N_STAB) == 0 && (y.typ & N_TYPE) == N_SECT && y.sect >= 1 {
+      var xs = starts.get(y.sect) ?? []
+      xs.push(y.value)
+      starts[y.sect] = xs
+    }
+  }
+  var spans: List[(Int, Int)] = []
+  for (sect, at) in gone {
+    var end = -1
+    for v in starts.get(sect) ?? [] {
+      if v > at && (end < 0 || v < end) {
+        end = v
+      }
+    }
+    spans.push((at, end))
+  }
+  let in_gone = fn(f: Int) -> Bool {
+    spans.any(fn(sp: (Int, Int)) -> Bool { f >= sp.0 && (sp.1 < 0 || f < sp.1) })
+  }
   var keep: List[Int] = []
   for r in s.relocs {
     if r.addr % 32 != 0 {
@@ -385,7 +412,7 @@ fn (l: Linker) uncoalesced_unwind(o: Int, s: ISect) -> ISect {
     }
     // the entry's function: a symbol, or a section and an address
     let f = if r.ext() { l.objs[o].syms[r.sym()].value } else { rd64(s.data, r.addr) }
-    if !gone.contains(f) {
+    if !in_gone(f) {
       keep.push(r.addr)
     }
   }

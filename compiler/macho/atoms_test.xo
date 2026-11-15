@@ -111,6 +111,25 @@ test "a weak definition in two objects links once (std's object and a program's)
   }
 }
 
+// std's store defines _xo_hf weak with a second unwind region (a
+// function's fault stubs: DWARF mode, as with a personality) under a
+// local label; the program defines it strong. The store copy's entries
+// all go, the second's too: its FDE names _xo_hf, which resolves to the
+// program's (2026-11-15, aws-43: mysql.handshake, "no FDE for the DWARF
+// mode function")
+test "a store link drops every unwind entry of a replaced weak copy" {
+  let part = asm_or_fault("\t.subsections_via_symbols\n\t.text\n\t.globl _xo_hf\n\t.weak_definition _xo_hf\n\t.p2align 2\n_xo_hf:\n\t.cfi_startproc\n\tstp x29, x30, [sp, #-16]!\n\t.cfi_def_cfa_offset 16\n\tmov x29, sp\n\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n\tldp x29, x30, [sp], #16\n\tret\n\t.cfi_endproc\nLhf_stubs:\n\t.cfi_startproc\n\t.cfi_def_cfa w1, 16\n\tbrk #1\n\t.cfi_endproc\n\t.globl _xo_other\n\t.p2align 2\n_xo_other:\n\tadrp x0, _xo_tab@PAGE\n\tret\n\t.section __DATA,__data\n\t.globl _xo_tab\n_xo_tab:\n\t.quad Lhf_stubs\n")
+  let prog = asm_or_fault("\t.text\n\t.globl _main\n\t.p2align 2\n_main:\n\t.cfi_startproc\n\tstp x29, x30, [sp, #-16]!\n\t.cfi_def_cfa_offset 16\n\tmov x29, sp\n\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n\tbl _xo_hf\n\tbl _xo_other\n\tmov x0, #0\n\tldp x29, x30, [sp], #16\n\tret\n\t.cfi_endproc\n\t.globl _xo_hf\n\t.p2align 2\n_xo_hf:\n\t.cfi_startproc\n\tret\n\t.cfi_endproc\n")
+  let store = match store_encode([LinkInput{path: "part.o", data: part}]) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  match link_store([LinkInput{path: "prog.o", data: prog}], store, LinkOpts{name: "s", embed_dwarf: false}) {
+    Ok(_) => {}
+    Err(e) => fault(e)
+  }
+}
+
 test "defined_symbols names an object's external definitions" {
   let a = asm_or_fault("\t.text\n\t.globl _f\n\t.p2align 2\n_f:\n\tbl _g\n\tret\nLlocal:\n\tret\n")
   match defined_symbols("a.o", a) {
