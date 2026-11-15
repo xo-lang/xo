@@ -10642,7 +10642,10 @@ fn version_of(name: Str) -> Int?
   `StatementEnd` around a statement that holds `;`, and `-- +goose NO
   TRANSACTION`. `ENVSUB ON` is refused (an embedded file's text is fixed).
   `collect` takes the top level `.sql` files with a version and skips the
-  rest, as goose's collect does.
+  rest, as goose's collect does. `embed("migrations")` names its files
+  `migrations/NNN_name.sql`, so pass `.sub("migrations")`: the embed
+  itself has no top level file, and `up` then applies nothing
+  (gotchas/migrate-embed-sub.md).
 - `up` holds one connection for the whole run and takes the dialect's lock
   on it (`pg_advisory_lock` for Postgres, `GET_LOCK` for MySQL; none for
   SQLite and the in memory database), so a second process waits and then
