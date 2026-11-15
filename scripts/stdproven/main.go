@@ -80,6 +80,8 @@ var harnesses = map[string][]harness{
 	"base32":   {{"TestBase32Fuzz", "XO_BASE32FUZZ"}},
 	"base64":   {{"TestBase64Fuzz", "XO_BASE64FUZZ"}},
 	"crc32":    {{"TestCrc32Fuzz", "XO_CRC32FUZZ"}},
+	"csv":      {{"TestCsvFuzz", "XO_CSVFUZZ"}},
+	"png":      {{"TestPngFuzz", "XO_PNGFUZZ"}},
 }
 
 func main() {
