@@ -1,7 +1,8 @@
 # 0662: deterministic pure function values
 
-Status: Proposed (owner session, 2026-11-15). Draft only: the owner
-decides, and Xo Lang 1 builds, before any compiler change lands. Builds on
+Status: Accepted, option B (owner, 2026-11-15: "go with B, build the
+prototype"). The prototype below is not on main; landing it is the next
+step. Builds on
 0004 (effects in signatures), 0332 (no global variables), 0652 (Proposed,
 capability effect parameters) and 0659 (Proposed, local-first UI).
 
@@ -106,14 +107,58 @@ Then a pure function value means deterministic: same inputs, same
 result. std/ui gets its guarantee for update and view, and so does any
 other library that replays, memoizes or runs a function on two machines.
 
+## Prototype of B (2026-11-15)
+
+Branch `sync-effect-exp` (commit 4c5c81142, local, not pushed), about 120
+lines in compiler/check:
+
+- `use_var` (call.xo): in a closure, a use of a local declared outside it
+  whose type holds a Chan, Mutex or Atomic at any depth (`shared_handle`,
+  a copy of XO0416's type walk with `is_sync_handle`) performs `sync`,
+  with the note "`x` is a captured Mutex: shared state another task may
+  change".
+- `sync` stays ambient outside closures: `perform` drops it in a declared
+  function, a test or an initializer; the effect fixpoint drops it from a
+  declared function's inferred set (it can arrive through a closure passed
+  to a generic call such as `scope.spawn`); and a Decl or Iface obligation
+  ignores it.
+- The label is accepted in `uses` clauses and module ceilings.
+
+Probes: the three impure updates of the Context get XO0701 for `sync`;
+also a closure capturing a struct with an Atomic field, and an outer
+closure that calls an inner one that captures (the note points at the
+capture). Accepted: a declared pub function that locks or calls such a
+closure, shared state passed as a parameter, `scope.spawn`, and
+`Router.handle` handlers (their type takes an effect parameter).
+
+| Tree | Option A | Option B |
+|---|---|---|
+| compiler/ | 110 | 0 |
+| examples/ | 0 | 0 |
+| bench/ | 130 | 22 in 11 files |
+| std (A: 15 top-level modules; B: all 94) | 180 | 24 in 8 modules |
+
+B's 46 hits are of two kinds, and none has a machine fix yet:
+
+- A callback type that is pure today and is called from another task,
+  where shared state is the point: FakeNet's `os.net.handle` handlers
+  (`fn(http.Request) -> http.Response`, 15 bench test hits),
+  `metrics` `gauge_func` (`fn() -> Float`), a reader built from
+  `fn() -> Str? ! IoErr`, std/native/http's body producers, the TLS
+  session cache callback, std/trace's middleware handler, a worker pool's
+  job type. Each type gains `uses sync` (or an effect parameter, as
+  `Router.handle` has) in std.
+- A closure with its own `uses` clause that captures shared state
+  (std/amqp, amqptest, grpc, backoff, rate; one in bench): its clause
+  gains `sync`. A fix that writes it is worth adding.
+
 ## Consequences
 
 - std/ui's `App` needs no rule of its own; its `fn(M, E) -> M` type
   already says pure.
-- The breaking set is small and local: closures given a pure callback
-  type that capture shared state. The experiment's function value column
-  (1 in compiler/, 19 in bench/) is the estimate; the real count comes
-  from building B, since the experiment flagged calls, not captures.
+- The breaking set is small and local, as measured by the prototype: 0
+  in compiler/, 24 in std, 22 in bench/, most of them in about seven std
+  callback types.
 - The checker needs a "holds shared state" walk over types. The XO0416
   check of constants already has one to start from.
 - Effect inference over captures sits next to Lang 1's queued fix for an
