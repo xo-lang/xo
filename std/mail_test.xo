@@ -1,4 +1,4 @@
-// Go's net/mail (go1.26.1) ParseAddress and ParseAddressList on the inputs of
+// Go's net/mail (go1.26.1; four error rows go1.26.11's since 2026-11-15) ParseAddress and ParseAddressList on the inputs of
 // message_test.go and random strings of address pieces (encoded words in
 // utf-8, iso-8859-1, and an unsupported charset, groups, comments, domain
 // literals): Go's names, addresses, String() texts, and errors (decision
@@ -178,7 +178,7 @@ const ONE: List[(Str, Str, Str, Str, Str)] = [
   ("é.", "", "", "", "mail: missing '@' or angle-addr"),
   ("127.0.0.1\\=?utf-8?b?w6k=?=;", "", "", "", "mail: missing '@' or angle-addr"),
   (",;<=?utf-8?b?w6k=?=>=?utf-8?q?J=C3=B6rg?=é", "", "", "", "mail: missing word in phrase: mail: invalid string"),
-  ("=?utf-8?b?w6k=?=(\"=?koi8-r?q?x?=example.com.><,", "", "", "", "mail: misformatted parenthetical comment"),
+  ("=?utf-8?b?w6k=?=(\"=?koi8-r?q?x?=example.com.><,", "", "", "", "mail: missing '@' or angle-addr"),
   ("=?iso-8859-1?q?caf=E9?=", "", "", "", "mail: missing '@' or angle-addr"),
   ("=?utf-8?b?w6k=?==?utf-8?q?J=C3=B6rg?=;];,127.0.0.1<", "", "", "", "mail: missing '@' or angle-addr"),
   ("Ann LeeAnn Lee", "", "", "", "mail: no angle-addr"),
@@ -456,7 +456,7 @@ const ONE: List[(Str, Str, Str, Str, Str)] = [
   ("[", "", "", "", "mail: missing word in phrase: mail: invalid string"),
   ("])[)", "", "", "", "mail: missing word in phrase: mail: invalid string"),
   (":@;:@::1.", "", "", "", "mail: missing word in phrase: mail: invalid string"),
-  ("=?iso-8859-1?q?caf=E9?=(Ann Lee", "", "", "", "mail: misformatted parenthetical comment"),
+  ("=?iso-8859-1?q?caf=E9?=(Ann Lee", "", "", "", "mail: missing '@' or angle-addr"),
   (">([", "", "", "", "mail: missing word in phrase: mail: invalid string"),
   ("=?utf-8?q?J=C3=B6rg?=;=?iso-8859-1?q?caf=E9?==?koi8-r?q?x?=::1=?koi8-r?q?x?=)=?utf-8?q?J=C3=B6rg?=", "", "", "", "mail: missing '@' or angle-addr"),
   ("<", "", "", "", "mail: no addr-spec"),
@@ -777,7 +777,7 @@ const LIST: List[(Str, List[(Str, Str)], Str)] = [
   ("é.", [], "mail: missing '@' or angle-addr"),
   ("127.0.0.1\\=?utf-8?b?w6k=?=;", [], "mail: missing '@' or angle-addr"),
   (",;<=?utf-8?b?w6k=?=>=?utf-8?q?J=C3=B6rg?=é", [], "mail: missing word in phrase: mail: invalid string"),
-  ("=?utf-8?b?w6k=?=(\"=?koi8-r?q?x?=example.com.><,", [], "mail: misformatted parenthetical comment"),
+  ("=?utf-8?b?w6k=?=(\"=?koi8-r?q?x?=example.com.><,", [], "mail: missing '@' or angle-addr"),
   ("=?iso-8859-1?q?caf=E9?=", [], "mail: missing '@' or angle-addr"),
   ("=?utf-8?b?w6k=?==?utf-8?q?J=C3=B6rg?=;];,127.0.0.1<", [], "mail: missing '@' or angle-addr"),
   ("Ann LeeAnn Lee", [], "mail: no angle-addr"),
@@ -1055,7 +1055,7 @@ const LIST: List[(Str, List[(Str, Str)], Str)] = [
   ("[", [], "mail: missing word in phrase: mail: invalid string"),
   ("])[)", [], "mail: missing word in phrase: mail: invalid string"),
   (":@;:@::1.", [], "mail: missing word in phrase: mail: invalid string"),
-  ("=?iso-8859-1?q?caf=E9?=(Ann Lee", [], "mail: misformatted parenthetical comment"),
+  ("=?iso-8859-1?q?caf=E9?=(Ann Lee", [], "mail: missing '@' or angle-addr"),
   (">([", [], "mail: missing word in phrase: mail: invalid string"),
   ("=?utf-8?q?J=C3=B6rg?=;=?iso-8859-1?q?caf=E9?==?koi8-r?q?x?=::1=?koi8-r?q?x?=)=?utf-8?q?J=C3=B6rg?=", [], "mail: missing '@' or angle-addr"),
   ("<", [], "mail: no addr-spec"),

@@ -889,7 +889,10 @@ fn (var p: P) addr_spec() -> Str ! MailErr {
 
 fn (var p: P) consume_phrase() -> Str ! MailErr {
   var words: List[Str] = []
-  var prev_encoded = false
+  // a run of encoded words, joined without spaces (Go's sb): it is not
+  // in words until a plain word or the end, so CFWS is skipped only
+  // after a plain word, as Go's consumePhrase
+  var pending = ""
   var failed = ""
   while {
     if !words.is_empty() {
@@ -932,13 +935,18 @@ fn (var p: P) consume_phrase() -> Str ! MailErr {
         }
       }
     }
-    if prev_encoded && encoded {
-      let last = words.pop() ?? ""
-      words.push(last + word)
+    if encoded {
+      pending = pending + word
+    } else if !pending.is_empty() {
+      words.push(pending)
+      pending = ""
+      words.push(word)
     } else {
       words.push(word)
     }
-    prev_encoded = encoded
+  }
+  if !pending.is_empty() {
+    words.push(pending)
   }
   if !failed.is_empty() && words.is_empty() {
     return Err(fail("mail: missing word in phrase: ${failed}"))

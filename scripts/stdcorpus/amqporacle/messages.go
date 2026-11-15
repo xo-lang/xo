@@ -125,7 +125,7 @@ func messageRows() []row {
 		if err := back.UnmarshalBinary(b); err != nil {
 			panic(fmt.Sprintf("%s: unmarshal: %v", c.name, err))
 		}
-		rows = append(rows, row{c.name, b, showMsg(&back)})
+		rows = append(rows, row{c.name, canon(b), showMsg(&back)})
 	}
 	return rows
 }

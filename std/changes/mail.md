@@ -1,5 +1,20 @@
 # std/mail changes
 
+## 2026-11-15: fix: a comment after an encoded word in a display name is not skipped (Go 1.26's consumePhrase)
+
+- Kind: fix
+- Commit: this push
+- Found by: the mail corpus after its inputs were pinned to Go 1.26.11's message_test.go (the lead's stdcorpus -check follow-up)
+- Go reference: net/mail message.go consumePhrase (go1.26.11): a run of encoded words is held apart from the phrase's words, so CFWS is skipped only after a plain word
+- Test: the mail corpus (seeded inputs, go, arm64, llvm); std/mail_test.xo's four rows Go 1.26.11 answers differently from go1.26.1
+- Timing: none
+- Shipped in: not yet released
+
+`parse_address("=?UTF-8?Q?a_b?=((unclosed)")` and the like now answer
+Go's `mail: no angle-addr` or `mail: missing '@' or angle-addr` instead
+of `mail: misformatted parenthetical comment`: std/mail skipped a
+comment after an encoded word, where Go stops the phrase there.
+
 ## 2026-11-11: feature: parse_date_civil (dates of any year)
 
 - Kind: feature

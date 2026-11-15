@@ -128,12 +128,23 @@ func main() {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(ns))
 			_ = call(cc, ctx)
 			cancel()
+			// the header on the wire depends on how far the deadline ran
+			// down before the call was sent; the corpus takes the header
+			// for ns itself, from grpc-go's encoder (encodeDuration, a
+			// copy), after checking that the copy gives the wire's
+			// header for the duration that header names
 			select {
 			case h := <-got:
-				fmt.Println(h["grpc-timeout"])
+				w := h["grpc-timeout"]
+				d, ok := decodeTimeout(w)
+				if !ok || encodeDuration(d) != w {
+					fmt.Fprintf(os.Stderr, "grpcref: grpc-go sent grpc-timeout %q, which encodeDuration does not give back\n", w)
+					os.Exit(1)
+				}
 			case <-time.After(2 * time.Second):
-				fmt.Println("none")
+				// a deadline that ran out before the call was sent
 			}
+			fmt.Println(encodeDuration(time.Duration(ns)))
 			cc.Close()
 			stop()
 		case "decode":
@@ -149,4 +160,53 @@ func main() {
 			fmt.Println("?")
 		}
 	}
+}
+
+// encodeDuration is grpc-go v1.79.2's internal/grpcutil.EncodeDuration
+// (Copyright 2020 gRPC authors, Apache License 2.0), copied because the
+// package is internal.
+func encodeDuration(t time.Duration) string {
+	const maxTimeoutValue int64 = 100000000 - 1
+	div := func(d, r time.Duration) int64 {
+		if d%r > 0 {
+			return int64(d/r + 1)
+		}
+		return int64(d / r)
+	}
+	if t <= 0 {
+		return "0n"
+	}
+	if d := div(t, time.Nanosecond); d <= maxTimeoutValue {
+		return strconv.FormatInt(d, 10) + "n"
+	}
+	if d := div(t, time.Microsecond); d <= maxTimeoutValue {
+		return strconv.FormatInt(d, 10) + "u"
+	}
+	if d := div(t, time.Millisecond); d <= maxTimeoutValue {
+		return strconv.FormatInt(d, 10) + "m"
+	}
+	if d := div(t, time.Second); d <= maxTimeoutValue {
+		return strconv.FormatInt(d, 10) + "S"
+	}
+	if d := div(t, time.Minute); d <= maxTimeoutValue {
+		return strconv.FormatInt(d, 10) + "M"
+	}
+	return strconv.FormatInt(div(t, time.Hour), 10) + "H"
+}
+
+// decodeTimeout reads a grpc-timeout header: digits and one unit.
+func decodeTimeout(s string) (time.Duration, bool) {
+	if len(s) < 2 {
+		return 0, false
+	}
+	units := map[byte]time.Duration{'n': time.Nanosecond, 'u': time.Microsecond, 'm': time.Millisecond, 'S': time.Second, 'M': time.Minute, 'H': time.Hour}
+	u, ok := units[s[len(s)-1]]
+	if !ok {
+		return 0, false
+	}
+	v, err := strconv.ParseInt(s[:len(s)-1], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return time.Duration(v) * u, true
 }

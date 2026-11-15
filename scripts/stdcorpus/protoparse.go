@@ -18,41 +18,32 @@ var (
 	protoRPC          = regexp.MustCompile(`(?m)^\s*rpc\s+\w+`)
 )
 
-// protoparseCorpus is the real world check of std/protoparse (decision 0530): the proto3 files of the Go module cache
-// (grpc-go, protobuf-go, genproto and their neighbors) are parsed, and the counts of top level messages, top level
+// protoparseCorpus is the real world check of std/protoparse (decision 0530): proto3 files sampled from the Go module
+// cache (grpc-go, protobuf-go, genproto and their neighbors), kept in testdata/protoparse so the corpus does not depend
+// on what a machine's cache holds (XO_STDCORPUS_PROTO_RESAMPLE=1 samples them again), are parsed, and the counts of top level messages, top level
 // enums and rpcs (found here with regular expressions on the text without comments, which is independent of the
 // parser) must match; the generated Xo source must be the same on a second run.
 func protoparseCorpus() string {
-	out, err := exec.Command("go", "env", "GOMODCACHE").Output()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "stdcorpus: go env GOMODCACHE:", err)
-		os.Exit(1)
+	if os.Getenv("XO_STDCORPUS_PROTO_RESAMPLE") == "1" {
+		protoResample()
 	}
-	root := strings.TrimSpace(string(out))
 	type pf struct{ name, text string }
 	var files []pf
-	seen := map[[32]byte]bool{}
-	filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".proto") || info.Size() < 300 || info.Size() > 14000 {
+	filepath.Walk(protoDir, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".proto") {
 			return nil
 		}
 		b, _ := os.ReadFile(p)
-		t := string(b)
-		if !strings.Contains(t, `syntax = "proto3"`) || strings.Contains(t, "group ") {
-			return nil
-		}
-		h := sha256.Sum256(b)
-		if seen[h] {
-			return nil
-		}
-		seen[h] = true
-		rel, _ := filepath.Rel(root, p)
-		files = append(files, pf{rel, t})
+		rel, _ := filepath.Rel(protoDir, p)
+		files = append(files, pf{filepath.ToSlash(rel), string(b)})
 		return nil
 	})
 	sort.Slice(files, func(i, j int) bool { return files[i].name < files[j].name })
-	// every kth file, so the sample spreads over the modules
-	step := len(files)/70 + 1
+	if len(files) == 0 {
+		fmt.Fprintln(os.Stderr, "stdcorpus: protoparse: no files in", protoDir)
+		os.Exit(1)
+	}
+	step := 1
 	var o strings.Builder
 	o.WriteString(header("the proto3 files of the Go module cache (Apache 2.0 licensed: grpc-go, protobuf-go, genproto and others), with the counts of top level messages, top level enums and rpcs found by regular expressions"))
 	o.WriteString("use std/protoparse\n\n")
@@ -131,4 +122,54 @@ func protoTop(t, kw string) int {
 		}
 	}
 	return n
+}
+
+// protoDir holds the sampled proto files, by module@version path.
+var protoDir = filepath.Join("scripts", "stdcorpus", "testdata", "protoparse")
+
+// protoResample replaces protoDir's files with a new sample of the module
+// cache: every kth proto3 file of 300 to 14000 bytes, without groups,
+// deduplicated by content, so the sample spreads over the modules.
+func protoResample() {
+	out, err := exec.Command("go", "env", "GOMODCACHE").Output()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "stdcorpus: go env GOMODCACHE:", err)
+		os.Exit(1)
+	}
+	root := strings.TrimSpace(string(out))
+	type pf struct{ name, text string }
+	var files []pf
+	seen := map[[32]byte]bool{}
+	filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".proto") || info.Size() < 300 || info.Size() > 14000 {
+			return nil
+		}
+		b, _ := os.ReadFile(p)
+		t := string(b)
+		if !strings.Contains(t, `syntax = "proto3"`) || strings.Contains(t, "group ") {
+			return nil
+		}
+		h := sha256.Sum256(b)
+		if seen[h] {
+			return nil
+		}
+		seen[h] = true
+		rel, _ := filepath.Rel(root, p)
+		files = append(files, pf{rel, t})
+		return nil
+	})
+	sort.Slice(files, func(i, j int) bool { return files[i].name < files[j].name })
+	if err := os.RemoveAll(protoDir); err != nil {
+		panic(err)
+	}
+	step := len(files)/70 + 1
+	for i := 0; i < len(files); i += step {
+		p := filepath.Join(protoDir, files[i].name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			panic(err)
+		}
+		if err := os.WriteFile(p, []byte(files[i].text), 0o644); err != nil {
+			panic(err)
+		}
+	}
 }

@@ -8,8 +8,6 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
-	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,10 +15,10 @@ import (
 
 // goURLInputs are the input strings of Go's net/url tests (url_test.go:
 // urltests, parseRequestURLTests, stringURLTests and TestParseErrors),
-// read from the Go tree the corpus is generated with.
+// read from the copy in testdata/gosrc (goSrc).
 func goURLInputs() []string {
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, filepath.Join(runtime.GOROOT(), "src", "net", "url", "url_test.go"), nil, 0)
+	f, err := parser.ParseFile(fset, goSrc("net/url/url_test.go"), nil, 0)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "stdcorpus:", err)
 		os.Exit(1)

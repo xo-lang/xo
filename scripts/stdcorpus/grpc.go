@@ -60,12 +60,9 @@ func grpcCorpus() string {
 	var o strings.Builder
 	o.WriteString(header("grpc-go's client and server observed on the wire (internal/stdtest/grpcref): the grpc-timeout header a client sends and the status message a client decodes from grpc-message"))
 	o.WriteString("use std/grpc\n\n")
-	o.WriteString("/// grpc-timeout headers grpc-go sent (the deadline had run down a little by then: the check is that the header is\n/// what encode_timeout makes of its own decoding)\nconst TIMEOUTS: List[Str] = [\n")
+	o.WriteString("/// grpc-timeout headers grpc-go's encoder gives for the seeded deadlines (grpcref checks its copy of the encoder\n/// against the headers grpc-go sent; the check is that each header is what encode_timeout makes of its own decoding)\nconst TIMEOUTS: List[Str] = [\n")
 	for i := range ts {
-		// a deadline that ran out before the call was sent has no header
-		if out[i] != "none" {
-			fmt.Fprintf(&o, "  %s,\n", xq(out[i]))
-		}
+		fmt.Fprintf(&o, "  %s,\n", xq(out[i]))
 	}
 	o.WriteString("]\n\n/// (grpc-message as sent, the status message grpc-go reports, in hex)\nconst MESSAGES: List[(Str, Str)] = [\n")
 	for i, m := range msgs {

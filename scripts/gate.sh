@@ -50,6 +50,11 @@
 #            corpora; the 8-hourly full tier runs it every time (lead,
 #            2026-10-26). The `corpora` step below is the cheaper Go
 #            backend only subset a per-change gate runs.
+#   corpuscheck
+#            go run ./scripts/stdcorpus -check: every committed corpus
+#            against its generator (26 s and 1.8 GB on the Mac,
+#            2026-11-15); the full tier's Mac steps run it, since the
+#            oracles need the module cache (lead, 2026-11-15)
 #   alloff   internal/arm64's goldens with every optional pass off
 #            (XO_PASSES, compiler/arm64 passes.xo)
 #   fp       the self rebuild fixed point (scripts/bootstrap-xo.sh); its
@@ -836,7 +841,7 @@ for step in "$@"; do
     # codegen` ran neither, then pushq refused the push for cross)
     named="$named $step" ;;
   repo) ;; # ran first, above
-  short|arm64|llvm|irmanifest|corpora|cmd|gen|fuzz|corpora-all|alloff|fp|warm|chkcache|warmseq|stdwasm|stdcov)
+  short|arm64|llvm|irmanifest|corpora|cmd|gen|fuzz|corpora-all|corpuscheck|alloff|fp|warm|chkcache|warmseq|stdwasm|stdcov)
     [ "$step" = chkcache ] && chkcache_ran=1
     [ "$step" = warmseq ] && warmseq_ran=1
     steps="$steps $step" ;;
@@ -978,6 +983,20 @@ run_step_body() {
     # -short the corpora run the host backend alone). 10 min 32 s measured
     # 2026-10-26, mostly the LLVM corpora's clang links.
     full corpora ./internal/stdtest -run '^TestStdCorpora$' ;;
+  corpuscheck)
+    # stdcorpus -check: every committed corpus against its generator, so a
+    # change to Go, an oracle or a generator shows (lead, 2026-11-15: a
+    # check that always reports stale hides real drift). 26 s and 1.8 GB
+    # on the Mac, 2026-11-15 (generators run one at a time). The oracles
+    # read their Go modules from the module cache (GOPROXY=off), so the
+    # step runs where they are: the Mac's tier steps.
+    if go run ./scripts/stdcorpus -check >"$logs/corpuscheck.txt" 2>&1; then
+      echo "corpuscheck: every corpus is current"
+    else
+      failed=1
+      echo "corpuscheck: FAIL: a corpus differs from its generator ($logs/corpuscheck.txt)"
+      grep -E 'stale|panic|error' "$logs/corpuscheck.txt" | head -8
+    fi ;;
   alloff)
     off=$(sed -n '/^pub fn passes()/,/^}/p' compiler/arm64/passes.xo | grep -o '"[a-z0-9_]*"' | tr -d '"' | sed 's/^/-/' | paste -sd, -)
     XO_PASSES=$off full alloff ./internal/arm64 -run '^TestGoldenRun$' ;;

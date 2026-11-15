@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"net/mail"
 	"net/textproto"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -22,7 +23,7 @@ import (
 // goTestStrings are the string literals of a Go test file that are valid
 // UTF-8 (an Xo Str cannot hold the others), deduplicated, in order.
 func goTestStrings(rel string) []string {
-	f, err := parser.ParseFile(token.NewFileSet(), filepath.Join(runtime.GOROOT(), "src", rel), nil, 0)
+	f, err := parser.ParseFile(token.NewFileSet(), goSrc(rel), nil, 0)
 	if err != nil {
 		panic(err)
 	}
@@ -383,3 +384,15 @@ test "read_message is Go's" {
   expect(first_bad(bad)) == []
 }
 `
+
+// goSrc is the path of a Go source file the corpora read: the copy in
+// scripts/stdcorpus/testdata/gosrc when there is one (pinned, so a
+// corpus does not change with the local Go patch release), else the
+// local GOROOT's.
+func goSrc(rel string) string {
+	p := filepath.Join("scripts", "stdcorpus", "testdata", "gosrc", filepath.FromSlash(rel))
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return filepath.Join(runtime.GOROOT(), "src", filepath.FromSlash(rel))
+}
