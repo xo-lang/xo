@@ -440,3 +440,15 @@ columns with one name, so `SELECT a.id, b.id` needs it.
 `Pool.take` asks an idle connection's `is_broken` before it reuses it, and the MySQL driver's `is_broken` now
 also checks that nothing waits on its socket (a MSG_PEEK recv that would block; the test world's pipe and wasm's
 non-blocking read alike). Postgres is unchanged: a server may send notices and notifications to an idle connection.
+
+## 2026-11-15: break: std/sql's callback types perform sync (decision 0662)
+
+- Kind: breaking (typing only)
+- Commit: this commit
+- Found by: the sql corpus on main after decision 0662 landed (XO0701: closures that capture an Atomic or a Mutex passed to `each`, `copy_from`, `on_notice` and `on_trace`)
+- Go reference: none (Go's callbacks have no effects)
+- Test: the sql corpus on go, arm64 and llvm
+
+`each`'s row function, `copy_from`'s row source, and `open` and `open_driver`'s `on_notice` and `on_trace` take
+`uses sync` function types, as decision 0662 has std callbacks that share state on purpose say so. A pure
+function still passes; a closure that counts rows in an Atomic or collects notices in a Mutex now does too.

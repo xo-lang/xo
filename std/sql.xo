@@ -230,7 +230,7 @@ struct TraceRecord {
 /// `on_trace` is called with a TraceRecord as each traced operation ends
 /// (pgx's tracers; decision 0648 item 16); like on_notice it is pure and
 /// keeps records through a Mutex or a Chan.
-fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"", loc: time.Zone = time.utc(), server_pub_key: Bytes = b"", on_notice: (fn(Notice))? = None, on_trace: (fn(TraceRecord))? = None) -> Db ! SqlErr uses net.dial
+fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"", loc: time.Zone = time.utc(), server_pub_key: Bytes = b"", on_notice: (fn(Notice) uses sync)? = None, on_trace: (fn(TraceRecord) uses sync)? = None) -> Db ! SqlErr uses net.dial
 /// An in memory database, optionally created with `schema` (`;` separated
 /// statements). Needs no capability.
 fn memory(schema: Str = "") -> Db ! SqlErr
@@ -244,7 +244,7 @@ fn (d: Db) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses n
 fn (d: Db) rows(q: Str, args: List[SqlValue] = []) -> Rows ! SqlErr uses net.dial
 /// `rows`, calling f on each row and closing in every path; an error from
 /// f ends the walk and is returned.
-fn (d: Db) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr) -> () ! SqlErr uses net.dial
+fn (d: Db) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr uses sync) -> () ! SqlErr uses net.dial
 /// Loads rows with COPY FROM STDIN in the text format (decision 0479, pgx's
 /// CopyFrom): `rows` is called until it returns None, each row a list of
 /// values in the order of `columns`; the result is the number of rows
@@ -253,7 +253,7 @@ fn (d: Db) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr) -> () !
 /// the driver (`quote_ident`); values are never interpolated. The in
 /// memory database inserts the rows one by one; a driver without COPY
 /// returns Driver.
-fn (d: Db) copy_from(table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses net.dial
+fn (d: Db) copy_from(table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr uses sync) -> Int ! SqlErr uses net.dial
 fn (d: Db) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (d: Db) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
 /// `query` with every row decoded into `T` (`derive SqlRow`, std.md 10.4).
@@ -307,8 +307,8 @@ fn (c: Conn) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses
 /// `Db.rows` on the connection: it is busy until the cursor ends or is
 /// closed.
 fn (c: Conn) rows(q: Str, args: List[SqlValue] = []) -> Rows ! SqlErr uses net.dial
-fn (c: Conn) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr) -> () ! SqlErr uses net.dial
-fn (c: Conn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses net.dial
+fn (c: Conn) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr uses sync) -> () ! SqlErr uses net.dial
+fn (c: Conn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr uses sync) -> Int ! SqlErr uses net.dial
 fn (c: Conn) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (c: Conn) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
 fn (c: Conn) query_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
@@ -347,8 +347,8 @@ fn (t: Tx) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses n
 /// `Db.rows` inside the transaction: the transaction's connection is
 /// busy until the cursor ends or is closed.
 fn (t: Tx) rows(q: Str, args: List[SqlValue] = []) -> Rows ! SqlErr uses net.dial
-fn (t: Tx) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr) -> () ! SqlErr uses net.dial
-fn (t: Tx) copy_from(table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses net.dial
+fn (t: Tx) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr uses sync) -> () ! SqlErr uses net.dial
+fn (t: Tx) copy_from(table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr uses sync) -> Int ! SqlErr uses net.dial
 fn (t: Tx) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (t: Tx) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
 fn (t: Tx) query_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
@@ -462,7 +462,7 @@ interface DriverConn[fx: Effects] {
   fn rollback(self) -> () ! SqlErr uses (net.dial, fx)
   fn ping(self) -> () ! SqlErr uses (net.dial, fx)
   /// COPY FROM STDIN (decision 0479): a driver without it returns Driver.
-  fn copy_from(self, table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses (net.dial, fx)
+  fn copy_from(self, table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr uses sync) -> Int ! SqlErr uses (net.dial, fx)
   /// A statement prepared on the server (decision 0648 item 6); None when
   /// the driver has none, and std/sql runs the text with `query` and
   /// `exec` each time.
@@ -562,4 +562,4 @@ interface DriverCursor[fx: Effects] {
 /// transactions; waiting is a cancellation point), `max_idle` kept open
 /// when unused, each closed after `max_lifetime`. Connects once before it
 /// returns, so a wrong password or host fails here. `on_notice` as open's.
-fn open_driver[fx: Effects](net: Net, d: Driver[fx], dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, on_notice: (fn(Notice))? = None, on_trace: (fn(TraceRecord))? = None) -> Db[fx] ! SqlErr uses (net.dial, fx)
+fn open_driver[fx: Effects](net: Net, d: Driver[fx], dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, on_notice: (fn(Notice) uses sync)? = None, on_trace: (fn(TraceRecord) uses sync)? = None) -> Db[fx] ! SqlErr uses (net.dial, fx)
