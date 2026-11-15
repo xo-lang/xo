@@ -256,6 +256,10 @@ pub struct Client {
   /// master secret its tickets derive from
   psk: Bytes = b""
   pub resumed: Bool = false
+  /// decision 0644 T10: the server's OCSP staple and SCTs (Go's
+  /// ConnectionState.OCSPResponse and SignedCertificateTimestamps)
+  pub ocsp: Bytes = b""
+  pub scts: List[Bytes] = []
   res_master: Bytes = b""
 }
 
@@ -789,6 +793,8 @@ fn server_hello(var c: Client, msg: Bytes) {
         return
       }
       c.resumed = true
+      c.ocsp = ss.ocsp
+      c.scts = ss.scts
       var peer: List[x509.Cert] = []
       for d in ss.peer {
         peer.push(x509.parse(d).cert)
@@ -1026,6 +1032,12 @@ fn certificate(var c: Client, msg: Bytes) {
       fail(c, ALERT_DECODE_ERROR, "tls: error decoding message")
       return
     }
+    // the leaf's status_request and SCT extensions (Go's
+    // certificateMsgTLS13: other entries' are ignored)
+    if ders.is_empty() && !leaf_exts(c, msg[p + 2..p + 2 + en]) {
+      fail(c, ALERT_DECODE_ERROR, "tls: error decoding message")
+      return
+    }
     p += 2 + en
     let parsed = x509.parse(der)
     if parsed.err != "" {
@@ -1099,6 +1111,61 @@ pub fn apple_code(code: Int, msg: Str) -> Int {
     return if msg == "x509: unhandled critical extension" { x509verify.UNHANDLED_CRITICAL } else { 99 }
   }
   code
+}
+
+/// The SignedCertificateTimestampList of scts (RFC 6962 3.3): a vector of
+/// vectors, each two byte length prefixed.
+pub fn sct_list(scts: List[Bytes]) -> Bytes {
+  var parts: List[Bytes] = []
+  for x in scts {
+    parts.push(vec16(x))
+  }
+  vec16(asn1.cat(parts))
+}
+
+/// Go's certificateMsgTLS13 leaf extensions: an OCSP staple (type ocsp,
+/// a non-empty response) and SCTs (a non-empty list of non-empty ones);
+/// false when they do not decode.
+fn leaf_exts(var c: Client, e: Bytes) -> Bool {
+  var q = 0
+  while q < e.len() {
+    if e.len() < q + 4 || e.len() < q + 4 + u16_at(e, q + 2) {
+      return false
+    }
+    let t = u16_at(e, q)
+    let d = e[q + 4..q + 4 + u16_at(e, q + 2)]
+    q += 4 + d.len()
+    if t == EXT_STATUS_REQUEST {
+      if d.len() < 4 || d[0] != 1 || u24_at(d, 1) != d.len() - 4 || d.len() == 4 {
+        return false
+      }
+      c.ocsp = d[4..d.len()]
+    } else if t == EXT_SCT {
+      match parse_scts(d) {
+        Some(l) => c.scts = l
+        None => return false
+      }
+    }
+  }
+  true
+}
+
+/// A SignedCertificateTimestampList: None unless it is a non-empty list
+/// of non-empty timestamps.
+pub fn parse_scts(d: Bytes) -> List[Bytes]? {
+  if d.len() < 2 || u16_at(d, 0) != d.len() - 2 || d.len() == 2 {
+    return None
+  }
+  var out: List[Bytes] = []
+  var q = 2
+  while q < d.len() {
+    if d.len() < q + 2 || u16_at(d, q) == 0 || d.len() < q + 2 + u16_at(d, q) {
+      return None
+    }
+    out.push(d[q + 2..q + 2 + u16_at(d, q)])
+    q += 2 + u16_at(d, q)
+  }
+  Some(out)
 }
 
 /// The DERs of each chain.
@@ -1449,7 +1516,7 @@ fn new_session_ticket(var c: Client, msg: Bytes) {
   for x in c.peer {
     ders.push(x.raw)
   }
-  store(tlscache.Session{version: 0x0304, suite: c.suite, created: c.conf.now, use_by: c.conf.now + lifetime, secret: psk, ticket: ticket, age_add: age_add, peer: ders, verified: chain_ders(c.verified), group: c.share_group, alpn: c.alpn})
+  store(tlscache.Session{version: 0x0304, suite: c.suite, created: c.conf.now, use_by: c.conf.now + lifetime, secret: psk, ticket: ticket, age_add: age_add, peer: ders, verified: chain_ders(c.verified), group: c.share_group, alpn: c.alpn, ocsp: c.ocsp, scts: c.scts})
 }
 
 /// RFC 8446 4.6.3: the server's read keys move on; when it asks, the

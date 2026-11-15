@@ -554,7 +554,7 @@ fn (t: TlsConn) state() -> tls.ConnState {
 /// The ConnState of what n negotiated; during the handshake (complete
 /// false: VerifyConnection's) without tls_unique.
 fn state_of(n: tlsneg.Negotiated, complete: Bool) -> tls.ConnState {
-  tls.ConnState{version: n.vers, handshake_complete: complete, did_resume: n.resumed, cipher_suite: n.suite, curve_id: n.group, negotiated_protocol: n.alpn, server_name: n.server_name, peer_certificates: parse_ders(n.peer), verified_chains: n.verified.map(parse_ders), tls_unique: if complete { unique_of(n) } else { b"" }}
+  tls.ConnState{ocsp_response: n.ocsp, signed_certificate_timestamps: n.scts, version: n.vers, handshake_complete: complete, did_resume: n.resumed, cipher_suite: n.suite, curve_id: n.group, negotiated_protocol: n.alpn, server_name: n.server_name, peer_certificates: parse_ders(n.peer), verified_chains: n.verified.map(parse_ders), tls_unique: if complete { unique_of(n) } else { b"" }}
 }
 
 /// Go's ConnectionState.TLSUnique: TLS 1.2's first Finished, unless a
@@ -844,16 +844,23 @@ fn chi_of(h: tlsneg.HelloInfo, c: ServerConn) -> tls.ClientHelloInfo {
 }
 
 /// ServerConfig's get_certificate as the engine's hook (decision 0644 T5).
-fn server_get_cert(cfg: tls.ServerConfig, c: ServerConn) -> (fn(tlsneg.HelloInfo) -> (List[Bytes], Bytes, Str))? {
+fn server_get_cert(cfg: tls.ServerConfig, c: ServerConn) -> (fn(tlsneg.HelloInfo) -> tlsneg.Chain)? {
   let g = cfg.get_certificate ?? return None
-  Some(fn(h: tlsneg.HelloInfo) -> (List[Bytes], Bytes, Str) {
+  Some(fn(h: tlsneg.HelloInfo) -> tlsneg.Chain {
     match g(chi_of(h, c)) {
-      Ok(Some(tc)) => (cert_data(tc).certs, cert_data(tc).key, "")
-      Ok(None) => ([], b"", "")
-      Err(e) => ([], b"", if e.is_empty() { "tls: get_certificate failed" } else { e })
+      Ok(Some(tc)) => {
+        let d = cert_data(tc)
+        tlsneg.Chain{certs: d.certs, key: d.key, ocsp: d.ocsp, scts: d.scts}
+      }
+      Ok(None) => tlsneg.Chain{certs: [], key: b""}
+      Err(e) => tlsneg.Chain{certs: [], key: b"", err: if e.is_empty() { "tls: get_certificate failed" } else { e }}
     }
   })
 }
+
+fn (c: TlsCert) with_ocsp_staple(staple: Bytes) -> TlsCert { TlsCert{c: c.c with {ocsp: staple}} }
+
+fn (c: TlsCert) with_signed_certificate_timestamps(scts: List[Bytes]) -> TlsCert { TlsCert{c: c.c with {scts: scts}} }
 
 /// ServerConfig's get_config_for_client as the engine's hook: the
 /// configuration it gives as the engine's, with its own get_certificate

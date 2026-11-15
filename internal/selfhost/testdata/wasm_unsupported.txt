@@ -25,6 +25,7 @@ tls_certsel # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has
 tls_keylog # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_resume # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_errors # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+tls_ocsp # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_close_write # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_conn_state # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_dial # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets

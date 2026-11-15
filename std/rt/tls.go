@@ -1195,3 +1195,23 @@ func Tls_cipher_suites(_ *Task) List[Tls_CipherSuite] {
 // Tls_insecure_cipher_suites is empty: the native code runs none of Go's
 // InsecureCipherSuites.
 func Tls_insecure_cipher_suites(_ *Task) List[Tls_CipherSuite] { return List[Tls_CipherSuite]{} }
+
+// M_with_ocsp_staple is `c.with_ocsp_staple(staple)` (decision 0644
+// T10): a copy of the certificate with Go's OCSPStaple.
+func (c Tls_TlsCert) M_with_ocsp_staple(tk *Task, staple Bytes) Tls_TlsCert {
+	n := *c.c
+	n.OCSPStaple = []byte(staple)
+	return Tls_TlsCert{c: &n}
+}
+
+// M_with_signed_certificate_timestamps is
+// `c.with_signed_certificate_timestamps(scts)`: a copy with Go's
+// SignedCertificateTimestamps.
+func (c Tls_TlsCert) M_with_signed_certificate_timestamps(tk *Task, scts List[Bytes]) Tls_TlsCert {
+	n := *c.c
+	n.SignedCertificateTimestamps = nil
+	for _, x := range scts.s {
+		n.SignedCertificateTimestamps = append(n.SignedCertificateTimestamps, []byte(x))
+	}
+	return Tls_TlsCert{c: &n}
+}

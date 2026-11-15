@@ -889,13 +889,13 @@ pub fn negotiated_of(h: Int) -> tlsneg.Negotiated {
         for p in x.peer {
           ders.push(p.raw)
         }
-        tlsneg.Negotiated{version: "TLS 1.2", cipher: tlsneg.suite_name(x.suite), server_name: tls13.sni_of(x.conf.host), resumed: x.resumed, peer: ders, verified: chain_ders(x.verified), curve: tlsneg.group_name(x.group), alpn: x.alpn, vers: 0x0303, suite: x.suite, group: x.group, master: tls12.ekm_parts(x).0, cr: tls12.ekm_parts(x).1, sr: tls12.ekm_parts(x).2, ems: tls12.ekm_parts(x).3, unique: x.unique}
+        tlsneg.Negotiated{version: "TLS 1.2", cipher: tlsneg.suite_name(x.suite), server_name: tls13.sni_of(x.conf.host), resumed: x.resumed, peer: ders, verified: chain_ders(x.verified), curve: tlsneg.group_name(x.group), alpn: x.alpn, vers: 0x0303, suite: x.suite, group: x.group, master: tls12.ekm_parts(x).0, cr: tls12.ekm_parts(x).1, sr: tls12.ekm_parts(x).2, ems: tls12.ekm_parts(x).3, unique: x.unique, ocsp: x.staple, scts: x.scts}
       } else {
         let x = c.cl
         for p in x.peer {
           ders.push(p.raw)
         }
-        tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(x.suite), server_name: tls13.sni_of(x.conf.host), resumed: x.resumed, peer: ders, verified: chain_ders(x.verified), curve: tlsneg.group_name(x.share_group), alpn: x.alpn, hrr: x.hrr, vers: 0x0304, suite: x.suite, group: x.share_group, exp: x.exp}
+        tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(x.suite), server_name: tls13.sni_of(x.conf.host), resumed: x.resumed, peer: ders, verified: chain_ders(x.verified), curve: tlsneg.group_name(x.share_group), alpn: x.alpn, hrr: x.hrr, vers: 0x0304, suite: x.suite, group: x.share_group, exp: x.exp, ocsp: x.ocsp, scts: x.scts}
       }
     }
     None => tlsneg.Negotiated{version: "", cipher: "", server_name: "", resumed: false}

@@ -55,6 +55,10 @@ const SMALL_READ = 4096
 pub struct Cert {
   pub certs: List[Bytes]
   pub key: Bytes
+  /// decision 0644 T10: Go's Certificate.OCSPStaple and
+  /// SignedCertificateTimestamps, sent to a client that asks
+  pub ocsp: Bytes = b""
+  pub scts: List[Bytes] = []
 }
 
 /// tls.X509KeyPair of the PEM inputs: the certificate, and "" or Go's
@@ -477,6 +481,8 @@ pub fn conn(h: Int, pd: Int) -> Int {
     put(h, rt.any_of(st))
   }
   var cf = tls13srv.conf(cs[0].certs, cs[0].key)
+  cf.ocsp = cs[0].ocsp
+  cf.scts = cs[0].scts
   cf.ticket_keys = keys
   cf.now = now
   cf.alpn = if st.alpn.is_empty() { ["h2", "http/1.1"] } else { st.alpn }
@@ -484,7 +490,7 @@ pub fn conn(h: Int, pd: Int) -> Int {
   cf.client_cas = st.client_cas
   cf.client_roots = st.client_roots
   for c in cs[1..cs.len()] {
-    cf.alts.push(tls13srv.Alt{certs: c.certs, key: c.key})
+    cf.alts.push(tls13srv.Alt{certs: c.certs, key: c.key, ocsp: c.ocsp, scts: c.scts})
   }
   // the connection's list, the handshake state (save), and what the
   // handshake negotiated (handshake, negotiated)
@@ -511,7 +517,7 @@ fn conn_block(var cf: tls13srv.Conf, pd: Int, http: Bool) -> Int {
 /// Without a certificate or a hook that gives one the handshake reads the
 /// client's hello and fails as Go's, unrecognized_name and "tls: no
 /// certificates configured" (Go's getCertificate errNoCertificates).
-pub fn conn_cfg(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: List[x509.Cert], pd: Int, min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)? = None, vconn: (fn(tlsneg.Negotiated) -> Str)? = None, for_client: (fn(tlsneg.HelloInfo) -> (tls13srv.Conf?, Str))? = None, get_cert: (fn(tlsneg.HelloInfo) -> (List[Bytes], Bytes, Str))? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None, tickets: List[tlsticket.Key] = [], own_tickets: Bool = false) -> Int {
+pub fn conn_cfg(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: List[x509.Cert], pd: Int, min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)? = None, vconn: (fn(tlsneg.Negotiated) -> Str)? = None, for_client: (fn(tlsneg.HelloInfo) -> (tls13srv.Conf?, Str))? = None, get_cert: (fn(tlsneg.HelloInfo) -> tlsneg.Chain)? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None, tickets: List[tlsticket.Key] = [], own_tickets: Bool = false) -> Int {
   var cf = conf_of(certs, alpn, client_auth, roots, min_v, max_v, suites, curves, vpeer, vconn, get_cert, key_log, tickets, own_tickets)
   cf.for_client = for_client
   conn_block(cf, pd, false)
@@ -522,9 +528,14 @@ pub fn conn_cfg(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: Lis
 /// ALPN protocols offered (none: no ALPN), the client certificate mode
 /// (tls13srv.AUTH_*) and its roots, Go's versions, suites and curves,
 /// the verify hooks and GetCertificate; ticket keys of its own.
-pub fn conf_of(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: List[x509.Cert], min_v: Int, max_v: Int, suites: List[Int], curves: List[Int], vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)?, vconn: (fn(tlsneg.Negotiated) -> Str)?, get_cert: (fn(tlsneg.HelloInfo) -> (List[Bytes], Bytes, Str))?, key_log: (fn(Str, Bytes, Bytes) -> Str)?, tickets: List[tlsticket.Key], own_tickets: Bool) -> tls13srv.Conf {
+pub fn conf_of(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: List[x509.Cert], min_v: Int, max_v: Int, suites: List[Int], curves: List[Int], vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)?, vconn: (fn(tlsneg.Negotiated) -> Str)?, get_cert: (fn(tlsneg.HelloInfo) -> tlsneg.Chain)?, key_log: (fn(Str, Bytes, Bytes) -> Str)?, tickets: List[tlsticket.Key], own_tickets: Bool) -> tls13srv.Conf {
   let now = sysio.real_ns() / 1000000000
   var cf = if certs.is_empty() { tls13srv.conf([], b"") } else { tls13srv.conf(certs[0].certs, certs[0].key) }
+  if !certs.is_empty() {
+    // decision 0644 T10
+    cf.ocsp = certs[0].ocsp
+    cf.scts = certs[0].scts
+  }
   // decision 0644 T4: the keys std/tls chose (ServerConfig's, a
   // listener's automatic ones, or none)
   cf.ticket_keys = tickets
@@ -549,7 +560,7 @@ pub fn conf_of(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: List
   }
   if !certs.is_empty() {
     for c in certs[1..certs.len()] {
-      cf.alts.push(tls13srv.Alt{certs: c.certs, key: c.key})
+      cf.alts.push(tls13srv.Alt{certs: c.certs, key: c.key, ocsp: c.ocsp, scts: c.scts})
     }
   }
   cf
@@ -954,6 +965,8 @@ fn feed(var c: Conn, data: Bytes) {
     let h = tls12srv.parse_hello(c.s.hello)
     var certs = c.s.conf.certs
     var key = c.s.conf.key
+    var ocsp = c.s.conf.ocsp
+    var scts = c.s.conf.scts
     if h.sni != "" {
       for a in c.s.conf.alts {
         if !a.certs.is_empty() && certs == c.s.conf.certs {
@@ -963,11 +976,15 @@ fn feed(var c: Conn, data: Bytes) {
           if !first_ok && p.err == "" && tlsname.host_ok(x509verify.names(p.cert), h.sni) {
             certs = a.certs
             key = a.key
+            ocsp = a.ocsp
+            scts = a.scts
           }
         }
       }
     }
     var cf = tls12srv.conf(certs, key)
+    cf.ocsp = ocsp
+    cf.scts = scts
     cf.alpn = c.s.conf.alpn
     cf.max13 = !c.s.conf.no13
     cf.suites = tlsneg.only(cf.suites, c.s.conf.suites12)

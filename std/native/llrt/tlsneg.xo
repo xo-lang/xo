@@ -49,6 +49,9 @@ pub struct Negotiated {
   pub sr: Bytes = b""
   pub ems: Bool = false
   pub unique: Bytes = b""
+  /// decision 0644 T10: the server's OCSP staple and SCTs
+  pub ocsp: Bytes = b""
+  pub scts: List[Bytes] = []
 }
 
 /// Go's tls.CipherSuiteName: every suite Go names (its secure and
@@ -167,3 +170,14 @@ pub fn header_fail(rin: Bytes) -> Failure {
 
 /// A failed verification of certs for host.
 pub fn verify_fail(code: Int, hint: Str, host: Str, certs: List[Bytes]) -> Failure { Failure{verify: true, code: code, hint: hint, host: host, certs: certs} }
+
+/// A certificate chain a server hook gives (decision 0644 T5, T10): the
+/// DER chain (leaf first), the leaf's key, "" or the hook's error, and
+/// Go's Certificate.OCSPStaple and SignedCertificateTimestamps.
+pub struct Chain {
+  pub certs: List[Bytes]
+  pub key: Bytes
+  pub err: Str = ""
+  pub ocsp: Bytes = b""
+  pub scts: List[Bytes] = []
+}

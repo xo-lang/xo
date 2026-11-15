@@ -813,6 +813,10 @@ pub struct Client {
   server_random: Bytes
   ems: Bool
   ocsp: Bool
+  /// decision 0644 T10: the server's OCSP staple (CertificateStatus) and
+  /// SCTs (the ServerHello's, else a resumed session's)
+  pub staple: Bytes = b""
+  pub scts: List[Bytes] = []
   ticket: Bool
   certs: List[Bytes]
   cert_req: Bool
@@ -1144,6 +1148,12 @@ fn handshake(var c: Client, t: Int, msg: Bytes) {
       fail(c, ALERT_UNEXPECTED_MESSAGE, "tls: received unexpected CertificateStatus message")
       return
     }
+    // Go's certificateStatusMsg: type ocsp and a non-empty response
+    if msg.len() < 8 || msg[4] != 1 || u24_at(msg, 5) != msg.len() - 8 || msg.len() == 8 {
+      fail(c, ALERT_DECODE_ERROR, "local error: tls: error decoding message")
+      return
+    }
+    c.staple = msg[8..msg.len()]
     c.tr = cat2(c.tr, msg)
     c.state = WAIT_SKE_STATUS
     return
@@ -1283,6 +1293,8 @@ pub struct Hello {
   pub comp: Int
   pub version: Int
   pub ocsp: Bool
+  /// decision 0644 T10: the ServerHello's SCTs
+  pub scts: List[Bytes] = []
   pub ticket: Bool
   pub reneg: Bool
   pub reneg_data: Bytes
@@ -1353,15 +1365,9 @@ pub fn parse_hello(m: Bytes) -> Hello {
       }
       h.alpn = d[3..n].to_str() ?? ""
     } else if t == EXT_SCT {
-      if n < 2 || u16_at(d, 0) != n - 2 || n == 2 {
-        return h
-      }
-      var q = 2
-      while q < n {
-        if n < q + 2 || u16_at(d, q) == 0 || n < q + 2 + u16_at(d, q) {
-          return h
-        }
-        q += 2 + u16_at(d, q)
+      match tls13.parse_scts(d) {
+        Some(l) => h.scts = l
+        None => return h
       }
     } else if t == EXT_SUPPORTED_VERSIONS {
       if n != 2 {
@@ -1470,6 +1476,7 @@ fn server_hello(var c: Client, msg: Bytes) {
   c.server_random = h.random
   c.ems = h.ems
   c.ocsp = h.ocsp
+  c.scts = h.scts
   c.ticket = h.ticket
   c.tr = cat2(c.tr, msg)
   if let Some(ss) = sess {
@@ -1509,6 +1516,10 @@ fn resume_session(var c: Client, s: tlscache.Session, h: Hello) {
   c.master = s.secret
   c.ems = s.ems
   c.certs = s.peer
+  c.staple = s.ocsp
+  if c.scts.is_empty() {
+    c.scts = s.scts
+  }
   var peer: List[x509.Cert] = []
   for d in s.peer {
     peer.push(x509.parse(d).cert)
@@ -1842,7 +1853,7 @@ fn finished(var c: Client, msg: Bytes) {
   // Go's saveSessionTicket
   if c.got_ticket {
     if let Some(store) = c.conf.on_session {
-      store(tlscache.Session{version: 0x0303, suite: c.suite, created: c.conf.now, secret: c.master, ems: c.ems, ticket: c.new_ticket, peer: c.certs, verified: tls13.chain_ders(c.verified), group: c.group, alpn: c.alpn})
+      store(tlscache.Session{version: 0x0303, suite: c.suite, created: c.conf.now, secret: c.master, ems: c.ems, ticket: c.new_ticket, peer: c.certs, verified: tls13.chain_ders(c.verified), group: c.group, alpn: c.alpn, ocsp: c.staple, scts: c.scts})
     }
   }
   c.tr = b""

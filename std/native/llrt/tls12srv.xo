@@ -74,6 +74,9 @@ pub struct Conf {
   pub certs: List[Bytes]
   pub key_alg: Int
   pub key: Bytes
+  /// decision 0644 T10: the chain's OCSP staple and SCTs
+  pub ocsp: Bytes = b""
+  pub scts: List[Bytes] = []
   pub suites: List[Int]
   pub groups: List[Int]
   pub alpn: List[Str]
@@ -470,6 +473,9 @@ pub struct Hello {
   pub versions: List[Int]
   pub has_ticket: Bool
   pub ticket: Bytes
+  /// Go's ocspStapling (a status_request of type ocsp) and scts
+  pub ocsp: Bool = false
+  pub scts: Bool = false
 }
 
 /// The 2 byte numbers of a list of n bytes at p in m.
@@ -758,6 +764,7 @@ fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
     }
     // a type and two vectors, nothing after
     let a = tls12.u16_at(d, 1)
+    h.ocsp = d[0] == 1
     return n == 5 + a + tls12.u16_at(d, 3 + a)
   }
   if t == tls12.EXT_SUPPORTED_GROUPS || t == tls12.EXT_SIGNATURE_ALGORITHMS || t == tls12.EXT_SIGNATURE_ALGORITHMS_CERT {
@@ -792,6 +799,9 @@ fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
   }
   if t == tls12.EXT_SCT || t == 42 {
     // signed_certificate_timestamp and early_data: empty
+    if t == tls12.EXT_SCT {
+      h.scts = true
+    }
     return n == 0
   }
   if t == tls12.EXT_SESSION_TICKET {
@@ -1062,8 +1072,14 @@ fn client_hello(var s: Server, msg: Bytes) {
   }
   s.suite = suite
   s.ems = h.ems
-  write(s, server_hello(s, h, b""))
+  // Go's doFullHandshake: the staple, when asked for and held, is
+  // announced in the ServerHello and sent after the Certificate
+  let staple = h.ocsp && !cf.ocsp.is_empty()
+  write(s, server_hello(s, h, b"", staple))
   write(s, tls12.certificate_msg(cf.certs))
+  if staple {
+    write(s, tls12.message(tls12.HS_CERTIFICATE_STATUS, asn1.cat([b"\x01", tls12.u24(cf.ocsp.len()), cf.ocsp])))
+  }
   let ske = key_exchange(s, h)
   if s.state == FAILED {
     return
@@ -1077,8 +1093,11 @@ fn client_hello(var s: Server, msg: Bytes) {
 }
 
 /// The ServerHello (Go's extension order) echoing sid.
-fn server_hello(s: Server, h: Hello, sid: Bytes) -> Bytes {
+fn server_hello(s: Server, h: Hello, sid: Bytes, staple: Bool = false) -> Bytes {
   var exts: List[Bytes] = []
+  if staple {
+    exts.push(tls12.ext(tls12.EXT_STATUS_REQUEST, b""))
+  }
   if s.ticket {
     exts.push(tls12.ext(tls12.EXT_SESSION_TICKET, b""))
   }
@@ -1090,6 +1109,10 @@ fn server_hello(s: Server, h: Hello, sid: Bytes) -> Bytes {
   }
   if s.alpn != "" {
     exts.push(tls12.ext(tls12.EXT_ALPN, tls12.vec16(tls12.vec8(s.alpn.bytes()))))
+  }
+  // Go's processClientHello: the chain's SCTs to a client that asked
+  if h.scts && !s.conf.scts.is_empty() {
+    exts.push(tls12.ext(tls12.EXT_SCT, tls13.sct_list(s.conf.scts)))
   }
   if !h.points.is_empty() {
     exts.push(tls12.ext(tls12.EXT_POINT_FORMATS, tls12.vec8(tls12.u8(0))))

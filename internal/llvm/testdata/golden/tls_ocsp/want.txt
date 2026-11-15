@@ -1,0 +1,28 @@
+exit 0
+--- stdout
+== TLS 1.3
+a stapled certificate:
+  1: resumed false ocsp 'an OCSP response' scts ["sct one", "sct two"]
+no staple:
+  1: resumed false ocsp '' scts []
+only SCTs:
+  1: resumed false ocsp '' scts ["just one"]
+resumed, the session's again:
+  1: resumed false ocsp 'an OCSP response' scts ["sct one", "sct two"]
+  2: resumed true ocsp 'an OCSP response' scts ["sct one", "sct two"]
+get_certificate's:
+  1: resumed false ocsp 'an OCSP response' scts ["sct one", "sct two"]
+== TLS 1.2
+a stapled certificate:
+  1: resumed false ocsp 'an OCSP response' scts ["sct one", "sct two"]
+no staple:
+  1: resumed false ocsp '' scts []
+only SCTs:
+  1: resumed false ocsp '' scts ["just one"]
+resumed, the session's again:
+  1: resumed false ocsp 'an OCSP response' scts ["sct one", "sct two"]
+  2: resumed true ocsp 'an OCSP response' scts ["sct one", "sct two"]
+get_certificate's:
+  1: resumed false ocsp 'an OCSP response' scts ["sct one", "sct two"]
+done
+--- stderr

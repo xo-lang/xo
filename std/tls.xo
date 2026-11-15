@@ -49,6 +49,17 @@ struct TlsCert {}
 /// Parses a PEM certificate chain and its PEM private key (Go's
 /// tls.X509KeyPair), as http.tls_cert.
 fn cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! TlsErr
+/// The certificate with an OCSP response to staple (Go's
+/// Certificate.OCSPStaple, decision 0644 T10): a server sends it to a
+/// client that asks (status_request), in TLS 1.3's Certificate and as
+/// TLS 1.2's CertificateStatus; a client reads it as
+/// ConnState.ocsp_response. Not checked, as Go's.
+fn (c: TlsCert) with_ocsp_staple(staple: Bytes) -> TlsCert
+/// The certificate with Signed Certificate Timestamps to send (Go's
+/// Certificate.SignedCertificateTimestamps, RFC 6962): to a client that
+/// asks, in TLS 1.3's Certificate and TLS 1.2's ServerHello; a client
+/// reads them as ConnState.signed_certificate_timestamps.
+fn (c: TlsCert) with_signed_certificate_timestamps(scts: List[Bytes]) -> TlsCert
 
 /// What a TLS server asks of a client's certificate (Go's
 /// tls.ClientAuthType, in Go's order and meaning; decision 0433).

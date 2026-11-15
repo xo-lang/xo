@@ -28,6 +28,10 @@ pub struct Session {
   pub verified: List[List[Bytes]] = []
   pub group: Int = 0
   pub alpn: Str = ""
+  /// decision 0644 T10: the server's OCSP staple and SCTs, reported again
+  /// on a resumed connection (Go's sessionState ocspResponse, scts)
+  pub ocsp: Bytes = b""
+  pub scts: List[Bytes] = []
 }
 
 /// Go's defaultSessionCacheCapacity.
