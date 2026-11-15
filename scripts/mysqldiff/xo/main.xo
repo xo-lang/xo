@@ -33,7 +33,7 @@ fn args(s: Str) -> List[sql.SqlValue] {
       "F" => sql.float(Float.parse(v) ?? 0.0)
       "B" => sql.bool(v == "t")
       "X" => sql.bytes(Bytes.from_hex(v) ?? b"")
-      "D" => sql.time(Time.parse_rfc3339(v) ?? Time.UNIX_EPOCH)
+      "D" => sql.time(Time.parse_rfc3339(v) ?? fault("D: not an RFC 3339 time in range: ${v}"))
       _ => sql.null()
     })
   }

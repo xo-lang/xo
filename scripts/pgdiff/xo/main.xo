@@ -31,7 +31,7 @@ fn args(s: Str) -> List[sql.SqlValue] {
       "B" => sql.bool(v == "t")
       "X" => sql.bytes(Bytes.from_hex(v) ?? b"")
       "J" => sql.SqlValue.JsonText(s: v)
-      "D" => sql.time(Time.parse_rfc3339(v) ?? Time.UNIX_EPOCH)
+      "D" => sql.time(Time.parse_rfc3339(v) ?? fault("D: not an RFC 3339 time in range: ${v}"))
       "A" => sql.array(v.split(",").map(fn(x) { if x == "N" { sql.null() } else { sql.int(Int.parse(x) ?? 0) } }))
       "S" => sql.array(v.split(",").map(fn(x) { if x == "N" { sql.null() } else { sql.str(x) } }))
       _ => sql.null()
