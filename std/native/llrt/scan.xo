@@ -99,6 +99,30 @@ pub fn find_byte(b: Bytes, from: Int, to: Int, c: Int) -> Int {
   find_short(b, i, to, c)
 }
 
+/// The index of the last byte c (0 to 255) of b before `to` (to <=
+/// b.len()), or -1: eight bytes a step from the end (eq8 is exact, so
+/// the highest bit of its mask is the last match), then a byte at a time
+/// (strings.LastIndexByte; `str.rfind` of one byte, which url's parse
+/// calls up to four times a URL).
+pub fn last_byte(b: Bytes, to: Int, c: Int) -> Int {
+  let r = mulw(c, ONES)
+  var i = to
+  while i >= 8 {
+    let m = eq8(rt.bytes_word(b, i - 8), r)
+    if m != 0 {
+      return i - 8 + ((63 - rt.clz(m)) >> 3)
+    }
+    i -= 8
+  }
+  while i > 0 {
+    i -= 1
+    if Int(b[i]) == c {
+      return i
+    }
+  }
+  -1
+}
+
 /// find_byte from i to `to` < 16 (fewer than 16 bytes).
 fn find_short(b: Bytes, from: Int, to: Int, c: Int) -> Int {
   var i = from

@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-15: perf: `Str.rfind` of a one byte Str scans eight bytes a step
+
+- Kind: perf
+- Commit: this push
+- Found by: the decision 0616 perf kind for std/url on linux/arm64 host 1 (urltype parse 1.129 of Go); url's parse finds `@`, `[`, `]` and `:` from the end
+- Go reference: strings.LastIndexByte (internal/bytealg)
+- Change: str_rfind with a one byte needle calls the new llrt scan.last_byte, which tests a word at a time from the end (an equal byte mask and a leading zero count) and the bytes before the first whole word one at a time, where it compared at every byte
+- Measured: with the std/url commit after it, bench/perf/urltype parse on linux/arm64 host 1, --ab against their parent, 0.859 (0.834 to 0.895, n=3; 33.8 to 29.0 ms)
+- Test: std/native/llrt/scan_test.xo "last_byte matches a byte loop" and "last_byte finds the last of several matches in every word place"
+- Affected: the native backends
+- Shipped in: not yet released
+
 ## 2026-11-14: feature: --check=free,guard,leak; XO_LEAKCHECK=fail and =0; a build's embedded checks
 
 - Kind: feature

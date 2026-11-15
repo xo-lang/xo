@@ -124,6 +124,36 @@ test "find_byte matches a byte loop" for xs: List[Int], c: Int {
   expect(find_byte(b, 0, b.len(), want_c) == want)
 }
 
+test "last_byte matches a byte loop" for xs: List[Int], c: Int, to: Int {
+  let b = bytes_of(xs)
+  let want_c = c & 255
+  let t = if b.len() == 0 { 0 } else { (to & 0x7fffffff) % (b.len() + 1) }
+  var want = -1
+  var i = t
+  while i > 0 {
+    i -= 1
+    if Int(b[i]) == want_c {
+      want = i
+      break
+    }
+  }
+  expect(last_byte(b, t, want_c) == want)
+}
+
+test "last_byte finds the last of several matches in every word place" {
+  for n in 0..40 {
+    for k in 0..n {
+      var bb = BytesBuilder.new()
+      for j in 0..n {
+        bb.write_byte(if j == k || j == k / 2 { UInt8(64) } else { UInt8(97) })
+      }
+      let b = bb.freeze()
+      expect(last_byte(b, n, 64) == k)
+      expect(last_byte(b, k, 64) == (if k / 2 < k { k / 2 } else { -1 }))
+    }
+  }
+}
+
 /// The first start at or after from where sub occurs in b, by a byte loop.
 fn find_naive(b: Bytes, sub: Bytes, from: Int) -> Int {
   var i = from

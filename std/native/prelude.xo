@@ -95,6 +95,13 @@ fn str_rfind(s: Str, sub: Str) -> Int? {
   }
   let sb = s.bytes()
   let qb = sub.bytes()
+  if m == 1 {
+    let k = scan.last_byte(sb, n, Int(qb[0]))
+    if k < 0 {
+      return None
+    }
+    return Some(k)
+  }
   var i = n - m
   while i >= 0 {
     var j = 0
