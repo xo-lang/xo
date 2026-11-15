@@ -13,6 +13,7 @@
 // CPU has them) encryption and GHASH take them instead.
 use native/llrt/cpu
 use native/llrt/ct
+use native/llrt/obj
 use native/llrt/raw
 use native/rt
 
@@ -932,11 +933,15 @@ fn ghash_hw(g: Gcm, y1a: Int, y0a: Int, b: Bytes, o: Int, n: Int) -> (Int, Int) 
   let bp = raw.bytes_addr(b).wrapping_add(o)
   let nb = n & -64
   if nb > 0 {
-    var st = [y1, y0]
-    cpu.ghash_blocks(addr(st), hp, bp, nb)
-    y1 = rt.mem_load(addr(st), 0, 8)
-    y0 = rt.mem_load(addr(st), 8, 8)
-    keep(st)
+    // the state in the thread's scratch (no system call before it is
+    // read back): a two word List per call was a fifth of a 64 byte
+    // seal and open (2026-11-15)
+    let st = obj.scratch()
+    rt.mem_store(st, 0, y1, 8)
+    rt.mem_store(st, 8, y0, 8)
+    cpu.ghash_blocks(st, hp, bp, nb)
+    y1 = rt.mem_load(st, 0, 8)
+    y0 = rt.mem_load(st, 8, 8)
     i = nb
   }
   keep(g.hk)
@@ -1151,11 +1156,16 @@ fn (g: Gcm) fused() -> Bool { (g.c.hw & cpu.HW_AES) != 0 && (g.hw & cpu.HW_CLMUL
 /// hashed before it is read again), the GHASH state (a1, a0) taken
 /// through the ciphertext; returns it.
 fn (g: Gcm) gcm_bulk(q0: Int, sp: Int, nlo: Int, nhi: Int, whole: Int, a1: Int, a0: Int, enc: Bool) -> (Int, Int) {
-  var iv = [nlo, nhi | (2).swap_bytes() & ~0xFFFFFFFF]
-  var st = [a1, a0]
+  // the counter block and the state in the thread's scratch (no system
+  // call before they are read back), where two Lists per call were
+  // allocated and freed (2026-11-15)
+  let ip = obj.scratch()
+  let yp = ip.wrapping_add(16)
+  rt.mem_store(ip, 0, nlo, 8)
+  rt.mem_store(ip, 8, nhi | (2).swap_bytes() & ~0xFFFFFFFF, 8)
+  rt.mem_store(yp, 0, a1, 8)
+  rt.mem_store(yp, 8, a0, 8)
   let kp = addr(g.c.rk)
-  let ip = addr(iv)
-  let yp = addr(st)
   // arm64 and amd64: the 128 byte multiple eight blocks a round
   // (cpu.aes_gcm8: arm64's round keys in registers, amd64's AES-NI and
   // PCLMULQDQ since 2026-10-27), then a last 64 bytes on the four block
@@ -1182,7 +1192,7 @@ fn (g: Gcm) gcm_bulk(q0: Int, sp: Int, nlo: Int, nhi: Int, whole: Int, a1: Int, 
     q = q.wrapping_add(w8)
     sq = sq.wrapping_add(w8)
     rest = whole - w8
-    iv[1] = nhi | (2 + w8 / 16).swap_bytes() & ~0xFFFFFFFF
+    rt.mem_store(ip, 8, nhi | (2 + w8 / 16).swap_bytes() & ~0xFFFFFFFF, 8)
   }
   let hp = addr(g.hk).wrapping_add(HK4)
   if rest == 0 {
@@ -1202,8 +1212,6 @@ fn (g: Gcm) gcm_bulk(q0: Int, sp: Int, nlo: Int, nhi: Int, whole: Int, a1: Int, 
   }
   let y1 = rt.mem_load(yp, 0, 8)
   let y0 = rt.mem_load(yp, 8, 8)
-  keep(iv)
-  keep(st)
   keep(g.c.rk)
   keep(g.hk)
   (y1, y0)

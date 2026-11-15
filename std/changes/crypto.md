@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-15: perf: AES-GCM keeps a small message's counter and GHASH state in scratch memory
+
+- Kind: perf
+- Commit: this push
+- Found by: the std Proven perf line (bench/perf/aead gcm_small 1.119 of Go on linux/arm64 host 1)
+- Go reference: crypto/internal/fips140/aes/gcm (counter and tag state on the stack)
+- Test: the aead, gcmsizes and aesmodes corpora (go, arm64, llvm); xo bench --ab on linux/arm64 host 1, 3 rounds: aead gcm_small 53.22 to 42.45 ms (0.798)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+gcm_bulk made two small Lists per call (the counter block and the stream state) and ghash_hw one for its state; a short message paid three allocations and frees for 16 to 48 bytes of state. They now live in the thread's 256 byte scratch buffer (obj.scratch, valid until the thread's next system call, which neither function makes), read and written with mem_load and mem_store.
+
 ## 2026-11-15: perf: AES-128-GCM on arm64 hashes one batch during the next one's rounds
 
 - Kind: perf
