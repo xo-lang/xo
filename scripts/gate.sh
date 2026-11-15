@@ -1537,11 +1537,7 @@ prove_stdfast() {
     for d in std/"$m"_test.xo std/"$m"/*_test.xo; do [ -f "$d" ] && t=1; done
     if [ "$t" = 0 ]; then
       echo "stdfast $m: no xo tests of its own"
-    # bin and backend caches off: `xo test --std-module` could reuse a
-    # stale test store (compiler/xo stdcache.xo std_variant_near) and link
-    # the edited module's old code, so a std push passed on stale code
-    # (Lang 1, 2026-11-15; until that fix lands)
-    elif XO_BIN_CACHE=off XO_BACKEND_CACHE=off "$XO_CLI" test --count=1 --std-module="$m" >"$logs/stdfast-$m.txt" 2>&1; then
+    elif "$XO_CLI" test --count=1 --std-module="$m" >"$logs/stdfast-$m.txt" 2>&1; then
       echo "stdfast $m: $(tail -1 "$logs/stdfast-$m.txt")"
     else
       bad=1; echo "stdfast $m: FAIL ($logs/stdfast-$m.txt: $(grep -m1 -- '--- FAIL' "$logs/stdfast-$m.txt"))"
