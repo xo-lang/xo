@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -781,6 +782,7 @@ test "zip_open walks a large archive from the File" {
 }
 `)
 	zipMethodCorpus(&o)
+	zipRawCorpus(&o)
 	tarWriterCorpus(&o)
 	return o.String()
 }
@@ -918,6 +920,156 @@ func zipMethodCorpus(o *strings.Builder) {
 	}
 	o.WriteString(zipMethodTests)
 }
+
+// zipCopySources are Go-written archives for Writer.Copy, File.OpenRaw
+// and DataOffset: deflated, stored, a directory, an entry comment, an
+// extra field, a UTF-8 name, an archive after a prefix with and without
+// SetOffset, and the zip64 fixture.
+func zipCopySources() [][]byte {
+	mk := func(prefix []byte, setOffset bool) []byte {
+		var b bytes.Buffer
+		b.Write(prefix)
+		w := zip.NewWriter(&b)
+		if setOffset {
+			w.SetOffset(int64(len(prefix)))
+		}
+		w.SetComment("src")
+		add := func(h *zip.FileHeader, data []byte) {
+			fw, err := w.CreateHeader(h)
+			if err != nil {
+				panic(err)
+			}
+			fw.Write(data)
+		}
+		t := time.Unix(1700000000, 0).UTC()
+		h := &zip.FileHeader{Name: "a.txt", Method: zip.Deflate, Modified: t}
+		h.SetMode(0o644)
+		add(h, lcgData(1, 3000, 3))
+		h = &zip.FileHeader{Name: "s.bin", Method: zip.Store, Modified: t, Comment: "an entry comment"}
+		h.SetMode(0o600)
+		add(h, lcgData(2, 200, 256))
+		h = &zip.FileHeader{Name: "d/", Method: zip.Store, Modified: t}
+		h.SetMode(os.ModeDir | 0o755)
+		add(h, nil)
+		h = &zip.FileHeader{Name: "d/\u00e9t\u00e9.txt", Method: zip.Deflate, Extra: []byte{0xfe, 0xca, 3, 0, 1, 2, 3}}
+		h.SetMode(0o444)
+		add(h, []byte("summer summer summer"))
+		w.Close()
+		return b.Bytes()
+	}
+	return [][]byte{mk(nil, false), mk(lcgData(3, 64, 256), true), mk(lcgData(4, 64, 256), false), zip64Fixture("big/name.txt", "zip64\n", time.Unix(1600000000, 0).UTC())}
+}
+
+// zipRawCorpus: Go's Writer.Copy of every entry of each source (the new
+// archive's length and SHA-256), File.DataOffset and OpenRaw of each
+// entry, and Writer.CreateRaw of headers made as add_raw makes them.
+func zipRawCorpus(o *strings.Builder) {
+	o.WriteString("\n/// (a Go-written archive; Go's copy of every entry by Writer.Copy: length and SHA-256; each entry's DataOffset and OpenRaw bytes' SHA-256, space separated)\nconst ZIP_COPY: List[(Bytes, Str, Str)] = [\n")
+	for _, src := range zipCopySources() {
+		zr, err := zip.NewReader(bytes.NewReader(src), int64(len(src)))
+		if err != nil {
+			panic(err)
+		}
+		var b bytes.Buffer
+		w := zip.NewWriter(&b)
+		var parts []string
+		for _, f := range zr.File {
+			if err := w.Copy(f); err != nil {
+				panic(err)
+			}
+			off, err := f.DataOffset()
+			if err != nil {
+				panic(err)
+			}
+			rd, _ := f.OpenRaw()
+			raw, _ := io.ReadAll(rd)
+			parts = append(parts, fmt.Sprintf("%d:%s", off, archSum(raw)[:16]))
+		}
+		w.Close()
+		fmt.Fprintf(o, "  (%s, %q, %q),\n", xbytes(src), fmt.Sprintf("%d %s", b.Len(), archSum(b.Bytes())), strings.Join(parts, " "))
+	}
+	o.WriteString("]\n\n/// add_raw entries: (path, method, flags, mode, is_dir, seconds, crc, size, raw bytes), then Go's archive of them by Writer.CreateRaw\nconst ZIP_RAW: List[(Str, Int, Int, Int, Bool, Int, Int, Int, Bytes)] = [\n")
+	var b bytes.Buffer
+	w := zip.NewWriter(&b)
+	r := rand.New(rand.NewSource(6))
+	for i := 0; i < 12; i++ {
+		data := lcgData(r.Intn(1<<30), r.Intn(300), []int{3, 256}[r.Intn(2)])
+		method := []uint16{zip.Store, zip.Deflate}[r.Intn(2)]
+		raw := data
+		if method == zip.Deflate {
+			var cb bytes.Buffer
+			fw, _ := flate.NewWriter(&cb, 5)
+			fw.Write(data)
+			fw.Close()
+			raw = cb.Bytes()
+		}
+		flags := []uint16{0, 0x8, 0x800, 0x808}[r.Intn(4)]
+		mode := []int{0o644, 0o600, 0o444}[r.Intn(3)]
+		isDir := i == 5
+		name := fmt.Sprintf("r%d.dat", i)
+		if isDir {
+			name, raw, data, method = "rdir", nil, nil, zip.Store
+		}
+		sec := []int64{0, 315532800, 1700000001}[r.Intn(3)]
+		crc := crc32.ChecksumIEEE(data)
+		h := &zip.FileHeader{Name: name, Method: method, Flags: flags, CRC32: crc, CompressedSize64: uint64(len(raw)), UncompressedSize64: uint64(len(data)), CreatorVersion: 0x0314, ReaderVersion: 20}
+		h.SetMode(os.FileMode(mode))
+		if isDir {
+			h.Name = name + "/"
+			h.SetMode(os.ModeDir | os.FileMode(mode))
+		}
+		h.SetModTime(time.Unix(sec, 0).UTC())
+		fw, err := w.CreateRaw(h)
+		if err != nil {
+			panic(err)
+		}
+		fw.Write(raw)
+		fmt.Fprintf(o, "  (%q, %d, %d, %d, %v, %d, %d, %d, %s),\n", name, method, flags, mode, isDir, sec, crc, len(data), xbytes(raw))
+	}
+	w.Close()
+	fmt.Fprintf(o, "]\n\n/// Go's archive of ZIP_RAW: length and SHA-256\nconst ZIP_RAW_WANT: Str = %q\n", fmt.Sprintf("%d %s", b.Len(), archSum(b.Bytes())))
+	o.WriteString(zipRawTests)
+}
+
+const zipRawTests = `
+test "copy writes Go's Writer.Copy of every entry, and raw and data_offset are Go's OpenRaw and DataOffset" {
+  for (i, (src, want, parts)) in ZIP_COPY.indexed() {
+    let r = archive.zip_reader(src)?
+    let name = "copy${i}.zip"
+    var f = os.fs.create(name)?
+    var w = archive.zip_writer(f)
+    var got: List[Str] = []
+    for z in r.files() {
+      w.copy(r, z)?
+      got.push("${r.data_offset(z)?}:${crypto.sha256(r.raw(z)?).to_hex()[0..16]}")
+    }
+    w.close()?
+    f.close()?
+    expect((i, sum_of(os.fs.read(name)?))) == (i, want)
+    expect((i, got.join(" "))) == (i, parts)
+    // the copy reads back as the source does
+    let back = archive.zip_reader(os.fs.read(name)?)?
+    for (j, z) in back.files().indexed() {
+      expect(back.read(z)?) == r.read(r.files()[j])?
+    }
+  }
+}
+
+test "add_raw writes Go's Writer.CreateRaw of the same header" {
+  var f = os.fs.create("raw.zip")?
+  var w = archive.zip_writer(f)
+  for (p, method, flags, mode, is_dir, sec, crc, size, raw) in ZIP_RAW {
+    let z = archive.ZipFile{path: p, size: size, compressed: raw.len(), mode: mode, is_dir: is_dir, modified: Time.UNIX_EPOCH + Duration.from_nanos(sec * 1000000000), offset: 0, method: method, flags: flags, crc: crc}
+    w.add_raw(z, raw)?
+  }
+  w.close()?
+  f.close()?
+  let data = os.fs.read("raw.zip")?
+  expect(sum_of(data)) == ZIP_RAW_WANT
+  let r = archive.zip_reader(data)?
+  expect(r.files().len()) == ZIP_RAW.len()
+}
+`
 
 // tarWriterCorpus: Go's tar.Writer for the steps of the Xo test below,
 // headers as Archive_tar makes them: the archive's length and SHA-256,

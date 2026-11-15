@@ -27,6 +27,21 @@ reader of the format.
 `archive.tar_writer(f)` writes a tar archive to a File as Go's tar.Writer
 does, holding one header in memory rather than the archive.
 
+
+## 2026-11-15: feature: raw zip entries (Go's Writer.Copy, CreateRaw, File.OpenRaw, DataOffset)
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655)
+- Go reference: archive/zip (writer.go Copy, CreateRaw, writeHeader, fileWriter.writeDataDescriptor; reader.go OpenRaw, DataOffset) (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/archive (scripts/stdcorpus archive): Go's Writer.Copy of every entry of 4 Go-written archives (deflated, stored, a directory, an entry comment, an extra field, a UTF-8 name, after a prefix with and without SetOffset, zip64) with Go's bytes, each entry's DataOffset and OpenRaw bytes, the copy read back; 12 CreateRaw entries (stored and deflated, flags 0, 0x8, 0x800, a directory) with Go's bytes (arm64, LLVM, Go)
+- Timing: none
+
+`ZipWriter.copy(r, f)` copies an entry without inflating and deflating
+it again, `ZipWriter.add_raw(f, raw)` writes already compressed bytes,
+and `ZipReader.raw(f)` and `data_offset(f)` give an entry's stored bytes
+and their offset.
+
 ## 2026-11-15: feature: zip comments, stored entries, and an offset after a prefix
 
 - Kind: feature

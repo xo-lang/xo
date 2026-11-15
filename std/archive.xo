@@ -121,6 +121,9 @@ struct ZipFile {
   method: Int
   flags: Int
   crc: Int
+  /// The entry's central directory record as read, for `ZipWriter.copy`
+  /// (natively; empty from the Go backend and for a ZipFile made by hand).
+  _dir: Bytes = b""
 }
 
 /// A zip archive (in memory, or in a File) whose central directory was
@@ -142,6 +145,13 @@ fn (r: ZipReader) files() -> List[ZipFile]
 /// The archive comment (Go's Reader.Comment; a byte that is not UTF-8
 /// reads as U+FFFD).
 fn (r: ZipReader) comment() -> Str
+/// One entry's stored bytes as they are, compressed or not (Go's
+/// File.OpenRaw read to the end): `compressed` bytes, fewer when the
+/// archive ends first.
+fn (r: ZipReader) raw(f: ZipFile) -> Bytes ! ArchiveErr uses fs.read
+/// Where an entry's stored bytes start in the archive (Go's
+/// File.DataOffset): after its local header, which is read to find it.
+fn (r: ZipReader) data_offset(f: ZipFile) -> Int ! ArchiveErr uses fs.read
 /// One entry's contents, inflated and checked against its CRC; a
 /// directory's is empty.
 fn (r: ZipReader) read(f: ZipFile) -> Bytes ! ArchiveErr uses fs.read
@@ -171,6 +181,18 @@ fn (var w: ZipWriter) set_comment(comment: Str) -> () ! ArchiveErr
 /// archive written after n bytes of something else; a fault once the
 /// writer has written (`zip: SetOffset called after data was written`).
 fn (var w: ZipWriter) set_offset(n: Int)
+/// An entry of r copied as it is, without inflating and deflating it
+/// again (Go's Writer.Copy): its header's fields (name, times, extra
+/// fields, comment, attributes, method, flags, CRC, sizes) and its stored
+/// bytes.
+fn (var w: ZipWriter) copy(r: ZipReader, f: ZipFile) -> () ! ArchiveErr uses fs
+/// An entry whose stored bytes raw are already compressed by f.method
+/// (Go's Writer.CreateRaw): f's path (with `/` for a directory), method,
+/// flags, crc, compressed and size are written as they are, with
+/// creator 0x0314, version 20, f.mode's attributes and f.modified's
+/// MS-DOS time, and no extra field. Nothing checks raw against them; a
+/// data descriptor follows raw when flags has bit 3 (0x8).
+fn (var w: ZipWriter) add_raw(f: ZipFile, raw: Bytes) -> () ! ArchiveErr uses fs.write
 /// Data for the entry `create` started (a data descriptor follows it).
 fn (var w: ZipWriter) write(data: Bytes) -> () ! ArchiveErr uses fs.write
 /// Ends the last entry and writes the central directory.

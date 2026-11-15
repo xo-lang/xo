@@ -1586,6 +1586,15 @@ struct ZipHdr {
   extra: Bytes
   attrs: Int
   offset: Int
+  /// the version needed to extract (20; 45 for zip64 on write)
+  version: Int = 20
+  /// the entry's comment, its bytes
+  comment: Bytes = b""
+  /// the central directory record read (ZipFile's _dir, for copy)
+  rec: Bytes = b""
+  /// written by copy or add_raw (Writer.CreateRaw): the header's own
+  /// fields, sizes and CRC in the local header unless a descriptor follows
+  is_raw: Bool = false
 }
 
 /// The directory record of an entry whose data is not yet written: its
@@ -1627,17 +1636,23 @@ fn zip_new_header(p: Str, mode: Int, is_dir: Bool, modified: Time, offset: Int, 
 
 /// The local file header of zf (sizes and CRC zero: they follow the data).
 fn zip_local_header(zf: ZipHdr) -> Bytes {
-  let nb = zf.name.bytes()
+  let nb = zf.raw
   var h = BytesBuilder.new()
   put_u32(h, 0x04034b50)
-  put_u16(h, 20)
+  put_u16(h, zf.version)
   put_u16(h, zf.flags)
   put_u16(h, zf.method)
   put_u16(h, zf.time)
   put_u16(h, zf.date)
-  put_u32(h, 0)
-  put_u32(h, 0)
-  put_u32(h, 0)
+  if zf.is_raw && (zf.flags & 0x8) == 0 {
+    put_u32(h, zf.crc)
+    put_u32(h, if zf.csize > 0xffffffff { 0xffffffff } else { zf.csize })
+    put_u32(h, if zf.usize > 0xffffffff { 0xffffffff } else { zf.usize })
+  } else {
+    put_u32(h, 0)
+    put_u32(h, 0)
+    put_u32(h, 0)
+  }
   put_u16(h, nb.len())
   put_u16(h, zf.extra.len())
   h.write(nb)
@@ -1673,11 +1688,11 @@ fn zip_central(files: List[ZipHdr], start: Int, comment: Str) -> Bytes {
   var out = BytesBuilder.new()
   var count = start
   for zf in files {
-    let nb = zf.name.bytes()
+    let nb = zf.raw
     let big = zip_is64(zf)
     put_u32(out, 0x02014b50)
     put_u16(out, zf.creator)
-    put_u16(out, if big { 45 } else { 20 })
+    put_u16(out, if big && !zf.is_raw { 45 } else { zf.version })
     put_u16(out, zf.flags)
     put_u16(out, zf.method)
     put_u16(out, zf.time)
@@ -1701,14 +1716,15 @@ fn zip_central(files: List[ZipHdr], start: Int, comment: Str) -> Bytes {
     }
     put_u16(out, nb.len())
     put_u16(out, extra.len())
-    put_u16(out, 0)
+    put_u16(out, zf.comment.len())
     put_u16(out, 0)
     put_u16(out, 0)
     put_u32(out, zf.attrs)
     put_u32(out, if zf.offset > 0xffffffff { 0xffffffff } else { zf.offset })
     out.write(nb)
     out.write(extra)
-    count += 46 + nb.len() + extra.len()
+    out.write(zf.comment)
+    count += 46 + nb.len() + extra.len() + zf.comment.len()
   }
   var records = files.len()
   var size = count - start
@@ -1875,6 +1891,68 @@ fn (var w: ZipWriter) create(path: Str, mode: Int, method: archive.ZipMethod) ->
   w.start(p, mode, false, Time.UNIX_EPOCH, method == archive.ZipMethod.Store)
 }
 
+/// Writer.CreateRaw and the raw bytes: the header as h says (sizes and
+/// CRC in the local header unless a descriptor follows), raw, and the
+/// descriptor when flags has bit 3; a directory gets no data.
+fn (var w: ZipWriter) put_raw(h: ZipHdr, raw: Bytes) -> () ! archive.ArchiveErr uses fs.write {
+  if w.done {
+    return Err(archive_err("zip_writer: closed"))
+  }
+  w.end_entry()?
+  var zf = h
+  zf.is_raw = true
+  zf.offset = w.pos
+  w.put(zip_local_header(zf))?
+  let nb = zf.raw
+  let is_dir = nb.len() > 0 && nb[nb.len() - 1] == 47
+  if !is_dir {
+    w.put(raw)?
+    if (zf.flags & 0x8) != 0 {
+      w.put(zip_descriptor(zf))?
+    }
+  } else if !raw.is_empty() {
+    return Err(archive_err("zip_writer: zip: write to directory"))
+  }
+  w.files.push(zf)
+  Ok(())
+}
+
+fn (var w: ZipWriter) copy(r: archive.ZipReader, f: archive.ZipFile) -> () ! archive.ArchiveErr uses fs {
+  let raw = zipreader_raw(r, f)?
+  var zf = zip_raw_header(f)
+  if !f._dir.is_empty() {
+    match zip_dir_header(f._dir, 0) {
+      Ok((h, _)) => zf = h
+      Err(e) => return Err(archive_err("zip_writer: ${e}"))
+    }
+    zf.csize = f.compressed
+    zf.usize = f.size
+  }
+  w.put_raw(zf, raw)
+}
+
+/// The header add_raw writes for f (Writer.CreateRaw of a FileHeader with
+/// f's name, method, flags, CRC and sizes, creator 0x0314, version 20,
+/// SetMode and SetModTime of f's mode and time).
+fn zip_raw_header(f: archive.ZipFile) -> ZipHdr {
+  var zf = zip_new_header(f.path, f.mode, f.is_dir, f.modified, 0, false)
+  zf.flags = f.flags
+  zf.method = f.method
+  zf.crc = f.crc
+  zf.csize = f.compressed
+  zf.usize = f.size
+  zf.extra = b""
+  zf
+}
+
+fn (var w: ZipWriter) add_raw(f: archive.ZipFile, raw: Bytes) -> () ! archive.ArchiveErr uses fs.write {
+  match archive_path(f.path) {
+    Some(_) => ()
+    None => return Err(archive_err("bad entry path ${f.path.quote()}"))
+  }
+  w.put_raw(zip_raw_header(f), raw)
+}
+
 fn (var w: ZipWriter) set_comment(comment: Str) -> () ! archive.ArchiveErr {
   if !zip_comment_ok(comment) {
     return Err(archive_err("zip_writer: ${ERR_COMMENT}"))
@@ -1999,7 +2077,7 @@ fn zip_dir_header(data: Bytes, pos: Int) -> (ZipHdr, Int) ! Str {
   if need_c || need_o {
     return Err(ERR_FORMAT)
   }
-  let zf = ZipHdr{name: scan.text_of(sub(data, p, p + nlen)), raw: sub(data, p, p + nlen), creator: get_u16(data, pos + 4), flags: get_u16(data, pos + 8), method: get_u16(data, pos + 10), time: get_u16(data, pos + 12), date: get_u16(data, pos + 14), crc: get_u32(data, pos + 16), csize: csize64, usize: usize64, extra: x, attrs: get_u32(data, pos + 38), offset: offset64}
+  let zf = ZipHdr{name: scan.text_of(sub(data, p, p + nlen)), raw: sub(data, p, p + nlen), creator: get_u16(data, pos + 4), flags: get_u16(data, pos + 8), method: get_u16(data, pos + 10), time: get_u16(data, pos + 12), date: get_u16(data, pos + 14), crc: get_u32(data, pos + 16), csize: csize64, usize: usize64, extra: x, attrs: get_u32(data, pos + 38), offset: offset64, version: get_u16(data, pos + 6), comment: sub(data, p + nlen + xlen, p + nlen + xlen + clen), rec: sub(data, pos, p + nlen + xlen + clen)}
   (zf, p + nlen + xlen + clen)
 }
 
@@ -2320,7 +2398,7 @@ fn zip_files_at(data: Bytes, shift: Int) -> List[archive.ZipFile] ! Str {
   var out: List[archive.ZipFile] = []
   for zf in files {
     let (p, perm, is_dir) = zip_meta(zf)?
-    out.push(archive.ZipFile{path: p, size: zf.usize, compressed: zf.csize, mode: perm, is_dir: is_dir, modified: Time.UNIX_EPOCH + Duration.from_nanos(zip_modified(zf)), offset: zf.offset, method: zf.method, flags: zf.flags, crc: zf.crc})
+    out.push(archive.ZipFile{path: p, size: zf.usize, compressed: zf.csize, mode: perm, is_dir: is_dir, modified: Time.UNIX_EPOCH + Duration.from_nanos(zip_modified(zf)), offset: zf.offset, method: zf.method, flags: zf.flags, crc: zf.crc, _dir: zf.rec})
   }
   out
 }
@@ -2328,6 +2406,47 @@ fn zip_files_at(data: Bytes, shift: Int) -> List[archive.ZipFile] ! Str {
 fn zipreader_files(r: archive.ZipReader) -> List[archive.ZipFile] { r.list }
 
 fn zipreader_comment(r: archive.ZipReader) -> Str { r.note }
+
+/// n bytes of the archive from off, fewer at its end (a ReaderAt's short
+/// read), from memory or the File.
+fn zr_bytes(r: archive.ZipReader, off: Int, n: Int) -> Bytes ! archive.ArchiveErr uses fs.read {
+  match r.file {
+    Some(file) => {
+      if off >= r.total {
+        return Ok(b"")
+      }
+      read_span(file, off, if off + n > r.total { r.total - off } else { n })
+    }
+    None => {
+      let size = r.data.len()
+      if off >= size {
+        return Ok(b"")
+      }
+      Ok(sub(r.data, off, if off + n > size { size } else { off + n }))
+    }
+  }
+}
+
+/// findBodyOffset: the local header at f.offset read for its name and
+/// extra lengths; the stored bytes' offset in the archive.
+fn zipreader_data_offset(r: archive.ZipReader, f: archive.ZipFile) -> Int ! archive.ArchiveErr uses fs.read {
+  if f.offset < 0 {
+    return Err(archive_err("zip_reader: strings.Reader.ReadAt: negative offset"))
+  }
+  let head = zr_bytes(r, f.offset, 30)?
+  if head.len() < 30 {
+    return Err(archive_err("zip_reader: EOF"))
+  }
+  if get_u32(head, 0) != 0x04034b50 {
+    return Err(archive_err("zip_reader: ${ERR_FORMAT}"))
+  }
+  Ok(f.offset + 30 + get_u16(head, 26) + get_u16(head, 28))
+}
+
+fn zipreader_raw(r: archive.ZipReader, f: archive.ZipFile) -> Bytes ! archive.ArchiveErr uses fs.read {
+  let at = zipreader_data_offset(r, f)?
+  zr_bytes(r, at, f.compressed)
+}
 
 /// The end record's comment (Reader.Comment), the directory already read.
 fn zip_comment_of(data: Bytes) -> Str {

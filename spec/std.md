@@ -5445,10 +5445,14 @@ fn (r: ZipReader) comment() -> Str                  // Reader.Comment
 pub fn tar_writer(f: File) -> TarWriter              // tar.Writer: add(e), create(path, size, mode, modified), write(data), flush(), close()
 pub fn tar_reader(f: File) -> TarReader              // tar.Reader: next() -> TarFile?, read(max) -> Bytes?
 struct TarFile { path: Str, size: Int, mode: Int, is_dir: Bool, modified: Time }
+fn (r: ZipReader) raw(f: ZipFile) -> Bytes ! ArchiveErr uses fs.read        // File.OpenRaw: the stored bytes
+fn (r: ZipReader) data_offset(f: ZipFile) -> Int ! ArchiveErr uses fs.read  // File.DataOffset
 pub fn zip_writer(f: File) -> ZipWriter
 fn (var w: ZipWriter) add(e: Entry, method: ZipMethod = ZipMethod.Deflate) -> () ! ArchiveErr uses fs.write   // also create(path, mode, method), write(data), close()
 fn (var w: ZipWriter) set_comment(comment: Str) -> () ! ArchiveErr   // Writer.SetComment
 fn (var w: ZipWriter) set_offset(n: Int)            // Writer.SetOffset
+fn (var w: ZipWriter) copy(r: ZipReader, f: ZipFile) -> () ! ArchiveErr uses fs    // Writer.Copy: no inflate and deflate
+fn (var w: ZipWriter) add_raw(f: ZipFile, raw: Bytes) -> () ! ArchiveErr uses fs.write  // Writer.CreateRaw
 struct ZipFile { path: Str, size: Int, compressed: Int, mode: Int, is_dir: Bool, modified: Time, offset: Int, method: Int, flags: Int, crc: Int }
 ```
 
@@ -5471,6 +5475,14 @@ struct ZipFile { path: Str, size: Int, compressed: Int, mode: Int, is_dir: Bool,
   `read(max)` its data. It gives `untar`'s entries and errors (`untar:`
   read as `tar_reader:`): data that ends early is `tar_reader:
   unexpected EOF`. A GNU sparse file's data is read whole at `next`.
+- `copy(r, f)` moves an entry between archives without inflating it
+  again, keeping its header (name, times, extra fields, comment,
+  attributes, flags) as Go's Writer.Copy does; `r.raw(f)` and
+  `r.data_offset(f)` are its stored bytes and where they start.
+  `add_raw(f, raw)` writes already compressed bytes under f's fields (Go's
+  CreateRaw of a header with f's name, method, flags, CRC and sizes,
+  creator 0x0314, version 20, f's mode and MS-DOS time, no extra field);
+  nothing checks raw against them.
 - `zip_reader` reads a zip archive's central directory once and checks
   every entry as `unzip` does (paths, kinds, Go's errors), but inflates
   none: `r.files()` lists them (`size` is the inflated length) and

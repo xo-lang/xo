@@ -27,6 +27,8 @@ var (
 	_ func(*Task, Bytes) Result[Archive_ZipReader, Archive_ArchiveErr]                                     = Archive_zip_reader
 	_ func(*Archive_ZipReader, *Task) List[Archive_ZipFile]                                                = (*Archive_ZipReader).M_files
 	_ func(*Archive_ZipReader, *Task) string                                                               = (*Archive_ZipReader).M_comment
+	_ func(*Archive_ZipReader, *Task, Archive_ZipFile) Result[Bytes, Archive_ArchiveErr]                   = (*Archive_ZipReader).M_raw
+	_ func(*Archive_ZipReader, *Task, Archive_ZipFile) Result[int64, Archive_ArchiveErr]                   = (*Archive_ZipReader).M_data_offset
 	_ func(*Archive_ZipReader, *Task, Archive_ZipFile) Result[Bytes, Archive_ArchiveErr]                   = (*Archive_ZipReader).M_read
 	_ func(*Task, File, int64) Result[Archive_ZipReader, Archive_ArchiveErr]                               = Archive_zip_open
 	_ func(*Task, File) Archive_ZipWriter                                                                  = Archive_zip_writer
@@ -34,6 +36,8 @@ var (
 	_ func(*Archive_ZipWriter, *Task, string, int64, Archive_ZipMethod) Result[Unit, Archive_ArchiveErr]   = (*Archive_ZipWriter).M_create
 	_ func(*Archive_ZipWriter, *Task, string) Result[Unit, Archive_ArchiveErr]                             = (*Archive_ZipWriter).M_set_comment
 	_ func(*Archive_ZipWriter, *Task, int64)                                                               = (*Archive_ZipWriter).M_set_offset
+	_ func(*Archive_ZipWriter, *Task, Archive_ZipReader, Archive_ZipFile) Result[Unit, Archive_ArchiveErr] = (*Archive_ZipWriter).M_copy
+	_ func(*Archive_ZipWriter, *Task, Archive_ZipFile, Bytes) Result[Unit, Archive_ArchiveErr]             = (*Archive_ZipWriter).M_add_raw
 	_ func(*Archive_ZipWriter, *Task, Bytes) Result[Unit, Archive_ArchiveErr]                              = (*Archive_ZipWriter).M_write
 	_ func(*Archive_ZipWriter, *Task) Result[Unit, Archive_ArchiveErr]                                     = (*Archive_ZipWriter).M_close
 )

@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"io"
 	"io/fs"
 	"path"
@@ -383,6 +384,46 @@ func (r *Archive_ZipReader) M_read(_ *Task, f Archive_ZipFile) Result[Bytes, Arc
 	return Ok[Bytes, Archive_ArchiveErr](Bytes(b))
 }
 
+// zipFileOf is the zip.File of f in r (the Go backend's offset is its
+// index).
+func (r *Archive_ZipReader) zipFileOf(f Archive_ZipFile) (*zip.File, error) {
+	zr, err := zip.NewReader(strings.NewReader(string(r.F_data)), int64(len(r.F_data)))
+	if err != nil || f.F_offset < 0 || int(f.F_offset) >= len(zr.File) {
+		return nil, errors.New("not a file of this archive")
+	}
+	return zr.File[f.F_offset], nil
+}
+
+// M_raw is File.OpenRaw read to the end.
+func (r *Archive_ZipReader) M_raw(_ *Task, f Archive_ZipFile) Result[Bytes, Archive_ArchiveErr] {
+	zf, err := r.zipFileOf(f)
+	if err != nil {
+		return Err[Bytes](archiveErr("zip_reader: " + err.Error()))
+	}
+	rd, err := zf.OpenRaw()
+	if err != nil {
+		return Err[Bytes](archiveErr("zip_reader: " + err.Error()))
+	}
+	b, err := io.ReadAll(rd)
+	if err != nil {
+		return Err[Bytes](archiveErr("zip_reader: " + err.Error()))
+	}
+	return Ok[Bytes, Archive_ArchiveErr](Bytes(b))
+}
+
+// M_data_offset is File.DataOffset.
+func (r *Archive_ZipReader) M_data_offset(_ *Task, f Archive_ZipFile) Result[int64, Archive_ArchiveErr] {
+	zf, err := r.zipFileOf(f)
+	if err != nil {
+		return Err[int64](archiveErr("zip_reader: " + err.Error()))
+	}
+	off, err := zf.DataOffset()
+	if err != nil {
+		return Err[int64](archiveErr("zip_reader: " + err.Error()))
+	}
+	return Ok[int64, Archive_ArchiveErr](off)
+}
+
 // Archive_ZipWriter is `archive.ZipWriter` (move only): Go's zip.Writer over
 // the File, which a Write adapter feeds with the current task.
 type Archive_ZipWriter struct {
@@ -467,6 +508,46 @@ func (x *Archive_ZipWriter) M_write(tk *Task, data Bytes) Result[Unit, Archive_A
 	}
 	x.fw.tk = tk
 	if _, err := x.cur.Write([]byte(data)); err != nil {
+		return x.fail(tk, err)
+	}
+	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}
+
+// M_copy is Writer.Copy.
+func (x *Archive_ZipWriter) M_copy(tk *Task, r Archive_ZipReader, f Archive_ZipFile) Result[Unit, Archive_ArchiveErr] {
+	zf, err := r.zipFileOf(f)
+	if err != nil {
+		return Err[Unit](archiveErr("zip_writer: " + err.Error()))
+	}
+	x.fw.tk = tk
+	x.cur = nil
+	if err := x.zw.Copy(zf); err != nil {
+		return x.fail(tk, err)
+	}
+	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}
+
+// M_add_raw is Writer.CreateRaw of f's header (archive.xo) and raw.
+func (x *Archive_ZipWriter) M_add_raw(tk *Task, f Archive_ZipFile, raw Bytes) Result[Unit, Archive_ArchiveErr] {
+	p, ok := archivePath(textOf(f.F_path))
+	if !ok {
+		return Err[Unit](archiveErr("bad entry path " + strconv.Quote(f.F_path)))
+	}
+	h := &zip.FileHeader{Name: p, Method: uint16(f.F_method), Flags: uint16(f.F_flags), CRC32: uint32(f.F_crc),
+		CompressedSize64: uint64(f.F_compressed), UncompressedSize64: uint64(f.F_size), CreatorVersion: 0x0314, ReaderVersion: 20}
+	h.SetMode(fs.FileMode(f.F_mode & 0o777))
+	if f.F_is_dir {
+		h.Name = p + "/"
+		h.SetMode(fs.ModeDir | fs.FileMode(f.F_mode&0o777))
+	}
+	h.SetModTime(time.Unix(0, int64(f.F_modified)).UTC())
+	x.fw.tk = tk
+	w, err := x.zw.CreateRaw(h)
+	x.cur = nil
+	if err != nil {
+		return x.fail(tk, err)
+	}
+	if _, err := w.Write([]byte(raw)); err != nil {
 		return x.fail(tk, err)
 	}
 	return Ok[Unit, Archive_ArchiveErr](Unit{})
