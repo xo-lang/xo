@@ -903,6 +903,7 @@ fn client_msg(e: http.ClientErr) -> Str {
     http.ClientErr.Timeout => "timeout"
     http.ClientErr.Protocol(msg: m) => m
     http.ClientErr.Canceled => "canceled"
+    http.ClientErr.Tls(err: e) => e.msg
   }
 }
 

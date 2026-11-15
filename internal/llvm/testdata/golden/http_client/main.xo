@@ -17,6 +17,7 @@ fn describe(e: http.ClientErr) -> Str {
     http.ClientErr.Timeout => "Timeout"
     http.ClientErr.Protocol(_) => "Protocol"
     http.ClientErr.Canceled => "Canceled"
+    http.ClientErr.Tls(_) => "Tls"
   }
 }
 

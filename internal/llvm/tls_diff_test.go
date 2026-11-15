@@ -291,6 +291,7 @@ fn describe(e: http.ClientErr) -> Str {
     http.ClientErr.Timeout => "Timeout"
     http.ClientErr.Protocol(msg) => "Protocol(${msg})"
     http.ClientErr.Canceled => "Canceled"
+    http.ClientErr.Tls(err) => "Protocol(${err.msg})"
   }
 }
 

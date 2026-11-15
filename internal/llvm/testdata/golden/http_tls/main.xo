@@ -9,6 +9,31 @@
 // 2120 except "expired" and "future").
 use std/archive
 use std/http
+use std/tls
+use std/x509
+
+/// The name of a tls error's kind, and the x509 one under a verification.
+fn tls_kind(k: tls.TlsErrKind) -> Str {
+  match k {
+    tls.TlsErrKind.Other => "Other"
+    tls.TlsErrKind.RecordHeader(_) => "RecordHeader"
+    tls.TlsErrKind.CertificateVerification(certs, cause) => "CertificateVerification ${certs.len()} ${x509_kind(cause.kind)}"
+    tls.TlsErrKind.EchRejection(_) => "EchRejection"
+    tls.TlsErrKind.Alert(a) => "Alert ${a}"
+  }
+}
+
+fn x509_kind(k: x509.CertErrKind) -> Str {
+  match k {
+    x509.CertErrKind.UnknownAuthority => "UnknownAuthority"
+    x509.CertErrKind.CertificateInvalid(reason, _) => match reason {
+      x509.InvalidReason.Expired => "CertificateInvalid Expired"
+      _ => "CertificateInvalid other"
+    }
+    x509.CertErrKind.Hostname(_) => "Hostname"
+    _ => "other"
+  }
+}
 
 fn describe(e: http.ClientErr, addrs: List[Str]) -> Str {
   var s = match e {
@@ -17,6 +42,8 @@ fn describe(e: http.ClientErr, addrs: List[Str]) -> Str {
     http.ClientErr.Timeout => "Timeout"
     http.ClientErr.Protocol(msg) => "Protocol(${msg})"
     http.ClientErr.Canceled => "Canceled"
+    // decision 0644 T12: the typed tls error, with the request's text
+    http.ClientErr.Tls(err) => "Tls(${tls_kind(err.kind)}: ${err.msg})"
   }
   for i in 0..addrs.len() {
     s = s.replace(addrs[i], "ADDR${i}")

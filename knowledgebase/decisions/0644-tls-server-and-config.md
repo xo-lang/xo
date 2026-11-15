@@ -141,7 +141,7 @@ rest in the same shape.
   `Alert(code)` (Go's AlertError, which QUIC's errors wrap, asked by
   aws-43 for T14) are added before the first release with T12, so no
   release's exhaustive match breaks.
-- **std/http and T12 (open, owner's choice; lead 2026-11-15):** the
+- **std/http and T12 (decided: option (2), owner 2026-11-15, in 0.52):** the
   client's failure is `ClientErr.Connect(msg)` with Go's text, and Xo's
   enums leave no non-breaking room on it: a variant field takes no
   default (XO0160) and a positional pattern must name every field
@@ -161,6 +161,15 @@ rest in the same shape.
   error from ADDR`, untyped), so the server needs nothing;
   `Request.tls_state()` covers the successful side. Until then a
   program that needs the typed error dials with `tls.client_conn`.
+  The owner chose (2), with no callback API. `ClientErr.Tls(err)`
+  covers what the TLS client reports itself (native: tlsio's own
+  failures, carried as hclient's R_TLS record to http1's CResult; Go
+  backend: an error crypto/tls types, or its own `tls: ` text, inside
+  the url.Error); `err.msg` is the request's whole text (`Get "URL":
+  tls: ...`), not the tls error's alone, so the display stays the
+  Protocol one as the owner asked. A server's alert stays Connect (Go's
+  net.OpError), a plain HTTP server and EOF stay Protocol, and a
+  wasi:http component's host does its own TLS (Protocol).
 - **Native code:** the server is std/http's existing engine
   (std/native/llrt/tlssrv.xo), given a configuration of its own
   (`tlssrv.conn_cfg`: no default ALPN, its own ticket keys, no plain

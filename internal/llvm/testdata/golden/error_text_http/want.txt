@@ -7,6 +7,7 @@ client denied by Net.only: a.test:80 | Connect(msg: "denied by Net.only: a.test:
 client request timed out | Timeout
 client protocol error: bad status line | Protocol(msg: "bad status line")
 client canceled | Canceled
+client protocol error: Get "https://a.test/": tls: handshake failure | Tls(err: TlsErr{msg: "Get \"https://a.test/\": tls: handshake failure", kind: Other})
 url invalid port
 cookie bad name
 http tls bad pem

@@ -50,6 +50,7 @@ fn main(os: Os) {
           http.ClientErr.Timeout => "Timeout"
           http.ClientErr.Protocol(msg) => "Protocol ${msg}"
           http.ClientErr.Canceled => "Canceled"
+          http.ClientErr.Tls(err) => "Protocol ${err.msg}"
         }
         os.stdio.println("${i} ${s}")
       }

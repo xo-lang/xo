@@ -180,6 +180,7 @@ fn describe(e: http.ClientErr, peer: Str, own: Str) -> Str {
     http.ClientErr.Timeout => "Timeout"
     http.ClientErr.Protocol(msg) => "Protocol(${msg})"
     http.ClientErr.Canceled => "Canceled"
+    http.ClientErr.Tls(err) => "Protocol(${err.msg})"
   }
   s.replace(peer, "<peer>").replace(own, "<own>")
 }

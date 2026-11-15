@@ -147,7 +147,8 @@ fn note(st: Mutex[ClientSt], e: NetErr, why: tlsneg.Failure) -> NetErr {
 /// The typed TlsErr of a failure's text and detail (decision 0644 T12):
 /// a verification's is Go's CertificateVerificationError, a record
 /// layer's its RecordHeaderError.
-fn typed(msg: Str, why: tlsneg.Failure) -> tls.TlsErr {
+/// (pub for std/http's ClientErr.Tls, decision 0644 T12)
+pub fn typed(msg: Str, why: tlsneg.Failure) -> tls.TlsErr {
   if why.verify {
     let cause = msg.cut_prefix("tls: failed to verify certificate: ") ?? msg
     return tls.TlsErr{msg: msg, kind: tls.TlsErrKind.CertificateVerification(certs: parse_ders(why.certs), cause: x509.CertErr{msg: cause, kind: cert_kind(why.code, cause, why.hint, why.host)})}

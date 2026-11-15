@@ -567,6 +567,7 @@ fn client_status(e: http.ClientErr) -> Status {
     http.ClientErr.Canceled => status(CANCELED, "pricing: ${e}")
     http.ClientErr.Connect(_) => status(UNAVAILABLE, "pricing: ${e}")
     http.ClientErr.Protocol(_) => status(UNAVAILABLE, "pricing: ${e}")
+    http.ClientErr.Tls(_) => status(UNAVAILABLE, "pricing: ${e}")
     http.ClientErr.InvalidUrl(_) => status(INTERNAL, "pricing: ${e}")
   }
 }

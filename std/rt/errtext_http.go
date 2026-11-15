@@ -23,6 +23,8 @@ func (v Http_ClientErr) M_display(*Task) string {
 		return p.F_msg
 	case Http_ClientErr_Protocol:
 		return "protocol error: " + p.F_msg
+	case Http_ClientErr_Tls:
+		return "protocol error: " + p.F_err.F_msg
 	}
 	if v.Tag == 3 {
 		return "request timed out"

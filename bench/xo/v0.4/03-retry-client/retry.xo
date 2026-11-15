@@ -111,7 +111,7 @@ fn classify(outcome: Result[http.Response, http.ClientErr]) -> Step {
     Err(e) => match e {
       http.ClientErr.Canceled => Step.Fail(err: FetchErr.Canceled)
       http.ClientErr.InvalidUrl(msg) => Step.Fail(err: FetchErr.InvalidUrl(msg: msg))
-      http.ClientErr.Connect(_) | http.ClientErr.Timeout | http.ClientErr.Protocol(_) =>
+      http.ClientErr.Connect(_) | http.ClientErr.Timeout | http.ClientErr.Protocol(_) | http.ClientErr.Tls(_) =>
         Step.Retry(cause: AttemptErr.Transport(e), hint: None)
     }
   }

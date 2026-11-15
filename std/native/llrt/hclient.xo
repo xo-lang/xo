@@ -26,6 +26,7 @@ use native/llrt/sock
 use native/llrt/sysio
 use native/llrt/tasks
 use native/llrt/tlsio
+use native/llrt/tlsneg
 use native/rt
 use native/rthttp
 
@@ -1559,7 +1560,45 @@ const R_REUSED = 192
 const R_SENT = 200
 /// the client's with_max_idle_per_host (h1_put gives it to the pool record)
 const R_MAX_IDLE = 208
-const R_SIZE = 216
+/// a failed TLS handshake's typed detail (decision 0644 T12, std/http's
+/// ClientErr.Tls): a kept rt.Any of a TlsFail, 0 for none
+const R_TLS = 216
+const R_SIZE = 224
+
+/// A TLS handshake's failure as tlsio reported it: its own text (Go's
+/// tls error, without the request) and the engine's typed detail.
+pub struct TlsFail {
+  pub msg: Str
+  pub why: tlsneg.Failure
+}
+
+/// Sets r's error to the TLS handshake failure (msg, why), a Protocol
+/// error with the request's prefix as before, and keeps the typed detail
+/// for tls_fail; the texts net/http does not report as a tls error (EOF,
+/// a plain HTTP server) stay untyped.
+fn fail_tls(r: Int, prefix: Str, msg: Str, why: tlsneg.Failure) {
+  fail(r, 4, prefix + ": " + msg)
+  if msg == "EOF" || msg.starts_with("http: ") {
+    return
+  }
+  let old = ld(r, R_TLS)
+  if old != 0 {
+    tasks.h_release(old)
+  }
+  let a = rt.any_of(TlsFail{msg: msg, why: why})
+  let w = rt.obj_addr(a)
+  rc.inc(w)
+  st(r, R_TLS, w)
+}
+
+/// The typed TLS failure of r's request, when its handshake failed.
+pub fn tls_fail(r: rthttp.CResp) -> TlsFail? {
+  let w = ld(rec(r), R_TLS)
+  if w == 0 {
+    return None
+  }
+  rt.any_get[TlsFail](rt.obj_at[rt.Any](w))
+}
 
 /// The deadline of a client's timeout (ns, > 0): the timers' clock.
 pub fn cl_deadline(timeout: Int) -> Int { hconn.deadline(timeout) }
@@ -1652,7 +1691,7 @@ fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: In
       } else if started.kind == 2 {
         fail(r, 2, started.msg)
       } else {
-        fail(r, 4, prefix + ": " + started.msg)
+        fail_tls(r, prefix, started.msg, started.why)
       }
       return
     }
@@ -1751,6 +1790,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
     let ts = started.status
     let tmsg = started.msg
     let kind = started.kind
+    let twhy = started.why
     let t = started.conn
     if ts != CC_OK {
       poll.pd_close(pd)
@@ -1763,7 +1803,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
       } else if kind == 2 {
         fail(r, 2, tmsg)
       } else {
-        fail(r, 4, prefix + ": " + tmsg)
+        fail_tls(r, prefix, tmsg, twhy)
       }
       return
     }
@@ -1876,6 +1916,10 @@ pub fn cresp_free(a: Int) {
   close_at(a)
   free_c(ld(a, R_MSG))
   free_c(ld(a, R_PREFIX))
+  let tw = ld(a, R_TLS)
+  if tw != 0 {
+    tasks.h_release(tw)
+  }
   let ha = ld(a, R_HDR)
   if ha != 0 {
     for i in 0..ld(a, R_HDR_N) {

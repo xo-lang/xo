@@ -4202,7 +4202,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
     2 => return Err(http.ClientErr.Connect(msg: r.msg))
     3 => return Err(http.ClientErr.Timeout)
     5 => return Err(http.ClientErr.Canceled)
-    _ => return Err(http.ClientErr.Protocol(msg: r.msg))
+    _ => return Err(client_protocol_err(r))
   }
   let (h, _) = fields_in(r.headers)
   let gz = if r.gz { Some(compress.decompressor(compress.Format.Gzip)) } else { None }
@@ -4727,7 +4727,7 @@ fn (c: Client) send(req0: Request) -> http.Response ! http.ClientErr uses net.di
     2 => return Err(http.ClientErr.Connect(msg: r.msg))
     3 => return Err(http.ClientErr.Timeout)
     5 => return Err(http.ClientErr.Canceled)
-    _ => return Err(http.ClientErr.Protocol(msg: r.msg))
+    _ => return Err(client_protocol_err(r))
   }
   // each received field; the Map joins a repeated name, Set-Cookie
   // excepted (decision 0288)
@@ -5681,6 +5681,16 @@ fn httperr_display(e: http.HttpErr) -> Str {
   }
 }
 
+/// A Protocol error of client_do's result, or Tls (decision 0644 T12,
+/// owner 2026-11-15) when a TLS handshake failed: its TlsErr has the
+/// request's text (the Protocol text it replaces) and the tls error's kind.
+fn client_protocol_err(r: http1.CResult) -> http.ClientErr {
+  match r.tls {
+    Some(f) => http.ClientErr.Tls(err: ntls.typed(f.msg, f.why) with {msg: r.msg})
+    None => http.ClientErr.Protocol(msg: r.msg)
+  }
+}
+
 fn clienterr_display(e: http.ClientErr) -> Str {
   match e {
     http.ClientErr.InvalidUrl(msg) => "invalid URL: ${msg}"
@@ -5688,6 +5698,7 @@ fn clienterr_display(e: http.ClientErr) -> Str {
     http.ClientErr.Timeout => "request timed out"
     http.ClientErr.Protocol(msg) => "protocol error: ${msg}"
     http.ClientErr.Canceled => "canceled"
+    http.ClientErr.Tls(err) => "protocol error: ${err.msg}"
   }
 }
 

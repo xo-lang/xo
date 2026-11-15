@@ -4490,6 +4490,9 @@ pub struct CResult {
   pub gz: Bool = false
   /// an HTTP/2 stream's exchange (h2_pump with H2_TO_DATA reads on)
   pub h2: H2X? = None
+  /// a failed TLS handshake's typed detail (decision 0644 T12): err is 4
+  /// and msg the request's text, as without it
+  pub tls: hclient.TlsFail? = None
 }
 
 fn cfail(err: Int, msg: Str) -> CResult { CResult{err: err, msg: msg, status: 0, headers: [], body: b""} }
@@ -4904,7 +4907,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       }
       let err = hclient.err(r)
       if err != 0 {
-        return cfail(err, hclient.msg(r))
+        return cfail(err, hclient.msg(r)) with {tls: hclient.tls_fail(r)}
       }
       jar_keep(jar_put, cut, headers)
       if stream && (h1 || h2x is Some(_)) {
@@ -4935,14 +4938,14 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
           h2_pump(r, x, H2_TO_END)
           h2_done(r, x)
           if hclient.err(r) != 0 {
-            return cfail(hclient.err(r), hclient.msg(r))
+            return cfail(hclient.err(r), hclient.msg(r)) with {tls: hclient.tls_fail(r)}
           }
         }
         while !hb.done {
           let st = cbody_next(r, hb, 65536)
           if st.s != CC_OK {
             hclient.end_keep(r, false, conn_https, conn_addr, conn_name, roots, st.s, if st.why.is_empty() { "" } else { "\u{1}" + st.why })
-            return cfail(hclient.err(r), hclient.msg(r))
+            return cfail(hclient.err(r), hclient.msg(r)) with {tls: hclient.tls_fail(r)}
           }
         }
         hclient.end_keep(r, hb.keep && method != "CONNECT", conn_https, conn_addr, conn_name, roots, CC_OK, "")

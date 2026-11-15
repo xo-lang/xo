@@ -663,10 +663,15 @@ enum ClientErr {
   Timeout
   Protocol(msg: Str)
   Canceled
+  /// a failed TLS handshake (decision 0644 T12, owner 2026-11-15): the
+  /// tls error as Go's errors.As finds it (TlsErr.kind), with the text
+  /// net/http gives (`Get "URL": tls: ...`) as its msg; the display is a
+  /// Protocol error's, as before
+  Tls(err: tls.TlsErr)
 }
 
 /// `invalid URL: MSG`, MSG for a Connect, `request timed out`, `protocol
-/// error: MSG`, `canceled` (decision 0358).
+/// error: MSG` (a Tls error's msg too), `canceled` (decision 0358).
 fn (e: ClientErr) display() -> Str
 
 fn parse_url(s: Str) -> Url ! UrlErr

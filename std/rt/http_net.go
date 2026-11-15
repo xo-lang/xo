@@ -553,6 +553,11 @@ func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool) 
 			if errors.As(ue.Err, &oe) {
 				return nil, nil, head, clientErr(2, oe.Error())
 			}
+			if isTLSErr(ue.Err) {
+				// decision 0644 T12: ClientErr.Tls, the request's text
+				te := tlsErrOf(textOf(err.Error()), ue.Err)
+				return nil, nil, head, Http_ClientErr{Tag: 6, P: Http_ClientErr_Tls{F_err: te}}
+			}
 		}
 		return nil, nil, head, clientErr(4, err.Error())
 	}
@@ -839,4 +844,19 @@ func (j xoJar) Cookies(u *url.URL) []*http.Cookie {
 		out = append(out, goCookie(c))
 	}
 	return out
+}
+
+// isTLSErr reports whether err is a failed TLS handshake's error as
+// crypto/tls returns it (decision 0644 T12): one of its error types, or
+// its own "tls: " text; net/http's "server gave HTTP response to HTTPS
+// client" (which replaces a RecordHeaderError) and EOF are not.
+func isTLSErr(err error) bool {
+	var cv *tls.CertificateVerificationError
+	var rh tls.RecordHeaderError
+	var er *tls.ECHRejectionError
+	var ae tls.AlertError
+	if errors.As(err, &cv) || errors.As(err, &rh) || errors.As(err, &er) || errors.As(err, &ae) {
+		return true
+	}
+	return strings.HasPrefix(err.Error(), "tls: ")
 }

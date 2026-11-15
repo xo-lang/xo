@@ -2217,6 +2217,7 @@ enum ClientErr {
   Timeout
   Protocol(msg: Str)
   Canceled
+  Tls(err: tls.TlsErr)     // a failed TLS handshake, typed (decision 0644 T12)
 }
 
 pub fn parse_url(s: Str) -> Url ! UrlErr
@@ -2292,7 +2293,8 @@ checks the native and Go backends agree.
 
 `display` of these errors prints plain text (decision 0358): `HttpErr` the
 message of an `Io` or `canceled`; `ClientErr` `invalid URL: MSG`, MSG for a
-`Connect`, `request timed out`, `protocol error: MSG`, `canceled`; `UrlErr`,
+`Connect`, `request timed out`, `protocol error: MSG` (a `Tls` error's
+`protocol error: ` and its msg), `canceled`; `UrlErr`,
 `CookieErr` and `TlsErr` their message.
 
 Any HTTP status is a successful `Response`; only transport failures are
@@ -2564,15 +2566,23 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
   certificates found in PEM input")` when it has none. The TLS handshake
   must finish within 10 seconds and within the client's `timeout`, else
   `Timeout`.
-- TLS failures are `ClientErr`s with Go's texts: a certificate that does
-  not verify is `Protocol("Get \"https://...\": tls: failed to verify
-  certificate: x509: ...")` (`certificate signed by unknown authority`,
+- TLS failures are `ClientErr`s with Go's texts. A failure the TLS
+  client reports itself is `Tls(err)` (decision 0644 T12, owner
+  2026-11-15): `err.kind` is the tls error's type as Go's errors.As finds
+  it inside net/http's error (`CertificateVerification` with the x509
+  kind, `RecordHeader`, `EchRejection`, else `Other`), and `err.msg` the
+  request's text, so the display is the `protocol error: ...` it was. A
+  certificate that does not verify is `Tls` with the msg `Get
+  \"https://...\": tls: failed to verify certificate: x509: ...`
+  (`certificate signed by unknown authority`,
   `certificate is valid for a, b, not c`, `certificate has expired or is
   not yet valid: ...`, whose current time is in the local zone, as Go's,
   and in UTC on wasm), a server answering plain HTTP is `Protocol("...:
   http: server gave HTTP response to HTTPS client")`, and an alert of the
   server (no shared cipher suite, a required client certificate) is
-  `Connect("remote error: tls: handshake failure")`.
+  `Connect("remote error: tls: handshake failure")` (Go's net.OpError).
+  A wasi:http component's host does the TLS, so its failures stay
+  `Protocol`.
 - Tests: `FakeNet` (8.1) and in memory listeners serve `https` URLs and
   `with_tls` servers in process, without TLS.
 - The native backends (`--no-gc`) implement this in Xo (decision 0202):

@@ -1,5 +1,25 @@
 # std/http changes
 
+## 2026-11-15: breaking: a failed TLS handshake is `ClientErr.Tls(err: tls.TlsErr)`
+
+- Kind: breaking
+- Commit: this push
+- Found by: the lang3 crypto/tls audit (T12), option (2) of ADR 0644, the owner's decision through the lead (2026-11-15)
+- Go reference: net/http's client errors wrapping crypto/tls's (errors.As with *tls.CertificateVerificationError, tls.RecordHeaderError, *tls.ECHRejectionError; go1.26.11)
+- Test: golden http_tls (every certificate failure is Tls with its kind, CertificateVerification with the x509 UnknownAuthority, CertificateInvalid Expired or Hostname; arm64 equal to the go backend); golden error_text_http (the Tls display)
+- Affected: every backend but a wasi:http component (its host does TLS)
+- Shipped in: not yet released
+
+A request whose TLS handshake fails in the client (a certificate that does
+not verify, a first record that is not TLS, a rejected ECH, the client's
+own tls errors) returns `ClientErr.Tls(err)`, where it returned
+`Protocol(msg)`: `err.kind` is the typed tls error and `err.msg` the old
+Protocol text, so `e.display()` is unchanged. A server's alert stays
+`Connect("remote error: tls: ...")` and a plain HTTP server
+`Protocol(...)`, as Go's types. Migration: an exhaustive match on
+`ClientErr` adds a `Tls(e)` arm (`http.ClientErr.Tls(e) => e.msg` keeps
+the old Protocol text).
+
 ## 2026-11-15: feature: `Url.to_url()` gives std/url's full `Url`
 
 - Kind: feature

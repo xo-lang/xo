@@ -10,7 +10,7 @@ fn main(os: Os) {
   for e in h {
     os.stdio.println("http ${e} | ${e.debug()}")
   }
-  let c: List[http.ClientErr] = [http.ClientErr.InvalidUrl(msg: "no scheme"), http.ClientErr.Connect(msg: "denied by Net.only: a.test:80"), http.ClientErr.Timeout, http.ClientErr.Protocol(msg: "bad status line"), http.ClientErr.Canceled]
+  let c: List[http.ClientErr] = [http.ClientErr.InvalidUrl(msg: "no scheme"), http.ClientErr.Connect(msg: "denied by Net.only: a.test:80"), http.ClientErr.Timeout, http.ClientErr.Protocol(msg: "bad status line"), http.ClientErr.Canceled, http.ClientErr.Tls(err: tls.TlsErr{msg: "Get \"https://a.test/\": tls: handshake failure"})]
   for e in c {
     os.stdio.println("client ${e} | ${e.debug()}")
   }

@@ -13,6 +13,7 @@ fn describe(e: http.ClientErr) -> Str {
     // the text after the URL (Go names the absolute URL, with its port)
     http.ClientErr.Protocol(msg) => "Protocol(${msg.split(": ").last() ?? msg})"
     http.ClientErr.Canceled => "Canceled"
+    http.ClientErr.Tls(err) => "Tls(${err.msg.split(": ").last() ?? err.msg})"
   }
 }
 
