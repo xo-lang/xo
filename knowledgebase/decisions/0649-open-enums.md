@@ -1,6 +1,6 @@
 # 0649: Open enums: a marker under which code outside the package must have a wildcard arm
 
-Status: Proposed (Lang 3, 2026-11-15, at the lead's request). Draft only: the owner approves before anything is built.
+Status: Accepted (owner, 2026-11-15, through the lead: in 0.52 with XO0306 at warning level, an error in the release after). Drafted by Lang 3 at the lead's request. Build order (seed rule): the parser and checker land first; the `open` keyword stays out of compiler/, std/native and the llrt files the seed imports until Lang 2 cuts a seed that parses it; enums in those files are marked open in a second step after that seed.
 
 ## Context
 
