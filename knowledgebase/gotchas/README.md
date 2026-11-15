@@ -1368,3 +1368,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [budget-stop-reentered.md](budget-stop-reentered.md): the memory budget's stop allocated through stdio.err's newline path and re-entered itself to a stack overflow (Observed)
 - [codegen-negative-pattern-matches-call-name.md](codegen-negative-pattern-matches-call-name.md): Observed 2026-11-14: amd64's -"crc32x" check matched a call to cpu.crc32x's software body (inlined crc_tail on the arm64 only path), not an instruction; negative patterns name the instruction (-"crc32[bwlq] %")
 - [region-mode-preempted.md](region-mode-preempted.md): a preempted task left decision 0633's region mode on another thread, so the release never ran under 0637's workers (Observed)
+- [lease-cancel-before-start-exit-zero.md](lease-cancel-before-start-exit-zero.md): Observed: a heavyd or heavy.sh lease cancelled before it started exited 0, so a `gate && push` chain pushed an ungated HEAD; now 130.
