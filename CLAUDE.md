@@ -188,6 +188,12 @@ reasons are in test-policy.md):
   an older bin/xo; rebuild after a rebase.
 - No rerun after a rebase unless the incoming commits change what the
   change touches or depends on, or a conflict changed code.
+- Every bug fix, however it was found (a failure on main, an agent's own
+  test, an audit, a profile), lands with a test that fails before the fix
+  and passes after it (owner, 2026-11-15). A speed regression gets a
+  guard instead: an instruction-count or time-budget test on the case
+  that regressed. Mark the xw task as a bug fix; xw flags a fix pushed
+  without a test file.
 - Golden tests: `want.txt` uses the exit/stdout/stderr layout
   (`xo dev new-golden`); run goldens through their tests (arm64
   `TestGoldenRun`, llvm `TestGolden`), and check the run matched tests
