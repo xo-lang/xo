@@ -1,5 +1,17 @@
 # std/png changes
 
+## 2026-11-15: fix: one byte past the image follows Go's flush points
+
+- Kind: fix
+- Commit: this push
+- Found by: the decision 0616 long fuzz of std/png (TestPngFuzz seed 190, case 2549, on linux/arm64 host 2), after the seed 29 fix
+- Go reference: compress/flate inflate.go's readFlush calls (an empty stored block, the final block's end, a full window) and Read, which returns a flush's last byte with the error only for the error's own flush (go1.26.1)
+- Before: one byte past the image always took the stream's error; a 30x6 paletted image whose IDAT inflates 187 of 186 bytes, then an empty stored block, then a cut, with a bad chunk checksum, gave "invalid checksum" where Go gives "too much pixel data"
+- Fix: go_clean_flush walks the deflate stream as Go reads it and gives the output count at its last clean flush; one byte past the image is too much pixel data when that flush already holds it, and the stream's error otherwise
+- Test: corpus png (scripts/stdcorpus png.go): the fuzz input as a fixed case after seed 29's; TestPngFuzz seeds 2 to 200 in the evidence rerun
+- Affected: png.decode of a stream that inflates exactly one byte past the image and then fails, on native backends
+- Shipped in: not yet released
+
 ## 2026-11-15: fix: one byte past the image and then a stream error gives the error, as Go does
 
 - Kind: fix
