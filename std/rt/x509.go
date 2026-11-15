@@ -1210,3 +1210,15 @@ func (o *X509_Oid) M_to_asn1_oid(_ *Task) Option[List[int64]] {
 	}
 	return Some(ListFromSlice(out))
 }
+
+func X509_parse_certificates(tk *Task, der Bytes) Result[List[X509_Certificate], X509_CertErr] {
+	cs, err := x509.ParseCertificates([]byte(der))
+	if err != nil {
+		return Err[List[X509_Certificate]](x509ErrOf(err))
+	}
+	out := []X509_Certificate{}
+	for _, c := range cs {
+		out = append(out, x509CertOf(tk, c))
+	}
+	return Ok[List[X509_Certificate], X509_CertErr](ListFromSlice(out))
+}

@@ -7570,6 +7570,7 @@ enum InvalidReason {
 }
 fn (e: CertErr) display() -> Str
 fn parse(der: Bytes) -> Certificate ! CertErr
+fn parse_certificates(der: Bytes) -> List[Certificate] ! CertErr   // Go's ParseCertificates: concatenated DERs
 fn parse_pem(pem: Bytes) -> List[Certificate] ! CertErr
 struct Pkcs12 { key: crypto.PrivateKey, certificate: Certificate, ca: List[Certificate] }
 fn parse_pkcs12(data: Bytes, password: Str) -> Pkcs12 ! CertErr

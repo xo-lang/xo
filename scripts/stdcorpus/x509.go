@@ -529,6 +529,60 @@ func x509Corpus() string {
 	}
 	o.WriteString("]\n")
 
+	// ParseCertificates: concatenations of the parse rows (one, two,
+	// three, with a bad or cut or padded one among them, and empty)
+	o.WriteString("\n/// (parts: PARSE_ROWS indexes, -1 a cut copy of the one before, -2 a zero byte; Go's ParseCertificates: each subject or the error and its type)\nconst CONCAT_ROWS: List[(List[Int], Str)] = [\n")
+	cr := rand.New(rand.NewSource(15))
+	concatOf := func(parts []int) []byte {
+		var b []byte
+		for k, i := range parts {
+			switch i {
+			case -1:
+				prev := rows[parts[k-1]].der
+				b = append(b, prev[:len(prev)/2]...)
+			case -2:
+				b = append(b, 0)
+			default:
+				b = append(b, rows[i].der...)
+			}
+		}
+		return b
+	}
+	cases := [][]int{{}, {0}, {0, 1}, {-2}, {0, -2}, {0, 0, -1}}
+	for k := 0; k < 120; k++ {
+		n := 1 + cr.Intn(3)
+		var parts []int
+		for j := 0; j < n; j++ {
+			parts = append(parts, cr.Intn(len(rows)))
+		}
+		switch cr.Intn(5) {
+		case 0:
+			parts = append(parts, parts[len(parts)-1], -1)
+		case 1:
+			parts = append(parts, -2)
+		}
+		cases = append(cases, parts)
+	}
+	for _, parts := range cases {
+		want := ""
+		cs, err := x509.ParseCertificates(concatOf(parts))
+		if err != nil {
+			want = "error: " + err.Error() + x509KindOf(err)
+		} else {
+			var subs []string
+			for _, c := range cs {
+				subs = append(subs, c.Subject.String()+" "+hex.EncodeToString(c.SerialNumber.Bytes()))
+			}
+			want = fmt.Sprintf("ok %d: %s", len(cs), strings.Join(subs, " | "))
+		}
+		var q []string
+		for _, i := range parts {
+			q = append(q, fmt.Sprint(i))
+		}
+		fmt.Fprintf(&o, "  ([%s], %s),\n", strings.Join(q, ", "), xq(want))
+	}
+	o.WriteString("]\n")
+
 	// CheckSignatureFrom: each parseable certificate against the ones whose
 	// subject is its issuer, and against a few others
 	o.WriteString("\n/// (child index in PARSE_ROWS, parent index, Go's CheckSignatureFrom: ok or the error and its type)\nconst SIG_ROWS: List[(Int, Int, Str)] = [\n")
@@ -755,6 +809,34 @@ fn reason_text(r: x509.InvalidReason) -> Str {
     CaNotAuthorizedForExtKeyUsage => "CaNotAuthorizedForExtKeyUsage"
     NoValidChains => "NoValidChains"
   }
+}
+
+test "parse_certificates reads concatenated DERs as Go's ParseCertificates" {
+  var bad: List[Str] = []
+  for (parts, want) in CONCAT_ROWS {
+    var b = BytesBuilder.new()
+    var k = 0
+    while k < parts.len() {
+      let i = parts[k]
+      if i == -1 {
+        let prev = PARSE_ROWS[parts[k - 1]].0
+        b.write(prev[0..(prev.len() / 2)])
+      } else if i == -2 {
+        b.write_byte(0)
+      } else {
+        b.write(PARSE_ROWS[i].0)
+      }
+      k += 1
+    }
+    let got = match x509.parse_certificates(b.freeze()) {
+      Ok(cs) => "ok ${cs.len()}: ${cs.map(fn(c) { "${c.subject.display()} ${c.serial.to_hex()}" }).join(" | ")}"
+      Err(e) => "error: ${e.display()}${kind_text(e.kind)}"
+    }
+    if got != want {
+      bad.push("${parts}:\n  got  ${got}\n  want ${want}")
+    }
+  }
+  expect(shown(bad)) == []
 }
 
 test "check_signature_from answers as Go's CheckSignatureFrom: ok or the error and its type" {

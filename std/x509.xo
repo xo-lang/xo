@@ -228,6 +228,11 @@ fn (e: CertErr) display() -> Str
 
 /// The certificate of a DER (Go's ParseCertificate).
 fn parse(der: Bytes) -> Certificate ! CertErr
+
+/// Go's ParseCertificates: the certificates of DERs concatenated with
+/// nothing between them; empty for empty der. The first that does not
+/// parse is the Err, with Go's text.
+fn parse_certificates(der: Bytes) -> List[Certificate] ! CertErr
 /// What a PKCS #12 file holds (std.md 18.x, golang.org/x/crypto/pkcs12).
 struct Pkcs12 {
   key: crypto.PrivateKey

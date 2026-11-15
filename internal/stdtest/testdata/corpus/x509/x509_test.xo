@@ -924,6 +924,136 @@ const HOST_ROWS: List[(Int, Str, Str)] = [
   (61, "P1 Mapping 1to234 CA", "x509: certificate relies on legacy Common Name field, use SANs instead {Hostname P1 Mapping 1to234 CA}"),
 ]
 
+/// (parts: PARSE_ROWS indexes, -1 a cut copy of the one before, -2 a zero byte; Go's ParseCertificates: each subject or the error and its type)
+const CONCAT_ROWS: List[(List[Int], Str)] = [
+  ([], "ok 0: "),
+  ([0], "ok 1: CN=Policy Intermediate 02"),
+  ([0, 1], "ok 2: CN=Policy Intermediate 02 | CN=Policy Intermediate 02"),
+  ([-2], "error: x509: malformed certificate {Other}"),
+  ([0, -2], "error: x509: malformed certificate {Other}"),
+  ([0, 0, -1], "error: x509: malformed certificate {Other}"),
+  ([76], "ok 1: CN=Valid Policy Mapping EE Certificate Test3,O=Test Certificates 2011,C=US 01"),
+  ([81, 175, 91], "error: x509: invalid CRL distribution point {Other}"),
+  ([37, 144], "ok 2: CN=Invalid DNS nameConstraints EE Certificate Test33,O=Test Certificates 2011,C=US 02 | CN=foo.example.com,O=Golang fa3df66a8926ba49"),
+  ([135, 187, 244, 244, -1], "error: x509: malformed serial number {Other}"),
+  ([100, -2], "error: x509: malformed certificate {Other}"),
+  ([147, 217, 68], "error: x509: malformed tbs certificate {Other}"),
+  ([193, 68], "error: x509: malformed tbs certificate {Other}"),
+  ([47, 61], "ok 2: CN=Invalid URI nameConstraints EE Certificate Test35,O=Test Certificates 2011,C=US 02 | CN=P1 Mapping 1to234 CA,O=Test Certificates 2011,C=US 32"),
+  ([5, 147, 7], "error: x509: malformed tbs certificate {Other}"),
+  ([26, 26, -1], "error: x509: malformed certificate {Other}"),
+  ([5, 180, 58], "error: P256 point not on curve {Other}"),
+  ([80, 173], "ok 2: CN=Valid UTF8String Case Insensitive Match EE Certificate Test11,O=Test Certificates 2011,C=US 01 | CN=Policy Intermediate 02"),
+  ([274, 110], "ok 2: CN=nameConstraints DN1 subCA1,OU=permittedSubtree1,O=Test Certificates 2011,C=US 05 | CN=Intermediate,O=Org bda470664aa7356a"),
+  ([90, 136], "ok 2: CN=inhibitAnyPolicy0 CA,O=Test Certificates 2011,C=US 3b | CN=test,O=ca "),
+  ([192, 171, 47], "error: x509: invalid extended key usages {Other}"),
+  ([186, 47, 16, -2], "error: x509: invalid RDNSequence {Other}"),
+  ([72, 193, 124], "error: x509: malformed certificate {Other}"),
+  ([52], "ok 1: CN=Invalid inhibitAnyPolicy EE Certificate Test1,O=Test Certificates 2011,C=US 01"),
+  ([130], "ok 1: CN=Root A "),
+  ([29, 32], "ok 2: CN=All Certificates No Policies EE Certificate Test2,O=Test Certificates 2011,C=US 01 | CN=Basic Self-Issued Old Key CA,O=Test Certificates 2011,C=US 01"),
+  ([53, 62], "ok 2: CN=Invalid inhibitPolicyMapping EE Certificate Test3,O=Test Certificates 2011,C=US 01 | CN=Policies P1234 subCAP123,O=Test Certificates 2011,C=US 01"),
+  ([277, -2], "error: x509: malformed certificate {Other}"),
+  ([87], "ok 1: CN=basicConstraints Not Critical cA False CA,O=Test Certificates 2011,C=US 18"),
+  ([133, 73], "ok 2: O=Acme Co ad125915668baef1537cf4824818f8f9 | CN=Valid IDP with indirectCRL EE Certificate Test24,O=Test Certificates 2011,C=US 01"),
+  ([239, 224], "error: x509: malformed algorithm identifier {Other}"),
+  ([35, 35, -1], "error: x509: malformed certificate {Other}"),
+  ([104], "ok 1: CN=pathLenConstraint6 subsubCA00,O=Test Certificates 2011,C=US 01"),
+  ([54, 95, 82], "ok 3: CN=Invalid keyUsage Not Critical cRLSign False EE Certificate Test5,O=Test Certificates 2011,C=US 01 | CN=inhibitPolicyMapping5 subCA,O=Test Certificates 2011,C=US 01 | CN=Valid deltaCRL EE Certificate Test7,O=Test Certificates 2011,C=US 06"),
+  ([276, 205, -2], "error: x509: invalid authority key identifier {Other}"),
+  ([147, 169, 45], "error: x509: malformed tbs certificate {Other}"),
+  ([173, 147], "error: x509: malformed certificate {Other}"),
+  ([68], "ok 1: CN=User Notice Qualifier EE Certificate Test17,O=Test Certificates 2011,C=US 14"),
+  ([52, 264, 123, 123, -1], "error: x509: malformed certificate {Other}"),
+  ([223, 243, -2], "error: x509: invalid RDNSequence {Other}"),
+  ([188, 28, 69], "ok 3: CN=Policy Intermediate 02 | O=Acme Co 2118bacde3cbea62a33a2a67f9d36e69 | CN=Valid Basic Self-Issued New With Old EE Certificate Test4,O=Test Certificates 2011,C=US 03"),
+  ([37, 256, 97], "error: x509: invalid RDNSequence: invalid attribute type {Other}"),
+  ([229, 164, -2], "error: x509: malformed issuer {Other}"),
+  ([279, 37], "ok 2: CN=nameConstraints DN1 subCA1,OU=permittedSubtree1,O=Test Certificates 2011,C=US 05 | CN=Invalid DNS nameConstraints EE Certificate Test33,O=Test Certificates 2011,C=US 02"),
+  ([167, 166, 69], "error: P256 point not on curve {Other}"),
+  ([154, 180, 239], "error: P256 point not on curve {Other}"),
+  ([200, 59], "error: x509: invalid RDNSequence: invalid attribute {Other}"),
+  ([71, 65], "ok 2: CN=Valid DN nameConstraints EE Certificate Test1,OU=permittedSubtree1,O=Test Certificates 2011,C=US 01 | CN=Revoked subCA,O=Test Certificates 2011,C=US 0e"),
+  ([114, 114], "ok 2: CN=Root,O=Org 9fa623ff39717029 | CN=Root,O=Org 9fa623ff39717029"),
+  ([54, -2], "error: x509: malformed certificate {Other}"),
+  ([139, 19, 251], "ok 3: CN=Izenpe.com,O=IZENPE S.A.,C=ES b0b75a16485fbfe1cbf58bd719e67d | CN=www.example.com 03 | CN=nameConstraints DN1 subCA1,OU=permittedSubtree1,O=Test Certificates 2011,C=US 05"),
+  ([228, 228, -1], "error: x509: malformed certificate {Other}"),
+  ([57, 255, -2], "error: x509: malformed certificate {Other}"),
+  ([51, 197, 240, 240, -1], "error: x509: malformed certificate {Other}"),
+  ([228], "ok 1: CN=Invalid Unknown Critical Certificate Extension EE Cert Test2,O=Test Certificates 2011,C=US 5f"),
+  ([42], "ok 1: CN=Invalid Missing CRL EE Certificate Test1,O=Test Certificates 2011,C=US 01"),
+  ([188, 0, 0, -1], "error: x509: malformed certificate {Other}"),
+  ([98, 245, 81, 81, -1], "error: x509: invalid CRL distribution point {Other}"),
+  ([238, 125, 236], "error: x509: malformed version {Other}"),
+  ([50, 234, -2], "error: x509: invalid RDNSequence: invalid attribute value: invalid PrintableString {Other}"),
+  ([194], "error: x509: malformed certificate {Other}"),
+  ([180, 149], "error: P256 point not on curve {Other}"),
+  ([268, 268, -1], "error: x509: malformed certificate {Other}"),
+  ([196, 250], "error: x509: malformed certificate {Other}"),
+  ([258, 258, -1], "error: x509: invalid RDNSequence: invalid attribute {Other}"),
+  ([16, 39, 39, -1], "error: x509: malformed certificate {Other}"),
+  ([142, 73], "ok 2: CN=foo.example.com 07babcb7d9ab0c02fe501d4e15a30de4111614a4 | CN=Valid IDP with indirectCRL EE Certificate Test24,O=Test Certificates 2011,C=US 01"),
+  ([68, 225, 222], "error: x509: malformed UTCTime {Other}"),
+  ([34, 104, 37, 37, -1], "error: x509: malformed certificate {Other}"),
+  ([165, 277, 186, -2], "error: P256 point not on curve {Other}"),
+  ([47, 187, -2], "error: x509: malformed certificate {Other}"),
+  ([19, -2], "error: x509: malformed certificate {Other}"),
+  ([65], "ok 1: CN=Revoked subCA,O=Test Certificates 2011,C=US 0e"),
+  ([86], "ok 1: CN=Valid requireExplicitPolicy EE Certificate Test4,O=Test Certificates 2011,C=US 01"),
+  ([106, 106, -1], "error: x509: malformed certificate {Other}"),
+  ([201, 169], "error: x509: invalid certificate policies {Other}"),
+  ([100], "ok 1: CN=nameConstraints URI2 CA,O=Test Certificates 2011,C=US 49"),
+  ([88, 175], "ok 2: OU=distributionPoint1 CA,O=Test Certificates 2011,C=US 4a | CN=Policy Intermediate 02"),
+  ([261], "ok 1: CN=nameConstraints DN1 subCA1,OU=permittedSubtree1,O=Test Certificates 2011,C=US 05"),
+  ([113, 113, -1], "error: x509: malformed certificate {Other}"),
+  ([176, 228], "ok 2: CN=Policy Intermediate 02 | CN=Invalid Unknown Critical Certificate Extension EE Cert Test2,O=Test Certificates 2011,C=US 5f"),
+  ([158, 269, 164, 164, -1], "error: x509: inner and outer signature algorithm identifiers don't match {Other}"),
+  ([250, 108, 266], "ok 3: CN=nameConstraints DN1 subCA1,OU=permittedSubtree1,O=Test Certificates 2011,C=US 05 | CN=requireExplicitPolicy4 subsubCA,O=Test Certificates 2011,C=US 01 | CN=nameConstraints DN1 subCA1,OU=permittedSubtree1,O=Test Certificates 2011,2.5.4.38=#13025553 05"),
+  ([224, 221, 209, -2], "error: x509: malformed certificate {Other}"),
+  ([47, 188, 237, 237, -1], "error: x509: malformed certificate {Other}"),
+  ([212], "ok 1: CN=Invalid Unknown Critical Certificate Extension EE Cert Test2,O=Test Certificates 2011,C=US 5f"),
+  ([172, 216, 216, -1], "error: x509: unsupported elliptic curve {Other}"),
+  ([152], "error: x509: malformed certificate {Other}"),
+  ([258, 141, 108], "error: x509: invalid RDNSequence: invalid attribute {Other}"),
+  ([120, 19, 9], "ok 3: CN=www.google.com 111991593cd5a33d1231ea33c3644cdc | CN=www.example.com 03 | CN=Policy Intermediate 02"),
+  ([50, 6, 192, 192, -1], "error: x509: malformed certificate {Other}"),
+  ([88, 178], "error: x509: malformed extension OID field {Other}"),
+  ([88], "ok 1: OU=distributionPoint1 CA,O=Test Certificates 2011,C=US 4a"),
+  ([258, 258, -1], "error: x509: invalid RDNSequence: invalid attribute {Other}"),
+  ([184, 230], "error: x509: malformed signature {Other}"),
+  ([2, 34], "error: x509: invalid certificate policies {Other}"),
+  ([145, 90], "ok 2: CN=Root CA,O=Golang 023e42c281e55ae6 | CN=inhibitAnyPolicy0 CA,O=Test Certificates 2011,C=US 3b"),
+  ([278, 173, 173, -1], "error: x509: malformed certificate {Other}"),
+  ([52, 134, 51], "ok 3: CN=Invalid inhibitAnyPolicy EE Certificate Test1,O=Test Certificates 2011,C=US 01 |   | CN=Invalid distributionPoint EE Certificate Test2,O=Test Certificates 2011,C=US 02"),
+  ([33, -2], "error: x509: malformed certificate {Other}"),
+  ([175], "ok 1: CN=Policy Intermediate 02"),
+  ([116, 210, 210, -1], "error: x509: malformed certificate {Other}"),
+  ([165, 165, -1], "error: P256 point not on curve {Other}"),
+  ([94, 115], "ok 2: CN=inhibitPolicyMapping1 P1 CA,O=Test Certificates 2011,C=US 01 | CN=DigiCert Global Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US 083be056904246b1a1756ac95991c74a"),
+  ([212, 193], "error: x509: malformed certificate {Other}"),
+  ([60, 14, 50], "error: x509: invalid certificate policies {Other}"),
+  ([177, 233], "error: x509: invalid key usage {Other}"),
+  ([69], "ok 1: CN=Valid Basic Self-Issued New With Old EE Certificate Test4,O=Test Certificates 2011,C=US 03"),
+  ([65, 59], "ok 2: CN=Revoked subCA,O=Test Certificates 2011,C=US 0e | CN=Name Ordering CA,OU=Organizational Unit Name 1+OU=Organizational Unit Name 2,O=Test Certificates 2011,C=US 06"),
+  ([177, 143, 29, -2], "error: x509: invalid key usage {Other}"),
+  ([73, 135, -2], "error: x509: malformed certificate {Other}"),
+  ([230], "error: x509: malformed tbs certificate {Other}"),
+  ([264], "ok 1: CN=nameConstraints DN1 subCA1,OU=permittedSubtree1,O=Test Certificates 2011,C=US 05"),
+  ([195], "error: x509: malformed certificate {Other}"),
+  ([152, 24, 181], "error: x509: malformed certificate {Other}"),
+  ([119, 230, 35], "error: x509: malformed tbs certificate {Other}"),
+  ([5, 234, -2], "error: x509: invalid RDNSequence: invalid attribute value: invalid PrintableString {Other}"),
+  ([153], "error: P256 point not on curve {Other}"),
+  ([29, 227, -2], "error: x509: malformed certificate {Other}"),
+  ([170, 45, 162], "error: x509: invalid RDNSequence: invalid attribute type {Other}"),
+  ([158, 14, 14, -1], "error: x509: inner and outer signature algorithm identifiers don't match {Other}"),
+  ([239, 29], "error: x509: malformed algorithm identifier {Other}"),
+  ([131, 5, 140], "ok 3: CN=Root B  | CN=Policy Intermediate 02 | CN=*.tm.cn,OU=知识产权部,O=厦门叁玖叁科技有限公司,L=厦门市,ST=福建省,C=CN 04e8e89997c77e1833d9b558655b9fd8"),
+  ([189, 178, -2], "error: x509: malformed extension OID field {Other}"),
+  ([9, -2], "error: x509: malformed certificate {Other}"),
+  ([240], "error: x509: malformed certificate {Other}"),
+]
+
 /// (child index in PARSE_ROWS, parent index, Go's CheckSignatureFrom: ok or the error and its type)
 const SIG_ROWS: List[(Int, Int, Str)] = [
   (0, 0, "x509: ECDSA verification failure {Other}"),
@@ -1719,6 +1849,34 @@ fn reason_text(r: x509.InvalidReason) -> Str {
     CaNotAuthorizedForExtKeyUsage => "CaNotAuthorizedForExtKeyUsage"
     NoValidChains => "NoValidChains"
   }
+}
+
+test "parse_certificates reads concatenated DERs as Go's ParseCertificates" {
+  var bad: List[Str] = []
+  for (parts, want) in CONCAT_ROWS {
+    var b = BytesBuilder.new()
+    var k = 0
+    while k < parts.len() {
+      let i = parts[k]
+      if i == -1 {
+        let prev = PARSE_ROWS[parts[k - 1]].0
+        b.write(prev[0..(prev.len() / 2)])
+      } else if i == -2 {
+        b.write_byte(0)
+      } else {
+        b.write(PARSE_ROWS[i].0)
+      }
+      k += 1
+    }
+    let got = match x509.parse_certificates(b.freeze()) {
+      Ok(cs) => "ok ${cs.len()}: ${cs.map(fn(c) { "${c.subject.display()} ${c.serial.to_hex()}" }).join(" | ")}"
+      Err(e) => "error: ${e.display()}${kind_text(e.kind)}"
+    }
+    if got != want {
+      bad.push("${parts}:\n  got  ${got}\n  want ${want}")
+    }
+  }
+  expect(shown(bad)) == []
 }
 
 test "check_signature_from answers as Go's CheckSignatureFrom: ok or the error and its type" {

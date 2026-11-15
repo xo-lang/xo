@@ -17,6 +17,7 @@ var (
 	_ func(*X509_Oid, *Task) Option[List[int64]]                                                                                             = (*X509_Oid).M_to_asn1_oid
 	_ func(*X509_CertErr, *Task) string                                                                                                      = (*X509_CertErr).M_display
 	_ func(*Task, Bytes) Result[X509_Certificate, X509_CertErr]                                                                              = X509_parse
+	_ func(*Task, Bytes) Result[List[X509_Certificate], X509_CertErr]                                                                        = X509_parse_certificates
 	_ func(*Task, Bytes, string) Result[X509_Pkcs12, X509_CertErr]                                                                           = X509_parse_pkcs12
 	_ func(*Task, Bytes) Result[List[X509_Certificate], X509_CertErr]                                                                        = X509_parse_pem
 	_ func(*Task, List[X509_Certificate]) Result[X509_CertPool, X509_CertErr]                                                                = X509_cert_pool

@@ -383,6 +383,21 @@ fn parse(der: Bytes) -> x509.Certificate ! x509.CertErr {
   Ok(cert_of(p.cert))
 }
 
+/// Go's ParseCertificates: parseCertificate reads one SEQUENCE element
+/// and parses it, so each certificate is the next element parsed alone.
+fn parse_certificates(der: Bytes) -> List[x509.Certificate] ! x509.CertErr {
+  var out: List[x509.Certificate] = []
+  var rest = cbyte.of(der)
+  while !cbyte.empty(rest) {
+    let el = match cbyte.read_element(rest, cbyte.SEQUENCE) {
+      Some(x) => x
+      None => return Err(err("x509: malformed certificate"))
+    }
+    out.push(parse(cbyte.bytes(el))?)
+  }
+  Ok(out)
+}
+
 fn parse_pem(pem: Bytes) -> List[x509.Certificate] ! x509.CertErr {
   var out: List[x509.Certificate] = []
   for der in tlscert.pem_certs(pem) {
