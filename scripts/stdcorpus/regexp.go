@@ -165,7 +165,8 @@ fn result(re: regexp.Regex, s: Str) -> Str {
 
 /// The patterns of CASES from k of PARTS in turn: each a test of its own,
 /// so a loaded host stays under xo test's 60 s per test (host 3 took 81 s
-/// for the whole corpus in one test, 2026-11-11).
+/// for the whole corpus in one test, 2026-11-11; host 4, 8 CPUs, ran two
+/// of 4 parts past 60 s on the Go backend, 2026-11-15: now 8).
 fn bad_in(k: Int) -> List[(Str, Str, Str, Str)] {
   var bad: List[(Str, Str, Str, Str)] = []
   for (j, (pat, ok, want)) in CASES.indexed() {
@@ -195,25 +196,45 @@ fn bad_in(k: Int) -> List[(Str, Str, Str, Str)] {
   bad
 }
 
-const PARTS: Int = 4
+const PARTS: Int = 8
 
-test "regexp is Go's on the corpus, part 1 of 4" {
+test "regexp is Go's on the corpus, part 1 of 8" {
   let bad = bad_in(0)
   expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
 }
 
-test "regexp is Go's on the corpus, part 2 of 4" {
+test "regexp is Go's on the corpus, part 2 of 8" {
   let bad = bad_in(1)
   expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
 }
 
-test "regexp is Go's on the corpus, part 3 of 4" {
+test "regexp is Go's on the corpus, part 3 of 8" {
   let bad = bad_in(2)
   expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
 }
 
-test "regexp is Go's on the corpus, part 4 of 4" {
+test "regexp is Go's on the corpus, part 4 of 8" {
   let bad = bad_in(3)
+  expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
+}
+
+test "regexp is Go's on the corpus, part 5 of 8" {
+  let bad = bad_in(4)
+  expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
+}
+
+test "regexp is Go's on the corpus, part 6 of 8" {
+  let bad = bad_in(5)
+  expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
+}
+
+test "regexp is Go's on the corpus, part 7 of 8" {
+  let bad = bad_in(6)
+  expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
+}
+
+test "regexp is Go's on the corpus, part 8 of 8" {
+  let bad = bad_in(7)
   expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
 }
 

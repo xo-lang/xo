@@ -704,6 +704,21 @@ does not answer `xo version` in 30 s. The first gate with it chose 0.51.1
 over 0.50.1 on host 2 (xobuild 93 s).
 Last verified: 2026-11-15
 
+## Host parity (lead, 2026-11-15)
+
+scripts/lead/host-toolchain.txt names what every linux/arm64 offload host
+must have: `go` (go1.26.11), `clang` (23.1.3, /opt/llvm), `node` (v20.19.2)
+and a `seed` under /work/seed (0.51.1-e391d9a4). offload-gate-remote.sh
+checks it after the checkout, before the seed choice and the build, and
+refuses a gate on a host that differs: exit 2 with `HOST-PARITY:` and every
+difference (`go: go1.26.1 (want go1.26.11)`); `OFFGATE_PARITY=0` gates
+anyway. An upgrade is made on every host and in that file in one change.
+Host 4 got go1.26.11 on 2026-11-15 the way host 3 has it (/usr/local/go,
+the image's tree kept as /usr/local/go.go1.26.1;
+[gotcha](../gotchas/host-setup-copy-misses-upgrades.md)).
+Last verified: 2026-11-15 (hosts 3 and 4 pass; host 4 with go1.26.1 first
+on PATH is refused)
+
 ## The Windows arm64 VM (owner, 2026-11-09)
 
 Windows 11 Pro ARM (26100) in VMware Fusion 26H1 (free personal use) on

@@ -8,4 +8,5 @@ Status: Observed (2026-11-11, Xo Lang 3; diagnosed by Xo Lang 2)
   corpus was one test. Under host 3's load it ran past the limit: "the test did not finish within 1m0s of real time".
 - Fix: the generator splits the corpus into parts (scripts/stdcorpus/regexp.go `PARTS`), one test each. A corpus test
   that takes more than about 15 s on the Mac gets the same split. Do not raise `--timeout` for all corpora: that hides
-  hangs. A failed step's whole log is now kept as ~/xo-lead/agents/offgate-NAME-STEP.log.gz (bec4d3b06).
+  hangs. Host 4 (8 CPUs, 2026-11-15) ran two of the 4 parts past 60 s on the Go backend in a memory gate:
+  now 8 parts (PARTS in scripts/stdcorpus/regexp.go and the corpus). A failed step's whole log is now kept as ~/xo-lead/agents/offgate-NAME-STEP.log.gz (bec4d3b06).
