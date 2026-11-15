@@ -1384,3 +1384,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [riscv64-host-tools.md](riscv64-host-tools.md): host 2 clang.cfg forces -mcpu=generic (riscv64 rejects it: --no-default-config); trixie qemu-user-static is transitional (use qemu-user)
 - [wasm-intrinsic-int-result-i64.md](wasm-intrinsic-int-result-i64.md): a wasm rt intrinsic declared `-> Int` returning i32 fails validation on wasip2 only; wasmtime shows why.
 - [darwin-resolver-aaaa-only.md](darwin-resolver-aaaa-only.md): Observed 2026-11-15: the Mac's getaddrinfo returned only AAAA for vuln.xolang.org with no IPv6 route, so xo vuln (XO1323) and curl failed; xo already races both families (dial_race), the A records were missing; check with dscacheutil vs dig
+- [nethttp-pool-leftover-race.md](nethttp-pool-leftover-race.md): Observed 2026-11-14: TestHTTP1ClientDiff Go backend read a 204's extra bytes as the next response on a pooled connection; fresh-process replay of differing Go lines

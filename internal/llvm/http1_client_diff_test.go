@@ -21,16 +21,17 @@ import (
 )
 
 // http1ClientProgram sends a request for /r/<i> (HEAD when i is a
-// multiple of 4) to the server at $ADDR for i below $N with std/http's
-// client and prints what it got: the status, the header sorted, the
-// body in hex, or the error's kind and text.
+// multiple of 4) to the server at $ADDR for i from $START (0 when unset)
+// below $N with std/http's client and prints what it got: the status,
+// the header sorted, the body in hex, or the error's kind and text.
 const http1ClientProgram = `use std/http
 
 fn main(os: Os) {
   let addr = os.env.get("ADDR") ?? ""
   let n = Int.parse(os.env.get("N") ?? "0") ?? 0
+  let start = Int.parse(os.env.get("START") ?? "0") ?? 0
   let c = http.client(os.net, timeout: 20s)
-  for i in 0..n {
+  for i in start..n {
     let m = if i % 4 == 0 { "HEAD" } else { "GET" }
     match c.send(http.new_request(m, "http://${addr}/r/${i}")) {
       Ok(r) => {
@@ -266,6 +267,7 @@ func TestHTTP1ClientDiff(t *testing.T) {
 		backends = append(backends, xotool.BackendArm64)
 	}
 	outs := map[string][]string{}
+	bins := map[string]string{}
 	for _, be := range backends {
 		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be})
 		if err != nil {
@@ -274,15 +276,8 @@ func TestHTTP1ClientDiff(t *testing.T) {
 		if res.Failed {
 			t.Fatalf("build (%s) failed: %v", be, res.Output)
 		}
-		cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
-		cmd.Env = append(os.Environ(), "ADDR="+addr, "N="+strconv.Itoa(len(inputs)))
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("%s: %v\n%s", be, err, stderr.String())
-		}
-		outs[be] = strings.Split(strings.TrimSuffix(strings.ReplaceAll(string(out), addr, "ADDR"), "\n"), "\n")
+		bins[be] = res.Binaries[xotool.Host()]
+		outs[be] = runHTTP1Client(t, be, bins[be], addr, 0, len(inputs))
 	}
 	if *updateGolden {
 		if err := os.WriteFile(http1ClientGolden, []byte(strings.Join(outs[xotool.BackendGo], "\n")+"\n"), 0o644); err != nil {
@@ -294,6 +289,7 @@ func TestHTTP1ClientDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	retryHTTP1GoReuse(t, outs[xotool.BackendGo], want, bins[xotool.BackendGo], addr)
 	bad := 0
 	for _, be := range backends {
 		got := outs[be]
@@ -328,6 +324,47 @@ func TestHTTP1ClientDiff(t *testing.T) {
 		t.Errorf("%d answers differ", bad)
 	}
 	t.Logf("%d responses, backends %v", len(inputs), backends)
+}
+
+// runHTTP1Client runs the client program bin for responses start to n
+// at addr and gives its lines, the address written ADDR.
+func runHTTP1Client(t *testing.T, be, bin, addr string, start, n int) []string {
+	t.Helper()
+	cmd := testtmp.Guard(exec.Command(bin))
+	cmd.Env = append(os.Environ(), "ADDR="+addr, "START="+strconv.Itoa(start), "N="+strconv.Itoa(n))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("%s: %v\n%s", be, err, stderr.String())
+	}
+	return strings.Split(strings.TrimSuffix(strings.ReplaceAll(string(out), addr, "ADDR"), "\n"), "\n")
+}
+
+// retryHTTP1GoReuse replays, each in a fresh process, the Go backend's
+// answers that differ from want, up to three times, and keeps an answer
+// that then matches. The golden is each response's answer on a fresh
+// connection, and net/http's pool races it: a response that leaves
+// bytes past its body (response 437, a 204 with 43 bytes) goes back to
+// the idle pool, and when the next request takes the connection before
+// the pool's idle read sees the bytes, net/http reads them as that
+// request's response (gate deadw-(private commit), response 438, 2026-11-14).
+// The native backends get no replay: a reuse bug of theirs shows.
+func retryHTTP1GoReuse(t *testing.T, got, want []string, bin, addr string) {
+	t.Helper()
+	for i := range want {
+		if i >= len(got) || got[i] == want[i] {
+			continue
+		}
+		for try := 1; try <= 3; try++ {
+			again := runHTTP1Client(t, xotool.BackendGo, bin, addr, i, i+1)
+			if len(again) == 1 && again[0] == want[i] {
+				t.Logf("go: response %d matched on a fresh connection (try %d); the pooled run gave %q", i, try, got[i])
+				got[i] = want[i]
+				break
+			}
+		}
+	}
 }
 
 // TestHTTPClientRedirectNotUTF8: a redirect whose Location host is not
@@ -376,4 +413,75 @@ func TestHTTPClientRedirectNotUTF8(t *testing.T) {
 			t.Logf("%s", out.String())
 		})
 	}
+}
+
+// TestHTTP1ClientGoReuseReplay holds retryHTTP1GoReuse to the race it
+// covers: a server that sends a 204's 43 extra bytes 20ms after its head
+// makes net/http read them as the next request's response on the pooled
+// connection (every time on an idle Mac, 2026-11-15), and the replay in a
+// fresh process gives the fresh connection's answer.
+func TestHTTP1ClientGoReuseReplay(t *testing.T) {
+	xotool.NeedPorts(t)
+	if testing.Short() {
+		t.Skip("builds an HTTP client")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(http1ClientProgram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				br := bufio.NewReader(c)
+				line, err := br.ReadString('\n')
+				if err != nil {
+					return
+				}
+				for {
+					h, err := br.ReadString('\n')
+					if err != nil || h == "\r\n" {
+						break
+					}
+				}
+				if strings.Contains(line, "/r/1 ") {
+					io.WriteString(c, "HTTP/1.1 204 No Content\r\n\r\n")
+					time.Sleep(20 * time.Millisecond)
+					io.WriteString(c, strings.Repeat("y", 43))
+					return
+				}
+				io.WriteString(c, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+			}()
+		}
+	}()
+	addr := l.Addr().String()
+	res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendGo})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res.Output)
+	}
+	bin := res.Binaries[xotool.Host()]
+	want := []string{"1 204 [] 0 ", "2 200 [Content-Length: 2] 2 6f6b"}
+	got := runHTTP1Client(t, xotool.BackendGo, bin, addr, 1, 3)
+	if len(got) != 2 || got[0] != want[0] {
+		t.Fatalf("pooled run: %q", got)
+	}
+	if got[1] == want[1] {
+		t.Skip("net/http saw the extra bytes before the next request; the race did not happen")
+	}
+	pooled := got[1]
+	all := append([]string{""}, got...)
+	retryHTTP1GoReuse(t, all, append([]string{""}, want...), bin, addr)
+	if all[2] != want[1] {
+		t.Fatalf("replay kept %q (pooled %q), want %q", all[2], pooled, want[1])
+	}
+	t.Logf("pooled run gave %q; the replay gave the fresh answer", pooled)
 }
