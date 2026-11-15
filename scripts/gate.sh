@@ -724,7 +724,12 @@ llvm_step() {
       pre_pid=""
       sk=$(gate_skip internal/llvm)
       [ -s "$logs/internal-llvm-areas.txt" ] && echo "llvm areas: $(cat "$logs/internal-llvm-areas.txt")"
-      if [ "${XO_GATE_LLVM_OVERLAP:-1}" != 0 ]; then
+      # XO_GATE_IR_FIRST=1 (ir_first_wait): the selection runs alone, not
+      # niced, and the package's other tests run after it
+      if [ "${XO_GATE_IR_FIRST:-0}" = 1 ]; then
+        export XO_GATE_IR_NICE=0
+      fi
+      if [ "${XO_GATE_LLVM_OVERLAP:-1}" != 0 ] && [ "${XO_GATE_IR_FIRST:-0}" != 1 ]; then
         presk="^($sel_tests)\$"
         [ -n "$sk" ] && presk="^($sel_tests|${sk#^(}"
         ( failed=0; full llvmpre ./internal/llvm -skip "$presk"; echo "$failed" >"$logs/llvmpre.failed" ) >"$logs/llvmpre.out" 2>&1 &
@@ -877,10 +882,29 @@ arm64_goldens() {
   done
   if [ -s "$logs/golden-sel.txt" ]; then cat "$logs/golden-sel.txt"; else echo all; fi
 }
+# ir_first_wait STEP: with XO_GATE_IR_FIRST=1 in a concurrent gate that
+# runs llvm, every other step but repo starts once the llvm step's golden
+# selection is made, so HEAD's IR builds have the host to themselves at
+# normal priority (lead, 2026-11-15: 1,253 s niced beside arm64 and cmd
+# on host 1, 288 s alone; bench/results/gate-time-2026-11-14.md). The
+# wait is not counted in the step's time; times.tsv records it.
+ir_first_wait() {
+  [ "${XO_GATE_IR_FIRST:-0}" = 1 ] && [ "$conc" = 1 ] || return 0
+  case " $steps " in *" llvm "*) ;; *) return 0 ;; esac
+  case $1 in llvm | repo) return 0 ;; esac
+  local t0 w=0
+  t0=$(date +%s)
+  while [ ! -s "$logs/golden-sel.txt" ] && [ "$w" -lt "${XO_GATE_ARM64_SEL_WAIT:-3600}" ]; do
+    sleep 5; w=$((w + 5))
+  done
+  printf '%s	(ir-first wait)	%s	wait
+' "$1" "$(($(date +%s) - t0))" >>"$logs/times.tsv"
+}
 # run_step: one named step, its wall time recorded in times.tsv as
 # "STEP<TAB>=<TAB>SECONDS<TAB>step"
 run_step() {
   local t1 rc
+  ir_first_wait "$1"
   t1=$(date +%s)
   run_step_body "$1"
   rc=$?
@@ -1077,6 +1101,7 @@ stdcov_step() {
 }
 # the checks after the named steps, by path
 after_steps() {
+  ir_first_wait after
   if [ "$chkcache_ran" = 0 ] && [ "${XO_GATE_CHKCACHE:-1}" != 0 ] && check_change; then
     full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$'
   fi
