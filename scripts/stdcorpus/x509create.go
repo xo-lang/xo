@@ -598,6 +598,7 @@ func x509CreateCorpus() string {
 
 	// verification errors of each of Go's types, on chains made here
 	ctVerifyKinds(&o, keys["ed"])
+	ctPools(&o, keys)
 
 	// requests: Go's, for the parse rows and the byte equality of Xo's
 	o.WriteString("\n/// (name, key, request template, Go's request)\nfn requests() -> List[(Str, Str, x509.RequestTemplate, Bytes)] {\n  [\n")
@@ -1304,6 +1305,241 @@ test "verify's errors have Go's text and Go's error type (decision 0643)" {
 test "a CertErr made without a kind is Other, so a literal still builds" {
   let e = x509.CertErr{msg: "x509: something"}
   expect(kind_text(e.kind)) == " {Other}"
+}
+`)
+}
+
+// ctPools writes the CertPool rows: AppendCertsFromPEM's result and
+// contents (checked with Go's Equal), Equal on pairs of pools, and
+// AddCertWithConstraint in Verify, where a constraint that refuses shows
+// the chain Go passed it in the unknown authority's hint.
+func ctPools(o *strings.Builder, keys map[string]crypto.Signer) {
+	nb, na, now := time.Unix(1735689600, 0), time.Unix(1767225600, 0), int64(1750000000)
+	k := keys["ed"]
+	mk := func(t, parent *x509.Certificate, signer crypto.Signer) *x509.Certificate {
+		if parent == nil {
+			parent = t
+		}
+		c, err := x509.ParseCertificate(ctMust(x509.CreateCertificate(rand.Reader, t, parent, k.Public(), signer)))
+		if err != nil {
+			panic(err)
+		}
+		return c
+	}
+	ca := func(cn string, serial int64, notAfter time.Time) *x509.Certificate {
+		return &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: cn}, NotBefore: nb, NotAfter: notAfter,
+			IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, MaxPathLen: -1}
+	}
+	rootT := ca("Pool Root", 1, na)
+	root := mk(rootT, nil, k)
+	root2 := mk(ca("Pool Root", 2, na), nil, k)
+	expired := mk(ca("Pool Root", 3, time.Unix(1740000000, 0)), nil, k)
+	interT := ca("Pool Inter", 4, na)
+	inter := mk(interT, rootT, k)
+	leafT := &x509.Certificate{SerialNumber: big.NewInt(10), Subject: pkix.Name{CommonName: "pool leaf"}, NotBefore: nb, NotAfter: na,
+		DNSNames: []string{"leaf.example"}, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	leaf := mk(leafT, rootT, k)
+	leaf2 := mk(&x509.Certificate{SerialNumber: big.NewInt(11), Subject: pkix.Name{CommonName: "pool leaf 2"}, NotBefore: nb, NotAfter: na,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}, interT, k)
+	certs := []*x509.Certificate{root, root2, expired, inter, leaf, leaf2}
+	fmt.Fprintf(o, "\n/// The pool rows' certificates.\nconst POOL_CERTS: List[Bytes] = [%s]\n", func() string {
+		var q []string
+		for _, c := range certs {
+			q = append(q, xbytes(c.Raw))
+		}
+		return strings.Join(q, ", ")
+	}())
+	pemOf := func(c *x509.Certificate, typ string, h map[string]string) string {
+		return string(pem.EncodeToMemory(&pem.Block{Type: typ, Headers: h, Bytes: c.Raw}))
+	}
+	// AppendCertsFromPEM: (pem, Go's bool, the indexes the pool holds)
+	type pemCase struct {
+		text string
+		want []int
+	}
+	bad := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte{0x30, 0x03, 1, 2, 3}}))
+	pems := []pemCase{
+		{"", nil},
+		{"no blocks here\n", nil},
+		{pemOf(root, "CERTIFICATE", nil), []int{0}},
+		{pemOf(root, "CERTIFICATE", nil) + "junk between\n" + pemOf(inter, "CERTIFICATE", nil), []int{0, 3}},
+		{pemOf(root, "CERTIFICATE", map[string]string{"Proc-Type": "4,ENCRYPTED"}), nil},
+		{pemOf(root, "TRUSTED CERTIFICATE", nil) + pemOf(leaf, "CERTIFICATE", nil), []int{4}},
+		{bad + pemOf(leaf2, "CERTIFICATE", nil), []int{5}},
+		{bad, nil},
+		{pemOf(root, "CERTIFICATE", nil) + pemOf(root, "CERTIFICATE", nil), []int{0}},
+		{"-----BEGIN CERTIFICATE-----\nnot base64!\n-----END CERTIFICATE-----\n" + pemOf(root2, "CERTIFICATE", nil), []int{1}},
+	}
+	o.WriteString("\n/// (PEM text, Go's AppendCertsFromPEM, the POOL_CERTS the pool then holds, by Go's Equal)\nconst PEM_ROWS: List[(Str, Bool, List[Int])] = [\n")
+	for _, c := range pems {
+		gp := x509.NewCertPool()
+		ok := gp.AppendCertsFromPEM([]byte(c.text))
+		want := x509.NewCertPool()
+		for _, i := range c.want {
+			want.AddCert(certs[i])
+		}
+		if !gp.Equal(want) {
+			panic("pem row's contents are not Go's")
+		}
+		fmt.Fprintf(o, "  (%s, %v, %s),\n", xq(c.text), ok, oidInts(c.want))
+	}
+	o.WriteString("]\n")
+	// Equal
+	eqs := [][2][]int{{{}, {}}, {{0}, {0}}, {{0, 3}, {3, 0}}, {{0}, {1}}, {{0, 3}, {0}}, {{0, 0}, {0}}, {{}, {0}}, {{0, 1, 2, 3, 4, 5}, {5, 4, 3, 2, 1, 0}}}
+	o.WriteString("\n/// (POOL_CERTS of a, of b, Go's Equal)\nconst EQUAL_ROWS: List[(List[Int], List[Int], Bool)] = [\n")
+	for _, e := range eqs {
+		a, b := x509.NewCertPool(), x509.NewCertPool()
+		for _, i := range e[0] {
+			a.AddCert(certs[i])
+		}
+		for _, i := range e[1] {
+			b.AddCert(certs[i])
+		}
+		fmt.Fprintf(o, "  (%s, %s, %v),\n", oidInts(e[0]), oidInts(e[1]), a.Equal(b))
+	}
+	o.WriteString("]\n")
+	// constraints: "" none, "show" refuses with the chain's subjects,
+	// "accept" passes, "long" refuses a chain of more than one
+	type entry struct {
+		cert int
+		con  string
+	}
+	conOf := func(kind string) func([]*x509.Certificate) error {
+		switch kind {
+		case "show":
+			return func(ch []*x509.Certificate) error {
+				var n []string
+				for _, c := range ch {
+					n = append(n, c.Subject.CommonName)
+				}
+				return fmt.Errorf("refused: %s", strings.Join(n, " > "))
+			}
+		case "accept":
+			return func([]*x509.Certificate) error { return nil }
+		case "long":
+			return func(ch []*x509.Certificate) error {
+				if len(ch) > 1 {
+					return fmt.Errorf("refused: %d long", len(ch))
+				}
+				return nil
+			}
+		}
+		return nil
+	}
+	type cRow struct {
+		name          string
+		leaf          int
+		inters, roots []entry
+	}
+	cRows := []cRow{
+		{"root refuses", 4, nil, []entry{{0, "show"}}},
+		{"root accepts", 4, nil, []entry{{0, "accept"}}},
+		{"root refuses, another root of the name accepts", 4, nil, []entry{{0, "show"}, {1, ""}}},
+		{"an expired root, then a root that refuses", 4, nil, []entry{{2, ""}, {0, "show"}}},
+		{"a root that refuses, then an expired root", 4, nil, []entry{{0, "show"}, {2, ""}}},
+		{"intermediate refuses", 5, []entry{{3, "show"}}, []entry{{0, ""}}},
+		{"root refuses above the intermediate", 5, []entry{{3, ""}}, []entry{{0, "show"}}},
+		{"root refuses a chain of two", 5, []entry{{3, ""}}, []entry{{0, "long"}}},
+		{"root allows a chain of one", 4, nil, []entry{{0, "long"}}},
+		{"a duplicate keeps the first constraint", 4, nil, []entry{{0, ""}, {0, "show"}}},
+		{"a duplicate keeps the first constraint (refusing)", 4, nil, []entry{{0, "show"}, {0, "accept"}}},
+	}
+	o.WriteString("\n/// (name, leaf, intermediates and roots as (POOL_CERTS index, constraint), Go's Verify)\nconst CONSTRAINT_ROWS: List[(Str, Int, List[(Int, Str)], List[(Int, Str)], Str)] = [\n")
+	ents := func(es []entry) string {
+		var q []string
+		for _, e := range es {
+			q = append(q, fmt.Sprintf("(%d, %s)", e.cert, xq(e.con)))
+		}
+		return "[" + strings.Join(q, ", ") + "]"
+	}
+	for _, r := range cRows {
+		ip, rp := x509.NewCertPool(), x509.NewCertPool()
+		for _, e := range r.inters {
+			if f := conOf(e.con); f != nil {
+				ip.AddCertWithConstraint(certs[e.cert], f)
+			} else {
+				ip.AddCert(certs[e.cert])
+			}
+		}
+		for _, e := range r.roots {
+			if f := conOf(e.con); f != nil {
+				rp.AddCertWithConstraint(certs[e.cert], f)
+			} else {
+				rp.AddCert(certs[e.cert])
+			}
+		}
+		want := ""
+		chains, err := certs[r.leaf].Verify(x509.VerifyOptions{Roots: rp, Intermediates: ip, CurrentTime: time.Unix(now, 0).UTC()})
+		if err != nil {
+			want = err.Error() + x509KindOf(err)
+		} else {
+			want = fmt.Sprintf("ok %d", len(chains))
+		}
+		fmt.Fprintf(o, "  (%s, %d, %s, %s, %s),\n", xq(r.name), r.leaf, ents(r.inters), ents(r.roots), xq(want))
+	}
+	o.WriteString("]\n")
+	fmt.Fprintf(o, "\nconst POOL_NOW: Int = %d\n", now)
+	o.WriteString(`
+fn pool_cert(i: Int) -> x509.Certificate { x509.parse(POOL_CERTS[i]).ok() ?? fault("pool cert") }
+
+fn pool_of(es: List[(Int, Str)]) -> x509.CertPool {
+  var p = x509.cert_pool([]).ok() ?? fault("pool")
+  for (i, con) in es {
+    let c = pool_cert(i)
+    if con == "" {
+      p.add(c).ok() ?? fault("add")
+    } else {
+      let f = if con == "show" {
+        fn(ch: List[x509.Certificate]) -> () ! x509.CertErr { Err(x509.CertErr{msg: "refused: ${ch.map(fn(x) { x.subject.common_name }).join(" > ")}"}) }
+      } else if con == "accept" {
+        fn(ch: List[x509.Certificate]) -> () ! x509.CertErr { Ok(()) }
+      } else {
+        fn(ch: List[x509.Certificate]) -> () ! x509.CertErr { if ch.len() > 1 { Err(x509.CertErr{msg: "refused: ${ch.len()} long"}) } else { Ok(()) } }
+      }
+      p.add_cert_with_constraint(c, f).ok() ?? fault("add with constraint")
+    }
+  }
+  p
+}
+
+test "append_certs_from_pem is Go's AppendCertsFromPEM: its result and the certificates added" {
+  var bad: List[Str] = []
+  for (text, want, held) in PEM_ROWS {
+    var p = x509.cert_pool([]).ok() ?? fault("pool")
+    let ok = p.append_certs_from_pem(text.bytes())
+    let want_pool = x509.cert_pool(held.map(fn(i) { pool_cert(i) })).ok() ?? fault("want")
+    if ok != want || !p.equal(want_pool) || p.len() != held.len() {
+      bad.push("${text.quote()}: got ${ok} ${p.len()}, want ${want} ${held}")
+    }
+  }
+  expect(shown(bad)) == []
+}
+
+test "CertPool.equal is Go's Equal" {
+  var bad: List[Str] = []
+  for (a, b, want) in EQUAL_ROWS {
+    let pa = x509.cert_pool(a.map(fn(i) { pool_cert(i) })).ok() ?? fault("a")
+    let pb = x509.cert_pool(b.map(fn(i) { pool_cert(i) })).ok() ?? fault("b")
+    if pa.equal(pb) != want {
+      bad.push("${a} ${b}: want ${want}")
+    }
+  }
+  expect(bad) == []
+}
+
+test "add_cert_with_constraint is Go's AddCertWithConstraint in verify: the chain it is given and its error as the hint" {
+  var bad: List[Str] = []
+  for (name, leaf, inters, roots, want) in CONSTRAINT_ROWS {
+    let opts = x509.VerifyOptions{root_pool: Some(pool_of(roots)), intermediate_pool: Some(pool_of(inters)), at: Time.from_unix(POOL_NOW)}
+    let got = match pool_cert(leaf).verify(opts) {
+      Ok(chains) => "ok ${chains.len()}"
+      Err(e) => "${e.display()}${kind_text(e.kind)}"
+    }
+    if got != want {
+      bad.push("${name}:\n  got  ${got}\n  want ${want}")
+    }
+  }
+  expect(shown(bad)) == []
 }
 `)
 }

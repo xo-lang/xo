@@ -7577,6 +7577,10 @@ fn parse_pkcs12(data: Bytes, password: Str) -> Pkcs12 ! CertErr
 struct CertPool {}                                        // handle (decision 0626)
 fn cert_pool(certs: List[Certificate]) -> CertPool ! CertErr
 fn (var p: CertPool) add(c: Certificate) -> () ! CertErr
+fn (var p: CertPool) add_cert_with_constraint(c: Certificate,
+  constraint: fn(List[Certificate]) -> () ! CertErr) -> () ! CertErr   // Go's AddCertWithConstraint
+fn (var p: CertPool) append_certs_from_pem(pem: Bytes) -> Bool         // Go's AppendCertsFromPEM
+fn (p: CertPool) equal(other: CertPool) -> Bool                         // Go's Equal
 fn (p: CertPool) certificates() -> List[Certificate]
 fn (p: CertPool) len() -> Int
 struct VerifyOptions {

@@ -262,6 +262,19 @@ struct CertPool {}
 fn cert_pool(certs: List[Certificate]) -> CertPool ! CertErr
 /// Adds c (Go's AddCert); a certificate with the same DER is kept once.
 fn (var p: CertPool) add(c: Certificate) -> () ! CertErr
+/// Go's AddCertWithConstraint: adds c (kept once, as add), and when c
+/// is a candidate parent in verify, calls constraint with the chain built
+/// so far (the leaf first, without c); an Err refuses that chain through
+/// c, and its text is the unknown authority error's hint, as in Go. A
+/// certificate already in the pool keeps its first constraint (or none).
+fn (var p: CertPool) add_cert_with_constraint(c: Certificate, constraint: fn(List[Certificate]) -> () ! CertErr) -> () ! CertErr
+/// Go's AppendCertsFromPEM: adds the certificate of each CERTIFICATE
+/// block without headers that parses, skipping the others; true when one
+/// was (a duplicate counts).
+fn (var p: CertPool) append_certs_from_pem(pem: Bytes) -> Bool
+/// Go's Equal: the same certificates (by DER), in any order; constraints
+/// are not compared.
+fn (p: CertPool) equal(other: CertPool) -> Bool
 /// The pool's certificates, in the order added.
 fn (p: CertPool) certificates() -> List[Certificate]
 fn (p: CertPool) len() -> Int

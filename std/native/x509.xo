@@ -412,10 +412,12 @@ struct CertPool {
   parsed: List[lx.Cert]
   certs: List[x509.Certificate]
   seen: Map[Bytes, Bool]
+  /// AddCertWithConstraint's constraints, by DER.
+  constraints: Map[Bytes, fn(List[x509.Certificate]) -> () ! x509.CertErr]
 }
 
 fn cert_pool(certs: List[x509.Certificate]) -> CertPool ! x509.CertErr {
-  var p = CertPool{parsed: [], certs: [], seen: {}}
+  var p = CertPool{parsed: [], certs: [], seen: {}, constraints: {}}
   for c in certs {
     p.add(c)?
   }
@@ -432,7 +434,70 @@ fn (var p: CertPool) add(c: x509.Certificate) -> () ! x509.CertErr {
   Ok(())
 }
 
+fn (var p: CertPool) add_cert_with_constraint(c: x509.Certificate, constraint: fn(List[x509.Certificate]) -> () ! x509.CertErr) -> () ! x509.CertErr {
+  if p.seen.contains(c.raw) {
+    return Ok(())
+  }
+  p.add(c)?
+  p.constraints.put(c.raw, constraint)
+  Ok(())
+}
+
+fn (var p: CertPool) append_certs_from_pem(pem: Bytes) -> Bool {
+  var ok = false
+  for b in crypto.pem_decode(pem.to_str_lossy()) {
+    if b.kind != "CERTIFICATE" || !b.headers.is_empty() {
+      continue
+    }
+    match parse(b.bytes) {
+      Ok(c) => {
+        if p.add(c).is_ok() {
+          ok = true
+        }
+      }
+      Err(_) => ()
+    }
+  }
+  ok
+}
+
+fn (p: CertPool) equal(other: CertPool) -> Bool {
+  if p.seen.len() != other.seen.len() {
+    return false
+  }
+  for k in p.seen.keys() {
+    if !other.seen.contains(k) {
+      return false
+    }
+  }
+  true
+}
+
 fn (p: CertPool) certificates() -> List[x509.Certificate] { p.certs }
+
+/// The pools' constraints as verify's candidate check (Go calls a
+/// candidate's constraint with the chain so far, as public
+/// certificates).
+fn pool_check(roots: CertPool?, inters: CertPool?) -> xv.Check {
+  let rc: Map[Bytes, fn(List[x509.Certificate]) -> () ! x509.CertErr] = match roots {
+    Some(p) => p.constraints
+    None => {}
+  }
+  let ic: Map[Bytes, fn(List[x509.Certificate]) -> () ! x509.CertErr] = match inters {
+    Some(p) => p.constraints
+    None => {}
+  }
+  fn(kind: Int, c: lx.Cert, chain: List[lx.Cert]) -> Str? {
+    let m = if kind == xv.ROOT_KIND { rc } else { ic }
+    match m.get(c.raw) {
+      Some(f) => match f(chain.map(fn(x) { cert_of(x) })) {
+        Ok(_) => None
+        Err(e) => Some(e.msg)
+      }
+      None => None
+    }
+  }
+}
 
 fn (p: CertPool) len() -> Int { p.certs.len() }
 
@@ -487,7 +552,9 @@ fn certificate_verify(c: x509.Certificate, opts: x509.VerifyOptions) -> List[Lis
     usages.push(eku_oid(x509.ExtKeyUsage.ServerAuth))
   }
   let now = opts.at.unix()
-  let (r, chains) = xv.verify_all_policies(leaf, inters, roots, opts.dns_name, now, usages, opts.certificate_policies.map(fn(o) { o.der }))
+  let rp = rt.cast[x509.CertPool?, CertPool?](opts.root_pool)
+  let ip = rt.cast[x509.CertPool?, CertPool?](opts.intermediate_pool)
+  let (r, chains) = xv.verify_all_checked(leaf, inters, roots, opts.dns_name, now, usages, opts.certificate_policies.map(fn(o) { o.der }), pool_check(rp, ip))
   if chains.is_empty() {
     let text = xv.full_text(r, leaf, opts.dns_name, now)
     return Err(x509.CertErr{msg: text, kind: verify_kind(r, text, opts.dns_name)})

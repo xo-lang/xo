@@ -43,6 +43,8 @@ const MAX_CHECKS: Int = 100
 const LEAF: Int = 0
 const INTERMEDIATE: Int = 1
 const ROOT: Int = 2
+/// ROOT, for a Check outside this file.
+pub const ROOT_KIND: Int = ROOT
 
 /// The outcome of a verification: the code, a chain (leaf first) when OK,
 /// for EXPIRED the certificate that is not valid, for UNKNOWN_AUTHORITY
@@ -114,20 +116,32 @@ struct LevelErr {
 /// extended key usage OID wanted (x509.EKU_SERVER, ...; EKU_ANY accepts
 /// any).
 pub fn verify(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usage: Str) -> Outcome {
-  run(leaf, inters, roots, host, now, [usage], false, []).0
+  run(leaf, inters, roots, host, now, [usage], false, [], no_check).0
 }
 
 /// verify keeping every valid chain, as Go's Verify returns them (std/x509),
 /// for any of the wanted usages (Go's checkChainForKeyUsage over a list: a
 /// chain whose certificates all allow one of them).
 pub fn verify_all(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usages: List[Str]) -> (Outcome, List[List[x509.Cert]]) {
-  run(leaf, inters, roots, host, now, usages, true, [])
+  run(leaf, inters, roots, host, now, usages, true, [], no_check)
 }
 
 /// verify_all with the caller's acceptable policies (Go's
 /// VerifyOptions.CertificatePolicies, OID contents; empty: any).
 pub fn verify_all_policies(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usages: List[Str], policies: List[Bytes]) -> (Outcome, List[List[x509.Cert]]) {
-  run(leaf, inters, roots, host, now, usages, true, policies)
+  run(leaf, inters, roots, host, now, usages, true, policies, no_check)
+}
+
+/// A candidate parent's check (Go's CertPool constraint): the kind (ROOT
+/// or INTERMEDIATE), the candidate and the chain so far; Some(text)
+/// refuses the candidate with that error.
+pub type Check = fn(Int, x509.Cert, List[x509.Cert]) -> Str?
+
+fn no_check(kind: Int, c: x509.Cert, chain: List[x509.Cert]) -> Str? { None }
+
+/// verify_all_policies with the pools' constraints.
+pub fn verify_all_checked(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usages: List[Str], policies: List[Bytes], check: Check) -> (Outcome, List[List[x509.Cert]]) {
+  run(leaf, inters, roots, host, now, usages, true, policies, check)
 }
 
 fn usages_ok(chain: List[x509.Cert], usages: List[Str]) -> Bool {
@@ -142,7 +156,7 @@ fn usages_ok(chain: List[x509.Cert], usages: List[Str]) -> Bool {
   false
 }
 
-fn run(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usages: List[Str], all: Bool, policies: List[Bytes]) -> (Outcome, List[List[x509.Cert]]) {
+fn run(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usages: List[Str], all: Bool, policies: List[Bytes], check: Check) -> (Outcome, List[List[x509.Cert]]) {
   if leaf.unhandled > 0 {
     return (Outcome{code: UNHANDLED_CRITICAL, chain: [], bad: leaf, hint: ""}, [])
   }
@@ -162,7 +176,7 @@ fn run(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: S
   if in_roots {
     s.chains.push([leaf])
   } else {
-    let err = build(s, [leaf], inters, roots, now)
+    let err = build(s, [leaf], inters, roots, now, check)
     if err.code != OK {
       return (Outcome{code: err.code, chain: [], bad: err.bad, hint: err.hint}, [])
     }
@@ -346,7 +360,7 @@ pub fn names(c: x509.Cert) -> tlsname.Names {
 /// isValid's, its own search's, the check limit), else an unknown
 /// authority with the hint of the first candidate whose signature check
 /// failed.
-fn build(var s: Search, chain: List[x509.Cert], inters: List[x509.Cert], roots: List[x509.Cert], now: Int) -> LevelErr {
+fn build(var s: Search, chain: List[x509.Cert], inters: List[x509.Cert], roots: List[x509.Cert], now: Int, check: Check) -> LevelErr {
   let cur = chain[chain.len() - 1]
   let before = s.chains.len()
   var err = LevelErr{code: -1, bad: cur, hint: ""}
@@ -380,14 +394,34 @@ fn build(var s: Search, chain: List[x509.Cert], inters: List[x509.Cert], roots: 
       let code = valid(c, kind, chain, now)
       if code != OK {
         err = LevelErr{code: code, bad: c, hint: ""}
+        // Go keeps isValid's error as the hint too; it shows only when a
+        // later candidate passes isValid and then its pool's constraint
+        // refuses it (below)
+        if hint == "" {
+          let why = full_text(Outcome{code: code, chain: [], bad: c, hint: ""}, c, "", now)
+          hint = " (possibly because of ${why.quote()} while trying to verify candidate authority certificate ${hint_name(c).quote()})"
+        }
         continue
+      }
+      // Go's err is isValid's, nil here
+      err = LevelErr{code: -1, bad: cur, hint: ""}
+      // the pool's constraint: its error is a hint only (Go's err there
+      // is a new variable)
+      match check(kind, c, chain) {
+        Some(why) => {
+          if hint == "" {
+            hint = " (possibly because of ${why.quote()} while trying to verify candidate authority certificate ${hint_name(c).quote()})"
+          }
+          continue
+        }
+        None => ()
       }
       var next = chain
       next.push(c)
       if kind == ROOT {
         s.chains.push(next)
       } else {
-        err = build(s, next, inters, roots, now)
+        err = build(s, next, inters, roots, now, check)
         if err.code == CHECK_LIMIT {
           stop = true
           break

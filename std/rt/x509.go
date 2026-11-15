@@ -334,6 +334,8 @@ type x509PoolData struct {
 	certs []X509_Certificate
 	gos   []*x509.Certificate
 	at    map[string]int
+	// AddCertWithConstraint's constraints, by entry (nil: none)
+	cons []func(*Task, List[X509_Certificate]) Result[Unit, X509_CertErr]
 }
 
 func (X509_CertPool) XoDebug(b *strings.Builder) { b.WriteString("<certpool>") }
@@ -363,6 +365,7 @@ func (p *X509_CertPool) M_add(_ *Task, c X509_Certificate) Result[Unit, X509_Cer
 		if p.d != nil {
 			d.certs = append([]X509_Certificate(nil), p.d.certs[:p.n]...)
 			d.gos = append([]*x509.Certificate(nil), p.d.gos[:p.n]...)
+			d.cons = append(d.cons[:0:0], p.d.cons[:p.n]...)
 			for i, x := range d.certs {
 				d.at[string(x.F_raw)] = i
 			}
@@ -372,8 +375,60 @@ func (p *X509_CertPool) M_add(_ *Task, c X509_Certificate) Result[Unit, X509_Cer
 	p.d.at[string(c.F_raw)] = len(p.d.certs)
 	p.d.certs = append(p.d.certs, c)
 	p.d.gos = append(p.d.gos, g)
+	p.d.cons = append(p.d.cons, nil)
 	p.n++
 	return Ok[Unit, X509_CertErr](Unit{})
+}
+
+func (p *X509_CertPool) M_add_cert_with_constraint(tk *Task, c X509_Certificate, f func(*Task, List[X509_Certificate]) Result[Unit, X509_CertErr]) Result[Unit, X509_CertErr] {
+	if p.d != nil {
+		if i, ok := p.d.at[string(c.F_raw)]; ok && i < p.n {
+			return Ok[Unit, X509_CertErr](Unit{})
+		}
+	}
+	if r := p.M_add(tk, c); !r.Ok {
+		return r
+	}
+	p.d.cons[p.n-1] = f
+	return Ok[Unit, X509_CertErr](Unit{})
+}
+
+func (p *X509_CertPool) M_append_certs_from_pem(tk *Task, pemCerts Bytes) bool {
+	// Go's AppendCertsFromPEM, adding through M_add
+	ok := false
+	rest := []byte(pemCerts)
+	for len(rest) > 0 {
+		var b *pem.Block
+		b, rest = pem.Decode(rest)
+		if b == nil {
+			break
+		}
+		if b.Type != "CERTIFICATE" || len(b.Headers) != 0 {
+			continue
+		}
+		if _, err := x509.ParseCertificate(b.Bytes); err != nil {
+			continue
+		}
+		r := X509_parse(tk, Bytes(b.Bytes))
+		if r.Ok && p.M_add(tk, r.V).Ok {
+			ok = true
+		}
+	}
+	return ok
+}
+
+func (p *X509_CertPool) M_equal(tk *Task, o X509_CertPool) bool {
+	// Go's Equal, by the certificates' DER
+	g := func(q *X509_CertPool) *x509.CertPool {
+		gp := x509.NewCertPool()
+		if q.d != nil {
+			for _, x := range q.d.gos[:q.n] {
+				gp.AddCert(x)
+			}
+		}
+		return gp
+	}
+	return g(p).Equal(g(&o))
 }
 
 func (p *X509_CertPool) M_certificates(*Task) List[X509_Certificate] {
@@ -386,10 +441,24 @@ func (p *X509_CertPool) M_certificates(*Task) List[X509_Certificate] {
 func (p *X509_CertPool) M_len(*Task) int64 { return int64(p.n) }
 
 // x509PoolAdd adds a pool's parsed certificates to a Go pool.
-func x509PoolAdd(to *x509.CertPool, p Option[X509_CertPool]) {
+func x509PoolAdd(tk *Task, to *x509.CertPool, p Option[X509_CertPool]) {
 	if p.Some && p.V.d != nil {
-		for _, g := range p.V.d.gos[:p.V.n] {
-			to.AddCert(g)
+		for i, g := range p.V.d.gos[:p.V.n] {
+			f := p.V.d.cons[i]
+			if f == nil {
+				to.AddCert(g)
+				continue
+			}
+			to.AddCertWithConstraint(g, func(chain []*x509.Certificate) error {
+				cs := make([]X509_Certificate, 0, len(chain))
+				for _, x := range chain {
+					cs = append(cs, x509CertOf(tk, x))
+				}
+				if r := f(tk, ListFromSlice(cs)); !r.Ok {
+					return errors.New(string(r.E.F_msg))
+				}
+				return nil
+			})
 		}
 	}
 }
@@ -400,7 +469,7 @@ func (c *X509_Certificate) M_verify(tk *Task, o X509_VerifyOptions) Result[List[
 		return Err[List[List[X509_Certificate]]](x509ErrOf(err))
 	}
 	roots := x509.NewCertPool()
-	x509PoolAdd(roots, o.F_root_pool)
+	x509PoolAdd(tk, roots, o.F_root_pool)
 	for _, r := range o.F_roots.s {
 		g, err := x509Go(r)
 		if err != nil {
@@ -409,7 +478,7 @@ func (c *X509_Certificate) M_verify(tk *Task, o X509_VerifyOptions) Result[List[
 		roots.AddCert(g)
 	}
 	inters := x509.NewCertPool()
-	x509PoolAdd(inters, o.F_intermediate_pool)
+	x509PoolAdd(tk, inters, o.F_intermediate_pool)
 	for _, r := range o.F_intermediates.s {
 		g, err := x509Go(r)
 		if err != nil {
