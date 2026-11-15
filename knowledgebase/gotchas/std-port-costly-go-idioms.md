@@ -145,3 +145,16 @@ Two kinds, both fixed std-side:
 - Planned helpers: zero-copy Bytes views (design note), fixed-size
   arrays (language poll), and `xo vet --cost` notes for per-iteration
   copies and allocations.
+- `xo vet --cost --cost-std bench/perf/<module>` notes four of these
+  (2026-11-15): XO0919, a struct copied out of a List to read its
+  fields while its heap fields are counted (cli's Flag lookup before
+  000044dcd, check's open_enum_in at 977812277); XO0920, a byte or rune
+  pushed per element where a run append fits (map_runes before
+  83047cb47); XO0921, a table of constants made per call; and XO0914, a
+  small List made every iteration. base64's per-quantum list before
+  a021bbfbd is not noted: its inner loop's `d.set` carries the list on a
+  loop edge, which XO0914 reads as kept; following such edges noted five
+  loop-carried lists in std that are not per-iteration scratch, so it
+  was left out. A struct copy read only through borrowed fields costs
+  nothing and is not noted: the cost comes when the read cannot borrow
+  (the function changes the list) or a field is kept.

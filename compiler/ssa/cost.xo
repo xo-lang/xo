@@ -36,6 +36,7 @@ pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
     }
   }
   let ar = addr_returns(m)
+  let hot = loop_callees(m)
   for f in m.funcs {
     // a clone (specialize.xo, decision 0368) repeats its original's lines
     if f.blocks.is_empty() || f.file.is_empty() || f.name.contains("#spec") {
@@ -51,7 +52,7 @@ pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
       continue
     }
     let inloop = loop_blocks(f)
-    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + callback_walks(m, f) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords) + view_stores(m, f, inloop) + slices_read_in_loop(f, inloop) + small_lists_in_loop(f, inloop) + freed_addresses_at(f, rv, ar) {
+    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + callback_walks(m, f) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords, hot.contains(f.name)) + counted_field_copies(m, f, inloop, nwords, hot.contains(f.name)) + view_stores(m, f, inloop) + slices_read_in_loop(f, inloop) + small_lists_in_loop(f, inloop, hot.contains(f.name)) + element_pushes(f, inloop) + freed_addresses_at(f, rv, ar) {
       var n2 = n
       n2.file = file
       out.push(n2)
@@ -585,7 +586,7 @@ fn type_words(m: Module, var nw: Map[Int, Int], t: Int, depth: Int) -> Int {
 /// collection, each heap field shared). Options made from a value built
 /// in place (a constructor, a returned record) are not noted: there is
 /// nothing to copy from.
-fn large_copies(m: Module, f: Func, inloop: List[Bool], var nw: Map[Int, Int]) -> List[CostNote] {
+fn large_copies(m: Module, f: Func, inloop: List[Bool], var nw: Map[Int, Int], hot: Bool) -> List[CostNote] {
   var out: List[CostNote] = []
   var seen: Map[Int, Bool] = {}
   for bl in f.blocks {
@@ -606,7 +607,7 @@ fn large_copies(m: Module, f: Func, inloop: List[Bool], var nw: Map[Int, Int]) -
             msg = "the closure copies a `${type_label(m, t)}` (${n} words) into its environment when it is made, sharing each of its heap fields; bind the fields the body reads first and capture those"
           }
         }
-      } else if x.op == Op.Variant && x.args.len() == 1 && list_elem_in_loop(f, f.arg(x.args, 0), inloop) {
+      } else if x.op == Op.Variant && x.args.len() == 1 && (list_elem_in_loop(f, f.arg(x.args, 0), inloop) || (hot && list_elem(f, f.arg(x.args, 0)))) {
         let n = type_words(m, nw, ty_of(f.values[f.arg(x.args, 0)].tb), 0)
         if n > LARGE_WORDS {
           msg = "this `${type_label(m, ty_of(x.tb))}` holds ${n} words inline: making it copies them and shares each heap field of the payload, and every copy of it does again; return or keep what the caller needs (an index, a field) instead"
@@ -618,6 +619,169 @@ fn large_copies(m: Module, f: Func, inloop: List[Bool], var nw: Map[Int, Int]) -
       seen[line] = true
       out.push(CostNote{code: "XO0910", fn_name: f.name, file: f.file, line: line, col: line_of(x.lp) % 4096, msg: msg})
     }
+  }
+  out
+}
+
+/// The names of the functions m calls from a loop block, and what those
+/// call, transitively: an accessor called per iteration costs what its
+/// body does each time (cli's Parsed.flag, which returned Some(list[i])
+/// for each reader the loop called, 2026-11-15).
+fn loop_callees(m: Module) -> Map[Str, Bool] {
+  var out: Map[Str, Bool] = {}
+  var calls: Map[Str, List[Str]] = {}
+  var work: List[Str] = []
+  for f in m.funcs {
+    if f.blocks.is_empty() {
+      continue
+    }
+    let inloop = loop_blocks(f)
+    // a callee is hot with its caller only when every return passes its
+    // call: slot's fallback p.flag on a missing name (cli after
+    // 3b44126dc) is not, the readers' p.flag before it was
+    let idom = dominators(f)
+    var rets: List[Int] = []
+    for x in f.values {
+      let b = block_of(x.tb)
+      if x.op == Op.Return && b >= 0 {
+        rets.push(b)
+      }
+    }
+    var cs: List[Str] = []
+    for x in f.values {
+      if x.op != Op.Call {
+        continue
+      }
+      let n = f.name_of(x)
+      let b = block_of(x.tb)
+      var always = b >= 0
+      for r in rets {
+        always = always && udom(idom, b, r)
+      }
+      if always {
+        cs.push(n)
+      }
+      if b >= 0 && b < inloop.len() && inloop[b] && !out.contains(n) {
+        out[n] = true
+        work.push(n)
+      }
+    }
+    calls[f.name] = cs
+  }
+  while !work.is_empty() {
+    let n = work.pop() ?? ""
+    for c in calls.get(n) ?? [] {
+      if !out.contains(c) {
+        out[c] = true
+        work.push(c)
+      }
+    }
+  }
+  out
+}
+
+/// Whether x is an element of a list (a list.index, through fields).
+fn list_elem(f: Func, x0: Int) -> Bool {
+  let x = below_fields(f, x0)
+  x >= 0 && x < f.values.len() && f.values[x].op == Op.Call && f.name_is(f.values[x], "list.index")
+}
+
+/// XO0919: a struct element of a list read (in a loop, or in a function
+/// called from one) only for its fields, whose heap fields the reference
+/// counting counts up and down because the copy lives past a call: each
+/// read pays a count per Str and List field where `xs[i].field` reads the
+/// field in place (cli's 13 field Flag, copied per argument and per
+/// reader: parse 0.536 of its time once read in place, 3b44126dc).
+fn counted_field_copies(m: Module, f: Func, inloop: List[Bool], var nw: Map[Int, Int], hot: Bool) -> List[CostNote] {
+  var out: List[CostNote] = []
+  var seen: Map[Int, Bool] = {}
+  let (users, edge) = cost_uses(f)
+  for (vi, x) in f.values.indexed() {
+    let b = block_of(x.tb)
+    let line = line_of(x.lp) / 4096
+    if x.op != Op.Call || !f.name_is(x, "list.index") || b < 0 || b >= inloop.len() || line <= 0 || seen.contains(line) || edge[vi] {
+      continue
+    }
+    if !inloop[b] && !hot {
+      continue
+    }
+    let t = ty_of(x.tb)
+    if t < 0 || t >= m.types.len() || m.types[t].kind != Kind.Struct || m.types[t].name.starts_with("xo.") {
+      continue
+    }
+    // the fields counted: retained after the read (a borrowed copy kept
+    // past a call), or released (an owned copy, counted up by the read:
+    // check's open_enum_in copied c.tys[r] so per call, 55% of `xo check
+    // compiler/xo`, 2026-11-15), each field once
+    var only = true
+    var owned = false
+    var fields: Map[Int, Bool] = {}
+    for u in users[vi] {
+      let w = f.values[u]
+      if w.op == Op.Field {
+        if edge[u] {
+          only = false
+        }
+        var k = -1
+        if let AuxW.I(i) = w.aux {
+          k = i
+        }
+        for uu in users[u] {
+          if f.values[uu].op is Op.Retain | Op.Release {
+            fields[k] = true
+          }
+        }
+      } else if w.op is Op.Release | Op.Drop {
+        owned = true
+      } else {
+        only = false
+      }
+    }
+    // an owned copy (released whole or a field of it released: the read
+    // could not borrow, as when the function changes the list's owner)
+    // counted up every heap field
+    var counted = fields.len()
+    for u in users[vi] {
+      let w = f.values[u]
+      if w.op == Op.Field {
+        for uu in users[u] {
+          if f.values[uu].op == Op.Release {
+            owned = true
+          }
+        }
+      }
+    }
+    if owned {
+      var nh = 0
+      for fd in m.types[t].fields {
+        if m.heap(fd.ty) {
+          nh += 1
+        }
+      }
+      counted = counted.max(nh)
+    }
+    if !only || counted < 2 {
+      continue
+    }
+    seen[line] = true
+    let n = type_words(m, nw, t, 0)
+    let where_ = if inloop[b] { "in a loop" } else { "in a function called from a loop" }
+    // the fields read: one read in place still copies the whole element
+    // when the function changes what holds the list (tls's take_out:
+    // `c.cl12[0].out` then `c.cl12[0].out = b""`, a 227 word Client)
+    var read: Map[Int, Bool] = {}
+    for u in users[vi] {
+      let w = f.values[u]
+      if w.op == Op.Field {
+        var k = -1
+        if let AuxW.I(i) = w.aux {
+          k = i
+        }
+        read[k] = true
+      }
+    }
+    let fix = if owned && read.len() == 1 { "the read cannot borrow the element, because this function also changes what holds the list: read the field in a function that only reads it, or keep the field in a list of its own" } else { "read the fields in place (`xs[i].field`), or pass or return the index" }
+    out.push(CostNote{code: "XO0919", fn_name: f.name, file: f.file, line: line, col: line_of(x.lp) % 4096, msg: "this copies a `${type_label(m, t)}` (${n} words) out of the list ${where_} to read ${if read.len() == 1 { "one field" } else { "its fields" }}, counting ${counted} of them up and down each time; ${fix}"})
   }
   out
 }
@@ -902,31 +1066,147 @@ fn slices_read_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   out
 }
 
+/// XO0920: in a loop, a builder push of one byte or rune
+/// (`BytesBuilder.write_byte`, a rune append, raw.push_rune) whose value
+/// comes from an element the loop reads of a parameter's text or bytes,
+/// in a function whose loops append no run (rt.rs_append_bytes): each
+/// element is a call chain into the runtime, where an element that is
+/// kept as it is can stay in a run of the source and go out with one
+/// append (std-performance-guide.md; Str.map_runes 1.20 to 0.86 of Go,
+/// 7ab8910dd, 2026-10-24).
+fn element_pushes(f: Func, inloop: List[Bool]) -> List[CostNote] {
+  var out: List[CostNote] = []
+  for x in f.values {
+    let b = block_of(x.tb)
+    if x.op == Op.Call && b >= 0 && b < inloop.len() && inloop[b] && (named(f.name_of(x), "rt.rs_append_bytes") || named(f.name_of(x), "rt.rs_append")) {
+      return out
+    }
+  }
+  var seen: Map[Int, Bool] = {}
+  for x in f.values {
+    let b = block_of(x.tb)
+    let line = line_of(x.lp) / 4096
+    if x.op != Op.Call || b < 0 || b >= inloop.len() || !inloop[b] || line <= 0 || seen.contains(line) || x.args.len() < 2 {
+      continue
+    }
+    let name = f.name_of(x)
+    if !(name == "rt.rs_push_byte" || name == "prelude.llrt_append_rune" || name.ends_with("raw.push_rune")) {
+      continue
+    }
+    if !from_param_elem(f, f.arg(x.args, x.args.len() - 1), inloop) {
+      continue
+    }
+    seen[line] = true
+    out.push(CostNote{code: "XO0920", fn_name: f.name, file: f.file, line: line, col: line_of(x.lp) % 4096, msg: "this pushes one element at a time, in a loop over a parameter's text or bytes: each push is a call into the runtime; keep the elements that stay as they are in a run of the source and append the run in one call (`out.write(s[from..i])`), pushing only the ones that change"})
+  }
+  out
+}
+
+/// Whether index x is a loop's counter: a block parameter, or one plus or
+/// minus a constant (`b[i + 1]`), not a value read from the data (a table
+/// lookup such as base32's `a[(v >> 35) & 31]`).
+fn counter_index(f: Func, x: Int) -> Bool {
+  if x < 0 || x >= f.values.len() {
+    return false
+  }
+  let v = f.values[x]
+  if v.op == Op.Param {
+    return block_of(v.tb) > 0
+  }
+  if v.op is Op.Add | Op.Sub && v.args.len() == 2 {
+    let a = f.values[f.arg(v.args, 0)]
+    let c = f.values[f.arg(v.args, 1)]
+    return a.op == Op.Param && block_of(a.tb) > 0 && c.op == Op.Const
+  }
+  false
+}
+
+/// Whether value x0 comes, through at most 12 steps of conversions,
+/// Option payloads, fields, calls and block parameters (no arithmetic),
+/// from a byte or rune index (bytes.index, str.index) in a loop block of
+/// a parameter's text or bytes; an index of anything else (a table) stops
+/// the walk.
+fn from_param_elem(f: Func, x0: Int, inloop: List[Bool]) -> Bool {
+  var work: List[(Int, Int)] = [(x0, 0)]
+  var seen: Map[Int, Bool] = {}
+  while let Some((x, d)) = work.pop() {
+    if x < 0 || x >= f.values.len() || seen.contains(x) || d > 12 {
+      continue
+    }
+    seen[x] = true
+    let v = f.values[x]
+    let b = block_of(v.tb)
+    if v.op == Op.Call && (f.name_is(v, "bytes.index") || f.name_is(v, "str.index") || f.name_is(v, "list.index")) {
+      if v.args.is_empty() {
+        continue
+      }
+      let src = below_fields(f, f.arg(v.args, 0))
+      if src >= 0 && src < f.values.len() && f.values[src].op == Op.Param && block_of(f.values[src].tb) == 0 && b >= 0 && b < inloop.len() && inloop[b] && !f.name_is(v, "list.index") && v.args.len() > 1 && counter_index(f, f.arg(v.args, 1)) {
+        return true
+      }
+      continue
+    }
+    if v.op == Op.Param {
+      // a block parameter: the edges' arguments into it
+      if b <= 0 || b >= f.blocks.len() {
+        continue
+      }
+      let k = f.blocks[b].params.index_of(x) ?? -1
+      for e in f.blocks[b].preds {
+        if e >= 0 && e < f.edges.len() && k >= 0 && k < f.edges[e].args.len() {
+          work.push((f.edges[e].args[k], d + 1))
+        }
+      }
+      continue
+    }
+    // through what keeps an element as it is (a conversion, an Option or
+    // field around it, a call such as map_runes' f(r)), not arithmetic:
+    // a decoder's computed bytes (base32's acc >> 32) fit no run
+    if !(v.op is Op.IntConv | Op.Payload | Op.Field | Op.Variant | Op.Box | Op.Unbox | Op.Call | Op.CallValue) {
+      continue
+    }
+    let (sp, ep) = f.args_span(v.args)
+    for ak in sp..ep {
+      work.push((f.argpool[ak], d + 1))
+    }
+  }
+  false
+}
+
 /// XO0914: in a loop, a List made with at most 8 elements (a literal, or
 /// with_capacity of a constant) that is only filled and read in the
 /// iteration: an allocation and a free every iteration, where locals (or
 /// one list made before the loop) need none (std-performance-guide.md 3;
 /// path's clean in locals, parts 0.927; base64's per-quantum list).
-fn small_lists_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
+/// XO0921: a list of constants only read, made in a loop or in a function
+/// called from one, where a top level `const` is made once.
+fn small_lists_in_loop(f: Func, inloop: List[Bool], hot: Bool) -> List[CostNote] {
   var out: List[CostNote] = []
   var seen: Map[Int, Bool] = {}
   let (users, edge) = cost_uses(f)
   for (vi, x) in f.values.indexed() {
     let line = line_of(x.lp) / 4096
-    if x.op != Op.Call || !f.name_is(x, "list.new") || x.args.is_empty() || block_of(x.tb) < 0 || block_of(x.tb) >= inloop.len() || !inloop[block_of(x.tb)] || line <= 0 || seen.contains(line) {
+    let b = block_of(x.tb)
+    if x.op != Op.Call || !f.name_is(x, "list.new") || x.args.is_empty() || b < 0 || b >= inloop.len() || line <= 0 || seen.contains(line) {
+      continue
+    }
+    if !inloop[b] && !hot {
       continue
     }
     let c = f.values[f.arg(x.args, 0)]
-    let n = match c.aux {
-      AuxW.I(k) => k
-      _ => -1
+    var n = -1
+    if let AuxW.I(k) = c.aux {
+      n = k
     }
-    if c.op != Op.Const || n < 1 || n > 8 {
+    if c.op != Op.Const || n < 1 || n > 4096 {
       continue
     }
-    // the list and the lists its pushes and sets make: only filled and read
+    // the list and the lists its pushes and sets make: only filled and
+    // read; whether every value pushed is a constant
     var work = [vi]
     var local = true
+    var consts = true
+    var pushes = 0
     var walked: Map[Int, Bool] = {}
     while local && !work.is_empty() {
       let l = work.pop() ?? -1
@@ -945,12 +1225,32 @@ fn small_lists_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
         }
         if w.op == Op.Call && (name == "list.push" || name == "list.set") && w.args.len() > 0 && f.arg(w.args, 0) == l {
           work.push(u)
+          if name == "list.push" {
+            pushes += 1
+            if w.args.len() < 2 || f.values[f.arg(w.args, 1)].op != Op.Const {
+              consts = false
+            }
+          } else {
+            consts = false
+          }
         } else if !(w.op == Op.Call && read_only_call(name) && w.args.len() > 0 && f.arg(w.args, 0) == l) {
           local = false
         }
       }
     }
     if !local {
+      continue
+    }
+    // a table of constants (2026-11-15, owner's vet --cost item): made
+    // whole on every call or iteration, where a top level `const` is made
+    // once
+    if consts && pushes == n && n >= 2 {
+      seen[line] = true
+      let where_ = if inloop[b] { "on every iteration" } else { "on every call of a function called from a loop" }
+      out.push(CostNote{code: "XO0921", fn_name: f.name, file: f.file, line: line, col: line_of(x.lp) % 4096, msg: "this list of ${n} constants is made ${where_} (an allocation, ${n} pushes and a free each time) and only read; make it a top level `const`"})
+      continue
+    }
+    if !inloop[b] || n > 8 {
       continue
     }
     seen[line] = true

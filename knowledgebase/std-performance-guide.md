@@ -53,7 +53,24 @@ keeps the symptoms as first observed. Last verified: 2026-10-28.
   appended it (37% of render's allocations); `"${s.out}${n}"` appends in
   place (a111fa25d, 0.934).
 - A table computed per call (crc_table) is a constant in Go; in Xo make it
-  a `const` list, since std has no package-level state.
+  a `const` list, since std has no package-level state. `xo vet --cost`
+  notes a list of constants made in a loop or in a function called from
+  one (XO0921).
+- Do not copy a struct out of a List to read its fields: `let f =
+  xs[i]` or `for f in xs` counts every heap field of the element up and
+  down (cli's Flag lookup, 000044dcd; check's open_enum_in copied
+  `c.tys[r]` per call, 55% of `xo check compiler/xo`). Read
+  `xs[i].field` in place, or pass or return the index. `xo vet --cost`
+  notes it in a loop or in a function called from one (XO0919, and
+  XO0910 for one wrapped in an Option). A field read in place still
+  copies the whole element when the same function changes what holds
+  the list (XO0919 says so): read it in a function that only reads.
+- Append runs, not elements: a builder push per byte or rune is a call
+  into the runtime (Go's inlined WriteByte is not); Str.map_runes kept
+  unchanged runes in runs of the source and appended each run once
+  (83047cb47: 1.20 to 0.86 of Go). `xo vet --cost` notes a per-element
+  push from a parameter's text in a function that appends no run
+  (XO0920).
 - Use Go's element widths for big tables: flate's hash tables as
   List[UInt32] (packed natively) halved what each stream zeroes and reads
   (035518a51: archive zip 0.959).

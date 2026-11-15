@@ -3132,6 +3132,102 @@ func TestVetCostLoopSlicesAndLists(t *testing.T) {
 	}
 }
 
+// vetCostIdiomsProg: the costly Go idioms of
+// gotchas/std-port-costly-go-idioms.md. A struct copied out of a list,
+// in a function called from a loop, to read its fields while the function
+// changes the list, so the read cannot borrow (XO0919, line 14; the
+// checker's open_enum_in), and the same fields read in place before the
+// change (quiet); a table of constants made per call in a function
+// called from a loop (XO0921, line 26) and the same table as a const
+// (quiet); a byte pushed per element of a parameter's bytes (XO0920, line
+// 47) and the same copy in runs (quiet).
+const vetCostIdiomsProg = `
+struct Ty {
+  kind: Int
+  args: List[Int]
+  vars: List[Bool]
+}
+
+struct Ck {
+  tys: List[Ty]
+  n: Int
+}
+
+fn (var c: Ck) walk(t: Int) -> Int {
+  let x = c.tys[t]
+  c.tys.push(Ty{kind: 0, args: [], vars: []})
+  x.kind + x.args.len() + x.vars.len()
+}
+
+fn (var c: Ck) walk_in_place(t: Int) -> Int {
+  let s = c.tys[t].kind + c.tys[t].args.len() + c.tys[t].vars.len()
+  c.tys.push(Ty{kind: 0, args: [], vars: []})
+  s
+}
+
+fn weight(i: Int) -> Int {
+  let w = [7, 3, 1, 7, 3, 1, 7, 3, 1, 7]
+  w[i % w.len()]
+}
+
+const WEIGHTS: List[Int] = [7, 3, 1, 7, 3, 1, 7, 3, 1, 7]
+
+fn weight_const(i: Int) -> Int {
+  WEIGHTS[i % WEIGHTS.len()]
+}
+
+fn sum(s: Str) -> Int {
+  var t = 0
+  for i in 0..s.len() {
+    t += weight(i) + weight_const(i)
+  }
+  t
+}
+
+fn dashes(b: Bytes) -> Bytes {
+  var o = BytesBuilder.with_capacity(b.len())
+  for i in 0..b.len() {
+    o.write_byte(if b[i] == 32 { UInt8(45) } else { b[i] })
+  }
+  o.freeze()
+}
+
+fn dashes_runs(b: Bytes) -> Bytes {
+  var o = BytesBuilder.with_capacity(b.len())
+  var from = 0
+  for i in 0..b.len() {
+    if b[i] == 32 {
+      o.write(b[from..i])
+      o.write_byte(45)
+      from = i + 1
+    }
+  }
+  o.write(b[from..b.len()])
+  o.freeze()
+}
+
+fn main(os: Os) {
+  var c = Ck{tys: [Ty{kind: 1, args: [2], vars: [true]}, Ty{kind: 3, args: [], vars: []}], n: 0}
+  var t = 0
+  for i in 0..2 {
+    t += c.walk(i) + c.walk_in_place(i)
+  }
+  os.stdio.println("${t} ${sum("123")} ${dashes(b"a b").len()} ${dashes_runs(b"a b").len()}")
+}
+`
+
+// TestVetCostIdioms: XO0919, XO0920 and XO0921 flag the
+// costly forms and stay quiet on the fixed ones (owner, 2026-11-15).
+func TestVetCostIdioms(t *testing.T) {
+	t.Parallel()
+	got := vetCostCodes(t, vetCostIdiomsProg)
+	for code, want := range map[string]string{"XO0919": "[14]", "XO0921": "[26]", "XO0920": "[47]"} {
+		if fmt.Sprint(got[code]) != want {
+			t.Errorf("%s at lines %v, want %s (all: %v)", code, got[code], want, got)
+		}
+	}
+}
+
 // TestAgentRefsReceiver: a method is found through every kind of
 // receiver value (a parameter, a field, a list element, a call's result, a
 // var receiver), and a name spelled with the value instead of its type
