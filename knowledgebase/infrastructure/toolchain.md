@@ -2247,7 +2247,8 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   HEAD's IR manifest builds with `-parallel` set to every CPU as memory
   allows (gate.sh ir_jobs: at most (MemAvailable - XO_GATE_IR_RESERVE_MB,
   default 8192) / XO_GATE_IR_MB, default 1600, at least 2;
-  `XO_GATE_IR_PARALLEL` overrides), logs the job count and the xo
+  `XO_GATE_IR_PARALLEL` overrides; niced, `XO_GATE_IR_NICE`, default 10,
+  so the tests beside it keep the CPU first), logs the job count and the xo
   processes' resident peak (`llvm IR manifest:` lines), and is kept by
   commit for a re-gate.
   The llvm step runs the package's tests that do not read the selection

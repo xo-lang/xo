@@ -611,7 +611,7 @@ llvm_goldens() {
     if git worktree add -q --detach "$pw/tree" "$base" >"$logs/llvm-ir-base.txt" 2>&1 &&
       cp internal/llvm/golden_select_test.go "$pw/tree/internal/llvm/" &&
       (cd "$pw/tree" && go run ./scripts/xobuild) >>"$logs/llvm-ir-base.txt" 2>&1 &&
-      (cd "$pw/tree" && XO_CLI=$pw/tree/bin/xo XO_LLVM_IR_MANIFEST="$bm.tmp$$" go test -count=1 -timeout 60m -parallel "${XO_GATE_IR_PARALLEL:-$(ir_jobs)}" -run '^TestGoldenIRManifest$' ./internal/llvm) >>"$logs/llvm-ir-base.txt" 2>&1; then
+      (cd "$pw/tree" && XO_CLI=$pw/tree/bin/xo XO_LLVM_IR_MANIFEST="$bm.tmp$$" nice -n "${XO_GATE_IR_NICE:-10}" go test -count=1 -timeout 60m -parallel "${XO_GATE_IR_PARALLEL:-$(ir_jobs)}" -run '^TestGoldenIRManifest$' ./internal/llvm) >>"$logs/llvm-ir-base.txt" 2>&1; then
       mv "$bm.tmp$$" "$bm"
     fi
     rm -f "$bm.tmp$$"
@@ -641,7 +641,10 @@ llvm_goldens() {
     ir_mem_watch "$logs/llvm-ir-mem.txt" &
     irw=$!
     t_ir=$(date +%s)
-    if XO_LLVM_IR_MANIFEST=$nm go test -count=1 -timeout 60m -parallel "$irp" -run '^TestGoldenIRManifest$' ./internal/llvm >"$logs/llvm-ir-head.txt" 2>&1; then
+    # niced (XO_GATE_IR_NICE, default 10): the tests that run beside it
+    # keep the CPU first (lead, 2026-11-15: TestOneThreadSpawnJoin's steal
+    # bound failed at steal=48 while twelve IR builds ran beside llvmpre)
+    if XO_LLVM_IR_MANIFEST=$nm nice -n "${XO_GATE_IR_NICE:-10}" go test -count=1 -timeout 60m -parallel "$irp" -run '^TestGoldenIRManifest$' ./internal/llvm >"$logs/llvm-ir-head.txt" 2>&1; then
       kill "$irw" 2>/dev/null; wait "$irw" 2>/dev/null
       echo "llvm IR manifest: $(($(date +%s) - t_ir)) s, xo processes' resident peak $(sort -n "$logs/llvm-ir-mem.txt" 2>/dev/null | tail -1) MB" >&2
       [ -s "$nm" ] && [ -n "$hm" ] && cp "$nm" "$hm.tmp$$" && mv "$hm.tmp$$" "$hm"
