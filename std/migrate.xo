@@ -1,0 +1,534 @@
+// std/migrate (spec/std.md 85, decision 0658 item 8). Encoding rules are
+// listed at the top of std/prelude.xo. Schema migrations: numbered `.sql`
+// files, usually embedded with std/embed, applied in version order, each
+// in its own transaction, recorded in a version table, under a database
+// lock so two processes never migrate at once. Forward only: `up` never
+// runs a Down section.
+//
+// The file format is goose's (pressly/goose v3.27.3,
+// internal/sqlparser/parser.go and migration.go's NumericComponent;
+// Copyright (c) 2012 Liam Staskawicz, MIT license): a file named
+// `NNN_name.sql` holds `-- +goose Up`, optionally `-- +goose Down`,
+// statements ending with `;` at the end of a line, `-- +goose
+// StatementBegin` / `StatementEnd` around a statement holding `;`
+// (a function body), and `-- +goose NO TRANSACTION`. `ENVSUB` is refused:
+// a migration's text is what the binary embeds. The out-of-order rule
+// (a pending version below the newest applied one stops `up`) and the
+// partial error (the migrations before a failed one stay applied) are
+// goose's Provider's.
+
+use std/embed
+use std/fnv
+use std/sql
+
+/// One migration file.
+pub struct Migration {
+  /// The number before the first `_` of the file name.
+  pub version: Int
+  /// The file's path in the files given.
+  pub name: Str
+  /// The statements of the Up section, in order.
+  pub up: List[Str]
+  /// The statements of the Down section (parsed, never run by `up`).
+  pub down: List[Str]
+  /// False for a file with `-- +goose NO TRANSACTION`.
+  pub tx: Bool = true
+}
+
+/// The database a migration runs on: it picks the lock and the version
+/// table's column types.
+pub enum Dialect {
+  /// pg_advisory_lock on one connection.
+  Postgres
+  /// GET_LOCK on one connection.
+  Mysql
+  /// No lock: the database takes one writer at a time.
+  Sqlite
+  /// sql.memory: no lock (it runs one statement at a time).
+  Memory
+}
+
+/// A migration's state in `status`.
+pub struct Status {
+  pub version: Int
+  pub name: Str
+  /// When `up` applied it; None while pending.
+  pub applied_at: Time?
+}
+
+pub enum MigrateErr {
+  /// A file's text is not a goose migration (goose's parser error).
+  Parse(name: Str, msg: Str)
+  /// Two files have the same version.
+  Duplicate(version: Int, first: Str, second: Str)
+  /// Pending versions below the newest applied one, refused unless
+  /// `allow_missing` (goose's "missing (out-of-order) migration").
+  Missing(versions: List[Int])
+  /// A statement of a migration failed. The migrations applied before it
+  /// stay; in a transaction, nothing of this one does.
+  Failed(version: Int, name: Str, statement: Int, err: sql.SqlErr)
+  /// Reading or writing the version table, or the lock, failed.
+  Db(err: sql.SqlErr)
+  /// The version table's name is not letters, digits and `_` (not
+  /// starting with a digit), optionally after a schema name and `.`.
+  Table(name: Str)
+}
+
+pub fn (e: MigrateErr) display() -> Str {
+  match e {
+    Parse(name, msg) => "migrate: ${name}: ${msg}"
+    Duplicate(v, a, b) => "migrate: found duplicate migration version ${v}: ${a} and ${b}"
+    Missing(vs) => "migrate: found ${vs.len()} missing (out-of-order) migration(s): ${vs.map(fn(v) { "${v}" }).join(", ")}"
+    Failed(v, name, i, err) => "migrate: partial migration error (version ${v}, ${name}, statement ${i + 1}): ${err.display()}"
+    Db(err) => "migrate: ${err.display()}"
+    Table(name) => "migrate: version table name ${name:?} is not an identifier"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The file format (goose's internal/sqlparser)
+
+// goose's parserState
+const START = 0
+const UP = 1
+const BEGIN_UP = 2
+const END_UP = 3
+const DOWN = 4
+const BEGIN_DOWN = 5
+const END_DOWN = 6
+
+const SEE = "see https://github.com/pressly/goose#sql-migrations"
+
+/// goose's extractAnnotation: the annotation of a `-- +goose X` line, by
+/// its canonical name, or the error text.
+fn annotation(line: Str) -> Str ! Str {
+  if line.starts_with(" ") || line.starts_with("\t") {
+    return Err("\"${line}\" contains leading whitespace: invalid annotation")
+  }
+  var cmd = line.replace("--", "")
+  cmd = cmd.replace_n("+goose", "", 1)
+  if cmd.contains("+goose") {
+    return Err("\"${cmd}\" contains multiple '+goose' annotations: invalid annotation")
+  }
+  cmd = cmd.trim()
+  if cmd == "" {
+    return Err("empty annotation")
+  }
+  for a in ["Up", "Down", "StatementBegin", "StatementEnd", "NO TRANSACTION", "ENVSUB ON", "ENVSUB OFF"] {
+    if a.equal_fold(cmd) {
+      return Ok(a)
+    }
+  }
+  Err("\"${cmd}\" not supported: invalid annotation")
+}
+
+/// goose's endsWithSemicolon: whether the last word before a `--` word
+/// ends with `;`.
+fn ends_with_semicolon(line: Str) -> Bool {
+  var prev = ""
+  for w in line.fields() {
+    if w.starts_with("--") {
+      break
+    }
+    prev = w
+  }
+  prev.ends_with(";")
+}
+
+fn missing_semicolon(state: Int, up: Bool, rest: Str) -> Str {
+  let dir = if up { "up" } else { "down" }
+  "failed to parse migration: state ${state}, direction: ${dir}: unexpected unfinished SQL query: ${rest:?}: missing semicolon?"
+}
+
+/// goose's ParseSQLMigration: the statements of one direction and whether
+/// the file runs in a transaction.
+fn parse_dir(text: Str, up: Bool) -> (List[Str], Bool) ! Str {
+  var state = START
+  var use_tx = true
+  var stmts: List[Str] = []
+  var buf = ""
+  for line in text.lines() {
+    if state == START && line.trim() == "" {
+      continue
+    }
+    if line.trim().starts_with("--") && line.contains("+goose") {
+      let cmd = match annotation(line) {
+        Ok(c) => c
+        Err(msg) => return Err("failed to parse annotation line ${line:?}: ${msg}")
+      }
+      if cmd == "Up" {
+        if state != START {
+          return Err("duplicate '-- +goose Up' annotations; stateMachine=${state}, ${SEE}")
+        }
+        state = UP
+        continue
+      }
+      if cmd == "Down" {
+        if state != UP && state != END_UP {
+          return Err("must start with '-- +goose Up' annotation, stateMachine=${state}, ${SEE}")
+        }
+        let rest = buf.trim()
+        if rest != "" {
+          return Err(missing_semicolon(state, up, rest))
+        }
+        state = DOWN
+        continue
+      }
+      if cmd == "StatementBegin" {
+        if state == UP || state == END_UP {
+          state = BEGIN_UP
+        } else if state == DOWN || state == END_DOWN {
+          state = BEGIN_DOWN
+        } else {
+          return Err("'-- +goose StatementBegin' must be defined after '-- +goose Up' or '-- +goose Down' annotation, stateMachine=${state}, ${SEE}")
+        }
+        continue
+      }
+      if cmd == "StatementEnd" {
+        if state == BEGIN_UP {
+          state = END_UP
+        } else if state == BEGIN_DOWN {
+          state = END_DOWN
+        } else {
+          return Err("'-- +goose StatementEnd' must be defined after '-- +goose StatementBegin', ${SEE}")
+        }
+      } else if cmd == "NO TRANSACTION" {
+        use_tx = false
+        continue
+      } else {
+        // ENVSUB ON and OFF: goose substitutes environment variables;
+        // an embedded migration's text is fixed
+        return Err("'-- +goose ${cmd}' is not supported by std/migrate (no environment substitution)")
+      }
+    }
+    // leading comments and empty lines before a statement are dropped;
+    // inside one they are kept
+    if buf == "" {
+      if line.trim().starts_with("--") || line == "" {
+        continue
+      }
+    }
+    if state != END_UP && state != END_DOWN {
+      buf = "${buf}${line}\n"
+    }
+    let in_up = state == UP || state == BEGIN_UP || state == END_UP
+    let in_down = state == DOWN || state == BEGIN_DOWN || state == END_DOWN
+    if !in_up && !in_down {
+      return Err("failed to parse migration: unexpected state ${state} on line ${line:?}, ${SEE}")
+    }
+    if in_up != up {
+      buf = ""
+      continue
+    }
+    if state == UP || state == DOWN {
+      if ends_with_semicolon(line) {
+        stmts.push(buf.trim())
+        buf = ""
+      }
+    } else if state == END_UP || state == END_DOWN {
+      stmts.push(buf.trim())
+      buf = ""
+      state = if state == END_UP { UP } else { DOWN }
+    }
+  }
+  if state == START {
+    return Err("failed to parse migration: must start with '-- +goose Up' annotation, ${SEE}")
+  }
+  if state == BEGIN_UP || state == BEGIN_DOWN {
+    return Err("failed to parse migration: missing '-- +goose StatementEnd' annotation")
+  }
+  let rest = buf.trim()
+  if rest != "" {
+    return Err(missing_semicolon(state, up, rest))
+  }
+  Ok((stmts, use_tx))
+}
+
+/// goose's NumericComponent: the version of a file name `NNN_name.sql`, or
+/// None for a name without one (such files are skipped, as goose's
+/// non-strict collect does).
+pub fn version_of(name: Str) -> Int? {
+  let base = match name.rfind("/") {
+    Some(i) => name[i + 1..]
+    None => name
+  }
+  if !base.ends_with(".sql") {
+    return None
+  }
+  let (num, _) = base.cut("_")?
+  if num == "" || num.contains("_") {
+    return None
+  }
+  let n = Int.parse(num)?
+  if n < 1 {
+    return None
+  }
+  Some(n)
+}
+
+/// Parses one migration file: its Up and Down statements and its
+/// transaction mode. `name` gives the version (`version_of`; 0 when it has
+/// none).
+pub fn parse(name: Str, text: Str) -> Migration ! MigrateErr {
+  let (up, tx) = match parse_dir(text, true) {
+    Ok(r) => r
+    Err(msg) => return Err(MigrateErr.Parse(name: name, msg: msg))
+  }
+  let (down, _) = match parse_dir(text, false) {
+    Ok(r) => r
+    Err(msg) => return Err(MigrateErr.Parse(name: name, msg: msg))
+  }
+  Ok(Migration{version: version_of(name) ?? 0, name: name, up: up, down: down, tx: tx})
+}
+
+/// The migrations of files: every `NNN_name.sql` at the top level (goose's
+/// `*.sql` glob), parsed and sorted by version. Other files are skipped.
+pub fn collect(files: embed.Dir) -> List[Migration] ! MigrateErr {
+  var by_version: Map[Int, Str] = {}
+  var out: List[Migration] = []
+  for path in files.paths() {
+    if path.contains("/") {
+      continue
+    }
+    let v = match version_of(path) {
+      Some(v) => v
+      None => continue
+    }
+    match by_version.get(v) {
+      Some(first) => return Err(MigrateErr.Duplicate(version: v, first: first, second: path))
+      None => {}
+    }
+    by_version[v] = path
+    let text = match files.read_text(path) {
+      Some(t) => t
+      None => return Err(MigrateErr.Parse(name: path, msg: "not valid UTF-8"))
+    }
+    out.push(parse(path, text)?)
+  }
+  Ok(out.sort_by(fn(m) { m.version }))
+}
+
+// ---------------------------------------------------------------------------
+// Running
+
+/// A key for pg_advisory_lock and GET_LOCK, from the table name (FNV-1a,
+/// made non-negative), so two version tables never share a lock.
+fn lock_key(table: Str) -> Int {
+  let h = fnv.sum64a(table.bytes())
+  if h < 0 { -(h + 1) } else { h }
+}
+
+fn is_ident(s: Str) -> Bool {
+  if s == "" {
+    return false
+  }
+  var i = 0
+  for b in s.bytes() {
+    let letter = (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_'
+    if !letter && !(i > 0 && b >= '0' && b <= '9') {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+/// The table name as written in the statements: an identifier, or a
+/// schema and an identifier. It is not quoted, as the in memory database
+/// takes no quoted names.
+fn check_table(table: Str) -> () ! MigrateErr {
+  let ok = match table.cut(".") {
+    Some((schema, name)) => is_ident(schema) && is_ident(name)
+    None => is_ident(table)
+  }
+  if ok { Ok(()) } else { Err(MigrateErr.Table(name: table)) }
+}
+
+fn time_type(d: Dialect) -> Str {
+  match d {
+    Mysql => "DATETIME(6)"
+    Postgres | Sqlite | Memory => "TIMESTAMPTZ"
+  }
+}
+
+fn create_table[fx: Effects](c: sql.Conn[fx], table: Str, d: Dialect) -> () ! MigrateErr uses (net.dial, fx) {
+  let q = "CREATE TABLE IF NOT EXISTS ${table} (version BIGINT PRIMARY KEY, name TEXT NOT NULL, applied_at ${time_type(d)} NOT NULL)"
+  match c.exec(q) {
+    Ok(_) => Ok(())
+    Err(e) => Err(MigrateErr.Db(e))
+  }
+}
+
+/// The applied versions and their times.
+fn applied[fx: Effects](c: sql.Conn[fx], table: Str) -> Map[Int, Time] ! MigrateErr uses (net.dial, fx) {
+  let rows = match c.query("SELECT version, applied_at FROM ${table}") {
+    Ok(r) => r
+    Err(e) => return Err(MigrateErr.Db(e))
+  }
+  var out: Map[Int, Time] = {}
+  for r in rows {
+    let v = match r.int("version") {
+      Ok(v) => v
+      Err(e) => return Err(MigrateErr.Db(e))
+    }
+    let at = match r.time("applied_at") {
+      Ok(t) => t
+      Err(e) => return Err(MigrateErr.Db(e))
+    }
+    out[v] = at
+  }
+  Ok(out)
+}
+
+fn lock[fx: Effects](c: sql.Conn[fx], table: Str, d: Dialect) -> () ! MigrateErr uses (net.dial, fx) {
+  let r = match d {
+    Postgres => c.query("SELECT pg_advisory_lock($1)", [sql.int(lock_key(table))])
+    Mysql => c.query("SELECT GET_LOCK(?, -1)", [sql.str("xo_migrate_${lock_key(table)}")])
+    Sqlite | Memory => return Ok(())
+  }
+  match r {
+    Ok(_) => Ok(())
+    Err(e) => Err(MigrateErr.Db(e))
+  }
+}
+
+fn unlock[fx: Effects](c: sql.Conn[fx], table: Str, d: Dialect) uses (net.dial, fx) {
+  // an unlock that fails leaves the lock to the session's end, which the
+  // connection's close brings
+  match d {
+    Postgres => c.query("SELECT pg_advisory_unlock($1)", [sql.int(lock_key(table))]).ignore_err("the session's end releases it")
+    Mysql => c.query("SELECT RELEASE_LOCK(?)", [sql.str("xo_migrate_${lock_key(table)}")]).ignore_err("the session's end releases it")
+    Sqlite | Memory => None
+  }
+}
+
+fn record[fx: Effects](c: sql.Conn[fx], table: Str, m: Migration, at: Time) -> () ! sql.SqlErr uses (net.dial, fx) {
+  c.exec("INSERT INTO ${table} (version, name, applied_at) VALUES ($1, $2, $3)", [sql.int(m.version), sql.str(m.name), sql.time(at)])?
+  Ok(())
+}
+
+fn record_tx[fx: Effects](t: sql.Tx[fx], table: Str, m: Migration, at: Time) -> () ! sql.SqlErr uses (net.dial, fx) {
+  t.exec("INSERT INTO ${table} (version, name, applied_at) VALUES ($1, $2, $3)", [sql.int(m.version), sql.str(m.name), sql.time(at)])?
+  Ok(())
+}
+
+/// Runs m's Up statements and records it: in one transaction, or one by
+/// one for a NO TRANSACTION file.
+fn apply[fx: Effects](c: sql.Conn[fx], table: Str, m: Migration, at: Time) -> () ! MigrateErr uses (net.dial, fx) {
+  let failed = fn(i: Int, e: sql.SqlErr) -> MigrateErr { MigrateErr.Failed(version: m.version, name: m.name, statement: i, err: e) }
+  if !m.tx {
+    for i in 0..m.up.len() {
+      match c.exec(m.up[i]) {
+        Ok(_) => {}
+        Err(e) => return Err(failed(i, e))
+      }
+    }
+    return match record(c, table, m, at) {
+      Ok(_) => Ok(())
+      Err(e) => Err(failed(m.up.len(), e))
+    }
+  }
+  let t = match c.begin() {
+    Ok(t) => t
+    Err(e) => return Err(MigrateErr.Db(e))
+  }
+  for i in 0..m.up.len() {
+    match t.exec(m.up[i]) {
+      Ok(_) => {}
+      Err(e) => {
+        t.rollback().ignore_err("the migration already failed")
+        return Err(failed(i, e))
+      }
+    }
+  }
+  match record_tx(t, table, m, at) {
+    Ok(_) => {}
+    Err(e) => {
+      t.rollback().ignore_err("the migration already failed")
+      return Err(failed(m.up.len(), e))
+    }
+  }
+  match t.commit() {
+    Ok(_) => Ok(())
+    Err(e) => Err(failed(m.up.len(), e))
+  }
+}
+
+fn up_locked[fx: Effects](c: sql.Conn[fx], ms: List[Migration], table: Str, clock: Clock, d: Dialect, allow_missing: Bool) -> List[Int] ! MigrateErr uses (net.dial, fx, clock) {
+  let done = applied(c, table)?
+  var newest = 0
+  for v in done.keys() {
+    if v > newest {
+      newest = v
+    }
+  }
+  let pending = ms.filter(fn(m) { !done.contains(m.version) })
+  let missing = pending.filter(fn(m) { m.version < newest }).map(fn(m) { m.version })
+  if missing.len() > 0 && !allow_missing {
+    return Err(MigrateErr.Missing(missing))
+  }
+  var out: List[Int] = []
+  for m in pending {
+    apply(c, table, m, clock.now())?
+    out.push(m.version)
+  }
+  Ok(out)
+}
+
+/// Applies every pending migration of files in version order, each in its
+/// own transaction (unless NO TRANSACTION), recording it in `table`
+/// (created when missing) with `clock`'s time, and answers the versions
+/// applied. One connection holds the dialect's lock throughout, so a
+/// second process waits and then finds nothing pending. A failure stops at
+/// that migration: the ones before it stay applied (MigrateErr.Failed).
+/// A pending version below the newest applied one is MigrateErr.Missing
+/// unless `allow_missing`, which applies it.
+pub fn up[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> List[Int] ! MigrateErr uses (net.dial, fx, clock) {
+  up_list(db, collect(files)?, clock, table, dialect, allow_missing)
+}
+
+/// `up` over migrations already collected or parsed.
+pub fn up_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> List[Int] ! MigrateErr uses (net.dial, fx, clock) {
+  var seen: Map[Int, Str] = {}
+  for m in migrations {
+    match seen.get(m.version) {
+      Some(first) => return Err(MigrateErr.Duplicate(version: m.version, first: first, second: m.name))
+      None => {}
+    }
+    seen[m.version] = m.name
+  }
+  check_table(table)?
+  let ms = migrations.sort_by(fn(m) { m.version })
+  let c = match db.conn() {
+    Ok(c) => c
+    Err(e) => return Err(MigrateErr.Db(e))
+  }
+  defer c.close()
+  lock(c, table, dialect)?
+  let r = match create_table(c, table, dialect) {
+    Ok(_) => up_locked(c, ms, table, clock, dialect, allow_missing)
+    Err(e) => Err(e)
+  }
+  unlock(c, table, dialect)
+  r
+}
+
+/// Each migration of files in version order with the time it was applied
+/// (None while pending). A database whose version table does not exist yet
+/// has every migration pending.
+pub fn status[fx: Effects](db: sql.Db[fx], files: embed.Dir, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> List[Status] ! MigrateErr uses (net.dial, fx) {
+  status_list(db, collect(files)?, table, dialect)
+}
+
+/// `status` over migrations already collected or parsed.
+pub fn status_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> List[Status] ! MigrateErr uses (net.dial, fx) {
+  check_table(table)?
+  let c = match db.conn() {
+    Ok(c) => c
+    Err(e) => return Err(MigrateErr.Db(e))
+  }
+  defer c.close()
+  create_table(c, table, dialect)?
+  let done = applied(c, table)?
+  Ok(migrations.sort_by(fn(m) { m.version }).map(fn(m) { Status{version: m.version, name: m.name, applied_at: done.get(m.version)} }))
+}

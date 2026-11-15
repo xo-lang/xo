@@ -1,0 +1,309 @@
+// std/migrate tests. The parser tests port pressly/goose v3.27.3's
+// internal/sqlparser/parser_test.go and parse_test.go (Copyright (c) 2012
+// Liam Staskawicz, MIT license), with its testdata generated below; the
+// collect tests port provider_collect_test.go's TestCollectFileSources,
+// and the run tests port provider_run_test.go's tx_partial_errors and
+// TestPending on sql.memory.
+
+use std/embed
+use std/sql
+use std/testing
+
+fn ups(text: Str) -> List[Str] { (parse("1_t.sql", text) ?? e => fault("${e}")).up }
+fn downs(text: Str) -> List[Str] { (parse("1_t.sql", text) ?? e => fault("${e}")).down }
+
+test "endsWithSemicolon (TestSemicolons)" {
+  expect(ends_with_semicolon("END;")) == true
+  expect(ends_with_semicolon("END; -- comment")) == true
+  expect(ends_with_semicolon("END   ; -- comment")) == true
+  expect(ends_with_semicolon("END -- comment")) == false
+  expect(ends_with_semicolon("END -- comment ;")) == false
+  expect(ends_with_semicolon("END \" ; \" -- comment")) == false
+}
+
+const MULTILINE = "-- +goose Up\nCREATE TABLE post (\n\t\tid int NOT NULL,\n\t\ttitle text,\n\t\tbody text,\n\t\tPRIMARY KEY(id)\n);                  -- 1st stmt\n\n-- comment\nSELECT 2;           -- 2nd stmt\nSELECT 3; SELECT 3; -- 3rd stmt\nSELECT 4;           -- 4th stmt\n\n-- +goose Down\n-- comment\nDROP TABLE post;    -- 1st stmt\n"
+const FUNCTXT = "-- +goose Up\nCREATE TABLE IF NOT EXISTS histories (\n\tid                BIGSERIAL  PRIMARY KEY,\n\tcurrent_value     varchar(2000) NOT NULL,\n\tcreated_at      timestamp with time zone  NOT NULL\n);\n\n-- +goose StatementBegin\nCREATE OR REPLACE FUNCTION histories_partition_creation( DATE, DATE )\nreturns void AS $$\nDECLARE\n\tcreate_query text;\nBEGIN\n\tFOR create_query IN SELECT\n\t\t\t'CREATE TABLE IF NOT EXISTS histories_'\n\t\t\t|| TO_CHAR( d, 'YYYY_MM' )\n\t\t\t|| ' ( CHECK( created_at >= timestamp '''\n\t\t\t|| TO_CHAR( d, 'YYYY-MM-DD 00:00:00' )\n\t\t\t|| ''' AND created_at < timestamp '''\n\t\t\t|| TO_CHAR( d + INTERVAL '1 month', 'YYYY-MM-DD 00:00:00' )\n\t\t\t|| ''' ) ) inherits ( histories );'\n\t\tFROM generate_series( $1, $2, '1 month' ) AS d\n\tLOOP\n\t\tEXECUTE create_query;\n\tEND LOOP;  -- LOOP END\nEND;         -- FUNCTION END\n$$\nlanguage plpgsql;\n-- +goose StatementEnd\n\n-- +goose Down\ndrop function histories_partition_creation(DATE, DATE);\ndrop TABLE histories;\n"
+const MYSQL_DELIMITER = "\n-- +goose Up\n-- +goose StatementBegin\nDELIMITER | \n-- +goose StatementEnd\n\n-- +goose StatementBegin\nCREATE FUNCTION my_func( str CHAR(255) ) RETURNS CHAR(255) DETERMINISTIC\nBEGIN \n  RETURN \"Dummy Body\"; \nEND | \n-- +goose StatementEnd\n\n-- +goose StatementBegin\nDELIMITER ; \n-- +goose StatementEnd\n\nselect my_func(\"123\") from dual;\n-- +goose Down\n"
+const COPY_STDIN = "\n-- +goose Up\n-- +goose StatementBegin\nCOPY public.django_content_type (id, app_label, model) FROM stdin;\n1\tadmin\tlogentry\n2\tauth\tpermission\n3\tauth\tgroup\n4\tauth\tuser\n5\tcontenttypes\tcontenttype\n6\tsessions\tsession\n\\.\n-- +goose StatementEnd\n"
+const PLPGSQL = "\n-- +goose Up\n-- +goose StatementBegin\nCREATE OR REPLACE FUNCTION update_updated_at_column()\nRETURNS TRIGGER AS $$\nBEGIN\n    NEW.updated_at = now();\n    RETURN NEW;\nEND;\n$$ language 'plpgsql';\n-- +goose StatementEnd\n-- +goose StatementBegin\nCREATE TRIGGER update_properties_updated_at BEFORE UPDATE ON properties FOR EACH ROW EXECUTE PROCEDURE  update_updated_at_column();\n-- +goose StatementEnd\n\n-- +goose Down\n-- +goose StatementBegin\nDROP TRIGGER update_properties_updated_at\n-- +goose StatementEnd\n-- +goose StatementBegin\nDROP FUNCTION update_updated_at_column()\n-- +goose StatementEnd\n"
+const PLPGSQL_MIXED = "\n-- +goose Up\n-- +goose StatementBegin\nCREATE OR REPLACE FUNCTION update_updated_at_column()\nRETURNS TRIGGER AS $$\nBEGIN\n    NEW.updated_at = now();\n    RETURN NEW;\nEND;\n$$ language 'plpgsql';\n-- +goose StatementEnd\n\nCREATE TRIGGER update_properties_updated_at\nBEFORE UPDATE\nON properties \nFOR EACH ROW EXECUTE PROCEDURE  update_updated_at_column();\n\n-- +goose Down\nDROP TRIGGER update_properties_updated_at;\nDROP FUNCTION update_updated_at_column();\n"
+
+test "statement counts per direction (TestSplitStatements)" {
+  let cases: List[(Str, Int, Int)] = [
+    (MULTILINE, 4, 1),
+    ("-- +goose Up\n-- This is just a comment", 0, 0),
+    ("\n\n-- comment\n-- +goose Up\n\n-- comment\n-- +goose Down\n\n", 0, 0),
+    (FUNCTXT, 2, 2),
+    (MYSQL_DELIMITER, 4, 0),
+    (COPY_STDIN, 1, 0),
+    (PLPGSQL, 2, 2),
+    (PLPGSQL_MIXED, 2, 2),
+  ]
+  for (text, up, down) in cases {
+    expect(ups(text).len()) == up
+    expect(downs(text).len()) == down
+  }
+  expect(ups(MULTILINE)[2]) == "SELECT 3; SELECT 3; -- 3rd stmt"
+  expect(downs(MULTILINE)) == ["DROP TABLE post;    -- 1st stmt"]
+}
+
+test "parsing errors (TestParsingErrors)" {
+  let bad = [
+    // statementBeginNoStatementEnd
+    "-- +goose Up\nCREATE TABLE t (id int);\n\n-- +goose StatementBegin\nCREATE FUNCTION f() returns void AS $$\nBEGIN\n  SELECT 1;\nEND;\n$$\nlanguage plpgsql;\n\n-- +goose Down\ndrop TABLE t;\n",
+    // unfinishedSQL
+    "\n-- +goose Up\nALTER TABLE post\n\n-- +goose Down\n",
+    // noUpDownAnnotations
+    "\nCREATE TABLE post (\n    id int NOT NULL,\n    PRIMARY KEY(id)\n);\n",
+    // multiUpDown
+    "-- +goose Up\nCREATE TABLE post (id int);\n\n-- +goose Down\nDROP TABLE post;\n\n-- +goose Up\nCREATE TABLE fancier_post (id int);\n",
+    // downFirst
+    "-- +goose Down\nDROP TABLE fancier_post;\n",
+  ]
+  for text in bad {
+    expect(parse("1_t.sql", text).is_ok()) == false
+  }
+  match parse("1_t.sql", "\n-- +goose Up\nALTER TABLE post\n\n-- +goose Down\n") {
+    Err(MigrateErr.Parse(_, msg)) => expect(msg.contains("unexpected unfinished SQL query") && msg.contains("missing semicolon?")) == true
+    _ => fault("want a parse error")
+  }
+}
+
+test "every testdata/invalid/up file fails (TestInvalidUp)" {
+  expect(invalid_up().len()) == 4
+  for (name, text) in invalid_up() {
+    expect(parse(name, text).is_ok()) == false
+  }
+}
+
+test "NO TRANSACTION (TestUseTransactions)" {
+  for (name, text, tx) in valid_txn() {
+    expect((parse(name, text) ?? e => fault("${e}")).tx) == tx
+  }
+}
+
+test "Up statements match testdata/valid-up's goldens (TestValidUp)" {
+  expect(valid_up().len()) == 9
+  for (dir, input, want) in valid_up() {
+    let got = ups(input)
+    expect("${dir}: ${got.len()}") == "${dir}: ${want.len()}"
+    for i in 0..want.len() {
+      expect(got[i]) == want[i]
+    }
+  }
+}
+
+test "annotations (Test_extractAnnotation)" {
+  expect(annotation("-- +goose Up").ok()) == Some("Up")
+  expect(annotation("-- +goose Down").ok()) == Some("Down")
+  expect(annotation("-- +goose StatementBegin").ok()) == Some("StatementBegin")
+  expect(annotation("-- +goose NO TRANSACTION").ok()) == Some("NO TRANSACTION")
+  expect(annotation("-- +goose unsupported").is_ok()) == false
+  expect(annotation("-- +goose").is_ok()) == false
+  expect(annotation("-- +goose   UP \t").ok()) == Some("Up")
+  expect(annotation(" -- +goose   UP \t").is_ok()) == false
+  expect(annotation("\t-- +goose   UP \t").is_ok()) == false
+  expect(annotation("-- +goose +goose Up").is_ok()) == false
+}
+
+test "ENVSUB is refused: an embedded migration's text is fixed" {
+  expect(parse("1_t.sql", "-- +goose ENVSUB ON\n-- +goose Up\nSELECT 1;\n").is_ok()) == false
+}
+
+fn dir(files: Map[Str, Str]) -> embed.Dir {
+  var m: Map[Str, Bytes] = {}
+  for (k, v) in files {
+    m[k] = v.bytes()
+  }
+  embed.Dir{files: m}
+}
+
+test "ParseAllFromFS: empty file and all_statements" {
+  match parse("001_foo.sql", "") {
+    Err(MigrateErr.Parse(_, msg)) => expect(msg.contains("must start with '-- +goose Up' annotation")) == true
+    _ => fault("want a parse error")
+  }
+  let ms = collect(dir({
+    "001_foo.sql": "\n-- +goose Up\n",
+    "002_bar.sql": "\n-- +goose Up\n-- +goose Down\n",
+    "003_baz.sql": "\n-- +goose Up\nCREATE TABLE foo (id int);\nCREATE TABLE bar (id int);\n\n-- +goose Down\nDROP TABLE bar;\n",
+    "004_qux.sql": "\n-- +goose NO TRANSACTION\n-- +goose Up\nCREATE TABLE foo (id int);\n-- +goose Down\nDROP TABLE foo;\n",
+  })) ?? e => fault("${e}")
+  expect(ms.map(fn(m) { (m.version, m.tx, m.up.len(), m.down.len()) })) == [(1, true, 0, 0), (2, true, 0, 0), (3, true, 2, 1), (4, false, 1, 1)]
+}
+
+const SQL1 = "-- +goose Up\nSELECT 1;\n"
+
+test "file names (TestCollectFileSources, NumericComponent)" {
+  expect(version_of("00001_foo.sql")) == Some(1)
+  expect(version_of("00110_qux.sql")) == Some(110)
+  expect(version_of("00000_foo.sql")) == None
+  expect(version_of("not_valid.sql")) == None
+  expect(version_of("1.sql")) == None
+  expect(version_of("4_something.go")) == None
+  expect(version_of("dir/7_x.sql")) == Some(7)
+  // skip_random_files: other files and subdirectories are skipped
+  let ms = collect(dir({
+    "1_foo.sql": SQL1,
+    "4_something.go": "package goose",
+    "5_qux.sql": SQL1,
+    "README.md": "# README",
+    "LICENSE": "MIT",
+    "no_a_real_migration.sql": "SELECT 1;",
+    "some/other/dir/2_foo.sql": "SELECT 1;",
+  })) ?? e => fault("${e}")
+  expect(ms.map(fn(m) { (m.version, m.name) })) == [(1, "1_foo.sql"), (5, "5_qux.sql")]
+  // duplicate_versions
+  match collect(dir({"001_foo.sql": SQL1, "01_bar.sql": SQL1})) {
+    Err(e) => expect(e.display().contains("found duplicate migration version 1")) == true
+    Ok(_) => fault("want a duplicate error")
+  }
+}
+
+const OWNERS = "-- +goose Up\nCREATE TABLE owners ( owner_name TEXT NOT NULL );\n"
+const SEED = "-- +goose Up\nINSERT INTO owners (owner_name) VALUES ('seed-user-1');\nINSERT INTO owners (owner_name) VALUES ('seed-user-2');\nINSERT INTO owners (owner_name) VALUES ('seed-user-3');\n"
+
+fn owners(db: sql.Db) -> Int uses net.dial {
+  ((db.query_one("SELECT count(*) AS n FROM owners") ?? e => fault("${e}")).int("n")) ?? e => fault("${e}")
+}
+
+test "up applies in order once; status reports each (up_and_down_all, status)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let files = dir({"00002_seed.sql": SEED, "00001_owners.sql": OWNERS})
+  let before = status(db, files, dialect: Dialect.Memory) ?? e => fault("${e}")
+  expect(before.map(fn(s) { (s.version, s.applied_at.is_some()) })) == [(1, false), (2, false)]
+  expect(up(db, files, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")) == [1, 2]
+  expect(owners(db)) == 3
+  expect(up(db, files, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")) == []
+  expect(owners(db)) == 3
+  let after = status(db, files, dialect: Dialect.Memory) ?? e => fault("${e}")
+  expect(after.map(fn(s) { (s.version, s.name, s.applied_at.is_some()) })) == [(1, "00001_owners.sql", true), (2, "00002_seed.sql", true)]
+  // a new file later is applied alone
+  let more = dir({"00002_seed.sql": SEED, "00001_owners.sql": OWNERS, "00003_more.sql": "-- +goose Up\nINSERT INTO owners (owner_name) VALUES ('x');\n"})
+  expect(up(db, more, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")) == [3]
+  expect(owners(db)) == 4
+}
+
+test "a failed migration leaves the ones before it applied and none of itself (tx_partial_errors)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let files = dir({
+    "00001_users_table.sql": OWNERS,
+    "00002_partial_error.sql": "-- +goose Up\nINSERT INTO owners (owner_name) VALUES ('kept-only-on-success');\nINSERT INTO invalid_table (invalid_table) VALUES ('invalid_value');\n",
+    "00003_insert_data.sql": SEED,
+  })
+  match up(db, files, os.clock, dialect: Dialect.Memory) {
+    Err(MigrateErr.Failed(v, name, i, err)) => {
+      expect((v, name, i)) == (2, "00002_partial_error.sql", 1)
+      expect(err.display()) == "no such table: invalid_table"
+    }
+    r => fault("want Failed, got ${r:?}")
+  }
+  expect(owners(db)) == 0
+  let st = status(db, files, dialect: Dialect.Memory) ?? e => fault("${e}")
+  expect(st.map(fn(s) { s.applied_at.is_some() })) == [true, false, false]
+}
+
+test "a pending version below the newest applied one (TestPending)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let first = dir({"00001_owners.sql": OWNERS, "00003_seed.sql": SEED})
+  expect(up(db, first, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")) == [1, 3]
+  let all = dir({"00001_owners.sql": OWNERS, "00002_one.sql": "-- +goose Up\nINSERT INTO owners (owner_name) VALUES ('two');\n", "00003_seed.sql": SEED})
+  match up(db, all, os.clock, dialect: Dialect.Memory) {
+    Err(e) => {
+      expect(e.display().contains("missing (out-of-order) migration")) == true
+      expect(e) == MigrateErr.Missing(versions: [2])
+    }
+    Ok(vs) => fault("want Missing, got ${vs:?}")
+  }
+  expect(owners(db)) == 3
+  expect(up(db, all, os.clock, dialect: Dialect.Memory, allow_missing: true) ?? e => fault("${e}")) == [2]
+  expect(owners(db)) == 4
+}
+
+test "NO TRANSACTION statements run one by one: those before a failure stay" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let files = dir({
+    "1_owners.sql": OWNERS,
+    "2_nt.sql": "-- +goose NO TRANSACTION\n-- +goose Up\nINSERT INTO owners (owner_name) VALUES ('a');\nINSERT INTO nope (x) VALUES (1);\n",
+  })
+  expect(up(db, files, os.clock, dialect: Dialect.Memory).is_ok()) == false
+  expect(owners(db)) == 1
+}
+
+test "the version table's name is a parameter" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let files = dir({"1_owners.sql": OWNERS})
+  expect(up(db, files, os.clock, table: "schema_a", dialect: Dialect.Memory) ?? e => fault("${e}")) == [1]
+  let n = ((db.query_one("SELECT count(*) AS n FROM schema_a") ?? e => fault("${e}")).int("n")) ?? e => fault("${e}")
+  expect(n) == 1
+  match up(db, files, os.clock, table: "x; DROP TABLE owners", dialect: Dialect.Memory) {
+    Err(e) => expect(e) == MigrateErr.Table(name: "x; DROP TABLE owners")
+    Ok(_) => fault("want Table")
+  }
+  expect(check_table("public.xo_migrations").is_ok()) == true
+  expect(check_table("1abc").is_ok()) == false
+  expect(check_table("a.b.c").is_ok()) == false
+}
+
+// Generated from pressly/goose v3.27.3 internal/sqlparser/testdata
+// (Copyright (c) 2012 Liam Staskawicz, MIT license).
+
+/// testdata/valid-up: each input.sql with its golden Up statements.
+fn valid_up() -> List[(Str, Str, List[Str])] { [
+  ("test01", "-- +goose UP\nCREATE TABLE emp (\n    empname text,\n    salary integer,\n    last_date timestamp,\n    last_user text\n);\n\n-- +goose statementBegin\nCREATE FUNCTION emp_stamp() RETURNS trigger AS $emp_stamp$\n    BEGIN\n        -- Check that empname and salary are given\n        IF NEW.empname IS NULL THEN\n            RAISE EXCEPTION 'empname cannot be null';\n        END IF;\n        IF NEW.salary IS NULL THEN\n            RAISE EXCEPTION '% cannot have null salary', NEW.empname;\n        END IF;\n\n        -- Who works for us when they must pay for it?\n        IF NEW.salary < 0 THEN\n            RAISE EXCEPTION '% cannot have a negative salary', NEW.empname;\n        END IF;\n\n        -- Remember who changed the payroll when\n        NEW.last_date := current_timestamp;\n        NEW.last_user := current_user;\n        RETURN NEW;\n    END;\n$emp_stamp$ LANGUAGE plpgsql;\n-- +goose StatementEnd\n\nCREATE TRIGGER emp_stamp BEFORE INSERT OR UPDATE ON emp\n    FOR EACH ROW EXECUTE FUNCTION emp_stamp();\n\n-- +goose Down\n", [
+    "CREATE TABLE emp (\n    empname text,\n    salary integer,\n    last_date timestamp,\n    last_user text\n);",
+    "CREATE FUNCTION emp_stamp() RETURNS trigger AS $emp_stamp$\n    BEGIN\n        -- Check that empname and salary are given\n        IF NEW.empname IS NULL THEN\n            RAISE EXCEPTION 'empname cannot be null';\n        END IF;\n        IF NEW.salary IS NULL THEN\n            RAISE EXCEPTION '% cannot have null salary', NEW.empname;\n        END IF;\n\n        -- Who works for us when they must pay for it?\n        IF NEW.salary < 0 THEN\n            RAISE EXCEPTION '% cannot have a negative salary', NEW.empname;\n        END IF;\n\n        -- Remember who changed the payroll when\n        NEW.last_date := current_timestamp;\n        NEW.last_user := current_user;\n        RETURN NEW;\n    END;\n$emp_stamp$ LANGUAGE plpgsql;",
+    "CREATE TRIGGER emp_stamp BEFORE INSERT OR UPDATE ON emp\n    FOR EACH ROW EXECUTE FUNCTION emp_stamp();",
+  ]),
+  ("test02", "-- +goose Up\n-- +goose StatementBegin\nCREATE TABLE emp (\n    empname           text NOT NULL,\n    salary            integer\n);\n\nCREATE TABLE emp_audit(\n    operation         char(1)   NOT NULL,\n    stamp             timestamp NOT NULL,\n    userid            text      NOT NULL,\n    empname           text      NOT NULL,\n    salary integer\n);\n\nCREATE OR REPLACE FUNCTION process_emp_audit() RETURNS TRIGGER AS $emp_audit$\n    BEGIN\n        --\n        -- Create a row in emp_audit to reflect the operation performed on emp,\n        -- making use of the special variable TG_OP to work out the operation.\n        --\n        IF (TG_OP = 'DELETE') THEN\n            INSERT INTO emp_audit SELECT 'D', now(), user, OLD.*;\n        ELSIF (TG_OP = 'UPDATE') THEN\n            INSERT INTO emp_audit SELECT 'U', now(), user, NEW.*;\n        ELSIF (TG_OP = 'INSERT') THEN\n            INSERT INTO emp_audit SELECT 'I', now(), user, NEW.*;\n        END IF;\n        RETURN NULL; -- result is ignored since this is an AFTER trigger\n    END;\n$emp_audit$ LANGUAGE plpgsql;\n\nCREATE TRIGGER emp_audit\nAFTER INSERT OR UPDATE OR DELETE ON emp\n    FOR EACH ROW EXECUTE FUNCTION process_emp_audit();\n-- +goose StatementEnd\n\n-- +goose Down\n", [
+    "CREATE TABLE emp (\n    empname           text NOT NULL,\n    salary            integer\n);\n\nCREATE TABLE emp_audit(\n    operation         char(1)   NOT NULL,\n    stamp             timestamp NOT NULL,\n    userid            text      NOT NULL,\n    empname           text      NOT NULL,\n    salary integer\n);\n\nCREATE OR REPLACE FUNCTION process_emp_audit() RETURNS TRIGGER AS $emp_audit$\n    BEGIN\n        --\n        -- Create a row in emp_audit to reflect the operation performed on emp,\n        -- making use of the special variable TG_OP to work out the operation.\n        --\n        IF (TG_OP = 'DELETE') THEN\n            INSERT INTO emp_audit SELECT 'D', now(), user, OLD.*;\n        ELSIF (TG_OP = 'UPDATE') THEN\n            INSERT INTO emp_audit SELECT 'U', now(), user, NEW.*;\n        ELSIF (TG_OP = 'INSERT') THEN\n            INSERT INTO emp_audit SELECT 'I', now(), user, NEW.*;\n        END IF;\n        RETURN NULL; -- result is ignored since this is an AFTER trigger\n    END;\n$emp_audit$ LANGUAGE plpgsql;\n\nCREATE TRIGGER emp_audit\nAFTER INSERT OR UPDATE OR DELETE ON emp\n    FOR EACH ROW EXECUTE FUNCTION process_emp_audit();",
+  ]),
+  ("test03", "-- +goose Up\n-- +goose StatementBegin\nCREATE FUNCTION cs_update_referrer_type_proc() RETURNS INTEGER AS '\nDECLARE\n    referrer_keys RECORD;  -- Declare a generic record to be used in a FOR\n    a_output varchar(4000);\nBEGIN \n    a_output := ''CREATE FUNCTION cs_find_referrer_type(varchar,varchar,varchar) \n                  RETURNS VARCHAR AS '''' \n                     DECLARE \n                         v_host ALIAS FOR $1; \n                         v_domain ALIAS FOR $2; \n                         v_url ALIAS FOR $3;\n                     BEGIN ''; \n\n-- \n-- Notice how we scan through the results of a query in a FOR loop\n-- using the FOR <record> construct.\n--\n\n    FOR referrer_keys IN SELECT * FROM cs_referrer_keys ORDER BY try_order LOOP\n        a_output := a_output || '' IF v_'' || referrer_keys.kind || '' LIKE '''''''''' \n                 || referrer_keys.key_string || '''''''''' THEN RETURN '''''' \n                 || referrer_keys.referrer_type || ''''''; END IF;''; \n    END LOOP; \n  \n    a_output := a_output || '' RETURN NULL; END; '''' LANGUAGE ''''plpgsql'''';''; \n \n    -- This works because we are not substituting any variables\n    -- Otherwise it would fail. Look at PERFORM for another way to run functions\n    \n    EXECUTE a_output; \nEND; \n' LANGUAGE 'plpgsql'; -- This comment WILL BE preserved.\n-- And so will this one.\n-- +goose StatementEnd\n\n-- +goose Down\n", [
+    "CREATE FUNCTION cs_update_referrer_type_proc() RETURNS INTEGER AS '\nDECLARE\n    referrer_keys RECORD;  -- Declare a generic record to be used in a FOR\n    a_output varchar(4000);\nBEGIN \n    a_output := ''CREATE FUNCTION cs_find_referrer_type(varchar,varchar,varchar) \n                  RETURNS VARCHAR AS '''' \n                     DECLARE \n                         v_host ALIAS FOR $1; \n                         v_domain ALIAS FOR $2; \n                         v_url ALIAS FOR $3;\n                     BEGIN ''; \n\n-- \n-- Notice how we scan through the results of a query in a FOR loop\n-- using the FOR <record> construct.\n--\n\n    FOR referrer_keys IN SELECT * FROM cs_referrer_keys ORDER BY try_order LOOP\n        a_output := a_output || '' IF v_'' || referrer_keys.kind || '' LIKE '''''''''' \n                 || referrer_keys.key_string || '''''''''' THEN RETURN '''''' \n                 || referrer_keys.referrer_type || ''''''; END IF;''; \n    END LOOP; \n  \n    a_output := a_output || '' RETURN NULL; END; '''' LANGUAGE ''''plpgsql'''';''; \n \n    -- This works because we are not substituting any variables\n    -- Otherwise it would fail. Look at PERFORM for another way to run functions\n    \n    EXECUTE a_output; \nEND; \n' LANGUAGE 'plpgsql'; -- This comment WILL BE preserved.\n-- And so will this one.",
+  ]),
+  ("test04", "-- +goose Up\n\nCREATE TABLE ssh_keys (\n    id integer NOT NULL,\n    \"publicKey\" text\n);\n\n-- +goose StatementBegin\nINSERT INTO ssh_keys (id, \"publicKey\") VALUES (1, '-----BEGIN RSA PUBLIC KEY-----\nMIIBCgKCAQEAqAo9QORIXMPMa/qv8908Z2sH2+Xa/wITYTJQ2ojTZlgsQiQf85ifw3dgvVZK\nM7Zifl2NyVVCPb0hELr2JJla1u/1CgiuqDpcjP2cCu2YxB/JGyCvcon+3tETUz3Ri9NGzHCZ\nfkuWRZjkUvy7nfPLjzM+t6SEvY4lbn3ihLPumZjwgvuCY3vDZY8V1/NMoP8MKATGR+S7D7gv\nI6KD9jkiSsTJMiotb/dRkXE3bG0nmjchhhLzMG551G8IZEpWBHDqEisCIl8yCd9YZV69BZTu\nL48zPl/CFvA+KJJ6LklxfwWeVDQ+ve2OIW0B1uLhR/MsoYbDQztbgIayg6ieMO/KlQIDAQAB\n-----END RSA PUBLIC KEY-----\n');\n-- +goose StatementEnd\n\nINSERT INTO ssh_keys (id, \"publicKey\") VALUES (2, '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABsQAAAAdzc2gtZH\nNzAAAAgQDKYlGRv+Ul4WYKN3F83zchQC24ZV17EJCKwakASf//u2p1+K4iuTQbPgcUWpET\nw4HkCRlOVwYkM4ZL2QncUDyEX3o0UDEgrnhWhLJJR2yCMSsqTNffME3X7YdP2LcE0OM9ZP\n9vb5+TwLr6c4edwlu3QYc4VStWSstdR9DD7vun9QAAABUA+DRjW9u+5IEPHyx+FhEoKsRm\n8aEAAACAU2auArSDuTVbJBE/oP6x+4vrud2qFtALsuFaLPfqN5gVBofRJlIOpQobyi022R\n6SPtX/DEbWkVuHfiyxkjb0Gb0obBzGM+RNqjOF6OE9sh7OuBfLaWW44OZasg1VXzkRcoWv\n7jClfKYi2Q/LxHGhZoqy1uYlHPYP5CmCpiELrUMAAACAfp0KpTVyYQjO2nLPuBhnsepfxQ\nkT+FDqDBp1rZfB4uKx4q466Aq0jeev1OeQEYZpj3+q4b2XX54zXDwvJLuiD9WSmC7jvT0+\nEUmF55PHW4inloG9pMUzeQnx3k8WDcRJbcAMalpoCCsb0jEPIiyBGBtQu0gOoLL+N+G2Cl\nU+/FEAAAHgOKSlwjikpcIAAAAHc3NoLWRzcwAAAIEAymJRkb/lJeFmCjdxfN83IUAtuGVd\nexCQisGpAEn//7tqdfiuIrk0Gz4HFFqRE8OB5AkZTlcGJDOGS9kJ3FA8hF96NFAxIK54Vo\nSySUdsgjErKkzX3zBN1+2HT9i3BNDjPWT/b2+fk8C6+nOHncJbt0GHOFUrVkrLXUfQw+77\np/UAAAAVAPg0Y1vbvuSBDx8sfhYRKCrEZvGhAAAAgFNmrgK0g7k1WyQRP6D+sfuL67ndqh\nbQC7LhWiz36jeYFQaH0SZSDqUKG8otNtkekj7V/wxG1pFbh34ssZI29Bm9KGwcxjPkTaoz\nhejhPbIezrgXy2lluODmWrINVV85EXKFr+4wpXymItkPy8RxoWaKstbmJRz2D+QpgqYhC6\n1DAAAAgH6dCqU1cmEIztpyz7gYZ7HqX8UJE/hQ6gwada2XweLiseKuOugKtI3nr9TnkBGG\naY9/quG9l1+eM1w8LyS7og/Vkpgu4709PhFJheeTx1uIp5aBvaTFM3kJ8d5PFg3ESW3ADG\npaaAgrG9IxDyIsgRgbULtIDqCy/jfhtgpVPvxRAAAAFQCPXzpVtY5yJTN1zBo9pTGeg+f3\nEgAAAAZub25hbWUBAgME\n-----END OPENSSH PRIVATE KEY-----\n');\n\n-- +goose Down\n", [
+    "CREATE TABLE ssh_keys (\n    id integer NOT NULL,\n    \"publicKey\" text\n);",
+    "INSERT INTO ssh_keys (id, \"publicKey\") VALUES (1, '-----BEGIN RSA PUBLIC KEY-----\nMIIBCgKCAQEAqAo9QORIXMPMa/qv8908Z2sH2+Xa/wITYTJQ2ojTZlgsQiQf85ifw3dgvVZK\nM7Zifl2NyVVCPb0hELr2JJla1u/1CgiuqDpcjP2cCu2YxB/JGyCvcon+3tETUz3Ri9NGzHCZ\nfkuWRZjkUvy7nfPLjzM+t6SEvY4lbn3ihLPumZjwgvuCY3vDZY8V1/NMoP8MKATGR+S7D7gv\nI6KD9jkiSsTJMiotb/dRkXE3bG0nmjchhhLzMG551G8IZEpWBHDqEisCIl8yCd9YZV69BZTu\nL48zPl/CFvA+KJJ6LklxfwWeVDQ+ve2OIW0B1uLhR/MsoYbDQztbgIayg6ieMO/KlQIDAQAB\n-----END RSA PUBLIC KEY-----\n');",
+    "INSERT INTO ssh_keys (id, \"publicKey\") VALUES (2, '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABsQAAAAdzc2gtZH\nNzAAAAgQDKYlGRv+Ul4WYKN3F83zchQC24ZV17EJCKwakASf//u2p1+K4iuTQbPgcUWpET\nw4HkCRlOVwYkM4ZL2QncUDyEX3o0UDEgrnhWhLJJR2yCMSsqTNffME3X7YdP2LcE0OM9ZP\n9vb5+TwLr6c4edwlu3QYc4VStWSstdR9DD7vun9QAAABUA+DRjW9u+5IEPHyx+FhEoKsRm\n8aEAAACAU2auArSDuTVbJBE/oP6x+4vrud2qFtALsuFaLPfqN5gVBofRJlIOpQobyi022R\n6SPtX/DEbWkVuHfiyxkjb0Gb0obBzGM+RNqjOF6OE9sh7OuBfLaWW44OZasg1VXzkRcoWv\n7jClfKYi2Q/LxHGhZoqy1uYlHPYP5CmCpiELrUMAAACAfp0KpTVyYQjO2nLPuBhnsepfxQ\nkT+FDqDBp1rZfB4uKx4q466Aq0jeev1OeQEYZpj3+q4b2XX54zXDwvJLuiD9WSmC7jvT0+\nEUmF55PHW4inloG9pMUzeQnx3k8WDcRJbcAMalpoCCsb0jEPIiyBGBtQu0gOoLL+N+G2Cl\nU+/FEAAAHgOKSlwjikpcIAAAAHc3NoLWRzcwAAAIEAymJRkb/lJeFmCjdxfN83IUAtuGVd\nexCQisGpAEn//7tqdfiuIrk0Gz4HFFqRE8OB5AkZTlcGJDOGS9kJ3FA8hF96NFAxIK54Vo\nSySUdsgjErKkzX3zBN1+2HT9i3BNDjPWT/b2+fk8C6+nOHncJbt0GHOFUrVkrLXUfQw+77\np/UAAAAVAPg0Y1vbvuSBDx8sfhYRKCrEZvGhAAAAgFNmrgK0g7k1WyQRP6D+sfuL67ndqh\nbQC7LhWiz36jeYFQaH0SZSDqUKG8otNtkekj7V/wxG1pFbh34ssZI29Bm9KGwcxjPkTaoz\nhejhPbIezrgXy2lluODmWrINVV85EXKFr+4wpXymItkPy8RxoWaKstbmJRz2D+QpgqYhC6\n1DAAAAgH6dCqU1cmEIztpyz7gYZ7HqX8UJE/hQ6gwada2XweLiseKuOugKtI3nr9TnkBGG\naY9/quG9l1+eM1w8LyS7og/Vkpgu4709PhFJheeTx1uIp5aBvaTFM3kJ8d5PFg3ESW3ADG\npaaAgrG9IxDyIsgRgbULtIDqCy/jfhtgpVPvxRAAAAFQCPXzpVtY5yJTN1zBo9pTGeg+f3\nEgAAAAZub25hbWUBAgME\n-----END OPENSSH PRIVATE KEY-----\n');",
+  ]),
+  ("test05", "-- +goose Up\n\nCREATE TABLE ssh_keys (\n    id integer NOT NULL,\n    \"publicKey\" text\n-- insert comment there\n);\n-- insert comment there\n\n-- This is a dangling comment\n-- Another comment\n-- Foo comment\n\nCREATE TABLE ssh_keys_backup (\n    id integer NOT NULL,\n    -- insert comment here\n    \"publicKey\" text\n    -- insert comment there\n);\n\n\n-- +goose Down\n", [
+    "CREATE TABLE ssh_keys (\n    id integer NOT NULL,\n    \"publicKey\" text\n-- insert comment there\n);",
+    "CREATE TABLE ssh_keys_backup (\n    id integer NOT NULL,\n    -- insert comment here\n    \"publicKey\" text\n    -- insert comment there\n);",
+  ]),
+  ("test06", "-- +goose Up\n\nCREATE TABLE article (\n    id text,\n            content text);\n\nINSERT INTO article (id, content) VALUES ('id_0001',  E'# My markdown doc\n\nfirst paragraph\n\nsecond paragraph');\n\nINSERT INTO article (id, content) VALUES ('id_0002',  E'# My second \n\nmarkdown doc\n\nfirst paragraph\n\n-- with a comment\n    -- with an indent comment\n\nsecond paragraph');\n\n-- +goose StatementBegin\n\n\n\n\n-- 1 this comment will NOT be preserved\n  -- 2 this comment will NOT be preserved\n\n\nCREATE FUNCTION do_something(sql TEXT) RETURNS INTEGER AS $$\nBEGIN\n  -- initiate technology\n  PERFORM something_or_other(sql);\n\n  -- increase technology\n  PERFORM some_other_thing(sql);\n\n  -- technology was successful\n  RETURN 1;\nEND;\n$$ LANGUAGE plpgsql;\n\n-- 3 this comment WILL BE preserved\n  -- 4 this comment WILL BE preserved\n\n\n-- +goose StatementEnd\n\nINSERT INTO post (id, title, body)\nVALUES ('id_01', 'my_title', '\nthis is an insert statement including empty lines.\n\nempty (blank) lines can be meaningful.\n\nleave the lines to keep the text syntax.\n');\n\n-- +goose Down\nTRUNCATE TABLE post; \n", [
+    "CREATE TABLE article (\n    id text,\n            content text);",
+    "INSERT INTO article (id, content) VALUES ('id_0001',  E'# My markdown doc\n\nfirst paragraph\n\nsecond paragraph');",
+    "INSERT INTO article (id, content) VALUES ('id_0002',  E'# My second \n\nmarkdown doc\n\nfirst paragraph\n\n-- with a comment\n    -- with an indent comment\n\nsecond paragraph');",
+    "CREATE FUNCTION do_something(sql TEXT) RETURNS INTEGER AS $$\nBEGIN\n  -- initiate technology\n  PERFORM something_or_other(sql);\n\n  -- increase technology\n  PERFORM some_other_thing(sql);\n\n  -- technology was successful\n  RETURN 1;\nEND;\n$$ LANGUAGE plpgsql;\n\n-- 3 this comment WILL BE preserved\n  -- 4 this comment WILL BE preserved",
+    "INSERT INTO post (id, title, body)\nVALUES ('id_01', 'my_title', '\nthis is an insert statement including empty lines.\n\nempty (blank) lines can be meaningful.\n\nleave the lines to keep the text syntax.\n');",
+  ]),
+  ("test07", "    \n-- +goose Up\n-- +goose StatementBegin\nCREATE INDEX ON public.users (user_id);\n-- +goose StatementEnd\n\n-- +goose Down\n-- +goose StatementBegin\nDROP INDEX IF EXISTS users_user_id_idx;\n-- +goose StatementEnd\n", [
+    "CREATE INDEX ON public.users (user_id);",
+  ]),
+  ("test08", "-- +goose Up\n\nCREATE TABLE `table_a` (\n    `column_1` DATETIME DEFAULT NOW(),\n    `column_2` DATETIME DEFAULT NOW(),\n    `column_3` DATETIME DEFAULT NOW()\n) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;\n\nCREATE TABLE `table_b` (\n    `column_1` DATETIME DEFAULT NOW(),\n    `column_2` DATETIME DEFAULT NOW(),\n    `column_3` DATETIME DEFAULT NOW()\n) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;\n\nCREATE TABLE `table_c` (\n    `column_1` DATETIME DEFAULT NOW(),\n    `column_2` DATETIME DEFAULT NOW(),\n    `column_3` DATETIME DEFAULT NOW()\n) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;\n\n/*!80031 ALTER TABLE `table_a` MODIFY `column_1` TEXT NOT NULL */;\n/*!80031 ALTER TABLE `table_b` MODIFY `column_2` TEXT NOT NULL */;\n/*!80033 ALTER TABLE `table_c` MODIFY `column_3` TEXT NOT NULL */;\n", [
+    "CREATE TABLE `table_a` (\n    `column_1` DATETIME DEFAULT NOW(),\n    `column_2` DATETIME DEFAULT NOW(),\n    `column_3` DATETIME DEFAULT NOW()\n) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;",
+    "CREATE TABLE `table_b` (\n    `column_1` DATETIME DEFAULT NOW(),\n    `column_2` DATETIME DEFAULT NOW(),\n    `column_3` DATETIME DEFAULT NOW()\n) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;",
+    "CREATE TABLE `table_c` (\n    `column_1` DATETIME DEFAULT NOW(),\n    `column_2` DATETIME DEFAULT NOW(),\n    `column_3` DATETIME DEFAULT NOW()\n) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;",
+    "/*!80031 ALTER TABLE `table_a` MODIFY `column_1` TEXT NOT NULL */;",
+    "/*!80031 ALTER TABLE `table_b` MODIFY `column_2` TEXT NOT NULL */;",
+    "/*!80033 ALTER TABLE `table_c` MODIFY `column_3` TEXT NOT NULL */;",
+  ]),
+  ("test09", "-- +goose Up\n-- +goose StatementBegin\ncreate table t ( id int );\nupdate rows set value = now() -- missing semicolon. valid statement because wrapped in goose annotation, but will fail when executed.\n-- +goose StatementEnd\n\n-- +goose Down\nDROP TABLE IF EXISTS t;\n", [
+    "create table t ( id int );\nupdate rows set value = now() -- missing semicolon. valid statement because wrapped in goose annotation, but will fail when executed.",
+  ]),
+] }
+
+/// testdata/invalid/up: every file fails to parse.
+fn invalid_up() -> List[(Str, Str)] { [
+  ("a.sql", "-- +goose Up\nSELECT * FROM foo;\nSELECT * FROM bar\n-- +goose Down\nSELECT * FROM baz;\n"),
+  ("b.sql", "-- +goose Up\nSELECT * FROM bar\n-- +goose Down\nSELECT * FROM baz;\n"),
+  ("c.sql", "-- +goose Up\nSELECT * FROM bar\n-- +goose Down\n"),
+  ("d.sql", "-- +goose Up\nSELECT * FROM bar\n"),
+] }
+
+/// testdata/valid-txn: the file and whether it runs in a transaction.
+fn valid_txn() -> List[(Str, Str, Bool)] { [
+  ("00001_create_users_table.sql", "-- +goose Up\nCREATE TABLE users (\n    id int NOT NULL PRIMARY KEY,\n    username text,\n    name text,\n    surname text\n);\n\nINSERT INTO users VALUES\n(0, 'root', '', ''),\n(1, 'vojtechvitek', 'Vojtech', 'Vitek');\n\n-- +goose Down\nDROP TABLE users;\n", true),
+  ("00002_rename_root.sql", "-- +goose Up\n-- +goose StatementBegin\nUPDATE users SET username='admin' WHERE username='root';\n-- +goose StatementEnd\n\n-- +goose Down\n-- +goose StatementBegin\nUPDATE users SET username='root' WHERE username='admin';\n-- +goose StatementEnd\n", true),
+  ("00003_no_transaction.sql", "-- +goose NO TRANSACTION\n-- +goose Up\nCREATE TABLE post (\n    id int NOT NULL,\n    title text,\n    body text,\n    PRIMARY KEY(id)\n);\n\n-- +goose Down\nDROP TABLE post;\n", false),
+] }

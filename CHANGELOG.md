@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Feature (std/archive, every backend): `archive.tar_writer(f)` writes a tar archive to a File entry by entry (`add`, `create(path, size)`, `write`, `flush`, `close`; Go's tar.Writer), with Go's bytes and errors.
+- Feature (std/migrate, new module, every backend): schema migrations in goose's `.sql` format (`-- +goose Up`, StatementBegin/End, NO TRANSACTION): `migrate.up(db, files, clock)` applies pending migrations in version order, each in its own transaction, under a Postgres advisory lock (MySQL GET_LOCK) on one connection, recording them in a version table; `status`, `collect`, `parse`. Forward only.
 - Feature (std/charset, every backend): `utf8_decode_last_rune`, `utf8_full_rune` (and their `_str` forms) and `utf8_rune_start` (Go's utf8.DecodeLastRune, FullRune and RuneStart).
 - Feature (std/archive, every backend): zip archive comments (`zip(entries, comment:)`, `ZipWriter.set_comment`, `ZipReader.comment()`), stored entries (`ZipMethod.Store` on `zip`, `add` and `create`), and archives after a prefix (`zip(entries, offset:)`, `ZipWriter.set_offset`; Go's SetComment, Store and SetOffset), with Go's bytes.
 - Feature (std/path, every backend): `path.eval_symlinks(fs, p)` (Go's filepath.EvalSymlinks): every symbolic link in a path resolved through an Fs.

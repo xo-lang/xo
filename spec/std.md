@@ -10531,3 +10531,62 @@ struct HpkeErr { msg: Str }
   and exports included), DeriveKeyPair of seeded inputs, messages Go
   sealed opened as sealed, changed and cut, and Go's errors; plus
   TestRoundTrip on every KEM, KDF and AEAD.
+
+
+## 85. std/migrate
+
+Schema migrations (decision 0658 item 8; goose and golang-migrate's
+role): numbered `.sql` files, usually embedded with std/embed, applied
+forward in version order, each in its own transaction, recorded in a
+version table, under a database lock. Pure (a merged module) over
+std/sql.
+
+```xo
+struct Migration { version: Int, name: Str, up: List[Str], down: List[Str], tx: Bool = true }
+enum Dialect { Postgres, Mysql, Sqlite, Memory }
+struct Status { version: Int, name: Str, applied_at: Time? }
+enum MigrateErr {
+  Parse(name: Str, msg: Str)                       // not a goose migration (goose's texts)
+  Duplicate(version: Int, first: Str, second: Str)
+  Missing(versions: List[Int])                     // pending below the newest applied
+  Failed(version: Int, name: Str, statement: Int, err: sql.SqlErr)
+  Db(err: sql.SqlErr)
+  Table(name: Str)                                 // the version table's name is not an identifier
+}
+fn up[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> List[Int] ! MigrateErr uses (net.dial, fx, clock)
+fn up_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> List[Int] ! MigrateErr uses (net.dial, fx, clock)
+fn status[fx: Effects](db: sql.Db[fx], files: embed.Dir, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> List[Status] ! MigrateErr uses (net.dial, fx)
+fn status_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> List[Status] ! MigrateErr uses (net.dial, fx)
+fn collect(files: embed.Dir) -> List[Migration] ! MigrateErr
+fn parse(name: Str, text: Str) -> Migration ! MigrateErr
+fn version_of(name: Str) -> Int?
+```
+
+- Files use goose's format (pressly/goose v3.27.3): a file named
+  `NNN_name.sql` (the version is the number before the first `_`, above
+  0) holds `-- +goose Up`, optionally `-- +goose Down`, statements ending
+  with `;` at the end of a line, `-- +goose StatementBegin` and
+  `StatementEnd` around a statement that holds `;`, and `-- +goose NO
+  TRANSACTION`. `ENVSUB ON` is refused (an embedded file's text is fixed).
+  `collect` takes the top level `.sql` files with a version and skips the
+  rest, as goose's collect does.
+- `up` holds one connection for the whole run and takes the dialect's lock
+  on it (`pg_advisory_lock` for Postgres, `GET_LOCK` for MySQL; none for
+  SQLite and the in memory database), so a second process waits and then
+  finds nothing pending. It creates `table` (`version BIGINT PRIMARY KEY,
+  name TEXT, applied_at TIMESTAMPTZ`, DATETIME(6) on MySQL) when missing,
+  then applies each pending migration: its Up statements and its row in
+  one transaction, or one statement at a time for NO TRANSACTION. It
+  answers the versions applied, `[]` when none was pending.
+- A failure stops at that migration (`Failed`, with the statement's index
+  from 0): the migrations before it stay applied, and a transactional one
+  leaves nothing of itself (goose's partial error). A pending version
+  below the newest applied one is `Missing` unless `allow_missing`
+  (goose's out-of-order rule). Down sections are parsed, never run: there
+  is no down.
+- The table name is written unquoted, so it must be an identifier or
+  `schema.identifier` (`Table` otherwise).
+- Tested by std/migrate_test.xo: goose's sqlparser tests and testdata
+  (statement splitting, the nine valid-up goldens, invalid files, NO
+  TRANSACTION, annotations), its collect tests, and the up, partial error
+  and out-of-order tests on `sql.memory`.

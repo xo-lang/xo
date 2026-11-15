@@ -58,3 +58,4 @@ std/task
 std/httpproxy
 std/publicsuffix
 std/hpke
+std/migrate
