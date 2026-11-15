@@ -8997,6 +8997,12 @@ pub fn encode(text: Str, cs: Charset) -> Bytes ! CharsetErr
 pub fn lookup(label: Str) -> Charset?
 pub fn utf16_units(text: Str) -> List[Int]          // Go's utf16.Encode
 pub fn from_utf16_units(units: List[Int]) -> Str    // Go's utf16.Decode
+pub const REPLACEMENT_CHAR: Rune = '\u{FFFD}'        // unicode.ReplacementChar
+pub fn utf16_is_surrogate(u: Int) -> Bool           // utf16.IsSurrogate (2026-11-15)
+pub fn utf16_rune_len(cp: Int) -> Int               // utf16.RuneLen: 1, 2, or -1
+pub fn utf16_encode_rune(cp: Int) -> (Int, Int)     // utf16.EncodeRune; (0xFFFD, 0xFFFD) without a pair
+pub fn utf16_decode_rune(u1: Int, u2: Int) -> Rune  // utf16.DecodeRune; U+FFFD for a bad pair
+pub fn utf16_append_rune(units: List[Int], cp: Int) -> List[Int]   // utf16.AppendRune
 ```
 
 - `Utf16Le` and `Utf16Be` read and write no byte order mark (a U+FEFF stays a character); `Utf16Bom`

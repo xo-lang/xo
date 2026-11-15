@@ -340,7 +340,7 @@ context.WithDeadline = std/task.with_timeout
 
 # unicode: Rune predicates are named; the tables are not values in Xo
 unicode.MaxRune = Rune.max
-unicode.ReplacementChar = gap: no Rune.REPLACEMENT constant ('\u{FFFD}' literal)
+unicode.ReplacementChar = std/charset.REPLACEMENT_CHAR
 unicode.MaxASCII = not planned: a literal ('\u{7F}')
 unicode.MaxLatin1 = not planned: a literal ('\u{FF}')
 unicode.SimpleFold = Rune.simple_fold
@@ -1514,11 +1514,11 @@ utf8.Valid = Bytes.to_str
 utf8.ValidRune = Rune.try
 utf16.Decode = std/charset.from_utf16_units
 utf16.Encode = std/charset.utf16_units
-utf16.AppendRune = gap: std/charset converts whole texts only (no one-rune UTF-16 step)
-utf16.DecodeRune = gap: see utf16.AppendRune
-utf16.EncodeRune = gap: see utf16.AppendRune
-utf16.IsSurrogate = gap: see utf16.AppendRune
-utf16.RuneLen = gap: see utf16.AppendRune
+utf16.AppendRune = std/charset.utf16_append_rune
+utf16.DecodeRune = std/charset.utf16_decode_rune
+utf16.EncodeRune = std/charset.utf16_encode_rune
+utf16.IsSurrogate = std/charset.utf16_is_surrogate
+utf16.RuneLen = std/charset.utf16_rune_len
 slices.AppendSeq = List.concat
 slices.Clip = not planned: a List's capacity is not part of its API (with_capacity only)
 slices.Grow = List.with_capacity

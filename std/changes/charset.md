@@ -1,5 +1,16 @@
 # std/charset changes
 
+## 2026-11-15: feature: one-rune UTF-16 steps and REPLACEMENT_CHAR (Go's utf16 AppendRune, DecodeRune, EncodeRune, IsSurrogate, RuneLen; unicode.ReplacementChar)
+
+- Kind: feature
+- Commit: this push
+- Found by: scripts/stdaudit gaps utf16.AppendRune, DecodeRune, EncodeRune, IsSurrogate, RuneLen and unicode.ReplacementChar (decision 0655)
+- Go reference: unicode/utf16 utf16.go and utf16_test.go (go1.26.11; Copyright 2010 The Go Authors, BSD-style license)
+- Test: std/charset_test.xo, Go's TestRuneLen, TestAppendRune, TestEncodeRune, TestDecodeRune and TestIsSurrogate tables (arm64, llvm; corpus charset on go)
+- Shipped in: not yet released
+
+The functions take code points and units as Int, as Go's take rune and uint16 values, so a surrogate, -1 and 0x110000 behave as in Go.
+
 ## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
 
 - Kind: refactor

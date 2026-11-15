@@ -1,0 +1,69 @@
+// Ported from Go's unicode/utf16 utf16_test.go (go1.26.11; Copyright 2010
+// The Go Authors, BSD-style license): TestRuneLen, TestAppendRune,
+// TestEncodeRune, TestDecodeRune, TestIsSurrogate, and Encode and Decode
+// on the same tables.
+
+/// encodeTests: code points and their UTF-16 units.
+const ENCODE_TESTS: List[(List[Int], List[Int])] = [
+  ([1, 2, 3, 4], [1, 2, 3, 4]),
+  ([0xffff, 0x10000, 0x10001, 0x12345, 0x10ffff], [0xffff, 0xd800, 0xdc00, 0xd800, 0xdc01, 0xd808, 0xdf45, 0xdbff, 0xdfff]),
+  ([97, 98, 0xd7ff, 0xd800, 0xdfff, 0xe000, 0x110000, -1], [97, 98, 0xd7ff, 0xfffd, 0xfffd, 0xe000, 0xfffd, 0xfffd]),
+]
+
+test "utf16_rune_len (TestRuneLen)" {
+  let cases: List[(Int, Int)] = [(0, 1), (0xd7ff, 1), (0xe000, 1), (0xffff, 1), (0x10000, 2), (0x10ffff, 2), (0x110000, -1), (-1, -1), (0xd800, -1), (0xdfff, -1)]
+  for (cp, want) in cases {
+    expect((cp, utf16_rune_len(cp))) == (cp, want)
+  }
+}
+
+test "utf16_append_rune (TestAppendRune)" {
+  for (inp, want) in ENCODE_TESTS {
+    var out: List[Int] = []
+    for cp in inp {
+      out = utf16_append_rune(out, cp)
+    }
+    expect(out) == want
+  }
+}
+
+test "utf16_encode_rune (TestEncodeRune)" {
+  for (inp, want) in ENCODE_TESTS {
+    var j = 0
+    for cp in inp {
+      let (a, b) = utf16_encode_rune(cp)
+      if cp < 0x10000 || cp > 0x10ffff {
+        expect((cp, a, b)) == (cp, 0xfffd, 0xfffd)
+        j += 1
+      } else {
+        expect((cp, a, b)) == (cp, want[j], want[j + 1])
+        // and back (TestEncodeRune's DecodeRune check)
+        expect(Int(utf16_decode_rune(a, b))) == cp
+        j += 2
+      }
+    }
+    expect(j) == want.len()
+  }
+}
+
+test "utf16_decode_rune (TestDecodeRune)" {
+  let cases: List[(Int, Int, Int)] = [(0xd800, 0xdc00, 0x10000), (0xd800, 0xdc01, 0x10001), (0xd808, 0xdf45, 0x12345), (0xdbff, 0xdfff, 0x10ffff), (0xd800, 97, 0xfffd), (0xdc00, 0xd800, 0xfffd)]
+  for (a, b, want) in cases {
+    expect((a, b, Int(utf16_decode_rune(a, b)))) == (a, b, want)
+  }
+}
+
+test "utf16_is_surrogate (TestIsSurrogate)" {
+  let cases: List[(Int, Bool)] = [(0x7a, false), (0x6c34, false), (0xfeff, false), (0x10000, false), (0x1d11e, false), (0x10fffd, false), (0xd7ff, false), (0xd800, true), (0xdc00, true), (0xe000, false), (0xdfff, true)]
+  for (u, want) in cases {
+    expect((u, utf16_is_surrogate(u))) == (u, want)
+  }
+}
+
+test "REPLACEMENT_CHAR is U+FFFD, and utf16_units and from_utf16_units round trip the valid tables (TestEncode, TestDecode)" {
+  expect(Int(REPLACEMENT_CHAR)) == 0xfffd
+  let text = "\u{1}\u{2}\u{ffff}\u{10000}\u{10001}\u{12345}\u{10ffff}"
+  expect(utf16_units(text)) == [1, 2, 0xffff, 0xd800, 0xdc00, 0xd800, 0xdc01, 0xd808, 0xdf45, 0xdbff, 0xdfff]
+  expect(from_utf16_units([0xd800, 97])) == "\u{fffd}a"
+  expect(from_utf16_units([0xdfff])) == "\u{fffd}"
+}

@@ -218,6 +218,63 @@ pub fn utf16_units(text: Str) -> List[Int] {
   out
 }
 
+/// U+FFFD, the character a decoder writes for invalid input (Go's
+/// unicode.ReplacementChar and utf8.RuneError).
+pub const REPLACEMENT_CHAR: Rune = '\u{FFFD}'
+
+/// Whether code unit u is half of a surrogate pair, 0xD800 to 0xDFFF (Go's
+/// utf16.IsSurrogate).
+pub fn utf16_is_surrogate(u: Int) -> Bool { u >= 0xD800 && u < 0xE000 }
+
+/// The number of UTF-16 code units of code point cp (Go's utf16.RuneLen):
+/// 1 below U+10000, 2 up to U+10FFFF, -1 for a surrogate or a value that
+/// is not a code point.
+pub fn utf16_rune_len(cp: Int) -> Int {
+  if (cp >= 0 && cp < 0xD800) || (cp >= 0xE000 && cp < 0x10000) {
+    1
+  } else if cp >= 0x10000 && cp <= 0x10FFFF {
+    2
+  } else {
+    -1
+  }
+}
+
+/// The surrogate pair of code point cp (Go's utf16.EncodeRune); (0xFFFD,
+/// 0xFFFD) when cp needs no pair or is not a code point.
+pub fn utf16_encode_rune(cp: Int) -> (Int, Int) {
+  if cp < 0x10000 || cp > 0x10FFFF {
+    return (0xFFFD, 0xFFFD)
+  }
+  let v = cp - 0x10000
+  (0xD800 + ((v >> 10) & 0x3FF), 0xDC00 + (v & 0x3FF))
+}
+
+/// The character of surrogate pair (u1, u2) (Go's utf16.DecodeRune);
+/// U+FFFD when they are not a high then a low surrogate.
+pub fn utf16_decode_rune(u1: Int, u2: Int) -> Rune {
+  if u1 >= 0xD800 && u1 < 0xDC00 && u2 >= 0xDC00 && u2 < 0xE000 {
+    return Rune(0x10000 + ((u1 - 0xD800) << 10) + (u2 - 0xDC00))
+  }
+  REPLACEMENT_CHAR
+}
+
+/// units with the UTF-16 encoding of code point cp appended (Go's
+/// utf16.AppendRune): one unit, a pair, or 0xFFFD for a surrogate or a
+/// value that is not a code point.
+pub fn utf16_append_rune(units: List[Int], cp: Int) -> List[Int] {
+  var out = units
+  if (cp >= 0 && cp < 0xD800) || (cp >= 0xE000 && cp < 0x10000) {
+    out.push(cp)
+  } else if cp >= 0x10000 && cp <= 0x10FFFF {
+    let (a, b) = utf16_encode_rune(cp)
+    out.push(a)
+    out.push(b)
+  } else {
+    out.push(0xFFFD)
+  }
+  out
+}
+
 /// Go's utf16.Decode: the text of code units; an unpaired surrogate or a
 /// value outside 0 to 65535 is U+FFFD.
 pub fn from_utf16_units(units: List[Int]) -> Str {
