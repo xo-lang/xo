@@ -911,8 +911,13 @@ run_step_body() {
     # runs it for main's commits and shares the file with every host)
     ir_cache_setup
     hm="$cache/$(git rev-parse HEAD)-$mcode.txt"
+    # skipped, not failed, when the disk is short (lead, 2026-11-15: under
+    # XO_GATE_IRMAN_MIN_GB, default 25, free after offload.sh's prune)
+    irfree=$(df -Pk . 2>/dev/null | awk 'NR==2 {print int($4 / 1048576)}')
     if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
       echo "irmanifest: FAIL (uncommitted changes: a manifest is kept by commit)"; failed=1
+    elif [ -n "$irfree" ] && [ "$irfree" -lt "${XO_GATE_IRMAN_MIN_GB:-25}" ]; then
+      echo "irmanifest: skipped: $irfree GB free here, under ${XO_GATE_IRMAN_MIN_GB:-25}"
     elif [ -s "$hm" ] || {
       # at ir_jobs' full count and not niced, so it finishes (lead,
       # 2026-11-15: niced at half width on a shared host 3 it took over 5
