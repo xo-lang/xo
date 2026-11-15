@@ -102,7 +102,7 @@ struct Started {
 fn started() -> Started { Started{wall: sysio.real_ns(), at: pool_now()} }
 
 /// The record of an operation that began at s, given to h.
-fn emit(h: fn(sql.TraceRecord), s: Started, op: sql.TraceOp, query: Str, args: List[sql.SqlValue], n: Int, err: sql.SqlErr?) {
+fn emit(h: fn(sql.TraceRecord) uses sync, s: Started, op: sql.TraceOp, query: Str, args: List[sql.SqlValue], n: Int, err: sql.SqlErr?) {
   h(sql.TraceRecord{op: op, query: query, args: args, rows_affected: n, err: err, start_ns: s.wall, elapsed: Duration.from_nanos((pool_now() - s.at).max(0))})
 }
 
@@ -360,7 +360,7 @@ fn noticed[fx: Effects](p: Pool[fx], c: sql.DriverConn[fx]) -> sql.DriverConn[fx
 /// (pgconn calls OnNotice as it reads each NoticeResponse).
 struct Noticed[fx: Effects] {
   c: sql.DriverConn[fx]
-  h: fn(sql.Notice)
+  h: fn(sql.Notice) uses sync
 }
 
 fn (n: Noticed) drain() {
@@ -454,7 +454,7 @@ fn traced[fx: Effects](p: Pool[fx], c: sql.DriverConn[fx]) -> sql.DriverConn[fx]
 /// QueryTracer, BatchTracer, CopyFromTracer and PrepareTracer).
 struct Traced[fx: Effects] {
   c: sql.DriverConn[fx]
-  h: fn(sql.TraceRecord)
+  h: fn(sql.TraceRecord) uses sync
 }
 
 fn (t: Traced[fx]) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows[fx] ! sql.SqlErr uses (net.dial, fx) {
@@ -573,7 +573,7 @@ fn (t: Traced) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> Lis
 /// A prepared statement whose runs are Query and Exec records of its text.
 struct TracedStmt[fx: Effects] {
   s: sql.DriverStmt[fx]
-  h: fn(sql.TraceRecord)
+  h: fn(sql.TraceRecord) uses sync
   q: Str
 }
 
@@ -610,7 +610,7 @@ fn (t: TracedStmt[fx]) close() uses (net.dial, fx) {
 /// the rows read.
 struct TracedCursor[fx: Effects] {
   c: sql.DriverCursor[fx]
-  h: fn(sql.TraceRecord)
+  h: fn(sql.TraceRecord) uses sync
   s: Started
   q: Str
   args: List[sql.SqlValue]
