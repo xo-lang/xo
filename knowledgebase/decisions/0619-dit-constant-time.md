@@ -2,6 +2,7 @@
 
 Status: Proposed (2026-11-12, Xo Lang 3; the lead approved the plan the
 same day, with the scheduler, every-build and amd64 points below)
+Amended by 0656 (2026-11-15): a public section, crypto.with_data_independent_timing.
 
 ## Context
 
