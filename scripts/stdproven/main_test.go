@@ -80,3 +80,18 @@ func TestSummaryLine(t *testing.T) {
 		}
 	}
 }
+
+func TestKilledUnchecked(t *testing.T) {
+	for _, c := range []struct {
+		out  string
+		want bool
+	}{
+		{"    idnafuzz_test.go:34: xo test --backend=llvm: signal: killed; 0 passed, 0 failed; the generated file holds 1 tests (40000 generated cases)", true},
+		{"    idnafuzz_test.go:34: xo test --backend=llvm: exit status 1; 0 passed, 1 failed; the generated file holds 1 tests", false},
+		{"    idnafuzz_test.go:34: xo test --backend=arm64: signal: killed; 3 passed, 0 failed", false},
+	} {
+		if got := killedUnchecked(c.out); got != c.want {
+			t.Errorf("killedUnchecked(%q) = %v, want %v", c.out, got, c.want)
+		}
+	}
+}

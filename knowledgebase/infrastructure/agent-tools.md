@@ -826,7 +826,7 @@ naming its commit and the module's source hash.
 covers; `go run ./scripts/stdproven fuzz [-cases N] [-hours H] [-batch N]
 [-backends B] [-host LABEL] MODULE` runs every fuzz harness that names
 the module (scripts/stdproven harnesses) with fresh seeds until 1,000,000
-cases per backend or 8 hours, and writes `fuzz.md`. Long runs go to host 2
+cases per backend or 8 hours, and writes `fuzz.md`; a seed whose test program the host killed before it checked a case (`signal: killed; 0 passed, 0 failed`) runs once more, logged in `fuzz.md`, and a mismatch or a second kill fails the run (2026-11-15). Long runs go to host 2
 outside the lane: `~/xo-lead/agents/stdproven-offload.sh WORKTREE NAME --
 fuzz -host "linux/arm64 host 2" MODULE` (run it from a commit on main, so
 the evidence names one). Several runs go as one job, on one xo build:

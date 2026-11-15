@@ -282,6 +282,13 @@ func readHeader(path string) (header, error) {
 }
 
 // fuzz runs the long fuzz of decision 0616 section 2 for one module.
+// killedUnchecked reports a fuzz seed's go test output whose xo test was
+// killed by a signal with no case passed or failed (runFuzzDir's line
+// "xo test --backend=B: signal: killed; 0 passed, 0 failed").
+func killedUnchecked(out string) bool {
+	return strings.Contains(out, ": signal: killed; 0 passed, 0 failed")
+}
+
 func fuzz(args []string) error {
 	fs := flag.NewFlagSet("fuzz", flag.ExitOnError)
 	cases := fs.Int("cases", 1000000, "cases per backend to reach")
@@ -339,12 +346,25 @@ func fuzz(args []string) error {
 				continue
 			}
 			t0 := time.Now()
-			cmd := exec.Command("go", "test", "./internal/stdtest", "-run", "^"+h.test+"$", "-count=1", "-timeout", "2h")
-			cmd.Env = append(os.Environ(),
-				fmt.Sprintf("%s_SEED=%d", h.env, seed),
-				fmt.Sprintf("%s_N=%d", h.env, *batch),
-				fmt.Sprintf("%s_BACKENDS=%s", h.env, *backends))
-			b, err := cmd.CombinedOutput()
+			run := func() ([]byte, error) {
+				cmd := exec.Command("go", "test", "./internal/stdtest", "-run", "^"+h.test+"$", "-count=1", "-timeout", "2h")
+				cmd.Env = append(os.Environ(),
+					fmt.Sprintf("%s_SEED=%d", h.env, seed),
+					fmt.Sprintf("%s_N=%d", h.env, *batch),
+					fmt.Sprintf("%s_BACKENDS=%s", h.env, *backends))
+				return cmd.CombinedOutput()
+			}
+			b, err := run()
+			if err != nil && killedUnchecked(string(b)) {
+				// the host killed the seed's test program before it checked a
+				// case (idna seeds 40 and 33 on host 2, 2026-11-14 and 15: each
+				// passed alone at 3 GB): run the seed once more, and say so in
+				// the evidence; a mismatch or a second kill still fails
+				line := fmt.Sprintf("- %s seed %d: killed before any case was checked (the host); run again", h.test, seed)
+				log = append(log, line)
+				fmt.Println(line)
+				b, err = run()
+			}
 			if err != nil {
 				tail := string(b)
 				if len(tail) > 20000 {
