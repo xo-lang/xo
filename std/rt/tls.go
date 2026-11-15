@@ -50,6 +50,116 @@ type Tls_TlsConn struct {
 	c      net.Conn
 	fake   bool
 	closed *atomic.Bool
+	st     *tlsConnSt
+}
+
+// tlsConnSt is a connection's state behind its lock (decision 0644
+// T12): a lazy client's (Tls_client_conn) handshake, run once, and its
+// Err; every connection's first failure, typed.
+type tlsConnSt struct {
+	mu    sync.Mutex
+	err   *Tls_TlsErr
+	lazy  bool
+	ran   bool
+	herr  *NetErr
+	early *NetErr
+}
+
+// note records err (the text msg) as the connection's first failure.
+func (s *tlsConnSt) note(msg string, err error) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err == nil {
+		e := tlsErrOf(msg, err)
+		s.err = &e
+	}
+}
+
+// tlsErrOf is err as a TlsErr with text msg and Go's error type as its
+// kind (decision 0644 T12).
+func tlsErrOf(msg string, err error) Tls_TlsErr {
+	e := Tls_TlsErr{F_msg: msg, F_kind: Tls_TlsErrKind{Tag: 1}}
+	var cv *tls.CertificateVerificationError
+	var rh tls.RecordHeaderError
+	switch {
+	case errors.As(err, &cv):
+		var certs []X509_Certificate
+		for _, c := range cv.UnverifiedCertificates {
+			certs = append(certs, x509CertOf(nil, c))
+		}
+		e.F_kind = Tls_TlsErrKind{Tag: 3, P: Tls_TlsErrKind_CertificateVerification{F_certs: ListFromSlice(certs), F_cause: x509ErrOf(cv.Err)}}
+	case errors.As(err, &rh):
+		e.F_kind = Tls_TlsErrKind{Tag: 2, P: Tls_TlsErrKind_RecordHeader{F_header: Bytes(rh.RecordHeader[:])}}
+	}
+	return e
+}
+
+// M_err is `t.err()`: the connection's first failure, typed.
+func (t Tls_TlsConn) M_err(*Task) Option[Tls_TlsErr] {
+	if t.st == nil {
+		return Option[Tls_TlsErr]{}
+	}
+	t.st.mu.Lock()
+	defer t.st.mu.Unlock()
+	if t.st.err == nil {
+		return Option[Tls_TlsErr]{}
+	}
+	return Some(*t.st.err)
+}
+
+// M_handshake is `t.handshake()`: a lazy client's handshake, run once
+// (its Err again after); Ok on any other.
+func (t Tls_TlsConn) M_handshake(tk *Task) Result[Unit, NetErr] {
+	if t.st == nil || !t.st.lazy {
+		return Ok[Unit, NetErr](Unit{})
+	}
+	t.st.mu.Lock()
+	if t.st.ran {
+		defer t.st.mu.Unlock()
+		if t.st.herr != nil {
+			return Err[Unit](*t.st.herr)
+		}
+		return Ok[Unit, NetErr](Unit{})
+	}
+	t.st.ran = true
+	if e := t.st.early; e != nil {
+		t.st.herr = e
+		t.st.mu.Unlock()
+		if e.Tag == 4 {
+			t.st.note(e.P.(NetErr_Io).F_msg, errors.New(e.P.(NetErr_Io).F_msg))
+		}
+		return Err[Unit](*e)
+	}
+	t.st.mu.Unlock()
+	if t.fake {
+		return Ok[Unit, NetErr](Unit{})
+	}
+	r := tlsHandshake(tk, t)
+	t.st.mu.Lock()
+	if !r.Ok {
+		e := r.E
+		t.st.herr = &e
+	}
+	t.st.mu.Unlock()
+	return r
+}
+
+// Tls_client_conn is `tls.client_conn(c, config)`: Go's tls.Client, the
+// handshake at the first handshake, read or write.
+func Tls_client_conn(tk *Task, c Conn, cfg Tls_ClientConfig) Tls_TlsConn {
+	t, early := tlsClientConfigPrep(tk, c, cfg)
+	if t.st == nil {
+		t.st = new(tlsConnSt)
+	}
+	if t.closed == nil {
+		t.closed = new(atomic.Bool)
+	}
+	t.st.lazy = true
+	t.st.early = early
+	return t
 }
 
 // XoDebug implements Debug.
@@ -96,17 +206,36 @@ func Tls_client(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify T
 // tlsClient is Tls_client with extra, when not nil, changing the
 // configuration last (ClientConfig's hooks, decision 0644 T6).
 func tlsClient(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify Tls_Verify, alpn List[string], cert Option[Tls_TlsCert], verifyConn Option[func(*Task, List[X509_Certificate]) Result[Unit, string]], minVersion int64, maxVersion int64, cipherSuites List[int64], curvePrefs List[int64], extra func(*tls.Config)) Result[Tls_TlsConn, NetErr] {
+	t, early := tlsPrep(tk, c, host, roots, verify, alpn, cert, verifyConn, minVersion, maxVersion, cipherSuites, curvePrefs, extra)
+	if early != nil {
+		return Err[Tls_TlsConn](*early)
+	}
+	if t.fake {
+		return Ok[Tls_TlsConn, NetErr](t)
+	}
+	if r := tlsHandshake(tk, t); !r.Ok {
+		return Err[Tls_TlsConn](r.E)
+	}
+	return Ok[Tls_TlsConn, NetErr](t)
+}
+
+// tlsPrep is tlsClient's connection before its handshake, or the Err
+// that stops it first.
+func tlsPrep(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify Tls_Verify, alpn List[string], cert Option[Tls_TlsCert], verifyConn Option[func(*Task, List[X509_Certificate]) Result[Unit, string]], minVersion int64, maxVersion int64, cipherSuites List[int64], curvePrefs List[int64], extra func(*tls.Config)) (Tls_TlsConn, *NetErr) {
+	fail := func(e NetErr) (Tls_TlsConn, *NetErr) {
+		return Tls_TlsConn{c: c.c, closed: new(atomic.Bool), st: new(tlsConnSt)}, &e
+	}
 	if tk.Canceled() {
-		return Err[Tls_TlsConn](netErr(5, ""))
+		return fail(netErr(5, ""))
 	}
 	if c.c == nil {
-		return Err[Tls_TlsConn](netErr(4, netClosedText))
+		return fail(netErr(4, netClosedText))
 	}
 	if _, loaded := upgradedConns.LoadOrStore(c.c, struct{}{}); loaded {
-		return Err[Tls_TlsConn](netErr(4, upgradedText))
+		return fail(netErr(4, upgradedText))
 	}
 	if _, ok := c.c.(fakeConn); ok {
-		return Ok[Tls_TlsConn, NetErr](Tls_TlsConn{c: c.c, fake: true, closed: new(atomic.Bool)})
+		return Tls_TlsConn{c: c.c, fake: true, closed: new(atomic.Bool), st: new(tlsConnSt)}, nil
 	}
 	name := host
 	if strings.HasPrefix(name, "[") && strings.HasSuffix(name, "]") {
@@ -152,30 +281,36 @@ func tlsClient(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify Tl
 	if extra != nil {
 		extra(cfg)
 	}
-	t := tls.Client(c.c, cfg)
-	// http.DefaultTransport's TLSHandshakeTimeout, or the connection's own
-	// deadlines when earlier (decision 0430: Go's Handshake honors them)
+	return Tls_TlsConn{t: tls.Client(c.c, cfg), c: c.c, closed: new(atomic.Bool), st: new(tlsConnSt)}, nil
+}
+
+// tlsHandshake is a client's handshake: http.DefaultTransport's
+// TLSHandshakeTimeout, or the connection's own deadlines when earlier
+// (decision 0430: Go's Handshake honors them); its failure is the
+// connection's first (decision 0644 T12).
+func tlsHandshake(tk *Task, t Tls_TlsConn) Result[Unit, NetErr] {
 	limit := time.Now().Add(10 * time.Second)
 	for _, w := range []bool{false, true} {
-		if d := userDeadline(c.c, w); !d.IsZero() && d.Before(limit) {
+		if d := userDeadline(t.c, w); !d.IsZero() && d.Before(limit) {
 			limit = d
 		}
 	}
-	c.c.SetDeadline(limit)
-	canceled, err := interruptible(tk, c.c.SetDeadline, t.Handshake)
-	c.c.SetReadDeadline(userDeadline(c.c, false))
-	c.c.SetWriteDeadline(userDeadline(c.c, true))
+	t.c.SetDeadline(limit)
+	canceled, err := interruptible(tk, t.c.SetDeadline, t.t.Handshake)
+	t.c.SetReadDeadline(userDeadline(t.c, false))
+	t.c.SetWriteDeadline(userDeadline(t.c, true))
 	if canceled {
-		return Err[Tls_TlsConn](netErr(5, ""))
+		return Err[Unit](netErr(5, ""))
 	}
 	if err != nil {
 		var ne net.Error
 		if errors.As(err, &ne) && ne.Timeout() {
-			return Err[Tls_TlsConn](netErr(3, ""))
+			return Err[Unit](netErr(3, ""))
 		}
-		return Err[Tls_TlsConn](netErr(4, err.Error()))
+		t.st.note(err.Error(), err)
+		return Err[Unit](netErr(4, err.Error()))
 	}
-	return Ok[Tls_TlsConn, NetErr](Tls_TlsConn{t: t, c: c.c, closed: new(atomic.Bool)})
+	return Ok[Unit, NetErr](Unit{})
 }
 
 // verifyChain is crypto/tls's verification without the host name: the
@@ -289,11 +424,27 @@ func tlsVerifyHooks(tk *Task, cfg *tls.Config, vp Option[func(*Task, List[Bytes]
 
 // Tls_client_config is `tls.client_config(c, config)` (decision 0644 T6).
 func Tls_client_config(tk *Task, c Conn, cfg Tls_ClientConfig) Result[Tls_TlsConn, NetErr] {
+	t, early := tlsClientConfigPrep(tk, c, cfg)
+	if early != nil {
+		return Err[Tls_TlsConn](*early)
+	}
+	if t.fake {
+		return Ok[Tls_TlsConn, NetErr](t)
+	}
+	if r := tlsHandshake(tk, t); !r.Ok {
+		return Err[Tls_TlsConn](r.E)
+	}
+	return Ok[Tls_TlsConn, NetErr](t)
+}
+
+// tlsClientConfigPrep is Tls_client_config's connection before its
+// handshake.
+func tlsClientConfigPrep(tk *Task, c Conn, cfg Tls_ClientConfig) (Tls_TlsConn, *NetErr) {
 	var one Option[Tls_TlsCert]
 	if len(cfg.F_certificates.s) == 1 {
 		one = Option[Tls_TlsCert]{Some: true, V: cfg.F_certificates.s[0]}
 	}
-	return tlsClient(tk, c, cfg.F_server_name, cfg.F_roots, cfg.F_verify, cfg.F_next_protos, one, Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]{}, cfg.F_min_version, cfg.F_max_version, cfg.F_cipher_suites, cfg.F_curve_preferences, func(gc *tls.Config) {
+	return tlsPrep(tk, c, cfg.F_server_name, cfg.F_roots, cfg.F_verify, cfg.F_next_protos, one, Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]{}, cfg.F_min_version, cfg.F_max_version, cfg.F_cipher_suites, cfg.F_curve_preferences, func(gc *tls.Config) {
 		if len(cfg.F_certificates.s) > 1 {
 			gc.Certificates = nil
 			for _, x := range cfg.F_certificates.s {
@@ -392,6 +543,9 @@ func (t Tls_TlsConn) M_read(tk *Task, max int64) Result[Option[Bytes], NetErr] {
 	if tk.Canceled() {
 		return Err[Option[Bytes]](netErr(5, ""))
 	}
+	if r := t.M_handshake(tk); !r.Ok {
+		return Err[Option[Bytes]](r.E)
+	}
 	if t.fake {
 		return passthrough(func() Result[Option[Bytes], NetErr] { return Conn{c: t.c}.M_read(tk, max) }, t.c)
 	}
@@ -420,13 +574,18 @@ func (t Tls_TlsConn) M_read(tk *Task, max int64) Result[Option[Bytes], NetErr] {
 	if errors.Is(err, os.ErrDeadlineExceeded) {
 		return Err[Option[Bytes]](netErr(3, ""))
 	}
-	return Err[Option[Bytes]](netIoErr(err))
+	e := netIoErr(err)
+	t.st.note(e.P.(NetErr_Io).F_msg, err)
+	return Err[Option[Bytes]](e)
 }
 
 // M_write is `t.write(data)`: writes every byte.
 func (t Tls_TlsConn) M_write(tk *Task, data Bytes) Result[Unit, NetErr] {
 	if tk.Canceled() {
 		return Err[Unit](netErr(5, ""))
+	}
+	if r := t.M_handshake(tk); !r.Ok {
+		return r
 	}
 	if t.fake {
 		return passthrough(func() Result[Unit, NetErr] { return Conn{c: t.c}.M_write(tk, data) }, t.c)
@@ -445,7 +604,9 @@ func (t Tls_TlsConn) M_write(tk *Task, data Bytes) Result[Unit, NetErr] {
 		return Err[Unit](netErr(3, ""))
 	}
 	if err != nil {
-		return Err[Unit](netIoErr(err))
+		e := netIoErr(err)
+		t.st.note(e.P.(NetErr_Io).F_msg, err)
+		return Err[Unit](e)
 	}
 	return Ok[Unit, NetErr](Unit{})
 }
@@ -872,12 +1033,12 @@ func serverOn(tk *Task, c ServerConn, cfg Tls_ServerConfig, auto *autoTicketKeys
 		upgradedConns.Store(c.c, struct{}{})
 	}
 	if _, ok := c.c.(fakeConn); ok || c.c == nil {
-		return Tls_TlsServerConn{Tls_TlsConn: Tls_TlsConn{c: c.c, fake: c.c != nil, closed: new(atomic.Bool)}}
+		return Tls_TlsServerConn{Tls_TlsConn: Tls_TlsConn{c: c.c, fake: c.c != nil, closed: new(atomic.Bool), st: new(tlsConnSt)}}
 	}
 	gc := serverConfig(tk, cfg)
 	setTickets(gc, cfg, auto)
 	t := tls.Server(c.c, gc)
-	return Tls_TlsServerConn{Tls_TlsConn: Tls_TlsConn{t: t, c: c.c, closed: new(atomic.Bool)}, noCerts: len(cfg.F_certificates.s) == 0 && !cfg.F_get_certificate.Some && !cfg.F_get_config_for_client.Some}
+	return Tls_TlsServerConn{Tls_TlsConn: Tls_TlsConn{t: t, c: c.c, closed: new(atomic.Bool), st: new(tlsConnSt)}, noCerts: len(cfg.F_certificates.s) == 0 && !cfg.F_get_certificate.Some && !cfg.F_get_config_for_client.Some}
 }
 
 // M_handshake is `t.handshake()`: Go's Conn.Handshake under the
@@ -906,9 +1067,19 @@ func (t Tls_TlsServerConn) M_handshake(tk *Task) Result[Unit, NetErr] {
 		return Err[Unit](netErr(3, ""))
 	}
 	if err != nil {
+		t.st.note(err.Error(), err)
 		return Err[Unit](netErr(4, err.Error()))
 	}
 	return Ok[Unit, NetErr](Unit{})
+}
+
+// M_err is `t.err()`: the connection's first failure, typed (decision
+// 0644 T12); with no certificate, the handshake's.
+func (t Tls_TlsServerConn) M_err(tk *Task) Option[Tls_TlsErr] {
+	if t.noCerts {
+		return Some(Tls_TlsErr{F_msg: "tls: no certificates configured", F_kind: Tls_TlsErrKind{Tag: 1}})
+	}
+	return t.Tls_TlsConn.M_err(tk)
 }
 
 // M_read is `t.read(max)`: the handshake first (its deadline the

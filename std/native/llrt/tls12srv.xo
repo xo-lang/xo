@@ -119,6 +119,8 @@ pub struct Server {
   pub conf: Conf
   pub state: Int
   pub err: Str
+  /// decision 0644 T12: the typed detail of a failure
+  pub why: tlsneg.Failure = tlsneg.Failure{}
   pub closed: Bool
   pub suite: Int
   pub group: Int
@@ -236,15 +238,18 @@ pub fn feed(var s: Server, data: Bytes) {
       return
     }
     if s.have_vers && vers != 0x0303 {
+      s.why = tlsneg.header_fail(s.rin)
       fail(s, tls12.ALERT_PROTOCOL_VERSION, "tls: received record with version ${tls12.hex(vers)} when expecting version 303")
       return
     }
     if !s.have_vers && ((ct != tls12.CT_ALERT && ct != tls12.CT_HANDSHAKE) || vers >= 0x1000) {
       s.state = FAILED
+      s.why = tlsneg.header_fail(s.rin)
       s.err = "tls: first record does not look like a TLS handshake"
       return
     }
     if n > tls12.MAX_CIPHER {
+      s.why = tlsneg.header_fail(s.rin)
       fail(s, tls12.ALERT_RECORD_OVERFLOW, "tls: oversized record received with length ${n}")
       return
     }
@@ -1416,6 +1421,7 @@ fn client_cert(var s: Server, msg: Bytes) {
     if r.0.code != x509verify.OK {
       let c = r.0.code
       let alert = if c == x509verify.UNKNOWN_AUTHORITY { ALERT_UNKNOWN_CA } else if c == x509verify.EXPIRED { ALERT_CERTIFICATE_EXPIRED } else { tls12.ALERT_BAD_CERTIFICATE }
+      s.why = tlsneg.verify_fail(c, r.0.hint, "", ders)
       fail(s, alert, "tls: failed to verify certificate: ${x509verify.full_text_zone(r.0, leaf, "", s.conf.now, tls13.zone_of(tls13.ZONE_LAZY, s.conf.now))}")
       return
     }

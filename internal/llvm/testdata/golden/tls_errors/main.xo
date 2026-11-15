@@ -1,0 +1,274 @@
+// std/tls's typed errors (decision 0644 T12): TlsErr.kind as Go's
+// RecordHeaderError and CertificateVerificationError (the certificates
+// and the x509 cause, decision 0643), TlsConn.err() and
+// TlsServerConn.err() (the connection's first failure), and
+// client_conn, Go's tls.Client: the handshake at handshake() or the
+// first read, its Err again on every call, CloseWrite before it
+// errEarlyCloseWrite; after conn_test.go's TestRecordHeaderError cases
+// and handshake_client_test.go's CertificateVerificationError checks.
+use std/tls
+use std/x509
+use std/crypto
+use std/base64
+use std/netip
+
+struct Issued {
+  cert: x509.Certificate
+  key: crypto.PrivateKey
+}
+
+/// A PEM block of der on one line (PEM readers ignore line lengths).
+fn pem_block(kind: Str, der: Bytes) -> Bytes {
+  "-----BEGIN ${kind}-----\n${base64.encode(der)}\n-----END ${kind}-----\n".bytes()
+}
+
+fn issue(os: Os, name: Str, parent: Issued?, ca: Bool, eku: List[x509.ExtKeyUsage], now: Time) -> Issued uses rand {
+  let key = crypto.generate_key(os.rand, crypto.KeyAlg.EcdsaP256).or_fault("key")
+  let usage = if ca { [x509.KeyUsage.CertSign, x509.KeyUsage.DigitalSignature] } else { [x509.KeyUsage.DigitalSignature] }
+  let ips = if ca { [] } else { [netip.parse_addr("127.0.0.1").or_fault("ip")] }
+  let t = x509.Template{subject: x509.Name{common_name: name}, not_before: now - 1h, not_after: now + 24h, ip_addresses: ips, is_ca: ca, key_usage: usage, ext_key_usage: eku}
+  let (pc, pk) = match parent {
+    Some(p) => (Some(p.cert), p.key)
+    None => (None, key)
+  }
+  Issued{cert: x509.create_certificate(os.rand, t, key.public_key(), pc, pk).or_fault("cert ${name}"), key: key}
+}
+
+fn tls_pair(i: Issued, chain: List[x509.Certificate]) -> tls.TlsCert {
+  var pem = i.cert.pem()
+  for c in chain {
+    pem = pem + c.pem()
+  }
+  tls.cert(pem, pem_block("PRIVATE KEY", crypto.marshal_private_key(i.key))).or_fault("pair")
+}
+
+
+
+fn reason(r: x509.InvalidReason) -> Str {
+  match r {
+    Expired => "Expired"
+    NotAuthorizedToSign => "NotAuthorizedToSign"
+    IncompatibleUsage => "IncompatibleUsage"
+    NoValidChains => "NoValidChains"
+    _ => "another reason"
+  }
+}
+
+/// A TlsErr's kind and what it carries.
+fn kind(e: tls.TlsErr?) -> Str {
+  let x = e ?? return "none"
+  match x.kind {
+    Other => "Other: ${x.msg}"
+    RecordHeader(header) => "RecordHeader ${header.to_hex()}: ${x.msg}"
+    CertificateVerification(certs, cause) => {
+      let c = match cause.kind {
+        UnknownAuthority => "UnknownAuthority: ${cause.msg}"
+        Hostname(host) => "Hostname ${host}: ${cause.msg}"
+        CertificateInvalid(r, _d) => "CertificateInvalid ${reason(r)}"
+        _ => "another: ${cause.msg}"
+      }
+      let names = certs.map(fn(c: x509.Certificate) -> Str { c.subject.common_name })
+      "CertificateVerification certs ${names} cause ${c}"
+    }
+  }
+}
+
+/// The line of the one connection of l (a TLS listener): its handshake's
+/// result and err().
+fn serve_one(l: tls.TlsListener) -> Str uses net {
+  match l.accept() {
+    Ok(c) => {
+      let r = match c.handshake() {
+        Ok(_) => "ok"
+        Err(e) => "${e}"
+      }
+      let k = kind(c.err())
+      c.close()
+      "handshake ${r}; err ${k}"
+    }
+    Err(e) => "accept: ${e}"
+  }
+}
+
+/// lazy against a server that writes reply and is not TLS.
+fn against_plain(os: Os, reply: Bytes, cc: tls.ClientConfig) -> Str uses net, clock {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  var out = ""
+  scope s {
+    let t = s.spawn(fn() {
+      if let Ok(c) = l.accept() {
+        c.write(reply).ignore_err("the client may be gone")
+        match c.read(64) {
+          _ => {}
+        }
+        c.close()
+      }
+    })
+    out = lazy(os, l.addr(), cc)
+    t.await
+  }
+  l.close()
+  out
+}
+
+/// lazy against a TLS listener of cfg, then the server's line.
+fn against_tls(os: Os, cfg: tls.ServerConfig, cc: tls.ClientConfig) -> Str uses net, clock {
+  let l = tls.listen(os.net, "127.0.0.1:0", cfg).or_fault("listen")
+  var out = ""
+  scope s {
+    let t = s.spawn(fn() -> Str { serve_one(l) })
+    let mine = lazy(os, l.addr(), cc)
+    out = "${mine}\n    server ${t.await}"
+  }
+  l.close()
+  out
+}
+
+/// dial_config's Err against a TLS listener of cfg, then the server's
+/// line.
+fn dial_against(os: Os, cfg: tls.ServerConfig, cc: tls.ClientConfig) -> Str uses net, clock {
+  let l = tls.listen(os.net, "127.0.0.1:0", cfg).or_fault("listen")
+  var out = ""
+  scope s {
+    let t = s.spawn(fn() -> Str { serve_one(l) })
+    let mine = match tls.dial_config(os.net, l.addr(), cc) {
+      Ok(c) => {
+        c.close()
+        "ok"
+      }
+      Err(e) => "${e}"
+    }
+    out = "${mine}\n    server ${t.await}"
+  }
+  l.close()
+  out
+}
+
+/// A client that writes text that is not TLS to a TLS listener of cfg:
+/// the server's line.
+fn not_tls(os: Os, cfg: tls.ServerConfig) -> Str uses net {
+  let l = tls.listen(os.net, "127.0.0.1:0", cfg).or_fault("listen")
+  var out = ""
+  scope s {
+    let t = s.spawn(fn() -> Str { serve_one(l) })
+    let c = os.net.dial(l.addr()).or_fault("dial")
+    c.write(b"hello, not TLS").ignore_err("the server may be gone")
+    out = "server ${t.await}"
+    c.close()
+  }
+  l.close()
+  out
+}
+
+/// tls.server without certificates on a plain listener: the server's
+/// handshake and err().
+fn no_certs(os: Os, cc: tls.ClientConfig) -> Str uses net, clock {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  var out = ""
+  scope s {
+    let t = s.spawn(fn() -> Str {
+      match l.accept() {
+        Ok(c) => {
+          let sc = tls.server(c, tls.ServerConfig{certificates: []})
+          let r = match sc.handshake() {
+            Ok(_) => "ok"
+            Err(e) => "${e}"
+          }
+          let k = kind(sc.err())
+          sc.close()
+          "handshake ${r}; err ${k}"
+        }
+        Err(e) => "accept: ${e}"
+      }
+    })
+    let c = os.net.dial(l.addr()).or_fault("dial")
+    let lz = tls.client_conn(c, cc)
+    let r = match lz.handshake() {
+      Ok(_) => "ok"
+      Err(e) => "${e}"
+    }
+    lz.close()
+    out = "client ${r}; server ${t.await}"
+  }
+  l.close()
+  out
+}
+
+/// close_write on a client_conn before its handshake.
+fn early_close_write(os: Os, cfg: tls.ServerConfig, cc: tls.ClientConfig) -> Str uses net {
+  let l = tls.listen(os.net, "127.0.0.1:0", cfg).or_fault("listen")
+  var out = ""
+  scope s {
+    let t = s.spawn(fn() -> Str { serve_one(l) })
+    let c = os.net.dial(l.addr()).or_fault("dial")
+    let lz = tls.client_conn(c, cc)
+    out = match lz.close_write() {
+      Ok(_) => "ok"
+      Err(e) => "${e}"
+    }
+    lz.close()
+    let _s = t.await
+  }
+  l.close()
+  out
+}
+
+/// client_conn on a connection to addr: the handshake's result, again,
+/// then err().
+fn lazy(os: Os, addr: Str, cfg: tls.ClientConfig) -> Str uses net, clock {
+  let c = os.net.dial(addr).or_fault("dial")
+  let t = tls.client_conn(c, cfg)
+  let before = kind(t.err())
+  let r1 = match t.handshake() {
+    Ok(_) => "ok"
+    Err(e) => "${e}"
+  }
+  let r2 = match t.handshake() {
+    Ok(_) => "ok"
+    Err(e) => "${e}"
+  }
+  let rd = match t.read(4) {
+    Ok(_) => "read ok"
+    Err(e) => "read ${e}"
+  }
+  let k = kind(t.err())
+  t.close()
+  "before ${before}\n    handshake ${r1}\n    again ${r2}\n    ${rd}\n    err ${k}"
+}
+
+fn main(os: Os) uses net, stdio, rand, clock {
+  let now = os.clock.now()
+  let ca = issue(os, "Xo Test CA", None, true, [], now)
+  let other = issue(os, "Other CA", None, true, [], now)
+  // another key under the trusted CA's name: the client's certificate
+  // names an acceptable issuer and does not verify
+  let impostor = issue(os, "Xo Test CA", None, true, [], now)
+  let server = issue(os, "server", Some(ca), false, [x509.ExtKeyUsage.ServerAuth], now)
+  let client = issue(os, "client", Some(impostor), false, [x509.ExtKeyUsage.ClientAuth], now)
+  let roots = tls.roots_of([ca.cert]).or_fault("roots")
+  let other_roots = tls.roots_of([other.cert]).or_fault("roots")
+  let pair = tls_pair(server, [])
+  for v in [tls.VERSION_TLS13, tls.VERSION_TLS12] {
+    os.stdio.println("== ${tls.version_name(v)}")
+    let cc = tls.ClientConfig{server_name: "127.0.0.1", roots: Some(roots), max_version: v}
+    let base = tls.ServerConfig{certificates: [pair], max_version: v}
+    // Go's RecordHeaderError on the client
+    os.stdio.println("an HTTP server:\n    ${against_plain(os, b"HTTP/1.0 400 Bad Request\r\n\r\n", cc)}")
+    os.stdio.println("an oversized record:\n    ${against_plain(os, b"\x16\x03\x03\xff\xff", cc)}")
+    // Go's CertificateVerificationError on the client
+    os.stdio.println("unknown authority:\n    ${against_tls(os, base, cc with {roots: Some(other_roots)})}")
+    os.stdio.println("another name:\n    ${against_tls(os, base, cc with {server_name: "wrong.example"})}")
+    os.stdio.println("a good one:\n    ${against_tls(os, base, cc)}")
+    // the eager form: no connection, the Io's text Go's
+    os.stdio.println("dial_config, unknown authority:\n    ${dial_against(os, base, cc with {roots: Some(other_roots)})}")
+    // Go's CertificateVerificationError on the server
+    os.stdio.println("a client certificate of another authority:\n    ${against_tls(os, base with {client_auth: tls.ClientAuth.RequireAndVerify, client_cas: Some(roots)}, cc with {certificates: [tls_pair(client, [])]})}")
+    // Go's RecordHeaderError on the server
+    os.stdio.println("a client that is not TLS:\n    ${not_tls(os, base)}")
+  }
+  let cc = tls.ClientConfig{server_name: "127.0.0.1", roots: Some(roots)}
+  // Go's errEarlyCloseWrite
+  os.stdio.println("close_write before the handshake: ${early_close_write(os, tls.ServerConfig{certificates: [pair]}, cc)}")
+  os.stdio.println("no certificates: ${no_certs(os, cc)}")
+  os.stdio.println("done")
+}

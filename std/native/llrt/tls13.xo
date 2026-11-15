@@ -211,6 +211,8 @@ pub struct Client {
   pub conf: Conf
   pub state: Int
   pub err: Str
+  /// decision 0644 T12: the typed detail of a failure
+  pub why: tlsneg.Failure = tlsneg.Failure{}
   pub closed: Bool
   pub suite: Int
   pub alpn: Str
@@ -340,12 +342,14 @@ pub fn feed(var c: Client, data: Bytes) {
     // Go's readRecordOrCCS before the server's hello: a first record of
     // another type, or a version from 16.0 on, is not TLS (no alert)
     if c.state == WAIT_SH && !c.hrr && ((c.rin[0] != 21 && c.rin[0] != 22) || Int(c.rin[1]) >= 16) {
+      c.why = tlsneg.header_fail(c.rin)
       c.err = "tls: first record does not look like a TLS handshake"
       c.state = FAILED
       return
     }
     let n = Int(c.rin[3]) * 256 + Int(c.rin[4])
     if n > tlsrec.MAX_CIPHER {
+      c.why = tlsneg.header_fail(c.rin)
       fail(c, ALERT_RECORD_OVERFLOW, "tls: oversized record received with length ${n}")
       return
     }
@@ -1057,8 +1061,11 @@ fn certificate(var c: Client, msg: Bytes) {
       } else {
         r.msg
       }
-      let alert = if code == 1 { ALERT_UNKNOWN_CA } else if code == 2 { ALERT_CERTIFICATE_EXPIRED } else { ALERT_BAD_CERTIFICATE }
-      fail(c, alert, "tls: failed to verify certificate: ${msg}")
+      // Go's client sends bad_certificate for every failure
+      // (verifyServerCertificate); only its server tells unknown_ca and
+      // certificate_expired apart
+      c.why = tlsneg.verify_fail(apple_code(code, msg), "", vh, ders)
+      fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${msg}")
       return
     }
   } else if !c.conf.insecure {
@@ -1067,8 +1074,8 @@ fn certificate(var c: Client, msg: Bytes) {
     let (r, chains) = x509verify.verify_all(leaf, inters, c.conf.roots, vhost(c.conf), c.conf.now, [x509.EKU_SERVER])
     c.verified = chains
     if r.code != x509verify.OK {
-      let alert = if r.code == x509verify.UNKNOWN_AUTHORITY { ALERT_UNKNOWN_CA } else if r.code == x509verify.EXPIRED { ALERT_CERTIFICATE_EXPIRED } else { ALERT_BAD_CERTIFICATE }
-      fail(c, alert, "tls: failed to verify certificate: ${verify_msg(r, leaf, c.conf)}")
+      c.why = tlsneg.verify_fail(r.code, r.hint, vhost(c.conf), ders)
+      fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${verify_msg(r, leaf, c.conf)}")
       return
     }
   }
@@ -1082,6 +1089,16 @@ fn certificate(var c: Client, msg: Bytes) {
   }
   c.tr = cat2(c.tr, msg)
   c.state = WAIT_CV
+}
+
+/// x509verify's code of the Security framework's outcome (AppleRes):
+/// its own codes but 10, which is the unhandled critical extension or
+/// an error Go returns untyped (99).
+pub fn apple_code(code: Int, msg: Str) -> Int {
+  if code == 10 {
+    return if msg == "x509: unhandled critical extension" { x509verify.UNHANDLED_CRITICAL } else { 99 }
+  }
+  code
 }
 
 /// The DERs of each chain.

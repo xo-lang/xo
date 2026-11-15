@@ -3,6 +3,7 @@
 // program dialed. std/rt/tls.go is the Go backend's.
 use std/crypto
 use std/tls
+use std/netip
 use std/x509
 use native/rt
 use native/rthttp
@@ -110,6 +111,148 @@ fn ticket_keys(cfg: tls.ServerConfig, auto: Mutex[List[tlsticket.Key]]?) -> (Lis
 struct TlsConn {
   c: Conn
   h: rthttp.TlsH?
+  /// client_conn's: the handshake runs at handshake, read or write
+  lazy: Bool
+  st: Mutex[ClientSt]
+}
+
+/// A client connection's state behind its lock (decision 0644 T12): a
+/// lazy one's config until its handshake ran, the handle it made, the
+/// handshake's Err; every connection's first failure, typed.
+struct ClientSt {
+  pending: tls.ClientConfig? = None
+  ran: Bool = true
+  herr: NetErr? = None
+  h: rthttp.TlsH? = None
+  err: tls.TlsErr? = None
+}
+
+fn new_st() -> Mutex[ClientSt] { Mutex[ClientSt].new(ClientSt{}) }
+
+/// Records e as st's first failure, typed by why (a Timeout or Canceled
+/// is not one), and gives it back.
+fn note(st: Mutex[ClientSt], e: NetErr, why: tlsneg.Failure) -> NetErr {
+  match e {
+    Io(msg) => st.with(fn(var s: ClientSt) {
+      if s.err.is_none() {
+        s.err = Some(typed(msg, why))
+      }
+    })
+    _ => {}
+  }
+  e
+}
+
+/// The typed TlsErr of a failure's text and detail (decision 0644 T12):
+/// a verification's is Go's CertificateVerificationError, a record
+/// layer's its RecordHeaderError.
+fn typed(msg: Str, why: tlsneg.Failure) -> tls.TlsErr {
+  if why.verify {
+    let cause = msg.cut_prefix("tls: failed to verify certificate: ") ?? msg
+    return tls.TlsErr{msg: msg, kind: tls.TlsErrKind.CertificateVerification(certs: parse_ders(why.certs), cause: x509.CertErr{msg: cause, kind: cert_kind(why.code, cause, why.hint, why.host)})}
+  }
+  if let Some(hd) = why.header {
+    return tls.TlsErr{msg: msg, kind: tls.TlsErrKind.RecordHeader(header: hd)}
+  }
+  tls.TlsErr{msg: msg}
+}
+
+/// Go's x509 error type of a verification's outcome code (native x509's
+/// verify_kind, decision 0643): text the x509 error's.
+fn cert_kind(code: Int, text: Str, hint: Str, host: Str) -> x509.CertErrKind {
+  let invalid = fn(reason: x509.InvalidReason, detail: Str) -> x509.CertErrKind { x509.CertErrKind.CertificateInvalid(reason: reason, detail: detail) }
+  match code {
+    1 => x509.CertErrKind.UnknownAuthority
+    2 => invalid(x509.InvalidReason.Expired, text.cut_prefix("x509: certificate has expired or is not yet valid: ") ?? "")
+    3 => invalid(x509.InvalidReason.NotAuthorizedToSign, "")
+    4 => invalid(x509.InvalidReason.TooManyIntermediates, "")
+    5 => invalid(x509.InvalidReason.CaNotAuthorizedForThisName, hint)
+    6 => invalid(x509.InvalidReason.IncompatibleUsage, "")
+    7 => x509.CertErrKind.Hostname(host: hostname_err_host(host))
+    8 => x509.CertErrKind.UnhandledCriticalExtension
+    10 => invalid(x509.InvalidReason.NoValidChains, hint)
+    _ => x509.CertErrKind.Other
+  }
+}
+
+/// HostnameError.Host: an IP address in brackets without them, else the
+/// host as asked (native x509's).
+fn hostname_err_host(h: Str) -> Str {
+  if h.len() >= 3 && h.starts_with("[") && h.ends_with("]") {
+    let inner = h[1..(h.len() - 1)]
+    if !inner.contains("%") && netip.parse_addr(inner).is_ok() {
+      return inner
+    }
+  }
+  h
+}
+
+/// The connection's handle: its own, or the one its lazy handshake made.
+/// Each is rebuilt from a match, not returned as the field: `return t.h`
+/// here freed the handle under every connection (gotcha
+/// return-handle-field-no-retain).
+fn (t: TlsConn) hh() -> rthttp.TlsH? {
+  if !t.lazy {
+    return match t.h {
+      Some(x) => Some(x)
+      None => None
+    }
+  }
+  t.st.with(fn(var s: ClientSt) -> rthttp.TlsH? {
+    match s.h {
+      Some(x) => Some(x)
+      None => None
+    }
+  })
+}
+
+fn client_conn(c: Conn, config: tls.ClientConfig) -> TlsConn { TlsConn{c: c, h: None, lazy: true, st: Mutex[ClientSt].new(ClientSt{pending: Some(config), ran: false})} }
+
+fn (t: TlsConn) handshake() -> () ! NetErr uses net.dial {
+  if !t.lazy {
+    return Ok(())
+  }
+  let todo = t.st.with(fn(var s: ClientSt) -> tls.ClientConfig? {
+    if s.ran {
+      return None
+    }
+    s.ran = true
+    s.pending
+  })
+  match todo {
+    Some(cfg) => match client_config_st(t.c, cfg, t.st) {
+      Ok(x) => {
+        t.st.with(fn(var s: ClientSt) {
+          s.h = x.h
+          s.pending = None
+        })
+        Ok(())
+      }
+      Err(e) => {
+        t.st.with(fn(var s: ClientSt) {
+          s.herr = Some(e)
+          s.pending = None
+        })
+        Err(e)
+      }
+    }
+    None => match t.st.with(fn(var s: ClientSt) -> NetErr? { s.herr }) {
+      Some(e) => Err(e)
+      None => Ok(())
+    }
+  }
+}
+
+fn (t: TlsConn) err() -> tls.TlsErr? { t.st.with(fn(var s: ClientSt) -> tls.TlsErr? { s.err }) }
+
+/// A read or write failure on h as the connection's first failure: typed
+/// when it is the engine's own.
+fn note_io(t: TlsConn, h: Int, e: NetErr) -> NetErr {
+  let (text, why) = tlsio.failure_of(h)
+  match e {
+    Io(msg) => note(t.st, e, if !text.is_empty() && msg.contains(text) { why } else { tlsneg.Failure{} })
+    _ => e
+  }
 }
 
 /// The text of a read or write after close (Go's net.ErrClosed).
@@ -187,20 +330,20 @@ fn pin_sha256(pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str) ! Str { pin_
 /// (Lang 3's tls13/tls12 hooks, decision 0433); until then the client
 /// answers a request with no certificate.
 fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None, min_version: Int = 0, max_version: Int = 0, cipher_suites: List[Int] = [], curve_preferences: List[Int] = []) -> TlsConn ! NetErr uses net.dial {
-  client_full(c, host, roots, verify, alpn, cert, verify_conn, min_version, max_version, cipher_suites, curve_preferences, None, None, None, no_resume())
+  client_full(c, host, roots, verify, alpn, cert, verify_conn, min_version, max_version, cipher_suites, curve_preferences, None, None, None, no_resume(), new_st())
 }
 
 /// client with ClientConfig's hooks (decision 0644 T6).
-fn client_full(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List[Str], cert: TlsCert?, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)?, min_version: Int, max_version: Int, cipher_suites: List[Int], curve_preferences: List[Int], vhook: (fn(tlsneg.Negotiated) -> Str)?, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))?, key_log: (fn(Str, Bytes, Bytes) -> Str)?, res0: Resume) -> TlsConn ! NetErr uses net.dial {
+fn client_full(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List[Str], cert: TlsCert?, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)?, min_version: Int, max_version: Int, cipher_suites: List[Int], curve_preferences: List[Int], vhook: (fn(tlsneg.Negotiated) -> Str)?, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))?, key_log: (fn(Str, Bytes, Bytes) -> Str)?, res0: Resume, st: Mutex[ClientSt]) -> TlsConn ! NetErr uses net.dial {
   if host.is_empty() && verify == tls.Verify.Full {
     // Go's Client without ServerName: the name could not be verified
-    return Err(NetErr.Io(msg: "tls: either ServerName or InsecureSkipVerify must be specified in the tls.Config"))
+    return Err(note(st, NetErr.Io(msg: "tls: either ServerName or InsecureSkipVerify must be specified in the tls.Config"), tlsneg.Failure{}))
   }
   let cn = rt.obj_addr(c)
   if target.arch == TargetArch.Wasm32 {
     // a wasip2 command's connection (netwasi.xo, decision 0447 R2e):
     // tlsio reads and writes it, and its own deadlines apply to them
-    return client_wasm(c, host, roots, verify, alpn, cert, min_version, max_version, cipher_suites, curve_preferences, vhook, get_cert, key_log, res0)
+    return client_wasm(c, host, roots, verify, alpn, cert, min_version, max_version, cipher_suites, curve_preferences, st, vhook, get_cert, key_log, res0)
   }
   if netconn.conn_upgraded(cn) {
     return Err(NetErr.Io(msg: "use of a connection upgraded to TLS"))
@@ -208,7 +351,7 @@ fn client_full(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List
   netconn.conn_upgrade(cn)
   if twflags.fake(TW_REAL_NET) {
     // FakeNet: no TLS, the connection's bytes pass through
-    return TlsConn{c: c, h: None}
+    return TlsConn{c: c, h: None, lazy: false, st: st}
   }
   var r = match roots {
     Some(x) => x.r
@@ -244,14 +387,14 @@ fn client_full(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List
     // the http client's text for a plain HTTP server is net/http's;
     // crypto/tls's own is this
     let msg = if started.msg == "http: server gave HTTP response to HTTPS client" { "tls: first record does not look like a TLS handshake" } else { started.msg }
-    return Err(NetErr.Io(msg: msg))
+    return Err(note(st, NetErr.Io(msg: msg), started.why))
   }
   tlsio.set_conn(started.conn, cn)
-  TlsConn{c: c, h: Some(tlsio.handle_new(started.conn))}
+  TlsConn{c: c, h: Some(tlsio.handle_new(started.conn)), lazy: false, st: st}
 }
 
 /// client on wasm: no upgrade mark, no system roots (none on wasm).
-fn client_wasm(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List[Str], cert: TlsCert?, min_version: Int, max_version: Int, cipher_suites: List[Int], curve_preferences: List[Int], vhook: (fn(tlsneg.Negotiated) -> Str)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None, res0: Resume = no_resume()) -> TlsConn ! NetErr uses net.dial {
+fn client_wasm(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List[Str], cert: TlsCert?, min_version: Int, max_version: Int, cipher_suites: List[Int], curve_preferences: List[Int], st: Mutex[ClientSt], vhook: (fn(tlsneg.Negotiated) -> Str)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None, res0: Resume = no_resume()) -> TlsConn ! NetErr uses net.dial {
   let cn = rt.obj_addr(c)
   if netwasi.upgraded(cn) {
     return Err(NetErr.Io(msg: "use of a connection upgraded to TLS"))
@@ -281,15 +424,16 @@ fn client_wasm(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List
   }
   if started.status != tlsio.CC_OK {
     let msg = if started.msg == "http: server gave HTTP response to HTTPS client" { "tls: first record does not look like a TLS handshake" } else { started.msg }
-    return Err(NetErr.Io(msg: msg))
+    return Err(note(st, NetErr.Io(msg: msg), started.why))
   }
   // the handshake's deadline ends; the connection's own apply after
   tlsio.set_conn(started.conn, cn)
-  TlsConn{c: c, h: Some(tlsio.handle_new(started.conn))}
+  TlsConn{c: c, h: Some(tlsio.handle_new(started.conn)), lazy: false, st: st}
 }
 
 fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net.dial {
-  let h = match t.h {
+  t.handshake()?
+  let h = match t.hh() {
     Some(x) => {
       if tlsio.handle_closed(x) {
         return Err(NetErr.Io(msg: CLOSED_TEXT))
@@ -313,11 +457,12 @@ fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net.dial {
   if k == 0 {
     return None
   }
-  Err(cc_err(-k, "read", tlsio.alert(h)))
+  Err(note_io(t, h, cc_err(-k, "read", tlsio.alert(h))))
 }
 
 fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net.dial {
-  let h = match t.h {
+  t.handshake()?
+  let h = match t.hh() {
     Some(x) => {
       if tlsio.handle_closed(x) {
         return Err(NetErr.Io(msg: CLOSED_TEXT))
@@ -337,12 +482,12 @@ fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net.dial {
   let s = tlsio.write(h, raw.bytes_addr(data), data.len())
   raw.alive(data)
   if s != tlsio.CC_OK {
-    return Err(cc_err(s, "write", tlsio.alert(h)))
+    return Err(note_io(t, h, cc_err(s, "write", tlsio.alert(h))))
   }
 }
 
 fn (t: TlsConn) close() {
-  if let Some(x) = t.h {
+  if let Some(x) = t.hh() {
     if tlsio.handle_closed(x) {
       return
     }
@@ -366,7 +511,7 @@ fn (t: TlsConn) set_read_deadline(clock: Clock, at: Time?) uses clock { t.c.set_
 fn (t: TlsConn) set_write_deadline(clock: Clock, at: Time?) uses clock { t.c.set_write_deadline(clock, at) }
 
 fn (t: TlsConn) alpn() -> Str {
-  match t.h {
+  match t.hh() {
     Some(x) => tlsio.alpn_of(tlsio.handle_conn(x))
     None => ""
   }
@@ -384,7 +529,7 @@ fn roots_of(certs: List[x509.Certificate]) -> Roots ! tls.TlsErr {
 }
 
 fn (t: TlsConn) peer_certificates() -> List[x509.Certificate] {
-  let h = match t.h {
+  let h = match t.hh() {
     Some(x) => x
     None => return []
   }
@@ -398,7 +543,7 @@ fn (t: TlsConn) peer_certificates() -> List[x509.Certificate] {
 }
 
 fn (t: TlsConn) state() -> tls.ConnState {
-  let h = match t.h {
+  let h = match t.hh() {
     Some(x) => x
     None => return tls.ConnState{version: 0x0304, handshake_complete: true, did_resume: false, cipher_suite: 0, curve_id: 0, negotiated_protocol: "", server_name: "", peer_certificates: [], verified_chains: []}
   }
@@ -435,7 +580,7 @@ fn ekm_of(n: tlsneg.Negotiated, label: Str, context: Bytes?, length: Int) -> Byt
 }
 
 fn (t: TlsConn) export_keying_material(label: Str, context: Bytes?, length: Int) -> Bytes ! tls.TlsErr {
-  let h = t.h ?? return Err(tls.TlsErr{msg: "tls: ExportKeyingMaterial on a connection without TLS"})
+  let h = t.hh() ?? return Err(tls.TlsErr{msg: "tls: ExportKeyingMaterial on a connection without TLS"})
   ekm_of(tlsio.negotiated_of(tlsio.handle_conn(h)), label, context, length)
 }
 
@@ -470,7 +615,7 @@ fn version_name(version: Int) -> Str { tlsneg.version_name(version) }
 fn curve_name(id: Int) -> Str { tlsneg.group_name(id) }
 
 fn (t: TlsConn) version() -> Str {
-  match t.h {
+  match t.hh() {
     Some(x) => tlsio.version_of(tlsio.handle_conn(x))
     None => "TLS 1.3"
   }
@@ -569,13 +714,16 @@ fn dial_done(c: Conn, timeout: Duration?, r: Result[TlsConn, NetErr]) -> TlsConn
   r
 }
 
-fn client_config(c: Conn, config: tls.ClientConfig) -> TlsConn ! NetErr uses net.dial {
+fn client_config(c: Conn, config: tls.ClientConfig) -> TlsConn ! NetErr uses net.dial { client_config_st(c, config, new_st()) }
+
+/// client_config recording its failure in st.
+fn client_config_st(c: Conn, config: tls.ClientConfig, st: Mutex[ClientSt]) -> TlsConn ! NetErr uses net.dial {
   let one = if config.certificates.len() == 1 { Some(rt.cast[tls.TlsCert, TlsCert](config.certificates[0])) } else { None }
   let roots = match config.roots {
     Some(r) => Some(rt.cast[tls.Roots, Roots](r))
     None => None
   }
-  client_full(c, config.server_name, roots, config.verify, config.next_protos, one, None, config.min_version, config.max_version, config.cipher_suites, config.curve_preferences, client_vhook(config), client_get_cert(config), key_log_hook(config.key_log), resume_of(c, config))
+  client_full(c, config.server_name, roots, config.verify, config.next_protos, one, None, config.min_version, config.max_version, config.cipher_suites, config.curve_preferences, client_vhook(config), client_get_cert(config), key_log_hook(config.key_log), resume_of(c, config), st)
 }
 
 fn dial_config(net: Net, addr: Str, config: tls.ClientConfig, timeout: Duration? = None) -> TlsConn ! NetErr uses net.dial {
@@ -773,7 +921,11 @@ fn (t: TlsConn) remote_addr() -> Str { t.c.remote_addr() }
 
 /// Go's Conn.CloseWrite: close_notify, then the connection's close_write.
 fn (t: TlsConn) close_write() -> () ! NetErr uses net.dial {
-  if let Some(x) = t.h {
+  if t.lazy && t.hh().is_none() {
+    // Go's errEarlyCloseWrite
+    return Err(NetErr.Io(msg: "tls: CloseWrite called before handshake complete"))
+  }
+  if let Some(x) = t.hh() {
     if tlsio.handle_closed(x) {
       return Err(NetErr.Io(msg: CLOSED_TEXT))
     }
@@ -871,6 +1023,16 @@ fn (t: TlsServerConn) handshake() -> () ! NetErr uses net.listen {
     return Err(srv_err(b, "tls: handshake failed"))
   }
   Ok(())
+}
+
+fn (t: TlsServerConn) err() -> tls.TlsErr? {
+  if t.fake {
+    return None
+  }
+  let h = t.h ?? return Some(tls.TlsErr{msg: NO_CERTS_TEXT})
+  let b = tlsserve.block(h)
+  let e = tlssrv.err_text(b)
+  if e.is_empty() { None } else { Some(typed(e, tlssrv.why_of(b))) }
 }
 
 fn (t: TlsServerConn) read(max: Int) -> Bytes? ! NetErr uses net.listen {

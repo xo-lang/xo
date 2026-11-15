@@ -141,3 +141,29 @@ pub fn only(all: List[Int], want: List[Int]) -> List[Int] {
   }
   out
 }
+
+/// Why a handshake or a record failed, for std/tls's typed errors
+/// (decision 0644 T12): header, the record header (five bytes) of a
+/// record layer failure (Go's RecordHeaderError); verify, a failed
+/// verification of the peer's certificates (Go's
+/// CertificateVerificationError), with x509verify's outcome code, its
+/// hint, the host verified and the peer's certificates (DER, leaf first).
+pub struct Failure {
+  pub header: Bytes? = None
+  pub verify: Bool = false
+  pub code: Int = 0
+  pub hint: Str = ""
+  pub host: Str = ""
+  pub certs: List[Bytes] = []
+}
+
+/// A record layer failure on the input rin (Go's newRecordHeaderError
+/// copies the header from its raw input into a [5]byte: zeros past what
+/// came).
+pub fn header_fail(rin: Bytes) -> Failure {
+  let n = if rin.len() < 5 { rin.len() } else { 5 }
+  Failure{header: Some(rin[0..n] + b"\x00".repeat(5 - n))}
+}
+
+/// A failed verification of certs for host.
+pub fn verify_fail(code: Int, hint: Str, host: Str, certs: List[Bytes]) -> Failure { Failure{verify: true, code: code, hint: hint, host: host, certs: certs} }

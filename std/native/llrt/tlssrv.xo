@@ -507,12 +507,11 @@ fn conn_block(var cf: tls13srv.Conf, pd: Int, http: Bool) -> Int {
 }
 
 /// A connection of std/tls's server (tls.server, decision 0644 T1) on pd
-/// (wasm: the connection record) with the settings conf_of makes; 0
-/// without a certificate or a hook that gives one.
+/// (wasm: the connection record) with the settings conf_of makes.
+/// Without a certificate or a hook that gives one the handshake reads the
+/// client's hello and fails as Go's, unrecognized_name and "tls: no
+/// certificates configured" (Go's getCertificate errNoCertificates).
 pub fn conn_cfg(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: List[x509.Cert], pd: Int, min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)? = None, vconn: (fn(tlsneg.Negotiated) -> Str)? = None, for_client: (fn(tlsneg.HelloInfo) -> (tls13srv.Conf?, Str))? = None, get_cert: (fn(tlsneg.HelloInfo) -> (List[Bytes], Bytes, Str))? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None, tickets: List[tlsticket.Key] = [], own_tickets: Bool = false) -> Int {
-  if certs.is_empty() && for_client.is_none() && get_cert.is_none() {
-    return 0
-  }
   var cf = conf_of(certs, alpn, client_auth, roots, min_v, max_v, suites, curves, vpeer, vconn, get_cert, key_log, tickets, own_tickets)
   cf.for_client = for_client
   conn_block(cf, pd, false)
@@ -566,6 +565,14 @@ pub fn err_text(t: Int) -> Str {
       if e.is_empty() && c.eof && c.done != 1 { "EOF" } else { e }
     }
     None => ""
+  }
+}
+
+/// The typed detail of block t's failure (decision 0644 T12).
+pub fn why_of(t: Int) -> tlsneg.Failure {
+  match load(t) {
+    Some(c) => if c.s12.is_empty() { c.s.why } else { c.s12[0].why }
+    None => tlsneg.Failure{}
   }
 }
 

@@ -466,9 +466,23 @@ pub struct Start {
   pub conn: Int
   pub kind: Int
   pub msg: Str
+  /// decision 0644 T12: the typed detail of the failure
+  pub why: tlsneg.Failure = tlsneg.Failure{}
 }
 
-fn failed(status: Int, kind: Int, msg: Str) -> Start { Start{status: status, conn: 0, kind: kind, msg: msg} }
+fn failed(status: Int, kind: Int, msg: Str, why: tlsneg.Failure = tlsneg.Failure{}) -> Start { Start{status: status, conn: 0, kind: kind, msg: msg, why: why} }
+
+/// The engine's typed detail of its failure (decision 0644 T12).
+fn why(c: Conn) -> tlsneg.Failure { if v12(c) { c.cl12[0].why } else { c.cl.why } }
+
+/// Why connection h's engine failed (decision 0644 T12): its text ("" when
+/// it has not) and the typed detail.
+pub fn failure_of(h: Int) -> (Str, tlsneg.Failure) {
+  match load(h) {
+    Some(c) => (err(c), why(c))
+    None => ("", tlsneg.Failure{})
+  }
+}
 
 /// The client's handshake on poll descriptor pd for host (the URL's
 /// host, IPv6 in brackets) with roots (a rthttp.Roots record) by the
@@ -579,17 +593,17 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
     return failed(c.status, 4, "")
   }
   if c.first.len() >= 5 && c.first[0..5] == b"HTTP/" {
-    return failed(CC_ERR, 4, "http: server gave HTTP response to HTTPS client")
+    return failed(CC_ERR, 4, "http: server gave HTTP response to HTTPS client", tlsneg.header_fail(c.first))
   }
   let e = err(c)
   if e.starts_with("remote error: ") {
     return failed(CC_ERR, 2, e)
   }
   if !e.is_empty() {
-    return failed(CC_ERR, 4, e)
+    return failed(CC_ERR, 4, e, why(c))
   }
   if c.first.len() >= 1 && c.first[0] != 21 && c.first[0] != 22 {
-    return failed(CC_ERR, 4, "tls: first record does not look like a TLS handshake")
+    return failed(CC_ERR, 4, "tls: first record does not look like a TLS handshake", tlsneg.header_fail(c.first))
   }
   failed(CC_ERR, 4, "EOF")
 }

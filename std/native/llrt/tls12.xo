@@ -791,6 +791,8 @@ pub struct Client {
   pub conf: Conf
   pub state: Int
   pub err: Str
+  /// decision 0644 T12: the typed detail of a failure
+  pub why: tlsneg.Failure = tlsneg.Failure{}
   pub closed: Bool
   pub suite: Int
   pub group: Int
@@ -952,15 +954,18 @@ pub fn feed(var c: Client, data: Bytes) {
     let vers = u16_at(c.rin, 1)
     let n = u16_at(c.rin, 3)
     if c.have_vers && vers != 0x0303 {
+      c.why = tlsneg.header_fail(c.rin)
       fail(c, ALERT_PROTOCOL_VERSION, "tls: received record with version ${hex(vers)} when expecting version 303")
       return
     }
     if !c.have_vers && ((ct != CT_ALERT && ct != CT_HANDSHAKE) || vers >= 0x1000) {
       c.state = FAILED
+      c.why = tlsneg.header_fail(c.rin)
       c.err = "tls: first record does not look like a TLS handshake"
       return
     }
     if n > MAX_CIPHER {
+      c.why = tlsneg.header_fail(c.rin)
       fail(c, ALERT_RECORD_OVERFLOW, "tls: oversized record received with length ${n}")
       return
     }
@@ -1559,6 +1564,7 @@ fn verify_certificates(var c: Client) -> Bool {
       } else {
         r.msg
       }
+      c.why = tlsneg.verify_fail(tls13.apple_code(code, msg), "", vh, c.certs)
       fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${msg}")
       return false
     }
@@ -1567,6 +1573,7 @@ fn verify_certificates(var c: Client) -> Bool {
     let (r, chains) = x509verify.verify_all(leaf, certs[1..certs.len()], c.conf.roots, vh, c.conf.now, [x509.EKU_SERVER])
     c.verified = chains
     if r.code != x509verify.OK {
+      c.why = tlsneg.verify_fail(r.code, r.hint, vh, c.certs)
       fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${verify_msg(r, leaf, vh, c.conf.now, tls13.zone_of(c.conf.zone_off, c.conf.now))}")
       return false
     }

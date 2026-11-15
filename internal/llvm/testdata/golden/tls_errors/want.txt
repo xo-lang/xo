@@ -1,0 +1,98 @@
+exit 0
+--- stdout
+== TLS 1.3
+an HTTP server:
+    before none
+    handshake tls: first record does not look like a TLS handshake
+    again tls: first record does not look like a TLS handshake
+    read tls: first record does not look like a TLS handshake
+    err RecordHeader 485454502f: tls: first record does not look like a TLS handshake
+an oversized record:
+    before none
+    handshake tls: oversized record received with length 65535
+    again tls: oversized record received with length 65535
+    read tls: oversized record received with length 65535
+    err RecordHeader 160303ffff: tls: oversized record received with length 65535
+unknown authority:
+    before none
+    handshake tls: failed to verify certificate: x509: certificate signed by unknown authority
+    again tls: failed to verify certificate: x509: certificate signed by unknown authority
+    read tls: failed to verify certificate: x509: certificate signed by unknown authority
+    err CertificateVerification certs ["server"] cause UnknownAuthority: x509: certificate signed by unknown authority
+    server handshake remote error: tls: bad certificate; err Other: remote error: tls: bad certificate
+another name:
+    before none
+    handshake tls: failed to verify certificate: x509: certificate is not valid for any names, but wanted to match wrong.example
+    again tls: failed to verify certificate: x509: certificate is not valid for any names, but wanted to match wrong.example
+    read tls: failed to verify certificate: x509: certificate is not valid for any names, but wanted to match wrong.example
+    err CertificateVerification certs ["server"] cause Hostname wrong.example: x509: certificate is not valid for any names, but wanted to match wrong.example
+    server handshake remote error: tls: bad certificate; err Other: remote error: tls: bad certificate
+a good one:
+    before none
+    handshake ok
+    again ok
+    read ok
+    err none
+    server handshake ok; err none
+dial_config, unknown authority:
+    tls: failed to verify certificate: x509: certificate signed by unknown authority
+    server handshake remote error: tls: bad certificate; err Other: remote error: tls: bad certificate
+a client certificate of another authority:
+    before none
+    handshake ok
+    again ok
+    read remote error: tls: unknown certificate authority
+    err Other: remote error: tls: unknown certificate authority
+    server handshake tls: failed to verify certificate: x509: certificate signed by unknown authority (possibly because of "x509: ECDSA verification failure" while trying to verify candidate authority certificate "Xo Test CA"); err CertificateVerification certs ["client"] cause UnknownAuthority: x509: certificate signed by unknown authority (possibly because of "x509: ECDSA verification failure" while trying to verify candidate authority certificate "Xo Test CA")
+a client that is not TLS:
+    server handshake tls: first record does not look like a TLS handshake; err RecordHeader 68656c6c6f: tls: first record does not look like a TLS handshake
+== TLS 1.2
+an HTTP server:
+    before none
+    handshake tls: first record does not look like a TLS handshake
+    again tls: first record does not look like a TLS handshake
+    read tls: first record does not look like a TLS handshake
+    err RecordHeader 485454502f: tls: first record does not look like a TLS handshake
+an oversized record:
+    before none
+    handshake tls: oversized record received with length 65535
+    again tls: oversized record received with length 65535
+    read tls: oversized record received with length 65535
+    err RecordHeader 160303ffff: tls: oversized record received with length 65535
+unknown authority:
+    before none
+    handshake tls: failed to verify certificate: x509: certificate signed by unknown authority
+    again tls: failed to verify certificate: x509: certificate signed by unknown authority
+    read tls: failed to verify certificate: x509: certificate signed by unknown authority
+    err CertificateVerification certs ["server"] cause UnknownAuthority: x509: certificate signed by unknown authority
+    server handshake remote error: tls: bad certificate; err Other: remote error: tls: bad certificate
+another name:
+    before none
+    handshake tls: failed to verify certificate: x509: certificate is not valid for any names, but wanted to match wrong.example
+    again tls: failed to verify certificate: x509: certificate is not valid for any names, but wanted to match wrong.example
+    read tls: failed to verify certificate: x509: certificate is not valid for any names, but wanted to match wrong.example
+    err CertificateVerification certs ["server"] cause Hostname wrong.example: x509: certificate is not valid for any names, but wanted to match wrong.example
+    server handshake remote error: tls: bad certificate; err Other: remote error: tls: bad certificate
+a good one:
+    before none
+    handshake ok
+    again ok
+    read ok
+    err none
+    server handshake ok; err none
+dial_config, unknown authority:
+    tls: failed to verify certificate: x509: certificate signed by unknown authority
+    server handshake remote error: tls: bad certificate; err Other: remote error: tls: bad certificate
+a client certificate of another authority:
+    before none
+    handshake remote error: tls: unknown certificate authority
+    again remote error: tls: unknown certificate authority
+    read remote error: tls: unknown certificate authority
+    err Other: remote error: tls: unknown certificate authority
+    server handshake tls: failed to verify certificate: x509: certificate signed by unknown authority (possibly because of "x509: ECDSA verification failure" while trying to verify candidate authority certificate "Xo Test CA"); err CertificateVerification certs ["client"] cause UnknownAuthority: x509: certificate signed by unknown authority (possibly because of "x509: ECDSA verification failure" while trying to verify candidate authority certificate "Xo Test CA")
+a client that is not TLS:
+    server handshake tls: first record does not look like a TLS handshake; err RecordHeader 68656c6c6f: tls: first record does not look like a TLS handshake
+close_write before the handshake: tls: CloseWrite called before handshake complete
+no certificates: client remote error: tls: unrecognized name; server handshake tls: no certificates configured; err Other: tls: no certificates configured
+done
+--- stderr

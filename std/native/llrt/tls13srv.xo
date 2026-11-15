@@ -204,6 +204,8 @@ pub struct Server {
   key_alg: Int
   pub state: Int
   pub err: Str
+  /// decision 0644 T12: the typed detail of a failure
+  pub why: tlsneg.Failure = tlsneg.Failure{}
   pub closed: Bool
   pub suite: Int
   pub group: Int
@@ -321,12 +323,14 @@ pub fn feed(var s: Server, data: Bytes) {
     let n = Int(s.rin[3]) * 256 + Int(s.rin[4])
     if !s.seen && (!(s.rin[0] is 21 | 22) || Int(s.rin[1]) >= 16) {
       // Go's check of the first record (a RecordHeaderError: no alert)
+      s.why = tlsneg.header_fail(s.rin)
       s.err = "tls: first record does not look like a TLS handshake"
       s.state = FAILED
       return
     }
     s.seen = true
     if n > tlsrec.MAX_CIPHER {
+      s.why = tlsneg.header_fail(s.rin)
       fail(s, ALERT_RECORD_OVERFLOW, "tls: oversized record received with length ${n}")
       return
     }
@@ -1179,6 +1183,7 @@ fn client_cert(var s: Server, msg: Bytes) {
     if r.0.code != x509verify.OK {
       let c = r.0.code
       let alert = if c == x509verify.UNKNOWN_AUTHORITY { ALERT_UNKNOWN_CA } else if c == x509verify.EXPIRED { ALERT_CERTIFICATE_EXPIRED } else { ALERT_BAD_CERTIFICATE }
+      s.why = tlsneg.verify_fail(c, r.0.hint, "", ders)
       fail(s, alert, "tls: failed to verify certificate: ${x509verify.full_text_zone(r.0, leaf, "", s.conf.now, tls13.zone_of(tls13.ZONE_LAZY, s.conf.now))}")
       return
     }

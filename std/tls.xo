@@ -17,6 +17,20 @@ struct Roots {}
 
 struct TlsErr {
   msg: Str
+  /// Which of Go's error types this is (decision 0644 T12); Other for an
+  /// error Go returns untyped. The text is msg either way.
+  kind: TlsErrKind = TlsErrKind.Other
+}
+
+/// Go's crypto/tls error types, for errors.As (decision 0644 T12):
+/// RecordHeaderError (a record that is not TLS, an oversized one, one of
+/// another version: the record's header, up to five bytes) and
+/// CertificateVerificationError (the peer's certificates, leaf first, as
+/// they came, and the x509 error that refused them).
+enum TlsErrKind {
+  Other
+  RecordHeader(header: Bytes)
+  CertificateVerification(certs: List[x509.Certificate], cause: x509.CertErr)
 }
 
 /// The message (decision 0358).
@@ -143,6 +157,19 @@ fn (i: CertificateRequestInfo) supports_certificate(cert: TlsCert) -> () ! TlsEr
 /// The TLS client on connection c with config (Go's tls.Client and
 /// Handshake): as client, with ClientConfig's hooks.
 fn client_config(c: Conn, config: ClientConfig) -> TlsConn ! NetErr uses net.dial
+/// A client on c under config that has not handshaked (Go's tls.Client):
+/// the handshake runs at the first handshake, read or write, under the
+/// connection's deadlines, and its failure is the connection's err()
+/// (decision 0644 T12).
+fn client_conn(c: Conn, config: ClientConfig) -> TlsConn
+/// Runs the handshake now if it has not run (Go's Conn.Handshake): its
+/// Err again on every later call when it failed; Ok on a connection
+/// client, dial or their config forms made, which handshake at once.
+fn (t: TlsConn) handshake() -> () ! NetErr uses net.dial
+/// The connection's first failure, typed (decision 0644 T12, Go's error
+/// types under the Io's text): of the handshake, a read or a write; None
+/// while there is none. A Timeout is not one: the connection stays usable.
+fn (t: TlsConn) err() -> TlsErr?
 /// Dials addr on net and runs client_config (Go's tls.Dial,
 /// DialWithDialer with Timeout): as dial.
 fn dial_config(net: Net, addr: Str, config: ClientConfig, timeout: Duration? = None) -> TlsConn ! NetErr uses net.dial
@@ -385,6 +412,10 @@ fn server(c: ServerConn, config: ServerConfig) -> TlsServerConn
 /// connection's deadline. With no certificate:
 /// `tls: no certificates configured`.
 fn (t: TlsServerConn) handshake() -> () ! NetErr uses net.listen
+/// The connection's first failure, typed, as TlsConn's err() (decision
+/// 0644 T12): a client certificate that does not verify is
+/// CertificateVerification, a client that does not speak TLS RecordHeader.
+fn (t: TlsServerConn) err() -> TlsErr?
 /// At most max bytes after the handshake; None when the client closed.
 fn (t: TlsServerConn) read(max: Int) -> Bytes? ! NetErr uses net.listen
 fn (t: TlsServerConn) write(data: Bytes) -> () ! NetErr uses net.listen

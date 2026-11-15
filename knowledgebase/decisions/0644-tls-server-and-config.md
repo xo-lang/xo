@@ -75,6 +75,51 @@ rest in the same shape.
   shutdown), wasip2 (new intrinsics `rt.wasi_sock_conn_local` and
   `rt.wasi_sock_shutdown` over `tcp-socket.local-address` and
   `shutdown`), Go (net.Conn).
+- **Key log (T8, B3):** `key_log: (fn(Str) -> () ! Str)?` on both
+  configs is Go's KeyLogWriter: one NSS line per secret (TLS 1.3's four
+  traffic secrets, TLS 1.2's CLIENT_RANDOM), written by the engines
+  right after each secret exists; a failed write fails the handshake
+  with Go's text. A function rather than a Writer, as the other hooks.
+- **Session tickets, server (T4, B3):** `session_tickets_disabled` and
+  `session_ticket_keys` (`ticket_key(32 bytes)`, Go's
+  SetSessionTicketKeys: the first encrypts, all decrypt). With neither,
+  a `TlsListener` makes its own keys, rotated daily and kept a week
+  (Go's automatic keys); a bare `tls.server` issues no tickets, since a
+  ServerConfig is a value with no shared state to keep keys in.
+- **Resumption, client (T3, B3):** `ClientConfig.session_cache`
+  (`lru_session_cache(capacity)`, Go's NewLRUClientSessionCache, 64
+  when capacity < 1) and `session_tickets_disabled`. The cache key is
+  server_name, else the remote address (Go's clientSessionCacheKey);
+  Go's loadSession checks decide whether an entry is offered, skipped
+  or dropped (the version offered, the leaf not expired, the name and
+  chain checked again unless Verify.None; TLS 1.3's use_by and suite
+  hash). TLS 1.3 offers psk_dhe_ke with binders; TLS 1.2 uses tickets.
+  `state().did_resume` reports it; a resumed connection's
+  verify_peer_certificate is not called and verify_connection is (Go's).
+- **Typed errors (T12, B3, lead's choice B):** `TlsErr` gains `kind:
+  TlsErrKind` (Other, RecordHeader(header: Bytes) as Go's
+  RecordHeaderError with its [5]byte, CertificateVerification(certs,
+  cause: x509.CertErr) as Go's CertificateVerificationError with the
+  x509 kind of decision 0643). `TlsConn.err()` and `TlsServerConn.err()`
+  give the connection's first failure, typed, after the Io that carried
+  its text (a Timeout is not one). An eager `client`/`dial` that fails
+  returns no connection, so `client_conn(c, config)` (Go's tls.Client)
+  is added: no I/O until `handshake()` (new on TlsConn, as Go's
+  Handshake) or the first read or write; its handshake runs once and
+  its Err repeats. ECH's ECHRejectionError lands with T13 and AlertError
+  (QUIC) with T14. Native's TLS 1.3 client now sends bad_certificate
+  for every failed verification, as Go's client does (it sent
+  unknown_ca and certificate_expired, which only Go's server sends), and
+  a server without certificates reads the hello and answers
+  unrecognized_name, as Go's, where it closed silently.
+- **std/http and T12:** not exposed yet. The client's failure is
+  `ClientErr.Connect(msg)` with Go's text; carrying the typed error
+  needs a new variant (`ClientErr.Tls(err: tls.TlsErr)`), which breaks
+  exhaustive matches of a decided enum (0358) and is the owner's call.
+  The server's handshake failures never reach a handler (Go logs them
+  as `http: TLS handshake error from ADDR`, untyped), so there is
+  nothing to expose; `Request.tls_state()` covers the successful side.
+  A program that needs the typed error dials with `tls.client_conn`.
 - **Native code:** the server is std/http's existing engine
   (std/native/llrt/tlssrv.xo), given a configuration of its own
   (`tlssrv.conn_cfg`: no default ALPN, its own ticket keys, no plain
@@ -237,6 +282,10 @@ rest in the same shape.
   options, and the callbacks, a struct reads better and composes.
 - One TlsConn for both sides with `uses net`: it widens every client
   call's effect and loses the dial/listen split 0280 made.
+- T12 as a prelude change (`NetErr.Tls(...)`, option A): every
+  NetErr match in user code breaks, and the typed parts would ride on
+  every network error; the connection already holds its failure, as
+  Go's Conn keeps handshakeErr.
 - Handshake inside `server` or `accept` (as a first draft had it):
   one silent client would block the accept loop until its deadline; Go
   defers the handshake for the same reason.
