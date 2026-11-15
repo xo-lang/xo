@@ -800,7 +800,8 @@ func main() {
 		}
 	}
 	// the owner's list of potential gaps (2026-11-02) overrides the table's "not planned" for these
-	for _, g := range []string{"image", "image/color", "image/png", "image/jpeg", "encoding/gob", "net/rpc", "net/rpc/jsonrpc",
+	// (the image packages left it on 2026-11-15: std/image, std/png, std/jpeg and std/gif map them)
+	for _, g := range []string{"encoding/gob", "net/rpc", "net/rpc/jsonrpc",
 		"compress/bzip2", "compress/lzw", "hash/crc64", "hash/adler32", "os/user", "log/syslog", "text/scanner", "container/ring",
 		"unicode/utf16", "index/suffixarray", "crypto/des", "crypto/dsa", "crypto/rc4", "weak", "unique"} {
 		if _, ok := status[g]; ok {
@@ -1035,7 +1036,7 @@ func main() {
 	w("| 1 | `encoding/gob`, `net/rpc`; `compress/bzip2`, `compress/lzw`; small hashes (`hash/crc64`, `hash/adler32`); `os/user`; `log/syslog`; `expvar`; `text/scanner`; `container/ring`; `unicode/utf16`; `index/suffixarray` | Q1 2027 |")
 	w("| 2 | legacy crypto (`crypto/des`, `crypto/dsa`, `crypto/rc4`); `weak`, `unique` | last, or possibly never |")
 	w("")
-	w("The repository's coverage table still lists some of these as not planned (for example `encoding/gob`, `net/rpc`, `text/scanner`, `log/syslog`, `container/ring`, `index/suffixarray`, the image packages); this page follows the owner's list, and the table moves with the decision. CBOR is not a Go package; it is listed because it is first on the list.")
+	w("The repository's coverage table still lists some of these as not planned (for example `encoding/gob`, `net/rpc`, `text/scanner`, `log/syslog`, `container/ring`, `index/suffixarray`); this page follows the owner's list, and the table moves with the decision. CBOR is not a Go package; it is listed because it is first on the list.")
 	w("")
 	w("Sources: [std-coverage.md](" + gh + "knowledgebase/infrastructure/std-coverage.md), [std/changes](" + gh + "std/changes/README.md) (every module's change log), [decision 0276](" + gh + "knowledgebase/decisions/0276-std-follows-go-std.md) and [decision 0461](" + gh + "knowledgebase/decisions/0461-std-module-maturity.md).")
 

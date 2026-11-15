@@ -134,8 +134,13 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | math/rand, math/rand/v2 | prelude Rand capability | done | Secure in programs, seeded in tests. |
 | math/cmplx | none | not planned | No backend use. |
 | hash | std/crypto Hasher | partial | A streaming hasher for the cryptographic hashes (decision 0279); no interface user types implement. |
-| image/jpeg | std/jpeg | done | Decode and DecodeConfig as `jpeg.decode`, `jpeg.decode_config` over one `Image` with Go's four decoded types, Go's integer IDCT and error texts (spec/std.md 49, decision 0467, 2026-11-03); no Encode. |
+| image/jpeg | std/jpeg | done | Decode and DecodeConfig as `jpeg.decode`, `jpeg.decode_config` over one `Image` with Go's four decoded types, Go's integer IDCT and error texts (spec/std.md 49, decision 0467, 2026-11-03); Encode as `jpeg.encode` (decision 0510). |
 | image/png | std/png | done | Decode, DecodeConfig and Encode as `png.decode`, `png.decode_config`, `png.encode` over one `Image` with Go's seven pix layouts (spec/std.md 48, decision 0466, 2026-11-03); byte exact encode, Go's error texts. |
+| image | std/image | partial | Go's Image as one type over the nine pixel models (Gray, Gray16, Paletted, RGBA, NRGBA, RGBA64, NRGBA64, CMYK, YCbCr), Rect, At, Set, SubImage, to and from std/png and std/jpeg images (spec/std.md 75, decision 0578); no Image interface or Uniform. |
+| image/color | std/image | partial | Color (Go's RGBA() channels) and the models' conversions (Gray, Gray16, NRGBA, NRGBA64, Alpha, CMYK, YCbCr, NYCbCrA) as methods and `from_*` functions, Palette.Index as `palette_index` (spec/std.md 75, 0578 step 1); no Color or Model interfaces. |
+| image/color/palette | std/image | done | Plan9 and WebSafe as `image.plan9()` and `image.web_safe()`, 0xRRGGBBAA entries (spec/std.md 75). |
+| image/draw | std/image | partial | Draw and DrawMask as `Image.draw` and `Image.draw_mask` with Op Over and Src, Go's clipping (0578); Floyd-Steinberg only inside std/gif's encoder; no Drawer or Quantizer interfaces. |
+| image/gif | std/gif | done | Decode, DecodeAll, DecodeConfig, Encode and EncodeAll over whole buffers, Go's error texts (spec/std.md 76, 0578 step 5). |
 | hash/crc32 | std/crc32 | done | IEEE and Castagnoli, `checksum` and `update` (spec/std.md 44); Castagnoli in software (Go uses CRC32C instructions). |
 | hash/fnv | std/fnv | done | 32, 64 and 128 bit FNV-1 and FNV-1a, `sum*` and `update*` (spec/std.md 45). |
 | hash/adler32 | std/adler32 | done | `checksum` and `update` (spec/std.md 52); Go's values on its golden strings and buffers across the block size. |
@@ -232,7 +237,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | testing/synctest | FakeClock, deterministic scheduling under xo test | done | |
 | testing/iotest, testing/slogtest, testing/cryptotest | none | not planned | Go interface conformance kits. |
 
-### Not planned: toolchain, runtime, and images
+### Not planned: toolchain and runtime
 
 | Go package | Status | Why |
 |---|---|---|
@@ -241,9 +246,6 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | runtime, runtime/debug, runtime/metrics, runtime/pprof, runtime/trace, runtime/race, runtime/coverage, runtime/cgo | not planned | The runtime is Xo's own; profiling (0238), tracing (0240), race (0273) are toolchain features. |
 | plugin | not planned | Static binaries only. |
 | reflect, unsafe | not planned | No reflection; derive replaces it. |
-| image/color | std/image | partial | The conversions (Gray, Gray16, NRGBA, YCbCr, CMYK) as functions (0578 step 1). |
-| image/gif | std/gif | complete | Decode, DecodeAll, DecodeConfig, Encode, EncodeAll over whole buffers (0578 step 5). |
-| image, image/draw, image/gif | planned | 0578: Image over png and jpeg, draw, gif follow; image/png and image/jpeg (decode) are done (std/png 0466, std/jpeg 0467). |
 
 ## Function level gaps (2026-11-12, scripts/stdaudit)
 
