@@ -2367,36 +2367,17 @@ fn parse_addr(addr: Str) -> (Str, Str, Bool) {
   } else if rest.starts_with("amqp://") {
     rest = rest[7..]
   }
-  var end = rest.len()
-  var i = 0
-  while i < rest.len() {
-    if rest[i..i + 1] == "/" {
-      end = i
-      break
-    }
-    i += 1
-  }
-  rest = rest[0..end]
+  rest = rest[0..(rest.find("/") ?? rest.len())]
   let default_port = if secure { "5671" } else { "5672" }
   if rest.starts_with("[") {
-    var close = -1
-    i = 0
-    while i < rest.len() {
-      if rest[i..i + 1] == "]" { close = i }
-      i += 1
-    }
+    let close = rest.rfind("]") ?? -1
     if close > 0 {
       let h = rest[1..close]
       if close + 1 < rest.len() && rest[close + 1..close + 2] == ":" { return (h, rest, secure) }
       return (h, "[" + h + "]:" + default_port, secure)
     }
   }
-  var cl = -1
-  i = 0
-  while i < rest.len() {
-    if rest[i..i + 1] == ":" { cl = i }
-    i += 1
-  }
+  let cl = rest.rfind(":") ?? -1
   if cl < 0 { return (rest, rest + ":" + default_port, secure) }
   (rest[0..cl], rest, secure)
 }

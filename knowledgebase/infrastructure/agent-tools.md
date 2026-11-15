@@ -264,8 +264,11 @@ yourself.
     -update-closure`): `stdfast`, which runs per changed module
     `xo test --std-module=M` (when it has `_test.xo` files; most std
     modules have none) and its corpora (`TestStdCorpora/*/M` and `M*`,
-    every backend: csv's take 15 s), plus TestStdChecks and stdgen
-    -check;
+    every backend: csv's take 15 s), `xo vet --cost --std-module=M`
+    (every function of M lowered, 1 to 3 s a module; a XO0913, XO0914
+    or XO0915 note that cmd/xo/testdata/vetcost-std-allow.txt does not
+    list fails: TestVetCostStd's rule, gatelib `gate_vetcost_new`), plus
+    TestStdChecks and stdgen -check;
   - a closure change (compiler/, std/native, llrt, closure std
     modules): `selfbuild` and `seedbuild`, plus the one or two proving
     tests you name;

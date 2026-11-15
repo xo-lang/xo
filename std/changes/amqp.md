@@ -1,5 +1,17 @@
 # std/amqp changes
 
+## 2026-11-15: perf: `parse_addr` finds its separators with `find` and `rfind`
+
+- Kind: perf
+- Commit: this commit
+- Found by: `xo vet --cost --std-module=amqp` (the stdfast push check, 2026-11-15): three XO0913 notes
+- Go reference: none (amqp091-go parses the URI with net/url)
+- Test: std/amqp_test.xo's parse_addr cases
+
+The address parser scanned for `/`, `]` and `:` a byte at a time with a
+one-byte slice each step; it now calls `find("/")`, `rfind("]")` and
+`rfind(":")`. The results are the same.
+
 ## 2026-11-15: feature: `AmqpErr` is an open enum (decision 0649)
 
 - Kind: feature

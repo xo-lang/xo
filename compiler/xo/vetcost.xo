@@ -2,7 +2,10 @@
 // `xo build` builds them for the host, up to insert_rc (no inlining,
 // code, or link), and ssa.cost_notes over the root module's functions,
 // as vet findings (notes). A program that does not check gets none: vet
-// reports its check errors itself.
+// reports its check errors itself. With --std-module=M, M is checked as
+// `xo test --std-module=M` checks it and every function of it is a root
+// (only a reached function is lowered; check.Checker.lib_roots, decision
+// 0523), and the notes are those in M's own files, not its tests'.
 
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/ssa
@@ -16,8 +19,11 @@ fn vet_cost_cmd(args: List[Str]) -> Bool {
 /// "." when none), as vet's findings.
 fn vet_cost(os: Os, args: List[Str]) -> List[check.Diag] {
   var dirs: List[Str] = []
+  var smod = ""
   for a in args[1..args.len()] {
-    if !a.starts_with("-") {
+    if a.starts_with("--std-module=") {
+      smod = a.trim_prefix("--std-module=")
+    } else if !a.starts_with("-") {
       // a .xo file: its directory (vet keeps the findings of that file)
       dirs.push(if a.ends_with(".xo") { dir_name(a) } else { a })
     }
@@ -29,8 +35,23 @@ fn vet_cost(os: Os, args: List[Str]) -> List[check.Diag] {
   for d in dirs {
     bargs.push(d)
   }
-  let o = parse_args(os, bargs)
+  var o = parse_args(os, bargs)
+  if !smod.is_empty() {
+    // a module with no tests too (its functions are the roots): NAME is
+    // std/NAME when std has it, else native/NAME
+    let root = o.std.trim_suffix("/")
+    if !(smod.starts_with("std/") || smod.starts_with("native/")) {
+      smod = if std_module_exists(os, "${root}/${smod}") { "std/${smod}" } else { "native/${smod}" }
+    }
+    if !std_module_exists(os, "${root}/${smod.trim_prefix("std/")}") {
+      os.stdio.eprintln("xo vet: no std module ${smod}")
+      os.proc.exit(2)
+    }
+    o.dirs = [o.std]
+  }
   var c = check.new_checker(os.fs, o.std)
+  c.std_test = std_test_path(smod)
+  c.lib_roots = !smod.is_empty()
   c.native = true
   c.lazy = (os.env.get("XO_CHECK_EAGER") ?? "") != "1"
   c.map_log = (os.env.get("XO_MAP_LOG") ?? "") != "0"
@@ -57,7 +78,9 @@ fn vet_cost(os: Os, args: List[Str]) -> List[check.Diag] {
   for (m, md) in c.mods.indexed() {
     if c.root_mods.contains(m) != std_only {
       for f in md.files {
-        keep.push(c.files[f].path)
+        if smod.is_empty() || !c.files[f].path.ends_with("_test.xo") {
+          keep.push(c.files[f].path)
+        }
       }
     }
   }

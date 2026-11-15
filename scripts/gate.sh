@@ -1515,9 +1515,12 @@ prove_xounit() {
 }
 # prove_stdfast: the std fast lane (owner, 2026-11-15, CLAUDE.md "Std
 # Proven push"): for each std module off compiler/xo's closure the change
-# touches (gatelib gate_stdfast_mods), `xo test --std-module=NAME`, then
-# stdchecks and stdgen -check (the pre-check's when it ran them); minutes,
-# no golden suites, the tier on main runs the rest
+# touches (gatelib gate_stdfast_mods), `xo test --std-module=NAME`, its
+# corpora, and `xo vet --cost --std-module=NAME` (every function of it
+# lowered; a cost note TestVetCostStd would refuse fails: gatelib
+# gate_vetcost_new; seconds), then stdchecks and stdgen -check (the
+# pre-check's when it ran them); minutes, no golden suites, the tier on
+# main runs the rest
 prove_stdfast() {
   local sfb mods m bad=0
   sfb=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
@@ -1535,6 +1538,26 @@ prove_stdfast() {
       echo "stdfast $m: $(tail -1 "$logs/stdfast-$m.txt")"
     else
       bad=1; echo "stdfast $m: FAIL ($logs/stdfast-$m.txt: $(grep -m1 -- '--- FAIL' "$logs/stdfast-$m.txt"))"
+    fi
+    # its cost notes against cmd/xo/testdata/vetcost-std-allow.txt
+    # (TestVetCostStd's rule, which the tier runs over bench/perf)
+    # (std/tzdata holds data, no .xo file: nothing to vet)
+    t=0
+    for d in std/"$m".xo std/"$m"/*.xo; do [ -f "$d" ] && t=1; done
+    if [ "$t" = 1 ]; then
+      "$XO_CLI" vet --json --cost --std-module="$m" >"$logs/stdfast-vet-$m.json" 2>"$logs/stdfast-vet-$m.err"
+      t=$?
+    else
+      t=skip
+    fi
+    if [ "$t" = skip ]; then
+      echo "stdfast vet $m: no .xo files"
+    elif [ "$t" != 0 ]; then
+      bad=1; echo "stdfast vet $m: FAIL (xo vet exited $t: $logs/stdfast-vet-$m.err: $(head -1 "$logs/stdfast-vet-$m.err"))"
+    elif gate_vetcost_new "$logs/stdfast-vet-$m.json" std cmd/xo/testdata/vetcost-std-allow.txt >"$logs/stdfast-vet-$m.txt" 2>&1; then
+      echo "stdfast vet $m: no new cost notes"
+    else
+      bad=1; echo "stdfast vet $m: FAIL, fix the code (knowledgebase/std-performance-guide.md) or allow it with a measured reason in cmd/xo/testdata/vetcost-std-allow.txt (only for a line a bench/perf program reaches: TestVetCostStd refuses an allow line no note there matches):"; sed 's/^/  /' "$logs/stdfast-vet-$m.txt"
     fi
     # its corpora: internal/stdtest/testdata/corpus/M and M* (csv, csvfuzz)
     for d in internal/stdtest/testdata/corpus/"$m" internal/stdtest/testdata/corpus/"$m"*; do
