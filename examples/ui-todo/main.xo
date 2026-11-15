@@ -83,7 +83,8 @@ pub fn view(m: Model) -> ui.Html {
 }
 
 pub fn app() -> ui.App[Model, Msg] {
-  ui.App{init: Model{todos: [], next_id: 1, seats: 3, holders: []}, update: update, view: view}
+  // A seat is the server's to give: Reserve waits for its answer.
+  ui.app(Model{todos: [], next_id: 1, seats: 3, holders: []}, update, view).confirming(fn(m) { m is Msg.Reserve(_) })
 }
 
 const CSS = r"""

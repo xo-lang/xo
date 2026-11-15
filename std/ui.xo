@@ -33,6 +33,20 @@ pub struct App[M, E] {
   pub update: fn(M, E) -> M
   /// The page for a model.
   pub view: fn(M) -> Html
+  /// Whether a Msg needs the server's answer before it shows (a payment, a
+  /// booking): a replica never predicts it, and lists it in awaiting()
+  /// until the server's log has it.
+  pub confirm: fn(E) -> Bool
+}
+
+/// An App whose Msgs all show at once (confirm says false for each).
+pub fn app[M, E](init: M, update: fn(M, E) -> M, view: fn(M) -> Html) -> App[M, E] {
+  App{init: init, update: update, view: view, confirm: fn(_) { false }}
+}
+
+/// The same App with confirm deciding which Msgs wait for the server.
+pub fn (a: App[M, E]) confirming(confirm: fn(E) -> Bool) -> App[M, E] {
+  App{init: a.init, update: a.update, view: a.view, confirm: confirm}
 }
 
 // ---- views ----
@@ -304,10 +318,19 @@ pub fn (var r: Replica[M, E]) send(msg: E) {
   r.next_seq = r.next_seq + 1
 }
 
-/// What the client shows: its pending Msgs over the confirmed model.
+/// What the client shows: its pending Msgs over the confirmed model,
+/// except those the App confirms (they wait for the server).
 pub fn (r: Replica[M, E]) model() -> M {
   let up = r.app.update
-  r.pending.fold(r.confirmed, fn(m, e) { up(m, e.msg) })
+  let confirm = r.app.confirm
+  r.pending.fold(r.confirmed, fn(m, e) { if confirm(e.msg) { m } else { up(m, e.msg) } })
+}
+
+/// The pending Msgs the App confirms, oldest first: the view shows them
+/// as waiting, never as done.
+pub fn (r: Replica[M, E]) awaiting() -> List[E] {
+  let confirm = r.app.confirm
+  r.pending.filter(fn(e) { confirm(e.msg) }).map(fn(e) { e.msg })
 }
 
 /// The confirmed model, as the server had it at version().

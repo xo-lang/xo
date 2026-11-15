@@ -1,5 +1,16 @@
 # std/ui changes
 
+## 2026-11-15: feature: confirmed Msgs (Early)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0659 stage 2
+- Go reference: none
+- Test: std/ui_test.xo (a confirmed Msg is not predicted and is listed as awaiting until confirmed; four clients reserving three seats offline never show a seat the server refused)
+- Shipped in: not yet released
+
+`App.confirm` marks Msgs that wait for the server; `Replica.awaiting()` lists them. `ui.app(init, update, view)` builds an App (confirm false for every Msg) and `.confirming(f)` sets it. Breaking for an `App{...}` literal, which now needs `confirm`; use `ui.app`.
+
 ## 2026-11-15: feature: live updates over a websocket (Early)
 
 - Kind: feature

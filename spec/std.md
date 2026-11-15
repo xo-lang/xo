@@ -10860,7 +10860,9 @@ decision 0659's stage 3 the browser is a thin client (it queues and sends
 Msgs and shows the server's rendered view, without predicting).
 
 ```
-pub struct App[M, E] { pub init: M, pub update: fn(M, E) -> M, pub view: fn(M) -> Html }
+pub struct App[M, E] { pub init: M, pub update: fn(M, E) -> M, pub view: fn(M) -> Html, pub confirm: fn(E) -> Bool }
+pub fn app[M, E](init: M, update: fn(M, E) -> M, view: fn(M) -> Html) -> App[M, E]   // confirm says false
+fn (a: App[M, E]) confirming(confirm: fn(E) -> Bool) -> App[M, E]
 
 pub enum Html { Text(s: Str), El(tag: Str, attrs: List[Attr], kids: List[Html]) }
 pub struct Attr { pub name: Str, pub value: Str }
@@ -10889,7 +10891,8 @@ fn (var s: Server[M, E]) compact(keep: Int)
 
 pub fn replica[M, E](app: App[M, E], client: Str, model: M, ver: Int) -> Replica[M, E]
 fn (var r: Replica[M, E]) send(msg: E)
-fn (r: Replica[M, E]) model() -> M          // pending Msgs over the confirmed model
+fn (r: Replica[M, E]) model() -> M          // pending Msgs over the confirmed model, less confirmed ones
+fn (r: Replica[M, E]) awaiting() -> List[E] // pending Msgs that wait for the server
 fn (r: Replica[M, E]) confirmed() -> M
 fn (r: Replica[M, E]) version() -> Int
 fn (r: Replica[M, E]) pending() -> Int
@@ -10945,6 +10948,10 @@ fn (h: Host[M, E]) live() -> Int                        // open live connections
   non-empty input or textarea in it has focus). The html element carries
   `data-xo-pending` while Msgs wait and `data-xo-offline` after a failed
   sync, for the app's CSS.
+- A Msg for which `confirm` is true (a payment, a booking: the server's
+  to decide) is sent like any other but never predicted: `model()` leaves
+  it out and `awaiting()` lists it until the server's log has it, so a
+  view shows it as waiting and never as done.
 - The server applies a client's Msg only when its seq is the next one
   (a duplicate or one after a gap is skipped; the client sends it again)
   and appends it to the log at version `version() + 1`. A reply carries

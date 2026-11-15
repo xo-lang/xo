@@ -70,7 +70,7 @@ fn view(m: Model) -> Html {
 }
 
 fn todo_app() -> App[Model, Msg] {
-  App{init: Model{todos: {}, seats: 3, holders: []}, update: update, view: view}
+  app(Model{todos: {}, seats: 3, holders: []}, update, view)
 }
 
 // ---- rendering ----
@@ -162,6 +162,40 @@ test "the server overturns a prediction it rejects" {
   }
   expect(s.model().holders) == ["c0", "c1", "c2"]
   expect(rs[3].model().holders.contains("c3")) == false
+}
+
+test "a confirmed Msg waits for the server instead of showing a guess" {
+  let app = todo_app().confirming(fn(m) { m is Msg.Reserve(_) })
+  var s = server(app)
+  var r = replica(app, "a", app.init, 0)
+  r.send(Msg.Add(id: "x", title: "milk"))
+  r.send(Msg.Reserve(who: "ann"))
+  // The add shows at once; the seat does not, and is listed as awaiting.
+  expect(r.model().todos.len()) == 1
+  expect(r.model().seats) == 3
+  expect(r.awaiting()) == [Msg.Reserve(who: "ann")]
+  r.receive(s.receive(r.outbox()))
+  expect(r.awaiting()) == []
+  expect(r.model().holders) == ["ann"]
+  expect(r.model()) == s.model()
+}
+
+test "a confirmed Msg the server refuses never showed as done" {
+  let app = todo_app().confirming(fn(m) { m is Msg.Reserve(_) })
+  var s = server(app)
+  var rs: List[Replica[Model, Msg]] = []
+  for c in ["a", "b", "c", "d"] {
+    rs.push(replica(app, c, app.init, 0))
+  }
+  for i in 0..4 {
+    rs[i].send(Msg.Reserve(who: "c${i}"))
+    expect(rs[i].model().holders) == []
+  }
+  for i in 0..4 {
+    rs[i].receive(s.receive(rs[i].outbox()))
+  }
+  expect(rs[3].awaiting()) == []
+  expect(rs[3].model().holders) == ["c0", "c1", "c2"]
 }
 
 test "a client behind a compacted log restarts from a snapshot" {
