@@ -12,6 +12,7 @@ compiler/xo/cffi.xo	/// as scripts/sqlite-prebuilt.sh's windows recipes.
 compiler/xo/fbsdstdio.xo	/// locale; and (stage 4, std/sqlite's needs) pthread's mutexes on
 compiler/xo/link.xo	// without a C runtime lacks (SQLite's sqlite3.c, 2026-11-09). From LLVM
 compiler/xo/main.xo	// std/sqlite's amalgamation with the defines of its windows/amd64
+compiler/xo/main.xo	// std/sqlite's prebuilt object (scripts/sqlite-prebuilt.sh,
 compiler/xo/main.xo	// prebuilt object (scripts/sqlite-prebuilt.sh, decision 0534 stage
 compiler/xo/main.xo	// structured exception handler for SQLite to call
 compiler/xo/main.xo	// call the Windows API without a `link` line (SQLite's
