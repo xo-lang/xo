@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+42
+P(3)
+x
+paren
+3
+call
+P(5)
+--- stderr

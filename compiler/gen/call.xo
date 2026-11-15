@@ -560,6 +560,15 @@ fn (var g: Gen) recv_code(e: Expr, fo: Int, borrow: Bool) -> Str {
   } else {
     code = g.val(e)
   }
+  if is_temp_value(e) && g.method_is_go_method(fo) {
+    // a struct literal (a Go composite literal) and a call's result are
+    // not addressable, and Go calls a pointer method (std/rt's display, a Go
+    // method's) only on an addressable value; through a pointer to a
+    // copy it is addressable and still a T where one is passed (aws-43,
+    // 2026-11-14: `x509.CertErr{msg: "x"}.display()` was "cannot call
+    // pointer method M_display")
+    code = "(*${g.rt()}Addr(${code}))"
+  }
   if g.is_param_t(t) && g.c.objs[fo].flags.iface() {
     let p = g.c.tys[g.c.resolve(t)].obj
     let c = g.c.objs[p].constraint
@@ -570,6 +579,16 @@ fn (var g: Gen) recv_code(e: Expr, fo: Int, borrow: Bool) -> Str {
     }
   }
   code
+}
+
+/// e is a temporary Go cannot take the address of: a struct literal or a
+/// call's result, through parentheses.
+fn is_temp_value(e: Expr) -> Bool {
+  match e {
+    StructLit(..) | CallExpr(..) => true
+    ParenExpr(x: x, ..) => is_temp_value(x)
+    _ => false
+  }
 }
 
 /// The default value of parameter i of fo (paramDefault).

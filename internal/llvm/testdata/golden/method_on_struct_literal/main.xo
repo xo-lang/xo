@@ -1,0 +1,28 @@
+// A method called on a temporary: a struct literal of a user struct and
+// of a std struct, a parenthesized one, and a call's result (the Go
+// backend routes std display to a pointer receiver Go method, which a Go
+// composite literal could not call; aws-43, 2026-11-14).
+use std/x509
+
+struct P {
+  x: Int
+}
+
+fn (p: P) twice() -> Int { p.x * 2 }
+
+fn (p: P) display() -> Str { "P(${p.x})" }
+
+fn mk(m: Str) -> x509.CertErr { x509.CertErr{msg: m} }
+
+fn mkp(x: Int) -> P { P{x: x} }
+
+fn main(os: Os) {
+  os.stdio.println("${P{x: 21}.twice()}")
+  os.stdio.println(P{x: 3}.display())
+  os.stdio.println(x509.CertErr{msg: "x"}.display())
+  os.stdio.println((x509.CertErr{msg: "paren"}).display())
+  let n = x509.CertErr{msg: "abc"}.display().len()
+  os.stdio.println("${n}")
+  os.stdio.println(mk("call").display())
+  os.stdio.println(mkp(5).display())
+}
