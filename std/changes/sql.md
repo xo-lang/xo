@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-15: feature: pool statistics and tracing; fix: a cancelled task lost a pool permit
+
+- Kind: feature and fix
+- Commit: this commit
+- Found by: decision 0648 item 16 (the stdaudit gaps of pgx v5.12.0: no pool statistics, no tracing hooks; Go's DB.Stats); the permit loss was found by the new cancelled waiter test
+- Go reference: Go 1.26 database/sql (DB.Stats, DBStats); pgx v5.12.0 (QueryTracer, BatchTracer, CopyFromTracer, PrepareTracer, ConnectTracer and their data structs; pgxpool's Pool.Stat, Stat, AcquireTracer, ReleaseTracer)
+- Test: corpus sql (arm64, llvm, go); pg_test.xo on a fake server (arm64, llvm); nine mutants killed
+- Shipped in: not yet released
+
+`db.stats()` gives the pool's counts (`sql.PoolStats`: open, in use, idle, connecting, acquires and their time, waits and their time, cancelled waits, new connections, closes by max_idle and max_lifetime). `sql.open(..., on_trace: Some(h))` calls `h` with a `sql.TraceRecord` (op, query, args, rows_affected, err, start_ns, elapsed) as each Connect, Acquire, Release, Query, Exec, Prepare, BatchQuery, Batch and CopyFrom ends. A task cancelled while it gave a connection back to the pool lost the pool's permit (its `send` unwound), so later calls waited forever; the permit goes back with `try_send` now.
+
 ## 2026-11-15: feature (breaking for drivers): batches and pipelines
 
 - Kind: feature

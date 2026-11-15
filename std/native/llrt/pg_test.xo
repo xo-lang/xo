@@ -640,7 +640,17 @@ fn fk_pipe_server(log: Mutex[List[Str]], skipping: Atomic[Bool], last: Mutex[Str
           }
           "D" => {
             log.with(fn(var xs) { xs.push("D") })
-            if q.starts_with("SELECT") { fk_row_desc([("n", 23)]) } else { fk_m("n", b"") }
+            let shape = if q.starts_with("SELECT") { fk_row_desc([("n", 23)]) } else { fk_m("n", b"") }
+            if body.len() > 0 && body[0] == 83 {
+              // Describe Statement: its parameters (int4 each) first
+              let n = q.split("$").len() - 1
+              var ps = fk_be16(n)
+              for _ in 0..n {
+                ps = ps + fk_be32(23)
+              }
+              return fk_m("t", ps) + shape
+            }
+            shape
           }
           "E" => {
             log.with(fn(var xs) { xs.push("E") })
@@ -748,6 +758,55 @@ test "a pipeline larger than a window: windows end with a Flush, every result co
     let skipped = l2.filter(fn(x) { x == "skip P" }).len()
     expect(skipped > 0 && skipped < 400) == true
     expect(l2.filter(fn(x) { x == "S" }).len()) == 2
+    s.cancel()
+  }
+}
+
+fn fk_trace_line(r: sql.TraceRecord) -> Str {
+  let op = match r.op {
+    sql.TraceOp.Connect => "Connect"
+    sql.TraceOp.Acquire => "Acquire"
+    sql.TraceOp.Release => "Release"
+    sql.TraceOp.Query => "Query"
+    sql.TraceOp.Exec => "Exec"
+    sql.TraceOp.Prepare => "Prepare"
+    sql.TraceOp.BatchQuery => "BatchQuery"
+    sql.TraceOp.Batch => "Batch"
+    sql.TraceOp.CopyFrom => "CopyFrom"
+  }
+  let q = if r.query == "" { "" } else { " ${r.query}" }
+  let e = if r.err.is_some() { " err" } else { "" }
+  "${op}${q} n=${r.rows_affected}${e}"
+}
+
+test "pgx's QueryTracer, BatchTracer and PrepareTracer and pgxpool's AcquireTracer on a fake server: a record as each operation ends, a cursor's at its end, and Db.stats" {
+  let log: Mutex[List[Str]] = Mutex.new([])
+  let got: Mutex[List[Str]] = Mutex.new([])
+  let serve = fk_pipe_db(os.net.listen("db.test:5432")?, log)
+  scope s {
+    s.spawn_background(fn() { serve().ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "postgres", fk_dsn("db.test:5432"), max_open: 1, on_trace: Some(fn(r: sql.TraceRecord) { got.with(fn(var xs) { xs.push(fk_trace_line(r)) }) }))?
+    expect(fk_take_log(got)) == ["Connect n=0", "Acquire n=0", "Release n=0"]
+    expect(db.query("SELECT n FROM t WHERE n = $1", [sql.int(7)])?.len()) == 1
+    expect(fk_take_log(got)) == ["Acquire n=0", "Query SELECT n FROM t WHERE n = $1 n=1", "Release n=0"]
+    expect(db.exec("INSERT INTO t (n) VALUES ($1)", [sql.int(1)])?.rows_affected) == 1
+    expect(fk_take_log(got)) == ["Acquire n=0", "Exec INSERT INTO t (n) VALUES ($1) n=1", "Release n=0"]
+    // a cursor's record comes at its end, with the rows read
+    let rows = db.rows("SELECT n FROM t WHERE n > $1", [sql.int(0)])?
+    expect(rows.next()?.is_some()) == true
+    expect(rows.next()?.is_some()) == false
+    rows.close()
+    expect(fk_take_log(got).filter(fn(x) { x.starts_with("Query") })) == ["Query SELECT n FROM t WHERE n > $1 n=1"]
+    let st = db.prepare("SELECT n FROM t WHERE n = $1")?
+    expect(st.query([sql.int(7)])?.len()) == 1
+    st.close()
+    expect(fk_take_log(got).filter(fn(x) { !x.starts_with("Acquire") && !x.starts_with("Release") })) == ["Prepare SELECT n FROM t WHERE n = $1 n=0", "Query SELECT n FROM t WHERE n = $1 n=1"]
+    let outs = db.pipeline([[sql.BatchQuery{query: "INSERT a"}, sql.BatchQuery{query: "SELECT b"}], [sql.BatchQuery{query: "BAD"}]])?
+    expect(outs.len()) == 2
+    expect(fk_take_log(got)) == ["Acquire n=0", "BatchQuery INSERT a n=1", "BatchQuery SELECT b n=1", "Batch n=2 err", "Release n=0"]
+    let ps = db.stats()
+    expect((ps.max_open, ps.open, ps.idle, ps.in_use, ps.new_conns)) == (1, 1, 1, 0, 1)
+    expect(ps.acquire_count >= 6) == true
     s.cancel()
   }
 }

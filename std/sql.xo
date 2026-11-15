@@ -146,6 +146,75 @@ struct Notice {
   hint: Str = ""
 }
 
+/// A pool's counts (decision 0648 item 16; Go's DB.Stats and sql.DBStats,
+/// pgxpool's Pool.Stat). On the in memory database every count is 0.
+struct PoolStats {
+  max_open: Int
+  /// Connections open: in use, idle, and being connected.
+  open: Int
+  /// Taken by an operation, a transaction, a Conn or a cursor.
+  in_use: Int
+  idle: Int
+  connecting: Int
+  /// Permits taken (pgxpool's AcquireCount) and the time they took,
+  /// connecting included (AcquireDuration).
+  acquire_count: Int
+  acquire_time: Duration
+  /// Acquires that found every permit taken and waited (Go's WaitCount,
+  /// pgxpool's EmptyAcquireCount), counted as the wait starts, and the
+  /// total of the waits that ended.
+  wait_count: Int
+  wait_time: Duration
+  /// Waits ended by a cancellation.
+  canceled_acquire_count: Int
+  new_conns: Int
+  /// Connections closed because max_idle were idle already, and because
+  /// they reached max_lifetime.
+  max_idle_closed: Int
+  max_lifetime_closed: Int
+}
+
+/// What a TraceRecord is of (decision 0648 item 16; pgx's QueryTracer,
+/// BatchTracer, CopyFromTracer, PrepareTracer and ConnectTracer,
+/// pgxpool's AcquireTracer and ReleaseTracer).
+enum TraceOp {
+  /// A new pool connection.
+  Connect
+  /// A connection taken from the pool (waiting for a permit included).
+  Acquire
+  /// A connection given back.
+  Release
+  /// query, rows (to the cursor's end or close), query_one, query_all, a
+  /// Stmt's query.
+  Query
+  /// exec, a Stmt's exec, and BEGIN, COMMIT and ROLLBACK (as pgx traces
+  /// them).
+  Exec
+  Prepare
+  /// One query of a batch or pipeline, after the driver returned (pgx's
+  /// TraceBatchQuery), before the batch's own record.
+  BatchQuery
+  /// A batch or pipeline.
+  Batch
+  CopyFrom
+}
+
+/// One traced operation of a pool connection, given to open's `on_trace`
+/// when it ends: `query` is the statement (CopyFrom's table, "" for
+/// Connect, Acquire, Release and Batch), `rows_affected` the count (the
+/// rows read for a Query), `err` its error. `start_ns` is when it started
+/// (Unix nanoseconds, std/trace's Span.start_ns) and `elapsed` how long it
+/// took.
+struct TraceRecord {
+  op: TraceOp
+  query: Str = ""
+  args: List[SqlValue] = []
+  rows_affected: Int = 0
+  err: SqlErr? = None
+  start_ns: Int = 0
+  elapsed: Duration = 0s
+}
+
 /// Opens a database: "postgres" (decision 0278; `roots` is PEM for
 /// sslmode verify-ca and verify-full) and "mysql" (decision 0648; `roots`
 /// for tls=true and tls=custom) natively. `max_open` bounds concurrent
@@ -158,7 +227,10 @@ struct Notice {
 /// plain TCP; refused for any other driver. `on_notice` is called with
 /// each notice the server sends, in order, after the operation that
 /// received it (pgconn's OnNotice; a driver's `DriverConn.notices`).
-fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"", loc: time.Zone = time.utc(), server_pub_key: Bytes = b"", on_notice: (fn(Notice))? = None) -> Db ! SqlErr uses net.dial
+/// `on_trace` is called with a TraceRecord as each traced operation ends
+/// (pgx's tracers; decision 0648 item 16); like on_notice it is pure and
+/// keeps records through a Mutex or a Chan.
+fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"", loc: time.Zone = time.utc(), server_pub_key: Bytes = b"", on_notice: (fn(Notice))? = None, on_trace: (fn(TraceRecord))? = None) -> Db ! SqlErr uses net.dial
 /// An in memory database, optionally created with `schema` (`;` separated
 /// statements). Needs no capability.
 fn memory(schema: Str = "") -> Db ! SqlErr
@@ -225,6 +297,8 @@ fn (d: Db) batch(queries: List[BatchQuery]) -> List[ResultSet] ! SqlErr uses net
 fn (d: Db) pipeline(batches: List[List[BatchQuery]]) -> List[Result[List[ResultSet], SqlErr]] ! SqlErr uses net.dial
 fn (d: Db) ping() -> () ! SqlErr uses net.dial
 fn (d: Db) close() -> () ! SqlErr
+/// The pool's counts now (Go's DB.Stats, pgxpool's Pool.Stat).
+fn (d: Db) stats() -> PoolStats
 /// Takes one connection from the pool and holds it (Go's DB.Conn, pgxpool's
 /// Acquire); waiting for a permit is a cancellation point.
 fn (d: Db) conn() -> Conn ! SqlErr uses net.dial
@@ -480,4 +554,4 @@ interface DriverCursor[fx: Effects] {
 /// transactions; waiting is a cancellation point), `max_idle` kept open
 /// when unused, each closed after `max_lifetime`. Connects once before it
 /// returns, so a wrong password or host fails here. `on_notice` as open's.
-fn open_driver[fx: Effects](net: Net, d: Driver[fx], dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, on_notice: (fn(Notice))? = None) -> Db[fx] ! SqlErr uses (net.dial, fx)
+fn open_driver[fx: Effects](net: Net, d: Driver[fx], dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, on_notice: (fn(Notice))? = None, on_trace: (fn(TraceRecord))? = None) -> Db[fx] ! SqlErr uses (net.dial, fx)

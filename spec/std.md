@@ -4182,6 +4182,53 @@ driver neither sends that rest nor waits for it; an error at the Sync (a
 deferred constraint at the implicit commit) fails the batch. MySQL
 (go-sql-driver has no batches) and SQLite run the queries one by one.
 
+### 10.14 Pool statistics and tracing
+
+Status: implemented natively and on the Go backend (decision 0648 item
+16, 2026-11-15).
+
+```
+struct PoolStats {
+  max_open: Int, open: Int, in_use: Int, idle: Int, connecting: Int,
+  acquire_count: Int, acquire_time: Duration,
+  wait_count: Int, wait_time: Duration, canceled_acquire_count: Int,
+  new_conns: Int, max_idle_closed: Int, max_lifetime_closed: Int,
+}
+enum TraceOp { Connect, Acquire, Release, Query, Exec, Prepare, BatchQuery, Batch, CopyFrom }
+struct TraceRecord {
+  op: TraceOp, query: Str = "", args: List[SqlValue] = [], rows_affected: Int = 0,
+  err: SqlErr? = None, start_ns: Int = 0, elapsed: Duration = 0s,
+}
+
+fn (d: Db) stats() -> PoolStats
+// open(..., on_trace: (fn(TraceRecord))? = None), open_driver(..., on_trace: ...)
+```
+
+`stats` (Go's `DB.Stats`, pgxpool's `Pool.Stat`) reads the pool's counts
+now: `open` is the connections in use, idle and being connected;
+`acquire_count` and `acquire_time` the permits taken and the time they
+took (connecting included); `wait_count` the acquires that found every
+permit taken, counted as the wait starts (Go's `WaitCount`), `wait_time`
+the total of the waits that ended, and `canceled_acquire_count` those
+ended by a cancellation; `max_idle_closed` and `max_lifetime_closed` the
+connections closed because `max_idle` were idle already or they reached
+`max_lifetime`. The in memory database counts nothing (every field 0).
+
+`on_trace` (pgx's `QueryTracer`, `BatchTracer`, `CopyFromTracer`,
+`PrepareTracer` and `ConnectTracer`, pgxpool's `AcquireTracer` and
+`ReleaseTracer`) is called with a `TraceRecord` as each operation of a
+pool connection ends, with when it started (Unix nanoseconds, std/trace's
+`Span.start_ns`) and how long it took. A query's record comes when it
+returns, or for a cursor (`rows`) at its last row, its error or its
+close, with the rows read in `rows_affected`. BEGIN, COMMIT and ROLLBACK
+are `Exec` records, as pgx traces them. A batch or pipeline gives a
+`BatchQuery` record per query of each batch that succeeded (pipelined, so
+each has the call's start and length), then one `Batch` with the sum of
+the counts and the first failed batch's error. Like `on_notice` the
+handler is pure and keeps records through a Mutex or a Chan; it runs on
+the task of the operation. A backend registered from Go (the Go backend's
+`sql.open` drivers) counts and traces nothing.
+
 ---
 
 ## 11. std/crypto

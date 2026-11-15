@@ -959,3 +959,117 @@ test "a pipeline's notices reach on_notice after it, and a driver without batche
   expect(fake.batch([])?.len()) == 0
   fake.close()?
 }
+
+fn op_name(o: sql.TraceOp) -> Str {
+  match o {
+    sql.TraceOp.Connect => "Connect"
+    sql.TraceOp.Acquire => "Acquire"
+    sql.TraceOp.Release => "Release"
+    sql.TraceOp.Query => "Query"
+    sql.TraceOp.Exec => "Exec"
+    sql.TraceOp.Prepare => "Prepare"
+    sql.TraceOp.BatchQuery => "BatchQuery"
+    sql.TraceOp.Batch => "Batch"
+    sql.TraceOp.CopyFrom => "CopyFrom"
+  }
+}
+
+fn trace_line(r: sql.TraceRecord) -> Str {
+  var s = op_name(r.op)
+  if r.query != "" {
+    s = "${s} ${r.query}"
+  }
+  s = "${s} n=${r.rows_affected}"
+  if r.err.is_some() {
+    s = "${s} err"
+  }
+  s
+}
+
+fn take_trace(got: Mutex[List[Str]]) -> Str {
+  got.with(fn(var xs: List[Str]) -> Str {
+    let out = xs.join("|")
+    xs = []
+    out
+  })
+}
+
+test "Db.stats counts a driver pool's connections, acquires and closes; the in memory Db counts nothing" {
+  let d = SessDriver{connects: Atomic.new(0), log: Mutex.new([])}
+  let db = sql.open_driver(os.net, d, "sess", max_open: 2, max_idle: 1)?
+  let s0 = db.stats()
+  expect(s0.max_open) == 2
+  expect((s0.open, s0.idle, s0.in_use, s0.connecting)) == (1, 1, 0, 0)
+  expect((s0.acquire_count, s0.new_conns, s0.wait_count, s0.canceled_acquire_count)) == (1, 1, 0, 0)
+  let c1 = db.conn()?
+  let c2 = db.conn()?
+  let s1 = db.stats()
+  expect((s1.open, s1.idle, s1.in_use, s1.new_conns, s1.acquire_count)) == (2, 0, 2, 2, 3)
+  c1.close()
+  c2.close()
+  let s2 = db.stats()
+  expect((s2.open, s2.idle, s2.in_use, s2.max_idle_closed, s2.max_lifetime_closed)) == (1, 1, 0, 1, 0)
+  expect(s2.acquire_time >= 0s) == true
+  db.query("Q")?
+  expect(db.stats().acquire_count) == 4
+  db.close()?
+  let m = sql.memory("CREATE TABLE t (n INT)")?
+  let ms = m.stats()
+  expect((ms.max_open, ms.open, ms.acquire_count)) == (0, 0, 0)
+  m.close()?
+}
+
+test "Db.stats counts a wait for a permit as it starts, its time when it ends, and a wait ended by a cancellation" {
+  let d = SessDriver{connects: Atomic.new(0), log: Mutex.new([])}
+  let got: Mutex[List[Str]] = Mutex.new([])
+  let db = sql.open_driver(os.net, d, "sess", max_open: 1, on_trace: Some(fn(r: sql.TraceRecord) { got.with(fn(var xs: List[Str]) -> () { xs.push(trace_line(r)) }) }))?
+  let c = db.conn()?
+  let _ = take_trace(got)
+  scope s {
+    s.spawn_background(fn() { db.query("W").ignore_err("checked through the trace") })
+    while db.stats().wait_count < 1 {
+      os.clock.sleep(1ms)
+    }
+    c.close()
+  }
+  let st = db.stats()
+  expect((st.wait_count, st.canceled_acquire_count, st.in_use)) == (1, 0, 0)
+  expect(st.wait_time > 0s) == true
+  expect(take_trace(got)) == "Release n=0|Acquire n=0|Query W n=1|Release n=0"
+  let c2 = db.conn()?
+  scope s2 {
+    s2.spawn_background(fn() { db.query("X").ignore_err("cancelled while it waits") })
+    while db.stats().wait_count < 2 {
+      os.clock.sleep(1ms)
+    }
+    s2.cancel()
+  }
+  expect(db.stats().canceled_acquire_count) == 1
+  c2.close()
+  expect(take_trace(got)) == "Acquire n=0|Acquire n=0 err|Release n=0"
+  db.close()?
+}
+
+test "on_trace gets a record as each pool, query, exec, transaction and batch operation ends" {
+  let d = SessDriver{connects: Atomic.new(0), log: Mutex.new([])}
+  let got: Mutex[List[Str]] = Mutex.new([])
+  let starts: Mutex[List[Int]] = Mutex.new([])
+  let h = fn(r: sql.TraceRecord) {
+    got.with(fn(var xs: List[Str]) -> () { xs.push(trace_line(r)) })
+    starts.with(fn(var xs: List[Int]) -> () { xs.push(r.start_ns) })
+  }
+  let db = sql.open_driver(os.net, d, "sess", max_open: 1, on_trace: Some(h))?
+  expect(take_trace(got)) == "Connect n=0|Acquire n=0|Release n=0"
+  db.query("Q", [sql.int(7)])?
+  expect(take_trace(got)) == "Acquire n=0|Query Q n=1|Release n=0"
+  db.exec("X")?
+  expect(take_trace(got)) == "Acquire n=0|Exec X n=0|Release n=0"
+  let tx = db.begin()?
+  tx.exec("Y")?
+  tx.commit()?
+  expect(take_trace(got)) == "Acquire n=0|Exec BEGIN n=0|Exec Y n=0|Exec COMMIT n=0|Release n=0"
+  db.pipeline([[sql.BatchQuery{query: "A"}, sql.BatchQuery{query: "B"}], [sql.BatchQuery{query: "FAIL z"}]])?
+  expect(take_trace(got)) == "Acquire n=0|BatchQuery A n=1|BatchQuery B n=1|Batch n=2 err|Release n=0"
+  expect(starts.with_read(fn(xs: List[Int]) -> Bool { xs.all(fn(x: Int) -> Bool { x > 0 }) })) == true
+  db.close()?
+}

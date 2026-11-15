@@ -51,6 +51,10 @@ type sqlDriverBackend struct {
 	// onNotice is open_driver's on_notice: each new connection is a
 	// sqlNoticeConn then (decision 0648 item 14)
 	onNotice Option[func(*Task, Sql_Notice) Result[Unit, Never]]
+	// onTrace is open_driver's on_trace (decision 0648 item 16, sqltrace.go)
+	onTrace Option[sqlTraceFn]
+	maxOpen int
+	n       sqlCounts
 }
 
 func sqlValues(args []any) List[Sql_SqlValue] {
@@ -63,6 +67,7 @@ func sqlValues(args []any) List[Sql_SqlValue] {
 
 func (b *sqlDriverBackend) take(tk *Task) (sqlIdle, error) {
 	now := time.Now()
+	start := now
 	for {
 		b.mu.Lock()
 		if len(b.idle) == 0 {
@@ -74,16 +79,32 @@ func (b *sqlDriverBackend) take(tk *Task) (sqlIdle, error) {
 		b.mu.Unlock()
 		if b.maxLife > 0 && now.Sub(x.born) >= b.maxLife {
 			x.c.M_close(tk)
+			b.n.open.Add(-1)
+			b.n.lifeClosed.Add(1)
 			continue
 		}
 		x.stmts.sweep(tk)
+		b.acquired(tk, start, nil)
 		return x, nil
 	}
+	b.n.connecting.Add(1)
+	cs := time.Now()
 	r := b.drv.M_connect(tk, b.net, b.dsn)
+	b.n.connecting.Add(-1)
 	if !r.Ok {
-		return sqlIdle{}, &sqlErrBox{r.E}
+		e := &sqlErrBox{r.E}
+		b.trace(tk, cs, sqlTraceConnect, e)
+		b.acquired(tk, start, e)
+		return sqlIdle{}, e
 	}
+	b.n.newConns.Add(1)
+	b.n.open.Add(1)
+	b.trace(tk, cs, sqlTraceConnect, nil)
+	b.acquired(tk, start, nil)
 	c := r.V
+	if b.onTrace.Some {
+		c = sqlTraceConn{Sql_DriverConn: c, h: b.onTrace.V}
+	}
 	if b.onNotice.Some {
 		c = sqlNoticeConn{Sql_DriverConn: c, h: b.onNotice.V}
 	}
@@ -91,7 +112,11 @@ func (b *sqlDriverBackend) take(tk *Task) (sqlIdle, error) {
 }
 
 func (b *sqlDriverBackend) give(tk *Task, x sqlIdle) {
-	keep := !x.c.M_is_broken(tk) && (b.maxLife == 0 || time.Since(x.born) < b.maxLife)
+	start := time.Now()
+	b.n.inUse.Add(-1)
+	defer b.trace(tk, start, sqlTraceRelease, nil)
+	young := b.maxLife == 0 || time.Since(x.born) < b.maxLife
+	keep := !x.c.M_is_broken(tk) && young
 	if keep {
 		x.stmts.sweep(tk)
 		b.mu.Lock()
@@ -103,6 +128,12 @@ func (b *sqlDriverBackend) give(tk *Task, x sqlIdle) {
 		b.mu.Unlock()
 	}
 	x.c.M_close(tk)
+	b.n.open.Add(-1)
+	if keep {
+		b.n.idleClosed.Add(1)
+	} else if !young {
+		b.n.lifeClosed.Add(1)
+	}
 }
 
 // driverRowsTypes is the result of a driver's query: its columns, their
@@ -218,6 +249,7 @@ func (b *sqlDriverBackend) CloseTk(tk *Task) error {
 	b.mu.Unlock()
 	for _, x := range idle {
 		x.c.M_close(tk)
+		b.n.open.Add(-1)
 	}
 	return nil
 }
@@ -317,7 +349,7 @@ func (t *sqlDriverTx) Rollback() error {
 }
 
 // Sql_open_driver is `sql.open_driver(net, d, dsn, ...)`.
-func Sql_open_driver(tk *Task, net Net, d Sql_Driver, dsn string, maxOpen, maxIdle int64, maxLifetime Duration, onNotice Option[func(*Task, Sql_Notice) Result[Unit, Never]]) Result[Sql_Db, Sql_SqlErr] {
+func Sql_open_driver(tk *Task, net Net, d Sql_Driver, dsn string, maxOpen, maxIdle int64, maxLifetime Duration, onNotice Option[func(*Task, Sql_Notice) Result[Unit, Never]], onTrace Option[sqlTraceFn]) Result[Sql_Db, Sql_SqlErr] {
 	if tk.Canceled() {
 		return sqlFail[Sql_Db](sqlTagCanceled)
 	}
@@ -331,7 +363,7 @@ func Sql_open_driver(tk *Task, net Net, d Sql_Driver, dsn string, maxOpen, maxId
 	if life < 0 {
 		life = 0
 	}
-	be := &sqlDriverBackend{drv: d, net: net, dsn: dsn, maxIdle: int(maxIdle), maxLife: life, onNotice: onNotice}
+	be := &sqlDriverBackend{drv: d, net: net, dsn: dsn, maxIdle: int(maxIdle), maxLife: life, onNotice: onNotice, onTrace: onTrace, maxOpen: int(maxOpen)}
 	db := newSqlDB(be, int(maxOpen))
 	// connect once now, so a wrong password or host fails at open
 	if r := db.M_ping(tk); !r.Ok {

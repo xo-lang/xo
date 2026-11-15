@@ -69,6 +69,47 @@ struct Pool[fx: Effects] {
   max_lifetime: Int
   /// open's on_notice: each new connection is a Noticed then.
   on_notice: (fn(sql.Notice))? = None
+  /// open's on_trace (decision 0648 item 16): each new connection is a
+  /// Traced then, and take and give report Connect, Acquire and Release.
+  on_trace: (fn(sql.TraceRecord))? = None
+  max_open: Int = 0
+  n: Mutex[Counts]
+}
+
+/// The pool's counts (Db.stats, decision 0648 item 16), behind one
+/// Mutex so Pool keeps few heap fields (XO0530 at every `if let` of it).
+struct Counts {
+  in_use: Int = 0
+  open: Int = 0
+  connecting: Int = 0
+  acquires: Int = 0
+  acquire_ns: Int = 0
+  waits: Int = 0
+  wait_ns: Int = 0
+  canceled: Int = 0
+  new_conns: Int = 0
+  idle_closed: Int = 0
+  life_closed: Int = 0
+}
+
+/// The time a traced operation started: wall clock for the record, the
+/// pool's clock for its length.
+struct Started {
+  wall: Int
+  at: Int
+}
+
+fn started() -> Started { Started{wall: sysio.real_ns(), at: pool_now()} }
+
+/// The record of an operation that began at s, given to h.
+fn emit(h: fn(sql.TraceRecord), s: Started, op: sql.TraceOp, query: Str, args: List[sql.SqlValue], n: Int, err: sql.SqlErr?) {
+  h(sql.TraceRecord{op: op, query: query, args: args, rows_affected: n, err: err, start_ns: s.wall, elapsed: Duration.from_nanos((pool_now() - s.at).max(0))})
+}
+
+fn (p: Pool) trace(s: Started, op: sql.TraceOp, err: sql.SqlErr?) {
+  if let Some(h) = p.on_trace {
+    emit(h, s, op, "", [], 0, err)
+  }
 }
 
 /// The pool's clock for connection ages: the monotonic clock, except in
@@ -111,10 +152,25 @@ struct Cached[fx: Effects] {
   in_tx: Bool = false
 }
 
+/// Gives a permit back. try_send, not send: send is a cancellation point,
+/// so a task cancelled while it gives a connection back would unwind there
+/// and the permit would be lost (every later take then waits forever).
+/// The channel holds max_open permits, so there is always room.
+fn give_permit(c: Chan[Bool]) {
+  if !c.try_send(true) {
+    fault("std/sql: a permit was given back to a full pool")
+  }
+}
+
 fn (p: Pool) take() -> Taken ! sql.SqlErr uses net.dial {
+  let s = started()
   // waiting for a permit is a cancellation point
-  if p.permits.recv() is None {
-    return Err(sql.SqlErr.Canceled)
+  if p.permits.try_recv() is None {
+    // counted as the wait starts, as Go's DB.Stats WaitCount
+    p.n.with(fn(var c) { c.waits += 1 })
+    if !p.wait_permit(s) {
+      return Err(sql.SqlErr.Canceled)
+    }
   }
   let now = pool_now()
   while {
@@ -123,28 +179,81 @@ fn (p: Pool) take() -> Taken ! sql.SqlErr uses net.dial {
       Some(x) => {
         if p.max_lifetime > 0 && now - x.born >= p.max_lifetime {
           x.c.close()
+          p.n.with(fn(var c) { c.open += -1 })
+          p.n.with(fn(var c) { c.life_closed += 1 })
           continue
         }
         let t = Taken{c: x.c, born: x.born, stmts: x.stmts}
         sweep(t.stmts)
+        p.acquired(s, None)
         return t
       }
       None => break
     }
   }
-  match p.drv.connect(p.net, p.dsn) {
-    Ok(c) => Taken{c: noticed(p, c), born: now, stmts: Mutex.new([])}
+  p.n.with(fn(var c) { c.connecting += 1 })
+  let cs = started()
+  let r = p.drv.connect(p.net, p.dsn)
+  p.n.with(fn(var c) { c.connecting += -1 })
+  match r {
+    Ok(c) => {
+      p.n.with(fn(var c) { c.new_conns += 1 })
+      p.n.with(fn(var c) { c.open += 1 })
+      p.trace(cs, sql.TraceOp.Connect, None)
+      p.acquired(s, None)
+      Taken{c: noticed(p, traced(p, c)), born: now, stmts: Mutex.new([])}
+    }
     Err(e) => {
-      p.permits.send(true)
+      p.trace(cs, sql.TraceOp.Connect, Some(e))
+      p.acquired(s, Some(e))
+      give_permit(p.permits)
       Err(e)
     }
   }
 }
 
+/// Counts an acquire that began at s and reports it; a failed one gives
+/// no connection.
+/// Waits for a permit: false when the channel closed. recv unwinds a
+/// cancelled task, so the wait's time and a cancellation are counted in a
+/// defer, which runs on the unwind too.
+fn (p: Pool) wait_permit(s: Started) -> Bool {
+  let got = Atomic.new(false)
+  defer p.wait_ended(s, got)
+  let ok = p.permits.recv() is Some(_)
+  got.set(ok)
+  ok
+}
+
+fn (p: Pool) wait_ended(s: Started, got: Atomic[Bool]) {
+  p.n.with(fn(var c) { c.wait_ns += (pool_now() - s.at).max(0) })
+  if !got.get() {
+    p.n.with(fn(var c) { c.canceled += 1 })
+    p.trace(s, sql.TraceOp.Acquire, Some(sql.SqlErr.Canceled))
+  }
+}
+
+fn (p: Pool) acquired(s: Started, err: sql.SqlErr?) {
+  p.n.with(fn(var c) { c.acquires += 1 })
+  p.n.with(fn(var c) { c.acquire_ns += (pool_now() - s.at).max(0) })
+  if err.is_none() {
+    p.n.with(fn(var c) { c.in_use += 1 })
+  }
+  p.trace(s, sql.TraceOp.Acquire, err)
+}
+
+fn (p: Pool) stats() -> sql.PoolStats {
+  let idle = p.idle.with_read(fn(xs) { xs.len() })
+  let c = p.n.with_read(fn(c) { c })
+  sql.PoolStats{max_open: p.max_open, open: c.open + c.connecting, in_use: c.in_use, idle: idle, connecting: c.connecting, acquire_count: c.acquires, acquire_time: Duration.from_nanos(c.acquire_ns), wait_count: c.waits, wait_time: Duration.from_nanos(c.wait_ns), canceled_acquire_count: c.canceled, new_conns: c.new_conns, max_idle_closed: c.idle_closed, max_lifetime_closed: c.life_closed}
+}
+
 /// Gives t back: kept idle while it works, has room, and is young enough,
 /// else closed; then the permit.
 fn give[fx: Effects](p: Pool[fx], t: Taken[fx]) uses (net.dial, fx) {
-  let keep = !t.c.is_broken() && (p.max_lifetime == 0 || pool_now() - t.born < p.max_lifetime)
+  let s = started()
+  let young = p.max_lifetime == 0 || pool_now() - t.born < p.max_lifetime
+  let keep = !t.c.is_broken() && young
   if keep {
     sweep(t.stmts)
   }
@@ -157,8 +266,18 @@ fn give[fx: Effects](p: Pool[fx], t: Taken[fx]) uses (net.dial, fx) {
   })
   if !kept {
     t.c.close()
+    p.n.with(fn(var c) { c.open += -1 })
+    if keep {
+      p.n.with(fn(var c) { c.idle_closed += 1 })
+    } else if !young {
+      p.n.with(fn(var c) { c.life_closed += 1 })
+    }
   }
-  p.permits.send(true)
+  p.n.with(fn(var c) { c.in_use += -1 })
+  // the permit first: on_trace may wait (a Mutex), and a cancelled task
+  // unwinds at a wait
+  give_permit(p.permits)
+  p.trace(s, sql.TraceOp.Release, None)
 }
 
 fn (p: Pool) query(q: Str, args: List[sql.SqlValue]) -> List[Row] ! sql.SqlErr uses net.dial {
@@ -214,6 +333,7 @@ fn (p: Pool) close_idle() {
   })
   for x in xs {
     x.c.close()
+    p.n.with(fn(var c) { c.open += -1 })
   }
 }
 
@@ -311,7 +431,223 @@ fn (n: Noticed) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> Li
   r
 }
 
-fn open_driver(net: Net, d: sql.Driver, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, on_notice: (fn(sql.Notice))? = None) -> Db ! sql.SqlErr uses net.dial {
+// ---------------------------------------------------------------------------
+// Tracing (decision 0648 item 16): open's on_trace after each traced call
+
+/// c, or c as a Traced when open was given on_trace.
+fn traced[fx: Effects](p: Pool[fx], c: sql.DriverConn[fx]) -> sql.DriverConn[fx] {
+  if let Some(h) = p.on_trace {
+    return Traced{c: c, h: h}
+  }
+  c
+}
+
+/// A connection whose calls are reported to on_trace as they end (pgx's
+/// QueryTracer, BatchTracer, CopyFromTracer and PrepareTracer).
+struct Traced[fx: Effects] {
+  c: sql.DriverConn[fx]
+  h: fn(sql.TraceRecord)
+}
+
+fn (t: Traced[fx]) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows[fx] ! sql.SqlErr uses (net.dial, fx) {
+  let s = started()
+  match t.c.query(q, args) {
+    Ok(x) => {
+      if let Some(cur) = x.cursor {
+        // reported at the cursor's end, as pgx's TraceQueryEnd at Rows.Close
+        return x with {cursor: Some(TracedCursor{c: cur, h: t.h, s: s, q: q, args: args, n: Atomic.new(x.rows.len()), done: Atomic.new(false)})}
+      }
+      emit(t.h, s, sql.TraceOp.Query, q, args, x.rows.len(), None)
+      Ok(x)
+    }
+    Err(e) => {
+      emit(t.h, s, sql.TraceOp.Query, q, args, 0, Some(e))
+      Err(e)
+    }
+  }
+}
+
+fn (t: Traced) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  let s = started()
+  let r = t.c.exec(q, args)
+  emit(t.h, s, sql.TraceOp.Exec, q, args, r.map(fn(x) { x.rows_affected }).ok() ?? 0, r.err())
+  r
+}
+
+/// BEGIN, COMMIT or ROLLBACK as an Exec record, as pgx traces them.
+fn (t: Traced) tx_op(what: Str, r: Result[(), sql.SqlErr], s: Started) -> () ! sql.SqlErr {
+  emit(t.h, s, sql.TraceOp.Exec, what, [], 0, r.err())
+  r
+}
+
+fn (t: Traced) begin() -> () ! sql.SqlErr uses net.dial {
+  let s = started()
+  t.tx_op("BEGIN", t.c.begin(), s)
+}
+
+fn (t: Traced) commit() -> () ! sql.SqlErr uses net.dial {
+  let s = started()
+  t.tx_op("COMMIT", t.c.commit(), s)
+}
+
+fn (t: Traced) rollback() -> () ! sql.SqlErr uses net.dial {
+  let s = started()
+  t.tx_op("ROLLBACK", t.c.rollback(), s)
+}
+
+fn (t: Traced) ping() -> () ! sql.SqlErr uses net.dial { t.c.ping() }
+
+fn (t: Traced) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  let s = started()
+  let r = t.c.copy_from(table, columns, rows)
+  emit(t.h, s, sql.TraceOp.CopyFrom, table, [], r.ok() ?? 0, r.err())
+  r
+}
+
+fn (t: Traced[fx]) prepare(q: Str) -> sql.DriverStmt[fx]? ! sql.SqlErr uses (net.dial, fx) {
+  let s = started()
+  match t.c.prepare(q) {
+    Ok(ds) => {
+      emit(t.h, s, sql.TraceOp.Prepare, q, [], 0, None)
+      match ds {
+        Some(x) => Ok(Some(TracedStmt{s: x, h: t.h, q: q}))
+        None => Ok(None)
+      }
+    }
+    Err(e) => {
+      emit(t.h, s, sql.TraceOp.Prepare, q, [], 0, Some(e))
+      Err(e)
+    }
+  }
+}
+
+fn (t: Traced) close() uses net.dial {
+  t.c.close()
+}
+
+fn (t: Traced) is_broken() -> Bool { t.c.is_broken() }
+
+fn (t: Traced) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dial { t.c.wait_notification() }
+
+fn (t: Traced) notices() -> List[sql.Notice] { t.c.notices() }
+
+/// A BatchQuery record for each query of each batch that succeeded (pgx's
+/// TraceBatchQuery; the queries are pipelined, so each has the call's
+/// start and length), then one Batch record with every count and the
+/// first failed batch's error.
+fn (t: Traced) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr uses net.dial {
+  let s = started()
+  let r = t.c.pipeline(batches, in_tx)
+  var total = 0
+  var first: sql.SqlErr? = r.err()
+  if let Ok(outs) = r {
+    for (i, o) in outs.indexed() {
+      match o {
+        Ok(sets) => {
+          for (j, x) in sets.indexed() {
+            let q = if i < batches.len() && j < batches[i].len() { batches[i][j] } else { sql.BatchQuery{query: ""} }
+            emit(t.h, s, sql.TraceOp.BatchQuery, q.query, q.args, x.rows_affected, None)
+            total += x.rows_affected
+          }
+        }
+        Err(e) => {
+          if first.is_none() {
+            first = Some(e)
+          }
+        }
+      }
+    }
+  }
+  emit(t.h, s, sql.TraceOp.Batch, "", [], total, first)
+  r
+}
+
+/// A prepared statement whose runs are Query and Exec records of its text.
+struct TracedStmt[fx: Effects] {
+  s: sql.DriverStmt[fx]
+  h: fn(sql.TraceRecord)
+  q: Str
+}
+
+fn (t: TracedStmt[fx]) query(args: List[sql.SqlValue]) -> sql.DriverRows[fx] ! sql.SqlErr uses (net.dial, fx) {
+  let s = started()
+  match t.s.query(args) {
+    Ok(x) => {
+      if let Some(cur) = x.cursor {
+        return x with {cursor: Some(TracedCursor{c: cur, h: t.h, s: s, q: t.q, args: args, n: Atomic.new(x.rows.len()), done: Atomic.new(false)})}
+      }
+      emit(t.h, s, sql.TraceOp.Query, t.q, args, x.rows.len(), None)
+      Ok(x)
+    }
+    Err(e) => {
+      emit(t.h, s, sql.TraceOp.Query, t.q, args, 0, Some(e))
+      Err(e)
+    }
+  }
+}
+
+fn (t: TracedStmt[fx]) exec(args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses (net.dial, fx) {
+  let s = started()
+  let r = t.s.exec(args)
+  emit(t.h, s, sql.TraceOp.Exec, t.q, args, r.map(fn(x) { x.rows_affected }).ok() ?? 0, r.err())
+  r
+}
+
+fn (t: TracedStmt[fx]) close() uses (net.dial, fx) {
+  t.s.close()
+}
+
+/// A query's cursor: its Query record when the last row has been read,
+/// on an error, or at close (pgx's TraceQueryEnd at Rows.Close), with
+/// the rows read.
+struct TracedCursor[fx: Effects] {
+  c: sql.DriverCursor[fx]
+  h: fn(sql.TraceRecord)
+  s: Started
+  q: Str
+  args: List[sql.SqlValue]
+  n: Atomic[Int]
+  done: Atomic[Bool]
+}
+
+fn (t: TracedCursor[fx]) end(err: sql.SqlErr?) {
+  if !t.done.swap(true) {
+    emit(t.h, t.s, sql.TraceOp.Query, t.q, t.args, t.n.get(), err)
+  }
+}
+
+fn (t: TracedCursor[fx]) next() -> List[sql.SqlValue]? ! sql.SqlErr uses (net.dial, fx) {
+  match t.c.next() {
+    Ok(Some(r)) => {
+      t.n.add(1)
+      Ok(Some(r))
+    }
+    Ok(None) => {
+      t.end(None)
+      Ok(None)
+    }
+    Err(e) => {
+      t.end(Some(e))
+      Err(e)
+    }
+  }
+}
+
+fn (t: TracedCursor[fx]) rest() -> List[List[sql.SqlValue]] ! sql.SqlErr uses (net.dial, fx) {
+  let r = t.c.rest()
+  if let Ok(xs) = r {
+    t.n.add(xs.len())
+  }
+  t.end(r.err())
+  r
+}
+
+fn (t: TracedCursor[fx]) close() uses (net.dial, fx) {
+  t.c.close()
+  t.end(None)
+}
+
+fn open_driver(net: Net, d: sql.Driver, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, on_notice: (fn(sql.Notice))? = None, on_trace: (fn(sql.TraceRecord))? = None) -> Db ! sql.SqlErr uses net.dial {
   if task.is_canceled() {
     return Err(sql.SqlErr.Canceled)
   }
@@ -322,7 +658,7 @@ fn open_driver(net: Net, d: sql.Driver, dsn: Str, max_open: Int = 10, max_idle: 
   for _ in 0..max_open {
     permits.send(true)
   }
-  let p = Pool{net: net, drv: d, dsn: dsn, permits: permits, idle: Mutex.new([]), max_idle: max_idle.max(0), max_lifetime: max_lifetime.nanos().max(0), on_notice: on_notice}
+  let p = Pool{net: net, drv: d, dsn: dsn, permits: permits, idle: Mutex.new([]), max_idle: max_idle.max(0), max_lifetime: max_lifetime.nanos().max(0), on_notice: on_notice, on_trace: on_trace, max_open: max_open, n: Mutex.new(Counts{})}
   // connect once now, so a wrong password or host fails at open
   p.ping()?
   let db = new_db({})
@@ -421,7 +757,7 @@ fn memory(schema: Str = "") -> Db ! sql.SqlErr {
   new_db(tables)
 }
 
-fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"", loc: time.Zone = time.utc(), server_pub_key: Bytes = b"", on_notice: (fn(sql.Notice))? = None) -> Db ! sql.SqlErr uses net.dial {
+fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"", loc: time.Zone = time.utc(), server_pub_key: Bytes = b"", on_notice: (fn(sql.Notice))? = None, on_trace: (fn(sql.TraceRecord))? = None) -> Db ! sql.SqlErr uses net.dial {
   if task.is_canceled() {
     return Err(sql.SqlErr.Canceled)
   }
@@ -435,11 +771,11 @@ fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, 
   }
   if driver is "postgres" | "postgresql" {
     // the driver is Xo and dials through net, so Net.only applies (decision 0278)
-    return open_driver(net, pg.PgDriver{roots: roots}, dsn, max_open: max_open, max_idle: max_idle, max_lifetime: max_lifetime, on_notice: on_notice)
+    return open_driver(net, pg.PgDriver{roots: roots}, dsn, max_open: max_open, max_idle: max_idle, max_lifetime: max_lifetime, on_notice: on_notice, on_trace: on_trace)
   }
   if driver == "mysql" {
     // the driver is Xo and dials through net, as Postgres's (decision 0648)
-    return open_driver(net, mysql.MysqlDriver{roots: roots, zone: loc, pub_key: server_pub_key}, dsn, max_open: max_open, max_idle: max_idle, max_lifetime: max_lifetime, on_notice: on_notice)
+    return open_driver(net, mysql.MysqlDriver{roots: roots, zone: loc, pub_key: server_pub_key}, dsn, max_open: max_open, max_idle: max_idle, max_lifetime: max_lifetime, on_notice: on_notice, on_trace: on_trace)
   }
   if !rt.net_lists(net).is_empty() {
     // the driver dials by itself, so an allowlist cannot be enforced:
@@ -518,6 +854,13 @@ fn (d: Db) ping() -> () ! sql.SqlErr uses net.dial {
   d.ready()?
   if let Some(p) = d.pool {
     return p.ping()
+  }
+}
+
+fn (d: Db) stats() -> sql.PoolStats {
+  match d.pool {
+    Some(p) => p.stats()
+    None => sql.PoolStats{max_open: 0, open: 0, in_use: 0, idle: 0, connecting: 0, acquire_count: 0, acquire_time: 0s, wait_count: 0, wait_time: 0s, canceled_acquire_count: 0, new_conns: 0, max_idle_closed: 0, max_lifetime_closed: 0}
   }
 }
 

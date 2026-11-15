@@ -359,6 +359,43 @@ conformance tests and `xo bench --ab`.
       later window, an error at the first query of 401, a deferred
       constraint at the Sync and a batch inside a failed transaction.
 
+16. **std/sql pool statistics and tracing** (Accepted 2026-11-15 under
+    the owner approved std Proven plan; aws-43). Closes the pgx v5.12.0
+    gap rows of scripts/stdaudit/map.txt "no pool statistics" (15) and
+    "no tracing hooks" (21), and Go's DB.Stats.
+    - `Db.stats() -> PoolStats` is pgxpool's Stat and Go's DBStats in one
+      struct: max_open, open, in_use, idle, connecting, acquire_count and
+      acquire_time, wait_count (counted as the wait starts, as Go's
+      WaitCount, so a test can see a waiter) and wait_time,
+      canceled_acquire_count, new_conns, max_idle_closed,
+      max_lifetime_closed. Go's MaxIdleTimeClosed has no counterpart:
+      std/sql has no idle timeout.
+    - `open(..., on_trace:)` and `open_driver(..., on_trace:)` take one
+      pure handler of a `TraceRecord{op, query, args, rows_affected,
+      err, start_ns, elapsed}` given as each operation ends, in place of
+      pgx's seven tracer interfaces with Start and End methods: an end
+      record carries the start (start_ns, as std/trace's Span) and
+      length, so a Span can be made from it, and nothing has to be kept
+      between a Start and an End. pgx's context passing between Start
+      and End is not needed for that reason.
+    - A cursor's Query record comes at its end (pgx's TraceQueryEnd at
+      Rows.Close); BEGIN, COMMIT and ROLLBACK are Exec records; a
+      pipeline gives a BatchQuery record per query of each batch that
+      succeeded, then one Batch record.
+    - A Go registered backend (the Go backend's own drivers) counts and
+      traces nothing, as it has no on_notice.
+    - Found on the way: a task cancelled while it gave a connection back
+      unwound at the permit channel's `send` (a cancellation point) and
+      lost the permit, so every later acquire waited forever. Permits go
+      back with `try_send` now (the channel always has room), before the
+      Release record, since on_trace may wait.
+    - Tests: corpus sql (arm64, llvm, go: stats over conns, closes and a
+      waiter seen by wait_count, a cancelled waiter, on_trace's records
+      for pool, query, exec, transaction and pipeline); pg_test.xo on a
+      fake server (cursor at its end, Prepare and the statement's Query,
+      a pipeline with a failed batch, stats). Nine mutants, all killed,
+      among them `send` back in place of `try_send`.
+
 ## Solid on three axes (decision 0461)
 
 - **Correct:** the oracle is go-sql-driver itself, on a real server, for

@@ -48,7 +48,7 @@ func (d Sql_Db) M_conn(tk *Task) Result[Sql_Conn, Sql_SqlErr] {
 	if !ok {
 		return Ok[Sql_Conn, Sql_SqlErr](Sql_Conn{&sqlConn{db: db}})
 	}
-	if !db.pool.acquire(tk) {
+	if !db.acquirePermit(tk) {
 		return sqlFail[Sql_Conn](sqlTagCanceled)
 	}
 	x, err := b.take(tk)

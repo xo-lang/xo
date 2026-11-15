@@ -348,7 +348,7 @@ func Testing_fake_db(tk *Task, schema string) Result[Sql_Db, Sql_SqlErr] {
 // Sql_open is `sql.open(net, driver, dsn, ...)`.
 // onNotice is for a Xo driver's notices (open_driver); a backend
 // registered from Go has none.
-func Sql_open(tk *Task, n Net, driver, dsn string, maxOpen, maxIdle int64, maxLife Duration, roots Bytes, loc Time_Zone, serverPubKey Bytes, onNotice Option[func(*Task, Sql_Notice) Result[Unit, Never]]) Result[Sql_Db, Sql_SqlErr] {
+func Sql_open(tk *Task, n Net, driver, dsn string, maxOpen, maxIdle int64, maxLife Duration, roots Bytes, loc Time_Zone, serverPubKey Bytes, onNotice Option[func(*Task, Sql_Notice) Result[Unit, Never]], onTrace Option[sqlTraceFn]) Result[Sql_Db, Sql_SqlErr] {
 	if tk.Canceled() {
 		return sqlFail[Sql_Db](sqlTagCanceled)
 	}
@@ -388,7 +388,7 @@ func withConn[T any](tk *Task, d *sqlDB, f func() Result[T, Sql_SqlErr]) Result[
 	if tk.Canceled() {
 		return sqlFail[T](sqlTagCanceled)
 	}
-	if !d.pool.acquire(tk) {
+	if !d.acquirePermit(tk) {
 		return sqlFail[T](sqlTagCanceled)
 	}
 	defer d.pool.release()
@@ -529,7 +529,7 @@ func (d Sql_Db) M_begin(tk *Task, isolation Sql_Isolation, readOnly, deferrable 
 	if tk.Canceled() {
 		return sqlFail[Sql_Tx](sqlTagCanceled)
 	}
-	if !db.pool.acquire(tk) {
+	if !db.acquirePermit(tk) {
 		return sqlFail[Sql_Tx](sqlTagCanceled)
 	}
 	if db.writer != nil && !db.writer.acquire(tk) {
