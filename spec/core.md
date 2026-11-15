@@ -4072,6 +4072,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0701` | error | checker | effect performed outside the declared set (core 6.2) |
 | `XO0702` | error | checker | unknown effect label (core 6.1) |
 | `XO0703` | warning | vet | effect declared in `uses` is never performed (core 6.2) |
+| `XO0704` | error | checker | the function given to `crypto.with_data_independent_timing` can park or yield (decision 0656) |
 | `XO0801` | error | checker | child or group task error does not convert to the enclosing error type (core 7.1) |
 | `XO0802` | error | checker | scope handle, or a value containing a task group, escapes its scope (core 7.1) |
 | `XO0803` | error | checker | task started without a scope handle (core 7.1) |

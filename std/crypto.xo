@@ -9,6 +9,14 @@ fn sha256(data: Bytes) -> Bytes
 fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes
 /// Constant time in the contents (not the lengths) of `a` and `b`.
 fn equal(a: Bytes, b: Bytes) -> Bool
+/// f's value, computed with Arm's DIT (data independent timing) set, then
+/// DIT back as it was (Go's crypto/subtle.WithDataIndependentTiming;
+/// decision 0656). Sections nest. f must not park or yield (no I/O,
+/// clock, Chan, Mutex, spawn or await: DIT belongs to the thread, and a
+/// task switch does not carry it): the checker refuses such an f
+/// (XO0704). On amd64, riscv64, wasm and Arm CPUs without FEAT_DIT, f runs
+/// with no mode change.
+fn with_data_independent_timing[T, fx: Effects](f: fn() -> T uses fx) -> T uses fx
 /// a[i] ^ b[i] for each i below the shorter length (Go's
 /// subtle.XORBytes, into a new Bytes).
 fn xor(a: Bytes, b: Bytes) -> Bytes

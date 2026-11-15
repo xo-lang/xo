@@ -36,6 +36,15 @@ func Crypto_equal(_ *Task, a, b Bytes) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
+// Crypto_with_data_independent_timing is
+// `crypto.with_data_independent_timing(f)` (decision 0656): Go's
+// subtle.WithDataIndependentTiming around f.
+func Crypto_with_data_independent_timing[T any](tk *Task, f func(*Task) Result[T, Never]) T {
+	var r Result[T, Never]
+	subtle.WithDataIndependentTiming(func() { r = f(tk) })
+	return r.V
+}
+
 // Crypto_xor is `crypto.xor(a, b)`: subtle.XORBytes into a new Bytes.
 func Crypto_xor(_ *Task, a, b Bytes) Bytes {
 	d := make([]byte, min(len(a), len(b)))

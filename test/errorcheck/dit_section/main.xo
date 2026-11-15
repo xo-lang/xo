@@ -1,0 +1,44 @@
+// crypto.with_data_independent_timing (decision 0656): the function must
+// not park or yield, since Arm's DIT is the thread's and a task switch
+// does not carry it (XO0704). Pure work and `rand` are accepted.
+use std/crypto
+
+fn pure_sum(xs: List[Int]) -> Int {
+  var n = 0
+  for x in xs {
+    n += x
+  }
+  n
+}
+
+fn main(os: Os) {
+  // accepted: pure work, nested sections, a closure called in place, rand
+  let a = crypto.with_data_independent_timing(fn() { pure_sum([1, 2, 3]) })
+  let b = crypto.with_data_independent_timing(fn() { crypto.with_data_independent_timing(fn() { a + 1 }) })
+  let c = crypto.with_data_independent_timing(fn() { [1, 2].map(fn(x) { x * 2 }).len() })
+  let d = crypto.with_data_independent_timing(fn() { crypto.random_bytes(os.rand, 4).len() })
+  os.stdio.println("${a} ${b} ${c} ${d}")
+
+  // rejected: effects that block
+  let _e = crypto.with_data_independent_timing(fn() { // ERROR XO0704 "performs `stdio`"
+    os.stdio.println("x")
+    1
+  })
+  let _f = crypto.with_data_independent_timing(fn() { // ERROR XO0704 "performs `clock`"
+    os.clock.now().unix()
+  })
+
+  // rejected: parking without an effect
+  let ch: Chan[Int] = Chan.new(1)
+  let _g = crypto.with_data_independent_timing(fn() { ch.recv() ?? 0 }) // ERROR XO0704 "`Chan.recv`"
+  let _h = crypto.with_data_independent_timing(fn() { ch.send(1) }) // ERROR XO0704 "`Chan.send`"
+  let m = Mutex.new(0)
+  let _i = crypto.with_data_independent_timing(fn() { m.with_read(fn(v) { v }) }) // ERROR XO0704 "`Mutex.with_read`"
+  let _j = crypto.with_data_independent_timing(fn() { m.with(fn(var v) { v += 1 }) }) // ERROR XO0704 "`Mutex.with`"
+  let _k = crypto.with_data_independent_timing(fn() -> Int {
+    scope s { // ERROR XO0704 "a `scope` block"
+      let t = s.spawn(fn() -> Int ! Str { 1 })
+      t.await.ok() ?? 0
+    }
+  })
+}

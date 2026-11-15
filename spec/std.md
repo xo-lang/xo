@@ -4146,6 +4146,7 @@ pub fn ct_eq(x: Int, y: Int) -> Int                     // 1 when x == y, 64 bit
 pub fn ct_select(v: Int, x: Int, y: Int) -> Int         // x when v's low bit is 1, else y (subtle.ConstantTimeSelect)
 pub fn ct_copy(v: Int, x: Bytes, y: Bytes) -> Bytes     // y when v's low bit is 1, else x; faults on lengths that differ
 pub fn ct_less_or_eq(x: Int, y: Int) -> Int             // 1 when x <= y, for x, y >= 0 (subtle.ConstantTimeLessOrEq)
+pub fn with_data_independent_timing[T, fx: Effects](f: fn() -> T uses fx) -> T uses fx // f with Arm's DIT set (subtle.WithDataIndependentTiming; XO0704)
 pub fn random_bytes(r: Rand, n: Int) -> Bytes uses rand // faults when n < 0
 pub fn token(r: Rand, n: Int = 32) -> Str uses rand     // n random bytes, unpadded URL safe base64
 pub fn random_text(r: Rand) -> Str uses rand            // Go's rand.Text: 26 base32 characters, 130 bits
@@ -4470,6 +4471,15 @@ pub fn generate_key(r: Rand, alg: KeyAlg, bits: Int = 2048) -> PrivateKey ! KeyE
   no feature register and has no PF_ constant for DIT, as in Go), and
   wasm: there the constant time property
   rests on the code alone (no branch, select or index on a secret).
+- `with_data_independent_timing(f)` (decision 0656, Go's
+  subtle.WithDataIndependentTiming) gives a program's own constant time
+  code the same: f runs with DIT set and DIT is then as it was (sections
+  nest), where the CPU has it, and with no mode change elsewhere. DIT is the
+  OS thread's and a task switch does not carry it, so f must not park or
+  yield: the checker refuses (XO0704) an f that performs an effect other
+  than `rand`, or whose literal body has a `scope` block, a `select`,
+  `.await`, `Chan.send` or `recv`, `Mutex.with` or `with_read`, or a
+  `Scope.spawn`; XO_LOCKCHECK=1 stops a program that parks with DIT held.
 - RSA keys verify and sign from 1024 bits (Go 1.24's minimum: `crypto/rsa:
   512-bit keys are insecure (see ...)`), and a key's public values are
   checked as Go checks them (`crypto/rsa: public exponent is even`, ...);

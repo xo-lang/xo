@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-15: feature: with_data_independent_timing (Go's crypto/subtle.WithDataIndependentTiming)
+
+- Kind: feature
+- Commit: this push
+- Found by: stdaudit's crypto/subtle gap row (owner decision 0656, option B)
+- Go reference: crypto/subtle WithDataIndependentTiming, go1.26.11
+- Test: std/native/crypto_test.xo (DIT set inside, nested sections, restored after; arm64 and llvm), golden crypto_dit (arm64, llvm, Go parity), errorcheck dit_section (accepted: pure work, nesting, map, rand; refused with XO0704: I/O, clock, Chan send and recv, Mutex with and with_read, a scope block)
+- Shipped in: not yet released
+
+`with_data_independent_timing(f)` runs f with Arm's DIT set where the CPU has it and then puts DIT back as it was, so sections nest; elsewhere f runs as is. The Go backend calls subtle.WithDataIndependentTiming. DIT is the OS thread's and a task switch does not carry it, so the checker refuses (new code XO0704) an f whose effects include any but `rand`, or whose literal body has a `scope` block, a `select`, `.await`, `Chan.send` or `recv`, `Mutex.with` or `with_read`, or a `Scope` spawn; XO_LOCKCHECK=1 backs it at run time (decision 0619).
+
 ## 2026-11-15: perf: ECDSA P-256 verification in Jacobian coordinates
 
 - Kind: perf

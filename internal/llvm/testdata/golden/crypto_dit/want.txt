@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+42 86 42 dit true false
+2d93cbc1be167bcb1637a4a23cbff01a7878f0c50ee833954ea5221bb1b8c628
+--- stderr

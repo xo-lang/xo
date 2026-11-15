@@ -33,6 +33,15 @@ fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes { dg.hmac_sha256(key, msg) }
 
 fn equal(a: Bytes, b: Bytes) -> Bool { ct.bytes_equal(a, b) }
 
+fn with_data_independent_timing[T, fx: Effects](f: fn() -> T uses fx) -> T uses fx {
+  // decision 0656: 0619's section around a user's f; the checker (XO0704)
+  // keeps f from parking or yielding
+  let old = ct.dit_on()
+  let v = f()
+  ct.dit_off(old)
+  v
+}
+
 fn ct_byte_eq(x: Int, y: Int) -> Int { ct.mask_eq(x & 0xff, y & 0xff) & 1 }
 
 fn ct_eq(x: Int, y: Int) -> Int { ct.mask_eq(x, y) & 1 }

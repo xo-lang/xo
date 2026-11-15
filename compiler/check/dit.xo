@@ -1,0 +1,209 @@
+// XO0704 (decision 0656): the function given to std/crypto's
+// with_data_independent_timing must not park or yield. Arm's DIT bit is
+// the OS thread's and a task switch does not carry it (decision 0619
+// point 4), so a section that parks would leave DIT set for other tasks
+// and resume without it. The check reads the argument's effects (any but
+// `rand` can block: I/O, clock, processes, logging) and, for a function
+// literal, its body: a `scope` block, a `select`, `.await`, and the
+// parking methods of the prelude's Chan, Mutex and Scope. XO_LOCKCHECK's
+// `xo: DIT held` (0619) backs it at run time for what a function value
+// hides.
+
+use github.com/xo-lang/xo/compiler/parser
+
+/// The checks of each call of with_data_independent_timing in the nodes
+/// of one body.
+fn (var c: Checker) dit_sections(nodes: List[Node]) {
+  for n in nodes {
+    if let NExpr(e) = n {
+      if let CallExpr(span: span, args: args, ..) = e {
+        let fo = c.fn_calls.get(c.expr_key(e)) ?? -1
+        if fo < 0 || !c.is_dit_fn(fo) || args.len() != 1 {
+          continue
+        }
+        c.dit_arg(span, args[0].value)
+      }
+    }
+  }
+}
+
+/// Whether function object fo is std/crypto's with_data_independent_timing.
+fn (c: Checker) is_dit_fn(fo: Int) -> Bool {
+  let m = c.objs[fo].module
+  m >= 0 && c.mods[m].path == "std/crypto" && text(c.objs[fo].name) == "with_data_independent_timing"
+}
+
+fn (var c: Checker) dit_arg(call_span: Span, arg: Expr) {
+  let t = c.resolve(c.type_of(arg))
+  if t >= 0 && c.tys[t].kind == TyKind.Func && c.tys[t].eff >= 0 {
+    let fl = c.flatten(c.tys[t].eff, true)
+    for l in fl.labels {
+      if l != "rand" {
+        let d = c.error("XO0704", parser.expr_span(arg), "the function given to `crypto.with_data_independent_timing` performs `${l}`, which can park or yield; DIT is the thread's and a task switch does not carry it (decision 0656)")
+        c.note(d, "compute the inputs before the section and pass only pure work to it")
+        return
+      }
+    }
+  }
+  if let FnLit(f) = unparen(arg) {
+    if let Some((sp, what)) = c.park_in_block(f.body) {
+      let d = c.error("XO0704", sp, "${what} inside `crypto.with_data_independent_timing` can park or yield; DIT is the thread's and a task switch does not carry it (decision 0656)")
+      c.note(d, "move the waiting out of the section; the section runs only computation over values it was given")
+    }
+  }
+}
+
+/// The first parking construct in b, with its span and what it is.
+fn (c: Checker) park_in_block(b: Block) -> (Span, Str)? {
+  for s in b.stmts {
+    if let Some(r) = c.park_in_stmt(s) {
+      return Some(r)
+    }
+  }
+  None
+}
+
+/// a when it found something, else b (both are computed).
+fn either(a: (Span, Str)?, b: (Span, Str)?) -> (Span, Str)? {
+  if a is Some(_) {
+    return a
+  }
+  b
+}
+
+fn (c: Checker) park_in_exprs(es: List[Expr]) -> (Span, Str)? {
+  for e in es {
+    if let Some(r) = c.park_in_expr(e) {
+      return Some(r)
+    }
+  }
+  None
+}
+
+fn (c: Checker) park_in_opt(e: Expr?) -> (Span, Str)? {
+  match e {
+    Some(x) => c.park_in_expr(x)
+    None => None
+  }
+}
+
+fn (c: Checker) park_in_stmt(s: Stmt) -> (Span, Str)? {
+  match s {
+    ForStmt(iter: iter, bound: bound, body: body, ..) => either(c.park_in_expr(iter), either(c.park_in_exprs(bound), c.park_in_block(body)))
+    WhileStmt(cond: cond, value: value, bound: bound, body: body, ..) => either(c.park_in_opt(cond), either(c.park_in_exprs(value), either(c.park_in_exprs(bound), c.park_in_block(body))))
+    ExprStmt(x: x, ..) => c.park_in_expr(x)
+    LetStmt(value: value, ..) => c.park_in_expr(value)
+    VarStmt(value: value, ..) => c.park_in_expr(value)
+    ConstDecl(d: cd) => c.park_in_expr(cd.value)
+    AssignStmt(target: target, value: value, ..) => either(c.park_in_expr(target), c.park_in_expr(value))
+    DeferStmt(body: body, ..) => c.park_in_stmt(body)
+    ReturnStmt(value: value, ..) => c.park_in_opt(value)
+    _ => None
+  }
+}
+
+/// A selector naming a parking method or `.await` of a prelude type.
+fn (c: Checker) park_selector(x: Expr, sel: parser.Ident, sp: Span) -> (Span, Str)? {
+  let name = text(sel.name)
+  if !(name is "await" | "send" | "recv" | "with" | "with_read" | "spawn" | "spawn_background" | "group") {
+    return None
+  }
+  let t = c.resolve(c.type_of(x))
+  if t < 0 {
+    return None
+  }
+  if name == "await" && c.is_prelude(t, "Task") {
+    return Some((sp, "`.await`"))
+  }
+  if (name is "send" | "recv") && c.is_prelude(t, "Chan") {
+    return Some((sp, "`Chan.${name}`"))
+  }
+  if (name is "with" | "with_read") && c.is_prelude(t, "Mutex") {
+    return Some((sp, "`Mutex.${name}`"))
+  }
+  if (name is "spawn" | "spawn_background" | "group") && c.is_prelude(t, "Scope") {
+    return Some((sp, "`Scope.${name}`"))
+  }
+  None
+}
+
+fn (c: Checker) park_in_expr(e: Expr) -> (Span, Str)? {
+  match e {
+    StringLit(s) => {
+      for p in s.parts {
+        if let Some(r) = c.park_in_opt(p.expr) {
+          return Some(r)
+        }
+      }
+      None
+    }
+    ParenExpr(x: x, ..) | UnaryExpr(x: x, ..) | IsExpr(x: x, ..) | TypeArgsExpr(x: x, ..) | TryExpr(x: x, ..) => c.park_in_expr(x)
+    TupleExpr(elems: els, ..) | ListLit(elems: els, ..) | SetLit(elems: els, ..) => c.park_in_exprs(els)
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        if let Some(r) = either(c.park_in_expr(en.key), c.park_in_expr(en.value)) {
+          return Some(r)
+        }
+      }
+      None
+    }
+    StructLit(fields: fields, ..) => {
+      for f in fields {
+        if let Some(r) = c.park_in_expr(f.value) {
+          return Some(r)
+        }
+      }
+      None
+    }
+    WithExpr(x: x, fields: fields, ..) => {
+      if let Some(r) = c.park_in_expr(x) {
+        return Some(r)
+      }
+      for f in fields {
+        if let Some(r) = c.park_in_expr(f.value) {
+          return Some(r)
+        }
+      }
+      None
+    }
+    BinaryExpr(x: x, y: y, ..) => either(c.park_in_expr(x), c.park_in_expr(y))
+    RangeExpr(lo: lo, hi: hi, ..) => either(c.park_in_opt(lo), c.park_in_opt(hi))
+    SelectorExpr(span: sp, x: x, sel: sel) => either(c.park_selector(x, sel, sp), c.park_in_expr(x))
+    CallExpr(fun: fun, args: args, ..) => {
+      if let Some(r) = c.park_in_expr(fun) {
+        return Some(r)
+      }
+      for a in args {
+        if let Some(r) = c.park_in_expr(a.value) {
+          return Some(r)
+        }
+      }
+      None
+    }
+    IndexExpr(x: x, index: index, ..) => either(c.park_in_expr(x), c.park_in_expr(index))
+    IfExpr(e: x) => either(c.park_in_opt(x.cond), either(c.park_in_opt(x.value), either(c.park_in_block(x.then), c.park_in_opt(x.els))))
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      if let Some(r) = c.park_in_expr(subject) {
+        return Some(r)
+      }
+      for arm in arms {
+        if let Some(r) = c.park_in_opt(arm.guard) {
+          return Some(r)
+        }
+        if let Some(b) = arm.body {
+          if let Some(r) = c.park_in_stmt(b) {
+            return Some(r)
+          }
+        }
+      }
+      None
+    }
+    ScopeExpr(span: sp, ..) => Some((sp, "a `scope` block"))
+    SelectExpr(span: sp, ..) => Some((sp, "a `select`"))
+    Block(b) => c.park_in_block(b)
+    WhileExpr(body: body, ..) => c.park_in_block(body)
+    // a closure inside the section is likely called there (List.map)
+    FnLit(f) => c.park_in_block(f.body)
+    _ => None
+  }
+}

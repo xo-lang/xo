@@ -1,0 +1,19 @@
+// crypto.with_data_independent_timing (decision 0656): f's value, sections
+// nested, generic results, and a constant time compare inside one.
+use std/crypto
+
+struct Pair {
+  a: Int
+  b: Str
+}
+
+fn main(os: Os) {
+  let n = crypto.with_data_independent_timing(fn() { 6 * 7 })
+  let nested = crypto.with_data_independent_timing(fn() { crypto.with_data_independent_timing(fn() { n + 1 }) * 2 })
+  let p = crypto.with_data_independent_timing(fn() { Pair{a: n, b: "dit"} })
+  let same = crypto.with_data_independent_timing(fn() { crypto.equal(b"secret", b"secret") })
+  let differ = crypto.with_data_independent_timing(fn() { crypto.equal(b"secret", b"secreT") })
+  let mac = crypto.with_data_independent_timing(fn() { crypto.hmac(crypto.Hash.Sha256, b"key", b"msg").to_hex() })
+  os.stdio.println("${n} ${nested} ${p.a} ${p.b} ${same} ${differ}")
+  os.stdio.println(mac)
+}
