@@ -127,6 +127,20 @@ in another worktree. Only an empty queue stops you; then ask the lead.
 Run the minimum and fix forward (owner, 2026-10-09 to 2026-11-06; the
 reasons are in test-policy.md):
 
+- Std Proven push (owner, 2026-11-15: "I'm fine with a couple bugs after a
+  4 hour work session that takes a few minutes to fix but saved hours in
+  running the same tests"). Until std is Proven this overrides the rules
+  below for std and compiler work:
+  - a push changing only std modules outside xo's closure (what
+    compiler/xo builds from, `xo build --list-inputs`) gates on the
+    module's own tests (`xo test --std-module`), stdchecks and stdgen
+    -check: minutes, no golden suites;
+  - a push changing xo's closure (compiler/, std/native, llrt, or a
+    closure std module) gates on selfbuild plus seedbuild and the one or
+    two tests that prove the change; no arm64, llvm or cmd suites;
+  - the full suites run on main every 2 hours (the lead's tier on the
+    offload hosts); a failure there is fixed forward by the commit's owner
+    within the hour, never reverted unless xo cannot build itself.
 - Per push: the gate (one xo build with the change plus the one or two
   tests that show it works), with these additions when they apply:
   - `codegen` for compiler/ssa, compiler/arm64, compiler/llvm changes;
