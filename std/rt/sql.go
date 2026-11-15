@@ -100,6 +100,38 @@ type sqlTx struct {
 	be   SqlTxBackend
 	mu   sync.Mutex
 	done bool
+	// ended is done, read without mu by the transactions inside this one
+	ended atomic.Bool
+	// goneTag is the error once done: TxDone, or Closed for a Conn's
+	// session (decision 0648 item 14); 0 is TxDone
+	goneTag int
+	// outer are the transactions and Conn this one is inside, innermost
+	// last: once one ends, this one is done too (TxDone)
+	outer []*sqlTx
+	// noRelease: the end leaves the permits to the owner (a Conn's
+	// transaction, a savepoint)
+	noRelease bool
+	// sp is the outermost transaction's savepoint count (pgx's
+	// savepointNum)
+	sp *atomic.Int64
+}
+
+// gone is the error of an operation after t's end.
+func (t *sqlTx) gone() int {
+	if t.goneTag != 0 {
+		return t.goneTag
+	}
+	return sqlTagTxDone
+}
+
+// outerEnded reports that a transaction or Conn t is inside has ended.
+func (t *sqlTx) outerEnded() bool {
+	for _, o := range t.outer {
+		if o.ended.Load() {
+			return true
+		}
+	}
+	return false
 }
 
 // Sql_Row is `sql.Row`.
@@ -314,7 +346,9 @@ func Testing_fake_db(tk *Task, schema string) Result[Sql_Db, Sql_SqlErr] {
 }
 
 // Sql_open is `sql.open(net, driver, dsn, ...)`.
-func Sql_open(tk *Task, n Net, driver, dsn string, maxOpen, maxIdle int64, maxLife Duration, roots Bytes, loc Time_Zone, serverPubKey Bytes) Result[Sql_Db, Sql_SqlErr] {
+// onNotice is for a Xo driver's notices (open_driver); a backend
+// registered from Go has none.
+func Sql_open(tk *Task, n Net, driver, dsn string, maxOpen, maxIdle int64, maxLife Duration, roots Bytes, loc Time_Zone, serverPubKey Bytes, onNotice Option[func(*Task, Sql_Notice) Result[Unit, Never]]) Result[Sql_Db, Sql_SqlErr] {
 	if tk.Canceled() {
 		return sqlFail[Sql_Db](sqlTagCanceled)
 	}
@@ -484,10 +518,10 @@ func (d Sql_Db) M_close(tk *Task) Result[Unit, Sql_SqlErr] {
 	return Ok[Unit, Sql_SqlErr](Unit{})
 }
 
-// M_begin is `db.begin(isolation, read_only)`: the transaction holds a
-// pool permit (and the writer permit of a single writer backend) until
-// commit or rollback.
-func (d Sql_Db) M_begin(tk *Task, isolation Sql_Isolation, readOnly bool) Result[Sql_Tx, Sql_SqlErr] {
+// M_begin is `db.begin(isolation, read_only, deferrable)`: the transaction
+// holds a pool permit (and the writer permit of a single writer backend)
+// until commit or rollback.
+func (d Sql_Db) M_begin(tk *Task, isolation Sql_Isolation, readOnly, deferrable bool) Result[Sql_Tx, Sql_SqlErr] {
 	db := d.d
 	if db == nil || db.closed.Load() {
 		return sqlFail[Sql_Tx](sqlTagClosed)
@@ -505,7 +539,7 @@ func (d Sql_Db) M_begin(tk *Task, isolation Sql_Isolation, readOnly bool) Result
 	var be SqlTxBackend
 	var err error
 	if b, ok := db.be.(*sqlDriverBackend); ok {
-		be, err = b.BeginTk(tk, sqlTxMode(isolation, readOnly))
+		be, err = b.BeginTk(tk, sqlTxMode(isolation, readOnly, deferrable))
 	} else {
 		be, err = db.be.Begin()
 		if mt, ok := be.(*memTx); ok && err == nil {
@@ -516,12 +550,12 @@ func (d Sql_Db) M_begin(tk *Task, isolation Sql_Isolation, readOnly bool) Result
 		db.release()
 		return sqlFailErr[Sql_Tx](err)
 	}
-	return Ok[Sql_Tx, Sql_SqlErr](Sql_Tx{t: &sqlTx{db: db, be: be}})
+	return Ok[Sql_Tx, Sql_SqlErr](Sql_Tx{t: &sqlTx{db: db, be: be, sp: new(atomic.Int64)}})
 }
 
 // sqlTxMode is std/native/sql.xo's tx_mode: the SET TRANSACTION statement
 // for the options, "" for the defaults.
-func sqlTxMode(isolation Sql_Isolation, readOnly bool) string {
+func sqlTxMode(isolation Sql_Isolation, readOnly, deferrable bool) string {
 	var modes []string
 	switch isolation.Tag {
 	case 2:
@@ -535,6 +569,9 @@ func sqlTxMode(isolation Sql_Isolation, readOnly bool) string {
 	}
 	if readOnly {
 		modes = append(modes, "READ ONLY")
+	}
+	if deferrable {
+		modes = append(modes, "DEFERRABLE")
 	}
 	if len(modes) == 0 {
 		return ""
@@ -560,6 +597,9 @@ func inTx[T any](tk *Task, t Sql_Tx, f func(be SqlTxBackend) Result[T, Sql_SqlEr
 	t.t.mu.Lock()
 	defer t.t.mu.Unlock()
 	if t.t.done {
+		return sqlFail[T](t.t.gone())
+	}
+	if t.t.outerEnded() {
 		return sqlFail[T](sqlTagTxDone)
 	}
 	return f(t.t.be)
@@ -580,18 +620,30 @@ func (t Sql_Tx) M_exec(tk *Task, q string, args List[Sql_SqlValue]) Result[Sql_E
 	return inTx(tk, t, func(be SqlTxBackend) Result[Sql_ExecResult, Sql_SqlErr] { return sqlExec(tk, be, q, args) })
 }
 
-// finish ends the transaction and releases its permits.
+// finish ends the transaction and releases its permits (the owner's
+// for a Conn's transaction and a savepoint).
 func (t Sql_Tx) finish(tk *Task, commit bool) error {
 	t.t.done = true
+	t.t.ended.Store(true)
 	var err error
 	if dt, ok := t.t.be.(*sqlDriverTx); ok {
 		err = dt.FinishTk(tk, commit)
+	} else if mt, ok := t.t.be.(*memTx); ok && mt.parent != nil {
+		// a savepoint's tables become the outer transaction's, under its lock
+		if commit {
+			up := t.t.outer[len(t.t.outer)-1]
+			up.mu.Lock()
+			err = mt.Commit()
+			up.mu.Unlock()
+		}
 	} else if commit {
 		err = t.t.be.Commit()
 	} else {
 		err = t.t.be.Rollback()
 	}
-	t.t.db.release()
+	if !t.t.noRelease {
+		t.t.db.release()
+	}
 	return err
 }
 
@@ -603,6 +655,12 @@ func (t Sql_Tx) M_commit(tk *Task) Result[Unit, Sql_SqlErr] {
 	t.t.mu.Lock()
 	defer t.t.mu.Unlock()
 	if t.t.done {
+		return sqlFail[Unit](sqlTagTxDone)
+	}
+	if t.t.outerEnded() {
+		// an outer end already finished it on the connection
+		t.t.done = true
+		t.t.ended.Store(true)
 		return sqlFail[Unit](sqlTagTxDone)
 	}
 	if err := t.finish(tk, true); err != nil {
@@ -620,6 +678,11 @@ func (t Sql_Tx) M_rollback(tk *Task) Result[Unit, Sql_SqlErr] {
 	t.t.mu.Lock()
 	defer t.t.mu.Unlock()
 	if t.t.done {
+		return Ok[Unit, Sql_SqlErr](Unit{})
+	}
+	if t.t.outerEnded() {
+		t.t.done = true
+		t.t.ended.Store(true)
 		return Ok[Unit, Sql_SqlErr](Unit{})
 	}
 	if err := t.finish(tk, false); err != nil {

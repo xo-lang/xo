@@ -264,6 +264,56 @@ conformance tests and `xo bench --ab`.
     `Net`. A golden that wants a driver every backend lacks names one
     no backend has (`nosuchdb`, sql_basic since 2026-11-15), not
     `"mysql"`, which is native's driver and an unknown one on Go.
+14. **std/sql batch S1: connections, LISTEN/NOTIFY, notices,
+    savepoints, DEFERRABLE** (Accepted 2026-11-15 under the owner
+    approved std Proven plan; aws-43). Closes the pgx v5.12.0 and
+    database/sql gaps of scripts/stdaudit/map.txt: "no connection held
+    across calls outside a transaction", "no LISTEN/NOTIFY", "no
+    handler for server notices", "no savepoints", "no DEFERRABLE
+    transactions".
+    - `Db.conn() -> Conn` (Go's DB.Conn, pgxpool's Acquire): a pool
+      connection and its `max_open` permit held until `Conn.close`
+      (pgxpool's Release), with Db's calls plus `begin`, `listen`,
+      `unlisten` and `wait_notification`. `close` rolls back a
+      transaction begun on the Conn and still open (pgxpool destroys a
+      connection that is not idle; std/sql keeps it), runs `UNLISTEN *`
+      when the Conn listened, and gives the connection back. A closed
+      Conn returns `Closed`, as a closed Stmt (item 6) and Go's
+      ErrConnDone map: a new SqlErr variant would break exhaustive
+      matches. On the in memory database a Conn runs on the Db.
+    - LISTEN/NOTIFY: `Notification{pid, channel, payload}`;
+      `DriverConn.wait_notification` (pgconn's WaitForNotification).
+      The Postgres driver keeps every NotificationResponse it reads,
+      during any call, and returns them oldest first before reading
+      more; the wait is a cancellation point that leaves the connection
+      usable (nothing in flight, no CancelRequest), as pgconn's
+      (TestConnWaitForNotificationTimeout). pgconn's OnNotification
+      callback is not added: a Conn's buffer and wait cover it.
+    - Notices: `Notice{severity, code, message, detail, hint}` (pgconn's
+      Notice's main fields) and `open(..., on_notice:)` /
+      `open_driver(..., on_notice:)`; `DriverConn.notices()` drains the
+      notices since the last call, and std/sql wraps each new pool
+      connection so that on_notice gets them in order after each driver
+      call. The handler is a pure `fn(Notice)`: it keeps notices through
+      a Mutex or a Chan.
+    - Savepoints: `Tx.begin()` as pgx's Tx.Begin: `savepoint sp_N`, N
+      counting the outermost transaction's savepoints; commit `release
+      savepoint sp_N`, rollback `rollback to savepoint sp_N`. The in
+      memory database works on a copy of the outer tables. An outer
+      end makes the nested one TxDone.
+    - `deferrable: Bool = false` on `Db.begin` and `Conn.begin` adds
+      DEFERRABLE to SET TRANSACTION (pgx's TxOptions.DeferrableMode).
+    - Breaking for drivers written in Xo: DriverConn gains
+      `wait_notification` and `notices` (as `prepare` in item 6);
+      mysql and sqlite return Driver ("LISTEN/NOTIFY is Postgres only")
+      and no notices.
+    - Go backend parity (std/rt/sqlconn.go): Conn over a Xo driver's
+      held connection, savepoints on driver, in memory and Go
+      registered transactions, the notice wrapper. Tests: the sql corpus
+      on arm64, llvm and go (a driver in Xo and the in memory Db; pgx's
+      TestTxNestedTransactionCommit and Rollback), pg_test.xo against
+      fake servers (TestListenNotify, TestListenNotifySelfNotification,
+      TestConnOnNotice, TestConnWaitForNotificationTimeout).
 
 ## Solid on three axes (decision 0461)
 

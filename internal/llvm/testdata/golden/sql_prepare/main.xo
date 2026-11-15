@@ -80,6 +80,13 @@ fn (c: FakeConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr uses net.dial {
   Some(FakeStmt{conn: c.id, name: name, log: c.log})
 }
 
+/// No LISTEN/NOTIFY and no notices (decision 0648 item 14).
+fn (c: FakeConn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no LISTEN/NOTIFY"))
+}
+
+fn (c: FakeConn) notices() -> List[sql.Notice] { [] }
+
 fn (s: FakeStmt) query(args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
   s.log.add("conn ${s.conn} ${s.name} query (${args.len()} args)")
   sql.DriverRows{columns: ["conn", "stmt"], rows: [[sql.int(s.conn), sql.str(s.name)]]}

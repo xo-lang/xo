@@ -7,6 +7,7 @@
 // against pgx itself).
 use std/sql
 use native/llrt/pgwire
+use std/task
 
 test "connection strings: what is refused" {
   expect(config("host=x sslmode=disable").err()) == Some(sql.SqlErr.Param(msg: "user is required: no environment is read"))
@@ -477,6 +478,110 @@ test "a cancelled query: a CancelRequest with the connection's key on a second c
     }
     // fk_key_data: pid 77, secret 1234
     expect(seen.recv()) == Some("cancel 77 1234")
+    s.cancel()
+  }
+}
+
+// ---- LISTEN/NOTIFY and notices (decision 0648 item 14): pgx v5.12.0's
+// conn_test.go TestListenNotify and TestListenNotifySelfNotification,
+// pgconn_test.go TestConnOnNotice and TestConnWaitForNotificationTimeout,
+// against fake servers that send NotificationResponse and NoticeResponse
+// where a PostgreSQL 17 does: inside a result, after ReadyForQuery, and
+// on an idle connection.
+
+fn fk_notification(pid: Int, channel: Str, payload: Str) -> Bytes { fk_m("A", fk_be32(pid) + fk_cs(channel) + fk_cs(payload)) }
+
+fn fk_notice(severity: Str, msg: Str) -> Bytes {
+  fk_m("N", fk_cs("S" + severity) + fk_cs("V" + severity) + fk_cs("C00000") + fk_cs("M" + msg) + fk_cs("Hsee the log") + b"\x00")
+}
+
+fn fk_notify_server(kind: Str, body: Bytes) -> Bytes {
+  if kind != "Q" {
+    return b""
+  }
+  let q = body[0..body.len() - 1].to_str() ?? ""
+  if q.starts_with("LISTEN") || q.starts_with("UNLISTEN") {
+    return fk_complete(q.split(" ")[0]) + fk_ready()
+  }
+  if q == "do $$ begin raise notice 'hello, world'; end$$" {
+    // a notification of another backend arrives in the middle of a result
+    return fk_notification(99, "chat", "early") + fk_notice("NOTICE", "hello, world") + fk_complete("DO") + fk_ready()
+  }
+  if q == "notify self" {
+    // the server sends a backend's own notification after ReadyForQuery
+    return fk_complete("NOTIFY") + fk_ready() + fk_notification(77, "self", "")
+  }
+  fk_complete("SELECT 0") + fk_ready()
+}
+
+test "pgx TestListenNotifySelfNotification and TestConnOnNotice: a notification read during another call is kept, one after ReadyForQuery too, and notices reach on_notice in order" {
+  let l = os.net.listen("db.test:5432")?
+  let got: Mutex[List[sql.Notice]] = Mutex.new([])
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_hello_trust(), fk_notify_server).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "postgres", fk_dsn("db.test:5432"), max_open: 1, on_notice: Some(fn(n: sql.Notice) { got.with(fn(var xs) { xs.push(n) }) }))?
+    let c = db.conn()?
+    c.listen("chat")?
+    c.exec("do $$ begin raise notice 'hello, world'; end$$")?
+    expect(got.with_read(fn(xs) { xs })) == [sql.Notice{severity: "NOTICE", code: "00000", message: "hello, world", hint: "see the log"}]
+    expect(c.wait_notification()?) == sql.Notification{pid: 99, channel: "chat", payload: "early"}
+    c.listen("self")?
+    c.exec("notify self")?
+    expect(c.wait_notification()?) == sql.Notification{pid: 77, channel: "self", payload: ""}
+    c.close()
+    // UNLISTEN * at close, and the connection is the pool's again
+    db.exec("SELECT 1")?
+    s.cancel()
+  }
+}
+
+/// fk_serve with a second writer: each Bytes sent on push goes to the
+/// client as it comes, between answers (a NOTIFY of another backend).
+fn fk_push_serve(l: Listener, push: Chan[Bytes]) -> () ! NetErr {
+  while let Ok(c) = l.accept() {
+    var buf = b""
+    let (_, _, rest) = fk_read_msg(c, buf, true)?
+    buf = rest
+    c.write(fk_hello_trust())?
+    scope w {
+      w.spawn_background(fn() {
+        while let Some(b) = push.recv() {
+          if c.write(b).is_err() {
+            break
+          }
+        }
+      })
+      while {
+        let (kind, body, rest2) = fk_read_msg(c, buf, false)?
+        buf = rest2
+        if kind.is_empty() || kind == "X" {
+          break
+        }
+        let out = fk_notify_server(kind, body)
+        if !out.is_empty() {
+          c.write(out)?
+        }
+      }
+      w.cancel()
+    }
+    c.close()
+  }
+}
+
+test "pgx TestListenNotify and TestConnWaitForNotificationTimeout: a timed out wait leaves the connection usable, and the next wait reads the server's notification" {
+  let l = os.net.listen("db.test:5432")?
+  let push = Chan[Bytes].new(4)
+  scope s {
+    s.spawn_background(fn() { fk_push_serve(l, push).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "postgres", fk_dsn("db.test:5432"), max_open: 1)?
+    let c = db.conn()?
+    c.listen("chat")?
+    let r = task.with_timeout(os.clock, 20ms, fn() { c.wait_notification() })
+    expect(r.err().map(fn(e) { e is TimedOut })) == Some(true)
+    c.exec("SELECT 1")?
+    push.send(fk_notification(5, "chat", "after"))
+    expect(c.wait_notification()?) == sql.Notification{pid: 5, channel: "chat", payload: "after"}
+    c.close()
     s.cancel()
   }
 }

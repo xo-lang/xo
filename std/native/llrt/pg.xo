@@ -7,7 +7,9 @@
 // THIRD_PARTY_NOTICES). TLS through std/tls (decision 0281): SSLRequest,
 // then tls.client with the sslmode's verification. A cancelled wait sends a
 // CancelRequest on a second connection (pgconn's CancelRequest) and drops
-// the connection. Not yet: LISTEN/NOTIFY, binary COPY.
+// the connection. NotificationResponse and NoticeResponse are kept on the
+// connection for wait_notification and notices (decision 0648 item 14,
+// pgconn v5.12.0's WaitForNotification and OnNotice). Not yet: binary COPY.
 use std/sql
 use std/tls
 use native/llrt/pgwire
@@ -176,6 +178,11 @@ pub struct PgConn {
   addr: Str
   /// The last prepared statement's number (xo_s1, xo_s2, ...).
   stmt_n: Atomic[Int]
+  /// NotificationResponses read and not yet given to wait_notification,
+  /// oldest first.
+  notifs: Mutex[List[sql.Notification]]
+  /// NoticeResponses read since the last notices call, oldest first.
+  notes: Mutex[List[sql.Notice]]
 }
 
 fn conn_err(msg: Str) -> sql.SqlErr { sql.SqlErr.Conn(msg: msg) }
@@ -277,7 +284,7 @@ fn connect_link(net: Net, cfg: Config, roots: Bytes, host: Str, addr: Str, mode:
       return Err(conn_err("server responded to SSLRequest with ${answer.quote()}"))
     }
   }
-  let p = PgConn{c: link, buf: Mutex.new(b""), broken: Atomic.new(false), pid: Atomic.new(0), secret: Mutex.new(b""), net: net, addr: addr, stmt_n: Atomic.new(0)}
+  let p = PgConn{c: link, buf: Mutex.new(b""), broken: Atomic.new(false), pid: Atomic.new(0), secret: Mutex.new(b""), net: net, addr: addr, stmt_n: Atomic.new(0), notifs: Mutex.new([]), notes: Mutex.new([])}
   match handshake(p, cfg) {
     Ok(_) => p
     Err(e) => {
@@ -297,8 +304,84 @@ fn (p: PgConn) send(data: Bytes) -> () ! sql.SqlErr uses net.dial {
   }
 }
 
-/// The next backend message; a failure breaks the connection.
+/// The next backend message; a failure breaks the connection. A
+/// notification or notice, which the server sends at any time, is kept on
+/// the connection and the read goes on (pgconn's receiveMessage).
 fn (p: PgConn) recv() -> pgwire.Backend ! sql.SqlErr uses net.dial {
+  while {
+    let m = p.next_msg(false)?
+    if !p.keep(m) {
+      return m
+    }
+  }
+  fault("unreachable")
+}
+
+/// Keeps m when it is a notification or a notice, and tells whether it was.
+fn (p: PgConn) keep(m: pgwire.Backend) -> Bool {
+  match m {
+    Notification(pid, channel, payload) => {
+      p.notifs.with(fn(var xs) { xs.push(sql.Notification{pid: pid, channel: channel, payload: payload}) })
+      true
+    }
+    Notice(f) => {
+      p.notes.with(fn(var xs) { xs.push(notice_of(f)) })
+      true
+    }
+    _ => false
+  }
+}
+
+/// pgconn's Notice from a NoticeResponse's fields: the unlocalized
+/// severity (V) when the server sends it, else the localized one (S).
+fn notice_of(f: Map[Str, Str]) -> sql.Notice {
+  sql.Notice{severity: f.get("V") ?? f.get("S") ?? "", code: f.get("C") ?? "", message: f.get("M") ?? "", detail: f.get("D") ?? "", hint: f.get("H") ?? ""}
+}
+
+/// The next notification (pgconn's WaitForNotification): a kept one
+/// first, else messages read until one comes. The connection is idle, so
+/// a cancelled wait sends no CancelRequest and leaves it usable, as
+/// pgconn's (TestConnWaitForNotificationTimeout).
+fn (p: PgConn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dial {
+  if p.broken.get() {
+    return Err(conn_err("the connection is broken"))
+  }
+  while {
+    let got = p.notifs.with(fn(var xs) -> sql.Notification? {
+      if xs.is_empty() {
+        return None
+      }
+      Some(xs.remove_at(0))
+    })
+    if let Some(n) = got {
+      return n
+    }
+    let m = p.next_msg(true)?
+    if !p.keep(m) {
+      if let Error(f) = m {
+        // a FATAL while idle (an administrator's shutdown): the server
+        // closes the connection after it
+        p.broken.set(true)
+        return Err(server_err(f))
+      }
+    }
+  }
+  fault("unreachable")
+}
+
+/// The notices kept since the last call, oldest first.
+fn (p: PgConn) notices() -> List[sql.Notice] {
+  p.notes.with(fn(var xs) {
+    let all = xs
+    xs = []
+    all
+  })
+}
+
+/// The next backend message as it comes. idle: no request is in flight
+/// (wait_notification), so a cancelled read leaves the connection as it
+/// was; else it breaks the connection and sends a CancelRequest.
+fn (p: PgConn) next_msg(idle: Bool) -> pgwire.Backend ! sql.SqlErr uses net.dial {
   while {
     let have = p.buf.with(fn(b) { b })
     match pgwire.frame_len(have) {
@@ -322,6 +405,9 @@ fn (p: PgConn) recv() -> pgwire.Backend ! sql.SqlErr uses net.dial {
         return Err(conn_err("unexpected EOF"))
       }
       Err(e) => {
+        if idle && e is Canceled {
+          return Err(sql.SqlErr.Canceled)
+        }
         p.broken.set(true)
         if e is Canceled {
           p.cancel()
@@ -1037,6 +1123,11 @@ fn (p: PgConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.
 
 fn (p: PgConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
   let r = p.run(q, args)?
+  if q == "UNLISTEN *" {
+    // std/sql's Conn.close: no notification of the old channels is left
+    // for the connection's next user
+    p.notifs.with(fn(var xs) { xs = [] })
+  }
   sql.ExecResult{rows_affected: pgwire.rows_affected(r.tag), last_insert_id: 0}
 }
 

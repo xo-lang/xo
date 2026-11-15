@@ -166,6 +166,13 @@ fn (c: FakeConn) is_broken() -> Bool {
 /// No statements on the server: std/sql runs the text each time.
 fn (c: FakeConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr { None }
 
+/// No LISTEN/NOTIFY and no notices (decision 0648 item 14).
+fn (c: FakeConn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no LISTEN/NOTIFY"))
+}
+
+fn (c: FakeConn) notices() -> List[sql.Notice] { [] }
+
 test "a Driver the program writes drives Db's pool: query, exec, begin, commit, rollback, ping and close" {
   let n = Mutex.new(0)
   let log: Mutex[List[Str]] = Mutex.new([])
@@ -246,6 +253,13 @@ fn (c: CurConn) is_broken() -> Bool { false }
 
 /// No statements on the server: std/sql runs the text each time.
 fn (c: CurConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr { None }
+
+/// No LISTEN/NOTIFY and no notices (decision 0648 item 14).
+fn (c: CurConn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no LISTEN/NOTIFY"))
+}
+
+fn (c: CurConn) notices() -> List[sql.Notice] { [] }
 
 fn (c: Cur) next() -> List[sql.SqlValue]? ! sql.SqlErr uses net.dial {
   let n = c.at.with(fn(var v) -> Int {
@@ -454,6 +468,13 @@ fn (c: ModeConn) is_broken() -> Bool { false }
 /// No statements on the server: std/sql runs the text each time.
 fn (c: ModeConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr { None }
 
+/// No LISTEN/NOTIFY and no notices (decision 0648 item 14).
+fn (c: ModeConn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no LISTEN/NOTIFY"))
+}
+
+fn (c: ModeConn) notices() -> List[sql.Notice] { [] }
+
 test "begin's isolation and read_only reach a driver as SET TRANSACTION after BEGIN" {
   let log: Mutex[List[Str]] = Mutex.new([])
   let db = sql.open_driver(os.net, ModeDriver{log: log}, "mode", max_open: 1)?
@@ -470,6 +491,15 @@ test "begin's isolation and read_only reach a driver as SET TRANSACTION after BE
     tx.commit()?
     expect((iso, ro, log.with_read(fn(ls: List[Str]) -> Str { ls.join("|") }))) == (iso, ro, want)
   }
+  // deferrable (pgx's TxOptions.DeferrableMode) comes last, as in pgx's BEGIN
+  log.with(fn(var ls: List[Str]) -> () { ls = [] })
+  let txd = db.begin(isolation: sql.Isolation.Serializable, read_only: true, deferrable: true)?
+  txd.commit()?
+  expect(log.with_read(fn(ls: List[Str]) -> Str { ls.join("|") })) == "BEGIN|SET TRANSACTION ISOLATION LEVEL SERIALIZABLE, READ ONLY, DEFERRABLE|COMMIT"
+  log.with(fn(var ls: List[Str]) -> () { ls = [] })
+  let txd2 = db.begin(deferrable: true)?
+  txd2.rollback()?
+  expect(log.with_read(fn(ls: List[Str]) -> Str { ls.join("|") })) == "BEGIN|SET TRANSACTION DEFERRABLE|ROLLBACK"
   // a refused mode rolls back, returns the server's error and gives the
   // connection back (max_open 1: the next begin would wait forever)
   log.with(fn(var ls: List[Str]) -> () { ls = [] })
@@ -504,5 +534,261 @@ test "a read only transaction on the in memory Db reads and refuses writes as Po
     t2.rollback()?
   }
   expect(db.query("SELECT n FROM t")?.len()) == 1
+  db.close()?
+}
+
+struct SessDriver {
+  connects: Atomic[Int]
+  log: Mutex[List[Str]]
+}
+
+struct SessConn {
+  id: Int
+  log: Mutex[List[Str]]
+  notes: Mutex[List[sql.Notice]]
+  notifs: Mutex[List[sql.Notification]]
+}
+
+fn (d: SessDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr uses net.dial {
+  Ok(SessConn{id: d.connects.add(1), log: d.log, notes: Mutex.new([]), notifs: Mutex.new([])})
+}
+
+fn (c: SessConn) note(q: Str) {
+  record(c.log, "${c.id} ${q}")
+}
+
+fn (c: SessConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  c.note(q)
+  Ok(sql.DriverRows{columns: ["conn"], rows: [[sql.int(c.id)]]})
+}
+
+/// "NOTIFY ch payload" keeps a notification from backend 4242, "RAISE
+/// msg" a notice and "WARN msg" a warning, as a server would send them.
+fn (c: SessConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  c.note(q)
+  let w = q.split(" ")
+  if w[0] == "NOTIFY" {
+    c.notifs.with(fn(var xs: List[sql.Notification]) -> () { xs.push(sql.Notification{pid: 4242, channel: w[1], payload: w[2]}) })
+  }
+  if w[0] == "RAISE" {
+    c.notes.with(fn(var xs: List[sql.Notice]) -> () { xs.push(sql.Notice{severity: "NOTICE", code: "00000", message: w[1]}) })
+  }
+  if w[0] == "WARN" {
+    c.notes.with(fn(var xs: List[sql.Notice]) -> () { xs.push(sql.Notice{severity: "WARNING", code: "01000", message: w[1], hint: "h"}) })
+  }
+  Ok(sql.ExecResult{rows_affected: 0, last_insert_id: 0})
+}
+
+fn (c: SessConn) begin() -> () ! sql.SqlErr uses net.dial {
+  c.note("BEGIN")
+  Ok(())
+}
+
+fn (c: SessConn) commit() -> () ! sql.SqlErr uses net.dial {
+  c.note("COMMIT")
+  Ok(())
+}
+
+fn (c: SessConn) rollback() -> () ! sql.SqlErr uses net.dial {
+  c.note("ROLLBACK")
+  Ok(())
+}
+
+fn (c: SessConn) ping() -> () ! sql.SqlErr uses net.dial { Ok(()) }
+
+fn (c: SessConn) close() uses net.dial {}
+
+fn (c: SessConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no COPY"))
+}
+
+fn (c: SessConn) is_broken() -> Bool { false }
+
+fn (c: SessConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr { None }
+
+/// The oldest notification kept; a fake has nothing to wait for, so none
+/// is Driver.
+fn (c: SessConn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dial {
+  let got = c.notifs.with(fn(var xs: List[sql.Notification]) -> sql.Notification? {
+    if xs.is_empty() {
+      return None
+    }
+    Some(xs.remove_at(0))
+  })
+  match got {
+    Some(n) => Ok(n)
+    None => Err(sql.SqlErr.Driver(msg: "no notification"))
+  }
+}
+
+fn (c: SessConn) notices() -> List[sql.Notice] {
+  c.notes.with(fn(var xs: List[sql.Notice]) -> List[sql.Notice] {
+    let all = xs
+    xs = []
+    all
+  })
+}
+
+fn sess_log(log: Mutex[List[Str]]) -> Str {
+  log.with(fn(var ls: List[Str]) -> Str {
+    let s = ls.join("|")
+    ls = []
+    s
+  })
+}
+
+test "Db.conn holds one connection across calls, a second Conn takes another, and close gives it back; Closed after close" {
+  let d = SessDriver{connects: Atomic.new(0), log: Mutex.new([])}
+  let db = sql.open_driver(os.net, d, "sess", max_open: 2)?
+  let c = db.conn()?
+  expect(c.query_one("SELECT conn")?.int("conn")?) == 1
+  c.exec("SET search_path TO x")?
+  expect(c.query_one("SELECT conn")?.int("conn")?) == 1
+  let c2 = db.conn()?
+  expect(c2.query_one("SELECT conn")?.int("conn")?) == 2
+  expect(sess_log(d.log)) == "1 SELECT conn|1 SET search_path TO x|1 SELECT conn|2 SELECT conn"
+  c2.close()
+  c2.close()
+  expect(c2.exec("SELECT 1").err()) == Some(sql.SqlErr.Closed)
+  expect(c2.query("SELECT 1").err()) == Some(sql.SqlErr.Closed)
+  expect(c2.begin().err()) == Some(sql.SqlErr.Closed)
+  // two permits: c holds one, so the Db runs on the one c2 gave back
+  expect(db.query_one("SELECT conn")?.int("conn")?) == 2
+  c.close()
+  expect(d.connects.get()) == 2
+  db.close()?
+}
+
+test "a Conn's transaction keeps the connection, and close rolls back one left open" {
+  let d = SessDriver{connects: Atomic.new(0), log: Mutex.new([])}
+  let db = sql.open_driver(os.net, d, "sess", max_open: 1)?
+  let c = db.conn()?
+  let tx = c.begin(isolation: sql.Isolation.Serializable, read_only: true, deferrable: true)?
+  tx.exec("INSERT 1")?
+  tx.commit()?
+  expect(tx.commit().err()) == Some(sql.SqlErr.TxDone)
+  c.exec("SELECT after")?
+  let open = c.begin()?
+  open.exec("INSERT 2")?
+  c.close()
+  expect(open.exec("INSERT 3").err()) == Some(sql.SqlErr.TxDone)
+  expect(sess_log(d.log)) == "1 BEGIN|1 SET TRANSACTION ISOLATION LEVEL SERIALIZABLE, READ ONLY, DEFERRABLE|1 INSERT 1|1 COMMIT|1 SELECT after|1 BEGIN|1 INSERT 2|1 ROLLBACK"
+  // max_open 1: the connection is back in the pool
+  db.exec("SELECT pool")?
+  db.close()?
+}
+
+test "pgx TestTxNestedTransactionCommit: savepoints sp_1 and sp_2 inside one transaction, released in order" {
+  let d = SessDriver{connects: Atomic.new(0), log: Mutex.new([])}
+  let db = sql.open_driver(os.net, d, "sess", max_open: 1)?
+  let tx = db.begin()?
+  tx.exec("insert into foo(id) values (1)")?
+  let nested = tx.begin()?
+  nested.exec("insert into foo(id) values (2)")?
+  let double = nested.begin()?
+  double.exec("insert into foo(id) values (3)")?
+  double.commit()?
+  nested.commit()?
+  tx.commit()?
+  expect(sess_log(d.log)) == "1 BEGIN|1 insert into foo(id) values (1)|1 savepoint sp_1|1 insert into foo(id) values (2)|1 savepoint sp_2|1 insert into foo(id) values (3)|1 release savepoint sp_2|1 release savepoint sp_1|1 COMMIT"
+  db.close()?
+}
+
+test "pgx TestTxNestedTransactionRollback: a savepoint's rollback, then the outer transaction goes on; an outer end ends the nested one" {
+  let d = SessDriver{connects: Atomic.new(0), log: Mutex.new([])}
+  let db = sql.open_driver(os.net, d, "sess", max_open: 1)?
+  let tx = db.begin()?
+  tx.exec("insert into foo(id) values (1)")?
+  let nested = tx.begin()?
+  nested.exec("insert into foo(id) values (2)")?
+  nested.rollback()?
+  expect(nested.exec("insert into foo(id) values (9)").err()) == Some(sql.SqlErr.TxDone)
+  tx.exec("insert into foo(id) values (3)")?
+  let left = tx.begin()?
+  tx.commit()?
+  expect(left.exec("insert into foo(id) values (4)").err()) == Some(sql.SqlErr.TxDone)
+  expect(left.commit().err()) == Some(sql.SqlErr.TxDone)
+  left.rollback()?
+  expect(sess_log(d.log)) == "1 BEGIN|1 insert into foo(id) values (1)|1 savepoint sp_1|1 insert into foo(id) values (2)|1 rollback to savepoint sp_1|1 insert into foo(id) values (3)|1 savepoint sp_2|1 COMMIT"
+  db.close()?
+}
+
+test "pgx TestTxNestedTransactionCommit and Rollback on the in memory Db" {
+  let db = sql.memory("CREATE TABLE foo (id INT UNIQUE)")?
+  let tx = db.begin()?
+  tx.exec("INSERT INTO foo (id) VALUES (1)")?
+  let nested = tx.begin()?
+  nested.exec("INSERT INTO foo (id) VALUES (2)")?
+  let double = nested.begin()?
+  double.exec("INSERT INTO foo (id) VALUES (3)")?
+  double.commit()?
+  nested.commit()?
+  expect(db.query("SELECT id FROM foo")?.len()) == 0
+  tx.commit()?
+  expect(db.query("SELECT id FROM foo")?.len()) == 3
+  let tx2 = db.begin()?
+  tx2.exec("INSERT INTO foo (id) VALUES (4)")?
+  let n2 = tx2.begin()?
+  n2.exec("INSERT INTO foo (id) VALUES (5)")?
+  expect(n2.query("SELECT id FROM foo")?.len()) == 5
+  n2.rollback()?
+  expect(tx2.query("SELECT id FROM foo")?.len()) == 4
+  tx2.exec("INSERT INTO foo (id) VALUES (6)")?
+  tx2.commit()?
+  expect(db.query("SELECT id FROM foo")?.len()) == 5
+  db.close()?
+}
+
+test "a Conn on the in memory Db runs on the Db, has no LISTEN/NOTIFY, and is Closed after close" {
+  let db = sql.memory("CREATE TABLE t (id INT)")?
+  let c = db.conn()?
+  c.exec("INSERT INTO t (id) VALUES (1)")?
+  expect(db.query("SELECT id FROM t")?.len()) == 1
+  let tx = c.begin()?
+  tx.exec("INSERT INTO t (id) VALUES (2)")?
+  tx.commit()?
+  expect(c.query("SELECT id FROM t")?.len()) == 2
+  c.ping()?
+  expect(c.listen("ch").err().map(fn(e: sql.SqlErr) -> Bool { e is Driver(..) })) == Some(true)
+  expect(c.wait_notification().err().map(fn(e: sql.SqlErr) -> Bool { e is Driver(..) })) == Some(true)
+  c.close()
+  expect(c.query("SELECT id FROM t").err()) == Some(sql.SqlErr.Closed)
+  db.close()?
+}
+
+test "LISTEN and UNLISTEN quote the channel, notifications are kept in order, and close runs UNLISTEN *" {
+  let d = SessDriver{connects: Atomic.new(0), log: Mutex.new([])}
+  let db = sql.open_driver(os.net, d, "sess", max_open: 1)?
+  let c = db.conn()?
+  c.listen("chat")?
+  c.listen("we\"ird")?
+  c.exec("NOTIFY chat hello")?
+  c.exec("NOTIFY chat again")?
+  expect(c.wait_notification()?) == sql.Notification{pid: 4242, channel: "chat", payload: "hello"}
+  expect(c.wait_notification()?.payload) == "again"
+  expect(c.wait_notification().err()) == Some(sql.SqlErr.Driver(msg: "no notification"))
+  c.unlisten("chat")?
+  c.close()
+  expect(c.wait_notification().err()) == Some(sql.SqlErr.Closed)
+  expect(sess_log(d.log)) == "1 LISTEN \"chat\"|1 LISTEN \"we\"\"ird\"|1 NOTIFY chat hello|1 NOTIFY chat again|1 UNLISTEN \"chat\"|1 UNLISTEN *"
+  db.close()?
+}
+
+test "on_notice gets each notice in order after the call that received it (pgconn TestConnOnNotice)" {
+  let d = SessDriver{connects: Atomic.new(0), log: Mutex.new([])}
+  let got: Mutex[List[sql.Notice]] = Mutex.new([])
+  let db = sql.open_driver(os.net, d, "sess", max_open: 1, on_notice: Some(fn(n: sql.Notice) { got.with(fn(var xs: List[sql.Notice]) -> () { xs.push(n) }) }))?
+  db.exec("RAISE hello,world")?
+  expect(got.with_read(fn(xs: List[sql.Notice]) -> List[Str] { xs.map(fn(n: sql.Notice) -> Str { "${n.severity} ${n.message}" }) })) == ["NOTICE hello,world"]
+  let tx = db.begin()?
+  tx.exec("WARN careful")?
+  tx.exec("RAISE two")?
+  tx.commit()?
+  let c = db.conn()?
+  c.exec("RAISE three")?
+  c.close()
+  let all = got.with_read(fn(xs: List[sql.Notice]) -> List[sql.Notice] { xs })
+  expect(all.map(fn(n: sql.Notice) -> Str { n.message })) == ["hello,world", "careful", "two", "three"]
+  expect(all[1]) == sql.Notice{severity: "WARNING", code: "01000", message: "careful", hint: "h"}
   db.close()?
 }

@@ -58,6 +58,13 @@ fn (c: FakeConn) is_broken() -> Bool { c.broken.get() }
 /// No statements on the server: std/sql runs the text each time.
 fn (c: FakeConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr { None }
 
+/// No LISTEN/NOTIFY and no notices (decision 0648 item 14).
+fn (c: FakeConn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no LISTEN/NOTIFY"))
+}
+
+fn (c: FakeConn) notices() -> List[sql.Notice] { [] }
+
 fn main(os: Os) ! {
   let log = Log{lines: Mutex.new([]), next: Atomic.new(0)}
   match sql.open_driver(os.net, FakeDriver{log: log, fail_password: true}, "x") {

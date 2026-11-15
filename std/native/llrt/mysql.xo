@@ -1263,6 +1263,14 @@ fn (p: MyConn) is_broken() -> Bool { p.broken.get() }
 /// whatever interpolateParams says, as go-sql-driver's Prepare.
 fn (p: MyConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr uses net.dial { Some(prepare_on(p, q)?) }
 
+/// MySQL has no LISTEN/NOTIFY (decision 0648 item 14).
+fn (p: MyConn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "mysql: LISTEN/NOTIFY is Postgres only"))
+}
+
+/// MySQL's warnings are not notices: none (decision 0648 item 14).
+fn (p: MyConn) notices() -> List[sql.Notice] { [] }
+
 // ---------------------------------------------------------------------------
 // Column types (decision 0609)
 

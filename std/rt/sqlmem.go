@@ -139,6 +139,9 @@ type memTx struct {
 	b        *memBackend
 	tables   map[string]*memTable
 	readOnly bool
+	// parent is the transaction of a savepoint (Tx.begin, decision 0648
+	// item 14): commit writes the tables there
+	parent *memTx
 }
 
 func (t *memTx) Query(q string, args []any) ([]string, [][]any, error) {
@@ -184,6 +187,10 @@ func memReadOnly(q string) error {
 }
 
 func (t *memTx) Commit() error {
+	if t.parent != nil {
+		t.parent.tables = t.tables
+		return nil
+	}
 	t.b.db.mu.Lock()
 	t.b.db.tables = t.tables
 	t.b.db.mu.Unlock()

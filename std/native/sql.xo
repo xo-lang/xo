@@ -67,6 +67,8 @@ struct Pool[fx: Effects] {
   max_idle: Int
   /// Nanoseconds; 0 for none.
   max_lifetime: Int
+  /// open's on_notice: each new connection is a Noticed then.
+  on_notice: (fn(sql.Notice))? = None
 }
 
 /// The pool's clock for connection ages: the monotonic clock, except in
@@ -131,7 +133,7 @@ fn (p: Pool) take() -> Taken ! sql.SqlErr uses net.dial {
     }
   }
   match p.drv.connect(p.net, p.dsn) {
-    Ok(c) => Taken{c: c, born: now, stmts: Mutex.new([])}
+    Ok(c) => Taken{c: noticed(p, c), born: now, stmts: Mutex.new([])}
     Err(e) => {
       p.permits.send(true)
       Err(e)
@@ -215,7 +217,95 @@ fn (p: Pool) close_idle() {
   }
 }
 
-fn open_driver(net: Net, d: sql.Driver, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m) -> Db ! sql.SqlErr uses net.dial {
+// ---------------------------------------------------------------------------
+// Notices (decision 0648 item 14): open's on_notice after each call
+
+/// c, or c as a Noticed when open was given on_notice.
+fn noticed[fx: Effects](p: Pool[fx], c: sql.DriverConn[fx]) -> sql.DriverConn[fx] {
+  if let Some(h) = p.on_notice {
+    return Noticed{c: c, h: h}
+  }
+  c
+}
+
+/// A connection whose notices go to on_notice after each call, in order
+/// (pgconn calls OnNotice as it reads each NoticeResponse).
+struct Noticed[fx: Effects] {
+  c: sql.DriverConn[fx]
+  h: fn(sql.Notice)
+}
+
+fn (n: Noticed) drain() {
+  let h = n.h
+  for x in n.c.notices() {
+    h(x)
+  }
+}
+
+fn (n: Noticed) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  let r = n.c.query(q, args)
+  n.drain()
+  r
+}
+
+fn (n: Noticed) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  let r = n.c.exec(q, args)
+  n.drain()
+  r
+}
+
+fn (n: Noticed) begin() -> () ! sql.SqlErr uses net.dial {
+  let r = n.c.begin()
+  n.drain()
+  r
+}
+
+fn (n: Noticed) commit() -> () ! sql.SqlErr uses net.dial {
+  let r = n.c.commit()
+  n.drain()
+  r
+}
+
+fn (n: Noticed) rollback() -> () ! sql.SqlErr uses net.dial {
+  let r = n.c.rollback()
+  n.drain()
+  r
+}
+
+fn (n: Noticed) ping() -> () ! sql.SqlErr uses net.dial {
+  let r = n.c.ping()
+  n.drain()
+  r
+}
+
+fn (n: Noticed) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  let r = n.c.copy_from(table, columns, rows)
+  n.drain()
+  r
+}
+
+fn (n: Noticed) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr uses net.dial {
+  let r = n.c.prepare(q)
+  n.drain()
+  r
+}
+
+fn (n: Noticed) close() uses net.dial {
+  n.c.close()
+}
+
+fn (n: Noticed) is_broken() -> Bool { n.c.is_broken() }
+
+fn (n: Noticed) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dial {
+  let r = n.c.wait_notification()
+  n.drain()
+  r
+}
+
+/// Drained after each call already.
+fn (n: Noticed) notices() -> List[sql.Notice] { n.c.notices() }
+
+fn open_driver(net: Net, d: sql.Driver, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, on_notice: (fn(sql.Notice))? = None) -> Db ! sql.SqlErr uses net.dial {
   if task.is_canceled() {
     return Err(sql.SqlErr.Canceled)
   }
@@ -226,7 +316,7 @@ fn open_driver(net: Net, d: sql.Driver, dsn: Str, max_open: Int = 10, max_idle: 
   for _ in 0..max_open {
     permits.send(true)
   }
-  let p = Pool{net: net, drv: d, dsn: dsn, permits: permits, idle: Mutex.new([]), max_idle: max_idle.max(0), max_lifetime: max_lifetime.nanos().max(0)}
+  let p = Pool{net: net, drv: d, dsn: dsn, permits: permits, idle: Mutex.new([]), max_idle: max_idle.max(0), max_lifetime: max_lifetime.nanos().max(0), on_notice: on_notice}
   // connect once now, so a wrong password or host fails at open
   p.ping()?
   let db = new_db({})
@@ -242,12 +332,48 @@ struct Tx[fx: Effects] {
   db: Db[fx]
   /// A transaction of a driver: its connection, held from begin to its end.
   conn: Taken[fx]? = None
+  /// A savepoint's name (Tx.begin, decision 0648 item 14); "" for a
+  /// transaction.
+  savepoint: Str = ""
+  /// Db.begin's: its end gives the connection back to the pool (a driver)
+  /// or the writer permit (the in memory database). A Conn's transaction,
+  /// a savepoint and a Conn's own session leave them to their owner.
+  owns: Bool = true
+  /// The transactions and Conn this one is inside, innermost last: once
+  /// one ends, this one is done too (TxDone).
+  outer: List[Mutex[TxState]] = []
+  /// The last savepoint number of the outermost transaction (pgx's
+  /// savepointNum), shared by every savepoint inside it.
+  sp: Atomic[Int]
 }
 
 struct TxState {
   tables: Map[Str, Table]
   done: Bool
   read_only: Bool = false
+  /// A Conn's session (Db.conn): done after close, with Closed.
+  is_conn: Bool = false
+}
+
+/// Why t cannot run now: its own end (TxDone, Closed for a Conn's
+/// session) or the end of a transaction or Conn it is inside (TxDone).
+fn ended(t: Tx, ts: TxState) -> sql.SqlErr? {
+  if ts.done {
+    return Some(if ts.is_conn { sql.SqlErr.Closed } else { sql.SqlErr.TxDone })
+  }
+  if outer_ended(t) {
+    return Some(sql.SqlErr.TxDone)
+  }
+  None
+}
+
+fn outer_ended(t: Tx) -> Bool {
+  for o in t.outer {
+    if o.with_read(fn(os) { os.done }) {
+      return true
+    }
+  }
+  false
 }
 
 struct Row {
@@ -289,7 +415,7 @@ fn memory(schema: Str = "") -> Db ! sql.SqlErr {
   new_db(tables)
 }
 
-fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"", loc: time.Zone = time.utc(), server_pub_key: Bytes = b"") -> Db ! sql.SqlErr uses net.dial {
+fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"", loc: time.Zone = time.utc(), server_pub_key: Bytes = b"", on_notice: (fn(sql.Notice))? = None) -> Db ! sql.SqlErr uses net.dial {
   if task.is_canceled() {
     return Err(sql.SqlErr.Canceled)
   }
@@ -303,11 +429,11 @@ fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, 
   }
   if driver is "postgres" | "postgresql" {
     // the driver is Xo and dials through net, so Net.only applies (decision 0278)
-    return open_driver(net, pg.PgDriver{roots: roots}, dsn, max_open: max_open, max_idle: max_idle, max_lifetime: max_lifetime)
+    return open_driver(net, pg.PgDriver{roots: roots}, dsn, max_open: max_open, max_idle: max_idle, max_lifetime: max_lifetime, on_notice: on_notice)
   }
   if driver == "mysql" {
     // the driver is Xo and dials through net, as Postgres's (decision 0648)
-    return open_driver(net, mysql.MysqlDriver{roots: roots, zone: loc, pub_key: server_pub_key}, dsn, max_open: max_open, max_idle: max_idle, max_lifetime: max_lifetime)
+    return open_driver(net, mysql.MysqlDriver{roots: roots, zone: loc, pub_key: server_pub_key}, dsn, max_open: max_open, max_idle: max_idle, max_lifetime: max_lifetime, on_notice: on_notice)
   }
   if !rt.net_lists(net).is_empty() {
     // the driver dials by itself, so an allowlist cannot be enforced:
@@ -396,35 +522,41 @@ fn (d: Db) close() -> () ! sql.SqlErr {
   }
 }
 
-fn (d: Db) begin(isolation: sql.Isolation = sql.Isolation.Default, read_only: Bool = false) -> Tx ! sql.SqlErr uses net.dial {
+fn (d: Db) begin(isolation: sql.Isolation = sql.Isolation.Default, read_only: Bool = false, deferrable: Bool = false) -> Tx ! sql.SqlErr uses net.dial {
   d.ready()?
   if let Some(p) = d.pool {
     // the transaction holds its permit and connection until it ends
     let t = p.take()?
-    if let Err(e) = t.c.begin() {
+    if let Err(e) = begin_on(t, isolation, read_only, deferrable) {
       give(p, t)
       return Err(e)
     }
-    if let Some(mode) = tx_mode(isolation, read_only) {
-      if let Err(e) = t.c.exec(mode, []) {
-        let _ = t.c.rollback().ignore_err("the SET TRANSACTION error is the one to report")
-        give(p, t)
-        return Err(e)
-      }
-    }
-    return Tx{st: Mutex.new(TxState{tables: {}, done: false}), db: d, conn: Some(t)}
+    return Tx{st: Mutex.new(TxState{tables: {}, done: false}), db: d, conn: Some(t), sp: Atomic.new(0)}
   }
   // the single writer permit; waiting is a cancellation point
   if d.writer.recv() is None {
     return Err(sql.SqlErr.Canceled)
   }
   let tables = d.st.with_read(fn(st) { st.tables })
-  Tx{st: Mutex.new(TxState{tables: tables, done: false, read_only: read_only}), db: d}
+  Tx{st: Mutex.new(TxState{tables: tables, done: false, read_only: read_only}), db: d, sp: Atomic.new(0)}
+}
+
+/// BEGIN on t, then the options' SET TRANSACTION; when that fails, the
+/// transaction is rolled back and its error is the one returned.
+fn begin_on[fx: Effects](t: Taken[fx], isolation: sql.Isolation, read_only: Bool, deferrable: Bool) -> () ! sql.SqlErr uses (net.dial, fx) {
+  t.c.begin()?
+  if let Some(mode) = tx_mode(isolation, read_only, deferrable) {
+    if let Err(e) = t.c.exec(mode, []) {
+      let _ = t.c.rollback().ignore_err("the SET TRANSACTION error is the one to report")
+      return Err(e)
+    }
+  }
 }
 
 /// The statement that sets a driver transaction's options after BEGIN
-/// (pgx's stdlib puts the same modes in its BEGIN); None for the defaults.
-fn tx_mode(isolation: sql.Isolation, read_only: Bool) -> Str? {
+/// (pgx's stdlib puts the same modes in its BEGIN, pgx's TxOptions
+/// DeferrableMode the DEFERRABLE); None for the defaults.
+fn tx_mode(isolation: sql.Isolation, read_only: Bool, deferrable: Bool) -> Str? {
   var modes: List[Str] = []
   match isolation {
     Default => {}
@@ -435,6 +567,9 @@ fn tx_mode(isolation: sql.Isolation, read_only: Bool) -> Str? {
   }
   if read_only {
     modes.push("READ ONLY")
+  }
+  if deferrable {
+    modes.push("DEFERRABLE")
   }
   if modes.is_empty() {
     return None
@@ -459,16 +594,16 @@ fn (t: Tx) query(q: Str, args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlEr
   }
   if let Some(tc) = t.conn {
     let rows = t.st.with(fn(var ts) -> sql.DriverRows ! sql.SqlErr {
-      if ts.done {
-        return Err(sql.SqlErr.TxDone)
+      if let Some(e) = ended(t, ts) {
+        return Err(e)
       }
       drain_rows(tc.c.query(q, args)?)
     })?
     return to_rows(rows.columns, rows.column_types, rows.rows)
   }
   let res = t.st.with(fn(var ts) -> MemRows ! sql.SqlErr {
-    if ts.done {
-      return Err(sql.SqlErr.TxDone)
+    if let Some(e) = ended(t, ts) {
+      return Err(e)
     }
     var work = ts.tables
     let r = mem_run(work, q, args)?
@@ -492,15 +627,15 @@ fn (t: Tx) exec(q: Str, args: List[sql.SqlValue] = []) -> sql.ExecResult ! sql.S
   }
   if let Some(tc) = t.conn {
     return t.st.with(fn(var ts) -> sql.ExecResult ! sql.SqlErr {
-      if ts.done {
-        return Err(sql.SqlErr.TxDone)
+      if let Some(e) = ended(t, ts) {
+        return Err(e)
       }
       tc.c.exec(q, args)
     })
   }
   t.st.with(fn(var ts) -> sql.ExecResult ! sql.SqlErr {
-    if ts.done {
-      return Err(sql.SqlErr.TxDone)
+    if let Some(e) = ended(t, ts) {
+      return Err(e)
     }
     if ts.read_only {
       if let Some(e) = read_only_refusal(q) {
@@ -538,42 +673,90 @@ fn finish_once(t: Tx) -> Bool {
 fn (t: Tx) commit() -> () ! sql.SqlErr uses net.dial {
   let db = t.db
   if let Some(tc) = t.conn {
-    if finish_once(t) {
+    if finish_once(t) || outer_ended(t) {
+      // an outer end already gave the connection back
       return Err(sql.SqlErr.TxDone)
     }
+    if !t.savepoint.is_empty() {
+      let _ = tc.c.exec("release savepoint ${t.savepoint}", [])?
+      return Ok(())
+    }
     let r = tc.c.commit()
-    close_tx_stmts(tc)
-    give(db.pool.or_fault("a driver's transaction has a pool"), tc)
+    if t.owns {
+      close_tx_stmts(tc)
+      give(db.pool.or_fault("a driver's transaction has a pool"), tc)
+    }
     return r
   }
   t.st.with(fn(var ts) -> () ! sql.SqlErr {
-    if ts.done {
-      return Err(sql.SqlErr.TxDone)
+    if let Some(e) = ended(t, ts) {
+      return Err(e)
     }
     ts.done = true
     let tables = ts.tables
-    db.st.with(fn(var st) { st.tables = tables })
-    db.writer.send(true)
+    if t.owns {
+      db.st.with(fn(var st) { st.tables = tables })
+      db.writer.send(true)
+    } else if let Some(up) = t.outer.last() {
+      // a savepoint's tables become the outer transaction's
+      up.with(fn(var us) { us.tables = tables })
+    }
+    Ok(())
   })
 }
 
 fn (t: Tx) rollback() -> () ! sql.SqlErr uses net.dial {
   let db = t.db
   if let Some(tc) = t.conn {
-    if finish_once(t) {
+    if finish_once(t) || outer_ended(t) {
+      return Ok(())
+    }
+    if !t.savepoint.is_empty() {
+      let _ = tc.c.exec("rollback to savepoint ${t.savepoint}", [])?
       return Ok(())
     }
     let r = tc.c.rollback()
-    close_tx_stmts(tc)
-    give(db.pool.or_fault("a driver's transaction has a pool"), tc)
+    if t.owns {
+      close_tx_stmts(tc)
+      give(db.pool.or_fault("a driver's transaction has a pool"), tc)
+    }
     return r
   }
   t.st.with(fn(var ts) {
     if !ts.done {
       ts.done = true
-      db.writer.send(true)
+      if t.owns {
+        db.writer.send(true)
+      }
     }
   })
+}
+
+/// A savepoint inside t (decision 0648 item 14, pgx's Tx.Begin).
+fn (t: Tx) begin() -> Tx ! sql.SqlErr uses net.dial {
+  if task.is_canceled() {
+    return Err(sql.SqlErr.Canceled)
+  }
+  var outer = t.outer
+  outer.push(t.st)
+  if let Some(tc) = t.conn {
+    let name = t.st.with(fn(var ts) -> Str ! sql.SqlErr {
+      if let Some(e) = ended(t, ts) {
+        return Err(e)
+      }
+      let name = "sp_${t.sp.add(1)}"
+      let _ = tc.c.exec("savepoint ${name}", [])?
+      name
+    })?
+    return Tx{st: Mutex.new(TxState{tables: {}, done: false}), db: t.db, conn: t.conn, savepoint: name, owns: false, outer: outer, sp: t.sp}
+  }
+  let (tables, ro) = t.st.with(fn(var ts) -> (Map[Str, Table], Bool) ! sql.SqlErr {
+    if let Some(e) = ended(t, ts) {
+      return Err(e)
+    }
+    (ts.tables, ts.read_only)
+  })?
+  Tx{st: Mutex.new(TxState{tables: tables, done: false, read_only: ro}), db: t.db, savepoint: "sp_${t.sp.add(1)}", owns: false, outer: outer, sp: t.sp}
 }
 
 // ---------------------------------------------------------------------------
@@ -659,16 +842,16 @@ fn (t: Tx) rows(q: Str, args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses
   }
   if let Some(tc) = t.conn {
     let x = t.st.with(fn(var ts) -> sql.DriverRows ! sql.SqlErr {
-      if ts.done {
-        return Err(sql.SqlErr.TxDone)
+      if let Some(e) = ended(t, ts) {
+        return Err(e)
       }
       tc.c.query(q, args)
     })?
     return new_rows(x.columns, x.column_types, RowsState{buf: x.rows, pos: 0, cursor: x.cursor})
   }
   let res = t.st.with(fn(var ts) -> MemRows ! sql.SqlErr {
-    if ts.done {
-      return Err(sql.SqlErr.TxDone)
+    if let Some(e) = ended(t, ts) {
+      return Err(e)
     }
     var work = ts.tables
     let r = mem_run(work, q, args)?
@@ -709,8 +892,8 @@ fn (t: Tx) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlV
   }
   if let Some(tc) = t.conn {
     return t.st.with(fn(var ts) -> Int ! sql.SqlErr {
-      if ts.done {
-        return Err(sql.SqlErr.TxDone)
+      if let Some(e) = ended(t, ts) {
+        return Err(e)
       }
       tc.c.copy_from(table, columns, rows)
     })
@@ -938,8 +1121,8 @@ fn (t: Tx) prepare(q: Str) -> Stmt ! sql.SqlErr uses net.dial {
   }
   let s = Stmt{db: t.db, tx: Some(t), q: q, id: t.db.stmt_ids.add(1), closed: Atomic.new(false)}
   t.st.with(fn(var ts) -> () ! sql.SqlErr {
-    if ts.done {
-      return Err(sql.SqlErr.TxDone)
+    if let Some(e) = ended(t, ts) {
+      return Err(e)
     }
     if let Some(tc) = t.conn {
       let _ = stmt_on(tc, s)?
@@ -958,8 +1141,8 @@ fn (s: Stmt) ready() -> () ! sql.SqlErr {
     if task.is_canceled() {
       return Err(sql.SqlErr.Canceled)
     }
-    if tx.st.with_read(fn(ts) { ts.done }) {
-      return Err(sql.SqlErr.TxDone)
+    if let Some(e) = tx.st.with_read(fn(ts) { ended(tx, ts) }) {
+      return Err(e)
     }
     if s.closed.get() {
       return Err(sql.SqlErr.Closed)
@@ -977,8 +1160,8 @@ fn (s: Stmt) query(args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlErr uses
   if let Some(tx) = s.tx {
     if let Some(tc) = tx.conn {
       let rows = tx.st.with(fn(var ts) -> sql.DriverRows ! sql.SqlErr {
-        if ts.done {
-          return Err(sql.SqlErr.TxDone)
+        if let Some(e) = ended(tx, ts) {
+          return Err(e)
         }
         drain_rows(stmt_query(tc, s, args)?)
       })?
@@ -1012,8 +1195,8 @@ fn (s: Stmt) exec(args: List[sql.SqlValue] = []) -> sql.ExecResult ! sql.SqlErr 
   if let Some(tx) = s.tx {
     if let Some(tc) = tx.conn {
       return tx.st.with(fn(var ts) -> sql.ExecResult ! sql.SqlErr {
-        if ts.done {
-          return Err(sql.SqlErr.TxDone)
+        if let Some(e) = ended(tx, ts) {
+          return Err(e)
         }
         stmt_exec(tc, s, args)
       })
@@ -1034,8 +1217,8 @@ fn (s: Stmt) rows(args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses net.d
   if let Some(tx) = s.tx {
     if let Some(tc) = tx.conn {
       let x = tx.st.with(fn(var ts) -> sql.DriverRows ! sql.SqlErr {
-        if ts.done {
-          return Err(sql.SqlErr.TxDone)
+        if let Some(e) = ended(tx, ts) {
+          return Err(e)
         }
         stmt_query(tc, s, args)
       })?
@@ -1150,16 +1333,16 @@ fn (t: Tx) query_all(q: Str, args: List[sql.SqlValue] = []) -> List[ResultSet] !
   }
   if let Some(tc) = t.conn {
     let x = t.st.with(fn(var ts) -> sql.DriverRows ! sql.SqlErr {
-      if ts.done {
-        return Err(sql.SqlErr.TxDone)
+      if let Some(e) = ended(t, ts) {
+        return Err(e)
       }
       drain_rows(tc.c.query(q, args)?)
     })?
     return result_sets(x)
   }
   let rs = t.st.with(fn(var ts) -> List[MemRows] ! sql.SqlErr {
-    if ts.done {
-      return Err(sql.SqlErr.TxDone)
+    if let Some(e) = ended(t, ts) {
+      return Err(e)
     }
     if ts.read_only {
       if let Some(e) = read_only_refusal(q) {
@@ -1172,6 +1355,210 @@ fn (t: Tx) query_all(q: Str, args: List[sql.SqlValue] = []) -> List[ResultSet] !
     r
   })?
   mem_sets(rs)
+}
+
+// ---------------------------------------------------------------------------
+// Conn: one pool connection held across calls (decision 0648 item 14)
+
+struct Conn[fx: Effects] {
+  db: Db[fx]
+  /// A driver's connection, as a transaction that never ran BEGIN: its
+  /// state is the Conn's (done after close, with Closed), its conn the
+  /// held one, and it does not own it (close gives it back). None on the
+  /// in memory database, where a Conn runs on the Db.
+  tx: Tx[fx]? = None
+  closed: Atomic[Bool]
+  listened: Atomic[Bool]
+  /// The states of the transactions begun on the Conn: one still open at
+  /// close is rolled back first.
+  txs: Mutex[List[Mutex[TxState]]]
+}
+
+const NO_NOTIFY = "LISTEN/NOTIFY: the in memory database has no notifications"
+
+fn (d: Db) conn() -> Conn ! sql.SqlErr uses net.dial {
+  d.ready()?
+  var tx: Tx? = None
+  if let Some(p) = d.pool {
+    let t = p.take()?
+    tx = Some(Tx{st: Mutex.new(TxState{tables: {}, done: false, is_conn: true}), db: d, conn: Some(t), owns: false, sp: Atomic.new(0)})
+  }
+  Conn{db: d, tx: tx, closed: Atomic.new(false), listened: Atomic.new(false), txs: Mutex.new([])}
+}
+
+/// The Conn's session: a driver's, or None on the in memory database;
+/// Closed after close.
+fn (c: Conn) on() -> Tx? ! sql.SqlErr {
+  if c.closed.get() {
+    return Err(sql.SqlErr.Closed)
+  }
+  c.tx
+}
+
+fn (c: Conn) query(q: Str, args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlErr uses net.dial {
+  match c.on()? {
+    Some(t) => t.query(q, args)
+    None => c.db.query(q, args)
+  }
+}
+
+fn (c: Conn) rows(q: Str, args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses net.dial {
+  match c.on()? {
+    Some(t) => t.rows(q, args)
+    None => c.db.rows(q, args)
+  }
+}
+
+fn (c: Conn) each(q: Str, args: List[sql.SqlValue], f: fn(Row) -> () ! sql.SqlErr) -> () ! sql.SqlErr uses net.dial {
+  rows_each(c.rows(q, args)?, f)
+}
+
+fn (c: Conn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  match c.on()? {
+    Some(t) => t.copy_from(table, columns, rows)
+    None => c.db.copy_from(table, columns, rows)
+  }
+}
+
+fn (c: Conn) query_one(q: Str, args: List[sql.SqlValue] = []) -> Row ! sql.SqlErr uses net.dial {
+  let rows = c.query(q, args)?
+  if rows.is_empty() {
+    return Err(sql.SqlErr.NoRows)
+  }
+  rows[0]
+}
+
+fn (c: Conn) exec(q: Str, args: List[sql.SqlValue] = []) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  match c.on()? {
+    Some(t) => t.exec(q, args)
+    None => c.db.exec(q, args)
+  }
+}
+
+fn (c: Conn) query_as[T: SqlRow](q: Str, args: List[sql.SqlValue] = []) -> List[T] ! sql.SqlErr uses net.dial {
+  decode_all(c.query(q, args)?)
+}
+
+fn (c: Conn) query_one_as[T: SqlRow](q: Str, args: List[sql.SqlValue] = []) -> T ! sql.SqlErr uses net.dial {
+  c.query_one(q, args)?.decode[T]()
+}
+
+fn (c: Conn) begin(isolation: sql.Isolation = sql.Isolation.Default, read_only: Bool = false, deferrable: Bool = false) -> Tx ! sql.SqlErr uses net.dial {
+  let s = match c.on()? {
+    Some(t) => t
+    None => return c.db.begin(isolation, read_only, deferrable)
+  }
+  if task.is_canceled() {
+    return Err(sql.SqlErr.Canceled)
+  }
+  let tc = s.conn.or_fault("a Conn's session holds a connection")
+  s.st.with(fn(var ts) -> () ! sql.SqlErr {
+    if let Some(e) = ended(s, ts) {
+      return Err(e)
+    }
+    begin_on(tc, isolation, read_only, deferrable)
+  })?
+  let tx = Tx{st: Mutex.new(TxState{tables: {}, done: false}), db: c.db, conn: Some(tc), owns: false, outer: [s.st], sp: Atomic.new(0)}
+  c.txs.with(fn(var xs) { xs.push(tx.st) })
+  tx
+}
+
+fn (c: Conn) prepare(q: Str) -> Stmt ! sql.SqlErr uses net.dial {
+  match c.on()? {
+    Some(t) => t.prepare(q)
+    None => c.db.prepare(q)
+  }
+}
+
+fn (c: Conn) query_all(q: Str, args: List[sql.SqlValue] = []) -> List[ResultSet] ! sql.SqlErr uses net.dial {
+  match c.on()? {
+    Some(t) => t.query_all(q, args)
+    None => c.db.query_all(q, args)
+  }
+}
+
+fn (c: Conn) ping() -> () ! sql.SqlErr uses net.dial {
+  let s = match c.on()? {
+    Some(t) => t
+    None => return c.db.ping()
+  }
+  if task.is_canceled() {
+    return Err(sql.SqlErr.Canceled)
+  }
+  let tc = s.conn.or_fault("a Conn's session holds a connection")
+  s.st.with(fn(var ts) -> () ! sql.SqlErr {
+    if let Some(e) = ended(s, ts) {
+      return Err(e)
+    }
+    tc.c.ping()
+  })
+}
+
+fn (c: Conn) listen(channel: Str) -> () ! sql.SqlErr uses net.dial {
+  if c.on()? is None {
+    return Err(sql.SqlErr.Driver(msg: NO_NOTIFY))
+  }
+  c.listened.set(true)
+  let _ = c.exec("LISTEN ${quote_ident(channel)}")?
+}
+
+fn (c: Conn) unlisten(channel: Str) -> () ! sql.SqlErr uses net.dial {
+  if c.on()? is None {
+    return Err(sql.SqlErr.Driver(msg: NO_NOTIFY))
+  }
+  let _ = c.exec("UNLISTEN ${quote_ident(channel)}")?
+}
+
+fn (c: Conn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dial {
+  let s = match c.on()? {
+    Some(t) => t
+    None => return Err(sql.SqlErr.Driver(msg: NO_NOTIFY))
+  }
+  let tc = s.conn.or_fault("a Conn's session holds a connection")
+  // no cancellation check first: a notification already received is
+  // returned to a cancelled task too, as pgx's
+  s.st.with(fn(var ts) -> sql.Notification ! sql.SqlErr {
+    if let Some(e) = ended(s, ts) {
+      return Err(e)
+    }
+    tc.c.wait_notification()
+  })
+}
+
+fn (c: Conn) close() uses net.dial {
+  if c.closed.swap(true) {
+    return
+  }
+  let s = match c.tx {
+    Some(t) => t
+    None => return
+  }
+  let tc = s.conn.or_fault("a Conn's session holds a connection")
+  // a transaction begun on the Conn and still open ends here, so the
+  // connection goes back to the pool idle (pgxpool destroys one that is not)
+  let open = c.txs.with(fn(var xs) {
+    let all = xs
+    xs = []
+    all
+  })
+  for st in open {
+    let was = st.with(fn(var ts) -> Bool {
+      let was = ts.done
+      ts.done = true
+      was
+    })
+    if !was {
+      let _ = tc.c.rollback().ignore_err("give drops a broken connection")
+    }
+  }
+  if finish_once(s) {
+    return
+  }
+  if c.listened.get() {
+    let _ = tc.c.exec("UNLISTEN *", []).ignore_err("give drops a broken connection")
+  }
+  close_tx_stmts(tc)
+  give(c.db.pool.or_fault("a driver's Conn has a pool"), tc)
 }
 
 fn (r: Row) columns() -> List[Str] { r.cols }

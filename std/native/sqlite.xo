@@ -484,6 +484,14 @@ fn (c: SqliteConn) is_broken() -> Bool { c.broken.get() }
 /// No statements on the server: std/sql runs the text each time.
 fn (c: SqliteConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr { None }
 
+/// No LISTEN/NOTIFY: it is Postgres only (decision 0648 item 14).
+fn (c: SqliteConn) wait_notification() -> sql.Notification ! sql.SqlErr {
+  Err(sql.SqlErr.Driver(msg: "sqlite: LISTEN/NOTIFY is Postgres only"))
+}
+
+/// No notices from this driver.
+fn (c: SqliteConn) notices() -> List[sql.Notice] { [] }
+
 /// The SQLite library's version, e.g. "3.54.1".
 pub fn version() -> Str uses fs {
   c3.sqlite3_libversion()

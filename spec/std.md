@@ -3360,7 +3360,8 @@ struct Db {}                                 // handle: copies share the databas
 pub fn open(net: Net, driver: Str, dsn: Str,
             max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m,
             roots: Bytes = b"", loc: time.Zone = time.utc(),   // roots: 10.8, 10.10; loc: 10.10
-            server_pub_key: Bytes = b"")                      // 10.10
+            server_pub_key: Bytes = b"",                      // 10.10
+            on_notice: (fn(Notice))? = None)                  // 10.12
     -> Db ! SqlErr uses net.dial
 pub fn memory(schema: Str = "") -> Db ! SqlErr         // no capability, no effect
 // std/testing: fake_db(schema: Str) -> Db ! SqlErr    // same as memory(schema)
@@ -3581,7 +3582,8 @@ fn add(db: sql.Db, owner: Int, body: Str, at: Time) -> Note ! sql.SqlErr uses ne
 
 ```
 enum Isolation { Default, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable }
-fn (d: Db) begin(isolation: Isolation = Isolation.Default, read_only: Bool = false) -> Tx ! SqlErr uses net.dial
+fn (d: Db) begin(isolation: Isolation = Isolation.Default, read_only: Bool = false, deferrable: Bool = false) -> Tx ! SqlErr uses net.dial
+fn (t: Tx) begin() -> Tx ! SqlErr uses net.dial    // a savepoint
 fn (t: Tx) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses net.dial
 fn (t: Tx) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (t: Tx) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
@@ -3614,7 +3616,20 @@ defaults; an error there rolls back and is `begin`'s error. The in memory
 driver is serializable whatever the level, and in a read only transaction
 refuses every statement but a SELECT with
 `Server(code: "25006", msg: "cannot execute INSERT in a read-only transaction")`,
-as Postgres does.
+as Postgres does. `deferrable` (pgx's `TxOptions.DeferrableMode`, decision
+0648 item 14) adds `DEFERRABLE` last; Postgres uses it for a serializable
+read only transaction, MySQL's server refuses it, the in memory driver
+ignores it.
+
+**Savepoints** (decision 0648 item 14, pgx's `Tx.Begin`): `t.begin()` is a
+pseudo nested transaction. On a driver's connection it runs `savepoint
+sp_N`, N counting the savepoints of the outermost transaction from 1; its
+`commit` runs `release savepoint sp_N` and its `rollback` `rollback to
+savepoint sp_N`, and the connection stays the outer transaction's. On the
+in memory driver it works on a copy of the outer transaction's tables
+that its `commit` writes back to the outer one (a later rollback of the
+outer one drops them). Once an outer transaction ends, the nested one is
+`TxDone` (its `rollback` succeeds and does nothing).
 
 ### 10.6 Errors and the in memory driver
 
@@ -3682,6 +3697,8 @@ interface DriverConn[fx: Effects] {
   fn prepare(self, q: Str) -> DriverStmt[fx]? ! SqlErr uses (net.dial, fx)   // None: no server statements
   fn close(self) uses (net.dial, fx)
   fn is_broken(self) -> Bool                       // dropped from the pool when true
+  fn wait_notification(self) -> Notification ! SqlErr uses (net.dial, fx)   // 10.12; Driver when none
+  fn notices(self) -> List[Notice]                 // 10.12; the notices since the last call
 }
 interface DriverStmt[fx: Effects] {               // a statement prepared on one connection (decision 0648 item 6)
   fn query(self, args: List[SqlValue]) -> DriverRows[fx] ! SqlErr uses (net.dial, fx)
@@ -3709,7 +3726,7 @@ interface DriverCursor[fx: Effects] {            // the rest of a result on the 
 }
 
 pub fn open_driver[fx: Effects](net: Net, d: Driver[fx], dsn: Str, max_open: Int = 10, max_idle: Int = 2,
-                   max_lifetime: Duration = 30m) -> Db[fx] ! SqlErr uses (net.dial, fx)
+                   max_lifetime: Duration = 30m, on_notice: (fn(Notice))? = None) -> Db[fx] ! SqlErr uses (net.dial, fx)
 ```
 
 **Column types** (decision 0609, Go's `Rows.ColumnTypes`):
@@ -3767,6 +3784,11 @@ the Go backend a driver bound with `use go` reports none.
   set that has columns in `DriverRows` and the later ones in `more`;
   `query`, `rows` and `query_one` use the first, `query_all` all of
   them. A cursor and `more` are not used together.
+- **Notifications and notices** (decision 0648 item 14): `wait_notification`
+  and `notices` are required since then. A driver without them adds `fn
+  wait_notification(self) -> sql.Notification ! sql.SqlErr {
+  Err(sql.SqlErr.Driver(msg: "LISTEN/NOTIFY is Postgres only")) }` and `fn
+  notices(self) -> List[sql.Notice] { [] }` (mysql and sqlite do).
 
 ### 10.8 Postgres
 
@@ -4046,6 +4068,53 @@ with `parseTime=true` too: go-sql-driver's Go zero time is not a `Time`.
 `column_types` (decision 0609) gives go-sql-driver's
 `DatabaseTypeName` (`UNSIGNED INT`, `VARBINARY`, `TEXT`, `ENUM`, ...),
 a DECIMAL's precision and scale, and nullability from the NOT NULL flag.
+
+### 10.12 Connections, LISTEN/NOTIFY and notices
+
+Status: implemented natively and on the Go backend (decision 0648 item
+14, 2026-11-15).
+
+```
+struct Conn {}                                   // handle: copies share the connection
+struct Notification { pid: Int, channel: Str, payload: Str }
+struct Notice { severity: Str, code: Str, message: Str, detail: Str = "", hint: Str = "" }
+
+fn (d: Db) conn() -> Conn ! SqlErr uses net.dial
+// query, rows, each, copy_from, query_one, exec, query_as, query_one_as,
+// prepare, query_all and ping as on Db (10.3), and:
+fn (c: Conn) begin(isolation: Isolation = Isolation.Default, read_only: Bool = false, deferrable: Bool = false) -> Tx ! SqlErr uses net.dial
+fn (c: Conn) listen(channel: Str) -> () ! SqlErr uses net.dial
+fn (c: Conn) unlisten(channel: Str) -> () ! SqlErr uses net.dial
+fn (c: Conn) wait_notification() -> Notification ! SqlErr uses net.dial
+fn (c: Conn) close() uses net.dial
+```
+
+`conn` takes one pool connection and a `max_open` permit (waiting is a
+cancellation point) and holds them until `close` (Go's `DB.Conn`, pgxpool's
+`Acquire` and `Release`): every call runs on that connection, so session
+state (`SET`, temporary tables, `LISTEN`) stays from one call to the next.
+A transaction begun on it keeps the connection when it ends; a statement
+prepared on it is closed with it. `close` rolls back a transaction begun
+on the Conn and still open, runs `UNLISTEN *` when the Conn listened, and
+gives the connection back; a second `close` does nothing, and any other
+call after it is `Closed` (Go's `ErrConnDone`; as a closed `Stmt`'s, not
+a new variant that would break an exhaustive match). On the in memory driver a `Conn` runs on the
+`Db`. A `Conn` is used by one task at a time, as pgx's.
+
+`listen` and `unlisten` run `LISTEN` and `UNLISTEN` with the channel quoted
+(`quote_ident`). `wait_notification` (pgx's `Conn.WaitForNotification`)
+returns the oldest notification the connection received during an earlier
+call (Postgres sends them at any time, inside a result or after it), else
+waits for the server. The wait is a cancellation point that leaves the
+connection usable (no CancelRequest: nothing is in flight); a timeout is
+the caller's (`task.with_timeout`). A driver without LISTEN/NOTIFY (mysql,
+sqlite) and the in memory driver return `Driver`.
+
+`on_notice` (`open`, `open_driver`; pgconn's `OnNotice`) is called with
+each notice the server sends (NoticeResponse: `RAISE NOTICE`, a WARNING),
+in order, after the driver call that received it. `severity` is the
+unlocalized one (`V`, else `S`), `code` the SQLSTATE. A handler is a pure
+function: it keeps notices through a `Mutex` or a `Chan` it captured.
 
 ---
 

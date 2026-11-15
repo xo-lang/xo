@@ -48,6 +48,9 @@ type sqlDriverBackend struct {
 	idle    []sqlIdle
 	maxIdle int
 	maxLife time.Duration
+	// onNotice is open_driver's on_notice: each new connection is a
+	// sqlNoticeConn then (decision 0648 item 14)
+	onNotice Option[func(*Task, Sql_Notice) Result[Unit, Never]]
 }
 
 func sqlValues(args []any) List[Sql_SqlValue] {
@@ -80,7 +83,11 @@ func (b *sqlDriverBackend) take(tk *Task) (sqlIdle, error) {
 	if !r.Ok {
 		return sqlIdle{}, &sqlErrBox{r.E}
 	}
-	return sqlIdle{c: r.V, born: now, stmts: &sqlConnStmts{}}, nil
+	c := r.V
+	if b.onNotice.Some {
+		c = sqlNoticeConn{Sql_DriverConn: c, h: b.onNotice.V}
+	}
+	return sqlIdle{c: c, born: now, stmts: &sqlConnStmts{}}, nil
 }
 
 func (b *sqlDriverBackend) give(tk *Task, x sqlIdle) {
@@ -182,18 +189,26 @@ func (b *sqlDriverBackend) BeginTk(tk *Task, mode string) (SqlTxBackend, error) 
 	if err != nil {
 		return nil, err
 	}
-	if err := driverUnit(x.c.M_begin(tk)); err != nil {
+	if err := beginOn(tk, x, mode); err != nil {
 		b.give(tk, x)
 		return nil, err
+	}
+	return &sqlDriverTx{b: b, x: x}, nil
+}
+
+// beginOn is BEGIN on x, then mode's SET TRANSACTION; when that fails,
+// the transaction is rolled back and its error returned (native begin_on).
+func beginOn(tk *Task, x sqlIdle, mode string) error {
+	if err := driverUnit(x.c.M_begin(tk)); err != nil {
+		return err
 	}
 	if mode != "" {
 		if r := x.c.M_exec(tk, mode, sqlValues(nil)); !r.Ok {
 			x.c.M_rollback(tk)
-			b.give(tk, x)
-			return nil, &sqlErrBox{r.E}
+			return &sqlErrBox{r.E}
 		}
 	}
-	return &sqlDriverTx{b: b, x: x}, nil
+	return nil
 }
 
 func (b *sqlDriverBackend) CloseTk(tk *Task) error {
@@ -226,7 +241,19 @@ func (b *sqlDriverBackend) SingleWriter() bool { return false }
 type sqlDriverTx struct {
 	b *sqlDriverBackend
 	x sqlIdle
+	// kind is sqlTxOwn (Db.begin's), sqlTxOnConn (Conn.begin's),
+	// sqlTxSavepoint (Tx.begin's, named name) or sqlTxSession (a Conn's
+	// own; decision 0648 item 14)
+	kind int
+	name string
 }
+
+const (
+	sqlTxOwn = iota
+	sqlTxOnConn
+	sqlTxSavepoint
+	sqlTxSession
+)
 
 func (t *sqlDriverTx) QueryTk(tk *Task, q string, args []any) ([]string, [][]any, error) {
 	cols, _, rows, err := t.QueryTypesTk(tk, q, args)
@@ -243,11 +270,28 @@ func (t *sqlDriverTx) ExecTk(tk *Task, q string, args []any) (int64, int64, erro
 }
 
 func (t *sqlDriverTx) FinishTk(tk *Task, commit bool) error {
+	switch t.kind {
+	case sqlTxSavepoint:
+		q := "rollback to savepoint "
+		if commit {
+			q = "release savepoint "
+		}
+		_, _, err := driverExec(t.x.c.M_exec(tk, q+t.name, sqlValues(nil)))
+		return err
+	case sqlTxOnConn:
+		if commit {
+			return driverUnit(t.x.c.M_commit(tk))
+		}
+		return driverUnit(t.x.c.M_rollback(tk))
+	}
+	// a Conn's session (its close) runs no statement
 	var err error
-	if commit {
-		err = driverUnit(t.x.c.M_commit(tk))
-	} else {
-		err = driverUnit(t.x.c.M_rollback(tk))
+	if t.kind != sqlTxSession {
+		if commit {
+			err = driverUnit(t.x.c.M_commit(tk))
+		} else {
+			err = driverUnit(t.x.c.M_rollback(tk))
+		}
 	}
 	// the transaction's statements end with it; give closes them
 	t.x.stmts.mu.Lock()
@@ -273,7 +317,7 @@ func (t *sqlDriverTx) Rollback() error {
 }
 
 // Sql_open_driver is `sql.open_driver(net, d, dsn, ...)`.
-func Sql_open_driver(tk *Task, net Net, d Sql_Driver, dsn string, maxOpen, maxIdle int64, maxLifetime Duration) Result[Sql_Db, Sql_SqlErr] {
+func Sql_open_driver(tk *Task, net Net, d Sql_Driver, dsn string, maxOpen, maxIdle int64, maxLifetime Duration, onNotice Option[func(*Task, Sql_Notice) Result[Unit, Never]]) Result[Sql_Db, Sql_SqlErr] {
 	if tk.Canceled() {
 		return sqlFail[Sql_Db](sqlTagCanceled)
 	}
@@ -287,7 +331,7 @@ func Sql_open_driver(tk *Task, net Net, d Sql_Driver, dsn string, maxOpen, maxId
 	if life < 0 {
 		life = 0
 	}
-	be := &sqlDriverBackend{drv: d, net: net, dsn: dsn, maxIdle: int(maxIdle), maxLife: life}
+	be := &sqlDriverBackend{drv: d, net: net, dsn: dsn, maxIdle: int(maxIdle), maxLife: life, onNotice: onNotice}
 	db := newSqlDB(be, int(maxOpen))
 	// connect once now, so a wrong password or host fails at open
 	if r := db.M_ping(tk); !r.Ok {

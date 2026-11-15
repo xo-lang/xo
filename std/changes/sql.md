@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-15: feature (breaking for drivers): Db.conn, LISTEN/NOTIFY, notices, savepoints and DEFERRABLE
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0648 item 14 (std/sql batch S1; the stdaudit gaps of pgx v5.12.0 and database/sql: no connection held across calls, no LISTEN/NOTIFY, no notice handler, no savepoints, no DEFERRABLE)
+- Go reference: Go 1.26 database/sql (DB.Conn, Conn, ErrConnDone); pgx v5.12.0 (pgxpool Acquire and Release, Conn.WaitForNotification, pgconn Notice and OnNotice, Tx.Begin's `savepoint sp_N`, `release savepoint`, `rollback to savepoint`, TxOptions.DeferrableMode)
+- Test: corpus sql (arm64, llvm, go: a driver in Xo for Conn, savepoints, LISTEN/UNLISTEN quoting, notifications and on_notice; pgx tx_test.go TestTxNestedTransactionCommit and Rollback on a driver and the in memory Db; DEFERRABLE's SET TRANSACTION); pg_test.xo (native and llvm, fake servers: pgx TestListenNotify, TestListenNotifySelfNotification, pgconn TestConnOnNotice and TestConnWaitForNotificationTimeout)
+- Shipped in: not yet released
+
+`db.conn()?` holds one pool connection until `close()`, so session state (SET, temporary tables, LISTEN) stays across calls; `c.listen(channel)` and `c.wait_notification()` receive Postgres notifications (one read during an earlier call first; a cancelled wait leaves the connection usable); `open(..., on_notice: Some(f))` and `open_driver` give each server notice to `f`; `tx.begin()` is a savepoint; `begin(deferrable: true)` adds DEFERRABLE (spec/std.md 10.5, 10.7, 10.12). A closed Conn returns `Closed`. A driver written in Xo must add `fn wait_notification(self) -> sql.Notification ! sql.SqlErr { Err(sql.SqlErr.Driver(msg: "LISTEN/NOTIFY is Postgres only")) }` and `fn notices(self) -> List[sql.Notice] { [] }` to its connection.
+
 ## 2026-11-15: feature: Postgres CancelRequest on cancellation
 
 - Kind: feature
