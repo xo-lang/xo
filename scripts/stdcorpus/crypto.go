@@ -209,7 +209,7 @@ func cryptoSeededInputs() [][]byte {
 
 func cryptoCorpus() string {
 	var o strings.Builder
-	o.WriteString(header("md5, sha1, sha224, sha256, sha384, sha512, sha3_224, sha3_256, sha3_384, sha3_512, sha512_224 and sha512_256 digests, HMAC over the six classic hashes, a Hasher written in pieces, equal, and ed25519 public keys, signatures and verification, on the golden tables of Go's crypto/md5, crypto/sha1, crypto/sha256, crypto/sha512, crypto/hmac and crypto/subtle tests, on crypto/ed25519's testdata/sign.input.gz vectors and its TestMalleability case, and on seeded inputs at the block and padding boundaries, against std/crypto (Go's crypto tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString(header("md5, sha1, sha224, sha256, sha384, sha512, sha3_224, sha3_256, sha3_384, sha3_512, sha512_224 and sha512_256 digests, HMAC over every hash, a Hasher written in pieces, equal, and ed25519 public keys, signatures and verification, on the golden tables of Go's crypto/md5, crypto/sha1, crypto/sha256, crypto/sha512, crypto/hmac and crypto/subtle tests, on crypto/ed25519's testdata/sign.input.gz vectors and its TestMalleability case, and on seeded inputs at the block and padding boundaries, against std/crypto (Go's crypto tests are Copyright 2009 The Go Authors, BSD-style license)"))
 	o.WriteString("\nuse std/crypto\n")
 
 	// Digests.
@@ -253,7 +253,7 @@ func cryptoCorpus() string {
 
 	// HMAC: Go's hmacTests rows for each hash, then seeded keys and messages
 	// of the block boundary lengths, keyed the same way.
-	for _, h := range cryptoHashes[:6] {
+	for _, h := range cryptoHashes {
 		type macRow struct{ key, msg, mac []byte }
 		var rows []macRow
 		for _, c := range goTestTable("crypto/hmac", "hmac_test.go", "hmacTests") {
@@ -269,7 +269,7 @@ func cryptoCorpus() string {
 			m.Write(msg)
 			rows = append(rows, macRow{key, msg, m.Sum(nil)})
 		}
-		for _, n := range []int{0, 1, 63, 64, 65, 128, 200, 1000} {
+		for _, n := range []int{0, 1, 63, 64, 65, 71, 72, 73, 103, 104, 105, 128, 135, 136, 137, 143, 144, 145, 200, 1000} {
 			key := bytes.Repeat([]byte("key"), 1+n/3)
 			key = key[:n]
 			msg := bytes.Repeat([]byte("The quick brown fox jumps over the lazy dog"), 1+n/40)
@@ -446,7 +446,7 @@ test "crypto.digest %s is Go's %s" {
 }
 `, h.key, h.key, name, h.enum)
 	}
-	for _, h := range cryptoHashes[:6] {
+	for _, h := range cryptoHashes {
 		name := strings.ToUpper(h.key)
 		fmt.Fprintf(&o, `
 test "crypto.hmac %s is Go's HMAC-%s" {
