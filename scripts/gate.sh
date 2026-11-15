@@ -914,13 +914,14 @@ run_step_body() {
     if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
       echo "irmanifest: FAIL (uncommitted changes: a manifest is kept by commit)"; failed=1
     elif [ -s "$hm" ] || {
-      # niced, with half ir_jobs' count, so the agents' gates on the same
-      # host keep their share (lead, 2026-11-15: host 3 is a container on
-      # the owner's Mac); its wall and CPU time are logged for irman.sh
-      irj=${XO_GATE_IR_PARALLEL:-$(( $(ir_jobs) / 2 ))}; [ "$irj" -lt 2 ] && irj=2
+      # at ir_jobs' full count and not niced, so it finishes (lead,
+      # 2026-11-15: niced at half width on a shared host 3 it took over 5
+      # times test1's 277 s; irman.sh runs it on host 2 and limits how
+      # often instead); its wall and CPU time are logged for irman.sh
+      irj=${XO_GATE_IR_PARALLEL:-$(ir_jobs)}
       t0=$(date +%s); c0=$(awk '{print $14 + $15 + $16 + $17}' /proc/$BASHPID/stat 2>/dev/null)
-      ir_head_manifest "$hm.tmp$$" "$irj" && mv "$hm.tmp$$" "$hm" &&
-        echo "irmanifest: built in $(($(date +%s) - t0)) s wall, $(( ($(awk '{print $14 + $15 + $16 + $17}' /proc/$BASHPID/stat 2>/dev/null || echo 0) - ${c0:-0}) / $(getconf CLK_TCK) )) s CPU, -parallel $irj, niced"
+      XO_GATE_IR_NICE=0 ir_head_manifest "$hm.tmp$$" "$irj" && mv "$hm.tmp$$" "$hm" &&
+        echo "irmanifest: built in $(($(date +%s) - t0)) s wall, $(( ($(awk '{print $14 + $15 + $16 + $17}' /proc/$BASHPID/stat 2>/dev/null || echo 0) - ${c0:-0}) / $(getconf CLK_TCK) )) s CPU, -parallel $irj"
     }; then
       echo "irmanifest: $hm ($(wc -l <"$hm" | tr -d ' ') goldens)"
     else

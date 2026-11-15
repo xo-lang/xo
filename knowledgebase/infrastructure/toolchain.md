@@ -2232,7 +2232,7 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   golden's IR, and ran 722 of 728 goldens. On an offload host the
   base's manifest is usually there already: scripts/lead/irman.sh makes
   main's manifest once per main commit that changes an IR input (gate.sh's
-  `irmanifest` step on host 3) and copies it to every arm64 host's
+  `irmanifest` step on host 2) and copies it to every arm64 host's
   /work/in, which gate.sh reads as `XO_LLVM_IR_SHARED` (offload-gate-remote.sh
   sets it; the log's selection line says "shared by irman.sh"). Each gate's selection time
   and golden count are in its times.tsv (see "Gate test areas").
