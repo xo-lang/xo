@@ -59,6 +59,17 @@ Each CONTINUATION frame asked HPACK to decode again and copied the header bytes 
 
 query_all split the raw query on every `&` before looking at any pair, and returned values past the 10000 parameter limit where Go's Query() returns none. It now counts the separators first and answers [] past the limit, as url.parse_query does since its own fix.
 
+## 2026-11-14: security: an HTTP/2 connection's buffered request bodies are bounded by flow control
+
+- Kind: security
+- Commit: this push
+- Found by: aws-43, the follow-up to the 2026-11-13 body budget entry (no Go advisory: net/http's server hands bodies to handlers as they arrive and returns the window as they read)
+- Test: golden http_h2_body_budget, rewritten with a client that keeps to the windows (fails before the change, 3 of 3 runs: what it sent on unfinished streams passed four bodies' limit; Go parity file want_go.txt: net/http reads the bodies, refuses none)
+- Affected: every release up to 0.51.1 (native and LLVM backends; the Go backend is net/http's)
+- Shipped in: not yet released
+
+A body read whole before its handler runs (a `handle` route) gave its connection window back as each DATA frame arrived, and only REFUSED_STREAM bounded the bodies buffered: four bodies' limit (`XO_HTTP_MAX_BODY`), plus the 1 MiB window the client still held. The window now comes back only while the bodies buffered plus the window the client holds stay within four bodies' limit; the rest is owed until a body is handed to its handler or dropped. A client that keeps to the windows is slowed instead of refused; a stream is refused (REFUSED_STREAM, before a handler saw it, so a client may retry it) only when the client has no window left and no buffered body can end, and still when the connection window alone is larger than the budget (a small `XO_HTTP_MAX_BODY`).
+
 ## 2026-11-14: security: an HTTP/2 connection holds at most its flow control window of unread streamed bodies
 
 - Kind: security

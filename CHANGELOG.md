@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Security (std/http, native backends): an HTTP/2 connection gives the window for bodies it buffers before the handler runs back only while those bodies plus the window the client holds stay within four times `XO_HTTP_MAX_BODY`, so a client that keeps to the windows is slowed instead of refused, and the buffers no longer pass the budget by the client's window; REFUSED_STREAM remains for a client with no window left. Affected: 0.51.1 and earlier.
 - Security (std/http, native backends): an HTTP/2 connection gives its flow control window back for a handle_stream body as the handler reads it (and for unread bytes when the stream closes), as Go does, so it holds at most 1 MiB of bodies no handler has read; before, 250 streams could park about 250 MiB. Affected: 0.51.1 and earlier.
 - Fix (runtime, native backends): a program stopped by its memory budget (`XO_MAX_MEM`) could die on a stack overflow instead of exiting with status 70, its report repeated with growing sizes: the report's last line allocated, and an allocation that mapped re-entered the stop. The stop now allocates nothing and runs once. Affected: every release with XO_MAX_MEM (decision 0349).
 - Feature (std/url, every backend): `url.parse`, `url.parse_request_uri` and `url.join_path` give a `Url` with Go's url.URL methods (`display`, `redacted`, `resolve_reference`, `parse_ref`, `query`, `request_uri`, `hostname`, `port`, `join_path`, `escaped_path`) and Go's error texts (decision 0642, spec std 20.1).

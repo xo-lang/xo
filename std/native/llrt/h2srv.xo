@@ -209,9 +209,13 @@ const C_BUFD = 720
 /// wasm only (decision 0447 R2f): the park word the connection's fiber
 /// waits on (wake, the reader task) and the one its reader task waits on
 /// for the fiber to have read; past the native record's end (c_size)
-const C_WPARK = 728
-const C_WREAD = 736
-const C_SIZE = 728 // own: this module\'s connection record, not the context
+/// the connection window owed for buffered bodies and not yet given
+/// back: C_BUFD plus the window the peer holds stays within
+/// BODY_BUDGET_MUL bodies' limit (conn_give)
+const C_OWED = 728
+const C_WPARK = 736
+const C_WREAD = 744
+const C_SIZE = 736 // own: this module\'s connection record, not the context
 
 /// The connection record's size: wasm's has the park words after it.
 fn c_size() -> Int { if target.arch == TargetArch.Wasm32 { C_SIZE + 16 } else { C_SIZE } }
@@ -460,12 +464,58 @@ fn wake(c: Int) {
 /// max_concurrent_streams whole bodies at once.
 const BODY_BUDGET_MUL = 4
 
-/// Frees st's buffered body and takes it off its connection's C_BUFD.
+/// Gives back n more bytes of the connection's window for buffered
+/// bodies, as far as the budget allows: what the peer may still send
+/// (C_IN and the batched update) plus the bodies buffered (C_BUFD) stays
+/// within BODY_BUDGET_MUL bodies' limit; the rest is owed (C_OWED) until
+/// a buffered body is released. Before, the window came back on arrival
+/// and only REFUSED_STREAM bounded the buffers. The lock held.
+fn conn_give(c: Int, n: Int) {
+  inc(c, C_OWED, n)
+  if on(c, C_DEAD) || on(c, C_FAILED) {
+    return
+  }
+  let room = BODY_BUDGET_MUL * ld(c, C_MAXBODY) - ld(c, C_BUFD) - ld(c, C_IN) - ld(c, C_IN + 8)
+  var g = ld(c, C_OWED)
+  if g > room {
+    g = room
+  }
+  if g <= 0 {
+    return
+  }
+  inc(c, C_OWED, -g)
+  let u = inflow_add(c, C_IN, g)
+  if u > 0 {
+    put_winup(c, 0, u)
+    wake(c)
+  }
+}
+
+/// Whether st holds a buffered body its client has not finished.
+fn stuck(st: Int) -> Bool {
+  ld(st, S_BUFC) > 0 && ld(st, S_STATE) == ST_OPEN && !on(st, S_OVER) && !on(st, S_RST) && !on(st, S_DEAD)
+}
+
+/// A stream of c that is stuck, 0 for none.
+fn stuck_any(c: Int) -> Int {
+  for i in 0..ntab(c) {
+    let st = tab_at(c, i)
+    if st != 0 && stuck(st) {
+      return st
+    }
+  }
+  0
+}
+
+/// Frees st's buffered body and takes it off its connection's C_BUFD,
+/// giving back window owed for it (conn_give). The lock held.
 fn body_release(st: Int) {
   let n = ld(st, S_BUFC)
   if n > 0 {
-    inc(ld(st, S_C), C_BUFD, -n)
+    let c = ld(st, S_C)
+    inc(c, C_BUFD, -n)
     sto(st, S_BUFC, 0)
+    conn_give(c, 0)
   }
   bfree(st, S_BODY)
 }
@@ -1249,7 +1299,9 @@ fn (h: H2Conn) request_of(st: Int) -> H2Req {
   var body = b""
   if !streamed {
     body = bstr(st, S_BODY).bytes()
+    lk(ld(st, S_C))
     body_release(st)
+    unlk(ld(st, S_C))
   }
   http1.fault_probe(p.path, "frame")
   H2Req{conn: hconn.stream(h.h, st), method: p.method, path: p.path, scheme: p.scheme, urlhost: p.urlhost, host: p.host, headers: p.headers, query: p.query, rawquery: p.rawquery, body: body, fields: p.fields, trailer: p.trailer, streamed: streamed}
@@ -2184,14 +2236,12 @@ fn (var h: H2Conn) on_data(sid: Int, flags: Int, flen: Int, p: Int, dn: Int) {
         sto(st, S_OVER, 1)
       }
       if ld(c, C_BUFD) + k > BODY_BUDGET_MUL * max {
-        // the connection's buffered bodies are at their budget: this
-        // stream is refused before any handler saw it (RFC 9113 8.7, a
-        // client may retry it), and its window comes back
-        let u = inflow_add(c, C_IN, flen)
-        if u > 0 {
-          put_winup(c, 0, u)
-        }
+        // the connection's buffered bodies are at their budget (a
+        // connection window larger than it): this stream is refused
+        // before any handler saw it (RFC 9113 8.7, a client may retry
+        // it), and its window comes back
         body_release(st)
+        conn_give(c, flen)
         stream_err(c, sid, E_REFUSED)
         return
       }
@@ -2199,14 +2249,24 @@ fn (var h: H2Conn) on_data(sid: Int, flags: Int, flen: Int, p: Int, dn: Int) {
       inc(c, C_BUFD, k)
       inc(st, S_BUFC, k)
     }
-    // the body is read at once: its window comes back now (the
-    // stream's while it is wanted)
-    var u = inflow_add(c, C_IN, flen)
-    if u > 0 {
-      put_winup(c, 0, u)
+    // the body is read at once: the connection's window comes back as
+    // the budget allows (conn_give), the stream's while it is wanted
+    conn_give(c, flen)
+    if ld(c, C_IN) == 0 && ld(c, C_OWED) > 0 {
+      // the peer has no window left: no buffered body can end, so one
+      // unfinished stream is refused (RFC 9113 8.7, a client may retry
+      // it), this one when it is, and its buffer's window comes back
+      let v = if (flags & F_END_STREAM) == 0 && stuck(st) { st } else { stuck_any(c) }
+      if v != 0 {
+        body_release(v)
+        stream_err(c, ld(v, S_ID), E_REFUSED)
+        if v == st {
+          return
+        }
+      }
     }
     if (flags & F_END_STREAM) == 0 && !on(st, S_OVER) {
-      u = inflow_add(st, S_IN, flen)
+      var u = inflow_add(st, S_IN, flen)
       if u > 0 {
         put_winup(c, sid, u)
       }

@@ -2577,9 +2577,13 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
     a body whose client went away). Go has no such limit. A
     `handle_stream` route's body has none either (decision 0310). On
     HTTP/2 the unfinished bodies one connection buffers for streams not
-    yet handed to a handler are capped together at four times this
-    limit; the stream whose data would cross the cap is reset with
-    REFUSED_STREAM before any handler sees it, so a client may retry it.
+    yet handed to a handler, plus the connection window the client
+    holds, are capped together at four times this limit: the window
+    comes back only within the cap. A stream is reset with
+    REFUSED_STREAM before any handler sees it, so a client may retry
+    it, when the client has no window left and no buffered body can
+    end, or when its data would cross the cap (a connection window
+    larger than the cap).
 
 ### 4.7 Response compression
 

@@ -1,5 +1,9 @@
 exit 0
 --- stdout
+stream window holds a body: true
+never stalled: true
+unfinished bodies within the budget: true
 streams refused: true
+every stream answered or refused: true
 serves after: 200
 --- stderr
