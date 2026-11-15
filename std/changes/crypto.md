@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-15: feature: ECDSA raw points and scalars, ECDH of ECDSA keys, signatures over a digest
+
+- Kind: feature
+- Commit: this push
+- Found by: Lang 3's crypto and TLS gap audit (C9); decision 0599's stage 2 (an ECDSA key as an ECDH key)
+- Go reference: crypto/ecdsa ParseUncompressedPublicKey, PublicKey.Bytes, PrivateKey.Bytes, PublicKey.ECDH, PrivateKey.ECDH, SignASN1, VerifyASN1; ed25519.PrivateKey.Seed; go1.26.11
+- Test: corpus ecdsaraw (ecdsa_test.go's TestVectors over the 300 NIST SigVer vectors of Go's testdata, each key parsed from its point; TestParseAndBytesRoundTrip over seeded keys of every curve with Go's points and ECDH secrets; TestInvalidPublicKeys's infinity, off curve and compressed points with Go's errors, and cut, grown and out of range points; TestZeroHashSignature and Go's signatures over digests of 0 to 100 bytes, verified, signed and changed; RSA and Ed25519 keys), native, go and llvm
+- Shipped in: not yet released
+
+`ecdsa_public_key(alg, point)` reads an uncompressed point 0x04 || X || Y, as Go's ParseUncompressedPublicKey, with Go's errors (`ecdsa: invalid uncompressed public key`, then nistec's `invalid P256 point encoding`, `invalid P256 element encoding` and `P256 point not on curve`, each curve's). `PublicKey.bytes()` is that point (Go's PublicKey.Bytes) and `PrivateKey.bytes()` the scalar d as long as the order (Go's PrivateKey.Bytes, which ecdsa_private_key reads); for an Ed25519 key they are its 32 byte public key and its seed (Go's Seed). An RSA key has no raw encoding: both give an Err. `PublicKey.ecdh()` and `PrivateKey.ecdh()` give the key as an ECDH key of its curve (Go's ECDH), P-256, P-384 and P-521; `ecdsa: unsupported curve by crypto/ecdh` for P-224 and the other algorithms. `ecdsa_sign_digest(r, k, digest)` and `ecdsa_verify_digest(k, digest, sig)` are Go's SignASN1 and VerifyASN1 over a digest the caller computed: ASN.1 DER, sign's hedged nonce from r, a digest longer than the order counted by its leftmost bits.
+
 ## 2026-11-15: feature: Hasher and Shake state: reset, sizes, Go's binary state
 
 - Kind: feature

@@ -4127,12 +4127,19 @@ pub fn marshal_public_key(k: PublicKey) -> Bytes
 fn (k: PublicKey) alg() -> KeyAlg
 fn (k: PrivateKey) alg() -> KeyAlg
 fn (k: PrivateKey) public_key() -> PublicKey
+fn (k: PrivateKey) bytes() -> Bytes ! KeyErr   // ECDSA's d (Go's PrivateKey.Bytes), Ed25519's seed; Err for RSA
+fn (k: PublicKey) bytes() -> Bytes ! KeyErr    // ECDSA's uncompressed point (Go's PublicKey.Bytes), Ed25519's 32 bytes; Err for RSA
+fn (k: PrivateKey) ecdh() -> EcdhPrivateKey ! KeyErr  // Go's ECDH: P-256, P-384, P-521
+fn (k: PublicKey) ecdh() -> EcdhPublicKey ! KeyErr
+pub fn ecdsa_public_key(alg: KeyAlg, point: Bytes) -> PublicKey ! KeyErr  // Go's ParseUncompressedPublicKey and its errors
 pub fn verify(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
 pub fn verify_pss(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
 pub fn verify_raw_ecdsa(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
 pub fn sign(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
 pub fn sign_pss(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
 pub fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
+pub fn ecdsa_sign_digest(r: Rand, k: PrivateKey, digest: Bytes) -> Bytes ! KeyErr uses rand  // Go's SignASN1 over a caller's digest
+pub fn ecdsa_verify_digest(k: PublicKey, digest: Bytes, sig: Bytes) -> Bool                   // Go's VerifyASN1
 pub fn encrypt_oaep(r: Rand, k: PublicKey, h: Hash, msg: Bytes, label: Bytes = b"") -> Bytes ! KeyErr uses rand
 pub fn decrypt_oaep(k: PrivateKey, h: Hash, ciphertext: Bytes, label: Bytes = b"") -> Bytes ! KeyErr
 pub fn encrypt_pkcs1v15(r: Rand, k: PublicKey, msg: Bytes) -> Bytes ! KeyErr uses rand   // legacy

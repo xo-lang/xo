@@ -2047,6 +2047,74 @@ fn ecdsa_private_key(alg: crypto.KeyAlg, d: Bytes) -> PrivateKey ! crypto.KeyErr
   Ok(PrivateKey{kind: alg, rsa: no_rsa(), d: d, public: PublicKey{kind: alg, n: b"", e: 0, key: p}})
 }
 
+/// Go's ecdsa.ParseUncompressedPublicKey: the 0x04 form first, then the
+/// curve, then nistec's SetBytes texts.
+fn ecdsa_public_key(alg: crypto.KeyAlg, point: Bytes) -> PublicKey ! crypto.KeyErr {
+  if point.is_empty() || point[0] != 4 {
+    return Err(key_err("ecdsa: invalid uncompressed public key"))
+  }
+  if !is_ecdsa(alg) {
+    return Err(key_err("ecdsa: curve not supported by ParseUncompressedPublicKey"))
+  }
+  let name = curve_name(alg)
+  match nistec.point_check(nist_curve(alg), point) {
+    0 => Ok(PublicKey{kind: alg, n: b"", e: 0, key: point})
+    1 => Err(key_err("invalid ${name} point encoding"))
+    2 => Err(key_err(element_err(name)))
+    _ => Err(key_err("${name} point not on curve"))
+  }
+}
+
+fn (k: PublicKey) bytes() -> Bytes ! crypto.KeyErr {
+  if k.kind == crypto.KeyAlg.Rsa {
+    return Err(key_err("crypto: an RSA key has no raw encoding"))
+  }
+  Ok(k.key)
+}
+
+fn (k: PrivateKey) bytes() -> Bytes ! crypto.KeyErr {
+  if k.kind == crypto.KeyAlg.Rsa {
+    return Err(key_err("crypto: an RSA key has no raw encoding"))
+  }
+  Ok(k.d)
+}
+
+/// The ECDH curve of an ECDSA key's, as Go's curveToECDH.
+fn ecdh_of(a: crypto.KeyAlg) -> crypto.EcdhCurve? {
+  match a {
+    EcdsaP256 => Some(crypto.EcdhCurve.P256)
+    EcdsaP384 => Some(crypto.EcdhCurve.P384)
+    EcdsaP521 => Some(crypto.EcdhCurve.P521)
+    _ => None
+  }
+}
+
+fn (k: PublicKey) ecdh() -> EcdhPublicKey ! crypto.KeyErr {
+  match ecdh_of(k.kind) {
+    Some(c) => Ok(EcdhPublicKey{crv: c, key: k.key})
+    None => Err(key_err("ecdsa: unsupported curve by crypto/ecdh"))
+  }
+}
+
+fn (k: PrivateKey) ecdh() -> EcdhPrivateKey ! crypto.KeyErr {
+  match ecdh_of(k.kind) {
+    Some(c) => Ok(EcdhPrivateKey{crv: c, d: k.d, public: EcdhPublicKey{crv: c, key: k.public.key}})
+    None => Err(key_err("ecdsa: unsupported curve by crypto/ecdh"))
+  }
+}
+
+fn ecdsa_sign_digest(r: Rand, k: PrivateKey, digest: Bytes) -> Bytes ! crypto.KeyErr uses rand {
+  if !is_ecdsa(k.kind) {
+    return Err(key_err("crypto: ecdsa_sign_digest needs an ECDSA key"))
+  }
+  let c = nist_curve(k.kind)
+  Ok(nistec.sign_hedged(c, k.d, digest, r.bytes(nistec.size(c))))
+}
+
+fn ecdsa_verify_digest(k: PublicKey, digest: Bytes, sig: Bytes) -> Bool {
+  is_ecdsa(k.kind) && nistec.verify(nist_curve(k.kind), k.key, digest, sig)
+}
+
 /// An RSA key of `bits` (Go's rsa.GenerateKey, with go1.26's size floor,
 /// and 8192, the largest key std signs with), its checks run as for a
 /// parsed key.

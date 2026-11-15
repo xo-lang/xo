@@ -1766,7 +1766,7 @@ ed25519.PrivateKey = std/crypto.PrivateKey
 ed25519.PublicKey = std/crypto.PublicKey
 ed25519.PrivateKey.Public = std/crypto.PrivateKey.public_key
 ed25519.PrivateKey.Sign = std/crypto.sign
-ed25519.PrivateKey.Seed = std/crypto.ed25519_sign
+ed25519.PrivateKey.Seed = std/crypto.PrivateKey.bytes
 ed25519.PrivateKey.Equal = ==
 ed25519.PublicKey.Equal = ==
 ed25519.VerifyWithOptions = std/crypto.ed25519_verify_with
@@ -1795,21 +1795,21 @@ elliptic.P521 = std/crypto.KeyAlg.EcdsaP521
 elliptic.* = not planned: Go's low level curve arithmetic (deprecated there for crypto/ecdh); keys are std/crypto's
 ecdsa.GenerateKey = std/crypto.generate_key
 ecdsa.Sign = std/crypto.sign
-ecdsa.SignASN1 = std/crypto.sign
+ecdsa.SignASN1 = std/crypto.ecdsa_sign_digest
 ecdsa.Verify = std/crypto.verify
-ecdsa.VerifyASN1 = std/crypto.verify
+ecdsa.VerifyASN1 = std/crypto.ecdsa_verify_digest
 ecdsa.ParseRawPrivateKey = std/crypto.ecdsa_private_key
-ecdsa.ParseUncompressedPublicKey = gap: no public key from a raw point (parse_public_key reads DER)
+ecdsa.ParseUncompressedPublicKey = std/crypto.ecdsa_public_key
 ecdsa.PrivateKey = std/crypto.PrivateKey
 ecdsa.PublicKey = std/crypto.PublicKey
-ecdsa.PrivateKey.Bytes = std/crypto.marshal_private_key
-ecdsa.PublicKey.Bytes = std/crypto.marshal_public_key
+ecdsa.PrivateKey.Bytes = std/crypto.PrivateKey.bytes
+ecdsa.PublicKey.Bytes = std/crypto.PublicKey.bytes
 ecdsa.PrivateKey.Public = std/crypto.PrivateKey.public_key
 ecdsa.PrivateKey.Sign = std/crypto.sign
 ecdsa.PrivateKey.Equal = ==
 ecdsa.PublicKey.Equal = ==
-ecdsa.PrivateKey.ECDH = gap: an ECDSA key as an ECDH key (decision 0599 stage 2)
-ecdsa.PublicKey.ECDH = gap: an ECDSA key as an ECDH key (decision 0599 stage 2)
+ecdsa.PrivateKey.ECDH = std/crypto.PrivateKey.ecdh
+ecdsa.PublicKey.ECDH = std/crypto.PublicKey.ecdh
 ecdh.X25519 = std/crypto.EcdhCurve
 ecdh.P256 = std/crypto.EcdhCurve
 ecdh.P384 = std/crypto.EcdhCurve

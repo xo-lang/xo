@@ -73,6 +73,11 @@ var (
 	_ func(*Crypto_PrivateKey, *Task) Crypto_KeyAlg                                               = (*Crypto_PrivateKey).M_alg
 	_ func(*Crypto_PrivateKey, *Task) Crypto_PublicKey                                            = (*Crypto_PrivateKey).M_public_key
 	_ func(*Task, Crypto_KeyAlg, Bytes) Result[Crypto_PrivateKey, Crypto_KeyErr]                  = Crypto_ecdsa_private_key
+	_ func(*Task, Crypto_KeyAlg, Bytes) Result[Crypto_PublicKey, Crypto_KeyErr]                   = Crypto_ecdsa_public_key
+	_ func(*Crypto_PublicKey, *Task) Result[Bytes, Crypto_KeyErr]                                 = (*Crypto_PublicKey).M_bytes
+	_ func(*Crypto_PrivateKey, *Task) Result[Bytes, Crypto_KeyErr]                                = (*Crypto_PrivateKey).M_bytes
+	_ func(*Crypto_PublicKey, *Task) Result[Crypto_EcdhPublicKey, Crypto_KeyErr]                  = (*Crypto_PublicKey).M_ecdh
+	_ func(*Crypto_PrivateKey, *Task) Result[Crypto_EcdhPrivateKey, Crypto_KeyErr]                = (*Crypto_PrivateKey).M_ecdh
 	_ func(*Task, string) List[Crypto_PemBlock]                                                   = Crypto_pem_decode
 	_ func(*Task, Crypto_PemBlock) Result[string, Crypto_KeyErr]                                  = Crypto_pem_encode
 	_ func(*Task, Crypto_PublicKey, Crypto_Hash, Bytes, Bytes) bool                               = Crypto_verify
@@ -85,6 +90,8 @@ var (
 	_ func(*Task, Rand, Crypto_PublicKey, Bytes) Result[Bytes, Crypto_KeyErr]                     = Crypto_encrypt_pkcs1v15
 	_ func(*Task, Crypto_PrivateKey, Bytes) Result[Bytes, Crypto_KeyErr]                          = Crypto_decrypt_pkcs1v15
 	_ func(*Task, Rand, Crypto_PrivateKey, Crypto_Hash, Bytes) Result[Bytes, Crypto_KeyErr]       = Crypto_sign_raw_ecdsa
+	_ func(*Task, Rand, Crypto_PrivateKey, Bytes) Result[Bytes, Crypto_KeyErr]                    = Crypto_ecdsa_sign_digest
+	_ func(*Task, Crypto_PublicKey, Bytes, Bytes) bool                                            = Crypto_ecdsa_verify_digest
 	_ func(*Task, Rand, Crypto_KeyAlg, int64) Result[Crypto_PrivateKey, Crypto_KeyErr]            = Crypto_generate_key
 	_ func(*Task, Rand, Crypto_EcdhCurve) Crypto_EcdhPrivateKey                                   = Crypto_ecdh_generate_key
 	_ func(*Task, Crypto_EcdhCurve, Bytes) Result[Crypto_EcdhPrivateKey, Crypto_KeyErr]           = Crypto_ecdh_private_key

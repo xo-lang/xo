@@ -58,6 +58,7 @@ var generators = map[string]func() string{
 	"gcmsizes":     gcmSizesCorpus,
 	"ed25519opts":  ed25519OptsCorpus,
 	"hashstate":    hashStateCorpus,
+	"ecdsaraw":     ecdsaRawCorpus,
 	"hpke":         hpkeCorpus,
 	"csv":          csvCorpus,
 	"cut":          cutCorpus,

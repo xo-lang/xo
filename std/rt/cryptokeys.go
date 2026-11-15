@@ -3,6 +3,7 @@ package rt
 import (
 	"bytes"
 	"crypto"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -409,7 +410,7 @@ func Crypto_ecdsa_private_key(_ *Task, alg Crypto_KeyAlg, d Bytes) Result[Crypto
 	if alg.Tag < 2 || alg.Tag > 5 {
 		return Err[Crypto_PrivateKey](keyErr("ecdsa: curve not supported by ParseRawPrivateKey"))
 	}
-	c := []elliptic.Curve{nil, nil, elliptic.P224(), elliptic.P256(), elliptic.P384(), elliptic.P521()}[alg.Tag]
+	c := ecdsaCurves[alg.Tag]
 	k, err := ecdsa.ParseRawPrivateKey(c, []byte(d))
 	if err != nil {
 		return Err[Crypto_PrivateKey](keyErr(err.Error()))
@@ -419,6 +420,119 @@ func Crypto_ecdsa_private_key(_ *Task, alg Crypto_KeyAlg, d Bytes) Result[Crypto
 		return Err[Crypto_PrivateKey](keyErr(err.Error()))
 	}
 	return Ok[Crypto_PrivateKey, Crypto_KeyErr](Crypto_PrivateKey{k: k, pub: Crypto_PublicKey{k: k.Public(), der: string(m)}})
+}
+
+var ecdsaCurves = []elliptic.Curve{nil, nil, elliptic.P224(), elliptic.P256(), elliptic.P384(), elliptic.P521()}
+
+// Crypto_ecdsa_public_key is Go's ecdsa.ParseUncompressedPublicKey.
+func Crypto_ecdsa_public_key(_ *Task, alg Crypto_KeyAlg, point Bytes) Result[Crypto_PublicKey, Crypto_KeyErr] {
+	c := elliptic.Curve(nil)
+	if alg.Tag >= 2 && alg.Tag <= 5 {
+		c = ecdsaCurves[alg.Tag]
+	}
+	if len(point) < 1 || point[0] != 4 {
+		return Err[Crypto_PublicKey](keyErr("ecdsa: invalid uncompressed public key"))
+	}
+	if c == nil {
+		return Err[Crypto_PublicKey](keyErr("ecdsa: curve not supported by ParseUncompressedPublicKey"))
+	}
+	k, err := ecdsa.ParseUncompressedPublicKey(c, []byte(point))
+	if err != nil {
+		return Err[Crypto_PublicKey](keyErr(err.Error()))
+	}
+	m, err := x509.MarshalPKIXPublicKey(k)
+	if err != nil {
+		return Err[Crypto_PublicKey](keyErr(err.Error()))
+	}
+	return Ok[Crypto_PublicKey, Crypto_KeyErr](Crypto_PublicKey{k: k, der: string(m)})
+}
+
+const rsaNoRaw = "crypto: an RSA key has no raw encoding"
+
+func (k Crypto_PublicKey) M_bytes(*Task) Result[Bytes, Crypto_KeyErr] {
+	switch p := k.k.(type) {
+	case *ecdsa.PublicKey:
+		b, err := p.Bytes()
+		if err != nil {
+			return Err[Bytes](keyErr(err.Error()))
+		}
+		return Ok[Bytes, Crypto_KeyErr](Bytes(b))
+	case ed25519.PublicKey:
+		return Ok[Bytes, Crypto_KeyErr](Bytes(p))
+	}
+	return Err[Bytes](keyErr(rsaNoRaw))
+}
+
+func (k Crypto_PrivateKey) M_bytes(*Task) Result[Bytes, Crypto_KeyErr] {
+	switch p := k.k.(type) {
+	case *ecdsa.PrivateKey:
+		b, err := p.Bytes()
+		if err != nil {
+			return Err[Bytes](keyErr(err.Error()))
+		}
+		return Ok[Bytes, Crypto_KeyErr](Bytes(b))
+	case ed25519.PrivateKey:
+		return Ok[Bytes, Crypto_KeyErr](Bytes(p.Seed()))
+	}
+	return Err[Bytes](keyErr(rsaNoRaw))
+}
+
+// ecdhTag is the crypto.EcdhCurve of an ecdh curve.
+func ecdhTag(c ecdh.Curve) Crypto_EcdhCurve {
+	switch c {
+	case ecdh.P384():
+		return Crypto_EcdhCurve{Tag: 3}
+	case ecdh.P521():
+		return Crypto_EcdhCurve{Tag: 4}
+	}
+	return Crypto_EcdhCurve{Tag: 2}
+}
+
+const ecdsaNoECDH = "ecdsa: unsupported curve by crypto/ecdh"
+
+func (k Crypto_PublicKey) M_ecdh(*Task) Result[Crypto_EcdhPublicKey, Crypto_KeyErr] {
+	p, ok := k.k.(*ecdsa.PublicKey)
+	if !ok {
+		return Err[Crypto_EcdhPublicKey](keyErr(ecdsaNoECDH))
+	}
+	e, err := p.ECDH()
+	if err != nil {
+		return Err[Crypto_EcdhPublicKey](keyErr(err.Error()))
+	}
+	return Ok[Crypto_EcdhPublicKey, Crypto_KeyErr](Crypto_EcdhPublicKey{k: e, crv: ecdhTag(e.Curve())})
+}
+
+func (k Crypto_PrivateKey) M_ecdh(*Task) Result[Crypto_EcdhPrivateKey, Crypto_KeyErr] {
+	p, ok := k.k.(*ecdsa.PrivateKey)
+	if !ok {
+		return Err[Crypto_EcdhPrivateKey](keyErr(ecdsaNoECDH))
+	}
+	e, err := p.ECDH()
+	if err != nil {
+		return Err[Crypto_EcdhPrivateKey](keyErr(err.Error()))
+	}
+	return Ok[Crypto_EcdhPrivateKey, Crypto_KeyErr](Crypto_EcdhPrivateKey{k: e, crv: ecdhTag(e.Curve())})
+}
+
+// Crypto_ecdsa_sign_digest is Go's ecdsa.SignASN1; it reads the bytes the
+// native code's hedged nonce takes from r, so r stays in step.
+func Crypto_ecdsa_sign_digest(tk *Task, r Rand, k Crypto_PrivateKey, digest Bytes) Result[Bytes, Crypto_KeyErr] {
+	p, ok := k.k.(*ecdsa.PrivateKey)
+	if !ok {
+		return Err[Bytes](keyErr("crypto: ecdsa_sign_digest needs an ECDSA key"))
+	}
+	r.M_bytes(tk, int64((p.Curve.Params().N.BitLen()+7)/8))
+	sig, err := ecdsa.SignASN1(cryptorand.Reader, p, []byte(digest))
+	if err != nil {
+		return Err[Bytes](keyErr(err.Error()))
+	}
+	return Ok[Bytes, Crypto_KeyErr](Bytes(sig))
+}
+
+// Crypto_ecdsa_verify_digest is Go's ecdsa.VerifyASN1.
+func Crypto_ecdsa_verify_digest(_ *Task, k Crypto_PublicKey, digest, sig Bytes) bool {
+	p, ok := k.k.(*ecdsa.PublicKey)
+	return ok && ecdsa.VerifyASN1(p, []byte(digest), []byte(sig))
 }
 
 // Crypto_jwk_public_key follows the native code's rules and texts: the

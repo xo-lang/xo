@@ -306,6 +306,29 @@ fn (k: PrivateKey) public_key() -> PublicKey
 /// `invalid scalar length`, and any other alg is KeyErr. `public_key()` of
 /// the result is the public point (AWS SigV4a derives its key this way).
 fn ecdsa_private_key(alg: KeyAlg, d: Bytes) -> PrivateKey ! KeyErr
+/// An ECDSA public key from its uncompressed point 0x04 || X || Y (SEC 1
+/// 2.3.3, Go's ecdsa.ParseUncompressedPublicKey). Err with Go's texts:
+/// `ecdsa: invalid uncompressed public key` (no leading 0x04), then
+/// `invalid P256 point encoding`, `invalid P256 element encoding`, `P256
+/// point not on curve` (each curve's), and `ecdsa: curve not supported by
+/// ParseUncompressedPublicKey` for an alg that is not ECDSA.
+fn ecdsa_public_key(alg: KeyAlg, point: Bytes) -> PublicKey ! KeyErr
+/// The key's raw encoding: an ECDSA key's uncompressed point (Go's
+/// ecdsa.PublicKey.Bytes, which ecdsa_public_key reads), an Ed25519 key's
+/// 32 bytes; Err for an RSA key, which has none (marshal_public_key gives
+/// its DER).
+fn (k: PublicKey) bytes() -> Bytes ! KeyErr
+/// The key's raw encoding: an ECDSA key's scalar d as long as the order
+/// (Go's ecdsa.PrivateKey.Bytes, which ecdsa_private_key reads), an
+/// Ed25519 key's 32 byte seed (Go's Seed, which ed25519_sign takes); Err
+/// for an RSA key.
+fn (k: PrivateKey) bytes() -> Bytes ! KeyErr
+/// The key as an ECDH key of its curve (Go's ecdsa.PublicKey.ECDH): P-256,
+/// P-384 and P-521; Err `ecdsa: unsupported curve by crypto/ecdh` for
+/// P-224 and for keys that are not ECDSA.
+fn (k: PublicKey) ecdh() -> EcdhPublicKey ! KeyErr
+/// Go's ecdsa.PrivateKey.ECDH, as PublicKey.ecdh.
+fn (k: PrivateKey) ecdh() -> EcdhPrivateKey ! KeyErr
 
 /// Every PEM block in text, in order (pem.Decode repeated on the rest);
 /// text outside blocks and malformed blocks are skipped.
@@ -349,6 +372,13 @@ fn encrypt_pkcs1v15(r: Rand, k: PublicKey, msg: Bytes) -> Bytes ! KeyErr uses ra
 fn decrypt_pkcs1v15(k: PrivateKey, ciphertext: Bytes) -> Bytes ! KeyErr
 /// ECDSA as the fixed size r || s of JWS.
 fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
+/// ECDSA over a digest the caller computed (Go's ecdsa.SignASN1): ASN.1
+/// DER, a hedged nonce from r, as sign's; a digest longer than the order
+/// counts by its leftmost bits, as Go's. Err for a key that is not ECDSA.
+fn ecdsa_sign_digest(r: Rand, k: PrivateKey, digest: Bytes) -> Bytes ! KeyErr uses rand
+/// Go's ecdsa.VerifyASN1: whether sig (ASN.1 DER) signs digest under k;
+/// false for a key that is not ECDSA.
+fn ecdsa_verify_digest(k: PublicKey, digest: Bytes, sig: Bytes) -> Bool
 /// A new key from r (Go's GenerateKey): an ECDSA or Ed25519 key, or an RSA
 /// key of `bits` (1024 to 8192, exponent 65537; other algorithms ignore
 /// it). The same r gives the same key on every backend.
