@@ -61,7 +61,11 @@ by Postgres.
    Full-text search (tsvector) over notes, gotchas, decisions and
    reports first; pgvector only in stage 4, kept if it beats full text
    on a fixed set of 20 lead questions.
-4. **Web view: server-rendered HTML from std/http and std/template**,
+4. **Backend and CLI first; the web view last** (owner, 2026-11-15: the
+   backend has the most to figure out, without a web front end's
+   overhead). Stages 1 to 3 answer every question through `xw`
+   commands; the web view (stage 4) is a thin layer over the same
+   queries. **Web view: server-rendered HTML from std/http and std/template**,
    no JavaScript, no build step, a meta refresh every 30 s, one small
    inline stylesheet that reads on a phone. Pages: `/` (each agent: task,
    state, last event, idle minutes, running jobs, tokens today), `/tasks`,
@@ -106,10 +110,11 @@ by Postgres.
 
 | Stage | Contents | Done when |
 |---|---|---|
-| 1 | std/migrate; schema; `xw event` and spool; heavyd, pushq and git ingest; `/` and `xw status` | the lead's "what is everyone doing" is one `xw status`, matching the agents' screens |
+| 1 | std/migrate; schema; the server's write API and per-agent tokens; `xw event` and spool; heavyd, pushq and git ingest; `xw status` | the lead's "what is everyone doing" is one `xw status`, matching the agents' screens |
 | 2 | tasks, decisions, acks; board.sh wrapper; todo.md retired | a decision sent to an agent shows unacknowledged until it acks |
-| 3 | transcript ingest (tool time, tokens); `/gates`, `/std`; alert loop replaces the three watchers | writing vs testing for any agent and window is one page |
-| 4 | full-text search; pgvector trial | search answers the 20 fixed questions; vectors kept only if better |
+| 3 | transcript ingest (tool time, tokens); `xw gates`, `xw std`; alert loop replaces the three watchers | writing vs testing for any agent and window is one command |
+| 4 | web view: login, `/`, `/tasks`, `/gates`, `/std`, `/decisions` over stage 1 to 3's queries | the owner reads status from a phone over the VPN |
+| 5 | full-text search; pgvector trial | search answers the 20 fixed questions; vectors kept only if better |
 
 ## Consequences
 
