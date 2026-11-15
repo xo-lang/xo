@@ -1,6 +1,6 @@
 # A new TargetArch or TargetOs variant: a clean check misses matches
 
-Status: Observed (Xo Lang 1, 2026-11-08, decision 0571 stage 1)
+Status: Observed (Xo Lang 1, 2026-11-08, decision 0571 stage 1; again by Lang 3, 2026-11-15, any std enum: ClientErr.Tls)
 
 ## Symptom
 
@@ -45,3 +45,17 @@ a match, check whether the file holds a generator's output
 keccaklazy; `grep -rl 'TargetOs\|TargetArch' scripts/gen` finds the ones
 that emit a target match), and fix the generator, then regenerate; gate
 on TestFieldGeneratorsInSync.
+
+## Any std enum, not only targets (Lang 3, 2026-11-15)
+
+`http.ClientErr.Tls` (decision 0644) built xo, passed the http goldens and
+the SDK checks, and still failed a full gate in 11 tests on one site:
+std/grpc.xo's `from_client_err` listed every old variant and no `Tls`. Only
+programs that use std/grpc check its bodies (merged std modules are checked
+lazily too), so the gate's grpc goldens, TestStdModules grpc, TestStdChecks,
+sepcomp and island builds failed together, with one root cause. Before
+pushing a new variant of any std enum, grep std/ for a variant the match
+must already list (`InvalidUrl(` for ClientErr) and read each hit: an arm
+for the new variant or `_ =>`. Open enums (decision 0649) do not help
+inside std: std is one package, so its own matches stay exhaustive.
+
