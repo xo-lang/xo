@@ -873,3 +873,26 @@ test "html mode: JS regexp and division contexts after braces, \${, yield, a pro
   }
   expect(bad) == []
 }
+
+test "html mode: JSON in a script element, an on* attribute and text cannot close the element (\"</script><b>\", U+2028)" {
+  let evil = "</script><b>"
+  let data = json.Value.Object(fields: [("s", json.Value.Str(s: evil)), ("o", json.Value.Object(fields: [("k", json.Value.Str(s: evil))])), ("ls", json.Value.Str(s: "a\u{2028}b\u{2029}c"))])
+  let render = fn(src: Str) -> Str {
+    match template.parse_html("t", src) {
+      Ok(t) => t.render(data).ok() ?? "render failed"
+      Err(e) => "err ${e.msg}"
+    }
+  }
+  expect(render("<script>var s = {{.s}};</script>")) == "<script>var s = \"\\u003c/script\\u003e\\u003cb\\u003e\";</script>"
+  expect(render("<script>var o = {{.o}};</script>")) == "<script>var o = {\"k\":\"\\u003c/script\\u003e\\u003cb\\u003e\"};</script>"
+  expect(render("<script>var l = {{.ls}};</script>")) == "<script>var l = \"a\\u2028b\\u2029c\";</script>"
+  let attr = render("<button onclick=\"f({{.s}})\">x</button>")
+  expect(attr.contains(evil)) == false
+  expect(attr.contains("\\u003c/script\\u003e")) == true
+  expect(render("<p>{{.s}}</p>")) == "<p>&lt;/script&gt;&lt;b&gt;</p>"
+  // std/json itself does not escape HTML (spec/std.md 5); html_escape does.
+  // U+2028 and U+2029 are escaped by encode already, as Go's encoder does
+  expect(json.encode_str("a\u{2028}b")) == "\"a\\u2028b\""
+  expect(json.encode_str(evil)) == "\"</script><b>\""
+  expect(json.html_escape(json.encode_str(evil))) == "\"\\u003c/script\\u003e\\u003cb\\u003e\""
+}
