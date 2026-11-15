@@ -76,6 +76,15 @@ func Duration_seconds(_ *Task, d Duration) float64 { return time.Duration(d).Sec
 // Duration_millis is `d.millis()`, truncated.
 func Duration_millis(_ *Task, d Duration) int64 { return int64(d) / 1e6 }
 
+// Duration_micros is `d.micros()`: Go's Duration.Microseconds.
+func Duration_micros(_ *Task, d Duration) int64 { return time.Duration(d).Microseconds() }
+
+// Duration_minutes is `d.minutes()`: Go's Duration.Minutes.
+func Duration_minutes(_ *Task, d Duration) float64 { return time.Duration(d).Minutes() }
+
+// Duration_hours is `d.hours()`: Go's Duration.Hours.
+func Duration_hours(_ *Task, d Duration) float64 { return time.Duration(d).Hours() }
+
 // Duration_nanos is `d.nanos()`.
 func Duration_nanos(_ *Task, d Duration) int64 { return int64(d) }
 

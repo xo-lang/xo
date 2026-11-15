@@ -250,6 +250,12 @@ func timeCorpus() string {
 		fmt.Fprintf(&o, "  (%d, %s, %d),\n", ns, xq(d.String()), d.Milliseconds())
 	}
 	o.WriteString("]\n")
+	o.WriteString("\n/// (nanoseconds, Go's Duration.Microseconds, the IEEE 754 bits of Go's Minutes and of Hours)\nconst DUR_UNIT_CASES: List[(Int, Int, Int, Int)] = [\n")
+	for _, ns := range append(nanos, 60000000000, -60000000000, 3600000000000, 5400000000000, 59999999999, 3599999999999) {
+		d := time.Duration(ns)
+		fmt.Fprintf(&o, "  (%d, %d, %d, %d),\n", ns, d.Microseconds(), int64(math.Float64bits(d.Minutes())), int64(math.Float64bits(d.Hours())))
+	}
+	o.WriteString("]\n")
 
 	// Duration.round and truncate: Go's time_test.go durationRoundTests and
 	// durationTruncateTests (their d and m), then seeded pairs of every
@@ -441,6 +447,7 @@ func timeCorpus() string {
 		{"{year}-{month}-{day}", "2006-01-02"},
 		{"{hour}:{minute}:{second}", "15:04:05"},
 		{"{year}-{month}-{day} {hour}:{minute}:{second}", "2006-01-02 15:04:05"},
+		{"{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {offset:compact}", time.RFC1123Z},
 		{"{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second}", "Mon, 02 Jan 2006 15:04:05"},
 		{"{weekday:name} {month:name} {day:1}, {year}", "Monday January 2, 2006"},
 		{"{year}/{month:1}/{day:1}", "2006/1/2"},
@@ -648,6 +655,26 @@ test "Duration.round and truncate are Go's Round and Truncate" {
     let want = "${want_round} ${want_trunc}"
     if got != want {
       bad.push(("${d}.round(${m})", got, want))
+    }
+  }
+  expect(bad) == []
+}
+
+test "DATE_TIME and RFC1123Z are Go's DateTime and RFC1123Z" {
+  let t = Time.from_unix(1234567890)
+  expect(time.DATE_TIME_LAYOUT.format(t, time.utc())) == "2009-02-13 23:31:30"
+  expect(time.RFC1123Z_LAYOUT.format(t, time.fixed("X", Duration.from_secs_int(-25200)))) == "Fri, 13 Feb 2009 16:31:30 -0700"
+  expect(time.format(t, time.utc(), time.DATE_TIME)) == "2009-02-13 23:31:30"
+  expect(time.parse("2009-02-13 23:31:30", time.DATE_TIME, time.utc())?.unix()) == 1234567890
+  expect(time.parse("Fri, 13 Feb 2009 16:31:30 -0700", time.RFC1123Z, time.utc())?.unix()) == 1234567890
+}
+
+test "micros, minutes and hours are Go's" {
+  var bad: List[Int] = []
+  for (ns, us, mins, hrs) in DUR_UNIT_CASES {
+    let d = Duration.from_nanos(ns)
+    if d.micros() != us || d.minutes().to_bits() != mins || d.hours().to_bits() != hrs {
+      bad.push(ns)
     }
   }
   expect(bad) == []

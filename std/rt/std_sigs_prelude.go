@@ -212,6 +212,9 @@ var (
 	_ func(*Task, string) Result[Duration, DurationErr]                                                    = Duration_parse
 	_ func(*Task, Duration) float64                                                                        = Duration_seconds
 	_ func(*Task, Duration) int64                                                                          = Duration_millis
+	_ func(*Task, Duration) int64                                                                          = Duration_micros
+	_ func(*Task, Duration) float64                                                                        = Duration_minutes
+	_ func(*Task, Duration) float64                                                                        = Duration_hours
 	_ func(*Task, Duration) int64                                                                          = Duration_nanos
 	_ func(*Task, Duration, float64) Duration                                                              = Duration_scale
 	_ func(*Task, Duration) int64                                                                          = Duration_ceil_seconds

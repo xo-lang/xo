@@ -539,6 +539,9 @@ Duration.from_nanos(ns: Int) -> Duration
 Duration.parse(s: Str) -> Duration ! DurationErr
 fn (d: Duration) seconds() -> Float          // Go's Duration.Seconds to the bit: whole seconds plus the rest over 1e9 (decision 0503)
 fn (d: Duration) millis() -> Int             // truncated
+fn (d: Duration) micros() -> Int             // truncated (Go's Microseconds)
+fn (d: Duration) minutes() -> Float          // Go's Minutes, to the bit
+fn (d: Duration) hours() -> Float            // Go's Hours, to the bit
 fn (d: Duration) nanos() -> Int
 fn (d: Duration) scale(f: Float) -> Duration // rounds to the nearest nanosecond
 fn (d: Duration) ceil_seconds() -> Int
@@ -4872,6 +4875,8 @@ const RFC3339: Str = "{year}-{month}-{day}T{hour}:{minute}:{second}{frac}{offset
 const RFC1123: Str = "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {zone}"   // HTTP dates
 const DATE: Str = "{year}-{month}-{day}"
 const TIME: Str = "{hour}:{minute}:{second}"
+const RFC1123Z: Str = "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {offset:compact}"   // Go's RFC1123Z
+const DATE_TIME: Str = "{year}-{month}-{day} {hour}:{minute}:{second}"   // Go's DateTime
 
 struct ParseErr { input: Str, layout: Str, at: Int, msg: Str }
 fn (e: ParseErr) display() -> Str                // at byte 5 of "2026-1x-09": expected 2 digit month
@@ -4890,7 +4895,7 @@ fn (l: Layout) format(t: Time, z: Zone) -> Str             // as format(t, z, te
 fn (l: Layout) parse(s: Str, z: Zone) -> Time ! ParseErr   // as parse(s, text, z)
 fn (l: Layout) parse_civil(s: Str, z: Zone) -> Civil ! ParseErr   // as parse_civil(s, text, z)
 fn (l: Layout) format_civil(c: Civil) -> Str               // as c.format(text)
-// consts RFC3339_LAYOUT, RFC1123_LAYOUT, DATE_LAYOUT, TIME_LAYOUT are the named layouts as Layouts
+// consts RFC3339_LAYOUT, RFC1123_LAYOUT, RFC1123Z_LAYOUT, DATE_LAYOUT, TIME_LAYOUT, DATE_TIME_LAYOUT are the named layouts as Layouts
 ```
 
 Fields, one spelling each: `{year}`; `{month}` 01 to 12, `{month:1}`
@@ -7554,6 +7559,9 @@ fn (static: Duration) from_nanos(ns: Int) -> Duration
 fn (static: Duration) parse(s: Str) -> Duration ! DurationErr
 fn (d: Duration) seconds() -> Float
 fn (d: Duration) millis() -> Int
+fn (d: Duration) micros() -> Int
+fn (d: Duration) minutes() -> Float
+fn (d: Duration) hours() -> Float
 fn (d: Duration) nanos() -> Int
 fn (d: Duration) scale(f: Float) -> Duration
 fn (d: Duration) ceil_seconds() -> Int

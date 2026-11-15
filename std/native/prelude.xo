@@ -5716,6 +5716,20 @@ fn duration_truncate(d: Duration, m: Duration) -> Duration {
   Duration.from_nanos(n - n % mn)
 }
 
+fn duration_micros(d: Duration) -> Int { d.nanos() / 1000 }
+
+/// Go's Duration.Minutes: whole minutes plus the rest over 6e10.
+fn duration_minutes(d: Duration) -> Float {
+  let n = d.nanos()
+  Float(n / 60000000000) + Float(n % 60000000000) / 60000000000.0
+}
+
+/// Go's Duration.Hours: whole hours plus the rest over 3.6e12.
+fn duration_hours(d: Duration) -> Float {
+  let n = d.nanos()
+  Float(n / 3600000000000) + Float(n % 3600000000000) / 3600000000000.0
+}
+
 fn duration_ceil_seconds(d: Duration) -> Int {
   let n = d.nanos()
   if n % 1000000000 > 0 {

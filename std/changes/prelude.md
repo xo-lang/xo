@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-15: feature: Duration.hours, minutes and micros
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655)
+- Go reference: time.Duration.Hours, Minutes, Microseconds (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/time, 220 durations (go, arm64, llvm)
+- Shipped in: not yet released
+- Timing: none
+
+See std/changes/time.md (the same push).
+
 ## 2026-11-15: perf: `Str.rfind` of a one byte Str scans eight bytes a step
 
 - Kind: perf

@@ -1095,6 +1095,12 @@ fn (static: Duration) parse(s: Str) -> Duration ! DurationErr
 fn (d: Duration) seconds() -> Float
 /// d in whole milliseconds, truncated (Go's Duration.Milliseconds).
 fn (d: Duration) millis() -> Int
+/// d in whole microseconds, truncated (Go's Duration.Microseconds).
+fn (d: Duration) micros() -> Int
+/// d in minutes with the fraction (Go's Duration.Minutes, to the bit).
+fn (d: Duration) minutes() -> Float
+/// d in hours with the fraction (Go's Duration.Hours, to the bit).
+fn (d: Duration) hours() -> Float
 /// d in nanoseconds (Go's Duration.Nanoseconds).
 fn (d: Duration) nanos() -> Int
 /// d times f, rounded to the nearest nanosecond.

@@ -15,10 +15,12 @@ import (
 
 // Time_RFC3339 and the other layout constants of std/time.
 const (
-	Time_RFC3339 = "{year}-{month}-{day}T{hour}:{minute}:{second}{frac}{offset}"
-	Time_RFC1123 = "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {zone}"
-	Time_DATE    = "{year}-{month}-{day}"
-	Time_TIME    = "{hour}:{minute}:{second}"
+	Time_RFC3339   = "{year}-{month}-{day}T{hour}:{minute}:{second}{frac}{offset}"
+	Time_RFC1123   = "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {zone}"
+	Time_RFC1123Z  = "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {offset:compact}"
+	Time_DATE      = "{year}-{month}-{day}"
+	Time_TIME      = "{hour}:{minute}:{second}"
+	Time_DATE_TIME = "{year}-{month}-{day} {hour}:{minute}:{second}"
 )
 
 // Time_RFC3339_LAYOUT and the other named layouts of std/time are the
@@ -30,10 +32,12 @@ const (
 // `time.DATE_LAYOUT.format(t, time.utc())` failed to build with
 // "undefined: rt.Time_DATE_LAYOUT" (2026-10-26).
 var (
-	Time_RFC3339_LAYOUT = Time_layout(nil, Time_RFC3339)
-	Time_RFC1123_LAYOUT = Time_layout(nil, Time_RFC1123)
-	Time_DATE_LAYOUT    = Time_layout(nil, Time_DATE)
-	Time_TIME_LAYOUT    = Time_layout(nil, Time_TIME)
+	Time_RFC3339_LAYOUT   = Time_layout(nil, Time_RFC3339)
+	Time_RFC1123_LAYOUT   = Time_layout(nil, Time_RFC1123)
+	Time_DATE_LAYOUT      = Time_layout(nil, Time_DATE)
+	Time_TIME_LAYOUT      = Time_layout(nil, Time_TIME)
+	Time_RFC1123Z_LAYOUT  = Time_layout(nil, Time_RFC1123Z)
+	Time_DATE_TIME_LAYOUT = Time_layout(nil, Time_DATE_TIME)
 )
 
 // tlItem is one piece of a layout: literal text (field "") or a field.
@@ -234,7 +238,9 @@ func (c Time_Civil) M_to_time(*Task) Option[Time] {
 }
 
 // M_format_civil is `l.format_civil(c)`.
-func (l *Time_Layout) M_format_civil(_ *Task, c Time_Civil) string { return formatGo(l.items, civilGo(c)) }
+func (l *Time_Layout) M_format_civil(_ *Task, c Time_Civil) string {
+	return formatGo(l.items, civilGo(c))
+}
 
 func formatGo(items []tlItem, gt time.Time) string {
 	abbr, off := gt.Zone()

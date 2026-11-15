@@ -1,5 +1,21 @@
 # std/time changes
 
+## 2026-11-15: feature: Duration hours, minutes, micros; RFC1123Z and DATE_TIME
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): time.Duration.Hours, Minutes, Microseconds, time.RFC1123Z, time.DateTime
+- Go reference: time.Duration.Hours, Minutes, Microseconds; time.RFC1123Z, time.DateTime (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/time (scripts/stdcorpus time): 220 durations against Go's Microseconds and the bits of Minutes and Hours; both layouts formatted against Go on 8 instants and parsed back (go, arm64, llvm)
+- Shipped in: not yet released
+- Timing: none
+
+Duration's `hours()`, `minutes()` (whole units plus the rest, Go's sum, to
+the bit) and `micros()` are prelude methods; std/time gains `RFC1123Z`,
+`DATE_TIME`, `RFC1123Z_LAYOUT` and `DATE_TIME_LAYOUT`. Go's RFC822,
+RFC822Z and RFC850 have a two digit year, which std/time's fields do not
+write; they are std/timego's constants (Go layouts).
+
 ## 2026-11-14: security: days_until, unix and format answer near and past Int's ends (native)
 
 - Kind: security
