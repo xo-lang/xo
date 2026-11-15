@@ -1,0 +1,198 @@
+// Command cryptostressgen prints the CASES of std/evidence/crypto/stress:
+// seeded inputs and Go 1.26's answers (crypto/*, x/crypto v0.58.0 blake2b,
+// sha3 legacy Keccak, chacha20poly1305).
+package main
+
+import (
+	"bytes"
+	"crypto"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/hkdf"
+	"crypto/hmac"
+	"crypto/md5"
+	"crypto/mlkem"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha3"
+	"crypto/sha512"
+	"crypto/x509"
+	"encoding/hex"
+	"fmt"
+	"hash"
+	mrand "math/rand"
+	"strings"
+
+	"golang.org/x/crypto/blake2b"
+	"golang.org/x/crypto/chacha20poly1305"
+	xsha3 "golang.org/x/crypto/sha3"
+)
+
+func b2(n int) func() hash.Hash {
+	return func() hash.Hash { h, _ := blake2b.New(n, nil); return h }
+}
+
+// in std/crypto Hash order (the program's HASHES)
+var hashes = []func() hash.Hash{md5.New, sha1.New, sha256.New224, sha256.New, sha512.New384, sha512.New,
+	func() hash.Hash { return sha3.New256() }, func() hash.Hash { return sha3.New512() }, func() hash.Hash { return sha3.New224() }, func() hash.Hash { return sha3.New384() },
+	sha512.New512_224, sha512.New512_256, b2(32), b2(48), b2(64), xsha3.NewLegacyKeccak256, xsha3.NewLegacyKeccak512}
+
+var cryptoHashes = []crypto.Hash{crypto.MD5, crypto.SHA1, crypto.SHA224, crypto.SHA256, crypto.SHA384, crypto.SHA512, crypto.SHA3_256, crypto.SHA3_512, crypto.SHA3_224, crypto.SHA3_384, crypto.SHA512_224, crypto.SHA512_256, crypto.BLAKE2b_256, crypto.BLAKE2b_384, crypto.BLAKE2b_512}
+
+var r = mrand.New(mrand.NewSource(616))
+
+func rb(n int) []byte { b := make([]byte, n); r.Read(b); return b }
+
+// a length near a block boundary or random
+func ln() int {
+	ls := []int{0, 1, 31, 32, 33, 63, 64, 65, 127, 128, 129, 135, 136, 137, 255, 256, 1000}
+	if r.Intn(2) == 0 {
+		return ls[r.Intn(len(ls))]
+	}
+	return r.Intn(600)
+}
+
+func sum(f func() hash.Hash, b []byte) []byte { h := f(); h.Write(b); return h.Sum(nil) }
+
+type cs struct{ kind, sub int; a, b, c, d, want string }
+
+var out []cs
+
+func add(kind, sub int, a, b, c, d []byte, want string) {
+	out = append(out, cs{kind, sub, hex.EncodeToString(a), hex.EncodeToString(b), hex.EncodeToString(c), hex.EncodeToString(d), want})
+}
+
+func hx(b []byte) string { return hex.EncodeToString(b) }
+
+func must(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+func main() {
+	// 0 digest, 1 hmac, 2 hkdf (sub: hash)
+	for i := 0; i < 3*len(hashes); i++ {
+		h := i % len(hashes)
+		d := rb(ln())
+		add(0, h, d, nil, nil, nil, hx(sum(hashes[h], d)))
+		k := rb(ln())
+		m := hmac.New(hashes[h], k)
+		m.Write(d)
+		add(1, h, k, d, nil, nil, hx(m.Sum(nil)))
+		if h < len(cryptoHashes) || true {
+			salt, info := rb(r.Intn(40)), rb(r.Intn(40))
+			n := 1 + r.Intn(3*hashes[h]().Size())
+			prk, err := hkdf.Extract(hashes[h], d, salt)
+			must(err)
+			okm, err := hkdf.Expand(hashes[h], prk, string(info), n)
+			must(err)
+			add(2, h, d, salt, info, nil, fmt.Sprintf("%d %s", n, hx(okm)))
+		}
+	}
+	// 3 AEAD seal (sub 0 AES-128-GCM, 1 AES-256-GCM, 2 ChaCha20-Poly1305, 3 XChaCha20-Poly1305): a key, b nonce, c plaintext, d aad
+	for i := 0; i < 64; i++ {
+		sub := i % 4
+		var key []byte
+		var a cipher.AEAD
+		switch sub {
+		case 0, 1:
+			key = rb(16 + 16*sub)
+			blk, _ := aes.NewCipher(key)
+			a, _ = cipher.NewGCM(blk)
+		case 2:
+			key = rb(32)
+			a, _ = chacha20poly1305.New(key)
+		case 3:
+			key = rb(32)
+			a, _ = chacha20poly1305.NewX(key)
+		}
+		nonce, pt, aad := rb(a.NonceSize()), rb(ln()), rb(r.Intn(50))
+		add(3, sub, key, nonce, pt, aad, hx(a.Seal(nil, nonce, pt, aad)))
+	}
+	// 4 Ed25519: a seed, b msg -> signature
+	for i := 0; i < 32; i++ {
+		seed, msg := rb(32), rb(ln())
+		add(4, 0, seed, msg, nil, nil, hx(ed25519.Sign(ed25519.NewKeyFromSeed(seed), msg)))
+	}
+	// 5 ECDH: sub curve (X25519, P256, P384, P521); a, b private keys -> shared secret
+	curves := []ecdh.Curve{ecdh.X25519(), ecdh.P256(), ecdh.P384(), ecdh.P521()}
+	for i := 0; i < 32; i++ {
+		sub := i % 4
+		ka, _ := curves[sub].GenerateKey(rand.Reader)
+		kb, _ := curves[sub].GenerateKey(rand.Reader)
+		s, err := ka.ECDH(kb.PublicKey())
+		must(err)
+		add(5, sub, ka.Bytes(), kb.Bytes(), nil, nil, hx(s))
+	}
+	// 6 ECDSA verify of Go's signature: sub curve (P256, P384); a PKIX key, b msg, c sig, d hash index
+	for i := 0; i < 32; i++ {
+		sub := i % 2
+		c := []elliptic.Curve{elliptic.P256(), elliptic.P384()}[sub]
+		k, _ := ecdsa.GenerateKey(c, rand.Reader)
+		der, _ := x509.MarshalPKIXPublicKey(&k.PublicKey)
+		h := r.Intn(len(hashes))
+		msg := rb(ln())
+		sig, err := ecdsa.SignASN1(rand.Reader, k, sum(hashes[h], msg))
+		must(err)
+		bad := r.Intn(3) == 0
+		if bad {
+			msg = append(append([]byte{}, msg...), 1)
+		}
+		add(6, sub, der, msg, sig, []byte{byte(h)}, fmt.Sprint(!bad))
+	}
+	// 7 RSA (one 2048-bit key, PKCS #8 in RSA_KEY): sub 0 PKCS #1 v1.5 sign (deterministic), 1 PSS verify of Go's, 2 OAEP decrypt of Go's
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	must(err)
+	kder, _ := x509.MarshalPKCS8PrivateKey(k)
+	for i := 0; i < 36; i++ {
+		sub := i % 3
+		h := r.Intn(len(cryptoHashes))
+		msg := rb(ln())
+		switch sub {
+		case 0:
+			if h >= 12 {
+				h = 3
+			}
+			s, err := rsa.SignPKCS1v15(nil, k, cryptoHashes[h], sum(hashes[h], msg))
+			must(err)
+			add(7, 0, msg, nil, nil, []byte{byte(h)}, hx(s))
+		case 1:
+			s, err := rsa.SignPSS(rand.Reader, k, cryptoHashes[h], sum(hashes[h], msg), nil)
+			must(err)
+			add(7, 1, msg, s, nil, []byte{byte(h)}, "true")
+		case 2:
+			if hashes[h]().Size() > 64 || h == 14 {
+				h = 3
+			}
+			msg = rb(r.Intn(100))
+			label := rb(r.Intn(20))
+			c, err := rsa.EncryptOAEP(hashes[h](), rand.Reader, &k.PublicKey, msg, label)
+			must(err)
+			add(7, 2, c, label, nil, []byte{byte(h)}, hx(msg))
+		}
+	}
+	// 8 ML-KEM-768 decapsulation: a seed, b ciphertext -> shared key
+	for i := 0; i < 16; i++ {
+		seed := rb(64)
+		dk, err := mlkem.NewDecapsulationKey768(seed)
+		must(err)
+		shared, ct := dk.EncapsulationKey().Encapsulate()
+		add(8, 0, seed, ct, nil, nil, hx(shared))
+	}
+	var o strings.Builder
+	o.WriteString("const RSA_KEY: Str = \"" + hx(kder) + "\"\n\n")
+	o.WriteString("const CASES: List[(Int, Int, Str, Str, Str, Str, Str)] = [\n")
+	for _, c := range out {
+		fmt.Fprintf(&o, "  (%d, %d, %q, %q, %q, %q, %q),\n", c.kind, c.sub, c.a, c.b, c.c, c.d, c.want)
+	}
+	o.WriteString("]\n")
+	_ = bytes.Equal
+	fmt.Print(o.String())
+}

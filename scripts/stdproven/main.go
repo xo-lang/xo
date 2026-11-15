@@ -66,6 +66,7 @@ type harness struct {
 // input gets a harness first, its Solid requirement).
 var harnesses = map[string][]harness{
 	"compress": {{"TestCompressFuzz", "XO_COMPRESSFUZZ"}, {"TestLzwFuzz", "XO_LZWFUZZ"}},
+	"crypto":   {{"TestRsaFuzz", "XO_RSAFUZZ"}},
 	"json":     {{"TestJsonFuzz", "XO_JSONFUZZ"}},
 	"time":     {{"TestTimeFuzz", "XO_TIMEFUZZ"}},
 	"http":     {{"TestHttpHeadFuzz", "XO_HEADFUZZ"}, {"TestHttpResponseFuzz", "XO_RESPFUZZ"}, {"TestHttpUrlFuzz", "XO_URLFUZZ"}},
