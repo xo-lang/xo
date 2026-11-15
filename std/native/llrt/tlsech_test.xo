@@ -1,0 +1,81 @@
+// Go's crypto/tls ech_test.go (go1.26.11), ported (decision 0644 T13).
+use std/hpke
+use native/llrt/asn1
+
+fn unhex(s: Str) -> Bytes { Bytes.from_hex(s) ?? b"" }
+
+test "TestDecodeECHConfigLists" {
+  let one = unhex("0045fe0d0041590020002092a01233db2218518ccbbbbc24df20686af417b37388de6460e94011974777090004000100010012636c6f7564666c6172652d6563682e636f6d0000")
+  let (a, ea) = parse_list(one)
+  expect(ea) == ""
+  expect(a.len()) == 1
+  expect(a[0].public_name.to_str() ?? "") == "cloudflare-ech.com"
+  let three = unhex("0105badd00050504030201fe0d0066000010004104e62b69e2bf659f97be2f1e0d948a4cd5976bb7a91e0d46fbdda9a91e9ddcba5a01e7d697a80a18f9c3c4a31e56e27c8348db161a1cf51d7ef1942d4bcf7222c1000c000100010001000200010003400e7075626c69632e6578616d706c650000fe0d003d00002000207d661615730214aeee70533366f36a609ead65c0c208e62322346ab5bcd8de1c000411112222400e7075626c69632e6578616d706c650000fe0d004d000020002085bd6a03277c25427b52e269e0c77a8eb524ba1eb3d2f132662d4b0ac6cb7357000c000100010001000200010003400e7075626c69632e6578616d706c650008aaaa000474657374")
+  let (b, eb) = parse_list(three)
+  expect(eb) == ""
+  expect(b.len()) == 3
+  expect(pick(a).is_some()) == true
+}
+
+test "TestSkipBadConfigs" {
+  let l = unhex("00c8badd00050504030201fe0d0029006666000401020304000c000100010001000200010003400e7075626c69632e6578616d706c650000fe0d003d000020002072e8a23b7aef67832bcc89d652e3870a60f88ca684ec65d6eace6b61f136064c000411112222400e7075626c69632e6578616d706c650000fe0d004d00002000200ce95810a81d8023f41e83679bc92701b2acd46c75869f95c72bc61c6b12297c000c000100010001000200010003400e7075626c69632e6578616d706c650008aaaa000474657374")
+  let (cs, e) = parse_list(l)
+  expect(e) == ""
+  expect(pick(cs).is_none()) == true
+}
+
+test "malformed lists" {
+  expect(parse_list(b"").1) == "tls: malformed ECHConfigList"
+  expect(parse_list(b"\x00\x03\xfe\x0d\x00").1) == "tls: malformed ECHConfig"
+  expect(parse_list(b"\x00\x04\xfe\x0d\x00\x05").1) == "tls: malformed ECHConfig, invalid length field"
+}
+
+test "validDNSName" {
+  expect(valid_dns_name("public.example")) == true
+  expect(valid_dns_name("example")) == false
+  expect(valid_dns_name("a..b")) == false
+  expect(valid_dns_name("-a.b")) == false
+  expect(valid_dns_name("a_b.c")) == false
+}
+
+test "padding as Go pads" {
+  // Go's encodeInnerClientHello as it is: its second assignment to
+  // paddingLen replaces the name's padding, so the length is
+  // len(h) + 31 - ((len(h) + name padding - 1) % 32)
+  expect(pad_inner(zeros(100), "a.b", 32).len()) == 131
+  expect(pad_inner(zeros(100), "", 0).len()) == 119
+}
+
+test "outer extension round trip" {
+  let d = outer_ext(123, 1, 1, b"KEY", b"PAYLOAD")
+  let e = parse_ext(d)
+  expect(e.err) == ""
+  expect(e.outer) == true
+  expect(e.id) == 123
+  expect(e.enc) == b"KEY"
+  expect(e.payload) == b"PAYLOAD"
+  expect(parse_ext(b"\x01").outer) == false
+  expect(parse_ext(b"\x01\x00").err) == "malformed"
+  expect(parse_ext(b"\x02").err) == "invalid"
+}
+
+// The client's sender (here, on the handshake's primitives) against
+// std/hpke's Recipient, for each KEM and suite it takes.
+test "sender seals what std/hpke opens" {
+  for (kem_id, kdf, aead) in [(0x0020, 1, 1), (0x0020, 1, 3), (0x0010, 1, 1), (0x0011, 2, 2), (0x0012, 3, 1)] {
+    let kem = hpke.new_kem(kem_id) ?? e => fault(e.msg)
+    let sk = kem.derive_key_pair(b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") ?? e => fault(e.msg)
+    let pkb = sk.public_key().bytes()
+    let raw = asn1.cat([b"\xfe\x0d\x00\x00", b"\x07"])
+    let cfg = Config{raw: raw, id: 7, kem: kem_id, public_key: pkb, suites: [(kdf, aead)], max_name: 0, public_name: "a.example".bytes(), exts: []}
+    let p = Picked{config: cfg, pk: sk.public_key(), kdf: hpke.new_kdf(kdf) ?? e => fault(e.msg), aead: hpke.new_aead(aead) ?? e => fault(e.msg)}
+    let (so, e) = sender(p)
+    expect(e) == ""
+    var s = so ?? fault("no sender")
+    let c1 = seal(s, b"aad1", b"hello")
+    let c2 = seal(s, b"aad2", b"again")
+    var r = hpke.new_recipient(s.enc, sk, p.kdf, p.aead, info(raw)) ?? e => fault(e.msg)
+    expect(r.open(b"aad1", c1) ?? e => "FAIL ${e.msg}".bytes()) == b"hello"
+    expect(r.open(b"aad2", c2) ?? _e => "FAIL".bytes()) == b"again"
+  }
+}

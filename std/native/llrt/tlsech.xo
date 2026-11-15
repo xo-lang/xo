@@ -1,0 +1,651 @@
+// Encrypted Client Hello (decision 0644 T13, RFC 9849), a port of Go's
+// crypto/tls ech.go (go1.26.11; Copyright 2024 The Go Authors,
+// BSD-style license): ECHConfigList parsing and the config a client
+// picks (parseECHConfigList, pickECHConfig, validDNSName), the
+// EncodedClientHelloInner with its padding and outer_extensions
+// (encodeInnerClientHello, decodeInnerClientHello), the
+// encrypted_client_hello extension (generateOuterECHExt, parseECHExt),
+// the acceptance confirmations of RFC 9849 7.2 and the retry configs a
+// server sends (buildRetryConfigList). HPKE is std/hpke. tls13.xo (the
+// client) and tls13srv.xo (the server) run the handshake.
+
+use std/hpke
+use native/llrt/aesgcm
+use native/llrt/asn1
+use native/llrt/chacha
+use native/llrt/hkdf
+use native/llrt/nistec
+use native/llrt/rand
+use native/llrt/sha256
+use native/llrt/x25519
+use native/rt
+
+/// The encrypted_client_hello extension and ECHConfig version (Go's
+/// extensionEncryptedClientHello).
+pub const EXT_ECH: Int = 0xfe0d
+/// ech_outer_extensions (Go's extensionECHOuterExtensions).
+pub const EXT_OUTER: Int = 0xfd00
+/// The alert a client sends when the server rejected ECH (Go's
+/// alertECHRequired).
+pub const ALERT_ECH_REQUIRED: Int = 121
+
+/// Go's ECHRejectionError text.
+pub const REJECTED: Str = "tls: server rejected ECH"
+
+/// An ECHConfig (Go's echConfig): raw the config's whole encoding (its
+/// version and length too), the HPKE KEM and its public key, the
+/// (KDF, AEAD) suites, the longest name to pad to, the public name and
+/// the extensions' types.
+pub struct Config {
+  pub raw: Bytes
+  pub id: Int
+  pub kem: Int
+  pub public_key: Bytes
+  pub suites: List[(Int, Int)]
+  pub max_name: Int
+  pub public_name: Bytes
+  pub exts: List[Int]
+}
+
+/// A server's ECH key (Go's EncryptedClientHelloKey): the ECHConfig it
+/// decrypts, the KEM's private key, and whether the config is sent to a
+/// client whose ECH was rejected.
+pub struct Key {
+  pub config: Bytes
+  pub private_key: Bytes
+  pub send_as_retry: Bool
+}
+
+fn u8(x: Int) -> Bytes { rt.rs_push_byte(rt.rs_with_cap(1), x & 255).bytes() }
+fn u16(x: Int) -> Bytes { rt.rs_push_byte(rt.rs_push_byte(rt.rs_with_cap(2), (x >> 8) & 255), x & 255).bytes() }
+fn u16_at(b: Bytes, p: Int) -> Int { Int(b[p]) * 256 + Int(b[p + 1]) }
+fn vec8(b: Bytes) -> Bytes { asn1.cat([u8(b.len()), b]) }
+fn vec16(b: Bytes) -> Bytes { asn1.cat([u16(b.len()), b]) }
+fn ext(t: Int, d: Bytes) -> Bytes { asn1.cat([u16(t), vec16(d)]) }
+
+fn config_err(field: Str) -> Str { if field == "" { "tls: malformed ECHConfig" } else { "tls: malformed ECHConfig, invalid ${field} field" } }
+
+/// Go's parseECHConfig: (skip, config, error text): skip when the
+/// config's version is not ECH's (its length still read).
+pub fn parse_config(enc: Bytes) -> (Bool, Config, Str) {
+  var c = Config{raw: b"", id: 0, kem: 0, public_key: b"", suites: [], max_name: 0, public_name: b"", exts: []}
+  if enc.len() < 2 {
+    return (false, c, config_err("version"))
+  }
+  let version = u16_at(enc, 0)
+  if enc.len() < 4 {
+    return (false, c, config_err("length"))
+  }
+  let length = u16_at(enc, 2)
+  if enc.len() < length + 4 {
+    return (false, c, config_err("length"))
+  }
+  c.raw = enc[0..length + 4]
+  if version != EXT_ECH {
+    return (true, c, "")
+  }
+  // the fields read from the whole input as Go's cryptobyte string, not
+  // only the config's length
+  var p = 4
+  if enc.len() < p + 1 {
+    return (false, c, config_err("config_id"))
+  }
+  c.id = Int(enc[p])
+  p += 1
+  if enc.len() < p + 2 {
+    return (false, c, config_err("kem_id"))
+  }
+  c.kem = u16_at(enc, p)
+  p += 2
+  if enc.len() < p + 2 || enc.len() < p + 2 + u16_at(enc, p) {
+    return (false, c, config_err("public_key"))
+  }
+  c.public_key = enc[p + 2..p + 2 + u16_at(enc, p)]
+  p += 2 + u16_at(enc, p)
+  if enc.len() < p + 2 || enc.len() < p + 2 + u16_at(enc, p) {
+    return (false, c, config_err("cipher_suites"))
+  }
+  let cs_end = p + 2 + u16_at(enc, p)
+  p += 2
+  while p < cs_end {
+    if cs_end < p + 2 {
+      return (false, c, config_err("cipher_suites kdf_id"))
+    }
+    if cs_end < p + 4 {
+      return (false, c, config_err("cipher_suites aead_id"))
+    }
+    c.suites.push((u16_at(enc, p), u16_at(enc, p + 2)))
+    p += 4
+  }
+  if enc.len() < p + 1 {
+    return (false, c, config_err("maximum_name_length"))
+  }
+  c.max_name = Int(enc[p])
+  p += 1
+  if enc.len() < p + 1 || enc.len() < p + 1 + Int(enc[p]) {
+    return (false, c, config_err("public_name"))
+  }
+  c.public_name = enc[p + 1..p + 1 + Int(enc[p])]
+  p += 1 + Int(enc[p])
+  if enc.len() < p + 2 || enc.len() < p + 2 + u16_at(enc, p) {
+    return (false, c, config_err("extensions"))
+  }
+  let ex_end = p + 2 + u16_at(enc, p)
+  p += 2
+  while p < ex_end {
+    if ex_end < p + 2 {
+      return (false, c, config_err("extensions type"))
+    }
+    if ex_end < p + 4 || ex_end < p + 4 + u16_at(enc, p + 2) {
+      return (false, c, config_err("extensions data"))
+    }
+    c.exts.push(u16_at(enc, p))
+    p += 4 + u16_at(enc, p + 2)
+  }
+  (false, c, "")
+}
+
+/// Go's parseECHConfigList: the configs of ECH's version, in order.
+pub fn parse_list(data: Bytes) -> (List[Config], Str) {
+  if data.len() < 2 || u16_at(data, 0) != data.len() - 2 {
+    return ([], "tls: malformed ECHConfigList")
+  }
+  var out: List[Config] = []
+  var s = data[2..data.len()]
+  while s.len() > 0 {
+    if s.len() < 4 {
+      return ([], "tls: malformed ECHConfig")
+    }
+    let n = u16_at(s, 2)
+    let (skip, c, e) = parse_config(s)
+    if !e.is_empty() {
+      return ([], e)
+    }
+    s = s[n + 4..s.len()]
+    if !skip {
+      out.push(c)
+    }
+  }
+  (out, "")
+}
+
+/// The config a client uses, its HPKE public key and suite (Go's
+/// pickECHConfig's results).
+pub struct Picked {
+  pub config: Config
+  pub pk: hpke.PublicKey
+  pub kdf: hpke.Kdf
+  pub aead: hpke.Aead
+}
+
+/// Go's pickECHConfig: the first config with a valid public name, no
+/// mandatory extension, a KEM and key HPKE has, and a suite HPKE has
+/// (its first).
+pub fn pick(list: List[Config]) -> Picked? {
+  for c in list {
+    if !valid_dns_name(c.public_name.to_str() ?? "") {
+      continue
+    }
+    var mandatory = false
+    for t in c.exts {
+      if t & 0x8000 != 0 {
+        mandatory = true
+      }
+    }
+    if mandatory {
+      continue
+    }
+    // the KEMs the client's sender takes: Go's NewKEM also has ML-KEM's,
+    // whose configs are skipped here
+    if !kem_ok(c.kem) {
+      continue
+    }
+    let kem = hpke.new_kem(c.kem).ok() ?? continue
+    let pk = kem.public_key(c.public_key).ok() ?? continue
+    for (k, a) in c.suites {
+      let kdf = hpke.new_kdf(k).ok() ?? continue
+      let aead = hpke.new_aead(a).ok() ?? continue
+      return Some(Picked{config: c, pk: pk, kdf: kdf, aead: aead})
+    }
+  }
+  None
+}
+
+/// Go's validDNSName: at most 253 bytes, two labels or more, each of
+/// letters, digits and inner hyphens.
+pub fn valid_dns_name(name: Str) -> Bool {
+  if name.len() > 253 {
+    return false
+  }
+  let labels = name.split(".")
+  if labels.len() <= 1 {
+    return false
+  }
+  for l in labels {
+    let b = l.bytes()
+    if b.is_empty() {
+      return false
+    }
+    for (i, r) in b.indexed() {
+      let c = Int(r)
+      if c == 0x2d && (i == 0 || i == b.len() - 1) {
+        return false
+      }
+      let digit = c >= 0x30 && c <= 0x39
+      let lower = c >= 0x61 && c <= 0x7a
+      let upper = c >= 0x41 && c <= 0x5a
+      if !digit && !lower && !upper && c != 0x2d {
+        // Go ranges over the label's runes: a byte at or above 0x80 is
+        // part of a rune that is none of these either
+        return false
+      }
+    }
+  }
+  true
+}
+
+/// The HPKE info of a config (Go's "tls ech\x00" + raw).
+pub fn info(raw: Bytes) -> Bytes { asn1.cat(["tls ech".bytes(), b"\x00", raw]) }
+
+/// Go's encodeInnerClientHello's padding: the EncodedClientHelloInner
+/// body h (no message header) padded with zeros to a multiple of 32
+/// (RFC 9849 6.1.3), first to the config's longest name.
+pub fn pad_inner(h: Bytes, server_name: Str, max_name: Int) -> Bytes {
+  var pad = if server_name != "" { if max_name - server_name.len() > 0 { max_name - server_name.len() } else { 0 } } else { max_name + 9 }
+  pad = 31 - ((h.len() + pad - 1) % 32)
+  asn1.cat([h, zeros(pad)])
+}
+
+/// Go's generateOuterECHExt: the outer encrypted_client_hello
+/// extension's data.
+pub fn outer_ext(id: Int, kdf: Int, aead: Int, enc: Bytes, payload: Bytes) -> Bytes { asn1.cat([u8(0), u16(kdf), u16(aead), u8(id), vec16(enc), vec16(payload)]) }
+
+/// The inner encrypted_client_hello extension's data (Go's innerECHExt).
+pub fn inner_ext() -> Bytes { b"\x01" }
+
+/// A parsed encrypted_client_hello extension (Go's parseECHExt):
+/// outer (type 0) or inner (1), and an outer's suite, config id,
+/// encapsulated key and payload; err "malformed" (decode_error) or
+/// "invalid" (illegal_parameter) when it does not parse.
+pub struct Ext {
+  pub outer: Bool
+  pub kdf: Int
+  pub aead: Int
+  pub id: Int
+  pub enc: Bytes
+  pub payload: Bytes
+  pub err: Str
+}
+
+/// Go's parseECHExt.
+pub fn parse_ext(d: Bytes) -> Ext {
+  var e = Ext{outer: false, kdf: 0, aead: 0, id: 0, enc: b"", payload: b"", err: ""}
+  if d.is_empty() {
+    return e with {err: "malformed"}
+  }
+  if d[0] == 1 {
+    return if d.len() == 1 { e } else { e with {err: "malformed"} }
+  }
+  if d[0] != 0 {
+    return e with {err: "invalid"}
+  }
+  e.outer = true
+  if d.len() < 6 {
+    return e with {err: "malformed"}
+  }
+  e.kdf = u16_at(d, 1)
+  e.aead = u16_at(d, 3)
+  e.id = Int(d[5])
+  var p = 6
+  if d.len() < p + 2 || d.len() < p + 2 + u16_at(d, p) {
+    return e with {err: "malformed"}
+  }
+  e.enc = d[p + 2..p + 2 + u16_at(d, p)]
+  p += 2 + u16_at(d, p)
+  if d.len() < p + 2 || d.len() < p + 2 + u16_at(d, p) {
+    return e with {err: "malformed"}
+  }
+  e.payload = d[p + 2..p + 2 + u16_at(d, p)]
+  e
+}
+
+/// The error texts Go's server returns for an ECH extension it cannot use.
+pub const ERR_INVALID_EXT: Str = "tls: client sent invalid encrypted_client_hello extension"
+
+/// Go's extractRawExtensions: the extensions of a ClientHello message
+/// (with its header) as (type, data), in order; None when malformed.
+pub fn raw_exts(m: Bytes) -> List[(Int, Bytes)]? {
+  var p = 4 + 2 + 32
+  if m.len() < p + 1 || m.len() < p + 1 + Int(m[p]) {
+    return None
+  }
+  p += 1 + Int(m[p])
+  if m.len() < p + 2 || m.len() < p + 2 + u16_at(m, p) {
+    return None
+  }
+  p += 2 + u16_at(m, p)
+  if m.len() < p + 1 || m.len() < p + 1 + Int(m[p]) {
+    return None
+  }
+  p += 1 + Int(m[p])
+  if m.len() < p + 2 || m.len() < p + 2 + u16_at(m, p) {
+    return None
+  }
+  let end = p + 2 + u16_at(m, p)
+  p += 2
+  var out: List[(Int, Bytes)] = []
+  while p < end {
+    if end < p + 4 || end < p + 4 + u16_at(m, p + 2) {
+      return None
+    }
+    out.push((u16_at(m, p), m[p + 4..p + 4 + u16_at(m, p + 2)]))
+    p += 4 + u16_at(m, p + 2)
+  }
+  Some(out)
+}
+
+/// Go's decodeInnerClientHello up to the reconstructed message: the
+/// ClientHelloInner (with its header) from the outer ClientHello message
+/// (with its header), the outer's session id and the decrypted
+/// EncodedClientHelloInner, each outer_extensions reference replaced by
+/// the outer's extension (RFC 9849 5.1, Appendix A: in the outer's order,
+/// never rewinding); the error text when it does not decode. The caller
+/// parses it and checks its encrypted_client_hello and versions
+/// (check_inner).
+pub fn decode_inner(outer: Bytes, sid: Bytes, enc: Bytes) -> (Bytes, Str) {
+  let bad = "tls: invalid inner client hello"
+  var p = 34
+  if enc.len() < p + 1 || enc[p] != 0 {
+    return (b"", bad)
+  }
+  let vr = enc[0..34]
+  p += 1
+  if enc.len() < p + 2 || enc.len() < p + 2 + u16_at(enc, p) {
+    return (b"", bad)
+  }
+  let suites = enc[p + 2..p + 2 + u16_at(enc, p)]
+  p += 2 + u16_at(enc, p)
+  if enc.len() < p + 1 || enc.len() < p + 1 + Int(enc[p]) {
+    return (b"", bad)
+  }
+  let comp = enc[p + 1..p + 1 + Int(enc[p])]
+  p += 1 + Int(enc[p])
+  if enc.len() < p + 2 || enc.len() < p + 2 + u16_at(enc, p) {
+    return (b"", bad)
+  }
+  let ex_end = p + 2 + u16_at(enc, p)
+  p += 2
+  // the padding after the extensions must be zeros
+  for i in ex_end..enc.len() {
+    if enc[i] != 0 {
+      return (b"", bad)
+    }
+  }
+  let outer_exts = raw_exts(outer) ?? return (b"", "tls: malformed outer client hello")
+  var exts: List[Bytes] = []
+  var seen_outer = false
+  while p < ex_end {
+    if ex_end < p + 4 || ex_end < p + 4 + u16_at(enc, p + 2) {
+      return (b"", bad)
+    }
+    let t = u16_at(enc, p)
+    let d = enc[p + 4..p + 4 + u16_at(enc, p + 2)]
+    p += 4 + u16_at(enc, p + 2)
+    if t != EXT_OUTER {
+      exts.push(ext(t, d))
+      continue
+    }
+    if seen_outer {
+      return (b"", "tls: invalid outer extensions")
+    }
+    seen_outer = true
+    if d.is_empty() || Int(d[0]) != d.len() - 1 || d.len() == 1 {
+      return (b"", bad)
+    }
+    var q = 1
+    var i = 0
+    while q < d.len() {
+      if d.len() < q + 2 {
+        return (b"", bad)
+      }
+      let want = u16_at(d, q)
+      q += 2
+      if want == EXT_ECH || want == EXT_OUTER {
+        return (b"", "tls: invalid outer extensions")
+      }
+      while i < outer_exts.len() && outer_exts[i].0 != want {
+        i += 1
+      }
+      if i == outer_exts.len() {
+        return (b"", "tls: invalid outer extensions")
+      }
+      exts.push(ext(outer_exts[i].0, outer_exts[i].1))
+      i += 1
+    }
+  }
+  let body = asn1.cat([vr, vec8(sid), vec16(suites), vec8(comp), vec16(asn1.cat(exts))])
+  let n = body.len()
+  (asn1.cat([u8(1), u8(n >> 16), u16(n), body]), "")
+}
+
+/// The rest of Go's decodeInnerClientHello on the parsed inner hello:
+/// its encrypted_client_hello must be the inner type, and it must offer
+/// TLS 1.3 and nothing older (GREASE values aside); the error text.
+pub fn check_inner(ech: Bytes, versions: List[Int]) -> Str {
+  if ech != inner_ext() {
+    return ERR_INVALID_EXT
+  }
+  var v13 = false
+  for v in versions {
+    if v & 0x0f0f == 0x0a0a && v & 255 == v >> 8 {
+      continue
+    }
+    if v == 0x0304 {
+      v13 = true
+    } else if v < 0x0304 {
+      return "tls: client sent encrypted_client_hello extension with unsupported versions"
+    }
+  }
+  if !v13 {
+    return "tls: client sent encrypted_client_hello extension but did not offer TLS 1.3"
+  }
+  ""
+}
+
+/// The outer ClientHello's AAD for the payload (Go's decryptECHPayload):
+/// the message without its header, the payload's bytes zeroed (its first
+/// occurrence, as Go's bytes.Replace).
+pub fn outer_aad(hello: Bytes, payload: Bytes) -> Bytes {
+  let body = hello[4..hello.len()]
+  let n = payload.len()
+  if n == 0 {
+    return body
+  }
+  var i = 0
+  while i + n <= body.len() {
+    if body[i..i + n] == payload {
+      return asn1.cat([body[0..i], zeros(n), body[i + n..body.len()]])
+    }
+    i += 1
+  }
+  body
+}
+
+/// n zero bytes.
+pub fn zeros(n: Int) -> Bytes {
+  var s = rt.rs_with_cap(n)
+  for _ in 0..n {
+    s = rt.rs_push_byte(s, 0)
+  }
+  s.bytes()
+}
+
+/// The 8 bytes of an acceptance confirmation (RFC 9849 7.2): label
+/// "ech accept confirmation" over the ServerHello transcript, "hrr ech
+/// accept confirmation" over the HelloRetryRequest's, keyed by the inner
+/// ClientHello's random.
+pub fn confirmation(hash: Int, inner_random: Bytes, label: Str, transcript: Bytes) -> Bytes {
+  let prk = hkdf.extract(hash, b"", inner_random)
+  hkdf.expand_label(hash, prk, label, sha256.sum(hash, transcript), 8)
+}
+
+/// A ServerHello message (with its header) with the last 8 bytes of its
+/// random zeroed (Go's confTranscript of the ServerHello).
+pub fn zero_random_tail(sh: Bytes) -> Bytes { asn1.cat([sh[0..30], zeros(8), sh[38..sh.len()]]) }
+
+/// Go's buildRetryConfigList: the ECHConfigList of the keys sent as
+/// retry configs; empty when none is.
+pub fn retry_list(keys: List[Key]) -> Bytes {
+  var cs: List[Bytes] = []
+  for k in keys {
+    if k.send_as_retry {
+      cs.push(k.config)
+    }
+  }
+  if cs.is_empty() {
+    return b""
+  }
+  vec16(asn1.cat(cs))
+}
+
+/// A client's HPKE context (RFC 9180 5.1, base mode) to the picked
+/// config: the encapsulated key, the AEAD's key and base nonce, and the
+/// sequence number of the next seal. HPKE's own Sender takes a Rand,
+/// which the handshake (pure, with the system's randomness as Go's
+/// crypto/rand) cannot pass, so the client's side is here on the
+/// handshake's primitives; the server opens with std/hpke's Recipient,
+/// so each checks the other.
+pub struct Sender {
+  pub enc: Bytes
+  aead: Int
+  key: Bytes
+  nonce: Bytes
+  seq: Int = 0
+}
+
+/// A KEM the client encapsulates to: DHKEM over X25519 (0x0020), P-256
+/// (0x0010), P-384 (0x0011) and P-521 (0x0012) (RFC 9180 7.1).
+pub fn kem_ok(kem: Int) -> Bool { kem is 0x0010 | 0x0011 | 0x0012 | 0x0020 }
+
+fn kem_hash(kem: Int) -> Int {
+  if kem == 0x0011 {
+    return sha256.HASH_SHA384
+  }
+  if kem == 0x0012 {
+    return sha256.HASH_SHA512
+  }
+  sha256.HASH_SHA256
+}
+
+fn kdf_hash(kdf: Int) -> Int {
+  if kdf == 2 {
+    return sha256.HASH_SHA384
+  }
+  if kdf == 3 {
+    return sha256.HASH_SHA512
+  }
+  sha256.HASH_SHA256
+}
+
+fn labeled_extract(hash: Int, suite: Bytes, salt: Bytes, label: Str, ikm: Bytes) -> Bytes { hkdf.extract(hash, salt, asn1.cat(["HPKE-v1".bytes(), suite, label.bytes(), ikm])) }
+
+fn labeled_expand(hash: Int, suite: Bytes, prk: Bytes, label: Str, info: Bytes, n: Int) -> Bytes { hkdf.expand(hash, prk, asn1.cat([u16(n), "HPKE-v1".bytes(), suite, label.bytes(), info]), n) }
+
+/// The context to the picked config (Go's hpke.NewSender with the
+/// config's info): None and the text when the KEM is not one kem_ok
+/// takes or the key is invalid.
+pub fn sender(p: Picked) -> (Sender?, Str) {
+  let c = p.config
+  if !kem_ok(c.kem) {
+    return (None, "tls: unsupported ECH KEM")
+  }
+  let kdf = p.kdf.id()
+  let aead = p.aead.id()
+  if !(kdf is 1 | 2 | 3) || !(aead is 1 | 2 | 3) {
+    return (None, "tls: unsupported ECH cipher suite")
+  }
+  // DHKEM's Encap (RFC 9180 4.1): an ephemeral key, its DH with the
+  // recipient's key, and the shared secret from both public keys
+  let pk_r = c.public_key
+  var priv = b""
+  var enc = b""
+  var dh: Bytes? = None
+  if c.kem == 0x0020 {
+    priv = rand.next_bytes(32)
+    enc = x25519.base(priv)
+    if pk_r.len() == 32 {
+      let sh = x25519.scalar_mult(priv, pk_r)
+      var acc = 0
+      for b in sh {
+        acc = acc | Int(b)
+      }
+      dh = if acc == 0 { None } else { Some(sh) }
+    }
+  } else {
+    let curve = if c.kem == 0x0010 { nistec.P256 } else if c.kem == 0x0011 { nistec.P384 } else { nistec.P521 }
+    priv = nistec.generate(curve)
+    enc = nistec.public_key(curve, priv)
+    dh = nistec.ecdh(curve, priv, pk_r)
+  }
+  let secret = dh ?? return (None, "tls: invalid ECH public key")
+  let kh = kem_hash(c.kem)
+  let kem_suite = asn1.cat(["KEM".bytes(), u16(c.kem)])
+  let eae = labeled_extract(kh, kem_suite, b"", "eae_prk", secret)
+  let ss = labeled_expand(kh, kem_suite, eae, "shared_secret", asn1.cat([enc, pk_r]), sha256.size(kh))
+  // KeySchedule (5.1), mode_base with no PSK
+  let h = kdf_hash(kdf)
+  let suite = asn1.cat(["HPKE".bytes(), u16(c.kem), u16(kdf), u16(aead)])
+  let psk_id_hash = labeled_extract(h, suite, b"", "psk_id_hash", b"")
+  let info_hash = labeled_extract(h, suite, b"", "info_hash", info(c.raw))
+  let ctx = asn1.cat([u8(0), psk_id_hash, info_hash])
+  let sec = labeled_extract(h, suite, ss, "secret", b"")
+  let nk = if aead == 1 { 16 } else { 32 }
+  (Some(Sender{enc: enc, aead: aead, key: labeled_expand(h, suite, sec, "key", ctx, nk), nonce: labeled_expand(h, suite, sec, "base_nonce", ctx, 12)}), "")
+}
+
+/// The next message sealed with aad (RFC 9180 5.2's ContextS.Seal): the
+/// base nonce xor the sequence number.
+pub fn seal(var s: Sender, aad: Bytes, pt: Bytes) -> Bytes {
+  var n = rt.rs_with_cap(12)
+  for i in 0..12 {
+    let shift = (11 - i) * 8
+    let sb = if shift < 64 { (s.seq >> shift) & 255 } else { 0 }
+    n = rt.rs_push_byte(n, Int(s.nonce[i]) ^ sb)
+  }
+  let nonce = n.bytes()
+  s.seq += 1
+  if s.aead == 3 {
+    return chacha.seal(s.key, nonce, pt, aad)
+  }
+  aesgcm.new_gcm(s.key).seal(nonce, pt, aad)
+}
+
+/// A server's context for an outer extension under key k (Go's
+/// processECHClientHello, one trial): None when the key cannot open it;
+/// a text when the key itself is unusable (internal_error).
+pub fn recipient(k: Key, e: Ext) -> (hpke.Recipient?, Str) {
+  let (skip, c, err) = parse_config(k.config)
+  if !err.is_empty() || skip {
+    return (None, "tls: invalid EncryptedClientHelloKey Config: ${if err.is_empty() { "%!s(<nil>)" } else { err }}")
+  }
+  let kem = match hpke.new_kem(c.kem) {
+    Ok(x) => x
+    Err(x) => return (None, "tls: invalid EncryptedClientHelloKey Config KEM: ${x.msg}")
+  }
+  let priv = match kem.private_key(k.private_key) {
+    Ok(x) => x
+    Err(x) => return (None, "tls: invalid EncryptedClientHelloKey PrivateKey: ${x.msg}")
+  }
+  let kdf = match hpke.new_kdf(e.kdf) {
+    Ok(x) => x
+    Err(x) => return (None, "tls: invalid EncryptedClientHelloKey Config KDF: ${x.msg}")
+  }
+  let aead = match hpke.new_aead(e.aead) {
+    Ok(x) => x
+    Err(x) => return (None, "tls: invalid EncryptedClientHelloKey Config AEAD: ${x.msg}")
+  }
+  match hpke.new_recipient(e.enc, priv, kdf, aead, info(k.config)) {
+    Ok(r) => (Some(r), "")
+    Err(_) => (None, "")
+  }
+}
