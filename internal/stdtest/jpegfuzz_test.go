@@ -305,7 +305,7 @@ func jxMutateOnce(r *rand.Rand, b []byte) []byte {
 			default:
 				d[len(d)-1] = byte(r.Intn(256)) // Ah, Al
 			}
-			if r.Intn(4) == 0 && len(d) > 7 {
+			if r.Intn(4) == 0 && len(d) > 8 {
 				d[5+r.Intn(len(d)-8)] = byte(r.Intn(256))
 			}
 		}
