@@ -1203,6 +1203,32 @@ section 3, amended 2026-11-14). Security reviews follow
   layout still parses (code-signing.md "Windows").
 - `scripts/cache-churn.sh [--dir DIR] [--since UNIX] [--live-min N]` (2026-10-24, decision 0365's churn measurement): the back-end cache's store churn by hour and for the last 24 hours and the whole period, from DIR/store-log and DIR/prune-log: GB stored, GB pruned, distinct ids, GB stored by retired ids (an id with no store in the last N minutes, default 60) and their share. Read only; `--since` defaults to 2026-10-24 about 20:45 local. Run it on the cache's machine, e.g. Sunday morning for the owner's review.
 
+## Waiting (lead, 2026-11-15)
+
+Never poll a job with repeated status or log reads: over 24 hours of
+transcripts about 30% of every agent's Bash calls were such polls, and
+each one re-reads the whole session context (plausibly 40 to 50% of all
+tokens). Start one blocking wait with the harness's background run
+(`run_in_background`), which wakes the session once when it ends, and
+work on the next item meanwhile. Each wait polls by itself, prints a
+short result, exits with the job's status, and exits 124 at its ceiling.
+
+| Wait | Blocks until | Prints | Ceiling |
+|---|---|---|---|
+| `~/xo-lead/agents/heavy.sh --wait NAME [--max-min N]` | the newest run of heavy.sh job NAME ends (its log's last `cwd` line starts the run; a log not there yet is waited for) | exit, duration and peak, then on failure up to 20 distinct error lines (`--- FAIL`, `panic:`, errors; else its last lines), on success its last 3 lines | `HEAVY_WAIT_MAX_MIN`, 180 |
+| `~/xo-lead/agents/pushq.sh --wait WORKTREE [--max-min N]` | the running push of WORKTREE ends (`$LEAD/pushq-run/BASENAME.run`); at once when none runs | `rc=N`, then that push's last 5 log lines (the pushed SHA, or the refusal) | `PUSHQ_WAIT_MAX_MIN`, 90 |
+| `~/xo-lead/agents/offload-gate.sh --wait WORKTREE [--max-min N]` | the running offload gate of WORKTREE ends (its git directory's `offload-gate-run`, kept across reroutes); at once when none runs | `rc=N host=... HEAD=...`, the `pass PUSHQ_RAN=...` line or NOT PASSED with its log, and up to 20 failing test or step lines; a note when the verdict is for another HEAD | `OFFGATE_WAIT_MAX_MIN`, 240 |
+| `~/xo-lead/agents/board.sh` | (unchanged: no wait) | | |
+
+Exit 2 is a usage error or nothing recorded. A job started in the same
+command needs no wait: run `offload-gate.sh WT STEPS` or `pushq.sh WT
+--gated` itself in the background, and the harness wakes the session
+when it ends. The waits are for a job another command started (a chain,
+a gate queued earlier, a push from another worktree's script). Names
+stay unique per run (heavy.sh's NAME-cmd.log appends): a reused name
+waits on its newest run. Tested by scripts/lead/offload_gate_test.sh.
+Last verified: 2026-11-15
+
 ## Coordinating (scripts/lead/README.md)
 
 - Gates: `HEAVY_CLASS=gate ~/xo-lead/agents/heavy.sh NAME CMD...`: no slot,
