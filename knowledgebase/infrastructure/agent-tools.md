@@ -243,8 +243,31 @@ yourself.
   HEAD's IR are built for those goldens alone; a std/csv.xo probe took 39 s
   to select, where the base's whole manifest took 385 to 509 s. A compiler,
   std/rt or removed std file change, or a larger scope, goes through the
-  IR manifests as before. `XO_GATE_IR_INPUTS=0` turns it off; the 8 hourly
-  tier still runs every golden.
+  IR manifests as before. `XO_GATE_IR_INPUTS=0` turns it off; the continuous
+  tier (ctier.sh, below) runs every golden.
+- Light push sets (owner, 2026-11-15, CLAUDE.md "Std Proven push"):
+  `pushq.sh WT --needs` and the offload-gate planner ask only for
+  - a std module outside xo's closure (`scripts/lead/xo-closure.txt`,
+    the std files `xo build --list-inputs compiler/xo` reads; refresh
+    with `go test ./internal/repotest -run TestXoClosureCurrent
+    -update-closure`): `stdfast`, which runs per changed module
+    `xo test --std-module=M` (when it has `_test.xo` files; most std
+    modules have none) and its corpora (`TestStdCorpora/*/M` and `M*`,
+    every backend: csv's take 15 s), plus TestStdChecks and stdgen
+    -check;
+  - a closure change (compiler/, std/native, llrt, closure std
+    modules): `selfbuild` and `seedbuild`, plus the one or two proving
+    tests you name;
+  - no arm64, llvm, cmd, codegen, wasm or cross suites per push (the
+    fast repo checks stay). `GATE_FULL_SET=1` restores the old sets.
+  The full suites run on main back to back instead:
+  `scripts/lead/ctier.sh` (run_in_background) gates the newest
+  origin/main on one arm64 host (host 4, else host 3) with every
+  golden, Go parity on every golden (`XO_GATE_GO_PARITY=1`) and no
+  fail fast; runs go to `~/xo-lead/notes/ctier/runs.tsv`, a failure to
+  `failures.txt` with the bad and the last good commit (the lead names
+  the bisect owner), and `touch ~/xo-lead/notes/ctier/stop` ends it
+  after the current run.
 - Fail fast (lead, owner approved 2026-11-15): the first gate step that
   fails stops the gate. Steps still running are stopped (their output
   so far in `$XO_GATE_LOGS/STEP.stopped.txt`), the rest are skipped, and a

@@ -872,7 +872,11 @@ llvm_step() {
       else
         set -- ${sk:+-skip "$sk"}
       fi
-      if go_backend; then
+      # XO_GATE_GO_PARITY=1 (scripts/lead/ctier.sh, the continuous tier on main):
+      # every golden on the Go backend too, whatever changed
+      if [ "${XO_GATE_GO_PARITY:-0}" = 1 ]; then
+        XO_TEST_GO_PARITY=1 XO_GO_PARITY_SAMPLE=${XO_GATE_GO_PARITY_SAMPLE:-1} full llvm ./internal/llvm "$@"
+      elif go_backend; then
         # every 16th golden on the Go backend too: the selection above
         # follows the LLVM IR, which a Go backend change leaves alone, so
         # TestGoldenGoParity ran none and passed (2026-11-06,
@@ -1021,7 +1025,7 @@ fi
 steps=""
 for step in "$@"; do
   case $step in
-  codegen|selfbuild|seedbuild|wasm|cross|fieldgen|xounit)
+  codegen|selfbuild|seedbuild|wasm|cross|fieldgen|xounit|stdfast)
     # pushq's proving checks: run after the named steps with the ones the
     # change's paths require (gate_plan), each once, and named in the
     # PUSHQ_RAN line when they pass (lead, 2026-11-08: a named `cross
@@ -1430,6 +1434,48 @@ prove_xounit() {
     failed=1; echo "xounit: FAIL ($logs/xounit.txt: $(grep -m1 -- '--- FAIL' "$logs/xounit.txt"))"
   fi
 }
+# prove_stdfast: the std fast lane (owner, 2026-11-15, CLAUDE.md "Std
+# Proven push"): for each std module off compiler/xo's closure the change
+# touches (gatelib gate_stdfast_mods), `xo test --std-module=NAME`, then
+# stdchecks and stdgen -check (the pre-check's when it ran them); minutes,
+# no golden suites, the tier on main runs the rest
+prove_stdfast() {
+  local sfb mods m bad=0
+  sfb=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  mods=$({ git diff --name-only "$sfb" HEAD; git status --porcelain | cut -c4-; } | sort -u | gate_stdfast_mods)
+  local cdirs="" d t
+  for m in $mods; do
+    # the module's own tests (std/M_test.xo, std/M/*_test.xo): most std
+    # modules have none, their tests are internal/stdtest's corpora below
+    # (the probe of 2026-11-15: "xo test: the std module csv has no tests")
+    t=0
+    for d in std/"$m"_test.xo std/"$m"/*_test.xo; do [ -f "$d" ] && t=1; done
+    if [ "$t" = 0 ]; then
+      echo "stdfast $m: no xo tests of its own"
+    elif "$XO_CLI" test --count=1 --std-module="$m" >"$logs/stdfast-$m.txt" 2>&1; then
+      echo "stdfast $m: $(tail -1 "$logs/stdfast-$m.txt")"
+    else
+      bad=1; echo "stdfast $m: FAIL ($logs/stdfast-$m.txt: $(grep -m1 -- '--- FAIL' "$logs/stdfast-$m.txt"))"
+    fi
+    # its corpora: internal/stdtest/testdata/corpus/M and M* (csv, csvfuzz)
+    for d in internal/stdtest/testdata/corpus/"$m" internal/stdtest/testdata/corpus/"$m"*; do
+      [ -d "$d" ] && cdirs="$cdirs ${d##*/}"
+    done
+  done
+  cdirs=$(echo $cdirs | tr ' ' '\n' | sort -u | paste -sd'|' -)
+  if [ -n "$cdirs" ]; then
+    if XO_CLI="$XO_CLI" go test -count=1 -timeout 30m ./internal/stdtest -run "^TestStdCorpora\$/.*/^($cdirs)\$" >"$logs/stdfast-corpora.txt" 2>&1; then
+      echo "stdfast corpora ($cdirs): $(tail -1 "$logs/stdfast-corpora.txt")"
+    else
+      bad=1; echo "stdfast corpora ($cdirs): FAIL ($logs/stdfast-corpora.txt: $(grep -m1 -- '--- FAIL' "$logs/stdfast-corpora.txt"))"
+    fi
+  else
+    echo "stdfast: no corpora for $mods"
+  fi
+  pre_ran stdchecks || { [ "${XO_GATE_STDCHECKS:-1}" != 0 ] && stdchecks_check; }
+  pre_ran stdgen || { [ "${XO_GATE_STDGEN:-1}" != 0 ] && stdgen_change && stdgen_check; }
+  if [ "$bad" = 1 ]; then failed=1; else ran="$ran stdfast"; fi
+}
 # The concurrent jobs (conc=1): job KEY CMD... starts CMD in the
 # background once fewer than gjobs jobs run, with its output buffered in
 # $logs/.job-KEY.out and printed when it ends; its failed and ran go to
@@ -1553,7 +1599,7 @@ fi
 plan=" $(gate_plan "$req" $named) "
 echo "gate.sh: proving checks:${plan% }${plan:+ }(required by the paths: ${req:-none}; named:${named:- none})"
 if [ "$conc" = 1 ]; then
-  for p in codegen wasm cross fieldgen xounit; do
+  for p in codegen wasm cross fieldgen xounit stdfast; do
     [[ "$plan" == *" $p "* ]] && job "$p" "prove_$p"
   done
   pool_wait
@@ -1565,13 +1611,13 @@ if [ "$conc" = 1 ]; then
   done
   # PUSHQ_RAN in the serial order
   r2=""
-  for p in codegen wasm cross selfbuild seedbuild fieldgen xounit; do
+  for p in codegen wasm cross selfbuild seedbuild fieldgen xounit stdfast; do
     [[ " $ran " == *" $p "* ]] && r2="$r2 $p"
   done
   ran=$r2
   echo "gate.sh: steps took $(($(date +%s) - tsteps)) s (concurrent, at most $gjobs jobs)"
 else
-  for p in codegen wasm cross selfbuild seedbuild fieldgen xounit; do
+  for p in codegen wasm cross selfbuild seedbuild fieldgen xounit stdfast; do
     [[ "$plan" == *" $p "* ]] || continue
     if ff_serial; then ff_skipped="$ff_skipped $p"; continue; fi
     ff_last=$p
