@@ -112,14 +112,26 @@ rest in the same shape.
   unknown_ca and certificate_expired, which only Go's server sends), and
   a server without certificates reads the hello and answers
   unrecognized_name, as Go's, where it closed silently.
-- **std/http and T12:** not exposed yet. The client's failure is
-  `ClientErr.Connect(msg)` with Go's text; carrying the typed error
-  needs a new variant (`ClientErr.Tls(err: tls.TlsErr)`), which breaks
-  exhaustive matches of a decided enum (0358) and is the owner's call.
-  The server's handshake failures never reach a handler (Go logs them
-  as `http: TLS handshake error from ADDR`, untyped), so there is
-  nothing to expose; `Request.tls_state()` covers the successful side.
-  A program that needs the typed error dials with `tls.client_conn`.
+- **std/http and T12 (open, owner's choice; lead 2026-11-15):** the
+  client's failure is `ClientErr.Connect(msg)` with Go's text, and Xo's
+  enums leave no non-breaking room on it: a variant field takes no
+  default (XO0160) and a positional pattern must name every field
+  (XO0302), so `Connect(msg, tls: ...)` breaks `Connect(m)` matches as
+  much as a new variant does; a `ClientErr` value carries nothing else,
+  so an accessor `e.tls()` has nowhere to read from (a side table keyed
+  by the error would be racy and lose the certificates). Options:
+  (1) recommended, non-breaking, ships now: `Client.with_tls_error(f:
+  fn(tls.TlsErr))`, called with the typed error of each failed TLS
+  handshake or read before the request's `Connect` returns, per
+  request, so concurrent requests each see their own;
+  (2) breaking, Go's errors.As shape: `ClientErr.Tls(err: tls.TlsErr)`
+  for TLS failures (display unchanged, Go's text), with a CHANGELOG
+  Breaking line and migration (`Connect(m)` matches add a `Tls(e)` arm).
+  (1) can land first and stay after (2). The server's handshake
+  failures never reach a handler (Go logs them as `http: TLS handshake
+  error from ADDR`, untyped), so the server needs nothing;
+  `Request.tls_state()` covers the successful side. Until then a
+  program that needs the typed error dials with `tls.client_conn`.
 - **Native code:** the server is std/http's existing engine
   (std/native/llrt/tlssrv.xo), given a configuration of its own
   (`tlssrv.conn_cfg`: no default ALPN, its own ticket keys, no plain
