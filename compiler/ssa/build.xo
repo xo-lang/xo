@@ -384,6 +384,14 @@ pub struct Builder {
   /// the one-way flags a recorded body set (set_flag): 1 need_conc, 2
   /// uses_net; a builder that had them already would otherwise hide it
   fe_flagbits: Int = 0
+  /// The function whose body a front end cache entry records (fe_begin),
+  /// and the made up variables its own body made (local): what the
+  /// entry's replay advances nvar by. The helpers a body makes on first
+  /// use in the build (xo.maph.logget[Map[Str, Str]] for a Map's loop)
+  /// make theirs in the same window, so nvar's change there depended on
+  /// what the build had made before the body (2026-11-15).
+  fe_job_fi: Int = -1
+  fe_nvar_own: Int = 0
   /// a speculative worker's copy (decision 0637 stage 3, run_queue_crawl)
   spec_worker: Bool = false
 }
@@ -1791,7 +1799,7 @@ fn (var b: Builder) spec_one(j: Job) -> Option[Bytes] {
   if b.c.lazy_bad.contains(fo) || b.spec_reports() != before {
     return None
   }
-  let r = b.fe_begin()
+  let r = b.fe_begin(fi)
   b.run_job0(j)
   let e = b.fe_entry(r, fi)?
   // a body that makes closures is lowered at its turn: its closures'
@@ -1973,7 +1981,7 @@ fn (var b: Builder) run_job_fe(j: Job) {
       let applies = b.fe.verify && entry != None && b.fe_applies(entry ?? b"")
       // the runtime's lazy check before the recording (a hit skips it)
       b.check_lazy(fo)
-      let r = b.fe_begin()
+      let r = b.fe_begin(fi)
       b.run_job0(j)
       // a body that does not parse (check.force_body) gets no entry: a
       // hit would skip check_lazy, which reports its syntax errors
@@ -2028,7 +2036,7 @@ fn (var b: Builder) run_job_fe(j: Job) {
       // its module's bodies incomplete: a module whose closures made a
       // generic instance (fe skip.gen, bench/perf/http's Mutex.with calls)
       // never skipped its check (cache chk 0/1, 2026-10-23)
-      let r = b.fe_begin()
+      let r = b.fe_begin(cf)
       b.run_job0(j)
       match b.fe_entry(r, cf) {
         Some(e) => b.fe.clos_rec[cf] = (e, b.fe_made_closures())
@@ -3986,6 +3994,9 @@ fn (var b: Builder) new_block() -> Int {
 /// A fresh made up variable (local("name")).
 fn (var b: Builder) local() -> Int {
   b.nvar += 1
+  if b.s.fi == b.fe_job_fi {
+    b.fe_nvar_own += 1
+  }
   -1000000 - b.nvar
 }
 

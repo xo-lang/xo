@@ -23,7 +23,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v18"
+const FE_CACHE_VERSION = "xo front cache v19"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -311,7 +311,9 @@ struct FeRec {
   mods: Map[Str, Bool]
 }
 
-fn (var b: Builder) fe_begin() -> FeRec {
+fn (var b: Builder) fe_begin(fi: Int) -> FeRec {
+  b.fe_job_fi = fi
+  b.fe_nvar_own = 0
   b.fe_rec = true
   b.fe_gen = false
   b.fe_greads = []
@@ -354,6 +356,47 @@ fn name_made(x: SType) -> Bool {
     Kind.List | Kind.Box | Kind.Tuple | Kind.Func | Kind.Struct | Kind.Enum => true
     _ => false
   }
+}
+
+/// Whether the body recorded since r read a type made before it whose
+/// shape holds a task handle (conc_handle), at any depth.
+fn (b: Builder) fe_reads_conc(r: FeRec) -> Bool {
+  var seen: Map[Int, Bool] = {}
+  var st: List[Int] = []
+  for (t, _) in b.m.fe_treads {
+    if t >= 0 && t < r.nt {
+      st.push(t)
+    }
+  }
+  while let Some(t) = st.pop() {
+    if seen.contains(t) {
+      continue
+    }
+    seen[t] = true
+    let x = b.m.types[t]
+    if conc_handle(x) {
+      return true
+    }
+    for c in type_parts(x) {
+      if c >= 0 && c < b.m.types.len() && !seen.contains(c) {
+        st.push(c)
+      }
+    }
+  }
+  false
+}
+
+/// Whether x is a handle of the task runtime (Builder.conc_type's types,
+/// as named_type names them: the prelude's, and std/task's Group).
+fn conc_handle(x: SType) -> Bool {
+  if x.kind != Kind.Handle {
+    return false
+  }
+  let base = match x.name.find("[") {
+    Some(i) => x.name[0..i]
+    None => x.name
+  }
+  base is "Chan" | "Mutex" | "Atomic" | "Scope" | "Task" | "Listener" | "Conn" | "ServerConn" | "task.Group"
 }
 
 /// The types type x's shape names: its fields', variants' fields',
@@ -474,7 +517,11 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
     tl.str(c.callee)
     tl.sv(c.w)
   }
-  tl.sv(b.nvar - r.nvar)
+  // the body's own made up variables, not those of the helpers it made
+  // on first use (fe_nvar_own): one body recorded in two builds of a
+  // shared cache gave 4 and 5, and XO_BACKEND_CACHE=verify failed
+  // (internal/arm64 TestChainKeysSharedCache, http.header_get)
+  tl.sv(b.fe_nvar_own)
   var mods: List[Str] = []
   for (k, _) in b.decl_mods {
     if !r.mods.contains(k) {
@@ -486,7 +533,13 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
     tl.str(k)
   }
   tl.bool(b.m.funcs[fi].target)
-  tl.uv(b.fe_flagbits)
+  // need_conc as the body sets it whichever body made its types first:
+  // lowering a struct with a task handle field sets it (named_type's
+  // conc_type), but only where the struct is made, so a body that read
+  // one another body made carried no bit (http.respond's entry differed
+  // between two programs of one cache, 2026-11-15)
+  let bits = if (b.fe_flagbits & 1) == 0 && b.fe_reads_conc(r) { b.fe_flagbits | 1 } else { b.fe_flagbits }
+  tl.uv(bits)
   tl.bytes(fbo ?? b"")
   e.bytes(tl.b.freeze())
   // types it found that another body made and that their names
