@@ -1,5 +1,17 @@
 # std/big changes
 
+## 2026-11-15: feature: jacobi (Go's big.Jacobi)
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): big.Jacobi
+- Go reference: math/big int.go Jacobi (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/big (scripts/stdcorpus big): 400 pairs (zero, multiples, primes, both signs, up to 600 bits) against Go's big.Jacobi (arm64, LLVM, Go)
+- Timing: none
+
+`big.jacobi(x, y)` is the Jacobi symbol, on the nat routine
+probably_prime's Lucas test already used.
+
 ## 2026-11-15: perf: BigRat cmp and float_text on small values
 
 - Kind: perf

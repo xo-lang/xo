@@ -1799,7 +1799,7 @@ fn miller_rabin(n: List[Int], bases: List[Int]) -> Bool {
 }
 
 /// The Jacobi symbol (a/n) for odd n > 0 (Go's Jacobi on words and nats).
-fn jacobi(a0: List[Int], n0: List[Int]) -> Int {
+fn nat_jacobi(a0: List[Int], n0: List[Int]) -> Int {
   var a = a0
   var n = n0
   var j = 1
@@ -1829,6 +1829,17 @@ fn jacobi(a0: List[Int], n0: List[Int]) -> Int {
   j
 }
 
+/// Go's Jacobi: (x mod |y|) / |y| on nats, negated for a negative y and x.
+fn jacobi(x: big.BigInt, y: big.BigInt) -> Int {
+  let (yn, ya) = parts(y)
+  if ya.is_empty() || (ya[0] & 1) == 0 {
+    fault("big: invalid 2nd argument to Int.Jacobi: need odd integer but got ${bigint_text(y, 10)}")
+  }
+  let j = if yn && bigint_sign(x) < 0 { -1 } else { 1 }
+  let (_an, aa) = parts(bigint_mod(x, make(false, ya)))
+  j * nat_jacobi(aa, ya)
+}
+
 /// Go's probablyPrimeLucas: the extra strong Lucas test with Baillie's
 /// parameters.
 fn lucas(n: List[Int]) -> Bool {
@@ -1843,7 +1854,7 @@ fn lucas(n: List[Int]) -> Bool {
     if p > 10000 {
       fault("math/big: internal error: cannot find (D/n) = -1 for ${bigint_text(make(false, n), 10)}")
     }
-    let jv = jacobi([p * p - 4], n)
+    let jv = nat_jacobi([p * p - 4], n)
     if jv == -1 {
       break
     }

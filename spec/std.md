@@ -6859,6 +6859,7 @@ pub fn from_int(n: Int) -> BigInt
 pub fn parse(s: Str, base: Int = 10) -> BigInt ! BigErr    // Go's SetString; base 0 reads prefixes and _
 pub fn from_bytes(b: Bytes) -> BigInt                      // unsigned big-endian
 pub fn random_below(r: Rand, max: BigInt) -> BigInt uses rand          // Go's crypto/rand.Int; faults unless max > 0
+pub fn jacobi(x: BigInt, y: BigInt) -> Int                 // Go's Jacobi: y odd, else a fault
 pub fn random_prime(r: Rand, bits: Int) -> BigInt ! BigErr uses rand  // Go's crypto/rand.Prime; Err below 2 bits
 fn (x: BigInt) add(y: BigInt) -> BigInt        // also sub, mul
 fn (x: BigInt) quo(y: BigInt) -> BigInt        // also rem, div, mod

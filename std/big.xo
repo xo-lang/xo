@@ -32,6 +32,10 @@ fn from_bytes(b: Bytes) -> BigInt
 /// as many as max - 1 takes, the first masked to max - 1's top bits, until
 /// a number below max. Faults when max is not positive (Go panics).
 fn random_below(r: Rand, max: BigInt) -> BigInt uses rand
+/// The Jacobi symbol (x/y): -1, 0 or 1 (Go's Jacobi); y must be odd (a
+/// negative y as Go takes it: (x/|y|), negated when x and y are both
+/// negative), else a fault with Go's text.
+fn jacobi(x: BigInt, y: BigInt) -> Int
 /// A number of exactly `bits` bits that is prime with probability above
 /// 1 - 2^-80 (Go's crypto/rand.Prime): candidates of r's bytes with the top
 /// two bits and the low bit set, until one passes probably_prime(20). Err

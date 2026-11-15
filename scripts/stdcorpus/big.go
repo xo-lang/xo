@@ -270,11 +270,61 @@ func bigCorpus() string {
 		}
 	}
 	o.WriteString("]\n")
+	bigJacobiCorpus(&o)
 	o.WriteString(bigTests)
 	return o.String()
 }
 
+// bigJacobiCorpus: Go's big.Jacobi on seeded random x (both signs, zero,
+// small and up to 600 bits) and odd y (both signs, 1, primes), its own
+// source so the tables above stay as they are.
+func bigJacobiCorpus(o *strings.Builder) {
+	r := rand.New(rand.NewSource(77))
+	o.WriteString("\n/// big.jacobi: (x in hex, y in hex, Go's Jacobi)\nconst JACOBIS: List[(Str, Str, Int)] = [\n")
+	for i := 0; i < 400; i++ {
+		x := bigRand(r, []int{8, 64, 130, 600}[r.Intn(4)])
+		y := bigRand(r, []int{8, 64, 130, 300}[r.Intn(4)])
+		switch i % 10 {
+		case 0:
+			x = big.NewInt(0)
+		case 1:
+			y = big.NewInt(1)
+		case 2:
+			y = new(big.Int).Abs(y)
+			y.SetBit(y, 0, 1)
+			for !y.ProbablyPrime(10) {
+				y.Add(y, big.NewInt(2))
+			}
+		case 3:
+			x = new(big.Int).Mul(y, big.NewInt(int64(1+r.Intn(5))))
+		}
+		y.SetBit(y, 0, 1)
+		if y.Sign() < 0 {
+			y.Sub(y, big.NewInt(0))
+		}
+		if new(big.Int).Abs(y).Bit(0) == 0 {
+			y.Add(y, big.NewInt(1))
+		}
+		fmt.Fprintf(o, "  (%q, %q, %d),\n", bigHex(x), bigHex(y), big.Jacobi(x, y))
+	}
+	o.WriteString("]\n")
+}
+
 const bigTests = `
+test "jacobi matches Go's big.Jacobi" {
+  var bad: List[Str] = []
+  for (x, y, want) in JACOBIS {
+    if big.jacobi(h(x), h(y)) != want {
+      bad.push("${x} ${y}")
+    }
+  }
+  expect(bad) == []
+  expect(big.jacobi(big.from_int(2), big.from_int(7))) == 1
+  expect(big.jacobi(big.from_int(3), big.from_int(7))) == -1
+  expect(big.jacobi(big.from_int(-1), big.from_int(-3))) == 1
+  expect(big.jacobi(big.from_int(14), big.from_int(7))) == 0
+}
+
 fn h(s: Str) -> big.BigInt { big.parse(s, base: 16).or_fault("corpus hex") }
 
 fn hx(x: big.BigInt) -> Str { x.text(base: 16) }

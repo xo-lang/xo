@@ -81,6 +81,15 @@ func bigZeroFault(y *big.Int) {
 
 func Big_from_int(_ *Task, n int64) Big_BigInt { return bigKey(big.NewInt(n)) }
 
+// Big_jacobi is big.Jacobi (a fault where Go panics).
+func Big_jacobi(_ *Task, x, y Big_BigInt) int64 {
+	yv := bigOf(y)
+	if yv.Bit(0) == 0 {
+		FaultHere("big: invalid 2nd argument to Int.Jacobi: need odd integer but got %s", yv.String())
+	}
+	return int64(big.Jacobi(bigOf(x), yv))
+}
+
 func Big_parse(_ *Task, s string, base int64) Result[Big_BigInt, Big_BigErr] {
 	if base != 0 && (base < 2 || base > big.MaxBase) {
 		return Err[Big_BigInt](Big_BigErr{F_msg: "invalid base " + strconv.FormatInt(base, 10)})
