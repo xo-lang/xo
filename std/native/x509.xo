@@ -1558,3 +1558,363 @@ fn oid_to_asn1_oid(o: x509.Oid) -> List[Int]? {
   }
   Some(out)
 }
+
+// ---------------------------------------------------------------------------
+// Key encodings (Go's pkcs1.go, sec1.go, pkcs8.go): which form a DER has, as
+// encoding/asn1's Unmarshal into Go's structs tells (the hint naming the
+// right parser), then std/crypto's parse of it.
+
+/// An INTEGER as encoding/asn1 reads it: some bytes, minimally encoded;
+/// small (a Go int) when at most 8 bytes.
+fn ka_int(b: Bytes, t: asn1.Tlv, small: Bool) -> Bool {
+  if t.tag != asn1.INTEGER || t.hi == t.lo {
+    return false
+  }
+  if t.hi - t.lo > 1 && ((b[t.lo] == 0 && (b[t.lo + 1] & 0x80) == 0) || (b[t.lo] == 0xff && (b[t.lo + 1] & 0x80) != 0)) {
+    return false
+  }
+  !small || t.hi - t.lo <= 8
+}
+
+/// A BIT STRING as encoding/asn1's parseBitString takes it.
+fn ka_bits(b: Bytes, t: asn1.Tlv) -> Bool {
+  if t.tag != asn1.BIT_STRING || t.hi == t.lo {
+    return false
+  }
+  let pad = Int(b[t.lo])
+  if pad > 7 || (t.hi - t.lo == 1 && pad > 0) {
+    return false
+  }
+  (Int(b[t.hi - 1]) & ((1 << pad) - 1)) == 0
+}
+
+/// An OBJECT IDENTIFIER as encoding/asn1 reads it: arcs of at most 5
+/// bytes, minimal, each within int32.
+fn ka_oid(b: Bytes, t: asn1.Tlv) -> Bool {
+  if t.tag != asn1.OID || t.hi == t.lo {
+    return false
+  }
+  var i = t.lo
+  while i < t.hi {
+    var v = 0
+    var n = 0
+    if b[i] == 0x80 {
+      return false
+    }
+    while true {
+      if i >= t.hi || n == 5 {
+        return false
+      }
+      let c = Int(b[i])
+      v = v * 128 + (c & 0x7f)
+      i += 1
+      n += 1
+      if (c & 0x80) == 0 {
+        break
+      }
+    }
+    if v > Int(Int32.max) {
+      return false
+    }
+  }
+  true
+}
+
+/// The element at pos of a SEQUENCE's contents (ends at end), or tag -1.
+fn ka_at(b: Bytes, pos: Int, end: Int) -> asn1.Tlv {
+  if pos >= end {
+    return asn1.Tlv{tag: -1, lo: 0, hi: 0, next: 0}
+  }
+  asn1.read(b, pos, end)
+}
+
+/// AlgorithmIdentifier {OID, optional any} at pos: its next, or -1.
+fn ka_alg(b: Bytes, pos: Int, end: Int) -> Int {
+  let s = ka_at(b, pos, end)
+  if s.tag != asn1.SEQUENCE {
+    return -1
+  }
+  let o = ka_at(b, s.lo, s.hi)
+  if !ka_oid(b, o) {
+    return -1
+  }
+  if o.next < s.hi && asn1.read(b, o.next, s.hi).tag < 0 {
+    return -1
+  }
+  s.next
+}
+
+/// The top SEQUENCE of der: its Tlv (tag -1 when there is none).
+fn ka_top(der: Bytes) -> asn1.Tlv {
+  let t = asn1.read(der, 0, der.len())
+  if t.tag != asn1.SEQUENCE {
+    return asn1.Tlv{tag: -1, lo: 0, hi: 0, next: 0}
+  }
+  t
+}
+
+/// Go's pkcs1PrivateKey: the next of the SEQUENCE, or -1.
+fn ka_pkcs1_private(der: Bytes) -> Int {
+  let t = ka_top(der)
+  if t.tag < 0 {
+    return -1
+  }
+  var pos = t.lo
+  for small in [true, false, true, false, false, false] {
+    let e = ka_at(der, pos, t.hi)
+    if !ka_int(der, e, small) {
+      return -1
+    }
+    pos = e.next
+  }
+  // Dp, Dq, Qinv: optional INTEGERs; AdditionalPrimes: an optional
+  // SEQUENCE OF {Prime, Exp, Coeff}
+  for _ in 0..3 {
+    if pos >= t.hi {
+      return t.next
+    }
+    let e = asn1.read(der, pos, t.hi)
+    if e.tag < 0 {
+      return -1
+    }
+    if e.tag == asn1.INTEGER {
+      if !ka_int(der, e, false) {
+        return -1
+      }
+      pos = e.next
+    }
+  }
+  if pos >= t.hi {
+    return t.next
+  }
+  let a = asn1.read(der, pos, t.hi)
+  if a.tag < 0 {
+    return -1
+  }
+  if a.tag == asn1.SEQUENCE {
+    var q = a.lo
+    while q < a.hi {
+      let x = asn1.read(der, q, a.hi)
+      if x.tag != asn1.SEQUENCE {
+        return -1
+      }
+      var r = x.lo
+      for _ in 0..3 {
+        let e = ka_at(der, r, x.hi)
+        if !ka_int(der, e, false) {
+          return -1
+        }
+        r = e.next
+      }
+      q = x.next
+    }
+  }
+  t.next
+}
+
+/// Go's ecPrivateKey: the next of the SEQUENCE, or -1.
+fn ka_ec_private(der: Bytes) -> Int {
+  let t = ka_top(der)
+  if t.tag < 0 {
+    return -1
+  }
+  let v = ka_at(der, t.lo, t.hi)
+  if !ka_int(der, v, true) {
+    return -1
+  }
+  let k = ka_at(der, v.next, t.hi)
+  if k.tag != asn1.OCTET_STRING {
+    return -1
+  }
+  var pos = k.next
+  for (tag, inner) in [(0xa0, asn1.OID), (0xa1, asn1.BIT_STRING)] {
+    if pos >= t.hi {
+      return t.next
+    }
+    let e = asn1.read(der, pos, t.hi)
+    if e.tag < 0 {
+      return -1
+    }
+    if e.tag == tag {
+      // an inner element of another type skips the optional field (Go's
+      // setDefaultValue), and the next field is tried on the same element
+      let x = ka_at(der, e.lo, e.hi)
+      if x.tag < 0 {
+        return -1
+      }
+      if x.tag == inner {
+        if !(if inner == asn1.OID { ka_oid(der, x) } else { ka_bits(der, x) }) {
+          return -1
+        }
+        pos = e.next
+      }
+    }
+  }
+  t.next
+}
+
+/// Go's pkcs8: the next of the SEQUENCE, or -1.
+fn ka_pkcs8(der: Bytes) -> Int {
+  let t = ka_top(der)
+  if t.tag < 0 {
+    return -1
+  }
+  let v = ka_at(der, t.lo, t.hi)
+  if !ka_int(der, v, true) {
+    return -1
+  }
+  let a = ka_alg(der, v.next, t.hi)
+  if a < 0 {
+    return -1
+  }
+  if ka_at(der, a, t.hi).tag != asn1.OCTET_STRING {
+    return -1
+  }
+  t.next
+}
+
+/// Go's publicKeyInfo: the next of the SEQUENCE, or -1.
+fn ka_pkix(der: Bytes) -> Int {
+  let t = ka_top(der)
+  if t.tag < 0 {
+    return -1
+  }
+  let a = ka_alg(der, t.lo, t.hi)
+  if a < 0 || !ka_bits(der, ka_at(der, a, t.hi)) {
+    return -1
+  }
+  t.next
+}
+
+/// Go's pkcs1PublicKey: the next of the SEQUENCE, or -1.
+fn ka_pkcs1_public(der: Bytes) -> Int {
+  let t = ka_top(der)
+  if t.tag < 0 {
+    return -1
+  }
+  let n = ka_at(der, t.lo, t.hi)
+  if !ka_int(der, n, false) || !ka_int(der, ka_at(der, n.next, t.hi), true) {
+    return -1
+  }
+  t.next
+}
+
+fn ka_hint(fmt: Str, what: Str) -> x509.CertErr { err("x509: failed to parse ${what} key (use ${fmt} instead for this key format)") }
+
+fn ka_priv(der: Bytes) -> crypto.PrivateKey ! x509.CertErr { crypto.parse_private_key(der).map_err(fn(e) { err(e.msg) }) }
+
+fn ka_pub(der: Bytes) -> crypto.PublicKey ! x509.CertErr { crypto.parse_public_key(der).map_err(fn(e) { err(e.msg) }) }
+
+fn parse_pkcs1_private_key(der: Bytes) -> crypto.PrivateKey ! x509.CertErr {
+  let n = ka_pkcs1_private(der)
+  if n < 0 {
+    if ka_ec_private(der) >= 0 {
+      return Err(ka_hint("ParseECPrivateKey", "private"))
+    }
+    if ka_pkcs8(der) >= 0 {
+      return Err(ka_hint("ParsePKCS8PrivateKey", "private"))
+    }
+    return Err(err("x509: malformed private key"))
+  }
+  if n != der.len() {
+    return Err(err("x509: malformed private key"))
+  }
+  ka_priv(der)
+}
+
+fn parse_ec_private_key(der: Bytes) -> crypto.PrivateKey ! x509.CertErr {
+  if ka_ec_private(der) < 0 {
+    if ka_pkcs8(der) >= 0 {
+      return Err(ka_hint("ParsePKCS8PrivateKey", "private"))
+    }
+    if ka_pkcs1_private(der) >= 0 {
+      return Err(ka_hint("ParsePKCS1PrivateKey", "private"))
+    }
+    return Err(err("x509: failed to parse EC private key: malformed DER"))
+  }
+  ka_priv(der)
+}
+
+fn parse_pkcs8_private_key(der: Bytes) -> crypto.PrivateKey ! x509.CertErr {
+  if ka_pkcs8(der) < 0 {
+    if ka_ec_private(der) >= 0 {
+      return Err(ka_hint("ParseECPrivateKey", "private"))
+    }
+    if ka_pkcs1_private(der) >= 0 {
+      return Err(ka_hint("ParsePKCS1PrivateKey", "private"))
+    }
+    return Err(err("x509: malformed private key"))
+  }
+  ka_priv(der)
+}
+
+fn parse_pkcs1_public_key(der: Bytes) -> crypto.PublicKey ! x509.CertErr {
+  let n = ka_pkcs1_public(der)
+  if n < 0 {
+    if ka_pkix(der) >= 0 {
+      return Err(ka_hint("ParsePKIXPublicKey", "public"))
+    }
+    return Err(err("x509: malformed public key"))
+  }
+  if n != der.len() {
+    return Err(err("x509: malformed public key"))
+  }
+  ka_pub(der)
+}
+
+fn parse_pkix_public_key(der: Bytes) -> crypto.PublicKey ! x509.CertErr {
+  let n = ka_pkix(der)
+  if n < 0 {
+    if ka_pkcs1_public(der) >= 0 {
+      return Err(ka_hint("ParsePKCS1PublicKey", "public"))
+    }
+    return Err(err("x509: malformed public key"))
+  }
+  if n != der.len() {
+    return Err(err("x509: trailing data after ASN.1 of public-key"))
+  }
+  ka_pub(der)
+}
+
+/// The elements of a PKCS #8 DER std/crypto made: the AlgorithmIdentifier's
+/// and the key's.
+fn ka_p8_parts(p8: Bytes) -> (List[asn1.Tlv], List[asn1.Tlv]) {
+  let top = asn1.children(p8, asn1.read(p8, 0, p8.len()))
+  (asn1.children(p8, top[1]), [top[2]])
+}
+
+fn marshal_pkcs1_private_key(k: crypto.PrivateKey) -> Bytes ! x509.CertErr {
+  if k.alg() != crypto.KeyAlg.Rsa {
+    return Err(err("x509: not an RSA key"))
+  }
+  let p8 = crypto.marshal_private_key(k)
+  let (_, key) = ka_p8_parts(p8)
+  Ok(asn1.contents(p8, key[0]))
+}
+
+fn marshal_ec_private_key(k: crypto.PrivateKey) -> Bytes ! x509.CertErr {
+  if k.alg() is crypto.KeyAlg.Rsa | crypto.KeyAlg.Ed25519 {
+    return Err(err("x509: not an ECDSA key"))
+  }
+  // PKCS #8's ECPrivateKey has no curve (it is in the algorithm's
+  // parameters): SEC 1's puts it at [0], before the public key
+  let p8 = crypto.marshal_private_key(k)
+  let (alg, key) = ka_p8_parts(p8)
+  let inner = asn1.contents(p8, key[0])
+  let xs = asn1.children(inner, asn1.read(inner, 0, inner.len()))
+  let curve = p8[alg[0].next..alg[1].next]
+  Ok(asn1.enc_seq([inner[raw_start(inner, xs, 0)..xs[0].next], inner[raw_start(inner, xs, 1)..xs[1].next], asn1.enc_explicit(0, curve), inner[raw_start(inner, xs, 2)..xs[2].next]]))
+}
+
+/// Where element i of xs starts: right after element i - 1 (or the
+/// SEQUENCE's header).
+fn raw_start(b: Bytes, xs: List[asn1.Tlv], i: Int) -> Int { if i == 0 { asn1.read(b, 0, b.len()).lo } else { xs[i - 1].next } }
+
+fn marshal_pkcs1_public_key(k: crypto.PublicKey) -> Bytes ! x509.CertErr {
+  if k.alg() != crypto.KeyAlg.Rsa {
+    return Err(err("x509: not an RSA key"))
+  }
+  let d = crypto.marshal_public_key(k)
+  let top = asn1.children(d, asn1.read(d, 0, d.len()))
+  Ok(d[top[1].lo + 1..top[1].hi])
+}

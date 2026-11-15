@@ -7574,6 +7574,14 @@ fn parse_certificates(der: Bytes) -> List[Certificate] ! CertErr   // Go's Parse
 fn parse_pem(pem: Bytes) -> List[Certificate] ! CertErr
 struct Pkcs12 { key: crypto.PrivateKey, certificate: Certificate, ca: List[Certificate] }
 fn parse_pkcs12(data: Bytes, password: Str) -> Pkcs12 ! CertErr
+fn parse_pkcs1_private_key(der: Bytes) -> crypto.PrivateKey ! CertErr   // Go's ParsePKCS1PrivateKey
+fn parse_ec_private_key(der: Bytes) -> crypto.PrivateKey ! CertErr      // Go's ParseECPrivateKey
+fn parse_pkcs8_private_key(der: Bytes) -> crypto.PrivateKey ! CertErr   // Go's ParsePKCS8PrivateKey
+fn parse_pkcs1_public_key(der: Bytes) -> crypto.PublicKey ! CertErr     // Go's ParsePKCS1PublicKey
+fn parse_pkix_public_key(der: Bytes) -> crypto.PublicKey ! CertErr      // Go's ParsePKIXPublicKey
+fn marshal_pkcs1_private_key(k: crypto.PrivateKey) -> Bytes ! CertErr   // Go's MarshalPKCS1PrivateKey (Err for non-RSA)
+fn marshal_ec_private_key(k: crypto.PrivateKey) -> Bytes ! CertErr      // Go's MarshalECPrivateKey (Err for non-ECDSA)
+fn marshal_pkcs1_public_key(k: crypto.PublicKey) -> Bytes ! CertErr     // Go's MarshalPKCS1PublicKey (Err for non-RSA)
 struct CertPool {}                                        // handle (decision 0626)
 fn cert_pool(certs: List[Certificate]) -> CertPool ! CertErr
 fn (var p: CertPool) add(c: Certificate) -> () ! CertErr

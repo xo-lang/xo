@@ -20,6 +20,14 @@ var (
 	_ func(*Task, Bytes) Result[List[X509_Certificate], X509_CertErr]                                                                          = X509_parse_certificates
 	_ func(*Task, Bytes, string) Result[X509_Pkcs12, X509_CertErr]                                                                             = X509_parse_pkcs12
 	_ func(*Task, Bytes) Result[List[X509_Certificate], X509_CertErr]                                                                          = X509_parse_pem
+	_ func(*Task, Bytes) Result[Crypto_PrivateKey, X509_CertErr]                                                                               = X509_parse_pkcs1_private_key
+	_ func(*Task, Bytes) Result[Crypto_PrivateKey, X509_CertErr]                                                                               = X509_parse_ec_private_key
+	_ func(*Task, Bytes) Result[Crypto_PrivateKey, X509_CertErr]                                                                               = X509_parse_pkcs8_private_key
+	_ func(*Task, Bytes) Result[Crypto_PublicKey, X509_CertErr]                                                                                = X509_parse_pkcs1_public_key
+	_ func(*Task, Bytes) Result[Crypto_PublicKey, X509_CertErr]                                                                                = X509_parse_pkix_public_key
+	_ func(*Task, Crypto_PrivateKey) Result[Bytes, X509_CertErr]                                                                               = X509_marshal_pkcs1_private_key
+	_ func(*Task, Crypto_PrivateKey) Result[Bytes, X509_CertErr]                                                                               = X509_marshal_ec_private_key
+	_ func(*Task, Crypto_PublicKey) Result[Bytes, X509_CertErr]                                                                                = X509_marshal_pkcs1_public_key
 	_ func(*Task, List[X509_Certificate]) Result[X509_CertPool, X509_CertErr]                                                                  = X509_cert_pool
 	_ func(*X509_CertPool, *Task, X509_Certificate) Result[Unit, X509_CertErr]                                                                 = (*X509_CertPool).M_add
 	_ func(*X509_CertPool, *Task, X509_Certificate, func(*Task, List[X509_Certificate]) Result[Unit, X509_CertErr]) Result[Unit, X509_CertErr] = (*X509_CertPool).M_add_cert_with_constraint

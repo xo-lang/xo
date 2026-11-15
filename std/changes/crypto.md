@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-15: fix: an EC private key's BIT STRING padding as Go's
+
+- Kind: fix
+- Commit: this push
+- Found by: corpus x509keys (aws-43's x509 piece 9): a P-384 PKCS #8 key with its public key's padding byte flipped to 1 parsed, where Go refuses it
+- Go reference: encoding/asn1 asn1.go parseBitString, go1.26.11
+- Test: corpus x509keys (parse_pkcs8_private_key's rows; arm64, LLVM, Go backends); corpus crypto (21 pass on the three)
+- Shipped in: not yet released
+
+`crypto.parse_private_key` on the native backends checks an EC private key's [1] public key BIT STRING as encoding/asn1 does: padding bits at most 7, none in a BIT STRING of one byte, and zero bits in the last byte's padding. It checked the first rule only, so it parsed keys Go refuses.
+
 ## 2026-11-12: perf: hardware AES, PMULL and SHA on windows/arm64
 
 - Kind: perf

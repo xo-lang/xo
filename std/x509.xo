@@ -251,6 +251,36 @@ fn parse_pkcs12(data: Bytes, password: Str) -> Pkcs12 ! CertErr
 /// first that does not parse.
 fn parse_pem(pem: Bytes) -> List[Certificate] ! CertErr
 
+// ---- key encodings (Go's pkcs1.go, sec1.go, pkcs8.go, x509.go) ----
+// std/crypto's parse_private_key and parse_public_key read every form; these
+// read one each, with Go's errors (a key of another form names the parser
+// for it: `x509: failed to parse private key (use ParseECPrivateKey instead
+// for this key format)`). encoding/asn1's errors are std/crypto's texts
+// (`x509: malformed private key`, `x509: malformed public key`, `...:
+// malformed DER`).
+
+/// Go's ParsePKCS1PrivateKey: an RSA private key's PKCS #1 DER.
+fn parse_pkcs1_private_key(der: Bytes) -> crypto.PrivateKey ! CertErr
+/// Go's ParseECPrivateKey: an ECDSA private key's SEC 1 DER (its curve
+/// named in it).
+fn parse_ec_private_key(der: Bytes) -> crypto.PrivateKey ! CertErr
+/// Go's ParsePKCS8PrivateKey: a PKCS #8 DER of an RSA, ECDSA or Ed25519
+/// key (an X25519 one is an Err: std/crypto has no X25519 private key).
+fn parse_pkcs8_private_key(der: Bytes) -> crypto.PrivateKey ! CertErr
+/// Go's ParsePKCS1PublicKey: an RSA public key's PKCS #1 DER.
+fn parse_pkcs1_public_key(der: Bytes) -> crypto.PublicKey ! CertErr
+/// Go's ParsePKIXPublicKey: a SubjectPublicKeyInfo DER.
+fn parse_pkix_public_key(der: Bytes) -> crypto.PublicKey ! CertErr
+/// Go's MarshalPKCS1PrivateKey: an RSA key's PKCS #1 DER; Err `x509: not
+/// an RSA key` for another algorithm (Go's type refuses it).
+fn marshal_pkcs1_private_key(k: crypto.PrivateKey) -> Bytes ! CertErr
+/// Go's MarshalECPrivateKey: an ECDSA key's SEC 1 DER with its curve and
+/// public key; Err `x509: not an ECDSA key` for another algorithm.
+fn marshal_ec_private_key(k: crypto.PrivateKey) -> Bytes ! CertErr
+/// Go's MarshalPKCS1PublicKey: an RSA public key's PKCS #1 DER; Err `x509:
+/// not an RSA key` for another algorithm.
+fn marshal_pkcs1_public_key(k: crypto.PublicKey) -> Bytes ! CertErr
+
 /// Certificates parsed once for verify (Go's CertPool): a pool keeps each
 /// certificate's checked form, so verify does not parse it again on every
 /// call (decision 0626). A certificate already in the pool (the same DER)

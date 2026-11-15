@@ -1104,7 +1104,9 @@ fn ec_parts(der: Bytes) -> (Int, Bytes, Str)? {
   }
   if i < xs.len() && xs[i].tag == 0xa1 {
     let bs = asn1.read(der, xs[i].lo, xs[i].hi)
-    if bs.tag < 0 || (bs.tag == asn1.BIT_STRING && (bs.hi == bs.lo || Int(der[bs.lo]) > 7)) {
+    // encoding/asn1's parseBitString: padding bits at most 7, none in a
+    // BIT STRING of no bytes, and zero in the last byte
+    if bs.tag < 0 || (bs.tag == asn1.BIT_STRING && (bs.hi == bs.lo || Int(der[bs.lo]) > 7 || (bs.hi - bs.lo == 1 && der[bs.lo] > 0) || (Int(der[bs.hi - 1]) & ((1 << Int(der[bs.lo])) - 1)) != 0)) {
       return None
     }
   } else if i < xs.len() && xs[i].tag < 0 {

@@ -10,6 +10,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	cryptorand "crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -1290,4 +1291,92 @@ func X509_parse_certificates(tk *Task, der Bytes) Result[List[X509_Certificate],
 		out = append(out, x509CertOf(tk, c))
 	}
 	return Ok[List[X509_Certificate], X509_CertErr](ListFromSlice(out))
+}
+
+// Key encodings (std/x509's parse_pkcs1_private_key and the rest): Go's
+// typed parsers for the error, std/crypto's parse for the key; asn1's
+// errors are std/crypto's texts.
+func x509KeyErr(err error, bare string) X509_CertErr {
+	m := err.Error()
+	if strings.HasPrefix(m, "asn1:") {
+		m = bare
+	} else if i := strings.Index(m, "asn1:"); i >= 0 {
+		m = m[:i] + "malformed DER"
+	}
+	return x509Err(m)
+}
+
+func x509PrivOf(tk *Task, der Bytes, err error, bare string) Result[Crypto_PrivateKey, X509_CertErr] {
+	if err != nil {
+		return Err[Crypto_PrivateKey](x509KeyErr(err, bare))
+	}
+	r := Crypto_parse_private_key(tk, der)
+	if !r.Ok {
+		return Err[Crypto_PrivateKey](x509Err(r.E.F_msg))
+	}
+	return Ok[Crypto_PrivateKey, X509_CertErr](r.V)
+}
+
+func x509PubOf(tk *Task, der Bytes, err error) Result[Crypto_PublicKey, X509_CertErr] {
+	if err != nil {
+		return Err[Crypto_PublicKey](x509KeyErr(err, "x509: malformed public key"))
+	}
+	r := Crypto_parse_public_key(tk, der)
+	if !r.Ok {
+		return Err[Crypto_PublicKey](x509Err(r.E.F_msg))
+	}
+	return Ok[Crypto_PublicKey, X509_CertErr](r.V)
+}
+
+func X509_parse_pkcs1_private_key(tk *Task, der Bytes) Result[Crypto_PrivateKey, X509_CertErr] {
+	_, err := x509.ParsePKCS1PrivateKey([]byte(der))
+	return x509PrivOf(tk, der, err, "x509: malformed private key")
+}
+
+func X509_parse_ec_private_key(tk *Task, der Bytes) Result[Crypto_PrivateKey, X509_CertErr] {
+	_, err := x509.ParseECPrivateKey([]byte(der))
+	return x509PrivOf(tk, der, err, "x509: failed to parse EC private key: malformed DER")
+}
+
+func X509_parse_pkcs8_private_key(tk *Task, der Bytes) Result[Crypto_PrivateKey, X509_CertErr] {
+	_, err := x509.ParsePKCS8PrivateKey([]byte(der))
+	return x509PrivOf(tk, der, err, "x509: malformed private key")
+}
+
+func X509_parse_pkcs1_public_key(tk *Task, der Bytes) Result[Crypto_PublicKey, X509_CertErr] {
+	_, err := x509.ParsePKCS1PublicKey([]byte(der))
+	return x509PubOf(tk, der, err)
+}
+
+func X509_parse_pkix_public_key(tk *Task, der Bytes) Result[Crypto_PublicKey, X509_CertErr] {
+	_, err := x509.ParsePKIXPublicKey([]byte(der))
+	return x509PubOf(tk, der, err)
+}
+
+func X509_marshal_pkcs1_private_key(_ *Task, k Crypto_PrivateKey) Result[Bytes, X509_CertErr] {
+	x, ok := k.k.(*rsa.PrivateKey)
+	if !ok {
+		return Err[Bytes](x509Err("x509: not an RSA key"))
+	}
+	return Ok[Bytes, X509_CertErr](Bytes(x509.MarshalPKCS1PrivateKey(x)))
+}
+
+func X509_marshal_ec_private_key(_ *Task, k Crypto_PrivateKey) Result[Bytes, X509_CertErr] {
+	x, ok := k.k.(*ecdsa.PrivateKey)
+	if !ok {
+		return Err[Bytes](x509Err("x509: not an ECDSA key"))
+	}
+	d, err := x509.MarshalECPrivateKey(x)
+	if err != nil {
+		return Err[Bytes](x509Err(err.Error()))
+	}
+	return Ok[Bytes, X509_CertErr](Bytes(d))
+}
+
+func X509_marshal_pkcs1_public_key(_ *Task, k Crypto_PublicKey) Result[Bytes, X509_CertErr] {
+	x, ok := k.k.(*rsa.PublicKey)
+	if !ok {
+		return Err[Bytes](x509Err("x509: not an RSA key"))
+	}
+	return Ok[Bytes, X509_CertErr](Bytes(x509.MarshalPKCS1PublicKey(x)))
 }
