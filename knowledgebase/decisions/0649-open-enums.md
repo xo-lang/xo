@@ -143,6 +143,12 @@ enum, done once for all of std:
 - **Add new failure kinds only as a generic catch-all variant (`Other(msg: Str)`).** Avoids breaks but loses the typed
   detail that motivated `ClientErr.Tls` (owner decision, option 2 in 0644).
 
+## Decision 0653 (adoption sweeps)
+
+XO0306's fix (it inserts `_ => ???` at the end of the match) counts as this decision's vet rule plus fix under 0653
+(lead, 2026-11-15): no older form becomes obsolete, and the matches that need a `_` arm are exactly the ones XO0306
+reports. Lang 2 sweeps compiler/, std/native and llrt at the seed cut that brings in `open`, with step 2's opt-ins.
+
 ## Follow-ups (small, from the same survey; independent of the above)
 
 - **`Bytes.from_list(List[Int]) -> Bytes`** (spec/std.md 2.2 has `from_hex` and `from_base64` only). Byte-level code
