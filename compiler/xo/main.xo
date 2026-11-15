@@ -1717,6 +1717,13 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // the instruction selector (isel_flags): a binary linked from objects
     // of GlobalISel is not one of SelectionDAG
     var mode_flags = ["llvm", split.opt] + isel_flags(split.opt, tgoarch)
+    if split.stable {
+      // a test build's split modules are made after the binary key, from
+      // prog.ll, outside dir (split_ir, split_build's levels): by this xo's
+      // rules, so its identity and the module count are keyed (2026-11-15:
+      // the counts 2, 8, 32 and files all fetched one binary)
+      mode_flags = mode_flags + ["modules=${split.modules}", "by_file=${split.by_file}", "xo ${self_id(os)}"]
+    }
     if multi {
       mode_flags = mode_flags + ["split", split.lto]
     } else {

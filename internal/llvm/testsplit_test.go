@@ -79,3 +79,61 @@ func TestTestSplitReuse(t *testing.T) {
 		t.Errorf("after an edit of one body: %d/%d modules reused, want all but one or two", r, n)
 	}
 }
+
+// TestTestSplitCountKeys: test builds of one program with two split
+// counts (XO_LLVM_TEST_SPLIT) are two binaries in the binary cache, each
+// compiled from its own modules: the key had no module count and no xo
+// identity (the modules are made outside the keyed directory), so every
+// count fetched the first count's binary (2026-11-15, the x509 closure
+// miscompile of gotchas/llvm-globalisel-aggregate-args.md showed under
+// every count).
+func TestTestSplitCountKeys(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds test programs with clang")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(own, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"xo.mod":      "module example.com/p\n",
+		"lib.xo":      "pub fn twice(x: Int) -> Int {\n  x * 2\n}\n",
+		"more.xo":     "pub fn more(x: Int) -> Int {\n  x + 1\n}\n",
+		"lib_test.xo": "test \"twice\" {\n  expect(twice(more(1))) == 4\n}\n",
+	}
+	for p, s := range files {
+		if err := os.WriteFile(filepath.Join(own, p), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bins := filepath.Join(work, "bin")
+	note := regexp.MustCompile(`cache llvm modules (\d+)/(\d+) reused`)
+	for _, n := range []string{"2", "3"} {
+		cmd := testtmp.Guard(exec.Command(xo, "test", "--backend=llvm", "--phase-times", "."))
+		cmd.Dir = own
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=on", "XO_BIN_CACHE="+bins, "XO_TEST_CACHE=off", "XO_LLVM_TEST_SPLIT="+n)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo test (split %s): %v\n%s", n, err, log)
+		}
+		if note.FindSubmatch(log) == nil {
+			t.Errorf("split %s: no `cache llvm modules` line, so its binary came from the cache:\n%s", n, log)
+		}
+	}
+	// the stored binaries: entries of two hex characters' directories
+	var stored int
+	dirs, _ := filepath.Glob(filepath.Join(bins, "[0-9a-f][0-9a-f]", "*"))
+	for _, d := range dirs {
+		if fi, err := os.Stat(d); err == nil && !fi.IsDir() {
+			stored++
+		}
+	}
+	if stored != 2 {
+		t.Errorf("%d binaries in the cache after two split counts, want 2 (%v)", stored, dirs)
+	}
+}
