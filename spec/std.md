@@ -4223,8 +4223,9 @@ pub fn ed25519_verify_with(public_key: Bytes, msg: Bytes, sig: Bytes, prehashed:
 **Hashes and HMAC** (decision 0279, 2026-10-20; every backend):
 
 ```
-enum Hash { Md5, Sha1, Sha224, Sha256, Sha384, Sha512, Sha3_256, Sha3_512, Sha3_224, Sha3_384, Sha512_224, Sha512_256 }
-fn (h: Hash) size() -> Int                     // digest bytes: 16, 20, 28, 32, 48, 64, 32, 64, 28, 48, 28, 32
+enum Hash { Md5, Sha1, Sha224, Sha256, Sha384, Sha512, Sha3_256, Sha3_512, Sha3_224, Sha3_384, Sha512_224, Sha512_256,
+            Blake2b_256, Blake2b_384, Blake2b_512, Keccak256, Keccak512 }
+fn (h: Hash) size() -> Int                     // digest bytes: 16, 20, 28, 32, 48, 64, 32, 64, 28, 48, 28, 32, 32, 48, 64, 32, 64
 pub fn digest(h: Hash, data: Bytes) -> Bytes
 pub fn hmac(h: Hash, key: Bytes, msg: Bytes) -> Bytes
 
@@ -4234,12 +4235,20 @@ pub fn hmac_hasher(h: Hash, key: Bytes) -> Hasher
 fn ([var] x: Hasher) write(data: Bytes)
 fn (x: Hasher) sum() -> Bytes                  // the digest so far; writing may continue
 fn (x: Hasher) written() -> Int
-fn (x: Hasher) block_size() -> Int             // Go's BlockSize (the rate for SHA-3)
-fn (x: Hasher) size() -> Int                   // Go's Size
+fn (x: Hasher) block_size() -> Int             // Go's BlockSize (the rate for SHA-3 and Keccak; 128 for BLAKE2b)
+fn (x: Hasher) size() -> Int                   // Go's Size (a blake2b_hasher's size)
 fn (var x: Hasher) reset()                     // to the state hasher or hmac_hasher made; the HMAC key kept
-fn (x: Hasher) marshal_binary() -> Bytes ! HashErr                 // Go's MarshalBinary format; Err for an HMAC
-fn (x: Hasher) unmarshal_binary(state: Bytes) -> Hasher ! HashErr  // Go's UnmarshalBinary and its errors; written() is the state's length (0 for SHA-3)
+fn (x: Hasher) marshal_binary() -> Bytes ! HashErr                 // Go's MarshalBinary format; Err for an HMAC and a keyed BLAKE2b
+fn (x: Hasher) unmarshal_binary(state: Bytes) -> Hasher ! HashErr  // Go's UnmarshalBinary and its errors; written() is the state's length (0 for SHA-3 and Keccak)
 struct HashErr { msg: Str }
+pub fn blake2b_hasher(size: Int, key: Bytes = b"") -> Hasher ! KeyErr  // x/crypto's blake2b.New: 1 to 64 bytes, a key of up to 64 (a MAC)
+
+const BLAKE2B_OUTPUT_LENGTH_UNKNOWN: Int = 0   // x/crypto's OutputLengthUnknown
+struct Blake2bXof {}                           // BLAKE2Xb (x/crypto's blake2b.XOF); a value: a copy is its Clone
+pub fn blake2b_xof(size: Int, key: Bytes = b"") -> Blake2bXof ! KeyErr  // x/crypto's NewXOF and its errors
+fn (var x: Blake2bXof) write(data: Bytes)      // faults "blake2b: write to XOF after read" once output was read
+fn (var x: Blake2bXof) read(n: Int) -> Bytes ! KeyErr  // up to n bytes, fewer at the end of the size; Err "EOF" (io.EOF) after it
+fn (var x: Blake2bXof) reset()                 // the key kept
 
 struct Shake {}                                // SHAKE and cSHAKE (Go's sha3.SHAKE); a value, copies independent
 pub fn shake128() -> Shake
@@ -4271,6 +4280,16 @@ pub fn sum_shake256(data: Bytes, n: Int) -> Bytes
   (std/native/llrt sha1.xo, sha256.xo, sha3.xo; SHA-256 with the CPU's
   instructions) and MD5 is ported from Go's crypto/md5; Go's vectors for
   each are in std/native/crypto_test.xo and llrt/md5_test.xo.
+- BLAKE2b (RFC 7693), BLAKE2Xb and legacy Keccak (Keccak before FIPS
+  202's padding, Ethereum's Keccak-256) are golang.org/x/crypto
+  v0.58.0's blake2b and sha3.NewLegacyKeccak256/512: natively
+  std/native/llrt blake2b.xo (with x/crypto's blake2b_test.go vectors
+  in blake2b_test.xo) and sha3.xo, on the Go backend x/crypto's code
+  vendored into std/rt; the corpus xcrypto checks every backend against
+  x/crypto. RSA (PKCS #1 v1.5, PSS, OAEP) refuses the five with Go's
+  `crypto/rsa: unsupported hash function` (verify is false): Go's
+  hashPrefixes has no DigestInfo for them and Keccak has no crypto.Hash.
+  ECDSA and Ed25519 sign with any Hash.
 
 **Authenticated encryption and key derivation** (milestone 0.35; Go's
 `cipher.AEAD` and `crypto/hkdf`; every backend; Go's `aesGCMTests` and
@@ -4283,12 +4302,12 @@ let k = crypto.aead_key(crypto.Aead.AesGcm, key)?        // key from a KDF or a 
 let sealed = k.seal_random(rand, b"user=42", b"session")
 let plain = k.open_random(sealed, b"session")?           // Err if anything changed
 
-enum Aead { AesGcm, ChaCha20Poly1305, Aes128CbcHmacSha256 }
-fn (a: Aead) nonce_size() -> Int                         // 12; 16 for Aes128CbcHmacSha256 (the IV)
+enum Aead { AesGcm, ChaCha20Poly1305, Aes128CbcHmacSha256, XChaCha20Poly1305 }
+fn (a: Aead) nonce_size() -> Int                         // 12; 16 for Aes128CbcHmacSha256 (the IV); 24 for XChaCha20Poly1305
 fn (a: Aead) overhead() -> Int                           // 16: the tag; at most 32 for Aes128CbcHmacSha256 (padding, then the tag)
 struct AeadKey {}                                        // Debug text `<aeadkey>`: never key material
 struct AeadErr { msg: Str }
-fn aead_key(alg: Aead, key: Bytes) -> AeadKey ! AeadErr  // AES: 16, 24, 32 bytes; ChaCha20-Poly1305: 32; Aes128CbcHmacSha256: 32 (MAC key, then AES key; RFC 7518 5.2.3, JWE A128CBC-HS256; seal gives ciphertext || tag; every open failure is the one error)
+fn aead_key(alg: Aead, key: Bytes) -> AeadKey ! AeadErr  // AES: 16, 24, 32 bytes; ChaCha20-Poly1305 and XChaCha20-Poly1305 (x/crypto's NewX: HChaCha20 subkey, draft-irtf-cfrg-xchacha): 32; Aes128CbcHmacSha256: 32 (MAC key, then AES key; RFC 7518 5.2.3, JWE A128CBC-HS256; seal gives ciphertext || tag; every open failure is the one error)
 fn aes_gcm_key_with_nonce_size(key: Bytes, size: Int) -> AeadKey ! AeadErr  // Go's NewGCMWithNonceSize: any nonce size above 0 (NIST SP 800-38D's J0 by GHASH for sizes other than 12)
 fn aes_gcm_key_with_tag_size(key: Bytes, size: Int) -> AeadKey ! AeadErr    // Go's NewGCMWithTagSize: tags of 12 to 16 bytes
 fn (k: AeadKey) nonce_size() -> Int                                      // Go's NonceSize

@@ -94,9 +94,22 @@ enum Hash {
   Sha512_224
   /// SHA-512/256: the same, cut to 32 bytes.
   Sha512_256
+  /// BLAKE2b (RFC 7693) of 32, 48 and 64 bytes, unkeyed (x/crypto's
+  /// blake2b.New256, New384, New512 with a nil key; Sum256, Sum384,
+  /// Sum512). blake2b_hasher takes another size or a key.
+  Blake2b_256
+  Blake2b_384
+  Blake2b_512
+  /// Legacy Keccak-256 and Keccak-512: Keccak before FIPS 202 changed its
+  /// padding (x/crypto's sha3.NewLegacyKeccak256 and NewLegacyKeccak512;
+  /// Ethereum's Keccak-256). Not SHA3-256: use Sha3_256 unless a protocol
+  /// names Keccak.
+  Keccak256
+  Keccak512
 }
 
-/// The digest's size in bytes: 16, 20, 28, 32, 48, 64, 32, 64, 28, 48, 28, 32.
+/// The digest's size in bytes: 16, 20, 28, 32, 48, 64, 32, 64, 28, 48, 28,
+/// 32, then 32, 48, 64 for BLAKE2b and 32, 64 for Keccak.
 fn (h: Hash) size() -> Int
 /// The digest of data with h (Go's md5.Sum, sha1.Sum, sha256.Sum224, ...).
 fn digest(h: Hash, data: Bytes) -> Bytes
@@ -116,25 +129,37 @@ fn (x: Hasher) sum() -> Bytes
 /// The bytes written so far.
 fn (x: Hasher) written() -> Int
 /// The hash's block size in bytes (Go's BlockSize): 64 for MD5, SHA-1,
-/// SHA-224 and SHA-256, 128 for SHA-384, SHA-512 and SHA-512/t, the rate
-/// for SHA-3 (144, 136, 104, 72).
+/// SHA-224 and SHA-256, 128 for SHA-384, SHA-512, SHA-512/t and BLAKE2b,
+/// the rate for SHA-3 (144, 136, 104, 72) and Keccak (136, 72).
 fn (x: Hasher) block_size() -> Int
-/// The digest's size in bytes (Go's Size).
+/// The digest's size in bytes (Go's Size): a blake2b_hasher's size.
 fn (x: Hasher) size() -> Int
 /// Back to the state hasher or hmac_hasher made, the HMAC key kept (Go's
 /// Reset).
 fn (var x: Hasher) reset()
 /// Go's MarshalBinary (and AppendBinary): the state in Go's format, which
 /// Go's UnmarshalBinary resumes and unmarshal_binary reads back. Err for
-/// an HMAC: Go's HMAC has no MarshalBinary.
+/// an HMAC: Go's HMAC has no MarshalBinary; and for a keyed
+/// blake2b_hasher, Go's `crypto/blake2b: cannot marshal MACs`.
 fn (x: Hasher) marshal_binary() -> Bytes ! HashErr
 /// Go's UnmarshalBinary: a Hasher of x's hash at that state. Err with Go's
 /// texts (`crypto/sha256: invalid hash state identifier`, `crypto/sha256:
 /// invalid hash state size`, `sha3: invalid hash state`, `sha3: invalid
 /// hash state identifier`, `sha3: invalid hash state function`, and
-/// md5's, sha1's and sha512's), and for an HMAC. Its written() is the
-/// state's message length; SHA-3's state keeps none, so it counts from 0.
+/// md5's, sha1's, sha512's and blake2b's), and for an HMAC. Its written()
+/// is the state's message length; SHA-3's and Keccak's states keep none,
+/// so they count from 0. A BLAKE2b state sets the digest size too (a
+/// keyed blake2b_hasher keeps its key, as Go's); a size outside 1 to 64
+/// or an offset past the block is `crypto/blake2b: invalid hash state
+/// size`, where Go accepts it and then panics.
 fn (x: Hasher) unmarshal_binary(state: Bytes) -> Hasher ! HashErr
+
+/// BLAKE2b of `size` bytes (1 to 64) keyed with `key` (at most 64 bytes;
+/// empty, a plain hash): x/crypto's blake2b.New(size, key), a MAC when
+/// keyed. Its Hash is Blake2b_256, Blake2b_384 or Blake2b_512 for those
+/// sizes, else Blake2b_512 (size() is the size asked for). Err with Go's
+/// texts: `blake2b: invalid hash size`, `blake2b: invalid key size`.
+fn blake2b_hasher(size: Int, key: Bytes = b"") -> Hasher ! KeyErr
 
 /// Go's error texts for a hash state.
 struct HashErr {
@@ -179,6 +204,31 @@ fn sum_shake128(data: Bytes, n: Int) -> Bytes
 /// The first n bytes of SHAKE256 of data.
 fn sum_shake256(data: Bytes, n: Int) -> Bytes
 
+/// blake2b_xof's size for an output of unknown length (x/crypto's
+/// blake2b.OutputLengthUnknown): up to 2^32 blocks of 64 bytes are read.
+const BLAKE2B_OUTPUT_LENGTH_UNKNOWN: Int = 0
+
+/// BLAKE2Xb, BLAKE2b's extendable output function (x/crypto's
+/// blake2b.XOF): write the input, then read the output in as many reads as
+/// wanted, which continue one stream. A value, so a copy is Go's Clone.
+struct Blake2bXof {}
+
+/// An XOF of `size` bytes of output (1 to 2^32 - 2, or
+/// BLAKE2B_OUTPUT_LENGTH_UNKNOWN), keyed with `key` (at most 64 bytes):
+/// x/crypto's blake2b.NewXOF. Err with Go's texts: `blake2b: invalid key
+/// size`, then `blake2b: XOF length too large` (2^32 - 1, Go's magic for
+/// an unknown length, and any size outside Go's uint32).
+fn blake2b_xof(size: Int, key: Bytes = b"") -> Blake2bXof ! KeyErr
+/// Absorbs data. A fault (`blake2b: write to XOF after read`) once output
+/// was read, as Go panics.
+fn (var x: Blake2bXof) write(data: Bytes)
+/// The next n bytes of output, fewer at the end of the size (Go's Read);
+/// Err `EOF` (Go's io.EOF) once all of it was read. Faults when n is
+/// negative.
+fn (var x: Blake2bXof) read(n: Int) -> Bytes ! KeyErr
+/// Back to the state before any write, the key kept (Go's Reset).
+fn (var x: Blake2bXof) reset()
+
 // ---- authenticated encryption and key derivation (0.35, Go's cipher.AEAD and crypto/hkdf) ----
 
 /// An authenticated cipher with associated data (Go's cipher.AEAD): it
@@ -197,10 +247,16 @@ enum Aead {
   /// is `ciphertext || tag`. Every failure to open (tag, padding, length) is
   /// the same error, after the tag is checked in constant time.
   Aes128CbcHmacSha256
+  /// XChaCha20-Poly1305 (draft-irtf-cfrg-xchacha, x/crypto's
+  /// chacha20poly1305.NewX): a 32 byte key and a 24 byte nonce, random
+  /// nonces safe at any message count. ChaCha20-Poly1305 under the
+  /// HChaCha20 subkey of the key and the nonce's first 16 bytes, with the
+  /// nonce 4 zero bytes then its last 8.
+  XChaCha20Poly1305
 }
 
 /// The nonce's size in bytes: 12 for AesGcm and ChaCha20Poly1305, 16 for
-/// Aes128CbcHmacSha256.
+/// Aes128CbcHmacSha256, 24 for XChaCha20Poly1305.
 fn (a: Aead) nonce_size() -> Int
 /// The bytes a sealed message is longer than its plaintext: 16 (the tag);
 /// for Aes128CbcHmacSha256 at most 32 (1 to 16 bytes of padding, then the

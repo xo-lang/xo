@@ -199,8 +199,16 @@ func Crypto_parse_private_key(_ *Task, der Bytes) Result[Crypto_PrivateKey, Cryp
 	return Ok[Crypto_PrivateKey, Crypto_KeyErr](Crypto_PrivateKey{k: k, pub: Crypto_PublicKey{k: pub, der: string(m)}})
 }
 
-// The crypto.Hash of a std/crypto Hash (tags 1 to 8).
-var cryptoGoHashes = [...]crypto.Hash{0, crypto.MD5, crypto.SHA1, crypto.SHA224, crypto.SHA256, crypto.SHA384, crypto.SHA512, crypto.SHA3_256, crypto.SHA3_512, crypto.SHA3_224, crypto.SHA3_384, crypto.SHA512_224, crypto.SHA512_256}
+// The crypto.Hash of a std/crypto Hash (by tag; legacy Keccak has none).
+var cryptoGoHashes = [...]crypto.Hash{0, crypto.MD5, crypto.SHA1, crypto.SHA224, crypto.SHA256, crypto.SHA384, crypto.SHA512, crypto.SHA3_256, crypto.SHA3_512, crypto.SHA3_224, crypto.SHA3_384, crypto.SHA512_224, crypto.SHA512_256, crypto.BLAKE2b_256, crypto.BLAKE2b_384, crypto.BLAKE2b_512, 0, 0}
+
+// rsaHashOK: whether RSA takes h. Not BLAKE2b or legacy Keccak, which have
+// no DigestInfo prefix (Go's SignPKCS1v15 refuses BLAKE2b) and Keccak no
+// crypto.Hash; PSS and OAEP refuse them too (std/native/crypto.xo
+// rsa_hash).
+func rsaHashOK(h Crypto_Hash) bool { return h.Tag < hashTagBlake2b256 }
+
+const rsaHashUnsupported = "crypto/rsa: unsupported hash function"
 
 func keySum(h Crypto_Hash, msg Bytes) []byte {
 	x := cryptoHashes[h.Tag]()
@@ -211,7 +219,7 @@ func keySum(h Crypto_Hash, msg Bytes) []byte {
 func Crypto_verify(_ *Task, k Crypto_PublicKey, h Crypto_Hash, msg Bytes, sig Bytes) bool {
 	switch p := k.k.(type) {
 	case *rsa.PublicKey:
-		return rsa.VerifyPKCS1v15(p, cryptoGoHashes[h.Tag], keySum(h, msg), []byte(sig)) == nil
+		return rsaHashOK(h) && rsa.VerifyPKCS1v15(p, cryptoGoHashes[h.Tag], keySum(h, msg), []byte(sig)) == nil
 	case *ecdsa.PublicKey:
 		return ecdsa.VerifyASN1(p, keySum(h, msg), []byte(sig))
 	case ed25519.PublicKey:
@@ -222,7 +230,7 @@ func Crypto_verify(_ *Task, k Crypto_PublicKey, h Crypto_Hash, msg Bytes, sig By
 
 func Crypto_verify_pss(_ *Task, k Crypto_PublicKey, h Crypto_Hash, msg Bytes, sig Bytes) bool {
 	p, ok := k.k.(*rsa.PublicKey)
-	return ok && rsa.VerifyPSS(p, cryptoGoHashes[h.Tag], keySum(h, msg), []byte(sig), nil) == nil
+	return ok && rsaHashOK(h) && rsa.VerifyPSS(p, cryptoGoHashes[h.Tag], keySum(h, msg), []byte(sig), nil) == nil
 }
 
 func Crypto_verify_raw_ecdsa(_ *Task, k Crypto_PublicKey, h Crypto_Hash, msg Bytes, sig Bytes) bool {
@@ -247,6 +255,9 @@ func Crypto_sign(tk *Task, r Rand, k Crypto_PrivateKey, h Crypto_Hash, msg Bytes
 	var err error
 	switch p := k.k.(type) {
 	case *rsa.PrivateKey:
+		if !rsaHashOK(h) {
+			return Err[Bytes](keyErr(rsaHashUnsupported))
+		}
 		sig, err = rsa.SignPKCS1v15(nil, p, cryptoGoHashes[h.Tag], keySum(h, msg))
 	case *ecdsa.PrivateKey:
 		r.M_bytes(tk, int64((p.Curve.Params().N.BitLen()+7)/8))
@@ -264,6 +275,9 @@ func Crypto_sign_pss(tk *Task, r Rand, k Crypto_PrivateKey, h Crypto_Hash, msg B
 	p, ok := k.k.(*rsa.PrivateKey)
 	if !ok {
 		return Err[Bytes](keyErr("crypto: sign_pss needs an RSA key"))
+	}
+	if !rsaHashOK(h) {
+		return Err[Bytes](keyErr(rsaHashUnsupported))
 	}
 	r.M_bytes(tk, int64(cryptoGoHashes[h.Tag].Size()))
 	sig, err := rsa.SignPSS(cryptorand.Reader, p, cryptoGoHashes[h.Tag], keySum(h, msg), &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
@@ -522,6 +536,9 @@ func Crypto_sign_pss_digest(tk *Task, r Rand, k Crypto_PrivateKey, h Crypto_Hash
 	if !ok {
 		return Err[Bytes](keyErr("crypto: sign_pss_digest needs an RSA key"))
 	}
+	if !rsaHashOK(h) {
+		return Err[Bytes](keyErr(rsaHashUnsupported))
+	}
 	gh := cryptoGoHashes[h.Tag]
 	if saltLen < -1 || saltLen > math.MaxInt32 {
 		return Err[Bytes](keyErr("crypto/rsa: invalid PSS salt length"))
@@ -544,7 +561,7 @@ func Crypto_sign_pss_digest(tk *Task, r Rand, k Crypto_PrivateKey, h Crypto_Hash
 // Crypto_verify_pss_digest is Go's VerifyPSS with PSSOptions.
 func Crypto_verify_pss_digest(_ *Task, k Crypto_PublicKey, h Crypto_Hash, digest, sig Bytes, saltLen int64) bool {
 	p, ok := k.k.(*rsa.PublicKey)
-	if !ok || saltLen < -1 || saltLen > math.MaxInt32 {
+	if !ok || !rsaHashOK(h) || saltLen < -1 || saltLen > math.MaxInt32 {
 		return false
 	}
 	return rsa.VerifyPSS(p, cryptoGoHashes[h.Tag], []byte(digest), []byte(sig), &rsa.PSSOptions{SaltLength: int(saltLen)}) == nil
@@ -563,6 +580,9 @@ func Crypto_sign_pkcs1v15_digest(_ *Task, k Crypto_PrivateKey, h Option[Crypto_H
 	if !ok {
 		return Err[Bytes](keyErr("crypto: sign_pkcs1v15_digest needs an RSA key"))
 	}
+	if h.Some && !rsaHashOK(h.V) {
+		return Err[Bytes](keyErr(rsaHashUnsupported))
+	}
 	sig, err := rsa.SignPKCS1v15(nil, p, pkcs1Hash(h), []byte(digest))
 	if err != nil {
 		return Err[Bytes](keyErr(err.Error()))
@@ -573,7 +593,7 @@ func Crypto_sign_pkcs1v15_digest(_ *Task, k Crypto_PrivateKey, h Option[Crypto_H
 // Crypto_verify_pkcs1v15_digest is Go's VerifyPKCS1v15.
 func Crypto_verify_pkcs1v15_digest(_ *Task, k Crypto_PublicKey, h Option[Crypto_Hash], digest, sig Bytes) bool {
 	p, ok := k.k.(*rsa.PublicKey)
-	return ok && rsa.VerifyPKCS1v15(p, pkcs1Hash(h), []byte(digest), []byte(sig)) == nil
+	return ok && (!h.Some || rsaHashOK(h.V)) && rsa.VerifyPKCS1v15(p, pkcs1Hash(h), []byte(digest), []byte(sig)) == nil
 }
 
 // Crypto_ecdsa_sign_digest is Go's ecdsa.SignASN1; it reads the bytes the
@@ -782,6 +802,9 @@ func Crypto_encrypt_oaep(tk *Task, r Rand, k Crypto_PublicKey, h Crypto_Hash, ms
 	if !ok {
 		return Err[Bytes](keyErr("crypto: encrypt_oaep needs an RSA key"))
 	}
+	if !rsaHashOK(h) || (mgf.Some && !rsaHashOK(mgf.V)) {
+		return Err[Bytes](keyErr(rsaHashUnsupported))
+	}
 	r.M_bytes(tk, int64(cryptoGoHashes[h.Tag].Size()))
 	c, err := rsa.EncryptOAEPWithOptions(cryptorand.Reader, p, []byte(msg), oaepOpts(h, label, mgf))
 	if err != nil {
@@ -803,6 +826,9 @@ func Crypto_decrypt_oaep(_ *Task, k Crypto_PrivateKey, h Crypto_Hash, ciphertext
 	p, ok := k.k.(*rsa.PrivateKey)
 	if !ok {
 		return Err[Bytes](keyErr("crypto: decrypt_oaep needs an RSA key"))
+	}
+	if !rsaHashOK(h) || (mgf.Some && !rsaHashOK(mgf.V)) {
+		return Err[Bytes](keyErr(rsaHashUnsupported))
 	}
 	m, err := p.Decrypt(nil, []byte(ciphertext), oaepOpts(h, label, mgf))
 	if err != nil {

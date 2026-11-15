@@ -9,19 +9,23 @@ import (
 	"crypto/subtle"
 	"encoding/binary"
 	"fmt"
+	"math/bits"
 	"strings"
 )
 
 // std/crypto's Aead, AeadKey, and HKDF (std.md 11) on Go's crypto/cipher
 // (AES-GCM), this package's ChaCha20-Poly1305 (internal_crypto.go, the
-// one internal.crypto_op uses: Go's standard library exports none), and
-// crypto/hkdf. The error texts are native's (std/native/crypto.xo).
+// one internal.crypto_op uses: Go's standard library exports none) and
+// XChaCha20-Poly1305 over it, and crypto/hkdf. The error texts are native's (std/native/crypto.xo).
 
 const aeadFail = "cipher: message authentication failed"
 
 func (a Crypto_Aead) M_nonce_size(*Task) int64 {
-	if a.Tag == aeadTagCbc {
+	switch a.Tag {
+	case aeadTagCbc:
 		return 16
+	case aeadTagXChaCha:
+		return 24
 	}
 	return 12
 }
@@ -33,8 +37,61 @@ func (a Crypto_Aead) M_overhead(*Task) int64 {
 }
 
 // aeadTagCbc is Aes128CbcHmacSha256's variant tag (after AesGcm and
-// ChaCha20Poly1305).
-const aeadTagCbc = 3
+// ChaCha20Poly1305), aeadTagXChaCha XChaCha20Poly1305's.
+const (
+	aeadTagCbc     = 3
+	aeadTagXChaCha = 4
+)
+
+// hChaCha20 is x/crypto v0.58.0's chacha20.HChaCha20 (the
+// draft-irtf-cfrg-xchacha subkey) of a 32 byte key and a 16 byte nonce.
+func hChaCha20(key, nonce []byte) []byte {
+	var x [16]uint32
+	x[0], x[1], x[2], x[3] = 0x61707865, 0x3320646e, 0x79622d32, 0x6b206574
+	for i := 0; i < 8; i++ {
+		x[4+i] = binary.LittleEndian.Uint32(key[4*i:])
+	}
+	for i := 0; i < 4; i++ {
+		x[12+i] = binary.LittleEndian.Uint32(nonce[4*i:])
+	}
+	qr := func(a, b, c, d int) {
+		x[a] += x[b]
+		x[d] = bits.RotateLeft32(x[d]^x[a], 16)
+		x[c] += x[d]
+		x[b] = bits.RotateLeft32(x[b]^x[c], 12)
+		x[a] += x[b]
+		x[d] = bits.RotateLeft32(x[d]^x[a], 8)
+		x[c] += x[d]
+		x[b] = bits.RotateLeft32(x[b]^x[c], 7)
+	}
+	for i := 0; i < 10; i++ {
+		qr(0, 4, 8, 12)
+		qr(1, 5, 9, 13)
+		qr(2, 6, 10, 14)
+		qr(3, 7, 11, 15)
+		qr(0, 5, 10, 15)
+		qr(1, 6, 11, 12)
+		qr(2, 7, 8, 13)
+		qr(3, 4, 9, 14)
+	}
+	out := make([]byte, 32)
+	for i, j := range []int{0, 1, 2, 3, 12, 13, 14, 15} {
+		binary.LittleEndian.PutUint32(out[4*i:], x[j])
+	}
+	return out
+}
+
+// chachaKeyNonce is the ChaCha20-Poly1305 key and 12 byte nonce of a
+// key's message: XChaCha20-Poly1305's HChaCha20 subkey and 4 zero bytes
+// then the nonce's last 8 (x/crypto's xchacha20poly1305), else as given.
+func (k Crypto_AeadKey) chachaKeyNonce(nonce []byte) ([]byte, []byte) {
+	if k.alg.Tag != aeadTagXChaCha {
+		return k.key, nonce
+	}
+	n := make([]byte, 12)
+	copy(n[4:], nonce[16:24])
+	return hChaCha20(k.key, nonce[:16]), n
+}
 
 func (e Crypto_AeadErr) M_display(*Task) string { return e.F_msg }
 
@@ -67,7 +124,7 @@ func Crypto_aead_key(_ *Task, alg Crypto_Aead, key Bytes) Result[Crypto_AeadKey,
 		}
 		return Ok[Crypto_AeadKey, Crypto_AeadErr](Crypto_AeadKey{alg: alg, key: []byte(key[:16]), cbc: b})
 	}
-	if alg.Tag == 2 { // ChaCha20Poly1305
+	if alg.Tag == 2 || alg.Tag == aeadTagXChaCha { // ChaCha20Poly1305, XChaCha20Poly1305
 		if len(key) != 32 {
 			return Err[Crypto_AeadKey](aeadErr("chacha20poly1305: bad key length"))
 		}
@@ -175,8 +232,9 @@ func (k Crypto_AeadKey) M_seal(_ *Task, nonce, plaintext, aad Bytes) Bytes {
 	if k.gcm != nil {
 		return Bytes(k.gcm.Seal(nil, []byte(nonce), []byte(plaintext), []byte(aad)))
 	}
-	ct := chachaXor(k.key, 1, []byte(nonce), []byte(plaintext))
-	return Bytes(ct) + Bytes(chachaTag(k.key, []byte(nonce), ct, []byte(aad)))
+	key, n := k.chachaKeyNonce([]byte(nonce))
+	ct := chachaXor(key, 1, n, []byte(plaintext))
+	return Bytes(ct) + Bytes(chachaTag(key, n, ct, []byte(aad)))
 }
 
 func (k Crypto_AeadKey) M_open(_ *Task, nonce, sealed, aad Bytes) Result[Bytes, Crypto_AeadErr] {
@@ -213,12 +271,13 @@ func (k Crypto_AeadKey) M_open(_ *Task, nonce, sealed, aad Bytes) Result[Bytes, 
 		}
 		return Ok[Bytes, Crypto_AeadErr](Bytes(pt))
 	}
+	key, cn := k.chachaKeyNonce([]byte(nonce))
 	n := len(sealed) - 16
 	ct := []byte(sealed[:n])
-	if subtle.ConstantTimeCompare(chachaTag(k.key, []byte(nonce), ct, []byte(aad)), []byte(sealed[n:])) != 1 {
+	if subtle.ConstantTimeCompare(chachaTag(key, cn, ct, []byte(aad)), []byte(sealed[n:])) != 1 {
 		return Err[Bytes](aeadErr(aeadFail))
 	}
-	return Ok[Bytes, Crypto_AeadErr](Bytes(chachaXor(k.key, 1, []byte(nonce), ct)))
+	return Ok[Bytes, Crypto_AeadErr](Bytes(chachaXor(key, 1, cn, ct)))
 }
 
 func (k Crypto_AeadKey) M_seal_random(tk *Task, r Rand, plaintext, aad Bytes) Bytes {

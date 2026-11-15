@@ -1,7 +1,8 @@
-// Vendored from golang.org/x/crypto v0.55.0, package blake2b (blake2b.go,
-// blake2b_generic.go), reduced to the unkeyed digest that Argon2 needs and
-// renamed into package rt (decision 0059). Only the portable Go code is
-// kept: no assembly, no golang.org/x/sys/cpu.
+// Vendored from golang.org/x/crypto v0.58.0, package blake2b (blake2b.go,
+// blake2x.go, blake2b_generic.go) and renamed into package rt (decision
+// 0059): the keyed digest, its MarshalBinary, and the XOF (BLAKE2Xb), for
+// Argon2 and std/crypto's Blake2b hashes, blake2b_hasher and blake2b_xof.
+// Only the portable Go code is kept: no assembly, no golang.org/x/sys/cpu.
 //
 // Copyright 2016 The Go Authors. All rights reserved.
 //
@@ -35,6 +36,8 @@ package rt
 
 import (
 	"encoding/binary"
+	"errors"
+	"io"
 	"math/bits"
 )
 
@@ -50,33 +53,124 @@ var b2bIV = [8]uint64{
 	0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
 }
 
-// b2bDigest is an unkeyed BLAKE2b hash with an output size of 1 to 64 bytes.
+var (
+	b2bErrKeySize  = errors.New("blake2b: invalid key size")
+	b2bErrHashSize = errors.New("blake2b: invalid hash size")
+)
+
+// b2bDigest is a BLAKE2b hash with an output size of 1 to 64 bytes and a
+// key of up to 64 bytes.
 type b2bDigest struct {
 	h      [8]uint64
 	c      [2]uint64
 	size   int
 	block  [b2bBlockSize]byte
 	offset int
+
+	key    [b2bBlockSize]byte
+	keyLen int
 }
 
-// newB2b returns a BLAKE2b digest of size bytes (1 to 64).
+// newB2b returns an unkeyed BLAKE2b digest of size bytes (1 to 64).
 func newB2b(size int) *b2bDigest {
-	if size < 1 || size > b2bSize {
-		panic("blake2b: invalid hash size")
+	d, err := newB2bDigest(size, nil)
+	if err != nil {
+		panic(err)
 	}
-	d := &b2bDigest{size: size}
-	d.Reset()
 	return d
 }
 
-func (d *b2bDigest) Reset() {
-	d.h = b2bIV
-	d.h[0] ^= uint64(d.size) | (1 << 16) | (1 << 24)
-	d.offset, d.c[0], d.c[1] = 0, 0, 0
+// newB2bDigest is x/crypto's newDigest (New, New256, New384, New512).
+func newB2bDigest(hashSize int, key []byte) (*b2bDigest, error) {
+	if hashSize < 1 || hashSize > b2bSize {
+		return nil, b2bErrHashSize
+	}
+	if len(key) > b2bSize {
+		return nil, b2bErrKeySize
+	}
+	d := &b2bDigest{
+		size:   hashSize,
+		keyLen: len(key),
+	}
+	copy(d.key[:], key)
+	d.Reset()
+	return d, nil
 }
 
-func (d *b2bDigest) Write(p []byte) {
-	n := len(p)
+const (
+	b2bMagic         = "b2b"
+	b2bMarshaledSize = len(b2bMagic) + 8*8 + 2*8 + 1 + b2bBlockSize + 1
+)
+
+func (d *b2bDigest) MarshalBinary() ([]byte, error) {
+	if d.keyLen != 0 {
+		return nil, errors.New("crypto/blake2b: cannot marshal MACs")
+	}
+	return d.marshalState(), nil
+}
+
+// marshalState is MarshalBinary without its refusal of a keyed digest
+// (std/crypto's Hasher keeps a keyed digest's state as bytes too; the key
+// stays in the template it restores into).
+func (d *b2bDigest) marshalState() []byte {
+	b := make([]byte, 0, b2bMarshaledSize)
+	b = append(b, b2bMagic...)
+	for i := 0; i < 8; i++ {
+		b = binary.BigEndian.AppendUint64(b, d.h[i])
+	}
+	b = binary.BigEndian.AppendUint64(b, d.c[0])
+	b = binary.BigEndian.AppendUint64(b, d.c[1])
+	b = append(b, byte(d.size))
+	b = append(b, d.block[:]...)
+	b = append(b, byte(d.offset))
+	return b
+}
+
+// UnmarshalBinary is x/crypto's, with one addition: a size outside 1 to
+// 64 or an offset past the block, which x/crypto accepts and then panics
+// on in Sum or Write, is its size error.
+func (d *b2bDigest) UnmarshalBinary(b []byte) error {
+	if len(b) < len(b2bMagic) || string(b[:len(b2bMagic)]) != b2bMagic {
+		return errors.New("crypto/blake2b: invalid hash state identifier")
+	}
+	if len(b) != b2bMarshaledSize {
+		return errors.New("crypto/blake2b: invalid hash state size")
+	}
+	if size, offset := int(b[83]), int(b[84+b2bBlockSize]); size < 1 || size > b2bSize || offset > b2bBlockSize {
+		return errors.New("crypto/blake2b: invalid hash state size")
+	}
+	b = b[len(b2bMagic):]
+	for i := 0; i < 8; i++ {
+		d.h[i] = binary.BigEndian.Uint64(b)
+		b = b[8:]
+	}
+	d.c[0] = binary.BigEndian.Uint64(b)
+	d.c[1] = binary.BigEndian.Uint64(b[8:])
+	b = b[16:]
+	d.size = int(b[0])
+	b = b[1:]
+	copy(d.block[:], b[:b2bBlockSize])
+	b = b[b2bBlockSize:]
+	d.offset = int(b[0])
+	return nil
+}
+
+func (d *b2bDigest) BlockSize() int { return b2bBlockSize }
+
+func (d *b2bDigest) Size() int { return d.size }
+
+func (d *b2bDigest) Reset() {
+	d.h = b2bIV
+	d.h[0] ^= uint64(d.size) | (uint64(d.keyLen) << 8) | (1 << 16) | (1 << 24)
+	d.offset, d.c[0], d.c[1] = 0, 0, 0
+	if d.keyLen > 0 {
+		d.block = d.key
+		d.offset = b2bBlockSize
+	}
+}
+
+func (d *b2bDigest) Write(p []byte) (n int, err error) {
+	n = len(p)
 	if d.offset > 0 {
 		remaining := b2bBlockSize - d.offset
 		if n <= remaining {
@@ -99,6 +193,7 @@ func (d *b2bDigest) Write(p []byte) {
 	if len(p) > 0 {
 		d.offset += copy(d.block[:], p)
 	}
+	return
 }
 
 func (d *b2bDigest) Sum(sum []byte) []byte {
@@ -120,6 +215,144 @@ func (d *b2bDigest) finalize(hash *[b2bSize]byte) {
 	b2bHashBlocks(&h, &c, 0xFFFFFFFFFFFFFFFF, block[:])
 	for i, v := range h {
 		binary.LittleEndian.PutUint64(hash[8*i:], v)
+	}
+}
+
+// BLAKE2Xb (x/crypto's blake2x.go).
+
+const (
+	// b2bOutputLengthUnknown is x/crypto's OutputLengthUnknown.
+	b2bOutputLengthUnknown = 0
+	// b2bMagicUnknownOutputLength is the length an XOF of unknown output
+	// length holds.
+	b2bMagicUnknownOutputLength = (1 << 32) - 1
+	// b2bMaxOutputLength is how much an XOF of unknown output length reads.
+	b2bMaxOutputLength = (1 << 32) * 64
+)
+
+// newB2bXOF is x/crypto's NewXOF.
+func newB2bXOF(size uint32, key []byte) (*b2bXOF, error) {
+	if len(key) > b2bSize {
+		return nil, b2bErrKeySize
+	}
+	if size == b2bMagicUnknownOutputLength {
+		return nil, errors.New("blake2b: XOF length too large")
+	}
+	if size == b2bOutputLengthUnknown {
+		size = b2bMagicUnknownOutputLength
+	}
+	x := &b2bXOF{
+		d: b2bDigest{
+			size:   b2bSize,
+			keyLen: len(key),
+		},
+		length: size,
+	}
+	copy(x.d.key[:], key)
+	x.Reset()
+	return x, nil
+}
+
+// b2bXOF is x/crypto's xof: a Go value copy of it is its Clone.
+type b2bXOF struct {
+	d                b2bDigest
+	length           uint32
+	remaining        uint64
+	cfg, root, block [b2bSize]byte
+	offset           int
+	nodeOffset       uint32
+	readMode         bool
+}
+
+func (x *b2bXOF) Write(p []byte) (n int, err error) {
+	if x.readMode {
+		panic("blake2b: write to XOF after read")
+	}
+	return x.d.Write(p)
+}
+
+func (x *b2bXOF) BlockSize() int { return x.d.BlockSize() }
+
+func (x *b2bXOF) Reset() {
+	x.cfg[0] = byte(b2bSize)
+	binary.LittleEndian.PutUint32(x.cfg[4:], uint32(b2bSize)) // leaf length
+	binary.LittleEndian.PutUint32(x.cfg[12:], x.length)       // XOF length
+	x.cfg[17] = byte(b2bSize)                                 // inner hash size
+
+	x.d.Reset()
+	x.d.h[1] ^= uint64(x.length) << 32
+
+	x.remaining = uint64(x.length)
+	if x.remaining == b2bMagicUnknownOutputLength {
+		x.remaining = b2bMaxOutputLength
+	}
+	x.offset, x.nodeOffset = 0, 0
+	x.readMode = false
+}
+
+func (x *b2bXOF) Read(p []byte) (n int, err error) {
+	if !x.readMode {
+		x.d.finalize(&x.root)
+		x.readMode = true
+	}
+
+	if x.remaining == 0 {
+		return 0, io.EOF
+	}
+
+	n = len(p)
+	if uint64(n) > x.remaining {
+		n = int(x.remaining)
+		p = p[:n]
+	}
+
+	if x.offset > 0 {
+		blockRemaining := b2bSize - x.offset
+		if n < blockRemaining {
+			x.offset += copy(p, x.block[x.offset:])
+			x.remaining -= uint64(n)
+			return
+		}
+		copy(p, x.block[x.offset:])
+		p = p[blockRemaining:]
+		x.offset = 0
+		x.remaining -= uint64(blockRemaining)
+	}
+
+	for len(p) >= b2bSize {
+		binary.LittleEndian.PutUint32(x.cfg[8:], x.nodeOffset)
+		x.nodeOffset++
+
+		x.d.initConfig(&x.cfg)
+		x.d.Write(x.root[:])
+		x.d.finalize(&x.block)
+
+		copy(p, x.block[:])
+		p = p[b2bSize:]
+		x.remaining -= uint64(b2bSize)
+	}
+
+	if todo := len(p); todo > 0 {
+		if x.remaining < uint64(b2bSize) {
+			x.cfg[0] = byte(x.remaining)
+		}
+		binary.LittleEndian.PutUint32(x.cfg[8:], x.nodeOffset)
+		x.nodeOffset++
+
+		x.d.initConfig(&x.cfg)
+		x.d.Write(x.root[:])
+		x.d.finalize(&x.block)
+
+		x.offset = copy(p, x.block[:todo])
+		x.remaining -= uint64(todo)
+	}
+	return
+}
+
+func (d *b2bDigest) initConfig(cfg *[b2bSize]byte) {
+	d.offset, d.c[0], d.c[1] = 0, 0, 0
+	for i := range d.h {
+		d.h[i] = b2bIV[i] ^ binary.LittleEndian.Uint64(cfg[i*8:])
 	}
 }
 

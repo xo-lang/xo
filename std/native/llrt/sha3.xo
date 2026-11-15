@@ -7,8 +7,9 @@ use native/llrt/cpu
 use native/rt
 
 /// A sponge: the 25 lanes, its rate in bytes, its domain separator
-/// (0x06 SHA-3, 0x1f SHAKE), the bytes absorbed into the current block
-/// (absorbing) or left to squeeze from it (squeezing).
+/// (0x06 SHA-3, 0x1f SHAKE, 0x04 cSHAKE, 0x01 legacy Keccak), the bytes
+/// absorbed into the current block (absorbing) or left to squeeze from it
+/// (squeezing).
 pub struct Sponge {
   lanes: List[Int]
   rate: Int
@@ -1096,6 +1097,11 @@ pub fn new_sha3_384() -> Sponge { sponge(104, 0x06) }
 pub fn new_sha3_512() -> Sponge { sponge(72, 0x06) }
 pub fn new_shake128() -> Sponge { sponge(168, 0x1f) }
 pub fn new_shake256() -> Sponge { sponge(136, 0x1f) }
+/// Legacy Keccak-256 (rate 136) and Keccak-512 (72): the original Keccak
+/// padding, domain byte 0x01 (x/crypto's NewLegacyKeccak256 and
+/// NewLegacyKeccak512, Ethereum's Keccak-256).
+pub fn new_keccak256() -> Sponge { sponge(136, 0x01) }
+pub fn new_keccak512() -> Sponge { sponge(72, 0x01) }
 
 /// cSHAKE (NIST SP 800-185 3.3) of rate 168 (cSHAKE128) or 136
 /// (cSHAKE256), function name n and customization s: plain SHAKE when

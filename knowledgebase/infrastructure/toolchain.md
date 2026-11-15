@@ -59,9 +59,11 @@ Last verified: 2026-10-12
   compiler or for generated programs. (Go packages bound with `use go` are
   dependencies of the generated program, not of the compiler; see "Go
   interop".) Last verified: 2026-10-08.
-- Vendored third party code (decision 0059): `std/rt/xcrypto_argon2.go`
-  and `std/rt/xcrypto_blake2b.go` hold the portable Go of
-  `golang.org/x/crypto` v0.55.0 packages `argon2` and `blake2b` (no
+- Vendored third party code (decision 0059): `std/rt/xcrypto_argon2.go`,
+  `std/rt/xcrypto_blake2b.go` and `std/rt/xcrypto_keccak.go` hold the
+  portable Go of `golang.org/x/crypto` packages `argon2` (v0.55.0),
+  `blake2b` (v0.58.0: the keyed digest, MarshalBinary and the XOF, since
+  2026-11-15) and sha3's legacy Keccak (v0.58.0) (no
   assembly, no `x/sys/cpu`), renamed into package `rt`, with the Go
   authors' BSD 3 clause license in each file header. They are not a module
   requirement: the generated `go.mod` stays `module xoprog` plus `use go`

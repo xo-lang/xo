@@ -1,6 +1,7 @@
 // ChaCha20, Poly1305, and the ChaCha20-Poly1305 AEAD (RFC 8439) for TLS
 // (work item B31, decision 0202), as golang.org/x/crypto's chacha20poly1305
-// (12 byte nonce, 16 byte tag; seal appends the tag). Constant time
+// (12 byte nonce, 16 byte tag; seal appends the tag), and HChaCha20 for
+// std/crypto's XChaCha20-Poly1305. Constant time
 // (decision 0222, ct.xo): ChaCha20 is additions, rotations, and xors of
 // 32 bit words; Poly1305 is poly1305-donna's five 26 bit limbs, its final
 // reduction picked with a mask. Branches and indexes depend on lengths
@@ -37,6 +38,46 @@ fn le32(b: Bytes, i: Int) -> Int { Int(b[i]) | shl(Int(b[i + 1]), 8) | shl(Int(b
 
 /// The 64 byte key stream block of key, counter ctr, and nonce.
 pub fn block(key: Bytes, ctr: Int, nonce: Bytes) -> Bytes { xor_stream(rt.rs_with_cap(64), key, ctr, nonce, zeros64(), 0, 0).bytes() }
+
+/// HChaCha20 (draft-irtf-cfrg-xchacha 2.2, x/crypto's chacha20.HChaCha20)
+/// of a 32 byte key and a 16 byte nonce: the state's 20 rounds without the
+/// final addition, its words 0 to 3 and 12 to 15, the XChaCha20 subkey.
+pub fn hchacha20(key: Bytes, nonce: Bytes) -> Bytes {
+  var x: List[Int] = [0x61707865, 0x3320646e, 0x79622d32, 0x6b206574]
+  for i in 0..8 {
+    x.push(le32(key, 4 * i))
+  }
+  for i in 0..4 {
+    x.push(le32(nonce, 4 * i))
+  }
+  for _ in 0..10 {
+    quarter(x, 0, 4, 8, 12)
+    quarter(x, 1, 5, 9, 13)
+    quarter(x, 2, 6, 10, 14)
+    quarter(x, 3, 7, 11, 15)
+    quarter(x, 0, 5, 10, 15)
+    quarter(x, 1, 6, 11, 12)
+    quarter(x, 2, 7, 8, 13)
+    quarter(x, 3, 4, 9, 14)
+  }
+  var out = BytesBuilder.with_capacity(32)
+  for i in [0, 1, 2, 3, 12, 13, 14, 15] {
+    out.write_le(x[i], 4)
+  }
+  out.freeze()
+}
+
+/// The ChaCha quarter round (RFC 8439 2.1) on the words a, b, c, d of x.
+fn quarter(var x: List[Int], a: Int, b: Int, c: Int, d: Int) {
+  x[a] = add(x[a], x[b])
+  x[d] = (x[d] ^ x[a]).rotate_right32(16)
+  x[c] = add(x[c], x[d])
+  x[b] = (x[b] ^ x[c]).rotate_right32(20)
+  x[a] = add(x[a], x[b])
+  x[d] = (x[d] ^ x[a]).rotate_right32(24)
+  x[c] = add(x[c], x[d])
+  x[b] = (x[b] ^ x[c]).rotate_right32(25)
+}
 
 /// 64 zero bytes.
 fn zeros64() -> Bytes {

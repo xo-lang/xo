@@ -39,6 +39,7 @@ var (
 	_ func(*Crypto_Hasher, *Task)                                                                                      = (*Crypto_Hasher).M_reset
 	_ func(*Crypto_Hasher, *Task) Result[Bytes, Crypto_HashErr]                                                        = (*Crypto_Hasher).M_marshal_binary
 	_ func(*Crypto_Hasher, *Task, Bytes) Result[Crypto_Hasher, Crypto_HashErr]                                         = (*Crypto_Hasher).M_unmarshal_binary
+	_ func(*Task, int64, Bytes) Result[Crypto_Hasher, Crypto_KeyErr]                                                   = Crypto_blake2b_hasher
 	_ func(*Crypto_HashErr, *Task) string                                                                              = (*Crypto_HashErr).M_display
 	_ func(*Task) Crypto_Shake                                                                                         = Crypto_shake128
 	_ func(*Task) Crypto_Shake                                                                                         = Crypto_shake256
@@ -52,6 +53,10 @@ var (
 	_ func(*Crypto_Shake, *Task, Bytes) Result[Crypto_Shake, Crypto_HashErr]                                           = (*Crypto_Shake).M_unmarshal_binary
 	_ func(*Task, Bytes, int64) Bytes                                                                                  = Crypto_sum_shake128
 	_ func(*Task, Bytes, int64) Bytes                                                                                  = Crypto_sum_shake256
+	_ func(*Task, int64, Bytes) Result[Crypto_Blake2bXof, Crypto_KeyErr]                                               = Crypto_blake2b_xof
+	_ func(*Crypto_Blake2bXof, *Task, Bytes)                                                                           = (*Crypto_Blake2bXof).M_write
+	_ func(*Crypto_Blake2bXof, *Task, int64) Result[Bytes, Crypto_KeyErr]                                              = (*Crypto_Blake2bXof).M_read
+	_ func(*Crypto_Blake2bXof, *Task)                                                                                  = (*Crypto_Blake2bXof).M_reset
 	_ func(*Crypto_Aead, *Task) int64                                                                                  = (*Crypto_Aead).M_nonce_size
 	_ func(*Crypto_Aead, *Task) int64                                                                                  = (*Crypto_Aead).M_overhead
 	_ func(*Crypto_AeadErr, *Task) string                                                                              = (*Crypto_AeadErr).M_display

@@ -128,6 +128,7 @@ var generators = map[string]func() string{
 	"norm":         normCorpus,
 	"idna":         idnaCorpus,
 	"bcrypt":       bcryptCorpus,
+	"xcrypto":      xcryptoCorpus,
 	"htmltok":      htmltokCorpus,
 	"htmlparse":    htmlparseCorpus,
 	"protodesc":    protodescCorpus,

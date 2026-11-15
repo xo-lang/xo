@@ -10,6 +10,7 @@ use std/json
 use native/llrt/aesgcm
 use native/llrt/asn1
 use native/llrt/bigmod
+use native/llrt/blake2b
 use native/llrt/chacha
 use native/llrt/ct
 use native/llrt/digest as dg
@@ -164,7 +165,8 @@ fn ed25519_verify_with(public_key: Bytes, msg: Bytes, sig: Bytes, prehashed: Boo
 
 // ---------------------------------------------------------------------------
 // Hash, digest, hmac, and Hasher (decision 0279): the runtime's hashes
-// (md5.xo, sha1.xo, sha256.xo for SHA-224 to SHA-512, sha3.xo), HMAC as
+// (md5.xo, sha1.xo, sha256.xo for SHA-224 to SHA-512, sha3.xo for SHA-3
+// and legacy Keccak, blake2b.xo for BLAKE2b), HMAC as
 // Go's crypto/hmac builds it over each (RFC 2104: the key hashed when
 // longer than the block, then the inner and outer pads).
 
@@ -182,6 +184,11 @@ fn hash_size(h: crypto.Hash) -> Int {
     Sha3_384 => 48
     Sha512_224 => 28
     Sha512_256 => 32
+    Blake2b_256 => 32
+    Blake2b_384 => 48
+    Blake2b_512 => 64
+    Keccak256 => 32
+    Keccak512 => 64
   }
 }
 
@@ -196,6 +203,11 @@ fn block_of(h: crypto.Hash) -> Int {
     Sha3_384 => 104
     Sha512_224 => 128
     Sha512_256 => 128
+    Blake2b_256 => 128
+    Blake2b_384 => 128
+    Blake2b_512 => 128
+    Keccak256 => 136
+    Keccak512 => 72
     _ => 64
   }
 }
@@ -205,6 +217,7 @@ enum State {
   S1(h: sha1.Hasher)
   S2(h: sha256.Hasher)
   S3(s: sha3.Sponge)
+  B2(b: blake2b.State)
 }
 
 struct Hasher {
@@ -231,6 +244,11 @@ fn fresh(h: crypto.Hash) -> State {
     Sha3_384 => State.S3(s: sha3.new_sha3_384())
     Sha512_224 => State.S2(h: sha256.new(sha256.HASH_SHA512_224))
     Sha512_256 => State.S2(h: sha256.new(sha256.HASH_SHA512_256))
+    Blake2b_256 => State.B2(b: blake2b.new(32, b""))
+    Blake2b_384 => State.B2(b: blake2b.new(48, b""))
+    Blake2b_512 => State.B2(b: blake2b.new(64, b""))
+    Keccak256 => State.S3(s: sha3.new_keccak256())
+    Keccak512 => State.S3(s: sha3.new_keccak512())
   }
 }
 
@@ -256,6 +274,11 @@ fn absorb(st: State, data: Bytes) -> State {
       sha3.write(x, data)
       State.S3(s: x)
     }
+    B2(b) => {
+      var x = b
+      x.write(data)
+      State.B2(b: x)
+    }
   }
 }
 
@@ -269,6 +292,7 @@ fn finish(st: State) -> Bytes {
       var x = s
       sha3.sum(x)
     }
+    B2(b) => b.sum()
   }
 }
 
@@ -297,7 +321,8 @@ fn padded_key(h: crypto.Hash, key: Bytes, x: Int) -> Bytes {
   out.freeze()
 }
 
-/// HMAC's inner and outer pad bytes over the largest block (SHA3-224's 144).
+/// HMAC's inner and outer pad bytes over the largest block (SHA3-224's 144;
+/// BLAKE2b's is 128, legacy Keccak's 136 and 72).
 const IPAD: Bytes = b"\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36"
 const OPAD: Bytes = b"\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c"
 
@@ -328,7 +353,26 @@ fn (x: Hasher) written() -> Int { x.total }
 
 fn (x: Hasher) block_size() -> Int { block_of(x.hash) }
 
-fn (x: Hasher) size() -> Int { hash_size(x.hash) }
+fn (x: Hasher) size() -> Int {
+  match x.st {
+    B2(b) => b.size()
+    M5(_) | S1(_) | S2(_) | S3(_) => hash_size(x.hash)
+  }
+}
+
+/// Go's blake2b.New(size, key): a keyed BLAKE2b of `size` bytes; its Hash
+/// is the BLAKE2b of that size, or Blake2b_512 for another size.
+fn blake2b_hasher(size: Int, key: Bytes = b"") -> Hasher ! crypto.KeyErr {
+  if size < 1 || size > blake2b.SIZE {
+    return Err(key_err("blake2b: invalid hash size"))
+  }
+  if key.len() > blake2b.SIZE {
+    return Err(key_err("blake2b: invalid key size"))
+  }
+  let h = if size == 32 { crypto.Hash.Blake2b_256 } else if size == 48 { crypto.Hash.Blake2b_384 } else { crypto.Hash.Blake2b_512 }
+  let st = State.B2(b: blake2b.new(size, key))
+  Ok(Hasher{hash: h, st: st, opad: b"", total: 0, start: st})
+}
 
 fn (var x: Hasher) reset() {
   x.st = x.start
@@ -418,13 +462,15 @@ fn state_bin(h: crypto.Hash, st: State) -> Bytes {
       md_bin(h, w, held, total)
     }
     S3(s) => sha3.marshal(s)
+    B2(d) => blake2b.marshal(d)
   }
 }
 
-/// The state of Go's binary state b for h, and its length (0 for SHA-3,
-/// whose state keeps none).
-fn state_of(h: crypto.Hash, b: Bytes) -> (State, Int) ! Str {
-  match fresh(h) {
+/// The state of Go's binary state b for h, restored into tmpl (h's fresh
+/// state, or a keyed BLAKE2b's), and its length (0 for SHA-3 and Keccak,
+/// whose state keeps none; BLAKE2b's counter and held bytes).
+fn state_of(h: crypto.Hash, tmpl: State, b: Bytes) -> (State, Int) ! Str {
+  match tmpl {
     M5(_) => {
       let (w, held, total) = md_parts(h, 4, b)?
       Ok((State.M5(h: md5.from_parts(w, held, total)), total))
@@ -438,12 +484,27 @@ fn state_of(h: crypto.Hash, b: Bytes) -> (State, Int) ! Str {
       Ok((State.S2(h: sha256.from_parts(x.hash, w, held, total)), total))
     }
     S3(s) => Ok((State.S3(s: sha3.unmarshal(s, b)?), 0))
+    B2(d) => {
+      let x = blake2b.unmarshal(d, b)?
+      Ok((State.B2(b: x), x.written()))
+    }
+  }
+}
+
+/// Whether st is a keyed BLAKE2b (Go's MarshalBinary refuses a MAC).
+fn keyed_b2(st: State) -> Bool {
+  match st {
+    B2(b) => b.keyed()
+    M5(_) | S1(_) | S2(_) | S3(_) => false
   }
 }
 
 fn (x: Hasher) marshal_binary() -> Bytes ! crypto.HashErr {
   if !x.opad.is_empty() {
     return Err(hash_err("crypto: an HMAC Hasher has no binary state"))
+  }
+  if keyed_b2(x.st) {
+    return Err(hash_err("crypto/blake2b: cannot marshal MACs"))
   }
   Ok(state_bin(x.hash, x.st))
 }
@@ -452,7 +513,7 @@ fn (x: Hasher) unmarshal_binary(state: Bytes) -> Hasher ! crypto.HashErr {
   if !x.opad.is_empty() {
     return Err(hash_err("crypto: an HMAC Hasher has no binary state"))
   }
-  match state_of(x.hash, state) {
+  match state_of(x.hash, x.start, state) {
     Ok((st, total)) => Ok(Hasher{hash: x.hash, st: st, opad: b"", total: total, start: x.start})
     Err(m) => Err(hash_err(m))
   }
@@ -512,6 +573,52 @@ fn (x: Shake) unmarshal_binary(state: Bytes) -> Shake ! crypto.HashErr {
 fn sum_shake128(data: Bytes, n: Int) -> Bytes { sha3.shake128(data, n) }
 fn sum_shake256(data: Bytes, n: Int) -> Bytes { sha3.shake256(data, n) }
 
+/// BLAKE2Xb (Go's blake2b XOF): llrt blake2b.xo's Xof.
+struct Blake2bXof {
+  x: blake2b.Xof
+}
+
+/// Go's NewXOF: the key's check, then the length's (Go's
+/// OutputLengthUnknown, 0, an unknown length; Go's uint32 magic for it,
+/// and anything outside uint32, too large).
+fn blake2b_xof(size: Int, key: Bytes = b"") -> Blake2bXof ! crypto.KeyErr {
+  if key.len() > blake2b.SIZE {
+    return Err(key_err("blake2b: invalid key size"))
+  }
+  if size < 0 || size >= blake2b.XOF_UNKNOWN {
+    return Err(key_err("blake2b: XOF length too large"))
+  }
+  Ok(Blake2bXof{x: blake2b.new_xof(if size == 0 { blake2b.XOF_UNKNOWN } else { size }, key)})
+}
+
+fn (var x: Blake2bXof) write(data: Bytes) {
+  if x.x.reading() {
+    fault("blake2b: write to XOF after read")
+  }
+  var v = x.x
+  v.write(data)
+  x.x = v
+}
+
+fn (var x: Blake2bXof) read(n: Int) -> Bytes ! crypto.KeyErr {
+  if n < 0 {
+    fault("blake2b: a read of ${n} bytes")
+  }
+  var v = x.x
+  let got = v.read(n)
+  x.x = v
+  match got {
+    Some(b) => Ok(b)
+    None => Err(key_err("EOF"))
+  }
+}
+
+fn (var x: Blake2bXof) reset() {
+  var v = x.x
+  v.reset()
+  x.x = v
+}
+
 fn hmac(h: crypto.Hash, key: Bytes, msg: Bytes) -> Bytes {
   if h == crypto.Hash.Sha256 {
     // digest.xo's one shot: no Hasher, no padded key copies, the two
@@ -532,11 +639,17 @@ fn hmac(h: crypto.Hash, key: Bytes, msg: Bytes) -> Bytes {
 /// Go's cipher error text, the same for every check that fails.
 const AEAD_FAIL = "cipher: message authentication failed"
 
-fn aead_nonce_size(a: crypto.Aead) -> Int { if a == crypto.Aead.Aes128CbcHmacSha256 { 16 } else { 12 } }
+fn aead_nonce_size(a: crypto.Aead) -> Int {
+  match a {
+    Aes128CbcHmacSha256 => 16
+    XChaCha20Poly1305 => 24
+    _ => 12
+  }
+}
 fn aead_overhead(a: crypto.Aead) -> Int { if a == crypto.Aead.Aes128CbcHmacSha256 { 32 } else { 16 } }
 fn aeaderr_display(e: crypto.AeadErr) -> Str { e.msg }
 
-/// The key: AES-GCM's ready Gcm, or ChaCha20-Poly1305's 32 bytes. Never
+/// The key: AES-GCM's ready Gcm, or (X)ChaCha20-Poly1305's 32 bytes. Never
 /// displayed or encoded (no Display; the declaration has none).
 struct AeadKey {
   which: crypto.Aead
@@ -558,7 +671,7 @@ fn aead_key(alg: crypto.Aead, key: Bytes) -> AeadKey ! crypto.AeadErr {
       }
       Ok(AeadKey{which: alg, gcm: Some(aesgcm.new_gcm(key)), key: b"", cbc: None})
     }
-    ChaCha20Poly1305 => {
+    ChaCha20Poly1305 | XChaCha20Poly1305 => {
       if key.len() != 32 {
         return Err(crypto.AeadErr{msg: "chacha20poly1305: bad key length"})
       }
@@ -651,6 +764,20 @@ fn aes_gcm_key_with_tag_size(key: Bytes, size: Int) -> AeadKey ! crypto.AeadErr 
 /// The shortest sealed message open reads: the tag.
 fn min_sealed(k: AeadKey) -> Int { if k.which == crypto.Aead.AesGcm { k.ts } else { 16 } }
 
+/// The ChaCha20-Poly1305 key and 12 byte nonce of a message under k:
+/// XChaCha20-Poly1305's HChaCha20 subkey of the nonce's first 16 bytes,
+/// and 4 zero bytes then its last 8 (x/crypto's xchacha20poly1305), else
+/// k's key and the nonce.
+fn chacha_key_nonce(k: AeadKey, nonce: Bytes) -> (Bytes, Bytes) {
+  if k.which != crypto.Aead.XChaCha20Poly1305 {
+    return (k.key, nonce)
+  }
+  var n = BytesBuilder.with_capacity(12)
+  n.write(b"\x00\x00\x00\x00")
+  n.write(nonce[16..24])
+  (chacha.hchacha20(k.key, nonce[0..16]), n.freeze())
+}
+
 /// Whether the key's sizes are the ones the fast GCM path takes.
 fn plain_sizes(k: AeadKey) -> Bool { k.ns == 12 && k.ts == 16 }
 
@@ -665,7 +792,10 @@ fn (k: AeadKey) seal(nonce: Bytes, plaintext: Bytes, aad: Bytes = b"") -> Bytes 
   }
   match k.gcm {
     Some(g) => if plain_sizes(k) { g.seal(nonce, plaintext, aad) } else { g.seal_any(nonce, plaintext, aad, k.ts) }
-    None => chacha.seal(k.key, nonce, plaintext, aad)
+    None => {
+      let (key, n) = chacha_key_nonce(k, nonce)
+      chacha.seal(key, n, plaintext, aad)
+    }
   }
 }
 
@@ -689,7 +819,10 @@ fn (k: AeadKey) open(nonce: Bytes, sealed: Bytes, aad: Bytes = b"") -> Bytes ! c
   }
   let got = match k.gcm {
     Some(g) => if plain_sizes(k) { g.open(nonce, sealed, aad) } else { g.open_any(nonce, sealed, aad, k.ts) }
-    None => chacha.open(k.key, nonce, sealed, aad)
+    None => {
+      let (key, n) = chacha_key_nonce(k, nonce)
+      chacha.open(key, n, sealed, aad)
+    }
   }
   match got {
     Some(pt) => Ok(pt)
@@ -1869,8 +2002,17 @@ fn parse_private_key(der: Bytes) -> PrivateKey ! crypto.KeyErr { parse_private(d
 // Signatures (crypto/rsa, crypto/ecdsa, crypto/ed25519 of go1.26; decision
 // 0285)
 
+/// Whether RSA signs, verifies and encrypts with h: not with BLAKE2b or
+/// legacy Keccak, which have no DigestInfo prefix in Go's hashPrefixes
+/// (Go's SignPKCS1v15 refuses them), and Keccak no crypto.Hash; PSS and
+/// OAEP refuse them too, so every RSA operation takes the same hashes.
+fn rsa_hash(h: crypto.Hash) -> Bool { !(h is Blake2b_256 | Blake2b_384 | Blake2b_512 | Keccak256 | Keccak512) }
+
+/// Go's error for a hash RSA does not take.
+fn rsa_hash_err() -> crypto.KeyErr { key_err("crypto/rsa: unsupported hash function") }
+
 /// The DigestInfo prefix of a hash (crypto/internal/fips140/rsa
-/// hashPrefixes).
+/// hashPrefixes; empty for the hashes rsa_hash refuses).
 fn digest_info(h: crypto.Hash) -> Bytes {
   let hex = match h {
     Md5 => "3020300c06082a864886f70d020505000410"
@@ -1885,6 +2027,7 @@ fn digest_info(h: crypto.Hash) -> Bytes {
     Sha3_384 => "3041300d060960864801650304020905000430"
     Sha512_224 => "302d300d06096086480165030402050500041c"
     Sha512_256 => "3031300d060960864801650304020605000420"
+    _ => ""
   }
   Bytes.from_hex(hex) ?? b""
 }
@@ -1917,14 +2060,14 @@ fn is_ecdsa(a: crypto.KeyAlg) -> Bool { a is EcdsaP224 | EcdsaP256 | EcdsaP384 |
 
 fn verify(k: PublicKey, h: crypto.Hash, msg: Bytes, sig: Bytes) -> Bool {
   match k.kind {
-    Rsa => rsa_public_err(k.n, k.e).is_empty() && rsa.verify_pkcs1_prefix(rsa_pub(k), digest_info(h), digest(h, msg), sig)
+    Rsa => rsa_hash(h) && rsa_public_err(k.n, k.e).is_empty() && rsa.verify_pkcs1_prefix(rsa_pub(k), digest_info(h), digest(h, msg), sig)
     Ed25519 => ed25519.verify(k.key, msg, sig)
     _ => nistec.verify(nist_curve(k.kind), k.key, digest(h, msg), sig)
   }
 }
 
 fn verify_pss(k: PublicKey, h: crypto.Hash, msg: Bytes, sig: Bytes) -> Bool {
-  if k.kind != crypto.KeyAlg.Rsa || !rsa_public_err(k.n, k.e).is_empty() {
+  if k.kind != crypto.KeyAlg.Rsa || !rsa_hash(h) || !rsa_public_err(k.n, k.e).is_empty() {
     return false
   }
   rsa.verify_pss_fn(rsa_pub(k), h.size(), fn(b) { digest(h, b) }, digest(h, msg), sig, -1)
@@ -1957,6 +2100,9 @@ fn sign(r: Rand, k: PrivateKey, h: crypto.Hash, msg: Bytes) -> Bytes ! crypto.Ke
 fn sign_z(k: PrivateKey, h: crypto.Hash, msg: Bytes, z: Bytes) -> Bytes ! crypto.KeyErr {
   match k.kind {
     Rsa => {
+      if !rsa_hash(h) {
+        return Err(rsa_hash_err())
+      }
       let e = rsa_public_err(k.rsa.n, k.rsa.e)
       if !e.is_empty() {
         return Err(key_err(e))
@@ -1974,9 +2120,17 @@ fn sign_z(k: PrivateKey, h: crypto.Hash, msg: Bytes, z: Bytes) -> Bytes ! crypto
   }
 }
 
-fn sign_pss(r: Rand, k: PrivateKey, h: crypto.Hash, msg: Bytes) -> Bytes ! crypto.KeyErr uses rand { sign_pss_with(k, h, msg, r.bytes(h.size())) }
+fn sign_pss(r: Rand, k: PrivateKey, h: crypto.Hash, msg: Bytes) -> Bytes ! crypto.KeyErr uses rand {
+  if k.kind == crypto.KeyAlg.Rsa && !rsa_hash(h) {
+    return Err(rsa_hash_err())
+  }
+  sign_pss_with(k, h, msg, r.bytes(h.size()))
+}
 
 fn encrypt_oaep(r: Rand, k: PublicKey, h: crypto.Hash, msg: Bytes, label: Bytes, mgf_hash: crypto.Hash?) -> Bytes ! crypto.KeyErr uses rand {
+  if k.kind == crypto.KeyAlg.Rsa && !(rsa_hash(h) && rsa_hash(mgf_hash ?? h)) {
+    return Err(rsa_hash_err())
+  }
   encrypt_oaep_with(k, h, msg, label, r.bytes(h.size()), mgf_hash)
 }
 
@@ -2002,6 +2156,9 @@ fn decrypt_oaep(k: PrivateKey, h: crypto.Hash, ciphertext: Bytes, label: Bytes, 
   let mh = mgf_hash ?? h
   if k.kind != crypto.KeyAlg.Rsa {
     return Err(key_err("crypto: decrypt_oaep needs an RSA key"))
+  }
+  if !rsa_hash(h) || !rsa_hash(mh) {
+    return Err(rsa_hash_err())
   }
   let e = rsa_public_err(k.rsa.n, k.rsa.e)
   if !e.is_empty() {
@@ -2210,6 +2367,9 @@ fn sign_pss_digest(r: Rand, k: PrivateKey, h: crypto.Hash, dg: Bytes, salt_len: 
   if k.kind != crypto.KeyAlg.Rsa {
     return Err(key_err("crypto: sign_pss_digest needs an RSA key"))
   }
+  if !rsa_hash(h) {
+    return Err(rsa_hash_err())
+  }
   let e = rsa_public_err(k.rsa.n, k.rsa.e)
   if !e.is_empty() {
     return Err(key_err(e))
@@ -2237,7 +2397,7 @@ fn sign_pss_digest(r: Rand, k: PrivateKey, h: crypto.Hash, dg: Bytes, salt_len: 
 }
 
 fn verify_pss_digest(k: PublicKey, h: crypto.Hash, dg: Bytes, sig: Bytes, salt_len: Int) -> Bool {
-  if k.kind != crypto.KeyAlg.Rsa || salt_len < -1 || !rsa_public_err(k.n, k.e).is_empty() {
+  if k.kind != crypto.KeyAlg.Rsa || !rsa_hash(h) || salt_len < -1 || !rsa_public_err(k.n, k.e).is_empty() {
     return false
   }
   let s = if salt_len == 0 { -1 } else if salt_len == -1 { h.size() } else { salt_len }
@@ -2250,6 +2410,9 @@ fn sign_pkcs1v15_digest(k: PrivateKey, h: crypto.Hash?, dg: Bytes) -> Bytes ! cr
   }
   let prefix = match h {
     Some(x) => {
+      if !rsa_hash(x) {
+        return Err(rsa_hash_err())
+      }
       if dg.len() != x.size() {
         return Err(key_err("crypto/rsa: input must be hashed message"))
       }
@@ -2273,7 +2436,7 @@ fn verify_pkcs1v15_digest(k: PublicKey, h: crypto.Hash?, dg: Bytes, sig: Bytes) 
     return false
   }
   match h {
-    Some(x) => dg.len() == x.size() && rsa.verify_pkcs1_prefix(rsa_pub(k), digest_info(x), dg, sig)
+    Some(x) => rsa_hash(x) && dg.len() == x.size() && rsa.verify_pkcs1_prefix(rsa_pub(k), digest_info(x), dg, sig)
     None => rsa.verify_pkcs1_prefix(rsa_pub(k), b"", dg, sig)
   }
 }
