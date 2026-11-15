@@ -1,7 +1,7 @@
 # 0650: `t.await_or_cancel()` reports a cancelled task as a value
 
-Status: Proposed (2026-11-15, aws-43 for the lead; a follow-up of the
-owner's language survey, for the owner's approval).
+Status: Accepted (owner, 2026-11-15; drafted by aws-43 for the lead, a
+follow-up of the owner's language survey). Not built yet.
 
 ## Context
 
