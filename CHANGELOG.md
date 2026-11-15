@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (prelude, every backend): `File.read_at(offset, max)` returns max bytes, fewer only when the file ends first, as Go's ReadAt; it returned at most 1 MiB.
 - Feature (std/ui, Early): confirmed Msgs: `ui.app(init, update, view).confirming(fn(m) { ... })` marks Msgs a client must not predict (a payment, a booking); `Replica.awaiting()` lists them until the server answers. Breaking: an `ui.App{...}` literal now needs `confirm`; build Apps with `ui.app(init, update, view)`.
 - Feature (std/asn1, every backend): struct fields as Go's Unmarshal and Marshal read and write them: `asn1.field("optional,explicit,tag:0", kind)` reads Go's tag options, `FieldReader.next` reads one field of a SEQUENCE (explicit and implicit tags, optional fields, SET OF, RawValue, RawContent through `last`), `Value.with_field` writes one, and `BitString` is the field type for a BIT STRING (decision 0661).
 - Fix (std/asn1): `Value.Printable(s).der()` writes a `*`, as Go's Marshal does with `printable`; it refused it.

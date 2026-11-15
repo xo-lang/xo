@@ -927,7 +927,7 @@ enum Whence { Start, Current, End }               // decision 0600: io.SeekStart
 struct File {}                                    // handle
 fn (f: File) read(max: Int) -> Bytes? ! FsErr     uses fs.read   // None at the end
 fn (f: File) read_line() -> Str? ! FsErr          uses fs.read   // without \n or \r\n
-fn (f: File) read_at(offset: Int, max: Int) -> Bytes? ! FsErr uses fs.read   // decision 0479: Go's ReadAt once; position untouched; None at the end
+fn (f: File) read_at(offset: Int, max: Int) -> Bytes? ! FsErr uses fs.read   // decision 0479: Go's ReadAt: max bytes, fewer only at the end; position untouched; None at the end
 fn (f: File) write(data: Bytes) -> () ! FsErr     uses fs.write
 fn (f: File) write_at(offset: Int, data: Bytes) -> () ! FsErr uses fs.write   // Go's WriteAt: every byte, position untouched, a gap reads as zeros; an open_append file is an error
 fn (f: File) seek(offset: Int, whence: Whence = Whence.Start) -> Int ! FsErr uses fs.read   // decision 0600: Go's Seek; Current counts from what was read; the new offset

@@ -775,6 +775,20 @@ test "File.read_at reads at an offset without moving the position, as Go's ReadA
   w.close()?
 }
 
+test "File.read_at fills max past 1 MiB, as Go's ReadAt fills its buffer" {
+  var b = BytesBuilder.new()
+  for i in 0..3 * 1048576 + 5 {
+    b.write_byte(UInt8(i % 251))
+  }
+  let data = b.freeze()
+  os.fs.write("ra_big.bin", data)?
+  let f = os.fs.open("ra_big.bin")?
+  expect((f.read_at(0, 4 * 1048576)? ?? b"") == data) == true
+  expect((f.read_at(9, 2 * 1048576)? ?? b"").len()) == 2 * 1048576
+  expect((f.read_at(data.len() - 3, 1048576 + 1)? ?? b"").len()) == 3
+  f.close()?
+}
+
 test "File.write_at, truncate and stat work at offsets without moving the position, as Go's WriteAt, Truncate and Stat" {
   let w = os.fs.create("wa.bin")?
   w.write(b"0123456789")?

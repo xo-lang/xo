@@ -4176,6 +4176,33 @@ fn file_read_at(f: File, offset: Int, max: Int) -> Bytes? ! FsErr {
   if max <= 0 {
     return Some(b"")
   }
+  // Go's ReadAt fills its buffer or stops at the end: the layer reads at
+  // most 1 MiB a call, so the rest is read piece by piece (the result grows
+  // with what the file holds, not with max)
+  let first = match file_read_at_piece(f, offset, max)? {
+    Some(b) => b
+    None => return None
+  }
+  if first.len() >= max {
+    return Some(first)
+  }
+  var out = BytesBuilder.with_capacity(first.len() * 2)
+  out.write(first)
+  while out.len() < max {
+    match file_read_at_piece(f, offset + out.len(), max - out.len())? {
+      Some(b) => {
+        if b.is_empty() {
+          break
+        }
+        out.write(b)
+      }
+      None => break
+    }
+  }
+  Some(out.freeze())
+}
+
+fn file_read_at_piece(f: File, offset: Int, max: Int) -> Bytes? ! FsErr {
   let l = fsops.file_read_at(f.h, offset, max, f.path)
   let st = sysio.status()
   if st != 0 {

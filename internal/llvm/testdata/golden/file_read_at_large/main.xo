@@ -1,0 +1,28 @@
+// File.read_at past 1 MiB on a real file (xo-lang task #40): Go's ReadAt
+// fills its buffer, so read_at returns max bytes, fewer only when the file
+// ends first; the platform layers read at most 1 MiB a call, and read_at
+// returned that much before. Runs on every backend.
+fn main(os: Os) {
+  let p = "file_read_at_large_tmp.bin"
+  os.fs.remove(p).ok()
+  let n = 3 * 1048576 + 5
+  var b = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    b.write_byte(UInt8(i % 251))
+  }
+  let data = b.freeze()
+  os.fs.write(p, data).or_fault("write")
+  let f = os.fs.open(p).or_fault("open")
+  let all = f.read_at(0, 4 * 1048576).or_fault("all") ?? b""
+  os.stdio.println("all ${all.len()} ${all == data}")
+  let mid = f.read_at(7, 2 * 1048576 + 3).or_fault("mid") ?? b""
+  os.stdio.println("mid ${mid.len()} ${mid == data[7..7 + 2 * 1048576 + 3]}")
+  let tail = f.read_at(n - 2, 10).or_fault("tail") ?? b""
+  os.stdio.println("tail ${tail.len()}")
+  let past = f.read_at(n, 10).or_fault("past")
+  os.stdio.println("past ${past == None}")
+  let head = f.read(4).or_fault("read") ?? b""
+  os.stdio.println("position kept ${head == data[..4]}")
+  f.close().or_fault("close")
+  os.fs.remove(p).or_fault("remove")
+}

@@ -987,9 +987,6 @@ fn memfile_read_at_in(var st: MemState, f: File, offset: Int, max: Int) -> Bytes
   if max < n {
     n = max
   }
-  if n > 1048576 {
-    n = 1048576
-  }
   Some(mf.data[offset..offset + n])
 }
 

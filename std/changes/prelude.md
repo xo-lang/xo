@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-11-15: fix: File.read_at fills max past 1 MiB, as Go's ReadAt
+
+- Kind: fix
+- Commit: this push
+- Found by: xw-1 (task #40): a read_at of more than 1 MiB came back short in the middle of a file
+- Go reference: os.File.ReadAt, which loops until its buffer is full or the file ends (go1.26)
+- Affected: every release with File.read_at (decision 0479) on every backend; the native, wasm, MemFs and Go backend paths each stopped at 1 MiB
+- Test: internal/llvm/testdata/golden/file_read_at_large (arm64, llvm, Go parity); the prelude corpus "File.read_at fills max past 1 MiB" (go, arm64, llvm)
+- Shipped in: not yet released
+- Timing: none (the first 1 MiB piece is returned without a copy, as before)
+
+`f.read_at(offset, max)` returned at most 1 MiB, a short read in the
+middle of a file, where Go's ReadAt fills its buffer and returns less
+only at the end. It now reads piece by piece (1 MiB a call to the
+platform) until max bytes or the end, so memory grows with what the file
+holds, not with max. Callers that looped on a short read (archive's
+zip_open) are unchanged.
+
 ## 2026-11-15: feature: Duration.hours, minutes and micros
 
 - Kind: feature

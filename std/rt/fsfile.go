@@ -651,8 +651,8 @@ func userDir(tk *Task, e Env, cache bool) Result[string, EnvErr] {
 	return Ok[string, EnvErr](strings.TrimSuffix(filepath.ToSlash(h.V), "/") + unix)
 }
 
-func (e realEnv) M_config_dir(tk *Task) Result[string, EnvErr]  { return userDir(tk, e, false) }
-func (e realEnv) M_cache_dir(tk *Task) Result[string, EnvErr]   { return userDir(tk, e, true) }
+func (e realEnv) M_config_dir(tk *Task) Result[string, EnvErr] { return userDir(tk, e, false) }
+func (e realEnv) M_cache_dir(tk *Task) Result[string, EnvErr]  { return userDir(tk, e, true) }
 
 // M_hostname is `env.hostname()` (decision 0410): os.Hostname, "" on error.
 func (realEnv) M_hostname(tk *Task) string {
@@ -673,6 +673,7 @@ func (f Testing_FakeEnv) M_hostname(tk *Task) string {
 	}
 	return "test"
 }
+
 // M_local_app_data is `env.local_app_data()` (decision 0584): Windows'
 // FOLDERID_LocalAppData (dpapi_windows.go), Missing elsewhere.
 func (realEnv) M_local_app_data(tk *Task) Result[string, EnvErr] {
@@ -725,18 +726,27 @@ func (f File) M_read_at(tk *Task, offset, max int64) Result[Option[Bytes], FsErr
 		if offset >= int64(len(d)) {
 			return Ok[Option[Bytes], FsErr](Option[Bytes]{})
 		}
-		n := min(int64(len(d))-offset, max, 1<<20)
+		n := min(int64(len(d))-offset, max)
 		return Ok[Option[Bytes], FsErr](Some(Bytes(d[offset : offset+n])))
 	}
-	buf := make([]byte, min(max, 1<<20))
-	n, err := h.osf.ReadAt(buf, offset)
-	if n > 0 {
-		return Ok[Option[Bytes], FsErr](Some(Bytes(buf[:n])))
+	// Go's ReadAt fills buf or stops at the end; buf grows 1 MiB at a time,
+	// so a large max costs only what the file holds
+	var out []byte
+	for int64(len(out)) < max {
+		buf := make([]byte, min(max-int64(len(out)), 1<<20))
+		n, err := h.osf.ReadAt(buf, offset+int64(len(out)))
+		out = append(out, buf[:n]...)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return Err[Option[Bytes]](mapFsErr(err, h.path))
+		}
 	}
-	if err == nil || errors.Is(err, io.EOF) {
+	if len(out) == 0 {
 		return Ok[Option[Bytes], FsErr](Option[Bytes]{})
 	}
-	return Err[Option[Bytes]](mapFsErr(err, h.path))
+	return Ok[Option[Bytes], FsErr](Some(Bytes(out)))
 }
 
 // writableState is the state check of the write_at and truncate: canceled,
