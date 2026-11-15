@@ -1,0 +1,1123 @@
+// riscv64 instruction encoding (decision 0645, stage 1): the mnemonics and
+// operand forms the riscv64 emitter writes, encoded as LLVM's assembler
+// encodes them with relaxation off (`llvm-mc -triple=riscv64
+// -mattr=+m,+a,+f,+d,+zba,+zbb -riscv-no-aliases`): RV64I, M, A, F, D,
+// Zicsr, Zifencei, and Zba and Zbb (used only at the rva22u64 level), in
+// their 4 byte forms (the C extension is stage 4). Pseudo instructions
+// expand as LLVM's do for the forms here (nop, mv, not, neg, seqz, j, ret,
+// call, tail, li of 32 bits, the branch swaps).
+
+/// Fixup kinds of riscv64 text words (asm.xo's FX_* space, above
+/// arm64's).
+const FX_RV_B = 40
+const FX_RV_J = 41
+/// the auipc of an auipc and jalr pair (R_RISCV_CALL_PLT)
+const FX_RV_CALL = 42
+const FX_RV_PCREL_HI = 43
+/// %pcrel_lo(label): the label is the auipc's, as the psABI pairs them
+const FX_RV_PCREL_LO_I = 44
+const FX_RV_PCREL_LO_S = 45
+const FX_RV_GOT_HI = 46
+const FX_RV_TPREL_HI = 47
+const FX_RV_TPREL_LO_I = 48
+const FX_RV_TPREL_LO_S = 49
+/// `add rd, rs, tp, %tprel_add(sym)`: no bits, a relocation only
+const FX_RV_TPREL_ADD = 50
+
+/// ELF relocation types (the RISC-V psABI).
+const R_RISCV_32 = 1
+const R_RISCV_64 = 2
+const R_RISCV_BRANCH = 16
+const R_RISCV_JAL = 17
+const R_RISCV_CALL_PLT = 19
+const R_RISCV_GOT_HI20 = 20
+const R_RISCV_PCREL_HI20 = 23
+const R_RISCV_PCREL_LO12_I = 24
+const R_RISCV_PCREL_LO12_S = 25
+const R_RISCV_TPREL_HI20 = 29
+const R_RISCV_TPREL_LO12_I = 30
+const R_RISCV_TPREL_LO12_S = 31
+const R_RISCV_TPREL_ADD = 32
+const R_RISCV_32_PCREL = 57
+
+/// Major opcodes.
+const RV_LOAD = 0x03
+const RV_LOAD_FP = 0x07
+const RV_MISC_MEM = 0x0f
+const RV_OP_IMM = 0x13
+const RV_AUIPC = 0x17
+const RV_OP_IMM_32 = 0x1b
+const RV_STORE = 0x23
+const RV_STORE_FP = 0x27
+const RV_AMO = 0x2f
+const RV_OP = 0x33
+const RV_LUI = 0x37
+const RV_OP_32 = 0x3b
+const RV_OP_FP = 0x53
+const RV_BRANCH = 0x63
+const RV_JALR = 0x67
+const RV_JAL = 0x6f
+const RV_SYSTEM = 0x73
+
+/// A riscv64 instruction's encoding: one or two words (call, tail, li of
+/// 32 bits), the fixup of its first word (kind -1: none) and its label.
+/// ok false: the form is not one this encoder knows.
+pub struct RvEnc {
+  words: List[Int] = []
+  fx: Int = -1
+  name: Bytes = b""
+  ok: Bool = true
+}
+
+fn rv_bad() -> RvEnc { RvEnc{ok: false} }
+
+fn rv_one(w: Int) -> RvEnc { RvEnc{words: [w]} }
+
+fn rv_fix(w: Int, fx: Int, name: Bytes) -> RvEnc { RvEnc{words: [w], fx: fx, name: name} }
+
+/// The number of integer register b (x0 to x31 or an ABI name), -1 when b
+/// is not one.
+pub fn rv_xreg(b: Bytes) -> Int {
+  let s = bstr(b)
+  match s {
+    "zero" => 0
+    "ra" => 1
+    "sp" => 2
+    "gp" => 3
+    "tp" => 4
+    "t0" => 5
+    "t1" => 6
+    "t2" => 7
+    "s0" | "fp" => 8
+    "s1" => 9
+    "a0" => 10
+    "a1" => 11
+    "a2" => 12
+    "a3" => 13
+    "a4" => 14
+    "a5" => 15
+    "a6" => 16
+    "a7" => 17
+    "s2" => 18
+    "s3" => 19
+    "s4" => 20
+    "s5" => 21
+    "s6" => 22
+    "s7" => 23
+    "s8" => 24
+    "s9" => 25
+    "s10" => 26
+    "s11" => 27
+    "t3" => 28
+    "t4" => 29
+    "t5" => 30
+    "t6" => 31
+    _ => rv_numbered(b, 'x')
+  }
+}
+
+/// The number of float register b (f0 to f31 or an ABI name), -1 when b
+/// is not one.
+pub fn rv_freg(b: Bytes) -> Int {
+  if b.len() >= 3 && b[0] == 'f' {
+    let n = parse_int(b[2..]) ?? -1
+    if b[1] == 't' {
+      // ft0 to ft7 are f0 to f7, ft8 to ft11 are f28 to f31
+      if n >= 0 && n <= 7 {
+        return n
+      }
+      if n >= 8 && n <= 11 {
+        return n + 20
+      }
+      return -1
+    }
+    if b[1] == 's' {
+      // fs0 and fs1 are f8 and f9, fs2 to fs11 are f18 to f27
+      if n >= 0 && n <= 1 {
+        return n + 8
+      }
+      if n >= 2 && n <= 11 {
+        return n + 16
+      }
+      return -1
+    }
+    if b[1] == 'a' {
+      if n >= 0 && n <= 7 {
+        return n + 10
+      }
+      return -1
+    }
+  }
+  rv_numbered(b, 'f')
+}
+
+fn rv_numbered(b: Bytes, c: UInt8) -> Int {
+  if b.len() < 2 || b.len() > 3 || b[0] != c {
+    return -1
+  }
+  for i in 1..b.len() {
+    if b[i] < '0' || b[i] > '9' {
+      return -1
+    }
+  }
+  if b.len() == 3 && b[1] == '0' {
+    return -1
+  }
+  let n = parse_int(b[1..]) ?? -1
+  if n < 0 || n > 31 { -1 } else { n }
+}
+
+/// A relocation operator operand `%op(sym)`: (op, sym), or ("", b"") when
+/// b is not one.
+fn rv_reloc_op(b: Bytes) -> (Str, Bytes) {
+  if b.len() < 4 || b[0] != '%' || b[b.len() - 1] != ')' {
+    return ("", b"")
+  }
+  var i = 1
+  while i < b.len() && b[i] != '(' {
+    i += 1
+  }
+  if i >= b.len() - 1 {
+    return ("", b"")
+  }
+  (bstr(b[1..i]), b[i + 1..b.len() - 1])
+}
+
+/// A memory operand `off(reg)`, `(reg)` or `%op(sym)(reg)`: the base
+/// register, the offset, and the relocation operator and symbol of a
+/// symbolic offset; base -1 when b is not one.
+fn rv_mem(b: Bytes) -> (Int, Int, Str, Bytes) {
+  if b.len() < 3 || b[b.len() - 1] != ')' {
+    return (-1, 0, "", b"")
+  }
+  // the base's parenthesis: the last `(`
+  var i = b.len() - 2
+  while i > 0 && b[i] != '(' {
+    i -= 1
+  }
+  if b[i] != '(' {
+    return (-1, 0, "", b"")
+  }
+  let base = rv_xreg(b[i + 1..b.len() - 1])
+  if base < 0 {
+    return (-1, 0, "", b"")
+  }
+  let off = b[0..i]
+  if off.is_empty() {
+    return (base, 0, "", b"")
+  }
+  let (op, sym) = rv_reloc_op(off)
+  if !op.is_empty() {
+    return (base, 0, op, sym)
+  }
+  match parse_int(off) {
+    Some(v) => (base, v, "", b"")
+    None => (-1, 0, "", b"")
+  }
+}
+
+fn rv_r(f7: Int, rs2: Int, rs1: Int, f3: Int, rd: Int, op: Int) -> Int {
+  (f7 << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | op
+}
+
+fn rv_i(imm: Int, rs1: Int, f3: Int, rd: Int, op: Int) -> Int {
+  ((imm & 0xfff) << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | op
+}
+
+fn rv_s(imm: Int, rs2: Int, rs1: Int, f3: Int, op: Int) -> Int {
+  (((imm >> 5) & 0x7f) << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | ((imm & 0x1f) << 7) | op
+}
+
+/// The B-type immediate bits of a branch displacement d (even, 13 bits).
+pub fn rv_b_imm(d: Int) -> Int {
+  (((d >> 12) & 1) << 31) | (((d >> 5) & 0x3f) << 25) | (((d >> 1) & 0xf) << 8) | (((d >> 11) & 1) << 7)
+}
+
+/// The J-type immediate bits of a jal displacement d (even, 21 bits).
+pub fn rv_j_imm(d: Int) -> Int {
+  (((d >> 20) & 1) << 31) | (((d >> 1) & 0x3ff) << 21) | (((d >> 11) & 1) << 20) | (((d >> 12) & 0xff) << 12)
+}
+
+/// The I-type immediate bits (bits 31 to 20) of a 12 bit value.
+pub fn rv_i_imm(v: Int) -> Int { (v & 0xfff) << 20 }
+
+/// The S-type immediate bits of a 12 bit value.
+pub fn rv_s_imm(v: Int) -> Int { (((v >> 5) & 0x7f) << 25) | ((v & 0x1f) << 7) }
+
+/// The hi20 and lo12 parts of a pc relative or absolute value v, so that
+/// (hi << 12) + lo == v with lo sign extended (the psABI's +0x800).
+pub fn rv_hi_lo(v: Int) -> (Int, Int) {
+  let hi = (v + 0x800) >> 12
+  (hi & 0xfffff, v - (hi << 12))
+}
+
+fn fits12(v: Int) -> Bool { v >= -2048 && v <= 2047 }
+
+/// li rd, v of a 32 bit v: RISCVMatInt's generateInstSeqImpl for it (lui
+/// when the high 20 bits are not zero, then addi, or addiw when lui's
+/// value plus the low 12 bits leaves 32 bits).
+fn rv_li32(rd: Int, v: Int) -> List[Int] {
+  let (hi, lo) = rv_hi_lo(v)
+  var ws: List[Int] = []
+  if hi != 0 {
+    ws.push((hi << 12) | (rd << 7) | RV_LUI)
+  }
+  if lo != 0 || hi == 0 {
+    var op = RV_OP_IMM
+    if hi != 0 {
+      // lui's result, sign extended from 32 bits
+      var lui = (hi << 12) & 0xffffffff
+      if lui >= 0x80000000 {
+        lui -= 0x100000000
+      }
+      if lui + lo < -2147483648 || lui + lo > 2147483647 {
+        op = RV_OP_IMM_32
+      }
+    }
+    ws.push(rv_i(lo, if hi != 0 { rd } else { 0 }, 0, rd, op))
+  }
+  ws
+}
+
+/// A rounding mode name's field value, -1 when b is not one.
+fn rv_rm(b: Bytes) -> Int {
+  match bstr(b) {
+    "rne" => 0
+    "rtz" => 1
+    "rdn" => 2
+    "rup" => 3
+    "rmm" => 4
+    "dyn" => 7
+    _ => -1
+  }
+}
+
+/// A CSR's number: a name the emitter uses or a number.
+fn rv_csr(b: Bytes) -> Int {
+  match bstr(b) {
+    "fflags" => 1
+    "frm" => 2
+    "fcsr" => 3
+    "cycle" => 0xc00
+    "time" => 0xc01
+    "instret" => 0xc02
+    _ => {
+      let v = parse_int(b) ?? -1
+      if v < 0 || v > 0xfff { -1 } else { v }
+    }
+  }
+}
+
+/// A fence's predecessor or successor set (`iorw` letters), -1 when b is
+/// not one.
+fn rv_fence_set(b: Bytes) -> Int {
+  var v = 0
+  for c in b {
+    if c == 'i' {
+      v = v | 8
+    } else if c == 'o' {
+      v = v | 4
+    } else if c == 'r' {
+      v = v | 2
+    } else if c == 'w' {
+      v = v | 1
+    } else {
+      return -1
+    }
+  }
+  if b.is_empty() { -1 } else { v }
+}
+
+/// An immediate operand: a number, -1 << 62 sentinel when b is not one.
+const RV_NOIMM = -4611686018427387904
+
+fn rv_imm(b: Bytes) -> Int { parse_int(b) ?? RV_NOIMM }
+
+/// The encoding of instruction m with operands ops.
+pub fn rv_encode(m: Str, ops: List[Bytes]) -> RvEnc {
+  let n = ops.len()
+  // R-type integer instructions: (funct7, funct3, opcode)
+  let r = rv_r_op(m)
+  if r.0 >= 0 {
+    if n != 3 {
+      return rv_bad()
+    }
+    let rd = rv_xreg(ops[0])
+    let rs1 = rv_xreg(ops[1])
+    let rs2 = rv_xreg(ops[2])
+    if rd < 0 || rs1 < 0 || rs2 < 0 {
+      return rv_bad()
+    }
+    return rv_one(rv_r(r.0, rs2, rs1, r.1, rd, r.2))
+  }
+  // I-type arithmetic: (funct3, opcode)
+  let ia = rv_i_arith(m)
+  if ia.0 >= 0 {
+    if n != 3 {
+      return rv_bad()
+    }
+    let rd = rv_xreg(ops[0])
+    let rs1 = rv_xreg(ops[1])
+    if rd < 0 || rs1 < 0 {
+      return rv_bad()
+    }
+    let (op, sym) = rv_reloc_op(ops[2])
+    if op == "pcrel_lo" && m == "addi" {
+      return rv_fix(rv_i(0, rs1, ia.0, rd, ia.1), FX_RV_PCREL_LO_I, sym)
+    }
+    if op == "tprel_lo" && m == "addi" {
+      return rv_fix(rv_i(0, rs1, ia.0, rd, ia.1), FX_RV_TPREL_LO_I, sym)
+    }
+    let v = rv_imm(ops[2])
+    if v == RV_NOIMM || !fits12(v) {
+      return rv_bad()
+    }
+    return rv_one(rv_i(v, rs1, ia.0, rd, ia.1))
+  }
+  // shifts by an immediate: (top bits of the immediate, funct3, opcode,
+  // the shift amount's width)
+  let sh = rv_shift_imm(m)
+  if sh.0 >= 0 {
+    if n != 3 {
+      return rv_bad()
+    }
+    let rd = rv_xreg(ops[0])
+    let rs1 = rv_xreg(ops[1])
+    let v = rv_imm(ops[2])
+    if rd < 0 || rs1 < 0 || v < 0 || v >= sh.3 {
+      return rv_bad()
+    }
+    return rv_one(rv_i(sh.0 | v, rs1, sh.1, rd, sh.2))
+  }
+  // unary Zbb forms with a fixed immediate field: (imm12, funct3, opcode)
+  let un = rv_unary(m)
+  if un.0 >= 0 {
+    if n != 2 {
+      return rv_bad()
+    }
+    let rd = rv_xreg(ops[0])
+    let rs1 = rv_xreg(ops[1])
+    if rd < 0 || rs1 < 0 {
+      return rv_bad()
+    }
+    if m == "zext.h" {
+      return rv_one(rv_r(0x04, 0, rs1, 4, rd, RV_OP_32))
+    }
+    return rv_one(rv_i(un.0, rs1, un.1, rd, un.2))
+  }
+  // loads and stores: funct3
+  let ld = rv_load(m)
+  if ld >= 0 {
+    if n != 2 {
+      return rv_bad()
+    }
+    let fp = m == "flw" || m == "fld"
+    let rd = if fp { rv_freg(ops[0]) } else { rv_xreg(ops[0]) }
+    let (base, off, op, sym) = rv_mem(ops[1])
+    if rd < 0 || base < 0 {
+      return rv_bad()
+    }
+    let opc = if fp { RV_LOAD_FP } else { RV_LOAD }
+    if op == "pcrel_lo" {
+      return rv_fix(rv_i(0, base, ld, rd, opc), FX_RV_PCREL_LO_I, sym)
+    }
+    if op == "tprel_lo" {
+      return rv_fix(rv_i(0, base, ld, rd, opc), FX_RV_TPREL_LO_I, sym)
+    }
+    if !op.is_empty() || !fits12(off) {
+      return rv_bad()
+    }
+    return rv_one(rv_i(off, base, ld, rd, opc))
+  }
+  let st = rv_store(m)
+  if st >= 0 {
+    if n != 2 {
+      return rv_bad()
+    }
+    let fp = m == "fsw" || m == "fsd"
+    let rs2 = if fp { rv_freg(ops[0]) } else { rv_xreg(ops[0]) }
+    let (base, off, op, sym) = rv_mem(ops[1])
+    if rs2 < 0 || base < 0 {
+      return rv_bad()
+    }
+    let opc = if fp { RV_STORE_FP } else { RV_STORE }
+    if op == "pcrel_lo" {
+      return rv_fix(rv_s(0, rs2, base, st, opc), FX_RV_PCREL_LO_S, sym)
+    }
+    if op == "tprel_lo" {
+      return rv_fix(rv_s(0, rs2, base, st, opc), FX_RV_TPREL_LO_S, sym)
+    }
+    if !op.is_empty() || !fits12(off) {
+      return rv_bad()
+    }
+    return rv_one(rv_s(off, rs2, base, st, opc))
+  }
+  // conditional branches: funct3, and whether the operands swap (bgt,
+  // ble, bgtu, bleu)
+  let br = rv_branch(m)
+  if br.0 >= 0 {
+    var rs1 = -1
+    var rs2 = -1
+    var target = b""
+    if n == 3 {
+      rs1 = rv_xreg(ops[0])
+      rs2 = rv_xreg(ops[1])
+      target = ops[2]
+    } else if n == 2 && br.2 >= 0 {
+      // a comparison with zero: beqz rs, L (zero second) or blez rs, L
+      // (zero first)
+      let x = rv_xreg(ops[0])
+      if br.2 == 0 {
+        rs1 = x
+        rs2 = 0
+      } else {
+        rs1 = 0
+        rs2 = x
+      }
+      target = ops[1]
+    }
+    if rs1 < 0 || rs2 < 0 || target.is_empty() {
+      return rv_bad()
+    }
+    if br.1 {
+      let t = rs1
+      rs1 = rs2
+      rs2 = t
+    }
+    return rv_fix(rv_r(0, rs2, rs1, br.0, 0, RV_BRANCH), FX_RV_B, target)
+  }
+  match m {
+    "lui" | "auipc" => {
+      if n != 2 {
+        return rv_bad()
+      }
+      let rd = rv_xreg(ops[0])
+      if rd < 0 {
+        return rv_bad()
+      }
+      let opc = if m == "lui" { RV_LUI } else { RV_AUIPC }
+      let (op, sym) = rv_reloc_op(ops[1])
+      if m == "auipc" && op == "pcrel_hi" {
+        return rv_fix((rd << 7) | opc, FX_RV_PCREL_HI, sym)
+      }
+      if m == "auipc" && op == "got_pcrel_hi" {
+        return rv_fix((rd << 7) | opc, FX_RV_GOT_HI, sym)
+      }
+      if m == "lui" && op == "tprel_hi" {
+        return rv_fix((rd << 7) | opc, FX_RV_TPREL_HI, sym)
+      }
+      let v = rv_imm(ops[1])
+      if !op.is_empty() || v < 0 || v > 0xfffff {
+        return rv_bad()
+      }
+      return rv_one((v << 12) | (rd << 7) | opc)
+    }
+    "jal" => {
+      // jal L (rd ra) or jal rd, L
+      let rd = if n == 1 { 1 } else if n == 2 { rv_xreg(ops[0]) } else { -1 }
+      if rd < 0 {
+        return rv_bad()
+      }
+      return rv_fix((rd << 7) | RV_JAL, FX_RV_J, ops[n - 1])
+    }
+    "j" => {
+      if n != 1 {
+        return rv_bad()
+      }
+      return rv_fix(RV_JAL, FX_RV_J, ops[0])
+    }
+    "jalr" => {
+      // jalr rd, off(rs1); jalr rd, rs1, off; jalr rs1 (rd ra)
+      if n == 1 {
+        let rs1 = rv_xreg(ops[0])
+        if rs1 < 0 {
+          return rv_bad()
+        }
+        return rv_one(rv_i(0, rs1, 0, 1, RV_JALR))
+      }
+      let rd = rv_xreg(ops[0])
+      if rd < 0 {
+        return rv_bad()
+      }
+      if n == 2 {
+        let (base, off, op, _) = rv_mem(ops[1])
+        if base < 0 || !op.is_empty() || !fits12(off) {
+          return rv_bad()
+        }
+        return rv_one(rv_i(off, base, 0, rd, RV_JALR))
+      }
+      if n == 3 {
+        let rs1 = rv_xreg(ops[1])
+        let off = rv_imm(ops[2])
+        if rs1 < 0 || off == RV_NOIMM || !fits12(off) {
+          return rv_bad()
+        }
+        return rv_one(rv_i(off, rs1, 0, rd, RV_JALR))
+      }
+      return rv_bad()
+    }
+    "jr" => {
+      let rs1 = if n == 1 { rv_xreg(ops[0]) } else { -1 }
+      if rs1 < 0 {
+        return rv_bad()
+      }
+      return rv_one(rv_i(0, rs1, 0, 0, RV_JALR))
+    }
+    "ret" => return if n == 0 { rv_one(rv_i(0, 1, 0, 0, RV_JALR)) } else { rv_bad() }
+    "call" | "tail" => {
+      // auipc ra, 0; jalr ra, 0(ra) (tail: t1 and x0), R_RISCV_CALL_PLT
+      // on the auipc
+      if n != 1 {
+        return rv_bad()
+      }
+      let link = if m == "call" { 1 } else { 6 }
+      let rd = if m == "call" { 1 } else { 0 }
+      return RvEnc{words: [(link << 7) | RV_AUIPC, rv_i(0, link, 0, rd, RV_JALR)], fx: FX_RV_CALL, name: ops[0]}
+    }
+    "nop" => return if n == 0 { rv_one(RV_OP_IMM) } else { rv_bad() }
+    "mv" | "not" | "neg" | "negw" | "sext.w" | "seqz" | "snez" | "sltz" | "sgtz" => {
+      if n != 2 {
+        return rv_bad()
+      }
+      let rd = rv_xreg(ops[0])
+      let rs = rv_xreg(ops[1])
+      if rd < 0 || rs < 0 {
+        return rv_bad()
+      }
+      return rv_one(match m {
+        "mv" => rv_i(0, rs, 0, rd, RV_OP_IMM)
+        "not" => rv_i(-1, rs, 4, rd, RV_OP_IMM)
+        "neg" => rv_r(0x20, rs, 0, 0, rd, RV_OP)
+        "negw" => rv_r(0x20, rs, 0, 0, rd, RV_OP_32)
+        "sext.w" => rv_i(0, rs, 0, rd, RV_OP_IMM_32)
+        "seqz" => rv_i(1, rs, 3, rd, RV_OP_IMM)
+        "snez" => rv_r(0, rs, 0, 3, rd, RV_OP)
+        "sltz" => rv_r(0, 0, rs, 2, rd, RV_OP)
+        _ => rv_r(0, rs, 0, 2, rd, RV_OP)
+      })
+    }
+    "li" => {
+      // up to 32 bits, as LLVM's RISCVMatInt: addi, or lui and addi
+      // (addiw only when the sum leaves 32 bits), or, for a constant with
+      // trailing zeros whose low 12 bits are not zero, addi and slli when
+      // that is shorter or as long with the shifted value in 6 bits;
+      // wider constants the emitter builds itself
+      if n != 2 {
+        return rv_bad()
+      }
+      let rd = rv_xreg(ops[0])
+      let v = rv_imm(ops[1])
+      if rd < 0 || v == RV_NOIMM || v < -2147483648 || v > 2147483647 {
+        return rv_bad()
+      }
+      var ws = rv_li32(rd, v)
+      if (v & 0xfff) != 0 && (v & 1) == 0 && ws.len() >= 2 {
+        var tz = 0
+        while ((v >> tz) & 1) == 0 {
+          tz += 1
+        }
+        let sv = v >> tz
+        let short = rv_li32(rd, sv)
+        if short.len() + 1 < ws.len() || (sv >= -32 && sv <= 31 && short.len() + 1 == ws.len()) {
+          ws = short + [rv_i(tz, rd, 1, rd, RV_OP_IMM)]
+        }
+      }
+      return RvEnc{words: ws}
+    }
+    "add" => {
+      // add rd, rs1, tp, %tprel_add(sym)
+      if n == 4 {
+        let rd = rv_xreg(ops[0])
+        let rs1 = rv_xreg(ops[1])
+        let rs2 = rv_xreg(ops[2])
+        let (op, sym) = rv_reloc_op(ops[3])
+        if rd < 0 || rs1 < 0 || rs2 < 0 || op != "tprel_add" {
+          return rv_bad()
+        }
+        return rv_fix(rv_r(0, rs2, rs1, 0, rd, RV_OP), FX_RV_TPREL_ADD, sym)
+      }
+      return rv_bad()
+    }
+    "ecall" => return if n == 0 { rv_one(RV_SYSTEM) } else { rv_bad() }
+    "ebreak" => return if n == 0 { rv_one(0x00100073) } else { rv_bad() }
+    "fence.i" => return if n == 0 { rv_one(0x0000100f) } else { rv_bad() }
+    "fence.tso" => return if n == 0 { rv_one(0x8330000f) } else { rv_bad() }
+    "fence" => {
+      if n == 0 {
+        return rv_one(0x0ff0000f)
+      }
+      if n != 2 {
+        return rv_bad()
+      }
+      let p = rv_fence_set(ops[0])
+      let s = rv_fence_set(ops[1])
+      if p < 0 || s < 0 {
+        return rv_bad()
+      }
+      return rv_one((p << 24) | (s << 20) | RV_MISC_MEM)
+    }
+    "csrrw" | "csrrs" | "csrrc" | "csrrwi" | "csrrsi" | "csrrci" => {
+      if n != 3 {
+        return rv_bad()
+      }
+      let rd = rv_xreg(ops[0])
+      let csr = rv_csr(ops[1])
+      let f3 = match m {
+        "csrrw" => 1
+        "csrrs" => 2
+        "csrrc" => 3
+        "csrrwi" => 5
+        "csrrsi" => 6
+        _ => 7
+      }
+      let src = if f3 >= 5 { rv_imm(ops[2]) } else { rv_xreg(ops[2]) }
+      if rd < 0 || csr < 0 || src < 0 || src > 31 {
+        return rv_bad()
+      }
+      return rv_one(rv_i(csr, src, f3, rd, RV_SYSTEM))
+    }
+    "rdtime" | "rdcycle" | "rdinstret" | "frcsr" | "frrm" | "frflags" => {
+      if n != 1 {
+        return rv_bad()
+      }
+      let rd = rv_xreg(ops[0])
+      if rd < 0 {
+        return rv_bad()
+      }
+      let csr = match m {
+        "rdtime" => 0xc01
+        "rdcycle" => 0xc00
+        "rdinstret" => 0xc02
+        "frcsr" => 3
+        "frrm" => 2
+        _ => 1
+      }
+      return rv_one(rv_i(csr, 0, 2, rd, RV_SYSTEM))
+    }
+    _ => {}
+  }
+  if m.starts_with("lr.") || m.starts_with("sc.") || m.starts_with("amo") {
+    return rv_amo(m, ops)
+  }
+  if m.starts_with("f") {
+    return rv_float(m, ops)
+  }
+  rv_bad()
+}
+
+/// R-type integer instructions: (funct7, funct3, opcode), funct7 -1 when
+/// m is not one.
+fn rv_r_op(m: Str) -> (Int, Int, Int) {
+  match m {
+    "add" => (0, 0, RV_OP)
+    "sub" => (0x20, 0, RV_OP)
+    "sll" => (0, 1, RV_OP)
+    "slt" => (0, 2, RV_OP)
+    "sltu" => (0, 3, RV_OP)
+    "xor" => (0, 4, RV_OP)
+    "srl" => (0, 5, RV_OP)
+    "sra" => (0x20, 5, RV_OP)
+    "or" => (0, 6, RV_OP)
+    "and" => (0, 7, RV_OP)
+    "mul" => (1, 0, RV_OP)
+    "mulh" => (1, 1, RV_OP)
+    "mulhsu" => (1, 2, RV_OP)
+    "mulhu" => (1, 3, RV_OP)
+    "div" => (1, 4, RV_OP)
+    "divu" => (1, 5, RV_OP)
+    "rem" => (1, 6, RV_OP)
+    "remu" => (1, 7, RV_OP)
+    "addw" => (0, 0, RV_OP_32)
+    "subw" => (0x20, 0, RV_OP_32)
+    "sllw" => (0, 1, RV_OP_32)
+    "srlw" => (0, 5, RV_OP_32)
+    "sraw" => (0x20, 5, RV_OP_32)
+    "mulw" => (1, 0, RV_OP_32)
+    "divw" => (1, 4, RV_OP_32)
+    "divuw" => (1, 5, RV_OP_32)
+    "remw" => (1, 6, RV_OP_32)
+    "remuw" => (1, 7, RV_OP_32)
+    // Zba
+    "sh1add" => (0x10, 2, RV_OP)
+    "sh2add" => (0x10, 4, RV_OP)
+    "sh3add" => (0x10, 6, RV_OP)
+    "add.uw" => (0x04, 0, RV_OP_32)
+    "sh1add.uw" => (0x10, 2, RV_OP_32)
+    "sh2add.uw" => (0x10, 4, RV_OP_32)
+    "sh3add.uw" => (0x10, 6, RV_OP_32)
+    // Zbb
+    "andn" => (0x20, 7, RV_OP)
+    "orn" => (0x20, 6, RV_OP)
+    "xnor" => (0x20, 4, RV_OP)
+    "min" => (0x05, 4, RV_OP)
+    "minu" => (0x05, 5, RV_OP)
+    "max" => (0x05, 6, RV_OP)
+    "maxu" => (0x05, 7, RV_OP)
+    "rol" => (0x30, 1, RV_OP)
+    "ror" => (0x30, 5, RV_OP)
+    "rolw" => (0x30, 1, RV_OP_32)
+    "rorw" => (0x30, 5, RV_OP_32)
+    _ => (-1, 0, 0)
+  }
+}
+
+/// I-type arithmetic: (funct3, opcode), funct3 -1 when m is not one.
+fn rv_i_arith(m: Str) -> (Int, Int) {
+  match m {
+    "addi" => (0, RV_OP_IMM)
+    "slti" => (2, RV_OP_IMM)
+    "sltiu" => (3, RV_OP_IMM)
+    "xori" => (4, RV_OP_IMM)
+    "ori" => (6, RV_OP_IMM)
+    "andi" => (7, RV_OP_IMM)
+    "addiw" => (0, RV_OP_IMM_32)
+    _ => (-1, 0)
+  }
+}
+
+/// Shifts by an immediate: (the immediate's top bits, funct3, opcode, the
+/// shift amount's bound), the first -1 when m is not one.
+fn rv_shift_imm(m: Str) -> (Int, Int, Int, Int) {
+  match m {
+    "slli" => (0, 1, RV_OP_IMM, 64)
+    "srli" => (0, 5, RV_OP_IMM, 64)
+    "srai" => (0x400, 5, RV_OP_IMM, 64)
+    "slliw" => (0, 1, RV_OP_IMM_32, 32)
+    "srliw" => (0, 5, RV_OP_IMM_32, 32)
+    "sraiw" => (0x400, 5, RV_OP_IMM_32, 32)
+    // Zba, Zbb
+    "slli.uw" => (0x080, 1, RV_OP_IMM_32, 64)
+    "rori" => (0x600, 5, RV_OP_IMM, 64)
+    "roriw" => (0x600, 5, RV_OP_IMM_32, 32)
+    _ => (-1, 0, 0, 0)
+  }
+}
+
+/// Zbb's unary forms: (imm12, funct3, opcode), the first -1 when m is not
+/// one (zext.h is an R-type of its own).
+fn rv_unary(m: Str) -> (Int, Int, Int) {
+  match m {
+    "clz" => (0x600, 1, RV_OP_IMM)
+    "ctz" => (0x601, 1, RV_OP_IMM)
+    "cpop" => (0x602, 1, RV_OP_IMM)
+    "sext.b" => (0x604, 1, RV_OP_IMM)
+    "sext.h" => (0x605, 1, RV_OP_IMM)
+    "clzw" => (0x600, 1, RV_OP_IMM_32)
+    "ctzw" => (0x601, 1, RV_OP_IMM_32)
+    "cpopw" => (0x602, 1, RV_OP_IMM_32)
+    "rev8" => (0x6b8, 5, RV_OP_IMM)
+    "orc.b" => (0x287, 5, RV_OP_IMM)
+    "zext.h" => (0, 4, RV_OP_32)
+    _ => (-1, 0, 0)
+  }
+}
+
+fn rv_load(m: Str) -> Int {
+  match m {
+    "lb" => 0
+    "lh" => 1
+    "lw" | "flw" => 2
+    "ld" | "fld" => 3
+    "lbu" => 4
+    "lhu" => 5
+    "lwu" => 6
+    _ => -1
+  }
+}
+
+fn rv_store(m: Str) -> Int {
+  match m {
+    "sb" => 0
+    "sh" => 1
+    "sw" | "fsw" => 2
+    "sd" | "fsd" => 3
+    _ => -1
+  }
+}
+
+/// Conditional branches: (funct3, swap the operands, zero form: -1 none,
+/// 0 the second operand is zero, 1 the first is), funct3 -1 when m is not
+/// one.
+fn rv_branch(m: Str) -> (Int, Bool, Int) {
+  match m {
+    "beq" => (0, false, -1)
+    "bne" => (1, false, -1)
+    "blt" => (4, false, -1)
+    "bge" => (5, false, -1)
+    "bltu" => (6, false, -1)
+    "bgeu" => (7, false, -1)
+    "bgt" => (4, true, -1)
+    "ble" => (5, true, -1)
+    "bgtu" => (6, true, -1)
+    "bleu" => (7, true, -1)
+    "beqz" => (0, false, 0)
+    "bnez" => (1, false, 0)
+    "bltz" => (4, false, 0)
+    "bgez" => (5, false, 0)
+    "blez" => (5, false, 1)
+    "bgtz" => (4, false, 1)
+    _ => (-1, false, -1)
+  }
+}
+
+/// The A extension: lr, sc and the amo operations, .w or .d, with .aq,
+/// .rl or .aqrl.
+fn rv_amo(m: Str, ops: List[Bytes]) -> RvEnc {
+  let parts = m.split(".")
+  if parts.len() < 2 || parts.len() > 3 {
+    return rv_bad()
+  }
+  let f5 = match parts[0] {
+    "lr" => 0x02
+    "sc" => 0x03
+    "amoswap" => 0x01
+    "amoadd" => 0x00
+    "amoxor" => 0x04
+    "amoand" => 0x0c
+    "amoor" => 0x08
+    "amomin" => 0x10
+    "amomax" => 0x14
+    "amominu" => 0x18
+    "amomaxu" => 0x1c
+    _ => -1
+  }
+  let f3 = match parts[1] {
+    "w" => 2
+    "d" => 3
+    _ => -1
+  }
+  let order = if parts.len() == 3 { parts[2] } else { "" }
+  let ar = match order {
+    "" => 0
+    "aq" => 2
+    "rl" => 1
+    "aqrl" => 3
+    _ => -1
+  }
+  if f5 < 0 || f3 < 0 || ar < 0 {
+    return rv_bad()
+  }
+  let rd = if ops.is_empty() { -1 } else { rv_xreg(ops[0]) }
+  if rd < 0 {
+    return rv_bad()
+  }
+  var rs2 = 0
+  var addr = b""
+  if f5 == 0x02 {
+    if ops.len() != 2 {
+      return rv_bad()
+    }
+    addr = ops[1]
+  } else {
+    if ops.len() != 3 {
+      return rv_bad()
+    }
+    rs2 = rv_xreg(ops[1])
+    addr = ops[2]
+  }
+  let (base, off, op, _) = rv_mem(addr)
+  if rs2 < 0 || base < 0 || off != 0 || !op.is_empty() {
+    return rv_bad()
+  }
+  rv_one((f5 << 27) | (ar << 25) | (rs2 << 20) | (base << 15) | (f3 << 12) | (rd << 7) | RV_AMO)
+}
+
+/// F and D: arithmetic, fused multiply add, sign injection, min and max,
+/// compares, conversions, moves, classify; the rounding mode as a last
+/// operand where the instruction rounds.
+fn rv_float(m: Str, ops0: List[Bytes]) -> RvEnc {
+  var ops = ops0
+  // a trailing rounding mode
+  var rm = -1
+  if !ops.is_empty() {
+    let x = rv_rm(ops[ops.len() - 1])
+    if x >= 0 {
+      rm = x
+      ops = ops[0..ops.len() - 1]
+    }
+  }
+  let n = ops.len()
+  let (base, fmt) = if m.ends_with(".s") { (m.trim_suffix(".s"), 0) } else if m.ends_with(".d") { (m.trim_suffix(".d"), 1) } else { (m, -1) }
+  // pseudo moves: fmv.d fd, fs is fsgnj.d fd, fs, fs; fneg and fabs
+  if fmt >= 0 && n == 2 && (base == "fmv" || base == "fneg" || base == "fabs") {
+    let fd = rv_freg(ops[0])
+    let fs = rv_freg(ops[1])
+    if fd < 0 || fs < 0 || rm >= 0 {
+      return rv_bad()
+    }
+    let f3 = match base {
+      "fmv" => 0
+      "fneg" => 1
+      _ => 2
+    }
+    return rv_one(rv_r((0x04 << 2) | fmt, fs, fs, f3, fd, RV_OP_FP))
+  }
+  if fmt >= 0 {
+    let f5 = match base {
+      "fadd" => 0x00
+      "fsub" => 0x01
+      "fmul" => 0x02
+      "fdiv" => 0x03
+      _ => -1
+    }
+    if f5 >= 0 {
+      if n != 3 {
+        return rv_bad()
+      }
+      let fd = rv_freg(ops[0])
+      let fa = rv_freg(ops[1])
+      let fb = rv_freg(ops[2])
+      if fd < 0 || fa < 0 || fb < 0 {
+        return rv_bad()
+      }
+      return rv_one(rv_r((f5 << 2) | fmt, fb, fa, if rm < 0 { 7 } else { rm }, fd, RV_OP_FP))
+    }
+    if base == "fsqrt" {
+      let fd = if n == 2 { rv_freg(ops[0]) } else { -1 }
+      let fa = if n == 2 { rv_freg(ops[1]) } else { -1 }
+      if fd < 0 || fa < 0 {
+        return rv_bad()
+      }
+      return rv_one(rv_r((0x0b << 2) | fmt, 0, fa, if rm < 0 { 7 } else { rm }, fd, RV_OP_FP))
+    }
+    let fma = match base {
+      "fmadd" => 0x43
+      "fmsub" => 0x47
+      "fnmsub" => 0x4b
+      "fnmadd" => 0x4f
+      _ => -1
+    }
+    if fma >= 0 {
+      if n != 4 {
+        return rv_bad()
+      }
+      let fd = rv_freg(ops[0])
+      let fa = rv_freg(ops[1])
+      let fb = rv_freg(ops[2])
+      let fc = rv_freg(ops[3])
+      if fd < 0 || fa < 0 || fb < 0 || fc < 0 {
+        return rv_bad()
+      }
+      return rv_one((fc << 27) | (fmt << 25) | (fb << 20) | (fa << 15) | ((if rm < 0 { 7 } else { rm }) << 12) | (fd << 7) | fma)
+    }
+    let sg = match base {
+      "fsgnj" => 0
+      "fsgnjn" => 1
+      "fsgnjx" => 2
+      "fmin" => 0
+      "fmax" => 1
+      _ => -1
+    }
+    if sg >= 0 {
+      if n != 3 || rm >= 0 {
+        return rv_bad()
+      }
+      let fd = rv_freg(ops[0])
+      let fa = rv_freg(ops[1])
+      let fb = rv_freg(ops[2])
+      if fd < 0 || fa < 0 || fb < 0 {
+        return rv_bad()
+      }
+      let f5 = if base == "fmin" || base == "fmax" { 0x05 } else { 0x04 }
+      return rv_one(rv_r((f5 << 2) | fmt, fb, fa, sg, fd, RV_OP_FP))
+    }
+    let cmp = match base {
+      "feq" => 2
+      "flt" => 1
+      "fle" => 0
+      _ => -1
+    }
+    if cmp >= 0 {
+      if n != 3 || rm >= 0 {
+        return rv_bad()
+      }
+      let rd = rv_xreg(ops[0])
+      let fa = rv_freg(ops[1])
+      let fb = rv_freg(ops[2])
+      if rd < 0 || fa < 0 || fb < 0 {
+        return rv_bad()
+      }
+      return rv_one(rv_r((0x14 << 2) | fmt, fb, fa, cmp, rd, RV_OP_FP))
+    }
+    if base == "fclass" {
+      let rd = if n == 2 { rv_xreg(ops[0]) } else { -1 }
+      let fa = if n == 2 { rv_freg(ops[1]) } else { -1 }
+      if rd < 0 || fa < 0 || rm >= 0 {
+        return rv_bad()
+      }
+      return rv_one(rv_r((0x1c << 2) | fmt, 0, fa, 1, rd, RV_OP_FP))
+    }
+  }
+  // moves between the register files: fmv.x.w, fmv.w.x, fmv.x.d, fmv.d.x
+  match m {
+    "fmv.x.w" | "fmv.x.d" => {
+      let rd = if n == 2 { rv_xreg(ops[0]) } else { -1 }
+      let fa = if n == 2 { rv_freg(ops[1]) } else { -1 }
+      if rd < 0 || fa < 0 || rm >= 0 {
+        return rv_bad()
+      }
+      return rv_one(rv_r((0x1c << 2) | (if m == "fmv.x.d" { 1 } else { 0 }), 0, fa, 0, rd, RV_OP_FP))
+    }
+    "fmv.w.x" | "fmv.d.x" => {
+      let fd = if n == 2 { rv_freg(ops[0]) } else { -1 }
+      let ra = if n == 2 { rv_xreg(ops[1]) } else { -1 }
+      if fd < 0 || ra < 0 || rm >= 0 {
+        return rv_bad()
+      }
+      return rv_one(rv_r((0x1e << 2) | (if m == "fmv.d.x" { 1 } else { 0 }), 0, ra, 0, fd, RV_OP_FP))
+    }
+    _ => {}
+  }
+  // conversions: fcvt.DST.SRC
+  if m.starts_with("fcvt.") {
+    let p = m.split(".")
+    if p.len() != 3 || n != 2 {
+      return rv_bad()
+    }
+    let ints = ["w", "wu", "l", "lu"]
+    let di = ints.index_of(p[1]) ?? -1
+    let si = ints.index_of(p[2]) ?? -1
+    let df = match p[1] {
+      "s" => 0
+      "d" => 1
+      _ => -1
+    }
+    let sf = match p[2] {
+      "s" => 0
+      "d" => 1
+      _ => -1
+    }
+    if df >= 0 && sf >= 0 && df != sf {
+      // fcvt.s.d rounds; fcvt.d.s is exact (LLVM writes rne for it)
+      let fd = rv_freg(ops[0])
+      let fa = rv_freg(ops[1])
+      if fd < 0 || fa < 0 {
+        return rv_bad()
+      }
+      let r = if rm >= 0 { rm } else if df == 1 { 0 } else { 7 }
+      return rv_one(rv_r((0x08 << 2) | df, sf, fa, r, fd, RV_OP_FP))
+    }
+    if di >= 0 && sf >= 0 {
+      // float to integer
+      let rd = rv_xreg(ops[0])
+      let fa = rv_freg(ops[1])
+      if rd < 0 || fa < 0 {
+        return rv_bad()
+      }
+      return rv_one(rv_r((0x18 << 2) | sf, di, fa, if rm < 0 { 7 } else { rm }, rd, RV_OP_FP))
+    }
+    if df >= 0 && si >= 0 {
+      // integer to float: exact for fcvt.d.w and fcvt.d.wu (LLVM writes
+      // rne)
+      let fd = rv_freg(ops[0])
+      let ra = rv_xreg(ops[1])
+      if fd < 0 || ra < 0 {
+        return rv_bad()
+      }
+      let exact = df == 1 && si <= 1
+      let r = if rm >= 0 { rm } else if exact { 0 } else { 7 }
+      return rv_one(rv_r((0x1a << 2) | df, si, ra, r, fd, RV_OP_FP))
+    }
+  }
+  rv_bad()
+}

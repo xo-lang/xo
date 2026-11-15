@@ -215,6 +215,9 @@ struct Frame {
   /// fields, patched once the sections have addresses (-1 for none)
   pc_field: Int = -1
   lsda_field: Int = -1
+  /// riscv64 ELF: the temporary symbol at its start (".L0 ") its FDE's
+  /// pc begin names, as LLVM's; -1 for the section symbol
+  begin: Int = -1
 }
 
 pub struct Asm {
@@ -273,6 +276,12 @@ pub struct Asm {
   /// words; the relaxable branches made long (by their number in the
   /// source), the next number, the branches and fixups of this pass
   amd64: Bool = false
+  /// riscv64 (asm_riscv64.xo, decision 0645): ELF only, 4 byte words as
+  /// arm64's, `#` comments
+  rv64: Bool = false
+  /// riscv64: whether the first $x (named with the ISA, as LLVM's) is
+  /// written
+  rv_isa_mapped: Bool = false
   xlong: Map[Int, Bool] = {}
   xseq: Int = 0
   xbrs: List[XBr] = []
@@ -370,7 +379,7 @@ fn (var a: Asm) parse(src: Bytes) {
 fn (var a: Asm) parse_line(l0: Bytes) {
   var s = 0
   var e = l0.len()
-  if a.amd64 {
+  if a.amd64 || a.rv64 {
     // `#` starts a comment, outside a quoted string
     var q = false
     var i = 0
@@ -427,6 +436,10 @@ fn (var a: Asm) parse_line(l0: Bytes) {
   }
   if a.elf {
     a.map_code()
+  }
+  if a.rv64 {
+    a.rv_instruction(l)
+    return
   }
   if let Some(e) = a.enc_memo.get(l) {
     a.put_enc(e)
@@ -1191,6 +1204,9 @@ fn (var a: Asm) finish() {
   }
   // the unwind sections come from the frames (cfi.xo, elf.xo)
   if a.elf {
+    if a.rv64 {
+      a.rv_attributes()
+    }
     a.elf_eh_frame()
   } else {
     a.unwind_sections()

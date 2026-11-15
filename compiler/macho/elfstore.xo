@@ -377,6 +377,7 @@ pub fn elf_store_prepare(parsed: ElfProg, store: Bytes, opts: ElfLinkOpts, cache
   // x86-64's relocations and GOT forms (link_elf_split's check, which
   // reads the first object: here a stored one)
   l.amd64 = !prog.is_empty() && prog[0].machine == 62
+  l.rv64 = !prog.is_empty() && prog[0].machine == 243
   // the dead functions' FDEs, as the strip drops them: the globals first
   // (rel_sect resolves through them), in a linker of their own (its
   // COMDAT bookkeeping would make the link's drop every group's copy)

@@ -237,6 +237,7 @@ pub fn elf_store_prepare_half(prog: ElfProg, h: ElfHalf, opts: ElfLinkOpts) -> E
   l.half_und = h.und
   l.half_und_gc = h.und_gc
   l.amd64 = !prog.objs.is_empty() && prog.objs[0].machine == 62
+  l.rv64 = !prog.objs.is_empty() && prog.objs[0].machine == 243
   ElfStoreLink{l: l, n: h.n, half: true}
 }
 

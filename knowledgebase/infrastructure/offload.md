@@ -320,6 +320,15 @@ both `--put` and the job, and a whole bundle the first time (a bare
 there). Its commits sent are in `refs/offload-arm64b/sent`. Memory-heavy runs
 (the tier's selfhost and llvm steps) stay on the first host.
 
+riscv64 tools on host 2 (decision 0645, Lang 1; Last verified: 2026-11-15):
+/opt/llvm/bin has clang, llvm-mc, llvm-readelf and llvm-objdump 23.1.3 with
+the riscv64 target. Its clang.cfg forces `-mcpu=generic`, which riscv64
+rejects, so pass `--no-default-config` (gotchas/riscv64-host-tools.md).
+qemu is not installed and the job has no sudo. `apt-get download qemu-user
+libc6-riscv64-cross` plus `dpkg-deb -x` unpack it under /work/rvtools/root,
+and `qemu-riscv64 -L /work/rvtools/root/usr/riscv64-linux-gnu PROG` runs a
+glibc program. The script is the lead notes' `lang1/rv/qemu2-remote.sh`.
+
 **`--ab` stays on the first host.** The lane's name is outside `arm64*` so
 `ab-host.sh` does not pick it, because of these controls: identical compiler
 and std on both sides (8fe1f704b and d1cd6520c, a script-only commit), self

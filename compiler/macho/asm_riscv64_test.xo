@@ -1,0 +1,265 @@
+// riscv64 assembler tests (decision 0645 stage 1): encodings from the
+// RISC-V unprivileged spec's formats, worked by hand, and an object's
+// header, resolved branches and relocations. Encoder goldens from
+// llvm-mc are a separate table (scripts on the linux host).
+
+use std/crypto
+
+fn rv_word(l: Str) -> Int {
+  var k = 0
+  let b = l.bytes()
+  while k < b.len() && !is_space(b[k]) {
+    k += 1
+  }
+  let e = rv_encode(bstr(b[0..k]), split_operands(b[k..]))
+  if !e.ok || e.words.len() != 1 {
+    return -1
+  }
+  e.words[0]
+}
+
+test "riscv64 base encodings match the spec's formats" {
+  expect(rv_word("addi a0, a0, 1")) == 0x00150513
+  expect(rv_word("nop")) == 0x00000013
+  expect(rv_word("ret")) == 0x00008067
+  expect(rv_word("add a0, a1, a2")) == 0x00c58533
+  expect(rv_word("mul a0, a1, a2")) == 0x02c58533
+  expect(rv_word("ld ra, 8(sp)")) == 0x00813083
+  expect(rv_word("sd ra, 8(sp)")) == 0x00113423
+  expect(rv_word("lui a0, 0x12345")) == 0x12345537
+  expect(rv_word("ecall")) == 0x00000073
+  expect(rv_word("li a0, 1")) == 0x00100513
+  expect(rv_word("mv a0, a1")) == 0x00058513
+}
+
+const RV_HELLO = r#"	.text
+	.globl	main
+	.p2align	2
+	.type	main,@function
+main:
+	.cfi_startproc
+	addi	sp, sp, -16
+	.cfi_def_cfa_offset 16
+	sd	ra, 8(sp)        # the return address
+	.cfi_offset ra, -8
+.Lpcrel_hi0:
+	auipc	a0, %pcrel_hi(.Lmsg)
+	addi	a0, a0, %pcrel_lo(.Lpcrel_hi0)
+	call	puts
+	beq	a0, zero, .L1
+	li	a0, 1
+.L1:
+	ld	ra, 8(sp)
+	addi	sp, sp, 16
+	ret
+.L2:
+	j	.L2
+	.cfi_endproc
+	.size	main, .-main
+	.section	.rodata
+.Lmsg:
+	.asciz	"hello"
+"#
+
+test "a riscv64 object: EM_RISCV, LP64D, local branches resolved, the rest relocated" {
+  let o = match assemble_elf_rv64(RV_HELLO.bytes()) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  // e_machine 243, e_flags EF_RISCV_FLOAT_ABI_DOUBLE
+  expect(Int(o[18]) + Int(o[19]) * 256) == 243
+  expect(Int(o[48])) == 4
+  var a = Asm{elf: true, rv64: true}
+  a.parse(RV_HELLO.bytes())
+  a.finish()
+  expect(a.err) == ""
+  var text = -1
+  for (i, s) in a.sects.indexed() {
+    if s.code {
+      text = i
+    }
+  }
+  let w = a.sects[text].words
+  expect(w.len()) == 12
+  // beq a0, zero, +8 and j -0 (a jump to itself)
+  expect(w[6]) == 0x00050463
+  expect(w[11]) == 0x0000006f
+  var typs: List[Int] = []
+  for r in a.sects[text].relocs {
+    typs.push(r.typ)
+  }
+  expect(typs.sort()) == [R_RISCV_CALL_PLT, R_RISCV_PCREL_HI20, R_RISCV_PCREL_LO12_I]
+}
+
+// a static program with no C library: write(1, msg, 6), exit(0)
+const RV_STATIC_HELLO = r#"	.text
+	.globl	_start
+	.p2align	2
+	.type	_start,@function
+_start:
+.Lhi0:
+	auipc	a1, %pcrel_hi(.Lmsg)
+	addi	a1, a1, %pcrel_lo(.Lhi0)
+	li	a0, 1
+	li	a2, 6
+	li	a7, 64
+	ecall
+	call	done
+.Lspin:
+	j	.Lspin
+	.size	_start, .-_start
+	.p2align	2
+	.type	done,@function
+done:
+	li	a0, 0
+	li	a7, 93
+	ecall
+	ret
+	.size	done, .-done
+	.section	.rodata
+.Lmsg:
+	.asciz	"hello\n"
+"#
+
+// a glibc program: puts through the PLT, the counter through .data
+const RV_DYN_HELLO = r#"	.text
+	.globl	main
+	.p2align	2
+	.type	main,@function
+main:
+	.cfi_startproc
+	addi	sp, sp, -16
+	.cfi_def_cfa_offset 16
+	sd	ra, 8(sp)
+	.cfi_offset ra, -8
+.Lhi1:
+	auipc	a0, %pcrel_hi(count)
+	ld	a1, %pcrel_lo(.Lhi1)(a0)
+	addi	a1, a1, 1
+.Lhi2:
+	auipc	a0, %pcrel_hi(count)
+	sd	a1, %pcrel_lo(.Lhi2)(a0)
+.Lhi3:
+	auipc	a0, %pcrel_hi(.Lmsg)
+	addi	a0, a0, %pcrel_lo(.Lhi3)
+	call	puts
+	li	a0, 0
+	ld	ra, 8(sp)
+	addi	sp, sp, 16
+	ret
+	.cfi_endproc
+	.size	main, .-main
+	.data
+	.p2align	3
+count:
+	.quad	41
+	.section	.rodata
+.Lmsg:
+	.asciz	"hello from riscv64"
+"#
+
+// two functions with frames (FDE begin symbols .L0 and .L1), a local call
+// resolved in place and a global one relocated: compared with clang's
+const RV_TWO_FN = r#"	.text
+	.globl	twice
+	.p2align	2
+	.type	twice,@function
+twice:
+	.cfi_startproc
+	addi	sp, sp, -16
+	.cfi_def_cfa_offset 16
+	sd	ra, 8(sp)
+	.cfi_offset ra, -8
+	call	helper
+	call	helper
+	call	puts
+	ld	ra, 8(sp)
+	addi	sp, sp, 16
+	ret
+	.cfi_endproc
+	.size	twice, .-twice
+	.p2align	2
+	.type	helper,@function
+helper:
+	.cfi_startproc
+	addi	sp, sp, -32
+	.cfi_def_cfa_offset 32
+	sd	s0, 24(sp)
+	.cfi_offset s0, -8
+	li	s0, 300000
+	addi	a0, s0, 5
+	ld	s0, 24(sp)
+	addi	sp, sp, 32
+	ret
+	.cfi_endproc
+	.size	helper, .-helper
+"#
+
+// decision 0645 stage 1's object oracle: clang (LLVM 23.1.3, `clang
+// --no-default-config -c --target=riscv64-linux-gnu
+// -march=rv64imafd_zicsr_zifencei -mabi=lp64d -mno-relax`) assembles each
+// source to these bytes, and so does Xo. The SHA-256 of clang's object
+// (host 2, 2026-11-15, notes rv/cmp2-remote.sh; re-record after an
+// intended change: XO_RV_OUT writes the .s and .o files beside each other)
+test "riscv64 objects are clang's, byte for byte" {
+  for (src, want) in [(RV_HELLO, "ad1c5f808c719c6f2854f743fa03b5c373f04921a5e2e4702065d046714434bf"), (RV_STATIC_HELLO, "592709145b751588e799d635c77280bf6909115d7f45576c05f43d40482ae336"), (RV_DYN_HELLO, "19103fb3d8350ebe5b46ecb70663dc63b90f20fc1535f39ab82f5992c6200446"), (RV_TWO_FN, "92b8aa6f38eecdeaa2a2eb9a56e7d48721bdb42374af8fe1cb3794a5bb55976a")] {
+    let o = match assemble_elf_rv64(src.bytes()) {
+      Ok(x) => x
+      Err(e) => fault(e)
+    }
+    expect(crypto.sha256(o).to_hex()) == want
+  }
+}
+
+fn rv_has(b: Bytes, s: Str) -> Bool {
+  let n = s.bytes()
+  for i in 0..b.len() - n.len() + 1 {
+    if b[i..i + n.len()] == n {
+      return true
+    }
+  }
+  false
+}
+
+fn rv_link(src: Str, static: Bool) -> Bytes {
+  let obj = match assemble_elf_rv64(src.bytes()) {
+    Ok(x) => x
+    Err(e) => fault("assemble: ${e}")
+  }
+  match link_elf([LinkInput{path: "rv.o", data: obj}], ElfLinkOpts{static: static}) {
+    Ok(x) => x
+    Err(e) => fault("link: ${e}")
+  }
+}
+
+test "riscv64 programs link: EM_RISCV executables, static and with glibc" {
+  for (src, static) in [(RV_STATIC_HELLO, true), (RV_DYN_HELLO, false)] {
+    let exe = rv_link(src, static)
+    // ET_EXEC, EM_RISCV, LP64D
+    expect(Int(exe[16])) == 2
+    expect(Int(exe[18]) + Int(exe[19]) * 256) == 243
+    expect(Int(exe[48])) == 4
+  }
+  let dynx = rv_link(RV_DYN_HELLO, false)
+  expect(rv_has(dynx, "/lib/ld-linux-riscv64-lp64d.so.1")) == true
+  expect(rv_has(dynx, "GLIBC_2.27")) == true
+}
+
+// XO_RV_OUT=DIR xo test --real --run=riscv64: the two programs as files,
+// for qemu-riscv64 on the linux host
+test "riscv64 programs written for qemu" uses fs.write, env {
+  let dir = os.env.get("XO_RV_OUT") ?? ""
+  if dir.is_empty() {
+    return
+  }
+  os.fs.write("${dir}/rv-static", rv_link(RV_STATIC_HELLO, true)).or_fault("write")
+  os.fs.write("${dir}/rv-dyn", rv_link(RV_DYN_HELLO, false)).or_fault("write")
+  // the objects, to compare with clang's of the same text
+  for (name, src) in [("rv_hello", RV_HELLO), ("rv_static_hello", RV_STATIC_HELLO), ("rv_dyn_hello", RV_DYN_HELLO), ("rv_two_fn", RV_TWO_FN)] {
+    os.fs.write("${dir}/${name}.s", src.bytes()).or_fault("write")
+    match assemble_elf_rv64(src.bytes()) {
+      Ok(o) => os.fs.write("${dir}/${name}.o", o).or_fault("write")
+      Err(e) => fault("assemble ${name}: ${e}")
+    }
+  }
+}

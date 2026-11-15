@@ -255,6 +255,17 @@ cost work are:
    - A seed for linux/riscv64 when the owner wants xo itself to run
      there (0216).
 
+## Progress
+
+- Stage 1 (Xo Lang 1, 2026-11-15): done. enc_riscv64.xo encodes 595 forms to
+  llvm-mc 23.1.3's bytes (enc_riscv64_test.xo, from scripts/rv64-enc-goldens.py). `li`
+  follows LLVM's RISCVMatInt. assemble_elf_rv64 writes LLVM's object: `.riscv.attributes`,
+  the ISA named on the first `$x`, `.L0 ` FDE begin symbols, and calls to a local function
+  of the same section resolved. clang's object of four test sources is byte equal
+  ("riscv64 objects are clang's, byte for byte"). elflink links them static and with
+  glibc 2.27, and under qemu-riscv64 on host 2 they print `hello` and `hello from
+  riscv64` (gotchas/riscv64-host-tools.md).
+
 ## Consequences
 
 - linux/riscv64 builds no longer need clang or a sysroot for static

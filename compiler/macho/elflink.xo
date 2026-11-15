@@ -195,7 +195,7 @@ struct ESym {
 
 struct EObj {
   path: Str
-  /// e_machine: 183 (arm64) or 62 (x86-64)
+  /// e_machine: 183 (arm64), 62 (x86-64) or 243 (riscv64)
   machine: Int = 183
   sects: List[ESect] = []
   syms: List[ESym] = []
@@ -267,6 +267,8 @@ struct ELinker {
   commons: Map[(Int, Int), Int] = {}
   /// x86-64 objects (decision 0254, stage 4): every input's machine
   amd64: Bool = false
+  /// riscv64 objects (decision 0645 stage 1, elflink_riscv64.xo)
+  rv64: Bool = false
   err: Str = ""
   /// the debug file of a split link (ElfLinkOpts.debug_link)
   debug_file: Bytes = zeros(0)
@@ -336,6 +338,7 @@ pub fn link_elf_split(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[(Byt
   }
   if !l.objs.is_empty() {
     l.amd64 = l.objs[0].machine == 62
+    l.rv64 = l.objs[0].machine == 243
     for o in l.objs {
       if o.machine != l.objs[0].machine {
         return Err("${o.path}: an object of another machine than ${l.objs[0].path}")
@@ -343,6 +346,9 @@ pub fn link_elf_split(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[(Byt
     }
     if l.amd64 && l.opts.interp == "/lib/ld-linux-aarch64.so.1" {
       l.opts.interp = "/lib64/ld-linux-x86-64.so.2"
+    }
+    if l.rv64 && l.opts.interp == "/lib/ld-linux-aarch64.so.1" {
+      l.opts.interp = "/lib/ld-linux-riscv64-lp64d.so.1"
     }
   }
   l.link_rest()
@@ -445,8 +451,8 @@ fn parse_elf_object(path: Str, b: Bytes) -> Result[EObj, Str] {
     return Err("${path}: not a 64 bit little endian ELF file")
   }
   let machine = rd16(b, 18)
-  if rd16(b, 16) != 1 || (machine != 183 && machine != 62) {
-    return Err("${path}: not an arm64 or x86-64 relocatable object")
+  if rd16(b, 16) != 1 || (machine != 183 && machine != 62 && machine != 243) {
+    return Err("${path}: not an arm64, x86-64 or riscv64 relocatable object")
   }
   let shoff = rd64(b, 40)
   let shnum = rd16(b, 60)
@@ -735,6 +741,8 @@ fn (var l: ELinker) synthesize_start() {
     src.write_str("\t.globl _start\n\t.type _start,@function\n_start:\n")
     src.write_str("\txorl %ebp, %ebp\n\tmovq %rdx, %r9\n\tpopq %rsi\n\tmovq %rsp, %rdx\n\tandq $-16, %rsp\n\tpushq %rax\n\tpushq %rsp\n")
     src.write_str("\txorl %r8d, %r8d\n\txorl %ecx, %ecx\n\tleaq main(%rip), %rdi\n\tcallq *__libc_start_main@GOTPCREL(%rip)\n\thlt\n")
+  } else if !l.globals.contains(l.opts.entry.bytes()) && l.rv64 {
+    src.write_str(RV_START)
   } else if !l.globals.contains(l.opts.entry.bytes()) {
     // glibc's crt1: x0 the loader's fini, the stack holds argc and argv
     src.write_str("\t.globl _start\n\t.p2align 2\n\t.type _start, %function\n_start:\n")
@@ -747,7 +755,7 @@ fn (var l: ELinker) synthesize_start() {
   let und = l.undefined()
   for (name, _) in und {
     let n = bstr(name)
-    if n.starts_with("__aarch64_") && !l.amd64 {
+    if n.starts_with("__aarch64_") && !l.amd64 && !l.rv64 {
       // with the LSE dispatch when the program defines xo_lse (an
       // XO_NOLIBC program, whose start sets it from AT_HWCAP)
       match outline_atomic_lse(n, l.globals.contains("xo_lse".bytes())) {
@@ -757,14 +765,16 @@ fn (var l: ELinker) synthesize_start() {
           return
         }
       }
-    } else if !l.opts.static {
+    } else if !l.opts.static && !l.rv64 {
+      // riscv64's glibc starts at 2.27, with no __xstat compatibility
+      // to bridge
       match nonshared(n, l.amd64) {
         Some(body) => src.write_str(body)
         None => {}
       }
     }
   }
-  let start = if l.amd64 { assemble_elf_amd64(src.freeze()) } else { assemble_elf(src.freeze()) }
+  let start = if l.amd64 { assemble_elf_amd64(src.freeze()) } else if l.rv64 { assemble_elf_rv64(src.freeze()) } else { assemble_elf(src.freeze()) }
   match start {
     Ok(obj) => {
       match parse_elf_object("<start>", obj) {
@@ -996,8 +1006,8 @@ fn (var l: ELinker) collect_imports() {
     }
     return
   }
-  let vers = glibc_versions(l.amd64)
-  let base = if l.amd64 { "GLIBC_2.2.5" } else { "GLIBC_2.17" }
+  let vers = if l.rv64 { glibc_versions_rv64() } else { glibc_versions(l.amd64) }
+  let base = if l.amd64 { "GLIBC_2.2.5" } else if l.rv64 { "GLIBC_2.27" } else { "GLIBC_2.17" }
   var gcc = false
   var dl = false
   for (name, weak) in und {
@@ -1322,6 +1332,12 @@ fn (var l: ELinker) scan() {
           }
           continue
         }
+        if l.rv64 {
+          if !l.scan_rv(o, d, i, r) {
+            return
+          }
+          continue
+        }
         if r.typ == R_AARCH64_ADR_GOT_PAGE || r.typ == R_AARCH64_LD64_GOT_LO12_NC {
           l.need_got(d, i)
         } else if d < 0 {
@@ -1472,7 +1488,7 @@ fn (var l: ELinker) layout() {
         continue
       }
       for r in s.relocs {
-        if r.typ == (if l.amd64 { R_X86_64_64 } else { R_AARCH64_ABS64 }) {
+        if r.typ == (if l.amd64 { R_X86_64_64 } else if l.rv64 { R_RISCV_64 } else { R_AARCH64_ABS64 }) {
           let (d, _) = l.def_of(o, r.sym)
           if d < 0 {
             ndyn += 1
@@ -1603,6 +1619,8 @@ fn (var l: ELinker) relocate() {
         }
         if l.amd64 {
           l.reloc_x86(o, s, base, r)
+        } else if l.rv64 {
+          l.reloc_rv(o, s, base, r)
         } else {
           l.reloc(o, k, s, base, r)
         }
@@ -1618,7 +1636,7 @@ fn (var l: ELinker) relocate() {
     if imp >= 0 && l.opts.static {
       // a weak undefined symbol: 0 (the GOT's zeros)
     } else if imp >= 0 {
-      l.dynrels.push(EDynRel{addr: at, typ: if l.amd64 { R_X86_64_GLOB_DAT } else { R_AARCH64_GLOB_DAT }, sym: imp + 1, addend: 0})
+      l.dynrels.push(EDynRel{addr: at, typ: if l.amd64 { R_X86_64_GLOB_DAT } else if l.rv64 { R_RISCV_64 } else { R_AARCH64_GLOB_DAT }, sym: imp + 1, addend: 0})
     } else {
       l.patches.push(Patch{addr: at, size: 8, value: l.sym_addr(d, i)})
     }
@@ -1848,7 +1866,9 @@ fn elf_branch_key(d: Int, i: Int, addend: Int) -> Str { "${d}.${i}+${addend}" }
 /// the islands together stay under that 1/8, the most they move a
 /// target. Then the output is laid out again.
 fn (var l: ELinker) islands() {
-  if l.amd64 {
+  // riscv64 calls are auipc and jalr pairs (2 GiB); jal's 1 MiB islands
+  // are a later stage of decision 0645
+  if l.amd64 || l.rv64 {
     return
   }
   let slack = l.reach() / 8
@@ -2225,6 +2245,10 @@ fn (var l: ELinker) write() -> Bytes {
       }
       continue
     }
+    if l.rv64 {
+      rv_plt_entry(b, at, slot)
+      continue
+    }
     let x = (page(slot) - page(at)) >> 12
     b.u32(0x90000010 | ((x & 3) * 0x20000000) | (((x >> 2) & 0x7ffff) * 32))
     b.u32(0xf9400000 | (((slot & 0xfff) / 8) * 1024) | (16 * 32) | 17)
@@ -2337,7 +2361,7 @@ fn (var l: ELinker) write() -> Bytes {
   o.u8(1)
   o.zeros(9)
   o.u16(ET_EXEC)
-  o.u16(if l.amd64 { 62 } else { 183 })
+  o.u16(if l.amd64 { 62 } else if l.rv64 { 243 } else { 183 })
   o.u32(1)
   let entry = match l.globals.get(l.opts.entry.bytes()) {
     Some((d, i)) => l.sym_addr(d, i)
@@ -2349,7 +2373,8 @@ fn (var l: ELinker) write() -> Bytes {
   o.u64(entry)
   o.u64(64)
   o.u64(shoff)
-  o.u32(0)
+  // riscv64: EF_RISCV_FLOAT_ABI_DOUBLE
+  o.u32(if l.rv64 { 4 } else { 0 })
   o.u16(64)
   o.u16(56)
   o.u16(l.phnum)

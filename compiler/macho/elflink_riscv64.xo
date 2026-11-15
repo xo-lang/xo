@@ -1,0 +1,208 @@
+// elflink for riscv64 objects (decision 0645 stage 1): the psABI's
+// relocations, the PLT stubs, glibc's start code and symbol versions. The
+// link is not relaxed (the objects carry no R_RISCV_RELAX, -mno-relax),
+// and the executable is ET_EXEC with the interpreter
+// /lib/ld-linux-riscv64-lp64d.so.1.
+
+const R_RISCV_RELAX = 51
+
+/// glibc's crt1 for riscv64 (sysdeps/riscv/start.S): a0 the loader's
+/// fini, the stack holds argc and argv; the stack aligned for
+/// __libc_start_main. gp stays unset: an unrelaxed link never uses it.
+const RV_START = """	.globl _start
+	.p2align 2
+	.type _start,@function
+_start:
+	mv a5, a0
+	ld a1, 0(sp)
+	addi a2, sp, 8
+	andi sp, sp, -16
+.Lxo_start_main:
+	auipc a0, %pcrel_hi(main)
+	addi a0, a0, %pcrel_lo(.Lxo_start_main)
+	li a3, 0
+	li a4, 0
+	mv a6, sp
+	call __libc_start_main
+	ebreak
+"""
+
+/// glibc's symbol versions on riscv64: the port starts at 2.27, so every
+/// version before it is GLIBC_2.27 (the table's later ones stand).
+fn glibc_versions_rv64() -> Map[Bytes, (Str, Str)] {
+  var m = glibc_versions(false)
+  for (k, (lib, ver)) in m.entries() {
+    if ver.starts_with("GLIBC_2.") {
+      let minor = parse_int(ver.trim_prefix("GLIBC_2.").split(".")[0].bytes()) ?? 99
+      if minor < 27 {
+        m.put(k, (lib, "GLIBC_2.27"))
+      }
+    }
+  }
+  m
+}
+
+/// The offset from the thread pointer of a TLS address on riscv64 (TLS
+/// variant 1 with the thread pointer at the block's start, as lld's).
+fn (l: ELinker) tp_off_rv(addr: Int) -> Int {
+  addr - l.tls_start
+}
+
+/// A PLT stub: auipc t3, slot; ld t3, slot lo12(t3); jalr t1, t3; nop
+/// (lld's, the slot bound at load time: no lazy binding).
+fn rv_plt_entry(var b: Out, at: Int, slot: Int) {
+  let (hi, lo) = rv_split(slot - at)
+  b.u32((hi << 12) | (28 << 7) | 0x17)
+  b.u32(((lo & 0xfff) << 20) | (28 << 15) | (3 << 12) | (28 << 7) | 0x03)
+  b.u32((28 << 15) | (6 << 7) | 0x67)
+  b.u32(0x13)
+}
+
+/// x as hi20 (with the rounding of lo12's sign) and lo12.
+fn rv_split(x: Int) -> (Int, Int) {
+  let hi = ((x + 0x800) >> 12) & 0xfffff
+  let lo = x - (((x + 0x800) >> 12) << 12)
+  (hi, lo)
+}
+
+/// scan's riscv64 case: the GOT slots and the PLT stubs a relocation
+/// needs. False after an error.
+fn (var l: ELinker) scan_rv(o: Int, d: Int, i: Int, r: ERel) -> Bool {
+  if r.typ == R_RISCV_GOT_HI20 {
+    l.need_got(d, i)
+    return true
+  }
+  if d >= 0 {
+    return true
+  }
+  if r.typ == R_RISCV_CALL_PLT {
+    if l.opts.static {
+      // a weak undefined callee: a nop or a ret (reloc_rv), no stub
+      return true
+    }
+    l.imports[i].func = true
+    if l.imports[i].plt < 0 {
+      l.need_got(d, i)
+      l.imports[i].plt = l.plt.len()
+      l.plt.push(i)
+    }
+    return true
+  }
+  if r.typ != R_RISCV_64 {
+    l.fail("${l.objs[o].path}: ${bstr(l.imports[i].name)} (from ${l.imports[i].lib}) is used by relocation ${r.typ}, which needs a copy relocation")
+    return false
+  }
+  true
+}
+
+/// The pc relative value of the R_RISCV_PCREL_HI20 or R_RISCV_GOT_HI20 at
+/// offset off of section s (a %pcrel_lo's label), None when there is none.
+fn (l: ELinker) rv_hi_value(o: Int, s: ESect, base: Int, off: Int) -> Int? {
+  for h in s.relocs {
+    if h.off != off || (h.typ != R_RISCV_PCREL_HI20 && h.typ != R_RISCV_GOT_HI20) {
+      continue
+    }
+    let (d, i) = l.def_of(o, h.sym)
+    let target = if h.typ == R_RISCV_GOT_HI20 { l.got_addr(d, i) } else if d < 0 { 0 } else { l.sym_addr(d, i) + h.addend }
+    return Some(target - (base + h.off))
+  }
+  None
+}
+
+/// A riscv64 relocation (decision 0645 stage 1).
+fn (var l: ELinker) reloc_rv(o: Int, s: ESect, base: Int, r: ERel) {
+  let p = base + r.off
+  let (d, i) = l.def_of(o, r.sym)
+  let imp = d < 0
+  let sv = if imp { 0 } else { l.sym_addr(d, i) }
+  let v = sv + r.addend
+  let ins = if r.off + 4 <= s.data.len() { rd32(s.data, r.off) } else { 0 }
+  let t = r.typ
+  let path = l.objs[o].path
+  if t == R_RISCV_RELAX {
+    return
+  }
+  if t == R_RISCV_64 {
+    if imp && l.opts.static {
+      l.patches.push(Patch{addr: p, size: 8, value: r.addend})
+    } else if imp {
+      l.dynrels.push(EDynRel{addr: p, typ: R_RISCV_64, sym: i + 1, addend: r.addend})
+      l.patches.push(Patch{addr: p, size: 8, value: 0})
+    } else {
+      l.patches.push(Patch{addr: p, size: 8, value: v})
+    }
+  } else if t == R_RISCV_32 {
+    if v < 0 || v >= 4294967296 {
+      return l.fail("${path}: R_RISCV_32 out of range")
+    }
+    l.patches.push(Patch{addr: p, size: 4, value: v})
+  } else if t == R_RISCV_32_PCREL {
+    let x = v - p
+    if x < -2147483648 || x >= 2147483648 {
+      return l.fail("${path}: R_RISCV_32_PCREL out of range in ${s.name}")
+    }
+    l.patches.push(Patch{addr: p, size: 4, value: x & 0xffffffff})
+  } else if t == R_RISCV_BRANCH {
+    let x = v - p
+    if x < -4096 || x >= 4096 {
+      return l.fail("${path}: R_RISCV_BRANCH out of range in ${s.name}")
+    }
+    l.patches.push(Patch{addr: p, size: 4, value: (ins & 0x01fff07f) | rv_b_imm(x)})
+  } else if t == R_RISCV_JAL {
+    let x = v - p
+    if x < -1048576 || x >= 1048576 {
+      return l.fail("${path}: R_RISCV_JAL out of range in ${s.name}")
+    }
+    l.patches.push(Patch{addr: p, size: 4, value: (ins & 0xfff) | rv_j_imm(x)})
+  } else if t == R_RISCV_CALL_PLT {
+    let jalr = if r.off + 8 <= s.data.len() { rd32(s.data, r.off + 4) } else { 0 }
+    if imp && l.opts.static {
+      // a weak undefined callee (the sanitizer hooks): a call becomes
+      // two nops, a tail call (jalr x0) a nop and a ret, as the arm64
+      // link's
+      l.patches.push(Patch{addr: p, size: 4, value: 0x13})
+      l.patches.push(Patch{addr: p + 4, size: 4, value: if ((jalr >> 7) & 31) == 0 { 0x00008067 } else { 0x13 }})
+      return
+    }
+    let target = if imp { l.osects[O_PLT].addr + 16 * l.imports[i].plt } else { v }
+    let x = target - p
+    if x < -2147483648 - 0x800 || x >= 2147483648 - 0x800 {
+      return l.fail("${path}: call out of range in ${s.name}")
+    }
+    let (hi, lo) = rv_split(x)
+    l.patches.push(Patch{addr: p, size: 4, value: (ins & 0xfff) | (hi << 12)})
+    l.patches.push(Patch{addr: p + 4, size: 4, value: (jalr & 0xfffff) | ((lo & 0xfff) << 20)})
+  } else if t == R_RISCV_PCREL_HI20 || t == R_RISCV_GOT_HI20 {
+    let target = if t == R_RISCV_GOT_HI20 { l.got_addr(d, i) } else { v }
+    let x = target - p
+    if x < -2147483648 - 0x800 || x >= 2147483648 - 0x800 {
+      return l.fail("${path}: pc relative reference out of range in ${s.name}")
+    }
+    let (hi, _) = rv_split(x)
+    l.patches.push(Patch{addr: p, size: 4, value: (ins & 0xfff) | (hi << 12)})
+  } else if t == R_RISCV_PCREL_LO12_I || t == R_RISCV_PCREL_LO12_S {
+    // the symbol is the auipc's label: its HI20's value, low 12 bits
+    let lab = l.objs[o].syms[r.sym]
+    let x = match l.rv_hi_value(o, s, base, lab.value) {
+      Some(x) => x
+      None => return l.fail("${path}: ${bstr(lab.name)} of a %pcrel_lo has no R_RISCV_PCREL_HI20 in ${s.name}")
+    }
+    let (_, lo) = rv_split(x)
+    let w = if t == R_RISCV_PCREL_LO12_I { (ins & 0xfffff) | ((lo & 0xfff) << 20) } else { (ins & 0x01fff07f) | rv_s_imm(lo) }
+    l.patches.push(Patch{addr: p, size: 4, value: w})
+  } else if t == R_RISCV_TPREL_HI20 || t == R_RISCV_TPREL_LO12_I || t == R_RISCV_TPREL_LO12_S || t == R_RISCV_TPREL_ADD {
+    if imp {
+      return l.fail("${path}: thread local ${bstr(l.imports[i].name)} is imported")
+    }
+    let (hi, lo) = rv_split(l.tp_off_rv(sv) + r.addend)
+    if t == R_RISCV_TPREL_HI20 {
+      l.patches.push(Patch{addr: p, size: 4, value: (ins & 0xfff) | (hi << 12)})
+    } else if t == R_RISCV_TPREL_LO12_I {
+      l.patches.push(Patch{addr: p, size: 4, value: (ins & 0xfffff) | ((lo & 0xfff) << 20)})
+    } else if t == R_RISCV_TPREL_LO12_S {
+      l.patches.push(Patch{addr: p, size: 4, value: (ins & 0x01fff07f) | rv_s_imm(lo)})
+    }
+  } else {
+    l.fail("${path}: riscv64 relocation type ${t} in ${s.name} is not supported")
+  }
+}

@@ -39,6 +39,14 @@ fn (var a: Asm) cfi(d: Str, rest: Bytes) {
     }
     a.open = true
     a.frame = Frame{sect: a.cur, start: here, atom: a.sects[a.cur].last_atom}
+    if a.rv64 {
+      // LLVM's FDE names a temporary symbol at the start, ".L0 " (with
+      // the space), the same name for every function
+      let t = a.syms.len()
+      a.syms.push(Sym{name: ".L0 ".bytes(), sect: a.cur, off: here})
+      a.register(t)
+      a.frame.begin = t
+    }
     // x86-64: the CFA is %rsp + 8 at entry (the return address)
     a.cfa_off = 8
     return
@@ -74,14 +82,14 @@ fn (var a: Asm) cfi(d: Str, rest: Bytes) {
       a.frame.insts.push(Cfi{raw: raw, at: here, op: 5, reg: 0, off: 0})
     }
     ".cfi_restore" => {
-      let r = if a.amd64 { x86_dwarf_reg(trim(rest)) } else { dwarf_reg(trim(rest)) }
+      let r = if a.amd64 { x86_dwarf_reg(trim(rest)) } else if a.rv64 { rv_dwarf_reg(trim(rest)) } else { dwarf_reg(trim(rest)) }
       if r < 0 {
         return a.fail("bad ${d} ${bstr(rest)}")
       }
       a.frame.insts.push(Cfi{at: here, op: 4, reg: r, off: 0})
     }
     ".cfi_def_cfa_register" => {
-      let r = if a.amd64 { x86_dwarf_reg(trim(rest)) } else { dwarf_reg(trim(rest)) }
+      let r = if a.amd64 { x86_dwarf_reg(trim(rest)) } else if a.rv64 { rv_dwarf_reg(trim(rest)) } else { dwarf_reg(trim(rest)) }
       if r < 0 {
         return a.fail("bad ${d} ${bstr(rest)}")
       }
@@ -91,7 +99,7 @@ fn (var a: Asm) cfi(d: Str, rest: Bytes) {
       if ops.len() != 2 {
         return a.fail("${d} takes a register and an offset")
       }
-      let r = if a.amd64 { x86_dwarf_reg(ops[0]) } else { dwarf_reg(ops[0]) }
+      let r = if a.amd64 { x86_dwarf_reg(ops[0]) } else if a.rv64 { rv_dwarf_reg(ops[0]) } else { dwarf_reg(ops[0]) }
       let off = parse_int(ops[1]) ?? MIN_INT
       if r < 0 || off == MIN_INT {
         return a.fail("bad ${d} ${bstr(rest)}")

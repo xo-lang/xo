@@ -342,7 +342,13 @@ fn (var a: Asm) map_code() {
   }
   if a.sects[a.cur].mapstate != 1 {
     a.sects[a.cur].mapstate = 1
-    a.map_sym("$x")
+    if a.rv64 && !a.rv_isa_mapped {
+      // LLVM's first riscv64 code mapping symbol carries the ISA
+      a.rv_isa_mapped = true
+      a.map_sym("$x${RV_ARCH}")
+    } else {
+      a.map_sym("$x")
+    }
   }
 }
 
@@ -374,15 +380,15 @@ fn (var a: Asm) map_sym(name: Str) {
 
 /// The pointer and pc relative 4 byte relocation types of the target.
 fn (a: Asm) r_abs64() -> Int {
-  if a.amd64 { R_X86_64_64 } else { R_AARCH64_ABS64 }
+  if a.amd64 { R_X86_64_64 } else if a.rv64 { R_RISCV_64 } else { R_AARCH64_ABS64 }
 }
 
 fn (a: Asm) r_abs32() -> Int {
-  if a.amd64 { R_X86_64_32 } else { R_AARCH64_ABS32 }
+  if a.amd64 { R_X86_64_32 } else if a.rv64 { R_RISCV_32 } else { R_AARCH64_ABS32 }
 }
 
 fn (a: Asm) r_prel32() -> Int {
-  if a.amd64 { R_X86_64_PC32 } else { R_AARCH64_PREL32 }
+  if a.amd64 { R_X86_64_PC32 } else if a.rv64 { R_RISCV_32_PCREL } else { R_AARCH64_PREL32 }
 }
 
 /// A RELA relocation at off of section si to sym + addend: undefined,
@@ -396,7 +402,9 @@ fn (var a: Asm) elf_reloc(si: Int, off: Int, typ: Int, sym: Int, addend: Int) {
   // a TLS relocation names its symbol, as LLVM's (decision 0212)
   // and so does a GOT one on x86-64, as LLVM's X86 ELF writer
   let tls = if a.amd64 { typ == R_X86_64_TPOFF32 || typ == R_X86_64_GOTTPOFF || typ == R_X86_64_GOTPCRELX || typ == R_X86_64_REX_GOTPCRELX || typ == R_X86_64_GOTPCREL || typ == R_X86_64_TLSGD || typ == R_X86_64_TLSLD || typ == R_X86_64_DTPOFF32 } else { typ == R_AARCH64_TLSLE_ADD_TPREL_HI12 || typ == R_AARCH64_TLSLE_ADD_TPREL_LO12_NC }
-  if s.sect >= 0 && !s.global && !s.weak && !s.secsym && !tls {
+  // riscv64 keeps the symbol of every relocation, as LLVM's
+  // RISCVELFObjectWriter (a %pcrel_lo names its auipc's label)
+  if s.sect >= 0 && !s.global && !s.weak && !s.secsym && !tls && !a.rv64 {
     let merge = (a.sects[s.sect].eflags & SHF_MERGE) != 0
     if !(merge && addend != 0) {
       target = a.sects[s.sect].ltmp
@@ -424,6 +432,12 @@ fn (var a: Asm) elf_apply_fixes() {
         }
       }
       a.sects[f.sect].words[f.at] = w
+      continue
+    }
+    if a.rv64 {
+      if !a.rv_elf_fix(f) {
+        return
+      }
       continue
     }
     if f.kind == FX_PAGE21 {
@@ -520,7 +534,12 @@ fn (var a: Asm) elf_eh_frame() {
     // CIE pointer: from this field back to the CIE
     body.u32(start + 4 - cie)
     // pc begin: the function's start, pc relative
-    a.elf_reloc_sect(eh, start + 8, a.r_prel32(), f.sect, f.start)
+    if f.begin >= 0 {
+      a.syms[f.begin].used = true
+      a.sects[eh].relocs.push(Reloc{addr: start + 8, typ: a.r_prel32(), pcrel: false, len: 0, sym: f.begin, addend: 0})
+    } else {
+      a.elf_reloc_sect(eh, start + 8, a.r_prel32(), f.sect, f.start)
+    }
     body.u32(0)
     body.u32(f.end - f.start)
     if f.lsda >= 0 {
@@ -530,7 +549,7 @@ fn (var a: Asm) elf_eh_frame() {
     } else {
       body.uleb(0)
     }
-    cfa_insts(body, f, if a.amd64 { -8 } else { -4 })
+    cfa_insts(body, f, if a.amd64 || a.rv64 { -8 } else { -4 })
     let al = if fi == sorted.len() - 1 { 8 } else { 4 }
     while (start + 4 + body.n) % al != 0 {
       body.u8(0)
@@ -579,8 +598,9 @@ fn (var a: Asm) elf_cie(var o: Out, eh: Int, f: Frame) {
   // code alignment 1, data alignment -4, return address x30; x86-64:
   // data alignment -8, return address %rip (16)
   body.uleb(1)
-  body.sleb(if a.amd64 { -8 } else { -4 })
-  body.uleb(if a.amd64 { 16 } else { 30 })
+  // riscv64: data alignment -8, return address ra (1)
+  body.sleb(if a.amd64 || a.rv64 { -8 } else { -4 })
+  body.uleb(if a.amd64 { 16 } else if a.rv64 { 1 } else { 30 })
   var alen = 1
   if f.pers >= 0 {
     alen += 5
@@ -607,9 +627,9 @@ fn (var a: Asm) elf_cie(var o: Out, eh: Int, f: Frame) {
     body.u8(0x90)
     body.u8(1)
   } else {
-    // DW_CFA_def_cfa sp, 0
+    // DW_CFA_def_cfa sp, 0 (riscv64's sp is x2)
     body.u8(0x0c)
-    body.u8(31)
+    body.u8(if a.rv64 { 2 } else { 31 })
     body.u8(0)
   }
   while (start + 4 + body.n) % 4 != 0 {
@@ -896,12 +916,13 @@ fn (var a: Asm) write_elf() -> Bytes {
   hd.zeros(8)
   // ET_REL, EM_AARCH64 (EM_X86_64)
   hd.u16(1)
-  hd.u16(if a.amd64 { 62 } else { 183 })
+  // EM_RISCV (243), e_flags EF_RISCV_FLOAT_ABI_DOUBLE (LP64D, no RVC)
+  hd.u16(if a.amd64 { 62 } else if a.rv64 { 243 } else { 183 })
   hd.u32(1)
   hd.u64(0)
   hd.u64(0)
   hd.u64(shoff)
-  hd.u32(0)
+  hd.u32(if a.rv64 { 4 } else { 0 })
   hd.u16(64)
   hd.u16(0)
   hd.u16(0)

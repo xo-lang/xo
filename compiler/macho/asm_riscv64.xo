@@ -1,0 +1,159 @@
+// The riscv64 ELF assembler (decision 0645, stage 1): Asm with rv64 set
+// reads the riscv64 emitter's assembly (LLVM's syntax, `#` comments) and
+// writes an ELF64 relocatable object for elflink, as `clang -c
+// --target=riscv64-linux-gnu -mno-relax` does: instructions from
+// enc_riscv64.xo, branches and jumps to labels of their own section
+// resolved, every other label reference relocated with its symbol (LLVM's
+// RISCVELFObjectWriter keeps the symbol of every relocation), no
+// R_RISCV_RELAX.
+
+/// assemble_elf_rv64: the ELF riscv64 object of src.
+pub fn assemble_elf_rv64(src: Bytes) -> Result[Bytes, Str] {
+  var a = Asm{elf: true, rv64: true}
+  a.parse(src)
+  if !a.err.is_empty() {
+    return Err(a.err)
+  }
+  a.finish()
+  if !a.err.is_empty() {
+    return Err(a.err)
+  }
+  Ok(a.write_elf())
+}
+
+/// One instruction line: its words, the first with its fixup.
+fn (var a: Asm) rv_instruction(l: Bytes) {
+  var k = 0
+  while k < l.len() && !is_space(l[k]) {
+    k += 1
+  }
+  let m = bstr(l[0..k])
+  let ops = split_operands(l[k..])
+  let e = rv_encode(m, ops)
+  if !e.ok {
+    return a.bad(m, ops)
+  }
+  for (i, w) in e.words.indexed() {
+    if i == 0 && e.fx >= 0 {
+      a.word_fix(w, e.fx, e.name)
+    } else {
+      a.word(w)
+    }
+  }
+}
+
+/// The DWARF register number of a riscv64 .cfi_ operand: x0 to x31 (or
+/// an ABI name) 0 to 31, f0 to f31 32 to 63.
+fn rv_dwarf_reg(b: Bytes) -> Int {
+  let x = rv_xreg(b)
+  if x >= 0 {
+    return x
+  }
+  let f = rv_freg(b)
+  if f >= 0 {
+    return 32 + f
+  }
+  -1
+}
+
+/// The relocation type of fixup kind k, -1 for a kind that is not
+/// riscv64's.
+fn rv_reloc_type(k: Int) -> Int {
+  if k == FX_RV_B {
+    R_RISCV_BRANCH
+  } else if k == FX_RV_J {
+    R_RISCV_JAL
+  } else if k == FX_RV_CALL {
+    R_RISCV_CALL_PLT
+  } else if k == FX_RV_PCREL_HI {
+    R_RISCV_PCREL_HI20
+  } else if k == FX_RV_PCREL_LO_I {
+    R_RISCV_PCREL_LO12_I
+  } else if k == FX_RV_PCREL_LO_S {
+    R_RISCV_PCREL_LO12_S
+  } else if k == FX_RV_GOT_HI {
+    R_RISCV_GOT_HI20
+  } else if k == FX_RV_TPREL_HI {
+    R_RISCV_TPREL_HI20
+  } else if k == FX_RV_TPREL_LO_I {
+    R_RISCV_TPREL_LO12_I
+  } else if k == FX_RV_TPREL_LO_S {
+    R_RISCV_TPREL_LO12_S
+  } else if k == FX_RV_TPREL_ADD {
+    R_RISCV_TPREL_ADD
+  } else {
+    -1
+  }
+}
+
+/// A riscv64 text fixup: a branch, jump or call to a local label of its
+/// own section resolved, the rest relocated. False after an error.
+fn (var a: Asm) rv_elf_fix(f: Fix) -> Bool {
+  let s = a.syms[f.sym]
+  let pc = f.at * 4
+  let w = a.sects[f.sect].words[f.at]
+  let local = s.sect == f.sect && !s.weak && !s.global
+  if local && (f.kind == FX_RV_B || f.kind == FX_RV_J) {
+    let d = s.off - pc
+    if f.kind == FX_RV_B {
+      if d % 2 != 0 || d < -4096 || d >= 4096 {
+        a.err = "line ${f.line}: branch out of range"
+        return false
+      }
+      a.sects[f.sect].words[f.at] = w | rv_b_imm(d)
+    } else {
+      if d % 2 != 0 || d < -1048576 || d >= 1048576 {
+        a.err = "line ${f.line}: jump out of range"
+        return false
+      }
+      a.sects[f.sect].words[f.at] = w | rv_j_imm(d)
+    }
+    return true
+  }
+  if local && f.kind == FX_RV_CALL {
+    // call/tail to a local function of its own section: auipc and jalr
+    // patched, no relocation, as llvm-mc does without relaxation
+    let (hi, lo) = rv_split(s.off - pc)
+    a.sects[f.sect].words[f.at] = w | (hi << 12)
+    a.sects[f.sect].words[f.at + 1] = a.sects[f.sect].words[f.at + 1] | rv_i_imm(lo)
+    return true
+  }
+  let typ = rv_reloc_type(f.kind)
+  if typ < 0 {
+    a.err = "line ${f.line}: fixup kind ${f.kind} is not riscv64's"
+    return false
+  }
+  if f.kind == FX_RV_TPREL_HI || f.kind == FX_RV_TPREL_LO_I || f.kind == FX_RV_TPREL_LO_S || f.kind == FX_RV_TPREL_ADD {
+    a.syms[f.sym].kind = STT_TLS
+  }
+  a.elf_reloc(f.sect, pc, typ, f.sym, 0)
+  true
+}
+
+/// The ISA string LLVM 23 writes for rv64imafd_zicsr_zifencei (the implied
+/// extensions with it) in .riscv.attributes and the first $x.
+const RV_ARCH = "rv64i2p1_m2p0_a2p1_f2p2_d2p2_zicsr2p0_zifencei2p0_zmmul1p0_zaamo1p0_zalrsc1p0"
+
+/// .riscv.attributes (SHT_RISCV_ATTRIBUTES), as LLVM writes it: format
+/// 'A', the "riscv" vendor subsection, one file attribute, Tag_RISCV_arch.
+fn (var a: Asm) rv_attributes() {
+  a.elf_section(".riscv.attributes", 0x70000003, 0, 0, -1)
+  let at = a.cur
+  a.sects[at].align = 0
+  a.sects[at].raw = true
+  a.map_data()
+  let arch = RV_ARCH.bytes()
+  var o = new_out(128)
+  o.u8(0x41)
+  // the subsection: its length, "riscv\0", then the file's attributes
+  o.u32(4 + 6 + 1 + 4 + 1 + arch.len() + 1)
+  o.bytes("riscv".bytes())
+  o.u8(0)
+  o.u8(1)
+  o.u32(1 + 4 + 1 + arch.len() + 1)
+  o.u8(5)
+  o.bytes(arch)
+  o.u8(0)
+  a.sects[at].bytes = o.done()
+  a.sects[at].size = a.sects[at].bytes.len()
+}
