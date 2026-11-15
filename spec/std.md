@@ -9114,7 +9114,17 @@ struct CronErr { msg: Str }                  // displays robfig/cron's text, e.g
 fn parse(spec: Str, zone: time.Zone = time.utc()) -> Schedule ! CronErr
 fn (s: Schedule) next(after: Time) -> Time?   // strictly after, whole seconds; None when none within 5 years
 fn (s: Schedule) zone() -> time.Zone
+const SECOND, SECOND_OPTIONAL, MINUTE, HOUR, DOM, MONTH, DOW, DOW_OPTIONAL, DESCRIPTOR: Int   // ParseOption bits
+fn parser(options: Int) -> Parser            // NewParser; SECOND_OPTIONAL with DOW_OPTIONAL faults
+fn (p: Parser) parse(spec: Str, zone: time.Zone = time.utc()) -> Schedule ! CronErr
 ```
+
+- `parser(options)` is robfig's NewParser (2026-11-15): the fields named by the options, in the order second,
+  minute, hour, day of month, month, day of week; a field left out takes robfig's default (0 for second, minute
+  and hour, `*` else); SECOND_OPTIONAL or DOW_OPTIONAL lets that field be omitted; descriptors only with
+  DESCRIPTOR (else `parser does not accept descriptors: @daily`). robfig's WithSeconds is
+  `cron.parser(cron.SECOND | cron.MINUTE | cron.HOUR | cron.DOM | cron.MONTH | cron.DOW | cron.DESCRIPTOR)`.
+  `next` honors the seconds field as robfig's Next does. Checked against robfig on six option sets.
 
 - The spec is robfig's ParseStandard: five fields (minute 0-59, hour 0-23, day of month 1-31, month 1-12 or
   jan-dec, day of week 0-6 or sun-sat), each a comma list of `*`, `?`, a number or name, `a-b`, `a-b/n`, `*/n`,

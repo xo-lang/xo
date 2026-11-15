@@ -1,5 +1,16 @@
 # std/cron changes
 
+## 2026-11-15: feature: parser with robfig's options: a seconds field, optional fields, descriptors on or off
+
+- Kind: feature
+- Commit: this push
+- Found by: scripts/stdaudit gaps cron.NewParser, ParseOption, Parser, Second, SecondOptional, WithSeconds and WithParser (decision 0655)
+- Go reference: github.com/robfig/cron/v3 v3.0.1 parser.go (NewParser, Parse, normalizeFields) and spec.go (Next's seconds loop) (Copyright (C) 2012 Rob Figueiredo, MIT license)
+- Test: corpus cron, 327 schedules over six option sets with Next from seeded starts and 78 error texts, from robfig itself through scripts/stdcorpus/cronoracle (go, arm64, llvm)
+- Shipped in: not yet released
+
+`cron.parser(options)` and `Parser.parse`, with `SECOND` to `DESCRIPTOR`; a Schedule now has a seconds field (0 for `parse`'s, as robfig's ParseStandard), and `next` walks seconds as robfig's Next does. `parse` is unchanged.
+
 ## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
 
 - Kind: refactor

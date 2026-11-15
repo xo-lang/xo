@@ -23,6 +23,7 @@ pub fn (e: CronErr) display() -> Str { e.msg }
 pub struct Schedule {
   /// @every: the delay in seconds, else 0
   _every: Int
+  _second: Int
   _minute: Int
   _hour: Int
   _dom: Int
@@ -63,16 +64,128 @@ pub fn parse(spec: Str, zone: time.Zone = time.utc()) -> Schedule ! CronErr {
   if spec1.starts_with("@") {
     return descriptor(spec1, z)
   }
-  let fields = spec1.fields()
-  if fields.len() != 5 {
-    return Err(err_of("expected exactly 5 fields, found ${fields.len()}: [${fields.join(" ")}]"))
+  fields_of(spec1.fields(), STANDARD, z)
+}
+
+/// The parts of a spec a Parser reads (robfig's ParseOption), or'ed together.
+pub const SECOND: Int = 1
+/// A seconds field that may be left out (then 0); not with DOW_OPTIONAL.
+pub const SECOND_OPTIONAL: Int = 2
+pub const MINUTE: Int = 4
+pub const HOUR: Int = 8
+pub const DOM: Int = 16
+pub const MONTH: Int = 32
+pub const DOW: Int = 64
+/// A day of week field that may be left out (then `*`).
+pub const DOW_OPTIONAL: Int = 128
+/// `@yearly` and the other descriptors, and `@every`.
+pub const DESCRIPTOR: Int = 256
+
+/// `parse`'s fields: MINUTE, HOUR, DOM, MONTH, DOW and DESCRIPTOR.
+const STANDARD: Int = 380
+
+/// A spec parser for a chosen set of fields (robfig's Parser): a field not
+/// in the set takes its default (0 for second, minute and hour, `*` for the
+/// others).
+pub struct Parser {
+  _options: Int
+}
+
+/// A parser of `options` (robfig's NewParser), for example
+/// `SECOND | MINUTE | HOUR | DOM | MONTH | DOW | DESCRIPTOR` for robfig's
+/// WithSeconds. SECOND_OPTIONAL with DOW_OPTIONAL faults, as NewParser
+/// panics.
+pub fn parser(options: Int) -> Parser {
+  if (options & SECOND_OPTIONAL) != 0 && (options & DOW_OPTIONAL) != 0 {
+    fault("multiple optionals may not be configured")
   }
-  let (minute, _) = get_field(fields[0], 0, 59, NONAMES)?
-  let (hour, _) = get_field(fields[1], 0, 23, NONAMES)?
-  let (dom, dom_star) = get_field(fields[2], 1, 31, NONAMES)?
-  let (month, _) = get_field(fields[3], 1, 12, MONTHS)?
-  let (dow, dow_star) = get_field(fields[4], 0, 6, DOWS)?
-  Ok(sched(minute, hour, dom, month, dow, dom_star, dow_star, z))
+  Parser{_options: options}
+}
+
+/// The schedule of spec under the parser's fields (robfig's Parser.Parse),
+/// with `parse`'s `TZ=` prefix, descriptors (when DESCRIPTOR is set) and
+/// error texts.
+pub fn (p: Parser) parse(spec: Str, zone: time.Zone = time.utc()) -> Schedule ! CronErr {
+  if spec.len() == 0 {
+    return Err(err_of("empty spec string"))
+  }
+  var spec1 = spec
+  var z = zone
+  if spec1.starts_with("TZ=") || spec1.starts_with("CRON_TZ=") {
+    let i = spec1.find(" ") ?? -1
+    let eq = spec1.find("=") ?? 0
+    if i < 0 {
+      return Err(err_of("provided bad location ${spec1[eq + 1..]}: missing space after the time zone"))
+    }
+    let name = spec1[eq + 1..i]
+    z = match time.zone(name) {
+      Ok(x) => x
+      Err(e) => return Err(err_of("provided bad location ${name}: ${e.display()}"))
+    }
+    spec1 = spec1[i..].trim()
+  }
+  if spec1.starts_with("@") {
+    if (p._options & DESCRIPTOR) == 0 {
+      return Err(err_of("parser does not accept descriptors: ${spec1}"))
+    }
+    return descriptor(spec1, z)
+  }
+  fields_of(spec1.fields(), p._options, z)
+}
+
+/// normalizeFields then the six getField calls of Parser.Parse.
+fn fields_of(given: List[Str], options0: Int, z: time.Zone) -> Schedule ! CronErr {
+  var options = options0
+  var optionals = 0
+  if (options & SECOND_OPTIONAL) != 0 {
+    options = options | SECOND
+    optionals += 1
+  }
+  if (options & DOW_OPTIONAL) != 0 {
+    options = options | DOW
+    optionals += 1
+  }
+  if optionals > 1 {
+    return Err(err_of("multiple optionals may not be configured"))
+  }
+  let places = [SECOND, MINUTE, HOUR, DOM, MONTH, DOW]
+  var max = 0
+  for pl in places {
+    if (options & pl) != 0 {
+      max += 1
+    }
+  }
+  let min = max - optionals
+  let count = given.len()
+  if count < min || count > max {
+    if min == max {
+      return Err(err_of("expected exactly ${min} fields, found ${count}: [${given.join(" ")}]"))
+    }
+    return Err(err_of("expected ${min} to ${max} fields, found ${count}: [${given.join(" ")}]"))
+  }
+  var fields = given
+  if min < max && count == min {
+    if (options & DOW_OPTIONAL) != 0 {
+      fields = fields + ["*"]
+    } else {
+      fields = ["0"] + fields
+    }
+  }
+  var all = ["0", "0", "0", "*", "*", "*"]
+  var n = 0
+  for (i, pl) in places.indexed() {
+    if (options & pl) != 0 {
+      all[i] = fields[n]
+      n += 1
+    }
+  }
+  let (second, _) = get_field(all[0], 0, 59, NONAMES)?
+  let (minute, _) = get_field(all[1], 0, 59, NONAMES)?
+  let (hour, _) = get_field(all[2], 0, 23, NONAMES)?
+  let (dom, dom_star) = get_field(all[3], 1, 31, NONAMES)?
+  let (month, _) = get_field(all[4], 1, 12, MONTHS)?
+  let (dow, dow_star) = get_field(all[5], 0, 6, DOWS)?
+  Ok(sched(second, minute, hour, dom, month, dow, dom_star, dow_star, z))
 }
 
 /// The first fire time strictly after `after` (robfig's Next, whole
@@ -177,9 +290,16 @@ pub fn (s: Schedule) next(after: Time) -> Time? {
     if wrap {
       continue
     }
-    if c.time.second != 0 {
+    while ((s._second >> c.time.second) & 1) == 0 {
       added = true
-      t = t + (60 - c.time.second)
+      t += 1
+      c = civ(t, z)
+      if c.time.second == 0 {
+        wrap = true
+        break
+      }
+    }
+    if wrap {
       continue
     }
     return Some(Time.from_unix(t))
@@ -325,8 +445,8 @@ fn get_field(field: Str, lo: Int, hi: Int, names: List[(Str, Int)]) -> (Int, Boo
   Ok((b, star))
 }
 
-fn sched(minute: Int, hour: Int, dom: Int, month: Int, dow: Int, dom_star: Bool, dow_star: Bool, z: time.Zone) -> Schedule {
-  Schedule{_every: 0, _minute: minute, _hour: hour, _dom: dom, _month: month, _dow: dow, _dom_star: dom_star, _dow_star: dow_star, _loc: z}
+fn sched(second: Int, minute: Int, hour: Int, dom: Int, month: Int, dow: Int, dom_star: Bool, dow_star: Bool, z: time.Zone) -> Schedule {
+  Schedule{_every: 0, _second: second, _minute: minute, _hour: hour, _dom: dom, _month: month, _dow: dow, _dom_star: dom_star, _dow_star: dow_star, _loc: z}
 }
 
 fn descriptor(d: Str, z: time.Zone) -> Schedule ! CronErr {
@@ -335,11 +455,11 @@ fn descriptor(d: Str, z: time.Zone) -> Schedule ! CronErr {
   let all_months = bits(1, 12, 1)
   let all_dow = bits(0, 6, 1)
   match d {
-    "@yearly" | "@annually" => Ok(sched(1, 1, 1 << 1, 1 << 1, all_dow, false, true, z))
-    "@monthly" => Ok(sched(1, 1, 1 << 1, all_months, all_dow, false, true, z))
-    "@weekly" => Ok(sched(1, 1, all_dom, all_months, 1, true, false, z))
-    "@daily" | "@midnight" => Ok(sched(1, 1, all_dom, all_months, all_dow, true, true, z))
-    "@hourly" => Ok(sched(1, all_hours, all_dom, all_months, all_dow, true, true, z))
+    "@yearly" | "@annually" => Ok(sched(1, 1, 1, 1 << 1, 1 << 1, all_dow, false, true, z))
+    "@monthly" => Ok(sched(1, 1, 1, 1 << 1, all_months, all_dow, false, true, z))
+    "@weekly" => Ok(sched(1, 1, 1, all_dom, all_months, 1, true, false, z))
+    "@daily" | "@midnight" => Ok(sched(1, 1, 1, all_dom, all_months, all_dow, true, true, z))
+    "@hourly" => Ok(sched(1, 1, all_hours, all_dom, all_months, all_dow, true, true, z))
     _ => {
       if d.starts_with("@every ") {
         let text = d[7..]
@@ -351,8 +471,8 @@ fn descriptor(d: Str, z: time.Zone) -> Schedule ! CronErr {
         if secs < 1 {
           secs = 1
         }
-        let s = sched(0, 0, 0, 0, 0, false, false, z)
-        return Ok(Schedule{_every: secs, _minute: s._minute, _hour: s._hour, _dom: s._dom, _month: s._month, _dow: s._dow, _dom_star: false, _dow_star: false, _loc: z})
+        let s = sched(1, 0, 0, 0, 0, 0, false, false, z)
+        return Ok(Schedule{_every: secs, _second: s._second, _minute: s._minute, _hour: s._hour, _dom: s._dom, _month: s._month, _dow: s._dow, _dom_star: false, _dow_star: false, _loc: z})
       }
       Err(err_of("unrecognized descriptor: ${d}"))
     }
