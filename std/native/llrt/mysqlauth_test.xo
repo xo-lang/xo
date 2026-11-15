@@ -1,0 +1,26 @@
+// std/native/llrt/mysqlauth.xo's tests: the scrambles of MySQL's
+// documented formulas, with vectors from Python's hashlib (an independent
+// implementation; decision 0648). The conformance run logs in to a real
+// server with each plugin.
+
+const NONCE: Bytes = b"abcdefghijklmnopqrst"
+
+test "mysql_native_password's scramble" {
+  expect(native_scramble(b"secret", NONCE).to_hex()) == "8817c50fa779daef010ee7577825b0847df9842e"
+  expect(native_scramble(b"", NONCE)) == b""
+}
+
+test "caching_sha2_password's scramble" {
+  expect(sha2_scramble(b"secret", NONCE).to_hex()) == "c76e2898612a4cf042c77fa8c4702c4c64c0c2c557c53c4d75595aaa6abae809"
+  expect(sha2_scramble(b"", NONCE)) == b""
+}
+
+test "the RSA plaintext and the first responses" {
+  expect(rsa_plain(b"secret", NONCE).to_hex()) == "12070016001267"
+  expect(first_response("caching_sha2_password", b"secret", NONCE, false)) == Some(sha2_scramble(b"secret", NONCE))
+  expect(first_response("mysql_native_password", b"secret", NONCE, false)) == Some(native_scramble(b"secret", NONCE))
+  expect(first_response("mysql_clear_password", b"secret", NONCE, false)) == Some(b"secret\x00")
+  expect(first_response("sha256_password", b"secret", NONCE, true)) == Some(b"secret\x00")
+  expect(first_response("sha256_password", b"secret", NONCE, false)) == Some(b"\x01")
+  expect(first_response("mysql_old_password", b"secret", NONCE, false)) == None
+}

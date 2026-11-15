@@ -1,0 +1,65 @@
+// Origin: MySQL's documentation of its authentication methods (dev.mysql.com,
+// MySQL Source Code Documentation: page_protocol_connection_phase_authentication_methods,
+// page_caching_sha2_authentication_exchanges, and the reference manual's
+// "Caching SHA-2 Pluggable Authentication" and "Native Pluggable
+// Authentication") for std/sql's MySQL driver (decision 0648 item 3; route
+// (a): from the documentation, not from a driver's code). The scrambles
+// each plugin sends for a password and the server's nonce.
+use std/crypto
+
+/// mysql_native_password: SHA1(password) XOR SHA1(nonce + SHA1(SHA1(password))),
+/// empty for an empty password.
+pub fn native_scramble(password: Bytes, nonce: Bytes) -> Bytes {
+  if password.is_empty() {
+    return b""
+  }
+  let h1 = crypto.digest(crypto.Hash.Sha1, password)
+  let h2 = crypto.digest(crypto.Hash.Sha1, h1)
+  crypto.xor(h1, crypto.digest(crypto.Hash.Sha1, nonce + h2))
+}
+
+/// caching_sha2_password's fast path: SHA256(password) XOR
+/// SHA256(SHA256(SHA256(password)) + nonce), empty for an empty password.
+pub fn sha2_scramble(password: Bytes, nonce: Bytes) -> Bytes {
+  if password.is_empty() {
+    return b""
+  }
+  let h1 = crypto.sha256(password)
+  let h2 = crypto.sha256(h1)
+  crypto.xor(h1, crypto.sha256(h2 + nonce))
+}
+
+/// The password as sent in clear (over TLS or a Unix socket, or by
+/// mysql_clear_password): its bytes and a 0.
+pub fn clear(password: Bytes) -> Bytes { password + b"\x00" }
+
+/// What RSA encrypts in caching_sha2_password's and sha256_password's full
+/// authentication: the password and a 0, xored with the nonce repeated.
+pub fn rsa_plain(password: Bytes, nonce: Bytes) -> Bytes {
+  let p = clear(password)
+  var w = BytesBuilder.with_capacity(p.len())
+  for i in 0..p.len() {
+    w.write_byte(p[i] ^ nonce[i % nonce.len()])
+  }
+  w.freeze()
+}
+
+/// caching_sha2_password's AuthMoreData status bytes.
+pub const SHA2_REQUEST_PUBLIC_KEY: Int = 2
+pub const SHA2_FAST_AUTH_OK: Int = 3
+pub const SHA2_PERFORM_FULL_AUTH: Int = 4
+
+/// The first response of plugin to nonce: its scramble, or the password in
+/// clear for mysql_clear_password and, on a secure link, sha256_password;
+/// None for a plugin the driver does not have.
+pub fn first_response(plugin: Str, password: Bytes, nonce: Bytes, secure: Bool) -> Bytes? {
+  match plugin {
+    "caching_sha2_password" => Some(sha2_scramble(password, nonce))
+    "mysql_native_password" => Some(native_scramble(password, nonce))
+    "mysql_clear_password" => Some(clear(password))
+    // sha256_password: the password in clear on a secure link, else a
+    // request for the server's key (the byte 1), or empty for no password
+    "sha256_password" => Some(if password.is_empty() { b"" } else if secure { clear(password) } else { b"\x01" })
+    _ => None
+  }
+}
