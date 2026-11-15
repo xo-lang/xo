@@ -68,9 +68,12 @@ by Postgres.
    `/gates` (queue, step durations, failures by cause), `/std` (stdcov
    by axis over time), `/decisions` (pending owner, unacknowledged),
    `/search?q=`. Read-only in stage 1; writes stay in the CLI.
-5. **Access:** the server listens on the Mac Studio's VPN address only
-   (never 0.0.0.0, never the OCI host), with a token cookie from
-   `~/xo-lead/xw.env`. The database holds no secrets: ingesters drop
+5. **Access** (owner, 2026-11-15): the server listens on 0.0.0.0 on the
+   Mac Studio (the owner's phone reaches it over the VPN into the home
+   network; no router port forward; never the OCI host), behind a token
+   cookie from `~/xo-lead/xw.env`. Plain HTTP carries the token across
+   the home network; HTTPS with a self-signed certificate is the step up
+   if wanted. The database holds no secrets: ingesters drop
    message text, and the private values of CLAUDE.local.md never enter
    an event (the CLI refuses values matching the patterns of
    `~/xo-lead/xw-redact.txt`).
