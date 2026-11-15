@@ -1,7 +1,9 @@
 # 0648: MySQL driver for std/sql
 
-Status: Proposed (2026-11-15, aws-43 for the lead). Two points wait for
-the owner: the license route (item 11) and the TLS default (item 4).
+Status: Proposed (2026-11-15, aws-43 for the lead). The license route
+(item 11: route (a), from MySQL's documentation, go-sql-driver only in
+the test oracle) and the TLS default (item 4: `tls=true`, verified) are
+the lead's, provisional, on the owner's list to confirm.
 
 ## Context
 
@@ -78,7 +80,11 @@ conformance tests and `xo bench --ab`.
    one that names `tls` keeps its meaning. The cost is that MySQL 8's
    auto generated self signed certificate fails `true`, so a default
    install needs `tls=custom` with its CA, `tls=skip-verify` or
-   `tls=false`. A Unix socket never uses TLS.
+   `tls=false`; that failure is a `Conn` error whose text says so and
+   names `tls=custom` (with `roots:`) and `tls=skip-verify`, when the
+   server's certificate is self signed with MySQL's auto generated
+   issuer (`MySQL_Server_..._Auto_Generated_CA_Certificate`). A Unix
+   socket never uses TLS.
 5. **Queries.** Without arguments a statement runs with COM_QUERY and
    the text protocol (so `exec` of a `;` separated schema works with
    `multiStatements=true`). With arguments it is a server side prepared
