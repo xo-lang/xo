@@ -29,6 +29,7 @@ internal.obj_word  an object's address for rt_probe; only the internal/llvm/test
 internal.rt_queued  the realtime queue depth, native backends only
 internal.rt_allocs  the realtime allocation count, native backends only
 internal.lock_shared  the shared fs lock a reader takes; no corpus opens one
+internal.heap_region  xo's front end allocation region (decision 0633, f42255c27): only compiler/xo calls it, and it is 0 on the Go and wasm backends
 
 # Swap shapes a codegen pattern needs a call site for (test/codegen/intrinsics,
 # the bounds check of each index): a golden cannot call them, because a golden
