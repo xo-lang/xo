@@ -3315,6 +3315,7 @@ pub fn clean(p: Str) -> Str          // removes `.`, `..`, repeated `/`
 pub fn is_abs(p: Str) -> Bool        // starts with "/"
 pub fn rel(base: Str, target: Str) -> Str?   // filepath.Rel, lexical
 pub fn is_local(p: Str) -> Bool      // filepath.IsLocal (Unix rules)
+pub fn eval_symlinks(fs: Fs, p: Str) -> Str ! FsErr uses fs.read   // filepath.EvalSymlinks
 
 struct PathErr { pattern: Str }      // a pattern `match` cannot parse
 pub fn is_match(pattern: Str, name: Str) -> Bool ! PathErr
@@ -3332,6 +3333,14 @@ the other not, or `base` leaving `..` elements that only the file system
 could resolve. `is_local(p)` is filepath.IsLocal with the Unix rules:
 false for "", an absolute path, or one whose cleaned form is `..` or
 starts with `../`.
+
+`eval_symlinks(fs, p)` is filepath.EvalSymlinks through an Fs: each
+component of p is looked up in turn and a symbolic link replaced by its
+target (relative to the link's directory, or absolute), `..` applied to
+what is resolved so far, and the result cleaned; a relative p stays
+relative. A missing component is `NotFound`, a file before more
+components `NotDir`, and more than 255 links an `Io` error with Go's
+text `EvalSymlinks: too many links`.
 
 Go's path package's results on every backend. Every backend runs one
 implementation, std/native/path.xo: the Go backend compiles it too

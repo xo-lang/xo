@@ -8703,6 +8703,87 @@ const MATCH_CASES: List[(Str, Str, Str)] = [
   ("\\**\\\\", "/", "false"),
 ]
 
+/// The tree under es/ (Go's TestEvalSymlinks dirs and links, a loop, a file): path, link target, "" for a directory, or "file"
+const ES_TREE: List[(Str, Str)] = [
+  ("test", ""),
+  ("test/dir", ""),
+  ("test/dir/link3", "../../"),
+  ("test/link1", "../test"),
+  ("test/link2", "dir"),
+  ("test/linkabs", "/"),
+  ("test/link4", "../test2"),
+  ("test2", "test/dir"),
+  ("src", ""),
+  ("src/pool", ""),
+  ("src/pool/test", ""),
+  ("src/versions", ""),
+  ("src/versions/current", "../../version"),
+  ("src/versions/v1", ""),
+  ("src/versions/v1/modules", ""),
+  ("src/versions/v1/modules/test", "../../../pool/test"),
+  ("version", "src/versions/v1"),
+  ("loop1", "loop2"),
+  ("loop2", "loop1"),
+  ("f.txt", "file"),
+  ("tofile", "f.txt"),
+  ("dangling", "nothere"),
+]
+
+/// (es/CASE, Go's filepath.EvalSymlinks: the path, or err NotFound, err NotDir, err TEXT)
+const ES_CASES: List[(Str, Str)] = [
+  ("es/test", "es/test"),
+  ("es/test/dir", "es/test/dir"),
+  ("es/test/dir/../..", "es"),
+  ("es/test/link1", "es/test"),
+  ("es/test/link2", "es/test/dir"),
+  ("es/test/link1/dir", "es/test/dir"),
+  ("es/test/link2/..", "es/test"),
+  ("es/test/dir/link3", "es"),
+  ("es/test/link2/link3/test", "es/test"),
+  ("es/test/linkabs", "/"),
+  ("es/test/link4/..", "es/test"),
+  ("es/src/versions/current/modules/test", "es/src/pool/test"),
+  ("es/loop1", "err EvalSymlinks: too many links"),
+  ("es/loop1/x", "err EvalSymlinks: too many links"),
+  ("es/missing", "err NotFound"),
+  ("es/test/missing/x", "err NotFound"),
+  ("es/f.txt", "es/f.txt"),
+  ("es/f.txt/x", "err NotDir"),
+  ("es/tofile", "es/f.txt"),
+  ("es/tofile/x", "err NotDir"),
+  ("es/dangling", "err NotFound"),
+  ("es/./test//link2/", "es/test/dir"),
+  ("es/test/../test2", "es/test/dir"),
+  ("es/..", "."),
+  ("es/test2/link3/test/link1", "es/test"),
+]
+
+test "eval_symlinks is Go's filepath.EvalSymlinks on its test tree" {
+  os.fs.remove_all("es").ok() ?? ()
+  for (p, kind) in ES_TREE {
+    let at = "es/${p}"
+    match kind {
+      "" => os.fs.create_dir_all(at)?
+      "file" => os.fs.write(at, b"x")?
+      _ => os.fs.symlink(kind, at)?
+    }
+  }
+  var bad: List[(Str, Str, Str)] = []
+  for (c, want) in ES_CASES {
+    let got = match path.eval_symlinks(os.fs, c) {
+      Ok(s) => s
+      Err(FsErr.NotFound(_)) => "err NotFound"
+      Err(FsErr.NotDir(_)) => "err NotDir"
+      Err(FsErr.Io(_, m)) => "err ${m}"
+      Err(e) => "err ${e.display()}"
+    }
+    if got != want {
+      bad.push((c, got, want))
+    }
+  }
+  expect(bad) == []
+}
+
 fn show(bad: List[(Str, Str, Str, Str)]) -> List[(Str, Str, Str, Str)] {
   bad[0..(if bad.len() < 25 { bad.len() } else { 25 })]
 }

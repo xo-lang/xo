@@ -1,5 +1,17 @@
 # std/path changes
 
+## 2026-11-15: feature: eval_symlinks (Go's filepath.EvalSymlinks)
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655)
+- Go reference: path/filepath symlink.go walkSymlinks (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/path (scripts/stdcorpus path): Go's TestEvalSymlinks tree (with issue 23444's) plus a link loop, a file and a dangling link, built on disk; 25 paths with Go's EvalSymlinks result or error kind (arm64, LLVM, Go)
+- Timing: none
+
+`path.eval_symlinks(fs, p)` resolves every symbolic link in p through
+an Fs, as Go's filepath.EvalSymlinks does.
+
 ## 2026-11-15: feature: rel and is_local (Go's filepath.Rel and IsLocal)
 
 - Kind: feature

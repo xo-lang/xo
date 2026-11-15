@@ -644,3 +644,100 @@ fn scan_chunk(p: Bytes, i0: Int) -> (Bool, Int, Int, Int) {
   }
   (star, start, n, n)
 }
+
+/// The index of the last `/` in d at or after lo, or lo - 1 for none.
+fn last_sep(d: Str, lo: Int) -> Int {
+  let b = d.bytes()
+  var r = b.len() - 1
+  while r >= lo {
+    if b[r] == 47 {
+      return r
+    }
+    r -= 1
+  }
+  r
+}
+
+/// p with every symbolic link in it replaced by its target, cleaned (Go's
+/// filepath.EvalSymlinks): each component is looked up in fs in turn, a
+/// link's target (relative to the link's directory, or absolute) joined
+/// with the rest. NotFound for a component that is not there, NotDir
+/// for a file before more components, and `EvalSymlinks: too many links`
+/// (an Io error on p) after 255 links. A relative p stays relative.
+pub fn eval_symlinks(fs: Fs, p: Str) -> Str ! FsErr uses fs.read {
+  var path = p
+  var vol_len = if is_abs(path) { 1 } else { 0 }
+  var vol = cut(path, 0, vol_len)
+  var dest = vol
+  var links = 0
+  var start = vol_len
+  var end = vol_len
+  while start < path.len() {
+    let pb = path.bytes()
+    while start < pb.len() && pb[start] == 47 {
+      start += 1
+    }
+    end = start
+    while end < pb.len() && pb[end] != 47 {
+      end += 1
+    }
+    let part = cut(path, start, end)
+    if end == start {
+      break
+    }
+    if part == "." {
+      start = end
+      continue
+    }
+    if part == ".." {
+      // back up to the previous component if there is one
+      let r = last_sep(dest, vol_len)
+      if r < vol_len || cut(dest, r + 1, dest.len()) == ".." {
+        if dest.len() > vol_len {
+          dest += "/"
+        }
+        dest += ".."
+      } else {
+        dest = cut(dest, 0, r)
+      }
+      start = end
+      continue
+    }
+    if dest.len() > 0 && !dest.ends_with("/") {
+      dest += "/"
+    }
+    dest += part
+    match fs.read_link(dest)? {
+      None => {
+        match fs.stat(dest)? {
+          None => return Err(FsErr.NotFound(dest))
+          Some(info) => {
+            if !info.is_dir && end < path.len() {
+              return Err(FsErr.NotDir(dest))
+            }
+          }
+        }
+        start = end
+      }
+      Some(link) => {
+        links += 1
+        if links > 255 {
+          return Err(FsErr.Io(path: p, msg: "EvalSymlinks: too many links"))
+        }
+        path = link + cut(path, end, path.len())
+        if is_abs(link) {
+          dest = "/"
+          end = 1
+          vol = "/"
+          vol_len = 1
+        } else {
+          let r = last_sep(dest, vol_len)
+          dest = if r < vol_len { vol } else { cut(dest, 0, r) }
+          end = 0
+        }
+        start = end
+      }
+    }
+  }
+  Ok(clean(dest))
+}

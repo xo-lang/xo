@@ -1,11 +1,15 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"math/rand"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // The std/path corpus: Go's path package on the inputs of its own tests
@@ -1550,11 +1554,107 @@ func pathCorpus() string {
 	}
 	o.WriteString("]\n")
 
+	evalSymlinksCorpus(&o)
 	o.WriteString(pathTests)
 	return o.String()
 }
 
+// The tree of Go's path/filepath TestEvalSymlinks (EvalSymlinksTestDirs,
+// with issue 23444's), under es/, plus a link loop and a file in the
+// middle of a path: (path, link target or "" for a directory, or "file").
+var esTree = [][2]string{
+	{"test", ""}, {"test/dir", ""}, {"test/dir/link3", "../../"}, {"test/link1", "../test"}, {"test/link2", "dir"},
+	{"test/linkabs", "/"}, {"test/link4", "../test2"}, {"test2", "test/dir"},
+	{"src", ""}, {"src/pool", ""}, {"src/pool/test", ""}, {"src/versions", ""}, {"src/versions/current", "../../version"},
+	{"src/versions/v1", ""}, {"src/versions/v1/modules", ""}, {"src/versions/v1/modules/test", "../../../pool/test"},
+	{"version", "src/versions/v1"},
+	{"loop1", "loop2"}, {"loop2", "loop1"}, {"f.txt", "file"}, {"tofile", "f.txt"}, {"dangling", "nothere"},
+}
+
+// esCases: Go's EvalSymlinksTests inputs, then errors and odd forms.
+var esCases = []string{
+	"test", "test/dir", "test/dir/../..", "test/link1", "test/link2", "test/link1/dir", "test/link2/..",
+	"test/dir/link3", "test/link2/link3/test", "test/linkabs", "test/link4/..", "src/versions/current/modules/test",
+	"loop1", "loop1/x", "missing", "test/missing/x", "f.txt", "f.txt/x", "tofile", "tofile/x", "dangling",
+	"./test//link2/", "test/../test2", "..", "test2/link3/test/link1",
+}
+
+// evalSymlinksCorpus builds esTree in a temporary directory and records
+// Go's filepath.EvalSymlinks of es/CASE from inside it: the path, or the
+// error's kind (NotFound, NotDir, or the text of any other).
+func evalSymlinksCorpus(o *strings.Builder) {
+	dir, err := os.MkdirTemp("", "es")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(dir)
+	for _, e := range esTree {
+		p := filepath.Join(dir, "es", e[0])
+		switch e[1] {
+		case "":
+			err = os.MkdirAll(p, 0o755)
+		case "file":
+			err = os.WriteFile(p, []byte("x"), 0o644)
+		default:
+			err = os.Symlink(e[1], p)
+		}
+		if err != nil {
+			panic(err)
+		}
+	}
+	wd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		panic(err)
+	}
+	defer os.Chdir(wd)
+	o.WriteString("\n/// The tree under es/ (Go's TestEvalSymlinks dirs and links, a loop, a file): path, link target, \"\" for a directory, or \"file\"\nconst ES_TREE: List[(Str, Str)] = [\n")
+	for _, e := range esTree {
+		fmt.Fprintf(o, "  (%q, %q),\n", e[0], e[1])
+	}
+	o.WriteString("]\n\n/// (es/CASE, Go's filepath.EvalSymlinks: the path, or err NotFound, err NotDir, err TEXT)\nconst ES_CASES: List[(Str, Str)] = [\n")
+	for _, c := range esCases {
+		got, err := filepath.EvalSymlinks("es/" + c)
+		switch {
+		case err == nil:
+		case errors.Is(err, fs.ErrNotExist):
+			got = "err NotFound"
+		case errors.Is(err, syscall.ENOTDIR):
+			got = "err NotDir"
+		default:
+			got = "err " + err.Error()
+		}
+		fmt.Fprintf(o, "  (%q, %q),\n", "es/"+c, got)
+	}
+	o.WriteString("]\n")
+}
+
 const pathTests = `
+test "eval_symlinks is Go's filepath.EvalSymlinks on its test tree" {
+  os.fs.remove_all("es").ok() ?? ()
+  for (p, kind) in ES_TREE {
+    let at = "es/${p}"
+    match kind {
+      "" => os.fs.create_dir_all(at)?
+      "file" => os.fs.write(at, b"x")?
+      _ => os.fs.symlink(kind, at)?
+    }
+  }
+  var bad: List[(Str, Str, Str)] = []
+  for (c, want) in ES_CASES {
+    let got = match path.eval_symlinks(os.fs, c) {
+      Ok(s) => s
+      Err(FsErr.NotFound(_)) => "err NotFound"
+      Err(FsErr.NotDir(_)) => "err NotDir"
+      Err(FsErr.Io(_, m)) => "err ${m}"
+      Err(e) => "err ${e.display()}"
+    }
+    if got != want {
+      bad.push((c, got, want))
+    }
+  }
+  expect(bad) == []
+}
+
 fn show(bad: List[(Str, Str, Str, Str)]) -> List[(Str, Str, Str, Str)] {
   bad[0..(if bad.len() < 25 { bad.len() } else { 25 })]
 }
