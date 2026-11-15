@@ -648,7 +648,12 @@ cp - xo-host4:DIR`; the seeds 0.50.1-6d0a9dc7, 0.51.0 and 0.51.1-e391d9a4
 under /work/seed; a root password of its own (in the env file only); and on
 /work, mode 1777 with the directories offload.q and offload.runs and the
 files offload.lock, offload.lock.2 and offload.lock.3, all owned by xo (a
-file where a directory belongs fails a job with "Not a directory"). The
+file where a directory belongs fails a job with "Not a directory"); and
+the gate directories /work/in (root), /work/out and /work/offgate-keep
+(xo, 775) and the gate repository /work/priv, copied from host 3 (23 refs
+on both, 2026-11-15). The first gate there failed with rc 2 before these
+existed, though the probe had passed
+([gotcha](../gotchas/host-probe-skips-bundle-path.md)). The
 lane has one slot, so every lease there has the whole host: it is for
 memory and exclusive runs. offload-gate.sh sends a memory gate (llvm,
 arm64, corpora-all or cmd, or OFFGATE_MEM=1) there first when the caller
