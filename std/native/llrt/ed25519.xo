@@ -666,21 +666,39 @@ fn public_key_dit(seed: Bytes) -> Bytes {
 /// crypto.ed25519_sign: key is the 32 byte seed, or Go's 64 byte private
 /// key (the seed, then its public key, used as stored, as Go's Sign
 /// does, which saves a base multiplication); crypto.xo checks the length.
-pub fn sign(key: Bytes, msg: Bytes) -> Bytes {
+pub fn sign(key: Bytes, msg: Bytes) -> Bytes { sign_dom(key, msg, b"") }
+
+/// RFC 8032's dom2(phflag, context): Go's domPrefixPh or domPrefixCtx,
+/// then the context's length and bytes (at most 255; crypto.xo checks).
+pub fn dom2(ph: Bool, context: Bytes) -> Bytes {
+  var b = BytesBuilder.with_capacity(34 + context.len())
+  b.write(b"SigEd25519 no Ed25519 collisions")
+  b.write_byte(UInt8(if ph { 1 } else { 0 }))
+  b.write_byte(UInt8(context.len()))
+  b.write(context)
+  b.freeze()
+}
+
+/// dom, then x: x itself for pure Ed25519's empty dom.
+fn after(dom: Bytes, x: Bytes) -> Bytes { if dom.len() == 0 { x } else { dom + x } }
+
+/// sign with the hashes prefixed by dom (empty, or dom2's): Ed25519ph and
+/// Ed25519ctx (RFC 8032 5.1.6).
+pub fn sign_dom(key: Bytes, msg: Bytes, dom: Bytes) -> Bytes {
   // under Arm's DIT (decision 0619)
   let dit = ct.dit_on()
-  let r = sign_dit(key, msg)
+  let r = sign_dit(key, msg, dom)
   ct.dit_off(dit)
   r
 }
 
-fn sign_dit(key: Bytes, msg: Bytes) -> Bytes {
+fn sign_dit(key: Bytes, msg: Bytes, dom: Bytes) -> Bytes {
   let stored = key.len() == 64
   let (a, prefix) = expand(if stored { key[0..32] } else { key })
   let pk = if stored { words(key, 32) } else { x25519.ed_base(a) }
-  let r = sc_reduce(digest.sha512_le(words_bytes(prefix), msg, b""))
+  let r = sc_reduce(digest.sha512_le(after(dom, words_bytes(prefix)), msg, b""))
   var sig = x25519.ed_base(r)
-  let k = sc_reduce(digest.sha512_le(words_bytes(sig), words_bytes(pk), msg))
+  let k = sc_reduce(digest.sha512_le(after(dom, words_bytes(sig)), words_bytes(pk), msg))
   for x in sc_muladd(k, a, r) {
     sig.push(x)
   }
@@ -689,7 +707,10 @@ fn sign_dit(key: Bytes, msg: Bytes) -> Bytes {
 
 /// crypto.ed25519_verify: false for a key or signature of the wrong
 /// length. Every input is public.
-pub fn verify(pk: Bytes, msg: Bytes, sig: Bytes) -> Bool {
+pub fn verify(pk: Bytes, msg: Bytes, sig: Bytes) -> Bool { verify_dom(pk, msg, sig, b"") }
+
+/// verify with the hashes prefixed by dom, as sign_dom.
+pub fn verify_dom(pk: Bytes, msg: Bytes, sig: Bytes, dom: Bytes) -> Bool {
   if pk.len() != 32 || sig.len() != 64 {
     return false
   }
@@ -709,7 +730,7 @@ pub fn verify(pk: Bytes, msg: Bytes, sig: Bytes) -> Bool {
   fe_bytes(m, at(p1, 40))
   let ay = bw(m)
   keep(w)
-  let k = sc_reduce(digest.sha512_le(sig[0..32], pk, msg))
+  let k = sc_reduce(digest.sha512_le(after(dom, sig[0..32]), pk, msg))
   let got = x25519.ed_check(ax, ay, k, s)
   let r = words(sig, 0)
   got[0] == r[0] && got[1] == r[1] && got[2] == r[2] && got[3] == r[3]

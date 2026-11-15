@@ -1,12 +1,14 @@
 package rt
 
 import (
+	gocrypto "crypto"
 	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/pbkdf2"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -215,6 +217,61 @@ func Crypto_ed25519_sign(_ *Task, seed, msg Bytes) Bytes {
 		FaultHere("crypto.ed25519_sign: the key is %d bytes, want 32 or 64", len(seed))
 	}
 	return Bytes(ed25519.Sign(ed25519.NewKeyFromSeed([]byte(seed)), []byte(msg)))
+}
+
+// ed25519Opts is ed25519_sign_with's options as Go's, or Go's error for
+// a hash or context of the wrong length (which VerifyWithOptions would
+// give as it gives an invalid signature's).
+func ed25519Opts(prehashed bool, msg, context Bytes) (*ed25519.Options, error) {
+	o := &ed25519.Options{Context: string(context)}
+	if prehashed {
+		o.Hash = gocrypto.SHA512
+		if len(msg) != 64 {
+			return nil, fmt.Errorf("ed25519: bad Ed25519ph message hash length: %d", len(msg))
+		}
+		if len(context) > 255 {
+			return nil, fmt.Errorf("ed25519: bad Ed25519ph context length: %d", len(context))
+		}
+	} else if len(context) > 255 {
+		return nil, fmt.Errorf("ed25519: bad Ed25519ctx context length: %d", len(context))
+	}
+	return o, nil
+}
+
+// Crypto_ed25519_sign_with is `crypto.ed25519_sign_with(seed, msg,
+// prehashed, context)`: Go's PrivateKey.Sign with ed25519.Options.
+func Crypto_ed25519_sign_with(_ *Task, seed, msg Bytes, prehashed bool, context Bytes) Result[Bytes, Crypto_KeyErr] {
+	var priv ed25519.PrivateKey
+	switch len(seed) {
+	case ed25519.PrivateKeySize:
+		priv = ed25519.PrivateKey(append([]byte(nil), seed...))
+	case ed25519.SeedSize:
+		priv = ed25519.NewKeyFromSeed([]byte(seed))
+	default:
+		FaultHere("crypto.ed25519_sign_with: the key is %d bytes, want 32 or 64", len(seed))
+	}
+	o, err := ed25519Opts(prehashed, msg, context)
+	if err == nil {
+		var sig []byte
+		if sig, err = priv.Sign(nil, []byte(msg), o); err == nil {
+			return Ok[Bytes, Crypto_KeyErr](Bytes(sig))
+		}
+	}
+	return Err[Bytes, Crypto_KeyErr](Crypto_KeyErr{F_msg: err.Error()})
+}
+
+// Crypto_ed25519_verify_with is `crypto.ed25519_verify_with(public_key,
+// msg, sig, prehashed, context)`: Go's VerifyWithOptions, false for an
+// invalid signature or a key or signature of the wrong length.
+func Crypto_ed25519_verify_with(_ *Task, pub, msg, sig Bytes, prehashed bool, context Bytes) Result[bool, Crypto_KeyErr] {
+	o, err := ed25519Opts(prehashed, msg, context)
+	if err != nil {
+		return Err[bool, Crypto_KeyErr](Crypto_KeyErr{F_msg: err.Error()})
+	}
+	if len(pub) != ed25519.PublicKeySize || len(sig) != ed25519.SignatureSize {
+		return Ok[bool, Crypto_KeyErr](false)
+	}
+	return Ok[bool, Crypto_KeyErr](ed25519.VerifyWithOptions(ed25519.PublicKey(pub), []byte(msg), []byte(sig), o) == nil)
 }
 
 // Crypto_ed25519_verify is `crypto.ed25519_verify(public_key, msg, sig)`:

@@ -3920,6 +3920,10 @@ pub fn verify_password(password: Str, hash: Str) -> Bool
 pub fn ed25519_public_key(seed: Bytes) -> Bytes                   // 32 bytes; faults unless seed is 32 bytes
 pub fn ed25519_sign(seed: Bytes, msg: Bytes) -> Bytes             // 64 bytes; faults unless seed is 32 or 64 bytes
 pub fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool
+pub fn ed25519_sign_with(seed: Bytes, msg: Bytes, prehashed: Bool = false,
+                         context: Bytes = b"") -> Bytes ! KeyErr      // Ed25519ph (msg is SHA-512 of the message) and Ed25519ctx (context of 1 to 255 bytes), RFC 8032 5.1; Go's ed25519.Options
+pub fn ed25519_verify_with(public_key: Bytes, msg: Bytes, sig: Bytes, prehashed: Bool = false,
+                           context: Bytes = b"") -> Bool ! KeyErr      // Go's VerifyWithOptions; Err only for a hash or context of the wrong length
 ```
 
 - Hashing, signing, and comparison are pure: no capability, no effect.

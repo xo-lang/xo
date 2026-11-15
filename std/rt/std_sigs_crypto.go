@@ -18,6 +18,8 @@ var (
 	_ func(*Task, Bytes) Bytes                                                                    = Crypto_ed25519_public_key
 	_ func(*Task, Bytes, Bytes) Bytes                                                             = Crypto_ed25519_sign
 	_ func(*Task, Bytes, Bytes, Bytes) bool                                                       = Crypto_ed25519_verify
+	_ func(*Task, Bytes, Bytes, bool, Bytes) Result[Bytes, Crypto_KeyErr]                         = Crypto_ed25519_sign_with
+	_ func(*Task, Bytes, Bytes, Bytes, bool, Bytes) Result[bool, Crypto_KeyErr]                   = Crypto_ed25519_verify_with
 	_ func(*Crypto_Hash, *Task) int64                                                             = (*Crypto_Hash).M_size
 	_ func(*Task, Crypto_Hash, Bytes) Bytes                                                       = Crypto_digest
 	_ func(*Task, Crypto_Hash, Bytes, Bytes) Bytes                                                = Crypto_hmac

@@ -98,6 +98,40 @@ fn ed25519_sign(seed: Bytes, msg: Bytes, at: rt.Loc) -> Bytes {
 
 fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool { ed25519.verify(public_key, msg, sig) }
 
+/// The dom2 prefix of ed25519_sign_with's options, empty for pure
+/// Ed25519, or Go's error.
+fn ed25519_dom(prehashed: Bool, msg: Bytes, context: Bytes) -> Bytes ! crypto.KeyErr {
+  if prehashed {
+    if msg.len() != 64 {
+      return Err(key_err("ed25519: bad Ed25519ph message hash length: ${msg.len()}"))
+    }
+    if context.len() > 255 {
+      return Err(key_err("ed25519: bad Ed25519ph context length: ${context.len()}"))
+    }
+    return Ok(ed25519.dom2(true, context))
+  }
+  if context.len() == 0 {
+    return Ok(b"")
+  }
+  if context.len() > 255 {
+    return Err(key_err("ed25519: bad Ed25519ctx context length: ${context.len()}"))
+  }
+  Ok(ed25519.dom2(false, context))
+}
+
+fn ed25519_sign_with(seed: Bytes, msg: Bytes, prehashed: Bool, context: Bytes, at: rt.Loc) -> Bytes ! crypto.KeyErr {
+  if seed.len() != 32 && seed.len() != 64 {
+    rt.fault_at("crypto.ed25519_sign_with: the key is ${seed.len()} bytes, want 32 or 64", at)
+  }
+  let dom = ed25519_dom(prehashed, msg, context)?
+  Ok(ed25519.sign_dom(seed, msg, dom))
+}
+
+fn ed25519_verify_with(public_key: Bytes, msg: Bytes, sig: Bytes, prehashed: Bool, context: Bytes) -> Bool ! crypto.KeyErr {
+  let dom = ed25519_dom(prehashed, msg, context)?
+  Ok(ed25519.verify_dom(public_key, msg, sig, dom))
+}
+
 // ---------------------------------------------------------------------------
 // Hash, digest, hmac, and Hasher (decision 0279): the runtime's hashes
 // (md5.xo, sha1.xo, sha256.xo for SHA-224 to SHA-512, sha3.xo), HMAC as

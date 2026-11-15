@@ -38,6 +38,21 @@ fn ed25519_sign(seed: Bytes, msg: Bytes) -> Bytes
 /// Whether sig is a valid Ed25519 signature of msg by public_key; false
 /// for a key that is not 32 bytes or a signature that is not 64.
 fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool
+/// Ed25519ph and Ed25519ctx (RFC 8032 5.1, Go's PrivateKey.Sign with
+/// ed25519.Options): with `prehashed`, msg is the 64 byte SHA-512 of the
+/// message (Ed25519ph, Go's Hash: crypto.SHA512); a `context` of 1 to 255
+/// bytes selects Ed25519ctx, or is Ed25519ph's context; with neither it is
+/// ed25519_sign. The key is ed25519_sign's (faults on another length).
+/// Err with Go's texts: `ed25519: bad Ed25519ph message hash length: N`,
+/// `ed25519: bad Ed25519ph context length: N`, `ed25519: bad Ed25519ctx
+/// context length: N`.
+fn ed25519_sign_with(seed: Bytes, msg: Bytes, prehashed: Bool = false, context: Bytes = b"") -> Bytes ! KeyErr
+/// Go's VerifyWithOptions: whether sig is a valid signature of msg by
+/// public_key under the same `prehashed` and `context` (false, as
+/// ed25519_verify, for a key or signature of the wrong length); Err with
+/// ed25519_sign_with's texts for a hash or context of the wrong length,
+/// checked before the key.
+fn ed25519_verify_with(public_key: Bytes, msg: Bytes, sig: Bytes, prehashed: Bool = false, context: Bytes = b"") -> Bool ! KeyErr
 
 /// The hashes of `digest`, `hmac`, and `Hasher` (decision 0279). Md5 and
 /// Sha1 are broken for collision resistance; they are here for protocols

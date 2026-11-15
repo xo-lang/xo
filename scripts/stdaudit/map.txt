@@ -1762,9 +1762,9 @@ ed25519.PrivateKey.Sign = std/crypto.sign
 ed25519.PrivateKey.Seed = std/crypto.ed25519_sign
 ed25519.PrivateKey.Equal = ==
 ed25519.PublicKey.Equal = ==
-ed25519.VerifyWithOptions = gap: no Ed25519ph or Ed25519ctx
-ed25519.Options = gap: see ed25519.VerifyWithOptions
-ed25519.Options.HashFunc = gap: see ed25519.VerifyWithOptions
+ed25519.VerifyWithOptions = std/crypto.ed25519_verify_with
+ed25519.Options = std/crypto.ed25519_sign_with
+ed25519.Options.HashFunc = std/crypto.ed25519_sign_with
 ed25519.* = not planned: the size constants (32 byte seeds and keys, 64 byte signatures, in the docs)
 cipher.NewGCM = std/crypto.Aead.AesGcm
 cipher.NewGCMWithRandomNonce = std/crypto.AeadKey.seal_random

@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-15: feature: Ed25519ph and Ed25519ctx
+
+- Kind: feature
+- Commit: this push
+- Found by: Lang 3's crypto and TLS gap audit (C10)
+- Go reference: crypto/ed25519 Options, PrivateKey.Sign, VerifyWithOptions, go1.26.11
+- Test: corpus ed25519opts (ed25519_test.go's TestSignVerifyHashed with RFC 8032 7.3 and its context case, TestSignVerifyContext with RFC 8032 7.2, TestMalleability; seeded 32 and 64 byte keys over contexts of 0 to 255 bytes and messages of 0 to 200 bytes in every variant, each refused under the other variant, another context or message and a changed signature; Go's errors), native, go and llvm
+- Shipped in: not yet released
+
+`ed25519_sign_with(seed, msg, prehashed, context)` and `ed25519_verify_with(public_key, msg, sig, prehashed, context)` are RFC 8032's Ed25519ph and Ed25519ctx, as Go's PrivateKey.Sign with ed25519.Options and VerifyWithOptions: with `prehashed` the message is its 64 byte SHA-512 (Go's Hash: crypto.SHA512) and the context is optional; without it a nonempty context selects Ed25519ctx and an empty one is plain Ed25519 (ed25519_sign's signature). Both hashes take RFC 8032's dom2 prefix. The errors are Go's (`ed25519: bad Ed25519ph message hash length: N`, `ed25519: bad Ed25519ph context length: N`, `ed25519: bad Ed25519ctx context length: N`); verify gives false, not an error, for an invalid signature, as ed25519_verify does. Go's FIPS 140-only refusal of Ed25519ctx has no counterpart.
+
 ## 2026-11-15: feature: GCM with any nonce size and shorter tags
 
 - Kind: feature

@@ -56,6 +56,7 @@ var generators = map[string]func() string{
 	"shake":        shakeCorpus,
 	"pbkdf2":       pbkdf2Corpus,
 	"gcmsizes":     gcmSizesCorpus,
+	"ed25519opts":  ed25519OptsCorpus,
 	"hpke":         hpkeCorpus,
 	"csv":          csvCorpus,
 	"cut":          cutCorpus,
