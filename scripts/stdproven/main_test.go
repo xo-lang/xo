@@ -42,9 +42,18 @@ func TestSourceHashStopsAtRuntime(t *testing.T) {
 			t.Errorf("%s does not hash std/%s.xo: %v", m, m, files)
 		}
 	}
+	// url hashes its native half too; the modules it imports (netip since
+	// the URL type, decision 0642) may change, so present, not exact
 	_, files, _ = sourceHash("url")
-	if !reflect.DeepEqual(files, []string{"std/native/url_native.xo", "std/url.xo"}) {
-		t.Errorf("url hashes %v, want its url_native.xo too", files)
+	has := map[string]bool{}
+	for _, f := range files {
+		has[f] = true
+		if rt[f] {
+			t.Errorf("url hashes runtime file %s", f)
+		}
+	}
+	if !has["std/native/url_native.xo"] || !has["std/url.xo"] {
+		t.Errorf("url hashes %v, want std/url.xo and its std/native/url_native.xo", files)
 	}
 }
 
