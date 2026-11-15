@@ -1,6 +1,6 @@
 # `use go` bindings land in the source tree unless XO_GOBIND_DIR is set
 
-Status: Observed (2026-10-08, Go interop prototype)
+Status: Observed (2026-10-08, Go interop prototype; again 2026-11-15)
 
 Symptom: after running `xo run internal/gen/testdata/golden/go_uuid`, the
 golden directory held a `.xo/gobind/` tree (declaration files, adapters,
@@ -20,3 +20,12 @@ Fix: `.xo/` is in `.gitignore`. Tests that check or build Xo code with
 `find . -name .xo -type d -prune -exec rm -rf {} +`. Go and the Xo module
 walk skip dot directories, so a stray cache never builds, but it does
 pin a stale binding until its version header changes.
+
+Again (2026-11-15): main's hourly `-short` failed in internal/gen
+TestGoldenSQLDriverParity with "read
+testdata/golden/go_jwt_mapclaims/.xo: is a directory". A `use go`
+golden run outside the test harness (no `XO_GOBIND_DIR`) left the
+untracked `.xo` cache in the golden, and `filepath.Glob("*.xo")` matches
+it: Go's `*` matches a leading dot, so the cache directory's name is a
+`*.xo` match. A test that globs source files must skip dot names and
+anything not a regular file (the test now does).

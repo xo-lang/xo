@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -24,6 +25,15 @@ func TestGoldenSQLDriverParity(t *testing.T) {
 		t.Fatal("no goldens found")
 	}
 	for _, f := range files {
+		// a `use go` golden run leaves its binding cache, a `.xo`
+		// directory, in the golden (gotcha go-bind-cache-in-source-tree),
+		// and Glob's * matches a leading dot: regular source files only
+		if strings.HasPrefix(filepath.Base(f), ".") {
+			continue
+		}
+		if fi, err := os.Lstat(f); err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
 		src, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
