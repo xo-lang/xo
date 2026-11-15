@@ -9,18 +9,20 @@ import (
 )
 
 // TestSourceHashStopsAtRuntime: decision 0616 section 3 (amended
-// 2026-11-14). uuid's hash is its own file and std/internal.xo, and no
-// module's hash reaches the runtime core or the prelude.
+// 2026-11-14). A module that uses no other std module (deque; uuid used
+// none until its v3 and v5 used crypto, 2026-11-15) hashes its own file
+// alone (std/internal.xo too when it uses it), and no module's hash
+// reaches the runtime core or the prelude.
 func TestSourceHashStopsAtRuntime(t *testing.T) {
 	if err := os.Chdir("../.."); err != nil {
 		t.Fatal(err)
 	}
-	_, files, err := sourceHash("uuid")
+	_, files, err := sourceHash("deque")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"std/internal.xo", "std/uuid.xo"}; !reflect.DeepEqual(files, want) {
-		t.Fatalf("uuid hashes %v, want %v", files, want)
+	if want := []string{"std/deque.xo"}; !reflect.DeepEqual(files, want) {
+		t.Fatalf("deque hashes %v, want %v", files, want)
 	}
 	rt, err := runtimeFiles()
 	if err != nil {

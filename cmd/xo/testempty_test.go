@@ -52,8 +52,9 @@ func TestXoTestStdModuleNames(t *testing.T) {
 	if code, out, errs := xt("--std-module=bas64"); code != 2 || !strings.Contains(errs, "did you mean base64?") {
 		t.Errorf("--std-module=bas64: want exit 2 and a did-you-mean, exit %d:\n%s%s", code, out, errs)
 	}
-	if code, out, errs := xt("--std-module=backoff"); code != 2 || !strings.Contains(errs, "has no tests") {
-		t.Errorf("--std-module=backoff (no tests): want exit 2, exit %d:\n%s%s", code, out, errs)
+	// adler32 has no tests of its own (backoff gained some on 2026-11-15)
+	if code, out, errs := xt("--std-module=adler32"); code != 2 || !strings.Contains(errs, "has no tests") {
+		t.Errorf("--std-module=adler32 (no tests): want exit 2, exit %d:\n%s%s", code, out, errs)
 	}
 	if code, out, errs := xt(filepath.Join(xoStd(), "native", "json.xo")); code != 2 || !strings.Contains(errs, "--std-module=native/json") {
 		t.Errorf("xo test on std's native/json.xo: want exit 2 naming --std-module=native/json, exit %d:\n%s%s", code, out, errs)
