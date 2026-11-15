@@ -236,6 +236,17 @@ yourself.
 
 ## Testing
 
+- Fail fast (lead, owner approved 2026-11-15): the first gate step that
+  fails stops the gate. Steps still running are stopped (their output
+  so far in `$XO_GATE_LOGS/STEP.stopped.txt`), the rest are skipped, and a
+  `FAIL-FAST: STEP failed ...; stopped while running: ...; not run: ...`
+  line names them before the exit 1. Fix the failure and gate again;
+  `XO_GATE_FAILFAST=0` runs every step when you want the whole list (a
+  tier, a sweep). A change to gate.sh's step runner runs
+  `scripts/lead/gate_failfast_test.sh WORKTREE` through heavy.sh (about
+  20 s; not in repotest, since its nested gate.sh rebuilds the
+  checkout's bin/xo). Gate exit codes: 1 a failure, 2 refused, 3 a
+  stalled xobuild (offload.md "Stalled builds and the seed").
 - A gate step that hangs or runs far past its usual time (lead,
   2026-11-07): before blaming your change or the gate, run the same
   step at main as a control with a go test `-timeout` a few times its

@@ -153,8 +153,11 @@
 # (default 3) at a time (opt in; see "XO_GATE_CONCURRENT" below).
 #
 # Logs go to $XO_GATE_LOGS (default $TMPDIR/xo-gate-WORKTREE_NAME), one
-# file per step. A step's failure is reported and the next step runs;
-# the exit status is 1 when any failed.
+# file per step. The first step that fails stops the gate (fail fast,
+# lead, 2026-11-15): the steps still running are stopped, those not
+# started are skipped, and a FAIL-FAST line names them;
+# XO_GATE_FAILFAST=0 runs every step as before. The exit status is 1 when
+# any failed, 2 for a refused gate, 3 for a stalled xobuild.
 set -u
 # a step name in WORKTREE's place (`gate.sh arm64`, 2026-10-30) ran the
 # steps in the caller's directory and reported their failures as the
@@ -849,6 +852,17 @@ llvm_step() {
 # minutes one after another.
 conc=0
 [ "${XO_GATE_CONCURRENT:-0}" = 1 ] && conc=1
+# fail fast (XO_GATE_FAILFAST, default 1; lead, owner approved
+# 2026-11-15): ff=1 once a step has failed; ff_by names it, ff_stopped the
+# jobs stopped while they ran, ff_skipped the steps never started
+ff=0 ff_by="" ff_stopped="" ff_skipped="" ff_last=repo
+ff_on() { [ "${XO_GATE_FAILFAST:-1}" = 1 ]; }
+# ff_serial: in the serial order, true (stop) once anything failed
+ff_serial() {
+  ff_on && [ "$failed" = 1 ] || return 1
+  [ "$ff" = 1 ] || { ff=1; ff_by=${ff_by:-${ff_last:-an earlier check}}; }
+  return 0
+}
 gjobs=${XO_GATE_JOBS:-3}
 case $gjobs in '' | *[!0-9]* | 0) echo "gate.sh: XO_GATE_JOBS=$gjobs is not a positive number"; exit 2 ;; esac
 # repo: internal/repotest, the fast repo checks pushq runs before a push
@@ -895,6 +909,8 @@ for step in "$@"; do
     [ "$step" = chkcache ] && chkcache_ran=1
     [ "$step" = warmseq ] && warmseq_ran=1
     steps="$steps $step" ;;
+  selftest-fail|selftest-sleep|selftest-ok)
+    if [ "${XO_GATE_SELFTEST:-0}" = 1 ]; then steps="$steps $step"; else echo "gate.sh: $step is a test step (XO_GATE_SELFTEST=1)"; failed=1; fi ;;
   *) echo "gate.sh: unknown step $step"; failed=1 ;;
   esac
 done
@@ -958,6 +974,14 @@ run_step() {
 }
 run_step_body() {
   case $1 in
+  selftest-*)
+    # scripts/lead/gate_failfast_test.sh's steps (XO_GATE_SELFTEST=1):
+    # fail after 2 s, sleep 60 s, or pass at once
+    case $1 in
+    selftest-fail) sleep 2; failed=1; echo "selftest-fail: FAIL (on purpose)" ;;
+    selftest-sleep) sleep 60; echo "selftest-sleep: ok" ;;
+    *) echo "$1: ok" ;;
+    esac ;;
   short)
     # -p and -parallel capped (2026-11-07): uncapped, -short's parallel
     # packages and tests passed 16 GB on the Mac (six packages at once,
@@ -1297,10 +1321,12 @@ prove_xounit() {
 # background once fewer than gjobs jobs run, with its output buffered in
 # $logs/.job-KEY.out and printed when it ends; its failed and ran go to
 # files that pool_wait folds in, in the order the jobs started.
-jobkeys=""
+jobkeys="" jobpids=""
 job() {
   local k=$1; shift
-  while [ "$(jobs -pr | wc -l)" -ge "$gjobs" ]; do sleep 2; done
+  ff_check
+  while [ "$ff" = 0 ] && [ "$(jobs -pr | wc -l)" -ge "$gjobs" ]; do sleep 2; ff_check; done
+  if [ "$ff" = 1 ]; then ff_skipped="$ff_skipped $k"; return 0; fi
   rm -f "$logs/.job-$k".*
   (
     failed=0 ran="" t1=$(date +%s)
@@ -1310,18 +1336,51 @@ job() {
     cat "$logs/.job-$k.out"
     echo "gate.sh: $k done in $(($(date +%s) - t1)) s"
   ) &
-  jobkeys="$jobkeys $k"
+  jobkeys="$jobkeys $k" jobpids="$jobpids $k:$!"
+}
+# ff_check: with fail fast on, once a job has ended failed (or a check of
+# this shell, such as repo, failed), every job still running is stopped
+# (gate_tree_kill: the jobs' own $! only) and ff is set, so job starts
+# no more; a stopped job's output so far is kept as $logs/KEY.stopped.txt
+ff_check() {
+  ff_on || return 0
+  local kp k p
+  if [ "$failed" = 1 ] && [ "$ff" = 0 ]; then ff=1; ff_by=${ff_by:-${ff_last:-repo}}; fi
+  for kp in $jobpids; do
+    [ "$ff" = 1 ] && break
+    k=${kp%%:*}
+    [ "$(cat "$logs/.job-$k.failed" 2>/dev/null)" = 1 ] && { ff=1; ff_by=$k; }
+  done
+  [ "$ff" = 1 ] || return 0
+  for kp in $jobpids; do
+    k=${kp%%:*} p=${kp#*:}
+    [ -e "$logs/.job-$k.failed" ] && continue
+    case " $ff_stopped " in *" $k "*) continue ;; esac
+    kill -0 "$p" 2>/dev/null || continue
+    gate_tree_kill "$p" 2>/dev/null
+    ff_stopped="$ff_stopped $k"
+    cp "$logs/.job-$k.out" "$logs/$k.stopped.txt" 2>/dev/null
+    echo "gate.sh: $k stopped (fail fast: $ff_by failed; its output so far: $logs/$k.stopped.txt)"
+  done
 }
 pool_wait() {
-  local k
-  wait
+  local k kp alive
+  while :; do
+    ff_check
+    alive=0
+    for kp in $jobpids; do kill -0 "${kp#*:}" 2>/dev/null && { alive=1; break; }; done
+    [ "$alive" = 0 ] && break
+    sleep 2
+  done
+  ff_check
+  wait 2>/dev/null
   for k in $jobkeys; do
     # a job that left no status died before it finished: a failure
     [ "$(cat "$logs/.job-$k.failed" 2>/dev/null || echo 1)" = 0 ] || failed=1
     ran="$ran $(cat "$logs/.job-$k.ran" 2>/dev/null)"
     rm -f "$logs/.job-$k".*
   done
-  jobkeys=""
+  jobkeys="" jobpids=""
 }
 corpora_group() { # corpora then corpora-all, as named: one job (shared logs)
   local s
@@ -1343,8 +1402,13 @@ if [ "$conc" = 1 ]; then
   done
   job after after_steps
 else
-  for step in $steps; do run_step "$step"; done
-  after_steps
+  ff_last=repo
+  for step in $steps; do
+    if ff_serial; then ff_skipped="$ff_skipped $step"; continue; fi
+    ff_last=$step
+    run_step "$step"
+  done
+  if ff_serial; then ff_skipped="$ff_skipped after"; else ff_last=after; after_steps; fi
 fi
 # The checks pushq.sh requires by path (its "Proving-test reminders"), run
 # here so the push is not refused after the gate (lead, 2026-11-06
@@ -1366,7 +1430,11 @@ fi
 # with no diagnostic, so an XO0804 or other warning in std fails here, not
 # first at pushq; owner, 2026-11-15) for a change to a std .xo file, a few
 # seconds; XO_GATE_STDCHECKS=0 skips it
-if [ "${XO_GATE_STDCHECKS:-1}" != 0 ] && echo "$ch" | grep -qE '^std/.*\.xo$'; then
+ff_serial
+ff_last=stdchecks
+if [ "$ff" = 1 ]; then
+  echo "$ch" | grep -qE '^std/.*\.xo$' && ff_skipped="$ff_skipped stdchecks"
+elif [ "${XO_GATE_STDCHECKS:-1}" != 0 ] && echo "$ch" | grep -qE '^std/.*\.xo$'; then
   if go test -count=1 -run '^TestStdChecks$' ./cmd/xo >"$logs/stdchecks.txt" 2>&1; then
     echo "stdchecks: ok"
   else
@@ -1380,8 +1448,12 @@ if [ "$conc" = 1 ]; then
     [[ "$plan" == *" $p "* ]] && job "$p" "prove_$p"
   done
   pool_wait
-  [[ "$plan" == *" selfbuild "* ]] && prove_selfbuild
-  [[ "$plan" == *" seedbuild "* ]] && prove_seedbuild
+  for p in selfbuild seedbuild; do
+    [[ "$plan" == *" $p "* ]] || continue
+    if ff_serial; then ff_skipped="$ff_skipped $p"; continue; fi
+    ff_last=$p
+    "prove_$p"
+  done
   # PUSHQ_RAN in the serial order
   r2=""
   for p in codegen wasm cross selfbuild seedbuild fieldgen xounit; do
@@ -1390,14 +1462,16 @@ if [ "$conc" = 1 ]; then
   ran=$r2
   echo "gate.sh: steps took $(($(date +%s) - tsteps)) s (concurrent, at most $gjobs jobs)"
 else
-  [[ "$plan" == *" codegen "* ]] && prove_codegen
-  [[ "$plan" == *" wasm "* ]] && prove_wasm
-  [[ "$plan" == *" cross "* ]] && prove_cross
-  [[ "$plan" == *" selfbuild "* ]] && prove_selfbuild
-  [[ "$plan" == *" seedbuild "* ]] && prove_seedbuild
-  [[ "$plan" == *" fieldgen "* ]] && prove_fieldgen
-  [[ "$plan" == *" xounit "* ]] && prove_xounit
+  for p in codegen wasm cross selfbuild seedbuild fieldgen xounit; do
+    [[ "$plan" == *" $p "* ]] || continue
+    if ff_serial; then ff_skipped="$ff_skipped $p"; continue; fi
+    ff_last=$p
+    "prove_$p"
+  done
   echo "gate.sh: steps took $(($(date +%s) - tsteps)) s"
+fi
+if [ "$ff" = 1 ]; then
+  echo "FAIL-FAST: $ff_by failed, so the gate stopped there; stopped while running:${ff_stopped:- none}; not run:${ff_skipped:- none} (XO_GATE_FAILFAST=0 runs every step)"
 fi
 [ -n "$ran" ] && echo "pushq: PUSHQ_RAN=\"$(echo $ran)\""
 # pushq-ran (lead, 2026-11-06 bottleneck review: 6 pushes in 3 hours were
