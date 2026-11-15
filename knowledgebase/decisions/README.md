@@ -634,3 +634,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0643](0643-error-struct-kind-enum.md): Accepted (aws-43): a std error struct gains Go's error types as a `kind` enum defaulting to Other, text unchanged (std/x509 CertErr first)
 - [0644](0644-tls-server-and-config.md): Proposed (lang3): std/tls gains a public server, ServerConfig and ClientConfig values, ConnState, and the rest of Go's crypto/tls (T1 to T14)
 - [0641](0641-monitor-polls-network.md): Rejected (Xo Lang 2, measured): the monitor doing the poller thread's fallback poll left the throttles under a CPU quota as they were; the residual is CFS's slice floor at saturation
+- [0645](0645-riscv64-native-backend.md): Proposed (Xo Lang 1, stub): a native linux/riscv64 backend (RV64GC, LP64D) beside the LLVM port of 0571
