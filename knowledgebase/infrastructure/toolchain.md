@@ -3750,7 +3750,9 @@ Last verified: 2026-10-09.
   URL>` writes each version the log adds to the proxy bucket in the
   background, `<data dir>/times`
   holds each record's Unix time, and `GET /index?since=<RFC 3339>` is the
-  index feed. Test: cmd/xo TestChecksumLogOps. Last verified: 2026-11-08.
+  index feed. `GET /` (2026-11-15) is a plain page naming the service by
+  the address asked (index.* or the log's name), its endpoints and curl
+  examples. Test: cmd/xo TestChecksumLogOps. Last verified: 2026-11-15.
 - `xo repl` line editing (decision 0572 stage 2 step 1, 2026-11-09): on
   a terminal, compiler/cli/repl/line.xo edits entries on raw input
   (decision 0581); history in `<config dir>/xo/repl_history`,
