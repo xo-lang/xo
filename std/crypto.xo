@@ -12,6 +12,23 @@ fn equal(a: Bytes, b: Bytes) -> Bool
 /// a[i] ^ b[i] for each i below the shorter length (Go's
 /// subtle.XORBytes, into a new Bytes).
 fn xor(a: Bytes, b: Bytes) -> Bytes
+/// 1 when the low 8 bits of x and y are equal, else 0, in a time that does
+/// not depend on them (Go's subtle.ConstantTimeByteEq).
+fn ct_byte_eq(x: Int, y: Int) -> Int
+/// 1 when x == y, else 0, in constant time (Go's subtle.ConstantTimeEq,
+/// over 64 bits where Go's takes int32).
+fn ct_eq(x: Int, y: Int) -> Int
+/// x when v is 1 and y when v is 0, in constant time (Go's
+/// subtle.ConstantTimeSelect); only v's low bit is read, where Go leaves
+/// any other v undefined.
+fn ct_select(v: Int, x: Int, y: Int) -> Int
+/// y when v is 1 and x when v is 0, in a time that depends on the lengths
+/// only (Go's subtle.ConstantTimeCopy into a new Bytes; only v's low bit is
+/// read). Faults when x and y differ in length (Go panics).
+fn ct_copy(v: Int, x: Bytes, y: Bytes) -> Bytes
+/// 1 when x <= y, else 0, in constant time, for x and y at least 0 (Go's
+/// subtle.ConstantTimeLessOrEq, whose x and y are below 2^31).
+fn ct_less_or_eq(x: Int, y: Int) -> Int
 fn random_bytes(r: Rand, n: Int) -> Bytes uses rand
 /// `n` random bytes as unpadded URL safe base64.
 fn token(r: Rand, n: Int = 32) -> Str uses rand

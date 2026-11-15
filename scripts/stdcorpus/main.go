@@ -64,6 +64,7 @@ var generators = map[string]func() string{
 	"rsaparts":     rsaPartsCorpus,
 	"rsaopts":      rsaOptsCorpus,
 	"randbig":      randBigCorpus,
+	"subtle":       subtleCorpus,
 	"hpke":         hpkeCorpus,
 	"csv":          csvCorpus,
 	"cut":          cutCorpus,

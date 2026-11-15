@@ -3911,6 +3911,11 @@ pub fn sha256(data: Bytes) -> Bytes                     // 32 bytes
 pub fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes     // 32 bytes
 pub fn equal(a: Bytes, b: Bytes) -> Bool                // constant time in the contents
 pub fn xor(a: Bytes, b: Bytes) -> Bytes                 // a[i] ^ b[i] below the shorter length (subtle.XORBytes)
+pub fn ct_byte_eq(x: Int, y: Int) -> Int                // 1 when the low bytes are equal (subtle.ConstantTimeByteEq)
+pub fn ct_eq(x: Int, y: Int) -> Int                     // 1 when x == y, 64 bits (subtle.ConstantTimeEq)
+pub fn ct_select(v: Int, x: Int, y: Int) -> Int         // x when v's low bit is 1, else y (subtle.ConstantTimeSelect)
+pub fn ct_copy(v: Int, x: Bytes, y: Bytes) -> Bytes     // y when v's low bit is 1, else x; faults on lengths that differ
+pub fn ct_less_or_eq(x: Int, y: Int) -> Int             // 1 when x <= y, for x, y >= 0 (subtle.ConstantTimeLessOrEq)
 pub fn random_bytes(r: Rand, n: Int) -> Bytes uses rand // faults when n < 0
 pub fn token(r: Rand, n: Int = 32) -> Str uses rand     // n random bytes, unpadded URL safe base64
 pub fn random_text(r: Rand) -> Str uses rand            // Go's rand.Text: 26 base32 characters, 130 bits

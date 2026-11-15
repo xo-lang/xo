@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-15: feature: crypto/subtle's integer helpers
+
+- Kind: feature
+- Commit: this push
+- Found by: Lang 3's crypto and TLS gap audit (C12)
+- Go reference: crypto/subtle ConstantTimeByteEq, ConstantTimeEq, ConstantTimeSelect, ConstantTimeCopy, ConstantTimeLessOrEq; go1.26.11
+- Test: corpus subtle (constant_time_test.go's TestConstantTimeByteEq, TestConstantTimeEq, TestConstantTimeCopy and lessOrEqTests, and seeded values against Go over its domains, a byte, int32 and 0 to 2^31 - 1, and against x == y and x <= y over 64 bits), native, go and llvm; test/codegen/consttime: no branch or conditional select in them on arm64, amd64 and LLVM
+- Shipped in: not yet released
+
+`ct_byte_eq`, `ct_eq`, `ct_select`, `ct_copy` and `ct_less_or_eq` are Go's subtle helpers in Xo's Int: 1 or 0 results, masks and picks with no branch on the values (std/native/llrt/ct.xo natively, Go's subtle on the Go backend). Over Go's domains they give Go's results; Xo's take 64 bits where ConstantTimeEq takes int32 and ConstantTimeLessOrEq numbers below 2^31, and ct_select and ct_copy read only v's low bit where Go leaves v other than 0 and 1 undefined. ct_copy returns a new Bytes. WithDataIndependentTiming stays a gap: std sets Arm's DIT around its own constant time code (decision 0619), and a public section needs a way to keep a user's function from yielding with DIT set.
+
 ## 2026-11-15: feature: random_text (Go's crypto/rand.Text)
 
 - Kind: feature

@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"math/bits"
 	"strconv"
 	"strings"
 )
@@ -40,6 +41,41 @@ func Crypto_xor(_ *Task, a, b Bytes) Bytes {
 	d := make([]byte, min(len(a), len(b)))
 	subtle.XORBytes(d, []byte(a), []byte(b))
 	return Bytes(d)
+}
+
+// Crypto_ct_byte_eq is Go's subtle.ConstantTimeByteEq of the low bytes.
+func Crypto_ct_byte_eq(_ *Task, x, y int64) int64 {
+	return int64(subtle.ConstantTimeByteEq(uint8(x), uint8(y)))
+}
+
+// Crypto_ct_eq is Go's subtle.ConstantTimeEq over 64 bits.
+func Crypto_ct_eq(_ *Task, x, y int64) int64 {
+	z := uint64(x ^ y)
+	return int64((z|-z)>>63) ^ 1
+}
+
+// Crypto_ct_select is Go's subtle.ConstantTimeSelect of v's low bit.
+func Crypto_ct_select(_ *Task, v, x, y int64) int64 {
+	m := -(v & 1)
+	return y ^ (m & (x ^ y))
+}
+
+// Crypto_ct_copy is Go's subtle.ConstantTimeCopy into a new Bytes.
+func Crypto_ct_copy(_ *Task, v int64, x, y Bytes) Bytes {
+	if len(x) != len(y) {
+		FaultHere("crypto.ct_copy: x is %d bytes and y %d", len(x), len(y))
+	}
+	d := []byte(x)
+	d = append(d[:0:0], d...)
+	subtle.ConstantTimeCopy(int(v&1), d, []byte(y))
+	return Bytes(d)
+}
+
+// Crypto_ct_less_or_eq is Go's subtle.ConstantTimeLessOrEq over 64 bits:
+// 1 unless y - x borrows.
+func Crypto_ct_less_or_eq(_ *Task, x, y int64) int64 {
+	_, borrow := bits.Sub64(uint64(y), uint64(x), 0)
+	return int64(borrow ^ 1)
 }
 
 // Crypto_random_bytes is `crypto.random_bytes(r, n)`: n bytes from the Rand

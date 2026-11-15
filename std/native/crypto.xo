@@ -32,6 +32,26 @@ fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes { dg.hmac_sha256(key, msg) }
 
 fn equal(a: Bytes, b: Bytes) -> Bool { ct.bytes_equal(a, b) }
 
+fn ct_byte_eq(x: Int, y: Int) -> Int { ct.mask_eq(x & 0xff, y & 0xff) & 1 }
+
+fn ct_eq(x: Int, y: Int) -> Int { ct.mask_eq(x, y) & 1 }
+
+fn ct_select(v: Int, x: Int, y: Int) -> Int { ct.pick(ct.mask_bit(v), x, y) }
+
+fn ct_copy(v: Int, x: Bytes, y: Bytes, at: rt.Loc) -> Bytes {
+  if x.len() != y.len() {
+    rt.fault_at("crypto.ct_copy: x is ${x.len()} bytes and y ${y.len()}", at)
+  }
+  let m = ct.mask_bit(v)
+  var w = BytesBuilder.with_capacity(x.len())
+  for i in 0..x.len() {
+    w.write_byte(UInt8(ct.pick(m, Int(y[i]), Int(x[i]))))
+  }
+  w.freeze()
+}
+
+fn ct_less_or_eq(x: Int, y: Int) -> Int { (~ct.mask_lt(y, x)) & 1 }
+
 /// `crypto.xor(a, b)`: a word at a time, as Go's xorBytes, then bytes.
 fn xor(a: Bytes, b: Bytes) -> Bytes {
   let n = a.len().min(b.len())
