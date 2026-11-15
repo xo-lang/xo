@@ -40,7 +40,7 @@ test "packets: framing, sequence ids, and a payload of 2^24 - 1 bytes" {
   expect(f[0..4].to_hex()) == "ffffff03"
   expect(f[f.len() - 4..f.len()].to_hex()) == "00000004"
   expect(n3) == 5
-  expect(join(f).map(fn(x) { (x.0.len(), x.1, x.2) })) == Some((MAX_PAYLOAD, 4, f.len()))
+  expect(join(f).map(fn(x) { (x.0.len(), x.1, x.2, x.3) })) == Some((MAX_PAYLOAD, 3, 4, f.len()))
   expect(join(f[0..f.len() - 1])) == None
   expect(packet(b"\x02\x00\x00")) == None
   expect(packet(b"\x02\x00\x00\x07a")) == None

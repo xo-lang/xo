@@ -51,6 +51,12 @@ test "values by column type" {
   expect(decode_text(col(12, 63, 0), Some(b"2026-11-15 03:04:05.123456"), true)) == sql.SqlValue.At(t: Time.parse_rfc3339("2026-11-15T03:04:05.123456Z") ?? Time.UNIX_EPOCH)
   expect(decode_text(col(10, 63, 0), Some(b"2026-11-15"), true)) == sql.SqlValue.At(t: Time.parse_rfc3339("2026-11-15T00:00:00Z") ?? Time.UNIX_EPOCH)
   expect(decode_text(col(11, 63, 0), Some(b"-838:59:59"), true)) == sql.SqlValue.Text(s: "-838:59:59")
+  // a zero date and a year outside Time's range keep the server's text
+  // (found by scripts/mysql-diff.sh: the zero date was 1970-01-01)
+  expect(decode_text(col(12, 63, 0), Some(b"0000-00-00 00:00:00"), true)) == sql.SqlValue.Text(s: "0000-00-00 00:00:00")
+  expect(decode_text(col(10, 63, 0), Some(b"0000-00-00"), true)) == sql.SqlValue.Text(s: "0000-00-00")
+  expect(decode_text(col(12, 63, 0), Some(b"1000-01-01 00:00:00"), true)) == sql.SqlValue.Text(s: "1000-01-01 00:00:00")
+  expect(decode_text(col(7, 63, 0), Some(b"2038-01-19 03:14:07"), true)) == sql.SqlValue.At(t: Time.from_unix(2147483647))
   expect(decode_text(col(3, 63, 0), None, true)) == sql.SqlValue.Null
 }
 

@@ -1,0 +1,116 @@
+// The Xo side of the MySQL differential test (decision 0648 item 12):
+// each statement on standard input through std/sql's MySQL driver,
+// printed as the go-sql-driver reference (scripts/mysqldiff/gomysql)
+// prints it.
+use std/sql
+
+fn first_line(s: Str) -> Str { s.lines().first() ?? "" }
+
+fn err_line(e: sql.SqlErr) -> Str {
+  match e {
+    Constraint(msg, code, _) => "error Constraint ${code} ${first_line(msg)}"
+    Syntax(msg) => "error Syntax ${first_line(msg)}"
+    NoTable(name) => "error NoTable ${name}"
+    Canceled => "error Canceled"
+    Server(code, msg) => "error Server ${code} ${first_line(msg)}"
+    _ => "error conn"
+  }
+}
+
+/// The arguments of a case line (after ` ;; `, separated by ` | `), as
+/// the reference reads them: T:text, I:int, F:float, B:t or f, N, X:hex,
+/// D:RFC 3339 time.
+fn args(s: Str) -> List[sql.SqlValue] {
+  var out: List[sql.SqlValue] = []
+  for a in s.split(" | ") {
+    let (kind, v) = match a.find(":") {
+      Some(i) => (a[0..i], a[i + 1..])
+      None => (a, "")
+    }
+    out.push(match kind {
+      "T" => sql.str(v)
+      "I" => sql.int(Int.parse(v) ?? 0)
+      "F" => sql.float(Float.parse(v) ?? 0.0)
+      "B" => sql.bool(v == "t")
+      "X" => sql.bytes(Bytes.from_hex(v) ?? b"")
+      "D" => sql.time(Time.parse_rfc3339(v) ?? Time.UNIX_EPOCH)
+      _ => sql.null()
+    })
+  }
+  out
+}
+
+fn main(os: Os) ! {
+  let argv = os.env.args()
+  // MY_ROOTS: a PEM file of the roots to trust (the reference's tls=xo)
+  let roots = match os.env.get("MY_ROOTS") {
+    Some(path) => os.fs.read(path)?
+    None => b""
+  }
+  if argv.first() == Some("probe") {
+    // whether a connection opens and answers a ping: "ok" or "fail"
+    let r = sql.open(os.net, "mysql", argv[1], max_open: 1, roots: roots)
+    let ok = match r {
+      Ok(db) => db.ping().is_ok()
+      Err(_) => false
+    }
+    os.stdio.println(if ok { "ok" } else { "fail" })
+    if !ok && os.env.get("MY_WHY").is_some() {
+      let why = match r {
+        Ok(db) => db.ping().err().map(fn(e) { "${e}" }) ?? ""
+        Err(e) => "${e}"
+      }
+      os.stdio.eprintln(why)
+    }
+    return
+  }
+  let dsn = argv.first().or_err("usage: diff DSN < cases")?
+  let db = sql.open(os.net, "mysql", dsn, max_open: 1, roots: roots)?
+  for line in os.stdio.lines()? {
+    if line.trim().is_empty() {
+      continue
+    }
+    os.stdio.println("== ${line}")
+    let (stmt, xs) = match line.find(" ;; ") {
+      Some(i) => (line[0..i], args(line[i + 4..]))
+      None => (line, [])
+    }
+    if line.starts_with("SELECT") || line.starts_with("SHOW") {
+      match select_lines(db, stmt, xs) {
+        Ok(out) => {
+          for l in out {
+            os.stdio.println(l)
+          }
+        }
+        Err(e) => os.stdio.println(err_line(e))
+      }
+    } else {
+      match db.exec(stmt, xs) {
+        Ok(x) => os.stdio.println("affected ${x.rows_affected} id ${x.last_insert_id}")
+        Err(e) => os.stdio.println(err_line(e))
+      }
+    }
+  }
+}
+
+/// A SELECT's column types (name, database type, a DECIMAL's precision
+/// and scale, nullability) and then each row as Go's Row Debug text; the
+/// whole result first, so an error part way prints the error alone.
+fn select_lines(db: sql.Db, stmt: Str, xs: List[sql.SqlValue]) -> List[Str] ! sql.SqlErr uses net.dial {
+  let rows = db.rows(stmt, xs)?
+  defer rows.close()
+  let ts = rows.column_types().map(fn(t) {
+    let ps = match (t.precision, t.scale) {
+      (Some(p), Some(s)) => "${p},${s}"
+      _ => "-"
+    }
+    let null = t.nullable.map(fn(n) { "${n}" }) ?? "-"
+    "${t.name}:${t.database_type}:${ps}:${null}"
+  })
+  var out = ["types " + ts.join(" ")]
+  while let Some(r) = rows.next()? {
+    let vals = r.columns().map(fn(c) { r.value(c).or_fault("column") })
+    out.push("Row{cols: ${r.columns().debug()}, vals: ${vals.debug()}}")
+  }
+  out
+}

@@ -1,0 +1,58 @@
+DROP TABLE IF EXISTS c2
+DROP TABLE IF EXISTS t
+CREATE TABLE t (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(40) NOT NULL UNIQUE, n INT, u INT UNSIGNED, f DOUBLE, r FLOAT, dec1 DECIMAL(10,2), at DATETIME(6), d DATE, raw VARBINARY(16), bl BLOB, tx TEXT, j JSON, e ENUM('x','y'), s SET('p','q'), b BIT(8), yr YEAR, tm TIME, ts TIMESTAMP NULL, ch CHAR(3), bn BINARY(2))
+INSERT INTO t (name, n, u, f, r, dec1, at, d, raw, bl, tx, j, e, s, b, yr, tm, ts, ch, bn) VALUES ('a', -1, 4294967295, 1.5, 0.1, 12.34, '2026-10-20 12:34:56.123456', '2026-10-20', 0x00ff, 'blob', 'é漢😀', '{"k": [1, 2]}', 'y', 'p,q', b'10100101', 2026, '-12:30:00', '2026-10-20 01:02:03', 'ab', 0x0102)
+INSERT INTO t (name) VALUES ('b')
+SELECT * FROM t ORDER BY id
+SELECT 1 AS one, 'two' AS two, NULL AS three, 4.5 AS four, 1e300 AS big, -0.000001 AS small, 18446744073709551615 AS umax, -9223372036854775808 AS imin
+SELECT CAST(1.25 AS DECIMAL(5,3)) AS num, CAST('2026-10-20' AS DATE) AS d, CAST('2026-10-20 01:02:03' AS DATETIME) AS dt, X'00ff' AS hx, _utf8mb4'quote '' and \\ backslash' AS q
+SELECT CAST(18446744073709551615 AS UNSIGNED) AS u, CAST(-5 AS SIGNED) AS s, 'a\0b' AS nul, '' AS blank, CAST('' AS BINARY) AS blankb
+SELECT JSON_OBJECT('a', 1, 'b', JSON_ARRAY(true, null)) AS js, JSON_EXTRACT('{"x": "y"}', '$.x') AS jx
+SELECT count(*) AS c, sum(n) AS s, avg(n) AS a, max(name) AS m FROM t
+INSERT INTO t (name) VALUES ('a')
+INSERT INTO t (name, n) VALUES (NULL, 1)
+SELEC 1
+SELECT * FROM missing_table
+SELECT nosuchcol FROM t
+SELECT 1/0 AS z
+UPDATE t SET n = n + 1 WHERE name = 'a'
+UPDATE t SET n = n WHERE name = 'a'
+DELETE FROM t WHERE name = 'b'
+INSERT INTO t (name) VALUES ('c'), ('d'), ('e')
+SELECT id, name FROM t ORDER BY id
+SELECT ? AS a, ? AS b, ? AS c, ? AS d, ? AS e ;; T:hé 漢 | I:-42 | F:2.5 | B:t | B:f
+INSERT INTO t (name, n, raw, j, at) VALUES (?, ?, ?, ?, ?) ;; T:f | I:7 | X:00ff10 | T:{"x": [1, "y"]} | D:2026-10-20T01:02:03.5Z
+SELECT name, n, raw, j, at FROM t WHERE name = ? ;; T:f
+SELECT ? IS NULL AS isnull, ? AS n ;; N | N
+UPDATE t SET n = ? WHERE name = ? ;; I:9 | T:f
+SELECT ? AS q ;; T:quote ' and \ backslash; -- not a comment
+SELECT ? AS q2, '?' AS lit, ? AS after ;; T:x"y | T:it's
+SELECT ? AS raw, LENGTH(?) AS len ;; X: | X:00
+SELECT ? AS big, ? AS small, ? AS min ;; F:1e300 | F:-0.000001 | I:-9223372036854775808
+SELECT count(*) AS c FROM t WHERE n > ? ;; I:1
+INSERT INTO t (name) VALUES (?) ;; T:f
+BEGIN
+INSERT INTO t (name) VALUES ('tx1')
+ROLLBACK
+SELECT count(*) AS c FROM t WHERE name = 'tx1'
+START TRANSACTION
+INSERT INTO t (name) VALUES ('tx2')
+COMMIT
+SELECT count(*) AS c FROM t WHERE name = 'tx2'
+CREATE TABLE c2 (id INT PRIMARY KEY, tid BIGINT, v INT CHECK (v > 0), CONSTRAINT c2_t FOREIGN KEY (tid) REFERENCES t(id))
+INSERT INTO c2 VALUES (1, 999, 1)
+INSERT INTO c2 VALUES (2, 1, 0)
+INSERT INTO c2 VALUES (3, 1, 5)
+DELETE FROM t WHERE id = 1
+SELECT REPEAT('x', 70000) = REPEAT('x', 70000) AS same, LENGTH(REPEAT('é', 30000)) AS len
+SELECT @@session.sql_mode LIKE '%STRICT_TRANS_TABLES%' AS strict
+SHOW VARIABLES LIKE 'max_allowed_packet'
+DO SLEEP(0)
+SET @x = 5
+SELECT @x AS x
+SET SESSION sql_mode = ''
+DROP TABLE IF EXISTS z
+CREATE TABLE z (d DATETIME, dd DATE, ts TIMESTAMP NULL)
+INSERT INTO z VALUES ('0000-00-00 00:00:00', '0000-00-00', '0000-00-00 00:00:00'), ('1999-12-31 23:59:59', '1999-12-31', '2038-01-19 03:14:07'), ('1000-01-01 00:00:00', '1000-01-01', NULL)
+SELECT d, dd, ts FROM z
+SELECT CAST('2026-10-20 01:02:03.000001' AS DATETIME(6)) AS us, TIMESTAMP('2026-02-28 12:00:00') AS tsf

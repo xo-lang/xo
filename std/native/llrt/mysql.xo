@@ -602,12 +602,12 @@ pub fn decode_text(c: w.Column, v: Bytes?, parse_time: Bool) -> sql.SqlValue {
   }
 }
 
-/// A DATE, DATETIME or TIMESTAMP's text as a time in UTC; a zero date is
-/// the zero time (0001-01-01), a text that is not a date stays Text.
+/// A DATE, DATETIME or TIMESTAMP's text as a time in UTC; a zero date
+/// ("0000-00-00 ..."), a year outside Time's range (1678 to 2262; MySQL
+/// allows 1000 to 9999) or a text that is not a date stays the server's
+/// Text, as the Postgres driver keeps infinity (Go's zero time is outside
+/// Time's range).
 fn time_value(s: Str) -> sql.SqlValue {
-  if s.starts_with("0000-00-00") {
-    return sql.SqlValue.At(t: Time.parse_rfc3339("0001-01-01T00:00:00Z") ?? Time.UNIX_EPOCH)
-  }
   let iso = if s.len() == 10 { "${s}T00:00:00Z" } else { "${s.replace(" ", "T")}Z" }
   match Time.parse_rfc3339(iso) {
     Some(t) => sql.SqlValue.At(t: t)

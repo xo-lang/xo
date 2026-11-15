@@ -2094,6 +2094,22 @@ Last verified: 2026-10-21.
   `sslrootcert` for pgx). Runs outside the heavy lock. Last verified:
   2026-10-20.
 
+- `scripts/mysql-diff.sh XO WORK [IMAGE...]` (decision 0648 item 12):
+  the MySQL differential test of std/sql's driver: scripts/mysqldiff/
+  cases.txt (twice: `tls=true`, then with `parseTime=true` and
+  `clientFoundRows=true`) and multi.txt (`multiStatements=true`) through
+  go-sql-driver (scripts/mysqldiff/gomysql, its own Go module pinned to
+  v1.10.1, the only place go-sql-driver appears) and through the Xo
+  driver (scripts/mysqldiff/xo) against mysql:8.4 and mysql:8.0 in Docker
+  started with a test CA's server certificate (openssl), every statement
+  over verified TLS (`MY_ROOTS` for both sides), then the ok or fail
+  outcome of each tls mode with right, wrong and no roots, and the Xo
+  driver's self signed hint. The Xo side runs first after FLUSH
+  PRIVILEGES, so its first connection takes caching_sha2's full path.
+  The containers it starts are removed by ID. Needs Docker on the Mac
+  (the offload hosts have none). Last verified: 2026-11-15, equal on
+  both images.
+
 - `scripts/gate-http.sh OUTDIR [STEP...]`: the gate for a change to
   std/native, the runtime, HTTP, TLS, or the compiler, from the checkout
   under test: build (xobuild, unless XO_CLI is set), short, llvm goldens,

@@ -3310,7 +3310,8 @@ Status: draft (2026-10-08), implemented on every backend: the in memory
 driver (`sql.memory`, ported to Xo for native builds, decision 0083, with
 the same results and error texts; `max_open` does not bound it, as it
 runs one statement at a time) and drivers written in Xo (decision 0278,
-10.7). `sql.open(net, "postgres", dsn)` opens Postgres natively (10.8);
+10.7). `sql.open(net, "postgres", dsn)` opens Postgres natively (10.8),
+`sql.open(net, "mysql", dsn)` MySQL (10.10);
 on the Go backend, and for any other driver name on every backend,
 `sql.open` reports an unknown driver. A `Row`'s Debug text is its
 columns and values on every backend, `Row(a: 1, b: "x", c: null)`;
@@ -3786,6 +3787,106 @@ The values and accessors are 10.2 and 10.4's.
 `derive SqlRow` accepts `Bytes`, `List[Int]`, and `List[Str]` fields
 too. Column names that are not field names use the field's wire name
 (decision 0277, planned): `kind as "type": Str`.
+
+### 10.10 MySQL
+
+Status: stage A implemented natively (decision 0648, 2026-11-15): the
+wire protocol, authentication, go-sql-driver's DSN and the text
+protocol, TLS through std/tls's `tls.client`; checked against
+go-sql-driver v1.10.1 on MySQL 8.4 and 8.0 (scripts/mysql-diff.sh).
+Prepared statements over the binary protocol, RSA authentication,
+`loc` zones and `server_pub_key:` are stage B. The Go backend reports an
+unknown driver.
+
+```
+let db = sql.open(os.net, "mysql", "app:${pw}@tcp(db.internal:3306)/shop?parseTime=true", roots: ca)?
+```
+
+`sql.open(net, "mysql", dsn, ...)` opens a MySQL database (5.7, 8.0 or
+later; MariaDB speaks the same protocol) through `net`, with 10.8's
+`roots` argument: PEM certificates trusted instead of the system's.
+`open` connects and pings once before it returns.
+
+**Connection strings** are go-sql-driver's:
+`[user[:password]@][net[(addr)]]/dbname[?param=value&...]`, `net` `tcp`
+(`host:port`, port 3306; `[::1]:3306` for IPv6; 127.0.0.1:3306 when
+empty) or `unix` (a socket path, /tmp/mysql.sock when empty). The
+password runs to the last `@`, so it may hold `@` and `:`. Parameters:
+
+- `tls`: `true` (the default: the chain and host name verified against
+  `roots`, else the system's), `custom` (the same, `roots` required),
+  `skip-verify` (TLS, nothing verified), `preferred` (TLS when the
+  server offers it, unverified) or `false`. go-sql-driver's default is
+  `false`; Xo's is verified TLS, as 10.8 chose `verify-full`. A Unix
+  socket never uses TLS. MySQL's auto generated certificate is self
+  signed, so `tls=true` fails against a default install with a `Conn`
+  error that names `tls=custom` (with `roots:`) and `tls=skip-verify`.
+- `parseTime` (`false`): DATE, DATETIME and TIMESTAMP as `At`, else
+  `Text`. `loc`: `UTC` only in stage A (`Local` is refused: there is no
+  process time zone without `env`).
+- `charset`, `collation` (`utf8mb4_general_ci`), `allowNativePasswords`
+  (`true`), `allowCleartextPasswords`, `allowPublicKeyRetrieval`,
+  `multiStatements`, `interpolateParams`, `clientFoundRows`,
+  `columnsWithAlias`, `rejectReadOnly`, `maxAllowedPacket` (64 MiB),
+  `connectionAttributes`, and `timeout`, `readTimeout`, `writeTimeout`
+  (accepted; a call's deadline is its context's). `allowOldPasswords` is
+  refused (the pre 4.1 hash is broken); `serverPubKey` until stage B.
+- Any other name is a system variable, set with `SET name=value` after
+  connecting, as go-sql-driver does.
+
+No file or environment variable is read (no `~/.my.cnf`, no
+`MYSQL_PWD`).
+
+**Authentication** follows the server's plugin and its switch requests:
+`caching_sha2_password` (MySQL 8's default: the SHA-256 scramble, and on
+the server's request for full authentication the password in clear over
+TLS or a Unix socket; over plain TCP that needs RSA, stage B, and fails
+with a `Conn` error until then), `mysql_native_password` (refused with
+`allowNativePasswords=false`), `sha256_password` (the same rules) and
+`mysql_clear_password` (only with `allowCleartextPasswords=true`).
+
+**Statements.** Arguments are escaped into the statement's text (stage
+A; prepared statements are stage B): `?` outside quotes and comments is
+the next argument, `Flag` as 1 or 0, `At` as a quoted DATETIME in UTC
+(microseconds when it has them), `Blob` as a `_binary'...'` literal,
+`Real` NaN and infinities and `Array` refused (`Param`), the server's
+NO_BACKSLASH_ESCAPES mode honoured. With
+`multiStatements=true` a statement may hold several; `query` and `rows`
+return the first result set and read the rest, an error in any of them
+being the call's error (go-sql-driver drops it), and `exec` counts the
+last. `LOAD DATA LOCAL INFILE` is refused. `begin` is `START
+TRANSACTION`. `copy_from` sends batched multi row INSERTs, each under
+`maxAllowedPacket`. `ExecResult.last_insert_id` is the AUTO_INCREMENT
+value.
+
+**Errors** carry MySQL's number in the message, go-sql-driver's text
+`Error 1062 (23000): Duplicate entry 'a' for key 't.name'`:
+`Constraint(msg, code, name)` (code the SQLSTATE) for 1062 and 1586
+(name the key), 1451, 1452, 1216 and 1217 (the foreign key), 1048 and
+1364 (not null) and 3819 (the check); `Syntax` for 1064 and 1149;
+`NoTable(name)` for 1146 (`schema.table`); `Canceled` for 1317 and 3024;
+`Server(code, msg)` for the rest.
+
+### 10.11 Values by MySQL type
+
+| MySQL type | SqlValue | Read with |
+|---|---|---|
+| TINYINT to BIGINT, YEAR | `Integer` | `int` |
+| BIGINT UNSIGNED above Int.max | `Text`, its digits | `str` |
+| FLOAT, DOUBLE | `Real` | `float` |
+| DECIMAL | `Text`, the server's digits | `str` |
+| CHAR, VARCHAR, TEXT, ENUM, SET | `Text` | `str` |
+| BINARY, VARBINARY, BLOB, BIT, GEOMETRY | `Blob` | `bytes` |
+| JSON | `JsonText` | `json[T]`, `str` |
+| DATE, DATETIME, TIMESTAMP | `At` (UTC) with `parseTime=true`, else `Text` | `time`, `str` |
+| TIME | `Text` (a duration up to 838 hours) | `str` |
+
+NULL is `Null`. A zero date (`0000-00-00 00:00:00`) and a year outside
+`Time`'s range (MySQL allows 1000 to 9999) stay the server's `Text`
+with `parseTime=true` too: go-sql-driver's Go zero time is not a `Time`.
+`column_types` (decision 0609) gives go-sql-driver's
+`DatabaseTypeName` (`UNSIGNED INT`, `VARBINARY`, `TEXT`, `ENUM`, ...),
+a DECIMAL's precision and scale, and nullability from the NOT NULL flag.
 
 ---
 

@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-15: feature: the MySQL driver (stage A)
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0648
+- Go reference: github.com/go-sql-driver/mysql v1.10.1 (its DSN, behaviour and error text; the code is written from MySQL's protocol documentation, not from go-sql-driver's, decision 0648 item 11)
+- Test: std/native/llrt/mysqlwire_test.xo, mysqlauth_test.xo and mysql_test.xo (packets, scrambles against Python hashlib vectors, DSNs, values, escaping, errors, and fake servers for each auth path; native and llvm); scripts/mysql-diff.sh (go-sql-driver against the Xo driver on mysql:8.4 and mysql:8.0: 124 statements over verified TLS, with parseTime and clientFoundRows, with multiStatements, and 10 tls mode outcomes, equal)
+- Shipped in: not yet released
+
+`sql.open(net, "mysql", dsn)` opens MySQL (spec/std.md 10.10). Two choices differ from go-sql-driver on purpose: `tls` defaults to `true` (verified), and an error in a later result set of a multi statement query is the query's error. A zero date reads as `Text` with `parseTime=true` (go-sql-driver gives Go's zero time, which is outside `Time`'s range).
+
 ## 2026-11-12: behavior (breaking): `sql "-"` or `as "-"` leaves a field out of derive SqlRow
 
 - Kind: behavior

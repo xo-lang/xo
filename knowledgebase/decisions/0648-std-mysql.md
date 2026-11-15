@@ -110,7 +110,10 @@ conformance tests and `xo bench --ab`.
    List[ResultSet]` returns each set's columns and rows, Go's
    `Rows.NextResultSet`. `DriverRows` gains `next: DriverRows[fx]? =
    None` for the sets after the first; Postgres's simple query fills it
-   too.
+   too. An error in a later set is the query's error (stage A, found by
+   scripts/mysql-diff.sh): go-sql-driver reports it only to a caller of
+   `NextResultSet`, so `SELECT 1; DELETE ...` whose DELETE fails looks
+   like success there; a failed statement is not dropped here.
 8. **Values.** By column type: TINYINT to BIGINT and YEAR `Integer`;
    BIGINT UNSIGNED above Int.max `Text` (its decimal digits, nothing
    rounded); DECIMAL `Text`; FLOAT and DOUBLE `Real`; CHAR, VARCHAR,
@@ -121,9 +124,12 @@ conformance tests and `xo bench --ab`.
    `env`, and a name from the embedded zone data is used instead), and
    `Text` otherwise, go-sql-driver's two behaviours; TIME is `Text`
    (it is a duration up to 838 hours, not a time of day), as
-   go-sql-driver, which never parses TIME. Zero dates read as `Text`
-   "0000-00-00 ..." or, with parseTime, Go's zero time, as
-   go-sql-driver. Binds: `Flag` as 1 or 0, `At` formatted in `loc` with
+   go-sql-driver, which never parses TIME. Zero dates, and years
+   outside `Time`'s range (MySQL allows 1000 to 9999, `Time` covers 1678
+   to 2262), read as the server's `Text` ("0000-00-00 00:00:00") with
+   parseTime too, as the Postgres driver keeps `infinity`: go-sql-driver's
+   Go zero time (year 1) is not a `Time` (stage A, found by
+   scripts/mysql-diff.sh, where the first draft gave 1970-01-01). Binds: `Flag` as 1 or 0, `At` formatted in `loc` with
    microseconds, `Blob` as bytes, `Array` refused (`Param`). Column
    types (decision 0609): go-sql-driver's `ColumnTypeDatabaseTypeName`,
    length, precision and scale for DECIMAL, nullable from the NOT_NULL
@@ -171,11 +177,14 @@ conformance tests and `xo bench --ab`.
       switch, AuthMoreData's fast and full auth, errors mid result, a
       broken sequence, a cancelled wait, multi results.
     - Conformance against a real server: a MySQL 8.0 and an 8.4 LTS
-      container on an offload host (the scripts/docker-linux.sh
-      pattern; no real cloud and no credentials beyond the container's
-      own). The same statements through Xo and through go-sql-driver in
-      an oracle module (scripts/stdcorpus/mysqloracle, its own go.mod,
-      not a dependency of xo), compared row by row and error by error:
+      container in Docker (scripts/mysql-diff.sh, as scripts/pg-diff.sh;
+      no real cloud and no credentials beyond the container's own). The
+      same statements through Xo and through go-sql-driver in an oracle
+      module (scripts/mysqldiff/gomysql, its own go.mod pinned to
+      go-sql-driver v1.10.1, not a dependency of xo or std), compared row
+      by row and error by error (stage A, 2026-11-15: 124 statements in
+      three passes, tls=true verified, parseTime and clientFoundRows,
+      multiStatements, and 10 tls mode outcomes, equal on 8.4 and 8.0):
       every type of item 8 with parseTime on and off and three `loc`
       values, each plugin with TLS, a Unix socket and RSA, prepared and
       interpolated arguments, multi statements and results,
