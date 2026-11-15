@@ -254,7 +254,9 @@ conformance tests and `xo bench --ab`.
     `query_all` (items 6 and 7), for every driver. The Go backend
     reports an unknown driver for `"mysql"` until it compiles std/sql's
     Xo drivers, as for Postgres (spec/std.md 10); WebAssembly has no
-    `Net`.
+    `Net`. A golden that wants a driver every backend lacks names one
+    no backend has (`nosuchdb`, sql_basic since 2026-11-15), not
+    `"mysql"`, which is native's driver and an unknown one on Go.
 
 ## Solid on three axes (decision 0461)
 
