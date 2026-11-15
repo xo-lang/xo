@@ -40,6 +40,10 @@ var (
 	_ func(*Crypto_Aead, *Task) int64                                                             = (*Crypto_Aead).M_overhead
 	_ func(*Crypto_AeadErr, *Task) string                                                         = (*Crypto_AeadErr).M_display
 	_ func(*Task, Crypto_Aead, Bytes) Result[Crypto_AeadKey, Crypto_AeadErr]                      = Crypto_aead_key
+	_ func(*Task, Bytes, int64) Result[Crypto_AeadKey, Crypto_AeadErr]                            = Crypto_aes_gcm_key_with_nonce_size
+	_ func(*Task, Bytes, int64) Result[Crypto_AeadKey, Crypto_AeadErr]                            = Crypto_aes_gcm_key_with_tag_size
+	_ func(*Crypto_AeadKey, *Task) int64                                                          = (*Crypto_AeadKey).M_nonce_size
+	_ func(*Crypto_AeadKey, *Task) int64                                                          = (*Crypto_AeadKey).M_overhead
 	_ func(*Crypto_AeadKey, *Task) Crypto_Aead                                                    = (*Crypto_AeadKey).M_alg
 	_ func(*Crypto_AeadKey, *Task, Rand, Bytes, Bytes) Bytes                                      = (*Crypto_AeadKey).M_seal_random
 	_ func(*Crypto_AeadKey, *Task, Bytes, Bytes) Result[Bytes, Crypto_AeadErr]                    = (*Crypto_AeadKey).M_open_random

@@ -35,14 +35,18 @@ func (a Crypto_Aead) M_overhead(*Task) int64 {
 // aeadTagCbc is Aes128CbcHmacSha256's variant tag (after AesGcm and
 // ChaCha20Poly1305).
 const aeadTagCbc = 3
+
 func (e Crypto_AeadErr) M_display(*Task) string { return e.F_msg }
 
 // Crypto_AeadKey is `crypto.AeadKey`: AES-GCM's cipher.AEAD, or
 // ChaCha20-Poly1305's 32 byte key. It never prints its key.
 type Crypto_AeadKey struct {
 	alg Crypto_Aead
-	gcm cipher.AEAD
-	key []byte
+	// ns and ts: an AES-GCM key's nonce and tag sizes (aes_gcm_key); 0 is
+	// the algorithm's
+	ns, ts int
+	gcm    cipher.AEAD
+	key    []byte
 	// cbc is the AES-128 block of Aes128CbcHmacSha256, key[:16] its MAC key
 	cbc cipher.Block
 }
@@ -87,8 +91,57 @@ func Crypto_aead_key(_ *Task, alg Crypto_Aead, key Bytes) Result[Crypto_AeadKey,
 
 func (k Crypto_AeadKey) M_alg(*Task) Crypto_Aead { return k.alg }
 
-func aeadNonce(a Crypto_Aead, nonce Bytes) {
-	want := int(a.M_nonce_size(nil))
+func (k Crypto_AeadKey) M_nonce_size(*Task) int64 {
+	if k.ns != 0 {
+		return int64(k.ns)
+	}
+	return k.alg.M_nonce_size(nil)
+}
+
+func (k Crypto_AeadKey) M_overhead(*Task) int64 {
+	if k.ts != 0 {
+		return int64(k.ts)
+	}
+	return k.alg.M_overhead(nil)
+}
+
+// Crypto_aes_gcm_key_with_nonce_size is Go's NewGCMWithNonceSize.
+func Crypto_aes_gcm_key_with_nonce_size(_ *Task, key Bytes, size int64) Result[Crypto_AeadKey, Crypto_AeadErr] {
+	return aesGCMSized(key, size, 16)
+}
+
+// Crypto_aes_gcm_key_with_tag_size is Go's NewGCMWithTagSize.
+func Crypto_aes_gcm_key_with_tag_size(_ *Task, key Bytes, size int64) Result[Crypto_AeadKey, Crypto_AeadErr] {
+	return aesGCMSized(key, 12, size)
+}
+
+func aesGCMSized(key Bytes, nonceSize, tagSize int64) Result[Crypto_AeadKey, Crypto_AeadErr] {
+	b, err := aes.NewCipher([]byte(key))
+	if err != nil {
+		return Err[Crypto_AeadKey](aeadErr(err.Error()))
+	}
+	var g cipher.AEAD
+	if tagSize != 16 {
+		g, err = cipher.NewGCMWithTagSize(b, int(tagSize))
+	} else {
+		g, err = cipher.NewGCMWithNonceSize(b, int(nonceSize))
+	}
+	if err != nil {
+		return Err[Crypto_AeadKey](aeadErr(err.Error()))
+	}
+	return Ok[Crypto_AeadKey, Crypto_AeadErr](Crypto_AeadKey{alg: Crypto_Aead{Tag: 1}, ns: int(nonceSize), ts: int(tagSize), gcm: g})
+}
+
+// minSealed is the shortest sealed message open reads: the tag.
+func (k Crypto_AeadKey) minSealed() int {
+	if k.ts != 0 {
+		return k.ts
+	}
+	return 16
+}
+
+func aeadNonce(k Crypto_AeadKey, nonce Bytes) {
+	want := int(k.M_nonce_size(nil))
 	if len(nonce) != want {
 		FaultHere("crypto: AEAD nonce of %d bytes, want %d", len(nonce), want)
 	}
@@ -108,7 +161,7 @@ func (k Crypto_AeadKey) cbcTag(iv, ct, aad []byte) []byte {
 }
 
 func (k Crypto_AeadKey) M_seal(_ *Task, nonce, plaintext, aad Bytes) Bytes {
-	aeadNonce(k.alg, nonce)
+	aeadNonce(k, nonce)
 	if k.cbc != nil {
 		pad := 16 - len(plaintext)%16
 		buf := make([]byte, len(plaintext)+pad)
@@ -127,7 +180,7 @@ func (k Crypto_AeadKey) M_seal(_ *Task, nonce, plaintext, aad Bytes) Bytes {
 }
 
 func (k Crypto_AeadKey) M_open(_ *Task, nonce, sealed, aad Bytes) Result[Bytes, Crypto_AeadErr] {
-	aeadNonce(k.alg, nonce)
+	aeadNonce(k, nonce)
 	if k.cbc != nil {
 		n := len(sealed) - 16
 		if n < 16 || n%16 != 0 {
@@ -150,7 +203,7 @@ func (k Crypto_AeadKey) M_open(_ *Task, nonce, sealed, aad Bytes) Result[Bytes, 
 		}
 		return Ok[Bytes, Crypto_AeadErr](Bytes(pt[:n-pad]))
 	}
-	if len(sealed) < 16 {
+	if len(sealed) < k.minSealed() {
 		return Err[Bytes](aeadErr(aeadFail))
 	}
 	if k.gcm != nil {
@@ -169,13 +222,13 @@ func (k Crypto_AeadKey) M_open(_ *Task, nonce, sealed, aad Bytes) Result[Bytes, 
 }
 
 func (k Crypto_AeadKey) M_seal_random(tk *Task, r Rand, plaintext, aad Bytes) Bytes {
-	nonce := r.M_bytes(tk, k.alg.M_nonce_size(tk))
+	nonce := r.M_bytes(tk, k.M_nonce_size(tk))
 	return nonce + k.M_seal(tk, nonce, plaintext, aad)
 }
 
 func (k Crypto_AeadKey) M_open_random(tk *Task, sealed, aad Bytes) Result[Bytes, Crypto_AeadErr] {
-	nn := int(k.alg.M_nonce_size(tk))
-	if len(sealed) < nn+16 {
+	nn := int(k.M_nonce_size(tk))
+	if len(sealed) < nn+k.minSealed() {
 		return Err[Bytes](aeadErr(aeadFail))
 	}
 	return k.M_open(tk, sealed[:nn], sealed[nn:], aad)

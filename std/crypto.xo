@@ -155,6 +155,21 @@ fn (e: AeadErr) display() -> Str
 
 /// alg's key; Err when `key` is not a length alg takes.
 fn aead_key(alg: Aead, key: Bytes) -> AeadKey ! AeadErr
+/// An AES-GCM key for nonces of `size` bytes (Go's
+/// cipher.NewGCMWithNonceSize; RFC 5288 and most protocols use 12, the
+/// size aead_key's keys take). Err with Go's texts: `crypto/aes: invalid
+/// key size N`, `cipher: the nonce can't have zero length`.
+fn aes_gcm_key_with_nonce_size(key: Bytes, size: Int) -> AeadKey ! AeadErr
+/// An AES-GCM key whose tags are cut to `size` bytes, 12 to 16 (Go's
+/// cipher.NewGCMWithTagSize); `cipher: incorrect tag size given to GCM`
+/// for another size.
+fn aes_gcm_key_with_tag_size(key: Bytes, size: Int) -> AeadKey ! AeadErr
+/// The key's nonce size (Go's AEAD.NonceSize): its algorithm's, or the
+/// size aes_gcm_key_with_nonce_size was given.
+fn (k: AeadKey) nonce_size() -> Int
+/// The key's overhead (Go's AEAD.Overhead): its algorithm's, or the tag
+/// size aes_gcm_key_with_tag_size was given.
+fn (k: AeadKey) overhead() -> Int
 fn (k: AeadKey) alg() -> Aead
 /// plaintext sealed under a random nonce from `r`, the nonce first: the
 /// way to seal unless a protocol counts nonces (Go's

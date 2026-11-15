@@ -12,6 +12,7 @@
 // carry-less multiply (decision 0231, cpu.xo; cpu.hw() says whether this
 // CPU has them) encryption and GHASH take them instead.
 use native/llrt/cpu
+use native/llrt/ct
 use native/llrt/raw
 use native/rt
 
@@ -1684,4 +1685,87 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
       Some(last)
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// GCM of any nonce length and a shorter tag (NIST SP 800-38D 7.1, Go's
+// NewGCMWithNonceSize and NewGCMWithTagSize): the sizes seal and open do
+// not take, on the block cipher and GHASH a block at a time.
+
+/// The 16 bytes of (y1, y0), big endian.
+fn be128(y1: Int, y0: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(16)
+  b.write_be(y1, 8)
+  b.write_be(y0, 8)
+  b.freeze()
+}
+
+/// The pre-counter block J0: the nonce and the counter 1 for 12 bytes,
+/// else GHASH of the nonce and its length in bits.
+fn (g: Gcm) j0(nonce: Bytes) -> (Int, Int) {
+  if nonce.len() == 12 {
+    return (be64(nonce, 0), shl(be64(nonce, 4), 32) | 1)
+  }
+  let (y1, y0) = g.ghash(0, 0, nonce, nonce.len())
+  g.mul(y1, y0 ^ (8 * nonce.len()))
+}
+
+/// inc32: the low 32 bits of the block plus one, wrapping.
+fn inc32(y0: Int) -> Int { (y0 & -4294967296) | ((y0 + 1) & 0xFFFFFFFF) }
+
+/// GCTR of data from the counter block (c1, c0).
+fn (g: Gcm) gctr(c1: Int, c0: Int, data: Bytes) -> Bytes {
+  var out = BytesBuilder.with_capacity(data.len())
+  var y0 = c0
+  var i = 0
+  while i < data.len() {
+    let ks = g.c.encrypt_block(be128(c1, y0))
+    let n = if data.len() - i < 16 { data.len() - i } else { 16 }
+    for j in 0..n {
+      out.write_byte(UInt8(Int(data[i + j]) ^ Int(ks[j])))
+    }
+    y0 = inc32(y0)
+    i += 16
+  }
+  out.freeze()
+}
+
+/// The full 16 byte tag of ciphertext ct and aad under J0.
+fn (g: Gcm) tag_any(j1: Int, j0: Int, ct: Bytes, aad: Bytes) -> Bytes {
+  let (a1, a0) = g.ghash(0, 0, aad, aad.len())
+  let (b1, b0) = g.ghash(a1, a0, ct, ct.len())
+  let (s1, s0) = g.mul(b1 ^ (8 * aad.len()), b0 ^ (8 * ct.len()))
+  let e = g.c.encrypt_block(be128(j1, j0))
+  let s = be128(s1, s0)
+  var out = BytesBuilder.with_capacity(16)
+  for i in 0..16 {
+    out.write_byte(UInt8(Int(e[i]) ^ Int(s[i])))
+  }
+  out.freeze()
+}
+
+/// The ciphertext of pt with its first tag_size tag bytes after it, for a
+/// nonce of any length.
+pub fn (g: Gcm) seal_any(nonce: Bytes, pt: Bytes, aad: Bytes, tag_size: Int) -> Bytes {
+  let (j1, j0) = g.j0(nonce)
+  let ct = g.gctr(j1, inc32(j0), pt)
+  var out = BytesBuilder.with_capacity(ct.len() + tag_size)
+  out.write(ct)
+  out.write(g.tag_any(j1, j0, ct, aad)[0..tag_size])
+  out.freeze()
+}
+
+/// The plaintext of seal_any's output, or None when its tag (compared in
+/// constant time) does not match; nothing is decrypted before the check.
+pub fn (g: Gcm) open_any(nonce: Bytes, sealed: Bytes, aad: Bytes, tag_size: Int) -> Bytes? {
+  if sealed.len() < tag_size {
+    return None
+  }
+  let n = sealed.len() - tag_size
+  let body = sealed[0..n]
+  let (j1, j0) = g.j0(nonce)
+  if !ct.bytes_equal(g.tag_any(j1, j0, body, aad)[0..tag_size], sealed[n..sealed.len()]) {
+    return None
+  }
+  Some(g.gctr(j1, inc32(j0), body))
 }

@@ -316,6 +316,10 @@ fn aeaderr_display(e: crypto.AeadErr) -> Str { e.msg }
 /// displayed or encoded (no Display; the declaration has none).
 struct AeadKey {
   which: crypto.Aead
+  /// An AES-GCM key's nonce and tag sizes (12 and 16 but for the
+  /// aes_gcm_key_with_* keys)
+  ns: Int = 12
+  ts: Int = 16
   gcm: aesgcm.Gcm?
   key: Bytes
   /// Aes128CbcHmacSha256: the AES-128 key schedule (key is the MAC key)
@@ -399,8 +403,35 @@ fn cbc_open(c: aesgcm.Cipher, mac_key: Bytes, iv: Bytes, sealed: Bytes, aad: Byt
 
 fn (k: AeadKey) alg() -> crypto.Aead { k.which }
 
+fn (k: AeadKey) nonce_size() -> Int { if k.which == crypto.Aead.AesGcm { k.ns } else { aead_nonce_size(k.which) } }
+fn (k: AeadKey) overhead() -> Int { if k.which == crypto.Aead.AesGcm { k.ts } else { aead_overhead(k.which) } }
+
+/// Go's cipher.newGCM checks (the tag size, then the nonce's), after the
+/// key's.
+fn aes_gcm_sized(key: Bytes, ns: Int, ts: Int) -> AeadKey ! crypto.AeadErr {
+  if !(key.len() is 16 | 24 | 32) {
+    return Err(crypto.AeadErr{msg: "crypto/aes: invalid key size ${key.len()}"})
+  }
+  if ts < 12 || ts > 16 {
+    return Err(crypto.AeadErr{msg: "cipher: incorrect tag size given to GCM"})
+  }
+  if ns <= 0 {
+    return Err(crypto.AeadErr{msg: "cipher: the nonce can't have zero length"})
+  }
+  Ok(AeadKey{which: crypto.Aead.AesGcm, ns: ns, ts: ts, gcm: Some(aesgcm.new_gcm(key)), key: b"", cbc: None})
+}
+
+fn aes_gcm_key_with_nonce_size(key: Bytes, size: Int) -> AeadKey ! crypto.AeadErr { aes_gcm_sized(key, size, 16) }
+fn aes_gcm_key_with_tag_size(key: Bytes, size: Int) -> AeadKey ! crypto.AeadErr { aes_gcm_sized(key, 12, size) }
+
+/// The shortest sealed message open reads: the tag.
+fn min_sealed(k: AeadKey) -> Int { if k.which == crypto.Aead.AesGcm { k.ts } else { 16 } }
+
+/// Whether the key's sizes are the ones the fast GCM path takes.
+fn plain_sizes(k: AeadKey) -> Bool { k.ns == 12 && k.ts == 16 }
+
 fn (k: AeadKey) seal(nonce: Bytes, plaintext: Bytes, aad: Bytes = b"") -> Bytes {
-  let want = aead_nonce_size(k.which)
+  let want = k.nonce_size()
   if nonce.len() != want {
     fault("crypto: AEAD nonce of ${nonce.len()} bytes, want ${want}")
   }
@@ -409,17 +440,18 @@ fn (k: AeadKey) seal(nonce: Bytes, plaintext: Bytes, aad: Bytes = b"") -> Bytes 
     None => {}
   }
   match k.gcm {
-    Some(g) => g.seal(nonce, plaintext, aad)
+    Some(g) => if plain_sizes(k) { g.seal(nonce, plaintext, aad) } else { g.seal_any(nonce, plaintext, aad, k.ts) }
     None => chacha.seal(k.key, nonce, plaintext, aad)
   }
 }
 
 fn (k: AeadKey) open(nonce: Bytes, sealed: Bytes, aad: Bytes = b"") -> Bytes ! crypto.AeadErr {
-  let want = aead_nonce_size(k.which)
+  let want = k.nonce_size()
   if nonce.len() != want {
     fault("crypto: AEAD nonce of ${nonce.len()} bytes, want ${want}")
   }
-  if sealed.len() < 16 {
+  // the tag at least (a CBC message is checked whole by cbc_open)
+  if sealed.len() < min_sealed(k) {
     return Err(crypto.AeadErr{msg: AEAD_FAIL})
   }
   match k.cbc {
@@ -432,7 +464,7 @@ fn (k: AeadKey) open(nonce: Bytes, sealed: Bytes, aad: Bytes = b"") -> Bytes ! c
     None => {}
   }
   let got = match k.gcm {
-    Some(g) => g.open(nonce, sealed, aad)
+    Some(g) => if plain_sizes(k) { g.open(nonce, sealed, aad) } else { g.open_any(nonce, sealed, aad, k.ts) }
     None => chacha.open(k.key, nonce, sealed, aad)
   }
   match got {
@@ -442,7 +474,7 @@ fn (k: AeadKey) open(nonce: Bytes, sealed: Bytes, aad: Bytes = b"") -> Bytes ! c
 }
 
 fn (k: AeadKey) seal_random(r: Rand, plaintext: Bytes, aad: Bytes = b"") -> Bytes uses rand {
-  let nn = aead_nonce_size(k.which)
+  let nn = k.nonce_size()
   let nonce = r.bytes(nn)
   var b = BytesBuilder.with_capacity(nn + plaintext.len() + 32)
   b.write(nonce)
@@ -451,8 +483,8 @@ fn (k: AeadKey) seal_random(r: Rand, plaintext: Bytes, aad: Bytes = b"") -> Byte
 }
 
 fn (k: AeadKey) open_random(sealed: Bytes, aad: Bytes = b"") -> Bytes ! crypto.AeadErr {
-  let nn = aead_nonce_size(k.which)
-  if sealed.len() < nn + 16 {
+  let nn = k.nonce_size()
+  if sealed.len() < nn + min_sealed(k) {
     return Err(crypto.AeadErr{msg: AEAD_FAIL})
   }
   k.open(sealed[0..nn], sealed[nn..sealed.len()], aad)

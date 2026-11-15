@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-15: feature: GCM with any nonce size and shorter tags
+
+- Kind: feature
+- Commit: this push
+- Found by: Lang 3's crypto and TLS gap audit (C5)
+- Go reference: crypto/cipher NewGCMWithNonceSize, NewGCMWithTagSize, go1.26.11
+- Test: corpus gcmsizes (gcm_test.go's aesGCMTests with their odd nonce and tag sizes, seeded keys of 16, 24 and 32 bytes over nonce sizes 1 to 64 and tags 12 to 15, sealed, opened, changed and cut; TestGCMCounterWrap; TestGCMInvalidTagSize's errors), native, go and llvm
+- Shipped in: not yet released
+
+`aes_gcm_key_with_nonce_size(key, size)` and `aes_gcm_key_with_tag_size(key, size)` give an AeadKey whose seal, open, seal_random and open_random use that nonce or tag size, as Go's NewGCMWithNonceSize and NewGCMWithTagSize: a nonce other than 12 bytes takes J0 from GHASH (NIST SP 800-38D 7.1) and the counter's low 32 bits wrap, and the errors are Go's (`crypto/aes: invalid key size N`, `cipher: the nonce can't have zero length`, `cipher: incorrect tag size given to GCM`). `nonce_size()` and `overhead()` are Go's NonceSize and Overhead for every AeadKey. The 12 byte nonce and 16 byte tag keep the hardware path; the other sizes run a portable GCTR and GHASH a block at a time, and a message is not decrypted before its tag checks.
+
 ## 2026-11-15: feature: pbkdf2 over any hash
 
 - Kind: feature

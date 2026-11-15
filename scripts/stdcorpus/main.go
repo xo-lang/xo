@@ -55,6 +55,7 @@ var generators = map[string]func() string{
 	"crypto":       cryptoCorpus,
 	"shake":        shakeCorpus,
 	"pbkdf2":       pbkdf2Corpus,
+	"gcmsizes":     gcmSizesCorpus,
 	"hpke":         hpkeCorpus,
 	"csv":          csvCorpus,
 	"cut":          cutCorpus,

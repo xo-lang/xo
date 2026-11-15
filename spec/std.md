@@ -4050,6 +4050,10 @@ fn (a: Aead) overhead() -> Int                           // 16: the tag; at most
 struct AeadKey {}                                        // Debug text `<aeadkey>`: never key material
 struct AeadErr { msg: Str }
 fn aead_key(alg: Aead, key: Bytes) -> AeadKey ! AeadErr  // AES: 16, 24, 32 bytes; ChaCha20-Poly1305: 32; Aes128CbcHmacSha256: 32 (MAC key, then AES key; RFC 7518 5.2.3, JWE A128CBC-HS256; seal gives ciphertext || tag; every open failure is the one error)
+fn aes_gcm_key_with_nonce_size(key: Bytes, size: Int) -> AeadKey ! AeadErr  // Go's NewGCMWithNonceSize: any nonce size above 0 (NIST SP 800-38D's J0 by GHASH for sizes other than 12)
+fn aes_gcm_key_with_tag_size(key: Bytes, size: Int) -> AeadKey ! AeadErr    // Go's NewGCMWithTagSize: tags of 12 to 16 bytes
+fn (k: AeadKey) nonce_size() -> Int                                      // Go's NonceSize
+fn (k: AeadKey) overhead() -> Int                                        // Go's Overhead: the tag size (32 for Aes128CbcHmacSha256)
 fn (k: AeadKey) alg() -> Aead
 fn (k: AeadKey) seal_random(r: Rand, plaintext: Bytes, aad: Bytes = b"") -> Bytes uses rand
 fn (k: AeadKey) open_random(sealed: Bytes, aad: Bytes = b"") -> Bytes ! AeadErr
