@@ -58,10 +58,29 @@ fn main(os: Os) {
     for i in 0..50 {
       h.observe(0.01 * Float(i + 1), [names[i]])
     }
+    // Xo's exposition adds its own family (xo_metrics_dropped_total),
+    // which client_golang has not: its bytes, measured once, are left out
+    // of the checksum so the twins agree
+    var own = -1
     for _ in 0..300 {
       let t = r.text()
-      sum += t.len()
+      if own < 0 {
+        own = own_family_len(t)
+      }
+      sum += t.len() - own
     }
   }
   os.stdio.println("${w} ${sum}")
+}
+
+/// The bytes of the lines of t that belong to Xo's own metric families
+/// (names starting `xo_`), each with its newline.
+fn own_family_len(t: Str) -> Int {
+  var n = 0
+  for l in t.lines() {
+    if l.starts_with("xo_") || l.starts_with("# HELP xo_") || l.starts_with("# TYPE xo_") {
+      n += l.len() + 1
+    }
+  }
+  n
 }
