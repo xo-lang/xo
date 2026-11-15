@@ -1,0 +1,35 @@
+// publicsuffix: std/publicsuffix against golang.org/x/net/publicsuffix
+// (twin.go.txt, vendored in govendor/), decision 0616's perf kind for
+// std/publicsuffix: the public suffix (suffix) and the registrable domain
+// (etld1) of 16 domains (ICANN and private suffixes, wildcard and exception
+// rules, an unlisted TLD), 200,000 passes each; `none` is the setup alone.
+// Usage: `<program> none|suffix|etld1`. Prints `<workload> <checksum>`;
+// the twin prints the same.
+use std/publicsuffix
+
+const DOMAINS = ["www.example.com", "a.b.example.co.uk", "foo.github.io", "shop.example.com.au", "x.y.z.blogspot.com", "localhost", "api.service.amazonaws.com", "sub.domain.example.jp", "news.bbc.co.uk", "deep.a.b.c.d.example.org", "test.kawasaki.jp", "www.city.kawasaki.jp", "example.xn--p1ai", "app.herokuapp.com", "mail.google.com", "s3.us-east-1.amazonaws.com"]
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var sum = 0
+  if w == "suffix" {
+    for i in 0..200000 {
+      for d in DOMAINS {
+        let (s, icann) = publicsuffix.public_suffix(d)
+        sum += s.len() + (if icann { 1 } else { 0 }) + i % 3
+      }
+    }
+  } else if w == "etld1" {
+    for i in 0..200000 {
+      for d in DOMAINS {
+        sum += match publicsuffix.effective_tld_plus_one(d) {
+          Ok(e) => e.len()
+          Err(_) => 100
+        } + i % 3
+      }
+    }
+  } else {
+    sum = DOMAINS.len()
+  }
+  os.stdio.println("${w} ${sum}")
+}

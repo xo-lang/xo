@@ -1,0 +1,5 @@
+# twincheck: publicsuffix: three workloads (none is the setup alone); Go is golang.org/x/net publicsuffix.
+require golang.org/x/net v0.60.0
+- - none
+- - suffix
+- - etld1

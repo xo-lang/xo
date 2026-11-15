@@ -1,0 +1,44 @@
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"golang.org/x/net/publicsuffix"
+)
+
+var domains = []string{"www.example.com", "a.b.example.co.uk", "foo.github.io", "shop.example.com.au", "x.y.z.blogspot.com", "localhost", "api.service.amazonaws.com", "sub.domain.example.jp", "news.bbc.co.uk", "deep.a.b.c.d.example.org", "test.kawasaki.jp", "www.city.kawasaki.jp", "example.xn--p1ai", "app.herokuapp.com", "mail.google.com", "s3.us-east-1.amazonaws.com"}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	switch w {
+	case "suffix":
+		for i := 0; i < 200000; i++ {
+			for _, d := range domains {
+				s, icann := publicsuffix.PublicSuffix(d)
+				sum += len(s) + i%3
+				if icann {
+					sum++
+				}
+			}
+		}
+	case "etld1":
+		for i := 0; i < 200000; i++ {
+			for _, d := range domains {
+				e, err := publicsuffix.EffectiveTLDPlusOne(d)
+				if err != nil {
+					sum += 100 + i%3
+				} else {
+					sum += len(e) + i%3
+				}
+			}
+		}
+	default:
+		sum = len(domains)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}
