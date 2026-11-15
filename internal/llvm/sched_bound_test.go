@@ -176,14 +176,31 @@ func TestOneThreadSpawnJoin(t *testing.T) {
 	if n, _ := strconv.Atoi(m[1]); n > 5 {
 		t.Fatalf("the worker was woken %d times for 50,000 spawns its spawner joined", n)
 	}
+	counts := map[string]int{}
 	for _, k := range []string{"mon_wake", "steal"} {
 		m := regexp.MustCompile(`\b` + k + `=(\d+)`).FindStringSubmatch(out)
 		if m == nil {
 			t.Fatalf("no %s count: %s", k, out)
 		}
-		if n, _ := strconv.Atoi(m[1]); n > 5 {
-			t.Errorf("%s=%d for 50,000 spawns its spawner joined (want at most 5)", k, n)
-		}
+		counts[k], _ = strconv.Atoi(m[1])
+	}
+	if n := counts["mon_wake"]; n > 5 {
+		t.Errorf("mon_wake=%d for 50,000 spawns its spawner joined (want at most 5)", n)
+	}
+	// steals come only from a worker the monitor woke: on a loaded host the
+	// root loses its CPU with spawns queued, and the monitor wakes the worker
+	// to run them (2026-11-15, 6 runs with XO_THREADS=1 under 56 busy loops
+	// on 28 CPUs: before decision 0640 (221125a5a^) steal 8, 0, 0, 8, 9, 4
+	// with mon_wake 1, 1, 0, 1, 2, 2; main steal 16, 0, 0, 0, 0, 0 with
+	// mon_wake 2, 0, 0, 0, 0, 1; a host 1 gate saw steal=48). So more than
+	// 5 steals fail only with no monitor wake, or past 50 a wake, so a
+	// monitor bug cannot hide behind one wake.
+	st, mw := counts["steal"], counts["mon_wake"]
+	if st > 5 && mw == 0 {
+		t.Errorf("steal=%d with mon_wake=0 for 50,000 spawns its spawner joined (want at most 5 when the monitor woke no worker)", st)
+	}
+	if mw > 0 && st > 50*mw {
+		t.Errorf("steal=%d for mon_wake=%d (want at most 50 steals a monitor wake)", st, mw)
 	}
 }
 
