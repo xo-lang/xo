@@ -6,22 +6,25 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Archive_ArchiveErr, *Task) string                                            = (*Archive_ArchiveErr).M_display
-	_ func(*Task, string, Bytes) Archive_Entry                                           = Archive_file
-	_ func(*Task, string) Archive_Entry                                                  = Archive_dir
-	_ func(*Task, Bytes) Bytes                                                           = Archive_gzip
-	_ func(*Task, Bytes, int64) Result[Bytes, Archive_ArchiveErr]                        = Archive_gunzip
-	_ func(*Task, List[Archive_Entry]) Result[Bytes, Archive_ArchiveErr]                 = Archive_tar
-	_ func(*Task, Bytes) Result[List[Archive_Entry], Archive_ArchiveErr]                 = Archive_untar
-	_ func(*Task, List[Archive_Entry]) Result[Bytes, Archive_ArchiveErr]                 = Archive_zip
-	_ func(*Task, Bytes, int64) Result[List[Archive_Entry], Archive_ArchiveErr]          = Archive_unzip
-	_ func(*Task, Bytes) Result[Archive_ZipReader, Archive_ArchiveErr]                   = Archive_zip_reader
-	_ func(*Archive_ZipReader, *Task) List[Archive_ZipFile]                              = (*Archive_ZipReader).M_files
-	_ func(*Archive_ZipReader, *Task, Archive_ZipFile) Result[Bytes, Archive_ArchiveErr] = (*Archive_ZipReader).M_read
-	_ func(*Task, File, int64) Result[Archive_ZipReader, Archive_ArchiveErr]             = Archive_zip_open
-	_ func(*Task, File) Archive_ZipWriter                                                = Archive_zip_writer
-	_ func(*Archive_ZipWriter, *Task, Archive_Entry) Result[Unit, Archive_ArchiveErr]    = (*Archive_ZipWriter).M_add
-	_ func(*Archive_ZipWriter, *Task, string, int64) Result[Unit, Archive_ArchiveErr]    = (*Archive_ZipWriter).M_create
-	_ func(*Archive_ZipWriter, *Task, Bytes) Result[Unit, Archive_ArchiveErr]            = (*Archive_ZipWriter).M_write
-	_ func(*Archive_ZipWriter, *Task) Result[Unit, Archive_ArchiveErr]                   = (*Archive_ZipWriter).M_close
+	_ func(*Archive_ArchiveErr, *Task) string                                                              = (*Archive_ArchiveErr).M_display
+	_ func(*Task, string, Bytes) Archive_Entry                                                             = Archive_file
+	_ func(*Task, string) Archive_Entry                                                                    = Archive_dir
+	_ func(*Task, Bytes) Bytes                                                                             = Archive_gzip
+	_ func(*Task, Bytes, int64) Result[Bytes, Archive_ArchiveErr]                                          = Archive_gunzip
+	_ func(*Task, List[Archive_Entry]) Result[Bytes, Archive_ArchiveErr]                                   = Archive_tar
+	_ func(*Task, Bytes) Result[List[Archive_Entry], Archive_ArchiveErr]                                   = Archive_untar
+	_ func(*Task, List[Archive_Entry], string, Archive_ZipMethod, int64) Result[Bytes, Archive_ArchiveErr] = Archive_zip
+	_ func(*Task, Bytes, int64) Result[List[Archive_Entry], Archive_ArchiveErr]                            = Archive_unzip
+	_ func(*Task, Bytes) Result[Archive_ZipReader, Archive_ArchiveErr]                                     = Archive_zip_reader
+	_ func(*Archive_ZipReader, *Task) List[Archive_ZipFile]                                                = (*Archive_ZipReader).M_files
+	_ func(*Archive_ZipReader, *Task) string                                                               = (*Archive_ZipReader).M_comment
+	_ func(*Archive_ZipReader, *Task, Archive_ZipFile) Result[Bytes, Archive_ArchiveErr]                   = (*Archive_ZipReader).M_read
+	_ func(*Task, File, int64) Result[Archive_ZipReader, Archive_ArchiveErr]                               = Archive_zip_open
+	_ func(*Task, File) Archive_ZipWriter                                                                  = Archive_zip_writer
+	_ func(*Archive_ZipWriter, *Task, Archive_Entry, Archive_ZipMethod) Result[Unit, Archive_ArchiveErr]   = (*Archive_ZipWriter).M_add
+	_ func(*Archive_ZipWriter, *Task, string, int64, Archive_ZipMethod) Result[Unit, Archive_ArchiveErr]   = (*Archive_ZipWriter).M_create
+	_ func(*Archive_ZipWriter, *Task, string) Result[Unit, Archive_ArchiveErr]                             = (*Archive_ZipWriter).M_set_comment
+	_ func(*Archive_ZipWriter, *Task, int64)                                                               = (*Archive_ZipWriter).M_set_offset
+	_ func(*Archive_ZipWriter, *Task, Bytes) Result[Unit, Archive_ArchiveErr]                              = (*Archive_ZipWriter).M_write
+	_ func(*Archive_ZipWriter, *Task) Result[Unit, Archive_ArchiveErr]                                     = (*Archive_ZipWriter).M_close
 )

@@ -491,7 +491,7 @@ test "tar and zip give Go's bytes" {
   for (i, (l, want_tar, want_zip)) in GO_WRITE.indexed() {
     let es = entries(l)
     let t = written(tar(es))
-    let z = written(zip(es))
+    let z = written(zip(es, "", archive.ZipMethod.Deflate, 0))
     if t != want_tar {
       bad.push((i, "tar " + t, want_tar))
     }

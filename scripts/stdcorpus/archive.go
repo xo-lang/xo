@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -779,5 +780,265 @@ test "zip_open walks a large archive from the File" {
   f.close()?
 }
 `)
+	zipMethodCorpus(&o)
 	return o.String()
 }
+
+// zmComment is the comment of kind k, as the Xo test's comment_of(k).
+func zmComment(k int) string {
+	switch k {
+	case 1:
+		return "hello"
+	case 2:
+		return "h\u00e9llo \u2713 tab\tnl\n"
+	case 3:
+		return strings.Repeat("c", 65535)
+	case 4:
+		return strings.Repeat("c", 65536)
+	}
+	return ""
+}
+
+type zmEntry struct {
+	path  string
+	seed  int
+	n     int
+	mode  int
+	sec   int64
+	isDir bool
+}
+
+// zmWrite is std/rt's archive.zip(entries, comment, method): Go's
+// zip.Writer with SetComment and each file's Method.
+func zmWrite(es []zmEntry, comment string, store bool) string {
+	var b bytes.Buffer
+	w := zip.NewWriter(&b)
+	if err := w.SetComment(comment); err != nil {
+		return "err archive: zip: " + err.Error()
+	}
+	for _, e := range es {
+		h := &zip.FileHeader{Name: e.path, Method: zip.Deflate, Modified: time.Unix(e.sec, 0).UTC()}
+		if store {
+			h.Method = zip.Store
+		}
+		h.SetMode(os.FileMode(e.mode & 0o777))
+		if e.isDir {
+			h.Name, h.Method = e.path+"/", zip.Store
+			h.SetMode(os.ModeDir | os.FileMode(e.mode&0o777))
+		}
+		fw, err := w.CreateHeader(h)
+		if err != nil {
+			return "err " + err.Error()
+		}
+		if !e.isDir {
+			fw.Write(lcgData(e.seed, e.n, 26))
+		}
+	}
+	if err := w.Close(); err != nil {
+		return "err " + err.Error()
+	}
+	return fmt.Sprintf("%d %s", b.Len(), archSum(b.Bytes()))
+}
+
+// zipMethodCorpus: zip.Store and Writer.SetComment against Go's bytes,
+// and Reader.Comment of Go-written archives (a comment that is not UTF-8
+// included).
+func zipMethodCorpus(o *strings.Builder) {
+	r := rand.New(rand.NewSource(5))
+	o.WriteString("\n/// (entries: path, data seed, n, mode, seconds, is_dir; comment kind, store, Go's archive: length and SHA-256, or err TEXT)\nconst ZIP_METHOD: List[(List[(Str, Int, Int, Int, Int, Bool)], Int, Bool, Str)] = [\n")
+	for i := 0; i < 60; i++ {
+		var es []zmEntry
+		var parts []string
+		for j, n := 0, 1+r.Intn(4); j < n; j++ {
+			e := zmEntry{path: fmt.Sprintf("p%d/f%d.txt", i, j), seed: r.Intn(1 << 30), n: []int{0, 5, 300, 5000}[r.Intn(4)], mode: []int{0o644, 0o600, 0o755, 0o444}[r.Intn(4)], sec: []int64{0, 1000000000, 1700000000}[r.Intn(3)], isDir: r.Intn(5) == 0}
+			if e.isDir {
+				e.path, e.n = fmt.Sprintf("p%d/d%d", i, j), 0
+			}
+			es = append(es, e)
+			parts = append(parts, fmt.Sprintf("(%q, %d, %d, %d, %d, %v)", e.path, e.seed, e.n, e.mode, e.sec, e.isDir))
+		}
+		k := r.Intn(5)
+		if i < 5 {
+			k = i
+		}
+		store := r.Intn(2) == 0
+		fmt.Fprintf(o, "  ([%s], %d, %v, %q),\n", strings.Join(parts, ", "), k, store, zmWrite(es, zmComment(k), store))
+	}
+	o.WriteString("]\n\n/// (a Go-written archive with a comment, Go's Reader.Comment as text)\nconst ZIP_COMMENTS: List[(Bytes, Str)] = [\n")
+	for _, c := range []string{"", "x", "a\xffb", "\u00e9\u2713", strings.Repeat("z", 300)} {
+		var b bytes.Buffer
+		w := zip.NewWriter(&b)
+		w.SetComment(c)
+		fw, _ := w.Create("a")
+		fw.Write([]byte("abc"))
+		w.Close()
+		zr, err := zip.NewReader(bytes.NewReader(b.Bytes()), int64(b.Len()))
+		if err != nil {
+			panic(err)
+		}
+		fmt.Fprintf(o, "  (%s, %s),\n", xbytes(b.Bytes()), xq(textOf(zr.Comment)))
+	}
+	o.WriteString("]\n")
+	// the streamed writer: SetComment, stored and deflated entries
+	var b bytes.Buffer
+	w := zip.NewWriter(&b)
+	add := func(name string, mode int, method uint16, data []byte) {
+		h := &zip.FileHeader{Name: name, Method: method, Modified: time.Unix(0, 0).UTC()}
+		h.SetMode(os.FileMode(mode))
+		fw, _ := w.CreateHeader(h)
+		fw.Write(data)
+	}
+	add("s.txt", 0o644, zip.Store, []byte("stored stored stored"))
+	add("d.txt", 0o600, zip.Deflate, lcgData(9, 4000, 3))
+	add("s2", 0o644, zip.Store, lcgData(10, 70000, 256))
+	w.SetComment("streamed")
+	w.Close()
+	fmt.Fprintf(o, "\n/// Go's archive for the zip_writer test below\nconst ZIP_STREAMED: Str = %q\n", fmt.Sprintf("%d %s", b.Len(), archSum(b.Bytes())))
+	// SetOffset: an archive after a 100 byte prefix, in memory and streamed
+	pre := lcgData(11, 100, 256)
+	for _, streamed := range []bool{false, true} {
+		var b bytes.Buffer
+		b.Write(pre)
+		w := zip.NewWriter(&b)
+		w.SetOffset(100)
+		w.SetComment("sfx")
+		for i, d := range [][]byte{[]byte("one one one"), lcgData(12, 3000, 3)} {
+			h := &zip.FileHeader{Name: fmt.Sprintf("f%d", i), Method: zip.Deflate, Modified: time.Unix(0, 0).UTC()}
+			h.SetMode(0o644)
+			fw, _ := w.CreateHeader(h)
+			fw.Write(d)
+		}
+		w.Close()
+		name := "ZIP_OFFSET"
+		if streamed {
+			name = "ZIP_OFFSET_STREAMED"
+		}
+		fmt.Fprintf(o, "/// Go's prefix and archive with SetOffset(100)\nconst %s: Str = %q\n", name, fmt.Sprintf("%d %s", b.Len(), archSum(b.Bytes())))
+	}
+	o.WriteString(zipMethodTests)
+}
+
+const zipMethodTests = `
+fn zdata(seed: Int, n: Int) -> Bytes {
+  var x = seed & 0x7fffffff
+  var b = BytesBuilder.with_capacity(n)
+  var i = 0
+  while i < n {
+    x = (x * 1103515245 + 12345) & 0x7fffffff
+    b.write_byte(UInt8(97 + (x >> 8) % 26))
+    i += 1
+  }
+  b.freeze()
+}
+
+fn zdata256(seed: Int, n: Int, k: Int) -> Bytes {
+  var x = seed & 0x7fffffff
+  var b = BytesBuilder.with_capacity(n)
+  var i = 0
+  while i < n {
+    x = (x * 1103515245 + 12345) & 0x7fffffff
+    let v = x >> 8
+    b.write_byte(UInt8(if k < 256 { 97 + v % k } else { v & 255 }))
+    i += 1
+  }
+  b.freeze()
+}
+
+fn comment_of(k: Int) -> Str {
+  match k {
+    1 => "hello"
+    2 => "h\u{e9}llo \u{2713} tab\tnl\n"
+    3 => "c".repeat(65535)
+    4 => "c".repeat(65536)
+    _ => ""
+  }
+}
+
+fn sum_of(b: Bytes) -> Str { "${b.len()} ${crypto.sha256(b).to_hex()}" }
+
+test "zip with a comment and either method writes Go's bytes (zip.Store, Writer.SetComment), and zip_reader reads them back" {
+  var bad: List[(Int, Str, Str)] = []
+  for (i, (spec, k, store, want)) in ZIP_METHOD.indexed() {
+    var es: List[archive.Entry] = []
+    for (p, seed, n, mode, sec, is_dir) in spec {
+      es.push(archive.Entry{path: p, data: zdata(seed, n), mode: mode, is_dir: is_dir, modified: Time.UNIX_EPOCH + Duration.from_nanos(sec * 1000000000)})
+    }
+    let method = if store { archive.ZipMethod.Store } else { archive.ZipMethod.Deflate }
+    let got = match archive.zip(es, comment: comment_of(k), method: method) {
+      Ok(b) => {
+        let back = match archive.zip_reader(b) {
+          Ok(r) => {
+            var ok = r.comment() == comment_of(k)
+            for (j, f) in r.files().indexed() {
+              ok = ok && (f.method == (if store || f.is_dir { 0 } else { 8 })) && ((r.read(f).ok() ?? b"-") == es[j].data)
+            }
+            ok
+          }
+          Err(_) => false
+        }
+        if back { sum_of(b) } else { "read back differs" }
+      }
+      Err(e) => "err ${e.display()}"
+    }
+    if got != want {
+      bad.push((i, got, want))
+    }
+  }
+  expect(show3(bad.map(fn(x) { ("${x.0}", x.1, x.2) }))) == []
+}
+
+test "zip_reader gives Go's Reader.Comment" {
+  var got: List[Str] = []
+  var want: List[Str] = []
+  for (data, c) in ZIP_COMMENTS {
+    got.push(match archive.zip_reader(data) {
+      Ok(r) => r.comment()
+      Err(e) => "err ${e.display()}"
+    })
+    want.push(c)
+  }
+  expect(got) == want
+}
+
+test "zip_writer with set_comment and stored entries writes Go's bytes" {
+  var f = os.fs.create("m.zip")?
+  var w = archive.zip_writer(f)
+  w.add(archive.file("s.txt", b"stored stored stored"), method: archive.ZipMethod.Store)?
+  w.create("d.txt", 0o600)?
+  w.write(zdata256(9, 4000, 3))?
+  w.create("s2", method: archive.ZipMethod.Store)?
+  let big = zdata256(10, 70000, 256)
+  w.write(big[0..30000])?
+  w.write(big[30000..])?
+  w.set_comment("streamed")?
+  expect(w.set_comment("c".repeat(65536)).is_err()) == true
+  w.close()?
+  f.close()?
+  let data = os.fs.read("m.zip")?
+  expect(sum_of(data)) == ZIP_STREAMED
+  let r = archive.zip_open(os.fs.open("m.zip")?, data.len())?
+  expect(r.comment()) == "streamed"
+  expect(r.files().map(fn(x) { x.method })) == [0, 8, 0]
+}
+
+test "zip with offset after a prefix writes Go's bytes (Writer.SetOffset), and zip_reader reads it" {
+  let pre = zdata256(11, 100, 256)
+  let es = [archive.file("f0", b"one one one"), archive.file("f1", zdata256(12, 3000, 3))]
+  let z = archive.zip(es, comment: "sfx", offset: 100)?
+  let whole = pre + z
+  expect(sum_of(whole)) == ZIP_OFFSET
+  let r = archive.zip_reader(whole)?
+  expect(r.comment()) == "sfx"
+  expect(r.read(r.files()[1])?) == es[1].data
+  var f = os.fs.create("sfx.zip")?
+  f.write(pre)?
+  var w = archive.zip_writer(f)
+  w.set_offset(100)
+  w.add(es[0])?
+  w.add(es[1])?
+  w.set_comment("sfx")?
+  w.close()?
+  f.close()?
+  expect(sum_of(os.fs.read("sfx.zip")?)) == ZIP_OFFSET_STREAMED
+}
+`

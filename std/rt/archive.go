@@ -145,15 +145,27 @@ func Archive_untar(_ *Task, data Bytes) Result[List[Archive_Entry], Archive_Arch
 }
 
 // Archive_zip is `archive.zip(entries)`.
-func Archive_zip(_ *Task, entries List[Archive_Entry]) Result[Bytes, Archive_ArchiveErr] {
+// archiveMethod is Go's method for a ZipMethod.
+func archiveMethod(m Archive_ZipMethod) uint16 {
+	if m.Tag == 2 {
+		return zip.Store
+	}
+	return zip.Deflate
+}
+
+func Archive_zip(_ *Task, entries List[Archive_Entry], comment string, method Archive_ZipMethod, offset int64) Result[Bytes, Archive_ArchiveErr] {
 	var b bytes.Buffer
 	w := zip.NewWriter(&b)
+	w.SetOffset(offset)
+	if err := w.SetComment(comment); err != nil {
+		return Err[Bytes](archiveErr("zip: " + err.Error()))
+	}
 	for _, e := range entries.s {
 		p, ok := archivePath(e.F_path)
 		if !ok {
 			return Err[Bytes](archiveErr("bad entry path " + strconv.Quote(e.F_path)))
 		}
-		h := &zip.FileHeader{Name: p, Method: zip.Deflate, Modified: entryTime(e)}
+		h := &zip.FileHeader{Name: p, Method: archiveMethod(method), Modified: entryTime(e)}
 		h.SetMode(fs.FileMode(e.F_mode & 0o777))
 		if e.F_is_dir {
 			h.Name, h.Method = p+"/", zip.Store
@@ -245,10 +257,13 @@ func Archive_zip_reader(_ *Task, data Bytes) Result[Archive_ZipReader, Archive_A
 		out = append(out, Archive_ZipFile{F_path: p, F_size: int64(f.UncompressedSize64), F_compressed: int64(f.CompressedSize64), F_mode: int64(m.Perm()),
 			F_is_dir: m.IsDir(), F_modified: Time(f.Modified.UnixNano()), F_offset: int64(i), F_method: int64(f.Method), F_flags: int64(f.Flags), F_crc: int64(f.CRC32)})
 	}
-	return Ok[Archive_ZipReader, Archive_ArchiveErr](Archive_ZipReader{F_data: data, F_list: ListOf(out...)})
+	return Ok[Archive_ZipReader, Archive_ArchiveErr](Archive_ZipReader{F_data: data, F_list: ListOf(out...), F_note: textOf(r.Comment)})
 }
 
 func (r *Archive_ZipReader) M_files(*Task) List[Archive_ZipFile] { return r.F_list }
+
+// M_comment is Reader.Comment.
+func (r *Archive_ZipReader) M_comment(*Task) string { return r.F_note }
 
 func (r *Archive_ZipReader) M_read(_ *Task, f Archive_ZipFile) Result[Bytes, Archive_ArchiveErr] {
 	if f.F_is_dir {
@@ -307,8 +322,8 @@ func (x *Archive_ZipWriter) fail(tk *Task, err error) Result[Unit, Archive_Archi
 	return Err[Unit](archiveErr("zip_writer: " + err.Error()))
 }
 
-func (x *Archive_ZipWriter) start(tk *Task, name string, mode int64, isDir bool, mod time.Time) error {
-	h := &zip.FileHeader{Name: name, Method: zip.Deflate, Modified: mod}
+func (x *Archive_ZipWriter) start(tk *Task, name string, mode int64, isDir bool, mod time.Time, method uint16) error {
+	h := &zip.FileHeader{Name: name, Method: method, Modified: mod}
 	h.SetMode(fs.FileMode(mode & 0o777))
 	if isDir {
 		h.Name = name + "/"
@@ -321,12 +336,12 @@ func (x *Archive_ZipWriter) start(tk *Task, name string, mode int64, isDir bool,
 	return err
 }
 
-func (x *Archive_ZipWriter) M_add(tk *Task, e Archive_Entry) Result[Unit, Archive_ArchiveErr] {
+func (x *Archive_ZipWriter) M_add(tk *Task, e Archive_Entry, method Archive_ZipMethod) Result[Unit, Archive_ArchiveErr] {
 	p, ok := archivePath(textOf(e.F_path))
 	if !ok {
 		return Err[Unit](archiveErr("bad entry path " + strconv.Quote(e.F_path)))
 	}
-	if err := x.start(tk, p, e.F_mode, e.F_is_dir, entryTime(e)); err != nil {
+	if err := x.start(tk, p, e.F_mode, e.F_is_dir, entryTime(e), archiveMethod(method)); err != nil {
 		return x.fail(tk, err)
 	}
 	if !e.F_is_dir {
@@ -337,12 +352,12 @@ func (x *Archive_ZipWriter) M_add(tk *Task, e Archive_Entry) Result[Unit, Archiv
 	return Ok[Unit, Archive_ArchiveErr](Unit{})
 }
 
-func (x *Archive_ZipWriter) M_create(tk *Task, p string, mode int64) Result[Unit, Archive_ArchiveErr] {
+func (x *Archive_ZipWriter) M_create(tk *Task, p string, mode int64, method Archive_ZipMethod) Result[Unit, Archive_ArchiveErr] {
 	clean, ok := archivePath(textOf(p))
 	if !ok {
 		return Err[Unit](archiveErr("bad entry path " + strconv.Quote(p)))
 	}
-	if err := x.start(tk, clean, mode, false, time.Unix(0, 0).UTC()); err != nil {
+	if err := x.start(tk, clean, mode, false, time.Unix(0, 0).UTC(), archiveMethod(method)); err != nil {
 		return x.fail(tk, err)
 	}
 	return Ok[Unit, Archive_ArchiveErr](Unit{})
@@ -357,6 +372,24 @@ func (x *Archive_ZipWriter) M_write(tk *Task, data Bytes) Result[Unit, Archive_A
 		return x.fail(tk, err)
 	}
 	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}
+
+// M_set_comment is Writer.SetComment.
+func (x *Archive_ZipWriter) M_set_comment(tk *Task, comment string) Result[Unit, Archive_ArchiveErr] {
+	if err := x.zw.SetComment(comment); err != nil {
+		return x.fail(tk, err)
+	}
+	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}
+
+// M_set_offset is Writer.SetOffset; its panic is a fault.
+func (x *Archive_ZipWriter) M_set_offset(_ *Task, n int64) {
+	defer func() {
+		if r := recover(); r != nil {
+			FaultHere("%v", r)
+		}
+	}()
+	x.zw.SetOffset(n)
 }
 
 func (x *Archive_ZipWriter) M_close(tk *Task) Result[Unit, Archive_ArchiveErr] {

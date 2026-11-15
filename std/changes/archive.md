@@ -1,5 +1,18 @@
 # std/archive changes
 
+## 2026-11-15: feature: zip comments, stored entries, and an offset after a prefix
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): zip.Writer.SetComment, zip.Store, zip.Writer.SetOffset
+- Go reference: archive/zip (writer.go SetComment, SetOffset, CreateHeader; reader.go Comment) (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/archive (scripts/stdcorpus archive): 60 archives of 1 to 4 entries with comments of 0 to 65536 bytes, stored or deflated, with Go's bytes and read back; Go's Reader.Comment of 5 Go-written archives (one not UTF-8); the streamed writer with set_comment and stored entries; an archive after a 100 byte prefix in memory and streamed (arm64, LLVM, Go)
+- Timing: none
+
+`zip(entries, comment:, method:, offset:)`, `ZipWriter.add(e, method:)`,
+`create(path, mode, method:)`, `set_comment` and `set_offset` write what
+Go's zip.Writer writes; `ZipReader.comment()` reads the comment back.
+
 ## 2026-11-14: security: unzip and gunzip bound what they inflate; xo mod caps a module zip as Go
 
 - Kind: security

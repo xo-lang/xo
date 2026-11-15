@@ -1226,11 +1226,11 @@ struct ZipHdr {
 /// The directory record of an entry whose data is not yet written: its
 /// name (a directory's ends with `/`), flags, method, MS-DOS and Unix
 /// times, attributes and header offset (Writer.CreateHeader).
-fn zip_new_header(p: Str, mode: Int, is_dir: Bool, modified: Time, offset: Int) -> ZipHdr {
+fn zip_new_header(p: Str, mode: Int, is_dir: Bool, modified: Time, offset: Int, store: Bool) -> ZipHdr {
   var name = p
   let perm = mode & 0o777
   var attrs = (0x8000 | perm) << 16
-  var method = 8
+  var method = if store { 0 } else { 8 }
   var flags = 0x8
   if is_dir {
     name = p + "/"
@@ -1304,7 +1304,7 @@ fn zip_descriptor(zf: ZipHdr) -> Bytes {
 /// or offset gets the zip64 extra field, and an archive of 65,535 or more
 /// entries, or a directory past the 32-bit size or offset, the zip64 end
 /// record and its locator before the classic end record.
-fn zip_central(files: List[ZipHdr], start: Int) -> Bytes {
+fn zip_central(files: List[ZipHdr], start: Int, comment: Str) -> Bytes {
   var out = BytesBuilder.new()
   var count = start
   for zf in files {
@@ -1376,14 +1376,24 @@ fn zip_central(files: List[ZipHdr], start: Int) -> Bytes {
   put_u16(out, records)
   put_u32(out, size)
   put_u32(out, offset)
-  put_u16(out, 0)
+  put_u16(out, comment.len())
+  out.write(comment.bytes())
   out.freeze()
 }
 
-fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
+/// Writer.SetComment's check.
+fn zip_comment_ok(comment: Str) -> Bool { comment.len() <= 65535 }
+
+const ERR_COMMENT: Str = "zip: Writer.Comment too long"
+
+fn zip(entries: List[archive.Entry], comment: Str, method: archive.ZipMethod, offset: Int) -> Bytes ! archive.ArchiveErr {
+  if !zip_comment_ok(comment) {
+    return Err(archive_err("zip: ${ERR_COMMENT}"))
+  }
+  let store = method == archive.ZipMethod.Store
   let t = flate.crc_table()
   var out = BytesBuilder.new()
-  var count = 0
+  var count = offset
   var files: List[ZipHdr] = []
   var zs = flate.new_stream(5)
   for e in entries {
@@ -1391,12 +1401,12 @@ fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
       Some(x) => x
       None => return Err(archive_err("bad entry path ${e.path.quote()}"))
     }
-    var zf = zip_new_header(p, e.mode, e.is_dir, e.modified, count)
+    var zf = zip_new_header(p, e.mode, e.is_dir, e.modified, count, store)
     let hdr = zip_local_header(zf)
     out.write(hdr)
     count += hdr.len()
     if !e.is_dir {
-      let comp = flate.deflate_again(zs, e.data)
+      let comp = if store { e.data } else { flate.deflate_again(zs, e.data) }
       out.write(comp)
       count += comp.len()
       zf.crc = flate.crc32(t, 0, e.data)
@@ -1408,7 +1418,7 @@ fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
     }
     files.push(zf)
   }
-  out.write(zip_central(files, count))
+  out.write(zip_central(files, count, comment))
   out.freeze()
 }
 
@@ -1425,6 +1435,7 @@ struct ZipWriter {
   s: flate.Stream
   sum: Int
   done: Bool
+  comment: Str = ""
 }
 
 fn zip_writer(f: File) -> ZipWriter {
@@ -1449,11 +1460,13 @@ fn (var w: ZipWriter) end_entry() -> () ! archive.ArchiveErr uses fs.write {
   if !w.open {
     return Ok(())
   }
-  if w.cur.method == 8 {
-    w.s.close()
-    let comp = w.s.take()
-    w.cur.csize += comp.len()
-    w.put(comp)?
+  if (w.cur.flags & 0x8) != 0 {
+    if w.cur.method == 8 {
+      w.s.close()
+      let comp = w.s.take()
+      w.cur.csize += comp.len()
+      w.put(comp)?
+    }
     w.cur.crc = w.sum
     w.put(zip_descriptor(w.cur))?
   }
@@ -1462,47 +1475,65 @@ fn (var w: ZipWriter) end_entry() -> () ! archive.ArchiveErr uses fs.write {
   Ok(())
 }
 
-fn (var w: ZipWriter) start(p: Str, mode: Int, is_dir: Bool, modified: Time) -> () ! archive.ArchiveErr uses fs.write {
+fn (var w: ZipWriter) start(p: Str, mode: Int, is_dir: Bool, modified: Time, store: Bool) -> () ! archive.ArchiveErr uses fs.write {
   if w.done {
     return Err(archive_err("zip_writer: closed"))
   }
   w.end_entry()?
-  w.cur = zip_new_header(p, mode, is_dir, modified, w.pos)
+  w.cur = zip_new_header(p, mode, is_dir, modified, w.pos, store)
   w.put(zip_local_header(w.cur))?
   w.open = true
   w.sum = 0
-  if !is_dir {
+  if !is_dir && !store {
     w.s = flate.new_stream(5)
   }
   Ok(())
 }
 
-fn (var w: ZipWriter) add(e: archive.Entry) -> () ! archive.ArchiveErr uses fs.write {
+fn (var w: ZipWriter) add(e: archive.Entry, method: archive.ZipMethod) -> () ! archive.ArchiveErr uses fs.write {
   let p = match archive_path(e.path) {
     Some(x) => x
     None => return Err(archive_err("bad entry path ${e.path.quote()}"))
   }
-  w.start(p, e.mode, e.is_dir, e.modified)?
+  w.start(p, e.mode, e.is_dir, e.modified, method == archive.ZipMethod.Store)?
   if !e.is_dir {
     w.write(e.data)?
   }
   w.end_entry()
 }
 
-fn (var w: ZipWriter) create(path: Str, mode: Int) -> () ! archive.ArchiveErr uses fs.write {
+fn (var w: ZipWriter) create(path: Str, mode: Int, method: archive.ZipMethod) -> () ! archive.ArchiveErr uses fs.write {
   let p = match archive_path(path) {
     Some(x) => x
     None => return Err(archive_err("bad entry path ${path.quote()}"))
   }
-  w.start(p, mode, false, Time.UNIX_EPOCH)
+  w.start(p, mode, false, Time.UNIX_EPOCH, method == archive.ZipMethod.Store)
+}
+
+fn (var w: ZipWriter) set_comment(comment: Str) -> () ! archive.ArchiveErr {
+  if !zip_comment_ok(comment) {
+    return Err(archive_err("zip_writer: ${ERR_COMMENT}"))
+  }
+  w.comment = comment
+}
+
+fn (var w: ZipWriter) set_offset(n: Int) {
+  if w.pos != 0 {
+    fault("zip: SetOffset called after data was written")
+  }
+  w.pos = n
 }
 
 fn (var w: ZipWriter) write(data: Bytes) -> () ! archive.ArchiveErr uses fs.write {
-  if !w.open || w.cur.method != 8 {
+  if !w.open || (w.cur.flags & 0x8) == 0 {
     return Err(archive_err("zip_writer: write without create"))
   }
   w.sum = flate.crc32(w.t, w.sum, data)
   w.cur.usize += data.len()
+  if w.cur.method == 0 {
+    w.cur.csize += data.len()
+    return w.put(data)
+  }
   w.s.write(data)
   let comp = w.s.take()
   w.cur.csize += comp.len()
@@ -1515,7 +1546,7 @@ fn (var w: ZipWriter) close() -> () ! archive.ArchiveErr uses fs.write {
   }
   w.end_entry()?
   w.done = true
-  w.put(zip_central(w.files, w.pos))
+  w.put(zip_central(w.files, w.pos, w.comment))
 }
 
 const ERR_FORMAT: Str = "zip: not a valid zip file"
@@ -1866,7 +1897,7 @@ fn zip_reader(data: Bytes) -> archive.ZipReader ! archive.ArchiveErr {
     Ok(l) => list = l
     Err(e) => return Err(archive_err("zip_reader: ${e}"))
   }
-  archive.ZipReader{data: data, list: list, file: None, total: 0}
+  archive.ZipReader{data: data, list: list, file: None, total: 0, note: zip_comment_of(data)}
 }
 
 /// n bytes of f from the offset off, or why not.
@@ -1903,7 +1934,7 @@ fn zip_open(f: File, size: Int) -> archive.ZipReader ! archive.ArchiveErr uses f
   for _ in 0..3 {
     let data = read_span(f, shift, size - shift)?
     match zip_files_at(data, shift) {
-      Ok(l) => return Ok(archive.ZipReader{data: b"", list: l, file: Some(f), total: size})
+      Ok(l) => return Ok(archive.ZipReader{data: b"", list: l, file: Some(f), total: size, note: zip_comment_of(data)})
       Err(e) => {
         if e.starts_with("NEED ") {
           let n = Int.parse(e[5..]) ?? -1
@@ -1930,6 +1961,18 @@ fn zip_files_at(data: Bytes, shift: Int) -> List[archive.ZipFile] ! Str {
 }
 
 fn zipreader_files(r: archive.ZipReader) -> List[archive.ZipFile] { r.list }
+
+fn zipreader_comment(r: archive.ZipReader) -> Str { r.note }
+
+/// The end record's comment (Reader.Comment), the directory already read.
+fn zip_comment_of(data: Bytes) -> Str {
+  let end_off = zip_find_end(data)
+  if end_off < 0 {
+    return ""
+  }
+  let n = get_u16(data, end_off + 20)
+  scan.text_of(sub(data, end_off + 22, end_off + 22 + n))
+}
 
 /// The contents of one entry, inflated and checked (its CRC).
 fn zipreader_read(r: archive.ZipReader, f: archive.ZipFile) -> Bytes ! archive.ArchiveErr uses fs.read {

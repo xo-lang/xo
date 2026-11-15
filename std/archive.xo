@@ -37,8 +37,19 @@ fn tar(entries: List[Entry]) -> Bytes ! ArchiveErr
 /// The entries of a tar archive. An entry whose path is absolute or
 /// leaves the archive's root (`..`) is an error, as are links and devices.
 fn untar(data: Bytes) -> List[Entry] ! ArchiveErr
-/// A zip archive of the entries (deflated), in order.
-fn zip(entries: List[Entry]) -> Bytes ! ArchiveErr
+/// How a zip entry's data is kept: deflated, or stored as it is (Go's
+/// zip.Deflate and zip.Store). A directory is always stored.
+enum ZipMethod {
+  Deflate
+  Store
+} derive Eq, Debug
+
+/// A zip archive of the entries, in order, each written by method, with
+/// the archive comment comment (Go's Writer.SetComment: more than 65535
+/// bytes is `zip: zip: Writer.Comment too long`). offset is where the
+/// archive will start in its file (Go's Writer.SetOffset): the bytes to
+/// append after offset bytes of something else, such as an executable.
+fn zip(entries: List[Entry], comment: Str = "", method: ZipMethod = ZipMethod.Deflate, offset: Int = 0) -> Bytes ! ArchiveErr
 /// The entries of a zip archive, with the same path rules as untar. An
 /// archive whose files declare more than max_size bytes in all is an error
 /// before any is inflated (`unzip: zip: files exceed max_size (N bytes)`),
@@ -70,6 +81,7 @@ struct ZipReader {
   list: List[ZipFile]
   file: File?
   total: Int
+  note: Str = ""
 }
 
 /// The archive's directory, checked as `unzip` checks it (paths, kinds,
@@ -77,6 +89,9 @@ struct ZipReader {
 fn zip_reader(data: Bytes) -> ZipReader ! ArchiveErr
 /// The entries in directory order.
 fn (r: ZipReader) files() -> List[ZipFile]
+/// The archive comment (Go's Reader.Comment; a byte that is not UTF-8
+/// reads as U+FFFD).
+fn (r: ZipReader) comment() -> Str
 /// One entry's contents, inflated and checked against its CRC; a
 /// directory's is empty.
 fn (r: ZipReader) read(f: ZipFile) -> Bytes ! ArchiveErr uses fs.read
@@ -95,10 +110,17 @@ struct ZipWriter {}
 
 fn zip_writer(f: File) -> ZipWriter
 /// Writes an entry whose data is in hand, ending the entry before it.
-fn (var w: ZipWriter) add(e: Entry) -> () ! ArchiveErr uses fs.write
+fn (var w: ZipWriter) add(e: Entry, method: ZipMethod = ZipMethod.Deflate) -> () ! ArchiveErr uses fs.write
 /// Starts a streamed file entry (its time the Unix epoch, as `file`),
 /// ending the one before it; `write` gives it data.
-fn (var w: ZipWriter) create(path: Str, mode: Int = 0o644) -> () ! ArchiveErr uses fs.write
+fn (var w: ZipWriter) create(path: Str, mode: Int = 0o644, method: ZipMethod = ZipMethod.Deflate) -> () ! ArchiveErr uses fs.write
+/// The archive comment `close` writes (Go's Writer.SetComment): more than
+/// 65535 bytes is `zip_writer: zip: Writer.Comment too long`.
+fn (var w: ZipWriter) set_comment(comment: Str) -> () ! ArchiveErr
+/// Where the archive starts in its File (Go's Writer.SetOffset), for an
+/// archive written after n bytes of something else; a fault once the
+/// writer has written (`zip: SetOffset called after data was written`).
+fn (var w: ZipWriter) set_offset(n: Int)
 /// Data for the entry `create` started (a data descriptor follows it).
 fn (var w: ZipWriter) write(data: Bytes) -> () ! ArchiveErr uses fs.write
 /// Ends the last entry and writes the central directory.

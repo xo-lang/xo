@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Feature (std/charset, every backend): `utf8_decode_last_rune`, `utf8_full_rune` (and their `_str` forms) and `utf8_rune_start` (Go's utf8.DecodeLastRune, FullRune and RuneStart).
+- Feature (std/archive, every backend): zip archive comments (`zip(entries, comment:)`, `ZipWriter.set_comment`, `ZipReader.comment()`), stored entries (`ZipMethod.Store` on `zip`, `add` and `create`), and archives after a prefix (`zip(entries, offset:)`, `ZipWriter.set_offset`; Go's SetComment, Store and SetOffset), with Go's bytes.
 - Feature (std/base64, every backend): `base64.custom(alphabet, padding:)` (Go's NewEncoding and WithPadding), `base64.of(enc)`, and `Encoding.strict()` (Go's Strict decoding: nonzero tail bits are an error).
 - Feature (std/cron, every backend): `cron.parser(options)` (robfig's NewParser) with `SECOND`, `SECOND_OPTIONAL`, `MINUTE`, `HOUR`, `DOM`, `MONTH`, `DOW`, `DOW_OPTIONAL` and `DESCRIPTOR`: six field specs with seconds, optional fields, descriptors on or off.
 - Feature (std/charset, every backend): `utf16_append_rune`, `utf16_encode_rune`, `utf16_decode_rune`, `utf16_is_surrogate`, `utf16_rune_len` (Go's unicode/utf16 one-rune functions) and `REPLACEMENT_CHAR`.

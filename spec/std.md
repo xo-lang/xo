@@ -5416,16 +5416,27 @@ pub fn gzip(data: Bytes) -> Bytes
 pub fn gunzip(data: Bytes, max_size: Int = 1073741824) -> Bytes ! ArchiveErr   // more output is an error, found as it passes max_size
 pub fn tar(entries: List[Entry]) -> Bytes ! ArchiveErr
 pub fn untar(data: Bytes) -> List[Entry] ! ArchiveErr
-pub fn zip(entries: List[Entry]) -> Bytes ! ArchiveErr
+enum ZipMethod { Deflate, Store }   // zip.Deflate, zip.Store (a directory is always stored)
+pub fn zip(entries: List[Entry], comment: Str = "", method: ZipMethod = ZipMethod.Deflate, offset: Int = 0) -> Bytes ! ArchiveErr
 pub fn unzip(data: Bytes, max_size: Int = 1073741824) -> List[Entry] ! ArchiveErr   // the files' declared sizes in all, checked first; a file stops past its own (Go's ErrFormat)
 pub fn zip_reader(data: Bytes) -> ZipReader ! ArchiveErr   // decision 0479 step 3
 fn (r: ZipReader) files() -> List[ZipFile]
 fn (r: ZipReader) read(f: ZipFile) -> Bytes ! ArchiveErr
+fn (r: ZipReader) comment() -> Str                  // Reader.Comment
 pub fn zip_writer(f: File) -> ZipWriter
-fn (var w: ZipWriter) add(e: Entry) -> () ! ArchiveErr uses fs.write   // also create(path, mode), write(data), close()
+fn (var w: ZipWriter) add(e: Entry, method: ZipMethod = ZipMethod.Deflate) -> () ! ArchiveErr uses fs.write   // also create(path, mode, method), write(data), close()
+fn (var w: ZipWriter) set_comment(comment: Str) -> () ! ArchiveErr   // Writer.SetComment
+fn (var w: ZipWriter) set_offset(n: Int)            // Writer.SetOffset
 struct ZipFile { path: Str, size: Int, compressed: Int, mode: Int, is_dir: Bool, modified: Time, offset: Int, method: Int, flags: Int, crc: Int }
 ```
 
+- `comment` and `set_comment` are the archive comment (more than 65535
+  bytes is Go's `zip: Writer.Comment too long`); `offset` and
+  `set_offset` say where the archive starts in its file, for an archive
+  appended after other bytes (a self-extracting executable), as Go's
+  Writer.SetOffset (a fault once the writer has written).
+  `ZipMethod.Store` keeps an entry's bytes as they are. Every backend
+  writes Go's zip.Writer bytes for these.
 - `zip_reader` reads a zip archive's central directory once and checks
   every entry as `unzip` does (paths, kinds, Go's errors), but inflates
   none: `r.files()` lists them (`size` is the inflated length) and
