@@ -608,7 +608,8 @@ Last verified: 2026-11-01
 A container on the Mac Studio itself (owner, 2026-11-09), lane `pass3`,
 settings in `~/xo-lead/offload-arm64c.env` (ssh to a local port). Docker
 Desktop 4.99.0 (4.47.0 did not start on macOS 27.2) with 12 CPUs, 32 GB,
-1 GB swap and a 250 GB disk; the container `xo-host3` runs
+1 GB swap and a 250 GB disk (since 2026-11-15 the VM has 20 CPUs and 54.8 GB,
+and the container is capped to 12 CPUs and 31 GB: next section); the container `xo-host3` runs
 `golang:1.26.1-trixie` with `--init --restart unless-stopped --security-opt
 seccomp=unconfined --cap-add=SYS_NICE --ulimit rtprio=99` and the named
 volume `xo-host3-work` on /work. Same setup as the hosts above (openssh,
@@ -622,6 +623,66 @@ asking for a lane no line names waits forever. First gate (selfbuild of
 main): 35 s. Use it for pass/fail runs with `OFFLOAD_ENV=offload-arm64c.env`;
 it shares the Mac's cores, so no timing runs. No WebAssembly tools yet.
 Last verified: 2026-11-09.
+
+## The fourth linux/arm64 host, and the drain (owner, 2026-11-15)
+
+Docker Desktop's VM grew to 20 CPUs and 54.8 GB (owner, 2026-11-15), and
+it now holds two hosts, each capped with `docker update`:
+
+| Host | Container | Caps | ssh | Env | Lane |
+|---|---|---|---|---|---|
+| 3 | xo-host3 | `--cpus 12 --memory 31g --memory-swap 32g` (set live 2026-11-15) | 127.0.0.1:2223 | offload-arm64c.env | pass3 (3 slots, cap 2) |
+| 4 | xo-host4 | `--cpus 8 --memory 24g --memory-swap 25g` | 127.0.0.1:2224 | offload-arm64d.env | pass4 (1 slot, cap 2) |
+
+Host 4 is `golang:1.26.1-trixie` with host 3's options (`--init --restart
+unless-stopped --security-opt seccomp=unconfined --cap-add=SYS_NICE
+--ulimit rtprio=99`), the volume xo-host4-work on /work, and the command
+`sh -c 'mkdir -p /run/sshd; [ -x /usr/sbin/sshd ] && /usr/sbin/sshd; exec
+sleep infinity'`, so sshd starts with the container. Its setup was copied
+from host 3, not committed from it (host 3's container layer is 81 GB, and
+`docker commit` failed with "short write"): the packages openssh-server,
+sudo, time, tini, xz-utils, zstd and nodejs; the user xo (uid 1000);
+/opt/llvm (LLVM 23.1.3, 12 GB), /usr/local/bin/xo-cc, /etc/profile.d/xo.sh
+and /etc/ssh/sshd_config.d/xo.conf by `docker cp xo-host3:PATH - | docker
+cp - xo-host4:DIR`; the seeds 0.50.1-6d0a9dc7, 0.51.0 and 0.51.1-e391d9a4
+under /work/seed; a root password of its own (in the env file only); and on
+/work, mode 1777 with the directories offload.q and offload.runs and the
+files offload.lock, offload.lock.2 and offload.lock.3, all owned by xo (a
+file where a directory belongs fails a job with "Not a directory"). The
+lane has one slot, so every lease there has the whole host: it is for
+memory and exclusive runs. offload-gate.sh sends a memory gate (llvm,
+arm64, corpora-all or cmd, or OFFGATE_MEM=1) there first when the caller
+names no OFFLOAD_ENV (OFFGATE_HOST4=0 keeps the old first host), and never
+reroutes a plain gate there. A container's `nproc` and `free` show the
+whole VM; the cgroup holds the caps (`/sys/fs/cgroup/cpu.max` 800000
+100000, `memory.max` 24 GB on host 4), and Go sizes GOMAXPROCS from it.
+
+sshd after a restart: host 3's PID 1 is `sleep infinity`, so a Docker
+Desktop restart left it without sshd (the lead started it by hand on
+2026-11-15). Both env files carry `OFF_DOCKER=NAME`, and offload.sh, when
+the port gives no `SSH-` banner (Docker Desktop's port forward accepts a
+TCP connection with no sshd behind it), runs `docker exec NAME sh -c
+'mkdir -p /run/sshd && /usr/sbin/sshd'` once before it connects.
+
+The drain (heavyd, `HEAVYD_DRAIN_MIN`, default 3; lanes.go DrainAfter):
+once a memory or exclusive lease has waited that long at the head of a
+lane, no plain lease starts there unless its own `-max` ends before the
+earliest limit of the leases running there, so the lane empties for it.
+While it drains, this replaces both backfills (beside a long run, and the
+fitting backfill against the latest limit). A memory gate's OFF_WAIT_MIN
+defaults to none, so it no longer gives up after 10 minutes and bounces
+(rc 77, then a reroute: 40 give-ups on hosts 2 and 3 on 2026-11-15, 4.8 h
+of waiting); `-move` still takes it to another host's lane that starts it
+at once. A plain gate keeps 10.
+
+Lease history (offload-gate.sh): every gate that reaches its verdict (rc
+0 or 1) appends a row to `$LEAD/notes/gate-history.tsv` (date, host, the
+sorted steps, cold or warm xo, seconds from its lease's start in
+heavyd.log to its end, rc). With `OFFGATE_HIST=1` and 5 runs of the same
+steps and xo state in 30 days, the lease is 1.3 times their p90 (at least
+10 minutes) instead of the step formula; it stays off until the lead has
+reviewed why gates hit their ceiling (rc 124).
+Last verified: 2026-11-15
 
 ## The Windows arm64 VM (owner, 2026-11-09)
 
