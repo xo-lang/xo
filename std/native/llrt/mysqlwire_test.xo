@@ -1,0 +1,149 @@
+// std/native/llrt/mysqlwire.xo's tests: the encodings and packets of
+// MySQL's protocol documentation (decision 0648), built here byte by byte
+// from the documented layouts; the conformance run against a real server
+// (decision 0648 item 12) checks them against MySQL itself.
+
+fn hex(x: Str) -> Bytes { Bytes.from_hex(x) ?? b"" }
+
+test "length encoded integers at each width's edges" {
+  expect(lenenc_int(0).to_hex()) == "00"
+  expect(lenenc_int(250).to_hex()) == "fa"
+  expect(lenenc_int(251).to_hex()) == "fcfb00"
+  expect(lenenc_int(65535).to_hex()) == "fcffff"
+  expect(lenenc_int(65536).to_hex()) == "fd000001"
+  expect(lenenc_int(16777215).to_hex()) == "fdffffff"
+  expect(lenenc_int(16777216).to_hex()) == "fe0000000100000000"
+  for n in [0, 1, 250, 251, 252, 65535, 65536, 16777215, 16777216, 4294967296, 9223372036854775807] {
+    var r = reader(lenenc_int(n))
+    expect(r.lenenc()) == Ok(Some(n))
+    expect(r.left()) == 0
+  }
+  var nul = reader(b"\xfb")
+  expect(nul.lenenc()) == Ok(None)
+  var cut = reader(b"\xfc\x01")
+  expect(cut.lenenc().is_err()) == true
+  var ff = reader(b"\xff")
+  expect(ff.lenenc().is_err()) == true
+}
+
+test "packets: framing, sequence ids, and a payload of 2^24 - 1 bytes" {
+  let (one, next) = frame(0, b"\x0e")
+  expect(one.to_hex()) == "010000000e"
+  expect(next) == 1
+  let (wrap, n2) = frame(255, b"ab")
+  expect(wrap.to_hex()) == "020000ff6162"
+  expect(n2) == 0
+  // exactly MAX_PAYLOAD: a full packet, then an empty one
+  let big = b"x".repeat(MAX_PAYLOAD)
+  let (f, n3) = frame(3, big)
+  expect(f.len()) == MAX_PAYLOAD + 8
+  expect(f[0..4].to_hex()) == "ffffff03"
+  expect(f[f.len() - 4..f.len()].to_hex()) == "00000004"
+  expect(n3) == 5
+  expect(join(f).map(fn(x) { (x.0.len(), x.1, x.2) })) == Some((MAX_PAYLOAD, 4, f.len()))
+  expect(join(f[0..f.len() - 1])) == None
+  expect(packet(b"\x02\x00\x00")) == None
+  expect(packet(b"\x02\x00\x00\x07a")) == None
+  expect(packet(b"\x02\x00\x00\x07abz")) == Some((b"ab", 7, 6))
+}
+
+/// A HandshakeV10 laid out as page_protocol_connection_phase_packets
+/// gives it.
+fn handshake_bytes(version: Str, plugin: Str, caps: Int, part2: Bytes) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_byte(10)
+  b.write(version.bytes() + b"\x00")
+  b.write_le(4660, 4)
+  b.write(b"abcdefgh")
+  b.write_byte(0)
+  b.write_le(caps & 65535, 2)
+  b.write_byte(255)
+  b.write_le(2, 2)
+  b.write_le(caps >> 16, 2)
+  b.write_byte(UInt8(8 + part2.len()))
+  b.write(b"\x00".repeat(10))
+  b.write(part2)
+  b.write(plugin.bytes() + b"\x00")
+  b.freeze()
+}
+
+test "the server's handshake: version, nonce, capabilities, plugin" {
+  let caps = CLIENT_PROTOCOL_41 | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH | CLIENT_SSL | CLIENT_DEPRECATE_EOF
+  let h = parse_handshake(handshake_bytes("8.4.3", "caching_sha2_password", caps, b"ijklmnopqrst\x00")) ?? e => fault(e.msg)
+  expect(h.version) == "8.4.3"
+  expect(h.thread_id) == 4660
+  expect(h.nonce) == b"abcdefghijklmnopqrst"
+  expect(h.caps) == caps
+  expect(h.charset) == 255
+  expect(h.status) == 2
+  expect(h.plugin) == "caching_sha2_password"
+  // a server whose plugin name has no 0 byte at the end
+  let raw = handshake_bytes("5.7.44", "mysql_native_password", caps, b"ijklmnopqrst\x00")
+  let h2 = parse_handshake(raw[0..raw.len() - 1]) ?? e => fault(e.msg)
+  expect(h2.plugin) == "mysql_native_password"
+  expect(parse_handshake(b"\x09x\x00").is_err()) == true
+  expect(parse_handshake(b"\x0a8.0").is_err()) == true
+  // an ERR in place of the handshake (too many connections)
+  let refused = parse_handshake(b"\xff\x10\x04Too many connections")
+  expect(refused.err().map(fn(e) { e.msg })) == Some("the server refused the connection: Too many connections")
+}
+
+test "HandshakeResponse41 and SSLRequest" {
+  let caps = CLIENT_PROTOCOL_41 | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH | CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA | CLIENT_CONNECT_WITH_DB
+  let r = handshake_response(caps, 16777216, 45, "app", b"\x01\x02", "shop", "caching_sha2_password", [])
+  var want = BytesBuilder.new()
+  want.write_le(caps, 4)
+  want.write_le(16777216, 4)
+  want.write_byte(45)
+  want.write(b"\x00".repeat(23))
+  want.write(b"app\x00\x02\x01\x02shop\x00caching_sha2_password\x00")
+  expect(r) == want.freeze()
+  let s = ssl_request(caps, 16777216, 45)
+  expect(s.len()) == 32
+  expect(le(s, 0, 4)) == caps | CLIENT_SSL
+  expect(r[0..4] != s[0..4]) == true
+  expect(r[4..32]) == s[4..32]
+  // without the length encoded form: one length byte; with attributes
+  let caps2 = CLIENT_PROTOCOL_41 | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH | CLIENT_CONNECT_ATTRS
+  let r2 = handshake_response(caps2, 1, 33, "u", b"pw", "ignored", "mysql_native_password", [("_client_name", "xo")])
+  expect(r2[32..r2.len()]) == b"u\x00\x02pwmysql_native_password\x00\x10\x0c_client_name\x02xo"
+}
+
+test "OK, ERR, EOF and the auth phase's packets" {
+  let ok = ok_packet(hex("00fc10270502000100"), CLIENT_PROTOCOL_41) ?? e => fault(e.msg)
+  expect((ok.affected, ok.insert_id, ok.status, ok.warnings)) == (10000, 5, 2, 1)
+  let info = ok_packet(b"\x00\x01\x00\x02\x00\x00\x00Rows matched: 1", CLIENT_PROTOCOL_41) ?? e => fault(e.msg)
+  expect(info.info) == "Rows matched: 1"
+  let e = err_packet(b"\xff\x26\x04#23000Duplicate entry '1' for key 't.PRIMARY'", true) ?? x => fault(x.msg)
+  expect((e.code, e.state, e.msg)) == (1062, "23000", "Duplicate entry '1' for key 't.PRIMARY'")
+  let e2 = err_packet(b"\xff\x15\x04Access denied", true) ?? x => fault(x.msg)
+  expect((e2.code, e2.state)) == (1045, "HY000")
+  expect(is_end(b"\xfe\x00\x00\x02\x00")) == true
+  expect(is_end(b"\x03abc")) == false
+  expect(end_status(b"\xfe\x00\x00\x0a\x00", CLIENT_PROTOCOL_41)) == Ok(10)
+  expect(end_status(b"\xfe\x00\x00\x0a\x00\x00\x00", CLIENT_PROTOCOL_41 | CLIENT_DEPRECATE_EOF)) == Ok(10)
+  expect(parse_auth(b"\xfecaching_sha2_password\x00abcdefghijklmnopqrst\x00", CLIENT_PROTOCOL_41)) == Ok(Auth.Switch(plugin: "caching_sha2_password", data: b"abcdefghijklmnopqrst"))
+  expect(parse_auth(b"\x01\x04", CLIENT_PROTOCOL_41)) == Ok(Auth.More(data: b"\x04"))
+  expect(parse_auth(b"\xfe", CLIENT_PROTOCOL_41)) == Ok(Auth.Switch(plugin: "mysql_old_password", data: b""))
+  expect(parse_auth(b"\x07", CLIENT_PROTOCOL_41).is_err()) == true
+}
+
+test "column definitions and text rows" {
+  var b = BytesBuilder.new()
+  for s in ["def", "shop", "o", "orders", "id", "id"] {
+    b.write(lenenc_str(s.bytes()))
+  }
+  b.write(b"\x0c")
+  b.write_le(63, 2)
+  b.write_le(20, 4)
+  b.write_byte(8)
+  b.write_le(FLAG_NOT_NULL | FLAG_UNSIGNED, 2)
+  b.write_byte(0)
+  b.write(b"\x00\x00")
+  let c = parse_column(b.freeze()) ?? e => fault(e.msg)
+  expect((c.schema, c.table, c.org_table, c.name, c.charset, c.length, c.kind, c.flags)) == ("shop", "o", "orders", "id", 63, 20, TYPE_LONGLONG, 33)
+  expect(parse_text_row(b"\x011\xfb\x03abc", 3)) == Ok([Some(b"1"), None, Some(b"abc")])
+  expect(parse_text_row(b"\x011", 2).is_err()) == true
+  expect(parse_text_row(b"\x011x", 1).is_err()) == true
+  expect(command(COM_QUERY, b"SELECT 1")) == b"\x03SELECT 1"
+}

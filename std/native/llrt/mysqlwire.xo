@@ -1,0 +1,525 @@
+// Origin: MySQL's client/server protocol documentation (dev.mysql.com,
+// "MySQL: Client/Server Protocol" of the MySQL Source Code Documentation:
+// page_protocol_basic_packets, page_protocol_basic_dt_integers,
+// page_protocol_basic_dt_strings, page_protocol_connection_phase_packets,
+// page_protocol_basic_ok_packet, page_protocol_basic_err_packet,
+// page_protocol_basic_eof_packet, page_protocol_com_query_response,
+// page_protocol_command_phase_text) for std/sql's MySQL driver (decision
+// 0648 item 11, route (a): written from the documentation, not from any
+// driver's code). Packets as pure Bytes functions: framing, the integer
+// and string encodings, the connection phase's handshake and responses,
+// OK, ERR and EOF, column definitions and text protocol rows.
+
+/// A packet the driver cannot read, or one from another phase.
+pub struct WireErr {
+  pub msg: Str
+}
+
+fn bad(msg: Str) -> WireErr { WireErr{msg: msg} }
+
+// ---- capability flags (page_protocol_basic_dt_integers' capabilities) ----
+
+pub const CLIENT_LONG_PASSWORD: Int = 1
+pub const CLIENT_FOUND_ROWS: Int = 2
+pub const CLIENT_LONG_FLAG: Int = 4
+pub const CLIENT_CONNECT_WITH_DB: Int = 8
+pub const CLIENT_LOCAL_FILES: Int = 128
+pub const CLIENT_PROTOCOL_41: Int = 512
+pub const CLIENT_SSL: Int = 2048
+pub const CLIENT_TRANSACTIONS: Int = 8192
+pub const CLIENT_SECURE_CONNECTION: Int = 32768
+pub const CLIENT_MULTI_STATEMENTS: Int = 65536
+pub const CLIENT_MULTI_RESULTS: Int = 131072
+pub const CLIENT_PS_MULTI_RESULTS: Int = 262144
+pub const CLIENT_PLUGIN_AUTH: Int = 524288
+pub const CLIENT_CONNECT_ATTRS: Int = 1048576
+pub const CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA: Int = 2097152
+pub const CLIENT_DEPRECATE_EOF: Int = 16777216
+
+// ---- server status flags ----
+
+pub const SERVER_STATUS_IN_TRANS: Int = 1
+pub const SERVER_STATUS_AUTOCOMMIT: Int = 2
+pub const SERVER_MORE_RESULTS_EXISTS: Int = 8
+
+// ---- commands ----
+
+pub const COM_QUIT: Int = 1
+pub const COM_INIT_DB: Int = 2
+pub const COM_QUERY: Int = 3
+pub const COM_PING: Int = 14
+pub const COM_STMT_PREPARE: Int = 22
+pub const COM_STMT_EXECUTE: Int = 23
+pub const COM_STMT_CLOSE: Int = 25
+pub const COM_RESET_CONNECTION: Int = 31
+
+/// The largest payload of one packet: a longer one continues in the next.
+pub const MAX_PAYLOAD: Int = 16777215
+
+// ---- integers and strings ----
+
+fn le_bytes(v: Int, n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  b.write_le(v, n)
+  b.freeze()
+}
+
+/// The unsigned little endian number of b[at..at + n].
+pub fn le(b: Bytes, at: Int, n: Int) -> Int {
+  var v = 0
+  var i = n - 1
+  while i >= 0 {
+    v = (v << 8) | Int(b[at + i])
+    i -= 1
+  }
+  v
+}
+
+/// A length encoded integer (page_protocol_basic_dt_integers): one byte
+/// below 251, else 0xfc and 2 bytes, 0xfd and 3, 0xfe and 8.
+pub fn lenenc_int(n: Int) -> Bytes {
+  if n >= 0 && n < 251 {
+    return le_bytes(n, 1)
+  }
+  if n >= 0 && n < 65536 {
+    return b"\xfc" + le_bytes(n, 2)
+  }
+  if n >= 0 && n < 16777216 {
+    return b"\xfd" + le_bytes(n, 3)
+  }
+  b"\xfe" + le_bytes(n, 8)
+}
+
+pub fn lenenc_str(s: Bytes) -> Bytes { lenenc_int(s.len()) + s }
+
+fn nul_str(s: Str) -> Bytes { s.bytes() + b"\x00" }
+
+/// A reader over one packet's payload.
+pub struct Rd {
+  pub b: Bytes
+  pub at: Int
+}
+
+pub fn reader(b: Bytes) -> Rd { Rd{b: b, at: 0} }
+
+fn (r: Rd) need(n: Int) -> () ! WireErr {
+  if n < 0 || r.at + n > r.b.len() {
+    return Err(bad("a packet ended early: ${n} bytes wanted at ${r.at} of ${r.b.len()}"))
+  }
+  Ok(())
+}
+
+pub fn (r: Rd) left() -> Int { r.b.len() - r.at }
+
+pub fn (var r: Rd) u(n: Int) -> Int ! WireErr {
+  r.need(n)?
+  let v = le(r.b, r.at, n)
+  r.at += n
+  Ok(v)
+}
+
+pub fn (var r: Rd) take(n: Int) -> Bytes ! WireErr {
+  r.need(n)?
+  let v = r.b[r.at..r.at + n]
+  r.at += n
+  Ok(v)
+}
+
+pub fn (var r: Rd) rest() -> Bytes {
+  let v = r.b[r.at..r.b.len()]
+  r.at = r.b.len()
+  v
+}
+
+/// A string ended by a 0 byte (the byte read and dropped).
+pub fn (var r: Rd) nul() -> Bytes ! WireErr {
+  match r.b[r.at..r.b.len()].find(b"\x00") {
+    Some(i) => {
+      let v = r.b[r.at..r.at + i]
+      r.at += i + 1
+      Ok(v)
+    }
+    None => Err(bad("a string with no 0 byte at ${r.at}"))
+  }
+}
+
+/// A length encoded integer; None for 0xfb, NULL in a text row.
+pub fn (var r: Rd) lenenc() -> Int? ! WireErr {
+  let first = r.u(1)?
+  match first {
+    251 => Ok(None)
+    252 => Ok(Some(r.u(2)?))
+    253 => Ok(Some(r.u(3)?))
+    254 => {
+      let v = r.u(8)?
+      if v < 0 {
+        return Err(bad("a length past 2^63"))
+      }
+      Ok(Some(v))
+    }
+    255 => Err(bad("0xff is not a length"))
+    _ => Ok(Some(first))
+  }
+}
+
+/// A length encoded string; None for NULL.
+pub fn (var r: Rd) lenenc_bytes() -> Bytes? ! WireErr {
+  match r.lenenc()? {
+    Some(n) => Ok(Some(r.take(n)?))
+    None => Ok(None)
+  }
+}
+
+fn (var r: Rd) lenenc_text() -> Str ! WireErr {
+  let b = r.lenenc_bytes()? ?? b""
+  Ok(b.to_str_lossy())
+}
+
+// ---- packets (page_protocol_basic_packets) ----
+
+/// payload in packets from sequence number seq: 3 byte length, the
+/// sequence id, then up to MAX_PAYLOAD bytes; a payload of a multiple of
+/// MAX_PAYLOAD ends with an empty packet. The next sequence id is
+/// seq plus the packets written.
+pub fn frame(seq: Int, payload: Bytes) -> (Bytes, Int) {
+  var b = BytesBuilder.with_capacity(payload.len() + 4)
+  var s = seq
+  var at = 0
+  while true {
+    let n = (payload.len() - at).min(MAX_PAYLOAD)
+    b.write_le(n, 3)
+    b.write_byte(UInt8(s & 255))
+    b.write(payload[at..at + n])
+    s += 1
+    at += n
+    if n < MAX_PAYLOAD {
+      break
+    }
+  }
+  (b.freeze(), s & 255)
+}
+
+/// One packet at the start of buf: (its payload, its sequence id, the
+/// bytes it took), or None until buf holds it all. A payload of
+/// MAX_PAYLOAD continues in the next packet, which the caller joins
+/// (see join).
+pub fn packet(buf: Bytes) -> (Bytes, Int, Int)? {
+  if buf.len() < 4 {
+    return None
+  }
+  let n = le(buf, 0, 3)
+  if buf.len() < 4 + n {
+    return None
+  }
+  Some((buf[4..4 + n], Int(buf[3]), 4 + n))
+}
+
+/// A whole logical packet at the start of buf, joined from its pieces:
+/// (payload, the last piece's sequence id, the bytes taken), or None
+/// until buf holds them all.
+pub fn join(buf: Bytes) -> (Bytes, Int, Int)? {
+  var at = 0
+  var w = BytesBuilder.new()
+  while true {
+    match packet(buf[at..buf.len()]) {
+      Some((p, seq, took)) => {
+        w.write(p)
+        at += took
+        if p.len() < MAX_PAYLOAD {
+          return Some((w.freeze(), seq, at))
+        }
+      }
+      None => return None
+    }
+  }
+  None
+}
+
+// ---- the connection phase (page_protocol_connection_phase_packets) ----
+
+/// Protocol::HandshakeV10 as the driver reads it.
+pub struct Handshake {
+  pub version: Str
+  pub thread_id: Int
+  /// The 20 byte nonce of auth_plugin_data (parts 1 and 2, without the
+  /// trailing 0).
+  pub nonce: Bytes
+  pub caps: Int
+  pub charset: Int
+  pub status: Int
+  pub plugin: Str
+}
+
+pub fn parse_handshake(p: Bytes) -> Handshake ! WireErr {
+  var r = reader(p)
+  let proto = r.u(1)?
+  if proto == 255 {
+    return Err(bad("the server refused the connection: ${err_packet(p, true).map(fn(e) { e.msg }).ok() ?? "?"}"))
+  }
+  if proto != 10 {
+    return Err(bad("handshake protocol ${proto}, want 10"))
+  }
+  let version = r.nul()?.to_str_lossy()
+  let thread_id = r.u(4)?
+  let part1 = r.take(8)?
+  let _ = r.u(1)?
+  var caps = r.u(2)?
+  var charset = 0
+  var status = 0
+  var nonce = part1
+  var plugin = ""
+  if r.left() > 0 {
+    charset = r.u(1)?
+    status = r.u(2)?
+    caps = caps | (r.u(2)? << 16)
+    let data_len = r.u(1)?
+    let _ = r.take(10)?
+    if caps & CLIENT_SECURE_CONNECTION != 0 {
+      // max(13, data_len - 8) bytes, the last a 0
+      let n = (data_len - 8).max(13)
+      let part2 = r.take(n.min(r.left()))?
+      let cut = if part2.len() > 0 && part2[part2.len() - 1] == 0 { part2.len() - 1 } else { part2.len() }
+      nonce = part1 + part2[0..cut]
+    }
+    if caps & CLIENT_PLUGIN_AUTH != 0 && r.left() > 0 {
+      // some servers leave out the trailing 0
+      let rest = r.rest()
+      plugin = (if rest.len() > 0 && rest[rest.len() - 1] == 0 { rest[0..rest.len() - 1] } else { rest }).to_str_lossy()
+    }
+  }
+  Ok(Handshake{version: version, thread_id: thread_id, nonce: nonce, caps: caps, charset: charset, status: status, plugin: plugin})
+}
+
+/// The client's flags, max packet and character set: the first 32 bytes
+/// of HandshakeResponse41, and the whole of an SSLRequest.
+fn response_head(caps: Int, max_packet: Int, charset: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(32)
+  b.write_le(caps, 4)
+  b.write_le(max_packet, 4)
+  b.write_byte(UInt8(charset & 255))
+  for _ in 0..23 {
+    b.write_byte(0)
+  }
+  b.freeze()
+}
+
+/// Protocol::SSLRequest: sent before the TLS handshake, with CLIENT_SSL.
+pub fn ssl_request(caps: Int, max_packet: Int, charset: Int) -> Bytes { response_head(caps | CLIENT_SSL, max_packet, charset) }
+
+/// Protocol::HandshakeResponse41.
+pub fn handshake_response(caps: Int, max_packet: Int, charset: Int, user: Str, auth: Bytes, database: Str, plugin: Str, attrs: List[(Str, Str)]) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write(response_head(caps, max_packet, charset))
+  b.write(nul_str(user))
+  if caps & CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA != 0 {
+    b.write(lenenc_str(auth))
+  } else {
+    b.write_byte(UInt8(auth.len()))
+    b.write(auth)
+  }
+  if caps & CLIENT_CONNECT_WITH_DB != 0 {
+    b.write(nul_str(database))
+  }
+  if caps & CLIENT_PLUGIN_AUTH != 0 {
+    b.write(nul_str(plugin))
+  }
+  if caps & CLIENT_CONNECT_ATTRS != 0 {
+    var a = BytesBuilder.new()
+    for (k, v) in attrs {
+      a.write(lenenc_str(k.bytes()))
+      a.write(lenenc_str(v.bytes()))
+    }
+    let ab = a.freeze()
+    b.write(lenenc_str(ab))
+  }
+  b.freeze()
+}
+
+/// A server packet of the connection phase after the client's response.
+pub enum Auth {
+  Ok(ok: OkPacket)
+  Err(err: ErrPacket)
+  /// AuthSwitchRequest: another plugin, and its data (the trailing 0 of
+  /// the nonce dropped).
+  Switch(plugin: Str, data: Bytes)
+  /// AuthMoreData: the plugin's next data.
+  More(data: Bytes)
+}
+
+pub fn parse_auth(p: Bytes, caps: Int) -> Auth ! WireErr {
+  if p.is_empty() {
+    return Err(bad("an empty packet in the connection phase"))
+  }
+  match Int(p[0]) {
+    0 => Ok(Auth.Ok(ok: ok_packet(p, caps)?))
+    255 => Ok(Auth.Err(err: err_packet(p, caps & CLIENT_PROTOCOL_41 != 0)?))
+    254 => {
+      var r = reader(p[1..p.len()])
+      if r.left() == 0 {
+        // the old AuthSwitchRequest, for mysql_old_password
+        return Ok(Auth.Switch(plugin: "mysql_old_password", data: b""))
+      }
+      let plugin = r.nul()?.to_str_lossy()
+      let data = r.rest()
+      let d = if data.len() > 0 && data[data.len() - 1] == 0 { data[0..data.len() - 1] } else { data }
+      Ok(Auth.Switch(plugin: plugin, data: d))
+    }
+    1 => Ok(Auth.More(data: p[1..p.len()]))
+    _ => Err(bad("packet 0x${p[0..1].to_hex()} in the connection phase"))
+  }
+}
+
+// ---- OK, ERR and EOF ----
+
+pub struct OkPacket {
+  pub affected: Int
+  pub insert_id: Int
+  pub status: Int
+  pub warnings: Int
+  pub info: Str
+}
+
+/// An OK packet (0x00, or 0xfe ending a result set under
+/// CLIENT_DEPRECATE_EOF). Session state information, when the server
+/// sends it, is not read.
+pub fn ok_packet(p: Bytes, caps: Int) -> OkPacket ! WireErr {
+  var r = reader(p[1..p.len()])
+  let affected = r.lenenc()? ?? 0
+  let insert_id = r.lenenc()? ?? 0
+  var status = 0
+  var warnings = 0
+  if caps & CLIENT_PROTOCOL_41 != 0 {
+    status = r.u(2)?
+    warnings = r.u(2)?
+  } else if caps & CLIENT_TRANSACTIONS != 0 {
+    status = r.u(2)?
+  }
+  Ok(OkPacket{affected: affected, insert_id: insert_id, status: status, warnings: warnings, info: r.rest().to_str_lossy()})
+}
+
+pub struct ErrPacket {
+  pub code: Int
+  /// The SQLSTATE, "HY000" when the server sends none.
+  pub state: Str
+  pub msg: Str
+}
+
+pub fn err_packet(p: Bytes, proto41: Bool) -> ErrPacket ! WireErr {
+  var r = reader(p[1..p.len()])
+  let code = r.u(2)?
+  var state = "HY000"
+  if proto41 && r.left() > 0 && r.b[r.at] == 35 {
+    let _ = r.u(1)?
+    state = r.take(5)?.to_str_lossy()
+  }
+  Ok(ErrPacket{code: code, state: state, msg: r.rest().to_str_lossy()})
+}
+
+/// Whether p ends a result set: an EOF packet, or an OK packet that starts
+/// with 0xfe under CLIENT_DEPRECATE_EOF (a row starting with 0xfe, a value
+/// of 2^24 bytes or more, is a packet of MAX_PAYLOAD).
+pub fn is_end(p: Bytes) -> Bool { p.len() > 0 && p[0] == 254 && p.len() < MAX_PAYLOAD }
+
+/// The status flags of an end of result packet.
+pub fn end_status(p: Bytes, caps: Int) -> Int ! WireErr {
+  if caps & CLIENT_DEPRECATE_EOF != 0 {
+    return Ok(ok_packet(p, caps)?.status)
+  }
+  // EOF: 0xfe, warnings (2), status (2)
+  var r = reader(p[1..p.len()])
+  if r.left() < 4 {
+    return Ok(0)
+  }
+  let _ = r.u(2)?
+  Ok(r.u(2)?)
+}
+
+// ---- results (page_protocol_com_query_response) ----
+
+/// Column types (enum_field_types).
+pub const TYPE_DECIMAL: Int = 0
+pub const TYPE_TINY: Int = 1
+pub const TYPE_SHORT: Int = 2
+pub const TYPE_LONG: Int = 3
+pub const TYPE_FLOAT: Int = 4
+pub const TYPE_DOUBLE: Int = 5
+pub const TYPE_NULL: Int = 6
+pub const TYPE_TIMESTAMP: Int = 7
+pub const TYPE_LONGLONG: Int = 8
+pub const TYPE_INT24: Int = 9
+pub const TYPE_DATE: Int = 10
+pub const TYPE_TIME: Int = 11
+pub const TYPE_DATETIME: Int = 12
+pub const TYPE_YEAR: Int = 13
+pub const TYPE_NEWDATE: Int = 14
+pub const TYPE_VARCHAR: Int = 15
+pub const TYPE_BIT: Int = 16
+pub const TYPE_JSON: Int = 245
+pub const TYPE_NEWDECIMAL: Int = 246
+pub const TYPE_ENUM: Int = 247
+pub const TYPE_SET: Int = 248
+pub const TYPE_TINY_BLOB: Int = 249
+pub const TYPE_MEDIUM_BLOB: Int = 250
+pub const TYPE_LONG_BLOB: Int = 251
+pub const TYPE_BLOB: Int = 252
+pub const TYPE_VAR_STRING: Int = 253
+pub const TYPE_STRING: Int = 254
+pub const TYPE_GEOMETRY: Int = 255
+
+/// Column flags.
+pub const FLAG_NOT_NULL: Int = 1
+pub const FLAG_UNSIGNED: Int = 32
+pub const FLAG_BINARY: Int = 128
+
+/// The binary character set's number (a BINARY, VARBINARY or BLOB column).
+pub const CHARSET_BINARY: Int = 63
+
+/// Protocol::ColumnDefinition41.
+pub struct Column {
+  pub schema: Str
+  pub table: Str
+  pub org_table: Str
+  pub name: Str
+  pub org_name: Str
+  pub charset: Int
+  pub length: Int
+  pub kind: Int
+  pub flags: Int
+  pub decimals: Int
+}
+
+pub fn parse_column(p: Bytes) -> Column ! WireErr {
+  var r = reader(p)
+  let _ = r.lenenc_text()?
+  let schema = r.lenenc_text()?
+  let table = r.lenenc_text()?
+  let org_table = r.lenenc_text()?
+  let name = r.lenenc_text()?
+  let org_name = r.lenenc_text()?
+  let _ = r.lenenc()?
+  let charset = r.u(2)?
+  let length = r.u(4)?
+  let kind = r.u(1)?
+  let flags = r.u(2)?
+  let decimals = r.u(1)?
+  Ok(Column{schema: schema, table: table, org_table: org_table, name: name, org_name: org_name, charset: charset, length: length, kind: kind, flags: flags, decimals: decimals})
+}
+
+/// A text protocol row (ProtocolText::ResultsetRow): each column's
+/// value as the server's text, None for NULL.
+pub fn parse_text_row(p: Bytes, n: Int) -> List[Bytes?] ! WireErr {
+  var r = reader(p)
+  var out: List[Bytes?] = []
+  for _ in 0..n {
+    out.push(r.lenenc_bytes()?)
+  }
+  if r.left() != 0 {
+    return Err(bad("a row of ${n} columns has ${r.left()} bytes more"))
+  }
+  Ok(out)
+}
+
+// ---- commands ----
+
+/// A command packet's payload: the command byte, then its argument.
+pub fn command(cmd: Int, arg: Bytes) -> Bytes { le_bytes(cmd, 1) + arg }
