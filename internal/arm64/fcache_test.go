@@ -3233,6 +3233,54 @@ func TestFrontCacheClosureMadeMapHelper(t *testing.T) {
 	}
 }
 
+// TestFrontCacheClosureReadMapHelper: a closure's front end entry that
+// read a Map helper another body made (std/metrics' cells_of and
+// series_of closures call xo.maph.logget[Map[Str, Int]], which
+// internal/llvm golden metrics_child makes before them) replays in a
+// program where nothing made it yet (metrics_empty). Before (2026-11-15,
+// TestWarmBuildSequence on main at 1eef3ee9e), the entry listed the
+// helper as a read, missed there, and the build was made again without
+// the cache; the entry now records such a helper as made whole.
+func TestFrontCacheClosureReadMapHelper(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	t.Parallel()
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-femaphelper-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(work) })
+	cache := filepath.Join(work, "cache")
+	for _, prog := range []string{"metrics_child", "metrics_empty"} {
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, prog+".bin"), "."))
+		cmd.Dir = filepath.Join("..", "llvm", "testdata", "golden", prog)
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_BIN_CACHE=off", "XO_WHOLE_BUILD=off", "XO_SHARED_PACK=off", "XO_FE_KEEP_DIR="+filepath.Join(work, "kept"))
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: xo build: %v\n%s", prog, err, log)
+		}
+		if strings.Contains(string(log), "did not replay") {
+			t.Errorf("%s after metrics_child: a front end cache entry did not replay:\n%s", prog, log)
+		}
+	}
+	want, err := os.ReadFile(filepath.Join("..", "llvm", "testdata", "golden", "metrics_empty", "want.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := testtmp.Guard(exec.Command(filepath.Join(work, "metrics_empty.bin"))).Output()
+	if len(out) == 0 || !strings.Contains(string(want), strings.TrimSpace(string(out))) {
+		t.Errorf("metrics_empty's run printed %q, want the stdout of its want.txt", out)
+	}
+}
+
 // TestFrontCacheClosureReadMadeType: a closure's front end entry that
 // read types another body made where it was recorded replays in a
 // program where nothing made them yet. tls.vconn_wrap's closures read

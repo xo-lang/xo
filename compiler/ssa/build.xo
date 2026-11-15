@@ -3427,6 +3427,10 @@ fn (var b: Builder) fidx(name: Str) -> Int {
   if b.m.fe_log {
     if i >= 0 {
       b.m.fe_freads[i] = true
+      if i < b.m.fe_nf && fe_map_helper(name) && !b.m.fe_hreads.contains(i) {
+        b.m.fe_hreads[i] = true
+        b.m.fe_ev.push((3, i))
+      }
     } else {
       b.m.fe_fabsent[name] = true
     }

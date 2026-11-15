@@ -320,6 +320,8 @@ fn (var b: Builder) fe_begin() -> FeRec {
   b.m.fe_treads = {}
   b.m.fe_freads = {}
   b.m.fe_fabsent = {}
+  b.m.fe_hreads = {}
+  b.m.fe_nf = b.m.funcs.len()
   b.fe_flagbits = 0
   b.m.fe_ev = []
   b.fe_site0 = b.sites.len()
@@ -506,6 +508,68 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
       roots.push(t)
     }
   }
+  // Map helpers it found that another body made (their names determine
+  // them, fe_map_helper; fidx noted each as an event 3 at its first read):
+  // recorded as made whole, each followed by the helpers its body calls,
+  // so a build where nothing made one yet makes it where a build without
+  // the cache would (the replay keeps one already there); their types
+  // join the types read, and the other functions they call are reads. A
+  // closure of std/metrics' cells_of read xo.maph.logget[Map[Str, Int]],
+  // which internal/llvm golden metrics_child made before it and
+  // metrics_empty does not: its entry missed there and the build was
+  // made again without the cache (internal/arm64 TestWarmBuildSequence,
+  // 2026-11-15)
+  var fread: Map[Int, Bool] = {}
+  var helper: Map[Int, Bool] = {}
+  var after: Map[Int, List[Int]] = {}
+  for (i, _) in b.m.fe_freads {
+    if i < r.nf && !fe_map_helper(b.m.funcs[i].name) {
+      fread[i] = true
+    }
+  }
+  for (k, x) in b.m.fe_ev {
+    if k != 3 || x >= r.nf || helper.contains(x) {
+      continue
+    }
+    helper[x] = true
+    var extra: List[Int] = []
+    var st: List[Int] = [x]
+    while let Some(i) = st.pop() {
+      let hf = b.m.funcs[i]
+      for t in hf.results {
+        roots.push(t)
+      }
+      for t in hf.captures {
+        roots.push(t)
+      }
+      for v in hf.values {
+        roots.push(ty_of(v.tb))
+        if let Aux.S(n) = hf.aux(v) {
+          let w = b.m.func_at.get(n) ?? -1
+          if w < 0 || w >= r.nf || helper.contains(w) {
+            continue
+          }
+          if fe_map_helper(n) {
+            helper[w] = true
+            extra.push(w)
+            st.push(w)
+          } else {
+            fread[w] = true
+          }
+        }
+      }
+    }
+    after[x] = extra
+  }
+  var rs: List[Int] = []
+  var rseen: Map[Int, Bool] = {}
+  for t in roots {
+    if t >= 0 && t < r.nt && !rseen.contains(t) {
+      rseen[t] = true
+      rs.push(t)
+    }
+  }
+  roots = rs
   for t0 in roots.sort() {
     if !name_made(b.m.types[t0]) || pre_t.contains(t0) {
       tread[t0] = true
@@ -553,10 +617,8 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
       reads.push("t ${b.m.types[t].name}")
     }
   }
-  for (i, _) in b.m.fe_freads {
-    if i < r.nf {
-      reads.push("f ${b.m.funcs[i].name}")
-    }
+  for (i, _) in fread {
+    reads.push("f ${b.m.funcs[i].name}")
   }
   // what it looked for and did not find, and the functions it made
   // whole: absent at a commit too (another function of the name may be
@@ -566,7 +628,7 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
     absent[n] = true
   }
   for (k, x) in b.m.fe_ev {
-    if k == 3 {
+    if k == 3 && x >= r.nf {
       absent[b.m.funcs[x].name] = true
     }
   }
@@ -584,7 +646,28 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
   }
   // what it made, in order
   var evs = pre
+  var emitted: Map[Int, Bool] = {}
   for ev in b.m.fe_ev {
+    let (k, x) = ev
+    if k == 3 && x < r.nf {
+      if emitted.contains(x) {
+        continue
+      }
+      // the helper and the helpers its body calls in the order the
+      // recording program made them (a helper's maker may make what it
+      // calls first)
+      var group: List[Int] = [x]
+      for w in after.get(x) ?? [] {
+        if !emitted.contains(w) {
+          group.push(w)
+        }
+      }
+      for w in group.sort() {
+        emitted[w] = true
+        evs.push((3, w))
+      }
+      continue
+    }
     evs.push(ev)
   }
   e.uv(evs.len())
@@ -1726,6 +1809,13 @@ pub fn (var b: Builder) fe_finalize() {
 /// where it was recorded; in a program where another body made it first
 /// the closure's entry, which cannot fall back to its source, did not
 /// replay, and the build was made again without the cache.)
+/// Whether n names a Map type's helper (xo.map.*, xo.mlog.*,
+/// xo.maph.*[T]), which thunk_func makes by its name: an entry that read
+/// one another body made records it as made whole (fe_entry).
+fn fe_map_helper(n: Str) -> Bool {
+  n.starts_with("xo.map.") || n.starts_with("xo.mlog.") || n.starts_with("xo.maph.")
+}
+
 fn fe_const_fn(n: Str) -> Bool {
   n.starts_with("xo.const[") || n.starts_with("xo.droplist[") || n.starts_with("xo.map.") || n.starts_with("xo.mlog.") || n.starts_with("xo.maph.")
 }

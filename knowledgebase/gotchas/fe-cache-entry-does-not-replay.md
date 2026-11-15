@@ -117,3 +117,20 @@ integer) stay reads. Test: internal/arm64 TestFrontCacheClosureReadMadeType.
 A first version walked a recursive type's shape forever (33 GB in 36 s,
 stopped by heavy.sh): the walk marks a type on entry.
 
+
+Observed 2026-11-15 (TestWarmBuildSequence on main at 4ccafc37c, the
+Mac): internal/llvm golden metrics_empty after metrics_child warned that
+the closures metrics.cells_of.fn5 and series_of.fn7 and fn8 did not
+replay ("its entry missed: read xo.maph.logget[Map[Str, Int]]"). Since
+572a47416, std/metrics' Store keeps a Map[Str, Int], and the closures'
+`st.at.get(key)` calls that Map helper. metrics_child made it in an
+earlier body, so the entry listed it as a function read; metrics_empty
+had none yet. This is the same accident as the types above, for
+functions: a Map type's helpers (xo.map.*, xo.mlog.*, xo.maph.*[T]) are
+made by thunk_func at their first use and their names determine them.
+Fix: an entry records each such helper it read that existed before its
+body as made whole (event 3, its body encoded), with the helpers that
+body calls; their types join the types read, and the other functions
+they call stay reads. The replay keeps one already there
+(fe_const_fn). Test: internal/arm64 TestFrontCacheClosureReadMapHelper
+(the pair: 3 non-replays with main's xo, 0 here).

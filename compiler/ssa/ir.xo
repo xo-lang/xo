@@ -684,6 +684,11 @@ pub struct Module {
   /// branches on that (a helper's `#n` or result suffix), and function
   /// names, unlike type names, do not say what they are
   pub fe_fabsent: Map[Str, Bool] = {}
+  /// the Map helpers (fe_map_helper) it found that were there before it
+  /// (index below fe_nf), each noted as an event 3 at its first read,
+  /// where a build that had not made it would make it (fidx)
+  pub fe_hreads: Map[Int, Bool] = {}
+  pub fe_nf: Int = 0
   pub fe_ev: List[(Int, Int)] = []
   /// Named struct and enum types in creation order.
   pub order: List[Int] = []
