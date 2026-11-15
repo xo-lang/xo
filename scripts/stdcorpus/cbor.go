@@ -683,6 +683,7 @@ func cborCorpus() string {
 	o.WriteString(cborTypedXo)
 	o.WriteString(cborCheckXo)
 	o.WriteString(cborAPITests)
+	cborOptsCorpus(&o)
 	return o.String()
 }
 
@@ -912,5 +913,114 @@ test "the JSON bridge" {
     }
     Err(e) => fault("${e}")
   }
+}
+`
+
+// cborOptsCases are the inputs of the decode_with corpus, each decoded
+// under every option set of internal/stdtest/cborref opts.go (optSet).
+// No case puts a refused item after another error fxamacker finds later
+// (its well formed pass refuses counts, indefinite lengths, tags, NaN and
+// infinity before its decode sees UTF-8 or simple values; std/cbor stops
+// at the first in data order).
+func cborOptsCases() []string {
+	rep := func(s string, n int) string { return strings.Repeat(s, n) }
+	pairs := func(n int) string {
+		var b strings.Builder
+		for i := 0; i < n; i++ {
+			if i < 24 {
+				fmt.Fprintf(&b, "%02x00", i)
+			} else {
+				fmt.Fprintf(&b, "18%02x00", i)
+			}
+		}
+		return b.String()
+	}
+	return []string{
+		"90" + rep("00", 16), "91" + rep("00", 17), "9f" + rep("00", 16) + "ff", "9f" + rep("00", 17) + "ff",
+		"910000", "99010000", "8191" + rep("00", 17),
+		"b0" + pairs(16), "b1" + pairs(17), "bf" + pairs(16) + "ff", "bf" + pairs(17) + "ff", "b10000",
+		"5f4161ff", "7f6161ff", "9fff", "bfff", "819fff", "a1009f00ff",
+		"d86400", "d864d86400", "81d86400", "c11a514b67b0",
+		"f97e00", "fa7fc00000", "fb7ff8000000000000", "f97c00", "f9fc00", "fa7f800000", "fbfff0000000000000", "f93c00", "fb3ff199999999999a",
+		"e0", "f3", "f4", "f5", "f6", "f7", "f820", "f8ff", "f8fe",
+		"8301f97e00d86400", "a1f4f5", "9ff4ff", "82" + "61ff" + "00",
+	}
+}
+
+func cborOptsCorpus(o *strings.Builder) {
+	cases := cborOptsCases()
+	var in bytes.Buffer
+	for _, c := range cases {
+		for k := 0; k < 8; k++ {
+			fmt.Fprintf(&in, "%d %s\n", k, c)
+		}
+	}
+	cmd := exec.Command("go", "run", ".", "opts")
+	cmd.Dir = filepath.Join("internal", "stdtest", "cborref")
+	cmd.Stdin = &in
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stdcorpus: the cbor oracle (opts) failed: %v\n", err)
+		os.Exit(1)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) != len(cases)*8 {
+		panic("cbor opts oracle: wrong number of answers")
+	}
+	o.WriteString("\n/// decode_with: each input, then fxamacker's answer under opts_of(0) to opts_of(7): \"\" decodes, \"?\" another error, else the error text\nconst OPTS_CASES: List[(Str, List[Str])] = [\n")
+	for i, c := range cases {
+		var errs []string
+		for k := 0; k < 8; k++ {
+			var r struct {
+				Err string `json:"err"`
+			}
+			if err := json.Unmarshal([]byte(lines[i*8+k]), &r); err != nil {
+				panic(err)
+			}
+			errs = append(errs, xq(r.Err))
+		}
+		fmt.Fprintf(o, "  (%q, [%s]),\n", c, strings.Join(errs, ", "))
+	}
+	o.WriteString("]\n")
+	o.WriteString(cborOptsTests)
+}
+
+const cborOptsTests = `
+/// The DecodeOptions of internal/stdtest/cborref opts.go optSet(k).
+fn opts_of(k: Int) -> cbor.DecodeOptions {
+  var o = cbor.DecodeOptions{}
+  if k == 0 || k == 7 { o.max_array_elements = 16 }
+  if k == 1 || k == 7 { o.max_map_pairs = 16 }
+  if k == 2 || k == 7 { o.reject_indefinite = true }
+  if k == 3 || k == 7 { o.reject_tags = true }
+  if k == 4 || k == 7 { o.reject_nan = true }
+  if k == 5 || k == 7 { o.reject_inf = true }
+  if k == 6 || k == 7 { o.rejected_simple = [0, 20, 255] }
+  o
+}
+
+test "decode_with gives fxamacker's DecOptions answers (counts, indefinite lengths, tags, NaN, infinity, simple values)" {
+  var bad: List[Str] = []
+  for (h, want) in OPTS_CASES {
+    for k in 0..8 {
+      let got = match cbor.decode_with(hx(h), opts_of(k)) {
+        Ok(_) => ""
+        Err(e) => if want[k] == "?" { "?" } else { e.display() }
+      }
+      if got != want[k] {
+        bad.push("${h} set ${k}: got ${got.quote()}, want ${want[k].quote()}")
+      }
+    }
+  }
+  expect(bad) == []
+}
+
+test "decode_with: default options are decode's, the prefix form, and the reserved simple values" {
+  expect(cbor.decode_with(hx("9f0102ff"), cbor.DecodeOptions{})?) == cbor.decode(hx("9f0102ff"))?
+  expect(cbor.decode_prefix_with(hx("0102"), cbor.DecodeOptions{reject_tags: true})?) == (cbor.Value.Uint(n: 1), 1)
+  expect(cbor.decode_with(hx("00"), cbor.DecodeOptions{rejected_simple: [24]}).err().map(fn(e: cbor.CborErr) -> Str { e.display() })) == Some("cbor: cannot set analog for reserved simple value 24")
+  expect(cbor.decode_with(hx("820000"), cbor.DecodeOptions{max_depth: 0}).is_err()) == true
+  expect(cbor.decode_with(hx("a20000"  + "00" + "00"), cbor.DecodeOptions{reject_dup_keys: true}).is_err()) == true
 }
 `

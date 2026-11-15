@@ -1,5 +1,20 @@
 # std/cbor changes
 
+## 2026-11-15: feature: decode_with and DecodeOptions (fxamacker's DecOptions limits and refusals)
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): MaxArrayElements, MaxMapPairs, IndefLengthForbidden, TagsForbidden, NaNDecodeForbidden, InfDecodeForbidden, SimpleValueRegistry and their errors
+- Go reference: github.com/fxamacker/cbor/v2 v2.9.0 valid.go and decode.go (MIT)
+- Test: internal/stdtest/testdata/corpus/cbor (scripts/stdcorpus cbor): 44 inputs under 8 option sets (each option alone and all together) against fxamacker's DecMode through internal/stdtest/cborref opts, the error texts compared (arm64, LLVM, Go)
+- Timing: none
+
+`cbor.decode_with(data, opts)` bounds array and map counts and refuses
+indefinite lengths, tags, NaN, infinity or chosen simple values. The
+defaults are `decode`'s. Where fxamacker's well formed pass finds a refused
+item after an earlier UTF-8 or simple value error, std/cbor reports the
+first in data order.
+
 ## 2026-11-15: feature: `CborErr` is an open enum (decision 0649)
 
 - Kind: feature

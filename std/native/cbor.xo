@@ -324,6 +324,21 @@ struct Dec {
   max_depth: Int
   dup: Bool
   utf8: Bool = true
+  /// DecodeOptions: 0 is no count limit; rej[n] refuses simple value n
+  max_arr: Int = 0
+  max_pairs: Int = 0
+  no_indef: Bool = false
+  no_tags: Bool = false
+  no_nan: Bool = false
+  no_inf: Bool = false
+  rej: List[Bool] = []
+}
+
+fn refused(what: Str) -> cbor.CborErr { invalid("data item of cbor type primitives is not accepted by protocol: ${what}") }
+
+fn indef_refused(major: Int) -> cbor.CborErr {
+  let t = if major == 2 { "byte string" } else if major == 3 { "UTF-8 text string" } else if major == 4 { "array" } else { "map" }
+  invalid("indefinite-length ${t} isn't allowed")
 }
 
 fn float_of_half(h: Int) -> Float {
@@ -493,6 +508,12 @@ fn read_item(var d: Dec, depth: Int) -> cbor.Value ! cbor.CborErr {
   if major == 1 {
     return cbor.Value.Nint(n: UInt64.from_bits(n))
   }
+  if ai == 31 && d.no_indef && major >= 2 && major <= 5 {
+    if major >= 4 && depth + 1 > d.max_depth {
+      return Err(limit("exceeded max nested level ${d.max_depth}"))
+    }
+    return Err(indef_refused(major))
+  }
   if major == 2 {
     if ai == 31 {
       return cbor.Value.ByteString(b: read_chunks(d, 2)?)
@@ -512,6 +533,12 @@ fn read_item(var d: Dec, depth: Int) -> cbor.Value ! cbor.CborErr {
     let per = if major == 4 { 1 } else { 2 }
     var items: List[cbor.Value] = []
     if ai != 31 {
+      if major == 4 && d.max_arr > 0 && n > d.max_arr {
+        return Err(limit("exceeded max number of elements ${d.max_arr} for CBOR array"))
+      }
+      if major == 5 && d.max_pairs > 0 && n > d.max_pairs {
+        return Err(limit("exceeded max number of key-value pairs ${d.max_pairs} for CBOR map"))
+      }
       // every item takes a byte at least
       if n < 0 || n > (d.data.len() - d.pos) / per {
         return Err(cbor.CborErr.Truncated)
@@ -527,6 +554,12 @@ fn read_item(var d: Dec, depth: Int) -> cbor.Value ! cbor.CborErr {
           break
         }
         items.push(read_item(d, depth + 1)?)
+        if major == 4 && d.max_arr > 0 && items.len() > d.max_arr {
+          return Err(limit("exceeded max number of elements ${d.max_arr} for CBOR array"))
+        }
+        if major == 5 && d.max_pairs > 0 && items.len() % 2 == 0 && items.len() / 2 > d.max_pairs {
+          return Err(limit("exceeded max number of key-value pairs ${d.max_pairs} for CBOR map"))
+        }
       }
       if major == 5 && items.len() % 2 == 1 {
         return Err(syntax("unexpected break in a map"))
@@ -547,6 +580,9 @@ fn read_item(var d: Dec, depth: Int) -> cbor.Value ! cbor.CborErr {
     return cbor.Value.Map(pairs: pairs)
   }
   if major == 6 {
+    if d.no_tags {
+      return Err(invalid("CBOR tag isn't allowed"))
+    }
     need(d, 1)?
     var child = depth
     if (Int(d.data[d.pos]) >> 5) == 6 {
@@ -559,6 +595,18 @@ fn read_item(var d: Dec, depth: Int) -> cbor.Value ! cbor.CborErr {
     return cbor.Value.Tag(num: UInt64.from_bits(n), v: inner)
   }
   // major 7
+  if ai <= 24 && !d.rej.is_empty() && d.rej[n] {
+    return Err(refused("simple value ${n} is not recognized"))
+  }
+  if ai >= 25 && ai <= 27 && (d.no_nan || d.no_inf) {
+    let f = if ai == 25 { float_of_half(n) } else if ai == 26 { float_of_single(n) } else { Float.from_bits(n) }
+    if d.no_nan && f.is_nan() {
+      return Err(refused("floating-point NaN"))
+    }
+    if d.no_inf && f.is_inf() {
+      return Err(refused("floating-point infinity"))
+    }
+  }
   if ai == 20 { return cbor.Value.Bool(b: false) }
   if ai == 21 { return cbor.Value.Bool(b: true) }
   if ai == 22 { return cbor.Value.Null }
@@ -576,6 +624,40 @@ fn decode_prefix(data: Bytes, max_depth: Int, reject_dup_keys: Bool) -> (cbor.Va
   var d = Dec{data: data, max_depth: max_depth, dup: reject_dup_keys}
   let v = read_item(d, 0)?
   (v, d.pos)
+}
+
+fn dec_of(data: Bytes, o: cbor.DecodeOptions) -> Dec ! cbor.CborErr {
+  var rej: List[Bool] = []
+  if !o.rejected_simple.is_empty() {
+    rej = List.with_capacity(256)
+    for _ in 0..256 {
+      rej.push(false)
+    }
+    for sv in o.rejected_simple {
+      if sv >= 24 && sv <= 31 {
+        return Err(invalid("cannot set analog for reserved simple value ${sv}"))
+      }
+      if sv < 0 || sv > 255 {
+        return Err(invalid("rejected_simple: ${sv} is not a simple value (0 to 255)"))
+      }
+      rej[sv] = true
+    }
+  }
+  Dec{data: data, max_depth: o.max_depth, dup: o.reject_dup_keys, max_arr: o.max_array_elements, max_pairs: o.max_map_pairs, no_indef: o.reject_indefinite, no_tags: o.reject_tags, no_nan: o.reject_nan, no_inf: o.reject_inf, rej: rej}
+}
+
+fn decode_prefix_with(data: Bytes, opts: cbor.DecodeOptions) -> (cbor.Value, Int) ! cbor.CborErr {
+  var d = dec_of(data, opts)?
+  let v = read_item(d, 0)?
+  (v, d.pos)
+}
+
+fn decode_with(data: Bytes, opts: cbor.DecodeOptions) -> cbor.Value ! cbor.CborErr {
+  let (v, used) = decode_prefix_with(data, opts)?
+  if used != data.len() {
+    return Err(invalid("${data.len() - used} bytes of extraneous data starting at index ${used}"))
+  }
+  v
 }
 
 fn decode(data: Bytes, max_depth: Int, reject_dup_keys: Bool) -> cbor.Value ! cbor.CborErr {

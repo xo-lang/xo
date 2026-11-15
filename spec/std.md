@@ -9099,6 +9099,10 @@ fn encode(v: Value, deterministic: Bool = false) -> Bytes ! CborErr
 fn decode(data: Bytes, max_depth: Int = 128, reject_dup_keys: Bool = false) -> Value ! CborErr
 fn decode_prefix(data: Bytes, max_depth: Int = 128, reject_dup_keys: Bool = false) -> (Value, Int) ! CborErr
 fn well_formed(data: Bytes, max_depth: Int = 128) -> Bool
+struct DecodeOptions { max_depth: Int = 128, reject_dup_keys: Bool = false, max_array_elements: Int = 0, max_map_pairs: Int = 0,
+  reject_indefinite: Bool = false, reject_tags: Bool = false, reject_nan: Bool = false, reject_inf: Bool = false, rejected_simple: List[Int] = [] }
+fn decode_with(data: Bytes, opts: DecodeOptions) -> Value ! CborErr                 // fxamacker's DecOptions
+fn decode_prefix_with(data: Bytes, opts: DecodeOptions) -> (Value, Int) ! CborErr
 fn (v: Value) diagnostic() -> Str
 fn (v: Value) to_json() -> json.Value ! CborErr
 fn from_json(j: json.Value) -> Value

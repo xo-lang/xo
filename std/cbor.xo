@@ -75,6 +75,38 @@ fn decode(data: Bytes, max_depth: Int = 128, reject_dup_keys: Bool = false) -> V
 /// left for the caller (a CBOR sequence, RFC 8742).
 fn decode_prefix(data: Bytes, max_depth: Int = 128, reject_dup_keys: Bool = false) -> (Value, Int) ! CborErr
 
+/// What `decode_with` accepts (fxamacker's DecOptions). The defaults are
+/// `decode`'s: every count, indefinite lengths, tags, NaN, infinity and
+/// simple values. A count of 0 or less is no limit but the data's length;
+/// above 0, an array of more elements or a map of more pairs is `Limit`
+/// (`exceeded max number of elements N for CBOR array`, `... key-value
+/// pairs N for CBOR map`), found at a definite head before its items are
+/// read. The rest are `Invalid` with fxamacker's texts: `indefinite-length
+/// array isn't allowed` (`byte string`, `UTF-8 text string`, `map`), `CBOR
+/// tag isn't allowed`, `data item of cbor type primitives is not accepted
+/// by protocol: floating-point NaN` (`floating-point infinity`, `simple
+/// value N is not recognized`). `rejected_simple` takes 0 to 23 (20 to 23
+/// are false, true, null and undefined) and 32 to 255; 24 to 31 is
+/// `Invalid` (`cannot set analog for reserved simple value N`) whatever
+/// the data. The first refused item in data order is the error.
+struct DecodeOptions {
+  max_depth: Int = 128
+  reject_dup_keys: Bool = false
+  max_array_elements: Int = 0
+  max_map_pairs: Int = 0
+  reject_indefinite: Bool = false
+  reject_tags: Bool = false
+  reject_nan: Bool = false
+  reject_inf: Bool = false
+  rejected_simple: List[Int] = []
+}
+
+/// `decode` with opts: one data item, nothing after it.
+fn decode_with(data: Bytes, opts: DecodeOptions) -> Value ! CborErr
+
+/// `decode_prefix` with opts.
+fn decode_prefix_with(data: Bytes, opts: DecodeOptions) -> (Value, Int) ! CborErr
+
 /// Whether data is exactly one well formed item (no UTF-8 or duplicate key
 /// check), as RFC 8949 Section 5.3.1 defines it.
 fn well_formed(data: Bytes, max_depth: Int = 128) -> Bool
