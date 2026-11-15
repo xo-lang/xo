@@ -28,6 +28,10 @@ compiler/macho/elflink.xo	/// the structure version first (0 on arm64), so a bin
 compiler/macho/elflink.xo	/// later (gotchas/glibc-nonshared-stat.md). None for other names. On
 compiler/macho/elflink.xo	/// The symbol versions of glibc.xo: name to (library, version).
 compiler/macho/elflink.xo	// dlsym and dladdr (ThreadSanitizer's runtime): libdl.so.2 on glibc
+compiler/macho/elflink.xo	// riscv64's glibc starts at 2.27, with no __xstat compatibility
+compiler/macho/elflink_riscv64.xo	// relocations, the PLT stubs, glibc's start code and symbol versions. The
+compiler/macho/elflink_riscv64.xo	/// glibc's crt1 for riscv64 (sysdeps/riscv/start.S): a0 the loader's
+compiler/macho/elflink_riscv64.xo	/// glibc's symbol versions on riscv64: the port starts at 2.27, so every
 compiler/macho/elfsplit.xo	/// CRC-32 (IEEE, reflected, as zlib's crc32): .gnu_debuglink's check of
 compiler/macho/main.xo	//       (glibc imported)
 compiler/xo/clang.xo	/// when sysroot (XO_LINUXSYSROOT) names a glibc sysroot (2026-10-15, to
