@@ -225,3 +225,72 @@ fn main(os: Os) {
 		t.Errorf("--vet=0906: exit %d, want 2 (%s)", code, errOut.String())
 	}
 }
+
+// TestFixVetDestructure: `xo fix --vet=XO0918` (decision 0653) turns a
+// tuple let whose names are only stored, in order, into one
+// destructuring assignment (core 5.2, decision 0536), for bindings and
+// fields alike; a name read after, a target that reads a name, stores
+// out of order, and a comment between keep the let.
+func TestFixVetDestructure(t *testing.T) {
+	t.Parallel()
+	src := `struct P {
+  x: Int
+  y: Int
+}
+
+fn divmod(a: Int, b: Int) -> (Int, Int) {
+  (a / b, a % b)
+}
+
+fn main(os: Os) {
+  var a = 0
+  var b = 0
+  let (q, r) = divmod(7, 2)
+  a = q
+  b = r
+  var p = P{x: 0, y: 0}
+  let (x0, y0) = divmod(9, 4)
+  p.x = x0
+  p.y = y0
+  let (s, t) = divmod(5, 3)
+  a = s
+  b = t
+  os.stdio.println("${s}")
+  var xs = [0, 0, 0]
+  let (i, v) = divmod(3, 2)
+  a = i
+  xs[i] = v
+  let (u, w) = divmod(8, 3)
+  b = w
+  a = u
+  let (m, n) = divmod(6, 4)
+  a = m
+  // kept: the comment would be lost
+  b = n
+  os.stdio.println("${a} ${b} ${p.x} ${p.y} ${xs}")
+}
+`
+	dir := writeFiles(t, map[string]string{"m/main.xo": src})
+	mod := filepath.Join(dir, "m")
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"fix", "--vet=XO0918", mod}, &out, &errOut); code != 0 {
+		t.Fatalf("fix: exit %d: %s%s", code, out.String(), errOut.String())
+	}
+	b, _ := os.ReadFile(filepath.Join(mod, "main.xo"))
+	got := string(b)
+	for _, want := range []string{"  (a, b) = divmod(7, 2)\n  var p", "  (p.x, p.y) = divmod(9, 4)\n  let (s, t)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("not fixed: want %q in\n%s", want, got)
+		}
+	}
+	for _, keep := range []string{"let (s, t)", "let (i, v)", "let (u, w)", "let (m, n)"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("%s was rewritten:\n%s", keep, got)
+		}
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"run", mod}, &out, &errOut); code != 0 || out.String() != "1\n1 2 2 1 [0, 1, 0]\n" {
+		t.Errorf("run after fix: exit %d: %q %s\n%s", code, out.String(), errOut.String(), got)
+	}
+}

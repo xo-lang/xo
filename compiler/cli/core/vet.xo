@@ -333,6 +333,7 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
         }
         Block(b) => {
           out = out + copy_store(c, f, path, b) + elem_copy_store(c, f, path, b) + stale_captures(c, f, path, b)
+          out = out + destructure_assign(c, f, path, b)
           out = out + buf_views(c, f, path, b)
         }
         StringLit(s) => {
@@ -388,6 +389,88 @@ fn copy_store(c: check.Checker, f: Int, file: Str, b: parser.Block) -> List[Diag
     }
   }
   out
+}
+
+/// XO0918 (decision 0653): `let (x, y) = e` whose names are only stored,
+/// in order, by the next statements (`a = x` then `b = y`) and never read
+/// again: the destructuring assignment `(a, b) = e` (core 5.2, decision
+/// 0536) says it in one statement. Only exact shapes: every element a
+/// name, no type, the stores plain `=` of the bare names in pattern order,
+/// targets that are distinct and read none of the names, and no comment
+/// in the statements.
+fn destructure_assign(c: check.Checker, f: Int, file: Str, b: parser.Block) -> List[Diag] {
+  var out: List[Diag] = []
+  let ss = b.stmts
+  for (i, s) in ss.indexed() {
+    if let LetStmt(_, pat, typ, value, is_var) = s {
+      if !is_var && typ.is_none() {
+        if let TuplePat(_, elems) = pat {
+          if let Some(d) = destructure_at(c, f, file, ss, i, elems, value) {
+            out.push(d)
+          }
+        }
+      }
+    }
+  }
+  out
+}
+
+fn destructure_at(c: check.Checker, f: Int, file: Str, ss: List[parser.Stmt], i: Int, elems: List[parser.Pattern], value: parser.Expr) -> Diag? {
+  let k = elems.len()
+  if k < 2 || i + k >= ss.len() {
+    return None
+  }
+  var vars: List[Int] = []
+  var names: List[Str] = []
+  for p in elems {
+    if let BindPat(_, id) = p {
+      vars.push(c.var_of(f, id))
+      names.push(text_of(id.name))
+    }
+  }
+  if names.len() != k || vars.contains(-1) {
+    return None
+  }
+  var targets: List[Str] = []
+  var tnodes: List[parser.Expr] = []
+  for n in 0..k {
+    if let AssignStmt(_, op, target, v) = ss[i + 1 + n] {
+      if let Ident(vid) = v {
+        if op != lexer.Kind.Assign || c.var_of(f, vid) != vars[n] {
+          return None
+        }
+        walk_expr(target, tnodes)
+        targets.push(src_text(c, f, parser.expr_span(target)))
+      } else {
+        return None
+      }
+    } else {
+      return None
+    }
+  }
+  if targets.contains("") || targets.to_set().len() != k {
+    return None
+  }
+  // the names are read nowhere else: not in a target, not after
+  var rest = tnodes
+  for t in ss[i + 1 + k..] {
+    walk_stmt(t, rest)
+  }
+  for e in rest {
+    if let Ident(id) = e {
+      if vars.contains(c.var_of(f, id)) {
+        return None
+      }
+    }
+  }
+  let sp = parser.Span{start: stmt_span(ss[i]).start, end: stmt_span(ss[i + k]).end}
+  if src_text(c, f, sp).contains("//") || allowed(c, f, sp.start.line, "XO0918") {
+    return None
+  }
+  let short = "(${targets.join(", ")}) = ${src_text(c, f, parser.expr_span(value))}"
+  var d = vdiag("XO0918", true, file, sp, "`let (${names.join(", ")})` is only stored into ${k} places: `${short}` says it in one statement (core 5.2, decision 0536)")
+  d.fixes.push(check.DFix{title: "write one destructuring assignment", edits: [check.DEdit{span: jspan(file, sp), replace: short}]})
+  Some(d)
 }
 
 /// The identifier at the root of a chain of selectors and indexes.

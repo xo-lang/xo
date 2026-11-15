@@ -2579,6 +2579,9 @@ never depend on it, but the time does:
   places' types, so `(n, s) = (0, "")` with `n: Int32` types `0` as
   `Int32`. Naming the same place twice (`(a, a) = ...`, `(p.x, p.x)`,
   `(xs[i], xs[i])`) is `XO0539`. Compound assignment takes one target.
+  A tuple `let` whose names are only stored, in order, into other places
+  by the next statements (`let (q, r) = e` then `a = q` and `b = r`) is
+  the `xo vet` note `XO0918`, whose fix writes `(a, b) = e`.
 - **Struct targets** (decision 0538): `P{x, y} = p` stores the fields of
   the struct value `p` into places, by the rules of `let`'s struct
   pattern (3.5): each field is `name: place`, `name` alone (the binding
@@ -4074,6 +4077,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0916` | warning | vet | `time.format` or `time.parse` called with a layout that is a compile time string (a literal, a constant, or a `+` of them): each call parses the layout text again (5.4 and 4.7 of Go's wall), where a `const Layout` made with `time.layout` is parsed once (2.0 and 1.9); a layout built at run time is not reported, and `// xo:allow XO0916 REASON` silences a cold call (decision 0464) |
 | `XO0917` | warning | vet | a valued enum's catch-all built directly from a run time value (`StorageClass.Unknown(s)`): a value a named variant has would become a second spelling of it; `E.from(s)` picks the named variant (decision 0493) |
 | `XO0904` | warning | vet | a file an embed constant embeds is ignored or untracked by git, so a build of a clean checkout embeds something else or fails (decision 0304) |
+| `XO0918` | note | vet | a tuple let whose names are only stored, in order, into other places: one destructuring assignment `(a, b) = e` says it (decision 0536, 0653) |
 | `XO1001` | error | reserved | `std/sys/<os>` used outside the matching target arm (core 12.2) |
 | `XO1101` | error | checker | Go package cannot be bound (not found, does not build, main package, or binding error) |
 | `XO1102` | error | checker | Go name exists but its signature does not map to Xo, so the binding skipped it |
