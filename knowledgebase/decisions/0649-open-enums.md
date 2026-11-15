@@ -149,8 +149,10 @@ enum, done once for all of std:
   (llrt tests, the rsa OAEP block builder, ECH framing) builds single bytes through `rt.rs_push_byte`; a prelude
   constructor (each element masked to 0..255, or `XO`-coded panic on out-of-range, to be decided with the spec text)
   removes that. A std change: std/changes entry and spec std.md line.
-- **An llrt `_test.xo` cannot `use` the runtime module it tests.** The llrt unit tests (`xo test --std-module`) for a file
-  such as rsa.xo end up in a separately named file (tlssign_test.xo for the PSS guard) and call through other modules.
-  Next experiment: a `rsa_test.xo` in std/native/llrt with `use native/llrt/rsa` and one `rsa.sign_pss_salt` call, run with
-  `xo test --std-module=native/llrt`, to record the exact diagnostic, then a gotcha and either a fix in the test driver
-  (treat a `_test.xo` as part of its basename's module, as Go's in-package tests) or the documented pattern.
+- **An llrt `_test.xo` cannot `use` the runtime module it tests.** Recorded 2026-11-15 (xo at fd6e4c63c): adding
+  `use native/llrt/rsa` to std/native/llrt/rsa_test.xo and running `xo test --std-module=native/llrt/rsa` reports
+  `rsa_test.xo:26:1: error XO0604: import cycle: `native/llrt/rsa` imports `native/llrt/rsa`, which imports it back`.
+  The test file is already part of rsa's module and calls its names bare, so nothing is blocked, but the message reads
+  as a real cycle and sent me to a differently named file (tlssign_test.xo). Fix: a new code (XO0604 keeps its meaning)
+  for a module that imports itself, with the note "a `_test.xo` is part of the module it tests: drop the `use` and call
+  the names bare"; optionally, later, Go's external test form (a test that sees only the module's `pub` API).
