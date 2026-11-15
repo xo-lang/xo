@@ -18,7 +18,8 @@ Protocol text, so `e.display()` is unchanged. A server's alert stays
 `Connect("remote error: tls: ...")` and a plain HTTP server
 `Protocol(...)`, as Go's types. Migration: an exhaustive match on
 `ClientErr` adds a `Tls(e)` arm (`http.ClientErr.Tls(e) => e.msg` keeps
-the old Protocol text).
+the old Protocol text); a library that must build on 0.51 too ends the
+match with a wildcard arm instead.
 
 ## 2026-11-15: feature: `Url.to_url()` gives std/url's full `Url`
 
