@@ -101,6 +101,11 @@ struct PointRec {
 struct F {
   /// the checker file of the code being generated
   file: Int = -1
+  /// the module whose temporary count this function's temporaries take
+  /// (tmp), set at its first; -2 before (a std default value's code is
+  /// generated in its own file inside a caller, so the file at each
+  /// temporary is not one module)
+  tmod: Int = -2
   out: List[Str] = []
   ind: Int = 1
   names: Map[Int, Str] = {}
@@ -274,9 +279,16 @@ fn (g: Gen) out_since(start: Int) -> Str {
   g.f.out[start..g.f.out.len()].join("")
 }
 
+/// A fresh Go name for a temporary: numbered per module (Pkg.tmps; the
+/// function's module, F.tmod), so unique in each Go function.
 fn (var g: Gen) tmp(prefix: Str) -> Str {
-  g.pkgs[g.p].tmp += 1
-  "x_${prefix}${g.pkgs[g.p].tmp}"
+  if g.f.tmod == -2 {
+    g.f.tmod = if g.f.file >= 0 && g.f.file < g.c.files.len() { g.c.files[g.f.file].module } else { -1 }
+  }
+  let m = g.f.tmod
+  let n = (g.pkgs[g.p].tmps.get(m) ?? 0) + 1
+  g.pkgs[g.p].tmps[m] = n
+  "x_${prefix}${n}"
 }
 
 /// Assigns a fresh Go name to a local binding (declName).

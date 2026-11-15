@@ -140,7 +140,11 @@ struct Pkg {
   keep: Map[Int, Bool] = {}
   /// the file being generated
   cur: Int = -1
-  tmp: Int = 0
+  /// the temporaries named so far, by the Xo module whose code names
+  /// them (tmp): std/rt is one Go package for every std module, and one
+  /// count across them renumbered every later module's temporaries when
+  /// one module changed (owner, 2026-11-15, from the agents' survey)
+  tmps: Map[Int, Int] = {}
   /// interface adapters made: `<from>|<to>` to the adapter's name
   adapt: Map[Str, Str] = {}
   tests: List[TestRef] = []
