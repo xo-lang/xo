@@ -53,3 +53,11 @@ full tier's Mac steps run it (gate.sh step corpuscheck).
 Pinning the inputs showed a real gap: Go's consumePhrase changed in a
 1.26 patch release, and std/mail still skipped CFWS after an encoded
 word (std/changes/mail.md, 2026-11-15).
+
+Hit again (2026-11-15, host 3): psloracle panicked there, since
+GOPROXY is off and that machine's module cache lacks golang.org/x/net.
+psloracle now replaces x/net with scripts/stdcorpus/psloracle/xnet,
+x/net v0.60.0's publicsuffix package copied unchanged (with its
+LICENSE), so `stdcorpus -check publicsuffix cookiejar` passes with an
+empty GOMODCACHE. An oracle that needs a third-party module either
+carries the code it needs this way or reads pinned inputs from testdata.
