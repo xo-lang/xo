@@ -1483,6 +1483,14 @@ Last verified: 2026-11-15
     DONE without a restart, unacknowledged tasks and decisions).
   - `xw task title ID TEXT` replaces a stale task title (the old one
     stays in the task log).
+  - `xw alerts` (lead): the open alerts, one per problem while it lasts:
+    `xw check`'s problems, a run that waited over 30 minutes, 6 pushq
+    refusals in 3 hours, a worktree refused twice in a row, a BLOCKED
+    memory lease, a failed hourly.log result or ctier run. `xw alerts
+    --wait` under run_in_background wakes once per new alert (it prints
+    the next `--wait --after SEQ` command) and replaces idlewatch and
+    bottlewatch; `xw snooze ID [--for 2h]` quiets one (the idle-ok
+    file's grace). Last verified: 2026-11-15.
   - Fire and forget: a down xw never fails heavy.sh, pushq or
     offload-gate (events spool under ~/xo-lead/xw/spool).
   - board.sh stays for claims and a one-line NOW until it becomes a

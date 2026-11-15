@@ -143,3 +143,25 @@ by Postgres.
 - A terminal UI: Xo has no TUI library yet; not readable from a phone.
 - Keep the files and add more scripts: today's state; it is what went
   stale.
+
+## Addendum: the alert loop as built (xw-1, 2026-11-15)
+
+Stage 3's alert loop landed as `xw alerts` (workstream 7c0b520). Every
+minute the server turns `xw check`'s problems, the bottleneck review's
+thresholds (bottlewatch3.sh: a run that waited over 30 minutes, 6 pushq
+refusals in 3 hours, a worktree refused twice in a row, a BLOCKED memory
+lease) and the main checks' results (hourly.log, ctier's runs.tsv) into
+alert rows, one per problem while it lasts. `xw alerts --wait` blocks
+until a new one and replaces idlewatch, bottlewatch and the alert half
+of mainwatch (mainwatch still runs hourly.sh). Two departures from the
+plan above:
+
+- No LISTEN/NOTIFY: alerts change only on the server's one-minute pass,
+  so the client asks every 20 seconds over loopback HTTP. That survives
+  an xw restart, which a held LISTEN connection would not, and costs no
+  model turn.
+- hangcheck.sh is not folded in yet: on 2026-11-15 it reported the host
+  VMs (Virtualization.framework 56G, VMware 32G) as RUNAWAY and every
+  offload over 25 minutes, which as alerts would wake the lead each
+  minute. It moves in by class with its own thresholds and an ignore
+  list.
