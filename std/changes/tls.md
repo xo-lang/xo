@@ -1,5 +1,19 @@
 # std/tls changes
 
+## 2026-11-15: feature: QUIC (decision 0644 T14)
+
+- Kind: feature
+- Commit: this push
+- Found by: the lang3 crypto/tls audit of 2026-11-15 (item T14; owner approved through the lead)
+- Go reference: crypto/tls QUICClient, QUICServer, QUICConn (Start, NextEvent, HandleData, SendSessionTicket, SetTransportParameters, ConnectionState, Close), QUICEvent, QUICEventKind, QUICEncryptionLevel, QUICSessionTicketOptions (go1.26.11)
+- Test: golden tls_quic (Go's quic_test.go cases; native, llvm and split equal to the go backend)
+- Timing: none (TLS over records is unchanged; QUIC is new)
+- Shipped in: not yet released
+
+`quic_client` and `quic_server` give a `QuicConn`: the TLS 1.3 handshake
+for a QUIC transport, events in Go's order, transport parameters either
+side, session tickets on demand with 0-RTT secrets.
+
 
 ## 2026-11-15: feature: Encrypted Client Hello (decision 0644 B4)
 

@@ -141,6 +141,26 @@ rest in the same shape.
   `Alert(code)` (Go's AlertError, which QUIC's errors wrap, asked by
   aws-43 for T14) are added before the first release with T12, so no
   release's exhaustive match breaks.
+- **QUIC (T14, B5, aws-43 with lang3):** `quic_client`, `quic_server`
+  and `QuicConn` with Go's QUICConn methods (`start`, `next_event`,
+  `handle_data`, `send_session_ticket(early_data, extra)`,
+  `set_transport_parameters`, `state`, `close`), `QuicEvent` with Go's
+  kinds and levels; ClientConfig and ServerConfig as they are (Go's
+  QUICConfig.TLSConfig), no context (cancelling the task is Go's ctx).
+  Native: std/native/llrt/tlsquic.xo drives the sans-I/O tls13.xo and
+  tls13srv.xo with `conf.quic` set; the engines put handshake bytes,
+  secrets and the peer's parameters in `quic_events`, and the layer
+  orders them as Go (WriteData merged per level, the Application read
+  secret held until HandshakeDone, one ErrorEvent). A server without
+  parameters pauses before EncryptedExtensions. 0-RTT: a ticket sent
+  with early_data carries max_early_data_size 0xffffffff and its state
+  the ALPN protocol (Go's SessionState layout); the hooks see no
+  addresses (Go's conn is nil). Left out: QUICConfig.EnableSessionEvents
+  (ResumeSession, StoreSession; a field to add when a QUIC stack needs
+  it), ECH with 0-RTT on the native client, and QUIC client
+  authentication's ticket after the client's Certificate. Golden
+  tls_quic ports Go's quic_test.go and equals the go backend on native,
+  llvm and split.
 - **std/http and T12 (decided: option (2), owner 2026-11-15, in 0.52):** the
   client's failure is `ClientErr.Connect(msg)` with Go's text, and Xo's
   enums leave no non-breaking room on it: a variant field takes no

@@ -184,6 +184,12 @@ pub struct Conf {
   pub client_auth: Int = 0
   pub client_cas: List[Bytes] = []
   pub client_roots: List[Bytes] = []
+  /// decision 0644 T14: the handshake runs for a QUIC transport (as
+  /// tls13.Conf's quic); quic_params the transport parameters to send,
+  /// None until the transport gives them (the handshake then stops
+  /// before EncryptedExtensions: Go's QUICTransportParametersRequired)
+  pub quic: Bool = false
+  pub quic_params: Bytes? = None
 }
 
 /// Another certificate chain (DER, the leaf first) and its key.
@@ -287,6 +293,83 @@ pub struct Server {
   /// client's Finished: an ECH client's ech_required alert that follows
   /// it is the next read's error)
   pub completed: Bool = false
+  /// decision 0644 T14 (conf.quic): as tls13.Client's; pause is the
+  /// flight waiting for the transport parameters; ticket_psk the
+  /// resumption PSK a send_ticket seals (Go sends QUIC tickets only when
+  /// asked)
+  pub quic_events: List[tls13.QuicEv] = []
+  pub quic_read: Int = 0
+  pub alert: Int = 0
+  pause: QuicPause? = None
+  ticket_psk: Bytes = b""
+  /// decision 0644 T14: the client's 0-RTT was taken (Go's hs.earlyData)
+  pub early: Bool = false
+}
+
+/// The server's flight stopped before EncryptedExtensions.
+struct QuicPause {
+  h: Hello
+  chosen: Int
+  hash: Int
+  hs_secret: Bytes
+  s_hs: Bytes
+}
+
+/// As tls13.hs_out.
+fn hs_out(var s: Server, level: Int, m: Bytes) {
+  if s.conf.quic {
+    s.quic_events.push(tls13.QuicEv{kind: tls13.QEV_DATA, level: level, suite: 0, data: m})
+  } else {
+    s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, m, 0x0303))
+  }
+}
+
+/// As tls13.set_keys.
+fn set_keys(var s: Server, write: Bool, level: Int, secret: Bytes) {
+  if s.conf.quic {
+    s.quic_events.push(tls13.QuicEv{kind: if write { tls13.QEV_WRITE } else { tls13.QEV_READ }, level: level, suite: s.suite, data: secret})
+    if !write {
+      s.quic_read = level
+    }
+  } else if write {
+    s.wk = tlsrec.keys(s.suite, secret)
+  } else {
+    s.rk = tlsrec.keys(s.suite, secret)
+  }
+}
+
+/// Handshake bytes the QUIC transport got at the read level.
+pub fn feed_quic(var s: Server, data: Bytes) {
+  if s.state == FAILED || s.closed {
+    return
+  }
+  hs_bytes(s, data)
+}
+
+/// The transport parameters, given late (Go's SetTransportParameters
+/// after QUICTransportParametersRequired): a stopped flight goes on.
+pub fn set_quic_params(var s: Server, params: Bytes) {
+  s.conf.quic_params = Some(params)
+  if let Some(pz) = s.pause {
+    s.pause = None
+    ee_flight(s, pz.h, pz.chosen, pz.hash, pz.hs_secret, pz.s_hs)
+  }
+}
+
+/// Go's QUICConn.SendSessionTicket after the handshake: one ticket of
+/// the resumption PSK at the Application level. Err's text when it
+/// cannot.
+pub fn send_ticket(var s: Server, early: Bool, extra: List[Bytes] = []) -> Str {
+  if s.state != DONE {
+    return "tls: SendSessionTicket called before handshake completed"
+  }
+  if s.ticket_psk.is_empty() || s.conf.ticket_keys.is_empty() {
+    // tickets disabled: Go returns nil
+    return ""
+  }
+  hs_out(s, 3, ticket_msg(s, s.ticket_psk, early, extra))
+  s.ticket_psk = b""
+  ""
 }
 
 /// A new server for conf, waiting for a ClientHello.
@@ -432,21 +515,7 @@ fn record(var s: Server, buf: Bytes, n: Int) {
     if s.state != DONE {
       s.useless = 0
     }
-    s.hs = tls13.cat2(s.hs, inner.data)
-    while s.state != FAILED && s.state != HANDOFF && s.hs.len() >= 4 {
-      let t = Int(s.hs[0])
-      let n = tls13.u24_at(s.hs, 1)
-      if n > MAX_HANDSHAKE {
-        fail(s, ALERT_INTERNAL_ERROR, "tls: handshake message of length ${n} bytes exceeds maximum of ${MAX_HANDSHAKE} bytes")
-        return
-      }
-      if s.hs.len() < 4 + n {
-        return
-      }
-      let msg = s.hs[0..4 + n]
-      s.hs = s.hs[4 + n..s.hs.len()]
-      handshake(s, t, msg)
-    }
+    hs_bytes(s, inner.data)
     return
   }
   if inner.ct == tlsrec.CT_APP {
@@ -489,6 +558,9 @@ fn handshake(var s: Server, t: Int, msg: Bytes) {
     client_verify(s, msg)
   } else if s.state == WAIT_FIN && t == HS_FINISHED {
     finished(s, msg)
+  } else if s.state == DONE && t == HS_KEY_UPDATE && s.conf.quic {
+    // RFC 9001 6 (Go's handleKeyUpdate)
+    fail(s, ALERT_UNEXPECTED_MESSAGE, "tls: received unexpected key update message")
   } else if s.state == DONE && t == HS_KEY_UPDATE {
     // Go's handlePostHandshakeMessage counts it (Go 1.26.11)
     s.useless += 1
@@ -500,6 +572,26 @@ fn handshake(var s: Server, t: Int, msg: Bytes) {
   } else {
     let want = if s.state == WAIT_CCERT { "*tls.certificateMsgTLS13" } else if s.state == WAIT_CVERIFY { "*tls.certificateVerifyMsg" } else if s.state == WAIT_FIN { "*tls.finishedMsg" } else if s.state == DONE { "*tls.keyUpdateMsg" } else { "*tls.clientHelloMsg" }
     fail(s, ALERT_UNEXPECTED_MESSAGE, "tls: received unexpected handshake message of type ${go_type(t)} when waiting for ${want}")
+  }
+}
+
+/// Handshake bytes, from records or from QUIC: each complete message is
+/// handled.
+fn hs_bytes(var s: Server, data: Bytes) {
+  s.hs = tls13.cat2(s.hs, data)
+  while s.state != FAILED && s.state != HANDOFF && s.hs.len() >= 4 {
+    let t = Int(s.hs[0])
+    let n = tls13.u24_at(s.hs, 1)
+    if n > MAX_HANDSHAKE {
+      fail(s, ALERT_INTERNAL_ERROR, "tls: handshake message of length ${n} bytes exceeds maximum of ${MAX_HANDSHAKE} bytes")
+      return
+    }
+    if s.hs.len() < 4 + n {
+      return
+    }
+    let msg = s.hs[0..4 + n]
+    s.hs = s.hs[4 + n..s.hs.len()]
+    handshake(s, t, msg)
   }
 }
 
@@ -541,6 +633,7 @@ struct Hello {
   early: Bool
   reneg: Bytes
   quic: Bool
+  quic_params: Bytes = b""
   kept: Bytes
   raw: Bytes
   psk_modes: Bytes
@@ -755,6 +848,7 @@ fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
   }
   if t == EXT_QUIC {
     h.quic = true
+    h.quic_params = d
     return true
   }
   if t == EXT_PRE_SHARED_KEY {
@@ -819,7 +913,7 @@ fn client_hello(var s: Server, msg0: Bytes) {
     }
     if let Some(x) = nc {
       // the connection's own: the handoff and its ticket keys
-      s.conf = x with {handoff: s.conf.handoff, ticket_keys: if x.own_tickets { x.ticket_keys } else { s.conf.ticket_keys }, now: s.conf.now}
+      s.conf = x with {handoff: s.conf.handoff, ticket_keys: if x.own_tickets { x.ticket_keys } else { s.conf.ticket_keys }, now: s.conf.now, quic: s.conf.quic, quic_params: s.conf.quic_params}
     }
   }
   let versions = if h.versions.is_empty() { versions_from_max(h.vers) } else { h.versions }
@@ -857,7 +951,13 @@ fn client_hello(var s: Server, msg0: Bytes) {
     fail(s, ALERT_HANDSHAKE_FAILURE, "tls: initial handshake had non-empty renegotiation extension")
     return
   }
-  if h.early {
+  if h.early && s.conf.quic {
+    // RFC 9001 4.6.1: 0-RTT needs a PSK (Go's handshake_server_tls13)
+    if h.ids.is_empty() {
+      fail(s, ALERT_ILLEGAL_PARAMETER, "tls: early_data without pre_shared_key")
+      return
+    }
+  } else if h.early {
     fail(s, ALERT_UNSUPPORTED_EXTENSION, "tls: client sent unexpected early data")
     return
   }
@@ -927,7 +1027,7 @@ fn retry(var s: Server, msg: Bytes) {
   }
   s.tr = asn1.cat([tls13.message(HS_MESSAGE_HASH, ch1), hrr])
   s.trk = -1
-  s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, hrr, 0x0303))
+  hs_out(s, 0, hrr)
   dummy_ccs(s)
   s.hrr = true
   s.state = WAIT_CH2
@@ -1007,6 +1107,11 @@ fn respond(var s: Server, h: Hello) {
       return
     }
   }
+  if s.conf.quic && !s.conf.alpn.is_empty() && h.alpn.is_empty() {
+    // RFC 9001 8.1 (Go's negotiateALPN for QUIC)
+    fail(s, ALERT_NO_APPLICATION_PROTOCOL, "tls: client did not request an application protocol")
+    return
+  }
   match negotiate_alpn(s.conf.alpn, h.alpn) {
     Ok(p) => s.alpn = p
     Err(e) => {
@@ -1014,7 +1119,20 @@ fn respond(var s: Server, h: Hello) {
       return
     }
   }
-  if h.quic {
+  if s.conf.quic {
+    // RFC 9001 4.2 and 8.2
+    for v in h.versions {
+      if v < 0x0304 {
+        fail(s, ALERT_PROTOCOL_VERSION, "tls: client offered TLS version older than TLS 1.3")
+        return
+      }
+    }
+    if !h.quic {
+      fail(s, ALERT_MISSING_EXTENSION, "tls: client did not send a quic_transport_parameters extension")
+      return
+    }
+    s.quic_events.push(tls13.QuicEv{kind: tls13.QEV_PARAMS, level: 0, suite: 0, data: h.quic_params})
+  } else if h.quic {
     fail(s, ALERT_UNSUPPORTED_EXTENSION, "tls: client sent an unexpected quic_transport_parameters extension")
     return
   }
@@ -1040,6 +1158,14 @@ fn respond(var s: Server, h: Hello) {
           }
           psk = st.secret
           chosen = i
+          if s.conf.quic && h.early && i == 0 && st.early && st.suite == s.suite && st.alpn == s.alpn {
+            // Go's 0-RTT: the client's early traffic secret over its
+            // ClientHello, given to the transport (the Early level has
+            // no CRYPTO data, so the read level stays)
+            s.early = true
+            let cets = hkdf.expand_label(hash, early_secret(hash, psk), "c e traffic", sha256.sum(hash, h.raw), sha256.size(hash))
+            s.quic_events.push(tls13.QuicEv{kind: tls13.QEV_READ, level: 1, suite: s.suite, data: cets})
+          }
         }
       }
     }
@@ -1106,7 +1232,7 @@ fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes
     sh = tls13.cat2(zeroed[0..30], tls13.cat2(cf8, zeroed[38..zeroed.len()]))
   }
   s.tr = tls13.cat2(s.tr, sh)
-  s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, sh, 0x0303))
+  hs_out(s, 0, sh)
   dummy_ccs(s)
   // RFC 8446 7.1 from the PSK's early secret (zeros without one)
   let l = sha256.size(hash)
@@ -1115,22 +1241,41 @@ fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes
   let th = tr_hash(s, hash)
   s.c_hs = hkdf.expand_label(hash, hs_secret, "c hs traffic", th, l)
   let s_hs = hkdf.expand_label(hash, hs_secret, "s hs traffic", th, l)
-  s.wk = tlsrec.keys(s.suite, s_hs)
-  s.rk = tlsrec.keys(s.suite, s.c_hs)
+  set_keys(s, true, 2, s_hs)
+  set_keys(s, false, 2, s.c_hs)
   let ke = tls13.log_keys(s.conf.key_log, "CLIENT_HANDSHAKE_TRAFFIC_SECRET", "SERVER_HANDSHAKE_TRAFFIC_SECRET", h.random, s.c_hs, s_hs)
   if !ke.is_empty() {
     fail(s, ALERT_INTERNAL_ERROR, ke)
     return
   }
+  if s.conf.quic && s.conf.quic_params.is_none() {
+    // Go's quicGetTransportParameters: the transport is asked, and the
+    // flight waits for set_quic_params
+    s.quic_events.push(tls13.QuicEv{kind: tls13.QEV_PARAMS_NEEDED, level: 0, suite: 0, data: b""})
+    s.pause = Some(QuicPause{h: h, chosen: chosen, hash: hash, hs_secret: hs_secret, s_hs: s_hs})
+    return
+  }
+  ee_flight(s, h, chosen, hash, hs_secret, s_hs)
+}
+
+/// The flight from EncryptedExtensions on (finish_hello's second half).
+fn ee_flight(var s: Server, h: Hello, chosen: Int, hash: Int, hs_secret: Bytes, s_hs: Bytes) {
+  let l = sha256.size(hash)
   // EncryptedExtensions (Go's encryptedExtensionsMsg order: ALPN, the
-  // ECH retry configs, then the server_name ack, which a resumed session
-  // does not send)
+  // QUIC parameters, early_data, the ECH retry configs, then the
+  // server_name ack, which a resumed session does not send)
   let ee_exts = match s.conf.ee {
     Some(e) => e
     None => {
       var es: List[Bytes] = []
       if s.alpn != "" {
         es.push(tls13.ext(EXT_ALPN, tls13.vec16(tls13.vec8(s.alpn.bytes()))))
+      }
+      if s.conf.quic {
+        es.push(tls13.ext(EXT_QUIC, s.conf.quic_params ?? b""))
+      }
+      if s.early {
+        es.push(tls13.ext(EXT_EARLY_DATA, b""))
       }
       // the retry configs to a client whose ECH was not taken
       if s.ech_sent && !s.ech_on && !s.ech_keys.is_empty() {
@@ -1166,14 +1311,14 @@ fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes
   // Finished, then the application keys for writing
   let fin = tls13.message(HS_FINISHED, tls13.finished_mac(hash, s_hs, tr_hash(s, hash)))
   s.tr = tls13.cat2(s.tr, fin)
-  s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, tls13.cat2(flight, fin), 0x0303))
+  hs_out(s, 2, tls13.cat2(flight, fin))
   let derived2 = hkdf.expand_label(hash, hs_secret, "derived", sha256.sum(hash, b""), l)
   let master = hkdf.extract(hash, derived2, tls13.zeros(l))
   let th2 = tr_hash(s, hash)
   s.c_ap = hkdf.expand_label(hash, master, "c ap traffic", th2, l)
   s.exp = hkdf.expand_label(hash, master, "exp master", th2, l)
   let s_ap = hkdf.expand_label(hash, master, "s ap traffic", th2, l)
-  s.wk = tlsrec.keys(s.suite, s_ap)
+  set_keys(s, true, 3, s_ap)
   let ka = tls13.log_keys(s.conf.key_log, "CLIENT_TRAFFIC_SECRET_0", "SERVER_TRAFFIC_SECRET_0", h.random, s.c_ap, s_ap)
   if !ka.is_empty() {
     fail(s, ALERT_INTERNAL_ERROR, ka)
@@ -1186,7 +1331,12 @@ fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes
     let cf = tls13.message(HS_FINISHED, s.client_fin)
     let res = hkdf.expand_label(hash, master, "res master", tr_hash_with(s, hash, cf), l)
     let psk2 = hkdf.expand_label(hash, res, "resumption", b"", l)
-    s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, ticket_msg(s, psk2), 0x0303))
+    if s.conf.quic {
+      // QUIC tickets wait for send_ticket (Go's shouldSendSessionTickets)
+      s.ticket_psk = psk2
+    } else {
+      s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, ticket_msg(s, psk2), 0x0303))
+    }
   }
   if auth {
     s.hsh = hash
@@ -1308,7 +1458,7 @@ fn client_cert(var s: Server, msg: Bytes) {
 }
 
 /// What is negotiated so far, for the verify hooks (decision 0644 T6).
-fn neg_now(s: Server) -> tlsneg.Negotiated { tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(s.suite), server_name: s.sni, resumed: s.resumed, peer: s.peer, verified: s.verified, curve: tlsneg.group_name(s.group), alpn: s.alpn, hrr: s.hrr, vers: 0x0304, suite: s.suite, group: s.group, ech_accepted: s.ech_accepted} }
+pub fn neg_now(s: Server) -> tlsneg.Negotiated { tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(s.suite), server_name: s.sni, resumed: s.resumed, peer: s.peer, verified: s.verified, curve: tlsneg.group_name(s.group), alpn: s.alpn, hrr: s.hrr, vers: 0x0304, suite: s.suite, group: s.group, ech_accepted: s.ech_accepted} }
 
 /// Go's VerifyPeerCertificate then VerifyConnection after the client's
 /// Certificate: false when one failed the handshake.
@@ -1414,13 +1564,16 @@ fn session(s: Server, id: Bytes, hash: Int) -> tlsticket.State? {
 
 /// Go's NewSessionTicket for TLS 1.3: the lifetime, ticket_age_add (4
 /// random bytes read little endian), no nonce, the sealed state of the
-/// session (its PSK), no extensions.
-fn ticket_msg(s: Server, psk: Bytes) -> Bytes {
+/// session (its PSK, and extra); a QUIC ticket allowing 0-RTT (early)
+/// carries early_data with max_early_data_size 0xffffffff (RFC 9001
+/// 4.6.1) and its state the ALPN protocol.
+fn ticket_msg(s: Server, psk: Bytes, early: Bool = false, extra: List[Bytes] = []) -> Bytes {
   let r = if s.conf.age_add.len() == 4 { s.conf.age_add } else { rand.next_bytes(4) }
   let iv = if s.conf.ticket_iv.len() == 16 { s.conf.ticket_iv } else { rand.next_bytes(16) }
-  let st = tlsticket.state(0x0304, s.suite, s.conf.now, psk, false, 0)
+  let st = tlsticket.state(0x0304, s.suite, s.conf.now, psk, false, 0, early: early, alpn: s.alpn, extra: extra)
   let label = tlsticket.seal(s.conf.ticket_keys[0], st, iv)
-  let body = asn1.cat([tls13.u16(tlsticket.LIFETIME >> 16), tls13.u16(tlsticket.LIFETIME & 65535), r[3..4], r[2..3], r[1..2], r[0..1], b"\x00", tls13.vec16(label), b"\x00\x00"])
+  let exts = if early { tls13.ext(EXT_EARLY_DATA, b"\xff\xff\xff\xff") } else { b"" }
+  let body = asn1.cat([tls13.u16(tlsticket.LIFETIME >> 16), tls13.u16(tlsticket.LIFETIME & 65535), r[3..4], r[2..3], r[1..2], r[0..1], b"\x00", tls13.vec16(label), tls13.vec16(exts)])
   tls13.message(HS_NEW_SESSION_TICKET, body)
 }
 
@@ -1494,7 +1647,7 @@ fn pick(var s: Server) {
 /// the ServerHello or HelloRetryRequest (Go sends it whatever the
 /// client's session id).
 fn dummy_ccs(var s: Server) {
-  if !s.ccs_sent && !s.conf.rfc {
+  if !s.ccs_sent && !s.conf.rfc && !s.conf.quic {
     s.ccs_sent = true
     s.out = tls13.cat2(s.out, b"\x14\x03\x03\x00\x01\x01")
   }
@@ -1548,7 +1701,7 @@ fn finished(var s: Server, msg: Bytes) {
     fail(s, ALERT_UNEXPECTED_MESSAGE, "tls: handshake buffer not empty before setting read traffic secret")
     return
   }
-  s.rk = tlsrec.keys(s.suite, s.c_ap)
+  set_keys(s, false, 3, s.c_ap)
   if !s.conf.ticket.is_empty() {
     s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, s.conf.ticket, 0x0303))
   }
@@ -1586,6 +1739,10 @@ fn fail(var s: Server, alert: Int, msg: Str) {
   if s.state != FAILED {
     s.err = msg
     s.state = FAILED
+    s.alert = alert
+    if s.conf.quic {
+      return
+    }
     // Go's record version: TLS 1.0's until the version is chosen
     s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_ALERT, asn1.cat([tls13.u8(2), tls13.u8(alert)]), if s.vers { 0x0303 } else { 0x0301 }))
   }

@@ -245,6 +245,13 @@ func tlsPrep(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify Tls_
 	if _, ok := c.c.(fakeConn); ok {
 		return Tls_TlsConn{c: c.c, fake: true, closed: new(atomic.Bool), st: new(tlsConnSt)}, nil
 	}
+	cfg := buildClientTLS(tk, host, roots, verify, alpn, cert, verifyConn, minVersion, maxVersion, cipherSuites, curvePrefs, extra)
+	return Tls_TlsConn{t: tls.Client(c.c, cfg), c: c.c, closed: new(atomic.Bool), st: new(tlsConnSt)}, nil
+}
+
+// buildClientTLS is tlsPrep's Go Config, without a connection (QUIC's
+// client takes one too: decision 0644 T14).
+func buildClientTLS(tk *Task, host string, roots Option[Tls_Roots], verify Tls_Verify, alpn List[string], cert Option[Tls_TlsCert], verifyConn Option[func(*Task, List[X509_Certificate]) Result[Unit, string]], minVersion int64, maxVersion int64, cipherSuites List[int64], curvePrefs List[int64], extra func(*tls.Config)) *tls.Config {
 	name := host
 	if strings.HasPrefix(name, "[") && strings.HasSuffix(name, "]") {
 		name = name[1 : len(name)-1]
@@ -289,7 +296,7 @@ func tlsPrep(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify Tls_
 	if extra != nil {
 		extra(cfg)
 	}
-	return Tls_TlsConn{t: tls.Client(c.c, cfg), c: c.c, closed: new(atomic.Bool), st: new(tlsConnSt)}, nil
+	return cfg
 }
 
 // tlsHandshake is a client's handshake: http.DefaultTransport's
@@ -452,7 +459,21 @@ func tlsClientConfigPrep(tk *Task, c Conn, cfg Tls_ClientConfig) (Tls_TlsConn, *
 	if len(cfg.F_certificates.s) == 1 {
 		one = Option[Tls_TlsCert]{Some: true, V: cfg.F_certificates.s[0]}
 	}
-	return tlsPrep(tk, c, cfg.F_server_name, cfg.F_roots, cfg.F_verify, cfg.F_next_protos, one, Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]{}, cfg.F_min_version, cfg.F_max_version, cfg.F_cipher_suites, cfg.F_curve_preferences, func(gc *tls.Config) {
+	return tlsPrep(tk, c, cfg.F_server_name, cfg.F_roots, cfg.F_verify, cfg.F_next_protos, one, Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]{}, cfg.F_min_version, cfg.F_max_version, cfg.F_cipher_suites, cfg.F_curve_preferences, clientExtra(tk, cfg))
+}
+
+// clientTLSConfig is cfg as Go's Config (QUIC's client: decision 0644 T14).
+func clientTLSConfig(tk *Task, cfg Tls_ClientConfig) *tls.Config {
+	var one Option[Tls_TlsCert]
+	if len(cfg.F_certificates.s) == 1 {
+		one = Option[Tls_TlsCert]{Some: true, V: cfg.F_certificates.s[0]}
+	}
+	return buildClientTLS(tk, cfg.F_server_name, cfg.F_roots, cfg.F_verify, cfg.F_next_protos, one, Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]{}, cfg.F_min_version, cfg.F_max_version, cfg.F_cipher_suites, cfg.F_curve_preferences, clientExtra(tk, cfg))
+}
+
+// clientExtra is what a ClientConfig sets beyond tlsPrep's arguments.
+func clientExtra(tk *Task, cfg Tls_ClientConfig) func(*tls.Config) {
+	return func(gc *tls.Config) {
 		if len(cfg.F_certificates.s) > 1 {
 			gc.Certificates = nil
 			for _, x := range cfg.F_certificates.s {
@@ -493,7 +514,7 @@ func tlsClientConfigPrep(tk *Task, c Conn, cfg Tls_ClientConfig) (Tls_TlsConn, *
 				return r.V.V.c, nil
 			}
 		}
-	})
+	}
 }
 
 // criOf is Go's CertificateRequestInfo as Xo's.

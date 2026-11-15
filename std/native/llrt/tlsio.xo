@@ -497,19 +497,30 @@ pub const VERIFY_NONE = 2
 
 /// client with the ALPN protocols offered (none: no extension) and the
 /// verification (VERIFY_*); std/tls's client (decision 0281).
-pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], verify: Int, ccerts: List[Bytes] = [], ckey: Bytes = b"", min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vhook: (fn(tlsneg.Negotiated) -> Str)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None, tickets: Bool = false, session: tlscache.Session? = None, put: (fn(tlscache.Session?) -> ())? = None, ech_list: Bytes? = None, ech_verify: (fn(tlsneg.Negotiated) -> Str)? = None) -> Start {
+/// What client_conf gives: the engine's settings, or the failure that
+/// stops the handshake before it starts; and the roots' verify_conn,
+/// run once it is done.
+pub struct ConfStart {
+  pub cf: tls13.Conf
+  pub fail: Start?
+  pub vconn: (fn(List[Bytes]) -> Str)?
+}
+
+/// client_with's settings without its connection (decision 0644 T14:
+/// QUIC's client takes them too).
+pub fn client_conf(host: Str, roots: Int, protos: List[Str], verify: Int, ccerts: List[Bytes], ckey: Bytes, min_v: Int, max_v: Int, suites: List[Int], curves: List[Int], vhook: (fn(tlsneg.Negotiated) -> Str)?, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))?, key_log: (fn(Str, Bytes, Bytes) -> Str)?, tickets: Bool, session: tlscache.Session?, put: (fn(tlscache.Session?) -> ())?, ech_list: Bytes?, ech_verify: (fn(tlsneg.Negotiated) -> Str)?) -> ConfStart {
   // decision 0644 T7: Go's MinVersion and MaxVersion (0: TLS 1.2 and
   // 1.3), CipherSuites (TLS 1.2's only) and CurvePreferences, whose
   // orders Go ignores: each keeps the default order, less what is left out
   let allow13 = max_v == 0 || max_v >= 0x0304
   let allow12 = min_v <= 0x0303 && (max_v == 0 || max_v >= 0x0303)
   if !allow13 && !allow12 {
-    return failed(CC_ERR, 4, "tls: no supported versions satisfy MinVersion and MaxVersion")
+    return ConfStart{cf: tls13.conf("", [], 0), fail: Some(failed(CC_ERR, 4, "tls: no supported versions satisfy MinVersion and MaxVersion")), vconn: None}
   }
   // decision 0644 T13: ECH needs TLS 1.3 (Go's makeClientHello)
   let ech_err = ech_versions(ech_list.is_some(), min_v, max_v)
   if !ech_err.is_empty() {
-    return failed(CC_ERR, 4, ech_err)
+    return ConfStart{cf: tls13.conf("", [], 0), fail: Some(failed(CC_ERR, 4, ech_err)), vconn: None}
   }
   let data = match roots_data(roots) {
     Some(d) => d
@@ -518,14 +529,14 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
   let system = data.system
   // Client.with_verify: the client's mode, which must be pinned when it checks nothing
   if data.verify == VERIFY_NONE && data.vconn.is_none() && vhook.is_none() {
-    return failed(CC_ERR, 4, "tls: Verify.None needs a verify_conn (an unverified connection must be pinned)")
+    return ConfStart{cf: tls13.conf("", [], 0), fail: Some(failed(CC_ERR, 4, "tls: Verify.None needs a verify_conn (an unverified connection must be pinned)")), vconn: None}
   }
   let verify = if data.verify != 0 { data.verify } else { verify }
   // the framework decides on macOS with the system's roots
   let apple = if system && target.os == TargetOs.Darwin { 1 } else { 0 }
   let certs = if system && apple == 0 && data.cell != 0 { system_certs(data.cell) } else { data.certs }
   if system && apple == 0 && certs.is_empty() && verify != VERIFY_NONE {
-    return failed(CC_ERR, 4, "tls: failed to verify certificate: x509: failed to load system roots and no roots provided")
+    return ConfStart{cf: tls13.conf("", [], 0), fail: Some(failed(CC_ERR, 4, "tls: failed to verify certificate: x509: failed to load system roots and no roots provided")), vconn: None}
   }
   var name = if data.sni.is_empty() { host } else { data.sni }
   if name.len() >= 2 && name.starts_with("[") && name.ends_with("]") {
@@ -569,6 +580,15 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
       }
     }
   }
+  ConfStart{cf: cf, fail: None, vconn: data.vconn}
+}
+
+pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], verify: Int, ccerts: List[Bytes] = [], ckey: Bytes = b"", min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vhook: (fn(tlsneg.Negotiated) -> Str)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None, tickets: Bool = false, session: tlscache.Session? = None, put: (fn(tlscache.Session?) -> ())? = None, ech_list: Bytes? = None, ech_verify: (fn(tlsneg.Negotiated) -> Str)? = None) -> Start {
+  let cs = client_conf(host, roots, protos, verify, ccerts, ckey, min_v, max_v, suites, curves, vhook, get_cert, key_log, tickets, session, put, ech_list, ech_verify)
+  if let Some(f) = cs.fail {
+    return f
+  }
+  let cf = cs.cf
   let hs = hconn.deadline(HANDSHAKE_NS)
   let limit = if dl != 0 && dl < hs { dl } else { hs }
   var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, cn: 0, status: 0, wfail: 0, first: b"", eof: false, pending: b""}
@@ -578,7 +598,7 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
     }
   }
   if done(c) {
-    if let Some(vf) = data.vconn {
+    if let Some(vf) = cs.vconn {
       var ders: List[Bytes] = []
       for x in (if v12(c) { c.cl12[0].peer } else { c.cl.peer }) {
         ders.push(x.raw)

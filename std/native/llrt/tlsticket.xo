@@ -66,12 +66,27 @@ pub struct State {
   pub secret: Bytes
   pub ems: Bool
   pub curve: Int
+  /// decision 0644 T14: a QUIC ticket allowing 0-RTT, and the ALPN
+  /// protocol it was issued under (Go's EarlyData, alpnProtocol)
+  pub early: Bool = false
+  pub alpn: Str = ""
 }
 
-/// Go's SessionState.Bytes for a server's session: no extra data, no
-/// early data, no peer certificates or chains; the curve below TLS 1.3.
-pub fn state(version: Int, suite: Int, created: Int, secret: Bytes, ems: Bool, curve: Int) -> Bytes {
-  var parts: List[Bytes] = [u16(version), b"\x01", u16(suite), u64(created), u8(secret.len()), secret, b"\x00\x00\x00", if ems { b"\x01" } else { b"\x00" }, b"\x00", b"\x00\x00\x00", b"\x00\x00\x00"]
+/// Go's SessionState.Bytes for a server's session: its extra data, no
+/// peer certificates or chains; with early data (QUIC's 0-RTT) the ALPN
+/// protocol; the curve below TLS 1.3.
+pub fn state(version: Int, suite: Int, created: Int, secret: Bytes, ems: Bool, curve: Int, early: Bool = false, alpn: Str = "", extra: List[Bytes] = []) -> Bytes {
+  var xs: List[Bytes] = []
+  for x in extra {
+    xs.push(u24(x.len()))
+    xs.push(x)
+  }
+  let xb = asn1.cat(xs)
+  var parts: List[Bytes] = [u16(version), b"\x01", u16(suite), u64(created), u8(secret.len()), secret, u24(xb.len()), xb, if ems { b"\x01" } else { b"\x00" }, if early { b"\x01" } else { b"\x00" }, b"\x00\x00\x00", b"\x00\x00\x00"]
+  if early {
+    parts.push(u8(alpn.len()))
+    parts.push(alpn.bytes())
+  }
   if version < 0x0304 {
     parts.push(u16(curve))
   }
@@ -124,10 +139,12 @@ pub fn parse(b: Bytes) -> State? {
     return None
   }
   p += 6
+  var alpn = ""
   if early == 1 {
-    if n < p + 1 + Int(b[p]) {
+    if n < p + 1 || n < p + 1 + Int(b[p]) {
       return None
     }
+    alpn = b[p + 1..p + 1 + Int(b[p])].to_str_lossy()
     p += 1 + Int(b[p])
   }
   var curve = 0
@@ -145,7 +162,7 @@ pub fn parse(b: Bytes) -> State? {
     curve = u16_at(b, p)
     p += 2
   }
-  Some(State{version: version, suite: suite, created: created, secret: secret, ems: ems == 1, curve: curve})
+  Some(State{version: version, suite: suite, created: created, secret: secret, ems: ems == 1, curve: curve, early: early == 1, alpn: alpn})
 }
 
 /// Go's encryptTicket with key k and the 16 byte IV: the IV, the state
@@ -216,6 +233,8 @@ fn incr(b: Bytes) -> Bytes {
 fn u8(x: Int) -> Bytes { rt.rs_push_byte(rt.rs_with_cap(1), x & 255).bytes() }
 
 fn u16(x: Int) -> Bytes { asn1.cat([u8(x >> 8), u8(x)]) }
+
+fn u24(x: Int) -> Bytes { asn1.cat([u8(x >> 16), u8(x >> 8), u8(x)]) }
 
 fn u64(x: Int) -> Bytes { asn1.cat([u8(x >> 56), u8(x >> 48), u8(x >> 40), u8(x >> 32), u8(x >> 24), u8(x >> 16), u8(x >> 8), u8(x)]) }
 

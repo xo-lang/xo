@@ -1,0 +1,382 @@
+// std/tls's QUIC side (decision 0644 T14): Go's QUICConn driven as
+// quic_test.go's runTestQUICConnection drives it, a client and a server
+// passing each other's CRYPTO data. The cases are TestQUICConnection,
+// TestQUICFragmentaryData, TestQUICDelayedTransportParameters,
+// TestQUICEmptyTransportParameters, TestQUICHandshakeError,
+// TestQUICConnectionState, TestQUICSessionResumption, and the three
+// post handshake refusals (client authentication, KeyUpdate, a message
+// too large). Each prints what does not depend on the randomness: the
+// order of events, their levels and suites, whether each read secret is
+// the peer's write secret, the transport parameters and Go's error texts.
+use std/tls
+use std/x509
+use std/crypto
+use std/base64
+
+struct Issued {
+  cert: x509.Certificate
+  key: crypto.PrivateKey
+}
+
+fn pem_block(kind: Str, der: Bytes) -> Bytes {
+  "-----BEGIN ${kind}-----\n${base64.encode(der)}\n-----END ${kind}-----\n".bytes()
+}
+
+fn issue(os: Os, name: Str, parent: Issued?, ca: Bool, now: Time) -> Issued uses rand {
+  let key = crypto.generate_key(os.rand, crypto.KeyAlg.EcdsaP256).or_fault("key")
+  let usage = if ca { [x509.KeyUsage.CertSign, x509.KeyUsage.DigitalSignature] } else { [x509.KeyUsage.DigitalSignature] }
+  let dns = if ca { [] } else { ["example.go.dev"] }
+  let t = x509.Template{subject: x509.Name{common_name: name}, not_before: now - 1h, not_after: now + 24h, dns_names: dns, ip_addresses: [], is_ca: ca, key_usage: usage, ext_key_usage: if ca { [] } else { [x509.ExtKeyUsage.ServerAuth] }}
+  let (pc, pk) = match parent {
+    Some(p) => (Some(p.cert), p.key)
+    None => (None, key)
+  }
+  Issued{cert: x509.create_certificate(os.rand, t, key.public_key(), pc, pk).or_fault("cert ${name}"), key: key}
+}
+
+fn kind_name(k: tls.QuicEventKind) -> Str {
+  match k {
+    NoEvent => "NoEvent"
+    SetReadSecret => "SetReadSecret"
+    SetWriteSecret => "SetWriteSecret"
+    WriteData => "WriteData"
+    TransportParameters => "TransportParameters"
+    TransportParametersRequired => "TransportParametersRequired"
+    RejectedEarlyData => "RejectedEarlyData"
+    HandshakeDone => "HandshakeDone"
+    ResumeSession => "ResumeSession"
+    StoreSession => "StoreSession"
+    ErrorEvent => "ErrorEvent"
+  }
+}
+
+/// One end of a run: its connection, its name, and what it has seen.
+struct End {
+  q: tls.QuicConn
+  name: Str
+  writes: Map[Str, Bytes]
+  reads: Map[Str, Bytes]
+  complete: Bool
+  params: Str
+  err: Str
+}
+
+fn end(q: tls.QuicConn, name: Str) -> End { End{q: q, name: name, writes: {}, reads: {}, complete: false, params: "", err: ""} }
+
+/// mode: "" plain, "bytes" each WriteData one byte at a time (Go's
+/// TestQUICFragmentaryData), "state" the ALPN checked as soon as a read
+/// secret says it is known (TestQUICConnectionState). ticket: 0 none, 1
+/// a session ticket once the server is done, 2 one allowing early data.
+/// Returns "" or the run's error, Go's runTestQUICConnection's.
+fn run(cli0: End, srv0: End, mode: Str, ticket: Int, start: Bool, var log: List[Str]) -> Str {
+  var cli = cli0
+  var srv = srv0
+  // Go's runTestQUICConnection starts a conn not yet started
+  if start {
+    for e in [cli, srv] {
+      if let Err(x) = e.q.start() {
+        return "start: ${x}"
+      }
+    }
+  }
+  var a_cli = true
+  var idle = 0
+  while {
+    var a = if a_cli { cli } else { srv }
+    var b = if a_cli { srv } else { cli }
+    let e = a.q.next_event()
+    let lv = "${e.level}"
+    var result = ""
+    match e.kind {
+      NoEvent => {
+        idle += 1
+        if idle == 2 {
+          if !cli.complete || !srv.complete {
+            return "handshake incomplete"
+          }
+          // each read secret is the peer's write secret at that level
+          for lv in ["Early", "Handshake", "Application"] {
+            for (x, y) in [(cli, srv), (srv, cli)] {
+              if let Some(r) = x.reads.get(lv) {
+                let same = if let Some(w) = y.writes.get(lv) { w == r } else { false }
+                log.push("${x.name} read ${lv} ${if same { "= " } else { "!= " }}${y.name} write")
+              }
+            }
+          }
+          return ""
+        }
+        a_cli = !a_cli
+        continue
+      }
+      SetReadSecret => {
+        log.push("${a.name} SetReadSecret ${lv} suite ${e.suite}")
+        a.reads[lv] = e.data
+        if mode == "state" {
+          let st = a.q.state()
+          log.push("${a.name}   state: protocol ${st.negotiated_protocol.quote()} complete ${st.handshake_complete}")
+        }
+      }
+      SetWriteSecret => {
+        log.push("${a.name} SetWriteSecret ${lv} suite ${e.suite}")
+        a.writes[lv] = e.data
+      }
+      WriteData => {
+        log.push("${a.name} WriteData ${lv}")
+        if mode == "bytes" {
+          for i in 0..e.data.len() {
+            if let Err(x) = b.q.handle_data(e.level, e.data[i..i + 1]) {
+              result = "handle_data: ${x}"
+              break
+            }
+          }
+        } else if let Err(x) = b.q.handle_data(e.level, e.data) {
+          result = "handle_data: ${x}"
+        }
+      }
+      TransportParameters => {
+        a.params = e.data.to_str_lossy()
+        log.push("${a.name} TransportParameters ${a.params.quote()}")
+      }
+      TransportParametersRequired => {
+        log.push("${a.name} TransportParametersRequired")
+        result = "transport parameters required"
+      }
+      HandshakeDone => {
+        a.complete = true
+        log.push("${a.name} HandshakeDone")
+        if !a_cli && ticket > 0 {
+          if let Err(x) = a.q.send_session_ticket(early_data: ticket == 2) {
+            result = "send_session_ticket: ${x}"
+          }
+        }
+      }
+      ErrorEvent => {
+        a.err = if let Some(x) = e.err { x.msg } else { "(no err)" }
+        log.push("${a.name} ErrorEvent ${a.err}")
+      }
+      k => log.push("${a.name} ${kind_name(k)}")
+    }
+    idle = 0
+    if a_cli {
+      cli = a
+      srv = b
+    } else {
+      srv = a
+      cli = b
+    }
+    if !result.is_empty() {
+      return result
+    }
+  }
+  ""
+}
+
+fn show(os: Os, title: Str, log: List[Str], err: Str) {
+  os.stdio.println("== ${title}")
+  for l in log {
+    os.stdio.println(l)
+  }
+  os.stdio.println(if err.is_empty() { "ok" } else { "error: ${err}" })
+}
+
+fn main(os: Os) {
+  let now = os.clock.now()
+  let ca = issue(os, "QUIC test CA", None, true, now)
+  let leaf = issue(os, "example.go.dev", Some(ca), false, now)
+  let pair = tls.cert(leaf.cert.pem(), pem_block("PRIVATE KEY", crypto.marshal_private_key(leaf.key))).or_fault("pair")
+  let roots = tls.roots_of([ca.cert]).or_fault("roots")
+  let tk = tls.ticket_key(b"q".repeat(32)).or_fault("ticket key")
+  let ccfg = tls.ClientConfig{server_name: "example.go.dev", roots: Some(roots), min_version: tls.VERSION_TLS13, next_protos: ["h3"]}
+  let scfg = tls.ServerConfig{certificates: [pair], min_version: tls.VERSION_TLS13, next_protos: ["h3"], session_ticket_keys: [tk]}
+
+  // TestQUICConnection, with the parameters set before start
+  var log: List[Str] = []
+  let c1 = tls.quic_client(ccfg)
+  c1.set_transport_parameters(b"client params")
+  let s1 = tls.quic_server(scfg)
+  s1.set_transport_parameters(b"server params")
+  var err = run(end(c1, "client"), end(s1, "server"), "", 0, true, log)
+  show(os, "connection", log, err)
+  let cs = c1.state()
+  let ss = s1.state()
+  os.stdio.println("client state: version ${cs.version} suite ${cs.cipher_suite} protocol ${cs.negotiated_protocol.quote()} complete ${cs.handshake_complete} resumed ${cs.did_resume}")
+  os.stdio.println("server state: version ${ss.version} suite ${ss.cipher_suite} protocol ${ss.negotiated_protocol.quote()} server_name ${ss.server_name.quote()}")
+
+  os.stdio.println("start again: ${c1.start().err().map(fn(x) { x.msg }) ?? "no error"}")
+  c1.close().ignore_err("closing")
+  s1.close().ignore_err("closing")
+
+  // the post handshake refusals, each on a new connection (RFC 9001 4.4
+  // and 6)
+  let app = tls.QuicEncryptionLevel.Application
+  // a CertificateRequest: context empty, signature_algorithms ecdsa_secp256r1_sha256
+  let cr_body = b"\x00\x00\x08\x00\x0d\x00\x04\x00\x02\x04\x03"
+  let cr = b"\x0d\x00\x00\x0b" + cr_body
+  // a NewSessionTicket of 65537 bytes: Go's maxHandshake (65536) plus one
+  for (what, msg) in [("CertificateRequest", cr), ("KeyUpdate", b"\x18\x00\x00\x01\x00"), ("too large", b"\x04\x01\x00\x01")] {
+    let c = tls.quic_client(ccfg)
+    c.set_transport_parameters(b"")
+    let s = tls.quic_server(scfg)
+    s.set_transport_parameters(b"")
+    var quiet: List[Str] = []
+    let r = run(end(c, "client"), end(s, "server"), "", 0, true, quiet)
+    os.stdio.println("post handshake ${what}: ${if r.is_empty() { c.handle_data(app, msg).err().map(fn(x) { x.msg }) ?? "no error" } else { r }}")
+  }
+
+  // TestQUICFragmentaryData
+  log = []
+  let c2 = tls.quic_client(ccfg)
+  c2.set_transport_parameters(b"")
+  let s2 = tls.quic_server(scfg)
+  s2.set_transport_parameters(b"")
+  err = run(end(c2, "client"), end(s2, "server"), "bytes", 0, true, log)
+  show(os, "fragmentary data", log, err)
+
+  // TestQUICDelayedTransportParameters: the server's come when asked
+  log = []
+  let c3 = tls.quic_client(ccfg)
+  c3.set_transport_parameters(b"client params")
+  let s3 = tls.quic_server(scfg)
+  let cli3 = end(c3, "client")
+  let srv3 = end(s3, "server")
+  err = run(cli3, srv3, "", 0, true, log)
+  show(os, "delayed transport parameters (first)", log, err)
+  s3.set_transport_parameters(b"server params")
+  log = []
+  // both are started: Go's runTestQUICConnection skips them
+  err = run(cli3, srv3, "", 0, false, log)
+  show(os, "delayed transport parameters (second)", log, err)
+
+  // TestQUICEmptyTransportParameters
+  log = []
+  let c4 = tls.quic_client(ccfg)
+  c4.set_transport_parameters(b"")
+  let s4 = tls.quic_server(scfg)
+  s4.set_transport_parameters(b"")
+  err = run(end(c4, "client"), end(s4, "server"), "", 0, true, log)
+  show(os, "empty transport parameters", log, err)
+
+  // TestQUICHandshakeError: a client that does not trust the server
+  log = []
+  let other = issue(os, "Other CA", None, true, now)
+  let c5 = tls.quic_client(tls.ClientConfig{server_name: "example.go.dev", roots: Some(tls.roots_of([other.cert]).or_fault("roots")), min_version: tls.VERSION_TLS13, next_protos: ["h3"]})
+  c5.set_transport_parameters(b"")
+  let s5 = tls.quic_server(scfg)
+  s5.set_transport_parameters(b"")
+  err = run(end(c5, "client"), end(s5, "server"), "", 0, true, log)
+  show(os, "handshake error", log, err)
+  let ev = c5.next_event()
+  os.stdio.println("client next event: ${kind_name(ev.kind)}")
+
+  // a client below TLS 1.3
+  let c6 = tls.quic_client(tls.ClientConfig{server_name: "example.go.dev", roots: Some(roots), next_protos: ["h3"]})
+  os.stdio.println("min_version 0: ${c6.start().err().map(fn(x) { x.msg }) ?? "no error"}")
+
+  // TestQUICConnectionState
+  log = []
+  let c7 = tls.quic_client(ccfg)
+  c7.set_transport_parameters(b"")
+  let s7 = tls.quic_server(scfg)
+  s7.set_transport_parameters(b"")
+  err = run(end(c7, "client"), end(s7, "server"), "state", 0, true, log)
+  show(os, "connection state", log, err)
+
+  // TestQUICSessionResumption: a ticket from the first, used by the second
+  let cache = tls.lru_session_cache(1)
+  var rcfg = ccfg
+  rcfg.session_cache = Some(cache)
+  for i in 0..2 {
+    log = []
+    let c = tls.quic_client(rcfg)
+    c.set_transport_parameters(b"")
+    let s = tls.quic_server(scfg)
+    s.set_transport_parameters(b"")
+    err = run(end(c, "client"), end(s, "server"), "", 1, true, log)
+    show(os, "resumption ${i + 1}", log, err)
+    os.stdio.println("client resumed ${c.state().did_resume}, server resumed ${s.state().did_resume}")
+  }
+
+  // TestQUICEarlyData: a ticket allowing early data, then the Early
+  // secrets of the resumption
+  let ecache = tls.lru_session_cache(1)
+  var ecfg = ccfg
+  ecfg.session_cache = Some(ecache)
+  for i in 0..2 {
+    log = []
+    let c = tls.quic_client(ecfg)
+    c.set_transport_parameters(b"")
+    let s = tls.quic_server(scfg)
+    s.set_transport_parameters(b"")
+    err = run(end(c, "client"), end(s, "server"), "", 2, true, log)
+    show(os, "early data ${i + 1}", log, err)
+    os.stdio.println("client resumed ${c.state().did_resume}, server resumed ${s.state().did_resume}")
+  }
+
+  // a ticket without early data, then a resumption offering none
+  let ncache = tls.lru_session_cache(1)
+  var ncfg = ccfg
+  ncfg.session_cache = Some(ncache)
+  for (i, t) in [(1, 1), (2, 2)] {
+    log = []
+    let c = tls.quic_client(ncfg)
+    c.set_transport_parameters(b"")
+    let s = tls.quic_server(scfg)
+    s.set_transport_parameters(b"")
+    err = run(end(c, "client"), end(s, "server"), "", t, true, log)
+    show(os, "no early data ${i}", log, err)
+  }
+
+  // the client's parameters when asked (Go's quicGetTransportParameters
+  // on the client)
+  log = []
+  let c8 = tls.quic_client(ccfg)
+  let s8 = tls.quic_server(scfg)
+  s8.set_transport_parameters(b"server params")
+  let cli8 = end(c8, "client")
+  let srv8 = end(s8, "server")
+  err = run(cli8, srv8, "", 0, true, log)
+  show(os, "delayed client parameters (first)", log, err)
+  c8.set_transport_parameters(b"late client params")
+  log = []
+  err = run(cli8, srv8, "", 0, false, log)
+  show(os, "delayed client parameters (second)", log, err)
+
+  // data at a level without a read secret
+  let c9 = tls.quic_client(ccfg)
+  c9.set_transport_parameters(b"")
+  c9.start().or_fault("start")
+  let hs = tls.QuicEncryptionLevel.Handshake
+  os.stdio.println("wrong level: ${c9.handle_data(hs, b"\x02").err().map(fn(x) { x.msg }) ?? "no error"}")
+  os.stdio.println("wrong level again: ${c9.handle_data(tls.QuicEncryptionLevel.Initial, b"\x02").err().map(fn(x) { x.msg }) ?? "no error"}")
+  var kinds: List[Str] = []
+  while {
+    let e = c9.next_event()
+    kinds.push(kind_name(e.kind))
+    if e.kind == tls.QuicEventKind.NoEvent {
+      break
+    }
+  }
+  os.stdio.println("wrong level events: ${kinds.join(" ")}")
+
+  // TestQUICCanceledWaitingForData and ...ForTransportParams, and a
+  // connection never started
+  let c10 = tls.quic_client(ccfg)
+  c10.set_transport_parameters(b"")
+  c10.start().or_fault("start")
+  while c10.next_event().kind != tls.QuicEventKind.NoEvent {}
+  os.stdio.println("close waiting for data: ${c10.close().err().map(fn(x) { x.msg }) ?? "no error"}")
+  let c11 = tls.quic_client(ccfg)
+  c11.start().or_fault("start")
+  while c11.next_event().kind != tls.QuicEventKind.TransportParametersRequired {}
+  os.stdio.println("close waiting for parameters: ${c11.close().err().map(fn(x) { x.msg }) ?? "no error"}")
+  os.stdio.println("close never started: ${tls.quic_client(ccfg).close().err().map(fn(x) { x.msg }) ?? "no error"}")
+
+  // SendSessionTicket's misuse, and a client without a server name
+  let s12 = tls.quic_server(scfg)
+  os.stdio.println("ticket before start: ${s12.send_session_ticket().err().map(fn(x) { x.msg }) ?? "no error"}")
+  let c12 = tls.quic_client(ccfg)
+  os.stdio.println("ticket on a client: ${c12.send_session_ticket().err().map(fn(x) { x.msg }) ?? "no error"}")
+  let c13 = tls.quic_client(tls.ClientConfig{roots: Some(roots), min_version: tls.VERSION_TLS13, next_protos: ["h3"]})
+  c13.set_transport_parameters(b"")
+  os.stdio.println("no server name: ${c13.start().err().map(fn(x) { x.msg }) ?? "no error"}")
+}

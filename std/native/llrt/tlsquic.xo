@@ -1,0 +1,310 @@
+// std/tls's QUIC side (decision 0644 T14): Go's QUICConn over the TLS 1.3
+// engines of tls13.xo (client) and tls13srv.xo (server) with conf.quic
+// set. The engines put their handshake bytes, secrets and the peer's
+// transport parameters in quic_events; this layer gives them as Go's
+// QUICEvents in Go's order (crypto/tls quic.go): consecutive handshake
+// bytes at one level are one WriteData (quicWriteCryptoData), and the
+// Application read secret comes after HandshakeDone (RFC 9001 5.7, Go's
+// handshakeContext). Event kinds and levels are Go's numbers.
+use native/llrt/tls13
+use native/llrt/tls13srv
+use native/llrt/tlsneg
+
+pub const K_NONE: Int = 0
+pub const K_READ: Int = 1
+pub const K_WRITE: Int = 2
+pub const K_DATA: Int = 3
+pub const K_PARAMS: Int = 4
+pub const K_PARAMS_REQUIRED: Int = 5
+pub const K_REJECTED_EARLY: Int = 6
+pub const K_DONE: Int = 7
+pub const K_ERROR: Int = 10
+
+/// One of Go's QUICEvents: kind and level are Go's numbers; err the
+/// text of an Error event, with alert its alert and why its typed detail.
+pub struct Event {
+  pub kind: Int
+  pub level: Int = 0
+  pub suite: Int = 0
+  pub data: Bytes = b""
+  pub err: Str = ""
+  pub alert: Int = 0
+  pub why: tlsneg.Failure = tlsneg.Failure{}
+}
+
+/// A QUIC connection's TLS side: one engine, the events not yet taken,
+/// the Application read secret held back, and Go's flags.
+pub struct Quic {
+  pub server: Bool
+  cl: tls13.Client?
+  sv: tls13srv.Server?
+  /// the client's settings until start (the parameters go in then)
+  ccf: tls13.Conf?
+  scf: tls13srv.Conf?
+  pub started: Bool = false
+  params: Bytes? = None
+  events: List[Event] = []
+  next: Int = 0
+  held: Event? = None
+  pub done: Bool = false
+  /// the first failure, its text and alert (Go's handshakeErr)
+  pub err: Str = ""
+  pub alert: Int = 0
+  pub why: tlsneg.Failure = tlsneg.Failure{}
+  ticket_sent: Bool = false
+  /// the Error event was given (Go's errorReturned)
+  err_given: Bool = false
+  /// run on the client's verified chain once done (a Roots' verify_conn)
+  vconn: (fn(List[Bytes]) -> Str)? = None
+}
+
+pub fn client(cf: tls13.Conf, vconn: (fn(List[Bytes]) -> Str)?) -> Quic { Quic{server: false, cl: None, sv: None, ccf: Some(cf), scf: None, vconn: vconn} }
+
+pub fn server(cf: tls13srv.Conf) -> Quic { Quic{server: true, cl: None, sv: None, ccf: None, scf: Some(cf)} }
+
+/// Go's SetTransportParameters: before start they go in the first
+/// flight; a server stopped for them goes on.
+pub fn set_params(var q: Quic, params: Bytes) {
+  q.params = Some(params)
+  if !q.started || !q.err.is_empty() {
+    return
+  }
+  if q.server {
+    if let Some(s0) = q.sv {
+      var s = s0
+      tls13srv.set_quic_params(s, params)
+      q.sv = Some(s)
+      pump(q)
+    }
+  } else if q.cl.is_none() {
+    // the hello waited for them (Go's quicGetTransportParameters)
+    start_client(q, params)
+  }
+}
+
+fn start_client(var q: Quic, params: Bytes) {
+  var cf = q.ccf ?? return
+  cf.quic = true
+  cf.quic_params = params
+  q.cl = Some(tls13.client(cf))
+  pump(q)
+}
+
+/// Go's Start: "" or the error's text.
+pub fn start(var q: Quic) -> Str {
+  if q.started {
+    return "tls: Start called more than once"
+  }
+  q.started = true
+  if q.server {
+    var cf = q.scf ?? return "tls: internal error: no configuration"
+    if cf.no13 || !cf.no12 {
+      return "tls: Config MinVersion must be at least TLS 1.3"
+    }
+    cf.quic = true
+    cf.quic_params = q.params
+    q.sv = Some(tls13srv.server(cf))
+  } else {
+    let cf = q.ccf ?? return "tls: internal error: no configuration"
+    if !cf.legacy_suites.is_empty() || cf.no13 {
+      return "tls: Config MinVersion must be at least TLS 1.3"
+    }
+    match q.params {
+      Some(pp) => start_client(q, pp)
+      None => q.events.push(Event{kind: K_PARAMS_REQUIRED})
+    }
+    return q.err
+  }
+  pump(q)
+  if q.err.is_empty() { "" } else { q.err }
+}
+
+/// The level the engine reads handshake bytes at.
+fn read_level(q: Quic) -> Int {
+  if let Some(c) = q.cl {
+    return c.quic_read
+  }
+  if let Some(s) = q.sv {
+    return s.quic_read
+  }
+  0
+}
+
+/// Go's HandleData: "" or the error's text.
+pub fn handle_data(var q: Quic, level: Int, data: Bytes) -> Str {
+  if !q.err.is_empty() {
+    return q.err
+  }
+  if !q.started {
+    return "tls: handshake data received before Start"
+  }
+  if level != read_level(q) {
+    // Go's: an error, the handshake's state as it was
+    return "tls: handshake data received at wrong level"
+  }
+  if let Some(c0) = q.cl {
+    var c = c0
+    tls13.feed_quic(c, data)
+    q.cl = Some(c)
+  } else if let Some(s0) = q.sv {
+    var s = s0
+    tls13srv.feed_quic(s, data)
+    q.sv = Some(s)
+  }
+  pump(q)
+  q.err
+}
+
+/// Go's SendSessionTicket: "" or the error's text.
+pub fn send_ticket(var q: Quic, early: Bool, extra: List[Bytes]) -> Str {
+  if !q.server {
+    return if q.done { "tls: SendSessionTicket called on the client" } else { "tls: SendSessionTicket called before handshake completed" }
+  }
+  if !q.done {
+    return "tls: SendSessionTicket called before handshake completed"
+  }
+  if q.ticket_sent {
+    return "tls: SendSessionTicket called multiple times"
+  }
+  q.ticket_sent = true
+  var s = q.sv ?? return "tls: SendSessionTicket called before handshake completed"
+  let e = tls13srv.send_ticket(s, early, extra)
+  q.sv = Some(s)
+  pump(q)
+  e
+}
+
+/// Go's NextEvent: the next event, K_NONE when there is none. After a
+/// failure: one Error event, the events not taken dropped, then none.
+pub fn next_event(var q: Quic) -> Event {
+  if !q.err.is_empty() {
+    q.events = []
+    q.next = 0
+    if q.err_given {
+      return Event{kind: K_NONE}
+    }
+    q.err_given = true
+    return Event{kind: K_ERROR, err: q.err, alert: q.alert, why: q.why}
+  }
+  if q.next >= q.events.len() {
+    q.events = []
+    q.next = 0
+    return Event{kind: K_NONE}
+  }
+  let e = q.events[q.next]
+  q.next += 1
+  e
+}
+
+/// What the engine negotiated so far (Go's ConnectionState).
+pub fn negotiated(q: Quic) -> tlsneg.Negotiated {
+  if let Some(x) = q.cl {
+    var ders: List[Bytes] = []
+    for p in x.peer {
+      ders.push(p.raw)
+    }
+    return tlsneg.Negotiated{version: if x.suite == 0 { "" } else { "TLS 1.3" }, cipher: tlsneg.suite_name(x.suite), server_name: tls13.sni_of(x.conf.host), resumed: x.resumed, peer: ders, verified: tls13.chain_ders(x.verified), curve: tlsneg.group_name(x.share_group), alpn: x.alpn, hrr: x.hrr, vers: if x.suite == 0 { 0 } else { 0x0304 }, suite: x.suite, group: x.share_group, exp: x.exp, ocsp: x.ocsp, scts: x.scts}
+  }
+  if let Some(s) = q.sv {
+    var n = tls13srv.neg_now(s)
+    if s.suite == 0 {
+      n.vers = 0
+    }
+    return n
+  }
+  tlsneg.Negotiated{version: "", cipher: "", server_name: "", resumed: false}
+}
+
+/// Go's Close: "" when never started or done, the handshake's error, or
+/// a handshake in progress stopped (its error from then on).
+pub fn close(var q: Quic) -> Str {
+  if !q.started || q.done {
+    return q.err
+  }
+  fail(q, "local error: tls: close notify", 0)
+  q.err
+}
+
+fn fail(var q: Quic, msg: Str, alert: Int) {
+  if !q.err.is_empty() {
+    return
+  }
+  q.err = msg
+  q.alert = alert
+}
+
+/// The engine's new events, as Go's, then its state.
+fn pump(var q: Quic) {
+  var evs: List[tls13.QuicEv] = []
+  var state_done = false
+  var failed = false
+  var err = ""
+  var alert = 0
+  var why = tlsneg.Failure{}
+  if let Some(c0) = q.cl {
+    var c = c0
+    evs = c.quic_events
+    c.quic_events = []
+    state_done = tls13.ready(c)
+    failed = !c.err.is_empty()
+    err = c.err
+    alert = c.alert
+    why = c.why
+    q.cl = Some(c)
+  } else if let Some(s0) = q.sv {
+    var s = s0
+    evs = s.quic_events
+    s.quic_events = []
+    state_done = tls13srv.ready(s)
+    failed = !s.err.is_empty()
+    err = s.err
+    alert = s.alert
+    q.sv = Some(s)
+  }
+  for e in evs {
+    if e.kind == tls13.QEV_DATA {
+      // Go's quicWriteCryptoData: one event per run of bytes at a level
+      let n = q.events.len()
+      if n > q.next && q.events[n - 1].kind == K_DATA && q.events[n - 1].level == e.level {
+        var last = q.events[n - 1]
+        last.data = last.data + e.data
+        q.events[n - 1] = last
+      } else {
+        q.events.push(Event{kind: K_DATA, level: e.level, data: e.data})
+      }
+    } else if e.kind == tls13.QEV_READ && e.level == 3 {
+      q.held = Some(Event{kind: K_READ, level: 3, suite: e.suite, data: e.data})
+    } else if e.kind == tls13.QEV_READ {
+      q.events.push(Event{kind: K_READ, level: e.level, suite: e.suite, data: e.data})
+    } else if e.kind == tls13.QEV_WRITE {
+      q.events.push(Event{kind: K_WRITE, level: e.level, suite: e.suite, data: e.data})
+    } else if e.kind == tls13.QEV_PARAMS {
+      q.events.push(Event{kind: K_PARAMS, data: e.data})
+    } else if e.kind == tls13.QEV_PARAMS_NEEDED {
+      q.events.push(Event{kind: K_PARAMS_REQUIRED})
+    } else if e.kind == tls13.QEV_REJECTED {
+      q.events.push(Event{kind: K_REJECTED_EARLY})
+    }
+  }
+  if failed {
+    q.why = why
+    fail(q, err, alert)
+    return
+  }
+  if state_done && !q.done {
+    if let Some(f) = q.vconn {
+      let v = negotiated(q)
+      let w = f(v.peer)
+      if !w.is_empty() {
+        fail(q, w, 42)
+        return
+      }
+    }
+    q.done = true
+    q.events.push(Event{kind: K_DONE})
+    if let Some(h) = q.held {
+      q.events.push(h)
+      q.held = None
+    }
+  }
+}

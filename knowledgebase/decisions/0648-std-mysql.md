@@ -1,9 +1,9 @@
 # 0648: MySQL driver for std/sql
 
-Status: Proposed (2026-11-15, aws-43 for the lead). The license route
-(item 11: route (a), from MySQL's documentation, go-sql-driver only in
-the test oracle) and the TLS default (item 4: `tls=true`, verified) are
-the lead's, provisional, on the owner's list to confirm.
+Status: Accepted (2026-11-15, aws-43 for the lead; the owner confirmed
+the license route, item 11: route (a), from MySQL's documentation,
+go-sql-driver only in the test oracle, and the TLS default, item 4:
+`tls=true`, verified). Item 12's performance report is still to come.
 
 ## Context
 
@@ -252,7 +252,8 @@ conformance tests and `xo bench --ab`.
       transactions, `clientFoundRows`, and the error codes of item 9.
     - Performance: `xo bench --ab` against go-sql-driver on the same
       host for point selects, a 10 000 row read, prepared inserts and
-      a batched copy_from; reported here before the status is Accepted.
+      a batched copy_from; reported here (owed: the status was accepted
+      before it).
 13. **Backends and stages.** Stage A: the wire, auth, DSN and text
     protocol natively. Stage B: prepared statements over the binary
     protocol, TLS, time and location. Stage C: the conformance and

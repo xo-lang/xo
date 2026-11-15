@@ -24,6 +24,7 @@ use native/llrt/sysio
 use native/llrt/tlssrv
 use native/llrt/tlscache
 use native/llrt/tlsticket
+use native/llrt/tlsquic
 use native/llrt/twflags
 use native/llrt/x509cert as x509c
 
@@ -60,13 +61,17 @@ fn no_resume() -> Resume { Resume{tickets: false, session: None, put: None} }
 
 /// config's session cache for a handshake on c (Go's loadSession and
 /// clientSessionCacheKey: the server name, else the peer's address).
-fn resume_of(c: Conn, config: tls.ClientConfig) -> Resume {
+fn resume_of(c: Conn, config: tls.ClientConfig) -> Resume { resume_at(config, if config.server_name.is_empty() { c.remote_addr() } else { "" }) }
+
+/// resume_of with the peer's address given ("" for none: QUIC's, whose
+/// key is the server name alone, decision 0644 T14).
+fn resume_at(config: tls.ClientConfig, addr: Str) -> Resume {
   if config.session_tickets_disabled {
     return no_resume()
   }
   let sc = config.session_cache ?? return no_resume()
   let m = rt.cast[tls.SessionCache, SessionCache](sc).m
-  let key = if config.server_name.is_empty() { c.remote_addr() } else { config.server_name }
+  let key = if config.server_name.is_empty() { addr } else { config.server_name }
   if key.is_empty() {
     return Resume{tickets: true, session: None, put: None}
   }
@@ -760,10 +765,12 @@ fn client_ech_verify(cfg: tls.ClientConfig) -> (fn(tlsneg.Negotiated) -> Str)? {
 fn ech_keys_of(keys: List[tls.EchKey]) -> List[tlsech.Key] { keys.map(fn(k) { tlsech.Key{config: k.config, private_key: k.private_key, send_as_retry: k.send_as_retry} }) }
 
 /// ServerConfig's get_encrypted_client_hello_keys as the engine's hook.
-fn server_ech_hook(cfg: tls.ServerConfig, c: ServerConn) -> (fn(tlsneg.HelloInfo) -> (List[tlsech.Key], Str))? {
+fn server_ech_hook(cfg: tls.ServerConfig, c: ServerConn) -> (fn(tlsneg.HelloInfo) -> (List[tlsech.Key], Str))? { server_ech_hook_at(cfg, c.local_addr(), c.remote_addr()) }
+
+fn server_ech_hook_at(cfg: tls.ServerConfig, local: Str, remote: Str) -> (fn(tlsneg.HelloInfo) -> (List[tlsech.Key], Str))? {
   let g = cfg.get_encrypted_client_hello_keys ?? return None
   Some(fn(h: tlsneg.HelloInfo) -> (List[tlsech.Key], Str) {
-    match g(chi_of(h, c)) {
+    match g(chi_at(h, local, remote)) {
       Ok(ks) => (ech_keys_of(ks), "")
       Err(e) => ([], if e.is_empty() { "tls: get_encrypted_client_hello_keys failed" } else { e })
     }
@@ -883,15 +890,20 @@ fn engine_parts(config: tls.ServerConfig) -> (List[tlssrv.Cert], List[x509c.Cert
 }
 
 /// The ClientHelloInfo of h on connection c.
-fn chi_of(h: tlsneg.HelloInfo, c: ServerConn) -> tls.ClientHelloInfo {
-  tls.ClientHelloInfo{cipher_suites: h.suites, server_name: h.server_name, supported_curves: h.curves, supported_points: h.points, signature_schemes: h.schemes, supported_protos: h.protos, supported_versions: h.versions, extensions: h.exts, local_addr: c.local_addr(), remote_addr: c.remote_addr()}
+fn chi_of(h: tlsneg.HelloInfo, c: ServerConn) -> tls.ClientHelloInfo { chi_at(h, c.local_addr(), c.remote_addr()) }
+
+/// chi_of with the addresses given (QUIC's are the transport's: none).
+fn chi_at(h: tlsneg.HelloInfo, local: Str, remote: Str) -> tls.ClientHelloInfo {
+  tls.ClientHelloInfo{cipher_suites: h.suites, server_name: h.server_name, supported_curves: h.curves, supported_points: h.points, signature_schemes: h.schemes, supported_protos: h.protos, supported_versions: h.versions, extensions: h.exts, local_addr: local, remote_addr: remote}
 }
 
 /// ServerConfig's get_certificate as the engine's hook (decision 0644 T5).
-fn server_get_cert(cfg: tls.ServerConfig, c: ServerConn) -> (fn(tlsneg.HelloInfo) -> tlsneg.Chain)? {
+fn server_get_cert(cfg: tls.ServerConfig, c: ServerConn) -> (fn(tlsneg.HelloInfo) -> tlsneg.Chain)? { server_get_cert_at(cfg, c.local_addr(), c.remote_addr()) }
+
+fn server_get_cert_at(cfg: tls.ServerConfig, local: Str, remote: Str) -> (fn(tlsneg.HelloInfo) -> tlsneg.Chain)? {
   let g = cfg.get_certificate ?? return None
   Some(fn(h: tlsneg.HelloInfo) -> tlsneg.Chain {
-    match g(chi_of(h, c)) {
+    match g(chi_at(h, local, remote)) {
       Ok(Some(tc)) => {
         let d = cert_data(tc)
         tlsneg.Chain{certs: d.certs, key: d.key, ocsp: d.ocsp, scts: d.scts}
@@ -909,14 +921,16 @@ fn (c: TlsCert) with_signed_certificate_timestamps(scts: List[Bytes]) -> TlsCert
 /// ServerConfig's get_config_for_client as the engine's hook: the
 /// configuration it gives as the engine's, with its own get_certificate
 /// (its get_config_for_client is not called, as Go's).
-fn server_for_client(cfg: tls.ServerConfig, c: ServerConn) -> (fn(tlsneg.HelloInfo) -> (tls13srv.Conf?, Str))? {
+fn server_for_client(cfg: tls.ServerConfig, c: ServerConn) -> (fn(tlsneg.HelloInfo) -> (tls13srv.Conf?, Str))? { server_for_client_at(cfg, c.local_addr(), c.remote_addr()) }
+
+fn server_for_client_at(cfg: tls.ServerConfig, local: Str, remote: Str) -> (fn(tlsneg.HelloInfo) -> (tls13srv.Conf?, Str))? {
   let f = cfg.get_config_for_client ?? return None
   Some(fn(h: tlsneg.HelloInfo) -> (tls13srv.Conf?, Str) {
-    match f(chi_of(h, c)) {
+    match f(chi_at(h, local, remote)) {
       Ok(Some(nc)) => {
         let (certs, roots) = engine_parts(nc)
         let (tks, own) = ticket_keys(nc, None)
-        (Some(tlssrv.conf_of(certs, nc.next_protos, server_auth_mode(nc.client_auth), roots, nc.min_version, nc.max_version, nc.cipher_suites, nc.curve_preferences, server_vpeer(nc), server_vconn(nc), server_get_cert(nc, c), key_log_hook(nc.key_log), tks, own, ech_keys_of(nc.encrypted_client_hello_keys), server_ech_hook(nc, c))), "")
+        (Some(tlssrv.conf_of(certs, nc.next_protos, server_auth_mode(nc.client_auth), roots, nc.min_version, nc.max_version, nc.cipher_suites, nc.curve_preferences, server_vpeer(nc), server_vconn(nc), server_get_cert_at(nc, local, remote), key_log_hook(nc.key_log), tks, own, ech_keys_of(nc.encrypted_client_hello_keys), server_ech_hook_at(nc, local, remote))), "")
       }
       Ok(None) => (None, "")
       Err(e) => (None, if e.is_empty() { "tls: get_config_for_client failed" } else { e })
@@ -1235,3 +1249,159 @@ fn (l: TlsListener) accept() -> TlsServerConn ! NetErr uses net.listen { server_
 fn (l: TlsListener) addr() -> Str { l.l.addr() }
 
 fn (l: TlsListener) close() { l.l.close() }
+
+// ---------------------------------------------------------------------------
+// QUIC (decision 0644 T14): std/tls QuicConn over native/llrt/tlsquic,
+// the TLS 1.3 engines driven by the transport's CRYPTO data. No
+// connection: the hooks see no addresses (Go's, whose conn is nil).
+
+/// A QuicConn: the layer, or the configuration's failure start gives;
+/// roots kept while the engine verifies with them.
+struct QuicSt {
+  q: tlsquic.Quic
+  fail: Str = ""
+  why: tlsneg.Failure = tlsneg.Failure{}
+  roots: rthttp.Roots? = None
+}
+
+struct QuicConn {
+  m: Mutex[QuicSt]
+}
+
+fn quic_client(config: tls.ClientConfig) -> QuicConn {
+  let one = if config.certificates.len() == 1 { Some(rt.cast[tls.TlsCert, TlsCert](config.certificates[0])) } else { None }
+  var r = match config.roots {
+    Some(x) => rt.cast[tls.Roots, Roots](x).r
+    None => tlsio.roots_system_at(rt.fn_addr("tls_roots_free"), true)
+  }
+  let v = match config.verify {
+    Full => tlsio.VERIFY_FULL
+    ChainOnly => tlsio.VERIFY_CHAIN
+    None => tlsio.VERIFY_NONE
+  }
+  var ccerts: List[Bytes] = []
+  var ckey = b""
+  if let Some(tc) = one {
+    ccerts = tc.c.certs
+    ckey = tc.c.key
+  }
+  let res = resume_at(config, "")
+  let cs = tlsio.client_conf(config.server_name, rt.obj_addr(r), config.next_protos, v, ccerts, ckey, config.min_version, config.max_version, config.cipher_suites, config.curve_preferences, client_vhook(config), client_get_cert(config), key_log_hook(config.key_log), res.tickets, res.session, res.put, config.encrypted_client_hello_config_list, client_ech_verify(config))
+  var st = QuicSt{q: tlsquic.client(cs.cf, cs.vconn), roots: Some(r)}
+  if config.server_name.is_empty() && config.verify == tls.Verify.Full {
+    // Go's QUICClient without ServerName, as Client's
+    st.fail = "tls: either ServerName or InsecureSkipVerify must be specified in the tls.Config"
+  } else if let Some(f) = cs.fail {
+    st.fail = f.msg
+    st.why = f.why
+  }
+  QuicConn{m: Mutex[QuicSt].new(st)}
+}
+
+fn quic_server(config: tls.ServerConfig) -> QuicConn {
+  let (certs, roots) = engine_parts(config)
+  let (tks, own) = ticket_keys(config, None)
+  var cf = tlssrv.conf_of(certs, config.next_protos, server_auth_mode(config.client_auth), roots, config.min_version, config.max_version, config.cipher_suites, config.curve_preferences, server_vpeer(config), server_vconn(config), server_get_cert_at(config, "", ""), key_log_hook(config.key_log), tks, own, ech_keys_of(config.encrypted_client_hello_keys), server_ech_hook_at(config, "", ""))
+  cf.for_client = server_for_client_at(config, "", "")
+  QuicConn{m: Mutex[QuicSt].new(QuicSt{q: tlsquic.server(cf)})}
+}
+
+fn quic_res(msg: Str, why: tlsneg.Failure) -> () ! tls.TlsErr {
+  if msg.is_empty() {
+    return Ok(())
+  }
+  Err(typed(msg, why))
+}
+
+fn (q: QuicConn) start() -> () ! tls.TlsErr {
+  let (msg, why) = q.m.with(fn(var s: QuicSt) -> (Str, tlsneg.Failure) {
+    if !s.fail.is_empty() && !s.q.started {
+      s.q.started = true
+      return (s.fail, s.why)
+    }
+    let e = tlsquic.start(s.q)
+    (e, s.q.why)
+  })
+  quic_res(msg, why)
+}
+
+fn quic_level(n: Int) -> tls.QuicEncryptionLevel {
+  match n {
+    1 => tls.QuicEncryptionLevel.Early
+    2 => tls.QuicEncryptionLevel.Handshake
+    3 => tls.QuicEncryptionLevel.Application
+    _ => tls.QuicEncryptionLevel.Initial
+  }
+}
+
+fn quic_level_num(l: tls.QuicEncryptionLevel) -> Int {
+  match l {
+    Initial => 0
+    Early => 1
+    Handshake => 2
+    Application => 3
+  }
+}
+
+fn quic_kind(n: Int) -> tls.QuicEventKind {
+  match n {
+    1 => tls.QuicEventKind.SetReadSecret
+    2 => tls.QuicEventKind.SetWriteSecret
+    3 => tls.QuicEventKind.WriteData
+    4 => tls.QuicEventKind.TransportParameters
+    5 => tls.QuicEventKind.TransportParametersRequired
+    6 => tls.QuicEventKind.RejectedEarlyData
+    7 => tls.QuicEventKind.HandshakeDone
+    8 => tls.QuicEventKind.ResumeSession
+    9 => tls.QuicEventKind.StoreSession
+    10 => tls.QuicEventKind.ErrorEvent
+    _ => tls.QuicEventKind.NoEvent
+  }
+}
+
+fn quicencryptionlevel_display(l: tls.QuicEncryptionLevel) -> Str {
+  match l {
+    Initial => "Initial"
+    Early => "Early"
+    Handshake => "Handshake"
+    Application => "Application"
+  }
+}
+
+fn (q: QuicConn) next_event() -> tls.QuicEvent {
+  let e = q.m.with(fn(var s: QuicSt) -> tlsquic.Event { tlsquic.next_event(s.q) })
+  tls.QuicEvent{kind: quic_kind(e.kind), level: quic_level(e.level), data: e.data, suite: e.suite, err: if e.kind == tlsquic.K_ERROR { Some(typed(e.err, e.why)) } else { None }}
+}
+
+fn (q: QuicConn) handle_data(level: tls.QuicEncryptionLevel, data: Bytes) -> () ! tls.TlsErr {
+  let n = quic_level_num(level)
+  let (msg, why) = q.m.with(fn(var s: QuicSt) -> (Str, tlsneg.Failure) {
+    let e = tlsquic.handle_data(s.q, n, data)
+    (e, s.q.why)
+  })
+  quic_res(msg, why)
+}
+
+fn (q: QuicConn) send_session_ticket(early_data: Bool = false, extra: List[Bytes] = []) -> () ! tls.TlsErr {
+  let msg = q.m.with(fn(var s: QuicSt) -> Str { tlsquic.send_ticket(s.q, early_data, extra) })
+  quic_res(msg, tlsneg.Failure{})
+}
+
+fn (q: QuicConn) set_transport_parameters(params: Bytes) {
+  q.m.with(fn(var s: QuicSt) { tlsquic.set_params(s.q, params) })
+}
+
+fn (q: QuicConn) state() -> tls.ConnState {
+  let (n, done) = q.m.with(fn(var s: QuicSt) -> (tlsneg.Negotiated, Bool) { (tlsquic.negotiated(s.q), s.q.done) })
+  state_of(n, done)
+}
+
+fn (q: QuicConn) close() -> () ! tls.TlsErr {
+  // Go's Close: the handshake's error, if any
+  let (msg, why) = q.m.with(fn(var s: QuicSt) -> (Str, tlsneg.Failure) {
+    s.roots = None
+    let e = tlsquic.close(s.q)
+    (e, s.q.why)
+  })
+  quic_res(msg, why)
+}

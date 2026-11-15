@@ -85,6 +85,7 @@ const EXT_KEY_SHARE: Int = 51
 const EXT_SESSION_TICKET: Int = 35
 const EXT_PRE_SHARED_KEY: Int = 41
 const EXT_PSK_MODES: Int = 45
+const EXT_EARLY_DATA: Int = 42
 
 // the alerts this client sends
 const ALERT_CLOSE_NOTIFY: Int = 0
@@ -103,6 +104,7 @@ const ALERT_PROTOCOL_VERSION: Int = 70
 const ALERT_UNSUPPORTED_EXTENSION: Int = 110
 const ALERT_INTERNAL_ERROR: Int = 80
 const ALERT_NO_APPLICATION_PROTOCOL: Int = 120
+const ALERT_MISSING_EXTENSION: Int = 109
 
 // Go's limits on a handshake message (maxHandshake, and
 // maxHandshakeCertificateMsg for a Certificate)
@@ -181,6 +183,13 @@ pub struct Conf {
   /// its text fails the handshake with bad_certificate)
   pub ech_list: Bytes? = None
   pub ech_verify: (fn(tlsneg.Negotiated) -> Str)? = None
+  /// decision 0644 T14: the handshake runs for a QUIC transport (RFC
+  /// 9001): no records, no compatibility ChangeCipherSpec, no session id,
+  /// no KeyUpdate; the handshake bytes and the secrets go to quic_events
+  /// and come in by feed_quic; quic_params are the transport parameters
+  /// to send (quic_transport_parameters).
+  pub quic: Bool = false
+  pub quic_params: Bytes = b""
   pub hello: Bytes
   pub random: Bytes
   pub sid: Bytes
@@ -263,6 +272,8 @@ pub struct Client {
   /// "" when none is), whether the server took it, and the resumption
   /// master secret its tickets derive from
   psk: Bytes = b""
+  /// decision 0644 T14: the hello offers 0-RTT (Go's hello.earlyData)
+  early: Bool = false
   pub resumed: Bool = false
   /// decision 0644 T10: the server's OCSP staple and SCTs (Go's
   /// ConnectionState.OCSPResponse and SignedCertificateTimestamps)
@@ -284,6 +295,74 @@ pub struct Client {
   pub ech_accepted: Bool = false
   pub ech_rejected: Bool = false
   ech_retry: Bytes = b""
+  /// decision 0644 T14 (conf.quic): what the QUIC layer takes, in order;
+  /// the peer's transport parameters; the level handshake bytes are read
+  /// at (0 Initial, 2 Handshake, 3 Application); the alert of a failure,
+  /// which a QUIC transport sends in CONNECTION_CLOSE instead of a record
+  pub quic_events: List[QuicEv] = []
+  pub peer_quic_params: Bytes? = None
+  pub quic_read: Int = 0
+  pub alert: Int = 0
+}
+
+/// One event of a QUIC handshake (decision 0644 T14): kind QEV_READ or
+/// QEV_WRITE a secret of suite at level (data the secret), QEV_DATA
+/// handshake bytes to send at level, QEV_PARAMS the peer's transport
+/// parameters, QEV_PARAMS_NEEDED a server's parameters are asked for.
+/// Levels are Go's QUICEncryptionLevel: 0 Initial, 1 Early, 2 Handshake,
+/// 3 Application.
+pub struct QuicEv {
+  pub kind: Int
+  pub level: Int
+  pub suite: Int
+  pub data: Bytes
+}
+
+pub const QEV_READ: Int = 1
+pub const QEV_WRITE: Int = 2
+pub const QEV_DATA: Int = 3
+pub const QEV_PARAMS: Int = 4
+pub const QEV_PARAMS_NEEDED: Int = 5
+/// the server declined the 0-RTT the hello offered (Go's
+/// quicRejectedEarlyData)
+pub const QEV_REJECTED: Int = 6
+
+/// The quic_transport_parameters extension (RFC 9001 8.2).
+pub const EXT_QUIC: Int = 57
+
+/// Handshake bytes m at level: a record, or for QUIC the bytes as they
+/// are (Go's quicWriteCryptoData).
+fn hs_out(var c: Client, level: Int, m: Bytes, vers: Int) {
+  if c.conf.quic {
+    c.quic_events.push(QuicEv{kind: QEV_DATA, level: level, suite: 0, data: m})
+  } else {
+    c.out = cat2(c.out, tlsrec.seal(c.wk, tlsrec.CT_HANDSHAKE, m, vers))
+  }
+}
+
+/// The keys of a secret for writing or reading at level; for QUIC the
+/// secret goes to the transport (Go's quicSetWriteSecret and
+/// quicSetReadSecret).
+fn set_keys(var c: Client, write: Bool, level: Int, secret: Bytes) {
+  if c.conf.quic {
+    c.quic_events.push(QuicEv{kind: if write { QEV_WRITE } else { QEV_READ }, level: level, suite: c.suite, data: secret})
+    if !write {
+      c.quic_read = level
+    }
+  } else if write {
+    c.wk = tlsrec.keys(c.suite, secret)
+  } else {
+    c.rk = tlsrec.keys(c.suite, secret)
+  }
+}
+
+/// Handshake bytes the QUIC transport got at the read level (Go's
+/// HandleData; the level is the caller's to check).
+pub fn feed_quic(var c: Client, data: Bytes) {
+  if c.state == FAILED || c.closed {
+    return
+  }
+  hs_bytes(c, data)
 }
 
 /// A new client for conf: its ClientHello is ready in take().
@@ -293,7 +372,8 @@ pub fn client(cf: Conf) -> Client {
   if ch.is_empty() {
     let fixed = !cf.random.is_empty()
     c.random = if fixed { cf.random } else { rand.next_bytes(32) }
-    c.sid = if fixed { cf.sid } else { rand.next_bytes(32) }
+    // QUIC has no compatibility mode (Go's makeClientHello: no session id)
+    c.sid = if cf.quic { b"" } else if fixed { cf.sid } else { rand.next_bytes(32) }
     if cf.groups.is_empty() {
       return fail(c, ALERT_INTERNAL_ERROR, "tls: no supported elliptic curves for ECDHE")
     }
@@ -301,6 +381,7 @@ pub fn client(cf: Conf) -> Client {
     c.priv = key_for(cf, c.share_group)
     c.kem = kem_for(c.share_group, c.priv)
     c.psk = offered_psk(cf)
+    c.early = early_ok(c)
     if let Some(list) = cf.ech_list {
       if !ech_setup(c, list) {
         return c
@@ -316,8 +397,39 @@ pub fn client(cf: Conf) -> Client {
     c.share_group = if cf.groups.is_empty() { 0 } else { cf.groups[0] }
   }
   c.tr = ch
-  c.out = tlsrec.seal(c.wk, tlsrec.CT_HANDSHAKE, ch, 0x0301)
+  hs_out(c, 0, ch, 0x0301)
+  if c.early {
+    // Go's clientHandshake: the early traffic secret over the hello, to
+    // the transport after the hello's bytes
+    if let Some(s) = cf.session {
+      let hash = tlsrec.suite_hash(s.suite)
+      let l = sha256.size(hash)
+      let cets = hkdf.expand_label(hash, hkdf.extract(hash, b"", c.psk), "c e traffic", sha256.sum(hash, ch), l)
+      c.quic_events.push(QuicEv{kind: QEV_WRITE, level: 1, suite: s.suite, data: cets})
+    }
+  }
   c
+}
+
+/// Go's loadSession for 0-RTT: a QUIC session allowing it, offered as the
+/// PSK, its suite and ALPN protocol offered again (ECH aside: its inner
+/// hello is not offered 0-RTT here).
+fn early_ok(c: Client) -> Bool {
+  let cf = c.conf
+  if !cf.quic || c.psk.is_empty() || cf.ech_list.is_some() {
+    return false
+  }
+  let s = cf.session ?? return false
+  s.early && has(cf.suites, s.suite) && has_str(cf.alpn, s.alpn)
+}
+
+fn has_str(xs: List[Str], x: Str) -> Bool {
+  for v in xs {
+    if v == x {
+      return true
+    }
+  }
+  false
 }
 
 /// The bytes to send to the server, taken.
@@ -450,28 +562,7 @@ fn record(var c: Client, buf: Bytes, n: Int) {
     if c.state != DONE {
       c.useless = 0
     }
-    c.hs = cat2(c.hs, inner.data)
-    while c.state != FAILED && c.hs.len() >= 4 {
-      let t = Int(c.hs[0])
-      let n = Int(c.hs[1]) * 65536 + Int(c.hs[2]) * 256 + Int(c.hs[3])
-      let most = if t == HS_CERTIFICATE { MAX_CERTIFICATE_MSG } else { MAX_HANDSHAKE }
-      if n > most {
-        fail(c, ALERT_INTERNAL_ERROR, "tls: handshake message of length ${n} bytes exceeds maximum of ${most} bytes")
-        return
-      }
-      if c.hs.len() < 4 + n {
-        return
-      }
-      let msg = c.hs[0..4 + n]
-      c.hs = c.hs[4 + n..c.hs.len()]
-      handshake(c, t, msg)
-      if c.state == HANDOFF {
-        // the ServerHello and what followed it in the record are TLS 1.2's
-        c.handoff = cat2(msg, c.hs)
-        c.hs = b""
-        return
-      }
-    }
+    hs_bytes(c, inner.data)
     return
   }
   if inner.ct == tlsrec.CT_APP {
@@ -488,6 +579,34 @@ fn record(var c: Client, buf: Bytes, n: Int) {
     return
   }
   fail(c, ALERT_UNEXPECTED_MESSAGE, "local error: tls: unexpected message")
+}
+
+/// Handshake bytes, from records or from QUIC: each complete message is
+/// handled.
+fn hs_bytes(var c: Client, data: Bytes) {
+  c.hs = cat2(c.hs, data)
+  while c.state != FAILED && c.hs.len() >= 4 {
+    let t = Int(c.hs[0])
+    let n = Int(c.hs[1]) * 65536 + Int(c.hs[2]) * 256 + Int(c.hs[3])
+    // QUIC after the handshake: Go's HandleData limit for every type
+    let most = if t == HS_CERTIFICATE && !(c.conf.quic && c.state == DONE) { MAX_CERTIFICATE_MSG } else { MAX_HANDSHAKE }
+    if n > most {
+      fail(c, ALERT_INTERNAL_ERROR, "tls: handshake message of length ${n} bytes exceeds maximum of ${most} bytes")
+      return
+    }
+    if c.hs.len() < 4 + n {
+      return
+    }
+    let msg = c.hs[0..4 + n]
+    c.hs = c.hs[4 + n..c.hs.len()]
+    handshake(c, t, msg)
+    if c.state == HANDOFF {
+      // the ServerHello and what followed it in the record are TLS 1.2's
+      c.handoff = cat2(msg, c.hs)
+      c.hs = b""
+      return
+    }
+  }
 }
 
 /// Go's maxUselessRecords: consecutive records or post-handshake messages
@@ -535,9 +654,16 @@ fn handshake(var c: Client, t: Int, msg: Bytes) {
       new_session_ticket(c, msg)
     }
   } else if c.state == DONE && t == HS_KEY_UPDATE {
-    if post_handshake(c) {
+    if c.conf.quic {
+      // RFC 9001 6: QUIC updates its own keys (Go's handleKeyUpdate)
+      fail(c, ALERT_UNEXPECTED_MESSAGE, "tls: received unexpected key update message")
+    } else if post_handshake(c) {
       key_update(c, msg)
     }
+  } else if c.conf.quic && c.state == DONE && t == HS_CERTIFICATE_REQUEST {
+    // RFC 9001 4.4: no post-handshake authentication (Go's text names its
+    // message type)
+    fail(c, ALERT_UNEXPECTED_MESSAGE, "tls: received unexpected handshake message of type *tls.certificateRequestMsgTLS13")
   } else {
     fail(c, ALERT_UNEXPECTED_MESSAGE, "tls: unexpected message")
   }
@@ -605,6 +731,12 @@ fn hello(c: Client) -> Bytes {
     exts.push(ext(EXT_COOKIE, vec16(c.cookie)))
   }
   exts.push(key_share_ext(c))
+  if c.early {
+    exts.push(ext(EXT_EARLY_DATA, b""))
+  }
+  if cf.quic {
+    exts.push(ext(EXT_QUIC, cf.quic_params))
+  }
   if cf.tickets && !cf.no13 {
     // Go requires DHE on resumption (RFC 8446 4.2.9)
     exts.push(ext(EXT_PSK_MODES, vec8(u8(1))))
@@ -1059,8 +1191,8 @@ fn server_hello(var c: Client, msg: Bytes) {
   c.c_hs = sec[1]
   c.s_hs = sec[2]
   dummy_ccs(c)
-  c.wk = tlsrec.keys(c.suite, c.c_hs)
-  c.rk = tlsrec.keys(c.suite, c.s_hs)
+  set_keys(c, true, 2, c.c_hs)
+  set_keys(c, false, 2, c.s_hs)
   let e = log_keys(c.conf.key_log, "CLIENT_HANDSHAKE_TRAFFIC_SECRET", "SERVER_HANDSHAKE_TRAFFIC_SECRET", c.random, c.c_hs, c.s_hs)
   if !e.is_empty() {
     fail(c, ALERT_INTERNAL_ERROR, e)
@@ -1130,16 +1262,21 @@ fn retry(var c: Client, msg: Bytes, h: Hello) {
   }
   let ch1 = sha256.sum(hash, c.tr)
   c.tr = asn1.cat([message(HS_MESSAGE_HASH, ch1), msg])
+  if c.early {
+    // Go's processHelloRetryRequest: no 0-RTT in the second hello
+    c.early = false
+    c.quic_events.push(QuicEv{kind: QEV_REJECTED, level: 0, suite: 0, data: b""})
+  }
   dummy_ccs(c)
   let ch2 = if c.ech_cfg.is_some() { ech_hellos(c, false, inner) } else { hello(c) }
   c.tr = cat2(c.tr, ch2)
-  c.out = cat2(c.out, tlsrec.seal(c.wk, tlsrec.CT_HANDSHAKE, ch2, 0x0303))
+  hs_out(c, 0, ch2, 0x0303)
 }
 
 /// The compatibility mode's ChangeCipherSpec (RFC 8446 D.4), once, when
 /// the client sent a legacy session id.
 fn dummy_ccs(var c: Client) {
-  if !c.ccs_sent && !c.sid.is_empty() {
+  if !c.ccs_sent && !c.sid.is_empty() && !c.conf.quic {
     c.ccs_sent = true
     c.out = cat2(c.out, b"\x14\x03\x03\x00\x01\x01")
   }
@@ -1154,6 +1291,7 @@ fn encrypted_extensions(var c: Client, msg: Bytes) {
     return
   }
   var p = 6
+  var early = false
   while p < msg.len() {
     if msg.len() < p + 4 || msg.len() < p + 4 + u16_at(msg, p + 2) {
       fail(c, ALERT_DECODE_ERROR, "tls: error decoding message")
@@ -1162,6 +1300,9 @@ fn encrypted_extensions(var c: Client, msg: Bytes) {
     let t = u16_at(msg, p)
     let n = u16_at(msg, p + 2)
     let d = msg[p + 4..p + 4 + n]
+    if t == EXT_EARLY_DATA {
+      early = true
+    }
     if t == EXT_ALPN {
       // one protocol, one we offered
       if n < 3 || u16_at(d, 0) != n - 2 || Int(d[2]) != n - 3 {
@@ -1181,6 +1322,14 @@ fn encrypted_extensions(var c: Client, msg: Bytes) {
       }
       c.alpn = proto
     }
+    if t == EXT_QUIC {
+      // Go's readServerParameters: QUIC's alone
+      if !c.conf.quic {
+        fail(c, ALERT_UNSUPPORTED_EXTENSION, "tls: server sent an unexpected quic_transport_parameters extension")
+        return
+      }
+      c.peer_quic_params = Some(d)
+    }
     if t == tlsech.EXT_ECH && c.ech_cfg.is_some() {
       if c.ech_rejected {
         c.ech_retry = d
@@ -1190,6 +1339,41 @@ fn encrypted_extensions(var c: Client, msg: Bytes) {
       }
     }
     p += 4 + n
+  }
+  if c.conf.quic {
+    // Go's checkALPN for QUIC, then the server's parameters
+    if c.alpn == "" && !c.conf.alpn.is_empty() {
+      fail(c, ALERT_UNSUPPORTED_EXTENSION, "tls: server did not select an ALPN protocol")
+      return
+    }
+    match c.peer_quic_params {
+      Some(qp) => c.quic_events.push(QuicEv{kind: QEV_PARAMS, level: 0, suite: 0, data: qp})
+      None => {
+        fail(c, ALERT_MISSING_EXTENSION, "tls: server did not send a quic_transport_parameters extension")
+        return
+      }
+    }
+  }
+  // Go's readServerParameters: 0-RTT taken only when offered, with the
+  // session's suite and ALPN protocol
+  if early && !c.early {
+    fail(c, ALERT_UNSUPPORTED_EXTENSION, "tls: server sent an unexpected early_data extension")
+    return
+  }
+  if c.early && !early {
+    c.quic_events.push(QuicEv{kind: QEV_REJECTED, level: 0, suite: 0, data: b""})
+  }
+  if early {
+    if let Some(s) = c.conf.session {
+      if s.suite != c.suite {
+        fail(c, ALERT_HANDSHAKE_FAILURE, "tls: server accepted 0-RTT with the wrong cipher suite")
+        return
+      }
+      if s.alpn != c.alpn {
+        fail(c, ALERT_HANDSHAKE_FAILURE, "tls: server accepted 0-RTT with the wrong ALPN")
+        return
+      }
+    }
   }
   c.tr = cat2(c.tr, msg)
   if c.resumed {
@@ -1675,7 +1859,7 @@ fn finished(var c: Client, msg: Bytes) {
   let c_ap = ap[0]
   let s_ap = ap[1]
   c.exp = ap[2]
-  c.rk = tlsrec.keys(c.suite, s_ap)
+  set_keys(c, false, 3, s_ap)
   let ke = log_keys(c.conf.key_log, "CLIENT_TRAFFIC_SECRET_0", "SERVER_TRAFFIC_SECRET_0", c.random, c_ap, s_ap)
   if !ke.is_empty() {
     fail(c, ALERT_INTERNAL_ERROR, ke)
@@ -1731,8 +1915,8 @@ fn finished(var c: Client, msg: Bytes) {
   let fin = message(HS_FINISHED, verify_data(hash, c.c_hs, c.tr))
   c.tr = cat2(c.tr, fin)
   flight = cat2(flight, fin)
-  c.out = cat2(c.out, tlsrec.seal(c.wk, tlsrec.CT_HANDSHAKE, flight, 0x0303))
-  c.wk = tlsrec.keys(c.suite, c_ap)
+  hs_out(c, 2, flight, 0x0303)
+  set_keys(c, true, 3, c_ap)
   if c.ech_rejected {
     // Go's clientHandshake: ech_required after the client's Finished,
     // and ECHRejectionError with the server's retry configs
@@ -1774,6 +1958,23 @@ fn new_session_ticket(var c: Client, msg: Bytes) {
     fail(c, ALERT_DECODE_ERROR, "tls: error decoding message")
     return
   }
+  // the extensions: early_data's max_early_data_size (RFC 8446 4.6.1)
+  var max_early = 0
+  var q = p + 2
+  while q < msg.len() {
+    if msg.len() < q + 4 || msg.len() < q + 4 + u16_at(msg, q + 2) {
+      fail(c, ALERT_DECODE_ERROR, "tls: error decoding message")
+      return
+    }
+    if u16_at(msg, q) == EXT_EARLY_DATA {
+      if u16_at(msg, q + 2) != 4 {
+        fail(c, ALERT_DECODE_ERROR, "tls: error decoding message")
+        return
+      }
+      max_early = u16_at(msg, q + 4) * 65536 + u16_at(msg, q + 6)
+    }
+    q += 4 + u16_at(msg, q + 2)
+  }
   let store = c.conf.on_session ?? return
   if !c.conf.tickets || lifetime == 0 {
     return
@@ -1786,13 +1987,18 @@ fn new_session_ticket(var c: Client, msg: Bytes) {
     fail(c, ALERT_DECODE_ERROR, "tls: received a session ticket with empty opaque ticket label")
     return
   }
+  // RFC 9001 4.6.1
+  if c.conf.quic && max_early != 0 && max_early != 0xffffffff {
+    fail(c, ALERT_ILLEGAL_PARAMETER, "tls: invalid early data for QUIC connection")
+    return
+  }
   let hash = tlsrec.suite_hash(c.suite)
   let psk = hkdf.expand_label(hash, c.res_master, "resumption", nonce, sha256.size(hash))
   var ders: List[Bytes] = []
   for x in c.peer {
     ders.push(x.raw)
   }
-  store(tlscache.Session{version: 0x0304, suite: c.suite, created: c.conf.now, use_by: c.conf.now + lifetime, secret: psk, ticket: ticket, age_add: age_add, peer: ders, verified: chain_ders(c.verified), group: c.share_group, alpn: c.alpn, ocsp: c.ocsp, scts: c.scts})
+  store(tlscache.Session{version: 0x0304, suite: c.suite, created: c.conf.now, use_by: c.conf.now + lifetime, secret: psk, ticket: ticket, age_add: age_add, peer: ders, verified: chain_ders(c.verified), group: c.share_group, alpn: c.alpn, ocsp: c.ocsp, scts: c.scts, early: c.conf.quic && max_early == 0xffffffff})
 }
 
 /// RFC 8446 4.6.3: the server's read keys move on; when it asks, the
@@ -1833,7 +2039,8 @@ fn fail(var c: Client, alert: Int, msg: Str) -> Client {
   if c.state != FAILED {
     c.err = msg
     c.state = FAILED
-    if alert >= 0 {
+    c.alert = alert
+    if alert >= 0 && !c.conf.quic {
       c.out = cat2(c.out, tlsrec.seal(c.wk, tlsrec.CT_ALERT, asn1.cat([u8(2), u8(alert)]), 0x0303))
     }
   }

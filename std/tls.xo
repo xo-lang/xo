@@ -498,3 +498,97 @@ fn new_listener(l: Listener, config: ServerConfig) -> TlsListener
 fn (l: TlsListener) accept() -> TlsServerConn ! NetErr uses net.listen
 fn (l: TlsListener) addr() -> Str
 fn (l: TlsListener) close()
+
+// ---------------------------------------------------------------------------
+// QUIC (decision 0644 T14): Go's QUICConn, the TLS 1.3 handshake of RFC
+// 9001 driven by a QUIC transport. The transport carries the handshake
+// bytes in CRYPTO frames and protects packets with the secrets; TLS
+// records are not used.
+
+/// Go's QUICEncryptionLevel.
+enum QuicEncryptionLevel {
+  Initial
+  Early
+  Handshake
+  Application
+}
+
+/// Go's String: "Initial", "Early", "Handshake", "Application".
+fn (l: QuicEncryptionLevel) display() -> Str
+
+/// Go's QUICEventKind.
+enum QuicEventKind {
+  /// No event is ready (Go's QUICNoEvent): feed the peer's data, or wait.
+  NoEvent
+  /// The read or write secret of level (level, data and suite set).
+  /// Initial secrets come from the connection ID, not from here.
+  SetReadSecret
+  SetWriteSecret
+  /// data goes to the peer in CRYPTO frames at level.
+  WriteData
+  /// The peer's transport parameters (data).
+  TransportParameters
+  /// set_transport_parameters must be called before the next next_event.
+  TransportParametersRequired
+  /// The server declined 0-RTT data (a client only).
+  RejectedEarlyData
+  /// The handshake is complete.
+  HandshakeDone
+  /// A client resumes a session, or a server got a client's ticket.
+  ResumeSession
+  /// A server sent state the client may resume (a client only).
+  StoreSession
+  /// A fatal error (err set): the connection must be closed.
+  ErrorEvent
+}
+
+/// Go's QUICEvent: kind, and the fields that kind sets.
+struct QuicEvent {
+  kind: QuicEventKind
+  level: QuicEncryptionLevel = QuicEncryptionLevel.Initial
+  data: Bytes = b""
+  suite: Int = 0
+  err: TlsErr? = None
+}
+
+/// A QUIC connection's TLS side (Go's QUICConn); a handle. Its methods are
+/// not for concurrent use, as Go's.
+struct QuicConn {}
+
+/// A client (Go's QUICClient). config's min_version must be
+/// VERSION_TLS13 (RFC 9001 4.2; start refuses less, as Go), and
+/// next_protos should be set: QUIC requires ALPN.
+fn quic_client(config: ClientConfig) -> QuicConn
+
+/// A server (Go's QUICServer).
+fn quic_server(config: ServerConfig) -> QuicConn
+
+/// Starts the handshake (Go's Start): a client's ClientHello is then in
+/// next_event. Err when called twice (`tls: Start called more than
+/// once`), or when min_version is below TLS 1.3 (`tls: Config MinVersion
+/// must be at least TLS 1.3`). Cancelling the task stops a handshake
+/// waiting in a hook.
+fn (q: QuicConn) start() -> () ! TlsErr
+
+/// The next event (Go's NextEvent); NoEvent when there is none.
+fn (q: QuicConn) next_event() -> QuicEvent
+
+/// Handshake bytes the peer sent at level in CRYPTO frames, in order;
+/// any split (Go's HandleData). A handshake message too large, or data at
+/// a level that has no read secret yet, is an error.
+fn (q: QuicConn) handle_data(level: QuicEncryptionLevel, data: Bytes) -> () ! TlsErr
+
+/// A server's session ticket, after HandshakeDone, once (Go's
+/// SendSessionTicket); early_data marks it as accepting 0-RTT data and
+/// extra is carried in it.
+fn (q: QuicConn) send_session_ticket(early_data: Bool = false, extra: List[Bytes] = []) -> () ! TlsErr
+
+/// The transport parameters to send (Go's SetTransportParameters), before
+/// start or on TransportParametersRequired; empty is valid.
+fn (q: QuicConn) set_transport_parameters(params: Bytes)
+
+/// What the handshake negotiated (Go's ConnectionState).
+fn (q: QuicConn) state() -> ConnState
+
+/// Ends the connection (Go's Close); a handshake in progress stops.
+fn (q: QuicConn) close() -> () ! TlsErr

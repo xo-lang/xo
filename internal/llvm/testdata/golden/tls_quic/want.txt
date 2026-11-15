@@ -1,0 +1,314 @@
+exit 0
+--- stdout
+== connection
+client WriteData Initial
+server TransportParameters "client params"
+server WriteData Initial
+server SetWriteSecret Handshake suite 4865
+server SetReadSecret Handshake suite 4865
+server WriteData Handshake
+server SetWriteSecret Application suite 4865
+client SetWriteSecret Handshake suite 4865
+client SetReadSecret Handshake suite 4865
+client TransportParameters "server params"
+client WriteData Handshake
+client SetWriteSecret Application suite 4865
+client HandshakeDone
+client SetReadSecret Application suite 4865
+server HandshakeDone
+server SetReadSecret Application suite 4865
+client read Handshake = server write
+server read Handshake = client write
+client read Application = server write
+server read Application = client write
+ok
+client state: version 772 suite 4865 protocol "h3" complete true resumed false
+server state: version 772 suite 4865 protocol "h3" server_name "example.go.dev"
+start again: tls: Start called more than once
+post handshake CertificateRequest: tls: received unexpected handshake message of type *tls.certificateRequestMsgTLS13
+post handshake KeyUpdate: tls: received unexpected key update message
+post handshake too large: tls: handshake message of length 65537 bytes exceeds maximum of 65536 bytes
+== fragmentary data
+client WriteData Initial
+server TransportParameters ""
+server WriteData Initial
+server SetWriteSecret Handshake suite 4865
+server SetReadSecret Handshake suite 4865
+server WriteData Handshake
+server SetWriteSecret Application suite 4865
+client SetWriteSecret Handshake suite 4865
+client SetReadSecret Handshake suite 4865
+client TransportParameters ""
+client WriteData Handshake
+client SetWriteSecret Application suite 4865
+client HandshakeDone
+client SetReadSecret Application suite 4865
+server HandshakeDone
+server SetReadSecret Application suite 4865
+client read Handshake = server write
+server read Handshake = client write
+client read Application = server write
+server read Application = client write
+ok
+== delayed transport parameters (first)
+client WriteData Initial
+server TransportParameters "client params"
+server WriteData Initial
+server SetWriteSecret Handshake suite 4865
+server SetReadSecret Handshake suite 4865
+server TransportParametersRequired
+error: transport parameters required
+== delayed transport parameters (second)
+client SetWriteSecret Handshake suite 4865
+client SetReadSecret Handshake suite 4865
+server WriteData Handshake
+server SetWriteSecret Application suite 4865
+client TransportParameters "server params"
+client WriteData Handshake
+client SetWriteSecret Application suite 4865
+client HandshakeDone
+client SetReadSecret Application suite 4865
+server HandshakeDone
+server SetReadSecret Application suite 4865
+client read Handshake != server write
+client read Application = server write
+server read Application = client write
+ok
+== empty transport parameters
+client WriteData Initial
+server TransportParameters ""
+server WriteData Initial
+server SetWriteSecret Handshake suite 4865
+server SetReadSecret Handshake suite 4865
+server WriteData Handshake
+server SetWriteSecret Application suite 4865
+client SetWriteSecret Handshake suite 4865
+client SetReadSecret Handshake suite 4865
+client TransportParameters ""
+client WriteData Handshake
+client SetWriteSecret Application suite 4865
+client HandshakeDone
+client SetReadSecret Application suite 4865
+server HandshakeDone
+server SetReadSecret Application suite 4865
+client read Handshake = server write
+server read Handshake = client write
+client read Application = server write
+server read Application = client write
+ok
+== handshake error
+client WriteData Initial
+server TransportParameters ""
+server WriteData Initial
+server SetWriteSecret Handshake suite 4865
+server SetReadSecret Handshake suite 4865
+server WriteData Handshake
+error: handle_data: tls: failed to verify certificate: x509: certificate signed by unknown authority
+client next event: ErrorEvent
+min_version 0: tls: Config MinVersion must be at least TLS 1.3
+== connection state
+client WriteData Initial
+server TransportParameters ""
+server WriteData Initial
+server SetWriteSecret Handshake suite 4865
+server SetReadSecret Handshake suite 4865
+server   state: protocol "h3" complete false
+server WriteData Handshake
+server SetWriteSecret Application suite 4865
+client SetWriteSecret Handshake suite 4865
+client SetReadSecret Handshake suite 4865
+client   state: protocol "h3" complete true
+client TransportParameters ""
+client WriteData Handshake
+client SetWriteSecret Application suite 4865
+client HandshakeDone
+client SetReadSecret Application suite 4865
+client   state: protocol "h3" complete true
+server HandshakeDone
+server SetReadSecret Application suite 4865
+server   state: protocol "h3" complete true
+client read Handshake = server write
+server read Handshake = client write
+client read Application = server write
+server read Application = client write
+ok
+== resumption 1
+client WriteData Initial
+server TransportParameters ""
+server WriteData Initial
+server SetWriteSecret Handshake suite 4865
+server SetReadSecret Handshake suite 4865
+server WriteData Handshake
+server SetWriteSecret Application suite 4865
+client SetWriteSecret Handshake suite 4865
+client SetReadSecret Handshake suite 4865
+client TransportParameters ""
+client WriteData Handshake
+client SetWriteSecret Application suite 4865
+client HandshakeDone
+client SetReadSecret Application suite 4865
+server HandshakeDone
+server SetReadSecret Application suite 4865
+server WriteData Application
+client read Handshake = server write
+server read Handshake = client write
+client read Application = server write
+server read Application = client write
+ok
+client resumed false, server resumed false
+== resumption 2
+client WriteData Initial
+server TransportParameters ""
+server WriteData Initial
+server SetWriteSecret Handshake suite 4865
+server SetReadSecret Handshake suite 4865
+server WriteData Handshake
+server SetWriteSecret Application suite 4865
+client SetWriteSecret Handshake suite 4865
+client SetReadSecret Handshake suite 4865
+client TransportParameters ""
+client WriteData Handshake
+client SetWriteSecret Application suite 4865
+client HandshakeDone
+client SetReadSecret Application suite 4865
+server HandshakeDone
+server SetReadSecret Application suite 4865
+server WriteData Application
+client read Handshake = server write
+server read Handshake = client write
+client read Application = server write
+server read Application = client write
+ok
+client resumed true, server resumed true
+== early data 1
+client WriteData Initial
+server TransportParameters ""
+server WriteData Initial
+server SetWriteSecret Handshake suite 4865
+server SetReadSecret Handshake suite 4865
+server WriteData Handshake
+server SetWriteSecret Application suite 4865
+client SetWriteSecret Handshake suite 4865
+client SetReadSecret Handshake suite 4865
+client TransportParameters ""
+client WriteData Handshake
+client SetWriteSecret Application suite 4865
+client HandshakeDone
+client SetReadSecret Application suite 4865
+server HandshakeDone
+server SetReadSecret Application suite 4865
+server WriteData Application
+client read Handshake = server write
+server read Handshake = client write
+client read Application = server write
+server read Application = client write
+ok
+client resumed false, server resumed false
+== early data 2
+client WriteData Initial
+client SetWriteSecret Early suite 4865
+server TransportParameters ""
+server SetReadSecret Early suite 4865
+server WriteData Initial
+server SetWriteSecret Handshake suite 4865
+server SetReadSecret Handshake suite 4865
+server WriteData Handshake
+server SetWriteSecret Application suite 4865
+client SetWriteSecret Handshake suite 4865
+client SetReadSecret Handshake suite 4865
+client TransportParameters ""
+client WriteData Handshake
+client SetWriteSecret Application suite 4865
+client HandshakeDone
+client SetReadSecret Application suite 4865
+server HandshakeDone
+server SetReadSecret Application suite 4865
+server WriteData Application
+server read Early = client write
+client read Handshake = server write
+server read Handshake = client write
+client read Application = server write
+server read Application = client write
+ok
+client resumed true, server resumed true
+== no early data 1
+client WriteData Initial
+server TransportParameters ""
+server WriteData Initial
+server SetWriteSecret Handshake suite 4865
+server SetReadSecret Handshake suite 4865
+server WriteData Handshake
+server SetWriteSecret Application suite 4865
+client SetWriteSecret Handshake suite 4865
+client SetReadSecret Handshake suite 4865
+client TransportParameters ""
+client WriteData Handshake
+client SetWriteSecret Application suite 4865
+client HandshakeDone
+client SetReadSecret Application suite 4865
+server HandshakeDone
+server SetReadSecret Application suite 4865
+server WriteData Application
+client read Handshake = server write
+server read Handshake = client write
+client read Application = server write
+server read Application = client write
+ok
+== no early data 2
+client WriteData Initial
+server TransportParameters ""
+server WriteData Initial
+server SetWriteSecret Handshake suite 4865
+server SetReadSecret Handshake suite 4865
+server WriteData Handshake
+server SetWriteSecret Application suite 4865
+client SetWriteSecret Handshake suite 4865
+client SetReadSecret Handshake suite 4865
+client TransportParameters ""
+client WriteData Handshake
+client SetWriteSecret Application suite 4865
+client HandshakeDone
+client SetReadSecret Application suite 4865
+server HandshakeDone
+server SetReadSecret Application suite 4865
+server WriteData Application
+client read Handshake = server write
+server read Handshake = client write
+client read Application = server write
+server read Application = client write
+ok
+== delayed client parameters (first)
+client TransportParametersRequired
+error: transport parameters required
+== delayed client parameters (second)
+client WriteData Initial
+server TransportParameters "late client params"
+server WriteData Initial
+server SetWriteSecret Handshake suite 4865
+server SetReadSecret Handshake suite 4865
+server WriteData Handshake
+server SetWriteSecret Application suite 4865
+client SetWriteSecret Handshake suite 4865
+client SetReadSecret Handshake suite 4865
+client TransportParameters "server params"
+client WriteData Handshake
+client SetWriteSecret Application suite 4865
+client HandshakeDone
+client SetReadSecret Application suite 4865
+server HandshakeDone
+server SetReadSecret Application suite 4865
+client read Handshake = server write
+server read Handshake = client write
+client read Application = server write
+server read Application = client write
+ok
+wrong level: tls: handshake data received at wrong level
+wrong level again: no error
+wrong level events: WriteData NoEvent
+close waiting for data: local error: tls: close notify
+close waiting for parameters: local error: tls: close notify
+close never started: no error
+ticket before start: tls: SendSessionTicket called before handshake completed
+ticket on a client: tls: SendSessionTicket called before handshake completed
+no server name: tls: either ServerName or InsecureSkipVerify must be specified in the tls.Config
+--- stderr

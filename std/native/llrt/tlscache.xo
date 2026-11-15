@@ -32,6 +32,9 @@ pub struct Session {
   /// on a resumed connection (Go's sessionState ocspResponse, scts)
   pub ocsp: Bytes = b""
   pub scts: List[Bytes] = []
+  /// decision 0644 T14: a QUIC ticket allowing 0-RTT (Go's EarlyData,
+  /// RFC 9001 4.6.1's max_early_data_size 0xffffffff)
+  pub early: Bool = false
 }
 
 /// Go's defaultSessionCacheCapacity.

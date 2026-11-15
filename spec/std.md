@@ -6228,6 +6228,32 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
   server's signal that it has no ECH), text "tls: server rejected ECH".
   Not supported, as Go's client: an ML-KEM KEM (Go's crypto/hpke offers
   it; std/hpke does not yet). Golden `tls_ech`.
+- QUIC (T14): `quic_client(ClientConfig)` and `quic_server(ServerConfig)`
+  give a `QuicConn`, Go's QUICConn: the TLS 1.3 handshake of RFC 9001
+  for a QUIC transport, which carries the handshake bytes in CRYPTO
+  frames and protects packets with the secrets; no records, no
+  ChangeCipherSpec, no session id. `start` begins it (a `min_version`
+  below TLS 1.3 is refused, as is a second call); `next_event` gives
+  Go's `QuicEvent`s in Go's order (`QuicEventKind`, `QuicEncryptionLevel`
+  Initial, Early, Handshake, Application): consecutive bytes at one level
+  are one WriteData, the Application read secret follows HandshakeDone,
+  and after a failure one ErrorEvent (the events not yet taken dropped)
+  then NoEvent. `handle_data(level, data)` takes the peer's bytes in any
+  split (data at another level than the read level is an error that
+  leaves the handshake as it was; a message over 65536 bytes, a
+  KeyUpdate or a post-handshake CertificateRequest fail it).
+  `set_transport_parameters` before `start` or on
+  TransportParametersRequired (either side; a client without them asks
+  before its hello). QUIC requires ALPN when `next_protos` is set (the
+  server's no_application_protocol, the client's "tls: server did not
+  select an ALPN protocol"). A server's tickets go only through
+  `send_session_ticket` after HandshakeDone, once; `early_data: true`
+  allows 0-RTT, and a client resuming such a ticket with the same suite
+  and ALPN protocol gets the Early write secret (the server the read
+  secret) or RejectedEarlyData. `close` gives the handshake's error, or
+  `local error: tls: close notify` for one in progress. ResumeSession and
+  StoreSession (Go's EnableSessionEvents) are not given. Golden
+  `tls_quic` (Go's quic_test.go cases).
 
 ---
 
