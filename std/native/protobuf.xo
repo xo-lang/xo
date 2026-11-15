@@ -15,6 +15,10 @@ fn protoerr_display(e: protobuf.ProtoErr) -> Str {
   }
 }
 
+fn valid_number(num: Int) -> Bool {
+  (num >= protobuf.MIN_VALID_NUMBER && num < protobuf.FIRST_RESERVED_NUMBER) || (num > protobuf.LAST_RESERVED_NUMBER && num <= protobuf.MAX_VALID_NUMBER)
+}
+
 fn size_varint(v: UInt64) -> Int {
   var n = 1
   var x = v.to_bits()

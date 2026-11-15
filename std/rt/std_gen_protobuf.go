@@ -79,4 +79,12 @@ func (v Protobuf_ProtoErr) M_debug(*Task) string { return Debug(v) }
 
 func (v Protobuf_ProtoErr) M_display(*Task) string { return Debug(v) }
 
+var Protobuf_MIN_VALID_NUMBER = int64(1)
+
+var Protobuf_MAX_VALID_NUMBER = int64(536870911)
+
+var Protobuf_FIRST_RESERVED_NUMBER = int64(19000)
+
+var Protobuf_LAST_RESERVED_NUMBER = int64(19999)
+
 var Protobuf_MAX_GROUP_DEPTH = int64(10000)

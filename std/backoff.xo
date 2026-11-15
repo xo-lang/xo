@@ -1,7 +1,7 @@
 // std/backoff (spec/std.md 43, std survey gap 15).
 // Encoding rules are listed at the top of std/prelude.xo. Exponential
-// backoff with jitter and a retry loop, cenkalti/backoff v4's
-// ExponentialBackOff and Retry. The Clock and Rand are given per call,
+// backoff with jitter, a retry loop and a ticker, cenkalti/backoff v4's
+// ExponentialBackOff, Retry and Ticker. The Clock and Rand are given per call,
 // so a test's virtual clock and seeded Rand make it deterministic.
 //
 // std/backoff on the native backends and the Go backend (spec/std.md
@@ -87,6 +87,76 @@ pub fn retry_notify[T, E, fx: Effects, rx: Effects, nx: Effects](b: Backoff, clo
 /// A retryable that retries every error.
 pub fn always[E]() -> fn(E) -> Bool {
   fn(_e: E) { true }
+}
+
+/// A ticker's state. Internal: use `next` and `stop`.
+pub struct TickState {
+  pub ticks: Int
+  /// when the next tick is due; None once the schedule ended or stop ran
+  pub due: Time?
+  pub start: Time
+}
+
+/// Ticks at the backoff's delays (cenkalti/backoff v4's Ticker): the
+/// first at once, each next one the next delay after the last, until
+/// `max_tries` ticks, `max_elapsed`, or `stop`. Go sends on a channel
+/// from a goroutine; here the caller pulls: `next` sleeps on the clock
+/// until the tick is due. A handle: copies share the schedule; one task
+/// reads the ticks (two would each get the same tick).
+pub struct Ticker {
+  pub b: Backoff
+  pub clock: Clock
+  pub rand: Rand
+  pub st: Mutex[TickState]
+}
+
+/// A ticker of b on clock, drawing its jitter from rand (NewTicker; the
+/// clock is NewTickerWithTimer's Timer). Its schedule starts now.
+pub fn ticker(b: Backoff, clock: Clock, rand: Rand) -> Ticker uses clock {
+  let now = clock.now()
+  Ticker{b: b, clock: clock, rand: rand, st: Mutex[TickState].new(TickState{ticks: 0, due: Some(now), start: now})}
+}
+
+/// The next tick's time, after sleeping until it is due (a cancellation
+/// point), or None once the schedule has ended or `stop` ran. As Go's
+/// run does after each tick is taken, the delay to the next tick is drawn
+/// when this one is given, and the schedule ends when the time since the
+/// start plus that delay passes `max_elapsed` (NextBackOff's Stop).
+pub fn (t: Ticker) next() -> Time? uses (clock, rand) {
+  let due = match t.st.with_read(fn(s: TickState) -> Time? { s.due }) {
+    Some(x) => x
+    None => return None
+  }
+  let now = t.clock.now()
+  if due > now {
+    t.clock.sleep(due - now)
+  }
+  let tick = t.clock.now()
+  let gave = t.st.with(fn(var s: TickState) -> Bool uses rand {
+    if s.due is None {
+      // stopped while this call slept
+      return false
+    }
+    s.ticks += 1
+    if t.b.max_tries > 0 && s.ticks >= t.b.max_tries {
+      s.due = None
+      return true
+    }
+    let d = t.b.delay(s.ticks - 1, t.rand)
+    if t.b.max_elapsed > 0s && tick - s.start + d > t.b.max_elapsed {
+      s.due = None
+    } else {
+      s.due = Some(tick + d)
+    }
+    true
+  })
+  if gave { Some(tick) } else { None }
+}
+
+/// Ends the ticks (Ticker.Stop): `next` answers None from now on, also a
+/// call sleeping toward its tick. Stopping twice is fine.
+pub fn (t: Ticker) stop() {
+  t.st.with(fn(var s: TickState) { s.due = None })
 }
 
 /// The interval before randomizing for retry number attempt: Go's

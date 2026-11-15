@@ -1,0 +1,90 @@
+// Ticker tests from cenkalti/backoff v4's ticker_test.go (Copyright (c)
+// 2014 Cenk Altı, MIT license), on the fake clock, plus the schedule's
+// ends: max_elapsed (ExponentialBackOff's Stop), max_tries
+// (WithMaxRetries) and stop.
+
+use std/testing
+
+/// The times of the ticks t gives, as offsets from start, at most n.
+fn ticks(t: Ticker, start: Time, n: Int) -> List[Duration] uses (clock, rand) {
+  var out: List[Duration] = []
+  while out.len() < n {
+    match t.next() {
+      Some(at) => out.push(at - start)
+      None => break
+    }
+  }
+  out
+}
+
+test "ticks until op succeeds (TestTicker): the first at once, then the delays" {
+  let b = Backoff{randomization: 0.0}
+  let start = os.clock.now()
+  let t = ticker(b, os.clock, os.rand)
+  var calls = 0
+  var at: List[Duration] = []
+  while true {
+    match t.next() {
+      Some(x) => {
+        calls += 1
+        at.push(x - start)
+        if calls == 3 {
+          t.stop()
+          break
+        }
+      }
+      None => break
+    }
+  }
+  expect(calls) == 3
+  expect(at) == [0s, 500ms, 1250ms]
+  expect(t.next()) == None
+}
+
+test "a ticker stopped before its first read still ticks once (TestTickerContext's guarantee)" {
+  let t = ticker(Backoff{randomization: 0.0}, os.clock, os.rand)
+  let first = t.next()
+  t.stop()
+  expect(first is Some(_)) == true
+  expect(t.next()) == None
+}
+
+test "the schedule ends where ExponentialBackOff answers Stop: elapsed plus the next delay past max_elapsed" {
+  let b = Backoff{initial: 1s, multiplier: 2.0, randomization: 0.0, max_interval: 5s, max_elapsed: 12s}
+  let start = os.clock.now()
+  let t = ticker(b, os.clock, os.rand)
+  // 0, 1, 3, 7, then 7 + 5 = 12 is not past 12s, so 12 ticks; 12 + 5 is
+  expect(ticks(t, start, 20)) == [0s, 1s, 3s, 7s, 12s]
+}
+
+test "max_tries ticks at most (WithMaxRetries counts the calls)" {
+  let b = Backoff{initial: 1s, randomization: 0.0, max_tries: 3}
+  let start = os.clock.now()
+  expect(ticks(ticker(b, os.clock, os.rand), start, 20)) == [0s, 1s, 2500ms]
+}
+
+test "a tick read late is not moved: the delay counts from the last tick given" {
+  let b = Backoff{initial: 1s, multiplier: 1.0, randomization: 0.0, max_elapsed: 0s}
+  let start = os.clock.now()
+  let t = ticker(b, os.clock, os.rand)
+  expect(t.next()) == Some(start)
+  os.clock.advance(400ms)
+  expect(t.next()) == Some(start + 1s)
+  os.clock.advance(3s)
+  // past due: given at once, at the time it is read
+  expect(t.next()) == Some(start + 4s)
+}
+
+test "jittered ticks stay within the randomization of each delay" {
+  let b = Backoff{initial: 100ms, multiplier: 2.0, randomization: 0.5, max_interval: 1s, max_elapsed: 0s}
+  let start = os.clock.now()
+  let got = ticks(ticker(b, os.clock, os.rand), start, 6)
+  let nominal = [100ms, 200ms, 400ms, 800ms, 1s]
+  var ok = got.len() == 6
+  for k in 1..got.len() {
+    let gap = got[k] - got[k - 1]
+    let d = nominal[k - 1]
+    ok = ok && gap >= d / 2 && gap <= d + d / 2
+  }
+  expect(ok) == true
+}

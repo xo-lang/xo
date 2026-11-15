@@ -72,3 +72,15 @@ test "put_* builder forms write the same bytes as append_*" {
   b = protobuf.append_bytes(b, b"abc")
   expect(o.freeze()) == b
 }
+
+test "valid_number is protowire's Number.IsValid at every boundary" {
+  let cases: List[(Int, Bool)] = [
+    (-1, false), (0, false), (1, true), (2, true), (18999, true), (19000, false), (19500, false),
+    (19999, false), (20000, true), (536870910, true), (536870911, true), (536870912, false),
+    (Int.max, false), (Int.min, false),
+  ]
+  for (n, want) in cases {
+    expect((n, protobuf.valid_number(n))) == (n, want)
+  }
+  expect((protobuf.MIN_VALID_NUMBER, protobuf.MAX_VALID_NUMBER, protobuf.FIRST_RESERVED_NUMBER, protobuf.LAST_RESERVED_NUMBER)) == (1, (1 << 29) - 1, 19000, 19999)
+}

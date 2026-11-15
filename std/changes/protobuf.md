@@ -1,5 +1,16 @@
 # std/protobuf changes
 
+## 2026-11-15: feature: field number range (protowire's MinValidNumber, MaxValidNumber, reserved range, Number.IsValid)
+
+- Kind: feature
+- Commit: this push
+- Found by: scripts/stdaudit gaps protowire.MinValidNumber, MaxValidNumber, FirstReservedNumber, LastReservedNumber and Number.IsValid (decision 0655)
+- Go reference: google.golang.org/protobuf v1.36.12 encoding/protowire wire.go (Copyright 2018 The Go Authors, BSD-style license)
+- Test: std/native/protobuf_test.xo "valid_number" at every boundary (arm64, llvm; corpus protobuf on go)
+- Shipped in: not yet released
+
+`protobuf.valid_number(num)` and the four constants, as protowire declares them.
+
 ## 2026-11-15: feature: `ProtoErr` is an open enum (decision 0649)
 
 - Kind: feature

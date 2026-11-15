@@ -1,5 +1,16 @@
 # std/backoff changes
 
+## 2026-11-15: feature: ticker, Ticker.next and Ticker.stop (cenkalti/backoff v4's Ticker)
+
+- Kind: feature
+- Commit: this push
+- Found by: scripts/stdaudit gaps backoff.NewTicker, NewTickerWithTimer, Ticker and Ticker.Stop (decision 0655)
+- Go reference: cenkalti/backoff v4.3.0 ticker.go and ticker_test.go (Copyright (c) 2014 Cenk Altı, MIT license)
+- Test: std/backoff_test.xo on the fake clock: TestTicker's three ticks, TestTickerContext's first tick, the max_elapsed and max_tries ends, a late read, jitter bounds (arm64, llvm)
+- Shipped in: not yet released
+
+A pulled ticker: `next()` sleeps until the tick is due and answers its time, None once the schedule ends or `stop` ran; the delay to the next tick is drawn when a tick is given, as Go's goroutine does after a send.
+
 ## 2026-11-11: refactor: std/backoff is one file (decisions 0588, 0597)
 
 - Kind: refactor

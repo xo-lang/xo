@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/backoff, every backend): `backoff.ticker(b, clock, rand)` with `next()` and `stop()` (cenkalti's Ticker), ticks at the backoff's delays.
+- Feature (std/protobuf, every backend): `valid_number(num)` and `MIN_VALID_NUMBER`, `MAX_VALID_NUMBER`, `FIRST_RESERVED_NUMBER`, `LAST_RESERVED_NUMBER` (protowire's field number range).
 - Feature (std/csv, every backend): `Reader.field_pos(i)` and `Reader.input_offset()` (Go's FieldPos and InputOffset): where each field of the last record starts, and the byte offset reached in the file.
 - Feature (std/crc32, every backend): `crc32.table(poly)` (Go's MakeTable) for any reversed polynomial, with `KOOPMAN`, `IEEE` and `CASTAGNOLI`, and `checksum_table` and `update_table` (Go's Checksum and Update over a table).
 - Feature (std/path, every backend): `path.rel(base, target)` and `path.is_local(p)` (Go's filepath.Rel and IsLocal).

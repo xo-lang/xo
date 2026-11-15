@@ -8557,7 +8557,18 @@ fn (b: Backoff) delay(attempt: Int, rand: Rand) -> Duration uses rand
 fn retry[T, E, fx: Effects](b: Backoff, clock: Clock, rand: Rand, op: fn() -> T ! E uses fx, retryable: fn(E) -> Bool) -> T ! E uses (clock, rand, fx)
 fn retry_notify[T, E, fx: Effects, rx: Effects, nx: Effects](b: Backoff, clock: Clock, rand: Rand, op: fn() -> T ! E uses fx, retryable: fn(E) -> Bool uses rx, notify: fn(E, Duration) -> () uses nx) -> T ! E uses (clock, rand, fx, rx, nx)
 fn always[E]() -> fn(E) -> Bool
+fn ticker(b: Backoff, clock: Clock, rand: Rand) -> Ticker uses clock   // NewTicker
+fn (t: Ticker) next() -> Time? uses (clock, rand)   // the next tick, sleeping until due
+fn (t: Ticker) stop()
 ```
+
+- `ticker` is cenkalti's Ticker pulled instead of read from a channel
+  (2026-11-15): the first `next` answers at once, each later one sleeps
+  on the clock until the last tick plus the next delay (drawn when the
+  last tick was given, as Go's run does), and answers None once
+  `max_tries` ticks were given, once the time since the ticker started
+  plus the next delay passes `max_elapsed`, or after `stop` (also for a
+  `next` sleeping toward its tick). One task reads a ticker's ticks.
 
 - `delay(k, rand)` is the delay before retry k (0 first): `initial`
   multiplied k times by `multiplier`, truncated to whole nanoseconds at
@@ -9577,6 +9588,9 @@ fn append_fixed32(b: Bytes, v: UInt32) -> Bytes
 fn append_fixed64(b: Bytes, v: UInt64) -> Bytes
 fn append_bytes(b: Bytes, data: Bytes) -> Bytes
 fn size_varint(v: UInt64) -> Int
+const MIN_VALID_NUMBER: Int = 1; const MAX_VALID_NUMBER: Int = 536870911   // 2^29 - 1
+const FIRST_RESERVED_NUMBER: Int = 19000; const LAST_RESERVED_NUMBER: Int = 19999
+fn valid_number(num: Int) -> Bool                      // Number.IsValid: in range, not reserved
 fn encode_zigzag(v: Int) -> UInt64
 fn decode_zigzag(v: UInt64) -> Int
 fn read_varint(b: Bytes, at: Int) -> (UInt64, Int) ! ProtoErr
