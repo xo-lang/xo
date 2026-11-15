@@ -1,5 +1,16 @@
 # std/ui changes
 
+## 2026-11-15: feature: live updates over a websocket (Early)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0659 stage 1 (the ADR names std/websocket for the sync channel; 1b polled every 2 s)
+- Go reference: none
+- Test: std/ui_test.xo (a changing sync notifies a live subscriber, one that changes nothing does not; the page names the endpoint); headless Chrome over CDP, two clients: another tab saw each add in 1 to 10 ms (about 1.7 s by polling), a background tab a toggle in 110 ms, a reconnect's queued work in 102 ms (1,147 ms); 14/14 checks
+- Shipped in: not yet released
+
+`mount` adds `prefix/_xo/live`, a websocket that sends the server's version when it changes; the runtime syncs when it hears of a newer one, polls every 30 s while the socket is up (2 s while it is down), and reconnects with backoff. `Host.live()` counts the connections.
+
 ## 2026-11-15: feature: serving an App over HTTP (Early)
 
 - Kind: feature

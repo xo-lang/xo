@@ -325,7 +325,7 @@ test "the host serves the page, the runtime and sync" {
   let p = r.call(http.new_request("GET", "/"))
   expect(p.status) == 200
   let body = p.text()?
-  expect(body.contains("<div id=\"xo-ui\" data-xo-sync=\"/_xo/sync\">")) == true
+  expect(body.contains("<div id=\"xo-ui\" data-xo-sync=\"/_xo/sync\" data-xo-live=\"/_xo/live\">")) == true
   expect(body.contains("<script src=\"/_xo/ui.js\" defer></script>")) == true
   let js = r.call(http.new_request("GET", "/_xo/ui.js"))
   expect(js.status) == 200
@@ -370,4 +370,25 @@ test "field marks a form value in the event's JSON" {
   let s = render(el("form", [on("submit", Msg.Add(id: "n", title: field("title")))], [el("input", [attr("name", "title")])]))
   // The private use mark survives escaping; the runtime fills it in.
   expect(s.contains("\u{E000}title")) == true
+}
+
+test "a sync that changes the model tells the live connections" {
+  let h = host(todo_app())
+  var r = http.router()
+  h.mount(r)
+  let (id, ch) = h.subscribe()
+  expect(h.live()) == 1
+  let up = Up{client: "a", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "x", title: "milk")}]}
+  r.call(sync_req(json.encode_str(up)))
+  expect(ch.try_recv()) == Some(1)
+  // A sync with nothing new tells no one.
+  r.call(sync_req(json.encode_str(Up{client: "a", ver: 1, msgs: []})))
+  expect(ch.try_recv()) == None
+  h.unsubscribe(id)
+  expect(h.live()) == 0
+}
+
+test "the page names the live endpoint" {
+  let r = routes_for(host(todo_app()))
+  expect(r.call(http.new_request("GET", "/")).text()?.contains("data-xo-live=\"/_xo/live\"")) == true
 }

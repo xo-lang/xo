@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/ui, Early): live updates: `mount` adds a websocket (`prefix/_xo/live`) that tells browsers when the server's model changes, so other tabs update in milliseconds instead of on the next 2 s poll.
 - Feature (std/ui, Early): `ui.host(app, title, css).mount(router)` serves an App: the server-rendered page, a browser runtime and a JSON sync endpoint; `ui.field(name)` puts a form value in a Msg. Until decision 0659's stage 3 the browser is a thin client: it queues Msgs in localStorage while offline, sends them on reconnect, and shows the server's view. New example: examples/ui-todo.
 - Feature (std/jwt, every backend): JWE compact tokens, `jwt.encrypt`, `jwt.decrypt` and `jwt.peek_jwe_header` (RFC 7516 and 7518 after go-jose v4: RSA-OAEP, AES and AES-GCM key wrap, PBES2, ECDH-ES, dir; AES-CBC-HMAC and AES-GCM), and the error `JwtErr.Decrypt` (decision 0660).
 - Perf (std/crypto, native backends): AES-GCM keeps a small message's counter and GHASH state in the thread's scratch memory instead of three small Lists: aead gcm_small 0.798 of before on linux/arm64 (xo bench --ab, 3 rounds).

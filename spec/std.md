@@ -10869,7 +10869,7 @@ pub fn el(tag: Str, attrs: List[Attr] = [], kids: List[Html] = []) -> Html
 pub fn attr(name: Str, value: Str) -> Attr
 pub fn on[E: Json](event: Str, msg: E) -> Attr       // data-xo-EVENT holding msg as JSON
 pub fn render(h: Html) -> Str
-pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "") -> Str
+pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "") -> Str
 pub fn field(name: Str) -> Str                         // a form value placeholder for a Msg's Str field
 
 pub struct Envelope[E] { pub seq: Int, pub msg: E }                        // derive Json
@@ -10900,6 +10900,7 @@ pub struct Sync[M, E] { pub down: Down[M, E], pub ver: Int, pub html: Str }   //
 pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256) -> Host[M, E]
 fn (h: Host[M, E]) model() -> M
 fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "")
+fn (h: Host[M, E]) live() -> Int                        // open live connections
 ```
 
 - `update` and `view` are fn types without `uses`, so the checker
@@ -10927,13 +10928,20 @@ fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "")
   takes only `Content-Type: application/json` (415 otherwise; a
   cross-site form cannot send it without CORS) and a body that decodes
   as an `Up` (400 otherwise); `?thin=1` leaves the log entries out.
+  `GET prefix/_xo/live` is a websocket (std/websocket's same-host Origin
+  rule) that sends the server's version as text at once and after each
+  sync that changed it; a connection has one pending notice at most, so a
+  slow client is never queued behind. The page's root carries
+  `data-xo-live` with its path.
 - The runtime sends the Msg of an `on` event for `click`, `submit` and
   `change` (a `field` placeholder filled from the form's field, or the
   element's own value; "" when absent), keeps its client id, next seq
   and unacknowledged Msgs in localStorage (so they survive going offline
-  and reloads), syncs after each event, every 2 s while the page is
-  visible, when it becomes visible and when the browser comes back
-  online, and replaces the view when the server's changed (not while a
+  and reloads), syncs after each event, when the live websocket announces
+  a version past its own, every 2 s while the page is visible and the
+  websocket is down (every 30 s while it is up), when it becomes visible
+  and when the browser comes back online; the websocket reconnects with
+  backoff from 1 s to 30 s, and replaces the view when the server's changed (not while a
   non-empty input or textarea in it has focus). The html element carries
   `data-xo-pending` while Msgs wait and `data-xo-offline` after a failed
   sync, for the app's CSS.
@@ -10958,4 +10966,6 @@ fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "")
   content types and bodies. examples/ui-todo is a shared todo list with
   three seats, checked in a browser on 2026-11-15: two clients, a form
   submit, a click, offline queueing and reconnect, a reload, no sideways
-  scrolling at 390 px.
+  scrolling at 390 px; with the live websocket another tab saw each add
+  in 1 to 10 ms (about 1.7 s by polling) and a reconnect's queued work in
+  102 ms (1,147 ms).
