@@ -2076,6 +2076,9 @@ pub fn crl_check_from(rl: Crl, parent: Cert) -> Str {
 pub struct Csr {
   pub cert: Cert
   pub err: Str
+  /// The attributes that read as PKCS #10 Attributes: (OID, the values'
+  /// DERs).
+  pub attrs: List[(Str, List[Bytes])] = []
 }
 
 fn csr_fail(msg: Str) -> Csr { Csr{cert: empty(), err: msg} }
@@ -2164,11 +2167,18 @@ pub fn parse_csr(der: Bytes) -> Csr {
   }
   var attrs = ao.body
   var seen: List[Str] = []
+  var out: List[(Str, List[Bytes])] = []
   while !cbyte.empty(attrs) {
-    var attr = match cbyte.read(attrs, cbyte.SEQUENCE) {
-      Some(x) => x
-      None => return csr_fail(MALFORMED_CSR)
+    // Go's RawAttributes take an element of any type; one that is not an
+    // Attribute is skipped
+    let el = cbyte.read_any(attrs)
+    if !el.ok {
+      return csr_fail(MALFORMED_CSR)
     }
+    if el.tag != cbyte.SEQUENCE {
+      continue
+    }
+    var attr = el.body
     let id = match cbyte.read_oid(attr) {
       Some(o) => o
       None => continue
@@ -2177,6 +2187,23 @@ pub fn parse_csr(der: Bytes) -> Csr {
       Some(x) => x
       None => continue
     }
+    // the values: a SET OF any (pkcs10Attribute's []RawValue); one that
+    // does not read skips the attribute
+    var vs: List[Bytes] = []
+    var each = vals
+    var read_all = true
+    while !cbyte.empty(each) {
+      let v = cbyte.read_any(each)
+      if !v.ok {
+        read_all = false
+        break
+      }
+      vs.push(cbyte.bytes(v.whole))
+    }
+    if !read_all {
+      continue
+    }
+    out.push((id, vs))
     if id != "1.2.840.113549.1.9.14" || cbyte.empty(vals) {
       continue
     }
@@ -2226,7 +2253,7 @@ pub fn parse_csr(der: Bytes) -> Csr {
   if !cbyte.empty(body) {
     return csr_fail(MALFORMED_CSR)
   }
-  Csr{cert: c, err: ""}
+  Csr{cert: c, err: "", attrs: out}
 }
 
 /// Go's CertificateRequest.CheckSignature: the request's own key signed

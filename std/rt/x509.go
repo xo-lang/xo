@@ -1038,8 +1038,40 @@ func x509RequestOf(tk *Task, q *x509.CertificateRequest) X509_CertificateRequest
 		F_subject: x509NameOf(q.RawSubject, q.Subject), F_public_key: pk,
 		F_dns_names: x509Strs(q.DNSNames), F_ip_addresses: ListFromSlice(ips),
 		F_email_addresses: x509Strs(q.EmailAddresses), F_uris: ListFromSlice(uris),
-		F_extensions: x509Exts(q.Extensions),
+		F_extensions: x509Exts(q.Extensions), F_attributes: x509CsrAttrs(q.RawTBSCertificateRequest),
 	}
+}
+
+// x509CsrAttrs is a request's attributes: each of RawAttributes that reads
+// as parseCSRExtensions' pkcs10Attribute, with its values' DERs.
+func x509CsrAttrs(tbs []byte) List[X509_CsrAttribute] {
+	var t struct {
+		Raw           asn1.RawContent
+		Version       int
+		Subject       asn1.RawValue
+		PublicKey     asn1.RawValue
+		RawAttributes []asn1.RawValue `asn1:"tag:0"`
+	}
+	var out []X509_CsrAttribute
+	if _, err := asn1.Unmarshal(tbs, &t); err != nil {
+		return ListFromSlice(out)
+	}
+	type attr struct {
+		Id     asn1.ObjectIdentifier
+		Values []asn1.RawValue `asn1:"set"`
+	}
+	for _, r := range t.RawAttributes {
+		var a attr
+		if rest, err := asn1.Unmarshal(r.FullBytes, &a); err != nil || len(rest) != 0 {
+			continue
+		}
+		vs := make([]Bytes, 0, len(a.Values))
+		for _, v := range a.Values {
+			vs = append(vs, Bytes(v.FullBytes))
+		}
+		out = append(out, X509_CsrAttribute{F_oid: a.Id.String(), F_values: ListFromSlice(vs)})
+	}
+	return ListFromSlice(out)
 }
 
 func X509_parse_request(tk *Task, der Bytes) Result[X509_CertificateRequest, X509_CertErr] {

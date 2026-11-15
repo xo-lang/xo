@@ -434,6 +434,20 @@ struct CertificateRequest {
   uris: List[Str]
   /// The requested extensions, in order.
   extensions: List[Extension]
+  /// The request's attributes (PKCS #10's [0] attributes: the extension
+  /// request, a challengePassword, an unstructuredName, ...), in order:
+  /// each that reads as an Attribute (an OID and a SET of values), as Go's
+  /// parseCSRExtensions reads them. Go's deprecated Attributes holds the
+  /// ones whose values are SEQUENCEs of AttributeTypeAndValue, decoded;
+  /// these keep every value as its DER.
+  attributes: List[CsrAttribute] = []
+}
+
+/// A certificate request attribute (RFC 2986 4.1): its type's OID
+/// (dotted) and its values, each the DER of one element of its SET.
+struct CsrAttribute {
+  oid: Str
+  values: List[Bytes]
 }
 
 /// What create_request puts in a request.

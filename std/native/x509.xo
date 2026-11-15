@@ -1104,7 +1104,7 @@ fn revocationlist_check_signature_from(l: x509.RevocationList, issuer: x509.Cert
 // ---------------------------------------------------------------------------
 // Certificate requests
 
-fn request_of(c: lx.Cert) -> x509.CertificateRequest {
+fn request_of(c: lx.Cert, attrs: List[(Str, List[Bytes])]) -> x509.CertificateRequest {
   var ips: List[netip.Addr] = []
   for b in c.ips {
     if let Some(a) = netip.addr_from_bytes(b) {
@@ -1122,6 +1122,7 @@ fn request_of(c: lx.Cert) -> x509.CertificateRequest {
     email_addresses: c.emails,
     uris: c.uris,
     extensions: c.extensions.map(fn(x) { ext_of(x) }),
+    attributes: attrs.map(fn(a) { x509.CsrAttribute{oid: a.0, values: a.1} }),
   }
 }
 
@@ -1130,7 +1131,7 @@ fn parse_request(der: Bytes) -> x509.CertificateRequest ! x509.CertErr {
   if q.err != "" {
     return Err(err(q.err))
   }
-  Ok(request_of(q.cert))
+  Ok(request_of(q.cert, q.attrs))
 }
 
 fn certificaterequest_check_signature(q: x509.CertificateRequest) -> () ! x509.CertErr {

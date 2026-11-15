@@ -7627,8 +7627,10 @@ fn self_signed(r: Rand, hosts: List[Str], now: Time, days: Int = 30) -> (Bytes, 
 struct CertificateRequest {
   raw: Bytes, version: Int, signature_algorithm: Str, subject: Name,
   public_key: crypto.PublicKey?, dns_names: List[Str], ip_addresses: List[netip.Addr],
-  email_addresses: List[Str], uris: List[Str], extensions: List[Extension]
+  email_addresses: List[Str], uris: List[Str], extensions: List[Extension],
+  attributes: List[CsrAttribute] = []   // PKCS #10 attributes (Go's Attributes and challengePassword)
 }
+struct CsrAttribute { oid: Str, values: List[Bytes] }   // each value's DER
 struct RequestTemplate {
   subject: Name, dns_names: List[Str] = [], ip_addresses: List[netip.Addr] = [],
   email_addresses: List[Str] = [], uris: List[Str] = [], extra_extensions: List[Extension] = []

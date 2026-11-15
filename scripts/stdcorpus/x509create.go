@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"go/ast"
@@ -634,6 +635,9 @@ func x509CreateCorpus() string {
 	for _, der := range goCSRs {
 		fmt.Fprintf(&o, "  (%s, %s),\n", xbytes(der), xq(ctCSRWant(der)))
 	}
+	for _, der := range ctCSRAttrVariants(goCSRs[0]) {
+		fmt.Fprintf(&o, "  (%s, %s),\n", xbytes(der), xq(ctCSRWant(der)))
+	}
 	for i, der := range csrDERs {
 		fmt.Fprintf(&o, "  (%s, %s),\n", xbytes(der), xq(ctCSRWant(der)))
 		if i < 3 {
@@ -821,7 +825,7 @@ test "create_request makes Go's request, and parse_request reads Go's and its mu
           Ok(_) => "ok"
           Err(e) => e.display()
         }
-        "v=${q.version} sig=${q.signature_algorithm} subj=${q.subject.display()} dns=${q.dns_names.join(",")} ip=${q.ip_addresses.map(fn(a) { a.display() }).join(",")} email=${q.email_addresses.join(",")} uri=${q.uris.join(",")} ext=${exts(q.extensions)} key=${q.public_key.is_some()} check=${sig}"
+        "v=${q.version} sig=${q.signature_algorithm} subj=${q.subject.display()} dns=${q.dns_names.join(",")} ip=${q.ip_addresses.map(fn(a) { a.display() }).join(",")} email=${q.email_addresses.join(",")} uri=${q.uris.join(",")} ext=${exts(q.extensions)} key=${q.public_key.is_some()} check=${sig} attrs=${q.attributes.map(fn(a) { "${a.oid}=${a.values.map(fn(v) { v.to_hex() }).join("+")}" }).join(";")}"
       }
       Err(e) => "error: ${e.display()}"
     }
@@ -960,9 +964,136 @@ func ctCSRWant(der []byte) string {
 	if err := q.CheckSignature(); err != nil {
 		check = err.Error()
 	}
-	return fmt.Sprintf("v=%d sig=%s subj=%s dns=%s ip=%s email=%s uri=%s ext=%s key=%v check=%s", q.Version, q.SignatureAlgorithm, q.Subject,
+	return fmt.Sprintf("v=%d sig=%s subj=%s dns=%s ip=%s email=%s uri=%s ext=%s key=%v check=%s attrs=%s", q.Version, q.SignatureAlgorithm, q.Subject,
 		strings.Join(q.DNSNames, ","), strings.Join(ips, ","), strings.Join(q.EmailAddresses, ","), strings.Join(uris, ","),
-		ctExtText(q.Extensions), q.PublicKey != nil, check)
+		ctExtText(q.Extensions), q.PublicKey != nil, check, ctCSRAttrs(q))
+}
+
+// ctCSRAttrVariants is der with other [0] attributes in its
+// CertificationRequestInfo (the signature no longer checks): elements that
+// are not Attributes, Attributes that do not read, odd values, and the
+// extension request among them.
+func ctCSRAttrVariants(der []byte) [][]byte {
+	var outer struct {
+		TBS asn1.RawValue
+		Alg asn1.RawValue
+		Sig asn1.RawValue
+	}
+	if _, err := asn1.Unmarshal(der, &outer); err != nil {
+		panic(err)
+	}
+	var tbs struct {
+		Version   int
+		Subject   asn1.RawValue
+		PublicKey asn1.RawValue
+		Attrs     asn1.RawValue
+	}
+	if _, err := asn1.Unmarshal(outer.TBS.FullBytes, &tbs); err != nil {
+		panic(err)
+	}
+	h := func(s string) []byte {
+		b, err := hex.DecodeString(strings.ReplaceAll(s, " ", ""))
+		if err != nil {
+			panic(err)
+		}
+		return b
+	}
+	tlv := func(tag byte, body []byte) []byte {
+		if len(body) < 128 {
+			return append([]byte{tag, byte(len(body))}, body...)
+		}
+		return append([]byte{tag, 0x82, byte(len(body) >> 8), byte(len(body))}, body...)
+	}
+	cat := func(xs ...[]byte) []byte {
+		var b []byte
+		for _, x := range xs {
+			b = append(b, x...)
+		}
+		return b
+	}
+	cp := h("06 09 2a 86 48 86 f7 0d 01 09 07")                  // challengePassword
+	un := h("06 09 2a 86 48 86 f7 0d 01 09 02")                  // unstructuredName
+	er := h("06 09 2a 86 48 86 f7 0d 01 09 0e")                  // extensionRequest
+	exts := h("30 0e 30 0c 06 03 55 1d 11 04 05 30 03 82 01 61") // SAN dNSName "a"
+	exts2 := h("30 0e 30 0c 06 03 55 1d 11 04 05 30 03 82 01 62")
+	sets := [][]byte{
+		nil,
+		tlv(0x30, cat(cp, tlv(0x31, tlv(0x0c, []byte("secret"))))),
+		cat(tlv(0x30, cat(cp, tlv(0x31, tlv(0x13, []byte("pw"))))), tlv(0x30, cat(un, tlv(0x31, tlv(0x16, []byte("host.example")))))),
+		cat(h("02 01 05"), tlv(0x30, cat(cp, tlv(0x31, tlv(0x0c, []byte("x")))))),
+		cat(tlv(0x30, cat(h("06 00"), tlv(0x31, h("05 00")))), tlv(0x30, cat(un, tlv(0x31, h("05 00"))))),
+		tlv(0x30, cat(cp, h("02 01 01"))),
+		tlv(0x30, cat(cp, tlv(0x31, nil))),
+		tlv(0x30, cat(cp, tlv(0x31, h("0c 05 61")))),
+		tlv(0x30, cat(cp, tlv(0x31, cat(tlv(0x0c, []byte("a")), tlv(0x0c, []byte("b")))), h("02 01 07"))),
+		tlv(0x30, cat(er, tlv(0x31, exts))),
+		cat(tlv(0x30, cat(er, tlv(0x31, exts))), tlv(0x30, cat(er, tlv(0x31, exts2)))),
+		cat(tlv(0x30, cat(er, tlv(0x31, exts))), tlv(0x30, cat(er, tlv(0x31, exts)))),
+		tlv(0x30, cat(er, tlv(0x31, h("30 03 02 01")))),
+		tlv(0x30, cat(er, tlv(0x31, cat(exts, tlv(0x0c, []byte("z")))))),
+		tlv(0x30, cat(er, tlv(0x31, nil))),
+		cat(tlv(0x31, nil), tlv(0x30, nil), tlv(0x30, cp)),
+		tlv(0x30, cat(cp, tlv(0x30, tlv(0x0c, []byte("seq not set"))))),
+		tlv(0x30, cat(h("06 03 2a 03 04"), tlv(0x31, tlv(0x30, cat(h("06 03 55 04 03"), tlv(0x0c, []byte("cn"))))))),
+	}
+	var out [][]byte
+	for _, s := range sets {
+		t := tlv(0x30, cat(asn1Int(tbs.Version), tbs.Subject.FullBytes, tbs.PublicKey.FullBytes, tlv(0xa0, s)))
+		out = append(out, tlv(0x30, cat(t, outer.Alg.FullBytes, outer.Sig.FullBytes)))
+	}
+	return out
+}
+
+func asn1Int(v int) []byte {
+	b, err := asn1.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// ctCSRAttrs is a request's attributes as std/x509 reads them: each of
+// RawAttributes that reads as parseCSRExtensions' pkcs10Attribute, "OID=V+V"
+// with each value's DER in hex, joined by ";". The ones that read as
+// pkix.AttributeTypeAndValueSET must be Go's (deprecated) Attributes.
+func ctCSRAttrs(q *x509.CertificateRequest) string {
+	var t struct {
+		Raw           asn1.RawContent
+		Version       int
+		Subject       asn1.RawValue
+		PublicKey     asn1.RawValue
+		RawAttributes []asn1.RawValue `asn1:"tag:0"`
+	}
+	if _, err := asn1.Unmarshal(q.RawTBSCertificateRequest, &t); err != nil {
+		panic(err)
+	}
+	type attr struct {
+		Id     asn1.ObjectIdentifier
+		Values []asn1.RawValue `asn1:"set"`
+	}
+	var parts []string
+	atvs := 0
+	for _, r := range t.RawAttributes {
+		var a attr
+		if rest, err := asn1.Unmarshal(r.FullBytes, &a); err != nil || len(rest) != 0 {
+			continue
+		}
+		var vs []string
+		for _, v := range a.Values {
+			vs = append(vs, hex.EncodeToString(v.FullBytes))
+		}
+		parts = append(parts, a.Id.String()+"="+strings.Join(vs, "+"))
+	}
+	for _, r := range t.RawAttributes {
+		var s pkix.AttributeTypeAndValueSET
+		if rest, err := asn1.Unmarshal(r.FullBytes, &s); err == nil && len(rest) == 0 {
+			atvs++
+		}
+	}
+	if atvs != len(q.Attributes) {
+		panic("ctCSRAttrs: Go's Attributes disagree")
+	}
+	return strings.Join(parts, ";")
 }
 
 func ctCRLWant(der []byte) string {
