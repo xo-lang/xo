@@ -8,5 +8,11 @@ private vulnerability reporting: the **Security** tab of xo-lang/xo, then
 Include what is affected, how to reproduce it, and its impact as you
 understand it. You will get an answer in the report's thread.
 
-Xo is experimental and has no supported releases yet: fixes land on main
-and in the next version, not as backports.
+Response times: an acknowledgement within 3 days, and a fix or a plan
+within 30 days, sooner for a critical issue.
+
+Supported versions: security fixes go to the current release only,
+shipped as a point release (for example 0.52.1 for 0.52.0); older
+releases get no backports. Each fix is a `Security` line in the
+CHANGELOG and, once the database is live, an entry in vuln.xolang.org,
+which `xo vuln` checks a program against.
