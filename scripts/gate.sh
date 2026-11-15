@@ -1070,6 +1070,68 @@ arm64_goldens() {
   done
   if [ -s "$logs/golden-sel.txt" ]; then cat "$logs/golden-sel.txt"; else echo all; fi
 }
+# bin_select BACKEND: decision 0657 (owner through the lead, 2026-11-15):
+# the goldens to run, from the binaries themselves. Every golden is built
+# by the merge base's xo with the base's std and by this xo with this std
+# (each std copied to one path in turn, this branch's golden sources at
+# one path, every cache off: the std path is in the debug information and
+# strings, so two paths differ everywhere), and scripts/golden-bin-select.py
+# names those whose binaries differ with the build-info id masked, those
+# a side could not build, and those that use C (their C step records a
+# path of its own). A compiler change left 98% of the arm64 binaries
+# byte-identical (E: 14 of 743 differ; openenum: 8 of 742, all C;
+# ~/xo-lead/notes/lang2/artifact-keyed-tests.md), where its LLVM IR differed
+# in nearly every golden. Prints "all", "none" or the comma separated
+# names, with a line for the log in $logs/bin-select.txt; every golden when
+# the change touches the golden tests, the test harness or the selection,
+# or when a build of the base fails. The full tier on main (ctier.sh) runs
+# every golden; XO_GATE_BIN_SELECT=0 turns this off.
+bin_select() {
+  local be=$1 base files T bx t0 sel n ntot
+  local note="$logs/bin-select.txt"
+  t0=$(date +%s)
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  files=$({ git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; })
+  # XO_GATE_BIN_SELECT=force skips this check (for proving the selection
+  # on a branch that carries a change to it)
+  if [ "${XO_GATE_BIN_SELECT:-1}" != force ] && echo "$files" | grep -q -E '^(internal/(arm64|llvm)/[^/]+$|internal/xotool/|scripts/xobuild/|scripts/golden-bin-select\.py$|go\.(mod|sum)$)'; then
+    echo "every golden (the change touches the golden tests, internal/xotool, scripts/xobuild or the selection)" >"$note"; echo all; return
+  fi
+  T=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-bin.XXXXXX")
+  if ! { git worktree add -q --detach "$T/tree" "$base" && (cd "$T/tree" && go run ./scripts/xobuild); } >"$logs/bin-select-base.txt" 2>&1 || [ ! -x "$T/tree/bin/xo" ]; then
+    echo "every golden (the merge base's xo did not build: $logs/bin-select-base.txt)" >"$note"
+    git worktree remove --force "$T/tree" >/dev/null 2>&1; rm -rf "${T:?}"; echo all; return
+  fi
+  cp "$T/tree/bin/xo" "$T/xo-base"
+  mkdir -p "$T/src" && cp -R internal/llvm/testdata/golden "$T/src/golden"
+  ls "$T/src/golden" | sort >"$T/names.txt"
+  ntot=$(wc -l <"$T/names.txt" | tr -d ' ')
+  # both sides build to one output path, renamed after: a Mach-O's code
+  # signature and UUID take the output's path
+  # (gotchas/darwin-binary-identity-output-name.md)
+  bin_build_side() { # XO STDDIR OUT
+    rm -rf "$T/std" "$T/o" && cp -R "$2" "$T/std" && mkdir -p "$T/o"
+    XO_BIN_CACHE=off XO_BACKEND_CACHE=off XO_FE_CACHE=off XO_PART_CACHE=off XO_CHK_CACHE=off XO_CLANG_CACHE=off XO_BACKEND_CACHE_DIR="$T/bcache" \
+      BX="$1" XSTD="$T/std" SRC="$T/src/golden" OUT="$T/o" BE="$be" \
+      xargs -P "${XO_GATE_BIN_JOBS:-$(ir_jobs)}" -n 1 sh -c 'mkdir -p "$OUT/$0" && cd "$SRC/$0" && XO_STD="$XSTD" "$BX" build --backend="$BE" -o "$OUT/$0/prog" . >"$OUT/$0/log" 2>&1; :' <"$T/names.txt"
+    mv "$T/o" "$3"
+  }
+  bin_build_side "$T/xo-base" "$T/tree/std" "$T/a"
+  bin_build_side "$XO_CLI" "$PWD/std" "$T/b"
+  sel=$(python3 scripts/golden-bin-select.py "$T/a" "$T/b" "$T/src/golden" "$T/names.txt" 2>"$T/count.txt")
+  # the goldens whose own directory the branch changes or adds: both sides
+  # built this branch's sources
+  sel=$( { echo "$sel"; echo "$files" | sed -n 's|^internal/llvm/testdata/golden/\([^/]*\)/.*|\1|p'; } | sort -u | grep . | grep -x -F -f "$T/names.txt")
+  n=$(echo "$sel" | grep -c .)
+  echo "$n of $ntot goldens by their $be binaries ($(sed 's/^golden-bin-select: //' "$T/count.txt"); $(($(date +%s) - t0)) s): $(echo "$sel" | paste -sd' ' -)" >"$note"
+  printf '%s\t(binselect)\t%s\tselect\n' "$be" "$(($(date +%s) - t0))" >>"$logs/times.tsv"
+  git worktree remove --force "$T/tree" >/dev/null 2>&1; rm -rf "${T:?}"
+  if [ "$n" = 0 ]; then echo none; else echo "$sel" | paste -sd, -; fi
+}
+bin_select_ok() {
+  [ "${XO_GATE_BIN_SELECT:-1}" != 0 ] || return 1
+  [ "${XO_GATE_LLVM:-}" != all ] && [ "${XO_GATE_TESTS:-}" != all ]
+}
 # ir_first_wait STEP: with XO_GATE_IR_FIRST=1 in a concurrent gate that
 # runs llvm, every other step but repo starts once the llvm step's golden
 # selection is made, so HEAD's IR builds have the host to themselves at
@@ -1120,7 +1182,24 @@ run_step_body() {
   arm64)
     sk=$(gate_skip internal/arm64)
     [ -s "$logs/internal-arm64-areas.txt" ] && echo "arm64 areas: $(cat "$logs/internal-arm64-areas.txt")"
-    if arm64_select_ok; then
+    if bin_select_ok; then
+      # decision 0657: the goldens whose arm64 binaries differ, selected
+      # while the package's other tests run
+      ( bin_select arm64 >"$logs/arm64-binsel.txt.tmp" 2>>"$logs/bin-select-base.txt"; mv "$logs/arm64-binsel.txt.tmp" "$logs/arm64-binsel.txt" ) &
+      bpid=$!
+      presk="^($arm64_sel_tests)\$"
+      [ -n "$sk" ] && presk="^($arm64_sel_tests|${sk#^(}"
+      full arm64 ./internal/arm64 -skip "$presk"
+      wait "$bpid"
+      asel=$(cat "$logs/arm64-binsel.txt" 2>/dev/null); [ -n "$asel" ] || asel=all
+      echo "arm64 goldens: $(cat "$logs/bin-select.txt" 2>/dev/null)"
+      case $asel in
+        all) full arm64sel ./internal/arm64 -run "^($arm64_sel_tests)\$" ${sk:+-skip "$sk"} ;;
+        *) XO_ARM64_GOLDENS=$asel full arm64sel ./internal/arm64 -run "^($arm64_sel_tests)\$" ${sk:+-skip "$sk"} ;;
+      esac
+      # what ran, so a selection that matched no golden shows
+      echo "arm64 golden subtests: $(grep -c -E -- '--- PASS: Test[A-Za-z]+/[^ ]+' "$logs/arm64sel.txt") passed, $(grep -c -E -- '--- FAIL: Test[A-Za-z]+/[^ ]+' "$logs/arm64sel.txt") failed, $(grep -c -E -- '--- SKIP: Test[A-Za-z]+/[^ ]+' "$logs/arm64sel.txt") skipped"
+    elif arm64_select_ok; then
       # the tests that build every golden run after the others, on the
       # llvm step's selection (arm64_goldens)
       presk="^($arm64_sel_tests)\$"

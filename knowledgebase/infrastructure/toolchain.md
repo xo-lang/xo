@@ -2300,6 +2300,12 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   prelude-closure change, a golden importing a module outside std, or a
   base manifest without a deps file. Tests: scripts/golden-std-deps_test.sh.
   Last verified: 2026-11-15.
+  The arm64 step's golden tests follow their own selection since decision
+  0657 (gate.sh bin_select): every golden built by the merge base's xo and
+  by the branch's, compared with the build-info id masked
+  (scripts/golden-bin-select.py; tests: scripts/golden-bin-select_test.sh;
+  `XO_GATE_BIN_SELECT=0` turns it off, `XO_GATE_BIN_JOBS` sets the build
+  width, default ir_jobs). Last verified: 2026-11-15.
   The llvm step runs the package's tests that do not read the selection
   (all but TestGolden, TestGoldenSplit, TestGoldenGoParity,
   TestDebugInfoSameOutputLLVM, TestGoldenTasks, TestGoldenASan) while the

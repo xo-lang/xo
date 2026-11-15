@@ -236,6 +236,17 @@ yourself.
 
 ## Testing
 
+- Golden selection by binaries (decision 0657, 2026-11-15): the arm64
+  step builds every golden with the merge base's xo and with yours (each
+  side's std at one path, caches off) and runs TestGoldenRun and its
+  variants only for the goldens whose binaries differ with the build-info
+  id masked, plus those a side could not build, those that use C, and
+  those whose directory you changed (scripts/golden-bin-select.py). The
+  log's `arm64 goldens:` line counts each kind; `$XO_GATE_LOGS/bin-select-base.txt`
+  holds the base's build. Every golden runs for a change to the golden
+  tests, internal/xotool, scripts/xobuild or the selector, and with
+  `XO_GATE_BIN_SELECT=0` (the escape hatch); the continuous tier runs
+  every golden on main. Traps: gotchas/binary-compare-build-id-and-paths.md.
 - Golden selection by inputs ((B) of the gate-time plan, lead, 2026-11-15):
   the llvm step first runs `xo build --list-inputs` on every golden (about
   11 s for 742 on the Mac). When no golden reads a changed file, no IR is
