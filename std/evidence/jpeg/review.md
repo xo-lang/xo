@@ -1,8 +1,8 @@
 kind: review
 module: jpeg
 result: pass
-commit: 58b0c68a4
-source: 019450388a9c7ef8436c7951c465cf4117b5e1755aad4b2ecc608bb05d56b1d4
+commit: afa43571d
+source: 5f0d82e205789ddcdafa775bcd5797960a6fca94b5a193128bcba9c40c8e83e2
 date: 2026-11-14
 host: darwin/arm64 (probes and tests), linux/arm64 host 2 (fuzz, stress, race), host 1 (perf)
 command: none (section 3 does not apply: no secret); read against knowledgebase/infrastructure/std-security-checklist.md
@@ -32,8 +32,10 @@ Sibling classes, from the golang.org/x/image entries (read 2026-11-14):
   (jpeg.xo process_sos, `image too large`), which Go does not.
 - CPU on degenerate sizes (GO-2023-1990 tiff 0-height images,
   GO-2023-1989): a zero width or height is not refused (neither is it in
-  Go's reader.go); it gives no MCUs (mxx or myy 0) and an empty image at
-  no cost; a scan's work is bounded by the blocks the frame declares
+  Go's reader.go); it gives no MCUs (mxx or myy 0) and an image of 0 by 0
+  at no cost, as Go's SubImage of an empty rectangle (since afa43571d: the
+  fuzz, TestJpegFuzz seed 9, found decode returning the frame's width by
+  0, an output divergence with no cost or memory effect); a scan's work is bounded by the blocks the frame declares
   (at most max_pixels / 64 per component, with sampling factors summing
   to at most 10, jpeg.xo:1476 `total sampling factors too large`).
 - Panics on out of range indexes (GO-2024-2937 tiff palette, GO-2026-5031
