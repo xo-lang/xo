@@ -141,7 +141,7 @@ func (x *Crypto_Shake) M_read(_ *Task, n int64) Bytes {
 	return Bytes(out)
 }
 
-func (x *Crypto_Shake) M_reset(*Task)          { x.s.Reset() }
+func (x *Crypto_Shake) M_reset(*Task)           { x.s.Reset() }
 func (x Crypto_Shake) M_block_size(*Task) int64 { return int64(x.s.BlockSize()) }
 
 func Crypto_sum_shake128(_ *Task, data Bytes, n int64) Bytes {
