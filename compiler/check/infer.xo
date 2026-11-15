@@ -695,6 +695,16 @@ fn (var c: Checker) is_eq_type(t: Int, name: Str) -> Bool {
 }
 
 /// Whether o is a std handle type (no equality).
+/// Whether o is a prelude type that holds state shared between tasks
+/// (decision 0662): what a closure must not capture to stay deterministic.
+fn (c: Checker) is_sync_handle(o: Int) -> Bool {
+  let m = c.objs[o].module
+  if m < 0 || c.objs[o].tkind != "struct" || !c.mods[m].is_prelude {
+    return false
+  }
+  text(c.objs[o].name) is "Chan" | "Mutex" | "Atomic"
+}
+
 fn (c: Checker) is_handle(o: Int) -> Bool {
   let m = c.objs[o].module
   if m < 0 || c.objs[o].tkind != "struct" {

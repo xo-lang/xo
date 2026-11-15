@@ -1,5 +1,16 @@
 # std/metrics changes
 
+## 2026-11-15: behavior: scrape time readers may use shared state
+
+- Kind: behavior
+- Commit: this push
+- Found by: decision 0662 (a closure that captures shared state performs `sync`)
+- Go reference: none
+- Test: test/errorcheck/effect_sync_capture; the module's own tests check clean
+- Shipped in: not yet released
+
+`gauge_func`, `counter_func` and `collector` take `fn() -> Float uses sync` (`fn() -> List[Sample] uses sync`): a reader is called at scrape time from another task and usually reads an Atomic or a Mutex, which a pure function type now refuses (decision 0662). `handler()`, `handler_at(clock)` and `middleware(clock, label)` return types that allow `sync` too (`uses sync`, `uses (clock, sync)`): the closures read the registry's Mutex. Callers change nothing; a program that passed or stored a variable of the old type adds `sync` to it.
+
 ## 2026-11-15: perf: a labelled hit reads its series in place
 
 - Kind: perf

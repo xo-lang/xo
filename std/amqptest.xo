@@ -222,7 +222,7 @@ pub fn new(clock: Clock) -> Broker {
 /// Serves the connections `l` accepts, each in a task of `g`; returns at once. The tasks end when
 /// `g` is cancelled or `l` is closed.
 pub fn (b: Broker) serve(g: task.Group, l: Listener) uses (net.listen, clock) {
-  g.spawn_background(fn() uses (net.listen, clock) { accept_loop(b, g, l) })
+  g.spawn_background(fn() uses (net.listen, clock, sync) { accept_loop(b, g, l) })
 }
 
 /// Declares a queue (a queue is also created, with the defaults, by the first link to it).
@@ -2260,7 +2260,7 @@ fn run_conn(b: Broker, g: task.Group, sc: ServerConn, id: Int, wake: Chan[Bool])
   var c = SvConn{id: id}
   let rest = handshake(sc, c)?
   let frames = Chan[amqp.Frame].new(cap: 64)
-  g.spawn_background(fn() uses net.listen { frame_reader(sc, rest, frames) })
+  g.spawn_background(fn() uses (net.listen, sync) { frame_reader(sc, rest, frames) })
   c.seen_gen = b.st.with_read(fn(s: BrokerState) -> Int { s.gen })
   var stop = false
   while !stop {
@@ -2307,7 +2307,7 @@ fn accept_loop(b: Broker, g: task.Group, l: Listener) uses (net.listen, clock) {
           s.conns.push((n, sc))
           n
         })
-        g.spawn_background(fn() uses (net.listen, clock) { serve_conn(b, g, sc, id, wake) })
+        g.spawn_background(fn() uses (net.listen, clock, sync) { serve_conn(b, g, sc, id, wake) })
       }
       Err(_) => return
     }

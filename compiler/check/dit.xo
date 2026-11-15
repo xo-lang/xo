@@ -38,7 +38,9 @@ fn (var c: Checker) dit_arg(call_span: Span, arg: Expr) {
   if t >= 0 && c.tys[t].kind == TyKind.Func && c.tys[t].eff >= 0 {
     let fl = c.flatten(c.tys[t].eff, true)
     for l in fl.labels {
-      if l != "rand" {
+      // `sync` (a captured Chan, Mutex or Atomic, decision 0662) is not
+      // parking by itself: the walk below names each operation that parks
+      if l != "rand" && l != "sync" {
         let d = c.error("XO0704", parser.expr_span(arg), "the function given to `crypto.with_data_independent_timing` performs `${l}`, which can park or yield; DIT is the thread's and a task switch does not carry it (decision 0656)")
         c.note(d, "compute the inputs before the section and pass only pure work to it")
         return

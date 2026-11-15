@@ -1,7 +1,7 @@
 use std/json
 use std/path
 
-type ReadLine = fn() -> Str? ! IoErr
+type ReadLine = fn() -> Str? ! IoErr uses sync
 
 /// Input that arrives only when the test sends it, so the test controls
 /// where "the middle of input" is.

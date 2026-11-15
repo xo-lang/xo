@@ -72,12 +72,12 @@ fn split_fake(pattern: Str) -> (Str, Str, Str) {
   (method, prefix, rest)
 }
 
-fn fakenet_handle(n: testing.FakeNet, pattern: Str, h: fn(http.Request) -> http.Response) {
+fn fakenet_handle(n: testing.FakeNet, pattern: Str, h: fn(http.Request) -> http.Response uses sync) {
   let (method, prefix, path) = split_fake(pattern)
   testworld.fake_handle(method, prefix, path, rt.any_of(h))
 }
 
-fn fakenet_handle_tls(n: testing.FakeNet, pattern: Str, cert: tls.TlsCert, h: fn(http.Request) -> http.Response) {
+fn fakenet_handle_tls(n: testing.FakeNet, pattern: Str, cert: tls.TlsCert, h: fn(http.Request) -> http.Response uses sync) {
   let (method, prefix, path) = split_fake(pattern)
   testworld.fake_handle(method, prefix, path, rt.any_of(testworld.FakeTlsH{h: rt.any_of(h), cert: rt.any_of(cert)}))
 }

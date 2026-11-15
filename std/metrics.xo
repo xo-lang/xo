@@ -85,7 +85,7 @@ pub struct Family {
   pub bounds: List[Float]
   pub series: Mutex[Store]
   pub dropped: Atomic[Int]
-  pub reads: List[fn() -> List[Sample]]
+  pub reads: List[fn() -> List[Sample] uses sync]
   pub objectives: List[(Float, Float)]
   pub max_age_ms: Int
   pub age_buckets: Int
@@ -308,17 +308,17 @@ pub fn (s: Summary) observe(v: Float, values: List[Str] = []) {
 
 /// A gauge (counter) whose value f returns at each scrape (GaugeFunc,
 /// CounterFunc).
-pub fn (r: Registry) gauge_func(name: Str, help: Str, f: fn() -> Float) {
-  let _f = make(r, 1, name, help, [], [], [fn() -> List[Sample] { [Sample{values: [], value: f()}] }])
+pub fn (r: Registry) gauge_func(name: Str, help: Str, f: fn() -> Float uses sync) {
+  let _f = make(r, 1, name, help, [], [], [fn() -> List[Sample] uses sync { [Sample{values: [], value: f()}] }])
 }
 
-pub fn (r: Registry) counter_func(name: Str, help: Str, f: fn() -> Float) {
-  let _f = make(r, 0, name, help, [], [], [fn() -> List[Sample] { [Sample{values: [], value: f()}] }])
+pub fn (r: Registry) counter_func(name: Str, help: Str, f: fn() -> Float uses sync) {
+  let _f = make(r, 0, name, help, [], [], [fn() -> List[Sample] uses sync { [Sample{values: [], value: f()}] }])
 }
 
 /// An instrument whose series f returns at each scrape (a Collector):
 /// one Sample per series, its values one per label.
-pub fn (r: Registry) collector(name: Str, help: Str, kind: Kind, labels: List[Str], f: fn() -> List[Sample]) {
+pub fn (r: Registry) collector(name: Str, help: Str, kind: Kind, labels: List[Str], f: fn() -> List[Sample] uses sync) {
   let _f = make(r, if kind is Kind.Counter { 0 } else { 1 }, name, help, labels, [], [f])
 }
 
@@ -363,14 +363,14 @@ pub fn (r: Registry) text(now: Time? = None) -> Str {
 
 /// A handler answering `text()` as `text/plain; version=0.0.4`:
 /// `router.handle("GET /metrics", reg.handler())`.
-pub fn (r: Registry) handler() -> fn(http.Request) -> http.Response {
+pub fn (r: Registry) handler() -> fn(http.Request) -> http.Response uses sync {
   fn(_req) -> http.Response {
     http.Response{status: 200, headers: {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"}, body: r.text().bytes()}
   }
 }
 
 /// handler, each scrape passing the clock's time to text (summaries age).
-pub fn (r: Registry) handler_at(clock: Clock) -> fn(http.Request) -> http.Response uses clock {
+pub fn (r: Registry) handler_at(clock: Clock) -> fn(http.Request) -> http.Response uses (clock, sync) {
   fn(_req) -> http.Response {
     http.Response{status: 200, headers: {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"}, body: r.text(Some(clock.now())).bytes()}
   }
@@ -382,7 +382,7 @@ pub fn (r: Registry) handler_at(clock: Clock) -> fn(http.Request) -> http.Respon
 /// `http_in_flight`. `label` names the route of a request for the `route`
 /// label: pass a function that returns a bounded set (the matched pattern,
 /// or the path with ids cut), never the raw path of an API with ids.
-pub fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str) -> fn(http.Request, http.Next) -> http.Response uses clock {
+pub fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str) -> fn(http.Request, http.Next) -> http.Response uses (clock, sync) {
   let reqs = r.counter("http_requests_total", "Requests by method, route and status.", ["method", "route", "status"])
   let lat = r.histogram("http_request_seconds", "Request latency in seconds.", ["route"], latency_buckets())
   let inflight = r.gauge("http_in_flight", "Requests being served.")
@@ -418,7 +418,7 @@ fn valid_name(s: Str, colon: Bool) -> Bool {
   true
 }
 
-fn make(r: Registry, kind: Int, name: Str, help: Str, labels: List[Str], bounds: List[Float], reads: List[fn() -> List[Sample]] = [], objectives: List[(Float, Float)] = [], max_age_ms: Int = 0, age_buckets: Int = 0) -> Family {
+fn make(r: Registry, kind: Int, name: Str, help: Str, labels: List[Str], bounds: List[Float], reads: List[fn() -> List[Sample] uses sync] = [], objectives: List[(Float, Float)] = [], max_age_ms: Int = 0, age_buckets: Int = 0) -> Family {
   if !valid_name(name, true) {
     fault("metrics: invalid metric name ${name.quote()}")
   }

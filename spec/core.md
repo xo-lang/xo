@@ -2837,10 +2837,30 @@ The builtin effects are:
 | `secrets` | `secrets.read`, `secrets.write` | The user's OS secret stores: Linux keyring, macOS Keychain, Windows DPAPI (decision 0584) |
 | `ffi` | | Calls into C through `use c` (4.5, native builds) |
 | `log` | | Writing a `std/log` record (`debug`, `info`, `warn`, `error`) |
+| `sync` | | A closure's use of captured shared state: a `Chan`, `Mutex` or `Atomic` (decision 0662) |
 
 A function with no `uses` clause is **pure**: it performs no capability
-effects. It may still allocate, fault, be cancelled, and use
-synchronized state (`Mutex`, `Atomic`, `Chan`).
+effects. It may still allocate, fault and be cancelled. A pure function
+**value** is also deterministic: the same arguments give the same result
+(decision 0662).
+
+- A closure that uses a captured value whose type holds a `Chan`, `Mutex`
+  or `Atomic` (directly, in a field, an element or an enum payload)
+  performs `sync`, so a pure function type refuses it (XO0701, with a
+  note on the capture). A closure with a `uses` clause lists `sync`
+  there (XO0701's fix adds it); a function type allows it with
+  `uses sync` (`fn(Request) -> Response uses sync`), as a callback that
+  is called from other tasks on purpose does.
+- `sync` binds closures only. A declared function, a test, an
+  initializer and an interface method use shared state without declaring
+  `sync`: a declared function reaches shared state only through its
+  parameters (decision 0332 has no global variables), whose types already
+  show it. A call of a closure that performs `sync` does not make the
+  declared function that calls it perform `sync`.
+- Passing shared state as an argument is allowed: `fn(Store) -> Int`
+  shows it in its parameter type.
+- std/native modules are exempt until a seed that knows `sync` is cut
+  (the seed compiles them).
 
 Logging (`std/log`) performs the `log` effect (decision 0156): a `pub`
 function that logs declares `uses log`, so a dependency's logging is
@@ -4069,7 +4089,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0607` | error | checker | `break` or `continue` outside a loop, or an unknown label (core 3.5) |
 | `XO0608` | error | checker | two C ABI export modules of the native std (std/native/llrt/cabi*.xo) define the same function name, one symbol `xo_x_<name>` (decision 0207) |
 | `XO0609` | error | checker | a merged std module calls an intrinsic of native/rt that is not portable (decision 0597: only `rt.cast`) |
-| `XO0701` | error | checker | effect performed outside the declared set (core 6.2) |
+| `XO0701` | error | checker | effect performed outside the declared set, including `sync` for a closure that captures shared state (core 6.1, 6.2) |
 | `XO0702` | error | checker | unknown effect label (core 6.1) |
 | `XO0703` | warning | vet | effect declared in `uses` is never performed (core 6.2) |
 | `XO0704` | error | checker | the function given to `crypto.with_data_independent_timing` can park or yield (decision 0656) |

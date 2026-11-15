@@ -132,7 +132,7 @@ pub fn (t: Ticker) next() -> Time? uses (clock, rand) {
     t.clock.sleep(due - now)
   }
   let tick = t.clock.now()
-  let gave = t.st.with(fn(var s: TickState) -> Bool uses rand {
+  let gave = t.st.with(fn(var s: TickState) -> Bool uses (rand, sync) {
     if s.due is None {
       // stopped while this call slept
       return false

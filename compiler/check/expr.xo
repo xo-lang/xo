@@ -2264,6 +2264,15 @@ fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
       ob.uses_file = c.path
       ob.uses_clause = us
     }
+    // the clause written, for XO0701's fix that adds what it misses
+    // (decision 0662: a closure that captures shared state gains `sync`)
+    if !x.effects.is_empty() {
+      var written: List[Str] = []
+      for e in x.effects {
+        written.push(if let Some(sb) = e.sub { "${text(e.name.name)}.${text(sb.name)}" } else { text(e.name.name) })
+      }
+      ob.uses_fix = Some(UsesFix{written: written, at: x.effects[x.effects.len() - 1].span.end, append: true, before_body: false})
+    }
     c.obligations.push(ob)
     eff = declared
   }

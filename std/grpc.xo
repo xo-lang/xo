@@ -499,7 +499,7 @@ pub fn (c: ClientCall) close_send() {
 
 /// The next response message; None at the end of an OK call, the status as an error otherwise.
 pub fn (c: ClientCall) recv() -> Bytes? ! Status uses net.dial {
-  let out = c.st.with(fn(var s) -> Result[Bytes?, Status] uses net.dial {
+  let out = c.st.with(fn(var s) -> Result[Bytes?, Status] uses (net.dial, sync) {
     if let Some(e) = s.failed {
       return Err(e)
     }

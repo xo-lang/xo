@@ -3137,10 +3137,10 @@ entropy.
 ### 8.1 FakeNet
 
 ```
-fn (n: FakeNet) handle(pattern: Str, h: fn(http.Request) -> http.Response)
+fn (n: FakeNet) handle(pattern: Str, h: fn(http.Request) -> http.Response uses sync)
     // pattern: "[METHOD ]<absolute url pattern>", e.g. "GET https://api.test/users/{id}"
     // a second handle with the same method, URL prefix and path pattern replaces the first (last wins; Go's ServeMux panics)
-fn (n: FakeNet) handle_tls(pattern: Str, cert: tls.TlsCert, h: fn(http.Request) -> http.Response)
+fn (n: FakeNet) handle_tls(pattern: Str, cert: tls.TlsCert, h: fn(http.Request) -> http.Response uses sync)
     // handle for https with the server's certificate: the client's checks run first (decision 0544)
 fn (n: FakeNet) fail(pattern: Str, err: http.ClientErr)       // every matching request, until clear_failures
 fn (n: FakeNet) fail_next(pattern: Str, err: http.ClientErr)  // the next matching request only
@@ -8332,9 +8332,9 @@ fn (g: Gauge) add(v: Float, values: List[Str] = [])
 fn (h: Histogram) observe(v: Float, values: List[Str] = [])
 fn (r: Registry) summary(name: Str, help: Str, labels: List[Str] = [], objectives: List[(Float, Float)] = [], max_age: Duration = 10m, age_buckets: Int = 5) -> Summary
 fn (s: Summary) observe(v: Float, values: List[Str] = [])
-fn (r: Registry) gauge_func(name: Str, help: Str, f: fn() -> Float)
-fn (r: Registry) counter_func(name: Str, help: Str, f: fn() -> Float)
-fn (r: Registry) collector(name: Str, help: Str, kind: Kind, labels: List[Str], f: fn() -> List[Sample])
+fn (r: Registry) gauge_func(name: Str, help: Str, f: fn() -> Float uses sync)
+fn (r: Registry) counter_func(name: Str, help: Str, f: fn() -> Float uses sync)
+fn (r: Registry) collector(name: Str, help: Str, kind: Kind, labels: List[Str], f: fn() -> List[Sample] uses sync)
 struct Sample { values: List[Str], value: Float }
 enum Kind { Counter, Gauge }
 fn (c: Counter) remove(values: List[Str]) -> Bool   // also Gauge, Histogram, Summary
@@ -8346,9 +8346,9 @@ fn (g: GaugeChild) set(v: Float)
 fn (g: GaugeChild) add(v: Float)
 fn (h: HistogramChild) observe(v: Float)                           // also SummaryChild
 fn (r: Registry) text(now: Time? = None) -> Str
-fn (r: Registry) handler() -> fn(http.Request) -> http.Response
-fn (r: Registry) handler_at(clock: Clock) -> fn(http.Request) -> http.Response uses clock
-fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str) -> fn(http.Request, http.Next) -> http.Response uses clock
+fn (r: Registry) handler() -> fn(http.Request) -> http.Response uses sync
+fn (r: Registry) handler_at(clock: Clock) -> fn(http.Request) -> http.Response uses (clock, sync)
+fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str) -> fn(http.Request, http.Next) -> http.Response uses (clock, sync)
 ```
 
 - A name is a Prometheus name (letters, digits, `_` and `:`, not
@@ -8410,11 +8410,11 @@ exporter: a program's handler reads the ring.
 ```xo
 struct Span { id: Str, name: Str, start_ms: Int, micros: Int, status: Int } derive Json
 fn ring(cap: Int = 1000) -> Ring
-fn (r: Ring) middleware(rand: Rand, clock: Clock) -> fn(http.Request, http.Next) -> http.Response
+fn (r: Ring) middleware(rand: Rand, clock: Clock) -> fn(http.Request, http.Next) -> http.Response uses (rand, clock, sync)
 fn id(req: http.Request) -> Str
 fn (r: Ring) record(id: Str, name: Str, start: Time, d: Duration)
 fn (r: Ring) spans(min: Duration, n: Int) -> List[Span]
-fn (r: Ring) handler(auth: fn(http.Request) -> Bool) -> fn(http.Request) -> http.Response
+fn (r: Ring) handler(auth: fn(http.Request) -> Bool) -> fn(http.Request) -> http.Response uses sync
 ```
 
 - The middleware takes the id from the `X-Request-Id` header when it is 1

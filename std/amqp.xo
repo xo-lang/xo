@@ -456,7 +456,7 @@ pub fn (c: Connection) keepalive(g: task.Group) -> () ! AmqpErr uses (net.dial, 
   match st.0 {
     None => Err(proto_err("keepalive needs ConnOptions.clock and an open connection without one running"))
     Some(k) => {
-      g.spawn_background(fn() uses (net.dial, clock) { mux_loop(c, k, st.1, st.2, st.3, st.4, st.5) })
+      g.spawn_background(fn() uses (net.dial, clock, sync) { mux_loop(c, k, st.1, st.2, st.3, st.4, st.5) })
       Ok(())
     }
   }
@@ -3659,7 +3659,7 @@ fn link_close(c: Connection, id: Int, error: WireError?) -> () ! AmqpErr uses (n
 }
 
 fn settle(r: Receiver, d: Delivery, state: DeliveryState) -> () ! AmqpErr uses (net.dial, clock) {
-  let e = r.conn.st.with(fn(var z: ConnState) -> AmqpErr? uses (net.dial, clock) {
+  let e = r.conn.st.with(fn(var z: ConnState) -> AmqpErr? uses (net.dial, clock, sync) {
     match st_settle(z, r.id, d, state) {
       Ok(_) => None
       Err(y) => Some(y)

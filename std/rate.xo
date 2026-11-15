@@ -349,7 +349,7 @@ pub fn sometimes(clock: Clock, first: Int = 0, every: Int = 0, interval: Duratio
 /// Runs f when one of the Sometimes's rules says so (Sometimes.Do), and
 /// counts the call either way.
 pub fn (s: Sometimes) do[fx: Effects](f: fn() uses fx) uses (clock, fx) {
-  s.st.with(fn(var st: SometimesState) uses (clock, fx) {
+  s.st.with(fn(var st: SometimesState) uses (clock, fx, sync) {
     if st.count == 0 || (s.first > 0 && st.count < s.first) || (s.every > 0 && st.count % s.every == 0) || (s.interval > 0s && sub_sat(s.clock.now(), st.last) >= s.interval) {
       f()
       if s.interval > 0s {

@@ -15,6 +15,18 @@ fn (c: Checker) in_test_context() -> Bool {
 fn (var c: Checker) use_var(id: Ident, v: Int) -> Int {
   c.mark_used(v)
   c.record(id, v)
+  // A closure that captures shared state performs `sync` (decision 0662),
+  // so a pure function type, which promises the same result for the same
+  // arguments, refuses it.
+  // std/native is exempt until a seed that knows `sync` is cut (the seed
+  // compiles it; decision 0662), as `log` is ambient there (0156)
+  let native = c.cur_mod >= 0 && c.mods[c.cur_mod].native
+  if !native && c.ctx >= 0 && c.ctxs[c.ctx].closure && c.objs[v].vctx >= 0 && c.objs[v].vctx != c.ctx {
+    let h = c.shared_handle(c.objs[v].ty, [], 16)
+    if !h.is_empty() {
+      c.perform(c.new_eset([EffItem{label: "sync", file: c.path, span: id.span, via: "`${text(id.name)}` is a captured ${h}: shared state another task may change"}]))
+    }
+  }
   c.objs[v].ty
 }
 

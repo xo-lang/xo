@@ -1,5 +1,16 @@
 # std/testing changes
 
+## 2026-11-15: behavior: FakeNet handlers may use shared state
+
+- Kind: behavior
+- Commit: this push
+- Found by: decision 0662 (a closure that captures shared state performs `sync`)
+- Go reference: none
+- Test: test/errorcheck/effect_sync_capture; the module's own tests check clean
+- Shipped in: not yet released
+
+`FakeNet.handle` and `handle_tls` take `fn(http.Request) -> http.Response uses sync`: a test handler that counts requests in an Atomic, or records them behind a Mutex, captures shared state, which a pure function type now refuses (decision 0662). Callers change nothing.
+
 ## 2026-11-11: fix: the test world in a WASI test module (os.env, the virtual clock, sleeps)
 
 - Kind: fix

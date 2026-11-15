@@ -1,8 +1,7 @@
 # 0662: deterministic pure function values
 
 Status: Accepted, option B (owner, 2026-11-15: "go with B, build the
-prototype"). The prototype below is not on main; landing it is the next
-step. Builds on
+prototype"); landed 2026-11-15 (see Landing). Builds on
 0004 (effects in signatures), 0332 (no global variables), 0652 (Proposed,
 capability effect parameters) and 0659 (Proposed, local-first UI).
 
@@ -151,6 +150,41 @@ B's 46 hits are of two kinds, and none has a machine fix yet:
 - A closure with its own `uses` clause that captures shared state
   (std/amqp, amqptest, grpc, backoff, rate; one in bench): its clause
   gains `sync`. A fix that writes it is worth adding.
+
+## Landing (2026-11-15)
+
+The prototype plus:
+
+- **std/native is exempt for now.** The seed compiles std/native, and a
+  seed rejects an unknown effect label, so its sites (HTTP body pipes and
+  readers, the TLS session cache callback) cannot say `uses sync` yet.
+  The capture rule skips native modules, as `log` is ambient there (0156).
+  After the next seed cut, decision 0653's sweep removes the exemption
+  (`native` in compiler/check call.xo `use_var`) and adds `sync` to those
+  types.
+- **The closure clause fix.** XO0701 on a closure whose `uses` clause
+  misses an effect now carries the same note and fix as a declaration's
+  ("declare them: `uses (net.dial, sync)`"), for any effect, not only
+  `sync`.
+- **std:** `sync` added to twelve closure clauses (amqp, amqptest,
+  backoff, grpc, jsonrpc, rate) and to the callback types of FakeNet
+  `handle`/`handle_tls`, metrics `gauge_func`/`counter_func`/`collector`
+  and the types metrics `handler`/`handler_at`/`middleware` and trace's
+  middleware and handler return; amqptest_test's polling helper. std then
+  checks clean (TestStdChecks, stdgen -check). The prototype's per-module
+  count missed jsonrpc and metrics (`xo test --std-module` of a module
+  with no tests checks nothing); TestStdChecks is the complete check.
+- **bench:** the three non-paper sites outside std's types (a test
+  `ReadLine` alias) fixed; the metrics and FakeNet changes fixed the rest.
+  Five sites stay in bench/paper, which holds solutions written blind
+  from the spec and is never edited; that tree already has unrelated
+  errors from older drafts.
+- **No vet code** (decision 0653): 0662 makes no older form obsolete; the
+  breaking sites get XO0701's fix where one is mechanical (a closure's
+  clause). A capture given a pure callback type has no local fix: the
+  callback's type, often in another module, decides.
+- Test: test/errorcheck/effect_sync_capture (fails on main before this
+  change: no XO0701, and `sync` is an unknown effect, XO0702).
 
 ## Consequences
 

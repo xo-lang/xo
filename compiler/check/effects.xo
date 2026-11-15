@@ -54,6 +54,25 @@ pub struct Flat {
   pub param_items: List[EffItem] = []
 }
 
+/// f without the `sync` label (decision 0662).
+fn without_sync(f: Flat) -> Flat {
+  if !f.labels.contains("sync") {
+    return f
+  }
+  var out = f
+  out.labels = []
+  out.label_items = []
+  for i in 0..f.labels.len() {
+    if f.labels[i] != "sync" {
+      out.labels.push(f.labels[i])
+      if i < f.label_items.len() {
+        out.label_items.push(f.label_items[i])
+      }
+    }
+  }
+  out
+}
+
 /// A copy of set s whose items without a place are attributed to the call
 /// at sp in file of the callee via (effects.go EffSet.performed).
 fn (var c: Checker) performed(s: Int, file: Str, sp: Span, via: Str) -> Int {
@@ -574,8 +593,15 @@ fn (var c: Checker) perform(s: Int) {
   // introduced only by the pub std/log functions, so dropping the `log`
   // label here keeps it off std's inferred effects; user code gets it.
   let strip = c.cur_mod >= 0 && (c.mods[c.cur_mod].is_std || c.mods[c.cur_mod].native)
+  // `sync` is a closure's effect only (decision 0662): a declared
+  // function, a test or an initializer may use shared state without
+  // saying so, as its parameter types already show it.
+  let in_closure = c.ctxs[c.ctx].closure
   for it in c.esets[s] {
     if strip && it.label == "log" {
+      continue
+    }
+    if it.label == "sync" && !in_closure {
       continue
     }
     c.esets[e].push(it)
@@ -704,7 +730,9 @@ fn (var c: Checker) solve_effects() {
   while changed {
     changed = false
     for f in c.inferred_fns {
-      let nf = c.flatten(c.objs[f].body_eff, true)
+      // a declared function's `sync` stays ambient (decision 0662), also
+      // when it arrives through a closure it passes to a generic call
+      let nf = without_sync(c.flatten(c.objs[f].body_eff, true))
       if nf.size() != (c.inferred.get(f) ?? Flat{}).size() {
         c.inferred[f] = nf
         changed = true
@@ -721,7 +749,13 @@ fn (var c: Checker) solve_effects() {
     let sub = c.flatten(ob.sub, true)
     let sup = c.flatten(ob.sup, true)
     var missing: List[Str] = []
+    // `sync` binds closures only (decision 0662): a declaration or an
+    // interface method may use shared state without declaring it
+    let ambient_sync = ob.kind == ObKind.Decl || ob.kind == ObKind.Iface
     for l in sub.labels.sort() {
+      if ambient_sync && l == "sync" {
+        continue
+      }
       if !sup.covers_label(l) {
         missing.push(l)
       }
@@ -780,7 +814,7 @@ fn (var c: Checker) solve_effects() {
     // the corrected clause, when those notes gave no fix of their own
     // (theirs name an effect argument instead; lead, 2026-11-08)
     var uses_fix: (Str, DEdit, Str)? = None
-    if ob.kind == ObKind.Decl && c.diags[d].fixes.is_empty() {
+    if (ob.kind == ObKind.Decl || ob.kind == ObKind.Closure) && c.diags[d].fixes.is_empty() {
       uses_fix = c.uses_fix_edit(ob, missing, sub, sup)
       if let Some((_, _, clause)) = uses_fix {
         c.note(d, "declare them: `${clause}` (`xo fix` writes it)")
@@ -965,6 +999,11 @@ fn (var c: Checker) effect_chain(d: Int, w0: EffItem, key: Str) {
       }
       w = next
       continue
+    }
+    if w.label == "sync" && w.fn_obj < 0 && !w.via.is_empty() && !w.file.is_empty() {
+      // a capture (decision 0662): via is the whole note
+      c.chain_note(d, w, w.via)
+      return
     }
     var via = w.via
     if w.fn_obj >= 0 {

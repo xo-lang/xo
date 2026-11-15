@@ -773,6 +773,71 @@ fn (var c: Checker) const_handle(t0: Int, seen: List[Int], depth: Int) -> Str {
   }
 }
 
+/// The name of a shared state type (Chan, Mutex, Atomic) in a value of
+/// type t at any depth, "" for none: a closure that captures such a value
+/// performs `sync` (decision 0662).
+fn (var c: Checker) shared_handle(t0: Int, seen: List[Int], depth: Int) -> Str {
+  if t0 < 0 || depth <= 0 {
+    return ""
+  }
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Tuple => {
+      for e in x.args {
+        let h = c.shared_handle(e, seen, depth - 1)
+        if !h.is_empty() {
+          return h
+        }
+      }
+      ""
+    }
+    Named => {
+      let o = x.obj
+      if c.is_sync_handle(o) {
+        return text(c.objs[o].name)
+      }
+      for a in x.args {
+        if c.tys[a].kind != TyKind.EffArg {
+          let h = c.shared_handle(a, seen, depth - 1)
+          if !h.is_empty() {
+            return h
+          }
+        }
+      }
+      if seen.contains(o) {
+        return ""
+      }
+      var seen2 = seen
+      seen2.push(o)
+      let sm = c.args_subst(c.objs[o].tparams, x.args)
+      var fts: List[Int] = []
+      let tk = c.objs[o].tkind
+      if tk == "struct" {
+        for fl in c.objs[o].fields {
+          fts.push(c.subst(fl.ty, sm))
+        }
+      } else if tk == "enum" {
+        for v in c.objs[o].variants {
+          for fl in v.fields {
+            fts.push(c.subst(fl.ty, sm))
+          }
+        }
+      } else if (tk == "newtype" || tk == "alias") && c.objs[o].target >= 0 {
+        fts.push(c.subst(c.objs[o].target, sm))
+      }
+      for ft in fts {
+        let h = c.shared_handle(ft, seen2, depth - 1)
+        if !h.is_empty() {
+          return h
+        }
+      }
+      ""
+    }
+    Func | Param | Var | Bad | EffArg => ""
+  }
+}
+
 /// XO0408 for the parts of a block `const` initializer that are not
 /// compile time values (core 3.1; a module constant may call functions,
 /// decision 0332).

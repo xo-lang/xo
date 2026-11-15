@@ -1,0 +1,54 @@
+// A closure that captures shared state (a Chan, Mutex or Atomic, at any
+// depth of its type) performs `sync`, so a pure function type refuses it
+// (decision 0662): a pure function value gives the same result for the
+// same arguments. Declared functions use shared state without declaring
+// `sync`, and a parameter of a shared type is allowed.
+
+struct Store {
+  hits: Atomic[Int]
+  name: Str
+}
+
+fn apply(f: fn(Int) -> Int, x: Int) -> Int {
+  f(x)
+}
+
+fn apply_sync(f: fn(Int) -> Int uses sync, x: Int) -> Int {
+  f(x)
+}
+
+// a declared pub function locks without declaring `sync`
+pub fn count(s: Store) -> Int {
+  let bump = fn() -> Int { s.hits.add(1) }
+  bump()
+}
+
+pub fn read(f: fn(Store) -> Int, s: Store) -> Int {
+  f(s)
+}
+
+fn main(os: Os) {
+  let ch = Chan[Int].new(cap: 1)
+  let m = Mutex[Int].new(0)
+  let store = Store{hits: Atomic[Int].new(0), name: "a"}
+  let a = apply(fn(x) { x + (ch.try_recv() ?? 0) }, 1) // ERROR XO0701 "is pure, but performs .sync."
+  let b = apply(fn(x) { x + m.with(fn(var v) { v }) }, 1) // ERROR XO0701 "performs .sync."
+  let c = apply(fn(x) { x + store.hits.get() }, 1) // ERROR XO0701 "captured Atomic"
+  // an outer closure that calls an inner one that captures
+  let d = apply(fn(x) { // ERROR XO0701 "performs .sync."
+    let inner = fn() -> Int { store.hits.get() }
+    x + inner()
+  }, 1)
+  // a closure's own clause must name it; the fix adds it
+  let e = fn() -> Int uses stdio { store.hits.get() } // ERROR XO0701 "uses .stdio, sync."
+  // allowed: a copy of a plain field, a parameter, a type that says sync,
+  // a scope's spawn
+  let name = store.name
+  let f = apply(fn(x) { x + name.len() }, 1)
+  let g = read(fn(s) { s.hits.get() }, store)
+  let h = apply_sync(fn(x) { x + store.hits.get() }, 1)
+  scope s {
+    s.spawn(fn() { m.with(fn(var v) { v = v + 1 }) })
+  }
+  os.stdio.println("${a}${b}${c}${d}${e()}${f}${g}${h}${count(store)}")
+}

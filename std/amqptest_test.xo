@@ -13,7 +13,7 @@ fn opts(clk: Clock) -> amqp.ConnOptions {
 }
 
 /// Waits for `cond` to hold, up to two seconds.
-fn until(clk: Clock, cond: fn() -> Bool uses clock) uses clock {
+fn until(clk: Clock, cond: fn() -> Bool uses (clock, sync)) uses clock {
   for _ in 0..400 {
     if cond() { return }
     clk.sleep(5ms)
@@ -854,7 +854,7 @@ test "an event hub answers the hub and partition properties on the namespace man
     snd.send(msg("a")).or_fault("send")
     let ms = c.new_sender(sess, "\$management", amqp.SenderOptions{name: "m-s"}).or_fault("mgmt sender")
     let mr = c.new_receiver(sess, "\$management", amqp.ReceiverOptions{name: "m-r", target: "client-reply", credit: 5, desired_capabilities: [geo]}).or_fault("mgmt receiver")
-    let ask = fn(props: List[(Str, amqp.Value)]) -> amqp.Message uses (net, clock) {
+    let ask = fn(props: List[(Str, amqp.Value)]) -> amqp.Message uses (net, clock, sync) {
       let req = amqp.Message{
         properties: Some(amqp.Properties{message_id: amqp.Value.Str(v: "r-1"), reply_to: Some("client-reply")}),
         app_properties: Some([("operation", amqp.Value.Str(v: "READ")), ("name", amqp.Value.Str(v: "hub"))] + props),

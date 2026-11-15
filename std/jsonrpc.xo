@@ -545,7 +545,7 @@ fn id_of(v: json.Value?) -> Id? {
 }
 
 fn (c: Conn[fx]) send(text: Str) -> () ! IoErr uses fx {
-  c.wl.with(fn(var _n: Int) -> () ! IoErr uses fx { (c.write)(text) })
+  c.wl.with(fn(var _n: Int) -> () ! IoErr uses (fx, sync) { (c.write)(text) })
 }
 
 /// Calls method on the peer and waits for its answer: the result, or the
@@ -630,7 +630,7 @@ pub fn (c: Conn[fx]) close() {
 /// and is not passed to handle. At the end of read, or when it fails, the
 /// connection closes.
 pub fn (c: Conn[fx]) serve(g: task.Group, read: fn() -> Str? ! IoErr uses fx, handle: fn(Request) -> json.Value ! RpcError uses fx) uses fx {
-  g.spawn_background(fn() uses fx { c.read_loop(g, read, handle) })
+  g.spawn_background(fn() uses (fx, sync) { c.read_loop(g, read, handle) })
 }
 
 fn (c: Conn[fx]) read_loop(g: task.Group, read: fn() -> Str? ! IoErr uses fx, handle: fn(Request) -> json.Value ! RpcError uses fx) uses fx {
@@ -675,7 +675,7 @@ fn (c: Conn[fx]) read_loop(g: task.Group, read: fn() -> Str? ! IoErr uses fx, ha
           Some(id) => {
             let stop = Chan[()].new(cap: 1)
             c.add_running(id, stop)
-            g.spawn_background(fn() uses fx { c.run_call(r, id, stop, handle) })
+            g.spawn_background(fn() uses (fx, sync) { c.run_call(r, id, stop, handle) })
           }
         }
       }
@@ -706,7 +706,7 @@ fn (c: Conn[fx]) add_running(id: Id, stop: Chan[()]) {
 fn (c: Conn[fx]) run_call(r: Request, id: Id, stop: Chan[()], handle: fn(Request) -> json.Value ! RpcError uses fx) uses fx {
   let done = Chan[Result[json.Value, RpcError]].new(cap: 1)
   let resp = scope h {
-    let _t = h.spawn_background(fn() uses fx { done.send(handle(r)) })
+    let _t = h.spawn_background(fn() uses (fx, sync) { done.send(handle(r)) })
     select {
       got = done.recv() => match got {
         Some(Ok(x)) => Some(Response{id: Some(id), result: x})

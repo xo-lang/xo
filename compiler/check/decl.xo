@@ -1090,7 +1090,7 @@ fn (var c: Checker) resolve_err_spec(es: parser.ErrSpec?, var env: TypeEnv) -> I
 }
 
 fn is_effect_label(name: Str) -> Bool {
-  name is "net" | "net.dial" | "net.listen" | "fs" | "fs.read" | "fs.write" | "clock" | "rand" | "env" | "proc" | "stdio" | "secrets" | "secrets.read" | "secrets.write" | "ffi" | "log" | "go"
+  name is "net" | "net.dial" | "net.listen" | "fs" | "fs.read" | "fs.write" | "clock" | "rand" | "env" | "proc" | "stdio" | "secrets" | "secrets.read" | "secrets.write" | "ffi" | "log" | "sync" | "go"
 }
 
 /// The effect set of effect labels and variables (decl.go
@@ -1119,7 +1119,7 @@ fn (var c: Checker) resolve_effects(effs: List[parser.Effect], env: TypeEnv) -> 
         }
       }
     }
-    var cands = ["net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "secrets", "secrets.read", "secrets.write", "ffi", "log", "go"]
+    var cands = ["net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "secrets", "secrets.read", "secrets.write", "ffi", "log", "sync", "go"]
     for (n, p) in env.params.entries() {
       if c.objs[p].flags.effect() {
         cands.push(text(n))

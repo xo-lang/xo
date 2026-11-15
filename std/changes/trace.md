@@ -1,5 +1,16 @@
 # std/trace changes
 
+## 2026-11-15: behavior: the middleware and handler types allow `sync`
+
+- Kind: behavior
+- Commit: this push
+- Found by: decision 0662 (a closure that captures shared state performs `sync`)
+- Go reference: none
+- Test: test/errorcheck/effect_sync_capture; the module's own tests check clean
+- Shipped in: not yet released
+
+`Ring.middleware` returns `fn(http.Request, http.Next) -> http.Response uses (rand, clock, sync)` and `Ring.handler` returns `fn(http.Request) -> http.Response uses sync`: both closures use the ring's Mutex, which a pure function type now refuses (decision 0662). `router.wrap` and `router.handle` take them as before; a program that stored one in a variable of the old type adds `sync` to that type.
+
 ## 2026-11-11: fix: Span's and Event's wire-named fields are public again
 
 - Kind: fix

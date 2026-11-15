@@ -86,7 +86,7 @@ pub fn ring(cap: Int = 1000) -> Ring {
 /// printable characters) or makes a random 64 bit one, puts it in the
 /// request (`id(req)`), answers it in the `X-Request-Id` header, and
 /// records a `request` span.
-pub fn (r: Ring) middleware(rand: Rand, clock: Clock) -> fn(http.Request, http.Next) -> http.Response uses (rand, clock) {
+pub fn (r: Ring) middleware(rand: Rand, clock: Clock) -> fn(http.Request, http.Next) -> http.Response uses (rand, clock, sync) {
   fn(req, next) -> http.Response {
     let given = req.header("X-Request-Id") ?? ""
     let rid = if valid_id(given) { given } else { rand.bytes(8).to_hex() }
@@ -229,7 +229,7 @@ pub fn (a: Active) end() uses clock {
 /// A handler answering the spans as JSON (`?slow=MILLIS&n=N`; defaults 0
 /// and 100): `router.handle("GET /debug/requests", ring.handler(auth))`;
 /// a request for which `auth` answers false gets 403.
-pub fn (r: Ring) handler(auth: fn(http.Request) -> Bool) -> fn(http.Request) -> http.Response {
+pub fn (r: Ring) handler(auth: fn(http.Request) -> Bool) -> fn(http.Request) -> http.Response uses sync {
   fn(req) -> http.Response {
     if !auth(req) {
       return http.text(403, "forbidden\n")
