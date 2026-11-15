@@ -1,9 +1,9 @@
 # 0658: an agent work system (xw): Postgres, an Xo CLI and a server-rendered Xo web view
 
-Status: Proposed (owner asked for it, 2026-11-15; drafted by the lead).
-The owner chose the server-rendered Xo web view over Grafana, Metabase
-and a terminal UI. Build timing is the owner's: not before Lang 2's
-artifact-keyed selective reruns land.
+Status: Accepted (owner, 2026-11-15: "the whole system is fine",
+including the Postgres container; drafted by the lead). The owner chose
+the server-rendered Xo web view over Grafana, Metabase and a terminal
+UI. Built after Lang 2's artifact-keyed selective reruns land.
 
 ## Context
 
@@ -83,7 +83,15 @@ by Postgres.
    into a wrapper over `xw task`, retires todo.md for `xw decide` and
    events, and isdone.sh becomes a query. Stage 3 replaces the idle,
    bottleneck and main watchers with one alert loop on the same data.
-8. **Code** in `scripts/lead/xw/` (an Xo module), installed by
+8. **Schema changes through a new std/migrate** (stage 1; std has none,
+   std-coverage.md lists migrations as planned): numbered `.sql` files
+   embedded with std/embed, goose's file format, a version table, one
+   transaction per migration, a Postgres advisory lock so two processes
+   never migrate at once, forward only; `migrate.up(db, files)` and
+   `migrate.status(db, files)`. It follows the std rules (golang-migrate
+   and goose tests ported where they fit, std/changes, its own Proven
+   marks).
+9. **Code** in `scripts/lead/xw/` (an Xo module), installed by
    `scripts/lead/install.sh` like the other lead tools. Tests use
    `sql.memory` where the queries allow, plus one Postgres test in the
    container.
@@ -92,7 +100,7 @@ by Postgres.
 
 | Stage | Contents | Done when |
 |---|---|---|
-| 1 | schema; `xw event` and spool; heavyd, pushq and git ingest; `/` and `xw status` | the lead's "what is everyone doing" is one `xw status`, matching the agents' screens |
+| 1 | std/migrate; schema; `xw event` and spool; heavyd, pushq and git ingest; `/` and `xw status` | the lead's "what is everyone doing" is one `xw status`, matching the agents' screens |
 | 2 | tasks, decisions, acks; board.sh wrapper; todo.md retired | a decision sent to an agent shows unacknowledged until it acks |
 | 3 | transcript ingest (tool time, tokens); `/gates`, `/std`; alert loop replaces the three watchers | writing vs testing for any agent and window is one page |
 | 4 | full-text search; pgvector trial | search answers the 20 fixed questions; vectors kept only if better |
