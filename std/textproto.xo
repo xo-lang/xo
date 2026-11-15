@@ -5,6 +5,8 @@
 // net/textproto (go1.26.1 reader.go, header.go, writer.go, textproto.go),
 // with its tests in std/textproto_test.xo. Pure.
 
+use native/rt
+
 /// A protocol error: Go's ProtocolError (its text), Error (a reply's code
 /// and message), io.EOF (the input ended where a line was expected) or
 /// io.ErrUnexpectedEOF (it ended inside a dot-encoded block).
@@ -41,7 +43,14 @@ fn pad3(n: Int) -> Str {
 /// Whether c may be in a header field name (RFC 7230 token: Go's
 /// validHeaderFieldByte).
 fn field_byte(c: UInt8) -> Bool {
-  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c is '!' | '#' | '$' | '%' | '&' | '\'' | '*' | '+' | '-' | '.' | '^' | '_' | '`' | '|' | '~'
+  // the token bytes as two 64 bit masks (0x3ff6cfa00000000 below 64,
+  // 0x57ffffffc7fffffe from 64), where a chain of ranges and a pattern
+  // was a check per byte of every key
+  let x = Int(c)
+  if x < 64 {
+    return (288068722172624896.shr_logical(x) & 1) != 0
+  }
+  x < 128 && (6341068274398134270.shr_logical(x - 64) & 1) != 0
 }
 
 /// Whether c may be in a header value (Go's validHeaderValueByte: no
@@ -53,6 +62,10 @@ fn value_byte(c: UInt8) -> Bool { c >= 0x20 && c != 0x7f || c == '\t' || c >= 0x
 /// case (`accept-encoding` is `Accept-Encoding`). A key with a byte that
 /// cannot be in a field name (a space) is returned unchanged.
 pub fn canonical_key(s: Str) -> Str {
+  // Go's CanonicalMIMEHeaderKey: scan until a byte that cannot be in a
+  // field name (unchanged, a space among them) or the first letter whose
+  // case changes; canon then checks the rest as it builds, so a key is
+  // read once either way
   let b = s.bytes()
   var upper = true
   var i = 0
@@ -62,9 +75,7 @@ pub fn canonical_key(s: Str) -> Str {
       return s
     }
     if (upper && c >= 'a' && c <= 'z') || (!upper && c >= 'A' && c <= 'Z') {
-      // Go's canonicalMIMEHeaderKey of the whole key: unchanged for a bad
-      // byte or a space past here
-      return line_key(b) ?? s
+      return canon(s, b, i)
     }
     upper = c == '-'
     i += 1
@@ -72,12 +83,19 @@ pub fn canonical_key(s: Str) -> Str {
   s
 }
 
-/// b (only field bytes) with each word capitalized.
-fn canon(b: Bytes) -> Str {
+/// s with each word capitalized, from its first change at `from` (the
+/// bytes before it are field bytes in canonical case); s unchanged when a
+/// later byte cannot be in a field name.
+fn canon(s: Str, b: Bytes, from: Int) -> Str {
   var out = BytesBuilder.with_capacity(b.len())
-  var upper = true
-  for c0 in b {
-    var c = c0
+  out.write(b[0..from])
+  var upper = from == 0 || b[from - 1] == '-'
+  var i = from
+  while i < b.len() {
+    var c = b[i]
+    if !field_byte(c) {
+      return s
+    }
     if upper && c >= 'a' && c <= 'z' {
       c -= 32
     } else if !upper && c >= 'A' && c <= 'Z' {
@@ -85,8 +103,10 @@ fn canon(b: Bytes) -> Str {
     }
     out.write_byte(c)
     upper = c == '-'
+    i += 1
   }
-  out.freeze().to_str_lossy()
+  // token bytes are ASCII: no UTF-8 check (path.xo's cast)
+  rt.cast[Bytes, Str](out.freeze())
 }
 
 /// The key of a header line (Go's canonicalMIMEHeaderKey): None when it
@@ -107,7 +127,8 @@ fn line_key(k: Bytes) -> Str? {
   if spaces {
     return Some(k.to_str_lossy())
   }
-  Some(canon(k))
+  // field bytes are ASCII; a key already in canonical form is not copied
+  Some(canonical_key(rt.cast[Bytes, Str](k)))
 }
 
 /// s without leading and trailing ASCII space: spaces, tabs, CR and LF

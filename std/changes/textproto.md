@@ -1,5 +1,17 @@
 # std/textproto changes
 
+## 2026-11-15: perf: canonical_key checks a key in one pass
+
+- Kind: perf
+- Commit: this push
+- Found by: the std Proven perf line (bench/perf/textproto canonical 1.257 and header 1.308 of Go on linux/arm64 host 1)
+- Go reference: net/textproto reader.go (CanonicalMIMEHeaderKey, validHeaderFieldByte, canonicalMIMEHeaderKey)
+- Test: the textproto, mail, mailfuzz, multipart and smtp corpora (go, arm64, llvm); xo bench --ab on linux/arm64 host 1, 3 rounds: canonical 100.6 to 71.9 ms (0.715, about 0.90 of Go from 1.257); header within noise (0.992)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+canonical_key now scans a key only until the first letter whose case changes (Go's CanonicalMIMEHeaderKey) and builds the rest while checking it, so a key is read once instead of a validity scan, a canonical check and a copy; a header line's key that is already canonical is no longer copied; a field byte is tested against two 64 bit masks instead of a chain of comparisons, and the canonical form skips the UTF-8 check of its output, which is ASCII by construction.
+
 ## 2026-11-13: security: read_header is linear in the number of fields
 
 - Kind: security
