@@ -427,6 +427,28 @@ pub fn conn_write(c: Conn, data: Str) {
 
 pub fn conn_close(c: Conn) { rt.wasi_sock_close(c) }
 
+/// `c.local_addr()` (peer false) or `c.remote_addr()`: "" once closed.
+pub fn conn_addr(c: Conn, peer: Bool) -> Str {
+  let b = if peer { rt.wasi_sock_peer(c) } else { rt.wasi_sock_conn_local(c) }
+  if b.len() < 7 {
+    return ""
+  }
+  fmt_addr(b[3..b.len()], Int(b[1]) * 256 + Int(b[2]))
+}
+
+/// `c.close_write()`: tcp-socket.shutdown(send); Err's text, "" when it
+/// worked.
+pub fn conn_close_write(c: Conn) -> Str {
+  let e = rt.wasi_sock_shutdown(c)
+  if e == 0 {
+    return ""
+  }
+  if e == 100 {
+    return "use of closed network connection"
+  }
+  "shutdown: ${err_text(e)}"
+}
+
 // The runtime's connection record (compiler/wasm rt9.xo): the read and
 // write deadlines (the monotonic clock's ns, 0 none) at 24 and 32, and a
 // word at 44 the runtime leaves alone, std/tls's mark (decision 0447 R2e).

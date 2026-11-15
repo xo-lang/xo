@@ -339,4 +339,8 @@ llvm wasi_scope_close hserve's detached scope on wasm (compiler/wasm rt3.xo, dec
 llvm wasi_park_signal HTTP/2's park on wasm (compiler/wasm rt3.xo, decision 0447 R2f); native parks through poll.xo
 llvm wasi_park_wait HTTP/2's park on wasm (compiler/wasm rt3.xo, decision 0447 R2f); native parks through poll.xo
 arm64 wasi_sock_peer the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447 R2c); native reads getpeername
+arm64 wasi_sock_conn_local the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447 R2c); native reads getpeername
+arm64 wasi_sock_shutdown the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447 R2c); native reads getpeername
 llvm wasi_sock_peer the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447 R2c); native reads getpeername
+llvm wasi_sock_conn_local the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447 R2c); native reads getpeername
+llvm wasi_sock_shutdown the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447 R2c); native reads getpeername

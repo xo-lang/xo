@@ -50,7 +50,10 @@ const R_MAIN = 80
 const R_EXITING = 88
 /// The runs started (next).
 const R_RAN = 96
-const R_SIZE = 104
+/// FakeNet.dial's port counter: a dialer's local port is 49151 plus it
+/// (std/rt testing.go nextPort).
+const R_DPORT = 104
+const R_SIZE = 112
 
 /// The test world's record's fields (twflags.xo), the clock's bit of
 /// the effects made real (testworld.xo REAL_CLOCK), and the virtual
@@ -112,7 +115,11 @@ const PIPE_CAP = 65536
 const ME_IN = 0
 const ME_OUT = 8
 const ME_QNEXT = 16
-const ME_SIZE = 24
+/// The end's local and peer addresses (blocks; Conn.local_addr and
+/// remote_addr, std/rt memconn.go's memEnd local and peer).
+const ME_LOCAL = 24
+const ME_PEER = 32
+const ME_SIZE = 40
 
 /// A listener's mem (netconn.xo L_MEM, asserted in xo_rt.c): the ML record.
 const L_MEM = 32
@@ -651,11 +658,23 @@ fn me_close_locked(me: Int) {
   wake_list(inp + P_WAITERS)
 }
 
+/// Shuts end me's sending side (Conn.close_write): its peer's reads end
+/// after the bytes held; its own reads go on.
+pub fn me_close_write(me: Int) {
+  lock()
+  let out = ld(me, ME_OUT)
+  st(out, P_WCLOSED, 1)
+  wake_list(out + P_WAITERS)
+  unlock()
+}
+
 /// Closes and frees end me, the lock held.
 fn me_release(me: Int) {
   me_close_locked(me)
   pipe_drop(ld(me, ME_IN))
   pipe_drop(ld(me, ME_OUT))
+  blk_free(ld(me, ME_LOCAL))
+  blk_free(ld(me, ME_PEER))
   rt.heap_release(me - 8)
 }
 
@@ -692,6 +711,14 @@ pub fn dial(addr: Str) -> Int {
   st(server, ME_IN, b)
   st(server, ME_OUT, a)
   st(server, ME_QNEXT, 0)
+  let port = ld(state(), R_DPORT) + 1
+  st(state(), R_DPORT, port)
+  let from = "127.0.0.1:${49151 + port}"
+  let to = blk_str(ld(ml, ML_ADDR))
+  st(client, ME_LOCAL, blk(from))
+  st(client, ME_PEER, blk(to))
+  st(server, ME_LOCAL, blk(to))
+  st(server, ME_PEER, blk(from))
   let tail = ld(ml, ML_QTAIL)
   if tail == 0 {
     st(ml, ML_QHEAD, server)
@@ -875,6 +902,15 @@ pub fn me_close(me: Int) {
   lock()
   me_close_locked(me)
   unlock()
+}
+
+/// End me's local (peer false) or peer address, "" for none.
+pub fn me_addr(me: Int, peer: Bool) -> Str {
+  lock()
+  let b = ld(me, if peer { ME_PEER } else { ME_LOCAL })
+  let a = if b == 0 { "" } else { blk_str(b) }
+  unlock()
+  a
 }
 
 /// The connection of end me is freed.
@@ -1116,6 +1152,7 @@ fn between() -> Bool {
   st(s, R_SLEEPS + 8, 0)
   st(s, R_SIGNALS + 8, 0)
   st(s, R_PORT, 0)
+  st(s, R_DPORT, 0)
   let mls = ld(s, R_MLS)
   let main = ld(s, R_MAIN)
   st(s, R_EXITING, 0)

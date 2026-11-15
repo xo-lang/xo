@@ -1,0 +1,39 @@
+// std/tls's server handles (tls.server, decision 0644 T1): a tlssrv
+// connection block and the state of the connection's close, in a handle
+// whose free hook (cabi_tlsserver.xo) frees the block. std/native/tls.xo
+// reaches it from its server functions only, so a TLS client builds no
+// server (cabi_tlsserver's exports follow this module).
+use native/rt
+use native/rthttp
+use native/llrt/cabi_tlsserver
+use native/llrt/tasks
+
+// A server handle's fields: the tlssrv block, and the close state (0
+// open, 1 closed, 2 close_write ran: close_notify sent, writes fail).
+const H_BLOCK = tasks.HANDLE_FIELDS
+const H_STATE = tasks.HANDLE_FIELDS + 8
+const H_SIZE = tasks.HANDLE_FIELDS + 16
+
+/// A server handle of tlssrv block t.
+pub fn handle_new(t: Int) -> rthttp.TlsH {
+  if target.arch == TargetArch.Wasm32 {
+    let w = rt.wasi_handle_new(H_SIZE, rt.wasi_hook("tls_sh_free"))
+    rt.mem_store(w, H_BLOCK, t, 8)
+    rt.mem_store(w, H_STATE, 0, 8)
+    let hw = rt.obj_at[rthttp.TlsH](w)
+    tasks.h_release(w)
+    return hw
+  }
+  let (v, p) = tasks.make_handle[rthttp.TlsH](H_SIZE, rt.fn_addr("tls_sh_free"))
+  rt.mem_store(p, H_BLOCK, t, 8)
+  rt.mem_store(p, H_STATE, 0, 8)
+  v
+}
+
+/// The tlssrv block of handle h.
+pub fn block(h: rthttp.TlsH) -> Int { rt.mem_load(rt.obj_addr(h), H_BLOCK, 8) }
+
+/// Handle h's close state (H_STATE).
+pub fn state(h: rthttp.TlsH) -> Int { rt.mem_load(rt.obj_addr(h), H_STATE, 8) }
+
+pub fn set_state(h: rthttp.TlsH, s: Int) { rt.mem_store(rt.obj_addr(h), H_STATE, s, 8) }

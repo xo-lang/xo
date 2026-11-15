@@ -1642,6 +1642,15 @@ fn (c: Conn) set_deadline(clock: Clock, t: Time?) uses clock
 fn (c: Conn) set_read_deadline(clock: Clock, t: Time?) uses clock
 /// set_deadline for writes only (Go's SetWriteDeadline).
 fn (c: Conn) set_write_deadline(clock: Clock, t: Time?) uses clock
+/// This end's address (Go's LocalAddr): `ip:port`, `[ip]:port`, a unix
+/// socket's path; "" for an unnamed unix client (after close, either
+/// the address or "").
+fn (c: Conn) local_addr() -> Str
+/// The other end's address (Go's RemoteAddr), as local_addr.
+fn (c: Conn) remote_addr() -> Str
+/// Shuts the sending side (Go's TCPConn.CloseWrite): the peer reads the
+/// end of the stream while reads here go on.
+fn (c: Conn) close_write() -> () ! NetErr uses net.dial
 /// A connection taken by `Listener.accept`: its reads and writes are
 /// `net.listen` (decision 0280).
 struct ServerConn {}
@@ -1659,6 +1668,15 @@ fn (c: ServerConn) set_deadline(clock: Clock, t: Time?) uses clock
 fn (c: ServerConn) set_read_deadline(clock: Clock, t: Time?) uses clock
 /// set_deadline for writes only (Go's SetWriteDeadline).
 fn (c: ServerConn) set_write_deadline(clock: Clock, t: Time?) uses clock
+/// This end's address (Go's LocalAddr): `ip:port`, `[ip]:port`, a unix
+/// socket's path; "" for an unnamed unix client (after close, either
+/// the address or "").
+fn (c: ServerConn) local_addr() -> Str
+/// The other end's address (Go's RemoteAddr), as local_addr.
+fn (c: ServerConn) remote_addr() -> Str
+/// Shuts the sending side (Go's TCPConn.CloseWrite): the peer reads the
+/// end of the stream while reads here go on.
+fn (c: ServerConn) close_write() -> () ! NetErr uses net.listen
 
 /// Either kind of connection, for code that reads and writes both
 /// (decision 0280).

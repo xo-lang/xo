@@ -1044,6 +1044,10 @@ fn (c: Conn) set_deadline(clock: Clock, t: Time?) uses clock         // decision
 fn (c: Conn) set_read_deadline(clock: Clock, t: Time?) uses clock    // Go's SetReadDeadline
 fn (c: Conn) set_write_deadline(clock: Clock, t: Time?) uses clock   // Go's SetWriteDeadline
 // ServerConn has the same three
+fn (c: Conn) local_addr() -> Str                    // decision 0644 T11: Go's LocalAddr, "host:port"
+fn (c: Conn) remote_addr() -> Str                   // Go's RemoteAddr
+fn (c: Conn) close_write() -> () ! NetErr uses net.dial   // Go's TCPConn.CloseWrite: shuts the sending half
+// ServerConn has the same three (close_write uses net.listen)
 
 interface Stream {                                 // either kind of connection
   fn read(self, max: Int) -> Bytes? ! NetErr uses net
@@ -1073,6 +1077,17 @@ the type on the join, `let c: NetConn = if tls { tls_conn } else { conn
 }` (core 2.10; without it the arms are `XO0401`), then sets deadlines
 through `c`. `Stream` keeps its three methods, so user types that
 implement it are unaffected.
+
+`local_addr` and `remote_addr` (decision 0644 T11) are the two ends of
+the connection as `host:port` (`[host]:port` for IPv6; the socket's path
+for a Unix domain socket, empty for an unnamed end), the values Go's
+`LocalAddr().String()` and `RemoteAddr().String()` give; after `close`
+either the address or "". On FakeNet's memory connections the dialing
+end is `127.0.0.1:N` and the far end the listener's address.
+`close_write` shuts down the sending half (Go's `TCPConn.CloseWrite`,
+`shutdown(SHUT_WR)`; wasip2's `tcp-socket.shutdown(send)`): the peer
+reads the end of the stream while this end still reads; a later `write`
+fails. On a memory connection the peer reads `None`.
 
 ```
 struct NetInterface {
@@ -5861,6 +5876,50 @@ fn (t: TlsConn) set_write_deadline(clock: Clock, at: Time?) uses clock
 fn (t: TlsConn) alpn() -> Str                      // the protocol the server chose, "" for none
 fn (t: TlsConn) version() -> Str                   // "TLS 1.2" or "TLS 1.3"
 fn (t: TlsConn) peer_certificates() -> List[x509.Certificate]
+
+// decision 0644 (B1: T2, T11, T1)
+struct ConnState {                                 // Go's ConnectionState
+  version: Int, handshake_complete: Bool, did_resume: Bool, cipher_suite: Int, curve_id: Int
+  negotiated_protocol: Str, negotiated_protocol_is_mutual: Bool = true, server_name: Str
+  peer_certificates: List[x509.Certificate], verified_chains: List[List[x509.Certificate]]
+  signed_certificate_timestamps: List[Bytes] = [], ocsp_response: Bytes = b"", tls_unique: Bytes = b"", ech_accepted: Bool = false
+}
+fn (t: TlsConn) state() -> ConnState
+fn cipher_suite_name(id: Int) -> Str               // Go's CipherSuiteName
+fn version_name(version: Int) -> Str               // Go's VersionName
+fn curve_name(id: Int) -> Str                      // Go's CurveID.String
+fn dial(net: Net, addr: Str, server_name: Str = "", roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None, timeout: Duration? = None) -> TlsConn ! NetErr uses net.dial
+fn load_cert(fs: Fs, cert_file: Str, key_file: Str) -> TlsCert ! TlsErr uses fs.read   // Go's LoadX509KeyPair
+fn (t: TlsConn) net_conn() -> Conn
+fn (t: TlsConn) verify_hostname(host: Str) -> () ! TlsErr
+fn (t: TlsConn) local_addr() -> Str
+fn (t: TlsConn) remote_addr() -> Str
+fn (t: TlsConn) close_write() -> () ! NetErr uses net.dial
+
+struct ServerConfig {
+  certificates: List[TlsCert]
+  next_protos: List[Str] = []
+  client_auth: ClientAuth = ClientAuth.None
+  client_cas: Roots? = None
+}
+struct TlsServerConn {}                            // handle
+fn server(c: ServerConn, config: ServerConfig) -> TlsServerConn   // Go's Server
+fn (t: TlsServerConn) handshake() -> () ! NetErr uses net.listen
+fn (t: TlsServerConn) read(max: Int) -> Bytes? ! NetErr uses net.listen
+fn (t: TlsServerConn) write(data: Bytes) -> () ! NetErr uses net.listen
+fn (t: TlsServerConn) close()
+fn (t: TlsServerConn) close_write() -> () ! NetErr uses net.listen
+fn (t: TlsServerConn) set_deadline(clock: Clock, at: Time?) uses clock   // and set_read_deadline, set_write_deadline
+fn (t: TlsServerConn) state() -> ConnState
+fn (t: TlsServerConn) local_addr() -> Str
+fn (t: TlsServerConn) remote_addr() -> Str
+fn (t: TlsServerConn) net_conn() -> ServerConn
+struct TlsListener {}                              // handle
+fn listen(net: Net, addr: Str, config: ServerConfig) -> TlsListener ! NetErr uses net.listen   // Go's Listen
+fn new_listener(l: Listener, config: ServerConfig) -> TlsListener                             // Go's NewListener
+fn (l: TlsListener) accept() -> TlsServerConn ! NetErr uses net.listen
+fn (l: TlsListener) addr() -> Str
+fn (l: TlsListener) close()
 ```
 
 ```
@@ -5931,6 +5990,46 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
 - Backends: native (std/native/llrt/tlsio.xo, the http client's TLS, on
   the connection's descriptor) and Go (crypto/tls; `ChainOnly` as
   InsecureSkipVerify with a check of the chain alone). Wasm has no Net.
+- `state()` (decision 0644 T2) is Go's ConnectionState: `version`,
+  `cipher_suite` and `curve_id` are Go's numbers, named by
+  `version_name`, `cipher_suite_name` and `curve_name` in Go's texts
+  ("TLS 1.3", "TLS_AES_128_GCM_SHA256", "X25519MLKEM768"; an unknown
+  suite as Go's `0x%04X` form). `verified_chains` are the chains verification
+  built, empty when nothing was verified. The fields after it are filled
+  by later pieces of 0644 and are empty until then.
+- `dial` (T11) is Go's `Dial` and `DialWithDialer`: it dials `addr` and
+  runs `client` on it; `server_name` defaults to `addr`'s host; `timeout`
+  bounds the dial and the handshake together (`Timeout`, "i/o timeout").
+  `load_cert` reads two PEM files (Go's `LoadX509KeyPair` and its texts,
+  e.g. switched inputs). `verify_hostname` checks the server's leaf
+  against `host` (Go's `Conn.VerifyHostname`; "tls: handshake did not
+  verify certificate chain" when nothing was verified). `net_conn` is
+  the underlying connection (Go's `NetConn`). `close_write` sends
+  close_notify and shuts the connection's sending half (Go's
+  `Conn.CloseWrite`); a later `write` is `Io("tls: protocol is
+  shutdown")`.
+- The server side (T1) is Go's `Server`, `Listen` and `NewListener`.
+  `server(c, config)` takes over an accepted connection as `client` does
+  a dialed one; the handshake runs on the first `read`, `write` or
+  `handshake` (Go's lazy handshake, so one slow client does not hold up
+  `accept`), bounded by the connection's deadlines and a cancellation
+  point. `ServerConfig` holds Go's Config fields for a server:
+  `certificates` (the first is served, or when the client's SNI names a
+  host the first does not cover, the first that covers it; none is `Io("tls: no
+  certificates configured")` at the handshake, and `listen` refuses it
+  with Go's "tls: neither Certificates, GetCertificate, nor
+  GetConfigForClient set in Config"), `next_protos` (ALPN, the server's
+  order, none by default), `client_auth` and `client_cas` (the roots a
+  client certificate verifies against). `state()` before the handshake
+  has `handshake_complete` false and the rest empty; after it,
+  `peer_certificates` are the client's. `close_write` before the
+  handshake is `Io("tls: CloseWrite called before handshake complete")`.
+  `TlsListener.accept` returns the connection before its handshake. On
+  FakeNet `server` does no TLS, as `client`. Golden `tls_server` runs a
+  listener with ALPN and client auth against `dial`, a handshake past its
+  deadline and the errors, on every backend. Backends: native
+  (std/native/llrt/tlssrv.xo, std/http's server code, linked only when a
+  program reaches `server`) and Go (crypto/tls).
 
 ---
 
@@ -6480,7 +6579,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-576 declarations.
+582 declarations.
 
 ### Range
 
@@ -7167,6 +7266,9 @@ fn (c: Conn) close()
 fn (c: Conn) set_deadline(clock: Clock, t: Time?) uses clock
 fn (c: Conn) set_read_deadline(clock: Clock, t: Time?) uses clock
 fn (c: Conn) set_write_deadline(clock: Clock, t: Time?) uses clock
+fn (c: Conn) local_addr() -> Str
+fn (c: Conn) remote_addr() -> Str
+fn (c: Conn) close_write() -> () ! NetErr uses net.dial
 ```
 
 ### ServerConn
@@ -7178,6 +7280,9 @@ fn (c: ServerConn) close()
 fn (c: ServerConn) set_deadline(clock: Clock, t: Time?) uses clock
 fn (c: ServerConn) set_read_deadline(clock: Clock, t: Time?) uses clock
 fn (c: ServerConn) set_write_deadline(clock: Clock, t: Time?) uses clock
+fn (c: ServerConn) local_addr() -> Str
+fn (c: ServerConn) remote_addr() -> Str
+fn (c: ServerConn) close_write() -> () ! NetErr uses net.listen
 ```
 
 ### Stream

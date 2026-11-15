@@ -1,6 +1,27 @@
 # std/tls changes
 
 
+## 2026-11-15: feature: the server side, dial, load_cert, ConnState, close_write and the connection's addresses (decision 0644 B1)
+
+- Kind: feature
+- Commit: this push
+- Found by: the lang3 crypto/tls audit of 2026-11-15 (~/xo-lead/notes/lang3/crypto-tls-gap.md, items T1, T2, T11; owner approved through the lead)
+- Go reference: crypto/tls tls.go (Server, Listen, NewListener, Dial, DialWithDialer, LoadX509KeyPair), conn.go (Handshake, CloseWrite, NetConn, VerifyHostname, LocalAddr, RemoteAddr), common.go (ConnectionState, CipherSuiteName, VersionName, CurveID.String) (go1.26.11)
+- Test: goldens tls_server, tls_dial, tls_conn_state and tls_close_write (go, arm64, llvm; each want matches Go's output)
+- Timing: none (no hot path changed; the TLS evidence pass of decision 0644 measures --ab against Go)
+- Shipped in: not yet released
+
+`tls.server` takes over an accepted ServerConn with a `ServerConfig`
+(certificates, ALPN, client auth and its roots); the handshake runs on
+the first read, write or `handshake`, within the connection's deadlines.
+`tls.listen` and `tls.new_listener` give a TlsListener whose `accept`
+returns a TlsServerConn. `tls.dial` dials and runs the client handshake,
+with a timeout over both; `load_cert` reads a key pair from files.
+`TlsConn.state()` and `TlsServerConn.state()` are Go's ConnectionState,
+with `cipher_suite_name`, `version_name` and `curve_name`.
+`close_write` sends close_notify and shuts the sending half;
+`local_addr`, `remote_addr`, `net_conn` and `verify_hostname` are Go's.
+
 ## 2026-11-13: security: at most 16 records or post-handshake messages in a row that do not advance the connection (native)
 
 - Kind: security

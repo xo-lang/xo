@@ -1,0 +1,18 @@
+// The C ABI exports of std/tls's server (tls.server, decision 0644 T1):
+// like cabi_tlsclient.xo, every top level function here is an export.
+// Only tlsserve.xo imports this module, so a program that runs no TLS
+// server builds none of it (compiler/ssa build.xo importer_built).
+use native/rt
+use native/llrt/tasks
+use native/llrt/tlssrv
+
+/// The free function of a std/tls server handle (tlsserve.handle_new):
+/// the tlssrv connection block in its first field, then the record (the
+/// runtime frees a wasm record after its hook).
+fn tls_sh_free(p: Int) {
+  tlssrv.free(rt.mem_load(p, tasks.HANDLE_FIELDS, 8))
+  if target.arch == TargetArch.Wasm32 {
+    return
+  }
+  tasks.free_handle(p)
+}

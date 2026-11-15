@@ -1,0 +1,10 @@
+missing: true
+swapped: tls: failed to find certificate PEM data in certificate input, but did find a private key; PEM inputs may have been switched
+dial: localhost TLS 1.3
+verify localhost: true
+verify example.com: x509: certificate is valid for localhost, good.test, not example.com
+response: true true
+named: localhost complete true
+unverified: tls: handshake did not verify certificate chain
+silent: i/o timeout
+done

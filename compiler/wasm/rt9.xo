@@ -35,7 +35,7 @@
 
 /// The runtime calls of rt9.xo (the operands' leaves, like rt3.xo's).
 fn rt9_direct(name: Str) -> Bool {
-  name is "net_status" | "net_msg" | "wasi_sock_status" | "wasi_sock_msg" | "wasi_sock_set" | "wasi_sock_err" | "wasi_sock_listen" | "wasi_sock_local" | "wasi_sock_peer" | "wasi_sock_accept" | "wasi_sock_connect" | "wasi_sock_connected" | "wasi_sock_read" | "wasi_sock_try_read" | "wasi_sock_readable" | "wasi_udp_open" | "wasi_udp_recv" | "wasi_udp_send" | "wasi_udp_local" | "wasi_rand_u64" | "wasi_sock_write" | "wasi_sock_close" | "wasi_sock_lclose" | "wasi_sock_deadline" | "wasi_sock_resolve" | "wasi_sock_next" | "wasi_sock_resolve_end"
+  name is "net_status" | "net_msg" | "wasi_sock_status" | "wasi_sock_msg" | "wasi_sock_set" | "wasi_sock_err" | "wasi_sock_listen" | "wasi_sock_local" | "wasi_sock_peer" | "wasi_sock_conn_local" | "wasi_sock_shutdown" | "wasi_sock_accept" | "wasi_sock_connect" | "wasi_sock_connected" | "wasi_sock_read" | "wasi_sock_try_read" | "wasi_sock_readable" | "wasi_udp_open" | "wasi_udp_recv" | "wasi_udp_send" | "wasi_udp_local" | "wasi_rand_u64" | "wasi_sock_write" | "wasi_sock_close" | "wasi_sock_lclose" | "wasi_sock_deadline" | "wasi_sock_resolve" | "wasi_sock_next" | "wasi_sock_resolve_end"
 }
 
 /// The calls of rt9.xo that can suspend the task.
@@ -46,7 +46,7 @@ fn rt9_blocking(name: Str) -> Bool {
 /// Whether rt9 function name works on a TCP socket or its streams (the
 /// rest: the outcome, close, deadlines and lookups, or rt.wasi_udp_*).
 fn rt9_tcp(name: Str) -> Bool {
-  name is "rt.wasi_sock_listen" | "rt.wasi_sock_local" | "rt.wasi_sock_peer" | "rt.wasi_sock_accept" | "rt.wasi_sock_connect" | "rt.wasi_sock_connected" | "rt.wasi_sock_read" | "rt.wasi_sock_try_read" | "rt.wasi_sock_readable" | "rt.wasi_sock_write" | "rt.wasi_sock_lclose"
+  name is "rt.wasi_sock_listen" | "rt.wasi_sock_local" | "rt.wasi_sock_peer" | "rt.wasi_sock_conn_local" | "rt.wasi_sock_shutdown" | "rt.wasi_sock_accept" | "rt.wasi_sock_connect" | "rt.wasi_sock_connected" | "rt.wasi_sock_read" | "rt.wasi_sock_try_read" | "rt.wasi_sock_readable" | "rt.wasi_sock_write" | "rt.wasi_sock_lclose"
 }
 
 /// The imports of rt9.xo.
@@ -63,6 +63,7 @@ fn rt9_imports() -> Str {
     (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.accept" (func $sk_accept (param i32 i32)))
     (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.local-address" (func $sk_local (param i32 i32)))
     (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.remote-address" (func $sk_remote (param i32 i32)))
+    (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.shutdown" (func $sk_shutdown (param i32 i32 i32)))
     (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.subscribe" (func $sk_sub (param i32) (result i32)))
     (import "wasi:sockets/tcp@0.2.0" "[resource-drop]tcp-socket" (func $sk_drop (param i32)))
     (import "wasi:sockets/ip-name-lookup@0.2.0" "resolve-addresses" (func $sk_resolve (param i32 i32 i32 i32)))
@@ -1264,6 +1265,38 @@ ${closing}
       i32.load offset=8
       i32.const 1
       call $sk_addr_bytes)
+
+    ;; rt.wasi_sock_conn_local: connection c's local address, as
+    ;; $wasi_sock_local's (Conn.local_addr); empty once closed
+    (func $wasi_sock_conn_local (param $c i32) (result i32 i32)
+      local.get $c
+      i32.load offset=20
+      if
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $c
+      i32.load offset=8
+      i32.const 0
+      call $sk_addr_bytes)
+
+    ;; rt.wasi_sock_shutdown: tcp-socket.shutdown(send) of connection c
+    ;; (Conn.close_write): 0, 1 + the error-code, or 100 once closed
+    (func $wasi_sock_shutdown (param $c i32) (result i32)
+      local.get $c
+      i32.load offset=20
+      if
+        i32.const 100
+        return
+      end
+      local.get $c
+      i32.load offset=8
+      i32.const 1
+      call $hret_at
+      call $sk_shutdown
+      call $hret_at
+      call $sk_unit)
 
     ;; socket s's local (remote 0) or remote (1) address as bytes; 2: udp
     ;; socket s's local address

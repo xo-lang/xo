@@ -1,0 +1,87 @@
+// std/tls's dial, load_cert, net_conn and verify_hostname (decision 0644
+// T11): Go's tls.Dial and DialWithDialer (the server name from the
+// address, a timeout over a handshake that never answers),
+// LoadX509KeyPair (tls_test.go TestX509KeyPair's files and a missing
+// one) and Conn.VerifyHostname (TestVerifyHostname's match, mismatch and
+// unverified cases), against a local std/http TLS server.
+use std/http
+use std/tls
+use std/x509
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /hello", fn(_req) { http.text(200, "hello") })
+  r
+}
+
+fn port_of(addr: Str) -> Str { addr[(addr.rfind(":") ?? 0) + 1..] }
+
+fn main(os: Os) ! {
+  let cwd = os.fs.cwd()
+  let dir = create_temp_dir(cwd, ".", "tlsdial-")?
+  defer {
+    cwd.remove_all(dir).ignore_err("the test's directory")
+  }
+  cwd.write("${dir}/cert.pem", good_cert())?
+  cwd.write("${dir}/key.pem", good_key())?
+  let good = tls.load_cert(cwd, "${dir}/cert.pem", "${dir}/key.pem").or_fault("load_cert")
+  match tls.load_cert(cwd, "${dir}/missing.pem", "${dir}/key.pem") {
+    Ok(_) => os.stdio.println("missing: loaded")
+    Err(e) => os.stdio.println("missing: ${e.msg.contains("missing.pem")}")
+  }
+  match tls.load_cert(cwd, "${dir}/key.pem", "${dir}/cert.pem") {
+    Ok(_) => os.stdio.println("swapped: loaded")
+    Err(e) => os.stdio.println("swapped: ${e}")
+  }
+  let ca = x509.parse_pem(ca_pem()).or_fault("ca")
+  let roots = tls.roots_of(ca).or_fault("roots_of")
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, routes()).with_tls([good])
+  let silent = os.net.listen("127.0.0.1:0").or_fault("listen silent")
+  scope s {
+    s.spawn_background(fn() {
+      match srv.serve() {
+        Ok(_) => ()
+        Err(e) => os.stdio.println("serve failed: ${e}")
+      }
+    })
+    let addr = "localhost:${port_of(l.addr())}"
+    let t = tls.dial(os.net, addr, roots: Some(roots)).or_fault("dial")
+    os.stdio.println("dial: ${t.state().server_name} ${tls.version_name(t.state().version)}")
+    os.stdio.println("verify localhost: ${t.verify_hostname("localhost") is Ok(..)}")
+    match t.verify_hostname("example.com") {
+      Ok(_) => os.stdio.println("verify example.com: ok")
+      Err(e) => os.stdio.println("verify example.com: ${e}")
+    }
+    t.write(b"GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").or_fault("write")
+    var got = b""
+    while let Some(b) = t.read(4096).or_fault("read") {
+      got = got + b
+    }
+    let text = got.to_str_lossy()
+    os.stdio.println("response: ${text.starts_with("HTTP/1.1 200")} ${text.ends_with("hello")}")
+    t.close()
+    let n = tls.dial(os.net, l.addr(), server_name: "localhost", roots: Some(roots), timeout: Some(Duration.from_secs_int(5))).or_fault("dial timeout")
+    os.stdio.println("named: ${n.state().server_name} complete ${n.state().handshake_complete}")
+    n.close()
+    let u = tls.dial(os.net, l.addr(), verify: tls.Verify.None).or_fault("dial unverified")
+    match u.verify_hostname("localhost") {
+      Ok(_) => os.stdio.println("unverified: ok")
+      Err(e) => os.stdio.println("unverified: ${e}")
+    }
+    let _ = u.net_conn()
+    u.close()
+    match tls.dial(os.net, silent.addr(), server_name: "localhost", roots: Some(roots), timeout: Some(Duration.from_millis(200))) {
+      Ok(_) => os.stdio.println("silent: handshake done")
+      Err(e) => os.stdio.println("silent: ${e}")
+    }
+    silent.close()
+  }
+  os.stdio.println("done")
+}
+
+// ---------------------------------------------------------------------------
+// Test certificates (golden http_tls's; PEM)
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }

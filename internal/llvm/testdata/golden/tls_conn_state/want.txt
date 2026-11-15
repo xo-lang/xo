@@ -1,0 +1,36 @@
+suite 4865: TLS_AES_128_GCM_SHA256
+suite 4866: TLS_AES_256_GCM_SHA384
+suite 4867: TLS_CHACHA20_POLY1305_SHA256
+suite 49195: TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+suite 49200: TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+suite 52392: TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+suite 49171: TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA
+suite 5: TLS_RSA_WITH_RC4_128_SHA
+suite 10: TLS_RSA_WITH_3DES_EDE_CBC_SHA
+suite 157: TLS_RSA_WITH_AES_256_GCM_SHA384
+suite 49191: TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256
+suite 0: 0x0000
+suite 255: 0x00FF
+suite 65278: 0xFEFE
+version 768: SSLv3
+version 769: TLS 1.0
+version 770: TLS 1.1
+version 771: TLS 1.2
+version 772: TLS 1.3
+version 298: 0x012A
+curve 23: CurveP256
+curve 24: CurveP384
+curve 25: CurveP521
+curve 29: X25519
+curve 4587: SecP256r1MLKEM768
+curve 4588: X25519MLKEM768
+curve 4589: SecP384r1MLKEM1024
+curve 0: CurveID(0)
+curve 30: CurveID(30)
+version TLS 1.3 complete true resumed false
+suite TLS_AES_128_GCM_SHA256 curve X25519MLKEM768
+alpn http/1.1 mutual true server name localhost
+peer good,Xo Test CA
+chains good > Xo Test CA
+ocsp 0 scts 0 ech false
+done

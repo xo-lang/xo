@@ -9,8 +9,11 @@ use native/rthttp
 use native/llrt/cabi_tlsclient
 use native/llrt/netwasi
 use native/llrt/netconn
+use native/llrt/poll
 use native/llrt/raw
 use native/llrt/tlsio
+use native/llrt/tlsneg
+use native/llrt/tlsserve
 use native/llrt/tlssrv
 use native/llrt/twflags
 
@@ -33,6 +36,9 @@ struct TlsConn {
 
 /// The text of a read or write after close (Go's net.ErrClosed).
 const CLOSED_TEXT = "use of closed network connection"
+
+/// The text of a write after close_write (Go's errShutdown).
+const SHUTDOWN_TEXT = "tls: protocol is shutdown"
 
 /// The test world's real network (netconn.xo TW_REAL_NET).
 const TW_REAL_NET = 4
@@ -229,6 +235,9 @@ fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net.dial {
       if tlsio.handle_closed(x) {
         return Err(NetErr.Io(msg: CLOSED_TEXT))
       }
+      if tlsio.handle_write_shut(x) {
+        return Err(NetErr.Io(msg: SHUTDOWN_TEXT))
+      }
       tlsio.handle_conn(x)
     }
     None => return passthrough_write(t.c, data)
@@ -250,8 +259,11 @@ fn (t: TlsConn) close() {
     if tlsio.handle_closed(x) {
       return
     }
+    let sent = tlsio.handle_write_shut(x)
     tlsio.handle_close(x)
-    tlsio.close_notify(tlsio.handle_conn(x))
+    if !sent {
+      tlsio.close_notify(tlsio.handle_conn(x))
+    }
   }
   if target.arch == TargetArch.Wasm32 {
     t.c.close()
@@ -298,6 +310,32 @@ fn (t: TlsConn) peer_certificates() -> List[x509.Certificate] {
   out
 }
 
+fn (t: TlsConn) state() -> tls.ConnState {
+  let h = match t.h {
+    Some(x) => x
+    None => return tls.ConnState{version: 0x0304, handshake_complete: true, did_resume: false, cipher_suite: 0, curve_id: 0, negotiated_protocol: "", server_name: "", peer_certificates: [], verified_chains: []}
+  }
+  let n = tlsio.negotiated_of(tlsio.handle_conn(h))
+  tls.ConnState{version: n.vers, handshake_complete: n.vers != 0, did_resume: n.resumed, cipher_suite: n.suite, curve_id: n.group, negotiated_protocol: n.alpn, server_name: n.server_name, peer_certificates: parse_ders(n.peer), verified_chains: n.verified.map(parse_ders)}
+}
+
+/// The certificates of ders that parse (each was verified or sent as is).
+fn parse_ders(ders: List[Bytes]) -> List[x509.Certificate] {
+  var out: List[x509.Certificate] = []
+  for der in ders {
+    if let Ok(c) = x509.parse(der) {
+      out.push(c)
+    }
+  }
+  out
+}
+
+fn cipher_suite_name(id: Int) -> Str { tlsneg.suite_name(id) }
+
+fn version_name(version: Int) -> Str { tlsneg.version_name(version) }
+
+fn curve_name(id: Int) -> Str { tlsneg.group_name(id) }
+
 fn (t: TlsConn) version() -> Str {
   match t.h {
     Some(x) => tlsio.version_of(tlsio.handle_conn(x))
@@ -340,3 +378,310 @@ fn passthrough_write(c: Conn, data: Bytes) -> () ! NetErr uses net.dial {
 
 /// The message (decision 0358).
 fn tlserr_display(e: tls.TlsErr) -> Str { e.msg }
+
+/// The host part of addr (Go's Dial: up to the last colon), brackets kept
+/// (client drops them).
+fn dial_host(addr: Str) -> Str {
+  match addr.rfind(":") {
+    Some(i) => addr[..i]
+    None => addr
+  }
+}
+
+fn dial(net: Net, addr: Str, server_name: Str = "", roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None, timeout: Duration? = None) -> TlsConn ! NetErr uses net.dial {
+  let name = if server_name.is_empty() { dial_host(addr) } else { server_name }
+  let d = match timeout {
+    Some(t) => t
+    None => return client(net.dial(addr)?, name, roots: roots, verify: verify, alpn: alpn, cert: cert, verify_conn: verify_conn)
+  }
+  let wasm = target.arch == TargetArch.Wasm32
+  // wasm has no monotonic reading here: its handshake gets the whole d
+  let start = if wasm { 0 } else { poll.now() }
+  let c = net.dial_timeout(addr, d)?
+  let left = if wasm { d.nanos() } else { d.nanos() - (poll.now() - start) }
+  if left <= 0 {
+    c.close()
+    return Err(NetErr.Timeout)
+  }
+  // Go's Dialer: a deadline over the handshake, cleared after
+  if wasm {
+    netwasi.set_deadline(c, 3, true, left)
+  } else {
+    netconn.set_deadline(rt.obj_addr(c), 3, true, left)
+  }
+  let r = client(c, name, roots: roots, verify: verify, alpn: alpn, cert: cert, verify_conn: verify_conn)
+  if wasm {
+    netwasi.set_deadline(c, 3, false, 0)
+  } else {
+    netconn.set_deadline(rt.obj_addr(c), 3, false, 0)
+  }
+  if r is Err(..) {
+    c.close()
+  }
+  r
+}
+
+fn load_cert(fs: Fs, cert_file: Str, key_file: Str) -> TlsCert ! tls.TlsErr uses fs.read {
+  let cp = match fs.read(cert_file) {
+    Ok(b) => b
+    Err(e) => return Err(tls.TlsErr{msg: "${e}"})
+  }
+  let kp = match fs.read(key_file) {
+    Ok(b) => b
+    Err(e) => return Err(tls.TlsErr{msg: "${e}"})
+  }
+  cert(cp, kp)
+}
+
+fn (t: TlsConn) net_conn() -> Conn { t.c }
+
+fn (t: TlsConn) verify_hostname(host: Str) -> () ! tls.TlsErr {
+  let st = t.state()
+  if st.verified_chains.is_empty() || st.peer_certificates.is_empty() {
+    return Err(tls.TlsErr{msg: "tls: handshake did not verify certificate chain"})
+  }
+  match st.peer_certificates[0].verify_hostname(host) {
+    Ok(_) => Ok(())
+    Err(e) => Err(tls.TlsErr{msg: "${e}"})
+  }
+}
+
+fn (t: TlsConn) local_addr() -> Str { t.c.local_addr() }
+
+fn (t: TlsConn) remote_addr() -> Str { t.c.remote_addr() }
+
+/// Go's Conn.CloseWrite: close_notify, then the connection's close_write.
+fn (t: TlsConn) close_write() -> () ! NetErr uses net.dial {
+  if let Some(x) = t.h {
+    if tlsio.handle_closed(x) {
+      return Err(NetErr.Io(msg: CLOSED_TEXT))
+    }
+    if !tlsio.handle_write_shut(x) {
+      tlsio.handle_shut_write(x)
+      tlsio.close_notify(tlsio.handle_conn(x))
+    }
+  }
+  t.c.close_write()
+}
+
+// ---------------------------------------------------------------------------
+// The server (decision 0644 T1): tlssrv's engine, as std/http's TLS uses
+// it, on a connection of the program's own.
+
+/// h holds the tlssrv connection (None: no certificate, every operation
+/// fails with Go's text); fake: FakeNet's connection, whose bytes pass
+/// through.
+struct TlsServerConn {
+  c: ServerConn
+  h: rthttp.TlsH?
+  fake: Bool
+}
+
+/// Go's Server Handshake with an empty Certificates.
+const NO_CERTS_TEXT = "tls: no certificates configured"
+
+/// tls.Listen's text for a Config with no certificate.
+const LISTEN_NO_CERTS_TEXT = "tls: neither Certificates, GetCertificate, nor GetConfigForClient set in Config"
+
+fn server_auth_mode(m: tls.ClientAuth) -> Int {
+  match m {
+    tls.ClientAuth.None => 0
+    tls.ClientAuth.Request => 1
+    tls.ClientAuth.RequireAny => 2
+    tls.ClientAuth.VerifyIfGiven => 3
+    tls.ClientAuth.RequireAndVerify => 4
+  }
+}
+
+fn server(c: ServerConn, config: tls.ServerConfig) -> TlsServerConn {
+  let cn = rt.obj_addr(c)
+  let wasm = target.arch == TargetArch.Wasm32
+  if wasm {
+    netwasi.upgrade(cn)
+  } else {
+    netconn.conn_upgrade(cn)
+    if twflags.fake(TW_REAL_NET) {
+      return TlsServerConn{c: c, h: None, fake: true}
+    }
+  }
+  var certs: List[tlssrv.Cert] = []
+  for tc in config.certificates {
+    certs.push(cert_data(tc))
+  }
+  let roots = match config.client_cas {
+    Some(r) => tlsio.roots_certs(roots_data(r))
+    None => []
+  }
+  let pd = if wasm { cn } else { netconn.conn_pd(cn) }
+  let t = tlssrv.conn_cfg(certs, config.next_protos, server_auth_mode(config.client_auth), roots, pd)
+  if t == 0 {
+    return TlsServerConn{c: c, h: None, fake: false}
+  }
+  TlsServerConn{c: c, h: Some(tlsserve.handle_new(t)), fake: false}
+}
+
+/// The connection's deadline for reads (write false) or writes, on the
+/// timers' clock (0 none), which tlssrv waits until.
+fn srv_deadline(c: ServerConn, write: Bool) -> Int {
+  let cn = rt.obj_addr(c)
+  if target.arch == TargetArch.Wasm32 { netwasi.user_deadline(cn) } else { netconn.user_deadline(cn, write) }
+}
+
+/// The earlier of two deadlines (0 none).
+fn earlier(a: Int, b: Int) -> Int { if a == 0 { b } else if b != 0 && b < a { b } else { a } }
+
+/// Why tlssrv block t's last operation failed, as a NetErr.
+fn srv_err(t: Int, what: Str) -> NetErr {
+  if tlssrv.timed_out(t) {
+    return NetErr.Timeout
+  }
+  let e = tlssrv.err_text(t)
+  NetErr.Io(msg: if e.is_empty() { what } else { e })
+}
+
+fn (t: TlsServerConn) handshake() -> () ! NetErr uses net.listen {
+  if t.fake {
+    return Ok(())
+  }
+  let h = t.h ?? return Err(NetErr.Io(msg: NO_CERTS_TEXT))
+  if tlsserve.state(h) == 1 {
+    return Err(NetErr.Io(msg: CLOSED_TEXT))
+  }
+  let b = tlsserve.block(h)
+  tlssrv.set_deadline(b, earlier(srv_deadline(t.c, false), srv_deadline(t.c, true)))
+  if !tlssrv.handshake(b) {
+    return Err(srv_err(b, "tls: handshake failed"))
+  }
+  Ok(())
+}
+
+fn (t: TlsServerConn) read(max: Int) -> Bytes? ! NetErr uses net.listen {
+  if t.fake {
+    let cn = rt.obj_addr(t.c)
+    netconn.conn_unupgrade(cn)
+    let r = t.c.read(max)
+    netconn.conn_upgrade(cn)
+    return r
+  }
+  t.handshake()?
+  let b = tlsserve.block(t.h ?? return Err(NetErr.Io(msg: NO_CERTS_TEXT)))
+  if max <= 0 {
+    return Some(b"")
+  }
+  tlssrv.set_deadline(b, srv_deadline(t.c, false))
+  let n = if max > 1048576 { 1048576 } else { max }
+  let buf = raw.bytes_buf(n)
+  let k = tlssrv.hc_read(b, raw.bytes_addr(buf), n)
+  if k > 0 {
+    return Some(raw.bytes_len(buf, k))
+  }
+  if k == 0 {
+    return None
+  }
+  Err(srv_err(b, CLOSED_TEXT))
+}
+
+fn (t: TlsServerConn) write(data: Bytes) -> () ! NetErr uses net.listen {
+  if t.fake {
+    let cn = rt.obj_addr(t.c)
+    netconn.conn_unupgrade(cn)
+    let r = t.c.write(data)
+    netconn.conn_upgrade(cn)
+    return r
+  }
+  t.handshake()?
+  let h = t.h ?? return Err(NetErr.Io(msg: NO_CERTS_TEXT))
+  if tlsserve.state(h) == 2 {
+    return Err(NetErr.Io(msg: SHUTDOWN_TEXT))
+  }
+  let b = tlsserve.block(h)
+  tlssrv.set_deadline(b, srv_deadline(t.c, true))
+  let s = tlssrv.write(b, raw.bytes_addr(data), data.len())
+  raw.alive(data)
+  match s {
+    0 => Ok(())
+    2 => Err(NetErr.Timeout)
+    3 => Err(NetErr.Canceled)
+    _ => Err(srv_err(b, "write: connection reset by peer"))
+  }
+}
+
+fn (t: TlsServerConn) close() {
+  if let Some(h) = t.h {
+    let st = tlsserve.state(h)
+    if st == 1 {
+      return
+    }
+    tlsserve.set_state(h, 1)
+    if st == 0 {
+      // after a handshake only (tlssrv.close_notify checks), at most 5 s
+      tlssrv.close_notify(tlsserve.block(h))
+    }
+  }
+  if target.arch == TargetArch.Wasm32 {
+    t.c.close()
+    return
+  }
+  netconn.conn_close(rt.obj_addr(t.c))
+}
+
+fn (t: TlsServerConn) close_write() -> () ! NetErr uses net.listen {
+  if !t.fake {
+    let h = t.h ?? return Err(NetErr.Io(msg: NO_CERTS_TEXT))
+    if tlssrv.neg_any(tlsserve.block(h)) == 0 {
+      // Go's errEarlyCloseWrite
+      return Err(NetErr.Io(msg: "tls: CloseWrite called before handshake complete"))
+    }
+    if tlsserve.state(h) == 0 {
+      tlsserve.set_state(h, 2)
+      tlssrv.close_notify(tlsserve.block(h))
+    }
+  }
+  t.c.close_write()
+}
+
+fn (t: TlsServerConn) set_deadline(clock: Clock, at: Time?) uses clock { t.c.set_deadline(clock, at) }
+fn (t: TlsServerConn) set_read_deadline(clock: Clock, at: Time?) uses clock { t.c.set_read_deadline(clock, at) }
+fn (t: TlsServerConn) set_write_deadline(clock: Clock, at: Time?) uses clock { t.c.set_write_deadline(clock, at) }
+
+fn (t: TlsServerConn) state() -> tls.ConnState {
+  let none = tls.ConnState{version: 0, handshake_complete: false, did_resume: false, cipher_suite: 0, curve_id: 0, negotiated_protocol: "", server_name: "", peer_certificates: [], verified_chains: []}
+  if t.fake {
+    return none with {version: 0x0304, handshake_complete: true}
+  }
+  let h = t.h ?? return none
+  let w = tlssrv.neg_any(tlsserve.block(h))
+  if w == 0 {
+    return none
+  }
+  match rt.any_get[tlsneg.Negotiated](rt.obj_at[rt.Any](w)) {
+    Some(n) => tls.ConnState{version: n.vers, handshake_complete: true, did_resume: n.resumed, cipher_suite: n.suite, curve_id: n.group, negotiated_protocol: n.alpn, server_name: n.server_name, peer_certificates: parse_ders(n.peer), verified_chains: n.verified.map(parse_ders)}
+    None => none
+  }
+}
+
+fn (t: TlsServerConn) local_addr() -> Str { t.c.local_addr() }
+
+fn (t: TlsServerConn) remote_addr() -> Str { t.c.remote_addr() }
+
+fn (t: TlsServerConn) net_conn() -> ServerConn { t.c }
+
+struct TlsListener {
+  l: Listener
+  config: tls.ServerConfig
+}
+
+fn listen(net: Net, addr: Str, config: tls.ServerConfig) -> TlsListener ! NetErr uses net.listen {
+  if config.certificates.is_empty() {
+    return Err(NetErr.Io(msg: LISTEN_NO_CERTS_TEXT))
+  }
+  TlsListener{l: net.listen(addr)?, config: config}
+}
+
+fn new_listener(l: Listener, config: tls.ServerConfig) -> TlsListener { TlsListener{l: l, config: config} }
+
+fn (l: TlsListener) accept() -> TlsServerConn ! NetErr uses net.listen { server(l.l.accept()?, l.config) }
+
+fn (l: TlsListener) addr() -> Str { l.l.addr() }
+
+fn (l: TlsListener) close() { l.l.close() }

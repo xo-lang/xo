@@ -21,6 +21,7 @@ use native/llrt/tls12
 use native/llrt/tls13
 use native/llrt/tlscert
 use native/llrt/tlsname
+use native/llrt/tlsneg
 use native/llrt/x509cert as x509
 use native/rt
 use native/rthttp
@@ -824,6 +825,46 @@ pub fn peer_ders(h: Int) -> List[Bytes] {
   }
 }
 
+/// What the client's handshake negotiated (Go's ConnectionState): the
+/// version, suite, group, server name asked for, ALPN, whether a
+/// HelloRetryRequest ran, and the server's certificates (DER, leaf
+/// first); a zero value before the handshake. The client resumes no
+/// session (tickets are dropped), so resumed is false.
+pub fn negotiated_of(h: Int) -> tlsneg.Negotiated {
+  match load(h) {
+    Some(c) => {
+      var ders: List[Bytes] = []
+      if v12(c) {
+        let x = c.cl12[0]
+        for p in x.peer {
+          ders.push(p.raw)
+        }
+        tlsneg.Negotiated{version: "TLS 1.2", cipher: tlsneg.suite_name(x.suite), server_name: x.conf.host, resumed: false, peer: ders, verified: chain_ders(x.verified), curve: tlsneg.group_name(x.group), alpn: x.alpn, vers: 0x0303, suite: x.suite, group: x.group}
+      } else {
+        let x = c.cl
+        for p in x.peer {
+          ders.push(p.raw)
+        }
+        tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(x.suite), server_name: x.conf.host, resumed: false, peer: ders, verified: chain_ders(x.verified), curve: tlsneg.group_name(x.share_group), alpn: x.alpn, hrr: x.hrr, vers: 0x0304, suite: x.suite, group: x.share_group}
+      }
+    }
+    None => tlsneg.Negotiated{version: "", cipher: "", server_name: "", resumed: false}
+  }
+}
+
+/// Each chain's certificates as DER.
+fn chain_ders(chains: List[List[x509.Cert]]) -> List[List[Bytes]] {
+  var out: List[List[Bytes]] = []
+  for ch in chains {
+    var l: List[Bytes] = []
+    for x in ch {
+      l.push(x.raw)
+    }
+    out.push(l)
+  }
+  out
+}
+
 /// The version the handshake chose, as Go's tls.VersionName.
 pub fn version_of(h: Int) -> Str {
   match load(h) {
@@ -882,8 +923,15 @@ pub fn handle_new(h: Int) -> rthttp.TlsH {
 /// The connection of a std/tls handle.
 pub fn handle_conn(t: rthttp.TlsH) -> Int { rt.mem_load(rt.obj_addr(t), H_CONN, 8) }
 
-/// Whether the std/tls handle's close ran.
-pub fn handle_closed(t: rthttp.TlsH) -> Bool { rt.mem_load(rt.obj_addr(t), H_CLOSED, 8) != 0 }
+/// Whether the std/tls handle's close ran (H_CLOSED 1; 2 is close_write's).
+pub fn handle_closed(t: rthttp.TlsH) -> Bool { rt.mem_load(rt.obj_addr(t), H_CLOSED, 8) == 1 }
+
+/// Whether the handle's close_write ran: close_notify is sent and writes
+/// fail (Go's errShutdown).
+pub fn handle_write_shut(t: rthttp.TlsH) -> Bool { rt.mem_load(rt.obj_addr(t), H_CLOSED, 8) == 2 }
+
+/// Marks the handle's sending side shut (TlsConn.close_write).
+pub fn handle_shut_write(t: rthttp.TlsH) { rt.mem_store(rt.obj_addr(t), H_CLOSED, 2, 8) }
 
 /// Marks the std/tls handle closed.
 pub fn handle_close(t: rthttp.TlsH) { rt.mem_store(rt.obj_addr(t), H_CLOSED, 1, 8) }

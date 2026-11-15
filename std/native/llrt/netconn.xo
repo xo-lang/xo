@@ -1518,6 +1518,60 @@ pub fn conn_write(cn: Int, p: Int, n: Int) {
   ok(c)
 }
 
+/// `c.local_addr()` (peer false) and `c.remote_addr()` (true): the
+/// socket's address, "ip:port", "[ip]:port" or a unix socket's path; ""
+/// once closed (Go keeps it; the prelude leaves it unspecified) or when
+/// the system has none (an unnamed unix client).
+pub fn conn_addr(cn: Int, peer: Bool) -> Str {
+  let me = ld(cn, C_MEM)
+  if me != 0 {
+    return twrun.me_addr(me, peer)
+  }
+  let pd = ld(cn, C_PD)
+  if pd == 0 || !poll.pd_begin(pd) {
+    return ""
+  }
+  let size = sun_size() + 8
+  let sa = rt.heap_large(size + 8).wrapping_sub(8)
+  rt.mem_set(sa, 0, size + 8)
+  rt.mem_store(sa + size, 0, size, 4)
+  let fd = pd_fd(pd)
+  let r = if peer { sock.peername(fd, sa, sa + size) } else { sock.sockname(fd, sa, sa + size) }
+  poll.pd_end(pd)
+  var out = ""
+  if r >= 0 {
+    if family(sa) == sock.AF_UNIX {
+      var n = 0
+      while n < size - 2 && rt.mem_load(sa, 2 + n, 1) != 0 {
+        n = n + 1
+      }
+      out = raw.str_at(sa + 2, n)
+    } else if family(sa) == sock.AF_INET || family(sa) == sock.af_inet6() {
+      out = fmt_addr(sa)
+    }
+  }
+  mfree(sa)
+  out
+}
+
+/// `c.close_write()` (Go's TCPConn.CloseWrite): shuts the sending side
+/// (shutdown SHUT_WR); the peer reads the end of the stream, and reads
+/// here go on. Err's text, "" when it worked.
+pub fn conn_close_write(cn: Int) -> Str {
+  let me = ld(cn, C_MEM)
+  if me != 0 {
+    twrun.me_close_write(me)
+    return ""
+  }
+  let pd = ld(cn, C_PD)
+  if pd == 0 || !poll.pd_begin(pd) {
+    return CLOSED_TEXT
+  }
+  let r = sock.shutdown(pd_fd(pd), 1)
+  poll.pd_end(pd)
+  if r < 0 { "shutdown: ${err_text(0 - r)}" } else { "" }
+}
+
 /// `c.close()`.
 pub fn conn_close(cn: Int) {
   let me = ld(cn, C_MEM)

@@ -772,6 +772,8 @@ pub struct Client {
   pub group: Int
   pub alpn: Str
   pub peer: List[x509.Cert]
+  /// the chains the verification built (Go's VerifiedChains)
+  pub verified: List[List[x509.Cert]] = []
   max13: Bool
   offered: List[Int]
   have_vers: Bool
@@ -1450,7 +1452,8 @@ fn verify_certificates(var c: Client) -> Bool {
     }
   } else if !c.conf.insecure {
     let vh = if c.conf.chain_only { "" } else { c.conf.host }
-    let r = x509verify.verify(leaf, certs[1..certs.len()], c.conf.roots, vh, c.conf.now, x509.EKU_SERVER)
+    let (r, chains) = x509verify.verify_all(leaf, certs[1..certs.len()], c.conf.roots, vh, c.conf.now, [x509.EKU_SERVER])
+    c.verified = chains
     if r.code != x509verify.OK {
       fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${verify_msg(r, leaf, vh, c.conf.now, tls13.zone_of(c.conf.zone_off, c.conf.now))}")
       return false

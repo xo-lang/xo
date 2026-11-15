@@ -1,0 +1,170 @@
+// std/tls's server side (decision 0644 T1): Go's tls.Server, Listen,
+// NewListener and Conn's server methods. A TlsListener with ALPN and
+// RequireAndVerify client auth against tls.dial with and without a
+// client certificate (the server's ConnectionState: version, ALPN,
+// the peer's leaf and its verified chain), a server handshake that
+// times out on the connection's deadline (a client that sends nothing),
+// the state before a handshake, close_write before a handshake, and the
+// errors with no certificates (Go's Listen and Server texts).
+use std/tls
+use std/x509
+use std/crypto
+use std/base64
+use std/netip
+
+struct Issued {
+  cert: x509.Certificate
+  key: crypto.PrivateKey
+}
+
+/// A PEM block of der on one line (PEM readers ignore line lengths).
+fn pem_block(kind: Str, der: Bytes) -> Bytes {
+  "-----BEGIN ${kind}-----\n${base64.encode(der)}\n-----END ${kind}-----\n".bytes()
+}
+
+fn issue(os: Os, name: Str, parent: Issued?, ca: Bool, eku: List[x509.ExtKeyUsage], now: Time) -> Issued uses rand {
+  let key = crypto.generate_key(os.rand, crypto.KeyAlg.EcdsaP256).or_fault("key")
+  let usage = if ca { [x509.KeyUsage.CertSign, x509.KeyUsage.DigitalSignature] } else { [x509.KeyUsage.DigitalSignature] }
+  let ips = if ca { [] } else { [netip.parse_addr("127.0.0.1").or_fault("ip")] }
+  let t = x509.Template{subject: x509.Name{common_name: name}, not_before: now - 1h, not_after: now + 24h, ip_addresses: ips, is_ca: ca, key_usage: usage, ext_key_usage: eku}
+  let (pc, pk) = match parent {
+    Some(p) => (Some(p.cert), p.key)
+    None => (None, key)
+  }
+  Issued{cert: x509.create_certificate(os.rand, t, key.public_key(), pc, pk).or_fault("cert ${name}"), key: key}
+}
+
+fn tls_pair(i: Issued, chain: List[x509.Certificate]) -> tls.TlsCert {
+  var pem = i.cert.pem()
+  for c in chain {
+    pem = pem + c.pem()
+  }
+  tls.cert(pem, pem_block("PRIVATE KEY", crypto.marshal_private_key(i.key))).or_fault("pair")
+}
+
+fn chain_names(s: tls.ConnState) -> Str {
+  var chains: List[Str] = []
+  for ch in s.verified_chains {
+    var names: List[Str] = []
+    for c in ch {
+      names.push(c.subject.common_name)
+    }
+    chains.push(names.join(">"))
+  }
+  chains.join(", ")
+}
+
+/// Serves one connection: reads a line, answers with what the server saw.
+fn serve_one(l: tls.TlsListener) -> Str uses net {
+  let c = match l.accept() {
+    Ok(c) => c
+    Err(e) => return "accept: ${e}"
+  }
+  let before = c.state().handshake_complete
+  match c.handshake() {
+    Ok(_) => ()
+    Err(e) => {
+      c.close()
+      return "server handshake: ${e}"
+    }
+  }
+  let s = c.state()
+  let leaf = if s.peer_certificates.is_empty() { "-" } else { s.peer_certificates[0].subject.common_name }
+  let msg = match c.read(4096) {
+    Ok(Some(b)) => b.to_str_lossy().trim()
+    Ok(None) => "eof"
+    Err(e) => "read: ${e}"
+  }
+  c.write("seen ${msg}\n".bytes()).or_fault("server write")
+  c.close()
+  "server: before ${before} complete ${s.handshake_complete} ${tls.version_name(s.version)} alpn ${s.negotiated_protocol} leaf ${leaf} chains [${chain_names(s)}]"
+}
+
+fn main(os: Os) uses net, stdio, rand, clock {
+  let now = os.clock.now()
+  let ca = issue(os, "Xo Test CA", None, true, [], now)
+  let server = issue(os, "server", Some(ca), false, [x509.ExtKeyUsage.ServerAuth], now)
+  let good = issue(os, "good client", Some(ca), false, [x509.ExtKeyUsage.ClientAuth], now)
+  let roots = tls.roots_of([ca.cert]).or_fault("roots")
+  let cfg = tls.ServerConfig{certificates: [tls_pair(server, [])], next_protos: ["h2", "http/1.1"], client_auth: tls.ClientAuth.RequireAndVerify, client_cas: Some(roots)}
+  match tls.listen(os.net, "127.0.0.1:0", tls.ServerConfig{certificates: []}) {
+    Ok(_) => os.stdio.println("listen without certificates: ok")
+    Err(e) => os.stdio.println("listen without certificates: ${e}")
+  }
+  let tl = tls.listen(os.net, "127.0.0.1:0", cfg).or_fault("listen")
+  os.stdio.println("listener addr: ${tl.addr().starts_with("127.0.0.1:")}")
+  scope s {
+    // a client with a certificate, ALPN http/1.1
+    let t = s.spawn(fn() -> Str { serve_one(tl) })
+    let c = tls.dial(os.net, tl.addr(), server_name: "127.0.0.1", roots: Some(roots), alpn: ["http/1.1"], cert: Some(tls_pair(good, []))).or_fault("dial")
+    os.stdio.println("client: ${tls.version_name(c.state().version)} alpn ${c.state().negotiated_protocol}")
+    c.write("hello\n".bytes()).or_fault("write")
+    match c.read(4096) {
+      Ok(Some(b)) => os.stdio.println("client got: ${b.to_str_lossy().trim()}")
+      Ok(None) => os.stdio.println("client got: eof")
+      Err(e) => os.stdio.println("client read: ${e}")
+    }
+    c.close()
+    os.stdio.println(t.await)
+    // a client with no certificate: the server refuses it
+    let t2 = s.spawn(fn() -> Str { serve_one(tl) })
+    match tls.dial(os.net, tl.addr(), server_name: "127.0.0.1", roots: Some(roots)) {
+      Ok(c2) => {
+        c2.write("hi\n".bytes()).ignore_err("refused")
+        c2.read(4096).ignore_err("refused")
+        c2.close()
+      }
+      Err(_) => ()
+    }
+    os.stdio.println(t2.await)
+  }
+  tl.close()
+  // a server handshake bounded by the connection's deadline
+  let pl = os.net.listen("127.0.0.1:0").or_fault("plain listen")
+  let nl = tls.new_listener(pl, cfg)
+  scope s {
+    let t = s.spawn(fn() -> Str {
+      let sc = match nl.accept() {
+        Ok(c) => c
+        Err(e) => return "accept: ${e}"
+      }
+      os.stdio.println("state before handshake: complete ${sc.state().handshake_complete} version ${sc.state().version}")
+      match sc.close_write() {
+        Ok(_) => os.stdio.println("close_write before handshake: ok")
+        Err(e) => os.stdio.println("close_write before handshake: ${e}")
+      }
+      os.stdio.println("addrs: ${sc.local_addr() == pl.addr()} ${sc.remote_addr().starts_with("127.0.0.1:")}")
+      sc.set_deadline(os.clock, Some(os.clock.now() + 200ms))
+      let r = match sc.handshake() {
+        Ok(_) => "handshake: done"
+        Err(e) => "handshake: ${e}"
+      }
+      sc.close()
+      r
+    })
+    let raw = os.net.dial(pl.addr()).or_fault("raw dial")
+    os.stdio.println(t.await)
+    raw.close()
+  }
+  // no certificates on tls.server
+  let pl2 = os.net.listen("127.0.0.1:0").or_fault("listen 2")
+  scope s {
+    let t = s.spawn(fn() -> Str {
+      let sc = tls.server(pl2.accept().or_fault("accept"), tls.ServerConfig{certificates: []})
+      let r = match sc.handshake() {
+        Ok(_) => "no certificates: done"
+        Err(e) => "no certificates: ${e}"
+      }
+      sc.close()
+      r
+    })
+    match tls.dial(os.net, pl2.addr(), server_name: "127.0.0.1", roots: Some(roots)) {
+      Ok(c) => c.close()
+      Err(_) => ()
+    }
+    os.stdio.println(t.await)
+  }
+  pl.close()
+  pl2.close()
+  os.stdio.println("done")
+}

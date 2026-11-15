@@ -5091,6 +5091,27 @@ fn server_conn_set_deadline(c: ServerConn, clock: Clock, t: Time?) uses clock { 
 fn server_conn_set_read_deadline(c: ServerConn, clock: Clock, t: Time?) uses clock { conn_deadline(rt.obj_addr(c), 1, clock, t) }
 fn server_conn_set_write_deadline(c: ServerConn, clock: Clock, t: Time?) uses clock { conn_deadline(rt.obj_addr(c), 2, clock, t) }
 
+/// Conn.local_addr, remote_addr and close_write and ServerConn's (Go's
+/// net.Conn LocalAddr and RemoteAddr, TCPConn.CloseWrite).
+fn conn_local_addr(c: Conn) -> Str { conn_addr_of(rt.obj_addr(c), false) }
+fn conn_remote_addr(c: Conn) -> Str { conn_addr_of(rt.obj_addr(c), true) }
+fn conn_close_write(c: Conn) -> () ! NetErr uses net.dial { conn_shut(rt.obj_addr(c)) }
+fn server_conn_local_addr(c: ServerConn) -> Str { conn_addr_of(rt.obj_addr(c), false) }
+fn server_conn_remote_addr(c: ServerConn) -> Str { conn_addr_of(rt.obj_addr(c), true) }
+fn server_conn_close_write(c: ServerConn) -> () ! NetErr uses net.listen { conn_shut(rt.obj_addr(c)) }
+
+fn conn_addr_of(cn: Int, peer: Bool) -> Str {
+  if target.arch == TargetArch.Wasm32 {
+    return netwasi.conn_addr(rt.obj_at[Conn](cn), peer)
+  }
+  netconn.conn_addr(cn, peer)
+}
+
+fn conn_shut(cn: Int) -> () ! NetErr {
+  let e = if target.arch == TargetArch.Wasm32 { netwasi.conn_close_write(rt.obj_at[Conn](cn)) } else { netconn.conn_close_write(cn) }
+  if e.is_empty() { Ok(()) } else { Err(NetErr.Io(msg: e)) }
+}
+
 fn conn_deadline(cn: Int, which: Int, clock: Clock, t: Time?) uses clock {
   if target.arch == TargetArch.Wasm32 {
     // a wasip2 command's wasi:sockets (decision 0447): cn is the handle's

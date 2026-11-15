@@ -438,6 +438,12 @@ fn wasi_sock_local(l: Listener) -> Bytes
 /// wasm only: connection c's peer address, as wasi_sock_local's bytes
 /// (decision 0447 R2c)
 fn wasi_sock_peer(c: Conn) -> Bytes
+/// wasm only: connection c's local address, as wasi_sock_local's bytes
+/// (Conn.local_addr); empty once closed
+fn wasi_sock_conn_local(c: Conn) -> Bytes
+/// wasm only: tcp-socket.shutdown(send) of connection c (Conn.close_write):
+/// 0, 1 + a wasi:sockets error-code, or 100 once closed
+fn wasi_sock_shutdown(c: Conn) -> Int
 fn wasi_sock_accept(l: Listener) -> ServerConn
 fn wasi_sock_lclose(l: Listener)
 /// A connect started, limited to d ns (0 none); wasi_sock_connected waits

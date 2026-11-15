@@ -183,6 +183,9 @@ pub struct Client {
   pub suite: Int
   pub alpn: Str
   pub peer: List[x509.Cert]
+  /// the chains the verification built, leaf first (Go's
+  /// ConnectionState.VerifiedChains); none when not verified here
+  pub verified: List[List[x509.Cert]] = []
   rin: Bytes
   hs: Bytes
   app: Bytes
@@ -190,14 +193,14 @@ pub struct Client {
   tr: Bytes
   random: Bytes
   sid: Bytes
-  share_group: Int
+  pub share_group: Int
   priv: Bytes
   /// a hybrid priv's ML-KEM key, expanded once for the share and the
   /// decapsulation (mlkem.hybrid_key_for); none for another group or a
   /// ClientHello given whole
   kem: mlkem.Key?
   cookie: Bytes
-  hrr: Bool
+  pub hrr: Bool
   ccs_sent: Bool
   cert_req: Bool
   req_ctx: Bytes
@@ -902,7 +905,9 @@ fn certificate(var c: Client, msg: Bytes) {
     }
   } else if !c.conf.insecure {
     let inters = certs[1..certs.len()]
-    let r = x509verify.verify(leaf, inters, c.conf.roots, vhost(c.conf), c.conf.now, x509.EKU_SERVER)
+    // every chain kept, as Go's Verify gives ConnectionState.VerifiedChains
+    let (r, chains) = x509verify.verify_all(leaf, inters, c.conf.roots, vhost(c.conf), c.conf.now, [x509.EKU_SERVER])
+    c.verified = chains
     if r.code != x509verify.OK {
       let alert = if r.code == x509verify.UNKNOWN_AUTHORITY { ALERT_UNKNOWN_CA } else if r.code == x509verify.EXPIRED { ALERT_CERTIFICATE_EXPIRED } else { ALERT_BAD_CERTIFICATE }
       fail(c, alert, "tls: failed to verify certificate: ${verify_msg(r, leaf, c.conf)}")

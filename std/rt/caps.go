@@ -1657,3 +1657,53 @@ func lookPathHasExt(p string) bool {
 func lookPathWinAbs(p string) bool {
 	return strings.HasPrefix(p, `\`) || strings.HasPrefix(p, "/") || (len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/'))
 }
+
+// connAddr is a net.Addr as Conn.local_addr gives it: "" for none.
+func connAddr(a net.Addr) string {
+	if a == nil {
+		return ""
+	}
+	if u, ok := a.(*net.UnixAddr); ok {
+		if u == nil {
+			return ""
+		}
+		return u.Name
+	}
+	return a.String()
+}
+
+// M_local_addr is `c.local_addr()`: Go's LocalAddr.
+func (c Conn) M_local_addr(*Task) string {
+	if c.c == nil {
+		return ""
+	}
+	return connAddr(c.c.LocalAddr())
+}
+
+// M_remote_addr is `c.remote_addr()`: Go's RemoteAddr.
+func (c Conn) M_remote_addr(*Task) string {
+	if c.c == nil {
+		return ""
+	}
+	return connAddr(c.c.RemoteAddr())
+}
+
+// M_close_write is `c.close_write()`: Go's TCPConn.CloseWrite (and
+// UnixConn's).
+func (c Conn) M_close_write(tk *Task) Result[Unit, NetErr] {
+	if c.c == nil {
+		return Err[Unit](netErr(4, netClosedText))
+	}
+	if m, ok := c.c.(*memEnd); ok {
+		m.closeWrite()
+		return Ok[Unit, NetErr](Unit{})
+	}
+	cw, ok := c.c.(interface{ CloseWrite() error })
+	if !ok {
+		return Err[Unit](netErr(4, "close_write: not a TCP or unix connection"))
+	}
+	if err := cw.CloseWrite(); err != nil {
+		return Err[Unit](netErr(4, err.Error()))
+	}
+	return Ok[Unit, NetErr](Unit{})
+}

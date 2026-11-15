@@ -417,6 +417,9 @@ fn ity_sock_tcp(t_net: Int, t_ec: Int, t_sa: Int, t_in: Int, t_out: Int, t_poll:
   let la = i.def(dt_result(sa, ec))
   i.fun("[method]tcp-socket.local-address", [("self", bs)], la)
   i.fun("[method]tcp-socket.remote-address", [("self", bs)], la)
+  let sht0 = i.def(dt_enum(["receive", "send", "both"]))
+  let sht = i.eq("shutdown-type", sht0)
+  i.fun("[method]tcp-socket.shutdown", [("self", bs), ("shutdown-type", sht)], none)
   i.fun("[method]tcp-socket.subscribe", [("self", bs)], own_p)
   i
 }

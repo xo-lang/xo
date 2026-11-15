@@ -4552,7 +4552,7 @@ are `@0.2.0`. `http.Client` works through the host's
 `wasi:http/outgoing-handler`, imported only by a program that reaches it (see
 `spec/std.md`). A command's TCP network is `wasi:sockets`' (2026-11-03):
 `Net.listen`, `Net.dial`, `Net.dial_timeout`, `Net.lookup_host`, `Net.only`,
-`Listener` and `Conn` with their deadlines, with the native targets' NetErr
+`Listener` and `Conn` with their deadlines, addresses and `close_write`, with the native targets' NetErr
 values and texts; no Unix domain sockets (`unix:` is `Io`) and no service
 names for ports. A component that imports `wasi:sockets/tcp` needs its
 host's network (`wasmtime run -S inherit-network=y`), one that imports

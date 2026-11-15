@@ -12,6 +12,24 @@
 - Affected: the native backends
 - Shipped in: not yet released
 
+## 2026-11-15: feature: Conn and ServerConn local_addr, remote_addr and close_write
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0644 T11 (Go's net.Conn surface that std/tls's Conn methods forward to)
+- Go reference: net net.go (Conn.LocalAddr, RemoteAddr), tcpsock.go (TCPConn.CloseWrite) (go1.26.11)
+- Test: golden conn_close_write (go, arm64, llvm); wasip2 through the gate's wasm step
+- Timing: none
+- Shipped in: not yet released
+
+`Conn` and `ServerConn` gain `local_addr()` and `remote_addr()`
+(`host:port`, as Go's `String()` of each end) and `close_write()`
+(shuts the sending half, so the peer reads the end of the stream while
+this end still reads). Native: getsockname, getpeername and shutdown;
+wasip2: `tcp-socket.local-address`, `remote-address` and `shutdown`
+(new rt intrinsics `wasi_sock_conn_local` and `wasi_sock_shutdown`);
+FakeNet's memory connections keep both ends' addresses.
+
 ## 2026-11-14: feature: --check=free,guard,leak; XO_LEAKCHECK=fail and =0; a build's embedded checks
 
 - Kind: feature

@@ -325,3 +325,12 @@ func (q *memQueue) close() {
 		e.close()
 	}
 }
+
+// closeWrite is Conn.close_write on an in memory connection: the peer's
+// reads end after the bytes held; reads here go on.
+func (e *memEnd) closeWrite() {
+	e.out.mu.Lock()
+	e.out.wclosed = true
+	e.out.notify()
+	e.out.mu.Unlock()
+}

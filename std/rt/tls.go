@@ -344,3 +344,241 @@ func Tls_pin_sha256(_ *Task, pin string) Result[func(*Task, List[X509_Certificat
 }
 
 func hexDecode(s string) ([]byte, error) { return hex.DecodeString(s) }
+
+// Tls_dial is `tls.dial(net, addr, server_name, ...)`: Go's
+// DialWithDialer, the timeout over the dial and the handshake together
+// and cleared after.
+func Tls_dial(tk *Task, n Net, addr string, serverName string, roots Option[Tls_Roots], verify Tls_Verify, alpn List[string], cert Option[Tls_TlsCert], verifyConn Option[func(*Task, List[X509_Certificate]) Result[Unit, string]], timeout Option[Duration]) Result[Tls_TlsConn, NetErr] {
+	name := serverName
+	if name == "" {
+		name = addr
+		if i := strings.LastIndex(addr, ":"); i >= 0 {
+			name = addr[:i]
+		}
+	}
+	if !timeout.Some {
+		c := n.M_dial(tk, addr)
+		if !c.Ok {
+			return Err[Tls_TlsConn](c.E)
+		}
+		return Tls_client(tk, c.V, name, roots, verify, alpn, cert, verifyConn)
+	}
+	start := time.Now()
+	c := n.M_dial_timeout(tk, addr, timeout.V)
+	if !c.Ok {
+		return Err[Tls_TlsConn](c.E)
+	}
+	at := start.Add(time.Duration(int64(timeout.V)))
+	if !time.Now().Before(at) {
+		c.V.M_close(tk)
+		return Err[Tls_TlsConn](netErr(3, ""))
+	}
+	setUserDeadline(c.V, at)
+	r := Tls_client(tk, c.V, name, roots, verify, alpn, cert, verifyConn)
+	setUserDeadline(c.V, time.Time{})
+	if !r.Ok {
+		c.V.M_close(tk)
+	}
+	return r
+}
+
+// setUserDeadline sets both of c's deadlines to at (zero: none), as
+// set_deadline does, for the handshake tls.dial bounds.
+func setUserDeadline(c Conn, at time.Time) {
+	if c.c == nil {
+		return
+	}
+	if _, ok := c.c.(*memEnd); ok {
+		return
+	}
+	v, _ := connDeadlines.LoadOrStore(c.c, &connDL{})
+	d := v.(*connDL)
+	n := int64(0)
+	if !at.IsZero() {
+		n = at.UnixNano()
+	}
+	d.rd.Store(n)
+	d.wr.Store(n)
+	c.c.SetDeadline(at)
+}
+
+// Tls_load_cert is `tls.load_cert(fs, cert_file, key_file)`: Go's
+// LoadX509KeyPair through fs.
+func Tls_load_cert(tk *Task, fs Fs, certFile, keyFile string) Result[Tls_TlsCert, Tls_TlsErr] {
+	cp := fs.M_read(tk, certFile)
+	if !cp.Ok {
+		return Err[Tls_TlsCert](Tls_TlsErr{F_msg: cp.E.M_display(tk)})
+	}
+	kp := fs.M_read(tk, keyFile)
+	if !kp.Ok {
+		return Err[Tls_TlsCert](Tls_TlsErr{F_msg: kp.E.M_display(tk)})
+	}
+	return Tls_cert(tk, cp.V, kp.V)
+}
+
+// M_net_conn is `t.net_conn()`: Go's Conn.NetConn.
+func (t Tls_TlsConn) M_net_conn(*Task) Conn { return Conn{c: t.c} }
+
+// M_verify_hostname is `t.verify_hostname(host)`: Go's Conn.VerifyHostname.
+func (t Tls_TlsConn) M_verify_hostname(tk *Task, host string) Result[Unit, Tls_TlsErr] {
+	if t.t == nil {
+		return Err[Unit](Tls_TlsErr{F_msg: "tls: handshake did not verify certificate chain"})
+	}
+	if err := t.t.VerifyHostname(host); err != nil {
+		return Err[Unit](Tls_TlsErr{F_msg: err.Error()})
+	}
+	return Ok[Unit, Tls_TlsErr](Unit{})
+}
+
+// M_local_addr is `t.local_addr()`: Go's Conn.LocalAddr.
+func (t Tls_TlsConn) M_local_addr(tk *Task) string { return Conn{c: t.c}.M_local_addr(tk) }
+
+// M_remote_addr is `t.remote_addr()`: Go's Conn.RemoteAddr.
+func (t Tls_TlsConn) M_remote_addr(tk *Task) string { return Conn{c: t.c}.M_remote_addr(tk) }
+
+// M_close_write is `t.close_write()`: Go's Conn.CloseWrite.
+func (t Tls_TlsConn) M_close_write(tk *Task) Result[Unit, NetErr] {
+	if t.closed.Load() {
+		return Err[Unit](netErr(4, netClosedText))
+	}
+	if t.t == nil {
+		return Conn{c: t.c}.M_close_write(tk)
+	}
+	if err := t.t.CloseWrite(); err != nil {
+		return Err[Unit](netErr(4, err.Error()))
+	}
+	return Ok[Unit, NetErr](Unit{})
+}
+
+// Tls_TlsServerConn is a std/tls TlsServerConn (decision 0644 T1):
+// crypto/tls's server Conn, whose handshake runs at the first read, write
+// or handshake (tls.Server's); the methods it shares with TlsConn are
+// TlsConn's.
+type Tls_TlsServerConn struct {
+	Tls_TlsConn
+	noCerts bool
+}
+
+// Tls_TlsListener is a std/tls TlsListener: the listener and its config.
+type Tls_TlsListener struct {
+	l   Listener
+	cfg Tls_ServerConfig
+}
+
+// XoDebug implements Debug.
+func (Tls_TlsListener) XoDebug(b *strings.Builder) { b.WriteString("<tlslistener>") }
+
+// serverConfig is cfg as crypto/tls's Config.
+func serverConfig(cfg Tls_ServerConfig) *tls.Config {
+	c := &tls.Config{NextProtos: cfg.F_next_protos.s, ClientAuth: clientAuthType(cfg.F_client_auth)}
+	for _, tc := range cfg.F_certificates.s {
+		c.Certificates = append(c.Certificates, *tc.c)
+	}
+	if cfg.F_client_cas.Some {
+		c.ClientCAs = cfg.F_client_cas.V.pool
+	}
+	return c
+}
+
+// Tls_server is `tls.server(c, config)`: Go's tls.Server.
+func Tls_server(tk *Task, c ServerConn, cfg Tls_ServerConfig) Tls_TlsServerConn {
+	if c.c != nil {
+		upgradedConns.Store(c.c, struct{}{})
+	}
+	if _, ok := c.c.(fakeConn); ok || c.c == nil {
+		return Tls_TlsServerConn{Tls_TlsConn: Tls_TlsConn{c: c.c, fake: c.c != nil, closed: new(atomic.Bool)}}
+	}
+	t := tls.Server(c.c, serverConfig(cfg))
+	return Tls_TlsServerConn{Tls_TlsConn: Tls_TlsConn{t: t, c: c.c, closed: new(atomic.Bool)}, noCerts: len(cfg.F_certificates.s) == 0}
+}
+
+// M_handshake is `t.handshake()`: Go's Conn.Handshake under the
+// connection's deadlines.
+func (t Tls_TlsServerConn) M_handshake(tk *Task) Result[Unit, NetErr] {
+	if tk.Canceled() {
+		return Err[Unit](netErr(5, ""))
+	}
+	if t.fake {
+		return Ok[Unit, NetErr](Unit{})
+	}
+	if t.closed.Load() {
+		return Err[Unit](netErr(4, netClosedText))
+	}
+	limit := userDeadline(t.c, false)
+	if w := userDeadline(t.c, true); !w.IsZero() && (limit.IsZero() || w.Before(limit)) {
+		limit = w
+	}
+	canceled, err := interruptibleTo(tk, t.c.SetDeadline, limit, t.t.Handshake)
+	t.c.SetReadDeadline(userDeadline(t.c, false))
+	t.c.SetWriteDeadline(userDeadline(t.c, true))
+	if canceled {
+		return Err[Unit](netErr(5, ""))
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return Err[Unit](netErr(3, ""))
+	}
+	if err != nil {
+		return Err[Unit](netErr(4, err.Error()))
+	}
+	return Ok[Unit, NetErr](Unit{})
+}
+
+// M_read is `t.read(max)`: the handshake first (its deadline the
+// connection's), then TlsConn's read.
+func (t Tls_TlsServerConn) M_read(tk *Task, max int64) Result[Option[Bytes], NetErr] {
+	if r := t.M_handshake(tk); !r.Ok {
+		return Err[Option[Bytes]](r.E)
+	}
+	return t.Tls_TlsConn.M_read(tk, max)
+}
+
+// M_write is `t.write(data)`, after the handshake.
+func (t Tls_TlsServerConn) M_write(tk *Task, data Bytes) Result[Unit, NetErr] {
+	if r := t.M_handshake(tk); !r.Ok {
+		return r
+	}
+	return t.Tls_TlsConn.M_write(tk, data)
+}
+
+// M_state is `t.state()`: the zero state before the handshake.
+func (t Tls_TlsServerConn) M_state(tk *Task) Tls_ConnState {
+	if t.t != nil && !t.t.ConnectionState().HandshakeComplete {
+		return Tls_ConnState{F_negotiated_protocol_is_mutual: true}
+	}
+	return t.Tls_TlsConn.M_state(tk)
+}
+
+// M_net_conn is `t.net_conn()`.
+func (t Tls_TlsServerConn) M_net_conn(*Task) ServerConn { return ServerConn{c: t.c} }
+
+// Tls_listen is `tls.listen(net, addr, config)`: Go's tls.Listen.
+func Tls_listen(tk *Task, n Net, addr string, cfg Tls_ServerConfig) Result[Tls_TlsListener, NetErr] {
+	if len(cfg.F_certificates.s) == 0 {
+		return Err[Tls_TlsListener](netErr(4, "tls: neither Certificates, GetCertificate, nor GetConfigForClient set in Config"))
+	}
+	l := n.M_listen(tk, addr)
+	if !l.Ok {
+		return Err[Tls_TlsListener](l.E)
+	}
+	return Ok[Tls_TlsListener, NetErr](Tls_TlsListener{l: l.V, cfg: cfg})
+}
+
+// Tls_new_listener is `tls.new_listener(l, config)`: Go's tls.NewListener.
+func Tls_new_listener(_ *Task, l Listener, cfg Tls_ServerConfig) Tls_TlsListener {
+	return Tls_TlsListener{l: l, cfg: cfg}
+}
+
+// M_accept is `l.accept()`: the next connection, its handshake not yet run.
+func (l Tls_TlsListener) M_accept(tk *Task) Result[Tls_TlsServerConn, NetErr] {
+	c := l.l.M_accept(tk)
+	if !c.Ok {
+		return Err[Tls_TlsServerConn](c.E)
+	}
+	return Ok[Tls_TlsServerConn, NetErr](Tls_server(tk, c.V, l.cfg))
+}
+
+// M_addr is `l.addr()`.
+func (l Tls_TlsListener) M_addr(tk *Task) string { return l.l.M_addr(tk) }
+
+// M_close is `l.close()`.
+func (l Tls_TlsListener) M_close(tk *Task) { l.l.M_close(tk) }
