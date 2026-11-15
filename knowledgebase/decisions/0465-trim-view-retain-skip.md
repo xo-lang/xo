@@ -166,6 +166,52 @@ cost the self build 1.1%; a later draft read 0.94 because its xo failed
 the inlined module's verification and built without inlining
 (gotchas/ab-self-measures-inline-fallback.md).
 
+## Step 3: views returned in tuples (2026-11-15, Xo Lang 1)
+
+Step 2 marked only functions whose result is a Str. A parser that splits
+its input returns a tuple instead: std/mime consume_token returns
+`(v[0..i], v[i..])`, so the callee counted both views (mime parse spent
+40% of its time in the increment thunk) and the caller released them.
+Seventeen std functions return `(Str, ...)` tuples built from a Str
+parameter (mime, path, netip, url among them).
+
+- retview.xo: a function is a candidate when its result is a Str or a
+  tuple of Str and scalar fields (Int, Float, Bool, Unit) with at least
+  one Str (is_view_result). A Return whose argument is a Tuple qualifies
+  when every Str field is a view of the same parameter or a constant,
+  and the Tuple's only use is that Return (returned_only). The facts
+  format is unchanged: Func.ret_view is still one parameter index.
+- mark_ret_tuples tags each such returned Tuple (aux RET_TUPLE_MARK) once
+  the function is marked; rc.xo's kind() treats a marked Tuple as
+  borrowed and modes() borrows its arguments, so the callee counts
+  nothing. At the call site ret_view_at accepts a tuple result, so every
+  field of the call is a projection of the argument: owned only where it
+  is stored, returned, or kept past the argument's release.
+- XO0915 (cost.xo): a Field of a value that views p views p too.
+- rc cache v15 and inline cache v14 (a cached "no view" for a tuple
+  function changes meaning). The std store and the backend caches key on
+  XO_CODEGEN_KEY, which hashes compiler/ssa, so they rebuild on their
+  own; nothing prebuilt is checked in.
+- Golden ret_view_tuple: two views, a view and a constant, a recursive
+  one, a stored field (owned), a field kept past the parameter, a tuple
+  whose Str is a new string (not marked), pairs kept in a list; leakcheck clean
+  on arm64 and LLVM, the same output as with `XO_PASSES=-ret_views` and
+  the Go backend.
+
+`xo bench --ab` on host 1 (linux/arm64), 3 rounds, A = 6b8886f22, B =
+step 3 (wall time B / A):
+
+| bench | case | B / A | verdict |
+|---|---|---|---|
+| mime | parse | 0.94 | better |
+| path | parts | 0.921 | better |
+| netip | parse6 | 0.99 | within noise (calls no tuple function) |
+| url | query | 1.001 | within noise (its splits return `(Str, Str)?`) |
+
+Not covered yet (step 3b): an optional or fallible tuple result,
+`(Str, Str)?` (prelude str_cut, scan.cut, url_host) and
+`(Str, Str) ! E` (netip.split_host_port).
+
 ## Consequences
 
 - Removes the `drop Str` share of trim and slice heavy loops (24% of this profile).

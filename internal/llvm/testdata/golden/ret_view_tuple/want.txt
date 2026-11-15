@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+[alpha] [ beta gamma delta]
+4 alpha,beta,gamma,delta
+word0word1word2
+x rest  empty
+key 3 true novalue -1 false
+delta||
+one| TWO THREE
+<a/ b><cc/ dd><e/>
+000 111 222 333
+--- stderr

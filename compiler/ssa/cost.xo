@@ -1172,6 +1172,13 @@ fn freed_addresses_at(f: Func, rv: Map[Str, Int], ar: Map[Str, Int]) -> List[Cos
         // a view of a borrowed view points into the first one's text
         addr_of[v] = addr_of.get(f.arg(x.args, p)) ?? f.arg(x.args, p)
         views[v] = true
+      } else if x.op == Op.Field && !x.args.is_empty() && views.contains(f.arg(x.args, 0)) {
+        // a field of a tuple of views (decision 0465 step 3) views what
+        // the tuple does
+        if let Some(into) = addr_of.get(f.arg(x.args, 0)) {
+          addr_of[v] = into
+          views[v] = true
+        }
       } else if x.op == Op.Call && addr_of_call(f.name_of(x)) && !x.args.is_empty() {
         addr_of[v] = f.arg(x.args, 0)
       } else if x.op == Op.Call && (ar.get(f.name_of(x)) ?? -1) >= 0 && (ar.get(f.name_of(x)) ?? -1) < x.args.len() {

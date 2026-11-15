@@ -10,7 +10,7 @@
 use std/crypto
 
 /// The version of the entries and keys.
-const RC_CACHE_VERSION = "xo rc cache v14"
+const RC_CACHE_VERSION = "xo rc cache v15"
 
 /// What insert_rc_plan computed for the cache: the key of each function
 /// ("" for one not cached), and the pass's state after borrow inference.

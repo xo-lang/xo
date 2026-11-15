@@ -28,7 +28,7 @@ pub fn return_views(funcs: List[Func], types: List[SType], fidx: Map[Str, Int], 
       continue
     }
     rvp.push(-1)
-    cand.push(!f.indirect && !f.entry && f.export.is_empty() && f.results.len() == 1 && is_str(types, f.results[0]))
+    cand.push(!f.indirect && !f.entry && f.export.is_empty() && f.results.len() == 1 && is_view_result(types, f.results[0]))
   }
   // a function named by a FuncAddr, a Closure or a CodeOf is reached through a value
   for f in funcs {
@@ -48,7 +48,7 @@ pub fn return_views(funcs: List[Func], types: List[SType], fidx: Map[Str, Int], 
       if !cand[fi] || rvp[fi] >= 0 {
         continue
       }
-      let p = returned_view(f, rvp, fidx)
+      let p = returned_view(f, rvp, fidx, types)
       if p >= 0 && fi < borrowed.len() && p < borrowed[fi].len() && borrowed[fi][p] {
         rvp[fi] = p
         changed = true
@@ -62,8 +62,97 @@ fn is_str(types: List[SType], t: Int) -> Bool {
   t >= 0 && t < types.len() && types[t].kind == Kind.Str
 }
 
+/// Whether a result of type t can be a view of a parameter (decision 0465
+/// step 3): a Str, or a tuple of Strs and scalars (Int, Float, Bool, Unit)
+/// with at least one Str (mime's consume_token: `(v[0..i], v[i..])`).
+pub fn is_view_result(types: List[SType], t: Int) -> Bool {
+  if is_str(types, t) {
+    return true
+  }
+  if t < 0 || t >= types.len() || types[t].kind != Kind.Tuple {
+    return false
+  }
+  var any = false
+  for e in types[t].elems {
+    if is_str(types, e) {
+      any = true
+    } else if e < 0 || e >= types.len() || !(types[e].kind is Kind.Int | Kind.Float | Kind.Bool | Kind.Unit) {
+      return false
+    }
+  }
+  any
+}
+
+/// The mark on a Tuple that a function returning views hands back (decision
+/// 0465 step 3, mark_ret_tuples): the reference counting gives it no count
+/// of its own and has it borrow its fields, views of a borrowed parameter.
+pub const RET_TUPLE_MARK = 4653
+
+/// Whether value x is a marked return tuple (RET_TUPLE_MARK).
+pub fn is_ret_tuple(x: Value) -> Bool {
+  x.op == Op.Tuple && auxw_int(x.aux) == RET_TUPLE_MARK
+}
+
+/// Whether Tuple v of f is used once, as the value of a Return.
+fn returned_only(f: Func, v: Int) -> Bool {
+  var n = 0
+  var ret = false
+  for bl in f.blocks {
+    for w in bl.instrs {
+      let y = f.values[w]
+      for k in 0..y.args.len() {
+        if f.arg(y.args, k) == v {
+          n += 1
+          ret = y.op == Op.Return && k == 0
+        }
+      }
+    }
+  }
+  for e in f.edges {
+    if e.args.contains(v) {
+      return false
+    }
+  }
+  n == 1 && ret
+}
+
+/// Marks the Tuple each Return of a function of rvp with a tuple result
+/// hands back (RET_TUPLE_MARK), after return_views decided: its caller
+/// counts the fields as projections of the argument, so the callee hands
+/// them back without a count.
+pub fn mark_ret_tuples(var m: Module, rvp: List[Int]) {
+  for fi in 0..m.funcs.len() {
+    if fi >= rvp.len() || rvp[fi] < 0 || m.funcs[fi].blocks.is_empty() {
+      continue
+    }
+    let t = m.funcs[fi].results[0]
+    if t < 0 || t >= m.types.len() || m.types[t].kind != Kind.Tuple {
+      continue
+    }
+    var f = m.funcs[fi]
+    var changed = false
+    for bl in f.blocks {
+      if bl.instrs.is_empty() {
+        continue
+      }
+      let r = f.values[bl.instrs[bl.instrs.len() - 1]]
+      if r.op != Op.Return || r.args.is_empty() {
+        continue
+      }
+      let a = f.arg(r.args, 0)
+      if f.values[a].op == Op.Tuple {
+        f.set_aux(a, Aux.I(n: RET_TUPLE_MARK))
+        changed = true
+      }
+    }
+    if changed {
+      m.funcs[fi] = f
+    }
+  }
+}
+
 /// The parameter every Return of f returns a view of, or -1.
-fn returned_view(f: Func, rvp: List[Int], fidx: Map[Str, Int]) -> Int {
+fn returned_view(f: Func, rvp: List[Int], fidx: Map[Str, Int], types: List[SType]) -> Int {
   var p = -1
   var any = false
   for bl in f.blocks {
@@ -78,7 +167,32 @@ fn returned_view(f: Func, rvp: List[Int], fidx: Map[Str, Int]) -> Int {
       return -1
     }
     var seen: Map[Int, Bool] = {}
-    let q = view_of(f, f.arg(t.args, 0), rvp, fidx, seen)
+    let a = f.arg(t.args, 0)
+    var q = -1
+    if f.values[a].op == Op.Tuple {
+      // decision 0465 step 3: every Str field a view of the same
+      // parameter (or a constant), the tuple used only here
+      if !returned_only(f, a) {
+        return -1
+      }
+      q = -2
+      for k in 0..f.values[a].args.len() {
+        let fv = f.arg(f.values[a].args, k)
+        if !is_str(types, ty_of(f.values[fv].tb)) {
+          continue
+        }
+        var seen2: Map[Int, Bool] = {}
+        let qk = view_of(f, fv, rvp, fidx, seen2)
+        if qk == -1 || (qk >= 0 && q >= 0 && qk != q) {
+          return -1
+        }
+        if qk >= 0 {
+          q = qk
+        }
+      }
+    } else {
+      q = view_of(f, a, rvp, fidx, seen)
+    }
     if q == -1 || (q >= 0 && any && q != p) {
       return -1
     }

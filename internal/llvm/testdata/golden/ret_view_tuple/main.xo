@@ -1,0 +1,107 @@
+// Decision 0465 step 3: a function returning a tuple of views of a
+// borrowed parameter hands them back without a count, and its caller
+// counts a field only where it must own it. Each case's output is the
+// same whatever the counting; leaks and double frees show under
+// XO_LEAKCHECK and the sanitizer goldens.
+
+/// mime's consume_token: the token at the start of v and the rest.
+fn token(v: Str) -> (Str, Str) {
+  let b = v.bytes()
+  var i = 0
+  while i < b.len() && b[i] != 32 {
+    i += 1
+  }
+  (v[0..i], v[i..])
+}
+
+/// A view and a constant.
+fn head_or(v: Str) -> (Str, Str) {
+  if v.is_empty() {
+    return ("", "empty")
+  }
+  (v[0..1], "rest")
+}
+
+/// A view, an Int and a Bool.
+fn cut_at(v: Str, c: Str) -> (Str, Int, Bool) {
+  match v.find(c) {
+    Some(i) => (v[0..i], i, true)
+    None => (v, -1, false)
+  }
+}
+
+/// Recursive: the last word of v.
+fn last(v: Str) -> (Str, Str) {
+  let (a, b) = token(v)
+  if b.is_empty() {
+    return (a, b)
+  }
+  last(b[1..])
+}
+
+/// Not a view: a new Str in the tuple (not marked).
+fn upper_rest(v: Str) -> (Str, Str) {
+  let (a, b) = token(v)
+  (a, b.to_upper())
+}
+
+/// The tuple stored whole (it must be owned there).
+fn keep_pairs(lines: List[Str]) -> List[(Str, Str)] {
+  var out: List[(Str, Str)] = []
+  for l in lines {
+    out.push(token(l))
+  }
+  out
+}
+
+fn words(v0: Str) -> List[Str] {
+  var out: List[Str] = []
+  var v = v0
+  while !v.is_empty() {
+    let (w, rest) = token(v)
+    // the field stored: owned
+    out.push(w)
+    v = if rest.is_empty() { rest } else { rest[1..] }
+  }
+  out
+}
+
+fn main(os: Os) uses stdio {
+  let s = "alpha beta gamma delta"
+  let (a, b) = token(s)
+  os.stdio.println("[${a}] [${b}]")
+  let ws = words(s)
+  os.stdio.println("${ws.len()} ${ws.join(",")}")
+  // a field kept past the parameter's last use: the text is a fresh
+  // string that the call's argument releases first
+  var kept = ""
+  for k in 0..3 {
+    let t = "word${k} tail${k}"
+    let (w, _) = token(t)
+    kept = kept + w
+  }
+  os.stdio.println(kept)
+  let (h1, r1) = head_or("xyz")
+  let (h2, r2) = head_or("")
+  os.stdio.println("${h1} ${r1} ${h2} ${r2}")
+  let (p, i, ok) = cut_at("key=value", "=")
+  let (q, j, ok2) = cut_at("novalue", "=")
+  os.stdio.println("${p} ${i} ${ok} ${q} ${j} ${ok2}")
+  let (l1, l2) = last(s)
+  os.stdio.println("${l1}|${l2}|")
+  let (u1, u2) = upper_rest("one two three")
+  os.stdio.println("${u1}|${u2}")
+  let ps = keep_pairs(["a b", "cc dd", "e"])
+  var line = ""
+  for (x, y) in ps {
+    line = line + "<${x}/${y}>"
+  }
+  os.stdio.println(line)
+  // a long-lived field from a short-lived string
+  var hold: List[Str] = []
+  for k in 0..4 {
+    let t = "${k}${k}${k} end"
+    hold.push(token(t).0)
+  }
+  os.stdio.println(hold.join(" "))
+}
