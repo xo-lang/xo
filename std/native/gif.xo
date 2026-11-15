@@ -10,30 +10,6 @@ fn gerr(msg: Str) -> gif.GifErr { gif.GifErr{msg: msg} }
 
 fn hex2(c: Int) -> Str { c.to_str_width(2, 16, true) }
 
-/// Go's %q of the six version bytes (ASCII as strconv.Quote, other bytes as \x escapes).
-fn quote6(b: Bytes) -> Str {
-  var s = "\""
-  for x in b {
-    let c = Int(x)
-    if c == 34 {
-      s = s + "\\\""
-    } else if c == 92 {
-      s = s + "\\\\"
-    } else if c >= 32 && c < 127 {
-      s = s + "${Rune.try(c) ?? Rune.try(63).or_fault("rune")}"
-    } else if c == 10 {
-      s = s + "\\n"
-    } else if c == 9 {
-      s = s + "\\t"
-    } else if c == 13 {
-      s = s + "\\r"
-    } else {
-      s = s + "\\x" + hex2(c)
-    }
-  }
-  s + "\""
-}
-
 struct Dec {
   data: Bytes
   pos: Int
@@ -302,7 +278,7 @@ fn (var d: Dec) header() -> () ! gif.GifErr {
   }
   let vers = d.tmp[0..6]
   if vers != b"GIF87a" && vers != b"GIF89a" {
-    return Err(gerr("gif: can't recognize format ${quote6(vers)}"))
+    return Err(gerr("gif: can't recognize format ${vers.quote()}"))
   }
   d.width = u16(d.tmp, 6)
   d.height = u16(d.tmp, 8)

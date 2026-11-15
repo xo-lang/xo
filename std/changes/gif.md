@@ -1,5 +1,18 @@
 # std/gif changes
 
+## 2026-11-15: fix: the bad version error quotes as Go's %q
+
+- Kind: fix
+- Commit: this commit
+- Found by: the new differential fuzz harness TestGifFuzz (seed 7: 4 of 2,000 mutated streams)
+- Go reference: image/gif reader.go readHeaderAndScreenDescriptor (`fmt.Errorf("gif: can't recognize format %q", ...)`, strconv.Quote)
+- Test: testdata/corpus/giffuzz (seed 1 plus six versions with \a, \b, \f, \v, a UTF-8 rune and invalid bytes; three fail before the fix)
+- Shipped in: not yet released
+
+`gif: can't recognize format "..."` wrote a BEL as `\x07` where Go writes
+`\a` (likewise `\b`, `\f`, `\v`), and escaped a printable UTF-8 rune
+Go keeps: it now uses `Bytes.quote`, Go's strconv.Quote.
+
 ## 2026-11-09: feature: std/gif (decision 0578 step 5)
 
 - Kind: feature
