@@ -1,0 +1,4 @@
+# twincheck: multipart: three workloads (none is the setup alone); Go is mime/multipart.
+- - none
+- - parse
+- - write

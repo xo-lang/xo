@@ -1,0 +1,59 @@
+// multipart: std/multipart against Go's mime/multipart (twin.go.txt),
+// decision 0616's perf kind for std/multipart: a form body of six fields
+// and two 4 KiB files, parsed 20,000 times (parse: every part's name and
+// data), and the same parts written 20,000 times (write); `none` is the
+// setup alone. Usage: `<program> none|parse|write`. Prints `<workload>
+// <checksum>`; the twin prints the same.
+use std/multipart
+
+const BOUNDARY = "xo-bench-boundary-7f3a"
+
+fn blob(n: Int, seed: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  var x = seed
+  for _ in 0..n {
+    x = (x * 1103515245 + 12345) % 2147483648
+    b.write_byte(UInt8(97 + (x >> 16) % 26))
+  }
+  b.freeze()
+}
+
+fn parts() -> List[multipart.Part] {
+  var ps: List[multipart.Part] = []
+  for i in 0..6 {
+    ps.push(multipart.Part{name: "field${i}", filename: None, headers: {}, data: "value number ${i * 7919} for the form".bytes()})
+  }
+  for i in 0..2 {
+    ps.push(multipart.Part{name: "upload${i}", filename: Some("file${i}.txt"), headers: {}, data: blob(4096, i + 1)})
+  }
+  ps
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let ps = parts()
+  let body = multipart.write(ps, BOUNDARY)
+  var sum = 0
+  if w == "parse" {
+    for i in 0..20000 {
+      let got = match multipart.parse(body, BOUNDARY) {
+        Ok(v) => v
+        Err(_) => {
+          os.stdio.println("parse error")
+          return
+        }
+      }
+      for p in got {
+        sum += p.name.len() + p.data.len() + Int(p.data[i % p.data.len()])
+      }
+    }
+  } else if w == "write" {
+    for i in 0..20000 {
+      let out = multipart.write(ps, BOUNDARY)
+      sum += out.len() + Int(out[i % out.len()])
+    }
+  } else {
+    sum = body.len()
+  }
+  os.stdio.println("${w} ${sum}")
+}

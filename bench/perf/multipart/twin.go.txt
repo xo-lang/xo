@@ -1,0 +1,90 @@
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"os"
+)
+
+const boundary = "xo-bench-boundary-7f3a"
+
+type part struct {
+	name, filename string
+	data           []byte
+}
+
+func blob(n, seed int) []byte {
+	b := make([]byte, n)
+	x := seed
+	for i := range b {
+		x = (x*1103515245 + 12345) % 2147483648
+		b[i] = byte(97 + (x>>16)%26)
+	}
+	return b
+}
+
+func parts() []part {
+	var ps []part
+	for i := 0; i < 6; i++ {
+		ps = append(ps, part{name: fmt.Sprintf("field%d", i), data: []byte(fmt.Sprintf("value number %d for the form", i*7919))})
+	}
+	for i := 0; i < 2; i++ {
+		ps = append(ps, part{name: fmt.Sprintf("upload%d", i), filename: fmt.Sprintf("file%d.txt", i), data: blob(4096, i+1)})
+	}
+	return ps
+}
+
+func write(ps []part) []byte {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	mw.SetBoundary(boundary)
+	for _, p := range ps {
+		var w io.Writer
+		if p.filename != "" {
+			w, _ = mw.CreateFormFile(p.name, p.filename)
+		} else {
+			w, _ = mw.CreateFormField(p.name)
+		}
+		w.Write(p.data)
+	}
+	mw.Close()
+	return buf.Bytes()
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	ps := parts()
+	body := write(ps)
+	sum := 0
+	switch w {
+	case "parse":
+		for i := 0; i < 20000; i++ {
+			r := multipart.NewReader(bytes.NewReader(body), boundary)
+			for {
+				p, err := r.NextPart()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					fmt.Println("parse error")
+					return
+				}
+				data, _ := io.ReadAll(p)
+				sum += len(p.FormName()) + len(data) + int(data[i%len(data)])
+			}
+		}
+	case "write":
+		for i := 0; i < 20000; i++ {
+			out := write(ps)
+			sum += len(out) + int(out[i%len(out)])
+		}
+	default:
+		sum = len(body)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}
