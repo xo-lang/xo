@@ -11,10 +11,15 @@
 // Msgs wait in its outbox. update and view are fn types without `uses`,
 // so the checker already refuses a clock, randomness or I/O in them.
 //
-// This module is pure: Server and Replica are values that turn messages
-// into messages; the HTTP and websocket transport comes in a later step.
+// Server and Replica are pure values that turn messages into messages;
+// `host` serves an App over HTTP: the first page, the browser runtime and
+// a sync endpoint. Until decision 0659's stage 3 the browser cannot run
+// update, so it is a thin client: it queues its Msgs (in localStorage, so
+// they survive going offline and reloads), sends them, and shows the
+// server's rendered view.
 
 use std/html
+use std/http
 use std/json
 
 /// A UI program.
@@ -368,12 +373,23 @@ pub struct PageState[M] {
 /// A whole HTML document for model at log version ver: the rendered view
 /// in `<div id="xo-ui">`, so the page reads before any script runs, and
 /// the state as JSON in `<script type="application/json" id="xo-state">`
-/// for the client runtime at runtime_src.
-pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js") -> Str {
+/// for the client runtime at runtime_src, which syncs with sync_url. css,
+/// if any, goes in a `<style>` element in the head.
+pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "") -> Str {
   var b = BytesBuilder.new()
   b.write_str("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>")
   b.write_str(html.escape_string(title))
-  b.write_str("</title></head><body><div id=\"xo-ui\">")
+  b.write_str("</title>")
+  if css != "" {
+    // CSS has no escapes for markup; `<` written as the CSS escape \3c
+    // keeps the text from ending the style element.
+    b.write_str("<style>")
+    b.write_str(css.replace("<", "\\3c "))
+    b.write_str("</style>")
+  }
+  b.write_str("</head><body><div id=\"xo-ui\" data-xo-sync=\"")
+  b.write_str(html.escape_string(if safe_url(sync_url) { sync_url } else { "about:invalid#xo-unsafe" }))
+  b.write_str("\">")
   write_html(b, app.view(model))
   b.write_str("</div><script type=\"application/json\" id=\"xo-state\">")
   // encode_str does not escape HTML; html_escape writes the JSON's
@@ -388,3 +404,155 @@ pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", run
   b.write_str("</body></html>")
   b.freeze().to_str_lossy()
 }
+
+// ---- form values ----
+
+const FIELD_MARK = "\u{E000}"
+
+/// A placeholder for the value of the form field `name`, filled in by the
+/// client runtime when the event fires: `on("submit",
+/// Msg.Add(title: field("title")))` sends the form's `title` field. A
+/// field the form lacks is "". Only Str fields of a Msg can hold one.
+pub fn field(name: Str) -> Str {
+  "${FIELD_MARK}${name}"
+}
+
+// ---- serving an App over HTTP ----
+
+/// The reply to the browser runtime: the protocol reply, the log version
+/// the server is at, and the view rendered for the server's model.
+pub struct Sync[M, E] {
+  pub down: Down[M, E]
+  pub ver: Int
+  pub html: Str
+} derive Json
+
+/// An App served over HTTP, with its Server behind a lock.
+pub struct Host[M: Json, E: Json] {
+  app: App[M, E]
+  state: Mutex[Server[M, E]]
+  title: Str
+  css: Str
+}
+
+/// A host for app starting at app.init.
+pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256) -> Host[M, E] {
+  Host{app: app, state: Mutex[Server[M, E]].new(server(app, max_batch: max_batch)), title: title, css: css}
+}
+
+/// The server's model now.
+pub fn (h: Host[M, E]) model() -> M {
+  h.state.with_read(fn(s) { s.model() })
+}
+
+/// Adds the routes to r under prefix ("" or a path like "/todo"): GET
+/// prefix/ (the page), GET prefix/_xo/ui.js (the runtime) and POST
+/// prefix/_xo/sync (an Up as JSON, answered with a Sync). The sync route
+/// takes only `Content-Type: application/json`, which a cross-site form
+/// cannot send without CORS (415 otherwise); a body that is not an Up is
+/// 400. `?thin=1` leaves the log entries out of the reply, for a client
+/// that shows the rendered view.
+pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
+  let app = h.app
+  let state = h.state
+  let title = h.title
+  let css = h.css
+  let js = "${prefix}/_xo/ui.js"
+  let sync = "${prefix}/_xo/sync"
+  r.handle("GET ${prefix}/{$}", fn(req) -> http.Response ! Never {
+    let (m, v) = state.with_read(fn(s) { (s.model(), s.version()) })
+    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync, css: css)).with_header("Content-Type", "text/html; charset=utf-8")
+  })
+  r.handle("GET ${js}", fn(req) -> http.Response ! Never {
+    http.text(200, RUNTIME_JS).with_header("Content-Type", "text/javascript; charset=utf-8").with_header("Cache-Control", "no-cache")
+  })
+  r.handle("POST ${sync}", fn(req) -> http.Response ! Never {
+    let ct = (req.header("Content-Type") ?? "").to_lower()
+    if !ct.starts_with("application/json") {
+      return http.text(415, "std/ui: sync takes application/json")
+    }
+    let up = match req.json[Up[E]]() {
+      Ok(u) => u
+      Err(e) => return http.text(400, "std/ui: bad sync: ${e}")
+    }
+    let (d, m, v) = state.with(fn(var s) { (s.receive(up), s.model(), s.version()) })
+    let down = if req.query("thin") == Some("1") { Down{acked: d.acked, reset: None, entries: []} } else { d }
+    http.json(200, Sync{down: down, ver: v, html: render(app.view(m))})
+  })
+}
+
+/// The browser runtime (served at prefix/_xo/ui.js). Thin until decision
+/// 0659 stage 3: it sends the Msgs of `on` events (click, submit, change;
+/// `field` placeholders filled from the form or the element), keeps
+/// unacknowledged Msgs in localStorage, syncs after each event, every 2 s
+/// while the page is visible, when it becomes visible and when the
+/// browser comes back online,
+/// and replaces the view with the server's when it changed. The html
+/// element carries data-xo-pending while Msgs wait and data-xo-offline
+/// after a failed sync, for the app's CSS.
+const RUNTIME_JS = r#"""(function(){
+"use strict";
+var root=document.getElementById("xo-ui");
+var stEl=document.getElementById("xo-state");
+if(!root||!stEl)return;
+var url=root.getAttribute("data-xo-sync")||"/_xo/sync";
+var st=JSON.parse(stEl.textContent);
+var KEY="xo-ui:"+location.pathname+":"+url;
+var MARK="";
+var saved=null;
+try{saved=JSON.parse(localStorage.getItem(KEY));}catch(e){}
+var client=(saved&&saved.client)||("c"+Math.random().toString(36).slice(2)+Date.now().toString(36));
+var next=(saved&&saved.next)||1;
+var queue=(saved&&saved.queue)||[];
+var acked=(saved&&saved.acked)||0;
+var ver=st.ver;
+var last=root.innerHTML;
+var busy=false,again=false;
+function save(){try{localStorage.setItem(KEY,JSON.stringify({client:client,next:next,queue:queue,acked:acked}));}catch(e){}}
+function mark(){var h=document.documentElement;if(queue.length)h.setAttribute("data-xo-pending","");else h.removeAttribute("data-xo-pending");}
+function fill(v,get){
+  if(typeof v==="string"&&v.charAt(0)===MARK){var x=get(v.slice(1));return x==null?"":String(x);}
+  if(Array.isArray(v))return v.map(function(e){return fill(e,get);});
+  if(v&&typeof v==="object"){var o={};for(var k in v)if(Object.prototype.hasOwnProperty.call(v,k))o[k]=fill(v[k],get);return o;}
+  return v;
+}
+function send(msg){queue.push({seq:next++,msg:msg});save();mark();sync();}
+function sync(){
+  if(busy){again=true;return;}
+  busy=true;
+  var msgs=queue.filter(function(e){return e.seq>acked;});
+  fetch(url+"?thin=1",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:client,ver:ver,msgs:msgs}),credentials:"same-origin"})
+  .then(function(r){if(!r.ok)throw new Error("sync "+r.status);return r.json();})
+  .then(function(s){
+    if(s.down.acked>acked)acked=s.down.acked;
+    queue=queue.filter(function(e){return e.seq>acked;});
+    ver=s.ver;
+    if(s.html!==last){
+      var a=document.activeElement;
+      if(!(a&&root.contains(a)&&(a.tagName==="INPUT"||a.tagName==="TEXTAREA")&&a.value!=="")){root.innerHTML=s.html;last=s.html;}
+    }
+    document.documentElement.removeAttribute("data-xo-offline");
+    save();mark();
+  })
+  .catch(function(){document.documentElement.setAttribute("data-xo-offline","");})
+  .then(function(){busy=false;if(again){again=false;sync();}});
+}
+function handler(ev,name){
+  var t=ev.target&&ev.target.closest?ev.target.closest("[data-xo-"+name+"]"):null;
+  if(!t||!root.contains(t))return;
+  var msg;
+  try{msg=JSON.parse(t.getAttribute("data-xo-"+name));}catch(e){return;}
+  var get;
+  if(name==="submit"){ev.preventDefault();var fd=new FormData(t);get=function(k){return fd.get(k);};}
+  else{if(name==="click")ev.preventDefault();get=function(k){if(t.name===k)return t.type==="checkbox"?(t.checked?"on":""):t.value;var f=t.form;var e=f&&f.elements[k];return e?e.value:null;};}
+  send(fill(msg,get));
+  if(name==="submit"&&t.reset)t.reset();
+}
+["click","submit","change"].forEach(function(n){root.addEventListener(n,function(ev){handler(ev,n);});});
+window.addEventListener("online",sync);
+document.addEventListener("visibilitychange",function(){if(!document.hidden)sync();});
+setInterval(function(){if(!document.hidden)sync();},2000);
+mark();
+if(queue.length)sync();
+})();
+"""#

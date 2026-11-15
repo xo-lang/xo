@@ -1,0 +1,115 @@
+// ui-todo: a shared todo list on std/ui (decision 0659). Every browser
+// that opens it sees the same list; actions taken offline are queued and
+// sent when the connection returns. Three seats can be reserved, which
+// only the server can decide.
+//
+//   xo run examples/ui-todo -- :8080
+use std/http
+use std/log
+use std/ui
+
+pub struct Todo {
+  id: Int
+  title: Str
+  done: Bool
+} derive Eq, Json
+
+pub struct Model {
+  todos: List[Todo]
+  next_id: Int
+  seats: Int
+  holders: List[Str]
+} derive Eq, Json
+
+pub enum Msg {
+  Add(title: Str)
+  Toggle(id: Int)
+  Remove(id: Int)
+  Reserve(name: Str)
+} derive Eq, Json
+
+pub fn update(m: Model, msg: Msg) -> Model {
+  var n = m
+  match msg {
+    Add(title) => {
+      let t = title.trim()
+      if t != "" && t.rune_count() <= 200 {
+        n.todos.push(Todo{id: n.next_id, title: t, done: false})
+        n.next_id = n.next_id + 1
+      }
+    }
+    Toggle(id) => {
+      n.todos = n.todos.map(fn(t) { if t.id == id { Todo{id: t.id, title: t.title, done: !t.done} } else { t } })
+    }
+    Remove(id) => {
+      n.todos = n.todos.filter(fn(t) { t.id != id })
+    }
+    Reserve(name) => {
+      let who = name.trim()
+      if who != "" && n.seats > 0 && !n.holders.contains(who) {
+        n.seats = n.seats - 1
+        n.holders.push(who)
+      }
+    }
+  }
+  n
+}
+
+pub fn view(m: Model) -> ui.Html {
+  var items: List[ui.Html] = []
+  for t in m.todos {
+    let id = t.id
+    items.push(ui.el("li", [ui.attr("class", if t.done { "done" } else { "" })], [
+      ui.el("button", [ui.attr("class", "check"), ui.attr("aria-label", "toggle"), ui.on("click", Msg.Toggle(id: id))], [ui.text(if t.done { "✓" } else { " " })]),
+      ui.el("span", [], [ui.text(t.title)]),
+      ui.el("button", [ui.attr("class", "remove"), ui.attr("aria-label", "remove ${t.title}"), ui.on("click", Msg.Remove(id: id))], [ui.text("Remove")]),
+    ]))
+  }
+  ui.el("main", [], [
+    ui.el("h1", [], [ui.text("Todos")]),
+    ui.el("form", [ui.on("submit", Msg.Add(title: ui.field("title")))], [
+      ui.el("input", [ui.attr("name", "title"), ui.attr("placeholder", "What needs doing?"), ui.attr("autocomplete", "off")]),
+      ui.el("button", [ui.attr("type", "submit")], [ui.text("Add")]),
+    ]),
+    ui.el("ul", [], items),
+    ui.el("h2", [], [ui.text("Seats: ${m.seats} left")]),
+    ui.el("form", [ui.on("submit", Msg.Reserve(name: ui.field("name")))], [
+      ui.el("input", [ui.attr("name", "name"), ui.attr("placeholder", "Your name"), ui.attr("autocomplete", "off")]),
+      ui.el("button", [ui.attr("type", "submit")], [ui.text("Reserve")]),
+    ]),
+    ui.el("p", [ui.attr("class", "holders")], [ui.text(if m.holders.is_empty() { "No reservations yet." } else { "Reserved: ${m.holders.join(", ")}" })]),
+    ui.el("p", [ui.attr("class", "status")], []),
+  ])
+}
+
+pub fn app() -> ui.App[Model, Msg] {
+  ui.App{init: Model{todos: [], next_id: 1, seats: 3, holders: []}, update: update, view: view}
+}
+
+const CSS = r"""
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.4 -apple-system,Helvetica,Arial,sans-serif;color:#111827;background:#f9fafb}
+main{max-width:560px;margin:0 auto;padding:16px}
+h1{font-size:24px;margin:8px 0 16px}
+h2{font-size:18px;margin:24px 0 8px}
+form{display:flex;gap:8px;flex-wrap:wrap}
+input{flex:1 1 180px;min-height:44px;padding:0 12px;font:inherit;border:1px solid #9ca3af;border-radius:8px}
+button{min-height:44px;min-width:44px;padding:0 14px;font:inherit;border:1px solid #d1d5db;border-radius:8px;background:#e5e7eb;color:#111827}
+form button{background:#2563eb;border-color:#2563eb;color:#fff}
+ul{list-style:none;padding:0;margin:16px 0}
+li{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #e5e7eb}
+li span{flex:1;overflow-wrap:anywhere}
+li.done span{text-decoration:line-through;color:#4b5563}
+.holders{color:#374151}
+html[data-xo-pending] .status::after{content:"Saving…";color:#374151}
+html[data-xo-offline] .status::after{content:"Offline: changes will be sent when you reconnect.";color:#b91c1c}
+"""
+
+fn main(os: Os) ! {
+  let addr = os.env.args().get(0) ?? ":8080"
+  var r = http.router()
+  ui.host(app(), title: "Todos", css: CSS).mount(r)
+  let l = os.net.listen(addr)?
+  log.info("listening", {"addr": l.addr()})
+  http.server(l, r).serve()?
+}

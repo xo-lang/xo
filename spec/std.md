@@ -10779,8 +10779,9 @@ Status: Early (decision 0659 stage 1, 2026-11-15; the API may change
 until stage 1 is done). Pure: no I/O. One pure update runs on every
 client (predicted at once) and on the server (in arrival order, the
 authority); clients replay the server's log and fold their pending Msgs
-on top. The HTTP and websocket transport and the browser runtime are
-later steps of stage 1.
+on top. `host` serves an App over HTTP with a browser runtime; until
+decision 0659's stage 3 the browser is a thin client (it queues and sends
+Msgs and shows the server's rendered view, without predicting).
 
 ```
 pub struct App[M, E] { pub init: M, pub update: fn(M, E) -> M, pub view: fn(M) -> Html }
@@ -10792,7 +10793,8 @@ pub fn el(tag: Str, attrs: List[Attr] = [], kids: List[Html] = []) -> Html
 pub fn attr(name: Str, value: Str) -> Attr
 pub fn on[E: Json](event: Str, msg: E) -> Attr       // data-xo-EVENT holding msg as JSON
 pub fn render(h: Html) -> Str
-pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js") -> Str
+pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "") -> Str
+pub fn field(name: Str) -> Str                         // a form value placeholder for a Msg's Str field
 
 pub struct Envelope[E] { pub seq: Int, pub msg: E }                        // derive Json
 pub struct Entry[E] { pub ver: Int, pub client: Str, pub seq: Int, pub msg: E }
@@ -10817,6 +10819,11 @@ fn (r: Replica[M, E]) version() -> Int
 fn (r: Replica[M, E]) pending() -> Int
 fn (r: Replica[M, E]) outbox() -> Up[E]     // the Msgs the server has not acknowledged
 fn (var r: Replica[M, E]) receive(d: Down[M, E])
+
+pub struct Sync[M, E] { pub down: Down[M, E], pub ver: Int, pub html: Str }   // derive Json
+pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256) -> Host[M, E]
+fn (h: Host[M, E]) model() -> M
+fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "")
 ```
 
 - `update` and `view` are fn types without `uses`, so the checker
@@ -10834,6 +10841,26 @@ fn (var r: Replica[M, E]) receive(d: Down[M, E])
   it reads before any script, and `PageState` as JSON (HTML escaped with
   `json.html_escape`, so a model's text cannot end the element) in
   `<script type="application/json" id="xo-state">`.
+- `page` puts `css` in a `<style>` element in the head, with `<` written
+  as the CSS escape `\3c ` so the text cannot end the element; the view
+  root carries `data-xo-sync` with the sync URL.
+- `host` keeps a Server behind a Mutex. `mount` adds `GET prefix/` (the
+  page for the server's model), `GET prefix/_xo/ui.js` (the runtime) and
+  `POST prefix/_xo/sync`: an `Up` as JSON, answered with a `Sync` (the
+  reply, the server's version and the view rendered for its model). Sync
+  takes only `Content-Type: application/json` (415 otherwise; a
+  cross-site form cannot send it without CORS) and a body that decodes
+  as an `Up` (400 otherwise); `?thin=1` leaves the log entries out.
+- The runtime sends the Msg of an `on` event for `click`, `submit` and
+  `change` (a `field` placeholder filled from the form's field, or the
+  element's own value; "" when absent), keeps its client id, next seq
+  and unacknowledged Msgs in localStorage (so they survive going offline
+  and reloads), syncs after each event, every 2 s while the page is
+  visible, when it becomes visible and when the browser comes back
+  online, and replaces the view when the server's changed (not while a
+  non-empty input or textarea in it has focus). The html element carries
+  `data-xo-pending` while Msgs wait and `data-xo-offline` after a failed
+  sync, for the app's CSS.
 - The server applies a client's Msg only when its seq is the next one
   (a duplicate or one after a gap is skipped; the client sends it again)
   and appends it to the log at version `version() + 1`. A reply carries
@@ -10851,4 +10878,8 @@ fn (var r: Replica[M, E]) receive(d: Down[M, E])
   clients reserving three seats offline), a snapshot after compaction,
   and convergence of 4 to 5 replicas over a simulated network with loss,
   delay, reordering and offline stretches, with and without compaction,
-  and as a property over any seed.
+  and as a property over any seed; the host's routes, prefixes, refused
+  content types and bodies. examples/ui-todo is a shared todo list with
+  three seats, checked in a browser on 2026-11-15: two clients, a form
+  submit, a click, offline queueing and reconnect, a reload, no sideways
+  scrolling at 390 px.

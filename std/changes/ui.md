@@ -1,5 +1,16 @@
 # std/ui changes
 
+## 2026-11-15: feature: serving an App over HTTP (Early)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0659 stage 1, step 1b
+- Go reference: none
+- Test: std/ui_test.xo (the host's routes, a prefix, refused content types and bodies, field placeholders); examples/ui-todo (its update and a browser's sync), checked in headless Chrome over CDP (two clients, offline queueing and reconnect, server-decided seats, reload)
+- Shipped in: not yet released
+
+`ui.host(app, title, css)` and `mount(router, prefix)`: the first page, the browser runtime and a JSON sync endpoint over a Server behind a Mutex; `ui.field(name)` for form values in a Msg; `page` takes `css` and `sync_url`. The runtime is thin until stage 3: it queues Msgs in localStorage, syncs on events, every 2 s, on becoming visible and on reconnecting, and shows the server's view.
+
 ## 2026-11-15: feature: std/ui, local-first UI core (Early)
 
 - Kind: feature

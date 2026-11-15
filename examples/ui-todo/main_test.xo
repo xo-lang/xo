@@ -1,0 +1,28 @@
+use std/http
+use std/json
+use std/ui
+
+test "update ignores empty titles and holds three seats" {
+  var m = app().init
+  m = update(m, Msg.Add(title: "  "))
+  expect(m.todos.len()) == 0
+  m = update(m, Msg.Add(title: " milk "))
+  expect(m.todos[0].title) == "milk"
+  for n in ["a", "b", "a", "c", "d"] {
+    m = update(m, Msg.Reserve(name: n))
+  }
+  expect(m.holders) == ["a", "b", "c"]
+  expect(m.seats) == 0
+}
+
+test "a browser's sync adds a todo and returns the view" {
+  var r = http.router()
+  ui.host(app(), title: "Todos", css: CSS).mount(r)
+  let page = r.call(http.new_request("GET", "/")).text()?
+  expect(page.contains("<style>")) == true
+  let up = ui.Up{client: "b1", ver: 0, msgs: [ui.Envelope{seq: 1, msg: Msg.Add(title: "milk")}]}
+  let resp = r.call(http.new_request("POST", "/_xo/sync?thin=1", headers: {"Content-Type": "application/json"}, body: json.encode(up)))
+  let s = json.decode_str[ui.Sync[Model, Msg]](resp.text()?)?
+  expect(s.ver) == 1
+  expect(s.html.contains("<span>milk</span>")) == true
+}

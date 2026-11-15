@@ -1,4 +1,5 @@
 use std/html
+use std/http
 use std/json
 
 // ---- a small app: a shared todo list with a limited resource ----
@@ -304,4 +305,69 @@ test "replicas converge while the server compacts its log" {
 
 test "convergence holds for any seed" for seed: Int {
   expect(simulate(seed, 4, 120, 400, 50, 20)) == true
+}
+
+// ---- serving over HTTP ----
+
+fn routes_for(h: Host[Model, Msg]) -> http.Router {
+  var r = http.router()
+  h.mount(r)
+  r
+}
+
+fn sync_req(body: Str, ct: Str = "application/json", query: Str = "") -> http.Request {
+  http.new_request("POST", "/_xo/sync${query}", headers: {"Content-Type": ct}, body: body.bytes())
+}
+
+test "the host serves the page, the runtime and sync" {
+  let h = host(todo_app(), title: "Todos")
+  let r = routes_for(h)
+  let p = r.call(http.new_request("GET", "/"))
+  expect(p.status) == 200
+  let body = p.text()?
+  expect(body.contains("<div id=\"xo-ui\" data-xo-sync=\"/_xo/sync\">")) == true
+  expect(body.contains("<script src=\"/_xo/ui.js\" defer></script>")) == true
+  let js = r.call(http.new_request("GET", "/_xo/ui.js"))
+  expect(js.status) == 200
+  expect(js.text()?.contains("data-xo-")) == true
+  let up = Up{client: "a", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "x", title: "milk")}]}
+  let resp = r.call(sync_req(json.encode_str(up)))
+  expect(resp.status) == 200
+  let s = json.decode_str[Sync[Model, Msg]](resp.text()?)?
+  expect(s.down.acked) == 1
+  expect(s.ver) == 1
+  expect(s.down.entries.len()) == 1
+  expect(s.html.contains("<li>milk")) == true
+  expect(h.model().todos.len()) == 1
+}
+
+test "a thin sync leaves out the log entries" {
+  let h = host(todo_app())
+  let r = routes_for(h)
+  let up = Up{client: "a", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "x", title: "milk")}]}
+  let s = json.decode_str[Sync[Model, Msg]](r.call(sync_req(json.encode_str(up), query: "?thin=1")).text()?)?
+  expect(s.down.entries.len()) == 0
+  expect(s.ver) == 1
+}
+
+test "sync refuses other content types and bad bodies" {
+  let r = routes_for(host(todo_app()))
+  expect(r.call(sync_req("{}", ct: "application/x-www-form-urlencoded")).status) == 415
+  expect(r.call(sync_req("not json")).status) == 400
+  expect(r.call(sync_req("{\"client\":\"a\",\"ver\":0,\"msgs\":[{\"seq\":1,\"msg\":{\"Nope\":{}}}]}")).status) == 400
+}
+
+test "the host mounts under a prefix" {
+  var r = http.router()
+  host(todo_app()).mount(r, prefix: "/app")
+  let body = r.call(http.new_request("GET", "/app/")).text()?
+  expect(body.contains("data-xo-sync=\"/app/_xo/sync\"")) == true
+  expect(body.contains("src=\"/app/_xo/ui.js\"")) == true
+  expect(r.call(http.new_request("GET", "/app/_xo/ui.js")).status) == 200
+}
+
+test "field marks a form value in the event's JSON" {
+  let s = render(el("form", [on("submit", Msg.Add(id: "n", title: field("title")))], [el("input", [attr("name", "title")])]))
+  // The private use mark survives escaping; the runtime fills it in.
+  expect(s.contains("\u{E000}title")) == true
 }
