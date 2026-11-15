@@ -1,0 +1,60 @@
+package main
+
+import (
+	"crypto/ecdh"
+	"crypto/hpke"
+	"fmt"
+	"os"
+)
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	kem := hpke.DHKEM(ecdh.X25519())
+	kdf := hpke.HKDFSHA256()
+	aead := hpke.AES128GCM()
+	sk := must(kem.DeriveKeyPair([]byte("xo hpke bench seed, 32 bytes ok!")))
+	pk := sk.PublicKey()
+	small := []byte("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	msg := make([]byte, 1024)
+	for i := range msg {
+		msg[i] = byte(i % 251)
+	}
+	sum := 0
+	switch w {
+	case "setup":
+		for i := 0; i < 10000; i++ {
+			enc, s, err := hpke.NewSender(pk, kdf, aead, []byte("info"))
+			if err != nil {
+				panic(err)
+			}
+			ct := must(s.Seal(nil, small))
+			r := must(hpke.NewRecipient(enc, sk, kdf, aead, []byte("info")))
+			pt := must(r.Open(nil, ct))
+			sum += len(enc) + len(ct) + len(pt) + i%3
+		}
+	case "stream":
+		enc, s, err := hpke.NewSender(pk, kdf, aead, []byte("info"))
+		if err != nil {
+			panic(err)
+		}
+		r := must(hpke.NewRecipient(enc, sk, kdf, aead, []byte("info")))
+		for i := 0; i < 100000; i++ {
+			ct := must(s.Seal([]byte("aad"), msg))
+			pt := must(r.Open([]byte("aad"), ct))
+			sum += len(ct) + int(pt[i%len(pt)])
+		}
+	default:
+		sum = len(pk.Bytes())
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

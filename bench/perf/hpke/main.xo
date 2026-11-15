@@ -1,0 +1,45 @@
+// hpke: std/hpke against Go's crypto/hpke (twin.go.txt), decision 0616's
+// perf kind for std/hpke, DHKEM(X25519), HKDF-SHA256 and AES-128-GCM:
+// setup makes a sender and a recipient and seals and opens one 64 byte
+// message, 10,000 times; stream seals and opens 1 KiB messages on one
+// context pair, 100,000 times; `none` is the setup alone (a key pair
+// derived from a fixed seed). Ephemeral keys are random, so the checksum
+// counts lengths. Usage: `<program> none|setup|stream`. Prints `<workload>
+// <checksum>`; the twin prints the same.
+use std/hpke
+
+fn main(os: Os) uses stdio, env, rand {
+  let w = os.env.args().get(0) ?? "none"
+  let kem = hpke.Kem.DhkemX25519
+  let kdf = hpke.Kdf.HkdfSha256
+  let aead = hpke.Aead.Aes128Gcm
+  let sk = kem.derive_key_pair(b"xo hpke bench seed, 32 bytes ok!").ok() ?? fault("hpke bench: derive")
+  let pk = sk.public_key()
+  let small = b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  var big = BytesBuilder.new()
+  for i in 0..1024 {
+    big.write_byte(UInt8(i % 251))
+  }
+  let msg = big.freeze()
+  var sum = 0
+  if w == "setup" {
+    for i in 0..10000 {
+      var s = hpke.new_sender(os.rand, pk, kdf, aead, b"info").ok() ?? fault("hpke bench: sender")
+      let ct = s.seal(b"", small).ok() ?? fault("hpke bench: seal")
+      var r = hpke.new_recipient(s.enc(), sk, kdf, aead, b"info").ok() ?? fault("hpke bench: recipient")
+      let pt = r.open(b"", ct).ok() ?? fault("hpke bench: open")
+      sum += s.enc().len() + ct.len() + pt.len() + i % 3
+    }
+  } else if w == "stream" {
+    var s = hpke.new_sender(os.rand, pk, kdf, aead, b"info").ok() ?? fault("hpke bench: sender")
+    var r = hpke.new_recipient(s.enc(), sk, kdf, aead, b"info").ok() ?? fault("hpke bench: recipient")
+    for i in 0..100000 {
+      let ct = s.seal(b"aad", msg).ok() ?? fault("hpke bench: seal")
+      let pt = r.open(b"aad", ct).ok() ?? fault("hpke bench: open")
+      sum += ct.len() + Int(pt[i % pt.len()])
+    }
+  } else {
+    sum = pk.bytes().len()
+  }
+  os.stdio.println("${w} ${sum}")
+}
