@@ -10,6 +10,7 @@
 // now >= value - leeway).
 
 use std/base64
+use std/compress
 use std/crypto
 use std/json
 
@@ -90,6 +91,9 @@ pub open enum JwtErr {
   Claim(msg: Str)
   /// no key for the token's `kid`
   Key(msg: Str)
+  /// a JWE that does not decrypt: a wrong key, a changed token, a bad tag or padding (go-jose's
+  /// ErrCryptoFailure; which check failed is not told)
+  Decrypt
 }
 
 pub fn (e: JwtErr) display() -> Str {
@@ -104,6 +108,7 @@ pub fn (e: JwtErr) display() -> Str {
     Subject => "jwt: token has invalid subject"
     Claim(msg) => "jwt: token has invalid claims: ${msg}"
     Key(msg) => "jwt: key: ${msg}"
+    Decrypt => "jwt: error in cryptographic primitive"
   }
 }
 
@@ -603,4 +608,747 @@ fn signature_ok(alg: Alg, key: Key, msg: Bytes, sig: Bytes) -> Bool {
       }
     }
   }
+}
+
+// ---- JWE compact tokens (RFC 7516, RFC 7518 4 and 5; decision 0660) ----
+//
+// After go-jose v4.1.9 (Apache 2.0): its key management and content
+// encryption algorithms, its checks on decryption and its one error for a
+// token that does not decrypt. No RSA1_5 (go-jose keeps it for old
+// tokens; RFC 8725 3.2 says not to use it) and no JSON serialization.
+
+/// How the content key travels (RFC 7518 4.1): `Dir` the key itself;
+/// AES key wrap; AES-GCM key wrap; RSA-OAEP with SHA-1 or SHA-256;
+/// PBES2 from a password; ECDH-ES on P-256, P-384 or P-521, alone or
+/// with AES key wrap.
+pub enum KeyAlg {
+  Dir
+  A128KW
+  A192KW
+  A256KW
+  A128GCMKW
+  A192GCMKW
+  A256GCMKW
+  RsaOaep
+  RsaOaep256
+  Pbes2Hs256A128KW
+  Pbes2Hs384A192KW
+  Pbes2Hs512A256KW
+  EcdhEs
+  EcdhEsA128KW
+  EcdhEsA192KW
+  EcdhEsA256KW
+} derive Eq
+
+/// The content encryption (RFC 7518 5.1).
+pub enum Enc {
+  A128CbcHs256
+  A192CbcHs384
+  A256CbcHs512
+  A128Gcm
+  A192Gcm
+  A256Gcm
+} derive Eq
+
+/// A JWE key: `Symmetric` for Dir, the AES and AES-GCM key wraps (16, 24
+/// or 32 bytes as the algorithm says; Dir: the content key's size);
+/// `Password` for PBES2; a public key to encrypt and a private key to
+/// decrypt for RSA-OAEP (RSA) and ECDH-ES (an ECDSA key of P-256, P-384
+/// or P-521).
+pub enum JweKey {
+  Symmetric(key: Secret[Bytes])
+  Password(password: Secret[Str])
+  Public(key: crypto.PublicKey)
+  Private(key: crypto.PrivateKey)
+}
+
+/// What `encrypt` adds to the protected header and how it keys PBES2.
+pub struct JweOptions {
+  pub kid: Str? = None
+  /// `typ`: "JWT" for an encrypted JWT
+  pub typ: Str? = None
+  /// `cty`: "JWT" for a nested (signed, then encrypted) JWT
+  pub cty: Str? = None
+  /// compress the payload with raw DEFLATE first (`zip: DEF`)
+  pub deflate: Bool = false
+  /// the PBES2 iteration count (go-jose's default)
+  pub p2c: Int = 600000
+}
+
+/// The protected header of a JWE, unverified.
+pub struct JweHeader {
+  pub alg: KeyAlg
+  pub enc: Enc
+  pub kid: Str?
+  pub typ: Str?
+  pub cty: Str?
+  pub zip: Bool
+}
+
+/// The compact JWE of payload (go-jose's Encrypter with one recipient and
+/// CompactSerialize): a new content key from r (none for Dir and
+/// ECDH-ES, whose key is agreed), carried by alg, then payload sealed by
+/// enc with a new IV. A key that does not fit alg (kind or size) is
+/// JwtErr.Alg.
+pub fn encrypt(r: Rand, alg: KeyAlg, enc: Enc, key: JweKey, payload: Bytes, opts: JweOptions = JweOptions{}) -> Str ! JwtErr uses rand {
+  let ksize = enc_key_size(enc)
+  var fields: List[(Str, json.Value)] = []
+  var cek = b""
+  var ek = b""
+  match alg {
+    Dir => {
+      cek = symmetric_of(key, "dir")?
+      if cek.len() != ksize {
+        return Err(JwtErr.Alg(msg: "dir needs a ${ksize} byte key for ${enc_name(enc)}"))
+      }
+    }
+    A128KW | A192KW | A256KW => {
+      let kek = symmetric_of(key, key_alg_name(alg))?
+      check_size(alg, kek)?
+      cek = crypto.random_bytes(r, ksize)
+      ek = key_wrap(kek, cek)
+    }
+    A128GCMKW | A192GCMKW | A256GCMKW => {
+      let kek = symmetric_of(key, key_alg_name(alg))?
+      check_size(alg, kek)?
+      cek = crypto.random_bytes(r, ksize)
+      let iv = crypto.random_bytes(r, 12)
+      let sealed = gcm_key(kek).seal(iv, cek)
+      ek = sealed[0..sealed.len() - 16]
+      fields.push(("iv", json.Value.Str(s: b64(iv))))
+      fields.push(("tag", json.Value.Str(s: b64(sealed[sealed.len() - 16..]))))
+    }
+    RsaOaep | RsaOaep256 => {
+      let pk = match key {
+        Public(k) => k
+        Private(k) => k.public_key()
+        Symmetric(..) | Password(..) => return Err(JwtErr.Alg(msg: "${key_alg_name(alg)} needs an RSA key"))
+      }
+      if !(pk.alg() is Rsa) {
+        return Err(JwtErr.Alg(msg: "${key_alg_name(alg)} needs an RSA key"))
+      }
+      cek = crypto.random_bytes(r, ksize)
+      let h = if alg is RsaOaep { crypto.Hash.Sha1 } else { crypto.Hash.Sha256 }
+      ek = match crypto.encrypt_oaep(r, pk, h, cek) {
+        Ok(b) => b
+        Err(e) => return Err(JwtErr.Key(msg: e.msg))
+      }
+    }
+    Pbes2Hs256A128KW | Pbes2Hs384A192KW | Pbes2Hs512A256KW => {
+      let pw = match key {
+        Password(p) => p.reveal()
+        Symmetric(..) | Public(..) | Private(..) => return Err(JwtErr.Alg(msg: "${key_alg_name(alg)} needs a password"))
+      }
+      if opts.p2c <= 0 {
+        return Err(JwtErr.Alg(msg: "p2c must be positive"))
+      }
+      let p2s = crypto.random_bytes(r, 16)
+      let kek = pbes2_key(alg, pw, p2s, opts.p2c)
+      cek = crypto.random_bytes(r, ksize)
+      ek = key_wrap(kek, cek)
+      fields.push(("p2c", json.Value.Int(n: opts.p2c)))
+      fields.push(("p2s", json.Value.Str(s: b64(p2s))))
+    }
+    EcdhEs | EcdhEsA128KW | EcdhEsA192KW | EcdhEsA256KW => {
+      let pk = match key {
+        Public(k) => k
+        Private(k) => k.public_key()
+        Symmetric(..) | Password(..) => return Err(JwtErr.Alg(msg: "${key_alg_name(alg)} needs an EC key"))
+      }
+      let (curve, crv) = ec_curve_of(pk)?
+      let peer = match pk.ecdh() {
+        Ok(k) => k
+        Err(e) => return Err(JwtErr.Key(msg: e.msg))
+      }
+      let eph = crypto.ecdh_generate_key(r, curve)
+      let z = match eph.ecdh(peer) {
+        Ok(z) => z
+        Err(e) => return Err(JwtErr.Key(msg: e.msg))
+      }
+      let pt = eph.public_key().bytes()
+      let n = (pt.len() - 1) / 2
+      var epk: List[(Str, json.Value)] = []
+      epk.push(("kty", json.Value.Str(s: "EC")))
+      epk.push(("crv", json.Value.Str(s: crv)))
+      epk.push(("x", json.Value.Str(s: b64(pt[1..1 + n]))))
+      epk.push(("y", json.Value.Str(s: b64(pt[1 + n..]))))
+      fields.push(("epk", obj(epk)))
+      if alg is EcdhEs {
+        cek = concat_kdf(z, enc_name(enc), b"", b"", ksize)
+      } else {
+        let kek = concat_kdf(z, key_alg_name(alg), b"", b"", wrap_size(alg))
+        cek = crypto.random_bytes(r, ksize)
+        ek = key_wrap(kek, cek)
+      }
+    }
+  }
+  var head: List[(Str, json.Value)] = []
+  head.push(("alg", json.Value.Str(s: key_alg_name(alg))))
+  if let Some(c) = opts.cty {
+    head.push(("cty", json.Value.Str(s: c)))
+  }
+  head.push(("enc", json.Value.Str(s: enc_name(enc))))
+  for f in fields {
+    head.push(f)
+  }
+  if let Some(k) = opts.kid {
+    head.push(("kid", json.Value.Str(s: k)))
+  }
+  if let Some(t) = opts.typ {
+    head.push(("typ", json.Value.Str(s: t)))
+  }
+  if opts.deflate {
+    head.push(("zip", json.Value.Str(s: "DEF")))
+  }
+  // go-jose writes the header's fields in order of name (a Go map)
+  let protected = b64(sorted_obj(head).encode().bytes())
+  let plain = if opts.deflate { compress.deflate(payload, compress.Level.BestSpeed) } else { payload }
+  let iv = crypto.random_bytes(r, if is_gcm(enc) { 12 } else { 16 })
+  let (ct, tag) = content_seal(enc, cek, iv, plain, protected.bytes())
+  "${protected}.${b64(ek)}.${b64(iv)}.${b64(ct)}.${b64(tag)}"
+}
+
+/// The payload of a compact JWE (go-jose's ParseEncryptedCompact, then
+/// Decrypt): its `alg` must be in algs and its `enc` in encs (JwtErr.Alg
+/// otherwise), and `crit` is refused; then every failure of the key or
+/// the content, whatever it was, is JwtErr.Decrypt. A `zip: DEF` payload
+/// is inflated to at most max(250000, 10 times its size) bytes, as
+/// go-jose does.
+pub fn decrypt(token: Str, key: JweKey, algs: List[KeyAlg], encs: List[Enc], max_size: Int = 262144) -> Bytes ! JwtErr {
+  if token.len() > max_size {
+    return Err(malformed("token is larger than ${max_size} bytes"))
+  }
+  let parts = token.split(".")
+  if parts.len() != 5 {
+    return Err(malformed("compact JWE format must have five parts"))
+  }
+  var raw: List[Bytes] = []
+  for (i, part) in parts.indexed() {
+    // a part may be empty (dir's key, an empty payload's ciphertext)
+    if part.is_empty() {
+      raw.push(b"")
+      continue
+    }
+    if !b64url_ok(part) {
+      return Err(malformed("part ${i + 1} is not base64url"))
+    }
+    match base64.decode(part, base64.Base64.RawUrl) {
+      Ok(b) => raw.push(b)
+      Err(_) => return Err(malformed("part ${i + 1} is not base64url"))
+    }
+  }
+  let hv = match json.parse_value(raw[0].to_str() ?? "") {
+    Ok(v) => v
+    Err(_) => return Err(malformed("invalid protected header"))
+  }
+  let h = jwe_header_of(hv)?
+  if !algs.contains(h.alg) {
+    return Err(JwtErr.Alg(msg: "unexpected key algorithm ${key_alg_name(h.alg)}"))
+  }
+  if !encs.contains(h.enc) {
+    return Err(JwtErr.Alg(msg: "unexpected content encryption algorithm ${enc_name(h.enc)}"))
+  }
+  let cek = match unwrap_cek(h, hv, key, raw[1]) {
+    Ok(c) => c
+    Err(e) => {
+      if e is Alg(..) {
+        return Err(e)
+      }
+      return Err(JwtErr.Decrypt)
+    }
+  }
+  if cek.len() != enc_key_size(h.enc) {
+    return Err(JwtErr.Decrypt)
+  }
+  let plain = content_open(h.enc, cek, raw[2], raw[3], raw[4], parts[0].bytes()) ?? return Err(JwtErr.Decrypt)
+  if !h.zip {
+    return plain
+  }
+  let limit = if 10 * plain.len() > 250000 { 10 * plain.len() } else { 250000 }
+  match compress.inflate(plain, max_size: limit) {
+    Ok(b) => b
+    Err(e) => Err(malformed("zip: ${e.display()}"))
+  }
+}
+
+/// The protected header of a compact JWE, not decrypted: to choose a key.
+pub fn peek_jwe_header(token: Str) -> JweHeader ! JwtErr {
+  let parts = token.split(".")
+  if parts.len() != 5 {
+    return Err(malformed("compact JWE format must have five parts"))
+  }
+  let raw = match base64.decode(parts[0], base64.Base64.RawUrl) {
+    Ok(b) => b
+    Err(_) => return Err(malformed("part 1 is not base64url"))
+  }
+  match json.parse_value(raw.to_str() ?? "") {
+    Ok(v) => jwe_header_of(v)
+    Err(_) => Err(malformed("invalid protected header"))
+  }
+}
+
+fn jwe_header_of(v: json.Value) -> JweHeader ! JwtErr {
+  if !(v is Object(..)) {
+    return Err(malformed("invalid protected header"))
+  }
+  if v.get("crit") != None {
+    return Err(malformed("unsupported critical header"))
+  }
+  let alg = match v.get("alg") {
+    Some(Str(s)) => key_alg_of(s) ?? return Err(JwtErr.Alg(msg: "unexpected key algorithm ${s.quote()}"))
+    _ => return Err(malformed("missing header \"alg\""))
+  }
+  let enc = match v.get("enc") {
+    Some(Str(s)) => enc_of(s) ?? return Err(JwtErr.Alg(msg: "unexpected content encryption algorithm ${s.quote()}"))
+    _ => return Err(malformed("missing header \"enc\""))
+  }
+  let zip = match v.get("zip") {
+    None => false
+    Some(Str(s)) => {
+      if s != "DEF" {
+        return Err(malformed("unsupported zip ${s.quote()}"))
+      }
+      true
+    }
+    _ => return Err(malformed("invalid zip header"))
+  }
+  JweHeader{alg: alg, enc: enc, kid: str_field(v, "kid")?, typ: str_field(v, "typ")?, cty: str_field(v, "cty")?, zip: zip}
+}
+
+fn str_field(v: json.Value, name: Str) -> Str? ! JwtErr {
+  match v.get(name) {
+    None => None
+    Some(Str(s)) => Some(s)
+    _ => Err(malformed("header field ${name} is not a string"))
+  }
+}
+
+/// The content key, by the token's alg: any error but Alg becomes Decrypt.
+fn unwrap_cek(h: JweHeader, hv: json.Value, key: JweKey, ek: Bytes) -> Bytes ! JwtErr {
+  let ksize = enc_key_size(h.enc)
+  match h.alg {
+    Dir => {
+      let k = symmetric_of(key, "dir")?
+      if !ek.is_empty() {
+        return Err(JwtErr.Decrypt)
+      }
+      k
+    }
+    A128KW | A192KW | A256KW => key_unwrap(symmetric_of(key, key_alg_name(h.alg))?, ek)
+    A128GCMKW | A192GCMKW | A256GCMKW => {
+      let kek = symmetric_of(key, key_alg_name(h.alg))?
+      if ek.is_empty() {
+        return Err(JwtErr.Decrypt)
+      }
+      let iv = b64_field(hv, "iv")?
+      let tag = b64_field(hv, "tag")?
+      if kek.len() != 16 && kek.len() != 24 && kek.len() != 32 {
+        return Err(JwtErr.Decrypt)
+      }
+      let k = match crypto.aes_gcm_key_with_nonce_size(kek, if iv.is_empty() { 12 } else { iv.len() }) {
+        Ok(k) => k
+        Err(_) => return Err(JwtErr.Decrypt)
+      }
+      if iv.is_empty() || tag.len() != 16 {
+        return Err(JwtErr.Decrypt)
+      }
+      match k.open(iv, ek + tag) {
+        Ok(c) => c
+        Err(_) => Err(JwtErr.Decrypt)
+      }
+    }
+    RsaOaep | RsaOaep256 => {
+      let sk = match key {
+        Private(k) => k
+        Symmetric(..) | Password(..) | Public(..) => return Err(JwtErr.Alg(msg: "${key_alg_name(h.alg)} needs an RSA private key"))
+      }
+      if !(sk.alg() is Rsa) {
+        return Err(JwtErr.Alg(msg: "${key_alg_name(h.alg)} needs an RSA private key"))
+      }
+      let hh = if h.alg is RsaOaep { crypto.Hash.Sha1 } else { crypto.Hash.Sha256 }
+      match crypto.decrypt_oaep(sk, hh, ek) {
+        Ok(c) => c
+        Err(_) => Err(JwtErr.Decrypt)
+      }
+    }
+    Pbes2Hs256A128KW | Pbes2Hs384A192KW | Pbes2Hs512A256KW => {
+      let pw = match key {
+        Password(p) => p.reveal()
+        Symmetric(..) | Public(..) | Private(..) => return Err(JwtErr.Alg(msg: "${key_alg_name(h.alg)} needs a password"))
+      }
+      if ek.is_empty() {
+        return Err(JwtErr.Decrypt)
+      }
+      let p2s = b64_field(hv, "p2s")?
+      if p2s.is_empty() {
+        return Err(JwtErr.Decrypt)
+      }
+      let p2c = match hv.get("p2c") {
+        Some(Int(n)) => n
+        _ => return Err(JwtErr.Decrypt)
+      }
+      if p2c <= 0 || p2c > 1000000 {
+        return Err(JwtErr.Decrypt)
+      }
+      key_unwrap(pbes2_key(h.alg, pw, p2s, p2c), ek)
+    }
+    EcdhEs | EcdhEsA128KW | EcdhEsA192KW | EcdhEsA256KW => {
+      let sk = match key {
+        Private(k) => k
+        Symmetric(..) | Password(..) | Public(..) => return Err(JwtErr.Alg(msg: "${key_alg_name(h.alg)} needs an EC private key"))
+      }
+      let (curve, crv) = ec_curve_of(sk.public_key())?
+      let mine = match sk.ecdh() {
+        Ok(k) => k
+        Err(_) => return Err(JwtErr.Decrypt)
+      }
+      let epk = match hv.get("epk") {
+        Some(Object(..)) => hv.get("epk") ?? json.Value.Null
+        _ => return Err(JwtErr.Decrypt)
+      }
+      if epk.get("kty") != Some(json.Value.Str(s: "EC")) || epk.get("crv") != Some(json.Value.Str(s: crv)) {
+        return Err(JwtErr.Decrypt)
+      }
+      let x = b64_field(epk, "x")?
+      let y = b64_field(epk, "y")?
+      let n = (mine.public_key().bytes().len() - 1) / 2
+      if x.len() != n || y.len() != n {
+        return Err(JwtErr.Decrypt)
+      }
+      let peer = match crypto.ecdh_public_key(curve, b"\x04" + x + y) {
+        Ok(k) => k
+        Err(_) => return Err(JwtErr.Decrypt)
+      }
+      let z = match mine.ecdh(peer) {
+        Ok(z) => z
+        Err(_) => return Err(JwtErr.Decrypt)
+      }
+      let apu = b64_field(hv, "apu")?
+      let apv = b64_field(hv, "apv")?
+      if h.alg is EcdhEs {
+        if !ek.is_empty() {
+          return Err(JwtErr.Decrypt)
+        }
+        return concat_kdf(z, enc_name(h.enc), apu, apv, ksize)
+      }
+      if ek.is_empty() {
+        return Err(JwtErr.Decrypt)
+      }
+      key_unwrap(concat_kdf(z, key_alg_name(h.alg), apu, apv, wrap_size(h.alg)), ek)
+    }
+  }
+}
+
+/// A base64url header field, empty when absent; a bad one is Decrypt.
+fn b64_field(v: json.Value, name: Str) -> Bytes ! JwtErr {
+  match v.get(name) {
+    None => b""
+    Some(Str(s)) => {
+      if !b64url_ok(s) {
+        return Err(JwtErr.Decrypt)
+      }
+      match base64.decode(s, base64.Base64.RawUrl) {
+        Ok(b) => b
+        Err(_) => Err(JwtErr.Decrypt)
+      }
+    }
+    _ => Err(JwtErr.Decrypt)
+  }
+}
+
+fn symmetric_of(key: JweKey, what: Str) -> Bytes ! JwtErr {
+  match key {
+    Symmetric(k) => k.reveal()
+    Password(..) | Public(..) | Private(..) => Err(JwtErr.Alg(msg: "${what} needs a symmetric key"))
+  }
+}
+
+fn wrap_size(alg: KeyAlg) -> Int {
+  match alg {
+    A128KW | A128GCMKW | Pbes2Hs256A128KW | EcdhEsA128KW => 16
+    A192KW | A192GCMKW | Pbes2Hs384A192KW | EcdhEsA192KW => 24
+    A256KW | A256GCMKW | Pbes2Hs512A256KW | EcdhEsA256KW => 32
+    Dir | RsaOaep | RsaOaep256 | EcdhEs => 0
+  }
+}
+
+fn check_size(alg: KeyAlg, k: Bytes) -> () ! JwtErr {
+  if k.len() != wrap_size(alg) {
+    return Err(JwtErr.Alg(msg: "${key_alg_name(alg)} needs a ${wrap_size(alg)} byte key"))
+  }
+}
+
+fn ec_curve_of(k: crypto.PublicKey) -> (crypto.EcdhCurve, Str) ! JwtErr {
+  match k.alg() {
+    EcdsaP256 => (crypto.EcdhCurve.P256, "P-256")
+    EcdsaP384 => (crypto.EcdhCurve.P384, "P-384")
+    EcdsaP521 => (crypto.EcdhCurve.P521, "P-521")
+    Rsa | EcdsaP224 | Ed25519 => Err(JwtErr.Alg(msg: "ECDH-ES needs a P-256, P-384 or P-521 key"))
+  }
+}
+
+fn key_alg_name(a: KeyAlg) -> Str {
+  match a {
+    Dir => "dir"
+    A128KW => "A128KW"
+    A192KW => "A192KW"
+    A256KW => "A256KW"
+    A128GCMKW => "A128GCMKW"
+    A192GCMKW => "A192GCMKW"
+    A256GCMKW => "A256GCMKW"
+    RsaOaep => "RSA-OAEP"
+    RsaOaep256 => "RSA-OAEP-256"
+    Pbes2Hs256A128KW => "PBES2-HS256+A128KW"
+    Pbes2Hs384A192KW => "PBES2-HS384+A192KW"
+    Pbes2Hs512A256KW => "PBES2-HS512+A256KW"
+    EcdhEs => "ECDH-ES"
+    EcdhEsA128KW => "ECDH-ES+A128KW"
+    EcdhEsA192KW => "ECDH-ES+A192KW"
+    EcdhEsA256KW => "ECDH-ES+A256KW"
+  }
+}
+
+const KEY_ALGS: List[KeyAlg] = [KeyAlg.Dir, KeyAlg.A128KW, KeyAlg.A192KW, KeyAlg.A256KW, KeyAlg.A128GCMKW, KeyAlg.A192GCMKW,
+  KeyAlg.A256GCMKW, KeyAlg.RsaOaep, KeyAlg.RsaOaep256, KeyAlg.Pbes2Hs256A128KW, KeyAlg.Pbes2Hs384A192KW,
+  KeyAlg.Pbes2Hs512A256KW, KeyAlg.EcdhEs, KeyAlg.EcdhEsA128KW, KeyAlg.EcdhEsA192KW, KeyAlg.EcdhEsA256KW]
+
+const ENCS: List[Enc] = [Enc.A128CbcHs256, Enc.A192CbcHs384, Enc.A256CbcHs512, Enc.A128Gcm, Enc.A192Gcm, Enc.A256Gcm]
+
+fn key_alg_of(s: Str) -> KeyAlg? {
+  for a in KEY_ALGS {
+    if key_alg_name(a) == s {
+      return Some(a)
+    }
+  }
+  None
+}
+
+fn enc_name(e: Enc) -> Str {
+  match e {
+    A128CbcHs256 => "A128CBC-HS256"
+    A192CbcHs384 => "A192CBC-HS384"
+    A256CbcHs512 => "A256CBC-HS512"
+    A128Gcm => "A128GCM"
+    A192Gcm => "A192GCM"
+    A256Gcm => "A256GCM"
+  }
+}
+
+fn enc_of(s: Str) -> Enc? {
+  for e in ENCS {
+    if enc_name(e) == s {
+      return Some(e)
+    }
+  }
+  None
+}
+
+fn enc_key_size(e: Enc) -> Int {
+  match e {
+    A128CbcHs256 => 32
+    A192CbcHs384 => 48
+    A256CbcHs512 => 64
+    A128Gcm => 16
+    A192Gcm => 24
+    A256Gcm => 32
+  }
+}
+
+fn is_gcm(e: Enc) -> Bool { e is A128Gcm | A192Gcm | A256Gcm }
+
+fn gcm_key(k: Bytes) -> crypto.AeadKey {
+  crypto.aes_gcm_key_with_nonce_size(k, 12).or_fault("jwt: an AES key of 16, 24 or 32 bytes")
+}
+
+fn obj(fields: List[(Str, json.Value)]) -> json.Value { json.Value.Object(fields: fields) }
+
+fn sorted_obj(fields: List[(Str, json.Value)]) -> json.Value {
+  json.Value.Object(fields: fields.sort_by(fn(f: (Str, json.Value)) -> Str { f.0 }))
+}
+
+/// The ciphertext and tag of plain under enc (go-jose's aeadContentCipher).
+fn content_seal(enc: Enc, cek: Bytes, iv: Bytes, plain: Bytes, aad: Bytes) -> (Bytes, Bytes) {
+  if is_gcm(enc) {
+    let sealed = gcm_key(cek).seal(iv, plain, aad)
+    return (sealed[0..sealed.len() - 16], sealed[sealed.len() - 16..])
+  }
+  let n = cek.len() / 2
+  let block = crypto.aes_block(cek[n..]).or_fault("jwt: an AES key")
+  var m = crypto.cbc_encrypter(block, iv)
+  let pad = 16 - plain.len() % 16
+  var padded = BytesBuilder.with_capacity(plain.len() + pad)
+  padded.write(plain)
+  var i = 0
+  while i < pad {
+    padded.write_byte(UInt8(pad))
+    i += 1
+  }
+  let ct = m.crypt_blocks(padded.freeze())
+  (ct, cbc_tag(enc, cek[0..n], aad, iv, ct))
+}
+
+fn cbc_tag(enc: Enc, mac_key: Bytes, aad: Bytes, iv: Bytes, ct: Bytes) -> Bytes {
+  let h = match enc {
+    A192CbcHs384 => crypto.Hash.Sha384
+    A256CbcHs512 => crypto.Hash.Sha512
+    A128CbcHs256 | A128Gcm | A192Gcm | A256Gcm => crypto.Hash.Sha256
+  }
+  var al = BytesBuilder.with_capacity(8)
+  let bits = aad.len() * 8
+  var s = 56
+  while s >= 0 {
+    al.write_byte(UInt8((bits >> s) & 255))
+    s -= 8
+  }
+  let mac = crypto.hmac(h, mac_key, aad + iv + ct + al.freeze())
+  mac[0..mac_key.len()]
+}
+
+/// The plaintext, or None for any failure (go-jose's checks: the tag
+/// first, then whole blocks and the padding).
+fn content_open(enc: Enc, cek: Bytes, iv: Bytes, ct: Bytes, tag: Bytes, aad: Bytes) -> Bytes? {
+  if is_gcm(enc) {
+    if iv.len() != 12 || tag.len() != 16 {
+      return None
+    }
+    return gcm_key(cek).open(iv, ct + tag, aad).ok()
+  }
+  let n = cek.len() / 2
+  if iv.len() != 16 {
+    return None
+  }
+  if !crypto.equal(cbc_tag(enc, cek[0..n], aad, iv, ct), tag) {
+    return None
+  }
+  if ct.is_empty() || ct.len() % 16 != 0 {
+    return None
+  }
+  let block = crypto.aes_block(cek[n..]).or_fault("jwt: an AES key")
+  var m = crypto.cbc_decrypter(block, iv)
+  let p = m.crypt_blocks(ct)
+  let c = Int(p[p.len() - 1])
+  if c == 0 || c > 16 || c > p.len() {
+    return None
+  }
+  var i = p.len() - c
+  while i < p.len() {
+    if Int(p[i]) != c {
+      return None
+    }
+    i += 1
+  }
+  Some(p[0..p.len() - c])
+}
+
+const KW_IV: Bytes = b"\xa6\xa6\xa6\xa6\xa6\xa6\xa6\xa6"
+
+/// RFC 3394 AES key wrap (go-jose's cipher.KeyWrap); cek is 8 byte blocks.
+fn key_wrap(kek: Bytes, cek: Bytes) -> Bytes {
+  let b = crypto.aes_block(kek).or_fault("jwt: an AES key of 16, 24 or 32 bytes")
+  let n = cek.len() / 8
+  var r: List[Bytes] = []
+  var i = 0
+  while i < n {
+    r.push(cek[i * 8..i * 8 + 8])
+    i += 1
+  }
+  var a = KW_IV
+  var t = 0
+  while t < 6 * n {
+    let out = b.encrypt_block(a + r[t % n])
+    a = xor_count(out[0..8], t + 1)
+    r[t % n] = out[8..16]
+    t += 1
+  }
+  var res = BytesBuilder.with_capacity((n + 1) * 8)
+  res.write(a)
+  for x in r {
+    res.write(x)
+  }
+  res.freeze()
+}
+
+/// RFC 3394 unwrap; Decrypt for a bad length or integrity value.
+fn key_unwrap(kek: Bytes, ct: Bytes) -> Bytes ! JwtErr {
+  if kek.len() != 16 && kek.len() != 24 && kek.len() != 32 {
+    return Err(JwtErr.Decrypt)
+  }
+  let b = crypto.aes_block(kek).or_fault("jwt: an AES key")
+  let n = ct.len() / 8 - 1
+  if n <= 0 || ct.len() % 8 != 0 {
+    return Err(JwtErr.Decrypt)
+  }
+  var r: List[Bytes] = []
+  var i = 0
+  while i < n {
+    r.push(ct[(i + 1) * 8..(i + 2) * 8])
+    i += 1
+  }
+  var a = ct[0..8]
+  var t = 6 * n - 1
+  while t >= 0 {
+    let out = b.decrypt_block(xor_count(a, t + 1) + r[t % n])
+    a = out[0..8]
+    r[t % n] = out[8..16]
+    t -= 1
+  }
+  if !crypto.equal(a, KW_IV) {
+    return Err(JwtErr.Decrypt)
+  }
+  var res = BytesBuilder.with_capacity(n * 8)
+  for x in r {
+    res.write(x)
+  }
+  res.freeze()
+}
+
+/// a xored with t as 8 big endian bytes.
+fn xor_count(a: Bytes, t: Int) -> Bytes {
+  var out = BytesBuilder.with_capacity(8)
+  var i = 0
+  while i < 8 {
+    out.write_byte(a[i] ^ UInt8((t >> (56 - 8 * i)) & 255))
+    i += 1
+  }
+  out.freeze()
+}
+
+/// PBES2's key: PBKDF2 over the password with salt = alg name, 0, p2s.
+fn pbes2_key(alg: KeyAlg, pw: Str, p2s: Bytes, p2c: Int) -> Bytes {
+  let h = match alg {
+    Pbes2Hs384A192KW => crypto.Hash.Sha384
+    Pbes2Hs512A256KW => crypto.Hash.Sha512
+    _ => crypto.Hash.Sha256
+  }
+  let salt = key_alg_name(alg).bytes() + b"\x00" + p2s
+  crypto.pbkdf2(h, pw.bytes(), salt, p2c, wrap_size(alg)).or_fault("jwt: pbkdf2 parameters")
+}
+
+/// NIST SP 800-56A Concat KDF with SHA-256 (go-jose's DeriveECDHES).
+fn concat_kdf(z: Bytes, alg_id: Str, apu: Bytes, apv: Bytes, size: Int) -> Bytes {
+  var info = BytesBuilder.new()
+  info.write(be32(alg_id.len()))
+  info.write(alg_id.bytes())
+  info.write(be32(apu.len()))
+  info.write(apu)
+  info.write(be32(apv.len()))
+  info.write(apv)
+  info.write(be32(size * 8))
+  let inf = info.freeze()
+  var out = BytesBuilder.with_capacity(size + 32)
+  var counter = 1
+  while out.len() < size {
+    out.write(crypto.sha256(be32(counter) + z + inf))
+    counter += 1
+  }
+  out.freeze()[0..size]
+}
+
+fn be32(n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(4)
+  b.write_byte(UInt8((n >> 24) & 255))
+  b.write_byte(UInt8((n >> 16) & 255))
+  b.write_byte(UInt8((n >> 8) & 255))
+  b.write_byte(UInt8(n & 255))
+  b.freeze()
 }

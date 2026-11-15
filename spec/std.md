@@ -9597,6 +9597,35 @@ is `Malformed`. A call without them writes the header it always did.
   as long as the hash.
 - `jwks` reads an RFC 7517 key set (RSA, EC and OKP public keys) into keys by `kid`, skipping `use: enc`.
 
+### 62.1 JWE compact tokens (decision 0660)
+
+```xo
+enum KeyAlg { Dir, A128KW, A192KW, A256KW, A128GCMKW, A192GCMKW, A256GCMKW, RsaOaep, RsaOaep256,
+  Pbes2Hs256A128KW, Pbes2Hs384A192KW, Pbes2Hs512A256KW, EcdhEs, EcdhEsA128KW, EcdhEsA192KW, EcdhEsA256KW }
+enum Enc { A128CbcHs256, A192CbcHs384, A256CbcHs512, A128Gcm, A192Gcm, A256Gcm }
+enum JweKey { Symmetric(key: Secret[Bytes]), Password(password: Secret[Str]), Public(key: crypto.PublicKey), Private(key: crypto.PrivateKey) }
+struct JweOptions { kid: Str? = None, typ: Str? = None, cty: Str? = None, deflate: Bool = false, p2c: Int = 600000 }
+struct JweHeader { alg: KeyAlg, enc: Enc, kid: Str?, typ: Str?, cty: Str?, zip: Bool }
+fn encrypt(r: Rand, alg: KeyAlg, enc: Enc, key: JweKey, payload: Bytes, opts: JweOptions = JweOptions{}) -> Str ! JwtErr uses rand
+fn decrypt(token: Str, key: JweKey, algs: List[KeyAlg], encs: List[Enc], max_size: Int = 262144) -> Bytes ! JwtErr
+fn peek_jwe_header(token: Str) -> JweHeader ! JwtErr
+```
+
+- RFC 7516's compact form with RFC 7518's algorithms, after go-jose v4.1.9: the key algorithms (`RSA-OAEP`,
+  `RSA-OAEP-256`, AES and AES-GCM key wrap, PBES2, ECDH-ES on P-256, P-384 and P-521, alone or with key wrap,
+  `dir`) and content encryptions it has, without RSA1_5 (RFC 8725 3.2) and without the JSON serialization.
+- `encrypt` makes a content key from r (none for `dir` and `ECDH-ES`) and an IV, writes the protected header's
+  fields in order of name (go-jose's), and with `deflate` compresses the payload first (`zip: DEF`). A key that
+  does not fit the algorithm (its kind, or a size other than 16, 24 or 32 bytes for a key wrap and the content
+  key's for `dir`) is `Alg`; PBES2 uses a 16 byte salt and `p2c` iterations.
+- `decrypt` checks the size, five parts, the header (a JSON object, no `crit`, a `zip` of `DEF` only), then
+  `alg` against `algs` and `enc` against `encs` (`Alg` otherwise; there are no defaults). Any failure after
+  that, whatever it was (a wrong key, a changed part, a bad tag or padding, a PBES2 count above 1,000,000), is
+  `JwtErr.Decrypt`, `jwt: error in cryptographic primitive`, go-jose's ErrCryptoFailure. A `zip` payload is
+  inflated to at most max(250000, 10 times its size) bytes.
+- An encrypted JWT is `encrypt` of `json.encode(claims)` with `typ: "JWT"`; a nested one encrypts a signed
+  token with `cty: "JWT"`, and the reader checks it with `verify` after `decrypt`.
+
 ## 63. std/yaml
 
 Status: implemented on every backend (2026-11-05, decision 0512, Accepted by the owner 2026-11-05): one pure source,

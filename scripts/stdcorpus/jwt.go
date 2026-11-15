@@ -19,3 +19,15 @@ func jwtCorpus() string {
 	}
 	return string(out)
 }
+
+// jweCorpus is std/jwt's JWE corpus, printed by jweoracle (go-jose v4).
+func jweCorpus() string {
+	cmd := exec.Command("go", "run", ".", runtime.Version())
+	cmd.Dir = filepath.Join("scripts", "stdcorpus", "jweoracle")
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		panic("jweoracle: " + err.Error())
+	}
+	return string(out)
+}

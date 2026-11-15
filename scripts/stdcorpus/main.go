@@ -137,6 +137,7 @@ var generators = map[string]func() string{
 	"yaml":         yamlCorpus,
 	"yamlfuzz":     yamlfuzzCorpus,
 	"jwt":          jwtCorpus,
+	"jwe":          jweCorpus,
 	"pkcs12":       pkcs12Corpus,
 	"amqp":         amqpCorpus,
 	"grpc":         grpcCorpus,

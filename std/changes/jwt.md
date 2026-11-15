@@ -1,5 +1,21 @@
 # std/jwt changes
 
+## 2026-11-15: feature: JWE compact tokens
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): jwt.behavior.jwe; decision 0660
+- Go reference: github.com/go-jose/go-jose/v4 v4.1.9 (jwe.go, crypter.go, symmetric.go, asymmetric.go, cipher/; Apache 2.0)
+- Test: internal/stdtest/testdata/corpus/jwe (scripts/stdcorpus jwe, run by scripts/stdcorpus/jweoracle): 96 go-jose tokens over every key algorithm and content encryption, with wrong keys and a changed character in each part, 615 cases decrypting or failing as go-jose's Decrypt; every combination encrypted by std/jwt and decrypted back (go, arm64, llvm)
+- Shipped in: not yet released
+- Timing: none
+
+`encrypt(r, alg, enc, key, payload, opts)`, `decrypt(token, key, algs,
+encs)` and `peek_jwe_header(token)`; `JwtErr` gains `Decrypt` (an open
+enum, so a match with a wildcard arm keeps working). AES key wrap
+(RFC 3394) and the Concat KDF are written in std/jwt over std/crypto's
+AES block, GCM, CBC, HMAC, PBKDF2, OAEP and ECDH.
+
 ## 2026-11-15: feature: Options.all_audiences and Options.require_nbf (golang-jwt's WithAllAudiences, WithNotBeforeRequired)
 
 - Kind: feature

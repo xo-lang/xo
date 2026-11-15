@@ -2865,7 +2865,7 @@ jwt.ErrNotEdPublicKey = std/jwt.JwtErr.Key
 jwt.ErrHashUnavailable = std/jwt.JwtErr.Key
 jwt.ErrTokenUnverifiable = std/jwt.JwtErr.Key
 # jwt behavior checklist (decision 0655)
-jwt.behavior.jwe = gap: JWS only, no JWE (go-jose)
+jwt.behavior.jwe = std/jwt.encrypt (and decrypt, decision 0660)
 # go-amqp: github.com/Azure/go-amqp v1.7.0 (outside.txt; decision 0655; keyed by the path's last element)
 go-amqp.Dial = std/amqp.dial
 go-amqp.NewConn = std/amqp.dial
