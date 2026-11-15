@@ -122,6 +122,25 @@ rest in the same shape.
   client's ConnState reports them, a resumed one the session's. Neither
   is verified, as Go's. A server's own ConnState leaves them empty, as
   Go's does on a full handshake.
+- **ECH (T13, B4):** the client and server ports of Go 1.26's ech.go
+  and its handshake code (llrt tlsech.xo: config list parsing and
+  picking, Go's padding, the inner and outer hellos with
+  ech_outer_extensions, the accept confirmations for the ServerHello and
+  a HelloRetryRequest, retry configs). The client's HPKE sender is a
+  pure llrt one (tlsech.sender, RFC 9180 base mode over std/hpke's
+  primitives), not std/hpke's `new_sender`: the engine is sans-I/O
+  without effects, and `new_sender` takes `uses rand` for its ephemeral
+  key, so the engine draws the key from llrt's random source as it does
+  for its key shares; tlsech_test checks that std/hpke opens what it
+  seals. The server opens with std/hpke's Recipient (no effect).
+  The KEMs are std/hpke's DHKEMs; Go's ML-KEM KEMs wait for std/hpke.
+  A rejected client sends an empty Certificate when asked, its
+  Finished, then ech_required, as Go's; the native server therefore
+  keeps a finished handshake finished when that alert arrives in the
+  same read (tls13srv.completed). `TlsErrKind.EchRejection` and
+  `Alert(code)` (Go's AlertError, which QUIC's errors wrap, asked by
+  aws-43 for T14) are added before the first release with T12, so no
+  release's exhaustive match breaks.
 - **std/http and T12 (open, owner's choice; lead 2026-11-15):** the
   client's failure is `ClientErr.Connect(msg)` with Go's text, and Xo's
   enums leave no non-breaking room on it: a variant field takes no

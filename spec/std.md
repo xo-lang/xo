@@ -5967,6 +5967,8 @@ enum TlsErrKind {
   Other
   RecordHeader(header: Bytes)                                                   // Go's RecordHeaderError
   CertificateVerification(certs: List[x509.Certificate], cause: x509.CertErr)   // Go's CertificateVerificationError
+  EchRejection(retry_config_list: Bytes)                                        // Go's ECHRejectionError
+  Alert(code: Int)                                                              // Go's AlertError (QUIC)
 }
 fn client_conn(c: Conn, config: ClientConfig) -> TlsConn         // Go's tls.Client: no handshake yet
 fn (t: TlsConn) handshake() -> () ! NetErr uses net.dial
@@ -5974,6 +5976,11 @@ fn (t: TlsConn) err() -> TlsErr?
 fn (t: TlsServerConn) err() -> TlsErr?
 fn (c: TlsCert) with_ocsp_staple(staple: Bytes) -> TlsCert
 fn (c: TlsCert) with_signed_certificate_timestamps(scts: List[Bytes]) -> TlsCert
+// ClientConfig gains: encrypted_client_hello_config_list: Bytes? = None,
+//   encrypted_client_hello_rejection_verify: (fn(ConnState) -> () ! Str)? = None
+// ServerConfig gains: encrypted_client_hello_keys: List[EchKey] = [],
+//   get_encrypted_client_hello_keys: (fn(ClientHelloInfo) -> List[EchKey] ! Str)? = None
+struct EchKey { config: Bytes, private_key: Bytes, send_as_retry: Bool = false }   // Go's EncryptedClientHelloKey
 ```
 
 ```
@@ -6182,6 +6189,26 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
   CertificateStatus and the ServerHello). The client's `ConnState` has
   them as `ocsp_response` and `signed_certificate_timestamps` (again on
   a resumed connection); neither is checked, as Go's. Golden `tls_ocsp`.
+- Encrypted Client Hello (T13, RFC 9849, as Go 1.26's crypto/tls): a
+  client with `encrypted_client_hello_config_list` (an ECHConfigList,
+  from the server's DNS HTTPS record) uses the first config whose KEM
+  (DHKEM P-256, P-384, P-521, X25519; HPKE through std/hpke's
+  algorithms) and suite it supports, sends the real hello encrypted in
+  an outer hello named for the config's public name, and offers TLS 1.3
+  alone; a malformed list is Go's "tls: malformed ECHConfigList", and a
+  min_version or max_version that rules out TLS 1.3 Go's
+  "MinVersion must be >= VersionTLS13 if EncryptedClientHelloConfigList
+  is populated". A server accepts it with a key of
+  `encrypted_client_hello_keys` (or `get_encrypted_client_hello_keys`'s)
+  and answers with the inner hello's name; `state().ech_accepted` tells,
+  on both sides. A server that rejects it (no key opens it, or no ECH)
+  completes the outer handshake; the client checks the certificate
+  against the public name (or runs `encrypted_client_hello_rejection_verify`),
+  sends ech_required, and fails with `TlsErrKind.EchRejection` and the
+  configs of the server's `send_as_retry` keys (empty when none: the
+  server's signal that it has no ECH), text "tls: server rejected ECH".
+  Not supported, as Go's client: an ML-KEM KEM (Go's crypto/hpke offers
+  it; std/hpke does not yet). Golden `tls_ech`.
 
 ---
 

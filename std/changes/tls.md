@@ -1,6 +1,28 @@
 # std/tls changes
 
 
+## 2026-11-15: feature: Encrypted Client Hello (decision 0644 B4)
+
+- Kind: feature
+- Commit: this push
+- Found by: the lang3 crypto/tls audit of 2026-11-15 (item T13; owner approved through the lead)
+- Go reference: crypto/tls Config.EncryptedClientHelloConfigList, EncryptedClientHelloRejectionVerify, EncryptedClientHelloKeys, GetEncryptedClientHelloKeys, EncryptedClientHelloKey, ECHRejectionError, AlertError, ConnectionState.ECHAccepted; ech.go, handshake_client.go, handshake_server_tls13.go (go1.26.11); Go's TestDecodeECHConfigLists, TestSkipBadConfigs and validDNSName cases (ech_test.go) in std/native/llrt/tlsech_test.xo
+- Test: golden tls_ech (arm64 equal to the go backend: accepted, after an HRR, the get hook, rejected with and without retry configs, rejection_verify refusing and passing, a malformed list, MinVersion); tlsech_test.xo (config lists, Go's padding, the outer extensions, the sender against std/hpke for five KEM and suite pairs); tls13srv_test.xo's ECH cases
+- Timing: none (a hello without ECH takes the same path; the ECH work runs only with a config list or server keys)
+- Shipped in: not yet released
+
+`ClientConfig.encrypted_client_hello_config_list` encrypts the client's
+hello to the server's ECH config (RFC 9849), and `ServerConfig.encrypted_client_hello_keys`
+(or `get_encrypted_client_hello_keys`) decrypts it; `state().ech_accepted`
+reports the outcome on both sides. A rejection is Go's: the client
+checks the outer certificate against the public name (or
+`encrypted_client_hello_rejection_verify`), then fails with
+`TlsErrKind.EchRejection(retry_config_list)`. `TlsErrKind.Alert(code)`
+is Go's AlertError, for QUIC (T14). A native TLS 1.3 server whose
+handshake finished no longer reports a failure that a record in the same
+read caused after the client's Finished (Go's server sees it on the next
+read).
+
 ## 2026-11-15: feature: key log, session tickets and resumption, typed errors, OCSP stapling and SCTs (decision 0644 B3)
 
 - Kind: feature
