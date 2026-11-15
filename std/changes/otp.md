@@ -1,5 +1,21 @@
 # std/otp changes
 
+## 2026-11-15: feature: Key.image, a QR code of the URI
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): otp.Key.Image
+- Go reference: github.com/pquerna/otp v1.5.0 Key.Image over github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc (qr.Encode at level M in Auto mode, barcode.Scale; MIT)
+- Test: internal/stdtest/testdata/corpus/otp (scripts/stdcorpus otp): 296 cases (key URIs, numeric and alphanumeric contents, long URIs to version 40 and past it, 8 sizes) against Key.Image run by internal/stdtest/qrref, compared by the SHA-256 of the modules (go, arm64, llvm)
+- Shipped in: not yet released
+- Timing: none
+
+`Key.image(width, height)` returns a Gray `png.Image` (0 dark, 255
+light) with boombuler's modules, mask choice and scaling, and its error
+texts. The penalty rules are boombuler's, not the QR standard's (rule 1
+adds the run length minus 2), so the mask can differ from another
+encoder's for the same text; the code reads the same.
+
 ## 2026-11-15: feature: parse_uri, Key and the Steam Guard encoder (pquerna/otp)
 
 - Kind: feature

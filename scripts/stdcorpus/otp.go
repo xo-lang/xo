@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"crypto/hmac"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -63,7 +67,7 @@ func otpCorpus() string {
 	rg := rand.New(rand.NewSource(57))
 	var o strings.Builder
 	o.WriteString(header("RFC 4226 and RFC 6238 computed independently on Go's crypto/hmac, and net/url for the otpauth URI, against std/otp"))
-	o.WriteString("use std/otp\nuse std/crypto\n\n")
+	o.WriteString("use std/otp\nuse std/crypto\nuse std/png\n\n")
 	algos := []string{"Sha1", "Sha256", "Sha512"}
 	o.WriteString("/// (secret hex, counter, digits, algo, the hotp code)\nconst HOTPS: List[(Str, Int, Int, Str, Str)] = [\n")
 	for i := 0; i < 400; i++ {
@@ -128,6 +132,7 @@ func otpCorpus() string {
 	}
 	o.WriteString("]\n\n")
 	o.WriteString(otpTests)
+	otpImageCorpus(&o)
 	return o.String()
 }
 
@@ -350,4 +355,103 @@ func otpKeyOf(orig string) *otpKey {
 	}
 	k.steam = strings.ToLower(q.Get("encoder")) == "steam"
 	return k
+}
+
+// otpImageCorpus: pquerna/otp's Key.Image (boombuler/barcode's QR code at
+// level M, scaled) run by internal/stdtest/qrref on the key URIs above,
+// on contents for the numeric and alphanumeric modes and on long URIs up
+// to version 40 and past it, at several sizes; the Xo test hashes its
+// image's dark modules as qrref prints them.
+func otpImageCorpus(o *strings.Builder) {
+	var contents []string
+	for _, u := range otpKeyURIs() {
+		if u == strings.TrimSpace(u) {
+			contents = append(contents, u)
+		}
+	}
+	contents = append(contents, "", "0123456789", "+12", "-0", "-12", "12a", "HELLO WORLD $%*+-./:", "HELLO world", "A",
+		strings.Repeat("7", 3000), strings.Repeat("8", 3100), strings.Repeat("AB:", 600), strings.Repeat("Z", 1900))
+	for _, n := range []int{60, 120, 200, 300, 500, 800, 1200, 1700, 2300, 2331, 2332, 2400} {
+		u := "otpauth://totp/Issuer:me?secret=JBSWY3DPEHPK3PXP&issuer="
+		contents = append(contents, u+strings.Repeat("x", n-len(u)))
+	}
+	sizes := [][2]int{{200, 200}, {256, 128}, {21, 21}, {25, 25}, {20, 20}, {0, 0}, {300, 41}, {57, 299}}
+	type qrCase struct {
+		s    string
+		w, h int
+	}
+	var cases []qrCase
+	for _, c := range contents {
+		if len(c) > 400 {
+			cases = append(cases, qrCase{c, 200, 200}, qrCase{c, 400, 380})
+			continue
+		}
+		for _, sz := range sizes {
+			cases = append(cases, qrCase{c, sz[0], sz[1]})
+		}
+	}
+	var in bytes.Buffer
+	for _, c := range cases {
+		fmt.Fprintf(&in, "%s\t%d\t%d\n", c.s, c.w, c.h)
+	}
+	cmd := exec.Command("go", "run", ".")
+	cmd.Dir = filepath.Join("internal", "stdtest", "qrref")
+	cmd.Stdin = &in
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stdcorpus: the QR oracle (internal/stdtest/qrref) failed: %v\n", err)
+		os.Exit(1)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+	if len(lines) != len(cases) {
+		fmt.Fprintf(os.Stderr, "stdcorpus: qrref gave %d lines for %d cases\n", len(lines), len(cases))
+		os.Exit(1)
+	}
+	o.WriteString("\n/// (content, width, height, qrref's Key.Image: \"W H\" and the SHA-256 of its dark modules as 1 and light as 0 row by row, or ERR and the error)\nconst IMAGES: List[(Str, Int, Int, Str)] = [\n")
+	for i, c := range cases {
+		want := lines[i]
+		if !strings.HasPrefix(want, "ERR ") {
+			f := strings.SplitN(want, " ", 3)
+			want = f[0] + " " + f[1] + " " + hex.EncodeToString(sha256Of(f[2]))
+		}
+		fmt.Fprintf(o, "  (%s, %d, %d, %s),\n", xq(c.s), c.w, c.h, xq(want))
+	}
+	o.WriteString("]\n")
+	o.WriteString(`
+fn image_of(s: Str, w: Int, h: Int) -> Str {
+  let k = otp.Key{uri: s, kind: "totp", issuer: "", account: "", secret: "", period: 30, digits: 6, algo: crypto.Hash.Sha1, encoder: otp.Encoder.Decimal}
+  match k.image(w, h) {
+    Ok(img) => {
+      var b = BytesBuilder.with_capacity(img.pix.len())
+      for p in img.pix {
+        b.write_byte(if p == 0 { '1' } else { '0' })
+      }
+      "${img.width} ${img.height} ${crypto.sha256(b.freeze()).to_hex()}"
+    }
+    Err(e) => "ERR ${e.msg}"
+  }
+}
+
+test "image is pquerna's Key.Image (boombuler's QR code at level M, scaled)" {
+  var bad: List[Str] = []
+  for (s, w, h, want) in IMAGES {
+    let got = image_of(s, w, h)
+    if got != want {
+      bad.push("${s.len()} bytes ${s[0..(if s.len() < 40 { s.len() } else { 40 })]} ${w}x${h}: ${got}")
+    }
+  }
+  expect(bad) == []
+  // the image is a PNG Gray image
+  let k = otp.parse_uri("otpauth://totp/Example:alice@google.com?secret=JBSWY3DPEHPK3PXP&issuer=Example")?
+  let img = k.image(200, 200)?
+  expect(img.model) == png.Model.Gray
+  expect(png.decode(png.encode(img)?)?.pix) == img.pix
+}
+`)
+}
+
+func sha256Of(s string) []byte {
+	h := sha256.Sum256([]byte(s))
+	return h[:]
 }

@@ -9,6 +9,7 @@
 
 use std/base32
 use std/crypto
+use std/png
 use std/url
 
 /// How a code is written (pquerna/otp's Encoder): decimal digits, or
@@ -267,4 +268,774 @@ fn pow10(n: Int) -> Int {
     p *= 10
   }
   p
+}
+
+// ---- Key.image: a QR code of the URI (pquerna/otp's Key.Image) ----
+//
+// A port of boombuler/barcode's qr.Encode at level M in Auto mode and of
+// barcode.Scale (github.com/boombuler/barcode v1.0.1-0.20190219062509-
+// 6c824513bacc, the version pquerna/otp v1.5.0 requires; Copyright (c)
+// 2014 Florian Sundermann, MIT license). The module grid is indexed
+// x * dim + y, as boombuler's BitList.
+
+/// The URI as a QR code (pquerna/otp's Key.Image): error correction level
+/// M, the smallest version that holds it in numeric, alphanumeric or byte
+/// mode (the first that fits, in that order), the mask with the lowest
+/// penalty, scaled by the largest whole factor that fits width x height
+/// and centered, with no quiet zone; a Gray image, 0 for a dark module
+/// and 255 for a light one. Errors with boombuler's texts: `No encoding
+/// found to encode "URI"` when the URI is too long, `can not scale barcode
+/// to an image smaller than NxN` when width or height is under the code's
+/// size.
+pub fn (k: Key) image(width: Int, height: Int) -> png.Image ! OtpErr {
+  let (data, version) = match qr_bits(k.uri) {
+    Some(x) => x
+    None => return Err(OtpErr{msg: "No encoding found to encode \"${k.uri}\""})
+  }
+  let dim = (version - 1) * 4 + 21
+  let grid = qr_render(qr_codewords(data, version), version)
+  let fw = width / dim
+  let fh = height / dim
+  let factor = if fw < fh { fw } else { fh }
+  if factor <= 0 {
+    return Err(OtpErr{msg: "can not scale barcode to an image smaller than ${dim}x${dim}"})
+  }
+  let ox = (width - dim * factor) / 2
+  let oy = (height - dim * factor) / 2
+  var pix = BytesBuilder.with_capacity(width * height)
+  var y = 0
+  while y < height {
+    var x = 0
+    while x < width {
+      var dark = false
+      if x >= ox && y >= oy {
+        let mx = (x - ox) / factor
+        let my = (y - oy) / factor
+        if mx < dim && my < dim {
+          dark = grid[mx * dim + my]
+        }
+      }
+      pix.write_byte(if dark { 0 } else { 255 })
+      x += 1
+    }
+    y += 1
+  }
+  png.Image{width: width, height: height, model: png.Model.Gray, pix: pix.freeze()}
+}
+
+/// boombuler/barcode qr versionInfos at level M, one row per version 1 to 40:
+/// (ecc codewords per block, blocks in group 1, data codewords per block
+/// in group 1, blocks in group 2, data codewords per block in group 2).
+const QR_M: List[(Int, Int, Int, Int, Int)] = [
+  (10, 1, 16, 0, 0),
+  (16, 1, 28, 0, 0),
+  (26, 1, 44, 0, 0),
+  (18, 2, 32, 0, 0),
+  (24, 2, 43, 0, 0),
+  (16, 4, 27, 0, 0),
+  (18, 4, 31, 0, 0),
+  (22, 2, 38, 2, 39),
+  (22, 3, 36, 2, 37),
+  (26, 4, 43, 1, 44),
+  (30, 1, 50, 4, 51),
+  (22, 6, 36, 2, 37),
+  (22, 8, 37, 1, 38),
+  (24, 4, 40, 5, 41),
+  (24, 5, 41, 5, 42),
+  (28, 7, 45, 3, 46),
+  (28, 10, 46, 1, 47),
+  (26, 9, 43, 4, 44),
+  (26, 3, 44, 11, 45),
+  (26, 3, 41, 13, 42),
+  (26, 17, 42, 0, 0),
+  (28, 17, 46, 0, 0),
+  (28, 4, 47, 14, 48),
+  (28, 6, 45, 14, 46),
+  (28, 8, 47, 13, 48),
+  (28, 19, 46, 4, 47),
+  (28, 22, 45, 3, 46),
+  (28, 3, 45, 23, 46),
+  (28, 21, 45, 7, 46),
+  (28, 19, 47, 10, 48),
+  (28, 2, 46, 29, 47),
+  (28, 10, 46, 23, 47),
+  (28, 14, 46, 21, 47),
+  (28, 14, 46, 23, 47),
+  (28, 12, 47, 26, 48),
+  (28, 6, 47, 34, 48),
+  (28, 29, 46, 14, 47),
+  (28, 13, 46, 32, 47),
+  (28, 40, 47, 7, 48),
+  (28, 18, 47, 31, 48),
+]
+
+/// The 15 format bits at level M per mask (boombuler formatInfos[M]), bit
+/// 14 the first written.
+const QR_FORMAT_M: List[Int] = [
+  21522,
+  20773,
+  24188,
+  23371,
+  17913,
+  16590,
+  20375,
+  19104,
+]
+
+/// The 18 version bits of versions 7 to 40 (boombuler versionInfoBitsByVersion),
+/// bit 17 the first of the Go list.
+const QR_VERSION_BITS: List[Int] = [
+  31892,
+  34236,
+  39577,
+  42195,
+  48118,
+  51042,
+  55367,
+  58893,
+  63784,
+  68472,
+  70749,
+  76311,
+  79154,
+  84390,
+  87683,
+  92361,
+  96236,
+  102084,
+  102881,
+  110507,
+  110734,
+  117786,
+  119615,
+  126325,
+  127568,
+  133589,
+  136944,
+  141498,
+  145311,
+  150283,
+  152622,
+  158308,
+  161089,
+  167017,
+]
+
+const QR_ALNUM: Str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:"
+
+/// The data codewords of level M (bits 4 mode, count, data, terminator and
+/// pad bytes) and the version, the first of encodeAuto's encoders that
+/// fits; None when none does.
+fn qr_bits(content: Str) -> (List[Bool], Int)? {
+  if let Some(x) = qr_numeric(content) {
+    return Some(x)
+  }
+  if let Some(x) = qr_alnum(content) {
+    return Some(x)
+  }
+  qr_byte(content)
+}
+
+fn qr_total_bytes(v: Int) -> Int {
+  let (_, b1, d1, b2, d2) = QR_M[v - 1]
+  b1 * d1 + b2 * d2
+}
+
+/// charCountBits of mode 1 numeric, 2 alphanumeric, 4 byte.
+fn qr_count_bits(v: Int, mode: Int) -> Int {
+  if mode == 1 {
+    return if v < 10 { 10 } else if v < 27 { 12 } else { 14 }
+  }
+  if mode == 2 {
+    return if v < 10 { 9 } else if v < 27 { 11 } else { 13 }
+  }
+  if v < 10 { 8 } else { 16 }
+}
+
+/// findSmallestVersionInfo: the first version whose data bytes hold the
+/// mode indicator, the count and data_bits; 0 for none.
+fn qr_version(mode: Int, data_bits: Int) -> Int {
+  var v = 1
+  while v <= 40 {
+    if qr_total_bytes(v) * 8 >= data_bits + 4 + qr_count_bits(v, mode) {
+      return v
+    }
+    v += 1
+  }
+  0
+}
+
+fn qr_add(var bl: List[Bool], value: Int, count: Int) {
+  var i = count - 1
+  while i >= 0 {
+    bl.push(((value >> i) & 1) == 1)
+    i -= 1
+  }
+}
+
+/// addPaddingAndTerminator.
+fn qr_pad(var bl: List[Bool], v: Int) {
+  let total = qr_total_bytes(v) * 8
+  var i = 0
+  while i < 4 && bl.len() < total {
+    bl.push(false)
+    i += 1
+  }
+  while bl.len() % 8 != 0 {
+    bl.push(false)
+  }
+  var j = 0
+  while bl.len() < total {
+    qr_add(bl, if j % 2 == 0 { 236 } else { 17 }, 8)
+    j += 1
+  }
+}
+
+/// Go's strconv.Atoi of a piece, None for an error or a negative value
+/// (encodeNumeric).
+fn qr_atoi(p: Bytes) -> Int? {
+  var i = 0
+  var neg = false
+  if p.len() > 0 && (p[0] == '+' || p[0] == '-') {
+    neg = p[0] == '-'
+    i = 1
+  }
+  if i >= p.len() {
+    return None
+  }
+  var n = 0
+  while i < p.len() {
+    let c = p[i]
+    if c < '0' || c > '9' {
+      return None
+    }
+    n = n * 10 + Int(c - '0')
+    i += 1
+  }
+  if neg && n != 0 {
+    return None
+  }
+  Some(n)
+}
+
+fn qr_numeric(content: Str) -> (List[Bool], Int)? {
+  let b = content.bytes()
+  var bits = b.len() / 3 * 10
+  if b.len() % 3 == 1 {
+    bits += 4
+  } else if b.len() % 3 == 2 {
+    bits += 7
+  }
+  let v = qr_version(1, bits)
+  if v == 0 {
+    return None
+  }
+  var bl: List[Bool] = []
+  qr_add(bl, 1, 4)
+  qr_add(bl, b.len(), qr_count_bits(v, 1))
+  var pos = 0
+  while pos < b.len() {
+    let end = if pos + 3 <= b.len() { pos + 3 } else { b.len() }
+    let n = qr_atoi(b[pos..end])?
+    let w = end - pos
+    qr_add(bl, n, if w == 3 { 10 } else if w == 1 { 4 } else { 7 })
+    pos += 3
+  }
+  qr_pad(bl, v)
+  Some((bl, v))
+}
+
+fn qr_alnum(content: Str) -> (List[Bool], Int)? {
+  var idx: List[Int] = []
+  for r in content.runes() {
+    match QR_ALNUM.find("${r}") {
+      Some(i) => idx.push(i)
+      None => return None
+    }
+  }
+  let n = content.len()
+  var bits = n / 2 * 11
+  if n % 2 == 1 {
+    bits += 6
+  }
+  let v = qr_version(2, bits)
+  if v == 0 {
+    return None
+  }
+  var bl: List[Bool] = []
+  qr_add(bl, 2, 4)
+  qr_add(bl, n, qr_count_bits(v, 2))
+  var i = 0
+  while i + 1 < n {
+    qr_add(bl, idx[i] * 45 + idx[i + 1], 11)
+    i += 2
+  }
+  if n % 2 == 1 {
+    qr_add(bl, idx[n - 1], 6)
+  }
+  qr_pad(bl, v)
+  Some((bl, v))
+}
+
+fn qr_byte(content: Str) -> (List[Bool], Int)? {
+  let b = content.bytes()
+  let v = qr_version(4, b.len() * 8)
+  if v == 0 {
+    return None
+  }
+  var bl: List[Bool] = []
+  qr_add(bl, 4, 4)
+  qr_add(bl, b.len(), qr_count_bits(v, 4))
+  for c in b {
+    qr_add(bl, Int(c), 8)
+  }
+  qr_pad(bl, v)
+  Some((bl, v))
+}
+
+/// The Reed-Solomon remainder of data over GF(256) (polynomial 285,
+/// generator roots a^0 to a^(n-1)): boombuler's ReedSolomonEncoder.Encode.
+fn qr_ecc(data: List[Int], n: Int, alog: List[Int], log: List[Int]) -> List[Int] {
+  // the generator, highest degree first
+  var g: List[Int] = [1]
+  var d = 0
+  while d < n {
+    var ng: List[Int] = []
+    var i = 0
+    while i <= g.len() {
+      var c = 0
+      if i < g.len() {
+        c = g[i]
+      }
+      if i > 0 {
+        c = c ^ qr_mul(g[i - 1], alog[d], alog, log)
+      }
+      ng.push(c)
+      i += 1
+    }
+    g = ng
+    d += 1
+  }
+  var rem: List[Int] = []
+  for x in data {
+    rem.push(x)
+  }
+  var k = 0
+  while k < n {
+    rem.push(0)
+    k += 1
+  }
+  var i = 0
+  while i < data.len() {
+    let lead = rem[i]
+    if lead != 0 {
+      var j = 0
+      while j < g.len() {
+        rem[i + j] = rem[i + j] ^ qr_mul(g[j], lead, alog, log)
+        j += 1
+      }
+    }
+    i += 1
+  }
+  rem[data.len()..]
+}
+
+fn qr_mul(a: Int, b: Int, alog: List[Int], log: List[Int]) -> Int {
+  if a == 0 || b == 0 {
+    return 0
+  }
+  alog[(log[a] + log[b]) % 255]
+}
+
+/// The final codewords: the data split into level M's blocks, each with
+/// its error correction, interleaved (splitToBlocks, interleave).
+fn qr_codewords(bits: List[Bool], v: Int) -> List[Int] {
+  var bytes: List[Int] = []
+  var i = 0
+  while i < bits.len() {
+    var b = 0
+    var j = 0
+    while j < 8 {
+      b = b * 2 + (if bits[i + j] { 1 } else { 0 })
+      j += 1
+    }
+    bytes.push(b)
+    i += 8
+  }
+  var alog: List[Int] = []
+  var log: List[Int] = []
+  var x = 1
+  var t = 0
+  while t < 256 {
+    alog.push(x)
+    log.push(0)
+    x = x * 2
+    if x >= 256 {
+      x = (x ^ 285) & 255
+    }
+    t += 1
+  }
+  t = 0
+  while t < 256 {
+    log[alog[t]] = t
+    t += 1
+  }
+  let (ecc, b1, d1, b2, d2) = QR_M[v - 1]
+  var datas: List[List[Int]] = []
+  var eccs: List[List[Int]] = []
+  var at = 0
+  var blk = 0
+  while blk < b1 + b2 {
+    let n = if blk < b1 { d1 } else { d2 }
+    let d = bytes[at..at + n]
+    at += n
+    datas.push(d)
+    eccs.push(qr_ecc(d, ecc, alog, log))
+    blk += 1
+  }
+  let most = if d1 > d2 { d1 } else { d2 }
+  var out: List[Int] = []
+  var c = 0
+  while c < most {
+    for d in datas {
+      if d.len() > c {
+        out.push(d[c])
+      }
+    }
+    c += 1
+  }
+  c = 0
+  while c < ecc {
+    for e in eccs {
+      out.push(e[c])
+    }
+    c += 1
+  }
+  out
+}
+
+/// boombuler's alignmentPatternPlacements.
+fn qr_align(v: Int) -> List[Int] {
+  if v == 1 {
+    return []
+  }
+  let first = 6
+  let last = (v - 1) * 4 + 21 - 7
+  let count = Int((Float(last - first) / 28.0).ceil()) + 1
+  var res: List[Int] = []
+  var i = 0
+  while i < count {
+    res.push(0)
+    i += 1
+  }
+  res[0] = first
+  res[count - 1] = last
+  if count > 2 {
+    var step = Int((Float(last - first) / Float(count - 1)).ceil())
+    if step % 2 == 1 {
+      var frac = Float(last - first) / Float(count - 1)
+      if frac - frac.trunc() >= 0.5 {
+        frac = frac.ceil()
+      } else {
+        frac = frac.floor()
+      }
+      if Int(frac) % 2 == 0 {
+        step -= 1
+      } else {
+        step += 1
+      }
+    }
+    var k = 1
+    while k <= count - 2 {
+      res[k] = last - step * (count - 1 - k)
+      k += 1
+    }
+  }
+  res
+}
+
+/// The 8 masked codes and the occupied map as one grid each, then the one
+/// of least penalty (boombuler's render).
+fn qr_render(data: List[Int], v: Int) -> List[Bool] {
+  let dim = (v - 1) * 4 + 21
+  let dd = dim * dim
+  var occ: List[Bool] = []
+  var res: List[Bool] = []
+  var i = 0
+  while i < dd {
+    occ.push(false)
+    i += 1
+  }
+  i = 0
+  while i < 8 * dd {
+    res.push(false)
+    i += 1
+  }
+  // finder patterns
+  for (fx, fy) in [(0, 0), (0, dim - 7), (dim - 7, 0)] {
+    var x = -1
+    while x < 8 {
+      var y = -1
+      while y < 8 {
+        let val = (x == 0 || x == 6 || y == 0 || y == 6 || (x > 1 && x < 5 && y > 1 && y < 5)) && (x <= 6 && y <= 6 && x >= 0 && y >= 0)
+        if x + fx >= 0 && x + fx < dim && y + fy >= 0 && y + fy < dim {
+          qr_set_all(occ, res, dim, x + fx, y + fy, val)
+        }
+        y += 1
+      }
+      x += 1
+    }
+  }
+  // alignment patterns
+  let pos = qr_align(v)
+  for ax in pos {
+    for ay in pos {
+      if occ[ax * dim + ay] {
+        continue
+      }
+      var x = -2
+      while x <= 2 {
+        var y = -2
+        while y <= 2 {
+          qr_set_all(occ, res, dim, x + ax, y + ay, x == -2 || x == 2 || y == -2 || y == 2 || (x == 0 && y == 0))
+          y += 1
+        }
+        x += 1
+      }
+    }
+  }
+  // timing patterns and the dark module
+  i = 0
+  while i < dim {
+    if !occ[i * dim + 6] {
+      qr_set_all(occ, res, dim, i, 6, i % 2 == 0)
+    }
+    if !occ[6 * dim + i] {
+      qr_set_all(occ, res, dim, 6, i, i % 2 == 0)
+    }
+    i += 1
+  }
+  qr_set_all(occ, res, dim, 8, dim - 8, true)
+  // version information
+  if v >= 7 {
+    let bits = QR_VERSION_BITS[v - 7]
+    var k = 0
+    while k < 18 {
+      let x = dim - 11 + k % 3
+      let y = k / 3
+      let b = ((bits >> k) & 1) == 1
+      qr_set_all(occ, res, dim, x, y, b)
+      qr_set_all(occ, res, dim, y, x, b)
+      k += 1
+    }
+  }
+  // format information: all set in occupied, per mask in each code
+  qr_format(occ, 0, dim, 32767)
+  var m = 0
+  while m < 8 {
+    qr_format(res, m * dd, dim, QR_FORMAT_M[m])
+    m += 1
+  }
+  // the data, in boombuler's module order
+  var bit = 0
+  let nbits = data.len() * 8
+  var cx = dim - 1
+  var cy = dim - 1
+  var up = true
+  while true {
+    var k = 0
+    while k < 2 {
+      let px = cx - k
+      if !occ[px * dim + cy] {
+        var cur = false
+        if bit < nbits {
+          cur = ((data[bit / 8] >> (7 - bit % 8)) & 1) == 1
+        }
+        var mm = 0
+        while mm < 8 {
+          res[mm * dd + px * dim + cy] = qr_mask(px, cy, cur, mm)
+          mm += 1
+        }
+        bit += 1
+      }
+      k += 1
+    }
+    if up {
+      cy -= 1
+      if cy < 0 {
+        cy = 0
+        cx -= 2
+        if cx == 6 {
+          cx -= 1
+        }
+        if cx < 0 {
+          break
+        }
+        up = false
+      }
+    } else {
+      cy += 1
+      if cy >= dim {
+        cy = dim - 1
+        cx -= 2
+        if cx == 6 {
+          cx -= 1
+        }
+        up = true
+        if cx < 0 {
+          break
+        }
+      }
+    }
+  }
+  var best = -1
+  var best_p = 0
+  m = 0
+  while m < 8 {
+    let p = qr_penalty(res, m * dd, dim)
+    if best < 0 || p < best_p {
+      best = m
+      best_p = p
+    }
+    m += 1
+  }
+  res[best * dd..(best + 1) * dd]
+}
+
+fn qr_set_all(var occ: List[Bool], var res: List[Bool], dim: Int, x: Int, y: Int, val: Bool) {
+  let at = x * dim + y
+  occ[at] = true
+  var m = 0
+  while m < 8 {
+    res[m * dim * dim + at] = val
+    m += 1
+  }
+}
+
+/// drawFormatInfo: the 15 bits (bit 14 first) at both places.
+fn qr_format(var g: List[Bool], base: Int, dim: Int, bits: Int) {
+  let places: List[(Int, Int, Int, Int)] = [
+    (0, 8, 8, dim - 1), (1, 8, 8, dim - 2), (2, 8, 8, dim - 3), (3, 8, 8, dim - 4), (4, 8, 8, dim - 5),
+    (5, 8, 8, dim - 6), (7, 8, 8, dim - 7), (8, 8, dim - 8, 8), (8, 7, dim - 7, 8), (8, 5, dim - 6, 8),
+    (8, 4, dim - 5, 8), (8, 3, dim - 4, 8), (8, 2, dim - 3, 8), (8, 1, dim - 2, 8), (8, 0, dim - 1, 8),
+  ]
+  for (i, (x1, y1, x2, y2)) in places.indexed() {
+    let b = ((bits >> (14 - i)) & 1) == 1
+    g[base + x1 * dim + y1] = b
+    g[base + x2 * dim + y2] = b
+  }
+}
+
+fn qr_mask(x: Int, y: Int, val: Bool, mask: Int) -> Bool {
+  let flip = match mask {
+    0 => (y + x) % 2 == 0
+    1 => y % 2 == 0
+    2 => x % 3 == 0
+    3 => (y + x) % 3 == 0
+    4 => (y / 2 + x / 3) % 2 == 0
+    5 => (y * x) % 2 + (y * x) % 3 == 0
+    6 => ((y * x) % 2 + (y * x) % 3) % 2 == 0
+    _ => ((y + x) % 2 + (y * x) % 3) % 2 == 0
+  }
+  val != flip
+}
+
+/// calcPenalty: boombuler's four rules.
+fn qr_penalty(g: List[Bool], base: Int, dim: Int) -> Int {
+  var result = 0
+  // rule 1: runs of 5 or more in a column and in a row
+  var x = 0
+  while x < dim {
+    var cx_ = false
+    var nx = 0
+    var cy_ = false
+    var ny = 0
+    var y = 0
+    while y < dim {
+      if g[base + x * dim + y] == cx_ {
+        nx += 1
+      } else {
+        cx_ = !cx_
+        if nx >= 5 {
+          result += nx - 2
+        }
+        nx = 1
+      }
+      if g[base + y * dim + x] == cy_ {
+        ny += 1
+      } else {
+        cy_ = !cy_
+        if ny >= 5 {
+          result += ny - 2
+        }
+        ny = 1
+      }
+      y += 1
+    }
+    if nx >= 5 {
+      result += nx - 2
+    }
+    if ny >= 5 {
+      result += ny - 2
+    }
+    x += 1
+  }
+  // rule 2: 2x2 blocks of one color
+  x = 0
+  while x < dim - 1 {
+    var y = 0
+    while y < dim - 1 {
+      let c = g[base + x * dim + y]
+      if g[base + x * dim + y + 1] == c && g[base + (x + 1) * dim + y] == c && g[base + (x + 1) * dim + y + 1] == c {
+        result += 3
+      }
+      y += 1
+    }
+    x += 1
+  }
+  // rule 3: the finder-like patterns
+  let p1: List[Bool] = [true, false, true, true, true, false, true, false, false, false, false]
+  let p2: List[Bool] = [false, false, false, false, true, false, true, true, true, false, true]
+  x = 0
+  while x <= dim - 11 {
+    var y = 0
+    while y < dim {
+      var f1x = true
+      var f2x = true
+      var f1y = true
+      var f2y = true
+      var i = 0
+      while i < 11 {
+        let a = g[base + (x + i) * dim + y]
+        if a != p1[i] { f1x = false }
+        if a != p2[i] { f2x = false }
+        let b = g[base + y * dim + x + i]
+        if b != p1[i] { f1y = false }
+        if b != p2[i] { f2y = false }
+        i += 1
+      }
+      if f1x || f2x {
+        result += 40
+      }
+      if f1y || f2y {
+        result += 40
+      }
+      y += 1
+    }
+    x += 1
+  }
+  // rule 4: the share of dark modules
+  let total = dim * dim
+  var dark = 0
+  var i = 0
+  while i < total {
+    if g[base + i] {
+      dark += 1
+    }
+    i += 1
+  }
+  let perc = Float(dark) * 100.0 / Float(total)
+  let fl = ((perc / 5.0).floor() - 10.0).abs()
+  let ce = ((perc / 5.0).ceil() - 10.0).abs()
+  result + Int((if fl < ce { fl } else { ce }) * 10.0)
 }

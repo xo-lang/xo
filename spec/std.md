@@ -9369,6 +9369,7 @@ enum Encoder { Decimal, Steam }                   // pquerna/otp's Encoder: hotp
 struct Key { uri: Str, kind: Str, issuer: Str, account: Str, secret: Str, period: Int, digits: Int, algo: crypto.Hash, encoder: Encoder }
 fn parse_uri(s: Str) -> Key ! OtpErr                // NewKeyFromURL and Key's methods
 fn (k: Key) secret_bytes() -> Bytes ! OtpErr        // the base32 secret as pquerna decodes it
+fn (k: Key) image(width: Int, height: Int) -> png.Image ! OtpErr   // pquerna's Key.Image: the uri as a QR code (level M, boombuler/barcode), scaled, a Gray image
 ```
 
 - `digits` is 6, 7 or 8 and `algo` Sha1, Sha256 or Sha512; anything else, a negative counter or unix time, or a

@@ -11,6 +11,7 @@ the text of every entry is unchanged).
 
 - Perf (std/crypto, native backends): AES-GCM keeps a small message's counter and GHASH state in the thread's scratch memory instead of three small Lists: aead gcm_small 0.798 of before on linux/arm64 (xo bench --ab, 3 rounds).
 - Feature (std/ui, new module, Early, every backend): the core of a local-first UI (decision 0659 stage 1): `ui.App` (init, a pure `update`, a `view`), `Html` views rendered with escaping and no raw HTML, `ui.on` events, `ui.page` for the server-rendered first page, and the reconciliation protocol as pure values (`ui.server`, `ui.replica`): clients predict at once, the server applies each Msg once in arrival order, clients replay its log. Transport and the browser runtime come later.
+- Feature (std/otp, every backend): `Key.image(width, height)`, the key's URI as a QR code (pquerna/otp's Key.Image, a port of boombuler/barcode's QR encoder), a `png.Image`.
 - Feature (std/big, every backend): `big.jacobi(x, y)`, the Jacobi symbol (Go's big.Jacobi).
 - Feature (std/mime, every backend): RFC 2047 encoded words, `mime.encode_word`, `mime.decode_word` and `mime.decode_header` (Go's WordEncoder and WordDecoder).
 - Fix (build cache): a closure's front end cache entry that called a Map helper another body made first (std/metrics' cells_of and series_of closures, `xo.maph.logget[Map[Str, Int]]`) replays in a program where nothing made the helper yet: the entry records the helper as made whole. Before, the build warned "did not replay" and was made again without the cache (never wrong code).
