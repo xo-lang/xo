@@ -5605,6 +5605,12 @@ enum Base64 { Std, Url, RawStd, RawUrl }       // RFC 4648 sections 4 and 5; Raw
 struct DecodeErr { at: Int }                   // displays as `illegal base64 data at input byte 4`
 pub fn encode(data: Bytes, enc: Base64 = Std) -> Str
 pub fn decode(s: Str, enc: Base64 = Std) -> Bytes ! DecodeErr
+struct Encoding                                // a custom alphabet (Go's NewEncoding, WithPadding, Strict)
+pub fn custom(alphabet: Str, padding: Str = "=") -> Encoding
+pub fn of(enc: Base64) -> Encoding             // StdEncoding and the others as an Encoding
+pub fn (e: Encoding) strict() -> Encoding      // Strict: the unused tail bits must be zero
+pub fn (e: Encoding) encode(data: Bytes) -> Str
+pub fn (e: Encoding) decode(s: Str) -> Bytes ! DecodeErr
 
 // std/base32
 enum Base32 { Std, Hex, RawStd, RawHex }       // RFC 4648 sections 6 and 7
@@ -5621,13 +5627,18 @@ pub fn (e: Encoding) decode(s: Str) -> Bytes ! DecodeErr
   and a padding of one byte or "" for none; anything else is a fault, as
   Go's NewEncoding and WithPadding panic (2026-11-15). Its encode and
   decode follow the same rules as the enum's (z-base-32, `@` padding).
+  `base64.custom` is the same over 64 bytes (2026-11-15), and
+  `base64.of(enc).strict()` or `custom(...).strict()` decodes as Go's
+  Strict: a last quantum whose unused low bits are not zero is
+  DecodeErr at Go's offset.
 
 - Decoding follows Go's rules and error offsets (CorruptInputError):
   base64 skips `\r` and `\n` anywhere; base32 removes them first and
   counts the offset in what remains. A symbol outside the alphabet,
   padding in a Raw encoding, missing or misplaced padding in a padded
   one, and data after the padding are errors; the unused low bits of
-  the last symbol need not be zero (Go's default, not `Strict`). Go
+  the last symbol need not be zero (Go's default; `strict()` for Go's
+  `Strict`). Go
   returns the bytes decoded before an error; Xo returns the error.
 - `Bytes.to_base64` and `Bytes.from_base64` (2.2) are `Std`. JWTs and
   cursors use `RawUrl`; TOTP secrets use base32 `RawStd` (remove spaces

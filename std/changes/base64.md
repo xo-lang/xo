@@ -1,5 +1,16 @@
 # std/base64 changes
 
+## 2026-11-15: feature: custom alphabets, padding and strict decoding (Go's NewEncoding, WithPadding, Strict)
+
+- Kind: feature
+- Commit: this push
+- Found by: scripts/stdaudit gaps base64.NewEncoding and base64.Encoding.Strict (decision 0655)
+- Go reference: encoding/base64 base64.go NewEncoding, WithPadding, Strict and decodeQuantum's strict checks (go1.26.11; Copyright 2009 The Go Authors, BSD-style license)
+- Test: std/base64_test.xo, 760 cases generated from Go: the four encodings made strict, a reversed alphabet with `=`, `@` and no padding, and a strict custom one, on random data and its encodings with the last symbol moved, cut, lengthened and newlined (arm64, llvm; corpus base64 on go)
+- Shipped in: not yet released
+
+`base64.custom(alphabet, padding:)`, `base64.of(enc)` and `Encoding.strict()`, with `encode` and `decode`. `encode` and `decode` on the enum share the same core and keep their fast paths; their output is unchanged.
+
 ## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
 
 - Kind: refactor

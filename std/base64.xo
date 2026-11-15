@@ -32,8 +32,11 @@ pub fn encode(data: Bytes, enc: Base64 = Base64.Std) -> Str {
   if enc is Std {
     return data.to_base64()
   }
-  let a = alphabet(enc)
-  let pad = padded(enc)
+  encode_with(data, alphabet(enc), if padded(enc) { 61 } else { -1 })
+}
+
+/// encode over alphabet a, with pad the padding byte (-1: none).
+fn encode_with(data: Bytes, a: Bytes, pad: Int) -> Str {
   var out = BytesBuilder.with_capacity((data.len() + 2) / 3 * 4)
   let n = data.len() / 3 * 3
   var si = 0
@@ -55,10 +58,10 @@ pub fn encode(data: Bytes, enc: Base64 = Base64.Std) -> Str {
     out.write_byte(a[(v >> 12) & 63])
     if remain == 2 {
       out.write_byte(a[(v >> 6) & 63])
-      if pad { out.write_byte(61) }
-    } else if pad {
-      out.write_byte(61)
-      out.write_byte(61)
+      if pad >= 0 { out.write_byte(UInt8(pad)) }
+    } else if pad >= 0 {
+      out.write_byte(UInt8(pad))
+      out.write_byte(UInt8(pad))
     }
   }
   out.freeze().to_str() ?? ""
@@ -75,9 +78,14 @@ pub fn decode(s: Str, enc: Base64 = Base64.Std) -> Bytes ! DecodeErr {
       return Ok(b)
     }
   }
+  decode_with(s, if enc is Url | RawUrl { DEC_URL } else { DEC_STD }, if padded(enc) { 61 } else { -1 }, false)
+}
+
+/// decode with tbl the symbol values (255: not a symbol), pad the padding
+/// byte (-1: none), and strict Go's Strict: the bits a final quantum
+/// leaves over must be zero.
+fn decode_with(s: Str, tbl: Bytes, pad: Int, strict: Bool) -> Bytes ! DecodeErr {
   let src = s.bytes()
-  let tbl = if enc is Url | RawUrl { DEC_URL } else { DEC_STD }
-  let pad = padded(enc)
   let n = src.len()
   var out = BytesBuilder.with_capacity(n / 4 * 3 + 3)
   var si = 0
@@ -110,7 +118,7 @@ pub fn decode(s: Str, enc: Base64 = Base64.Std) -> Bytes ! DecodeErr {
           dlen = 0
           break
         }
-        if j == 1 || pad {
+        if j == 1 || pad >= 0 {
           return Err(DecodeErr{at: si - j})
         }
         dlen = j
@@ -127,7 +135,7 @@ pub fn decode(s: Str, enc: Base64 = Base64.Std) -> Bytes ! DecodeErr {
       if is_nl(c) {
         continue
       }
-      if c != 61 || !pad {
+      if pad < 0 || Int(c) != pad {
         return Err(DecodeErr{at: si - 1})
       }
       // padding
@@ -139,7 +147,7 @@ pub fn decode(s: Str, enc: Base64 = Base64.Std) -> Bytes ! DecodeErr {
         if si == n {
           return Err(DecodeErr{at: n})
         }
-        if src[si] != 61 {
+        if Int(src[si]) != pad {
           return Err(DecodeErr{at: si - 1})
         }
         si += 1
@@ -153,6 +161,13 @@ pub fn decode(s: Str, enc: Base64 = Base64.Std) -> Bytes ! DecodeErr {
     }
     // the missing symbols are zero bits
     let val = acc << (6 * (4 - j))
+    // Go's Strict: the bits past the last whole byte must be zero
+    if strict && dlen == 3 && (val & 255) != 0 {
+      return Err(DecodeErr{at: si - 1})
+    }
+    if strict && dlen == 2 && (val & 65535) != 0 {
+      return Err(DecodeErr{at: si - 2})
+    }
     if dlen >= 2 { out.write_byte(UInt8((val >> 16) & 255)) }
     if dlen >= 3 { out.write_byte(UInt8((val >> 8) & 255)) }
     if dlen == 4 { out.write_byte(UInt8(val & 255)) }
@@ -162,6 +177,69 @@ pub fn decode(s: Str, enc: Base64 = Base64.Std) -> Bytes ! DecodeErr {
   }
   out.freeze()
 }
+
+/// An encoding over an alphabet of the caller's (Go's NewEncoding, with
+/// WithPadding and Strict), made by `custom` or `of`.
+pub struct Encoding {
+  _alphabet: Bytes
+  _table: Bytes
+  _pad: Int
+  _strict: Bool
+}
+
+/// The encoding of a 64 byte alphabet (Go's NewEncoding) padded with
+/// `padding`, one byte, or none for "" (WithPadding(NoPadding)). An
+/// alphabet that is not 64 bytes, holds `\r`, `\n` or a byte twice, or
+/// holds the padding, and a padding of `\r`, `\n` or more than one byte,
+/// fault with Go's panic text: a programmer error, found at start.
+pub fn custom(alphabet: Str, padding: Str = "=") -> Encoding {
+  let a = alphabet.bytes()
+  if a.len() != 64 {
+    fault("base64: encoding alphabet is not 64-bytes long")
+  }
+  if padding.len() > 1 {
+    fault("base64: padding is not one byte")
+  }
+  let pad = if padding.is_empty() { -1 } else { Int(padding.bytes()[0]) }
+  if pad == 13 || pad == 10 {
+    fault("base64: invalid padding")
+  }
+  var tbl: List[Int] = List.with_capacity(256)
+  for _ in 0..256 { tbl.push(255) }
+  for (i, c) in a.indexed() {
+    if c == 10 || c == 13 {
+      fault("base64: encoding alphabet contains newline character")
+    }
+    if tbl[Int(c)] != 255 {
+      fault("base64: encoding alphabet includes duplicate symbols")
+    }
+    tbl[Int(c)] = i
+  }
+  if pad >= 0 && tbl[pad] != 255 {
+    fault("base64: padding contained in alphabet")
+  }
+  var t = BytesBuilder.with_capacity(256)
+  for v in tbl { t.write_byte(UInt8(v)) }
+  Encoding{_alphabet: a, _table: t.freeze(), _pad: pad, _strict: false}
+}
+
+/// One of the four RFC 4648 encodings as an Encoding (Go's StdEncoding,
+/// URLEncoding, RawStdEncoding, RawURLEncoding), to make strict.
+pub fn of(enc: Base64) -> Encoding {
+  Encoding{_alphabet: alphabet(enc), _table: if enc is Url | RawUrl { DEC_URL } else { DEC_STD }, _pad: if padded(enc) { 61 } else { -1 }, _strict: false}
+}
+
+/// The same encoding decoding strictly (Go's Encoding.Strict): a final
+/// quantum whose unused bits are not zero is DecodeErr, so each text has
+/// one decoding (`\r` and `\n` are still skipped).
+pub fn (e: Encoding) strict() -> Encoding { Encoding{_alphabet: e._alphabet, _table: e._table, _pad: e._pad, _strict: true} }
+
+/// data in the encoding (Go's Encoding.EncodeToString).
+pub fn (e: Encoding) encode(data: Bytes) -> Str { encode_with(data, e._alphabet, e._pad) }
+
+/// The bytes of s in the encoding, skipping `\r` and `\n` (Go's
+/// Encoding.DecodeString).
+pub fn (e: Encoding) decode(s: Str) -> Bytes ! DecodeErr { decode_with(s, e._table, e._pad, e._strict) }
 
 const STD: Str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 

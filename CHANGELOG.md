@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/base64, every backend): `base64.custom(alphabet, padding:)` (Go's NewEncoding and WithPadding), `base64.of(enc)`, and `Encoding.strict()` (Go's Strict decoding: nonzero tail bits are an error).
 - Feature (std/backoff, every backend): `backoff.ticker(b, clock, rand)` with `next()` and `stop()` (cenkalti's Ticker), ticks at the backoff's delays.
 - Feature (std/protobuf, every backend): `valid_number(num)` and `MIN_VALID_NUMBER`, `MAX_VALID_NUMBER`, `FIRST_RESERVED_NUMBER`, `LAST_RESERVED_NUMBER` (protowire's field number range).
 - Feature (std/jwt, every backend): `Options.all_audiences` (golang-jwt's WithAllAudiences: every listed audience must be in `aud`) and `Options.require_nbf` (WithNotBeforeRequired).
