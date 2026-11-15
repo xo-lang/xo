@@ -6,6 +6,7 @@
 // restarted log serves the same tree (an in-memory log that restarts is
 // a rewrite every client of it reports as XO1313).
 //
+//   GET /                           a page naming the service and its endpoints
 //   GET /latest                     the signed tree head
 //   GET /lookup/<path>@<version>    "<record id>\n<record>\n<signed tree head>"
 //   GET /proof/inclusion/<id>/<n>   audit path of record id in the tree of n records
@@ -777,6 +778,36 @@ fn index_lines(st: LogState, since: Int, limit: Int) -> Str {
 
 const NO_STORE = "no-store"
 
+/// The text at GET /: what the service is and its endpoints, with an
+/// example, named for the address it was asked by (index. or the log's
+/// name), since one server answers both.
+fn root_page(host: Str, log_name: Str) -> Str {
+  let (h, _, _) = cut(host, ":")
+  let name = if h.is_empty() { log_name } else { h }
+  let head = if name.starts_with("index.") {
+    "${name}: the index of module versions recorded by the checksum log ${log_name},\nin the order they were added (as index.golang.org).\n"
+  } else {
+    "${name}: the checksum log of Xo module versions (as sum.golang.org). xo checks the\nfirst fetch of each module version against it, so a version's content cannot\nchange without clients noticing (XO_SUMDB, XO1313).\n"
+  }
+  let base = "https://${name}"
+  var b = StrBuilder.new()
+  b.write(head)
+  b.write("\nIndex:\n")
+  b.write("  GET /index                      module versions in log order, one JSON object a line (at most 2000)\n")
+  b.write("  GET /index?since=TIME&limit=N   those added at or after TIME (RFC 3339)\n")
+  b.write("\nChecksum log:\n")
+  b.write("  GET /latest                     the signed tree head\n")
+  b.write("  GET /lookup/PATH@VERSION        the version's record id, its two xo.lock lines, the signed tree head\n")
+  b.write("  GET /proof/inclusion/ID/N       the audit path of record ID in the tree of N records\n")
+  b.write("  GET /proof/consistency/M/N      proof that the tree of M records prefixes the tree of N\n")
+  b.write("\nExamples:\n")
+  b.write("  curl '${base}/index?since=2026-11-01T00:00:00Z&limit=10'\n")
+  b.write("  curl ${base}/lookup/github.com/xo-lang/aws@v0.2.1\n")
+  b.write("\nUsing modules: https://xolang.dev/docs/dependencies/#fetching-and-installing\n")
+  b.write("Module files: https://proxy.xolang.org; package docs: https://pkg.xolang.org\n")
+  b.freeze()
+}
+
 /// sumdb.Server.ServeHTTP for one request.
 fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], limits: Mutex[Map[Str, (Int, Int)]], conf: LogConf) -> http.Response uses (fs, proc, rand, net, clock, stdio) {
   var cc = c
@@ -785,6 +816,11 @@ fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], limits: M
     return http_error("the checksum log is read only", 405)
   }
   let p = req.path
+  if p == "/" {
+    // a page for a person who opens the service's address, as
+    // index.golang.org/ and sum.golang.org/ have
+    return plain(root_page(req.host(), signer.name)).with_header("Cache-Control", "public, max-age=3600")
+  }
   if p == "/latest" {
     let t = state.with_read(fn(st) { Tree{n: st.leaves.len(), hash: st.root} })
     return plain(sign_tree(signer, t)).with_header("Cache-Control", NO_STORE)

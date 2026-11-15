@@ -233,6 +233,10 @@ func get(t *testing.T, url string, headers map[string]string) (int, string, stri
 		t.Fatal(err)
 	}
 	for k, v := range headers {
+		if k == "Host" {
+			req.Host = v // Go sends req.Host, not a Host header field
+			continue
+		}
 		req.Header.Set(k, v)
 	}
 	resp, err := http.DefaultClient.Do(req)
@@ -248,7 +252,7 @@ func get(t *testing.T, url string, headers map[string]string) (int, string, stri
 // version the log adds is written to the proxy bucket (--fill-to); each
 // new record is copied to a bucket before it is added and `xo mod sumdb
 // restore` rebuilds the same log from the copies; the index feed lists
-// records by time; lookups that add a version are limited per client
+// records by time; GET / names the service and its endpoints; lookups that add a version are limited per client
 // (Cloudflare's CF-Connecting-IP behind a local tunnel); the head is
 // never cached and proofs are.
 func TestChecksumLogOps(t *testing.T) {
@@ -335,6 +339,13 @@ func TestChecksumLogOps(t *testing.T) {
 	code, cache, head := get(t, logURL+"/latest", nil)
 	if code != 200 || cache != "no-store" {
 		t.Errorf("/latest: %d, Cache-Control %q", code, cache)
+	}
+	// GET /: a page naming the service by the address it was asked at
+	if code, _, page := get(t, logURL+"/", nil); code != 200 || !strings.Contains(page, ": the checksum log of Xo module versions") || !strings.Contains(page, "GET /lookup/PATH@VERSION") || !strings.Contains(page, "GET /index?since=TIME") {
+		t.Errorf("GET /: %d\n%s", code, page)
+	}
+	if code, _, page := get(t, logURL+"/", map[string]string{"Host": "index.example"}); code != 200 || !strings.HasPrefix(page, "index.example: the index of module versions recorded by the checksum log sum.test") || !strings.Contains(page, "curl 'https://index.example/index?since=") {
+		t.Errorf("GET / as index.example: %d\n%s", code, page)
 	}
 	if _, cache, _ := get(t, logURL+"/proof/consistency/1/3", nil); cache != "public, max-age=31536000, immutable" {
 		t.Errorf("a proof's Cache-Control %q", cache)
