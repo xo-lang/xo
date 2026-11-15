@@ -101,10 +101,12 @@ by Postgres.
    `migrate.status(db, files)`. It follows the std rules (golang-migrate
    and goose tests ported where they fit, std/changes, its own Proven
    marks).
-9. **Code** in `scripts/lead/xw/` (an Xo module), installed by
-   `scripts/lead/install.sh` like the other lead tools. Tests use
-   `sql.memory` where the queries allow, plus one Postgres test in the
-   container.
+9. **Code** in its own private repository, xo-lang/workstream (owner,
+   2026-11-15: stays private for now), built by a dedicated agent,
+   xw-1, which brings decisions to the lead. std/migrate is a std module
+   and lands in this repository; the hooks in heavyd, pushq and gate.sh
+   land here through pushq. Tests use `sql.memory` where the queries
+   allow, plus one Postgres test in the container.
 
 ### Stages
 

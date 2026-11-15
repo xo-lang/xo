@@ -103,6 +103,7 @@ in another worktree. Only an empty queue stops you; then ask the lead.
 | Xo Lang 2 | toolchain, releases, Windows (native windows/arm64), website, browser playground |
 | Xo Lang 3 | std (ports from Go's standard library, std/changes logs) |
 | Azure 1 (tab "Xo AWS") | cloud SDKs, editors and LSP, pkg.xolang.org |
+| xw-1 | workstream (xw), the agent work system (decision 0658; private repo xo-lang/workstream) |
 | Xo Lead | merges, tiers, hosts, owner decisions |
 
 ## Where things run
