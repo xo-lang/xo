@@ -629,7 +629,6 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0637](0637-parallel-front-end.md): Accepted (owner): the front end builds function bodies on the task pool, with the serial order's result (byte-identical output); stage 3 built 2026-11-14: crawling workers make front end cache entries ahead, replayed in queue order (default 6 workers, serial for a program with little source per checker table entry)
 - [0638](0638-public-runtime-checks-threads-metrics.md): Accepted (owner): public memory checks (--check=free,guard,leak), XO_THREADS and the container CPU quota, runtime metrics in std/metrics
 - [0639](0639-rc-dense-liveness.md): Accepted (Xo Lang 1): reference count liveness runs on bit sets over a function's leaves numbered in sorted order
-- [0640](0640-root-helper-takes-worker-slot.md): Proposed (Xo Lang 2): a root thread that helps run tasks takes one of the pool's worker slots, so XO_THREADS=N means at most N threads run Xo work (Go's Ps)
-- [0642](0642-std-url-type.md): Accepted (Xo Lang 3): std/url gets Go's URL type (parse, resolve_reference, userinfo, display), beside http.Url
 - [0640](0640-root-helper-takes-worker-slot.md): Accepted (Xo Lang 2): a root thread that helps run tasks takes one of the pool's worker slots, so XO_THREADS=N means at most N threads run Xo work (Go's Ps)
+- [0642](0642-std-url-type.md): Accepted (Xo Lang 3): std/url gets Go's URL type (parse, resolve_reference, userinfo, display), beside http.Url
 - [0641](0641-monitor-polls-network.md): Rejected (Xo Lang 2, measured): the monitor doing the poller thread's fallback poll left the throttles under a CPU quota as they were; the residual is CFS's slice floor at saturation
