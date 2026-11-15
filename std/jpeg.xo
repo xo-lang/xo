@@ -1792,8 +1792,11 @@ fn finish(var d: Dec) -> Image ! JpegErr {
       ensure_plane(d.pk, d.zb, d.ksz, d.ksz)
     }
   }
-  let w = d.w
-  let h = d.h
+  // an image with no width or no height is empty in both, as Go's SubImage
+  // of an empty rectangle is the zero Rectangle
+  let empty = d.w == 0 || d.h == 0
+  let w = if empty { 0 } else { d.w }
+  let h = if empty { 0 } else { d.h }
   if d.n_comp == 1 {
     return Image{width: w, height: h, model: Model.Gray, pix: crop(d.py.freeze(), d.ystride, w, h)}
   }

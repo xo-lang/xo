@@ -3278,9 +3278,23 @@ func Jpeg_finish(tk *Task, v_d *Jpeg_Dec) Result[Jpeg_Image, Jpeg_JpegErr] {
 			Jpeg_ensure_plane(tk, &(*v_d).F_pk, (*v_d).F_zb, (*v_d).F_ksz, (*v_d).F_ksz)
 		}
 	}
-	var v_w int64 = (*v_d).F_w
+	var v_empty bool = (((*v_d).F_w == int64(0)) || ((*v_d).F_h == int64(0)))
+	_ = v_empty
+	var x_v653 int64
+	if v_empty {
+		x_v653 = int64(0)
+	} else {
+		x_v653 = (*v_d).F_w
+	}
+	var v_w int64 = x_v653
 	_ = v_w
-	var v_h int64 = (*v_d).F_h
+	var x_v654 int64
+	if v_empty {
+		x_v654 = int64(0)
+	} else {
+		x_v654 = (*v_d).F_h
+	}
+	var v_h int64 = x_v654
 	_ = v_h
 	if (*v_d).F_n_comp == int64(1) {
 		return Ok[Jpeg_Image, Jpeg_JpegErr](Jpeg_Image{F_width: v_w, F_height: v_h, F_model: Jpeg_Model{Tag: 1}, F_subsample: Jpeg_Subsample{Tag: 1}, F_pix: Jpeg_crop(tk, (*v_d).F_py.M_freeze(tk), (*v_d).F_ystride, v_w, v_h), F_y: Bytes(""), F_cb: Bytes(""), F_cr: Bytes("")})
@@ -3307,72 +3321,72 @@ func Jpeg_finish(tk *Task, v_d *Jpeg_Dec) Result[Jpeg_Image, Jpeg_JpegErr] {
 		if !((*v_d).F_adobe_valid) {
 			return Err[Jpeg_Image](Jpeg_unsup(tk, "unknown color model: 4-component JPEG doesn't have Adobe APP14 metadata"))
 		}
-		var v_out BytesBuilder = BytesBuilder_with_capacity(tk, MulIK(MulS(v_w, v_h, "std/jpeg.xo:1813:42"), int64(4), -2305843009213693952, 2305843009213693951, "std/jpeg.xo:1813:42"))
+		var v_out BytesBuilder = BytesBuilder_with_capacity(tk, MulIK(MulS(v_w, v_h, "std/jpeg.xo:1816:42"), int64(4), -2305843009213693952, 2305843009213693951, "std/jpeg.xo:1816:42"))
 		_ = v_out
 		if (*v_d).F_adobe_t != int64(0) {
-			x_it653 := Range[int64]{Lo: int64(0), Hi: v_h, Incl: false}
-			for x_i655 := x_it653.Lo; x_i655 < x_it653.Hi; x_i655++ {
-				x_el656 := x_i655
-				_ = x_el656
-				var v_y int64 = x_el656
+			x_it655 := Range[int64]{Lo: int64(0), Hi: v_h, Incl: false}
+			for x_i657 := x_it655.Lo; x_i657 < x_it655.Hi; x_i657++ {
+				x_el658 := x_i657
+				_ = x_el658
+				var v_y int64 = x_el658
 				_ = v_y
 				{
-					x_it657 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
-					for x_i659 := x_it657.Lo; x_i659 < x_it657.Hi; x_i659++ {
-						x_el660 := x_i659
-						_ = x_el660
-						var v_x int64 = x_el660
+					x_it659 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
+					for x_i661 := x_it659.Lo; x_i661 < x_it659.Hi; x_i661++ {
+						x_el662 := x_i661
+						_ = x_el662
+						var v_x int64 = x_el662
 						_ = v_x
 						{
-							var v_rgb int64 = Jpeg_ycbcr_rgb(tk, int64(BytesAt(v_yp, AddS(MulS(v_y, v_w, "std/jpeg.xo:1818:38"), v_x, "std/jpeg.xo:1818:38"), "std/jpeg.xo:1818:35")), int64(BytesAt(v_cbp, AddS(MulS(DivS(v_y, v_rt.F1, "std/jpeg.xo:1818:60"), v_cw, "std/jpeg.xo:1818:59"), DivS(v_x, v_rt.F0, "std/jpeg.xo:1818:77"), "std/jpeg.xo:1818:59"), "std/jpeg.xo:1818:55")), int64(BytesAt(v_crp, AddS(MulS(DivS(v_y, v_rt.F1, "std/jpeg.xo:1818:98"), v_cw, "std/jpeg.xo:1818:97"), DivS(v_x, v_rt.F0, "std/jpeg.xo:1818:115"), "std/jpeg.xo:1818:97"), "std/jpeg.xo:1818:93")))
+							var v_rgb int64 = Jpeg_ycbcr_rgb(tk, int64(BytesAt(v_yp, AddS(MulS(v_y, v_w, "std/jpeg.xo:1821:38"), v_x, "std/jpeg.xo:1821:38"), "std/jpeg.xo:1821:35")), int64(BytesAt(v_cbp, AddS(MulS(DivS(v_y, v_rt.F1, "std/jpeg.xo:1821:60"), v_cw, "std/jpeg.xo:1821:59"), DivS(v_x, v_rt.F0, "std/jpeg.xo:1821:77"), "std/jpeg.xo:1821:59"), "std/jpeg.xo:1821:55")), int64(BytesAt(v_crp, AddS(MulS(DivS(v_y, v_rt.F1, "std/jpeg.xo:1821:98"), v_cw, "std/jpeg.xo:1821:97"), DivS(v_x, v_rt.F0, "std/jpeg.xo:1821:115"), "std/jpeg.xo:1821:97"), "std/jpeg.xo:1821:93")))
 							_ = v_rgb
-							v_out.M_write_byte(tk, ConvS_uint8((v_rgb>>int64(16)), "std/jpeg.xo:1819:26"))
-							v_out.M_write_byte(tk, ConvS_uint8(((v_rgb>>int64(8))&int64(255)), "std/jpeg.xo:1820:26"))
-							v_out.M_write_byte(tk, ConvS_uint8((v_rgb&int64(255)), "std/jpeg.xo:1821:26"))
-							v_out.M_write_byte(tk, ConvS_uint8((int64(255)-int64(BytesAt(v_kp, AddS(MulS(v_y, v_w, "std/jpeg.xo:1822:45"), v_x, "std/jpeg.xo:1822:45"), "std/jpeg.xo:1822:42"))), "std/jpeg.xo:1822:26"))
+							v_out.M_write_byte(tk, ConvS_uint8((v_rgb>>int64(16)), "std/jpeg.xo:1822:26"))
+							v_out.M_write_byte(tk, ConvS_uint8(((v_rgb>>int64(8))&int64(255)), "std/jpeg.xo:1823:26"))
+							v_out.M_write_byte(tk, ConvS_uint8((v_rgb&int64(255)), "std/jpeg.xo:1824:26"))
+							v_out.M_write_byte(tk, ConvS_uint8((int64(255)-int64(BytesAt(v_kp, AddS(MulS(v_y, v_w, "std/jpeg.xo:1825:45"), v_x, "std/jpeg.xo:1825:45"), "std/jpeg.xo:1825:42"))), "std/jpeg.xo:1825:26"))
 						}
 					}
 				}
 			}
 		} else {
-			var v_sub_m bool = ((List_At((*v_d).F_ch, int64(1), "std/jpeg.xo:1827:19") != List_At((*v_d).F_ch, int64(0), "std/jpeg.xo:1827:30")) || (List_At((*v_d).F_cv, int64(1), "std/jpeg.xo:1827:41") != List_At((*v_d).F_cv, int64(0), "std/jpeg.xo:1827:52")))
+			var v_sub_m bool = ((List_At((*v_d).F_ch, int64(1), "std/jpeg.xo:1830:19") != List_At((*v_d).F_ch, int64(0), "std/jpeg.xo:1830:30")) || (List_At((*v_d).F_cv, int64(1), "std/jpeg.xo:1830:41") != List_At((*v_d).F_cv, int64(0), "std/jpeg.xo:1830:52")))
 			_ = v_sub_m
-			var v_sub_y bool = ((List_At((*v_d).F_ch, int64(2), "std/jpeg.xo:1828:19") != List_At((*v_d).F_ch, int64(0), "std/jpeg.xo:1828:30")) || (List_At((*v_d).F_cv, int64(2), "std/jpeg.xo:1828:41") != List_At((*v_d).F_cv, int64(0), "std/jpeg.xo:1828:52")))
+			var v_sub_y bool = ((List_At((*v_d).F_ch, int64(2), "std/jpeg.xo:1831:19") != List_At((*v_d).F_ch, int64(0), "std/jpeg.xo:1831:30")) || (List_At((*v_d).F_cv, int64(2), "std/jpeg.xo:1831:41") != List_At((*v_d).F_cv, int64(0), "std/jpeg.xo:1831:52")))
 			_ = v_sub_y
-			x_it661 := Range[int64]{Lo: int64(0), Hi: v_h, Incl: false}
-			for x_i663 := x_it661.Lo; x_i663 < x_it661.Hi; x_i663++ {
-				x_el664 := x_i663
-				_ = x_el664
-				var v_y_1 int64 = x_el664
+			x_it663 := Range[int64]{Lo: int64(0), Hi: v_h, Incl: false}
+			for x_i665 := x_it663.Lo; x_i665 < x_it663.Hi; x_i665++ {
+				x_el666 := x_i665
+				_ = x_el666
+				var v_y_1 int64 = x_el666
 				_ = v_y_1
 				{
-					x_it665 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
-					for x_i667 := x_it665.Lo; x_i667 < x_it665.Hi; x_i667++ {
-						x_el668 := x_i667
-						_ = x_el668
-						var v_x_1 int64 = x_el668
+					x_it667 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
+					for x_i669 := x_it667.Lo; x_i669 < x_it667.Hi; x_i669++ {
+						x_el670 := x_i669
+						_ = x_el670
+						var v_x_1 int64 = x_el670
 						_ = v_x_1
 						{
-							v_out.M_write_byte(tk, ConvS_uint8((int64(255)-int64(BytesAt(v_yp, AddS(MulS(v_y_1, v_w, "std/jpeg.xo:1831:45"), v_x_1, "std/jpeg.xo:1831:45"), "std/jpeg.xo:1831:42"))), "std/jpeg.xo:1831:26"))
-							var x_v669 int64
+							v_out.M_write_byte(tk, ConvS_uint8((int64(255)-int64(BytesAt(v_yp, AddS(MulS(v_y_1, v_w, "std/jpeg.xo:1834:45"), v_x_1, "std/jpeg.xo:1834:45"), "std/jpeg.xo:1834:42"))), "std/jpeg.xo:1834:26"))
+							var x_v671 int64
 							if v_sub_m {
-								x_v669 = AddS(MulS((v_y_1/int64(2)), v_cw, "std/jpeg.xo:1832:31"), (v_x_1 / int64(2)), "std/jpeg.xo:1832:31")
+								x_v671 = AddS(MulS((v_y_1/int64(2)), v_cw, "std/jpeg.xo:1835:31"), (v_x_1 / int64(2)), "std/jpeg.xo:1835:31")
 							} else {
-								x_v669 = AddS(MulS(v_y_1, v_cw, "std/jpeg.xo:1832:61"), v_x_1, "std/jpeg.xo:1832:61")
+								x_v671 = AddS(MulS(v_y_1, v_cw, "std/jpeg.xo:1835:61"), v_x_1, "std/jpeg.xo:1835:61")
 							}
-							var v_mi int64 = x_v669
+							var v_mi int64 = x_v671
 							_ = v_mi
-							v_out.M_write_byte(tk, ConvS_uint8((int64(255)-int64(BytesAt(v_cbp, v_mi, "std/jpeg.xo:1833:42"))), "std/jpeg.xo:1833:26"))
-							var x_v670 int64
+							v_out.M_write_byte(tk, ConvS_uint8((int64(255)-int64(BytesAt(v_cbp, v_mi, "std/jpeg.xo:1836:42"))), "std/jpeg.xo:1836:26"))
+							var x_v672 int64
 							if v_sub_y {
-								x_v670 = AddS(MulS((v_y_1/int64(2)), v_cw, "std/jpeg.xo:1834:31"), (v_x_1 / int64(2)), "std/jpeg.xo:1834:31")
+								x_v672 = AddS(MulS((v_y_1/int64(2)), v_cw, "std/jpeg.xo:1837:31"), (v_x_1 / int64(2)), "std/jpeg.xo:1837:31")
 							} else {
-								x_v670 = AddS(MulS(v_y_1, v_cw, "std/jpeg.xo:1834:61"), v_x_1, "std/jpeg.xo:1834:61")
+								x_v672 = AddS(MulS(v_y_1, v_cw, "std/jpeg.xo:1837:61"), v_x_1, "std/jpeg.xo:1837:61")
 							}
-							var v_yi int64 = x_v670
+							var v_yi int64 = x_v672
 							_ = v_yi
-							v_out.M_write_byte(tk, ConvS_uint8((int64(255)-int64(BytesAt(v_crp, v_yi, "std/jpeg.xo:1835:42"))), "std/jpeg.xo:1835:26"))
-							v_out.M_write_byte(tk, ConvS_uint8((int64(255)-int64(BytesAt(v_kp, AddS(MulS(v_y_1, v_w, "std/jpeg.xo:1836:45"), v_x_1, "std/jpeg.xo:1836:45"), "std/jpeg.xo:1836:42"))), "std/jpeg.xo:1836:26"))
+							v_out.M_write_byte(tk, ConvS_uint8((int64(255)-int64(BytesAt(v_crp, v_yi, "std/jpeg.xo:1838:42"))), "std/jpeg.xo:1838:26"))
+							v_out.M_write_byte(tk, ConvS_uint8((int64(255)-int64(BytesAt(v_kp, AddS(MulS(v_y_1, v_w, "std/jpeg.xo:1839:45"), v_x_1, "std/jpeg.xo:1839:45"), "std/jpeg.xo:1839:42"))), "std/jpeg.xo:1839:26"))
 						}
 					}
 				}
@@ -3381,28 +3395,28 @@ func Jpeg_finish(tk *Task, v_d *Jpeg_Dec) Result[Jpeg_Image, Jpeg_JpegErr] {
 		return Ok[Jpeg_Image, Jpeg_JpegErr](Jpeg_Image{F_width: v_w, F_height: v_h, F_model: Jpeg_Model{Tag: 3}, F_subsample: Jpeg_Subsample{Tag: 1}, F_pix: v_out.M_freeze(tk), F_y: Bytes(""), F_cb: Bytes(""), F_cr: Bytes("")})
 	}
 	if Jpeg_is_rgb(tk, func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d))) {
-		var v_c_scale int64 = DivS(List_At((*v_d).F_ch, int64(0), "std/jpeg.xo:1843:19"), List_At((*v_d).F_ch, int64(1), "std/jpeg.xo:1843:29"), "std/jpeg.xo:1843:19")
+		var v_c_scale int64 = DivS(List_At((*v_d).F_ch, int64(0), "std/jpeg.xo:1846:19"), List_At((*v_d).F_ch, int64(1), "std/jpeg.xo:1846:29"), "std/jpeg.xo:1846:19")
 		_ = v_c_scale
-		var v_out_1 BytesBuilder = BytesBuilder_with_capacity(tk, MulIK(MulS(v_w, v_h, "std/jpeg.xo:1844:42"), int64(4), -2305843009213693952, 2305843009213693951, "std/jpeg.xo:1844:42"))
+		var v_out_1 BytesBuilder = BytesBuilder_with_capacity(tk, MulIK(MulS(v_w, v_h, "std/jpeg.xo:1847:42"), int64(4), -2305843009213693952, 2305843009213693951, "std/jpeg.xo:1847:42"))
 		_ = v_out_1
-		x_it671 := Range[int64]{Lo: int64(0), Hi: v_h, Incl: false}
-		for x_i673 := x_it671.Lo; x_i673 < x_it671.Hi; x_i673++ {
-			x_el674 := x_i673
-			_ = x_el674
-			var v_y_2 int64 = x_el674
+		x_it673 := Range[int64]{Lo: int64(0), Hi: v_h, Incl: false}
+		for x_i675 := x_it673.Lo; x_i675 < x_it673.Hi; x_i675++ {
+			x_el676 := x_i675
+			_ = x_el676
+			var v_y_2 int64 = x_el676
 			_ = v_y_2
 			{
-				x_it675 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
-				for x_i677 := x_it675.Lo; x_i677 < x_it675.Hi; x_i677++ {
-					x_el678 := x_i677
-					_ = x_el678
-					var v_x_2 int64 = x_el678
+				x_it677 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
+				for x_i679 := x_it677.Lo; x_i679 < x_it677.Hi; x_i679++ {
+					x_el680 := x_i679
+					_ = x_el680
+					var v_x_2 int64 = x_el680
 					_ = v_x_2
 					{
-						v_out_1.M_write_byte(tk, BytesAt(v_yp, AddS(MulS(v_y_2, v_w, "std/jpeg.xo:1847:27"), v_x_2, "std/jpeg.xo:1847:27"), "std/jpeg.xo:1847:24"))
-						v_out_1.M_write_byte(tk, BytesAt(v_cbp, AddS(MulS(DivS(v_y_2, v_rt.F1, "std/jpeg.xo:1848:29"), v_cw, "std/jpeg.xo:1848:28"), DivS(v_x_2, v_c_scale, "std/jpeg.xo:1848:46"), "std/jpeg.xo:1848:28"), "std/jpeg.xo:1848:24"))
-						v_out_1.M_write_byte(tk, BytesAt(v_crp, AddS(MulS(DivS(v_y_2, v_rt.F1, "std/jpeg.xo:1849:29"), v_cw, "std/jpeg.xo:1849:28"), DivS(v_x_2, v_c_scale, "std/jpeg.xo:1849:46"), "std/jpeg.xo:1849:28"), "std/jpeg.xo:1849:24"))
-						v_out_1.M_write_byte(tk, ConvS_uint8(int64(255), "std/jpeg.xo:1850:24"))
+						v_out_1.M_write_byte(tk, BytesAt(v_yp, AddS(MulS(v_y_2, v_w, "std/jpeg.xo:1850:27"), v_x_2, "std/jpeg.xo:1850:27"), "std/jpeg.xo:1850:24"))
+						v_out_1.M_write_byte(tk, BytesAt(v_cbp, AddS(MulS(DivS(v_y_2, v_rt.F1, "std/jpeg.xo:1851:29"), v_cw, "std/jpeg.xo:1851:28"), DivS(v_x_2, v_c_scale, "std/jpeg.xo:1851:46"), "std/jpeg.xo:1851:28"), "std/jpeg.xo:1851:24"))
+						v_out_1.M_write_byte(tk, BytesAt(v_crp, AddS(MulS(DivS(v_y_2, v_rt.F1, "std/jpeg.xo:1852:29"), v_cw, "std/jpeg.xo:1852:28"), DivS(v_x_2, v_c_scale, "std/jpeg.xo:1852:46"), "std/jpeg.xo:1852:28"), "std/jpeg.xo:1852:24"))
+						v_out_1.M_write_byte(tk, ConvS_uint8(int64(255), "std/jpeg.xo:1853:24"))
 					}
 				}
 			}
@@ -3418,10 +3432,10 @@ func Jpeg_segments(tk *Task, v_d *Jpeg_Dec, v_config_only bool, v_max_pixels int
 	if v_at < int64(0) {
 		return Err[bool](Jpeg_JpegErr{Tag: 3})
 	}
-	if (Jpeg_byte_at(tk, func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_at) != int64(255)) || (Jpeg_byte_at(tk, func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), AddIUp(v_at, int64(1), "std/jpeg.xo:1866:42")) != int64(216)) {
+	if (Jpeg_byte_at(tk, func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_at) != int64(255)) || (Jpeg_byte_at(tk, func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), AddIUp(v_at, int64(1), "std/jpeg.xo:1869:42")) != int64(216)) {
 		return Err[bool](Jpeg_fmt_err(tk, "missing SOI marker"))
 	}
-x_L679:
+x_L681:
 	for {
 		if !(true) {
 			break
@@ -3433,7 +3447,7 @@ x_L679:
 			}
 			var v_t0 int64 = Jpeg_byte_at(tk, func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_at)
 			_ = v_t0
-			var v_t1 int64 = Jpeg_byte_at(tk, func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), AddIUp(v_at, int64(1), "std/jpeg.xo:1875:25"))
+			var v_t1 int64 = Jpeg_byte_at(tk, func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), AddIUp(v_at, int64(1), "std/jpeg.xo:1878:25"))
 			_ = v_t1
 			for {
 				if !(v_t0 != int64(255)) {
@@ -3452,7 +3466,7 @@ x_L679:
 			var v_marker int64 = v_t1
 			_ = v_marker
 			if v_marker == int64(0) {
-				continue x_L679
+				continue x_L681
 			}
 			for {
 				if !(v_marker == int64(255)) {
@@ -3468,16 +3482,16 @@ x_L679:
 				}
 			}
 			if v_marker == int64(217) {
-				break x_L679
+				break x_L681
 			}
 			if (int64(208) <= v_marker) && (v_marker <= int64(215)) {
-				continue x_L679
+				continue x_L681
 			}
 			v_at = Jpeg_read_full(tk, &(*v_d), int64(2))
 			if v_at < int64(0) {
 				return Err[bool](Jpeg_JpegErr{Tag: 3})
 			}
-			var v_n int64 = SubIDown(AddS(Shl(Jpeg_byte_at(tk, func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_at), int64(8), "std/jpeg.xo:1905:14"), Jpeg_byte_at(tk, func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), AddIUp(v_at, int64(1), "std/jpeg.xo:1905:48")), "std/jpeg.xo:1905:13"), int64(2), "std/jpeg.xo:1905:13")
+			var v_n int64 = SubIDown(AddS(Shl(Jpeg_byte_at(tk, func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_at), int64(8), "std/jpeg.xo:1908:14"), Jpeg_byte_at(tk, func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), AddIUp(v_at, int64(1), "std/jpeg.xo:1908:48")), "std/jpeg.xo:1908:13"), int64(2), "std/jpeg.xo:1908:13")
 			_ = v_n
 			if v_n < int64(0) {
 				return Err[bool](Jpeg_fmt_err(tk, "short segment length"))
@@ -3488,94 +3502,94 @@ x_L679:
 				var v_r Result[Unit, Jpeg_JpegErr] = Jpeg_process_sof(tk, &(*v_d), v_n)
 				_ = v_r
 				if v_config_only && (*v_d).F_jfif {
-					x_r682 := v_r
-					if !x_r682.Ok {
-						return ErrTr[bool](x_r682.E, Frame3(x_r682.Tr, "jpeg.segments", "std/jpeg.xo:1914", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
+					x_r684 := v_r
+					if !x_r684.Ok {
+						return ErrTr[bool](x_r684.E, Frame3(x_r684.Tr, "jpeg.segments", "std/jpeg.xo:1917", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
 					}
-					_ = x_r682.V
+					_ = x_r684.V
 					return Ok[bool, Jpeg_JpegErr](false)
 				}
-				x_r683 := v_r
-				if !x_r683.Ok {
-					return ErrTr[bool](x_r683.E, Frame3(x_r683.Tr, "jpeg.segments", "std/jpeg.xo:1917", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
+				x_r685 := v_r
+				if !x_r685.Ok {
+					return ErrTr[bool](x_r685.E, Frame3(x_r685.Tr, "jpeg.segments", "std/jpeg.xo:1920", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
 				}
-				_ = x_r683.V
+				_ = x_r685.V
 			} else {
 				if v_marker == int64(196) {
 					if v_config_only {
-						x_r684 := Jpeg_ignore(tk, &(*v_d), v_n)
-						if !x_r684.Ok {
-							return ErrTr[bool](x_r684.E, Frame3(x_r684.Tr, "jpeg.segments", "std/jpeg.xo:1920", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
+						x_r686 := Jpeg_ignore(tk, &(*v_d), v_n)
+						if !x_r686.Ok {
+							return ErrTr[bool](x_r686.E, Frame3(x_r686.Tr, "jpeg.segments", "std/jpeg.xo:1923", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
 						}
-						_ = x_r684.V
+						_ = x_r686.V
 					} else {
-						x_r685 := Jpeg_process_dht(tk, &(*v_d), v_n)
-						if !x_r685.Ok {
-							return ErrTr[bool](x_r685.E, Frame3(x_r685.Tr, "jpeg.segments", "std/jpeg.xo:1922", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
+						x_r687 := Jpeg_process_dht(tk, &(*v_d), v_n)
+						if !x_r687.Ok {
+							return ErrTr[bool](x_r687.E, Frame3(x_r687.Tr, "jpeg.segments", "std/jpeg.xo:1925", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
 						}
-						_ = x_r685.V
+						_ = x_r687.V
 					}
 				} else {
 					if v_marker == int64(219) {
 						if v_config_only {
-							x_r686 := Jpeg_ignore(tk, &(*v_d), v_n)
-							if !x_r686.Ok {
-								return ErrTr[bool](x_r686.E, Frame3(x_r686.Tr, "jpeg.segments", "std/jpeg.xo:1926", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
+							x_r688 := Jpeg_ignore(tk, &(*v_d), v_n)
+							if !x_r688.Ok {
+								return ErrTr[bool](x_r688.E, Frame3(x_r688.Tr, "jpeg.segments", "std/jpeg.xo:1929", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
 							}
-							_ = x_r686.V
+							_ = x_r688.V
 						} else {
-							x_r687 := Jpeg_process_dqt(tk, &(*v_d), v_n)
-							if !x_r687.Ok {
-								return ErrTr[bool](x_r687.E, Frame3(x_r687.Tr, "jpeg.segments", "std/jpeg.xo:1928", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
+							x_r689 := Jpeg_process_dqt(tk, &(*v_d), v_n)
+							if !x_r689.Ok {
+								return ErrTr[bool](x_r689.E, Frame3(x_r689.Tr, "jpeg.segments", "std/jpeg.xo:1931", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
 							}
-							_ = x_r687.V
+							_ = x_r689.V
 						}
 					} else {
 						if v_marker == int64(218) {
 							if v_config_only {
 								return Ok[bool, Jpeg_JpegErr](false)
 							}
-							x_r688 := Jpeg_process_sos(tk, &(*v_d), v_n, v_max_pixels)
-							if !x_r688.Ok {
-								return ErrTr[bool](x_r688.E, Frame3(x_r688.Tr, "jpeg.segments", "std/jpeg.xo:1934", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
+							x_r690 := Jpeg_process_sos(tk, &(*v_d), v_n, v_max_pixels)
+							if !x_r690.Ok {
+								return ErrTr[bool](x_r690.E, Frame3(x_r690.Tr, "jpeg.segments", "std/jpeg.xo:1937", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
 							}
-							_ = x_r688.V
+							_ = x_r690.V
 						} else {
 							if v_marker == int64(221) {
 								if v_config_only {
-									x_r689 := Jpeg_ignore(tk, &(*v_d), v_n)
-									if !x_r689.Ok {
-										return ErrTr[bool](x_r689.E, Frame3(x_r689.Tr, "jpeg.segments", "std/jpeg.xo:1937", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
-									}
-									_ = x_r689.V
-								} else {
-									x_r690 := Jpeg_process_dri(tk, &(*v_d), v_n)
-									if !x_r690.Ok {
-										return ErrTr[bool](x_r690.E, Frame3(x_r690.Tr, "jpeg.segments", "std/jpeg.xo:1939", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
-									}
-									_ = x_r690.V
-								}
-							} else {
-								if v_marker == int64(224) {
-									x_r691 := Jpeg_process_app0(tk, &(*v_d), v_n)
+									x_r691 := Jpeg_ignore(tk, &(*v_d), v_n)
 									if !x_r691.Ok {
-										return ErrTr[bool](x_r691.E, Frame3(x_r691.Tr, "jpeg.segments", "std/jpeg.xo:1942", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
+										return ErrTr[bool](x_r691.E, Frame3(x_r691.Tr, "jpeg.segments", "std/jpeg.xo:1940", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
 									}
 									_ = x_r691.V
 								} else {
+									x_r692 := Jpeg_process_dri(tk, &(*v_d), v_n)
+									if !x_r692.Ok {
+										return ErrTr[bool](x_r692.E, Frame3(x_r692.Tr, "jpeg.segments", "std/jpeg.xo:1942", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
+									}
+									_ = x_r692.V
+								}
+							} else {
+								if v_marker == int64(224) {
+									x_r693 := Jpeg_process_app0(tk, &(*v_d), v_n)
+									if !x_r693.Ok {
+										return ErrTr[bool](x_r693.E, Frame3(x_r693.Tr, "jpeg.segments", "std/jpeg.xo:1945", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
+									}
+									_ = x_r693.V
+								} else {
 									if v_marker == int64(238) {
-										x_r692 := Jpeg_process_app14(tk, &(*v_d), v_n)
-										if !x_r692.Ok {
-											return ErrTr[bool](x_r692.E, Frame3(x_r692.Tr, "jpeg.segments", "std/jpeg.xo:1944", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
+										x_r694 := Jpeg_process_app14(tk, &(*v_d), v_n)
+										if !x_r694.Ok {
+											return ErrTr[bool](x_r694.E, Frame3(x_r694.Tr, "jpeg.segments", "std/jpeg.xo:1947", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
 										}
-										_ = x_r692.V
+										_ = x_r694.V
 									} else {
 										if ((int64(224) <= v_marker) && (v_marker <= int64(239))) || (v_marker == int64(254)) {
-											x_r693 := Jpeg_ignore(tk, &(*v_d), v_n)
-											if !x_r693.Ok {
-												return ErrTr[bool](x_r693.E, Frame3(x_r693.Tr, "jpeg.segments", "std/jpeg.xo:1946", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
+											x_r695 := Jpeg_ignore(tk, &(*v_d), v_n)
+											if !x_r695.Ok {
+												return ErrTr[bool](x_r695.E, Frame3(x_r695.Tr, "jpeg.segments", "std/jpeg.xo:1949", "d config_only max_pixels", func(v Jpeg_Dec) Jpeg_Dec { v.XoMark(); return v }((*v_d)), v_config_only, v_max_pixels))
 											}
-											_ = x_r693.V
+											_ = x_r695.V
 										} else {
 											if v_marker < int64(192) {
 												return Err[bool](Jpeg_fmt_err(tk, "unknown marker"))
@@ -3596,270 +3610,270 @@ x_L679:
 }
 
 func Jpeg_idct_rows(tk *Task, v_b *List[int64]) {
-	x_it694 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
-	for x_i696 := x_it694.Lo; x_i696 < x_it694.Hi; x_i696++ {
-		x_el697 := x_i696
-		_ = x_el697
-		var v_i int64 = x_el697
+	x_it696 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
+	for x_i698 := x_it696.Lo; x_i698 < x_it696.Hi; x_i698++ {
+		x_el699 := x_i698
+		_ = x_el699
+		var v_i int64 = x_el699
 		_ = v_i
 		{
 			var v_o int64 = (int64(8) * v_i)
 			_ = v_o
-			var v_x0 int64 = List_At((*v_b), (v_o + int64(0)), "std/jpeg.xo:1959:14")
+			var v_x0 int64 = List_At((*v_b), (v_o + int64(0)), "std/jpeg.xo:1962:14")
 			_ = v_x0
-			var v_x7 int64 = List_At((*v_b), (v_o + int64(1)), "std/jpeg.xo:1960:14")
+			var v_x7 int64 = List_At((*v_b), (v_o + int64(1)), "std/jpeg.xo:1963:14")
 			_ = v_x7
-			var v_x2 int64 = List_At((*v_b), (v_o + int64(2)), "std/jpeg.xo:1961:14")
+			var v_x2 int64 = List_At((*v_b), (v_o + int64(2)), "std/jpeg.xo:1964:14")
 			_ = v_x2
-			var v_x5 int64 = List_At((*v_b), (v_o + int64(3)), "std/jpeg.xo:1962:14")
+			var v_x5 int64 = List_At((*v_b), (v_o + int64(3)), "std/jpeg.xo:1965:14")
 			_ = v_x5
-			var v_x1 int64 = List_At((*v_b), (v_o + int64(4)), "std/jpeg.xo:1963:14")
+			var v_x1 int64 = List_At((*v_b), (v_o + int64(4)), "std/jpeg.xo:1966:14")
 			_ = v_x1
-			var v_x6 int64 = List_At((*v_b), (v_o + int64(5)), "std/jpeg.xo:1964:14")
+			var v_x6 int64 = List_At((*v_b), (v_o + int64(5)), "std/jpeg.xo:1967:14")
 			_ = v_x6
-			var v_x3 int64 = List_At((*v_b), (v_o + int64(6)), "std/jpeg.xo:1965:14")
+			var v_x3 int64 = List_At((*v_b), (v_o + int64(6)), "std/jpeg.xo:1968:14")
 			_ = v_x3
-			var v_x4 int64 = List_At((*v_b), (v_o + int64(7)), "std/jpeg.xo:1966:14")
+			var v_x4 int64 = List_At((*v_b), (v_o + int64(7)), "std/jpeg.xo:1969:14")
 			_ = v_x4
-			v_x0 = Shl(v_x0, int64(17), "std/jpeg.xo:1967:10")
-			v_x1 = Shl(v_x1, int64(17), "std/jpeg.xo:1968:10")
-			var v_s int64 = AddS(v_x0, v_x1, "std/jpeg.xo:1969:13")
+			v_x0 = Shl(v_x0, int64(17), "std/jpeg.xo:1970:10")
+			v_x1 = Shl(v_x1, int64(17), "std/jpeg.xo:1971:10")
+			var v_s int64 = AddS(v_x0, v_x1, "std/jpeg.xo:1972:13")
 			_ = v_s
-			v_x1 = SubS(v_x0, v_x1, "std/jpeg.xo:1970:10")
+			v_x1 = SubS(v_x0, v_x1, "std/jpeg.xo:1973:10")
 			v_x0 = v_s
-			var v_t1 int64 = MulKI(int64(70936), AddS(v_x2, v_x3, "std/jpeg.xo:1972:23"), -130023853006298, 130023853006298, "std/jpeg.xo:1972:14")
+			var v_t1 int64 = MulKI(int64(70936), AddS(v_x2, v_x3, "std/jpeg.xo:1975:23"), -130023853006298, 130023853006298, "std/jpeg.xo:1975:14")
 			_ = v_t1
-			var v_u1 int64 = AddS(v_t1, MulKI(int64(-242190), v_x3, -38083207551322, 38083207551322, "std/jpeg.xo:1973:19"), "std/jpeg.xo:1973:14")
+			var v_u1 int64 = AddS(v_t1, MulKI(int64(-242190), v_x3, -38083207551322, 38083207551322, "std/jpeg.xo:1976:19"), "std/jpeg.xo:1976:14")
 			_ = v_u1
-			var v_v1 int64 = SubS(v_t1, MulKI(int64(-100318), v_x2, -91941346885452, 91941346885452, "std/jpeg.xo:1974:19"), "std/jpeg.xo:1974:14")
+			var v_v1 int64 = SubS(v_t1, MulKI(int64(-100318), v_x2, -91941346885452, 91941346885452, "std/jpeg.xo:1977:19"), "std/jpeg.xo:1977:14")
 			_ = v_v1
 			v_x2 = v_u1
 			v_x3 = v_v1
-			v_s = AddS(v_x1, v_x2, "std/jpeg.xo:1977:9")
-			v_x2 = SubS(v_x1, v_x2, "std/jpeg.xo:1978:10")
+			v_s = AddS(v_x1, v_x2, "std/jpeg.xo:1980:9")
+			v_x2 = SubS(v_x1, v_x2, "std/jpeg.xo:1981:10")
 			v_x1 = v_s
-			v_s = AddS(v_x0, v_x3, "std/jpeg.xo:1980:9")
-			v_x3 = SubS(v_x0, v_x3, "std/jpeg.xo:1981:10")
+			v_s = AddS(v_x0, v_x3, "std/jpeg.xo:1983:9")
+			v_x3 = SubS(v_x0, v_x3, "std/jpeg.xo:1984:10")
 			v_x0 = v_s
-			v_x4 = Shl(v_x4, int64(7), "std/jpeg.xo:1983:10")
-			v_x7 = Shl(v_x7, int64(7), "std/jpeg.xo:1984:10")
-			v_s = AddS(v_x7, v_x4, "std/jpeg.xo:1985:9")
-			v_x4 = SubS(v_x7, v_x4, "std/jpeg.xo:1986:10")
+			v_x4 = Shl(v_x4, int64(7), "std/jpeg.xo:1986:10")
+			v_x7 = Shl(v_x7, int64(7), "std/jpeg.xo:1987:10")
+			v_s = AddS(v_x7, v_x4, "std/jpeg.xo:1988:9")
+			v_x4 = SubS(v_x7, v_x4, "std/jpeg.xo:1989:10")
 			v_x7 = v_s
-			v_x6 = MulIK(v_x6, int64(181), -50957856557208706, 50957856557208706, "std/jpeg.xo:1988:10")
-			v_x5 = MulIK(v_x5, int64(181), -50957856557208706, 50957856557208706, "std/jpeg.xo:1989:10")
-			v_s = AddS(v_x7, v_x5, "std/jpeg.xo:1990:9")
-			v_x5 = SubS(v_x7, v_x5, "std/jpeg.xo:1991:10")
+			v_x6 = MulIK(v_x6, int64(181), -50957856557208706, 50957856557208706, "std/jpeg.xo:1991:10")
+			v_x5 = MulIK(v_x5, int64(181), -50957856557208706, 50957856557208706, "std/jpeg.xo:1992:10")
+			v_s = AddS(v_x7, v_x5, "std/jpeg.xo:1993:9")
+			v_x5 = SubS(v_x7, v_x5, "std/jpeg.xo:1994:10")
 			v_x7 = v_s
-			v_s = AddS(v_x4, v_x6, "std/jpeg.xo:1993:9")
-			v_x6 = SubS(v_x4, v_x6, "std/jpeg.xo:1994:10")
+			v_s = AddS(v_x4, v_x6, "std/jpeg.xo:1996:9")
+			v_x6 = SubS(v_x4, v_x6, "std/jpeg.xo:1997:10")
 			v_x4 = v_s
-			v_x4 = (((AddIUp(v_x4, int64(2147483648), "std/jpeg.xo:1996:13") & int64(4294967295)) - int64(2147483648)) >> int64(2))
-			v_x7 = (((AddIUp(v_x7, int64(2147483648), "std/jpeg.xo:1997:13") & int64(4294967295)) - int64(2147483648)) >> int64(2))
-			var v_t2 int64 = MulKI(int64(3406), AddS(v_x4, v_x7, "std/jpeg.xo:1998:22"), -2707977697256246, 2707977697256246, "std/jpeg.xo:1998:14")
+			v_x4 = (((AddIUp(v_x4, int64(2147483648), "std/jpeg.xo:1999:13") & int64(4294967295)) - int64(2147483648)) >> int64(2))
+			v_x7 = (((AddIUp(v_x7, int64(2147483648), "std/jpeg.xo:2000:13") & int64(4294967295)) - int64(2147483648)) >> int64(2))
+			var v_t2 int64 = MulKI(int64(3406), AddS(v_x4, v_x7, "std/jpeg.xo:2001:22"), -2707977697256246, 2707977697256246, "std/jpeg.xo:2001:14")
 			_ = v_t2
-			var v_u2 int64 = AddS(v_t2, MulKI(int64(-5682), v_x7, -1623261534117348, 1623261534117348, "std/jpeg.xo:1999:19"), "std/jpeg.xo:1999:14")
+			var v_u2 int64 = AddS(v_t2, MulKI(int64(-5682), v_x7, -1623261534117348, 1623261534117348, "std/jpeg.xo:2002:19"), "std/jpeg.xo:2002:14")
 			_ = v_u2
-			var v_v2 int64 = SubS(v_t2, MulKI(int64(1130), v_x4, -8162276138809536, 8162276138809536, "std/jpeg.xo:2000:19"), "std/jpeg.xo:2000:14")
+			var v_v2 int64 = SubS(v_t2, MulKI(int64(1130), v_x4, -8162276138809536, 8162276138809536, "std/jpeg.xo:2003:19"), "std/jpeg.xo:2003:14")
 			_ = v_v2
 			v_x4 = v_u2
 			v_x7 = v_v2
-			v_x5 = (((AddIUp(v_x5, int64(2147483648), "std/jpeg.xo:2003:13") & int64(4294967295)) - int64(2147483648)) >> int64(2))
-			v_x6 = (((AddIUp(v_x6, int64(2147483648), "std/jpeg.xo:2004:13") & int64(4294967295)) - int64(2147483648)) >> int64(2))
-			var v_t3 int64 = MulKI(int64(4017), AddS(v_x5, v_x6, "std/jpeg.xo:2005:22"), -2296084649453516, 2296084649453516, "std/jpeg.xo:2005:14")
+			v_x5 = (((AddIUp(v_x5, int64(2147483648), "std/jpeg.xo:2006:13") & int64(4294967295)) - int64(2147483648)) >> int64(2))
+			v_x6 = (((AddIUp(v_x6, int64(2147483648), "std/jpeg.xo:2007:13") & int64(4294967295)) - int64(2147483648)) >> int64(2))
+			var v_t3 int64 = MulKI(int64(4017), AddS(v_x5, v_x6, "std/jpeg.xo:2008:22"), -2296084649453516, 2296084649453516, "std/jpeg.xo:2008:14")
 			_ = v_t3
-			var v_u3 int64 = AddS(v_t3, MulKI(int64(-4816), v_x6, -1915152001008051, 1915152001008051, "std/jpeg.xo:2006:19"), "std/jpeg.xo:2006:14")
+			var v_u3 int64 = AddS(v_t3, MulKI(int64(-4816), v_x6, -1915152001008051, 1915152001008051, "std/jpeg.xo:2009:19"), "std/jpeg.xo:2009:14")
 			_ = v_u3
-			var v_v3 int64 = SubS(v_t3, MulKI(int64(3218), v_x5, -2866181490632310, 2866181490632310, "std/jpeg.xo:2007:19"), "std/jpeg.xo:2007:14")
+			var v_v3 int64 = SubS(v_t3, MulKI(int64(3218), v_x5, -2866181490632310, 2866181490632310, "std/jpeg.xo:2010:19"), "std/jpeg.xo:2010:14")
 			_ = v_v3
 			v_x5 = v_u3
 			v_x6 = v_v3
-			v_s = AddS(v_x0, v_x7, "std/jpeg.xo:2010:9")
-			v_x7 = SubS(v_x0, v_x7, "std/jpeg.xo:2011:10")
+			v_s = AddS(v_x0, v_x7, "std/jpeg.xo:2013:9")
+			v_x7 = SubS(v_x0, v_x7, "std/jpeg.xo:2014:10")
 			v_x0 = v_s
-			v_s = AddS(v_x1, v_x6, "std/jpeg.xo:2013:9")
-			v_x6 = SubS(v_x1, v_x6, "std/jpeg.xo:2014:10")
+			v_s = AddS(v_x1, v_x6, "std/jpeg.xo:2016:9")
+			v_x6 = SubS(v_x1, v_x6, "std/jpeg.xo:2017:10")
 			v_x1 = v_s
-			v_s = AddS(v_x2, v_x5, "std/jpeg.xo:2016:9")
-			v_x5 = SubS(v_x2, v_x5, "std/jpeg.xo:2017:10")
+			v_s = AddS(v_x2, v_x5, "std/jpeg.xo:2019:9")
+			v_x5 = SubS(v_x2, v_x5, "std/jpeg.xo:2020:10")
 			v_x2 = v_s
-			v_s = AddS(v_x3, v_x4, "std/jpeg.xo:2019:9")
-			v_x4 = SubS(v_x3, v_x4, "std/jpeg.xo:2020:10")
+			v_s = AddS(v_x3, v_x4, "std/jpeg.xo:2022:9")
+			v_x4 = SubS(v_x3, v_x4, "std/jpeg.xo:2023:10")
 			v_x3 = v_s
-			x_ix698 := (v_o + int64(0))
+			x_ix700 := (v_o + int64(0))
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix698, ((AddIUp(v_x0, int64(2147483648), "std/jpeg.xo:2022:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2022:5")
-			x_ix699 := (v_o + int64(1))
+			List_PutM((*v_b), x_ix700, ((AddIUp(v_x0, int64(2147483648), "std/jpeg.xo:2025:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2025:5")
+			x_ix701 := (v_o + int64(1))
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix699, ((AddIUp(v_x1, int64(2147483648), "std/jpeg.xo:2023:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2023:5")
-			x_ix700 := (v_o + int64(2))
+			List_PutM((*v_b), x_ix701, ((AddIUp(v_x1, int64(2147483648), "std/jpeg.xo:2026:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2026:5")
+			x_ix702 := (v_o + int64(2))
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix700, ((AddIUp(v_x2, int64(2147483648), "std/jpeg.xo:2024:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2024:5")
-			x_ix701 := (v_o + int64(3))
+			List_PutM((*v_b), x_ix702, ((AddIUp(v_x2, int64(2147483648), "std/jpeg.xo:2027:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2027:5")
+			x_ix703 := (v_o + int64(3))
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix701, ((AddIUp(v_x3, int64(2147483648), "std/jpeg.xo:2025:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2025:5")
-			x_ix702 := (v_o + int64(4))
+			List_PutM((*v_b), x_ix703, ((AddIUp(v_x3, int64(2147483648), "std/jpeg.xo:2028:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2028:5")
+			x_ix704 := (v_o + int64(4))
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix702, ((AddIUp(v_x4, int64(2147483648), "std/jpeg.xo:2026:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2026:5")
-			x_ix703 := (v_o + int64(5))
+			List_PutM((*v_b), x_ix704, ((AddIUp(v_x4, int64(2147483648), "std/jpeg.xo:2029:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2029:5")
+			x_ix705 := (v_o + int64(5))
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix703, ((AddIUp(v_x5, int64(2147483648), "std/jpeg.xo:2027:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2027:5")
-			x_ix704 := (v_o + int64(6))
+			List_PutM((*v_b), x_ix705, ((AddIUp(v_x5, int64(2147483648), "std/jpeg.xo:2030:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2030:5")
+			x_ix706 := (v_o + int64(6))
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix704, ((AddIUp(v_x6, int64(2147483648), "std/jpeg.xo:2028:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2028:5")
-			x_ix705 := (v_o + int64(7))
+			List_PutM((*v_b), x_ix706, ((AddIUp(v_x6, int64(2147483648), "std/jpeg.xo:2031:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2031:5")
+			x_ix707 := (v_o + int64(7))
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix705, ((AddIUp(v_x7, int64(2147483648), "std/jpeg.xo:2029:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2029:5")
+			List_PutM((*v_b), x_ix707, ((AddIUp(v_x7, int64(2147483648), "std/jpeg.xo:2032:18") & int64(4294967295)) - int64(2147483648)), "std/jpeg.xo:2032:5")
 		}
 	}
 	return
 }
 
 func Jpeg_idct_cols(tk *Task, v_b *List[int64]) {
-	x_it706 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
-	for x_i708 := x_it706.Lo; x_i708 < x_it706.Hi; x_i708++ {
-		x_el709 := x_i708
-		_ = x_el709
-		var v_i int64 = x_el709
+	x_it708 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
+	for x_i710 := x_it708.Lo; x_i710 < x_it708.Hi; x_i710++ {
+		x_el711 := x_i710
+		_ = x_el711
+		var v_i int64 = x_el711
 		_ = v_i
 		{
-			var v_x0 int64 = List_At((*v_b), (int64(0) + v_i), "std/jpeg.xo:2035:14")
+			var v_x0 int64 = List_At((*v_b), (int64(0) + v_i), "std/jpeg.xo:2038:14")
 			_ = v_x0
-			var v_x7 int64 = List_At((*v_b), (int64(8) + v_i), "std/jpeg.xo:2036:14")
+			var v_x7 int64 = List_At((*v_b), (int64(8) + v_i), "std/jpeg.xo:2039:14")
 			_ = v_x7
-			var v_x2 int64 = List_At((*v_b), (int64(16) + v_i), "std/jpeg.xo:2037:14")
+			var v_x2 int64 = List_At((*v_b), (int64(16) + v_i), "std/jpeg.xo:2040:14")
 			_ = v_x2
-			var v_x5 int64 = List_At((*v_b), (int64(24) + v_i), "std/jpeg.xo:2038:14")
+			var v_x5 int64 = List_At((*v_b), (int64(24) + v_i), "std/jpeg.xo:2041:14")
 			_ = v_x5
-			var v_x1 int64 = List_At((*v_b), (int64(32) + v_i), "std/jpeg.xo:2039:14")
+			var v_x1 int64 = List_At((*v_b), (int64(32) + v_i), "std/jpeg.xo:2042:14")
 			_ = v_x1
-			var v_x6 int64 = List_At((*v_b), (int64(40) + v_i), "std/jpeg.xo:2040:14")
+			var v_x6 int64 = List_At((*v_b), (int64(40) + v_i), "std/jpeg.xo:2043:14")
 			_ = v_x6
-			var v_x3 int64 = List_At((*v_b), (int64(48) + v_i), "std/jpeg.xo:2041:14")
+			var v_x3 int64 = List_At((*v_b), (int64(48) + v_i), "std/jpeg.xo:2044:14")
 			_ = v_x3
-			var v_x4 int64 = List_At((*v_b), (int64(56) + v_i), "std/jpeg.xo:2042:14")
+			var v_x4 int64 = List_At((*v_b), (int64(56) + v_i), "std/jpeg.xo:2045:14")
 			_ = v_x4
-			v_x0 = AddIUp(v_x0, int64(524288), "std/jpeg.xo:2043:10")
-			var v_s int64 = AddS(v_x0, v_x1, "std/jpeg.xo:2044:13")
+			v_x0 = AddIUp(v_x0, int64(524288), "std/jpeg.xo:2046:10")
+			var v_s int64 = AddS(v_x0, v_x1, "std/jpeg.xo:2047:13")
 			_ = v_s
-			v_x1 = SubS(v_x0, v_x1, "std/jpeg.xo:2045:10")
-			v_x0 = (((AddIUp(v_s, int64(2147483648), "std/jpeg.xo:2046:13") & int64(4294967295)) - int64(2147483648)) >> int64(2))
-			v_x1 = (((AddIUp(v_x1, int64(2147483648), "std/jpeg.xo:2047:13") & int64(4294967295)) - int64(2147483648)) >> int64(2))
-			v_x2 = (((AddIUp(v_x2, int64(2147483648), "std/jpeg.xo:2048:13") & int64(4294967295)) - int64(2147483648)) >> int64(13))
-			v_x3 = (((AddIUp(v_x3, int64(2147483648), "std/jpeg.xo:2049:13") & int64(4294967295)) - int64(2147483648)) >> int64(13))
-			var v_t4 int64 = MulKI(int64(1108), AddS(v_x2, v_x3, "std/jpeg.xo:2050:22"), -8324342993551241, 8324342993551241, "std/jpeg.xo:2050:14")
+			v_x1 = SubS(v_x0, v_x1, "std/jpeg.xo:2048:10")
+			v_x0 = (((AddIUp(v_s, int64(2147483648), "std/jpeg.xo:2049:13") & int64(4294967295)) - int64(2147483648)) >> int64(2))
+			v_x1 = (((AddIUp(v_x1, int64(2147483648), "std/jpeg.xo:2050:13") & int64(4294967295)) - int64(2147483648)) >> int64(2))
+			v_x2 = (((AddIUp(v_x2, int64(2147483648), "std/jpeg.xo:2051:13") & int64(4294967295)) - int64(2147483648)) >> int64(13))
+			v_x3 = (((AddIUp(v_x3, int64(2147483648), "std/jpeg.xo:2052:13") & int64(4294967295)) - int64(2147483648)) >> int64(13))
+			var v_t4 int64 = MulKI(int64(1108), AddS(v_x2, v_x3, "std/jpeg.xo:2053:22"), -8324342993551241, 8324342993551241, "std/jpeg.xo:2053:14")
 			_ = v_t4
-			var v_u4 int64 = AddS(v_t4, MulKI(int64(-3784), v_x3, -2437466183101156, 2437466183101156, "std/jpeg.xo:2051:19"), "std/jpeg.xo:2051:14")
+			var v_u4 int64 = AddS(v_t4, MulKI(int64(-3784), v_x3, -2437466183101156, 2437466183101156, "std/jpeg.xo:2054:19"), "std/jpeg.xo:2054:14")
 			_ = v_u4
-			var v_v4 int64 = SubS(v_t4, MulKI(int64(-1568), v_x2, -5882252574524729, 5882252574524729, "std/jpeg.xo:2052:19"), "std/jpeg.xo:2052:14")
+			var v_v4 int64 = SubS(v_t4, MulKI(int64(-1568), v_x2, -5882252574524729, 5882252574524729, "std/jpeg.xo:2055:19"), "std/jpeg.xo:2055:14")
 			_ = v_v4
 			v_x2 = v_u4
 			v_x3 = v_v4
-			v_s = AddS(v_x1, v_x2, "std/jpeg.xo:2055:9")
-			v_x2 = SubS(v_x1, v_x2, "std/jpeg.xo:2056:10")
+			v_s = AddS(v_x1, v_x2, "std/jpeg.xo:2058:9")
+			v_x2 = SubS(v_x1, v_x2, "std/jpeg.xo:2059:10")
 			v_x1 = v_s
-			v_s = AddS(v_x0, v_x3, "std/jpeg.xo:2058:9")
-			v_x3 = SubS(v_x0, v_x3, "std/jpeg.xo:2059:10")
+			v_s = AddS(v_x0, v_x3, "std/jpeg.xo:2061:9")
+			v_x3 = SubS(v_x0, v_x3, "std/jpeg.xo:2062:10")
 			v_x0 = v_s
-			v_s = AddS(v_x7, v_x4, "std/jpeg.xo:2061:9")
-			v_x4 = SubS(v_x7, v_x4, "std/jpeg.xo:2062:10")
+			v_s = AddS(v_x7, v_x4, "std/jpeg.xo:2064:9")
+			v_x4 = SubS(v_x7, v_x4, "std/jpeg.xo:2065:10")
 			v_x7 = v_s
-			v_x5 = MulIK((((AddIUp(v_x5, int64(2147483648), "std/jpeg.xo:2064:14") & int64(4294967295)) - int64(2147483648)) >> int64(13)), int64(11585), -796147780479480, 796147780479480, "std/jpeg.xo:2064:10")
-			v_x6 = MulIK((((AddIUp(v_x6, int64(2147483648), "std/jpeg.xo:2065:14") & int64(4294967295)) - int64(2147483648)) >> int64(13)), int64(11585), -796147780479480, 796147780479480, "std/jpeg.xo:2065:10")
-			v_s = AddS(v_x7, v_x5, "std/jpeg.xo:2066:9")
-			v_x5 = SubS(v_x7, v_x5, "std/jpeg.xo:2067:10")
+			v_x5 = MulIK((((AddIUp(v_x5, int64(2147483648), "std/jpeg.xo:2067:14") & int64(4294967295)) - int64(2147483648)) >> int64(13)), int64(11585), -796147780479480, 796147780479480, "std/jpeg.xo:2067:10")
+			v_x6 = MulIK((((AddIUp(v_x6, int64(2147483648), "std/jpeg.xo:2068:14") & int64(4294967295)) - int64(2147483648)) >> int64(13)), int64(11585), -796147780479480, 796147780479480, "std/jpeg.xo:2068:10")
+			v_s = AddS(v_x7, v_x5, "std/jpeg.xo:2069:9")
+			v_x5 = SubS(v_x7, v_x5, "std/jpeg.xo:2070:10")
 			v_x7 = v_s
-			v_s = AddS(v_x4, v_x6, "std/jpeg.xo:2069:9")
-			v_x6 = SubS(v_x4, v_x6, "std/jpeg.xo:2070:10")
+			v_s = AddS(v_x4, v_x6, "std/jpeg.xo:2072:9")
+			v_x6 = SubS(v_x4, v_x6, "std/jpeg.xo:2073:10")
 			v_x4 = v_s
-			v_x4 = (((AddIUp(v_x4, int64(2147483648), "std/jpeg.xo:2072:13") & int64(4294967295)) - int64(2147483648)) >> int64(14))
-			v_x7 = (((AddIUp(v_x7, int64(2147483648), "std/jpeg.xo:2073:13") & int64(4294967295)) - int64(2147483648)) >> int64(14))
-			var v_t5 int64 = MulKI(int64(3406), AddS(v_x4, v_x7, "std/jpeg.xo:2074:22"), -2707977697256246, 2707977697256246, "std/jpeg.xo:2074:14")
+			v_x4 = (((AddIUp(v_x4, int64(2147483648), "std/jpeg.xo:2075:13") & int64(4294967295)) - int64(2147483648)) >> int64(14))
+			v_x7 = (((AddIUp(v_x7, int64(2147483648), "std/jpeg.xo:2076:13") & int64(4294967295)) - int64(2147483648)) >> int64(14))
+			var v_t5 int64 = MulKI(int64(3406), AddS(v_x4, v_x7, "std/jpeg.xo:2077:22"), -2707977697256246, 2707977697256246, "std/jpeg.xo:2077:14")
 			_ = v_t5
-			var v_u5 int64 = AddS(v_t5, MulKI(int64(-5682), v_x7, -1623261534117348, 1623261534117348, "std/jpeg.xo:2075:19"), "std/jpeg.xo:2075:14")
+			var v_u5 int64 = AddS(v_t5, MulKI(int64(-5682), v_x7, -1623261534117348, 1623261534117348, "std/jpeg.xo:2078:19"), "std/jpeg.xo:2078:14")
 			_ = v_u5
-			var v_v5 int64 = SubS(v_t5, MulKI(int64(1130), v_x4, -8162276138809536, 8162276138809536, "std/jpeg.xo:2076:19"), "std/jpeg.xo:2076:14")
+			var v_v5 int64 = SubS(v_t5, MulKI(int64(1130), v_x4, -8162276138809536, 8162276138809536, "std/jpeg.xo:2079:19"), "std/jpeg.xo:2079:14")
 			_ = v_v5
 			v_x4 = v_u5
 			v_x7 = v_v5
-			v_x5 = (((AddIUp(v_x5, int64(2147483648), "std/jpeg.xo:2079:13") & int64(4294967295)) - int64(2147483648)) >> int64(14))
-			v_x6 = (((AddIUp(v_x6, int64(2147483648), "std/jpeg.xo:2080:13") & int64(4294967295)) - int64(2147483648)) >> int64(14))
-			var v_t6 int64 = MulKI(int64(4017), AddS(v_x5, v_x6, "std/jpeg.xo:2081:22"), -2296084649453516, 2296084649453516, "std/jpeg.xo:2081:14")
+			v_x5 = (((AddIUp(v_x5, int64(2147483648), "std/jpeg.xo:2082:13") & int64(4294967295)) - int64(2147483648)) >> int64(14))
+			v_x6 = (((AddIUp(v_x6, int64(2147483648), "std/jpeg.xo:2083:13") & int64(4294967295)) - int64(2147483648)) >> int64(14))
+			var v_t6 int64 = MulKI(int64(4017), AddS(v_x5, v_x6, "std/jpeg.xo:2084:22"), -2296084649453516, 2296084649453516, "std/jpeg.xo:2084:14")
 			_ = v_t6
-			var v_u6 int64 = AddS(v_t6, MulKI(int64(-4816), v_x6, -1915152001008051, 1915152001008051, "std/jpeg.xo:2082:19"), "std/jpeg.xo:2082:14")
+			var v_u6 int64 = AddS(v_t6, MulKI(int64(-4816), v_x6, -1915152001008051, 1915152001008051, "std/jpeg.xo:2085:19"), "std/jpeg.xo:2085:14")
 			_ = v_u6
-			var v_v6 int64 = SubS(v_t6, MulKI(int64(3218), v_x5, -2866181490632310, 2866181490632310, "std/jpeg.xo:2083:19"), "std/jpeg.xo:2083:14")
+			var v_v6 int64 = SubS(v_t6, MulKI(int64(3218), v_x5, -2866181490632310, 2866181490632310, "std/jpeg.xo:2086:19"), "std/jpeg.xo:2086:14")
 			_ = v_v6
 			v_x5 = v_u6
 			v_x6 = v_v6
-			v_s = AddS(v_x0, v_x7, "std/jpeg.xo:2086:9")
-			v_x7 = SubS(v_x0, v_x7, "std/jpeg.xo:2087:10")
+			v_s = AddS(v_x0, v_x7, "std/jpeg.xo:2089:9")
+			v_x7 = SubS(v_x0, v_x7, "std/jpeg.xo:2090:10")
 			v_x0 = v_s
-			v_s = AddS(v_x1, v_x6, "std/jpeg.xo:2089:9")
-			v_x6 = SubS(v_x1, v_x6, "std/jpeg.xo:2090:10")
+			v_s = AddS(v_x1, v_x6, "std/jpeg.xo:2092:9")
+			v_x6 = SubS(v_x1, v_x6, "std/jpeg.xo:2093:10")
 			v_x1 = v_s
-			v_s = AddS(v_x2, v_x5, "std/jpeg.xo:2092:9")
-			v_x5 = SubS(v_x2, v_x5, "std/jpeg.xo:2093:10")
+			v_s = AddS(v_x2, v_x5, "std/jpeg.xo:2095:9")
+			v_x5 = SubS(v_x2, v_x5, "std/jpeg.xo:2096:10")
 			v_x2 = v_s
-			v_s = AddS(v_x3, v_x4, "std/jpeg.xo:2095:9")
-			v_x4 = SubS(v_x3, v_x4, "std/jpeg.xo:2096:10")
+			v_s = AddS(v_x3, v_x4, "std/jpeg.xo:2098:9")
+			v_x4 = SubS(v_x3, v_x4, "std/jpeg.xo:2099:10")
 			v_x3 = v_s
-			x_ix710 := (int64(0) + v_i)
+			x_ix712 := (int64(0) + v_i)
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix710, (((AddIUp(v_x0, int64(2147483648), "std/jpeg.xo:2098:19") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2098:5")
-			x_ix711 := (int64(8) + v_i)
+			List_PutM((*v_b), x_ix712, (((AddIUp(v_x0, int64(2147483648), "std/jpeg.xo:2101:19") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2101:5")
+			x_ix713 := (int64(8) + v_i)
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix711, (((AddIUp(v_x1, int64(2147483648), "std/jpeg.xo:2099:19") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2099:5")
-			x_ix712 := (int64(16) + v_i)
+			List_PutM((*v_b), x_ix713, (((AddIUp(v_x1, int64(2147483648), "std/jpeg.xo:2102:19") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2102:5")
+			x_ix714 := (int64(16) + v_i)
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix712, (((AddIUp(v_x2, int64(2147483648), "std/jpeg.xo:2100:20") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2100:5")
-			x_ix713 := (int64(24) + v_i)
+			List_PutM((*v_b), x_ix714, (((AddIUp(v_x2, int64(2147483648), "std/jpeg.xo:2103:20") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2103:5")
+			x_ix715 := (int64(24) + v_i)
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix713, (((AddIUp(v_x3, int64(2147483648), "std/jpeg.xo:2101:20") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2101:5")
-			x_ix714 := (int64(32) + v_i)
+			List_PutM((*v_b), x_ix715, (((AddIUp(v_x3, int64(2147483648), "std/jpeg.xo:2104:20") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2104:5")
+			x_ix716 := (int64(32) + v_i)
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix714, (((AddIUp(v_x4, int64(2147483648), "std/jpeg.xo:2102:20") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2102:5")
-			x_ix715 := (int64(40) + v_i)
+			List_PutM((*v_b), x_ix716, (((AddIUp(v_x4, int64(2147483648), "std/jpeg.xo:2105:20") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2105:5")
+			x_ix717 := (int64(40) + v_i)
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix715, (((AddIUp(v_x5, int64(2147483648), "std/jpeg.xo:2103:20") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2103:5")
-			x_ix716 := (int64(48) + v_i)
+			List_PutM((*v_b), x_ix717, (((AddIUp(v_x5, int64(2147483648), "std/jpeg.xo:2106:20") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2106:5")
+			x_ix718 := (int64(48) + v_i)
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix716, (((AddIUp(v_x6, int64(2147483648), "std/jpeg.xo:2104:20") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2104:5")
-			x_ix717 := (int64(56) + v_i)
+			List_PutM((*v_b), x_ix718, (((AddIUp(v_x6, int64(2147483648), "std/jpeg.xo:2107:20") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2107:5")
+			x_ix719 := (int64(56) + v_i)
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix717, (((AddIUp(v_x7, int64(2147483648), "std/jpeg.xo:2105:20") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2105:5")
+			List_PutM((*v_b), x_ix719, (((AddIUp(v_x7, int64(2147483648), "std/jpeg.xo:2108:20") & int64(4294967295)) - int64(2147483648)) >> int64(18)), "std/jpeg.xo:2108:5")
 		}
 	}
 	return
@@ -4011,23 +4025,23 @@ func (v Jpeg_Enc) XoDebug(b *strings.Builder) {
 func (v Jpeg_Enc) M_debug(*Task) string { return Debug(v) }
 
 func Jpeg_enc_emit(tk *Task, v_e *Jpeg_Enc, v_bits int64, v_nb int64) {
-	(*v_e).F_acc = (Shl((*v_e).F_acc, v_nb, "std/jpeg.xo:2973:12") | v_bits)
-	(*v_e).F_n = AddS((*v_e).F_n, v_nb, "std/jpeg.xo:2974:3")
+	(*v_e).F_acc = (Shl((*v_e).F_acc, v_nb, "std/jpeg.xo:2976:12") | v_bits)
+	(*v_e).F_n = AddS((*v_e).F_n, v_nb, "std/jpeg.xo:2977:3")
 	for {
 		if !((*v_e).F_n >= int64(8)) {
 			break
 		}
 		{
-			var v_b int64 = (Shr((*v_e).F_acc, SubIDown((*v_e).F_n, int64(8), "std/jpeg.xo:2976:24"), "std/jpeg.xo:2976:14") & int64(255))
+			var v_b int64 = (Shr((*v_e).F_acc, SubIDown((*v_e).F_n, int64(8), "std/jpeg.xo:2979:24"), "std/jpeg.xo:2979:14") & int64(255))
 			_ = v_b
-			(*v_e).F_out.M_write_byte(tk, ConvS_uint8(v_b, "std/jpeg.xo:2977:22"))
+			(*v_e).F_out.M_write_byte(tk, ConvS_uint8(v_b, "std/jpeg.xo:2980:22"))
 			if v_b == int64(255) {
-				(*v_e).F_out.M_write_byte(tk, ConvS_uint8(int64(0), "std/jpeg.xo:2979:24"))
+				(*v_e).F_out.M_write_byte(tk, ConvS_uint8(int64(0), "std/jpeg.xo:2982:24"))
 			}
-			(*v_e).F_n = SubS((*v_e).F_n, int64(8), "std/jpeg.xo:2981:5")
+			(*v_e).F_n = SubS((*v_e).F_n, int64(8), "std/jpeg.xo:2984:5")
 		}
 	}
-	(*v_e).F_acc = ((*v_e).F_acc & SubIDown(Shl(int64(1), (*v_e).F_n, "std/jpeg.xo:2983:21"), int64(1), "std/jpeg.xo:2983:20"))
+	(*v_e).F_acc = ((*v_e).F_acc & SubIDown(Shl(int64(1), (*v_e).F_n, "std/jpeg.xo:2986:21"), int64(1), "std/jpeg.xo:2986:20"))
 	return
 }
 
@@ -4038,39 +4052,39 @@ func Jpeg_enc_lut(tk *Task, v_count List[int64], v_value List[int64]) List[int64
 	_ = v_code
 	var v_k int64 = int64(0)
 	_ = v_k
-	x_it719 := Range[int64]{Lo: int64(0), Hi: int64(16), Incl: false}
-	for x_i721 := x_it719.Lo; x_i721 < x_it719.Hi; x_i721++ {
-		x_el722 := x_i721
-		_ = x_el722
-		var v_i int64 = x_el722
+	x_it721 := Range[int64]{Lo: int64(0), Hi: int64(16), Incl: false}
+	for x_i723 := x_it721.Lo; x_i723 < x_it721.Hi; x_i723++ {
+		x_el724 := x_i723
+		_ = x_el724
+		var v_i int64 = x_el724
 		_ = v_i
 		{
-			var v_nbits int64 = Shl((v_i + int64(1)), int64(24), "std/jpeg.xo:2993:17")
+			var v_nbits int64 = Shl((v_i + int64(1)), int64(24), "std/jpeg.xo:2996:17")
 			_ = v_nbits
-			x_it723 := Range[int64]{Lo: int64(0), Hi: List_At(v_count, v_i, "std/jpeg.xo:2994:18"), Incl: false}
-			for x_i725 := x_it723.Lo; x_i725 < x_it723.Hi; x_i725++ {
-				x_el726 := x_i725
-				_ = x_el726
-				var v__j int64 = x_el726
+			x_it725 := Range[int64]{Lo: int64(0), Hi: List_At(v_count, v_i, "std/jpeg.xo:2997:18"), Incl: false}
+			for x_i727 := x_it725.Lo; x_i727 < x_it725.Hi; x_i727++ {
+				x_el728 := x_i727
+				_ = x_el728
+				var v__j int64 = x_el728
 				_ = v__j
 				{
-					x_ix727 := List_At(v_value, v_k, "std/jpeg.xo:2995:11")
+					x_ix729 := List_At(v_value, v_k, "std/jpeg.xo:2998:11")
 					if !List_Mine(v_lut) {
 						v_lut = List_Unshared(v_lut)
 					}
-					List_PutM(v_lut, x_ix727, (v_nbits | v_code), "std/jpeg.xo:2995:7")
-					v_code = AddIUp(v_code, int64(1), "std/jpeg.xo:2996:7")
-					v_k = AddIUp(v_k, int64(1), "std/jpeg.xo:2997:7")
+					List_PutM(v_lut, x_ix729, (v_nbits | v_code), "std/jpeg.xo:2998:7")
+					v_code = AddIUp(v_code, int64(1), "std/jpeg.xo:2999:7")
+					v_k = AddIUp(v_k, int64(1), "std/jpeg.xo:3000:7")
 				}
 			}
-			v_code = Shl(v_code, int64(1), "std/jpeg.xo:2999:12")
+			v_code = Shl(v_code, int64(1), "std/jpeg.xo:3002:12")
 		}
 	}
 	return List_Own(v_lut)
 }
 
 func Jpeg_enc_huff(tk *Task, v_e *Jpeg_Enc, v_lut List[int64], v_value int64) {
-	var v_x int64 = List_At(v_lut, v_value, "std/jpeg.xo:3005:11")
+	var v_x int64 = List_At(v_lut, v_value, "std/jpeg.xo:3008:11")
 	_ = v_x
 	Jpeg_enc_emit(tk, &(*v_e), (v_x & int64(16777215)), (v_x >> int64(24)))
 	return
@@ -4082,22 +4096,22 @@ func Jpeg_enc_huff_rle(tk *Task, v_e *Jpeg_Enc, v_lut List[int64], v_run int64, 
 	var v_b int64 = v_value
 	_ = v_b
 	if v_a < int64(0) {
-		v_a = NegS(v_value, "std/jpeg.xo:3013:9")
-		v_b = SubIDown(v_value, int64(1), "std/jpeg.xo:3014:9")
+		v_a = NegS(v_value, "std/jpeg.xo:3016:9")
+		v_b = SubIDown(v_value, int64(1), "std/jpeg.xo:3017:9")
 	}
 	var v_nbits int64 = int64(0)
 	_ = v_nbits
 	if v_a < int64(256) {
-		v_nbits = List_At(Jpeg_ENC_BITCOUNT, v_a, "std/jpeg.xo:3018:13")
+		v_nbits = List_At(Jpeg_ENC_BITCOUNT, v_a, "std/jpeg.xo:3021:13")
 	} else {
-		v_nbits = AddS(int64(8), List_At(Jpeg_ENC_BITCOUNT, (v_a>>int64(8)), "std/jpeg.xo:3020:17"), "std/jpeg.xo:3020:13")
+		v_nbits = AddS(int64(8), List_At(Jpeg_ENC_BITCOUNT, (v_a>>int64(8)), "std/jpeg.xo:3023:17"), "std/jpeg.xo:3023:13")
 	}
-	var v_x int64 = List_At(v_lut, (Shl(v_run, int64(4), "std/jpeg.xo:3022:16") | v_nbits), "std/jpeg.xo:3022:11")
+	var v_x int64 = List_At(v_lut, (Shl(v_run, int64(4), "std/jpeg.xo:3025:16") | v_nbits), "std/jpeg.xo:3025:11")
 	_ = v_x
 	var v_cs int64 = (v_x >> int64(24))
 	_ = v_cs
 	if v_nbits > int64(0) {
-		Jpeg_enc_emit(tk, &(*v_e), (Shl((v_x&int64(16777215)), v_nbits, "std/jpeg.xo:3025:18") | (v_b & SubIDown(Shl(int64(1), v_nbits, "std/jpeg.xo:3025:52"), int64(1), "std/jpeg.xo:3025:51"))), AddS(v_cs, v_nbits, "std/jpeg.xo:3025:71"))
+		Jpeg_enc_emit(tk, &(*v_e), (Shl((v_x&int64(16777215)), v_nbits, "std/jpeg.xo:3028:18") | (v_b & SubIDown(Shl(int64(1), v_nbits, "std/jpeg.xo:3028:52"), int64(1), "std/jpeg.xo:3028:51"))), AddS(v_cs, v_nbits, "std/jpeg.xo:3028:71"))
 		return
 	} else {
 		Jpeg_enc_emit(tk, &(*v_e), (v_x & int64(16777215)), v_cs)
@@ -4107,271 +4121,271 @@ func Jpeg_enc_huff_rle(tk *Task, v_e *Jpeg_Enc, v_lut List[int64], v_run int64, 
 
 func Jpeg_enc_div(tk *Task, v_a int64, v_d int64, v_m int64) int64 {
 	if v_a >= int64(0) {
-		return (MulS(AddS(v_a, (v_d>>int64(1)), "std/jpeg.xo:3036:14"), v_m, "std/jpeg.xo:3036:13") >> int64(31))
+		return (MulS(AddS(v_a, (v_d>>int64(1)), "std/jpeg.xo:3039:14"), v_m, "std/jpeg.xo:3039:13") >> int64(31))
 	}
-	return NegS((MulS(SubS((v_d>>int64(1)), v_a, "std/jpeg.xo:3038:6"), v_m, "std/jpeg.xo:3038:5") >> int64(31)), "std/jpeg.xo:3038:3")
+	return NegS((MulS(SubS((v_d>>int64(1)), v_a, "std/jpeg.xo:3041:6"), v_m, "std/jpeg.xo:3041:5") >> int64(31)), "std/jpeg.xo:3041:3")
 }
 
 func Jpeg_enc_divs(tk *Task, v_quant List[int64]) List[int64] {
 	var v_out List[int64] = List_Own(Jpeg_zlist(tk, int64(192)))
 	_ = v_out
-	x_it728 := Range[int64]{Lo: int64(0), Hi: int64(64), Incl: false}
-	for x_i730 := x_it728.Lo; x_i730 < x_it728.Hi; x_i730++ {
-		x_el731 := x_i730
-		_ = x_el731
-		var v_j int64 = x_el731
+	x_it730 := Range[int64]{Lo: int64(0), Hi: int64(64), Incl: false}
+	for x_i732 := x_it730.Lo; x_i732 < x_it730.Hi; x_i732++ {
+		x_el733 := x_i732
+		_ = x_el733
+		var v_j int64 = x_el733
 		_ = v_j
 		{
-			var v_d int64 = MulKI(int64(8), List_At(v_quant, v_j, "std/jpeg.xo:3045:17"), -1152921504606846976, 1152921504606846975, "std/jpeg.xo:3045:13")
+			var v_d int64 = MulKI(int64(8), List_At(v_quant, v_j, "std/jpeg.xo:3048:17"), -1152921504606846976, 1152921504606846975, "std/jpeg.xo:3048:13")
 			_ = v_d
-			x_ix732 := v_j
+			x_ix734 := v_j
 			if !List_Mine(v_out) {
 				v_out = List_Unshared(v_out)
 			}
-			List_PutM(v_out, x_ix732, v_d, "std/jpeg.xo:3046:5")
-			x_ix733 := (int64(64) + v_j)
+			List_PutM(v_out, x_ix734, v_d, "std/jpeg.xo:3049:5")
+			x_ix735 := (int64(64) + v_j)
 			if !List_Mine(v_out) {
 				v_out = List_Unshared(v_out)
 			}
-			List_PutM(v_out, x_ix733, DivS((AddS(int64(2147483648), v_d, "std/jpeg.xo:3047:20")-int64(1)), v_d, "std/jpeg.xo:3047:19"), "std/jpeg.xo:3047:5")
-			x_ix734 := (int64(128) + v_j)
+			List_PutM(v_out, x_ix735, DivS((AddS(int64(2147483648), v_d, "std/jpeg.xo:3050:20")-int64(1)), v_d, "std/jpeg.xo:3050:19"), "std/jpeg.xo:3050:5")
+			x_ix736 := (int64(128) + v_j)
 			if !List_Mine(v_out) {
 				v_out = List_Unshared(v_out)
 			}
-			List_PutM(v_out, x_ix734, SubS(v_d, (v_d>>int64(1)), "std/jpeg.xo:3048:20"), "std/jpeg.xo:3048:5")
+			List_PutM(v_out, x_ix736, SubS(v_d, (v_d>>int64(1)), "std/jpeg.xo:3051:20"), "std/jpeg.xo:3051:5")
 		}
 	}
 	return List_Own(v_out)
 }
 
 func Jpeg_fdct(tk *Task, v_b *List[int64], v_off int64) {
-	x_it735 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
-	for x_i737 := x_it735.Lo; x_i737 < x_it735.Hi; x_i737++ {
-		x_el738 := x_i737
-		_ = x_el738
-		var v_i int64 = x_el738
+	x_it737 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
+	for x_i739 := x_it737.Lo; x_i739 < x_it737.Hi; x_i739++ {
+		x_el740 := x_i739
+		_ = x_el740
+		var v_i int64 = x_el740
 		_ = v_i
 		{
-			var v_x0 int64 = List_At((*v_b), AddS(v_off, v_i, "std/jpeg.xo:3056:16"), "std/jpeg.xo:3056:14")
+			var v_x0 int64 = List_At((*v_b), AddS(v_off, v_i, "std/jpeg.xo:3059:16"), "std/jpeg.xo:3059:14")
 			_ = v_x0
-			var v_x1 int64 = List_At((*v_b), AddS(AddIUp(v_off, int64(8), "std/jpeg.xo:3057:16"), v_i, "std/jpeg.xo:3057:16"), "std/jpeg.xo:3057:14")
+			var v_x1 int64 = List_At((*v_b), AddS(AddIUp(v_off, int64(8), "std/jpeg.xo:3060:16"), v_i, "std/jpeg.xo:3060:16"), "std/jpeg.xo:3060:14")
 			_ = v_x1
-			var v_x2 int64 = List_At((*v_b), AddS(AddIUp(v_off, int64(16), "std/jpeg.xo:3058:16"), v_i, "std/jpeg.xo:3058:16"), "std/jpeg.xo:3058:14")
+			var v_x2 int64 = List_At((*v_b), AddS(AddIUp(v_off, int64(16), "std/jpeg.xo:3061:16"), v_i, "std/jpeg.xo:3061:16"), "std/jpeg.xo:3061:14")
 			_ = v_x2
-			var v_x3 int64 = List_At((*v_b), AddS(AddIUp(v_off, int64(24), "std/jpeg.xo:3059:16"), v_i, "std/jpeg.xo:3059:16"), "std/jpeg.xo:3059:14")
+			var v_x3 int64 = List_At((*v_b), AddS(AddIUp(v_off, int64(24), "std/jpeg.xo:3062:16"), v_i, "std/jpeg.xo:3062:16"), "std/jpeg.xo:3062:14")
 			_ = v_x3
-			var v_x4 int64 = List_At((*v_b), AddS(AddIUp(v_off, int64(32), "std/jpeg.xo:3060:16"), v_i, "std/jpeg.xo:3060:16"), "std/jpeg.xo:3060:14")
+			var v_x4 int64 = List_At((*v_b), AddS(AddIUp(v_off, int64(32), "std/jpeg.xo:3063:16"), v_i, "std/jpeg.xo:3063:16"), "std/jpeg.xo:3063:14")
 			_ = v_x4
-			var v_x5 int64 = List_At((*v_b), AddS(AddIUp(v_off, int64(40), "std/jpeg.xo:3061:16"), v_i, "std/jpeg.xo:3061:16"), "std/jpeg.xo:3061:14")
+			var v_x5 int64 = List_At((*v_b), AddS(AddIUp(v_off, int64(40), "std/jpeg.xo:3064:16"), v_i, "std/jpeg.xo:3064:16"), "std/jpeg.xo:3064:14")
 			_ = v_x5
-			var v_x6 int64 = List_At((*v_b), AddS(AddIUp(v_off, int64(48), "std/jpeg.xo:3062:16"), v_i, "std/jpeg.xo:3062:16"), "std/jpeg.xo:3062:14")
+			var v_x6 int64 = List_At((*v_b), AddS(AddIUp(v_off, int64(48), "std/jpeg.xo:3065:16"), v_i, "std/jpeg.xo:3065:16"), "std/jpeg.xo:3065:14")
 			_ = v_x6
-			var v_x7 int64 = List_At((*v_b), AddS(AddIUp(v_off, int64(56), "std/jpeg.xo:3063:16"), v_i, "std/jpeg.xo:3063:16"), "std/jpeg.xo:3063:14")
+			var v_x7 int64 = List_At((*v_b), AddS(AddIUp(v_off, int64(56), "std/jpeg.xo:3066:16"), v_i, "std/jpeg.xo:3066:16"), "std/jpeg.xo:3066:14")
 			_ = v_x7
-			var v_t int64 = AddS(v_x0, v_x7, "std/jpeg.xo:3064:13")
+			var v_t int64 = AddS(v_x0, v_x7, "std/jpeg.xo:3067:13")
 			_ = v_t
-			v_x7 = SubS(v_x0, v_x7, "std/jpeg.xo:3065:10")
+			v_x7 = SubS(v_x0, v_x7, "std/jpeg.xo:3068:10")
 			v_x0 = v_t
-			v_t = AddS(v_x1, v_x6, "std/jpeg.xo:3067:9")
-			v_x6 = SubS(v_x1, v_x6, "std/jpeg.xo:3068:10")
+			v_t = AddS(v_x1, v_x6, "std/jpeg.xo:3070:9")
+			v_x6 = SubS(v_x1, v_x6, "std/jpeg.xo:3071:10")
 			v_x1 = v_t
-			v_t = AddS(v_x2, v_x5, "std/jpeg.xo:3070:9")
-			v_x5 = SubS(v_x2, v_x5, "std/jpeg.xo:3071:10")
+			v_t = AddS(v_x2, v_x5, "std/jpeg.xo:3073:9")
+			v_x5 = SubS(v_x2, v_x5, "std/jpeg.xo:3074:10")
 			v_x2 = v_t
-			v_t = AddS(v_x3, v_x4, "std/jpeg.xo:3073:9")
-			v_x4 = SubS(v_x3, v_x4, "std/jpeg.xo:3074:10")
+			v_t = AddS(v_x3, v_x4, "std/jpeg.xo:3076:9")
+			v_x4 = SubS(v_x3, v_x4, "std/jpeg.xo:3077:10")
 			v_x3 = v_t
-			var v_ks int64 = MulKI(Jpeg_FD_COS3_18, AddS(v_x4, v_x7, "std/jpeg.xo:3076:28"), -42315839868120, 42315839868120, "std/jpeg.xo:3076:14")
+			var v_ks int64 = MulKI(Jpeg_FD_COS3_18, AddS(v_x4, v_x7, "std/jpeg.xo:3079:28"), -42315839868120, 42315839868120, "std/jpeg.xo:3079:14")
 			_ = v_ks
-			v_t = AddS(v_ks, MulKI((Jpeg_FD_SIN3_18-Jpeg_FD_COS3_18), v_x7, -127524984609335, 127524984609335, "std/jpeg.xo:3077:14"), "std/jpeg.xo:3077:9")
-			v_x7 = SubS(v_ks, MulKI((Jpeg_FD_COS3_18+Jpeg_FD_SIN3_18), v_x4, -25366530722584, 25366530722584, "std/jpeg.xo:3078:15"), "std/jpeg.xo:3078:10")
+			v_t = AddS(v_ks, MulKI((Jpeg_FD_SIN3_18-Jpeg_FD_COS3_18), v_x7, -127524984609335, 127524984609335, "std/jpeg.xo:3080:14"), "std/jpeg.xo:3080:9")
+			v_x7 = SubS(v_ks, MulKI((Jpeg_FD_COS3_18+Jpeg_FD_SIN3_18), v_x4, -25366530722584, 25366530722584, "std/jpeg.xo:3081:15"), "std/jpeg.xo:3081:10")
 			v_x4 = v_t
-			v_ks = MulKI(Jpeg_FD_COS1_18, AddS(v_x5, v_x6, "std/jpeg.xo:3080:24"), -35873671416393, 35873671416393, "std/jpeg.xo:3080:10")
-			v_t = AddS(v_ks, MulKI((Jpeg_FD_SIN1_18-Jpeg_FD_COS1_18), v_x6, -44781259130700, 44781259130700, "std/jpeg.xo:3081:14"), "std/jpeg.xo:3081:9")
-			v_x6 = SubS(v_ks, MulKI((Jpeg_FD_COS1_18+Jpeg_FD_SIN1_18), v_x5, -29921823061404, 29921823061404, "std/jpeg.xo:3082:15"), "std/jpeg.xo:3082:10")
+			v_ks = MulKI(Jpeg_FD_COS1_18, AddS(v_x5, v_x6, "std/jpeg.xo:3083:24"), -35873671416393, 35873671416393, "std/jpeg.xo:3083:10")
+			v_t = AddS(v_ks, MulKI((Jpeg_FD_SIN1_18-Jpeg_FD_COS1_18), v_x6, -44781259130700, 44781259130700, "std/jpeg.xo:3084:14"), "std/jpeg.xo:3084:9")
+			v_x6 = SubS(v_ks, MulKI((Jpeg_FD_COS1_18+Jpeg_FD_SIN1_18), v_x5, -29921823061404, 29921823061404, "std/jpeg.xo:3085:15"), "std/jpeg.xo:3085:10")
 			v_x5 = v_t
-			v_t = AddS(v_x0, v_x3, "std/jpeg.xo:3084:9")
-			v_x3 = SubS(v_x0, v_x3, "std/jpeg.xo:3085:10")
+			v_t = AddS(v_x0, v_x3, "std/jpeg.xo:3087:9")
+			v_x3 = SubS(v_x0, v_x3, "std/jpeg.xo:3088:10")
 			v_x0 = v_t
-			v_t = AddS(v_x1, v_x2, "std/jpeg.xo:3087:9")
-			v_x2 = SubS(v_x1, v_x2, "std/jpeg.xo:3088:10")
+			v_t = AddS(v_x1, v_x2, "std/jpeg.xo:3090:9")
+			v_x2 = SubS(v_x1, v_x2, "std/jpeg.xo:3091:10")
 			v_x1 = v_t
-			v_ks = MulKI(Jpeg_FD_S2C6_18, AddS(v_x2, v_x3, "std/jpeg.xo:3090:24"), -65012384749912, 65012384749912, "std/jpeg.xo:3090:10")
-			v_t = AddS(v_ks, MulKI((Jpeg_FD_S2S6_18-Jpeg_FD_S2C6_18), v_x3, -45970444319117, 45970444319117, "std/jpeg.xo:3091:14"), "std/jpeg.xo:3091:9")
-			v_x3 = SubS(v_ks, MulKI((Jpeg_FD_S2C6_18+Jpeg_FD_S2S6_18), v_x2, -19041643087034, 19041643087034, "std/jpeg.xo:3092:15"), "std/jpeg.xo:3092:10")
+			v_ks = MulKI(Jpeg_FD_S2C6_18, AddS(v_x2, v_x3, "std/jpeg.xo:3093:24"), -65012384749912, 65012384749912, "std/jpeg.xo:3093:10")
+			v_t = AddS(v_ks, MulKI((Jpeg_FD_S2S6_18-Jpeg_FD_S2C6_18), v_x3, -45970444319117, 45970444319117, "std/jpeg.xo:3094:14"), "std/jpeg.xo:3094:9")
+			v_x3 = SubS(v_ks, MulKI((Jpeg_FD_S2C6_18+Jpeg_FD_S2S6_18), v_x2, -19041643087034, 19041643087034, "std/jpeg.xo:3095:15"), "std/jpeg.xo:3095:10")
 			v_x2 = v_t
-			v_t = AddS(v_x0, v_x1, "std/jpeg.xo:3094:9")
-			v_x1 = SubS(v_x0, v_x1, "std/jpeg.xo:3095:10")
+			v_t = AddS(v_x0, v_x1, "std/jpeg.xo:3097:9")
+			v_x1 = SubS(v_x0, v_x1, "std/jpeg.xo:3098:10")
 			v_x0 = v_t
-			x_ix739 := AddS(v_off, v_i, "std/jpeg.xo:3097:7")
+			x_ix741 := AddS(v_off, v_i, "std/jpeg.xo:3100:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix739, Shl(SubIDown(v_x0, int64(1024), "std/jpeg.xo:3097:19"), int64(18), "std/jpeg.xo:3097:18"), "std/jpeg.xo:3097:5")
-			x_ix740 := AddS(AddIUp(v_off, int64(32), "std/jpeg.xo:3098:7"), v_i, "std/jpeg.xo:3098:7")
+			List_PutM((*v_b), x_ix741, Shl(SubIDown(v_x0, int64(1024), "std/jpeg.xo:3100:19"), int64(18), "std/jpeg.xo:3100:18"), "std/jpeg.xo:3100:5")
+			x_ix742 := AddS(AddIUp(v_off, int64(32), "std/jpeg.xo:3101:7"), v_i, "std/jpeg.xo:3101:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix740, Shl(v_x1, int64(18), "std/jpeg.xo:3098:23"), "std/jpeg.xo:3098:5")
-			x_ix741 := AddS(AddIUp(v_off, int64(16), "std/jpeg.xo:3099:7"), v_i, "std/jpeg.xo:3099:7")
+			List_PutM((*v_b), x_ix742, Shl(v_x1, int64(18), "std/jpeg.xo:3101:23"), "std/jpeg.xo:3101:5")
+			x_ix743 := AddS(AddIUp(v_off, int64(16), "std/jpeg.xo:3102:7"), v_i, "std/jpeg.xo:3102:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix741, v_x2, "std/jpeg.xo:3099:5")
-			x_ix742 := AddS(AddIUp(v_off, int64(48), "std/jpeg.xo:3100:7"), v_i, "std/jpeg.xo:3100:7")
+			List_PutM((*v_b), x_ix743, v_x2, "std/jpeg.xo:3102:5")
+			x_ix744 := AddS(AddIUp(v_off, int64(48), "std/jpeg.xo:3103:7"), v_i, "std/jpeg.xo:3103:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix742, v_x3, "std/jpeg.xo:3100:5")
-			v_t = AddS(v_x4, v_x6, "std/jpeg.xo:3101:9")
-			v_x6 = SubS(v_x4, v_x6, "std/jpeg.xo:3102:10")
+			List_PutM((*v_b), x_ix744, v_x3, "std/jpeg.xo:3103:5")
+			v_t = AddS(v_x4, v_x6, "std/jpeg.xo:3104:9")
+			v_x6 = SubS(v_x4, v_x6, "std/jpeg.xo:3105:10")
 			v_x4 = v_t
-			v_t = AddS(v_x7, v_x5, "std/jpeg.xo:3104:9")
-			v_x5 = SubS(v_x7, v_x5, "std/jpeg.xo:3105:10")
+			v_t = AddS(v_x7, v_x5, "std/jpeg.xo:3107:9")
+			v_x5 = SubS(v_x7, v_x5, "std/jpeg.xo:3108:10")
 			v_x7 = v_t
-			v_x5 = MulIK((v_x5 >> int64(12)), Jpeg_FD_SQRT2_12, -1592158128233173, 1592158128233173, "std/jpeg.xo:3107:10")
-			v_x6 = MulIK((v_x6 >> int64(12)), Jpeg_FD_SQRT2_12, -1592158128233173, 1592158128233173, "std/jpeg.xo:3108:10")
-			v_t = AddS(v_x7, v_x4, "std/jpeg.xo:3109:9")
-			v_x4 = SubS(v_x7, v_x4, "std/jpeg.xo:3110:10")
+			v_x5 = MulIK((v_x5 >> int64(12)), Jpeg_FD_SQRT2_12, -1592158128233173, 1592158128233173, "std/jpeg.xo:3110:10")
+			v_x6 = MulIK((v_x6 >> int64(12)), Jpeg_FD_SQRT2_12, -1592158128233173, 1592158128233173, "std/jpeg.xo:3111:10")
+			v_t = AddS(v_x7, v_x4, "std/jpeg.xo:3112:9")
+			v_x4 = SubS(v_x7, v_x4, "std/jpeg.xo:3113:10")
 			v_x7 = v_t
-			x_ix743 := AddS(AddIUp(v_off, int64(8), "std/jpeg.xo:3112:7"), v_i, "std/jpeg.xo:3112:7")
+			x_ix745 := AddS(AddIUp(v_off, int64(8), "std/jpeg.xo:3115:7"), v_i, "std/jpeg.xo:3115:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix743, v_x7, "std/jpeg.xo:3112:5")
-			x_ix744 := AddS(AddIUp(v_off, int64(24), "std/jpeg.xo:3113:7"), v_i, "std/jpeg.xo:3113:7")
+			List_PutM((*v_b), x_ix745, v_x7, "std/jpeg.xo:3115:5")
+			x_ix746 := AddS(AddIUp(v_off, int64(24), "std/jpeg.xo:3116:7"), v_i, "std/jpeg.xo:3116:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix744, v_x5, "std/jpeg.xo:3113:5")
-			x_ix745 := AddS(AddIUp(v_off, int64(40), "std/jpeg.xo:3114:7"), v_i, "std/jpeg.xo:3114:7")
+			List_PutM((*v_b), x_ix746, v_x5, "std/jpeg.xo:3116:5")
+			x_ix747 := AddS(AddIUp(v_off, int64(40), "std/jpeg.xo:3117:7"), v_i, "std/jpeg.xo:3117:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix745, v_x6, "std/jpeg.xo:3114:5")
-			x_ix746 := AddS(AddIUp(v_off, int64(56), "std/jpeg.xo:3115:7"), v_i, "std/jpeg.xo:3115:7")
+			List_PutM((*v_b), x_ix747, v_x6, "std/jpeg.xo:3117:5")
+			x_ix748 := AddS(AddIUp(v_off, int64(56), "std/jpeg.xo:3118:7"), v_i, "std/jpeg.xo:3118:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix746, v_x4, "std/jpeg.xo:3115:5")
+			List_PutM((*v_b), x_ix748, v_x4, "std/jpeg.xo:3118:5")
 		}
 	}
-	x_it747 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
-	for x_i749 := x_it747.Lo; x_i749 < x_it747.Hi; x_i749++ {
-		x_el750 := x_i749
-		_ = x_el750
-		var v_i_1 int64 = x_el750
+	x_it749 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
+	for x_i751 := x_it749.Lo; x_i751 < x_it749.Hi; x_i751++ {
+		x_el752 := x_i751
+		_ = x_el752
+		var v_i_1 int64 = x_el752
 		_ = v_i_1
 		{
-			var v_r int64 = AddS(v_off, (int64(8) * v_i_1), "std/jpeg.xo:3118:13")
+			var v_r int64 = AddS(v_off, (int64(8) * v_i_1), "std/jpeg.xo:3121:13")
 			_ = v_r
-			var v_x0_1 int64 = List_At((*v_b), v_r, "std/jpeg.xo:3119:14")
+			var v_x0_1 int64 = List_At((*v_b), v_r, "std/jpeg.xo:3122:14")
 			_ = v_x0_1
-			var v_x1_1 int64 = List_At((*v_b), AddIUp(v_r, int64(1), "std/jpeg.xo:3120:16"), "std/jpeg.xo:3120:14")
+			var v_x1_1 int64 = List_At((*v_b), AddIUp(v_r, int64(1), "std/jpeg.xo:3123:16"), "std/jpeg.xo:3123:14")
 			_ = v_x1_1
-			var v_x2_1 int64 = List_At((*v_b), AddIUp(v_r, int64(2), "std/jpeg.xo:3121:16"), "std/jpeg.xo:3121:14")
+			var v_x2_1 int64 = List_At((*v_b), AddIUp(v_r, int64(2), "std/jpeg.xo:3124:16"), "std/jpeg.xo:3124:14")
 			_ = v_x2_1
-			var v_x3_1 int64 = List_At((*v_b), AddIUp(v_r, int64(3), "std/jpeg.xo:3122:16"), "std/jpeg.xo:3122:14")
+			var v_x3_1 int64 = List_At((*v_b), AddIUp(v_r, int64(3), "std/jpeg.xo:3125:16"), "std/jpeg.xo:3125:14")
 			_ = v_x3_1
-			var v_x4_1 int64 = List_At((*v_b), AddIUp(v_r, int64(4), "std/jpeg.xo:3123:16"), "std/jpeg.xo:3123:14")
+			var v_x4_1 int64 = List_At((*v_b), AddIUp(v_r, int64(4), "std/jpeg.xo:3126:16"), "std/jpeg.xo:3126:14")
 			_ = v_x4_1
-			var v_x5_1 int64 = List_At((*v_b), AddIUp(v_r, int64(5), "std/jpeg.xo:3124:16"), "std/jpeg.xo:3124:14")
+			var v_x5_1 int64 = List_At((*v_b), AddIUp(v_r, int64(5), "std/jpeg.xo:3127:16"), "std/jpeg.xo:3127:14")
 			_ = v_x5_1
-			var v_x6_1 int64 = List_At((*v_b), AddIUp(v_r, int64(6), "std/jpeg.xo:3125:16"), "std/jpeg.xo:3125:14")
+			var v_x6_1 int64 = List_At((*v_b), AddIUp(v_r, int64(6), "std/jpeg.xo:3128:16"), "std/jpeg.xo:3128:14")
 			_ = v_x6_1
-			var v_x7_1 int64 = List_At((*v_b), AddIUp(v_r, int64(7), "std/jpeg.xo:3126:16"), "std/jpeg.xo:3126:14")
+			var v_x7_1 int64 = List_At((*v_b), AddIUp(v_r, int64(7), "std/jpeg.xo:3129:16"), "std/jpeg.xo:3129:14")
 			_ = v_x7_1
-			var v_t_1 int64 = AddS(v_x0_1, v_x7_1, "std/jpeg.xo:3127:13")
+			var v_t_1 int64 = AddS(v_x0_1, v_x7_1, "std/jpeg.xo:3130:13")
 			_ = v_t_1
-			v_x7_1 = SubS(v_x0_1, v_x7_1, "std/jpeg.xo:3128:10")
+			v_x7_1 = SubS(v_x0_1, v_x7_1, "std/jpeg.xo:3131:10")
 			v_x0_1 = v_t_1
-			v_t_1 = AddS(v_x1_1, v_x6_1, "std/jpeg.xo:3130:9")
-			v_x6_1 = SubS(v_x1_1, v_x6_1, "std/jpeg.xo:3131:10")
+			v_t_1 = AddS(v_x1_1, v_x6_1, "std/jpeg.xo:3133:9")
+			v_x6_1 = SubS(v_x1_1, v_x6_1, "std/jpeg.xo:3134:10")
 			v_x1_1 = v_t_1
-			v_t_1 = AddS(v_x2_1, v_x5_1, "std/jpeg.xo:3133:9")
-			v_x5_1 = SubS(v_x2_1, v_x5_1, "std/jpeg.xo:3134:10")
+			v_t_1 = AddS(v_x2_1, v_x5_1, "std/jpeg.xo:3136:9")
+			v_x5_1 = SubS(v_x2_1, v_x5_1, "std/jpeg.xo:3137:10")
 			v_x2_1 = v_t_1
-			v_t_1 = AddS(v_x3_1, v_x4_1, "std/jpeg.xo:3136:9")
-			v_x4_1 = SubS(v_x3_1, v_x4_1, "std/jpeg.xo:3137:10")
+			v_t_1 = AddS(v_x3_1, v_x4_1, "std/jpeg.xo:3139:9")
+			v_x4_1 = SubS(v_x3_1, v_x4_1, "std/jpeg.xo:3140:10")
 			v_x3_1 = v_t_1
 			var v_a int64 = (v_x4_1 >> int64(14))
 			_ = v_a
 			var v_c int64 = (v_x7_1 >> int64(14))
 			_ = v_c
-			var v_ks_1 int64 = MulKI(Jpeg_FD_COS3_14, AddS(v_a, v_c, "std/jpeg.xo:3141:28"), -677044119272904, 677044119272904, "std/jpeg.xo:3141:14")
+			var v_ks_1 int64 = MulKI(Jpeg_FD_COS3_14, AddS(v_a, v_c, "std/jpeg.xo:3144:28"), -677044119272904, 677044119272904, "std/jpeg.xo:3144:14")
 			_ = v_ks_1
-			v_x4_1 = AddS(v_ks_1, MulKI((Jpeg_FD_SIN3_14-Jpeg_FD_COS3_14), v_c, -2040117681233084, 2040117681233084, "std/jpeg.xo:3142:15"), "std/jpeg.xo:3142:10")
-			v_x7_1 = SubS(v_ks_1, MulKI((Jpeg_FD_COS3_14+Jpeg_FD_SIN3_14), v_a, -405868956517261, 405868956517261, "std/jpeg.xo:3143:15"), "std/jpeg.xo:3143:10")
+			v_x4_1 = AddS(v_ks_1, MulKI((Jpeg_FD_SIN3_14-Jpeg_FD_COS3_14), v_c, -2040117681233084, 2040117681233084, "std/jpeg.xo:3145:15"), "std/jpeg.xo:3145:10")
+			v_x7_1 = SubS(v_ks_1, MulKI((Jpeg_FD_COS3_14+Jpeg_FD_SIN3_14), v_a, -405868956517261, 405868956517261, "std/jpeg.xo:3146:15"), "std/jpeg.xo:3146:10")
 			v_a = (v_x5_1 >> int64(14))
 			v_c = (v_x6_1 >> int64(14))
-			v_ks_1 = MulKI(Jpeg_FD_COS1_14, AddS(v_a, v_c, "std/jpeg.xo:3146:24"), -573985440093022, 573985440093022, "std/jpeg.xo:3146:10")
-			v_x5_1 = AddS(v_ks_1, MulKI((Jpeg_FD_SIN1_14-Jpeg_FD_COS1_14), v_c, -716489710001924, 716489710001924, "std/jpeg.xo:3147:15"), "std/jpeg.xo:3147:10")
-			v_x6_1 = SubS(v_ks_1, MulKI((Jpeg_FD_COS1_14+Jpeg_FD_SIN1_14), v_a, -478763147513873, 478763147513873, "std/jpeg.xo:3148:15"), "std/jpeg.xo:3148:10")
-			v_t_1 = AddS(v_x0_1, v_x3_1, "std/jpeg.xo:3149:9")
-			v_x3_1 = SubS(v_x0_1, v_x3_1, "std/jpeg.xo:3150:10")
+			v_ks_1 = MulKI(Jpeg_FD_COS1_14, AddS(v_a, v_c, "std/jpeg.xo:3149:24"), -573985440093022, 573985440093022, "std/jpeg.xo:3149:10")
+			v_x5_1 = AddS(v_ks_1, MulKI((Jpeg_FD_SIN1_14-Jpeg_FD_COS1_14), v_c, -716489710001924, 716489710001924, "std/jpeg.xo:3150:15"), "std/jpeg.xo:3150:10")
+			v_x6_1 = SubS(v_ks_1, MulKI((Jpeg_FD_COS1_14+Jpeg_FD_SIN1_14), v_a, -478763147513873, 478763147513873, "std/jpeg.xo:3151:15"), "std/jpeg.xo:3151:10")
+			v_t_1 = AddS(v_x0_1, v_x3_1, "std/jpeg.xo:3152:9")
+			v_x3_1 = SubS(v_x0_1, v_x3_1, "std/jpeg.xo:3153:10")
 			v_x0_1 = v_t_1
-			v_t_1 = AddS(v_x1_1, v_x2_1, "std/jpeg.xo:3152:9")
-			v_x2_1 = SubS(v_x1_1, v_x2_1, "std/jpeg.xo:3153:10")
+			v_t_1 = AddS(v_x1_1, v_x2_1, "std/jpeg.xo:3155:9")
+			v_x2_1 = SubS(v_x1_1, v_x2_1, "std/jpeg.xo:3156:10")
 			v_x1_1 = v_t_1
 			v_a = (v_x2_1 >> int64(14))
 			v_c = (v_x3_1 >> int64(14))
-			v_ks_1 = MulKI(Jpeg_FD_S2C6_14, AddS(v_a, v_c, "std/jpeg.xo:3157:24"), -1040190824050386, 1040190824050386, "std/jpeg.xo:3157:10")
-			v_x2_1 = AddS(v_ks_1, MulKI((Jpeg_FD_S2S6_14-Jpeg_FD_S2C6_14), v_c, -735516111391927, 735516111391927, "std/jpeg.xo:3158:15"), "std/jpeg.xo:3158:10")
-			v_x3_1 = SubS(v_ks_1, MulKI((Jpeg_FD_S2C6_14+Jpeg_FD_S2S6_14), v_a, -304663144508646, 304663144508646, "std/jpeg.xo:3159:15"), "std/jpeg.xo:3159:10")
-			v_t_1 = AddS(v_x0_1, v_x1_1, "std/jpeg.xo:3160:9")
-			v_x1_1 = SubS(v_x0_1, v_x1_1, "std/jpeg.xo:3161:10")
+			v_ks_1 = MulKI(Jpeg_FD_S2C6_14, AddS(v_a, v_c, "std/jpeg.xo:3160:24"), -1040190824050386, 1040190824050386, "std/jpeg.xo:3160:10")
+			v_x2_1 = AddS(v_ks_1, MulKI((Jpeg_FD_S2S6_14-Jpeg_FD_S2C6_14), v_c, -735516111391927, 735516111391927, "std/jpeg.xo:3161:15"), "std/jpeg.xo:3161:10")
+			v_x3_1 = SubS(v_ks_1, MulKI((Jpeg_FD_S2C6_14+Jpeg_FD_S2S6_14), v_a, -304663144508646, 304663144508646, "std/jpeg.xo:3162:15"), "std/jpeg.xo:3162:10")
+			v_t_1 = AddS(v_x0_1, v_x1_1, "std/jpeg.xo:3163:9")
+			v_x1_1 = SubS(v_x0_1, v_x1_1, "std/jpeg.xo:3164:10")
 			v_x0_1 = v_t_1
-			v_t_1 = AddS(v_x4_1, v_x6_1, "std/jpeg.xo:3163:9")
-			v_x6_1 = SubS(v_x4_1, v_x6_1, "std/jpeg.xo:3164:10")
+			v_t_1 = AddS(v_x4_1, v_x6_1, "std/jpeg.xo:3166:9")
+			v_x6_1 = SubS(v_x4_1, v_x6_1, "std/jpeg.xo:3167:10")
 			v_x4_1 = v_t_1
-			v_t_1 = AddS(v_x7_1, v_x5_1, "std/jpeg.xo:3166:9")
-			v_x5_1 = SubS(v_x7_1, v_x5_1, "std/jpeg.xo:3167:10")
+			v_t_1 = AddS(v_x7_1, v_x5_1, "std/jpeg.xo:3169:9")
+			v_x5_1 = SubS(v_x7_1, v_x5_1, "std/jpeg.xo:3170:10")
 			v_x7_1 = v_t_1
-			v_x5_1 = MulIK((v_x5_1 >> int64(14)), Jpeg_FD_SQRT2_14, -398073890239740, 398073890239740, "std/jpeg.xo:3169:10")
-			v_x6_1 = MulIK((v_x6_1 >> int64(14)), Jpeg_FD_SQRT2_14, -398073890239740, 398073890239740, "std/jpeg.xo:3170:10")
-			v_t_1 = AddS(v_x7_1, v_x4_1, "std/jpeg.xo:3171:9")
-			v_x4_1 = SubS(v_x7_1, v_x4_1, "std/jpeg.xo:3172:10")
+			v_x5_1 = MulIK((v_x5_1 >> int64(14)), Jpeg_FD_SQRT2_14, -398073890239740, 398073890239740, "std/jpeg.xo:3172:10")
+			v_x6_1 = MulIK((v_x6_1 >> int64(14)), Jpeg_FD_SQRT2_14, -398073890239740, 398073890239740, "std/jpeg.xo:3173:10")
+			v_t_1 = AddS(v_x7_1, v_x4_1, "std/jpeg.xo:3174:9")
+			v_x4_1 = SubS(v_x7_1, v_x4_1, "std/jpeg.xo:3175:10")
 			v_x7_1 = v_t_1
-			x_ix751 := v_r
+			x_ix753 := v_r
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix751, (AddIUp(v_x0_1, int64(131072), "std/jpeg.xo:3174:13") >> int64(18)), "std/jpeg.xo:3174:5")
-			x_ix752 := AddIUp(v_r, int64(1), "std/jpeg.xo:3175:7")
+			List_PutM((*v_b), x_ix753, (AddIUp(v_x0_1, int64(131072), "std/jpeg.xo:3177:13") >> int64(18)), "std/jpeg.xo:3177:5")
+			x_ix754 := AddIUp(v_r, int64(1), "std/jpeg.xo:3178:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix752, (AddIUp(v_x7_1, int64(131072), "std/jpeg.xo:3175:17") >> int64(18)), "std/jpeg.xo:3175:5")
-			x_ix753 := AddIUp(v_r, int64(2), "std/jpeg.xo:3176:7")
+			List_PutM((*v_b), x_ix754, (AddIUp(v_x7_1, int64(131072), "std/jpeg.xo:3178:17") >> int64(18)), "std/jpeg.xo:3178:5")
+			x_ix755 := AddIUp(v_r, int64(2), "std/jpeg.xo:3179:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix753, (AddIUp(v_x2_1, int64(131072), "std/jpeg.xo:3176:17") >> int64(18)), "std/jpeg.xo:3176:5")
-			x_ix754 := AddIUp(v_r, int64(3), "std/jpeg.xo:3177:7")
+			List_PutM((*v_b), x_ix755, (AddIUp(v_x2_1, int64(131072), "std/jpeg.xo:3179:17") >> int64(18)), "std/jpeg.xo:3179:5")
+			x_ix756 := AddIUp(v_r, int64(3), "std/jpeg.xo:3180:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix754, (AddIUp(v_x5_1, int64(131072), "std/jpeg.xo:3177:17") >> int64(18)), "std/jpeg.xo:3177:5")
-			x_ix755 := AddIUp(v_r, int64(4), "std/jpeg.xo:3178:7")
+			List_PutM((*v_b), x_ix756, (AddIUp(v_x5_1, int64(131072), "std/jpeg.xo:3180:17") >> int64(18)), "std/jpeg.xo:3180:5")
+			x_ix757 := AddIUp(v_r, int64(4), "std/jpeg.xo:3181:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix755, (AddIUp(v_x1_1, int64(131072), "std/jpeg.xo:3178:17") >> int64(18)), "std/jpeg.xo:3178:5")
-			x_ix756 := AddIUp(v_r, int64(5), "std/jpeg.xo:3179:7")
+			List_PutM((*v_b), x_ix757, (AddIUp(v_x1_1, int64(131072), "std/jpeg.xo:3181:17") >> int64(18)), "std/jpeg.xo:3181:5")
+			x_ix758 := AddIUp(v_r, int64(5), "std/jpeg.xo:3182:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix756, (AddIUp(v_x6_1, int64(131072), "std/jpeg.xo:3179:17") >> int64(18)), "std/jpeg.xo:3179:5")
-			x_ix757 := AddIUp(v_r, int64(6), "std/jpeg.xo:3180:7")
+			List_PutM((*v_b), x_ix758, (AddIUp(v_x6_1, int64(131072), "std/jpeg.xo:3182:17") >> int64(18)), "std/jpeg.xo:3182:5")
+			x_ix759 := AddIUp(v_r, int64(6), "std/jpeg.xo:3183:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix757, (AddIUp(v_x3_1, int64(131072), "std/jpeg.xo:3180:17") >> int64(18)), "std/jpeg.xo:3180:5")
-			x_ix758 := AddIUp(v_r, int64(7), "std/jpeg.xo:3181:7")
+			List_PutM((*v_b), x_ix759, (AddIUp(v_x3_1, int64(131072), "std/jpeg.xo:3183:17") >> int64(18)), "std/jpeg.xo:3183:5")
+			x_ix760 := AddIUp(v_r, int64(7), "std/jpeg.xo:3184:7")
 			if !List_Mine((*v_b)) {
 				(*v_b) = List_Unshared((*v_b))
 			}
-			List_PutM((*v_b), x_ix758, (AddIUp(v_x4_1, int64(131072), "std/jpeg.xo:3181:17") >> int64(18)), "std/jpeg.xo:3181:5")
+			List_PutM((*v_b), x_ix760, (AddIUp(v_x4_1, int64(131072), "std/jpeg.xo:3184:17") >> int64(18)), "std/jpeg.xo:3184:5")
 		}
 	}
 	return
@@ -4379,26 +4393,26 @@ func Jpeg_fdct(tk *Task, v_b *List[int64], v_off int64) {
 
 func Jpeg_enc_block(tk *Task, v_e *Jpeg_Enc, v_b *List[int64], v_off int64, v_dv List[int64], v_dc_lut List[int64], v_ac_lut List[int64], v_prev_dc int64) int64 {
 	Jpeg_fdct(tk, &(*v_b), v_off)
-	var v_dc int64 = Jpeg_enc_div(tk, List_At((*v_b), v_off, "std/jpeg.xo:3189:20"), List_At(v_dv, int64(0), "std/jpeg.xo:3189:28"), List_At(v_dv, int64(64), "std/jpeg.xo:3189:35"))
+	var v_dc int64 = Jpeg_enc_div(tk, List_At((*v_b), v_off, "std/jpeg.xo:3192:20"), List_At(v_dv, int64(0), "std/jpeg.xo:3192:28"), List_At(v_dv, int64(64), "std/jpeg.xo:3192:35"))
 	_ = v_dc
-	Jpeg_enc_huff_rle(tk, &(*v_e), List_Own(v_dc_lut), int64(0), SubS(v_dc, v_prev_dc, "std/jpeg.xo:3190:30"))
+	Jpeg_enc_huff_rle(tk, &(*v_e), List_Own(v_dc_lut), int64(0), SubS(v_dc, v_prev_dc, "std/jpeg.xo:3193:30"))
 	var v_run int64 = int64(0)
 	_ = v_run
-	x_it759 := Range[int64]{Lo: int64(1), Hi: int64(64), Incl: false}
-	for x_i761 := x_it759.Lo; x_i761 < x_it759.Hi; x_i761++ {
-		x_el762 := x_i761
-		_ = x_el762
-		var v_zig int64 = x_el762
+	x_it761 := Range[int64]{Lo: int64(1), Hi: int64(64), Incl: false}
+	for x_i763 := x_it761.Lo; x_i763 < x_it761.Hi; x_i763++ {
+		x_el764 := x_i763
+		_ = x_el764
+		var v_zig int64 = x_el764
 		_ = v_zig
 		{
-			var v_a int64 = List_At((*v_b), AddS(v_off, List_At(Jpeg_UNZIG, v_zig, "std/jpeg.xo:3193:21"), "std/jpeg.xo:3193:15"), "std/jpeg.xo:3193:13")
+			var v_a int64 = List_At((*v_b), AddS(v_off, List_At(Jpeg_UNZIG, v_zig, "std/jpeg.xo:3196:21"), "std/jpeg.xo:3196:15"), "std/jpeg.xo:3196:13")
 			_ = v_a
-			var v_th int64 = List_At(v_dv, (int64(128) + v_zig), "std/jpeg.xo:3194:14")
+			var v_th int64 = List_At(v_dv, (int64(128) + v_zig), "std/jpeg.xo:3197:14")
 			_ = v_th
 			if (v_a < v_th) && (v_a > (-v_th)) {
-				v_run = AddIUp(v_run, int64(1), "std/jpeg.xo:3196:7")
+				v_run = AddIUp(v_run, int64(1), "std/jpeg.xo:3199:7")
 			} else {
-				var v_ac int64 = Jpeg_enc_div(tk, v_a, List_At(v_dv, v_zig, "std/jpeg.xo:3198:27"), List_At(v_dv, (int64(64)+v_zig), "std/jpeg.xo:3198:36"))
+				var v_ac int64 = Jpeg_enc_div(tk, v_a, List_At(v_dv, v_zig, "std/jpeg.xo:3201:27"), List_At(v_dv, (int64(64)+v_zig), "std/jpeg.xo:3201:36"))
 				_ = v_ac
 				for {
 					if !(v_run > int64(15)) {
@@ -4421,9 +4435,9 @@ func Jpeg_enc_block(tk *Task, v_e *Jpeg_Enc, v_b *List[int64], v_off int64, v_dv
 }
 
 func Jpeg_rgb_ycc(tk *Task, v_r int64, v_g int64, v_b int64) Tuple3[int64, int64, int64] {
-	var v_yy int64 = (AddIUp(AddS(AddS(MulKI(int64(19595), v_r, -470700282564673, 470700282564673, "std/jpeg.xo:3215:13"), MulKI(int64(38470), v_g, -239754926874311, 239754926874311, "std/jpeg.xo:3215:25"), "std/jpeg.xo:3215:13"), MulKI(int64(7471), v_b, -1234556556934115, 1234556556934115, "std/jpeg.xo:3215:37"), "std/jpeg.xo:3215:13"), int64(32768), "std/jpeg.xo:3215:13") >> int64(16))
+	var v_yy int64 = (AddIUp(AddS(AddS(MulKI(int64(19595), v_r, -470700282564673, 470700282564673, "std/jpeg.xo:3218:13"), MulKI(int64(38470), v_g, -239754926874311, 239754926874311, "std/jpeg.xo:3218:25"), "std/jpeg.xo:3218:13"), MulKI(int64(7471), v_b, -1234556556934115, 1234556556934115, "std/jpeg.xo:3218:37"), "std/jpeg.xo:3218:13"), int64(32768), "std/jpeg.xo:3218:13") >> int64(16))
 	_ = v_yy
-	var v_cb int64 = AddIUp(AddS(SubS(MulKI(int64(-11056), v_r, -834241320265446, 834241320265446, "std/jpeg.xo:3216:12"), MulKI(int64(21712), v_g, -424805270673119, 424805270673119, "std/jpeg.xo:3216:25"), "std/jpeg.xo:3216:12"), MulKI(int64(32768), v_b, -281474976710656, 281474976710655, "std/jpeg.xo:3216:37"), "std/jpeg.xo:3216:12"), int64(8421376), "std/jpeg.xo:3216:12")
+	var v_cb int64 = AddIUp(AddS(SubS(MulKI(int64(-11056), v_r, -834241320265446, 834241320265446, "std/jpeg.xo:3219:12"), MulKI(int64(21712), v_g, -424805270673119, 424805270673119, "std/jpeg.xo:3219:25"), "std/jpeg.xo:3219:12"), MulKI(int64(32768), v_b, -281474976710656, 281474976710655, "std/jpeg.xo:3219:37"), "std/jpeg.xo:3219:12"), int64(8421376), "std/jpeg.xo:3219:12")
 	_ = v_cb
 	if v_cb < int64(0) {
 		v_cb = int64(0)
@@ -4433,7 +4447,7 @@ func Jpeg_rgb_ycc(tk *Task, v_r int64, v_g int64, v_b int64) Tuple3[int64, int64
 			v_cb = int64(255)
 		}
 	}
-	var v_cr int64 = AddIUp(SubS(SubS(MulKI(int64(32768), v_r, -281474976710656, 281474976710655, "std/jpeg.xo:3225:12"), MulKI(int64(27440), v_g, -336128718544270, 336128718544270, "std/jpeg.xo:3225:24"), "std/jpeg.xo:3225:12"), MulKI(int64(5328), v_b, -1731113370280551, 1731113370280551, "std/jpeg.xo:3225:36"), "std/jpeg.xo:3225:12"), int64(8421376), "std/jpeg.xo:3225:12")
+	var v_cr int64 = AddIUp(SubS(SubS(MulKI(int64(32768), v_r, -281474976710656, 281474976710655, "std/jpeg.xo:3228:12"), MulKI(int64(27440), v_g, -336128718544270, 336128718544270, "std/jpeg.xo:3228:24"), "std/jpeg.xo:3228:12"), MulKI(int64(5328), v_b, -1731113370280551, 1731113370280551, "std/jpeg.xo:3228:36"), "std/jpeg.xo:3228:12"), int64(8421376), "std/jpeg.xo:3228:12")
 	_ = v_cr
 	if v_cr < int64(0) {
 		v_cr = int64(0)
@@ -4455,38 +4469,38 @@ func Jpeg_min2(tk *Task, v_a int64, v_b int64) int64 {
 }
 
 func Jpeg_enc_scale(tk *Task, v_dst *List[int64], v_src List[int64]) {
-	x_it764 := Range[int64]{Lo: int64(0), Hi: int64(4), Incl: false}
-	for x_i766 := x_it764.Lo; x_i766 < x_it764.Hi; x_i766++ {
-		x_el767 := x_i766
-		_ = x_el767
-		var v_i int64 = x_el767
+	x_it766 := Range[int64]{Lo: int64(0), Hi: int64(4), Incl: false}
+	for x_i768 := x_it766.Lo; x_i768 < x_it766.Hi; x_i768++ {
+		x_el769 := x_i768
+		_ = x_el769
+		var v_i int64 = x_el769
 		_ = v_i
 		{
-			var v_dst_off int64 = (Shl((v_i&int64(2)), int64(4), "std/jpeg.xo:3243:20") | Shl((v_i&int64(1)), int64(2), "std/jpeg.xo:3243:37"))
+			var v_dst_off int64 = (Shl((v_i&int64(2)), int64(4), "std/jpeg.xo:3246:20") | Shl((v_i&int64(1)), int64(2), "std/jpeg.xo:3246:37"))
 			_ = v_dst_off
-			x_it768 := Range[int64]{Lo: int64(0), Hi: int64(4), Incl: false}
-			for x_i770 := x_it768.Lo; x_i770 < x_it768.Hi; x_i770++ {
-				x_el771 := x_i770
-				_ = x_el771
-				var v_y int64 = x_el771
+			x_it770 := Range[int64]{Lo: int64(0), Hi: int64(4), Incl: false}
+			for x_i772 := x_it770.Lo; x_i772 < x_it770.Hi; x_i772++ {
+				x_el773 := x_i772
+				_ = x_el773
+				var v_y int64 = x_el773
 				_ = v_y
 				{
-					x_it772 := Range[int64]{Lo: int64(0), Hi: int64(4), Incl: false}
-					for x_i774 := x_it772.Lo; x_i774 < x_it772.Hi; x_i774++ {
-						x_el775 := x_i774
-						_ = x_el775
-						var v_x int64 = x_el775
+					x_it774 := Range[int64]{Lo: int64(0), Hi: int64(4), Incl: false}
+					for x_i776 := x_it774.Lo; x_i776 < x_it774.Hi; x_i776++ {
+						x_el777 := x_i776
+						_ = x_el777
+						var v_x int64 = x_el777
 						_ = v_x
 						{
 							var v_j int64 = ((int64(16) * v_y) + (int64(2) * v_x))
 							_ = v_j
-							var v_s int64 = AddS(AddS(AddS(List_At(v_src, ((v_i*int64(64))+v_j), "std/jpeg.xo:3247:17"), List_At(v_src, (((v_i*int64(64))+v_j)+int64(1)), "std/jpeg.xo:3247:35"), "std/jpeg.xo:3247:17"), List_At(v_src, (((v_i*int64(64))+v_j)+int64(8)), "std/jpeg.xo:3247:57"), "std/jpeg.xo:3247:17"), List_At(v_src, (((v_i*int64(64))+v_j)+int64(9)), "std/jpeg.xo:3247:79"), "std/jpeg.xo:3247:17")
+							var v_s int64 = AddS(AddS(AddS(List_At(v_src, ((v_i*int64(64))+v_j), "std/jpeg.xo:3250:17"), List_At(v_src, (((v_i*int64(64))+v_j)+int64(1)), "std/jpeg.xo:3250:35"), "std/jpeg.xo:3250:17"), List_At(v_src, (((v_i*int64(64))+v_j)+int64(8)), "std/jpeg.xo:3250:57"), "std/jpeg.xo:3250:17"), List_At(v_src, (((v_i*int64(64))+v_j)+int64(9)), "std/jpeg.xo:3250:79"), "std/jpeg.xo:3250:17")
 							_ = v_s
-							x_ix776 := AddS(((int64(8) * v_y) + v_x), v_dst_off, "std/jpeg.xo:3248:13")
+							x_ix778 := AddS(((int64(8) * v_y) + v_x), v_dst_off, "std/jpeg.xo:3251:13")
 							if !List_Mine((*v_dst)) {
 								(*v_dst) = List_Unshared((*v_dst))
 							}
-							List_PutM((*v_dst), x_ix776, (AddIUp(v_s, int64(2), "std/jpeg.xo:3248:37") >> int64(2)), "std/jpeg.xo:3248:9")
+							List_PutM((*v_dst), x_ix778, (AddIUp(v_s, int64(2), "std/jpeg.xo:3251:37") >> int64(2)), "std/jpeg.xo:3251:9")
 						}
 					}
 				}

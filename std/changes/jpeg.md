@@ -1,5 +1,16 @@
 # std/jpeg changes
 
+## 2026-11-14: fix: a frame of width or height 0 decodes to an image of 0 by 0
+
+- Kind: fix
+- Commit: this push
+- Found by: the decision 0616 std/jpeg fuzz (TestJpegFuzz seed 9 case 772, a 150 by 0 frame, on linux/arm64 host 2)
+- Go reference: image/jpeg makes its image with SubImage(image.Rect(0, 0, width, height)), and image's SubImage of an empty rectangle returns an image with the zero Rectangle
+- Before: decode returned an Image of 150 by 0 (its planes empty), where Go's image is 0 by 0
+- Fix: decode's image is 0 by 0 when the frame's width or height is 0, for every model; decode_config still reports the frame's own size, as Go's DecodeConfig does
+- Test: std/jpeg_test.xo "a frame of height 0 decodes to an empty image ..." (the fuzz case's bytes); TestJpegFuzz seed 9
+- Shipped in: not yet released
+
 ## 2026-11-14: perf: a baseline block whose scan wrote no AC term skips the inverse DCT
 
 - Kind: perf
