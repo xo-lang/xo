@@ -452,3 +452,14 @@ non-blocking read alike). Postgres is unchanged: a server may send notices and n
 `each`'s row function, `copy_from`'s row source, and `open` and `open_driver`'s `on_notice` and `on_trace` take
 `uses sync` function types, as decision 0662 has std callbacks that share state on purpose say so. A pure
 function still passes; a closure that counts rows in an Atomic or collects notices in a Mutex now does too.
+
+## 2026-11-15: fix: MySQL refuses bytes after a text row's last value again
+
+- Kind: fix
+- Commit: this commit
+- Found by: reading go-sql-driver master while reporting TestMysqlFuzz's findings upstream (the lead: follow master, the safer behavior and their next release)
+- Go reference: go-sql-driver/mysql master 96884ae (#1816, 2026-10-06; in no release yet): textRows.readRow returns ErrMalformPkt when bytes follow the last value
+- Test: native/llrt/mysqlwire's "column definitions and text rows" and native/llrt/mysql's "text values convert as go-sql-driver's" on arm64 and llvm; TestMysqlFuzz (its reference, v1.10.1, takes such rows; Xo's refusal there is counted as a changed case Xo refuses)
+
+The 2026-11-15 parity change made Xo ignore them as v1.10.1 does; they are a malformed row again, a `Conn`
+error that drops the connection.

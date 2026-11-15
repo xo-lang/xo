@@ -4048,7 +4048,8 @@ ParseInt (BIGINT UNSIGNED by ParseUint, `Text` of its digits above
 `Int.max`), FLOAT as a float32, DOUBLE as a double, and with
 `parseTime` dates by parseDateTime; a value that does not convert is
 the statement's `Driver` error (strconv's text), read after the rest of
-its rows. Arguments take
+its rows; bytes after a row's last value are a malformed packet
+(go-sql-driver master since 96884ae; v1.10.1 ignored them). Arguments take
 go-sql-driver's types (`Integer` a BIGINT, `Real` a
 DOUBLE, `Flag` a TINYINT, `Text`, `JsonText`, `Blob` and `At` strings);
 a count of arguments that is not the statement's placeholders is

@@ -22,3 +22,12 @@ Symptoms and causes:
   statement.
 - A 1 to 3 byte packet starting 0xfe where a text row is due panics
   go-sql-driver (readStatus(data[3:]) in textRows.readRow).
+
+Upstream (2026-11-15): the column definition panic is open as
+go-sql-driver/mysql#1854 (with readStatus and the other unchecked
+offsets); the silent truncation reproduces on v1.10.1 only, as master
+(f32af30) returns ErrMalformPkt from readColumnBytes. Master also refuses
+bytes after a row's last value (96884ae), which Xo follows; v1.10.1, the
+harness's reference, takes them, so the fuzz test counts Xo's refusal.
+The repository has no AI or LLM contribution policy; SECURITY.md treats a
+malformed server's packets as bugs, not vulnerabilities.

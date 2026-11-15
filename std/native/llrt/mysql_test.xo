@@ -87,8 +87,9 @@ test "text values convert as go-sql-driver's" {
   expect(text_value(col(12, 63, 0), Some(b"2024-02-29T23:59:59"), true)) == Err("bad value for field: `T`")
   expect(text_value(col(12, 63, 0), Some(b"2024-02-29 23:59"), true)) == Err("invalid time bytes: 2024-02-29 23:59")
   expect(text_value(col(12, 63, 0), Some(b"0000-00-00 00:00:00.000"), true)) == Ok(sql.SqlValue.Text(s: "0000-00-00 00:00:00.000"))
-  // a row's bytes after its last value are not read
-  expect(w.parse_text_row(b"\x01a\x99", 1)) == Ok([Some(b"a")])
+  // a row's bytes after its last value are refused, as go-sql-driver
+  // master's readRow (96884ae, #1816)
+  expect(w.parse_text_row(b"\x01a\x99", 1).is_err()) == true
 }
 
 test "literals and interpolation" {
