@@ -2281,7 +2281,22 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   `XO_GATE_IR_PARALLEL` overrides; niced, `XO_GATE_IR_NICE`, default 10,
   so the tests beside it keep the CPU first), logs the job count and the xo
   processes' resident peak (`llvm IR manifest:` lines), and is kept by
-  commit for a re-gate.
+  commit for a re-gate. `XO_GATE_IR_FIRST=1` (lead, 2026-11-15) runs it
+  first and not niced: in a concurrent gate with llvm, the other steps
+  and the llvm package tests wait for the selection (times.tsv
+  `(ir-first wait)`); offload-gate.sh passes it as
+  `OFFGATE_GATE_ENV="XO_GATE_IR_FIRST=1"` (XO_GATE_* names only).
+  For a std only change HEAD's IR is built only for the goldens the change
+  can reach (gate.sh ir_scope, lead 2026-11-15; `XO_GATE_IR_SCOPE=0`
+  builds every one): scripts/golden-std-deps.py takes the closure of a
+  golden's std imports over std's `use` lines plus the std files its base
+  IR's debug information names (TestGoldenIRManifest `XO_LLVM_IR_DEPS`,
+  the `.deps` file beside a manifest, which irman.sh shares too), and
+  builds those with `XO_LLVM_IR_ONLY`; the others keep the base's lines.
+  Every golden for a compiler, std/rt, std non-.xo, runtime (llrt) or
+  prelude-closure change, a golden importing a module outside std, or a
+  base manifest without a deps file. Tests: scripts/golden-std-deps_test.sh.
+  Last verified: 2026-11-15.
   The llvm step runs the package's tests that do not read the selection
   (all but TestGolden, TestGoldenSplit, TestGoldenGoParity,
   TestDebugInfoSameOutputLLVM, TestGoldenTasks, TestGoldenASan) while the

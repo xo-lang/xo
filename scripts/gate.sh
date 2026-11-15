@@ -582,9 +582,10 @@ ir_manifest_for() {
   local sh="${XO_LLVM_IR_SHARED:-}/llvm-ir-$(uname -s | tr A-Z a-z)-$(uname -m)-$1-$mcode.txt"
   [ -n "${XO_LLVM_IR_SHARED:-}" ] && [ -s "$sh" ] && irm=$sh
 }
-# ir_head_manifest OUT JOBS: the IR manifest of this tree's goldens, built
-# by its bin/xo with JOBS at once, into OUT; logs the time and the xo
-# processes' resident peak
+# ir_head_manifest OUT JOBS [DEPS]: the IR manifest of this tree's goldens,
+# built by its bin/xo with JOBS at once, into OUT (and each golden's std
+# files into DEPS, for ir_scope); logs the time and the xo processes'
+# resident peak. XO_LLVM_IR_ONLY=a,b builds only those goldens.
 ir_head_manifest() {
   local irw t_ir rc
   echo "llvm IR manifest: -parallel $2 ($(ir_jobs_why))" >&2
@@ -594,7 +595,7 @@ ir_head_manifest() {
   # niced (XO_GATE_IR_NICE, default 10): the tests that run beside it
   # keep the CPU first (lead, 2026-11-15: TestOneThreadSpawnJoin's steal
   # bound failed at steal=48 while twelve IR builds ran beside llvmpre)
-  XO_LLVM_IR_MANIFEST=$1 nice -n "${XO_GATE_IR_NICE:-10}" go test -count=1 -timeout 60m -parallel "$2" -run '^TestGoldenIRManifest$' ./internal/llvm >"$logs/llvm-ir-head.txt" 2>&1
+  XO_LLVM_IR_MANIFEST=$1 XO_LLVM_IR_DEPS=${3:-} nice -n "${XO_GATE_IR_NICE:-10}" go test -count=1 -timeout 60m -parallel "$2" -run '^TestGoldenIRManifest$' ./internal/llvm >"$logs/llvm-ir-head.txt" 2>&1
   rc=$?
   kill "$irw" 2>/dev/null; wait "$irw" 2>/dev/null
   [ "$rc" = 0 ] && echo "llvm IR manifest: $(($(date +%s) - t_ir)) s, xo processes' resident peak $(sort -n "$logs/llvm-ir-mem.txt" 2>/dev/null | tail -1) MB" >&2
@@ -662,10 +663,11 @@ llvm_goldens() {
     if git worktree add -q --detach "$pw/tree" "$base" >"$logs/llvm-ir-base.txt" 2>&1 &&
       cp internal/llvm/golden_select_test.go "$pw/tree/internal/llvm/" &&
       (cd "$pw/tree" && go run ./scripts/xobuild) >>"$logs/llvm-ir-base.txt" 2>&1 &&
-      (cd "$pw/tree" && XO_CLI=$pw/tree/bin/xo XO_LLVM_IR_MANIFEST="$bm.tmp$$" nice -n "${XO_GATE_IR_NICE:-10}" go test -count=1 -timeout 60m -parallel "${XO_GATE_IR_PARALLEL:-$(ir_jobs)}" -run '^TestGoldenIRManifest$' ./internal/llvm) >>"$logs/llvm-ir-base.txt" 2>&1; then
+      (cd "$pw/tree" && XO_CLI=$pw/tree/bin/xo XO_LLVM_IR_MANIFEST="$bm.tmp$$" XO_LLVM_IR_DEPS="${bm%.txt}.deps.tmp$$" nice -n "${XO_GATE_IR_NICE:-10}" go test -count=1 -timeout 60m -parallel "${XO_GATE_IR_PARALLEL:-$(ir_jobs)}" -run '^TestGoldenIRManifest$' ./internal/llvm) >>"$logs/llvm-ir-base.txt" 2>&1; then
+      mv "${bm%.txt}.deps.tmp$$" "${bm%.txt}.deps" 2>/dev/null
       mv "$bm.tmp$$" "$bm"
     fi
-    rm -f "$bm.tmp$$"
+    rm -f "$bm.tmp$$" "${bm%.txt}.deps.tmp$$"
     git worktree remove --force "$pw/tree" >/dev/null 2>&1
     rm -rf "${pw:?}"
   fi
@@ -685,8 +687,36 @@ llvm_goldens() {
   hm=""
   [ -z "$(git status --porcelain --untracked-files=no)" ] && hm="$cache/$(git rev-parse HEAD)-$mcode.txt"
   irp=${XO_GATE_IR_PARALLEL:-$(ir_jobs)}
+  # ir_scope (lead, 2026-11-15, gate-time plan (b)): for a std only
+  # change, HEAD's IR is built only for the goldens that can reach it
+  # (scripts/golden-std-deps.py: their imports' closure and the std files
+  # their base IR names), and the others keep the base's lines; every
+  # golden for a compiler, std/rt, prelude or runtime change, or with no
+  # deps file beside the base's manifest. XO_GATE_IR_SCOPE=0 builds every
+  # golden.
+  scope=all
+  bd="${bm%.txt}.deps"
+  if [ "${XO_GATE_IR_SCOPE:-1}" != 0 ] && [ -s "$bm" ] && [ -s "$bd" ] && { [ -z "$hm" ] || [ ! -s "$hm" ]; }; then
+    scope=$(echo "$files" | python3 scripts/golden-std-deps.py "$PWD" "$bd" 2>>"$logs/llvm-ir-head.txt") || scope=all
+    [ -n "$scope" ] || scope=all
+  fi
   if [ -n "$hm" ] && [ -s "$hm" ]; then
     cp "$hm" "$nm"; echo "HEAD's manifest from $hm" >"$logs/llvm-ir-head.txt"
+  elif [ "$scope" = none ]; then
+    cp "$bm" "$nm"; ib="$ib (no golden's imports reach the change: HEAD's IR not built)"
+    echo "llvm IR manifest: scoped: no golden reaches the change" >&2
+  elif [ "$scope" != all ] && [ -s "$bm" ]; then
+    echo "llvm IR manifest: scoped to $(echo "$scope" | tr ',' '\n' | grep -c .) goldens the change can reach" >&2
+    if XO_LLVM_IR_ONLY=$scope ir_head_manifest "$nm.part" "$irp"; then
+      # the base's lines, those built replaced
+      awk 'NR == FNR {h[$1] = $2; next} {print $1, ($1 in h) ? h[$1] : $2}' "$nm.part" "$bm" >"$nm"
+      awk 'NR == FNR {b[$1] = 1; next} !($1 in b)' "$bm" "$nm.part" >>"$nm"
+      sort -o "$nm" "$nm"
+      ib="$ib (HEAD's IR built for the $(wc -l <"$nm.part" | tr -d ' ') goldens the change can reach)"
+    else
+      rm -f "$nm"
+    fi
+    rm -f "$nm.part"
   elif [ -s "$bm" ]; then
     ir_head_manifest "$nm" "$irp" || rm -f "$nm"
     [ -s "$nm" ] && [ -n "$hm" ] && cp "$nm" "$hm.tmp$$" && mv "$hm.tmp$$" "$hm"
@@ -962,12 +992,12 @@ run_step_body() {
       # here: inside $( ) BASHPID names the substitution's subshell)
       me=$BASHPID
       t0=$(date +%s); c0=$(awk '{print $14 + $15 + $16 + $17}' /proc/$me/stat 2>/dev/null)
-      XO_GATE_IR_NICE=0 ir_head_manifest "$hm.tmp$$" "$irj" && mv "$hm.tmp$$" "$hm" &&
+      XO_GATE_IR_NICE=0 ir_head_manifest "$hm.tmp$$" "$irj" "${hm%.txt}.deps.tmp$$" && mv "${hm%.txt}.deps.tmp$$" "${hm%.txt}.deps" && mv "$hm.tmp$$" "$hm" &&
         echo "irmanifest: built in $(($(date +%s) - t0)) s wall, $(( ($(awk '{print $14 + $15 + $16 + $17}' /proc/$me/stat 2>/dev/null || echo 0) - ${c0:-0}) / $(getconf CLK_TCK) )) s CPU, -parallel $irj"
     }; then
       echo "irmanifest: $hm ($(wc -l <"$hm" | tr -d ' ') goldens)"
     else
-      rm -f "$hm.tmp$$"; echo "irmanifest: FAIL ($logs/llvm-ir-head.txt)"; failed=1
+      rm -f "$hm.tmp$$" "${hm%.txt}.deps.tmp$$"; echo "irmanifest: FAIL ($logs/llvm-ir-head.txt)"; failed=1
     fi ;;
   stdcov) stdcov_step ;;
   corpora)

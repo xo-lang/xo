@@ -84,13 +84,48 @@ func normalizeIR(ir, root string) string {
 	return debugPos.ReplaceAllString(ir, "$1: L")
 }
 
+// diFile matches a DIFile's file name and directory in the IR's debug
+// information.
+var diFile = regexp.MustCompile(`!DIFile\(filename: "([^"]*)", directory: "([^"]*)"`)
+
+// irStdFiles is the std files ir's debug information names, as
+// repository paths (std/native/csv.xo), sorted
+func irStdFiles(ir, root string) []string {
+	seen := map[string]bool{}
+	for _, m := range diFile.FindAllStringSubmatch(ir, -1) {
+		// std's files are named from std's parent ("std/native/csv.xo",
+		// directory "."), or by an absolute path under root
+		f := filepath.ToSlash(filepath.Join(m[2], m[1]))
+		if filepath.IsAbs(m[1]) {
+			f = filepath.ToSlash(m[1])
+		}
+		if filepath.IsAbs(f) {
+			if rel, err := filepath.Rel(root, f); err == nil {
+				f = filepath.ToSlash(rel)
+			}
+		}
+		if strings.HasPrefix(f, "std/") {
+			seen[f] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for f := range seen {
+		out = append(out, f)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // TestGoldenIRManifest writes, to $XO_LLVM_IR_MANIFEST, one line per
 // golden program: its name and the SHA-256 of the LLVM IR xo emits for it
 // with TestGolden's options (goldenEnv), clang never run (a stub that
 // fails after the IR is written), normalized (normalizeIR) so two
 // worktrees agree. A program whose build fails before the IR is
 // hashed by its output instead. scripts/gate.sh runs it with the branch's
-// xo and with the merge base's.
+// xo and with the merge base's. XO_LLVM_IR_DEPS=FILE also writes each
+// golden's name and the std files its IR's debug information names
+// (irStdFiles), for scripts/golden-std-deps.py; XO_LLVM_IR_ONLY=a,b,c
+// builds only those goldens (the manifest then has only their lines).
 func TestGoldenIRManifest(t *testing.T) {
 	out := os.Getenv("XO_LLVM_IR_MANIFEST")
 	if out == "" {
@@ -109,12 +144,22 @@ func TestGoldenIRManifest(t *testing.T) {
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	only := map[string]bool{}
+	if v := os.Getenv("XO_LLVM_IR_ONLY"); v != "" {
+		for _, n := range strings.Split(v, ",") {
+			only[strings.TrimSpace(n)] = true
+		}
+	}
 	var mu sync.Mutex
 	hashes := map[string]string{}
+	deps := map[string][]string{}
 	t.Run("ir", func(t *testing.T) {
 		for _, dir := range dirs {
 			dir := dir
 			name := filepath.Base(dir)
+			if len(only) > 0 && !only[name] {
+				continue
+			}
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				ll := filepath.Join(tmp, name+".ll")
@@ -124,14 +169,17 @@ func TestGoldenIRManifest(t *testing.T) {
 					t.Fatal(err)
 				}
 				var h string
+				var fs []string
 				if b, err := os.ReadFile(ll); err == nil {
 					h = fmt.Sprintf("%x", sha256.Sum256([]byte(normalizeIR(string(b), root))))
+					fs = irStdFiles(string(b), root)
 					os.Remove(ll)
 				} else {
 					h = fmt.Sprintf("noir-%x", sha256.Sum256([]byte(strings.ReplaceAll(res.Output, root, "$ROOT"))))
 				}
 				mu.Lock()
 				hashes[name] = h
+				deps[name] = fs
 				mu.Unlock()
 			})
 		}
@@ -147,5 +195,25 @@ func TestGoldenIRManifest(t *testing.T) {
 	}
 	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if df := os.Getenv("XO_LLVM_IR_DEPS"); df != "" {
+		var d strings.Builder
+		for _, n := range names {
+			fmt.Fprintf(&d, "%s %s\n", n, strings.Join(deps[n], " "))
+		}
+		if err := os.WriteFile(df, []byte(d.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestIRStdFiles(t *testing.T) {
+	ir := `!1 = !DIFile(filename: "main.xo", directory: "internal/llvm/testdata/golden/x")
+!2 = !DIFile(filename: "std/native/crypto.xo", directory: ".")
+!3 = !DIFile(filename: "/r/std/csv.xo", directory: "/r")
+!4 = !DIFile(filename: "std/native/crypto.xo", directory: ".")`
+	got := strings.Join(irStdFiles(ir, "/r"), " ")
+	if got != "std/csv.xo std/native/crypto.xo" {
+		t.Errorf("irStdFiles: %q", got)
 	}
 }
