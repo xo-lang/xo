@@ -551,7 +551,7 @@ func race(args []string) error {
 			t0 := time.Now()
 			out, err := exec.Command(bin, strconv.Itoa(*stressMin), "64").CombinedOutput()
 			text := strings.TrimSpace(string(out))
-			last := text[strings.LastIndex(text, "\n")+1:]
+			last := summaryLine(text)
 			// decision 0616 section 2a: under --race the resident set
 			// grows with every finished task (ThreadSanitizer keeps each
 			// task's context, as Go's race runtime keeps each
@@ -1166,4 +1166,19 @@ func serverPerf(args []string) error {
 	}
 	fmt.Print(tb.String())
 	return os.WriteFile(outp, []byte(b.String()), 0o644)
+}
+
+// summaryLine is a stress program's summary: its last line that is not
+// the "error: ..." line main prints for the Err it returns (crc32's
+// stress program, 2026-11-15: "FAIL (memory grew)" then "error: memory
+// grew 12.7%", so a race run read the error line and failed on memory
+// growth that decision 0616 section 2a leaves to the task churn).
+func summaryLine(text string) string {
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if !strings.HasPrefix(lines[i], "error: ") {
+			return lines[i]
+		}
+	}
+	return lines[len(lines)-1]
 }

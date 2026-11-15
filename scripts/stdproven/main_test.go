@@ -66,3 +66,17 @@ func TestPerfOwner(t *testing.T) {
 		}
 	}
 }
+
+// TestSummaryLine: a stress program that returns Err prints its summary,
+// then main's "error: ..." line; the race kind judges the summary.
+func TestSummaryLine(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"a\ncrc32 stress: 1 operations, 0 mismatches, rss 1 MB, FAIL (memory grew)\nerror: memory grew 12.6%", "crc32 stress: 1 operations, 0 mismatches, rss 1 MB, FAIL (memory grew)"},
+		{"x stress: ok, pass", "x stress: ok, pass"},
+		{"error: only", "error: only"},
+	} {
+		if got := summaryLine(c.in); got != c.want {
+			t.Errorf("summaryLine(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
