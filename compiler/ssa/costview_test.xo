@@ -68,3 +68,80 @@ test "XO0915: the result of a function that returns a view of its parameter" {
   expect(out) == ["XO0915:2"]
   expect(codes(ret_view_func())) == []
 }
+
+/// m: hc(h) -> Int, a word loaded from h's object (tlsio.handle_conn's
+/// shape), or, with direct, rt.obj_addr(h) + 16 itself; and f(s): t =
+/// hc(s), then, in order, the ops of shape ("release": s released,
+/// "use": t passed to g), each at its own line.
+fn handle_module(direct: Bool, shape: List[Str]) -> Module {
+  var m = Module{}
+  let it = m.intern(SType{kind: Kind.Int, name: "Int"})
+  let st = m.intern(SType{kind: Kind.Str, name: "Str"})
+  let hi = m.new_func("hc", [st], [it])
+  let fi = m.new_func("f", [st], [])
+  var h = m.funcs[hi]
+  let hp = h.blocks[0].params[0]
+  let a = h.add(0, Op.Call, it, Aux.S(s: "rt.obj_addr"), [hp])
+  let off = h.add(0, Op.Const, it, Aux.I(n: 16), [])
+  var r = -1
+  if direct {
+    r = h.add(0, Op.Add, it, Aux.None, [a, off])
+  } else {
+    let w = h.add(0, Op.Const, it, Aux.I(n: 8), [])
+    r = h.add(0, Op.Call, it, Aux.S(s: "rt.mem_load"), [a, off, w])
+  }
+  let _rh = h.add(0, Op.Return, -1, Aux.None, [r])
+  m.funcs[hi] = h
+  var f = m.funcs[fi]
+  let s = f.blocks[0].params[0]
+  let t = f.add(0, Op.Call, it, Aux.S(s: "hc"), [s])
+  f.values[t].lp = 2 * 4096 + 1
+  for (k, op) in shape.indexed() {
+    let x = match op {
+      "release" => f.add(0, Op.Release, -1, Aux.None, [s])
+      _ => f.add(0, Op.Call, -1, Aux.S(s: "g"), [t])
+    }
+    f.values[x].lp = (3 + k) * 4096 + 1
+  }
+  let _rf = f.add(0, Op.Return, -1, Aux.None, [])
+  m.funcs[fi] = f
+  m
+}
+
+fn handle_codes(m: Module) -> List[Str] {
+  var out: List[Str] = []
+  for n in freed_addresses_at(m.funcs[m.func_index("f")], {}, addr_returns(m)) {
+    out.push("${n.code}:${n.line}")
+  }
+  out
+}
+
+test "XO0915: an address a call read from its handle, used after the handle's release" {
+  expect(addr_returns(handle_module(false, []))) == {"hc": 0}
+  expect(addr_returns(handle_module(true, []))) == {"hc": 0}
+  expect(handle_codes(handle_module(false, ["release", "use"]))) == ["XO0915:2"]
+  expect(handle_codes(handle_module(true, ["release", "use"]))) == ["XO0915:2"]
+}
+
+test "XO0915: the handle's address used before its release is not reported" {
+  expect(handle_codes(handle_module(false, ["use", "release"]))) == []
+  // without the summary, a call's Int result is not an address
+  expect(codes(handle_module(false, ["release", "use"]).funcs[1])) == []
+}
+
+test "XO0915: a function that also counts what it returns is not an address source" {
+  // tlsio's keep: rt.obj_addr(a), then rc.inc of it; the address owns a count
+  var m = handle_module(true, ["release", "use"])
+  let hi = m.func_index("hc")
+  var h = m.funcs[hi]
+  let ret = h.blocks[0].instrs[h.blocks[0].instrs.len() - 1]
+  let a = h.blocks[0].instrs[0]
+  var ins = h.blocks[0].instrs[0..h.blocks[0].instrs.len() - 1]
+  let inc = h.add(0, Op.Call, -1, Aux.S(s: "rc.inc"), [a])
+  ins.push(inc)
+  ins.push(ret)
+  h.blocks[0].instrs = ins
+  m.funcs[hi] = h
+  expect(addr_returns(m)) == {}
+  expect(handle_codes(m)) == []
+}

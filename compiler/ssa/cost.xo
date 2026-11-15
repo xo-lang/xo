@@ -35,6 +35,7 @@ pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
       rv[f.name] = f.ret_view
     }
   }
+  let ar = addr_returns(m)
   for f in m.funcs {
     // a clone (specialize.xo, decision 0368) repeats its original's lines
     if f.blocks.is_empty() || f.file.is_empty() || f.name.contains("#spec") {
@@ -50,7 +51,7 @@ pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
       continue
     }
     let inloop = loop_blocks(f)
-    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + callback_walks(m, f) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords) + view_stores(m, f, inloop) + slices_read_in_loop(f, inloop) + small_lists_in_loop(f, inloop) + freed_addresses_rv(f, rv) {
+    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + callback_walks(m, f) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords) + view_stores(m, f, inloop) + slices_read_in_loop(f, inloop) + small_lists_in_loop(f, inloop) + freed_addresses_at(f, rv, ar) {
       var n2 = n
       n2.file = file
       out.push(n2)
@@ -958,6 +959,135 @@ fn small_lists_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   out
 }
 
+/// The functions of m whose every Return hands back an address into one
+/// of its parameters, p: rt.obj_addr(p) (or raw.data, raw.bytes_addr),
+/// plus or minus an offset, or an 8 byte rt.mem_load at such an address
+/// (a pointer the object holds, which its free may free: a std/tls
+/// handle's connection), or the result of a call of another such
+/// function on p; by name, the parameter's index. An Int result only,
+/// and only functions with no other results. A pessimistic fixed point
+/// over calls, like decision 0465's return_views.
+fn addr_returns(m: Module) -> Map[Str, Int] {
+  var ar: Map[Str, Int] = {}
+  var changed = true
+  while changed {
+    changed = false
+    for f in m.funcs {
+      if f.blocks.is_empty() || ar.contains(f.name) || f.results.len() != 1 {
+        continue
+      }
+      let t = f.results[0]
+      if t < 0 || t >= m.types.len() || m.types[t].kind != Kind.Int {
+        continue
+      }
+      if !addr_body_only(f, ar) {
+        continue
+      }
+      var p = -1
+      var ok = false
+      for bl in f.blocks {
+        if bl.instrs.is_empty() {
+          continue
+        }
+        let r = f.values[bl.instrs[bl.instrs.len() - 1]]
+        if r.op != Op.Return {
+          continue
+        }
+        let q = if r.args.is_empty() { -1 } else { addr_param(f, f.arg(r.args, 0), ar, true) }
+        if q < 0 || (ok && q != p) {
+          ok = false
+          p = -1
+          break
+        }
+        p = q
+        ok = true
+      }
+      if ok && p >= 0 {
+        ar[f.name] = p
+        changed = true
+      }
+    }
+  }
+  ar
+}
+
+/// Whether f only computes an address (addr_returns): its values are
+/// parameters, constants, adds and subtracts, address calls, loads,
+/// calls of functions already in ar, and Returns. A function that does
+/// more may own what it returns (tlsio's keep counts the object it hands
+/// back the address of) and is not followed.
+fn addr_body_only(f: Func, ar: Map[Str, Int]) -> Bool {
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      let ok = match x.op {
+        Op.Param | Op.Const | Op.Add | Op.Sub | Op.Return => true
+        Op.Call => {
+          let n = f.name_of(x)
+          addr_of_call(n) || n == "rt.mem_load" || ar.contains(n)
+        }
+        _ => false
+      }
+      if !ok {
+        return false
+      }
+    }
+  }
+  true
+}
+
+/// The entry parameter v is an address into (addr_returns), or -1; load
+/// allows one 8 byte rt.mem_load at such an address on the way.
+fn addr_param(f: Func, v: Int, ar: Map[Str, Int], load: Bool) -> Int {
+  if v < 0 || v >= f.values.len() {
+    return -1
+  }
+  let x = f.values[v]
+  if x.op == Op.Add || x.op == Op.Sub {
+    if x.args.len() != 2 {
+      return -1
+    }
+    let a = f.arg(x.args, 0)
+    let b = f.arg(x.args, 1)
+    if f.values[b].op == Op.Const {
+      return addr_param(f, a, ar, load)
+    }
+    if x.op == Op.Add && f.values[a].op == Op.Const {
+      return addr_param(f, b, ar, load)
+    }
+    return -1
+  }
+  if x.op != Op.Call {
+    return -1
+  }
+  let n = f.name_of(x)
+  if addr_of_call(n) && !x.args.is_empty() {
+    let a = f.values[f.arg(x.args, 0)]
+    if a.op == Op.Param && block_of(a.tb) == 0 {
+      return f.blocks[0].params.index_of(f.arg(x.args, 0)) ?? -1
+    }
+    return -1
+  }
+  if load && n == "rt.mem_load" && x.args.len() == 3 {
+    let w = f.values[f.arg(x.args, 2)]
+    if w.op == Op.Const && auxw_int(w.aux) == 8 {
+      let q = addr_param(f, f.arg(x.args, 0), ar, false)
+      if q >= 0 {
+        return q
+      }
+    }
+    return -1
+  }
+  let k = ar.get(n) ?? -1
+  if k >= 0 && k < x.args.len() {
+    let a = f.values[f.arg(x.args, k)]
+    if a.op == Op.Param && block_of(a.tb) == 0 {
+      return f.blocks[0].params.index_of(f.arg(x.args, k)) ?? -1
+    }
+  }
+  -1
+}
+
 /// Calls whose result is an address into their first argument's memory.
 fn addr_of_call(name: Str) -> Bool {
   name is "raw.data" | "raw.bytes_addr" | "rt.obj_addr" | "obj_addr"
@@ -977,9 +1107,18 @@ fn addr_of_call(name: Str) -> Bool {
 /// Str's release is a view of freed text. So is the result of a call
 /// of a function that returns a view of its parameter p (rv, decision
 /// 0465 step 2), a view of the call's argument p.
-fn freed_addresses(f: Func) -> List[CostNote] { freed_addresses_rv(f, {}) }
+fn freed_addresses(f: Func) -> List[CostNote] { freed_addresses_at(f, {}, {}) }
 
-fn freed_addresses_rv(f: Func, rv: Map[Str, Int]) -> List[CostNote] {
+fn freed_addresses_rv(f: Func, rv: Map[Str, Int]) -> List[CostNote] { freed_addresses_at(f, rv, {}) }
+
+/// The functions whose Int result is an address into their parameter p,
+/// or a word loaded from one, by name (addr_returns): a call of one is an
+/// address into its argument p, as rt.obj_addr is (XO0915 across a call,
+/// Xo Lang 3's 2026-11-15 case: `close_notify(handle_conn(x))` released
+/// the handle x, whose free closes the connection, before close_notify
+/// used the connection handle_conn had read from it;
+/// gotchas/obj-addr-handle-released-early.md).
+fn freed_addresses_at(f: Func, rv: Map[Str, Int], ar: Map[Str, Int]) -> List[CostNote] {
   var out: List[CostNote] = []
   var seen: Map[Int, Bool] = {}
   for bl in f.blocks {
@@ -1035,6 +1174,8 @@ fn freed_addresses_rv(f: Func, rv: Map[Str, Int]) -> List[CostNote] {
         views[v] = true
       } else if x.op == Op.Call && addr_of_call(f.name_of(x)) && !x.args.is_empty() {
         addr_of[v] = f.arg(x.args, 0)
+      } else if x.op == Op.Call && (ar.get(f.name_of(x)) ?? -1) >= 0 && (ar.get(f.name_of(x)) ?? -1) < x.args.len() {
+        addr_of[v] = f.arg(x.args, ar.get(f.name_of(x)) ?? 0)
       } else if (x.op == Op.Add || x.op == Op.Sub) && x.args.len() == 2 {
         let (sp8, ep8) = f.args_span(x.args)
         for ak8 in sp8..ep8 {
