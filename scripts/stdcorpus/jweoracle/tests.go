@@ -1,6 +1,7 @@
 package main
 
-const jweTests = `
+// jweHelpers are the key helpers of the corpus and of the reverse program.
+const jweHelpers = `
 fn pem_der(text: Str) -> Bytes { crypto.pem_decode(text)[0].bytes }
 
 fn sym(n: Int, flip: Bool) -> Bytes {
@@ -76,7 +77,9 @@ fn outcome(r: Result[Bytes, jwt.JwtErr]) -> Str {
   }
 }
 
-test "go-jose's tokens decrypt, or fail, as go-jose's Decrypt does" {
+`
+
+const jweTests = `test "go-jose's tokens decrypt, or fail, as go-jose's Decrypt does" {
   let algs = all_algs()
   let encs = all_encs()
   var bad: List[Str] = []

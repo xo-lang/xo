@@ -9630,6 +9630,9 @@ fn peek_jwe_header(token: Str) -> JweHeader ! JwtErr
   inflated to at most max(250000, 10 times its size) bytes.
 - An encrypted JWT is `encrypt` of `json.encode(claims)` with `typ: "JWT"`; a nested one encrypts a signed
   token with `cty: "JWT"`, and the reader checks it with `verify` after `decrypt`.
+- Checked in both directions against go-jose v4.1.9: its tokens decrypt or fail as its Decrypt does (corpus jwe,
+  615 cases), and the tokens `encrypt` writes under each of the 96 combinations decrypt with go-jose to the payload
+  and kid (internal/stdtest TestJweGoJoseDecrypts, arm64, llvm and the Go backend; decision 0660's condition).
 
 ## 63. std/yaml
 

@@ -1,5 +1,18 @@
 # std/jwt changes
 
+## 2026-11-15: test: go-jose decrypts the tokens std/jwt encrypts
+
+- Kind: test
+- Commit: this push
+- Found by: decision 0660's acceptance (owner, 2026-11-15): a Go side test in the reverse direction before jwt features count as Proven (task #39)
+- Go reference: github.com/go-jose/go-jose/v4 v4.1.9 ParseEncryptedCompact and Decrypt
+- Test: internal/stdtest TestJweGoJoseDecrypts: jweoracle `reverse` prints an Xo program that encrypts under every key algorithm and content encryption (96 combinations; empty, short and long payloads, deflate, typ and kid), and jweoracle `decrypt` decrypts each token with go-jose and checks the payload and kid; 96 of 96 on arm64, llvm and go
+- Shipped in: not yet released
+- Timing: none
+
+No behavior change: until now the corpus checked go-jose's tokens in
+std/jwt and std/jwt's tokens in std/jwt; go-jose now reads std/jwt's.
+
 ## 2026-11-15: feature: JWE compact tokens
 
 - Kind: feature
