@@ -1,0 +1,35 @@
+// XO0804 (split critical section) and `// xo:allow XO0804 <reason>`, on
+// the line or the line above, which allows one (core 5.4); an allow
+// without a reason allows nothing.
+struct B { n: Int }
+
+fn bump(m: Mutex[Map[Str, B]]) {
+  let b = m.with(fn(s) { s.get("k") ?? B{n: 0} })
+  m.with(fn(var s) { s.put("k", b with {n: b.n + 1}) }) // ERROR XO0804 "read in an earlier"
+}
+
+fn hint(m: Mutex[Map[Str, B]]) {
+  let b = m.with(fn(s) { s.get("k") ?? B{n: 0} })
+  // xo:allow XO0804 the later section only stores a hint the reader rechecks
+  m.with(fn(var s) { s.put("h", b) })
+}
+
+fn same_line(m: Mutex[Map[Str, B]]) {
+  let b = m.with(fn(s) { s.get("k") ?? B{n: 0} })
+  m.with(fn(var s) { s.put("h", b) }) // xo:allow XO0804 a hint, rechecked by the reader
+}
+
+fn no_reason(m: Mutex[Map[Str, B]]) {
+  let b = m.with(fn(s) { s.get("k") ?? B{n: 0} })
+  // xo:allow XO0804
+  m.with(fn(var s) { s.put("h", b) }) // ERROR XO0804 "read in an earlier"
+}
+
+fn main(os: Os) {
+  let m = Mutex.new({"k": B{n: 1}})
+  bump(m)
+  hint(m)
+  same_line(m)
+  no_reason(m)
+  os.stdio.println("${m.with(fn(s) { s.len() })}")
+}

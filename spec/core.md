@@ -2740,7 +2740,10 @@ fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E
   `m.with(...)`, or derived from one, is used inside a later `m.with(...)` on
   the same mutex, or a branch on it decides whether the later `with` runs.
   Another task may have changed the state in between (check then act). Do the
-  check and the action in one `with`.
+  check and the action in one `with`. Where the gap is safe (the later
+  `with` rechecks, or the value is only a hint), `// xo:allow XO0804
+  <reason>` on the warned line or the line above it allows one; the
+  reason is required.
 - `with` cannot be called re entrantly on the same mutex within one task
   (fault `XO-F004` with both acquisition sites).
 - `m.with_read(f)` (std.md 2.7) is shared read only access: `f` gets the
@@ -4053,7 +4056,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0801` | error | checker | child or group task error does not convert to the enclosing error type (core 7.1) |
 | `XO0802` | error | checker | scope handle, or a value containing a task group, escapes its scope (core 7.1) |
 | `XO0803` | error | checker | task started without a scope handle (core 7.1) |
-| `XO0804` | warning | checker | value read in one `Mutex.with` is written back in a later one (core 5.4) |
+| `XO0804` | warning | checker | value read in one `Mutex.with` is written back in a later one (core 5.4); `// xo:allow XO0804 <reason>` on the line or above it allows one |
 | `XO0900` | warning | checker | typed hole report (core 3.7) |
 | `XO0901` | warning | vet | `dbg(...)` left in code (core 11.4) |
 | `XO0902` | warning | vet | `tls.Verify.None`: a TLS client that checks no certificate (std.md 27, decision 0281) |

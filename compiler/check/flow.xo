@@ -1913,6 +1913,11 @@ fn (var c: Checker) split_critical_sections(nodes: List[Node]) {
             }
             if let Some(id) = decided.get(mu) {
               c.split_warned[key] = true
+              // `// xo:allow XO0804 <reason>` on the line or the one above
+              // (owner, 2026-11-15)
+              if c.allowed_here(parser.expr_span(call), "XO0804") {
+                continue
+              }
               let d = c.warn("XO0804", parser.expr_span(call), "this `${mu}.with` acts on a decision about `${text(id.name)}`, which was read in an earlier `${mu}.with`")
               c.note(d, "another task may have changed it since; do the check and the action in one `with` (core 5.4)")
               continue
@@ -1921,8 +1926,11 @@ fn (var c: Checker) split_critical_sections(nodes: List[Node]) {
               for a in args {
                 if let Some(id) = c.tainted_ref(a.value, tainted, mu) {
                   c.split_warned[key] = true
+                  if c.allowed_here(id.span, "XO0804") {
+                    break
+                  }
                   let d = c.warn("XO0804", id.span, "`${text(id.name)}` was read in an earlier `${mu}.with`; another task may have changed it since")
-                  c.note(d, "do the read and the update in one `with` so the check and the action are atomic (core 5.4)")
+                  c.note(d, "do the read and the update in one `with` so the check and the action are atomic (core 5.4); when the gap is safe, `// xo:allow XO0804 <reason>` on the line or the line above")
                   break
                 }
               }

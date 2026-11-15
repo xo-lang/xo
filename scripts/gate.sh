@@ -1349,6 +1349,17 @@ if [ "${XO_GATE_PUSHQ:-1}" != 0 ]; then
   req=$(echo "$ch" | gate_required_steps)
   [ "${XO_GATE_CROSS:-1}" = 0 ] && req=$(echo " $req " | sed 's/ cross / /')
 fi
+# std's own checks (TestStdChecks: every native and runtime body checked
+# with no diagnostic, so an XO0804 or other warning in std fails here, not
+# first at pushq; owner, 2026-11-15) for a change to a std .xo file, a few
+# seconds; XO_GATE_STDCHECKS=0 skips it
+if [ "${XO_GATE_STDCHECKS:-1}" != 0 ] && echo "$ch" | grep -qE '^std/.*\.xo$'; then
+  if go test -count=1 -run '^TestStdChecks$' ./cmd/xo >"$logs/stdchecks.txt" 2>&1; then
+    echo "stdchecks: ok"
+  else
+    failed=1; echo "stdchecks: FAIL ($logs/stdchecks.txt)"; grep -E 'stdcheck_test.go' "$logs/stdchecks.txt" | head -8
+  fi
+fi
 plan=" $(gate_plan "$req" $named) "
 echo "gate.sh: proving checks:${plan% }${plan:+ }(required by the paths: ${req:-none}; named:${named:- none})"
 if [ "$conc" = 1 ]; then
