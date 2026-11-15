@@ -1,5 +1,19 @@
 # std/charset changes
 
+## 2026-11-15: feature: UTF-8 steps from the end and stream checks (Go's utf8 DecodeLastRune, DecodeLastRuneInString, FullRune, FullRuneInString, RuneStart)
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655)
+- Go reference: unicode/utf8 utf8.go (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/charset (scripts/stdcorpus/charsetoracle): 769 byte strings (utf8_test.go's utf8map runes cut from both ends, its invalid sequences, 600 seeded random strings over lead, continuation and invalid bytes) with Go's DecodeLastRune and FullRune, the Str forms where the bytes are UTF-8; RuneStart of every byte (arm64, LLVM, Go)
+- Timing: none
+
+`utf8_decode_last_rune` reads the last rune of a buffer, `utf8_full_rune`
+says whether a buffer starts with a whole sequence (for decoding a
+stream in pieces), and `utf8_rune_start` whether a byte can start one,
+each as Go's unicode/utf8 does.
+
 ## 2026-11-15: feature: one-rune UTF-16 steps and REPLACEMENT_CHAR (Go's utf16 AppendRune, DecodeRune, EncodeRune, IsSurrogate, RuneLen; unicode.ReplacementChar)
 
 - Kind: feature

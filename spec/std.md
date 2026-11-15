@@ -9110,6 +9110,11 @@ pub fn utf16_rune_len(cp: Int) -> Int               // utf16.RuneLen: 1, 2, or -
 pub fn utf16_encode_rune(cp: Int) -> (Int, Int)     // utf16.EncodeRune; (0xFFFD, 0xFFFD) without a pair
 pub fn utf16_decode_rune(u1: Int, u2: Int) -> Rune  // utf16.DecodeRune; U+FFFD for a bad pair
 pub fn utf16_append_rune(units: List[Int], cp: Int) -> List[Int]   // utf16.AppendRune
+pub fn utf8_decode_last_rune(b: Bytes) -> (Rune, Int)   // utf8.DecodeLastRune: (U+FFFD, 1) invalid, (U+FFFD, 0) empty
+pub fn utf8_decode_last_rune_str(s: Str) -> (Rune, Int) // utf8.DecodeLastRuneInString
+pub fn utf8_full_rune(b: Bytes) -> Bool                 // utf8.FullRune: false only for a valid sequence cut short (or empty)
+pub fn utf8_full_rune_str(s: Str) -> Bool               // utf8.FullRuneInString
+pub fn utf8_rune_start(b: Int) -> Bool                  // utf8.RuneStart: not a continuation byte
 ```
 
 - `Utf16Le` and `Utf16Be` read and write no byte order mark (a U+FEFF stays a character); `Utf16Bom`

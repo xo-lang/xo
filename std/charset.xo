@@ -465,3 +465,91 @@ fn encode_utf16(src: Bytes, big: Bool, bom: Bool) -> Bytes {
 }
 
 fn is_ws(c: UInt8) -> Bool { c == 9 || c == 10 || c == 12 || c == 13 || c == 32 }
+
+/// Whether b can be the first byte of a UTF-8 sequence (Go's
+/// utf8.RuneStart): any byte but a continuation byte (0x80 to 0xBF).
+pub fn utf8_rune_start(b: Int) -> Bool { (b & 0xC0) != 0x80 }
+
+/// Go's first table: the length of the sequence b leads (1 for ASCII and
+/// for a byte that leads none) and the range its second byte must be in
+/// (0: 80-BF, 1: A0-BF, 2: 80-9F, 3: 90-BF, 4: 80-8F).
+fn utf8_first(b: Int) -> (Int, Int) {
+  if b < 0xC2 || b > 0xF4 {
+    (1, 0)
+  } else if b < 0xE0 {
+    (2, 0)
+  } else if b == 0xE0 {
+    (3, 1)
+  } else if b == 0xED {
+    (3, 2)
+  } else if b < 0xF0 {
+    (3, 0)
+  } else if b == 0xF0 {
+    (4, 3)
+  } else if b < 0xF4 {
+    (4, 0)
+  } else {
+    (4, 4)
+  }
+}
+
+/// Whether b begins with a whole UTF-8 sequence (Go's utf8.FullRune): an
+/// invalid sequence is whole too (it decodes as U+FFFD of width 1); only
+/// a valid but cut short one is not. False for empty b.
+pub fn utf8_full_rune(b: Bytes) -> Bool {
+  let n = b.len()
+  if n == 0 {
+    return false
+  }
+  let (size, acc) = utf8_first(Int(b[0]))
+  if n >= size {
+    return true
+  }
+  let lo = [0x80, 0xA0, 0x80, 0x90, 0x80][acc]
+  let hi = [0xBF, 0xBF, 0x9F, 0xBF, 0x8F][acc]
+  if n > 1 && (Int(b[1]) < lo || Int(b[1]) > hi) {
+    return true
+  }
+  if n > 2 && (Int(b[2]) < 0x80 || Int(b[2]) > 0xBF) {
+    return true
+  }
+  false
+}
+
+/// utf8_full_rune of s's bytes (Go's utf8.FullRuneInString).
+pub fn utf8_full_rune_str(s: Str) -> Bool { utf8_full_rune(s.bytes()) }
+
+/// The last rune of b and its size in bytes (Go's utf8.DecodeLastRune):
+/// (U+FFFD, 1) when b does not end with a valid sequence, (U+FFFD, 0) for
+/// empty b.
+pub fn utf8_decode_last_rune(b: Bytes) -> (Rune, Int) {
+  let end = b.len()
+  if end == 0 {
+    return (REPLACEMENT_CHAR, 0)
+  }
+  var start = end - 1
+  if Int(b[start]) < 0x80 {
+    return (Rune(Int(b[start])), 1)
+  }
+  let lim = if end - 4 < 0 { 0 } else { end - 4 }
+  start -= 1
+  while start >= lim {
+    if utf8_rune_start(Int(b[start])) {
+      break
+    }
+    start -= 1
+  }
+  if start < 0 {
+    start = 0
+  }
+  let (r, size) = b[start..end].decode_rune(0)
+  if start + size != end {
+    return (REPLACEMENT_CHAR, 1)
+  }
+  (r, size)
+}
+
+/// utf8_decode_last_rune of s's bytes (Go's
+/// utf8.DecodeLastRuneInString); a Str is valid UTF-8, so only the empty
+/// one gives (U+FFFD, 0).
+pub fn utf8_decode_last_rune_str(s: Str) -> (Rune, Int) { utf8_decode_last_rune(s.bytes()) }

@@ -321,6 +321,48 @@ func main() {
 	}
 	o.WriteString("]\n\n")
 
+	// unicode/utf8's DecodeLastRune, FullRune and RuneStart: Go's
+	// utf8_test.go utf8map strings and their prefixes, its invalid
+	// sequences, and seeded random short byte strings
+	o.WriteString("/// (bytes in hex, Go's utf8.DecodeLastRune: the rune and size, Go's utf8.FullRune)\nconst UTF8_LAST: List[(Str, Int, Int, Bool)] = [\n")
+	var ins [][]byte
+	for _, t := range []string{"\u0000", "\u0001", "\u007e", "\u007f", "\u0080", "\u0081", "\u00bf", "\u00c0", "\u00c1", "\u00c8", "\u00d0", "\u00e0", "\u00ff", "\u0100", "\u07ff", "\u0800", "\u08ff", "\ud7ff", "\ue000", "\ufffe", "\uffff", "\U00010000", "\U00010001", "\U0010fffe", "\U0010ffff", "\ufffd", "a\u00e9", "ab\u2713", "\U0001f600x"} {
+		b := []byte(t)
+		for k := len(b); k >= 1; k-- {
+			ins = append(ins, b[:k])
+			ins = append(ins, b[len(b)-k:])
+		}
+	}
+	for _, t := range []string{"\x80", "\xc0", "\xc1", "\xc0\x80", "\xed\xa0\x80", "\xed\xbf\xbf", "\xf4\x90\x80\x80", "\xf7\xbf\xbf\xbf", "\xfb\xbf\xbf\xbf\xbf", "\xe0\x80", "\xf0\x80", "\xf4\x8f", "\xe1\x80", "\xbf\xbf\xbf\xbf\xbf", "a\x80\x80\x80\x80", "\xe2\x9c", "\xe2"} {
+		ins = append(ins, []byte(t))
+	}
+	ur := rand.New(rand.NewSource(8))
+	alpha := []byte{0x41, 0x7f, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc0, 0xc2, 0xdf, 0xe0, 0xe1, 0xed, 0xef, 0xf0, 0xf3, 0xf4, 0xf5, 0xff}
+	for i := 0; i < 600; i++ {
+		b := make([]byte, ur.Intn(7))
+		for j := range b {
+			b[j] = alpha[ur.Intn(len(alpha))]
+		}
+		ins = append(ins, b)
+	}
+	for _, b := range ins {
+		r, n := utf8.DecodeLastRune(b)
+		if r2, n2 := utf8.DecodeLastRuneInString(string(b)); r2 != r || n2 != n || utf8.FullRuneInString(string(b)) != utf8.FullRune(b) {
+			panic("InString differs")
+		}
+		o.WriteString(fmt.Sprintf("  (%s, %d, %d, %v),\n", hx(b), r, n, utf8.FullRune(b)))
+	}
+	o.WriteString("]\n\n")
+	var rs strings.Builder
+	for c := 0; c < 256; c++ {
+		if utf8.RuneStart(byte(c)) {
+			rs.WriteByte('1')
+		} else {
+			rs.WriteByte('0')
+		}
+	}
+	o.WriteString(fmt.Sprintf("/// Go's utf8.RuneStart of the bytes 0 to 255\nconst RUNE_START: Str = %s\n\n", xq(rs.String())))
+
 	o.WriteString(`fn bytes_of_hex(h: Str) -> Bytes {
   Bytes.from_hex(h) ?? b""
 }
@@ -467,6 +509,33 @@ test "lookup is the Encoding Standard's labels for the supported charsets" {
   }
   expect(charset.lookup("utf-16")) == Some(charset.Charset.Utf16Bom)
   expect(charset.lookup(" UTF-16 ")) == Some(charset.Charset.Utf16Bom)
+}
+
+test "utf8_decode_last_rune and utf8_full_rune are Go's DecodeLastRune and FullRune" {
+  var bad: List[(Str, Str, Str)] = []
+  for (h, r, n, full) in UTF8_LAST {
+    let b = bytes_of_hex(h)
+    let (gr, gn) = charset.utf8_decode_last_rune(b)
+    let gf = charset.utf8_full_rune(b)
+    if Int(gr) != r || gn != n || gf != full {
+      bad.push((h, "${Int(gr)} ${gn} ${gf}", "${r} ${n} ${full}"))
+    }
+    if let Some(s) = b.to_str() {
+      let (sr, sn) = charset.utf8_decode_last_rune_str(s)
+      if Int(sr) != r || sn != n || charset.utf8_full_rune_str(s) != full {
+        bad.push((h, "str ${Int(sr)} ${sn}", "${r} ${n} ${full}"))
+      }
+    }
+  }
+  expect(first12(bad)) == []
+}
+
+test "utf8_rune_start is Go's RuneStart" {
+  var got = ""
+  for c in 0..256 {
+    got += if charset.utf8_rune_start(c) { "1" } else { "0" }
+  }
+  expect(got) == RUNE_START
 }
 `)
 	fmt.Print(o.String())
