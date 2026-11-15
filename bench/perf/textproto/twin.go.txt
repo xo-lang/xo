@@ -1,0 +1,86 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"net/textproto"
+	"os"
+)
+
+const head = "Host: example.com\r\nuser-agent: xo-bench/1.0\r\nAccept: text/html,application/xhtml+xml\r\naccept-encoding: gzip, deflate\r\nAccept-Language: en-US,en;q=0.9\r\nCache-Control: no-cache\r\nX-Request-Id: 7f3a9c2e-1b4d-4e8f-a6b0-3c5d7e9f1a2b\r\nX-Forwarded-For: 10.0.0.1\r\nx-forwarded-for: 10.0.0.2\r\nCookie: session=abc123; theme=dark\r\nX-Long: first part\r\n second part\r\nConnection: keep-alive\r\n\r\n"
+
+var keys = []string{"content-type", "CONTENT-LENGTH", "x-forwarded-for", "Accept", "accept-encoding", "user-agent", "X-REQUEST-ID", "cache-control", "set-cookie", "www-authenticate", "If-None-Match", "last-modified", "etag", "x-b3-traceid", "Transfer-Encoding", "connection"}
+
+func message() []byte {
+	var b bytes.Buffer
+	x := 7
+	for i := 0; i < 64; i++ {
+		if i%9 == 0 {
+			b.WriteString(".leading dot line\r\n")
+		}
+		for j := 0; j < 56; j++ {
+			x = (x*1103515245 + 12345) % 2147483648
+			b.WriteByte(byte(97 + (x>>16)%26))
+		}
+		b.WriteString("\r\n")
+	}
+	b.WriteString(".\r\n")
+	return b.Bytes()
+}
+
+func dotEncode(p []byte) []byte {
+	var buf bytes.Buffer
+	bw := bufio.NewWriter(&buf)
+	w := textproto.NewWriter(bw).DotWriter()
+	w.Write(p)
+	w.Close()
+	bw.Flush()
+	return buf.Bytes()
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	hb := []byte(head)
+	msg := dotEncode(message())
+	sum := 0
+	switch w {
+	case "header":
+		for i := 0; i < 100000; i++ {
+			r := textproto.NewReader(bufio.NewReader(bytes.NewReader(hb)))
+			h, err := r.ReadMIMEHeader()
+			if err != nil {
+				fmt.Println("header error")
+				return
+			}
+			for k, vs := range h {
+				sum += len(k)
+				for _, v := range vs {
+					sum += len(v)
+				}
+			}
+		}
+	case "canonical":
+		for i := 0; i < 200000; i++ {
+			for _, k := range keys {
+				sum += len(textproto.CanonicalMIMEHeaderKey(k)) + i%3
+			}
+		}
+	case "dot":
+		for i := 0; i < 20000; i++ {
+			r := textproto.NewReader(bufio.NewReader(bytes.NewReader(msg)))
+			b, err := r.ReadDotBytes()
+			if err != nil {
+				fmt.Println("dot error")
+				return
+			}
+			sum += len(b) + int(b[i%len(b)])
+		}
+	default:
+		sum = len(hb) + len(msg)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

@@ -1,0 +1,5 @@
+# twincheck: textproto: four workloads (none is the setup alone); Go is net/textproto.
+- - none
+- - header
+- - canonical
+- - dot

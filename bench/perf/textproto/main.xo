@@ -1,0 +1,75 @@
+// textproto: std/textproto against Go's net/textproto (twin.go.txt),
+// decision 0616's perf kind for std/textproto: header reads a 12 field MIME
+// header (one folded line, one repeated key) 100,000 times, canonical
+// canonicalizes 16 keys 200,000 times, and dot reads a 4 KiB dot-encoded
+// message 20,000 times; `none` is the setup alone. Usage: `<program>
+// none|header|canonical|dot`. Prints `<workload> <checksum>`; the twin
+// prints the same.
+use std/textproto
+
+const HEAD = "Host: example.com\r\nuser-agent: xo-bench/1.0\r\nAccept: text/html,application/xhtml+xml\r\naccept-encoding: gzip, deflate\r\nAccept-Language: en-US,en;q=0.9\r\nCache-Control: no-cache\r\nX-Request-Id: 7f3a9c2e-1b4d-4e8f-a6b0-3c5d7e9f1a2b\r\nX-Forwarded-For: 10.0.0.1\r\nx-forwarded-for: 10.0.0.2\r\nCookie: session=abc123; theme=dark\r\nX-Long: first part\r\n second part\r\nConnection: keep-alive\r\n\r\n"
+
+const KEYS = ["content-type", "CONTENT-LENGTH", "x-forwarded-for", "Accept", "accept-encoding", "user-agent", "X-REQUEST-ID", "cache-control", "set-cookie", "www-authenticate", "If-None-Match", "last-modified", "etag", "x-b3-traceid", "Transfer-Encoding", "connection"]
+
+fn message() -> Bytes {
+  var b = BytesBuilder.new()
+  var x = 7
+  for i in 0..64 {
+    if i % 9 == 0 {
+      b.write_str(".leading dot line\r\n")
+    }
+    for _ in 0..56 {
+      x = (x * 1103515245 + 12345) % 2147483648
+      b.write_byte(UInt8(97 + (x >> 16) % 26))
+    }
+    b.write_str("\r\n")
+  }
+  b.write_str(".\r\n")
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let head = HEAD.bytes()
+  let msg = textproto.dot_encode(message())
+  var sum = 0
+  if w == "header" {
+    for _ in 0..100000 {
+      var r = textproto.reader(head)
+      let h = match r.read_header() {
+        Ok(h) => h
+        Err(_) => {
+          os.stdio.println("header error")
+          return
+        }
+      }
+      for k in h.keys() {
+        sum += k.len()
+        for v in h.values(k) {
+          sum += v.len()
+        }
+      }
+    }
+  } else if w == "canonical" {
+    for i in 0..200000 {
+      for k in KEYS {
+        sum += textproto.canonical_key(k).len() + i % 3
+      }
+    }
+  } else if w == "dot" {
+    for i in 0..20000 {
+      var r = textproto.reader(msg)
+      let b = match r.read_dot_bytes() {
+        Ok(b) => b
+        Err(_) => {
+          os.stdio.println("dot error")
+          return
+        }
+      }
+      sum += b.len() + Int(b[i % b.len()])
+    }
+  } else {
+    sum = head.len() + msg.len()
+  }
+  os.stdio.println("${w} ${sum}")
+}
