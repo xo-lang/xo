@@ -16,6 +16,8 @@ programs for any OS with fast, structured, unambiguous feedback.
 - 5.5 and 10.1: `--check=free,guard,leak|all` on `xo run`, `xo test` and `xo build` turns on the native runtime's memory checks (decision 0638); the variables under it (XO_FREE_CHECK, XO_HEAP_GUARD, XO_LEAKCHECK) are documented, and `XO_LEAKCHECK=fail` ends a program that leaves blocks live with status 1.
 - 7.4: the native worker pool follows a Linux cgroup CPU quota (`cpu.max`; v1's CFS quota) as Go 1.25's GOMAXPROCS does, max(2, ceil(quota / period)) workers when that is fewer than the CPUs; `XO_THREADS` is documented and still wins (decision 0638); the count includes the thread that runs `main` and helps while it waits, as Go's Ps, so N is at most N threads running tasks (decision 0640).
 
+- 2.9: `derive Asn1` (decision 0661): a struct's DER encoding with Go's encoding/asn1 rules through `asn1.marshal[T]`, `asn1.unmarshal[T]` and `asn1.unmarshal_prefix[T]`; a field's `asn1 "..."` string is Go's tag text (an unknown option is `XO0422`).
+
 ## Changes in 0.51
 
 None yet.
@@ -1375,6 +1377,22 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
   On an enum a unit variant is the text of its name (`as "x"` on the variant renames it, `derive Cbor(case:)` converts it as `derive Json` does), a variant with fields a one entry
   map from its name to a map of its fields keyed by field name (a lone unnamed `from` field is the value itself), and a
   struct field of an enum type uses the same form; an unknown variant is `CborErr.Type`.
+
+- `Asn1` (structs without type parameters; decision 0661) gives the struct Go's encoding/asn1 DER encoding through
+  `asn1.marshal[T]`, `asn1.unmarshal[T]` and `asn1.unmarshal_prefix[T]`, each with Go's MarshalWithParams /
+  UnmarshalWithParams tag text as `params` (spec/std.md 78). A field's options are its `asn1` string, Go's struct tag
+  text unchanged (`optional`, `explicit`, `application`, `private`, `tag:N`, `default:N`, `set`, `omitempty`, `utf8`,
+  `ia5`, `printable`, `numeric`, `utc`, `generalized`); an unknown option, or one the field's type cannot take, is
+  `XO0422` (Go ignores it). Field types are Bool, Int, big.BigInt, Str, Bytes, Time, time.Civil (any year),
+  asn1.Oid, asn1.BitString, asn1.Enumerated, asn1.Value (any value, Go's RawValue), a struct that derives Asn1, a
+  List of those (SEQUENCE OF, or SET OF with `set`), or an Option of one (`XO0425` for another type); a first field
+  of type asn1.RawContent receives the struct's whole encoding and, when not empty, is what marshal writes. An Option
+  is absent as None; a plain `optional` Bool, Int, Str, Bytes, List or Enumerated is absent as its zero (or the
+  `default:N` value), which marshal leaves out, and `optional` on another type needs an Option. `unmarshal` refuses
+  trailing data after the struct's fields are read. The expansion is ordinary Xo (`asn1_rd__T`, `asn1_wr__T`,
+  `asn1_marshal__T`, `asn1_unmarshal__T`, `asn1_unmarshal_prefix__T` and one `asn1_rd__TYPE` and `asn1_wr__TYPE` a
+  field type) over std/asn1's FieldReader and with_field, and a call of one of the three functions is rewritten to
+  the generated function.
 
 ### 2.10 Implicit conversions
 

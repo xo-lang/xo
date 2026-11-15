@@ -1,0 +1,63 @@
+// derive Asn1 (decision 0661): option and field type errors are reported
+// at the field.
+use std/asn1
+
+struct Plain {
+  a: Int
+}
+
+struct Inner {
+  n: Int
+} derive Asn1
+
+struct Bad {
+  a asn1 "optional,bogus": Int // ERROR XO0422 "unknown asn1 option `bogus`"
+  b asn1 "utf8": Int // ERROR XO0422 "a string type option needs a Str field"
+  c asn1 "generalized": Str // ERROR XO0422 "`utc` and `generalized` need a Time or time.Civil field"
+  d asn1 "set": Int // ERROR XO0422 "`set` needs a struct or a List field"
+  e asn1 "omitempty": Str // ERROR XO0422 "`omitempty` needs a List field"
+  f asn1 "default:3": Int // ERROR XO0422 "`default:N` needs an `optional` Int"
+  g asn1 "optional": Inner // ERROR XO0422 "needs an Option"
+  h asn1 "tag:x": Int // ERROR XO0422 "unknown asn1 option `tag:x`"
+} derive Asn1
+
+struct BadType {
+  m: Map[Str, Int] // ERROR XO0425 "field `m` is another type"
+  f: Float // ERROR XO0425 "field `f` is another type"
+  o: List[Int?] // ERROR XO0425 "field `o` is another type"
+} derive Asn1
+
+struct LateRaw {
+  n: Int
+  raw: asn1.RawContent // ERROR XO0425 "must be the struct's first field"
+} derive Asn1
+
+struct Generic[T] { // ERROR XO0425 "without type parameters"
+  v: Int
+} derive Asn1
+
+struct NotDerived {
+  inner: Plain // ERROR XO0425 "does not derive Asn1"
+  more: List[Plain] // ERROR XO0425 "does not derive Asn1"
+} derive Asn1
+
+enum Choice { // ERROR XO0425 "is an enum"
+  A
+  B
+} derive Asn1
+
+fn use_it(os: Os) {
+  let p = Plain{a: 1}
+  match asn1.marshal(p) { // ERROR XO0404
+    Ok(b) => os.stdio.println("${b.len()}")
+    Err(e) => os.stdio.println(e.display())
+  }
+}
+
+fn generic[T: Asn1](der: Bytes) -> T ! asn1.Asn1Err {
+  asn1.unmarshal[T](der) // ERROR XO0427 "needs a concrete struct that derives Asn1"
+}
+
+struct Untagged {
+  a asn1 "tag:0": Int // ERROR XO0424 "does not derive Asn1"
+}

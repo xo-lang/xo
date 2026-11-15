@@ -2691,6 +2691,41 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
       any_cbor = true
     }
   }
+  var any_asn1 = false
+  var adone: Map[Str, Bool] = {}
+  // this file's structs that do not derive Asn1, for a field naming one
+  var aplain: Map[Str, Bool] = {}
+  for d in f.decls {
+    if let StructDecl(sd) = d {
+      if !sd.derive.any(fn(id: parser.Ident) -> Bool { id.name == b"Asn1" }) {
+        aplain[text(sd.name.name)] = true
+      }
+    }
+  }
+  for d in f.decls {
+    match d {
+      StructDecl(sd) => {
+        if !sd.derive.any(fn(id: parser.Ident) -> Bool { id.name == b"Asn1" }) {
+          continue
+        }
+        if !sd.type_params.is_empty() {
+          c.error_at(file, "XO0425", sd.name.span, "`derive Asn1` needs a struct without type parameters; `${text(sd.name.name)}` has some (decision 0661)")
+          continue
+        }
+        if let Some(e2) = c.asn1_codec(sd, em, adone, aplain, file) {
+          em = e2
+          any = true
+          any_asn1 = true
+        }
+      }
+      EnumDecl(ed) => {
+        if ed.derive.any(fn(id: parser.Ident) -> Bool { id.name == b"Asn1" }) {
+          c.error_at(file, "XO0425", ed.name.span, "`derive Asn1` maps a struct to a SEQUENCE; `${text(ed.name.name)}` is an enum (decision 0661): read a CHOICE as an asn1.Value field")
+        }
+      }
+      _ => {}
+    }
+  }
   var any_proto = false
   // enums of oneof variants of this file: (field number, variant, type) per variant
   var poneofs: Map[Str, List[(Int, Str, Str)]] = {}
@@ -2799,6 +2834,10 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
     head.push("use std/cbor")
     seen["std/cbor"] = true
   }
+  if any_asn1 {
+    head.push("use std/asn1")
+    seen["std/asn1"] = true
+  }
   for u in f.imports {
     let p = text(u.path)
     if u.go || u.c || seen.contains(p) {
@@ -2840,9 +2879,11 @@ fn (var c: Checker) rewrite_xml_calls(from: Int) {
     // only for a call in the program's main file)
     let fname = text(c.objs[fo].name)
     let mpath = c.mods[c.objs[fo].module].path
-    let cbor = mpath == "std/cbor"
+    let cbor = mpath == "std/cbor" || mpath == "std/asn1"
     var dname = "Xml"
-    if cbor {
+    if mpath == "std/asn1" {
+      dname = "Asn1"
+    } else if cbor {
       dname = "Cbor"
     } else if mpath == "std/protobuf" {
       dname = "Proto"
@@ -2859,7 +2900,7 @@ fn (var c: Checker) rewrite_xml_calls(from: Int) {
       continue
     }
     let o = c.tys[t].obj
-    let want = if cbor { "cbor_${fname}__${text(c.objs[o].name)}" } else if dname == "Proto" { "proto_${fname}__${text(c.objs[o].name)}" } else { "${dname.to_lower()}_${if fname == "decode" { "decode" } else if fname == "decode_all" { "decode_all" } else if fname == "encode_all" { "encode_all" } else { "encode" }}__${text(c.objs[o].name)}" }
+    let want = if cbor { "${dname.to_lower()}_${fname}__${text(c.objs[o].name)}" } else if dname == "Proto" { "proto_${fname}__${text(c.objs[o].name)}" } else { "${dname.to_lower()}_${if fname == "decode" { "decode" } else if fname == "decode_all" { "decode_all" } else if fname == "encode_all" { "encode_all" } else { "encode" }}__${text(c.objs[o].name)}" }
     let g = c.mods[c.objs[o].module].members.get(want.bytes()) ?? -1
     if g < 0 {
       c.error("XO0427", sp, "DEBUG no generated function ${want}")
@@ -2868,4 +2909,432 @@ fn (var c: Checker) rewrite_xml_calls(from: Int) {
     c.call_infos[key] = CallInfo{fn_obj: g, recv: ci.recv, params: ci.params, subst: {}}
     c.fn_calls[key] = g
   }
+}
+
+// ---- derive Asn1 (decision 0661): readers and writers over std/asn1's FieldReader ----
+
+/// A field's `asn1 "..."` options, Go's struct tag text (parseFieldParameters);
+/// bad is the first option that is not one of Go's.
+struct Asn1Opts {
+  optional: Bool = false
+  explicit: Bool = false
+  application: Bool = false
+  private: Bool = false
+  tag: Int = -1
+  default_value: Int? = None
+  string_type: Int = 0
+  time_type: Int = 0
+  set: Bool = false
+  omit: Bool = false
+  bad: Str = ""
+}
+
+fn asn1_opts(fl: parser.Field) -> Asn1Opts {
+  var o = Asn1Opts{}
+  var wire = ""
+  for fw in fl.formats {
+    if fw.format == b"asn1" {
+      wire = text(fw.wire)
+    }
+  }
+  if wire.is_empty() {
+    return o
+  }
+  for part in wire.split(",") {
+    if part.is_empty() {
+      continue
+    }
+    if part == "optional" {
+      o.optional = true
+    } else if part == "explicit" {
+      o.explicit = true
+    } else if part == "application" {
+      o.application = true
+    } else if part == "private" {
+      o.private = true
+    } else if part == "set" {
+      o.set = true
+    } else if part == "omitempty" {
+      o.omit = true
+    } else if part == "generalized" {
+      o.time_type = 24
+    } else if part == "utc" {
+      o.time_type = 23
+    } else if part == "ia5" {
+      o.string_type = 22
+    } else if part == "printable" {
+      o.string_type = 19
+    } else if part == "numeric" {
+      o.string_type = 18
+    } else if part == "utf8" {
+      o.string_type = 12
+    } else if part.starts_with("default:") {
+      match Int.parse(part[8..]) {
+        Some(n) => o.default_value = Some(n)
+        None => if o.bad.is_empty() { o.bad = part }
+      }
+    } else if part.starts_with("tag:") {
+      match Int.parse(part[4..]) {
+        Some(n) if n >= 0 => o.tag = n
+        _ => if o.bad.is_empty() { o.bad = part }
+      }
+    } else if o.bad.is_empty() {
+      o.bad = part
+    }
+  }
+  if o.tag < 0 && (o.explicit || o.application || o.private) {
+    o.tag = 0
+  }
+  o
+}
+
+/// The asn1.Field literal of a field of kind with options o.
+fn asn1_field_lit(kind: Int, o: Asn1Opts) -> Str {
+  var parts = ["kind: ${kind}"]
+  if o.optional {
+    parts.push("optional: true")
+  }
+  if o.explicit {
+    parts.push("explicit: true")
+  }
+  if o.application {
+    parts.push("application: true")
+  }
+  if o.private {
+    parts.push("private: true")
+  }
+  if o.tag >= 0 {
+    parts.push("tag: ${o.tag}")
+  }
+  if let Some(d) = o.default_value {
+    parts.push("default_value: Some(${d})")
+  }
+  if o.string_type != 0 {
+    parts.push("string_type: ${o.string_type}")
+  }
+  if o.time_type != 0 {
+    parts.push("time_type: ${o.time_type}")
+  }
+  if o.set {
+    parts.push("set: true")
+  }
+  if o.omit {
+    parts.push("omit_empty: true")
+  }
+  "asn1.Field{${parts.join(", ")}}"
+}
+
+/// Whether t is asn1.RawContent.
+fn asn1_is_raw_content(t: parser.Type) -> Bool {
+  match t {
+    NamedType(_, path, args) => args.is_empty() && path.len() == 2 && text(path[0].name) == "asn1" && text(path[1].name) == "RawContent"
+    _ => false
+  }
+}
+
+/// For a field type t (not an Option): its kind, the names of its reader
+/// `(var r: asn1.FieldReader, x: asn1.Value) -> T ! asn1.Asn1Err` and writer
+/// `(v: T, f: asn1.Field) -> asn1.Value ! asn1.Asn1Err` (defined once into em),
+/// and the text of its zero value when `optional` may omit it ("" when it
+/// must be an Option); None for a type derive Asn1 does not map.
+fn (var c: Checker) asn1_type(t: parser.Type, sp: Span, em: Emit, var done: Map[Str, Bool]) -> (Int, Str, Str, Str, Emit)? {
+  var e = em
+  let (path, args) = match t {
+    NamedType(_, p, a) => (p, a)
+    _ => return None
+  }
+  if path.is_empty() || path.len() > 2 {
+    return None
+  }
+  let n = text(path[path.len() - 1].name)
+  let p0 = if path.len() == 2 { text(path[0].name) } else { "" }
+  var kind = -1
+  var tx = ""
+  var zero = ""
+  var rdb = ""
+  var wrb = ""
+  if args.is_empty() {
+    if p0.is_empty() {
+      match n {
+        "Bool" => {
+          kind = 1
+          zero = "false"
+          rdb = "Ok(x.to_bool())"
+          wrb = "Ok(asn1.Value.Bool(v: v))"
+        }
+        "Int" => {
+          kind = 2
+          zero = "0"
+          rdb = "x.to_int()"
+          wrb = "Ok(asn1.int_value(v))"
+        }
+        "Str" => {
+          kind = 19
+          zero = "\"\""
+          rdb = "Ok(x.to_str())"
+          wrb = "Ok(asn1.str_value(v, f.string_type))"
+        }
+        "Bytes" => {
+          kind = 4
+          zero = "b\"\""
+          rdb = "Ok(x.to_bytes())"
+          wrb = "Ok(asn1.Value.OctetString(v: v))"
+        }
+        "Time" => {
+          kind = 23
+          rdb = "x.to_time()"
+          wrb = "Ok(asn1.time_value(v, f.time_type))"
+        }
+        _ => {}
+      }
+      tx = n
+    } else if p0 == "big" && n == "BigInt" {
+      kind = 2
+      rdb = "Ok(x.to_big())"
+      wrb = "Ok(asn1.Value.Int(v: v))"
+      tx = "big.BigInt"
+    } else if p0 == "time" && n == "Civil" {
+      kind = 23
+      rdb = "Ok(x.to_civil())"
+      wrb = "Ok(asn1.civil_value(v, f.time_type))"
+      tx = "time.Civil"
+    } else if p0 == "asn1" {
+      tx = "asn1.${n}"
+      match n {
+        "Oid" => {
+          kind = 6
+          rdb = "Ok(x.to_oid())"
+          wrb = "Ok(asn1.Value.Oid(v: v))"
+        }
+        "BitString" => {
+          kind = 3
+          rdb = "Ok(x.to_bit_string())"
+          wrb = "Ok(asn1.bit_string_value(v))"
+        }
+        "Enumerated" => {
+          kind = 10
+          zero = "asn1.Enumerated(0)"
+          rdb = "Ok(x.to_enumerated())"
+          wrb = "Ok(asn1.enum_value(v))"
+        }
+        "Value" => {
+          kind = 0
+          rdb = "Ok(x)"
+          wrb = "Ok(v)"
+        }
+        _ => {}
+      }
+    }
+    if kind >= 0 {
+      let m = yaml_mangle(tx)
+      let rd = "asn1_rd__${m}"
+      let wr = "asn1_wr__${m}"
+      if !done.contains(rd) {
+        done[rd] = true
+        e.ln("fn ${rd}(var r: asn1.FieldReader, x: asn1.Value) -> ${tx} ! asn1.Asn1Err { ${rdb} }", sp)
+        e.ln("fn ${wr}(v: ${tx}, f: asn1.Field) -> asn1.Value ! asn1.Asn1Err { ${wrb} }", sp)
+      }
+      return Some((kind, rd, wr, zero, e))
+    }
+    if p0.is_empty() && (is_scalar_name(n) || n is "Option" | "List" | "Map" | "Set" | "Duration") {
+      return None
+    }
+    if p0 is "big" | "time" | "asn1" {
+      return None
+    }
+    // a struct that derives Asn1 (its own expansion defines these)
+    let q = if p0.is_empty() { "" } else { "${p0}." }
+    return Some((16, "${q}asn1_rd__${n}", "${q}asn1_wr__${n}", "", e))
+  }
+  if p0.is_empty() && n == "List" && args.len() == 1 {
+    let el = args[0]
+    if el is OptionalType(..) {
+      return None
+    }
+    let (ek, erd, ewr, _, e2) = c.asn1_type(el, sp, e, done) ?? return None
+    e = e2
+    let ex = yaml_type_text(el) ?? return None
+    let lt = "List[${ex}]"
+    let m = yaml_mangle(lt)
+    let rd = "asn1_rd__${m}"
+    let wr = "asn1_wr__${m}"
+    if !done.contains(rd) {
+      done[rd] = true
+      e.ln("fn ${rd}(var r: asn1.FieldReader, x: asn1.Value) -> ${lt} ! asn1.Asn1Err {", sp)
+      e.ln("  var lr = r.open_list(x, ${ek})?", sp)
+      e.ln("  var out: ${lt} = []", sp)
+      e.ln("  while !lr.done() {", sp)
+      e.ln("    let y = lr.need(asn1.Field{kind: ${ek}})?", sp)
+      e.ln("    out.push(${erd}(lr, y)?)", sp)
+      e.ln("  }", sp)
+      e.ln("  Ok(out)", sp)
+      e.ln("}", sp)
+      e.ln("fn ${wr}(v: ${lt}, f: asn1.Field) -> asn1.Value ! asn1.Asn1Err {", sp)
+      e.ln("  var items: List[asn1.Value] = []", sp)
+      e.ln("  for y in v {", sp)
+      e.ln("    items.push(${ewr}(y, asn1.Field{kind: ${ek}})?)", sp)
+      e.ln("  }", sp)
+      e.ln("  Ok(if f.set { asn1.Value.Set(items: items) } else { asn1.Value.Sequence(items: items) })", sp)
+      e.ln("}", sp)
+    }
+    return Some((16, rd, wr, "[]", e))
+  }
+  None
+}
+
+/// The reader, writer and entry points of a struct that derives Asn1
+/// (decision 0661): `asn1_rd__N`, `asn1_wr__N`, `asn1_marshal__N`,
+/// `asn1_unmarshal__N` and `asn1_unmarshal_prefix__N`.
+fn (var c: Checker) asn1_codec(sd: parser.StructDecl, em: Emit, var done: Map[Str, Bool], plain: Map[Str, Bool], file: Int) -> Emit? {
+  var e = em
+  let sp = sd.name.span
+  let n = text(sd.name.name)
+  let pub_ = if sd.is_pub { "pub " } else { "" }
+  var reads: List[Str] = []
+  var writes: List[Str] = []
+  var inits: List[Str] = []
+  var raw = ""
+  var ok = true
+  for (i, fl) in sd.fields.indexed() {
+    let f = text(fl.name.name)
+    if asn1_is_raw_content(fl.typ) {
+      if i != 0 {
+        c.error_at(file, "XO0425", fl.name.span, "an asn1.RawContent field must be the struct's first field; `${f}` is not (decision 0661)")
+        ok = false
+        continue
+      }
+      raw = f
+      inits.push("${f}: asn1.RawContent(raw_)")
+      continue
+    }
+    let o = asn1_opts(fl)
+    if !o.bad.is_empty() {
+      c.error_at(file, "XO0422", fl.name.span, "unknown asn1 option `${o.bad}` of field `${f}`; the options are Go's: optional, explicit, application, private, tag:N, default:N, set, omitempty, utf8, ia5, printable, numeric, utc, generalized (decision 0661)")
+      ok = false
+      continue
+    }
+    var ty = fl.typ
+    var opt = false
+    match fl.typ {
+      OptionalType(_, el) => {
+        ty = el
+        opt = true
+      }
+      NamedType(_, path, args) => {
+        if path.len() == 1 && args.len() == 1 && text(path[0].name) == "Option" {
+          ty = args[0]
+          opt = true
+        }
+      }
+      _ => {}
+    }
+    var sty = ty
+    if let NamedType(_, sp_, sa) = ty {
+      if sp_.len() == 1 && sa.len() == 1 && text(sp_[0].name) == "List" {
+        sty = sa[0]
+      }
+    }
+    if let Some((q, sn)) = yaml_struct_name(sty) {
+      if q.is_empty() && plain.contains(sn) {
+        c.error_at(file, "XO0425", fl.name.span, "field `${f}` is the struct `${sn}`, which does not derive Asn1; add `derive Asn1` to it (decision 0661)")
+        ok = false
+        continue
+      }
+    }
+    let (kind, rd, wr, zero, e2) = c.asn1_type(ty, fl.name.span, e, done) ?? {
+      c.error_at(file, "XO0425", fl.name.span, "`derive Asn1` maps Bool, Int, big.BigInt, Str, Bytes, Time, time.Civil, asn1.Oid, asn1.BitString, asn1.Enumerated, asn1.Value, a struct that derives Asn1, a List of those, or an Option of one; field `${f}` is another type (decision 0661)")
+      ok = false
+      continue
+    }
+    e = e2
+    let is_list = zero == "[]"
+    var bad = ""
+    if o.set && kind != 16 {
+      bad = "`set` needs a struct or a List field"
+    } else if o.string_type != 0 && kind != 19 {
+      bad = "a string type option needs a Str field"
+    } else if o.time_type != 0 && kind != 23 {
+      bad = "`utc` and `generalized` need a Time or time.Civil field"
+    } else if o.omit && !is_list {
+      bad = "`omitempty` needs a List field"
+    } else if o.default_value != None && (!o.optional || opt || !(kind == 2 && zero == "0" || kind == 10)) {
+      bad = "`default:N` needs an `optional` Int or asn1.Enumerated field"
+    } else if o.optional && !opt && zero.is_empty() {
+      bad = "`optional` on a field of this type needs an Option (Go omits a zero struct or time, which has no Xo form)"
+    }
+    if !bad.is_empty() {
+      c.error_at(file, "XO0422", fl.name.span, "field `${f}`: ${bad} (decision 0661)")
+      ok = false
+      continue
+    }
+    var fo = o
+    if opt {
+      fo.optional = true
+    }
+    let lit = asn1_field_lit(kind, fo)
+    var dflt = zero
+    if let Some(d) = o.default_value {
+      dflt = if kind == 10 { "asn1.Enumerated(${d})" } else { "${d}" }
+    }
+    if opt || o.optional {
+      reads.push("  let o_${f} = r.next(${lit})?")
+      let t_ = yaml_type_text(fl.typ) ?? ""
+      reads.push("  var f_${f}: ${t_} = ${if opt { "None" } else { dflt }}")
+      reads.push("  if let Some(x) = o_${f} {")
+      reads.push("    f_${f} = ${if opt { "Some(${rd}(r, x)?)" } else { "${rd}(r, x)?" }}")
+      reads.push("  }")
+    } else {
+      reads.push("  let x_${f} = r.need(${lit})?")
+      reads.push("  let f_${f} = ${rd}(r, x_${f})?")
+    }
+    inits.push("${f}: f_${f}")
+    if opt {
+      writes.push("  if let Some(w) = v.${f} { items.push(${wr}(w, ${lit})?.with_field(${lit})?) }")
+    } else if o.omit || o.optional && is_list {
+      writes.push("  if !v.${f}.is_empty() { items.push(${wr}(v.${f}, ${lit})?.with_field(${lit})?) }")
+    } else if o.optional {
+      writes.push("  if v.${f} != ${dflt} { items.push(${wr}(v.${f}, ${lit})?.with_field(${lit})?) }")
+    } else {
+      writes.push("  items.push(${wr}(v.${f}, ${lit})?.with_field(${lit})?)")
+    }
+  }
+  if !ok {
+    return None
+  }
+  e.ln("${pub_}fn asn1_rd__${n}(var p: asn1.FieldReader, x: asn1.Value) -> ${n} ! asn1.Asn1Err {", sp)
+  if !raw.is_empty() {
+    e.ln("  let raw_ = p.last()", sp)
+  }
+  e.ln("  var r = p.open(x)", sp)
+  for l in reads {
+    e.ln(l, sp)
+  }
+  e.ln("  Ok(${n}{${inits.join(", ")}})", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn asn1_wr__${n}(v: ${n}, _f: asn1.Field) -> asn1.Value ! asn1.Asn1Err {", sp)
+  if !raw.is_empty() {
+    e.ln("  if !v.${raw}.0.is_empty() { return Ok(asn1.raw_struct(v.${raw}.0)) }", sp)
+  }
+  e.ln("  var items: List[asn1.Value] = []", sp)
+  for l in writes {
+    e.ln(l, sp)
+  }
+  e.ln("  Ok(asn1.Value.Sequence(items: items))", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn asn1_marshal__${n}(v: ${n}, params: Str = \"\") -> Bytes ! asn1.Asn1Err {", sp)
+  e.ln("  let f = asn1.field(params, asn1.KIND_SEQUENCE)", sp)
+  e.ln("  asn1_wr__${n}(v, f)?.with_field(f)?.der()", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn asn1_unmarshal_prefix__${n}(der: Bytes, params: Str = \"\") -> (${n}, Bytes) ! asn1.Asn1Err {", sp)
+  e.ln("  var top = asn1.field_reader(der)", sp)
+  e.ln("  let x = top.need(asn1.field(params, asn1.KIND_SEQUENCE))?", sp)
+  e.ln("  let v = asn1_rd__${n}(top, x)?", sp)
+  e.ln("  Ok((v, top.rest()))", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn asn1_unmarshal__${n}(der: Bytes, params: Str = \"\") -> ${n} ! asn1.Asn1Err {", sp)
+  e.ln("  let (v, rest) = asn1_unmarshal_prefix__${n}(der, params)?", sp)
+  e.ln("  if !rest.is_empty() { return Err(asn1.Asn1Err.Syntax(msg: \"trailing data\")) }", sp)
+  e.ln("  Ok(v)", sp)
+  e.ln("}", sp)
+  Some(e)
 }

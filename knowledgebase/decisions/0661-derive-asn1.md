@@ -1,8 +1,9 @@
 # 0661: derive Asn1, typed DER over std/asn1 (decision 0601 stage 2)
 
-Status: Proposed (Xo Lang 3, 2026-11-15). Owner, 2026-11-15: direction approved (finishes 0601's "derive Asn1
-later", on the derive Xml/Cbor pattern); the std side lands first, and the compiler part lands after this ADR is
-filled in and the lead has reviewed it, which accepts it.
+Status: Accepted (owner through the lead's review, 2026-11-15). Proposed by Xo Lang 3, 2026-11-15; the owner
+approved the direction (finishes 0601's "derive Asn1 later", on the derive Xml/Cbor pattern); the std side landed
+first (fac4a80b6), and the lead's review accepted the compiler part with two changes, made below: times of any year
+in a `time.Civil` field, and `asn1.Enumerated` as a field type.
 
 ## Context
 
@@ -48,8 +49,11 @@ as gaps of this stage; 0601 deferred it until stage 1's corpus was green and the
 3. **The mapping** (Go's getUniversalType): `Bool` BOOLEAN; `Int` INTEGER (64 bit, `integer too large`);
    `big.BigInt` INTEGER of any size; `asn1.BitString` BIT STRING; `Bytes` OCTET STRING; `asn1.Oid` OBJECT
    IDENTIFIER; `Str` any string type read, written Printable or UTF8 or as the option says; `Time` UTCTime or
-   GeneralizedTime (a time outside 1678 to 2261 is an error, where Go reads it: decision 0614's WideTime has no
-   place in a `Time` field); a struct deriving Asn1 a SEQUENCE (`set`: SET, in field order as Go); `List[T]`
+   GeneralizedTime (a time outside 1678 to 2261 is an error whose text names `time.Civil`); `time.Civil` (decision
+   0614's wide time, the lead's review) the same types for any year 0000 to 9999, read as the wall clock in UTC and
+   written as a `Time` is when in range, else as a GeneralizedTime (RFC 5280's `99991231235959Z`, "no expiry");
+   `asn1.Enumerated` (an `Int` newtype, the lead's review) ENUMERATED, 32 bits as Go reads it, with `default:N`
+   as for `Int`; a struct deriving Asn1 a SEQUENCE (`set`: SET, in field order as Go); `List[T]`
    SEQUENCE OF (`set`: SET OF, sorted as DER); `asn1.Value` any value as written (Go's RawValue: `Raw` with its
    class, tag and contents); a first field of type `asn1.RawContent` (a struct holding `Bytes`) receives the
    struct's whole encoding and, when not empty, is what Marshal writes.
@@ -58,21 +62,26 @@ as gaps of this stage; 0601 deferred it until stage 1's corpus was green and the
    `List`): the zero value (or the `default:N` integer) is omitted on Marshal and an absent element reads as it.
    An `optional` field of another type must be an `Option` (a compile error otherwise), since Go's DeepEqual to a
    zero struct or a zero time has no Xo counterpart.
-5. **Out:** `asn1.Flag` (a marker for reflection; a zero length explicit tag stays an error), `Enumerated` as a
-   field type (read it as `asn1.Value`; KIND_ENUM exists in the helpers for a later newtype), slice types named
+5. **Out:** `asn1.Flag` (a marker for reflection; a zero length explicit tag stays an error), slice types named
    `...SET` (Xo uses the `set` option), Go's unexported field error (Xo derives see every field), and `tags don't
-   match`'s parameter dump (Go prints its %+v parameters, pointers included: the text ends after the tag and length).
+   match`'s parameter dump (Go prints its %+v parameters, pointers included: the text ends after the tag and length),
+   and a parsed time's offset on Marshal (std/asn1's `Value` holds an instant and writes `Z`; Go writes the offset
+   it read back: the corpus compares Go's Marshal of the UTC time).
 6. **Spec:** spec/core.md 2.9 (the derivable table) and spec/std.md 78 gain the derive and the three functions;
-   `TestDerivableTable` and the checker's tables take the entry; an `asn1 "..."` tag on a struct without `derive
-   Asn1` is a warning (the 0277 rule).
+   `TestDerivableTable` and the checker's tables take the entry; an `asn1 "..."` string on a struct without `derive
+   Asn1` is `XO0424`, as for the other formats. Diagnostics: `XO0422` an unknown option or one the field's type
+   cannot take (`utf8` on an Int, `optional` on a struct that is not an Option), `XO0425` a field type the derive
+   does not map, a struct field naming a struct of the file that does not derive Asn1, a RawContent field that is not
+   first, an enum or a generic struct; `XO0427` a call with a type parameter.
 
 ## Consequences
 
 - Typed DER without a hand written walk; PKCS, CMS, LDAP and SNMP structures port from Go with their tags copied.
-- Verification is the oracle corpus `testdata/corpus/asn1fields` (in place with the std side: 430 cases over four
-  struct types using every tag option, each Unmarshal result and Go's Marshal of it compared on go, arm64 and llvm).
-  Its four structs are read and written by hand-written code shaped as the generated code; when the derive lands
-  the corpus switches those structs to `derive Asn1` with the same expectations, so both forms stay proven.
+- Verification is the oracle corpus `testdata/corpus/asn1fields` (1035 cases over five struct types using every
+  tag option, ENUMERATED and times of years 0000 to 9999, each Unmarshal result and Go's Marshal of it compared on
+  go, arm64 and llvm). Structs A to D are read both by hand-written code over the std helpers and by `derive Asn1`
+  with the same expectations, so both forms stay proven; struct E is derive only. `test/errorcheck/derive_asn1`
+  holds the compile errors.
 - The std helpers are public API even if the derive were never accepted; they stand alone as Go's field rules for
   hand-written readers, which is why the std side lands first.
 - Cost: a derive in compiler/check (derive.xo, derivables.xo, call.xo's std path list) about the size of Cbor's,

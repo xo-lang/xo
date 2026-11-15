@@ -292,6 +292,8 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
               }
               c.error("XO0422", fw.span, "unknown wire name option `${text(o)}` of field `${text(fl.name.name)}`; a `sql` column name takes no options")
             }
+          } else if fw.format == b"asn1" {
+            // read by derive Asn1's expansion (decision 0661)
           } else {
             xml_wire = fw.wire
           }

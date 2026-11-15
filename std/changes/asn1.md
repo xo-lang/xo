@@ -1,5 +1,20 @@
 # std/asn1 changes
 
+## 2026-11-15: feature: derive Asn1, marshal and unmarshal (decision 0661)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the std audit (decision 0655 features line): Marshal, Unmarshal, MarshalWithParams, UnmarshalWithParams and RawContent were gaps
+- Go reference: encoding/asn1 Marshal, Unmarshal, getUniversalType, parseField, makeField (go1.26)
+- Test: testdata/corpus/asn1fields (1035 cases over five structs, hand-written and derived, go, arm64, llvm); test/errorcheck/derive_asn1
+
+`asn1.marshal[T]`, `asn1.unmarshal[T]` and `asn1.unmarshal_prefix[T]`
+over a struct that derives Asn1, each with Go's params text. New field
+types: `Enumerated` (Go's asn1.Enumerated, 32 bits as Go reads it),
+`RawContent`, and `time.Civil` for times of any year (`to_civil`,
+`civil_value`); a `Time` field's out of range error now names
+`time.Civil`.
+
 ## 2026-11-15: feature: struct fields: FieldReader, Field and with_field (decision 0661)
 
 - Kind: feature

@@ -10537,6 +10537,15 @@ fn (v: Value) to_bool() -> Bool                    // and to_int() ! Asn1Err, to
 fn int_value(n: Int) -> Value                      // and bit_string_value(b), str_value(s, string_type = 0),
                                                    // time_value(t, time_type = 0), raw_struct(full)
 fn (v: Value) with_field(f: Field) -> Value ! Asn1Err   // Go's makeField: `set`, then an explicit or implicit tag
+fn (v: Value) to_civil() -> time.Civil             // a time of any year, its wall clock in UTC
+fn civil_value(c: time.Civil, time_type: Int = 0) -> Value
+type Enumerated struct(Int)                        // an ENUMERATED field; to_enumerated(), enum_value(e)
+type RawContent struct(Bytes)                      // a first field: the struct's whole encoding
+
+// derive Asn1 (spec/core.md 2.9): a call is compiled as a call of the function the derive generates for T
+fn marshal[T: Asn1](v: T, params: Str = "") -> Bytes ! Asn1Err                     // Marshal, MarshalWithParams
+fn unmarshal[T: Asn1](der: Bytes, params: Str = "") -> T ! Asn1Err                 // all of der: `trailing data`
+fn unmarshal_prefix[T: Asn1](der: Bytes, params: Str = "") -> (T, Bytes) ! Asn1Err // Unmarshal and its rest
 ```
 
 `parse` refuses what Go refuses, with Go's texts (`asn1: syntax error: ...` for a SyntaxError, `asn1: structure error:
@@ -10557,7 +10566,7 @@ the same way.
 
 Struct fields (decision 0661): a `FieldReader` reads a SEQUENCE's contents one field at a time with Go's parseField
 rules, and `with_field` writes a field's value with Go's makeField rules, so a hand-written reader and writer of a
-struct (and, once its compiler part lands, `derive Asn1`) gives Go's bytes and errors. `next` takes the field's kind
+struct (and `derive Asn1`, which generates that code) gives Go's bytes and errors. `next` takes the field's kind
 and options: an explicit tag's header is read before its tag is compared (an optional explicit field followed by an
 empty last element is `explicit tag has no child`, as in Go); a zero length explicit tag is an error (Go's
 `asn1.Flag` is not ported); a string field reads any string type (GeneralString as T61); a time field reads both
@@ -10565,14 +10574,17 @@ time types; an implicit tag sets the class and tag compared; a mismatch is None 
 `tags don't match` otherwise (Go's text continues with its parameters, which Xo's does not); a SEQUENCE or SET is
 `Raw` with its contents for `open` or `open_list`, and KIND_ANY is the value as written (Go's RawValue). Trailing
 elements of a SEQUENCE no field reads are not parsed, as in Go; a reader checks for trailing data after its struct's
-fields, so a field's error comes first, as in Go. A time outside what a `Time` holds is an error for a time field
-(`to_time`), where Go reads it. `str_value` writes a PrintableString when every byte is printable (`*` and `&`
+fields, so a field's error comes first, as in Go. A time outside what a `Time` holds is an error for a `Time` field
+(`to_time`, whose text names `time.Civil`), where Go reads it; a `time.Civil` field (`to_civil`, `civil_value`)
+holds any year 0000 to 9999, such as RFC 5280's `99991231235959Z`. ENUMERATED fields are `Enumerated`, read in 32
+bits as Go does (`integer too large`). `str_value` writes a PrintableString when every byte is printable (`*` and `&`
 refused) and a UTF8String otherwise; a forced PrintableString allows `*`, as Go's makePrintableString. `time_value`
 writes a UTCTime unless `generalized` or the year is outside 1950 to 2049. Optional fields: Go omits a zero value
 (or the `default:N` integer) on Marshal; a writer does the same, and `Option` fields are the Xo form of "absent".
 
-Checked against Go's Unmarshal and Marshal (testdata/corpus/asn1, 1305 cases; testdata/corpus/asn1fields, 430
-cases over four struct types using every tag option, each with Go's Marshal of what it decoded) and its own tests
+Checked against Go's Unmarshal and Marshal (testdata/corpus/asn1, 1305 cases; testdata/corpus/asn1fields, 1035
+cases over five struct types using every tag option, ENUMERATED and times of any year, each with Go's Marshal of
+what it decoded, read by hand-written code and by `derive Asn1`) and its own tests
 (std/asn1_test.xo).
 
 ## 79. std/sse

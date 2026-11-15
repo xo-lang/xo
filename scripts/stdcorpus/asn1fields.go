@@ -62,6 +62,18 @@ type afD struct {
 	S   string `asn1:"tag:0"`
 }
 
+// afE is derive-only on the Xo side: ENUMERATED fields and times in
+// time.Civil fields, which hold any year GeneralizedTime writes (RFC
+// 5280's 99991231235959Z).
+type afE struct {
+	St    asn1.Enumerated
+	Opt   asn1.Enumerated `asn1:"optional,tag:0,default:2"`
+	Never time.Time       `asn1:"generalized"`
+	At    time.Time
+}
+
+func afCivil(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000000000") }
+
 func afHex(s string) string { return hex.EncodeToString([]byte(s)) }
 
 func afWhen(t time.Time) string {
@@ -104,6 +116,8 @@ func afText(v any) string {
 		return fmt.Sprintf("C [%s]|[%s]|%s|%s|%s|%d", strings.Join(it, ","), strings.Join(rs, ","), afRawText(x.Any), afInnerText(x.Nest), at, x.Tail)
 	case *afD:
 		return fmt.Sprintf("D %x|%d|%s", []byte(x.Raw), x.N, afHex(x.S))
+	case *afE:
+		return fmt.Sprintf("E %d|%d|%s|%s", x.St, x.Opt, afCivil(x.Never), afCivil(x.At))
 	}
 	panic("afText")
 }
@@ -143,6 +157,8 @@ func afCase(kind byte, der []byte) (string, string) {
 		v = new(afB)
 	case 'C':
 		v = new(afC)
+	case 'E':
+		v = new(afE)
 	default:
 		v = new(afD)
 	}
@@ -163,6 +179,16 @@ func afCase(kind byte, der []byte) (string, string) {
 			return "err wide", "-"
 		}
 	}
+	// std/asn1 writes every time in UTC (its Value holds an instant), where
+	// Go writes a parsed time's offset back: Go marshals the UTC times
+	switch x := v.(type) {
+	case *afA:
+		x.When, x.Until = x.When.UTC(), x.Until.UTC()
+	case *afC:
+		x.At = x.At.UTC()
+	case *afE:
+		x.Never, x.At = x.Never.UTC(), x.At.UTC()
+	}
 	enc := "-"
 	if b, err := asn1.Marshal(reflectElem(v)); err == nil {
 		enc = hex.EncodeToString(b)
@@ -181,6 +207,8 @@ func reflectElem(v any) any {
 	case *afC:
 		return *x
 	case *afD:
+		return *x
+	case *afE:
 		return *x
 	}
 	panic("reflectElem")
@@ -255,6 +283,20 @@ func afGen(r *rand.Rand, kind byte) []byte {
 			at = afTime(r, 1950, 2050)
 		}
 		v = afC{Items: items, Raws: raws, Any: asn1.RawValue{Tag: 2, Bytes: []byte{byte(r.Intn(128))}}, Nest: afInnerGen(r), At: at, Tail: []int{0, 9}[r.Intn(2)]}
+	case 'E':
+		en := func() asn1.Enumerated {
+			return asn1.Enumerated([]int{0, 1, 2, 3, -1, 1<<31 - 1, -(1 << 31), 1 << 31, 1 << 40}[r.Intn(9)])
+		}
+		never := time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+		switch r.Intn(4) {
+		case 1:
+			never = afTime(r, 1, 9999)
+		case 2:
+			never = afTime(r, 1950, 2050)
+		case 3:
+			never = time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
+		}
+		v = afE{St: en(), Opt: en(), Never: never, At: afTime(r, 1700, 2200)}
 	default:
 		v = afD{N: afInt(r), S: afStr(r, true)}
 	}
@@ -292,6 +334,14 @@ func afFixed() [][2]string {
 		{"C", "30003000020105310502010113008703"},               // At truncated
 		{"C", "300030000201053105020101130087023030"},           // At not a UTCTime
 		{"C", "3006300402010113003000020105310502010113000209"}, // Items, Tail 9
+		{"E", "0a0105180f39393939313233313233353935395a170d3730303130313030303030305a"},         // 9999-12-31 GeneralizedTime (RFC 5280's never)
+		{"E", "0a0105800103180f39393939313233313233353935395a170d3730303130313030303030305a"},   // Opt [0] given
+		{"E", "0a0105800102180f39393939313233313233353935395a170d3730303130313030303030305a"},   // Opt given as its default
+		{"E", "020105180f39393939313233313233353935395a170d3730303130313030303030305a"},         // an INTEGER where the ENUMERATED is
+		{"E", "0a050100000000180f39393939313233313233353935395a170d3730303130313030303030305a"}, // ENUMERATED past 32 bits
+		{"E", "0a0105181339393939313233313233353935392b30313030170d3730303130313030303030305a"}, // never at +0100
+		{"E", "0a0105180f30303031303130313030303030305a170d3730303130313030303030305a"},         // year 1
+		{"E", "0a0105181330303031303130313030303030302b30313030170d3730303130313030303030305a"}, // year 1 at +0100: year 0 in UTC
 		{"A", ""},
 		{"A", "="},
 		{"C", ""},
@@ -301,9 +351,9 @@ func afFixed() [][2]string {
 func asn1fieldsCorpus() string {
 	r := rand.New(rand.NewSource(661))
 	var o strings.Builder
-	o.WriteString(header("encoding/asn1's Unmarshal and Marshal of four struct types (every field tag option) on DER from seeded random values, their mutations, and hand-made cases"))
-	o.WriteString("use std/asn1\nuse std/big\n\n")
-	o.WriteString("/// (struct A to D, DER, Go's Unmarshal as the corpus's text or `err TEXT`, Go's Marshal of the result as hex, `err TEXT` or `-`)\nconst CASES: List[(Str, Bytes, Str, Str)] = [\n")
+	o.WriteString(header("encoding/asn1's Unmarshal and Marshal of five struct types (every field tag option, ENUMERATED, times of any year) on DER from seeded random values, their mutations, and hand-made cases"))
+	o.WriteString("use std/asn1\nuse std/big\nuse std/time\n\n")
+	o.WriteString("/// (struct A to E, DER, Go's Unmarshal as the corpus's text or `err TEXT`, Go's Marshal of the result as hex, `err TEXT` or `-`)\nconst CASES: List[(Str, Bytes, Str, Str)] = [\n")
 	add := func(kind byte, der []byte) {
 		t, enc := afCase(kind, der)
 		fmt.Fprintf(&o, "  (%s, %s, %s, %s),\n", xq(string(kind)), xbytes(der), xq(t), xq(enc))
@@ -340,6 +390,23 @@ func asn1fieldsCorpus() string {
 			b = c
 		}
 		add(k, b)
+	}
+	// struct E (derive only): its own source, so A to D keep their cases
+	re := rand.New(rand.NewSource(6610))
+	for i := 0; i < 200; i++ {
+		b := afGen(re, 'E')
+		if b == nil {
+			continue
+		}
+		switch re.Intn(4) {
+		case 2:
+			c := append([]byte(nil), b...)
+			c[re.Intn(len(c))] ^= byte(1 << uint(re.Intn(8)))
+			b = c
+		case 3:
+			b = b[:re.Intn(len(b))]
+		}
+		add('E', b)
 	}
 	o.WriteString("]\n")
 	o.WriteString(asn1fieldsTests)
@@ -619,7 +686,7 @@ fn err_text(e: asn1.Asn1Err) -> Str {
   if t.starts_with("asn1: invalid UTCTime") || t.starts_with("asn1: invalid GeneralizedTime") {
     return "time"
   }
-  if t.starts_with("asn1: time outside") {
+  if t.contains("outside the years a Time holds") {
     return "wide"
   }
   match t.find("tags don't match") {
@@ -674,9 +741,143 @@ fn round(kind: Str, der: Bytes) -> (Str, Str) ! asn1.Asn1Err {
   (text, enc)
 }
 
+// The same four structs with derive Asn1 (decision 0661): the generated
+// reader and writer must give the hand-written ones' results.
+
+struct DInner {
+  x: Int
+  y asn1 "printable": Str
+} derive Asn1
+
+struct DA {
+  serial: big.BigInt
+  alg: asn1.Oid
+  name: Str
+  mail asn1 "ia5": Str
+  when: Time
+  until asn1 "generalized": Time
+  flags: asn1.BitString
+  key: Bytes
+  ok: Bool
+  count: Int
+} derive Asn1
+
+struct DB {
+  version asn1 "optional,explicit,default:1,tag:0": Int
+  a asn1 "tag:1": Int
+  b asn1 "optional,tag:2,utf8": Str
+  c asn1 "set": List[Int]
+  d asn1 "optional,omitempty,explicit,tag:3": List[Str]
+  f asn1 "optional,explicit,tag:4": DInner?
+  g asn1 "optional,application,tag:5": Int
+  h asn1 "optional,private,tag:6": Int
+  i asn1 "optional": Bool
+} derive Asn1
+
+struct DC {
+  items: List[DInner]
+  raws: List[asn1.Value]
+  any: asn1.Value
+  nest asn1 "set": DInner
+  at asn1 "optional,tag:7": Time?
+  tail asn1 "optional": Int
+} derive Asn1
+
+struct DD {
+  raw: asn1.RawContent
+  n: Int
+  s asn1 "tag:0": Str
+} derive Asn1
+
+struct DE {
+  st: asn1.Enumerated
+  opt asn1 "optional,tag:0,default:2": asn1.Enumerated
+  never asn1 "generalized": time.Civil
+  at: time.Civil
+} derive Asn1
+
+fn pad(n: Int, w: Int) -> Str {
+  let t = "${n}"
+  "${"0".repeat((w - t.len()).max(0))}${t}"
+}
+
+/// Go's t.UTC().Format("2006-01-02T15:04:05.000000000").
+fn civil_text(c: time.Civil) -> Str {
+  "${pad(c.date.year, 4)}-${pad(c.date.month, 2)}-${pad(c.date.day, 2)}T${pad(c.time.hour, 2)}:${pad(c.time.minute, 2)}:${pad(c.time.second, 2)}.${pad(c.time.nanos, 9)}"
+}
+
+fn hi(x: DInner) -> Inner { Inner{x: x.x, y: x.y} }
+
+fn enc_text(r: Result[Bytes, asn1.Asn1Err]) -> Str {
+  match r {
+    Ok(b) => b.to_hex()
+    Err(e) => "err ${err_text(e)}"
+  }
+}
+
+/// round with the derived structs and asn1.unmarshal and asn1.marshal.
+fn round_derived(kind: Str, der: Bytes) -> (Str, Str) ! asn1.Asn1Err {
+  match kind {
+    "A" => {
+      let d = asn1.unmarshal[DA](der)?
+      let x = SA{serial: d.serial, alg: d.alg, name: d.name, mail: d.mail, when: d.when, until: d.until, flags: d.flags, key: d.key, ok: d.ok, count: d.count}
+      Ok(("A ${x.serial}|${x.alg}|${hex_str(x.name)}|${hex_str(x.mail)}|${when(x.when)}|${when(x.until)}|${x.flags.bytes.to_hex()}:${x.flags.bit_len}|${x.key.to_hex()}|${x.ok}|${x.count}", enc_text(asn1.marshal(d))))
+    }
+    "B" => {
+      let d = asn1.unmarshal[DB](der)?
+      let f = match d.f {
+        Some(i) => if i.x == 0 && i.y == "" { "-" } else { inner_text(hi(i)) }
+        None => "-"
+      }
+      Ok(("B ${d.version}|${d.a}|${hex_str(d.b)}|${int_list(d.c)}|[${d.d.map(hex_str).join(",")}]|${f}|${d.g}|${d.h}|${d.i}", enc_text(asn1.marshal(d))))
+    }
+    "C" => {
+      let d = asn1.unmarshal[DC](der)?
+      let at = match d.at {
+        Some(t) => when(t)
+        None => "-"
+      }
+      Ok(("C [${d.items.map(hi).map(inner_text).join(",")}]|[${d.raws.map(raw_text).join(",")}]|${raw_text(d.any)}|${inner_text(hi(d.nest))}|${at}|${d.tail}", enc_text(asn1.marshal(d))))
+    }
+    "E" => {
+      let d = asn1.unmarshal[DE](der)?
+      Ok(("E ${d.st.0}|${d.opt.0}|${civil_text(d.never)}|${civil_text(d.at)}", enc_text(asn1.marshal(d))))
+    }
+    _ => {
+      let d = asn1.unmarshal[DD](der)?
+      Ok(("D ${d.raw.0.to_hex()}|${d.n}|${hex_str(d.s)}", enc_text(asn1.marshal(d))))
+    }
+  }
+}
+
+test "derive Asn1 reads and writes as Go's Unmarshal and Marshal" {
+  var bad: List[(Str, Bytes, Str, Str)] = []
+  for (kind, der, want, wenc) in CASES {
+    match round_derived(kind, der) {
+      Ok((text, enc)) => {
+        if text != want {
+          bad.push((kind, der, text, want))
+        } else if enc != wenc {
+          bad.push((kind, der, "marshal ${enc}", wenc))
+        }
+      }
+      Err(e) => {
+        let got = "err ${err_text(e)}"
+        if got != want {
+          bad.push((kind, der, got, want))
+        }
+      }
+    }
+  }
+  expect(bad[..bad.len().min(5)]) == []
+}
+
 test "struct fields read and write as Go's Unmarshal and Marshal" {
   var bad: List[(Str, Bytes, Str, Str)] = []
   for (kind, der, want, wenc) in CASES {
+    if kind == "E" {
+      continue
+    }
     match round(kind, der) {
       Ok((text, enc)) => {
         if text != want {

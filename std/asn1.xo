@@ -1221,14 +1221,90 @@ pub fn (v: Value) to_str() -> Str {
   }
 }
 
-/// A time field's instant; a time outside what a Time holds (WideTime)
-/// is an error here, where Go reads it.
+/// A time field's instant; a time outside the years a Time holds (1678 to
+/// 2261) is an error here, where Go reads it: a `time.Civil` field reads
+/// any year (decision 0614; RFC 5280 writes 99991231235959Z for "never").
 pub fn (v: Value) to_time() -> Time ! Asn1Err {
   match v {
     Value.UtcTime(t) => t
     Value.GeneralizedTime(t) => t
-    _ => Err(Asn1Err.Invalid(msg: "asn1: time outside the years a Time holds"))
+    Value.WideTime(c, _) => Err(Asn1Err.Invalid(msg: "asn1: time ${c.date.year} is outside the years a Time holds (1678 to 2261); read it into a time.Civil field"))
+    _ => Err(Asn1Err.Invalid(msg: "asn1: not a time"))
   }
+}
+
+/// A time field's wall clock in UTC for a `time.Civil` field: any year a
+/// UTCTime or GeneralizedTime can write (decision 0614).
+pub fn (v: Value) to_civil() -> time.Civil {
+  match v {
+    Value.UtcTime(t) => time.civil(t, time.utc())
+    Value.GeneralizedTime(t) => time.civil(t, time.utc())
+    Value.WideTime(c, _) => wide_utc(c)
+    _ => time.civil(Time.UNIX_EPOCH, time.utc())
+  }
+}
+
+/// c's instant as a wall clock in UTC (a WideTime keeps its offset).
+fn wide_utc(c: time.Civil) -> time.Civil {
+  if c.offset == 0s {
+    return time.Civil{date: c.date, time: c.time, offset: 0s, zone: "UTC"}
+  }
+  let u = c.unix()
+  var days = u / 86400
+  if u % 86400 < 0 {
+    days -= 1
+  }
+  let rem = u - days * 86400
+  let d = time.Date{year: 1970, month: 1, day: 1}.add_days(days)
+  time.Civil{date: d, time: time.ClockTime{hour: rem / 3600, minute: rem / 60 % 60, second: rem % 60, nanos: c.time.nanos}, offset: 0s, zone: "UTC"}
+}
+
+/// An ENUMERATED field (Go's asn1.Enumerated): LDAP's resultCode, SNMP's
+/// error status. 32 bits on the wire, as Go reads it.
+pub type Enumerated struct(Int)
+
+/// The whole encoding of the struct it is the first field of (Go's
+/// RawContent): filled by unmarshal; a non-empty one is what marshal writes.
+pub type RawContent struct(Bytes)
+
+/// An ENUMERATED field's value.
+pub fn (v: Value) to_enumerated() -> Enumerated {
+  match v {
+    Value.Enumerated(n) => Enumerated(n)
+    _ => Enumerated(0)
+  }
+}
+
+/// An ENUMERATED value of e.
+pub fn enum_value(e: Enumerated) -> Value { Value.Enumerated(v: e.0) }
+
+/// c as Marshal writes a time field: in its instant's range a Time is
+/// written (`time_value`); outside it, a GeneralizedTime of the wall clock
+/// in UTC (a UTCTime holds 1950 to 2049 only).
+pub fn civil_value(c: time.Civil, time_type: Int = 0) -> Value {
+  match c.to_time() {
+    Some(t) => time_value(t, time_type)
+    None => Value.WideTime(c: c, generalized: true)
+  }
+}
+
+/// The DER encoding of v, a struct that derives Asn1 (Go's Marshal; params
+/// is MarshalWithParams's tag text for the top level value). A call is
+/// compiled as a call of the function `derive Asn1` generates for T.
+pub fn marshal[T: Asn1](v: T, params: Str = "") -> Bytes ! Asn1Err {
+  fault("asn1.marshal is compiled as a call of the function derive Asn1 generates")
+}
+
+/// The T that der holds, all of it (Go's Unmarshal with an empty rest, or
+/// `trailing data`); params is UnmarshalWithParams's tag text.
+pub fn unmarshal[T: Asn1](der: Bytes, params: Str = "") -> T ! Asn1Err {
+  fault("asn1.unmarshal is compiled as a call of the function derive Asn1 generates")
+}
+
+/// The T at the start of der and the bytes after it (Go's Unmarshal and its
+/// rest).
+pub fn unmarshal_prefix[T: Asn1](der: Bytes, params: Str = "") -> (T, Bytes) ! Asn1Err {
+  fault("asn1.unmarshal_prefix is compiled as a call of the function derive Asn1 generates")
 }
 
 /// An INTEGER value of n.

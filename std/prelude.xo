@@ -128,6 +128,8 @@ interface Xml {}
 interface Yaml {}
 /// Marshaled to and from CBOR by the types of its fields (`derive Cbor`, decision 0527).
 interface Cbor {}
+/// Marshaled to and from ASN.1 DER by the types of its fields (`derive Asn1`, decision 0661).
+interface Asn1 {}
 
 // ---------------------------------------------------------------------------
 // Predeclared functions (core 1.4, 8, 11.4)
