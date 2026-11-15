@@ -68,6 +68,29 @@ test "values by column type" {
   expect(decode_text(col(3, 63, 0), None, true)) == sql.SqlValue.Null
 }
 
+// found by internal/stdtest TestMysqlFuzz against go-sql-driver v1.10.1's
+// textRows.readRow: a value that does not convert is the query's error,
+// a FLOAT is a float32, and a DATETIME is parseDateTime's
+test "text values convert as go-sql-driver's" {
+  expect(text_value(col(3, 63, 0), Some(b"12x"), false)) == Err("strconv.ParseInt: parsing \"12x\": invalid syntax")
+  expect(text_value(col(8, 63, 0), Some(b"9223372036854775808"), false)) == Err("strconv.ParseInt: parsing \"9223372036854775808\": value out of range")
+  expect(text_value(col(8, 63, 32), Some(b"-1"), false)) == Err("strconv.ParseUint: parsing \"-1\": invalid syntax")
+  expect(text_value(col(8, 63, 32), Some(b"18446744073709551616"), false)) == Err("strconv.ParseUint: parsing \"18446744073709551616\": value out of range")
+  expect(text_value(col(8, 63, 32), Some(b"018446744073709551615"), false)) == Ok(sql.SqlValue.Text(s: "18446744073709551615"))
+  expect(text_value(col(4, 63, 0), Some(b"0.1"), false)) == Ok(sql.SqlValue.Real(f: 0.1))
+  expect(text_value(col(4, 63, 0), Some(b"0.123456789"), false)) == Ok(sql.SqlValue.Real(f: 0.12345679))
+  expect(text_value(col(4, 63, 0), Some(b"1e39"), false)) == Err("strconv.ParseFloat: parsing \"1e39\": value out of range")
+  expect(text_value(col(5, 63, 0), Some(b"1e999"), false)) == Err("strconv.ParseFloat: parsing \"1e999\": value out of range")
+  expect(text_value(col(5, 63, 0), Some(b"abc"), false)) == Err("strconv.ParseFloat: parsing \"abc\": invalid syntax")
+  expect(text_value(col(12, 63, 0), Some(b"2024-02-30 25:00:00"), true)) == Ok(sql.SqlValue.At(t: Time.parse_rfc3339("2024-03-02T01:00:00Z") ?? Time.UNIX_EPOCH))
+  expect(text_value(col(12, 63, 0), Some(b"2024-02-29 s3:59:59"), true)) == Err("not [0-9]")
+  expect(text_value(col(12, 63, 0), Some(b"2024-02-29T23:59:59"), true)) == Err("bad value for field: `T`")
+  expect(text_value(col(12, 63, 0), Some(b"2024-02-29 23:59"), true)) == Err("invalid time bytes: 2024-02-29 23:59")
+  expect(text_value(col(12, 63, 0), Some(b"0000-00-00 00:00:00.000"), true)) == Ok(sql.SqlValue.Text(s: "0000-00-00 00:00:00.000"))
+  // a row's bytes after its last value are not read
+  expect(w.parse_text_row(b"\x01a\x99", 1)) == Ok([Some(b"a")])
+}
+
 test "literals and interpolation" {
   expect(quote_bytes(b"a'b\"c\\d\x00\n\r\x1a", false)) == "'a\\'b\\\"c\\\\d\\0\\n\\r\\Z'"
   expect(quote_bytes(b"it's", true)) == "'it''s'"

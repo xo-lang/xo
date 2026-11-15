@@ -410,3 +410,21 @@ The memory driver's ORDER BY checks whether the rows are already in key order (n
 them as they are when they are, since a stable sort would not move any; otherwise its merge sort runs bottom
 up between two index buffers, where the recursive form sliced the index list and built a new one per call.
 Results unchanged.
+
+## 2026-11-15: fix: MySQL text values convert as go-sql-driver's, and Row.values
+
+- Kind: fix (and a feature: `Row.values`)
+- Commit: this commit
+- Found by: internal/stdtest TestMysqlFuzz (new): 300 generated result sets over a fake server, 55 differed from go-sql-driver v1.10.1
+- Go reference: go-sql-driver/mysql v1.10.1 textRows.readRow (strconv.ParseInt, ParseUint for BIGINT UNSIGNED, ParseFloat 32 and 64) and parseDateTime; database/sql Rows.Scan into []any
+- Test: native/llrt/mysql's "text values convert as go-sql-driver's" on arm64 and llvm (fails before: the conversions returned Text); the sql corpus's Row.values test on go, arm64 and llvm; TestMysqlFuzz with 3000 cases on arm64 and llvm
+
+A text-protocol integer, FLOAT or DOUBLE whose text did not parse came back as a Text value; go-sql-driver fails
+the query with strconv's error, and now Xo does too (`SqlErr.Driver(msg)`, read after the rest of the rows so the
+connection stays usable). A FLOAT is a float32 as go-sql-driver reads it, a DATETIME with parseTime follows
+parseDateTime (fixed places, digits, then time.Date's normalization), and bytes after a row's last value are not
+read. Where go-sql-driver ends the rows early at a length past the packet, or panics on a malformed column
+definition, Xo refuses with an error (counted by the fuzz test, not a difference).
+
+`Row.values()` returns the values in column order; `value(name)` and the other accessors read the first of two
+columns with one name, so `SELECT a.id, b.id` needs it.

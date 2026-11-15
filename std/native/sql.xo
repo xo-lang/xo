@@ -2066,6 +2066,8 @@ fn (c: Conn) close() uses net.dial {
 
 fn (r: Row) columns() -> List[Str] { r.cols }
 
+fn (r: Row) values() -> List[sql.SqlValue] { r.vals }
+
 fn (r: Row) column_types() -> List[sql.ColumnType] { column_types_of(r.cols, r.types) }
 
 fn (r: Row) decode[T: SqlRow]() -> T ! sql.SqlErr { rtsql.sql_decode[T, Row](r) }

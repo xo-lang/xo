@@ -220,7 +220,8 @@ func colTypes(cts []*sql.ColumnType) string {
 		if n, ok := c.Nullable(); ok {
 			null = strconv.FormatBool(n)
 		}
-		out = append(out, fmt.Sprintf("%s:%s:%s:%s", c.Name(), c.DatabaseTypeName(), ps, null))
+		// a name's invalid UTF-8 as Xo's Str has it (string([]rune(s)))
+		out = append(out, fmt.Sprintf("%s:%s:%s:%s", string([]rune(c.Name())), c.DatabaseTypeName(), ps, null))
 	}
 	return strings.Join(out, " ")
 }
@@ -302,13 +303,32 @@ func main() {
 			continue
 		}
 		fmt.Println("== " + line)
+		if os.Getenv("MY_FRESH") != "" {
+			// a pool of its own for each statement (internal/stdtest
+			// TestMysqlFuzz: a hostile server closes connections at will)
+			db.Close()
+			db, _ = sql.Open("mysql", dsnFor(os.Args[1]))
+			db.SetMaxOpenConns(1)
+			db.SetMaxIdleConns(1)
+		}
 		stmt, rest, has := strings.Cut(line, " ;; ")
 		var xs []any
 		if has {
 			xs = args(rest)
 		}
 		if strings.HasPrefix(line, "SELECT") || strings.HasPrefix(line, "SHOW") {
-			out, err := selectLines(db, stmt, xs)
+			out, err, panicked := safeSelect(db, stmt, xs)
+			if panicked != nil {
+				// go-sql-driver panics on some malformed server packets
+				// (internal/stdtest TestMysqlFuzz's hostile server): the
+				// connection is lost, so the pool is opened again
+				fmt.Println("panic go-sql-driver")
+				fmt.Fprintln(os.Stderr, "panic:", panicked)
+				db, _ = sql.Open("mysql", dsnFor(os.Args[1]))
+				db.SetMaxOpenConns(1)
+				db.SetMaxIdleConns(1)
+				continue
+			}
 			if err != nil {
 				fmt.Println(errLine(err))
 				continue
@@ -331,6 +351,13 @@ func main() {
 
 // selectLines is a SELECT's column types and then each row; the whole
 // result first, so an error part way prints the error alone.
+// safeSelect is selectLines with a driver panic recovered.
+func safeSelect(db *sql.DB, stmt string, xs []any) (out []string, err error, panicked any) {
+	defer func() { panicked = recover() }()
+	out, err = selectLines(db, stmt, xs)
+	return
+}
+
 func selectLines(db *sql.DB, stmt string, xs []any) ([]string, error) {
 	rows, err := db.Query(stmt, xs...)
 	if err != nil {

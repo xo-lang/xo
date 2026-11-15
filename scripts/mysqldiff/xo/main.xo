@@ -71,8 +71,15 @@ fn main(os: Os) ! {
   let loc = if dsn.contains("loc=America%2FNew_York") { time.zone("America/New_York")? } else { time.utc() }
   // MY_PUBKEY: the server's RSA key, PEM, for serverPubKey=srv
   let key = if dsn.contains("serverPubKey=") { os.fs.read(os.env.get("MY_PUBKEY").or_err("serverPubKey needs MY_PUBKEY")?)? } else { b"" }
-  let db = sql.open(os.net, "mysql", dsn, max_open: 1, roots: roots, loc: loc, server_pub_key: key)?
+  // MY_FRESH: a pool of its own for each statement (internal/stdtest
+  // TestMysqlFuzz: a hostile server closes connections at will)
+  let fresh = os.env.get("MY_FRESH").is_some()
+  var db = sql.open(os.net, "mysql", dsn, max_open: 1, roots: roots, loc: loc, server_pub_key: key)?
   for line in os.stdio.lines()? {
+    if fresh {
+      db.close().ignore_err("the next statement opens a pool of its own")
+      db = sql.open(os.net, "mysql", dsn, max_open: 1, roots: roots, loc: loc, server_pub_key: key)?
+    }
     if line.trim().is_empty() {
       continue
     }
@@ -115,7 +122,7 @@ fn select_lines(db: sql.Db, stmt: Str, xs: List[sql.SqlValue]) -> List[Str] ! sq
   })
   var out = ["types " + ts.join(" ")]
   while let Some(r) = rows.next()? {
-    let vals = r.columns().map(fn(c) { r.value(c).or_fault("column") })
+    let vals = r.values()
     out.push("Row{cols: ${r.columns().debug()}, vals: ${vals.debug()}}")
   }
   out

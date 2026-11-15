@@ -67,6 +67,7 @@ type harness struct {
 var harnesses = map[string][]harness{
 	"compress": {{"TestCompressFuzz", "XO_COMPRESSFUZZ"}, {"TestLzwFuzz", "XO_LZWFUZZ"}},
 	"crypto":   {{"TestRsaFuzz", "XO_RSAFUZZ"}},
+	"sql":      {{"TestMysqlFuzz", "XO_MYSQLFUZZ"}},
 	"json":     {{"TestJsonFuzz", "XO_JSONFUZZ"}},
 	"time":     {{"TestTimeFuzz", "XO_TIMEFUZZ"}},
 	"http":     {{"TestHttpHeadFuzz", "XO_HEADFUZZ"}, {"TestHttpResponseFuzz", "XO_RESPFUZZ"}, {"TestHttpUrlFuzz", "XO_URLFUZZ"}},

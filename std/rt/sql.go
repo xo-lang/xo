@@ -699,6 +699,11 @@ func (r Sql_Row) M_columns(*Task) List[string] {
 	return ListFromSlice(append([]string(nil), r.cols...))
 }
 
+// M_values is `row.values()`: the values in column order.
+func (r Sql_Row) M_values(*Task) List[Sql_SqlValue] {
+	return sqlValues(r.vals)
+}
+
 func (r Sql_Row) get(name string) (any, *Sql_SqlErr) {
 	for i, c := range r.cols {
 		if c == name {

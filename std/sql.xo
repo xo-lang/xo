@@ -410,6 +410,11 @@ fn (s: ResultSet) rows() -> List[Row]
 fn (s: ResultSet) rows_affected() -> Int
 
 fn (r: Row) columns() -> List[Str]
+/// The row's values in column order (Go's Rows.Scan into a slice of any,
+/// pgx's Rows.Values): the one way to every column when two share a name
+/// (`SELECT a.id, b.id ...`), which `value` and the other accessors read
+/// the first of.
+fn (r: Row) values() -> List[SqlValue]
 /// The result's column types, as Rows.column_types.
 fn (r: Row) column_types() -> List[ColumnType]
 /// Decodes the row into a struct with `derive SqlRow`: each field from the

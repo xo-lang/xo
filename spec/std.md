@@ -3530,6 +3530,7 @@ driver implements since decision 0479.
 struct Row {}
 fn (r: Row) columns() -> List[Str]
 fn (r: Row) column_types() -> List[ColumnType]    // the result's, as Rows.column_types
+fn (r: Row) values() -> List[SqlValue]            // in column order (Go's Rows.Scan into []any, pgx's Rows.Values); two columns of one name: the accessors by name read the first
 fn (r: Row) value(name: Str) -> SqlValue ! SqlErr  // the column's value as read (pgx's Rows.Values)
 fn (r: Row) is_null(name: Str) -> Bool ! SqlErr
 fn (r: Row) int(name: Str) -> Int ! SqlErr       // also str, float, bool, time
@@ -4037,8 +4038,14 @@ variable).
 **Statements.** A statement without arguments runs as text
 (COM_QUERY). With arguments it is prepared on the server, run once and
 closed (COM_STMT_PREPARE, COM_STMT_EXECUTE, COM_STMT_CLOSE), its rows in
-the binary protocol and decoded to the same values as text rows,
-go-sql-driver's types for the arguments (`Integer` a BIGINT, `Real` a
+the binary protocol and decoded to the same values as text rows. A
+text row's value converts as go-sql-driver's readRow: integers by
+ParseInt (BIGINT UNSIGNED by ParseUint, `Text` of its digits above
+`Int.max`), FLOAT as a float32, DOUBLE as a double, and with
+`parseTime` dates by parseDateTime; a value that does not convert is
+the statement's `Driver` error (strconv's text), read after the rest of
+its rows. Arguments take
+go-sql-driver's types (`Integer` a BIGINT, `Real` a
 DOUBLE, `Flag` a TINYINT, `Text`, `JsonText`, `Blob` and `At` strings);
 a count of arguments that is not the statement's placeholders is
 `Param`. With `interpolateParams=true` the arguments are escaped into

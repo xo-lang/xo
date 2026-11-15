@@ -334,6 +334,16 @@ test "a driver's cursor: query reads it whole, rows as asked, and a one connecti
   db.close()?
 }
 
+test "Row.values is the row in column order, and reaches the second of two columns of one name" {
+  let db = sql.memory("CREATE TABLE t (id INT, name TEXT)")?
+  db.exec("INSERT INTO t (id, name) VALUES ($1, $2)", [sql.int(7), sql.str("n7")])?
+  let r = db.query_one("SELECT id, name, name AS id FROM t")?
+  expect(r.columns()) == ["id", "name", "id"]
+  expect(r.values()) == [sql.SqlValue.Integer(n: 7), sql.SqlValue.Text(s: "n7"), sql.SqlValue.Text(s: "n7")]
+  expect(r.value("id")?) == sql.SqlValue.Integer(n: 7)
+  db.close()?
+}
+
 test "rows, next_as and each on the in memory Db" {
   let db = sql.memory("CREATE TABLE t (id INT, name TEXT)")?
   for i in 1..4 {

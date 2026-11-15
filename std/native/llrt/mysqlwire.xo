@@ -524,9 +524,8 @@ pub fn parse_text_row(p: Bytes, n: Int) -> List[Bytes?] ! WireErr {
   for _ in 0..n {
     out.push(r.lenenc_bytes()?)
   }
-  if r.left() != 0 {
-    return Err(bad("a row of ${n} columns has ${r.left()} bytes more"))
-  }
+  // bytes after the last value are not read, as go-sql-driver's
+  // textRows.readRow
   Ok(out)
 }
 

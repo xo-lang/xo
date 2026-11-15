@@ -22,6 +22,7 @@ use std/sql
 use std/time
 use std/tls
 use native/llrt/mysqlwire as w
+use native/llrt/num
 use native/llrt/mysqlauth as auth
 use native/llrt/rsa
 use native/llrt/netconn
@@ -724,38 +725,184 @@ fn quoted_after(msg: Str, prefix: Str) -> Str {
 
 /// A text row's value by its column (decision 0648 item 8).
 pub fn decode_text(c: w.Column, v: Bytes?, parse_time: Bool, z: time.Zone = time.utc()) -> sql.SqlValue {
-  let b = v ?? return sql.SqlValue.Null
+  match text_value(c, v, parse_time, z) {
+    Ok(x) => x
+    Err(_) => sql.SqlValue.Text(s: (v ?? b"").to_str_lossy())
+  }
+}
+
+/// Whether s is one or more ASCII digits.
+fn all_digits(s: Str) -> Bool {
+  if s.is_empty() {
+    return false
+  }
+  for b in s.bytes() {
+    if b < 48 || b > 57 {
+      return false
+    }
+  }
+  true
+}
+
+/// Go's strconv error text of a failed parse.
+fn strconv_err(f: Str, s: Str, range: Bool) -> Str {
+  "strconv.${f}: parsing ${s.debug()}: ${if range { "value out of range" } else { "invalid syntax" }}"
+}
+
+/// Go's ParseUint(s, 10, 64): no sign, decimal digits, at most 2^64 - 1;
+/// above Int.max the digits without leading zeros (decision 0648 item 8's
+/// Text of a BIGINT UNSIGNED past Int).
+fn uint_value(s: Str) -> sql.SqlValue ! Str {
+  if !all_digits(s) {
+    return Err(strconv_err("ParseUint", s, false))
+  }
+  if let Some(n) = Int.parse(s) {
+    return Ok(sql.SqlValue.Integer(n: n))
+  }
+  let d = s.trim_start_chars("0")
+  if d.len() > 20 || (d.len() == 20 && d > "18446744073709551615") {
+    return Err(strconv_err("ParseUint", s, true))
+  }
+  Ok(sql.SqlValue.Text(s: d))
+}
+
+/// Whether Float.parse refused s for its range, not its syntax: s reads
+/// with its exponent cut to one digit.
+fn float_out_of_range(s: Str) -> Bool {
+  let i = s.find_any("eE") ?? return false
+  let e = s[i + 1..]
+  let sign = if e.starts_with("-") || e.starts_with("+") { e[0..1] } else { "" }
+  all_digits(e[sign.len()..]) && Float.parse("${s[0..i]}e${sign}1").is_some()
+}
+
+/// A text-protocol value as go-sql-driver's textRows.readRow converts it:
+/// integers by ParseInt (ParseUint for BIGINT UNSIGNED), FLOAT by
+/// ParseFloat(s, 32), DOUBLE by ParseFloat(s, 64); Err with Go's text
+/// when that fails (the query's error). FLOAT narrows Float.parse's
+/// double to Float32, which is ParseFloat(s, 32) but for decimal text
+/// within half a double ulp of a midpoint of two float32s (a server
+/// sends a FLOAT's shortest float32 text, never such a number).
+pub fn text_value(c: w.Column, v: Bytes?, parse_time: Bool, z: time.Zone = time.utc()) -> sql.SqlValue ! Str {
+  let b = v ?? return Ok(sql.SqlValue.Null)
   let s = b.to_str_lossy()
-  match c.kind {
+  if c.kind == 8 && c.flags & w.FLAG_UNSIGNED != 0 {
+    return uint_value(s)
+  }
+  Ok(match c.kind {
     0 | 246 => sql.SqlValue.Text(s: s)
     1 | 2 | 3 | 8 | 9 | 13 => match Int.parse(s) {
       Some(n) => sql.SqlValue.Integer(n: n)
-      // BIGINT UNSIGNED above Int.max: its digits
-      None => sql.SqlValue.Text(s: s)
+      None => return Err(strconv_err("ParseInt", s, all_digits(s.trim_prefix("-").trim_prefix("+")) && (s.len() > 1 || !s.starts_with("+") && !s.starts_with("-"))))
     }
-    4 | 5 => match Float.parse(s) {
+    4 => match Float.parse(s) {
+      Some(f) => {
+        let x = Float32(f)
+        if Float(x).is_inf() && !f.is_inf() {
+          return Err(strconv_err("ParseFloat", s, true))
+        }
+        // the Float of the float32's shortest text, as decision 0648
+        // item 8 reads go-sql-driver's float32
+        sql.SqlValue.Real(f: num.parse_float(num.append_json_float32("", Float(x))) ?? Float(x))
+      }
+      None => return Err(strconv_err("ParseFloat", s, float_out_of_range(s)))
+    }
+    5 => match Float.parse(s) {
       Some(f) => sql.SqlValue.Real(f: f)
-      None => sql.SqlValue.Text(s: s)
+      None => return Err(strconv_err("ParseFloat", s, float_out_of_range(s)))
     }
-    7 | 10 | 12 | 14 => if parse_time { time_value(s, z) } else { sql.SqlValue.Text(s: s) }
+    7 | 10 | 12 | 14 => if parse_time { datetime_value(s, z)? } else { sql.SqlValue.Text(s: s) }
     16 | 255 => sql.SqlValue.Blob(b: b)
     245 => sql.SqlValue.JsonText(s: s)
     15 | 247 | 248 | 249 | 250 | 251 | 252 | 253 | 254 => if c.charset == w.CHARSET_BINARY { sql.SqlValue.Blob(b: b) } else { sql.SqlValue.Text(s: s) }
     _ => sql.SqlValue.Text(s: s)
-  }
+  })
 }
 
-/// A DATE, DATETIME or TIMESTAMP's text as a time in UTC; a zero date
-/// ("0000-00-00 ..."), a year outside Time's range (1678 to 2262; MySQL
-/// allows 1000 to 9999) or a text that is not a date stays the server's
-/// Text, as the Postgres driver keeps infinity (Go's zero time is outside
-/// Time's range).
-fn time_value(s: Str, z: time.Zone) -> sql.SqlValue {
-  let iso = if s.len() == 10 { "${s}T00:00:00Z" } else { "${s.replace(" ", "T")}Z" }
-  match Time.parse_rfc3339(iso) {
-    Some(t) => sql.SqlValue.At(t: wall_in(t, z))
-    None => sql.SqlValue.Text(s: s)
+/// The digit at b[i] (go-sql-driver's bToi).
+fn digit_at(b: Bytes, i: Int) -> Int ! Str {
+  let x = Int(b[i])
+  if x < 48 || x > 57 {
+    return Err("not [0-9]")
   }
+  Ok(x - 48)
+}
+
+/// Err unless b[i] is the separator c (go-sql-driver's "bad value for
+/// field").
+fn sep_at(b: Bytes, i: Int, c: Int) -> () ! Str {
+  if Int(b[i]) != c {
+    return Err("bad value for field: `${b[i..i + 1].to_str_lossy()}`")
+  }
+  Ok(())
+}
+
+/// Days from 1970-01-01 to the civil date (proleptic Gregorian, any year;
+/// m 1 to 12, d from 1).
+fn days_from_civil(y: Int, m: Int, d: Int) -> Int {
+  let y2 = if m <= 2 { y - 1 } else { y }
+  let era = (if y2 >= 0 { y2 } else { y2 - 399 }) / 400
+  let yoe = y2 - era * 400
+  let mp = (m + 9) % 12
+  let doy = (153 * mp + 2) / 5 + d - 1
+  era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468
+}
+
+/// go-sql-driver's parseDateTime of a DATE, DATETIME or TIMESTAMP's text
+/// (parseTime=true): 10, 19 or 21 to 26 bytes, digits and separators at
+/// their places, the fields then normalized as Go's time.Date (2024-02-30
+/// is 2024-03-01, hour 25 the next day), in the zone z. Err with Go's
+/// text otherwise. The zero date ("0000-00-00 ..."), and a time outside
+/// Time's 1677 to 2262, stay the server's Text, as Postgres's infinity
+/// (Go's zero time is outside Time's range).
+fn datetime_value(s: Str, z: time.Zone) -> sql.SqlValue ! Str {
+  let b = s.bytes()
+  let n = b.len()
+  if !(n == 10 || n == 19 || (n >= 21 && n <= 26)) {
+    return Err("invalid time bytes: ${s}")
+  }
+  if s == "0000-00-00 00:00:00.000000"[0..n] {
+    return Ok(sql.SqlValue.Text(s: s))
+  }
+  let year = digit_at(b, 0)? * 1000 + digit_at(b, 1)? * 100 + digit_at(b, 2)? * 10 + digit_at(b, 3)?
+  sep_at(b, 4, 45)?
+  let month = digit_at(b, 5)? * 10 + digit_at(b, 6)?
+  sep_at(b, 7, 45)?
+  let day = digit_at(b, 8)? * 10 + digit_at(b, 9)?
+  var hour = 0
+  var minute = 0
+  var sec = 0
+  var ns = 0
+  if n > 10 {
+    sep_at(b, 10, 32)?
+    hour = digit_at(b, 11)? * 10 + digit_at(b, 12)?
+    sep_at(b, 13, 58)?
+    minute = digit_at(b, 14)? * 10 + digit_at(b, 15)?
+    sep_at(b, 16, 58)?
+    sec = digit_at(b, 17)? * 10 + digit_at(b, 18)?
+    if n > 19 {
+      sep_at(b, 19, 46)?
+      var place = 100000
+      for i in 20..n {
+        ns += digit_at(b, i)? * place
+        place /= 10
+      }
+      ns *= 1000
+    }
+  }
+  // time.Date's normalization: the month into the year, the rest added
+  var y = year
+  var m0 = month - 1
+  if m0 < 0 {
+    y -= 1
+    m0 += 12
+  }
+  y += m0 / 12
+  m0 = m0 % 12
+  let secs = (days_from_civil(y, m0 + 1, 1) + day - 1) * 86400 + hour * 3600 + minute * 60 + sec
+  if secs < -9223372036 || secs > 9223372036 || (secs == 9223372036 && ns > 854775807) {
+    return Ok(sql.SqlValue.Text(s: s))
+  }
+  Ok(sql.SqlValue.At(t: wall_in(Time.from_unix_nanos(secs * 1000000000 + ns), z)))
 }
 
 /// The instant whose wall clock in z is naive's in UTC, by Go's
@@ -996,22 +1143,47 @@ fn read_result_set(p: MyConn, first: Bytes, binary: Bool) -> (Result1, Bool) ! s
     }
   }
   var rows: List[List[sql.SqlValue]] = []
+  // the first value that did not convert (Go's strconv text): the
+  // statement's error once its rows are read
+  var bad = ""
   while true {
     let pk = p.recv()?
     if w.is_end(pk) {
       let st = w.end_status(pk, p.caps).map_err(fn(e) { wire_err(p, e) })?
       p.status.set(st)
-      return Ok((Result1{cols: cols, rows: rows, affected: 0, insert_id: 0}, st & w.SERVER_MORE_RESULTS_EXISTS != 0))
+      let more = st & w.SERVER_MORE_RESULTS_EXISTS != 0
+      if !bad.is_empty() {
+        if more {
+          // the result sets after it are not read
+          p.broken.set(true)
+        }
+        return Err(sql.SqlErr.Driver(msg: bad))
+      }
+      return Ok((Result1{cols: cols, rows: rows, affected: 0, insert_id: 0}, more))
     }
     if pk.len() > 0 && pk[0] == 255 {
+      if !bad.is_empty() {
+        return Err(sql.SqlErr.Driver(msg: bad))
+      }
       // an error in the middle of the rows ends the statement
       let e = w.err_packet(pk, true).map_err(fn(x) { wire_err(p, x) })?
       return Err(server_err(e))
     }
     let vals = (if binary { w.parse_binary_row(pk, cols) } else { w.parse_text_row(pk, cols.len()) }).map_err(fn(e) { wire_err(p, e) })?
+    if !bad.is_empty() {
+      // after a value that does not convert the rest is read and dropped,
+      // as database/sql's Rows.Close has go-sql-driver do
+      continue
+    }
     var row: List[sql.SqlValue] = List.with_capacity(vals.len())
     for (i, v) in vals.indexed() {
-      row.push(decode_text(cols[i], v, p.cfg.parse_time, p.cfg.zone))
+      match text_value(cols[i], v, p.cfg.parse_time, p.cfg.zone) {
+        Ok(x) => row.push(x)
+        Err(m) => {
+          bad = m
+          break
+        }
+      }
     }
     rows.push(row)
   }
