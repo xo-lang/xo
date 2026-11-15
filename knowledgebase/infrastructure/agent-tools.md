@@ -1086,10 +1086,12 @@ section 3, amended 2026-11-14). Security reviews follow
   Start a measurement with `HEAVY_CLASS=measure
   ~/xo-lead/agents/heavy.sh NAME CMD...` (2026-10-26): it waits its turn
   (one measurement at a time), waits out the lead's full tier or main
-  check without a window, opens its own quiet window, lets the running
-  slots and gates finish (at most 30 minutes; past that it exits 75,
-  refused, rather than measure under load: start it again), runs, and
-  closes the window, so no lead go is needed; never start one by hand when the
+  check without a window, drains (new slot runs and gates wait, "a
+  measurement drains"; quick runs go on) while the running slots and gates
+  finish (at most 30 minutes; past that it exits 75, refused, rather than
+  measure under load: start it again), opens its quiet window when its
+  timed run starts (2026-11-15), runs, and closes the window, so no lead
+  go is needed; never start one by hand when the
   load drops (two runs started that way overlapped another agent's
   window).
 - heavy.sh sets `HEAVY_JOB=NAME` in every job's environment (nested jobs
@@ -1310,6 +1312,14 @@ Last verified: 2026-11-15
   (HEAVY_GATE_MAX_LOAD); heavy runs take one of 3 slots (HEAVY_SLOTS; owner, 2026-11-11, was 4) and are
   stopped past 32 GB (HEAVY_MAX_GB). Owner, 2026-11-09, for the 96 GB, 30-core
   Mac Studio. Last verified: 2026-11-09.
+- Quick runs (2026-11-15): `HEAVY_CLASS=quick ~/xo-lead/agents/heavy.sh
+  NAME CMD...` for a run of seconds (one package's `xo test`, a vet, a
+  short repro): it starts at once, past the slot queue, the gate cap,
+  stagger and load rule and a draining measurement; only a timed run's
+  open window, memory under 15% free (HEAVY_QUICK_MIN_FREE) or 6 quick
+  runs at once (HEAVY_QUICK_MAX) hold it. It is stopped past 60 s
+  (HEAVY_QUICK_SEC) or 4 GB (HEAVY_QUICK_MAX_GB), so anything longer is a
+  gate. Without heavyd the fallback runs it as a gate.
 - Gates on an offload host (owner, 2026-11-07): `OFFGATE_AGENT=NAME ~/xo-lead/agents/offload-gate.sh WORKTREE
   [STEP...]` runs `scripts/gate.sh` on the pass/fail host for a committed worktree, with no hand made bundle or
   host script: it bundles HEAD and origin/main (only the commits the host lacks, so no detached HEAD or

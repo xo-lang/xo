@@ -180,3 +180,34 @@ CPU, no output and no new process) stopped only gates (HEAVY_GATE_STALL_MIN,
 20); slot and bulk runs now get it too, after HEAVY_STALL_MIN minutes
 (default 30, 0 turns it off), in the daemon and in the shadow. The
 offload hosts' jobs get the same rule in offload.sh (OFF_IDLE_MIN, 15).
+
+## Addendum 2026-11-15: the quick class and the window at the timed start
+
+The owner via the lead, 2026-11-15, from xw's job data (ADR 0658): in
+three hours 379 Mac gates waited 2h21m, as long as they ran; the top
+reasons were a quiet window (58 min), a measurement's quiet window (37
+min) and a measurement draining (30 min). A 4 s gate (l3f16-t4) waited 29
+min 42 s behind a drain whose measurement (l1-uwab2) then hit the drain
+cap and never ran.
+
+- `HEAVY_CLASS=quick`: a run of seconds starts at once, past the slot
+  queue, the gate cap, stagger and load rule and a draining measurement.
+  Only a timed run's open window, a memory floor (HEAVY_QUICK_MIN_FREE,
+  15) and HEAVY_QUICK_MAX (6) hold it; it is stopped past HEAVY_QUICK_SEC
+  (60) or HEAVY_QUICK_MAX_GB (4). It holds `locks/quick/PID` while it runs.
+  The shell fallback runs it as a gate.
+- A measurement's drain no longer opens the quiet window: it writes
+  `locks/draining` (its PID); slot runs and non-urgent gates wait on it ("a
+  measurement drains"), quick runs do not. When only quick runs (or the
+  load) remain, the window opens so no new quick run starts; it opens for
+  HEAVY_MEASURE_MIN when the timed run starts. A refused drain leaves no
+  window. Tests: TestQuickAndDraining, TestScenario02 (rewritten),
+  TestScenario20QuickPastDrain, TestScenario21QuickTimeout.
+- A long memory or exclusive lease (limit 180 minutes or more: ctier, the
+  continuous tier, takes a host's whole lane for one to two hours, back to
+  back; on host 3 gates waited 26 to 55 minutes behind it) lets every
+  waiting gate (a memory lease neither exclusive nor long) start before
+  it, whenever the gate arrived, until it has waited HEAVYD_YIELD_MAX_MIN
+  (60, 0 off). A running one is not stopped; a gate behind it says which
+  run holds the whole lane, since when and until its limit. Test:
+  TestLongYieldsToGates.
