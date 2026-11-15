@@ -183,7 +183,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | net/http (client) | std/http Client | partial | get, send, post_json, redirects (decision 0404), gzip, HTTP/2, TLS roots and client certificates, a timeout per client and per request (`Request.with_timeout`), streamed response bodies (`Client.open`); std/cookiejar's Jar (decision 0475) by hand. Missing (stdaudit 2026-11-12; decision 0617 B): proxies (HTTP_PROXY, CONNECT), the jar used by the Client, a public suffix list. |
 | net/http/httptest | std/testing FakeNet, Router.call | done | In process servers and fakes (section 8). |
 | net/http/httputil | std/http reverse_proxy | partial | ReverseProxy as `http.reverse_proxy` (a handle_stream route); DumpRequest and the rest missing (stdaudit 2026-11-10). |
-| net/http/cookiejar | std/cookiejar | done | Jar with Go's matching rules, the clock a parameter, no public suffix list (spec/std.md 59, decision 0475); the http.Client wiring is a later change. |
+| net/http/cookiejar | std/cookiejar | done | Jar with Go's matching rules, the clock a parameter (spec/std.md 59, decision 0475); `new_with(psl:)` consults std/publicsuffix (Options.PublicSuffixList, decision 0617 B), and Client.with_jar wires it. Last verified: 2026-11-15. |
 | net/http/pprof | std/debug router (decision 0325) | done | CPU and heap profiles over HTTP under a prefix the program mounts, behind its auth function; XO_PROF for files (decision 0238). |
 | net/http/httptrace | none | not planned | Tracing is the runtime's (decision 0240). |
 | net/http/cgi, net/http/fcgi | none | not planned | Legacy deployment models. |

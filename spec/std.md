@@ -5594,7 +5594,16 @@ enum Base32 { Std, Hex, RawStd, RawHex }       // RFC 4648 sections 6 and 7
 struct DecodeErr { at: Int }                   // displays as `illegal base32 data at input byte 4`
 pub fn encode(data: Bytes, enc: Base32 = Std) -> Str
 pub fn decode(s: Str, enc: Base32 = Std) -> Bytes ! DecodeErr
+struct Encoding                                // a custom alphabet (Go's NewEncoding, WithPadding)
+pub fn custom(alphabet: Str, padding: Str = "=") -> Encoding
+pub fn (e: Encoding) encode(data: Bytes) -> Str
+pub fn (e: Encoding) decode(s: Str) -> Bytes ! DecodeErr
 ```
+
+- `base32.custom` takes 32 distinct bytes, none `\r`, `\n` or the padding,
+  and a padding of one byte or "" for none; anything else is a fault, as
+  Go's NewEncoding and WithPadding panic (2026-11-15). Its encode and
+  decode follow the same rules as the enum's (z-base-32, `@` padding).
 
 - Decoding follows Go's rules and error offsets (CorruptInputError):
   base64 skips `\r` and `\n` anywhere; base32 removes them first and

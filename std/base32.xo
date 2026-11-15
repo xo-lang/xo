@@ -41,7 +41,12 @@ const DEC_STD: Bytes = b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xf
 const DEC_HEX: Bytes = b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\xff\xff\xff\xff\xff\xff\xff\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
 
 pub fn encode(data: Bytes, enc: Base32 = Base32.Std) -> Str {
-  let a = alphabet(enc)
+  encode_with(data, alphabet(enc), if padded(enc) { 61 } else { -1 })
+}
+
+/// encode over alphabet a, writing pad (a byte, or -1 for none) after a
+/// partial block.
+fn encode_with(data: Bytes, a: Bytes, pad: Int) -> Str {
   var out = BytesBuilder.with_capacity((data.len() + 4) / 5 * 8)
   // whole five byte blocks: one 40 bit word, eight symbols, no per byte
   // test (Go's Encode loop; 2026-10-26: the block loop below ran encode at
@@ -74,8 +79,8 @@ pub fn encode(data: Bytes, enc: Base32 = Base32.Std) -> Str {
     for k in 0..syms {
       out.write_byte(a[(v >> (35 - 5 * k)) & 31])
     }
-    if padded(enc) {
-      for _ in syms..8 { out.write_byte(61) }
+    if pad >= 0 {
+      for _ in syms..8 { out.write_byte(UInt8(pad)) }
     }
     si += 5
   }
@@ -86,6 +91,12 @@ pub fn encode(data: Bytes, enc: Base32 = Base32.Std) -> Str {
 /// or padding where the encoding has none, is DecodeErr at its byte
 /// offset in the input without them.
 pub fn decode(s: Str, enc: Base32 = Base32.Std) -> Bytes ! DecodeErr {
+  decode_with(s, if enc is Hex | RawHex { DEC_HEX } else { DEC_STD }, if padded(enc) { 61 } else { -1 })
+}
+
+/// decode with the value table tbl (255 outside the alphabet) and pad (a
+/// byte, or -1 for none).
+fn decode_with(s: Str, tbl: Bytes, pad_byte: Int) -> Bytes ! DecodeErr {
   // copy only when there is a newline to drop (Go skips them in place)
   var src = s.bytes()
   if s.contains("\n") || s.contains("\r") {
@@ -95,8 +106,7 @@ pub fn decode(s: Str, enc: Base32 = Base32.Std) -> Bytes ! DecodeErr {
     }
     src = stripped.freeze()
   }
-  let tbl = if enc is Hex | RawHex { DEC_HEX } else { DEC_STD }
-  let pad = padded(enc)
+  let pad = pad_byte >= 0
   let olen = src.len()
   var out = BytesBuilder.with_capacity(olen / 8 * 5 + 5)
   var at = 0
@@ -137,12 +147,12 @@ pub fn decode(s: Str, enc: Base32 = Base32.Std) -> Bytes ! DecodeErr {
       let c = src[at]
       at += 1
       let rest = olen - at
-      if pad && c == 61 && j >= 2 && rest < 8 {
+      if pad && Int(c) == pad_byte && j >= 2 && rest < 8 {
         if rest + j < 7 {
           return Err(DecodeErr{at: olen})
         }
         for k in 0..7 - j {
-          if rest > k && src[at + k] != 61 {
+          if rest > k && Int(src[at + k]) != pad_byte {
             return Err(DecodeErr{at: olen - rest + k - 1})
           }
         }
@@ -178,3 +188,53 @@ pub fn decode(s: Str, enc: Base32 = Base32.Std) -> Bytes ! DecodeErr {
   }
   out.freeze()
 }
+
+/// An encoding over an alphabet of the caller's (Go's NewEncoding, with
+/// WithPadding): made by `custom`.
+pub struct Encoding {
+  _alphabet: Bytes
+  _table: Bytes
+  _pad: Int
+}
+
+/// The encoding over alphabet (32 distinct bytes, none of them `\r`, `\n`
+/// or the padding), padded with `padding` (one byte, `=` as RFC 4648, or ""
+/// for none: Go's WithPadding(NoPadding)). Anything else is a fault, as Go's
+/// NewEncoding and WithPadding panic: a programmer error, found at start.
+pub fn custom(alphabet: Str, padding: Str = "=") -> Encoding {
+  let a = alphabet.bytes()
+  if a.len() != 32 {
+    fault("base32: encoding alphabet is not 32-bytes long")
+  }
+  if padding.len() > 1 {
+    fault("base32: padding is not one byte")
+  }
+  let pad = if padding.is_empty() { -1 } else { Int(padding.bytes()[0]) }
+  if pad == 13 || pad == 10 {
+    fault("base32: invalid padding")
+  }
+  var tbl: List[Int] = List.with_capacity(256)
+  for _ in 0..256 { tbl.push(255) }
+  for (i, c) in a.indexed() {
+    if c == 10 || c == 13 {
+      fault("base32: encoding alphabet contains newline character")
+    }
+    if Int(c) == pad {
+      fault("base32: padding contained in alphabet")
+    }
+    if tbl[Int(c)] != 255 {
+      fault("base32: encoding alphabet includes duplicate symbols")
+    }
+    tbl[Int(c)] = i
+  }
+  var t = BytesBuilder.with_capacity(256)
+  for v in tbl { t.write_byte(UInt8(v)) }
+  Encoding{_alphabet: a, _table: t.freeze(), _pad: pad}
+}
+
+/// data in the encoding (Go's Encoding.EncodeToString).
+pub fn (e: Encoding) encode(data: Bytes) -> Str { encode_with(data, e._alphabet, e._pad) }
+
+/// s decoded, with `encode`'s rules for `\r`, `\n` and errors (Go's
+/// Encoding.DecodeString).
+pub fn (e: Encoding) decode(s: Str) -> Bytes ! DecodeErr { decode_with(s, e._table, e._pad) }

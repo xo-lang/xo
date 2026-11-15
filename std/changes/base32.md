@@ -1,5 +1,18 @@
 # std/base32 changes
 
+## 2026-11-15: feature: custom alphabets and padding (Go's NewEncoding, WithPadding)
+
+- Kind: feature
+- Commit: this commit
+- Found by: scripts/stdaudit gap base32.NewEncoding (decision 0655)
+- Go reference: encoding/base32 go1.26 (NewEncoding, WithPadding, NoPadding)
+- Test: std/base32_test.xo "go base32 custom" (z-base-32 with `=`, `@` padding, unpadded; 42 cases from Go)
+
+`base32.custom(alphabet, padding:)` makes an `Encoding` with `encode` and `decode`
+over any 32 byte alphabet and padding byte (or none), with Go's output and error
+offsets. An alphabet that is not 32 distinct bytes, or holds a newline or the
+padding, is a fault, as Go panics.
+
 ## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
 
 - Kind: refactor
