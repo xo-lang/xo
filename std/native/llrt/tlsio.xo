@@ -973,6 +973,28 @@ pub fn handle_new(h: Int) -> rthttp.TlsH {
 /// The connection of a std/tls handle.
 pub fn handle_conn(t: rthttp.TlsH) -> Int { rt.mem_load(rt.obj_addr(t), H_CONN, 8) }
 
+// The accessors std/tls calls take the handle, not its engine's address:
+// an address read from a handle (handle_conn) is valid only while the
+// handle lives, and a caller's handle can be released right after its
+// last use, before a call given only the address runs (Lang 1's
+// diagnosis 2026-11-15; gotchas/obj-addr-handle-released-early.md). A
+// parameter is held by the caller until the call returns.
+
+/// close_notify on the handle's connection.
+pub fn close_notify_h(t: rthttp.TlsH) { close_notify(handle_conn(t)) }
+
+/// alpn_of the handle's connection.
+pub fn alpn_h(t: rthttp.TlsH) -> Str { alpn_of(handle_conn(t)) }
+
+/// peer_ders of the handle's connection.
+pub fn peer_ders_h(t: rthttp.TlsH) -> List[Bytes] { peer_ders(handle_conn(t)) }
+
+/// negotiated_of the handle's connection.
+pub fn negotiated_h(t: rthttp.TlsH) -> tlsneg.Negotiated { negotiated_of(handle_conn(t)) }
+
+/// version_of the handle's connection.
+pub fn version_h(t: rthttp.TlsH) -> Str { version_of(handle_conn(t)) }
+
 /// Whether the std/tls handle's close ran (H_CLOSED 1; 2 is close_write's).
 pub fn handle_closed(t: rthttp.TlsH) -> Bool { rt.mem_load(rt.obj_addr(t), H_CLOSED, 8) == 1 }
 

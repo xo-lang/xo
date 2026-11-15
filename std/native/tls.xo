@@ -188,15 +188,13 @@ fn hostname_err_host(h: Str) -> Str {
 }
 
 /// The connection's handle: its own, or the one its lazy handshake made.
-/// Each is rebuilt from a match, not returned as the field: `return t.h`
-/// here freed the handle under every connection (gotcha
+/// Returning the field makes the receiver owned, so a method's handle can
+/// be released at its last use: every caller hands the handle itself to
+/// tlsio, never only its engine's address (gotcha
 /// return-handle-field-no-retain).
 fn (t: TlsConn) hh() -> rthttp.TlsH? {
   if !t.lazy {
-    return match t.h {
-      Some(x) => Some(x)
-      None => None
-    }
+    return t.h
   }
   t.st.with(fn(var s: ClientSt) -> rthttp.TlsH? {
     match s.h {
@@ -433,15 +431,23 @@ fn client_wasm(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List
 
 fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net.dial {
   t.handshake()?
-  let h = match t.hh() {
+  let hx = match t.hh() {
     Some(x) => {
       if tlsio.handle_closed(x) {
         return Err(NetErr.Io(msg: CLOSED_TEXT))
       }
-      tlsio.handle_conn(x)
+      x
     }
     None => return passthrough_read(t.c, max)
   }
+  read_on(t, hx, max)
+}
+
+// The handle is a parameter so the caller holds it until the read ends:
+// the engine's address taken from it (handle_conn) is valid only while
+// the handle lives (gotchas/obj-addr-handle-released-early.md).
+fn read_on(t: TlsConn, hx: rthttp.TlsH, max: Int) -> Bytes? ! NetErr uses net.dial {
+  let h = tlsio.handle_conn(hx)
   if max <= 0 {
     return Some(b"")
   }
@@ -462,7 +468,7 @@ fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net.dial {
 
 fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net.dial {
   t.handshake()?
-  let h = match t.hh() {
+  let hx = match t.hh() {
     Some(x) => {
       if tlsio.handle_closed(x) {
         return Err(NetErr.Io(msg: CLOSED_TEXT))
@@ -470,10 +476,16 @@ fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net.dial {
       if tlsio.handle_write_shut(x) {
         return Err(NetErr.Io(msg: SHUTDOWN_TEXT))
       }
-      tlsio.handle_conn(x)
+      x
     }
     None => return passthrough_write(t.c, data)
   }
+  write_on(t, hx, data)
+}
+
+// As read_on: the caller holds the handle for the write.
+fn write_on(t: TlsConn, hx: rthttp.TlsH, data: Bytes) -> () ! NetErr uses net.dial {
+  let h = tlsio.handle_conn(hx)
   if target.arch != TargetArch.Wasm32 && netconn.deadline_passed(rt.obj_addr(t.c), true) {
     // as Go's: the failed write breaks the TLS stream for good
     tlsio.fail_writes(h, tlsio.CC_TIMEOUT)
@@ -494,7 +506,7 @@ fn (t: TlsConn) close() {
     let sent = tlsio.handle_write_shut(x)
     tlsio.handle_close(x)
     if !sent {
-      tlsio.close_notify(tlsio.handle_conn(x))
+      tlsio.close_notify_h(x)
     }
   }
   if target.arch == TargetArch.Wasm32 {
@@ -512,7 +524,7 @@ fn (t: TlsConn) set_write_deadline(clock: Clock, at: Time?) uses clock { t.c.set
 
 fn (t: TlsConn) alpn() -> Str {
   match t.hh() {
-    Some(x) => tlsio.alpn_of(tlsio.handle_conn(x))
+    Some(x) => tlsio.alpn_h(x)
     None => ""
   }
 }
@@ -534,7 +546,7 @@ fn (t: TlsConn) peer_certificates() -> List[x509.Certificate] {
     None => return []
   }
   var out: List[x509.Certificate] = []
-  for der in tlsio.peer_ders(tlsio.handle_conn(h)) {
+  for der in tlsio.peer_ders_h(h) {
     if let Ok(c) = x509.parse(der) {
       out.push(c)
     }
@@ -547,7 +559,7 @@ fn (t: TlsConn) state() -> tls.ConnState {
     Some(x) => x
     None => return tls.ConnState{version: 0x0304, handshake_complete: true, did_resume: false, cipher_suite: 0, curve_id: 0, negotiated_protocol: "", server_name: "", peer_certificates: [], verified_chains: []}
   }
-  let n = tlsio.negotiated_of(tlsio.handle_conn(h))
+  let n = tlsio.negotiated_h(h)
   state_of(n, n.vers != 0)
 }
 
@@ -581,7 +593,7 @@ fn ekm_of(n: tlsneg.Negotiated, label: Str, context: Bytes?, length: Int) -> Byt
 
 fn (t: TlsConn) export_keying_material(label: Str, context: Bytes?, length: Int) -> Bytes ! tls.TlsErr {
   let h = t.hh() ?? return Err(tls.TlsErr{msg: "tls: ExportKeyingMaterial on a connection without TLS"})
-  ekm_of(tlsio.negotiated_of(tlsio.handle_conn(h)), label, context, length)
+  ekm_of(tlsio.negotiated_h(h), label, context, length)
 }
 
 /// The certificates of ders that parse (each was verified or sent as is).
@@ -616,7 +628,7 @@ fn curve_name(id: Int) -> Str { tlsneg.group_name(id) }
 
 fn (t: TlsConn) version() -> Str {
   match t.hh() {
-    Some(x) => tlsio.version_of(tlsio.handle_conn(x))
+    Some(x) => tlsio.version_h(x)
     None => "TLS 1.3"
   }
 }
@@ -938,7 +950,7 @@ fn (t: TlsConn) close_write() -> () ! NetErr uses net.dial {
     }
     if !tlsio.handle_write_shut(x) {
       tlsio.handle_shut_write(x)
-      tlsio.close_notify(tlsio.handle_conn(x))
+      tlsio.close_notify_h(x)
     }
   }
   t.c.close_write()
