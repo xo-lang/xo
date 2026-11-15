@@ -1,6 +1,6 @@
 # 0569: windows/arm64 as a native target
 
-Status: Accepted (owner, 2026-11-08, on the lead's recommendation; windows/arm64 stays out of releases until it runs in a VM). Proposed (Xo Lang 2, 2026-11-08; the owner decides). The owner
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation; windows/arm64 stays out of releases until it runs in a VM). Stage 6 decided (owner, 2026-11-15, through the lead): 0.52 ships the windows/arm64 archive (XO_RELEASE_WINDOWS_ARM64=1, Authenticode signed, release smoke on the winarm VM, a windows-arm64 sqlite prebuilt). Proposed (Xo Lang 2, 2026-11-08; the owner decides). The owner
 approved windows/arm64 as a new target on 2026-11-08, through the lead;
 this ADR is the plan. Stages 1 to 4 need no Windows machine and are
 verified by cross build. Running anything waits for the test host (a

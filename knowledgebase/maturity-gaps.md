@@ -1,117 +1,150 @@
 # What mature languages have that Xo does not (yet)
 
 Status: a list for the owner to revisit (owner, 2026-10-27: "Document
-them, I'll bring them up again later"). Not decided or scheduled; a
-larger standard library is tracked separately and left out here.
+them, I'll bring them up again later"; restructured 2026-11-15 at the
+owner's request into Remaining and Done, each item with the check that
+proves it). A larger standard library is tracked separately
+(knowledgebase/infrastructure/std-coverage.md) and left out here.
 
-Written after 0.33.0. Checked against the spec and the knowledgebase
-first: Xo already has versioned module requires with capability limits
-(spec core, `require ... uses ...`), an LSP, a debugger, a profiler, a
-race detector, fuzzing, a formatter, vet, `xo explain`, signed release
-archives and byte-identical (reproducible) builds. Items marked
-*unverified* have a mention somewhere in the repo that was not checked
-in detail; check before starting one.
+## Keeping it current
 
-## Highest value
+Every item names its evidence as `Probe:` lines that
+`scripts/lead/maturity-probes.sh` runs against what is live (the
+registries, the services, the release archives, the published site) and
+the checkout's HEAD. A Remaining item's probes pass while the gap is
+there, so a DRIFT on one means the gap may be closed; a Done item's
+DRIFT means it broke or moved. Run it at each release (release
+CHECKLIST) and before editing this file:
 
-1. **A stability promise.** A published compatibility policy, as Go's 1
-   compatibility guarantee or Rust's editions: what may change between
-   versions, how deprecations work (0.33.0's uuid `u.0` deprecation then
-   removal is the first instance), and how long a deprecated form keeps
-   working. *Written 2026-11-08:* decision 0567 states what 0.x promises
-   today and what 1.0 will promise (spec 13), with Road to 1.0 entry
-   criteria for the owner to edit; it is frozen when the owner declares
-   1.0, and the website page and post are with the owner for review.
-2. **A package registry and module discovery.** Xo modules can be
-   required by version, but there is no index to find them, and no module
-   proxy or checksum database (Go's proxy.golang.org and sum.golang.org)
-   that makes dependencies tamper-evident and available when the origin
-   is gone. *Verified 2026-10-29:* the client side exists in Xo (`XO_PROXY`
-   and `xo mod proxy serve`, decision 0126; the checksum log client,
-   `XO_SUMDB`, decision 0124, in compiler/cli/modules); no public proxy or
-   log runs, and there is no index. *Updated 2026-11-08:* the log server
-   is Xo again (`xo mod sumdb keygen` and `xo mod sumdb serve`, decision
-   0124's addendum), and cmd/xo TestChecksumLog runs the proxy and the
-   log end to end on loopback (fetch, verify, lock; XO1313 and XO1304 on
-   a tampered tree; XO_NOSUMDB and XO_NOPROXY), so what a public service
-   would run is built and tested; hosting it is the owner's decision (decision 0568, Proposed: R2 and Cloudflare's CDN, the owner's OCI host).
-   *Last verified 2026-11-15:* decision 0568 is Accepted (owner,
-   2026-11-08) and the services run: proxy.xolang.org serves module
-   versions (github.com/xo-lang/aws lists v0.1.0 to v0.2.1),
-   sum.xolang.org/latest answers, and index.xolang.org/index lists
-   modules; pkg.xolang.org (item 4) is the discovery page.
-3. **A security process.** A vulnerability database, a `xo vuln` checker
-   for a module's dependencies (as `govulncheck`), and a published
-   security policy (how to report, response times). *Last verified
-   2026-11-15:* SECURITY.md (how to report) is in the repository since
-   2026-10-17, and each CHANGELOG security line names the affected
-   versions; there is no vulnerability database and no `xo vuln`.
-4. **Documentation for newcomers.** A guided tour or book, and browsable
-   std API documentation (as pkg.go.dev). The spec and `xo doc` are
-   reference material, not a way in.
-   *Verified 2026-10-29:* the website has a 12-page tour whose examples
-   are checked and run in the playground (content/docs/tour, last edited
-   2026-10-17); browsable std API docs do not exist (`xo doc` writes the
-   Markdown they could be made from). *Last verified 2026-11-15:*
-   browsable docs exist: pkg.xolang.org serves module and std API docs
-   (as pkg.go.dev), and the website has a std reference at
-   xolang.dev/docs/stdlib. pkg.xolang.org's std docs are at v0.46.0,
-   behind the 0.51.1 release, so they need a refresh step per release.
+    XO_CLI=bin/xo scripts/lead/maturity-probes.sh
 
-## Important, smaller
+Check what is live, never only code or older notes. Each item carries
+the date its probes last passed.
 
-5. **Editor support.** A published VS Code extension and a tree-sitter
-   grammar, so Xo highlights in editors and on GitHub. *Verified
-   2026-10-29:* editors/vscode is a complete extension (TextMate grammar,
-   an `xo lsp` client; decision 0113) that is not published; no tree-sitter
-   grammar exists. *2026-11-05:* the extension moved to its own repository,
-   xo-lang/vscode, and debugs through `xo debug --dap` (decision 0516).
-   *Verified 2026-11-08:* published on 2026-11-05 as "Xo Language"
-   (`xo-lang.xo`, version 0.1.1) on the VS Code Marketplace (verified
-   publisher) and on Open VSX; the repository is public. *2026-11-08:*
-   a tree-sitter grammar, `tree-sitter-xo` (infrastructure/
-   tree-sitter-xo.md), is public at https://github.com/xo-lang/tree-sitter-xo;
-   the npm package, the crate and the editor-list submissions await the
-   owner's approval. *Last verified 2026-11-15:* Open VSX has
-   `xo-lang.xo` 0.1.3 (2026-11-11); npm has no `tree-sitter-xo` package.
-6. **More platforms.** FreeBSD and Linux riscv64 are the common asks
-   after the five current targets; 32-bit and mobile matter less for a
-   backend language. *Last verified 2026-11-15:* both are in: FreeBSD
-   (decision 0573, Accepted; amd64 and arm64) and linux/riscv64 through
-   LLVM (decision 0571, Accepted), in the 0.51.1 CHANGELOG.
-7. **Database drivers beyond Postgres:** SQLite and MySQL. *Last
-   verified 2026-11-15:* std/sqlite exists (decision 0534, Accepted;
-   in 0.51.1, FreeBSD too); there is no MySQL driver.
-8. **Observability:** OpenTelemetry-style tracing and metrics in std.
-   *Verified 2026-10-29:* std/metrics
-   (Prometheus exposition) and std/trace (request ids, a span ring) exist
-   (decision 0325, spec 11.6); OpenTelemetry export does not. *Last
-   verified 2026-11-15:* std/otlp exports OpenTelemetry traces and
-   metrics (decision 0539, Accepted and implemented; in 0.51.1).
-9. **Calling Xo from other languages:** building a C-compatible shared
-   library, as Go's `-buildmode=c-shared`. *Verified 2026-10-29:* none for
-   users; only the runtime's own C-name exports (decisions 0207, 0234).
-   *Last verified 2026-11-15:* `xo build --lib=shared` builds C shared
-   libraries, Windows DLLs with their import library too (decision
-   0574, Accepted; in the 0.51.1 CHANGELOG).
+## Remaining
 
-## Process
+1. **A vulnerability database and `xo vuln`** (as vuln.go.dev and
+   govulncheck): an OSV feed for std and the xo-lang modules, and a
+   checker of a module's xo.lock and toolchain against it. Owner
+   priority 2026-11-15 (after 0.52): one ADR for the format, hosting on
+   vuln.xolang.org, the CLI and its codes. Until then each CHANGELOG
+   security line names the affected versions. Last verified 2026-11-15.
+   Probe: `help unknown[[:space:]]command vuln`
+   Probe: `!http 200 https://vuln.xolang.org/`
+2. **A security page on xolang.dev.** SECURITY.md (how to report) is in
+   the repository since 2026-10-17; the site has no page with it,
+   response times, supported versions and past advisories. Owner
+   priority with item 1. Last verified 2026-11-15.
+   Probe: `http 200 https://raw.githubusercontent.com/xo-lang/xo/main/SECURITY.md`
+   Probe: `http 404 https://xolang.dev/security/`
+3. **A MySQL driver.** Postgres and SQLite are in std; MySQL is not.
+   Last verified 2026-11-15.
+   Probe: `!file std/mysql.xo`
+   Probe: `http 404 https://pkg.xolang.org/std/mysql/`
+4. **The windows/arm64 release archive** (decision 0569 stage 6). The
+   native backend builds windows/arm64 by default since 2026-11-09
+   (`--targets=all` is seven targets); the owner decided on 2026-11-15
+   that 0.52 ships the sixth archive (signed, verified on the winarm VM,
+   with a sqlite prebuilt). Last verified 2026-11-15.
+   Probe: `!body windows-arm64 https://github.com/xo-lang/xo/releases/latest/download/SHA256SUMS`
+5. **`xo help build` names every target and library mode.** It still
+   says windows/arm64 needs `--backend=go` (stale since 2026-11-09) and
+   does not mention `--lib=shared|static`, linux/riscv64 or FreeBSD.
+   Last verified 2026-11-15.
+   Probe: `help windows/arm64[[:space:]]needs[[:space:]]--backend=go build`
+   Probe: `!help --lib build`
+6. **Native riscv64.** linux/riscv64 builds with the LLVM backend only
+   (decision 0571); no native backend. Last verified 2026-11-15.
+   Probe: `xo no[[:space:]]native[[:space:]]backend[[:space:]]builds[[:space:]]linux/riscv64 build --targets=linux/riscv64 -o out .`
+7. **Editor lists for the tree-sitter grammar.** The grammar is
+   published (Done, below); Helix's pull request is open (#16461,
+   2026-11-09); nothing is submitted to nvim-treesitter, Zed's
+   extensions or GitHub Linguist. Last verified 2026-11-15.
+   Probe: `body "state":[[:space:]]*"open" https://api.github.com/repos/helix-editor/helix/pulls/16461`
+   Probe: `body "total_count":[[:space:]]*0, https://api.github.com/search/issues?q=tree-sitter-xo+repo:nvim-treesitter/nvim-treesitter`
+   Probe: `body "total_count":[[:space:]]*0, https://api.github.com/search/issues?q=tree-sitter-xo+repo:zed-industries/extensions`
+   Probe: `body "total_count":[[:space:]]*0, https://api.github.com/search/issues?q=tree-sitter-xo+repo:github-linguist/linguist`
+8. **A public process:** a front door for language proposals (the ADRs
+   are the process, but outsiders can only send issues and patches,
+   CONTRIBUTING.md "Code: as a proposal, not a merge"), a stated release
+   cadence, and possibly a long-term-support line. Last verified
+   2026-11-15.
+   Probe: `repo as[[:space:]]a[[:space:]]proposal,[[:space:]]not[[:space:]]a[[:space:]]merge CONTRIBUTING.md`
+   Probe: `!repo [Cc]adence CONTRIBUTING.md`
+9. **The 1.0 compatibility freeze.** Decision 0567 states what 0.x
+   promises and what 1.0 will; the freeze is the owner's, when the owner
+   declares 1.0. Last verified 2026-11-15.
+   Probe: `repo we[[:space:]]will[[:space:]]freeze[[:space:]]later knowledgebase/decisions/0567-compatibility-policy.md`
 
-10. **A public process:** a proposal process for language changes (the
-    ADRs are most of it, without a public front door), a release cadence,
-    and possibly a long-term-support line.
+## Done
 
-## Lead's recommendation (2026-10-27)
-
-The stability policy (1), the registry with a checksum database (2) and
-the tour or book (4) decide whether people can adopt Xo, more than
-further speedups. The *unverified* items were checked on 2026-10-29 (the
-notes above): a stability policy has spec 13 and decisions 0089 and 0155
-behind it, and a 12-page tour runs in the playground on the website.
+- **A stability promise.** Decision 0567 (Accepted, 2026-11-08), spec
+  13, and the compatibility page. Last verified 2026-11-15.
+  Probe: `repo ^Status:[[:space:]]Accepted knowledgebase/decisions/0567-compatibility-policy.md`
+  Probe: `http 200 https://xolang.dev/docs/compatibility/`
+- **A module proxy, checksum log and index** (decision 0568, Accepted
+  2026-11-08): proxy.xolang.org, sum.xolang.org and index.xolang.org,
+  with the client side in xo (`XO_PROXY`, `XO_SUMDB`; decisions 0124,
+  0126). Last verified 2026-11-15.
+  Probe: `body ^v0\.2\.1$ https://proxy.xolang.org/github.com/xo-lang/aws/@v/list`
+  Probe: `body ^sum\.xolang\.org https://sum.xolang.org/latest`
+  Probe: `body "Path":"github\.com/xo-lang/ https://index.xolang.org/index?limit=5`
+  Probe: `body github\.com/xo-lang/aws[[:space:]]v0\.2\.1[[:space:]]h1: https://sum.xolang.org/lookup/github.com/xo-lang/aws@v0.2.1`
+- **A security policy (how to report).** SECURITY.md, and each CHANGELOG
+  security line names the affected versions. The database, the checker
+  and the site page are Remaining items 1 and 2. Last verified
+  2026-11-15.
+  Probe: `body [Rr]eport https://raw.githubusercontent.com/xo-lang/xo/main/SECURITY.md`
+- **Documentation for newcomers.** A 12-page tour whose examples run in
+  the playground, the book, and browsable API docs: pkg.xolang.org
+  (decision 0589) for std and published modules, and xolang.dev's std
+  reference. Last verified 2026-11-15.
+  Probe: `http 200 https://xolang.dev/docs/tour/`
+  Probe: `http 200 https://xolang.dev/docs/stdlib/`
+  Probe: `http 200 https://pkg.xolang.org/std/sqlite/`
+  Probe: `http 200 https://pkg.xolang.org/github.com/xo-lang/aws/`
+- **A published VS Code extension** ("Xo Language", `xo-lang.xo`, an
+  `xo lsp` client that debugs through `xo debug --dap`; decisions 0113,
+  0516) on the VS Code Marketplace and Open VSX, repository
+  xo-lang/vscode. Last verified 2026-11-15 (0.1.3 on both).
+  Probe: `http 200 https://marketplace.visualstudio.com/items?itemName=xo-lang.xo`
+  Probe: `body "version":[[:space:]]*"0\.[0-9]+\.[0-9]+" https://open-vsx.org/api/xo-lang/xo`
+- **A tree-sitter grammar,** xo-lang/tree-sitter-xo
+  (infrastructure/tree-sitter-xo.md), published 2026-11-09 as npm
+  `@xo-lang/tree-sitter-xo` and crates.io `tree-sitter-xo` (0.1.1). The
+  editor lists are Remaining item 7. Last verified 2026-11-15.
+  Probe: `body "latest":"0\.[0-9]+\.[0-9]+" https://registry.npmjs.org/@xo-lang%2ftree-sitter-xo`
+  Probe: `body "max_version":"0\.[0-9]+\.[0-9]+" https://crates.io/api/v1/crates/tree-sitter-xo`
+- **More platforms:** FreeBSD amd64 and arm64 (decision 0573) and
+  linux/riscv64 through LLVM (decision 0571), both in 0.51.1; windows/arm64
+  with the native backend by default (decision 0569, 2026-11-09). Native
+  riscv64 and the windows/arm64 archive are Remaining items 6 and 4.
+  Last verified 2026-11-15.
+  Probe: `repo FreeBSD[[:space:]]\(decision[[:space:]]0573\) CHANGELOG.md`
+  Probe: `repo riscv64 CHANGELOG.md`
+  Probe: `repo windows/arm64[[:space:]]builds[[:space:]]with[[:space:]]the[[:space:]]native[[:space:]]arm64[[:space:]]backend[[:space:]]by[[:space:]]default CHANGELOG.md`
+- **std docs on pkg.xolang.org at the release.** Refreshed to 0.51.1
+  on 2026-11-15 (they were at v0.46.0); two commands per release
+  (release CHECKLIST). Change the version in the probe at each release.
+  Last verified 2026-11-15.
+  Probe: `body std/json@v0\.51\.1 https://pkg.xolang.org/std/json/`
+- **SQLite** (std/sqlite, decision 0534), beside Postgres. Last verified
+  2026-11-15.
+  Probe: `file std/sqlite.xo`
+  Probe: `http 200 https://pkg.xolang.org/std/sqlite/`
+- **Observability:** std/metrics (Prometheus exposition) and std/trace
+  (decision 0325, spec 11.6), and OTLP export of both (std/otlp,
+  decision 0539). Last verified 2026-11-15.
+  Probe: `file std/otlp.xo`
+  Probe: `http 200 https://pkg.xolang.org/std/otlp/`
+- **Calling Xo from other languages:** `xo build --lib=shared|static`
+  builds a C library (decision 0574), with a Windows DLL's import
+  library. Last verified 2026-11-15.
+  Probe: `repo xo[[:space:]]build[[:space:]]--lib=shared CHANGELOG.md`
 
 ## Related lessons from the 0.33.0 testers
 
 Both testers' new bugs were in `use go` workflows (install, a fresh
 clone, `mod tidy`, the newest Go), not the compiler. Tests of the
 workflows a new user hits first (release smoke with `use go` and a
-fresh-clone tidy, a newest-Go check) are milestone 0.34.0 work.
+fresh-clone tidy, a newest-Go check) were milestone 0.34.0 work.

@@ -6,7 +6,8 @@ source of truth, and `xo doc NAME` shows a type's methods (prelude types
 included). Two features were reported missing on 2026-10-21 that Xo had
 (match guards, `Set`); check here, then the spec, then ask.
 
-Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
+Last verified: 2026-10-24 (spec/core.md and spec/std.md at main);
+std, targets, modules and editors 2026-11-15 (maturity-gaps.md's probes).
 
 ## Types (core 2)
 
@@ -121,10 +122,12 @@ http (server, router, client with keep-alive, HTTP/2 and h2c with
 `with_protocols`/`with_h2_config` (0434), trailers and full duplex
 streams (0433), mutual TLS (`with_client_auth`, `Client.with_cert`),
 streaming bodies, multipart, ServeContent, gzip), tls, websocket, json (derive, Value,
-streaming decoder), xml (tokens, tree, derive), sql (Postgres driver),
+streaming decoder), xml (tokens, tree, derive), sql (Postgres driver), sqlite (0534; no MySQL driver yet),
 csv, toml, yaml (derive Yaml, decode/encode, Node with comments, to_json; a port of yaml.v3, 0512), regexp, time, url, netip, udp, mime, mail, smtp, amqp (AMQP 1.0 client with a reader task for concurrent links, CBS; a port of go-amqp, 0521) and amqptest (an in-process Service Bus shaped broker for tests, spec/std.md 64.6), multipart,
 template, embed, compress, big, base64/base32, binary, uuid, path, asn1 (DER value tree, Go's rules, 0601), png (decode and encode, 0466), jpeg (decode, 0467), image (shared Image, color, draw, draw_mask, fill, floyd_steinberg, scale; 0578), gif (decode, encode; 0578), lzw in compress (0578), cbor (0468; derive Cbor, marshal/unmarshal, 0527),
-crypto, archive, log, task, testing, cli, term, go (`use go` bindings).
+crypto, archive, log, metrics and trace (0325) with OTLP export (otlp, 0539),
+task, testing, cli, term, go (`use go` bindings). Browsable docs for std
+and published modules: pkg.xolang.org (0589).
 `time` layouts are named fields (`"{year}-{month}-{day}"`), checked at
 compile time when constant; `time.layout(text)` gives a `Layout` parsed
 once (`const ISO: Layout = layout(...)`, 0332).
@@ -168,6 +171,20 @@ lists the rest.
 - `xo prof FILE|URL`: a URL is a running server's std/debug
   `/debug/profile?seconds=N` or `/debug/heap` (0325), fetched then
   summarized like a file; `/debug/sched` is printed.
+- Native targets (spec 12.1): darwin, linux and windows on arm64 and
+  amd64, and freebsd arm64 and amd64 (0573), each with its native
+  backend by default (windows/arm64 since 0569, 2026-11-09);
+  linux/riscv64 through `--backend=llvm` only (0571). Release archives:
+  darwin and linux (arm64, amd64) and windows/amd64; windows/arm64 joins in 0.52 (owner,
+  2026-11-15). `xo build --lib=shared|static` builds a C library or a
+  Windows DLL with its import library (0574).
+- Modules: versioned requires, `xo get`, the public proxy, checksum log
+  and index (proxy.xolang.org, sum.xolang.org, index.xolang.org; 0568,
+  0124, 0126). No vulnerability database or `xo vuln` yet
+  (maturity-gaps.md).
+- Editors: `xo lsp`; the VS Code extension `xo-lang.xo` (Marketplace and
+  Open VSX); the tree-sitter grammar (npm `@xo-lang/tree-sitter-xo`,
+  crates.io `tree-sitter-xo`).
 - Targets: `xo build --targets=wasip1/wasm` (a preview 1 module) and
   `--targets=wasip2/wasm` (core 10, decision 0447): a `wasi:http`
   component for a program that calls `http.serve_component` (served by
