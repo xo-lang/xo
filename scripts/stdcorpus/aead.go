@@ -53,6 +53,9 @@ var hkdfHashes = map[string]func() hash.Hash{
 
 type wycheFile struct {
 	TestGroups []struct {
+		PublicKey struct {
+			Uncompressed string `json:"uncompressed"`
+		} `json:"publicKey"`
 		IvSize  int `json:"ivSize"`
 		TagSize int `json:"tagSize"`
 		Tests   []struct {
@@ -69,6 +72,7 @@ type wycheFile struct {
 			Info    string `json:"info"`
 			Size    int    `json:"size"`
 			Okm     string `json:"okm"`
+			Sig     string `json:"sig"`
 			Result  string `json:"result"`
 		} `json:"tests"`
 	} `json:"testGroups"`

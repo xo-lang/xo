@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-15: perf: ECDSA P-256 verification in Jacobian coordinates
+
+- Kind: perf
+- Commit: this push
+- Found by: std Proven perf evidence (std/evidence/jwt/perf.md: es256_verify 1.692 of Go's wall on linux/arm64 host 1)
+- Go reference: crypto/internal/fips140/nistec p256_asm_arm64.s (p256PointDoubleAsm, p256PointAddAsm) and ecdsa verifyAsm's comparison of r without an inversion; go1.26.11
+- Test: corpus ecdsaraw gains Wycheproof's ecdsa_secp256r1_sha256_test.json (484 cases, 174 valid, 310 invalid, each checked against Go's VerifyASN1 by the generator), native, go and llvm; internal/repotest TestVtPublicOnlyInVerify covers the new variable time multiply; xo bench --ab on linux/arm64 host 1, 3 rounds
+- Shipped in: not yet released
+
+`verify` on P-256 (ECDSA, ES256 JWTs, TLS and X.509 signatures) computes u1 G + u2 Q in one run of doublings in Jacobian coordinates (u2 in width 6 NAF over the odd multiples of Q, u1 in width 5 over G256's affine first window), with Go's doubling and addition formulas, a variable time binary inverse of s mod n, P-256's R^2 constants instead of 512 doublings per call, and the check X = r Z^2 (or (r + n) Z^2) in place of an inversion. Only public values take these variable time paths; signing and ECDH keep the constant time complete formulas. bench/perf/jwt es256_verify: 123.3 to 65.0 ms (0.527) on linux/arm64 host 1, about 0.89 of Go's from 1.692.
+
 ## 2026-11-15: feature: Block and KeyStream, and CBC and CTR over any Block
 
 - Kind: feature

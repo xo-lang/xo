@@ -126,6 +126,26 @@ func ecdsaRawCorpus() string {
 	}
 	o.WriteString("]\n")
 
+	// Wycheproof's P-256 SHA-256 verify vectors, each checked against Go
+	o.WriteString("\n/// Wycheproof's ecdsa_secp256r1_sha256_test.json (Apache 2.0, Copyright Google LLC and the Wycheproof authors): (tcId, the public point, the digest, the DER signature, the verdict, Go's VerifyASN1 agreeing)\nconst WYCHEPROOF: List[(Int, Bytes, Bytes, Bytes, Bool)] = [\n")
+	for _, g := range wycheproof("ecdsa_secp256r1_sha256_test.json").TestGroups {
+		pt := unhex(g.PublicKey.Uncompressed)
+		pk, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), pt)
+		if err != nil {
+			panic("ecdsa: Go refuses a Wycheproof key: " + err.Error())
+		}
+		for _, t := range g.Tests {
+			sum := sha256.Sum256(unhex(t.Msg))
+			sig := unhex(t.Sig)
+			want := t.Result == "valid"
+			if t.Result == "acceptable" || ecdsa.VerifyASN1(pk, sum[:], sig) != want {
+				panic(fmt.Sprintf("ecdsa: Go disagrees with Wycheproof tcId %d", t.TcID))
+			}
+			fmt.Fprintf(&o, "  (%d, %s, %s, %s, %v),\n", t.TcID, xbytes(pt), xbytes(sum[:]), xbytes(sig), want)
+		}
+	}
+	o.WriteString("]\n")
+
 	// TestParseAndBytesRoundTrip over seeded scalars, with Go's ECDH secret
 	// of two keys
 	rr := mrand.New(mrand.NewSource(2011))
@@ -256,6 +276,17 @@ test "ecdsa_verify_digest is Go's VerifyASN1 over NIST's SigVer vectors (TestVec
       Err(e) => if e.msg != perr || want {
         bad.push("${n}: ${e.msg}, Go: ${perr}")
       }
+    }
+  }
+  expect(show(bad)) == []
+}
+
+test "ecdsa_verify_digest is Go's VerifyASN1 over Wycheproof's P-256 SHA-256 vectors" {
+  var bad: List[Str] = []
+  for (id, pt, dg, sig, want) in WYCHEPROOF {
+    let k = crypto.ecdsa_public_key(crypto.KeyAlg.EcdsaP256, pt) ?? e => fault(e.msg)
+    if crypto.ecdsa_verify_digest(k, dg, sig) != want {
+      bad.push("tcId ${id}")
     }
   }
   expect(show(bad)) == []

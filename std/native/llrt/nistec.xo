@@ -1837,8 +1837,10 @@ fn set_hex(c: Int, h: Int, s: Str) {
 /// Fills m's block from its hex digits: -m^-1 mod 2^64 (Newton's
 /// iteration doubles the correct low bits of 1/m0 each step), R mod m
 /// (2^(64L) - m when m is above 2^(64L - 1), else 1 doubled 64 L times:
-/// P-521 and P-224), R^2 mod m by 64 L doublings, and m - 2.
-fn modulus(c: Int, md: Int, hex: Str) {
+/// P-521 and P-224), R^2 mod m from rr_hex when given (P-256's two
+/// moduli: the 512 doublings were 4% of a verify) else by 64 L
+/// doublings, and m - 2.
+fn modulus(c: Int, md: Int, hex: Str, rr_hex: Str) {
   let n = limbs(c)
   let m = at(md, MLIMBS)
   set_hex(c, m, hex)
@@ -1864,9 +1866,13 @@ fn modulus(c: Int, md: Int, hex: Str) {
     }
   }
   let rr = at(md, MRR)
-  copy(c, rr, one)
-  for _ in 0..64 * n {
-    add(c, rr, rr, rr, md)
+  if rr_hex.len() > 0 {
+    set_hex(c, rr, rr_hex)
+  } else {
+    copy(c, rr, one)
+    for _ in 0..64 * n {
+      add(c, rr, rr, rr, md)
+    }
   }
   let e2 = at(md, ME2)
   b = 2
@@ -1885,29 +1891,29 @@ fn workspace(curve: Int) -> List[Int] {
   st(c, SZW, size(curve))
   if curve == P521 {
     st(c, 0, 9)
-    modulus(c, mp, "00000000000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
-    modulus(c, at(c, MN), "00000000000001fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffa51868783bf2f966b7fcc0148f709a5d03bb5c9b8899c47aebb6fb71e91386409")
+    modulus(c, mp, "00000000000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "")
+    modulus(c, at(c, MN), "00000000000001fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffa51868783bf2f966b7fcc0148f709a5d03bb5c9b8899c47aebb6fb71e91386409", "")
     set_hex(c, at(c, CB), "0000000000000051953eb9618e1c9a1f929a21a0b68540eea2da725b99b315f3b8b489918ef109e156193951ec7e937b1652c0bd3bb1bf073573df883d2c34f1ef451fd46b503f00")
     set_hex(c, at(c, PG), "00000000000000c6858e06b70404e9cd9e3ecb662395b4429c648139053fb521f828af606b4d3dbaa14b5e77efe75928fe1dc127a2ffa8de3348b3c1856a429bf97e7e31c2e5bd66")
     set_hex(c, at(c, PG + ES), "000000000000011839296a789a3bc0045c8a5fb42c7d1bd998f54449579b446817afbd17273e662c97ee72995ef42640c550b9013fad0761353c7086a272c24088be94769fd16650")
   } else if curve == P224 {
     st(c, 0, 4)
-    modulus(c, mp, "00000000ffffffffffffffffffffffffffffffff000000000000000000000001")
-    modulus(c, at(c, MN), "00000000ffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d")
+    modulus(c, mp, "00000000ffffffffffffffffffffffffffffffff000000000000000000000001", "")
+    modulus(c, at(c, MN), "00000000ffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d", "")
     set_hex(c, at(c, CB), "00000000b4050a850c04b3abf54132565044b0b7d7bfd8ba270b39432355ffb4")
     set_hex(c, at(c, PG), "00000000b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21")
     set_hex(c, at(c, PG + ES), "00000000bd376388b5f723fb4c22dfe6cd4375a05a07476444d5819985007e34")
   } else if curve == P384 {
     st(c, 0, 6)
-    modulus(c, mp, "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff")
-    modulus(c, at(c, MN), "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973")
+    modulus(c, mp, "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff", "")
+    modulus(c, at(c, MN), "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973", "")
     set_hex(c, at(c, CB), "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef")
     set_hex(c, at(c, PG), "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7")
     set_hex(c, at(c, PG + ES), "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f")
   } else {
     st(c, 0, 4)
-    modulus(c, mp, "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff")
-    modulus(c, at(c, MN), "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551")
+    modulus(c, mp, "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff", "00000004fffffffdfffffffffffffffefffffffbffffffff0000000000000003")
+    modulus(c, at(c, MN), "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", "66e12d94f3d956202845b2392b6bec594699799c49bd6fa683244c95be79eea2")
     set_hex(c, at(c, CB), "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b")
     set_hex(c, at(c, PG), "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296")
     set_hex(c, at(c, PG + ES), "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5")
@@ -2307,10 +2313,7 @@ fn pt_mul_base_vt_public(c: Int, r: Int, k: Int) {
   let n = limbs(c)
   var tb = 0
   var nw = 0
-  if csize(c) == 32 {
-    tb = rt.obj_addr(nistec_g256.G256).wrapping_add(rt.layout(2))
-    nw = 64
-  } else if n == 6 || n == 9 {
+  if n == 6 || n == 9 {
     tb = gtab(c)
     nw = 2 * csize(c)
   } else {
@@ -2339,6 +2342,531 @@ fn pt_mul_base_vt_public(c: Int, r: Int, k: Int) {
 }
 
 fn copy_pt(r: Int, p: Int) { rt.mem_copy(r, p, PS) }
+
+/// VARIABLE TIME (verify's public s only): h = 1/f mod P-256's order n
+/// (f and h normal, 0 < f < n; h may be f) by the binary extended
+/// Euclidean algorithm on local words: a f = u and b f = v (mod n)
+/// while u and v shrink to 1. pow's f^(n - 2) was 326 Montgomery
+/// multiplications, 11% of a verify.
+fn inv_n256_vt(c: Int, h: Int, f: Int) {
+  let m = at(at(c, MN), MLIMBS)
+  let n0 = ld(m, 0)
+  let n1 = ld(m, 8)
+  let n2 = ld(m, 16)
+  let n3 = ld(m, 24)
+  var u0 = ld(f, 0)
+  var u1 = ld(f, 8)
+  var u2 = ld(f, 16)
+  var u3 = ld(f, 24)
+  if (u0 | u1 | u2 | u3) == 0 {
+    set_zero(c, h)
+    return
+  }
+  var v0 = n0
+  var v1 = n1
+  var v2 = n2
+  var v3 = n3
+  var a0 = 1
+  var a1 = 0
+  var a2 = 0
+  var a3 = 0
+  var b0 = 0
+  var b1 = 0
+  var b2 = 0
+  var b3 = 0
+  while true {
+    while (u0 & 1) == 0 {
+      u0 = u0.shr_logical(1) | u1.wrapping_shl(63)
+      u1 = u1.shr_logical(1) | u2.wrapping_shl(63)
+      u2 = u2.shr_logical(1) | u3.wrapping_shl(63)
+      u3 = u3.shr_logical(1)
+      // a / 2 mod n: a + n when a is odd, then a shift with the carry
+      let mk = (0).wrapping_sub(a0 & 1)
+      let s0 = cpu.adc(a0, n0 & mk, 0)
+      let k0 = cpu.adc_carry(a0, n0 & mk, 0)
+      let s1 = cpu.adc(a1, n1 & mk, k0)
+      let k1 = cpu.adc_carry(a1, n1 & mk, k0)
+      let s2 = cpu.adc(a2, n2 & mk, k1)
+      let k2 = cpu.adc_carry(a2, n2 & mk, k1)
+      let s3 = cpu.adc(a3, n3 & mk, k2)
+      let k3 = cpu.adc_carry(a3, n3 & mk, k2)
+      a0 = s0.shr_logical(1) | s1.wrapping_shl(63)
+      a1 = s1.shr_logical(1) | s2.wrapping_shl(63)
+      a2 = s2.shr_logical(1) | s3.wrapping_shl(63)
+      a3 = s3.shr_logical(1) | k3.wrapping_shl(63)
+    }
+    while (v0 & 1) == 0 {
+      v0 = v0.shr_logical(1) | v1.wrapping_shl(63)
+      v1 = v1.shr_logical(1) | v2.wrapping_shl(63)
+      v2 = v2.shr_logical(1) | v3.wrapping_shl(63)
+      v3 = v3.shr_logical(1)
+      let mk = (0).wrapping_sub(b0 & 1)
+      let s0 = cpu.adc(b0, n0 & mk, 0)
+      let k0 = cpu.adc_carry(b0, n0 & mk, 0)
+      let s1 = cpu.adc(b1, n1 & mk, k0)
+      let k1 = cpu.adc_carry(b1, n1 & mk, k0)
+      let s2 = cpu.adc(b2, n2 & mk, k1)
+      let k2 = cpu.adc_carry(b2, n2 & mk, k1)
+      let s3 = cpu.adc(b3, n3 & mk, k2)
+      let k3 = cpu.adc_carry(b3, n3 & mk, k2)
+      b0 = s0.shr_logical(1) | s1.wrapping_shl(63)
+      b1 = s1.shr_logical(1) | s2.wrapping_shl(63)
+      b2 = s2.shr_logical(1) | s3.wrapping_shl(63)
+      b3 = s3.shr_logical(1) | k3.wrapping_shl(63)
+    }
+    if u0 == 1 && (u1 | u2 | u3) == 0 {
+      st(h, 0, a0)
+      st(h, 8, a1)
+      st(h, 16, a2)
+      st(h, 24, a3)
+      return
+    }
+    if v0 == 1 && (v1 | v2 | v3) == 0 {
+      st(h, 0, b0)
+      st(h, 8, b1)
+      st(h, 16, b2)
+      st(h, 24, b3)
+      return
+    }
+    // u - v as u + ~v + 1: a carry out is no borrow (u >= v)
+    let d0 = cpu.adc(u0, ~v0, 1)
+    let c0 = cpu.adc_carry(u0, ~v0, 1)
+    let d1 = cpu.adc(u1, ~v1, c0)
+    let c1 = cpu.adc_carry(u1, ~v1, c0)
+    let d2 = cpu.adc(u2, ~v2, c1)
+    let c2 = cpu.adc_carry(u2, ~v2, c1)
+    let d3 = cpu.adc(u3, ~v3, c2)
+    let c3 = cpu.adc_carry(u3, ~v3, c2)
+    if c3 == 1 {
+      u0 = d0
+      u1 = d1
+      u2 = d2
+      u3 = d3
+      // a = a - b mod n
+      let e0 = cpu.adc(a0, ~b0, 1)
+      let g0 = cpu.adc_carry(a0, ~b0, 1)
+      let e1 = cpu.adc(a1, ~b1, g0)
+      let g1 = cpu.adc_carry(a1, ~b1, g0)
+      let e2 = cpu.adc(a2, ~b2, g1)
+      let g2 = cpu.adc_carry(a2, ~b2, g1)
+      let e3 = cpu.adc(a3, ~b3, g2)
+      let g3 = cpu.adc_carry(a3, ~b3, g2)
+      let mk = g3.wrapping_sub(1)
+      a0 = cpu.adc(e0, n0 & mk, 0)
+      let h0 = cpu.adc_carry(e0, n0 & mk, 0)
+      a1 = cpu.adc(e1, n1 & mk, h0)
+      let h1 = cpu.adc_carry(e1, n1 & mk, h0)
+      a2 = cpu.adc(e2, n2 & mk, h1)
+      let h2 = cpu.adc_carry(e2, n2 & mk, h1)
+      a3 = cpu.adc(e3, n3 & mk, h2)
+    } else {
+      // v = v - u = ~(u - v) + 1
+      let w0 = cpu.adc(~d0, 1, 0)
+      let x0 = cpu.adc_carry(~d0, 1, 0)
+      let w1 = cpu.adc(~d1, 0, x0)
+      let x1 = cpu.adc_carry(~d1, 0, x0)
+      let w2 = cpu.adc(~d2, 0, x1)
+      let x2 = cpu.adc_carry(~d2, 0, x1)
+      v0 = w0
+      v1 = w1
+      v2 = w2
+      v3 = cpu.adc(~d3, 0, x2)
+      // b = b - a mod n
+      let e0 = cpu.adc(b0, ~a0, 1)
+      let g0 = cpu.adc_carry(b0, ~a0, 1)
+      let e1 = cpu.adc(b1, ~a1, g0)
+      let g1 = cpu.adc_carry(b1, ~a1, g0)
+      let e2 = cpu.adc(b2, ~a2, g1)
+      let g2 = cpu.adc_carry(b2, ~a2, g1)
+      let e3 = cpu.adc(b3, ~a3, g2)
+      let g3 = cpu.adc_carry(b3, ~a3, g2)
+      let mk = g3.wrapping_sub(1)
+      b0 = cpu.adc(e0, n0 & mk, 0)
+      let h0 = cpu.adc_carry(e0, n0 & mk, 0)
+      b1 = cpu.adc(e1, n1 & mk, h0)
+      let h1 = cpu.adc_carry(e1, n1 & mk, h0)
+      b2 = cpu.adc(e2, n2 & mk, h1)
+      let h2 = cpu.adc_carry(e2, n2 & mk, h1)
+      b3 = cpu.adc(e3, n3 & mk, h2)
+    }
+  }
+}
+
+
+/// VARIABLE TIME (verify's public scalars only): P-256 in Jacobian
+/// coordinates (x = X/Z^2, y = Y/Z^3, Z = 0 the identity), where the
+/// complete projective formulas (pt_double256, 8M + 3S and 21 additions)
+/// were most of a verify: Go's arm64 doubling (4M + 4S) and addition
+/// (12M + 4S), whose few field additions cost less than the formulas with
+/// the fewest multiplications, and madd-2007-bl for an affine point
+/// (7M + 4S), each checking the cases its formula misses.
+/// Temporaries: T0's 8 elements, TMPW, DIFF and POWT (inv's table, unused
+/// until pt_affine).
+fn zero4(f: Int) -> Bool { (ld(f, 0) | ld(f, 8) | ld(f, 16) | ld(f, 24)) == 0 }
+
+/// h = f / 2 in P-256's field (f below p; h may be f): f, or f + p when
+/// f is odd, shifted right with the carry.
+fn half4p(h: Int, f: Int) {
+  let f0 = ld(f, 0)
+  let mk = (0).wrapping_sub(f0 & 1)
+  let s0 = cpu.adc(f0, mk, 0)
+  let k0 = cpu.adc_carry(f0, mk, 0)
+  let s1 = cpu.adc(ld(f, 8), 4294967295 & mk, k0)
+  let k1 = cpu.adc_carry(ld(f, 8), 4294967295 & mk, k0)
+  let s2 = cpu.adc(ld(f, 16), 0, k1)
+  let k2 = cpu.adc_carry(ld(f, 16), 0, k1)
+  let s3 = cpu.adc(ld(f, 24), -4294967295 & mk, k2)
+  let k3 = cpu.adc_carry(ld(f, 24), -4294967295 & mk, k2)
+  st(h, 0, s0.shr_logical(1) | s1.wrapping_shl(63))
+  st(h, 8, s1.shr_logical(1) | s2.wrapping_shl(63))
+  st(h, 16, s2.shr_logical(1) | s3.wrapping_shl(63))
+  st(h, 24, s3.shr_logical(1) | k3.wrapping_shl(63))
+}
+
+/// r = 2p in Jacobian coordinates (r may be p), as Go's arm64
+/// p256PointDoubleAsm: A = 3 (X - Z^2)(X + Z^2), B = 2Y, Z3 = B Z,
+/// C = B^2, D = C X, X3 = A^2 - 2D, Y3 = (D - X3) A - C^2 / 2 (4M + 4S
+/// and 10 additions, where dbl-2001-b's 3M + 5S took 17).
+fn jac_double256_vt(c: Int, r: Int, p: Int) {
+  let zz = at(c, T0)
+  let a = at(c, T0 + ES)
+  let b = at(c, T0 + 2 * ES)
+  let cc = at(c, T0 + 3 * ES)
+  let d = at(c, T0 + 4 * ES)
+  let t = at(c, T0 + 5 * ES)
+  let u = at(c, T0 + 6 * ES)
+  let x = p
+  let y = at(p, ES)
+  let z = at(p, 2 * ES)
+  sqr4p(zz, z)
+  sub4p(t, x, zz)
+  add4p(u, x, zz)
+  mul4p(a, t, u)
+  add4p(t, a, a)
+  add4p(a, t, a)
+  add4p(b, y, y)
+  // the last uses of y and z, then of x
+  mul4p(at(r, 2 * ES), b, z)
+  sqr4p(cc, b)
+  mul4p(d, cc, x)
+  sqr4p(t, a)
+  add4p(u, d, d)
+  sub4p(r, t, u)
+  sqr4p(cc, cc)
+  half4p(cc, cc)
+  sub4p(t, d, r)
+  mul4p(t, t, a)
+  sub4p(at(r, ES), t, cc)
+}
+
+/// r = p + q in Jacobian coordinates (r may be p or q).
+fn jac_add256_vt(c: Int, r: Int, p: Int, q: Int) {
+  let x1 = p
+  let y1 = at(p, ES)
+  let z1 = at(p, 2 * ES)
+  let x2 = q
+  let y2 = at(q, ES)
+  let z2 = at(q, 2 * ES)
+  if zero4(z2) {
+    if r != p {
+      copy_pt(r, p)
+    }
+    return
+  }
+  if zero4(z1) {
+    if r != q {
+      copy_pt(r, q)
+    }
+    return
+  }
+  let z1z1 = at(c, T0)
+  let z2z2 = at(c, T0 + ES)
+  let u1 = at(c, T0 + 2 * ES)
+  let u2 = at(c, T0 + 3 * ES)
+  let s1 = at(c, T0 + 4 * ES)
+  let s2 = at(c, T0 + 5 * ES)
+  let h = at(c, T0 + 6 * ES)
+  let rr = at(c, T0 + 7 * ES)
+  let i = at(c, TMPW)
+  let j = at(c, DIFF)
+  let v = at(c, POWT)
+  sqr4p(z1z1, z1)
+  sqr4p(z2z2, z2)
+  mul4p(u1, x1, z2z2)
+  mul4p(u2, x2, z1z1)
+  mul4p(s1, y1, z2)
+  mul4p(s1, s1, z2z2)
+  mul4p(s2, y2, z1)
+  mul4p(s2, s2, z1z1)
+  sub4p(h, u2, u1)
+  sub4p(rr, s2, s1)
+  if zero4(h) {
+    if zero4(rr) {
+      jac_double256_vt(c, r, p)
+    } else {
+      pt_identity(c, r)
+    }
+    return
+  }
+  // Go's p256PointAddAsm: HH = H^2, HHH = H HH, V = U1 HH,
+  // X3 = R^2 - HHH - 2V, Y3 = R (V - X3) - S1 HHH, Z3 = Z1 Z2 H
+  // (12M + 4S and 7 additions; add-2007-bl's 11M + 5S took 14)
+  sqr4p(i, h)
+  mul4p(j, h, i)
+  mul4p(v, u1, i)
+  // z3 into u2
+  mul4p(u2, z1, z2)
+  mul4p(u2, u2, h)
+  // x3 into z1z1
+  sqr4p(z1z1, rr)
+  sub4p(z1z1, z1z1, j)
+  add4p(z2z2, v, v)
+  sub4p(z1z1, z1z1, z2z2)
+  // y3 into z2z2
+  sub4p(z2z2, v, z1z1)
+  mul4p(z2z2, rr, z2z2)
+  mul4p(s1, s1, j)
+  sub4p(z2z2, z2z2, s1)
+  rt.mem_copy(r, z1z1, 32)
+  rt.mem_copy(at(r, ES), z2z2, 32)
+  rt.mem_copy(at(r, 2 * ES), u2, 32)
+}
+
+/// r = p + (x2, y2) for an affine point in Montgomery form (r may be p).
+fn jac_add_affine256_vt(c: Int, r: Int, p: Int, x2: Int, y2: Int) {
+  let x1 = p
+  let y1 = at(p, ES)
+  let z1 = at(p, 2 * ES)
+  if zero4(z1) {
+    rt.mem_copy(r, x2, 32)
+    rt.mem_copy(at(r, ES), y2, 32)
+    rt.mem_copy(at(r, 2 * ES), at(at(c, MP), MONE), 32)
+    return
+  }
+  let z1z1 = at(c, T0)
+  let u2 = at(c, T0 + ES)
+  let s2 = at(c, T0 + 2 * ES)
+  let h = at(c, T0 + 3 * ES)
+  let rr = at(c, T0 + 4 * ES)
+  let hh = at(c, T0 + 5 * ES)
+  let i = at(c, T0 + 6 * ES)
+  let j = at(c, T0 + 7 * ES)
+  let v = at(c, TMPW)
+  let t = at(c, DIFF)
+  sqr4p(z1z1, z1)
+  mul4p(u2, x2, z1z1)
+  mul4p(s2, y2, z1)
+  mul4p(s2, s2, z1z1)
+  sub4p(h, u2, x1)
+  sub4p(rr, s2, y1)
+  if zero4(h) {
+    if zero4(rr) {
+      jac_double256_vt(c, r, p)
+    } else {
+      pt_identity(c, r)
+    }
+    return
+  }
+  sqr4p(hh, h)
+  add4p(i, hh, hh)
+  add4p(i, i, i)
+  mul4p(j, h, i)
+  add4p(rr, rr, rr)
+  mul4p(v, x1, i)
+  // z3 = (z1 + h)^2 - z1z1 - hh, the last use of z1
+  add4p(t, z1, h)
+  sqr4p(t, t)
+  sub4p(t, t, z1z1)
+  sub4p(at(r, 2 * ES), t, hh)
+  // y1 j before y1 is overwritten
+  mul4p(j, y1, j)
+  add4p(j, j, j)
+  // x3 = rr^2 - J - 2v (J = h i, recomputed into u2)
+  mul4p(u2, h, i)
+  sqr4p(t, rr)
+  sub4p(t, t, u2)
+  sub4p(t, t, v)
+  sub4p(r, t, v)
+  // y3 = rr (v - x3) - 2 y1 J
+  sub4p(t, v, r)
+  mul4p(t, rr, t)
+  sub4p(at(r, ES), t, j)
+}
+
+/// VARIABLE TIME (verify only): the signed digits of the scalar at k (4
+/// words, below 2^256) in width w non adjacent form, one byte each (two's
+/// complement) at out + i for bit i, 0 to 256: every nonzero digit odd
+/// and below 2^(w-1) in size, at least w - 1 zeros after each.
+fn wnaf256_vt(k: Int, out: Int, w: Int) {
+  var k0 = ld(k, 0)
+  var k1 = ld(k, 8)
+  var k2 = ld(k, 16)
+  var k3 = ld(k, 24)
+  var k4 = 0
+  let full = 1 << w
+  let half = full >> 1
+  var i = 0
+  while i < 257 {
+    var d = 0
+    if (k0 & 1) == 1 {
+      d = k0 & (full - 1)
+      if d >= half {
+        d -= full
+      }
+      // k - d: the low w bits become zero; a negative d adds and carries
+      let s0 = cpu.adc(k0, (0).wrapping_sub(d), 0)
+      let c0 = if d < 0 { cpu.adc_carry(k0, (0).wrapping_sub(d), 0) } else { 0 }
+      k0 = s0
+      if c0 != 0 {
+        let s1 = cpu.adc(k1, 0, c0)
+        let c1 = cpu.adc_carry(k1, 0, c0)
+        let s2 = cpu.adc(k2, 0, c1)
+        let c2 = cpu.adc_carry(k2, 0, c1)
+        let s3 = cpu.adc(k3, 0, c2)
+        let c3 = cpu.adc_carry(k3, 0, c2)
+        k1 = s1
+        k2 = s2
+        k3 = s3
+        k4 = k4 + c3
+      }
+    }
+    rt.mem_store(out, i, d & 255, 1)
+    k0 = k0.shr_logical(1) | k1.wrapping_shl(63)
+    k1 = k1.shr_logical(1) | k2.wrapping_shl(63)
+    k2 = k2.shr_logical(1) | k3.wrapping_shl(63)
+    k3 = k3.shr_logical(1) | k4.wrapping_shl(63)
+    k4 = k4.shr_logical(1)
+    i += 1
+  }
+}
+
+/// The signed digit at out + i (wnaf256_vt).
+fn digit_at(out: Int, i: Int) -> Int {
+  let v = rt.mem_load(out, i, 1)
+  if v >= 128 { v - 256 } else { v }
+}
+
+/// h = -f in P-256's field (f below p; h may be f): p - f, or 0 for 0.
+fn neg4p(h: Int, f: Int) {
+  let f0 = ld(f, 0)
+  let f1 = ld(f, 8)
+  let f2 = ld(f, 16)
+  let f3 = ld(f, 24)
+  if (f0 | f1 | f2 | f3) == 0 {
+    rt.mem_set(h, 0, 32)
+    return
+  }
+  // p - f as p + ~f + 1
+  let d0 = cpu.adc(-1, ~f0, 1)
+  let c0 = cpu.adc_carry(-1, ~f0, 1)
+  let d1 = cpu.adc(4294967295, ~f1, c0)
+  let c1 = cpu.adc_carry(4294967295, ~f1, c0)
+  let d2 = cpu.adc(0, ~f2, c1)
+  let c2 = cpu.adc_carry(0, ~f2, c1)
+  st(h, 0, d0)
+  st(h, 8, d1)
+  st(h, 16, d2)
+  st(h, 24, cpu.adc(-4294967295, ~f3, c2))
+}
+
+/// VARIABLE TIME (verify only, internal/repotest TestVtPublicOnlyInVerify):
+/// r = [u1]G + [u2]p on P-256 in Jacobian coordinates (Straus: one run of
+/// doublings): u2's digits in width 6 NAF over the odd multiples [1]p to
+/// [31]p, u1's in width 5 over G256's affine [1]G to [15]G (its first
+/// window), a negative digit adding the entry with y negated.
+fn jac_mul2_256_vt(c: Int, r: Int, u1: Int, p: Int, u2: Int) {
+  let tab = at(c, TABLE)
+  let two = at(c, SEL)
+  // p's Z is one, so it is the same point in Jacobian coordinates
+  copy_pt(tab, p)
+  jac_double256_vt(c, two, p)
+  var j = 1
+  while j < 16 {
+    jac_add256_vt(c, at(tab, PS * j), at(tab, PS * (j - 1)), two)
+    j += 1
+  }
+  // the digits after jac_add256_vt's one POWT element
+  let dg1 = at(c, POWT + ES)
+  let dg2 = at(c, POWT + ES + 264)
+  wnaf256_vt(u1, dg1, 5)
+  wnaf256_vt(u2, dg2, 6)
+  let g = rt.obj_addr(nistec_g256.G256).wrapping_add(rt.layout(2))
+  let neg = at(c, SEL)
+  let acc = at(c, ACC)
+  pt_identity(c, acc)
+  var started = false
+  var i = 256
+  while i >= 0 {
+    if started {
+      jac_double256_vt(c, acc, acc)
+    }
+    let d2 = digit_at(dg2, i)
+    if d2 > 0 {
+      jac_add256_vt(c, acc, acc, at(tab, PS * (d2 >> 1)))
+      started = true
+    } else if d2 < 0 {
+      let e = at(tab, PS * ((0 - d2) >> 1))
+      copy_pt(neg, e)
+      neg4p(at(neg, ES), at(e, ES))
+      jac_add256_vt(c, acc, acc, neg)
+      started = true
+    }
+    let d1 = digit_at(dg1, i)
+    if d1 > 0 {
+      let e = at(g, 64 * (d1 - 1))
+      jac_add_affine256_vt(c, acc, acc, e, at(e, 32))
+      started = true
+    } else if d1 < 0 {
+      let e = at(g, 64 * (0 - d1 - 1))
+      neg4p(at(neg, ES), at(e, 32))
+      jac_add_affine256_vt(c, acc, acc, e, at(neg, ES))
+      started = true
+    }
+    i -= 1
+  }
+  copy_pt(r, acc)
+}
+
+/// VARIABLE TIME (verify only): whether the affine x of the Jacobian point
+/// p, reduced mod n, is r (normal, 0 < r < n): X = r Z^2, or (r + n) Z^2
+/// when r + n < p, with no inversion (Go's p256 verify compares the same
+/// way). The identity is never r.
+fn jac_x_is_r256_vt(c: Int, p: Int, r: Int) -> Bool {
+  let z = at(p, 2 * ES)
+  if zero4(z) {
+    return false
+  }
+  let mp = at(c, MP)
+  let zz = at(c, T0)
+  let t = at(c, T0 + ES)
+  let rn = at(c, T0 + 2 * ES)
+  sqr4p(zz, z)
+  mul4p(t, r, at(mp, MRR))
+  mul4p(t, t, zz)
+  if same(c, t, p) {
+    return true
+  }
+  let m = at(at(c, MN), MLIMBS)
+  let s0 = cpu.adc(ld(r, 0), ld(m, 0), 0)
+  let k0 = cpu.adc_carry(ld(r, 0), ld(m, 0), 0)
+  let s1 = cpu.adc(ld(r, 8), ld(m, 8), k0)
+  let k1 = cpu.adc_carry(ld(r, 8), ld(m, 8), k0)
+  let s2 = cpu.adc(ld(r, 16), ld(m, 16), k1)
+  let k2 = cpu.adc_carry(ld(r, 16), ld(m, 16), k1)
+  let s3 = cpu.adc(ld(r, 24), ld(m, 24), k2)
+  let k3 = cpu.adc_carry(ld(r, 24), ld(m, 24), k2)
+  st(rn, 0, s0)
+  st(rn, 8, s1)
+  st(rn, 16, s2)
+  st(rn, 24, s3)
+  if k3 != 0 || below(c, rn, mp) == 0 {
+    return false
+  }
+  mul4p(t, rn, at(mp, MRR))
+  mul4p(t, t, zz)
+  same(c, t, p)
+}
+
 
 /// r = [k]G, the curve's base point: P-256's from the compiled in fixed
 /// base table (pt_mul_g), P-384's and P-521's from a table made on first
@@ -2901,10 +3429,21 @@ pub fn verify(curve: Int, pub_key: Bytes, hash: Bytes, sig: Bytes) -> Bool {
   }
   hash_int(c, e, hash, curve)
   // w = 1/s; u1 = e w, u2 = r w (normal: one factor is Montgomery)
-  to_mont(c, s, s, mn)
-  inv(c, s, s, mn)
+  if csize(c) == 32 {
+    inv_n256_vt(c, s, s)
+    to_mont(c, s, s, mn)
+  } else {
+    to_mont(c, s, s, mn)
+    inv(c, s, s, mn)
+  }
   mul(c, u1, e, s, mn)
   mul(c, u2, r, s, mn)
+  if csize(c) == 32 {
+    jac_mul2_256_vt(c, at(c, PB), u1, at(c, PA), u2)
+    let ok = jac_x_is_r256_vt(c, at(c, PB), r)
+    keep(w)
+    return ok
+  }
   pt_mul_base_vt_public(c, at(c, PB), u1)
   pt_mul_vt_public(c, at(c, PC), at(c, PA), u2)
   pt_add(c, at(c, PB), at(c, PB), at(c, PC))

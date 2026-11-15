@@ -15,7 +15,7 @@ import (
 // nistec.verify. Any other caller, in any std file, fails here.
 func TestVtPublicOnlyInVerify(t *testing.T) {
 	root := filepath.Join("..", "..")
-	call := regexp.MustCompile(`\bpt_mul(_base)?_vt_public\(`)
+	call := regexp.MustCompile(`\b(pt_mul(_base)?_vt_public|jac_mul2_256_vt)\(`)
 	fnLine := regexp.MustCompile(`^(pub )?fn (\w+)\(`)
 	var found []string
 	err := filepath.Walk(filepath.Join(root, "std"), func(path string, info os.FileInfo, err error) error {
