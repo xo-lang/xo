@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Feature (std/big, every backend): `big.jacobi(x, y)`, the Jacobi symbol (Go's big.Jacobi).
+- Feature (std/mime, every backend): RFC 2047 encoded words, `mime.encode_word`, `mime.decode_word` and `mime.decode_header` (Go's WordEncoder and WordDecoder).
 - Fix (xo vet): `xo vet --cost --std-module=M` notes the costs in M's own files with every function of M lowered (it vetted the current directory as a program and ignored the module); a module without tests works too.
 - Feature (std/sql, every backend; decision 0648 item 15): `db.batch(queries)` sends `sql.BatchQuery` values at once on one connection (pgx's SendBatch; Postgres in one round trip per 32 KiB) and returns a `ResultSet` per query with its rows and `rows_affected()`, atomic outside a transaction; `db.pipeline(batches)` sends several atomic batches at once with a result per batch (pgconn's Pipeline); `Conn.batch`, `Conn.pipeline` and `Tx.batch` too.
 - Breaking (std/sql, drivers written in Xo): `DriverConn` gains `pipeline`. Add `fn pipeline(self, batches: List[List[sql.BatchQuery]], in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr { Err(sql.SqlErr.Driver(msg: "no batches")) }` to your connection type, or run each batch's queries in `begin` and `commit` (spec/std.md 10.7).

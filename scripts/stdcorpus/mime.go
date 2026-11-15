@@ -105,6 +105,7 @@ func mimeCorpus() string {
 	}
 	o.WriteString("]\n")
 	o.WriteString(mimeTests)
+	mimeWordCorpus(&o)
 	return o.String()
 }
 
@@ -151,3 +152,111 @@ test "detect_content_type sniffs as Go's DetectContentType" {
   expect(first_bad(bad)) == []
 }
 `
+
+// mimeWordCorpus: Go's mime WordEncoder.Encode, WordDecoder.Decode and
+// DecodeHeader on encodedword_test.go's inputs (those that are UTF-8, as
+// a Str is) and on seeded random ones; a result that is not UTF-8 is
+// written with U+FFFD per bad byte, as std/mime gives it.
+func mimeWordCorpus(o *strings.Builder) {
+	r := rand.New(rand.NewSource(2047))
+	fix := func(s string) string { return string([]rune(s)) }
+	enc := []string{
+		"François-Jérôme", "Café", "La Seleção", "", "A", "a", "123 456",
+		"\t !\"#$%&'()*+,-./ :;<>?@[\\]^_`{|}~", strings.Repeat("é", 10), strings.Repeat("é", 11),
+		strings.Repeat("à", 30), strings.Repeat("é", 60), strings.Repeat("ï", 25), strings.Repeat("ô", 37),
+		"{$firstname} Bienvendio a Apostolica, aquà inicia el camino de tu", "日本語のテキスト", "a\x00b", "tab\tonly", "line\nbreak",
+	}
+	pieces := []string{"a", " ", "_", "=", "?", "é", "日", "😀", "\t", "\n", "z", "Q", "~", "\x7f"}
+	for i := 0; i < 60; i++ {
+		var b strings.Builder
+		for n := r.Intn(70); n > 0; n-- {
+			b.WriteString(pieces[r.Intn(len(pieces))])
+		}
+		enc = append(enc, b.String())
+	}
+	o.WriteString("\n/// encode_word: (s, charset, b, Go's WordEncoder.Encode)\nconst WORD_ENC: List[(Str, Str, Bool, Str)] = [\n")
+	for _, src := range enc {
+		for _, cs := range []string{"utf-8", "iso-8859-1", "UTF-8"} {
+			for _, e := range []mime.WordEncoder{mime.QEncoding, mime.BEncoding} {
+				fmt.Fprintf(o, "  (%s, %q, %v, %s),\n", xq(src), cs, e == mime.BEncoding, xq(e.Encode(cs, src)))
+			}
+		}
+	}
+	o.WriteString("]\n")
+	words := []string{
+		"=?UTF-8?Q?=C2=A1Hola,_se=C3=B1or!?=", "=?UTF-8?Q?Fran=C3=A7ois-J=C3=A9r=C3=B4me?=", "=?UTF-8?q?ascii?=", "=?utf-8?B?QW5kcsOp?=",
+		"=?ISO-8859-1?Q?Rapha=EBl_Dupont?=", "=?utf-8?b?IkFudG9uaW8gSm9zw6kiIDxqb3NlQGV4YW1wbGUub3JnPg==?=", "=?UTF-8?A?Test?=",
+		"=?UTF-8?Q?A=B?=", "=?UTF-8?Q?=A?=", "=?UTF-8?A?A?=", "=????=", "=?UTF-8???=", "=?UTF-8?Q??=",
+		"=?us-ascii?q?a=FFb?=", "=?utf-8?q?=80=C3?=", "=?koi8-r?q?x?=", "=?UTF-8?b?QW5kcs?=", "=?UTF-8?q?=g0?=", "=?UTF-8?q?a\x01?=",
+		"=?UTF-8?q?a=0D=0A?=", "=?UTF-8?q?tab\there?=", "=?a?q?b?c?=", "Jean", "=?UTF-8?Q?x", "=?ISO-8859-1?B?6enp?=",
+	}
+	headers := append([]string{}, words...)
+	headers = append(headers, "=?", "=?UTF-8?", "=?UTF-8?=", "=?UTF-8?Q", "=?UTF-8?Q?", "=?UTF-8?Q?=", "=?UTF-8?Q?A", "=?UTF-8?Q?A?",
+		"=?ISO-8859-1?Q?a?=", "=?ISO-8859-1?Q?a?= b", "=?ISO-8859-1?Q?a?= =?ISO-8859-1?Q?b?=", "=?ISO-8859-1?Q?a?=  =?ISO-8859-1?Q?b?=",
+		"=?ISO-8859-1?Q?a?= \r\n\t =?ISO-8859-1?Q?b?=", "=?ISO-8859-1?Q?a_b?=",
+		"=?UTF-8?b?garbage?= =?UTF-8?b?QW5kcsOp?= =?UTF-8?b?garbage?=", "=?UTF-8?b?QW5kcsOp", "=?UTF-8?x?y?=?UTF-8?x?y=?",
+		"Re: =?utf-8?q?caf=C3=A9?= x =?utf-8?b?w6k=?=", "a =?koi8-r?q?x?= b", "pre=?utf-8?q?a?=post")
+	for i := 0; i < 40; i++ {
+		var b strings.Builder
+		for n := 1 + r.Intn(4); n > 0; n-- {
+			src := enc[r.Intn(len(enc))]
+			e := []mime.WordEncoder{mime.QEncoding, mime.BEncoding}[r.Intn(2)]
+			b.WriteString(e.Encode("utf-8", src))
+			b.WriteString([]string{" ", "  ", "\r\n ", " x ", ""}[r.Intn(5)])
+		}
+		headers = append(headers, b.String())
+	}
+	dec := new(mime.WordDecoder)
+	res := func(s string, err error) string {
+		if err != nil {
+			return "ERR " + err.Error()
+		}
+		return fix(s)
+	}
+	o.WriteString("\n/// decode_word: (word, Go's Decode: the text, or ERR and the error)\nconst WORD_DEC: List[(Str, Str)] = [\n")
+	for _, w := range words {
+		fmt.Fprintf(o, "  (%s, %s),\n", xq(w), xq(res(dec.Decode(w))))
+	}
+	o.WriteString("]\n\n/// decode_header: (header, Go's DecodeHeader)\nconst HEADER_DEC: List[(Str, Str)] = [\n")
+	for _, h := range headers {
+		fmt.Fprintf(o, "  (%s, %s),\n", xq(h), xq(res(dec.DecodeHeader(h))))
+	}
+	o.WriteString("]\n")
+	o.WriteString(`
+fn word_res(r: Result[Str, mime.MimeErr]) -> Str {
+  match r {
+    Ok(s) => s
+    Err(e) => "ERR " + e.display()
+  }
+}
+
+test "encode_word, decode_word and decode_header give Go's mime results" {
+  var bad: List[Str] = []
+  for (s, cs, b, want) in WORD_ENC {
+    let got = mime.encode_word(s, charset: cs, encoding: if b { mime.WordEncoding.B } else { mime.WordEncoding.Q })
+    if got != want {
+      bad.push("enc ${s.quote()} ${cs} ${b}: ${got.quote()}")
+    }
+    // Go splits only UTF-8 words (TestEncodedWordLength)
+    for w in got.split(" ") {
+      if cs.to_lower() == "utf-8" && w.len() > 75 {
+        bad.push("long ${w}")
+      }
+    }
+  }
+  for (w, want) in WORD_DEC {
+    let got = word_res(mime.decode_word(w))
+    if got != want {
+      bad.push("word ${w.quote()}: ${got.quote()}")
+    }
+  }
+  for (h, want) in HEADER_DEC {
+    let got = word_res(mime.decode_header(h))
+    if got != want {
+      bad.push("header ${h.quote()}: ${got.quote()}")
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+`)
+}

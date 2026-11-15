@@ -1,5 +1,20 @@
 # std/mime changes
 
+## 2026-11-15: feature: RFC 2047 encoded words
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): mime.* (WordEncoder, WordDecoder)
+- Go reference: mime encodedword.go (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/mime (scripts/stdcorpus mime): Go's encodedword_test.go inputs plus 60 seeded random strings encoded in 3 charsets and both encodings, 25 words and 82 headers decoded, all against Go (go, arm64, llvm)
+- Shipped in: not yet released
+- Timing: none
+
+`encode_word(s, charset:, encoding:)`, `decode_word(word)` and
+`decode_header(header)`, Go's WordEncoder.Encode, WordDecoder.Decode and
+DecodeHeader with no CharsetReader. std/mime keeps its own base64 error
+offset walk, since on the Go backend it is compiled without std/base64.
+
 ## 2026-11-10: internal: std/mime merged, and the Go backend runs the Xo port
 
 - Kind: internal (behavior on the Go backend)

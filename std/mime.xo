@@ -755,3 +755,385 @@ fn sig_type(s: Sig) -> Str {
     Text => "text/plain; charset=utf-8"
   }
 }
+
+// ---- RFC 2047 encoded words (Go's mime/encodedword.go, go1.26) ----
+
+/// The encoding of an encoded word (Go's WordEncoder): base64 (`b`) or
+/// quoted-printable (`q`).
+pub enum WordEncoding {
+  B
+  Q
+}
+
+/// s as RFC 2047 encoded words (WordEncoder.Encode): s itself when every
+/// rune is printable ASCII or a tab, else `=?charset?q?...?=` words of
+/// at most 75 bytes, split between runes when charset is UTF-8 in any
+/// case, joined by a space. The bytes of s are written as they are, the
+/// charset only labels them.
+pub fn encode_word(s: Str, charset: Str = "utf-8", encoding: WordEncoding = WordEncoding.Q) -> Str {
+  if !needs_encoding(s) {
+    return s
+  }
+  var buf = StrBuilder.new()
+  open_word(buf, charset, encoding)
+  if encoding is B {
+    b_encode(buf, charset, encoding, s.bytes())
+  } else {
+    q_encode(buf, charset, encoding, s.bytes())
+  }
+  buf.write("?=")
+  buf.freeze()
+}
+
+/// One encoded word decoded (WordDecoder.Decode with no CharsetReader):
+/// the charsets UTF-8, ISO-8859-1 and US-ASCII in any case (a byte above
+/// 127 in US-ASCII, and bytes that are not UTF-8 in UTF-8, become U+FFFD:
+/// a Str holds UTF-8, decision 0259). Go's errors: `mime: invalid RFC 2047
+/// encoded-word`, base64's `illegal base64 data at input byte N`, `mime:
+/// invalid hex byte 0x..`, `mime: unhandled charset "x"`.
+pub fn decode_word(word: Str) -> Str ! MimeErr {
+  let b = word.bytes()
+  if b.len() < 8 || !word.starts_with("=?") || !word.ends_with("?=") || count_q(b) != 4 {
+    return Err(err(INVALID_WORD))
+  }
+  let inner = word[2..word.len() - 2]
+  let (charset, rest) = inner.cut("?") ?? (inner, "")
+  if charset.is_empty() {
+    return Err(err(INVALID_WORD))
+  }
+  let (enc, text) = rest.cut("?") ?? (rest, "")
+  if enc.len() != 1 {
+    return Err(err(INVALID_WORD))
+  }
+  let content = word_content(enc.bytes()[0], text)?
+  convert_charset(charset, content)
+}
+
+/// A header with its encoded words decoded (WordDecoder.DecodeHeader):
+/// text between two encoded words that is only white space is dropped, a
+/// word that does not decode is kept as written; an unhandled charset is
+/// the error, as decode_word's.
+pub fn decode_header(header: Str) -> Str ! MimeErr {
+  let first = match header.find("=?") {
+    Some(i) => i
+    None => return header
+  }
+  var buf = StrBuilder.new()
+  buf.write(header[0..first])
+  var h = header[first..]
+  var between = false
+  while true {
+    let start = match h.find("=?") {
+      Some(i) => i
+      None => break
+    }
+    var cur = start + 2
+    let i = match h[cur..].find("?") {
+      Some(x) => x
+      None => break
+    }
+    let charset = h[cur..cur + i]
+    cur += i + 1
+    if h.len() < cur + 4 {
+      break
+    }
+    let enc = h.bytes()[cur]
+    cur += 1
+    if h.bytes()[cur] != '?' {
+      break
+    }
+    cur += 1
+    let j = match h[cur..].find("?=") {
+      Some(x) => x
+      None => break
+    }
+    let text = h[cur..cur + j]
+    let end = cur + j + 2
+    match word_content(enc, text) {
+      Ok(content) => {
+        if start > 0 && (!between || has_non_ws(h[0..start])) {
+          buf.write(h[0..start])
+        }
+        buf.write(convert_charset(charset, content)?)
+        h = h[end..]
+        between = true
+      }
+      Err(_) => {
+        between = false
+        buf.write(h[0..end])
+        h = h[end..]
+      }
+    }
+  }
+  buf.write(h)
+  buf.freeze()
+}
+
+const INVALID_WORD: Str = "mime: invalid RFC 2047 encoded-word"
+const MAX_CONTENT_LEN: Int = 63
+/// base64.StdEncoding.DecodedLen(63)
+const MAX_BASE64_LEN: Int = 45
+
+fn needs_encoding(s: Str) -> Bool {
+  for r in s.runes() {
+    if (r < ' ' || r > '~') && r != '\t' {
+      return true
+    }
+  }
+  false
+}
+
+fn is_utf8_name(charset: Str) -> Bool { charset.to_lower() == "utf-8" }
+
+fn enc_letter(e: WordEncoding) -> Str { if e is B { "b" } else { "q" } }
+
+fn open_word(var buf: StrBuilder, charset: Str, e: WordEncoding) {
+  buf.write("=?")
+  buf.write(charset)
+  buf.write("?")
+  buf.write(enc_letter(e))
+  buf.write("?")
+}
+
+fn split_word(var buf: StrBuilder, charset: Str, e: WordEncoding) {
+  buf.write("?= ")
+  open_word(buf, charset, e)
+}
+
+fn rune_len_at(b: Bytes, i: Int) -> Int { b.decode_rune(i).1 }
+
+fn b_encode(var buf: StrBuilder, charset: Str, e: WordEncoding, s: Bytes) {
+  if !is_utf8_name(charset) || (s.len() + 2) / 3 * 4 <= MAX_CONTENT_LEN {
+    buf.write(s.to_base64())
+    return
+  }
+  var cur = 0
+  var last = 0
+  var i = 0
+  while i < s.len() {
+    let n = rune_len_at(s, i)
+    if cur + n <= MAX_BASE64_LEN {
+      cur += n
+    } else {
+      buf.write(s[last..i].to_base64())
+      split_word(buf, charset, e)
+      last = i
+      cur = n
+    }
+    i += n
+  }
+  buf.write(s[last..].to_base64())
+}
+
+fn q_plain(c: UInt8) -> Bool { c >= 32 && c <= 126 && c != '=' && c != '?' && c != '_' }
+
+fn q_encode(var buf: StrBuilder, charset: Str, e: WordEncoding, s: Bytes) {
+  if !is_utf8_name(charset) {
+    write_q(buf, s)
+    return
+  }
+  var cur = 0
+  var i = 0
+  while i < s.len() {
+    var n = 1
+    var el = 1
+    if !q_plain(s[i]) {
+      n = rune_len_at(s, i)
+      el = 3 * n
+    }
+    if cur + el > MAX_CONTENT_LEN {
+      split_word(buf, charset, e)
+      cur = 0
+    }
+    write_q(buf, s[i..i + n])
+    cur += el
+    i += n
+  }
+}
+
+fn write_q(var buf: StrBuilder, s: Bytes) {
+  var out = BytesBuilder.with_capacity(s.len() * 3)
+  for c in s {
+    if c == ' ' {
+      out.write_byte('_')
+    } else if c >= '!' && c <= '~' && c != '=' && c != '?' && c != '_' {
+      out.write_byte(c)
+    } else {
+      out.write_byte('=')
+      out.write_byte(UPPER_HEX.bytes()[Int(c) >> 4])
+      out.write_byte(UPPER_HEX.bytes()[Int(c) & 15])
+    }
+  }
+  // ASCII only
+  buf.write(out.freeze().to_str() ?? "")
+}
+
+fn count_q(b: Bytes) -> Int {
+  var n = 0
+  for c in b {
+    if c == '?' {
+      n += 1
+    }
+  }
+  n
+}
+
+fn word_content(enc: UInt8, text: Str) -> Bytes ! MimeErr {
+  if enc == 'B' || enc == 'b' {
+    if let Some(b) = Bytes.from_base64(text) {
+      return b
+    }
+    return Err(err("illegal base64 data at input byte ${b64_bad_at(text.bytes())}"))
+  }
+  if enc == 'Q' || enc == 'q' {
+    return q_decode(text.bytes())
+  }
+  Err(err(INVALID_WORD))
+}
+
+fn q_decode(s: Bytes) -> Bytes ! MimeErr {
+  var out = BytesBuilder.with_capacity(s.len())
+  var i = 0
+  while i < s.len() {
+    let c = s[i]
+    if c == '_' {
+      out.write_byte(' ')
+    } else if c == '=' {
+      if i + 2 >= s.len() {
+        return Err(err(INVALID_WORD))
+      }
+      let hi = from_hex(s[i + 1])?
+      let lo = from_hex(s[i + 2])?
+      out.write_byte(UInt8(hi * 16 + lo))
+      i += 2
+    } else if (c <= '~' && c >= ' ') || c == '\n' || c == '\r' || c == '\t' {
+      out.write_byte(c)
+    } else {
+      return Err(err(INVALID_WORD))
+    }
+    i += 1
+  }
+  out.freeze()
+}
+
+fn from_hex(b: UInt8) -> Int ! MimeErr {
+  if b >= '0' && b <= '9' {
+    return Int(b - '0')
+  }
+  if b >= 'A' && b <= 'F' {
+    return Int(b - 'A') + 10
+  }
+  if b >= 'a' && b <= 'f' {
+    return Int(b - 'a') + 10
+  }
+  Err(err("mime: invalid hex byte ${hex_byte(b)}"))
+}
+
+/// Go's %#02x of a byte: 0x and two hex digits.
+fn hex_byte(b: UInt8) -> Str {
+  let h = "0123456789abcdef"
+  "0x" + h[(Int(b) >> 4)..(Int(b) >> 4) + 1] + h[(Int(b) & 15)..(Int(b) & 15) + 1]
+}
+
+fn convert_charset(charset: Str, content: Bytes) -> Str ! MimeErr {
+  let l = charset.to_lower()
+  if l == "utf-8" {
+    return to_text(content)
+  }
+  if l == "iso-8859-1" {
+    var out = StrBuilder.new()
+    for c in content {
+      out.write("${Rune(Int(c))}")
+    }
+    return out.freeze()
+  }
+  if l == "us-ascii" {
+    var out = StrBuilder.new()
+    for c in content {
+      out.write(if c >= 128 { "\u{FFFD}" } else { "${Rune(Int(c))}" })
+    }
+    return out.freeze()
+  }
+  Err(err("mime: unhandled charset ${charset.quote()}"))
+}
+
+/// content as UTF-8, a U+FFFD for each byte that is not.
+fn to_text(b: Bytes) -> Str {
+  if let Some(s) = b.to_str() {
+    return s
+  }
+  var out = StrBuilder.new()
+  var i = 0
+  while i < b.len() {
+    let (r, n) = b.decode_rune(i)
+    out.write("${r}")
+    i += n
+  }
+  out.freeze()
+}
+
+fn has_non_ws(s: Str) -> Bool {
+  for c in s.bytes() {
+    if !(c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+      return true
+    }
+  }
+  false
+}
+
+/// The value of a standard base64 symbol, -1 for another byte.
+fn b64_val(c: UInt8) -> Int {
+  if c >= 'A' && c <= 'Z' { return Int(c - 'A') }
+  if c >= 'a' && c <= 'z' { return Int(c - 'a') + 26 }
+  if c >= '0' && c <= '9' { return Int(c - '0') + 52 }
+  if c == '+' { return 62 }
+  if c == '/' { return 63 }
+  -1
+}
+
+/// Where Go's base64.StdEncoding.DecodeString reports a CorruptInputError
+/// in src, which Bytes.from_base64 refused (std/base64 decode_with's walk,
+/// padded, not strict; std/mime is compiled alone on the Go backend).
+fn b64_bad_at(src: Bytes) -> Int {
+  let n = src.len()
+  var si = 0
+  while si < n {
+    var j = 0
+    while j < 4 {
+      if si == n {
+        if j == 0 {
+          return n
+        }
+        return si - j
+      }
+      let c = src[si]
+      si += 1
+      if b64_val(c) >= 0 {
+        j += 1
+        continue
+      }
+      if c == '\r' || c == '\n' {
+        continue
+      }
+      if c != '=' || j < 2 {
+        return si - 1
+      }
+      if j == 2 {
+        while si < n && (src[si] == '\r' || src[si] == '\n') { si += 1 }
+        if si == n {
+          return n
+        }
+        if src[si] != '=' {
+          return si - 1
+        }
+        si += 1
+      }
+      while si < n && (src[si] == '\r' || src[si] == '\n') { si += 1 }
+      if si < n {
+        return si
+      }
+      return n
+    }
+  }
+  n
+}

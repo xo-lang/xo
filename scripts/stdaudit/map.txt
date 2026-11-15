@@ -2192,7 +2192,14 @@ maps.EqualFunc = gap: no equality of two maps by a function (== compares values 
 quotedprintable.* = gap: no public quoted-printable codec (std/mail and std/multipart decode it internally)
 mime.ErrInvalidMediaParameter = std/mime.MimeErr
 mime.AddExtensionType = gap: the extension table is fixed (no registration)
-mime.* = gap: no public RFC 2047 encoded-word codec (std/mail's decode_word and encode_word are internal)
+mime.WordEncoder = std/mime.WordEncoding
+mime.BEncoding = std/mime.WordEncoding.B
+mime.QEncoding = std/mime.WordEncoding.Q
+mime.WordEncoder.Encode = std/mime.encode_word
+mime.WordDecoder = std/mime.decode_word
+mime.WordDecoder.Decode = std/mime.decode_word
+mime.WordDecoder.DecodeHeader = std/mime.decode_header
+mime.WordDecoder.CharsetReader = gap: no charset reader hook (UTF-8, ISO-8859-1 and US-ASCII only; std/charset converts others)
 cookiejar.Options = std/cookiejar.new_with
 cookiejar.PublicSuffixList = std/cookiejar.new_with (psl: std/publicsuffix's list; another list is not planned)
 pprof.* = not planned: profiles come from XO_PROF and xo run --profile (decision 0238), not an HTTP endpoint

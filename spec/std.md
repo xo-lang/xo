@@ -5898,7 +5898,24 @@ pub fn format_media_type(kind: Str, params: Map[Str, Str]) -> Str
 pub fn type_by_extension(ext: Str) -> Str?               // ".png" -> "image/png"
 pub fn extensions_by_type(kind: Str) -> List[Str] ! MimeErr
 pub fn detect_content_type(data: Bytes) -> Str
+
+pub enum WordEncoding { B, Q }
+pub fn encode_word(s: Str, charset: Str = "utf-8", encoding: WordEncoding = WordEncoding.Q) -> Str
+pub fn decode_word(word: Str) -> Str ! MimeErr
+pub fn decode_header(header: Str) -> Str ! MimeErr
 ```
+
+- `encode_word`, `decode_word` and `decode_header` are Go's RFC 2047
+  `WordEncoder.Encode`, `WordDecoder.Decode` and `DecodeHeader` with no
+  `CharsetReader`: s unchanged when it is printable ASCII and tabs, else
+  `=?charset?q?...?=` words of at most 75 bytes split between runes
+  (UTF-8 only; another charset is one word and only labels the bytes).
+  Decoding reads UTF-8, ISO-8859-1 and US-ASCII in any case (bytes that
+  are not UTF-8, and US-ASCII bytes above 127, become U+FFFD), with Go's
+  errors (`mime: invalid RFC 2047 encoded-word`, `illegal base64 data at
+  input byte N`, `mime: invalid hex byte 0x..`, `mime: unhandled charset
+  "x"`). `decode_header` drops white space between two encoded words and
+  keeps a word that does not decode as written.
 
 - `parse_media_type` is `mime.ParseMediaType`: the type before any `;`
   (lower cased, `type/subtype` or a single token, else `mime: no media
