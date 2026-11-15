@@ -288,6 +288,12 @@ func (n sqlNoticeConn) drain(tk *Task) {
 	}
 }
 
+func (n sqlNoticeConn) M_pipeline(tk *Task, batches List[List[Sql_BatchQuery]], inTx bool) Result[List[Result[List[Sql_DriverResult], Sql_SqlErr]], Sql_SqlErr] {
+	r := n.Sql_DriverConn.M_pipeline(tk, batches, inTx)
+	n.drain(tk)
+	return r
+}
+
 func (n sqlNoticeConn) M_query(tk *Task, q string, args List[Sql_SqlValue]) Result[Sql_DriverRows, Sql_SqlErr] {
 	r := n.Sql_DriverConn.M_query(tk, q, args)
 	n.drain(tk)

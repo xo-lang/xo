@@ -30,6 +30,9 @@ type Sql_ResultSet struct {
 	cols  []string
 	types []Sql_ColumnType
 	rows  List[Sql_Row]
+	// affected is a batch query's count (decision 0648 item 15); 0 from
+	// query_all
+	affected int64
 }
 
 // XoDebug implements Debug.
@@ -43,9 +46,10 @@ func (s Sql_ResultSet) XoDebug(b *strings.Builder) {
 
 // sqlSet is one result set of a backend.
 type sqlSet struct {
-	cols  []string
-	types []Sql_ColumnType
-	rows  [][]any
+	cols     []string
+	types    []Sql_ColumnType
+	rows     [][]any
+	affected int64
 }
 
 // sqlAllRunner is a backend or transaction with query_all (the memory
@@ -67,7 +71,7 @@ var sqlStmtIDs atomic.Int64
 func sqlSets(sets []sqlSet) List[Sql_ResultSet] {
 	out := make([]Sql_ResultSet, len(sets))
 	for i, s := range sets {
-		out[i] = Sql_ResultSet{cols: s.cols, types: List_Slice(sqlColumnTypes(s.cols, s.types)), rows: sqlRows(s.cols, s.types, s.rows)}
+		out[i] = Sql_ResultSet{cols: s.cols, types: List_Slice(sqlColumnTypes(s.cols, s.types)), rows: sqlRows(s.cols, s.types, s.rows), affected: s.affected}
 	}
 	return ListFromSlice(out)
 }

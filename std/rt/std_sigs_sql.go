@@ -27,6 +27,8 @@ var (
 	_ func(*Sql_Db, *Task, Sql_Isolation, bool, bool) Result[Sql_Tx, Sql_SqlErr]                                                                                        = (*Sql_Db).M_begin
 	_ func(*Sql_Db, *Task, string) Result[Sql_Stmt, Sql_SqlErr]                                                                                                         = (*Sql_Db).M_prepare
 	_ func(*Sql_Db, *Task, string, List[Sql_SqlValue]) Result[List[Sql_ResultSet], Sql_SqlErr]                                                                          = (*Sql_Db).M_query_all
+	_ func(*Sql_Db, *Task, List[Sql_BatchQuery]) Result[List[Sql_ResultSet], Sql_SqlErr]                                                                                = (*Sql_Db).M_batch
+	_ func(*Sql_Db, *Task, List[List[Sql_BatchQuery]]) Result[List[Result[List[Sql_ResultSet], Sql_SqlErr]], Sql_SqlErr]                                                = (*Sql_Db).M_pipeline
 	_ func(*Sql_Db, *Task) Result[Unit, Sql_SqlErr]                                                                                                                     = (*Sql_Db).M_ping
 	_ func(*Sql_Db, *Task) Result[Unit, Sql_SqlErr]                                                                                                                     = (*Sql_Db).M_close
 	_ func(*Sql_Db, *Task) Result[Sql_Conn, Sql_SqlErr]                                                                                                                 = (*Sql_Db).M_conn
@@ -39,6 +41,8 @@ var (
 	_ func(*Sql_Conn, *Task, Sql_Isolation, bool, bool) Result[Sql_Tx, Sql_SqlErr]                                                                                      = (*Sql_Conn).M_begin
 	_ func(*Sql_Conn, *Task, string) Result[Sql_Stmt, Sql_SqlErr]                                                                                                       = (*Sql_Conn).M_prepare
 	_ func(*Sql_Conn, *Task, string, List[Sql_SqlValue]) Result[List[Sql_ResultSet], Sql_SqlErr]                                                                        = (*Sql_Conn).M_query_all
+	_ func(*Sql_Conn, *Task, List[Sql_BatchQuery]) Result[List[Sql_ResultSet], Sql_SqlErr]                                                                              = (*Sql_Conn).M_batch
+	_ func(*Sql_Conn, *Task, List[List[Sql_BatchQuery]]) Result[List[Result[List[Sql_ResultSet], Sql_SqlErr]], Sql_SqlErr]                                              = (*Sql_Conn).M_pipeline
 	_ func(*Sql_Conn, *Task) Result[Unit, Sql_SqlErr]                                                                                                                   = (*Sql_Conn).M_ping
 	_ func(*Sql_Conn, *Task, string) Result[Unit, Sql_SqlErr]                                                                                                           = (*Sql_Conn).M_listen
 	_ func(*Sql_Conn, *Task, string) Result[Unit, Sql_SqlErr]                                                                                                           = (*Sql_Conn).M_unlisten
@@ -52,6 +56,7 @@ var (
 	_ func(*Sql_Tx, *Task, string, List[Sql_SqlValue]) Result[Sql_ExecResult, Sql_SqlErr]                                                                               = (*Sql_Tx).M_exec
 	_ func(*Sql_Tx, *Task, string) Result[Sql_Stmt, Sql_SqlErr]                                                                                                         = (*Sql_Tx).M_prepare
 	_ func(*Sql_Tx, *Task, string, List[Sql_SqlValue]) Result[List[Sql_ResultSet], Sql_SqlErr]                                                                          = (*Sql_Tx).M_query_all
+	_ func(*Sql_Tx, *Task, List[Sql_BatchQuery]) Result[List[Sql_ResultSet], Sql_SqlErr]                                                                                = (*Sql_Tx).M_batch
 	_ func(*Sql_Tx, *Task) Result[Sql_Tx, Sql_SqlErr]                                                                                                                   = (*Sql_Tx).M_begin
 	_ func(*Sql_Tx, *Task) Result[Unit, Sql_SqlErr]                                                                                                                     = (*Sql_Tx).M_commit
 	_ func(*Sql_Tx, *Task) Result[Unit, Sql_SqlErr]                                                                                                                     = (*Sql_Tx).M_rollback
@@ -68,6 +73,7 @@ var (
 	_ func(*Sql_ResultSet, *Task) List[string]                                                                                                                          = (*Sql_ResultSet).M_columns
 	_ func(*Sql_ResultSet, *Task) List[Sql_ColumnType]                                                                                                                  = (*Sql_ResultSet).M_column_types
 	_ func(*Sql_ResultSet, *Task) List[Sql_Row]                                                                                                                         = (*Sql_ResultSet).M_rows
+	_ func(*Sql_ResultSet, *Task) int64                                                                                                                                 = (*Sql_ResultSet).M_rows_affected
 	_ func(*Sql_Row, *Task) List[string]                                                                                                                                = (*Sql_Row).M_columns
 	_ func(*Sql_Row, *Task) List[Sql_ColumnType]                                                                                                                        = (*Sql_Row).M_column_types
 	_ func(*Sql_Row, *Task, string) Result[Sql_SqlValue, Sql_SqlErr]                                                                                                    = (*Sql_Row).M_value

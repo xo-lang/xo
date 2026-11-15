@@ -5,7 +5,10 @@
 # mapping of text values) and through std/sql's driver
 # (scripts/pgdiff/xo), against a PostgreSQL server in Docker, outputs
 # compared line by line; each SELECT also prints its column types, pgx
-# stdlib's ColumnType* against Rows.column_types (decision 0609).
+# stdlib's ColumnType* against Rows.column_types (decision 0609). A line
+# `BATCH q1 || q2 ;; args || N*q3` is one batch (decision 0648 item 15):
+# pgconn's ExecBatch against Db.batch, the first error or each query's
+# rows and count.
 #
 #   scripts/pg-diff.sh XO WORK [IMAGE...]
 #

@@ -108,8 +108,16 @@ struct Rows[fx: Effects] {}
 /// A Db's statement prepares again on each pool connection it runs on.
 struct Stmt[fx: Effects] {}
 
-/// One result set of `query_all` (Go's Rows.NextResultSet).
+/// One result set of `query_all` (Go's Rows.NextResultSet), or one
+/// query's result in a `batch` or `pipeline`.
 struct ResultSet {}
+
+/// One query of a batch (pgx's QueuedQuery, decision 0648 item 15): one
+/// statement and its arguments.
+struct BatchQuery {
+  query: Str
+  args: List[SqlValue] = []
+}
 
 /// One connection held from the pool (decision 0648 item 14, Go's *sql.Conn,
 /// pgxpool's *Conn from Acquire): every call runs on the same connection,
@@ -200,6 +208,21 @@ fn (d: Db) prepare(q: Str) -> Stmt ! SqlErr uses net.dial
 /// statements without rows run and give none. The first error is the
 /// call's.
 fn (d: Db) query_all(q: Str, args: List[SqlValue] = []) -> List[ResultSet] ! SqlErr uses net.dial
+/// Sends the queries at once and reads their results in order (pgx's
+/// SendBatch, decision 0648 item 15): Postgres gets them in one round trip
+/// (a pipeline with one Sync), other drivers one by one on one connection.
+/// One ResultSet per query, in order: its rows (none for a statement
+/// without) and `rows_affected`. Each query is one statement. The batch is
+/// atomic: it runs as one transaction (Postgres's implicit transaction,
+/// BEGIN and COMMIT on a driver that runs the queries one by one, a copy
+/// of the tables on the in memory database), so an error rolls back the queries before it, and the
+/// first error is the call's. An empty batch sends nothing.
+fn (d: Db) batch(queries: List[BatchQuery]) -> List[ResultSet] ! SqlErr uses net.dial
+/// Several batches at once on one connection (pgconn's Pipeline, a Sync
+/// after each batch): each is atomic as `batch`, and a failed one does not
+/// stop the ones after it. The result per batch is its sets or its first
+/// error; the call's own error is a connection failure or Canceled.
+fn (d: Db) pipeline(batches: List[List[BatchQuery]]) -> List[Result[List[ResultSet], SqlErr]] ! SqlErr uses net.dial
 fn (d: Db) ping() -> () ! SqlErr uses net.dial
 fn (d: Db) close() -> () ! SqlErr
 /// Takes one connection from the pool and holds it (Go's DB.Conn, pgxpool's
@@ -223,6 +246,10 @@ fn (c: Conn) begin(isolation: Isolation = Isolation.Default, read_only: Bool = f
 /// is closed when the Conn is.
 fn (c: Conn) prepare(q: Str) -> Stmt ! SqlErr uses net.dial
 fn (c: Conn) query_all(q: Str, args: List[SqlValue] = []) -> List[ResultSet] ! SqlErr uses net.dial
+/// `Db.batch` on the connection.
+fn (c: Conn) batch(queries: List[BatchQuery]) -> List[ResultSet] ! SqlErr uses net.dial
+/// `Db.pipeline` on the connection.
+fn (c: Conn) pipeline(batches: List[List[BatchQuery]]) -> List[Result[List[ResultSet], SqlErr]] ! SqlErr uses net.dial
 fn (c: Conn) ping() -> () ! SqlErr uses net.dial
 /// `LISTEN channel` with the name quoted (quote_ident): NOTIFYs on it are
 /// kept on the connection for `wait_notification`.
@@ -257,6 +284,11 @@ fn (t: Tx) query_one_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> T ! Sql
 /// TxDone.
 fn (t: Tx) prepare(q: Str) -> Stmt ! SqlErr uses net.dial
 fn (t: Tx) query_all(q: Str, args: List[SqlValue] = []) -> List[ResultSet] ! SqlErr uses net.dial
+/// `Db.batch` inside the transaction (pgxpool's Tx.SendBatch): the queries
+/// before a failing one stay in the transaction, which Postgres then
+/// refuses to go on with (SQLSTATE 25P02) until a rollback; on the in
+/// memory database a failed batch changes nothing.
+fn (t: Tx) batch(queries: List[BatchQuery]) -> List[ResultSet] ! SqlErr uses net.dial
 /// A pseudo nested transaction (pgx's Tx.Begin): `SAVEPOINT sp_N` on the
 /// transaction's connection, N counting the savepoints of the outermost
 /// transaction; its commit is `RELEASE SAVEPOINT sp_N` and its rollback
@@ -299,6 +331,9 @@ fn (s: ResultSet) columns() -> List[Str]
 /// As Rows.column_types.
 fn (s: ResultSet) column_types() -> List[ColumnType]
 fn (s: ResultSet) rows() -> List[Row]
+/// The statement's count (pgconn's CommandTag.RowsAffected): the rows
+/// written, or read by a SELECT; 0 from `query_all`'s sets.
+fn (s: ResultSet) rows_affected() -> Int
 
 fn (r: Row) columns() -> List[Str]
 /// The result's column types, as Rows.column_types.
@@ -365,6 +400,14 @@ interface DriverConn[fx: Effects] {
   /// OnNotice); std/sql drains them after each call and gives them to
   /// open's `on_notice`. A driver without notices returns [].
   fn notices(self) -> List[Notice]
+  /// Runs the batches of `pipeline` (decision 0648 item 15), each a
+  /// DriverResult per query (with rows_affected) or the batch's first
+  /// error. Each batch is atomic: with `in_tx` false the driver runs it in
+  /// a transaction of its own (Postgres's implicit transaction of a Sync);
+  /// with `in_tx` true it is inside the caller's. The call's error is the
+  /// connection's (the pool then drops a broken one). A driver without
+  /// batches returns Driver.
+  fn pipeline(self, batches: List[List[BatchQuery]], in_tx: Bool) -> List[Result[List[DriverResult], SqlErr]] ! SqlErr uses (net.dial, fx)
 }
 
 /// The result of DriverConn.query: column names and rows of values. A
@@ -384,11 +427,14 @@ struct DriverRows[fx: Effects] {
   more: List[DriverResult] = []
 }
 
-/// A later result set of DriverRows.
+/// A later result set of DriverRows, or one query's result of
+/// DriverConn.pipeline.
 struct DriverResult {
   columns: List[Str]
   rows: List[List[SqlValue]]
   column_types: List[ColumnType] = []
+  /// DriverConn.pipeline's count (ResultSet.rows_affected).
+  rows_affected: Int = 0
 }
 
 /// A statement prepared on one connection (DriverConn.prepare), used by

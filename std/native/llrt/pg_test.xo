@@ -585,3 +585,169 @@ test "pgx TestListenNotify and TestConnWaitForNotificationTimeout: a timed out w
     s.cancel()
   }
 }
+
+/// A pipeline's server (decision 0648 item 15), each message logged by
+/// kind: Parse (with its query), Bind, Describe, Execute, Sync and Flush.
+/// It answers as PostgreSQL does in the extended protocol: after an
+/// ErrorResponse it skips every message until Sync. A query "BAD..." fails
+/// at Parse; "DEFER..." fails at its batch's Sync, as a deferred
+/// constraint fails at the implicit commit; a SELECT gives one int4 row
+/// of 7, an INSERT "INSERT 0 1".
+fn fk_pipe_server(log: Mutex[List[Str]], skipping: Atomic[Bool], last: Mutex[Str], deferred: Atomic[Bool]) -> fn(Str, Bytes) -> Bytes {
+  fn(kind, body) {
+    let q = last.with_read(fn(s) { s })
+    match kind {
+      "Q" => {
+        log.with(fn(var xs) { xs.push("Q") })
+        fk_complete("SELECT 0") + fk_ready()
+      }
+      "S" => {
+        log.with(fn(var xs) { xs.push("S") })
+        skipping.set(false)
+        if deferred.get() {
+          deferred.set(false)
+          return fk_error_resp("23505", "duplicate key value violates unique constraint \"t_pkey\"", "t_pkey") + fk_ready()
+        }
+        fk_ready()
+      }
+      "H" => {
+        log.with(fn(var xs) { xs.push("H") })
+        b""
+      }
+      _ => {
+        if skipping.get() {
+          log.with(fn(var xs) { xs.push("skip ${kind}") })
+          return b""
+        }
+        match kind {
+          "P" => {
+            let (_, at) = fk_cstr_at(body, 0)
+            let (text, _) = fk_cstr_at(body, at)
+            last.with(fn(var s) { s = text })
+            log.with(fn(var xs) { xs.push("P ${text}") })
+            if text.starts_with("BAD") {
+              skipping.set(true)
+              return fk_error_resp("42601", "syntax error at or near \"BAD\"", "")
+            }
+            if text.starts_with("DEFER") {
+              deferred.set(true)
+            }
+            fk_m("1", b"")
+          }
+          "B" => {
+            log.with(fn(var xs) { xs.push("B") })
+            fk_m("2", b"")
+          }
+          "D" => {
+            log.with(fn(var xs) { xs.push("D") })
+            if q.starts_with("SELECT") { fk_row_desc([("n", 23)]) } else { fk_m("n", b"") }
+          }
+          "E" => {
+            log.with(fn(var xs) { xs.push("E") })
+            if q.starts_with("SELECT") { fk_data_row([Some("7")]) + fk_complete("SELECT 1") } else { fk_complete("INSERT 0 1") }
+          }
+          _ => b""
+        }
+      }
+    }
+  }
+}
+
+fn fk_pipe_db(l: Listener, log: Mutex[List[Str]]) -> fn() -> () ! NetErr uses net.listen {
+  let skipping = Atomic.new(false)
+  let last: Mutex[Str] = Mutex.new("")
+  let deferred = Atomic.new(false)
+  fn() { fk_serve(l, fk_hello_trust(), fk_pipe_server(log, skipping, last, deferred)) }
+}
+
+fn fk_take_log(log: Mutex[List[Str]]) -> List[Str] {
+  log.with(fn(var xs) {
+    let all = xs
+    xs = []
+    all
+  })
+}
+
+test "pgx TestConnSendBatch on a fake server: every query's Parse, Bind, Describe and Execute, one Sync, and a set per query with its rows and count" {
+  let log: Mutex[List[Str]] = Mutex.new([])
+  let serve = fk_pipe_db(os.net.listen("db.test:5432")?, log)
+  scope s {
+    s.spawn_background(fn() { serve().ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "postgres", fk_dsn("db.test:5432"), max_open: 1)?
+    let _ = fk_take_log(log)
+    let sets = db.batch([
+      sql.BatchQuery{query: "INSERT INTO t (n) VALUES ($1)", args: [sql.int(1)]},
+      sql.BatchQuery{query: "SELECT n FROM t"},
+      sql.BatchQuery{query: "INSERT INTO t (n) VALUES ($1)", args: [sql.str("2")]},
+    ])?
+    expect(sets.map(fn(x) { x.rows_affected() })) == [1, 1, 1]
+    expect(sets[1].columns()) == ["n"]
+    expect(sets[1].rows()[0].int("n")) == Ok(7)
+    expect(sets[0].columns()) == []
+    expect(fk_take_log(log)) == ["P INSERT INTO t (n) VALUES ($1)", "B", "D", "E", "P SELECT n FROM t", "B", "D", "E", "P INSERT INTO t (n) VALUES ($1)", "B", "D", "E", "S"]
+    // an empty batch sends nothing
+    expect(db.batch([])?.len()) == 0
+    expect(fk_take_log(log)) == []
+    s.cancel()
+  }
+}
+
+test "pgconn Pipeline on a fake server: a Sync per batch, an error skips the rest of its batch only, and an error at the Sync fails its batch" {
+  let log: Mutex[List[Str]] = Mutex.new([])
+  let serve = fk_pipe_db(os.net.listen("db.test:5432")?, log)
+  scope s {
+    s.spawn_background(fn() { serve().ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "postgres", fk_dsn("db.test:5432"), max_open: 1)?
+    let _ = fk_take_log(log)
+    let outs = db.pipeline([
+      [sql.BatchQuery{query: "INSERT a"}],
+      [sql.BatchQuery{query: "BAD"}, sql.BatchQuery{query: "INSERT b"}],
+      [sql.BatchQuery{query: "DEFER c"}],
+      [sql.BatchQuery{query: "SELECT d"}],
+    ])?
+    expect(outs.len()) == 4
+    expect(outs[0].map(fn(xs) { xs.len() })) == Ok(1)
+    expect(outs[1].err()) == Some(sql.SqlErr.Syntax(msg: "syntax error at or near \"BAD\""))
+    expect(outs[2].err()) == Some(sql.SqlErr.Constraint(msg: "duplicate key value violates unique constraint \"t_pkey\"", code: "23505", name: "t_pkey"))
+    expect(outs[3].map(fn(xs) { xs[0].rows()[0].int("n").or_fault("n") })) == Ok(7)
+    expect(fk_take_log(log)) == ["P INSERT a", "B", "D", "E", "S", "P BAD", "skip B", "skip D", "skip E", "skip P", "skip B", "skip D", "skip E", "S", "P DEFER c", "B", "D", "E", "S", "P SELECT d", "B", "D", "E", "S"]
+    // the connection is in step: the next call works
+    expect(db.batch([sql.BatchQuery{query: "SELECT e"}])?.len()) == 1
+    s.cancel()
+  }
+}
+
+test "a pipeline larger than a window: windows end with a Flush, every result comes back, and an error read in one window leaves the batch's later queries unsent" {
+  let log: Mutex[List[Str]] = Mutex.new([])
+  let serve = fk_pipe_db(os.net.listen("db.test:5432")?, log)
+  let pad = "x".repeat(200)
+  var big: List[sql.BatchQuery] = []
+  for i in 0..400 {
+    big.push(sql.BatchQuery{query: "INSERT INTO t (n, pad) VALUES ($1, $2)", args: [sql.int(i), sql.str(pad)]})
+  }
+  scope s {
+    s.spawn_background(fn() { serve().ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "postgres", fk_dsn("db.test:5432"), max_open: 1)?
+    let _ = fk_take_log(log)
+    let sets = db.batch(big)?
+    expect(sets.len()) == 400
+    let l1 = fk_take_log(log)
+    expect(l1.filter(fn(x) { x == "H" }).len() >= 2) == true
+    expect(l1.filter(fn(x) { x.starts_with("P ") }).len()) == 400
+    expect(l1.last()) == Some("S")
+    var bad = [sql.BatchQuery{query: "BAD"}]
+    for x in big {
+      bad.push(x)
+    }
+    let outs = db.pipeline([bad, [sql.BatchQuery{query: "SELECT after"}]])?
+    expect(outs[0].err()) == Some(sql.SqlErr.Syntax(msg: "syntax error at or near \"BAD\""))
+    expect(outs[1].map(fn(xs) { xs.len() })) == Ok(1)
+    let l2 = fk_take_log(log)
+    // the first window's queries after BAD reach the server, which skips
+    // them; the later windows send only the batch's Sync
+    let skipped = l2.filter(fn(x) { x == "skip P" }).len()
+    expect(skipped > 0 && skipped < 400) == true
+    expect(l2.filter(fn(x) { x == "S" }).len()) == 2
+    s.cancel()
+  }
+}

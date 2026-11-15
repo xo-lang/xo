@@ -315,6 +315,50 @@ conformance tests and `xo bench --ab`.
       fake servers (TestListenNotify, TestListenNotifySelfNotification,
       TestConnOnNotice, TestConnWaitForNotificationTimeout).
 
+15. **std/sql batch S2: batches and pipelines** (Accepted 2026-11-15
+    under the owner approved std Proven plan; aws-43). Closes the pgx
+    v5.12.0 gap rows of scripts/stdaudit/map.txt "no batches or
+    pipelining" (38 rows).
+    - `BatchQuery{query, args}` (pgx's QueuedQuery); `Db.batch`,
+      `Conn.batch`, `Tx.batch` return a ResultSet per query (pgx's
+      SendBatch and BatchResults read in order), and
+      `ResultSet.rows_affected` (pgconn's CommandTag) gives each query's
+      count. pgx's per query callbacks (QueuedQuery.Exec, Query,
+      QueryRow) and Batch.Len are a list and its results: no API of
+      their own. Batch.BeginTx is `Tx.batch` (or a batch outside a
+      transaction, which is atomic already).
+    - Atomic outside a transaction on every driver: Postgres's implicit
+      transaction of one Sync (as pgx), BEGIN and COMMIT on MySQL and
+      SQLite, a copy of the tables on the in memory database. The first
+      error is the call's (the SqlErr as it is, not wrapped with the
+      query's index: ErrPreprocessingBatch's client side encoding
+      errors cannot happen with SqlValue arguments).
+    - `Db.pipeline` and `Conn.pipeline` (pgconn's Pipeline): several
+      batches, a Sync after each, a `Result` per batch, so one failed
+      batch does not stop the next. pgconn's lower level calls
+      (SendPrepare, SendDeallocate, SendFlushRequest, GetResults) are
+      the driver's: a pipeline of named statements is not exposed.
+    - DriverConn gains `pipeline(batches, in_tx)`; DriverResult gains
+      `rows_affected`. Breaking for drivers written in Xo, as items 6
+      and 14. One method serves both calls (a batch is a pipeline of
+      one); `in_tx` tells a driver that runs queries one by one whether
+      to wrap each batch in begin and commit.
+    - Postgres: Parse, Bind, Describe, Execute of the unnamed statement
+      per query, text results, windows of about 32 KiB ending in Flush
+      (pgwire.flush) whose results are read before the next window is
+      written, so a large pipeline cannot deadlock on full socket
+      buffers (pgconn reads while it writes instead). A window ending
+      after an error is safe: PostgreSQL flushes an ErrorResponse at
+      once (elog.c send_message_to_frontend) and then skips to Sync.
+    - Go backend parity (std/rt/sqlbatch.go). Tests: the sql corpus on
+      arm64, llvm and go; pg_test.xo fake servers (the messages of a
+      batch, an error skipped to Sync, an error at Sync, windows);
+      mysql_test.xo; sqlite_test.xo; scripts/pg-diff.sh's BATCH lines
+      against pgconn's ExecBatch (pgx's SendBatch underneath) on
+      PostgreSQL 17 and 14 and over TLS: equal, including errors in a
+      later window, an error at the first query of 401, a deferred
+      constraint at the Sync and a batch inside a failed transaction.
+
 ## Solid on three axes (decision 0461)
 
 - **Correct:** the oracle is go-sql-driver itself, on a real server, for

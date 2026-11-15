@@ -1271,6 +1271,62 @@ fn (p: MyConn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dia
 /// MySQL's warnings are not notices: none (decision 0648 item 14).
 fn (p: MyConn) notices() -> List[sql.Notice] { [] }
 
+/// DriverConn.pipeline (decision 0648 item 15): each batch's queries one
+/// by one (go-sql-driver has no batches), in START TRANSACTION and COMMIT
+/// unless in_tx, with ROLLBACK at the first error. A broken connection is
+/// the call's error.
+fn (p: MyConn) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr uses net.dial {
+  var out: List[Result[List[sql.DriverResult], sql.SqlErr]] = List.with_capacity(batches.len())
+  for b in batches {
+    let r = my_batch(p, b, in_tx)
+    if p.broken.get() {
+      return Err(r.err() ?? conn_err("the connection is broken"))
+    }
+    out.push(r)
+  }
+  out
+}
+
+fn my_batch(p: MyConn, qs: List[sql.BatchQuery], in_tx: Bool) -> List[sql.DriverResult] ! sql.SqlErr uses net.dial {
+  if qs.is_empty() {
+    return []
+  }
+  if !in_tx {
+    p.begin()?
+  }
+  var out: List[sql.DriverResult] = List.with_capacity(qs.len())
+  for x in qs {
+    match run_args(p, x.query, x.args) {
+      Ok(rs) => out.push(batch_result(p, rs))
+      Err(e) => {
+        if !in_tx && !p.broken.get() {
+          p.rollback().ignore_err("the batch's error is the one returned")
+        }
+        return Err(e)
+      }
+    }
+  }
+  if !in_tx {
+    p.commit()?
+  }
+  out
+}
+
+/// A batch query's result: its last result's rows (a SELECT counts them)
+/// or its count.
+fn batch_result(p: MyConn, rs: List[Result1]) -> sql.DriverResult {
+  match rs.last() {
+    Some(r) => {
+      if r.cols.is_empty() {
+        sql.DriverResult{columns: [], rows: [], rows_affected: r.affected}
+      } else {
+        sql.DriverResult{columns: r.cols.map(fn(c) { col_name(p, c) }), rows: r.rows, column_types: column_types(r.cols), rows_affected: r.rows.len()}
+      }
+    }
+    None => sql.DriverResult{columns: [], rows: []}
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Column types (decision 0609)
 

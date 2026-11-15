@@ -1121,6 +1121,155 @@ fn (p: PgConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.
   res.n
 }
 
+// ---------------------------------------------------------------------------
+// Pipelines (decision 0648 item 15, pgconn's Pipeline and pgx's SendBatch)
+
+/// The bytes of a pipeline's window: at most about this many are written
+/// before the window's results are read (one query at least), so the
+/// write never waits on a server that waits for its results to be read.
+const PIPE_WINDOW = 32768
+
+/// What a window waits for: a query's result, or the ReadyForQuery of a
+/// batch's Sync.
+struct PipeItem {
+  b: Int
+  sync: Bool
+}
+
+/// A query's result, or the error the server sent instead.
+struct PipeRes {
+  r: sql.DriverResult
+  err: sql.SqlErr? = None
+}
+
+struct PipeGot {
+  b: Int
+  r: sql.DriverResult
+}
+
+/// A query of a pipeline: Parse, Bind, Describe and Execute of the unnamed
+/// statement and portal, with text results.
+fn pipe_query(x: sql.BatchQuery) -> Bytes {
+  pgwire.parse("", x.query, []) + pgwire.bind("", "", x.args.map(param_of), [0]) + pgwire.describe("P", "") + pgwire.execute("", 0)
+}
+
+/// DriverConn.pipeline: every query of every batch, a Sync after each
+/// batch, sent in windows of PIPE_WINDOW bytes; a window that ends inside
+/// the pipeline ends with a Flush so the server sends its results. Outside
+/// BEGIN each batch is the server's implicit transaction (in_tx needs
+/// nothing more here). After an error the server skips the rest of the
+/// batch to its Sync, so those queries are not sent or not waited for; an
+/// error at the Sync (a deferred constraint at the implicit commit) is the
+/// batch's too.
+fn (p: PgConn) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr uses net.dial {
+  if p.broken.get() {
+    return Err(conn_err("the connection is broken"))
+  }
+  var failed: List[sql.SqlErr?] = List.with_capacity(batches.len())
+  for _ in batches {
+    failed.push(None)
+  }
+  var got: List[PipeGot] = []
+  var b = 0
+  var i = 0
+  while b < batches.len() {
+    var win = BytesBuilder.new()
+    var pending: List[PipeItem] = []
+    while b < batches.len() && win.len() < PIPE_WINDOW {
+      if i < batches[b].len() {
+        if failed[b].is_none() {
+          win.write(pipe_query(batches[b][i]))
+          pending.push(PipeItem{b: b, sync: false})
+        }
+        i += 1
+      } else {
+        win.write(pgwire.sync())
+        pending.push(PipeItem{b: b, sync: true})
+        b += 1
+        i = 0
+      }
+    }
+    if b < batches.len() {
+      win.write(pgwire.flush())
+    }
+    p.send(win.freeze())?
+    for it in pending {
+      if it.sync {
+        if let Some(e) = p.pipe_sync()? {
+          if failed[it.b].is_none() {
+            failed[it.b] = Some(e)
+          }
+        }
+      } else if failed[it.b].is_none() {
+        let x = p.pipe_result()?
+        match x.err {
+          Some(e) => failed[it.b] = Some(e)
+          None => got.push(PipeGot{b: it.b, r: x.r})
+        }
+      }
+    }
+  }
+  var out: List[Result[List[sql.DriverResult], sql.SqlErr]] = List.with_capacity(batches.len())
+  var k = 0
+  for (bi, f) in failed.indexed() {
+    var sets: List[sql.DriverResult] = []
+    while k < got.len() && got[k].b == bi {
+      sets.push(got[k].r)
+      k += 1
+    }
+    out.push(match f {
+      Some(e) => Err(e)
+      None => Ok(sets)
+    })
+  }
+  out
+}
+
+/// One query's messages in a pipeline, to its CommandComplete,
+/// EmptyQueryResponse or ErrorResponse.
+fn (p: PgConn) pipe_result() -> PipeRes ! sql.SqlErr uses net.dial {
+  var res = sql.DriverResult{columns: [], rows: []}
+  var oids: List[Int] = []
+  while {
+    match p.recv()? {
+      RowDesc(fs) => {
+        oids = fs.map(fn(f) { f.type_oid })
+        res = sql.DriverResult{columns: fs.map(fn(f) { f.name }), rows: [], column_types: column_types(fs)}
+      }
+      DataRow(vals) => res.rows.push(decode_row(oids, vals))
+      CommandComplete(tag) => {
+        res.rows_affected = pgwire.rows_affected(tag)
+        return PipeRes{r: res}
+      }
+      EmptyQuery => return PipeRes{r: res}
+      Error(f) => return PipeRes{r: res, err: Some(server_err(f))}
+      Ready(_) => {
+        p.broken.set(true)
+        return Err(conn_err("pipeline: ReadyForQuery before a query's result"))
+      }
+      _ => {}
+    }
+  }
+  fault("unreachable")
+}
+
+/// The messages to a Sync's ReadyForQuery, and the error among them.
+fn (p: PgConn) pipe_sync() -> sql.SqlErr? ! sql.SqlErr uses net.dial {
+  var failed: sql.SqlErr? = None
+  while {
+    match p.recv()? {
+      Ready(_) => return failed
+      Error(f) => {
+        if failed.is_none() {
+          failed = Some(server_err(f))
+        }
+      }
+      _ => {}
+    }
+  }
+  fault("unreachable")
+}
+
 fn (p: PgConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
   let r = p.run(q, args)?
   if q == "UNLISTEN *" {

@@ -61,3 +61,29 @@ test "column_types are the declared types upper cased, as mattn's ColumnTypeData
   expect(rows.column_types().map(fn(t) { "${t.name}:${t.database_type}" })) == ["id:INTEGER", "name:VARCHAR(10)", "x:", "y:"]
   rows.close()
 }
+test "batch and pipeline (decision 0648 item 15): each batch in BEGIN and COMMIT, rolled back at its first error, and inside a transaction without one" {
+  let db = sql.open_driver(os.net, sqlite.driver(os.fs), ":memory:", max_open: 1)?
+  db.exec("CREATE TABLE t (n INTEGER NOT NULL UNIQUE)", [])?
+  let sets = db.batch([
+    sql.BatchQuery{query: "INSERT INTO t (n) VALUES ($1)", args: [sql.int(1)]},
+    sql.BatchQuery{query: "INSERT INTO t (n) VALUES (2), (3)"},
+    sql.BatchQuery{query: "SELECT n FROM t ORDER BY n"},
+    sql.BatchQuery{query: "UPDATE t SET n = n + 10 WHERE n > 1"},
+  ])?
+  expect(sets.map(fn(s) { s.rows_affected() })) == [1, 2, 3, 2]
+  expect(sets[2].rows().map(fn(r) { r.int("n").or_fault("n") })) == [1, 2, 3]
+  let outs = db.pipeline([
+    [sql.BatchQuery{query: "INSERT INTO t (n) VALUES (4)"}, sql.BatchQuery{query: "INSERT INTO t (n) VALUES (1)"}],
+    [sql.BatchQuery{query: "INSERT INTO t (n) VALUES (5)"}],
+  ])?
+  match outs[0] {
+    Err(Constraint(_, code, _)) => expect(code) == "23505"
+    _ => expect(false) == true
+  }
+  expect(outs[1].is_ok()) == true
+  expect(db.query("SELECT n FROM t ORDER BY n", [])?.map(fn(r) { r.int("n").or_fault("n") })) == [1, 5, 12, 13]
+  let tx = db.begin()?
+  tx.batch([sql.BatchQuery{query: "DELETE FROM t WHERE n = 5"}])?
+  tx.rollback()?
+  expect(db.query("SELECT n FROM t", [])?.len()) == 4
+}

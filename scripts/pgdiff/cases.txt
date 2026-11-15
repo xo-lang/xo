@@ -44,3 +44,23 @@ SELECT pg_typeof($1) AS ty ;; T:x
 SELECT $1::int4 + $2::int4 AS sum ;; I:2147483647 | I:1
 SELECT $1 AS untyped ;; I:5
 SELECT 'x'::varchar(20) AS v, 'ab'::char(5) AS c, 1.5::numeric(10,2) AS n, 'y'::varchar AS vu, 2.5::numeric AS nu, B'101'::varbit(8) AS vb, now()::date AS dt, '{}'::int4[] AS ia, 'z'::name AS nm
+DROP TABLE IF EXISTS bt; CREATE TABLE bt (n INT4 NOT NULL, pad TEXT)
+BATCH INSERT INTO t (name) VALUES ('ba') || SELECT count(*) AS c FROM t WHERE name = 'ba' || UPDATE t SET n = 5 WHERE name = 'ba' || DELETE FROM t WHERE name = 'nobody'
+BATCH INSERT INTO t (name) VALUES ('bb') || SELECT 1/0 || INSERT INTO t (name) VALUES ('bc')
+SELECT count(*) AS c FROM t WHERE name IN ('bb', 'bc')
+BATCH SELECT $1::int8 AS x, $2::text AS y ;; I:5 | T:z || INSERT INTO t (name) VALUES ($1) ;; T:bd || SELECT name FROM t WHERE name = $1 ;; T:bd
+BATCH 400*INSERT INTO bt (n, pad) VALUES ($1, $2) ;; I:1 | T:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+SELECT count(*) AS c FROM bt
+BATCH 200*INSERT INTO bt (n, pad) VALUES ($1, $2) ;; I:2 | T:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx || SELECT 1/0 || 200*INSERT INTO bt (n, pad) VALUES ($1, $2) ;; I:3 | T:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+BATCH SELEC 1 || 400*INSERT INTO bt (n, pad) VALUES ($1, $2) ;; I:4 | T:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+BATCH 300*INSERT INTO bt (n, pad) VALUES ($1, $2) ;; I:5 | T:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx || INSERT INTO bt (n) VALUES (NULL)
+SELECT n, count(*) AS c FROM bt GROUP BY n ORDER BY n
+DROP TABLE IF EXISTS dc; CREATE TABLE dc (id INT4 PRIMARY KEY DEFERRABLE INITIALLY DEFERRED)
+BATCH INSERT INTO dc VALUES (1) || INSERT INTO dc VALUES (1)
+SELECT count(*) AS c FROM dc
+BATCH SELECT 1 AS a; SELECT 2 AS b
+BEGIN
+BATCH INSERT INTO t (name) VALUES ('be') || SELECT 1/0
+SELECT 1 AS in_failed_tx
+ROLLBACK
+SELECT count(*) AS c FROM t WHERE name = 'be'

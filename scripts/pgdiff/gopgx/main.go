@@ -228,6 +228,11 @@ func main() {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
+		if rest, ok := strings.CutPrefix(line, "BATCH "); ok {
+			fmt.Println("== " + line)
+			batch(ctx, c, rest)
+			continue
+		}
 		stmt, args, hasArgs := strings.Cut(line, " ;; ")
 		var res []*pgconn.Result
 		if hasArgs {
@@ -250,22 +255,75 @@ func main() {
 			fmt.Printf("affected %d\n", r.CommandTag.RowsAffected())
 			continue
 		}
-		var cols []string
-		for _, f := range r.FieldDescriptions {
-			cols = append(cols, q(f.Name))
-		}
-		fmt.Println(colTypes(r.FieldDescriptions))
-		for _, row := range r.Rows {
-			var vals []string
-			for i, v := range row {
-				if v == nil {
-					vals = append(vals, "Null")
-				} else {
-					vals = append(vals, val(r.FieldDescriptions[i].DataTypeOID, string(v)))
-				}
+		printRows(r)
+	}
+}
+
+// batchItems are a BATCH line's queries (decision 0648 item 15): items
+// separated by " || ", each a query with " ;; " arguments, "N*" before
+// one repeating it N times.
+func batchItems(s string) [][2]string {
+	var out [][2]string
+	for _, it := range strings.Split(s, " || ") {
+		n := 1
+		if i := strings.Index(it, "*"); i > 0 {
+			if k, err := strconv.Atoi(it[:i]); err == nil {
+				n, it = k, it[i+1:]
 			}
-			fmt.Printf("Row{cols: [%s], vals: [%s]}\n", strings.Join(cols, ", "), strings.Join(vals, ", "))
 		}
+		stmt, args, _ := strings.Cut(it, " ;; ")
+		for range n {
+			out = append(out, [2]string{stmt, args})
+		}
+	}
+	return out
+}
+
+// batch runs a BATCH line through pgconn's ExecBatch (one Sync, the
+// extended protocol, text results: pgx's SendBatch underneath) and prints
+// the first error alone, or each result's rows and count.
+func batch(ctx context.Context, c *pgconn.PgConn, s string) {
+	b := &pgconn.Batch{}
+	for _, it := range batchItems(s) {
+		var ps [][]byte
+		if it[1] != "" {
+			ps = params(it[1])
+		}
+		b.ExecParams(it[0], ps, nil, nil, nil)
+	}
+	res, err := c.ExecBatch(ctx, b).ReadAll()
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) {
+		fmt.Printf("error %s %s\n", pe.Code, pe.Message)
+		return
+	} else if err != nil {
+		fmt.Println("error", err)
+		return
+	}
+	for _, r := range res {
+		if len(r.FieldDescriptions) > 0 {
+			printRows(r)
+		}
+		fmt.Printf("affected %d\n", r.CommandTag.RowsAffected())
+	}
+}
+
+func printRows(r *pgconn.Result) {
+	var cols []string
+	for _, f := range r.FieldDescriptions {
+		cols = append(cols, q(f.Name))
+	}
+	fmt.Println(colTypes(r.FieldDescriptions))
+	for _, row := range r.Rows {
+		var vals []string
+		for i, v := range row {
+			if v == nil {
+				vals = append(vals, "Null")
+			} else {
+				vals = append(vals, val(r.FieldDescriptions[i].DataTypeOID, string(v)))
+			}
+		}
+		fmt.Printf("Row{cols: [%s], vals: [%s]}\n", strings.Join(cols, ", "), strings.Join(vals, ", "))
 	}
 }
 

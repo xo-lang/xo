@@ -3490,6 +3490,7 @@ fn (t: Tx) query_all(q: Str, args: List[SqlValue] = []) -> List[ResultSet] ! Sql
 fn (s: ResultSet) columns() -> List[Str]
 fn (s: ResultSet) column_types() -> List[ColumnType]
 fn (s: ResultSet) rows() -> List[Row]
+fn (s: ResultSet) rows_affected() -> Int   // a batch query's count (10.13); 0 here
 ```
 
 A `;` separated script (MySQL with `multiStatements=true`, Postgres's
@@ -3708,6 +3709,7 @@ interface DriverConn[fx: Effects] {
   fn is_broken(self) -> Bool                       // dropped from the pool when true
   fn wait_notification(self) -> Notification ! SqlErr uses (net.dial, fx)   // 10.12; Driver when none
   fn notices(self) -> List[Notice]                 // 10.12; the notices since the last call
+  fn pipeline(self, batches: List[List[BatchQuery]], in_tx: Bool) -> List[Result[List[DriverResult], SqlErr]] ! SqlErr uses (net.dial, fx)   // 10.13; Driver when none
 }
 interface DriverStmt[fx: Effects] {               // a statement prepared on one connection (decision 0648 item 6)
   fn query(self, args: List[SqlValue]) -> DriverRows[fx] ! SqlErr uses (net.dial, fx)
@@ -3798,6 +3800,14 @@ the Go backend a driver bound with `use go` reports none.
   wait_notification(self) -> sql.Notification ! sql.SqlErr {
   Err(sql.SqlErr.Driver(msg: "LISTEN/NOTIFY is Postgres only")) }` and `fn
   notices(self) -> List[sql.Notice] { [] }` (mysql and sqlite do).
+- **Batches** (decision 0648 item 15): `pipeline` is required since
+  then, and `DriverResult` has `rows_affected: Int = 0`. A driver without
+  batches adds `fn pipeline(self, batches: List[List[sql.BatchQuery]],
+  in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] !
+  sql.SqlErr { Err(sql.SqlErr.Driver(msg: "no batches")) }`; one that
+  runs the queries one by one wraps each batch in `begin` and `commit`
+  when `in_tx` is false and rolls back at its first error, as mysql and
+  sqlite do.
 
 ### 10.8 Postgres
 
@@ -4124,6 +4134,50 @@ each notice the server sends (NoticeResponse: `RAISE NOTICE`, a WARNING),
 in order, after the driver call that received it. `severity` is the
 unlocalized one (`V`, else `S`), `code` the SQLSTATE. A handler is a pure
 function: it keeps notices through a `Mutex` or a `Chan` it captured.
+
+### 10.13 Batches and pipelines
+
+Status: implemented natively and on the Go backend (decision 0648 item
+15, 2026-11-15).
+
+```
+struct BatchQuery { query: Str, args: List[SqlValue] = [] }
+
+fn (d: Db) batch(queries: List[BatchQuery]) -> List[ResultSet] ! SqlErr uses net.dial
+fn (d: Db) pipeline(batches: List[List[BatchQuery]]) -> List[Result[List[ResultSet], SqlErr]] ! SqlErr uses net.dial
+fn (c: Conn) batch(queries: List[BatchQuery]) -> List[ResultSet] ! SqlErr uses net.dial
+fn (c: Conn) pipeline(batches: List[List[BatchQuery]]) -> List[Result[List[ResultSet], SqlErr]] ! SqlErr uses net.dial
+fn (t: Tx) batch(queries: List[BatchQuery]) -> List[ResultSet] ! SqlErr uses net.dial
+```
+
+`batch` (pgx's `SendBatch`) sends its queries at once on one connection
+and reads their results in order: one `ResultSet` per query, with its
+rows (none for a statement without) and `rows_affected` (the rows
+written, or read by a SELECT; pgconn's `CommandTag.RowsAffected`). Each
+query is one statement. Outside a transaction a batch is atomic: Postgres
+runs it as the implicit transaction of one Sync, MySQL and SQLite in
+`START TRANSACTION` (or `BEGIN`) and `COMMIT`, the in memory database on
+a copy of its tables; an error rolls back the queries before it and is
+the call's. MySQL commits implicitly at DDL (its rule), so a batch with
+DDL is not atomic there. Inside a transaction (`Tx.batch`) the queries
+before a failing one stay in it, and Postgres refuses the transaction's
+next statements (25P02) until a rollback; on the in memory database a
+failed batch changes nothing. An empty batch sends nothing.
+
+`pipeline` (pgconn's `Pipeline`, a Sync after each batch) sends several
+batches at once: each is atomic as `batch`, and a failed one does not stop
+the ones after it. The result per batch is its sets or its first error;
+the call's own error is a failure of the connection or `Canceled`. On a
+`Conn` each batch is a transaction of its own as on the Db.
+
+The Postgres driver sends each query as Parse, Bind, Describe and Execute
+of the unnamed statement with text results, in windows of about 32 KiB:
+a window inside the pipeline ends with a Flush, and its results are read
+before the next is sent, so neither side waits on a full socket buffer.
+After an error the server skips the rest of the batch to its Sync, and the
+driver neither sends that rest nor waits for it; an error at the Sync (a
+deferred constraint at the implicit commit) fails the batch. MySQL
+(go-sql-driver has no batches) and SQLite run the queries one by one.
 
 ---
 

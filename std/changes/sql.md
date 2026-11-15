@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-15: feature (breaking for drivers): batches and pipelines
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0648 item 15 (std/sql batch S2; the stdaudit gaps of pgx v5.12.0: no batches or pipelining)
+- Go reference: pgx v5.12.0 (Batch, Batch.Queue, QueuedQuery, Conn.SendBatch, BatchResults, pgxpool's Pool, Conn and Tx SendBatch; pgconn's Pipeline with SendQueryParams, Flush and Sync, CommandTag.RowsAffected)
+- Test: corpus sql (arm64, llvm, go: the in memory Db's batches, atomic per batch, pipelines, Tx.batch with read only, a driver in Xo for in_tx and on_notice, a driver without batches); pg_test.xo (native and llvm, fake servers: pgx TestConnSendBatch's messages, pgconn's Pipeline with an error skipped to Sync and an error at Sync, windows with Flush and unsent queries after an error; four mutants killed); scripts/pg-diff.sh BATCH lines equal to pgconn's ExecBatch on PostgreSQL 17 and 14 and over TLS (20 cases: atomic rollback, errors inside later windows of 401 queries, a deferred constraint at the Sync, a failed transaction); mysql_test.xo (START TRANSACTION, COMMIT and ROLLBACK per batch); sqlite_test.xo
+- Shipped in: not yet released
+
+`db.batch([sql.BatchQuery{query: q, args: [...]}, ...])?` sends the queries at once on one connection and returns a `ResultSet` per query with its rows and `rows_affected()`; a batch is atomic outside a transaction (Postgres's implicit transaction, BEGIN and COMMIT on MySQL and SQLite, a copy of the tables on the in memory database). `db.pipeline([batch1, batch2])?` sends several batches at once, each atomic, with a result per batch. `Conn.batch`, `Conn.pipeline` and `Tx.batch` as well (spec/std.md 10.13). Postgres gets one round trip per 32 KiB window. A driver written in Xo must add `fn pipeline(self, batches: List[List[sql.BatchQuery]], in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr { Err(sql.SqlErr.Driver(msg: "no batches")) }` (or run each batch one query at a time, spec/std.md 10.7).
+
 ## 2026-11-15: feature (breaking for drivers): Db.conn, LISTEN/NOTIFY, notices, savepoints and DEFERRABLE
 
 - Kind: feature

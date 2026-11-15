@@ -305,6 +305,12 @@ fn (n: Noticed) wait_notification() -> sql.Notification ! sql.SqlErr uses net.di
 /// Drained after each call already.
 fn (n: Noticed) notices() -> List[sql.Notice] { n.c.notices() }
 
+fn (n: Noticed) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr uses net.dial {
+  let r = n.c.pipeline(batches, in_tx)
+  n.drain()
+  r
+}
+
 fn open_driver(net: Net, d: sql.Driver, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, on_notice: (fn(sql.Notice))? = None) -> Db ! sql.SqlErr uses net.dial {
   if task.is_canceled() {
     return Err(sql.SqlErr.Canceled)
@@ -1287,6 +1293,8 @@ struct ResultSet {
   cols: List[Str]
   types: List[sql.ColumnType]
   rs: List[Row]
+  /// A batch query's count (decision 0648 item 15); 0 from query_all.
+  affected: Int = 0
 }
 
 fn (s: ResultSet) columns() -> List[Str] { s.cols }
@@ -1294,6 +1302,8 @@ fn (s: ResultSet) columns() -> List[Str] { s.cols }
 fn (s: ResultSet) column_types() -> List[sql.ColumnType] { s.types }
 
 fn (s: ResultSet) rows() -> List[Row] { s.rs }
+
+fn (s: ResultSet) rows_affected() -> Int { s.affected }
 
 /// The sets of a driver's result: the first, when it has columns, and
 /// the later ones.
@@ -1355,6 +1365,142 @@ fn (t: Tx) query_all(q: Str, args: List[sql.SqlValue] = []) -> List[ResultSet] !
     r
   })?
   mem_sets(rs)
+}
+
+// ---------------------------------------------------------------------------
+// Batches and pipelines (decision 0648 item 15, pgx's SendBatch and
+// pgconn's Pipeline): DriverConn.pipeline on a driver's connection, each
+// batch on a copy of the tables on the in memory database
+
+/// The outcome of each batch of a pipeline.
+type Outcomes = List[Result[List[ResultSet], sql.SqlErr]]
+
+fn set_of(r: sql.DriverResult) -> ResultSet {
+  ResultSet{cols: r.columns, types: column_types_of(r.columns, r.column_types), rs: to_rows(r.columns, r.column_types, r.rows), affected: r.rows_affected}
+}
+
+fn sets_of(rs: List[Result[List[sql.DriverResult], sql.SqlErr]]) -> Outcomes {
+  var out: Outcomes = List.with_capacity(rs.len())
+  for r in rs {
+    out.push(match r {
+      Ok(xs) => Ok(xs.map(set_of))
+      Err(e) => Err(e)
+    })
+  }
+  out
+}
+
+/// The one batch of a pipeline of one: its sets, or its error.
+fn only_batch(rs: Outcomes) -> List[ResultSet] ! sql.SqlErr {
+  if rs.len() != 1 {
+    return Err(sql.SqlErr.Driver(msg: "pipeline: ${rs.len()} results for 1 batch"))
+  }
+  match rs[0] {
+    Ok(xs) => Ok(xs)
+    Err(e) => Err(e)
+  }
+}
+
+/// One query of a batch on the in memory database: one statement, its
+/// rows (a SELECT, or a write with RETURNING) and its count.
+fn mem_batch_one(var tables: Map[Str, Table], q: Str, args: List[sql.SqlValue]) -> sql.DriverResult ! sql.SqlErr {
+  let stmts = split_statements(lex(q)?)
+  if stmts.len() != 1 {
+    return Err(syntax("expected one statement"))
+  }
+  var p = Parser{toks: stmts[0]}
+  if p.is_kw("select") {
+    let r = mem_select(tables, p, args)?
+    return sql.DriverResult{columns: r.cols, rows: r.rows, column_types: r.types, rows_affected: r.rows.len()}
+  }
+  let w = exec_one(tables, stmts[0], args)?
+  sql.DriverResult{columns: w.cols, rows: w.rows, column_types: w.types, rows_affected: w.n}
+}
+
+/// A batch on the in memory database: on a copy of tables, published when
+/// every query succeeds.
+fn mem_batch(var tables: Map[Str, Table], qs: List[sql.BatchQuery], read_only: Bool) -> List[sql.DriverResult] ! sql.SqlErr {
+  if qs.is_empty() {
+    return []
+  }
+  var work = tables
+  var out: List[sql.DriverResult] = List.with_capacity(qs.len())
+  for x in qs {
+    if read_only {
+      if let Some(e) = read_only_refusal(x.query) {
+        return Err(e)
+      }
+    }
+    out.push(mem_batch_one(work, x.query, x.args)?)
+  }
+  tables = work
+  out
+}
+
+fn mem_pipeline(var tables: Map[Str, Table], batches: List[List[sql.BatchQuery]], read_only: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] {
+  var out: List[Result[List[sql.DriverResult], sql.SqlErr]] = List.with_capacity(batches.len())
+  for b in batches {
+    out.push(mem_batch(tables, b, read_only))
+  }
+  out
+}
+
+fn (d: Db) pipeline(batches: List[List[sql.BatchQuery]]) -> Outcomes ! sql.SqlErr uses net.dial {
+  d.ready()?
+  if batches.is_empty() {
+    return []
+  }
+  if let Some(p) = d.pool {
+    let t = p.take()?
+    let r = t.c.pipeline(batches, false)
+    give(p, t)
+    return sets_of(r?)
+  }
+  let rs = d.st.with(fn(var st) { mem_pipeline(st.tables, batches, false) })
+  sets_of(rs)
+}
+
+fn (d: Db) batch(queries: List[sql.BatchQuery]) -> List[ResultSet] ! sql.SqlErr uses net.dial {
+  if queries.is_empty() {
+    d.ready()?
+    return []
+  }
+  only_batch(d.pipeline([queries])?)
+}
+
+/// The batches on t's connection (a Conn's session runs each in a
+/// transaction of its own), or on its tables.
+fn (t: Tx) pipeline_on(batches: List[List[sql.BatchQuery]]) -> Outcomes ! sql.SqlErr uses net.dial {
+  if task.is_canceled() {
+    return Err(sql.SqlErr.Canceled)
+  }
+  if let Some(tc) = t.conn {
+    let rs = t.st.with(fn(var ts) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr {
+      if let Some(e) = ended(t, ts) {
+        return Err(e)
+      }
+      if batches.is_empty() {
+        return []
+      }
+      tc.c.pipeline(batches, !ts.is_conn)
+    })?
+    return sets_of(rs)
+  }
+  let rs = t.st.with(fn(var ts) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr {
+    if let Some(e) = ended(t, ts) {
+      return Err(e)
+    }
+    mem_pipeline(ts.tables, batches, ts.read_only)
+  })?
+  sets_of(rs)
+}
+
+fn (t: Tx) batch(queries: List[sql.BatchQuery]) -> List[ResultSet] ! sql.SqlErr uses net.dial {
+  let rs = t.pipeline_on(if queries.is_empty() { [] } else { [queries] })?
+  if rs.is_empty() {
+    return []
+  }
+  only_batch(rs)
 }
 
 // ---------------------------------------------------------------------------
@@ -1474,6 +1620,20 @@ fn (c: Conn) query_all(q: Str, args: List[sql.SqlValue] = []) -> List[ResultSet]
   match c.on()? {
     Some(t) => t.query_all(q, args)
     None => c.db.query_all(q, args)
+  }
+}
+
+fn (c: Conn) pipeline(batches: List[List[sql.BatchQuery]]) -> Outcomes ! sql.SqlErr uses net.dial {
+  match c.on()? {
+    Some(t) => t.pipeline_on(batches)
+    None => c.db.pipeline(batches)
+  }
+}
+
+fn (c: Conn) batch(queries: List[sql.BatchQuery]) -> List[ResultSet] ! sql.SqlErr uses net.dial {
+  match c.on()? {
+    Some(t) => t.batch(queries)
+    None => c.db.batch(queries)
   }
 }
 

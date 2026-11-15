@@ -60,6 +60,23 @@ fn main(os: Os) ! {
       continue
     }
     os.stdio.println("== ${line}")
+    if line.starts_with("BATCH ") {
+      match db.batch(batch_items(line[6..])) {
+        Ok(sets) => {
+          for s in sets {
+            if !s.columns().is_empty() {
+              os.stdio.println(types_line(s.column_types()))
+              for r in s.rows() {
+                os.stdio.println(row_line(r))
+              }
+            }
+            os.stdio.println("affected ${s.rows_affected()}")
+          }
+        }
+        Err(e) => os.stdio.println(err_line(e))
+      }
+      continue
+    }
     let (stmt, xs) = match line.find(" ;; ") {
       Some(i) => (line[0..i], args(line[i + 4..]))
       None => (line, [])
@@ -88,7 +105,15 @@ fn main(os: Os) ! {
 fn select_lines(db: sql.Db, stmt: Str, xs: List[sql.SqlValue]) -> List[Str] ! sql.SqlErr uses net.dial {
   let rows = db.rows(stmt, xs)?
   defer rows.close()
-  let ts = rows.column_types().map(fn(t) {
+  var out = [types_line(rows.column_types())]
+  while let Some(r) = rows.next()? {
+    out.push(row_line(r))
+  }
+  out
+}
+
+fn types_line(cts: List[sql.ColumnType]) -> Str {
+  let ts = cts.map(fn(t) {
     let len = t.length.map(fn(n) { "${n}" }) ?? "-"
     let ps = match (t.precision, t.scale) {
       (Some(p), Some(s)) => "${p},${s}"
@@ -96,10 +121,35 @@ fn select_lines(db: sql.Db, stmt: Str, xs: List[sql.SqlValue]) -> List[Str] ! sq
     }
     "${t.name}:${t.database_type}:${len}:${ps}"
   })
-  var out = ["types " + ts.join(" ")]
-  while let Some(r) = rows.next()? {
-    let vals = r.columns().map(fn(c) { r.value(c).or_fault("column") })
-    out.push("Row{cols: ${r.columns().debug()}, vals: ${vals.debug()}}")
+  "types " + ts.join(" ")
+}
+
+fn row_line(r: sql.Row) -> Str {
+  let vals = r.columns().map(fn(c) { r.value(c).or_fault("column") })
+  "Row{cols: ${r.columns().debug()}, vals: ${vals.debug()}}"
+}
+
+/// A BATCH line's queries (decision 0648 item 15), as the reference reads
+/// them: items separated by ` || `, each a query with ` ;; ` arguments,
+/// `N*` before one repeating it N times.
+fn batch_items(s: Str) -> List[sql.BatchQuery] {
+  var out: List[sql.BatchQuery] = []
+  for item in s.split(" || ") {
+    var n = 1
+    var it = item
+    if let Some(i) = item.find("*") {
+      if let Some(k) = Int.parse(item[0..i]) {
+        n = k
+        it = item[i + 1..]
+      }
+    }
+    let q = match it.find(" ;; ") {
+      Some(i) => sql.BatchQuery{query: it[0..i], args: args(it[i + 4..])}
+      None => sql.BatchQuery{query: it}
+    }
+    for _ in 0..n {
+      out.push(q)
+    }
   }
   out
 }

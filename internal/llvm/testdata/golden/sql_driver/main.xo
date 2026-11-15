@@ -65,6 +65,10 @@ fn (c: FakeConn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.d
 
 fn (c: FakeConn) notices() -> List[sql.Notice] { [] }
 
+fn (c: FakeConn) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr {
+  Err(sql.SqlErr.Driver(msg: "fake: no batches"))
+}
+
 fn main(os: Os) ! {
   let log = Log{lines: Mutex.new([]), next: Atomic.new(0)}
   match sql.open_driver(os.net, FakeDriver{log: log, fail_password: true}, "x") {

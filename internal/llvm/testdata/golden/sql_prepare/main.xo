@@ -87,6 +87,10 @@ fn (c: FakeConn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.d
 
 fn (c: FakeConn) notices() -> List[sql.Notice] { [] }
 
+fn (c: FakeConn) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr {
+  Err(sql.SqlErr.Driver(msg: "fake: no batches"))
+}
+
 fn (s: FakeStmt) query(args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
   s.log.add("conn ${s.conn} ${s.name} query (${args.len()} args)")
   sql.DriverRows{columns: ["conn", "stmt"], rows: [[sql.int(s.conn), sql.str(s.name)]]}

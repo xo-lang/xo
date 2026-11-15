@@ -492,6 +492,49 @@ fn (c: SqliteConn) wait_notification() -> sql.Notification ! sql.SqlErr {
 /// No notices from this driver.
 fn (c: SqliteConn) notices() -> List[sql.Notice] { [] }
 
+/// DriverConn.pipeline (decision 0648 item 15): each batch's queries one
+/// by one, in BEGIN and COMMIT unless in_tx, with ROLLBACK at the first
+/// error. A broken connection is the call's error.
+fn (c: SqliteConn) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr uses fs {
+  var out: List[Result[List[sql.DriverResult], sql.SqlErr]] = List.with_capacity(batches.len())
+  for b in batches {
+    let r = c.batch(b, in_tx)
+    if c.broken.get() {
+      return Err(r.err() ?? sql.SqlErr.Conn(msg: "the connection is broken"))
+    }
+    out.push(r)
+  }
+  out
+}
+
+fn (c: SqliteConn) batch(qs: List[sql.BatchQuery], in_tx: Bool) -> List[sql.DriverResult] ! sql.SqlErr uses fs {
+  if qs.is_empty() {
+    return []
+  }
+  if !in_tx {
+    c.begin()?
+  }
+  var out: List[sql.DriverResult] = List.with_capacity(qs.len())
+  for x in qs {
+    match c.run(x.query, x.args) {
+      Ok((rows, res)) => {
+        let n = if rows.columns.is_empty() { res.rows_affected } else { rows.rows.len() }
+        out.push(sql.DriverResult{columns: rows.columns, rows: rows.rows, column_types: rows.column_types, rows_affected: n})
+      }
+      Err(e) => {
+        if !in_tx && !c.broken.get() {
+          c.rollback().ignore_err("the batch's error is the one returned")
+        }
+        return Err(e)
+      }
+    }
+  }
+  if !in_tx {
+    c.commit()?
+  }
+  out
+}
+
 /// The SQLite library's version, e.g. "3.54.1".
 pub fn version() -> Str uses fs {
   c3.sqlite3_libversion()

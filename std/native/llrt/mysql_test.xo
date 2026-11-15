@@ -597,3 +597,36 @@ test "readTimeout: a server that does not answer is an i/o timeout, and the conn
     s.cancel()
   }
 }
+
+/// fk_rows_server with each COM_QUERY's text logged.
+fn fk_log_server(log: Mutex[List[Str]]) -> fn(Bytes) -> List[Bytes] {
+  let rows = fk_rows_server(false)
+  fn(cmd) {
+    if Int(cmd[0]) == w.COM_QUERY {
+      let q = cmd[1..cmd.len()].to_str_lossy()
+      log.with(fn(var xs) { xs.push(q) })
+    }
+    rows(cmd)
+  }
+}
+
+test "a fake server: batch and pipeline (decision 0648 item 15) run each batch in START TRANSACTION and COMMIT, ROLLBACK at its first error, nothing more inside a transaction" {
+  let l = os.net.listen("db.test:3306")?
+  let log: Mutex[List[Str]] = Mutex.new([])
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_caps(true), "caching_sha2_password", fk_sha2_fast, fk_log_server(log)).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false", max_open: 1)?
+    let sets = db.batch([sql.BatchQuery{query: "INSERT INTO t VALUES (1, 'x')"}, sql.BatchQuery{query: "SELECT id, name, at FROM t"}])?
+    expect(sets.map(fn(x) { x.rows_affected() })) == [2, 2]
+    expect(sets[1].columns()) == ["id", "name", "at"]
+    expect(sets[1].rows()[0].int("id")) == Ok(1)
+    let outs = db.pipeline([[sql.BatchQuery{query: "INSERT a"}, sql.BatchQuery{query: "BAD"}, sql.BatchQuery{query: "INSERT b"}], [sql.BatchQuery{query: "INSERT c"}]])?
+    expect(outs[0].err()) == Some(sql.SqlErr.Syntax(msg: "Error 1064 (42000): You have an error in your SQL syntax"))
+    expect(outs[1].map(fn(xs) { xs.len() })) == Ok(1)
+    let tx = db.begin()?
+    expect(tx.batch([sql.BatchQuery{query: "INSERT d"}, sql.BatchQuery{query: "BAD"}]).is_err()) == true
+    tx.rollback()?
+    expect(log.with_read(fn(xs) { xs })) == ["START TRANSACTION", "INSERT INTO t VALUES (1, 'x')", "SELECT id, name, at FROM t", "COMMIT", "START TRANSACTION", "INSERT a", "BAD", "ROLLBACK", "START TRANSACTION", "INSERT c", "COMMIT", "START TRANSACTION", "INSERT d", "BAD", "ROLLBACK"]
+    s.cancel()
+  }
+}
