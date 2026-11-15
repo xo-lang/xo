@@ -29,6 +29,7 @@ use native/llrt/fsops
 use native/llrt/heapos
 use native/llrt/heapprof
 use native/llrt/libcmem
+use native/llrt/libcstr
 use native/llrt/mutex
 use native/llrt/num
 use native/llrt/inlstr
@@ -470,6 +471,33 @@ fn obj_rs_concat(a: Int, an: Int, b: Int, bn: Int) -> Int {
     return obj.rs_append_inline(a, an, b, bn)
   }
   obj.rs_append(a, an, view_data(b, bn), bn & 4294967295)
+}
+
+/// A string with room for n bytes, length 0: the room of an
+/// interpolation's pieces (rt.rs_room, before their str.put appends,
+/// which test nothing), so a total past 4 GiB fails here.
+fn obj_rs_room(n: Int, lenp: Int) -> Int {
+  if n > 4294967295 {
+    len_over()
+  }
+  rt.mem_store(lenp, 0, 0, 8)
+  obj.rs_with_cap(n)
+}
+
+/// a + b where a has room for b and is held only here: str.put, which an
+/// interpolation's pieces use after rt.rs_with_cap of their total
+/// (compiler/ssa expr.xo string_lit_presized), so b's bytes are copied
+/// after a's with no reserve and no other test (str.concat's tests and
+/// obj.reserve were about a third of url.Url.display, 2026-11-14).
+fn obj_rs_put(a: Int, an: Int, b: Int, bn: Int) -> Int {
+  let n = bn & 4294967295
+  let d = a.wrapping_add(16).wrapping_add(an & 4294967295)
+  if n > 0 && n <= 16 {
+    libcstr.move_small(d, view_data(b, bn), n)
+  } else if n > 16 {
+    rt.mem_copy(d, view_data(b, bn), n)
+  }
+  a
 }
 
 fn obj_rs_append(a: Int, an: Int, b: Int, bn: Int, lenp: Int) -> Int {

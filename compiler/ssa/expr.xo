@@ -1471,9 +1471,19 @@ fn (var b: Builder) string_lit_presized(x: parser.StringLit) -> Int {
       }
     }
   }
-  var acc = b.rt("rs_with_cap", st, [total])
+  // each piece copied into the room the total made (str.put: no reserve
+  // and no test a piece; rt.rs_room refuses a total past 4 GiB); wasm
+  // keeps rs_with_cap and str.concat
+  if b.wasm {
+    var acc = b.rt("rs_with_cap", st, [total])
+    for v in vals {
+      acc = b.call("str.concat", st, "", [acc, v])
+    }
+    return acc
+  }
+  var acc = b.rt("rs_room", st, [total])
   for v in vals {
-    acc = b.call("str.concat", st, "", [acc, v])
+    acc = b.call("str.put", st, "", [acc, v])
   }
   acc
 }

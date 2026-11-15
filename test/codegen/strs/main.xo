@@ -194,11 +194,16 @@ fn count_empty(hs: List[Str]) -> Int {
 }
 
 // An interpolation of three or more Str pieces is one string of their
-// total length, then each appended in place (ssa expr.xo
-// string_lit_presized, 2026-11-14), where it regrew from its first piece.
+// total length (rt.rs_room), then each piece copied in (str.put, with no
+// reserve: ssa expr.xo string_lit_presized, 2026-11-14), where it regrew
+// from its first piece and later tested the room for each.
 fn joined(a: Str, b: Str, c: Str) -> Str {
-  // arm64: "xo_x_obj_rs_with_cap"
-  // amd64: "xo_x_obj_rs_with_cap"
+  // arm64: "xo_x_obj_rs_room"
+  // arm64: "xo_x_obj_rs_put"
+  // arm64: -"xo_x_obj_rs_concat"
+  // amd64: "xo_x_obj_rs_room"
+  // amd64: "xo_x_obj_rs_put"
+  // amd64: -"xo_x_obj_rs_concat"
   "${a}://${b}/${c}"
 }
 

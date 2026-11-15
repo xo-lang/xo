@@ -367,6 +367,22 @@ fn (var g: Gen) call(v: Int) {
       let n = g.def("add i64 ${an}, ${bn}")
       g.mk_str(v, obj, n)
     }
+    "str.put" => {
+      // an interpolation's piece into the room rt.rs_with_cap made
+      // (compiler/ssa expr.xo string_lit_presized): cabi.xo's obj_rs_put
+      let a0 = g.op(args[0])
+      let (ao, _, an) = g.str_parts(a0)
+      let a1 = g.op(args[1])
+      let (bo, _, bn) = g.str_parts(a1)
+      let pa = g.def("ptrtoint ptr ${ao} to i64")
+      let pb = g.def("ptrtoint ptr ${bo} to i64")
+      let aw = g.def("extractvalue %xo.str ${a0}, 1")
+      let bw = g.def("extractvalue %xo.str ${a1}, 1")
+      let r = g.def("call i64 @xo_x_obj_rs_put(i64 ${pa}, i64 ${aw}, i64 ${pb}, i64 ${bw}) #6")
+      let obj = g.def("inttoptr i64 ${r} to ptr")
+      let n = g.def("add i64 ${an}, ${bn}")
+      g.mk_str(v, obj, n)
+    }
     "str.concat_int" | "str.concat_float" => {
       let a0 = g.op(args[0])
       let (ao, _, _) = g.str_parts(a0)
@@ -2491,7 +2507,7 @@ fn xo_export(name: Str) -> Str {
     // exports
     return "xo_x_${name.trim_prefix("rt.")}"
   }
-  if name is "rt.rs_append" | "rt.rs_push_byte" | "rt.rs_push_word" | "rt.rs_push_words" | "rt.rs_append_bytes" | "rt.rs_with_cap" {
+  if name is "rt.rs_append" | "rt.rs_push_byte" | "rt.rs_push_word" | "rt.rs_push_words" | "rt.rs_append_bytes" | "rt.rs_with_cap" | "rt.rs_room" {
     // obj.xo's string builders, as on arm64
     return "xo_x_obj_${name.trim_prefix("rt.")}"
   }

@@ -1488,6 +1488,15 @@ fn (var g: G) call_op(v: Int) {
         g.set(v, [obj[0], n])
       }
     }
+    "str.put" => {
+      // an interpolation's piece into the room rt.rs_with_cap made
+      // (compiler/ssa expr.xo string_lit_presized): cabi.xo's obj_rs_put
+      let a = g.words(g.f.arg(x.args, 0))
+      let b = g.words(g.f.arg(x.args, 1))
+      let n = g.def1(false, "add $d0, $u0, $u1", [g.str_len(a), g.str_len(b)])
+      let obj = g.rt("xo_x_obj_rs_put", regs([a[0], a[1], b[0], b[1]]), [false])
+      g.set(v, [obj[0], n])
+    }
     "str.concat_int" | "str.concat_float" => {
       let a = g.words(g.f.arg(x.args, 0))
       let b = g.words(g.f.arg(x.args, 1))
@@ -4289,7 +4298,7 @@ fn (var g: G) rt_call(v: Int) {
     }
   }
   var name = "xo_${name0.trim_prefix("rt.")}"
-  if name0 is "rt.rs_append" | "rt.rs_push_byte" | "rt.rs_push_word" | "rt.rs_push_words" | "rt.rs_append_bytes" | "rt.rs_with_cap" {
+  if name0 is "rt.rs_append" | "rt.rs_push_byte" | "rt.rs_push_word" | "rt.rs_push_words" | "rt.rs_append_bytes" | "rt.rs_with_cap" | "rt.rs_room" {
     // obj.xo's string builders through their exports, with no C level
     name = "xo_x_obj_${name0.trim_prefix("rt.")}"
   }
