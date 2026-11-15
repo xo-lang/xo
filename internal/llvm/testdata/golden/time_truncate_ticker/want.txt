@@ -66,6 +66,6 @@ weekday 1: Monday number 1
 weekday 4: Thursday number 4
 weekday 7: Sunday number 7
 weekday 8: none
-ticks: true 50 100
+ticks: true 50 true
 2026-10-29: Thursday 4
 --- stderr
