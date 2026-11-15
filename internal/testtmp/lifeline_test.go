@@ -5,6 +5,7 @@ package testtmp
 import (
 	"os"
 	"os/exec"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -59,6 +60,37 @@ func TestLifelineParentDies(t *testing.T) {
 func TestLifelineCut(t *testing.T) {
 	cmd := exec.Command("sh", "-c", "echo $$; exec sleep 600")
 	cut := Lifeline(t, cmd, time.Minute)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	b := make([]byte, 32)
+	n, _ := out.Read(b)
+	if got := string(b[:n]); got != itoa(cmd.Process.Pid)+"\n" {
+		t.Fatalf("the program's pid %q, cmd.Process.Pid %d", got, cmd.Process.Pid)
+	}
+	cut()
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("cut did not end the child within 10 s")
+	}
+}
+
+// TestLifelineSessionLeader: a program started as a session's leader (as
+// script(1) starts the program it runs on a pseudo terminal, cmd/xo
+// TestReplLineEditing) runs behind the wrapper, whose setpgid fails for
+// a session leader, and ends with the lifeline (the wrapper exited 127
+// before, 2026-11-15).
+func TestLifelineSessionLeader(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "echo $$; exec sleep 600")
+	cut := Lifeline(t, cmd, time.Minute)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)

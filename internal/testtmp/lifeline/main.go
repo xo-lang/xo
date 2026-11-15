@@ -61,8 +61,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "lifeline:", e)
 		os.Exit(127)
 	}
-	// a process group of its own: the watcher signals the whole group
-	if err := syscall.Setpgid(0, 0); err != nil {
+	// a process group of its own: the watcher signals the whole group. A
+	// session leader (the program script(1) runs on its terminal) leads
+	// its group already, and setpgid fails for it (EPERM)
+	if err := syscall.Setpgid(0, 0); err != nil && syscall.Getpgrp() != os.Getpid() {
 		fmt.Fprintln(os.Stderr, "lifeline: setpgid:", err)
 		os.Exit(127)
 	}

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/xo-lang/xo/internal/testtmp"
 )
 
 // TestRepl: the experimental `xo repl` (decision 0572 stage 1) with
@@ -148,6 +150,7 @@ func TestReplWarmup(t *testing.T) {
 		cmd := exec.Command(xoBin(t), "repl")
 		cmd.Env = append(os.Environ(), "XO_REPL=1", "XO_REPL_TIMES=1", "TMPDIR="+tmp)
 		cmd.Stdin = strings.NewReader(input)
+		testtmp.Lifeline(t, cmd, 10*time.Minute)
 		out, err := cmd.Output()
 		if err != nil {
 			t.Fatalf("xo repl with %q: %v", input, err)
@@ -179,13 +182,27 @@ func TestReplLineEditing(t *testing.T) {
 	}
 	t.Parallel()
 	cfg := t.TempDir()
-	x := xoBin(t)
+	// xo repl runs behind the lifeline wrapper, inside script(1): script
+	// starts it in a session of its own, so killing script on a timeout
+	// left it running (three xo repl processes stayed on the Mac,
+	// 2026-11-15). The wrapper holds the lifeline on file descriptor 3,
+	// which script passes on; the test's cleanup cuts it, and the wrapper
+	// kills xo repl's process group, on every path out of the test.
+	inner := exec.Command(xoBin(t), "repl")
+	testtmp.Lifeline(t, inner, 10*time.Minute)
 	var c *exec.Cmd
 	if runtime.GOOS == "darwin" {
-		c = exec.Command("script", "-q", "/dev/null", x, "repl")
+		c = exec.Command("script", append([]string{"-q", "/dev/null"}, inner.Args...)...)
 	} else {
-		c = exec.Command("script", "-qec", x+" repl", "/dev/null")
+		q := make([]string, len(inner.Args))
+		for i, a := range inner.Args {
+			q[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+		}
+		// exec: the wrapper takes the shell's place as the session's
+		// leader, whose group is the terminal's foreground group
+		c = exec.Command("script", "-qec", "exec "+strings.Join(q, " "), "/dev/null")
 	}
+	c.ExtraFiles = inner.ExtraFiles
 	c.Env = append(os.Environ(), "XDG_CONFIG_HOME="+cfg, "HOME="+cfg)
 	in, err := c.StdinPipe()
 	if err != nil {
@@ -197,6 +214,8 @@ func TestReplLineEditing(t *testing.T) {
 	if err := c.Start(); err != nil {
 		t.Fatal(err)
 	}
+	// script itself (an error once it has ended)
+	t.Cleanup(func() { c.Process.Kill() })
 	// each key group once the session shows what the one before did (the
 	// first after the prompt: bytes before raw input is set are cooked)
 	// a fresh prompt: the line before it ended (the banner, an entry, a
@@ -262,6 +281,7 @@ func TestReplJSON(t *testing.T) {
 	t.Parallel()
 	c := exec.Command(xoBin(t), "repl", "--json")
 	c.Env = os.Environ()
+	testtmp.Lifeline(t, c, 10*time.Minute)
 	c.Stdin = strings.NewReader(strings.Join([]string{
 		`{"in": "1 + 2"}`,
 		`{"in": "let a = 3"}`,
