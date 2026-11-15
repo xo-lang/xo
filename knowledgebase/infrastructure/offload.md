@@ -634,7 +634,7 @@ it now holds two hosts, each capped with `docker update`:
 | 3 | xo-host3 | `--cpus 12 --memory 31g --memory-swap 32g` (set live 2026-11-15) | 127.0.0.1:2223 | offload-arm64c.env | pass3 (3 slots, cap 2) |
 | 4 | xo-host4 | `--cpus 8 --memory 24g --memory-swap 25g` | 127.0.0.1:2224 | offload-arm64d.env | pass4 (1 slot, cap 2) |
 
-Host 4 is `golang:1.26.1-trixie` with host 3's options (`--init --restart
+Host 4 is `golang:1.26.1-trixie` (its Go is go1.26.1, not host 3's go1.26.11: Go backend checks fail there, gotcha offload-host-go-version; last verified 2026-11-15) with host 3's options (`--init --restart
 unless-stopped --security-opt seccomp=unconfined --cap-add=SYS_NICE
 --ulimit rtprio=99`), the volume xo-host4-work on /work, and the command
 `sh -c 'mkdir -p /run/sshd; [ -x /usr/sbin/sshd ] && /usr/sbin/sshd; exec
