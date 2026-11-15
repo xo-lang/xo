@@ -4058,6 +4058,7 @@ fn (k: AeadKey) open(nonce: Bytes, sealed: Bytes, aad: Bytes = b"") -> Bytes ! A
 pub fn hkdf_extract(h: Hash, secret: Bytes, salt: Bytes = b"") -> Bytes          // h.size() bytes
 pub fn hkdf_expand(h: Hash, prk: Bytes, info: Bytes, n: Int) -> Bytes
 pub fn hkdf(h: Hash, secret: Bytes, salt: Bytes, info: Bytes, n: Int) -> Bytes  // Go's hkdf.Key
+pub fn pbkdf2(h: Hash, password: Bytes, salt: Bytes, iterations: Int, key_len: Int) -> Bytes ! KeyErr  // Go's pbkdf2.Key, HMAC over h
 ```
 
 - **Nonces.** A nonce must never be used twice with one key: a repeated

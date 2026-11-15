@@ -48,6 +48,7 @@ var (
 	_ func(*Task, Crypto_Hash, Bytes, Bytes) Bytes                                                = Crypto_hkdf_extract
 	_ func(*Task, Crypto_Hash, Bytes, Bytes, int64) Bytes                                         = Crypto_hkdf_expand
 	_ func(*Task, Crypto_Hash, Bytes, Bytes, Bytes, int64) Bytes                                  = Crypto_hkdf
+	_ func(*Task, Crypto_Hash, Bytes, Bytes, int64, int64) Result[Bytes, Crypto_KeyErr]           = Crypto_pbkdf2
 	_ func(*Crypto_KeyErr, *Task) string                                                          = (*Crypto_KeyErr).M_display
 	_ func(*Task, Bytes) Result[Crypto_PublicKey, Crypto_KeyErr]                                  = Crypto_parse_public_key
 	_ func(*Task, Crypto_PublicKey) Bytes                                                         = Crypto_marshal_public_key

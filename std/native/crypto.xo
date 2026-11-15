@@ -469,6 +469,44 @@ fn sha2_of(h: crypto.Hash) -> Int {
   }
 }
 
+fn pbkdf2(h: crypto.Hash, password: Bytes, salt: Bytes, iterations: Int, key_len: Int) -> Bytes ! crypto.KeyErr {
+  if key_len <= 0 {
+    return Err(key_err("pkbdf2: keyLength must be larger than 0"))
+  }
+  let hl = hash_size(h)
+  if key_len.wrapping_add(hl) < key_len || (key_len + hl - 1) / hl > 4294967295 {
+    return Err(key_err("pbkdf2: keyLength too long"))
+  }
+  if h == crypto.Hash.Sha256 {
+    // the hash_password path: HMAC-SHA-256 on word states
+    return Ok(dg.pbkdf2(password, salt, iterations, key_len))
+  }
+  // the keyed state made once, copied for each block and round
+  let base = hmac_hasher(h, password)
+  var out = BytesBuilder.with_capacity(key_len + hl)
+  var block = 1
+  while out.len() < key_len {
+    var x = base
+    x.write(salt)
+    var be = BytesBuilder.with_capacity(4)
+    be.write_be(block, 4)
+    x.write(be.freeze())
+    var u = x.sum()
+    var t = u
+    var i = 1
+    while i < iterations {
+      var y = base
+      y.write(u)
+      u = y.sum()
+      t = crypto.xor(t, u)
+      i += 1
+    }
+    out.write(t)
+    block += 1
+  }
+  Ok(out.freeze()[0..key_len])
+}
+
 fn hkdf_extract(h: crypto.Hash, secret: Bytes, salt: Bytes = b"") -> Bytes {
   let s2 = sha2_of(h)
   if s2 >= 0 {

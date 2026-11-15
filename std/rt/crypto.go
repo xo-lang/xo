@@ -68,6 +68,14 @@ const (
 // PBKDF2-HMAC-SHA256 with a 16 byte salt from r, encoded as
 // "pbkdf2-sha256$<iterations>$<salt>$<key>" (unpadded standard base64).
 // Faults when iterations is below 1 or above 100,000,000.
+func Crypto_pbkdf2(_ *Task, h Crypto_Hash, password, salt Bytes, iterations, keyLen int64) Result[Bytes, Crypto_KeyErr] {
+	k, err := pbkdf2.Key(cryptoHashes[h.Tag], string(password), []byte(salt), int(iterations), int(keyLen))
+	if err != nil {
+		return Err[Bytes, Crypto_KeyErr](Crypto_KeyErr{F_msg: err.Error()})
+	}
+	return Ok[Bytes, Crypto_KeyErr](Bytes(k))
+}
+
 func Crypto_hash_password(tk *Task, r Rand, password string, iterations int64) string {
 	if iterations < 1 || iterations > pbkdf2MaxIter {
 		FaultHere("crypto.hash_password: iterations must be in 1..=%d, got %d", pbkdf2MaxIter, iterations)

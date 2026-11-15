@@ -180,6 +180,12 @@ fn hkdf_extract(h: Hash, secret: Bytes, salt: Bytes = b"") -> Bytes
 fn hkdf_expand(h: Hash, prk: Bytes, info: Bytes, n: Int) -> Bytes
 /// HKDF, extract then expand (Go's hkdf.Key).
 fn hkdf(h: Hash, secret: Bytes, salt: Bytes, info: Bytes, n: Int) -> Bytes
+/// PBKDF2 (RFC 8018 5.2, Go's pbkdf2.Key) with HMAC over h: key_len bytes
+/// of key from password and salt after `iterations` rounds (fewer than 1
+/// count as 1, as Go). Err with Go's texts: `pkbdf2: keyLength must be
+/// larger than 0` (Go's spelling) and `pbkdf2: keyLength too long` (more
+/// than 2^32 - 1 blocks).
+fn pbkdf2(h: Hash, password: Bytes, salt: Bytes, iterations: Int, key_len: Int) -> Bytes ! KeyErr
 
 // ---- public key signatures, keys, and PEM (decision 0285) ----
 

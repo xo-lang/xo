@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-15: feature: pbkdf2 over any hash
+
+- Kind: feature
+- Commit: this push
+- Found by: Lang 3's crypto and TLS gap audit (C4)
+- Go reference: crypto/pbkdf2 Key, go1.26.11
+- Test: corpus pbkdf2 (pbkdf2_test.go's RFC 6070 and SHA-256 vectors, every Hash at iterations -1 to 100 and key lengths around the hash size, TestZeroKeyLength, TestMaxKeyLength), native, go and llvm
+- Shipped in: not yet released
+
+`pbkdf2(h, password, salt, iterations, key_len)` is RFC 8018's PBKDF2 with HMAC over any Hash, as Go's pbkdf2.Key: fewer than one iteration counts as one, and the errors are Go's (`pkbdf2: keyLength must be larger than 0`, in Go's spelling, and `pbkdf2: keyLength too long`). SHA-256 takes hash_password's word state path.
+
 ## 2026-11-15: feature: SHAKE, cSHAKE, SHA3-224, SHA3-384, SHA-512/224 and SHA-512/256
 
 - Kind: feature
