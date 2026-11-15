@@ -270,19 +270,25 @@ usage: xo build [--targets=all|os/arch,...] [--backend=native|go|llvm|arm64|amd6
                 [--trimpath=on|off] [-s] [--dsym] [--ld=macho|cc] [--race]
                 [--stamp NAME=VALUE]... [--entitlement=KEY]... [--hybrid] [--pack-lists=on|off]
                 [--versioninfo=FILE.json] [--icon=FILE.ico]... [--manifest=FILE]
-                [--inline-str] [--check=free,guard,leak|all] [--json] [-o out] <dirs...>
+                [--inline-str] [--check=free,guard,leak|all] [--lib=shared|static]
+                [--json] [-o out] <dirs...>
 
 Compile to static binaries (default: the host). The directories are one
 program. The default backend is native (decisions 0248 and 0270): arm64
 or amd64 for the target's architecture, --race too where a
 ThreadSanitizer runtime ships for the target (else llvm, which needs
 clang). With no --backend, --targets=all builds each of linux/amd64,
-linux/arm64, darwin/amd64, darwin/arm64, windows/amd64 and wasip1/wasm
-with its own native backend, as NAME-OS-ARCH (.exe, .wasm) in -o's
-directory; windows/arm64 needs --backend=go, whose --targets=all builds
-all seven; -o NAME for windows writes NAME.exe. --backend=go builds through
-the Go toolchain, and a program with `use go` needs it. A linux/arm64
-target links with Xo's own linker, from any host (decision 0243).
+linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64
+(decision 0569) and wasip1/wasm with its own native backend, as
+NAME-OS-ARCH (.exe, .wasm) in -o's directory; -o NAME for windows writes
+NAME.exe. freebsd/amd64 and freebsd/arm64 (decision 0573) build natively
+when named; linux/riscv64 (decision 0571) only with --backend=llvm.
+--backend=go builds through the Go toolchain, and a program with `use go`
+needs it. A linux/arm64 target links with Xo's own linker, from any host
+(decision 0243). --lib=shared or --lib=static (decision 0574) builds the
+root package as a C library with NAME.h beside it, its `pub fn ... as c
+"name"` functions the exports; a windows --lib=shared writes NAME.dll and
+its import library NAME.lib.
 --no-gc (also on run and test) reports every construct, std API, or
 effect the native backends do not support as XO1201 before code
 generation (decision 0083). --check=free,guard,leak (decision 0638; xo

@@ -298,6 +298,8 @@ done
 sq_plats="darwin-arm64 darwin-amd64"
 if [ -n "${XO_CLANG:-}" ] && [ -n "${XO_WINSYSROOT:-}" ]; then
 	sq_plats="$sq_plats windows-amd64"
+	# windows/arm64's too with its archive (decision 0569 stage 6)
+	[ "$winarm" = 1 ] && sq_plats="$sq_plats windows-arm64"
 else
 	echo "== sqlite prebuilt: no windows-amd64 object (set XO_CLANG and XO_WINSYSROOT): a windows/amd64 std/sqlite build then needs XO_WINSYSROOT" >&2
 fi
@@ -350,9 +352,9 @@ layout() {
 	mkdir -p "$stage/lib/xo/std/native/.xo/cbind"
 	cp std/native/.xo/cbind/c_xo_sqlite_*.xo std/native/.xo/cbind/c_xo_sqlite_*.c "$stage/lib/xo/std/native/.xo/cbind/"
 	# std/sqlite's prebuilt objects (decision 0534 stage 2): this
-	# target's, and windows/amd64's in every archive, since any host cross
-	# builds it with no C compiler
-	for sq in "$plat" windows-amd64; do
+	# target's, and windows/amd64's (and windows/arm64's with its archive)
+	# in every archive, since any host cross builds them with no C compiler
+	for sq in "$plat" windows-amd64 $([ "$winarm" = 1 ] && echo windows-arm64); do
 		if [ -d "lib/xo/sqlite/$sq" ] && [ ! -d "$stage/lib/xo/sqlite/$sq" ]; then
 			mkdir -p "$stage/lib/xo/sqlite"
 			cp -R "lib/xo/sqlite/$sq" "$stage/lib/xo/sqlite/"

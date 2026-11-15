@@ -3971,8 +3971,18 @@ spec core 4.5.
   its key matches (`<root>/sqlite/rel` or an install's
   `lib/xo/sqlite/rel`), else compiles the C sources; a prebuilt object
   lets a windows/amd64 build link with no clang or sysroot.
-  scripts/release.sh builds them (darwin both arches; windows when the
-  two variables are set) and ships the std binding files.
+  windows-arm64 (2026-11-15, decision 0569 stage 6) is the same for
+  aarch64-pc-windows-msvc: its object may also need `__chkstk` and the
+  `__aarch64_*` outline atomics, which every windows/arm64 link defines
+  (link.xo win_arm64_atomics), and with it a windows/arm64 std/sqlite
+  build needs no clang or SDK either (main.xo, `ci.prebuilt`). The
+  clang and sysroot on the Mac: `XO_CLANG=~/xo-tools/winxc/LLVM-23.1.3-macOS-ARM64/bin/clang`,
+  `XO_WINSYSROOT=~/xo-tools/winxc/winsysroot` (0.51.1 shipped no windows
+  object: neither was set). scripts/release.sh builds them (darwin both
+  arches; windows when the two variables are set, windows-arm64 with
+  XO_RELEASE_WINDOWS_ARM64=1) and ships the std binding files.
+  Last verified: 2026-11-15 (a windows/arm64 sqlite program built with
+  no clang or SDK ran on the winarm VM: WAL and rollback, integrity ok).
 
 ## Real-time mode (`uses realtime`, decision 0133)
 

@@ -2391,7 +2391,13 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail(os, ci.err)
       }
       var cobjs: List[Str] = []
-      if !ci.srcs.is_empty() || !ci.flags.is_empty() {
+      if ci.prebuilt && ci.flags.is_empty() {
+        // std/sqlite's prebuilt object (scripts/sqlite-prebuilt.sh,
+        // decision 0569 stage 6): it calls only KERNEL32 (Xo's PE
+        // linker's imports), cabi_wincrt.xo's C functions and this link's
+        // __chkstk and outline atomics, so a build needs no clang and no SDK
+        cobjs = ci.srcs
+      } else if !ci.srcs.is_empty() || !ci.flags.is_empty() {
         // XO_WINSYSROOT's SDK, else (on a Windows host) the installed one
         let (incs, libdirs, wroot, swhy) = win_sdk(os, "arm64")
         if !swhy.is_empty() {

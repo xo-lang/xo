@@ -2,7 +2,7 @@
 # sqlite-prebuilt.sh REPO XO PLAT...: std/sqlite's prebuilt objects
 # (decision 0534 stage 2) into REPO/lib/xo/sqlite/PLAT/ (git ignored),
 # which release.sh's layout copies: sqlite.o (sqlite.obj for
-# windows-amd64), its .sha256, and its .key (compiler/xo cffi.xo
+# windows), its .sha256, and its .key (compiler/xo cffi.xo
 # sqlite_key: xo links the object in place of the three sources only
 # while the key matches).
 #
@@ -14,7 +14,10 @@
 #     its offload host), else cc when the host is that target;
 #   windows-amd64: $XO_CLANG with $XO_WINSYSROOT (xwin's sysroot), with
 #     the addendum's flags: the object then needs no C runtime, only
-#     KERNEL32 and the C functions cabi_wincrt.xo defines (Xo's PE linker).
+#     KERNEL32 and the C functions cabi_wincrt.xo defines (Xo's PE linker);
+#   windows-arm64: the same for aarch64-pc-windows-msvc (decision 0569
+#     stage 6, owner 2026-11-15), with -fno-stack-protector as xo's own
+#     windows/arm64 `use c` compile (compiler/xo main.xo).
 # darwin and linux keep a checkout's flags (-g -O2, SQLite's defaults), so
 # a prebuilt and a compiled program behave alike.
 # Their debug information names the checkout as . (-ffile-prefix-map): the
@@ -57,6 +60,10 @@ for plat in "$@"; do
 		ext=obj
 		cmd=("${XO_CLANG:?windows-amd64 needs XO_CLANG}" --target=x86_64-pc-windows-msvc -Xmicrosoft-windows-sys-root "${XO_WINSYSROOT:?windows-amd64 needs XO_WINSYSROOT}" -O2 -DSQLITE_THREADSAFE=2 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_WIN32_MALLOC=1 -DSQLITE_MAX_WORKER_THREADS=0 -DSQLITE_OMIT_SEH)
 		;;
+	windows-arm64)
+		ext=obj
+		cmd=("${XO_CLANG:?windows-arm64 needs XO_CLANG}" --target=aarch64-pc-windows-msvc -Xmicrosoft-windows-sys-root "${XO_WINSYSROOT:?windows-arm64 needs XO_WINSYSROOT}" -fno-stack-protector -O2 -DSQLITE_THREADSAFE=2 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_WIN32_MALLOC=1 -DSQLITE_MAX_WORKER_THREADS=0 -DSQLITE_OMIT_SEH)
+		;;
 	*) echo "sqlite-prebuilt.sh: no recipe for $plat" >&2; exit 1 ;;
 	esac
 	obj="$out/sqlite.$ext"
@@ -77,7 +84,7 @@ for f in [f'{d}/sqlite3.c', f'{d}/xo_sqlite.c', f'{d}/xo_sqlite.h', adapter]:
     b += f'{len(data)}\n'.encode() + data
 print(hashlib.sha256(b).hexdigest())
 EOF
-	if [ "$plat" = windows-amd64 ]; then
+	if [ "$goos" = windows ]; then
 		# every symbol the object needs is an import of compiler/macho
 		# peimports.xo (__imp_ too), a C function cabi_wincrt.xo defines,
 		# or the runtime's (xo_x_*): a SQLite update that needs another
@@ -92,13 +99,16 @@ bad = []
 for s in sys.stdin.read().split():
     n = s[len("__imp_"):] if s.startswith("__imp_") else s
     # _fltused: listed by clang, named by no relocation; __chkstk: the
-    # emitter defines it (compiler/arm64 x86win.xo w64_chkstk)
-    if n in imports or n in crt or n.startswith("xo_x_") or n in ("_fltused", "__chkstk"):
+    # amd64 emitter defines it (compiler/arm64 x86win.xo w64_chkstk), and
+    # on arm64 every link has it and the libgcc outline atomics
+    # (__aarch64_*), compiler/xo link.xo win_arm64_atomics
+    arm = sys.argv[2] == "windows-arm64"
+    if n in imports or n in crt or n.startswith("xo_x_") or n in ("_fltused", "__chkstk") or (arm and n.startswith("__aarch64_")):
         continue
     bad.append(s)
 if bad:
-    sys.exit("sqlite-prebuilt.sh: windows-amd64 object needs symbols nothing defines: " + " ".join(bad))
-' "$repo"
+    sys.exit("sqlite-prebuilt.sh: " + sys.argv[2] + " object needs symbols nothing defines: " + " ".join(bad))
+' "$repo" "$plat"
 	fi
 	echo "$plat: $obj ($(wc -c < "$obj") bytes), key $(cat "$obj.key")" >&2
 done
