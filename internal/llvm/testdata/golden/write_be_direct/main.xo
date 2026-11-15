@@ -1,0 +1,96 @@
+// BytesBuilder pushes (compiler/ssa call.xo: write_be lowers to
+// rt.rs_push_word as write_le does): write_be and write_le of every width
+// 0 to 8 in a loop, word pushes between byte pushes, growth from a small
+// capacity, a builder passed as a var parameter, one in a struct field,
+// and builders in a List keep the same output on every backend.
+
+struct Pair {
+  name: Str
+  out: BytesBuilder
+}
+
+fn fill(var b: BytesBuilder, n: Int, c: Int) {
+  for i in 0..n {
+    b.write_byte(UInt8(c + i % 3))
+  }
+}
+
+fn fresh(n: Int) -> Str {
+  var a = BytesBuilder.with_capacity(2)
+  for i in 0..n {
+    a.write_byte(UInt8(48 + i % 10))
+    if i % 7 == 0 {
+      a.write_le(0x2D2D, 2)
+    }
+    if a.len() % 16 == 0 {
+      a.write_byte(124)
+    }
+  }
+  a.freeze().to_str() ?? "?"
+}
+
+fn in_struct(n: Int) -> Str {
+  var p = Pair{name: "p", out: BytesBuilder.with_capacity(4)}
+  for i in 0..n {
+    p.out.write_byte(UInt8(97 + i))
+    p.out.write_byte(UInt8(65 + i))
+  }
+  "${p.name}=${p.out.freeze().to_str() ?? "?"}"
+}
+
+fn listed(n: Int) -> Str {
+  var bs: List[BytesBuilder] = []
+  for k in 0..3 {
+    var a = BytesBuilder.with_capacity(k)
+    fill(a, n + k, 97 + 3 * k)
+    bs.push(a)
+  }
+  var s = ""
+  for b in bs {
+    s = "${s}[${b.freeze().to_str() ?? "?"}]"
+  }
+  s
+}
+
+fn passed(n: Int) -> Str {
+  var a = BytesBuilder.with_capacity(4)
+  fill(a, n, 120)
+  fill(a, n, 65)
+  fill(a, 3 * n, 49)
+  a.freeze().to_str() ?? "?"
+}
+
+/// write_be of every width 0 to 8 in a loop (call.xo's direct push), and
+/// write_le beside it, as hex.
+fn widths(v: Int) -> Str {
+  var a = BytesBuilder.with_capacity(1)
+  for n in 0..9 {
+    a.write_be(v, n)
+    a.write_byte(46)
+    a.write_le(v, n)
+    a.write_byte(124)
+  }
+  let bs = a.freeze()
+  var s = BytesBuilder.with_capacity(2 * bs.len())
+  let hx = "0123456789abcdef".bytes()
+  for c in bs {
+    if c == 46 || c == 124 {
+      s.write_byte(c)
+    } else {
+      s.write_byte(hx[Int(c) >> 4])
+      s.write_byte(hx[Int(c) & 15])
+    }
+  }
+  s.freeze().to_str() ?? "?"
+}
+
+fn main(os: Os) uses stdio {
+  os.stdio.println(widths(0x0102030405060708))
+  os.stdio.println(widths(-2))
+  os.stdio.println(fresh(30))
+  os.stdio.println(fresh(0))
+  os.stdio.println(in_struct(6))
+  os.stdio.println(listed(4))
+  os.stdio.println(passed(5))
+  os.stdio.println("${passed(1000).len()}")
+}

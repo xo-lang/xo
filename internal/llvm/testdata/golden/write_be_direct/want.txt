@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+.|08.08|0708.0807|060708.080706|05060708.08070605|0405060708.0807060504|030405060708.080706050403|02030405060708.08070605040302|0102030405060708.0807060504030201|
+.|fe.fe|fffe.feff|fffffe.feffff|fffffffe.feffffff|fffffffffe.feffffffff|fffffffffffe.feffffffffff|fffffffffffffe.feffffffffffff|fffffffffffffffe.feffffffffffffff|
+0--1234567--8901|234--5678901--2|345678--9
+
+p=aAbBcCdDeEfF
+[abca][defde][ghighi]
+xyzxyABCAB123123123123123
+5000
+--- stderr

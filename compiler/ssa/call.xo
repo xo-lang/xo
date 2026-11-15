@@ -2585,6 +2585,22 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
         b.write_width_check(n, pos)
         b.place_set(p, b.rt("rs_push_word", st, [cur, v, n]))
       }
+      "write_be" if !b.wasm => {
+        // write_le's direct push, the word's bytes swapped and shifted down
+        // first (its n high bytes, highest first, are the push's n low
+        // ones): through llrt_rs_write, never inlined, the call and the
+        // out of line push were half of std/image's gray draw on host 1
+        // (draw_rgba_rows, 2026-11-15). n is 0 to 8 past the check; the
+        // shift is masked so n = 0 shifts by 0 and pushes nothing.
+        let v = b.io_arg(fo, es, 0, it)
+        let n = b.io_arg(fo, es, 1, it)
+        b.write_width_check(n, pos)
+        let sw = b.rt("int_wrap", it, [b.cint(7), v, b.cint(0)])
+        let bits = b.add(Op.Mul, it, Aux.None, [n, b.cint(8)])
+        let sh = b.add(Op.And, it, Aux.None, [b.add(Op.Sub, it, Aux.None, [b.cint(64), bits]), b.cint(63)])
+        let w = b.rt("int_wrap", it, [b.cint(4), sw, sh])
+        b.place_set(p, b.rt("rs_push_word", st, [cur, w, n]))
+      }
       "write_le" | "write_be" => {
         // decision 0561: the n low bytes of v appended, one word push
         let v = b.io_arg(fo, es, 0, it)
