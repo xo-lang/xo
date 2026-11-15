@@ -1,6 +1,6 @@
 # 0660: JWE compact tokens in std/jwt
 
-Status: Proposed (Xo Lang 3, 2026-11-15)
+Status: Accepted (owner, 2026-11-15; drafted by Xo Lang 3). Before jwt's features count as Proven, a Go side test decrypts std/jwt's tokens with go-jose (the other direction of the corpus).
 
 ## Context
 
