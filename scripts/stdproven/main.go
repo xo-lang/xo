@@ -931,10 +931,19 @@ func stressCheckOnly(module, dir string, minutes, tasks int, host string) error 
 	return os.WriteFile(path, []byte(strings.Join(out, "\n")+"\n"), 0o644)
 }
 
-// perfOwner is the std module a bench/perf directory measures: the
-// longest std module name (std/NAME.xo) its name starts with, so
-// bench/perf/htmlparse is htmlparse's and bench/perf/jsontoken json's.
+// perfOwners names the module of a bench/perf directory whose name starts
+// with no module's: the primitives of std/crypto (its AEADs, SHA-3,
+// ML-KEM and Ed25519) are benched by algorithm.
+var perfOwners = map[string]string{"aead": "crypto", "aesgcm": "crypto", "aesmodes": "crypto", "chacha": "crypto", "sha3": "crypto", "mlkem": "crypto", "ed25519": "crypto"}
+
+// perfOwner is the std module a bench/perf directory measures: the one
+// perfOwners names, else the longest std module name (std/NAME.xo) its
+// name starts with, so bench/perf/htmlparse is htmlparse's and
+// bench/perf/jsontoken json's.
 func perfOwner(dir string) string {
+	if m, ok := perfOwners[dir]; ok {
+		return m
+	}
 	best := ""
 	mods, _ := filepath.Glob(filepath.Join("std", "*.xo"))
 	for _, m := range mods {
@@ -977,6 +986,12 @@ func perf(args []string) error {
 		return fmt.Errorf("std, compiler or bench/perf has uncommitted changes: evidence names a commit:\n%s", dirty)
 	}
 	cands, _ := filepath.Glob(filepath.Join("bench", "perf", module+"*"))
+	for d, m := range perfOwners {
+		if m == module {
+			cands = append(cands, filepath.Join("bench", "perf", d))
+		}
+	}
+	sort.Strings(cands)
 	var dirs []string
 	for _, d := range cands {
 		if perfOwner(filepath.Base(d)) != module {
