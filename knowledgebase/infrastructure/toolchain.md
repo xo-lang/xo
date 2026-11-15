@@ -2238,8 +2238,12 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   test out of the step (TestModuleCheckAuto: the chkcache step runs it).
   Parents of parallel subtests are listed by their subtests' summed time
   (times.tsv kind `subtests`): a parent's own Elapsed leaves them out.
-  HEAD's IR manifest builds with `-parallel` a third of the CPUs (at least
-  4; `XO_GATE_IR_PARALLEL`) and is kept by commit for a re-gate.
+  HEAD's IR manifest builds with `-parallel` set to every CPU as memory
+  allows (gate.sh ir_jobs: at most (MemAvailable - XO_GATE_IR_RESERVE_MB,
+  default 8192) / XO_GATE_IR_MB, default 1600, at least 2;
+  `XO_GATE_IR_PARALLEL` overrides), logs the job count and the xo
+  processes' resident peak (`llvm IR manifest:` lines), and is kept by
+  commit for a re-gate.
   The llvm step runs the package's tests that do not read the selection
   (all but TestGolden, TestGoldenSplit, TestGoldenGoParity,
   TestDebugInfoSameOutputLLVM, TestGoldenTasks, TestGoldenASan) while the

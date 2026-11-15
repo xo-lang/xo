@@ -523,6 +523,36 @@ warmseq_ran=0
 # $XO_LLVM_IR_CACHE (default <user cache>/xo/llvm-ir) by commit and
 # manifest code. Writes
 # a line for the log to $logs/llvm-select.txt.
+# ir_jobs: how many goldens' IR the selection builds at once: every CPU,
+# as the available memory allows (llvm_goldens); ir_jobs_why says why
+ir_avail_mb() {
+  if [ -r /proc/meminfo ]; then
+    awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo
+  else
+    # darwin: free, inactive and purgeable pages
+    vm_stat | awk -v ps="$(pagesize 2>/dev/null || echo 16384)" '/Pages (free|inactive|purgeable)/ {gsub(/\./, "", $NF); n += $NF} END {print int(n * ps / 1048576)}'
+  fi
+}
+ir_jobs() {
+  local ncpu avail bymem
+  ncpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+  avail=$(ir_avail_mb); avail=${avail:-0}
+  bymem=$(((avail - ${XO_GATE_IR_RESERVE_MB:-8192}) / ${XO_GATE_IR_MB:-1600}))
+  [ "$bymem" -lt "$ncpu" ] && ncpu=$bymem
+  [ "$ncpu" -lt 2 ] && ncpu=2
+  echo "$ncpu"
+}
+ir_jobs_why() {
+  echo "$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4) CPUs, $(ir_avail_mb) MB available, ${XO_GATE_IR_RESERVE_MB:-8192} MB kept for the other steps, ${XO_GATE_IR_MB:-1600} MB a build"
+}
+# ir_mem_watch FILE: the summed resident size (MB) of the xo processes,
+# every 2 s, until stopped (the selection's own memory, for sizing ir_jobs)
+ir_mem_watch() {
+  while :; do
+    ps -A -o rss= -o comm= 2>/dev/null | awk '$2 ~ /(^|\/)xo$/ {n += $1} END {print int(n / 1024)}' >>"$1"
+    sleep 2
+  done
+}
 llvm_goldens() {
   sel_note="$logs/llvm-select.txt"
   if [ "${XO_GATE_LLVM:-}" = all ]; then
@@ -575,19 +605,30 @@ llvm_goldens() {
   # HEAD's manifest is kept by commit too, for a gate of the same commit
   # again (a clean tree only), and built with more goldens at once: with
   # -parallel 4 it took 1,419 s of a host 2 gate that selected no golden
-  # (bench/results/gate-time-2026-11-14.md). XO_GATE_IR_PARALLEL sets it;
-  # the default is a third of the CPUs (the gate runs 3 steps at once), at
-  # least 4.
+  # (bench/results/gate-time-2026-11-14.md). XO_GATE_IR_PARALLEL sets it.
+  # The default is every CPU, as memory allows (lead, 2026-11-14: the
+  # selection is the floor both the llvm and the arm64 golden tests wait
+  # for; at -parallel 4 each golden's xo was blocked half its time, 204% CPU,
+  # and every CPU took the selection from 988 to 292 s on host 1): at most
+  # (MemAvailable - XO_GATE_IR_RESERVE_MB, default 8192) / XO_GATE_IR_MB
+  # (default 1600, about one xo IR build's resident peak) at once, at least
+  # 2 (ir_jobs).
   hm=""
   [ -z "$(git status --porcelain --untracked-files=no)" ] && hm="$cache/$(git rev-parse HEAD)-$mcode.txt"
-  ncpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
-  irp=${XO_GATE_IR_PARALLEL:-$((ncpu / 3 > 4 ? ncpu / 3 : 4))}
+  irp=${XO_GATE_IR_PARALLEL:-$(ir_jobs)}
   if [ -n "$hm" ] && [ -s "$hm" ]; then
     cp "$hm" "$nm"; echo "HEAD's manifest from $hm" >"$logs/llvm-ir-head.txt"
   elif [ -s "$bm" ]; then
+    echo "llvm IR manifest: -parallel $irp ($(ir_jobs_why))" >&2
+    ir_mem_watch "$logs/llvm-ir-mem.txt" &
+    irw=$!
+    t_ir=$(date +%s)
     if XO_LLVM_IR_MANIFEST=$nm go test -count=1 -timeout 60m -parallel "$irp" -run '^TestGoldenIRManifest$' ./internal/llvm >"$logs/llvm-ir-head.txt" 2>&1; then
+      kill "$irw" 2>/dev/null; wait "$irw" 2>/dev/null
+      echo "llvm IR manifest: $(($(date +%s) - t_ir)) s, xo processes' resident peak $(sort -n "$logs/llvm-ir-mem.txt" 2>/dev/null | tail -1) MB" >&2
       [ -s "$nm" ] && [ -n "$hm" ] && cp "$nm" "$hm.tmp$$" && mv "$hm.tmp$$" "$hm"
     else
+      kill "$irw" 2>/dev/null; wait "$irw" 2>/dev/null
       rm -f "$nm"
     fi
   fi
