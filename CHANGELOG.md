@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Feature (std/archive, every backend): `archive.tar_reader(f)` reads a tar archive from a File entry by entry (`next()` gives a `TarFile` header, `read(max)` its data; Go's tar.Reader) with untar's entries and errors, without holding the archive in memory.
+- Feature (std/uuid): name based UUIDs (`uuid.v3`, `uuid.v5`, `uuid.hash` and the four `NAMESPACE_*`), time and node UUIDs (`uuid.v1`, `uuid.v6`), `uuid.max()`, and the readers `variant`, `urn`, `time`, `unix_time`, `clock_sequence` and `node_id` (google/uuid's NewMD5, NewSHA1, NewHash, NewUUID, NewV6, Max, Variant, URN, Time, ClockSequence, NodeID).
 - Feature (std/archive, every backend): `archive.tar_writer(f)` writes a tar archive to a File entry by entry (`add`, `create(path, size)`, `write`, `flush`, `close`; Go's tar.Writer), with Go's bytes and errors.
 - Feature (std/migrate, new module, every backend): schema migrations in goose's `.sql` format (`-- +goose Up`, StatementBegin/End, NO TRANSACTION): `migrate.up(db, files, clock)` applies pending migrations in version order, each in its own transaction, under a Postgres advisory lock (MySQL GET_LOCK) on one connection, recording them in a version table; `status`, `collect`, `parse`. Forward only.
 - Feature (std/charset, every backend): `utf8_decode_last_rune`, `utf8_full_rune` (and their `_str` forms) and `utf8_rune_start` (Go's utf8.DecodeLastRune, FullRune and RuneStart).

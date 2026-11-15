@@ -1,4 +1,4 @@
-// Origin: uuid github.com/google/uuid v1.6.0 (Parse, NewRandom, NewV7), BSD-3 (THIRD_PARTY_NOTICES).
+// Origin: uuid github.com/google/uuid v1.6.0 (Parse, NewRandom, NewV7, NewHash, NewUUID, NewV6, Variant, Time), BSD-3 (THIRD_PARTY_NOTICES).
 // v7 has no process wide counter: random bits after the millisecond, no package state.
 // std/uuid (spec/std.md 24, decision 0282). Encoding rules are listed at the
 // top of std/prelude.xo. RFC 9562 UUIDs, following
@@ -8,6 +8,7 @@
 // their bytes, and its canonical text (lower case 8-4-4-4-12) is
 // `u.display()`, which a Postgres uuid column takes with sql.str.
 
+use std/crypto
 use std/internal
 
 /// A UUID: its 16 bytes as two words. `u.display()` (or `"${u}"`) is its
@@ -126,3 +127,142 @@ pub fn (u: Uuid) display() -> Str { internal.uuid_text_words(u.hi ^ TOP, u.lo ^ 
 
 /// `Uuid("<its text>")`, as when a Uuid was its text.
 pub fn (u: Uuid) debug() -> Str { "Uuid(${u.display().quote()})" }
+
+// ---------------------------------------------------------------------------
+// Name based (v3, v5), time and node (v1, v6) UUIDs and the readers of a
+// UUID's fields (google/uuid's hash.go, version1.go, version6.go, time.go,
+// uuid.go)
+
+/// The namespaces of RFC 9562 appendix C (google/uuid's NameSpaceDNS,
+/// NameSpaceURL, NameSpaceOID, NameSpaceX500), stored as Uuid keeps its
+/// words (the top bit flipped).
+pub const NAMESPACE_DNS: Uuid = Uuid{hi: -1466000772181454383, lo: 50666321780945096}
+pub const NAMESPACE_URL: Uuid = Uuid{hi: -1466000767886487087, lo: 50666321780945096}
+pub const NAMESPACE_OID: Uuid = Uuid{hi: -1466000763591519791, lo: 50666321780945096}
+pub const NAMESPACE_X500: Uuid = Uuid{hi: -1466000755001585199, lo: 50666321780945096}
+
+/// ffffffff-ffff-ffff-ffff-ffffffffffff (RFC 9562's Max UUID).
+pub fn max() -> Uuid { of_words(-1, -1) }
+
+/// A name based UUID: the first 16 bytes of h over the namespace's bytes
+/// and then data, with the version's 4 bits and the RFC 9562 variant
+/// (google/uuid's NewHash).
+pub fn hash(h: crypto.Hash, space: Uuid, data: Bytes, version: Int) -> Uuid {
+  var b = BytesBuilder.with_capacity(16 + data.len())
+  b.write(space.bytes())
+  b.write(data)
+  let d = crypto.digest(h, b.freeze())
+  let hi = word_of(d, 0)
+  let lo = word_of(d, 8)
+  of_words((hi & -61441) | ((version & 15) << 12), (lo & 4611686018427387903) | TOP)
+}
+
+/// A version 3 UUID: MD5 of the namespace and name (google/uuid's NewMD5).
+pub fn v3(space: Uuid, name: Bytes) -> Uuid { hash(crypto.Hash.Md5, space, name, 3) }
+
+/// A version 5 UUID: SHA-1 of the namespace and name (google/uuid's
+/// NewSHA1), the name based version RFC 9562 prefers.
+pub fn v5(space: Uuid, name: Bytes) -> Uuid { hash(crypto.Hash.Sha1, space, name, 5) }
+
+/// 100 nanosecond intervals from 1582-10-15 (the Gregorian reform) to the
+/// Unix epoch (google/uuid's g1582ns100).
+const G1582: Int = 122192928000000000
+
+/// The clock sequence (with the variant's bits) and node of a v1 or v6
+/// UUID: random for each, the node's multicast bit set (RFC 9562 6.10), as
+/// there is no package state to keep a sequence or a hardware address in.
+fn seq_node(r: Rand) -> Int uses rand {
+  let b = r.bytes(8)
+  let seq = ((Int(b[0]) & 63) << 8) | Int(b[1]) | 32768
+  seq.wrapping_shl(48) | ((Int(b[2]) | 1) << 40) | (Int(b[3]) << 32) | (Int(b[4]) << 24) | (Int(b[5]) << 16) | (Int(b[6]) << 8) | Int(b[7])
+}
+
+fn ticks(c: Clock) -> Int uses clock { c.now().unix_nanos() / 100 + G1582 }
+
+/// A version 1 UUID: the time in 100 ns intervals since 1582-10-15, low
+/// word first, then a random clock sequence and node (google/uuid's
+/// NewUUID, whose node is a hardware address).
+pub fn v1(r: Rand, c: Clock) -> Uuid uses (rand, clock) {
+  let now = ticks(c)
+  let hi = (now & 4294967295).wrapping_shl(32) | (((now >> 32) & 65535) << 16) | ((now >> 48) & 4095) | 4096
+  of_words(hi, seq_node(r))
+}
+
+/// A version 6 UUID: version 1's time with its high bits first, so later
+/// UUIDs sort later (google/uuid's NewV6).
+pub fn v6(r: Rand, c: Clock) -> Uuid uses (rand, clock) {
+  let now = ticks(c)
+  let hi = ((now >> 28) & 4294967295).wrapping_shl(32) | (((now >> 12) & 65535) << 16) | (now & 4095) | 24576
+  of_words(hi, seq_node(r))
+}
+
+/// A UUID's variant: the layout its bits 64 to 66 name (google/uuid's
+/// Variant; `Invalid` is never a UUID's).
+pub enum Variant {
+  Invalid
+  Rfc4122
+  Reserved
+  Microsoft
+  Future
+} derive Eq, Debug
+
+/// Invalid, RFC4122, Reserved, Microsoft or Future (google/uuid's String).
+pub fn (v: Variant) display() -> Str {
+  match v {
+    Invalid => "Invalid"
+    Rfc4122 => "RFC4122"
+    Reserved => "Reserved"
+    Microsoft => "Microsoft"
+    Future => "Future"
+  }
+}
+
+pub fn (u: Uuid) variant() -> Variant {
+  let b = ((u.lo ^ TOP) >> 56) & 255
+  if (b & 192) == 128 {
+    return Variant.Rfc4122
+  }
+  if (b & 224) == 192 {
+    return Variant.Microsoft
+  }
+  if (b & 224) == 224 {
+    return Variant.Future
+  }
+  Variant.Reserved
+}
+
+/// urn:uuid: and the text (RFC 9562 4; google/uuid's URN).
+pub fn (u: Uuid) urn() -> Str { "urn:uuid:" + u.display() }
+
+/// The time of a time based UUID in 100 ns intervals since 1582-10-15
+/// (google/uuid's UUID.Time): version 7's milliseconds, version 1's layout
+/// for the rest but 6, whose first 8 bytes google/uuid v1.6.0 returns as
+/// they are (so a v6 UUID's time() is not its creation time; unix_time
+/// of v1 and v7 UUIDs is).
+pub fn (u: Uuid) time() -> Int {
+  let w = u.hi ^ TOP
+  let v = u.version()
+  if v == 6 {
+    // google/uuid v1.6.0 reads version 6's first 8 bytes whole, version
+    // bits included, not the 60 bit time NewV6 writes
+    return w
+  }
+  if v == 7 {
+    return ((w >> 16) & 281474976710655) * 10000 + G1582
+  }
+  ((w >> 32) & 4294967295) | (((w >> 16) & 65535) << 32) | ((w & 4095) << 48)
+}
+
+/// The time as Unix seconds and nanoseconds (google/uuid's Time.UnixTime).
+pub fn (u: Uuid) unix_time() -> (Int, Int) {
+  let t = u.time() - G1582
+  (t / 10000000, (t % 10000000) * 100)
+}
+
+/// The clock sequence of a version 1, 2 or 6 UUID: 14 bits (google/uuid's
+/// UUID.ClockSequence).
+pub fn (u: Uuid) clock_sequence() -> Int { ((u.lo ^ TOP) >> 48) & 16383 }
+
+/// The node of a version 1, 2 or 6 UUID: its last 6 bytes (google/uuid's
+/// UUID.NodeID).
+pub fn (u: Uuid) node_id() -> Bytes { u.bytes()[10..16] }

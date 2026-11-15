@@ -1,5 +1,18 @@
 # std/uuid changes
 
+## 2026-11-15: feature: v3, v5, hash, v1, v6, max and the field readers (google/uuid)
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): uuid.NewMD5, NewSHA1, NewHash, NameSpace*, NewUUID, NewV6, Max, Variant, URN, Time, ClockSequence, NodeID
+- Go reference: github.com/google/uuid v1.6.0 hash.go, version1.go, version6.go, time.go, uuid.go
+- Test: internal/stdtest/testdata/corpus/uuid (scripts/stdcorpus uuidoracle): NewMD5, NewSHA1 and NewHash(sha256, 8) over the four namespaces and 40 random ones with 46 names; Variant, URN, Time, UnixTime, ClockSequence and NodeID of 203 UUIDs of every version; v1 and v6 against the clock (version, variant, multicast node, order, time)
+- Timing: none
+
+`v1` and `v6` take a random clock sequence and node for each UUID, as
+there is no package state for google/uuid's sequence and hardware
+address.
+
 ## 2026-11-14: security: parse answers google/uuid's error for multi-byte text instead of a fault
 
 - Kind: security

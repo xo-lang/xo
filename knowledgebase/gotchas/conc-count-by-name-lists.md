@@ -34,6 +34,13 @@ clock, stdio, proc or fs and is in neither list (or a listed name is
 gone). A new std module that waits on something else must declare one
 of those effects, and the test then asks for its entry.
 
+Observed again 2026-11-15 (Xo Lang 3): two new std/archive declarations,
+`ZipReader.raw` and `ZipReader.data_offset` (`uses fs.read`, bodies in
+std/native/archive.xo), failed a 25 minute gate on TestWaitsClassified.
+Before gating a new std declaration that uses clock, stdio, proc or fs,
+run `go test ./internal/repotest -run TestWaitsClassified` (seconds) and
+add the name to WAITS or NO_WAIT in compiler/ssa/waits.xo.
+
 Check: a golden of the module with no task in the program
 (dns_no_tasks, udp_no_tasks), and for the shutdown, internal/llvm
 TestNativeSignalNetNoTasks (SIGTERM twice to its own child).

@@ -5872,6 +5872,20 @@ pub fn v7(r: Rand, c: Clock) -> Uuid uses (rand, clock)
 pub fn parse(s: Str) -> Uuid ! UuidErr
 pub fn from_bytes(b: Bytes) -> Uuid ! UuidErr
 pub fn nil() -> Uuid
+pub fn max() -> Uuid                       // ffffffff-...-ffffffffffff
+pub const NAMESPACE_DNS, NAMESPACE_URL, NAMESPACE_OID, NAMESPACE_X500: Uuid
+pub fn v3(space: Uuid, name: Bytes) -> Uuid   // NewMD5
+pub fn v5(space: Uuid, name: Bytes) -> Uuid   // NewSHA1
+pub fn hash(h: crypto.Hash, space: Uuid, data: Bytes, version: Int) -> Uuid   // NewHash
+pub fn v1(r: Rand, c: Clock) -> Uuid uses (rand, clock)
+pub fn v6(r: Rand, c: Clock) -> Uuid uses (rand, clock)
+enum Variant { Invalid, Rfc4122, Reserved, Microsoft, Future }   // display(): google/uuid's names
+fn (u: Uuid) variant() -> Variant
+fn (u: Uuid) urn() -> Str                  // urn:uuid:...
+fn (u: Uuid) time() -> Int                 // 100 ns intervals since 1582-10-15 (UUID.Time)
+fn (u: Uuid) unix_time() -> (Int, Int)     // seconds and nanoseconds (Time.UnixTime)
+fn (u: Uuid) clock_sequence() -> Int
+fn (u: Uuid) node_id() -> Bytes
 fn (u: Uuid) version() -> Int
 fn (u: Uuid) bytes() -> Bytes
 fn (u: Uuid) display() -> Str
@@ -5896,6 +5910,21 @@ fn (u: Uuid) debug() -> Str            // Uuid("6ba7b810-9dad-11d1-80b4-00c04fd4
   google/uuid, `{...}`, without checking the braces), or 32 hex digits;
   hex digits in either case; `display()` of the result is the canonical
   lower case text.
+- `v3` and `v5` are the name based UUIDs: MD5 or SHA-1 of the
+  namespace's bytes then the name, cut to 16 bytes with the version and
+  variant bits set (`hash` with any `crypto.Hash` and version, as
+  google/uuid's NewHash); the four namespaces are RFC 9562's.
+- `v1` and `v6` hold the time from `c` in 100 ns intervals since
+  1582-10-15 (v1 low bits first, v6 high bits first so it sorts by time),
+  then a clock sequence and a node. Both are random for each UUID, the
+  node with its multicast bit set (RFC 9562 6.10): there is no package
+  state to keep a sequence or a hardware address in, so google/uuid's
+  ClockSequence, SetClockSequence, NodeID, SetNodeID and NodeInterface
+  have no counterpart.
+- `time`, `unix_time`, `clock_sequence`, `node_id` and `variant` read a
+  UUID's fields as google/uuid does, whatever its version (`time` uses
+  version 7's milliseconds, and version 1's layout for the rest except
+  version 6, whose first 8 bytes google/uuid v1.6.0 returns as they are).
 
 ---
 
