@@ -763,9 +763,20 @@ func TestRaceDefaultNative(t *testing.T) {
 	if !strings.Contains(stderr.String(), "WARNING: ThreadSanitizer: data race") || !strings.Contains(stderr.String(), "xo_f_touch main.xo:") {
 		t.Errorf("no race reported (stdout %q):\n%s", stdout.String(), stderr.String())
 	}
-	// no runtime for the target: LLVM, and no clang
+	// no runtime for the target: LLVM, and no clang. xo looks for the
+	// runtime beside its std, and a darwin gate installs xo's own in the
+	// checkout's lib/xo/race (gate.sh, race-rt.sh --local; full tier 77,
+	// 2026-11-15: the build found it and passed), so std comes through a
+	// root with no lib/xo/race
+	bare := filepath.Join(tmp, "bare")
+	if err := os.Mkdir(bare, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "std"), filepath.Join(bare, "std")); err != nil {
+		t.Fatal(err)
+	}
 	fb := testtmp.Guard(exec.Command(xo, "build", "--race", "-o", filepath.Join(tmp, "fb"), filepath.Join("testdata", "race_stacks")))
-	fb.Env = env
+	fb.Env = append(env[:len(env):len(env)], "XO_STD="+filepath.Join(bare, "std"))
 	b, err := fb.CombinedOutput()
 	// the targets come from race_files, so a shipped one cannot go missing
 	if err == nil || !strings.Contains(string(b), "no native ThreadSanitizer runtime ships for darwin/arm64") || !strings.Contains(string(b), "darwin/arm64, darwin/amd64, linux/arm64, linux/amd64 and windows/amd64 have one") {
