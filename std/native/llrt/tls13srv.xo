@@ -1122,8 +1122,9 @@ fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes
     fail(s, ALERT_INTERNAL_ERROR, ke)
     return
   }
-  // EncryptedExtensions (Go's order: ALPN, then the server_name ack,
-  // which a resumed session does not send)
+  // EncryptedExtensions (Go's encryptedExtensionsMsg order: ALPN, the
+  // ECH retry configs, then the server_name ack, which a resumed session
+  // does not send)
   let ee_exts = match s.conf.ee {
     Some(e) => e
     None => {
@@ -1131,15 +1132,15 @@ fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes
       if s.alpn != "" {
         es.push(tls13.ext(EXT_ALPN, tls13.vec16(tls13.vec8(s.alpn.bytes()))))
       }
-      if s.sni != "" && chosen < 0 {
-        es.push(tls13.ext(EXT_SERVER_NAME, b""))
-      }
       // the retry configs to a client whose ECH was not taken
       if s.ech_sent && !s.ech_on && !s.ech_keys.is_empty() {
         let rl = tlsech.retry_list(s.ech_keys)
         if !rl.is_empty() {
           es.push(tls13.ext(tlsech.EXT_ECH, rl))
         }
+      }
+      if s.sni != "" && chosen < 0 {
+        es.push(tls13.ext(EXT_SERVER_NAME, b""))
       }
       asn1.cat(es)
     }

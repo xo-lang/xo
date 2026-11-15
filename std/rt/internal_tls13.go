@@ -15,7 +15,6 @@ import (
 	"crypto/sha512"
 	"crypto/x509"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"hash"
 	"net/netip"
@@ -697,15 +696,9 @@ func (c *t13Client) certificate(msg []byte) {
 	opts := x509.VerifyOptions{Roots: roots, Intermediates: inters, DNSName: c.conf.host,
 		CurrentTime: time.Unix(c.conf.now, 0).UTC(), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	if _, err := certs[0].Verify(opts); err != nil {
-		alert := 42
-		var ua x509.UnknownAuthorityError
-		var ci x509.CertificateInvalidError
-		if errors.As(err, &ua) {
-			alert = 48
-		} else if errors.As(err, &ci) && ci.Reason == x509.Expired {
-			alert = 45
-		}
-		c.fail(alert, "tls: failed to verify certificate: "+err.Error())
+		// Go's client sends bad_certificate for every failed
+		// verification, as tls13.xo since decision 0644 T12
+		c.fail(42, "tls: failed to verify certificate: "+err.Error())
 		return
 	}
 	c.peer = certs

@@ -93,8 +93,8 @@ secp384r1mlkem1024, a byte at a time:
   bye <client close_notify>
 expired:
   ch <ClientHello>
-  flight 7 14030300010117030300132872e4eacaeccc65d5f8e2d704515979e79ad7 tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time 2028-05-27T20:26:40Z is after 2027-05-28T20:26:40Z
+  flight 7 14030300010117030300132875e4ede796ec687693bebbe01f38fb49883f tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time 2028-05-27T20:26:40Z is after 2027-05-28T20:26:40Z
 no root:
   ch <ClientHello>
-  flight 7 1403030001011703030013286fe4b7ab7a41e70e2d3ac66faac9f3bdd754 tls: failed to verify certificate: x509: certificate signed by unknown authority
+  flight 7 14030300010117030300132875e4ede796ec687693bebbe01f38fb49883f tls: failed to verify certificate: x509: certificate signed by unknown authority
 --- stderr
