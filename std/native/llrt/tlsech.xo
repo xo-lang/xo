@@ -461,14 +461,10 @@ pub fn outer_aad(hello: Bytes, payload: Bytes) -> Bytes {
   if n == 0 {
     return body
   }
-  var i = 0
-  while i + n <= body.len() {
-    if body[i..i + n] == payload {
-      return asn1.cat([body[0..i], zeros(n), body[i + n..body.len()]])
-    }
-    i += 1
+  match body.find(payload) {
+    Some(i) => asn1.cat([body[0..i], zeros(n), body[i + n..body.len()]])
+    None => body
   }
-  body
 }
 
 /// b with its first occurrence of old replaced by new (Go's
@@ -478,14 +474,10 @@ pub fn replace_first(b: Bytes, old: Bytes, new: Bytes) -> Bytes {
   if n == 0 {
     return b
   }
-  var i = 0
-  while i + n <= b.len() {
-    if b[i..i + n] == old {
-      return asn1.cat([b[0..i], new, b[i + n..b.len()]])
-    }
-    i += 1
+  match b.find(old) {
+    Some(i) => asn1.cat([b[0..i], new, b[i + n..b.len()]])
+    None => b
   }
-  b
 }
 
 /// n zero bytes.
