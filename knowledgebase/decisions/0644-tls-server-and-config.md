@@ -112,6 +112,16 @@ rest in the same shape.
   unknown_ca and certificate_expired, which only Go's server sends), and
   a server without certificates reads the hello and answers
   unrecognized_name, as Go's, where it closed silently.
+- **OCSP and SCTs (T10, B3):** `TlsCert.with_ocsp_staple` and
+  `with_signed_certificate_timestamps` (Go's Certificate fields; a
+  TlsCert is opaque, so methods that copy it). A server sends them to a
+  client that asks (TLS 1.3: the leaf's Certificate entry extensions;
+  TLS 1.2: status_request and CertificateStatus in a full handshake,
+  SCTs in every ServerHello), also from `get_certificate`, so the
+  engine's hook gives a chain with its staple (tlsneg.Chain); the
+  client's ConnState reports them, a resumed one the session's. Neither
+  is verified, as Go's. A server's own ConnState leaves them empty, as
+  Go's does on a full handshake.
 - **std/http and T12 (open, owner's choice; lead 2026-11-15):** the
   client's failure is `ClientErr.Connect(msg)` with Go's text, and Xo's
   enums leave no non-breaking room on it: a variant field takes no

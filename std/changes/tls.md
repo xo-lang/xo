@@ -1,6 +1,46 @@
 # std/tls changes
 
 
+## 2026-11-15: feature: key log, session tickets and resumption, typed errors, OCSP stapling and SCTs (decision 0644 B3)
+
+- Kind: feature
+- Commit: this push
+- Found by: the lang3 crypto/tls audit of 2026-11-15 (items T8, T12, T4, T3, T10; owner approved through the lead)
+- Go reference: crypto/tls Config.KeyLogWriter, SessionTicketsDisabled, SetSessionTicketKeys, ClientSessionCache, NewLRUClientSessionCache; Conn.Handshake, Client; RecordHeaderError, CertificateVerificationError; Certificate.OCSPStaple and SignedCertificateTimestamps, ConnectionState.OCSPResponse and SignedCertificateTimestamps (go1.26.11)
+- Test: goldens tls_keylog, tls_resume, tls_errors, tls_ocsp (arm64 equal to the go backend; tls_resume also wasip2)
+- Timing: none (no handshake path is slower: the new work runs only when a hook, a cache or a staple is set)
+- Shipped in: not yet released
+
+`key_log` on both configs writes Go's NSS key log lines. A server issues
+session tickets under `session_ticket_keys` (`ticket_key`) or a
+`TlsListener`'s own rotating keys, unless `session_tickets_disabled`; a
+client resumes TLS 1.3 (PSK with binders) and TLS 1.2 (tickets) sessions
+through `session_cache` (`lru_session_cache`) with Go's checks before
+offering one, and `state().did_resume` tells. `TlsErr.kind` is Go's
+RecordHeaderError or CertificateVerificationError, read with `err()` on
+either connection; `client_conn` and `TlsConn.handshake()` are Go's
+tls.Client and Handshake. `TlsCert.with_ocsp_staple` and
+`with_signed_certificate_timestamps` are sent to a client that asks,
+which reads them in `ConnState`.
+
+## 2026-11-15: fix: the native TLS 1.3 client's alert on a failed verification, and a server without certificates (decision 0644 B3)
+
+- Kind: fix
+- Commit: this push
+- Found by: golden tls_errors against Go's output
+- Go reference: crypto/tls handshake_client.go verifyServerCertificate (bad_certificate for every failure), handshake_server_tls13.go and handshake_server.go getCertificate (errNoCertificates with unrecognized_name) (go1.26.11)
+- Affected: Xo 0.51.0 and earlier, native backends
+- Test: golden tls_errors (arm64; want equal to the go backend)
+- Timing: none
+- Shipped in: not yet released
+
+A native TLS 1.3 client that cannot verify the server's certificate
+sends bad_certificate, as Go's client does; it sent unknown_ca or
+certificate_expired, which only a server sends in Go. A `tls.server`
+without certificates or hooks reads the client's hello and answers
+unrecognized_name with "tls: no certificates configured", as Go's; it
+closed without a word, so the client saw `EOF`.
+
 ## 2026-11-15: feature: version, suite and curve preferences, keying material export, the verification and certificate hooks, ClientConfig (decision 0644 B2)
 
 - Kind: feature

@@ -5953,6 +5953,27 @@ struct ClientHelloInfo {
   local_addr: Str, remote_addr: Str
 }
 fn (i: ClientHelloInfo) supports_certificate(cert: TlsCert) -> () ! TlsErr
+
+// decision 0644 B3: T8, T12, T4, T3, T10
+// ClientConfig and ServerConfig gain: key_log: (fn(Str) -> () ! Str)? = None
+// ServerConfig gains: session_tickets_disabled: Bool = false, session_ticket_keys: List[TicketKey] = []
+struct TicketKey {}
+fn ticket_key(key: Bytes) -> TicketKey ! TlsErr                  // 32 bytes (Go's SetSessionTicketKeys)
+// ClientConfig gains: session_cache: SessionCache? = None, session_tickets_disabled: Bool = false
+struct SessionCache {}
+fn lru_session_cache(capacity: Int) -> SessionCache              // Go's NewLRUClientSessionCache
+struct TlsErr { msg: Str, kind: TlsErrKind = TlsErrKind.Other }
+enum TlsErrKind {
+  Other
+  RecordHeader(header: Bytes)                                                   // Go's RecordHeaderError
+  CertificateVerification(certs: List[x509.Certificate], cause: x509.CertErr)   // Go's CertificateVerificationError
+}
+fn client_conn(c: Conn, config: ClientConfig) -> TlsConn         // Go's tls.Client: no handshake yet
+fn (t: TlsConn) handshake() -> () ! NetErr uses net.dial
+fn (t: TlsConn) err() -> TlsErr?
+fn (t: TlsServerConn) err() -> TlsErr?
+fn (c: TlsCert) with_ocsp_staple(staple: Bytes) -> TlsCert
+fn (c: TlsCert) with_signed_certificate_timestamps(scts: List[Bytes]) -> TlsCert
 ```
 
 ```
@@ -6120,6 +6141,47 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
   server name, a signature scheme for the key, and for TLS 1.2 an ECDHE
   curve, the certificate's curve and a suite for its key, each with Go's
   reason. Golden `tls_certsel`.
+- `key_log` (T8) is Go's KeyLogWriter: it gets each secret as an NSS
+  key log line, newline ended (TLS 1.3's CLIENT_HANDSHAKE_TRAFFIC_SECRET,
+  SERVER_HANDSHAKE_TRAFFIC_SECRET, CLIENT_TRAFFIC_SECRET_0 and
+  SERVER_TRAFFIC_SECRET_0; TLS 1.2's CLIENT_RANDOM; nothing for a
+  resumed TLS 1.2 handshake), as soon as the secret exists; an Err fails
+  the handshake (`tls: failed to write to key log: MSG` on a TLS 1.2
+  client, as Go's). It exposes the session's keys: for debugging only.
+  Golden `tls_keylog`.
+- Session tickets and resumption (T4, T3): a server issues tickets unless
+  `session_tickets_disabled`; under `session_ticket_keys` the first key
+  encrypts and every key decrypts (rotation by order, Go's
+  SetSessionTicketKeys); with none, a `TlsListener` makes its own keys,
+  rotated daily and kept a week, shared by its connections, and a bare
+  `server` issues no tickets. A client resumes through `session_cache`
+  (keyed by `server_name`, else the remote address) unless its
+  `session_tickets_disabled`; a cached session is offered only when Go's
+  client would (its version offered, the leaf not expired, the name and
+  chain verified again unless `Verify.None`, TLS 1.3's lifetime and suite
+  hash), and dropped when it can no longer be. `state().did_resume`
+  tells; a resumed connection reports the session's certificates and
+  chains, skips `verify_peer_certificate` and runs `verify_connection`.
+  Golden `tls_resume`.
+- Typed errors (T12): a failure is still the `NetErr.Io` with Go's text;
+  `err()` on either connection type gives the connection's first
+  failure as a `TlsErr` whose `kind` is Go's error type: `RecordHeader`
+  (a peer that does not speak TLS, an oversized record, a record of
+  another version; the five header bytes) or `CertificateVerification`
+  (the peer's certificates as sent and the x509 error, with its decision
+  0643 kind). A Timeout is not a failure (the connection stays usable).
+  `client`, `dial` and their config forms handshake at once and return
+  no connection when it fails; `client_conn` is Go's tls.Client: the
+  handshake runs at `handshake()` or the first read or write, and its
+  Err repeats on every call. `close_write` before it is Go's "tls:
+  CloseWrite called before handshake complete". Golden `tls_errors`.
+- OCSP stapling and SCTs (T10): a client always asks for both;
+  `with_ocsp_staple` and `with_signed_certificate_timestamps` give a
+  server certificate what Go's OCSPStaple and SignedCertificateTimestamps
+  give, sent when asked (TLS 1.3: the leaf's Certificate entry; TLS 1.2:
+  CertificateStatus and the ServerHello). The client's `ConnState` has
+  them as `ocsp_response` and `signed_certificate_timestamps` (again on
+  a resumed connection); neither is checked, as Go's. Golden `tls_ocsp`.
 
 ---
 
