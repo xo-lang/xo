@@ -11,12 +11,25 @@ use std/base32
 use std/crypto
 use std/url
 
+/// How a code is written (pquerna/otp's Encoder): decimal digits, or
+/// Steam Guard's alphabet of 26 digits and capitals (`23456789BCDFGHJKMNPQRTVWXY`),
+/// the truncated value written lowest place first, `digits` places (Steam
+/// uses 5).
+pub enum Encoder {
+  Decimal
+  Steam
+}
+
+/// Steam Guard's alphabet (pquerna/otp hotp.go).
+const STEAM: Str = "23456789BCDFGHJKMNPQRTVWXY"
+
 /// The HOTP code (RFC 4226) of counter: `digits` decimal digits (6 to 8,
-/// zero padded), HMAC over algo (Sha1, Sha256 or Sha512), the 8 byte
-/// big endian counter and the dynamic truncation of section 5.3. A fault
-/// for other digits or algo, or a negative counter.
-pub fn hotp(secret: Bytes, counter: Int, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1) -> Str {
-  check_params(digits, algo)
+/// zero padded), HMAC over algo (Sha1, Sha256 or Sha512), the 8 byte big endian counter and the dynamic
+/// truncation of section 5.3. With `Encoder.Steam`, `digits` (1 to 8)
+/// letters of Steam's alphabet instead. A fault for other digits or algo,
+/// or a negative counter.
+pub fn hotp(secret: Bytes, counter: Int, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1, encoder: Encoder = Encoder.Decimal) -> Str {
+  check_params(digits, algo, encoder)
   if counter < 0 {
     fault("otp: counter must not be negative")
   }
@@ -29,6 +42,15 @@ pub fn hotp(secret: Bytes, counter: Int, digits: Int = 6, algo: crypto.Hash = cr
   let mac = crypto.hmac(algo, secret, msg.freeze())
   let off = Int(mac[mac.len() - 1]) & 15
   let bin = ((Int(mac[off]) & 127) << 24) | (Int(mac[off + 1]) << 16) | (Int(mac[off + 2]) << 8) | Int(mac[off + 3])
+  if encoder is Steam {
+    var v = bin
+    var out = BytesBuilder.with_capacity(digits)
+    for _ in 0..digits {
+      out.write_byte(STEAM.bytes()[v % 26])
+      v /= 26
+    }
+    return out.freeze().to_str() ?? ""
+  }
   var code = "${bin % pow10(digits)}"
   while code.len() < digits {
     code = "0" + code
@@ -38,14 +60,14 @@ pub fn hotp(secret: Bytes, counter: Int, digits: Int = 6, algo: crypto.Hash = cr
 
 /// The TOTP code (RFC 6238) at unix seconds: hotp of `unix / period`.
 /// A fault for a period under 1 or a negative unix, and hotp's.
-pub fn totp(secret: Bytes, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1) -> Str {
+pub fn totp(secret: Bytes, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1, encoder: Encoder = Encoder.Decimal) -> Str {
   if period < 1 {
     fault("otp: period must be at least 1")
   }
   if unix < 0 {
     fault("otp: unix time must not be negative")
   }
-  hotp(secret, unix / period, digits, algo)
+  hotp(secret, unix / period, digits, algo, encoder)
 }
 
 /// The time step (`unix / period` plus an offset, the counter that was
@@ -54,10 +76,11 @@ pub fn totp(secret: Bytes, unix: Int, period: Int = 30, digits: Int = 6, algo: c
 /// stores the last step it accepted and rejects a step that is not later
 /// (RFC 6238 section 5.2, replay). Each candidate is compared in constant
 /// time and every one is compared, so the time taken does not say which
-/// matched. A code that is not `digits` ASCII digits is None, never a
-/// fault: it is untrusted input. Does not remember a used code.
-pub fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1, skew: Int = 1) -> Int? {
-  check_params(digits, algo)
+/// matched. A code that is not `digits` ASCII digits (letters of Steam's
+/// alphabet with `Encoder.Steam`) is None, never a fault: it is untrusted
+/// input. Does not remember a used code.
+pub fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1, skew: Int = 1, encoder: Encoder = Encoder.Decimal) -> Int? {
+  check_params(digits, algo, encoder)
   if period < 1 || unix < 0 || skew < 0 {
     return None
   }
@@ -66,7 +89,11 @@ pub fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int
     return None
   }
   for c in b {
-    if c < '0' || c > '9' {
+    if encoder is Steam {
+      if !in_steam(c) {
+        return None
+      }
+    } else if c < '0' || c > '9' {
       return None
     }
   }
@@ -75,7 +102,7 @@ pub fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int
   var k = -skew
   while k <= skew {
     if step + k >= 0 {
-      let want = hotp(secret, step + k, digits, algo).bytes()
+      let want = hotp(secret, step + k, digits, algo, encoder).bytes()
       if crypto.equal(want, b) && found < 0 {
         found = step + k
       }
@@ -116,14 +143,122 @@ pub fn uri(issuer: Str, account: Str, secret: Bytes, period: Int = 30, digits: I
   "otpauth://totp/" + label + "?" + q.encode()
 }
 
-fn check_params(digits: Int, algo: crypto.Hash) {
-  if digits < 6 || digits > 8 {
+fn check_params(digits: Int, algo: crypto.Hash, encoder: Encoder = Encoder.Decimal) {
+  if encoder is Steam {
+    if digits < 1 || digits > 8 {
+      fault("otp: Steam codes take 1 to 8 letters")
+    }
+  } else if digits < 6 || digits > 8 {
     fault("otp: digits must be 6, 7 or 8")
   }
   match algo {
     Sha1 | Sha256 | Sha512 => {}
     _ => fault("otp: algo must be Sha1, Sha256 or Sha512")
   }
+}
+
+/// An otpauth:// URI read back (pquerna/otp's NewKeyFromURL and Key's
+/// methods). `kind` is the host (`totp` or `hotp`); `issuer` the
+/// `issuer` parameter, else the label's part before `:`; `account` the
+/// label after `:` (all of it without one); `secret` the base32 text as
+/// written (`secret_bytes` decodes it); `period` (30) and `digits` (6)
+/// when the parameter is missing or not an unsigned decimal; `algo` from
+/// `algorithm` in any case (`md5`, `sha256`, `sha512`, else Sha1; hotp
+/// refuses Md5, whose 16 byte MAC is too short for RFC 4226's truncation,
+/// where pquerna/otp's index goes out of range);
+/// `encoder` Steam for `encoder=steam`. `uri` is the input without the
+/// white space around it.
+pub struct Key {
+  pub uri: Str
+  pub kind: Str
+  pub issuer: Str
+  pub account: Str
+  pub secret: Str
+  pub period: Int
+  pub digits: Int
+  pub algo: crypto.Hash
+  pub encoder: Encoder
+}
+
+/// Displays as `otp: ...`.
+pub struct OtpErr {
+  pub msg: Str
+}
+
+pub fn (e: OtpErr) display() -> Str { "otp: ${e.msg}" }
+
+/// The Key of an otpauth:// URI (pquerna/otp's NewKeyFromURL): only a URI
+/// std/url cannot parse is an error (url.parse's text).
+pub fn parse_uri(s: Str) -> Key ! OtpErr {
+  let t = s.trim()
+  let u = match url.parse(t) {
+    Ok(x) => x
+    Err(e) => return Err(OtpErr{msg: e.display()})
+  }
+  let q = u.query()
+  let p = u.path.trim_prefix("/")
+  var issuer = q.get("issuer") ?? ""
+  var account = p
+  match p.find(":") {
+    Some(i) => {
+      if issuer == "" {
+        issuer = p[0..i]
+      }
+      account = p[(i + 1)..]
+    }
+    None => ()
+  }
+  let algo = match (q.get("algorithm") ?? "").to_lower() {
+    "md5" => crypto.Hash.Md5
+    "sha256" => crypto.Hash.Sha256
+    "sha512" => crypto.Hash.Sha512
+    _ => crypto.Hash.Sha1
+  }
+  let enc = if (q.get("encoder") ?? "").to_lower() == "steam" { Encoder.Steam } else { Encoder.Decimal }
+  Key{uri: t, kind: u.host, issuer: issuer, account: account, secret: q.get("secret") ?? "", period: uint_or(q.get("period") ?? "", 30), digits: uint_or(q.get("digits") ?? "", 6), algo: algo, encoder: enc}
+}
+
+/// The secret as pquerna/otp decodes it: white space trimmed, `=` padded
+/// to a multiple of 8, upper cased, standard base32; an error otherwise
+/// (`otp: Decoding of secret as base32 failed.`, pquerna's text).
+pub fn (k: Key) secret_bytes() -> Bytes ! OtpErr {
+  var s = k.secret.trim()
+  let n = s.len() % 8
+  if n != 0 {
+    s = s + "=".repeat(8 - n)
+  }
+  match base32.decode(s.to_upper(), base32.Base32.Std) {
+    Ok(b) => b
+    Err(_) => Err(OtpErr{msg: "Decoding of secret as base32 failed."})
+  }
+}
+
+fn in_steam(c: UInt8) -> Bool {
+  for x in STEAM.bytes() {
+    if x == c {
+      return true
+    }
+  }
+  false
+}
+
+/// strconv.ParseUint(s, 10, 64) when it fits Int, else d.
+fn uint_or(s: Str, d: Int) -> Int {
+  if s.is_empty() {
+    return d
+  }
+  var v = 0
+  for c in s.bytes() {
+    if c < '0' || c > '9' {
+      return d
+    }
+    let x = Int(c - '0')
+    if v > (9223372036854775807 - x) / 10 {
+      return d
+    }
+    v = v * 10 + x
+  }
+  v
 }
 
 fn pow10(n: Int) -> Int {

@@ -1,5 +1,20 @@
 # std/otp changes
 
+## 2026-11-15: feature: parse_uri, Key and the Steam Guard encoder (pquerna/otp)
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): otp.NewKeyFromURL, Encoder, EncoderDefault, EncoderSteam, Key.Encoder
+- Go reference: github.com/pquerna/otp v1.5.0 otp.go and hotp/hotp.go (Apache-2.0)
+- Test: internal/stdtest/testdata/corpus/otp (scripts/stdcorpus otp): 120 Steam codes (1 to 8 letters, three algorithms) by pquerna's GenerateCodeCustom written out in Go, and verify of each; 22 URIs read by a Go mirror of pquerna's Key methods on net/url (missing, bad, signed and overflowing numbers, escapes, white space, steam); secret_bytes and its error (arm64, LLVM, Go)
+- Timing: none
+
+`otp.parse_uri(s)` gives a `Key` read as pquerna's Key methods read the
+URI; `encoder: otp.Encoder.Steam` writes and checks Steam Guard codes.
+Key.Image (a QR code) is still a gap. hotp still refuses Md5: its 16 byte
+MAC is shorter than RFC 4226's truncation reads (pquerna's index goes out
+of range there).
+
 ## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
 
 - Kind: refactor

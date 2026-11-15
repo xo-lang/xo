@@ -12,10 +12,17 @@ import (
 	"hash"
 	"math/rand"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
 func otpHotp(secret []byte, counter uint64, digits int, algo string) string {
+	return otpCode(secret, counter, digits, algo, false)
+}
+
+// otpCode is pquerna/otp's hotp.GenerateCodeCustom: decimal, or with
+// steam the Steam Guard alphabet, lowest place first.
+func otpCode(secret []byte, counter uint64, digits int, algo string, steam bool) string {
 	var h func() hash.Hash
 	switch algo {
 	case "Sha256":
@@ -32,6 +39,15 @@ func otpHotp(secret []byte, counter uint64, digits int, algo string) string {
 	s := m.Sum(nil)
 	off := s[len(s)-1] & 15
 	v := binary.BigEndian.Uint32(s[off:off+4]) & 0x7fffffff
+	if steam {
+		const alphabet = "23456789BCDFGHJKMNPQRTVWXY"
+		out := ""
+		for i := 0; i < digits; i++ {
+			out += string(alphabet[v%26])
+			v /= 26
+		}
+		return out
+	}
 	mod := uint32(1)
 	for i := 0; i < digits; i++ {
 		mod *= 10
@@ -89,6 +105,27 @@ func otpCorpus() string {
 		u := "otpauth://totp/" + url.PathEscape(is) + ":" + url.PathEscape(ac) + "?" + q.Encode()
 		o.WriteString(fmt.Sprintf("  (%s, %s, %q, %d, %d, %q, %s),\n", xq(is), xq(ac), hex.EncodeToString(sec), per, d, a, xq(u)))
 	}
+	o.WriteString("]\n\n/// (secret hex, counter, letters, algo, the Steam Guard code; pquerna/otp's EncoderSteam)\nconst STEAMS: List[(Str, Int, Int, Str, Str)] = [\n")
+	algos4 := []string{"Sha1", "Sha256", "Sha512"}
+	for i := 0; i < 120; i++ {
+		sec := make([]byte, 1+rg.Intn(40))
+		rg.Read(sec)
+		ctr := rg.Int63n(1 << 40)
+		d := 1 + rg.Intn(8)
+		if i%3 == 0 {
+			d = 5
+		}
+		a := algos4[rg.Intn(3)]
+		o.WriteString(fmt.Sprintf("  (%q, %d, %d, %q, %q),\n", hex.EncodeToString(sec), ctr, d, a, otpCode(sec, uint64(ctr), d, a, true)))
+	}
+	o.WriteString("]\n\n/// parse_uri: (uri, kind, issuer, account, secret, period, digits, algo, steam) as pquerna/otp's Key methods read it on net/url\nconst KEYS: List[(Str, Str, Str, Str, Str, Int, Int, Str, Bool)] = [\n")
+	for _, u := range otpKeyURIs() {
+		k := otpKeyOf(u)
+		if k == nil {
+			continue
+		}
+		o.WriteString(fmt.Sprintf("  (%s, %s, %s, %s, %s, %d, %d, %q, %v),\n", xq(u), xq(k.kind), xq(k.issuer), xq(k.account), xq(k.secret), k.period, k.digits, k.algo, k.steam))
+	}
 	o.WriteString("]\n\n")
 	o.WriteString(otpTests)
 	return o.String()
@@ -97,7 +134,9 @@ func otpCorpus() string {
 const otpTests = `fn hex(h: Str) -> Bytes { Bytes.from_hex(h) ?? b"" }
 
 fn algo(name: Str) -> crypto.Hash {
-  if name == "Sha256" {
+  if name == "Md5" {
+    crypto.Hash.Md5
+  } else if name == "Sha256" {
     crypto.Hash.Sha256
   } else if name == "Sha512" {
     crypto.Hash.Sha512
@@ -140,6 +179,41 @@ test "uri matches net/url's layout" {
     }
   }
   expect(bad) == []
+}
+
+test "Steam Guard codes match pquerna/otp's GenerateCodeCustom" {
+  var bad: List[Int] = []
+  for (i, (s, c, d, a, want)) in STEAMS.indexed() {
+    if otp.hotp(hex(s), c, d, algo(a), encoder: otp.Encoder.Steam) != want {
+      bad.push(i)
+    }
+    if otp.verify(hex(s), want, c * 30, digits: d, algo: algo(a), skew: 0, encoder: otp.Encoder.Steam) != Some(c) {
+      bad.push(1000 + i)
+    }
+  }
+  expect(bad) == []
+  expect(otp.verify(b"k", "2345a", 0, digits: 5, encoder: otp.Encoder.Steam)) == None
+}
+
+test "parse_uri reads a Key as pquerna/otp's Key methods do" {
+  var bad: List[Str] = []
+  for (u, kind, is, ac, sec, per, dig, a, steam) in KEYS {
+    match otp.parse_uri(u) {
+      Ok(k) => {
+        let got_steam = k.encoder is Steam
+        if k.kind != kind || k.issuer != is || k.account != ac || k.secret != sec || k.period != per || k.digits != dig || k.algo != algo(a) || got_steam != steam || k.uri != u.trim() {
+          bad.push(u)
+        }
+      }
+      Err(e) => bad.push("${u}: ${e.display()}")
+    }
+  }
+  expect(bad) == []
+  expect((otp.parse_uri("otpauth://totp/a:b?secret=JBSWY3DPEHPK3PXP")?).secret_bytes()?) == b"Hello!\xde\xad\xbe\xef"
+  expect((otp.parse_uri("otpauth://totp/a?secret=jbswy3dpehpk3pxp")?).secret_bytes()?) == b"Hello!\xde\xad\xbe\xef"
+  expect(otp.parse_uri("otpauth://totp/a?secret=JBSWY3DP1").ok().map(fn(k: otp.Key) -> Bool { k.secret_bytes().is_err() })) == Some(true)
+  expect((otp.parse_uri("otpauth://totp/a?secret=JBSWY3DP1")?).secret_bytes().err().map(fn(e: otp.OtpErr) -> Str { e.display() })) == Some("otp: Decoding of secret as base32 failed.")
+  expect(otp.parse_uri("%zz").is_err()) == true
 }
 
 test "RFC 4226 appendix D" {
@@ -205,3 +279,75 @@ test "generate_secret has the length asked for" {
   expect(otp.generate_secret(os.rand, len: 32).len()) == 32
 }
 `
+
+// otpKeyURIs are parse_uri's inputs: Google Authenticator's examples,
+// the corpus's own uri layout, missing and bad parameters, labels with
+// and without an issuer, escapes, steam, white space around.
+func otpKeyURIs() []string {
+	return []string{
+		"otpauth://totp/Example:alice@google.com?secret=JBSWY3DPEHPK3PXP&issuer=Example",
+		"otpauth://totp/ACME%20Co:john.doe@email.com?secret=HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ&issuer=ACME%20Co&algorithm=SHA1&digits=6&period=30",
+		"otpauth://hotp/Example:alice?secret=JBSWY3DPEHPK3PXP&counter=7",
+		"otpauth://totp/alice@google.com?secret=JBSWY3DPEHPK3PXP",
+		"otpauth://totp/Label:acct?secret=abc&issuer=Other&algorithm=sha256&digits=8&period=60",
+		"otpauth://totp/a:b:c?secret=X&algorithm=SHA512",
+		"otpauth://totp/a?algorithm=MD5&digits=x&period=-5",
+		"otpauth://totp/a?digits=007&period=+30",
+		"otpauth://totp/a?period=18446744073709551616&digits=99999999999999999999",
+		"otpauth://totp/Steam:me?secret=ABCDEFGH&encoder=steam&digits=5",
+		"otpauth://totp/Steam:me?secret=ABCDEFGH&encoder=STEAM",
+		"otpauth://totp/Steam:me?secret=ABCDEFGH&encoder=other",
+		"  otpauth://totp/Pad:me?secret=AB  \t",
+		"otpauth://totp/%E6%97%A5%E6%9C%AC:caf%C3%A9?secret=AB&issuer=%E6%97%A5",
+		"otpauth://totp/x%3Ay:z?secret=AB",
+		"otpauth://totp/?secret=AB",
+		"otpauth://totp",
+		"otpauth://totp/a?secret=A%20B&issuer=",
+		"otpauth://totp/a?secret=1&secret=2",
+		"otpauth://totp/a?;bad&secret=Q",
+		"http://example.com/x:y?issuer=i",
+		"otpauth:opaque?secret=AB",
+	}
+}
+
+type otpKey struct {
+	kind, issuer, account, secret, algo string
+	period, digits                      int64
+	steam                               bool
+}
+
+// otpKeyOf mirrors pquerna/otp v1.5.0's NewKeyFromURL and Key methods
+// (otp.go) on net/url; nil when url.Parse fails.
+func otpKeyOf(orig string) *otpKey {
+	u, err := url.Parse(strings.TrimSpace(orig))
+	if err != nil {
+		return nil
+	}
+	q := u.Query()
+	p := strings.TrimPrefix(u.Path, "/")
+	k := &otpKey{kind: u.Host, secret: q.Get("secret"), period: 30, digits: 6, algo: "Sha1"}
+	k.issuer = q.Get("issuer")
+	k.account = p
+	if i := strings.Index(p, ":"); i >= 0 {
+		if k.issuer == "" {
+			k.issuer = p[:i]
+		}
+		k.account = p[i+1:]
+	}
+	if v, err := strconv.ParseUint(q.Get("period"), 10, 64); err == nil && v <= 1<<63-1 {
+		k.period = int64(v)
+	}
+	if v, err := strconv.ParseUint(q.Get("digits"), 10, 64); err == nil && v <= 1<<63-1 {
+		k.digits = int64(v)
+	}
+	switch strings.ToLower(q.Get("algorithm")) {
+	case "md5":
+		k.algo = "Md5"
+	case "sha256":
+		k.algo = "Sha256"
+	case "sha512":
+		k.algo = "Sha512"
+	}
+	k.steam = strings.ToLower(q.Get("encoder")) == "steam"
+	return k
+}
