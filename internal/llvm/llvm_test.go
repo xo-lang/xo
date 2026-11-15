@@ -364,6 +364,16 @@ func TestGolden(t *testing.T) {
 // them, since TestGolden no longer builds the Go reference. Skipped
 // unless XO_TEST_GO_PARITY=1: scripts/gate.sh's llvm step sets it for a
 // change to compiler/gen or std/rt, and the batch full tier always.
+// goParitySkip names the goldens TestGoldenGoParity leaves out, with the
+// reason. fair_pairs: 96M channel round trips that test xo's native
+// scheduler (decision 0394), not Go's; the Go backend takes 42.6 s alone
+// on host 3 (LLVM 2.2 s) and passed the 2 minute program limit inside the
+// tier's llvm suite (ctier 77354814f, 2026-11-15). Fewer rounds would stop
+// the golden catching the starvation it was written for.
+var goParitySkip = map[string]string{
+	"fair_pairs": "the Go backend runs its 96M channel round trips in 40 s or more, past the program limit under a loaded suite; it tests xo's native scheduler (decision 0394)",
+}
+
 func TestGoldenGoParity(t *testing.T) {
 	if os.Getenv("XO_TEST_GO_PARITY") != "1" {
 		t.Skip("XO_TEST_GO_PARITY=1 runs it (scripts/gate.sh for compiler/gen, std/rt)")
@@ -389,6 +399,9 @@ func TestGoldenGoParity(t *testing.T) {
 		inSample := sample > 0 && i%sample == 0
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			matched.Add(1)
+			if why, ok := goParitySkip[filepath.Base(dir)]; ok {
+				t.Skip(why)
+			}
 			if !inSample {
 				skipUnselected(t, dir)
 			}
@@ -408,6 +421,21 @@ func TestGoldenGoParity(t *testing.T) {
 				t.Errorf("Go backend differs from %s\n--- want\n%s\n--- got\n%s", name, want, res)
 			}
 		})
+	}
+}
+
+// TestGoParitySkipNamed: every golden goParitySkip leaves out of
+// TestGoldenGoParity exists and gives its reason, so a renamed or removed
+// golden does not leave a stale entry, and an entry cannot drop one
+// silently.
+func TestGoParitySkipNamed(t *testing.T) {
+	for name, why := range goParitySkip {
+		if _, err := os.Stat(filepath.Join("testdata", "golden", name, "main.xo")); err != nil {
+			t.Errorf("goParitySkip names %s, which is not a golden program: %v", name, err)
+		}
+		if len(why) < 20 {
+			t.Errorf("goParitySkip[%s]: the reason %q is too short to say why", name, why)
+		}
 	}
 }
 
