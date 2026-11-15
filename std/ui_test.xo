@@ -1,0 +1,307 @@
+use std/html
+use std/json
+
+// ---- a small app: a shared todo list with a limited resource ----
+
+struct Todo {
+  title: Str
+  done: Bool
+  stars: Int
+} derive Eq, Json, Debug
+
+struct Model {
+  todos: Map[Str, Todo]
+  seats: Int
+  holders: List[Str]
+} derive Eq, Json, Debug
+
+enum Msg {
+  Add(id: Str, title: Str)
+  Rename(id: Str, title: Str)
+  Toggle(id: Str)
+  Star(id: Str)
+  Remove(id: Str)
+  Reserve(who: Str)
+} derive Eq, Json, Debug
+
+fn update(m: Model, msg: Msg) -> Model {
+  var n = m
+  match msg {
+    Add(id, title) => {
+      if !n.todos.contains(id) {
+        n.todos.put(id, Todo{title: title, done: false, stars: 0})
+      }
+    }
+    Rename(id, title) => {
+      if let Some(t) = n.todos.get(id) {
+        n.todos.put(id, Todo{title: title, done: t.done, stars: t.stars})
+      }
+    }
+    Toggle(id) => {
+      if let Some(t) = n.todos.get(id) {
+        n.todos.put(id, Todo{title: t.title, done: !t.done, stars: t.stars})
+      }
+    }
+    Star(id) => {
+      if let Some(t) = n.todos.get(id) {
+        n.todos.put(id, Todo{title: t.title, done: t.done, stars: t.stars + 1})
+      }
+    }
+    Remove(id) => {
+      n.todos.remove(id)
+    }
+    Reserve(who) => {
+      if n.seats > 0 && !n.holders.contains(who) {
+        n.seats = n.seats - 1
+        n.holders.push(who)
+      }
+    }
+  }
+  n
+}
+
+fn view(m: Model) -> Html {
+  var items: List[Html] = []
+  for (id, t) in m.todos {
+    items.push(el("li", [], [text(t.title), el("button", [on("click", Msg.Toggle(id: id))], [text(if t.done { "undo" } else { "done" })])]))
+  }
+  el("main", [attr("class", "todos")], [el("h1", [], [text("Todos")]), el("ul", [], items), el("p", [], [text("seats left: ${m.seats}")])])
+}
+
+fn todo_app() -> App[Model, Msg] {
+  App{init: Model{todos: {}, seats: 3, holders: []}, update: update, view: view}
+}
+
+// ---- rendering ----
+
+test "render escapes text and attribute values" {
+  let h = el("p", [attr("title", "a \"q\" <b>")], [text("1 < 2 & <script>x</script>")])
+  expect(render(h)) == "<p title=\"a &#34;q&#34; &lt;b&gt;\">1 &lt; 2 &amp; &lt;script&gt;x&lt;/script&gt;</p>"
+}
+
+test "void elements have no closing tag" {
+  expect(render(el("div", [], [el("br"), el("input", [attr("name", "q")])]))) == "<div><br><input name=\"q\"></div>"
+}
+
+test "unsafe URLs are replaced" {
+  expect(render(el("a", [attr("href", " JavaScript:alert(1)")]))) == "<a href=\"about:invalid#xo-unsafe\"></a>"
+  expect(render(el("a", [attr("href", "https://xolang.org/a?b=1")]))) == "<a href=\"https://xolang.org/a?b=1\"></a>"
+  expect(render(el("a", [attr("href", "/x/y:z")]))) == "<a href=\"/x/y:z\"></a>"
+  expect(render(el("a", [attr("href", "mailto:a@b.c")]))) == "<a href=\"mailto:a@b.c\"></a>"
+  expect(render(el("img", [attr("src", "data:text/html,x")]))) == "<img src=\"about:invalid#xo-unsafe\">"
+}
+
+test "on renders the Msg as JSON in a data attribute" {
+  let s = render(el("button", [on("click", Msg.Star(id: "a<b"))], [text("star")]))
+  expect(s.starts_with("<button data-xo-click=\"")) == true
+  expect(s.contains("a<b")) == false
+  let v = s.cut_prefix("<button data-xo-click=\"")?.cut("\">")?.0
+  expect(json.decode_str[Msg](html.unescape_string(v))?) == Msg.Star(id: "a<b")
+}
+
+test "the page carries the rendered view and the state" {
+  let app = todo_app()
+  let m = update(app.init, Msg.Add(id: "1", title: "</script><b>"))
+  let p = page(app, m, 7, title: "T & T")
+  expect(p.contains("<title>T &amp; T</title>")) == true
+  expect(p.contains("<li>&lt;/script&gt;&lt;b&gt;")) == true
+  // The JSON state cannot close its script element early.
+  let state = p.cut("id=\"xo-state\">")?.1.cut("</script>")?.0
+  expect(state.contains("<")) == false
+  let st = json.decode_str[PageState[Model]](state)?
+  expect(st.ver) == 7
+  expect(st.model) == m
+}
+
+// ---- the protocol ----
+
+test "a replica predicts, then confirms" {
+  let app = todo_app()
+  var s = server(app)
+  var r = replica(app, "a", app.init, 0)
+  r.send(Msg.Add(id: "x", title: "milk"))
+  expect(r.model().todos.len()) == 1
+  expect(r.confirmed().todos.len()) == 0
+  r.receive(s.receive(r.outbox()))
+  expect(r.pending()) == 0
+  expect(r.version()) == 1
+  expect(r.model()) == s.model()
+}
+
+test "a duplicate or out of order Msg is applied once, in order" {
+  let app = todo_app()
+  var s = server(app)
+  let e1 = Envelope{seq: 1, msg: Msg.Add(id: "x", title: "a")}
+  let e2 = Envelope{seq: 2, msg: Msg.Star(id: "x")}
+  s.receive(Up{client: "a", ver: 0, msgs: [e2]})
+  expect(s.version()) == 0
+  s.receive(Up{client: "a", ver: 0, msgs: [e1, e2, e1, e2]})
+  expect(s.version()) == 2
+  expect(s.model().todos.get("x")?.stars) == 1
+}
+
+test "the server overturns a prediction it rejects" {
+  let app = todo_app()
+  var s = server(app)
+  var rs: List[Replica[Model, Msg]] = []
+  for c in ["a", "b", "c", "d"] {
+    rs.push(replica(app, c, app.init, 0))
+  }
+  // Four clients reserve offline; three seats.
+  for i in 0..4 {
+    rs[i].send(Msg.Reserve(who: "c${i}"))
+    expect(rs[i].model().seats) == 2
+  }
+  for i in 0..4 {
+    let d = s.receive(rs[i].outbox())
+    rs[i].receive(d)
+  }
+  for i in 0..4 {
+    rs[i].receive(s.reply("c${i}", rs[i].version()))
+  }
+  expect(s.model().holders) == ["c0", "c1", "c2"]
+  expect(rs[3].model().holders.contains("c3")) == false
+}
+
+test "a client behind a compacted log restarts from a snapshot" {
+  let app = todo_app()
+  var s = server(app, max_batch: 2)
+  var a = replica(app, "a", app.init, 0)
+  var b = replica(app, "b", app.init, 0)
+  for i in 0..5 {
+    a.send(Msg.Add(id: "a${i}", title: "t"))
+  }
+  b.send(Msg.Add(id: "b0", title: "t"))
+  s.receive(a.outbox())
+  s.receive(b.outbox())
+  s.compact(1)
+  // b never heard back; it is behind the kept log.
+  var n = 0
+  while (b.pending() > 0 || b.version() < s.version()) && n < 20 {
+    b.receive(s.receive(b.outbox()))
+    n = n + 1
+  }
+  expect(b.model()) == s.model()
+  expect(b.pending()) == 0
+}
+
+// ---- convergence over a bad network (decision 0659's experiment) ----
+
+struct Rng {
+  s: Int
+}
+
+fn (var r: Rng) int(n: Int) -> Int {
+  r.s = r.s * 48271 % 2147483647
+  r.s % n
+}
+
+enum Packet {
+  ToServer(up: Up[Msg])
+  ToClient(to: Int, down: Down[Model, Msg])
+}
+
+struct Flight {
+  at: Int
+  p: Packet
+}
+
+fn random_msg(var g: Rng, client: Int, n: Int, m: Model) -> Msg {
+  let ids = m.todos.keys()
+  let k = g.int(100)
+  if ids.is_empty() || k < 25 {
+    return Msg.Add(id: "c${client}-${n}", title: "t${g.int(1000)}")
+  }
+  let id = ids[g.int(ids.len())]
+  if k < 40 {
+    Msg.Rename(id: id, title: "r${g.int(1000)}")
+  } else if k < 60 {
+    Msg.Toggle(id: id)
+  } else if k < 80 {
+    Msg.Star(id: id)
+  } else if k < 92 {
+    Msg.Remove(id: id)
+  } else {
+    Msg.Reserve(who: "c${client}")
+  }
+}
+
+/// clients, ticks of activity; drop and offline in permille; the server
+/// compacts its log to `keep` entries every 50 ticks.
+fn simulate(seed: Int, clients: Int, ticks: Int, drop: Int, offline: Int, keep: Int) -> Bool {
+  let app = todo_app()
+  let r0 = seed % 2147483646
+  var g = Rng{s: (if r0 < 0 { -r0 } else { r0 }) + 1}
+  var s = server(app, max_batch: 8)
+  var rs: List[Replica[Model, Msg]] = []
+  var online: List[Int] = []
+  var sent: List[Int] = []
+  for i in 0..clients {
+    rs.push(replica(app, "c${i}", app.init, 0))
+    online.push(0)
+    sent.push(0)
+  }
+  var net: List[Flight] = []
+  var t = 0
+  var heal = false
+  while t < ticks + 3000 {
+    heal = t >= ticks
+    if heal && rs.all(fn(r) { r.pending() == 0 && r.version() == s.version() }) {
+      break
+    }
+    for i in 0..clients {
+      if !heal && online[i] <= t && g.int(1000) < offline {
+        online[i] = t + 1 + g.int(120)
+      }
+      if !heal && g.int(1000) < 200 {
+        sent[i] = sent[i] + 1
+        rs[i].send(random_msg(g, i, sent[i], rs[i].model()))
+      }
+      let up_now = heal || online[i] <= t
+      if up_now && (t % 3 == i % 3 || heal) && (heal || g.int(1000) >= drop) {
+        net.push(Flight{at: t + (if heal { 1 } else { 1 + g.int(12) }), p: Packet.ToServer(up: rs[i].outbox())})
+      }
+    }
+    if t % 50 == 49 {
+      s.compact(keep)
+    }
+    let due = net.filter(fn(f) { f.at <= t })
+    net = net.filter(fn(f) { f.at > t })
+    for f in due {
+      match f.p {
+        ToServer(up) => {
+          let d = s.receive(up)
+          let who = Int.parse(up.client[1..]) ?? 0
+          if heal || g.int(1000) >= drop {
+            net.push(Flight{at: t + (if heal { 1 } else { 1 + g.int(12) }), p: Packet.ToClient(to: who, down: d)})
+          }
+        }
+        ToClient(to, down) => {
+          if heal || online[to] <= t {
+            rs[to].receive(down)
+          }
+        }
+      }
+    }
+    t = t + 1
+  }
+  let total = sent.fold(0, fn(a, n) { a + n })
+  let sm = s.model()
+  total == s.version() && rs.all(fn(r) { r.pending() == 0 && r.model() == sm && r.confirmed() == sm })
+}
+
+test "replicas converge over a lossy, reordering network" {
+  for seed in 1..=20 {
+    expect(simulate(seed * 7919, 5, 300, 300, 30, 1000000)) == true
+  }
+}
+
+test "replicas converge while the server compacts its log" {
+  for seed in 1..=20 {
+    expect(simulate(seed * 104729, 5, 300, 300, 30, 10)) == true
+  }
+}
+
+test "convergence holds for any seed" for seed: Int {
+  expect(simulate(seed, 4, 120, 400, 50, 20)) == true
+}

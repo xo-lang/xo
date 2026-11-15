@@ -94,3 +94,4 @@ entries yet.
 - [publicsuffix.md](publicsuffix.md): std/publicsuffix (spec/std.md 83)
 - [hpke.md](hpke.md): std/hpke (spec/std.md 84)
 - [migrate.md](migrate.md): std/migrate (spec/std.md 85)
+- [ui.md](ui.md): std/ui (spec/std.md 86)

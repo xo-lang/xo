@@ -10758,3 +10758,83 @@ fn version_of(name: Str) -> Int?
   (statement splitting, the nine valid-up goldens, invalid files, NO
   TRANSACTION, annotations), its collect tests, and the up, partial error
   and out-of-order tests on `sql.memory`.
+
+## 86. std/ui
+
+Status: Early (decision 0659 stage 1, 2026-11-15; the API may change
+until stage 1 is done). Pure: no I/O. One pure update runs on every
+client (predicted at once) and on the server (in arrival order, the
+authority); clients replay the server's log and fold their pending Msgs
+on top. The HTTP and websocket transport and the browser runtime are
+later steps of stage 1.
+
+```
+pub struct App[M, E] { pub init: M, pub update: fn(M, E) -> M, pub view: fn(M) -> Html }
+
+pub enum Html { Text(s: Str), El(tag: Str, attrs: List[Attr], kids: List[Html]) }
+pub struct Attr { pub name: Str, pub value: Str }
+pub fn text(s: Str) -> Html
+pub fn el(tag: Str, attrs: List[Attr] = [], kids: List[Html] = []) -> Html
+pub fn attr(name: Str, value: Str) -> Attr
+pub fn on[E: Json](event: Str, msg: E) -> Attr       // data-xo-EVENT holding msg as JSON
+pub fn render(h: Html) -> Str
+pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js") -> Str
+
+pub struct Envelope[E] { pub seq: Int, pub msg: E }                        // derive Json
+pub struct Entry[E] { pub ver: Int, pub client: Str, pub seq: Int, pub msg: E }
+pub struct Up[E] { pub client: Str, pub ver: Int, pub msgs: List[Envelope[E]] }
+pub struct Snapshot[M] { pub ver: Int, pub model: M, pub applied: Int }
+pub struct Down[M, E] { pub acked: Int, pub reset: Snapshot[M]?, pub entries: List[Entry[E]] }
+pub struct PageState[M] { pub ver: Int, pub model: M }
+
+pub fn server[M, E](app: App[M, E], max_batch: Int = 256) -> Server[M, E]
+fn (s: Server[M, E]) model() -> M
+fn (s: Server[M, E]) version() -> Int
+fn (s: Server[M, E]) applied(client: Str) -> Int
+fn (var s: Server[M, E]) receive(up: Up[E]) -> Down[M, E]
+fn (s: Server[M, E]) reply(client: Str, ver: Int) -> Down[M, E]
+fn (var s: Server[M, E]) compact(keep: Int)
+
+pub fn replica[M, E](app: App[M, E], client: Str, model: M, ver: Int) -> Replica[M, E]
+fn (var r: Replica[M, E]) send(msg: E)
+fn (r: Replica[M, E]) model() -> M          // pending Msgs over the confirmed model
+fn (r: Replica[M, E]) confirmed() -> M
+fn (r: Replica[M, E]) version() -> Int
+fn (r: Replica[M, E]) pending() -> Int
+fn (r: Replica[M, E]) outbox() -> Up[E]     // the Msgs the server has not acknowledged
+fn (var r: Replica[M, E]) receive(d: Down[M, E])
+```
+
+- `update` and `view` are fn types without `uses`, so the checker
+  refuses a clock, randomness or I/O in them; an invalid Msg should leave
+  the model as it is, which is also the server's validation.
+- Views: text and attribute values are always escaped (std/html); there
+  is no raw HTML. A tag or attribute name is lower case letters, digits
+  and `-` starting with a letter; `script`, `style`, `iframe`, `object`
+  and `embed`, and attribute names starting with `on`, fault at render
+  (events are `on`, which the client runtime reads). A URL attribute
+  (`href`, `src`, `action`, `formaction`) whose scheme is not http,
+  https, mailto or tel (or relative) renders as
+  `about:invalid#xo-unsafe`. Void elements have no closing tag.
+- `page` renders a whole document: the view in `<div id="xo-ui">`, so
+  it reads before any script, and `PageState` as JSON (HTML escaped with
+  `json.html_escape`, so a model's text cannot end the element) in
+  `<script type="application/json" id="xo-state">`.
+- The server applies a client's Msg only when its seq is the next one
+  (a duplicate or one after a gap is skipped; the client sends it again)
+  and appends it to the log at version `version() + 1`. A reply carries
+  the client's last applied seq (`acked`), so `outbox` stops resending
+  what the server has, and at most `max_batch` entries after the
+  client's version. A client older than the kept log (after `compact`)
+  or ahead of it gets a `Snapshot` with the last seq of its own the
+  snapshot includes.
+- A replica applies only the entry after its version, drops its own
+  confirmed Msgs from pending, and shows pending Msgs folded over the
+  confirmed model. Client ids are trusted in this step; per-Msg
+  authorization is decision 0659 stage 4.
+- Tested by std/ui_test.xo: escaping, URL and page cases, prediction and
+  confirmation, duplicates and gaps, an overturned prediction (four
+  clients reserving three seats offline), a snapshot after compaction,
+  and convergence of 4 to 5 replicas over a simulated network with loss,
+  delay, reordering and offline stretches, with and without compaction,
+  and as a property over any seed.

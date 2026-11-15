@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Perf (std/crypto, native backends): AES-GCM keeps a small message's counter and GHASH state in the thread's scratch memory instead of three small Lists: aead gcm_small 0.798 of before on linux/arm64 (xo bench --ab, 3 rounds).
+- Feature (std/ui, new module, Early, every backend): the core of a local-first UI (decision 0659 stage 1): `ui.App` (init, a pure `update`, a `view`), `Html` views rendered with escaping and no raw HTML, `ui.on` events, `ui.page` for the server-rendered first page, and the reconciliation protocol as pure values (`ui.server`, `ui.replica`): clients predict at once, the server applies each Msg once in arrival order, clients replay its log. Transport and the browser runtime come later.
 - Feature (std/big, every backend): `big.jacobi(x, y)`, the Jacobi symbol (Go's big.Jacobi).
 - Feature (std/mime, every backend): RFC 2047 encoded words, `mime.encode_word`, `mime.decode_word` and `mime.decode_header` (Go's WordEncoder and WordDecoder).
 - Fix (xo vet): `xo vet --cost --std-module=M` notes the costs in M's own files with every function of M lowered (it vetted the current directory as a program and ignored the module); a module without tests works too.

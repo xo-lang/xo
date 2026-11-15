@@ -1,0 +1,390 @@
+// std/ui (spec/std.md 86, decision 0659 stage 1). Encoding rules are
+// listed at the top of std/prelude.xo. Early: the API may change until
+// decision 0659's stage 1 is done.
+//
+// A UI is an App: a model's start, one pure update and a view. The same
+// update runs on every client (predicted at once) and on the server (in
+// arrival order, the authority): clients send their Msgs, the server
+// applies each (client, seq) exactly once and appends it to a log, and a
+// client replays the log it has not seen with the same update and folds
+// its pending Msgs on top. A client that is offline keeps working; its
+// Msgs wait in its outbox. update and view are fn types without `uses`,
+// so the checker already refuses a clock, randomness or I/O in them.
+//
+// This module is pure: Server and Replica are values that turn messages
+// into messages; the HTTP and websocket transport comes in a later step.
+
+use std/html
+use std/json
+
+/// A UI program.
+pub struct App[M, E] {
+  /// The model a new server starts from.
+  pub init: M
+  /// The one update, run on clients and the server alike. An invalid Msg
+  /// should leave the model as it is: that is also the server's check.
+  pub update: fn(M, E) -> M
+  /// The page for a model.
+  pub view: fn(M) -> Html
+}
+
+// ---- views ----
+
+/// A view: text or an element. There is no raw HTML: text and attribute
+/// values are always escaped.
+pub enum Html {
+  Text(s: Str)
+  El(tag: Str, attrs: List[Attr], kids: List[Html])
+}
+
+/// An attribute; build one with `attr` or `on`.
+pub struct Attr {
+  pub name: Str
+  pub value: Str
+}
+
+/// A text node.
+pub fn text(s: Str) -> Html {
+  Html.Text(s: s)
+}
+
+/// An element. A tag is lower case letters, digits and `-`, starting with
+/// a letter; `script`, `style`, `iframe`, `object` and `embed` are
+/// refused (a fault at render), since a view never carries code.
+pub fn el(tag: Str, attrs: List[Attr] = [], kids: List[Html] = []) -> Html {
+  Html.El(tag: tag, attrs: attrs, kids: kids)
+}
+
+/// An attribute. A name is lower case letters, digits and `-`, starting
+/// with a letter, and never `on...` (event handlers are `on`); a fault at
+/// render otherwise. A URL attribute (href, src, action, formaction)
+/// whose scheme is not http, https, mailto or tel, or relative, renders
+/// as `about:invalid#xo-unsafe` (html/template's rule).
+pub fn attr(name: Str, value: Str) -> Attr {
+  Attr{name: name, value: value}
+}
+
+/// An event that sends msg: `on("click", Msg.Add)` renders
+/// `data-xo-click` holding msg as JSON, which the client runtime sends.
+pub fn on[E: Json](event: Str, msg: E) -> Attr {
+  Attr{name: "data-xo-${event}", value: json.encode_str(msg)}
+}
+
+fn name_ok(s: Str) -> Bool {
+  if s == "" {
+    return false
+  }
+  for (i, r) in s.runes().indexed() {
+    let ok = (r >= 'a' && r <= 'z') || (i > 0 && ((r >= '0' && r <= '9') || r == '-'))
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+fn void_tag(t: Str) -> Bool {
+  match t {
+    "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link" | "meta" | "source" | "track" | "wbr" => true
+    _ => false
+  }
+}
+
+fn url_attr(n: Str) -> Bool {
+  n == "href" || n == "src" || n == "action" || n == "formaction"
+}
+
+fn safe_url(v: Str) -> Bool {
+  let t = v.trim().to_lower()
+  match t.find(":") {
+    None => true
+    Some(i) => {
+      // A ':' after a '/', '?' or '#' is not a scheme.
+      let first = t.find_any("/?#")
+      if let Some(j) = first {
+        if j < i {
+          return true
+        }
+      }
+      let scheme = t[0..i]
+      scheme == "http" || scheme == "https" || scheme == "mailto" || scheme == "tel"
+    }
+  }
+}
+
+/// The HTML text of a view.
+pub fn render(h: Html) -> Str {
+  var b = BytesBuilder.new()
+  write_html(b, h)
+  b.freeze().to_str_lossy()
+}
+
+fn write_html(var b: BytesBuilder, h: Html) {
+  match h {
+    Text(s) => b.write_str(html.escape_string(s))
+    El(tag, attrs, kids) => {
+      if !name_ok(tag) {
+        fault("std/ui: bad tag name ${tag:?}")
+      }
+      match tag {
+        "script" | "style" | "iframe" | "object" | "embed" => fault("std/ui: tag <${tag}> is refused: a view carries no code")
+        _ => {}
+      }
+      b.write_str("<${tag}")
+      for a in attrs {
+        if !name_ok(a.name) || a.name.starts_with("on") {
+          fault("std/ui: bad attribute name ${a.name:?}")
+        }
+        let v = if url_attr(a.name) && !safe_url(a.value) { "about:invalid#xo-unsafe" } else { a.value }
+        b.write_str(" ${a.name}=\"${html.escape_string(v)}\"")
+      }
+      b.write_str(">")
+      if void_tag(tag) {
+        return
+      }
+      for k in kids {
+        write_html(b, k)
+      }
+      b.write_str("</${tag}>")
+    }
+  }
+}
+
+// ---- the protocol ----
+
+/// One Msg from a client, numbered from 1 per client.
+pub struct Envelope[E] {
+  pub seq: Int
+  pub msg: E
+} derive Json
+
+/// A Msg the server applied: the log's entry `ver` (from 1).
+pub struct Entry[E] {
+  pub ver: Int
+  pub client: Str
+  pub seq: Int
+  pub msg: E
+} derive Json
+
+/// A client's sync: its Msgs the server has not acknowledged, and the log
+/// version it has.
+pub struct Up[E] {
+  pub client: Str
+  pub ver: Int
+  pub msgs: List[Envelope[E]]
+} derive Json
+
+/// The model at a log version, sent to a client too far behind for the
+/// log the server kept (or ahead of it). `applied` is the last seq of
+/// this client's Msgs the snapshot includes.
+pub struct Snapshot[M] {
+  pub ver: Int
+  pub model: M
+  pub applied: Int
+} derive Json
+
+/// The server's reply: the last seq of this client it applied, a
+/// snapshot when the client must restart from one, and the log after the
+/// client's version (at most the server's batch).
+pub struct Down[M, E] {
+  pub acked: Int
+  pub reset: Snapshot[M]?
+  pub entries: List[Entry[E]]
+} derive Json
+
+/// The authority: the model, the log, and each client's last seq.
+pub struct Server[M, E] {
+  app: App[M, E]
+  model: M
+  // The log holds versions base+1 ..= base+log.len(); base_model is the
+  // model at base and base_seqs each client's last seq at base.
+  base: Int
+  base_model: M
+  base_seqs: Map[Str, Int]
+  log: List[Entry[E]]
+  last_seq: Map[Str, Int]
+  max_batch: Int
+}
+
+/// A server at the app's initial model. A reply carries at most
+/// max_batch log entries (at least 1).
+pub fn server[M, E](app: App[M, E], max_batch: Int = 256) -> Server[M, E] {
+  Server{app: app, model: app.init, base: 0, base_model: app.init, base_seqs: {}, log: [], last_seq: {}, max_batch: if max_batch < 1 { 1 } else { max_batch }}
+}
+
+/// The authoritative model.
+pub fn (s: Server[M, E]) model() -> M {
+  s.model
+}
+
+/// The log version of the model: the number of Msgs applied.
+pub fn (s: Server[M, E]) version() -> Int {
+  s.base + s.log.len()
+}
+
+/// The last seq applied for a client (0 for none).
+pub fn (s: Server[M, E]) applied(client: Str) -> Int {
+  s.last_seq.get(client) ?? 0
+}
+
+/// Applies the client's next Msgs (each seq once, in order: a duplicate
+/// or one after a gap is skipped, and the client sends it again) and
+/// returns the reply.
+pub fn (var s: Server[M, E]) receive(up: Up[E]) -> Down[M, E] {
+  for e in up.msgs {
+    let last = s.last_seq.get(up.client) ?? 0
+    if e.seq == last + 1 {
+      s.model = s.app.update(s.model, e.msg)
+      s.last_seq.put(up.client, e.seq)
+      s.log.push(Entry{ver: s.version() + 1, client: up.client, seq: e.seq, msg: e.msg})
+    }
+  }
+  s.reply(up.client, up.ver)
+}
+
+/// The reply for a client at version ver, without new Msgs.
+pub fn (s: Server[M, E]) reply(client: Str, ver: Int) -> Down[M, E] {
+  let acked = s.last_seq.get(client) ?? 0
+  if ver < s.base || ver > s.version() {
+    let snap = Snapshot{ver: s.base, model: s.base_model, applied: s.base_seqs.get(client) ?? 0}
+    return Down{acked: acked, reset: Some(snap), entries: s.batch(0)}
+  }
+  Down{acked: acked, reset: None, entries: s.batch(ver - s.base)}
+}
+
+fn (s: Server[M, E]) batch(from: Int) -> List[Entry[E]] {
+  let end = if s.log.len() - from > s.max_batch { from + s.max_batch } else { s.log.len() }
+  s.log[from..end].clone()
+}
+
+/// Drops all but the newest keep log entries; a client older than the
+/// rest gets a snapshot.
+pub fn (var s: Server[M, E]) compact(keep: Int) {
+  let k = if keep < 0 { 0 } else { keep }
+  if s.log.len() <= k {
+    return
+  }
+  let drop = s.log.len() - k
+  for e in s.log[0..drop] {
+    s.base_model = s.app.update(s.base_model, e.msg)
+    s.base_seqs.put(e.client, e.seq)
+  }
+  s.base = s.base + drop
+  s.log = s.log[drop..].clone()
+}
+
+/// A client's copy: the confirmed model at a log version and its own
+/// Msgs not yet in the log.
+pub struct Replica[M, E] {
+  app: App[M, E]
+  client: Str
+  confirmed: M
+  ver: Int
+  pending: List[Envelope[E]]
+  next_seq: Int
+  acked: Int
+}
+
+/// A replica for client starting from model at log version ver (the
+/// state a server rendered page carries).
+pub fn replica[M, E](app: App[M, E], client: Str, model: M, ver: Int) -> Replica[M, E] {
+  Replica{app: app, client: client, confirmed: model, ver: ver, pending: [], next_seq: 1, acked: 0}
+}
+
+/// Applies msg locally at once and queues it for the server.
+pub fn (var r: Replica[M, E]) send(msg: E) {
+  r.pending.push(Envelope{seq: r.next_seq, msg: msg})
+  r.next_seq = r.next_seq + 1
+}
+
+/// What the client shows: its pending Msgs over the confirmed model.
+pub fn (r: Replica[M, E]) model() -> M {
+  let up = r.app.update
+  r.pending.fold(r.confirmed, fn(m, e) { up(m, e.msg) })
+}
+
+/// The confirmed model, as the server had it at version().
+pub fn (r: Replica[M, E]) confirmed() -> M {
+  r.confirmed
+}
+
+/// The log version the confirmed model is at.
+pub fn (r: Replica[M, E]) version() -> Int {
+  r.ver
+}
+
+/// The number of Msgs not yet confirmed.
+pub fn (r: Replica[M, E]) pending() -> Int {
+  r.pending.len()
+}
+
+/// The sync to send: the Msgs the server has not acknowledged. Send it
+/// whenever there is a connection; a lost one is sent again next time.
+pub fn (r: Replica[M, E]) outbox() -> Up[E] {
+  let acked = r.acked
+  Up{client: r.client, ver: r.ver, msgs: r.pending.filter(fn(e) { e.seq > acked })}
+}
+
+/// Takes the server's reply: a snapshot if any, then the log entries that
+/// follow the confirmed version (others are skipped); confirmed Msgs of
+/// this client leave pending.
+pub fn (var r: Replica[M, E]) receive(d: Down[M, E]) {
+  if d.acked > r.acked {
+    r.acked = d.acked
+  }
+  if let Some(snap) = d.reset {
+    r.confirmed = snap.model
+    r.ver = snap.ver
+    r.drop_through(snap.applied)
+  }
+  for e in d.entries {
+    if e.ver == r.ver + 1 {
+      r.confirmed = r.app.update(r.confirmed, e.msg)
+      r.ver = e.ver
+      if e.client == r.client {
+        r.drop_through(e.seq)
+      }
+    }
+  }
+}
+
+fn (var r: Replica[M, E]) drop_through(seq: Int) {
+  while let Some(p) = r.pending.first() {
+    if p.seq > seq {
+      break
+    }
+    r.pending.remove_at(0)
+  }
+}
+
+// ---- the first page ----
+
+/// The page's state as the client runtime reads it.
+pub struct PageState[M] {
+  pub ver: Int
+  pub model: M
+} derive Json
+
+/// A whole HTML document for model at log version ver: the rendered view
+/// in `<div id="xo-ui">`, so the page reads before any script runs, and
+/// the state as JSON in `<script type="application/json" id="xo-state">`
+/// for the client runtime at runtime_src.
+pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js") -> Str {
+  var b = BytesBuilder.new()
+  b.write_str("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>")
+  b.write_str(html.escape_string(title))
+  b.write_str("</title></head><body><div id=\"xo-ui\">")
+  write_html(b, app.view(model))
+  b.write_str("</div><script type=\"application/json\" id=\"xo-state\">")
+  // encode_str does not escape HTML; html_escape writes the JSON's
+  // angle brackets and ampersands as escapes, so a model's text cannot
+  // end the element.
+  b.write_str(json.html_escape(json.encode_str(PageState{ver: ver, model: model})))
+  b.write_str("</script>")
+  if runtime_src != "" {
+    let src = if safe_url(runtime_src) { runtime_src } else { "about:invalid#xo-unsafe" }
+    b.write_str("<script src=\"${html.escape_string(src)}\" defer></script>")
+  }
+  b.write_str("</body></html>")
+  b.freeze().to_str_lossy()
+}
