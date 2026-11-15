@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-14: fix: a client request to a URL that does not parse reports Go's parse error
+
+- Kind: fix
+- Commit: this push
+- Found by: aws-43, while fixing zone escapes in client URLs (`http://[fe80::1%25xo%2Fzone]/`, whose zone escape Go refuses)
+- Go reference: net/http NewRequest and Client.Get (url.Parse's error)
+- Test: golden http_client (native and Go backends), cases "bad escape" and "bad zone escape"
+- Affected: every release (every backend)
+- Shipped in: not yet released
+
+`new_request` keeps a URL that does not parse as a path, and `send`, `get` and `open` refused it as `absolute URL required: URL`, which hid why. They now report url.Parse's error, as net/http does (`invalid URL: parse "http://h/%zz": invalid URL escape "%zz"`); a URL that parses but has no scheme or host (`/inspect`) is still `absolute URL required`.
 ## 2026-11-14: fix: a client request to an IPv6 literal with a zone keeps the zone escaped
 
 - Kind: fix

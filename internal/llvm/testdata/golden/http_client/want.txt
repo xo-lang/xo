@@ -47,6 +47,8 @@ length: 5 text/plain; charset=utf-8
 slow: Timeout
 relative: InvalidUrl(absolute URL required: /inspect)
 not a url: InvalidUrl(absolute URL required: not a url)
+bad escape: InvalidUrl(parse "http://h/%zz": invalid URL escape "%zz")
+bad zone escape: InvalidUrl(parse "http://[fe80::1%25xo%2Fzone]:9/": invalid URL escape "%2F")
 refused: Connect
 done
 --- stderr

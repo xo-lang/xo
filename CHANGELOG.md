@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/http, every backend): `send`, `get` and `open` of a URL that does not parse report url.Parse's error, as net/http does (`invalid URL: parse "http://h/%zz": invalid URL escape "%zz"`), not `absolute URL required`. Affected: every release.
 - Security (std/http, native backends): an HTTP/2 connection gives the window for bodies it buffers before the handler runs back only while those bodies plus the window the client holds stay within four times `XO_HTTP_MAX_BODY`, so a client that keeps to the windows is slowed instead of refused, and the buffers no longer pass the budget by the client's window; REFUSED_STREAM remains for a client with no window left. Affected: 0.51.1 and earlier.
 - Fix (std/http, every backend): a client request to an IPv6 literal with a zone (`http://[fe80::1%25eth0]/`) dials it; the URL the client rebuilt dropped the zone's `%25` escape and failed as `invalid URL escape "%et"`. Affected: every release with RFC 6874 zones in client URLs.
 - Security (std/http, native backends): an HTTP/2 connection gives its flow control window back for a handle_stream body as the handler reads it (and for unread bytes when the stream closes), as Go does, so it holds at most 1 MiB of bodies no handler has read; before, 250 streams could park about 250 MiB. Affected: 0.51.1 and earlier.

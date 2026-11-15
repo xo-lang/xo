@@ -4133,7 +4133,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   }
   let raw = request_url_string(req)
   if req.url.scheme.is_empty() || req.url.host.is_empty() {
-    return Err(http.ClientErr.InvalidUrl(msg: "absolute URL required: ${raw}"))
+    return Err(http.ClientErr.InvalidUrl(msg: no_host_error(raw)))
   }
   if let Some(e) = denied(c, req) {
     return Err(e)
@@ -4663,6 +4663,14 @@ fn denied(c: Client, req: Request) -> http.ClientErr? {
   Some(http.ClientErr.Connect(msg: "denied by Net.only: ${hp}"))
 }
 
+/// Why a request URL without a scheme or host is refused: Go's
+/// url.Parse error when the text does not parse (net/http's
+/// NewRequest), else "absolute URL required".
+fn no_host_error(raw: Str) -> Str {
+  let e = http1.url_error(raw)
+  if e.is_empty() { "absolute URL required: ${raw}" } else { e }
+}
+
 fn (c: Client) send(req0: Request) -> http.Response ! http.ClientErr uses net.dial {
   if task.is_canceled() {
     return Err(http.ClientErr.Canceled)
@@ -4670,7 +4678,7 @@ fn (c: Client) send(req0: Request) -> http.Response ! http.ClientErr uses net.di
   let req = url_basic_auth(req0)
   let raw = request_url_string(req)
   if req.url.scheme.is_empty() || req.url.host.is_empty() {
-    return Err(http.ClientErr.InvalidUrl(msg: "absolute URL required: ${raw}"))
+    return Err(http.ClientErr.InvalidUrl(msg: no_host_error(raw)))
   }
   if let Some(e) = denied(c, req) {
     return Err(e)

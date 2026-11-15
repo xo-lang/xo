@@ -1630,6 +1630,16 @@ type fakeDispatcher interface {
 	isFake() bool
 }
 
+// noHostError is why a request URL without a scheme or host is refused:
+// url.Parse's error when the text does not parse (NewRequest's), else
+// "absolute URL required".
+func noHostError(rawURL string) string {
+	if _, err := url.Parse(rawURL); err != nil {
+		return err.Error()
+	}
+	return "absolute URL required: " + rawURL
+}
+
 // M_send is `c.send(req)`. Any status is a successful Response; only
 // transport failures are ClientErr.
 func (c Http_Client) M_send(tk *Task, req Http_Request) Result[Http_Response, Http_ClientErr] {
@@ -1639,7 +1649,7 @@ func (c Http_Client) M_send(tk *Task, req Http_Request) Result[Http_Response, Ht
 	req = urlBasicAuth(tk, req)
 	rawURL := requestURLString(req)
 	if req.F_url.F_scheme == "" || req.F_url.F_host == "" {
-		return Err[Http_Response](clientErr(1, "absolute URL required: "+rawURL))
+		return Err[Http_Response](clientErr(1, noHostError(rawURL)))
 	}
 	if e, denied := httpDenied(c.net, req.F_url); denied {
 		// an attenuated Net (Net.only, decision 0156)

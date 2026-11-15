@@ -125,7 +125,7 @@ func (c Http_Client) M_open(tk *Task, req Http_Request) Result[Http_ClientStream
 	}
 	rawURL := requestURLString(req)
 	if req.F_url.F_scheme == "" || req.F_url.F_host == "" {
-		return Err[Http_ClientStream](clientErr(1, "absolute URL required: "+rawURL))
+		return Err[Http_ClientStream](clientErr(1, noHostError(rawURL)))
 	}
 	if e, denied := httpDenied(c.net, req.F_url); denied {
 		return Err[Http_ClientStream](e)
