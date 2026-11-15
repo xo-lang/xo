@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -11,6 +12,7 @@ import (
 	"encoding/asn1"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -187,6 +189,35 @@ func x509Clamp(t time.Time) int64 {
 		return -9223372035
 	}
 	return s
+}
+
+// x509InvalidReasons are Go's InvalidReason names, in Go's order.
+var x509InvalidReasons = []string{"NotAuthorizedToSign", "Expired", "CaNotAuthorizedForThisName", "TooManyIntermediates", "IncompatibleUsage", "NameMismatch", "NameConstraintsWithoutSans", "UnconstrainedName", "TooManyConstraints", "CaNotAuthorizedForExtKeyUsage", "NoValidChains"}
+
+// x509KindOf is " {KIND}": the error's type as std/x509's CertErrKind
+// shows it (kind_text in the test).
+func x509KindOf(err error) string {
+	var ci x509.CertificateInvalidError
+	var he x509.HostnameError
+	var ua x509.UnknownAuthorityError
+	var ia x509.InsecureAlgorithmError
+	var cv x509.ConstraintViolationError
+	var uc x509.UnhandledCriticalExtension
+	switch {
+	case errors.As(err, &ci):
+		return fmt.Sprintf(" {CertificateInvalid %s: %s}", x509InvalidReasons[ci.Reason], ci.Detail)
+	case errors.As(err, &he):
+		return fmt.Sprintf(" {Hostname %s}", he.Host)
+	case errors.As(err, &ua):
+		return " {UnknownAuthority}"
+	case errors.As(err, &ia):
+		return fmt.Sprintf(" {InsecureAlgorithm %s}", x509.SignatureAlgorithm(ia))
+	case errors.As(err, &cv):
+		return " {ConstraintViolation}"
+	case errors.As(err, &uc):
+		return " {UnhandledCriticalExtension}"
+	}
+	return " {Other}"
 }
 
 func x509Want(der []byte) string {
@@ -383,7 +414,7 @@ func x509Verify(t goVerifyTest) string {
 		CurrentTime: time.Unix(t.currentTime, 0), KeyUsages: usages,
 	})
 	if err != nil {
-		return "error: " + err.Error()
+		return "error: " + err.Error() + x509KindOf(err)
 	}
 	var cs []string
 	for _, ch := range chains {
@@ -490,10 +521,40 @@ func x509Corpus() string {
 		for _, h := range cands {
 			want := "ok"
 			if err := c.VerifyHostname(h); err != nil {
-				want = err.Error()
+				want = err.Error() + x509KindOf(err)
 			}
 			fmt.Fprintf(&o, "  (%d, %s, %s),\n", i, xq(h), xq(want))
 			hosts++
+		}
+	}
+	o.WriteString("]\n")
+
+	// CheckSignatureFrom: each parseable certificate against the ones whose
+	// subject is its issuer, and against a few others
+	o.WriteString("\n/// (child index in PARSE_ROWS, parent index, Go's CheckSignatureFrom: ok or the error and its type)\nconst SIG_ROWS: List[(Int, Int, Str)] = [\n")
+	var parsed []*x509.Certificate
+	var at []int
+	for i, x := range rows {
+		if c, err := x509.ParseCertificate(x.der); err == nil {
+			parsed = append(parsed, c)
+			at = append(at, i)
+		}
+	}
+	sigs := 0
+	for a, c := range parsed {
+		for b, p := range parsed {
+			if sigs > 600 {
+				break
+			}
+			if !bytes.Equal(c.RawIssuer, p.RawSubject) && (a*31+b)%97 != 0 {
+				continue
+			}
+			want := "ok"
+			if err := c.CheckSignatureFrom(p); err != nil {
+				want = err.Error() + x509KindOf(err)
+			}
+			fmt.Fprintf(&o, "  (%d, %d, %s),\n", at[a], at[b], xq(want))
+			sigs++
 		}
 	}
 	o.WriteString("]\n")
@@ -658,10 +719,55 @@ test "verify_test.go's verifyTests verify as Go's Verify: the chains or the erro
     }
     let got = match l.verify(opts) {
       Ok(chains) => chains.map(fn(ch) { ch.map(fn(c) { c.subject.display() }).join(" > ") }).sort().join(" | ")
-      Err(e) => "error: ${e.display()}"
+      Err(e) => "error: ${e.display()}${kind_text(e.kind)}"
     }
     if got != want {
       bad.push("${name}:\n  got  ${got}\n  want ${want}")
+    }
+  }
+  expect(shown(bad)) == []
+}
+
+/// A CertErrKind as x509KindOf shows Go's error type.
+fn kind_text(k: x509.CertErrKind) -> Str {
+  match k {
+    Other => " {Other}"
+    CertificateInvalid(reason, detail) => " {CertificateInvalid ${reason_text(reason)}: ${detail}}"
+    Hostname(host) => " {Hostname ${host}}"
+    UnknownAuthority => " {UnknownAuthority}"
+    InsecureAlgorithm(algorithm) => " {InsecureAlgorithm ${algorithm}}"
+    ConstraintViolation => " {ConstraintViolation}"
+    UnhandledCriticalExtension => " {UnhandledCriticalExtension}"
+  }
+}
+
+fn reason_text(r: x509.InvalidReason) -> Str {
+  match r {
+    NotAuthorizedToSign => "NotAuthorizedToSign"
+    Expired => "Expired"
+    CaNotAuthorizedForThisName => "CaNotAuthorizedForThisName"
+    TooManyIntermediates => "TooManyIntermediates"
+    IncompatibleUsage => "IncompatibleUsage"
+    NameMismatch => "NameMismatch"
+    NameConstraintsWithoutSans => "NameConstraintsWithoutSans"
+    UnconstrainedName => "UnconstrainedName"
+    TooManyConstraints => "TooManyConstraints"
+    CaNotAuthorizedForExtKeyUsage => "CaNotAuthorizedForExtKeyUsage"
+    NoValidChains => "NoValidChains"
+  }
+}
+
+test "check_signature_from answers as Go's CheckSignatureFrom: ok or the error and its type" {
+  var bad: List[Str] = []
+  for (i, j, want) in SIG_ROWS {
+    let c = x509.parse(PARSE_ROWS[i].0).ok() ?? fault("parse")
+    let p = x509.parse(PARSE_ROWS[j].0).ok() ?? fault("parse")
+    let got = match c.check_signature_from(p) {
+      Ok(_) => "ok"
+      Err(e) => "${e.display()}${kind_text(e.kind)}"
+    }
+    if got != want {
+      bad.push("${PARSE_ROWS[i].2} from ${PARSE_ROWS[j].2}:\n  got  ${got}\n  want ${want}")
     }
   }
   expect(shown(bad)) == []
@@ -673,7 +779,7 @@ test "verify_hostname answers as Go's VerifyHostname: ok or the error" {
     let c = x509.parse(PARSE_ROWS[i].0).ok() ?? fault("parse")
     let got = match c.verify_hostname(host) {
       Ok(_) => "ok"
-      Err(e) => e.display()
+      Err(e) => "${e.display()}${kind_text(e.kind)}"
     }
     if got != want {
       bad.push("${PARSE_ROWS[i].2} ${host.quote()}:\n  got  ${got}\n  want ${want}")

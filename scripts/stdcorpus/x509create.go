@@ -596,6 +596,9 @@ func x509CreateCorpus() string {
 	}
 	o.WriteString("  ]\n}\n")
 
+	// verification errors of each of Go's types, on chains made here
+	ctVerifyKinds(&o, keys["ed"])
+
 	// requests: Go's, for the parse rows and the byte equality of Xo's
 	o.WriteString("\n/// (name, key, request template, Go's request)\nfn requests() -> List[(Str, Str, x509.RequestTemplate, Bytes)] {\n  [\n")
 	var csrDERs [][]byte
@@ -1149,4 +1152,158 @@ func ctCRLCreate(o *strings.Builder, keys map[string]crypto.Signer, rootDER []by
 			xq(r.name), strings.ToUpper(r.issuer), xq(r.key), xbytes(r.t.Number.Bytes()), r.t.ThisUpdate.Unix(), r.t.NextUpdate.Unix(), strings.Join(ents, ", "), ctExts(r.t.ExtraExtensions), xq(alg), xbytes(der), xq(msg))
 	}
 	o.WriteString("  ]\n}\n")
+}
+
+// ctVerifyKinds writes KIND_ROWS: chains Go's Verify refuses with each of
+// its error types (CertificateInvalidError's reasons, HostnameError,
+// UnknownAuthorityError, UnhandledCriticalExtension), and one it accepts.
+func ctVerifyKinds(o *strings.Builder, k crypto.Signer) {
+	nb, na, now := time.Unix(1735689600, 0), time.Unix(1767225600, 0), int64(1750000000)
+	mk := func(t, parent *x509.Certificate) *x509.Certificate {
+		if parent == nil {
+			parent = t
+		}
+		der := ctMust(x509.CreateCertificate(rand.Reader, t, parent, k.Public(), k))
+		c, err := x509.ParseCertificate(der)
+		if err != nil {
+			panic(err)
+		}
+		return c
+	}
+	ca := func(cn string, serial int64, f func(*x509.Certificate)) *x509.Certificate {
+		t := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: cn}, NotBefore: nb, NotAfter: na,
+			IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, MaxPathLen: -1}
+		if f != nil {
+			f(t)
+		}
+		return t
+	}
+	leafT := func(serial int64, f func(*x509.Certificate)) *x509.Certificate {
+		t := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: "leaf"}, NotBefore: nb, NotAfter: na,
+			DNSNames: []string{"leaf.example"}, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+		if f != nil {
+			f(t)
+		}
+		return t
+	}
+	rootT := ca("Kind Root", 1, nil)
+	root := mk(rootT, nil)
+	other := mk(ca("Other Root", 2, nil), nil)
+	pl0T := ca("PL0 Root", 3, func(t *x509.Certificate) { t.MaxPathLen, t.MaxPathLenZero = 0, true })
+	pl0 := mk(pl0T, nil)
+	interT := ca("Inter", 4, nil)
+	inter := mk(interT, pl0)
+	notCAT := &x509.Certificate{SerialNumber: big.NewInt(5), Subject: pkix.Name{CommonName: "Not CA"}, NotBefore: nb, NotAfter: na, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	notCA := mk(notCAT, root)
+	// a trust anchor's own name and policy constraints are not applied
+	// (RFC 5280 6.1): these are intermediates
+	ncT := ca("NC Inter", 6, func(t *x509.Certificate) { t.ExcludedDNSDomains = []string{"leaf.example"} })
+	nc := mk(ncT, rootT)
+	polT := ca("Policy Inter", 7, func(t *x509.Certificate) {
+		t.ExtraExtensions = []pkix.Extension{{Id: ctOID("2.5.29.36"), Critical: true, Value: []byte{0x30, 0x03, 0x80, 0x01, 0x00}}}
+	})
+	pol := mk(polT, rootT)
+	leaf := mk(leafT(10, nil), rootT)
+	type row struct {
+		name          string
+		leaf          *x509.Certificate
+		inters, roots []*x509.Certificate
+		at            int64
+		dns           string
+		usages        []x509.ExtKeyUsage
+	}
+	rows := []row{
+		{"a chain Go accepts", leaf, nil, []*x509.Certificate{root}, now, "leaf.example", nil},
+		{"Hostname: another name", leaf, nil, []*x509.Certificate{root}, now, "other.example", nil},
+		{"Hostname: an IP in brackets", leaf, nil, []*x509.Certificate{root}, now, "[::1]", nil},
+		{"Expired: after", leaf, nil, []*x509.Certificate{root}, 1800000000, "", nil},
+		{"Expired: before", leaf, nil, []*x509.Certificate{root}, 1700000000, "", nil},
+		{"UnknownAuthority", leaf, nil, []*x509.Certificate{other}, now, "", nil},
+		{"IncompatibleUsage", mk(leafT(11, func(t *x509.Certificate) { t.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth} }), rootT), nil, []*x509.Certificate{root}, now, "", nil},
+		{"TooManyIntermediates", mk(leafT(12, nil), interT), []*x509.Certificate{inter}, []*x509.Certificate{pl0}, now, "", nil},
+		// Go keeps NotAuthorizedToSign as the unknown authority's hint
+		{"UnknownAuthority, hint NotAuthorizedToSign", mk(leafT(13, nil), notCAT), []*x509.Certificate{notCA}, []*x509.Certificate{root}, now, "", nil},
+		{"CaNotAuthorizedForThisName", mk(leafT(14, nil), ncT), []*x509.Certificate{nc}, []*x509.Certificate{root}, now, "", nil},
+		{"NoValidChains: invalid policies", mk(leafT(15, nil), polT), []*x509.Certificate{pol}, []*x509.Certificate{root}, now, "", nil},
+		{"NoValidChains: invalid policies and usage", mk(leafT(16, nil), polT), []*x509.Certificate{pol}, []*x509.Certificate{root}, now, "", []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning}},
+		{"UnhandledCriticalExtension", mk(leafT(17, func(t *x509.Certificate) {
+			t.ExtraExtensions = []pkix.Extension{{Id: ctOID("1.2.3.4.5"), Critical: true, Value: []byte{5, 0}}}
+		}), rootT), nil, []*x509.Certificate{root}, now, "", nil},
+	}
+	ders := func(cs []*x509.Certificate) string {
+		var q []string
+		for _, c := range cs {
+			q = append(q, xbytes(c.Raw))
+		}
+		return "[" + strings.Join(q, ", ") + "]"
+	}
+	o.WriteString("\n/// (name, leaf, intermediates, roots, Unix time, DNS name, server auth (false: code signing), Go's Verify: ok or the error and its type)\nfn kind_rows() -> List[(Str, Bytes, List[Bytes], List[Bytes], Int, Str, Bool, Str)] {\n  [\n")
+	for _, r := range rows {
+		ip, rp := x509.NewCertPool(), x509.NewCertPool()
+		for _, c := range r.inters {
+			ip.AddCert(c)
+		}
+		for _, c := range r.roots {
+			rp.AddCert(c)
+		}
+		want := "ok"
+		if _, err := r.leaf.Verify(x509.VerifyOptions{Roots: rp, Intermediates: ip, DNSName: r.dns, CurrentTime: time.Unix(r.at, 0).UTC(), KeyUsages: r.usages}); err != nil {
+			want = err.Error() + x509KindOf(err)
+		}
+		fmt.Fprintf(o, "    (%s, %s, %s, %s, %d, %s, %v, %s),\n", xq(r.name), xbytes(r.leaf.Raw), ders(r.inters), ders(r.roots), r.at, xq(r.dns), r.usages == nil, xq(want))
+	}
+	o.WriteString("  ]\n}\n")
+	o.WriteString(`
+/// A CertErrKind as the generator's x509KindOf shows Go's error type.
+fn kind_text(k: x509.CertErrKind) -> Str {
+  match k {
+    Other => " {Other}"
+    CertificateInvalid(reason, detail) => " {CertificateInvalid ${reason_text(reason)}: ${detail}}"
+    Hostname(host) => " {Hostname ${host}}"
+    UnknownAuthority => " {UnknownAuthority}"
+    InsecureAlgorithm(algorithm) => " {InsecureAlgorithm ${algorithm}}"
+    ConstraintViolation => " {ConstraintViolation}"
+    UnhandledCriticalExtension => " {UnhandledCriticalExtension}"
+  }
+}
+
+fn reason_text(r: x509.InvalidReason) -> Str {
+  match r {
+    NotAuthorizedToSign => "NotAuthorizedToSign"
+    Expired => "Expired"
+    CaNotAuthorizedForThisName => "CaNotAuthorizedForThisName"
+    TooManyIntermediates => "TooManyIntermediates"
+    IncompatibleUsage => "IncompatibleUsage"
+    NameMismatch => "NameMismatch"
+    NameConstraintsWithoutSans => "NameConstraintsWithoutSans"
+    UnconstrainedName => "UnconstrainedName"
+    TooManyConstraints => "TooManyConstraints"
+    CaNotAuthorizedForExtKeyUsage => "CaNotAuthorizedForExtKeyUsage"
+    NoValidChains => "NoValidChains"
+  }
+}
+
+test "verify's errors have Go's text and Go's error type (decision 0643)" {
+  var bad: List[Str] = []
+  for (name, leaf, inters, roots, at, dns, server, want) in kind_rows() {
+    let l = x509.parse(leaf).ok() ?? fault("leaf")
+    let parse_all = fn(ds: List[Bytes]) -> List[x509.Certificate] { ds.map(fn(d) { x509.parse(d).ok() ?? fault("cert") }) }
+    let usages = if server { [x509.ExtKeyUsage.ServerAuth] } else { [x509.ExtKeyUsage.CodeSigning] }
+    let opts = x509.VerifyOptions{roots: parse_all(roots), intermediates: parse_all(inters), dns_name: dns, at: Time.from_unix(at), key_usages: usages}
+    let got = match l.verify(opts) {
+      Ok(_) => "ok"
+      Err(e) => "${e.display()}${kind_text(e.kind)}"
+    }
+    if got != want {
+      bad.push("${name}:\n  got  ${got}\n  want ${want}")
+    }
+  }
+  expect(shown(bad)) == []
+}
+
+test "a CertErr made without a kind is Other, so a literal still builds" {
+  let e = x509.CertErr{msg: "x509: something"}
+  expect(kind_text(e.kind)) == " {Other}"
+}
+`)
 }

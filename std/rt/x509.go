@@ -30,7 +30,35 @@ import (
 	"time"
 )
 
-func x509Err(m string) X509_CertErr { return X509_CertErr{F_msg: m} }
+// x509Err is an untyped error (kind Other: enum tags start at 1).
+func x509Err(m string) X509_CertErr { return X509_CertErr{F_msg: m, F_kind: X509_CertErrKind{Tag: 1}} }
+
+// x509ErrOf is err with Go's text and its error type as the kind
+// (decision 0643).
+func x509ErrOf(err error) X509_CertErr {
+	e := x509Err(textOf(err.Error()))
+	var ci x509.CertificateInvalidError
+	var he x509.HostnameError
+	var ua x509.UnknownAuthorityError
+	var ia x509.InsecureAlgorithmError
+	var cv x509.ConstraintViolationError
+	var uc x509.UnhandledCriticalExtension
+	switch {
+	case errors.As(err, &ci):
+		e.F_kind = X509_CertErrKind{Tag: 2, P: X509_CertErrKind_CertificateInvalid{F_reason: X509_InvalidReason{Tag: int(ci.Reason) + 1}, F_detail: textOf(ci.Detail)}}
+	case errors.As(err, &he):
+		e.F_kind = X509_CertErrKind{Tag: 3, P: X509_CertErrKind_Hostname{F_host: textOf(he.Host)}}
+	case errors.As(err, &ua):
+		e.F_kind = X509_CertErrKind{Tag: 4}
+	case errors.As(err, &ia):
+		e.F_kind = X509_CertErrKind{Tag: 5, P: X509_CertErrKind_InsecureAlgorithm{F_algorithm: textOf(x509.SignatureAlgorithm(ia).String())}}
+	case errors.As(err, &cv):
+		e.F_kind = X509_CertErrKind{Tag: 6}
+	case errors.As(err, &uc):
+		e.F_kind = X509_CertErrKind{Tag: 7}
+	}
+	return e
+}
 
 // x509Time is t as a Time, clamped to the times a Time holds (native's
 // time_of).
@@ -263,7 +291,7 @@ func x509Constraint(n int, zero bool) Option[int64] {
 func X509_parse(tk *Task, der Bytes) Result[X509_Certificate, X509_CertErr] {
 	c, err := x509.ParseCertificate([]byte(der))
 	if err != nil {
-		return Err[X509_Certificate](x509Err(textOf(err.Error())))
+		return Err[X509_Certificate](x509ErrOf(err))
 	}
 	return Ok[X509_Certificate, X509_CertErr](x509CertOf(tk, c))
 }
@@ -328,7 +356,7 @@ func (p *X509_CertPool) M_add(_ *Task, c X509_Certificate) Result[Unit, X509_Cer
 	}
 	g, err := x509Go(c)
 	if err != nil {
-		return Err[Unit](x509Err(textOf(err.Error())))
+		return Err[Unit](x509ErrOf(err))
 	}
 	if p.d == nil || p.n != len(p.d.certs) {
 		d := &x509PoolData{at: map[string]int{}}
@@ -369,14 +397,14 @@ func x509PoolAdd(to *x509.CertPool, p Option[X509_CertPool]) {
 func (c *X509_Certificate) M_verify(tk *Task, o X509_VerifyOptions) Result[List[List[X509_Certificate]], X509_CertErr] {
 	leaf, err := x509Go(*c)
 	if err != nil {
-		return Err[List[List[X509_Certificate]]](x509Err(textOf(err.Error())))
+		return Err[List[List[X509_Certificate]]](x509ErrOf(err))
 	}
 	roots := x509.NewCertPool()
 	x509PoolAdd(roots, o.F_root_pool)
 	for _, r := range o.F_roots.s {
 		g, err := x509Go(r)
 		if err != nil {
-			return Err[List[List[X509_Certificate]]](x509Err(textOf(err.Error())))
+			return Err[List[List[X509_Certificate]]](x509ErrOf(err))
 		}
 		roots.AddCert(g)
 	}
@@ -385,7 +413,7 @@ func (c *X509_Certificate) M_verify(tk *Task, o X509_VerifyOptions) Result[List[
 	for _, r := range o.F_intermediates.s {
 		g, err := x509Go(r)
 		if err != nil {
-			return Err[List[List[X509_Certificate]]](x509Err(textOf(err.Error())))
+			return Err[List[List[X509_Certificate]]](x509ErrOf(err))
 		}
 		inters.AddCert(g)
 	}
@@ -415,7 +443,7 @@ func (c *X509_Certificate) M_verify(tk *Task, o X509_VerifyOptions) Result[List[
 		KeyUsages:     usages,
 	})
 	if err != nil {
-		return Err[List[List[X509_Certificate]]](x509Err(textOf(err.Error())))
+		return Err[List[List[X509_Certificate]]](x509ErrOf(err))
 	}
 	var out []List[X509_Certificate]
 	for _, ch := range chains {
@@ -434,7 +462,7 @@ func (c *X509_Certificate) M_verify_hostname(_ *Task, host string) Result[Unit, 
 		err = g.VerifyHostname(string(host))
 	}
 	if err != nil {
-		return Err[Unit](x509Err(textOf(err.Error())))
+		return Err[Unit](x509ErrOf(err))
 	}
 	return Ok[Unit, X509_CertErr](Unit{})
 }
@@ -448,7 +476,7 @@ func (c *X509_Certificate) M_check_signature_from(_ *Task, parent X509_Certifica
 		}
 	}
 	if err != nil {
-		return Err[Unit](x509Err(textOf(err.Error())))
+		return Err[Unit](x509ErrOf(err))
 	}
 	return Ok[Unit, X509_CertErr](Unit{})
 }
@@ -729,12 +757,12 @@ func X509_create_certificate(tk *Task, r Rand, t X509_Template, pub Crypto_Publi
 	}
 	tmpl, err := x509Template(t)
 	if err != nil {
-		return Err[X509_Certificate](x509Err(textOf(err.Error())))
+		return Err[X509_Certificate](x509ErrOf(err))
 	}
 	par := tmpl
 	if parent.Some {
 		if par, err = x509Go(parent.V); err != nil {
-			return Err[X509_Certificate](x509Err(textOf(err.Error())))
+			return Err[X509_Certificate](x509ErrOf(err))
 		}
 	}
 	// r is read as the native code reads it: the serial's 20 bytes, then
@@ -750,7 +778,7 @@ func X509_create_certificate(tk *Task, r Rand, t X509_Template, pub Crypto_Publi
 	x509ReadSalt(tk, r, tmpl.SignatureAlgorithm)
 	der, err := x509.CreateCertificate(cryptorand.Reader, tmpl, par, pub.k, key.k)
 	if err != nil {
-		return Err[X509_Certificate](x509Err(textOf(err.Error())))
+		return Err[X509_Certificate](x509ErrOf(err))
 	}
 	return X509_parse(tk, Bytes(der))
 }
@@ -801,7 +829,7 @@ func x509Exts(es []pkix.Extension) List[X509_Extension] {
 func X509_parse_revocation_list(tk *Task, der Bytes) Result[X509_RevocationList, X509_CertErr] {
 	l, err := x509.ParseRevocationList([]byte(der))
 	if err != nil {
-		return Err[X509_RevocationList](x509Err(textOf(err.Error())))
+		return Err[X509_RevocationList](x509ErrOf(err))
 	}
 	var revoked []X509_RevokedCertificate
 	for _, e := range l.RevokedCertificateEntries {
@@ -831,7 +859,7 @@ func X509_parse_revocation_list(tk *Task, der Bytes) Result[X509_RevocationList,
 // by issuer and signed with key.
 func X509_create_revocation_list(tk *Task, r Rand, t X509_RevocationListTemplate, issuer X509_Certificate, key Crypto_PrivateKey) Result[X509_RevocationList, X509_CertErr] {
 	fail := func(err error) Result[X509_RevocationList, X509_CertErr] {
-		return Err[X509_RevocationList](x509Err(textOf(err.Error())))
+		return Err[X509_RevocationList](x509ErrOf(err))
 	}
 	var iss *x509.Certificate
 	if len(issuer.F_raw) > 0 {
@@ -904,7 +932,7 @@ func (l *X509_RevocationList) M_check_signature_from(_ *Task, issuer X509_Certif
 		}
 	}
 	if err != nil {
-		return Err[Unit](x509Err(textOf(err.Error())))
+		return Err[Unit](x509ErrOf(err))
 	}
 	return Ok[Unit, X509_CertErr](Unit{})
 }
@@ -951,7 +979,7 @@ func (q *X509_CertificateRequest) M_check_signature(*Task) Result[Unit, X509_Cer
 		err = g.CheckSignature()
 	}
 	if err != nil {
-		return Err[Unit](x509Err(textOf(err.Error())))
+		return Err[Unit](x509ErrOf(err))
 	}
 	return Ok[Unit, X509_CertErr](Unit{})
 }
@@ -970,13 +998,13 @@ func X509_create_request(tk *Task, r Rand, t X509_RequestTemplate, key Crypto_Pr
 	ct, err := x509Template(X509_Template{F_subject: t.F_subject, F_dns_names: t.F_dns_names, F_ip_addresses: t.F_ip_addresses,
 		F_email_addresses: t.F_email_addresses, F_uris: t.F_uris, F_extra_extensions: t.F_extra_extensions})
 	if err != nil {
-		return Err[X509_CertificateRequest](x509Err(textOf(err.Error())))
+		return Err[X509_CertificateRequest](x509ErrOf(err))
 	}
 	tmpl := &x509.CertificateRequest{Subject: ct.Subject, RawSubject: ct.RawSubject, DNSNames: ct.DNSNames, EmailAddresses: ct.EmailAddresses,
 		IPAddresses: ct.IPAddresses, URIs: ct.URIs, ExtraExtensions: ct.ExtraExtensions}
 	der, err := x509.CreateCertificateRequest(cryptorand.Reader, tmpl, key.k)
 	if err != nil {
-		return Err[X509_CertificateRequest](x509Err(textOf(err.Error())))
+		return Err[X509_CertificateRequest](x509ErrOf(err))
 	}
 	return X509_parse_request(tk, Bytes(der))
 }
@@ -1071,7 +1099,7 @@ func x509OidErr() Result[X509_Oid, X509_CertErr] {
 
 func x509OidOf(o x509.OID, err error) Result[X509_Oid, X509_CertErr] {
 	if err != nil {
-		return Err[X509_Oid](x509Err(textOf(err.Error())))
+		return Err[X509_Oid](x509ErrOf(err))
 	}
 	b, _ := o.MarshalBinary()
 	return Ok[X509_Oid, X509_CertErr](X509_Oid{F_der: Bytes(b)})

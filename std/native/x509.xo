@@ -474,7 +474,8 @@ fn certificate_verify(c: x509.Certificate, opts: x509.VerifyOptions) -> List[Lis
   let now = opts.at.unix()
   let (r, chains) = xv.verify_all(leaf, inters, roots, opts.dns_name, now, usages)
   if chains.is_empty() {
-    return Err(err(xv.full_text(r, leaf, opts.dns_name, now)))
+    let text = xv.full_text(r, leaf, opts.dns_name, now)
+    return Err(x509.CertErr{msg: text, kind: verify_kind(r, text, opts.dns_name)})
   }
   var out: List[List[x509.Certificate]] = []
   for ch in chains {
@@ -492,7 +493,7 @@ fn certificate_verify_hostname(c: x509.Certificate, host: Str) -> () ! x509.Cert
   if xv.host_ok(leaf, host) {
     return Ok(())
   }
-  Err(err(xv.full_text(xv.Outcome{code: 7, chain: [], bad: leaf, hint: ""}, leaf, host, 0)))
+  Err(x509.CertErr{msg: xv.full_text(xv.Outcome{code: 7, chain: [], bad: leaf, hint: ""}, leaf, host, 0), kind: x509.CertErrKind.Hostname(host: hostname_err_host(host))})
 }
 
 fn certificate_check_signature_from(c: x509.Certificate, parent: x509.Certificate) -> () ! x509.CertErr {
@@ -500,9 +501,50 @@ fn certificate_check_signature_from(c: x509.Certificate, parent: x509.Certificat
   let p = lcert(parent)?
   let e = lx.check_from(child, p)
   if e != "" {
-    return Err(err(e))
+    return Err(x509.CertErr{msg: e, kind: signature_kind(e)})
   }
   Ok(())
+}
+
+/// Go's error type of a verification's outcome (decision 0643).
+fn verify_kind(r: xv.Outcome, text: Str, host: Str) -> x509.CertErrKind {
+  let invalid = fn(reason: x509.InvalidReason, detail: Str) -> x509.CertErrKind { x509.CertErrKind.CertificateInvalid(reason: reason, detail: detail) }
+  match r.code {
+    1 => x509.CertErrKind.UnknownAuthority
+    2 => invalid(x509.InvalidReason.Expired, text.cut_prefix("x509: certificate has expired or is not yet valid: ") ?? "")
+    3 => invalid(x509.InvalidReason.NotAuthorizedToSign, "")
+    4 => invalid(x509.InvalidReason.TooManyIntermediates, "")
+    5 => invalid(x509.InvalidReason.CaNotAuthorizedForThisName, r.hint)
+    6 => invalid(x509.InvalidReason.IncompatibleUsage, "")
+    7 => x509.CertErrKind.Hostname(host: hostname_err_host(host))
+    8 => x509.CertErrKind.UnhandledCriticalExtension
+    10 => invalid(x509.InvalidReason.NoValidChains, r.hint)
+    _ => x509.CertErrKind.Other
+  }
+}
+
+/// HostnameError.Host: an IP address in brackets without them, else the
+/// host as asked (Go's VerifyHostname).
+fn hostname_err_host(h: Str) -> Str {
+  if h.len() >= 3 && h.starts_with("[") && h.ends_with("]") {
+    let inner = h[1..(h.len() - 1)]
+    if !inner.contains("%") && netip.parse_addr(inner).is_ok() {
+      return inner
+    }
+  }
+  h
+}
+
+/// Go's error type of a signature check's text: ConstraintViolationError
+/// and InsecureAlgorithmError have fixed texts.
+fn signature_kind(e: Str) -> x509.CertErrKind {
+  if e == "x509: invalid signature: parent certificate cannot sign this kind of certificate" {
+    return x509.CertErrKind.ConstraintViolation
+  }
+  match e.cut_prefix("x509: cannot verify signature: insecure algorithm ") {
+    Some(a) => x509.CertErrKind.InsecureAlgorithm(algorithm: a)
+    None => x509.CertErrKind.Other
+  }
 }
 
 fn system_roots(fs: Fs) -> List[x509.Certificate] ! x509.CertErr uses fs {
@@ -972,7 +1014,7 @@ fn revocationlist_check_signature_from(l: x509.RevocationList, issuer: x509.Cert
   let p = lcert(issuer)?
   let e = lx.crl_check_from(lx.parse_crl(l.raw), p)
   if e != "" {
-    return Err(err(e))
+    return Err(x509.CertErr{msg: e, kind: signature_kind(e)})
   }
   Ok(())
 }

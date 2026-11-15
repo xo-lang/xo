@@ -7550,7 +7550,17 @@ fn oid_from_binary(der: Bytes) -> Oid ! CertErr
 fn (o: Oid) display() -> Str
 fn (o: Oid) equal_asn1_oid(arcs: List[Int]) -> Bool
 fn (o: Oid) to_asn1_oid() -> List[Int]?
-struct CertErr { msg: Str }
+struct CertErr { msg: Str, kind: CertErrKind = CertErrKind.Other }
+enum CertErrKind {
+  Other, CertificateInvalid(reason: InvalidReason, detail: Str), Hostname(host: Str),
+  UnknownAuthority, InsecureAlgorithm(algorithm: Str), ConstraintViolation,
+  UnhandledCriticalExtension
+}
+enum InvalidReason {
+  NotAuthorizedToSign, Expired, CaNotAuthorizedForThisName, TooManyIntermediates,
+  IncompatibleUsage, NameMismatch, NameConstraintsWithoutSans, UnconstrainedName,
+  TooManyConstraints, CaNotAuthorizedForExtKeyUsage, NoValidChains
+}
 fn (e: CertErr) display() -> Str
 fn parse(der: Bytes) -> Certificate ! CertErr
 fn parse_pem(pem: Bytes) -> List[Certificate] ! CertErr
@@ -7688,6 +7698,15 @@ fn check(os: Os, pem: Bytes, roots: Bytes) -> () ! Error uses clock {
   text (`"x509: certificate signed by unknown authority"`, `"x509:
   certificate has expired or is not yet valid: current time ... is
   after ..."`, ...). `check_signature_from` is Go's CheckSignatureFrom.
+- `CertErr.kind` is Go's error type (decision 0643), for what Go's
+  callers do with errors.As: `CertificateInvalid` (Go's
+  CertificateInvalidError: its Reason and Detail, such as Expired with
+  "current time ... is after ..."), `Hostname` (HostnameError: the host
+  asked for, an IP without its brackets), `UnknownAuthority`,
+  `InsecureAlgorithm` (Go's name of the algorithm),
+  `ConstraintViolation`, `UnhandledCriticalExtension`; `Other`, the
+  default, for an error Go returns untyped. `msg` is Go's text either way.
+  `verify`, `verify_hostname` and both `check_signature_from` set it.
 - `Oid` is Go's x509.OID: an object identifier whose arcs may be any
   size, held as its DER contents (`der`, Go's MarshalBinary); `==` is
   Go's Equal and the empty Oid is Go's zero `OID{}`. `parse_oid` is

@@ -189,6 +189,39 @@ fn (o: Oid) to_asn1_oid() -> List[Int]?
 /// `x509: certificate signed by unknown authority`, ...).
 struct CertErr {
   msg: Str
+  /// Which of Go's error types this is (decision 0643); Other for an
+  /// error Go returns untyped (a parse error, errors.New). The text is msg
+  /// either way.
+  kind: CertErrKind = CertErrKind.Other
+}
+
+/// Go's x509 error types, for errors.As: CertificateInvalidError (the
+/// reason and Detail), HostnameError (the host it was asked for),
+/// UnknownAuthorityError, InsecureAlgorithmError (Go's name of the
+/// algorithm), ConstraintViolationError and UnhandledCriticalExtension.
+enum CertErrKind {
+  Other
+  CertificateInvalid(reason: InvalidReason, detail: Str)
+  Hostname(host: Str)
+  UnknownAuthority
+  InsecureAlgorithm(algorithm: Str)
+  ConstraintViolation
+  UnhandledCriticalExtension
+}
+
+/// Go's InvalidReason, in Go's order.
+enum InvalidReason {
+  NotAuthorizedToSign
+  Expired
+  CaNotAuthorizedForThisName
+  TooManyIntermediates
+  IncompatibleUsage
+  NameMismatch
+  NameConstraintsWithoutSans
+  UnconstrainedName
+  TooManyConstraints
+  CaNotAuthorizedForExtKeyUsage
+  NoValidChains
 }
 
 fn (e: CertErr) display() -> Str
