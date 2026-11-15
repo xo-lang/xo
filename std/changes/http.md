@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-14: fix: a client request to an IPv6 literal with a zone keeps the zone escaped
+
+- Kind: fix
+- Commit: this push
+- Found by: aws-43, checking the SSRF impact of the url zone fix (be1a6c8d7) (`client.get("http://[fe80::1%25eth0]/y")`)
+- Go reference: net/url URL.String (a host's `%` escaped as `%25`, encodeHost)
+- Test: golden http_client_zone (native and Go backends; fails before the fix on both: `invalid URL escape "%xo"`)
+- Affected: every release with RFC 6874 zones in client URLs (every backend)
+- Shipped in: not yet released
+
+The client rebuilds the URL it sends from the parsed URL, whose host holds the zone unescaped (`fe80::1%eth0`), and wrote it back inside brackets as it was, so `http://[fe80::1%25eth0]/y` became `http://[fe80::1%eth0]/y` and the request failed as `invalid URL: parse ...: invalid URL escape "%et"` before any dial. The rebuilt text now escapes the host as Go's URL.String does (`%25`, and any other byte a host does not keep), so it parses back to the same host and the request dials it, as net/http's does.
+
 ## 2026-11-14: feature: Client.with_max_idle_per_host (Go's Transport.MaxIdleConnsPerHost)
 
 - Kind: feature

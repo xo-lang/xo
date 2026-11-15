@@ -1767,7 +1767,9 @@ func urlStringPath(u Http_Url, path string) string {
 		b.WriteString(u.F_scheme + "://")
 	}
 	if strings.Contains(u.F_host, ":") && !strings.HasPrefix(u.F_host, "[") {
-		b.WriteString("[" + u.F_host + "]")
+		// the zone escaped as URL.String escapes a host: fe80::1%eth0 is
+		// fe80::1%25eth0, which parses back to the same host
+		b.WriteString(strings.TrimPrefix((&url.URL{Host: "[" + u.F_host + "]"}).String(), "//"))
 	} else {
 		b.WriteString(u.F_host)
 	}

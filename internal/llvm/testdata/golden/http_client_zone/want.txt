@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+http://[fe80::1%25xozone0]:9/a: a dial error
+http://[fe80::1%25xozone0]:9/b?q=1: a dial error
+http://[fe80::1%25xoeth9]/y: a dial error
+--- stderr

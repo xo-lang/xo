@@ -1,0 +1,23 @@
+// A client request to an IPv6 literal with a zone (RFC 6874, `%25`):
+// the URL the client sends is rebuilt from the parsed host, whose zone
+// is unescaped (`fe80::1%xozone0`), so the rebuilt text escapes it again
+// as Go's URL.String does and parses back to the same host. Before, the
+// rebuilt `[fe80::1%xozone0]` failed as `invalid URL escape "%xo"`. The
+// zone names no interface, so the dial fails, as net/http's does.
+use std/http
+
+fn kind(r: Result[http.Response, http.ClientErr]) -> Str {
+  match r {
+    Ok(_) => "a response"
+    Err(http.ClientErr.InvalidUrl(m)) => "invalid URL: ${m}"
+    Err(http.ClientErr.Connect(_)) => "a dial error"
+    Err(e) => "another error: ${e}"
+  }
+}
+
+fn main(os: Os) {
+  let c = http.client(os.net, 2s)
+  for raw in ["http://[fe80::1%25xozone0]:9/a", "http://[fe80::1%25xozone0]:9/b?q=1", "http://[fe80::1%25xoeth9]/y"] {
+    os.stdio.println("${raw}: ${kind(c.get(raw))}")
+  }
+}

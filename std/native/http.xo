@@ -4591,6 +4591,32 @@ fn request_url_string(req: Request) -> Str {
   url_string_path(req.url with {query: {}}, path) + "?" + req.raw_query
 }
 
+/// An IPv6 host's text in a URL: its zone (after `%`) escaped as Go's
+/// URL.String escapes a host (encodeHost), so `fe80::1%eth0` is
+/// `fe80::1%25eth0` and the text parses back to the same host.
+fn host_escape(h: Str) -> Str {
+  if !h.contains("%") {
+    return h
+  }
+  let hex = "0123456789ABCDEF"
+  var b = BytesBuilder.new()
+  for c in h.bytes() {
+    let k = Int(c)
+    var keep = (k >= 97 && k <= 122) || (k >= 65 && k <= 90) || (k >= 48 && k <= 57)
+    for d in "-_.~!$&'()*+,;=:[]<>\"".bytes() {
+      keep = keep || d == c
+    }
+    if keep {
+      b.write_byte(c)
+    } else {
+      b.write_byte(37)
+      b.write_byte(hex.bytes()[k >> 4])
+      b.write_byte(hex.bytes()[k & 15])
+    }
+  }
+  b.freeze().to_str_lossy()
+}
+
 /// The text of a URL (std/rt's urlString).
 fn url_string(u: http.Url) -> Str { url_string_path(u, u.path) }
 
@@ -4601,7 +4627,7 @@ fn url_string_path(u: http.Url, path: Str) -> Str {
     s = u.scheme + "://"
   }
   // an IPv6 host is stored without its brackets: a port or a path after it needs them
-  s = s + (if u.host.contains(":") && !u.host.starts_with("[") { "[" + u.host + "]" } else { u.host })
+  s = s + (if u.host.contains(":") && !u.host.starts_with("[") { "[" + host_escape(u.host) + "]" } else { u.host })
   match u.port {
     Some(p) => s = s + ":${p}"
     None => ()
