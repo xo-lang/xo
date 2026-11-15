@@ -1789,7 +1789,20 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       } else {
         // a giant function's module (split_build does the same per module)
         let gf = if tgoarch == "arm64" && split.opt != "-O0" && ir_has_giant_fn(code) { giant_fn_flags(lctx.tgoos, tgoarch, lto1) } else { [] }
-        cc_build(os, lctx, cc, [split.opt] + single_lto_flags(lto1) + ["-Wno-override-module"] + gf + (if lto1 == "none" { isel_flags(split.opt, tgoarch) } else { [] }) + lflags, srcs, st.bin)
+        let cflags = [split.opt] + single_lto_flags(lto1) + ["-Wno-override-module"] + gf + (if lto1 == "none" { isel_flags(split.opt, tgoarch) } else { [] })
+        if dsym && lto1 == "none" {
+          // the IR compiled to objects in dir first: given a .ll, clang's
+          // one step link compiled it to a temporary object it deleted,
+          // the only file the debug map named, so dsymutil found no
+          // DWARF and an -O0 build had no source lines (2026-11-15; 0.51.1
+          // too). With LTO, lto_object_flags keeps the object
+          match ir_objects(os, cc, cflags, lls) {
+            Ok(objs) => cc_build(os, lctx, cc, cflags + lflags, objs + lk.srcs, st.bin)
+            Err(e) => e
+          }
+        } else {
+          cc_build(os, lctx, cc, cflags + lflags, srcs, st.bin)
+        }
       }
       if !msg.is_empty() {
         os.stdio.eprint(msg)

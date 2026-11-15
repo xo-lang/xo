@@ -1,0 +1,9 @@
+fn add(a: Int, b: Int) -> Int {
+  let c = a * 2
+  c + b
+}
+
+fn main(os: Os) {
+  let n = add(3, 4)
+  os.stdio.println("${n}")
+}

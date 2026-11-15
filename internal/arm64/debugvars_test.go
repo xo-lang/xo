@@ -881,6 +881,13 @@ func TestDebugTypes(t *testing.T) {
 		{"llvm", []string{"--backend=llvm"}, []string{"frame variable *xs", "frame variable m", "frame variable it", "frame select 0", "frame variable name m"},
 			[]string{"(List[Int].obj) *xs = (count = 1, len = 3, cap = 3", "(Item) it = {", "len = 3", "tags = 0x", "(Str) name = {", "len = 5", "n = 2"},
 			[]string{"(Map[Str, Int]) m = {\n  keys = NULL\n  vals = NULL\n  live = NULL\n  slots = NULL\n  n = 0"}},
+		// LLVM at -O0, without LTO: the debug map names the objects xo
+		// keeps in the build directory (link.xo ir_objects); from a .ll
+		// clang's one step link named a temporary object it deleted, so
+		// the program had no source lines and main.xo:19 no location
+		// (2026-11-15, 0.51.1 too)
+		{"llvm-O0", []string{"--backend=llvm", "--opt=O0"}, []string{"frame variable *xs", "frame select 0", "frame variable name m"},
+			[]string{"(List[Int].obj) *xs = (count = 1, len = 3, cap = 3", "(Str) name = {", "len = 5", "n = 2"}, nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			bin := filepath.Join(out, c.name)

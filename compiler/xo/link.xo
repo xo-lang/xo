@@ -179,6 +179,24 @@ fn lto_object_flags(os: Os, dir: Str, lto: Str) -> List[Str] {
   }
 }
 
+/// Each IR file of lls compiled with cc and flags to an object beside it
+/// (NAME.ll to NAME.o), for a link whose debug map must name files that
+/// stay (cc_dsym); the objects, or the compiler's output of the failure.
+fn ir_objects(os: Os, cc: Str, flags: List[Str], lls: List[Str]) -> Result[List[Str], Str] {
+  var objs: List[Str] = []
+  for ll in lls {
+    let obj = ll.trim_suffix(".ll") + ".o"
+    match os.proc.run(cc, flags + ["-c", ll, "-o", obj]) {
+      Ok(r) => if r.code != 0 {
+        return Err("${r.stdout.to_str() ?? ""}${r.stderr.to_str() ?? ""}")
+      }
+      Err(e) => return Err("${cc}: ${e}\n")
+    }
+    objs.push(obj)
+  }
+  Ok(objs)
+}
+
 fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: Str) -> Str {
   // libraries of `use c` go after the objects (splitLibs)
   var flags: List[Str] = []
