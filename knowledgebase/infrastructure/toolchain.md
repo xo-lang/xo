@@ -2223,8 +2223,14 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   minutes); the newest cached manifest within `XO_LLVM_IR_BACK` (default
   30) commits of the base is used instead, which selects the base's
   goldens plus those the commits between changed (a superset), and the
-  log line names it. Each gate's selection time and golden count are in
-  its times.tsv (see "Gate test areas").
+  log line names it. Since 2026-11-15 only when the commits from that
+  ancestor to the base change no IR input (gate.sh ir_inputs_changed:
+  compiler/ but compiler/wasm and compiler/macho, std's .xo sources but
+  tests and std/rt); otherwise the base's own manifest is built, with
+  ir_jobs' job count: a host 1 gate of a comment change took a manifest
+  25 commits back, across compiler commits that changed nearly every
+  golden's IR, and ran 722 of 728 goldens. Each gate's selection time
+  and golden count are in its times.tsv (see "Gate test areas").
 - **Gate test areas** (owner's test-time plan, lead, 2026-11-14):
   `scripts/gate-areas.txt` lists the slow top-level tests of
   internal/llvm, internal/arm64 and cmd/xo with the changed paths that

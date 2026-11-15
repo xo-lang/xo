@@ -553,6 +553,14 @@ ir_mem_watch() {
     sleep 2
   done
 }
+# ir_inputs_changed A B: whether the commits A..B change what a golden's
+# LLVM IR is made from: the compiler (but its wasm and Mach-O linker
+# parts) or std's sources (not tests, docs, the Go runtime std/rt)
+ir_inputs_changed() {
+  git diff --name-only "$1" "$2" -- compiler std |
+    grep -v -E '^compiler/(wasm|macho)/|_test\.xo$|\.md$|^std/(rt|changes|evidence)/' |
+    grep -q -E '^compiler/|^std/.*\.xo$'
+}
 llvm_goldens() {
   sel_note="$logs/llvm-select.txt"
   if [ "${XO_GATE_LLVM:-}" = all ]; then
@@ -577,11 +585,21 @@ llvm_goldens() {
   # plus those the commits between them changed, a superset, so nothing the
   # base would select is lost. Within XO_LLVM_IR_BACK (default 30) commits
   # of the base; an older one is replaced by the base's own.
+  # Only an ancestor whose commits up to the base change no IR input
+  # (ir_inputs_changed): a host 1 gate of a comment change took the
+  # manifest 25 commits back, across compiler commits that changed
+  # nearly every golden's IR, and ran 722 of 728 goldens (lead,
+  # 2026-11-15; bench/results/gate-time-2026-11-14.md); the base's own
+  # manifest is built then.
   ib=""
   if [ ! -s "$bm" ]; then
     for c in $(git rev-list --max-count="${XO_LLVM_IR_BACK:-30}" "$base"); do
       if [ -s "$cache/$c-$mcode.txt" ]; then
-        bm="$cache/$c-$mcode.txt"; ib=" (manifest of $(git rev-parse --short "$c"), $(git rev-list --count "$c..$base") commits before the base)"
+        if ir_inputs_changed "$c" "$base"; then
+          echo "llvm IR manifest: $(git rev-parse --short "$c")'s is $(git rev-list --count "$c..$base") commits before the base, across IR input changes: the base's own is built" >&2
+        else
+          bm="$cache/$c-$mcode.txt"; ib=" (manifest of $(git rev-parse --short "$c"), $(git rev-list --count "$c..$base") commits before the base, no IR input changed between)"
+        fi
         break
       fi
     done
@@ -593,7 +611,7 @@ llvm_goldens() {
     if git worktree add -q --detach "$pw/tree" "$base" >"$logs/llvm-ir-base.txt" 2>&1 &&
       cp internal/llvm/golden_select_test.go "$pw/tree/internal/llvm/" &&
       (cd "$pw/tree" && go run ./scripts/xobuild) >>"$logs/llvm-ir-base.txt" 2>&1 &&
-      (cd "$pw/tree" && XO_CLI=$pw/tree/bin/xo XO_LLVM_IR_MANIFEST="$bm.tmp$$" go test -count=1 -timeout 60m -parallel 4 -run '^TestGoldenIRManifest$' ./internal/llvm) >>"$logs/llvm-ir-base.txt" 2>&1; then
+      (cd "$pw/tree" && XO_CLI=$pw/tree/bin/xo XO_LLVM_IR_MANIFEST="$bm.tmp$$" go test -count=1 -timeout 60m -parallel "${XO_GATE_IR_PARALLEL:-$(ir_jobs)}" -run '^TestGoldenIRManifest$' ./internal/llvm) >>"$logs/llvm-ir-base.txt" 2>&1; then
       mv "$bm.tmp$$" "$bm"
     fi
     rm -f "$bm.tmp$$"
