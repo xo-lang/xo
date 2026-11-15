@@ -683,10 +683,12 @@ at once. A plain gate keeps 10.
 Lease history (offload-gate.sh): every gate that reaches its verdict (rc
 0 or 1) appends a row to `$LEAD/notes/gate-history.tsv` (date, host, the
 sorted steps, cold or warm xo, seconds from its lease's start in
-heavyd.log to its end, rc). With `OFFGATE_HIST=1` and 5 runs of the same
-steps and xo state in 30 days, the lease is 1.3 times their p90 (at least
-10 minutes) instead of the step formula; it stays off until the lead has
-reviewed why gates hit their ceiling (rc 124).
+heavyd.log to its end, rc). With 5 passing runs of the same steps and xo
+state in 30 days, the lease is 1.3 times their p90 (at least 10 minutes)
+instead of the step formula. On by default since the xobuild watchdog
+(2026-11-15: the rc 124 review found stalled builds, not short ceilings);
+rc 1 rows are kept but not counted (fail fast ends them early);
+`OFFGATE_HIST=0` uses the formula alone.
 
 Stalled builds and the seed (lead, 2026-11-15; the 2026-11 review found
 18 gates at the ceiling with no xobuild line, 15 while the hosts' seeds

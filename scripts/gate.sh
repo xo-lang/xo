@@ -891,6 +891,64 @@ done
 if { [ "${XO_GATE_REPO:-1}" != 0 ] || [ "$has_repo" = 1 ]; } && [ "$has_short" = 0 ]; then
   full repo ./internal/repotest
 fi
+# The pre-check (lead, owner approved 2026-11-15, gate-failures-2026-11.md
+# (F): 11 of 28 failed gates in 2026-11 failed a check of seconds, then
+# ran their llvm and arm64 suites 30 to 90 minutes before reporting):
+# after repo and before the steps, one after another, the host's free
+# disk (hostcheck) and the quick checks the paths call for: stdgen
+# -check, TestCLIHelp and TestStdChecks, which otherwise run after the
+# steps. With fail fast, a failure here ends the gate in minutes.
+# XO_GATE_PRECHECK=0 leaves them after the steps; each keeps its own
+# switch (XO_GATE_STDGEN, XO_GATE_HELP, XO_GATE_STDCHECKS).
+pre_done=" "
+pre_ran() { case "$pre_done" in *" $1 "*) return 0 ;; esac; return 1; }
+stdgen_check() {
+  if go run ./scripts/stdgen -check >"$logs/stdgen.txt" 2>&1; then
+    echo "stdgen: current"
+  else
+    failed=1
+    echo "stdgen: FAIL: std/rt's generated Go is stale: run go run ./scripts/stdsync and commit ($logs/stdgen.txt)"
+    grep -E 'stale|error' "$logs/stdgen.txt" | head -5
+  fi
+}
+stdchecks_check() {
+  if go test -count=1 -run '^TestStdChecks$' ./cmd/xo >"$logs/stdchecks.txt" 2>&1; then
+    echo "stdchecks: ok"
+  else
+    failed=1; echo "stdchecks: FAIL ($logs/stdchecks.txt)"; grep -E 'stdcheck_test.go' "$logs/stdchecks.txt" | head -8
+  fi
+}
+# hostcheck: XO_GATE_MIN_FREE_GB (default 10) free on the file systems of
+# TMPDIR, the logs and the worktree, else HOSTCHECK-FAIL (a full disk
+# failed jsondec's gate in 2026-11 after its steps had run); many
+# TIME_WAIT sockets (Linux ss) only print a warning
+hostcheck() {
+  local d free tw min=${XO_GATE_MIN_FREE_GB:-10}
+  for d in "${TMPDIR:-/tmp}" "$logs" "$wt"; do
+    free=$(df -Pk "$d" 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }')
+    [ -n "$free" ] || continue
+    if [ "$free" -lt "$min" ]; then
+      failed=1
+      echo "HOSTCHECK-FAIL: $free GB free on the file system of $d, under $min (XO_GATE_MIN_FREE_GB): infrastructure, not the change; free space or gate elsewhere"
+      return
+    fi
+  done
+  if command -v ss >/dev/null 2>&1; then
+    tw=$(ss -Htan state time-wait 2>/dev/null | wc -l | tr -d ' ')
+    [ "${tw:-0}" -gt 20000 ] && echo "hostcheck: warning: $tw TCP sockets in TIME_WAIT (the HTTP diff tests can run out of ephemeral ports)"
+  fi
+  echo "hostcheck: ok"
+}
+if [ "${XO_GATE_PRECHECK:-1}" != 0 ] && ! ff_serial; then
+  tpre=$(date +%s)
+  pch=$({ git diff --name-only "${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}" HEAD; git status --porcelain | cut -c4-; } | grep -v '_test\.xo$')
+  ff_last=hostcheck; hostcheck; pre_done="$pre_done hostcheck "
+  if ! ff_serial && [ "${XO_GATE_STDGEN:-1}" != 0 ] && stdgen_change; then ff_last=stdgen; stdgen_check; pre_done="$pre_done stdgen "; fi
+  if ! ff_serial && [ "${XO_GATE_HELP:-1}" != 0 ] && help_change; then ff_last=clihelp; full clihelp ./cmd/xo -run '^TestCLIHelp$'; pre_done="$pre_done clihelp "; fi
+  if ! ff_serial && [ "${XO_GATE_STDCHECKS:-1}" != 0 ] && echo "$pch" | grep -qE '^std/.*\.xo$'; then ff_last=stdchecks; stdchecks_check; pre_done="$pre_done stdchecks "; fi
+  printf 'precheck\t=\t%s\tstep\n' "$(($(date +%s) - tpre))" >>"$logs/times.tsv"
+  echo "gate.sh: pre-check: $(echo $pre_done) in $(($(date +%s) - tpre)) s"
+fi
 # the named steps, in order: pushq's proving checks are collected into
 # named (they run after the steps, with the ones the paths require), an
 # unknown name fails the gate, and a named chkcache keeps it from running
@@ -1186,18 +1244,8 @@ after_steps() {
   if [ "${XO_GATE_STDSTORE:-1}" != 0 ] && stdstore_change; then
     full stdstore ./internal/arm64 -run '^TestStdStoreBuilds$'
   fi
-  if [ "${XO_GATE_HELP:-1}" != 0 ] && help_change; then
-    full clihelp ./cmd/xo -run '^TestCLIHelp$'
-  fi
-  if [ "${XO_GATE_STDGEN:-1}" != 0 ] && stdgen_change; then
-    if go run ./scripts/stdgen -check >"$logs/stdgen.txt" 2>&1; then
-      echo "stdgen: current"
-    else
-      failed=1
-      echo "stdgen: FAIL: std/rt's generated Go is stale: run go run ./scripts/stdsync and commit ($logs/stdgen.txt)"
-      grep -E 'stale|error' "$logs/stdgen.txt" | head -5
-    fi
-  fi
+  pre_ran clihelp || { [ "${XO_GATE_HELP:-1}" != 0 ] && help_change && full clihelp ./cmd/xo -run '^TestCLIHelp$'; }
+  pre_ran stdgen || { [ "${XO_GATE_STDGEN:-1}" != 0 ] && stdgen_change && stdgen_check; }
   if [ "${XO_GATE_RACE:-1}" != 0 ] && race_change; then
     full race ./internal/llvm -run '^TestRaceSyncTable(Arm64)?$'
   fi
@@ -1434,12 +1482,8 @@ ff_serial
 ff_last=stdchecks
 if [ "$ff" = 1 ]; then
   echo "$ch" | grep -qE '^std/.*\.xo$' && ff_skipped="$ff_skipped stdchecks"
-elif [ "${XO_GATE_STDCHECKS:-1}" != 0 ] && echo "$ch" | grep -qE '^std/.*\.xo$'; then
-  if go test -count=1 -run '^TestStdChecks$' ./cmd/xo >"$logs/stdchecks.txt" 2>&1; then
-    echo "stdchecks: ok"
-  else
-    failed=1; echo "stdchecks: FAIL ($logs/stdchecks.txt)"; grep -E 'stdcheck_test.go' "$logs/stdchecks.txt" | head -8
-  fi
+elif ! pre_ran stdchecks && [ "${XO_GATE_STDCHECKS:-1}" != 0 ] && echo "$ch" | grep -qE '^std/.*\.xo$'; then
+  stdchecks_check
 fi
 plan=" $(gate_plan "$req" $named) "
 echo "gate.sh: proving checks:${plan% }${plan:+ }(required by the paths: ${req:-none}; named:${named:- none})"

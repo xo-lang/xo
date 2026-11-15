@@ -240,7 +240,11 @@ yourself.
   fails stops the gate. Steps still running are stopped (their output
   so far in `$XO_GATE_LOGS/STEP.stopped.txt`), the rest are skipped, and a
   `FAIL-FAST: STEP failed ...; stopped while running: ...; not run: ...`
-  line names them before the exit 1. Fix the failure and gate again;
+  line names them before the exit 1. A pre-check runs first, after repo
+  (`gate.sh: pre-check: ...`): free disk (HOSTCHECK-FAIL under
+  `XO_GATE_MIN_FREE_GB`, 10) and, when the paths call for them, stdgen
+  -check, TestCLIHelp and TestStdChecks (`XO_GATE_PRECHECK=0` runs them
+  after the steps). Fix the failure and gate again;
   `XO_GATE_FAILFAST=0` runs every step when you want the whole list (a
   tier, a sweep). A change to gate.sh's step runner runs
   `scripts/lead/gate_failfast_test.sh WORKTREE` through heavy.sh (about
