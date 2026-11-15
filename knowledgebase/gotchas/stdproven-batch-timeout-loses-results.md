@@ -29,3 +29,9 @@ The run directory is not always there to fetch from: after round 2
 (`l3-round2`, stopped at 180 minutes the same day) `/work/spl3-round2`
 was gone from host 2, so its two passed uuid steps were lost and reran.
 Treat `--get` as a chance, not a plan: keep each batch inside its limit.
+
+Observed again 2026-11-14 (Xo Lang 2, `l2stress` on host 3): a five
+module stress batch (each module about 65 minutes: the 30 minute arm64
+run, the 30 minute LLVM run, the 5 minute --check=all run) stopped at
+OFF_MAX_MIN=240 inside its fourth module; three passed modules were lost
+and `/work/spl2stress` was already gone. Run stress one module a job.
