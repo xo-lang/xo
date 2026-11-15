@@ -115,6 +115,100 @@ func isDir(pkg string) bool {
 	return err == nil && st.IsDir()
 }
 
+// outsidePin is one line of outside.txt: a row outside Go's standard
+// library, its Xo module, its Go module and version, and the packages.
+type outsidePin struct {
+	need, xoMod, module, version string
+	pkgs                         []string
+}
+
+// readOutside reads outside.txt beside this command's map.txt.
+func readOutside(file string) ([]outsidePin, error) {
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	var out []outsidePin
+	for _, l := range strings.Split(string(b), "\n") {
+		if l = strings.TrimSpace(l); l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		f := strings.Split(l, "|")
+		if len(f) != 4 {
+			return nil, fmt.Errorf("%s: want NEED | XO MODULE | MODULE VERSION | PACKAGES: %s", file, l)
+		}
+		mv := strings.Fields(f[2])
+		if len(mv) != 2 {
+			return nil, fmt.Errorf("%s: want MODULE VERSION: %s", file, f[2])
+		}
+		out = append(out, outsidePin{strings.TrimSpace(f[0]), strings.TrimSpace(f[1]), mv[0], mv[1], strings.Fields(f[3])})
+	}
+	return out, nil
+}
+
+// specPin is the MODULE of an outside.txt line for a module with no Go
+// reference (decision 0655): its bar is spec/std.md's declared surface and
+// a behavior checklist, the `PKG.behavior.ITEM` lines of map.txt keyed by
+// the line's one PACKAGES word; -go lists nothing for it.
+const specPin = "spec/std.md"
+
+// outsideFile is outside.txt (set by main from -outside).
+var outsideFile = "scripts/stdaudit/outside.txt"
+
+// pinOf is the pin whose module holds package pkg, if any.
+func pinOf(pkg string) (outsidePin, bool) {
+	pins, _ := readOutside(outsideFile)
+	for _, p := range pins {
+		if pkg == p.module || strings.HasPrefix(pkg, p.module+"/") {
+			return p, true
+		}
+	}
+	return outsidePin{}, false
+}
+
+// moduleDirs caches `go mod download -json MODULE@VERSION`'s Dir.
+var moduleDirs = map[string]string{}
+
+// pkgDir is the directory of package pkg: GOROOT's source, or the module
+// cache for a package of an outside.txt module.
+func pkgDir(pkg string) (string, error) {
+	p, ok := pinOf(pkg)
+	if !ok {
+		return filepath.Join(runtime.GOROOT(), "src", filepath.FromSlash(pkg)), nil
+	}
+	key := p.module + "@" + p.version
+	dir, ok := moduleDirs[key]
+	if !ok {
+		cmd := exec.Command("go", "mod", "download", "-json", key)
+		cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("go mod download %s: %v", key, err)
+		}
+		var res struct{ Dir string }
+		if err := json.Unmarshal(out, &res); err != nil || res.Dir == "" {
+			return "", fmt.Errorf("go mod download %s: no Dir", key)
+		}
+		dir = res.Dir
+		moduleDirs[key] = dir
+	}
+	return filepath.Join(dir, filepath.FromSlash(strings.TrimPrefix(strings.TrimPrefix(pkg, p.module), "/"))), nil
+}
+
+// shortName is map.txt's key prefix for package pkg: its last element, or
+// the one before a /vN suffix (github.com/golang-jwt/jwt/v5 is jwt).
+func shortName(pkg string) string {
+	parts := strings.Split(pkg, "/")
+	last := parts[len(parts)-1]
+	if len(parts) > 1 && len(last) > 1 && last[0] == 'v' && strings.Trim(last[1:], "0123456789") == "" {
+		return parts[len(parts)-2]
+	}
+	if i := strings.LastIndex(last, ".v"); i > 0 && strings.Trim(last[i+2:], "0123456789") == "" && i+2 < len(last) {
+		return last[:i] // gopkg.in/yaml.v3: yaml
+	}
+	return last
+}
+
 // api lists the exported symbols of package pkg of GOROOT.
 var ctxt = func() build.Context {
 	c := build.Default
@@ -123,7 +217,10 @@ var ctxt = func() build.Context {
 }()
 
 func api(pkg string) ([]string, error) {
-	dir := filepath.Join(runtime.GOROOT(), "src", filepath.FromSlash(pkg))
+	dir, err := pkgDir(pkg)
+	if err != nil {
+		return nil, err
+	}
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool {
 		n := fi.Name()
@@ -312,6 +409,9 @@ func modName(pkg string) string {
 	case "math/rand", "math/rand/v2":
 		return "rand"
 	}
+	if p, ok := pinOf(pkg); ok {
+		return p.xoMod
+	}
 	return pkg[strings.LastIndex(pkg, "/")+1:]
 }
 
@@ -319,7 +419,7 @@ func modName(pkg string) string {
 // snake_case spelling in the package's builtin type or std module.
 func seedMatch(xo map[string]bool, pkg, kind, name string) string {
 	var cands []string
-	short := pkg[strings.LastIndex(pkg, "/")+1:]
+	short := shortName(pkg)
 	n := snake(name)
 	if r, ok := renames[short+"."+name]; ok {
 		n = r
@@ -408,7 +508,7 @@ func report(goFile, xoFile, mapFile, md string) error {
 			continue
 		}
 		pkg, kind, name := f[0], f[1], f[2]
-		short := pkg[strings.LastIndex(pkg, "/")+1:]
+		short := shortName(pkg)
 		key := mapKey(mapped, pkg, short, name)
 		switch {
 		case mapped[key] == "" && notPlanned[pkg] != "":
@@ -672,6 +772,17 @@ func main() {
 		if pkgs, err = packages(*md); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
+		}
+		pins, err := readOutside(outsideFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		for _, p := range pins {
+			if p.module == specPin { // no Go reference: map.txt's behavior lines are the audit
+				continue
+			}
+			pkgs = append(pkgs, p.pkgs...)
 		}
 	}
 	for _, p := range pkgs {

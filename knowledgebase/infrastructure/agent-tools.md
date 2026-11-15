@@ -509,7 +509,16 @@ yourself.
   names; a key written twice is an error). `-rank REPORT -status gap DIRS...`
   ranks the gaps instead of the unmapped rows. Results:
   bench/results/std-audit-2026-11-10.md and -10b.md, std-coverage.md
-  "Function level gaps".
+  "Function level gaps". Outside Go's standard library (decision 0655,
+  2026-11-15): scripts/stdaudit/outside.txt pins each audited row's
+  reference module (`NEED | XO MODULE | MODULE VERSION | PACKAGES`), `-go`
+  lists those packages from the module cache (`go mod download`, network
+  once), map.txt keys them by the import path's last element (a `/vN` suffix skipped: `jwt.Parse`, `go-amqp.Dial`), and
+  `PKG.behavior.ITEM = gap: what` lines hold the row's behavior checklist. A module with no Go
+  reference pins `spec/std.md -` with one checklist key (sse, go, amqptest,
+  deque): its bar is spec/std.md's declared surface plus that checklist.
+  scripts/stdcov reads both: a module is features Proven only with no open
+  gap and no done outside row left unpinned.
 - `go run ./scripts/stdcoverage` prints every std function and method no
   corpus or golden calls (internal/stdcoverage): std/*.xo and
   std/native/prelude.xo against the calls in internal/stdtest's corpora,

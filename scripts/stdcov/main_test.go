@@ -56,3 +56,22 @@ func TestDecimals(t *testing.T) {
 		}
 	}
 }
+
+// TestFeatAuditGaps: decision 0655, a module whose rows are all done is
+// Proven only when its Go packages have no open stdaudit gap and no row
+// outside Go's standard library lacks its audit.
+func TestFeatAuditGaps(t *testing.T) {
+	rowsByMod = map[string][]string{"utf": {"done"}, "clean": {"done", "done"}, "part": {"done", "partial"}, "cbor": {"unaudited"}}
+	pkgsByMod = map[string][]string{"utf": {"utf8"}, "clean": {"base64", "utf16"}, "part": {"csv"}}
+	gapsByPkg = map[string][]string{"utf8": {"utf8.FullRune", "utf8.DecodeLastRune"}, "csv": {"csv.Reader.FieldPos"}}
+	for _, c := range []struct{ mod, level, text string }{
+		{"utf", "Solid", "all 1 mapped Go rows done, 2 open stdaudit gaps (utf8.DecodeLastRune, utf8.FullRune)"},
+		{"clean", "Proven", "all 2 mapped Go rows done, no open stdaudit gap"},
+		{"part", "Solid", "1 of 2 mapped Go rows done, 1 partial, 1 open stdaudit gaps"},
+		{"cbor", "Solid", "all 1 mapped rows done, 1 outside Go's standard library without a symbol audit yet (decision 0655)"},
+	} {
+		if f := feat(c.mod); f.level != c.level || f.text != c.text {
+			t.Errorf("feat(%s) = %s %q, want %s %q", c.mod, f.level, f.text, c.level, c.text)
+		}
+	}
+}

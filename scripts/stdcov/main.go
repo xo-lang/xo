@@ -10,7 +10,8 @@
 // the counts goes to stderr. -today fixes the date the evidence staleness rule
 // (decision 0616 section 3) reads, for reproducible output.
 //
-// The marks: features from knowledgebase/infrastructure/std-coverage.md;
+// The marks: features from knowledgebase/infrastructure/std-coverage.md and
+// the open gaps of scripts/stdaudit/map.txt;
 // testing from the corpus of Go's tests, Go differentials, fuzz harnesses, and
 // Proven from std/evidence/MODULE/*.md; performance from bench/results files
 // with a Go twin, and Proven also from std/evidence/MODULE/perf.md.
@@ -64,10 +65,15 @@ var (
 	cover      = map[string]coverRow{}
 	coverOrder []string // first insertion order, as the lookup's prefix scan reads it
 	rowsByMod  = map[string][]string{}
+	// pkgsByMod: the Go packages of the rows that name the module (the last
+	// element of each import path, as scripts/stdaudit/map.txt keys them)
+	pkgsByMod = map[string][]string{}
+	// gapsByPkg: the open `gap:` symbols of scripts/stdaudit/map.txt by package
+	gapsByPkg = map[string][]string{}
 )
 
 var (
-	reRow     = regexp.MustCompile(`^\| (.+?) \| (.+?) \| (done|partial|planned|not planned)[^|]*\|(.*)\|`)
+	reRow     = regexp.MustCompile(`^\| (.+?) \| (.+?) \| (done|partial|in progress|planned|not planned)[^|]*\|(.*)\|`)
 	reRowNP   = regexp.MustCompile(`^\| (.+?) \| (not planned) \| (.*) \|`)
 	reStdMod  = regexp.MustCompile(`std/([a-z0-9]+)`)
 	reSplitCo = regexp.MustCompile(`,\s*`)
@@ -82,11 +88,18 @@ func readCoverage() {
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	outside := false
 	for sc.Scan() {
 		l := sc.Text()
+		if strings.HasPrefix(l, "## ") {
+			outside = l == "## Outside Go's standard library"
+		}
 		var first, xo, st, note string
 		if m := reRow.FindStringSubmatch(l); m != nil {
 			first, xo, st, note = m[1], m[2], m[3], m[4]
+			if st == "in progress" { // the outside rows' word for partial
+				st = "partial"
+			}
 		} else if m2 := reRowNP.FindStringSubmatch(l); m2 != nil && (strings.Contains(m2[1], "go/*") ||
 			strings.Contains(m2[1], "debug/*") || strings.Contains(m2[1], "runtime") ||
 			strings.Contains(m2[1], "plugin") || strings.Contains(m2[1], "reflect") || strings.Contains(m2[1], "image")) {
@@ -117,16 +130,123 @@ func readCoverage() {
 			cover[n] = coverRow{st, strings.Trim(xo, "` "), strings.TrimSpace(note)}
 		}
 		seen := map[string]bool{}
+		var mods []string
 		for _, mm := range reStdMod.FindAllStringSubmatch(xo, -1) {
 			if !seen[mm[1]] {
 				seen[mm[1]] = true
-				rowsByMod[mm[1]] = append(rowsByMod[mm[1]], st)
+				mods = append(mods, mm[1])
 			}
 		}
 		if strings.Contains(xo, "prelude") {
-			rowsByMod["prelude"] = append(rowsByMod["prelude"], st)
+			mods = append(mods, "prelude")
+		}
+		// a done row outside Go's standard library counts only with its
+		// symbol audit (decision 0655): its reference module pinned in
+		// scripts/stdaudit/outside.txt, whose packages' gaps then apply
+		modSt := st
+		pkgs := names
+		if outside {
+			pkgs = nil
+			if pin, ok := outsidePins[strings.TrimSpace(first)]; ok {
+				pkgs = pin
+			} else if st == "done" {
+				modSt = "unaudited"
+			}
+		}
+		for _, m := range mods {
+			rowsByMod[m] = append(rowsByMod[m], modSt)
+			for _, n := range pkgs {
+				if !strings.Contains(n, "*") {
+					pkgsByMod[m] = append(pkgsByMod[m], shortPkg(n))
+				}
+			}
 		}
 	}
+}
+
+// outsidePins maps an outside row's Need cell to the Go packages
+// scripts/stdaudit/outside.txt pins for it.
+var outsidePins = map[string][]string{}
+
+// readOutsidePins reads scripts/stdaudit/outside.txt (decision 0655).
+func readOutsidePins() {
+	data, err := os.ReadFile(filepath.Join(repo, "scripts/stdaudit/outside.txt"))
+	if err != nil {
+		die("%v", err)
+	}
+	for _, l := range strings.Split(string(data), "\n") {
+		if l = strings.TrimSpace(l); l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		if f := strings.Split(l, "|"); len(f) == 4 {
+			outsidePins[strings.TrimSpace(f[0])] = strings.Fields(f[3])
+		}
+	}
+}
+
+// shortPkg is map.txt's key prefix for a Go package: its last path
+// element, or the one before a /vN suffix (scripts/stdaudit shortName).
+func shortPkg(p string) string {
+	parts := strings.Split(p, "/")
+	last := parts[len(parts)-1]
+	if len(parts) > 1 && len(last) > 1 && last[0] == 'v' && strings.Trim(last[1:], "0123456789") == "" {
+		return parts[len(parts)-2]
+	}
+	if i := strings.LastIndex(last, ".v"); i > 0 && strings.Trim(last[i+2:], "0123456789") == "" && i+2 < len(last) {
+		return last[:i] // gopkg.in/yaml.v3: yaml
+	}
+	return last
+}
+
+// readAuditGaps fills gapsByPkg from scripts/stdaudit/map.txt (decision
+// 0276's audit): a row marked done in std-coverage.md does not make a module
+// Proven while its packages have an open gap there.
+func readAuditGaps() {
+	data, err := os.ReadFile(filepath.Join(repo, "scripts/stdaudit/map.txt"))
+	if err != nil {
+		die("%v", err)
+	}
+	for _, l := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(l, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(l, " = ")
+		if !ok || !strings.HasPrefix(strings.TrimSpace(val), "gap:") {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		// a key with an import path (github.com/x/jwt/v5.Parse): the package
+		// is the path's short name; else the key's first element
+		var pkg, sym string
+		if i := strings.LastIndex(key, "/"); i >= 0 {
+			j := strings.Index(key[i:], ".")
+			if j < 0 {
+				continue
+			}
+			pkg, sym = shortPkg(key[:i+j]), key[i+j+1:]
+		} else {
+			var ok bool
+			if pkg, sym, ok = strings.Cut(key, "."); !ok {
+				continue
+			}
+		}
+		gapsByPkg[pkg] = append(gapsByPkg[pkg], pkg+"."+sym)
+	}
+}
+
+// auditGaps are the open stdaudit gaps of module m's Go packages, sorted.
+func auditGaps(m string) []string {
+	seen := map[string]bool{}
+	var gs []string
+	for _, p := range pkgsByMod[m] {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		gs = append(gs, gapsByPkg[p]...)
+	}
+	sort.Strings(gs)
+	return gs
 }
 
 func lookup(p string) (coverRow, bool) {
@@ -455,11 +575,27 @@ func feat(m string) mark {
 		return mark{"Solid", "no Go package maps to it; covers its own domain's common uses", ""}
 	}
 	c := count(st)
-	if c["partial"] > 0 || c["planned"] > 0 {
-		return mark{"Solid", fmt.Sprintf("%d of %d mapped Go rows done, %d partial", c["done"], len(st), c["partial"]),
+	if c["unaudited"] > 0 && c["partial"] == 0 && c["planned"] == 0 {
+		return mark{"Solid", fmt.Sprintf("all %d mapped rows done, %d outside Go's standard library without a symbol audit yet (decision 0655)", len(st), c["unaudited"]),
 			"knowledgebase/infrastructure/std-coverage.md"}
 	}
-	return mark{"Proven", fmt.Sprintf("all %d mapped Go rows done", len(st)), "knowledgebase/infrastructure/std-coverage.md"}
+	if c["partial"] > 0 || c["planned"] > 0 {
+		text := fmt.Sprintf("%d of %d mapped Go rows done, %d partial", c["done"]+c["unaudited"], len(st), c["partial"])
+		if gs := auditGaps(m); len(gs) > 0 {
+			text += fmt.Sprintf(", %d open stdaudit gaps", len(gs))
+		}
+		return mark{"Solid", text,
+			"knowledgebase/infrastructure/std-coverage.md"}
+	}
+	if gs := auditGaps(m); len(gs) > 0 {
+		shown := gs
+		if len(shown) > 4 {
+			shown = append(append([]string(nil), gs[:4]...), fmt.Sprintf("%d more", len(gs)-4))
+		}
+		return mark{"Solid", fmt.Sprintf("all %d mapped Go rows done, %d open stdaudit gaps (%s)", len(st), len(gs), strings.Join(shown, ", ")),
+			"scripts/stdaudit/map.txt"}
+	}
+	return mark{"Proven", fmt.Sprintf("all %d mapped Go rows done, no open stdaudit gap", len(st)), "knowledgebase/infrastructure/std-coverage.md"}
 }
 
 // ---- evidence (decision 0616)
@@ -790,7 +926,9 @@ func main() {
 	}
 	gover := strings.Fields(sh("go", "version"))[2]
 
+	readOutsidePins()
 	readCoverage()
+	readAuditGaps()
 	status := map[string]string{}
 	for _, p := range gopk {
 		if c, ok := lookup(p); ok {
@@ -918,7 +1056,7 @@ func main() {
 	w("| Testing | own tests | Go's tests ported or a Go differential; parsers fuzzed | also `--race` and load stress clean, long fuzz runs, security reviewed where it applies (crypto, tls, http, x509) |")
 	w("| Performance | not measured, or measured and above 2x Go | measured against Go, within 2x | at or better than Go on its benchmark |")
 	w("")
-	w("How a mark is read here: *Features* from the rows of the coverage table that name the module (all done is Proven, any partial is Solid; a module with no Go package is Solid and says so). *Testing* from the committed corpus of Go's tests under `internal/stdtest/testdata/corpus`, Go differential tests, and fuzz tests for modules that parse untrusted input. *Performance* from a committed result file with a Go twin. A mark with no committed evidence is Early, so a missing result is the gap to close, not a hidden number. The dates are those of the result files, which can be older than this page; a re-run can only move a mark if the file is replaced. Proven testing evidence (`std/evidence/MODULE`) counts while the module's source hash matches the one it ran at, or for 90 days and one minor release: the hash covers the module's own files (`std/MODULE.xo`, `std/native/MODULE.xo`, `std/native/MODULE_native.xo` and the module specific `std/native/llrt` files they reach), the same files of every std module it uses, and `std/internal.xo`, but not the shared runtime (the allocator, scheduler, I/O and OS layer and the prelude), which its own tests, the fixed point and the full tier cover (decision 0616 section 3).")
+	w("How a mark is read here: *Features* from the rows of the coverage table that name the module (all done and no open function level gap of their Go packages in the audit, `scripts/stdaudit/map.txt`, is Proven; any partial row or open gap is Solid; a module with no Go package is Solid and says so). *Testing* from the committed corpus of Go's tests under `internal/stdtest/testdata/corpus`, Go differential tests, and fuzz tests for modules that parse untrusted input. *Performance* from a committed result file with a Go twin. A mark with no committed evidence is Early, so a missing result is the gap to close, not a hidden number. The dates are those of the result files, which can be older than this page; a re-run can only move a mark if the file is replaced. Proven testing evidence (`std/evidence/MODULE`) counts while the module's source hash matches the one it ran at, or for 90 days and one minor release: the hash covers the module's own files (`std/MODULE.xo`, `std/native/MODULE.xo`, `std/native/MODULE_native.xo` and the module specific `std/native/llrt` files they reach), the same files of every std module it uses, and `std/internal.xo`, but not the shared runtime (the allocator, scheduler, I/O and OS layer and the prelude), which its own tests, the fixed point and the full tier cover (decision 0616 section 3).")
 	w("")
 	w("Today: overall %d Proven, %d Solid, %d Early of %d (prelude and %d modules). Per axis, features %d/%d/%d, testing %d/%d/%d, performance %d/%d/%d (Proven/Solid/Early). No module has the committed `--race`, load stress, long fuzz and security review evidence that Proven testing needs yet.",
 		lvc["Proven"], lvc["Solid"], lvc["Early"], len(rows), nmods,

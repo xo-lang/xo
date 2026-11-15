@@ -1,0 +1,43 @@
+# The reference modules of the rows outside Go's standard library
+# (std-coverage.md "Outside Go's standard library", decision 0655). Each
+# line: the row's Need cell | the Xo module | the Go module and version
+# (the version the repository's interop tests and oracles pin, else the
+# latest on 2026-11-15) | the packages audited, space separated. stdaudit
+# -go lists their exported API from the module cache (`go mod download`)
+# beside GOROOT's packages; map.txt keys them by the import path's last element (a /vN
+# suffix is skipped: jwt.Parse for github.com/golang-jwt/jwt/v5). A row
+# with a line here counts as audited in scripts/stdcov; its open `gap:`
+# lines, and its `PKG.behavior.ITEM` checklist lines, keep it below Proven.
+# A module with no Go reference names `spec/std.md -` as its module and
+# one PACKAGES word, the key of its map.txt checklist lines: its bar is
+# spec/std.md's declared surface plus that checklist (decision 0655).
+gRPC | grpc | google.golang.org/grpc v1.79.2 | google.golang.org/grpc google.golang.org/grpc/codes google.golang.org/grpc/status google.golang.org/grpc/metadata google.golang.org/grpc/health google.golang.org/grpc/keepalive google.golang.org/grpc/credentials
+Protocol Buffers | protobuf | google.golang.org/protobuf v1.36.12 | google.golang.org/protobuf/proto google.golang.org/protobuf/encoding/protowire google.golang.org/protobuf/encoding/protojson google.golang.org/protobuf/types/known/timestamppb google.golang.org/protobuf/types/known/durationpb google.golang.org/protobuf/types/known/anypb google.golang.org/protobuf/types/known/structpb google.golang.org/protobuf/types/known/wrapperspb google.golang.org/protobuf/types/known/emptypb google.golang.org/protobuf/types/known/fieldmaskpb
+WebSocket | websocket | github.com/gorilla/websocket v1.5.3 | github.com/gorilla/websocket
+JWT, JOSE | jwt | github.com/golang-jwt/jwt/v5 v5.3.1 | github.com/golang-jwt/jwt/v5
+AMQP 1.0 | amqp | github.com/Azure/go-amqp v1.7.0 | github.com/Azure/go-amqp
+OTLP export | otlp | go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.47.0 | go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp
+bcrypt | bcrypt | golang.org/x/crypto v0.58.0 | golang.org/x/crypto/bcrypt
+UUID | uuid | github.com/google/uuid v1.6.0 | github.com/google/uuid
+Cron schedules | cron | github.com/robfig/cron/v3 v3.0.1 | github.com/robfig/cron/v3
+TOTP | otp | github.com/pquerna/otp v1.5.0 | github.com/pquerna/otp github.com/pquerna/otp/totp github.com/pquerna/otp/hotp
+CBOR | cbor | github.com/fxamacker/cbor/v2 v2.9.0 | github.com/fxamacker/cbor/v2
+Prometheus exposition | metrics | github.com/prometheus/client_golang v1.23.2 | github.com/prometheus/client_golang/prometheus github.com/prometheus/client_golang/prometheus/promhttp
+Argon2, BLAKE2b | crypto | golang.org/x/crypto v0.58.0 | golang.org/x/crypto/argon2 golang.org/x/crypto/blake2b
+ChaCha20-Poly1305, HKDF, SHA-3 | crypto | golang.org/x/crypto v0.58.0 | golang.org/x/crypto/chacha20poly1305 golang.org/x/crypto/hkdf golang.org/x/crypto/sha3
+PKCS #12 (pfx) | x509 | golang.org/x/crypto v0.58.0 | golang.org/x/crypto/pkcs12
+HTTP/2 | http | golang.org/x/net v0.62.0 | golang.org/x/net/http2 golang.org/x/net/http2/h2c golang.org/x/net/http2/hpack
+Postgres driver | sql | github.com/jackc/pgx/v5 v5.12.0 | github.com/jackc/pgx/v5 github.com/jackc/pgx/v5/pgconn github.com/jackc/pgx/v5/pgtype github.com/jackc/pgx/v5/pgxpool
+YAML | yaml | gopkg.in/yaml.v3 v3.0.1 | gopkg.in/yaml.v3
+TOML | toml | github.com/pelletier/go-toml/v2 v2.4.3 | github.com/pelletier/go-toml/v2
+Rate limiting | rate | golang.org/x/time v0.16.0 | golang.org/x/time/rate
+Backoff and retry | backoff | github.com/cenkalti/backoff/v4 v4.3.0 | github.com/cenkalti/backoff/v4
+Terminal | term | golang.org/x/term v0.48.0 | golang.org/x/term
+HTTP proxy settings | httpproxy | golang.org/x/net v0.62.0 | golang.org/x/net/http/httpproxy
+Public suffix list | publicsuffix | golang.org/x/net v0.62.0 | golang.org/x/net/publicsuffix
+JSON-RPC 2.0 | jsonrpc | github.com/modelcontextprotocol/go-sdk v1.8.0 | github.com/modelcontextprotocol/go-sdk/jsonrpc
+Protobuf wire format | protowire | google.golang.org/protobuf v1.36.12 | google.golang.org/protobuf/encoding/protowire
+Server-sent events | sse | spec/std.md - | sse
+Go interop values | go | spec/std.md - | go
+AMQP test broker | amqptest | spec/std.md - | amqptest
+Double ended queue | deque | spec/std.md - | deque

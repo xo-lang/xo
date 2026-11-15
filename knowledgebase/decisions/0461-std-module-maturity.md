@@ -2,6 +2,8 @@
 
 Status: Accepted (owner, 2026-11-02)
 
+Amended by 0655 (2026-11-15, Proposed): features Proven also needs no open function level gap in scripts/stdaudit/map.txt, and the rows outside Go's standard library get a pinned symbol audit and a behavior checklist.
+
 ## Context
 
 Decision 0276 makes Go's standard library std's reference scope, and the coverage table
