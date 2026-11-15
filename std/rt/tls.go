@@ -300,6 +300,7 @@ func Tls_client_config(tk *Task, c Conn, cfg Tls_ClientConfig) Result[Tls_TlsCon
 			}
 		}
 		tlsVerifyHooks(tk, gc, cfg.F_verify_peer_certificate, cfg.F_verify_connection, cfg.F_verify.Tag == 2)
+		setKeyLog(tk, gc, cfg.F_key_log)
 		if cfg.F_get_client_certificate.Some {
 			g := cfg.F_get_client_certificate.V
 			gc.GetClientCertificate = func(cri *tls.CertificateRequestInfo) (*tls.Certificate, error) {
@@ -656,6 +657,26 @@ type Tls_TlsListener struct {
 func (Tls_TlsListener) XoDebug(b *strings.Builder) { b.WriteString("<tlslistener>") }
 
 // serverConfig is cfg as crypto/tls's Config.
+// keyLogWriter is Go's KeyLogWriter over std/tls's key_log (decision
+// 0644 T8): crypto/tls writes each NSS line in one Write.
+type keyLogWriter struct {
+	tk *Task
+	f  func(*Task, string) Result[Unit, string]
+}
+
+func (w keyLogWriter) Write(p []byte) (int, error) {
+	if r := w.f(w.tk, string(p)); !r.Ok {
+		return 0, hookErr(r.E, "tls: key_log failed")
+	}
+	return len(p), nil
+}
+
+func setKeyLog(tk *Task, c *tls.Config, kl Option[func(*Task, string) Result[Unit, string]]) {
+	if kl.Some {
+		c.KeyLogWriter = keyLogWriter{tk, kl.V}
+	}
+}
+
 func serverConfig(tk *Task, cfg Tls_ServerConfig) *tls.Config {
 	c := &tls.Config{NextProtos: cfg.F_next_protos.s, ClientAuth: clientAuthType(cfg.F_client_auth)}
 	setPrefs(c, cfg.F_min_version, cfg.F_max_version, cfg.F_cipher_suites, cfg.F_curve_preferences)
@@ -666,6 +687,7 @@ func serverConfig(tk *Task, cfg Tls_ServerConfig) *tls.Config {
 		c.ClientCAs = cfg.F_client_cas.V.pool
 	}
 	tlsVerifyHooks(tk, c, cfg.F_verify_peer_certificate, cfg.F_verify_connection, false)
+	setKeyLog(tk, c, cfg.F_key_log)
 	// decision 0644 T5: GetCertificate and GetConfigForClient
 	if cfg.F_get_certificate.Some {
 		g := cfg.F_get_certificate.V

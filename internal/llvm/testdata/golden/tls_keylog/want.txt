@@ -1,0 +1,25 @@
+exit 0
+--- stdout
+== TLS 1.3
+both log: client ok; server ok, read hi
+  client CLIENT_HANDSHAKE_TRAFFIC_SECRET 64 64 newline true
+  client SERVER_HANDSHAKE_TRAFFIC_SECRET 64 64 newline true
+  client CLIENT_TRAFFIC_SECRET_0 64 64 newline true
+  client SERVER_TRAFFIC_SECRET_0 64 64 newline true
+  server lines 4, the client's: true
+  one client random: true
+client only: client ok; server ok, read hi
+client key_log fails: client disk full; server remote error: tls: internal error
+client key_log empty Err: client tls: key_log failed; server remote error: tls: internal error
+server key_log fails: client remote error: tls: internal error; server disk full
+== TLS 1.2
+both log: client ok; server ok, read hi
+  client CLIENT_RANDOM 64 96 newline true
+  server lines 1, the client's: true
+  one client random: true
+client only: client ok; server ok, read hi
+client key_log fails: client tls: failed to write to key log: disk full; server remote error: tls: internal error
+client key_log empty Err: client tls: failed to write to key log: tls: key_log failed; server remote error: tls: internal error
+server key_log fails: client remote error: tls: internal error; server disk full
+done
+--- stderr

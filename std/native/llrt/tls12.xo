@@ -762,6 +762,10 @@ pub struct Conf {
   /// chain and key it gives (an empty chain sends none), or the error's
   /// text
   pub get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None
+  /// decision 0644 T8: Go's KeyLogWriter, given each secret's NSS key
+  /// log label, the client random and the secret at Go's point; a text
+  /// fails the handshake with internal_error
+  pub key_log: (fn(Str, Bytes, Bytes) -> Str)? = None
 }
 
 /// Go's defaults for host: the AEAD suites, X25519 then P-256 and P-384.
@@ -1682,6 +1686,13 @@ fn client_flight(var c: Client) {
   let hash = suite_hash(c.suite)
   c.master = master_secret(hash, c.pms, c.ems, c.tr, c.random, c.server_random)
   c.pms = b""
+  if let Some(k) = c.conf.key_log {
+    let e = k("CLIENT_RANDOM", c.random, c.master)
+    if !e.is_empty() {
+      fail(c, ALERT_INTERNAL_ERROR, "tls: failed to write to key log: " + e)
+      return
+    }
+  }
   if scheme != 0 {
     // CertificateVerify: the signature over every handshake message so
     // far, through the ClientKeyExchange

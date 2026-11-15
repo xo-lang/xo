@@ -95,6 +95,10 @@ pub struct Conf {
   /// handshake with bad_certificate
   pub vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)? = None
   pub vconn: (fn(tlsneg.Negotiated) -> Str)? = None
+  /// decision 0644 T8: Go's KeyLogWriter, given each secret's NSS key
+  /// log label, the client random and the secret at Go's point; a text
+  /// fails the handshake with internal_error
+  pub key_log: (fn(Str, Bytes, Bytes) -> Str)? = None
   pub client_roots: List[Bytes] = []
 }
 
@@ -1332,6 +1336,13 @@ fn client_key_exchange(var s: Server, msg: Bytes) {
   s.tr = cat2(s.tr, msg)
   s.master = tls12.master_secret(tls12.suite_hash(s.suite), pms, s.ems, s.tr, s.cr, s.sr)
   s.priv = b""
+  if let Some(k) = s.conf.key_log {
+    let e = k("CLIENT_RANDOM", s.cr, s.master)
+    if !e.is_empty() {
+      fail(s, tls12.ALERT_INTERNAL_ERROR, e)
+      return
+    }
+  }
   let kb = tls12.key_block(s.suite, s.master, s.cr, s.sr)
   s.next_rk = tls12.direction(s.suite, kb, true, b"")
   s.next_wk = tls12.direction(s.suite, kb, false, s.conf.iv)

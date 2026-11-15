@@ -139,6 +139,10 @@ pub struct Conf {
   /// handshake with internal_error
   pub for_client: (fn(tlsneg.HelloInfo) -> (Conf?, Str))? = None
   pub get_cert: (fn(tlsneg.HelloInfo) -> (List[Bytes], Bytes, Str))? = None
+  /// decision 0644 T8: Go's KeyLogWriter, given each secret's NSS key
+  /// log label, the client random and the secret at Go's point; a text
+  /// fails the handshake with internal_error
+  pub key_log: (fn(Str, Bytes, Bytes) -> Str)? = None
   /// session tickets (Go's, decision 0202): the ticket keys (keys[0]
   /// seals; none: no tickets, no resumption), the time in Unix seconds;
   /// the tests' hooks ticket_iv (the 16 byte IV of a ticket) and age_add
@@ -1012,6 +1016,11 @@ fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes
   let s_hs = hkdf.expand_label(hash, hs_secret, "s hs traffic", th, l)
   s.wk = tlsrec.keys(s.suite, s_hs)
   s.rk = tlsrec.keys(s.suite, s.c_hs)
+  let ke = tls13.log_keys(s.conf.key_log, "CLIENT_HANDSHAKE_TRAFFIC_SECRET", "SERVER_HANDSHAKE_TRAFFIC_SECRET", h.random, s.c_hs, s_hs)
+  if !ke.is_empty() {
+    fail(s, ALERT_INTERNAL_ERROR, ke)
+    return
+  }
   // EncryptedExtensions (Go's order: ALPN, then the server_name ack,
   // which a resumed session does not send)
   let ee_exts = match s.conf.ee {
@@ -1054,7 +1063,13 @@ fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes
   let th2 = tr_hash(s, hash)
   s.c_ap = hkdf.expand_label(hash, master, "c ap traffic", th2, l)
   s.exp = hkdf.expand_label(hash, master, "exp master", th2, l)
-  s.wk = tlsrec.keys(s.suite, hkdf.expand_label(hash, master, "s ap traffic", th2, l))
+  let s_ap = hkdf.expand_label(hash, master, "s ap traffic", th2, l)
+  s.wk = tlsrec.keys(s.suite, s_ap)
+  let ka = tls13.log_keys(s.conf.key_log, "CLIENT_TRAFFIC_SECRET_0", "SERVER_TRAFFIC_SECRET_0", h.random, s.c_ap, s_ap)
+  if !ka.is_empty() {
+    fail(s, ALERT_INTERNAL_ERROR, ka)
+    return
+  }
   s.client_fin = tls13.finished_mac(hash, s.c_hs, th2)
   // Go's sendSessionTickets: the resumption secret over the transcript
   // with the client's Finished it expects, then one ticket

@@ -132,6 +132,7 @@ fn take_in(var c: Conn, data: Bytes) {
     cf.cert_key = c.cl.conf.cert_key
     cf.vhook = c.cl.conf.vhook
     cf.get_cert = c.cl.conf.get_cert
+    cf.key_log = c.cl.conf.key_log
     cf.alpn = c.cl.conf.alpn
     // the offered ones: a TLS 1.3 suite picked under 1.2 is refused
     cf.suites = c.cl.conf.legacy_suites
@@ -477,7 +478,7 @@ pub const VERIFY_NONE = 2
 
 /// client with the ALPN protocols offered (none: no extension) and the
 /// verification (VERIFY_*); std/tls's client (decision 0281).
-pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], verify: Int, ccerts: List[Bytes] = [], ckey: Bytes = b"", min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vhook: (fn(tlsneg.Negotiated) -> Str)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None) -> Start {
+pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], verify: Int, ccerts: List[Bytes] = [], ckey: Bytes = b"", min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vhook: (fn(tlsneg.Negotiated) -> Str)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None) -> Start {
   // decision 0644 T7: Go's MinVersion and MaxVersion (0: TLS 1.2 and
   // 1.3), CipherSuites (TLS 1.2's only) and CurvePreferences, whose
   // orders Go ignores: each keeps the default order, less what is left out
@@ -526,6 +527,7 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
   // decision 0644 T6: std/tls ClientConfig's verify and certificate hooks
   cf.vhook = vhook
   cf.get_cert = get_cert
+  cf.key_log = key_log
   let hs = hconn.deadline(HANDSHAKE_NS)
   let limit = if dl != 0 && dl < hs { dl } else { hs }
   var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, cn: 0, status: 0, wfail: 0, first: b"", eof: false, pending: b""}

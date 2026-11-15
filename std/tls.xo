@@ -104,6 +104,13 @@ struct ClientConfig {
   max_version: Int = 0
   cipher_suites: List[Int] = []
   curve_preferences: List[Int] = []
+  /// Go's KeyLogWriter (decision 0644 T8): each secret of the handshake
+  /// as an NSS key log line (`LABEL <client random> <secret>`, in
+  /// hexadecimal, with a newline) for tools such as Wireshark to decrypt
+  /// the connection; it compromises the connection's security, so use
+  /// it only to debug. An Err fails the handshake. It runs on the
+  /// connection's task, so calls from several connections can overlap.
+  key_log: (fn(Str) -> () ! Str)? = None
 }
 
 /// What a server's CertificateRequest asks for (Go's
@@ -306,6 +313,8 @@ struct ServerConfig {
   /// from its ClientHello (their own get_config_for_client is not
   /// called); None keeps these, and an Err fails the handshake
   get_config_for_client: (fn(ClientHelloInfo) -> ServerConfig? ! Str)? = None
+  /// as ClientConfig's (Go's KeyLogWriter, decision 0644 T8)
+  key_log: (fn(Str) -> () ! Str)? = None
 }
 
 /// What a client's ClientHello offers (Go's ClientHelloInfo; decision
