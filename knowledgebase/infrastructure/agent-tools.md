@@ -1465,8 +1465,11 @@ Last verified: 2026-11-15
     OFF-CHARTER marks a task outside your charter the lead has not
     allowed: ask the lead before working it.
   - `xw task ack|start|gate|done ID`, `xw task push ID SHA`, `xw task
-    block ID REASON`; `xw task add NAME TITLE --goal RANK` adds to your
-    own queue (another agent's: the lead).
+    block ID REASON`, `xw task drop ID [--dup OF] [REASON]` (closed
+    without doing it: a duplicate or no longer wanted; 2026-11-15); `xw
+    task add NAME TITLE --goal RANK` adds to your own queue (another
+    agent's: the lead) and warns when the queue already holds a task with
+    a near title.
   - `xw ack ID` for each decision sent to you (`xw decisions --open
     --agent NAME`), in the tool round you read it.
   - `xw priority` (the owner's ranked goals), `xw charter NAME`, `xw
