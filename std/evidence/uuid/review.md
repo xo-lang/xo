@@ -1,8 +1,8 @@
 kind: review
 module: uuid
 result: pass
-commit: 53ab9cb30
-source: 161bd8e78fb57c3730c333cb7e0cb76877ab871b58aea8106d31d54210b67fe9
+commit: 2f2582761
+source: c3cacf57c4b2235e9fff8cf0544f04a5c6fba12342c82c322019488bc35be316
 date: 2026-11-14
 host: darwin/arm64 (reading and tests), linux/arm64 host 2 (fuzz, stress, race), host 1 (perf)
 command: none (section 3 does not apply: no secret is compared); read against knowledgebase/infrastructure/std-security-checklist.md
@@ -73,7 +73,7 @@ and go; std/changes/uuid.md.
 
 ### Fault sites
 
-- uuid_word (internal.xo:692-697) faults when fewer than 8 bytes follow
+- uuid_word (internal.xo:724-729) faults when fewer than 8 bytes follow
   i. Its callers pass b from from_bytes after its 16 byte check, or
   r.bytes(16) and r.bytes(10) at offsets 0, 8 and 2; not reachable from
   input.
@@ -83,7 +83,7 @@ and go; std/changes/uuid.md.
   (36 or 32), and for half 0 and half 1 the largest offset it reads is
   n - 1 (35 dashed, 31 undashed); the table read is a zero extended byte
   (rt.xo:277) into 256 entries.
-- uuid_half does not check `half` (internal.xo:699-728): a half other
+- uuid_half does not check `half` (internal.xo:731-760): a half other
   than 0 or 1 would read past the text natively and panic on the Go
   backend (internal_lz4.go:293). Its only callers pass 0 and 1
   (uuid.xo:83-84), and it is internal to std, so it is not reachable.
