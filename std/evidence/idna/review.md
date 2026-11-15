@@ -1,8 +1,8 @@
 kind: review
 module: idna
 result: pass
-commit: 5a23d3a84
-source: 42f8c8ab1b0739a36a2e892fcd6d33c315ce2529171ec83ec0380997fe313450
+commit: 091fae48f
+source: 43b4baadf7fdc861b507d754c17e8964dbf7cf90ebef483c2d75810202155e30
 date: 2026-11-14
 host: darwin/arm64 (probes and tests), linux/arm64 host 2 (fuzz, stress, race), host 1 (perf)
 command: none (section 3 does not apply: no secret); read against knowledgebase/infrastructure/std-security-checklist.md
