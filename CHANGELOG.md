@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (compiler, native backends): a function that updates twenty or more fields of a struct from an inlined constructor and then updates one on only some paths (std's tlsio.client_with with ECH) is inlined again; the inlined module failed verification, so the build warned `built without inlining` and ran slower (XO_INLINE_STRICT=1 failed it). The output was always correct. 0.20.0 has the bug.
 - Feature (compiler/macho, decision 0645 stage 1): a riscv64 assembler and ELF linker in Xo, with no command yet. RV64IMAFD with Zicsr and Zifencei encodes to llvm-mc's bytes (595 forms). The objects are clang's byte for byte, and linked programs (static, and glibc 2.27) run under qemu-riscv64.
 - Feature (std/sql Postgres, native and llvm): a cancelled wait for the server sends a CancelRequest with the connection's key on a second connection (shielded, 1 s dial and 2 s exchange limits), as pgx, so the server stops the statement; the call still returns `Canceled` and drops the connection (decision 0278 item 7).
 - Feature (std/sql MySQL, native and llvm): a cancelled wait for the server runs `KILL QUERY` with the connection's id on a second connection (shielded, 1 s dial and 2 s exchange limits), so the server stops the statement too; the call still returns `Canceled` and drops the connection. The DSN's `timeout` (dial), `readTimeout` and `writeTimeout` (each packet) are applied, as go-sql-driver's deadlines; before they were accepted and ignored (decision 0648 item 10).

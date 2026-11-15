@@ -1,0 +1,123 @@
+// a long chain of field updates after an inlined constructor whose
+// literal holds b"" fields, then conditional updates joined before a
+// call: past 24 steps the immortal walk (rc.xo imm_at) gave up, and the
+// inline verify held the b"" fields on one path only (2026-11-15)
+
+struct Conf {
+  host: Str
+  legacy: List[Int]
+  f0: Int
+  f1: Int
+  f2: Int
+  f3: Int
+  f4: Int
+  f5: Int
+  f6: Int
+  f7: Int
+  f8: Int
+  f9: Int
+  f10: Int
+  f11: Int
+  f12: Int
+  f13: Int
+  f14: Int
+  f15: Int
+  f16: Int
+  f17: Int
+  f18: Int
+  f19: Int
+  f20: Int
+  f21: Int
+  f22: Int
+  f23: Int
+  tickets: Bool
+  session: Str?
+  hello: Bytes
+  random: Bytes
+  sid: Bytes
+  priv: Bytes
+  shared: Bytes
+}
+
+fn conf(host: Str) -> Conf {
+  Conf{host: host, legacy: [], f0: 0, f1: 0, f2: 0, f3: 0, f4: 0, f5: 0, f6: 0, f7: 0, f8: 0, f9: 0, f10: 0, f11: 0, f12: 0, f13: 0, f14: 0, f15: 0, f16: 0, f17: 0, f18: 0, f19: 0, f20: 0, f21: 0, f22: 0, f23: 0, tickets: false, session: None, hello: b"", random: b"", sid: b"", priv: b"", shared: b""}
+}
+
+struct Client {
+  conf: Conf
+  n: Int
+}
+
+fn client(c: Conf) -> Client {
+  Client{conf: c, n: c.host.len() + c.legacy.len() + c.hello.len()}
+}
+
+fn failed(msg: Str) -> Int {
+  msg.len() * 100
+}
+
+fn start(host: Str, a: Int, legacy: List[Int], ech: Bool, put: (fn(Str?) -> ())?, session: Str?, use_ok: Int) -> Int {
+  if a < 0 {
+    return failed("negative")
+  }
+  var cf = conf(host)
+  cf.f0 = a + 0
+  cf.f1 = a + 1
+  cf.f2 = a + 2
+  cf.f3 = a + 3
+  cf.f4 = a + 4
+  cf.f5 = a + 5
+  cf.f6 = a + 6
+  cf.f7 = a + 7
+  cf.f8 = a + 8
+  cf.f9 = a + 9
+  cf.f10 = a + 10
+  cf.f11 = a + 11
+  cf.f12 = a + 12
+  cf.f13 = a + 13
+  cf.f14 = a + 14
+  cf.f15 = a + 15
+  cf.f16 = a + 16
+  cf.f17 = a + 17
+  cf.f18 = a + 18
+  cf.f19 = a + 19
+  cf.f20 = a + 20
+  cf.f21 = a + 21
+  cf.f22 = a + 22
+  cf.f23 = a + 23
+  cf.legacy = if !ech { legacy } else { [] }
+  if ech {
+    cf.legacy = []
+  }
+  if let Some(p) = put {
+    cf.tickets = true
+    if let Some(s) = session {
+      if use_ok == 2 {
+        p(None)
+      } else if use_ok == 1 {
+        cf.session = Some(s)
+      }
+    }
+  }
+  let cl = client(cf)
+  if cl.n > 1000 {
+    return failed("too long")
+  }
+  var sum = cl.n
+  for i in 0..24 {
+    sum += i
+  }
+  if cl.conf.f3 == 99 {
+    return failed("f3")
+  }
+  sum + cl.conf.legacy.len() + (if cl.conf.session.is_some() { 1000 } else { 0 })
+}
+
+fn main(os: Os) {
+  let put: (fn(Str?) -> ())? = Some(fn(s: Str?) { let _x = s })
+  os.stdio.println("${start("example.com", 1, [1, 2], false, put, Some("s"), 1)}")
+  os.stdio.println("${start("example.com", 1, [1, 2], true, put, Some("s"), 2)}")
+  os.stdio.println("${start("h", 1, [], false, None, None, 0)}")
+  os.stdio.println("${start("h", -1, [], false, None, None, 0)}")
+  os.stdio.println("${start("h", 96, [], false, None, None, 0)}")
+}

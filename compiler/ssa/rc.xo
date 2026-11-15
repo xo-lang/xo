@@ -2031,7 +2031,12 @@ fn imm_at(f: Func, v: Int, path: Str, k: Int, sums: Map[Str, List[Bool]], depth:
     if auxw_int(x.aux) == idx {
       return imm_at(f, f.arg(x.args, 1), path, e + 1, sums, depth + 1, walking)
     }
-    return imm_at(f, f.arg(x.args, 0), path, k, sums, depth + 1, walking)
+    // past an update of another field: a straight chain, which cannot
+    // branch or loop (values come before their uses), so it spends no
+    // depth (2026-11-15: tlsio.client_with's twenty field sets after the
+    // inlined tls13.conf passed 24, and the inline verify held its b""
+    // fields on one path only; golden inline_immortal_depth)
+    return imm_at(f, f.arg(x.args, 0), path, k, sums, depth, walking)
   }
   if x.op == Op.Call && e == path.len() {
     // a field of a call of a function whose one return is a struct
