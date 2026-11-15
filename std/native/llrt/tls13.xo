@@ -21,6 +21,7 @@ use native/llrt/rand
 use native/llrt/sha256
 use native/llrt/tlscache
 use native/llrt/tlscert
+use native/llrt/tlsech
 use native/llrt/tlsname
 use native/llrt/tlsneg
 use native/llrt/tlsrec
@@ -173,6 +174,13 @@ pub struct Conf {
   pub tickets: Bool = false
   pub session: tlscache.Session? = None
   pub on_session: (fn(tlscache.Session) -> ())? = None
+  /// decision 0644 T13: Go's EncryptedClientHelloConfigList (None: no
+  /// ECH; with one the hello offers TLS 1.3 alone) and
+  /// EncryptedClientHelloRejectionVerify (run in place of the
+  /// verification against the public name when the server rejects ECH;
+  /// its text fails the handshake with bad_certificate)
+  pub ech_list: Bytes? = None
+  pub ech_verify: (fn(tlsneg.Negotiated) -> Str)? = None
   pub hello: Bytes
   pub random: Bytes
   pub sid: Bytes
@@ -261,6 +269,21 @@ pub struct Client {
   pub ocsp: Bytes = b""
   pub scts: List[Bytes] = []
   res_master: Bytes = b""
+  /// decision 0644 T13 (Go's echClientContext): the HPKE context, the
+  /// config and suite, the outer hello's encrypted_client_hello data
+  /// (sent again in a second outer hello after a rejecting
+  /// HelloRetryRequest), the inner hello's random and transcript, and
+  /// what the server did with it; its retry configs when it rejected
+  ech: tlsech.Sender? = None
+  ech_cfg: tlsech.Config? = None
+  ech_kdf: Int = 0
+  ech_aead: Int = 0
+  ech_ext: Bytes = b""
+  inner_random: Bytes = b""
+  inner_tr: Bytes = b""
+  pub ech_accepted: Bool = false
+  pub ech_rejected: Bool = false
+  ech_retry: Bytes = b""
 }
 
 /// A new client for conf: its ClientHello is ready in take().
@@ -278,7 +301,14 @@ pub fn client(cf: Conf) -> Client {
     c.priv = key_for(cf, c.share_group)
     c.kem = kem_for(c.share_group, c.priv)
     c.psk = offered_psk(cf)
-    ch = hello(c)
+    if let Some(list) = cf.ech_list {
+      if !ech_setup(c, list) {
+        return c
+      }
+      ch = ech_hellos(c, true, true)
+    } else {
+      ch = hello(c)
+    }
   } else if ch.len() > 38 {
     let n = Int(ch[38])
     c.sid = ch[39..39 + n]
@@ -574,6 +604,18 @@ fn hello(c: Client) -> Bytes {
   if !c.cookie.is_empty() {
     exts.push(ext(EXT_COOKIE, vec16(c.cookie)))
   }
+  exts.push(key_share_ext(c))
+  if cf.tickets && !cf.no13 {
+    // Go requires DHE on resumption (RFC 8446 4.2.9)
+    exts.push(ext(EXT_PSK_MODES, vec8(u8(1))))
+  }
+  let head = asn1.cat([u16(0x0303), c.random, vec8(c.sid), vec16(asn1.cat(suites)), b"\x01\x00"])
+  with_psk(c, head, exts, c.tr)
+}
+
+/// The key_share extension: the first group's share, and with a hybrid
+/// first the share of its ECDH group too (shared_groups).
+fn key_share_ext(c: Client) -> Bytes {
   let share = match c.kem {
     Some(key) => mlkem.hybrid_share_key(c.share_group, c.priv, key)
     None => public_key(c.share_group, c.priv)
@@ -584,12 +626,15 @@ fn hello(c: Client) -> Bytes {
     shares.push(u16(eg))
     shares.push(vec16(mlkem.hybrid_ecdh_share(c.share_group, share)))
   }
-  exts.push(ext(EXT_KEY_SHARE, vec16(asn1.cat(shares))))
-  if cf.tickets && !cf.no13 {
-    // Go requires DHE on resumption (RFC 8446 4.2.9)
-    exts.push(ext(EXT_PSK_MODES, vec8(u8(1))))
-  }
-  let head = asn1.cat([u16(0x0303), c.random, vec8(c.sid), vec16(asn1.cat(suites)), b"\x01\x00"])
+  ext(EXT_KEY_SHARE, vec16(asn1.cat(shares)))
+}
+
+/// The ClientHello of head and exts0, with the pre_shared_key extension
+/// last when a PSK is offered: its binder over the transcript before it
+/// (prefix) and the hello up to the binders.
+fn with_psk(c: Client, head: Bytes, exts0: List[Bytes], prefix: Bytes) -> Bytes {
+  var exts = exts0
+  let cf = c.conf
   if c.psk.is_empty() {
     return message(HS_CLIENT_HELLO, cat2(head, vec16(asn1.cat(exts))))
   }
@@ -605,8 +650,171 @@ fn hello(c: Client) -> Bytes {
   let full = message(HS_CLIENT_HELLO, cat2(head, vec16(asn1.cat(exts))))
   let truncated = full[0..full.len() - 3 - l]
   let binder_key = hkdf.expand_label(hash, hkdf.extract(hash, b"", c.psk), "res binder", sha256.sum(hash, b""), l)
-  let binder = finished_mac(hash, binder_key, sha256.sum(hash, cat2(c.tr, truncated)))
+  let binder = finished_mac(hash, binder_key, sha256.sum(hash, cat2(prefix, truncated)))
   cat2(full[0..full.len() - l], binder)
+}
+
+// ---------------------------------------------------------------------------
+// Encrypted Client Hello (decision 0644 T13; Go's makeClientHello,
+// clientHandshake and computeAndUpdateOuterECHExtension)
+
+/// Go's makeClientHello's ECH part: the list's config, the HPKE context,
+/// the inner hello's random (the hello's own) and a new one for the
+/// outer; false, the connection failed, when there is none to use.
+fn ech_setup(var c: Client, list: Bytes) -> Bool {
+  if c.conf.no13 {
+    fail(c, -1, "tls: MaxVersion must be >= VersionTLS13 if EncryptedClientHelloConfigList is populated")
+    return false
+  }
+  let (cfgs, e) = tlsech.parse_list(list)
+  if !e.is_empty() {
+    fail(c, -1, e)
+    return false
+  }
+  let p = match tlsech.pick(cfgs) {
+    Some(x) => x
+    None => {
+      fail(c, -1, "tls: EncryptedClientHelloConfigList contains no valid configs")
+      return false
+    }
+  }
+  let (s, se) = tlsech.sender(p)
+  if s.is_none() {
+    fail(c, -1, se)
+    return false
+  }
+  c.ech = s
+  c.ech_cfg = Some(p.config)
+  c.ech_kdf = p.kdf.id()
+  c.ech_aead = p.aead.id()
+  c.inner_random = c.random
+  c.random = rand.next_bytes(32)
+  true
+}
+
+/// The outer ClientHello to send, and with inner the inner one encrypted
+/// in it (its whole message appended to the inner transcript): the inner
+/// has the real server name, encrypted_client_hello's inner type and the
+/// PSK; the outer the config's public name and the encrypted
+/// EncodedClientHelloInner, which names the extensions both share
+/// (ech_outer_extensions: the contiguous block from supported_groups to
+/// psk_key_exchange_modes, as Go's). use_key: the first hello sends the
+/// encapsulated key, a second one does not. Without inner (a
+/// HelloRetryRequest that rejected ECH) the outer carries its first
+/// encrypted_client_hello again, as Go's.
+fn ech_hellos(var c: Client, use_key: Bool, inner: Bool) -> Bytes {
+  let cf = c.conf
+  let cfg = match c.ech_cfg {
+    Some(x) => x
+    None => return b""
+  }
+  var suites: List[Bytes] = []
+  for x in cf.suites {
+    suites.push(u16(x))
+  }
+  var groups: List[Bytes] = []
+  for g in cf.groups {
+    groups.push(u16(g))
+  }
+  var protos: List[Bytes] = []
+  for p in cf.alpn {
+    protos.push(vec8(p.bytes()))
+  }
+  var types: List[Int] = [EXT_SUPPORTED_GROUPS, EXT_SIGNATURE_ALGORITHMS]
+  var block: List[Bytes] = [ext(EXT_SUPPORTED_GROUPS, vec16(asn1.cat(groups))), ext(EXT_SIGNATURE_ALGORITHMS, vec16(u16s(schemes())))]
+  if !protos.is_empty() {
+    types.push(EXT_ALPN)
+    block.push(ext(EXT_ALPN, vec16(asn1.cat(protos))))
+  }
+  types.push(EXT_SUPPORTED_VERSIONS)
+  block.push(ext(EXT_SUPPORTED_VERSIONS, vec8(u16(0x0304))))
+  if !c.cookie.is_empty() {
+    types.push(EXT_COOKIE)
+    block.push(ext(EXT_COOKIE, vec16(c.cookie)))
+  }
+  types.push(EXT_KEY_SHARE)
+  block.push(key_share_ext(c))
+  if cf.tickets {
+    types.push(EXT_PSK_MODES)
+    block.push(ext(EXT_PSK_MODES, vec8(u8(1))))
+  }
+  let comp = b"\x01\x00"
+  let outer_head = asn1.cat([u16(0x0303), c.random, vec8(c.sid), vec16(asn1.cat(suites)), comp])
+  let sni_outer = ext(EXT_SERVER_NAME, vec16(asn1.cat([u8(0), vec16(cfg.public_name)])))
+  if !inner {
+    return message(HS_CLIENT_HELLO, cat2(outer_head, vec16(asn1.cat([sni_outer, ext(tlsech.EXT_ECH, c.ech_ext), asn1.cat(block)]))))
+  }
+  var lead: List[Bytes] = []
+  if cf.host != "" && !is_ip(cf.host) {
+    lead.push(ext(EXT_SERVER_NAME, vec16(asn1.cat([u8(0), vec16(trim_dot(cf.host).bytes())]))))
+  }
+  lead.push(ext(tlsech.EXT_ECH, tlsech.inner_ext()))
+  var all: List[Bytes] = []
+  for b in lead {
+    all.push(b)
+  }
+  for b in block {
+    all.push(b)
+  }
+  let inner_head = asn1.cat([u16(0x0303), c.inner_random, vec8(c.sid), vec16(asn1.cat(suites)), comp])
+  let full = with_psk(c, inner_head, all, c.inner_tr)
+  // the pre_shared_key extension, last, as the inner hello has it
+  let plain = 4 + inner_head.len() + 2 + asn1.cat(all).len()
+  let psk_ext = full[plain..full.len()]
+  var outer_list = b""
+  for t in types {
+    outer_list = cat2(outer_list, u16(t))
+  }
+  let enc_exts = asn1.cat([asn1.cat(lead), ext(tlsech.EXT_OUTER, vec8(outer_list)), psk_ext])
+  let encoded = tlsech.pad_inner(asn1.cat([u16(0x0303), c.inner_random, vec8(b""), vec16(asn1.cat(suites)), comp, vec16(enc_exts)]), sni_of(cf.host), cfg.max_name)
+  var tx = match c.ech {
+    Some(x) => x
+    None => return b""
+  }
+  let enc = if use_key { tx.enc } else { b"" }
+  // the AEAD's tag is 16 bytes for each AEAD HPKE has (Go's note)
+  let blank = tlsech.outer_ext(cfg.id, c.ech_kdf, c.ech_aead, enc, zeros(encoded.len() + 16))
+  let aad = message(HS_CLIENT_HELLO, cat2(outer_head, vec16(asn1.cat([sni_outer, ext(tlsech.EXT_ECH, blank), asn1.cat(block)]))))
+  let payload = tlsech.seal(tx, aad[4..aad.len()], encoded)
+  c.ech = Some(tx)
+  c.ech_ext = tlsech.outer_ext(cfg.id, c.ech_kdf, c.ech_aead, enc, payload)
+  c.inner_tr = cat2(c.inner_tr, full)
+  message(HS_CLIENT_HELLO, cat2(outer_head, vec16(asn1.cat([sni_outer, ext(tlsech.EXT_ECH, c.ech_ext), asn1.cat(block)]))))
+}
+
+/// Go's acceptance check at the ServerHello: the confirmation in the
+/// random's last 8 bytes over the inner transcript. Accepted, the inner
+/// hello is the handshake's (its transcript and random); else rejected
+/// (the outer's, which offered no PSK). False when the connection failed.
+fn ech_decide(var c: Client, msg: Bytes, h: Hello) -> Bool {
+  let hash = tlsrec.suite_hash(c.suite)
+  let want = tlsech.confirmation(hash, c.inner_random, "ech accept confirmation", cat2(c.inner_tr, tlsech.zero_random_tail(msg)))
+  if ct.bytes_equal(want, h.random[24..32]) {
+    if h.has_ech {
+      fail(c, ALERT_UNSUPPORTED_EXTENSION, "tls: unexpected encrypted client hello extension in server hello despite ECH being accepted")
+      return false
+    }
+    c.tr = c.inner_tr
+    c.random = c.inner_random
+    c.ech_accepted = true
+  } else {
+    c.ech_accepted = false
+    c.ech_rejected = true
+    c.psk = b""
+  }
+  c.inner_tr = b""
+  true
+}
+
+/// The name the server's certificate is checked against: the config's
+/// public name when ECH was rejected (Go's c.serverName then).
+fn ech_host(c: Client) -> Str {
+  if c.ech_rejected {
+    if let Some(cfg) = c.ech_cfg {
+      return cfg.public_name.to_str() ?? ""
+    }
+  }
+  vhost(c.conf)
 }
 
 /// The TLS 1.3 session's secret to offer as a PSK: none unless the
@@ -664,6 +872,9 @@ struct Hello {
   cookie: Bytes
   /// the pre_shared_key's selected identity, -1 without one
   psk: Int = -1
+  /// encrypted_client_hello: a HelloRetryRequest's confirmation
+  has_ech: Bool = false
+  ech: Bytes = b""
 }
 
 fn parse_hello(m: Bytes) -> Hello {
@@ -730,6 +941,9 @@ fn parse_hello(m: Bytes) -> Hello {
         return h
       }
       h.psk = u16_at(d, 0)
+    } else if t == tlsech.EXT_ECH {
+      h.has_ech = true
+      h.ech = d
     }
     p += 4 + n
   }
@@ -778,6 +992,9 @@ fn server_hello(var c: Client, msg: Bytes) {
   }
   if h.cookie.len() > 0 {
     fail(c, ALERT_UNSUPPORTED_EXTENSION, "tls: server sent a cookie in a normal ServerHello")
+    return
+  }
+  if c.ech_cfg.is_some() && !ech_decide(c, msg, h) {
     return
   }
   // Go's processServerHello: the PSK the server took
@@ -890,10 +1107,31 @@ fn retry(var c: Client, msg: Bytes, h: Hello) {
     }
   }
   let hash = tlsrec.suite_hash(c.suite)
+  // Go's processHelloRetryRequest with ECH: the inner transcript restarts
+  // too, and the retry's encrypted_client_hello confirms the inner hello
+  var inner = false
+  if c.ech_cfg.is_some() {
+    c.inner_tr = message(HS_MESSAGE_HASH, sha256.sum(hash, c.inner_tr))
+    if h.has_ech {
+      if h.ech.len() != 8 {
+        fail(c, ALERT_DECODE_ERROR, "tls: malformed encrypted client hello extension")
+        return
+      }
+      let conf = cat2(c.inner_tr, tlsech.replace_first(msg, h.ech, zeros(8)))
+      if ct.bytes_equal(tlsech.confirmation(hash, c.inner_random, "hrr ech accept confirmation", conf), h.ech) {
+        inner = true
+        c.ech_accepted = true
+      }
+    }
+    c.inner_tr = cat2(c.inner_tr, msg)
+  } else if h.has_ech {
+    fail(c, ALERT_UNSUPPORTED_EXTENSION, "tls: unexpected encrypted client hello extension in serverHello")
+    return
+  }
   let ch1 = sha256.sum(hash, c.tr)
   c.tr = asn1.cat([message(HS_MESSAGE_HASH, ch1), msg])
   dummy_ccs(c)
-  let ch2 = hello(c)
+  let ch2 = if c.ech_cfg.is_some() { ech_hellos(c, false, inner) } else { hello(c) }
   c.tr = cat2(c.tr, ch2)
   c.out = cat2(c.out, tlsrec.seal(c.wk, tlsrec.CT_HANDSHAKE, ch2, 0x0303))
 }
@@ -942,6 +1180,14 @@ fn encrypted_extensions(var c: Client, msg: Bytes) {
         return
       }
       c.alpn = proto
+    }
+    if t == tlsech.EXT_ECH && c.ech_cfg.is_some() {
+      if c.ech_rejected {
+        c.ech_retry = d
+      } else {
+        fail(c, ALERT_UNSUPPORTED_EXTENSION, "tls: server sent encrypted client hello retry configs after accepting encrypted client hello")
+        return
+      }
     }
     p += 4 + n
   }
@@ -1060,16 +1306,20 @@ fn certificate(var c: Client, msg: Bytes) {
     fail(c, ALERT_UNSUPPORTED_CERTIFICATE, "tls: server's certificate contains an unsupported type of public key")
     return
   }
-  if !c.conf.insecure && c.conf.apple_svc != 0 {
+  // an ECH rejection checks the public name whatever insecure says, or
+  // runs ech_verify in its place (Go's verifyServerCertificate)
+  let rej = c.ech_rejected
+  let check = if rej { c.conf.ech_verify.is_none() } else { !c.conf.insecure }
+  if check && c.conf.apple_svc != 0 {
     // Go's systemVerify on macOS
-    let vh = vhost(c.conf)
+    let vh = ech_host(c)
     let r = if leaf.unhandled > 0 { tlscert.AppleRes{code: 10, msg: "x509: unhandled critical extension"} } else { tlscert.apple_trust(c.conf.apple_svc, ders, vh) }
     let code = if r.code == 0 && vh != "" && !x509verify.host_ok(leaf, vh) { 7 } else { r.code }
     if code != 0 {
       let msg = if code == 1 {
         "x509: certificate signed by unknown authority"
       } else if code == 7 {
-        tlsname.hostname_msg(x509verify.names(leaf), leaf.has_san, leaf.cn, c.conf.host)
+        tlsname.hostname_msg(x509verify.names(leaf), leaf.has_san, leaf.cn, if rej { vh } else { c.conf.host })
       } else {
         r.msg
       }
@@ -1080,19 +1330,32 @@ fn certificate(var c: Client, msg: Bytes) {
       fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${msg}")
       return
     }
-  } else if !c.conf.insecure {
+  } else if check {
     let inters = certs[1..certs.len()]
     // every chain kept, as Go's Verify gives ConnectionState.VerifiedChains
-    let (r, chains) = x509verify.verify_all(leaf, inters, c.conf.roots, vhost(c.conf), c.conf.now, [x509.EKU_SERVER])
+    let (r, chains) = x509verify.verify_all(leaf, inters, c.conf.roots, ech_host(c), c.conf.now, [x509.EKU_SERVER])
     c.verified = chains
     if r.code != x509verify.OK {
-      c.why = tlsneg.verify_fail(r.code, r.hint, vhost(c.conf), ders)
-      fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${verify_msg(r, leaf, c.conf)}")
+      c.why = tlsneg.verify_fail(r.code, r.hint, ech_host(c), ders)
+      fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${verify_msg(r, leaf, c.conf, ech_host(c))}")
       return
     }
   }
   c.peer = certs
-  if let Some(h) = c.conf.vhook {
+  if rej {
+    if let Some(ev) = c.conf.ech_verify {
+      let why = ev(tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(c.suite), server_name: ech_host(c), resumed: false, peer: ders, verified: [], curve: tlsneg.group_name(c.share_group), alpn: c.alpn, hrr: c.hrr, vers: 0x0304, suite: c.suite, group: c.share_group})
+      if !why.is_empty() {
+        fail(c, ALERT_BAD_CERTIFICATE, why)
+        return
+      }
+    }
+  }
+  var vh_hook = c.conf.vhook
+  if rej {
+    vh_hook = None
+  }
+  if let Some(h) = vh_hook {
     let why = h(tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(c.suite), server_name: sni_of(c.conf.host), resumed: false, peer: ders, verified: chain_ders(c.verified), curve: tlsneg.group_name(c.share_group), alpn: c.alpn, hrr: c.hrr, vers: 0x0304, suite: c.suite, group: c.share_group})
     if !why.is_empty() {
       fail(c, ALERT_BAD_CERTIFICATE, why)
@@ -1192,7 +1455,7 @@ pub fn chain_text(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cer
 }
 
 /// The text of x509.Verify's error.
-fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, cf: Conf) -> Str { x509verify.full_text_zone(r, leaf, vhost(cf), cf.now, zone_of(cf.zone_off, cf.now)) }
+fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, cf: Conf, host: Str) -> Str { x509verify.full_text_zone(r, leaf, host, cf.now, zone_of(cf.zone_off, cf.now)) }
 
 /// A Conf's zone_off before it is needed: the client's verification
 /// messages find time.Local's offset only when they are made (zone_of).
@@ -1422,7 +1685,13 @@ fn finished(var c: Client, msg: Bytes) {
   // then Finished
   var flight = b""
   if c.cert_req {
-    if let Some(g) = c.conf.get_cert {
+    // a rejected ECH sends an empty Certificate (Go's
+    // sendClientCertificate)
+    var gc = c.conf.get_cert
+    if c.ech_rejected {
+      gc = None
+    }
+    if let Some(g) = gc {
       let (cc, ck, e) = g(c.req_cas, c.req_schemes, 0x0304)
       if !e.is_empty() {
         // Go's TLS 1.3 client returns the error without an alert
@@ -1438,7 +1707,7 @@ fn finished(var c: Client, msg: Bytes) {
         return
       }
     }
-    let scheme = client_scheme(c)
+    let scheme = if c.ech_rejected { 0 } else { client_scheme(c) }
     if scheme == 0 {
       let cm = message(HS_CERTIFICATE, asn1.cat([vec8(c.req_ctx), b"\x00\x00\x00"]))
       c.tr = cat2(c.tr, cm)
@@ -1464,6 +1733,13 @@ fn finished(var c: Client, msg: Bytes) {
   flight = cat2(flight, fin)
   c.out = cat2(c.out, tlsrec.seal(c.wk, tlsrec.CT_HANDSHAKE, flight, 0x0303))
   c.wk = tlsrec.keys(c.suite, c_ap)
+  if c.ech_rejected {
+    // Go's clientHandshake: ech_required after the client's Finished,
+    // and ECHRejectionError with the server's retry configs
+    c.why = tlsneg.Failure{ech_rejected: true, ech_retry: c.ech_retry}
+    fail(c, tlsech.ALERT_ECH_REQUIRED, tlsech.REJECTED)
+    return
+  }
   if c.conf.tickets {
     c.res_master = hkdf.expand_label(hash, ap[3], "res master", sha256.sum(hash, c.tr), sha256.size(hash))
   }

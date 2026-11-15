@@ -52,6 +52,9 @@ pub struct Negotiated {
   /// decision 0644 T10: the server's OCSP staple and SCTs
   pub ocsp: Bytes = b""
   pub scts: List[Bytes] = []
+  /// decision 0644 T13: whether the server took the client's Encrypted
+  /// Client Hello (Go's ECHAccepted)
+  pub ech_accepted: Bool = false
 }
 
 /// Go's tls.CipherSuiteName: every suite Go names (its secure and
@@ -158,6 +161,10 @@ pub struct Failure {
   pub hint: Str = ""
   pub host: Str = ""
   pub certs: List[Bytes] = []
+  /// decision 0644 T13: the server rejected ECH (Go's
+  /// ECHRejectionError), with its retry configs ("" for none)
+  pub ech_rejected: Bool = false
+  pub ech_retry: Bytes = b""
 }
 
 /// A record layer failure on the input rin (Go's newRecordHeaderError

@@ -471,6 +471,23 @@ pub fn outer_aad(hello: Bytes, payload: Bytes) -> Bytes {
   body
 }
 
+/// b with its first occurrence of old replaced by new (Go's
+/// bytes.Replace with n 1); b when old is empty or absent.
+pub fn replace_first(b: Bytes, old: Bytes, new: Bytes) -> Bytes {
+  let n = old.len()
+  if n == 0 {
+    return b
+  }
+  var i = 0
+  while i + n <= b.len() {
+    if b[i..i + n] == old {
+      return asn1.cat([b[0..i], new, b[i + n..b.len()]])
+    }
+    i += 1
+  }
+  b
+}
+
 /// n zero bytes.
 pub fn zeros(n: Int) -> Bytes {
   var s = rt.rs_with_cap(n)
