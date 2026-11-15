@@ -92,6 +92,58 @@ struct Certificate {
   authority_key_id: Bytes
   /// Every extension, in order.
   extensions: List[Extension]
+  /// The signed part's DER (Go's RawTBSCertificate), the subject's
+  /// SubjectPublicKeyInfo (RawSubjectPublicKeyInfo) and the signature
+  /// (Signature).
+  raw_tbs_certificate: Bytes = b""
+  raw_subject_public_key_info: Bytes = b""
+  signature: Bytes = b""
+  /// Go's PublicKeyAlgorithm.String(): "RSA", "DSA", "ECDSA", "Ed25519",
+  /// "0" when unknown.
+  public_key_algorithm: Str = "0"
+  /// Whether the basic constraints extension is there (Go's
+  /// BasicConstraintsValid); max_path_len tells 0 from no limit, as Go's
+  /// MaxPathLen and MaxPathLenZero do.
+  basic_constraints_valid: Bool = false
+  /// The authority information access URIs: OCSP responders (Go's
+  /// OCSPServer) and issuer certificates (IssuingCertificateURL).
+  ocsp_servers: List[Str] = []
+  issuing_certificate_urls: List[Str] = []
+  /// The CRL distribution points' full name URIs (Go's
+  /// CRLDistributionPoints).
+  crl_distribution_points: List[Str] = []
+  /// The name constraints (RFC 5280 4.2.1.10, Go's Permitted* and
+  /// Excluded* fields): whether the extension is critical, DNS domains,
+  /// IP ranges, e-mail addresses and URI domains.
+  permitted_dns_domains_critical: Bool = false
+  permitted_dns_domains: List[Str] = []
+  excluded_dns_domains: List[Str] = []
+  permitted_ip_ranges: List[netip.Prefix] = []
+  excluded_ip_ranges: List[netip.Prefix] = []
+  permitted_email_addresses: List[Str] = []
+  excluded_email_addresses: List[Str] = []
+  permitted_uri_domains: List[Str] = []
+  excluded_uri_domains: List[Str] = []
+  /// The certificate policies' OIDs, dotted (Go's Policies), and the
+  /// policy mappings (PolicyMappings).
+  policies: List[Str] = []
+  policy_mappings: List[PolicyMapping] = []
+  /// The policy constraints and inhibitAnyPolicy (Go's
+  /// InhibitAnyPolicy, InhibitPolicyMapping, RequireExplicitPolicy and
+  /// their *Zero flags): None when absent.
+  inhibit_any_policy: Int? = None
+  inhibit_policy_mapping: Int? = None
+  require_explicit_policy: Int? = None
+  /// The OIDs of the critical extensions std/x509 does not act on (Go's
+  /// UnhandledCriticalExtensions); verify fails while there is one.
+  unhandled_critical_extensions: List[Str] = []
+}
+
+/// A certificate policy mapping (RFC 5280 4.2.1.5, Go's PolicyMapping):
+/// the issuer's policy and the subject's policy it maps to, dotted OIDs.
+struct PolicyMapping {
+  issuer_domain_policy: Str
+  subject_domain_policy: Str
 }
 
 /// An x509 error, with Go's text (`x509: malformed certificate`,

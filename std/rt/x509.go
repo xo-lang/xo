@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	mbits "math/bits"
 	"net"
 	"net/netip"
 	"net/url"
@@ -179,7 +180,84 @@ func x509CertOf(tk *Task, c *x509.Certificate) X509_Certificate {
 		F_subject_key_id:      Bytes(c.SubjectKeyId),
 		F_authority_key_id:    Bytes(c.AuthorityKeyId),
 		F_extensions:          ListFromSlice(exts),
+
+		F_raw_tbs_certificate:            Bytes(c.RawTBSCertificate),
+		F_raw_subject_public_key_info:    Bytes(c.RawSubjectPublicKeyInfo),
+		F_signature:                      Bytes(c.Signature),
+		F_public_key_algorithm:           c.PublicKeyAlgorithm.String(),
+		F_basic_constraints_valid:        c.BasicConstraintsValid,
+		F_ocsp_servers:                   x509Strs(c.OCSPServer),
+		F_issuing_certificate_urls:       x509Strs(c.IssuingCertificateURL),
+		F_crl_distribution_points:        x509Strs(c.CRLDistributionPoints),
+		F_permitted_dns_domains_critical: c.PermittedDNSDomainsCritical,
+		F_permitted_dns_domains:          x509Strs(c.PermittedDNSDomains),
+		F_excluded_dns_domains:           x509Strs(c.ExcludedDNSDomains),
+		F_permitted_ip_ranges:            x509Ranges(tk, c.PermittedIPRanges),
+		F_excluded_ip_ranges:             x509Ranges(tk, c.ExcludedIPRanges),
+		F_permitted_email_addresses:      x509Strs(c.PermittedEmailAddresses),
+		F_excluded_email_addresses:       x509Strs(c.ExcludedEmailAddresses),
+		F_permitted_uri_domains:          x509Strs(c.PermittedURIDomains),
+		F_excluded_uri_domains:           x509Strs(c.ExcludedURIDomains),
+		F_policies:                       x509OIDs(c.Policies),
+		F_policy_mappings:                x509Mappings(c.PolicyMappings),
+		F_inhibit_any_policy:             x509Constraint(c.InhibitAnyPolicy, c.InhibitAnyPolicyZero),
+		F_inhibit_policy_mapping:         x509Constraint(c.InhibitPolicyMapping, c.InhibitPolicyMappingZero),
+		F_require_explicit_policy:        x509Constraint(c.RequireExplicitPolicy, c.RequireExplicitPolicyZero),
+		F_unhandled_critical_extensions:  x509ASN1OIDs(c.UnhandledCriticalExtensions),
 	}
+}
+
+// x509Ranges are name constraint IP ranges as prefixes (a mask's ones
+// counted, as the native code reads them).
+func x509Ranges(tk *Task, ns []*net.IPNet) List[Netip_Prefix] {
+	var out []Netip_Prefix
+	for _, n := range ns {
+		a, ok := netip.AddrFromSlice(n.IP)
+		if !ok {
+			continue
+		}
+		bits := 0
+		for _, m := range n.Mask {
+			bits += mbits.OnesCount8(m)
+		}
+		if p := Netip_prefix_from(tk, netipOf(a), int64(bits)); p.Some {
+			out = append(out, p.V)
+		}
+	}
+	return ListFromSlice(out)
+}
+
+func x509OIDs(os []x509.OID) List[string] {
+	var out []string
+	for _, o := range os {
+		out = append(out, o.String())
+	}
+	return ListFromSlice(out)
+}
+
+func x509ASN1OIDs(os []asn1.ObjectIdentifier) List[string] {
+	var out []string
+	for _, o := range os {
+		out = append(out, o.String())
+	}
+	return ListFromSlice(out)
+}
+
+func x509Mappings(ms []x509.PolicyMapping) List[X509_PolicyMapping] {
+	var out []X509_PolicyMapping
+	for _, m := range ms {
+		out = append(out, X509_PolicyMapping{F_issuer_domain_policy: m.IssuerDomainPolicy.String(), F_subject_domain_policy: m.SubjectDomainPolicy.String()})
+	}
+	return ListFromSlice(out)
+}
+
+// x509Constraint is a policy constraint as an Option: Go's int with its
+// *Zero flag (0 and false: absent).
+func x509Constraint(n int, zero bool) Option[int64] {
+	if n == 0 && !zero {
+		return None[int64]()
+	}
+	return Some(int64(n))
 }
 
 func X509_parse(tk *Task, der Bytes) Result[X509_Certificate, X509_CertErr] {

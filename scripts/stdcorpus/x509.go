@@ -5,15 +5,19 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	mbits "math/bits"
 	"math/rand"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -115,6 +119,61 @@ func x509Summary(c *x509.Certificate) string {
 		strings.Join(c.DNSNames, ","), strings.Join(ips, ","), strings.Join(c.EmailAddresses, ","), strings.Join(uris, ","),
 		c.IsCA, mpl, strings.Join(ku, ","), strings.Join(eku, ","), c.SubjectKeyId, c.AuthorityKeyId,
 		strings.Join(exts, ","), key, strings.Join(attrs, ";"))
+}
+
+// x509Fields is the text of the Certificate fields x509Summary leaves
+// out, as the corpus test prints std/x509's.
+func x509Fields(c *x509.Certificate) string {
+	h := func(b []byte) string {
+		d := sha256.Sum256(b)
+		return hex.EncodeToString(d[:8])
+	}
+	ranges := func(ns []*net.IPNet) string {
+		var q []string
+		for _, n := range ns {
+			a, ok := netip.AddrFromSlice(n.IP)
+			if !ok {
+				continue
+			}
+			bits := 0
+			for _, m := range n.Mask {
+				bits += mbits.OnesCount8(m)
+			}
+			if bits <= a.BitLen() {
+				q = append(q, netip.PrefixFrom(a, bits).String())
+			}
+		}
+		return strings.Join(q, ",")
+	}
+	oids := func(os []x509.OID) string {
+		var q []string
+		for _, o := range os {
+			q = append(q, o.String())
+		}
+		return strings.Join(q, ",")
+	}
+	var maps []string
+	for _, m := range c.PolicyMappings {
+		maps = append(maps, m.IssuerDomainPolicy.String()+">"+m.SubjectDomainPolicy.String())
+	}
+	opt := func(n int, zero bool) string {
+		if n == 0 && !zero {
+			return "none"
+		}
+		return strconv.Itoa(n)
+	}
+	var uce []string
+	for _, o := range c.UnhandledCriticalExtensions {
+		uce = append(uce, o.String())
+	}
+	return fmt.Sprintf("tbs=%s spki=%s sig=%s pka=%s bcv=%v ocsp=%s aia=%s crldp=%s pdc=%v pdns=%s edns=%s pip=%s eip=%s pem=%s eem=%s puri=%s euri=%s pol=%s pmap=%s iap=%s ipm=%s rep=%s uce=%s",
+		h(c.RawTBSCertificate), h(c.RawSubjectPublicKeyInfo), h(c.Signature), c.PublicKeyAlgorithm, c.BasicConstraintsValid,
+		strings.Join(c.OCSPServer, ","), strings.Join(c.IssuingCertificateURL, ","), strings.Join(c.CRLDistributionPoints, ","),
+		c.PermittedDNSDomainsCritical, strings.Join(c.PermittedDNSDomains, ","), strings.Join(c.ExcludedDNSDomains, ","),
+		ranges(c.PermittedIPRanges), ranges(c.ExcludedIPRanges), strings.Join(c.PermittedEmailAddresses, ","), strings.Join(c.ExcludedEmailAddresses, ","),
+		strings.Join(c.PermittedURIDomains, ","), strings.Join(c.ExcludedURIDomains, ","), oids(c.Policies), strings.Join(maps, ","),
+		opt(c.InhibitAnyPolicy, c.InhibitAnyPolicyZero), opt(c.InhibitPolicyMapping, c.InhibitPolicyMappingZero), opt(c.RequireExplicitPolicy, c.RequireExplicitPolicyZero),
+		strings.Join(uce, ","))
 }
 
 // x509Clamp is t in Unix seconds as std/x509 gives it: clamped to the
@@ -341,7 +400,7 @@ func x509Verify(t goVerifyTest) string {
 func x509Corpus() string {
 	var o strings.Builder
 	o.WriteString(header("Go's crypto/x509 and crypto/tls testdata certificates, verify_test.go's certificates and verifyTests, the NIST PKITS certificates, and mutated copies, against std/x509 (Go's tests are Copyright 2009 The Go Authors, BSD-style license)"))
-	o.WriteString("\nuse std/crypto\nuse std/x509\n")
+	o.WriteString("\nuse std/crypto\nuse std/netip\nuse std/x509\n")
 
 	src := filepath.Join(runtime.GOROOT(), "src", "crypto")
 	var rows []x509Row
@@ -397,6 +456,15 @@ func x509Corpus() string {
 	o.WriteString("\n/// (DER, Go's summary or error, where it comes from)\nconst PARSE_ROWS: List[(Bytes, Str, Str)] = [\n")
 	for _, x := range rows {
 		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xbytes(x.der), xq(x.want), xq(x.why))
+	}
+	o.WriteString("]\n")
+
+	// the fields beyond the summary, for every row Go parses
+	o.WriteString("\n/// (index in PARSE_ROWS, Go's other fields)\nconst FIELD_ROWS: List[(Int, Str)] = [\n")
+	for i, x := range rows {
+		if c, err := x509.ParseCertificate(x.der); err == nil {
+			fmt.Fprintf(&o, "  (%d, %s),\n", i, xq(x509Fields(c)))
+		}
 	}
 	o.WriteString("]\n")
 
@@ -522,6 +590,37 @@ fn summary(c: x509.Certificate) -> Str {
   let ext = c.extensions.map(fn(e) { "${e.oid}/${e.critical}/${e.value.len()}" }).join(",")
   let attrs = c.subject.attributes().map(fn(a) { "${a.0}=${a.1}" }).join(";")
   "v=${c.version} serial=${c.serial.to_hex()} sig=${c.signature_algorithm} subj=${c.subject.display()} iss=${c.issuer.display()} nb=${c.not_before.unix()} na=${c.not_after.unix()} dns=${c.dns_names.join(",")} ip=${ips} email=${c.email_addresses.join(",")} uri=${c.uris.join(",")} ca=${c.is_ca} mpl=${mpl} ku=${ku} eku=${eku} ski=${c.subject_key_id.to_hex()} aki=${c.authority_key_id.to_hex()} ext=${ext} key=${key_name(c.public_key)} attrs=${attrs}"
+}
+
+fn h8(b: Bytes) -> Str { crypto.sha256(b)[0..8].to_hex() }
+
+fn fields(c: x509.Certificate) -> Str {
+  let opt = fn(n: Int?) -> Str {
+    match n {
+      Some(x) => "${x}"
+      None => "none"
+    }
+  }
+  let ranges = fn(ps: List[netip.Prefix]) -> Str { ps.map(fn(p) { p.display() }).join(",") }
+  let maps = c.policy_mappings.map(fn(m) { "${m.issuer_domain_policy}>${m.subject_domain_policy}" }).join(",")
+  "tbs=${h8(c.raw_tbs_certificate)} spki=${h8(c.raw_subject_public_key_info)} sig=${h8(c.signature)} pka=${c.public_key_algorithm} bcv=${c.basic_constraints_valid} ocsp=${c.ocsp_servers.join(",")} aia=${c.issuing_certificate_urls.join(",")} crldp=${c.crl_distribution_points.join(",")} pdc=${c.permitted_dns_domains_critical} pdns=${c.permitted_dns_domains.join(",")} edns=${c.excluded_dns_domains.join(",")} pip=${ranges(c.permitted_ip_ranges)} eip=${ranges(c.excluded_ip_ranges)} pem=${c.permitted_email_addresses.join(",")} eem=${c.excluded_email_addresses.join(",")} puri=${c.permitted_uri_domains.join(",")} euri=${c.excluded_uri_domains.join(",")} pol=${c.policies.join(",")} pmap=${maps} iap=${opt(c.inhibit_any_policy)} ipm=${opt(c.inhibit_policy_mapping)} rep=${opt(c.require_explicit_policy)} uce=${c.unhandled_critical_extensions.join(",")}"
+}
+
+test "a parsed certificate's raw parts, URLs, name constraints, policies and unhandled extensions are Go's" {
+  var bad: List[Str] = []
+  for (i, want) in FIELD_ROWS {
+    let (der, _, why) = PARSE_ROWS[i]
+    match x509.parse(der) {
+      Ok(c) => {
+        let got = fields(c)
+        if got != want {
+          bad.push("${why}:\n  got  ${got}\n  want ${want}")
+        }
+      }
+      Err(e) => bad.push("${why}: ${e.display()}")
+    }
+  }
+  expect(shown(bad)) == []
 }
 
 test "every certificate parses as Go's ParseCertificate, field by field, errors with Go's text" {

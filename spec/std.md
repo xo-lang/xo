@@ -7528,8 +7528,20 @@ struct Certificate {
   public_key: crypto.PublicKey?, dns_names: List[Str], ip_addresses: List[netip.Addr],
   email_addresses: List[Str], uris: List[Str], is_ca: Bool, max_path_len: Int?,
   key_usage: List[KeyUsage], ext_key_usage: List[ExtKeyUsage],
-  subject_key_id: Bytes, authority_key_id: Bytes, extensions: List[Extension]
+  subject_key_id: Bytes, authority_key_id: Bytes, extensions: List[Extension],
+  raw_tbs_certificate: Bytes = b"", raw_subject_public_key_info: Bytes = b"",
+  signature: Bytes = b"", public_key_algorithm: Str = "0", basic_constraints_valid: Bool = false,
+  ocsp_servers: List[Str] = [], issuing_certificate_urls: List[Str] = [],
+  crl_distribution_points: List[Str] = [], permitted_dns_domains_critical: Bool = false,
+  permitted_dns_domains: List[Str] = [], excluded_dns_domains: List[Str] = [],
+  permitted_ip_ranges: List[netip.Prefix] = [], excluded_ip_ranges: List[netip.Prefix] = [],
+  permitted_email_addresses: List[Str] = [], excluded_email_addresses: List[Str] = [],
+  permitted_uri_domains: List[Str] = [], excluded_uri_domains: List[Str] = [],
+  policies: List[Str] = [], policy_mappings: List[PolicyMapping] = [],
+  inhibit_any_policy: Int? = None, inhibit_policy_mapping: Int? = None,
+  require_explicit_policy: Int? = None, unhandled_critical_extensions: List[Str] = []
 }
+struct PolicyMapping { issuer_domain_policy: Str, subject_domain_policy: Str }
 struct CertErr { msg: Str }
 fn (e: CertErr) display() -> Str
 fn parse(der: Bytes) -> Certificate ! CertErr

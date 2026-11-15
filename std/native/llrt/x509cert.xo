@@ -144,10 +144,20 @@ pub struct Cert {
   pub inhibit_any: Int
   /// Every extension, in order (std/x509's Certificate.extensions).
   pub extensions: List[Ext]
+  /// The authority information access URIs (Go's OCSPServer and
+  /// IssuingCertificateURL), the CRL distribution points' full name URIs,
+  /// whether the name constraints extension is critical, and the OIDs of
+  /// the critical extensions counted in unhandled (Go's
+  /// UnhandledCriticalExtensions).
+  pub ocsp: List[Str]
+  pub issuing: List[Str]
+  pub crl_dps: List[Str]
+  pub nc_critical: Bool
+  pub unhandled_oids: List[Str]
 }
 
 fn empty() -> Cert {
-  Cert{raw: b"", tbs: b"", version: 0, serial: b"", sig_alg: SIG_UNKNOWN, signature: b"", issuer: b"", subject: b"", cn: "", not_before: 0, not_after: 0, key_alg: KEY_UNKNOWN, key: b"", spki: b"", dns: [], ips: [], has_san: false, has_bc: false, is_ca: false, max_path: -1, key_usage: -1, ext_usage: [], ext_usage_der: [], has_eku: false, ski: b"", aki: b"", permitted_dns: [], excluded_dns: [], unhandled: 0, san_other: 0, other_constraints: 0, sig_oid: "", san_raw: b"", has_key: false, org: "", has_nc: false, permitted_ips: [], excluded_ips: [], permitted_emails: [], excluded_emails: [], permitted_uris: [], excluded_uris: [], emails: [], uris: [], uri_hosts: [], policies: [], policy_maps: [], has_req_explicit: false, req_explicit: 0, has_inhibit_mapping: false, inhibit_mapping: 0, has_inhibit_any: false, inhibit_any: 0, extensions: []}
+  Cert{raw: b"", tbs: b"", version: 0, serial: b"", sig_alg: SIG_UNKNOWN, signature: b"", issuer: b"", subject: b"", cn: "", not_before: 0, not_after: 0, key_alg: KEY_UNKNOWN, key: b"", spki: b"", dns: [], ips: [], has_san: false, has_bc: false, is_ca: false, max_path: -1, key_usage: -1, ext_usage: [], ext_usage_der: [], has_eku: false, ski: b"", aki: b"", permitted_dns: [], excluded_dns: [], unhandled: 0, san_other: 0, other_constraints: 0, sig_oid: "", san_raw: b"", has_key: false, org: "", has_nc: false, permitted_ips: [], excluded_ips: [], permitted_emails: [], excluded_emails: [], permitted_uris: [], excluded_uris: [], emails: [], uris: [], uri_hosts: [], policies: [], policy_maps: [], has_req_explicit: false, req_explicit: 0, has_inhibit_mapping: false, inhibit_mapping: 0, has_inhibit_any: false, inhibit_any: 0, extensions: [], ocsp: [], issuing: [], crl_dps: [], nc_critical: false, unhandled_oids: []}
 }
 
 /// The result of parse: the certificate, or the error text (Go's).
@@ -885,13 +895,14 @@ fn process_extensions(list: List[Ext], var c: Cert) -> Str {
         }
       } else if n == 30 {
         c.has_nc = true
+        c.nc_critical = e.critical
         let r = name_constraints(e.value, c)
         if r.err != "" {
           return r.err
         }
         unhandled = r.unhandled
       } else if n == 31 {
-        let err = crl_points(v)
+        let err = crl_points(v, c)
         if err != "" {
           return err
         }
@@ -1001,7 +1012,7 @@ fn process_extensions(list: List[Ext], var c: Cert) -> Str {
       if e.critical {
         return "x509: authority info access incorrectly marked critical"
       }
-      let err = info_access(v)
+      let err = info_access(v, c)
       if err != "" {
         return err
       }
@@ -1010,6 +1021,7 @@ fn process_extensions(list: List[Ext], var c: Cert) -> Str {
     }
     if e.critical && unhandled {
       c.unhandled += 1
+      c.unhandled_oids.push(e.oid)
     }
   }
   for o in unknown_eku {
@@ -1369,7 +1381,7 @@ fn is_ip_text(s: Str) -> Bool {
 }
 
 /// Go's reading of the CRL distribution points.
-fn crl_points(v0: cbyte.Win) -> Str {
+fn crl_points(v0: cbyte.Win, var c: Cert) -> Str {
   var v = v0
   var dps = match cbyte.read(v, cbyte.SEQUENCE) {
     Some(x) => x
@@ -1393,8 +1405,9 @@ fn crl_points(v0: cbyte.Win) -> Str {
       None => return "x509: invalid CRL distribution point"
     }
     while !cbyte.empty(full) && cbyte.peek(full, 0x86) {
-      if cbyte.read(full, 0x86) is None {
-        return "x509: invalid CRL distribution point"
+      match cbyte.read(full, 0x86) {
+        Some(u) => c.crl_dps.push(cbyte.bytes(u).to_str() ?? "")
+        None => return "x509: invalid CRL distribution point"
       }
     }
   }
@@ -1443,7 +1456,7 @@ fn policies(v0: cbyte.Win, var c: Cert) -> Str {
 }
 
 /// Go's reading of the authority information access.
-fn info_access(v0: cbyte.Win) -> Str {
+fn info_access(v0: cbyte.Win, var c: Cert) -> Str {
   var v = v0
   var aia = match cbyte.read(v, cbyte.SEQUENCE) {
     Some(x) => x
@@ -1454,14 +1467,23 @@ fn info_access(v0: cbyte.Win) -> Str {
       Some(x) => x
       None => return "x509: invalid authority info access"
     }
-    if cbyte.read_oid(one) is None {
-      return "x509: invalid authority info access"
+    let method = match cbyte.read_oid(one) {
+      Some(o) => o
+      None => return "x509: invalid authority info access"
     }
     if !cbyte.peek(one, 0x86) {
       continue
     }
-    if cbyte.read(one, 0x86) is None {
-      return "x509: invalid authority info access"
+    match cbyte.read(one, 0x86) {
+      Some(u) => {
+        let url = cbyte.bytes(u).to_str() ?? ""
+        if method == "1.3.6.1.5.5.7.48.1" {
+          c.ocsp.push(url)
+        } else if method == "1.3.6.1.5.5.7.48.2" {
+          c.issuing.push(url)
+        }
+      }
+      None => return "x509: invalid authority info access"
     }
   }
   ""

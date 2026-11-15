@@ -5,6 +5,7 @@ use std/crypto
 use std/netip
 use std/x509
 use native/llrt/asn1
+use native/llrt/cbyte
 use native/llrt/pkcs12
 use native/llrt/tlscert
 use native/llrt/x509cert as lx
@@ -282,7 +283,86 @@ fn cert_of(c: lx.Cert) -> x509.Certificate {
     subject_key_id: c.ski,
     authority_key_id: c.aki,
     extensions: exts,
+    raw_tbs_certificate: c.tbs,
+    raw_subject_public_key_info: c.spki,
+    signature: c.signature,
+    public_key_algorithm: spki_alg_name(c.spki),
+    basic_constraints_valid: c.has_bc,
+    ocsp_servers: c.ocsp,
+    issuing_certificate_urls: c.issuing,
+    crl_distribution_points: c.crl_dps,
+    permitted_dns_domains_critical: c.nc_critical,
+    permitted_dns_domains: c.permitted_dns,
+    excluded_dns_domains: c.excluded_dns,
+    permitted_ip_ranges: ranges_of(c.permitted_ips),
+    excluded_ip_ranges: ranges_of(c.excluded_ips),
+    permitted_email_addresses: c.permitted_emails,
+    excluded_email_addresses: c.excluded_emails,
+    permitted_uri_domains: c.permitted_uris,
+    excluded_uri_domains: c.excluded_uris,
+    policies: c.policies.map(fn(o) { oid_dotted(o) }),
+    policy_mappings: mappings_of(c.policy_maps),
+    inhibit_any_policy: if c.has_inhibit_any { Some(c.inhibit_any) } else { None },
+    inhibit_policy_mapping: if c.has_inhibit_mapping { Some(c.inhibit_mapping) } else { None },
+    require_explicit_policy: if c.has_req_explicit { Some(c.req_explicit) } else { None },
+    unhandled_critical_extensions: c.unhandled_oids,
   }
+}
+
+/// Go's PublicKeyAlgorithm.String() of a SubjectPublicKeyInfo's algorithm.
+fn spki_alg_name(spki: Bytes) -> Str {
+  let t = asn1.whole(spki, asn1.SEQUENCE)
+  let kids = asn1.children(spki, t)
+  if kids.len() != 2 || asn1.any_bad(kids) {
+    return "0"
+  }
+  let alg = asn1.children(spki, kids[0])
+  if alg.is_empty() || asn1.any_bad(alg) {
+    return "0"
+  }
+  match asn1.oid_text(spki, alg[0]) {
+    "1.2.840.113549.1.1.1" => "RSA"
+    "1.2.840.10040.4.1" => "DSA"
+    "1.2.840.10045.2.1" => "ECDSA"
+    "1.3.101.112" => "Ed25519"
+    _ => "0"
+  }
+}
+
+/// An OID's contents as dotted text (Go's OID.String).
+fn oid_dotted(contents: Bytes) -> Str { cbyte.oid_text(cbyte.of(contents)) ?? "" }
+
+/// Name constraint IP subtrees (address then mask) as prefixes.
+fn ranges_of(xs: List[Bytes]) -> List[netip.Prefix] {
+  var out: List[netip.Prefix] = []
+  for b in xs {
+    let n = b.len() / 2
+    var bits = 0
+    for i in 0..n {
+      var m = Int(b[n + i])
+      while m > 0 {
+        bits += m & 1
+        m = m >> 1
+      }
+    }
+    if let Some(a) = netip.addr_from_bytes(b[0..n]) {
+      if let Some(p) = netip.prefix_from(a, bits) {
+        out.push(p)
+      }
+    }
+  }
+  out
+}
+
+/// The policy mappings, stored as issuer and subject OID contents in turn.
+fn mappings_of(xs: List[Bytes]) -> List[x509.PolicyMapping] {
+  var out: List[x509.PolicyMapping] = []
+  var i = 0
+  while i + 1 < xs.len() {
+    out.push(x509.PolicyMapping{issuer_domain_policy: oid_dotted(xs[i]), subject_domain_policy: oid_dotted(xs[i + 1])})
+    i += 2
+  }
+  out
 }
 
 /// The llrt certificate of a public one (parsed again from its DER, which
