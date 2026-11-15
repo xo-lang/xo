@@ -278,7 +278,11 @@ func main() {
 			continue
 		}
 		s := string(r)
-		if norm.NFKD.String(s) == s && norm.NFD.PropertiesString(s).CCC() == 0 {
+		// a rune no form changes, of class 0, that starts a composition
+		// counts nothing; one that combines backward (U+0B57, U+11930)
+		// leads with one non-starter in x/text's count though its class is
+		// 0 (TestNormFuzz seed 59, 2026-11-14), so it is measured
+		if norm.NFKD.String(s) == s && norm.NFD.PropertiesString(s).CCC() == 0 && norm.NFC.PropertiesString(s).BoundaryBefore() && norm.NFKC.PropertiesString(s).BoundaryBefore() {
 			continue
 		}
 		l, t := ssProps(r)

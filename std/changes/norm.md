@@ -1,5 +1,17 @@
 # std/norm changes
 
+## 2026-11-14: fix: a rune of class 0 that combines backward counts in the stream-safe count
+
+- Kind: fix
+- Commit: this push
+- Found by: TestNormFuzz seed 59 on linux/arm64 host 2 (decision 0616's fuzz kind): a run starting with U+11930 put U+034F one mark later than x/text
+- Go reference: x/text v0.43.0 unicode/norm, nLeadingNonStarters (a rune that combines backward, U+0B57, U+0CC2, U+11930, counts as one non-starter though its class is 0)
+- Change: scripts/gennorm measured the stream-safe counts of only the runes a form changes or of a class above 0, so the runes of class 0 that combine backward had none; it now measures those too, and STREAM_SAFE and SS_IDX regenerate with them
+- Measured: no change to text without such a rune
+- Test: std/norm_test.xo "a rune of class 0 that combines backward counts as a non-starter" (11 leads, x/text's offsets); TestNormFuzz seeds 59, 60 and 61 at 5000 strings on arm64 and llvm; TestStdCorpora norm on go, arm64, llvm; xo test --std-module=norm native and llvm
+- Affected: every backend, the stream-safe text only (3a99cbf9e, not released)
+- Shipped in: not yet released
+
 ## 2026-11-14: perf: unstable runes found through a per block index
 
 - Kind: perf

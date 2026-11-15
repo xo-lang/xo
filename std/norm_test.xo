@@ -51,3 +51,25 @@ test "a long run of marks normalizes in linear time" {
   let out = normalize(s, Form.Nfc)
   expect(cgj_at(out).len()) == 6666
 }
+
+test "a rune of class 0 that combines backward counts as a non-starter in the stream-safe count, as x/text" {
+  // x/text v0.43.0's answers: the byte offset of the U+034F in the NFC
+  // form of lead + 29 or 30 U+0301 + U+0302 (TestNormFuzz seed 59)
+  let cases: List[(Str, Int, Int)] = [
+    ("a", 60, -1),
+    ("\u{11930}", 62, 62),
+    ("\u{b57}", 61, 61),
+    ("\u{b3e}", 61, 61),
+    ("\u{1161}", 61, 61),
+    ("\u{cd5}", 61, 61),
+    ("\u{cc2}", 61, 61),
+    ("a\u{11930}", 63, 63),
+    ("a\u{b57}", 62, 62),
+    ("a\u{1161}", 62, 62),
+    ("\u{1100}\u{1161}", 61, 61),
+  ]
+  for (lead, at30, at29) in cases {
+    expect(normalize(lead + marks(30, "\u{301}") + "\u{302}", Form.Nfc).find("\u{34f}") ?? -1) == at30
+    expect(normalize(lead + marks(29, "\u{301}") + "\u{302}", Form.Nfc).find("\u{34f}") ?? -1) == at29
+  }
+}
