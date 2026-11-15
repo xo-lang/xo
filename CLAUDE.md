@@ -81,9 +81,12 @@ in another worktree. Only an empty queue stops you; then ask the lead.
   with details in a file under `~/xo-lead/notes/AGENT/` named in the
   report. Message the lead only for results, blocks, decisions, and
   approvals; status goes on `board.sh`.
-- No polling: wait on gates and background runs through their
-  notification, never a sleep loop; outside CI and registries at most once
-  a day.
+- No polling (owner, 2026-11-15: polls were about 30% of agent calls,
+  each re-reading the whole context): wait with `heavy.sh --wait NAME`,
+  `pushq.sh --wait WT` or `offload-gate.sh --wait WT` under
+  run_in_background and act on the notification (agent-tools.md
+  "Waiting"); never a sleep loop or repeated tail or status checks;
+  outside CI and registries at most once a day.
 - After each finished task: write your resume note (open branches and
   worktrees, queued gates and jobs, next item, key paths), then message
   "DONE <task>; ready to restart; resume: <path>". The lead closes the
