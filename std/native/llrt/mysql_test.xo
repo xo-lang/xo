@@ -192,11 +192,65 @@ fn fk_sha2_fast(resp: Bytes, c: ServerConn, seq: Int) -> Int ! NetErr {
   Ok(seq + 2)
 }
 
+/// COM_STMT_PREPARE_OK for statement id with its definitions (each a
+/// VAR_STRING), and an EOF after each group on an old server.
+fn fk_prepared(id: Int, params: Int, cols: List[Bytes], eof: Bool) -> List[Bytes] {
+  var out = [b"\x00" + w.le_bytes(id, 4) + w.le_bytes(cols.len(), 2) + w.le_bytes(params, 2) + b"\x00\x00\x00"]
+  for _ in 0..params {
+    out.push(fk_col("?", w.TYPE_VAR_STRING, 63, 0))
+  }
+  if eof && params > 0 {
+    out.push(b"\xfe\x00\x00\x02\x00")
+  }
+  for c in cols {
+    out.push(c)
+  }
+  if eof && !cols.is_empty() {
+    out.push(b"\xfe\x00\x00\x02\x00")
+  }
+  out
+}
+
 fn fk_rows_server(eof: Bool) -> fn(Bytes) -> List[Bytes] {
   fn(cmd) {
     let q = cmd[1..cmd.len()].to_str_lossy()
     if Int(cmd[0]) == w.COM_PING {
       return [fk_ok(0, 0, 2)]
+    }
+    // prepared statements: 1 an INSERT, 3 a SELECT with binary rows
+    if Int(cmd[0]) == w.COM_STMT_CLOSE {
+      return []
+    }
+    if Int(cmd[0]) == w.COM_STMT_PREPARE {
+      if q.starts_with("INSERT") {
+        return fk_prepared(1, 2, [], eof)
+      }
+      if q.starts_with("SELECT name, n FROM t WHERE id = ?") {
+        return fk_prepared(3, 1, [fk_col("name", w.TYPE_VAR_STRING, 45, 0), fk_col("n", w.TYPE_LONGLONG, 63, w.FLAG_UNSIGNED)], eof)
+      }
+      if q.starts_with("SELECT * FROM missing") {
+        return [fk_err(1146, "42S02", "Table 'app.missing' doesn't exist")]
+      }
+      return [fk_err(1064, "42000", "You have an error in your SQL syntax")]
+    }
+    if Int(cmd[0]) == w.COM_STMT_EXECUTE {
+      let id = w.le(cmd, 1, 4)
+      if id == 1 {
+        let want = w.stmt_execute(1, [w.BinParam{kind: w.TYPE_LONGLONG, unsigned: false, null: false, value: w.le_bytes(1, 8)}, w.BinParam{kind: w.TYPE_STRING, unsigned: false, null: false, value: w.lenenc_str(b"x")}])
+        return if cmd == want { [fk_ok(2, 41, 2)] } else { [fk_err(1210, "HY000", "Incorrect arguments to mysqld_stmt_execute")] }
+      }
+      if id == 3 {
+        var out = [w.lenenc_int(2), fk_col("name", w.TYPE_VAR_STRING, 45, 0), fk_col("n", w.TYPE_LONGLONG, 63, w.FLAG_UNSIGNED)]
+        if eof {
+          out.push(b"\xfe\x00\x00\x02\x00")
+        }
+        // a row ("a", 2^64 - 1), then a row with name NULL (bit 2)
+        out.push(b"\x00\x00" + w.lenenc_str(b"a") + b"\xff\xff\xff\xff\xff\xff\xff\xff")
+        out.push(b"\x00\x04" + w.le_bytes(7, 8))
+        out.push(if eof { b"\xfe\x00\x00\x02\x00" } else { b"\xfe\x00\x00\x02\x00\x00\x00" })
+        return out
+      }
+      return [fk_err(1243, "HY000", "Unknown prepared statement handler")]
     }
     if q.starts_with("SELECT id") {
       var out = [w.lenenc_int(3), fk_col("id", w.TYPE_LONGLONG, 63, w.FLAG_NOT_NULL), fk_col("name", w.TYPE_VAR_STRING, 45, 0), fk_col("at", w.TYPE_DATETIME, 63, 0)]
@@ -235,7 +289,21 @@ test "a fake server: caching_sha2_password's fast path, rows with DEPRECATE_EOF,
     let r = db.exec("INSERT INTO t VALUES (?, ?)", [sql.int(1), sql.str("x")])?
     expect((r.rows_affected, r.last_insert_id)) == (2, 41)
     expect(db.exec("BAD").err()) == Some(sql.SqlErr.Syntax(msg: "Error 1064 (42000): You have an error in your SQL syntax"))
+    // prepared: an error at prepare; binary rows; a count mismatch
     expect(db.query("SELECT * FROM missing WHERE a = ? AND b = ?", [sql.str("x'y"), sql.int(7)]).err()) == Some(sql.SqlErr.NoTable(name: "app.missing"))
+    let bin = db.query("SELECT name, n FROM t WHERE id = ?", [sql.int(1)])?
+    expect(bin.len()) == 2
+    expect(bin[0].value("name")) == Ok(sql.SqlValue.Text(s: "a"))
+    expect(bin[0].value("n")) == Ok(sql.SqlValue.Text(s: "18446744073709551615"))
+    expect(bin[1].value("name")) == Ok(sql.SqlValue.Null)
+    expect(bin[1].int("n")) == Ok(7)
+    expect(db.query("SELECT name, n FROM t WHERE id = ?", [sql.int(1), sql.int(2)]).err()) == Some(sql.SqlErr.Param(msg: "the statement has 1 placeholders and 2 arguments"))
+    // the connection is still in step after each of those
+    expect(db.ping().is_ok()) == true
+    // interpolateParams=true: the arguments in the text, escaped
+    let text = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false&interpolateParams=true")?
+    expect(text.query("SELECT * FROM missing WHERE a = ? AND b = ?", [sql.str("x'y"), sql.int(7)]).err()) == Some(sql.SqlErr.NoTable(name: "app.missing"))
+    expect(text.exec("BAD ?", [sql.int(1)]).err()) == Some(sql.SqlErr.Syntax(msg: "Error 1064 (42000): You have an error in your SQL syntax"))
     s.cancel()
   }
 }

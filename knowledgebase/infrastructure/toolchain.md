@@ -2096,8 +2096,9 @@ Last verified: 2026-10-21.
 
 - `scripts/mysql-diff.sh XO WORK [IMAGE...]` (decision 0648 item 12):
   the MySQL differential test of std/sql's driver: scripts/mysqldiff/
-  cases.txt (twice: `tls=true`, then with `parseTime=true` and
-  `clientFoundRows=true`) and multi.txt (`multiStatements=true`) through
+  cases.txt (three times over `tls=true`: `interpolateParams=true`,
+  prepared, and prepared with `parseTime=true` and `clientFoundRows=true`)
+  and multi.txt (`multiStatements=true`) through
   go-sql-driver (scripts/mysqldiff/gomysql, its own Go module pinned to
   v1.10.1, the only place go-sql-driver appears) and through the Xo
   driver (scripts/mysqldiff/xo) against mysql:8.4 and mysql:8.0 in Docker

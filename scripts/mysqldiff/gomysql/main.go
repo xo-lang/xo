@@ -1,6 +1,7 @@
 // Reference for the MySQL differential test (scripts/mysql-diff.sh,
 // decision 0648 item 12): each statement through go-sql-driver/mysql's
-// public API (database/sql, the text protocol: interpolateParams=true),
+// public API (database/sql; arguments prepared, or in the text with
+// interpolateParams=true),
 // its values printed in the Debug form of std/sql's Row with decision
 // 0648 item 8's mapping, its column types as go-sql-driver reports them,
 // or the error's number, SQLSTATE and message with item 9's mapping. This
@@ -222,15 +223,12 @@ func colTypes(cts []*sql.ColumnType) string {
 	return strings.Join(out, " ")
 }
 
-// dsnFor is the DSN go-sql-driver gets for the Xo driver's dsn: the text
-// protocol, and with MY_ROOTS, tls=true and tls=custom verified against
-// those roots (the Xo driver's roots: on sql.open).
+// dsnFor is the DSN go-sql-driver gets for the Xo driver's dsn: the same
+// (interpolateParams=true for the text protocol, else arguments are
+// prepared and rows binary, as in the Xo driver), and with MY_ROOTS,
+// tls=true and tls=custom verified against those roots (the Xo driver's
+// roots: on sql.open).
 func dsnFor(dsn string) string {
-	sep := "?"
-	if strings.Contains(dsn, "?") {
-		sep = "&"
-	}
-	dsn += sep + "interpolateParams=true"
 	if path := os.Getenv("MY_ROOTS"); path != "" {
 		pem, err := os.ReadFile(path)
 		if err != nil {

@@ -11,8 +11,10 @@
 # XO is the xo to build the Xo side with; WORK a scratch directory; each
 # IMAGE (default mysql:8.4 mysql:8.0) runs once, with a test CA and a
 # server certificate for 127.0.0.1 (openssl): every statement over
-# tls=true verified against that CA, then with parseTime=true and
-# clientFoundRows=true, and multi.txt with multiStatements=true
+# tls=true verified against that CA with interpolateParams=true (the
+# text protocol), then with arguments prepared (the binary protocol),
+# then prepared with parseTime=true and clientFoundRows=true, and
+# multi.txt with multiStatements=true
 # (caching_sha2_password's full
 # authentication on the first connection, its fast path after), then the
 # outcome (ok or fail) of each tls mode with right, wrong and no roots,
@@ -75,7 +77,7 @@ for img in "${IMAGES[@]}"; do
 	: > "$WORK/$name.got"
 	: > "$WORK/$name.want"
 	# each pass: a case file and the DSN's parameters
-	for pass in "cases.txt tls=true" "cases.txt tls=true&parseTime=true&clientFoundRows=true" "multi.txt tls=true&multiStatements=true"; do
+	for pass in "cases.txt tls=true&interpolateParams=true" "cases.txt tls=true" "cases.txt tls=true&parseTime=true&clientFoundRows=true" "multi.txt tls=true&multiStatements=true"; do
 		set -- $pass
 		echo "=== $1 $2" | tee -a "$WORK/$name.got" >> "$WORK/$name.want"
 		MY_ROOTS="$certs/ca.pem" "$WORK/xodiff" "$base?$2" < "$HERE/mysqldiff/$1" >> "$WORK/$name.got" 2>&1 || true
@@ -105,7 +107,7 @@ for img in "${IMAGES[@]}"; do
 	cat "$WORK/$name.want" "$WORK/$name.modes.want" > "$WORK/$name.all.want"
 	cat "$WORK/$name.got" "$WORK/$name.modes.got" > "$WORK/$name.all.got"
 	if diff -u "$WORK/$name.all.want" "$WORK/$name.all.got" > "$WORK/$name.diff" && [ "$hint" = ok ]; then
-		echo "mysql-diff $img: ok ($(grep -c '^== ' "$WORK/$name.want") statements in 3 passes over tls=true (parseTime, clientFoundRows, multiStatements), $(wc -l < "$WORK/$name.modes.want" | tr -d ' ') tls outcomes, the self signed hint)"
+		echo "mysql-diff $img: ok ($(grep -c '^== ' "$WORK/$name.want") statements in 4 passes over tls=true (interpolated, prepared, prepared with parseTime and clientFoundRows, multiStatements), $(wc -l < "$WORK/$name.modes.want" | tr -d ' ') tls outcomes, the self signed hint)"
 	else
 		echo "mysql-diff $img: DIFFERS ($WORK/$name.diff; hint $hint)"
 		status=1

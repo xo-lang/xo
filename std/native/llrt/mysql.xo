@@ -764,6 +764,13 @@ fn run(p: MyConn, q: Str) -> List[Result1] ! sql.SqlErr uses net.dial {
   }
   p.seq.set(0)
   p.send(w.command(w.COM_QUERY, q.bytes()))?
+  results(p, false)
+}
+
+/// Every result of the command just sent (COM_QUERY, or COM_STMT_EXECUTE
+/// with binary rows), in order; the first error is the call's, after the
+/// rest are read so the connection stays usable.
+fn results(p: MyConn, binary: Bool) -> List[Result1] ! sql.SqlErr uses net.dial {
   var out: List[Result1] = []
   var failed: sql.SqlErr? = None
   while true {
@@ -799,7 +806,7 @@ fn run(p: MyConn, q: Str) -> List[Result1] ! sql.SqlErr uses net.dial {
         }
       }
       _ => {
-        let r = read_result_set(p, first)?
+        let r = read_result_set(p, first, binary)?
         out.push(r.0)
         more = r.1
       }
@@ -816,7 +823,7 @@ fn run(p: MyConn, q: Str) -> List[Result1] ! sql.SqlErr uses net.dial {
 
 /// A result set from its column count packet to its end: the set, and
 /// whether more results follow.
-fn read_result_set(p: MyConn, first: Bytes) -> (Result1, Bool) ! sql.SqlErr uses net.dial {
+fn read_result_set(p: MyConn, first: Bytes, binary: Bool) -> (Result1, Bool) ! sql.SqlErr uses net.dial {
   var r = w.reader(first)
   let n = r.lenenc().map_err(fn(e) { wire_err(p, e) })? ?? 0
   var cols: List[w.Column] = []
@@ -843,7 +850,7 @@ fn read_result_set(p: MyConn, first: Bytes) -> (Result1, Bool) ! sql.SqlErr uses
       let e = w.err_packet(pk, true).map_err(fn(x) { wire_err(p, x) })?
       return Err(server_err(e))
     }
-    let vals = w.parse_text_row(pk, cols.len()).map_err(fn(e) { wire_err(p, e) })?
+    let vals = (if binary { w.parse_binary_row(pk, cols) } else { w.parse_text_row(pk, cols.len()) }).map_err(fn(e) { wire_err(p, e) })?
     var row: List[sql.SqlValue] = List.with_capacity(vals.len())
     for (i, v) in vals.indexed() {
       row.push(decode_text(cols[i], v, p.cfg.parse_time))
@@ -853,11 +860,89 @@ fn read_result_set(p: MyConn, first: Bytes) -> (Result1, Bool) ! sql.SqlErr uses
   Ok((Result1{cols: cols, rows: rows, affected: 0, insert_id: 0}, false))
 }
 
+/// The column definitions of a COM_STMT_PREPARE_OK (n of them, then an
+/// EOF unless the server deprecated it).
+fn read_defs(p: MyConn, n: Int) -> List[w.Column] ! sql.SqlErr uses net.dial {
+  var cols: List[w.Column] = []
+  for _ in 0..n {
+    cols.push(w.parse_column(p.recv()?).map_err(fn(e) { wire_err(p, e) })?)
+  }
+  if n > 0 && p.caps & w.CLIENT_DEPRECATE_EOF == 0 {
+    let eof = p.recv()?
+    if !w.is_end(eof) {
+      p.broken.set(true)
+      return Err(conn_err("no EOF after a prepared statement's definitions"))
+    }
+  }
+  Ok(cols)
+}
+
+/// An argument in the binary protocol, go-sql-driver's types: Integer a
+/// LONGLONG, Real a DOUBLE, Flag a TINY, Text, JsonText and Blob a
+/// string's bytes, At a DATETIME's text in UTC.
+pub fn bin_param(v: sql.SqlValue) -> w.BinParam ! sql.SqlErr {
+  let str = fn(b: Bytes) { w.BinParam{kind: w.TYPE_STRING, unsigned: false, null: false, value: w.lenenc_str(b)} }
+  match v {
+    Null => Ok(w.BinParam{kind: w.TYPE_NULL, unsigned: false, null: true, value: b""})
+    Integer(n) => Ok(w.BinParam{kind: w.TYPE_LONGLONG, unsigned: false, null: false, value: w.le_bytes(n, 8)})
+    Real(f) => Ok(w.BinParam{kind: w.TYPE_DOUBLE, unsigned: false, null: false, value: w.le_bytes(f.to_bits(), 8)})
+    Flag(b) => Ok(w.BinParam{kind: w.TYPE_TINY, unsigned: false, null: false, value: if b { b"\x01" } else { b"\x00" }})
+    Text(s) => Ok(str(s.bytes()))
+    JsonText(s) => Ok(str(s.bytes()))
+    Blob(b) => Ok(str(b))
+    At(t) => Ok(str(datetime_text(t).bytes()))
+    Array(_) => Err(param_err("MySQL has no array type"))
+  }
+}
+
+/// q prepared on the server, run once with args, closed (decision 0648
+/// item 5: what go-sql-driver does for db.Query(q, args...)).
+fn run_prepared(p: MyConn, q: Str, args: List[sql.SqlValue]) -> List[Result1] ! sql.SqlErr uses net.dial {
+  if p.broken.get() {
+    return Err(conn_err("the connection is broken"))
+  }
+  var ps: List[w.BinParam] = []
+  for a in args {
+    ps.push(bin_param(a)?)
+  }
+  p.seq.set(0)
+  p.send(w.command(w.COM_STMT_PREPARE, q.bytes()))?
+  let first = p.recv()?
+  if first.len() > 0 && first[0] == 255 {
+    return Err(server_err(w.err_packet(first, true).map_err(fn(x) { wire_err(p, x) })?))
+  }
+  let ok = w.prepare_ok(first).map_err(fn(e) { wire_err(p, e) })?
+  let _ = read_defs(p, ok.params)?
+  let _ = read_defs(p, ok.columns)?
+  if ok.params != args.len() {
+    p.seq.set(0)
+    p.send(w.stmt_close(ok.id))?
+    return Err(param_err("the statement has ${ok.params} placeholders and ${args.len()} arguments"))
+  }
+  p.seq.set(0)
+  p.send(w.stmt_execute(ok.id, ps))?
+  let rs = results(p, true)
+  // closed whatever the result, unless the connection broke
+  if !p.broken.get() {
+    p.seq.set(0)
+    p.send(w.stmt_close(ok.id))?
+  }
+  rs
+}
+
+/// The results of q with args: prepared on the server, or with
+/// interpolateParams=true (or no arguments) as text.
+fn run_args(p: MyConn, q: Str, args: List[sql.SqlValue]) -> List[Result1] ! sql.SqlErr uses net.dial {
+  if args.is_empty() || p.cfg.interpolate {
+    return run(p, text_of(p, q, args)?)
+  }
+  run_prepared(p, q, args)
+}
+
 /// The status's NO_BACKSLASH_ESCAPES bit.
 fn no_backslash(p: MyConn) -> Bool { p.status.get() & 512 != 0 }
 
-/// q with its arguments in the text (stage A; stage B prepares it on the
-/// server unless interpolateParams=true).
+/// q with its arguments in the text (interpolateParams=true).
 fn text_of(p: MyConn, q: Str, args: List[sql.SqlValue]) -> Str ! sql.SqlErr {
   if args.is_empty() {
     return Ok(q)
@@ -870,7 +955,7 @@ fn col_name(p: MyConn, c: w.Column) -> Str {
 }
 
 fn (p: MyConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
-  let rs = run(p, text_of(p, q, args)?)?
+  let rs = run_args(p, q, args)?
   // the first result set (the rest, with multiStatements, are read and
   // dropped; std/sql's query_all is stage D)
   for r in rs {
@@ -882,7 +967,7 @@ fn (p: MyConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.S
 }
 
 fn (p: MyConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
-  let rs = run(p, text_of(p, q, args)?)?
+  let rs = run_args(p, q, args)?
   // the last statement's counts
   var res = sql.ExecResult{rows_affected: 0, last_insert_id: 0}
   for r in rs {

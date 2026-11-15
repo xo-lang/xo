@@ -3794,8 +3794,9 @@ Status: stage A implemented natively (decision 0648, 2026-11-15): the
 wire protocol, authentication, go-sql-driver's DSN and the text
 protocol, TLS through std/tls's `tls.client`; checked against
 go-sql-driver v1.10.1 on MySQL 8.4 and 8.0 (scripts/mysql-diff.sh).
-Prepared statements over the binary protocol, RSA authentication,
-`loc` zones and `server_pub_key:` are stage B. The Go backend reports an
+Arguments are prepared on the server over the binary protocol (stage B,
+2026-11-15). RSA authentication, `loc` zones and `server_pub_key:` are
+the rest of stage B. The Go backend reports an
 unknown driver.
 
 ```
@@ -3845,9 +3846,15 @@ with a `Conn` error until then), `mysql_native_password` (refused with
 `allowNativePasswords=false`), `sha256_password` (the same rules) and
 `mysql_clear_password` (only with `allowCleartextPasswords=true`).
 
-**Statements.** Arguments are escaped into the statement's text (stage
-A; prepared statements are stage B): `?` outside quotes and comments is
-the next argument, `Flag` as 1 or 0, `At` as a quoted DATETIME in UTC
+**Statements.** A statement without arguments runs as text
+(COM_QUERY). With arguments it is prepared on the server, run once and
+closed (COM_STMT_PREPARE, COM_STMT_EXECUTE, COM_STMT_CLOSE), its rows in
+the binary protocol and decoded to the same values as text rows,
+go-sql-driver's types for the arguments (`Integer` a BIGINT, `Real` a
+DOUBLE, `Flag` a TINYINT, `Text`, `JsonText`, `Blob` and `At` strings);
+a count of arguments that is not the statement's placeholders is
+`Param`. With `interpolateParams=true` the arguments are escaped into
+the text instead: `?` outside quotes and comments is the next argument, `Flag` as 1 or 0, `At` as a quoted DATETIME in UTC
 (microseconds when it has them), `Blob` as a `_binary'...'` literal,
 `Real` NaN and infinities and `Array` refused (`Param`), the server's
 NO_BACKSLASH_ESCAPES mode honoured. With

@@ -147,3 +147,76 @@ test "column definitions and text rows" {
   expect(parse_text_row(b"\x011x", 1).is_err()) == true
   expect(command(COM_QUERY, b"SELECT 1")) == b"\x03SELECT 1"
 }
+
+fn bcol(kind: Int, flags: Int, decimals: Int) -> Column {
+  Column{schema: "", table: "", org_table: "", name: "c", org_name: "c", charset: 63, length: 0, kind: kind, flags: flags, decimals: decimals}
+}
+
+test "COM_STMT_PREPARE_OK, COM_STMT_EXECUTE and COM_STMT_CLOSE" {
+  let ok = prepare_ok(hex("000700000002000300000100")) ?? e => fault(e.msg)
+  expect((ok.id, ok.columns, ok.params, ok.warnings)) == (7, 2, 3, 1)
+  expect(prepare_ok(hex("ff")).is_err()) == true
+  // no parameters: id, flags, iteration count only
+  expect(stmt_execute(7, []).to_hex()) == "17070000000001000000"
+  // 9 parameters, the 1st and 9th NULL: a 2 byte bitmap
+  var ps: List[BinParam] = [BinParam{kind: TYPE_NULL, unsigned: false, null: true, value: b""}]
+  for _ in 0..7 {
+    ps.push(BinParam{kind: TYPE_TINY, unsigned: false, null: false, value: b"\x01"})
+  }
+  ps.push(BinParam{kind: TYPE_NULL, unsigned: false, null: true, value: b""})
+  let x = stmt_execute(1, ps)
+  expect(x[10..13].to_hex()) == "010101"
+  expect(x[13..31].to_hex()) == "0600" + "0100".repeat(7) + "0600"
+  expect(x[31..x.len()].to_hex()) == "01".repeat(7)
+  let u = stmt_execute(2, [BinParam{kind: TYPE_LONGLONG, unsigned: true, null: false, value: le_bytes(-1, 8)}])
+  expect(u[10..u.len()].to_hex()) == "00010880ffffffffffffffff"
+  expect(stmt_close(258).to_hex()) == "1902010000"
+}
+
+test "binary rows: each type as the text protocol's text" {
+  let cols = [bcol(TYPE_TINY, 0, 0), bcol(TYPE_TINY, FLAG_UNSIGNED, 0), bcol(TYPE_SHORT, 0, 0), bcol(TYPE_LONG, 0, 0), bcol(TYPE_LONGLONG, 0, 0), bcol(TYPE_LONGLONG, FLAG_UNSIGNED, 0), bcol(TYPE_YEAR, FLAG_UNSIGNED, 0), bcol(TYPE_INT24, 0, 0), bcol(TYPE_VAR_STRING, 0, 0), bcol(TYPE_NULL, 0, 0)]
+  var b = BytesBuilder.new()
+  b.write_byte(0)
+  // 10 columns: (10 + 7 + 2) / 8 = 2 bitmap bytes; the last column (bit 11) NULL
+  b.write(hex("0008"))
+  b.write(hex("ff"))
+  b.write(hex("ff"))
+  b.write(hex("0080"))
+  b.write(hex("ffffffff"))
+  b.write(hex("0000000000000080"))
+  b.write(hex("ffffffffffffffff"))
+  b.write(hex("ea07"))
+  b.write(hex("feffffff"))
+  b.write(lenenc_str(b"hé"))
+  let row = parse_binary_row(b.freeze(), cols) ?? e => fault(e.msg)
+  expect(row) == [Some(b"-1"), Some(b"255"), Some(b"-32768"), Some(b"-1"), Some(b"-9223372036854775808"), Some(b"18446744073709551615"), Some(b"2026"), Some(b"-2"), Some("hé".bytes()), None]
+  // floats: the shortest text of the value
+  let fcols = [bcol(TYPE_FLOAT, 0, 31), bcol(TYPE_DOUBLE, 0, 31)]
+  var f = BytesBuilder.new()
+  f.write(hex("0000"))
+  // 2 columns: one bitmap byte
+  f.write_le(Int(Float32(0.1).to_bits()), 4)
+  f.write_le(Float(2.5).to_bits(), 8)
+  expect(parse_binary_row(f.freeze(), fcols)) == Ok([Some(b"0.1"), Some(b"2.5")])
+  for (v, want) in [(0.1, "0.1"), (1.2345678, "1.2345678"), (3.4028235e38, "3.4028235e+38"), (1e-45, "1e-45"), (0.0, "0"), (-2.0, "-2"), (16777216.0, "16777216")] {
+    expect(float32_text(Float32(v))) == want
+  }
+  // dates and times at each length, the fraction by the column's decimals
+  let tcols = [bcol(TYPE_DATETIME, 0, 0), bcol(TYPE_DATETIME, 0, 6), bcol(TYPE_DATETIME, 0, 3), bcol(TYPE_DATE, 0, 0), bcol(TYPE_TIMESTAMP, 0, 0), bcol(TYPE_TIME, 0, 0), bcol(TYPE_TIME, 0, 6), bcol(TYPE_TIME, 0, 0)]
+  var t = BytesBuilder.new()
+  t.write(hex("000000"))
+  t.write(hex("00"))
+  t.write(hex("0b") + le_bytes(2026, 2) + hex("0a14010203") + le_bytes(123456, 4))
+  t.write(hex("07") + le_bytes(2026, 2) + hex("0a14010203"))
+  t.write(hex("04") + le_bytes(999, 2) + hex("0101"))
+  t.write(hex("07") + le_bytes(2038, 2) + hex("0113030e07"))
+  t.write(hex("08") + hex("01") + le_bytes(34, 4) + hex("163b3b"))
+  t.write(hex("0c") + hex("00") + le_bytes(0, 4) + hex("0c1e00") + le_bytes(5, 4))
+  t.write(hex("00"))
+  let tr = parse_binary_row(t.freeze(), tcols) ?? e => fault(e.msg)
+  expect(tr) == [Some(b"0000-00-00 00:00:00"), Some(b"2026-10-20 01:02:03.123456"), Some(b"2026-10-20 01:02:03.000"), Some(b"0999-01-01"), Some(b"2038-01-19 03:14:07"), Some(b"-838:59:59"), Some(b"12:30:00.000005"), Some(b"00:00:00")]
+  // broken rows
+  expect(parse_binary_row(hex("0100"), [bcol(TYPE_TINY, 0, 0)]).is_err()) == true
+  expect(parse_binary_row(hex("0000"), [bcol(TYPE_LONG, 0, 0)]).is_err()) == true
+  expect(parse_binary_row(hex("000001ff"), [bcol(TYPE_TINY, 0, 0)]).is_err()) == true
+}

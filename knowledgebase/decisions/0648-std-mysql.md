@@ -182,8 +182,9 @@ conformance tests and `xo bench --ab`.
       same statements through Xo and through go-sql-driver in an oracle
       module (scripts/mysqldiff/gomysql, its own go.mod pinned to
       go-sql-driver v1.10.1, not a dependency of xo or std), compared row
-      by row and error by error (stage A, 2026-11-15: 124 statements in
-      three passes, tls=true verified, parseTime and clientFoundRows,
+      by row and error by error (2026-11-15: 182 statements in four
+      passes over verified TLS, interpolated, prepared (stage B's binary
+      protocol), prepared with parseTime and clientFoundRows, and
       multiStatements, and 10 tls mode outcomes, equal on 8.4 and 8.0):
       every type of item 8 with parseTime on and off and three `loc`
       values, each plugin with TLS, a Unix socket and RSA, prepared and
