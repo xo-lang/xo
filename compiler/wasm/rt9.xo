@@ -1283,11 +1283,11 @@ ${closing}
 
     ;; rt.wasi_sock_shutdown: tcp-socket.shutdown(send) of connection c
     ;; (Conn.close_write): 0, 1 + the error-code, or 100 once closed
-    (func $wasi_sock_shutdown (param $c i32) (result i32)
+    (func $wasi_sock_shutdown (param $c i32) (result i64)
       local.get $c
       i32.load offset=20
       if
-        i32.const 100
+        i64.const 100
         return
       end
       local.get $c
@@ -1296,7 +1296,8 @@ ${closing}
       call $hret_at
       call $sk_shutdown
       call $hret_at
-      call $sk_unit)
+      call $sk_unit
+      i64.extend_i32_u)
 
     ;; socket s's local (remote 0) or remote (1) address as bytes; 2: udp
     ;; socket s's local address
