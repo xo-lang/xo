@@ -1,0 +1,56 @@
+// Sometimes tests ported from golang.org/x/time/rate v0.16.0's
+// sometimes_test.go (Copyright 2022 The Go Authors, BSD-style license):
+// its examples, with the fake clock in place of time.Sleep.
+
+use std/testing
+
+/// The labels of the calls to `do` that ran their action.
+fn ran(s: Sometimes, c: testing.FakeClock, calls: List[(Str, Duration)]) -> List[Str] uses clock {
+  let out = Mutex[List[Str]].new([])
+  for (label, before) in calls {
+    c.advance(before)
+    s.do(fn() {
+      out.with(fn(var l: List[Str]) { l.push(label) })
+    })
+  }
+  out.with_read(fn(l: List[Str]) { l })
+}
+
+test "Sometimes zero value runs once (ExampleSometimes_once)" {
+  let s = sometimes(os.clock)
+  expect(ran(s, os.clock, [("1", 0s), ("2", 0s), ("3", 0s)])) == ["1"]
+}
+
+test "Sometimes first (ExampleSometimes_first)" {
+  let s = sometimes(os.clock, first: 2)
+  expect(ran(s, os.clock, [("1", 0s), ("2", 0s), ("3", 0s)])) == ["1", "2"]
+}
+
+test "Sometimes every (ExampleSometimes_every)" {
+  let s = sometimes(os.clock, every: 2)
+  expect(ran(s, os.clock, [("1", 0s), ("2", 0s), ("3", 0s)])) == ["1", "3"]
+}
+
+test "Sometimes interval (ExampleSometimes_interval)" {
+  let s = sometimes(os.clock, interval: 1s)
+  expect(ran(s, os.clock, [("1", 0s), ("2", 0s), ("3", 1s)])) == ["1", "3"]
+}
+
+test "Sometimes mix (ExampleSometimes_mix)" {
+  let s = sometimes(os.clock, first: 2, every: 2, interval: 2s)
+  let got = ran(s, os.clock, [("1 (First:2)", 0s), ("2 (First:2)", 0s), ("3 (Every:2)", 0s), ("4 (Interval)", 2s), ("5 (Every:2)", 0s), ("6", 0s)])
+  expect(got) == ["1 (First:2)", "2 (First:2)", "3 (Every:2)", "4 (Interval)", "5 (Every:2)"]
+}
+
+test "Sometimes zero, max and negative intervals run once (TestSometimesZero, Max, Negative)" {
+  for iv in [0s, Duration.from_nanos(9223372036854775807), Duration.from_nanos(-1)] {
+    let s = sometimes(os.clock, interval: iv)
+    expect(ran(s, os.clock, [("1", 0s), ("2", 0s)])) == ["1"]
+  }
+}
+
+test "Sometimes copies share the count" {
+  let s = sometimes(os.clock, first: 1)
+  let t = s
+  expect(ran(s, os.clock, [("a", 0s)]) + ran(t, os.clock, [("b", 0s)])) == ["a"]
+}

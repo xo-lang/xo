@@ -32,9 +32,18 @@ func i64s(xs []uint64) string {
 	return b.String()
 }
 
+// xfloat is f as an Xo Float literal.
+func xfloat(f float64) string {
+	t := fmt.Sprint(f)
+	if !strings.ContainsAny(t, ".e") {
+		t += ".0"
+	}
+	return t
+}
+
 func randomCorpus() string {
 	var o strings.Builder
-	o.WriteString(header("math/rand/v2's NormFloat64, ExpFloat64 and Perm on recorded PCG streams, replayed draw for draw"))
+	o.WriteString(header("math/rand/v2's NormFloat64, ExpFloat64, Perm and Zipf on recorded PCG streams, replayed draw for draw"))
 	o.WriteString("use std/random\n\n")
 	for _, c := range []struct {
 		name string
@@ -71,6 +80,24 @@ func randomCorpus() string {
 		ns = append(ns, fmt.Sprint(n))
 	}
 	fmt.Fprintf(&o, "const PERM_N: List[Int] = [%s]\n\n/// The Uint64s Go's Perm calls drew, in order.\nconst PERM_U: List[Int] = [%s\n]\n", strings.Join(ns, ", "), i64s(src.out))
+	// Zipf: NewZipf's parameters (nil ones included) and 200 draws of each
+	zsrc := &recSrc{s: rand.NewPCG(606, 4)}
+	zr := rand.New(zsrc)
+	o.WriteString("\n/// (s, v, imax, whether Go's NewZipf gives one, its first 200 Uint64s)\nconst ZIPF_WANT: List[(Float, Float, Int, Bool, List[Int])] = [\n")
+	for _, p := range []struct {
+		s, v float64
+		imax uint64
+	}{{1.1, 1, 10}, {2, 1, 100}, {1.5, 3, 1000}, {3, 1, 5}, {1.01, 1, 1 << 40}, {2.5, 10.5, 0}, {1.2, 2, 1}, {1.0001, 1, 1000000}, {7, 1, 1 << 62}, {1, 1, 10}, {0.5, 1, 10}, {2, 0.5, 10}} {
+		z := rand.NewZipf(zr, p.s, p.v, p.imax)
+		var ks []string
+		if z != nil {
+			for k := 0; k < 200; k++ {
+				ks = append(ks, fmt.Sprint(z.Uint64()))
+			}
+		}
+		fmt.Fprintf(&o, "  (%s, %s, %d, %v, [%s]),\n", xfloat(p.s), xfloat(p.v), p.imax, z != nil, strings.Join(ks, ", "))
+	}
+	fmt.Fprintf(&o, "]\n\n/// The Uint64s Go's Zipf draws took, in order.\nconst ZIPF_U: List[Int] = [%s\n]\n", i64s(zsrc.out))
 	o.WriteString(randomTests)
 	return o.String()
 }
@@ -192,6 +219,29 @@ test "perm is Go's Perm draw for draw" {
   }
   expect(bad) == []
   expect(r.at.with(fn(var x: Int) -> Int { x })) == PERM_U.len()
+}
+
+test "zipf is Go's NewZipf and Zipf.Uint64 draw for draw" {
+  let r = replay(ZIPF_U, false)
+  var bad: List[(Float, Float, Int)] = []
+  for (s, v, imax, ok, want) in ZIPF_WANT {
+    match random.zipf(s, v, imax) {
+      Some(z) => {
+        var got: List[Int] = []
+        for _ in 0..want.len() {
+          got.push(z.draw(r))
+        }
+        if !ok || got != want {
+          bad.push((s, v, imax))
+        }
+      }
+      None => if ok {
+        bad.push((s, v, imax))
+      }
+    }
+  }
+  expect(bad) == []
+  expect(r.at.with(fn(var x: Int) -> Int { x })) == ZIPF_U.len()
 }
 
 test "the moments over a million draws of a seeded Rand" {

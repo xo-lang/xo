@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -1391,10 +1392,26 @@ func pathRandomPattern(r *rand.Rand) string {
 	return b.String()
 }
 
+// goRelPairs are path/filepath/path_test.go's reltests (root, path),
+// Unix rows (Copyright 2009 The Go Authors, BSD-style license).
+var goRelPairs = [][2]string{
+	{"a/b", "a/b"}, {"a/b/.", "a/b"}, {"a/b", "a/b/."}, {"./a/b", "a/b"}, {"a/b", "./a/b"},
+	{"ab/cd", "ab/cde"}, {"ab/cd", "ab/c"}, {"a/b", "a/b/c/d"}, {"a/b", "a/b/../c"}, {"a/b/../c", "a/b"},
+	{"a/b/c", "a/c/d"}, {"a/b", "c/d"}, {"a/b/c/d", "a/b"}, {"a/b/c/d", "a/b/"}, {"a/b/c/d/", "a/b"},
+	{"a/b/c/d/", "a/b/"}, {"../../a/b", "../../a/b/c/d"}, {"/a/b", "/a/b"}, {"/a/b/.", "/a/b"}, {"/a/b", "/a/b/."},
+	{"/ab/cd", "/ab/cde"}, {"/ab/cd", "/ab/c"}, {"/a/b", "/a/b/c/d"}, {"/a/b", "/a/b/../c"}, {"/a/b/../c", "/a/b"},
+	{"/a/b/c", "/a/c/d"}, {"/a/b", "/c/d"}, {"/a/b/c/d", "/a/b"}, {"/a/b/c/d", "/a/b/"}, {"/a/b/c/d/", "/a/b"},
+	{"/a/b/c/d/", "/a/b/"}, {"/../../a/b", "/../../a/b/c/d"}, {".", "a/b"}, {".", ".."}, {"", "../../."},
+	{"..", "."}, {"..", "a"}, {"../..", ".."}, {"a", "/a"}, {"/a", "a"},
+}
+
+// goIsLocalPaths are path/filepath/path_test.go's islocaltests.
+var goIsLocalPaths = []string{"", ".", "..", "../a", "/", "/a", "/a/../..", "a", "a/../a", "a/", "a/.", "a/./b/./c", "a/../b:/../../c"}
+
 func pathCorpus() string {
 	r := rand.New(rand.NewSource(43))
 	var o strings.Builder
-	o.WriteString(header("Go's path package on the inputs of path/path_test.go (cleantests, splittests, jointests, exttests, basetests, dirtests, isAbsTests) and path/match_test.go (matchTests), and on seeded random paths, against path's clean, split, join, dir, base, ext, is_abs and is_match (Go's path tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString(header("Go's path package (and path/filepath's Rel and IsLocal, reltests and islocaltests) on the inputs of path/path_test.go (cleantests, splittests, jointests, exttests, basetests, dirtests, isAbsTests) and path/match_test.go (matchTests), and on seeded random paths, against path's clean, split, join, dir, base, ext, is_abs and is_match (Go's path tests are Copyright 2009 The Go Authors, BSD-style license)"))
 	o.WriteString("\nuse std/path\n")
 
 	// the inputs: the replaced corpus's, Go's table inputs, and seeded
@@ -1465,6 +1482,36 @@ func pathCorpus() string {
 	}
 	for i := 0; i < 600; i++ {
 		join(pathRandom(r), pathRandom(r))
+	}
+	o.WriteString("]\n")
+
+	o.WriteString("\n/// (base, target, Go's filepath.Rel on Unix; \"err\" where it errors)\nconst REL_CASES: List[(Str, Str, Str)] = [\n")
+	rel := func(a, b string) {
+		a, b = textOf(a), textOf(b)
+		w, err := filepath.Rel(a, b)
+		if err != nil {
+			w = "err"
+		}
+		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xq(a), xq(b), xq(w))
+	}
+	for _, p := range goRelPairs {
+		rel(p[0], p[1])
+	}
+	for _, p := range goJoinPairs {
+		rel(p[0], p[1])
+	}
+	for i := 0; i < 600; i++ {
+		a := pathRandom(r)
+		rel(a, pathRandom(r))
+		// a target under or beside the base
+		rel(a, a+"/"+pathRandom(r))
+	}
+	o.WriteString("]\n")
+
+	o.WriteString("\n/// (p, Go's filepath.IsLocal on Unix)\nconst IS_LOCAL_CASES: List[(Str, Bool)] = [\n")
+	for _, s := range append(append([]string{}, goIsLocalPaths...), inputs...) {
+		s = textOf(s)
+		fmt.Fprintf(&o, "  (%s, %v),\n", xq(s), filepath.IsLocal(s))
 	}
 	o.WriteString("]\n")
 
@@ -1548,6 +1595,27 @@ test "join is Go's Join" {
     let got = path.join(a, b)
     if got != want {
       bad.push((a, b, got, want))
+    }
+  }
+  expect(show(bad)) == []
+}
+
+test "rel is Go's filepath.Rel" {
+  var bad: List[(Str, Str, Str, Str)] = []
+  for (a, b, want) in REL_CASES {
+    let got = path.rel(a, b) ?? "err"
+    if got != want {
+      bad.push((a, b, got, want))
+    }
+  }
+  expect(show(bad)) == []
+}
+
+test "is_local is Go's filepath.IsLocal" {
+  var bad: List[(Str, Str, Str, Str)] = []
+  for (p, want) in IS_LOCAL_CASES {
+    if path.is_local(p) != want {
+      bad.push((p, "", "${!want}", "${want}"))
     }
   }
   expect(show(bad)) == []

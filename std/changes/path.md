@@ -1,5 +1,16 @@
 # std/path changes
 
+## 2026-11-15: feature: rel and is_local (Go's filepath.Rel and IsLocal)
+
+- Kind: feature
+- Commit: this push
+- Found by: scripts/stdaudit gaps filepath.Rel and filepath.IsLocal (decision 0655)
+- Go reference: path/filepath Rel and internal/filepathlite unixIsLocal (go1.26.11; Copyright 2009 The Go Authors, BSD-style license)
+- Test: internal/stdtest corpus path "rel" and "is_local": Go's reltests and islocaltests, the join pairs, and 1,200 seeded random pairs and every corpus input against Go (go, arm64, llvm)
+- Shipped in: not yet released
+
+`path.rel(base, target)` returns None where Go's Rel errors; `path.is_local(p)` follows the Unix rules, as every Fs path uses `/` (std.md 3.1).
+
 ## 2026-11-10: internal: std/path merged with its implementation
 
 - Kind: internal

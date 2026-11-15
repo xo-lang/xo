@@ -3313,6 +3313,8 @@ pub fn base(p: Str) -> Str           // the last element
 pub fn ext(p: Str) -> Str            // extension with the dot, or ""
 pub fn clean(p: Str) -> Str          // removes `.`, `..`, repeated `/`
 pub fn is_abs(p: Str) -> Bool        // starts with "/"
+pub fn rel(base: Str, target: Str) -> Str?   // filepath.Rel, lexical
+pub fn is_local(p: Str) -> Bool      // filepath.IsLocal (Unix rules)
 
 struct PathErr { pattern: Str }      // a pattern `match` cannot parse
 pub fn is_match(pattern: Str, name: Str) -> Bool ! PathErr
@@ -3322,6 +3324,14 @@ pub fn is_match(pattern: Str, name: Str) -> Bool ! PathErr
 
 `is_match` matches the whole of `name`, and a malformed pattern is `PathErr`
 (Go's `path.ErrBadPattern`), reported even when `name` cannot match.
+
+`rel(base, target)` is Go's filepath.Rel on `/` paths (2026-11-15): the
+path that joined to `base` cleans to `clean(target)` (`"."` for the same
+path, `../c` for a sibling), None where Go errors: one path absolute and
+the other not, or `base` leaving `..` elements that only the file system
+could resolve. `is_local(p)` is filepath.IsLocal with the Unix rules:
+false for "", an absolute path, or one whose cleaned form is `..` or
+starts with `../`.
 
 Go's path package's results on every backend. Every backend runs one
 implementation, std/native/path.xo: the Go backend compiles it too
@@ -8496,6 +8506,8 @@ fn (r: Reservation) ok() -> Bool
 fn (r: Reservation) delay() -> Duration uses clock
 fn (r: Reservation) cancel() uses clock
 open enum RateErr { Exceeds(n: Int, burst: Int), Canceled }
+fn sometimes(clock: Clock, first: Int = 0, every: Int = 0, interval: Duration = 0s) -> Sometimes
+fn (s: Sometimes) do[fx: Effects](f: fn() uses fx) uses (clock, fx)
 ```
 
 - `allow_n` takes n tokens when the bucket has them and answers whether
@@ -8519,6 +8531,11 @@ open enum RateErr { Exceeds(n: Int, burst: Int), Canceled }
 - Go's API without a Context: Go's `WaitN(ctx, n)` deadline check is the
   task's cancellation; `AllowN(t, n)` and the other `*At` forms are the
   clock's time (a test sets it).
+- `sometimes(clock, first:, every:, interval:)` is x/time's `Sometimes`
+  (2026-11-15): `do(f)` runs f on the first call, on each of the first
+  `first` calls, on every `every`th call, and when `interval` has passed
+  on the clock since f last ran; with no rule set it runs f once (Go's
+  zero value). Copies share the count; one call runs f at a time.
 
 ## 43. std/backoff
 
@@ -10178,14 +10195,17 @@ data), a notification of one is ignored. Checked against the specification's exa
 
 ## 81. std/random
 
-Random values of the normal and exponential distributions and random
-permutations over any `Rand` (decision 0606), Go's `math/rand/v2`
-NormFloat64, ExpFloat64 and Perm. Pure (a merged module).
+Random values of the normal, exponential and Zipf distributions and
+random permutations over any `Rand` (decision 0606), Go's `math/rand/v2`
+NormFloat64, ExpFloat64, Zipf and Perm. Pure (a merged module).
 
 ```xo
 fn normal(r: Rand) -> Float uses rand        // mean 0, standard deviation 1
 fn exp(r: Rand) -> Float uses rand           // rate 1
 fn perm(r: Rand, n: Int) -> List[Int] uses rand   // a permutation of 0..n
+struct Zipf { ... }                          // Go's Zipf
+fn zipf(s: Float, v: Float, imax: Int) -> Zipf?   // NewZipf; None for s <= 1 or v < 1
+fn (z: Zipf) draw(r: Rand) -> Int uses rand  // Uint64: k in 0..=imax
 ```
 
 `normal` and `exp` are Marsaglia and Tsang's ziggurat with Go's tables
@@ -10199,6 +10219,13 @@ end with `r.int(0, i + 1)`, as Go's Shuffle; a negative `n` faults
 random.normal(r)`, `random.exp(r) / rate`. Checked against Go on its
 recorded PCG streams replayed draw for draw, and by the moments of 10^6
 draws (testdata/corpus/random).
+
+`zipf(s, v, imax)` is Go's NewZipf (2026-11-15): P(k) proportional to
+(v + k)^-s for k in 0..=imax, None where Go returns nil, a fault for a
+negative `imax` (Go's is a uint64). `draw(r)` is Zipf.Uint64,
+rejection-inversion drawing one `r.float()` a try; the Zipf holds no
+Rand, so one distribution serves any. Checked against Go draw for draw
+on twelve parameter sets.
 
 ## 82. std/httpproxy
 

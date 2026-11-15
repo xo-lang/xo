@@ -1,5 +1,16 @@
 # std/rate changes
 
+## 2026-11-15: feature: Sometimes (x/time's rate.Sometimes)
+
+- Kind: feature
+- Commit: this push
+- Found by: scripts/stdaudit gaps rate.Sometimes and rate.Sometimes.Do (decision 0655)
+- Go reference: golang.org/x/time/rate v0.16.0 sometimes.go (Copyright 2022 The Go Authors, BSD-style license)
+- Test: std/rate_test.xo, Go's sometimes_test.go examples and the zero, max and negative interval tests on the fake clock (arm64, llvm)
+- Shipped in: not yet released
+
+`rate.sometimes(clock, first:, every:, interval:)` and `do(f)`: Go's rules (first N calls, every Nth call, once an interval on the clock, once with none), `last` set only with an interval as v0.16.0 does, and the interval measured with the saturating difference so the largest Duration does not overflow.
+
 ## 2026-11-15: feature: `RateErr` is an open enum (decision 0649)
 
 - Kind: feature

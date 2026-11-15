@@ -319,3 +319,43 @@ fn tokens_from_duration(limit: Float, d: Duration) -> Float {
   }
   d.seconds() * limit
 }
+
+/// Sometimes's state. Internal: use `do`.
+pub struct SometimesState {
+  pub count: Int
+  pub last: Time
+}
+
+/// An action run only sometimes (rate.Sometimes, x/time v0.16.0
+/// sometimes.go): `do` runs it on the first call, on each of the first
+/// `first` calls, on every `every`th call, and when `interval` has passed
+/// on the clock since it last ran; with none set it runs once, as Go's
+/// zero value does (a sync.Once). A handle: copies share the count, and
+/// tasks may call `do` at once (one runs the action at a time).
+pub struct Sometimes {
+  pub first: Int
+  pub every: Int
+  pub interval: Duration
+  pub st: Mutex[SometimesState]
+  pub clock: Clock
+}
+
+/// A Sometimes reading `clock` for `interval` (rate.Sometimes{First,
+/// Every, Interval}); 0 leaves a rule off.
+pub fn sometimes(clock: Clock, first: Int = 0, every: Int = 0, interval: Duration = 0s) -> Sometimes {
+  Sometimes{first: first, every: every, interval: interval, st: Mutex[SometimesState].new(SometimesState{count: 0, last: Time.UNIX_EPOCH}), clock: clock}
+}
+
+/// Runs f when one of the Sometimes's rules says so (Sometimes.Do), and
+/// counts the call either way.
+pub fn (s: Sometimes) do[fx: Effects](f: fn() uses fx) uses (clock, fx) {
+  s.st.with(fn(var st: SometimesState) uses (clock, fx) {
+    if st.count == 0 || (s.first > 0 && st.count < s.first) || (s.every > 0 && st.count % s.every == 0) || (s.interval > 0s && sub_sat(s.clock.now(), st.last) >= s.interval) {
+      f()
+      if s.interval > 0s {
+        st.last = s.clock.now()
+      }
+    }
+    st.count += 1
+  })
+}

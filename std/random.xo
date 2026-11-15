@@ -1,6 +1,7 @@
-// std/random: random values of the normal and exponential distributions
-// and random permutations, over any Rand (decision 0606). Ported from Go's
-// math/rand/v2 (go1.26.1 normal.go, exp.go, Shuffle and Perm in rand.go):
+// std/random: random values of the normal and exponential distributions,
+// random permutations and the Zipf distribution, over any Rand (decision
+// 0606). Ported from Go's math/rand/v2 (go1.26.1 normal.go, exp.go, zipf.go,
+// Shuffle and Perm in rand.go):
 // Marsaglia and Tsang's ziggurat with Go's tables. They draw through
 // `r.int` and `r.float` alone, so they work on a test's seeded Rand and on
 // a program's own Rand; a value equals Go's for the same draws. Pure.
@@ -79,6 +80,60 @@ pub fn perm(r: Rand, n: Int) -> List[Int] uses rand {
     i -= 1
   }
   p
+}
+
+/// A Zipf distribution (Go's Zipf, math/rand/v2 zipf.go, go1.26): values
+/// k in 0..=imax with P(k) proportional to (v + k) ^ -s, drawn by
+/// rejection-inversion (Hörmann and Derflinger). Make one with `zipf`.
+pub struct Zipf {
+  imax: Float
+  v: Float
+  q: Float
+  s: Float
+  oneminus_q: Float
+  oneminus_qinv: Float
+  hxm: Float
+  hx0minus_hxm: Float
+}
+
+/// The Zipf distribution of s > 1 and v >= 1 over 0..=imax (Go's NewZipf),
+/// None where Go returns nil (s <= 1 or v < 1). A negative imax faults
+/// (Go's imax is a uint64).
+pub fn zipf(s: Float, v: Float, imax: Int) -> Zipf? {
+  if imax < 0 {
+    fault("random.zipf: negative imax")
+  }
+  if s <= 1.0 || v < 1.0 {
+    return None
+  }
+  var z = Zipf{imax: Float(imax), v: v, q: s, s: 0.0, oneminus_q: 1.0 - s, oneminus_qinv: 1.0 / (1.0 - s), hxm: 0.0, hx0minus_hxm: 0.0}
+  z.hxm = z.h(z.imax + 0.5)
+  z.hx0minus_hxm = z.h(0.5) - (v.log() * -z.q).exp() - z.hxm
+  z.s = 1.0 - z.hinv(z.h(1.5) - (-z.q * (z.v + 1.0).log()).exp())
+  Some(z)
+}
+
+fn (z: Zipf) h(x: Float) -> Float { (z.oneminus_q * (z.v + x).log()).exp() * z.oneminus_qinv }
+
+fn (z: Zipf) hinv(x: Float) -> Float { (z.oneminus_qinv * (z.oneminus_q * x).log()).exp() - z.v }
+
+/// A value of the distribution (Go's Zipf.Uint64): each try draws one
+/// `r.float()`, as Go's draws one Float64.
+pub fn (z: Zipf) draw(r: Rand) -> Int uses rand {
+  var k = 0.0
+  while true {
+    let u = r.float()
+    let ur = z.hxm + u * z.hx0minus_hxm
+    let x = z.hinv(ur)
+    k = (x + 0.5).floor()
+    if k - x <= z.s {
+      break
+    }
+    if ur >= z.h(k + 0.5) - (-(k + z.v).log() * z.q).exp() {
+      break
+    }
+  }
+  Int(k)
 }
 
 const RN: Float = 3.442619855899

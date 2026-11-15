@@ -204,6 +204,95 @@ pub fn clean(p: Str) -> Str {
 
 pub fn is_abs(p: Str) -> Bool { p.len() > 0 && p.bytes()[0] == 47 }
 
+/// The path of target relative to base (Go's filepath.Rel, lexical): so
+/// that `join(base, rel(base, target))` cleans to `clean(target)`. None
+/// where Go errors: one path absolute and the other not, or base reaching
+/// above target with `..` (which needs the file system).
+pub fn rel(base: Str, target: Str) -> Str? {
+  var b = clean(base)
+  let t = clean(target)
+  if t == b {
+    return Some(".")
+  }
+  if b == "." {
+    b = ""
+  }
+  if is_abs(b) != is_abs(t) {
+    return None
+  }
+  let bb = b.bytes()
+  let tb = t.bytes()
+  let bl = bb.len()
+  let tl = tb.len()
+  var b0 = 0
+  var bi = 0
+  var t0 = 0
+  var ti = 0
+  while true {
+    while bi < bl && bb[bi] != 47 {
+      bi += 1
+    }
+    while ti < tl && tb[ti] != 47 {
+      ti += 1
+    }
+    if cut(t, t0, ti) != cut(b, b0, bi) {
+      break
+    }
+    if bi < bl {
+      bi += 1
+    }
+    if ti < tl {
+      ti += 1
+    }
+    b0 = bi
+    t0 = ti
+  }
+  if cut(b, b0, bi) == ".." {
+    return None
+  }
+  if b0 != bl {
+    // base elements left: up before down
+    var sb = StrBuilder.new()
+    sb.write("..")
+    for i in b0..bl {
+      if bb[i] == 47 {
+        sb.write("/..")
+      }
+    }
+    if t0 != tl {
+      sb.write("/")
+      sb.write(cut(t, t0, tl))
+    }
+    return Some(clean(sb.freeze()))
+  }
+  Some(cut(t, t0, tl))
+}
+
+/// Whether p is local (Go's filepath.IsLocal on Unix): not empty, not
+/// absolute, and not reaching above its start with `..` once cleaned, so
+/// joining it to a directory stays inside it.
+pub fn is_local(p: Str) -> Bool {
+  if p == "" || is_abs(p) {
+    return false
+  }
+  let pb = p.bytes()
+  var dots = false
+  var i = 0
+  while i < pb.len() && !dots {
+    var j = i
+    while j < pb.len() && pb[j] != 47 {
+      j += 1
+    }
+    let n = j - i
+    if (n == 1 && pb[i] == 46) || (n == 2 && pb[i] == 46 && pb[i + 1] == 46) {
+      dots = true
+    }
+    i = j + 1
+  }
+  let q = if dots { clean(p) } else { p }
+  !(q == ".." || q.starts_with("../"))
+}
+
 /// A path pattern `is_match` cannot parse (Go's path.ErrBadPattern).
 pub struct PathErr {
   pub pattern: Str

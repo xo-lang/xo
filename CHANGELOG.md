@@ -11,6 +11,9 @@ the text of every entry is unchanged).
 
 - Feature (std/csv, every backend): `Reader.field_pos(i)` and `Reader.input_offset()` (Go's FieldPos and InputOffset): where each field of the last record starts, and the byte offset reached in the file.
 - Feature (std/crc32, every backend): `crc32.table(poly)` (Go's MakeTable) for any reversed polynomial, with `KOOPMAN`, `IEEE` and `CASTAGNOLI`, and `checksum_table` and `update_table` (Go's Checksum and Update over a table).
+- Feature (std/path, every backend): `path.rel(base, target)` and `path.is_local(p)` (Go's filepath.Rel and IsLocal).
+- Feature (std/random, every backend): `random.zipf(s, v, imax)` and `Zipf.draw(r)` (Go's NewZipf and Zipf.Uint64), equal to Go's values draw for draw.
+- Feature (std/rate, every backend): `rate.sometimes(clock, first:, every:, interval:)` and `Sometimes.do(f)` (x/time's rate.Sometimes): run an action on the first N calls, every Nth call, or once an interval on the clock.
 - Perf (std/publicsuffix): `public_suffix` and `effective_tld_plus_one` no longer parse a host name as an IP address first; on the Mac they take about half the time (0.78 of x/net's, from 1.49).
 - Feature (std/base32, every backend): `base32.custom(alphabet, padding:)` gives an `Encoding` over any 32 byte alphabet with any padding byte or none (Go's NewEncoding and WithPadding), with Go's output and error offsets; z-base-32 and `@` padding are tested against Go.
 - Perf (compiler, decision 0465 step 3): a function that returns a tuple of views of one Str parameter (and scalar fields), as std/mime consume_token returns `(v[0..i], v[i..])`, no longer counts the views it returns; the caller owns a field only where it stores it or keeps it past the parameter. On linux/arm64, std/mime parsing takes 0.94 of the time, std/path parts 0.92.

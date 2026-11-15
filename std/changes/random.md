@@ -1,5 +1,16 @@
 # std/random changes
 
+## 2026-11-15: feature: zipf and Zipf.draw (Go's NewZipf and Zipf.Uint64)
+
+- Kind: feature
+- Commit: this push
+- Found by: scripts/stdaudit gaps math/rand/v2.NewZipf, Zipf and Zipf.Uint64 (decision 0655)
+- Go reference: math/rand/v2 zipf.go (go1.26.11; Copyright 2009 The Go Authors, BSD-style license)
+- Test: internal/stdtest corpus random "zipf", twelve parameter sets (nil ones included) with 200 draws each, replayed on Go's recorded PCG stream (go, arm64, llvm)
+- Shipped in: not yet released
+
+`random.zipf(s, v, imax)` and `draw(r)`: Hörmann and Derflinger's rejection-inversion as Go writes it, one `r.float()` per try. The Zipf takes the Rand at each draw, where Go's holds one.
+
 ## 2026-11-11: feature: std/random, Go's NormFloat64, ExpFloat64 and Perm over any Rand
 
 - Kind: feature
