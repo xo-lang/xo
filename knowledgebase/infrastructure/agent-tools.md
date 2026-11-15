@@ -1477,8 +1477,12 @@ Last verified: 2026-11-15
     --agent NAME`), in the tool round you read it.
   - `xw priority` (the owner's ranked goals), `xw charter NAME`, `xw
     status [NAME]`, `xw jobs --since 2h` (wait vs run per job), `xw
-    check` (off-charter tasks, idle agents with queued work, DONE
-    without a restart, unacknowledged tasks and decisions).
+    gates [NAME] --since 24h` (ended offload gates: by rc, step time
+    total, p50 and max, slowest tests, failing tests with the newest
+    log), `xw check` (off-charter tasks, idle agents with queued work,
+    DONE without a restart, unacknowledged tasks and decisions).
+  - `xw task title ID TEXT` replaces a stale task title (the old one
+    stays in the task log).
   - Fire and forget: a down xw never fails heavy.sh, pushq or
     offload-gate (events spool under ~/xo-lead/xw/spool).
   - board.sh stays for claims and a one-line NOW until it becomes a
