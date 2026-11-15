@@ -9,14 +9,15 @@ struct St {
 // A with body that maps a list with a closure literal is not a
 // cancellation point (prune_unwind walk_literal): the literal does not
 // wait, so the body has no check after the walk (no call of
-// ctx_unwinding), and it hands back a zero on a fault instead of keeping
+// ctx_unwinding, or on linux and darwin its inline test of the
+// context's unwinding word: cbz, then ldr w of [ctx, #8]), and it hands back a zero on a fault instead of keeping
 // the value it was given, so its push does not copy the list it holds
 // (std/sql Db.exec copied its tables; gotchas
 // with-body-cancelable-through-closure-call.md).
 fn lit(m: Mutex[St], k: Int) -> Int {
   m.with(fn(var st) -> Int {
     // func lit.fn1
-    // arm64: "bl _?xo_f_prelude_2elist__map" -"bl _?xo_x_ctx_unwinding"
+    // arm64: "bl _?xo_f_prelude_2elist__map" -"(bl _?xo_x_ctx_unwinding|cbz x[0-9]+, 1f\n\tldr w[0-9]+, \[x[0-9]+, #8\])"
     let ls = st.names.map(fn(s) { s.len() })
     st.items.push(ls.len() + k)
     st.items.len()
@@ -27,7 +28,7 @@ fn lit(m: Mutex[St], k: Int) -> Int {
 fn val(m: Mutex[St], k: Int, f: fn(Str) -> Int) -> Int {
   m.with(fn(var st) -> Int {
     // func val.fn2
-    // arm64: "bl _?xo_f_prelude_2elist__map" "bl _?xo_x_ctx_unwinding"
+    // arm64: "bl _?xo_f_prelude_2elist__map" "(bl _?xo_x_ctx_unwinding|cbz x[0-9]+, 1f\n\tldr w[0-9]+, \[x[0-9]+, #8\])"
     let ls = st.names.map(f)
     st.items.push(ls.len() + k)
     st.items.len()
@@ -48,7 +49,7 @@ fn keep(var st: St, k: Int) {
 fn upd(m: Mutex[St], k: Int) -> Int {
   m.with(fn(var st) -> Int {
     // func upd.fn3
-    // arm64: -"bl _?xo_x_ctx_unwinding"
+    // arm64: -"(bl _?xo_x_ctx_unwinding|cbz x[0-9]+, 1f\n\tldr w[0-9]+, \[x[0-9]+, #8\])"
     keep(st, k)
     st.items.push(k)
     st.items.len()

@@ -2610,6 +2610,15 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let _r = g.call(g.tramp(if g.f.name_is(x, "rt.unwind_save") { "xo_unwind_save" } else { "xo_unwind_resume" }), [rsrc(g.word(g.f.arg(x.args, 0)))], [])
       g.set(v, [])
     }
+    "rt.unwinding" if !g.x86 && (g.os is "linux" | "freebsd" | "darwin") => {
+      // ctx.unwinding inline (2026-11-15): the context from tlocal slot 0,
+      // then its unwinding word (layout.C_UNWINDING, 8), 0 with no context;
+      // the export's call and ctx.unwinding's behind it were 16% of a
+      // labelled metrics Counter.inc on linux (three checks per with_read)
+      g.sched_ref = true
+      let base = g.tl_base()
+      g.set(v, [g.def1(false, "ldr $d0, [$u0]\ncbz $d0, 1f\nldr $wd0, [$d0, #${CTX_UNWINDING}]\n1:", [base])])
+    }
     "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" if (g.os is "linux" | "freebsd") || g.os == "darwin" || g.os == "windows" => {
       // inline on Linux (2026-10-16): the thread pointer plus xo_tlocal's
       // local exec offset, then the slot; xo_tlocal_get's call, its
@@ -3334,6 +3343,10 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
 /// next call: a task may resume on another thread after any call (the
 /// scheduler steals work, decision 0077), so a base is never kept across
 /// one.
+/// std/native/llrt/layout.xo's C_UNWINDING: the offset of a context's
+/// unwinding word (4 bytes), which rt.unwinding reads inline.
+const CTX_UNWINDING = 8
+
 fn (var g: G) tl_base() -> Int {
   if g.x86 && g.os == "windows" {
     // the module's TLS block: the TEB's slot array (gs:88) at
@@ -4140,6 +4153,29 @@ fn (var g: G) race_acquire(v: Int, ord: Int, a: Int) {
   }
 }
 
+/// Whether linux's (and freebsd's) read modify writes are inline: in a
+/// program linked with no C library (it defines xo_lse, which the start
+/// sets from AT_HWCAP's ATOMICS bit), and not under --race (whose calls
+/// tell ThreadSanitizer the order). A test of xo_lse, then the one LSE
+/// instruction, else ARMv8.0's load and store exclusive loop, as Go's
+/// arm64 atomics test arm64HasATOMICS inline. The call of libgcc's
+/// outline helper was 11% of a labelled metrics Counter.inc on linux
+/// (three per inc: the share's take and drop and the add, 2026-11-15).
+fn (g: G) lse_inline() -> Bool {
+  !g.x86 && g.m.nolibc && !g.m.race && (g.os is "linux" | "freebsd")
+}
+
+/// The load and store exclusive pair of an order (none, acquire, release,
+/// both, sequentially consistent), as libgcc's outline helpers use them.
+fn llsc(ord: Int) -> (Str, Str) {
+  match ord {
+    0 => ("ldxr", "stxr")
+    1 => ("ldaxr", "stxr")
+    2 => ("ldxr", "stlxr")
+    _ => ("ldaxr", "stlxr")
+  }
+}
+
 /// Lowers the atomics and fences of decision 0200 inline: on darwin the
 /// LSE instructions every Apple arm64 CPU has (ldar, stlr, swp, cas,
 /// ldadd with the order's a and l; dmb, yield); on linux, which also runs
@@ -4229,6 +4265,12 @@ fn (var g: G) atomic(v: Int) {
         g.race_acquire(v, ord, a)
       } else if g.os == "darwin" {
         g.atomic_result(v, g.atomic_def("${op}${sfx} $u0, $d0, [$u1]", [val, a]))
+      } else if g.lse_inline() {
+        let (ld, st) = llsc(ord)
+        let alu = if op == "swp" { "" } else { "add x16, $d0, $u0\n" }
+        let sv = if op == "swp" { "$u0" } else { "x16" }
+        let lse = g.c_sym_addr("xo_lse")
+        g.atomic_result(v, g.atomic_def("ldrb w17, [$u2]\ncbz w17, 1f\n${op}${sfx} $u0, $d0, [$u1]\nb 2f\n1:\n${ld} $d0, [$u1]\n${alu}${st} w17, ${sv}, [$u1]\ncbnz w17, 1b\n2:", [val, a, lse]))
       } else {
         g.race_release(v, ord, a)
         let r = g.rt("__aarch64_${op}8_${model}", [rsrc(val), rsrc(a)], [false])
@@ -4246,6 +4288,10 @@ fn (var g: G) atomic(v: Int) {
         g.race_acquire(v, ord, a)
       } else if g.os == "darwin" {
         g.set(v, [g.atomic_def("mov $d0, $u0\ncas${sfx} $d0, $u1, [$u2]\ncmp $d0, $u0\ncset $d0, eq", [old, new, a])])
+      } else if g.lse_inline() {
+        let (ld, st) = llsc(ord)
+        let lse = g.c_sym_addr("xo_lse")
+        g.set(v, [g.atomic_def("ldrb w17, [$u3]\ncbz w17, 1f\nmov $d0, $u0\ncas${sfx} $d0, $u1, [$u2]\nb 2f\n1:\n${ld} $d0, [$u2]\ncmp $d0, $u0\nb.ne 2f\n${st} w17, $u1, [$u2]\ncbnz w17, 1b\n2:\ncmp $d0, $u0\ncset $d0, eq", [old, new, a, lse])])
       } else {
         g.race_release(v, ord, a)
         let r = g.rt("__aarch64_cas8_${model}", [rsrc(old), rsrc(new), rsrc(a)], [false])

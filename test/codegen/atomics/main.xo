@@ -1,0 +1,33 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): read modify write
+// atomics on linux/arm64 with no C library (the default link) are inline,
+// as Go's arm64 atomics are: a test of the byte xo_lse (set at the start
+// from AT_HWCAP's ATOMICS bit), then the one LSE instruction, else
+// ARMv8.0's load and store exclusive loop; no call of libgcc's outline
+// helper (__aarch64_ldadd8_acq_rel and the rest), whose call was 11% of a
+// labelled std/metrics Counter.inc (2026-11-15). darwin has LSE always:
+// the instruction alone.
+
+fn bump(a: Atomic[Int], n: Int) -> Int {
+  // arm64@linux: "xo_lse" "ldaddal" "ldaxr" "stlxr" -"__aarch64_ldadd8"
+  // arm64: "ldaddal" -"__aarch64_ldadd8"
+  a.add(n)
+}
+
+fn swap_in(a: Atomic[Int], n: Int) -> Int {
+  // arm64@linux: "xo_lse" "swpal" -"__aarch64_swp8"
+  a.swap(n)
+}
+
+fn claim(a: Atomic[Int], old: Int, n: Int) -> Bool {
+  // arm64@linux: "xo_lse" "casal" -"__aarch64_cas8"
+  a.compare_and_swap(old, n)
+}
+
+fn main(os: Os) {
+  let a = Atomic[Int].new(0)
+  let n = os.env.args().len()
+  let x = bump(a, n + 1)
+  let y = swap_in(a, x + 2)
+  let ok = claim(a, y, 7)
+  os.stdio.println("${x} ${y} ${ok} ${a.get()}")
+}

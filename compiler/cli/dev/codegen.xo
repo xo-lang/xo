@@ -27,7 +27,9 @@
 // assembly, so arm64's AES rounds are not an x86_64 host's). A key with
 // a target, `// arm64@windows: ...`, is checked on the code `xo asm
 // --targets=windows/arm64` emits, on any host (decision 0569: the
-// windows/arm64 invariants, such as no write of x18, the TEB). A line
+// windows/arm64 invariants, such as no write of x18, the TEB), and
+// `// arm64@linux: ...` on `--targets=linux/arm64`'s (the inline LSE
+// dispatch of test/codegen/atomics, 2026-11-15). A line
 // `// passes: SPEC` in a directory's file builds that directory with
 // XO_PASSES=SPEC, for an optional pass's patterns (`+acc_range`,
 // decision 0577).
@@ -69,7 +71,7 @@ pub fn patterns(file: Str, src: Str) -> List[Pattern] {
       cur = t.trim_prefix("// func ").trim()
       continue
     }
-    for key in ["arm64", "amd64", "llvm", "llvm/arm64", "llvm/amd64", "arm64@windows"] {
+    for key in ["arm64", "amd64", "llvm", "llvm/arm64", "llvm/amd64", "arm64@windows", "arm64@linux"] {
       let head = "// ${key}: "
       if !t.starts_with(head) {
         continue
