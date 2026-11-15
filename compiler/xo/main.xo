@@ -3640,7 +3640,15 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
   // (sepcomp_program, set by XO_SEPCOMP) has its helpers weak and its
   // parts in store mode, as std's object
   gm.sepcomp_program = !sepcomp_facts_path(os).is_empty()
-  gm.weak_shared = gm.std_obj || gm.sepcomp_program
+  // a --std-module program, which builds its module and their std
+  // importers from source (check.sep_source), links std's test
+  // variant, whose every definition is weak (weak_all): its own are
+  // strong, so each replaces the variant's. Weak, its interface thunks, generic instances and xo.*
+  // helpers lost to the variant's copies made before the edit, the
+  // first of two weak definitions being kept (2026-11-15, P0 #37: a pg
+  // mutant of sql's Traced.pipeline thunk passed;
+  // gotchas/std-module-weak-store-copy-wins.md)
+  gm.weak_shared = gm.std_obj || (gm.sepcomp_program && o.std_module.is_empty())
   gm.weak_all = gm.std_obj && o.cmd == "test"
   if gm.sepcomp_program {
     gm.std_store = true

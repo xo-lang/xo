@@ -671,6 +671,25 @@ func TestSepcompStdModuleEdits(t *testing.T) {
 	if err := os.MkdirAll(wd, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// an interface method's thunk (xo.iface[SepProbe].SepImpl.v) std's
+	// variant defines too, weak in both objects. After an edit the
+	// program's from-source instance must replace the variant's, or the
+	// variant's old body runs (2026-11-15: a pg mutant of
+	// xo.iface[sql.DriverConn].native.sql.Traced.pipeline passed, since
+	// the link kept the store's weak copy; gotchas/
+	// std-module-weak-store-copy-wins.md)
+	b64 := filepath.Join(std, "base64.xo")
+	{
+		f, err := os.OpenFile(b64, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = f.WriteString("\ninterface SepProbe {\n  fn v(self) -> Int\n}\n\nstruct SepImpl {\n  k: Int\n}\n\nfn (s: SepImpl) v() -> Int {\n  if s.k <= 0 { 51 } else { SepImpl{k: s.k - 1}.v() }\n}\n\nfn sepcomp_make(k: Int) -> SepProbe { SepImpl{k: k} }\n\npub fn sepcomp_use() -> Int { sepcomp_make(3).v() }\n")
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	env := append(os.Environ(), "XO_STD="+std, "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BIN_CACHE="+filepath.Join(work, "bin"), "XO_SEPCOMP_BG=0")
 	for _, c := range []string{"0", "1"} {
 		cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--test", "--conc="+c))
@@ -770,6 +789,20 @@ func TestSepcompStdModuleEdits(t *testing.T) {
 	log, err = run()
 	if err != nil || !strings.Contains(log, "module(s) from source") || passed(log) != n+2 {
 		t.Fatalf("after fixing the probe, want the variant reused and %d passed: %v\n%s", n+2, err, log)
+	}
+	// the method's edit (51 to 52) runs through the interface: the
+	// variant's weak thunk still says 51
+	b, err = os.ReadFile(b64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b64, []byte(strings.Replace(string(b), "{ 51 }", "{ 52 }", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	appendTo(tests, "\ntest \"sepcomp iface\" {\n  expect(sepcomp_use()) == 52\n}\n")
+	log, err = run()
+	if err != nil || !strings.Contains(log, "module(s) from source") || passed(log) != n+3 {
+		t.Fatalf("after an interface method's edit, want its new body (52) and %d passed: %v\n%s", n+3, err, log)
 	}
 }
 
