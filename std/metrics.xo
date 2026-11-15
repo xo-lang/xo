@@ -844,10 +844,25 @@ fn head(name: Str, labels: List[Str], values: List[Str], extra: Str) -> Str {
   if parts.is_empty() { name } else { "${name}{${parts.join(",")}}" }
 }
 
+/// A family's lines. As client_golang's Gather (internal
+/// NormalizeMetricFamilies drops a family with no metrics), a family with
+/// no series prints nothing, not even `# HELP` and `# TYPE`: a vec no
+/// child of which was made, or a read that gave no samples. An instrument
+/// without labels has its one series from the start, as Go's NewCounter
+/// and NewHistogram: it prints its zero values before the first update.
 fn expose(f: Family, now_ms: Int) -> List[Str] {
+  let body = expose_series(f, now_ms)
+  if body.is_empty() {
+    return []
+  }
   var out: List[Str] = []
   out.push("# HELP ${f.name} ${escape_help(f.help)}")
   out.push("# TYPE ${f.name} ${if f.kind == 0 { "counter" } else if f.kind == 1 { "gauge" } else if f.kind == 2 { "histogram" } else { "summary" }}")
+  out + body
+}
+
+fn expose_series(f: Family, now_ms: Int) -> List[Str] {
+  var out: List[Str] = []
   if let Some(read) = f.reads.get(0) {
     // read at scrape time (GaugeFunc, CounterFunc, a Collector), sorted
     // by label values as the instruments' series are
@@ -863,7 +878,10 @@ fn expose(f: Family, now_ms: Int) -> List[Str] {
     }
     return out
   }
-  let m = f.series.with_read(fn(m: Map[Str, Series]) -> Map[Str, Series] { m })
+  var m = f.series.with_read(fn(m: Map[Str, Series]) -> Map[Str, Series] { m })
+  if m.is_empty() && f.labels.is_empty() {
+    m[""] = new_series([], f.bounds.len(), f.kind, f.age_buckets)
+  }
   let keys = m.keys().sort()
   for k in keys {
     // k is one of m's keys (a `?? continue` here generates Go that go vet

@@ -8006,7 +8006,10 @@ fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str) -> fn(
   them in `http_request_seconds{route}` and tracks `http_in_flight`;
   `label` maps a request to the (bounded) route label.
 - `text()` writes `# HELP` and `# TYPE` per instrument in the order they
-  were made, its series sorted by label values, a histogram as
+  were made (an instrument with no series writes nothing, as
+  client_golang's Gather: a labelled one with no child yet or none left, a
+  collector that gives no samples; one without labels has its series from
+  the start and writes its zero values), its series sorted by label values, a histogram as
   cumulative `_bucket{le="..."}` (then `le="+Inf"`), `_sum` and `_count`,
   integral values without a fraction, and label values escaped (`\\`,
   `\"`, `\n`). `handler()` answers it as

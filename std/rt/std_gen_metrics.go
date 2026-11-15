@@ -2192,6 +2192,11 @@ func Metrics_head(tk *Task, v_name string, v_labels List[string], v_values List[
 }
 
 func Metrics_expose(tk *Task, v_f Metrics_Family, v_now_ms int64) List[string] {
+	var v_body List[string] = List_Own(Metrics_expose_series(tk, func(v Metrics_Family) Metrics_Family { v.XoMark(); return v }(v_f), v_now_ms))
+	_ = v_body
+	if List_is_empty[string](tk, v_body) {
+		return List[string]{}
+	}
 	var v_out List[string] = List[string]{}
 	_ = v_out
 	x_pv170 := ("# HELP " + v_f.F_name + " " + Metrics_escape_help(tk, v_f.F_help))
@@ -2223,6 +2228,12 @@ func Metrics_expose(tk *Task, v_f Metrics_Family, v_now_ms int64) List[string] {
 		v_out = List_PushSlow(v_out, x_pv173)
 	}
 	_ = Unit{}
+	return List_Concat(v_out, v_body)
+}
+
+func Metrics_expose_series(tk *Task, v_f Metrics_Family, v_now_ms int64) List[string] {
+	var v_out List[string] = List[string]{}
+	_ = v_out
 	x_a175 := int64(0)
 	x_l174 := List_get[func(*Task) Result[List[Metrics_Sample], Never]](tk, v_f.F_reads, x_a175)
 	if x_l174.Some {
@@ -2238,7 +2249,7 @@ func Metrics_expose(tk *Task, v_f Metrics_Family, v_now_ms int64) List[string] {
 			_ = v_x
 			{
 				if List_len[string](tk, v_x.F_values) != List_len[string](tk, v_f.F_labels) {
-					Fault(tk, ("metrics: " + v_f.F_name + " has " + IntStr(List_len[string](tk, v_f.F_labels)) + " labels, a sample has " + IntStr(List_len[string](tk, v_x.F_values)) + " values"), "std/metrics.xo:857:9")
+					Fault(tk, ("metrics: " + v_f.F_name + " has " + IntStr(List_len[string](tk, v_f.F_labels)) + " labels, a sample has " + IntStr(List_len[string](tk, v_x.F_values)) + " values"), "std/metrics.xo:872:9")
 				}
 			}
 		}
@@ -2272,44 +2283,48 @@ func Metrics_expose(tk *Task, v_f Metrics_Family, v_now_ms int64) List[string] {
 	}
 	var v_m_1 Map[string, Metrics_Series] = Map_Own(Mutex_with_read[Map[string, Metrics_Series], Map[string, Metrics_Series], Never](tk, v_f.F_series, x_a187).V)
 	_ = v_m_1
+	if Map_is_empty[string, Metrics_Series](tk, v_m_1) && List_is_empty[string](tk, v_f.F_labels) {
+		x_ix188 := ""
+		Map_put(tk, &v_m_1, x_ix188, func(v Metrics_Series) Metrics_Series { v.XoMark(); return v }(Metrics_new_series(tk, List[string]{}, List_len[float64](tk, v_f.F_bounds), v_f.F_kind, v_f.F_age_buckets)))
+	}
 	var v_keys List[string] = List_sort[string](tk, Map_keys[string, Metrics_Series](tk, v_m_1))
 	_ = v_keys
-	x_it188 := v_keys
-	for _, x_e190 := range List_Items(x_it188) {
-		x_el191 := x_e190
-		_ = x_el191
-		var v_k string = x_el191
+	x_it189 := v_keys
+	for _, x_e191 := range List_Items(x_it189) {
+		x_el192 := x_e191
+		_ = x_el192
+		var v_k string = x_el192
 		_ = v_k
 		{
-			x_a192 := v_k
-			x_t193 := func(v Option[Metrics_Series]) Option[Metrics_Series] {
+			x_a193 := v_k
+			x_t194 := func(v Option[Metrics_Series]) Option[Metrics_Series] {
 				if v.Some {
 					v.V.XoMark()
 				}
 				return v
-			}(Map_get[string, Metrics_Series](tk, v_m_1, x_a192))
-			var x_c194 Metrics_Series
-			if x_t193.Some {
-				x_c194 = x_t193.V
+			}(Map_get[string, Metrics_Series](tk, v_m_1, x_a193))
+			var x_c195 Metrics_Series
+			if x_t194.Some {
+				x_c195 = x_t194.V
 			} else {
-				x_c194 = Absurd[Metrics_Series](Fault(tk, ("metrics: series " + v_k + " not in its own map"), "std/metrics.xo:871:25"))
+				x_c195 = Absurd[Metrics_Series](Fault(tk, ("metrics: series " + v_k + " not in its own map"), "std/metrics.xo:889:25"))
 			}
-			var v_s Metrics_Series = x_c194
+			var v_s Metrics_Series = x_c195
 			_ = v_s
 			if v_f.F_kind < int64(2) {
-				var x_v195 float64
+				var x_v196 float64
 				if v_f.F_kind == int64(0) {
-					x_v195 = Metrics_counter_value(tk, List_Own(v_s.F_cells))
+					x_v196 = Metrics_counter_value(tk, List_Own(v_s.F_cells))
 				} else {
-					x_v195 = Metrics_load(tk, List_At(v_s.F_cells, int64(0), "std/metrics.xo:873:69"))
+					x_v196 = Metrics_load(tk, List_At(v_s.F_cells, int64(0), "std/metrics.xo:891:69"))
 				}
-				var v_v float64 = x_v195
+				var v_v float64 = x_v196
 				_ = v_v
-				x_pv196 := (Metrics_head(tk, v_f.F_name, List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + Metrics_num(tk, v_v))
+				x_pv197 := (Metrics_head(tk, v_f.F_name, List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + Metrics_num(tk, v_v))
 				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv196)
+					v_out = List_PushFast(v_out, x_pv197)
 				} else {
-					v_out = List_PushSlow(v_out, x_pv196)
+					v_out = List_PushSlow(v_out, x_pv197)
 				}
 				_ = Unit{}
 			} else {
@@ -2317,10 +2332,10 @@ func Metrics_expose(tk *Task, v_f Metrics_Family, v_now_ms int64) List[string] {
 					var v_objs List[Tuple2[float64, float64]] = List_Own(v_f.F_objectives)
 					_ = v_objs
 					if !(List_is_empty[Tuple2[float64, float64]](tk, v_objs)) {
-						x_a204 := List_At(v_s.F_q, int64(0), "std/metrics.xo:878:18")
+						x_a205 := List_At(v_s.F_q, int64(0), "std/metrics.xo:896:18")
 						v_objs.XoMark()
 						v_f.XoMark()
-						var v_qs List[float64] = List_Own(Mutex_with[Metrics_QState, List[float64], Never](tk, x_a204, func(tk *Task, v_st *Metrics_QState) Result[List[float64], Never] {
+						var v_qs List[float64] = List_Own(Mutex_with[Metrics_QState, List[float64], Never](tk, x_a205, func(tk *Task, v_st *Metrics_QState) Result[List[float64], Never] {
 							_ = (*v_st)
 							Metrics_qdrain(tk, &(*v_st), List_Own(v_objs))
 							if v_now_ms > int64(0) {
@@ -2328,23 +2343,23 @@ func Metrics_expose(tk *Task, v_f Metrics_Family, v_now_ms int64) List[string] {
 							}
 							var v_vs List[float64] = List[float64]{}
 							_ = v_vs
-							x_it197 := v_objs
-							for _, x_e199 := range List_Items(x_it197) {
-								x_el200 := x_e199
-								_ = x_el200
-								var v_q float64 = x_el200.F0
+							x_it198 := v_objs
+							for _, x_e200 := range List_Items(x_it198) {
+								x_el201 := x_e200
+								_ = x_el201
+								var v_q float64 = x_el201.F0
 								_ = v_q
 								{
-									x_ix201 := (*v_st).F_head
+									x_ix202 := (*v_st).F_head
 									if !List_Mine((*v_st).F_streams) {
 										(*v_st).F_streams = List_Unshared((*v_st).F_streams)
 									}
-									x_ep202 := List_PtrM((*v_st).F_streams, x_ix201, "std/metrics.xo:885:28")
-									x_pv203 := Metrics_qquery(tk, &(*x_ep202), v_q, List_Own(v_objs))
+									x_ep203 := List_PtrM((*v_st).F_streams, x_ix202, "std/metrics.xo:903:28")
+									x_pv204 := Metrics_qquery(tk, &(*x_ep203), v_q, List_Own(v_objs))
 									if List_CanPush(v_vs) {
-										v_vs = List_PushFast(v_vs, x_pv203)
+										v_vs = List_PushFast(v_vs, x_pv204)
 									} else {
-										v_vs = List_PushSlow(v_vs, x_pv203)
+										v_vs = List_PushSlow(v_vs, x_pv204)
 									}
 									_ = Unit{}
 								}
@@ -2352,82 +2367,82 @@ func Metrics_expose(tk *Task, v_f Metrics_Family, v_now_ms int64) List[string] {
 							return Ok[List[float64], Never](List_Own(v_vs))
 						}).V)
 						_ = v_qs
-						x_it205 := List_indexed[Tuple2[float64, float64]](tk, v_objs)
-						for _, x_e207 := range List_Items(x_it205) {
-							x_el208 := x_e207
-							_ = x_el208
-							var v_i int64 = x_el208.F0
+						x_it206 := List_indexed[Tuple2[float64, float64]](tk, v_objs)
+						for _, x_e208 := range List_Items(x_it206) {
+							x_el209 := x_e208
+							_ = x_el209
+							var v_i int64 = x_el209.F0
 							_ = v_i
-							var v_q_1 float64 = x_el208.F1.F0
+							var v_q_1 float64 = x_el209.F1.F0
 							_ = v_q_1
 							{
-								x_pv209 := (Metrics_head(tk, v_f.F_name, List_Own(v_f.F_labels), List_Own(v_s.F_values), ("quantile=\""+Metrics_num(tk, v_q_1)+"\"")) + " " + Metrics_num(tk, List_At(v_qs, v_i, "std/metrics.xo:890:89")))
+								x_pv210 := (Metrics_head(tk, v_f.F_name, List_Own(v_f.F_labels), List_Own(v_s.F_values), ("quantile=\""+Metrics_num(tk, v_q_1)+"\"")) + " " + Metrics_num(tk, List_At(v_qs, v_i, "std/metrics.xo:908:89")))
 								if List_CanPush(v_out) {
-									v_out = List_PushFast(v_out, x_pv209)
+									v_out = List_PushFast(v_out, x_pv210)
 								} else {
-									v_out = List_PushSlow(v_out, x_pv209)
+									v_out = List_PushSlow(v_out, x_pv210)
 								}
 								_ = Unit{}
 							}
 						}
 					}
-					x_pv210 := (Metrics_head(tk, (v_f.F_name+"_sum"), List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + Metrics_num(tk, Metrics_load(tk, List_At(v_s.F_cells, int64(2), "std/metrics.xo:893:77"))))
-					if List_CanPush(v_out) {
-						v_out = List_PushFast(v_out, x_pv210)
-					} else {
-						v_out = List_PushSlow(v_out, x_pv210)
-					}
-					_ = Unit{}
-					x_pv211 := (Metrics_head(tk, (v_f.F_name+"_count"), List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + IntStr(List_At(v_s.F_cells, int64(1), "std/metrics.xo:894:70").M_get(tk)))
+					x_pv211 := (Metrics_head(tk, (v_f.F_name+"_sum"), List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + Metrics_num(tk, Metrics_load(tk, List_At(v_s.F_cells, int64(2), "std/metrics.xo:911:77"))))
 					if List_CanPush(v_out) {
 						v_out = List_PushFast(v_out, x_pv211)
 					} else {
 						v_out = List_PushSlow(v_out, x_pv211)
 					}
 					_ = Unit{}
+					x_pv212 := (Metrics_head(tk, (v_f.F_name+"_count"), List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + IntStr(List_At(v_s.F_cells, int64(1), "std/metrics.xo:912:70").M_get(tk)))
+					if List_CanPush(v_out) {
+						v_out = List_PushFast(v_out, x_pv212)
+					} else {
+						v_out = List_PushSlow(v_out, x_pv212)
+					}
+					_ = Unit{}
 				} else {
 					var v_upto int64 = int64(0)
 					_ = v_upto
-					x_it212 := List_indexed[float64](tk, v_f.F_bounds)
-					for _, x_e214 := range List_Items(x_it212) {
-						x_el215 := x_e214
-						_ = x_el215
-						var v_i_1 int64 = x_el215.F0
+					x_it213 := List_indexed[float64](tk, v_f.F_bounds)
+					for _, x_e215 := range List_Items(x_it213) {
+						x_el216 := x_e215
+						_ = x_el216
+						var v_i_1 int64 = x_el216.F0
 						_ = v_i_1
-						var v_b float64 = x_el215.F1
+						var v_b float64 = x_el216.F1
 						_ = v_b
 						{
-							v_upto = AddS(v_upto, List_At(v_s.F_cells, AddS(int64(3), v_i_1, "std/metrics.xo:898:25"), "std/metrics.xo:898:17").M_get(tk), "std/metrics.xo:898:9")
-							x_pv216 := (Metrics_head(tk, (v_f.F_name+"_bucket"), List_Own(v_f.F_labels), List_Own(v_s.F_values), ("le=\""+Metrics_num(tk, v_b)+"\"")) + " " + IntStr(v_upto))
+							v_upto = AddS(v_upto, List_At(v_s.F_cells, AddS(int64(3), v_i_1, "std/metrics.xo:916:25"), "std/metrics.xo:916:17").M_get(tk), "std/metrics.xo:916:9")
+							x_pv217 := (Metrics_head(tk, (v_f.F_name+"_bucket"), List_Own(v_f.F_labels), List_Own(v_s.F_values), ("le=\""+Metrics_num(tk, v_b)+"\"")) + " " + IntStr(v_upto))
 							if List_CanPush(v_out) {
-								v_out = List_PushFast(v_out, x_pv216)
+								v_out = List_PushFast(v_out, x_pv217)
 							} else {
-								v_out = List_PushSlow(v_out, x_pv216)
+								v_out = List_PushSlow(v_out, x_pv217)
 							}
 							_ = Unit{}
 						}
 					}
-					var v_n int64 = List_At(v_s.F_cells, int64(1), "std/metrics.xo:901:15").M_get(tk)
+					var v_n int64 = List_At(v_s.F_cells, int64(1), "std/metrics.xo:919:15").M_get(tk)
 					_ = v_n
-					x_pv217 := (Metrics_head(tk, (v_f.F_name+"_bucket"), List_Own(v_f.F_labels), List_Own(v_s.F_values), "le=\"+Inf\"") + " " + IntStr(v_n))
-					if List_CanPush(v_out) {
-						v_out = List_PushFast(v_out, x_pv217)
-					} else {
-						v_out = List_PushSlow(v_out, x_pv217)
-					}
-					_ = Unit{}
-					x_pv218 := (Metrics_head(tk, (v_f.F_name+"_sum"), List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + Metrics_num(tk, Metrics_load(tk, List_At(v_s.F_cells, int64(2), "std/metrics.xo:903:77"))))
+					x_pv218 := (Metrics_head(tk, (v_f.F_name+"_bucket"), List_Own(v_f.F_labels), List_Own(v_s.F_values), "le=\"+Inf\"") + " " + IntStr(v_n))
 					if List_CanPush(v_out) {
 						v_out = List_PushFast(v_out, x_pv218)
 					} else {
 						v_out = List_PushSlow(v_out, x_pv218)
 					}
 					_ = Unit{}
-					x_pv219 := (Metrics_head(tk, (v_f.F_name+"_count"), List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + IntStr(v_n))
+					x_pv219 := (Metrics_head(tk, (v_f.F_name+"_sum"), List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + Metrics_num(tk, Metrics_load(tk, List_At(v_s.F_cells, int64(2), "std/metrics.xo:921:77"))))
 					if List_CanPush(v_out) {
 						v_out = List_PushFast(v_out, x_pv219)
 					} else {
 						v_out = List_PushSlow(v_out, x_pv219)
+					}
+					_ = Unit{}
+					x_pv220 := (Metrics_head(tk, (v_f.F_name+"_count"), List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + IntStr(v_n))
+					if List_CanPush(v_out) {
+						v_out = List_PushFast(v_out, x_pv220)
+					} else {
+						v_out = List_PushSlow(v_out, x_pv220)
 					}
 					_ = Unit{}
 				}

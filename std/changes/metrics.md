@@ -1,5 +1,20 @@
 # std/metrics changes
 
+## 2026-11-15: fix: an instrument with no series writes nothing, one without labels writes its zeros
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 1, bench/perf/metrics `scrape` against client_golang (52 bytes a scrape)
+- Go reference: prometheus/client_golang registry.go Gather and internal.NormalizeMetricFamilies (a family with no metrics is dropped); NewCounter and NewHistogram export one metric from the start
+- Test: golden metrics_empty (go, arm64, llvm); the six metrics goldens unchanged
+
+`text()` wrote `# HELP` and `# TYPE` for a labelled instrument no child of
+which was made (or whose children were all removed) and for a collector that
+gave no samples; client_golang writes nothing for them. It also wrote only
+the two comment lines for an instrument without labels before its first
+update, where Go writes its zero values (`boot_total 0`, a histogram's zero
+buckets, sum and count). Both now match Go.
+
 ## 2026-11-11: refactor: std/metrics is one file (decisions 0588, 0597)
 
 - Kind: refactor

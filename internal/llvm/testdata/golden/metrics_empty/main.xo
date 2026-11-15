@@ -1,0 +1,19 @@
+// std/metrics: families with no series, as client_golang's Gather writes
+// them. A vec with no child, a collector that gives no samples and a vec
+// whose only child was removed print nothing; an instrument without
+// labels prints its zero values before its first update (Go's NewCounter
+// and NewHistogram export one metric from the start).
+use std/metrics
+
+fn main(os: Os) {
+  let r = metrics.registry()
+  let _vec = r.counter("req_total", "Requests.", ["path"])
+  let gone = r.gauge("gone", "Removed.", ["k"])
+  gone.set(1.0, ["a"])
+  let _removed = gone.remove(["a"])
+  r.collector("pool_conns", "Connections.", metrics.Kind.Gauge, ["pool"], fn() -> List[metrics.Sample] { [] })
+  let _c = r.counter("boot_total", "Boots.")
+  let _h = r.histogram("wait_seconds", "Waits.", [], [1.0])
+  let _s = r.summary("rpc_seconds", "RPCs.")
+  os.stdio.print(r.text())
+}

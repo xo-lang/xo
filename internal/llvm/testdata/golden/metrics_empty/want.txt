@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+# HELP boot_total Boots.
+# TYPE boot_total counter
+boot_total 0
+# HELP wait_seconds Waits.
+# TYPE wait_seconds histogram
+wait_seconds_bucket{le="1"} 0
+wait_seconds_bucket{le="+Inf"} 0
+wait_seconds_sum 0
+wait_seconds_count 0
+# HELP rpc_seconds RPCs.
+# TYPE rpc_seconds summary
+rpc_seconds_sum 0
+rpc_seconds_count 0
+# HELP xo_metrics_dropped_total Series dropped past the per instrument limit.
+# TYPE xo_metrics_dropped_total counter
+xo_metrics_dropped_total 0
+--- stderr
