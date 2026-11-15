@@ -391,6 +391,86 @@ fn pax_name(real: Str) -> Str {
   clean_path(parts.join("/"))
 }
 
+/// The header block (and a PAX header before it when USTAR cannot hold
+/// the name or the time) Go's tar.Writer writes for an entry
+/// (Archive_tar's Header, FormatPAX).
+fn tar_header(var out: BytesBuilder, p: Str, mode0: Int, size0: Int, is_dir: Bool, modified: Time) {
+  var name = p
+  var flag = 48
+  var size = size0
+  if is_dir {
+    name = p + "/"
+    flag = 53
+    size = 0
+  }
+  let mode = mode0 & 0o7777
+  let ns = (modified - Time.UNIX_EPOCH).nanos()
+  let secs = floor_div(ns, 1000000000)
+  var mtime_rec = ""
+  var path_rec = ""
+  var ustar = true
+  if !is_ascii(name) || name.len() > 100 {
+    if split_ustar(name).is_none() {
+      ustar = false
+    }
+    path_rec = name
+  }
+  let fits = fits_octal(12, secs)
+  if !fits || ns - secs * 1000000000 != 0 {
+    // PAX is preferred: USTAR would lose the time
+    ustar = false
+    mtime_rec = pax_time(ns)
+  }
+  if ustar {
+    var prefix = ""
+    var short = name
+    match split_ustar(name) {
+      Some((a, b)) => {
+        prefix = a
+        short = b
+      }
+      None => ()
+    }
+    var blk = tar_template(short, mode, size, secs, flag)
+    fmt_str(blk, 345, 155, prefix)
+    set_ustar(blk)
+    out.write(bytes_of(blk))
+  } else {
+    if path_rec != "" || mtime_rec != "" {
+      // the records sorted by key
+      var data = ""
+      if mtime_rec != "" {
+        data = data + pax_record("mtime", mtime_rec)
+      }
+      if path_rec != "" {
+        data = data + pax_record("path", path_rec)
+      }
+      var pname = to_ascii(pax_name(name))
+      if pname.len() > 100 {
+        pname = pname[0..100]
+      }
+      while pname.ends_with("/") {
+        pname = pname[0..pname.len() - 1]
+      }
+      var hb = zeros(512)
+      hb[156] = 120
+      fmt_str(hb, 0, 100, pname)
+      fmt_oct(hb, 100, 8, 0)
+      fmt_oct(hb, 108, 8, 0)
+      fmt_oct(hb, 116, 8, 0)
+      fmt_oct(hb, 124, 12, data.len())
+      fmt_oct(hb, 136, 12, 0)
+      set_ustar(hb)
+      out.write(bytes_of(hb))
+      out.write(data.bytes())
+      pad_block(out, data.len())
+    }
+    var blk = tar_template(to_ascii(name), mode, size, secs, flag)
+    set_ustar(blk)
+    out.write(bytes_of(blk))
+  }
+}
+
 fn tar(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
   var out = BytesBuilder.new()
   for e in entries {
@@ -398,88 +478,105 @@ fn tar(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
       Some(x) => x
       None => return Err(archive_err("bad entry path ${e.path.quote()}"))
     }
-    var name = p
-    var flag = 48
-    var size = e.data.len()
-    if e.is_dir {
-      name = p + "/"
-      flag = 53
-      size = 0
-    }
-    let mode = e.mode & 0o7777
-    let ns = (e.modified - Time.UNIX_EPOCH).nanos()
-    let secs = floor_div(ns, 1000000000)
-    var mtime_rec = ""
-    var path_rec = ""
-    var ustar = true
-    if !is_ascii(name) || name.len() > 100 {
-      if split_ustar(name).is_none() {
-        ustar = false
-      }
-      path_rec = name
-    }
-    let fits = fits_octal(12, secs)
-    if !fits || ns - secs * 1000000000 != 0 {
-      // PAX is preferred: USTAR would lose the time
-      ustar = false
-      mtime_rec = pax_time(ns)
-    }
-    if ustar {
-      var prefix = ""
-      var short = name
-      match split_ustar(name) {
-        Some((a, b)) => {
-          prefix = a
-          short = b
-        }
-        None => ()
-      }
-      var blk = tar_template(short, mode, size, secs, flag)
-      fmt_str(blk, 345, 155, prefix)
-      set_ustar(blk)
-      out.write(bytes_of(blk))
-    } else {
-      if path_rec != "" || mtime_rec != "" {
-        // the records sorted by key
-        var data = ""
-        if mtime_rec != "" {
-          data = data + pax_record("mtime", mtime_rec)
-        }
-        if path_rec != "" {
-          data = data + pax_record("path", path_rec)
-        }
-        var pname = to_ascii(pax_name(name))
-        if pname.len() > 100 {
-          pname = pname[0..100]
-        }
-        while pname.ends_with("/") {
-          pname = pname[0..pname.len() - 1]
-        }
-        var hb = zeros(512)
-        hb[156] = 120
-        fmt_str(hb, 0, 100, pname)
-        fmt_oct(hb, 100, 8, 0)
-        fmt_oct(hb, 108, 8, 0)
-        fmt_oct(hb, 116, 8, 0)
-        fmt_oct(hb, 124, 12, data.len())
-        fmt_oct(hb, 136, 12, 0)
-        set_ustar(hb)
-        out.write(bytes_of(hb))
-        out.write(data.bytes())
-        pad_block(out, data.len())
-      }
-      var blk = tar_template(to_ascii(name), mode, size, secs, flag)
-      set_ustar(blk)
-      out.write(bytes_of(blk))
-    }
+    tar_header(out, p, e.mode, e.data.len(), e.is_dir, e.modified)
     if !e.is_dir {
       out.write(e.data)
-      pad_block(out, size)
+      pad_block(out, e.data.len())
     }
   }
   // two zero blocks end the archive
   out.write(bytes_of(zeros(1024)))
   out.freeze()
+}
+
+/// A tar archive written entry by entry to a File (Go's tar.Writer).
+struct TarWriter {
+  f: File
+  /// bytes the current entry still needs, and its padding
+  left: Int
+  pad: Int
+  done: Bool
+}
+
+fn tar_writer(f: File) -> TarWriter { TarWriter{f: f, left: 0, pad: 0, done: false} }
+
+fn tw_err(msg: Str) -> archive.ArchiveErr { archive_err("tar_writer: ${msg}") }
+
+fn (var w: TarWriter) put(b: Bytes) -> () ! archive.ArchiveErr uses fs.write {
+  match w.f.write(b) {
+    Ok(_) => Ok(())
+    Err(e) => Err(tw_err(e.display()))
+  }
+}
+
+fn (var w: TarWriter) flush() -> () ! archive.ArchiveErr uses fs.write {
+  if w.done {
+    return Err(tw_err("archive/tar: write after close"))
+  }
+  if w.left > 0 {
+    return Err(tw_err("archive/tar: missed writing ${w.left} bytes"))
+  }
+  if w.pad > 0 {
+    w.put(bytes_of(zeros(w.pad)))?
+    w.pad = 0
+  }
+  Ok(())
+}
+
+fn (var w: TarWriter) start(path: Str, mode: Int, size: Int, is_dir: Bool, modified: Time) -> () ! archive.ArchiveErr uses fs.write {
+  w.flush()?
+  let p = match archive_path(path) {
+    Some(x) => x
+    None => return Err(archive_err("bad entry path ${path.quote()}"))
+  }
+  if size < 0 {
+    return Err(tw_err("archive/tar: negative size"))
+  }
+  var out = BytesBuilder.new()
+  tar_header(out, p, mode, size, is_dir, modified)
+  w.put(out.freeze())?
+  if !is_dir {
+    w.left = size
+    w.pad = (512 - size % 512) % 512
+  }
+  Ok(())
+}
+
+fn (var w: TarWriter) add(e: archive.Entry) -> () ! archive.ArchiveErr uses fs.write {
+  w.start(e.path, e.mode, e.data.len(), e.is_dir, e.modified)?
+  if !e.is_dir {
+    w.write(e.data)?
+  }
+  Ok(())
+}
+
+fn (var w: TarWriter) create(path: Str, size: Int, mode: Int, modified: Time) -> () ! archive.ArchiveErr uses fs.write {
+  w.start(path, mode, size, false, modified)
+}
+
+fn (var w: TarWriter) write(data: Bytes) -> () ! archive.ArchiveErr uses fs.write {
+  if w.done {
+    return Err(tw_err("archive/tar: write after close"))
+  }
+  if data.len() > w.left {
+    // the part that fits is written (regFileWriter.Write)
+    let part = data[0..w.left]
+    w.left = 0
+    w.put(part)?
+    return Err(tw_err("archive/tar: write too long"))
+  }
+  w.left -= data.len()
+  w.put(data)
+}
+
+fn (var w: TarWriter) close() -> () ! archive.ArchiveErr uses fs.write {
+  if w.done {
+    return Ok(())
+  }
+  let r = w.flush()
+  w.done = true
+  r?
+  w.put(bytes_of(zeros(1024)))
 }
 
 fn parse_cstr(b: Bytes, at: Int, n: Int) -> Str {

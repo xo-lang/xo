@@ -497,3 +497,53 @@ test "zip with offset after a prefix writes Go's bytes (Writer.SetOffset), and z
   f.close()?
   expect(sum_of(os.fs.read("sfx.zip")?)) == ZIP_OFFSET_STREAMED
 }
+
+/// Go's tar.Writer archive for the tar_writer test: length and SHA-256
+const TAR_WRITER: Str = "77312 30f46f4ab5e620290e247afd6b2bf3bba218a292080f19e8db45388c52b7d1cf"
+/// each step's error, "" for none
+const TAR_WRITER_ERRS: List[Str] = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "archive/tar: write too long", "", "", "", "archive/tar: missed writing 2 bytes", "archive/tar: missed writing 2 bytes", "archive/tar: write too long", ""]
+
+fn tw_rec(r: Result[(), archive.ArchiveErr]) -> Str {
+  match r {
+    Ok(_) => ""
+    Err(e) => {
+      let m = e.display()
+      // Go's text without the archive: tar_writer: prefix
+      if m.starts_with("archive: tar_writer: ") { m[21..] } else { m }
+    }
+  }
+}
+
+test "tar_writer writes Go's tar.Writer archive and its errors" {
+  var f = os.fs.create("tw.tar")?
+  var w = archive.tar_writer(f)
+  var errs: List[Str] = []
+  let t = Time.UNIX_EPOCH + Duration.from_nanos(1700000000 * 1000000000)
+  errs.push(tw_rec(w.create("a.txt", 11, modified: t)))
+  errs.push(tw_rec(w.write(b"hello tar\n!")))
+  errs.push(tw_rec(w.add(archive.Entry{path: "d", data: b"", mode: 0o755, is_dir: true, modified: t})))
+  let big = zdata256(21, 70000, 256)
+  errs.push(tw_rec(w.create("big.bin", big.len(), mode: 0o600)))
+  var at = 0
+  while at < big.len() {
+    let end = if at + 9000 < big.len() { at + 9000 } else { big.len() }
+    errs.push(tw_rec(w.write(big[at..end])))
+    at = end
+  }
+  let long = "dir/".repeat(30) + "f\u{e9}.txt"
+  errs.push(tw_rec(w.create(long, 3, modified: t + Duration.from_nanos(123456789))))
+  errs.push(tw_rec(w.write(b"abc")))
+  errs.push(tw_rec(w.create("short", 10, modified: t)))
+  errs.push(tw_rec(w.write(b"0123456789ABCDE")))
+  errs.push(tw_rec(w.flush()))
+  errs.push(tw_rec(w.create("miss", 5, modified: t)))
+  errs.push(tw_rec(w.write(b"xyz")))
+  errs.push(tw_rec(w.flush()))
+  errs.push(tw_rec(w.create("next", 0, modified: t)))
+  errs.push(tw_rec(w.write(b"...")))
+  errs.push(tw_rec(w.close()))
+  f.close()?
+  expect(errs) == TAR_WRITER_ERRS
+  let data = os.fs.read("tw.tar")?
+  expect(sum_of(data)) == TAR_WRITER
+}

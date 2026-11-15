@@ -5442,6 +5442,7 @@ pub fn zip_reader(data: Bytes) -> ZipReader ! ArchiveErr   // decision 0479 step
 fn (r: ZipReader) files() -> List[ZipFile]
 fn (r: ZipReader) read(f: ZipFile) -> Bytes ! ArchiveErr
 fn (r: ZipReader) comment() -> Str                  // Reader.Comment
+pub fn tar_writer(f: File) -> TarWriter              // tar.Writer: add(e), create(path, size, mode, modified), write(data), flush(), close()
 pub fn zip_writer(f: File) -> ZipWriter
 fn (var w: ZipWriter) add(e: Entry, method: ZipMethod = ZipMethod.Deflate) -> () ! ArchiveErr uses fs.write   // also create(path, mode, method), write(data), close()
 fn (var w: ZipWriter) set_comment(comment: Str) -> () ! ArchiveErr   // Writer.SetComment
@@ -5456,6 +5457,12 @@ struct ZipFile { path: Str, size: Int, compressed: Int, mode: Int, is_dir: Bool,
   Writer.SetOffset (a fault once the writer has written).
   `ZipMethod.Store` keeps an entry's bytes as they are. Every backend
   writes Go's zip.Writer bytes for these.
+- `tar_writer` writes a tar archive to a File entry by entry, with the
+  headers `tar` writes: `create(path, size)` gives the size first (tar
+  needs it), `write` past it writes what fits and fails with Go's
+  `archive/tar: write too long`, and a new entry or `flush` while the
+  last one misses bytes fails with `archive/tar: missed writing N
+  bytes`, as Go's tar.Writer.
 - `zip_reader` reads a zip archive's central directory once and checks
   every entry as `unzip` does (paths, kinds, Go's errors), but inflates
   none: `r.files()` lists them (`size` is the inflated length) and

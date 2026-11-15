@@ -400,6 +400,88 @@ func (x *Archive_ZipWriter) M_close(tk *Task) Result[Unit, Archive_ArchiveErr] {
 	return Ok[Unit, Archive_ArchiveErr](Unit{})
 }
 
+// Archive_TarWriter is `archive.TarWriter` (move only): Go's tar.Writer
+// over the File.
+type Archive_TarWriter struct {
+	tw *tar.Writer
+	fw *zipFileWriter
+}
+
+func (Archive_TarWriter) XoDebug(b *strings.Builder) { b.WriteString("<tar_writer>") }
+func (x Archive_TarWriter) M_debug(*Task) string     { return Debug(x) }
+
+func Archive_tar_writer(_ *Task, f File) Archive_TarWriter {
+	fw := &zipFileWriter{f: f}
+	return Archive_TarWriter{tw: tar.NewWriter(fw), fw: fw}
+}
+
+func (x *Archive_TarWriter) fail(err error) Result[Unit, Archive_ArchiveErr] {
+	if x.fw.err != "" {
+		return Err[Unit](archiveErr("tar_writer: " + x.fw.err))
+	}
+	return Err[Unit](archiveErr("tar_writer: " + err.Error()))
+}
+
+func (x *Archive_TarWriter) start(tk *Task, path string, mode, size int64, isDir bool, mod time.Time) Result[Unit, Archive_ArchiveErr] {
+	x.fw.tk = tk
+	if err := x.tw.Flush(); err != nil {
+		return x.fail(err)
+	}
+	p, ok := archivePath(textOf(path))
+	if !ok {
+		return Err[Unit](archiveErr("bad entry path " + strconv.Quote(path)))
+	}
+	if size < 0 {
+		return Err[Unit](archiveErr("tar_writer: archive/tar: negative size"))
+	}
+	h := &tar.Header{Name: p, Mode: mode & 0o7777, ModTime: mod, Typeflag: tar.TypeReg, Size: size, Format: tar.FormatPAX}
+	if isDir {
+		h.Typeflag, h.Name, h.Size = tar.TypeDir, p+"/", 0
+	}
+	if err := x.tw.WriteHeader(h); err != nil {
+		return x.fail(err)
+	}
+	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}
+
+func (x *Archive_TarWriter) M_add(tk *Task, e Archive_Entry) Result[Unit, Archive_ArchiveErr] {
+	if r := x.start(tk, e.F_path, e.F_mode, int64(len(e.F_data)), e.F_is_dir, entryTime(e)); !r.Ok {
+		return r
+	}
+	if !e.F_is_dir {
+		return x.M_write(tk, e.F_data)
+	}
+	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}
+
+func (x *Archive_TarWriter) M_create(tk *Task, path string, size, mode int64, mod Time) Result[Unit, Archive_ArchiveErr] {
+	return x.start(tk, path, mode, size, false, time.Unix(0, int64(mod)).UTC())
+}
+
+func (x *Archive_TarWriter) M_write(tk *Task, data Bytes) Result[Unit, Archive_ArchiveErr] {
+	x.fw.tk = tk
+	if _, err := x.tw.Write([]byte(data)); err != nil {
+		return x.fail(err)
+	}
+	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}
+
+func (x *Archive_TarWriter) M_flush(tk *Task) Result[Unit, Archive_ArchiveErr] {
+	x.fw.tk = tk
+	if err := x.tw.Flush(); err != nil {
+		return x.fail(err)
+	}
+	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}
+
+func (x *Archive_TarWriter) M_close(tk *Task) Result[Unit, Archive_ArchiveErr] {
+	x.fw.tk = tk
+	if err := x.tw.Close(); err != nil {
+		return x.fail(err)
+	}
+	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}
+
 // Archive_zip_open is `archive.zip_open(f, size)`: the Go backend reads the
 // File whole through read_at and opens it as zip_reader does (its memory is
 // the archive's; the native backends read the directory and each entry).

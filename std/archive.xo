@@ -34,6 +34,31 @@ fn gzip(data: Bytes) -> Bytes
 fn gunzip(data: Bytes, max_size: Int = 1073741824) -> Bytes ! ArchiveErr
 /// A tar archive (POSIX ustar or PAX) of the entries, in order.
 fn tar(entries: List[Entry]) -> Bytes ! ArchiveErr
+/// A tar archive written entry by entry to a File (Go's tar.Writer):
+/// memory is one entry's header, not the data. Headers are what `tar`
+/// writes (USTAR, PAX when the name or time needs it). The File stays
+/// the caller's: open it for writing, and close it after `close`.
+/// @move_only
+struct TarWriter {}
+
+fn tar_writer(f: File) -> TarWriter
+/// Writes an entry whose data is in hand (WriteHeader and Write).
+fn (var w: TarWriter) add(e: Entry) -> () ! ArchiveErr uses fs.write
+/// Starts a file entry of size bytes (WriteHeader: the size comes first in
+/// tar); `write` gives it exactly that many. The entry before it must be
+/// whole: else `tar_writer: archive/tar: missed writing N bytes`.
+fn (var w: TarWriter) create(path: Str, size: Int, mode: Int = 0o644, modified: Time = Time.UNIX_EPOCH) -> () ! ArchiveErr uses fs.write
+/// Data for the entry `create` started; past its size, the part that fits
+/// is written and the rest is `tar_writer: archive/tar: write too long`.
+fn (var w: TarWriter) write(data: Bytes) -> () ! ArchiveErr uses fs.write
+/// The current entry's padding (Go's Flush): an error while it misses
+/// bytes.
+fn (var w: TarWriter) flush() -> () ! ArchiveErr uses fs.write
+/// Flushes (its error, if any, is close's) and writes the two zero blocks
+/// that end the archive.
+/// @moves
+fn (var w: TarWriter) close() -> () ! ArchiveErr uses fs.write
+
 /// The entries of a tar archive. An entry whose path is absolute or
 /// leaves the archive's root (`..`) is an error, as are links and devices.
 fn untar(data: Bytes) -> List[Entry] ! ArchiveErr

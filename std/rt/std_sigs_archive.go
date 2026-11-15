@@ -12,6 +12,12 @@ var (
 	_ func(*Task, Bytes) Bytes                                                                             = Archive_gzip
 	_ func(*Task, Bytes, int64) Result[Bytes, Archive_ArchiveErr]                                          = Archive_gunzip
 	_ func(*Task, List[Archive_Entry]) Result[Bytes, Archive_ArchiveErr]                                   = Archive_tar
+	_ func(*Task, File) Archive_TarWriter                                                                  = Archive_tar_writer
+	_ func(*Archive_TarWriter, *Task, Archive_Entry) Result[Unit, Archive_ArchiveErr]                      = (*Archive_TarWriter).M_add
+	_ func(*Archive_TarWriter, *Task, string, int64, int64, Time) Result[Unit, Archive_ArchiveErr]         = (*Archive_TarWriter).M_create
+	_ func(*Archive_TarWriter, *Task, Bytes) Result[Unit, Archive_ArchiveErr]                              = (*Archive_TarWriter).M_write
+	_ func(*Archive_TarWriter, *Task) Result[Unit, Archive_ArchiveErr]                                     = (*Archive_TarWriter).M_flush
+	_ func(*Archive_TarWriter, *Task) Result[Unit, Archive_ArchiveErr]                                     = (*Archive_TarWriter).M_close
 	_ func(*Task, Bytes) Result[List[Archive_Entry], Archive_ArchiveErr]                                   = Archive_untar
 	_ func(*Task, List[Archive_Entry], string, Archive_ZipMethod, int64) Result[Bytes, Archive_ArchiveErr] = Archive_zip
 	_ func(*Task, Bytes, int64) Result[List[Archive_Entry], Archive_ArchiveErr]                            = Archive_unzip

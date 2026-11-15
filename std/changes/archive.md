@@ -1,5 +1,17 @@
 # std/archive changes
 
+## 2026-11-15: feature: tar_writer, a tar archive written entry by entry (Go's tar.Writer)
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): tar.NewWriter, Writer, WriteHeader, Write, Flush, Close
+- Go reference: archive/tar writer.go (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/archive (scripts/stdcorpus archive): a file, a directory, a 70000 byte entry in 9000 byte writes, a long UTF-8 name with a nanosecond time (PAX), a write too long, missed bytes before flush and before the next entry: Go's archive bytes and each step's error text (arm64, LLVM, Go)
+- Timing: none
+
+`archive.tar_writer(f)` writes a tar archive to a File as Go's tar.Writer
+does, holding one header in memory rather than the archive.
+
 ## 2026-11-15: feature: zip comments, stored entries, and an offset after a prefix
 
 - Kind: feature

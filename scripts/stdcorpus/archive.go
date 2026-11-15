@@ -781,6 +781,7 @@ test "zip_open walks a large archive from the File" {
 }
 `)
 	zipMethodCorpus(&o)
+	tarWriterCorpus(&o)
 	return o.String()
 }
 
@@ -917,6 +918,112 @@ func zipMethodCorpus(o *strings.Builder) {
 	}
 	o.WriteString(zipMethodTests)
 }
+
+// tarWriterCorpus: Go's tar.Writer for the steps of the Xo test below,
+// headers as Archive_tar makes them: the archive's length and SHA-256,
+// and each step's error ("" for none).
+func tarWriterCorpus(o *strings.Builder) {
+	var b bytes.Buffer
+	w := tar.NewWriter(&b)
+	var errs []string
+	hdr := func(name string, mode, size int64, dir bool, mod time.Time) error {
+		if err := w.Flush(); err != nil {
+			return err
+		}
+		h := &tar.Header{Name: name, Mode: mode & 0o7777, ModTime: mod, Typeflag: tar.TypeReg, Size: size, Format: tar.FormatPAX}
+		if dir {
+			h.Typeflag, h.Name, h.Size = tar.TypeDir, name+"/", 0
+		}
+		return w.WriteHeader(h)
+	}
+	rec := func(err error) {
+		if err != nil {
+			errs = append(errs, err.Error())
+		} else {
+			errs = append(errs, "")
+		}
+	}
+	write := func(d []byte) { _, err := w.Write(d); rec(err) }
+	t := time.Unix(1700000000, 0).UTC()
+	rec(hdr("a.txt", 0o644, 11, false, t))
+	write([]byte("hello tar\n!"))
+	rec(hdr("d", 0o755, 0, true, t))
+	big := lcgData(21, 70000, 256)
+	rec(hdr("big.bin", 0o600, int64(len(big)), false, time.Unix(0, 0).UTC()))
+	for at := 0; at < len(big); at += 9000 {
+		end := min(at+9000, len(big))
+		write(big[at:end])
+	}
+	long := strings.Repeat("dir/", 30) + "f\u00e9.txt"
+	rec(hdr(long, 0o644, 3, false, time.Unix(1700000000, 123456789).UTC()))
+	write([]byte("abc"))
+	// errors: too long, missed bytes, then fixed
+	rec(hdr("short", 0o644, 10, false, t))
+	write([]byte("0123456789ABCDE"))
+	rec(w.Flush())
+	rec(hdr("miss", 0o644, 5, false, t))
+	write([]byte("xyz"))
+	rec(w.Flush())
+	rec(hdr("next", 0o644, 0, false, t))
+	write([]byte("..."))
+	rec(w.Close())
+	fmt.Fprintf(o, "\n/// Go's tar.Writer archive for the tar_writer test: length and SHA-256\nconst TAR_WRITER: Str = %q\n/// each step's error, \"\" for none\nconst TAR_WRITER_ERRS: List[Str] = [", fmt.Sprintf("%d %s", b.Len(), archSum(b.Bytes())))
+	for i, e := range errs {
+		if i > 0 {
+			o.WriteString(", ")
+		}
+		o.WriteString(xq(e))
+	}
+	o.WriteString("]\n")
+	o.WriteString(tarWriterTests)
+}
+
+const tarWriterTests = `
+fn tw_rec(r: Result[(), archive.ArchiveErr]) -> Str {
+  match r {
+    Ok(_) => ""
+    Err(e) => {
+      let m = e.display()
+      // Go's text without the archive: tar_writer: prefix
+      if m.starts_with("archive: tar_writer: ") { m[21..] } else { m }
+    }
+  }
+}
+
+test "tar_writer writes Go's tar.Writer archive and its errors" {
+  var f = os.fs.create("tw.tar")?
+  var w = archive.tar_writer(f)
+  var errs: List[Str] = []
+  let t = Time.UNIX_EPOCH + Duration.from_nanos(1700000000 * 1000000000)
+  errs.push(tw_rec(w.create("a.txt", 11, modified: t)))
+  errs.push(tw_rec(w.write(b"hello tar\n!")))
+  errs.push(tw_rec(w.add(archive.Entry{path: "d", data: b"", mode: 0o755, is_dir: true, modified: t})))
+  let big = zdata256(21, 70000, 256)
+  errs.push(tw_rec(w.create("big.bin", big.len(), mode: 0o600)))
+  var at = 0
+  while at < big.len() {
+    let end = if at + 9000 < big.len() { at + 9000 } else { big.len() }
+    errs.push(tw_rec(w.write(big[at..end])))
+    at = end
+  }
+  let long = "dir/".repeat(30) + "f\u{e9}.txt"
+  errs.push(tw_rec(w.create(long, 3, modified: t + Duration.from_nanos(123456789))))
+  errs.push(tw_rec(w.write(b"abc")))
+  errs.push(tw_rec(w.create("short", 10, modified: t)))
+  errs.push(tw_rec(w.write(b"0123456789ABCDE")))
+  errs.push(tw_rec(w.flush()))
+  errs.push(tw_rec(w.create("miss", 5, modified: t)))
+  errs.push(tw_rec(w.write(b"xyz")))
+  errs.push(tw_rec(w.flush()))
+  errs.push(tw_rec(w.create("next", 0, modified: t)))
+  errs.push(tw_rec(w.write(b"...")))
+  errs.push(tw_rec(w.close()))
+  f.close()?
+  expect(errs) == TAR_WRITER_ERRS
+  let data = os.fs.read("tw.tar")?
+  expect(sum_of(data)) == TAR_WRITER
+}
+`
 
 const zipMethodTests = `
 fn zdata(seed: Int, n: Int) -> Bytes {
