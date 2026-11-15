@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -42,11 +44,34 @@ func TestVetCostStd(t *testing.T) {
 	if len(dirs) == 0 {
 		t.Fatal("no bench/perf programs")
 	}
+	// the vets on a pool (each lowers its program whole: one after another
+	// the 176 programs took 936 s on host 2, 2026-11-15), read in order
+	type vetOut struct {
+		out, errOut bytes.Buffer
+		code        int
+	}
+	outs := make([]vetOut, len(dirs))
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for w := 0; w < vetCostWorkers(); w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				outs[i].code = run(t, []string{"vet", "--json", "--cost", "--cost-std", dirs[i]}, &outs[i].out, &outs[i].errOut)
+			}
+		}()
+	}
+	for i := range dirs {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
 	seen := map[string]bool{}
 	var bad []string
-	for _, dir := range dirs {
-		var out, errOut bytes.Buffer
-		if code := run(t, []string{"vet", "--json", "--cost", "--cost-std", dir}, &out, &errOut); code != 0 {
+	for i, dir := range dirs {
+		out, errOut := &outs[i].out, &outs[i].errOut
+		if code := outs[i].code; code != 0 {
 			t.Errorf("vet --cost %s: exit %d: %s", dir, code, errOut.String())
 			continue
 		}
@@ -101,6 +126,12 @@ func TestVetCostStd(t *testing.T) {
 			t.Errorf("vetcost-std-allow.txt: no note matches %q any more; remove it", k)
 		}
 	}
+}
+
+// vetCostWorkers is how many vets TestVetCostStd runs at once: a quarter
+// of the CPUs, 2 to 8 (a vet of a large bench peaks near 1 GB).
+func vetCostWorkers() int {
+	return min(max(runtime.NumCPU()/4, 2), 8)
 }
 
 func readVetCostAllow(t *testing.T) map[string]string {
