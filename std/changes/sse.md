@@ -1,5 +1,16 @@
 # std/sse changes
 
+## 2026-11-15: behavior: the web-platform-tests eventsource parsing cases
+
+- Kind: behavior
+- Commit: this push
+- Found by: scripts/stdaudit checklist item sse.behavior.wpt (decision 0655)
+- Go reference: none (WHATWG HTML 9.2.6); web-platform-tests eventsource/format-*.any.js at ddd4ca339ca0 (3-clause BSD license)
+- Test: std/sse_test.xo, 16 tests over the 19 parsing cases (BOM, BOM split, comments, field parsing, data, event, id and Last-Event-ID, retry and its bogus and empty forms, unknown fields, leading space, newlines, U+0000, UTF-8), each body fed whole and one byte at a time (arm64, llvm)
+- Shipped in: not yet released
+
+No change to the parser: every case already gave the events the WPT tests expect. The tests now hold it.
+
 ## 2026-11-15: feature: `SseErr` is an open enum (decision 0649)
 
 - Kind: feature

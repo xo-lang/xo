@@ -1,5 +1,16 @@
 # std/jwt changes
 
+## 2026-11-15: feature: Options.all_audiences and Options.require_nbf (golang-jwt's WithAllAudiences, WithNotBeforeRequired)
+
+- Kind: feature
+- Commit: this push
+- Found by: scripts/stdaudit gaps jwt.WithAllAudiences and jwt.WithNotBeforeRequired (decision 0655)
+- Go reference: github.com/golang-jwt/jwt/v5 v5.3.1 validator.go verifyAudience and verifyNotBefore, parser_option.go (MIT license)
+- Test: std/jwt_test.xo, the cases of validator_test.go Test_Validator_verifyAudience and Test_Validator_verifyNotBefore and map_claims_test.go's all-audience row (arm64, llvm; corpus jwt on go)
+- Shipped in: not yet released
+
+Every name in `all_audiences` must be in `aud` (a string or a list of strings), else `Audience`; with `require_nbf` a token without `nbf` is `Claim("nbf is required")`. Both default off: tokens that verified before still do.
+
 ## 2026-11-15: feature: `JwtErr` is an open enum (decision 0649)
 
 - Kind: feature

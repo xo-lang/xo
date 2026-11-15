@@ -59,8 +59,12 @@ pub struct Options {
   pub leeway: Duration = 0s
   pub issuer: Str? = None
   pub audience: Str? = None
+  /// every one of these must be in `aud` (golang-jwt's WithAllAudiences); checked with `audience`
+  pub all_audiences: List[Str] = []
   pub subject: Str? = None
   pub require_exp: Bool = true
+  /// `nbf` must be present (golang-jwt's WithNotBeforeRequired)
+  pub require_nbf: Bool = false
   /// `iat` in the future (past the leeway) is NotYetValid
   pub check_iat: Bool = false
   /// now - iat past this is Expired
@@ -501,10 +505,17 @@ fn check_claims(v: json.Value, opts: Options) -> () ! JwtErr {
       }
     }
   }
-  if let Some(x) = v.get("nbf") {
-    let nbf = numeric_date(x, "nbf")?
-    if before(now, nbf, Duration.from_nanos(0) - opts.leeway, Duration.from_nanos(0)) {
-      return Err(JwtErr.NotYetValid(at: date_time(nbf)))
+  match v.get("nbf") {
+    None => {
+      if opts.require_nbf {
+        return Err(JwtErr.Claim(msg: "nbf is required"))
+      }
+    }
+    Some(x) => {
+      let nbf = numeric_date(x, "nbf")?
+      if before(now, nbf, Duration.from_nanos(0) - opts.leeway, Duration.from_nanos(0)) {
+        return Err(JwtErr.NotYetValid(at: date_time(nbf)))
+      }
     }
   }
   let iat = match v.get("iat") {
@@ -537,7 +548,7 @@ fn check_claims(v: json.Value, opts: Options) -> () ! JwtErr {
       return Err(JwtErr.Subject)
     }
   }
-  if let Some(want) = opts.audience {
+  if opts.audience is Some(_) || !opts.all_audiences.is_empty() {
     // golang-jwt's ClaimStrings: a string, or a list of only strings
     if let Some(List(items)) = v.get("aud") {
       for x in items {
@@ -547,6 +558,18 @@ fn check_claims(v: json.Value, opts: Options) -> () ! JwtErr {
         }
       }
     }
+  }
+  for want in opts.all_audiences {
+    let ok = match v.get("aud") {
+      Some(Str(s)) => s == want
+      Some(List(items)) => items.any(fn(x) { x == json.Value.Str(s: want) })
+      _ => false
+    }
+    if !ok {
+      return Err(JwtErr.Audience)
+    }
+  }
+  if let Some(want) = opts.audience {
     let ok = match v.get("aud") {
       Some(Str(s)) => s == want
       Some(List(items)) => items.any(fn(x) { x == json.Value.Str(s: want) })

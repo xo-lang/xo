@@ -1,0 +1,124 @@
+// The web-platform-tests eventsource parsing cases (wpt eventsource/
+// format-*.any.js at ddd4ca339ca0, 3-clause BSD license): each body as
+// resources/message.py serves it (the message, then "\n\n" unless
+// newline=none, then "\n"), fed whole and one byte at a time, and the
+// events the test expects. The retry and id cases check the parser's
+// retry() and last_event_id(); reconnection timing is std/sse.Source's.
+
+/// The body message.py serves for message m.
+fn served(m: Str, newline: Bool) -> Bytes { (if newline { m + "\n\n\n" } else { m + "\n" }).bytes() }
+
+/// (event, data, id) of each event of body, fed whole and fed one byte at a time; "split differs" when the two disagree.
+fn events_of(body: Bytes) -> List[(Str, Str, Str)] {
+  var p = parser()
+  let whole = p.feed(body).ok() ?? []
+  var q = parser()
+  var split: List[Event] = []
+  for i in 0..body.len() {
+    split = split + (q.feed(body[i..i + 1]).ok() ?? [])
+  }
+  let a = whole.map(fn(e) { (e.event, e.data, e.id) })
+  let b = split.map(fn(e) { (e.event, e.data, e.id) })
+  if a != b {
+    return [("split differs", "", "")]
+  }
+  a
+}
+
+/// The data of each `message` event of body (what onmessage sees).
+fn messages(body: Bytes) -> List[Str] {
+  events_of(body).filter(fn(e) { e.0 == "message" }).map(fn(e) { e.1 })
+}
+
+test "wpt format-bom: a BOM is dropped only at the start of the stream" {
+  expect(messages(served("\u{feff}data:1\n\n\u{feff}data:2\n\ndata:3", true))) == ["1", "3"]
+}
+
+test "wpt format-bom-2: a second BOM makes the first line an unknown field" {
+  expect(messages(served("\u{feff}\u{feff}data:1\n\ndata:2\n\ndata:3", true))) == ["2", "3"]
+}
+
+test "wpt format-comments: comments of every line end, and long ones" {
+  let long = "x".repeat(2048)
+  let m = "data:1\r:\u{0}\n:\r\ndata:2\n:" + long + "\rdata:3\n:data:fail\r:" + long + "\ndata:4\n"
+  expect(messages(served(m, false))) == ["1\n2\n3\n4"]
+}
+
+test "wpt format-data-before-final-empty-line: an event the stream ends inside is not dispatched, nor its id" {
+  let ev = events_of(served("retry:1000\ndata:test1\n\nid:test\ndata:test2", false))
+  expect(ev) == [("message", "test1", "")]
+}
+
+test "wpt format-field-data: an empty data line, two bare data lines, a data value" {
+  expect(messages(served("data:\n\ndata\ndata\n\ndata:test", true))) == ["", "\n", "test"]
+}
+
+test "wpt format-field-event-empty: an empty event name is message" {
+  expect(events_of(served("event: \ndata:data", true))) == [("message", "data", "")]
+}
+
+test "wpt format-field-event: a named event is not a message" {
+  expect(events_of(served("event:test\ndata:x\n\ndata:x", true))) == [("test", "x", ""), ("message", "x", "")]
+}
+
+test "wpt format-field-id and format-field-id-2: the id is kept, and sent back as Last-Event-ID" {
+  var p = parser()
+  let first = p.feed("id: \u{2026}\nretry: 200\ndata: hello\n\n".bytes())?
+  expect(first.map(fn(e) { (e.data, e.id) })) == [("hello", "\u{2026}")]
+  expect(p.last_event_id()) == "\u{2026}"
+  // the reconnection: last-event-id.py echoes the header back
+  var q = parser()
+  q.set_last_event_id(p.last_event_id())
+  let again = q.feed("data: \u{2026}\n\n".bytes())?
+  expect(again.map(fn(e) { (e.data, e.id) })) == [("\u{2026}", "\u{2026}")]
+}
+
+test "wpt format-field-parsing: field names are exact, values keep all but one leading space" {
+  let m = "data:\u{0}\ndata:  2\rData:1\ndata\u{0}:2\ndata:1\r\u{0}data:4\nda-ta:3\rdata_5\ndata:3\rdata:\r\n data:32\ndata:4\n"
+  expect(messages(served(m, false))) == ["\u{0}\n 2\n1\n3\n\n4"]
+}
+
+test "wpt format-field-retry, -bogus, -bogus-2, -empty: only all-digit values set retry" {
+  var p = parser()
+  let _ = p.feed(served("retry:03000\ndata:x", true))?
+  expect(p.retry()) == Some(3000)
+  var b = parser()
+  let _ = b.feed(served("retry:3000\nretry:1000x\ndata:x", true))?
+  expect(b.retry()) == Some(3000)
+  var b2 = parser()
+  let _ = b2.feed(served("retry:1000\nretry:5000x\ndata:x", true))?
+  expect(b2.retry()) == Some(1000)
+  var e = parser()
+  let got = e.feed(served("retry\ndata:test", true))?
+  expect(got.map(fn(x) { x.data })) == ["test"]
+  expect(e.retry()) == None
+}
+
+test "wpt format-field-unknown: unknown fields, a line without a colon, a comment" {
+  expect(messages(served("data:test\n data\ndata\nfoobar:xxx\njustsometext\n:thisisacommentyay\ndata:test", true))) == ["test\n\ntest"]
+}
+
+test "wpt format-leading-space: only a space after the colon is dropped, not a tab" {
+  expect(messages(served("data:\ttest\rdata: \ndata:test", true))) == ["\ttest\n\ntest"]
+}
+
+test "wpt format-newlines: CRLF, LF and CR ends" {
+  expect(messages(served("data:test\r\ndata\ndata:test\r\n\r", false))) == ["test\n\ntest"]
+}
+
+test "wpt format-null-character: U+0000 in data" {
+  expect(messages(served("data:\u{0}\n\n", true))) == ["\u{0}"]
+}
+
+test "wpt format-utf-8: the stream is UTF-8 whatever the charset says" {
+  expect(messages(served("data:ok\u{2026}", true))) == ["ok\u{2026}"]
+}
+
+test "wpt format-bom-split: a BOM split across chunks is still dropped" {
+  var p = parser()
+  var got: List[Event] = []
+  for c in [b"\xef", b"\xbb", b"\xbf", b"data:1\n\n"] {
+    got = got + p.feed(c)?
+  }
+  expect(got.map(fn(e) { e.data })) == ["1"]
+}

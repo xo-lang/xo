@@ -9186,8 +9186,8 @@ enum Alg { HS256, HS384, HS512, RS256, RS384, RS512, PS256, PS384, PS512, ES256,
 enum Key { Hmac(secret: Secret[Bytes]), Public(key: crypto.PublicKey), Private(key: crypto.PrivateKey) }
 struct Header { alg: Alg, kid: Str?, typ: Str?, extra: Map[Str, Str] = {}, x5c: List[Str] = [] }
 struct Options { algs: List[Alg], now: Time, leeway: Duration = 0s, issuer: Str? = None, audience: Str? = None,
-                 subject: Str? = None, require_exp: Bool = true, check_iat: Bool = false,
-                 max_age: Duration? = None, max_size: Int = 16384 }
+                 all_audiences: List[Str] = [], subject: Str? = None, require_exp: Bool = true,
+                 require_nbf: Bool = false, check_iat: Bool = false, max_age: Duration? = None, max_size: Int = 16384 }
 open enum JwtErr { Malformed(msg: Str), Alg(msg: Str), Signature, Expired(at: Time), NotYetValid(at: Time), Issuer,
               Audience, Subject, Claim(msg: Str), Key(msg: Str) }
 fn (e: JwtErr) display() -> Str
@@ -9210,8 +9210,10 @@ is `Malformed`. A call without them writes the header it always did.
   object, `crit` refused), `alg` allowed, key, signature, then the claims. No claim is looked at before the
   signature holds.
 - Claims follow golang-jwt v5: `exp` is valid while `now < exp + leeway`, `nbf` while `now >= nbf - leeway`,
-  `iat` only with `check_iat`; a missing `exp` is `Claim` unless `require_exp` is false; `aud` is a string or a
-  list; `exp`, `nbf` and `iat` are numbers truncated to whole seconds. A claim of the wrong type is `Claim`.
+  `iat` only with `check_iat`; a missing `exp` is `Claim` unless `require_exp` is false, a missing `nbf` is
+  `Claim` with `require_nbf` (WithNotBeforeRequired); `aud` is a string or a list; `audience` must be one of
+  its values and each of `all_audiences` must be (WithAllAudiences, 2026-11-15), else `Audience`; `exp`, `nbf`
+  and `iat` are numbers truncated to whole seconds. A claim of the wrong type is `Claim`.
 - `sign` writes the header `{"alg":...,"kid":...,"typ":"JWT"}` (keys in that order, as golang-jwt) and the
   claims with `json.encode`; ECDSA signatures are the fixed-width `r || s` of RFC 7518 and RSA-PSS uses a salt
   as long as the hash.

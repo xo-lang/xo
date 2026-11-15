@@ -117,3 +117,89 @@ test "extra header fields and x5c follow alg, kid and typ in order of name" {
   let plain = sign(os.rand, Alg.HS256, key, Claims{sub: "ann", exp: 2000, role: None})?
   expect((base64.decode(plain.split(".")[0], base64.Base64.RawUrl).ok() ?? b"").to_str() ?? "") == "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"
 }
+
+struct AudOne {
+  exp: Int
+  aud: Str
+} derive Json
+
+struct Nbf {
+  exp: Int
+  nbf: Int
+} derive Json
+
+struct ExpOnly {
+  exp: Int
+} derive Json
+
+/// Whether a token with this aud list verifies against all_audiences.
+fn all_aud_ok(r: Rand, aud: List[Str], all: List[Str]) -> Bool ! JwtErr uses rand {
+  let key = Key.Hmac(secret: Secret.new(b"a secret of some length"))
+  let tok = sign(r, Alg.HS256, key, Aud{exp: 2000, aud: aud.map(fn(s) { json.Value.Str(s: s) })}, None)?
+  var o = opts(1000)
+  o.all_audiences = all
+  match verify_with[Aud](tok, key, o) {
+    Ok(_) => Ok(true)
+    Err(JwtErr.Audience) => Ok(false)
+    Err(e) => Err(e)
+  }
+}
+
+test "all_audiences is golang-jwt's WithAllAudiences (Test_Validator_verifyAudience, TestVerifyAud)" {
+  // (aud, every audience wanted, verifies)
+  let cases: List[(List[Str], List[Str], Bool)] = [
+    ([], ["example.com"], false),
+    (["example.com"], ["example.com"], true),
+    (["example.org", "example.com"], ["example.org", "example.com"], true),
+    (["example.com", "example.example.com"], ["example.com", "example.example.com"], true),
+    (["example.org", "example.net"], ["example.org", "example.com"], false),
+    (["example.com"], ["example.org", "example.com"], false),
+    ([""], ["example.com"], false),
+    (["a", "b", "c"], ["c", "a"], true),
+  ]
+  for (aud, all, want) in cases {
+    expect((aud, all, all_aud_ok(os.rand, aud, all)?)) == (aud, all, want)
+  }
+  // a single string aud
+  let key = Key.Hmac(secret: Secret.new(b"a secret of some length"))
+  let tok = sign(os.rand, Alg.HS256, key, AudOne{exp: 2000, aud: "example.com"}, None)?
+  var o = opts(1000)
+  o.all_audiences = ["example.com"]
+  let _ = verify_with[AudOne](tok, key, o)?
+  o.all_audiences = ["example.com", "example.org"]
+  match verify_with[AudOne](tok, key, o) {
+    Err(JwtErr.Audience) => ()
+    _ => fault("expected Audience")
+  }
+}
+
+test "all_audiences refuses an aud list holding a non string" {
+  let key = Key.Hmac(secret: Secret.new(b"a secret of some length"))
+  let tok = sign(os.rand, Alg.HS256, key, Aud{exp: 2000, aud: [json.Value.Str(s: "x"), json.Value.Int(n: 5)]}, None)?
+  var o = opts(1000)
+  o.all_audiences = ["x"]
+  match verify_with[Aud](tok, key, o) {
+    Err(JwtErr.Claim(_)) => ()
+    _ => fault("expected Claim")
+  }
+}
+
+test "require_nbf is golang-jwt's WithNotBeforeRequired (Test_Validator_verifyNotBefore)" {
+  let key = Key.Hmac(secret: Secret.new(b"a secret of some length"))
+  let without = sign(os.rand, Alg.HS256, key, ExpOnly{exp: 2000}, None)?
+  let past = sign(os.rand, Alg.HS256, key, Nbf{exp: 2000, nbf: 400}, None)?
+  let future = sign(os.rand, Alg.HS256, key, Nbf{exp: 2000, nbf: 1600}, None)?
+  // not required: a token without nbf verifies
+  let _ = verify_with[ExpOnly](without, key, opts(1000))?
+  var o = opts(1000)
+  o.require_nbf = true
+  match verify_with[ExpOnly](without, key, o) {
+    Err(JwtErr.Claim(msg)) => expect(msg) == "nbf is required"
+    _ => fault("expected Claim")
+  }
+  let _ = verify_with[Nbf](past, key, o)?
+  match verify_with[Nbf](future, key, o) {
+    Err(JwtErr.NotYetValid(_)) => ()
+    _ => fault("expected NotYetValid")
+  }
+}
