@@ -687,6 +687,19 @@ heavyd.log to its end, rc). With `OFFGATE_HIST=1` and 5 runs of the same
 steps and xo state in 30 days, the lease is 1.3 times their p90 (at least
 10 minutes) instead of the step formula; it stays off until the lead has
 reviewed why gates hit their ceiling (rc 124).
+
+Stalled builds and the seed (lead, 2026-11-15; the 2026-11 review found
+18 gates at the ceiling with no xobuild line, 15 while the hosts' seeds
+changed, where every finished xobuild took 302 s or less): gate.sh stops
+an xobuild that prints nothing for `XO_GATE_XOBUILD_IDLE_MIN` minutes
+(10) and exits 3 with `XOBUILD-STALL` (infrastructure, not the change:
+rerun, or move it with OFFLOAD_ENV, and tell the lead the host).
+offload-gate-remote.sh, before the build, uses the newest seed under
+/work/seed whose commit is an ancestor of HEAD in place of an older
+OFF_SEED (it prints `seed V ... in place of W`; `OFFGATE_SEED_PIN=1`
+keeps OFF_SEED), and exits 2 with `SEED-MISSING` when the chosen seed
+does not answer `xo version` in 30 s. The first gate with it chose 0.51.1
+over 0.50.1 on host 2 (xobuild 93 s).
 Last verified: 2026-11-15
 
 ## The Windows arm64 VM (owner, 2026-11-09)

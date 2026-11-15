@@ -191,7 +191,20 @@ cd "$wt" || exit 1
 gate_stale_check . || exit 2
 t0=$(date +%s)
 rm -f bin/xo
-go run ./scripts/xobuild >"$logs/xobuild.txt" 2>&1 || { echo "XOBUILD-FAIL ($logs/xobuild.txt)"; exit 1; }
+# a build that prints nothing for XO_GATE_XOBUILD_IDLE_MIN minutes
+# (default 10) is stopped and the gate exits 3, an infrastructure
+# failure (lead, 2026-11-15: 18 offload gates in 2026-11 sat to the
+# ceiling with no xobuild line, 15 of them while the hosts' seeds
+# changed; every finished xobuild took 302 s or less)
+go run ./scripts/xobuild >"$logs/xobuild.txt" 2>&1 &
+gate_wait_progress $! "$logs/xobuild.txt" $((${XO_GATE_XOBUILD_IDLE_MIN:-10} * 60))
+xbrc=$?
+if [ "$xbrc" = 124 ]; then
+  echo "XOBUILD-STALL: xobuild printed nothing for ${XO_GATE_XOBUILD_IDLE_MIN:-10} min after $(($(date +%s) - t0)) s and was stopped; an infrastructure failure, not the change (seed: ${XO_SEED:-none}; $logs/xobuild.txt ends:)"
+  tail -5 "$logs/xobuild.txt" | cut -c1-300 | sed 's/^/  /'
+  exit 3
+fi
+[ "$xbrc" = 0 ] || { echo "XOBUILD-FAIL ($logs/xobuild.txt)"; exit 1; }
 echo "xobuild $(($(date +%s) - t0)) s"
 # darwin: xo's own race runtime in lib/xo/race, so the race tests link
 # the runtime xo ships, not clang's dylib (scripts/lead/race-rt.sh
