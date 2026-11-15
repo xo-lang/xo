@@ -1,5 +1,18 @@
 # std/amqptest changes
 
+## 2026-11-15: feature: subscription rules (SQL and correlation filters, SQL actions, the rule management operations)
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): amqptest.behavior.rules
+- Go reference: none (Service Bus's "Subscription Rule SQL Filter Syntax", "SQL rule action syntax", "Topic filters and actions" and the AMQP request-response operations add-rule, remove-rule and enumerate-rules)
+- Test: std/amqptest_test.xo: 51 SQL filter cases (operators, three valued AND, OR and NOT, IN, LIKE with ESCAPE, EXISTS, IS NULL, delimited and quoted names, property(), every system property, type mixes and parse errors), correlation filters, four subscriptions with SQL, correlation and false rules fed by a topic, rule actions (SET, REMOVE, sys.Label, RuleName, a copy per rule), and the three management operations over AMQP with their status codes and encodings
+- Timing: none
+
+A subscription took every message of its topic. It now has rules, starting
+with `$Default`, which decide what it takes, as Service Bus's do; a test
+using no rules sees no change.
+
 ## 2026-11-10: behavior: broker methods that read the clock declare `uses clock` (decision 0591)
 
 - Kind: behavior (breaking)

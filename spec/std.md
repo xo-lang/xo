@@ -9706,6 +9706,11 @@ fn (b: Broker) event_hub(name: Str, partitions: Int, consumer_groups: List[Str] 
 fn (b: Broker) event_hub_geo_factor(hub: Str, factor: Int)
 fn (b: Broker) events(hub: Str, partition: Int) -> List[amqp.Message]
 fn (b: Broker) subscription(topic: Str, name: Str, opts: QueueOptions = QueueOptions{})
+fn (b: Broker) add_rule(topic: Str, sub: Str, name: Str, filter: RuleFilter, action: Str = "") -> () ! Str uses clock
+fn (b: Broker) remove_rule(topic: Str, sub: Str, name: Str) -> Bool
+fn (b: Broker) rules(topic: Str, sub: Str) -> List[(Str, RuleFilter)]
+enum RuleFilter { True, False, Sql(expr: Str), Correlation(c: CorrelationFilter) }
+struct CorrelationFilter { correlation_id, message_id, to, reply_to, subject, session_id, reply_to_session_id, content_type: Str? = None, properties: List[(Str, amqp.Value)] = [] }
 fn (b: Broker) put(queue: Str, m: amqp.Message) uses clock
 fn (b: Broker) ready(queue: Str) -> List[amqp.Message] uses clock
 fn (b: Broker) locked(queue: Str) -> Int uses clock
@@ -9731,7 +9736,26 @@ in memory listeners, or a loopback one) and serves each in a task of `g`; client
 SASL (any mechanism is accepted) or none.
 
 - Entities are queues, topics and subscriptions (`topic/Subscriptions/name`); a link to an undeclared entity is refused with
-  `amqp:not-found`, a send to a topic is copied to every subscription, and `put` creates a queue it does not know.
+  `amqp:not-found`, a send to a topic is copied to every subscription its rules let in, and `put` creates a queue it does
+  not know.
+- Rules (Service Bus's subscription rules): a subscription starts with the rule `$Default` (TrueFilter) and takes a message
+  once when any rule without an action matches it, plus one copy per matching rule with an action, that copy changed by
+  the action and given the property `RuleName`. A `Sql` filter is Service Bus's SQL subset: `AND`, `OR`, `NOT` with
+  three valued logic (a missing user property is unknown), `= <> != < > <= >=`, `+ - * / %`, `IS [NOT] NULL`,
+  `[NOT] IN (...)`, `[NOT] LIKE pattern [ESCAPE c]`, `EXISTS(p)`, `property(name)` and `p(name)`, string, integer, decimal
+  and `TRUE`/`FALSE` constants, properties as `name`, `user.name`, `[delimited]` or `"quoted"` (any case), and
+  `sys.MessageId`, `CorrelationId`, `To`, `ReplyTo`, `Label` (or `Subject`), `SessionId`, `ReplyToSessionId`,
+  `ContentType` and `DeliveryCount`; numbers compare by value, strings and booleans by `=` and `<>`, and any other mix is
+  unknown. `1=1` and `1=0` are stored as TrueFilter and FalseFilter. `newid()` and a `sys.` name not in the list are
+  errors. A `Correlation` filter matches when every field it sets is equal (case sensitive) and every property it lists
+  is present with an equal value. An action is `SET p = expression` and `REMOVE p` statements (each ending in an
+  optional `;`); a `sys.` property is set to the value's text. `add_rule` fails on a filter or action that does not
+  parse and on a name the subscription has (any case). On `<topic>/Subscriptions/<sub>/$management`, `add-rule` (body
+  `rule-name` and `rule-description` holding `sql-filter` or `correlation-filter`, and `sql-rule-action`, as maps) answers
+  200, 409 `com.microsoft:entity-already-exists` or 400 `com.microsoft:argument-error`; `remove-rule` 200 or 404
+  `amqp:not-found`; `enumerate-rules` (`top`, `skip`) 200 with `rules`, a list of maps whose `rule-description` is the
+  described list 0x0000013700000004 (filter, action, name, created time; filters 0x...06 SQL, 0x...07 true, 0x...08 false,
+  0x...09 correlation, actions 0x...05 empty and 0x...06 SQL), or 204 past the last rule.
 - `$cbs`: a `put-token` request is answered with `status-code` 202 (401 and `amqp:unauthorized-access` for a token given to
   `reject_token`); a later put-token for the same audience replaces the earlier one (the client's refresh). `tokens()` lists
   the accepted `(audience, token)` pairs. With `require_token(true)` a link to an entity is refused with

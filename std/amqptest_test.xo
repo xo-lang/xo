@@ -942,3 +942,267 @@ test "a typed receiver exposes the peer's attach: the echoed session filter and 
     c.close().or_fault("close")
   }
 }
+
+fn sql_msg() -> amqp.Message {
+  amqp.Message{
+    properties: Some(amqp.Properties{message_id: amqp.Value.Str(v: "m-1"), subject: Some("order"), correlation_id: amqp.Value.ULong(v: UInt64(42)),
+      content_type: Some("application/json"), group_id: Some("s-7"), to: Some("dest")}),
+    app_properties: Some([("Color", amqp.Value.Str(v: "red")), ("qty", amqp.Value.Int(v: Int32(5))), ("price", amqp.Value.Double(v: 2.5)),
+      ("vip", amqp.Value.Bool(v: true)), ("note", amqp.Value.Null), ("path", amqp.Value.Str(v: "a%b_c")), ("Prop With Space", amqp.Value.Long(v: Int64(9)))]),
+    body: amqp.Body.Data(sections: [b"x"])}
+}
+
+fn sql_res(expr: Str) -> Str {
+  match sql_parse(expr) {
+    Ok(f) => {
+      let v = sql_eval(f, f.root, sql_msg())
+      if v.k == 1 { if v.b { "T" } else { "F" } } else if v.k == 0 { "U" } else { "value" }
+    }
+    Err(e) => "error: " + e
+  }
+}
+
+test "SQL filters: comparisons, three valued logic, IN, LIKE, EXISTS, IS NULL and system properties" {
+  let cases: List[(Str, Str)] = [
+    ("color = 'red'", "T"),
+    ("COLOR = 'Red'", "F"),
+    ("user.Color <> 'blue'", "T"),
+    ("qty > 4 AND qty <= 5", "T"),
+    ("qty = 5.0", "T"),
+    ("price * 2 = 5", "T"),
+    ("qty / 2 = 2", "T"),
+    ("qty % 3 = 2", "T"),
+    ("-qty < 0", "T"),
+    ("qty + 1 = 6 OR missing = 1", "T"),
+    ("missing = 1", "U"),
+    ("missing = 1 AND qty = 5", "U"),
+    ("missing = 1 AND qty = 4", "F"),
+    ("missing = 1 OR qty = 4", "U"),
+    ("NOT missing = 1", "U"),
+    ("NOT qty = 4", "T"),
+    ("missing IS NULL", "T"),
+    ("note IS NULL", "T"),
+    ("color IS NOT NULL", "T"),
+    ("EXISTS(note)", "T"),
+    ("EXISTS(missing)", "F"),
+    ("color IN ('blue', 'red')", "T"),
+    ("color NOT IN ('blue', 'red')", "F"),
+    ("missing IN (1, 2)", "U"),
+    ("color LIKE 'r%'", "T"),
+    ("color LIKE '_e_'", "T"),
+    ("color NOT LIKE '%d'", "F"),
+    ("path LIKE 'a!%b!_c' ESCAPE '!'", "T"),
+    ("path LIKE 'a!%bxc' ESCAPE '!'", "F"),
+    ("vip = TRUE", "T"),
+    ("vip", "T"),
+    ("color = 'it''s'", "F"),
+    ("[Prop With Space] = 9", "T"),
+    ("\"Prop With Space\" = 9", "T"),
+    ("p('qty') = 5 AND property('COLOR') = 'red'", "T"),
+    ("sys.Label = 'order' AND sys.MessageId = 'm-1'", "T"),
+    ("sys.CorrelationId = '42' AND sys.SessionId = 's-7'", "T"),
+    ("sys.ContentType LIKE 'application/%' AND sys.To = 'dest'", "T"),
+    ("sys.ReplyTo IS NULL", "T"),
+    ("color = 5", "U"),
+    ("color > 'a'", "U"),
+    ("qty / 0 = 1", "U"),
+    ("1.5E1 = 15", "T"),
+    ("(qty = 5 OR qty = 6) AND NOT (color = 'blue')", "T"),
+    ("sys.Nope = 1", "error: sys.Nope is not a system property"),
+    ("color = 'red", "error: an unterminated string"),
+    ("color == 'red'", "error: unexpected \"=\""),
+    ("color NOT 'red'", "error: expected IN or LIKE after NOT at \"red\""),
+    ("qty >", "error: unexpected the end"),
+    ("newid() = 1", "error: newid() is not supported by the test broker"),
+    ("color = 'red' extra", "error: unexpected \"extra\""),
+  ]
+  var bad: List[(Str, Str, Str)] = []
+  for (e, want) in cases {
+    let got = sql_res(e)
+    if got != want { bad.push((e, got, want)) }
+  }
+  expect(bad) == []
+}
+
+test "correlation filters match every field and property they set" {
+  let m = sql_msg()
+  expect(corr_match(CorrelationFilter{subject: Some("order")}, m)) == true
+  expect(corr_match(CorrelationFilter{subject: Some("order"), correlation_id: Some("42")}, m)) == true
+  expect(corr_match(CorrelationFilter{subject: Some("Order")}, m)) == false
+  expect(corr_match(CorrelationFilter{session_id: Some("s-7"), content_type: Some("application/json"), to: Some("dest")}, m)) == true
+  expect(corr_match(CorrelationFilter{reply_to: Some("x")}, m)) == false
+  expect(corr_match(CorrelationFilter{properties: [("qty", amqp.Value.Long(v: Int64(5))), ("Color", amqp.Value.Str(v: "red"))]}, m)) == true
+  expect(corr_match(CorrelationFilter{properties: [("color", amqp.Value.Str(v: "red"))]}, m)) == false
+  expect(corr_match(CorrelationFilter{}, m)) == true
+}
+
+fn labelled(t: Str, label: Str, qty: Int) -> amqp.Message {
+  amqp.Message{properties: Some(amqp.Properties{subject: Some(label)}), app_properties: Some([("qty", amqp.Value.Int(v: Int32(qty)))]),
+    body: amqp.Body.Data(sections: [t.bytes()])}
+}
+
+test "subscription rules decide which subscriptions get a topic's messages" {
+  let b = new(os.clock)
+  b.subscription("orders", "all")
+  b.subscription("orders", "big")
+  b.subscription("orders", "refunds")
+  b.subscription("orders", "none")
+  expect(b.rules("orders", "big")) == [("$Default", RuleFilter.True)]
+  b.add_rule("orders", "big", "big", RuleFilter.Sql(expr: "qty >= 10")).or_fault("big")
+  expect(b.remove_rule("orders", "big", "$default")) == true
+  b.add_rule("orders", "refunds", "r", RuleFilter.Correlation(c: CorrelationFilter{subject: Some("refund")})).or_fault("r")
+  expect(b.remove_rule("orders", "refunds", "$Default")) == true
+  b.add_rule("orders", "refunds", "huge", RuleFilter.Sql(expr: "qty > 100")).or_fault("huge")
+  b.add_rule("orders", "none", "f", RuleFilter.Sql(expr: "1 = 0")).or_fault("f")
+  expect(b.remove_rule("orders", "none", "$Default")) == true
+  expect(b.rules("orders", "none")) == [("f", RuleFilter.False)]
+  expect(b.add_rule("orders", "big", "BIG", RuleFilter.True)) == Err("the rule \"BIG\" already exists")
+  expect(b.add_rule("orders", "big", "bad", RuleFilter.Sql(expr: "qty >"))) == Err("unexpected the end")
+  expect(b.remove_rule("orders", "big", "nope")) == false
+  b.put("orders", labelled("a", "sale", 1))
+  b.put("orders", labelled("b", "sale", 12))
+  b.put("orders", labelled("c", "refund", 3))
+  b.put("orders", labelled("d", "refund", 500))
+  expect(b.ready("orders/Subscriptions/all").map(text)) == ["a", "b", "c", "d"]
+  expect(b.ready("orders/Subscriptions/big").map(text)) == ["b", "d"]
+  // a message goes once to a subscription however many of its rules match
+  expect(b.ready("orders/Subscriptions/refunds").map(text)) == ["c", "d"]
+  expect(b.ready("orders/Subscriptions/none").len()) == 0
+}
+
+fn rule_names(m: amqp.Message) -> List[Str] {
+  var out: List[Str] = []
+  match key(body_map(m), "rules") {
+    List(items) => {
+      for it in items {
+        match it {
+          Map(ps) => match key(ps, "rule-description") {
+            Described(_, List(fields)) => match fields[2] {
+              Str(n) => out.push(n)
+              _ => {}
+            }
+            _ => {}
+          }
+          _ => {}
+        }
+      }
+    }
+    _ => {}
+  }
+  out
+}
+
+fn rule_field(m: amqp.Message, i: Int, f: Int) -> amqp.Value {
+  match key(body_map(m), "rules") {
+    List(items) => match items[i] {
+      Map(ps) => match key(ps, "rule-description") {
+        Described(_, List(fields)) => fields[f]
+        _ => amqp.Value.Null
+      }
+      _ => amqp.Value.Null
+    }
+    _ => amqp.Value.Null
+  }
+}
+
+fn rule_req(name: Str, desc: List[(amqp.Value, amqp.Value)]) -> amqp.Value {
+  amqp.Value.Map(pairs: [(amqp.Value.Str(v: "rule-name"), amqp.Value.Str(v: name)), (amqp.Value.Str(v: "rule-description"), amqp.Value.Map(pairs: desc))])
+}
+
+fn smap(k: Str, v: Str) -> (amqp.Value, amqp.Value) {
+  (amqp.Value.Str(v: k), amqp.Value.Map(pairs: [(amqp.Value.Str(v: "expression"), amqp.Value.Str(v: v))]))
+}
+
+test "management: add-rule, enumerate-rules and remove-rule on a subscription" uses (net, clock) {
+  let b = new(os.clock)
+  b.subscription("t", "s")
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope sc {
+    b.serve(sc.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(sc.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let mg = mgmt_open(c, sess, "t/Subscriptions/s")
+    let page = amqp.Value.Map(pairs: [(amqp.Value.Str(v: "top"), amqp.Value.Int(v: Int32(10))), (amqp.Value.Str(v: "skip"), amqp.Value.Int(v: Int32(0)))])
+    let r0 = mgmt_call(mg, "enumerate-rules", page).or_fault("enum0")
+    expect(status(r0)) == 200
+    expect(rule_names(r0)) == ["$Default"]
+    expect(rule_field(r0, 0, 0)) == amqp.Value.Described(descriptor: amqp.Value.ULong(v: UInt64(0x0000013700000007)), value: amqp.Value.List(items: [amqp.Value.Str(v: "1=1"), amqp.Value.Int(v: Int32(20))]))
+    expect(rule_field(r0, 0, 1)) == amqp.Value.Described(descriptor: amqp.Value.ULong(v: UInt64(0x0000013700000005)), value: amqp.Value.List(items: []))
+    let a1 = mgmt_call(mg, "add-rule", rule_req("cheap", [smap("sql-filter", "price < 10"), smap("sql-rule-action", "SET tier = 'low'")])).or_fault("add1")
+    expect(status(a1)) == 200
+    let corr = amqp.Value.Map(pairs: [(amqp.Value.Str(v: "label"), amqp.Value.Str(v: "refund")),
+      (amqp.Value.Str(v: "properties"), amqp.Value.Map(pairs: [(amqp.Value.Str(v: "region"), amqp.Value.Str(v: "eu"))]))])
+    let a2 = mgmt_call(mg, "add-rule", rule_req("refunds", [(amqp.Value.Str(v: "correlation-filter"), corr)])).or_fault("add2")
+    expect(status(a2)) == 200
+    let dup = mgmt_call(mg, "add-rule", rule_req("Cheap", [smap("sql-filter", "1=1")])).or_fault("dup")
+    expect(status(dup)) == 409
+    expect(cond(dup)) == "com.microsoft:entity-already-exists"
+    let bad = mgmt_call(mg, "add-rule", rule_req("bad", [smap("sql-filter", "price <")])).or_fault("bad")
+    expect(status(bad)) == 400
+    expect(cond(bad)) == "com.microsoft:argument-error"
+    let r1 = mgmt_call(mg, "enumerate-rules", page).or_fault("enum1")
+    expect(rule_names(r1)) == ["$Default", "cheap", "refunds"]
+    expect(rule_field(r1, 1, 0)) == amqp.Value.Described(descriptor: amqp.Value.ULong(v: UInt64(0x0000013700000006)), value: amqp.Value.List(items: [amqp.Value.Str(v: "price < 10"), amqp.Value.Int(v: Int32(20))]))
+    expect(rule_field(r1, 1, 1)) == amqp.Value.Described(descriptor: amqp.Value.ULong(v: UInt64(0x0000013700000006)), value: amqp.Value.List(items: [amqp.Value.Str(v: "SET tier = 'low'"), amqp.Value.Int(v: Int32(20))]))
+    match rule_field(r1, 2, 0) {
+      Described(d, List(fs)) => {
+        expect(d) == amqp.Value.ULong(v: UInt64(0x0000013700000009))
+        expect(fs[4]) == amqp.Value.Str(v: "refund")
+        expect(fs[0]) == amqp.Value.Null
+        expect(fs[8]) == amqp.Value.Map(pairs: [(amqp.Value.Str(v: "region"), amqp.Value.Str(v: "eu"))])
+      }
+      _ => fault("correlation filter")
+    }
+    let skip2 = amqp.Value.Map(pairs: [(amqp.Value.Str(v: "top"), amqp.Value.Int(v: Int32(1))), (amqp.Value.Str(v: "skip"), amqp.Value.Int(v: Int32(2)))])
+    expect(rule_names(mgmt_call(mg, "enumerate-rules", skip2).or_fault("enum2"))) == ["refunds"]
+    let rm = mgmt_call(mg, "remove-rule", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "rule-name"), amqp.Value.Str(v: "$Default"))])).or_fault("rm")
+    expect(status(rm)) == 200
+    let rm2 = mgmt_call(mg, "remove-rule", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "rule-name"), amqp.Value.Str(v: "$Default"))])).or_fault("rm2")
+    expect(status(rm2)) == 404
+    let past = amqp.Value.Map(pairs: [(amqp.Value.Str(v: "top"), amqp.Value.Int(v: Int32(10))), (amqp.Value.Str(v: "skip"), amqp.Value.Int(v: Int32(5)))])
+    expect(status(mgmt_call(mg, "enumerate-rules", past).or_fault("enum3"))) == 204
+    // the rules now decide what the subscription gets
+    b.put("t", amqp.Message{app_properties: Some([("price", amqp.Value.Int(v: Int32(3)))]), body: amqp.Body.Data(sections: [b"cheap"])})
+    b.put("t", amqp.Message{app_properties: Some([("price", amqp.Value.Int(v: Int32(30)))]), body: amqp.Body.Data(sections: [b"dear"])})
+    b.put("t", amqp.Message{properties: Some(amqp.Properties{subject: Some("refund")}), app_properties: Some([("region", amqp.Value.Str(v: "eu"))]), body: amqp.Body.Data(sections: [b"refund"])})
+    expect(b.ready("t/Subscriptions/s").map(text)) == ["cheap", "refund"]
+    c.close().or_fault("close")
+  }
+}
+
+fn app_of(m: amqp.Message, k: Str) -> amqp.Value {
+  for (a, v) in m.app_properties ?? [] {
+    if a == k { return v }
+  }
+  amqp.Value.Symbol(v: "absent")
+}
+
+test "rule actions: a copy per matching rule with an action, SET and REMOVE, and RuleName" {
+  let b = new(os.clock)
+  b.subscription("t", "s")
+  b.add_rule("t", "s", "tag", RuleFilter.Sql(expr: "qty > 1"), "SET tier = 'bulk'; SET Qty = qty * 2; REMOVE color; SET sys.Label = 'big'").or_fault("tag")
+  b.add_rule("t", "s", "copy", RuleFilter.True, "SET n = 1.5 SET flag = TRUE SET gone = missing").or_fault("copy")
+  expect(b.add_rule("t", "s", "bad", RuleFilter.True, "SET sys.Nope = 1")) == Err("sys.Nope is not a system property")
+  expect(b.add_rule("t", "s", "bad", RuleFilter.True, "REMOVE sys.Label")) == Err("REMOVE takes a user property")
+  expect(b.add_rule("t", "s", "bad", RuleFilter.True, "UPDATE x")) == Err("expected SET or REMOVE at \"UPDATE\"")
+  b.put("t", amqp.Message{properties: Some(amqp.Properties{subject: Some("order")}),
+    app_properties: Some([("qty", amqp.Value.Int(v: Int32(3))), ("Color", amqp.Value.Str(v: "red"))]), body: amqp.Body.Data(sections: [b"m"])})
+  let got = b.ready("t/Subscriptions/s")
+  // $Default (no action), then the two action copies in rule order
+  expect(got.len()) == 3
+  expect(app_of(got[0], "RuleName")) == amqp.Value.Symbol(v: "absent")
+  expect(app_of(got[0], "Color")) == amqp.Value.Str(v: "red")
+  expect(app_of(got[1], "RuleName")) == amqp.Value.Str(v: "tag")
+  expect(app_of(got[1], "tier")) == amqp.Value.Str(v: "bulk")
+  expect(app_of(got[1], "qty")) == amqp.Value.Long(v: Int64(6))
+  expect(app_of(got[1], "Color")) == amqp.Value.Symbol(v: "absent")
+  expect((got[1].properties ?? amqp.Properties{}).subject) == Some("big")
+  expect((got[0].properties ?? amqp.Properties{}).subject) == Some("order")
+  expect(app_of(got[2], "RuleName")) == amqp.Value.Str(v: "copy")
+  expect(app_of(got[2], "n")) == amqp.Value.Double(v: 1.5)
+  expect(app_of(got[2], "flag")) == amqp.Value.Bool(v: true)
+  expect(app_of(got[2], "gone")) == amqp.Value.Null
+  b.put("t", amqp.Message{app_properties: Some([("qty", amqp.Value.Int(v: Int32(1)))]), body: amqp.Body.Data(sections: [b"one"])})
+  expect(b.ready("t/Subscriptions/s").len()) == 5
+}

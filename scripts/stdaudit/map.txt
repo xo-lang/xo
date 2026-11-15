@@ -5222,6 +5222,6 @@ go.behavior.values = std/go.Any
 go.behavior.channels = std/go.Recv
 amqptest.behavior.spec_surface = std/amqptest (spec/std.md 64.6: every declared name present)
 amqptest.behavior.entities = std/amqptest.Broker (queues, topics, subscriptions, event hubs, sessions, dead letters, scheduled and deferred messages, CBS tokens, failure injection)
-amqptest.behavior.rules = gap: no subscription rules (SQL and correlation filters): a subscription takes every message of its topic
+amqptest.behavior.rules = std/amqptest.Broker.add_rule (SQL and correlation filters, SQL rule actions, the $management add-rule, remove-rule and enumerate-rules)
 deque.behavior.spec_surface = std/deque (spec/std.md 47: every declared name present)
 deque.behavior.ring = std/deque.Deque (O(1) at both ends, amortized; container/list's queue use)

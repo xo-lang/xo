@@ -57,6 +57,34 @@ pub struct FakeQueue {
   pub dead: List[FakeMsg] = []
   pub next_seq: Int = 1
   pub sessions: List[FakeSession] = []
+  /// a subscription's rules; None is the `$Default` rule alone (every message)
+  pub rules: List[FakeRule]? = None
+}
+
+/// A subscription rule's filter (Service Bus's TrueFilter, FalseFilter,
+/// SqlFilter and CorrelationFilter).
+pub enum RuleFilter {
+  True
+  False
+  /// a SQL filter expression (Service Bus's SQL subset)
+  Sql(expr: Str)
+  Correlation(c: CorrelationFilter)
+}
+
+/// A correlation filter: a message matches when every field set here is
+/// equal to its own (`subject` is Service Bus's label, `session_id` the
+/// group id) and every property is one of its application properties
+/// with an equal value.
+pub struct CorrelationFilter {
+  pub correlation_id: Str? = None
+  pub message_id: Str? = None
+  pub to: Str? = None
+  pub reply_to: Str? = None
+  pub subject: Str? = None
+  pub session_id: Str? = None
+  pub reply_to_session_id: Str? = None
+  pub content_type: Str? = None
+  pub properties: List[(Str, amqp.Value)] = []
 }
 
 /// An injected failure. Internal.
@@ -261,6 +289,42 @@ pub fn (b: Broker) topic(name: Str) {
 pub fn (b: Broker) subscription(topic: Str, name: Str, opts: QueueOptions = QueueOptions{}) {
   b.topic(topic)
   b.queue(topic + "/Subscriptions/" + name, opts)
+}
+
+/// Adds a rule to the subscription `topic/Subscriptions/sub` (declared
+/// as `subscription` does when new). A subscription starts with the rule
+/// `$Default` (TrueFilter) and takes a message any rule matches. An
+/// error is a SQL filter that does not parse or a name already used.
+pub fn (b: Broker) add_rule(topic: Str, sub: Str, name: Str, filter: RuleFilter, action: Str = "") -> () ! Str uses clock {
+  let r = new_rule(name, filter, action, now_ms(b))?
+  b.topic(topic)
+  let e = b.st.with(fn(var s: BrokerState) -> Str {
+    let qi = ensure_queue(s, topic + "/Subscriptions/" + sub)
+    match add_rule_at(s, qi, r) {
+      Ok(_) => ""
+      Err(m) => m
+    }
+  })
+  if e != "" { return Err(e) }
+  Ok(())
+}
+
+/// Removes a subscription's rule by name; false when it has none by that name.
+pub fn (b: Broker) remove_rule(topic: Str, sub: Str, name: Str) -> Bool {
+  b.st.with(fn(var s: BrokerState) -> Bool {
+    let qi = find_queue(s, topic + "/Subscriptions/" + sub)
+    if qi < 0 { return false }
+    remove_rule_at(s, qi, name)
+  })
+}
+
+/// A subscription's rules in order: name and filter.
+pub fn (b: Broker) rules(topic: Str, sub: Str) -> List[(Str, RuleFilter)] {
+  b.st.with(fn(var s: BrokerState) -> List[(Str, RuleFilter)] {
+    let qi = find_queue(s, topic + "/Subscriptions/" + sub)
+    if qi < 0 { return [] }
+    (s.queues[qi].rules ?? default_rules()).map(fn(r) { (r.name, r.filter) })
+  })
 }
 
 /// Puts a message on a queue (or a topic) as if a client had sent it.
@@ -527,7 +591,11 @@ fn enqueue(var s: BrokerState, qi: Int, m0: amqp.Message, now: Int) -> Int {
     var last = 0
     var i = 0
     while i < s.queues.len() {
-      if s.queues[i].name.starts_with(prefix) { last = enqueue(s, i, m0, now) }
+      if s.queues[i].name.starts_with(prefix) {
+        for m in rule_copies(s.queues[i].rules ?? default_rules(), m0) {
+          last = enqueue(s, i, m, now)
+        }
+      }
       i += 1
     }
     return last
@@ -1296,6 +1364,9 @@ fn mgmt_op(var s: BrokerState, qi: Int, conn: Int, now: Int, op: Str, req: amqp.
     None => {}
   }
   let body = val_map(body_value(req))
+  if op == "add-rule" || op == "remove-rule" || op == "enumerate-rules" {
+    return rule_op(s, qi, now, op, body)
+  }
   expire_locks(s, qi, now)
   var q = s.queues[qi]
   if op == "renew-lock" {
@@ -2241,4 +2312,1014 @@ fn accept_loop(b: Broker, g: task.Group, l: Listener) uses (net.listen, clock) {
       Err(_) => return
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Subscription rules: SQL and correlation filters (Service Bus's
+// "Subscription Rule SQL Filter Syntax" and the AMQP rule operations)
+
+/// A rule of a subscription. Internal.
+pub struct FakeRule {
+  pub name: Str
+  pub filter: RuleFilter
+  /// a SQL rule action's text ("" for none)
+  pub action: Str = ""
+  pub created_ms: Int = 0
+  /// the parsed SQL filter
+  pub sql: SqlFilter = SqlFilter{}
+  /// the parsed action: its statements' nodes, and per statement (1 SET,
+  /// 2 REMOVE; the property's node; the value's node)
+  pub act: SqlFilter = SqlFilter{}
+  pub stmts: List[(Int, Int, Int)] = []
+}
+
+/// A token of a SQL filter: kind 0 end, 1 identifier, 2 string, 3 number,
+/// 4 operator, 5 delimited or quoted identifier.
+struct SqlTok {
+  kind: Int
+  text: Str
+}
+
+/// A node of a parsed SQL filter. Internal.
+pub struct SqlNode {
+  /// const, prop, pfn, and, or, not, = <> < > <= >=, + - * / %, neg, isnull, notnull, in, notin, like,
+  /// notlike, exists
+  pub op: Str
+  pub v: SqlV = SqlV{}
+  pub sys: Bool = false
+  /// a property's name in lower case, and as written
+  pub name: Str = ""
+  pub raw: Str = ""
+  pub kids: List[Int] = []
+}
+
+/// A SQL filter's value: kind 0 is unknown (a missing property or a
+/// null), 1 a boolean, 2 a long, 3 a double, 4 a string. Internal.
+pub struct SqlV {
+  pub k: Int = 0
+  pub b: Bool = false
+  pub n: Int = 0
+  pub d: Float = 0.0
+  pub s: Str = ""
+}
+
+fn sv_bool(b: Bool) -> SqlV { SqlV{k: 1, b: b} }
+fn sv_long(n: Int) -> SqlV { SqlV{k: 2, n: n} }
+fn sv_double(d: Float) -> SqlV { SqlV{k: 3, d: d} }
+fn sv_str(s: Str) -> SqlV { SqlV{k: 4, s: s} }
+
+fn rune_text(r: Rune) -> Str {
+  var b = BytesBuilder.new()
+  b.write_rune(r)
+  b.freeze().to_str() ?? ""
+}
+
+/// A parsed SQL filter: its nodes and the root's index. Internal.
+pub struct SqlFilter {
+  pub nodes: List[SqlNode] = []
+  pub root: Int = -1
+}
+
+const SQL_KEYWORDS: List[Str] = ["and", "or", "not", "is", "null", "in", "like", "escape", "exists", "true", "false"]
+
+/// The system properties a filter may name as `sys.Name` (lower case).
+const SQL_SYS: List[Str] = ["messageid", "correlationid", "to", "replyto", "label", "subject", "sessionid", "replytosessionid", "contenttype", "deliverycount"]
+
+fn sql_lex(src: Str) -> List[SqlTok] ! Str {
+  let rs = src.runes()
+  var out: List[SqlTok] = []
+  var i = 0
+  while i < rs.len() {
+    let c = rs[i]
+    if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+      i += 1
+      continue
+    }
+    if c.is_letter() || c == '_' {
+      var t = ""
+      while i < rs.len() && (rs[i].is_letter() || rs[i].is_digit() || rs[i] == '_') {
+        t = t + rune_text(rs[i])
+        i += 1
+      }
+      out.push(SqlTok{kind: 1, text: t})
+      continue
+    }
+    if c.is_digit() || (c == '.' && i + 1 < rs.len() && rs[i + 1].is_digit()) {
+      var t = ""
+      while i < rs.len() && (rs[i].is_digit() || rs[i] == '.') {
+        t = t + rune_text(rs[i])
+        i += 1
+      }
+      if i < rs.len() && (rs[i] == 'e' || rs[i] == 'E') {
+        t = t + "e"
+        i += 1
+        if i < rs.len() && (rs[i] == '+' || rs[i] == '-') {
+          t = t + rune_text(rs[i])
+          i += 1
+        }
+        while i < rs.len() && rs[i].is_digit() {
+          t = t + rune_text(rs[i])
+          i += 1
+        }
+      }
+      out.push(SqlTok{kind: 3, text: t})
+      continue
+    }
+    if c == '\'' || c == '"' || c == '[' {
+      let close = if c == '[' { ']' } else { c }
+      var t = ""
+      i += 1
+      var closed = false
+      while i < rs.len() {
+        if rs[i] == close {
+          if i + 1 < rs.len() && rs[i + 1] == close {
+            t = t + rune_text(close)
+            i += 2
+            continue
+          }
+          i += 1
+          closed = true
+          break
+        }
+        t = t + rune_text(rs[i])
+        i += 1
+      }
+      if !closed {
+        return Err("an unterminated ${if c == '\'' { "string" } else { "identifier" }}")
+      }
+      out.push(SqlTok{kind: if c == '\'' { 2 } else { 5 }, text: t})
+      continue
+    }
+    let two = if i + 1 < rs.len() { rune_text(c) + rune_text(rs[i + 1]) } else { "" }
+    if two == "<>" || two == "!=" || two == "<=" || two == ">=" {
+      out.push(SqlTok{kind: 4, text: two})
+      i += 2
+      continue
+    }
+    if "=<>+-*/%(),.;".contains(rune_text(c)) {
+      out.push(SqlTok{kind: 4, text: rune_text(c)})
+      i += 1
+      continue
+    }
+    return Err("an unexpected character ${rune_text(c).quote()}")
+  }
+  out.push(SqlTok{kind: 0, text: ""})
+  out
+}
+
+struct SqlP {
+  toks: List[SqlTok]
+  i: Int
+  nodes: List[SqlNode]
+}
+
+fn (p: SqlP) peek() -> SqlTok { p.toks[p.i] }
+
+/// Whether the next token is the keyword or operator w (keywords in any case).
+fn (p: SqlP) at(w: Str) -> Bool {
+  let t = p.toks[p.i]
+  (t.kind == 1 && t.text.to_lower() == w) || (t.kind == 4 && t.text == w)
+}
+
+fn (var p: SqlP) eat(w: Str) -> Bool {
+  if p.at(w) {
+    p.i += 1
+    return true
+  }
+  false
+}
+
+fn (var p: SqlP) want(w: Str) -> () ! Str {
+  if !p.eat(w) {
+    return Err("expected ${w.to_upper()} at ${sql_tok_text(p.peek())}")
+  }
+  Ok(())
+}
+
+fn sql_tok_text(t: SqlTok) -> Str {
+  if t.kind == 0 { "the end" } else { t.text.quote() }
+}
+
+fn (var p: SqlP) node(n: SqlNode) -> Int {
+  p.nodes.push(n)
+  p.nodes.len() - 1
+}
+
+fn (var p: SqlP) or_expr() -> Int ! Str {
+  var l = p.and_expr()?
+  while p.eat("or") {
+    let r = p.and_expr()?
+    l = p.node(SqlNode{op: "or", kids: [l, r]})
+  }
+  l
+}
+
+fn (var p: SqlP) and_expr() -> Int ! Str {
+  var l = p.not_expr()?
+  while p.eat("and") {
+    let r = p.not_expr()?
+    l = p.node(SqlNode{op: "and", kids: [l, r]})
+  }
+  l
+}
+
+fn (var p: SqlP) not_expr() -> Int ! Str {
+  if p.eat("not") {
+    let e = p.not_expr()?
+    return p.node(SqlNode{op: "not", kids: [e]})
+  }
+  p.cmp_expr()
+}
+
+fn (var p: SqlP) cmp_expr() -> Int ! Str {
+  if p.at("exists") {
+    p.i += 1
+    p.want("(")?
+    let e = p.primary()?
+    p.want(")")?
+    if p.nodes[e].op != "prop" {
+      return Err("EXISTS takes a property")
+    }
+    return p.node(SqlNode{op: "exists", kids: [e]})
+  }
+  let l = p.add_expr()?
+  for op in ["=", "<>", "!=", "<=", ">=", "<", ">"] {
+    if p.eat(op) {
+      let r = p.add_expr()?
+      return p.node(SqlNode{op: if op == "!=" { "<>" } else { op }, kids: [l, r]})
+    }
+  }
+  if p.eat("is") {
+    let neg = p.eat("not")
+    p.want("null")?
+    if p.nodes[l].op != "prop" && p.nodes[l].op != "pfn" {
+      return Err("IS NULL takes a property")
+    }
+    return p.node(SqlNode{op: if neg { "notnull" } else { "isnull" }, kids: [l]})
+  }
+  let neg = p.eat("not")
+  if p.eat("in") {
+    p.want("(")?
+    var kids = [l]
+    kids.push(p.add_expr()?)
+    while p.eat(",") {
+      kids.push(p.add_expr()?)
+    }
+    p.want(")")?
+    return p.node(SqlNode{op: if neg { "notin" } else { "in" }, kids: kids})
+  }
+  if p.eat("like") {
+    var kids = [l, p.add_expr()?]
+    if p.eat("escape") {
+      kids.push(p.add_expr()?)
+    }
+    return p.node(SqlNode{op: if neg { "notlike" } else { "like" }, kids: kids})
+  }
+  if neg {
+    return Err("expected IN or LIKE after NOT at ${sql_tok_text(p.peek())}")
+  }
+  l
+}
+
+fn (var p: SqlP) add_expr() -> Int ! Str {
+  var l = p.mul_expr()?
+  while p.at("+") || p.at("-") {
+    let op = p.peek().text
+    p.i += 1
+    let r = p.mul_expr()?
+    l = p.node(SqlNode{op: op, kids: [l, r]})
+  }
+  l
+}
+
+fn (var p: SqlP) mul_expr() -> Int ! Str {
+  var l = p.unary()?
+  while p.at("*") || p.at("/") || p.at("%") {
+    let op = p.peek().text
+    p.i += 1
+    let r = p.unary()?
+    l = p.node(SqlNode{op: op, kids: [l, r]})
+  }
+  l
+}
+
+fn (var p: SqlP) unary() -> Int ! Str {
+  if p.eat("-") {
+    let e = p.unary()?
+    return p.node(SqlNode{op: "neg", kids: [e]})
+  }
+  if p.eat("+") {
+    return p.unary()
+  }
+  p.primary()
+}
+
+fn (var p: SqlP) primary() -> Int ! Str {
+  let t = p.peek()
+  if t.kind == 4 && t.text == "(" {
+    p.i += 1
+    let e = p.or_expr()?
+    p.want(")")?
+    return e
+  }
+  if t.kind == 2 {
+    p.i += 1
+    return p.node(SqlNode{op: "const", v: sv_str(t.text)})
+  }
+  if t.kind == 3 {
+    p.i += 1
+    if t.text.contains(".") || t.text.contains("e") {
+      return match Float.parse(t.text) {
+        Some(x) => p.node(SqlNode{op: "const", v: sv_double(x)})
+        None => Err("a bad number ${t.text.quote()}")
+      }
+    }
+    return match Int.parse(t.text) {
+      Some(x) => p.node(SqlNode{op: "const", v: sv_long(x)})
+      None => Err("a bad number ${t.text.quote()}")
+    }
+  }
+  if t.kind == 1 {
+    let w = t.text.to_lower()
+    if w == "true" || w == "false" {
+      p.i += 1
+      return p.node(SqlNode{op: "const", v: sv_bool(w == "true")})
+    }
+    if w == "null" {
+      p.i += 1
+      return p.node(SqlNode{op: "const"})
+    }
+    if (w == "property" || w == "p") && p.toks[p.i + 1].kind == 4 && p.toks[p.i + 1].text == "(" {
+      p.i += 2
+      let e = p.add_expr()?
+      p.want(")")?
+      return p.node(SqlNode{op: "pfn", kids: [e]})
+    }
+    if w == "newid" {
+      return Err("newid() is not supported by the test broker")
+    }
+    if SQL_KEYWORDS.contains(w) {
+      return Err("unexpected ${t.text.quote()}")
+    }
+  }
+  if t.kind == 1 || t.kind == 5 {
+    p.i += 1
+    var name = t.text
+    var sys = false
+    let scope = if t.kind == 1 { t.text.to_lower() } else { "" }
+    if (scope == "sys" || scope == "user") && p.at(".") {
+      p.i += 1
+      let n = p.peek()
+      if n.kind != 1 && n.kind != 5 {
+        return Err("expected a property name at ${sql_tok_text(n)}")
+      }
+      p.i += 1
+      name = n.text
+      sys = scope == "sys"
+    }
+    if sys && !SQL_SYS.contains(name.to_lower()) {
+      return Err("sys.${name} is not a system property")
+    }
+    return p.node(SqlNode{op: "prop", sys: sys, name: name.to_lower(), raw: name})
+  }
+  Err("unexpected ${sql_tok_text(t)}")
+}
+
+/// Parses a SQL rule action: statements `SET property = expression` and
+/// `REMOVE property`, each ended by an optional `;`.
+fn sql_parse_action(src: Str) -> (SqlFilter, List[(Int, Int, Int)]) ! Str {
+  var p = SqlP{toks: sql_lex(src)?, i: 0, nodes: []}
+  var stmts: List[(Int, Int, Int)] = []
+  while p.peek().kind != 0 {
+    if p.eat(";") {
+      continue
+    }
+    let set = p.eat("set")
+    if !set && !p.eat("remove") {
+      return Err("expected SET or REMOVE at ${sql_tok_text(p.peek())}")
+    }
+    let prop = p.primary()?
+    if p.nodes[prop].op != "prop" {
+      return Err("${if set { "SET" } else { "REMOVE" }} takes a property")
+    }
+    if set {
+      p.want("=")?
+      let e = p.add_expr()?
+      stmts.push((1, prop, e))
+    } else {
+      if p.nodes[prop].sys {
+        return Err("REMOVE takes a user property")
+      }
+      stmts.push((2, prop, -1))
+    }
+  }
+  if stmts.len() == 0 {
+    return Err("an empty action")
+  }
+  (SqlFilter{nodes: p.nodes, root: -1}, stmts)
+}
+
+/// A filter value as an AMQP value: a long, double, boolean or string;
+/// unknown is null.
+fn value_of_sql(v: SqlV) -> amqp.Value {
+  if v.k == 1 { return amqp.Value.Bool(v: v.b) }
+  if v.k == 2 { return amqp.Value.Long(v: Int64(v.n)) }
+  if v.k == 3 { return amqp.Value.Double(v: v.d) }
+  if v.k == 4 { return amqp.Value.Str(v: v.s) }
+  amqp.Value.Null
+}
+
+/// A value as a system property's text (C#'s ToString: True and False for
+/// booleans); None for unknown.
+fn sql_text(v: SqlV) -> Str? {
+  if v.k == 1 { return Some(if v.b { "True" } else { "False" }) }
+  if v.k == 2 { return Some("${v.n}") }
+  if v.k == 3 { return Some("${v.d}") }
+  if v.k == 4 { return Some(v.s) }
+  None
+}
+
+fn set_user_prop(m: amqp.Message, raw: Str, v: amqp.Value?) -> amqp.Message {
+  var out: List[(Str, amqp.Value)] = []
+  var done = false
+  for (k, x) in m.app_properties ?? [] {
+    if k.to_lower() == raw.to_lower() {
+      match v {
+        Some(nv) => {
+          if !done { out.push((k, nv)) }
+        }
+        None => {}
+      }
+      done = true
+    } else {
+      out.push((k, x))
+    }
+  }
+  match v {
+    Some(nv) => if !done { out.push((raw, nv)) }
+    None => {}
+  }
+  amqp.Message{header: m.header, delivery_annotations: m.delivery_annotations, annotations: m.annotations, properties: m.properties,
+    app_properties: Some(out), body: m.body, footer: m.footer}
+}
+
+fn set_sys_prop(m: amqp.Message, name: Str, t: Str?) -> amqp.Message {
+  var p = m.properties ?? amqp.Properties{}
+  let id = match t {
+    Some(x) => amqp.Value.Str(v: x)
+    None => amqp.Value.Null
+  }
+  if name == "messageid" {
+    p.message_id = id
+  } else if name == "correlationid" {
+    p.correlation_id = id
+  } else if name == "to" {
+    p.to = t
+  } else if name == "replyto" {
+    p.reply_to = t
+  } else if name == "label" || name == "subject" {
+    p.subject = t
+  } else if name == "sessionid" {
+    p.group_id = t
+  } else if name == "replytosessionid" {
+    p.reply_to_group_id = t
+  } else if name == "contenttype" {
+    p.content_type = t
+  }
+  amqp.Message{header: m.header, delivery_annotations: m.delivery_annotations, annotations: m.annotations, properties: Some(p),
+    app_properties: m.app_properties, body: m.body, footer: m.footer}
+}
+
+/// The copy of m a rule with an action puts on its subscription: the
+/// statements run in order on it, and the property RuleName names the rule.
+fn apply_action(r: FakeRule, m0: amqp.Message) -> amqp.Message {
+  var m = m0
+  for (kind, prop, e) in r.stmts {
+    let pn = r.act.nodes[prop]
+    if kind == 2 {
+      m = set_user_prop(m, pn.raw, None)
+    } else if pn.sys {
+      m = set_sys_prop(m, pn.name, sql_text(sql_eval(r.act, e, m)))
+    } else {
+      m = set_user_prop(m, pn.raw, Some(value_of_sql(sql_eval(r.act, e, m))))
+    }
+  }
+  set_user_prop(m, "RuleName", Some(amqp.Value.Str(v: r.name)))
+}
+
+/// The copies of m a subscription with these rules takes: one when a rule
+/// without an action matches, and one per matching rule with an action.
+fn rule_copies(rules: List[FakeRule], m: amqp.Message) -> List[amqp.Message] {
+  var out: List[amqp.Message] = []
+  var plain = false
+  for r in rules {
+    if rule_match(r, m) {
+      if r.action == "" {
+        plain = true
+      } else {
+        out.push(apply_action(r, m))
+      }
+    }
+  }
+  if plain { [m] + out } else { out }
+}
+
+/// Parses a SQL filter, or the reason it is not one.
+fn sql_parse(src: Str) -> SqlFilter ! Str {
+  var p = SqlP{toks: sql_lex(src)?, i: 0, nodes: []}
+  let root = p.or_expr()?
+  if p.peek().kind != 0 {
+    return Err("unexpected ${sql_tok_text(p.peek())}")
+  }
+  SqlFilter{nodes: p.nodes, root: root}
+}
+
+fn sql_of_value(v: amqp.Value) -> SqlV {
+  match v {
+    Bool(x) => sv_bool(x)
+    Str(x) => sv_str(x)
+    Symbol(x) => sv_str(x)
+    Float(x) => sv_double(Float(x))
+    Double(x) => sv_double(x)
+    Timestamp(ms) => sv_long(ms)
+    Int(x) => sv_long(Int(x))
+    Long(x) => sv_long(Int(x))
+    UInt(x) => sv_long(Int(x))
+    ULong(x) => sv_long(Int(x))
+    Short(x) => sv_long(Int(x))
+    UShort(x) => sv_long(Int(x))
+    Byte(x) => sv_long(Int(x))
+    UByte(x) => sv_long(Int(x))
+    _ => SqlV{}
+  }
+}
+
+/// A message id or correlation id as text: a string, a number or a GUID.
+fn id_text(v: amqp.Value) -> Str? {
+  match v {
+    Str(x) => Some(x)
+    Symbol(x) => Some(x)
+    ULong(x) => Some("${x}")
+    Uuid(b) => Some(guid_text(b))
+    Binary(b) => Some(b.to_hex())
+    _ => None
+  }
+}
+
+/// A UUID's 16 bytes in the 8-4-4-4-12 form.
+fn guid_text(b: Bytes) -> Str {
+  let h = b.to_hex()
+  if h.len() != 32 { return h }
+  "${h[0..8]}-${h[8..12]}-${h[12..16]}-${h[16..20]}-${h[20..32]}"
+}
+
+fn opt_sql(s: Str?) -> SqlV {
+  match s {
+    Some(x) => sv_str(x)
+    None => SqlV{}
+  }
+}
+
+/// A system property of m: None when the message does not have it.
+fn sys_prop(m: amqp.Message, name: Str) -> SqlV? {
+  let p = m.properties ?? amqp.Properties{}
+  let v = if name == "messageid" {
+    opt_sql(id_text(p.message_id))
+  } else if name == "correlationid" {
+    opt_sql(id_text(p.correlation_id))
+  } else if name == "to" {
+    opt_sql(p.to)
+  } else if name == "replyto" {
+    opt_sql(p.reply_to)
+  } else if name == "label" || name == "subject" {
+    opt_sql(p.subject)
+  } else if name == "sessionid" {
+    opt_sql(p.group_id)
+  } else if name == "replytosessionid" {
+    opt_sql(p.reply_to_group_id)
+  } else if name == "contenttype" {
+    opt_sql(p.content_type)
+  } else if name == "deliverycount" {
+    sv_long((m.header ?? amqp.Header{}).delivery_count)
+  } else {
+    SqlV{}
+  }
+  if v.k == 0 { None } else { Some(v) }
+}
+
+/// A user property of m by name in any case: None when it is missing.
+fn user_prop(m: amqp.Message, name: Str) -> amqp.Value? {
+  for (k, v) in m.app_properties ?? [] {
+    if k.to_lower() == name { return Some(v) }
+  }
+  None
+}
+
+fn sql_num(v: SqlV) -> Float? {
+  if v.k == 2 { return Some(Float(v.n)) }
+  if v.k == 3 { return Some(v.d) }
+  None
+}
+
+/// = and the ordered comparisons, C# style: numbers by value (a long and
+/// a double compare as doubles), strings and booleans only for = and <>;
+/// anything else is unknown.
+fn sql_cmp(op: Str, a: SqlV, b: SqlV) -> SqlV {
+  if a.k == 2 && b.k == 2 {
+    return sv_bool(sql_ord(op, if a.n < b.n { -1 } else if a.n > b.n { 1 } else { 0 }))
+  }
+  if (a.k == 4 && b.k == 4) || (a.k == 1 && b.k == 1) {
+    let eq = if a.k == 4 { a.s == b.s } else { a.b == b.b }
+    if op == "=" { return sv_bool(eq) }
+    if op == "<>" { return sv_bool(!eq) }
+    return SqlV{}
+  }
+  match (sql_num(a), sql_num(b)) {
+    (Some(x), Some(y)) => {
+      if x != x || y != y {
+        return sv_bool(op == "<>")
+      }
+      sv_bool(sql_ord(op, if x < y { -1 } else if x > y { 1 } else { 0 }))
+    }
+    _ => SqlV{}
+  }
+}
+
+fn sql_ord(op: Str, c: Int) -> Bool {
+  if op == "=" { return c == 0 }
+  if op == "<>" { return c != 0 }
+  if op == "<" { return c < 0 }
+  if op == ">" { return c > 0 }
+  if op == "<=" { return c <= 0 }
+  c >= 0
+}
+
+fn sql_arith(op: Str, a: SqlV, b: SqlV) -> SqlV {
+  if a.k == 2 && b.k == 2 {
+    let x = a.n
+    let y = b.n
+    if op == "+" { return sv_long(x.wrapping_add(y)) }
+    if op == "-" { return sv_long(x.wrapping_sub(y)) }
+    if op == "*" { return sv_long(x.wrapping_mul(y)) }
+    if y == 0 || (x == Int.min && y == -1) { return SqlV{} }
+    if op == "/" { return sv_long(x / y) }
+    return sv_long(x % y)
+  }
+  if a.k == 4 && b.k == 4 {
+    if op == "+" { return sv_str(a.s + b.s) }
+    return SqlV{}
+  }
+  match (sql_num(a), sql_num(b)) {
+    (Some(x), Some(y)) => {
+      if op == "+" { return sv_double(x + y) }
+      if op == "-" { return sv_double(x - y) }
+      if op == "*" { return sv_double(x * y) }
+      if op == "/" { return sv_double(x / y) }
+      sv_double(x - y * (x / y).trunc())
+    }
+    _ => SqlV{}
+  }
+}
+
+/// LIKE: % any run of characters, _ one, esc (when not "") makes the
+/// character after it literal.
+fn sql_like(s: List[Rune], si: Int, p: List[Rune], pi: Int, esc: Str) -> Bool {
+  if pi == p.len() { return si == s.len() }
+  let c = p[pi]
+  if esc != "" && rune_text(c) == esc && pi + 1 < p.len() {
+    return si < s.len() && s[si] == p[pi + 1] && sql_like(s, si + 1, p, pi + 2, esc)
+  }
+  if c == '%' {
+    var k = si
+    while k <= s.len() {
+      if sql_like(s, k, p, pi + 1, esc) { return true }
+      k += 1
+    }
+    return false
+  }
+  if si == s.len() { return false }
+  if c == '_' || s[si] == c {
+    return sql_like(s, si + 1, p, pi + 1, esc)
+  }
+  false
+}
+
+fn sql_bool(v: SqlV) -> Int {
+  if v.k != 1 { return -1 }
+  if v.b { 1 } else { 0 }
+}
+
+fn sql_tri(t: Int) -> SqlV {
+  if t < 0 { SqlV{} } else { sv_bool(t == 1) }
+}
+
+/// Evaluates node i of f against m (three valued: Unknown is SQL's unknown).
+fn sql_eval(f: SqlFilter, i: Int, m: amqp.Message) -> SqlV {
+  let n = f.nodes[i]
+  let op = n.op
+  if op == "const" { return n.v }
+  if op == "prop" {
+    if n.sys { return sys_prop(m, n.name) ?? SqlV{} }
+    return match user_prop(m, n.name) {
+      Some(v) => sql_of_value(v)
+      None => SqlV{}
+    }
+  }
+  if op == "pfn" {
+    let nv = sql_eval(f, n.kids[0], m)
+    if nv.k != 4 { return SqlV{} }
+    return match user_prop(m, nv.s.to_lower()) {
+      Some(v) => sql_of_value(v)
+      None => SqlV{}
+    }
+  }
+  if op == "exists" {
+    let p = f.nodes[n.kids[0]]
+    if p.sys { return sv_bool(sys_prop(m, p.name).is_some()) }
+    return sv_bool(user_prop(m, p.name).is_some())
+  }
+  if op == "isnull" || op == "notnull" {
+    let isnull = sql_eval(f, n.kids[0], m).k == 0
+    return sv_bool(isnull == (op == "isnull"))
+  }
+  if op == "and" {
+    let a = sql_bool(sql_eval(f, n.kids[0], m))
+    if a == 0 { return sv_bool(false) }
+    let b = sql_bool(sql_eval(f, n.kids[1], m))
+    if b == 0 { return sv_bool(false) }
+    return sql_tri(if a == 1 && b == 1 { 1 } else { -1 })
+  }
+  if op == "or" {
+    let a = sql_bool(sql_eval(f, n.kids[0], m))
+    if a == 1 { return sv_bool(true) }
+    let b = sql_bool(sql_eval(f, n.kids[1], m))
+    if b == 1 { return sv_bool(true) }
+    return sql_tri(if a == 0 && b == 0 { 0 } else { -1 })
+  }
+  if op == "not" {
+    let a = sql_bool(sql_eval(f, n.kids[0], m))
+    return sql_tri(if a < 0 { -1 } else { 1 - a })
+  }
+  if op == "neg" {
+    let a = sql_eval(f, n.kids[0], m)
+    if a.k == 2 { return sv_long(0.wrapping_sub(a.n)) }
+    if a.k == 3 { return sv_double(0.0 - a.d) }
+    return SqlV{}
+  }
+  if op == "in" || op == "notin" {
+    let a = sql_eval(f, n.kids[0], m)
+    if a.k == 0 { return SqlV{} }
+    var k = 1
+    var found = false
+    while k < n.kids.len() {
+      if sql_bool(sql_cmp("=", a, sql_eval(f, n.kids[k], m))) == 1 {
+        found = true
+        break
+      }
+      k += 1
+    }
+    return sv_bool(found == (op == "in"))
+  }
+  if op == "like" || op == "notlike" {
+    let s = sql_eval(f, n.kids[0], m)
+    let pat = sql_eval(f, n.kids[1], m)
+    var esc = ""
+    if n.kids.len() > 2 {
+      let e = sql_eval(f, n.kids[2], m)
+      if e.k != 4 { return SqlV{} }
+      esc = e.s
+      if esc.runes().len() != 1 { return SqlV{} }
+    }
+    if s.k != 4 || pat.k != 4 { return SqlV{} }
+    return sv_bool(sql_like(s.s.runes(), 0, pat.s.runes(), 0, esc) == (op == "like"))
+  }
+  let a = sql_eval(f, n.kids[0], m)
+  let b = sql_eval(f, n.kids[1], m)
+  if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" {
+    return sql_arith(op, a, b)
+  }
+  sql_cmp(op, a, b)
+}
+
+/// Whether a correlation filter matches m: every field it sets is equal
+/// (a message or correlation id by its text), and every property it
+/// lists is a user property of m with an equal value.
+fn corr_match(c: CorrelationFilter, m: amqp.Message) -> Bool {
+  let p = m.properties ?? amqp.Properties{}
+  let checks: List[(Str?, Str?)] = [
+    (c.correlation_id, id_text(p.correlation_id)),
+    (c.message_id, id_text(p.message_id)),
+    (c.to, p.to),
+    (c.reply_to, p.reply_to),
+    (c.subject, p.subject),
+    (c.session_id, p.group_id),
+    (c.reply_to_session_id, p.reply_to_group_id),
+    (c.content_type, p.content_type),
+  ]
+  for (want, got) in checks {
+    match want {
+      Some(w) => if got != Some(w) { return false }
+      None => {}
+    }
+  }
+  for (k, v) in c.properties {
+    var hit = false
+    for (k2, v2) in m.app_properties ?? [] {
+      if k2 == k && sql_bool(sql_cmp("=", sql_of_value(v), sql_of_value(v2))) == 1 {
+        hit = true
+        break
+      }
+    }
+    if !hit { return false }
+  }
+  true
+}
+
+fn rule_match(r: FakeRule, m: amqp.Message) -> Bool {
+  match r.filter {
+    True => true
+    False => false
+    Sql(_) => sql_bool(sql_eval(r.sql, r.sql.root, m)) == 1
+    Correlation(c) => corr_match(c, m)
+  }
+}
+
+fn default_rules() -> List[FakeRule] { [FakeRule{name: "$Default", filter: RuleFilter.True}] }
+
+/// A rule from a filter: a SQL filter parsed (`1=1` and `1=0` are the true
+/// and false filters, as Service Bus stores them).
+fn new_rule(name: Str, filter: RuleFilter, action: Str, now: Int) -> FakeRule ! Str {
+  var f = filter
+  var sql = SqlFilter{}
+  match filter {
+    Sql(e) => {
+      let t = e.trim().replace(" ", "")
+      if t == "1=1" {
+        f = RuleFilter.True
+      } else if t == "1=0" {
+        f = RuleFilter.False
+      } else {
+        sql = sql_parse(e)?
+      }
+    }
+    True => {}
+    False => {}
+    Correlation(_) => {}
+  }
+  if name == "" || name.len() > 50 {
+    return Err("a rule name is 1 to 50 characters")
+  }
+  var act = SqlFilter{}
+  var stmts: List[(Int, Int, Int)] = []
+  if action != "" {
+    let a = sql_parse_action(action)?
+    act = a.0
+    stmts = a.1
+  }
+  FakeRule{name: name, filter: f, action: action, created_ms: now, sql: sql, act: act, stmts: stmts}
+}
+
+/// Adds rule r to subscription qi: an error names a duplicate.
+fn add_rule_at(var s: BrokerState, qi: Int, r: FakeRule) -> () ! Str {
+  var q = s.queues[qi]
+  var rules = q.rules ?? default_rules()
+  for x in rules {
+    if x.name.to_lower() == r.name.to_lower() {
+      return Err("the rule ${r.name.quote()} already exists")
+    }
+  }
+  rules.push(r)
+  q.rules = Some(rules)
+  put_queue(s, qi, q)
+  Ok(())
+}
+
+fn remove_rule_at(var s: BrokerState, qi: Int, name: Str) -> Bool {
+  var q = s.queues[qi]
+  let rules = q.rules ?? default_rules()
+  let kept = rules.filter(fn(x) { x.name.to_lower() != name.to_lower() })
+  if kept.len() == rules.len() { return false }
+  q.rules = Some(kept)
+  put_queue(s, qi, q)
+  true
+}
+
+const RULE_DESC: Int = 0x0000013700000004
+const EMPTY_ACTION: Int = 0x0000013700000005
+const SQL_ACTION: Int = 0x0000013700000006
+const SQL_FILTER: Int = 0x0000013700000006
+const TRUE_FILTER: Int = 0x0000013700000007
+const FALSE_FILTER: Int = 0x0000013700000008
+const CORR_FILTER: Int = 0x0000013700000009
+
+fn described(code: Int, items: List[amqp.Value]) -> amqp.Value {
+  amqp.Value.Described(descriptor: amqp.Value.ULong(v: UInt64(code)), value: amqp.Value.List(items: items))
+}
+
+fn opt_val(s: Str?) -> amqp.Value {
+  match s {
+    Some(x) => amqp.Value.Str(v: x)
+    None => amqp.Value.Null
+  }
+}
+
+/// A rule as enumerate-rules gives it: a map holding `rule-description`,
+/// the described list (filter, action, name, created time).
+fn rule_value(r: FakeRule) -> amqp.Value {
+  let compat = amqp.Value.Int(v: Int32(20))
+  let filter = match r.filter {
+    True => described(TRUE_FILTER, [amqp.Value.Str(v: "1=1"), compat])
+    False => described(FALSE_FILTER, [amqp.Value.Str(v: "1=0"), compat])
+    Sql(e) => described(SQL_FILTER, [amqp.Value.Str(v: e), compat])
+    Correlation(c) => described(CORR_FILTER, [
+      opt_val(c.correlation_id), opt_val(c.message_id), opt_val(c.to), opt_val(c.reply_to), opt_val(c.subject),
+      opt_val(c.session_id), opt_val(c.reply_to_session_id), opt_val(c.content_type),
+      amqp.Value.Map(pairs: c.properties.map(fn(kv) { (amqp.Value.Str(v: kv.0), kv.1) })),
+    ])
+  }
+  let action = if r.action == "" { described(EMPTY_ACTION, []) } else { described(SQL_ACTION, [amqp.Value.Str(v: r.action), compat]) }
+  amqp.Value.Map(pairs: [pair("rule-description", described(RULE_DESC, [filter, action, amqp.Value.Str(v: r.name), amqp.Value.Timestamp(ms: r.created_ms)]))])
+}
+
+/// The filter of an add-rule request's rule-description map.
+fn filter_of(desc: List[(amqp.Value, amqp.Value)]) -> RuleFilter ! Str {
+  match mget(desc, "sql-filter") {
+    Some(Map(f)) => return Ok(RuleFilter.Sql(expr: val_str(mget(f, "expression"))))
+    _ => {}
+  }
+  match mget(desc, "correlation-filter") {
+    Some(Map(f)) => {
+      let get = fn(k: Str) -> Str? {
+        match mget(f, k) {
+          Some(Str(x)) => Some(x)
+          _ => None
+        }
+      }
+      var props: List[(Str, amqp.Value)] = []
+      match mget(f, "properties") {
+        Some(Map(ps)) => {
+          for (k, v) in ps {
+            props.push((val_str(Some(k)), v))
+          }
+        }
+        _ => {}
+      }
+      return Ok(RuleFilter.Correlation(c: CorrelationFilter{correlation_id: get("correlation-id"), message_id: get("message-id"), to: get("to"),
+        reply_to: get("reply-to"), subject: get("label"), session_id: get("session-id"), reply_to_session_id: get("reply-to-session-id"),
+        content_type: get("content-type"), properties: props}))
+    }
+    _ => {}
+  }
+  Err("a rule-description needs a sql-filter or a correlation-filter")
+}
+
+/// add-rule, remove-rule and enumerate-rules on a subscription's management link.
+fn rule_op(var s: BrokerState, qi: Int, now: Int, op: Str, body: List[(amqp.Value, amqp.Value)]) -> (Int, Str, Str, amqp.Value) {
+  if !s.queues[qi].name.contains("/Subscriptions/") {
+    return (400, "com.microsoft:argument-error", "rules belong to a subscription", amqp.Value.Null)
+  }
+  if op == "add-rule" {
+    let name = val_str(mget(body, "rule-name"))
+    let desc = match mget(body, "rule-description") {
+      Some(Map(d)) => d
+      _ => return (400, "com.microsoft:argument-error", "add-rule needs a rule-description map", amqp.Value.Null)
+    }
+    let filter = match filter_of(desc) {
+      Ok(f) => f
+      Err(e) => return (400, "com.microsoft:argument-error", e, amqp.Value.Null)
+    }
+    let action = match mget(desc, "sql-rule-action") {
+      Some(Map(a)) => val_str(mget(a, "expression"))
+      _ => ""
+    }
+    let r = match new_rule(name, filter, action, now) {
+      Ok(x) => x
+      Err(e) => return (400, "com.microsoft:argument-error", e, amqp.Value.Null)
+    }
+    return match add_rule_at(s, qi, r) {
+      Ok(_) => ok_out(amqp.Value.Null)
+      Err(e) => (409, "com.microsoft:entity-already-exists", e, amqp.Value.Null)
+    }
+  }
+  if op == "remove-rule" {
+    let name = val_str(mget(body, "rule-name"))
+    if !remove_rule_at(s, qi, name) {
+      return (404, "amqp:not-found", "no rule ${name.quote()}", amqp.Value.Null)
+    }
+    return ok_out(amqp.Value.Null)
+  }
+  // enumerate-rules
+  let top = val_int(mget(body, "top"))
+  let skip = val_int(mget(body, "skip"))
+  let rules = s.queues[qi].rules ?? default_rules()
+  var page: List[amqp.Value] = []
+  var i = if skip < 0 { 0 } else { skip }
+  while i < rules.len() && (top <= 0 || page.len() < top) {
+    page.push(rule_value(rules[i]))
+    i += 1
+  }
+  if page.len() == 0 {
+    return (204, "", "No Content", amqp.Value.Null)
+  }
+  ok_out(amqp.Value.Map(pairs: [pair("rules", amqp.Value.List(items: page))]))
 }
