@@ -1,4 +1,7 @@
+exit 0
+--- stdout
 remote is the listener: true local: true
 write after close_write: tls: protocol is shutdown
 response: true true
 done
+--- stderr

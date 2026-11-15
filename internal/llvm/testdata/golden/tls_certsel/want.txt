@@ -1,0 +1,52 @@
+exit 0
+--- stdout
+== TLS 1.3
+get_certificate by name: client TLS 1.3 cert b alpn 'http/1.1'; server ok
+  name b.example versions ["TLS 1.3", "TLS 1.2"] suites true curves true schemes true protos ["h2", "http/1.1"] exts true addrs true true
+get_certificate gives none, no certificates: client: remote error: tls: unrecognized name; server: tls: no certificates configured
+get_certificate gives none, certificates: client TLS 1.3 cert a alpn ''; server ok
+get_certificate fails: client: remote error: tls: internal error; server: unknown host a.example
+get_certificate not asked without a name: client TLS 1.3 cert ip alpn ''; server ok
+get_certificate asked without a name or certificates: client TLS 1.3 cert ip alpn ''; server ok
+  get_certificate name ''
+get_config_for_client swaps: client TLS 1.3 cert a alpn 'h2'; server ok
+  name a.example versions ["TLS 1.3", "TLS 1.2"] suites true curves true schemes true protos ["h2", "http/1.1"] exts true addrs true true
+get_config_for_client caps the version: client TLS 1.2 cert a alpn ''; server ok
+get_config_for_client with get_certificate: client TLS 1.3 cert b alpn ''; server ok
+get_config_for_client gives none: client TLS 1.3 cert a alpn ''; server ok
+get_config_for_client fails: client: remote error: tls: internal error; server: no config for you
+get_config_for_client without certificates: client: remote error: tls: unrecognized name; server: tls: no certificates configured
+supports_certificate picks: client TLS 1.3 cert ed alpn ''; server ok
+== TLS 1.2
+get_certificate by name: client TLS 1.2 cert b alpn 'http/1.1'; server ok
+  name b.example versions ["TLS 1.2"] suites true curves true schemes true protos ["h2", "http/1.1"] exts true addrs true true
+get_certificate gives none, no certificates: client: remote error: tls: unrecognized name; server: tls: no certificates configured
+get_certificate gives none, certificates: client TLS 1.2 cert a alpn ''; server ok
+get_certificate fails: client: remote error: tls: internal error; server: unknown host a.example
+get_certificate not asked without a name: client TLS 1.2 cert ip alpn ''; server ok
+get_certificate asked without a name or certificates: client TLS 1.2 cert ip alpn ''; server ok
+  get_certificate name ''
+get_config_for_client swaps: client TLS 1.2 cert a alpn 'h2'; server ok
+  name a.example versions ["TLS 1.2"] suites true curves true schemes true protos ["h2", "http/1.1"] exts true addrs true true
+get_config_for_client caps the version: client TLS 1.2 cert a alpn ''; server ok
+get_config_for_client with get_certificate: client TLS 1.2 cert b alpn ''; server ok
+get_config_for_client gives none: client TLS 1.2 cert a alpn ''; server ok
+get_config_for_client fails: client: remote error: tls: internal error; server: no config for you
+get_config_for_client without certificates: client: remote error: tls: unrecognized name; server: tls: no certificates configured
+supports_certificate picks: client TLS 1.2 cert ed alpn ''; server ok
+supports TLS 1.2 ECDSA: ok
+supports TLS 1.3 ECDSA: ok
+supports only TLS 1.0: no mutually supported protocol versions
+supports wrong name: certificate is not valid for requested server name: x509: certificate is valid for a.example, not b.example
+supports no name: ok
+supports no P-256: client doesn't support certificate curve
+supports no ECDHE curve: client doesn't support ECDHE, can only use legacy RSA key exchange
+supports compressed points only: tls: client offered only incompatible point formats
+supports no ECDSA scheme: tls: peer doesn't support any of the certificate's signature algorithms
+supports no ECDSA suite: client doesn't support any cipher suites compatible with the certificate
+supports TLS 1.3 ignores suites: ok
+supports Ed25519: ok
+supports Ed25519 without schemes: connection doesn't support Ed25519
+supports Ed25519 no scheme: tls: peer doesn't support any of the certificate's signature algorithms
+done
+--- stderr

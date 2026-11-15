@@ -1,44 +1,61 @@
 exit 0
 --- stdout
-chain: 0 leaf inter root
-wildcard: 0 leaf inter root
-wildcard parent: 7
-wildcard two labels: 7
-ipv4: 0 leaf inter root
-ipv6: 0 leaf inter root
-other ip: 7
-other host: 7
-case: 0 leaf inter root
-trailing dot: 0 leaf inter root
-leaf expired: 2
-leaf not yet: 2
-no intermediate: 1
-no root: 1
-fake root: 1
-fake and real root: 0 leaf inter root
-other root: 1
-client: 0 leaf inter root
-any: 0 leaf inter root
-direct: 0 direct root
-direct client: 6
-excess intermediates: 0 direct root
-not permitted: 5
-excluded: 5
-wildcard over excluded: 5
-permitted exact: 0 bare inter root
-path length: 4
-missing link: 1
-intermediate expired: 2
-nested usage: 6
-nested usage client: 6
-nested usage any: 0 leaf server inter client root
-parent not a ca: 1
-parent without cert sign: 1
-unhandled critical: 8
-rsa leaf in roots: 0 rsa self
-rsa self signed: 1
-rsa root: 0 rsa leaf rsa root
-many candidates: 0 leaf inter root
-intermediate as leaf: 0 inter root
-root as leaf: 0 root
+== TLS 1.3
+client verify_peer_certificate sees: client ok, read hi; server ok, client cert none
+  vpc raw 1 chains ["server>Xo Test CA"]
+client verify_peer_certificate fails: client: pin mismatch; server: remote error: tls: bad certificate
+client verify_peer_certificate empty Err: client: tls: verify_peer_certificate failed; server: remote error: tls: bad certificate
+Verify.None with verify_peer_certificate: client ok, read hi; server ok, client cert none
+  vpc raw 1 chains 0
+ChainOnly with verify_peer_certificate: client ok, read hi; server ok, client cert none
+  vpc raw 1 chains 1
+client verify_connection sees: client ok, read hi; server ok, client cert none
+  vc TLS 1.3 complete false alpn http/1.1 name  peer server chains 1 resumed false
+client verify_connection fails: client: refused by verify_connection; server: remote error: tls: bad certificate
+both client hooks fail: client: first; server: remote error: tls: bad certificate
+get_client_certificate gives alice: client ok, read hi; server ok, client cert alice
+  cri version TLS 1.3 cas 2 schemes true alice true bob true
+get_client_certificate gives none: client ok, read: remote error: tls: certificate required; server: tls: client didn't provide a certificate
+get_client_certificate fails: client: no certificate for you; server: EOF
+certificates picks the one the CAs name: client ok, read hi; server ok, client cert bob
+certificates none named: client ok, read hi; server ok, client cert none
+server verify_peer_certificate sees none: client ok, read hi; server ok, client cert none
+  server vpc raw 0 chains 0
+server verify_peer_certificate sees alice: client ok, read hi; server ok, client cert alice
+  server vpc raw 1 chains 1
+server verify_peer_certificate fails: client ok, read: remote error: tls: bad certificate; server: client not allowed
+server verify_peer_certificate not asked: client ok, read hi; server ok, client cert none
+server verify_connection sees: client ok, read hi; server ok, client cert none
+  server vc TLS 1.3 complete false alpn http/1.1 name  peer none
+server verify_connection fails: client ok, read: remote error: tls: bad certificate; server: server says no
+== TLS 1.2
+client verify_peer_certificate sees: client ok, read hi; server ok, client cert none
+  vpc raw 1 chains ["server>Xo Test CA"]
+client verify_peer_certificate fails: client: pin mismatch; server: remote error: tls: bad certificate
+client verify_peer_certificate empty Err: client: tls: verify_peer_certificate failed; server: remote error: tls: bad certificate
+Verify.None with verify_peer_certificate: client ok, read hi; server ok, client cert none
+  vpc raw 1 chains 0
+ChainOnly with verify_peer_certificate: client ok, read hi; server ok, client cert none
+  vpc raw 1 chains 1
+client verify_connection sees: client ok, read hi; server ok, client cert none
+  vc TLS 1.2 complete false alpn http/1.1 name  peer server chains 1 resumed false
+client verify_connection fails: client: refused by verify_connection; server: remote error: tls: bad certificate
+both client hooks fail: client: first; server: remote error: tls: bad certificate
+get_client_certificate gives alice: client ok, read hi; server ok, client cert alice
+  cri version TLS 1.2 cas 2 schemes true alice true bob true
+get_client_certificate gives none: client: remote error: tls: handshake failure; server: tls: client didn't provide a certificate
+get_client_certificate fails: client: no certificate for you; server: remote error: tls: internal error
+certificates picks the one the CAs name: client ok, read hi; server ok, client cert bob
+certificates none named: client ok, read hi; server ok, client cert none
+server verify_peer_certificate sees none: client ok, read hi; server ok, client cert none
+  server vpc raw 0 chains 0
+server verify_peer_certificate sees alice: client ok, read hi; server ok, client cert alice
+  server vpc raw 1 chains 1
+server verify_peer_certificate fails: client: remote error: tls: bad certificate; server: client not allowed
+server verify_peer_certificate not asked: client ok, read hi; server ok, client cert none
+server verify_connection sees: client ok, read hi; server ok, client cert none
+  server vc TLS 1.2 complete false alpn http/1.1 name  peer none
+server verify_connection fails: client: remote error: tls: bad certificate; server: server says no
+client_config without server_name: tls: either ServerName or InsecureSkipVerify must be specified in the tls.Config
+done
 --- stderr

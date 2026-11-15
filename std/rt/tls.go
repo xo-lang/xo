@@ -88,7 +88,13 @@ func clientAuthType(m Tls_ClientAuth) tls.ClientAuthType { return tls.ClientAuth
 
 // Tls_client is `tls.client(c, host, roots, verify, alpn, cert)`: the
 // handshake on c (at most 10 seconds), which std/tls owns from then on.
-func Tls_client(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify Tls_Verify, alpn List[string], cert Option[Tls_TlsCert], verifyConn Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]) Result[Tls_TlsConn, NetErr] {
+func Tls_client(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify Tls_Verify, alpn List[string], cert Option[Tls_TlsCert], verifyConn Option[func(*Task, List[X509_Certificate]) Result[Unit, string]], minVersion int64, maxVersion int64, cipherSuites List[int64], curvePrefs List[int64]) Result[Tls_TlsConn, NetErr] {
+	return tlsClient(tk, c, host, roots, verify, alpn, cert, verifyConn, minVersion, maxVersion, cipherSuites, curvePrefs, nil)
+}
+
+// tlsClient is Tls_client with extra, when not nil, changing the
+// configuration last (ClientConfig's hooks, decision 0644 T6).
+func tlsClient(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify Tls_Verify, alpn List[string], cert Option[Tls_TlsCert], verifyConn Option[func(*Task, List[X509_Certificate]) Result[Unit, string]], minVersion int64, maxVersion int64, cipherSuites List[int64], curvePrefs List[int64], extra func(*tls.Config)) Result[Tls_TlsConn, NetErr] {
 	if tk.Canceled() {
 		return Err[Tls_TlsConn](netErr(5, ""))
 	}
@@ -106,6 +112,7 @@ func Tls_client(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify T
 		name = name[1 : len(name)-1]
 	}
 	cfg := &tls.Config{ServerName: name, NextProtos: alpn.s}
+	setPrefs(cfg, minVersion, maxVersion, cipherSuites, curvePrefs)
 	if roots.Some {
 		cfg.RootCAs = roots.V.pool
 	}
@@ -140,6 +147,9 @@ func Tls_client(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify T
 			}
 			return nil
 		}
+	}
+	if extra != nil {
+		extra(cfg)
 	}
 	t := tls.Client(c.c, cfg)
 	// http.DefaultTransport's TLSHandshakeTimeout, or the connection's own
@@ -190,6 +200,183 @@ func verifyChain(raw [][]byte, pool *x509.CertPool) error {
 		return &tls.CertificateVerificationError{UnverifiedCertificates: certs, Err: err}
 	}
 	return nil
+}
+
+// chainsOf is the chains verifyChain finds (Verify.ChainOnly's
+// verified_chains for verify_peer_certificate; decision 0644 T6).
+func chainsOf(raw [][]byte, pool *x509.CertPool) [][]*x509.Certificate {
+	var certs []*x509.Certificate
+	for _, b := range raw {
+		c, err := x509.ParseCertificate(b)
+		if err != nil {
+			return nil
+		}
+		certs = append(certs, c)
+	}
+	if len(certs) == 0 {
+		return nil
+	}
+	inter := x509.NewCertPool()
+	for _, c := range certs[1:] {
+		inter.AddCert(c)
+	}
+	chains, _ := certs[0].Verify(x509.VerifyOptions{Roots: pool, Intermediates: inter, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}})
+	return chains
+}
+
+// hookErr is a hook's Err as Go's error, def for an empty text.
+func hookErr(e, def string) error {
+	if e == "" {
+		return errors.New(def)
+	}
+	return errors.New(e)
+}
+
+// tlsVerifyHooks sets cfg's VerifyPeerCertificate (after the one the
+// verification mode set) and VerifyConnection from Xo's hooks.
+func tlsVerifyHooks(tk *Task, cfg *tls.Config, vp Option[func(*Task, List[Bytes], List[List[X509_Certificate]]) Result[Unit, string]], vc Option[func(*Task, Tls_ConnState) Result[Unit, string]], chainOnly bool) {
+	if vp.Some {
+		prev := cfg.VerifyPeerCertificate
+		pool := cfg.RootCAs
+		if cfg.ClientCAs != nil {
+			pool = cfg.ClientCAs
+		}
+		f := vp.V
+		cfg.VerifyPeerCertificate = func(raw [][]byte, chains [][]*x509.Certificate) error {
+			if prev != nil {
+				if err := prev(raw, chains); err != nil {
+					return err
+				}
+				if chainOnly {
+					chains = chainsOf(raw, pool)
+				}
+			}
+			var rs []Bytes
+			for _, b := range raw {
+				rs = append(rs, Bytes(b))
+			}
+			var cs []List[X509_Certificate]
+			for _, ch := range chains {
+				var l []X509_Certificate
+				for _, x := range ch {
+					l = append(l, x509CertOf(tk, x))
+				}
+				cs = append(cs, ListFromSlice(l))
+			}
+			if r := f(tk, ListFromSlice(rs), ListFromSlice(cs)); !r.Ok {
+				return hookErr(r.E, "tls: verify_peer_certificate failed")
+			}
+			return nil
+		}
+	}
+	if vc.Some {
+		prev := cfg.VerifyConnection
+		f := vc.V
+		cfg.VerifyConnection = func(cs tls.ConnectionState) error {
+			if prev != nil {
+				if err := prev(cs); err != nil {
+					return err
+				}
+			}
+			if r := f(tk, connStateOf(tk, cs)); !r.Ok {
+				return hookErr(r.E, "tls: verify_connection failed")
+			}
+			return nil
+		}
+	}
+}
+
+// Tls_client_config is `tls.client_config(c, config)` (decision 0644 T6).
+func Tls_client_config(tk *Task, c Conn, cfg Tls_ClientConfig) Result[Tls_TlsConn, NetErr] {
+	var one Option[Tls_TlsCert]
+	if len(cfg.F_certificates.s) == 1 {
+		one = Option[Tls_TlsCert]{Some: true, V: cfg.F_certificates.s[0]}
+	}
+	return tlsClient(tk, c, cfg.F_server_name, cfg.F_roots, cfg.F_verify, cfg.F_next_protos, one, Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]{}, cfg.F_min_version, cfg.F_max_version, cfg.F_cipher_suites, cfg.F_curve_preferences, func(gc *tls.Config) {
+		if len(cfg.F_certificates.s) > 1 {
+			gc.Certificates = nil
+			for _, x := range cfg.F_certificates.s {
+				gc.Certificates = append(gc.Certificates, *x.c)
+			}
+		}
+		tlsVerifyHooks(tk, gc, cfg.F_verify_peer_certificate, cfg.F_verify_connection, cfg.F_verify.Tag == 2)
+		if cfg.F_get_client_certificate.Some {
+			g := cfg.F_get_client_certificate.V
+			gc.GetClientCertificate = func(cri *tls.CertificateRequestInfo) (*tls.Certificate, error) {
+				r := g(tk, criOf(cri))
+				if !r.Ok {
+					return nil, hookErr(r.E, "tls: get_client_certificate failed")
+				}
+				if !r.V.Some {
+					return new(tls.Certificate), nil
+				}
+				return r.V.V.c, nil
+			}
+		}
+	})
+}
+
+// criOf is Go's CertificateRequestInfo as Xo's.
+func criOf(cri *tls.CertificateRequestInfo) Tls_CertificateRequestInfo {
+	var cas []Bytes
+	for _, b := range cri.AcceptableCAs {
+		cas = append(cas, Bytes(b))
+	}
+	var ss []int64
+	for _, x := range cri.SignatureSchemes {
+		ss = append(ss, int64(x))
+	}
+	return Tls_CertificateRequestInfo{F_acceptable_cas: ListFromSlice(cas), F_signature_schemes: ListFromSlice(ss), F_version: int64(cri.Version)}
+}
+
+// M_supports_certificate is `i.supports_certificate(cert)`: Go's
+// CertificateRequestInfo.SupportsCertificate.
+func (v Tls_CertificateRequestInfo) M_supports_certificate(tk *Task, cert Tls_TlsCert) Result[Unit, Tls_TlsErr] {
+	cri := &tls.CertificateRequestInfo{Version: uint16(v.F_version)}
+	for _, b := range v.F_acceptable_cas.s {
+		cri.AcceptableCAs = append(cri.AcceptableCAs, []byte(b))
+	}
+	for _, x := range v.F_signature_schemes.s {
+		cri.SignatureSchemes = append(cri.SignatureSchemes, tls.SignatureScheme(x))
+	}
+	if err := cri.SupportsCertificate(cert.c); err != nil {
+		return Err[Unit](Tls_TlsErr{F_msg: err.Error()})
+	}
+	return Ok[Unit, Tls_TlsErr](Unit{})
+}
+
+// Tls_dial_config is `tls.dial_config(net, addr, config, timeout)`.
+func Tls_dial_config(tk *Task, n Net, addr string, cfg Tls_ClientConfig, timeout Option[Duration]) Result[Tls_TlsConn, NetErr] {
+	if cfg.F_server_name == "" {
+		cfg.F_server_name = addr
+		if i := strings.LastIndex(addr, ":"); i >= 0 {
+			cfg.F_server_name = addr[:i]
+		}
+	}
+	if !timeout.Some {
+		c := n.M_dial(tk, addr)
+		if !c.Ok {
+			return Err[Tls_TlsConn](c.E)
+		}
+		return Tls_client_config(tk, c.V, cfg)
+	}
+	start := time.Now()
+	c := n.M_dial_timeout(tk, addr, timeout.V)
+	if !c.Ok {
+		return Err[Tls_TlsConn](c.E)
+	}
+	at := start.Add(time.Duration(int64(timeout.V)))
+	if !time.Now().Before(at) {
+		c.V.M_close(tk)
+		return Err[Tls_TlsConn](netErr(3, ""))
+	}
+	setUserDeadline(c.V, at)
+	r := Tls_client_config(tk, c.V, cfg)
+	setUserDeadline(c.V, time.Time{})
+	if !r.Ok {
+		c.V.M_close(tk)
+	}
+	return r
 }
 
 // M_read is `t.read(max)`: at most max bytes (at most 1 MiB), None at the
@@ -348,7 +535,7 @@ func hexDecode(s string) ([]byte, error) { return hex.DecodeString(s) }
 // Tls_dial is `tls.dial(net, addr, server_name, ...)`: Go's
 // DialWithDialer, the timeout over the dial and the handshake together
 // and cleared after.
-func Tls_dial(tk *Task, n Net, addr string, serverName string, roots Option[Tls_Roots], verify Tls_Verify, alpn List[string], cert Option[Tls_TlsCert], verifyConn Option[func(*Task, List[X509_Certificate]) Result[Unit, string]], timeout Option[Duration]) Result[Tls_TlsConn, NetErr] {
+func Tls_dial(tk *Task, n Net, addr string, serverName string, roots Option[Tls_Roots], verify Tls_Verify, alpn List[string], cert Option[Tls_TlsCert], verifyConn Option[func(*Task, List[X509_Certificate]) Result[Unit, string]], timeout Option[Duration], minVersion int64, maxVersion int64, cipherSuites List[int64], curvePrefs List[int64]) Result[Tls_TlsConn, NetErr] {
 	name := serverName
 	if name == "" {
 		name = addr
@@ -361,7 +548,7 @@ func Tls_dial(tk *Task, n Net, addr string, serverName string, roots Option[Tls_
 		if !c.Ok {
 			return Err[Tls_TlsConn](c.E)
 		}
-		return Tls_client(tk, c.V, name, roots, verify, alpn, cert, verifyConn)
+		return Tls_client(tk, c.V, name, roots, verify, alpn, cert, verifyConn, minVersion, maxVersion, cipherSuites, curvePrefs)
 	}
 	start := time.Now()
 	c := n.M_dial_timeout(tk, addr, timeout.V)
@@ -374,7 +561,7 @@ func Tls_dial(tk *Task, n Net, addr string, serverName string, roots Option[Tls_
 		return Err[Tls_TlsConn](netErr(3, ""))
 	}
 	setUserDeadline(c.V, at)
-	r := Tls_client(tk, c.V, name, roots, verify, alpn, cert, verifyConn)
+	r := Tls_client(tk, c.V, name, roots, verify, alpn, cert, verifyConn, minVersion, maxVersion, cipherSuites, curvePrefs)
 	setUserDeadline(c.V, time.Time{})
 	if !r.Ok {
 		c.V.M_close(tk)
@@ -469,15 +656,97 @@ type Tls_TlsListener struct {
 func (Tls_TlsListener) XoDebug(b *strings.Builder) { b.WriteString("<tlslistener>") }
 
 // serverConfig is cfg as crypto/tls's Config.
-func serverConfig(cfg Tls_ServerConfig) *tls.Config {
+func serverConfig(tk *Task, cfg Tls_ServerConfig) *tls.Config {
 	c := &tls.Config{NextProtos: cfg.F_next_protos.s, ClientAuth: clientAuthType(cfg.F_client_auth)}
+	setPrefs(c, cfg.F_min_version, cfg.F_max_version, cfg.F_cipher_suites, cfg.F_curve_preferences)
 	for _, tc := range cfg.F_certificates.s {
 		c.Certificates = append(c.Certificates, *tc.c)
 	}
 	if cfg.F_client_cas.Some {
 		c.ClientCAs = cfg.F_client_cas.V.pool
 	}
+	tlsVerifyHooks(tk, c, cfg.F_verify_peer_certificate, cfg.F_verify_connection, false)
+	// decision 0644 T5: GetCertificate and GetConfigForClient
+	if cfg.F_get_certificate.Some {
+		g := cfg.F_get_certificate.V
+		c.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			r := g(tk, chiOf(chi))
+			if !r.Ok {
+				return nil, hookErr(r.E, "tls: get_certificate failed")
+			}
+			if !r.V.Some {
+				return nil, nil
+			}
+			return r.V.V.c, nil
+		}
+	}
+	if cfg.F_get_config_for_client.Some {
+		f := cfg.F_get_config_for_client.V
+		c.GetConfigForClient = func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
+			r := f(tk, chiOf(chi))
+			if !r.Ok {
+				return nil, hookErr(r.E, "tls: get_config_for_client failed")
+			}
+			if !r.V.Some {
+				return nil, nil
+			}
+			return serverConfig(tk, r.V.V), nil
+		}
+	}
 	return c
+}
+
+// chiOf is Go's ClientHelloInfo as Xo's.
+func chiOf(chi *tls.ClientHelloInfo) Tls_ClientHelloInfo {
+	var cs, curves, points, schemes, vers, exts []int64
+	for _, x := range chi.CipherSuites {
+		cs = append(cs, int64(x))
+	}
+	for _, x := range chi.SupportedCurves {
+		curves = append(curves, int64(x))
+	}
+	for _, x := range chi.SupportedPoints {
+		points = append(points, int64(x))
+	}
+	for _, x := range chi.SignatureSchemes {
+		schemes = append(schemes, int64(x))
+	}
+	for _, x := range chi.SupportedVersions {
+		vers = append(vers, int64(x))
+	}
+	for _, x := range chi.Extensions {
+		exts = append(exts, int64(x))
+	}
+	var la, ra string
+	if chi.Conn != nil {
+		la, ra = chi.Conn.LocalAddr().String(), chi.Conn.RemoteAddr().String()
+	}
+	return Tls_ClientHelloInfo{F_cipher_suites: ListFromSlice(cs), F_server_name: chi.ServerName, F_supported_curves: ListFromSlice(curves), F_supported_points: ListFromSlice(points), F_signature_schemes: ListFromSlice(schemes), F_supported_protos: ListFromSlice(append([]string(nil), chi.SupportedProtos...)), F_supported_versions: ListFromSlice(vers), F_extensions: ListFromSlice(exts), F_local_addr: la, F_remote_addr: ra}
+}
+
+// M_supports_certificate is `i.supports_certificate(cert)`: Go's
+// ClientHelloInfo.SupportsCertificate under the default Config.
+func (v Tls_ClientHelloInfo) M_supports_certificate(tk *Task, cert Tls_TlsCert) Result[Unit, Tls_TlsErr] {
+	chi := &tls.ClientHelloInfo{ServerName: v.F_server_name, SupportedProtos: v.F_supported_protos.s}
+	for _, x := range v.F_cipher_suites.s {
+		chi.CipherSuites = append(chi.CipherSuites, uint16(x))
+	}
+	for _, x := range v.F_supported_curves.s {
+		chi.SupportedCurves = append(chi.SupportedCurves, tls.CurveID(x))
+	}
+	for _, x := range v.F_supported_points.s {
+		chi.SupportedPoints = append(chi.SupportedPoints, uint8(x))
+	}
+	for _, x := range v.F_signature_schemes.s {
+		chi.SignatureSchemes = append(chi.SignatureSchemes, tls.SignatureScheme(x))
+	}
+	for _, x := range v.F_supported_versions.s {
+		chi.SupportedVersions = append(chi.SupportedVersions, uint16(x))
+	}
+	if err := chi.SupportsCertificate(cert.c); err != nil {
+		return Err[Unit](Tls_TlsErr{F_msg: err.Error()})
+	}
+	return Ok[Unit, Tls_TlsErr](Unit{})
 }
 
 // Tls_server is `tls.server(c, config)`: Go's tls.Server.
@@ -488,8 +757,8 @@ func Tls_server(tk *Task, c ServerConn, cfg Tls_ServerConfig) Tls_TlsServerConn 
 	if _, ok := c.c.(fakeConn); ok || c.c == nil {
 		return Tls_TlsServerConn{Tls_TlsConn: Tls_TlsConn{c: c.c, fake: c.c != nil, closed: new(atomic.Bool)}}
 	}
-	t := tls.Server(c.c, serverConfig(cfg))
-	return Tls_TlsServerConn{Tls_TlsConn: Tls_TlsConn{t: t, c: c.c, closed: new(atomic.Bool)}, noCerts: len(cfg.F_certificates.s) == 0}
+	t := tls.Server(c.c, serverConfig(tk, cfg))
+	return Tls_TlsServerConn{Tls_TlsConn: Tls_TlsConn{t: t, c: c.c, closed: new(atomic.Bool)}, noCerts: len(cfg.F_certificates.s) == 0 && !cfg.F_get_certificate.Some && !cfg.F_get_config_for_client.Some}
 }
 
 // M_handshake is `t.handshake()`: Go's Conn.Handshake under the
@@ -549,11 +818,16 @@ func (t Tls_TlsServerConn) M_state(tk *Task) Tls_ConnState {
 }
 
 // M_net_conn is `t.net_conn()`.
+// M_export_keying_material is TlsConn's (decision 0644 T9).
+func (t Tls_TlsServerConn) M_export_keying_material(tk *Task, label string, context Option[Bytes], length int64) Result[Bytes, Tls_TlsErr] {
+	return t.Tls_TlsConn.M_export_keying_material(tk, label, context, length)
+}
+
 func (t Tls_TlsServerConn) M_net_conn(*Task) ServerConn { return ServerConn{c: t.c} }
 
 // Tls_listen is `tls.listen(net, addr, config)`: Go's tls.Listen.
 func Tls_listen(tk *Task, n Net, addr string, cfg Tls_ServerConfig) Result[Tls_TlsListener, NetErr] {
-	if len(cfg.F_certificates.s) == 0 {
+	if len(cfg.F_certificates.s) == 0 && !cfg.F_get_certificate.Some && !cfg.F_get_config_for_client.Some {
 		return Err[Tls_TlsListener](netErr(4, "tls: neither Certificates, GetCertificate, nor GetConfigForClient set in Config"))
 	}
 	l := n.M_listen(tk, addr)
@@ -582,3 +856,52 @@ func (l Tls_TlsListener) M_addr(tk *Task) string { return l.l.M_addr(tk) }
 
 // M_close is `l.close()`.
 func (l Tls_TlsListener) M_close(tk *Task) { l.l.M_close(tk) }
+
+// setPrefs sets decision 0644 T7's MinVersion, MaxVersion, CipherSuites and
+// CurvePreferences as the native backends read them: TLS 1.2 is the least
+// version (the native code has no 1.0 or 1.1), and suites and curves the
+// native code does not implement are left out.
+func setPrefs(c *tls.Config, minV, maxV int64, suites, curves List[int64]) {
+	if minV != 0 {
+		c.MinVersion = uint16(max(minV, tls.VersionTLS12))
+	}
+	if maxV != 0 {
+		c.MaxVersion = uint16(maxV)
+	}
+	known := map[uint16]bool{}
+	for _, cs := range tls.CipherSuites() {
+		known[cs.ID] = true
+	}
+	for _, id := range suites.s {
+		if known[uint16(id)] {
+			c.CipherSuites = append(c.CipherSuites, uint16(id))
+		}
+	}
+	if len(suites.s) != 0 && len(c.CipherSuites) == 0 {
+		// none the native code runs: TLS 1.2 offers nothing
+		c.CipherSuites = []uint16{}
+	}
+	for _, id := range curves.s {
+		switch tls.CurveID(id) {
+		case tls.X25519MLKEM768, tls.SecP256r1MLKEM768, tls.SecP384r1MLKEM1024, tls.X25519, tls.CurveP256, tls.CurveP384, tls.CurveP521:
+			c.CurvePreferences = append(c.CurvePreferences, tls.CurveID(id))
+		}
+	}
+}
+
+// Tls_cipher_suites is Go's CipherSuites (every one the native code runs).
+func Tls_cipher_suites(_ *Task) List[Tls_CipherSuite] {
+	var out []Tls_CipherSuite
+	for _, cs := range tls.CipherSuites() {
+		vs := make([]int64, len(cs.SupportedVersions))
+		for i, v := range cs.SupportedVersions {
+			vs[i] = int64(v)
+		}
+		out = append(out, Tls_CipherSuite{F_id: int64(cs.ID), F_name: cs.Name, F_supported_versions: ListOf(vs...), F_insecure: cs.Insecure})
+	}
+	return ListOf(out...)
+}
+
+// Tls_insecure_cipher_suites is empty: the native code runs none of Go's
+// InsecureCipherSuites.
+func Tls_insecure_cipher_suites(_ *Task) List[Tls_CipherSuite] { return List[Tls_CipherSuite]{} }

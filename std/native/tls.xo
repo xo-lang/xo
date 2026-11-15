@@ -11,11 +11,15 @@ use native/llrt/netwasi
 use native/llrt/netconn
 use native/llrt/poll
 use native/llrt/raw
+use native/llrt/tls12
+use native/llrt/tls13
 use native/llrt/tlsio
 use native/llrt/tlsneg
 use native/llrt/tlsserve
+use native/llrt/tls13srv
 use native/llrt/tlssrv
 use native/llrt/twflags
+use native/llrt/x509cert as x509c
 
 struct Roots {
   r: rthttp.Roots
@@ -108,12 +112,21 @@ fn pin_sha256(pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str) ! Str { pin_
 /// cert is passed to the client's CertificateRequest path when it lands
 /// (Lang 3's tls13/tls12 hooks, decision 0433); until then the client
 /// answers a request with no certificate.
-fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None) -> TlsConn ! NetErr uses net.dial {
+fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None, min_version: Int = 0, max_version: Int = 0, cipher_suites: List[Int] = [], curve_preferences: List[Int] = []) -> TlsConn ! NetErr uses net.dial {
+  client_full(c, host, roots, verify, alpn, cert, verify_conn, min_version, max_version, cipher_suites, curve_preferences, None, None)
+}
+
+/// client with ClientConfig's hooks (decision 0644 T6).
+fn client_full(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List[Str], cert: TlsCert?, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)?, min_version: Int, max_version: Int, cipher_suites: List[Int], curve_preferences: List[Int], vhook: (fn(tlsneg.Negotiated) -> Str)?, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))?) -> TlsConn ! NetErr uses net.dial {
+  if host.is_empty() && verify == tls.Verify.Full {
+    // Go's Client without ServerName: the name could not be verified
+    return Err(NetErr.Io(msg: "tls: either ServerName or InsecureSkipVerify must be specified in the tls.Config"))
+  }
   let cn = rt.obj_addr(c)
   if target.arch == TargetArch.Wasm32 {
     // a wasip2 command's connection (netwasi.xo, decision 0447 R2e):
     // tlsio reads and writes it, and its own deadlines apply to them
-    return client_wasm(c, host, roots, verify, alpn, cert)
+    return client_wasm(c, host, roots, verify, alpn, cert, min_version, max_version, cipher_suites, curve_preferences, vhook, get_cert)
   }
   if netconn.conn_upgraded(cn) {
     return Err(NetErr.Io(msg: "use of a connection upgraded to TLS"))
@@ -146,7 +159,7 @@ fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Ver
     ccerts = cd.certs
     ckey = cd.key
   }
-  let started = tlsio.client_with(netconn.conn_pd(cn), host, rt.obj_addr(r), dl, alpn, v, ccerts, ckey)
+  let started = tlsio.client_with(netconn.conn_pd(cn), host, rt.obj_addr(r), dl, alpn, v, ccerts, ckey, min_version, max_version, cipher_suites, curve_preferences, vhook: vhook, get_cert: get_cert)
   if started.status == tlsio.CC_TIMEOUT {
     return Err(NetErr.Timeout)
   }
@@ -164,7 +177,7 @@ fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Ver
 }
 
 /// client on wasm: no upgrade mark, no system roots (none on wasm).
-fn client_wasm(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List[Str], cert: TlsCert?) -> TlsConn ! NetErr uses net.dial {
+fn client_wasm(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List[Str], cert: TlsCert?, min_version: Int, max_version: Int, cipher_suites: List[Int], curve_preferences: List[Int], vhook: (fn(tlsneg.Negotiated) -> Str)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None) -> TlsConn ! NetErr uses net.dial {
   let cn = rt.obj_addr(c)
   if netwasi.upgraded(cn) {
     return Err(NetErr.Io(msg: "use of a connection upgraded to TLS"))
@@ -185,7 +198,7 @@ fn client_wasm(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List
     ccerts = tc.c.certs
     ckey = tc.c.key
   }
-  let started = tlsio.client_with(cn, host, r, netwasi.user_deadline(cn), alpn, v, ccerts, ckey)
+  let started = tlsio.client_with(cn, host, r, netwasi.user_deadline(cn), alpn, v, ccerts, ckey, min_version, max_version, cipher_suites, curve_preferences, vhook: vhook, get_cert: get_cert)
   if started.status == tlsio.CC_TIMEOUT {
     return Err(NetErr.Timeout)
   }
@@ -316,7 +329,40 @@ fn (t: TlsConn) state() -> tls.ConnState {
     None => return tls.ConnState{version: 0x0304, handshake_complete: true, did_resume: false, cipher_suite: 0, curve_id: 0, negotiated_protocol: "", server_name: "", peer_certificates: [], verified_chains: []}
   }
   let n = tlsio.negotiated_of(tlsio.handle_conn(h))
-  tls.ConnState{version: n.vers, handshake_complete: n.vers != 0, did_resume: n.resumed, cipher_suite: n.suite, curve_id: n.group, negotiated_protocol: n.alpn, server_name: n.server_name, peer_certificates: parse_ders(n.peer), verified_chains: n.verified.map(parse_ders)}
+  state_of(n, n.vers != 0)
+}
+
+/// The ConnState of what n negotiated; during the handshake (complete
+/// false: VerifyConnection's) without tls_unique.
+fn state_of(n: tlsneg.Negotiated, complete: Bool) -> tls.ConnState {
+  tls.ConnState{version: n.vers, handshake_complete: complete, did_resume: n.resumed, cipher_suite: n.suite, curve_id: n.group, negotiated_protocol: n.alpn, server_name: n.server_name, peer_certificates: parse_ders(n.peer), verified_chains: n.verified.map(parse_ders), tls_unique: if complete { unique_of(n) } else { b"" }}
+}
+
+/// Go's ConnectionState.TLSUnique: TLS 1.2's first Finished, unless a
+/// resumption without Extended Master Secret.
+fn unique_of(n: tlsneg.Negotiated) -> Bytes { if n.vers == 0x0303 && (!n.resumed || n.ems) { n.unique } else { b"" } }
+
+/// Go's ConnectionState.ExportKeyingMaterial over what n negotiated.
+fn ekm_of(n: tlsneg.Negotiated, label: Str, context: Bytes?, length: Int) -> Bytes ! tls.TlsErr {
+  if n.vers == 0x0304 {
+    return tls13.exporter(n.suite, n.exp, label, context ?? b"", length)
+  }
+  if n.vers != 0x0303 {
+    return Err(tls.TlsErr{msg: "tls: ExportKeyingMaterial before the handshake completed"})
+  }
+  if !n.ems {
+    return Err(tls.TlsErr{msg: "crypto/tls: ExportKeyingMaterial is unavailable when neither TLS 1.3 nor Extended Master Secret are negotiated; override with GODEBUG=tlsunsafeekm=1"})
+  }
+  let (b, e) = tls12.ekm(n.suite, n.master, n.cr, n.sr, label, context, length)
+  if !e.is_empty() {
+    return Err(tls.TlsErr{msg: e})
+  }
+  b
+}
+
+fn (t: TlsConn) export_keying_material(label: Str, context: Bytes?, length: Int) -> Bytes ! tls.TlsErr {
+  let h = t.h ?? return Err(tls.TlsErr{msg: "tls: ExportKeyingMaterial on a connection without TLS"})
+  ekm_of(tlsio.negotiated_of(tlsio.handle_conn(h)), label, context, length)
 }
 
 /// The certificates of ders that parse (each was verified or sent as is).
@@ -331,6 +377,19 @@ fn parse_ders(ders: List[Bytes]) -> List[x509.Certificate] {
 }
 
 fn cipher_suite_name(id: Int) -> Str { tlsneg.suite_name(id) }
+
+fn cipher_suites() -> List[tls.CipherSuite] {
+  let v13 = [tls.VERSION_TLS13]
+  let up12 = [tls.VERSION_TLS10, tls.VERSION_TLS11, tls.VERSION_TLS12]
+  let v12 = [tls.VERSION_TLS12]
+  var out: List[tls.CipherSuite] = []
+  for (id, vs) in [(0x1301, v13), (0x1302, v13), (0x1303, v13), (0xc009, up12), (0xc00a, up12), (0xc013, up12), (0xc014, up12), (0xc02b, v12), (0xc02c, v12), (0xc02f, v12), (0xc030, v12), (0xcca8, v12), (0xcca9, v12)] {
+    out.push(tls.CipherSuite{id: id, name: tlsneg.suite_name(id), supported_versions: vs, insecure: false})
+  }
+  out
+}
+
+fn insecure_cipher_suites() -> List[tls.CipherSuite] { [] }
 
 fn version_name(version: Int) -> Str { tlsneg.version_name(version) }
 
@@ -388,11 +447,19 @@ fn dial_host(addr: Str) -> Str {
   }
 }
 
-fn dial(net: Net, addr: Str, server_name: Str = "", roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None, timeout: Duration? = None) -> TlsConn ! NetErr uses net.dial {
+fn dial(net: Net, addr: Str, server_name: Str = "", roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None, timeout: Duration? = None, min_version: Int = 0, max_version: Int = 0, cipher_suites: List[Int] = [], curve_preferences: List[Int] = []) -> TlsConn ! NetErr uses net.dial {
   let name = if server_name.is_empty() { dial_host(addr) } else { server_name }
+  let c = dial_open(net, addr, timeout)?
+  dial_done(c, timeout, client(c, name, roots: roots, verify: verify, alpn: alpn, cert: cert, verify_conn: verify_conn, min_version: min_version, max_version: max_version, cipher_suites: cipher_suites, curve_preferences: curve_preferences))
+}
+
+/// The connection dial runs the client on: with a timeout, dialed under
+/// it and given a deadline of what is left for the handshake (Go's
+/// Dialer).
+fn dial_open(net: Net, addr: Str, timeout: Duration?) -> Conn ! NetErr uses net.dial {
   let d = match timeout {
     Some(t) => t
-    None => return client(net.dial(addr)?, name, roots: roots, verify: verify, alpn: alpn, cert: cert, verify_conn: verify_conn)
+    None => return net.dial(addr)
   }
   let wasm = target.arch == TargetArch.Wasm32
   // wasm has no monotonic reading here: its handshake gets the whole d
@@ -403,14 +470,21 @@ fn dial(net: Net, addr: Str, server_name: Str = "", roots: Roots? = None, verify
     c.close()
     return Err(NetErr.Timeout)
   }
-  // Go's Dialer: a deadline over the handshake, cleared after
   if wasm {
     netwasi.set_deadline(c, 3, true, left)
   } else {
     netconn.set_deadline(rt.obj_addr(c), 3, true, left)
   }
-  let r = client(c, name, roots: roots, verify: verify, alpn: alpn, cert: cert, verify_conn: verify_conn)
-  if wasm {
+  c
+}
+
+/// After dial's handshake: the deadline dial_open set cleared, and the
+/// connection closed when the handshake failed.
+fn dial_done(c: Conn, timeout: Duration?, r: Result[TlsConn, NetErr]) -> TlsConn ! NetErr {
+  if timeout.is_none() {
+    return r
+  }
+  if target.arch == TargetArch.Wasm32 {
     netwasi.set_deadline(c, 3, false, 0)
   } else {
     netconn.set_deadline(rt.obj_addr(c), 3, false, 0)
@@ -419,6 +493,162 @@ fn dial(net: Net, addr: Str, server_name: Str = "", roots: Roots? = None, verify
     c.close()
   }
   r
+}
+
+fn client_config(c: Conn, config: tls.ClientConfig) -> TlsConn ! NetErr uses net.dial {
+  let one = if config.certificates.len() == 1 { Some(rt.cast[tls.TlsCert, TlsCert](config.certificates[0])) } else { None }
+  let roots = match config.roots {
+    Some(r) => Some(rt.cast[tls.Roots, Roots](r))
+    None => None
+  }
+  client_full(c, config.server_name, roots, config.verify, config.next_protos, one, None, config.min_version, config.max_version, config.cipher_suites, config.curve_preferences, client_vhook(config), client_get_cert(config))
+}
+
+fn dial_config(net: Net, addr: Str, config: tls.ClientConfig, timeout: Duration? = None) -> TlsConn ! NetErr uses net.dial {
+  let cfg = if config.server_name.is_empty() { config with {server_name: dial_host(addr)} } else { config }
+  let c = dial_open(net, addr, timeout)?
+  dial_done(c, timeout, client_config(c, cfg))
+}
+
+/// ClientConfig's verify_peer_certificate then verify_connection as the
+/// handshake's hook (decision 0644 T6).
+fn client_vhook(cfg: tls.ClientConfig) -> (fn(tlsneg.Negotiated) -> Str)? {
+  if cfg.verify_peer_certificate.is_none() && cfg.verify_connection.is_none() {
+    return None
+  }
+  let vp = cfg.verify_peer_certificate
+  let vc = cfg.verify_connection
+  Some(fn(n: tlsneg.Negotiated) -> Str { verify_hooks(vp, vc, n) })
+}
+
+/// verify_peer_certificate and verify_connection over n, on either end:
+/// the text of the first Err (a default for an empty one), "" when both
+/// pass.
+fn verify_hooks(vp: (fn(List[Bytes], List[List[x509.Certificate]]) -> () ! Str)?, vc: (fn(tls.ConnState) -> () ! Str)?, n: tlsneg.Negotiated) -> Str {
+  if let Some(f) = vp {
+    if let Err(e) = f(n.peer, n.verified.map(parse_ders)) {
+      return if e.is_empty() { "tls: verify_peer_certificate failed" } else { e }
+    }
+  }
+  if let Some(f) = vc {
+    if let Err(e) = f(state_of(n, false)) {
+      return if e.is_empty() { "tls: verify_connection failed" } else { e }
+    }
+  }
+  ""
+}
+
+/// ClientConfig's get_client_certificate, or with more than one of
+/// certificates the first the request supports (Go's
+/// getClientCertificate), as the handshake's hook; None with at most one
+/// (client's cert path).
+fn client_get_cert(cfg: tls.ClientConfig) -> (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? {
+  if let Some(g) = cfg.get_client_certificate {
+    return Some(fn(cas: List[Bytes], schemes: List[Int], v: Int) -> (List[Bytes], Bytes, Str) {
+      match g(tls.CertificateRequestInfo{acceptable_cas: cas, signature_schemes: schemes, version: v}) {
+        Ok(Some(tc)) => (cert_data(tc).certs, cert_data(tc).key, "")
+        Ok(None) => ([], b"", "")
+        Err(e) => ([], b"", if e.is_empty() { "tls: get_client_certificate failed" } else { e })
+      }
+    })
+  }
+  if cfg.certificates.len() <= 1 {
+    return None
+  }
+  let certs = cfg.certificates
+  Some(fn(cas: List[Bytes], schemes: List[Int], v: Int) -> (List[Bytes], Bytes, Str) {
+    for tc in certs {
+      let d = cert_data(tc)
+      if tls13.supports(d.certs, d.key, cas, schemes).is_empty() {
+        return (d.certs, d.key, "")
+      }
+    }
+    ([], b"", "")
+  })
+}
+
+/// ServerConfig's verify_peer_certificate as the handshake's hook.
+fn server_vpeer(cfg: tls.ServerConfig) -> (fn(List[Bytes], List[List[Bytes]]) -> Str)? {
+  let f = cfg.verify_peer_certificate ?? return None
+  Some(fn(peer: List[Bytes], chains: List[List[Bytes]]) -> Str {
+    match f(peer, chains.map(parse_ders)) {
+      Ok(_) => ""
+      Err(e) => if e.is_empty() { "tls: verify_peer_certificate failed" } else { e }
+    }
+  })
+}
+
+/// ServerConfig's verify_connection as the handshake's hook.
+fn server_vconn(cfg: tls.ServerConfig) -> (fn(tlsneg.Negotiated) -> Str)? {
+  if cfg.verify_connection.is_none() {
+    return None
+  }
+  let vc = cfg.verify_connection
+  Some(fn(n: tlsneg.Negotiated) -> Str { verify_hooks(None, vc, n) })
+}
+
+/// config's certificates and client roots as the engine takes them.
+fn engine_parts(config: tls.ServerConfig) -> (List[tlssrv.Cert], List[x509c.Cert]) {
+  var certs: List[tlssrv.Cert] = []
+  for tc in config.certificates {
+    certs.push(cert_data(tc))
+  }
+  let roots = match config.client_cas {
+    Some(r) => tlsio.roots_certs(roots_data(r))
+    None => []
+  }
+  (certs, roots)
+}
+
+/// The ClientHelloInfo of h on connection c.
+fn chi_of(h: tlsneg.HelloInfo, c: ServerConn) -> tls.ClientHelloInfo {
+  tls.ClientHelloInfo{cipher_suites: h.suites, server_name: h.server_name, supported_curves: h.curves, supported_points: h.points, signature_schemes: h.schemes, supported_protos: h.protos, supported_versions: h.versions, extensions: h.exts, local_addr: c.local_addr(), remote_addr: c.remote_addr()}
+}
+
+/// ServerConfig's get_certificate as the engine's hook (decision 0644 T5).
+fn server_get_cert(cfg: tls.ServerConfig, c: ServerConn) -> (fn(tlsneg.HelloInfo) -> (List[Bytes], Bytes, Str))? {
+  let g = cfg.get_certificate ?? return None
+  Some(fn(h: tlsneg.HelloInfo) -> (List[Bytes], Bytes, Str) {
+    match g(chi_of(h, c)) {
+      Ok(Some(tc)) => (cert_data(tc).certs, cert_data(tc).key, "")
+      Ok(None) => ([], b"", "")
+      Err(e) => ([], b"", if e.is_empty() { "tls: get_certificate failed" } else { e })
+    }
+  })
+}
+
+/// ServerConfig's get_config_for_client as the engine's hook: the
+/// configuration it gives as the engine's, with its own get_certificate
+/// (its get_config_for_client is not called, as Go's).
+fn server_for_client(cfg: tls.ServerConfig, c: ServerConn) -> (fn(tlsneg.HelloInfo) -> (tls13srv.Conf?, Str))? {
+  let f = cfg.get_config_for_client ?? return None
+  Some(fn(h: tlsneg.HelloInfo) -> (tls13srv.Conf?, Str) {
+    match f(chi_of(h, c)) {
+      Ok(Some(nc)) => {
+        let (certs, roots) = engine_parts(nc)
+        (Some(tlssrv.conf_of(certs, nc.next_protos, server_auth_mode(nc.client_auth), roots, nc.min_version, nc.max_version, nc.cipher_suites, nc.curve_preferences, server_vpeer(nc), server_vconn(nc), server_get_cert(nc, c))), "")
+      }
+      Ok(None) => (None, "")
+      Err(e) => (None, if e.is_empty() { "tls: get_config_for_client failed" } else { e })
+    }
+  })
+}
+
+fn clienthelloinfo_supports_certificate(i: tls.ClientHelloInfo, cert: TlsCert) -> () ! tls.TlsErr {
+  let h = tlsneg.HelloInfo{suites: i.cipher_suites, server_name: i.server_name, curves: i.supported_curves, points: i.supported_points, schemes: i.signature_schemes, protos: i.supported_protos, versions: i.supported_versions, exts: i.extensions}
+  let e = tlssrv.chi_supports(h, cert.c.certs, cert.c.key)
+  if e.is_empty() {
+    return Ok(())
+  }
+  Err(tls.TlsErr{msg: e})
+}
+
+fn certificaterequestinfo_supports_certificate(i: tls.CertificateRequestInfo, cert: TlsCert) -> () ! tls.TlsErr {
+  let e = tls13.supports(cert.c.certs, cert.c.key, i.acceptable_cas, i.signature_schemes)
+  if e.is_empty() {
+    return Ok(())
+  }
+  Err(tls.TlsErr{msg: e})
 }
 
 fn load_cert(fs: Fs, cert_file: Str, key_file: Str) -> TlsCert ! tls.TlsErr uses fs.read {
@@ -504,16 +734,9 @@ fn server(c: ServerConn, config: tls.ServerConfig) -> TlsServerConn {
       return TlsServerConn{c: c, h: None, fake: true}
     }
   }
-  var certs: List[tlssrv.Cert] = []
-  for tc in config.certificates {
-    certs.push(cert_data(tc))
-  }
-  let roots = match config.client_cas {
-    Some(r) => tlsio.roots_certs(roots_data(r))
-    None => []
-  }
+  let (certs, roots) = engine_parts(config)
   let pd = if wasm { cn } else { netconn.conn_pd(cn) }
-  let t = tlssrv.conn_cfg(certs, config.next_protos, server_auth_mode(config.client_auth), roots, pd)
+  let t = tlssrv.conn_cfg(certs, config.next_protos, server_auth_mode(config.client_auth), roots, pd, config.min_version, config.max_version, config.cipher_suites, config.curve_preferences, server_vpeer(config), server_vconn(config), server_for_client(config, c), server_get_cert(config, c))
   if t == 0 {
     return TlsServerConn{c: c, h: None, fake: false}
   }
@@ -655,7 +878,23 @@ fn (t: TlsServerConn) state() -> tls.ConnState {
     return none
   }
   match rt.any_get[tlsneg.Negotiated](rt.obj_at[rt.Any](w)) {
-    Some(n) => tls.ConnState{version: n.vers, handshake_complete: true, did_resume: n.resumed, cipher_suite: n.suite, curve_id: n.group, negotiated_protocol: n.alpn, server_name: n.server_name, peer_certificates: parse_ders(n.peer), verified_chains: n.verified.map(parse_ders)}
+    Some(n) => tls.ConnState{version: n.vers, handshake_complete: true, did_resume: n.resumed, cipher_suite: n.suite, curve_id: n.group, negotiated_protocol: n.alpn, server_name: n.server_name, peer_certificates: parse_ders(n.peer), verified_chains: n.verified.map(parse_ders), tls_unique: unique_of(n)}
+    None => none
+  }
+}
+
+fn (t: TlsServerConn) export_keying_material(label: Str, context: Bytes?, length: Int) -> Bytes ! tls.TlsErr {
+  let none = Err(tls.TlsErr{msg: "tls: ExportKeyingMaterial before the handshake completed"})
+  if t.fake {
+    return Err(tls.TlsErr{msg: "tls: ExportKeyingMaterial on a connection without TLS"})
+  }
+  let h = t.h ?? return none
+  let w = tlssrv.neg_any(tlsserve.block(h))
+  if w == 0 {
+    return none
+  }
+  match rt.any_get[tlsneg.Negotiated](rt.obj_at[rt.Any](w)) {
+    Some(n) => ekm_of(n, label, context, length)
     None => none
   }
 }
@@ -672,7 +911,7 @@ struct TlsListener {
 }
 
 fn listen(net: Net, addr: Str, config: tls.ServerConfig) -> TlsListener ! NetErr uses net.listen {
-  if config.certificates.is_empty() {
+  if config.certificates.is_empty() && config.get_certificate.is_none() && config.get_config_for_client.is_none() {
     return Err(NetErr.Io(msg: LISTEN_NO_CERTS_TEXT))
   }
   TlsListener{l: net.listen(addr)?, config: config}

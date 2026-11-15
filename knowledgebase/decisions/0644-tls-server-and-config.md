@@ -31,8 +31,24 @@ rest in the same shape.
   defaults: `certificates`, `next_protos`, `client_auth`, `client_cas`.
   Later pieces add fields (T4 ticket keys, T5 callbacks, T7
   preferences, T8 key log, T10 OCSP and SCTs, T13 ECH keys). The client
-  keeps named parameters on `client` and `dial`; a `ClientConfig` comes
-  with T7, when the parameter list passes a dozen.
+  keeps named parameters on `client` and `dial`; a `ClientConfig` came
+  with T6 (2026-11-15), when the hooks took the parameter list past a
+  dozen: `client_config(c, cfg)` and `dial_config(net, addr, cfg)` take
+  every client setting, and `client` and `dial` keep their parameters
+  for the common case.
+- **Hooks (B2, 2026-11-15)** run at Go's call points, with Go's alerts:
+  the client's `verify_peer_certificate` after chain verification (and
+  with `Verify.None`, given no chains) and `verify_connection` after it,
+  both bad_certificate; `get_client_certificate` at the
+  CertificateRequest (TLS 1.3 fails with no alert, TLS 1.2 with
+  internal_error); the server's `verify_peer_certificate` on the client's
+  certificates and `verify_connection` before its Finished (1.3) or
+  before the ClientKeyExchange or the resumed ServerHello (1.2);
+  `get_config_for_client` then `get_certificate` at the ClientHello
+  (unrecognized_name when neither gives a certificate). A hook's `Err`
+  is the handshake's error text. `supports_certificate` on
+  `ClientHelloInfo` and `CertificateRequestInfo` is Go's
+  SupportsCertificate over the hello's lists, with Go's error texts.
 - **`server(c, config) -> TlsServerConn`** does not fail and does not
   handshake: as Go's `tls.Server`, the handshake runs on the first
   `handshake`, `read` or `write`, so a slow or silent client never holds

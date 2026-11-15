@@ -1,3 +1,5 @@
+exit 0
+--- stdout
 suite 4865: TLS_AES_128_GCM_SHA256
 suite 4866: TLS_AES_256_GCM_SHA384
 suite 4867: TLS_CHACHA20_POLY1305_SHA256
@@ -34,3 +36,4 @@ peer good,Xo Test CA
 chains good > Xo Test CA
 ocsp 0 scts 0 ech false
 done
+--- stderr

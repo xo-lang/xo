@@ -17,6 +17,7 @@ use native/llrt/mlkem
 use native/llrt/rand
 use native/llrt/sha256
 use native/llrt/tls13
+use native/llrt/tlsneg
 use native/llrt/tlsname
 use native/llrt/tlsrec
 use native/llrt/tlssign
@@ -91,6 +92,7 @@ const ALERT_DECODE_ERROR: Int = 50
 const ALERT_DECRYPT_ERROR: Int = 51
 const ALERT_PROTOCOL_VERSION: Int = 70
 const ALERT_INTERNAL_ERROR: Int = 80
+const ALERT_UNRECOGNIZED_NAME: Int = 112
 const ALERT_MISSING_EXTENSION: Int = 109
 const ALERT_CERTIFICATE_REQUIRED: Int = 116
 const ALERT_UNSUPPORTED_EXTENSION: Int = 110
@@ -119,6 +121,24 @@ pub struct Conf {
   pub key: Bytes
   pub alts: List[Alt]
   pub handoff: Bool
+  /// decision 0644 T7: MinVersion TLS 1.3 (no12: a TLS 1.2 client is
+  /// refused) and MaxVersion TLS 1.2 (no13: TLS 1.3 is never chosen)
+  pub no12: Bool = false
+  pub no13: Bool = false
+  /// the TLS 1.2 suites a handoff keeps (Go's CipherSuites; none: all)
+  pub suites12: List[Int] = []
+  /// decision 0644 T6: Go's VerifyPeerCertificate (the client's
+  /// certificates and verified chains, when one was requested) and
+  /// VerifyConnection (every handshake, at Go's point); a text fails the
+  /// handshake with bad_certificate
+  pub vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)? = None
+  pub vconn: (fn(tlsneg.Negotiated) -> Str)? = None
+  /// decision 0644 T5: Go's GetConfigForClient (a Conf for the rest of
+  /// the handshake, none to keep this one) and GetCertificate (a chain
+  /// and key, none for certs) over the ClientHello; a text fails the
+  /// handshake with internal_error
+  pub for_client: (fn(tlsneg.HelloInfo) -> (Conf?, Str))? = None
+  pub get_cert: (fn(tlsneg.HelloInfo) -> (List[Bytes], Bytes, Str))? = None
   /// session tickets (Go's, decision 0202): the ticket keys (keys[0]
   /// seals; none: no tickets, no resumption), the time in Unix seconds;
   /// the tests' hooks ticket_iv (the 16 byte IV of a ticket) and age_add
@@ -185,6 +205,8 @@ pub struct Server {
   pub hrr: Bool
   /// whether the handshake resumed a session (a ticket's PSK)
   pub resumed: Bool
+  /// RFC 8446 7.5's exporter_master_secret (decision 0644 T9)
+  pub exp: Bytes = b""
   /// HANDOFF's ClientHello message and the record bytes after it
   pub hello: Bytes
   pub rest: Bytes
@@ -478,6 +500,10 @@ struct Hello {
   ids: List[Bytes]
   binders: List[Bytes]
   binders_len: Int
+  /// the ec_point_formats and every extension's type, in order (Go's
+  /// SupportedPoints and Extensions)
+  points: List[Int] = []
+  exts: List[Int] = []
 }
 
 fn no_hello() -> Hello {
@@ -544,11 +570,17 @@ fn parse_hello(m: Bytes) -> Hello {
     if !extension(h, t, d, p == m.len()) {
       return h
     }
+    if t == 11 && d.len() >= 1 {
+      for b in d[1..d.len()] {
+        h.points.push(Int(b))
+      }
+    }
     if t is 0 | 5 | 10 | 11 | 13 | 16 | 18 | 23 | 35 | 43 | 44 | 45 | 50 | 0xff01 {
       kept.push(tls13.ext(t, d))
     }
   }
   h.kept = asn1.cat(kept)
+  h.exts = seen
   h.ok = true
   h
 }
@@ -703,8 +735,24 @@ fn client_hello(var s: Server, msg: Bytes) {
     fail(s, ALERT_DECODE_ERROR, "local error: tls: error decoding message")
     return
   }
+  if let Some(f) = s.conf.for_client {
+    let (nc, e) = f(hello_info(h))
+    if !e.is_empty() {
+      fail(s, ALERT_INTERNAL_ERROR, e)
+      return
+    }
+    if let Some(x) = nc {
+      // the connection's own: the handoff and its ticket keys
+      s.conf = x with {handoff: s.conf.handoff, ticket_keys: s.conf.ticket_keys, now: s.conf.now}
+    }
+  }
   let versions = if h.versions.is_empty() { versions_from_max(h.vers) } else { h.versions }
-  if !has(versions, 0x0304) && has(versions, 0x0303) && s.conf.handoff {
+  let v13 = has(versions, 0x0304) && !s.conf.no13
+  if !v13 && has(versions, 0x0303) && s.conf.handoff && !s.conf.no12 {
+    // TLS 1.2's certificate, through GetCertificate, before the handoff
+    if !hook_cert(s, h) {
+      return
+    }
     s.hello = msg
     s.rest = tls13.cat2(s.hs, s.rin)
     s.hs = b""
@@ -712,7 +760,7 @@ fn client_hello(var s: Server, msg: Bytes) {
     s.state = HANDOFF
     return
   }
-  if !has(versions, 0x0304) {
+  if !v13 {
     fail(s, ALERT_PROTOCOL_VERSION, "tls: client offered only unsupported versions: ${hex_list(versions)}")
     return
   }
@@ -910,8 +958,7 @@ fn respond(var s: Server, h: Hello) {
     fail(s, ALERT_MISSING_EXTENSION, "local error: tls: missing extension")
     return
   }
-  if s.conf.certs.is_empty() {
-    fail(s, ALERT_INTERNAL_ERROR, "tls: no certificates configured")
+  if !hook_cert(s, h) {
     return
   }
   pick(s)
@@ -1006,6 +1053,7 @@ fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes
   let master = hkdf.extract(hash, derived2, tls13.zeros(l))
   let th2 = tr_hash(s, hash)
   s.c_ap = hkdf.expand_label(hash, master, "c ap traffic", th2, l)
+  s.exp = hkdf.expand_label(hash, master, "exp master", th2, l)
   s.wk = tlsrec.keys(s.suite, hkdf.expand_label(hash, master, "s ap traffic", th2, l))
   s.client_fin = tls13.finished_mac(hash, s.c_hs, th2)
   // Go's sendSessionTickets: the resumption secret over the transcript
@@ -1075,6 +1123,9 @@ fn client_cert(var s: Server, msg: Bytes) {
       fail(s, ALERT_CERTIFICATE_REQUIRED, "tls: client didn't provide a certificate")
       return
     }
+    if !peer_hooks(s) {
+      return
+    }
     s.tr = tls13.cat2(s.tr, msg)
     s.state = WAIT_FIN
     return
@@ -1124,8 +1175,39 @@ fn client_cert(var s: Server, msg: Bytes) {
   }
   s.peer = ders
   s.peer_leaf = Some(leaf)
+  if !peer_hooks(s) {
+    return
+  }
   s.tr = tls13.cat2(s.tr, msg)
   s.state = WAIT_CVERIFY
+}
+
+/// What is negotiated so far, for the verify hooks (decision 0644 T6).
+fn neg_now(s: Server) -> tlsneg.Negotiated { tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(s.suite), server_name: s.sni, resumed: s.resumed, peer: s.peer, verified: s.verified, curve: tlsneg.group_name(s.group), alpn: s.alpn, hrr: s.hrr, vers: 0x0304, suite: s.suite, group: s.group} }
+
+/// Go's VerifyPeerCertificate then VerifyConnection after the client's
+/// Certificate: false when one failed the handshake.
+fn peer_hooks(var s: Server) -> Bool {
+  if let Some(h) = s.conf.vpeer {
+    let why = h(s.peer, s.verified)
+    if !why.is_empty() {
+      fail(s, ALERT_BAD_CERTIFICATE, why)
+      return false
+    }
+  }
+  conn_hook(s)
+}
+
+/// Go's VerifyConnection: false when it failed the handshake.
+fn conn_hook(var s: Server) -> Bool {
+  if let Some(h) = s.conf.vconn {
+    let why = h(neg_now(s))
+    if !why.is_empty() {
+      fail(s, ALERT_BAD_CERTIFICATE, why)
+      return false
+    }
+  }
+  true
 }
 
 /// The client's CertificateVerify: its signature over the transcript up
@@ -1216,6 +1298,37 @@ fn has_byte(b: Bytes, x: Int) -> Bool {
   false
 }
 
+/// Go's getCertificate with GetCertificate (when there are no certs or
+/// the client sent a name; its chain replaces them), then no certs at all
+/// fails: false when the handshake failed.
+fn hook_cert(var s: Server, h: Hello) -> Bool {
+  if let Some(g) = s.conf.get_cert {
+    if s.conf.certs.is_empty() || h.name != "" {
+      let (cc, ck, e) = g(hello_info(h))
+      if !e.is_empty() {
+        fail(s, ALERT_INTERNAL_ERROR, e)
+        return false
+      }
+      if !cc.is_empty() {
+        s.conf.certs = cc
+        s.conf.key = ck
+        s.conf.alts = []
+      }
+    }
+  }
+  if s.conf.certs.is_empty() {
+    fail(s, ALERT_UNRECOGNIZED_NAME, "tls: no certificates configured")
+    return false
+  }
+  true
+}
+
+/// Go's clientHelloInfo for h.
+fn hello_info(h: Hello) -> tlsneg.HelloInfo {
+  let versions = if h.versions.is_empty() { versions_from_max(h.vers) } else { h.versions }
+  tlsneg.HelloInfo{suites: h.suites, server_name: h.name, curves: h.groups, points: h.points, schemes: h.algs, protos: h.alpn, versions: versions, exts: h.exts}
+}
+
 /// Go's getCertificate among Conf.certs and Conf.alts: the first chain
 /// whose leaf is valid for the client's server name becomes Conf.certs.
 fn pick(var s: Server) {
@@ -1278,6 +1391,11 @@ fn tr_hash_with(var s: Server, hash: Int, msg: Bytes) -> Bytes {
 /// Go's readClientFinished: the client's Finished, then its application
 /// keys for reading.
 fn finished(var s: Server, msg: Bytes) {
+  // Go's readClientCertificate without a request: VerifyConnection
+  // before the client's Finished
+  if !s.cauth && !conn_hook(s) {
+    return
+  }
   if s.cauth {
     // client authentication: the Finished covers the client's
     // Certificate and CertificateVerify too

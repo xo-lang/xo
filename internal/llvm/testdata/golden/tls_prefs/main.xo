@@ -1,0 +1,125 @@
+// std/tls's version, suite and curve settings (decision 0644 T7): Go's
+// MinVersion, MaxVersion, CipherSuites and CurvePreferences on both
+// ends, and CipherSuites and InsecureCipherSuites (tls_test.go
+// TestCipherSuites, handshake_server_test.go TestCipherSuitePreference
+// and TestTLS12OnlyCipherSuites, the version cases of TestVersion).
+// Each case runs tls.dial against a tls.listen server; both ends print
+// what they negotiated or why they failed.
+use std/tls
+use std/x509
+use std/crypto
+use std/base64
+use std/netip
+
+struct Issued {
+  cert: x509.Certificate
+  key: crypto.PrivateKey
+}
+
+/// A PEM block of der on one line (PEM readers ignore line lengths).
+fn pem_block(kind: Str, der: Bytes) -> Bytes {
+  "-----BEGIN ${kind}-----\n${base64.encode(der)}\n-----END ${kind}-----\n".bytes()
+}
+
+fn issue(os: Os, name: Str, parent: Issued?, ca: Bool, eku: List[x509.ExtKeyUsage], now: Time) -> Issued uses rand {
+  let key = crypto.generate_key(os.rand, crypto.KeyAlg.EcdsaP256).or_fault("key")
+  let usage = if ca { [x509.KeyUsage.CertSign, x509.KeyUsage.DigitalSignature] } else { [x509.KeyUsage.DigitalSignature] }
+  let ips = if ca { [] } else { [netip.parse_addr("127.0.0.1").or_fault("ip")] }
+  let t = x509.Template{subject: x509.Name{common_name: name}, not_before: now - 1h, not_after: now + 24h, ip_addresses: ips, is_ca: ca, key_usage: usage, ext_key_usage: eku}
+  let (pc, pk) = match parent {
+    Some(p) => (Some(p.cert), p.key)
+    None => (None, key)
+  }
+  Issued{cert: x509.create_certificate(os.rand, t, key.public_key(), pc, pk).or_fault("cert ${name}"), key: key}
+}
+
+fn tls_pair(i: Issued, chain: List[x509.Certificate]) -> tls.TlsCert {
+  var pem = i.cert.pem()
+  for c in chain {
+    pem = pem + c.pem()
+  }
+  tls.cert(pem, pem_block("PRIVATE KEY", crypto.marshal_private_key(i.key))).or_fault("pair")
+}
+
+fn show(s: tls.ConnState) -> Str { "${tls.version_name(s.version)} ${tls.cipher_suite_name(s.cipher_suite)} ${tls.curve_name(s.curve_id)}" }
+
+fn serve_one(l: tls.TlsListener) -> Str uses net {
+  let c = match l.accept() {
+    Ok(c) => c
+    Err(e) => return "accept: ${e}"
+  }
+  let r = match c.handshake() {
+    Ok(_) => "server ${show(c.state())}"
+    Err(e) => "server: ${e}"
+  }
+  c.close()
+  r
+}
+
+struct Case {
+  label: Str
+  server: tls.ServerConfig
+  min_version: Int = 0
+  max_version: Int = 0
+  cipher_suites: List[Int] = []
+  curve_preferences: List[Int] = []
+}
+
+fn main(os: Os) uses net, stdio, rand, clock {
+  for cs in tls.cipher_suites() {
+    os.stdio.println("${cs.id} ${cs.name} ${cs.supported_versions.map(tls.version_name).join(",")} insecure ${cs.insecure}")
+  }
+  os.stdio.println("insecure suites: ${tls.insecure_cipher_suites().len()}")
+  for id in [tls.CURVE_P256, tls.CURVE_P384, tls.CURVE_P521, tls.X25519, tls.X25519_MLKEM768, tls.SECP256R1_MLKEM768, tls.SECP384R1_MLKEM1024] {
+    os.stdio.println("curve ${id} ${tls.curve_name(id)}")
+  }
+  let now = os.clock.now()
+  let ca = issue(os, "Xo Test CA", None, true, [], now)
+  let server = issue(os, "server", Some(ca), false, [x509.ExtKeyUsage.ServerAuth], now)
+  let roots = tls.roots_of([ca.cert]).or_fault("roots")
+  let base = tls.ServerConfig{certificates: [tls_pair(server, [])]}
+  let cases = [
+    Case{label: "defaults", server: base},
+    Case{label: "client max 1.2", server: base, max_version: tls.VERSION_TLS12},
+    Case{label: "server max 1.2", server: tls.ServerConfig{certificates: base.certificates, max_version: tls.VERSION_TLS12}},
+    Case{label: "client min 1.3, server max 1.2", server: tls.ServerConfig{certificates: base.certificates, max_version: tls.VERSION_TLS12}, min_version: tls.VERSION_TLS13},
+    Case{label: "client max 1.2, server min 1.3", server: tls.ServerConfig{certificates: base.certificates, min_version: tls.VERSION_TLS13}, max_version: tls.VERSION_TLS12},
+    Case{label: "client min 1.3 max 1.2", server: base, min_version: tls.VERSION_TLS13, max_version: tls.VERSION_TLS12},
+    Case{label: "client suite AES-256-GCM", server: base, max_version: tls.VERSION_TLS12, cipher_suites: [tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384]},
+    Case{label: "client suites reversed", server: base, max_version: tls.VERSION_TLS12, cipher_suites: [tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA, tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256]},
+    Case{label: "server suite ChaCha20", server: tls.ServerConfig{certificates: base.certificates, cipher_suites: [tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256]}, max_version: tls.VERSION_TLS12},
+    Case{label: "no common suite", server: tls.ServerConfig{certificates: base.certificates, cipher_suites: [tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA]}, max_version: tls.VERSION_TLS12, cipher_suites: [tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384]},
+    Case{label: "1.3 ignores cipher_suites", server: tls.ServerConfig{certificates: base.certificates, cipher_suites: [tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA]}},
+    Case{label: "client curve P-256", server: base, curve_preferences: [tls.CURVE_P256]},
+    Case{label: "client curves X25519 and P-384", server: base, curve_preferences: [tls.CURVE_P384, tls.X25519]},
+    Case{label: "server curve P-384 (retry)", server: tls.ServerConfig{certificates: base.certificates, curve_preferences: [tls.CURVE_P384]}},
+    Case{label: "1.2 curve P-521", server: tls.ServerConfig{certificates: base.certificates, curve_preferences: [tls.CURVE_P521]}, max_version: tls.VERSION_TLS12},
+    Case{label: "no common curve", server: tls.ServerConfig{certificates: base.certificates, curve_preferences: [tls.CURVE_P521]}, curve_preferences: [tls.X25519]},
+  ]
+  for k in cases {
+    let tl = tls.listen(os.net, "127.0.0.1:0", k.server).or_fault("listen")
+    scope s {
+      let t = s.spawn(fn() -> Str { serve_one(tl) })
+      let client = match tls.dial(os.net, tl.addr(), server_name: "127.0.0.1", roots: Some(roots), timeout: Some(5s), min_version: k.min_version, max_version: k.max_version, cipher_suites: k.cipher_suites, curve_preferences: k.curve_preferences) {
+        Ok(c) => {
+          let r = "client ${show(c.state())}"
+          c.close()
+          r
+        }
+        Err(e) => "client: ${e}"
+      }
+      var srv = ""
+      if k.label == "client min 1.3 max 1.2" {
+        // the client sent nothing: unblock the server's accept
+        os.net.dial(tl.addr()).or_fault("raw dial").close()
+        let _ = t.await
+        srv = "server: (no hello)"
+      } else {
+        srv = t.await
+      }
+      os.stdio.println("${k.label}: ${client}; ${srv}")
+    }
+    tl.close()
+  }
+  os.stdio.println("done")
+}

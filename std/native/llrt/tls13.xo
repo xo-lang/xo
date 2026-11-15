@@ -21,6 +21,7 @@ use native/llrt/rand
 use native/llrt/sha256
 use native/llrt/tlscert
 use native/llrt/tlsname
+use native/llrt/tlsneg
 use native/llrt/tlsrec
 use native/llrt/tlssign
 use native/llrt/tzrules
@@ -124,6 +125,10 @@ pub struct Conf {
   pub suites: List[Int]
   pub legacy_suites: List[Int]
   pub groups: List[Int]
+  /// MaxVersion TLS 1.2 (decision 0644 T7): the hello offers only TLS
+  /// 1.2 (legacy_suites), and a server's TLS 1.3 or downgrade mark is
+  /// not checked against a version this client never offered
+  pub no13: Bool = false
   pub insecure: Bool
   /// macOS with the system's roots: the Security framework's table (Go
   /// verifies with the framework there, tlscert.apple_trust); 0 for
@@ -141,6 +146,16 @@ pub struct Conf {
   /// when it names none)
   pub certs: List[Bytes] = []
   pub cert_key: Bytes = b""
+  /// decision 0644 T6: Go's VerifyPeerCertificate and VerifyConnection
+  /// as one hook, run once the server's chain is checked (or not, with
+  /// insecure) over what is negotiated so far; its text fails the
+  /// handshake with bad_certificate ("" passes)
+  pub vhook: (fn(tlsneg.Negotiated) -> Str)? = None
+  /// Go's GetClientCertificate: asked at a CertificateRequest with its
+  /// certificate_authorities, signature schemes and the version; the
+  /// chain and key it gives (an empty chain sends none), or the error's
+  /// text
+  pub get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None
   pub hello: Bytes
   pub random: Bytes
   pub sid: Bytes
@@ -211,6 +226,9 @@ pub struct Client {
   hs_secret: Bytes
   c_hs: Bytes
   s_hs: Bytes
+  /// RFC 8446 7.5's exporter_master_secret (Go's ExportKeyingMaterial;
+  /// decision 0644 T9), set with the application keys
+  pub exp: Bytes = b""
   rk: tlsrec.Keys
   wk: tlsrec.Keys
   pub handoff: Bytes
@@ -475,8 +493,10 @@ fn hello(c: Client) -> Bytes {
   for s in cf.legacy_suites {
     suites.push(u16(s))
   }
-  for s in cf.suites {
-    suites.push(u16(s))
+  if !cf.no13 {
+    for s in cf.suites {
+      suites.push(u16(s))
+    }
   }
   var groups: List[Bytes] = []
   for g in cf.groups {
@@ -503,7 +523,7 @@ fn hello(c: Client) -> Bytes {
     if !protos.is_empty() {
       exts.push(ext(EXT_ALPN, vec16(asn1.cat(protos))))
     }
-    exts.push(ext(EXT_SUPPORTED_VERSIONS, vec8(cat2(u16(0x0304), u16(0x0303)))))
+    exts.push(ext(EXT_SUPPORTED_VERSIONS, vec8(if cf.no13 { u16(0x0303) } else { cat2(u16(0x0304), u16(0x0303)) })))
   } else {
     exts.push(ext(EXT_SUPPORTED_GROUPS, vec16(asn1.cat(groups))))
     exts.push(ext(EXT_SIGNATURE_ALGORITHMS, vec16(u16s(schemes()))))
@@ -639,14 +659,14 @@ fn server_hello(var c: Client, msg: Bytes) {
   }
   if h.version == 0x0303 && !c.conf.legacy_suites.is_empty() && !c.hrr {
     // RFC 8446 4.1.3: a server that speaks TLS 1.3 marks a downgrade
-    if h.random[24..32] == b"DOWNGRD\x01" {
+    if !c.conf.no13 && h.random[24..32] == b"DOWNGRD\x01" {
       fail(c, ALERT_ILLEGAL_PARAMETER, "tls: downgrade attempt detected, possibly due to a MitM attack or a broken middlebox")
       return
     }
     c.state = HANDOFF
     return
   }
-  if h.version != 0x0304 {
+  if h.version != 0x0304 || c.conf.no13 {
     fail(c, ALERT_PROTOCOL_VERSION, "tls: server selected unsupported protocol version ${hex(h.version)}")
     return
   }
@@ -915,8 +935,28 @@ fn certificate(var c: Client, msg: Bytes) {
     }
   }
   c.peer = certs
+  if let Some(h) = c.conf.vhook {
+    let why = h(tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(c.suite), server_name: sni_of(c.conf.host), resumed: false, peer: ders, verified: chain_ders(c.verified), curve: tlsneg.group_name(c.share_group), alpn: c.alpn, hrr: c.hrr, vers: 0x0304, suite: c.suite, group: c.share_group})
+    if !why.is_empty() {
+      fail(c, ALERT_BAD_CERTIFICATE, why)
+      return
+    }
+  }
   c.tr = cat2(c.tr, msg)
   c.state = WAIT_CV
+}
+
+/// The DERs of each chain.
+pub fn chain_ders(chains: List[List[x509.Cert]]) -> List[List[Bytes]] {
+  var out: List[List[Bytes]] = []
+  for ch in chains {
+    var l: List[Bytes] = []
+    for x in ch {
+      l.push(x.raw)
+    }
+    out.push(l)
+  }
+  out
 }
 
 /// The text of a client's failed verification of a server's chain (FakeNet.handle_tls, decision 0544), "" when it
@@ -1041,13 +1081,13 @@ pub fn handshake_secrets(hash: Int, shared: Bytes, tr: Bytes) -> List[Bytes] {
 
 /// RFC 8446 7.1's application traffic secrets from the handshake secret
 /// over the transcript through the server's Finished: the client's, then
-/// the server's.
+/// the server's, then the exporter master secret.
 pub fn app_secrets(hash: Int, hs: Bytes, tr: Bytes) -> List[Bytes] {
   let l = sha256.size(hash)
   let derived = hkdf.expand_label(hash, hs, "derived", sha256.sum(hash, b""), l)
   let master = hkdf.extract(hash, derived, zeros(l))
   let th = sha256.sum(hash, tr)
-  [hkdf.expand_label(hash, master, "c ap traffic", th, l), hkdf.expand_label(hash, master, "s ap traffic", th, l)]
+  [hkdf.expand_label(hash, master, "c ap traffic", th, l), hkdf.expand_label(hash, master, "s ap traffic", th, l), hkdf.expand_label(hash, master, "exp master", th, l)]
 }
 
 /// The Finished verify data of a base traffic secret over the transcript
@@ -1064,6 +1104,43 @@ pub fn finished_mac(hash: Int, base: Bytes, th: Bytes) -> Bytes {
 /// CertificateRequest with, 0 when it has none to present: no
 /// certificate, none of its chain issued by a named CA, or no scheme the
 /// server verifies that its key signs (Go's SupportsCertificate).
+/// Go's CertificateRequestInfo.SupportsCertificate over a chain (DER,
+/// the leaf first) and its key: "" when the key signs with one of
+/// schemes and one of the chain was issued by one of cas ([]: any).
+pub fn supports(certs: List[Bytes], key: Bytes, cas: List[Bytes], schemes: List[Int]) -> Str {
+  if certs.is_empty() {
+    return "tls: peer doesn't support any of the certificate's signature algorithms"
+  }
+  var chain: List[x509.Cert] = []
+  for d in certs {
+    let r = x509.parse(d)
+    if r.err != "" {
+      return "failed to parse certificate #${chain.len()} in the chain: ${r.err}"
+    }
+    chain.push(r.cert)
+  }
+  var signs = false
+  for sc in tlssign.schemes_for(chain[0].key_alg, key) {
+    if has(schemes, sc) {
+      signs = true
+    }
+  }
+  if !signs {
+    return "tls: peer doesn't support any of the certificate's signature algorithms"
+  }
+  if cas.is_empty() {
+    return ""
+  }
+  for x in chain {
+    for ca in cas {
+      if ct.bytes_equal(x.issuer, ca) {
+        return ""
+      }
+    }
+  }
+  "chain is not signed by an acceptable CA"
+}
+
 fn client_scheme(c: Client) -> Int {
   if c.conf.certs.is_empty() {
     return 0
@@ -1112,11 +1189,28 @@ fn finished(var c: Client, msg: Bytes) {
   let ap = app_secrets(hash, c.hs_secret, c.tr)
   let c_ap = ap[0]
   let s_ap = ap[1]
+  c.exp = ap[2]
   c.rk = tlsrec.keys(c.suite, s_ap)
   // the client's flight: an empty Certificate when one was asked for,
   // then Finished
   var flight = b""
   if c.cert_req {
+    if let Some(g) = c.conf.get_cert {
+      let (cc, ck, e) = g(c.req_cas, c.req_schemes, 0x0304)
+      if !e.is_empty() {
+        // Go's TLS 1.3 client returns the error without an alert
+        fail(c, -1, e)
+        return
+      }
+      c.conf.certs = cc
+      c.conf.cert_key = ck
+      // what the hook gives is sent, whatever CAs the server named
+      c.req_cas = []
+      if !cc.is_empty() && client_scheme(c) == 0 {
+        fail(c, ALERT_HANDSHAKE_FAILURE, "tls: peer doesn't support any of the certificate's signature algorithms")
+        return
+      }
+    }
     let scheme = client_scheme(c)
     if scheme == 0 {
       let cm = message(HS_CERTIFICATE, asn1.cat([vec8(c.req_ctx), b"\x00\x00\x00"]))
@@ -1175,7 +1269,9 @@ fn fail(var c: Client, alert: Int, msg: Str) -> Client {
   if c.state != FAILED {
     c.err = msg
     c.state = FAILED
-    c.out = cat2(c.out, tlsrec.seal(c.wk, tlsrec.CT_ALERT, asn1.cat([u8(2), u8(alert)]), 0x0303))
+    if alert >= 0 {
+      c.out = cat2(c.out, tlsrec.seal(c.wk, tlsrec.CT_ALERT, asn1.cat([u8(2), u8(alert)]), 0x0303))
+    }
   }
   c
 }
@@ -1313,6 +1409,10 @@ fn has(xs: List[Int], x: Int) -> Bool {
   }
   false
 }
+
+/// Go's hostnameInSNI: the name a client sends and reports
+/// (ConnectionState.ServerName), "" for an IP address.
+pub fn sni_of(host: Str) -> Str { if host == "" || is_ip(host) { "" } else { trim_dot(host) } }
 
 fn is_ip(h: Str) -> Bool {
   match tlsname.parse_ip(h) {
@@ -1475,4 +1575,13 @@ fn feed_in(var c: Client, data: Bytes, chunk: Int) {
     feed(c, data[i..j])
     i = j
   }
+}
+
+/// RFC 8446 7.5's exporter (Go's ExporterMasterSecret.Exporter, decision
+/// 0644 T9): Derive-Secret(exp, label, "") expanded with "exporter" over
+/// the context's hash (an absent context hashes as empty).
+pub fn exporter(suite: Int, exp: Bytes, label: Str, context: Bytes, length: Int) -> Bytes {
+  let hash = tlsrec.suite_hash(suite)
+  let secret = hkdf.expand_label(hash, exp, label, sha256.sum(hash, b""), sha256.size(hash))
+  hkdf.expand_label(hash, secret, "exporter", sha256.sum(hash, context), length)
 }

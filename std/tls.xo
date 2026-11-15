@@ -56,15 +56,75 @@ struct TlsConn {}
 
 /// Runs a TLS client handshake on c, which belongs to the result from
 /// then on (std.md 27). cert is the certificate presented when the
-/// server asks for one (decision 0433).
-fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None) -> TlsConn ! NetErr uses net.dial
+/// server asks for one (decision 0433). min_version and max_version are
+/// Go's MinVersion and MaxVersion (VERSION_TLS12, VERSION_TLS13; 0: TLS
+/// 1.2 and 1.3); cipher_suites are the TLS 1.2 suites offered and
+/// curve_preferences the key exchanges, each in Go's order whatever the
+/// list's ([]: Go's defaults; decision 0644 T7).
+fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None, min_version: Int = 0, max_version: Int = 0, cipher_suites: List[Int] = [], curve_preferences: List[Int] = []) -> TlsConn ! NetErr uses net.dial
 /// Dials addr on net and runs `client` on the connection (Go's tls.Dial
 /// and DialWithDialer): server_name defaults to addr's host (an IPv6
 /// literal's brackets dropped). timeout, when given, bounds the dial and
 /// the handshake together (Go's Dialer.Timeout); the connection's
 /// deadlines are clear again in the result. The other arguments are
 /// client's.
-fn dial(net: Net, addr: Str, server_name: Str = "", roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None, timeout: Duration? = None) -> TlsConn ! NetErr uses net.dial
+fn dial(net: Net, addr: Str, server_name: Str = "", roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None, timeout: Duration? = None, min_version: Int = 0, max_version: Int = 0, cipher_suites: List[Int] = [], curve_preferences: List[Int] = []) -> TlsConn ! NetErr uses net.dial
+/// A TLS client's settings (Go's Config, the fields a client reads;
+/// decision 0644 T6): `client` and `dial`'s named arguments plus Go's
+/// verification and certificate hooks. A plain value: each
+/// client_config or dial_config call reads the one it is given.
+struct ClientConfig {
+  /// the name sent (SNI) and verified (Go's ServerName); dial_config's
+  /// "" is addr's host
+  server_name: Str = ""
+  /// the roots that verify the server (Go's RootCAs; None: the system's)
+  roots: Roots? = None
+  /// what is verified (Verify.None is Go's InsecureSkipVerify, which
+  /// needs verify_peer_certificate or verify_connection to pin)
+  verify: Verify = Verify.Full
+  /// the ALPN protocols offered, most preferred first (Go's NextProtos)
+  next_protos: List[Str] = []
+  /// the client certificates: the first one a CertificateRequest
+  /// accepts is sent (Go's Certificates), none when no one does
+  certificates: List[TlsCert] = []
+  /// Go's VerifyPeerCertificate: the server's certificates (DER, the
+  /// leaf first) and the chains that verified them ([] with
+  /// Verify.None), after the normal verification; an Err fails the
+  /// handshake with its text
+  verify_peer_certificate: (fn(List[Bytes], List[List[x509.Certificate]]) -> () ! Str)? = None
+  /// Go's VerifyConnection: the state so far (handshake_complete false)
+  /// after verify_peer_certificate; an Err fails the handshake
+  verify_connection: (fn(ConnState) -> () ! Str)? = None
+  /// Go's GetClientCertificate: asked when the server requests a
+  /// certificate, in place of certificates; None sends none, and an Err
+  /// fails the handshake with its text
+  get_client_certificate: (fn(CertificateRequestInfo) -> TlsCert? ! Str)? = None
+  /// as client's (decision 0644 T7)
+  min_version: Int = 0
+  max_version: Int = 0
+  cipher_suites: List[Int] = []
+  curve_preferences: List[Int] = []
+}
+
+/// What a server's CertificateRequest asks for (Go's
+/// CertificateRequestInfo): the DER names of the CAs it accepts ([]:
+/// any), the signature schemes it verifies, and the version.
+struct CertificateRequestInfo {
+  acceptable_cas: List[Bytes]
+  signature_schemes: List[Int]
+  version: Int
+}
+
+/// Go's SupportsCertificate: Ok when cert signs with a scheme the
+/// request lists and one of its chain was issued by an acceptable CA.
+fn (i: CertificateRequestInfo) supports_certificate(cert: TlsCert) -> () ! TlsErr
+
+/// The TLS client on connection c with config (Go's tls.Client and
+/// Handshake): as client, with ClientConfig's hooks.
+fn client_config(c: Conn, config: ClientConfig) -> TlsConn ! NetErr uses net.dial
+/// Dials addr on net and runs client_config (Go's tls.Dial,
+/// DialWithDialer with Timeout): as dial.
+fn dial_config(net: Net, addr: Str, config: ClientConfig, timeout: Duration? = None) -> TlsConn ! NetErr uses net.dial
 /// Reads a PEM certificate chain and its PEM private key from two files
 /// (Go's tls.LoadX509KeyPair); a file that cannot be read is the Err's
 /// text, as `open NAME: ...`.
@@ -139,6 +199,61 @@ struct ConnState {
 /// with no suite, curve or certificates.
 fn (t: TlsConn) state() -> ConnState
 
+/// Go's ConnectionState.ExportKeyingMaterial (RFC 5705; TLS 1.3's RFC
+/// 8446 7.5): length bytes of keying material for label and context
+/// (None is Go's nil context, which TLS 1.2 tells apart from an empty
+/// one), with Go's errors: a reserved label, a context of 64 KiB or more,
+/// and TLS 1.2 without Extended Master Secret (decision 0644 T9).
+fn (t: TlsConn) export_keying_material(label: Str, context: Bytes?, length: Int) -> Bytes ! TlsErr
+
+/// Go's protocol versions (VersionTLS10 to VersionTLS13); Xo speaks 1.2
+/// and 1.3.
+const VERSION_TLS10: Int = 0x0301
+const VERSION_TLS11: Int = 0x0302
+const VERSION_TLS12: Int = 0x0303
+const VERSION_TLS13: Int = 0x0304
+
+/// Go's cipher suite IDs for the suites Xo implements.
+const TLS_AES_128_GCM_SHA256: Int = 0x1301
+const TLS_AES_256_GCM_SHA384: Int = 0x1302
+const TLS_CHACHA20_POLY1305_SHA256: Int = 0x1303
+const TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA: Int = 0xc009
+const TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA: Int = 0xc00a
+const TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA: Int = 0xc013
+const TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA: Int = 0xc014
+const TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256: Int = 0xc02b
+const TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384: Int = 0xc02c
+const TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256: Int = 0xc02f
+const TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384: Int = 0xc030
+const TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256: Int = 0xcca8
+const TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256: Int = 0xcca9
+
+/// Go's CurveID values.
+const CURVE_P256: Int = 23
+const CURVE_P384: Int = 24
+const CURVE_P521: Int = 25
+const X25519: Int = 29
+const SECP256R1_MLKEM768: Int = 4587
+const X25519_MLKEM768: Int = 4588
+const SECP384R1_MLKEM1024: Int = 4589
+
+/// A cipher suite (Go's tls.CipherSuite).
+struct CipherSuite {
+  id: Int
+  name: Str
+  supported_versions: List[Int]
+  insecure: Bool
+}
+
+/// The suites Xo implements that are not insecure, in Go's
+/// tls.CipherSuites order.
+fn cipher_suites() -> List[CipherSuite]
+
+/// The insecure suites Xo implements (Go's tls.InsecureCipherSuites);
+/// Xo implements none, so it is empty: Go's RC4, 3DES, CBC-SHA256 and
+/// RSA key exchange suites are not offered or accepted.
+fn insecure_cipher_suites() -> List[CipherSuite]
+
 /// Go's tls.CipherSuiteName: the suite's name, `0x%04X` for one Go does
 /// not name.
 fn cipher_suite_name(id: Int) -> Str
@@ -165,7 +280,56 @@ struct ServerConfig {
   /// the roots that verify client certificates (Go's ClientCAs; None:
   /// no CA is named and a certificate that must verify fails)
   client_cas: Roots? = None
+  /// Go's MinVersion and MaxVersion (0: TLS 1.2 and 1.3; decision 0644 T7)
+  min_version: Int = 0
+  max_version: Int = 0
+  /// the TLS 1.2 suites accepted (Go's CipherSuites; []: Go's defaults);
+  /// the server picks in Go's order, whatever the list's
+  cipher_suites: List[Int] = []
+  /// the key exchanges accepted (Go's CurvePreferences; []: Go's
+  /// defaults), in Go's order
+  curve_preferences: List[Int] = []
+  /// Go's VerifyPeerCertificate: the client's certificates (DER, the
+  /// leaf first; [] when it sent none) and the chains that verified
+  /// them, when client_auth asks for one; an Err fails the handshake
+  /// (decision 0644 T6)
+  verify_peer_certificate: (fn(List[Bytes], List[List[x509.Certificate]]) -> () ! Str)? = None
+  /// Go's VerifyConnection: the state so far (handshake_complete false)
+  /// on every handshake, resumptions too; an Err fails it
+  verify_connection: (fn(ConnState) -> () ! Str)? = None
+  /// Go's GetCertificate: the certificate for a ClientHello (called
+  /// when certificates is empty or the client sent a server name); None
+  /// falls back to certificates, and an Err fails the handshake with its
+  /// text (decision 0644 T5)
+  get_certificate: (fn(ClientHelloInfo) -> TlsCert? ! Str)? = None
+  /// Go's GetConfigForClient: the settings for the rest of a handshake
+  /// from its ClientHello (their own get_config_for_client is not
+  /// called); None keeps these, and an Err fails the handshake
+  get_config_for_client: (fn(ClientHelloInfo) -> ServerConfig? ! Str)? = None
 }
+
+/// What a client's ClientHello offers (Go's ClientHelloInfo; decision
+/// 0644 T5): its cipher suites, server name (SNI; "" for none), curves
+/// and point formats, signature schemes, ALPN protocols, versions and
+/// the extension types in order, with the connection's addresses.
+struct ClientHelloInfo {
+  cipher_suites: List[Int]
+  server_name: Str
+  supported_curves: List[Int]
+  supported_points: List[Int]
+  signature_schemes: List[Int]
+  supported_protos: List[Str]
+  supported_versions: List[Int]
+  extensions: List[Int]
+  local_addr: Str
+  remote_addr: Str
+}
+
+/// Go's ClientHelloInfo.SupportsCertificate under Go's default settings:
+/// Ok when cert can serve this client (a common version, the server name,
+/// a signature scheme, and for TLS 1.2 an ECDHE curve and a suite for its
+/// key), else Go's reason.
+fn (i: ClientHelloInfo) supports_certificate(cert: TlsCert) -> () ! TlsErr
 
 /// The server side of a TLS connection (Go's tls.Server's Conn; decision
 /// 0644): its reads and writes are `net.listen`. A handle.
@@ -194,6 +358,8 @@ fn (t: TlsServerConn) set_write_deadline(clock: Clock, at: Time?) uses clock
 /// false and the rest empty. peer_certificates are the client's,
 /// verified_chains the chains that verified them.
 fn (t: TlsServerConn) state() -> ConnState
+/// As TlsConn's (decision 0644 T9).
+fn (t: TlsServerConn) export_keying_material(label: Str, context: Bytes?, length: Int) -> Bytes ! TlsErr
 fn (t: TlsServerConn) local_addr() -> Str
 fn (t: TlsServerConn) remote_addr() -> Str
 /// The connection under the TLS one (Go's Conn.NetConn).

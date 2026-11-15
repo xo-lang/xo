@@ -1,0 +1,169 @@
+// std/tls's server certificate and configuration hooks (decision 0644
+// T5): ServerConfig.get_certificate and get_config_for_client over a
+// ClientHelloInfo, and ClientHelloInfo.supports_certificate, on TLS 1.3
+// and 1.2 (handshake_server_test.go TestHandshakeServerSNIGetCertificate,
+// TestGetConfigForClient; common_test.go TestClientHelloInfo_SupportsCertificate's
+// cases). Both ends print what they saw.
+use std/tls
+use std/x509
+use std/crypto
+use std/base64
+use std/netip
+
+struct Issued {
+  cert: x509.Certificate
+  key: crypto.PrivateKey
+}
+
+/// A PEM block of der on one line (PEM readers ignore line lengths).
+fn pem_block(kind: Str, der: Bytes) -> Bytes {
+  "-----BEGIN ${kind}-----\n${base64.encode(der)}\n-----END ${kind}-----\n".bytes()
+}
+
+fn issue(os: Os, name: Str, parent: Issued?, ca: Bool, eku: List[x509.ExtKeyUsage], now: Time, alg: crypto.KeyAlg = crypto.KeyAlg.EcdsaP256, dns: List[Str] = []) -> Issued uses rand {
+  let key = crypto.generate_key(os.rand, alg).or_fault("key")
+  let usage = if ca { [x509.KeyUsage.CertSign, x509.KeyUsage.DigitalSignature] } else { [x509.KeyUsage.DigitalSignature] }
+  let ips = if ca { [] } else { [netip.parse_addr("127.0.0.1").or_fault("ip")] }
+  let t = x509.Template{subject: x509.Name{common_name: name}, not_before: now - 1h, not_after: now + 24h, ip_addresses: ips, dns_names: dns, is_ca: ca, key_usage: usage, ext_key_usage: eku}
+  let (pc, pk) = match parent {
+    Some(p) => (Some(p.cert), p.key)
+    None => (None, key)
+  }
+  Issued{cert: x509.create_certificate(os.rand, t, key.public_key(), pc, pk).or_fault("cert ${name}"), key: key}
+}
+
+fn tls_pair(i: Issued, chain: List[x509.Certificate]) -> tls.TlsCert {
+  var pem = i.cert.pem()
+  for c in chain {
+    pem = pem + c.pem()
+  }
+  tls.cert(pem, pem_block("PRIVATE KEY", crypto.marshal_private_key(i.key))).or_fault("pair")
+}
+
+
+fn cn(l: List[x509.Certificate]) -> Str { if l.is_empty() { "none" } else { l[0].subject.common_name } }
+
+fn serve_one(l: tls.TlsListener) -> Str uses net {
+  let c = match l.accept() {
+    Ok(c) => c
+    Err(e) => return "accept: ${e}"
+  }
+  let r = match c.handshake() {
+    Ok(_) => "server ok"
+    Err(e) => "server: ${e}"
+  }
+  c.close()
+  r
+}
+
+struct Case {
+  label: Str
+  server: tls.ServerConfig
+  name: Str
+}
+
+fn info(i: tls.ClientHelloInfo) -> Str {
+  "name ${i.server_name} versions ${i.supported_versions.map(tls.version_name)} suites ${i.cipher_suites.len() > 0} curves ${i.supported_curves.len() > 0} schemes ${i.signature_schemes.len() > 0} protos ${i.supported_protos} exts ${i.extensions.contains(0) == !i.server_name.is_empty()} addrs ${i.local_addr.starts_with("127.0.0.1:")} ${i.remote_addr.starts_with("127.0.0.1:")}"
+}
+
+fn main(os: Os) uses net, stdio, rand, clock {
+  let now = os.clock.now()
+  let ca = issue(os, "Xo Test CA", None, true, [], now)
+  let srv_ip = issue(os, "ip", Some(ca), false, [x509.ExtKeyUsage.ServerAuth], now)
+  let srv_a = issue(os, "a", Some(ca), false, [x509.ExtKeyUsage.ServerAuth], now, dns: ["a.example"])
+  let srv_b = issue(os, "b", Some(ca), false, [x509.ExtKeyUsage.ServerAuth], now, dns: ["b.example"])
+  let srv_ed = issue(os, "ed", Some(ca), false, [x509.ExtKeyUsage.ServerAuth], now, alg: crypto.KeyAlg.Ed25519, dns: ["a.example"])
+  let roots = tls.roots_of([ca.cert]).or_fault("roots")
+  let ip = tls_pair(srv_ip, [])
+  let a = tls_pair(srv_a, [])
+  let b = tls_pair(srv_b, [])
+  let ed = tls_pair(srv_ed, [])
+  let seen = Mutex[List[Str]].new([])
+  for v in [tls.VERSION_TLS13, tls.VERSION_TLS12] {
+    let cases = [
+      Case{label: "get_certificate by name", name: "b.example", server: tls.ServerConfig{certificates: [], next_protos: ["http/1.1"], get_certificate: Some(fn(i: tls.ClientHelloInfo) -> tls.TlsCert? ! Str {
+        let got = info(i)
+        seen.with(fn(var l) { l.push(got) })
+        Ok(Some(if i.server_name == "a.example" { a } else { b }))
+      })}},
+      Case{label: "get_certificate gives none, no certificates", name: "a.example", server: tls.ServerConfig{certificates: [], get_certificate: Some(fn(i: tls.ClientHelloInfo) -> tls.TlsCert? ! Str { Ok(None) })}},
+      Case{label: "get_certificate gives none, certificates", name: "a.example", server: tls.ServerConfig{certificates: [a], get_certificate: Some(fn(i: tls.ClientHelloInfo) -> tls.TlsCert? ! Str { Ok(None) })}},
+      Case{label: "get_certificate fails", name: "a.example", server: tls.ServerConfig{certificates: [a], get_certificate: Some(fn(i: tls.ClientHelloInfo) -> tls.TlsCert? ! Str { Err("unknown host ${i.server_name}") })}},
+      Case{label: "get_certificate not asked without a name", name: "127.0.0.1", server: tls.ServerConfig{certificates: [ip], get_certificate: Some(fn(i: tls.ClientHelloInfo) -> tls.TlsCert? ! Str {
+        seen.with(fn(var l) { l.push("get_certificate called") })
+        Ok(None)
+      })}},
+      Case{label: "get_certificate asked without a name or certificates", name: "127.0.0.1", server: tls.ServerConfig{certificates: [], get_certificate: Some(fn(i: tls.ClientHelloInfo) -> tls.TlsCert? ! Str {
+        let got = "get_certificate name '${i.server_name}'"
+        seen.with(fn(var l) { l.push(got) })
+        Ok(Some(ip))
+      })}},
+      Case{label: "get_config_for_client swaps", name: "a.example", server: tls.ServerConfig{certificates: [b], next_protos: ["http/1.1"], get_config_for_client: Some(fn(i: tls.ClientHelloInfo) -> tls.ServerConfig? ! Str {
+        let got = info(i)
+        seen.with(fn(var l) { l.push(got) })
+        Ok(Some(tls.ServerConfig{certificates: [a], next_protos: ["h2"]}))
+      })}},
+      Case{label: "get_config_for_client caps the version", name: "a.example", server: tls.ServerConfig{certificates: [a], get_config_for_client: Some(fn(i: tls.ClientHelloInfo) -> tls.ServerConfig? ! Str { Ok(Some(tls.ServerConfig{certificates: [a], max_version: tls.VERSION_TLS12})) })}},
+      Case{label: "get_config_for_client with get_certificate", name: "b.example", server: tls.ServerConfig{certificates: [a], get_config_for_client: Some(fn(i: tls.ClientHelloInfo) -> tls.ServerConfig? ! Str { Ok(Some(tls.ServerConfig{certificates: [], get_certificate: Some(fn(j: tls.ClientHelloInfo) -> tls.TlsCert? ! Str { Ok(Some(b)) })})) })}},
+      Case{label: "get_config_for_client gives none", name: "a.example", server: tls.ServerConfig{certificates: [a], get_config_for_client: Some(fn(i: tls.ClientHelloInfo) -> tls.ServerConfig? ! Str { Ok(None) })}},
+      Case{label: "get_config_for_client fails", name: "a.example", server: tls.ServerConfig{certificates: [a], get_config_for_client: Some(fn(i: tls.ClientHelloInfo) -> tls.ServerConfig? ! Str { Err("no config for you") })}},
+      Case{label: "get_config_for_client without certificates", name: "a.example", server: tls.ServerConfig{certificates: [a], get_config_for_client: Some(fn(i: tls.ClientHelloInfo) -> tls.ServerConfig? ! Str { Ok(Some(tls.ServerConfig{certificates: []})) })}},
+      Case{label: "supports_certificate picks", name: "a.example", server: tls.ServerConfig{certificates: [], get_certificate: Some(fn(i: tls.ClientHelloInfo) -> tls.TlsCert? ! Str {
+        for c in [b, ed, a] {
+          if i.supports_certificate(c).is_ok() {
+            return Ok(Some(c))
+          }
+        }
+        Ok(None)
+      })}},
+    ]
+    os.stdio.println("== ${tls.version_name(v)}")
+    for k in cases {
+      seen.reset([])
+      let tl = tls.listen(os.net, "127.0.0.1:0", k.server).or_fault("listen")
+      scope s {
+        let t = s.spawn(fn() -> Str { serve_one(tl) })
+        let client = match tls.dial(os.net, tl.addr(), server_name: k.name, roots: Some(roots), timeout: Some(5s), max_version: v, alpn: ["h2", "http/1.1"]) {
+          Ok(c) => {
+            let st = c.state()
+            c.close()
+            "client ${tls.version_name(st.version)} cert ${cn(st.peer_certificates)} alpn '${st.negotiated_protocol}'"
+          }
+          Err(e) => "client: ${e}"
+        }
+        let srv = t.await
+        os.stdio.println("${k.label}: ${client}; ${srv}")
+        for x in seen.with(fn(l) { l }) {
+          os.stdio.println("  ${x}")
+        }
+      }
+      tl.close()
+    }
+  }
+  // Go's TestClientHelloInfo_SupportsCertificate shapes, without a connection
+  let base = tls.ClientHelloInfo{cipher_suites: [tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256], server_name: "a.example", supported_curves: [tls.X25519, tls.CURVE_P256], supported_points: [0], signature_schemes: [0x0403, 0x0804, 0x0807], supported_protos: [], supported_versions: [tls.VERSION_TLS12], extensions: [], local_addr: "", remote_addr: ""}
+  let checks = [
+    ("TLS 1.2 ECDSA", base, a),
+    ("TLS 1.3 ECDSA", base with {supported_versions: [tls.VERSION_TLS13, tls.VERSION_TLS12]}, a),
+    ("only TLS 1.0", base with {supported_versions: [0x0301]}, a),
+    ("wrong name", base with {server_name: "b.example"}, a),
+    ("no name", base with {server_name: ""}, a),
+    ("no P-256", base with {supported_curves: [tls.X25519]}, a),
+    ("no ECDHE curve", base with {supported_curves: [tls.CURVE_P521 + 100]}, a),
+    ("compressed points only", base with {supported_points: [1]}, a),
+    ("no ECDSA scheme", base with {signature_schemes: [0x0804]}, a),
+    ("no ECDSA suite", base with {cipher_suites: [tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256]}, a),
+    ("TLS 1.3 ignores suites", base with {supported_versions: [tls.VERSION_TLS13], cipher_suites: []}, a),
+    ("Ed25519", base, ed),
+    ("Ed25519 without schemes", base with {signature_schemes: []}, ed),
+    ("Ed25519 no scheme", base with {signature_schemes: [0x0403]}, ed),
+  ]
+  for (label, i, c) in checks {
+    let r = match i.supports_certificate(c) {
+      Ok(_) => "ok"
+      Err(e) => "${e}"
+    }
+    os.stdio.println("supports ${label}: ${r}")
+  }
+  os.stdio.println("done")
+}

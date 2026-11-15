@@ -21,6 +21,7 @@ use native/llrt/rand
 use native/llrt/rsa
 use native/llrt/sha256
 use native/llrt/tls12
+use native/llrt/tlsneg
 use native/llrt/tls13
 use native/llrt/tlsticket
 use native/llrt/tlsname
@@ -88,6 +89,12 @@ pub struct Conf {
   /// client certificates (mTLS), as tls13srv.xo's Conf
   pub client_auth: Int = 0
   pub client_cas: List[Bytes] = []
+  /// decision 0644 T6: Go's VerifyPeerCertificate (the client's
+  /// certificates and verified chains, when one was requested) and
+  /// VerifyConnection (every handshake, at Go's point); a text fails the
+  /// handshake with bad_certificate
+  pub vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)? = None
+  pub vconn: (fn(tlsneg.Negotiated) -> Str)? = None
   pub client_roots: List[Bytes] = []
 }
 
@@ -125,6 +132,8 @@ pub struct Server {
   cr: Bytes
   sr: Bytes
   ems: Bool
+  /// the first Finished's verify_data (RFC 5929 tls-unique; decision 0644 T9)
+  pub unique: Bytes = b""
   priv: Bytes
   master: Bytes
   next_rk: tls12.Keys
@@ -409,6 +418,10 @@ fn handshake(var s: Server, t: Int, msg: Bytes) {
   if s.state == WAIT_CKE {
     if t != tls12.HS_CLIENT_KEY_EXCHANGE {
       fail(s, tls12.ALERT_UNEXPECTED_MESSAGE, tls12.unexpected(tls12.HS_CLIENT_KEY_EXCHANGE, t))
+      return
+    }
+    // Go's VerifyConnection before the ClientKeyExchange
+    if !conn_hook(s) {
       return
     }
     client_key_exchange(s, msg)
@@ -1132,13 +1145,20 @@ fn resume_session(var s: Server, h: Hello, st: tlsticket.State) {
   s.created = st.created
   s.master = st.secret
   write(s, server_hello(s, h, h.sid))
+  // Go's doResumeHandshake: VerifyConnection after the ServerHello
+  if !conn_hook(s) {
+    return
+  }
   let kb = tls12.key_block(s.suite, s.master, s.cr, s.sr)
   s.next_rk = tls12.direction(s.suite, kb, true, b"")
   s.next_wk = tls12.direction(s.suite, kb, false, s.conf.iv)
   write(s, new_ticket(s))
   s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_CCS, b"\x01", 0x0303))
   s.wk = s.next_wk
-  let fin = tls12.message(tls12.HS_FINISHED, tls12.verify_data(s.suite, s.master, "server finished", s.tr))
+  let vd = tls12.verify_data(s.suite, s.master, "server finished", s.tr)
+  // a resumption: the server's Finished is the first
+  s.unique = vd
+  let fin = tls12.message(tls12.HS_FINISHED, vd)
   s.tr = cat2(s.tr, fin)
   s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_HANDSHAKE, fin, 0x0303))
   s.state = WAIT_CCS
@@ -1348,7 +1368,11 @@ fn client_cert(var s: Server, msg: Bytes) {
   }
   if ders.is_empty() {
     if mode == AUTH_REQUIRE_ANY || mode == AUTH_REQUIRE_AND_VERIFY {
-      fail(s, tls12.ALERT_BAD_CERTIFICATE, "tls: client didn't provide a certificate")
+      // Go's processCertsFromClient: handshake_failure before TLS 1.3
+      fail(s, tls12.ALERT_HANDSHAKE_FAILURE, "tls: client didn't provide a certificate")
+      return
+    }
+    if !peer_hooks(s) {
       return
     }
     s.tr = cat2(s.tr, msg)
@@ -1400,8 +1424,40 @@ fn client_cert(var s: Server, msg: Bytes) {
   }
   s.peer = ders
   s.peer_leaf = Some(leaf)
+  if !peer_hooks(s) {
+    return
+  }
   s.tr = cat2(s.tr, msg)
   s.state = WAIT_CKE
+}
+
+/// What is negotiated so far, for the verify hooks (decision 0644 T6).
+fn neg_now(s: Server) -> tlsneg.Negotiated { tlsneg.Negotiated{version: "TLS 1.2", cipher: tlsneg.suite_name(s.suite), server_name: s.host, resumed: s.resumed, peer: s.peer, verified: s.verified, curve: tlsneg.group_name(s.group), alpn: s.alpn, vers: 0x0303, suite: s.suite, group: s.group} }
+
+/// Go's VerifyPeerCertificate after the client's Certificate (TLS 1.2
+/// runs VerifyConnection at the ClientKeyExchange): false when it failed
+/// the handshake.
+fn peer_hooks(var s: Server) -> Bool {
+  if let Some(h) = s.conf.vpeer {
+    let why = h(s.peer, s.verified)
+    if !why.is_empty() {
+      fail(s, tls12.ALERT_BAD_CERTIFICATE, why)
+      return false
+    }
+  }
+  true
+}
+
+/// Go's VerifyConnection: false when it failed the handshake.
+fn conn_hook(var s: Server) -> Bool {
+  if let Some(h) = s.conf.vconn {
+    let why = h(neg_now(s))
+    if !why.is_empty() {
+      fail(s, tls12.ALERT_BAD_CERTIFICATE, why)
+      return false
+    }
+  }
+  true
 }
 
 /// The client's CertificateVerify: its signature over every handshake
@@ -1433,6 +1489,9 @@ fn finished(var s: Server, msg: Bytes) {
     return
   }
   s.tr = cat2(s.tr, msg)
+  if !s.resumed {
+    s.unique = want
+  }
   if s.resumed {
     s.tr = b""
     s.state = DONE
@@ -1617,3 +1676,8 @@ fn feed_in(var s: Server, data: Bytes, chunk: Int) {
     i = j
   }
 }
+
+/// What Go's ExportKeyingMaterial needs of a server connection (decision
+/// 0644 T9): the master secret, the client and server randoms, and
+/// whether Extended Master Secret was negotiated.
+pub fn ekm_parts(s: Server) -> (Bytes, Bytes, Bytes, Bool) { (s.master, s.cr, s.sr, s.ems) }

@@ -1,6 +1,9 @@
+exit 0
+--- stdout
 client remote is the listener: true
 client local: true true
 write after close_write: fails
 reply: got 18
 server: true true
 done
+--- stderr

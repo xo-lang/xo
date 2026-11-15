@@ -6,6 +6,21 @@
 
 /// The version, the suite's name (Go's CipherSuiteName), the server name
 /// the client asked for and whether a session resumed.
+/// What a ClientHello offers (Go's ClientHelloInfo, decision 0644 T5):
+/// its suites, server name, groups, point formats, signature schemes,
+/// ALPN protocols, versions (from the legacy version when it sent none)
+/// and extension types in order.
+pub struct HelloInfo {
+  pub suites: List[Int]
+  pub server_name: Str
+  pub curves: List[Int]
+  pub points: List[Int]
+  pub schemes: List[Int]
+  pub protos: List[Str]
+  pub versions: List[Int]
+  pub exts: List[Int]
+}
+
 pub struct Negotiated {
   pub version: Str
   pub cipher: Str
@@ -25,6 +40,15 @@ pub struct Negotiated {
   pub vers: Int = 0
   pub suite: Int = 0
   pub group: Int = 0
+  /// decision 0644 T9: TLS 1.3's exporter_master_secret, or TLS 1.2's
+  /// master secret, randoms and Extended Master Secret; tls-unique (TLS
+  /// 1.2's first Finished)
+  pub exp: Bytes = b""
+  pub master: Bytes = b""
+  pub cr: Bytes = b""
+  pub sr: Bytes = b""
+  pub ems: Bool = false
+  pub unique: Bytes = b""
 }
 
 /// Go's tls.CipherSuiteName: every suite Go names (its secure and
@@ -98,4 +122,22 @@ fn hex4(x: Int) -> Str {
     i -= 4
   }
   s
+}
+
+/// all in its order, less what want leaves out (want empty: all; Go's
+/// CipherSuites and CurvePreferences, whose orders it ignores).
+pub fn only(all: List[Int], want: List[Int]) -> List[Int] {
+  if want.is_empty() {
+    return all
+  }
+  var out: List[Int] = []
+  for x in all {
+    for w in want {
+      if w == x {
+        out.push(x)
+        break
+      }
+    }
+  }
+  out
 }

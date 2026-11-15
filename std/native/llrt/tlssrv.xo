@@ -21,6 +21,7 @@ use native/llrt/rsa
 use native/llrt/sock
 use native/llrt/sysio
 use native/llrt/tasks
+use native/llrt/tls12
 use native/llrt/tls12srv
 use native/llrt/tls13srv
 use native/llrt/tlsticket
@@ -506,35 +507,60 @@ fn conn_block(var cf: tls13srv.Conf, pd: Int, http: Bool) -> Int {
 }
 
 /// A connection of std/tls's server (tls.server, decision 0644 T1) on pd
-/// (wasm: the connection record): certs (the first the default, the rest
-/// chosen by SNI), the ALPN protocols offered (none: no ALPN), the client
-/// certificate mode (tls13srv.AUTH_*) and its roots; ticket keys of its
-/// own. 0 without a certificate.
-pub fn conn_cfg(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: List[x509.Cert], pd: Int) -> Int {
-  if certs.is_empty() {
+/// (wasm: the connection record) with the settings conf_of makes; 0
+/// without a certificate or a hook that gives one.
+pub fn conn_cfg(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: List[x509.Cert], pd: Int, min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)? = None, vconn: (fn(tlsneg.Negotiated) -> Str)? = None, for_client: (fn(tlsneg.HelloInfo) -> (tls13srv.Conf?, Str))? = None, get_cert: (fn(tlsneg.HelloInfo) -> (List[Bytes], Bytes, Str))? = None) -> Int {
+  if certs.is_empty() && for_client.is_none() && get_cert.is_none() {
     return 0
   }
+  var cf = conf_of(certs, alpn, client_auth, roots, min_v, max_v, suites, curves, vpeer, vconn, get_cert)
+  cf.for_client = for_client
+  conn_block(cf, pd, false)
+}
+
+/// std/tls ServerConfig's settings as the engine's (decision 0644 T1, T5
+/// to T7): certs (the first the default, the rest chosen by SNI), the
+/// ALPN protocols offered (none: no ALPN), the client certificate mode
+/// (tls13srv.AUTH_*) and its roots, Go's versions, suites and curves,
+/// the verify hooks and GetCertificate; ticket keys of its own.
+pub fn conf_of(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: List[x509.Cert], min_v: Int, max_v: Int, suites: List[Int], curves: List[Int], vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)?, vconn: (fn(tlsneg.Negotiated) -> Str)?, get_cert: (fn(tlsneg.HelloInfo) -> (List[Bytes], Bytes, Str))?) -> tls13srv.Conf {
   let now = sysio.real_ns() / 1000000000
-  var cf = tls13srv.conf(certs[0].certs, certs[0].key)
+  var cf = if certs.is_empty() { tls13srv.conf([], b"") } else { tls13srv.conf(certs[0].certs, certs[0].key) }
   cf.ticket_keys = tlsticket.rotate([], now, rand.next_bytes(32))
   cf.now = now
   cf.alpn = alpn
   cf.client_auth = client_auth
+  // decision 0644 T7: Go's MinVersion, MaxVersion, CipherSuites (TLS
+  // 1.2's) and CurvePreferences, in the default order less what is left out
+  cf.no12 = min_v > 0x0303 || (max_v != 0 && max_v < 0x0303)
+  cf.no13 = max_v != 0 && max_v < 0x0304
+  cf.groups = tlsneg.only(cf.groups, curves)
+  cf.suites12 = suites
+  // decision 0644 T6, T5: ServerConfig's hooks
+  cf.vpeer = vpeer
+  cf.vconn = vconn
+  cf.get_cert = get_cert
   for c in roots {
     cf.client_cas.push(c.subject)
     cf.client_roots.push(c.raw)
   }
-  for c in certs[1..certs.len()] {
-    cf.alts.push(tls13srv.Alt{certs: c.certs, key: c.key})
+  if !certs.is_empty() {
+    for c in certs[1..certs.len()] {
+      cf.alts.push(tls13srv.Alt{certs: c.certs, key: c.key})
+    }
   }
-  conn_block(cf, pd, false)
+  cf
 }
 
 /// Why connection t's handshake or last record failed (Go's error text),
 /// "" when it did not.
 pub fn err_text(t: Int) -> Str {
   match load(t) {
-    Some(c) => if c.s12.is_empty() { c.s.err } else { c.s12[0].err }
+    Some(c) => {
+      let e = if c.s12.is_empty() { c.s.err } else { c.s12[0].err }
+      // the client closed during the handshake: Go's io.EOF
+      if e.is_empty() && c.eof && c.done != 1 { "EOF" } else { e }
+    }
     None => ""
   }
 }
@@ -783,9 +809,9 @@ pub fn neg_any(t: Int) -> Int {
 /// What connection c's finished handshake negotiated.
 fn negotiated_of(c: Conn) -> tlsneg.Negotiated {
   if c.s12.is_empty() {
-    tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(c.s.suite), server_name: c.s.sni, resumed: c.s.resumed, peer: c.s.peer, verified: c.s.verified, curve: tlsneg.group_name(c.s.group), alpn: c.s.alpn, hrr: c.s.hrr, vers: 0x0304, suite: c.s.suite, group: c.s.group}
+    tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(c.s.suite), server_name: c.s.sni, resumed: c.s.resumed, peer: c.s.peer, verified: c.s.verified, curve: tlsneg.group_name(c.s.group), alpn: c.s.alpn, hrr: c.s.hrr, vers: 0x0304, suite: c.s.suite, group: c.s.group, exp: c.s.exp}
   } else {
-    tlsneg.Negotiated{version: "TLS 1.2", cipher: tlsneg.suite_name(c.s12[0].suite), server_name: c.s12[0].host, resumed: c.s12[0].resumed, peer: c.s12[0].peer, verified: c.s12[0].verified, curve: tlsneg.group_name(c.s12[0].group), alpn: c.s12[0].alpn, vers: 0x0303, suite: c.s12[0].suite, group: c.s12[0].group}
+    tlsneg.Negotiated{version: "TLS 1.2", cipher: tlsneg.suite_name(c.s12[0].suite), server_name: c.s12[0].host, resumed: c.s12[0].resumed, peer: c.s12[0].peer, verified: c.s12[0].verified, curve: tlsneg.group_name(c.s12[0].group), alpn: c.s12[0].alpn, vers: 0x0303, suite: c.s12[0].suite, group: c.s12[0].group, master: tls12srv.ekm_parts(c.s12[0]).0, cr: tls12srv.ekm_parts(c.s12[0]).1, sr: tls12srv.ekm_parts(c.s12[0]).2, ems: tls12srv.ekm_parts(c.s12[0]).3, unique: c.s12[0].unique}
   }
 }
 
@@ -932,12 +958,16 @@ fn feed(var c: Conn, data: Bytes) {
     }
     var cf = tls12srv.conf(certs, key)
     cf.alpn = c.s.conf.alpn
-    cf.max13 = true
+    cf.max13 = !c.s.conf.no13
+    cf.suites = tlsneg.only(cf.suites, c.s.conf.suites12)
+    cf.groups = tlsneg.only(cf.groups, c.s.conf.groups)
     // RFC 5077 tickets under the server's keys (tlsticket.xo)
     cf.ticket_keys = c.s.conf.ticket_keys
     cf.now = c.s.conf.now
     cf.client_auth = c.s.conf.client_auth
     cf.client_cas = c.s.conf.client_cas
+    cf.vpeer = c.s.conf.vpeer
+    cf.vconn = c.s.conf.vconn
     cf.client_roots = c.s.conf.client_roots
     c.s12 = [tls12srv.resume(cf, c.s.hello, c.s.rest)]
   }
@@ -1159,4 +1189,113 @@ fn wait_res(w: Int) -> Int {
     return CC_CANCELED
   }
   CC_ERR
+}
+
+/// Go's ClientHelloInfo.SupportsCertificate under Go's default Config
+/// (decision 0644 T5): "" when the chain certs with key can serve the
+/// ClientHello h, else Go's reason. Xo has none of Go's RSA key exchange
+/// suites, so its RSA fallback never applies.
+pub fn chi_supports(h: tlsneg.HelloInfo, certs: List[Bytes], key: Bytes) -> Str {
+  let vers = if has_int(h.versions, 0x0304) { 0x0304 } else if has_int(h.versions, 0x0303) { 0x0303 } else { 0 }
+  if vers == 0 {
+    return "no mutually supported protocol versions"
+  }
+  if certs.is_empty() {
+    return "failed to parse certificate: x509: malformed certificate"
+  }
+  let p = x509.parse(certs[0])
+  if p.err != "" {
+    return "failed to parse certificate: ${p.err}"
+  }
+  let leaf = p.cert
+  if h.server_name != "" && !tlsname.host_ok(x509verify.names(leaf), h.server_name) {
+    return "certificate is not valid for requested server name: ${tlsname.hostname_msg(x509verify.names(leaf), leaf.has_san, leaf.cn, h.server_name)}"
+  }
+  let alg = leaf.key_alg
+  if !h.schemes.is_empty() {
+    // Go's signatureSchemesForCertificate: TLS 1.3 binds ECDSA to the
+    // key's curve and RSA to PSS; SHA-1 is off (Go 1.26)
+    let mine = if alg == x509.KEY_ED25519 {
+      [0x0807]
+    } else if x509.is_ec(alg) && vers == 0x0303 {
+      [0x0403, 0x0503, 0x0603]
+    } else if alg == x509.KEY_P256 {
+      [0x0403]
+    } else if alg == x509.KEY_P384 {
+      [0x0503]
+    } else if alg == x509.KEY_P521 {
+      [0x0603]
+    } else if alg == x509.KEY_RSA && vers == 0x0304 {
+      [0x0804, 0x0805, 0x0806]
+    } else if alg == x509.KEY_RSA {
+      [0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601]
+    } else {
+      []
+    }
+    var ok = false
+    for sc in mine {
+      if has_int(h.schemes, sc) {
+        ok = true
+      }
+    }
+    if !ok {
+      return "tls: peer doesn't support any of the certificate's signature algorithms"
+    }
+  }
+  if vers == 0x0304 {
+    return ""
+  }
+  // Go's supportsECDHE
+  var curve_ok = false
+  for g in h.curves {
+    if g is 23 | 24 | 25 | 29 {
+      curve_ok = true
+    }
+  }
+  var uncompressed = false
+  var other = false
+  for f in h.points {
+    if f == 0 {
+      uncompressed = true
+    } else {
+      other = true
+    }
+  }
+  if other && !uncompressed {
+    return "tls: client offered only incompatible point formats"
+  }
+  if !curve_ok {
+    return "client doesn't support ECDHE, can only use legacy RSA key exchange"
+  }
+  var ec = false
+  if x509.is_ec(alg) {
+    let want = if alg == x509.KEY_P256 { 23 } else if alg == x509.KEY_P384 { 24 } else if alg == x509.KEY_P521 { 25 } else { 0 }
+    if want == 0 {
+      return "tls: unsupported certificate curve (P-224)"
+    }
+    if !has_int(h.curves, want) {
+      return "client doesn't support certificate curve"
+    }
+    ec = true
+  } else if alg == x509.KEY_ED25519 {
+    if h.schemes.is_empty() {
+      return "connection doesn't support Ed25519"
+    }
+    ec = true
+  }
+  for id in h.suites {
+    if has_int(tls12.default_suites(), id) && (id is 0xc02b | 0xc02c | 0xcca9 | 0xc009 | 0xc00a | 0xc023) == ec {
+      return ""
+    }
+  }
+  "client doesn't support any cipher suites compatible with the certificate"
+}
+
+fn has_int(xs: List[Int], x: Int) -> Bool {
+  for y in xs {
+    if y == x {
+      return true
+    }
+  }
+  false
 }

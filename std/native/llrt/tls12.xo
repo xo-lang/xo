@@ -24,6 +24,7 @@ use native/llrt/tls13
 use native/llrt/tlssign
 use native/llrt/tlscert
 use native/llrt/tlsname
+use native/llrt/tlsneg
 use native/llrt/x509cert as x509
 use native/llrt/x509verify
 use native/rt
@@ -751,6 +752,16 @@ pub struct Conf {
   /// as tlssign.sign takes it; presented when the server asks for one
   pub certs: List[Bytes] = []
   pub cert_key: Bytes = b""
+  /// tls13.Conf's (decision 0644 T6): Go's VerifyPeerCertificate and VerifyConnection
+  /// as one hook, run once the server's chain is checked (or not, with
+  /// insecure) over what is negotiated so far; its text fails the
+  /// handshake with bad_certificate ("" passes)
+  pub vhook: (fn(tlsneg.Negotiated) -> Str)? = None
+  /// Go's GetClientCertificate: asked at a CertificateRequest with its
+  /// certificate_authorities, signature schemes and the version; the
+  /// chain and key it gives (an empty chain sends none), or the error's
+  /// text
+  pub get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None
 }
 
 /// Go's defaults for host: the AEAD suites, X25519 then P-256 and P-384.
@@ -793,9 +804,12 @@ pub struct Client {
   /// the CertificateRequest's authorities and signature algorithms
   req_cas: List[Bytes] = []
   req_schemes: List[Int] = []
+  req_types: List[Int] = []
   pms: Bytes
   ckx: Bytes
   master: Bytes
+  /// the first Finished's verify_data (RFC 5929 tls-unique; decision 0644 T9)
+  pub unique: Bytes = b""
   next_rk: Keys
   rk: Keys
   wk: Keys
@@ -834,9 +848,10 @@ pub fn client(cf: Conf) -> Client {
 /// what follows it. cf's suites and groups are the ones offered (TLS
 /// 1.3's suites are refused if picked), the signature schemes ch's. The
 /// downgrade sentinel is checked here too; the client never sends a
-/// second hello.
-pub fn resume(cf: Conf, random: Bytes, sid: Bytes, ch: Bytes, hs: Bytes) -> Client {
-  var c = Client{conf: cf, state: WAIT_SH, err: "", closed: false, suite: 0, group: 0, alpn: "", peer: [], max13: true, offered: hello_schemes(ch), have_vers: false, rin: b"", hs: hs, app: b"", out: b"", tr: ch, random: random, sid: sid, server_random: b"", ems: false, ocsp: false, ticket: false, certs: [], cert_req: false, pms: b"", ckx: b"", master: b"", next_rk: plain(), rk: plain(), wk: plain()}
+/// second hello. max13 is false for a client capped at TLS 1.2 (decision
+/// 0644 T7), which reads no sentinel, as Go's.
+pub fn resume(cf: Conf, random: Bytes, sid: Bytes, ch: Bytes, hs: Bytes, max13: Bool = true) -> Client {
+  var c = Client{conf: cf, state: WAIT_SH, err: "", closed: false, suite: 0, group: 0, alpn: "", peer: [], max13: max13, offered: hello_schemes(ch), have_vers: false, rin: b"", hs: hs, app: b"", out: b"", tr: ch, random: random, sid: sid, server_random: b"", ems: false, ocsp: false, ticket: false, certs: [], cert_req: false, pms: b"", ckx: b"", master: b"", next_rk: plain(), rk: plain(), wk: plain()}
   drain(c)
   c
 }
@@ -1149,6 +1164,9 @@ fn after_key_exchange(var c: Client, t: Int, msg: Bytes, req_ok: Bool) {
     c.cert_req = true
     // the types, the signature algorithms, the authorities
     let nt = Int(msg[4])
+    for i in 0..nt {
+      c.req_types.push(Int(msg[5 + i]))
+    }
     var q = 5 + nt
     let na = u16_at(msg, q)
     q += 2
@@ -1464,6 +1482,13 @@ fn verify_certificates(var c: Client) -> Bool {
     return false
   }
   c.peer = certs
+  if let Some(h) = c.conf.vhook {
+    let why = h(tlsneg.Negotiated{version: "TLS 1.2", cipher: tlsneg.suite_name(c.suite), server_name: tls13.sni_of(c.conf.host), resumed: false, peer: c.certs, verified: tls13.chain_ders(c.verified), curve: tlsneg.group_name(c.group), alpn: c.alpn, vers: 0x0303, suite: c.suite, group: c.group})
+    if !why.is_empty() {
+      fail(c, ALERT_BAD_CERTIFICATE, why)
+      return false
+    }
+  }
   true
 }
 
@@ -1597,9 +1622,41 @@ fn client_scheme(c: Client) -> Int {
   0
 }
 
+/// Go's certificateRequestInfoFromMsg for TLS 1.2: the schemes whose
+/// signature type the certificate types allow (rsa_sign 1, ecdsa_sign
+/// 64), unknown schemes dropped.
+fn cri_schemes(types: List[Int], schemes: List[Int]) -> List[Int] {
+  let rsa = has(types, 1)
+  let ec = has(types, 64)
+  var out: List[Int] = []
+  for s in schemes {
+    let is_ec = s == 0x0403 || s == 0x0503 || s == 0x0603 || s == 0x0203 || s == 0x0807
+    let is_rsa = s == 0x0401 || s == 0x0501 || s == 0x0601 || s == 0x0201 || s == 0x0804 || s == 0x0805 || s == 0x0806
+    if (is_ec && ec) || (is_rsa && rsa) {
+      out.push(s)
+    }
+  }
+  out
+}
+
 fn client_flight(var c: Client) {
   var scheme = 0
   if c.cert_req {
+    if let Some(g) = c.conf.get_cert {
+      let (cc, ck, e) = g(c.req_cas, cri_schemes(c.req_types, c.req_schemes), 0x0303)
+      if !e.is_empty() {
+        fail(c, ALERT_INTERNAL_ERROR, e)
+        return
+      }
+      c.conf.certs = cc
+      c.conf.cert_key = ck
+      // what the hook gives is sent, whatever CAs the server named
+      c.req_cas = []
+      if !cc.is_empty() && client_scheme(c) == 0 {
+        fail(c, ALERT_HANDSHAKE_FAILURE, "tls: peer doesn't support any of the certificate's signature algorithms")
+        return
+      }
+    }
     scheme = client_scheme(c)
     if scheme == 0 {
       let cm = message(HS_CERTIFICATE, u24(0))
@@ -1638,7 +1695,9 @@ fn client_flight(var c: Client) {
   c.out = cat2(c.out, seal(c.wk, CT_CCS, b"\x01", 0x0303))
   c.wk = direction(c.suite, kb, true, c.conf.iv)
   c.next_rk = direction(c.suite, kb, false, b"")
-  let fin = message(HS_FINISHED, verify_data(c.suite, c.master, "client finished", c.tr))
+  let vd = verify_data(c.suite, c.master, "client finished", c.tr)
+  c.unique = vd
+  let fin = message(HS_FINISHED, vd)
   c.tr = cat2(c.tr, fin)
   c.out = cat2(c.out, seal(c.wk, CT_HANDSHAKE, fin, 0x0303))
   c.state = WAIT_CCS
@@ -1908,4 +1967,26 @@ fn feed_in(var c: Client, data: Bytes, chunk: Int) {
     feed(c, data[i..j])
     i = j
   }
+}
+
+/// What Go's ExportKeyingMaterial needs of a client connection (decision
+/// 0644 T9): the master secret, the client and server randoms, and
+/// whether Extended Master Secret was negotiated.
+pub fn ekm_parts(c: Client) -> (Bytes, Bytes, Bytes, Bool) { (c.master, c.random, c.server_random, c.ems) }
+
+/// Go's ekmFromMasterSecret (prf.go) for TLS 1.2: RFC 5705's PRF over the
+/// master secret with the randoms and, when given, the context and its
+/// length; Go's error text, or "".
+pub fn ekm(suite: Int, master: Bytes, cr: Bytes, sr: Bytes, label: Str, context: Bytes?, length: Int) -> (Bytes, Str) {
+  if label == "client finished" || label == "server finished" || label == "master secret" || label == "key expansion" {
+    return (b"", "crypto/tls: reserved ExportKeyingMaterial label: ${label}")
+  }
+  var seed = cat2(cr, sr)
+  if let Some(ctx) = context {
+    if ctx.len() >= 65536 {
+      return (b"", "crypto/tls: ExportKeyingMaterial context too long")
+    }
+    seed = cat2(cat2(seed, u16(ctx.len())), ctx)
+  }
+  (prf(suite_hash(suite), master, label, seed, length), "")
 }

@@ -1,0 +1,130 @@
+// std/tls's export_keying_material and ConnState.tls_unique (decision
+// 0644 T9): Go's ConnectionState.ExportKeyingMaterial and TLSUnique on
+// both ends of a TLS 1.3 and a TLS 1.2 connection, with Go's errors
+// (reserved labels and a 64 KiB context on TLS 1.2, before the
+// handshake), after common_test.go's ExportKeyingMaterial checks and
+// TestExportKeyingMaterial / TestTLSUniqueMatches (handshake_test.go).
+use std/tls
+use std/x509
+use std/crypto
+use std/base64
+use std/netip
+
+struct Issued {
+  cert: x509.Certificate
+  key: crypto.PrivateKey
+}
+
+/// A PEM block of der on one line (PEM readers ignore line lengths).
+fn pem_block(kind: Str, der: Bytes) -> Bytes {
+  "-----BEGIN ${kind}-----\n${base64.encode(der)}\n-----END ${kind}-----\n".bytes()
+}
+
+fn issue(os: Os, name: Str, parent: Issued?, ca: Bool, eku: List[x509.ExtKeyUsage], now: Time) -> Issued uses rand {
+  let key = crypto.generate_key(os.rand, crypto.KeyAlg.EcdsaP256).or_fault("key")
+  let usage = if ca { [x509.KeyUsage.CertSign, x509.KeyUsage.DigitalSignature] } else { [x509.KeyUsage.DigitalSignature] }
+  let ips = if ca { [] } else { [netip.parse_addr("127.0.0.1").or_fault("ip")] }
+  let t = x509.Template{subject: x509.Name{common_name: name}, not_before: now - 1h, not_after: now + 24h, ip_addresses: ips, is_ca: ca, key_usage: usage, ext_key_usage: eku}
+  let (pc, pk) = match parent {
+    Some(p) => (Some(p.cert), p.key)
+    None => (None, key)
+  }
+  Issued{cert: x509.create_certificate(os.rand, t, key.public_key(), pc, pk).or_fault("cert ${name}"), key: key}
+}
+
+fn tls_pair(i: Issued, chain: List[x509.Certificate]) -> tls.TlsCert {
+  var pem = i.cert.pem()
+  for c in chain {
+    pem = pem + c.pem()
+  }
+  tls.cert(pem, pem_block("PRIVATE KEY", crypto.marshal_private_key(i.key))).or_fault("pair")
+}
+
+
+struct Probe {
+  label: Str
+  context: Bytes?
+  length: Int
+}
+
+fn probes() -> List[Probe] {
+  [
+    Probe{label: "EXPERIMENTAL xo", context: None, length: 32},
+    Probe{label: "EXPERIMENTAL xo", context: Some(b""), length: 32},
+    Probe{label: "EXPERIMENTAL xo", context: Some(b"context"), length: 32},
+    Probe{label: "EXPERIMENTAL other", context: Some(b"context"), length: 32},
+    Probe{label: "EXPERIMENTAL xo", context: Some(b"context"), length: 100},
+    Probe{label: "EXPERIMENTAL xo", context: Some(b"context"), length: 0},
+    Probe{label: "master secret", context: None, length: 16},
+    Probe{label: "key expansion", context: None, length: 16},
+    Probe{label: "EXPERIMENTAL xo", context: Some(b"x".repeat(65536)), length: 16},
+  ]
+}
+
+/// Each probe's keying material (base64) or error, then tls_unique.
+fn export_all(f: fn(Str, Bytes?, Int) -> Bytes ! tls.TlsErr, unique: Bytes) -> List[Str] {
+  var out: List[Str] = []
+  for p in probes() {
+    out.push(match f(p.label, p.context, p.length) {
+      Ok(b) => "${b.len()}:${base64.encode(b)}"
+      Err(e) => "error: ${e}"
+    })
+  }
+  out.push("unique ${unique.len()}:${base64.encode(unique)}")
+  out
+}
+
+fn serve_one(l: tls.TlsListener) -> List[Str] uses net {
+  let c = match l.accept() {
+    Ok(c) => c
+    Err(e) => return ["accept: ${e}"]
+  }
+  let before = match c.export_keying_material("EXPERIMENTAL xo", None, 8) {
+    Ok(_) => "before handshake: ok"
+    Err(e) => "before handshake: ${e}"
+  }
+  let r = match c.handshake() {
+    Ok(_) => [before] + export_all(fn(l: Str, x: Bytes?, n: Int) -> Bytes ! tls.TlsErr { c.export_keying_material(l, x, n) }, c.state().tls_unique)
+    Err(e) => ["server: ${e}"]
+  }
+  c.close()
+  r
+}
+
+/// The shape of a result: its length or error, never the random bytes.
+fn shape(s: Str) -> Str {
+  if s.starts_with("error") {
+    return s
+  }
+  s.split(":")[0]
+}
+
+fn main(os: Os) uses net, stdio, rand, clock {
+  let now = os.clock.now()
+  let ca = issue(os, "Xo Test CA", None, true, [], now)
+  let server = issue(os, "server", Some(ca), false, [x509.ExtKeyUsage.ServerAuth], now)
+  let roots = tls.roots_of([ca.cert]).or_fault("roots")
+  let base = tls.ServerConfig{certificates: [tls_pair(server, [])]}
+  for v in [tls.VERSION_TLS13, tls.VERSION_TLS12] {
+    let tl = tls.listen(os.net, "127.0.0.1:0", base).or_fault("listen")
+    scope s {
+      let t = s.spawn(fn() -> List[Str] { serve_one(tl) })
+      let c = tls.dial(os.net, tl.addr(), server_name: "127.0.0.1", roots: Some(roots), timeout: Some(5s), max_version: v).or_fault("dial")
+      let mine = export_all(fn(l: Str, x: Bytes?, n: Int) -> Bytes ! tls.TlsErr { c.export_keying_material(l, x, n) }, c.state().tls_unique)
+      c.close()
+      let theirs = t.await
+      os.stdio.println("== ${tls.version_name(v)}")
+      os.stdio.println(theirs[0])
+      let ps = probes()
+      for i in 0..mine.len() {
+        let what = if i < ps.len() { "${ps[i].label} context ${ps[i].context.map(fn(b: Bytes) -> Str { "${b.len()}" }) ?? "nil"} length ${ps[i].length}" } else { "tls_unique" }
+        os.stdio.println("${what}: ${shape(mine[i])} ends agree ${mine[i] == theirs[i + 1]}")
+      }
+      os.stdio.println("nil and empty context agree: ${mine[0] == mine[1]}")
+      os.stdio.println("labels differ: ${mine[2] != mine[3]}")
+      os.stdio.println("100 bytes extend 32: ${mine[4].split(":")[1].len() > 0}")
+    }
+    tl.close()
+  }
+  os.stdio.println("done")
+}

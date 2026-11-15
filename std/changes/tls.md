@@ -1,6 +1,48 @@
 # std/tls changes
 
 
+## 2026-11-15: feature: version, suite and curve preferences, keying material export, the verification and certificate hooks, ClientConfig (decision 0644 B2)
+
+- Kind: feature
+- Commit: this push
+- Found by: the lang3 crypto/tls audit of 2026-11-15 (~/xo-lead/notes/lang3/crypto-tls-gap.md, items T5, T6, T7, T9; owner approved through the lead)
+- Go reference: crypto/tls common.go (Config.MinVersion, MaxVersion, CipherSuites, CurvePreferences, VerifyPeerCertificate, VerifyConnection, GetClientCertificate, GetCertificate, GetConfigForClient, ClientHelloInfo and CertificateRequestInfo with SupportsCertificate, ConnectionState.ExportKeyingMaterial and TLSUnique), cipher_suites.go (CipherSuites, InsecureCipherSuites), handshake_client.go and handshake_server.go (the hooks' call points) (go1.26.11)
+- Test: goldens tls_prefs, tls_ekm, tls_verify and tls_certsel (go, arm64, llvm; each want matches Go's output); the keying material of both ends equal between the Go backend and native, TLS 1.2 and 1.3, both directions (~/xo-lead/notes/lang3/evidence/t9-interop.log)
+- Timing: none (no hot path changed; the TLS evidence pass of decision 0644 measures --ab against Go)
+- Shipped in: not yet released
+
+`client`, `dial` and `ServerConfig` take `min_version`, `max_version`,
+`cipher_suites` and `curve_preferences`, applied in Go's order whatever
+the list's; `cipher_suites()`, `insecure_cipher_suites()` and Go's
+version, suite and curve constants are new. `state().export_keying_material`
+(RFC 5705 and 8446) and `tls_unique` are Go's. `ClientConfig`, with
+`client_config` and `dial_config`, holds every client setting, with
+`verify_peer_certificate`, `verify_connection` and
+`get_client_certificate` (a `CertificateRequestInfo` with
+`supports_certificate`). `ServerConfig` gains `verify_peer_certificate`,
+`verify_connection`, `get_certificate` and `get_config_for_client` (a
+`ClientHelloInfo` with `supports_certificate` and the addresses). Each
+hook runs where Go's does, with Go's alert and error text.
+
+## 2026-11-15: fix: Go's alert and text where the native TLS handshake differed (decision 0644 B2)
+
+- Kind: fix
+- Commit: this push
+- Found by: the B2 goldens against Go's output
+- Go reference: crypto/tls handshake_client.go (an empty ServerName without InsecureSkipVerify), handshake_server.go (the TLS 1.2 missing client certificate alert), conn.go (io.EOF from a peer closing mid-handshake) (go1.26.11)
+- Affected: Xo 0.51.0 and earlier, native backends
+- Test: goldens tls_verify and tls_certsel (arm64, llvm; want from Go)
+- Timing: none
+- Shipped in: not yet released
+
+A native client with `Verify.Full` and an empty host is refused with Go's
+text (`tls: either ServerName or InsecureSkipVerify must be specified in
+the tls.Config`); before, it verified no name. A TLS 1.2 server that
+requires a client certificate and gets none sends handshake_failure, as
+Go does (it sent bad_certificate). A server whose client closes during
+the handshake reports `EOF`. A server name that is an IP address is not
+sent as SNI and the server sees `""`, as Go's hostnameInSNI.
+
 ## 2026-11-15: feature: the server side, dial, load_cert, ConnState, close_write and the connection's addresses (decision 0644 B1)
 
 - Kind: feature

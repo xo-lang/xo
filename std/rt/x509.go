@@ -673,7 +673,11 @@ func (t Tls_TlsConn) M_state(tk *Task) Tls_ConnState {
 	if t.t == nil {
 		return Tls_ConnState{F_version: 0x0304, F_handshake_complete: true, F_negotiated_protocol_is_mutual: true}
 	}
-	cs := t.t.ConnectionState()
+	return connStateOf(tk, t.t.ConnectionState())
+}
+
+// connStateOf is Go's ConnectionState as Xo's ConnState.
+func connStateOf(tk *Task, cs tls.ConnectionState) Tls_ConnState {
 	certs := func(l []*x509.Certificate) List[X509_Certificate] {
 		var out []X509_Certificate
 		for _, c := range l {
@@ -696,6 +700,28 @@ func (t Tls_TlsConn) M_state(tk *Task) Tls_ConnState {
 		F_verified_chains: ListFromSlice(chains), F_signed_certificate_timestamps: ListFromSlice(scts),
 		F_ocsp_response: Bytes(cs.OCSPResponse), F_tls_unique: Bytes(cs.TLSUnique), F_ech_accepted: cs.ECHAccepted,
 	}
+}
+
+// M_export_keying_material is `t.export_keying_material(label,
+// context, length)` (decision 0644 T9): Go's
+// ConnectionState.ExportKeyingMaterial, None as the nil context.
+func (t Tls_TlsConn) M_export_keying_material(tk *Task, label string, context Option[Bytes], length int64) Result[Bytes, Tls_TlsErr] {
+	if t.t == nil {
+		return Err[Bytes](Tls_TlsErr{F_msg: "tls: ExportKeyingMaterial on a connection without TLS"})
+	}
+	cs := t.t.ConnectionState()
+	if !cs.HandshakeComplete {
+		return Err[Bytes](Tls_TlsErr{F_msg: "tls: ExportKeyingMaterial before the handshake completed"})
+	}
+	var ctx []byte
+	if context.Some {
+		ctx = append([]byte{}, context.V...)
+	}
+	b, err := cs.ExportKeyingMaterial(label, ctx, int(length))
+	if err != nil {
+		return Err[Bytes](Tls_TlsErr{F_msg: err.Error()})
+	}
+	return Ok[Bytes, Tls_TlsErr](Bytes(b))
 }
 
 // Tls_cipher_suite_name is `tls.cipher_suite_name(id)`: Go's CipherSuiteName.

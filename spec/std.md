@@ -5920,6 +5920,39 @@ fn new_listener(l: Listener, config: ServerConfig) -> TlsListener               
 fn (l: TlsListener) accept() -> TlsServerConn ! NetErr uses net.listen
 fn (l: TlsListener) addr() -> Str
 fn (l: TlsListener) close()
+
+// decision 0644 B2: T7, T9, T6, T5
+const VERSION_TLS10, VERSION_TLS11, VERSION_TLS12, VERSION_TLS13: Int
+const TLS_AES_128_GCM_SHA256, ..., TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256: Int   // Go's 13 suite IDs
+const CURVE_P256, CURVE_P384, CURVE_P521, X25519, X25519_MLKEM768, SECP256R1_MLKEM768, SECP384R1_MLKEM1024: Int
+struct CipherSuite { id: Int, name: Str, supported_versions: List[Int], insecure: Bool }
+fn cipher_suites() -> List[CipherSuite]            // Go's CipherSuites
+fn insecure_cipher_suites() -> List[CipherSuite]   // Go's InsecureCipherSuites: none in Xo
+// client and dial gain: min_version: Int = 0, max_version: Int = 0, cipher_suites: List[Int] = [], curve_preferences: List[Int] = []
+// ServerConfig gains the same four fields
+fn (t: TlsConn) export_keying_material(label: Str, context: Bytes?, length: Int) -> Bytes ! TlsErr
+fn (t: TlsServerConn) export_keying_material(label: Str, context: Bytes?, length: Int) -> Bytes ! TlsErr
+struct ClientConfig {
+  server_name: Str = "", roots: Roots? = None, verify: Verify = Verify.Full, next_protos: List[Str] = []
+  certificates: List[TlsCert] = []
+  verify_peer_certificate: (fn(List[Bytes], List[List[x509.Certificate]]) -> () ! Str)? = None
+  verify_connection: (fn(ConnState) -> () ! Str)? = None
+  get_client_certificate: (fn(CertificateRequestInfo) -> TlsCert? ! Str)? = None
+  min_version: Int = 0, max_version: Int = 0, cipher_suites: List[Int] = [], curve_preferences: List[Int] = []
+}
+struct CertificateRequestInfo { acceptable_cas: List[Bytes], signature_schemes: List[Int], version: Int }
+fn (i: CertificateRequestInfo) supports_certificate(cert: TlsCert) -> () ! TlsErr
+fn client_config(c: Conn, config: ClientConfig) -> TlsConn ! NetErr uses net.dial
+fn dial_config(net: Net, addr: Str, config: ClientConfig, timeout: Duration? = None) -> TlsConn ! NetErr uses net.dial
+// ServerConfig gains: verify_peer_certificate, verify_connection (as ClientConfig's),
+//   get_certificate: (fn(ClientHelloInfo) -> TlsCert? ! Str)? = None
+//   get_config_for_client: (fn(ClientHelloInfo) -> ServerConfig? ! Str)? = None
+struct ClientHelloInfo {
+  cipher_suites: List[Int], server_name: Str, supported_curves: List[Int], supported_points: List[Int]
+  signature_schemes: List[Int], supported_protos: List[Str], supported_versions: List[Int], extensions: List[Int]
+  local_addr: Str, remote_addr: Str
+}
+fn (i: ClientHelloInfo) supports_certificate(cert: TlsCert) -> () ! TlsErr
 ```
 
 ```
@@ -6030,6 +6063,63 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
   deadline and the errors, on every backend. Backends: native
   (std/native/llrt/tlssrv.xo, std/http's server code, linked only when a
   program reaches `server`) and Go (crypto/tls).
+- Versions, suites and curves (T7) are Go's MinVersion, MaxVersion,
+  CipherSuites and CurvePreferences, on `client`, `dial` and
+  `ServerConfig`: 0 for a version is TLS 1.2 and 1.3 (a minimum below
+  1.2 is 1.2, as Xo has no TLS 1.0 or 1.1); `cipher_suites` limits the
+  TLS 1.2 suites (TLS 1.3's are always Go's three) and `curve_preferences`
+  the key exchanges, each picked in Go's order whatever the list's (Go
+  ignores the order since 1.24); an unknown ID is dropped. No common
+  version is "tls: no supported versions satisfy MinVersion and
+  MaxVersion" on the client and Go's alert text on the other end.
+  `cipher_suites()` lists Go's 13 secure suites; `insecure_cipher_suites()`
+  is empty, since Xo implements none of Go's insecure ones.
+- `export_keying_material` (T9) is Go's ExportKeyingMaterial (RFC 5705;
+  TLS 1.3's exporter, RFC 8446 7.5): `None` is Go's nil context, which
+  TLS 1.2 tells apart from an empty one, and Go's errors are kept (a
+  reserved label or a context of 64 KiB or more under TLS 1.2, TLS 1.2
+  without Extended Master Secret, before the handshake). `ConnState`'s
+  `tls_unique` is TLS 1.2's first Finished (RFC 5929; empty for TLS 1.3
+  and for a resumption without Extended Master Secret). Both ends and
+  Go's crypto/tls agree byte for byte (golden `tls_ekm`, and a native
+  end against a Go end in each direction).
+- `ClientConfig` (T6) is Go's Config for a client: `client_config` and
+  `dial_config` take one where `client` and `dial` take named arguments
+  (they stay, for the simple case). `verify_peer_certificate` gets the
+  server's DER chain and the chains that verified it (none with
+  `Verify.None`; `ChainOnly`'s with no name checked), after the normal
+  verification; `verify_connection` then gets the `ConnState` so far
+  (`handshake_complete` false). An Err fails the handshake with its text
+  (an empty one with `tls: verify_peer_certificate failed` or `tls:
+  verify_connection failed`) and sends bad_certificate. With
+  `Verify.None` either one pins the connection. `certificates` are the
+  client's: the first a CertificateRequest supports (its CAs and
+  schemes) is sent, else none; `get_client_certificate` replaces that
+  choice, given the request (`version`, `acceptable_cas`,
+  `signature_schemes`); None sends no certificate. A `client_config`
+  with `Verify.Full` and no `server_name` fails with Go's "tls: either
+  ServerName or InsecureSkipVerify must be specified in the tls.Config",
+  and so does `client` with an empty `host`. `ServerConfig`'s
+  `verify_peer_certificate` runs when `client_auth` asks for a
+  certificate (also when none was sent) and its `verify_connection` on
+  every handshake, resumptions included, at Go's points. Golden
+  `tls_verify` runs each hook on TLS 1.3 and 1.2.
+- `get_certificate` and `get_config_for_client` (T5) are Go's
+  GetCertificate and GetConfigForClient, given a `ClientHelloInfo` (the
+  ClientHello's suites, server name, curves, point formats, schemes,
+  ALPN protocols, versions and extension types, with the connection's
+  addresses). `get_certificate` is asked when `certificates` is empty or
+  the client sent a name; None falls back to `certificates`.
+  `get_config_for_client` replaces the whole configuration for the rest
+  of the handshake (its own `get_config_for_client` is not called);
+  None keeps it. An Err fails the handshake with its text and sends
+  internal_error; no certificate at all is "tls: no certificates
+  configured" with unrecognized_name. `listen` accepts a configuration
+  with either hook and no certificates. `supports_certificate` is Go's
+  SupportsCertificate under Go's default Config: a common version, the
+  server name, a signature scheme for the key, and for TLS 1.2 an ECDHE
+  curve, the certificate's curve and a suite for its key, each with Go's
+  reason. Golden `tls_certsel`.
 
 ---
 

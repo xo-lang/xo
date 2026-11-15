@@ -28,3 +28,11 @@ compress Decompressor, builders) in a loop, move them in a helper
 outside the loop (std/native/http.xo gz_step).
 
 Observed again 2026-11-10 (decision 0594): `var k = r.table[c]` then `k += 1` in std/native/prelude.xo is XO0520 (a mutated copy of a collection element, core 5.2); `xo run` on all three backends passed, and TestGoldenRun's std object build failed. A `let` start and a `for k in k0..e` loop fixed it.
+
+Observed again 2026-11-15 (decision 0644 T7): std/native/tls.xo's
+wasm-only `client_wasm` was called with the four new preference
+arguments while its signature still had the old list. Every golden ran
+(the whole-program build of a native target never reaches the wasm
+path), and only the std store build, which compiles each target's
+code, reported the arity error. Change every target's variant of a
+function in the same edit, and run `xo dev stdobj --conc=0 OUT`.

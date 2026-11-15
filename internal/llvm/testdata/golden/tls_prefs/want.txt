@@ -1,0 +1,41 @@
+exit 0
+--- stdout
+4865 TLS_AES_128_GCM_SHA256 TLS 1.3 insecure false
+4866 TLS_AES_256_GCM_SHA384 TLS 1.3 insecure false
+4867 TLS_CHACHA20_POLY1305_SHA256 TLS 1.3 insecure false
+49161 TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA TLS 1.0,TLS 1.1,TLS 1.2 insecure false
+49162 TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA TLS 1.0,TLS 1.1,TLS 1.2 insecure false
+49171 TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA TLS 1.0,TLS 1.1,TLS 1.2 insecure false
+49172 TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA TLS 1.0,TLS 1.1,TLS 1.2 insecure false
+49195 TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 TLS 1.2 insecure false
+49196 TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 TLS 1.2 insecure false
+49199 TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 TLS 1.2 insecure false
+49200 TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 TLS 1.2 insecure false
+52392 TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 TLS 1.2 insecure false
+52393 TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 TLS 1.2 insecure false
+insecure suites: 0
+curve 23 CurveP256
+curve 24 CurveP384
+curve 25 CurveP521
+curve 29 X25519
+curve 4588 X25519MLKEM768
+curve 4587 SecP256r1MLKEM768
+curve 4589 SecP384r1MLKEM1024
+defaults: client TLS 1.3 TLS_AES_128_GCM_SHA256 X25519MLKEM768; server TLS 1.3 TLS_AES_128_GCM_SHA256 X25519MLKEM768
+client max 1.2: client TLS 1.2 TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 X25519; server TLS 1.2 TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 X25519
+server max 1.2: client TLS 1.2 TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 X25519; server TLS 1.2 TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 X25519
+client min 1.3, server max 1.2: client: remote error: tls: protocol version not supported; server: tls: client offered only unsupported versions: [304]
+client max 1.2, server min 1.3: client: remote error: tls: protocol version not supported; server: tls: client offered only unsupported versions: [303]
+client min 1.3 max 1.2: client: tls: no supported versions satisfy MinVersion and MaxVersion; server: (no hello)
+client suite AES-256-GCM: client TLS 1.2 TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 X25519; server TLS 1.2 TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 X25519
+client suites reversed: client TLS 1.2 TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 X25519; server TLS 1.2 TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 X25519
+server suite ChaCha20: client TLS 1.2 TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 X25519; server TLS 1.2 TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 X25519
+no common suite: client: remote error: tls: handshake failure; server: tls: no cipher suite supported by both client and server; client offered: [c02c]
+1.3 ignores cipher_suites: client TLS 1.3 TLS_AES_128_GCM_SHA256 X25519MLKEM768; server TLS 1.3 TLS_AES_128_GCM_SHA256 X25519MLKEM768
+client curve P-256: client TLS 1.3 TLS_AES_128_GCM_SHA256 CurveP256; server TLS 1.3 TLS_AES_128_GCM_SHA256 CurveP256
+client curves X25519 and P-384: client TLS 1.3 TLS_AES_128_GCM_SHA256 X25519; server TLS 1.3 TLS_AES_128_GCM_SHA256 X25519
+server curve P-384 (retry): client TLS 1.3 TLS_AES_128_GCM_SHA256 CurveP384; server TLS 1.3 TLS_AES_128_GCM_SHA256 CurveP384
+1.2 curve P-521: client TLS 1.2 TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 CurveP521; server TLS 1.2 TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 CurveP521
+no common curve: client: remote error: tls: handshake failure; server: tls: no key exchanges supported by both client and server
+done
+--- stderr
