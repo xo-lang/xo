@@ -91,6 +91,10 @@
 #            cmd/xo TestCLIHelp (about 2 s) when it changes xo's help text
 #            (compiler/cli/cmdhelp) or its goldens (cmd/xo/testdata/clihelp,
 #            clihelp_test.go; XO_GATE_HELP=0 skips that); and
+#            scripts/stdgen -check with the gate's xo (a few seconds) when
+#            it changes compiler/gen, std/*.xo, std/native (the modules
+#            std/go_compiled.txt lists) or std/rt, failing with
+#            "run stdsync" (XO_GATE_STDGEN=0 skips that); and
 #            internal/arm64's cache tests (-run 'Cache|BinCache',
 #            TestMachoBinCache among them) when it changes compiler/xo's
 #            bcache.xo, parallel.xo, packseg.xo or cache.xo
@@ -456,6 +460,15 @@ stdstore_change() {
 help_change() {
   base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
   { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^(compiler/cli/cmdhelp/|cmd/xo/testdata/clihelp/|cmd/xo/clihelp_test\.go$)'
+}
+# stdgen_change: the branch changes what std/rt's generated Go comes from
+# (compiler/gen, a std module, std/native and std/go_compiled.txt, std/rt), so scripts/stdgen -check runs with
+# the gate's xo (lead, 2026-11-15: stale std_gen files reached main twice
+# that day, d998e7187 and b88a5dc29, each found only by the next push's
+# pushq). XO_GATE_STDGEN=0 skips it.
+stdgen_change() {
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^(compiler/gen/|std/[a-z0-9_]+\.xo$|std/native/|std/go_compiled\.txt$|std/rt/)'
 }
 # race_change: the branch changes llrt's task, scheduler or TSan runtime
 # (tasks.xo, sched.xo, racesym.xo, cabi_race*.xo), so on darwin, where the
@@ -933,6 +946,15 @@ after_steps() {
   fi
   if [ "${XO_GATE_HELP:-1}" != 0 ] && help_change; then
     full clihelp ./cmd/xo -run '^TestCLIHelp$'
+  fi
+  if [ "${XO_GATE_STDGEN:-1}" != 0 ] && stdgen_change; then
+    if go run ./scripts/stdgen -check >"$logs/stdgen.txt" 2>&1; then
+      echo "stdgen: current"
+    else
+      failed=1
+      echo "stdgen: FAIL: std/rt's generated Go is stale: run go run ./scripts/stdsync and commit ($logs/stdgen.txt)"
+      grep -E 'stale|error' "$logs/stdgen.txt" | head -5
+    fi
   fi
   if [ "${XO_GATE_RACE:-1}" != 0 ] && race_change; then
     full race ./internal/llvm -run '^TestRaceSyncTable(Arm64)?$'
