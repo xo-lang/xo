@@ -1,5 +1,19 @@
 # std/regexp changes
 
+## 2026-11-15: feature: all matches with groups, positions, a function per match
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): FindAll(String)Submatch, Find(String)SubmatchIndex, FindAll(String)SubmatchIndex, FindAll(String)Index, ReplaceAll(String)Func
+- Go reference: regexp (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/regexp (scripts/stdcorpus regexp): every pattern and input of the corpus also checks the five new forms against Go (go, arm64, llvm)
+- Shipped in: not yet released
+- Timing: none
+
+`captures_all`, `captures_index`, `captures_all_index`, `find_all_index`
+and `replace_all_with` over the same matcher and match walk as
+`find_all` and `replace_all`.
+
 ## 2026-11-11: port: one file, and the Go backend runs the Xo port
 
 - Kind: port

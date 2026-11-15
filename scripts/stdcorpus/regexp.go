@@ -93,7 +93,43 @@ func regexpResult(re *regexp.Regexp, s string) string {
 		return strings.Join(parts, "\x03")
 	}
 	parts = append(parts, re.ReplaceAllString(s, "<$1>"), re.ReplaceAllLiteralString(s, "<$1>"), strings.Join(re.Split(s, -1), "\x01"))
+	// the find_all_index, captures_index, captures_all, captures_all_index
+	// and replace_all_with forms
+	var ix []string
+	for _, m := range re.FindAllStringIndex(s, -1) {
+		ix = append(ix, fmt.Sprintf("%d,%d", m[0], m[1]))
+	}
+	parts = append(parts, strings.Join(ix, ";"))
+	parts = append(parts, regexpSpans(re.FindStringSubmatchIndex(s)))
+	var all []string
+	for _, m := range re.FindAllStringSubmatch(s, -1) {
+		all = append(all, strings.Join(m, "\x02"))
+	}
+	parts = append(parts, strings.Join(all, "\x01"))
+	var alli []string
+	for _, m := range re.FindAllStringSubmatchIndex(s, -1) {
+		alli = append(alli, regexpSpans(m))
+	}
+	parts = append(parts, strings.Join(alli, "\x01"))
+	parts = append(parts, re.ReplaceAllStringFunc(s, func(m string) string { return "[" + m + "]" + strconv.Itoa(len(m)) }))
 	return strings.Join(parts, "\x03")
+}
+
+// regexpSpans is a FindStringSubmatchIndex result as "a,b" pairs joined
+// by ";", "x" for a group that did not take part, "-" for no match.
+func regexpSpans(m []int) string {
+	if m == nil {
+		return "-"
+	}
+	var cs []string
+	for i := 0; i+1 < len(m); i += 2 {
+		if m[i] < 0 {
+			cs = append(cs, "x")
+		} else {
+			cs = append(cs, fmt.Sprintf("%d,%d", m[i], m[i+1]))
+		}
+	}
+	return strings.Join(cs, ";")
 }
 
 func regexpCorpus() string {
@@ -160,7 +196,25 @@ fn result(re: regexp.Regex, s: Str) -> Str {
   parts.push(re.replace_all(s, "<$1>"))
   parts.push(re.replace_all_literal(s, "<$1>"))
   parts.push(joined(re.split(s)))
+  parts.push(re.find_all_index(s).map(fn(m: (Int, Int)) -> Str { "${m.0},${m.1}" }).join(";"))
+  parts.push(match re.captures_index(s) {
+    Some(m) => spans(m)
+    None => "-"
+  })
+  // Go's FindAllStringSubmatch gives "" for a group that did not take part
+  parts.push(joined(re.captures_all(s).map(fn(m: List[Str?]) -> Str { m.map(fn(c: Str?) -> Str { c ?? "" }).join("\u{2}") })))
+  parts.push(joined(re.captures_all_index(s).map(fn(m: List[(Int, Int)?]) -> Str { spans(m) })))
+  parts.push(re.replace_all_with(s, fn(m: Str) -> Str { "[${m}]${m.len()}" }))
   parts.join("\u{3}")
+}
+
+fn spans(m: List[(Int, Int)?]) -> Str {
+  m.map(fn(c: (Int, Int)?) -> Str {
+    match c {
+      Some((a, b)) => "${a},${b}"
+      None => "x"
+    }
+  }).join(";")
 }
 
 /// The patterns of CASES from k of PARTS in turn: each a test of its own,

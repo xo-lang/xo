@@ -5466,6 +5466,11 @@ fn (r: Regex) captures(s: Str) -> List[Str?]?       // [whole match, group 1, ..
 fn (r: Regex) named(s: Str) -> Map[Str, Str]?       // (?P<name>...) groups that took part
 fn (r: Regex) replace_all(s: Str, repl: Str) -> Str // $1, ${name}, $$ in repl
 fn (r: Regex) replace_all_literal(s: Str, repl: Str) -> Str
+fn (r: Regex) replace_all_with(s: Str, f: fn(Str) -> Str) -> Str   // Go's ReplaceAllStringFunc
+fn (r: Regex) find_all_index(s: Str) -> List[(Int, Int)]           // Go's FindAllStringIndex
+fn (r: Regex) captures_all(s: Str) -> List[List[Str?]]             // Go's FindAllStringSubmatch (None: a group that did not take part)
+fn (r: Regex) captures_index(s: Str) -> List[(Int, Int)?]?         // Go's FindStringSubmatchIndex (None for its -1 pairs)
+fn (r: Regex) captures_all_index(s: Str) -> List[List[(Int, Int)?]]   // Go's FindAllStringSubmatchIndex
 fn (r: Regex) split(s: Str) -> List[Str]
 ```
 

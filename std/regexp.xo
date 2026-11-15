@@ -176,6 +176,109 @@ pub fn (r: Regex) replace_all(s: Str, repl: Str) -> Str { r.replace(s, repl, rep
 /// Every match replaced by `repl` as written (no `$` expansion).
 pub fn (r: Regex) replace_all_literal(s: Str, repl: Str) -> Str { r.replace(s, repl, false) }
 
+/// Every match replaced by `f` of the matched text (Go's
+/// ReplaceAllStringFunc); f's result is written as it is.
+pub fn (r: Regex) replace_all_with(s: Str, f: fn(Str) -> Str) -> Str {
+  var b = BytesBuilder.new()
+  var last_end = 0
+  var search = 0
+  let end = s.len()
+  while search <= end {
+    let a = exec(r.prog, s, search, 2)
+    if a.is_empty() {
+      break
+    }
+    b.write_str(sl(s, last_end, a[0]))
+    if a[1] > last_end || a[0] == 0 {
+      b.write_str(f(sl(s, a[0], a[1])))
+    }
+    last_end = a[1]
+    var width = 0
+    let st = step_at(s, search)
+    if st >= 0 {
+      width = st & 7
+    }
+    if search + width > a[1] {
+      search += width
+    } else if search + 1 > a[1] {
+      search += 1
+    } else {
+      search = a[1]
+    }
+  }
+  b.write_str(sl(s, last_end, end))
+  b.freeze().to_str() ?? s
+}
+
+/// The byte offsets `(start, end)` of every match, left to right, not
+/// overlapping (Go's FindAllStringIndex).
+pub fn (r: Regex) find_all_index(s: Str) -> List[(Int, Int)] {
+  var out: List[(Int, Int)] = []
+  for m in all_matches(r.prog, s, 2) {
+    out.push((m[0], m[1]))
+  }
+  out
+}
+
+/// The groups of every match, left to right, as `captures` gives them for
+/// one (Go's FindAllStringSubmatch).
+pub fn (r: Regex) captures_all(s: Str) -> List[List[Str?]] {
+  var out: List[List[Str?]] = []
+  for m in all_matches(r.prog, s, r.prog.num_cap) {
+    out.push(groups_of(s, m))
+  }
+  out
+}
+
+/// The byte offsets of the leftmost match and its groups: element 0 is the
+/// whole match, then one per group, None for a group that did not take
+/// part (Go's FindStringSubmatchIndex, whose -1 pairs are None).
+pub fn (r: Regex) captures_index(s: Str) -> List[(Int, Int)?]? {
+  let m = exec(r.prog, s, 0, r.prog.num_cap)
+  if m.is_empty() {
+    return None
+  }
+  Some(spans_of(m))
+}
+
+/// captures_index of every match, left to right (Go's
+/// FindAllStringSubmatchIndex).
+pub fn (r: Regex) captures_all_index(s: Str) -> List[List[(Int, Int)?]] {
+  var out: List[List[(Int, Int)?]] = []
+  for m in all_matches(r.prog, s, r.prog.num_cap) {
+    out.push(spans_of(m))
+  }
+  out
+}
+
+fn groups_of(s: Str, m: List[Int]) -> List[Str?] {
+  var out: List[Str?] = []
+  var i = 0
+  while 2 * i + 1 < m.len() {
+    if m[2 * i] >= 0 {
+      out.push(Some(sl(s, m[2 * i], m[2 * i + 1])))
+    } else {
+      out.push(None)
+    }
+    i += 1
+  }
+  out
+}
+
+fn spans_of(m: List[Int]) -> List[(Int, Int)?] {
+  var out: List[(Int, Int)?] = []
+  var i = 0
+  while 2 * i + 1 < m.len() {
+    if m[2 * i] >= 0 {
+      out.push(Some((m[2 * i], m[2 * i + 1])))
+    } else {
+      out.push(None)
+    }
+    i += 1
+  }
+  out
+}
+
 /// s split around the matches.
 pub fn (r: Regex) split(s: Str) -> List[Str] {
   if r.expr.len() > 0 && s.len() == 0 {
