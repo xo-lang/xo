@@ -17,6 +17,7 @@ var (
 	_ func(*Archive_TarWriter, *Task, string, int64, int64, Time) Result[Unit, Archive_ArchiveErr]         = (*Archive_TarWriter).M_create
 	_ func(*Archive_TarWriter, *Task, Bytes) Result[Unit, Archive_ArchiveErr]                              = (*Archive_TarWriter).M_write
 	_ func(*Archive_TarWriter, *Task) Result[Unit, Archive_ArchiveErr]                                     = (*Archive_TarWriter).M_flush
+	_ func(*Archive_TarWriter, *Task, Fs) Result[Unit, Archive_ArchiveErr]                                 = (*Archive_TarWriter).M_add_fs
 	_ func(*Archive_TarWriter, *Task) Result[Unit, Archive_ArchiveErr]                                     = (*Archive_TarWriter).M_close
 	_ func(*Task, Bytes) Result[List[Archive_Entry], Archive_ArchiveErr]                                   = Archive_untar
 	_ func(*Task, File) Archive_TarReader                                                                  = Archive_tar_reader
@@ -38,6 +39,7 @@ var (
 	_ func(*Archive_ZipWriter, *Task, int64)                                                               = (*Archive_ZipWriter).M_set_offset
 	_ func(*Archive_ZipWriter, *Task, Archive_ZipReader, Archive_ZipFile) Result[Unit, Archive_ArchiveErr] = (*Archive_ZipWriter).M_copy
 	_ func(*Archive_ZipWriter, *Task, Archive_ZipFile, Bytes) Result[Unit, Archive_ArchiveErr]             = (*Archive_ZipWriter).M_add_raw
+	_ func(*Archive_ZipWriter, *Task, Fs) Result[Unit, Archive_ArchiveErr]                                 = (*Archive_ZipWriter).M_add_fs
 	_ func(*Archive_ZipWriter, *Task, Bytes) Result[Unit, Archive_ArchiveErr]                              = (*Archive_ZipWriter).M_write
 	_ func(*Archive_ZipWriter, *Task) Result[Unit, Archive_ArchiveErr]                                     = (*Archive_ZipWriter).M_close
 )

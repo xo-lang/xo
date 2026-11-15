@@ -54,6 +54,14 @@ fn (var w: TarWriter) write(data: Bytes) -> () ! ArchiveErr uses fs.write
 /// The current entry's padding (Go's Flush): an error while it misses
 /// bytes.
 fn (var w: TarWriter) flush() -> () ! ArchiveErr uses fs.write
+/// Every directory and file under src's root, as Go's Writer.AddFS: in
+/// `src.walk(".")`'s order (parents first, siblings by name), each with
+/// its path from the root, `src.mode` and its modified time, a file's
+/// data read from `src.open` in pieces. A symbolic link stops the walk
+/// with `tar_writer: tar: cannot add non-regular file "PATH"` (an Xo
+/// archive holds files and directories; Go's AddFS writes the link), an
+/// Fs error with `tar_writer: ` and its text.
+fn (var w: TarWriter) add_fs(src: Fs) -> () ! ArchiveErr uses fs
 /// Flushes (its error, if any, is close's) and writes the two zero blocks
 /// that end the archive.
 /// @moves
@@ -193,6 +201,12 @@ fn (var w: ZipWriter) copy(r: ZipReader, f: ZipFile) -> () ! ArchiveErr uses fs
 /// MS-DOS time, and no extra field. Nothing checks raw against them; a
 /// data descriptor follows raw when flags has bit 3 (0x8).
 fn (var w: ZipWriter) add_raw(f: ZipFile, raw: Bytes) -> () ! ArchiveErr uses fs.write
+/// Every directory and file under src's root, as Go's Writer.AddFS: in
+/// `src.walk(".")`'s order, each with its path from the root, `src.mode`
+/// and its modified time, files deflated from `src.open` in pieces. A
+/// symbolic link stops the walk with Go's `zip_writer: zip: cannot add
+/// non-regular file "PATH"`, an Fs error with `zip_writer: ` and its text.
+fn (var w: ZipWriter) add_fs(src: Fs) -> () ! ArchiveErr uses fs
 /// Data for the entry `create` started (a data descriptor follows it).
 fn (var w: ZipWriter) write(data: Bytes) -> () ! ArchiveErr uses fs.write
 /// Ends the last entry and writes the central directory.

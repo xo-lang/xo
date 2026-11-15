@@ -722,3 +722,68 @@ test "tar_reader streams a large entry" {
   expect(r.read(10)?) == Some(b"x")
   expect(r.next()?) == None
 }
+
+/// Go's tar.Writer.AddFS and zip.Writer.AddFS of the add_fs tree: length and SHA-256
+const TAR_ADD_FS: Str = "78848 082a512a25297638a8f39613bb16bf870df0bf8a2dab5e353dba36fb85f34faa"
+const ZIP_ADD_FS: Str = "71306 149d350dfdc16cf35511bc301da03c55af899d2fb43883511a3e51c51b22431c"
+
+fn tree_time(k: Int) -> Time { Time.UNIX_EPOCH + Duration.from_nanos((1700000000 + k * 60) * 1000000000) }
+
+/// The tree of addFSCorpus under dir: files first, then each one's mode
+/// and time, directories last (a file written into one changes its time).
+fn add_fs_tree(root: Fs, dir: Str) -> Fs ! FsErr uses fs {
+  let long = "long/" + "n".repeat(120) + "\u{e9}.txt"
+  let files: List[(Str, Bytes, Int, Int)] = [("a.txt", b"hello add_fs\n", 0o644, 0), ("bin/big.bin", zdata256(31, 70000, 256), 0o600, 2), ("bin/run.sh", b"#!/bin/sh\necho hi\n", 0o755, 3), (long, b"long name\n", 0o644, 6), ("z\u{e9}.txt", b"", 0o640, 7)]
+  let t = root.sub(dir)
+  t.create_dir_all("bin")?
+  t.create_dir_all("empty")?
+  t.create_dir_all("long")?
+  for (p, data, mode, k) in files {
+    t.write(p, data)?
+    t.set_mode(p, mode)?
+    t.set_modified(p, tree_time(k))?
+  }
+  for (p, mode, k) in [("bin", 0o750, 1), ("empty", 0o700, 4), ("long", 0o755, 5)] {
+    t.set_mode(p, mode)?
+    t.set_modified(p, tree_time(k))?
+  }
+  Ok(t)
+}
+
+test "TarWriter.add_fs and ZipWriter.add_fs write Go's Writer.AddFS archives" {
+  let t = add_fs_tree(os.fs, "addfs")?
+  var f = os.fs.create("addfs.tar")?
+  var w = archive.tar_writer(f)
+  w.add_fs(t)?
+  w.close()?
+  f.close()?
+  expect(sum_of(os.fs.read("addfs.tar")?)) == TAR_ADD_FS
+  var g = os.fs.create("addfs.zip")?
+  var z = archive.zip_writer(g)
+  z.add_fs(t)?
+  z.close()?
+  g.close()?
+  expect(sum_of(os.fs.read("addfs.zip")?)) == ZIP_ADD_FS
+  // the entries read back as the tree has them
+  let es = archive.untar(os.fs.read("addfs.tar")?)?
+  expect(es.map(fn(e: archive.Entry) -> Str { e.path })) == ["a.txt", "bin", "bin/big.bin", "bin/run.sh", "empty", "long", "long/" + "n".repeat(120) + "\u{e9}.txt", "z\u{e9}.txt"]
+  expect(es[2].data) == zdata256(31, 70000, 256)
+  expect(es[2].mode) == 0o600
+  expect(es[1].is_dir) == true
+}
+
+test "add_fs stops at a symbolic link, and at a missing root" {
+  let t = os.fs.sub("addlink")
+  t.create_dir_all(".")?
+  t.write("x", b"x")?
+  t.symlink("x", "y")?
+  var f = os.fs.create("addlink.tar")?
+  var w = archive.tar_writer(f)
+  expect(w.add_fs(t).err().map(fn(e: archive.ArchiveErr) -> Str { e.display() })) == Some("archive: tar_writer: tar: cannot add non-regular file \"y\"")
+  f.close()?
+  var g = os.fs.create("addlink.zip")?
+  var z = archive.zip_writer(g)
+  expect(z.add_fs(t).err().map(fn(e: archive.ArchiveErr) -> Str { e.display() })) == Some("archive: zip_writer: zip: cannot add non-regular file \"y\"")
+  expect(z.add_fs(os.fs.sub("no-such-dir")).is_err()) == true
+  g.close()?
+}

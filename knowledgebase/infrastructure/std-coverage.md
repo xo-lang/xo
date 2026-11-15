@@ -226,7 +226,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | compress/gzip, compress/flate | std/compress (and std/archive gzip, gunzip) | done | Every level, Go's bytes and errors, max_size, streaming Compressor and Decompressor (decision 0305, 2026-10-21); preset dictionaries and gzip header fields (2026-11-15). http.gzip_responses next. |
 | compress/zlib | std/compress zlib, unzlib | done | Go's writer and reader (decision 0305, 2026-10-21). |
 | compress/bzip2, compress/lzw | none | not planned | Read only legacy formats. |
-| archive/tar, archive/zip | std/archive | done | Go's results natively on Go's small test archives (zip64 and PAX sparse files included) and on written archives (2026-10-21); zip comments, Store and SetOffset with Go's bytes (2026-11-15). |
+| archive/tar, archive/zip | std/archive | done | Go's results natively on Go's small test archives (zip64 and PAX sparse files included) and on written archives (2026-10-21); zip comments, Store and SetOffset with Go's bytes; tar_writer, tar_reader, raw zip entries and both writers' add_fs (Writer.AddFS) with Go's bytes (2026-11-15). |
 
 ### Testing
 

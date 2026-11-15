@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"io/fs"
 	"math/rand"
 	"os"
 	"strconv"
 	"strings"
+	"testing/fstest"
 	"time"
 )
 
@@ -784,6 +786,7 @@ test "zip_open walks a large archive from the File" {
 	zipMethodCorpus(&o)
 	zipRawCorpus(&o)
 	tarWriterCorpus(&o)
+	addFSCorpus(&o)
 	return o.String()
 }
 
@@ -1416,5 +1419,104 @@ test "zip with offset after a prefix writes Go's bytes (Writer.SetOffset), and z
   w.close()?
   f.close()?
   expect(sum_of(os.fs.read("sfx.zip")?)) == ZIP_OFFSET_STREAMED
+}
+`
+
+// addFSCorpus: Go's tar.Writer.AddFS and zip.Writer.AddFS over the tree
+// the Xo test below writes to disk (modes and times set), as an
+// fstest.MapFS: each archive's length and SHA-256.
+func addFSCorpus(o *strings.Builder) {
+	at := func(k int) time.Time { return time.Unix(1700000000+int64(k)*60, 0).UTC() }
+	long := "long/" + strings.Repeat("n", 120) + "\u00e9.txt"
+	tree := fstest.MapFS{
+		"a.txt":       {Data: []byte("hello add_fs\n"), Mode: 0o644, ModTime: at(0)},
+		"bin":         {Mode: fs.ModeDir | 0o750, ModTime: at(1)},
+		"bin/big.bin": {Data: lcgData(31, 70000, 256), Mode: 0o600, ModTime: at(2)},
+		"bin/run.sh":  {Data: []byte("#!/bin/sh\necho hi\n"), Mode: 0o755, ModTime: at(3)},
+		"empty":       {Mode: fs.ModeDir | 0o700, ModTime: at(4)},
+		"long":        {Mode: fs.ModeDir | 0o755, ModTime: at(5)},
+		long:          {Data: []byte("long name\n"), Mode: 0o644, ModTime: at(6)},
+		"z\u00e9.txt": {Data: nil, Mode: 0o640, ModTime: at(7)},
+	}
+	var tb bytes.Buffer
+	tw := tar.NewWriter(&tb)
+	if err := tw.AddFS(tree); err != nil {
+		panic(err)
+	}
+	if err := tw.Close(); err != nil {
+		panic(err)
+	}
+	var zb bytes.Buffer
+	zw := zip.NewWriter(&zb)
+	if err := zw.AddFS(tree); err != nil {
+		panic(err)
+	}
+	if err := zw.Close(); err != nil {
+		panic(err)
+	}
+	fmt.Fprintf(o, "\n/// Go's tar.Writer.AddFS and zip.Writer.AddFS of the add_fs tree: length and SHA-256\nconst TAR_ADD_FS: Str = %q\nconst ZIP_ADD_FS: Str = %q\n", fmt.Sprintf("%d %s", tb.Len(), archSum(tb.Bytes())), fmt.Sprintf("%d %s", zb.Len(), archSum(zb.Bytes())))
+	o.WriteString(addFSTests)
+}
+
+const addFSTests = `
+fn tree_time(k: Int) -> Time { Time.UNIX_EPOCH + Duration.from_nanos((1700000000 + k * 60) * 1000000000) }
+
+/// The tree of addFSCorpus under dir: files first, then each one's mode
+/// and time, directories last (a file written into one changes its time).
+fn add_fs_tree(root: Fs, dir: Str) -> Fs ! FsErr uses fs {
+  let long = "long/" + "n".repeat(120) + "\u{e9}.txt"
+  let files: List[(Str, Bytes, Int, Int)] = [("a.txt", b"hello add_fs\n", 0o644, 0), ("bin/big.bin", zdata256(31, 70000, 256), 0o600, 2), ("bin/run.sh", b"#!/bin/sh\necho hi\n", 0o755, 3), (long, b"long name\n", 0o644, 6), ("z\u{e9}.txt", b"", 0o640, 7)]
+  let t = root.sub(dir)
+  t.create_dir_all("bin")?
+  t.create_dir_all("empty")?
+  t.create_dir_all("long")?
+  for (p, data, mode, k) in files {
+    t.write(p, data)?
+    t.set_mode(p, mode)?
+    t.set_modified(p, tree_time(k))?
+  }
+  for (p, mode, k) in [("bin", 0o750, 1), ("empty", 0o700, 4), ("long", 0o755, 5)] {
+    t.set_mode(p, mode)?
+    t.set_modified(p, tree_time(k))?
+  }
+  Ok(t)
+}
+
+test "TarWriter.add_fs and ZipWriter.add_fs write Go's Writer.AddFS archives" {
+  let t = add_fs_tree(os.fs, "addfs")?
+  var f = os.fs.create("addfs.tar")?
+  var w = archive.tar_writer(f)
+  w.add_fs(t)?
+  w.close()?
+  f.close()?
+  expect(sum_of(os.fs.read("addfs.tar")?)) == TAR_ADD_FS
+  var g = os.fs.create("addfs.zip")?
+  var z = archive.zip_writer(g)
+  z.add_fs(t)?
+  z.close()?
+  g.close()?
+  expect(sum_of(os.fs.read("addfs.zip")?)) == ZIP_ADD_FS
+  // the entries read back as the tree has them
+  let es = archive.untar(os.fs.read("addfs.tar")?)?
+  expect(es.map(fn(e: archive.Entry) -> Str { e.path })) == ["a.txt", "bin", "bin/big.bin", "bin/run.sh", "empty", "long", "long/" + "n".repeat(120) + "\u{e9}.txt", "z\u{e9}.txt"]
+  expect(es[2].data) == zdata256(31, 70000, 256)
+  expect(es[2].mode) == 0o600
+  expect(es[1].is_dir) == true
+}
+
+test "add_fs stops at a symbolic link, and at a missing root" {
+  let t = os.fs.sub("addlink")
+  t.create_dir_all(".")?
+  t.write("x", b"x")?
+  t.symlink("x", "y")?
+  var f = os.fs.create("addlink.tar")?
+  var w = archive.tar_writer(f)
+  expect(w.add_fs(t).err().map(fn(e: archive.ArchiveErr) -> Str { e.display() })) == Some("archive: tar_writer: tar: cannot add non-regular file \"y\"")
+  f.close()?
+  var g = os.fs.create("addlink.zip")?
+  var z = archive.zip_writer(g)
+  expect(z.add_fs(t).err().map(fn(e: archive.ArchiveErr) -> Str { e.display() })) == Some("archive: zip_writer: zip: cannot add non-regular file \"y\"")
+  expect(z.add_fs(os.fs.sub("no-such-dir")).is_err()) == true
+  g.close()?
 }
 `

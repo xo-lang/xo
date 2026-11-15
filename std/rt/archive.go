@@ -553,6 +553,40 @@ func (x *Archive_ZipWriter) M_add_raw(tk *Task, f Archive_ZipFile, raw Bytes) Re
 	return Ok[Unit, Archive_ArchiveErr](Unit{})
 }
 
+// M_add_fs is Writer.AddFS over src.walk(".") (archive.xo).
+func (x *Archive_ZipWriter) M_add_fs(tk *Task, src Fs) Result[Unit, Archive_ArchiveErr] {
+	l := src.M_walk(tk, ".")
+	if !l.Ok {
+		return Err[Unit](archiveErr("zip_writer: " + l.E.M_display(tk)))
+	}
+	for _, fi := range l.V.s {
+		if fi.F_is_symlink {
+			return Err[Unit](archiveErr("zip_writer: zip: cannot add non-regular file " + strconv.Quote(fi.F_path)))
+		}
+		m := src.M_mode(tk, fi.F_path)
+		if !m.Ok {
+			return Err[Unit](archiveErr("zip_writer: " + m.E.M_display(tk)))
+		}
+		p, ok := archivePath(textOf(fi.F_path))
+		if !ok {
+			return Err[Unit](archiveErr("bad entry path " + strconv.Quote(fi.F_path)))
+		}
+		mod := time.Unix(0, int64(fi.F_modified)).UTC()
+		if err := x.start(tk, p, m.V, fi.F_is_dir, mod, zip.Deflate); err != nil {
+			return x.fail(tk, err)
+		}
+		if fi.F_is_dir {
+			continue
+		}
+		if msg, err := archiveFsCopy(tk, src, fi.F_path, x.cur); msg != "" {
+			return Err[Unit](archiveErr("zip_writer: " + msg))
+		} else if err != nil {
+			return x.fail(tk, err)
+		}
+	}
+	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}
+
 // M_set_comment is Writer.SetComment.
 func (x *Archive_ZipWriter) M_set_comment(tk *Task, comment string) Result[Unit, Archive_ArchiveErr] {
 	if err := x.zw.SetComment(comment); err != nil {
@@ -649,6 +683,67 @@ func (x *Archive_TarWriter) M_flush(tk *Task) Result[Unit, Archive_ArchiveErr] {
 	x.fw.tk = tk
 	if err := x.tw.Flush(); err != nil {
 		return x.fail(err)
+	}
+	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}
+
+// archiveFsCopy copies p of src into w in 64 KiB reads (io.Copy in Go's
+// AddFS); a read error is its FsErr text.
+func archiveFsCopy(tk *Task, src Fs, p string, w io.Writer) (string, error) {
+	o := src.M_open(tk, p)
+	if !o.Ok {
+		return o.E.M_display(tk), nil
+	}
+	f := o.V
+	msg, err := archiveFsCopyFile(tk, f, w)
+	if c := f.M_close(tk); !c.Ok && msg == "" && err == nil {
+		return c.E.M_display(tk), nil
+	}
+	return msg, err
+}
+
+func archiveFsCopyFile(tk *Task, f File, w io.Writer) (string, error) {
+	for {
+		r := f.M_read(tk, 65536)
+		if !r.Ok {
+			return r.E.M_display(tk), nil
+		}
+		if !r.V.Some {
+			return "", nil
+		}
+		if _, err := w.Write([]byte(r.V.V)); err != nil {
+			return "", err
+		}
+	}
+}
+
+// M_add_fs is Writer.AddFS over src.walk(".") (archive.xo).
+func (x *Archive_TarWriter) M_add_fs(tk *Task, src Fs) Result[Unit, Archive_ArchiveErr] {
+	l := src.M_walk(tk, ".")
+	if !l.Ok {
+		return Err[Unit](archiveErr("tar_writer: " + l.E.M_display(tk)))
+	}
+	for _, fi := range l.V.s {
+		if fi.F_is_symlink {
+			return Err[Unit](archiveErr("tar_writer: tar: cannot add non-regular file " + strconv.Quote(fi.F_path)))
+		}
+		m := src.M_mode(tk, fi.F_path)
+		if !m.Ok {
+			return Err[Unit](archiveErr("tar_writer: " + m.E.M_display(tk)))
+		}
+		mod := time.Unix(0, int64(fi.F_modified)).UTC()
+		if r := x.start(tk, fi.F_path, m.V, fi.F_size, fi.F_is_dir, mod); !r.Ok {
+			return r
+		}
+		if fi.F_is_dir {
+			continue
+		}
+		x.fw.tk = tk
+		if msg, err := archiveFsCopy(tk, src, fi.F_path, x.tw); msg != "" {
+			return Err[Unit](archiveErr("tar_writer: " + msg))
+		} else if err != nil {
+			return x.fail(err)
+		}
 	}
 	return Ok[Unit, Archive_ArchiveErr](Unit{})
 }

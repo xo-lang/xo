@@ -5497,6 +5497,7 @@ fn (r: ZipReader) files() -> List[ZipFile]
 fn (r: ZipReader) read(f: ZipFile) -> Bytes ! ArchiveErr
 fn (r: ZipReader) comment() -> Str                  // Reader.Comment
 pub fn tar_writer(f: File) -> TarWriter              // tar.Writer: add(e), create(path, size, mode, modified), write(data), flush(), close()
+fn (var w: TarWriter) add_fs(src: Fs) -> () ! ArchiveErr uses fs   // Writer.AddFS
 pub fn tar_reader(f: File) -> TarReader              // tar.Reader: next() -> TarFile?, read(max) -> Bytes?
 struct TarFile { path: Str, size: Int, mode: Int, is_dir: Bool, modified: Time }
 fn (r: ZipReader) raw(f: ZipFile) -> Bytes ! ArchiveErr uses fs.read        // File.OpenRaw: the stored bytes
@@ -5507,6 +5508,7 @@ fn (var w: ZipWriter) set_comment(comment: Str) -> () ! ArchiveErr   // Writer.S
 fn (var w: ZipWriter) set_offset(n: Int)            // Writer.SetOffset
 fn (var w: ZipWriter) copy(r: ZipReader, f: ZipFile) -> () ! ArchiveErr uses fs    // Writer.Copy: no inflate and deflate
 fn (var w: ZipWriter) add_raw(f: ZipFile, raw: Bytes) -> () ! ArchiveErr uses fs.write  // Writer.CreateRaw
+fn (var w: ZipWriter) add_fs(src: Fs) -> () ! ArchiveErr uses fs   // Writer.AddFS
 struct ZipFile { path: Str, size: Int, compressed: Int, mode: Int, is_dir: Bool, modified: Time, offset: Int, method: Int, flags: Int, crc: Int }
 ```
 
@@ -5537,6 +5539,16 @@ struct ZipFile { path: Str, size: Int, compressed: Int, mode: Int, is_dir: Bool,
   CreateRaw of a header with f's name, method, flags, CRC and sizes,
   creator 0x0314, version 20, f's mode and MS-DOS time, no extra field);
   nothing checks raw against them.
+- `add_fs(src)` on a TarWriter or ZipWriter is Go's Writer.AddFS: every
+  directory and file of `src.walk(".")` (parents first, siblings by
+  name), each with its path from src's root, `src.mode` and its modified
+  time; a file's data is read from `src.open` in pieces, so memory is a
+  piece, not the file. Zip entries are deflated. A symbolic link is an
+  error (`tar_writer: tar: cannot add non-regular file "PATH"`, `zip_writer:
+  zip: ...` for zip): an Xo archive holds files and directories, where
+  Go's tar AddFS writes the link. A time keeps its nanoseconds in tar (a
+  PAX record), where Go's AddFS rounds to the second; whole-second times
+  give Go's bytes.
 - `zip_reader` reads a zip archive's central directory once and checks
   every entry as `unzip` does (paths, kinds, Go's errors), but inflates
   none: `r.files()` lists them (`size` is the inflated length) and

@@ -569,6 +569,52 @@ fn (var w: TarWriter) write(data: Bytes) -> () ! archive.ArchiveErr uses fs.writ
   w.put(data)
 }
 
+/// Writer.AddFS: src.walk(".") with each entry's mode, a file copied in
+/// 64 KiB reads (the size walk gave is the header's: a file that changed
+/// meanwhile is write too long or missed bytes, as io.Copy into Go's
+/// writer). A link is Go's non-regular file error.
+fn (var w: TarWriter) add_fs(src: Fs) -> () ! archive.ArchiveErr uses fs {
+  let list = match src.walk(".") {
+    Ok(l) => l
+    Err(e) => return Err(tw_err(e.display()))
+  }
+  for fi in list {
+    if fi.is_symlink {
+      return Err(tw_err("tar: cannot add non-regular file ${fi.path.quote()}"))
+    }
+    let mode = match src.mode(fi.path) {
+      Ok(m) => m
+      Err(e) => return Err(tw_err(e.display()))
+    }
+    if fi.is_dir {
+      w.start(fi.path, mode, 0, true, fi.modified)?
+      continue
+    }
+    w.start(fi.path, mode, fi.size, false, fi.modified)?
+    let inp = match src.open(fi.path) {
+      Ok(f) => f
+      Err(e) => return Err(tw_err(e.display()))
+    }
+    let r = w.copy_from(inp)
+    let cl = inp.close()
+    r?
+    if let Err(e) = cl {
+      return Err(tw_err(e.display()))
+    }
+  }
+  Ok(())
+}
+
+fn (var w: TarWriter) copy_from(inp: File) -> () ! archive.ArchiveErr uses fs {
+  while {
+    match inp.read(65536) {
+      Ok(Some(b)) => w.write(b)?
+      Ok(None) => return Ok(())
+      Err(e) => return Err(tw_err(e.display()))
+    }
+  }
+}
+
 fn (var w: TarWriter) close() -> () ! archive.ArchiveErr uses fs.write {
   if w.done {
     return Ok(())
@@ -1951,6 +1997,53 @@ fn (var w: ZipWriter) add_raw(f: archive.ZipFile, raw: Bytes) -> () ! archive.Ar
     None => return Err(archive_err("bad entry path ${f.path.quote()}"))
   }
   w.put_raw(zip_raw_header(f), raw)
+}
+
+/// Writer.AddFS: src.walk(".") with each entry's mode, deflated, a file
+/// copied in 64 KiB reads. A link is Go's non-regular file error.
+fn (var w: ZipWriter) add_fs(src: Fs) -> () ! archive.ArchiveErr uses fs {
+  let list = match src.walk(".") {
+    Ok(l) => l
+    Err(e) => return Err(zw_err(e))
+  }
+  for fi in list {
+    if fi.is_symlink {
+      return Err(archive_err("zip_writer: zip: cannot add non-regular file ${fi.path.quote()}"))
+    }
+    let mode = match src.mode(fi.path) {
+      Ok(m) => m
+      Err(e) => return Err(zw_err(e))
+    }
+    let p = match archive_path(fi.path) {
+      Some(x) => x
+      None => return Err(archive_err("bad entry path ${fi.path.quote()}"))
+    }
+    w.start(p, mode, fi.is_dir, fi.modified, false)?
+    if !fi.is_dir {
+      let inp = match src.open(fi.path) {
+        Ok(f) => f
+        Err(e) => return Err(zw_err(e))
+      }
+      let r = w.copy_from(inp)
+      let cl = inp.close()
+      r?
+      if let Err(e) = cl {
+        return Err(zw_err(e))
+      }
+    }
+    w.end_entry()?
+  }
+  Ok(())
+}
+
+fn (var w: ZipWriter) copy_from(inp: File) -> () ! archive.ArchiveErr uses fs {
+  while {
+    match inp.read(65536) {
+      Ok(Some(b)) => w.write(b)?
+      Ok(None) => return Ok(())
+      Err(e) => return Err(zw_err(e))
+    }
+  }
 }
 
 fn (var w: ZipWriter) set_comment(comment: Str) -> () ! archive.ArchiveErr {

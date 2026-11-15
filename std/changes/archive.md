@@ -1,5 +1,18 @@
 # std/archive changes
 
+## 2026-11-15: feature: TarWriter.add_fs and ZipWriter.add_fs (Go's Writer.AddFS)
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): tar.Writer.AddFS, zip.Writer.AddFS
+- Go reference: archive/tar writer.go and archive/zip writer.go AddFS (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/archive (scripts/stdcorpus archive): a tree of directories and files with set modes and times (a 70000 byte file, an empty directory, a long UTF-8 name, an empty file) written by both writers, against Go's AddFS of the same tree as an fstest.MapFS: Go's archive bytes; a symbolic link's error and a missing root (arm64, LLVM, Go)
+- Timing: none
+
+`w.add_fs(src)` adds every directory and file of an Fs in walk order, with
+their modes and times, reading each file in 64 KiB pieces. A symbolic link
+is an error (Go's tar AddFS writes it as a link).
+
 ## 2026-11-15: feature: tar_reader, a tar archive read entry by entry (Go's tar.Reader)
 
 - Kind: feature
