@@ -25,6 +25,15 @@ pub struct Series {
   pub q: List[Mutex[QState]]
 }
 
+/// An instrument's series: `at` maps a key (series_of's) to the series'
+/// index in `list`. A hit reads `list[i].cells` in place, where a
+/// Map[Str, Series] get copied the Series: three shared lists counted up
+/// and down, six atomic updates per labelled inc (2026-11-15). Internal.
+pub struct Store {
+  pub at: Map[Str, Int]
+  pub list: List[Series]
+}
+
 /// A CKMS targeted quantile stream (beorn7/perks, which Prometheus'
 /// client uses): samples (value, width, delta), the unsorted buffer, and
 /// the count. Internal.
@@ -74,7 +83,7 @@ pub struct Family {
   pub kind: Int
   pub labels: List[Str]
   pub bounds: List[Float]
-  pub series: Mutex[Map[Str, Series]]
+  pub series: Mutex[Store]
   pub dropped: Atomic[Int]
   pub reads: List[fn() -> List[Sample]]
   pub objectives: List[(Float, Float)]
@@ -206,10 +215,10 @@ pub fn (h: Histogram) observe(v: Float, values: List[Str] = []) {
     // retained and released its fields, histogram 1.76x, 2026-11-08)
     let nb = h.f.bounds.len()
     let b = bucket_of(h.f.bounds, v)
-    let done = h.f.series.with_read(fn(m: Map[Str, Series]) -> Bool {
-      match m.get(key) {
-        Some(s) => {
-          histogram_cell_add(s.cells, b, nb, v)
+    let done = h.f.series.with_read(fn(st: Store) -> Bool {
+      match st.at.get(key) {
+        Some(i) => {
+          histogram_cell_add(st.list[i].cells, b, nb, v)
           true
         }
         None => false
@@ -423,7 +432,7 @@ fn make(r: Registry, kind: Int, name: Str, help: Str, labels: List[Str], bounds:
       fault("metrics: histogram buckets must increase")
     }
   }
-  let f = Family{name: name, help: help, kind: kind, labels: labels, bounds: bounds, series: Mutex[Map[Str, Series]].new({}), dropped: r.dropped, reads: reads, objectives: objectives, max_age_ms: max_age_ms, age_buckets: age_buckets}
+  let f = Family{name: name, help: help, kind: kind, labels: labels, bounds: bounds, series: Mutex[Store].new(Store{at: {}, list: []}), dropped: r.dropped, reads: reads, objectives: objectives, max_age_ms: max_age_ms, age_buckets: age_buckets}
   let dup = r.families.with(fn(var fs: List[Family]) -> Bool {
     for g in fs {
       if g.name == name {
@@ -461,12 +470,44 @@ fn remove_series(f: Family, values: List[Str]) -> Bool {
   if values.len() != f.labels.len() {
     fault("metrics: ${f.name} has ${f.labels.len()} labels, got ${values.len()} values")
   }
-  let key = values.join(SEP)
-  f.series.with(fn(var m: Map[Str, Series]) -> Bool { m.remove(key) is Some(_) })
+  let key = key_of(values)
+  f.series.with(fn(var st: Store) -> Bool {
+    match st.at.remove(key) {
+      Some(i) => {
+        // the last series moves into the freed index
+        let last = st.list.len() - 1
+        if i != last {
+          st.list[i] = st.list[last]
+          st.at[key_of(st.list[i].values)] = i
+        }
+        let _s = st.list.pop()
+        true
+      }
+      None => false
+    }
+  })
 }
 
 fn reset_series(f: Family) {
-  f.series.with(fn(var m: Map[Str, Series]) { m = {} })
+  f.series.with(fn(var st: Store) { st = Store{at: {}, list: []} })
+}
+
+/// The key of a series' label values: one label's value itself (what join
+/// gives, without the copy), else the values joined with SEP.
+fn key_of(values: List[Str]) -> Str {
+  if values.len() == 1 { values[0] } else { values.join(SEP) }
+}
+
+/// f's series by key, a copy taken under the share: the scrape's and
+/// std/otlp's view. Internal.
+pub fn series_snapshot(f: Family) -> Map[Str, Series] {
+  f.series.with_read(fn(st: Store) -> Map[Str, Series] {
+    var m: Map[Str, Series] = {}
+    for (k, i) in st.at {
+      m[k] = st.list[i]
+    }
+    m
+  })
 }
 
 /// perks' buffer size: a stream merges its buffer when it holds this many.
@@ -670,8 +711,13 @@ fn series_of(f: Family, values: List[Str]) -> Series? {
     fault("metrics: ${f.name} has ${f.labels.len()} labels, got ${values.len()} values")
   }
   // one label: its value is the key (what join gives), without the copy
-  let key = if values.len() == 1 { values[0] } else { values.join(SEP) }
-  if let Some(s) = f.series.with_read(fn(m: Map[Str, Series]) -> Series? { m.get(key) }) {
+  let key = key_of(values)
+  if let Some(s) = f.series.with_read(fn(st: Store) -> Series? {
+    match st.at.get(key) {
+      Some(i) => Some(st.list[i])
+      None => None
+    }
+  }) {
     return Some(s)
   }
   // the fields the closure reads, bound first: capturing f would copy
@@ -682,15 +728,16 @@ fn series_of(f: Family, values: List[Str]) -> Series? {
   let nb = f.bounds.len()
   let kind = f.kind
   let age_buckets = f.age_buckets
-  let made = f.series.with(fn(var m: Map[Str, Series]) -> Series? {
-    if let Some(s) = m.get(key) {
-      return Some(s)
+  let made = f.series.with(fn(var st: Store) -> Series? {
+    if let Some(i) = st.at.get(key) {
+      return Some(st.list[i])
     }
-    if m.len() >= MAX_SERIES {
+    if st.list.len() >= MAX_SERIES {
       return None
     }
     let s = new_series(values, nb, kind, age_buckets)
-    m.put(key, s)
+    st.at.put(key, st.list.len())
+    st.list.push(s)
     Some(s)
   })
   if made is None {
@@ -706,10 +753,10 @@ fn series_of(f: Family, values: List[Str]) -> Series? {
 fn cells_of(f: Family, values: List[Str]) -> List[Atomic[Int]]? {
   if values.len() == f.labels.len() {
     // the key series_of makes
-    let key = if values.len() == 1 { values[0] } else { values.join(SEP) }
-    let hit = f.series.with_read(fn(m: Map[Str, Series]) -> List[Atomic[Int]]? {
-      match m.get(key) {
-        Some(s) => Some(s.cells)
+    let key = key_of(values)
+    let hit = f.series.with_read(fn(st: Store) -> List[Atomic[Int]]? {
+      match st.at.get(key) {
+        Some(i) => Some(st.list[i].cells)
         None => None
       }
     })
@@ -750,14 +797,14 @@ fn hit_add(f: Family, values: List[Str], counter: Bool, d: Float) -> Bool {
   if values.len() != f.labels.len() {
     return false
   }
-  let key = if values.len() == 1 { values[0] } else { values.join(SEP) }
-  f.series.with_read(fn(m: Map[Str, Series]) -> Bool {
-    match m.get(key) {
-      Some(s) => {
+  let key = key_of(values)
+  f.series.with_read(fn(st: Store) -> Bool {
+    match st.at.get(key) {
+      Some(i) => {
         if counter {
-          counter_cells_add(s.cells, d)
+          counter_cells_add(st.list[i].cells, d)
         } else {
-          add_float(s.cells[0], d)
+          add_float(st.list[i].cells[0], d)
         }
         true
       }
@@ -878,7 +925,7 @@ fn expose_series(f: Family, now_ms: Int) -> List[Str] {
     }
     return out
   }
-  var m = f.series.with_read(fn(m: Map[Str, Series]) -> Map[Str, Series] { m })
+  var m = series_snapshot(f)
   if m.is_empty() && f.labels.is_empty() {
     m[""] = new_series([], f.bounds.len(), f.kind, f.age_buckets)
   }

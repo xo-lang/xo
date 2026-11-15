@@ -354,7 +354,7 @@ fn family_msg(f: metrics.Family, start_ms: Int, now_ms: Int) -> MetricMsg {
       nums.push(number_point(f, x.values, x.value, start_ms, now_ms, f.kind == 0))
     }
   } else {
-    let sm = f.series.with_read(fn(m: Map[Str, metrics.Series]) -> Map[Str, metrics.Series] { m })
+    let sm = metrics.series_snapshot(f)
     for k in sm.keys().sort() {
       let s = sm.get(k) ?? continue
       if f.kind < 2 {

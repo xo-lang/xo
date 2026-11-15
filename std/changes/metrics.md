@@ -1,5 +1,17 @@
 # std/metrics changes
 
+## 2026-11-15: perf: a labelled hit reads its series in place
+
+- Kind: perf
+- Commit: this commit
+- Found by: Lang 3 and Lang 1, the std Proven perf line (bench/perf/metrics counter 1.640 and histogram 1.127 of client_golang on linux/arm64 host 1); a linux CPU profile put the atomic count updates of the Series a Map.get copies at about a quarter of Counter.inc
+- Go reference: prometheus/client_golang vec.go (metricMap.getMetricWithHashAndLabelValues: a lookup that returns a pointer)
+- Test: the metrics and otlp corpora and std/native/otlp_test.xo (go, arm64, llvm); xo bench --ab on linux/arm64 host 1, 3 rounds: counter 114.5 to 77.0 ms (0.673, about 1.05 of Go), histogram 84.2 to 65.6 ms (0.780, about 0.85 of Go)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+An instrument's series were a Map[Str, Series], so each labelled inc, add or observe copied the Series out of the map: its three shared lists counted up and down, six atomic updates. The series now sit in a list with a map from key to index, and a hit reads the series' cells in place. Removing a series moves the last one into its index; a scrape and std/otlp read a snapshot as before.
+
 ## 2026-11-15: fix: an instrument with no series writes nothing, one without labels writes its zeros
 
 - Kind: fix
