@@ -94,10 +94,12 @@ fn main(os: Os) {
 // 0231 addendum, 2026-10-28): the IEEE polynomial, inline asm on LLVM;
 // amd64's crc32 is Castagnoli only, so amd64 folds 64 bytes a step with
 // PCLMULQDQ instead (cpu.crc32_fold, ssa x86crc32.xo, Go's ieeeCLMUL),
-// on ymm registers with VPCLMULQDQ (crc32_fold_ymm).
+// on ymm registers with VPCLMULQDQ (crc32_fold_ymm). The arm64 path's
+// cpu.crc32x is a call to the software loop on amd64 (its body), never
+// reached there (hw() has no HW_CRC32), so the check is the instruction.
 // func flate.crc32
 // arm64: "crc32x w[0-9]+, w[0-9]+, x[0-9]+"
-// amd64: -"crc32x" "pclmulqdq \$17, %xmm0, %xmm5" "pextrd \$1, %xmm1, %eax" "vpclmulqdq \$17, %ymm0, %ymm1, %ymm5"
+// amd64: -"crc32[bwlq] %" "pclmulqdq \$17, %xmm0, %xmm5" "pextrd \$1, %xmm1, %eax" "vpclmulqdq \$17, %ymm0, %ymm1, %ymm5"
 // llvm/arm64: "crc32x \$\{0:w\}"
 
 // std/crc32's Castagnoli a word a step with arm64's crc32cx (decision
