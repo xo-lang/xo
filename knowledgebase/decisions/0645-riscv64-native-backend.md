@@ -1,6 +1,9 @@
 # 0645: A native linux/riscv64 backend
 
-Status: Proposed (Xo Lang 1, 2026-11-15; owner priority through the lead,
+Status: On hold (owner, 2026-11-15: std Proven first). linux/riscv64
+stays on `--backend=llvm` (decision 0571) until the work resumes; stage
+2's work in progress is the branch `wip/lang1-rv2` (see Progress).
+Was: Proposed (Xo Lang 1, 2026-11-15; owner priority through the lead,
 2026-11-15: "a native linux/riscv64 backend is next"). Supersedes
 Decision 2 of 0571 (no native backend at first) once accepted. The
 owner's features-first rule applies: land the backend broadly, then the
@@ -265,6 +268,19 @@ cost work are:
   ("riscv64 objects are clang's, byte for byte"). elflink links them static and with
   glibc 2.27, and under qemu-riscv64 on host 2 they print `hello` and `hello from
   riscv64` (gotchas/riscv64-host-tools.md).
+- Stage 2 (Xo Lang 1, 2026-11-15): in progress when the work was put on hold,
+  unpushed to main, on the branch `wip/lang1-rv2` (92b5307df). `--backend=riscv64`
+  runs the arm64 MIR through rv_retarget (compiler/arm64/rv.xo: integer, float,
+  compare, branch and fault templates), rvemit.xo (frames, CFI, LP64D calls, tail
+  calls, switch tables, landing pads with GCC call site tables) and rvrt.xo (RC
+  helpers, trampolines, scheduler switch, TLS, entry, exports, rt's byte intrinsics
+  as unrolled byte loads); `XO_RV_REPORT=all` lists the templates not yet
+  translated. Hello: 6459 untranslated templates down to 5 (`frintz`, and the
+  `fcmp a, a; fccmp vc` branch), and its assembly assembles with assemble_elf_rv64
+  (branch relaxation by re-assembly rounds) to a 1,381,832 byte object. Next: those
+  5, then link through elflink and run hello under qemu-riscv64 on host 2; confirm
+  the frcsr and fscsr words with llvm-mc; check LLVM's riscv64 output is unchanged
+  by moving its switch and unwind bodies into compiler/ssa.
 
 ## Consequences
 
