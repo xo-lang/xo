@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+https://user:p%40ss@example.com:8443/a/b%20c?x=1&y=2 | example.com | 8443 | /a/b%20c | user:p@ss | x=1&y=2 | https://user:xxxxx@example.com:8443/a/b%20c?x=1&y=2
+http://[fe80::1%25en0]:8080/index.html | fe80::1%en0 | 8080 | /index.html | <none> |  | http://[fe80::1%25en0]:8080/index.html
+http://example.com/ | example.com |  | / | <none> |  | http://example.com/
+http://u@h.example/p?e=&q=a+b | h.example |  | /p | u:<none> | e=&q=a+b | http://u@h.example/p?e=&q=a+b
+http://u:@h.example/ | h.example |  | / | u: |  | http://u:xxxxx@h.example/
+--- stderr

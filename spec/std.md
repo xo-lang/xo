@@ -2208,6 +2208,7 @@ pub fn parse_url(s: Str) -> Url ! UrlErr
 struct Url { scheme: Str, host: Str, port: Int?, path: Str, query: Map[Str, Str], user: Str = "", password: Str? = None }
 fn (u: Url) display() -> Str     // the URL with its userinfo escaped (Go's URL.String)
 fn (u: Url) redacted() -> Str    // display with a set password as xxxxx (Go's URL.Redacted)
+fn (u: Url) to_url() -> url.Url  // the full url.Url (20.1), as Go's Request.URL holds it
 struct UrlErr { msg: Str }
 ```
 
@@ -2216,7 +2217,11 @@ percent decoded into `user` and `password` (`Some("")` for `user:@`; an
 empty userinfo, `http://@host`, is none). `display` writes them back
 escaped as Go's `Userinfo.String` (letters, digits, `-_.~` and
 `$&+,;=` stay), `redacted` shows a set password as `xxxxx`; logs
-should use `redacted`. A client request to a URL with a user sends
+should use `redacted`. `to_url` gives the URL as std/url's `Url`
+(section 20.1): the host bracketed when IPv6 with `:port` when set,
+`user` and `password` as its `Userinfo` (none when both are unset), the
+decoded path with an empty `raw_path`, and the query as `raw_query`,
+`Values.encode` of its pairs (keys sorted). A client request to a URL with a user sends
 `Authorization: Basic` of `user:password` unless the request sets
 `Authorization` itself, as Go's Client does.
 
@@ -5177,7 +5182,9 @@ Query, RequestURI, Hostname, Port and JoinPath (url.go and
 encoding_table.go of go1.26) in `std/url.xo`; 529 cases from Go's
 url_test.go tables, generated with Go's answers by
 `scripts/genurltest`, in `url_test.xo`. http keeps its own lighter
-`http.Url` (section 18); this is the full type.
+`http.Url` (section 18); this is the full type, and `http.Url.to_url()`
+converts one to it (2026-11-15; an escaped slash in the path is lost,
+since `http.Url` keeps the decoded path only).
 
 ```
 struct UrlErr { op: Str, url: Str, msg: Str }   // displays as Go's *url.Error: parse "URL": reason

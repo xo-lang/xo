@@ -1,0 +1,30 @@
+// http.Url.to_url (2026-11-15): the url.Url Go's http.NewRequest holds
+// for the same text (url.Parse, the query as Values.Encode sorts it), so
+// its display, hostname, port, escaped_path, user and query match Go's
+// (Go's answers from net/url of go1.26; an escaped slash in the path is
+// the one difference, http.Url holding the decoded path only).
+use std/http
+
+const URLS: List[Str] = [
+  "https://user:p%40ss@example.com:8443/a/b%20c?y=2&x=1",
+  "http://[fe80::1%25en0]:8080/index.html",
+  "http://example.com/",
+  "http://u@h.example/p?q=a+b&e=",
+  "http://u:@h.example/",
+]
+
+fn main(os: Os) {
+  for s in URLS {
+    match http.parse_url(s) {
+      Ok(h) => {
+        let u = h.to_url()
+        let user = match u.user {
+          Some(ui) => "${ui.username}:${ui.password ?? "<none>"}"
+          None => "<none>"
+        }
+        os.stdio.println("${u.display()} | ${u.hostname()} | ${u.port()} | ${u.escaped_path()} | ${user} | ${u.query().encode()} | ${u.redacted()}")
+      }
+      Err(e) => os.stdio.println("parse_url: ${e.msg}")
+    }
+  }
+}

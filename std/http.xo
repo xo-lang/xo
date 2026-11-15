@@ -693,6 +693,15 @@ fn (u: Url) display() -> Str
 /// display with a set password as `xxxxx` (Go's URL.Redacted).
 fn (u: Url) redacted() -> Str
 
+/// The URL as std/url's full type (spec std 20.1), as Go's Request.URL
+/// holds it: the host with brackets for an IPv6 address (its zone
+/// decoded, as url.parse gives it) and `:port` when set, user and
+/// password as its Userinfo (none when both are unset), the path as
+/// it is (decoded, so raw_path is empty and escaped_path is Go's escape
+/// of it), and the query as raw_query, Values.encode of its pairs (keys
+/// sorted). http.Url keeps no fragment.
+fn (u: Url) to_url() -> url.Url
+
 struct UrlErr {
   msg: Str
 }

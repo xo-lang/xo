@@ -1776,6 +1776,20 @@ fn url_redacted(u: http.Url) -> Str {
   url_with_userinfo(u, u.password.map(fn(_) { "xxxxx" }))
 }
 
+/// `u.to_url()`: the url.Url of u (std/http.xo's note).
+fn url_to_url(u: http.Url) -> url.Url {
+  var host = if u.host.contains(":") && !u.host.starts_with("[") { "[" + u.host + "]" } else { u.host }
+  if let Some(p) = u.port {
+    host = "${host}:${p}"
+  }
+  let user: url.Userinfo? = if u.user.is_empty() && u.password is None { None } else { Some(url.Userinfo{username: u.user, password: u.password}) }
+  var q = url.values()
+  for (k, v) in u.query {
+    q.set(k, v)
+  }
+  url.Url{scheme: u.scheme, user: user, host: host, path: u.path, raw_query: q.encode()}
+}
+
 fn url_with_userinfo(u: http.Url, password: Str?) -> Str {
   let s = url_string(u)
   if u.user.is_empty() && password is None {

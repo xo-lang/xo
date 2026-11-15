@@ -123,6 +123,7 @@ var (
 	_ func(*Task, string) Result[Http_Url, Http_UrlErr]                                                                                                 = Http_parse_url
 	_ func(*Http_Url, *Task) string                                                                                                                     = (*Http_Url).M_display
 	_ func(*Http_Url, *Task) string                                                                                                                     = (*Http_Url).M_redacted
+	_ func(*Http_Url, *Task) Url_Url                                                                                                                    = (*Http_Url).M_to_url
 	_ func(*Http_UrlErr, *Task) string                                                                                                                  = (*Http_UrlErr).M_display
 	_ func(*Task, int64, Compress_Level) func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never] = Http_gzip_responses
 )

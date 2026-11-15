@@ -1897,3 +1897,32 @@ test "a Range header of more than 200 ranges is ignored, as Go 1.26.11 (GO-2026-
   expect(resp.status) == 200
   expect(resp.body.len()) == 10
 }
+
+test "to_url gives the url.Url of the same text, its query sorted as Values.encode" {
+  let h = match http.parse_url("https://user:p%40ss@[fe80::1%25en0]:8443/a/b%20c?y=2&x=1") {
+    Ok(x) => x
+    Err(e) => {
+      expect(e.msg) == "parsed"
+      return
+    }
+  }
+  let u = h.to_url()
+  expect(u.scheme) == "https"
+  expect(u.host) == "[fe80::1%en0]:8443"
+  expect(u.hostname()) == "fe80::1%en0"
+  expect(u.port()) == "8443"
+  expect(u.path) == "/a/b c"
+  expect(u.raw_path) == ""
+  expect(u.raw_query) == "x=1&y=2"
+  expect(u.user.map(fn(ui) { ui.username })) == Some("user")
+  expect(u.user.map(fn(ui) { ui.password ?? "<none>" })) == Some("p@ss")
+  expect(u.display()) == "https://user:p%40ss@[fe80::1%25en0]:8443/a/b%20c?x=1&y=2"
+  // no userinfo: no Userinfo
+  let plain = (http.parse_url("http://example.com/").ok() ?? h).to_url()
+  expect(plain.user is None) == true
+  expect(plain.display()) == "http://example.com/"
+  // an escaped slash: http.Url keeps the decoded path only, so the url.Url
+  // escapes it again as a plain path (Go's Request.URL keeps "/x%2Fy")
+  let slash = (http.parse_url("https://h.example/x%2Fy").ok() ?? h).to_url()
+  expect(slash.escaped_path()) == "/x/y"
+}

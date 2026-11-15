@@ -1736,6 +1736,27 @@ func (u Http_Url) M_redacted(_ *Task) string {
 	return urlWithUserinfo(u, pw)
 }
 
+// M_to_url is `u.to_url()`: u as a url.Url, as the native url_to_url
+// (the query's keys sorted, as Values.Encode writes them).
+func (u Http_Url) M_to_url(tk *Task) Url_Url {
+	host := u.F_host
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		host = "[" + host + "]"
+	}
+	if u.F_port.Some {
+		host += ":" + strconv.FormatInt(u.F_port.V, 10)
+	}
+	var user Option[Url_Userinfo]
+	if u.F_user != "" || u.F_password.Some {
+		user = Some(Url_Userinfo{F_username: u.F_user, F_password: u.F_password})
+	}
+	q := url.Values{}
+	for k, v := range Map_All(u.F_query) {
+		q.Set(k, v)
+	}
+	return Url_Url{F_scheme: u.F_scheme, F_user: user, F_host: host, F_path: u.F_path, F_raw_query: q.Encode()}
+}
+
 func urlWithUserinfo(u Http_Url, pw Option[string]) string {
 	s := urlString(u)
 	if u.F_user == "" && !pw.Some {

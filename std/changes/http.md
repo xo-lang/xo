@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-15: feature: `Url.to_url()` gives std/url's full `Url`
+
+- Kind: feature
+- Commit: this push
+- Found by: owner decision through the lead (2026-11-15)
+- Go reference: net/http Request.URL (a *url.URL from url.Parse)
+- Test: golden http_url_to_url (arm64, LLVM and Go backends; the want text is Go's net/url output for the same URLs, the query as Values.Encode sorts it); std/native/http_test.xo "to_url gives the url.Url of the same text, its query sorted as Values.encode" (native and LLVM)
+- Affected: every backend
+- Shipped in: not yet released
+
+`to_url` brackets an IPv6 host (its zone decoded, as url.parse gives it) with `:port` when set, carries `user` and `password` as a `Userinfo` (none when both are unset), keeps the decoded path with an empty `raw_path`, and writes the query as `raw_query` with its keys sorted. An escaped slash in the path (`/x%2Fy`) is lost, since `http.Url` holds the decoded path only.
 ## 2026-11-14: fix: a client request to a URL that does not parse reports Go's parse error
 
 - Kind: fix
