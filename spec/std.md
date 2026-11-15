@@ -7568,9 +7568,18 @@ struct Template {
   serial: Bytes = b"", subject: Name, not_before: Time, not_after: Time,
   dns_names: List[Str] = [], ip_addresses: List[netip.Addr] = [],
   email_addresses: List[Str] = [], uris: List[Str] = [],
-  is_ca: Bool = false, max_path_len: Int? = None,
+  is_ca: Bool = false, max_path_len: Int? = None, basic_constraints_valid: Bool = false,
   key_usage: List[KeyUsage] = [], ext_key_usage: List[ExtKeyUsage] = [],
-  subject_key_id: Bytes = b"", extra_extensions: List[Extension] = []
+  subject_key_id: Bytes = b"",
+  ocsp_servers: List[Str] = [], issuing_certificate_urls: List[Str] = [],
+  crl_distribution_points: List[Str] = [],
+  permitted_dns_domains_critical: Bool = false,
+  permitted_dns_domains: List[Str] = [], excluded_dns_domains: List[Str] = [],
+  permitted_ip_ranges: List[netip.Prefix] = [], excluded_ip_ranges: List[netip.Prefix] = [],
+  permitted_email_addresses: List[Str] = [], excluded_email_addresses: List[Str] = [],
+  permitted_uri_domains: List[Str] = [], excluded_uri_domains: List[Str] = [],
+  policies: List[Str] = [], signature_algorithm: Str = "",
+  extra_extensions: List[Extension] = []
 }
 fn create_certificate(r: Rand, t: Template, public_key: crypto.PublicKey,
   parent: Certificate?, key: crypto.PrivateKey) -> Certificate ! CertErr uses rand
@@ -7674,16 +7683,26 @@ fn check(os: Os, pem: Bytes, roots: Bytes) -> () ! Error uses clock {
 - `create_certificate` is Go's CreateCertificate: the TBS certificate
   of `t` for `public_key`, issued by `parent` (self-signed when None)
   and signed with `key`, in Go's encoding, so an Ed25519 or RSA
-  certificate is byte for byte Go's. The signature algorithm is Go's
-  default for the key (SHA256-RSA; ECDSA-SHA256, -SHA384, -SHA512 by
-  curve; Ed25519; a P-224 key is `CertErr("x509: unknown elliptic
-  curve")`). Its extensions, in Go's order: key usage (critical), extended
-  key usage, basic constraints (critical; made when `is_ca` or
-  `max_path_len` is set), subject key id (on a CA, the first 20 bytes of
-  the SHA-256 of the key when `subject_key_id` is empty), authority key id
-  (the parent's subject key id), the SAN (critical when the subject is
-  empty); then `extra_extensions`, one of which replaces a made one with
-  its OID. An empty `serial` is 20 random bytes with the top bit clear. A
+  certificate signed with PKCS #1 v1.5 is byte for byte Go's. The
+  signature algorithm is `t.signature_algorithm` by Go's name (as
+  `create_revocation_list` reads it: Go's error for one that is not the
+  key's), else Go's default for the key (SHA256-RSA; ECDSA-SHA256,
+  -SHA384, -SHA512 by curve; Ed25519; a P-224 key is `CertErr("x509:
+  unknown elliptic curve")`). Its extensions, in Go's order
+  (buildCertExtensions): key usage (critical), extended key usage, basic
+  constraints (critical; made when `is_ca`, `max_path_len` or
+  `basic_constraints_valid` is set), subject key id (on a CA, the first 20
+  bytes of the SHA-256 of the key when `subject_key_id` is empty),
+  authority key id (the parent's subject key id), authority information
+  access (`ocsp_servers`, then `issuing_certificate_urls`), the SAN
+  (critical when the subject is empty), certificate policies (`policies`,
+  dotted OIDs whose arcs may be any size, as Go's OID; a bad one is
+  `CertErr("invalid policy object identifier")`), name constraints (made
+  when a permitted or excluded list is set; critical when
+  `permitted_dns_domains_critical`; each subtree DNS, IP range as the
+  masked address and mask, e-mail, then URI, IA5 checked as the SAN), CRL
+  distribution points (each a full name URI); then `extra_extensions`,
+  one of which replaces a made one with its OID. An empty `serial` is 20 random bytes with the top bit clear. A
   subject with `raw` set is used as it is (a parsed certificate's).
   Errors are Go's texts: a non-ASCII DNS name, e-mail or URI, a
   `max_path_len` on a non-CA, a key that is not the parent's.

@@ -604,8 +604,34 @@ func x509Template(t X509_Template) (*x509.Certificate, error) {
 		}
 		g.URIs = append(g.URIs, p)
 	}
-	if t.F_is_ca || t.F_max_path_len.Some {
+	if t.F_is_ca || t.F_max_path_len.Some || t.F_basic_constraints_valid {
 		g.BasicConstraintsValid = true
+	}
+	g.OCSPServer = x509GoStrs(t.F_ocsp_servers)
+	g.IssuingCertificateURL = x509GoStrs(t.F_issuing_certificate_urls)
+	g.CRLDistributionPoints = x509GoStrs(t.F_crl_distribution_points)
+	g.PermittedDNSDomainsCritical = t.F_permitted_dns_domains_critical
+	g.PermittedDNSDomains = x509GoStrs(t.F_permitted_dns_domains)
+	g.ExcludedDNSDomains = x509GoStrs(t.F_excluded_dns_domains)
+	g.PermittedIPRanges = x509IPNets(t.F_permitted_ip_ranges)
+	g.ExcludedIPRanges = x509IPNets(t.F_excluded_ip_ranges)
+	g.PermittedEmailAddresses = x509GoStrs(t.F_permitted_email_addresses)
+	g.ExcludedEmailAddresses = x509GoStrs(t.F_excluded_email_addresses)
+	g.PermittedURIDomains = x509GoStrs(t.F_permitted_uri_domains)
+	g.ExcludedURIDomains = x509GoStrs(t.F_excluded_uri_domains)
+	for _, o := range t.F_policies.s {
+		oid, err := x509.ParseOID(string(o))
+		if err != nil {
+			return nil, errors.New("invalid policy object identifier")
+		}
+		g.Policies = append(g.Policies, oid)
+	}
+	if name := string(t.F_signature_algorithm); name != "" {
+		a, err := x509SigAlg(name)
+		if err != nil {
+			return nil, err
+		}
+		g.SignatureAlgorithm = a
 	}
 	if t.F_max_path_len.Some {
 		g.MaxPathLen = int(t.F_max_path_len.V)
@@ -638,6 +664,48 @@ func x509Template(t X509_Template) (*x509.Certificate, error) {
 		g.ExtraExtensions = append(g.ExtraExtensions, pkix.Extension{Id: oid, Critical: e.F_critical, Value: []byte(e.F_value)})
 	}
 	return g, nil
+}
+
+// x509SigAlg is the SignatureAlgorithm Go names name.
+func x509SigAlg(name string) (x509.SignatureAlgorithm, error) {
+	for a := x509.SignatureAlgorithm(1); a < 64; a++ {
+		if a.String() == name {
+			return a, nil
+		}
+	}
+	return 0, errors.New("x509: unknown SignatureAlgorithm")
+}
+
+// x509ReadSalt reads r as the native code does for a PSS signature: its
+// salt, the hash's size.
+func x509ReadSalt(tk *Task, r Rand, a x509.SignatureAlgorithm) {
+	switch a {
+	case x509.SHA256WithRSAPSS:
+		r.M_bytes(tk, 32)
+	case x509.SHA384WithRSAPSS:
+		r.M_bytes(tk, 48)
+	case x509.SHA512WithRSAPSS:
+		r.M_bytes(tk, 64)
+	}
+}
+
+func x509GoStrs(l List[string]) []string {
+	var out []string
+	for _, x := range l.s {
+		out = append(out, string(x))
+	}
+	return out
+}
+
+// x509IPNets is Go's form of prefixes: the address in its own length (4
+// bytes for IPv4) and the mask of that length.
+func x509IPNets(l List[Netip_Prefix]) []*net.IPNet {
+	var out []*net.IPNet
+	for _, p := range l.s {
+		a := p.F_addr.goAddr()
+		out = append(out, &net.IPNet{IP: net.IP(a.AsSlice()), Mask: net.CIDRMask(int(p.F_len), a.BitLen())})
+	}
+	return out
 }
 
 func x509ParseOID(s string) (asn1.ObjectIdentifier, error) {
@@ -679,6 +747,7 @@ func X509_create_certificate(tk *Task, r Rand, t X509_Template, pub Crypto_Publi
 	if k, ok := key.k.(*ecdsa.PrivateKey); ok {
 		r.M_bytes(tk, int64((k.Curve.Params().N.BitLen()+7)/8))
 	}
+	x509ReadSalt(tk, r, tmpl.SignatureAlgorithm)
 	der, err := x509.CreateCertificate(cryptorand.Reader, tmpl, par, pub.k, key.k)
 	if err != nil {
 		return Err[X509_Certificate](x509Err(textOf(err.Error())))
@@ -783,15 +852,11 @@ func X509_create_revocation_list(tk *Task, r Rand, t X509_RevocationListTemplate
 		NextUpdate: time.Unix(0, int64(t.F_next_update)),
 	}
 	if name := string(t.F_signature_algorithm); name != "" {
-		for a := x509.SignatureAlgorithm(1); a < 64; a++ {
-			if a.String() == name {
-				tmpl.SignatureAlgorithm = a
-				break
-			}
+		a, err := x509SigAlg(name)
+		if err != nil {
+			return fail(err)
 		}
-		if tmpl.SignatureAlgorithm == 0 {
-			return fail(errors.New("x509: unknown SignatureAlgorithm"))
-		}
+		tmpl.SignatureAlgorithm = a
 	}
 	for _, e := range t.F_revoked.s {
 		ent := x509.RevocationListEntry{SerialNumber: new(big.Int).SetBytes([]byte(e.F_serial)), RevocationTime: time.Unix(0, int64(e.F_revoked_at)), ReasonCode: int(e.F_reason)}
@@ -822,14 +887,7 @@ func X509_create_revocation_list(tk *Task, r Rand, t X509_RevocationListTemplate
 		// r is read as the native code reads it: an ECDSA signature's hedge
 		r.M_bytes(tk, int64((k.Curve.Params().N.BitLen()+7)/8))
 	}
-	switch tmpl.SignatureAlgorithm {
-	case x509.SHA256WithRSAPSS:
-		r.M_bytes(tk, 32) // the salt, as the native code reads it
-	case x509.SHA384WithRSAPSS:
-		r.M_bytes(tk, 48)
-	case x509.SHA512WithRSAPSS:
-		r.M_bytes(tk, 64)
-	}
+	x509ReadSalt(tk, r, tmpl.SignatureAlgorithm)
 	der, err := x509.CreateRevocationList(cryptorand.Reader, tmpl, iss, signer)
 	if err != nil {
 		return fail(err)

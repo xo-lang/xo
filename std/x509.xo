@@ -236,10 +236,36 @@ struct Template {
   /// or max_path_len is set); max_path_len only on a CA.
   is_ca: Bool = false
   max_path_len: Int? = None
+  /// Makes the basic constraints extension on a certificate that is not a
+  /// CA and has no max_path_len (Go's BasicConstraintsValid with IsCA
+  /// false).
+  basic_constraints_valid: Bool = false
   key_usage: List[KeyUsage] = []
   ext_key_usage: List[ExtKeyUsage] = []
   /// Empty on a CA: the first 20 bytes of the SHA-256 of its public key.
   subject_key_id: Bytes = b""
+  /// The authority information access URLs (Go's OCSPServer and
+  /// IssuingCertificateURL) and the CRL distribution points' URIs.
+  ocsp_servers: List[Str] = []
+  issuing_certificate_urls: List[Str] = []
+  crl_distribution_points: List[Str] = []
+  /// The name constraints extension, made when any list is not empty;
+  /// critical when permitted_dns_domains_critical (Go's name).
+  permitted_dns_domains_critical: Bool = false
+  permitted_dns_domains: List[Str] = []
+  excluded_dns_domains: List[Str] = []
+  permitted_ip_ranges: List[netip.Prefix] = []
+  excluded_ip_ranges: List[netip.Prefix] = []
+  permitted_email_addresses: List[Str] = []
+  excluded_email_addresses: List[Str] = []
+  permitted_uri_domains: List[Str] = []
+  excluded_uri_domains: List[Str] = []
+  /// The certificate policies' OIDs, dotted (Go's Policies).
+  policies: List[Str] = []
+  /// Go's name for the signature algorithm (as Certificate's
+  /// signature_algorithm shows it, such as "SHA384-RSA" or
+  /// "SHA256-RSAPSS"); empty: the key's default.
+  signature_algorithm: Str = ""
   /// Extensions added as given, after the ones made from the fields; one
   /// with the OID of a made one replaces it.
   extra_extensions: List[Extension] = []
@@ -248,10 +274,15 @@ struct Template {
 /// Go's CreateCertificate: a certificate of t for public_key, issued by
 /// parent and signed with parent's private key, key; self-signed when
 /// parent is None (the issuer is t's subject and key the matching private
-/// key). The signature algorithm is Go's for the key: SHA256-RSA,
-/// ECDSA-SHA256, -SHA384 or -SHA512 by curve, or Ed25519. Err with Go's
-/// text for a name that is not IA5, a max_path_len on a non-CA, a key that
-/// is not parent's, or a P-224 key (Go cannot sign with one).
+/// key). The signature algorithm is t's signature_algorithm, else Go's for
+/// the key: SHA256-RSA, ECDSA-SHA256, -SHA384 or -SHA512 by curve, or
+/// Ed25519. The extensions are made in Go's order: key usage, extended key
+/// usage, basic constraints, subject and authority key IDs, authority
+/// information access, subject alternative names, certificate policies,
+/// name constraints, CRL distribution points, then extra_extensions. Err
+/// with Go's text for a name that is not IA5, a max_path_len on a non-CA,
+/// a key that is not parent's, a signature algorithm that is not the
+/// key's, or a P-224 key (Go cannot sign with one).
 fn create_certificate(r: Rand, t: Template, public_key: crypto.PublicKey, parent: Certificate?, key: crypto.PrivateKey) -> Certificate ! CertErr uses rand
 
 /// A certificate for development and tests, never for production: a new

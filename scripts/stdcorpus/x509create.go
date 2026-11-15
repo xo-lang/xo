@@ -58,6 +58,16 @@ type ctRow struct {
 	extra             []pkix.Extension
 	key               string // "ed", "rsa", "ec"
 	parent            bool   // issued by the Ed25519 root
+	// piece 3's template fields (TestCreateSelfSignedCertificate's)
+	bcv                  bool
+	ocsp, issuers, crldp []string
+	ncCrit               bool
+	permDNS, exclDNS     []string
+	permIP, exclIP       []string // CIDR text
+	permEmail, exclEmail []string
+	permURI, exclURI     []string
+	policies             []string // dotted, arcs of any size
+	sigAlg               x509.SignatureAlgorithm
 }
 
 var ctKU = []string{"DigitalSignature", "ContentCommitment", "KeyEncipherment", "DataEncipherment", "KeyAgreement", "CertSign", "CrlSign", "EncipherOnly", "DecipherOnly"}
@@ -142,9 +152,30 @@ func ctTemplate(r ctRow) *x509.Certificate {
 		p, _ := url.Parse(u)
 		t.URIs = append(t.URIs, p)
 	}
-	if r.isCA || r.mpl >= 0 {
+	if r.isCA || r.mpl >= 0 || r.bcv {
 		t.BasicConstraintsValid = true
 	}
+	t.OCSPServer, t.IssuingCertificateURL, t.CRLDistributionPoints = r.ocsp, r.issuers, r.crldp
+	t.PermittedDNSDomainsCritical = r.ncCrit
+	t.PermittedDNSDomains, t.ExcludedDNSDomains = r.permDNS, r.exclDNS
+	t.PermittedEmailAddresses, t.ExcludedEmailAddresses = r.permEmail, r.exclEmail
+	t.PermittedURIDomains, t.ExcludedURIDomains = r.permURI, r.exclURI
+	for _, c := range r.permIP {
+		_, n, _ := net.ParseCIDR(c)
+		t.PermittedIPRanges = append(t.PermittedIPRanges, n)
+	}
+	for _, c := range r.exclIP {
+		_, n, _ := net.ParseCIDR(c)
+		t.ExcludedIPRanges = append(t.ExcludedIPRanges, n)
+	}
+	for _, o := range r.policies {
+		oid, err := x509.ParseOID(o)
+		if err != nil {
+			panic(err)
+		}
+		t.Policies = append(t.Policies, oid)
+	}
+	t.SignatureAlgorithm = r.sigAlg
 	if r.mpl >= 0 {
 		t.MaxPathLen = r.mpl
 		t.MaxPathLenZero = r.mpl == 0
@@ -188,6 +219,14 @@ func ctExts(es []pkix.Extension) string {
 	return "[" + strings.Join(q, ", ") + "]"
 }
 
+func ctPrefixes(cs []string) string {
+	var q []string
+	for _, c := range cs {
+		q = append(q, fmt.Sprintf("netip.parse_prefix(%s).ok() ?? fault(\"prefix\")", xq(c)))
+	}
+	return "[" + strings.Join(q, ", ") + "]"
+}
+
 func ctIPs(ips []string) string {
 	var q []string
 	for _, ip := range ips {
@@ -213,9 +252,35 @@ func ctXo(r ctRow) string {
 	if r.mpl >= 0 {
 		mpl = fmt.Sprintf("Some(%d)", r.mpl)
 	}
-	return fmt.Sprintf("x509.Template{serial: %s, subject: %s, not_before: Time.from_unix(%d), not_after: Time.from_unix(%d), dns_names: %s, ip_addresses: %s, email_addresses: %s, uris: %s, is_ca: %v, max_path_len: %s, key_usage: [%s], ext_key_usage: [%s], subject_key_id: %s, extra_extensions: %s}",
+	// piece 3's fields, only when set (the earlier rows read as before)
+	var more []string
+	add := func(name, v string, set bool) {
+		if set {
+			more = append(more, name+": "+v)
+		}
+	}
+	add("basic_constraints_valid", "true", r.bcv)
+	add("ocsp_servers", ctStrs(r.ocsp), len(r.ocsp) > 0)
+	add("issuing_certificate_urls", ctStrs(r.issuers), len(r.issuers) > 0)
+	add("crl_distribution_points", ctStrs(r.crldp), len(r.crldp) > 0)
+	add("permitted_dns_domains_critical", "true", r.ncCrit)
+	add("permitted_dns_domains", ctStrs(r.permDNS), len(r.permDNS) > 0)
+	add("excluded_dns_domains", ctStrs(r.exclDNS), len(r.exclDNS) > 0)
+	add("permitted_ip_ranges", ctPrefixes(r.permIP), len(r.permIP) > 0)
+	add("excluded_ip_ranges", ctPrefixes(r.exclIP), len(r.exclIP) > 0)
+	add("permitted_email_addresses", ctStrs(r.permEmail), len(r.permEmail) > 0)
+	add("excluded_email_addresses", ctStrs(r.exclEmail), len(r.exclEmail) > 0)
+	add("permitted_uri_domains", ctStrs(r.permURI), len(r.permURI) > 0)
+	add("excluded_uri_domains", ctStrs(r.exclURI), len(r.exclURI) > 0)
+	add("policies", ctStrs(r.policies), len(r.policies) > 0)
+	add("signature_algorithm", xq(r.sigAlg.String()), r.sigAlg != 0)
+	tail := ""
+	if len(more) > 0 {
+		tail = ", " + strings.Join(more, ", ")
+	}
+	return fmt.Sprintf("x509.Template{serial: %s, subject: %s, not_before: Time.from_unix(%d), not_after: Time.from_unix(%d), dns_names: %s, ip_addresses: %s, email_addresses: %s, uris: %s, is_ca: %v, max_path_len: %s, key_usage: [%s], ext_key_usage: [%s], subject_key_id: %s, extra_extensions: %s%s}",
 		xbytes(r.serial), ctName(r.subj), r.nb, r.na, ctStrs(r.dns), ctIPs(r.ips), ctStrs(r.emails), ctStrs(r.uris), r.isCA, mpl,
-		strings.Join(ku, ", "), strings.Join(eku, ", "), xbytes(r.skid), ctExts(r.extra))
+		strings.Join(ku, ", "), strings.Join(eku, ", "), xbytes(r.skid), ctExts(r.extra), tail)
 }
 
 func ctRows() []ctRow {
@@ -305,7 +370,136 @@ func ctRows() []ctRow {
 			r.serial = []byte{0x7f, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}
 		}),
 	)
+	// TestCreateSelfSignedCertificate's template (less its ExtraNames,
+	// which Name does not have), for each of its key and signature
+	// algorithm cases where the public key is the signer's
+	every := func(r *ctRow) {
+		r.subj = pkix.Name{CommonName: "test.example.com", Organization: []string{"Σ Acme Co"}, Country: []string{"US"}}
+		r.nb, r.na = 1000, 100000
+		r.skid = []byte{1, 2, 3, 4}
+		r.ku = []string{"CertSign"}
+		r.eku = []string{"ClientAuth", "ServerAuth", "1.2.3", "2.59.1"}
+		r.bcv, r.isCA = true, true
+		r.ocsp = []string{"http://ocsp.example.com"}
+		r.issuers = []string{"http://crt.example.com/ca1.crt"}
+		r.dns = []string{"test.example.com"}
+		r.emails = []string{"gopher@golang.org"}
+		r.ips = []string{"127.0.0.1", "2001:4860:0:2001::68"}
+		r.uris = []string{"https://foo.com/wibble#foo"}
+		r.policies = []string{"1.2.3.4294967295.18446744073709551615"}
+		r.permDNS = []string{".example.com", "example.com"}
+		r.exclDNS = []string{"bar.example.com"}
+		r.permIP = []string{"192.168.1.1/16", "1.2.3.4/8"}
+		r.exclIP = []string{"2001:db8::/48"}
+		r.permEmail = []string{"foo@example.com"}
+		r.exclEmail = []string{".example.com", "example.com"}
+		r.permURI = []string{".bar.com", "bar.com"}
+		r.exclURI = []string{".bar2.com", "bar2.com"}
+		r.crldp = []string{"http://crl1.example.com/ca1.crl", "http://crl2.example.com/ca1.crl"}
+		r.extra = []pkix.Extension{{Id: ctOID("1.2.3.4"), Value: []byte("extra extension")}, {Id: ctOID("2.5.29.14"), Value: []byte{0x04, 0x04, 4, 3, 2, 1}}}
+	}
+	for _, c := range []struct {
+		name, key string
+		alg       x509.SignatureAlgorithm
+	}{
+		{"RSA/RSA", "rsa", x509.SHA384WithRSA},
+		{"RSA, SHA-1 (Go still signs it)", "rsa", x509.SHA1WithRSA},
+		{"ECDSA/ECDSA", "ec", x509.ECDSAWithSHA256},
+		{"ECDSA, SHA-384", "ec", x509.ECDSAWithSHA384},
+		{"RSAPSS/RSAPSS", "rsa", x509.SHA256WithRSAPSS},
+		{"RSAPSS, SHA-384", "rsa", x509.SHA384WithRSAPSS},
+		{"Ed25519", "ed", x509.PureEd25519},
+	} {
+		c := c
+		rows = append(rows, with(func(r *ctRow) {
+			every(r)
+			r.name = "every template field (TestCreateSelfSignedCertificate), " + c.name
+			r.key, r.sigAlg = c.key, c.alg
+		}))
+	}
+	rows = append(rows,
+		with(func(r *ctRow) {
+			every(r)
+			r.name = "every template field, issued by the root"
+			r.key, r.parent = "rsa", true
+			r.isCA = false
+			r.mpl = -1
+		}),
+		with(func(r *ctRow) {
+			r.name = "basic constraints valid on a leaf"
+			r.key = "ed"
+			r.subj = pkix.Name{CommonName: "leaf"}
+			r.bcv = true
+		}),
+		with(func(r *ctRow) {
+			r.name = "critical name constraints, excluded only, IPv4 and IPv6 ranges"
+			r.key = "ed"
+			r.subj = pkix.Name{CommonName: "nc"}
+			r.isCA = true
+			r.ncCrit = true
+			r.exclDNS = []string{"evil.example"}
+			r.exclIP = []string{"10.0.0.0/8", "0.0.0.0/0", "::/0", "fe80::1/10", "192.0.2.7/32"}
+		}),
+		with(func(r *ctRow) {
+			r.name = "permitted only, emails and URIs"
+			r.key = "rsa"
+			r.subj = pkix.Name{CommonName: "nc2"}
+			r.isCA = true
+			r.permEmail = []string{"example.com", "a@b.example"}
+			r.permURI = []string{"x.example"}
+		}),
+		with(func(r *ctRow) {
+			r.name = "AIA with OCSP only, CRL points only, several policies"
+			r.key = "ed"
+			r.subj = pkix.Name{CommonName: "urls"}
+			r.ocsp = []string{"http://o1.example", "http://o2.example/path?q=1"}
+			r.crldp = []string{"ldap://ldap.example/cn=crl"}
+			r.policies = []string{"2.23.140.1.2.1", "2.5.29.32.0", "1.3.6.1.4.1.11129.2.5.3", "2.999.12345678901234567890"}
+		}),
+		with(func(r *ctRow) {
+			r.name = "issuer URLs only, extra extensions replacing NC, AIA, CRL points and policies"
+			r.key = "ed"
+			r.subj = pkix.Name{CommonName: "replace"}
+			r.issuers = []string{"http://i.example/ca.crt"}
+			r.permDNS = []string{"ignored.example"}
+			r.crldp = []string{"http://ignored.example/crl"}
+			r.policies = []string{"1.2.3"}
+			r.extra = []pkix.Extension{
+				{Id: ctOID("2.5.29.30"), Critical: true, Value: []byte{0x30, 0x07, 0xa1, 0x05, 0x30, 0x03, 0x82, 0x01, 0x78}},
+				{Id: ctOID("1.3.6.1.5.5.7.1.1"), Value: []byte{0x30, 0x00}},
+				{Id: ctOID("2.5.29.31"), Value: []byte{0x30, 0x00}},
+				{Id: ctOID("2.5.29.32"), Value: []byte{0x30, 0x05, 0x30, 0x03, 0x06, 0x01, 0x2a}},
+			}
+		}),
+	)
 	return rows
+}
+
+// ctErrRows are templates Go's CreateCertificate refuses.
+func ctErrRows() []ctRow {
+	base := ctRow{serial: []byte{1}, nb: 1735689600, na: 1767225600, mpl: -1, subj: pkix.Name{CommonName: "err"}}
+	with := func(f func(*ctRow)) ctRow { r := base; f(&r); return r }
+	return []ctRow{
+		with(func(r *ctRow) { r.name = "RSA key, ECDSA algorithm"; r.key, r.sigAlg = "rsa", x509.ECDSAWithSHA384 }),
+		with(func(r *ctRow) { r.name = "ECDSA key, RSA algorithm"; r.key, r.sigAlg = "ec", x509.SHA256WithRSA }),
+		with(func(r *ctRow) { r.name = "Ed25519 key, PSS"; r.key, r.sigAlg = "ed", x509.SHA256WithRSAPSS }),
+		with(func(r *ctRow) { r.name = "RSA key, MD5"; r.key, r.sigAlg = "rsa", x509.MD5WithRSA }),
+		with(func(r *ctRow) {
+			r.name = "permitted DNS not IA5"
+			r.key, r.isCA = "ed", true
+			r.permDNS = []string{"bü.example"}
+		}),
+		with(func(r *ctRow) {
+			r.name = "excluded email not IA5"
+			r.key, r.isCA = "ed", true
+			r.exclEmail = []string{"ü@example.com"}
+		}),
+		with(func(r *ctRow) {
+			r.name = "permitted URI not IA5"
+			r.key, r.isCA = "ed", true
+			r.permURI = []string{"ü.example"}
+		}),
+	}
 }
 
 // ctGoInputs are x509_test.go's requests and CRLs: csrBase64Array,
@@ -387,6 +581,18 @@ func x509CreateCorpus() string {
 		}
 		der := ctMust(x509.CreateCertificate(rand.Reader, t, parent, keys[r.key].Public(), signer))
 		fmt.Fprintf(&o, "    (%s, %s, %s, %v, %s),\n", xq(r.name), ctXo(r), xq(r.key), r.parent, xbytes(der))
+	}
+	o.WriteString("  ]\n}\n")
+
+	// template errors, Go's text (signingParamsForKey, isIA5String in the
+	// name constraints)
+	o.WriteString("\n/// (name, key, template, Go's error)\nfn template_errors() -> List[(Str, x509.Template, Str, Str)] {\n  [\n")
+	for _, r := range ctErrRows() {
+		_, err := x509.CreateCertificate(rand.Reader, ctTemplate(r), ctTemplate(r), keys[r.key].Public(), keys[r.key])
+		if err == nil {
+			panic("no error: " + r.name)
+		}
+		fmt.Fprintf(&o, "    (%s, %s, %s, %s),\n", xq(r.name), ctXo(r), xq(r.key), xq(err.Error()))
 	}
 	o.WriteString("  ]\n}\n")
 
@@ -522,10 +728,10 @@ fn summary(c: x509.Certificate) -> Str {
     Some(n) => "${n}"
     None => "none"
   }
-  "v=${c.version} serial=${c.serial.to_hex()} sig=${c.signature_algorithm} subj=${c.subject.display()} iss=${c.issuer.display()} nb=${c.not_before.unix()} na=${c.not_after.unix()} dns=${c.dns_names.join(",")} ip=${ips} email=${c.email_addresses.join(",")} uri=${c.uris.join(",")} ca=${c.is_ca} mpl=${mpl} ku=${c.key_usage.map(fn(u) { "${ku_index(u)}" }).join(",")} eku=${c.ext_key_usage.map(fn(u) { eku_oid(u) }).join(",")} ski=${c.subject_key_id.to_hex()} aki=${c.authority_key_id.to_hex()} ext=${exts(c.extensions)}"
+  "v=${c.version} serial=${c.serial.to_hex()} sig=${c.signature_algorithm} subj=${c.subject.display()} iss=${c.issuer.display()} nb=${c.not_before.unix()} na=${c.not_after.unix()} dns=${c.dns_names.join(",")} ip=${ips} email=${c.email_addresses.join(",")} uri=${c.uris.join(",")} ca=${c.is_ca} mpl=${mpl} ku=${c.key_usage.map(fn(u) { "${ku_index(u)}" }).join(",")} eku=${c.ext_key_usage.map(fn(u) { eku_oid(u) }).join(",")} ski=${c.subject_key_id.to_hex()} aki=${c.authority_key_id.to_hex()} ext=${exts(c.extensions)} bcv=${c.basic_constraints_valid} ocsp=${c.ocsp_servers.join(",")} issuers=${c.issuing_certificate_urls.join(",")} crl=${c.crl_distribution_points.join(",")} pol=${c.policies.join(",")} ncc=${c.permitted_dns_domains_critical} nc=${c.permitted_dns_domains.join(",")}/${c.excluded_dns_domains.join(",")}/${c.permitted_ip_ranges.map(fn(p) { p.display() }).join(",")}/${c.excluded_ip_ranges.map(fn(p) { p.display() }).join(",")}/${c.permitted_email_addresses.join(",")}/${c.excluded_email_addresses.join(",")}/${c.permitted_uri_domains.join(",")}/${c.excluded_uri_domains.join(",")}"
 }
 
-test "create_certificate makes Go's certificate: equal bytes for Ed25519 and RSA, equal fields for ECDSA" {
+test "create_certificate makes Go's certificate: equal bytes for Ed25519 and RSA PKCS #1 v1.5, equal TBS bytes for ECDSA and RSA PSS" {
   let root = x509.parse(ROOT).ok() ?? fault("root")
   var bad: List[Str] = []
   for (name, t, kname, from_root, want) in rows() {
@@ -535,11 +741,14 @@ test "create_certificate makes Go's certificate: equal bytes for Ed25519 and RSA
     match x509.create_certificate(os.rand, t, k.public_key(), parent, signer) {
       Ok(c) => {
         let go = x509.parse(want).ok() ?? fault("go's")
-        // an ECDSA signature has a random nonce: a self-signed ECDSA row
-        // compares fields, every other row bytes
-        if kname == "ec" && !from_root {
+        // an ECDSA or RSA PSS signature is random: a self-signed row
+        // signed so compares the signed part's bytes and fields, every
+        // other row the certificate's bytes
+        if (kname == "ec" || t.signature_algorithm.ends_with("PSS")) && !from_root {
           if summary(c) != summary(go) {
             bad.push("${name}:\n  got  ${summary(c)}\n  want ${summary(go)}")
+          } else if c.raw_tbs_certificate != go.raw_tbs_certificate {
+            bad.push("${name}: other TBS bytes")
           }
           match c.check_signature_from(if from_root { root } else { c }) {
             Ok(_) => ()
@@ -552,6 +761,21 @@ test "create_certificate makes Go's certificate: equal bytes for Ed25519 and RSA
       Err(e) => bad.push("${name}: ${e.display()}")
     }
   }
+  expect(shown(bad)) == []
+}
+
+test "create_certificate refuses Go's bad templates with Go's text" {
+  var bad: List[Str] = []
+  for (name, t, kname, want) in template_errors() {
+    let k = key(kname)
+    match x509.create_certificate(os.rand, t, k.public_key(), None, k) {
+      Ok(_) => bad.push("${name}: made a certificate, want ${want}")
+      Err(e) => if e.display() != want { bad.push("${name}: ${e.display()}, want ${want}") }
+    }
+  }
+  let k = key("ed")
+  let pol = x509.create_certificate(os.rand, x509.Template{subject: x509.Name{common_name: "x"}, not_before: Time.from_unix(0), not_after: Time.from_unix(1), policies: ["1.50.3"]}, k.public_key(), None, k)
+  if pol.err().map(fn(e) { e.display() }) != Some("invalid policy object identifier") { bad.push("policy 1.50.3: ${pol.is_ok()}") }
   expect(shown(bad)) == []
 }
 
