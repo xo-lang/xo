@@ -689,7 +689,7 @@ func Png_encode(tk *Task, v_img Png_Image, v_level Png_Compression) Result[Bytes
 			}
 		}
 	}
-	var v_z Bytes = Compress_zlib(tk, v_raw.M_freeze(tk), Png_level_of(tk, v_level))
+	var v_z Bytes = Compress_zlib(tk, v_raw.M_freeze(tk), Png_level_of(tk, v_level), Bytes(""))
 	_ = v_z
 	var v_at int64 = int64(0)
 	_ = v_at
@@ -2094,7 +2094,7 @@ func Png_partial_inflate(tk *Task, v_zdata Bytes, v_max int64) Bytes {
 	if ((((v_c0 & int64(15)) != int64(8)) || ((v_c0 >> int64(4)) > int64(7))) || (((Shl(v_c0, int64(8), "std/png.xo:1035:43") | v_c1) % int64(31)) != int64(0))) || ((v_c1 & int64(32)) != int64(0)) {
 		return Bytes("")
 	}
-	var v_dc Compress_Decompressor = func(v Compress_Decompressor) Compress_Decompressor { MarkP(&v); return v }(Compress_decompressor(tk, Compress_Format{Tag: 2}, v_max))
+	var v_dc Compress_Decompressor = func(v Compress_Decompressor) Compress_Decompressor { MarkP(&v); return v }(Compress_decompressor(tk, Compress_Format{Tag: 2}, v_max, Bytes("")))
 	_ = v_dc
 	var v_got BytesBuilder = BytesBuilder_new(tk)
 	_ = v_got
@@ -2128,7 +2128,7 @@ func Png_partial_inflate(tk *Task, v_zdata Bytes, v_max int64) Bytes {
 				}
 				if !x_m179.Ok {
 					{
-						var v_d2 Compress_Decompressor = func(v Compress_Decompressor) Compress_Decompressor { MarkP(&v); return v }(Compress_decompressor(tk, Compress_Format{Tag: 2}, v_max))
+						var v_d2 Compress_Decompressor = func(v Compress_Decompressor) Compress_Decompressor { MarkP(&v); return v }(Compress_decompressor(tk, Compress_Format{Tag: 2}, v_max, Bytes("")))
 						_ = v_d2
 						x_b182 := (v_at > int64(2))
 						if x_b182 {
@@ -2702,7 +2702,7 @@ func Png_go_clean_flush(tk *Task, v_zdata Bytes) int64 {
 func Png_decode_image(tk *Task, v_d Png_Dec, v_zdata Bytes) Result[Png_Image, Png_PngErr] {
 	var v_expect int64 = Png_expected_size(tk, func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d))
 	_ = v_expect
-	x_m241 := Compress_unzlib(tk, v_zdata, AddIUp(v_expect, int64(2), "std/png.xo:1330:32"))
+	x_m241 := Compress_unzlib(tk, v_zdata, AddIUp(v_expect, int64(2), "std/png.xo:1330:32"), Bytes(""))
 	_ = x_m241
 	switch {
 	default:

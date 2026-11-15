@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // M_display is the error's text.
@@ -39,6 +40,21 @@ func compressLevel(l Compress_Level) int {
 		FaultHere("compress: invalid compression level %d: want value in range [-2, 9]", n)
 	}
 	return int(n)
+}
+
+// compressDict is dict as Go's writers and readers take it: nil when
+// empty (Go's zlib writers set FDICT for any non-nil dictionary).
+func compressDict(dict Bytes) []byte {
+	if len(dict) == 0 {
+		return nil
+	}
+	return []byte(dict)
+}
+
+func compressNoGzipDict(format Compress_Format, dict Bytes) {
+	if format.Tag == 1 && len(dict) > 0 {
+		FaultHere("compress: gzip has no preset dictionary")
+	}
 }
 
 func compressFail(format string, max int64, err error) Compress_CompressErr {
@@ -85,32 +101,68 @@ func Compress_gunzip(_ *Task, data Bytes, max int64) Result[Bytes, Compress_Comp
 	return Ok[Bytes, Compress_CompressErr](Bytes(out))
 }
 
-func Compress_deflate(_ *Task, data Bytes, level Compress_Level) Bytes {
+// Compress_gzip_with is gzip.Writer with its Header set.
+func Compress_gzip_with(_ *Task, data Bytes, h Compress_GzipHeader, level Compress_Level) Result[Bytes, Compress_CompressErr] {
 	var b bytes.Buffer
-	w, _ := flate.NewWriter(&b, compressLevel(level))
+	w, _ := gzip.NewWriterLevel(&b, compressLevel(level))
+	w.Name = h.F_name
+	w.Comment = h.F_comment
+	if len(h.F_extra) > 0 {
+		w.Extra = []byte(h.F_extra)
+	}
+	if h.F_mtime > 0 {
+		w.ModTime = time.Unix(h.F_mtime, 0)
+	}
+	w.OS = byte(h.F_os)
+	_, err := w.Write([]byte(data))
+	if err == nil {
+		err = w.Close()
+	}
+	if err != nil {
+		return Err[Bytes](Compress_CompressErr{F_msg: err.Error()})
+	}
+	return Ok[Bytes, Compress_CompressErr](Bytes(b.Bytes()))
+}
+
+// Compress_gzip_header is gzip.NewReader's Header.
+func Compress_gzip_header(_ *Task, data Bytes) Result[Compress_GzipHeader, Compress_CompressErr] {
+	r, err := gzip.NewReader(bytes.NewReader([]byte(data)))
+	if err != nil {
+		return Err[Compress_GzipHeader](Compress_CompressErr{F_msg: err.Error()})
+	}
+	h := Compress_GzipHeader{F_name: r.Name, F_comment: r.Comment, F_extra: Bytes(r.Extra), F_os: int64(r.OS)}
+	if !r.ModTime.IsZero() {
+		h.F_mtime = r.ModTime.Unix()
+	}
+	return Ok[Compress_GzipHeader, Compress_CompressErr](h)
+}
+
+func Compress_deflate(_ *Task, data Bytes, level Compress_Level, dict Bytes) Bytes {
+	var b bytes.Buffer
+	w, _ := flate.NewWriterDict(&b, compressLevel(level), compressDict(dict))
 	w.Write([]byte(data))
 	w.Close()
 	return Bytes(b.Bytes())
 }
 
-func Compress_inflate(_ *Task, data Bytes, max int64) Result[Bytes, Compress_CompressErr] {
-	out, err := compressRead(flate.NewReader(bytes.NewReader([]byte(data))), max)
+func Compress_inflate(_ *Task, data Bytes, max int64, dict Bytes) Result[Bytes, Compress_CompressErr] {
+	out, err := compressRead(flate.NewReaderDict(bytes.NewReader([]byte(data)), compressDict(dict)), max)
 	if err != nil {
 		return Err[Bytes](compressFail("flate", max, err))
 	}
 	return Ok[Bytes, Compress_CompressErr](Bytes(out))
 }
 
-func Compress_zlib(_ *Task, data Bytes, level Compress_Level) Bytes {
+func Compress_zlib(_ *Task, data Bytes, level Compress_Level, dict Bytes) Bytes {
 	var b bytes.Buffer
-	w, _ := zlib.NewWriterLevel(&b, compressLevel(level))
+	w, _ := zlib.NewWriterLevelDict(&b, compressLevel(level), compressDict(dict))
 	w.Write([]byte(data))
 	w.Close()
 	return Bytes(b.Bytes())
 }
 
-func Compress_unzlib(_ *Task, data Bytes, max int64) Result[Bytes, Compress_CompressErr] {
-	r, err := zlib.NewReader(bytes.NewReader([]byte(data)))
+func Compress_unzlib(_ *Task, data Bytes, max int64, dict Bytes) Result[Bytes, Compress_CompressErr] {
+	r, err := zlib.NewReaderDict(bytes.NewReader([]byte(data)), compressDict(dict))
 	if err != nil {
 		return Err[Bytes](compressFail("zlib", max, err))
 	}
@@ -132,18 +184,20 @@ type Compress_Compressor struct {
 func (Compress_Compressor) XoDebug(b *strings.Builder) { b.WriteString("<compressor>") }
 func (x Compress_Compressor) M_debug(*Task) string     { return Debug(x) }
 
-// Compress_compressor is `compress.compressor(format, level)`.
-func Compress_compressor(_ *Task, format Compress_Format, level Compress_Level) Compress_Compressor {
+// Compress_compressor is `compress.compressor(format, level, dict)`.
+func Compress_compressor(_ *Task, format Compress_Format, level Compress_Level, dict Bytes) Compress_Compressor {
+	compressNoGzipDict(format, dict)
 	lv := compressLevel(level)
+	d := compressDict(dict)
 	b := &bytes.Buffer{}
 	var w io.WriteCloser
 	switch format.Tag {
 	case 1:
 		w, _ = gzip.NewWriterLevel(b, lv)
 	case 2:
-		w, _ = flate.NewWriter(b, lv)
+		w, _ = flate.NewWriterDict(b, lv, d)
 	default:
-		w, _ = zlib.NewWriterLevel(b, lv)
+		w, _ = zlib.NewWriterLevelDict(b, lv, d)
 	}
 	return Compress_Compressor{w: w, buf: b}
 }
@@ -209,16 +263,16 @@ func (f *compressFeed) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-func (f *compressFeed) run(format int) {
+func (f *compressFeed) run(format int, dict []byte) {
 	var r io.Reader
 	var err error
 	switch format {
 	case 1:
 		r, err = gzip.NewReader(f)
 	case 2:
-		r = flate.NewReader(f)
+		r = flate.NewReaderDict(f, dict)
 	default:
-		r, err = zlib.NewReader(f)
+		r, err = zlib.NewReaderDict(f, dict)
 	}
 	if err != nil {
 		// the constructor's error, io.EOF for an empty gzip stream included
@@ -266,14 +320,15 @@ type Compress_Decompressor struct {
 func (Compress_Decompressor) XoDebug(b *strings.Builder) { b.WriteString("<decompressor>") }
 func (x Compress_Decompressor) M_debug(*Task) string     { return Debug(x) }
 
-// Compress_decompressor is `compress.decompressor(format, max_size)`.
-func Compress_decompressor(_ *Task, format Compress_Format, max int64) Compress_Decompressor {
+// Compress_decompressor is `compress.decompressor(format, max_size, dict)`.
+func Compress_decompressor(_ *Task, format Compress_Format, max int64, dict Bytes) Compress_Decompressor {
+	compressNoGzipDict(format, dict)
 	if max < 0 {
 		max = 0
 	}
 	f := &compressFeed{max: max, name: map[int]string{1: "gzip", 2: "flate", 3: "zlib"}[format.Tag]}
 	f.cond = sync.NewCond(&f.mu)
-	go f.run(format.Tag)
+	go f.run(format.Tag, compressDict(dict))
 	return Compress_Decompressor{f: f}
 }
 

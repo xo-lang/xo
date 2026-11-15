@@ -76,6 +76,98 @@ fn gzip(data: Bytes, level: compress.Level) -> Bytes {
   b.freeze()
 }
 
+/// stringToLatin1's check (gzip.Writer.writeString): every rune 1 to 255.
+fn latin1(var b: BytesBuilder, s: Str) -> () ! compress.CompressErr {
+  for r in s.runes() {
+    let v = Int(r)
+    if v == 0 || v > 255 {
+      return Err(compress.CompressErr{msg: "gzip.Write: non-Latin-1 header string"})
+    }
+  }
+  for r in s.runes() {
+    b.write_byte(UInt8(Int(r)))
+  }
+  b.write_byte(UInt8(0))
+}
+
+fn gzip_with(data: Bytes, header: compress.GzipHeader, level: compress.Level) -> Bytes ! compress.CompressErr {
+  let lv = level_of(level)
+  var flg = 0
+  if !header.extra.is_empty() {
+    flg += 4
+  }
+  if !header.name.is_empty() {
+    flg += 8
+  }
+  if !header.comment.is_empty() {
+    flg += 16
+  }
+  let xfl = if lv == 9 { 2 } else if lv == 1 { 4 } else { 0 }
+  let mt = if header.mtime > 0 { header.mtime & 0xffffffff } else { 0 }
+  var b = BytesBuilder.new()
+  b.write(b"\x1f\x8b\x08")
+  b.write_byte(UInt8(flg))
+  put_u32le(b, mt)
+  b.write_byte(UInt8(xfl))
+  b.write_byte(UInt8(header.os & 255))
+  if !header.extra.is_empty() {
+    if header.extra.len() > 65535 {
+      return Err(compress.CompressErr{msg: "gzip.Write: Extra data is too large"})
+    }
+    b.write_byte(UInt8(header.extra.len() & 255))
+    b.write_byte(UInt8(header.extra.len() >> 8))
+    b.write(header.extra)
+  }
+  if !header.name.is_empty() {
+    latin1(b, header.name)?
+  }
+  if !header.comment.is_empty() {
+    latin1(b, header.comment)?
+  }
+  b.write(flate.deflate_level(data, lv))
+  put_u32le(b, flate.crc32(flate.crc_table(), 0, data))
+  put_u32le(b, data.len() & 0xffffffff)
+  Ok(b.freeze())
+}
+
+/// A NUL terminated Latin-1 field from p: the string and the position
+/// after its NUL (the header was checked whole first).
+fn latin1_at(data: Bytes, p0: Int) -> (Str, Int) {
+  var s = StrBuilder.new()
+  var p = p0
+  while Int(data[p]) != 0 {
+    s.write("${Rune(Int(data[p]))}")
+    p += 1
+  }
+  (s.freeze(), p + 1)
+}
+
+fn gzip_header(data: Bytes) -> compress.GzipHeader ! compress.CompressErr {
+  match flate.gzip_header(data, 0, flate.crc_table()) {
+    Ok(_) => {}
+    Err(e) => return Err(compress.CompressErr{msg: e})
+  }
+  let flg = Int(data[3])
+  var h = compress.GzipHeader{mtime: Int(data[4]) | (Int(data[5]) << 8) | (Int(data[6]) << 16) | (Int(data[7]) << 24), os: Int(data[9])}
+  var p = 10
+  if (flg & 4) != 0 {
+    let xlen = Int(data[p]) | (Int(data[p + 1]) << 8)
+    h.extra = data[p + 2..p + 2 + xlen]
+    p += 2 + xlen
+  }
+  if (flg & 8) != 0 {
+    let (s, q) = latin1_at(data, p)
+    h.name = s
+    p = q
+  }
+  if (flg & 16) != 0 {
+    let (s, q) = latin1_at(data, p)
+    h.comment = s
+    p = q
+  }
+  Ok(h)
+}
+
 fn gunzip(data: Bytes, max_size: Int) -> Bytes ! compress.CompressErr {
   match flate.gunzip_members(data, limit_of(max_size)) {
     Ok(out) => {
@@ -88,16 +180,17 @@ fn gunzip(data: Bytes, max_size: Int) -> Bytes ! compress.CompressErr {
   }
 }
 
-fn deflate(data: Bytes, level: compress.Level) -> Bytes { flate.deflate_level(data, level_of(level)) }
+fn deflate(data: Bytes, level: compress.Level, dict: Bytes) -> Bytes { flate.deflate_dict(data, level_of(level), dict) }
 
-fn inflate(data: Bytes, max_size: Int) -> Bytes ! compress.CompressErr {
+fn inflate(data: Bytes, max_size: Int, dict: Bytes) -> Bytes ! compress.CompressErr {
   var f = flate.Inflater{data: data, pos: 0, start: 0, end: data.len(), b: 0, nb: 0, out: [], out_start: 0, limit: limit_of(max_size)}
+  let k = f.prime(dict)
   match f.inflate(flate.fixed_decoder()) {
     Ok(_) => {
-      if over(f.out.len(), max_size) {
+      if over(f.out.len() - k, max_size) {
         return Err(fail("flate", flate.LIMIT, max_size))
       }
-      flate.list_bytes(f.out)
+      if k == 0 { flate.list_bytes(f.out) } else { flate.list_range_bytes(f.out, k, f.out.len()) }
     }
     Err(e) => Err(fail("flate", e, max_size))
   }
@@ -126,23 +219,37 @@ fn adler32(data: Bytes) -> Int {
   (b << 16) | a
 }
 
-fn zlib(data: Bytes, level: compress.Level) -> Bytes {
-  let lv = level_of(level)
-  // zlib.Writer's header: CMF 0x78, FLEVEL from the level, FCHECK
+/// zlib.Writer's header: CMF 0x78, FLEVEL from the level, FDICT and the
+/// dictionary's Adler-32 when there is one, FCHECK.
+fn zlib_header(lv: Int, dict: Bytes) -> Bytes {
   let flevel = if lv == -2 || lv == 0 || lv == 1 { 0 } else if lv >= 2 && lv <= 5 { 1 } else if lv == 6 || lv == -1 { 2 } else { 3 }
   var flg = flevel << 6
+  if !dict.is_empty() {
+    flg += 1 << 5
+  }
   flg += 31 - ((0x78 * 256 + flg) % 31)
   var b = BytesBuilder.new()
   b.write_byte(UInt8(0x78))
   b.write_byte(UInt8(flg))
-  b.write(flate.deflate_level(data, lv))
+  if !dict.is_empty() {
+    put_u32be(b, flate.adler32(dict))
+  }
+  b.freeze()
+}
+
+fn zlib(data: Bytes, level: compress.Level, dict: Bytes) -> Bytes {
+  let lv = level_of(level)
+  var b = BytesBuilder.new()
+  b.write(zlib_header(lv, dict))
+  b.write(flate.deflate_dict(data, lv, dict))
   put_u32be(b, adler32(data))
   b.freeze()
 }
 
-fn unzlib(data: Bytes, max_size: Int) -> Bytes ! compress.CompressErr {
-  // zlib.NewReader: the header (EOF on none, unexpected EOF on a short
-  // one), a preset dictionary is invalid (none can be given here)
+fn unzlib(data: Bytes, max_size: Int, dict: Bytes) -> Bytes ! compress.CompressErr {
+  // zlib.NewReaderDict: the header (EOF on none, unexpected EOF on a short
+  // one); a preset dictionary named in it must be dict (Adler-32 1 for
+  // none), and dict is ignored when the header names none
   let n = data.len()
   if n < 2 {
     // io.ReadFull's EOF is unexpected EOF here (zlib.Reader.Reset)
@@ -158,19 +265,19 @@ fn unzlib(data: Bytes, max_size: Int) -> Bytes ! compress.CompressErr {
     if n < 6 {
       return Err(compress.CompressErr{msg: "unexpected EOF"})
     }
-    // the dictionary's Adler-32 against the (empty) dictionary given: 1
     let id = (Int(data[2]) << 24) | (Int(data[3]) << 16) | (Int(data[4]) << 8) | Int(data[5])
-    if id != 1 {
+    if id != flate.adler32(dict) {
       return Err(compress.CompressErr{msg: "zlib: invalid dictionary"})
     }
     at = 6
   }
   var f = flate.Inflater{data: data, pos: at, start: at, end: n, b: 0, nb: 0, out: [], out_start: 0, limit: limit_of(max_size)}
+  let k = if at == 6 { f.prime(dict) } else { 0 }
   match f.inflate(flate.fixed_decoder()) {
     Ok(_) => {}
     Err(e) => return Err(fail("zlib", e, max_size))
   }
-  let out = flate.list_bytes(f.out)
+  let out = if k == 0 { flate.list_bytes(f.out) } else { flate.list_range_bytes(f.out, k, f.out.len()) }
   if n - f.pos < 4 {
     return Err(compress.CompressErr{msg: "unexpected EOF"})
   }
@@ -178,7 +285,7 @@ fn unzlib(data: Bytes, max_size: Int) -> Bytes ! compress.CompressErr {
   if sum != adler32(out) {
     return Err(compress.CompressErr{msg: "zlib: invalid checksum"})
   }
-  if over(f.out.len(), max_size) {
+  if over(out.len(), max_size) {
     return Err(fail("zlib", flate.LIMIT, max_size))
   }
   out
@@ -197,11 +304,22 @@ struct Compressor {
   /// gzip's CRC-32 and size, zlib's Adler-32
   sum: Int
   size: Int
+  /// the preset dictionary (the zlib header names it)
+  dict: Bytes = b""
 }
 
-fn compressor(format: compress.Format, level: compress.Level) -> Compressor {
+fn no_gzip_dict(format: compress.Format, dict: Bytes) {
+  if format == compress.Format.Gzip && !dict.is_empty() {
+    fault("compress: gzip has no preset dictionary")
+  }
+}
+
+fn compressor(format: compress.Format, level: compress.Level, dict: Bytes) -> Compressor {
+  no_gzip_dict(format, dict)
   let lv = level_of(level)
-  Compressor{format: format, level: lv, s: flate.new_stream(lv), head: false, sum: if format == compress.Format.Zlib { 1 } else { 0 }, size: 0}
+  var s = flate.new_stream(lv)
+  s.prime(dict)
+  Compressor{format: format, level: lv, s: s, head: false, sum: if format == compress.Format.Zlib { 1 } else { 0 }, size: 0, dict: dict}
 }
 
 /// The format's header, the first time (gzip.Writer and zlib.Writer write
@@ -221,16 +339,7 @@ fn (var c: Compressor) header() -> Bytes {
       b.freeze()
     }
     Deflate => b""
-    Zlib => {
-      let lv = c.level
-      let flevel = if lv == -2 || lv == 0 || lv == 1 { 0 } else if lv >= 2 && lv <= 5 { 1 } else if lv == 6 || lv == -1 { 2 } else { 3 }
-      var flg = flevel << 6
-      flg += 31 - ((0x78 * 256 + flg) % 31)
-      var b = BytesBuilder.new()
-      b.write_byte(UInt8(0x78))
-      b.write_byte(UInt8(flg))
-      b.freeze()
-    }
+    Zlib => zlib_header(c.level, c.dict)
   }
 }
 
@@ -292,7 +401,8 @@ struct Decompressor {
   err: compress.CompressErr? = None
 }
 
-fn decompressor(format: compress.Format, max_size: Int) -> Decompressor {
+fn decompressor(format: compress.Format, max_size: Int, dict: Bytes) -> Decompressor {
+  no_gzip_dict(format, dict)
   let f = match format {
     Deflate => 0
     Gzip => 1
@@ -301,7 +411,7 @@ fn decompressor(format: compress.Format, max_size: Int) -> Decompressor {
   // the one shot decoders' limit, max_size + 1, so the bytes past max_size
   // meet a bad checksum first as one shot (sign-off item 8); a write that
   // would give out more than max_size fails instead
-  Decompressor{format: format, st: flate.new_instream(f, limit_of(max_size)), max: max_size, total: 0}
+  Decompressor{format: format, st: flate.new_instream_dict(f, limit_of(max_size), dict), max: max_size, total: 0}
 }
 
 fn (d: Decompressor) name() -> Str {

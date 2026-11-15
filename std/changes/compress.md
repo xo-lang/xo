@@ -1,5 +1,20 @@
 # std/compress changes
 
+## 2026-11-15: feature: preset dictionaries and gzip header fields
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): flate.NewReaderDict, flate.NewWriterDict, zlib.NewReaderDict, zlib.NewWriterLevelDict, zlib.ErrDictionary, gzip.Header
+- Go reference: compress/flate (deflate.go fillWindow, dict_decoder.go init), compress/zlib (writer.go writeHeader, reader.go Reset), compress/gzip (gzip.go writeHeader and writeString, gunzip.go readHeader) (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/compress (scripts/stdcorpus compress): 240 dictionary writes (deflate and zlib, every level, one write or chunks with flushes, dictionaries of 0 to 40000 bytes) with Go's bytes; 108 dictionary reads (the right one, another, none, cut short) whole and in pieces with Go's results; compress/zlib TestDecompressor dictionary case; 120 gzip_with headers with Go's bytes and gzip.NewReader's header read back; 51 gzip_header reads (cut short, FHCRC right and wrong, bad magic) (arm64, LLVM, Go)
+- Timing: none
+
+`deflate`, `inflate`, `zlib`, `unzlib`, `compressor` and `decompressor`
+take `dict:`, a preset dictionary, and write and read the bytes Go's
+dictionary writers and readers do. `gzip_with(data, GzipHeader{...})`
+writes a member with a name, comment, extra field, modification time
+and OS byte, and `gzip_header(data)` reads them back.
+
 ## 2026-11-14: security: a Decompressor's first error is returned by every later write and finish
 
 - Kind: security

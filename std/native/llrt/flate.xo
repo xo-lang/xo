@@ -1577,6 +1577,29 @@ pub const LIMIT: Str = "\u{1}limit"
 
 pub fn unexpected_eof() -> Str { "unexpected EOF" }
 
+/// dictDecoder.init with a dictionary (NewReaderDict): its last
+/// WINDOW_SIZE bytes as history before the first output byte, not counted
+/// against limit; the count, where the output starts in out.
+pub fn (var f: Inflater) prime(dict0: Bytes) -> Int {
+  let dict = if dict0.len() > WINDOW_SIZE { dict0[dict0.len() - WINDOW_SIZE..] } else { dict0 }
+  for c in dict {
+    f.out.push(c)
+  }
+  f.dropped -= dict.len()
+  dict.len()
+}
+
+/// Adler-32 of b (a zlib preset dictionary's id).
+pub fn adler32(b: Bytes) -> Int {
+  var a = 1
+  var c = 0
+  for x in b {
+    a = (a + Int(x)) % 65521
+    c = (c + a) % 65521
+  }
+  (c << 16) | a
+}
+
 fn (f: Inflater) corrupt() -> Str { "flate: corrupt input before offset ${f.pos - f.start}" }
 
 fn (var f: Inflater) more_bits() -> () ! Str {
@@ -2375,6 +2398,28 @@ pub fn deflate_again(var s: Stream, data: Bytes) -> Bytes {
   s.take()
 }
 
+/// compressor.fillWindow (NewWriterDict): the last WINDOW_SIZE bytes of
+/// dict in the window and every position's hash in the chains, so the
+/// first bytes written can refer back into it. Levels below 2 (store,
+/// BestSpeed, HuffmanOnly) ignore it, as Go's does; block_start stays 0,
+/// as Go's.
+pub fn (var s: Stream) prime(dict0: Bytes) {
+  if s.level < 2 || dict0.is_empty() {
+    return
+  }
+  let dict = if dict0.len() > WINDOW_SIZE { dict0[dict0.len() - WINDOW_SIZE..] } else { dict0 }
+  let n = dict.len()
+  s.d.data = dict
+  s.d.base = 0
+  var i = 0
+  while i + MIN_MATCH <= n {
+    s.d.insert_hash(i)
+    i += 1
+  }
+  s.d.window_end = n
+  s.d.index = n
+}
+
 /// A Writer at level (-2 HuffmanOnly, 0 NoCompression, 1 BestSpeed, 2 to
 /// 9; -1 is 6).
 pub fn new_stream(level0: Int) -> Stream {
@@ -2525,6 +2570,16 @@ pub fn (var s: Stream) take() -> Bytes {
 /// once and closed as compress/flate's Writer does: the same bytes.
 pub fn deflate_level(data: Bytes, level: Int) -> Bytes {
   var s = new_stream(level)
+  s.write(data)
+  s.close()
+  s.take()
+}
+
+/// The raw DEFLATE stream of data at level with the preset dictionary dict
+/// (flate.NewWriterDict): the same bytes.
+pub fn deflate_dict(data: Bytes, level: Int, dict: Bytes) -> Bytes {
+  var s = new_stream(level)
+  s.prime(dict)
   s.write(data)
   s.close()
   s.take()
@@ -2697,6 +2752,19 @@ pub struct InStream {
   npend: Int
   /// The input to wait for before the next try (0: try on every push).
   want: Int
+  /// The preset dictionary (zlib: used when the header names one).
+  dict: Bytes = b""
+}
+
+/// A decoder with a preset dictionary (flate.NewReaderDict,
+/// zlib.NewReaderDict); format 1 (gzip) takes none.
+pub fn new_instream_dict(format: Int, limit: Int, dict: Bytes) -> InStream {
+  var s = new_instream(format, limit)
+  s.dict = dict
+  if format == 0 {
+    s.emit = s.f.prime(dict)
+  }
+  s
 }
 
 pub fn new_instream(format: Int, limit: Int) -> InStream {
@@ -2821,7 +2889,8 @@ pub fn (var s: InStream) push(data: Bytes, last: Bool) -> Bytes ! Str {
       continue
     }
     if s.state == 0 {
-      // zlib: the header (and a preset dictionary's id, 1 for the empty one)
+      // zlib: the header (and a preset dictionary's id: dict's Adler-32,
+      // 1 for none)
       if n - s.f.pos < 2 {
         if last {
           return Err(unexpected_eof())
@@ -2841,10 +2910,11 @@ pub fn (var s: InStream) push(data: Bytes, last: Bool) -> Bytes ! Str {
           }
           break
         }
-        if be32(s.f.data, at) != 1 {
+        if be32(s.f.data, at) != adler32(s.dict) {
           return Err("zlib: invalid dictionary")
         }
         at += 4
+        s.emit = s.f.prime(s.dict)
       }
       s.f.pos = at
       s.f.start = at

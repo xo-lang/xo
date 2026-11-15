@@ -6580,22 +6580,25 @@ struct CompressErr { msg: Str }   // Go's texts; displays as msg
 
 pub fn gzip(data: Bytes, level: Level = Level.Default) -> Bytes
 pub fn gunzip(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
-pub fn deflate(data: Bytes, level: Level = Level.Default) -> Bytes       // raw RFC 1951
-pub fn inflate(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
-pub fn zlib(data: Bytes, level: Level = Level.Default) -> Bytes          // RFC 1950
-pub fn unzlib(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
+struct GzipHeader { name: Str = "", comment: Str = "", extra: Bytes = b"", mtime: Int = 0, os: Int = 255 }  // gzip.Header
+pub fn gzip_with(data: Bytes, header: GzipHeader, level: Level = Level.Default) -> Bytes ! CompressErr
+pub fn gzip_header(data: Bytes) -> GzipHeader ! CompressErr      // the first member's header
+pub fn deflate(data: Bytes, level: Level = Level.Default, dict: Bytes = b"") -> Bytes       // raw RFC 1951
+pub fn inflate(data: Bytes, max_size: Int = 1073741824, dict: Bytes = b"") -> Bytes ! CompressErr
+pub fn zlib(data: Bytes, level: Level = Level.Default, dict: Bytes = b"") -> Bytes          // RFC 1950
+pub fn unzlib(data: Bytes, max_size: Int = 1073741824, dict: Bytes = b"") -> Bytes ! CompressErr
 enum LzwOrder { LSB, MSB }  // compress/lzw bit order
 fn lzw_encode(data: Bytes, order: LzwOrder, lit_width: Int) -> Bytes ! CompressErr  // Go's compress/lzw writer over a whole buffer
 fn lzw_decode(data: Bytes, order: LzwOrder, lit_width: Int, max_size: Int = 1073741824) -> Bytes ! CompressErr  // Go's compress/lzw reader
 
 enum Format { Gzip, Deflate, Zlib }
 struct Compressor {}                     // move only (core 5.3)
-pub fn compressor(format: Format, level: Level = Level.Default) -> Compressor
+pub fn compressor(format: Format, level: Level = Level.Default, dict: Bytes = b"") -> Compressor
 fn (var c: Compressor) write(data: Bytes) -> Bytes   // the output ready so far (may be empty)
 fn (var c: Compressor) flush() -> Bytes              // everything so far: Go's Flush, a sync block
 fn (var c: Compressor) finish() -> Bytes             // the rest and the trailer; moves c
 struct Decompressor {}                   // move only
-pub fn decompressor(format: Format, max_size: Int = 1073741824) -> Decompressor
+pub fn decompressor(format: Format, max_size: Int = 1073741824, dict: Bytes = b"") -> Decompressor
 fn (var d: Decompressor) write(data: Bytes) -> Bytes ! CompressErr
 fn (var d: Decompressor) finish() -> Bytes ! CompressErr      // the rest; moves d
 ```
@@ -6631,7 +6634,23 @@ fn (var d: Decompressor) finish() -> Bytes ! CompressErr      // the rest; moves
   outside that range it is a fault (`compress: invalid compression level
   12: want value in range [-2, 9]`). `Default` is 6.
 - `gzip` writes no name and no time, so the output depends only on the
-  data and the level. `gunzip` reads every concatenated member, as Go's
+  data and the level. `gzip_with` writes a header's fields as Go's
+  gzip.Writer does with its Header set (name and comment Latin-1, every
+  rune 1 to 255, else `gzip.Write: non-Latin-1 header string`; an extra
+  of more than 65535 bytes is `gzip.Write: Extra data is too large`;
+  mtime in Unix seconds, 0 for none). `gzip_header` reads the first
+  member's header as gzip.NewReader does, without its body.
+- `dict` is a preset dictionary (Go's flate.NewWriterDict and
+  NewReaderDict, zlib.NewWriterLevelDict and NewReaderDict): the data
+  may refer back into its last 32 KB, and the reader must be given the
+  same one. Levels 2 to 9 use it; store, BestSpeed and HuffmanOnly
+  ignore it, as Go's writers do. zlib's header names it (FDICT and its
+  Adler-32); `unzlib` with another dictionary is `zlib: invalid
+  dictionary` (Go's ErrDictionary), and a dictionary is ignored when
+  the header names none. An empty `dict` is none, so zlib's header
+  never names the empty dictionary (Go's does for a non-nil empty
+  one). Gzip has no dictionary: a non-empty `dict` with `Format.Gzip`
+  is a fault. `gunzip` reads every concatenated member, as Go's
   multistream reader does.
 - The decoders stop at `max_size` (default 1 GiB) with
   `gzip: output exceeds max_size (N bytes)` (`flate:`, `zlib:`). Go has

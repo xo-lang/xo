@@ -30,12 +30,45 @@ fn gzip(data: Bytes, level: Level = Level.Default) -> Bytes
 /// Every concatenated member; more than max_size bytes of output is an
 /// error.
 fn gunzip(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
-/// Raw DEFLATE (RFC 1951).
-fn deflate(data: Bytes, level: Level = Level.Default) -> Bytes
-fn inflate(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
-/// zlib (RFC 1950): a two byte header, DEFLATE, and the Adler-32 sum.
-fn zlib(data: Bytes, level: Level = Level.Default) -> Bytes
-fn unzlib(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
+/// The fields of a gzip member's header (Go's gzip.Header): name and
+/// comment are Latin-1 in the stream (every rune 1 to 255), extra is the
+/// FEXTRA field (none when empty), mtime the modification time in Unix
+/// seconds (none when 0), os the operating system byte (255: unknown).
+struct GzipHeader {
+  name: Str = ""
+  comment: Str = ""
+  extra: Bytes = b""
+  mtime: Int = 0
+  os: Int = 255
+} derive Eq, Debug
+
+/// gzip with header's fields (gzip.Writer with its Header set): gzip(data,
+/// level) when header is GzipHeader{}. Errors are Go's texts:
+/// `gzip.Write: non-Latin-1 header string` for a name or comment with a
+/// rune of 0 or above 255, `gzip.Write: Extra data is too large` for an
+/// extra of more than 65535 bytes.
+fn gzip_with(data: Bytes, header: GzipHeader, level: Level = Level.Default) -> Bytes ! CompressErr
+/// The header of the first gzip member in data (gzip.NewReader's Header):
+/// its errors are Go's (`EOF` for no data, `unexpected EOF`, `gzip:
+/// invalid header`); the member's body is not read.
+fn gzip_header(data: Bytes) -> GzipHeader ! CompressErr
+
+/// Raw DEFLATE (RFC 1951). dict is a preset dictionary (Go's
+/// flate.NewWriterDict): the data may refer back into its last 32 KB, and
+/// the reader must be given the same one. Levels 2 to 9 use it; store,
+/// BestSpeed, and HuffmanOnly ignore it, as Go's do.
+fn deflate(data: Bytes, level: Level = Level.Default, dict: Bytes = b"") -> Bytes
+/// flate.NewReaderDict when dict is not empty: back references reach into
+/// it, and the output does not include it.
+fn inflate(data: Bytes, max_size: Int = 1073741824, dict: Bytes = b"") -> Bytes ! CompressErr
+/// zlib (RFC 1950): a two byte header, DEFLATE, and the Adler-32 sum. A
+/// non-empty dict sets the header's FDICT bit and writes its Adler-32
+/// after it (zlib.NewWriterLevelDict).
+fn zlib(data: Bytes, level: Level = Level.Default, dict: Bytes = b"") -> Bytes
+/// zlib.NewReaderDict: a header that names a dictionary needs dict to be
+/// it (`zlib: invalid dictionary` otherwise, Go's ErrDictionary); dict is
+/// ignored when the header names none.
+fn unzlib(data: Bytes, max_size: Int = 1073741824, dict: Bytes = b"") -> Bytes ! CompressErr
 
 /// The stream formats of a Compressor or Decompressor.
 enum Format {
@@ -52,7 +85,9 @@ enum Format {
 /// @move_only
 struct Compressor {}
 
-fn compressor(format: Format, level: Level = Level.Default) -> Compressor
+/// dict: a preset dictionary for Deflate and Zlib as in deflate and zlib;
+/// a fault for Gzip, which has none.
+fn compressor(format: Format, level: Level = Level.Default, dict: Bytes = b"") -> Compressor
 fn (var c: Compressor) write(data: Bytes) -> Bytes
 fn (var c: Compressor) flush() -> Bytes
 /// @moves
@@ -68,7 +103,9 @@ fn (var c: Compressor) finish() -> Bytes
 /// @move_only
 struct Decompressor {}
 
-fn decompressor(format: Format, max_size: Int = 1073741824) -> Decompressor
+/// dict: a preset dictionary for Deflate and Zlib as in inflate and
+/// unzlib; a fault for Gzip, which has none.
+fn decompressor(format: Format, max_size: Int = 1073741824, dict: Bytes = b"") -> Decompressor
 fn (var d: Decompressor) write(data: Bytes) -> Bytes ! CompressErr
 /// @moves
 fn (var d: Decompressor) finish() -> Bytes ! CompressErr
