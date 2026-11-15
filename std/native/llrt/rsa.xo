@@ -404,6 +404,11 @@ pub fn sign_pss(k: PrivateKey, hash: Int, hashed: Bytes) -> Bytes { sign_pss_sal
 /// sign_pss with the given salt (the hash's length; the tests' fixed
 /// salts, as RFC 8448's CertificateVerify).
 pub fn sign_pss_salt(k: PrivateKey, hash: Int, hashed: Bytes, salt: Bytes) -> Bytes {
+  // TLS's rule (RFC 8446 4.2.3, Go's PSSSaltLengthEqualsHash): sign_pss_fn
+  // takes any salt since std/crypto's sign_pss_digest (a98eab0e5)
+  if salt.len() != hash_len(hash) {
+    return b""
+  }
   sign_pss_fn(k, hash_len(hash), fn(b) { hsum(hash, b) }, hashed, salt)
 }
 
