@@ -61,6 +61,26 @@ it starts", and that was all it did.
   logs), TestLeaseStalled (STALLED in --status, cleared by a new line, one
   bottleneck.log line); offload_test.sh's `--rm` cases.
 
+## Follow-up: the bound stopped a gate whose lease was sized for no steps (2026-11-14)
+
+Once the Mac side enforced -max, a gate that named no steps
+(`offload-gate.sh WT`) got the 15 minute base lease, while gate.sh on the
+host still ran pushq --needs's steps (selfbuild and seedbuild, cold after
+a cache prune). heavyd stopped it at 25 minutes, rc 124. The bound had
+never acted before, because the host's timeout did not fire (above). The
+run was then pushed on a misread of its result (b9ebffc14, re-gated after).
+
+- offload-gate.sh names pushq --needs's steps itself when none are given,
+  so the lease is sized from them and the host runs the same list.
+- offload-gate.sh records each run's HEAD, rc, patch-id and log in the
+  worktree's git dir (`offload-gate-last`) and prints NOT PASSED for a
+  rc other than 0; pushq.sh --gated refuses a change whose last gate there
+  ended other than 0 (by HEAD, or by patch-id after a rebase).
+- Test: scripts/lead/offload_gate_test.sh (internal/repotest
+  TestOffloadGateLease): the planned lease with and without named steps,
+  OFF_MAX_MIN, and pushq's refusal or not for each recorded result.
+- rc 124 is not a pass: the steps that finished are not all the steps.
+
 ## Still open
 
 Why the host's `timeout` did not end the job at 90 minutes. The two PIDs
