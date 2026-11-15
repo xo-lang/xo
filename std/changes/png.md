@@ -1,5 +1,17 @@
 # std/png changes
 
+## 2026-11-15: fix: an IDAT stream with bytes past the image and then a stream error gives too much pixel data, as Go does
+
+- Kind: fix
+- Commit: this push
+- Found by: the decision 0616 long fuzz of std/png (TestPngFuzz seed 20, case 4728, on linux/arm64 host 2)
+- Go reference: image/png reader.go decode's check read after the last row (n != 0 is "too much pixel data" before the stream's error or the chunk's checksum) (go1.26.1)
+- Before: decode inflated the stream again for the rows before a flate error in steps of at least 64 bytes and dropped the output of the step that failed, and with the image's bytes present it answered the stream's error; a 27x15 paletted image whose one 13 byte IDAT inflates 79 of 75 bytes and then cuts a stored block, with a bad chunk checksum, gave "invalid checksum" where Go gives "too much pixel data"
+- Fix: partial_inflate feeds the failing step again a byte at a time from a fresh decompressor, keeping the output before the error; decode_image answers too much pixel data when more than the image inflates before the error
+- Test: corpus png (scripts/stdcorpus png.go): the fuzz input as a fixed case after the seeded ones, on arm64, LLVM and the Go backend; TestPngFuzz seed 20 (5000 cases) on arm64 and LLVM
+- Affected: png.decode of a stream that inflates past the image and then fails, on native backends
+- Shipped in: not yet released
+
 ## 2026-11-14: security: a header too large for an Int is refused as dimension overflow, not overflowed
 
 - Kind: security

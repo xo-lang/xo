@@ -1049,7 +1049,26 @@ fn partial_inflate(zdata: Bytes, max: Int) -> Bytes {
     }
     match dc.write(zdata[at..end]) {
       Ok(o) => got.write(o)
-      Err(_) => return got.freeze()
+      Err(_) => {
+        // the failed write's output is lost with its error, and Go reads
+        // the bytes before it (fuzz seed 20, 2026-11-15: 79 bytes of a 75
+        // byte image in one 13 byte write that ended in a cut stored
+        // block): feed a fresh decompressor up to here, then this step a
+        // byte at a time
+        var d2 = compress.decompressor(compress.Format.Deflate, max)
+        if at > 2 && d2.write(zdata[2..at]) is Err(_) {
+          return got.freeze()
+        }
+        var k = at
+        while k < end {
+          match d2.write(zdata[k..k + 1]) {
+            Ok(o) => got.write(o)
+            Err(_) => return got.freeze()
+          }
+          k += 1
+        }
+        return got.freeze()
+      }
     }
     at = end
   }
@@ -1081,6 +1100,13 @@ fn decode_image(d: Dec, zdata: Bytes) -> Image ! PngErr {
           }
         }
         Ok(_) => {}
+      }
+      if raw.len() > expect {
+        // a byte past the image inflates before the stream's own error:
+        // Go's check read gets it (n != 0) and reports too much pixel data
+        // before it meets the error or the chunk's checksum (fuzz seed 20,
+        // 2026-11-15: 79 bytes of a 75 byte image, then a cut stored block)
+        return Err(format_err("too much pixel data"))
       }
       if raw.len() >= expect {
         if e.msg.contains("exceeds max_size") {

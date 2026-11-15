@@ -386,6 +386,12 @@ func pngCorpus() string {
 		}
 	}
 
+	// fixed inputs the fuzz found, after the seeded ones so those stay:
+	// png fuzz seed 20 case 4728 (2026-11-15), a 27x15 paletted image whose
+	// one IDAT inflates 79 bytes of 75 and then cuts a stored block, with a
+	// bad checksum; Go reports too much pixel data before the checksum
+	cases = append(cases, []byte("\x89PNG\x0d\x0a\x1a\x0a\x00\x00\x00\x0dIHDR\x00\x00\x00\x1b\x00\x00\x00\x0f\x01\x03\x00\x00\x00/]&\x9b\x00\x00\x00\x03PLTE\xb2\x92)`egP\x00\x00\x00\x01tRNSk\x9a\x86`\xb6\x00\x00\x00\x0fIDATx\x9cb\xa0\x1e\x08\x04\x00\x00\xff\xff\x00K\x00\x01\xaaR:\x1b\x00\x00\x00\x00IEND\xaeB`\x82"))
+
 	o.WriteString("/// (PNG bytes, Go's Decode result: `ok MODEL WxH pix=CRC32/LEN pal=N/CRC32` or `err KIND [TEXT]`, Go's DecodeConfig result)\nconst DECODE: List[(Bytes, Str, Str)] = [\n")
 	for _, c := range cases {
 		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xbytes(c), xq(pngDescribe(c)), xq(pngDescribeConfig(c)))
