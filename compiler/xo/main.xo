@@ -445,7 +445,7 @@ fn main(os0: Os) ! {
           os.fs.remove(hit.bin).ignore_err("a prune removes it later")
           os.proc.exit(code)
         }
-        let ok = whole_build_hit(os, hit)
+        let ok = whole_build_hit(os, hit, out_dir_free(os, o))
         os.fs.remove(hit.bin).ignore_err("a prune removes it later")
         if ok {
           return
@@ -3193,7 +3193,7 @@ fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(St
     // paths, so a hit writes them
     var wc = ctx
     wc.bin_cache = ctx.run_cache
-    run_store(os, wc, o.run_key, c, o.std, o.wd, host_bin, [], RunOut{output: kept_output(ctx), outs: if o.cmd == "build" { bins } else { [] }, sides: if o.cmd == "build" { sides } else { [] }}, o.run_start)
+    run_store(os, wc, o.run_key, c, o.std, o.wd, host_bin, [], RunOut{output: kept_output(ctx), outs: if o.cmd == "build" { bins } else { [] }, sides: if o.cmd == "build" { sides } else { [] }, out_dir: out_dir_free(os, o)}, o.run_start)
   }
   Native{bin: host_bin, bins: bins, pc: c.parse_cache}
 }

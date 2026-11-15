@@ -48,6 +48,9 @@ struct RunOut {
   /// suffixes of files the build wrote beside its one output's stem
   /// (".pdb" beside NAME.exe), kept as the entry's .side<i> files
   sides: List[Str] = []
+  /// the output's directory the entry does not depend on (out_dir_free):
+  /// its listing and probes are not inputs unless the build read a file in it
+  out_dir: Str = ""
 }
 
 /// An output's stem: its path without a .exe.
@@ -110,9 +113,17 @@ fn run_key_of(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Key? 
   // program's arguments
   var kept: List[Str] = []
   var skip_next = false
+  // -o's file name only (out_dir_free)
+  let od = out_dir_free(os, o)
+  var out_next = false
   for a in args {
     if skip_next {
       skip_next = false
+      continue
+    }
+    if out_next {
+      out_next = false
+      kept.push(base_name(a))
       continue
     }
     if a == "--" && o.cmd == "run" {
@@ -125,10 +136,22 @@ fn run_key_of(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Key? 
         skip_next = run_flag_takes_value(name) && !body.contains("=")
         continue
       }
+      if name == "o" && !od.is_empty() {
+        if body.contains("=") {
+          kept.push("-o=${base_name(body[(body.find("=") ?? 0) + 1..])}")
+        } else {
+          kept.push(a)
+          out_next = true
+        }
+        continue
+      }
     }
     kept.push(a)
   }
   k.strs(kept)
+  if !od.is_empty() {
+    k.str("out by file name")
+  }
   // --seed and --explore leave the key's command line, but build the
   // deterministic flavor (decision 0350 stage 2): a seeded run after a
   // plain one reused the plain binary
@@ -491,8 +514,10 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
       for (p, _) in rec.written {
         made[p] = true
       }
-      let own = fn(p: Str) -> Bool { made.contains(p) }
-      files = rec.reads.keys().sort().filter(fn(p) { !own(p) })
+      files = rec.reads.keys().sort().filter(fn(p) { !made.contains(p) })
+      // the output's directory, when no file the build read is in it
+      let od = if !ro.out_dir.is_empty() && !files.any(fn(f) { dir_name(f) == ro.out_dir }) { ro.out_dir } else { "" }
+      let own = fn(p: Str) -> Bool { made.contains(p) || (!od.is_empty() && p == od) }
       sums = rec.reads
       list_sums = rec.list_sums
       for p in rec.lists.keys().sort() {

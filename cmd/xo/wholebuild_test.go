@@ -392,3 +392,63 @@ func TestWholeBuildDebugEnv(t *testing.T) {
 		}
 	}
 }
+
+// TestWholeBuildOutputDir: the run cache entry of `xo build -o DIR/NAME`
+// does not depend on DIR (out_dir_free, 2026-11-15): a build of the same
+// program to a new directory hits, makes the directory, and writes the
+// same bytes; a new file name misses (darwin's signature and windows'
+// PDB name the file). Before, every new directory missed: a golden
+// test's build to a fresh temporary directory never hit.
+func TestWholeBuildOutputDir(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	tmp := t.TempDir()
+	setenv(t, "XO_BUILD_DIR", filepath.Join(tmp, "build"))
+	setenv(t, "XO_BIN_CACHE", filepath.Join(tmp, "bin"))
+	setenv(t, "XO_BACKEND_CACHE_DIR", filepath.Join(tmp, "backend"))
+	setenv(t, "XO_WHOLE_BUILD", "on")
+	dir := filepath.Join(tmp, "prog")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module outdir\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn main(os: Os) {\n  os.stdio.println(\"two\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	build := func(out string, wantHit bool) []byte {
+		t.Helper()
+		var so, se bytes.Buffer
+		code := run(t, []string{"build", "--phase-times", "-o", out, "."}, &so, &se)
+		hit := strings.Contains(se.String(), "phase run_cache ") && !strings.Contains(se.String(), "phase run_cache_miss ")
+		if code != 0 || hit != wantHit {
+			t.Fatalf("build -o %s: exit %d, cache hit %v (want %v)\n%s%s", out, code, hit, wantHit, so.String(), se.String())
+		}
+		abs := out
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(dir, out)
+		}
+		got, err := testtmp.Guard(exec.Command(abs)).Output()
+		if err != nil || string(got) != "two\n" {
+			t.Fatalf("build -o %s: the binary printed %q (%v)", out, got, err)
+		}
+		b, err := os.ReadFile(abs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	a := build(filepath.Join(tmp, "a", "prog"), false)
+	b := build(filepath.Join(tmp, "b", "prog"), true)
+	if !bytes.Equal(a, b) {
+		t.Errorf("a hit to a new directory wrote other bytes than the build (%d against %d)", len(b), len(a))
+	}
+	// a relative -o in another directory hits too
+	build(filepath.Join("..", "c", "prog"), true)
+	// a new file name is its own build
+	build(filepath.Join(tmp, "d", "other"), false)
+}

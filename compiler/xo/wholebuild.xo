@@ -124,15 +124,46 @@ fn whole_key(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Str {
   run_key(os, wc, o, args, backend)
 }
 
+/// The directory of a build's `-o PATH` that its run cache entry does not
+/// depend on, "" when there is none (no -o, or -o names a directory). No
+/// build output holds the output's directory (a darwin signature and a
+/// windows PDB record and .rsrc name only the file, and ELF names
+/// neither; 2026-11-15), so the key keeps -o's file name, the entry does
+/// not list the directory, and a hit writes into this build's own: a
+/// golden test's build to a new temporary directory each run hit no
+/// entry (230 ms against 13 ms warm on the Mac, every golden in every
+/// gate).
+fn out_dir_free(os: Os, o: Opts) -> Str {
+  if o.cmd != "build" || o.out.is_empty() || o.out.ends_with("/") {
+    return ""
+  }
+  let p = abs_path(o.wd, o.out)
+  match os.fs.stat(p) {
+    Ok(Some(fi)) => {
+      if fi.is_dir {
+        return ""
+      }
+    }
+    _ => {}
+  }
+  dir_name(p)
+}
+
 /// A build's hit: the stored binary copied to each output it wrote (by a
 /// temporary file and a rename, so two builds of one output never leave a
-/// torn file), its output printed again. false when an output cannot be
-/// written (the build then runs).
-fn whole_build_hit(os: Os, hit: RunHit) -> Bool {
+/// torn file), its output printed again; with od (out_dir_free), each
+/// output's file name in od. false when an output cannot be written (the
+/// build then runs).
+fn whole_build_hit(os: Os, hit: RunHit, od: Str) -> Bool {
   if hit.outs.is_empty() {
     return false
   }
-  for (_, p) in hit.outs {
+  // a new output directory, as the build makes it
+  if !od.is_empty() && os.fs.create_dir_all(od).is_err() {
+    return false
+  }
+  for (_, p0) in hit.outs {
+    let p = if od.is_empty() { p0 } else { "${od}/${base_name(p0)}" }
     // the side files first (a windows .exe's PDB), so the binary is
     // never newer than what it names
     for (suf, sp) in hit.sides {

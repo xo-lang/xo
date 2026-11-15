@@ -71,6 +71,24 @@ Verify: `XO_BACKEND_CACHE=verify` keeps a hit aside, builds, and
 compares the binary and what the build printed with the entry's;
 a difference is error XO1512 (TestWholeBuildCache plants a wrong binary).
 
+## Addendum 2026-11-15: the output's directory leaves the key (lead)
+
+A build into another output directory missed (stage 1's note), and the
+golden tests build every program into a new temporary directory, so
+their warm builds never hit: 230 to 312 ms a build of mime_basic to a
+new path against 13 ms to the same path on the Mac, in every golden of
+every gate and tier. The key now holds only `-o`'s file name when `-o`
+names a file (compiler/xo wholebuild.xo out_dir_free; "out by file name"
+in the key), the entry leaves the output directory's listing and probes
+out (the build lists it; kept when the build read a file there), and a
+hit makes the directory and writes the binary under this build's path.
+No output holds its directory: darwin's ad hoc signature and a windows
+PDB record and .rsrc name only the file (darwin-binary-identity-output-name.md),
+ELF neither. A new file name is still its own entry. The same program
+built to a new directory: 17 ms, the same bytes; on darwin 19 ms, the
+signature valid, and XO_BACKEND_CACHE=verify finds no difference
+(cmd/xo TestWholeBuildOutputDir).
+
 ## Context
 
 An unchanged warm build is Xo's largest build gap. The language twins
