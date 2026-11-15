@@ -6,6 +6,7 @@
 // per escape (linux/arm64 host 1, 2026-11-10), so it stays here, behind
 // the bodyless declaration in std/url.xo.
 use native/llrt/raw
+use native/llrt/scan
 use native/rt
 
 const UPPER_HEX: Str = "0123456789ABCDEF"
@@ -21,43 +22,52 @@ fn escape(s: Str, path: Bool) -> Str {
   let b = s.bytes()
   let tab = if path { PATH_CLASS } else { QUERY_CLASS }
   let nb = b.len()
+  let sp = raw.bytes_addr(b)
+  // the tables have 256 entries and a byte indexes them, so the loads go
+  // through the addresses with no bounds test, and the counts wrap (at
+  // most nb), with no overflow test: the count loop was a third of
+  // bench/perf/url escape
+  let tp = raw.bytes_addr(tab)
   var n = 0
-  var plus = 0
-  for c in b {
-    let t = Int(tab[Int(c)])
-    n += t & 1
-    plus += t >> 1
+  var any = 0
+  var i = 0
+  while i < nb {
+    let t = rt.mem_load(tp, rt.mem_load(sp, i, 1), 1)
+    n = n.wrapping_add(t & 1)
+    any = any | t
+    i += 1
   }
-  if n == 0 && plus == 0 {
+  if any == 0 {
+    raw.alive(b)
+    raw.alive(tab)
     return s
   }
   // the output is written through its address: a run of kept bytes is one
   // mem_copy, an escape three byte stores (a byte at a time into a builder
   // with the character tests was 1.55 of Go's wall, 2026-11-04)
-  let hex = UPPER_HEX.bytes()
+  let hp = raw.bytes_addr(UPPER_HEX.bytes())
   let ob = raw.bytes_buf(nb + 2 * n)
   let op = raw.bytes_addr(ob)
-  let sp = raw.bytes_addr(b)
   var o = 0
   var start = 0
-  var i = 0
+  i = 0
   while i < nb {
-    let c = Int(b[i])
-    let t = Int(tab[c])
+    let c = rt.mem_load(sp, i, 1)
+    let t = rt.mem_load(tp, c, 1)
     if t != 0 {
       let run = i - start
       if run > 0 {
         rt.mem_copy(op.wrapping_add(o), sp.wrapping_add(start), run)
-        o += run
+        o = o.wrapping_add(run)
       }
       if t == 2 {
         rt.mem_store(op, o, 43, 1)
-        o += 1
+        o = o.wrapping_add(1)
       } else {
         rt.mem_store(op, o, 37, 1)
-        rt.mem_store(op, o + 1, Int(hex[c >> 4]), 1)
-        rt.mem_store(op, o + 2, Int(hex[c & 15]), 1)
-        o += 3
+        rt.mem_store(op, o.wrapping_add(1), rt.mem_load(hp, c >> 4, 1), 1)
+        rt.mem_store(op, o.wrapping_add(2), rt.mem_load(hp, c & 15, 1), 1)
+        o = o.wrapping_add(3)
       }
       start = i + 1
     }
@@ -67,6 +77,79 @@ fn escape(s: Str, path: Bool) -> Str {
     rt.mem_copy(op.wrapping_add(o), sp.wrapping_add(start), nb - start)
   }
   raw.alive(b)
+  raw.alive(tab)
   // kept bytes are ASCII and every non-ASCII byte is escaped: the result is ASCII
+  rt.cast[Bytes, Str](ob)
+}
+
+fn has_ctl(s: Str) -> Bool {
+  let b = s.bytes()
+  scan.ctl_at(b, 0, b.len()) < b.len()
+}
+
+/// std/url's first_escape: the first byte of b that mode does not keep
+/// by modes (256 entries, so a byte indexes it with no bounds test), or -1.
+fn first_escape(b: Bytes, mode: Int, modes: Bytes) -> Int {
+  let n = b.len()
+  let sp = raw.bytes_addr(b)
+  let tp = raw.bytes_addr(modes)
+  var i = 0
+  while i < n {
+    if (rt.mem_load(tp, rt.mem_load(sp, i, 1), 1) & mode) == 0 {
+      raw.alive(b)
+      return i
+    }
+    i += 1
+  }
+  raw.alive(b)
+  -1
+}
+
+/// std/url's escape_from: s with every byte from first on that mode does
+/// not keep as `%XX`, the output sized by a count first and written
+/// through its address as escape is (the bytes before first are kept).
+fn escape_from(s: Str, first: Int, mode: Int, modes: Bytes) -> Str {
+  let b = s.bytes()
+  let nb = b.len()
+  let sp = raw.bytes_addr(b)
+  let tp = raw.bytes_addr(modes)
+  var n = 0
+  var i = first
+  while i < nb {
+    if (rt.mem_load(tp, rt.mem_load(sp, i, 1), 1) & mode) == 0 {
+      n = n.wrapping_add(1)
+    }
+    i += 1
+  }
+  let hp = raw.bytes_addr(UPPER_HEX.bytes())
+  let ob = raw.bytes_buf(nb + 2 * n)
+  let op = raw.bytes_addr(ob)
+  rt.mem_copy(op, sp, first)
+  var o = first
+  var start = first
+  i = first
+  while i < nb {
+    let c = rt.mem_load(sp, i, 1)
+    if (rt.mem_load(tp, c, 1) & mode) == 0 {
+      let run = i - start
+      if run > 0 {
+        rt.mem_copy(op.wrapping_add(o), sp.wrapping_add(start), run)
+        o = o.wrapping_add(run)
+      }
+      rt.mem_store(op, o, 37, 1)
+      rt.mem_store(op, o.wrapping_add(1), rt.mem_load(hp, c >> 4, 1), 1)
+      rt.mem_store(op, o.wrapping_add(2), rt.mem_load(hp, c & 15, 1), 1)
+      o = o.wrapping_add(3)
+      start = i + 1
+    }
+    i += 1
+  }
+  if start < nb {
+    rt.mem_copy(op.wrapping_add(o), sp.wrapping_add(start), nb - start)
+  }
+  raw.alive(b)
+  raw.alive(modes)
+  // every byte a mode keeps is ASCII (the table is 0 from 0x80): the
+  // result is ASCII
   rt.cast[Bytes, Str](ob)
 }

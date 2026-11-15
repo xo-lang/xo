@@ -17,6 +17,48 @@ func Url_escape(_ *Task, s string, path bool) string {
 	return url.QueryEscape(s)
 }
 
+// Url_has_ctl is std/url's has_ctl on the Go backend: Go's
+// stringContainsCTLByte.
+func Url_has_ctl(_ *Task, s string) bool {
+	for i := 0; i < len(s); i++ {
+		if b := s[i]; b < ' ' || b == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// Url_first_escape is std/url's first_escape on the Go backend: the
+// first byte of b that mode does not keep by modes, or -1.
+func Url_first_escape(_ *Task, b Bytes, mode int64, modes Bytes) int64 {
+	for i := 0; i < len(b); i++ {
+		if int64(modes[b[i]])&mode == 0 {
+			return int64(i)
+		}
+	}
+	return -1
+}
+
+// Url_escape_from is std/url's escape_from on the Go backend: s with
+// every byte from first on that mode does not keep as %XX.
+func Url_escape_from(_ *Task, s string, first int64, mode int64, modes Bytes) string {
+	const hex = "0123456789ABCDEF"
+	var out strings.Builder
+	out.Grow(len(s) + 16)
+	out.WriteString(s[:first])
+	for i := int(first); i < len(s); i++ {
+		c := s[i]
+		if int64(modes[c])&mode == 0 {
+			out.WriteByte('%')
+			out.WriteByte(hex[c>>4])
+			out.WriteByte(hex[c&15])
+		} else {
+			out.WriteByte(c)
+		}
+	}
+	return out.String()
+}
+
 // urlText is s with each byte that is not UTF-8 kept as its %XX escape
 // (decision 0259), as std/url's own decoding keeps it; std/rt's http uses
 // it on text Go's net/url decoded.

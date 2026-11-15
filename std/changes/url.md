@@ -1,5 +1,17 @@
 # std/url changes
 
+## 2026-11-15: perf: escape and the encoding checks find their first byte in native code; parse's control byte check a word at a time
+
+- Kind: perf
+- Commit: this push
+- Found by: the decision 0616 perf kind on linux/arm64 host 1 at source 22ca5e53: urltype parse 1.129, string 1.226 of Go
+- Go reference: net/url shouldEscape, escape, validEncoded, stringContainsCTLByte
+- Change: escape_in finds the first byte to escape (first_escape, native: a table load a byte with no bounds check) and escapes from it in one counted pass into a buffer of the exact size (escape_from: the kept runs copied whole, each `%XX` from a table), where it appended run by run to a growing Str; valid_encoded is the same scan with a bit of its own in the modes table (M_VALID) where it walked a byte at a time; parse's control byte check is llrt scan.ctl_at, eight bytes a step; display writes a password's `:` as a piece of its own
+- Measured: linux/arm64 host 1, --ab against the parent (with the prelude's rfind, n=3): urltype parse 0.859 (33.8 to 29.0 ms), url escape 0.837 (12.5 to 10.5 ms); urltype string 1.045 (0.938 to 1.088), resolve 1.012, url query 1.010, encode 0.959 within noise; url unescape 1.079 (1.007 to 1.081), which this change does not touch (code layout). Against Go after this push (stdproven perf, twincheck -time 9): escape 0.918, unescape 0.908, query 0.918, encode 0.778, urltype parse 0.982, resolve 1.006, string 1.197 (still over 1.05)
+- Test: internal/stdtest TestStdModules for url and every module that uses it (the gate's stdmods step, arm64), the std tests on wasm; the decision 0616 fuzz, stress and race kinds rerun at this source
+- Affected: every backend (the Go backend's first_escape, escape_from and has_ctl are in std/rt/url.go)
+- Shipped in: not yet released
+
 ## 2026-11-14: fix: a bracketed host byte from 0x80 is refused as Go refuses it; resolve and join in a byte an element
 
 - Kind: fix
