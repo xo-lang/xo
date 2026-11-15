@@ -919,9 +919,12 @@ run_step_body() {
       # times test1's 277 s; irman.sh runs it on host 2 and limits how
       # often instead); its wall and CPU time are logged for irman.sh
       irj=${XO_GATE_IR_PARALLEL:-$(ir_jobs)}
-      t0=$(date +%s); c0=$(awk '{print $14 + $15 + $16 + $17}' /proc/$BASHPID/stat 2>/dev/null)
+      # this shell's own and its waited children's CPU ticks (its PID read
+      # here: inside $( ) BASHPID names the substitution's subshell)
+      me=$BASHPID
+      t0=$(date +%s); c0=$(awk '{print $14 + $15 + $16 + $17}' /proc/$me/stat 2>/dev/null)
       XO_GATE_IR_NICE=0 ir_head_manifest "$hm.tmp$$" "$irj" && mv "$hm.tmp$$" "$hm" &&
-        echo "irmanifest: built in $(($(date +%s) - t0)) s wall, $(( ($(awk '{print $14 + $15 + $16 + $17}' /proc/$BASHPID/stat 2>/dev/null || echo 0) - ${c0:-0}) / $(getconf CLK_TCK) )) s CPU, -parallel $irj"
+        echo "irmanifest: built in $(($(date +%s) - t0)) s wall, $(( ($(awk '{print $14 + $15 + $16 + $17}' /proc/$me/stat 2>/dev/null || echo 0) - ${c0:-0}) / $(getconf CLK_TCK) )) s CPU, -parallel $irj"
     }; then
       echo "irmanifest: $hm ($(wc -l <"$hm" | tr -d ' ') goldens)"
     else
