@@ -48,6 +48,7 @@ var generators = map[string]func() string{
 	"crc64":        crc64Corpus,
 	"x509":         x509Corpus,
 	"x509create":   x509CreateCorpus,
+	"x509oid":      x509OIDCorpus,
 	"crypto":       cryptoCorpus,
 	"csv":          csvCorpus,
 	"cut":          cutCorpus,

@@ -146,6 +146,45 @@ struct PolicyMapping {
   subject_domain_policy: Str
 }
 
+/// Go's OID: an ASN.1 object identifier whose arcs may be any size, held
+/// as its DER contents (Go's MarshalBinary). The empty Oid is Go's zero
+/// OID{}. == is Go's Equal. An Oid is made by parse_oid, oid_from_ints,
+/// oid_from_asn1_oid or oid_from_binary; one built from other contents
+/// displays as "".
+struct Oid {
+  der: Bytes = b""
+}
+
+/// Go's ParseOID (and UnmarshalText): dotted decimal arcs of any size, at
+/// least two, the first 0 to 2 and the second under 40 when the first is
+/// 0 or 1. Err "invalid oid" (Go's errInvalidOID) otherwise.
+fn parse_oid(s: Str) -> Oid ! CertErr
+
+/// Go's OIDFromInts: Err "invalid oid" for fewer than two arcs or a first
+/// two Go refuses. As Go, the first value (40 times the first arc plus
+/// the second) is a UInt64 that wraps: [2, 2^64 - 1] is the Oid 1.39.
+fn oid_from_ints(arcs: List[UInt64]) -> Oid ! CertErr
+
+/// Go's OIDFromASN1OID: Err "x509: OID components must be non-negative"
+/// for a negative arc, "invalid oid" as oid_from_ints.
+fn oid_from_asn1_oid(arcs: List[Int]) -> Oid ! CertErr
+
+/// Go's UnmarshalBinary (newOIDFromDER): Err "invalid oid" for empty
+/// contents, an arc that starts with 0x80, or a last byte with its high
+/// bit set.
+fn oid_from_binary(der: Bytes) -> Oid ! CertErr
+
+/// Go's String (and MarshalText): the dotted arcs.
+fn (o: Oid) display() -> Str
+
+/// Go's EqualASN1OID: whether o has exactly these arcs (false for the
+/// empty Oid).
+fn (o: Oid) equal_asn1_oid(arcs: List[Int]) -> Bool
+
+/// The arcs when each fits an Int as Go's toASN1OID does (at most 31
+/// bits each), else None.
+fn (o: Oid) to_asn1_oid() -> List[Int]?
+
 /// An x509 error, with Go's text (`x509: malformed certificate`,
 /// `x509: certificate signed by unknown authority`, ...).
 struct CertErr {

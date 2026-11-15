@@ -8,6 +8,13 @@ package rt
 var (
 	_ func(*X509_Name, *Task) string                                                                                                         = (*X509_Name).M_display
 	_ func(*X509_Name, *Task) List[Tuple2[string, string]]                                                                                   = (*X509_Name).M_attributes
+	_ func(*Task, string) Result[X509_Oid, X509_CertErr]                                                                                     = X509_parse_oid
+	_ func(*Task, List[uint64]) Result[X509_Oid, X509_CertErr]                                                                               = X509_oid_from_ints
+	_ func(*Task, List[int64]) Result[X509_Oid, X509_CertErr]                                                                                = X509_oid_from_asn1_oid
+	_ func(*Task, Bytes) Result[X509_Oid, X509_CertErr]                                                                                      = X509_oid_from_binary
+	_ func(*X509_Oid, *Task) string                                                                                                          = (*X509_Oid).M_display
+	_ func(*X509_Oid, *Task, List[int64]) bool                                                                                               = (*X509_Oid).M_equal_asn1_oid
+	_ func(*X509_Oid, *Task) Option[List[int64]]                                                                                             = (*X509_Oid).M_to_asn1_oid
 	_ func(*X509_CertErr, *Task) string                                                                                                      = (*X509_CertErr).M_display
 	_ func(*Task, Bytes) Result[X509_Certificate, X509_CertErr]                                                                              = X509_parse
 	_ func(*Task, Bytes, string) Result[X509_Pkcs12, X509_CertErr]                                                                           = X509_parse_pkcs12

@@ -7542,6 +7542,14 @@ struct Certificate {
   require_explicit_policy: Int? = None, unhandled_critical_extensions: List[Str] = []
 }
 struct PolicyMapping { issuer_domain_policy: Str, subject_domain_policy: Str }
+struct Oid { der: Bytes = b"" }
+fn parse_oid(s: Str) -> Oid ! CertErr
+fn oid_from_ints(arcs: List[UInt64]) -> Oid ! CertErr
+fn oid_from_asn1_oid(arcs: List[Int]) -> Oid ! CertErr
+fn oid_from_binary(der: Bytes) -> Oid ! CertErr
+fn (o: Oid) display() -> Str
+fn (o: Oid) equal_asn1_oid(arcs: List[Int]) -> Bool
+fn (o: Oid) to_asn1_oid() -> List[Int]?
 struct CertErr { msg: Str }
 fn (e: CertErr) display() -> Str
 fn parse(der: Bytes) -> Certificate ! CertErr
@@ -7680,6 +7688,18 @@ fn check(os: Os, pem: Bytes, roots: Bytes) -> () ! Error uses clock {
   text (`"x509: certificate signed by unknown authority"`, `"x509:
   certificate has expired or is not yet valid: current time ... is
   after ..."`, ...). `check_signature_from` is Go's CheckSignatureFrom.
+- `Oid` is Go's x509.OID: an object identifier whose arcs may be any
+  size, held as its DER contents (`der`, Go's MarshalBinary); `==` is
+  Go's Equal and the empty Oid is Go's zero `OID{}`. `parse_oid` is
+  ParseOID (and UnmarshalText), `oid_from_ints` OIDFromInts (with Go's
+  UInt64 wrap of 40 times the first arc plus the second: `[2, 2^64 - 1]`
+  is 1.39), `oid_from_asn1_oid` OIDFromASN1OID, `oid_from_binary`
+  UnmarshalBinary; each refuses with Go's text, "invalid oid" or "x509:
+  OID components must be non-negative". `display` is String (and
+  MarshalText), `equal_asn1_oid` EqualASN1OID, and `to_asn1_oid` Go's
+  toASN1OID: the arcs when each value fits 31 bits. An Oid built from
+  other contents displays as "" and equals no arcs. The OID fields of
+  `Certificate`, `Extension` and `ExtKeyUsage.Other` stay dotted Str.
 - `create_certificate` is Go's CreateCertificate: the TBS certificate
   of `t` for `public_key`, issued by `parent` (self-signed when None)
   and signed with `key`, in Go's encoding, so an Ed25519 or RSA

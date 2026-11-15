@@ -1063,3 +1063,111 @@ func X509_parse_pkcs12(tk *Task, data Bytes, password string) Result[X509_Pkcs12
 	}
 	return Ok[X509_Pkcs12, X509_CertErr](X509_Pkcs12{F_key: kr.V, F_certificate: x509CertOf(tk, certs[leaf]), F_ca: ListFromSlice(ca)})
 }
+
+// x509OidErr is Go's errInvalidOID.
+func x509OidErr() Result[X509_Oid, X509_CertErr] {
+	return Err[X509_Oid](x509Err("invalid oid"))
+}
+
+func x509OidOf(o x509.OID, err error) Result[X509_Oid, X509_CertErr] {
+	if err != nil {
+		return Err[X509_Oid](x509Err(textOf(err.Error())))
+	}
+	b, _ := o.MarshalBinary()
+	return Ok[X509_Oid, X509_CertErr](X509_Oid{F_der: Bytes(b)})
+}
+
+func X509_parse_oid(_ *Task, s string) Result[X509_Oid, X509_CertErr] {
+	return x509OidOf(x509.ParseOID(string(s)))
+}
+
+func X509_oid_from_ints(_ *Task, arcs List[uint64]) Result[X509_Oid, X509_CertErr] {
+	var a []uint64
+	for _, x := range arcs.s {
+		a = append(a, x)
+	}
+	return x509OidOf(x509.OIDFromInts(a))
+}
+
+func X509_oid_from_asn1_oid(_ *Task, arcs List[int64]) Result[X509_Oid, X509_CertErr] {
+	var a asn1.ObjectIdentifier
+	for _, x := range arcs.s {
+		if x < 0 {
+			// Go's int is 64 bits here: OIDFromASN1OID's own check
+			a = append(a, -1)
+			continue
+		}
+		a = append(a, int(x))
+	}
+	return x509OidOf(x509.OIDFromASN1OID(a))
+}
+
+func X509_oid_from_binary(_ *Task, der Bytes) Result[X509_Oid, X509_CertErr] {
+	var o x509.OID
+	if err := o.UnmarshalBinary([]byte(der)); err != nil {
+		return x509OidErr()
+	}
+	return Ok[X509_Oid, X509_CertErr](X509_Oid{F_der: Bytes(append([]byte(nil), der...))})
+}
+
+// x509GoOID is o as Go's OID; ok false for contents Go would not make.
+func x509GoOID(o X509_Oid) (x509.OID, bool) {
+	var g x509.OID
+	if len(o.F_der) == 0 {
+		return g, true
+	}
+	if err := g.UnmarshalBinary([]byte(o.F_der)); err != nil {
+		return g, false
+	}
+	return g, true
+}
+
+func (o *X509_Oid) M_display(_ *Task) string {
+	g, ok := x509GoOID(*o)
+	if !ok {
+		return ""
+	}
+	return textOf(g.String())
+}
+
+func (o *X509_Oid) M_equal_asn1_oid(_ *Task, arcs List[int64]) bool {
+	g, ok := x509GoOID(*o)
+	if !ok {
+		return false
+	}
+	var a asn1.ObjectIdentifier
+	for _, x := range arcs.s {
+		a = append(a, int(x))
+	}
+	return g.EqualASN1OID(a)
+}
+
+func (o *X509_Oid) M_to_asn1_oid(_ *Task) Option[List[int64]] {
+	if _, ok := x509GoOID(*o); !ok {
+		return None[List[int64]]()
+	}
+	// Go's toASN1OID (unexported), line for line
+	out := []int64{}
+	val := 0
+	for _, v := range []byte(o.F_der) {
+		if val > (1<<24)-1 {
+			return None[List[int64]]()
+		}
+		val <<= 7
+		val |= int(v & 0x7f)
+		if v&0x80 == 0 {
+			if len(out) == 0 {
+				if val < 80 {
+					out = append(out, int64(val/40), int64(val%40))
+				} else {
+					out = append(out, 2, int64(val-80))
+				}
+				val = 0
+				continue
+			}
+			out = append(out, int64(val))
+			val = 0
+		}
+	}
+	return Some(ListFromSlice(out))
+}

@@ -1276,3 +1276,161 @@ fn oid_text_any(c: Bytes) -> Str {
   }
   parts.join(".")
 }
+
+// ---------------------------------------------------------------------------
+// The Oid type (Go's x509.OID)
+
+fn oid_err() -> x509.CertErr { err("invalid oid") }
+
+/// newOIDFromDER's check: not empty, no arc starting with 0x80, the last
+/// byte ending an arc. The empty Oid (Go's zero OID) is let through by
+/// the methods.
+fn oid_der_ok(der: Bytes) -> Bool {
+  if der.is_empty() || Int(der[der.len() - 1]) >= 128 {
+    return false
+  }
+  var start = true
+  for b in der {
+    if start && Int(b) == 128 {
+      return false
+    }
+    start = Int(b) < 128
+  }
+  true
+}
+
+fn parse_oid(s: Str) -> x509.Oid ! x509.CertErr {
+  match oid_contents_any(s) {
+    Some(d) => Ok(x509.Oid{der: d})
+    None => Err(oid_err())
+  }
+}
+
+fn oid_from_ints(arcs: List[UInt64]) -> x509.Oid ! x509.CertErr {
+  if arcs.len() < 2 {
+    return Err(oid_err())
+  }
+  // Go computes the first value, 40 times the first arc plus the second,
+  // in a uint64: a second arc within 80 of 2^64 wraps it to under 80,
+  // which reads back as other first two arcs
+  let edge = UInt64.from_bits(-80)
+  if arcs[0] == UInt64(2) && arcs[1] >= edge {
+    let v = Int(arcs[1] - edge)
+    var rest = ["${v / 40}", "${v % 40}"]
+    for a in arcs[2..arcs.len()] {
+      rest.push("${a}")
+    }
+    return parse_oid(rest.join("."))
+  }
+  parse_oid(arcs.map(fn(a) { "${a}" }).join("."))
+}
+
+fn oid_from_asn1_oid(arcs: List[Int]) -> x509.Oid ! x509.CertErr {
+  for a in arcs {
+    if a < 0 {
+      return Err(err("x509: OID components must be non-negative"))
+    }
+  }
+  if arcs.len() < 2 {
+    return Err(oid_err())
+  }
+  parse_oid(arcs.map(fn(a) { "${a}" }).join("."))
+}
+
+fn oid_from_binary(der: Bytes) -> x509.Oid ! x509.CertErr {
+  if !oid_der_ok(der) {
+    return Err(oid_err())
+  }
+  Ok(x509.Oid{der: der})
+}
+
+fn oid_display(o: x509.Oid) -> Str {
+  if !oid_der_ok(o.der) {
+    return ""
+  }
+  oid_text_any(o.der)
+}
+
+/// Go's parseBase128Int: a value of at most 31 bits, minimally encoded.
+fn oid_base128(der: Bytes, i0: Int) -> (Int, Int)? {
+  var v = 0
+  var i = i0
+  var shifted = 0
+  while i < der.len() {
+    if shifted == 5 {
+      return None
+    }
+    let b = Int(der[i])
+    if shifted == 0 && b == 128 {
+      return None
+    }
+    v = (v << 7) | (b & 127)
+    i += 1
+    if b < 128 {
+      if v > 2147483647 {
+        return None
+      }
+      return Some((v, i))
+    }
+    shifted += 1
+  }
+  None
+}
+
+fn oid_equal_asn1_oid(o: x509.Oid, arcs: List[Int]) -> Bool {
+  if arcs.len() < 2 || !oid_der_ok(o.der) {
+    return false
+  }
+  let (v, off) = match oid_base128(o.der, 0) {
+    Some(x) => x
+    None => return false
+  }
+  let (a, b) = if v < 80 { (v / 40, v % 40) } else { (2, v - 80) }
+  if arcs[0] != a || arcs[1] != b {
+    return false
+  }
+  var i = 2
+  var at = off
+  while at < o.der.len() {
+    let (w, nx) = match oid_base128(o.der, at) {
+      Some(x) => x
+      None => return false
+    }
+    if i >= arcs.len() || w != arcs[i] {
+      return false
+    }
+    at = nx
+    i += 1
+  }
+  i == arcs.len()
+}
+
+/// Go's toASN1OID, line for line.
+fn oid_to_asn1_oid(o: x509.Oid) -> List[Int]? {
+  if !o.der.is_empty() && !oid_der_ok(o.der) {
+    return None
+  }
+  var out: List[Int] = []
+  var val = 0
+  for b in o.der {
+    if val > 16777215 {
+      return None
+    }
+    val = (val << 7) | (Int(b) & 127)
+    if Int(b) < 128 {
+      if out.is_empty() {
+        if val < 80 {
+          out.push(val / 40)
+          out.push(val % 40)
+        } else {
+          out.push(2)
+          out.push(val - 80)
+        }
+      } else {
+        out.push(val)
+      }
+      val = 0
+    }
+  }
+  Some(out)
+}
