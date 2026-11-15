@@ -416,6 +416,14 @@ pub struct Checker {
   /// The XO0306 pass (decision 0649): an open enum of another package
   /// counts as covered only by a wildcard.
   open_strict: Bool = false
+  /// open_enum_in's memo (by resolved type and depth) for the module
+  /// oe_mod; oe_list holds the open enums of c.objs[0..oe_scan], and
+  /// oe_any whether one is of another package than oe_mod
+  oe_memo: Map[Int, Int] = {}
+  oe_mod: Int = -2
+  oe_scan: Int = 0
+  oe_list: List[Int] = []
+  oe_any: Bool = false
   cur_file: Int = -1
   path: Str = ""
   scopes: List[Map[Bytes, Int]] = []

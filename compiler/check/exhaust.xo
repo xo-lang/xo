@@ -393,7 +393,7 @@ fn (var c: Checker) check_exhaustive(mspan: Span, subject: Expr, rows: List[IPat
 /// that covers every variant of an open enum of another package but has
 /// no arm for the variants its owner may add.
 fn (var c: Checker) check_open_enums(mspan: Span, subject: Expr, rows: List[IPat], st: Int) {
-  let oe = c.open_enum_in(st, 0)
+  let oe = c.open_enum_of(st)
   if oe < 0 {
     return
   }
@@ -418,13 +418,51 @@ fn (var c: Checker) check_open_enums(mspan: Span, subject: Expr, rows: List[IPat
   c.fix(d, "add a `_` arm as a hole", [c.insert_edit(end, "  _ => ???\n${indent}")])
 }
 
+/// open_enum_in(t, 0), or -1 at once when no open enum of another package
+/// is loaded. The memo and the list of open enums start again for each
+/// module (a package boundary moves with it).
+fn (var c: Checker) open_enum_of(t: Int) -> Int {
+  if c.oe_mod != c.cur_mod {
+    c.oe_mod = c.cur_mod
+    c.oe_memo = {}
+    c.oe_any = false
+    while c.oe_scan < c.objs.len() {
+      if c.objs[c.oe_scan].flags.open_enum() {
+        c.oe_list.push(c.oe_scan)
+      }
+      c.oe_scan += 1
+    }
+    for o in c.oe_list {
+      if c.outside_pkg(c.objs[o].module) {
+        c.oe_any = true
+        break
+      }
+    }
+  }
+  if !c.oe_any {
+    return -1
+  }
+  c.open_enum_in(t, 0)
+}
+
 /// The first open enum of another package in t, its type arguments,
-/// tuple elements and struct fields (to a small depth), or -1.
+/// tuple elements and struct fields (to a small depth), or -1. Memoized
+/// per resolved type and depth (the depth bounds the answer).
 fn (var c: Checker) open_enum_in(t: Int, depth: Int) -> Int {
   if depth > 4 {
     return -1
   }
   let r = c.resolve(t)
+  let key = r * 8 + depth
+  if let Some(m) = c.oe_memo.get(key) {
+    return m
+  }
+  let res = c.open_enum_walk(r, depth)
+  c.oe_memo[key] = res
+  res
+}
+
+fn (var c: Checker) open_enum_walk(r: Int, depth: Int) -> Int {
   let x = c.tys[r]
   if x.kind == TyKind.Tuple {
     for a in x.args {
@@ -439,7 +477,8 @@ fn (var c: Checker) open_enum_in(t: Int, depth: Int) -> Int {
     return -1
   }
   let o = x.obj
-  if c.objs[o].flags.open_enum() && c.outside_pkg(c.objs[o].module) {
+  let ob = c.objs[o]
+  if ob.flags.open_enum() && c.outside_pkg(ob.module) {
     return o
   }
   for a in x.args {
@@ -448,18 +487,18 @@ fn (var c: Checker) open_enum_in(t: Int, depth: Int) -> Int {
       return oa
     }
   }
-  if c.objs[o].tkind == "struct" && !c.objs[o].flags.opaque() {
-    let s = c.args_subst(c.objs[o].tparams, x.args)
-    for f in c.objs[o].fields {
+  if ob.tkind == "struct" && !ob.flags.opaque() {
+    let s = c.args_subst(ob.tparams, x.args)
+    for f in ob.fields {
       let of = c.open_enum_in(c.subst(f.ty, s), depth + 1)
       if of >= 0 {
         return of
       }
     }
   }
-  if c.objs[o].tkind == "enum" {
-    let s = c.args_subst(c.objs[o].tparams, x.args)
-    for v in c.objs[o].variants {
+  if ob.tkind == "enum" {
+    let s = c.args_subst(ob.tparams, x.args)
+    for v in ob.variants {
       for f in v.fields {
         let ov = c.open_enum_in(c.subst(f.ty, s), depth + 1)
         if ov >= 0 {
