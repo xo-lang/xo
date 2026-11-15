@@ -470,13 +470,18 @@ func x509CreateCorpus() string {
 	}
 	o.WriteString("]\n")
 
+	// CRLs Xo makes (create_revocation_list): Go's for the same template,
+	// issuer and key, or Go's error; TestCreateRevocationList's cases with
+	// times Xo's Time holds (Go's use year 1), and its UTF-8 CA
+	ctCRLCreate(&o, keys, rootDER)
+
 	o.WriteString(`
 fn shown(bad: List[Str]) -> List[Str] {
   bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
 }
 
 fn key(name: Str) -> crypto.PrivateKey {
-  let der = if name == "ed" { KEY_ED } else if name == "rsa" { KEY_RSA } else { KEY_EC }
+  let der = if name == "ed" { KEY_ED } else if name == "rsa" { KEY_RSA } else if name == "utf8" { KEY_UTF8 } else { KEY_EC }
   crypto.parse_private_key(der).ok() ?? fault("key")
 }
 
@@ -650,6 +655,44 @@ test "self_signed makes a development certificate for its hosts and a key that p
   expect(c.verify(x509.VerifyOptions{roots: [c], dns_name: "localhost", at: Time.from_unix(1767225600 + 86400)}).is_ok()) == true
 }
 
+fn crl_summary(l: x509.RevocationList) -> Str {
+  let next = match l.next_update {
+    Some(t) => "${t.unix()}"
+    None => "none"
+  }
+  "sig=${l.signature_algorithm} iss=${l.issuer.display()} num=${l.number.to_hex()} this=${l.this_update.unix()} next=${next} revoked=${l.revoked.map(fn(r) { "${r.serial.to_hex()}/${r.revoked_at.unix()}/${r.reason}/${exts(r.extensions)}" }).join(";")} aki=${l.authority_key_id.to_hex()} ext=${exts(l.extensions)}"
+}
+
+test "create_revocation_list makes Go's CRL: equal bytes for Ed25519 and RSA PKCS #1 v1.5, equal fields for ECDSA and RSA PSS, Go's errors" {
+  var bad: List[Str] = []
+  for (name, issuer_der, kname, t, want, want_err) in crl_create_rows() {
+    let issuer = x509.parse(issuer_der).ok() ?? fault("issuer")
+    match x509.create_revocation_list(os.rand, t, issuer, key(kname)) {
+      Ok(l) => {
+        if !want_err.is_empty() {
+          bad.push("${name}: made a CRL, want ${want_err}")
+        } else {
+          let go = x509.parse_revocation_list(want).ok() ?? fault("go's")
+          let random = kname == "ec" || t.signature_algorithm.ends_with("PSS")
+          if random {
+            if crl_summary(l) != crl_summary(go) {
+              bad.push("${name}:\n  got  ${crl_summary(l)}\n  want ${crl_summary(go)}")
+            }
+          } else if l.raw != want {
+            bad.push("${name}: other bytes\n  got  ${crl_summary(l)}\n  want ${crl_summary(go)}")
+          }
+          match l.check_signature_from(issuer) {
+            Ok(_) => ()
+            Err(e) => bad.push("${name}: check_signature_from: ${e.display()}")
+          }
+        }
+      }
+      Err(e) => if e.display() != want_err { bad.push("${name}: ${e.display()}, want ${if want_err.is_empty() { "a CRL" } else { want_err }}") }
+    }
+  }
+  expect(shown(bad)) == []
+}
+
 test "marshal_private_key is Go's PKCS #8 and parses back" {
   for (name, der) in [("ed", KEY_ED), ("rsa", KEY_RSA), ("ec", KEY_EC)] {
     let k = key(name)
@@ -729,4 +772,157 @@ func ctCRLCheck(l *x509.RevocationList, ok string) string {
 		return err.Error()
 	}
 	return ok
+}
+
+type ctCRLRow struct {
+	name   string
+	issuer string // root, rsaca, ecca, utf8ca, nocrlsign, noskid
+	key    string
+	t      *x509.RevocationList
+}
+
+// ctCRLCreate writes the issuers, UTF-8 CA key and crl_create_rows.
+func ctCRLCreate(o *strings.Builder, keys map[string]crypto.Signer, rootDER []byte) {
+	path := filepath.Join(runtime.GOROOT(), "src", "crypto", "x509", "x509_test.go")
+	f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		panic(err)
+	}
+	// TestCreateRevocationList's utf8CAStr and utf8KeyStr
+	lits := map[string]string{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		a, ok := n.(*ast.AssignStmt)
+		if !ok || len(a.Lhs) != 1 || len(a.Rhs) != 1 {
+			return true
+		}
+		id, ok := a.Lhs[0].(*ast.Ident)
+		lit, ok2 := a.Rhs[0].(*ast.BasicLit)
+		if ok && ok2 && (id.Name == "utf8CAStr" || id.Name == "utf8KeyStr") {
+			lits[id.Name], _ = strconv.Unquote(lit.Value)
+		}
+		return true
+	})
+	if len(lits) != 2 {
+		panic("x509create: x509_test.go has no utf8CAStr and utf8KeyStr")
+	}
+	utf8CA := ctMust(base64.StdEncoding.DecodeString(lits["utf8CAStr"]))
+	utf8Key := ctMust(base64.StdEncoding.DecodeString(lits["utf8KeyStr"]))
+	uk, err := x509.ParsePKCS8PrivateKey(utf8Key)
+	if err != nil {
+		panic(err)
+	}
+	keys["utf8"] = uk.(crypto.Signer)
+	fmt.Fprintf(o, "\nconst KEY_UTF8: Bytes = %s\n", xbytes(utf8Key))
+
+	ca := func(k string, ku x509.KeyUsage, isCA bool) []byte {
+		t := &x509.Certificate{SerialNumber: big.NewInt(11), Subject: pkix.Name{CommonName: "Xo CRL issuer " + k, Organization: []string{"Xo"}},
+			NotBefore: time.Unix(1704067200, 0), NotAfter: time.Unix(1893456000, 0), IsCA: isCA, BasicConstraintsValid: true, KeyUsage: ku}
+		return ctMust(x509.CreateCertificate(rand.Reader, t, t, keys[k].Public(), keys[k]))
+	}
+	issuers := map[string][]byte{
+		"root": rootDER, "utf8ca": utf8CA,
+		"rsaca":     ca("rsa", x509.KeyUsageCertSign|x509.KeyUsageCRLSign, true),
+		"ecca":      ca("ec", x509.KeyUsageCertSign|x509.KeyUsageCRLSign, true),
+		"nocrlsign": ca("ed", x509.KeyUsageCertSign, true),
+		"noskid":    ca("ed", x509.KeyUsageCRLSign, false),
+	}
+	for _, n := range []string{"root", "utf8ca", "rsaca", "ecca", "nocrlsign", "noskid"} {
+		fmt.Fprintf(o, "const ISSUER_%s: Bytes = %s\n", strings.ToUpper(n), xbytes(issuers[n]))
+	}
+
+	this, next := time.Unix(1735689600, 0), time.Unix(1738368000, 0)
+	base := func() *x509.RevocationList {
+		return &x509.RevocationList{Number: big.NewInt(5), ThisUpdate: this, NextUpdate: next}
+	}
+	with := func(f func(*x509.RevocationList)) *x509.RevocationList {
+		t := base()
+		f(t)
+		return t
+	}
+	entry := x509.RevocationListEntry{SerialNumber: big.NewInt(2), RevocationTime: time.Unix(1735000000, 0)}
+	extra := pkix.Extension{Id: ctOID("2.5.29.99"), Value: []byte{5, 0}}
+	long := make([]byte, 21)
+	long[0] = 1
+	msb := make([]byte, 20)
+	msb[0] = 0x80
+	max := make([]byte, 20)
+	max[0] = 0x7f
+	rows := []ctCRLRow{
+		{"valid", "ecca", "ec", base()},
+		{"valid, reason code", "ecca", "ec", with(func(t *x509.RevocationList) {
+			t.RevokedCertificateEntries = []x509.RevocationListEntry{{SerialNumber: big.NewInt(2), RevocationTime: entry.RevocationTime, ReasonCode: 1}}
+		})},
+		{"valid, extra entry extension", "root", "ed", with(func(t *x509.RevocationList) {
+			t.RevokedCertificateEntries = []x509.RevocationListEntry{{SerialNumber: big.NewInt(2), RevocationTime: entry.RevocationTime, ExtraExtensions: []pkix.Extension{extra}}}
+		})},
+		{"valid, Ed25519 key", "root", "ed", with(func(t *x509.RevocationList) {
+			t.RevokedCertificateEntries = []x509.RevocationListEntry{entry}
+		})},
+		{"valid, non-default signature algorithm", "ecca", "ec", with(func(t *x509.RevocationList) {
+			t.SignatureAlgorithm = x509.ECDSAWithSHA512
+			t.RevokedCertificateEntries = []x509.RevocationListEntry{entry}
+		})},
+		{"valid, extra extension", "root", "ed", with(func(t *x509.RevocationList) {
+			t.RevokedCertificateEntries = []x509.RevocationListEntry{entry}
+			t.ExtraExtensions = []pkix.Extension{extra}
+		})},
+		{"valid, critical extra extension and reason with entry extension", "rsaca", "rsa", with(func(t *x509.RevocationList) {
+			t.RevokedCertificateEntries = []x509.RevocationListEntry{
+				{SerialNumber: big.NewInt(2), RevocationTime: entry.RevocationTime, ReasonCode: 4, ExtraExtensions: []pkix.Extension{extra}},
+				{SerialNumber: new(big.Int).SetBytes([]byte{0x80, 1, 2, 3}), RevocationTime: time.Unix(2600000000, 0), ReasonCode: 10},
+			}
+			t.ExtraExtensions = []pkix.Extension{{Id: ctOID("1.2.3.4"), Critical: true, Value: []byte{5, 0}}}
+		})},
+		{"valid, empty list", "rsaca", "rsa", base()},
+		{"valid, RSA SHA-512", "rsaca", "rsa", with(func(t *x509.RevocationList) { t.SignatureAlgorithm = x509.SHA512WithRSA })},
+		{"valid, RSA PSS SHA-256", "rsaca", "rsa", with(func(t *x509.RevocationList) { t.SignatureAlgorithm = x509.SHA256WithRSAPSS })},
+		{"valid, RSA PSS SHA-384", "rsaca", "rsa", with(func(t *x509.RevocationList) { t.SignatureAlgorithm = x509.SHA384WithRSAPSS })},
+		{"valid, SHA1-RSA", "rsaca", "rsa", with(func(t *x509.RevocationList) { t.SignatureAlgorithm = x509.SHA1WithRSA })},
+		{"valid, ECDSA-SHA1", "ecca", "ec", with(func(t *x509.RevocationList) { t.SignatureAlgorithm = x509.ECDSAWithSHA1 })},
+		{"valid CA with utf8 Subject fields including Email, empty list", "utf8ca", "utf8", base()},
+		{"valid, 20 byte number", "root", "ed", with(func(t *x509.RevocationList) { t.Number = new(big.Int).SetBytes(max) })},
+		{"valid, number 0, GeneralizedTime", "root", "ed", with(func(t *x509.RevocationList) {
+			t.Number = big.NewInt(0)
+			t.ThisUpdate = time.Unix(-1000000000, 0)
+			t.NextUpdate = time.Unix(2600000000, 0)
+		})},
+		{"valid, this equals next", "root", "ed", with(func(t *x509.RevocationList) { t.NextUpdate = this })},
+		{"issuer doesn't have crlSign key usage bit set", "nocrlsign", "ed", base()},
+		{"issuer missing SubjectKeyId", "noskid", "ed", base()},
+		{"nextUpdate before thisUpdate", "root", "ed", with(func(t *x509.RevocationList) { t.NextUpdate = this.Add(-time.Second) })},
+		{"long Number", "root", "ed", with(func(t *x509.RevocationList) { t.Number = new(big.Int).SetBytes(long) })},
+		{"long Number (20 bytes, MSB set)", "root", "ed", with(func(t *x509.RevocationList) { t.Number = new(big.Int).SetBytes(msb) })},
+		{"invalid signature algorithm", "ecca", "ec", with(func(t *x509.RevocationList) { t.SignatureAlgorithm = x509.SHA256WithRSA })},
+		{"Ed25519 key, ECDSA algorithm", "root", "ed", with(func(t *x509.RevocationList) { t.SignatureAlgorithm = x509.ECDSAWithSHA256 })},
+		{"RSA key, Ed25519 algorithm", "rsaca", "rsa", with(func(t *x509.RevocationList) { t.SignatureAlgorithm = x509.PureEd25519 })},
+		{"DSA algorithm", "rsaca", "rsa", with(func(t *x509.RevocationList) { t.SignatureAlgorithm = x509.DSAWithSHA256 })},
+		{"MD5-RSA", "rsaca", "rsa", with(func(t *x509.RevocationList) { t.SignatureAlgorithm = x509.MD5WithRSA })},
+		{"reason code as an extra entry extension", "root", "ed", with(func(t *x509.RevocationList) {
+			t.RevokedCertificateEntries = []x509.RevocationListEntry{{SerialNumber: big.NewInt(2), RevocationTime: entry.RevocationTime, ExtraExtensions: []pkix.Extension{{Id: ctOID("2.5.29.21"), Value: []byte{10, 1, 1}}}}}
+		})},
+	}
+	o.WriteString("\n/// (name, issuer, key, template, Go's CRL, Go's error)\nfn crl_create_rows() -> List[(Str, Bytes, Str, x509.RevocationListTemplate, Bytes, Str)] {\n  [\n")
+	for _, r := range rows {
+		iss, err := x509.ParseCertificate(issuers[r.issuer])
+		if err != nil {
+			panic(err)
+		}
+		der, err := x509.CreateRevocationList(rand.Reader, r.t, iss, keys[r.key])
+		msg := ""
+		if err != nil {
+			msg = err.Error()
+			der = nil
+		}
+		var ents []string
+		for _, e := range r.t.RevokedCertificateEntries {
+			ents = append(ents, fmt.Sprintf("x509.RevokedCertificate{serial: %s, revoked_at: Time.from_unix(%d), reason: %d, extensions: %s}", xbytes(e.SerialNumber.Bytes()), e.RevocationTime.Unix(), e.ReasonCode, ctExts(e.ExtraExtensions)))
+		}
+		alg := ""
+		if r.t.SignatureAlgorithm != 0 {
+			alg = r.t.SignatureAlgorithm.String()
+		}
+		fmt.Fprintf(o, "    (%s, ISSUER_%s, %s, x509.RevocationListTemplate{number: %s, this_update: Time.from_unix(%d), next_update: Time.from_unix(%d), revoked: [%s], extra_extensions: %s, signature_algorithm: %s}, %s, %s),\n",
+			xq(r.name), strings.ToUpper(r.issuer), xq(r.key), xbytes(r.t.Number.Bytes()), r.t.ThisUpdate.Unix(), r.t.NextUpdate.Unix(), strings.Join(ents, ", "), ctExts(r.t.ExtraExtensions), xq(alg), xbytes(der), xq(msg))
+	}
+	o.WriteString("  ]\n}\n")
 }

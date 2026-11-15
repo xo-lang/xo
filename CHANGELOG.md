@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/x509, every backend): `create_revocation_list` makes a certificate revocation list as Go's CreateRevocationList does, with a `RevocationListTemplate` (CRL number, update times, revoked certificates with reason codes, extra extensions, a signature algorithm by Go's name). Go's CRLs for the same inputs match byte for byte where the signature is deterministic.
 - Speed (compiler, native backends): an interpolation of three or more Str pieces (literal text or Str values, no format spec) allocates its result once at the pieces' total length and appends each in place, where it regrew from its first piece; appending an empty Str returns the string as it is; `s == ""` and `s != ""` are a length test with no call. url.Url.display on the Mac, Xo / Go: 1.32 to 1.04. Output is unchanged.
 - Fix (std/http, every backend): `send`, `get` and `open` of a URL that does not parse report url.Parse's error, as net/http does (`invalid URL: parse "http://h/%zz": invalid URL escape "%zz"`), not `absolute URL required`. Affected: every release.
 - Security (std/http, native backends): an HTTP/2 connection gives the window for bodies it buffers before the handler runs back only while those bodies plus the window the client holds stay within four times `XO_HTTP_MAX_BODY`, so a client that keeps to the windows is slowed instead of refused, and the buffers no longer pass the budget by the client's window; REFUSED_STREAM remains for a client with no window left. Affected: 0.51.1 and earlier.

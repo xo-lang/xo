@@ -699,6 +699,125 @@ fn parse_revocation_list(der: Bytes) -> x509.RevocationList ! x509.CertErr {
   })
 }
 
+/// The signature algorithm named (Go's SignatureAlgorithm.String()) for
+/// key, "" for the key's default: its AlgorithmIdentifier, hash and
+/// whether it is RSA PSS, or Go's signingParamsForKey error.
+fn signing_named(key: crypto.PrivateKey, name: Str) -> (Bytes, crypto.Hash, Bool) ! x509.CertErr {
+  if name.is_empty() {
+    let (a, h) = signing(key)?
+    return Ok((a, h, false))
+  }
+  let kind = match key.alg() {
+    Rsa => "RSA"
+    Ed25519 => "Ed25519"
+    EcdsaP224 => return Err(err("x509: unknown elliptic curve"))
+    _ => "ECDSA"
+  }
+  let rsa_alg = fn(oid: Str) -> Bytes { asn1.enc_seq([id(oid), asn1.enc_null()]) }
+  let pss = fn(hash_oid: Str, salt: Int) -> Bytes {
+    let h = asn1.enc_seq([id(hash_oid), asn1.enc_null()])
+    asn1.enc_seq([id("1.2.840.113549.1.1.10"), asn1.enc_seq([asn1.enc_explicit(0, h), asn1.enc_explicit(1, asn1.enc_seq([id("1.2.840.113549.1.1.8"), h])), asn1.enc_explicit(2, asn1.enc_int(salt))])])
+  }
+  // Go's signatureAlgorithmDetails: (key type, identifier, hash, PSS)
+  let (want, alg_id, hash, is_pss) = match name {
+    "MD2-RSA" => ("RSA", rsa_alg("1.2.840.113549.1.1.2"), crypto.Hash.Md5, false)
+    "MD5-RSA" => ("RSA", rsa_alg("1.2.840.113549.1.1.4"), crypto.Hash.Md5, false)
+    "SHA1-RSA" => ("RSA", rsa_alg("1.2.840.113549.1.1.5"), crypto.Hash.Sha1, false)
+    "SHA256-RSA" => ("RSA", rsa_alg("1.2.840.113549.1.1.11"), crypto.Hash.Sha256, false)
+    "SHA384-RSA" => ("RSA", rsa_alg("1.2.840.113549.1.1.12"), crypto.Hash.Sha384, false)
+    "SHA512-RSA" => ("RSA", rsa_alg("1.2.840.113549.1.1.13"), crypto.Hash.Sha512, false)
+    "SHA256-RSAPSS" => ("RSA", pss("2.16.840.1.101.3.4.2.1", 32), crypto.Hash.Sha256, true)
+    "SHA384-RSAPSS" => ("RSA", pss("2.16.840.1.101.3.4.2.2", 48), crypto.Hash.Sha384, true)
+    "SHA512-RSAPSS" => ("RSA", pss("2.16.840.1.101.3.4.2.3", 64), crypto.Hash.Sha512, true)
+    "DSA-SHA1" => ("DSA", b"", crypto.Hash.Sha1, false)
+    "DSA-SHA256" => ("DSA", b"", crypto.Hash.Sha256, false)
+    "ECDSA-SHA1" => ("ECDSA", asn1.enc_seq([id("1.2.840.10045.4.1")]), crypto.Hash.Sha1, false)
+    "ECDSA-SHA256" => ("ECDSA", asn1.enc_seq([id("1.2.840.10045.4.3.2")]), crypto.Hash.Sha256, false)
+    "ECDSA-SHA384" => ("ECDSA", asn1.enc_seq([id("1.2.840.10045.4.3.3")]), crypto.Hash.Sha384, false)
+    "ECDSA-SHA512" => ("ECDSA", asn1.enc_seq([id("1.2.840.10045.4.3.4")]), crypto.Hash.Sha512, false)
+    "Ed25519" => ("Ed25519", asn1.enc_seq([id("1.3.101.112")]), crypto.Hash.Sha512, false)
+    _ => return Err(err("x509: unknown SignatureAlgorithm"))
+  }
+  if want != kind {
+    return Err(err("x509: requested SignatureAlgorithm does not match private key type"))
+  }
+  if name == "MD5-RSA" {
+    return Err(err("x509: signing with MD5 is not supported"))
+  }
+  if name == "MD2-RSA" {
+    return Err(err("crypto: requested hash function #0 is unavailable"))
+  }
+  Ok((alg_id, hash, is_pss))
+}
+
+fn create_revocation_list(r: Rand, t: x509.RevocationListTemplate, issuer: x509.Certificate, key: crypto.PrivateKey) -> x509.RevocationList ! x509.CertErr uses rand {
+  if !issuer.key_usage.contains(x509.KeyUsage.CrlSign) {
+    return Err(err("x509: issuer must have the crlSign key usage bit set"))
+  }
+  if issuer.subject_key_id.is_empty() {
+    return Err(err("x509: issuer certificate doesn't contain a subject key identifier"))
+  }
+  if t.next_update.unix_nanos() < t.this_update.unix_nanos() {
+    return Err(err("x509: template.ThisUpdate is after template.NextUpdate"))
+  }
+  let (alg_id, hash, is_pss) = signing_named(key, t.signature_algorithm)?
+  var entries: List[Bytes] = []
+  for e in t.revoked {
+    var exts: List[Bytes] = []
+    for x in e.extensions {
+      if x.oid == "2.5.29.21" {
+        return Err(err("x509: template contains entry with ReasonCode ExtraExtension; use ReasonCode field instead"))
+      }
+      exts.push(ext_der(x.oid, x.critical, x.value)?)
+    }
+    if e.reason != 0 {
+      exts.push(ext_der("2.5.29.21", false, enum_der(e.reason))?)
+    }
+    var parts = [asn1.enc_uint(e.serial), asn1.enc_time(e.revoked_at.unix())]
+    if !exts.is_empty() {
+      parts.push(asn1.enc_seq(exts))
+    }
+    entries.push(asn1.enc_seq(parts))
+  }
+  // Go's Number.Bytes(): the magnitude without leading zeros
+  var a = 0
+  while a < t.number.len() && t.number[a] == 0 {
+    a += 1
+  }
+  let num = t.number[a..t.number.len()]
+  if num.len() > 20 || (num.len() == 20 && Int(num[0]) >= 128) {
+    return Err(err("x509: CRL number exceeds 20 octets"))
+  }
+  let issuer_name = if issuer.subject.raw.is_empty() { name_der(issuer.subject) } else { issuer.subject.raw }
+  var exts = [ext_der("2.5.29.35", false, asn1.enc_seq([asn1.enc_implicit(0, issuer.subject_key_id)]))?, ext_der("2.5.29.20", false, asn1.enc_uint(num))?]
+  for e in t.extra_extensions {
+    exts.push(ext_der(e.oid, e.critical, e.value)?)
+  }
+  var tbs_parts = [asn1.enc_int(1), alg_id, issuer_name, asn1.enc_time(t.this_update.unix()), asn1.enc_time(t.next_update.unix())]
+  if !entries.is_empty() {
+    tbs_parts.push(asn1.enc_seq(entries))
+  }
+  tbs_parts.push(asn1.enc_explicit(0, asn1.enc_seq(exts)))
+  let tbs = asn1.enc_seq(tbs_parts)
+  let signed = if is_pss { crypto.sign_pss(r, key, hash, tbs) } else { crypto.sign(r, key, hash, tbs) }
+  let sig = match signed {
+    Ok(x) => x
+    Err(e) => return Err(err(e.display()))
+  }
+  let ok = if is_pss { crypto.verify_pss(key.public_key(), hash, tbs, sig) } else { crypto.verify(key.public_key(), hash, tbs, sig) }
+  if !ok {
+    return Err(err("x509: signature returned by signer is invalid"))
+  }
+  parse_revocation_list(asn1.enc_seq([tbs, alg_id, asn1.enc_bits(sig)]))
+}
+
+/// An ASN.1 ENUMERATED of n (Go's asn1.Enumerated; a reasonCode).
+fn enum_der(n: Int) -> Bytes {
+  let i = asn1.enc_int(n)
+  // INTEGER and ENUMERATED share their content octets
+  b"\x0a" + i[1..i.len()]
+}
+
 fn revocationlist_check_signature_from(l: x509.RevocationList, issuer: x509.Certificate) -> () ! x509.CertErr {
   let p = lcert(issuer)?
   let e = lx.crl_check_from(lx.parse_crl(l.raw), p)

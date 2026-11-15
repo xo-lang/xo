@@ -283,6 +283,37 @@ fn parse_revocation_list(der: Bytes) -> RevocationList ! CertErr
 /// RevocationList.CheckSignatureFrom).
 fn (l: RevocationList) check_signature_from(issuer: Certificate) -> () ! CertErr
 
+/// What create_revocation_list puts in a CRL (the fields Go's
+/// CreateRevocationList reads from its RevocationList template).
+struct RevocationListTemplate {
+  /// The CRL number's magnitude, big endian (empty: 0); at most 20
+  /// octets, as Go allows.
+  number: Bytes
+  this_update: Time
+  next_update: Time
+  /// The revoked certificates: each one's serial, revoked_at, reason (0:
+  /// no reasonCode extension, RFC 5280 5.3.1) and extensions, added as
+  /// given before the reasonCode one (Go's ExtraExtensions; a reasonCode
+  /// extension among them is an error).
+  revoked: List[RevokedCertificate] = []
+  /// Added after the authority key identifier and the CRL number.
+  extra_extensions: List[Extension] = []
+  /// Go's SignatureAlgorithm.String() of the algorithm to sign with
+  /// ("ECDSA-SHA512", "SHA256-RSAPSS", ...); "" is the key's default, as
+  /// create_certificate's.
+  signature_algorithm: Str = ""
+}
+
+/// Go's CreateRevocationList: a v2 CRL of t issued by issuer and signed
+/// with issuer's private key, key. The issuer's subject is the CRL's
+/// issuer and its subject key identifier the authority key identifier;
+/// times are written as UTC. Err with Go's text for an issuer without the
+/// CrlSign key usage or a subject key identifier, next_update before
+/// this_update, a number longer than 20 octets, a signature algorithm
+/// that is not the key's, or a reasonCode extension in an entry's
+/// extensions.
+fn create_revocation_list(r: Rand, t: RevocationListTemplate, issuer: Certificate, key: crypto.PrivateKey) -> RevocationList ! CertErr uses rand
+
 /// The roots std/tls verifies servers against on this platform when a
 /// client gives none: the system's root certificates.
 fn system_roots(fs: Fs) -> List[Certificate] ! CertErr uses fs

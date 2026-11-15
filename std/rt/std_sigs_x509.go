@@ -28,5 +28,6 @@ var (
 	_ func(*X509_CertificateRequest, *Task) Bytes                                                                                            = (*X509_CertificateRequest).M_pem
 	_ func(*Task, Bytes) Result[X509_RevocationList, X509_CertErr]                                                                           = X509_parse_revocation_list
 	_ func(*X509_RevocationList, *Task, X509_Certificate) Result[Unit, X509_CertErr]                                                         = (*X509_RevocationList).M_check_signature_from
+	_ func(*Task, Rand, X509_RevocationListTemplate, X509_Certificate, Crypto_PrivateKey) Result[X509_RevocationList, X509_CertErr]          = X509_create_revocation_list
 	_ func(*Task, Fs) Result[List[X509_Certificate], X509_CertErr]                                                                           = X509_system_roots
 )

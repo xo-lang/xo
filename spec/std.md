@@ -7586,6 +7586,13 @@ struct RevocationList {
 }
 fn parse_revocation_list(der: Bytes) -> RevocationList ! CertErr
 fn (l: RevocationList) check_signature_from(issuer: Certificate) -> () ! CertErr
+struct RevocationListTemplate {
+  number: Bytes, this_update: Time, next_update: Time,
+  revoked: List[RevokedCertificate] = [], extra_extensions: List[Extension] = [],
+  signature_algorithm: Str = ""
+}
+fn create_revocation_list(r: Rand, t: RevocationListTemplate, issuer: Certificate,
+  key: crypto.PrivateKey) -> RevocationList ! CertErr uses rand
 ```
 `parse_pkcs12` reads a PKCS #12 file (RFC 7292, a `.pfx` or `.p12`) as golang.org/x/crypto/pkcs12 does: a v3 file with a
 SHA-1 MAC, `pbeWithSHAAnd3-KeyTripleDES-CBC` and `pbeWithSHAAnd40BitRC2-CBC` encryption (the only algorithms Go reads; a
@@ -7682,8 +7689,18 @@ fn check(os: Os, pem: Bytes, roots: Bytes) -> () ! Error uses clock {
 - `parse_revocation_list` is Go's ParseRevocationList (RFC 5280 5):
   each revoked serial with its time, reason code and extensions, the CRL
   number and the authority key id; `check_signature_from(issuer)` is Go's
-  RevocationList.CheckSignatureFrom. Creating CRLs, OCSP and PKCS #12 are
-  not in std (Go keeps the latter two in x/crypto).
+  RevocationList.CheckSignatureFrom. OCSP is not in std (Go keeps it in
+  x/crypto).
+- `create_revocation_list` is Go's CreateRevocationList: a v2 CRL whose
+  issuer is the issuer's subject (its raw DER when it has one) and whose
+  extensions are the authority key identifier (the issuer's subject key
+  id), the CRL number, then `extra_extensions`; each entry's
+  `extensions` go first and a nonzero `reason` adds the reasonCode
+  extension. `signature_algorithm` names the algorithm as
+  `Certificate.signature_algorithm` does (`""`: the key's default, as
+  `create_certificate`). Errors are Go's texts, in Go's order. Unlike
+  Go's template, `next_update` is always written: Go omits a zero
+  NextUpdate, a time Xo's `Time` cannot hold.
 - `system_roots(fs)` is the roots std/tls verifies servers against when
   given none (27): Linux's CA bundle and directories (`SSL_CERT_FILE`,
   `SSL_CERT_DIR`), Windows's ROOT store, and on macOS the system's anchor

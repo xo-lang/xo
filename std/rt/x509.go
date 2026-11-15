@@ -6,6 +6,7 @@ package rt
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	cryptorand "crypto/rand"
@@ -677,6 +678,85 @@ func X509_parse_revocation_list(tk *Task, der Bytes) Result[X509_RevocationList,
 		F_revoked: ListFromSlice(revoked), F_authority_key_id: Bytes(l.AuthorityKeyId),
 		F_extensions: x509Exts(l.Extensions),
 	})
+}
+
+// X509_create_revocation_list is Go's CreateRevocationList of t, issued
+// by issuer and signed with key.
+func X509_create_revocation_list(tk *Task, r Rand, t X509_RevocationListTemplate, issuer X509_Certificate, key Crypto_PrivateKey) Result[X509_RevocationList, X509_CertErr] {
+	fail := func(err error) Result[X509_RevocationList, X509_CertErr] {
+		return Err[X509_RevocationList](x509Err(textOf(err.Error())))
+	}
+	var iss *x509.Certificate
+	if len(issuer.F_raw) > 0 {
+		var err error
+		if iss, err = x509Go(issuer); err != nil {
+			return fail(err)
+		}
+	} else {
+		// a Certificate built in Xo: the fields CreateRevocationList reads
+		iss = &x509.Certificate{Subject: x509GoName(issuer.F_subject), RawSubject: []byte(issuer.F_subject.F_raw), SubjectKeyId: []byte(issuer.F_subject_key_id)}
+		for _, u := range issuer.F_key_usage.s {
+			iss.KeyUsage |= x509.KeyUsage(1) << uint(u.Tag-1)
+		}
+	}
+	tmpl := &x509.RevocationList{
+		Number:     new(big.Int).SetBytes([]byte(t.F_number)),
+		ThisUpdate: time.Unix(0, int64(t.F_this_update)),
+		NextUpdate: time.Unix(0, int64(t.F_next_update)),
+	}
+	if name := string(t.F_signature_algorithm); name != "" {
+		for a := x509.SignatureAlgorithm(1); a < 64; a++ {
+			if a.String() == name {
+				tmpl.SignatureAlgorithm = a
+				break
+			}
+		}
+		if tmpl.SignatureAlgorithm == 0 {
+			return fail(errors.New("x509: unknown SignatureAlgorithm"))
+		}
+	}
+	for _, e := range t.F_revoked.s {
+		ent := x509.RevocationListEntry{SerialNumber: new(big.Int).SetBytes([]byte(e.F_serial)), RevocationTime: time.Unix(0, int64(e.F_revoked_at)), ReasonCode: int(e.F_reason)}
+		for _, x := range e.F_extensions.s {
+			oid, err := x509ParseOID(string(x.F_oid))
+			if err != nil {
+				return fail(fmt.Errorf("x509: invalid extension OID %q", string(x.F_oid)))
+			}
+			ent.ExtraExtensions = append(ent.ExtraExtensions, pkix.Extension{Id: oid, Critical: x.F_critical, Value: []byte(x.F_value)})
+		}
+		tmpl.RevokedCertificateEntries = append(tmpl.RevokedCertificateEntries, ent)
+	}
+	for _, x := range t.F_extra_extensions.s {
+		oid, err := x509ParseOID(string(x.F_oid))
+		if err != nil {
+			return fail(fmt.Errorf("x509: invalid extension OID %q", string(x.F_oid)))
+		}
+		tmpl.ExtraExtensions = append(tmpl.ExtraExtensions, pkix.Extension{Id: oid, Critical: x.F_critical, Value: []byte(x.F_value)})
+	}
+	signer, ok := key.k.(crypto.Signer)
+	if !ok {
+		return fail(errors.New("x509: only RSA, ECDSA and Ed25519 keys supported"))
+	}
+	if k, ok := key.k.(*ecdsa.PrivateKey); ok {
+		if k.Curve == elliptic.P224() {
+			return fail(errors.New("x509: unknown elliptic curve"))
+		}
+		// r is read as the native code reads it: an ECDSA signature's hedge
+		r.M_bytes(tk, int64((k.Curve.Params().N.BitLen()+7)/8))
+	}
+	switch tmpl.SignatureAlgorithm {
+	case x509.SHA256WithRSAPSS:
+		r.M_bytes(tk, 32) // the salt, as the native code reads it
+	case x509.SHA384WithRSAPSS:
+		r.M_bytes(tk, 48)
+	case x509.SHA512WithRSAPSS:
+		r.M_bytes(tk, 64)
+	}
+	der, err := x509.CreateRevocationList(cryptorand.Reader, tmpl, iss, signer)
+	if err != nil {
+		return fail(err)
+	}
+	return X509_parse_revocation_list(tk, Bytes(der))
 }
 
 func (l *X509_RevocationList) M_check_signature_from(_ *Task, issuer X509_Certificate) Result[Unit, X509_CertErr] {
