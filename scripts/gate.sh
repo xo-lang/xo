@@ -595,6 +595,11 @@ ir_head_manifest() {
   [ "$rc" = 0 ] && echo "llvm IR manifest: $(($(date +%s) - t_ir)) s, xo processes' resident peak $(sort -n "$logs/llvm-ir-mem.txt" 2>/dev/null | tail -1) MB" >&2
   return $rc
 }
+# ir_free_gb DIR: the GB free on DIR's file system (df -Pk), "" when
+# unknown
+ir_free_gb() {
+  df -Pk "$1" 2>/dev/null | awk 'NR==2 {print int($4 / 1048576)}'
+}
 # ir_inputs_changed A B: whether the commits A..B change what a golden's
 # LLVM IR is made from: the compiler (but its wasm and Mach-O linker
 # parts) or std's sources (not tests, docs, the Go runtime std/rt)
@@ -913,7 +918,7 @@ run_step_body() {
     hm="$cache/$(git rev-parse HEAD)-$mcode.txt"
     # skipped, not failed, when the disk is short (lead, 2026-11-15: under
     # XO_GATE_IRMAN_MIN_GB, default 25, free after offload.sh's prune)
-    irfree=$(df -Pk . 2>/dev/null | awk 'NR==2 {print int($4 / 1048576)}')
+    irfree=$(ir_free_gb .)
     if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
       echo "irmanifest: FAIL (uncommitted changes: a manifest is kept by commit)"; failed=1
     elif [ -n "$irfree" ] && [ "$irfree" -lt "${XO_GATE_IRMAN_MIN_GB:-25}" ]; then
