@@ -133,7 +133,7 @@ pub fn new_kdf(id: Int) -> Kdf ! HpkeErr {
       return Ok(k)
     }
   }
-  Err(err("unsupported KDF ${id & 0xffff:04x}"))
+  Err(err("unsupported KDF ${(id & 0xffff).to_str_width(4, base: 16, zero: true)}"))
 }
 
 /// The AEAD of an identifier (Go's NewAEAD); `unsupported AEAD 0004` for
@@ -144,7 +144,7 @@ pub fn new_aead(id: Int) -> Aead ! HpkeErr {
       return Ok(a)
     }
   }
-  Err(err("unsupported AEAD ${id & 0xffff:04x}"))
+  Err(err("unsupported AEAD ${(id & 0xffff).to_str_width(4, base: 16, zero: true)}"))
 }
 
 /// The DHKEM over a curve (Go's DHKEM).

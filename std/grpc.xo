@@ -689,6 +689,10 @@ fn from_client_err(e: http.ClientErr) -> Status {
     Connect(msg) => status_new(Code.Unavailable, "connection error: ${msg}")
     Protocol(msg) => status_new(Code.Internal, msg)
     InvalidUrl(msg) => status_new(Code.Internal, "invalid URL: ${msg}")
+    // a TLS failure was Protocol before ClientErr.Tls (decision 0644):
+    // the same status and text (grpc-go says Unavailable for a failed
+    // handshake, a follow-up)
+    Tls(err) => status_new(Code.Internal, err.msg)
   }
 }
 
