@@ -188,13 +188,28 @@ cost work are:
      runs FreeBSD and Windows guests). `--ab` wall claims and the
      weak-memory soak need a real machine. Options, for the owner to
      pick:
-     - Rent: Scaleway Elastic Metal RV1 (StarFive JH7110, 4 cores,
-       RVA20 with Zba/Zbb; its current price to be checked when ordered). It is the only rented
-       bare metal riscv64 known to us; AWS, GCP and Azure offer none.
-     - Buy: a Milk-V Jupiter or a Banana Pi BPI-F3 (SpacemiT K1/M1,
-       8 cores, RVA22 with V 1.0, about 100 to 200 USD), on the owner's
-       network as a third offload host; or a Milk-V Pioneer (SG2042, 64
-       cores, rv64gc with T-Head's pre-1.0 vector) for build throughput.
+     - Rent: Scaleway Elastic Metal RV1 (EM-RV1-C4M16S128-A: T-Head
+       TH1520, 4 C910 cores at 1.85 GHz, RV64GC with T-Head's own
+       extensions and no standard Zba/Zbb, 16 GB, 128 GB, 100 Mb/s).
+       Cost: 15.99 EUR a month or 0.042 EUR an hour, excluding VAT, with
+       no setup fee (Scaleway Labs' EM-RV1 page, checked 2026-11-15; the
+       price is unchanged since the 2024 launch). It is sold as an
+       evaluation machine, and is the only riscv64 bare metal rented by
+       the hour that we know of; AWS, GCP and Azure offer none. It suits
+       RV64GC (rva20u64) timing, not the rva22u64 level.
+     - Buy: a Milk-V Jupiter (SpacemiT K1 or M1: 8 cores, RVA22 with
+       V 1.0; mini-ITX). Cost: about 60 USD for the 4 GB K1 and about
+       115 USD for the 16 GB M1 (2024 to 2025 reports; marketplace
+       listings run up to 259 USD), plus a power supply and storage. It
+       joins the owner's network as a third offload host.
+     - Buy: a Banana Pi BPI-F3 (the same K1 SoC as a board). Cost: about
+       74 to 89 USD for 4 GB/16 GB, and up to 230 USD for 16 GB/128 GB at
+       some sellers. The 4 GB model is listed end-of-life at one EU
+       shop. It is slower to set up than the Jupiter (eMMC, no ITX case).
+     - The K1 boards cover both levels (rva20u64 and rva22u64, Zba/Zbb
+       and V 1.0), and the EM-RV1 covers rva20u64 only. For timing alone,
+       a 16 GB K1/M1 board is the better fit; the EM-RV1 costs nothing up
+       front and nothing to keep on the owner's network.
      - Without either, the backend lands on qemu evidence (goldens, fixed
        point, instruction counts) and the wall `--ab` waits for hardware,
        listed as an open item.
