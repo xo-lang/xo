@@ -244,8 +244,10 @@ yourself.
   those whose directory you changed (scripts/golden-bin-select.py). The
   log's `arm64 goldens:` line counts each kind; `$XO_GATE_LOGS/bin-select-base.txt`
   holds the base's build. Every golden runs for a change to the golden
-  tests, internal/xotool, scripts/xobuild or the selector, and with
-  `XO_GATE_BIN_SELECT=0` (the escape hatch); the continuous tier runs
+  tests, internal/xotool, scripts/xobuild or the selector. Off by
+  default since 2026-11-15 (E on host 2: arm64 step 1,006 s with it, 912
+  s without; a selection mode is on by default only after a measured net
+  win on its host): `XO_GATE_BIN_SELECT=1` turns it on; the continuous tier runs
   every golden on main. Traps: gotchas/binary-compare-build-id-and-paths.md.
 - Golden selection by inputs ((B) of the gate-time plan, lead, 2026-11-15):
   the llvm step first runs `xo build --list-inputs` on every golden (about

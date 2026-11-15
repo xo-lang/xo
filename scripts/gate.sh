@@ -1085,7 +1085,10 @@ arm64_goldens() {
 # names, with a line for the log in $logs/bin-select.txt; every golden when
 # the change touches the golden tests, the test harness or the selection,
 # or when a build of the base fails. The full tier on main (ctier.sh) runs
-# every golden; XO_GATE_BIN_SELECT=0 turns this off.
+# every golden. Off by default (lead, 2026-11-15: on E it made the arm64
+# step 1,006 s against 912 s on host 2; a selection mode is on by default
+# only once it measures a net gate-time win on its host):
+# XO_GATE_BIN_SELECT=1 turns it on, force also skips the touched-files check.
 bin_select() {
   local be=$1 base files T bx t0 sel n ntot
   local note="$logs/bin-select.txt"
@@ -1094,7 +1097,7 @@ bin_select() {
   files=$({ git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; })
   # XO_GATE_BIN_SELECT=force skips this check (for proving the selection
   # on a branch that carries a change to it)
-  if [ "${XO_GATE_BIN_SELECT:-1}" != force ] && echo "$files" | grep -q -E '^(internal/(arm64|llvm)/[^/]+$|internal/xotool/|scripts/xobuild/|scripts/golden-bin-select\.py$|go\.(mod|sum)$)'; then
+  if [ "${XO_GATE_BIN_SELECT:-0}" != force ] && echo "$files" | grep -q -E '^(internal/(arm64|llvm)/[^/]+$|internal/xotool/|scripts/xobuild/|scripts/golden-bin-select\.py$|go\.(mod|sum)$)'; then
     echo "every golden (the change touches the golden tests, internal/xotool, scripts/xobuild or the selection)" >"$note"; echo all; return
   fi
   T=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-bin.XXXXXX")
@@ -1129,7 +1132,7 @@ bin_select() {
   if [ "$n" = 0 ]; then echo none; else echo "$sel" | paste -sd, -; fi
 }
 bin_select_ok() {
-  [ "${XO_GATE_BIN_SELECT:-1}" != 0 ] || return 1
+  [ "${XO_GATE_BIN_SELECT:-0}" != 0 ] || return 1
   [ "${XO_GATE_LLVM:-}" != all ] && [ "${XO_GATE_TESTS:-}" != all ]
 }
 # ir_first_wait STEP: with XO_GATE_IR_FIRST=1 in a concurrent gate that

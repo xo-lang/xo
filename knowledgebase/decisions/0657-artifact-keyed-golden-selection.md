@@ -58,6 +58,15 @@ selection on a branch that changes it). The continuous tier on main
 (scripts/lead/ctier.sh) runs every golden, so a selection miss shows
 there within a tier run (about 2 hours).
 
+Addendum 2026-11-15 (lead): measured on E on host 2 (18 CPUs), the
+arm64 step took 1,006 s with the selection (its package tests 1,000 s
+beside 801 s of selection builds; the 20 selected goldens 5 s) and 912 s
+without it: the arm64 goldens are not that step's critical path, and the
+1,486 builds compete with the other tests for CPU. The selection is
+therefore off by default (`XO_GATE_BIN_SELECT=1` turns it on), and a
+selection mode turns on by default only when the same change, measured
+with it on and off on the host it runs on, shows a net gate-time win.
+
 Stage 2, after this one is measured: the llvm step keyed the same way on
 llvm-backend binaries, replacing TestGoldenIRManifest.
 
