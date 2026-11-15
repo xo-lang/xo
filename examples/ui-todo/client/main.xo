@@ -1,0 +1,9 @@
+// The ui-todo client: the App's update and view for the browser, built
+// with `xo build --targets=wasip1/wasm -o client.wasm ./client`. The
+// std/ui runtime runs it on every event to show the predicted page.
+use std/ui
+use example.com/uitodo/todo
+
+fn main(os: Os) ! {
+  ui.client_main(os.stdio, todo.app())?
+}

@@ -69,3 +69,13 @@ layout read):
 - Later: wasm exports (decision 0574's `as c "name"` on the wasm
   backend) to keep one instance and skip stdin/stdout; measure against
   this baseline.
+
+## Follow-up (2026-11-15, same day)
+
+The stage 3 build landed on this baseline: `ui.client_main` and
+`ui.predict`, `host(client: ...)` serving `_xo/app.wasm`, and the runtime
+running it per event (examples/ui-todo client/ and server/). Headless
+Chrome, two tabs at 390 px: an offline add shown in 1.5 ms and a toggle
+in 1.1 ms from the event, an offline reserve shown as waiting, 21/21
+checks. Those checks also found two tabs sharing one client id
+(gotchas/ui-tabs-share-localstorage.md).

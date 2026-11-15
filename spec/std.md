@@ -10923,9 +10923,11 @@ Status: Early (decision 0659 stage 1, 2026-11-15; the API may change
 until stage 1 is done). Pure: no I/O. One pure update runs on every
 client (predicted at once) and on the server (in arrival order, the
 authority); clients replay the server's log and fold their pending Msgs
-on top. `host` serves an App over HTTP with a browser runtime; until
-decision 0659's stage 3 the browser is a thin client (it queues and sends
-Msgs and shows the server's rendered view, without predicting).
+on top. `host` serves an App over HTTP with a browser runtime. Given the
+App's client program built for wasm (decision 0659 stage 3) the browser
+predicts: it runs `update` and `view` itself and shows each event at
+once; without one it is a thin client (it queues and sends Msgs and
+shows the server's rendered view).
 
 ```
 pub struct App[M, E] { pub init: M, pub update: fn(M, E) -> M, pub view: fn(M) -> Html, pub confirm: fn(E) -> Bool }
@@ -10939,7 +10941,7 @@ pub fn el(tag: Str, attrs: List[Attr] = [], kids: List[Html] = []) -> Html
 pub fn attr(name: Str, value: Str) -> Attr
 pub fn on[E: Json](event: Str, msg: E) -> Attr       // data-xo-EVENT holding msg as JSON
 pub fn render(h: Html) -> Str
-pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "") -> Str
+pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "") -> Str
 pub fn field(name: Str) -> Str                         // a form value placeholder for a Msg's Str field
 
 pub struct Envelope[E] { pub seq: Int, pub msg: E }                        // derive Json
@@ -10967,11 +10969,16 @@ fn (r: Replica[M, E]) pending() -> Int
 fn (r: Replica[M, E]) outbox() -> Up[E]     // the Msgs the server has not acknowledged
 fn (var r: Replica[M, E]) receive(d: Down[M, E])
 
-pub struct Sync[M, E] { pub down: Down[M, E], pub ver: Int, pub html: Str }   // derive Json
-pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256) -> Host[M, E]
+pub struct Sync[M, E] { pub down: Down[M, E], pub ver: Int, pub html: Str, pub model: M? = None }   // derive Json
+pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"") -> Host[M, E]
 fn (h: Host[M, E]) model() -> M
 fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "")
 fn (h: Host[M, E]) live() -> Int                        // open live connections
+
+pub struct ClientIn[M, E] { pub model: M, pub pending: List[E] }            // derive Json
+pub struct ClientOut { pub html: Str, pub awaiting: Int }                   // derive Json
+pub fn predict[M, E](app: App[M, E], input: ClientIn[M, E]) -> ClientOut
+pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str uses stdio
 ```
 
 - `update` and `view` are fn types without `uses`, so the checker
@@ -10998,7 +11005,8 @@ fn (h: Host[M, E]) live() -> Int                        // open live connections
   reply, the server's version and the view rendered for its model). Sync
   takes only `Content-Type: application/json` (415 otherwise; a
   cross-site form cannot send it without CORS) and a body that decodes
-  as an `Up` (400 otherwise); `?thin=1` leaves the log entries out.
+  as an `Up` (400 otherwise); `?thin=1` leaves the log entries out and
+  `?model=1` adds the server's model.
   `GET prefix/_xo/live` is a websocket (std/websocket's same-host Origin
   rule) that sends the server's version as text at once and after each
   sync that changed it; a connection has one pending notice at most, so a
@@ -11006,9 +11014,11 @@ fn (h: Host[M, E]) live() -> Int                        // open live connections
   `data-xo-live` with its path.
 - The runtime sends the Msg of an `on` event for `click`, `submit` and
   `change` (a `field` placeholder filled from the form's field, or the
-  element's own value; "" when absent), keeps its client id, next seq
-  and unacknowledged Msgs in localStorage (so they survive going offline
-  and reloads), syncs after each event, when the live websocket announces
+  element's own value; "" when absent), keeps its client id in
+  sessionStorage and its next seq and unacknowledged Msgs in localStorage
+  under that id (so they survive going offline and reloads; each tab is
+  its own client, and a new tab adopts the queue of a tab that closed,
+  or was not seen for 10 minutes), syncs after each event, when the live websocket announces
   a version past its own, every 2 s while the page is visible and the
   websocket is down (every 30 s while it is up), when it becomes visible
   and when the browser comes back online; the websocket reconnects with
@@ -11016,6 +11026,17 @@ fn (h: Host[M, E]) live() -> Int                        // open live connections
   non-empty input or textarea in it has focus). The html element carries
   `data-xo-pending` while Msgs wait and `data-xo-offline` after a failed
   sync, for the app's CSS.
+- The predicting client (decision 0659 stage 3): an App's client program
+  is a `main` that calls `client_main(os.stdio, app)`, built with
+  `--targets=wasip1/wasm` and passed to `host(client: bytes)` (read from
+  a file or `embed`). `mount` then serves it at `GET prefix/_xo/app.wasm`
+  and the page's root carries `data-xo-wasm`. The runtime compiles it
+  once and, on each event and each sync reply, runs it with a `ClientIn`
+  (the server's model from `?model=1` and the queued Msgs) and shows the
+  `ClientOut`: `predict` folds the pending Msgs over the model, leaving
+  out those `confirm` marks (as `Replica.model()`), and renders the view.
+  The html element carries `data-xo-awaiting` with their count. If the
+  module fails to load or run, the runtime stays a thin client.
 - A Msg for which `confirm` is true (a payment, a booking: the server's
   to decide) is sent like any other but never predicted: `model()` leaves
   it out and `awaiting()` lists it until the server's log has it, so a

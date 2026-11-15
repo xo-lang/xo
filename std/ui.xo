@@ -13,10 +13,11 @@
 //
 // Server and Replica are pure values that turn messages into messages;
 // `host` serves an App over HTTP: the first page, the browser runtime and
-// a sync endpoint. Until decision 0659's stage 3 the browser cannot run
-// update, so it is a thin client: it queues its Msgs (in localStorage, so
-// they survive going offline and reloads), sends them, and shows the
-// server's rendered view.
+// a sync endpoint. The browser queues its Msgs (in localStorage, so they
+// survive going offline and reloads) and sends them. Given the App's
+// client program built for wasm (`client_main`, decision 0659 stage 3) it
+// runs update and view itself and shows each event at once; without one
+// it is a thin client that shows the server's rendered view.
 
 use std/html
 use std/http
@@ -401,7 +402,7 @@ pub struct PageState[M] {
 /// for the client runtime at runtime_src, which syncs with sync_url and,
 /// when live_url is not "", listens there for new versions. css,
 /// if any, goes in a `<style>` element in the head.
-pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "") -> Str {
+pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "") -> Str {
   var b = BytesBuilder.new()
   b.write_str("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>")
   b.write_str(html.escape_string(title))
@@ -418,6 +419,10 @@ pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", run
   if live_url != "" && safe_url(live_url) {
     b.write_str("\" data-xo-live=\"")
     b.write_str(html.escape_string(live_url))
+  }
+  if wasm_url != "" && safe_url(wasm_url) {
+    b.write_str("\" data-xo-wasm=\"")
+    b.write_str(html.escape_string(wasm_url))
   }
   b.write_str("\">")
   write_html(b, app.view(model))
@@ -455,7 +460,52 @@ pub struct Sync[M, E] {
   pub down: Down[M, E]
   pub ver: Int
   pub html: Str
+  /// The server's model, when the request asked for it (`?model=1`): a
+  /// client that predicts folds its pending Msgs over it.
+  pub model: M? = None
 } derive Json
+
+// ---- the predicting client (decision 0659 stage 3) ----
+
+/// What a browser hands its App's client program: the server's confirmed
+/// model and the Msgs it has sent that the server has not confirmed.
+pub struct ClientIn[M, E] {
+  pub model: M
+  pub pending: List[E]
+} derive Json
+
+/// What the client program answers: the view of the predicted model, and
+/// how many of the pending Msgs wait for the server (App.confirm).
+pub struct ClientOut {
+  pub html: Str
+  pub awaiting: Int
+} derive Json
+
+/// The view of the pending Msgs folded over the confirmed model, leaving
+/// out those the App confirms (they wait for the server, as in a
+/// Replica). The browser runs this, built for wasm, on every event.
+pub fn predict[M, E](app: App[M, E], input: ClientIn[M, E]) -> ClientOut {
+  var m = input.model
+  var awaiting = 0
+  for e in input.pending {
+    if (app.confirm)(e) {
+      awaiting += 1
+    } else {
+      m = (app.update)(m, e)
+    }
+  }
+  ClientOut{html: render((app.view)(m)), awaiting: awaiting}
+}
+
+/// The main of an App's client program, built with `--targets=wasip1/wasm`
+/// and given to `host(client: ...)`: reads a ClientIn as JSON on stdin and
+/// writes the ClientOut as JSON on stdout.
+pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str uses stdio {
+  let text = stdio.read_all().map_err(fn(e) { "${e}" })?
+  let input = json.decode_str[ClientIn[M, E]](text).map_err(fn(e) { "${e}" })?
+  stdio.print(json.encode_str(predict(app, input)))
+  Ok(())
+}
 
 /// An App served over HTTP, with its Server behind a lock.
 pub struct Host[M: Json, E: Json] {
@@ -463,14 +513,16 @@ pub struct Host[M: Json, E: Json] {
   state: Mutex[Server[M, E]]
   title: Str
   css: Str
+  // The App's client program built for wasm, "" for a thin client.
+  client: Bytes
   // The live connections, each told the server's version when it changes.
   subs: Mutex[Map[Int, Chan[Int]]]
   next_sub: Atomic[Int]
 }
 
 /// A host for app starting at app.init.
-pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256) -> Host[M, E] {
-  Host{app: app, state: Mutex[Server[M, E]].new(server(app, max_batch: max_batch)), title: title, css: css, subs: Mutex[Map[Int, Chan[Int]]].new({}), next_sub: Atomic[Int].new(0)}
+pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"") -> Host[M, E] {
+  Host{app: app, state: Mutex[Server[M, E]].new(server(app, max_batch: max_batch)), title: title, css: css, client: client, subs: Mutex[Map[Int, Chan[Int]]].new({}), next_sub: Atomic[Int].new(0)}
 }
 
 fn (h: Host[M, E]) subscribe() -> (Int, Chan[Int]) {
@@ -520,10 +572,12 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
   let js = "${prefix}/_xo/ui.js"
   let sync = "${prefix}/_xo/sync"
   let live = "${prefix}/_xo/live"
+  let client = h.client
+  let wasm = if client.is_empty() { "" } else { "${prefix}/_xo/app.wasm" }
   let hh = h
   r.handle("GET ${prefix}/{$}", fn(req) -> http.Response ! Never {
     let (m, v) = state.with_read(fn(s) { (s.model(), s.version()) })
-    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync, css: css, live_url: live)).with_header("Content-Type", "text/html; charset=utf-8")
+    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync, css: css, live_url: live, wasm_url: wasm)).with_header("Content-Type", "text/html; charset=utf-8")
   })
   r.handle("GET ${js}", fn(req) -> http.Response ! Never {
     http.text(200, RUNTIME_JS).with_header("Content-Type", "text/javascript; charset=utf-8").with_header("Cache-Control", "no-cache")
@@ -545,8 +599,14 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
       hh.notify(v)
     }
     let down = if req.query("thin") == Some("1") { Down{acked: d.acked, reset: None, entries: []} } else { d }
-    http.json(200, Sync{down: down, ver: v, html: render(app.view(m))})
+    let with_model = if req.query("model") == Some("1") { Some(m) } else { None }
+    http.json(200, Sync{down: down, ver: v, html: render(app.view(m)), model: with_model})
   })
+  if !client.is_empty() {
+    r.handle("GET ${wasm}", fn(req) -> http.Response ! Never {
+      http.Response{status: 200, headers: {"Content-Type": "application/wasm", "Cache-Control": "no-cache"}, body: client}
+    })
+  }
   r.handle("GET ${live}", fn(req) {
     websocket.upgrade(req, fn(conn) { serve_live(hh, conn) })
   })
@@ -601,18 +661,31 @@ var url=root.getAttribute("data-xo-sync")||"/_xo/sync";
 var live=root.getAttribute("data-xo-live");
 var ws=null,wsUp=false,backoff=1000,tick=0;
 var st=JSON.parse(stEl.textContent);
+var wasmUrl=root.getAttribute("data-xo-wasm");
+var mod=null,confirmed=st.model;
 var KEY="xo-ui:"+location.pathname+":"+url;
 var MARK="";
-var saved=null;
-try{saved=JSON.parse(localStorage.getItem(KEY));}catch(e){}
-var client=(saved&&saved.client)||("c"+Math.random().toString(36).slice(2)+Date.now().toString(36));
+// Each tab is its own client: its id lives in sessionStorage (a reload
+// keeps it), its queue in localStorage under KEY|id. A new tab adopts the
+// queue a closed tab left (marked free on pagehide, or not seen for 10
+// minutes), so offline work survives closing the tab. Two tabs never
+// share an id: the server keeps one seq per client.
+function ls(k){try{return JSON.parse(localStorage.getItem(k));}catch(e){return null;}}
+var client=null;
+try{client=sessionStorage.getItem(KEY);}catch(e){}
+if(!client){
+  try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k&&k.indexOf(KEY+"|")===0){var e=ls(k);if(e&&e.client&&(e.free||Date.now()-(e.seen||0)>600000)){client=e.client;e.free=false;e.seen=Date.now();localStorage.setItem(k,JSON.stringify(e));break;}}}}catch(e){}
+}
+if(!client)client="c"+Math.random().toString(36).slice(2)+Date.now().toString(36);
+try{sessionStorage.setItem(KEY,client);}catch(e){}
+var saved=ls(KEY+"|"+client);
 var next=(saved&&saved.next)||1;
 var queue=(saved&&saved.queue)||[];
 var acked=(saved&&saved.acked)||0;
 var ver=st.ver;
 var last=root.innerHTML;
 var busy=false,again=false;
-function save(){try{localStorage.setItem(KEY,JSON.stringify({client:client,next:next,queue:queue,acked:acked}));}catch(e){}}
+function save(free){try{localStorage.setItem(KEY+"|"+client,JSON.stringify({client:client,next:next,queue:queue,acked:acked,seen:Date.now(),free:!!free}));}catch(e){}}
 function mark(){var h=document.documentElement;if(queue.length)h.setAttribute("data-xo-pending","");else h.removeAttribute("data-xo-pending");}
 function fill(v,get){
   if(typeof v==="string"&&v.charAt(0)===MARK){var x=get(v.slice(1));return x==null?"":String(x);}
@@ -620,21 +693,55 @@ function fill(v,get){
   if(v&&typeof v==="object"){var o={};for(var k in v)if(Object.prototype.hasOwnProperty.call(v,k))o[k]=fill(v[k],get);return o;}
   return v;
 }
-function send(msg){queue.push({seq:next++,msg:msg});save();mark();sync();}
+function run(input){
+  var enc=new TextEncoder(),inb=enc.encode(input),pos=0,out=[],mem;
+  var dv=function(){return new DataView(mem.buffer);},u8=function(){return new Uint8Array(mem.buffer);};
+  function Exit(c){this.code=c;}
+  var w={
+    fd_read:function(fd,iovs,n,nr){if(fd!==0)return 8;var t=0,v=dv();for(var i=0;i<n;i++){var p=v.getUint32(iovs+i*8,true),l=v.getUint32(iovs+i*8+4,true),k=Math.min(l,inb.length-pos);u8().set(inb.subarray(pos,pos+k),p);pos+=k;t+=k;if(k<l)break;}v.setUint32(nr,t,true);return 0;},
+    fd_write:function(fd,iovs,n,nw){var t=0,v=dv();for(var i=0;i<n;i++){var p=v.getUint32(iovs+i*8,true),l=v.getUint32(iovs+i*8+4,true);if(fd===1)out.push(u8().slice(p,p+l));t+=l;}v.setUint32(nw,t,true);return 0;},
+    proc_exit:function(c){throw new Exit(c);},
+    args_sizes_get:function(a,b){dv().setUint32(a,0,true);dv().setUint32(b,0,true);return 0;},
+    args_get:function(){return 0;},
+    environ_sizes_get:function(a,b){dv().setUint32(a,0,true);dv().setUint32(b,0,true);return 0;},
+    environ_get:function(){return 0;},
+    clock_time_get:function(id,pr,p){dv().setBigUint64(p,BigInt(Math.round(performance.now()*1e6)),true);return 0;},
+    random_get:function(p,l){crypto.getRandomValues(u8().subarray(p,p+l));return 0;}
+  };
+  var imp={wasi_snapshot_preview1:new Proxy(w,{get:function(o,k){return o[k]||function(){return 52;};}})};
+  var inst=new WebAssembly.Instance(mod,imp);mem=inst.exports.memory;var code=0;
+  try{inst.exports._start();}catch(e){if(e instanceof Exit)code=e.code;else throw e;}
+  if(code!==0)throw new Error("xo-ui client exit "+code);
+  var len=0;out.forEach(function(b){len+=b.length;});var all=new Uint8Array(len),o=0;out.forEach(function(b){all.set(b,o);o+=b.length;});
+  return new TextDecoder().decode(all);
+}
+function show(html){
+  if(html===last)return;
+  var a=document.activeElement;
+  if(a&&root.contains(a)&&(a.tagName==="INPUT"||a.tagName==="TEXTAREA")&&a.value!=="")return;
+  root.innerHTML=html;last=html;
+}
+function predict(){
+  if(!mod)return false;
+  var r;
+  try{r=JSON.parse(run(JSON.stringify({model:confirmed,pending:queue.map(function(e){return e.msg;})})));}catch(e){return false;}
+  show(r.html);
+  var h=document.documentElement;if(r.awaiting>0)h.setAttribute("data-xo-awaiting",String(r.awaiting));else h.removeAttribute("data-xo-awaiting");
+  return true;
+}
+function send(msg){queue.push({seq:next++,msg:msg});save();mark();predict();sync();}
 function sync(){
   if(busy){again=true;return;}
   busy=true;
   var msgs=queue.filter(function(e){return e.seq>acked;});
-  fetch(url+"?thin=1",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:client,ver:ver,msgs:msgs}),credentials:"same-origin"})
+  fetch(url+(mod?"?thin=1&model=1":"?thin=1"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:client,ver:ver,msgs:msgs}),credentials:"same-origin"})
   .then(function(r){if(!r.ok)throw new Error("sync "+r.status);return r.json();})
   .then(function(s){
     if(s.down.acked>acked)acked=s.down.acked;
     queue=queue.filter(function(e){return e.seq>acked;});
     ver=s.ver;
-    if(s.html!==last){
-      var a=document.activeElement;
-      if(!(a&&root.contains(a)&&(a.tagName==="INPUT"||a.tagName==="TEXTAREA")&&a.value!=="")){root.innerHTML=s.html;last=s.html;}
-    }
+    if(s.model!=null)confirmed=s.model;
+    if(!(queue.length&&predict())){show(s.html);document.documentElement.removeAttribute("data-xo-awaiting");}
     document.documentElement.removeAttribute("data-xo-offline");
     save();mark();
   })
@@ -661,10 +768,19 @@ function connect(){
   ws.onclose=function(){wsUp=false;setTimeout(connect,backoff);backoff=Math.min(backoff*2,30000);};
 }
 window.addEventListener("online",sync);
-document.addEventListener("visibilitychange",function(){if(!document.hidden)sync();});
-setInterval(function(){tick++;if(!document.hidden&&(!wsUp||tick%15===0))sync();},2000);
+window.addEventListener("pagehide",function(){save(true);});
+window.addEventListener("pageshow",function(){save();});
+document.addEventListener("visibilitychange",function(){if(!document.hidden){save();sync();}});
+setInterval(function(){tick++;if(tick%15===0)save();if(!document.hidden&&(!wsUp||tick%15===0))sync();},2000);
 connect();
+save();
 mark();
+if(wasmUrl&&window.WebAssembly){
+  fetch(wasmUrl).then(function(r){if(!r.ok)throw new Error("wasm "+r.status);return r.arrayBuffer();})
+  .then(function(b){return WebAssembly.compile(b);})
+  .then(function(m){mod=m;if(queue.length)predict();sync();})
+  .catch(function(){});
+}
 if(queue.length)sync();
 })();
 """#

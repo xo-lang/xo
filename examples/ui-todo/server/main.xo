@@ -1,0 +1,21 @@
+// The ui-todo server: serves the App to every browser and decides each
+// Msg. With a client module (built from ../client for wasm) browsers
+// predict; without one they are thin clients.
+//
+//   xo build --targets=wasip1/wasm -o client.wasm ./client
+//   xo run ./server -- :8080 client.wasm
+use std/http
+use std/log
+use std/ui
+use example.com/uitodo/todo
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let addr = args.get(0) ?? ":8080"
+  let client = if let Some(path) = args.get(1) { os.fs.read(path)? } else { b"" }
+  var r = http.router()
+  ui.host(todo.app(), title: "Todos", css: todo.CSS, client: client).mount(r)
+  let l = os.net.listen(addr)?
+  log.info("listening", {"addr": l.addr(), "client_bytes": "${client.len()}"})
+  http.server(l, r).serve()?
+}

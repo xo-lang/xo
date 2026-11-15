@@ -1,11 +1,7 @@
-// ui-todo: a shared todo list on std/ui (decision 0659). Every browser
-// that opens it sees the same list; actions taken offline are queued and
-// sent when the connection returns. Three seats can be reserved, which
-// only the server can decide.
-//
-//   xo run examples/ui-todo -- :8080
-use std/http
-use std/log
+// The ui-todo App (decision 0659): a shared todo list with three seats,
+// which only the server can give. Its update and view run on the server
+// (server/) and, built for wasm, in the browser (client/), which shows a
+// click at once and keeps working offline.
 use std/ui
 
 pub struct Todo {
@@ -87,7 +83,7 @@ pub fn app() -> ui.App[Model, Msg] {
   ui.app(Model{todos: [], next_id: 1, seats: 3, holders: []}, update, view).confirming(fn(m) { m is Msg.Reserve(_) })
 }
 
-const CSS = r"""
+pub const CSS = r"""
 *{box-sizing:border-box}
 body{margin:0;font:16px/1.4 -apple-system,Helvetica,Arial,sans-serif;color:#111827;background:#f9fafb}
 main{max-width:560px;margin:0 auto;padding:16px}
@@ -104,13 +100,5 @@ li.done span{text-decoration:line-through;color:#4b5563}
 .holders{color:#374151}
 html[data-xo-pending] .status::after{content:"Saving…";color:#374151}
 html[data-xo-offline] .status::after{content:"Offline: changes will be sent when you reconnect.";color:#b91c1c}
+html[data-xo-awaiting] .holders::after{content:" (waiting for the server)";color:#374151}
 """
-
-fn main(os: Os) ! {
-  let addr = os.env.args().get(0) ?? ":8080"
-  var r = http.router()
-  ui.host(app(), title: "Todos", css: CSS).mount(r)
-  let l = os.net.listen(addr)?
-  log.info("listening", {"addr": l.addr()})
-  http.server(l, r).serve()?
-}

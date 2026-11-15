@@ -426,3 +426,47 @@ test "the page names the live endpoint" {
   let r = routes_for(host(todo_app()))
   expect(r.call(http.new_request("GET", "/")).text()?.contains("data-xo-live=\"/_xo/live\"")) == true
 }
+
+// ---- the predicting client (stage 3) ----
+
+test "predict folds pending Msgs over the confirmed model and renders it" {
+  let a = todo_app()
+  let out = predict(a, ClientIn{model: a.init, pending: [Msg.Add(id: "x", title: "milk"), Msg.Toggle(id: "x")]})
+  var s = server(a)
+  s.receive(Up{client: "c", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "x", title: "milk")}, Envelope{seq: 2, msg: Msg.Toggle(id: "x")}]})
+  // the prediction is the view the server renders once it has the Msgs
+  expect(out.html) == render(view(s.model()))
+  expect(out.awaiting) == 0
+}
+
+test "predict leaves confirmed Msgs out and counts them" {
+  let a = todo_app().confirming(fn(m) { m is Msg.Reserve(_) })
+  let out = predict(a, ClientIn{model: a.init, pending: [Msg.Reserve(who: "ann"), Msg.Add(id: "x", title: "milk")]})
+  expect(out.awaiting) == 1
+  expect(out.html) == render(view(update(a.init, Msg.Add(id: "x", title: "milk"))))
+}
+
+test "a host with a client serves its wasm and names it in the page" {
+  let r = routes_for(host(todo_app(), client: b"\x00asm\x01\x00\x00\x00"))
+  let p = r.call(http.new_request("GET", "/")).text()?
+  expect(p.contains("data-xo-wasm=\"/_xo/app.wasm\"")) == true
+  let w = r.call(http.new_request("GET", "/_xo/app.wasm"))
+  expect(w.status) == 200
+  expect(w.header("Content-Type")) == Some("application/wasm")
+  expect(w.body) == b"\x00asm\x01\x00\x00\x00"
+}
+
+test "a host without a client is a thin one" {
+  let r = routes_for(host(todo_app()))
+  expect(r.call(http.new_request("GET", "/")).text()?.contains("data-xo-wasm")) == false
+  expect(r.call(http.new_request("GET", "/_xo/app.wasm")).status) == 404
+}
+
+test "sync returns the confirmed model when asked" {
+  let r = routes_for(host(todo_app()))
+  let up = Up{client: "a", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "x", title: "milk")}]}
+  let with = json.decode_str[Sync[Model, Msg]](r.call(sync_req(json.encode_str(up), query: "?thin=1&model=1")).text()?)?
+  expect(with.model?.todos.len()) == 1
+  let without = json.decode_str[Sync[Model, Msg]](r.call(sync_req(json.encode_str(Up{client: "a", ver: 1, msgs: []}), query: "?thin=1")).text()?)?
+  expect(without.model) == None
+}

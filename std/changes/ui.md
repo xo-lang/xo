@@ -1,5 +1,27 @@
 # std/ui changes
 
+## 2026-11-15: fix: two tabs of one browser lost each other's Msgs (Early)
+
+- Kind: fix
+- Commit: this push
+- Found by: decision 0659 stage 3 browser checks (a second tab's toggle never reached the server)
+- Go reference: none
+- Test: internal/uiruntime TestTwoTabsAreTwoClients (the runtime under Node as two tabs sharing localStorage; failed before: the server applied a1, b1, b2 of a1, b1, a2, b2), TestClosedTabQueueIsAdopted
+- Shipped in: not yet released
+
+Tabs shared one client id and seq counter in localStorage, so once a second tab opened, Msgs the two sent with the same seq were dropped as duplicates. Each tab is now its own client (its id in sessionStorage, its queue in localStorage under that id); a new tab adopts the queue of a tab that closed, so offline work still survives closing the tab.
+
+## 2026-11-15: feature: the browser predicts with the App's own wasm (Early)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0659 stage 3
+- Go reference: none
+- Test: std/ui_test.xo (predict folds pending Msgs and renders what the server renders once it has them; confirmed Msgs left out and counted; the wasm route and page attribute; a thin host; `?model=1`); headless Chrome over CDP with examples/ui-todo built for wasip1/wasm: an offline add shown in 1.5 ms and a toggle in 1.1 ms, an offline reserve shown as waiting, 21/21 checks
+- Shipped in: not yet released
+
+`ui.client_main(os.stdio, app)` is the main of an App's client program, built with `--targets=wasip1/wasm`; `ui.host(app, client: bytes)` serves it at `_xo/app.wasm`, and the runtime runs it on each event to show the predicted page at once (`ui.predict`: pending Msgs over the server's model, confirmed ones left out; `data-xo-awaiting` counts them). `Sync` gains `model` (sent for `?model=1`). Without a client the runtime is the thin client it was.
+
 ## 2026-11-15: feature: confirmed Msgs (Early)
 
 - Kind: feature
