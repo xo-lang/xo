@@ -608,11 +608,13 @@ ir_free_gb() {
 }
 # ir_inputs_changed A B: whether the commits A..B change what a golden's
 # LLVM IR is made from: the compiler (but its wasm and Mach-O linker
-# parts) or std's sources (not tests, docs, the Go runtime std/rt)
+# parts) or std's sources (not tests, docs, the Go runtime std/rt), or the
+# manifest's own code (its key: a manifest made before is not found, so
+# irman.sh makes one)
 ir_inputs_changed() {
-  git diff --name-only "$1" "$2" -- compiler std |
+  git diff --name-only "$1" "$2" -- compiler std internal/llvm/golden_select_test.go |
     grep -v -E '^compiler/(wasm|macho)/|_test\.xo$|\.md$|^std/(rt|changes|evidence)/' |
-    grep -q -E '^compiler/|^std/.*\.xo$'
+    grep -q -E '^compiler/|^std/.*\.xo$|^internal/llvm/golden_select_test\.go$'
 }
 llvm_goldens() {
   sel_note="$logs/llvm-select.txt"
