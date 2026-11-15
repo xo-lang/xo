@@ -78,8 +78,16 @@ fn gcm8_block(j: Int, seal: Bool, p: Str, q: Str, hp: Str) -> List[Str] {
   if j == 0 {
     t.push("eor v11.16b, v11.16b, v16.16b")
   }
+  t + gcm8_products(j, hp)
+}
+
+/// Block j's products: v11 (the block, its halves' order as rev64 left
+/// it, the state already xored in) by H^(8 - j), the table's entry j
+/// (24 bytes: p0, p1, p0 ^ p1), into v8 to v10 (set by block 0, summed
+/// by the others).
+fn gcm8_products(j: Int, hp: Str) -> List[Str] {
   let h = 24 * j
-  t = t + [
+  let t = [
     if h == 0 { "ldr q13, [${hp}]" } else if h % 16 == 0 { "ldr q13, [${hp}, #${h}]" } else { "ldur q13, [${hp}, #${h}]" },
     "ldr d14, [${hp}, #${h + 16}]",
     // X = (x1, x0) lanes 0 and 1, so (x0, x1) by (p0, p1) lane by lane
@@ -102,6 +110,67 @@ fn gcm8_block(j: Int, seal: Bool, p: Str, q: Str, hp: Str) -> List[Str] {
       "eor v10.16b, v10.16b, v15.16b",
     ]
   }
+}
+
+/// The pointers past one batch and the bytes left (flags set for b.hi).
+fn gcm8_step(p: Str, q: Str, c: Str) -> List[Str] {
+  ["add ${p}, ${p}, #128", "add ${q}, ${q}, #128", "subs ${c}, ${c}, #128"]
+}
+
+/// dst's eight blocks: src's xor the key stream in v0 to v7.
+fn gcm8_store_all(p: Str, q: Str) -> List[Str] {
+  var t: List[Str] = []
+  for j in 0..8 {
+    let o = 16 * j
+    t = t + [
+      if o == 0 { "ldr q11, [${q}]" } else { "ldr q11, [${q}, #${o}]" },
+      "eor v${j}.16b, v${j}.16b, v11.16b",
+      if o == 0 { "str q${j}, [${p}]" } else { "str q${j}, [${p}, #${o}]" },
+    ]
+  }
+  t
+}
+
+/// The products of the eight ciphertext blocks at base + off (off -128
+/// or 0) by H^8 to H^1 summed into v8 to v10 (gcm8_block's, the blocks
+/// loaded from memory), the state xored into the first.
+fn gcm8_hash_all(base: Str, off: Int, hp: Str) -> List[Str] {
+  var t: List[Str] = []
+  for j in 0..8 {
+    let o = off + 16 * j
+    t.push(if o == 0 { "ldr q11, [${base}]" } else if o > 0 { "ldr q11, [${base}, #${o}]" } else { "ldur q11, [${base}, #${o}]" })
+    t.push("rev64 v11.16b, v11.16b")
+    if j == 0 {
+      t.push("eor v11.16b, v11.16b, v16.16b")
+    }
+    t = t + gcm8_products(j, hp)
+  }
+  t
+}
+
+/// Instructions a and g merged in order, g's spread evenly through a's
+/// but never between an aese and the aesmc after it (a pair the core
+/// fuses: splitting them made the kernel 1.13x slower, 2026-11-15).
+fn gcm8_interleave(a: List[Str], g: List[Str]) -> List[Str] {
+  var t: List[Str] = []
+  var gi = 0
+  for i in 0..a.len() {
+    t.push(a[i])
+    if a[i].starts_with("aese ") && i + 1 < a.len() && a[i + 1].starts_with("aesmc ") {
+      continue
+    }
+    // g's instructions due after a's first i + 1
+    let due = ((i + 1) * g.len()) / a.len()
+    while gi < due {
+      t.push(g[gi])
+      gi += 1
+    }
+  }
+  while gi < g.len() {
+    t.push(g[gi])
+    gi += 1
+  }
+  t
 }
 
 /// The sums' reduction into the state v16: Karatsuba's middle term
@@ -175,17 +244,35 @@ pub fn aes_gcm8_lines(nr: Int, seal: Bool, dst: Str, src: Str, rk: Str, iv: Str,
       r += 1
     }
   }
-  t = t + ["mov ${p}, ${dst}", "mov ${q}, ${src}", "mov ${c}, ${n}", "cbz ${c}, 9f", "1:"]
-  t = t + gcm8_aes(nr, rk)
-  for j in 0..8 {
-    t = t + gcm8_block(j, seal, p, q, hp)
+  t = t + ["mov ${p}, ${dst}", "mov ${q}, ${src}", "mov ${c}, ${n}", "cbz ${c}, 9f"]
+  if nr == 10 {
+    // AES-128 (round keys K0 to K10 in v20 to v30, so v8 to v15 are free
+    // through the rounds): the GHASH of eight blocks interleaved with the
+    // AES rounds of eight others, as Go's gcmAesEnc and gcmAesDec are (one
+    // after the other, the rounds and the products waited on the same
+    // units: sealing 1.10x and opening 1.23x Go's time on linux/arm64
+    // host 1, 2026-11-15). Opening hashes the batch it decrypts (src, in
+    // memory before the rounds); sealing hashes the batch before (dst,
+    // 128 bytes back), so the first batch is only encrypted and the last
+    // is hashed after the loop.
+    let st = gcm8_store_all(p, q)
+    if seal {
+      t = t + gcm8_aes(nr, rk) + st + gcm8_step(p, q, c) + ["b.ls 8f", "1:"]
+      t = t + gcm8_interleave(gcm8_aes(nr, rk), gcm8_hash_all(p, -128, hp) + gcm8_reduce()) + st
+      t = t + gcm8_step(p, q, c) + ["b.hi 1b", "8:"] + gcm8_hash_all(p, -128, hp) + gcm8_reduce()
+    } else {
+      t = t + ["1:"] + gcm8_interleave(gcm8_aes(nr, rk), gcm8_hash_all(q, 0, hp) + gcm8_reduce()) + st
+      t = t + gcm8_step(p, q, c) + ["b.hi 1b"]
+    }
+  } else {
+    t.push("1:")
+    t = t + gcm8_aes(nr, rk)
+    for j in 0..8 {
+      t = t + gcm8_block(j, seal, p, q, hp)
+    }
+    t = t + gcm8_reduce() + gcm8_step(p, q, c) + ["b.hi 1b"]
   }
-  t = t + gcm8_reduce()
   t + [
-    "add ${p}, ${p}, #128",
-    "add ${q}, ${q}, #128",
-    "subs ${c}, ${c}, #128",
-    "b.hi 1b",
     "9:",
     "str q16, [${y}]",
     "ldp d14, d15, [sp, #48]",

@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-15: perf: AES-128-GCM on arm64 hashes one batch during the next one's rounds
+
+- Kind: perf
+- Commit: this push
+- Found by: the std Proven perf line (bench/perf/aesgcm seal1 1.100 and open1 1.115 of Go on linux/arm64 host 1)
+- Go reference: crypto/internal/fips140/aes/gcm gcm_arm64.s (gcmAesEnc, gcmAesDec)
+- Test: twincheck bench/perf/aesgcm and bench/perf/aead (tags and output equal to Go's); the aead, aesgcm and TLS corpora and goldens (go, arm64, llvm); xo bench --ab on linux/arm64 host 1, 3 rounds: aesgcm seal1 37.34 to 36.1 ms (0.967), open1 36.51 to 36.04 ms (0.987)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+The eight block kernel (compiler/ssa a64aesgcm8.xo) ran a batch's AES rounds and then its GHASH products. For AES-128 the products of one batch (sealing: the batch before, read back from the output; opening: the batch being decrypted) are now spread through the rounds of the next, keeping each aese and aesmc pair together so the core still fuses them (splitting the pairs made the kernel 1.13x slower). AES-192 and AES-256 keep the old order: their round keys take the registers the products need.
+
 ## 2026-11-15: feature: with_data_independent_timing (Go's crypto/subtle.WithDataIndependentTiming)
 
 - Kind: feature
