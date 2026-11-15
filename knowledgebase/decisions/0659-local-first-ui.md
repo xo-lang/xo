@@ -1,6 +1,6 @@
 # 0659: local-first UI on one pure update
 
-Status: Proposed (owner session, 2026-11-15)
+Status: Accepted (owner, 2026-11-15). Stages 1, 2 and 3 landed the same day: 1a 02aa907a9, 1b 518a68b1f, 1d 3b56feaa0, stage 2 ea90ba87a, stage 3 343b92236 (the browser predicts with the App's own wasm); deterministic update by decision 0662 (24c9a9173)
 
 ## Context
 
