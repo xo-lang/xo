@@ -1,7 +1,10 @@
 # 0651: `if var` and `while var`, a mutable binding in a refutable pattern
 
-Status: Proposed (2026-11-15, aws-43 for the lead; a follow-up of the
-owner's language survey, for the owner's approval).
+Status: Accepted, option A (owner, 2026-11-15: `if var` / `while var`
+as a mutable copy, no write back; option B declined). Drafted by aws-43
+for the lead. Not built yet; code the seed compiles (compiler/, and the
+std/native and llrt files xo imports) uses it only after a seed that
+parses it is cut.
 
 ## Context
 
@@ -25,7 +28,7 @@ without it the mutation is silently lost, as values are copied.
 
 ## Decision
 
-Option A is recommended; B is the owner's call.
+The owner chose A (2026-11-15); B is kept below as the declined option.
 
 - **A (recommended): `if var p = e` and `while var p = e`**, with every
   pattern form and the Option shorthand of `if let` (core 2.5, decision
