@@ -1,7 +1,8 @@
 // std/big (spec/std.md 33, decision 0311). Declaration file; encoding
 // rules are listed at the top of std/prelude.xo. Go's math/big Int as an
 // immutable value: every operation returns a new BigInt, with Go's results
-// and error texts. Variable time: not for secrets. Pure.
+// and error texts. Variable time: not for secrets. Pure, but for
+// random_below and random_prime, which take the Rand capability.
 
 /// An integer of any size. `key` encodes it so that the derived order is
 /// the numeric one: zero is [0]; a number of n 64 bit limbs is n (-n when
@@ -27,6 +28,15 @@ fn from_int(n: Int) -> BigInt
 fn parse(s: Str, base: Int = 10) -> BigInt ! BigErr
 /// The unsigned big-endian number b (Go's SetBytes).
 fn from_bytes(b: Bytes) -> BigInt
+/// A uniform random number in [0, max) (Go's crypto/rand.Int): r's bytes,
+/// as many as max - 1 takes, the first masked to max - 1's top bits, until
+/// a number below max. Faults when max is not positive (Go panics).
+fn random_below(r: Rand, max: BigInt) -> BigInt uses rand
+/// A number of exactly `bits` bits that is prime with probability above
+/// 1 - 2^-80 (Go's crypto/rand.Prime): candidates of r's bytes with the top
+/// two bits and the low bit set, until one passes probably_prime(20). Err
+/// for bits below 2, with Go's text.
+fn random_prime(r: Rand, bits: Int) -> BigInt ! BigErr uses rand
 
 fn (x: BigInt) add(y: BigInt) -> BigInt
 fn (x: BigInt) sub(y: BigInt) -> BigInt

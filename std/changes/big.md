@@ -1,5 +1,16 @@
 # std/big changes
 
+## 2026-11-15: feature: random_below and random_prime (Go's crypto/rand.Int and Prime)
+
+- Kind: feature
+- Commit: this push
+- Found by: Lang 3's crypto and TLS gap audit (C11)
+- Go reference: crypto/rand Int, Prime; go1.26.11
+- Test: corpus randbig (Int over every max from 1 to 256, the powers of two to 2^31 and the byte and limb edges to 1024 bits from seeded streams, with the bytes Go read; TestIntMask; Prime of 2 to 11 bits and the edges to 1024 bits, the bytes Go read after MaybeReadByte's skip, which the generator sees on the stack; TestPrimeBitsLt2; Text over fixed and seeded bytes and TestText's every character at every index), native, go and llvm
+- Shipped in: not yet released
+
+`random_below(r, max)` is Go's crypto/rand.Int: bytes of r as many as max - 1 takes, the first masked to its top bits, until a number below max; it faults when max is not positive, where Go panics. `random_prime(r, bits)` is Go's crypto/rand.Prime: candidates with the top two bits and the low bit set until one passes probably_prime(20), and Go's error below 2 bits. Both read only the Rand: Go's own Prime reads the system's randomness unless a program sets cryptocustomrand=1 and then skips a byte at random, so the Go backend runs Go's loop over the Rand's bytes and a seeded Rand gives the same number on every backend.
+
 ## 2026-11-11: perf: BigFloat add and sub of operands far apart in exponent
 
 - Kind: perf

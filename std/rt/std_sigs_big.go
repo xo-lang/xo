@@ -10,6 +10,8 @@ var (
 	_ func(*Task, int64) Big_BigInt                                                        = Big_from_int
 	_ func(*Task, string, int64) Result[Big_BigInt, Big_BigErr]                            = Big_parse
 	_ func(*Task, Bytes) Big_BigInt                                                        = Big_from_bytes
+	_ func(*Task, Rand, Big_BigInt) Big_BigInt                                             = Big_random_below
+	_ func(*Task, Rand, int64) Result[Big_BigInt, Big_BigErr]                              = Big_random_prime
 	_ func(*Big_BigInt, *Task, Big_BigInt) Big_BigInt                                      = (*Big_BigInt).M_add
 	_ func(*Big_BigInt, *Task, Big_BigInt) Big_BigInt                                      = (*Big_BigInt).M_sub
 	_ func(*Big_BigInt, *Task, Big_BigInt) Big_BigInt                                      = (*Big_BigInt).M_mul

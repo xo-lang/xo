@@ -12,6 +12,7 @@ var (
 	_ func(*Task, Bytes, Bytes) Bytes                                                                                  = Crypto_xor
 	_ func(*Task, Rand, int64) Bytes                                                                                   = Crypto_random_bytes
 	_ func(*Task, Rand, int64) string                                                                                  = Crypto_token
+	_ func(*Task, Rand) string                                                                                         = Crypto_random_text
 	_ func(*Task, Rand, string, int64, int64, int64) string                                                            = Crypto_hash_password_argon2id
 	_ func(*Task, Rand, string, int64) string                                                                          = Crypto_hash_password
 	_ func(*Task, string, string) bool                                                                                 = Crypto_verify_password

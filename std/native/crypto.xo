@@ -61,6 +61,16 @@ fn random_bytes(r: Rand, n: Int, at: rt.Loc) -> Bytes uses rand {
 
 fn token(r: Rand, n: Int = 32, at: rt.Loc) -> Str uses rand { dg.b64(random_bytes(r, n, at), true) }
 
+fn random_text(r: Rand) -> Str uses rand {
+  let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".bytes()
+  let src = r.bytes(26)
+  var w = BytesBuilder.with_capacity(26)
+  for i in 0..26 {
+    w.write_byte(alphabet[Int(src[i]) % 32])
+  }
+  w.freeze().to_str_lossy()
+}
+
 fn hash_password_argon2id(r: Rand, password: Str, memory_kib: Int = 19456, iterations: Int = 2, parallelism: Int = 1, at: rt.Loc) -> Str uses rand {
   let ok = parallelism >= 1 && parallelism <= 255 && memory_kib >= 8 * parallelism && memory_kib <= 4194304 && iterations >= 1 && iterations <= 1000
   if !ok {

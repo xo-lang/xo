@@ -92,6 +92,64 @@ func Big_parse(_ *Task, s string, base int64) Result[Big_BigInt, Big_BigErr] {
 	return Ok[Big_BigInt, Big_BigErr](bigKey(z))
 }
 
+// Big_random_below is Go's crypto/rand.Int (Copyright 2011 The Go
+// Authors, BSD-style license) over r's bytes.
+func Big_random_below(tk *Task, r Rand, max Big_BigInt) Big_BigInt {
+	m := bigOf(max)
+	if m.Sign() <= 0 {
+		FaultHere("big.random_below: max must be positive, got %s", m.String())
+	}
+	bitLen := new(big.Int).Sub(m, big.NewInt(1)).BitLen()
+	if bitLen == 0 {
+		return bigKey(new(big.Int))
+	}
+	top := uint(bitLen % 8)
+	if top == 0 {
+		top = 8
+	}
+	n := new(big.Int)
+	for {
+		bytes := []byte(r.M_bytes(tk, int64((bitLen+7)/8)))
+		bytes[0] &= uint8(int(1<<top) - 1)
+		n.SetBytes(bytes)
+		if n.Cmp(m) < 0 {
+			return bigKey(n)
+		}
+	}
+}
+
+// Big_random_prime is Go's crypto/rand.Prime (Copyright 2011 The Go
+// Authors, BSD-style license) over r's bytes. Go's own reads the system's
+// randomness unless the program sets cryptocustomrand=1, and then skips a
+// byte at random; a Rand gives the same prime on every backend.
+func Big_random_prime(tk *Task, r Rand, bits int64) Result[Big_BigInt, Big_BigErr] {
+	if bits < 2 {
+		return Err[Big_BigInt](Big_BigErr{F_msg: "crypto/rand: prime size must be at least 2-bit"})
+	}
+	b := uint(bits % 8)
+	if b == 0 {
+		b = 8
+	}
+	p := new(big.Int)
+	for {
+		bytes := []byte(r.M_bytes(tk, (bits+7)/8))
+		bytes[0] &= uint8(int(1<<b) - 1)
+		if b >= 2 {
+			bytes[0] |= 3 << (b - 2)
+		} else {
+			bytes[0] |= 1
+			if len(bytes) > 1 {
+				bytes[1] |= 0x80
+			}
+		}
+		bytes[len(bytes)-1] |= 1
+		p.SetBytes(bytes)
+		if p.ProbablyPrime(20) {
+			return Ok[Big_BigInt, Big_BigErr](bigKey(p))
+		}
+	}
+}
+
 func Big_from_bytes(_ *Task, b Bytes) Big_BigInt {
 	return bigKey(new(big.Int).SetBytes([]byte(b)))
 }

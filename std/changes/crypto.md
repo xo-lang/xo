@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-15: feature: random_text (Go's crypto/rand.Text)
+
+- Kind: feature
+- Commit: this push
+- Found by: Lang 3's crypto and TLS gap audit (C11)
+- Go reference: crypto/rand Text; go1.26.11
+- Test: corpus randbig (Int over every max from 1 to 256, the powers of two to 2^31 and the byte and limb edges to 1024 bits from seeded streams, with the bytes Go read; TestIntMask; Prime of 2 to 11 bits and the edges to 1024 bits, the bytes Go read after MaybeReadByte's skip, which the generator sees on the stack; TestPrimeBitsLt2; Text over fixed and seeded bytes and TestText's every character at every index), native, go and llvm
+- Shipped in: not yet released
+
+`random_text(r)` is Go's crypto/rand.Text: 26 bytes of r, each mod 32 in the standard base32 alphabet, at least 128 bits. Go's Text takes no reader, so the corpus checks its loop over given bytes and TestText's properties over the test Rand. std/stdaudit maps crypto/rand.Text here now, not to `token`.
+
 ## 2026-11-15: feature: RSA over a caller's digest, PSS salt lengths, unpadded PKCS #1 v1.5 and OAEP's MGF1 hash
 
 - Kind: feature

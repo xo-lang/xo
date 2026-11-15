@@ -58,6 +58,16 @@ func Crypto_token(tk *Task, r Rand, n int64) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(Crypto_random_bytes(tk, r, n)))
 }
 
+// Crypto_random_text is Go's crypto/rand.Text (Copyright 2024 The Go
+// Authors, BSD-style license) over r's bytes.
+func Crypto_random_text(tk *Task, r Rand) string {
+	src := []byte(r.M_bytes(tk, 26))
+	for i := range src {
+		src[i] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"[src[i]%32]
+	}
+	return string(src)
+}
+
 const (
 	pbkdf2Prefix  = "pbkdf2-sha256"
 	pbkdf2SaltLen = 16

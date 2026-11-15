@@ -1201,10 +1201,10 @@ fs.FileMode.* = std/prelude.Fs.mode
 fs.* = not planned: the FS interface family (Fs is one capability with MemFs as its fake), mode bits and formatting helpers
 
 # crypto/rand (full paths: `rand.` above is math/rand's)
-crypto/rand.Int = gap: no uniform big.BigInt below a bound from the Rand capability
-crypto/rand.Prime = gap: no random prime generation (std/crypto.generate_key makes RSA keys)
+crypto/rand.Int = std/big.random_below
+crypto/rand.Prime = std/big.random_prime
 crypto/rand.Read = std/crypto.random_bytes
-crypto/rand.Text = std/crypto.token (URL safe base64 where Go writes base32)
+crypto/rand.Text = std/crypto.random_text
 
 # crypto/x509: std/x509
 x509.ParseCertificate = std/x509.parse

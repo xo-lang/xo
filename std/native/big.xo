@@ -1308,6 +1308,65 @@ fn from_int(n: Int) -> big.BigInt {
   if n < 0 { make(true, [-n]) } else { make(false, nat_word(n)) }
 }
 
+fn random_below(r: Rand, max: big.BigInt, at: rt.Loc) -> big.BigInt uses rand {
+  if bigint_sign(max) <= 0 {
+    rt.fault_at("big.random_below: max must be positive, got ${max}", at)
+  }
+  let bl = bigint_bit_len(bigint_sub(max, from_int(1)))
+  if bl == 0 {
+    return from_int(0)
+  }
+  let k = (bl + 7) / 8
+  let top = if bl % 8 == 0 { 8 } else { bl % 8 }
+  while true {
+    let n = from_bytes(masked(r.bytes(k), (1 << top) - 1, 0, 0))
+    if bigint_cmp(n, max) < 0 {
+      return n
+    }
+  }
+  from_int(0)
+}
+
+fn random_prime(r: Rand, bits: Int) -> big.BigInt ! big.BigErr uses rand {
+  if bits < 2 {
+    return Err(big.BigErr{msg: "crypto/rand: prime size must be at least 2-bit"})
+  }
+  let k = (bits + 7) / 8
+  let top = if bits % 8 == 0 { 8 } else { bits % 8 }
+  // the top two bits set; with one bit in the first byte, that bit and
+  // the next byte's top one
+  let set = if top >= 2 { 3 << (top - 2) } else { 1 }
+  let next = if top >= 2 || k == 1 { 0 } else { 0x80 }
+  while true {
+    let p = from_bytes(masked(r.bytes(k), (1 << top) - 1, set, next))
+    if bigint_probably_prime(p, 20) {
+      return Ok(p)
+    }
+  }
+  Ok(from_int(0))
+}
+
+/// b with its first byte and'ed with keep and or'ed with set, its second
+/// or'ed with next, and its last made odd when set or next is nonzero (Go's
+/// rand.Int and rand.Prime candidates).
+fn masked(b: Bytes, keep: Int, set: Int, next: Int) -> Bytes {
+  var w = BytesBuilder.with_capacity(b.len())
+  for i in 0..b.len() {
+    var c = Int(b[i])
+    if i == 0 {
+      c = (c & keep) | set
+    }
+    if i == 1 {
+      c = c | next
+    }
+    if i == b.len() - 1 && (set != 0 || next != 0) {
+      c = c | 1
+    }
+    w.write_byte(UInt8(c))
+  }
+  w.freeze()
+}
+
 fn from_bytes(b: Bytes) -> big.BigInt {
   let n = (b.len() + 7) / 8
   var z = raw.zero_ints(n)

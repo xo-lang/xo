@@ -3913,6 +3913,7 @@ pub fn equal(a: Bytes, b: Bytes) -> Bool                // constant time in the 
 pub fn xor(a: Bytes, b: Bytes) -> Bytes                 // a[i] ^ b[i] below the shorter length (subtle.XORBytes)
 pub fn random_bytes(r: Rand, n: Int) -> Bytes uses rand // faults when n < 0
 pub fn token(r: Rand, n: Int = 32) -> Str uses rand     // n random bytes, unpadded URL safe base64
+pub fn random_text(r: Rand) -> Str uses rand            // Go's rand.Text: 26 base32 characters, 130 bits
 pub fn hash_password_argon2id(r: Rand, password: Str, memory_kib: Int = 19456,
                               iterations: Int = 2, parallelism: Int = 1) -> Str uses rand
 pub fn hash_password(r: Rand, password: Str, iterations: Int = 600000) -> Str uses rand
@@ -6090,7 +6091,10 @@ Status: implemented on every backend (decision 0311, 2026-10-21), stage
 1: schoolbook multiplication and division natively. Go's math/big Int as
 an immutable value: the Go backend calls math/big, and the native
 backends port its nat arithmetic (std/native/big.xo). Every operation
-gives Go's result. Variable time: not for secrets. Pure.
+gives Go's result. Variable time: not for secrets. Pure, but for
+`random_below` and `random_prime`, which read the `Rand` (std.md 3.4): the
+Go backend runs Go's crypto/rand loops over its bytes, so a seeded `Rand`
+gives the same number on every backend.
 
 ```
 struct BigInt { key: List[Int] } derive Eq, Ord, Hash   // build with the functions, not a literal
@@ -6098,6 +6102,8 @@ struct BigErr { msg: Str }
 pub fn from_int(n: Int) -> BigInt
 pub fn parse(s: Str, base: Int = 10) -> BigInt ! BigErr    // Go's SetString; base 0 reads prefixes and _
 pub fn from_bytes(b: Bytes) -> BigInt                      // unsigned big-endian
+pub fn random_below(r: Rand, max: BigInt) -> BigInt uses rand          // Go's crypto/rand.Int; faults unless max > 0
+pub fn random_prime(r: Rand, bits: Int) -> BigInt ! BigErr uses rand  // Go's crypto/rand.Prime; Err below 2 bits
 fn (x: BigInt) add(y: BigInt) -> BigInt        // also sub, mul
 fn (x: BigInt) quo(y: BigInt) -> BigInt        // also rem, div, mod
 fn (x: BigInt) quo_rem(y: BigInt) -> (BigInt, BigInt)   // (quo, rem); div_mod gives (div, mod)
