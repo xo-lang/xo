@@ -748,7 +748,26 @@ func test(m string) mark {
 
 var reWorst = regexp.MustCompile(`worst Xo / Go (\d+\.\d+)`)
 
+// perfHelpers: internal modules (tables and helpers other std modules
+// use) whose performance is their users' (lead, 2026-11-15): a helper
+// takes the lowest perf mark among its users, so it is Proven only when
+// every user's twin is. No twin of its own.
+var perfHelpers = map[string][]string{
+	"htmlent":   {"html", "htmltok"},
+	"uniclass":  {"regexp"},
+	"protowire": {"protodesc", "protojson", "protowkt"},
+}
+
 func perf(m string) mark {
+	if users, ok := perfHelpers[m]; ok {
+		var low mark
+		for i, u := range users {
+			if p := perf(u); i == 0 || lv[p.level] < lv[low.level] {
+				low = p
+			}
+		}
+		return mark{low.level, "the lowest of its users' marks (" + strings.Join(users, ", ") + ")", low.ev}
+	}
 	e := ev(m)
 	if p, ok := e["perf"]; ok {
 		meas := p.hdr["measure"]
@@ -1056,7 +1075,7 @@ func main() {
 	w("| Testing | own tests | Go's tests ported or a Go differential; parsers fuzzed | also `--race` and load stress clean, long fuzz runs, security reviewed where it applies (crypto, tls, http, x509) |")
 	w("| Performance | not measured, or measured and above 2x Go | measured against Go, within 2x | at or better than Go on its benchmark |")
 	w("")
-	w("How a mark is read here: *Features* from the rows of the coverage table that name the module (all done and no open function level gap of their Go packages in the audit, `scripts/stdaudit/map.txt`, is Proven; any partial row or open gap is Solid; a module with no Go package is Solid and says so). *Testing* from the committed corpus of Go's tests under `internal/stdtest/testdata/corpus`, Go differential tests, and fuzz tests for modules that parse untrusted input. *Performance* from a committed result file with a Go twin. A mark with no committed evidence is Early, so a missing result is the gap to close, not a hidden number. The dates are those of the result files, which can be older than this page; a re-run can only move a mark if the file is replaced. Proven testing evidence (`std/evidence/MODULE`) counts while the module's source hash matches the one it ran at, or for 90 days and one minor release: the hash covers the module's own files (`std/MODULE.xo`, `std/native/MODULE.xo`, `std/native/MODULE_native.xo` and the module specific `std/native/llrt` files they reach), the same files of every std module it uses, and `std/internal.xo`, but not the shared runtime (the allocator, scheduler, I/O and OS layer and the prelude), which its own tests, the fixed point and the full tier cover (decision 0616 section 3).")
+	w("How a mark is read here: *Features* from the rows of the coverage table that name the module (all done and no open function level gap of their Go packages in the audit, `scripts/stdaudit/map.txt`, is Proven; any partial row or open gap is Solid; a module with no Go package is Solid and says so). *Testing* from the committed corpus of Go's tests under `internal/stdtest/testdata/corpus`, Go differential tests, and fuzz tests for modules that parse untrusted input. *Performance* from a committed result file with a Go twin; an internal helper module (htmlent, uniclass, protowire) takes the lowest performance mark among the modules that use it. A mark with no committed evidence is Early, so a missing result is the gap to close, not a hidden number. The dates are those of the result files, which can be older than this page; a re-run can only move a mark if the file is replaced. Proven testing evidence (`std/evidence/MODULE`) counts while the module's source hash matches the one it ran at, or for 90 days and one minor release: the hash covers the module's own files (`std/MODULE.xo`, `std/native/MODULE.xo`, `std/native/MODULE_native.xo` and the module specific `std/native/llrt` files they reach), the same files of every std module it uses, and `std/internal.xo`, but not the shared runtime (the allocator, scheduler, I/O and OS layer and the prelude), which its own tests, the fixed point and the full tier cover (decision 0616 section 3).")
 	w("")
 	w("Today: overall %d Proven, %d Solid, %d Early of %d (prelude and %d modules). Per axis, features %d/%d/%d, testing %d/%d/%d, performance %d/%d/%d (Proven/Solid/Early). No module has the committed `--race`, load stress, long fuzz and security review evidence that Proven testing needs yet.",
 		lvc["Proven"], lvc["Solid"], lvc["Early"], len(rows), nmods,

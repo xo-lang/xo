@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -72,6 +73,26 @@ func TestFeatAuditGaps(t *testing.T) {
 	} {
 		if f := feat(c.mod); f.level != c.level || f.text != c.text {
 			t.Errorf("feat(%s) = %s %q, want %s %q", c.mod, f.level, f.text, c.level, c.text)
+		}
+	}
+}
+
+// TestPerfHelpers: an internal helper takes the lowest perf mark among
+// its users (lead, 2026-11-15), and says whose.
+func TestPerfHelpers(t *testing.T) {
+	for h, users := range perfHelpers {
+		got := perf(h)
+		low := 2
+		for _, u := range users {
+			if l := lv[perf(u).level]; l < low {
+				low = l
+			}
+		}
+		if got.level != nm[low] {
+			t.Errorf("perf(%q) = %s, want %s (the lowest of %v)", h, got.level, nm[low], users)
+		}
+		if !strings.Contains(got.text, users[0]) {
+			t.Errorf("perf(%q) text %q does not name its users", h, got.text)
 		}
 	}
 }
