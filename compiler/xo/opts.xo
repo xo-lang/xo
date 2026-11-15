@@ -66,6 +66,9 @@ struct Opts {
   /// LinkOpts.strip, `ld -x` on darwin, `ld -s` on Linux; the Go
   /// backend's `-s -w`), on top of --debug-info
   strip: Bool = false
+  /// `xo build --list-inputs`: print the source files the build reads
+  /// and exit (list_inputs)
+  list_inputs: Bool = false
   /// --debug-info=on|off|split (decision 0354; split is decision 0355's),
   /// "" when not given: debug_info_eff
   debug_info: Str = ""
@@ -187,7 +190,7 @@ fn value_flags() -> List[Str] {
 
 /// The boolean flags.
 fn bool_flags() -> List[Str] {
-  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "fail-empty", "phase-times", "offline", "s", "debug-info", "dsym", "profile-support", "trace-support", "trimpath", "inline-str", "pack-lists", "watch", "debug-contracts", "dbg", "binfo-stable"]
+  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "fail-empty", "phase-times", "offline", "s", "debug-info", "dsym", "profile-support", "trace-support", "trimpath", "inline-str", "pack-lists", "watch", "debug-contracts", "dbg", "binfo-stable", "list-inputs"]
 }
 
 /// The usage of xo1's hidden commands (asm, keys) and of an unknown one;
@@ -781,6 +784,8 @@ fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
     o.release = on
   } else if name == "s" {
     o.strip = on
+  } else if name == "list-inputs" {
+    o.list_inputs = on
   } else if name == "debug-info" {
     o.debug_info = if on { "on" } else { "off" }
   } else if name == "dsym" {

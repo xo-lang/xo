@@ -299,6 +299,10 @@ fn main(os0: Os) ! {
     os.stdio.eprintln("xo ${what}: ${why}")
     os.proc.exit(2)
   }
+  if o.list_inputs && o.cmd == "build" {
+    list_inputs(os, o, backend)
+    return
+  }
   // --opt (decision 0354): the LLVM backend's levels; the native
   // backends have none
   if !o.opt.is_empty() && (backend is "arm64" | "amd64") {
@@ -3967,5 +3971,44 @@ fn rel_workers(os: Os) -> Int {
   match Int.parse(os.env.get("XO_HEAP_REGION_WORKERS") ?? "") {
     Some(n) => if n < 1 { 1 } else if n > 16 { 16 } else { n }
     None => 4
+  }
+}
+
+/// `xo build --list-inputs [--json]` (owner, 2026-11-15, from the agents'
+/// survey): the source files a build of the program reads, after the
+/// check: the program's, its modules', std's (a native build's
+/// std/native twins and runtime modules, and the prelude's imports),
+/// sorted, one a line, or as JSON with --json (`{"files": [{"path",
+/// "module", "std", "sig"}]}`), without building. A file is listed when
+/// the check loaded it, so the list may hold a file whose code the
+/// build then drops (a superset, for a cache or a dependency rule).
+fn list_inputs(os: Os, o: Opts, backend: Str) {
+  let c = check_program(os, o, backend != "go")
+  var rows: List[(Str, Str, Bool, Bool)] = []
+  var seen: Map[Str, Bool] = {}
+  for f in c.files {
+    if f.path.is_empty() || seen.contains(f.path) {
+      continue
+    }
+    seen[f.path] = true
+    let m = if f.module >= 0 && f.module < c.mods.len() { c.mods[f.module] } else { check.Module{path: "", name: "", dir: ""} }
+    rows.push((f.path, m.path, m.is_std, f.sig))
+  }
+  rows = rows.sort_by(fn(r) { r.0 })
+  if o.json {
+    var b = StrBuilder.new()
+    b.write("{\"files\": [")
+    for (i, r) in rows.indexed() {
+      if i > 0 {
+        b.write(", ")
+      }
+      b.write("{\"path\": ${json_str(r.0)}, \"module\": ${json_str(r.1)}, \"std\": ${r.2}, \"sig\": ${r.3}}")
+    }
+    b.write("]}")
+    os.stdio.println(b.freeze())
+    return
+  }
+  for r in rows {
+    os.stdio.println(r.0)
   }
 }

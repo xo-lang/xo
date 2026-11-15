@@ -7,7 +7,7 @@ usage: xo build [--targets=all|os/arch,...] [--backend=native|go|llvm|arm64|amd6
                 [--stamp NAME=VALUE]... [--entitlement=KEY]... [--hybrid] [--pack-lists=on|off]
                 [--versioninfo=FILE.json] [--icon=FILE.ico]... [--manifest=FILE]
                 [--inline-str] [--check=free,guard,leak|all] [--lib=shared|static]
-                [--json] [-o out] <dirs...>
+                [--list-inputs] [--json] [-o out] <dirs...>
 
 Compile to static binaries (default: the host). The directories are one
 program. The default backend is native (decisions 0248 and 0270): arm64
@@ -78,6 +78,11 @@ arm64 and LLVM backends; --pack-lists=off keeps a word an element.
 --inline-str (experimental, off by default, decision 0370) keeps a Str
 of up to 11 bytes in its two words; it works on the native arm64
 backend only, and elsewhere warns that it has no effect.
+--list-inputs builds nothing: it checks the program and prints the source
+files the build reads, sorted (the program's and its modules', and std's,
+with a native build's std/native twins and runtime modules), or with
+--json `{"files": [{"path", "module", "std", "sig"}]}`; a file is listed
+when the check loads it, so the list is a superset of the code built.
 
 A directory means that directory alone; DIR/... covers the directories
 below it too, up to 6,000 .xo files or 60,000 entries (decision 0345).
