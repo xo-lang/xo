@@ -1,5 +1,17 @@
 # std/crc32 changes
 
+## 2026-11-15: feature: tables of any polynomial, Koopman (Go's MakeTable, Checksum, Update)
+
+- Kind: feature
+- Commit: this commit
+- Found by: scripts/stdaudit gap crc32.Koopman (decision 0655)
+- Go reference: hash/crc32 go1.26 (MakeTable, simpleMakeTable, simpleUpdate, Checksum, Update, Koopman)
+- Test: internal/stdtest corpus crc32 "table" (Koopman and 0xd419cc15 on Go's inputs, table entries, update split; go, arm64, llvm)
+
+`crc32.table(poly)` makes Go's Table for any reversed polynomial (`KOOPMAN`, `IEEE`,
+`CASTAGNOLI` or another), and `checksum_table` and `update_table` use it; IEEE and
+Castagnoli tables take the fast paths of `checksum`.
+
 ## 2026-11-14: perf: a short input on arm64 no longer fetches a table
 
 - Kind: perf

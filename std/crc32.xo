@@ -17,3 +17,26 @@ fn checksum(data: Bytes, poly: Poly = Poly.Ieee) -> Int
 /// Update): `update(checksum(a), b) == checksum(a + b)`, and
 /// `update(0, d) == checksum(d)`.
 fn update(crc: Int, data: Bytes, poly: Poly = Poly.Ieee) -> Int
+
+/// The reversed polynomials of Go's IEEE, Castagnoli and Koopman constants,
+/// for `table`.
+const IEEE: Int = 0xedb88320
+const CASTAGNOLI: Int = 0x82f63b78
+const KOOPMAN: Int = 0xeb31d82e
+
+/// The 256 entry table of a reversed polynomial (Go's Table): made by
+/// `table`.
+struct Table {
+  poly: Int
+  entries: List[Int]
+}
+
+/// The table of poly, any reversed 32 bit polynomial (Go's MakeTable):
+/// `table(KOOPMAN)` for Koopman's. IEEE and CASTAGNOLI take the fast paths
+/// of `checksum`. A poly outside 0 to 2^32 - 1 is a fault.
+fn table(poly: Int) -> Table
+/// The CRC-32 of data over t (Go's Checksum).
+fn checksum_table(data: Bytes, t: Table) -> Int
+/// The CRC-32 of what crc was the checksum of, followed by data, over t (Go's
+/// Update).
+fn update_table(crc: Int, data: Bytes, t: Table) -> Int

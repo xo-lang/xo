@@ -70,3 +70,31 @@ test "checksum matches the bit loop for every length up to 300" {
     expect(crc32.checksum(data[0..n])) == bitwise(0xedb88320, data[0..n])
   }
 }
+
+/// (Koopman, polynomial 0xd419cc15) of cases()'s inputs, in order, from Go's
+/// Checksum(MakeTable(Koopman)) and Checksum(MakeTable(0xd419cc15)).
+fn table_cases() -> List[(Int, Int)] {
+  [
+    (0x00000000, 0x00000000), (0x0da2aa8a, 0x60819b69), (0x31ec935a, 0xf481d33a),
+    (0xba2322ac, 0x5832f57e), (0xe0a6bcf7, 0x9aed1c96), (0xd5cc0e40, 0x10290b5d),
+    (0x39080d0d, 0x1fa7a583), (0x418f6bac, 0xc0164d80), (0x847e1e04, 0xfdfb9f97),
+    (0xd4575591, 0x4bc2b676), (0x059faba8, 0xe5f710ce), (0xf5a98a65, 0xc5f1675f),
+    (0x58347c56, 0x7ff47edb),
+  ]
+}
+
+test "table: Koopman and any polynomial, as Go's MakeTable" {
+  let k = crc32.table(crc32.KOOPMAN)
+  let c = crc32.table(0xd419cc15)
+  expect(k.entries[1]) == 0x9695c4ca
+  expect(k.entries[255]) == 0xc0522c72
+  let tc = table_cases()
+  for (i, (data, ieee, cast)) in cases().indexed() {
+    let (kw, cw) = tc[i]
+    expect(crc32.checksum_table(data, k)) == kw
+    expect(crc32.checksum_table(data, c)) == cw
+    expect(crc32.checksum_table(data, crc32.table(crc32.IEEE))) == ieee
+    expect(crc32.checksum_table(data, crc32.table(crc32.CASTAGNOLI))) == cast
+  }
+  expect(crc32.update_table(crc32.checksum_table(b"abc", k), b"defghi", k)) == 0x39080d0d
+}

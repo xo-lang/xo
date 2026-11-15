@@ -90,7 +90,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | encoding/base32 | std/base32 | done | Std, Hex, RawStd, RawHex (decision 0279). |
 | encoding/hex | prelude Bytes | done | to_hex, from_hex, the same as EncodeToString and DecodeString on 1,500 strings (2026-10-20). Dump is not offered. |
 | encoding/binary | std/binary | done | Byte orders on Bytes and varints (decision 0279); no Read and Write of structs (no reflection). |
-| encoding/csv | std/csv | done | Native port (decision 0164); `parse` in memory, and `csv.reader(file)` streams records from a File (2026-11-03). Records match Go's Reader (FieldsPerRecord -1) on 2,022 texts (2026-10-20); error texts and Go's options (Comment, LazyQuotes, TrimLeadingSpace) are Xo's own or missing. |
+| encoding/csv | std/csv | done | Native port (decision 0164); `parse` in memory, and `csv.reader(file)` streams records from a File (2026-11-03). Records match Go's Reader (FieldsPerRecord -1) on 2,022 texts (2026-10-20); Go's options, error texts, and the Reader's `field_pos` and `input_offset` (FieldPos, InputOffset, 2026-11-15) match Go on the corpus's 2,812 texts. |
 | encoding/pem | std/crypto | done | pem_decode, pem_encode (decision 0285). |
 | encoding/asn1 | std/asn1 (std/native/llrt/asn1.xo for X.509) | done | `parse`, `parse_prefix` and `Value.der` over a Value tree with Go's DER rules (decision 0601 stage 1). Missing: struct marshaling (`derive Asn1`, stage 2). Last verified: 2026-11-15. |
 | encoding/xml | std/xml, std/xmlcodec (derive Xml) | partial | Go's Decoder tokens (strict, HTML-lenient, raw), an element tree, and the Encoder, on every backend (decision 0314, 2026-10-21). Missing: Marshal and Unmarshal of structs (stage 2), streaming. |
@@ -141,7 +141,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | image/color/palette | std/image | done | Plan9 and WebSafe as `image.plan9()` and `image.web_safe()`, 0xRRGGBBAA entries (spec/std.md 75). |
 | image/draw | std/image | partial | Draw and DrawMask as `Image.draw` and `Image.draw_mask` with Op Over and Src, Go's clipping (0578); Floyd-Steinberg only inside std/gif's encoder; no Drawer or Quantizer interfaces. |
 | image/gif | std/gif | done | Decode, DecodeAll, DecodeConfig, Encode and EncodeAll over whole buffers, Go's error texts (spec/std.md 76, 0578 step 5). |
-| hash/crc32 | std/crc32 | done | IEEE and Castagnoli, `checksum` and `update` (spec/std.md 44); Castagnoli in software (Go uses CRC32C instructions). |
+| hash/crc32 | std/crc32 | done | IEEE and Castagnoli, `checksum` and `update` (spec/std.md 44); Castagnoli in software (Go uses CRC32C instructions). `table(poly)` for Koopman or any polynomial with `checksum_table` and `update_table` (MakeTable, Checksum, Update; 2026-11-15). |
 | hash/fnv | std/fnv | done | 32, 64 and 128 bit FNV-1 and FNV-1a, `sum*` and `update*` (spec/std.md 45). |
 | hash/adler32 | std/adler32 | done | `checksum` and `update` (spec/std.md 52); Go's values on its golden strings and buffers across the block size. |
 | hash/crc64 | std/crc64 | done | ISO and ECMA, `checksum` and `update`, slicing-by-8 (spec/std.md 51). |

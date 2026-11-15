@@ -1,5 +1,16 @@
 # std/csv changes
 
+## 2026-11-15: feature: Reader.field_pos and Reader.input_offset (Go's FieldPos and InputOffset)
+
+- Kind: feature
+- Commit: this push
+- Found by: scripts/stdaudit gaps csv.Reader.FieldPos and csv.Reader.InputOffset (decision 0655)
+- Go reference: encoding/csv reader.go FieldPos, InputOffset, readLine's offset and readRecord's fieldPositions (go1.26.11)
+- Test: internal/stdtest corpus csv "reader field_pos and input_offset" (Go's positions and offsets after every read of the 2812 READ_CASES texts, from scripts/stdcorpus csvGoPosOf; go, arm64, llvm)
+- Shipped in: not yet released
+
+A Reader records each field's line and column as it parses (the slots are reused from record to record, as Go reuses its slice) and counts the bytes of every line it reads, before `\r\n` is folded. `parse` keeps no positions.
+
 ## 2026-11-14: perf: a Reader builds a quoted field with a doubled quote or a line break in one buffer
 
 - Kind: perf

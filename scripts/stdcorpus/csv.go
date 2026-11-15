@@ -21,6 +21,7 @@ package main
 import (
 	"encoding/csv"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"strings"
@@ -3353,6 +3354,60 @@ func csvGoReadOf(c csvReadCase) string {
 	return csvRecs(recs)
 }
 
+// csvGoPosOf is Go's Reader.Read on c one record at a time, with FieldPos
+// of each field and InputOffset after each read: per read "r" (a record),
+// "e" (an error) or "x" (the end), then for a record " LINE:COL" per field
+// and " @OFFSET", reads joined by ";", stopping after an error or the end.
+func csvGoPosOf(c csvReadCase) string {
+	r := csv.NewReader(strings.NewReader(csvPlain(c.text)))
+	if c.comma != 0 {
+		r.Comma = c.comma
+	}
+	r.Comment = c.comment
+	r.FieldsPerRecord = c.fields
+	r.LazyQuotes = c.lazy
+	r.TrimLeadingSpace = c.trim
+	var out []string
+	for {
+		_, err := r.Read()
+		kind := "r"
+		if err == io.EOF {
+			kind = "x"
+		} else if err != nil {
+			kind = "e"
+		}
+		var b strings.Builder
+		b.WriteString(kind)
+		if kind == "r" {
+			for i := 0; ; i++ {
+				l, col, ok := csvFieldPos(r, i)
+				if !ok {
+					break
+				}
+				fmt.Fprintf(&b, " %d:%d", l, col)
+			}
+		}
+		fmt.Fprintf(&b, " @%d", r.InputOffset())
+		out = append(out, b.String())
+		if kind != "r" {
+			break
+		}
+	}
+	return strings.Join(out, ";")
+}
+
+// csvFieldPos is r.FieldPos(i), and false where Go panics (i past the
+// positions it holds).
+func csvFieldPos(r *csv.Reader, i int) (l, c int, ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	l, c = r.FieldPos(i)
+	return l, c, true
+}
+
 // csvFormatXo is csv.format's text as std/csv.xo documents it: Go's Writer,
 // except that a record of one empty field is written as "", so it reads back
 // as a record, where Go's Writer writes an empty line (which its Reader
@@ -3491,6 +3546,12 @@ func csvCorpus() string {
 		fmt.Fprintf(&o, "  (%s, %s, %s, %d, %v, %v, %s),\n", xq(c.text), xsep(c.comma), xr(c.comment), c.fields, c.lazy, c.trim, xq(csvGoReadOf(c)))
 	}
 	o.WriteString("]\n")
+	o.WriteString("\n/// Go's Reader.Read on each READ_CASES text, one record at a time, with FieldPos of each field and InputOffset after each read (csvGoPosOf in scripts/stdcorpus/csv.go)\nconst POS_CASES: List[Str] = [\n")
+	for _, c := range reads {
+		c.text = textOf(c.text)
+		fmt.Fprintf(&o, "  %s,\n", xq(csvGoPosOf(c)))
+	}
+	o.WriteString("]\n")
 
 	// write cases: Go's tests, the module test's inputs, then randoms
 	writes := csvGoWrite()
@@ -3585,6 +3646,43 @@ fn reader_of(fs: Fs, text: Str, sep: Rune, comment: Rune, fields: Int, lazy: Boo
   recs_of(recs)
 }
 
+/// The text read through a csv.reader as csvGoPosOf shows Go's reads: each
+/// read's kind, field_pos of each field, and input_offset.
+fn positions_of(fs: Fs, text: Str, sep: Rune, comment: Rune, fields: Int, lazy: Bool, trim: Bool) -> Str uses fs.read, fs.write {
+  match fs.write("reader_pos.csv", text.bytes()) {
+    Ok(_) => {}
+    Err(e) => return "write ${e.display()}"
+  }
+  let f = match fs.open("reader_pos.csv") {
+    Ok(x) => x
+    Err(e) => return "open ${e.display()}"
+  }
+  var r = csv.reader(f, sep: sep, comment: comment, fields: fields, lazy_quotes: lazy, trim_leading_space: trim)
+  var out: List[Str] = []
+  while true {
+    let (kind, held) = match r.read() {
+      Ok(Some(rec)) => ("r", rec.len())
+      Ok(None) => ("x", 0)
+      Err(_) => ("e", 0)
+    }
+    var b = StrBuilder.new()
+    b.write(kind)
+    if kind == "r" {
+      for i in 0..held {
+        let (l, c) = r.field_pos(i)
+        b.write(" ${l}:${c}")
+      }
+    }
+    b.write(" @${r.input_offset()}")
+    out.push(b.freeze())
+    if kind != "r" {
+      break
+    }
+  }
+  f.close().ignore_err("a read only handle")
+  out.join(";")
+}
+
 fn first_read(bad: List[(Str, Rune, Rune, Int, Bool, Bool, Str, Str)]) -> List[(Str, Rune, Rune, Int, Bool, Bool, Str, Str)] {
   bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
 }
@@ -3621,6 +3719,18 @@ test "reader reads Go's csv.Reader cases from a file one record at a time" {
     }
   }
   expect(first_read(bad)) == []
+}
+
+test "reader field_pos and input_offset are Go's FieldPos and InputOffset after each read" {
+  var bad: List[(Str, Str, Str)] = []
+  for i in 0..READ_CASES.len() {
+    let (text, sep, comment, fields, lazy, trim, _) = READ_CASES[i]
+    let got = positions_of(os.fs, text, sep, comment, fields, lazy, trim)
+    if got != POS_CASES[i] {
+      bad.push((text, got, POS_CASES[i]))
+    }
+  }
+  expect(bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]) == []
 }
 
 test "reader over a file larger than its read chunk, with quoted line breaks across chunks" {

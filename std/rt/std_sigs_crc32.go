@@ -6,6 +6,9 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Task, Bytes, Crc32_Poly) int64        = Crc32_checksum
-	_ func(*Task, int64, Bytes, Crc32_Poly) int64 = Crc32_update
+	_ func(*Task, Bytes, Crc32_Poly) int64         = Crc32_checksum
+	_ func(*Task, int64, Bytes, Crc32_Poly) int64  = Crc32_update
+	_ func(*Task, int64) Crc32_Table               = Crc32_table
+	_ func(*Task, Bytes, Crc32_Table) int64        = Crc32_checksum_table
+	_ func(*Task, int64, Bytes, Crc32_Table) int64 = Crc32_update_table
 )

@@ -171,6 +171,21 @@ func Csv_reader(tk *Task, f File, sep Rune, comment Rune, fields int64, lazy boo
 	return Csv_Reader{r: r, src: src}
 }
 
+// M_field_pos is `Reader.field_pos(i)`: Go's FieldPos, with Xo's fault for
+// an index outside the record.
+func (x Csv_Reader) M_field_pos(tk *Task, i int64) (t Tuple2[int64, int64]) {
+	defer func() {
+		if recover() != nil {
+			FaultHere("csv: out of range index passed to field_pos")
+		}
+	}()
+	l, c := x.r.FieldPos(int(i))
+	return Tuple2[int64, int64]{int64(l), int64(c)}
+}
+
+// M_input_offset is `Reader.input_offset()`: Go's InputOffset.
+func (x Csv_Reader) M_input_offset(tk *Task) int64 { return x.r.InputOffset() }
+
 // M_read is `Reader.read()`.
 func (x *Csv_Reader) M_read(tk *Task) Result[Option[List[string]], Csv_CsvErr] {
 	x.src.tk = tk

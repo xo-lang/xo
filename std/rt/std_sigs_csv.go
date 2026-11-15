@@ -10,6 +10,8 @@ var (
 	_ func(*Task, string, Rune, Rune, int64, bool, bool) Result[List[List[string]], Csv_CsvErr] = Csv_parse
 	_ func(*Task, File, Rune, Rune, int64, bool, bool) Csv_Reader                               = Csv_reader
 	_ func(*Csv_Reader, *Task) Result[Option[List[string]], Csv_CsvErr]                         = (*Csv_Reader).M_read
+	_ func(*Csv_Reader, *Task, int64) Tuple2[int64, int64]                                      = (*Csv_Reader).M_field_pos
+	_ func(*Csv_Reader, *Task) int64                                                            = (*Csv_Reader).M_input_offset
 	_ func(*Task, string, Rune, Rune, bool, bool) Result[List[Map[string, string]], Csv_CsvErr] = Csv_parse_maps
 	_ func(*Task, List[List[string]], Rune, bool) string                                        = Csv_format
 	_ func(*Task, Rune) bool                                                                    = Csv_valid_sep

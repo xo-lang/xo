@@ -37,6 +37,15 @@ fn reader(f: File, sep: Rune = ',', comment: Rune = '\0', fields: Int = -1, lazy
 /// `parse`'s; a failure of the file is a CsvErr with `line` 0 and the
 /// file's error text as `msg`.
 fn (var r: Reader) read() -> List[Str]? ! CsvErr uses fs.read
+/// Where field `i` of the last record `read` returned starts (Go's
+/// FieldPos): its line and 1-based byte column, the opening quote's for
+/// a quoted field; a field that spans lines starts on its first. After a
+/// parse error, the fields read before it. Faults on an `i` outside the
+/// record (Go panics).
+fn (r: Reader) field_pos(i: Int) -> (Int, Int)
+/// The byte offset in the file of the end of the last record read (Go's
+/// InputOffset): blank and comment lines read count, `\r\n` counts two.
+fn (r: Reader) input_offset() -> Int
 /// The records after the first, each a map from the first record's
 /// fields (the header) to its own; every record must have the header's
 /// number of fields (`wrong number of fields`).

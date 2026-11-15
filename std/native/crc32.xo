@@ -615,3 +615,37 @@ const SHIFT_K2: List[Int] = [
   3039082533, 540329999, 2598907520, 267935402, 3938293103, 2142102853, 3312518090, 1348563936,
   169271985, 2668008091, 635073556, 2966029374, 1435488251, 3231694801, 2051234142, 4015204724,
 ]
+
+/// Go's simpleMakeTable: the CRC of each byte value, bit by bit.
+fn table(poly: Int) -> crc32.Table {
+  if poly < 0 || poly > 0xffffffff {
+    fault("crc32: polynomial ${poly} is not 32 bits")
+  }
+  var t: List[Int] = List.with_capacity(256)
+  for i in 0..256 {
+    var crc = i
+    for _ in 0..8 {
+      crc = if crc & 1 == 1 { (crc >> 1) ^ poly } else { crc >> 1 }
+    }
+    t.push(crc)
+  }
+  crc32.Table{poly: poly, entries: t}
+}
+
+fn checksum_table(data: Bytes, t: crc32.Table) -> Int { update_table(0, data, t) }
+
+/// Go's Update: the fast paths for IEEE and Castagnoli, else simpleUpdate.
+fn update_table(crc: Int, data: Bytes, t: crc32.Table) -> Int {
+  if t.poly == crc32.IEEE {
+    return flate.crc32_ieee(crc & 0xffffffff, data)
+  }
+  if t.poly == crc32.CASTAGNOLI {
+    return castagnoli(crc & 0xffffffff, data)
+  }
+  var c = (crc & 0xffffffff) ^ 0xffffffff
+  let e = t.entries
+  for v in data {
+    c = e[(c ^ Int(v)) & 255] ^ (c >> 8)
+  }
+  c ^ 0xffffffff
+}

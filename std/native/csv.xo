@@ -51,6 +51,28 @@ struct Rd {
   /// the file has no more text, or failed (io_err says which)
   f_done: Bool = false
   io_err: Str = ""
+  /// the bytes of the text the lines read so far took (Go's offset, before
+  /// "\r\n" is folded)
+  off: Int = 0
+  /// a Reader's field positions, line and column per field of the last
+  /// record (Go's fieldPositions); parse keeps none
+  track: Bool = false
+  fpos: List[Int] = []
+  /// the entries of fpos the last record holds (the list is reused, as
+  /// Go reuses its fieldPositions slice)
+  fpn: Int = 0
+}
+
+/// Records a field's position for field_pos, reusing fpos's slots.
+fn put_pos(var r: Rd, line: Int, col: Int) {
+  if r.fpn + 2 <= r.fpos.len() {
+    r.fpos.set(r.fpn, line)
+    r.fpos.set(r.fpn + 1, col)
+  } else {
+    r.fpos.push(line)
+    r.fpos.push(col)
+  }
+  r.fpn += 2
 }
 
 /// Reads the next chunk of the file into the buffer, dropping the lines
@@ -111,6 +133,7 @@ fn (var r: Rd) read_line() -> (Bytes, Bool) uses fs.read {
   var line = b""
   if j < r.b.len() {
     line = r.b[r.at..j + 1]
+    r.off += j + 1 - r.at
     r.at = j + 1
     let n = line.len()
     if n >= 2 && line[n - 2] == '\r' {
@@ -118,6 +141,7 @@ fn (var r: Rd) read_line() -> (Bytes, Bool) uses fs.read {
     }
   } else {
     line = r.b[r.at..]
+    r.off += r.b.len() - r.at
     r.at = r.b.len()
     if line.len() > 0 && line[line.len() - 1] == '\r' {
       line = line[0..line.len() - 1]
@@ -197,6 +221,7 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
   var fields: List[Str] = if r.nf > 0 { List.with_capacity(r.nf) } else { [] }
   var pos_line = r.num_line
   var col = 1
+  r.fpn = 0
   while true {
     if o.trim {
       var i = 0
@@ -227,6 +252,9 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
         }
       }
       fields.push(field_str(field, bad))
+      if r.track {
+        put_pos(r, pos_line, col)
+      }
       if i >= 0 {
         line = line[i + sep_len..]
         col += i + sep_len
@@ -235,6 +263,7 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
       break
     }
     // a quoted field
+    let (f_line, f_col) = (pos_line, col)
     line = line[1..]
     col += 1
     // the field's text when it is not one view of the line (Go appends to
@@ -263,6 +292,9 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
             bb.write(seg)
             bb.freeze()
           } else { seg }, bad))
+          if r.track {
+            put_pos(r, f_line, f_col)
+          }
           // break, not a flag: bb is moved once frozen
           break
         } else if length_nl(line) == line.len() {
@@ -270,6 +302,9 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
             bb.write(seg)
             bb.freeze()
           } else { seg }, bad))
+          if r.track {
+            put_pos(r, f_line, f_col)
+          }
           r.nf = fields.len()
           return Ok(Some((fields, rec_line)))
         } else if o.lazy {
@@ -298,6 +333,9 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
           return Err(csv.CsvErr{start_line: rec_line, line: pos_line, column: col, msg: ERR_QUOTE})
         }
         fields.push(field_str(bb.freeze(), bad))
+        if r.track {
+          put_pos(r, f_line, f_col)
+        }
         r.nf = fields.len()
         return Ok(Some((fields, rec_line)))
       }
@@ -347,7 +385,7 @@ struct Reader {
 
 fn reader(f: File, sep: Rune = ',', comment: Rune = '\0', fields: Int = -1, lazy_quotes: Bool = false, trim_leading_space: Bool = false, at: rt.Loc) -> Reader {
   check_delims(sep, comment, at)
-  Reader{rd: Rd{b: b"", f: Some(f)}, o: Opts{sep: sep, comment: comment, lazy: lazy_quotes, trim: trim_leading_space}, fields: fields}
+  Reader{rd: Rd{b: b"", f: Some(f), track: true}, o: Opts{sep: sep, comment: comment, lazy: lazy_quotes, trim: trim_leading_space}, fields: fields}
 }
 
 /// Reader.Read: the next record, None at the end of the file; a failure
@@ -370,6 +408,19 @@ fn (var r: Reader) read() -> List[Str]? ! csv.CsvErr uses fs.read {
   }
   Ok(Some(rec))
 }
+
+/// Reader.FieldPos: the line and 1-based byte column where field i of the
+/// last record read starts (its opening quote, for a quoted field).
+fn (r: Reader) field_pos(i: Int, at: rt.Loc) -> (Int, Int) {
+  if i < 0 || 2 * i + 1 >= r.rd.fpn {
+    rt.fault_at("csv: out of range index passed to field_pos", at)
+  }
+  (r.rd.fpos[2 * i], r.rd.fpos[2 * i + 1])
+}
+
+/// Reader.InputOffset: the byte offset in the file of the end of the last
+/// record read.
+fn (r: Reader) input_offset() -> Int { r.rd.off }
 
 fn parse(text: Str, sep: Rune = ',', comment: Rune = '\0', fields: Int = -1, lazy_quotes: Bool = false, trim_leading_space: Bool = false, at: rt.Loc) -> List[List[Str]] ! csv.CsvErr {
   check_delims(sep, comment, at)

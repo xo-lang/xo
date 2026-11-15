@@ -5215,6 +5215,8 @@ struct Reader {}                            // records read from a File as they 
 pub fn reader(f: File, sep: Rune = ',', comment: Rune = '\0', fields: Int = -1,
               lazy_quotes: Bool = false, trim_leading_space: Bool = false) -> Reader
 pub fn (var r: Reader) read() -> List[Str]? ! CsvErr uses fs.read   // None at the end of the file
+pub fn (r: Reader) field_pos(i: Int) -> (Int, Int)   // FieldPos: line, 1-based byte column
+pub fn (r: Reader) input_offset() -> Int             // InputOffset: bytes of the file read
 pub fn valid_comment(r: Rune) -> Bool       // a usable `comment`, `'\0'` (none) included
 ```
 
@@ -5223,7 +5225,12 @@ pub fn valid_comment(r: Rune) -> Bool       // a usable `comment`, `'\0'` (none)
   larger than memory can be walked), a quoted field may hold line breaks,
   and records, errors and their line and column are `parse`'s on the same
   text. A failure of the file is a CsvErr with `line` 0 and the file's
-  error text as `msg`. The options are `parse`'s.
+  error text as `msg`. The options are `parse`'s. `field_pos(i)` is
+  FieldPos: where field `i` of the last record read starts (the opening
+  quote of a quoted field, the first line of a field spanning lines); it
+  faults on an `i` outside the record. `input_offset()` is InputOffset:
+  the byte offset of the end of the last record read, counting skipped
+  lines and `\r\n` as two bytes (2026-11-15).
 - Go's csv.Reader: `sep` is Comma, `comment` Comment (`'\0'` for none:
   lines starting with it are skipped), `fields` FieldsPerRecord (-1 any
   number, the default here where Go's is 0; 0 the first record's; N
@@ -8564,6 +8571,11 @@ software); Go's values on its crc32_test.go inputs (corpus `crc32`). Pure.
 enum Poly { Ieee, Castagnoli }
 pub fn checksum(data: Bytes, poly: Poly = Poly.Ieee) -> Int             // ChecksumIEEE, Checksum(data, MakeTable(Castagnoli))
 pub fn update(crc: Int, data: Bytes, poly: Poly = Poly.Ieee) -> Int     // Update
+const IEEE: Int = 0xedb88320; const CASTAGNOLI: Int = 0x82f63b78; const KOOPMAN: Int = 0xeb31d82e
+struct Table { poly: Int, entries: List[Int] }                          // Table
+pub fn table(poly: Int) -> Table                                        // MakeTable
+pub fn checksum_table(data: Bytes, t: Table) -> Int                     // Checksum
+pub fn update_table(crc: Int, data: Bytes, t: Table) -> Int             // Update
 ```
 
 - A checksum is 0 to 2^32 - 1. `update(checksum(a), b) == checksum(a +
@@ -8571,7 +8583,8 @@ pub fn update(crc: Int, data: Bytes, poly: Poly = Poly.Ieee) -> Int     // Updat
   at a time.
 - IEEE is the polynomial of gzip, zip, PNG and Ethernet; Castagnoli
   (CRC-32C) that of iSCSI, SCTP, ext4, Btrfs and many storage formats.
-  Go's Koopman table is not offered.
+  `table(KOOPMAN)` or any other reversed 32 bit polynomial gives Go's
+  MakeTable (2026-11-15); IEEE and CASTAGNOLI tables take the fast paths.
 
 ## 45. std/fnv
 
