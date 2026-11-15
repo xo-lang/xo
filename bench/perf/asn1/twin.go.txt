@@ -1,0 +1,76 @@
+package main
+
+import (
+	"encoding/asn1"
+	"encoding/hex"
+	"fmt"
+	"math/big"
+	"os"
+	"time"
+)
+
+const der = "3081c7020103020d1000000000000000000000303906092a864886f70d01010b0c1c586f2062656e6368206365727469666963617465207375626a656374161162656e63682e6578616d706c652e636f6d170d3236313131353132303030305a0101ff044000070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b930230201010201160202014d0202115c020300d90302030a2c2a020376adf10204054c5638"
+
+type rec struct {
+	Version int
+	Serial  *big.Int
+	Alg     asn1.ObjectIdentifier
+	Name    string `asn1:"utf8"`
+	Host    string `asn1:"ia5"`
+	When    time.Time `asn1:"utc"`
+	Ok      bool
+	Blob    []byte
+	Nums    []int
+}
+
+func bitLen(n int) int {
+	return big.NewInt(int64(n)).BitLen()
+}
+
+func check(r *rec) int {
+	sum := bitLen(r.Version) + r.Serial.BitLen() + len(r.Alg) + len(r.Name) + len(r.Host) + int(r.When.Unix()%1000) + len(r.Blob)
+	if r.Ok {
+		sum++
+	}
+	for _, n := range r.Nums {
+		sum += bitLen(n)
+	}
+	return sum
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	b, _ := hex.DecodeString(der)
+	var v rec
+	if _, err := asn1.Unmarshal(b, &v); err != nil {
+		fmt.Println("parse error:", err)
+		return
+	}
+	sum := 0
+	switch w {
+	case "parse":
+		for i := 0; i < 200000; i++ {
+			var x rec
+			if _, err := asn1.Unmarshal(b, &x); err != nil {
+				fmt.Println("parse error")
+				return
+			}
+			sum += check(&x) + i%3
+		}
+	case "der":
+		for i := 0; i < 200000; i++ {
+			out, err := asn1.Marshal(v)
+			if err != nil {
+				fmt.Println("der error")
+				return
+			}
+			sum += len(out) + int(out[i%len(out)])
+		}
+	default:
+		sum = len(b) + check(&v)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

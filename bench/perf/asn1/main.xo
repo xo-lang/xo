@@ -1,0 +1,67 @@
+// asn1: std/asn1 against Go's encoding/asn1 (twin.go.txt), decision 0616's
+// perf kind for std/asn1: a 202 byte DER record (an INTEGER, a 101 bit
+// INTEGER, an OID, UTF8 and IA5 strings, a UTCTime, a BOOLEAN, a 64 byte
+// OCTET STRING and a SEQUENCE OF 8 INTEGERs) parsed 200,000 times (Go
+// unmarshals it into a struct) and encoded again 200,000 times (der; Go
+// marshals the struct); `none` is the setup alone. Usage: `<program>
+// none|parse|der`. Prints `<workload> <checksum>`; the twin prints the same.
+use std/asn1
+
+const DER = "3081c7020103020d1000000000000000000000303906092a864886f70d01010b0c1c586f2062656e6368206365727469666963617465207375626a656374161162656e63682e6578616d706c652e636f6d170d3236313131353132303030305a0101ff044000070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b930230201010201160202014d0202115c020300d90302030a2c2a020376adf10204054c5638"
+
+fn check(v: asn1.Value) -> Int {
+  var sum = 0
+  match v {
+    Sequence(items) => {
+      for x in items {
+        sum += check(x)
+      }
+    }
+    Int(n) => sum += n.bit_len()
+    Oid(o) => sum += o.arcs.len()
+    Utf8(s) => sum += s.len()
+    Ia5(s) => sum += s.len()
+    UtcTime(t) => sum += t.unix() % 1000
+    Bool(b) => sum += if b { 1 } else { 0 }
+    OctetString(b) => sum += b.len()
+    _ => {}
+  }
+  sum
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let der = Bytes.from_hex(DER) ?? b""
+  let v = match asn1.parse(der) {
+    Ok(v) => v
+    Err(e) => {
+      os.stdio.println("parse error: ${e.display()}")
+      return
+    }
+  }
+  var sum = 0
+  if w == "parse" {
+    for i in 0..200000 {
+      match asn1.parse(der) {
+        Ok(x) => sum += check(x) + i % 3
+        Err(_) => {
+          os.stdio.println("parse error")
+          return
+        }
+      }
+    }
+  } else if w == "der" {
+    for i in 0..200000 {
+      match v.der() {
+        Ok(b) => sum += b.len() + Int(b[i % b.len()])
+        Err(_) => {
+          os.stdio.println("der error")
+          return
+        }
+      }
+    }
+  } else {
+    sum = der.len() + check(v)
+  }
+  os.stdio.println("${w} ${sum}")
+}
