@@ -987,8 +987,19 @@ prove_cross() {
 prove_selfbuild() {
   local t1
   t1=$(date +%s)
-  if XO_MAX_MEM=8G XO_BACKEND_CACHE=off XO_BIN_CACHE=off XO_WHOLE_BUILD=off "$XO_CLI" build --phase-times -o "$logs/selfbuild-xo" ./compiler/xo >"$logs/selfbuild.txt" 2>&1; then
-    echo "selfbuild: $(($(date +%s) - t1)) s, $(grep -o 'peak [0-9]* MB' "$logs/selfbuild.txt" | sort -k2 -n | tail -1)"; ran="$ran selfbuild"
+  # XO_LOCKCHECK=1: a heap region window (decision 0633) that switches
+  # fibers stops the build; the release must have run with no thread left
+  # in region mode (2026-11-14: a preempted lazy check left the mode on,
+  # the release was skipped in 3 of 4 self builds, and one gate's RSS
+  # did not show it; gotchas/region-mode-preempted.md)
+  if XO_MAX_MEM=8G XO_BACKEND_CACHE=off XO_BIN_CACHE=off XO_WHOLE_BUILD=off XO_LOCKCHECK=1 XO_HEAP_REGION_STATS=1 "$XO_CLI" build --phase-times -o "$logs/selfbuild-xo" ./compiler/xo >"$logs/selfbuild.txt" 2>&1; then
+    local rel
+    rel=$(grep -m1 '^xo heap region: release' "$logs/selfbuild.txt")
+    if [ -z "$rel" ] || ! printf '%s' "$rel" | grep -q ' 0 threads in region mode' || printf '%s' "$rel" | grep -q 'pooled -1 units'; then
+      failed=1; echo "selfbuild: FAIL (the heap region release did not run: ${rel:-no release line}; $logs/selfbuild.txt)"
+    else
+      echo "selfbuild: $(($(date +%s) - t1)) s, $(grep -o 'peak [0-9]* MB' "$logs/selfbuild.txt" | sort -k2 -n | tail -1)"; ran="$ran selfbuild"
+    fi
   else
     failed=1; echo "selfbuild: FAIL ($logs/selfbuild.txt: $(grep -m1 -E 'memory budget|error' "$logs/selfbuild.txt"))"
   fi

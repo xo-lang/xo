@@ -165,9 +165,13 @@ a gate.
 - A survivor left in region mode by mistake pins its chunk (4 MiB) until it is freed: a missed
   survivor costs memory, never correctness. The probe of step 0 and XO_HEAPSTATS (pinned region
   chunks) watch it.
-- Thread migration: a task that moves threads mid-mode switches the new thread's record word too
-  (the mode is a property of the task while it runs front end code; xo's front end tasks do not
-  yield inside a parse or a check).
+- Thread migration: the mode is the thread's while a task runs in it, so a task in region mode must
+  not move threads. It does not block inside a parse or a check, and since 2026-11-14 region_on
+  holds off preemption until region_off (pool.held, as a runtime lock does): before that, decision
+  0637's crawling workers kept work waiting, the runtime preempted a lazy check in region mode, and
+  the task's region_off ran on another thread; the count stayed at 1 and the release never ran
+  (xo's self build 5.6 GB max RSS against 3.9 GB; gotchas/region-mode-preempted.md).
+  `XO_LOCKCHECK=1` stops a build whose region window blocks.
 - Decision 0630's pool and decision 0383's cut stay as they are: they act on normal chunks.
 
 ## Alternatives

@@ -44,8 +44,11 @@ fn (var b: Builder) check_lazy(fo: Int) {
     b.skip_src[m] = true
   }
   // decision 0633: the lazy check's and parse's allocations die with the
-  // checker, in xo's front end heap region
-  let rg = if internal.heap_region(4) == 0 { internal.heap_region(1) } else { 0 }
+  // checker, in xo's front end heap region. Not on a crawling worker
+  // (decision 0637 stage 3): its lazy check can switch fibers (XO_LOCKCHECK=1
+  // stopped the self build), and a task in region mode must not move
+  // threads (gotchas/region-mode-preempted.md)
+  let rg = if !b.spec_worker && internal.heap_region(4) == 0 { internal.heap_region(1) } else { 0 }
   let errs = b.c.check_lazy(fo)
   if rg == 1 {
     let _r = internal.heap_region(2)

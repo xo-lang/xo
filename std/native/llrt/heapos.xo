@@ -891,8 +891,9 @@ fn region_record(h: Int) -> Int {
   r
 }
 
-/// The calling thread enters region mode: 1 when it did (or already was),
-/// 0 when the region cannot run here.
+/// The calling thread enters region mode: 1 when it did, 2 when it already
+/// was (the window that entered it leaves it), 0 when the region cannot
+/// run here.
 pub fn region_on() -> Int {
   if !region_ok() {
     return 0
@@ -901,7 +902,9 @@ pub fn region_on() -> Int {
   // when the task enters region mode first
   let h = thread_heap()
   if rt.mem_load(h, H_RFLAG, 8) != 0 {
-    return 1
+    // already in the mode: 2, so the caller (testing for 1) leaves it to
+    // the window that entered it, and pool.held stays balanced
+    return 2
   }
   var r = rt.mem_load(h, H_RGN, 8)
   if r == 0 {
@@ -909,6 +912,14 @@ pub fn region_on() -> Int {
   }
   let _a = rt.slot_add(main_central(), RGN_ACTIVE_I, 1, RELAXED)
   rt.tlocal_set(TLS_HEAP, r)
+  // the mode is the thread's (TLS_HEAP) while the task runs in it: the
+  // task is not preempted until region_off, as under a runtime lock
+  // (pool.held). A preemption inside a lazy check moved a task to
+  // another thread, whose region_off left the mode on the first: its
+  // count stayed at 1, so the release never ran (2026-11-14: with
+  // decision 0637's workers, xo's self build kept 5.6 GB where 3.9 GB
+  // with the release)
+  pool.held(1)
   1
 }
 
@@ -920,6 +931,7 @@ pub fn region_off() {
   }
   rt.tlocal_set(TLS_HEAP, rt.mem_load(r, H_RGN, 8))
   let _a = rt.slot_add(main_central(), RGN_ACTIVE_I, -1, RELAXED)
+  pool.held(-1)
 }
 
 /// Region mode paused on the calling thread for allocations that outlive
