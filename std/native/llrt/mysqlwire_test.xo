@@ -144,7 +144,8 @@ test "column definitions and text rows" {
   expect((c.schema, c.table, c.org_table, c.name, c.charset, c.length, c.kind, c.flags)) == ("shop", "o", "orders", "id", 63, 20, TYPE_LONGLONG, 33)
   expect(parse_text_row(b"\x011\xfb\x03abc", 3)) == Ok([Some(b"1"), None, Some(b"abc")])
   expect(parse_text_row(b"\x011", 2).is_err()) == true
-  expect(parse_text_row(b"\x011x", 1).is_err()) == true
+  // bytes after the last value are not read, as go-sql-driver's readRow
+  expect(parse_text_row(b"\x011x", 1)) == Ok([Some(b"1")])
   expect(command(COM_QUERY, b"SELECT 1")) == b"\x03SELECT 1"
 }
 
