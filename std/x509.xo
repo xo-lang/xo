@@ -278,6 +278,11 @@ struct VerifyOptions {
   /// The extended key usages the chain must allow one of (Any: no
   /// check); empty is [ServerAuth], as Go's nil.
   key_usages: List[ExtKeyUsage] = []
+  /// The policies a chain must be valid for (Go's CertificatePolicies,
+  /// RFC 9618's user-initial-policy-set); empty: any. With Go's default
+  /// options a chain is refused for its policies only when a certificate
+  /// requires an explicit policy.
+  certificate_policies: List[Oid] = []
 }
 
 /// Every chain from c to one of the roots, leaf first (Go's

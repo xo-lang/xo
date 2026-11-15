@@ -114,14 +114,20 @@ struct LevelErr {
 /// extended key usage OID wanted (x509.EKU_SERVER, ...; EKU_ANY accepts
 /// any).
 pub fn verify(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usage: Str) -> Outcome {
-  run(leaf, inters, roots, host, now, [usage], false).0
+  run(leaf, inters, roots, host, now, [usage], false, []).0
 }
 
 /// verify keeping every valid chain, as Go's Verify returns them (std/x509),
 /// for any of the wanted usages (Go's checkChainForKeyUsage over a list: a
 /// chain whose certificates all allow one of them).
 pub fn verify_all(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usages: List[Str]) -> (Outcome, List[List[x509.Cert]]) {
-  run(leaf, inters, roots, host, now, usages, true)
+  run(leaf, inters, roots, host, now, usages, true, [])
+}
+
+/// verify_all with the caller's acceptable policies (Go's
+/// VerifyOptions.CertificatePolicies, OID contents; empty: any).
+pub fn verify_all_policies(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usages: List[Str], policies: List[Bytes]) -> (Outcome, List[List[x509.Cert]]) {
+  run(leaf, inters, roots, host, now, usages, true, policies)
 }
 
 fn usages_ok(chain: List[x509.Cert], usages: List[Str]) -> Bool {
@@ -136,7 +142,7 @@ fn usages_ok(chain: List[x509.Cert], usages: List[Str]) -> Bool {
   false
 }
 
-fn run(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usages: List[Str], all: Bool) -> (Outcome, List[List[x509.Cert]]) {
+fn run(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usages: List[Str], all: Bool, policies: List[Bytes]) -> (Outcome, List[List[x509.Cert]]) {
   if leaf.unhandled > 0 {
     return (Outcome{code: UNHANDLED_CRITICAL, chain: [], bad: leaf, hint: ""}, [])
   }
@@ -169,7 +175,7 @@ fn run(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: S
   var bad_usage = 0
   var good: List[List[x509.Cert]] = []
   for ch in s.chains {
-    if !policies_ok(ch) {
+    if !policies_ok(ch, policies) {
       bad_policies += 1
       continue
     }
@@ -1166,8 +1172,9 @@ fn pg_incr(var g: PGraph) {
   g.by_valid.push({})
 }
 
-/// Go's policiesValid with its default options.
-fn policies_ok(chain: List[x509.Cert]) -> Bool {
+/// Go's policiesValid with its default options and the caller's
+/// acceptable policies (user, OID contents; empty is anyPolicy).
+fn policies_ok(chain: List[x509.Cert], user: List[Bytes]) -> Bool {
   if chain.len() == 1 {
     return true
   }
@@ -1287,14 +1294,40 @@ fn policies_ok(chain: List[x509.Cert]) -> Bool {
   if chain[0].has_req_explicit && chain[0].req_explicit == 0 {
     explicit = 0
   }
-  var valid_n = 0
+  // 6.1.5 (g), as RFC 9618: the authority's valid policies, then the
+  // user's set of them
+  var authority: Map[Bytes, Bool] = {}
   if have_graph {
-    valid_n = pg_valid_nodes(g).len()
+    for id in pg_valid_nodes(g) {
+      authority.put(g.nodes[id].valid, true)
+    }
     if pg_find(g, g.depth, any_policy()) >= 0 {
-      valid_n += 1
+      authority.put(any_policy(), true)
     }
   }
-  !(explicit == 0 && valid_n == 0)
+  var initial: Map[Bytes, Bool] = {}
+  for p in user {
+    initial.put(p, true)
+  }
+  if initial.is_empty() {
+    initial.put(any_policy(), true)
+  }
+  var n_user = authority.len()
+  if initial.len() != 1 || !initial.contains(any_policy()) {
+    var kept: Map[Bytes, Bool] = {}
+    for p in authority.keys() {
+      if initial.contains(p) {
+        kept.put(p, true)
+      }
+    }
+    if authority.contains(any_policy()) {
+      for p in initial.keys() {
+        kept.put(p, true)
+      }
+    }
+    n_user = kept.len()
+  }
+  !(explicit == 0 && n_user == 0)
 }
 
 /// A URI with an empty host as Go's url.URL.String writes it, for the

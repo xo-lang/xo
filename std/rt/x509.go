@@ -435,12 +435,23 @@ func (c *X509_Certificate) M_verify(tk *Task, o X509_VerifyOptions) Result[List[
 	if len(usages) == 0 {
 		usages = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
 	}
+	var policies []x509.OID
+	for _, p := range o.F_certificate_policies.s {
+		var g x509.OID
+		if len(p.F_der) > 0 {
+			if err := g.UnmarshalBinary([]byte(p.F_der)); err != nil {
+				return Err[List[List[X509_Certificate]]](x509Err("invalid oid"))
+			}
+		}
+		policies = append(policies, g)
+	}
 	chains, err := leaf.Verify(x509.VerifyOptions{
-		Roots:         roots,
-		Intermediates: inters,
-		DNSName:       string(o.F_dns_name),
-		CurrentTime:   time.Unix(0, int64(o.F_at)).UTC(),
-		KeyUsages:     usages,
+		Roots:               roots,
+		Intermediates:       inters,
+		DNSName:             string(o.F_dns_name),
+		CurrentTime:         time.Unix(0, int64(o.F_at)).UTC(),
+		KeyUsages:           usages,
+		CertificatePolicies: policies,
 	})
 	if err != nil {
 		return Err[List[List[X509_Certificate]]](x509ErrOf(err))

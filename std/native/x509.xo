@@ -472,7 +472,7 @@ fn certificate_verify(c: x509.Certificate, opts: x509.VerifyOptions) -> List[Lis
     usages.push(eku_oid(x509.ExtKeyUsage.ServerAuth))
   }
   let now = opts.at.unix()
-  let (r, chains) = xv.verify_all(leaf, inters, roots, opts.dns_name, now, usages)
+  let (r, chains) = xv.verify_all_policies(leaf, inters, roots, opts.dns_name, now, usages, opts.certificate_policies.map(fn(o) { o.der }))
   if chains.is_empty() {
     let text = xv.full_text(r, leaf, opts.dns_name, now)
     return Err(x509.CertErr{msg: text, kind: verify_kind(r, text, opts.dns_name)})

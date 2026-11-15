@@ -7574,7 +7574,8 @@ fn (p: CertPool) len() -> Int
 struct VerifyOptions {
   roots: List[Certificate] = [], root_pool: CertPool? = None,
   intermediates: List[Certificate] = [], intermediate_pool: CertPool? = None,
-  dns_name: Str = "", at: Time, key_usages: List[ExtKeyUsage] = []   // [] is [ServerAuth]
+  dns_name: Str = "", at: Time, key_usages: List[ExtKeyUsage] = [],  // [] is [ServerAuth]
+  certificate_policies: List[Oid] = []   // Go's CertificatePolicies; [] is any
 }
 fn (c: Certificate) verify(opts: VerifyOptions) -> List[List[Certificate]] ! CertErr
 fn (c: Certificate) verify_hostname(host: Str) -> () ! CertErr
