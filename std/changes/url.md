@@ -1,5 +1,17 @@
 # std/url changes
 
+## 2026-11-15: perf: display joins fewer pieces; first_escape eight bytes a step
+
+- Kind: perf
+- Commit: this push
+- Found by: the decision 0616 perf kind after 6f65d0d73: urltype string 1.197 of Go
+- Go reference: net/url URL.String, shouldEscape
+- Change: display writes the scheme's colon and the slashes as one piece (`://`), and a URL without a user has no userinfo pieces, where each empty piece was a copy call; first_escape (native) tests eight bytes a step against the modes table before its byte loop
+- Measured: linux/arm64 host 1, --ab against the parent, n=3: urltype string 0.856 (14.8 to 12.66 ms, better), urltype parse 0.953 (better), url escape 1.023 (0.99 to 1.048, within noise)
+- Test: internal/stdtest TestStdModules for url and its users, the url goldens on arm64 and llvm (gate), corpora urlfuzz, urltypefuzz and httpurl
+- Affected: every backend (display is Xo; first_escape native only)
+- Shipped in: not yet released
+
 ## 2026-11-15: perf: escape and the encoding checks find their first byte in native code; parse's control byte check a word at a time
 
 - Kind: perf

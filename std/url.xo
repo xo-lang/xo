@@ -501,33 +501,24 @@ pub fn (u: Url) is_abs() -> Bool { u.scheme != "" }
 pub fn (u: Url) display() -> Str {
   // the parts as Strs, empty when absent, joined by one interpolation
   // (no validation of bytes; List.join of them was slower, 1.49 to 1.32
-  // of Go on the Mac)
-  let colon = if u.scheme != "" { ":" } else { "" }
+  // of Go on the Mac); the scheme's colon and the slashes are one piece,
+  // and a URL without a user has no userinfo pieces (each piece is a copy
+  // call)
   let (qm, frag) = if u.force_query || u.raw_query != "" { ("?", u.raw_query) } else { ("", "") }
   let (hash, efrag) = if u.fragment != "" { ("#", u.escaped_fragment()) } else { ("", "") }
   if u.opaque != "" {
+    let colon = if u.scheme != "" { ":" } else { "" }
     return "${u.scheme}${colon}${u.opaque}${qm}${frag}${hash}${efrag}"
   }
-  var slashes = ""
-  var name = ""
-  var pwc = ""
-  var pw = ""
-  var at = ""
+  var sep = if u.scheme != "" { ":" } else { "" }
+  var slashes = false
   var host = ""
   let has_user = has(u.user)
   if u.scheme != "" || u.host != "" || has_user {
     if !(u.omit_host && u.host == "" && !has_user) {
       if u.host != "" || u.path != "" || has_user {
-        slashes = "//"
-      }
-      if let Some(ui) = u.user {
-        name = escape_in(ui.username, M_USER)
-        if let Some(p) = ui.password {
-          // the colon a piece of its own: `":" + x` copies the literal
-          pwc = ":"
-          pw = escape_in(p, M_USER)
-        }
-        at = "@"
+        slashes = true
+        sep = if u.scheme != "" { "://" } else { "//" }
       }
       host = escape_in(u.host, M_HOST)
     }
@@ -536,7 +527,7 @@ pub fn (u: Url) display() -> Str {
   var lead = ""
   if path != "" && !path.starts_with("/") && u.host != "" {
     lead = "/"
-  } else if u.scheme == "" && slashes == "" {
+  } else if u.scheme == "" && !slashes {
     // nothing before the path: a first segment with a colon would read
     // as a scheme, so `./` keeps it a path
     let seg = match path.cut("/") {
@@ -547,7 +538,17 @@ pub fn (u: Url) display() -> Str {
       lead = "./"
     }
   }
-  "${u.scheme}${colon}${slashes}${name}${pwc}${pw}${at}${host}${lead}${path}${qm}${frag}${hash}${efrag}"
+  if slashes || host != "" {
+    if let Some(ui) = u.user {
+      let name = escape_in(ui.username, M_USER)
+      if let Some(p) = ui.password {
+        let pw = escape_in(p, M_USER)
+        return "${u.scheme}${sep}${name}:${pw}@${host}${lead}${path}${qm}${frag}${hash}${efrag}"
+      }
+      return "${u.scheme}${sep}${name}@${host}${lead}${path}${qm}${frag}${hash}${efrag}"
+    }
+  }
+  "${u.scheme}${sep}${host}${lead}${path}${qm}${frag}${hash}${efrag}"
 }
 
 /// display with a set password as `xxxxx` (URL.Redacted).

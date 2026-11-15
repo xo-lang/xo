@@ -94,6 +94,19 @@ fn first_escape(b: Bytes, mode: Int, modes: Bytes) -> Int {
   let sp = raw.bytes_addr(b)
   let tp = raw.bytes_addr(modes)
   var i = 0
+  // eight bytes a step: their table entries ANDed, one test a word (the
+  // byte loop below finds which byte when one stops)
+  while i.wrapping_add(8) <= n {
+    let w = rt.mem_load(sp, i, 8)
+    var m = rt.mem_load(tp, w & 255, 1) & rt.mem_load(tp, (w >> 8) & 255, 1)
+    m = m & rt.mem_load(tp, (w >> 16) & 255, 1) & rt.mem_load(tp, (w >> 24) & 255, 1)
+    m = m & rt.mem_load(tp, (w >> 32) & 255, 1) & rt.mem_load(tp, (w >> 40) & 255, 1)
+    m = m & rt.mem_load(tp, (w >> 48) & 255, 1) & rt.mem_load(tp, (w >> 56) & 255, 1)
+    if (m & mode) == 0 {
+      break
+    }
+    i = i.wrapping_add(8)
+  }
   while i < n {
     if (rt.mem_load(tp, rt.mem_load(sp, i, 1), 1) & mode) == 0 {
       raw.alive(b)
