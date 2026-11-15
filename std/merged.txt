@@ -57,3 +57,4 @@ std/random
 std/task
 std/httpproxy
 std/publicsuffix
+std/hpke

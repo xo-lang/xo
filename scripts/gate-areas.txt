@@ -25,7 +25,7 @@
 @rt ^std/native/llrt/|^std/native/rt[a-z]*\.xo$|^std/prelude\.xo$|^std/native/prelude\.xo$
 @sched ^std/native/llrt/(sched|task|park|pool|fiber|chan|atomic|mutex|preempt|timer|poll|thread|alloc|heap|budget|wake|ctx|entry|concflag|cpu|det|fault|crash|signal|stack|tw|race)[a-z0-9_]*\.xo$|^std/native/rt\.xo$|^std/task\.xo$
 @race race[a-z0-9_]*\.xo$|^scripts/lead/race-rt|^compiler/(llvm|arm64)/[a-z0-9_]*race
-@crypto ^std/(crypto|tls|x509|bcrypt|jwt|otp)\.xo$|^std/native/(crypto|rtcrypto|tls|x509)\.xo$|^std/native/(crypto|tls|x509)/|^std/native/llrt/(aes|asn1|bigmod|chacha|ct|des|digest|ed25519|hkdf|hmac|mlkem|nistec|p256|p384|p521|rsa|sha|x25519|curve|poly|gcm|keccak|tls|x509|crypt|ecdh|ecdsa|rand|cabi_tls)[a-z0-9_]*\.xo$
+@crypto ^std/(crypto|tls|x509|bcrypt|jwt|otp|hpke)\.xo$|^std/native/(crypto|rtcrypto|tls|x509)\.xo$|^std/native/(crypto|tls|x509)/|^std/native/llrt/(aes|asn1|bigmod|chacha|ct|des|digest|ed25519|hkdf|hmac|mlkem|nistec|p256|p384|p521|rsa|sha|x25519|curve|poly|gcm|keccak|tls|x509|crypt|ecdh|ecdsa|rand|cabi_tls)[a-z0-9_]*\.xo$
 @http ^std/(http|url|textproto|mime|multipart|websocket)\.xo$|^std/native/(http|rthttp|url_native|websocket)\.xo$|^std/native/http/|^std/native/llrt/(h2|hpack|hclient|hconn|http|cabi_h2|cabi_http|cabi_net|net|sock|poll)[a-z0-9_]*\.xo$
 @time ^std/(time|timego)\.xo$|^std/native/(time|rttime)\.xo$|^std/tzdata/|^std/native/llrt/(cabi_time|time|tz)[a-z0-9_]*\.xo$|^compiler/tzsel/
 @cabi ^std/native/llrt/cabi[a-z0-9_]*\.xo$|^std/native/sys_[a-z]*\.xo$|cbind|^compiler/xo/(cffi|clib|clang)\.xo$

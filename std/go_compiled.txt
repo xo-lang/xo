@@ -41,3 +41,4 @@ sse
 jsonrpc
 httpproxy
 publicsuffix
+hpke

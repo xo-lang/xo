@@ -9606,3 +9606,63 @@ empty label (`publicsuffix: empty label in domain ".com"`) and on a
 domain that is itself a suffix (`cannot derive eTLD+1`). Checked against
 x/net on 3,058 domains (testdata/corpus/publicsuffix) and Go's own tests.
 
+
+## 84. std/hpke
+
+Hybrid Public Key Encryption (decision 0646): RFC 9180's base mode and
+the post-quantum KEMs of draft-ietf-hpke-pq, a port of Go's crypto/hpke
+(go1.26) on std/crypto's ECDH, ML-KEM, HKDF, SHAKE and AEADs. Pure but
+for randomness, which comes from a `Rand` (a merged module; the Go
+backend compiles the same source).
+
+```xo
+enum Kem { DhkemP256, DhkemP384, DhkemP521, DhkemX25519, Mlkem768, Mlkem1024, Mlkem768X25519, Mlkem768P256, Mlkem1024P384 }
+enum Kdf { HkdfSha256, HkdfSha384, HkdfSha512, Shake128, Shake256 }
+enum Aead { Aes128Gcm, Aes256Gcm, ChaCha20Poly1305, ExportOnly }
+fn (k: Kem) id() -> Int                       // also Kdf.id, Aead.id: the RFC 9180 identifiers
+fn new_kem(id: Int) -> Kem ! HpkeErr          // NewKEM; also new_kdf, new_aead
+fn dhkem(c: crypto.EcdhCurve) -> Kem
+
+fn (k: Kem) generate_key(r: Rand) -> PrivateKey uses rand
+fn (k: Kem) public_key(data: Bytes) -> PublicKey ! HpkeErr     // NewPublicKey
+fn (k: Kem) private_key(data: Bytes) -> PrivateKey ! HpkeErr   // NewPrivateKey
+fn (k: Kem) derive_key_pair(ikm: Bytes) -> PrivateKey ! HpkeErr
+fn dhkem_public_key(k: crypto.EcdhPublicKey) -> PublicKey      // and dhkem_private_key, mlkem_public_key,
+fn hybrid_public_key(pq: crypto.MlkemEncapsulationKey, t: crypto.EcdhPublicKey) -> PublicKey ! HpkeErr  // mlkem_private_key, hybrid_private_key
+fn (k: PublicKey) kem() -> Kem
+fn (k: PublicKey) bytes() -> Bytes
+fn (k: PrivateKey) bytes() -> Bytes ! HpkeErr
+fn (k: PrivateKey) public_key() -> PublicKey
+
+struct Sender {}                              // @move_only: a copy would reuse its nonces
+struct Recipient {}                           // @move_only
+fn new_sender(r: Rand, pk: PublicKey, kdf: Kdf, aead: Aead, info: Bytes = b"") -> Sender ! HpkeErr uses rand
+fn new_recipient(enc: Bytes, k: PrivateKey, kdf: Kdf, aead: Aead, info: Bytes = b"") -> Recipient ! HpkeErr
+fn (s: Sender) enc() -> Bytes                 // the encapsulated key for the recipient
+fn (var s: Sender) seal(aad: Bytes, plaintext: Bytes) -> Bytes ! HpkeErr
+fn (var r: Recipient) open(aad: Bytes, ciphertext: Bytes) -> Bytes ! HpkeErr
+fn (s: Sender) export(context: Bytes, n: Int) -> Bytes ! HpkeErr   // also Recipient.export
+fn seal(r: Rand, pk: PublicKey, kdf: Kdf, aead: Aead, info: Bytes, plaintext: Bytes) -> Bytes ! HpkeErr uses rand
+fn open(k: PrivateKey, kdf: Kdf, aead: Aead, info: Bytes, ciphertext: Bytes) -> Bytes ! HpkeErr
+struct HpkeErr { msg: Str }
+```
+
+- Go's `NewSender` returns the encapsulated key beside the Sender; here
+  it is `s.enc()`. Export takes the exporter context as Bytes.
+- Encapsulation reads r: DHKEM its ephemeral key (`ecdh_generate_key`),
+  ML-KEM its 32 byte message, a hybrid its ML-KEM message and then its
+  ephemeral curve key, so a Rand that answers fixed bytes reproduces
+  RFC 9180's and draft-ietf-hpke-pq's vectors.
+- Errors are Go's texts: `unsupported KEM`, `unsupported KDF 0012`,
+  `invalid public key size`, `invalid encapsulated key size`, `ciphertext
+  too short`, `export-only instantiation`, `invalid length`, `hkdf:
+  requested key length too large`, `private key seed not available`,
+  std/crypto's ECDH and ML-KEM texts as Go passes them on, and the
+  AEAD's (`cipher: message authentication failed`, `chacha20poly1305:
+  message authentication failed`). A failed open leaves the sequence
+  where it was.
+- Checked against Go (testdata/corpus/hpke): the base mode vectors of
+  Go's testdata/rfc9180.json and hpke-pq.json (accumulated encryptions
+  and exports included), DeriveKeyPair of seeded inputs, messages Go
+  sealed opened as sealed, changed and cut, and Go's errors; plus
+  TestRoundTrip on every KEM, KDF and AEAD.
