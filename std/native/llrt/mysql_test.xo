@@ -1,0 +1,303 @@
+// std/sql's MySQL driver (decision 0648): DSNs, values, literals and
+// interpolation, error mapping, and conversations with fake servers on
+// FakeNet; the conformance run checks a real one.
+use std/sql
+use native/llrt/mysqlauth as auth
+use native/llrt/mysqlwire as w
+
+test "DSNs: go-sql-driver's documented format" {
+  let c = config("app:p@ss:w@rd@tcp(db.internal:3307)/shop?parseTime=true&charset=utf8mb4&sql_mode=%27ANSI%27") ?? e => fault("${e}")
+  expect((c.user, c.password, c.net, c.addr, c.database, c.tls, c.parse_time, c.collation)) == ("app", "p@ss:w@rd", "tcp", "db.internal:3307", "shop", "true", true, 45)
+  expect(c.vars) == [("sql_mode", "'ANSI'")]
+  let d = config("/") ?? e => fault("${e}")
+  expect((d.user, d.net, d.addr, d.database)) == ("", "tcp", "127.0.0.1:3306", "")
+  let u = config("root@unix(/var/run/mysqld/mysqld.sock)/x?tls=preferred") ?? e => fault("${e}")
+  expect((u.net, u.addr, u.tls)) == ("unix", "/var/run/mysqld/mysqld.sock", "false")
+  let h = config("u@tcp(db)/x") ?? e => fault("${e}")
+  expect(h.addr) == "db:3306"
+  let v6 = config("u@tcp([::1])/x") ?? e => fault("${e}")
+  expect(v6.addr) == "[::1]:3306"
+  let v6p = config("u@tcp([::1]:3307)/x") ?? e => fault("${e}")
+  expect(v6p.addr) == "[::1]:3307"
+  let a = config("u@/x?connectionAttributes=app:shop,env:prod&tls=skip-verify&clientFoundRows=true") ?? e => fault("${e}")
+  expect((a.attrs, a.tls, a.client_found_rows)) == ([("app", "shop"), ("env", "prod")], "skip-verify", true)
+}
+
+test "DSNs: what is refused" {
+  expect(config("u@tcp(x)").is_err()) == true
+  expect(config("u@tcp(x/db").is_err()) == true
+  expect(config("u@udp(x)/db").err()) == Some(sql.SqlErr.Param(msg: "unknown network udp"))
+  expect(config("u@/db?tls=maybe").is_err()) == true
+  expect(config("u@/db?parseTime=yes").err()) == Some(sql.SqlErr.Param(msg: "parseTime: invalid bool \"yes\""))
+  expect(config("u@/db?loc=Local").is_err()) == true
+  expect(config("u@/db?allowOldPasswords=true").is_err()) == true
+  expect(config("u@/db?collation=klingon").is_err()) == true
+  expect(config("u@/db?x=%zz").is_err()) == true
+}
+
+fn col(kind: Int, charset: Int, flags: Int) -> w.Column {
+  w.Column{schema: "", table: "t", org_table: "t", name: "c", org_name: "c", charset: charset, length: 20, kind: kind, flags: flags, decimals: 0}
+}
+
+test "values by column type" {
+  expect(decode_text(col(8, 63, 0), Some(b"-42"), false)) == sql.SqlValue.Integer(n: -42)
+  expect(decode_text(col(8, 63, 32), Some(b"18446744073709551615"), false)) == sql.SqlValue.Text(s: "18446744073709551615")
+  expect(decode_text(col(246, 63, 0), Some(b"1.50"), false)) == sql.SqlValue.Text(s: "1.50")
+  expect(decode_text(col(5, 63, 0), Some(b"2.5"), false)) == sql.SqlValue.Real(f: 2.5)
+  expect(decode_text(col(253, 45, 0), Some(b"hi"), false)) == sql.SqlValue.Text(s: "hi")
+  expect(decode_text(col(252, 63, 128), Some(b"\x00\xff"), false)) == sql.SqlValue.Blob(b: b"\x00\xff")
+  expect(decode_text(col(245, 63, 0), Some(b"{\"a\": 1}"), false)) == sql.SqlValue.JsonText(s: "{\"a\": 1}")
+  expect(decode_text(col(12, 63, 0), Some(b"2026-11-15 03:04:05.123456"), false)) == sql.SqlValue.Text(s: "2026-11-15 03:04:05.123456")
+  expect(decode_text(col(12, 63, 0), Some(b"2026-11-15 03:04:05.123456"), true)) == sql.SqlValue.At(t: Time.parse_rfc3339("2026-11-15T03:04:05.123456Z") ?? Time.UNIX_EPOCH)
+  expect(decode_text(col(10, 63, 0), Some(b"2026-11-15"), true)) == sql.SqlValue.At(t: Time.parse_rfc3339("2026-11-15T00:00:00Z") ?? Time.UNIX_EPOCH)
+  expect(decode_text(col(11, 63, 0), Some(b"-838:59:59"), true)) == sql.SqlValue.Text(s: "-838:59:59")
+  expect(decode_text(col(3, 63, 0), None, true)) == sql.SqlValue.Null
+}
+
+test "literals and interpolation" {
+  expect(quote_bytes(b"a'b\"c\\d\x00\n\r\x1a", false)) == "'a\\'b\\\"c\\\\d\\0\\n\\r\\Z'"
+  expect(quote_bytes(b"it's", true)) == "'it''s'"
+  expect(interpolate("SELECT ?, ?, ?, ?", [sql.int(1), sql.str("x"), sql.null(), sql.bool(true)], false)) == Ok("SELECT 1, 'x', NULL, 1")
+  expect(interpolate("SELECT '?', \"?\", `?`, ? -- ?\n, /* ? */ ?", [sql.int(1), sql.int(2)], false)) == Ok("SELECT '?', \"?\", `?`, 1 -- ?\n, /* ? */ 2")
+  expect(interpolate("SELECT 'it\\'s ?', ?", [sql.int(7)], false)) == Ok("SELECT 'it\\'s ?', 7")
+  expect(interpolate("SELECT ?", [], false).is_err()) == true
+  expect(interpolate("SELECT 1", [sql.int(1)], false).is_err()) == true
+  expect(interpolate("SELECT ?", [sql.bytes(b"\x00\x01")], false)) == Ok("SELECT _binary'\\0\x01'")
+  let t = Time.parse_rfc3339("2026-11-15T03:04:05.5Z") ?? Time.UNIX_EPOCH
+  expect(datetime_text(t)) == "2026-11-15 03:04:05.500000"
+  expect(datetime_text(Time.parse_rfc3339("2026-11-15T03:04:05Z") ?? Time.UNIX_EPOCH)) == "2026-11-15 03:04:05"
+}
+
+test "server errors by number" {
+  expect(server_err(w.ErrPacket{code: 1062, state: "23000", msg: "Duplicate entry '1' for key 'users.PRIMARY'"})) == sql.SqlErr.Constraint(msg: "Error 1062 (23000): Duplicate entry '1' for key 'users.PRIMARY'", code: "23000", name: "users.PRIMARY")
+  expect(server_err(w.ErrPacket{code: 1452, state: "23000", msg: "Cannot add or update a child row: a foreign key constraint fails (`shop`.`o`, CONSTRAINT `o_ibfk_1` FOREIGN KEY (`u`) REFERENCES `u` (`id`))"}) is Constraint(..)) == true
+  expect(server_err(w.ErrPacket{code: 1146, state: "42S02", msg: "Table 'shop.nope' doesn't exist"})) == sql.SqlErr.NoTable(name: "shop.nope")
+  expect(server_err(w.ErrPacket{code: 1064, state: "42000", msg: "You have an error"})) == sql.SqlErr.Syntax(msg: "Error 1064 (42000): You have an error")
+  expect(server_err(w.ErrPacket{code: 1213, state: "40001", msg: "Deadlock found"})) == sql.SqlErr.Server(code: "40001", msg: "Error 1213 (40001): Deadlock found")
+  expect(fk_name("a foreign key constraint fails (`shop`.`o`, CONSTRAINT `o_ibfk_1` FOREIGN KEY")) == "o_ibfk_1"
+}
+
+// ---- fake servers on FakeNet (decision 0292), speaking the documented
+// packets: they check what the driver sends and answer as MySQL 8 does
+
+
+const FK_NONCE: Bytes = b"0123456789abcdefghij"
+
+/// The server's caps: protocol 4.1 with plugins, and DEPRECATE_EOF when eof is false.
+fn fk_caps(deprecate_eof: Bool) -> Int {
+  let c = w.CLIENT_PROTOCOL_41 | w.CLIENT_SECURE_CONNECTION | w.CLIENT_PLUGIN_AUTH | w.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA | w.CLIENT_CONNECT_WITH_DB | w.CLIENT_TRANSACTIONS | w.CLIENT_MULTI_RESULTS | w.CLIENT_LONG_PASSWORD | w.CLIENT_CONNECT_ATTRS
+  if deprecate_eof { c | w.CLIENT_DEPRECATE_EOF } else { c }
+}
+
+fn fk_handshake(caps: Int, plugin: Str) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_byte(10)
+  b.write(b"8.4.3\x00")
+  b.write_le(7, 4)
+  b.write(FK_NONCE[0..8])
+  b.write_byte(0)
+  b.write_le(caps & 65535, 2)
+  b.write_byte(255)
+  b.write_le(2, 2)
+  b.write_le(caps >> 16, 2)
+  b.write_byte(21)
+  b.write(b"\x00".repeat(10))
+  b.write(FK_NONCE[8..20] + b"\x00")
+  b.write(plugin.bytes() + b"\x00")
+  b.freeze()
+}
+
+fn fk_ok(affected: Int, id: Int, status: Int) -> Bytes { b"\x00" + w.lenenc_int(affected) + w.lenenc_int(id) + w.le_bytes(status, 2) + b"\x00\x00" }
+
+fn fk_err(code: Int, state: Str, msg: Str) -> Bytes { b"\xff" + w.le_bytes(code, 2) + "#${state}${msg}".bytes() }
+
+fn fk_col(name: Str, kind: Int, charset: Int, flags: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for s in ["def", "app", "t", "t", name, name] {
+    b.write(w.lenenc_str(s.bytes()))
+  }
+  b.write(b"\x0c")
+  b.write_le(charset, 2)
+  b.write_le(20, 4)
+  b.write_byte(UInt8(kind))
+  b.write_le(flags, 2)
+  b.write(b"\x00\x00\x00")
+  b.freeze()
+}
+
+/// Reads one packet of c: (payload, seq, the bytes after it).
+fn fk_read(c: ServerConn, buf: Bytes) -> (Bytes, Int, Bytes)? ! NetErr {
+  var have = buf
+  while true {
+    if let Some((p, seq, took)) = w.packet(have) {
+      return Some((p, seq, have[took..have.len()]))
+    }
+    match c.read(65536)? {
+      Some(more) => have = have + more
+      None => return None
+    }
+  }
+  None
+}
+
+/// A server: the handshake, the auth exchange login gives, then answer
+/// per command packet (each answer a list of payloads, sent from seq 1).
+fn fk_serve(l: Listener, caps: Int, plugin: Str, login: fn(Bytes, ServerConn, Int) -> Int ! NetErr uses net.listen, answer: fn(Bytes) -> List[Bytes]) -> () ! NetErr {
+  while let Ok(c) = l.accept() {
+    c.write(w.frame(0, fk_handshake(caps, plugin)).0)?
+    let (resp, _, rest) = fk_read(c, b"")? ?? (b"", 0, b"")
+    var buf = rest
+    let _ = login(resp, c, 2)?
+    while true {
+      match fk_read(c, buf)? {
+        Some((cmd, _, rest2)) => {
+          buf = rest2
+          if cmd.is_empty() || Int(cmd[0]) == w.COM_QUIT {
+            break
+          }
+          var seq = 1
+          for out in answer(cmd) {
+            c.write(w.frame(seq, out).0)?
+            seq += 1
+          }
+        }
+        None => break
+      }
+    }
+    c.close()
+  }
+}
+
+/// The auth response's field after the user (lenenc auth data).
+fn fk_auth_of(resp: Bytes) -> Bytes {
+  var r = w.reader(resp[32..resp.len()])
+  let _ = r.nul().ok() ?? b""
+  (r.lenenc_bytes().ok() ?? None) ?? b""
+}
+
+/// caching_sha2_password's fast path: the scramble checked, then 0x03 and OK.
+fn fk_sha2_fast(resp: Bytes, c: ServerConn, seq: Int) -> Int ! NetErr {
+  if fk_auth_of(resp) != auth.sha2_scramble(b"pw", FK_NONCE) {
+    c.write(w.frame(seq, fk_err(1045, "28000", "Access denied for user 'app'")).0)?
+    return Ok(seq + 1)
+  }
+  c.write(w.frame(seq, b"\x01\x03").0)?
+  c.write(w.frame(seq + 1, fk_ok(0, 0, 2)).0)?
+  Ok(seq + 2)
+}
+
+fn fk_rows_server(eof: Bool) -> fn(Bytes) -> List[Bytes] {
+  fn(cmd) {
+    let q = cmd[1..cmd.len()].to_str_lossy()
+    if Int(cmd[0]) == w.COM_PING {
+      return [fk_ok(0, 0, 2)]
+    }
+    if q.starts_with("SELECT id") {
+      var out = [w.lenenc_int(3), fk_col("id", w.TYPE_LONGLONG, 63, w.FLAG_NOT_NULL), fk_col("name", w.TYPE_VAR_STRING, 45, 0), fk_col("at", w.TYPE_DATETIME, 63, 0)]
+      if eof {
+        out.push(b"\xfe\x00\x00\x02\x00")
+      }
+      out.push(w.lenenc_str(b"1") + w.lenenc_str(b"a") + w.lenenc_str(b"2026-11-15 03:04:05"))
+      out.push(w.lenenc_str(b"2") + b"\xfb" + b"\xfb")
+      out.push(if eof { b"\xfe\x00\x00\x02\x00" } else { b"\xfe\x00\x00\x02\x00\x00\x00" })
+      return out
+    }
+    if q.starts_with("INSERT") {
+      return [fk_ok(2, 41, 2)]
+    }
+    if q.starts_with("BAD") {
+      return [fk_err(1064, "42000", "You have an error in your SQL syntax")]
+    }
+    if q == "SELECT * FROM missing WHERE a = 'x\\'y' AND b = 7" {
+      return [fk_err(1146, "42S02", "Table 'app.missing' doesn't exist")]
+    }
+    [fk_ok(0, 0, 2)]
+  }
+}
+
+test "a fake server: caching_sha2_password's fast path, rows with DEPRECATE_EOF, an exec's counts" {
+  let l = os.net.listen("db.test:3306")?
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_caps(true), "caching_sha2_password", fk_sha2_fast, fk_rows_server(false)).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false&parseTime=true")?
+    let rows = db.query("SELECT id, name, at FROM t")?
+    expect(rows.len()) == 2
+    expect(rows[0].int("id")) == Ok(1)
+    expect(rows[0].str("name")) == Ok("a")
+    expect(rows[0].time("at").map(fn(t) { t.format_rfc3339() })) == Ok("2026-11-15T03:04:05Z")
+    expect(rows[1].str_opt("name")) == Ok(None)
+    let r = db.exec("INSERT INTO t VALUES (?, ?)", [sql.int(1), sql.str("x")])?
+    expect((r.rows_affected, r.last_insert_id)) == (2, 41)
+    expect(db.exec("BAD").err()) == Some(sql.SqlErr.Syntax(msg: "Error 1064 (42000): You have an error in your SQL syntax"))
+    expect(db.query("SELECT * FROM missing WHERE a = ? AND b = ?", [sql.str("x'y"), sql.int(7)]).err()) == Some(sql.SqlErr.NoTable(name: "app.missing"))
+    s.cancel()
+  }
+}
+
+test "a fake server: an old server's EOF packets" {
+  let l = os.net.listen("db.test:3306")?
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_caps(false), "caching_sha2_password", fk_sha2_fast, fk_rows_server(true)).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false")?
+    let rows = db.query("SELECT id, name, at FROM t")?
+    expect(rows.len()) == 2
+    expect(rows[0].str("at")) == Ok("2026-11-15 03:04:05")
+    s.cancel()
+  }
+}
+
+test "a fake server: a wrong password is the server's error" {
+  let l = os.net.listen("db.test:3306")?
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_caps(true), "caching_sha2_password", fk_sha2_fast, fk_rows_server(false)).ignore_err("the server stops when the test ends") })
+    let r = sql.open(os.net, "mysql", "app:wrong@tcp(db.test:3306)/app?tls=false")
+    expect(r.err()) == Some(sql.SqlErr.Server(code: "28000", msg: "Error 1045 (28000): Access denied for user 'app'"))
+    s.cancel()
+  }
+}
+
+/// A switch to mysql_native_password with a new nonce.
+fn fk_switch_native(resp: Bytes, c: ServerConn, seq: Int) -> Int ! NetErr {
+  let fresh = b"ABCDEFGHIJKLMNOPQRST"
+  c.write(w.frame(seq, b"\xfemysql_native_password\x00" + fresh + b"\x00").0)?
+  let (back, _, _) = fk_read(c, b"")? ?? (b"", 0, b"")
+  if back != auth.native_scramble(b"pw", fresh) {
+    c.write(w.frame(seq + 2, fk_err(1045, "28000", "Access denied")).0)?
+    return Ok(seq + 3)
+  }
+  c.write(w.frame(seq + 2, fk_ok(0, 0, 2)).0)?
+  Ok(seq + 3)
+}
+
+test "a fake server: an AuthSwitchRequest to mysql_native_password, and allowNativePasswords=false" {
+  let l = os.net.listen("db.test:3306")?
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_caps(true), "caching_sha2_password", fk_switch_native, fk_rows_server(false)).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false")?
+    expect(db.query("SELECT id, name, at FROM t").map(fn(r) { r.len() })) == Ok(2)
+    let refused = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false&allowNativePasswords=false")
+    expect(refused.err()) == Some(sql.SqlErr.Conn(msg: "mysql_native_password is not allowed (allowNativePasswords=false)"))
+    s.cancel()
+  }
+}
+
+/// caching_sha2_password's full authentication: 0x04, then the password
+/// over a link the driver must call secure.
+fn fk_sha2_full(resp: Bytes, c: ServerConn, seq: Int) -> Int ! NetErr {
+  c.write(w.frame(seq, b"\x01\x04").0)?
+  c.write(w.frame(seq + 2, fk_ok(0, 0, 2)).0)?
+  Ok(seq + 3)
+}
+
+test "a fake server: full authentication over plain TCP is refused, TLS is required by default" {
+  let l = os.net.listen("db.test:3306")?
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_caps(true), "caching_sha2_password", fk_sha2_full, fk_rows_server(false)).ignore_err("the server stops when the test ends") })
+    let r = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false")
+    expect(r.err().map(fn(e) { "${e}".contains("needs TLS or a Unix socket") })) == Some(true)
+    // the default is tls=true, and this server has no TLS
+    let d = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app")
+    expect(d.err()) == Some(sql.SqlErr.Conn(msg: "the server does not support TLS (tls=true; tls=false to connect in plain text)"))
+    s.cancel()
+  }
+}

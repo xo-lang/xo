@@ -17,6 +17,7 @@ use native/rt
 use native/rtsql
 use native/llrt/raw
 use native/llrt/sysio
+use native/llrt/mysql
 use native/llrt/pg
 
 /// The Display of SqlErr (decision 0358); std/rt/sqltext.go prints the same.
@@ -271,6 +272,10 @@ fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, 
   if driver is "postgres" | "postgresql" {
     // the driver is Xo and dials through net, so Net.only applies (decision 0278)
     return open_driver(net, pg.PgDriver{roots: roots}, dsn, max_open: max_open, max_idle: max_idle, max_lifetime: max_lifetime)
+  }
+  if driver == "mysql" {
+    // the driver is Xo and dials through net, as Postgres's (decision 0648)
+    return open_driver(net, mysql.MysqlDriver{roots: roots}, dsn, max_open: max_open, max_idle: max_idle, max_lifetime: max_lifetime)
   }
   if !rt.net_lists(net).is_empty() {
     // the driver dials by itself, so an allowlist cannot be enforced:

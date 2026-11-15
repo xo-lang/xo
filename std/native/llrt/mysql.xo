@@ -1,0 +1,1024 @@
+// std/sql's MySQL driver (decision 0648): a sql.Driver over the packets of
+// mysqlwire.xo and the scrambles of mysqlauth.xo, dialing through the Net
+// it is given. Written from MySQL's protocol documentation (route (a),
+// decision 0648 item 11): the connection phase
+// (page_protocol_connection_phase), COM_QUERY and its text resultsets
+// (page_protocol_com_query_response), COM_PING, COM_QUIT, and the server
+// error list of the reference manual. The DSN keeps the format Go's
+// go-sql-driver/mysql documents in its README, an interface the driver
+// reads, not code it copies. TLS through std/tls's client after an
+// SSLRequest.
+//
+// Stage A: TCP and Unix sockets, TLS, mysql_native_password,
+// caching_sha2_password (fast path, and full authentication over a secure
+// link), mysql_clear_password and sha256_password over a secure link, the
+// text protocol, arguments interpolated into the text, values, errors,
+// transactions, copy_from as batched INSERTs. Stage B: server side
+// prepared statements and binary rows, RSA full authentication, loc.
+use std/sql
+use std/tls
+use native/llrt/mysqlwire as w
+use native/llrt/mysqlauth as auth
+
+fn param_err(msg: Str) -> sql.SqlErr { sql.SqlErr.Param(msg: msg) }
+fn conn_err(msg: Str) -> sql.SqlErr { sql.SqlErr.Conn(msg: msg) }
+
+// ---------------------------------------------------------------------------
+// Configuration (the DSN)
+
+/// A connection's settings, from the DSN.
+pub struct Config {
+  pub user: Str
+  pub password: Str
+  /// "tcp" or "unix".
+  pub net: Str
+  pub addr: Str
+  pub database: Str
+  /// "true" (verified), "custom" (verified against open's roots),
+  /// "skip-verify", "preferred" or "false".
+  pub tls: Str
+  pub parse_time: Bool
+  pub loc: Str
+  /// The collation's number (utf8mb4_general_ci, 45, by default).
+  pub collation: Int
+  pub allow_native: Bool
+  pub allow_cleartext: Bool
+  pub allow_public_key: Bool
+  pub multi_statements: Bool
+  pub interpolate: Bool
+  pub client_found_rows: Bool
+  pub columns_with_alias: Bool
+  pub reject_read_only: Bool
+  pub max_allowed_packet: Int
+  pub attrs: List[(Str, Str)]
+  /// Other parameters: system variables set after connecting.
+  pub vars: List[(Str, Str)]
+}
+
+/// The collations a DSN may name (information_schema.COLLATIONS: the
+/// common utf8mb4, utf8mb3, latin1, ascii and binary ones).
+fn collation_id(name: Str) -> Int? {
+  match name {
+    "utf8mb4_general_ci" => Some(45)
+    "utf8mb4_bin" => Some(46)
+    "utf8mb4_unicode_ci" => Some(224)
+    "utf8mb4_0900_ai_ci" => Some(255)
+    "utf8mb4_0900_as_cs" => Some(278)
+    "utf8mb4_0900_bin" => Some(309)
+    "utf8_general_ci" | "utf8mb3_general_ci" => Some(33)
+    "utf8_bin" | "utf8mb3_bin" => Some(83)
+    "utf8_unicode_ci" | "utf8mb3_unicode_ci" => Some(192)
+    "latin1_swedish_ci" => Some(8)
+    "latin1_bin" => Some(47)
+    "ascii_general_ci" => Some(11)
+    "binary" => Some(63)
+    _ => None
+  }
+}
+
+/// A character set's default collation.
+fn charset_collation(cs: Str) -> Int? {
+  match cs {
+    "utf8mb4" => Some(45)
+    "utf8" | "utf8mb3" => Some(33)
+    "latin1" => Some(8)
+    "ascii" => Some(11)
+    "binary" => Some(63)
+    _ => None
+  }
+}
+
+/// %XX escapes decoded (a DSN's parameter values); None for a bad one.
+fn unescape(s: Str) -> Str? {
+  let b = s.bytes()
+  var w = BytesBuilder.with_capacity(b.len())
+  var i = 0
+  while i < b.len() {
+    if b[i] == 37 {
+      if i + 2 >= b.len() {
+        return None
+      }
+      let v = Int.parse_base(b[i + 1..i + 3].to_str() ?? "", 16)?
+      w.write_byte(UInt8(v))
+      i += 3
+    } else {
+      w.write_byte(b[i])
+      i += 1
+    }
+  }
+  w.freeze().to_str()
+}
+
+fn bool_param(k: Str, v: Str) -> Bool ! sql.SqlErr {
+  match v {
+    "true" | "1" | "TRUE" | "True" => Ok(true)
+    "false" | "0" | "FALSE" | "False" => Ok(false)
+    _ => Err(param_err("${k}: invalid bool ${v.quote()}"))
+  }
+}
+
+/// Parses `[user[:password]@][net[(addr)]]/dbname[?param1=value1&...]`.
+pub fn config(dsn: Str) -> Config ! sql.SqlErr {
+  var cfg = Config{user: "", password: "", net: "tcp", addr: "", database: "", tls: "true", parse_time: false, loc: "UTC", collation: 45, allow_native: true, allow_cleartext: false, allow_public_key: false, multi_statements: false, interpolate: false, client_found_rows: false, columns_with_alias: false, reject_read_only: false, max_allowed_packet: 67108864, attrs: [], vars: []}
+  // the database starts after the last /; the parameters after the first ?
+  // that follows it
+  let slash = dsn.rfind("/") ?? return Err(param_err("invalid DSN: missing the slash separating the database name"))
+  let head = dsn[0..slash]
+  var tail = dsn[slash + 1..dsn.len()]
+  var query = ""
+  if let Some((db, q)) = tail.cut("?") {
+    tail = db
+    query = q
+  }
+  cfg.database = tail
+  // user:password@ before the last @ of the head
+  var where_ = head
+  if let Some(at) = head.rfind("@") {
+    let cred = head[0..at]
+    where_ = head[at + 1..head.len()]
+    match cred.cut(":") {
+      Some((u, p)) => {
+        cfg.user = u
+        cfg.password = p
+      }
+      None => cfg.user = cred
+    }
+  }
+  if !where_.is_empty() {
+    match where_.cut("(") {
+      Some((n, rest)) => {
+        if !rest.ends_with(")") {
+          return Err(param_err("invalid DSN: network address not terminated (missing closing brace)"))
+        }
+        cfg.net = n
+        cfg.addr = rest[0..rest.len() - 1]
+      }
+      None => cfg.net = where_
+    }
+  }
+  match cfg.net {
+    "tcp" => {
+      if cfg.addr.is_empty() {
+        cfg.addr = "127.0.0.1:3306"
+      } else if !has_port(cfg.addr) {
+        cfg.addr = if cfg.addr.contains(":") && !cfg.addr.starts_with("[") { "[${cfg.addr}]:3306" } else { "${cfg.addr}:3306" }
+      }
+    }
+    "unix" => {
+      if cfg.addr.is_empty() {
+        cfg.addr = "/tmp/mysql.sock"
+      }
+    }
+    _ => return Err(param_err("unknown network ${cfg.net}"))
+  }
+  if !query.is_empty() {
+    for kv in query.split("&") {
+      if kv.is_empty() {
+        continue
+      }
+      let (k, raw) = kv.cut("=") ?? (kv, "")
+      let v = unescape(raw) ?? return Err(param_err("invalid DSN: ${k}: invalid escape in ${raw.quote()}"))
+      match k {
+        "tls" => {
+          match v {
+            "true" | "1" => cfg.tls = "true"
+            "false" | "0" => cfg.tls = "false"
+            "skip-verify" | "preferred" | "custom" => cfg.tls = v
+            _ => return Err(param_err("tls: invalid value ${v.quote()}: true, false, skip-verify, preferred or custom (roots: on sql.open)"))
+          }
+        }
+        "parseTime" => cfg.parse_time = bool_param(k, v)?
+        "loc" => {
+          if v == "Local" {
+            return Err(param_err("loc=Local: there is no process time zone without env; name the zone"))
+          }
+          if v != "UTC" {
+            return Err(param_err("loc=${v}: only UTC yet (decision 0648 stage B)"))
+          }
+          cfg.loc = v
+        }
+        "charset" => {
+          // the first of a comma separated list that is known
+          var found = false
+          for cs in v.split(",") {
+            if let Some(id) = charset_collation(cs) {
+              cfg.collation = id
+              found = true
+              break
+            }
+          }
+          if !found {
+            return Err(param_err("charset: unknown ${v.quote()}"))
+          }
+        }
+        "collation" => cfg.collation = collation_id(v) ?? return Err(param_err("collation: unknown ${v.quote()}"))
+        "allowNativePasswords" => cfg.allow_native = bool_param(k, v)?
+        "allowCleartextPasswords" => cfg.allow_cleartext = bool_param(k, v)?
+        "allowPublicKeyRetrieval" => cfg.allow_public_key = bool_param(k, v)?
+        "allowOldPasswords" => {
+          if bool_param(k, v)? {
+            return Err(param_err("allowOldPasswords: the pre 4.1 password hash is broken and not supported"))
+          }
+        }
+        "multiStatements" => cfg.multi_statements = bool_param(k, v)?
+        "interpolateParams" => cfg.interpolate = bool_param(k, v)?
+        "clientFoundRows" => cfg.client_found_rows = bool_param(k, v)?
+        "columnsWithAlias" => cfg.columns_with_alias = bool_param(k, v)?
+        "rejectReadOnly" => cfg.reject_read_only = bool_param(k, v)?
+        "maxAllowedPacket" => cfg.max_allowed_packet = Int.parse(v) ?? return Err(param_err("maxAllowedPacket: invalid number ${v.quote()}"))
+        "timeout" | "readTimeout" | "writeTimeout" => {
+          // durations are std/sql's and the caller's deadlines; accepted
+          // and not applied here
+        }
+        "connectionAttributes" => {
+          for a in v.split(",") {
+            if let Some((ak, av)) = a.cut(":") {
+              cfg.attrs.push((ak, av))
+            } else if !a.is_empty() {
+              return Err(param_err("connectionAttributes: ${a.quote()} is not key:value"))
+            }
+          }
+        }
+        "serverPubKey" => return Err(param_err("serverPubKey: RSA authentication is stage B of decision 0648"))
+        _ => cfg.vars.push((k, v))
+      }
+    }
+  }
+  if cfg.net == "unix" && (cfg.tls == "preferred") {
+    cfg.tls = "false"
+  }
+  Ok(cfg)
+}
+
+fn has_port(addr: Str) -> Bool {
+  if addr.starts_with("[") {
+    return addr.contains("]:")
+  }
+  match addr.rfind(":") {
+    Some(i) => !addr[0..i].contains(":")
+    None => false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The driver
+
+pub struct MysqlDriver {
+  /// PEM roots for tls=custom (open's roots argument).
+  pub roots: Bytes
+}
+
+/// A connection to the server: plain, or upgraded to TLS after the
+/// SSLRequest.
+enum Link {
+  Plain(c: Conn)
+  Tls(t: tls.TlsConn)
+}
+
+fn (l: Link) read(max: Int) -> Bytes? ! NetErr uses net.dial {
+  match l {
+    Plain(c) => c.read(max)
+    Tls(t) => t.read(max)
+  }
+}
+
+fn (l: Link) write(data: Bytes) -> () ! NetErr uses net.dial {
+  match l {
+    Plain(c) => c.write(data)
+    Tls(t) => t.write(data)
+  }
+}
+
+fn (l: Link) close() {
+  match l {
+    Plain(c) => c.close()
+    Tls(t) => t.close()
+  }
+}
+
+pub struct MyConn {
+  c: Link
+  /// Bytes read and not yet decoded.
+  buf: Mutex[Bytes]
+  /// The next packet's sequence id.
+  seq: Atomic[Int]
+  broken: Atomic[Bool]
+  /// The capabilities both sides have.
+  caps: Int
+  cfg: Config
+  /// The server's status flags of the last OK or EOF.
+  status: Atomic[Int]
+}
+
+fn net_err(e: NetErr) -> sql.SqlErr {
+  match e {
+    Canceled => sql.SqlErr.Canceled
+    _ => conn_err("${e}")
+  }
+}
+
+fn (d: MysqlDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr uses net.dial {
+  let cfg = config(dsn)?
+  if cfg.tls == "custom" && d.roots.is_empty() {
+    return Err(param_err("tls=custom needs roots: (PEM) on sql.open"))
+  }
+  let addr = if cfg.net == "unix" { "unix:${cfg.addr}" } else { cfg.addr }
+  let c = net.dial(addr).map_err(fn(e) {
+    match e {
+      Denied(_) => conn_err("dial ${addr}: denied by Net.only")
+      _ => net_err(e)
+    }
+  })?
+  let p = MyConn{c: Link.Plain(c: c), buf: Mutex.new(b""), seq: Atomic.new(0), broken: Atomic.new(false), caps: 0, cfg: cfg, status: Atomic.new(0)}
+  match handshake(p, d.roots, c) {
+    Ok(q) => Ok(q)
+    Err(e) => {
+      p.c.close()
+      Err(e)
+    }
+  }
+}
+
+fn (p: MyConn) send(payload: Bytes) -> () ! sql.SqlErr uses net.dial {
+  let (data, next) = w.frame(p.seq.get(), payload)
+  p.seq.set(next)
+  match p.c.write(data) {
+    Ok(_) => Ok(())
+    Err(e) => {
+      p.broken.set(true)
+      Err(net_err(e))
+    }
+  }
+}
+
+/// The next packet's payload; a failure or a sequence id out of order
+/// breaks the connection.
+fn (p: MyConn) recv() -> Bytes ! sql.SqlErr uses net.dial {
+  while true {
+    // the check and the take in one with (core 5.4)
+    let got = p.buf.with(fn(var b) -> (Bytes, Int, Int)? {
+      match w.join(b) {
+        Some((payload, first, seq, took)) => {
+          b = b[took..b.len()]
+          Some((payload, first, seq))
+        }
+        None => None
+      }
+    })
+    match got {
+      Some((payload, first, seq)) => {
+        if first != p.seq.get() {
+          p.broken.set(true)
+          return Err(conn_err("packets out of order: sequence id ${first}, want ${p.seq.get()}"))
+        }
+        p.seq.set((seq + 1) % 256)
+        return Ok(payload)
+      }
+      None => {}
+    }
+    match p.c.read(65536) {
+      Ok(Some(more)) => p.buf.with(fn(var b) { b = b + more })
+      Ok(None) => {
+        p.broken.set(true)
+        return Err(conn_err("unexpected EOF"))
+      }
+      Err(e) => {
+        p.broken.set(true)
+        return Err(net_err(e))
+      }
+    }
+  }
+  Err(conn_err("unreachable"))
+}
+
+fn wire_err(p: MyConn, e: w.WireErr) -> sql.SqlErr {
+  p.broken.set(true)
+  conn_err(e.msg)
+}
+
+/// The capabilities the driver asks for, of those the server has.
+fn client_caps(server: Int, cfg: Config) -> Int {
+  var c = w.CLIENT_PROTOCOL_41 | w.CLIENT_SECURE_CONNECTION | w.CLIENT_PLUGIN_AUTH | w.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA | w.CLIENT_LONG_PASSWORD | w.CLIENT_LONG_FLAG | w.CLIENT_TRANSACTIONS | w.CLIENT_MULTI_RESULTS | w.CLIENT_PS_MULTI_RESULTS | w.CLIENT_DEPRECATE_EOF | w.CLIENT_CONNECT_ATTRS
+  if !cfg.database.is_empty() {
+    c = c | w.CLIENT_CONNECT_WITH_DB
+  }
+  if cfg.client_found_rows {
+    c = c | w.CLIENT_FOUND_ROWS
+  }
+  if cfg.multi_statements {
+    c = c | w.CLIENT_MULTI_STATEMENTS
+  }
+  c & server
+}
+
+/// What the TLS failure of a server with MySQL's generated certificate
+/// says (decision 0648 item 4).
+fn tls_hint(cfg: Config, e: NetErr) -> sql.SqlErr {
+  match e {
+    Canceled => sql.SqlErr.Canceled
+    _ => conn_err("tls: ${e} (with tls=${cfg.tls}, the server's certificate must verify: MySQL's auto generated certificate is self signed, so pass its CA as roots: with tls=custom, or use tls=skip-verify)")
+  }
+}
+
+fn handshake(p0: MyConn, roots: Bytes, raw: Conn) -> MyConn ! sql.SqlErr uses net.dial {
+  let cfg = p0.cfg
+  let hs = w.parse_handshake(p0.recv()?).map_err(fn(e) { wire_err(p0, e) })?
+  if hs.caps & w.CLIENT_PROTOCOL_41 == 0 {
+    return Err(conn_err("the server ${hs.version} does not speak protocol 4.1"))
+  }
+  var caps = client_caps(hs.caps, cfg)
+  var p = p0
+  var secure = cfg.net == "unix"
+  if cfg.net == "tcp" && cfg.tls != "false" {
+    if hs.caps & w.CLIENT_SSL == 0 {
+      if cfg.tls != "preferred" {
+        return Err(conn_err("the server does not support TLS (tls=${cfg.tls}; tls=false to connect in plain text)"))
+      }
+    } else {
+      caps = caps | w.CLIENT_SSL
+      p0.send(w.ssl_request(caps, cfg.max_allowed_packet, cfg.collation))?
+      let verify = match cfg.tls {
+        "true" | "custom" => tls.Verify.Full
+        _ => tls.Verify.None
+      }
+      var rs: tls.Roots? = None
+      if !roots.is_empty() {
+        rs = Some(tls.roots(roots).map_err(fn(e) { param_err("roots: ${e}") })?)
+      }
+      let host = host_of(cfg.addr)
+      let t = tls.client(raw, host, roots: rs, verify: verify).map_err(fn(e) { tls_hint(cfg, e) })?
+      p = MyConn{c: Link.Tls(t: t), buf: p0.buf, seq: p0.seq, broken: p0.broken, caps: caps, cfg: cfg, status: p0.status}
+      secure = true
+    }
+  }
+  p = MyConn{c: p.c, buf: p.buf, seq: p.seq, broken: p.broken, caps: caps, cfg: cfg, status: p.status}
+  var plugin = if hs.plugin.is_empty() { "mysql_native_password" } else { hs.plugin }
+  var nonce = hs.nonce
+  let pw = cfg.password.bytes()
+  let first = plugin_response(cfg, plugin, pw, nonce, secure)?
+  let attrs = [("_client_name", "xo"), ("_os", "xo")] + cfg.attrs
+  p.send(w.handshake_response(caps, cfg.max_allowed_packet, cfg.collation, cfg.user, first, cfg.database, plugin, attrs))?
+  // the auth phase: switches and more data until OK or ERR
+  while true {
+    match w.parse_auth(p.recv()?, caps).map_err(fn(e) { wire_err(p, e) })? {
+      Ok(ok) => {
+        p.status.set(ok.status)
+        break
+      }
+      Err(e) => return Err(server_err(e))
+      Switch(name, data) => {
+        if name == "mysql_old_password" {
+          return Err(conn_err("the server asks for mysql_old_password, the pre 4.1 hash, which is broken and not supported"))
+        }
+        plugin = name
+        nonce = data
+        p.send(plugin_response(cfg, plugin, pw, nonce, secure)?)?
+      }
+      More(data) => {
+        if plugin == "caching_sha2_password" && data.len() == 1 && Int(data[0]) == auth.SHA2_FAST_AUTH_OK {
+          continue
+        }
+        if plugin == "caching_sha2_password" && data.len() == 1 && Int(data[0]) == auth.SHA2_PERFORM_FULL_AUTH {
+          if !secure {
+            return Err(conn_err("caching_sha2_password: the server asks for full authentication, which sends the password: it needs TLS or a Unix socket (RSA with server_pub_key is decision 0648 stage B)"))
+          }
+          p.send(auth.clear(pw))?
+          continue
+        }
+        return Err(conn_err("${plugin}: unexpected data from the server (RSA authentication is decision 0648 stage B)"))
+      }
+    }
+  }
+  if !cfg.vars.is_empty() {
+    // the other parameters are system variables, set as one statement
+    var sets: List[Str] = []
+    for (k, v) in cfg.vars {
+      sets.push("${k}=${v}")
+    }
+    let _ = run(p, "SET ${sets.join(",")}")?
+  }
+  Ok(p)
+}
+
+fn host_of(addr: Str) -> Str {
+  if addr.starts_with("[") {
+    return (addr.cut("]") ?? (addr, "")).0[1..]
+  }
+  (addr.cut(":") ?? (addr, "")).0
+}
+
+/// A plugin's response, with the DSN's permissions checked.
+fn plugin_response(cfg: Config, plugin: Str, pw: Bytes, nonce: Bytes, secure: Bool) -> Bytes ! sql.SqlErr {
+  if plugin == "mysql_native_password" && !cfg.allow_native {
+    return Err(conn_err("mysql_native_password is not allowed (allowNativePasswords=false)"))
+  }
+  if plugin == "mysql_clear_password" {
+    if !cfg.allow_cleartext {
+      return Err(conn_err("mysql_clear_password sends the password in clear: set allowCleartextPasswords=true"))
+    }
+    if !secure {
+      return Err(conn_err("mysql_clear_password needs TLS or a Unix socket"))
+    }
+  }
+  if plugin == "sha256_password" && !secure && !pw.is_empty() {
+    return Err(conn_err("sha256_password needs TLS or a Unix socket (RSA with server_pub_key is decision 0648 stage B)"))
+  }
+  auth.first_response(plugin, pw, nonce, secure).or_err(conn_err("unknown authentication plugin ${plugin}"))
+}
+
+// ---------------------------------------------------------------------------
+// Errors (the server error reference's numbers, mapped to SqlErr)
+
+fn server_err(e: w.ErrPacket) -> sql.SqlErr {
+  let msg = "Error ${e.code} (${e.state}): ${e.msg}"
+  match e.code {
+    1062 | 1586 => sql.SqlErr.Constraint(msg: msg, code: e.state, name: dup_key(e.msg))
+    1451 | 1452 | 1216 | 1217 => sql.SqlErr.Constraint(msg: msg, code: e.state, name: fk_name(e.msg))
+    1048 | 1364 => sql.SqlErr.Constraint(msg: msg, code: e.state, name: "")
+    3819 => sql.SqlErr.Constraint(msg: msg, code: e.state, name: quoted_after(e.msg, "Check constraint "))
+    1064 | 1149 => sql.SqlErr.Syntax(msg: msg)
+    1146 => sql.SqlErr.NoTable(name: quoted_after(e.msg, "Table "))
+    1317 | 3024 => sql.SqlErr.Canceled
+    _ => sql.SqlErr.Server(code: e.state, msg: msg)
+  }
+}
+
+/// The key of "Duplicate entry 'x' for key 'name'".
+fn dup_key(msg: Str) -> Str {
+  match msg.rfind(" for key '") {
+    Some(i) => {
+      let rest = msg[i + 10..msg.len()]
+      (rest.cut("'") ?? (rest, "")).0
+    }
+    None => ""
+  }
+}
+
+/// The constraint of "... CONSTRAINT `name` FOREIGN KEY ...".
+fn fk_name(msg: Str) -> Str {
+  match msg.find("CONSTRAINT `") {
+    Some(i) => {
+      let rest = msg[i + 12..msg.len()]
+      (rest.cut("`") ?? (rest, "")).0
+    }
+    None => ""
+  }
+}
+
+/// The name quoted with ' after prefix ("Table 'db.t' doesn't exist").
+fn quoted_after(msg: Str, prefix: Str) -> Str {
+  match msg.find(prefix + "'") {
+    Some(i) => {
+      let rest = msg[i + prefix.len() + 1..msg.len()]
+      (rest.cut("'") ?? (rest, "")).0
+    }
+    None => ""
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Values
+
+/// A text row's value by its column (decision 0648 item 8).
+pub fn decode_text(c: w.Column, v: Bytes?, parse_time: Bool) -> sql.SqlValue {
+  let b = v ?? return sql.SqlValue.Null
+  let s = b.to_str_lossy()
+  match c.kind {
+    0 | 246 => sql.SqlValue.Text(s: s)
+    1 | 2 | 3 | 8 | 9 | 13 => match Int.parse(s) {
+      Some(n) => sql.SqlValue.Integer(n: n)
+      // BIGINT UNSIGNED above Int.max: its digits
+      None => sql.SqlValue.Text(s: s)
+    }
+    4 | 5 => match Float.parse(s) {
+      Some(f) => sql.SqlValue.Real(f: f)
+      None => sql.SqlValue.Text(s: s)
+    }
+    7 | 10 | 12 | 14 => if parse_time { time_value(s) } else { sql.SqlValue.Text(s: s) }
+    16 | 255 => sql.SqlValue.Blob(b: b)
+    245 => sql.SqlValue.JsonText(s: s)
+    15 | 247 | 248 | 249 | 250 | 251 | 252 | 253 | 254 => if c.charset == w.CHARSET_BINARY { sql.SqlValue.Blob(b: b) } else { sql.SqlValue.Text(s: s) }
+    _ => sql.SqlValue.Text(s: s)
+  }
+}
+
+/// A DATE, DATETIME or TIMESTAMP's text as a time in UTC; a zero date is
+/// the zero time (0001-01-01), a text that is not a date stays Text.
+fn time_value(s: Str) -> sql.SqlValue {
+  if s.starts_with("0000-00-00") {
+    return sql.SqlValue.At(t: Time.parse_rfc3339("0001-01-01T00:00:00Z") ?? Time.UNIX_EPOCH)
+  }
+  let iso = if s.len() == 10 { "${s}T00:00:00Z" } else { "${s.replace(" ", "T")}Z" }
+  match Time.parse_rfc3339(iso) {
+    Some(t) => sql.SqlValue.At(t: t)
+    None => sql.SqlValue.Text(s: s)
+  }
+}
+
+/// A Str as a quoted literal: backslash escapes, or with the server's
+/// NO_BACKSLASH_ESCAPES mode only the quote doubled.
+pub fn quote_bytes(b: Bytes, no_backslash: Bool) -> Str {
+  var o = BytesBuilder.with_capacity(b.len() + 2)
+  o.write_byte(39)
+  for c in b {
+    if no_backslash {
+      if c == 39 {
+        o.write_str("''")
+      } else {
+        o.write_byte(c)
+      }
+      continue
+    }
+    match Int(c) {
+      0 => o.write_str("\\0")
+      10 => o.write_str("\\n")
+      13 => o.write_str("\\r")
+      26 => o.write_str("\\Z")
+      34 => o.write_str("\\\"")
+      39 => o.write_str("\\'")
+      92 => o.write_str("\\\\")
+      _ => o.write_byte(c)
+    }
+  }
+  o.write_byte(39)
+  o.freeze().to_str_lossy()
+}
+
+/// A value as SQL text.
+pub fn literal(v: sql.SqlValue, no_backslash: Bool) -> Str ! sql.SqlErr {
+  match v {
+    Null => Ok("NULL")
+    Integer(n) => Ok("${n}")
+    Text(s) => Ok(quote_bytes(s.bytes(), no_backslash))
+    Real(f) => {
+      if f.is_nan() || f.is_inf() {
+        return Err(param_err("MySQL has no ${f}"))
+      }
+      Ok("${f}")
+    }
+    Flag(b) => Ok(if b { "1" } else { "0" })
+    At(t) => Ok(quote_bytes(datetime_text(t).bytes(), no_backslash))
+    // _binary keeps the bytes out of the connection's character set
+    Blob(b) => Ok("_binary" + quote_bytes(b, no_backslash))
+    JsonText(s) => Ok(quote_bytes(s.bytes(), no_backslash))
+    Array(_) => Err(param_err("MySQL has no array type"))
+  }
+}
+
+/// A time as DATETIME's text in UTC, with microseconds when it has them.
+pub fn datetime_text(t: Time) -> Str {
+  let r = t.format_rfc3339()
+  // 2026-11-15T03:04:05[.fraction]Z
+  let body = r.trim_suffix("Z").replace("T", " ")
+  match body.cut(".") {
+    Some((sec, frac)) => {
+      let f = (frac + "000000")[0..6]
+      if f == "000000" { sec } else { "${sec}.${f}" }
+    }
+    None => body
+  }
+}
+
+/// q with each ? outside quotes and comments replaced by an argument's
+/// literal; Param when the counts differ.
+pub fn interpolate(q: Str, args: List[sql.SqlValue], no_backslash: Bool) -> Str ! sql.SqlErr {
+  let b = q.bytes()
+  var o = BytesBuilder.with_capacity(b.len() + 16 * args.len())
+  var n = 0
+  var i = 0
+  while i < b.len() {
+    let c = Int(b[i])
+    if c == 39 || c == 34 || c == 96 {
+      // a quoted string or name to its closing quote
+      let start = i
+      i += 1
+      while i < b.len() {
+        if Int(b[i]) == 92 && c != 96 && !no_backslash {
+          i += 2
+          continue
+        }
+        if Int(b[i]) == c {
+          if i + 1 < b.len() && Int(b[i + 1]) == c {
+            i += 2
+            continue
+          }
+          break
+        }
+        i += 1
+      }
+      i = (i + 1).min(b.len())
+      o.write(b[start..i])
+      continue
+    }
+    if c == 35 || (c == 45 && i + 2 < b.len() && Int(b[i + 1]) == 45 && (Int(b[i + 2]) == 32 || Int(b[i + 2]) == 9)) {
+      // a comment to the end of the line
+      let start = i
+      while i < b.len() && Int(b[i]) != 10 {
+        i += 1
+      }
+      o.write(b[start..i])
+      continue
+    }
+    if c == 47 && i + 1 < b.len() && Int(b[i + 1]) == 42 {
+      let start = i
+      i = match b[i + 2..b.len()].find(b"*/") {
+        Some(j) => i + 2 + j + 2
+        None => b.len()
+      }
+      o.write(b[start..i])
+      continue
+    }
+    if c == 63 {
+      if n >= args.len() {
+        return Err(param_err("the statement has more ? placeholders than the ${args.len()} arguments"))
+      }
+      o.write_str(literal(args[n], no_backslash)?)
+      n += 1
+      i += 1
+      continue
+    }
+    o.write_byte(b[i])
+    i += 1
+  }
+  if n != args.len() {
+    return Err(param_err("${args.len()} arguments for ${n} ? placeholders"))
+  }
+  Ok(o.freeze().to_str_lossy())
+}
+
+// ---------------------------------------------------------------------------
+// Queries
+
+/// One result set, or the OK of a statement with none.
+struct Result1 {
+  cols: List[w.Column]
+  rows: List[List[sql.SqlValue]]
+  affected: Int
+  insert_id: Int
+}
+
+/// Every result of one COM_QUERY, in order.
+fn run(p: MyConn, q: Str) -> List[Result1] ! sql.SqlErr uses net.dial {
+  if p.broken.get() {
+    return Err(conn_err("the connection is broken"))
+  }
+  p.seq.set(0)
+  p.send(w.command(w.COM_QUERY, q.bytes()))?
+  var out: List[Result1] = []
+  var failed: sql.SqlErr? = None
+  while true {
+    let first = p.recv()?
+    if first.is_empty() {
+      p.broken.set(true)
+      return Err(conn_err("an empty packet where a result starts"))
+    }
+    var more = false
+    match Int(first[0]) {
+      0 => {
+        let ok = w.ok_packet(first, p.caps).map_err(fn(e) { wire_err(p, e) })?
+        p.status.set(ok.status)
+        out.push(Result1{cols: [], rows: [], affected: ok.affected, insert_id: ok.insert_id})
+        more = ok.status & w.SERVER_MORE_RESULTS_EXISTS != 0
+      }
+      255 => {
+        let e = w.err_packet(first, true).map_err(fn(x) { wire_err(p, x) })?
+        if p.cfg.reject_read_only && (e.code == 1290 || e.code == 1792) {
+          p.broken.set(true)
+        }
+        // an error ends the statement list
+        if failed.is_none() {
+          failed = Some(server_err(e))
+        }
+      }
+      251 => {
+        // LOAD DATA LOCAL INFILE: the driver sends no file
+        p.send(b"")?
+        let _ = p.recv()?
+        if failed.is_none() {
+          failed = Some(sql.SqlErr.Driver(msg: "LOAD DATA LOCAL INFILE is refused: the driver reads no file"))
+        }
+      }
+      _ => {
+        let r = read_result_set(p, first)?
+        out.push(r.0)
+        more = r.1
+      }
+    }
+    if !more {
+      break
+    }
+  }
+  match failed {
+    Some(e) => Err(e)
+    None => Ok(out)
+  }
+}
+
+/// A result set from its column count packet to its end: the set, and
+/// whether more results follow.
+fn read_result_set(p: MyConn, first: Bytes) -> (Result1, Bool) ! sql.SqlErr uses net.dial {
+  var r = w.reader(first)
+  let n = r.lenenc().map_err(fn(e) { wire_err(p, e) })? ?? 0
+  var cols: List[w.Column] = []
+  for _ in 0..n {
+    cols.push(w.parse_column(p.recv()?).map_err(fn(e) { wire_err(p, e) })?)
+  }
+  if p.caps & w.CLIENT_DEPRECATE_EOF == 0 {
+    let eof = p.recv()?
+    if !w.is_end(eof) {
+      p.broken.set(true)
+      return Err(conn_err("no EOF after the column definitions"))
+    }
+  }
+  var rows: List[List[sql.SqlValue]] = []
+  while true {
+    let pk = p.recv()?
+    if w.is_end(pk) {
+      let st = w.end_status(pk, p.caps).map_err(fn(e) { wire_err(p, e) })?
+      p.status.set(st)
+      return Ok((Result1{cols: cols, rows: rows, affected: 0, insert_id: 0}, st & w.SERVER_MORE_RESULTS_EXISTS != 0))
+    }
+    if pk.len() > 0 && pk[0] == 255 {
+      // an error in the middle of the rows ends the statement
+      let e = w.err_packet(pk, true).map_err(fn(x) { wire_err(p, x) })?
+      return Err(server_err(e))
+    }
+    let vals = w.parse_text_row(pk, cols.len()).map_err(fn(e) { wire_err(p, e) })?
+    var row: List[sql.SqlValue] = List.with_capacity(vals.len())
+    for (i, v) in vals.indexed() {
+      row.push(decode_text(cols[i], v, p.cfg.parse_time))
+    }
+    rows.push(row)
+  }
+  Ok((Result1{cols: cols, rows: rows, affected: 0, insert_id: 0}, false))
+}
+
+/// The status's NO_BACKSLASH_ESCAPES bit.
+fn no_backslash(p: MyConn) -> Bool { p.status.get() & 512 != 0 }
+
+/// q with its arguments in the text (stage A; stage B prepares it on the
+/// server unless interpolateParams=true).
+fn text_of(p: MyConn, q: Str, args: List[sql.SqlValue]) -> Str ! sql.SqlErr {
+  if args.is_empty() {
+    return Ok(q)
+  }
+  interpolate(q, args, no_backslash(p))
+}
+
+fn col_name(p: MyConn, c: w.Column) -> Str {
+  if p.cfg.columns_with_alias && !c.table.is_empty() { "${c.table}.${c.name}" } else { c.name }
+}
+
+fn (p: MyConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  let rs = run(p, text_of(p, q, args)?)?
+  // the first result set (the rest, with multiStatements, are read and
+  // dropped; std/sql's query_all is stage D)
+  for r in rs {
+    if !r.cols.is_empty() {
+      return Ok(sql.DriverRows{columns: r.cols.map(fn(c) { col_name(p, c) }), rows: r.rows, column_types: column_types(r.cols)})
+    }
+  }
+  Ok(sql.DriverRows{columns: [], rows: []})
+}
+
+fn (p: MyConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  let rs = run(p, text_of(p, q, args)?)?
+  // the last statement's counts
+  var res = sql.ExecResult{rows_affected: 0, last_insert_id: 0}
+  for r in rs {
+    res = sql.ExecResult{rows_affected: r.affected, last_insert_id: r.insert_id}
+  }
+  Ok(res)
+}
+
+fn (p: MyConn) begin() -> () ! sql.SqlErr uses net.dial {
+  let _ = run(p, "START TRANSACTION")?
+}
+
+fn (p: MyConn) commit() -> () ! sql.SqlErr uses net.dial {
+  let _ = run(p, "COMMIT")?
+}
+
+fn (p: MyConn) rollback() -> () ! sql.SqlErr uses net.dial {
+  let _ = run(p, "ROLLBACK")?
+}
+
+fn (p: MyConn) ping() -> () ! sql.SqlErr uses net.dial {
+  if p.broken.get() {
+    return Err(conn_err("the connection is broken"))
+  }
+  p.seq.set(0)
+  p.send(w.command(w.COM_PING, b""))?
+  let r = p.recv()?
+  if r.len() > 0 && r[0] == 255 {
+    return Err(server_err(w.err_packet(r, true).map_err(fn(e) { wire_err(p, e) })?))
+  }
+}
+
+fn quote_name(s: Str) -> Str { "`" + s.replace("`", "``") + "`" }
+
+/// copy_from: INSERTs of as many rows as fit under maxAllowedPacket, in
+/// the caller's transaction (decision 0648 item 10).
+fn (p: MyConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  let head = "INSERT INTO ${quote_name(table)} (${columns.map(quote_name).join(", ")}) VALUES "
+  let limit = (p.cfg.max_allowed_packet - 1024).max(4096)
+  var total = 0
+  var batch = BytesBuilder.new()
+  var in_batch = 0
+  while true {
+    let next = rows()?
+    match next {
+      Some(vals) => {
+        if vals.len() != columns.len() {
+          return Err(param_err("a row of ${vals.len()} values for ${columns.len()} columns"))
+        }
+        var t: List[Str] = []
+        for v in vals {
+          t.push(literal(v, no_backslash(p))?)
+        }
+        let one = "(${t.join(", ")})"
+        if in_batch > 0 && batch.len() + one.len() + 2 > limit {
+          total += p.exec(head + batch.freeze().to_str_lossy(), [])?.rows_affected
+          batch = BytesBuilder.new()
+          in_batch = 0
+        }
+        if in_batch > 0 {
+          batch.write_str(", ")
+        }
+        batch.write_str(one)
+        in_batch += 1
+      }
+      None => break
+    }
+  }
+  if in_batch > 0 {
+    total += p.exec(head + batch.freeze().to_str_lossy(), [])?.rows_affected
+  }
+  Ok(total)
+}
+
+fn (p: MyConn) close() uses net.dial {
+  p.seq.set(0)
+  let (data, _) = w.frame(0, w.command(w.COM_QUIT, b""))
+  let _ = p.c.write(data).is_ok()
+  p.c.close()
+}
+
+fn (p: MyConn) is_broken() -> Bool { p.broken.get() }
+
+// ---------------------------------------------------------------------------
+// Column types (decision 0609)
+
+/// MySQL's name for a column's type (the reference manual's data type
+/// names), "UNSIGNED " before an unsigned integer's.
+pub fn type_name(c: w.Column) -> Str {
+  let unsigned = c.flags & w.FLAG_UNSIGNED != 0
+  let binary = c.charset == w.CHARSET_BINARY
+  let base = match c.kind {
+    0 | 246 => "DECIMAL"
+    1 => "TINYINT"
+    2 => "SMALLINT"
+    3 => "INT"
+    4 => "FLOAT"
+    5 => "DOUBLE"
+    6 => "NULL"
+    7 => "TIMESTAMP"
+    8 => "BIGINT"
+    9 => "MEDIUMINT"
+    10 | 14 => "DATE"
+    11 => "TIME"
+    12 => "DATETIME"
+    13 => "YEAR"
+    15 | 253 => if binary { "VARBINARY" } else { "VARCHAR" }
+    16 => "BIT"
+    245 => "JSON"
+    247 => "ENUM"
+    248 => "SET"
+    249 => if binary { "TINYBLOB" } else { "TINYTEXT" }
+    250 => if binary { "MEDIUMBLOB" } else { "MEDIUMTEXT" }
+    251 => if binary { "LONGBLOB" } else { "LONGTEXT" }
+    252 => if binary { "BLOB" } else { "TEXT" }
+    254 => if c.flags & 256 != 0 { "ENUM" } else if c.flags & 2048 != 0 { "SET" } else if binary { "BINARY" } else { "CHAR" }
+    255 => "GEOMETRY"
+    _ => ""
+  }
+  if unsigned && (c.kind is 1 | 2 | 3 | 8 | 9) { "UNSIGNED ${base}" } else { base }
+}
+
+fn kind_of(c: w.Column) -> Str {
+  match decode_text(c, Some(b"0"), true) {
+    Integer(_) => "Integer"
+    Real(_) => "Real"
+    Blob(_) => "Blob"
+    JsonText(_) => "JsonText"
+    At(_) => "At"
+    _ => "Text"
+  }
+}
+
+pub fn column_types(cols: List[w.Column]) -> List[sql.ColumnType] {
+  cols.map(fn(c) {
+    let dec = c.kind == 0 || c.kind == 246
+    sql.ColumnType{name: c.name, database_type: type_name(c), precision: if dec { Some(c.length - (if c.decimals > 0 { 1 } else { 0 }) - (if c.flags & w.FLAG_UNSIGNED != 0 { 0 } else { 1 })) } else { None }, scale: if dec { Some(c.decimals) } else { None }, nullable: Some(c.flags & w.FLAG_NOT_NULL == 0), kind: kind_of(c)}
+  })
+}

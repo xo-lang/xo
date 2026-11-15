@@ -58,7 +58,7 @@ pub const MAX_PAYLOAD: Int = 16777215
 
 // ---- integers and strings ----
 
-fn le_bytes(v: Int, n: Int) -> Bytes {
+pub fn le_bytes(v: Int, n: Int) -> Bytes {
   var b = BytesBuilder.with_capacity(n)
   b.write_le(v, n)
   b.freeze()
@@ -215,18 +215,22 @@ pub fn packet(buf: Bytes) -> (Bytes, Int, Int)? {
 }
 
 /// A whole logical packet at the start of buf, joined from its pieces:
-/// (payload, the last piece's sequence id, the bytes taken), or None
-/// until buf holds them all.
-pub fn join(buf: Bytes) -> (Bytes, Int, Int)? {
+/// (payload, the first and the last piece's sequence ids, the bytes
+/// taken), or None until buf holds them all.
+pub fn join(buf: Bytes) -> (Bytes, Int, Int, Int)? {
   var at = 0
+  var first = -1
   var w = BytesBuilder.new()
   while true {
     match packet(buf[at..buf.len()]) {
       Some((p, seq, took)) => {
+        if first < 0 {
+          first = seq
+        }
         w.write(p)
         at += took
         if p.len() < MAX_PAYLOAD {
-          return Some((w.freeze(), seq, at))
+          return Some((w.freeze(), first, seq, at))
         }
       }
       None => return None
