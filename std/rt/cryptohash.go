@@ -8,6 +8,7 @@ import (
 	"crypto/sha3"
 	"crypto/sha512"
 	"encoding"
+	"encoding/binary"
 	"hash"
 	"strings"
 )
@@ -42,6 +43,7 @@ type Crypto_Hasher struct {
 	state string // the inner hash's MarshalBinary
 	opad  string // the outer padded key of an HMAC, "" for a plain hash
 	total int64
+	start string // the state hasher or hmac_hasher made, for reset
 }
 
 func (Crypto_Hasher) XoDebug(b *strings.Builder) { b.WriteString("<hasher>") }
@@ -64,7 +66,8 @@ func (x Crypto_Hasher) restore() hash.Hash {
 }
 
 func Crypto_hasher(_ *Task, h Crypto_Hash) Crypto_Hasher {
-	return Crypto_Hasher{hash: h, state: hasherState(cryptoHashes[h.Tag]())}
+	s := hasherState(cryptoHashes[h.Tag]())
+	return Crypto_Hasher{hash: h, state: s, start: s}
 }
 
 func Crypto_hmac_hasher(_ *Task, h Crypto_Hash, key Bytes) Crypto_Hasher {
@@ -84,7 +87,8 @@ func Crypto_hmac_hasher(_ *Task, h Crypto_Hash, key Bytes) Crypto_Hasher {
 		opad[i] ^= 0x5c
 	}
 	inner.Write(ipad)
-	return Crypto_Hasher{hash: h, state: hasherState(inner), opad: string(opad)}
+	s := hasherState(inner)
+	return Crypto_Hasher{hash: h, state: s, opad: string(opad), start: s}
 }
 
 func (x *Crypto_Hasher) M_write(_ *Task, data Bytes) {
@@ -107,6 +111,46 @@ func (x Crypto_Hasher) M_sum(*Task) Bytes {
 
 func (x Crypto_Hasher) M_written(*Task) int64 { return x.total }
 
+func (x Crypto_Hasher) M_block_size(*Task) int64 {
+	return int64(cryptoHashes[x.hash.Tag]().BlockSize())
+}
+
+func (x Crypto_Hasher) M_size(*Task) int64 { return int64(cryptoHashes[x.hash.Tag]().Size()) }
+
+func (x *Crypto_Hasher) M_reset(*Task) {
+	x.state = x.start
+	x.total = 0
+}
+
+func (e Crypto_HashErr) M_display(*Task) string { return e.F_msg }
+
+const hmacNoState = "crypto: an HMAC Hasher has no binary state"
+
+// M_marshal_binary is Go's MarshalBinary of the hash (the state kept).
+func (x Crypto_Hasher) M_marshal_binary(*Task) Result[Bytes, Crypto_HashErr] {
+	if x.opad != "" {
+		return Err[Bytes, Crypto_HashErr](Crypto_HashErr{F_msg: hmacNoState})
+	}
+	return Ok[Bytes, Crypto_HashErr](Bytes(x.state))
+}
+
+// M_unmarshal_binary is Go's UnmarshalBinary into a new hash of x's; the
+// length is the state's last 8 bytes, but for SHA-3, which keeps none.
+func (x Crypto_Hasher) M_unmarshal_binary(_ *Task, state Bytes) Result[Crypto_Hasher, Crypto_HashErr] {
+	if x.opad != "" {
+		return Err[Crypto_Hasher, Crypto_HashErr](Crypto_HashErr{F_msg: hmacNoState})
+	}
+	h := cryptoHashes[x.hash.Tag]()
+	if err := h.(encoding.BinaryUnmarshaler).UnmarshalBinary([]byte(state)); err != nil {
+		return Err[Crypto_Hasher, Crypto_HashErr](Crypto_HashErr{F_msg: err.Error()})
+	}
+	var total int64
+	if _, sha3 := h.(*sha3.SHA3); !sha3 {
+		total = int64(binary.BigEndian.Uint64([]byte(state[len(state)-8:])))
+	}
+	return Ok[Crypto_Hasher, Crypto_HashErr](Crypto_Hasher{hash: x.hash, state: hasherState(h), total: total, start: x.start})
+}
+
 // Crypto_Shake is `crypto.Shake`: a Go value copy of sha3.SHAKE copies its
 // whole state (the cSHAKE init block is shared, and never written).
 type Crypto_Shake struct{ s sha3.SHAKE }
@@ -121,6 +165,21 @@ func Crypto_cshake128(_ *Task, n, s Bytes) Crypto_Shake {
 }
 func Crypto_cshake256(_ *Task, n, s Bytes) Crypto_Shake {
 	return Crypto_Shake{*sha3.NewCSHAKE256([]byte(n), []byte(s))}
+}
+
+func (x Crypto_Shake) M_marshal_binary(*Task) Bytes {
+	b, err := x.s.MarshalBinary()
+	if err != nil {
+		panic(err)
+	}
+	return Bytes(b)
+}
+
+func (x Crypto_Shake) M_unmarshal_binary(_ *Task, state Bytes) Result[Crypto_Shake, Crypto_HashErr] {
+	if err := x.s.UnmarshalBinary([]byte(state)); err != nil {
+		return Err[Crypto_Shake, Crypto_HashErr](Crypto_HashErr{F_msg: err.Error()})
+	}
+	return Ok[Crypto_Shake, Crypto_HashErr](x)
 }
 
 func (x *Crypto_Shake) M_write(_ *Task, data Bytes) {

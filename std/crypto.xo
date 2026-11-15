@@ -95,6 +95,33 @@ fn (var x: Hasher) write(data: Bytes)
 fn (x: Hasher) sum() -> Bytes
 /// The bytes written so far.
 fn (x: Hasher) written() -> Int
+/// The hash's block size in bytes (Go's BlockSize): 64 for MD5, SHA-1,
+/// SHA-224 and SHA-256, 128 for SHA-384, SHA-512 and SHA-512/t, the rate
+/// for SHA-3 (144, 136, 104, 72).
+fn (x: Hasher) block_size() -> Int
+/// The digest's size in bytes (Go's Size).
+fn (x: Hasher) size() -> Int
+/// Back to the state hasher or hmac_hasher made, the HMAC key kept (Go's
+/// Reset).
+fn (var x: Hasher) reset()
+/// Go's MarshalBinary (and AppendBinary): the state in Go's format, which
+/// Go's UnmarshalBinary resumes and unmarshal_binary reads back. Err for
+/// an HMAC: Go's HMAC has no MarshalBinary.
+fn (x: Hasher) marshal_binary() -> Bytes ! HashErr
+/// Go's UnmarshalBinary: a Hasher of x's hash at that state. Err with Go's
+/// texts (`crypto/sha256: invalid hash state identifier`, `crypto/sha256:
+/// invalid hash state size`, `sha3: invalid hash state`, `sha3: invalid
+/// hash state identifier`, `sha3: invalid hash state function`, and
+/// md5's, sha1's and sha512's), and for an HMAC. Its written() is the
+/// state's message length; SHA-3's state keeps none, so it counts from 0.
+fn (x: Hasher) unmarshal_binary(state: Bytes) -> Hasher ! HashErr
+
+/// Go's error texts for a hash state.
+struct HashErr {
+  msg: Str
+}
+
+fn (e: HashErr) display() -> Str
 
 /// An extendable output function (Go's sha3.SHAKE): SHAKE128 or SHAKE256
 /// (FIPS 202), or cSHAKE128 or cSHAKE256 (NIST SP 800-185). Write the
@@ -121,6 +148,12 @@ fn (var x: Shake) read(n: Int) -> Bytes
 fn (var x: Shake) reset()
 /// The rate in bytes: 168 for the 128 bit functions, 136 for the 256 bit.
 fn (x: Shake) block_size() -> Int
+/// Go's SHAKE.MarshalBinary: the sponge in Go's format, then cSHAKE's
+/// init block.
+fn (x: Shake) marshal_binary() -> Bytes
+/// Go's SHAKE.UnmarshalBinary: x's function at that state, its reset going
+/// back to the state's init block. Err with Go's texts, as Hasher's.
+fn (x: Shake) unmarshal_binary(state: Bytes) -> Shake ! HashErr
 /// The first n bytes of SHAKE128 of data (Go's sha3.SumSHAKE128).
 fn sum_shake128(data: Bytes, n: Int) -> Bytes
 /// The first n bytes of SHAKE256 of data.

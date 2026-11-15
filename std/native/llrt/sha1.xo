@@ -27,6 +27,11 @@ pub struct Hasher {
 /// A new hash.
 pub fn new() -> Hasher { Hasher{st: [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0], held: b"", total: 0} }
 
+/// The state words, the bytes held below a block, and the length (for
+/// crypto's marshal_binary).
+pub fn (h: Hasher) parts() -> (List[Int], Bytes, Int) { (h.st, h.held, h.total) }
+pub fn from_parts(st: List[Int], held: Bytes, total: Int) -> Hasher { Hasher{st: st, held: held, total: total} }
+
 fn rotl(x: Int, n: Int) -> Int { x.rotate_right32(32 - n) }
 
 /// The big endian 32 bit word of b at i.

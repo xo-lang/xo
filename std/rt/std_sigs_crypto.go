@@ -28,6 +28,12 @@ var (
 	_ func(*Crypto_Hasher, *Task, Bytes)                                                          = (*Crypto_Hasher).M_write
 	_ func(*Crypto_Hasher, *Task) Bytes                                                           = (*Crypto_Hasher).M_sum
 	_ func(*Crypto_Hasher, *Task) int64                                                           = (*Crypto_Hasher).M_written
+	_ func(*Crypto_Hasher, *Task) int64                                                           = (*Crypto_Hasher).M_block_size
+	_ func(*Crypto_Hasher, *Task) int64                                                           = (*Crypto_Hasher).M_size
+	_ func(*Crypto_Hasher, *Task)                                                                 = (*Crypto_Hasher).M_reset
+	_ func(*Crypto_Hasher, *Task) Result[Bytes, Crypto_HashErr]                                   = (*Crypto_Hasher).M_marshal_binary
+	_ func(*Crypto_Hasher, *Task, Bytes) Result[Crypto_Hasher, Crypto_HashErr]                    = (*Crypto_Hasher).M_unmarshal_binary
+	_ func(*Crypto_HashErr, *Task) string                                                         = (*Crypto_HashErr).M_display
 	_ func(*Task) Crypto_Shake                                                                    = Crypto_shake128
 	_ func(*Task) Crypto_Shake                                                                    = Crypto_shake256
 	_ func(*Task, Bytes, Bytes) Crypto_Shake                                                      = Crypto_cshake128
@@ -36,6 +42,8 @@ var (
 	_ func(*Crypto_Shake, *Task, int64) Bytes                                                     = (*Crypto_Shake).M_read
 	_ func(*Crypto_Shake, *Task)                                                                  = (*Crypto_Shake).M_reset
 	_ func(*Crypto_Shake, *Task) int64                                                            = (*Crypto_Shake).M_block_size
+	_ func(*Crypto_Shake, *Task) Bytes                                                            = (*Crypto_Shake).M_marshal_binary
+	_ func(*Crypto_Shake, *Task, Bytes) Result[Crypto_Shake, Crypto_HashErr]                      = (*Crypto_Shake).M_unmarshal_binary
 	_ func(*Task, Bytes, int64) Bytes                                                             = Crypto_sum_shake128
 	_ func(*Task, Bytes, int64) Bytes                                                             = Crypto_sum_shake256
 	_ func(*Crypto_Aead, *Task) int64                                                             = (*Crypto_Aead).M_nonce_size

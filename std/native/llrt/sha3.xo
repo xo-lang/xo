@@ -1103,21 +1103,81 @@ pub fn new_shake256() -> Sponge { sponge(136, 0x1f) }
 /// bytepad(encode_string(n) || encode_string(s), rate) absorbed (Go's
 /// newCShake).
 pub fn new_cshake(rate: Int, n: Bytes, s: Bytes) -> Sponge {
-  if n.is_empty() && s.is_empty() {
-    return sponge(rate, 0x1f)
+  let init = cshake_init(n, s)
+  restart(sponge(rate, if init.is_empty() { 0x1f } else { 0x04 }), init)
+}
+
+/// A fresh sponge of s's rate and domain separator with
+/// bytepad(init, rate) absorbed when init is not empty (Go's SHAKE.Reset).
+pub fn restart(s: Sponge, init: Bytes) -> Sponge {
+  var sp = sponge(s.rate, s.dsbyte)
+  if init.is_empty() {
+    return sp
   }
-  var sp = sponge(rate, 0x04)
-  var b = BytesBuilder.with_capacity(rate + 20 + n.len() + s.len())
-  b.write(left_encode(rate))
-  b.write(left_encode(n.len() * 8))
-  b.write(n)
-  b.write(left_encode(s.len() * 8))
-  b.write(s)
-  while b.len() % rate != 0 {
+  var b = BytesBuilder.with_capacity(s.rate + init.len() + 9)
+  b.write(left_encode(s.rate))
+  b.write(init)
+  while b.len() % s.rate != 0 {
     b.write_byte(0)
   }
   write(sp, b.freeze())
   sp
+}
+
+/// cSHAKE's init block as Go keeps it, encode_string(n) ||
+/// encode_string(s) (restart pads it); empty for SHAKE.
+pub fn cshake_init(n: Bytes, s: Bytes) -> Bytes {
+  if n.is_empty() && s.is_empty() {
+    return b""
+  }
+  var b = BytesBuilder.with_capacity(20 + n.len() + s.len())
+  b.write(left_encode(n.len() * 8))
+  b.write(n)
+  b.write(left_encode(s.len() * 8))
+  b.write(s)
+  b.freeze()
+}
+
+/// Go's Digest.MarshalBinary: the magic of the function (`sha\x08` SHA-3,
+/// `sha\x09` SHAKE, `sha\x0a` cSHAKE, `sha\x0b` Keccak), the rate, the 200
+/// state bytes, the position and the direction.
+pub fn marshal(s: Sponge) -> Bytes {
+  var b = BytesBuilder.with_capacity(207)
+  b.write(b"sha")
+  b.write_byte(UInt8(magic(s.dsbyte)))
+  b.write_byte(UInt8(s.rate))
+  for l in s.lanes {
+    b.write_le(l, 8)
+  }
+  b.write_byte(UInt8(s.pos))
+  b.write_byte(UInt8(if s.squeezing { 1 } else { 0 }))
+  b.freeze()
+}
+
+fn magic(dsbyte: Int) -> Int { if dsbyte == 0x06 { 8 } else if dsbyte == 0x1f { 9 } else if dsbyte == 0x04 { 10 } else { 11 } }
+
+/// Go's Digest.UnmarshalBinary into a sponge of s's function, or Go's
+/// error.
+pub fn unmarshal(s: Sponge, b: Bytes) -> Sponge ! Str {
+  if b.len() != 207 {
+    return Err("sha3: invalid hash state")
+  }
+  if b[0..3] != b"sha" || Int(b[3]) != magic(s.dsbyte) {
+    return Err("sha3: invalid hash state identifier")
+  }
+  if Int(b[4]) != s.rate {
+    return Err("sha3: invalid hash state function")
+  }
+  let pos = Int(b[205])
+  let dir = Int(b[206])
+  if pos > s.rate || dir > 1 {
+    return Err("sha3: invalid hash state")
+  }
+  var lanes: List[Int] = []
+  for l in 0..25 {
+    lanes.push(rt.bytes_word(b, 5 + 8 * l))
+  }
+  Ok(Sponge{lanes: lanes, rate: s.rate, dsbyte: s.dsbyte, pos: pos, squeezing: dir == 1})
 }
 
 /// SP 800-185's left_encode of x: its byte count (at least 1), then its

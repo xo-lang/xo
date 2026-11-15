@@ -21,6 +21,11 @@ pub struct Hasher {
 
 pub fn new() -> Hasher { Hasher{st: [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476], held: b"", total: 0} }
 
+/// The state words, the bytes held below a block, and the length (for
+/// crypto's marshal_binary).
+pub fn (h: Hasher) parts() -> (List[Int], Bytes, Int) { (h.st, h.held, h.total) }
+pub fn from_parts(st: List[Int], held: Bytes, total: Int) -> Hasher { Hasher{st: st, held: held, total: total} }
+
 fn le32(b: Bytes, i: Int) -> Int { Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24) }
 
 fn rotl(x: Int, s: Int) -> Int { ((x << s) | (x >> (32 - s))) & M32 }

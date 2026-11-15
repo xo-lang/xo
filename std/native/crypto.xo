@@ -183,6 +183,8 @@ struct Hasher {
   /// The outer padded key of an HMAC; empty for a plain hash.
   opad: Bytes
   total: Int
+  /// The state hasher or hmac_hasher made, for reset.
+  start: State
 }
 
 fn fresh(h: crypto.Hash) -> State {
@@ -269,10 +271,14 @@ fn padded_key(h: crypto.Hash, key: Bytes, x: Int) -> Bytes {
 const IPAD: Bytes = b"\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36\x36"
 const OPAD: Bytes = b"\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c\x5c"
 
-fn hasher(h: crypto.Hash) -> Hasher { Hasher{hash: h, st: fresh(h), opad: b"", total: 0} }
+fn hasher(h: crypto.Hash) -> Hasher {
+  let st = fresh(h)
+  Hasher{hash: h, st: st, opad: b"", total: 0, start: st}
+}
 
 fn hmac_hasher(h: crypto.Hash, key: Bytes) -> Hasher {
-  Hasher{hash: h, st: absorb(fresh(h), padded_key(h, key, 0x36)), opad: padded_key(h, key, 0x5c), total: 0}
+  let st = absorb(fresh(h), padded_key(h, key, 0x36))
+  Hasher{hash: h, st: st, opad: padded_key(h, key, 0x5c), total: 0, start: st}
 }
 
 fn (var x: Hasher) write(data: Bytes) {
@@ -290,18 +296,157 @@ fn (x: Hasher) sum() -> Bytes {
 
 fn (x: Hasher) written() -> Int { x.total }
 
+fn (x: Hasher) block_size() -> Int { block_of(x.hash) }
+
+fn (x: Hasher) size() -> Int { hash_size(x.hash) }
+
+fn (var x: Hasher) reset() {
+  x.st = x.start
+  x.total = 0
+}
+
+fn hasherr_display(e: crypto.HashErr) -> Str { e.msg }
+
+fn hash_err(msg: Str) -> crypto.HashErr { crypto.HashErr{msg: msg} }
+
+/// Go's magic of a Merkle-Damgard hash's state, and its package for the
+/// errors.
+fn md_magic(h: crypto.Hash) -> (Bytes, Str) {
+  match h {
+    Md5 => (b"md5\x01", "crypto/md5")
+    Sha1 => (b"sha\x01", "crypto/sha1")
+    Sha224 => (b"sha\x02", "crypto/sha256")
+    Sha256 => (b"sha\x03", "crypto/sha256")
+    Sha384 => (b"sha\x04", "crypto/sha512")
+    Sha512_224 => (b"sha\x05", "crypto/sha512")
+    Sha512_256 => (b"sha\x06", "crypto/sha512")
+    _ => (b"sha\x07", "crypto/sha512")
+  }
+}
+
+/// Go's state of words, held bytes and length: the magic, the words big
+/// endian (4 bytes each, 8 for SHA-512's), the held bytes zero padded to
+/// the block, the length as 8 bytes big endian.
+fn md_bin(h: crypto.Hash, st: List[Int], held: Bytes, total: Int) -> Bytes {
+  let bs = block_of(h)
+  let wb = if bs == 128 { 8 } else { 4 }
+  let (magic, _) = md_magic(h)
+  var b = BytesBuilder.with_capacity(4 + wb * st.len() + bs + 8)
+  b.write(magic)
+  for w in st {
+    b.write_be(w, wb)
+  }
+  b.write(held)
+  for _ in held.len()..bs {
+    b.write_byte(0)
+  }
+  b.write_be(total, 8)
+  b.freeze()
+}
+
+fn be_at(b: Bytes, i: Int, n: Int) -> Int {
+  var v = 0
+  for j in 0..n {
+    v = v.wrapping_shl(8) | Int(b[i + j])
+  }
+  v
+}
+
+/// Go's UnmarshalBinary of a Merkle-Damgard state of `words` words: the
+/// words, the held bytes and the length, or Go's error.
+fn md_parts(h: crypto.Hash, words: Int, b: Bytes) -> (List[Int], Bytes, Int) ! Str {
+  let bs = block_of(h)
+  let wb = if bs == 128 { 8 } else { 4 }
+  let (magic, pkg) = md_magic(h)
+  if b.len() < 4 || b[0..4] != magic {
+    return Err("${pkg}: invalid hash state identifier")
+  }
+  if b.len() != 4 + wb * words + bs + 8 {
+    return Err("${pkg}: invalid hash state size")
+  }
+  var st: List[Int] = []
+  for i in 0..words {
+    st.push(be_at(b, 4 + wb * i, wb))
+  }
+  let at = 4 + wb * words
+  let total = be_at(b, at + bs, 8)
+  Ok((st, b[at..at + (total & (bs - 1))], total))
+}
+
+fn state_bin(h: crypto.Hash, st: State) -> Bytes {
+  match st {
+    M5(x) => {
+      let (w, held, total) = x.parts()
+      md_bin(h, w, held, total)
+    }
+    S1(x) => {
+      let (w, held, total) = x.parts()
+      md_bin(h, w, held, total)
+    }
+    S2(x) => {
+      let (w, held, total) = x.parts()
+      md_bin(h, w, held, total)
+    }
+    S3(s) => sha3.marshal(s)
+  }
+}
+
+/// The state of Go's binary state b for h, and its length (0 for SHA-3,
+/// whose state keeps none).
+fn state_of(h: crypto.Hash, b: Bytes) -> (State, Int) ! Str {
+  match fresh(h) {
+    M5(_) => {
+      let (w, held, total) = md_parts(h, 4, b)?
+      Ok((State.M5(h: md5.from_parts(w, held, total)), total))
+    }
+    S1(_) => {
+      let (w, held, total) = md_parts(h, 5, b)?
+      Ok((State.S1(h: sha1.from_parts(w, held, total)), total))
+    }
+    S2(x) => {
+      let (w, held, total) = md_parts(h, 8, b)?
+      Ok((State.S2(h: sha256.from_parts(x.hash, w, held, total)), total))
+    }
+    S3(s) => Ok((State.S3(s: sha3.unmarshal(s, b)?), 0))
+  }
+}
+
+fn (x: Hasher) marshal_binary() -> Bytes ! crypto.HashErr {
+  if !x.opad.is_empty() {
+    return Err(hash_err("crypto: an HMAC Hasher has no binary state"))
+  }
+  Ok(state_bin(x.hash, x.st))
+}
+
+fn (x: Hasher) unmarshal_binary(state: Bytes) -> Hasher ! crypto.HashErr {
+  if !x.opad.is_empty() {
+    return Err(hash_err("crypto: an HMAC Hasher has no binary state"))
+  }
+  match state_of(x.hash, state) {
+    Ok((st, total)) => Ok(Hasher{hash: x.hash, st: st, opad: b"", total: total, start: x.start})
+    Err(m) => Err(hash_err(m))
+  }
+}
+
 /// SHAKE and cSHAKE: the sponge, and the sponge as made (after cSHAKE's
 /// init block) for reset.
 struct Shake {
   s: sha3.Sponge
   start: sha3.Sponge
+  /// cSHAKE's init block, empty for SHAKE (Go's initBlock).
+  init: Bytes
 }
 
-fn shake_of(sp: sha3.Sponge) -> Shake { Shake{s: sp, start: sp} }
+fn shake_of(sp: sha3.Sponge) -> Shake { Shake{s: sp, start: sp, init: b""} }
+
+fn cshake_of(rate: Int, n: Bytes, s: Bytes) -> Shake {
+  let sp = sha3.new_cshake(rate, n, s)
+  Shake{s: sp, start: sp, init: sha3.cshake_init(n, s)}
+}
 fn shake128() -> Shake { shake_of(sha3.new_shake128()) }
 fn shake256() -> Shake { shake_of(sha3.new_shake256()) }
-fn cshake128(n: Bytes, s: Bytes) -> Shake { shake_of(sha3.new_cshake(168, n, s)) }
-fn cshake256(n: Bytes, s: Bytes) -> Shake { shake_of(sha3.new_cshake(136, n, s)) }
+fn cshake128(n: Bytes, s: Bytes) -> Shake { cshake_of(168, n, s) }
+fn cshake256(n: Bytes, s: Bytes) -> Shake { cshake_of(136, n, s) }
 
 fn (var x: Shake) write(data: Bytes) {
   if sha3.squeezing(x.s) {
@@ -319,6 +464,21 @@ fn (var x: Shake) read(n: Int) -> Bytes {
 
 fn (var x: Shake) reset() { x.s = x.start }
 fn (x: Shake) block_size() -> Int { sha3.rate(x.s) }
+
+fn (x: Shake) marshal_binary() -> Bytes { sha3.marshal(x.s) + x.init }
+
+fn (x: Shake) unmarshal_binary(state: Bytes) -> Shake ! crypto.HashErr {
+  if state.len() < 207 {
+    return Err(hash_err("sha3: invalid hash state"))
+  }
+  match sha3.unmarshal(x.s, state[0..207]) {
+    Ok(s) => {
+      let init = state[207..state.len()]
+      Ok(Shake{s: s, start: sha3.restart(x.s, init), init: init})
+    }
+    Err(m) => Err(hash_err(m))
+  }
+}
 fn sum_shake128(data: Bytes, n: Int) -> Bytes { sha3.shake128(data, n) }
 fn sum_shake256(data: Bytes, n: Int) -> Bytes { sha3.shake256(data, n) }
 

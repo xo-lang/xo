@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-15: feature: Hasher and Shake state: reset, sizes, Go's binary state
+
+- Kind: feature
+- Commit: this push
+- Found by: Lang 3's crypto and TLS gap audit (C3)
+- Go reference: hash.Hash Reset, BlockSize, Size; encoding.BinaryMarshaler, BinaryAppender and BinaryUnmarshaler on crypto/md5, sha1, sha256, sha512 and sha3 (SHA3 and SHAKE), go1.26.11
+- Test: corpus hashstate (sha256_test.go's and sha512_test.go's TestGoldenMarshal, TestMarshalMismatch and TestBlockSize over every Hash, each at message lengths around its block and the state taken before, inside and after; every hash's state into every other's, cut, grown and changed; sha3_test.go's TestMarshalUnmarshal over SHAKE128, SHAKE256 and two cSHAKEs, read before the state and after, and reset; an HMAC's reset), native, go and llvm
+- Shipped in: not yet released
+
+`Hasher.block_size()` and `size()` are Go's BlockSize and Size; `reset()` goes back to the state `hasher` or `hmac_hasher` made, so an HMAC keeps its key. `marshal_binary()` gives the state in Go's MarshalBinary format (`md5\x01`, `sha\x01` to `sha\x07` with the words big endian, the held bytes and the length; SHA-3's `sha\x08` with the rate, the 200 state bytes, the position and the direction), and `unmarshal_binary(state)` takes Go's state into a Hasher of the same hash, with Go's errors (`crypto/sha256: invalid hash state identifier`, `crypto/sha256: invalid hash state size`, `sha3: invalid hash state`, `sha3: invalid hash state identifier`, `sha3: invalid hash state function`, and the same for md5, sha1 and sha512). An HMAC Hasher has no binary state (Go's HMAC has no MarshalBinary): both give an Err. SHA-3's state keeps no length, so an unmarshaled SHA-3 Hasher's written() counts from 0. `Shake.marshal_binary()` and `unmarshal_binary(state)` are Go's SHAKE ones, cSHAKE's init block after the sponge, and the unmarshaled Shake's reset goes to the state's init block, as Go's. A Hasher's copy stays Go's Clone.
+
 ## 2026-11-15: feature: Ed25519ph and Ed25519ctx
 
 - Kind: feature

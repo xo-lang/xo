@@ -4007,6 +4007,12 @@ pub fn hmac_hasher(h: Hash, key: Bytes) -> Hasher
 fn ([var] x: Hasher) write(data: Bytes)
 fn (x: Hasher) sum() -> Bytes                  // the digest so far; writing may continue
 fn (x: Hasher) written() -> Int
+fn (x: Hasher) block_size() -> Int             // Go's BlockSize (the rate for SHA-3)
+fn (x: Hasher) size() -> Int                   // Go's Size
+fn (var x: Hasher) reset()                     // to the state hasher or hmac_hasher made; the HMAC key kept
+fn (x: Hasher) marshal_binary() -> Bytes ! HashErr                 // Go's MarshalBinary format; Err for an HMAC
+fn (x: Hasher) unmarshal_binary(state: Bytes) -> Hasher ! HashErr  // Go's UnmarshalBinary and its errors; written() is the state's length (0 for SHA-3)
+struct HashErr { msg: Str }
 
 struct Shake {}                                // SHAKE and cSHAKE (Go's sha3.SHAKE); a value, copies independent
 pub fn shake128() -> Shake
@@ -4017,6 +4023,8 @@ fn (var x: Shake) write(data: Bytes)           // faults "sha3: Write after Read
 fn (var x: Shake) read(n: Int) -> Bytes        // the next n bytes of one output stream
 fn (var x: Shake) reset()                      // cSHAKE keeps its n and s
 fn (x: Shake) block_size() -> Int              // the rate: 168 or 136
+fn (x: Shake) marshal_binary() -> Bytes        // Go's SHAKE.MarshalBinary: the sponge, then cSHAKE's init block
+fn (x: Shake) unmarshal_binary(state: Bytes) -> Shake ! HashErr  // Go's UnmarshalBinary; reset then goes to the state's init block
 pub fn sum_shake128(data: Bytes, n: Int) -> Bytes
 pub fn sum_shake256(data: Bytes, n: Int) -> Bytes
 ```

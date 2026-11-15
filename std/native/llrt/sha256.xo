@@ -61,6 +61,11 @@ pub fn new(hash: Int) -> Hasher {
   Hasher{hash: hash, st: st, held: b"", total: 0}
 }
 
+/// The state words, the bytes held below a block, and the length (for
+/// crypto's marshal_binary).
+pub fn (h: Hasher) parts() -> (List[Int], Bytes, Int) { (h.st, h.held, h.total) }
+pub fn from_parts(hash: Int, st: List[Int], held: Bytes, total: Int) -> Hasher { Hasher{hash: hash, st: st, held: held, total: total} }
+
 /// The digest of data.
 pub fn sum(hash: Int, data: Bytes) -> Bytes {
   var h = new(hash)
