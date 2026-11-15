@@ -1,5 +1,16 @@
 # std/csv changes
 
+## 2026-11-14: perf: a Reader sizes each record's field list from the last record and no longer builds a separator's text per record
+
+- Kind: perf
+- Commit: this push
+- Found by: a linux/arm64 XO_PROF profile of bench/perf/csv reader (field list growth 11%, the separator's text 7% of samples)
+- Go reference: encoding/csv Reader reuses its fieldIndexes slice across records (go1.26.1)
+- Test: TestCsvFuzz; corpus csv and csvfuzz on arm64, LLVM and Go; TestOutsideBytesValidated
+- Shipped in: not yet released
+
+read_record takes the separator's length from unicode.utf8_len where it built the separator's text each record, and starts a record's field list with the previous record's field count as capacity. bench/perf/csv on linux/arm64 host 1, --ab against its parent, 9 rounds: reader 0.873 (0.84 to 0.878, n=6), parse 0.869 (0.858 to 0.88, n=6). Output unchanged.
+
 ## 2026-11-14: perf: a Reader checks each line's UTF-8 once
 
 - Kind: perf

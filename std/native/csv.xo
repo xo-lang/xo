@@ -6,6 +6,7 @@
 use std/csv
 use native/rt
 use native/llrt/scan
+use native/llrt/unicode
 
 fn csverr_display(e: csv.CsvErr) -> Str {
   if e.msg == "wrong number of fields" {
@@ -42,6 +43,9 @@ struct Rd {
   b: Bytes
   at: Int = 0
   num_line: Int = 0
+  /// the fields of the last record, the next one's list capacity (Go's
+  /// Reader reuses its field index slice)
+  nf: Int = 0
   /// the file a Reader pulls more text from (None: b is all of it)
   f: File? = None
   /// the file has no more text, or failed (io_err says which)
@@ -188,9 +192,9 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
   // checks its fields one by one (a field cut at an ASCII separator,
   // quote or line end from valid lines is valid)
   var bad = r.f is Some(_) && !scan.utf8_valid(line)
-  let sep_len = rune_text(o.sep).len()
+  let sep_len = unicode.utf8_len(Int(o.sep))
   let rec_line = r.num_line
-  var fields: List[Str] = []
+  var fields: List[Str] = if r.nf > 0 { List.with_capacity(r.nf) } else { [] }
   var pos_line = r.num_line
   var col = 1
   while true {
@@ -255,6 +259,7 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
           done = true
         } else if length_nl(line) == line.len() {
           fields.push(field_str(if buf.is_empty() { seg } else { buf + seg }, bad))
+          r.nf = fields.len()
           return Ok(Some((fields, rec_line)))
         } else if o.lazy {
           buf = buf + seg + b"\""
@@ -279,10 +284,12 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
           return Err(csv.CsvErr{start_line: rec_line, line: pos_line, column: col, msg: ERR_QUOTE})
         }
         fields.push(field_str(buf, bad))
+        r.nf = fields.len()
         return Ok(Some((fields, rec_line)))
       }
     }
   }
+  r.nf = fields.len()
   Ok(Some((fields, rec_line)))
 }
 
