@@ -1,0 +1,44 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"time"
+)
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	argv := []string{"--verbose", "--host=api.example.com", "--port", "8443", "--workers=16", "--timeout=2500ms", "--mode", "careful", "--ratio=0.75", "a.txt", "b.txt", "c.txt"}
+	sum := 0
+	switch w {
+	case "parse":
+		for i := 0; i < 200000; i++ {
+			fs := flag.NewFlagSet("bench", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			verbose := fs.Bool("verbose", false, "talk more")
+			host := fs.String("host", "localhost", "the host")
+			mode := fs.String("mode", "fast", "the mode")
+			port := fs.Int("port", 80, "the port")
+			workers := fs.Int("workers", 1, "worker count")
+			timeout := fs.Duration("timeout", 5*time.Second, "the timeout")
+			ratio := fs.Float64("ratio", 0.5, "a ratio")
+			if err := fs.Parse(argv); err != nil {
+				fmt.Println("parse error:", err)
+				return
+			}
+			v := 0
+			if *verbose {
+				v = 1
+			}
+			sum += v + len(*host) + len(*mode) + *port + *workers + int(timeout.Milliseconds()) + int(*ratio*100.0) + len(fs.Args()) + i%3
+		}
+	default:
+		sum = len(argv)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

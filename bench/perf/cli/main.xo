@@ -1,0 +1,37 @@
+// cli: std/cli against Go's flag (twin.go.txt), decision 0616's perf kind
+// for std/cli: a command of seven flags (a bool, two strings, two ints, a
+// duration, a float) parses an argument list of both `--name=value` and
+// `--name value` forms and three positional arguments, 200,000 times
+// (parse); `none` is the setup alone. Usage: `<program> none|parse`. Prints
+// `<workload> <checksum>`; the twin prints the same.
+use std/cli
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let cmd = cli.command("bench", "a bench command", flags: [
+    cli.bool_flag("verbose", "talk more"),
+    cli.str_flag("host", "the host", default: "localhost"),
+    cli.str_flag("mode", "the mode", default: "fast"),
+    cli.int_flag("port", "the port", default: 80),
+    cli.int_flag("workers", "worker count", default: 1),
+    cli.duration_flag("timeout", "the timeout", default: 5s),
+    cli.float_flag("ratio", "a ratio", default: 0.5),
+  ], args: [cli.rest("files", "the inputs")])
+  let argv = ["--verbose", "--host=api.example.com", "--port", "8443", "--workers=16", "--timeout=2500ms", "--mode", "careful", "--ratio=0.75", "a.txt", "b.txt", "c.txt"]
+  var sum = 0
+  if w == "parse" {
+    for i in 0..200000 {
+      let p = match cli.parse(cmd, argv, os.env) {
+        Ok(p) => p
+        Err(e) => {
+          os.stdio.println("parse error: ${e.display()}")
+          return
+        }
+      }
+      sum += (if p.bool("verbose") { 1 } else { 0 }) + p.str("host").len() + p.str("mode").len() + p.int("port") + p.int("workers") + p.duration("timeout").millis() + Int(p.float("ratio") * 100.0) + p.rest("files").len() + i % 3
+    }
+  } else {
+    sum = argv.len()
+  }
+  os.stdio.println("${w} ${sum}")
+}
