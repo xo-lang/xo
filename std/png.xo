@@ -1081,7 +1081,7 @@ fn partial_inflate(zdata: Bytes, max: Int) -> Bytes {
 /// read again for the rows before its error.
 fn decode_image(d: Dec, zdata: Bytes) -> Image ! PngErr {
   let expect = expected_size(d)
-  match compress.unzlib(zdata, expect + 1) {
+  match compress.unzlib(zdata, expect + 2) {
     Ok(raw) => {
       let img = decode_rows(d, raw)?
       if raw.len() > expect {
@@ -1090,7 +1090,7 @@ fn decode_image(d: Dec, zdata: Bytes) -> Image ! PngErr {
       img
     }
     Err(e) => {
-      let raw = partial_inflate(zdata, expect + 1)
+      let raw = partial_inflate(zdata, expect + 2)
       match decode_rows(d, raw) {
         Err(re) => {
           // running out of rows is the stream's own error below
@@ -1101,11 +1101,15 @@ fn decode_image(d: Dec, zdata: Bytes) -> Image ! PngErr {
         }
         Ok(_) => {}
       }
-      if raw.len() > expect {
-        // a byte past the image inflates before the stream's own error:
-        // Go's check read gets it (n != 0) and reports too much pixel data
-        // before it meets the error or the chunk's checksum (fuzz seed 20,
-        // 2026-11-15: 79 bytes of a 75 byte image, then a cut stored block)
+      if raw.len() > expect + 1 || (raw.len() == expect + 1 && (expect + 1) % 32768 == 0) {
+        // bytes past the image inflate before the stream's own error. Go's
+        // flate hands them over in the flush the error makes (or at a full
+        // 32 KB window, with no error), and its check read takes one byte:
+        // with more left after it the read has no error yet, n != 0, and
+        // Go reports too much pixel data (fuzz seed 20, 2026-11-15: 79
+        // bytes of a 75 byte image, then a cut stored block); a single
+        // extra byte empties the flush and comes with the error, which
+        // wins (seed 29: one byte past a 30x14 image, then a bad checksum)
         return Err(format_err("too much pixel data"))
       }
       if raw.len() >= expect {

@@ -1,5 +1,17 @@
 # std/png changes
 
+## 2026-11-15: fix: one byte past the image and then a stream error gives the error, as Go does
+
+- Kind: fix
+- Commit: this push
+- Found by: the decision 0616 long fuzz of std/png (TestPngFuzz seed 29, case 4393, on linux/arm64 host 2)
+- Go reference: image/png reader.go decode's one byte check read after the last row, and compress/flate's Read, which hands over the output of the step that fails with the error once that output is read (go1.26.1)
+- Before: decode answered too much pixel data whenever more than the image inflated before a stream error; a 30x14 NRGBA image whose IDAT inflates 1695 of 1694 bytes in a block the data cuts, with a bad chunk checksum, gave "too much pixel data" where Go gives "png: invalid format: invalid checksum"
+- Fix: decode_image answers too much pixel data when two or more bytes past the image inflate before the error (or the one byte ends a 32 KB window, which Go hands over with no error); one byte takes the stream's error, as Go's check read does; the inflate limits are the image plus two bytes
+- Test: corpus png (scripts/stdcorpus png.go): the fuzz input as a fixed case after seed 20's; TestPngFuzz seeds 2 to 29 in the evidence rerun
+- Affected: png.decode of a stream that inflates exactly one byte past the image and then fails, on native backends
+- Shipped in: not yet released
+
 ## 2026-11-15: fix: an IDAT stream with bytes past the image and then a stream error gives too much pixel data, as Go does
 
 - Kind: fix
