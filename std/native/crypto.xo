@@ -305,7 +305,15 @@ fn finish(st: State) -> Bytes {
   }
 }
 
-fn digest(h: crypto.Hash, data: Bytes) -> Bytes { finish(absorb(fresh(h), data)) }
+fn digest(h: crypto.Hash, data: Bytes) -> Bytes {
+  match h {
+    // one shot, no State (blake2b.sum)
+    Blake2b_256 => blake2b.sum(data, 32)
+    Blake2b_384 => blake2b.sum(data, 48)
+    Blake2b_512 => blake2b.sum(data, 64)
+    _ => finish(absorb(fresh(h), data))
+  }
+}
 
 /// The key as HMAC pads it: hashed when longer than the block, then
 /// XORed with the pad byte over the block.

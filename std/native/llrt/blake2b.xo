@@ -30,15 +30,19 @@ pub struct State {
   key: Bytes
 }
 
-/// The key zero padded to a block (an empty key: a block of zeros).
-fn key_block(key: Bytes) -> Bytes {
-  var b = BytesBuilder.with_capacity(BLOCK)
-  b.write(key)
-  for _ in key.len()..BLOCK {
-    b.write_byte(0)
-  }
-  b.freeze()
+/// A block of zeros, the padding of a short block.
+const ZEROS: Bytes = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+
+/// b[lo..hi] zero padded to a block.
+fn padded(b: Bytes, lo: Int, hi: Int) -> Bytes {
+  var o = BytesBuilder.with_capacity(BLOCK)
+  o.write(b[lo..hi])
+  o.write(ZEROS[0..BLOCK - (hi - lo)])
+  o.freeze()
 }
+
+/// The key zero padded to a block (an empty key: a block of zeros).
+fn key_block(key: Bytes) -> Bytes { padded(key, 0, key.len()) }
 
 /// The initial words for a digest of `size` bytes keyed with `klen` bytes
 /// (Go's Reset: the parameter block's first word, fanout and depth 1).
@@ -121,15 +125,10 @@ pub fn (var s: State) write(p: Bytes) {
 /// The 8 words of a final compression of the held bytes (Go's finalize):
 /// the state is not changed, so more can be written.
 fn final_words(s: State) -> List[Int] {
-  var blk = BytesBuilder.with_capacity(BLOCK)
-  blk.write(s.block[0..s.offset])
-  for _ in s.offset..BLOCK {
-    blk.write_byte(0)
-  }
   var h = s.h
   // a copy: the compression's index stores copy the shared words
   h[0] = h[0]
-  digest_tables.blake2b_compress(h, blk.freeze(), 0, s.t.wrapping_add(s.offset), true)
+  digest_tables.blake2b_compress(h, padded(s.block, 0, s.offset), 0, s.t.wrapping_add(s.offset), true)
   h
 }
 
@@ -147,10 +146,25 @@ pub fn (s: State) sum() -> Bytes { le_out(final_words(s), s.out) }
 
 /// The digest of data, size bytes, unkeyed (Go's Sum256, Sum384, Sum512
 /// and checkSum).
+/// One shot, with no State: the blocks are compressed where they lie in
+/// data and only a short last block is copied, padded (Go's checkSum
+/// keeps its digest on the stack; the State's block copies cost a short
+/// message twice Go's time, bench/perf/blake2b small, 2026-11-15).
 pub fn sum(data: Bytes, size: Int) -> Bytes {
-  var s = new(size, b"")
-  s.write(data)
-  s.sum()
+  var h = init_words(size, 0)
+  let n = data.len()
+  var i = 0
+  // every block but the last, which takes the final flag
+  while n - i > BLOCK {
+    digest_tables.blake2b_compress(h, data, i, i + BLOCK, false)
+    i += BLOCK
+  }
+  if n - i == BLOCK {
+    digest_tables.blake2b_compress(h, data, i, n, true)
+  } else {
+    digest_tables.blake2b_compress(h, padded(data, i, n), 0, n, true)
+  }
+  le_out(h, size)
 }
 
 // ---------------------------------------------------------------------------

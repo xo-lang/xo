@@ -1,5 +1,21 @@
 # std/crypto changes
 
+## 2026-11-15: perf: a BLAKE2b digest of a short message is one shot, with no State
+
+- Kind: perf
+- Commit: this push
+- Found by: the BLAKE2b timing row (bench/perf/blake2b small 1.93x x/crypto on the Mac Studio)
+- Go reference: golang.org/x/crypto v0.58.0 blake2b checkSum (Sum256, Sum384, Sum512: the digest on the stack)
+- Test: the xcrypto corpus (arm64, llvm: digests at every block boundary from 0 to 1000 bytes against x/crypto); native/llrt/blake2b and crypto module tests (arm64, llvm); twincheck bench/perf/blake2b; xo bench --ab on linux/arm64 host 1, 5 rounds: bench/perf/blake2b small 58.16 to 31.04 ms (0.534)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+`digest` of a BLAKE2b hash went through the streaming State: a key block,
+a copy of each short block and a padded final block, each built a byte at
+a time. blake2b.sum now compresses full blocks where they lie and copies
+only a short last block, padded from a zero block; the State's own block
+padding uses the same helper.
+
 ## 2026-11-15: fix: RSA PSS takes BLAKE2b and OAEP takes BLAKE2b and legacy Keccak, as Go
 
 - Kind: fix
