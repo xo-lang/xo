@@ -586,7 +586,10 @@ ir_head_manifest() {
   ir_mem_watch "$logs/llvm-ir-mem.txt" &
   irw=$!
   t_ir=$(date +%s)
-  XO_LLVM_IR_MANIFEST=$1 go test -count=1 -timeout 60m -parallel "$2" -run '^TestGoldenIRManifest$' ./internal/llvm >"$logs/llvm-ir-head.txt" 2>&1
+  # niced (XO_GATE_IR_NICE, default 10): the tests that run beside it
+  # keep the CPU first (lead, 2026-11-15: TestOneThreadSpawnJoin's steal
+  # bound failed at steal=48 while twelve IR builds ran beside llvmpre)
+  XO_LLVM_IR_MANIFEST=$1 nice -n "${XO_GATE_IR_NICE:-10}" go test -count=1 -timeout 60m -parallel "$2" -run '^TestGoldenIRManifest$' ./internal/llvm >"$logs/llvm-ir-head.txt" 2>&1
   rc=$?
   kill "$irw" 2>/dev/null; wait "$irw" 2>/dev/null
   [ "$rc" = 0 ] && echo "llvm IR manifest: $(($(date +%s) - t_ir)) s, xo processes' resident peak $(sort -n "$logs/llvm-ir-mem.txt" 2>/dev/null | tail -1) MB" >&2
@@ -915,10 +918,9 @@ run_step_body() {
       # host keep their share (lead, 2026-11-15: host 3 is a container on
       # the owner's Mac); its wall and CPU time are logged for irman.sh
       irj=${XO_GATE_IR_PARALLEL:-$(( $(ir_jobs) / 2 ))}; [ "$irj" -lt 2 ] && irj=2
-      t0=$(date +%s); c0=$(awk '{print $14 + $15 + $16 + $17}' /proc/$$/stat 2>/dev/null)
-      export -f ir_head_manifest ir_jobs_why ir_avail_mb ir_mem_watch 2>/dev/null
-      logs=$logs nice -n 10 bash -c 'ir_head_manifest "$1" "$2"' _ "$hm.tmp$$" "$irj" && mv "$hm.tmp$$" "$hm" &&
-        echo "irmanifest: built in $(($(date +%s) - t0)) s wall, $(( ($(awk '{print $14 + $15 + $16 + $17}' /proc/$$/stat 2>/dev/null || echo 0) - ${c0:-0}) / $(getconf CLK_TCK) )) s CPU, -parallel $irj, niced"
+      t0=$(date +%s); c0=$(awk '{print $14 + $15 + $16 + $17}' /proc/$BASHPID/stat 2>/dev/null)
+      ir_head_manifest "$hm.tmp$$" "$irj" && mv "$hm.tmp$$" "$hm" &&
+        echo "irmanifest: built in $(($(date +%s) - t0)) s wall, $(( ($(awk '{print $14 + $15 + $16 + $17}' /proc/$BASHPID/stat 2>/dev/null || echo 0) - ${c0:-0}) / $(getconf CLK_TCK) )) s CPU, -parallel $irj, niced"
     }; then
       echo "irmanifest: $hm ($(wc -l <"$hm" | tr -d ' ') goldens)"
     else
