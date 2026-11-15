@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-15: feature: MySQL KILL QUERY on cancellation, and the DSN timeouts
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0648 (item 10's later step; item 2's timeouts, accepted and not applied until now)
+- Go reference: go-sql-driver/mysql v1.10.1 (Config.Timeout, ReadTimeout, WriteTimeout as the dial's and each packet's deadlines; a cancelled context closes the connection without KILL); MySQL's own client (KILL QUERY on interrupt)
+- Test: mysql_test.xo (native and llvm: the DSN durations and a bad one; a fake server that never answers, cancelled: KILL QUERY 7 on a second connection, the handshake's id; readTimeout=50ms: `Conn` "i/o timeout", then a new connection works)
+- Shipped in: not yet released
+
+A cancelled wait for a MySQL server now also runs `KILL QUERY <id>` on a second connection, so the server stops the statement instead of running it to its end; the call still returns `Canceled` and drops the connection (spec/std.md 10.10). The DSN's `timeout` limits the dial, and `readTimeout` and `writeTimeout` each packet's read and write (`Conn` "i/o timeout"); a DSN that has them, ignored before, now has them applied, and one with a value that is not a Go duration is a `Param` error.
+
 ## 2026-11-15: feature (breaking for drivers): prepared statements and query_all
 
 - Kind: feature

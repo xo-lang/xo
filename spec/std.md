@@ -3922,8 +3922,11 @@ password runs to the last `@`, so it may hold `@` and `:`. Parameters:
   (`true`), `allowCleartextPasswords`, `allowPublicKeyRetrieval`,
   `multiStatements`, `interpolateParams`, `clientFoundRows`,
   `columnsWithAlias`, `rejectReadOnly`, `maxAllowedPacket` (64 MiB),
-  `connectionAttributes`, and `timeout`, `readTimeout`, `writeTimeout`
-  (accepted; a call's deadline is its context's). `allowOldPasswords` is
+  `connectionAttributes`. `timeout` (Go's duration syntax, `30s`) limits
+  the dial, and `readTimeout` and `writeTimeout` each packet's read and
+  write, as go-sql-driver's I/O deadlines: one that passes is a `Conn`
+  error `i/o timeout` and the connection is dropped. A call's own limit
+  is a `task.with_timeout` around it. `allowOldPasswords` is
   refused (the pre 4.1 hash is broken). `serverPubKey` names `open`'s
   `server_pub_key` (go-sql-driver's RegisterServerPubKey name), which it
   requires.
@@ -3965,7 +3968,14 @@ NO_BACKSLASH_ESCAPES mode honoured. With
 return the first result set and read the rest, an error in any of them
 being the call's error (go-sql-driver drops it), `query_all` returns each
 set with columns (go-sql-driver's NextResultSet skips the others), and
-`exec` counts the last. `prepare` is a server statement (10.3). `LOAD DATA LOCAL INFILE` is refused. `begin` is `START
+`exec` counts the last. `prepare` is a server statement (10.3).
+**Cancellation** while waiting for the server drops the connection (it
+is out of step) and returns `Canceled`, as go-sql-driver, and first runs
+`KILL QUERY` with the connection's id on a second connection, so the
+server stops the statement too: shielded from the cancellation, its dial
+limited to 1 s (or `timeout`, if shorter) and the exchange to 2 s after
+it, its failure ignored. go-sql-driver only closes the connection, and
+the server runs the statement on until it next writes to it. `LOAD DATA LOCAL INFILE` is refused. `begin` is `START
 TRANSACTION`. `copy_from` sends batched multi row INSERTs, each under
 `maxAllowedPacket`. `ExecResult.last_insert_id` is the AUTO_INCREMENT
 value.

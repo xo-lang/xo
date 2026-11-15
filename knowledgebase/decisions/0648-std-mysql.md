@@ -197,7 +197,13 @@ conformance tests and `xo bench --ab`.
 10. **Cancellation, exec results, copy_from.** A cancelled wait closes
     the connection and marks it broken, as go-sql-driver; `KILL QUERY`
     on a second connection, which stops the server's work too, is a
-    later step. `ExecResult` comes from the OK packet: affected rows
+    later step. Done (2026-11-15): a cancelled wait for the server runs
+    `KILL QUERY <thread id>` (the handshake's connection id) on a second
+    connection before returning `Canceled`, in shielded code with a 1 s
+    dial and 2 s exchange limit, under XO-F005's 5 s; its failure is
+    ignored. `timeout`, `readTimeout` and `writeTimeout` are applied
+    too: the dial's limit and each packet's read and write deadline.
+    `ExecResult` comes from the OK packet: affected rows
     (matched rows with `clientFoundRows=true`) and the real
     `last_insert_id`. `copy_from` is a prepared multi row INSERT in
     batches under `maxAllowedPacket`, inside the caller's transaction

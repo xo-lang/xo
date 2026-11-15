@@ -94,7 +94,6 @@ test "server errors by number" {
 // ---- fake servers on FakeNet (decision 0292), speaking the documented
 // packets: they check what the driver sends and answer as MySQL 8 does
 
-
 const FK_NONCE: Bytes = b"0123456789abcdefghij"
 
 /// The server's caps: protocol 4.1 with plugins, and DEPRECATE_EOF when eof is false.
@@ -520,6 +519,81 @@ test "a fake server: a Stmt prepares once per connection, runs, and closes; quer
     // in step after all of that (COM_STMT_CLOSE has no response)
     expect(db.ping().is_ok()) == true
     expect(log.with_read(fn(xs) { xs })) == ["prepare SELECT name, n FROM t WHERE id = ?", "execute 3", "execute 3", "close 3", "prepare SELECT * FROM missing", "query MULTI", "query MULTI"]
+    s.cancel()
+  }
+}
+
+test "DSNs: timeout, readTimeout and writeTimeout in Go's duration syntax" {
+  let c = config("u@tcp(db)/x?timeout=1m30s&readTimeout=500ms&writeTimeout=2s") ?? e => fault("${e}")
+  expect((c.dial_timeout.millis(), c.read_timeout.millis(), c.write_timeout.millis())) == (90000, 500, 2000)
+  let d = config("u@tcp(db)/x") ?? e => fault("${e}")
+  expect((d.dial_timeout.nanos(), d.read_timeout.nanos(), d.write_timeout.nanos())) == (0, 0, 0)
+  expect(config("u@tcp(db)/x?readTimeout=5").err()) == Some(sql.SqlErr.Param(msg: "readTimeout: invalid duration \"5\""))
+}
+
+/// One connection of fk_kill_serve: each COM_QUERY's text goes to seen; a
+/// SLEEP gets no answer (the server is busy until the client goes), the
+/// rest an OK.
+fn fk_kill_conn(c: ServerConn, seen: Chan[Str]) -> () ! NetErr {
+  c.write(w.frame(0, fk_handshake(fk_caps(true), "caching_sha2_password")).0)?
+  let (resp, _, rest) = fk_read(c, b"")? ?? (b"", 0, b"")
+  var buf = rest
+  let _ = fk_sha2_fast(resp, c, 2)?
+  while let Some((cmd, _, rest2)) = fk_read(c, buf)? {
+    buf = rest2
+    if cmd.is_empty() || Int(cmd[0]) == w.COM_QUIT {
+      break
+    }
+    if Int(cmd[0]) == w.COM_QUERY {
+      let q = cmd[1..cmd.len()].to_str_lossy()
+      seen.send(q)
+      if q.starts_with("SELECT SLEEP") {
+        continue
+      }
+    }
+    c.write(w.frame(1, fk_ok(0, 0, 2)).0)?
+  }
+  c.close()
+  Ok(())
+}
+
+fn fk_kill_serve(l: Listener, seen: Chan[Str]) -> () ! NetErr {
+  scope s {
+    while let Ok(c) = l.accept() {
+      s.spawn_background(fn() { fk_kill_conn(c, seen).ignore_err("a connection ends with the test") })
+    }
+  }
+  Ok(())
+}
+
+test "a cancelled query: KILL QUERY with the connection's id on a second connection" {
+  let l = os.net.listen("db.test:3306")?
+  let seen = Chan[Str].new(8)
+  scope s {
+    s.spawn_background(fn() { fk_kill_serve(l, seen).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false")?
+    scope q {
+      q.spawn(fn() { db.exec("SELECT SLEEP(60)") })
+      expect(seen.recv()) == Some("SELECT SLEEP(60)")
+      q.cancel()
+    }
+    expect(seen.recv()) == Some("KILL QUERY 7")
+    s.cancel()
+  }
+}
+
+test "readTimeout: a server that does not answer is an i/o timeout, and the connection is dropped" {
+  let l = os.net.listen("db.test:3306")?
+  let seen = Chan[Str].new(8)
+  scope s {
+    s.spawn_background(fn() { fk_kill_serve(l, seen).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false&readTimeout=50ms&timeout=1s")?
+    let e = db.exec("SELECT SLEEP(60)").err()
+    expect(seen.recv()) == Some("SELECT SLEEP(60)")
+    expect(e) == Some(sql.SqlErr.Conn(msg: "i/o timeout"))
+    // a new connection for the next
+    expect(db.exec("DO 1").is_ok()) == true
+    expect(seen.recv()) == Some("DO 1")
     s.cancel()
   }
 }

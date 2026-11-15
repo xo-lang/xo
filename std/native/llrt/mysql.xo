@@ -24,6 +24,9 @@ use std/tls
 use native/llrt/mysqlwire as w
 use native/llrt/mysqlauth as auth
 use native/llrt/rsa
+use native/llrt/netconn
+use native/llrt/netwasi
+use native/rt
 
 fn param_err(msg: Str) -> sql.SqlErr { sql.SqlErr.Param(msg: msg) }
 fn conn_err(msg: Str) -> sql.SqlErr { sql.SqlErr.Conn(msg: msg) }
@@ -60,6 +63,12 @@ pub struct Config {
   pub columns_with_alias: Bool
   pub reject_read_only: Bool
   pub max_allowed_packet: Int
+  /// timeout: the dial's limit (zero: Net.dial's own).
+  pub dial_timeout: Duration
+  /// readTimeout and writeTimeout: each packet read's and write's limit,
+  /// as go-sql-driver's I/O deadlines (zero: none).
+  pub read_timeout: Duration
+  pub write_timeout: Duration
   pub attrs: List[(Str, Str)]
   /// Other parameters: system variables set after connecting.
   pub vars: List[(Str, Str)]
@@ -127,9 +136,14 @@ fn bool_param(k: Str, v: Str) -> Bool ! sql.SqlErr {
   }
 }
 
+/// A duration parameter in Go's syntax ("30s", "1m30s", "500ms").
+fn dur_param(k: Str, v: Str) -> Duration ! sql.SqlErr {
+  Duration.parse(v).map_err(fn(_) { param_err("${k}: invalid duration ${v.quote()}") })
+}
+
 /// Parses `[user[:password]@][net[(addr)]]/dbname[?param1=value1&...]`.
 pub fn config(dsn: Str) -> Config ! sql.SqlErr {
-  var cfg = Config{user: "", password: "", net: "tcp", addr: "", database: "", tls: "true", parse_time: false, loc: "UTC", zone: time.utc(), collation: 45, allow_native: true, allow_cleartext: false, allow_public_key: false, server_pub_key: "", multi_statements: false, interpolate: false, client_found_rows: false, columns_with_alias: false, reject_read_only: false, max_allowed_packet: 67108864, attrs: [], vars: []}
+  var cfg = Config{user: "", password: "", net: "tcp", addr: "", database: "", tls: "true", parse_time: false, loc: "UTC", zone: time.utc(), collation: 45, allow_native: true, allow_cleartext: false, allow_public_key: false, server_pub_key: "", multi_statements: false, interpolate: false, client_found_rows: false, columns_with_alias: false, reject_read_only: false, max_allowed_packet: 67108864, dial_timeout: Duration.from_nanos(0), read_timeout: Duration.from_nanos(0), write_timeout: Duration.from_nanos(0), attrs: [], vars: []}
   // the database starts after the last /; the parameters after the first ?
   // that follows it
   let slash = dsn.rfind("/") ?? return Err(param_err("invalid DSN: missing the slash separating the database name"))
@@ -236,10 +250,9 @@ pub fn config(dsn: Str) -> Config ! sql.SqlErr {
         "columnsWithAlias" => cfg.columns_with_alias = bool_param(k, v)?
         "rejectReadOnly" => cfg.reject_read_only = bool_param(k, v)?
         "maxAllowedPacket" => cfg.max_allowed_packet = Int.parse(v) ?? return Err(param_err("maxAllowedPacket: invalid number ${v.quote()}"))
-        "timeout" | "readTimeout" | "writeTimeout" => {
-          // durations are std/sql's and the caller's deadlines; accepted
-          // and not applied here
-        }
+        "timeout" => cfg.dial_timeout = dur_param(k, v)?
+        "readTimeout" => cfg.read_timeout = dur_param(k, v)?
+        "writeTimeout" => cfg.write_timeout = dur_param(k, v)?
         "connectionAttributes" => {
           for a in v.split(",") {
             if let Some((ak, av)) = a.cut(":") {
@@ -315,6 +328,9 @@ fn (l: Link) close() {
 
 pub struct MyConn {
   c: Link
+  /// What a cancellation's KILL QUERY needs, and the raw connection under
+  /// any TLS for the deadlines.
+  x: ConnExtra
   /// Bytes read and not yet decoded.
   buf: Mutex[Bytes]
   /// The next packet's sequence id.
@@ -325,6 +341,54 @@ pub struct MyConn {
   cfg: Config
   /// The server's status flags of the last OK or EOF.
   status: Atomic[Int]
+}
+
+struct ConnExtra {
+  raw: Conn
+  net: Net
+  drv: MysqlDriver
+  /// The server's connection id (the handshake's), 0 until it is read.
+  thread_id: Atomic[Int]
+}
+
+/// d ns from now as c's read (1), write (2) or both (3) deadline.
+fn deadline(c: Conn, which: Int, d: Int) {
+  if target.arch == TargetArch.Wasm32 {
+    netwasi.set_deadline(c, which, true, d)
+  } else {
+    netconn.set_deadline(rt.obj_addr(c), which, true, d)
+  }
+}
+
+/// The limit of KILL QUERY's dial, and of its whole exchange after it
+/// (under the 5 s of shielded code, core XO-F005).
+const KILL_DIAL_MS = 1000
+const KILL_MS = 2000
+
+/// After a cancelled wait for the server: KILL QUERY on a second
+/// connection, so the server stops the statement too (decision 0648 item
+/// 10), shielded from the cancellation and capped in time. Its failure
+/// is ignored: p is broken and closed either way.
+fn (p: MyConn) kill() uses net.dial {
+  let id = p.x.thread_id.get()
+  if id == 0 {
+    return
+  }
+  {
+    defer {
+      var cfg = p.cfg
+      cfg.read_timeout = Duration.from_nanos(0)
+      cfg.write_timeout = Duration.from_nanos(0)
+      let cap = Duration.from_millis(KILL_DIAL_MS)
+      if cfg.dial_timeout.nanos() <= 0 || cfg.dial_timeout > cap {
+        cfg.dial_timeout = cap
+      }
+      if let Ok(k) = open_conn(p.x.drv, p.x.net, cfg, Duration.from_millis(KILL_MS).nanos()) {
+        let _ = run(k, "KILL QUERY ${id}").is_ok()
+        k.close()
+      }
+    }
+  }
 }
 
 fn net_err(e: NetErr) -> sql.SqlErr {
@@ -340,6 +404,12 @@ fn (d: MysqlDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr u
     return Err(param_err("loc=${cfg.loc}: the driver's zone is ${d.zone.name()}; a zone other than UTC is given as a value (time.zone(\"${cfg.loc}\") with a constant name), not looked up from the DSN, which would embed the whole zone database"))
   }
   cfg.zone = d.zone
+  Ok(open_conn(d, net, cfg, 0)?)
+}
+
+/// A connection with cfg; within total ns from the dial's end when total
+/// is positive.
+fn open_conn(d: MysqlDriver, net: Net, cfg: Config, total: Int) -> MyConn ! sql.SqlErr uses net.dial {
   var key: rsa.PublicKey? = None
   if !d.pub_key.is_empty() {
     key = Some(auth.pem_public_key(d.pub_key).or_err(param_err("server_pub_key: not a PEM RSA public key (PUBLIC KEY or RSA PUBLIC KEY) of 1024 bits or more"))?)
@@ -350,13 +420,18 @@ fn (d: MysqlDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr u
     return Err(param_err("tls=custom needs roots: (PEM) on sql.open"))
   }
   let addr = if cfg.net == "unix" { "unix:${cfg.addr}" } else { cfg.addr }
-  let c = net.dial(addr).map_err(fn(e) {
+  let dialed = if cfg.dial_timeout.nanos() > 0 { net.dial_timeout(addr, cfg.dial_timeout) } else { net.dial(addr) }
+  let c = dialed.map_err(fn(e) {
     match e {
       Denied(_) => conn_err("dial ${addr}: denied by Net.only")
       _ => net_err(e)
     }
   })?
-  let p = MyConn{c: Link.Plain(c: c), buf: Mutex.new(b""), seq: Atomic.new(0), broken: Atomic.new(false), caps: 0, cfg: cfg, status: Atomic.new(0)}
+  if total > 0 {
+    deadline(c, 3, total)
+  }
+  let x = ConnExtra{raw: c, net: net, drv: d, thread_id: Atomic.new(0)}
+  let p = MyConn{c: Link.Plain(c: c), x: x, buf: Mutex.new(b""), seq: Atomic.new(0), broken: Atomic.new(false), caps: 0, cfg: cfg, status: Atomic.new(0)}
   match handshake(p, d.roots, c, key) {
     Ok(q) => Ok(q)
     Err(e) => {
@@ -369,6 +444,9 @@ fn (d: MysqlDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr u
 fn (p: MyConn) send(payload: Bytes) -> () ! sql.SqlErr uses net.dial {
   let (data, next) = w.frame(p.seq.get(), payload)
   p.seq.set(next)
+  if p.cfg.write_timeout.nanos() > 0 {
+    deadline(p.x.raw, 2, p.cfg.write_timeout.nanos())
+  }
   match p.c.write(data) {
     Ok(_) => Ok(())
     Err(e) => {
@@ -403,6 +481,9 @@ fn (p: MyConn) recv() -> Bytes ! sql.SqlErr uses net.dial {
       }
       None => {}
     }
+    if p.cfg.read_timeout.nanos() > 0 {
+      deadline(p.x.raw, 1, p.cfg.read_timeout.nanos())
+    }
     match p.c.read(65536) {
       Ok(Some(more)) => p.buf.with(fn(var b) { b = b + more })
       Ok(None) => {
@@ -411,6 +492,9 @@ fn (p: MyConn) recv() -> Bytes ! sql.SqlErr uses net.dial {
       }
       Err(e) => {
         p.broken.set(true)
+        if e is Canceled {
+          p.kill()
+        }
         return Err(net_err(e))
       }
     }
@@ -450,6 +534,7 @@ fn tls_hint(cfg: Config, e: NetErr) -> sql.SqlErr {
 fn handshake(p0: MyConn, roots: Bytes, raw: Conn, key: rsa.PublicKey?) -> MyConn ! sql.SqlErr uses net.dial {
   let cfg = p0.cfg
   let hs = w.parse_handshake(p0.recv()?).map_err(fn(e) { wire_err(p0, e) })?
+  p0.x.thread_id.set(hs.thread_id)
   if hs.caps & w.CLIENT_PROTOCOL_41 == 0 {
     return Err(conn_err("the server ${hs.version} does not speak protocol 4.1"))
   }
@@ -474,11 +559,11 @@ fn handshake(p0: MyConn, roots: Bytes, raw: Conn, key: rsa.PublicKey?) -> MyConn
       }
       let host = host_of(cfg.addr)
       let t = tls.client(raw, host, roots: rs, verify: verify).map_err(fn(e) { tls_hint(cfg, e) })?
-      p = MyConn{c: Link.Tls(t: t), buf: p0.buf, seq: p0.seq, broken: p0.broken, caps: caps, cfg: cfg, status: p0.status}
+      p = MyConn{c: Link.Tls(t: t), x: p0.x, buf: p0.buf, seq: p0.seq, broken: p0.broken, caps: caps, cfg: cfg, status: p0.status}
       secure = true
     }
   }
-  p = MyConn{c: p.c, buf: p.buf, seq: p.seq, broken: p.broken, caps: caps, cfg: cfg, status: p.status}
+  p = MyConn{c: p.c, x: p.x, buf: p.buf, seq: p.seq, broken: p.broken, caps: caps, cfg: cfg, status: p.status}
   var plugin = if hs.plugin.is_empty() { "mysql_native_password" } else { hs.plugin }
   var nonce = hs.nonce
   let pw = cfg.password.bytes()
