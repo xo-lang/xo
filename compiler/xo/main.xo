@@ -490,7 +490,7 @@ fn main(os0: Os) ! {
     os.stdio.eprint(cache_stats_text(st))
   }
   if let Some(h) = verify_hit {
-    verify_entry(os, h, nb.bin, kept_output(ctx))
+    verify_entry(os, h, nb.bin, kept_output(ctx), out_dir_free(os, o))
   }
   if o.cmd == "test" && (!std_obj_dir(os).is_empty() || (os.env.get("XO_STD_ROOTS") ?? "") == "1") {
     // std's test variant (decision 0436, xo dev stdobj --test): the

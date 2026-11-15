@@ -157,12 +157,14 @@ fn run_key_of(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Key? 
   // plain one reused the plain binary
   k.str("det ${o.topts.seed != 0 || o.explore > 0}")
   // the environment that can change a build: every XO_ variable (but
-  // XO_TEST_JOBS, how many test processes run at once, and
-  // XO_TEST_ONLY, which of the tests run), and where tools
-  // and modules are found
+  // XO_TEST_JOBS, how many test processes run at once, XO_TEST_ONLY,
+  // which of the tests run, and XO_BUILD_DIR, where its scratch files
+  // go: internal/xotool gives each test build its own, so no golden
+  // test's build ever hit, 2026-11-15), and where tools and modules are
+  // found
   var env: List[Str] = []
   for (n, v) in os.env.vars().entries() {
-    if (n.starts_with("XO_") && !(n is "XO_TEST_JOBS" | "XO_TEST_ONLY")) || n is "PATH" | "HOME" | "XDG_CACHE_HOME" | "CC" | "SDKROOT" | "DEVELOPER_DIR" {
+    if (n.starts_with("XO_") && !(n is "XO_TEST_JOBS" | "XO_TEST_ONLY" | "XO_BUILD_DIR")) || n is "PATH" | "HOME" | "XDG_CACHE_HOME" | "CC" | "SDKROOT" | "DEVELOPER_DIR" {
       env.push("${n}=${v}")
     }
   }
@@ -539,6 +541,10 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
         extra.push("probe ${hex_field(rec.probes.get(k) ?? "")} ${hex_field(k)}\n")
       }
       for n in rec.env.keys().sort() {
+        // the scratch directory is not an input (run_key_of)
+        if n == "XO_BUILD_DIR" {
+          continue
+        }
         extra.push("env ${hex_field(rec.env.get(n) ?? "")} ${hex_field(n)}\n")
       }
     }

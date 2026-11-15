@@ -84,6 +84,33 @@ fn (t: Tee) text() -> Str {
   b.freeze()
 }
 
+/// hit's kept output (Tee.text) as this build would print it: with od
+/// (out_dir_free), the stored output's directory in each line written as
+/// od (a build prints its output's path: `darwin/arm64: DIR/prog`; a hit
+/// into a new directory printed the stored build's, and
+/// XO_BACKEND_CACHE=verify reported XO1512, 2026-11-15).
+fn hit_output(hit: RunHit, od: Str) -> Str {
+  if od.is_empty() || hit.outs.is_empty() {
+    return hit.output
+  }
+  let from = dir_name(hit.outs[0].1)
+  if from == od || from.is_empty() {
+    return hit.output
+  }
+  var b = StrBuilder.new()
+  for l in hit.output.split("\n") {
+    if l.len() < 2 {
+      continue
+    }
+    let s = match Bytes.from_hex(l[2..]) {
+      Some(x) => x.to_str() ?? ""
+      None => ""
+    }
+    b.write("${l[0..2]}${s.replace(from, od).bytes().to_hex()}\n")
+  }
+  b.freeze()
+}
+
 /// Prints an entry's kept output (Tee.text) again, in its order.
 fn replay_output(os: Os, kept: Str) {
   for l in kept.split("\n") {
@@ -137,7 +164,9 @@ fn out_dir_free(os: Os, o: Opts) -> Str {
   if o.cmd != "build" || o.out.is_empty() || o.out.ends_with("/") {
     return ""
   }
-  let p = abs_path(o.wd, o.out)
+  // cleaned, as the build names its output (`-o ../b/prog` prints
+  // DIR/b/prog)
+  let p = clean_path(abs_of(o.wd, o.out))
   match os.fs.stat(p) {
     Ok(Some(fi)) => {
       if fi.is_dir {
@@ -200,7 +229,7 @@ fn whole_build_hit(os: Os, hit: RunHit, od: Str) -> Bool {
       }
     }
   }
-  replay_output(os, hit.output)
+  replay_output(os, hit_output(hit, od))
   true
 }
 
@@ -221,7 +250,7 @@ fn verifying(os: Os) -> Bool {
 /// XO_BACKEND_CACHE=verify after the build a hit would have skipped: the
 /// stored binary and output must be the rebuild's, else error XO1512 (an
 /// input the entry missed, or a build that is not reproducible).
-fn verify_entry(os: Os, hit: RunHit, bin: Str, kept: Str) {
+fn verify_entry(os: Os, hit: RunHit, bin: Str, kept: Str, od: Str) {
   // xo:allow XO0903 a binary it cannot read differs
   let stored = os.fs.read(hit.bin).ok() ?? b""
   // xo:allow XO0903 a binary it cannot read differs
@@ -230,7 +259,7 @@ fn verify_entry(os: Os, hit: RunHit, bin: Str, kept: Str) {
   var what = ""
   if stored != built {
     what = "the binary (${stored.len()} bytes stored, ${built.len()} built)"
-  } else if hit.output != kept {
+  } else if hit_output(hit, od) != kept {
     what = "what the build printed"
   }
   if what.is_empty() {

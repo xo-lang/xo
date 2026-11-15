@@ -26,3 +26,17 @@ keeps -o's file name, the entry drops the output directory's listing and
 probes unless the build read a file there, and a hit makes the directory.
 Check a run cache change with `--phase-times`: `phase run_cache` followed
 by `phase run_cache_miss` means an entry was found and the hit failed.
+
+## Addendum 2026-11-15: XO_BUILD_DIR and the replayed output
+
+Two more held the output's place after the fix above. Tests give each
+build its own XO_BUILD_DIR (xotool XO_TEST_BUILD_SCRATCH), and the key
+and the entry's env lines held it ("environment changed: XO_BUILD_DIR");
+it is now out of both, as the build directory is scratch. And a hit
+replayed what the stored build printed, its own output path
+(`darwin/arm64: OLD/prog`), so `XO_BACKEND_CACHE=verify` reported XO1512
+"what the build printed" for every hit into a new directory, live on main
+since 530cddfba; a hit now prints its own cleaned path (wholebuild.xo
+hit_output), and verify compares that. Check: 60 goldens under verify
+on the Mac, 59 entries found and verified, 0 XO1512, binaries the same
+(native_sqlite never hits: its entry lists the temporary dSYM it wrote).

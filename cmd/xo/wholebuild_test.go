@@ -396,8 +396,9 @@ func TestWholeBuildDebugEnv(t *testing.T) {
 // TestWholeBuildOutputDir: the run cache entry of `xo build -o DIR/NAME`
 // does not depend on DIR (out_dir_free, 2026-11-15): a build of the same
 // program to a new directory hits, makes the directory, and writes the
-// same bytes; a new file name misses (darwin's signature and windows'
-// PDB name the file). Before, every new directory missed: a golden
+// same bytes and prints its own output path, with another XO_BUILD_DIR
+// too, and XO_BACKEND_CACHE=verify finds no difference; a new file name
+// misses (darwin's signature and windows' PDB name the file). Before, every new directory missed: a golden
 // test's build to a fresh temporary directory never hit.
 func TestWholeBuildOutputDir(t *testing.T) {
 	t.Parallel()
@@ -420,6 +421,7 @@ func TestWholeBuildOutputDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	chdir(t, dir)
+	last := ""
 	build := func(out string, wantHit bool) []byte {
 		t.Helper()
 		var so, se bytes.Buffer
@@ -432,6 +434,10 @@ func TestWholeBuildOutputDir(t *testing.T) {
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(dir, out)
 		}
+		// a hit prints this build's output path, not the stored build's
+		if !strings.Contains(so.String()+se.String(), abs) {
+			t.Fatalf("build -o %s: want its path %s printed, got\n%s%s", out, abs, so.String(), se.String())
+		}
 		got, err := testtmp.Guard(exec.Command(abs)).Output()
 		if err != nil || string(got) != "two\n" {
 			t.Fatalf("build -o %s: the binary printed %q (%v)", out, got, err)
@@ -440,6 +446,7 @@ func TestWholeBuildOutputDir(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		last = se.String()
 		return b
 	}
 	a := build(filepath.Join(tmp, "a", "prog"), false)
@@ -449,6 +456,19 @@ func TestWholeBuildOutputDir(t *testing.T) {
 	}
 	// a relative -o in another directory hits too
 	build(filepath.Join("..", "c", "prog"), true)
+	// and another scratch directory: internal/xotool gives each test
+	// build its own XO_BUILD_DIR
+	setenv(t, "XO_BUILD_DIR", filepath.Join(tmp, "build2"))
+	build(filepath.Join(tmp, "e", "prog"), true)
 	// a new file name is its own build
 	build(filepath.Join(tmp, "d", "other"), false)
+	// XO_BACKEND_CACHE=verify (its own key): a hit into a new directory
+	// rebuilds and matches, binary and output
+	setenv(t, "XO_BACKEND_CACHE", "verify")
+	build(filepath.Join(tmp, "f", "prog"), false)
+	build(filepath.Join(tmp, "g", "prog"), false)
+	// verified, not missed: the entry was found (an empty miss reason)
+	if !strings.Contains(last, "cache run miss: \n") {
+		t.Fatalf("verify build -o g/prog: want its entry found and checked, got\n%s", last)
+	}
 }

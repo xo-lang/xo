@@ -246,6 +246,15 @@ func sharedKey(dir string, opts xotool.Options) string {
 // binary. The result is shared: its binary is only read, and its
 // directory is removed by TestMain (xotool.CleanupTemp), never by a test.
 func sharedBuild(dir string, opts xotool.Options) (*xotool.Result, error) {
+	// a golden build with no variables of its own uses the run cache
+	// (decision 0360) that TestMain turns off for the cache tests: its
+	// key holds xo's identity, so a new xo's first build of each golden
+	// is a real build and only a repeat by the same xo hits (lead,
+	// 2026-11-15). A build that sets variables (the cache tests among
+	// them) keeps it off.
+	if len(opts.Env) == 0 {
+		opts.Env = []string{"XO_WHOLE_BUILD=on"}
+	}
 	v, _ := sharedBuilds.LoadOrStore(sharedKey(dir, opts), &sharedEntry{})
 	e := v.(*sharedEntry)
 	e.once.Do(func() { e.res, e.err = xotool.Build([]string{dir}, opts) })
