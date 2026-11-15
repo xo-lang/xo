@@ -1491,6 +1491,15 @@ Last verified: 2026-11-15
     the next `--wait --after SEQ` command) and replaces idlewatch and
     bottlewatch; `xw snooze ID [--for 2h]` quiets one (the idle-ok
     file's grace). Last verified: 2026-11-15.
+  - `xw std [MODULE] [--since 14d]`: std maturity over time (decision
+    0461's axes): each axis's Proven/Solid/Early counts then and now, the
+    marks that moved up or DOWN, new modules, the timeline; MODULE gives
+    its marks where they changed. It reads the snapshots in
+    ~/xo-lead/notes/stdcov, which `HEAVY_CLASS=quick heavy.sh NAME
+    scripts/lead/stdcov-snap.sh [REV...]` writes (scripts/stdcov -json at
+    REV, default origin/main, about 15 s; `--site WEBSITE_DIR` reads the
+    website page's history from before scripts/stdcov existed, back to
+    2026-11-03). Last verified: 2026-11-15.
   - Fire and forget: a down xw never fails heavy.sh, pushq or
     offload-gate (events spool under ~/xo-lead/xw/spool).
   - board.sh stays for claims and a one-line NOW until it becomes a
