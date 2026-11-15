@@ -307,7 +307,7 @@ func fuzz(args []string) error {
 		return err
 	}
 	if dirty, _ := gitOut("status", "--porcelain", "--", "std", ":(exclude)std/evidence", "compiler", "internal/stdtest"); dirty != "" {
-		return errors.New("std, compiler or internal/stdtest has uncommitted changes: evidence names a commit")
+		return fmt.Errorf("std, compiler or internal/stdtest has uncommitted changes: evidence names a commit:\n%s", dirty)
 	}
 	out := filepath.Join("std", "evidence", module, "fuzz.md")
 	first := 2 // seed 1 is each harness's committed corpus
@@ -411,7 +411,7 @@ func timing(args []string) error {
 		return err
 	}
 	if dirty, _ := gitOut("status", "--porcelain", "--", "std", ":(exclude)std/evidence", "compiler"); dirty != "" {
-		return errors.New("std or compiler has uncommitted changes: evidence names a commit")
+		return fmt.Errorf("std or compiler has uncommitted changes: evidence names a commit:\n%s", dirty)
 	}
 	tmp, err := os.MkdirTemp("", "stdproven-timing-")
 	if err != nil {
@@ -490,7 +490,7 @@ func race(args []string) error {
 		return err
 	}
 	if dirty, _ := gitOut("status", "--porcelain", "--", "std", ":(exclude)std/evidence", "compiler", "internal/stdtest"); dirty != "" {
-		return errors.New("std, compiler or internal/stdtest has uncommitted changes: evidence names a commit")
+		return fmt.Errorf("std, compiler or internal/stdtest has uncommitted changes: evidence names a commit:\n%s", dirty)
 	}
 	root, err := os.Getwd()
 	if err != nil {
@@ -772,7 +772,7 @@ func stress(args []string) error {
 		return err
 	}
 	if dirty, _ := gitOut("status", "--porcelain", "--", "std", ":(exclude)std/evidence", "compiler"); dirty != "" {
-		return errors.New("std or compiler has uncommitted changes: evidence names a commit")
+		return fmt.Errorf("std or compiler has uncommitted changes: evidence names a commit:\n%s", dirty)
 	}
 	tmp, err := os.MkdirTemp("", "stdproven-stress-")
 	if err != nil {
@@ -954,7 +954,7 @@ func perf(args []string) error {
 		return err
 	}
 	if dirty, _ := gitOut("status", "--porcelain", "--", "std", ":(exclude)std/evidence", "compiler", "bench/perf"); dirty != "" {
-		return errors.New("std, compiler or bench/perf has uncommitted changes: evidence names a commit")
+		return fmt.Errorf("std, compiler or bench/perf has uncommitted changes: evidence names a commit:\n%s", dirty)
 	}
 	cands, _ := filepath.Glob(filepath.Join("bench", "perf", module+"*"))
 	var dirs []string
@@ -1061,7 +1061,7 @@ func serverPerf(args []string) error {
 		return err
 	}
 	if dirty, _ := gitOut("status", "--porcelain", "--", "std", ":(exclude)std/evidence", "compiler", "bench/perf"); dirty != "" {
-		return errors.New("std, compiler or bench/perf has uncommitted changes: evidence names a commit")
+		return fmt.Errorf("std, compiler or bench/perf has uncommitted changes: evidence names a commit:\n%s", dirty)
 	}
 	script := filepath.Join("bench", "perf", module, "proven.sh")
 	if _, err := os.Stat(script); err != nil {
