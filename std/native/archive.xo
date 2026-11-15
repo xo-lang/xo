@@ -941,27 +941,111 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
   let n = data.len()
   var pos = 0
   var out: List[archive.Entry] = []
-  var pax: Map[Str, Str] = {}
-  var long_name = ""
-  var holes_left = SPARSE_HOLES_MAX
+  var st = UntarState{pax: {}, long_name: "", holes_left: SPARSE_HOLES_MAX}
+  while true {
+    match untar_step(data, pos, st, true)? {
+      TarStep.Need(_) => return Err("untar: unexpected EOF")
+      TarStep.End => break
+      TarStep.Head(h) => {
+        st = h.st
+        var e = h.e
+        pos = h.at
+        if !e.is_dir && !h.sparse {
+          if n - pos < h.nb {
+            return Err("untar: unexpected EOF")
+          }
+          e.data = sub(data, pos, pos + h.nb)
+        }
+        out.push(e)
+        pos += h.nb
+        let pad = (512 - h.nb % 512) % 512
+        if n - pos < pad {
+          // a short padding ends the archive (tryReadFull's io.EOF)
+          break
+        }
+        pos += pad
+      }
+    }
+  }
+  out
+}
+
+/// What untar carries from one header to the next: the PAX records and
+/// GNU long name for the next entry, and the sparse expansion budget.
+struct UntarState {
+  pax: Map[Str, Str]
+  long_name: Str
+  holes_left: Int
+}
+
+/// A file or directory header read by untar_step: the entry (its data
+/// empty unless the file is sparse, whose logical data is read whole),
+/// where its data starts, its size in the archive, and the state after it.
+struct TarHead {
+  e: archive.Entry
+  at: Int
+  nb: Int
+  sparse: Bool
+  st: UntarState
+}
+
+enum TarStep {
+  /// more input: data[pos..pos + n] is needed (only when not at EOF)
+  Need(n: Int)
+  End
+  Head(h: TarHead)
+}
+
+/// Whether PAX records describe a GNU sparse file (sparse_pax's test).
+fn is_sparse(records: Map[Str, Str]) -> Bool {
+  let major = records.get("GNU.sparse.major") ?? ""
+  let minor = records.get("GNU.sparse.minor") ?? ""
+  if major == "0" && (minor == "0" || minor == "1") {
+    return true
+  }
+  if major == "1" && minor == "0" {
+    return true
+  }
+  if major != "" || minor != "" {
+    return false
+  }
+  (records.get("GNU.sparse.map") ?? "") != ""
+}
+
+/// Reads from data[pos0..] the headers up to the next file or directory
+/// (Go's Reader.Next with untar's checks). The input may stop short of the
+/// archive's end when eof is false: where a step needs bytes past it, it
+/// returns Need, and the caller runs it again from pos0 with more.
+fn untar_step(data: Bytes, pos0: Int, st0: UntarState, eof: Bool) -> TarStep ! Str {
+  let n = data.len()
+  var pos = pos0
+  var pax = st0.pax
+  var long_name = st0.long_name
+  var holes_left = st0.holes_left
   while true {
     // readHeader
+    if n - pos < 512 && !eof {
+      return Ok(TarStep.Need(pos - pos0 + 512))
+    }
     if pos == n {
-      break
+      return Ok(TarStep.End)
     }
     if n - pos < 512 {
       return Err("untar: unexpected EOF")
     }
     if is_zero_block(data, pos) {
       pos += 512
+      if n - pos < 512 && !eof {
+        return Ok(TarStep.Need(pos - pos0 + 512))
+      }
       if pos == n {
-        break
+        return Ok(TarStep.End)
       }
       if n - pos < 512 {
         return Err("untar: unexpected EOF")
       }
       if is_zero_block(data, pos) {
-        break
+        return Ok(TarStep.End)
       }
       return Err(ERR_HEADER)
     }
@@ -1048,10 +1132,18 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
       // a PAX header or a GNU long name: the next header's
       // readSpecialFile reads up to 1 MiB and a byte: too long only
       // when that much is there, else a short body's unexpected EOF
-      if nb > 1048576 && n - pos > 1048576 {
-        return Err("untar: archive/tar: header field too long")
+      if nb > 1048576 {
+        if n - pos > 1048576 {
+          return Err("untar: archive/tar: header field too long")
+        }
+        if !eof {
+          return Ok(TarStep.Need(pos - pos0 + 1048577))
+        }
       }
       if n - pos < nb {
+        if !eof {
+          return Ok(TarStep.Need(pos - pos0 + nb))
+        }
         return Err("untar: unexpected EOF")
       }
       let body = sub(data, pos, pos + nb)
@@ -1077,9 +1169,12 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
       }
       let pad = (512 - nb % 512) % 512
       if n - pos < pad {
+        if !eof {
+          return Ok(TarStep.Need(pos - pos0 + pad))
+        }
         // the padding is read with tryReadFull, which gives io.EOF for
         // a short read too: the archive ends here, as in Go
-        break
+        return Ok(TarStep.End)
       }
       pos += pad
       if flag == 120 || flag == 103 {
@@ -1189,6 +1284,9 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
           break
         }
         if n - pos < 512 {
+          if !eof {
+            return Ok(TarStep.Need(pos - pos0 + 512))
+          }
           return Err("untar: unexpected EOF")
         }
         blk = pos
@@ -1210,41 +1308,211 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
       None => return Err("untar: entry path ${name.quote()} ${path_why(name)}")
     }
     var e = archive.Entry{path: p, data: b"", mode: mode & 0o7777, is_dir: false, modified: Time.UNIX_EPOCH + Duration.from_nanos(mtime_ns)}
+    var sparse = false
     if typ == 53 {
       e.is_dir = true
     } else if typ == 48 {
-      if n - pos < nb {
-        return Err("untar: unexpected EOF")
-      }
-      e.data = sub(data, pos, pos + nb)
-      // a GNU sparse file described by PAX records (handleSparseFile)
-      match sparse_pax(records, e.data, holes_left) {
-        Ok(Some((sname, logical))) => {
-          holes_left -= logical.len() - e.data.len()
-          if sname != "" {
-            e.path = match archive_path(sname) {
-              Some(x) => x
-              None => return Err("untar: entry path ${sname.quote()} ${path_why(sname)}")
-            }
+      if is_sparse(records) {
+        // a GNU sparse file described by PAX records (handleSparseFile):
+        // its map and data are read whole
+        if n - pos < nb {
+          if !eof {
+            return Ok(TarStep.Need(pos - pos0 + nb))
           }
-          e.data = logical
+          return Err("untar: unexpected EOF")
         }
-        Ok(None) => {}
-        Err(m) => return Err(m)
+        match sparse_pax(records, sub(data, pos, pos + nb), holes_left) {
+          Ok(Some((sname, logical))) => {
+            holes_left -= logical.len() - nb
+            if sname != "" {
+              e.path = match archive_path(sname) {
+                Some(x) => x
+                None => return Err("untar: entry path ${sname.quote()} ${path_why(sname)}")
+              }
+            }
+            e.data = logical
+            sparse = true
+          }
+          Ok(None) => {}
+          Err(m) => return Err(m)
+        }
       }
     } else {
       return Err("untar: entry ${name.quote()} is not a file or a directory")
     }
-    out.push(e)
-    pos += nb
-    let pad = (512 - nb % 512) % 512
-    if n - pos < pad {
-      // a short padding ends the archive (tryReadFull's io.EOF)
-      break
-    }
-    pos += pad
+    return Ok(TarStep.Head(TarHead{e: e, at: pos, nb: nb, sparse: sparse, st: UntarState{pax: pax, long_name: long_name, holes_left: holes_left}}))
   }
-  out
+  Ok(TarStep.End)
+}
+
+/// A tar archive read entry by entry from a File (Go's tar.Reader): memory
+/// is a header's records and the input buffered for it, not the data (a
+/// sparse file's data is the exception: it is read whole). The entries
+/// and errors are untar's, `untar:` read as `tar_reader:`.
+struct TarReader {
+  f: File
+  /// input read and not yet used: buf[at..]
+  buf: Bytes
+  at: Int
+  eof: Bool
+  st: UntarState
+  /// the current entry's bytes left in the archive, and its padding
+  left: Int
+  pad: Int
+  /// a sparse entry's logical data and how much of it read gave
+  logical: Bytes
+  lpos: Int
+  sparse: Bool
+  done: Bool
+}
+
+fn tar_reader(f: File) -> TarReader {
+  TarReader{f: f, buf: b"", at: 0, eof: false, st: UntarState{pax: {}, long_name: "", holes_left: SPARSE_HOLES_MAX}, left: 0, pad: 0, logical: b"", lpos: 0, sparse: false, done: false}
+}
+
+fn tr_err(msg: Str) -> archive.ArchiveErr {
+  archive_err("tar_reader: ${msg.cut_prefix("untar: ") ?? msg}")
+}
+
+/// Reads until buf[at..] holds k bytes or the File ends.
+fn (var r: TarReader) fill(k: Int) -> () ! archive.ArchiveErr uses fs.read {
+  if r.buf.len() - r.at >= k || r.eof {
+    return Ok(())
+  }
+  var b = BytesBuilder.with_capacity(k)
+  b.write(r.buf[r.at..r.buf.len()])
+  while b.len() < k {
+    let want = if k - b.len() > 65536 { k - b.len() } else { 65536 }
+    match r.f.read(want) {
+      Ok(Some(got)) => b.write(got)
+      Ok(None) => {
+        r.eof = true
+        break
+      }
+      Err(e) => return Err(tr_err(e.display()))
+    }
+  }
+  r.buf = b.freeze()
+  r.at = 0
+  Ok(())
+}
+
+/// Up to max bytes of the current entry's data in the archive (from the
+/// buffer first), or None at the File's end.
+fn (var r: TarReader) take(max: Int) -> Bytes? ! archive.ArchiveErr uses fs.read {
+  let have = r.buf.len() - r.at
+  if have > 0 {
+    let k = if max < have { max } else { have }
+    let out = r.buf[r.at..r.at + k]
+    r.at += k
+    return Ok(Some(out))
+  }
+  if r.eof {
+    return Ok(None)
+  }
+  match r.f.read(max) {
+    Ok(Some(got)) => Ok(Some(got))
+    Ok(None) => {
+      r.eof = true
+      Ok(None)
+    }
+    Err(e) => Err(tr_err(e.display()))
+  }
+}
+
+fn (var r: TarReader) next() -> archive.TarFile? ! archive.ArchiveErr uses fs.read {
+  if r.done {
+    return Ok(None)
+  }
+  // the rest of the current entry (discard), then its padding
+  // (tryReadFull: short is the archive's end)
+  while r.left > 0 {
+    match r.take(r.left) {
+      Ok(Some(got)) => r.left -= got.len()
+      Ok(None) => {
+        r.done = true
+        return Err(tr_err("unexpected EOF"))
+      }
+      Err(e) => {
+        r.done = true
+        return Err(e)
+      }
+    }
+  }
+  if r.pad > 0 {
+    r.fill(r.pad)?
+    if r.buf.len() - r.at < r.pad {
+      r.done = true
+      return Ok(None)
+    }
+    r.at += r.pad
+    r.pad = 0
+  }
+  r.logical = b""
+  r.lpos = 0
+  r.sparse = false
+  while true {
+    match untar_step(r.buf, r.at, r.st, r.eof) {
+      Ok(TarStep.Need(k)) => {
+        let had = r.buf.len() - r.at
+        r.fill(k)?
+        if r.buf.len() - r.at == had && !r.eof {
+          return Err(tr_err("no progress"))
+        }
+      }
+      Ok(TarStep.End) => {
+        r.done = true
+        return Ok(None)
+      }
+      Ok(TarStep.Head(h)) => {
+        r.st = h.st
+        r.at = h.at
+        r.left = h.nb
+        r.pad = (512 - h.nb % 512) % 512
+        var size = h.nb
+        if h.sparse {
+          r.sparse = true
+          r.logical = h.e.data
+          size = h.e.data.len()
+        }
+        return Ok(Some(archive.TarFile{path: h.e.path, size: size, mode: h.e.mode, is_dir: h.e.is_dir, modified: h.e.modified}))
+      }
+      Err(m) => {
+        r.done = true
+        return Err(tr_err(m))
+      }
+    }
+  }
+  Ok(None)
+}
+
+fn (var r: TarReader) read(max: Int) -> Bytes? ! archive.ArchiveErr uses fs.read {
+  if max <= 0 {
+    return Ok(Some(b""))
+  }
+  if r.sparse {
+    if r.lpos == r.logical.len() {
+      return Ok(None)
+    }
+    let k = if max < r.logical.len() - r.lpos { max } else { r.logical.len() - r.lpos }
+    let out = r.logical[r.lpos..r.lpos + k]
+    r.lpos += k
+    return Ok(Some(out))
+  }
+  if r.left == 0 {
+    return Ok(None)
+  }
+  let want = if max < r.left { max } else { r.left }
+  match r.take(want)? {
+    Some(got) => {
+      r.left -= got.len()
+      Ok(Some(got))
+    }
+    None => {
+      r.done = true
+      Err(tr_err("unexpected EOF"))
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

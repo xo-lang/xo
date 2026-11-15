@@ -547,3 +547,113 @@ test "tar_writer writes Go's tar.Writer archive and its errors" {
   let data = os.fs.read("tw.tar")?
   expect(sum_of(data)) == TAR_WRITER
 }
+
+fn tr_all(fs: Fs, path: Str, chunk: Int) -> List[archive.Entry] ! archive.ArchiveErr {
+  let f = match fs.open(path) {
+    Ok(x) => x
+    Err(e) => return Err(archive.ArchiveErr{msg: e.display()})
+  }
+  var r = archive.tar_reader(f)
+  var out: List[archive.Entry] = []
+  while true {
+    let h = match r.next()? {
+      Some(x) => x
+      None => break
+    }
+    var b = BytesBuilder.new()
+    while true {
+      match r.read(chunk)? {
+        Some(part) => b.write(part)
+        None => break
+      }
+    }
+    let data = b.freeze()
+    if data.len() != h.size {
+      return Err(archive.ArchiveErr{msg: "size ${h.size} read ${data.len()}"})
+    }
+    out.push(archive.Entry{path: h.path, data: data, mode: h.mode, is_dir: h.is_dir, modified: h.modified})
+  }
+  out
+}
+
+fn tr_ref(data: Bytes) -> Str {
+  match archive.untar(data) {
+    Ok(entries) => summarize(entries)
+    Err(e) => {
+      let m = e.display()
+      "!error " + (if m.starts_with("archive: untar: ") { "archive: tar_reader: " + m[16..] } else { m })
+    }
+  }
+}
+
+fn tr_got(fs: Fs, data: Bytes, chunk: Int) -> Str ! FsErr {
+  fs.write("tr.tar", data)?
+  match tr_all(fs, "tr.tar", chunk) {
+    Ok(entries) => summarize(entries)
+    Err(e) => "!error ${e.display()}"
+  }
+}
+
+test "tar_reader reads entry by entry what untar reads" {
+  var bad: List[(Str, Str, Str)] = []
+  var all: List[Bytes] = []
+  for (hex_text, _want) in TAR_CASES {
+    all.push(Bytes.from_hex(hex_text) ?? b"")
+  }
+  for (hex_text, _why) in TAR_REFUSED {
+    all.push(Bytes.from_hex(hex_text) ?? b"")
+  }
+  var runs = 0
+  for data in all {
+    var cuts = [data.len()]
+    var at = 0
+    while at < data.len() {
+      cuts.push(at)
+      cuts.push(at + 100)
+      cuts.push(at + 511)
+      at += 512
+    }
+    for cut in cuts {
+      if cut > data.len() {
+        continue
+      }
+      let part = data[0..cut]
+      let want = tr_ref(part)
+      for chunk in [1, 7, 512, 100000] {
+        let got = tr_got(os.fs, part, chunk)?
+        runs += 1
+        if got != want {
+          bad.push(("${data.len()} cut ${cut} chunk ${chunk}", got, want))
+        }
+      }
+    }
+  }
+  expect(show3(bad)) == []
+  // every fixture and cut, with four read sizes
+  expect(runs) == 832
+}
+
+test "tar_reader streams a large entry" {
+  var b = BytesBuilder.new()
+  var i = 0
+  while i < 200000 {
+    b.write_byte(UInt8(97 + (i * 7 + i / 300) % 26))
+    i += 1
+  }
+  let t = Time.UNIX_EPOCH + Duration.from_nanos(1700000000 * 1000000000)
+  let es = [archive.Entry{path: "dir/".repeat(30) + "big.bin", data: b.freeze(), mode: 0o600, is_dir: false, modified: t}, archive.dir("d"), archive.file("d/x", b"x")]
+  let data = archive.tar(es)?
+  expect(tr_got(os.fs, data, 4097)?) == summarize(es)
+  expect(tr_got(os.fs, data, 70000)?) == summarize(es)
+  // next skips an entry's unread data
+  os.fs.write("tr.tar", data)?
+  var r = archive.tar_reader(os.fs.open("tr.tar")?)
+  let h = r.next()? ?? fault("first")
+  expect(h.size) == 200000
+  expect((r.read(10)? ?? b"").len()) == 10
+  expect((r.next()? ?? fault("dir")).is_dir) == true
+  expect(r.read(10)?) == None
+  expect((r.next()? ?? fault("x")).path) == "d/x"
+  expect(r.read(10)?) == Some(b"x")
+  expect(r.next()?) == None
+}

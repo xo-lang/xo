@@ -62,6 +62,31 @@ fn (var w: TarWriter) close() -> () ! ArchiveErr uses fs.write
 /// The entries of a tar archive. An entry whose path is absolute or
 /// leaves the archive's root (`..`) is an error, as are links and devices.
 fn untar(data: Bytes) -> List[Entry] ! ArchiveErr
+/// A tar entry's header as tar_reader gives it: size is the data's
+/// length (a sparse file's logical size), 0 for a directory.
+struct TarFile {
+  path: Str
+  size: Int
+  mode: Int
+  is_dir: Bool
+  modified: Time
+}
+
+/// A tar archive read entry by entry from a File (Go's tar.Reader): memory
+/// is a header and the input buffered for it, not the data, except a
+/// sparse file's, which is read whole. It gives untar's entries (files
+/// and directories; a global PAX header skipped) and untar's errors,
+/// `untar:` read as `tar_reader:`; an error ends the archive.
+/// @move_only
+struct TarReader {}
+
+fn tar_reader(f: File) -> TarReader
+/// The next entry's header, or None at the archive's end. The current
+/// entry's unread data is skipped.
+fn (var r: TarReader) next() -> TarFile? ! ArchiveErr uses fs.read
+/// Up to max bytes of the current entry's data, or None when it is read;
+/// data that ends early is `tar_reader: unexpected EOF`.
+fn (var r: TarReader) read(max: Int) -> Bytes? ! ArchiveErr uses fs.read
 /// How a zip entry's data is kept: deflated, or stored as it is (Go's
 /// zip.Deflate and zip.Store). A directory is always stored.
 enum ZipMethod {

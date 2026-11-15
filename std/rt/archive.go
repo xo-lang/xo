@@ -144,6 +144,104 @@ func Archive_untar(_ *Task, data Bytes) Result[List[Archive_Entry], Archive_Arch
 	return Ok[List[Archive_Entry], Archive_ArchiveErr](ListOf(out...))
 }
 
+// tarFileReader reads a File for Go's tar.Reader with the current task.
+type tarFileReader struct {
+	f   File
+	tk  *Task
+	err string
+}
+
+func (z *tarFileReader) Read(p []byte) (int, error) {
+	r := z.f.M_read(z.tk, int64(len(p)))
+	if !r.Ok {
+		z.err = r.E.M_display(z.tk)
+		return 0, io.ErrClosedPipe
+	}
+	if !r.V.Some {
+		return 0, io.EOF
+	}
+	return copy(p, r.V.V), nil
+}
+
+// Archive_TarReader is `archive.TarReader` (move only): Go's tar.Reader
+// over the File, giving untar's entries.
+type Archive_TarReader struct {
+	tr   *tar.Reader
+	fr   *tarFileReader
+	done bool
+}
+
+func (Archive_TarReader) XoDebug(b *strings.Builder) { b.WriteString("<tar_reader>") }
+func (x Archive_TarReader) M_debug(*Task) string     { return Debug(x) }
+
+func Archive_tar_reader(_ *Task, f File) Archive_TarReader {
+	fr := &tarFileReader{f: f}
+	return Archive_TarReader{tr: tar.NewReader(fr), fr: fr}
+}
+
+func (x *Archive_TarReader) fail(err error) Archive_ArchiveErr {
+	x.done = true
+	if x.fr.err != "" {
+		return archiveErr("tar_reader: " + x.fr.err)
+	}
+	return archiveErr("tar_reader: " + err.Error())
+}
+
+func (x *Archive_TarReader) M_next(tk *Task) Result[Option[Archive_TarFile], Archive_ArchiveErr] {
+	x.fr.tk = tk
+	for !x.done {
+		h, err := x.tr.Next()
+		if err == io.EOF {
+			x.done = true
+			break
+		}
+		if err != nil {
+			return Err[Option[Archive_TarFile]](x.fail(err))
+		}
+		// a name from the archive: outside bytes (decision 0259)
+		p, ok := archivePath(textOf(h.Name))
+		if !ok {
+			x.done = true
+			return Err[Option[Archive_TarFile]](archiveErr("tar_reader: entry path " + strconv.Quote(h.Name) + archivePathWhy(h.Name)))
+		}
+		e := Archive_TarFile{F_path: p, F_size: h.Size, F_mode: h.Mode & 0o7777, F_modified: Time(h.ModTime.UnixNano())}
+		switch h.Typeflag {
+		case tar.TypeDir:
+			e.F_is_dir, e.F_size = true, 0
+		case tar.TypeXGlobalHeader:
+			continue
+		case tar.TypeReg:
+		default:
+			x.done = true
+			return Err[Option[Archive_TarFile]](archiveErr("tar_reader: entry " + strconv.Quote(h.Name) + " is not a file or a directory"))
+		}
+		return Ok[Option[Archive_TarFile], Archive_ArchiveErr](Some(e))
+	}
+	return Ok[Option[Archive_TarFile], Archive_ArchiveErr](None[Archive_TarFile]())
+}
+
+func (x *Archive_TarReader) M_read(tk *Task, max int64) Result[Option[Bytes], Archive_ArchiveErr] {
+	x.fr.tk = tk
+	if max <= 0 {
+		return Ok[Option[Bytes], Archive_ArchiveErr](Some(Bytes("")))
+	}
+	if x.done {
+		return Ok[Option[Bytes], Archive_ArchiveErr](None[Bytes]())
+	}
+	buf := make([]byte, max)
+	n, err := x.tr.Read(buf)
+	if n > 0 {
+		return Ok[Option[Bytes], Archive_ArchiveErr](Some(Bytes(buf[:n])))
+	}
+	if err == io.EOF {
+		return Ok[Option[Bytes], Archive_ArchiveErr](None[Bytes]())
+	}
+	if err == nil {
+		return Ok[Option[Bytes], Archive_ArchiveErr](Some(Bytes("")))
+	}
+	return Err[Option[Bytes]](x.fail(err))
+}
+
 // Archive_zip is `archive.zip(entries)`.
 // archiveMethod is Go's method for a ZipMethod.
 func archiveMethod(m Archive_ZipMethod) uint16 {

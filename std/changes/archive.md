@@ -1,5 +1,20 @@
 # std/archive changes
 
+## 2026-11-15: feature: tar_reader, a tar archive read entry by entry (Go's tar.Reader)
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit features line (decision 0655): tar.NewReader, Reader, Reader.Next, Reader.Read
+- Go reference: archive/tar reader.go (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/archive (scripts/stdcorpus archive): every tar fixture (TAR_CASES, TAR_REFUSED) whole and cut at each block's start, 100 bytes in and its last byte, read in pieces of 1, 7, 512 and 100000 bytes, gives untar's entries or error (832 runs); a 200000 byte entry under a PAX name streamed and skipped
+- Timing: none
+
+`archive.tar_reader(f)` reads a tar archive from a File as Go's tar.Reader
+does. The native backends run untar's header step over a buffer that
+grows only for a header (a PAX or long name record up to 1 MiB, an old GNU
+sparse map) or a sparse file's data, so `untar` and `tar_reader` share one
+reader of the format.
+
 ## 2026-11-15: feature: tar_writer, a tar archive written entry by entry (Go's tar.Writer)
 
 - Kind: feature

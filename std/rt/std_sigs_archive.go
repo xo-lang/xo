@@ -19,6 +19,9 @@ var (
 	_ func(*Archive_TarWriter, *Task) Result[Unit, Archive_ArchiveErr]                                     = (*Archive_TarWriter).M_flush
 	_ func(*Archive_TarWriter, *Task) Result[Unit, Archive_ArchiveErr]                                     = (*Archive_TarWriter).M_close
 	_ func(*Task, Bytes) Result[List[Archive_Entry], Archive_ArchiveErr]                                   = Archive_untar
+	_ func(*Task, File) Archive_TarReader                                                                  = Archive_tar_reader
+	_ func(*Archive_TarReader, *Task) Result[Option[Archive_TarFile], Archive_ArchiveErr]                  = (*Archive_TarReader).M_next
+	_ func(*Archive_TarReader, *Task, int64) Result[Option[Bytes], Archive_ArchiveErr]                     = (*Archive_TarReader).M_read
 	_ func(*Task, List[Archive_Entry], string, Archive_ZipMethod, int64) Result[Bytes, Archive_ArchiveErr] = Archive_zip
 	_ func(*Task, Bytes, int64) Result[List[Archive_Entry], Archive_ArchiveErr]                            = Archive_unzip
 	_ func(*Task, Bytes) Result[Archive_ZipReader, Archive_ArchiveErr]                                     = Archive_zip_reader
