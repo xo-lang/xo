@@ -24,8 +24,12 @@ fn (var g: G) by_ref_of(fi: Int) -> List[Bool] {
     // a function not decoded: its body facts' types (decision 0283 B)
     var any = false
     var flags: List[Bool] = []
-    for t in g.m.param_types(fi) {
-      let big = g.big_by_ref(t)
+    for (i, t) in g.m.param_types(fi).indexed() {
+      // a `var` aggregate past the argument registers by reference too
+      // (Xo Lang 1, 2026-11-15): by value it is passed in and returned
+      // whole at every call, and a small method on a parser's state
+      // (xml.Dec.getc, 20 words) moved its words through the stack twice
+      let big = g.big_by_ref(t) || (f.export == "" && f.var_params.contains(i) && g.var_by_ref(t))
       flags.push(big)
       any = any || big
     }
@@ -934,6 +938,16 @@ fn (var g: G) sret_set(v: Int, fi: Int, ad: Int, rest: List[Int]) {
 /// 0564 step 2) of ssa.WIDE_MIN bytes or more.
 fn (var g: G) big_by_ref(t: Int) -> Bool {
   ssa.wide_kind(g.kind(t)) && ssa.wide_bytes(8 * g.nwords(t))
+}
+
+/// The size in words past which a `var` parameter's aggregate is passed
+/// by reference though it is not wide: more than the 8 argument registers.
+const VAR_BY_REF_WORDS = 8
+
+/// Whether a `var` parameter of type t is passed by reference below the
+/// wide size (by_ref_of).
+fn (var g: G) var_by_ref(t: Int) -> Bool {
+  ssa.wide_kind(g.kind(t)) && g.nwords(t) > VAR_BY_REF_WORDS
 }
 
 /// The memory value v is read from in place: a read only parameter
