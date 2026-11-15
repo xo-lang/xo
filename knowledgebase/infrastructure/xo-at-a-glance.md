@@ -180,8 +180,9 @@ lists the rest.
   Windows DLL with its import library (0574).
 - Modules: versioned requires, `xo get`, the public proxy, checksum log
   and index (proxy.xolang.org, sum.xolang.org, index.xolang.org; 0568,
-  0124, 0126). No vulnerability database or `xo vuln` yet
-  (maturity-gaps.md).
+  0124, 0126). `xo vuln` (0647 stage A: toolchain, imported std modules
+  and required versions against an OSV database, `--db=file:///DIR`);
+  the public database vuln.xolang.org is not live yet (maturity-gaps.md).
 - Editors: `xo lsp`; the VS Code extension `xo-lang.xo` (Marketplace and
   Open VSX); the tree-sitter grammar (npm `@xo-lang/tree-sitter-xo`,
   crates.io `tree-sitter-xo`).

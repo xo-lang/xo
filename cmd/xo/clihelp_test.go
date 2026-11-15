@@ -17,7 +17,7 @@ var clihelpDir, _ = filepath.Abs(filepath.Join("testdata", "clihelp"))
 
 // helpCommands are the user commands of spec/core.md 10.1, as
 // compiler/cli/cmdhelp lists them.
-var helpCommands = []string{"build", "run", "test", "check", "parse", "fmt", "fix", "vet", "query", "edit", "doc", "def", "refs", "type", "symbols", "explain", "init", "get", "mod", "vendor", "publish", "audit", "bind", "proto", "dump", "replay", "lsp", "mcp", "serve", "version", "debug"}
+var helpCommands = []string{"build", "run", "test", "check", "parse", "fmt", "fix", "vet", "query", "edit", "doc", "def", "refs", "type", "symbols", "explain", "init", "get", "mod", "vendor", "publish", "audit", "vuln", "bind", "proto", "dump", "replay", "lsp", "mcp", "serve", "version", "debug"}
 
 // shippedXo is the shipped xo (xo1, decision 0178 switch point B) whose
 // command line the help tests drive: the binary the other tests run
@@ -149,7 +149,7 @@ func TestCLIHelp(t *testing.T) {
 	}
 	// the pattern DIR/... (decision 0210) is TestCLIPattern's; another
 	// form is a usage error, and run takes no pattern
-	for _, c := range []string{"check", "vet", "fmt", "fix", "doc", "parse", "build", "test", "audit"} {
+	for _, c := range []string{"check", "vet", "fmt", "fix", "doc", "parse", "build", "test", "audit", "vuln"} {
 		for _, p := range []string{"...", "a/.../b", "x..."} {
 			out, stderr, code := xo(c, p)
 			want := "xo " + c + ": " + p + ": only the pattern DIR/... is supported (for example xo " + c + " ./...), where DIR/... is every directory at or below DIR\n"

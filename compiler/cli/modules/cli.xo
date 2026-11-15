@@ -7,7 +7,7 @@ use github.com/xo-lang/xo/compiler/cli/cmdhelp
 
 /// The commands of this package, for the driver's dispatch.
 pub fn is_command(name: Str) -> Bool {
-  name is "get" | "mod" | "vendor" | "publish" | "audit"
+  name is "get" | "mod" | "vendor" | "publish" | "audit" | "vuln"
 }
 
 /// Runs `xo <args>` for a module command (args[0] is the command) in the
@@ -27,6 +27,7 @@ pub fn run(os: Os, wd: Str, args: List[Str]) -> Int uses (fs, net, proc, env, st
     "vendor" => c.run_vendor(rest)
     "publish" => c.run_publish(rest)
     "audit" => c.run_audit(rest)
+    "vuln" => c.run_vuln(rest)
     _ => {
       os.stdio.eprintln("xo: unknown command ${args[0].quote()}")
       2

@@ -3679,6 +3679,21 @@ Last verified: 2026-10-09.
   argument is an attenuation call or a `let` local bound to one. JSON
   (`--json` or a non terminal stdout) or a text report; exit 1 on check
   errors. Test: `cmd/xo/audit_test.go`. Last verified: 2026-10-11.
+- `xo vuln` (decision 0647 stage A, 2026-11-15): `compiler/cli/modules/vuln.xo`.
+  Checks the program as `xo audit` does (`check_dirs_fetching`), walks the
+  imports from its root modules (`Module.root`, each file's `imports`) for
+  the std modules it uses (the prelude always) and the required module
+  versions (`Module.dependency`), and reads the database at `--db`, else
+  `$XO_VULNDB`, else https://vuln.xolang.org (`file:///DIR` a local copy,
+  `off` nothing): `index/modules.json`, then `ID/<id>.json` (OSV 1.6) of
+  the `std`, `toolchain` and required modules' entries. std and toolchain
+  ranges are matched against std/VERSION, a module's against its selected
+  version. Findings XO1321 (std or toolchain), XO1322 (a module); XO1323
+  when the database cannot be read. JSON (`--json` or a non terminal
+  stdout) or text; exit 0 none, 3 found, 1 database, 2 usage or load.
+  Stage A matches imports only; symbols (`ecosystem_specific.imports[].symbols`)
+  are stage B. The database is built by the xo-lang/vulndb repository.
+  Test: `cmd/xo/vuln_test.go` (a file:// database). Last verified: 2026-11-15.
 - Attack replication (decision 0156, 2026-10-11): `cmd/xo`
   `TestSupplyChainAttacks` models the Backstabber's Knife Collection
   classes as small malicious Xo dependencies and consumers (benign,

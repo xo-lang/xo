@@ -1,0 +1,391 @@
+// `xo vuln [--json] [--db=URL|off] [--dir=DIR] [DIR|DIR/...]` (decision
+// 0647 stage A): the program's toolchain, the std modules it imports and
+// the module versions it requires, checked against the vulnerability
+// database (vuln.xolang.org, OSV 1.6 with vuln.go.dev's index layout).
+// Stage A reports an entry when its module or std module is imported;
+// stage B narrows it to reachable symbols. XO1321 a toolchain or std
+// entry, XO1322 a required module version's, XO1323 a database that
+// cannot be read. Exit 0 no finding, 3 a finding, 1 the database could not
+// be read, 2 a usage or load error.
+
+use github.com/xo-lang/xo/compiler/check
+use std/http
+use std/json
+
+const VULNDB = "https://vuln.xolang.org"
+
+struct OsvEvent {
+  introduced: Str? = None
+  fixed: Str? = None
+  last_affected: Str? = None
+} derive Json
+
+struct OsvRange {
+  kind as "type": Str = ""
+  events: List[OsvEvent] = []
+} derive Json
+
+struct OsvPackage {
+  ecosystem: Str = ""
+  name: Str = ""
+} derive Json
+
+struct OsvImport {
+  path: Str = ""
+  symbols: List[Str] = []
+} derive Json
+
+struct OsvEco {
+  imports: List[OsvImport] = []
+} derive Json
+
+struct OsvAffDb {
+  backends: List[Str] = []
+  platforms: List[Str] = []
+} derive Json
+
+struct OsvAffected {
+  pkg as "package": OsvPackage = OsvPackage{}
+  ranges: List[OsvRange] = []
+  ecosystem_specific: OsvEco? = None
+  database_specific: OsvAffDb? = None
+} derive Json
+
+struct OsvEntry {
+  id: Str = ""
+  summary: Str = ""
+  aliases: List[Str] = []
+  affected: List[OsvAffected] = []
+} derive Json
+
+struct VulnIdxEntry {
+  id: Str = ""
+  modified: Str = ""
+} derive Json
+
+struct VulnIdxModule {
+  path: Str = ""
+  vulns: List[VulnIdxEntry] = []
+} derive Json
+
+struct VulnFinding {
+  code: Str
+  id: Str
+  module: Str
+  /// the imported std modules the entry names (std), else []
+  imports: List[Str] = []
+  /// the version checked: the toolchain's or the required module's
+  version: Str
+  range: Str
+  fix: Str
+  summary: Str
+  aliases: List[Str] = []
+  backends: List[Str] = []
+  platforms: List[Str] = []
+}
+
+/// A version's numbers (a leading v and a -pre or +build suffix dropped);
+/// "0" is before every release.
+fn vuln_ver(v0: Str) -> List[Int] {
+  var v = v0.trim_prefix("v")
+  let (a, _, _) = cut(v, "-")
+  let (b, _, _) = cut(a, "+")
+  var out: List[Int] = []
+  for p in b.split(".") {
+    out.push(Int.parse(p) ?? 0)
+  }
+  while out.len() < 3 {
+    out.push(0)
+  }
+  out
+}
+
+/// -1, 0 or 1 as a is before, equal to or after b.
+fn vuln_cmp(a: Str, b: Str) -> Int {
+  let x = vuln_ver(a)
+  let y = vuln_ver(b)
+  for i in 0..3 {
+    if x[i] < y[i] {
+      return -1
+    }
+    if x[i] > y[i] {
+      return 1
+    }
+  }
+  0
+}
+
+/// Whether version v falls in one of the SEMVER ranges (OSV's evaluation:
+/// at or after an introduced, before its fixed, at or before its
+/// last_affected).
+fn vuln_affects(ranges: List[OsvRange], v: Str) -> Bool {
+  for r in ranges {
+    if r.kind != "SEMVER" {
+      continue
+    }
+    var inside = false
+    for e in r.events {
+      if let Some(i) = e.introduced {
+        if vuln_cmp(v, i) >= 0 {
+          inside = true
+        }
+      }
+      if let Some(f) = e.fixed {
+        if inside && vuln_cmp(v, f) >= 0 {
+          inside = false
+        }
+      }
+      if let Some(l) = e.last_affected {
+        if inside && vuln_cmp(v, l) > 0 {
+          inside = false
+        }
+      }
+    }
+    if inside {
+      return true
+    }
+  }
+  false
+}
+
+/// The range as text and what fixes it.
+fn vuln_range_text(ranges: List[OsvRange], what: Str) -> (Str, Str) {
+  var intro = "0"
+  var fixed = ""
+  var last = ""
+  for r in ranges {
+    for e in r.events {
+      if let Some(i) = e.introduced {
+        intro = i
+      }
+      if let Some(f) = e.fixed {
+        fixed = f
+      }
+      if let Some(l) = e.last_affected {
+        last = l
+      }
+    }
+  }
+  let from = if intro == "0" { "every release" } else { intro }
+  if !fixed.is_empty() {
+    return ("${from} before ${fixed}", "upgrade ${what} to ${fixed} or later")
+  }
+  ("${from} to ${last}", "no release has the fix yet (the next release after ${last} will)")
+}
+
+/// A database file: base is a file:// directory or an https URL.
+fn (c: ModCtx) vuln_get(base: Str, p: Str) -> Bytes ! Str uses (fs.read, net) {
+  if base.starts_with("file://") {
+    let path = "${base.trim_prefix("file://").trim_suffix("/")}/${p}"
+    return match c.os.fs.read(path) {
+      Ok(b) => Ok(b)
+      Err(e) => Err("${e}")
+    }
+  }
+  let url = "${base.trim_suffix("/")}/${p}"
+  let hc = http.client(c.os.net, timeout: 60s)
+  let resp = match hc.get(url) {
+    Ok(r) => r
+    Err(e) => return Err("Get ${url.quote()}: ${client_msg(e)}")
+  }
+  if resp.status != 200 {
+    return Err("${url}: ${status_text(resp.status)}")
+  }
+  Ok(resp.body)
+}
+
+fn (var c: ModCtx) run_vuln(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand, env, clock) {
+  var fl = FlagSet{name: "vuln", defs: [flag_str("dir", ".", "a directory of the main module"), flag_bool("json", "print the findings as JSON"), flag_str("db", "", "the database: an https URL, file:///DIR, or off (default $XO_VULNDB, else ${VULNDB})")]}
+  if !c.parse_flags(fl, args) {
+    return 2
+  }
+  var dir = fl.str("dir")
+  if !fl.args.is_empty() {
+    dir = fl.args[0]
+  }
+  var db = fl.str("db")
+  if db.is_empty() {
+    db = c.getenv("XO_VULNDB")
+  }
+  if db.is_empty() {
+    db = VULNDB
+  }
+  if db == "off" {
+    c.os.stdio.eprintln("xo vuln: the database is off (XO_VULNDB=off or --db=off): nothing checked")
+    return 0
+  }
+  if !db.starts_with("https://") && !db.starts_with("file://") && !db.starts_with("http://127.0.0.1") {
+    c.os.stdio.eprintln("xo vuln: --db=${db}: want an https URL, file:///DIR or off")
+    return 2
+  }
+  let walk = dir.ends_with("/...")
+  if walk {
+    dir = dir.trim_suffix("/...")
+    if dir.is_empty() {
+      dir = "/"
+    }
+  }
+  let root = match c.mod_root_of(dir, "vuln") {
+    Some(r) => r
+    None => return 2
+  }
+  var chk = check.new_checker(c.os.fs, c.std_dir())
+  chk.set_mod_env(c.wd, c.getenv("XO_MODCACHE"), c.getenv("HOME"), c.getenv("XDG_CACHE_HOME"), c.getenv("XO_OFFLINE"), c.getenv("XO_WORK"))
+  chk.cbind_dir = c.getenv("XO_CBIND_DIR")
+  chk.gobind_dir = c.getenv("XO_GOBIND_DIR")
+  chk.go_target = check.go_target(c.getenv("GOOS"), c.getenv("GOARCH"))
+  if walk {
+    chk.walk = [c.abs(root)]
+  }
+  let dirs = c.workspace_dirs([root])
+  chk.named_dirs = 1
+  if walk {
+    for d in dirs[1..] {
+      chk.walk.push(c.abs(d))
+    }
+  }
+  let os = c.os
+  let wd = c.wd
+  match chk.check_dirs_fetching(os, dirs, fn(p: Str, v: Str) -> Str ! check.Problem { fetch(os, wd, p, v) }) {
+    Ok(_) => {}
+    Err(e) => {
+      c.os.stdio.eprintln("xo vuln: ${e}")
+      return 2
+    }
+  }
+  // what the program uses: the modules its root modules import, directly
+  // or through other modules (std's own imports too), the prelude always,
+  // and each required module version (the checker loads more of std than
+  // a program imports, so its module list alone overreports)
+  var std_used: Set[Str] = #{}
+  std_used.add("std/prelude")
+  var deps: Map[Str, Str] = {}
+  var seen: Set[Int] = #{}
+  var todo: List[Int] = []
+  for i in 0..chk.mods.len() {
+    if chk.mods[i].root {
+      todo.push(i)
+      seen.add(i)
+    }
+  }
+  while !todo.is_empty() {
+    let mi = todo.pop() ?? 0
+    let m = chk.mods[mi]
+    if m.std_tree && !m.native && m.path.starts_with("std/") {
+      std_used.add(m.path)
+    }
+    if !m.dependency.is_empty() {
+      let (p, v, ok) = cut(m.dependency, "@")
+      if ok {
+        deps.put(p, v)
+      }
+    }
+    for fi in m.files {
+      for (_, im) in chk.files[fi].imports {
+        if im.module >= 0 && !seen.contains(im.module) {
+          seen.add(im.module)
+          todo.push(im.module)
+        }
+      }
+    }
+  }
+  let tv = ((c.os.fs.read("${c.std_dir()}/VERSION").ok() ?? b"").to_str() ?? "").trim()
+  if tv.is_empty() {
+    c.os.stdio.eprintln("xo vuln: no std/VERSION in ${c.std_dir()}: the toolchain's version is unknown")
+    return 2
+  }
+  // the index, then the entries of the modules in use
+  let idx_b = match c.vuln_get(db, "index/modules.json") {
+    Ok(b) => b
+    Err(e) => {
+      c.os.stdio.eprintln("xo vuln: XO1323: the vulnerability database cannot be read: ${e}")
+      return 1
+    }
+  }
+  let idx = match json.decode[List[VulnIdxModule]](idx_b) {
+    Ok(x) => x
+    Err(e) => {
+      c.os.stdio.eprintln("xo vuln: XO1323: ${db}/index/modules.json is not the database's index: ${e}")
+      return 1
+    }
+  }
+  var findings: List[VulnFinding] = []
+  for im in idx {
+    let what = if im.path == "std" || im.path == "toolchain" { "xo" } else { im.path }
+    let version = if im.path == "std" || im.path == "toolchain" { tv } else { deps.get(im.path) ?? "" }
+    if version.is_empty() {
+      continue
+    }
+    for ie in im.vulns {
+      let eb = match c.vuln_get(db, "ID/${ie.id}.json") {
+        Ok(b) => b
+        Err(e) => {
+          c.os.stdio.eprintln("xo vuln: XO1323: entry ${ie.id}: ${e}")
+          return 1
+        }
+      }
+      let ent = match json.decode[OsvEntry](eb) {
+        Ok(x) => x
+        Err(e) => {
+          c.os.stdio.eprintln("xo vuln: XO1323: entry ${ie.id} is not OSV: ${e}")
+          return 1
+        }
+      }
+      for a in ent.affected {
+        if a.pkg.ecosystem != "Xo" || a.pkg.name != im.path || !vuln_affects(a.ranges, version) {
+          continue
+        }
+        var hits: List[Str] = []
+        if im.path == "std" {
+          let imps = (a.ecosystem_specific ?? OsvEco{}).imports
+          if imps.is_empty() {
+            hits.push("std")
+          }
+          for x in imps {
+            if std_used.contains(x.path) && !hits.contains(x.path) {
+              hits.push(x.path)
+            }
+          }
+          if hits.is_empty() {
+            continue
+          }
+        }
+        let (rng, fix) = vuln_range_text(a.ranges, what)
+        let ds = a.database_specific ?? OsvAffDb{}
+        findings.push(VulnFinding{code: if im.path == "std" || im.path == "toolchain" { "XO1321" } else { "XO1322" }, id: ent.id, module: im.path, imports: hits, version: version, range: rng, fix: fix, summary: ent.summary, aliases: ent.aliases, backends: ds.backends, platforms: ds.platforms})
+        break
+      }
+    }
+  }
+  if fl.on("json") || !c.os.stdio.stdout_is_tty() {
+    c.out(encode_json(vuln_json(db, tv, findings)))
+  } else {
+    c.print_vuln(db, tv, findings)
+  }
+  if findings.is_empty() { 0 } else { 3 }
+}
+
+fn vuln_json(db: Str, tv: Str, fs: List[VulnFinding]) -> J {
+  J.O(fields: [("database", J.S(s: db)), ("toolchain", J.S(s: tv)), ("findings", J.A(xs: fs.map(fn(f) {
+    J.O(fields: [("code", J.S(s: f.code)), ("id", J.S(s: f.id)), ("module", J.S(s: f.module)), ("imports", jstrs(f.imports)), ("version", J.S(s: f.version)), ("affected", J.S(s: f.range)), ("fix", J.S(s: f.fix)), ("summary", J.S(s: f.summary)), ("aliases", jstrs(f.aliases)), ("backends", jstrs(f.backends)), ("platforms", jstrs(f.platforms)), ("url", J.S(s: "${db.trim_suffix("/")}/ID/${f.id}.json"))])
+  })))])
+}
+
+fn (c: ModCtx) print_vuln(db: Str, tv: Str, fs: List[VulnFinding]) uses stdio {
+  if fs.is_empty() {
+    c.out("No vulnerabilities found (xo ${tv}, ${db}).\n")
+    return
+  }
+  for f in fs {
+    let what = if f.module == "std" { "std (${f.imports.join(", ")})" } else if f.module == "toolchain" { "the xo toolchain" } else { "${f.module} ${f.version}" }
+    var only = ""
+    if !f.backends.is_empty() {
+      only = " (${f.backends.join(", ")} backends only)"
+    }
+    if !f.platforms.is_empty() {
+      only = "${only} (on ${f.platforms.join(", ")})"
+    }
+    c.out("${f.code} ${f.id}: ${what}${only}: affects ${f.range}; ${f.fix}\n  ${f.summary}\n  ${db.trim_suffix("/")}/ID/${f.id}.json\n")
+  }
+  c.out("${fs.len()} vulnerabilit${if fs.len() == 1 { "y" } else { "ies" }} found (xo ${tv}).\n")
+}

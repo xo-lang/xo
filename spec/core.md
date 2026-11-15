@@ -4100,6 +4100,9 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1318` | error | modules | a module's tree cannot be read (an I/O error) for its content hash, the effect or escape hatch audit, or `xo mod tidy`'s import scan, so none of them answers from a partial tree (4.3, decision 0156) |
 | `XO1319` | error | modules | a `use go` of a package outside Go's standard library whose Go module has no `require go` line in xo.mod (builds would follow its latest version); the fix adds the line with the version the binding resolved, and `xo mod tidy` adds it too (decision 0356) |
 | `XO1320` | error | modules | `xo mod tidy` with a `require go` pin whose go.sum hashes no binding has fetched yet (a fresh clone: .xo/gobind is not committed) and xo.lock does not hold: nothing is written; run `xo check` once, then tidy again (decision 0356) |
+| `XO1321` | error | modules | `xo vuln`: an entry of the vulnerability database affects this toolchain's version and the program imports a std module it names (or the toolchain itself); the fix is the first release that has the fix (decision 0647) |
+| `XO1322` | error | modules | `xo vuln`: an entry of the vulnerability database affects a module version the program requires (xo.mod, xo.lock); the fix is the first version that has the fix (decision 0647) |
+| `XO1323` | error | modules | `xo vuln`: the vulnerability database (`--db`, `$XO_VULNDB`, else https://vuln.xolang.org) cannot be read or is not OSV; exit 1, nothing is reported as safe (decision 0647) |
 | `XO1401` | error | checker | allocation in a real-time function (literal, interpolation, `+` on Str or List, closure, growth method) |
 | `XO1402` | error | checker | loop without a provable bound in a real-time function, or a `bound N` that is not a constant or is exceeded by a constant range |
 | `XO1403` | error | checker | call in a real-time function of a function that is not real-time, a function value, or an interface method |

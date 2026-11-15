@@ -26,9 +26,12 @@ the date its probes last passed.
 1. **A vulnerability database and `xo vuln`** (as vuln.go.dev and
    govulncheck): an OSV feed for std and the xo-lang modules, and a
    checker of a module's xo.lock and toolchain against it. Owner
-   priority 2026-11-15 (after 0.52): one ADR for the format, hosting on
-   vuln.xolang.org, the CLI and its codes. Until then each CHANGELOG
-   security line names the affected versions. Last verified 2026-11-15.
+   priority 2026-11-15 (after 0.52): ADR 0647 (format, hosting on
+   vuln.xolang.org, the CLI and its codes XO1321 to XO1323). `xo vuln`
+   stage A is on main (2026-11-15), not in a release yet; the reports
+   repository xo-lang/vulndb and vuln.xolang.org wait on the owner. Until
+   then each CHANGELOG security line names the affected versions. The
+   probes check the released xo and the live host. Last verified 2026-11-15.
    Probe: `help unknown[[:space:]]command vuln`
    Probe: `!http 200 https://vuln.xolang.org/`
 2. **A security page on xolang.dev.** SECURITY.md (how to report) is in

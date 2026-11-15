@@ -39,6 +39,7 @@ pub fn commands() -> List[Command] {
     Command{name: "vendor", purpose: "copy every selected module version into vendor/"},
     Command{name: "publish", purpose: "check a release against the previous version tag"},
     Command{name: "audit", purpose: "supply chain report of the dependencies"},
+    Command{name: "vuln", purpose: "known vulnerabilities in the toolchain, std and dependencies"},
     Command{name: "bind", purpose: "bind Go packages (use go) or C headers (use c)"},
     Command{name: "proto", purpose: "generate Xo derive Proto structs from .proto files (gen)"},
     Command{name: "dump", purpose: "print the task tree of a running Xo program"},
@@ -113,6 +114,7 @@ pub fn usage(name: Str) -> Str {
     "vendor" => vendor_text()
     "publish" => publish_text()
     "audit" => audit_text()
+    "vuln" => vuln_text()
     "bind" => bind_text()
     "proto" => proto_text()
     "dump" => dump_text()
@@ -157,7 +159,7 @@ const PATTERN_NOTE = "A directory means that directory alone; DIR/... covers the
 /// Whether the command cmd takes directories, and so the pattern D/...
 /// (decision 0210).
 pub fn takes_dirs(cmd: Str) -> Bool {
-  cmd is "build" | "run" | "test" | "check" | "parse" | "fmt" | "fix" | "vet" | "doc" | "audit"
+  cmd is "build" | "run" | "test" | "check" | "parse" | "fmt" | "fix" | "vet" | "doc" | "audit" | "vuln"
 }
 
 /// Whether arg is a package pattern in the go command's form: `D/...`
@@ -748,6 +750,21 @@ vouch that covers each; this module's attenuations and the capabilities
 it passes into dependencies; and the check's diagnostics. JSON when
 --json or stdout is not a terminal. Exit 1 when the check has errors.
 --no-gc checks as a native build (use c).
+"""
+}
+
+fn vuln_text() -> Str {
+  """
+usage: xo vuln [--dir=<dir>] [--json] [--db=<url>|off] [<dir>]
+
+Known vulnerabilities (decision 0647) that affect this program: entries
+of the vulnerability database for the xo toolchain and the std modules
+the program imports at this toolchain's version (XO1321), and for the
+module versions it requires (XO1322). The database is --db, else
+$XO_VULNDB, else https://vuln.xolang.org (OSV 1.6); file:///DIR reads a
+local copy, off checks nothing. JSON when --json or stdout is not a
+terminal. Exit 0 when nothing is found, 3 when something is, 1 when the
+database cannot be read (XO1323), 2 for a usage or load error.
 """
 }
 

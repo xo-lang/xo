@@ -23,6 +23,7 @@ commands:
   vendor    copy every selected module version into vendor/
   publish   check a release against the previous version tag
   audit     supply chain report of the dependencies
+  vuln      known vulnerabilities in the toolchain, std and dependencies
   bind      bind Go packages (use go) or C headers (use c)
   proto     generate Xo derive Proto structs from .proto files (gen)
   dump      print the task tree of a running Xo program

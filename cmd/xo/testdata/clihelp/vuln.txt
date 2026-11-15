@@ -1,0 +1,14 @@
+usage: xo vuln [--dir=<dir>] [--json] [--db=<url>|off] [<dir>]
+
+Known vulnerabilities (decision 0647) that affect this program: entries
+of the vulnerability database for the xo toolchain and the std modules
+the program imports at this toolchain's version (XO1321), and for the
+module versions it requires (XO1322). The database is --db, else
+$XO_VULNDB, else https://vuln.xolang.org (OSV 1.6); file:///DIR reads a
+local copy, off checks nothing. JSON when --json or stdout is not a
+terminal. Exit 0 when nothing is found, 3 when something is, 1 when the
+database cannot be read (XO1323), 2 for a usage or load error.
+
+A directory means that directory alone; DIR/... covers the directories
+below it too, up to 6,000 .xo files or 60,000 entries (decision 0345).
+A DIR/... with no .xo file at or below DIR is an error.
