@@ -85,7 +85,8 @@ protocol is small, stable since PostgreSQL 7.4, and fully documented.
    the existing API returns `List[Row]`. Cancellation of the waiting
    task sends CancelRequest on a second connection and returns
    `Canceled`; the connection is then drained to ReadyForQuery or
-   discarded. `last_insert_id` is 0 (use `RETURNING`).
+   discarded. Done (2026-11-15): the CancelRequest is sent (shielded, 1 s
+   dial and 2 s exchange limits) and the connection discarded. `last_insert_id` is 0 (use `RETURNING`).
 8. **Tests.** pgx's tests for the pieces ported (pgproto3 message
    round trips, connection string parsing, SCRAM vectors, RFC 7677's
    example), an in process fake server on FakeNet for the driver's

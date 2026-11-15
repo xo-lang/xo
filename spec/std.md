@@ -3821,9 +3821,12 @@ the socket or protocol level is dropped, and the operation fails with
 `Conn`; operations are not retried (a write may have run).
 
 **Cancellation.** When the task waiting on a statement is cancelled, the
-statement returns `Canceled` and the connection is dropped (closed, so
-the server stops the statement when it notices); sending CancelRequest
-first, as pgx does, is a later step. Deadlines are `task.with_timeout`.
+statement returns `Canceled` and the connection is dropped, after a
+CancelRequest with the connection's BackendKeyData on a second
+connection to the same address, as pgx's CancelRequest (in plain text,
+as pgx and libpq before 17), so the server stops the statement: shielded
+from the cancellation, its dial limited to 1 s and the exchange to 2 s
+after it, its failure ignored. Deadlines are `task.with_timeout`.
 A COMMIT of a transaction that had failed is
 `Server("25P02", "commit unexpectedly resulted in rollback")` (pgx's
 ErrTxCommitRollback).

@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-15: feature: Postgres CancelRequest on cancellation
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0278 item 7 (CancelRequest, listed as a later step in spec/std.md 10.8)
+- Go reference: pgx v5.11.0 pgconn (PgConn.CancelRequest: a new connection, the CancelRequest packet, a wait for the server to close it)
+- Test: pg_test.xo (native and llvm: a fake server that never answers, cancelled: a CancelRequest with BackendKeyData pid 77 and secret 1234 on a second connection)
+- Shipped in: not yet released
+
+A cancelled wait for a Postgres server now sends a CancelRequest on a second connection before dropping the connection, so the server stops the statement instead of running it to its end; the call still returns `Canceled` (spec/std.md 10.8).
+
 ## 2026-11-15: feature: MySQL KILL QUERY on cancellation, and the DSN timeouts
 
 - Kind: feature

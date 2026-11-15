@@ -420,3 +420,63 @@ test "a fake server: a named statement is parsed once, bound per run, and closed
     s.cancel()
   }
 }
+
+/// One connection of fk_cancel_serve: a CancelRequest's pid and secret
+/// go to seen as "cancel PID SECRET"; a query's text goes to seen, and a
+/// pg_sleep gets no answer (the server is busy until the client goes).
+fn fk_cancel_conn(c: ServerConn, seen: Chan[Str]) -> () ! NetErr {
+  var buf = b""
+  let (_, start, rest) = fk_read_msg(c, buf, true)?
+  if start.len() >= 12 && fk_get32(start, 0) == 80877102 {
+    seen.send("cancel ${fk_get32(start, 4)} ${fk_get32(start, 8)}")
+    c.close()
+    return Ok(())
+  }
+  buf = rest
+  c.write(fk_hello_trust())?
+  while {
+    let (kind, body, rest2) = fk_read_msg(c, buf, false)?
+    buf = rest2
+    if kind.is_empty() || kind == "X" {
+      break
+    }
+    if kind == "Q" {
+      let q = body[0..body.len() - 1].to_str() ?? ""
+      seen.send(q)
+      if q.starts_with("SELECT pg_sleep") {
+        continue
+      }
+    }
+    c.write(fk_complete("SELECT 0") + fk_ready())?
+  }
+  c.close()
+  Ok(())
+}
+
+fn fk_cancel_serve(l: Listener, seen: Chan[Str]) -> () ! NetErr {
+  scope s {
+    while let Ok(c) = l.accept() {
+      s.spawn_background(fn() { fk_cancel_conn(c, seen).ignore_err("a connection ends with the test") })
+    }
+  }
+  Ok(())
+}
+
+test "a cancelled query: a CancelRequest with the connection's key on a second connection" {
+  let l = os.net.listen("db.test:5432")?
+  let seen = Chan[Str].new(8)
+  scope s {
+    s.spawn_background(fn() { fk_cancel_serve(l, seen).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "postgres", fk_dsn("db.test:5432"))?
+    scope q {
+      q.spawn(fn() { db.exec("SELECT pg_sleep(60)") })
+      // the pool's ping of a new connection comes first
+      expect(seen.recv()) == Some("-- ping")
+      expect(seen.recv()) == Some("SELECT pg_sleep(60)")
+      q.cancel()
+    }
+    // fk_key_data: pid 77, secret 1234
+    expect(seen.recv()) == Some("cancel 77 1234")
+    s.cancel()
+  }
+}

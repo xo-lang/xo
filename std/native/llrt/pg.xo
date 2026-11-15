@@ -5,12 +5,16 @@
 // query protocols, text format results decoded by type OID, and SQLSTATE
 // mapping follow github.com/jackc/pgx/v5 v5.11.0 pgconn (MIT;
 // THIRD_PARTY_NOTICES). TLS through std/tls (decision 0281): SSLRequest,
-// then tls.client with the sslmode's verification. Not yet: CancelRequest (a cancelled wait drops the
-// connection), LISTEN/NOTIFY, binary COPY.
+// then tls.client with the sslmode's verification. A cancelled wait sends a
+// CancelRequest on a second connection (pgconn's CancelRequest) and drops
+// the connection. Not yet: LISTEN/NOTIFY, binary COPY.
 use std/sql
 use std/tls
 use native/llrt/pgwire
 use native/llrt/rand
+use native/llrt/netconn
+use native/llrt/netwasi
+use native/rt
 
 /// Type OIDs (pg_type.dat).
 const OID_BOOL: Int = 16
@@ -166,6 +170,10 @@ pub struct PgConn {
   broken: Atomic[Bool]
   /// BackendKeyData, for a CancelRequest.
   pid: Atomic[Int]
+  secret: Mutex[Bytes]
+  /// Where a CancelRequest goes: the Net and the address dialed.
+  net: Net
+  addr: Str
   /// The last prepared statement's number (xo_s1, xo_s2, ...).
   stmt_n: Atomic[Int]
 }
@@ -269,7 +277,7 @@ fn connect_link(net: Net, cfg: Config, roots: Bytes, host: Str, addr: Str, mode:
       return Err(conn_err("server responded to SSLRequest with ${answer.quote()}"))
     }
   }
-  let p = PgConn{c: link, buf: Mutex.new(b""), broken: Atomic.new(false), pid: Atomic.new(0), stmt_n: Atomic.new(0)}
+  let p = PgConn{c: link, buf: Mutex.new(b""), broken: Atomic.new(false), pid: Atomic.new(0), secret: Mutex.new(b""), net: net, addr: addr, stmt_n: Atomic.new(0)}
   match handshake(p, cfg) {
     Ok(_) => p
     Err(e) => {
@@ -315,11 +323,52 @@ fn (p: PgConn) recv() -> pgwire.Backend ! sql.SqlErr uses net.dial {
       }
       Err(e) => {
         p.broken.set(true)
+        if e is Canceled {
+          p.cancel()
+        }
         return Err(net_err(e))
       }
     }
   }
   fault("unreachable")
+}
+
+/// d ns from now as c's read and write deadline.
+fn deadline(c: Conn, d: Int) {
+  if target.arch == TargetArch.Wasm32 {
+    netwasi.set_deadline(c, 3, true, d)
+  } else {
+    netconn.set_deadline(rt.obj_addr(c), 3, true, d)
+  }
+}
+
+/// The limits of a CancelRequest's dial and of its exchange after it
+/// (under the 5 s of shielded code, core XO-F005).
+const CANCEL_DIAL_MS = 1000
+const CANCEL_MS = 2000
+
+/// After a cancelled wait for the server: a CancelRequest with the
+/// connection's key on a new connection to the same address, then a wait
+/// for the server to close it, as pgconn's CancelRequest (in plain text,
+/// as pgx and libpq before 17), shielded from the cancellation and capped
+/// in time. Its failure is ignored: p is broken and closed either way.
+fn (p: PgConn) cancel() uses net.dial {
+  let pid = p.pid.get()
+  if pid == 0 {
+    return
+  }
+  {
+    defer {
+      let secret = p.secret.with_read(fn(s) { s })
+      if let Ok(c) = p.net.dial_timeout(p.addr, Duration.from_millis(CANCEL_DIAL_MS)) {
+        deadline(c, Duration.from_millis(CANCEL_MS).nanos())
+        if c.write(pgwire.cancel_request(pid, secret)).is_ok() {
+          while let Ok(Some(_)) = c.read(64) {}
+        }
+        c.close()
+      }
+    }
+  }
 }
 
 /// The nonce of a SCRAM exchange: 18 random bytes as base64, as pgconn's
@@ -358,7 +407,10 @@ fn handshake(p: PgConn, cfg: Config) -> () ! sql.SqlErr uses net.dial {
         s.finish(data.to_str() ?? "").map_err(fn(e) { conn_err("${e}") })?
       }
       AuthOther(code) => return Err(conn_err("unsupported authentication method ${code}"))
-      KeyData(pid, _) => p.pid.set(pid)
+      KeyData(pid, secret) => {
+        p.pid.set(pid)
+        p.secret.with(fn(var s) { s = secret })
+      }
       Error(f) => return Err(server_err(f))
       Ready(_) => return Ok(())
       _ => {}
