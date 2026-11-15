@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""golden-std-deps.py ROOT DEPS: which LLVM goldens a std only change can
+"""golden-std-deps.py ROOT DEPS|inputs:DIR: which LLVM goldens a std only change can
 reach (scripts/gate.sh's llvm step, lead 2026-11-15: build HEAD's IR only
 for the goldens whose inputs the change touches).
 
@@ -19,6 +19,15 @@ its own sources' std imports and the keys of the files its base IR names
 but its wasm and Mach-O parts, std/rt, a std file that is not a module's
 .xo source), a key the prelude's or the runtime's closure reaches (every
 program has them), or a golden that imports a module from outside std.
+
+inputs:DIR in DEPS's place (lead, 2026-11-15, (B) of the gate-time
+plan): DIR holds NAME.txt, `xo build --list-inputs` of each golden at
+HEAD (gate.sh golden_inputs), and a golden is hit when one of its input
+files changed: exact files in place of the key closure, with no base
+manifest's deps needed (the compiler's own additions, a derive's codec,
+are in the list). A golden with no NAME.txt, a std .xo file that no
+longer exists (a removal) and the "all" rules above still give it or
+"all".
 """
 import os
 import re
@@ -71,8 +80,43 @@ def uses_of(path):
     return out
 
 
+def by_inputs(root, d):
+    changed = []
+    for p in sys.stdin.read().split():
+        if p.endswith(".md") or p.endswith("_test.xo"):
+            continue
+        if p.startswith("std/changes/") or p.startswith("std/evidence/"):
+            continue
+        if p.startswith("compiler/wasm/") or p.startswith("compiler/macho/"):
+            continue
+        if p.startswith("compiler/") or p.startswith("std/rt/"):
+            print("all"); return
+        if p.startswith("std/"):
+            if not p.endswith(".xo") or not os.path.exists(os.path.join(root, p)):
+                print("all"); return
+            changed.append(p)
+    if not changed:
+        print("none"); return
+    gdir = os.path.join(root, "internal", "llvm", "testdata", "golden")
+    want = set(changed)
+    hit = []
+    for g in sorted(os.listdir(gdir)):
+        if not os.path.isdir(os.path.join(gdir, g)):
+            continue
+        try:
+            with open(os.path.join(d, g + ".txt")) as f:
+                ins = set(f.read().split())
+        except OSError:
+            hit.append(g); continue
+        if not ins or ins & want:
+            hit.append(g)
+    print(",".join(hit) if hit else "none")
+
+
 def main():
     root, depsf = sys.argv[1], sys.argv[2]
+    if depsf.startswith("inputs:"):
+        return by_inputs(root, depsf[len("inputs:"):])
     std = os.path.join(root, "std")
     # key -> the std .xo sources of that key (tests left out)
     files = {}

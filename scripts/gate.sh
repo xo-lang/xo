@@ -632,6 +632,16 @@ ir_inputs_changed() {
     grep -v -E '^compiler/(wasm|macho)/|_test\.xo$|\.md$|^std/(rt|changes|evidence)/' |
     grep -q -E '^compiler/|^std/.*\.xo$|^internal/llvm/golden_select_test\.go$'
 }
+# golden_inputs DIR: `$XO_CLI build --list-inputs` of every llvm golden
+# into DIR/NAME.txt, at most ir_jobs at once; fails when this xo has no
+# --list-inputs or any golden's list fails (then the scope falls back)
+golden_inputs() {
+  local d=$1
+  rm -rf "${d:?}"; mkdir -p "$d"
+  "$XO_CLI" build --list-inputs "internal/llvm/testdata/golden/$(ls internal/llvm/testdata/golden | head -1)" >/dev/null 2>&1 || return 1
+  ls internal/llvm/testdata/golden | GI_DIR=$d xargs -P "$(ir_jobs)" -n 1 sh -c \
+    '[ -d "internal/llvm/testdata/golden/$1" ] || exit 0; "$XO_CLI" build --list-inputs "internal/llvm/testdata/golden/$1" >"$GI_DIR/$1.txt" 2>/dev/null || { rm -f "$GI_DIR/$1.txt"; exit 1; }' _
+}
 llvm_goldens() {
   sel_note="$logs/llvm-select.txt"
   if [ "${XO_GATE_LLVM:-}" = all ]; then
@@ -643,6 +653,50 @@ llvm_goldens() {
     echo "every golden (the change touches internal/llvm's tests, internal/xotool, compiler/xo or the LLVM debug information)" >"$sel_note"; echo all; return
   fi
   ir_cache_setup
+  # (B) of the gate-time plan (lead, 2026-11-15): the scope first, from
+  # every golden's `xo build --list-inputs` (golden_inputs, seconds): no
+  # golden reads a changed file, so no IR is built and only the goldens
+  # whose own directory changed run; or a scope of at most
+  # XO_GATE_IR_SCOPE_MAX goldens (300) has the base's and HEAD's IR built
+  # for those goldens alone (a probe of a std/csv.xo comment: 3 goldens,
+  # where the base's whole manifest took 385 to 509 s to build). A larger
+  # scope, "all" (a compiler or runtime change), or XO_GATE_IR_INPUTS=0
+  # goes on to the manifests below.
+  local gi escope gdirs ntot pw2 bpart hpart
+  gi="$logs/golden-inputs"
+  escope=""
+  if [ "${XO_GATE_IR_SCOPE:-1}" != 0 ] && [ "${XO_GATE_IR_INPUTS:-1}" != 0 ] && golden_inputs "$gi"; then
+    escope=$(echo "$files" | python3 scripts/golden-std-deps.py "$PWD" "inputs:$gi" 2>>"$logs/llvm-ir-head.txt") || escope=""
+  fi
+  gdirs=$(echo "$files" | sed -n 's|^internal/llvm/testdata/golden/\([^/]*\)/.*|\1|p' | sort -u | grep .)
+  ntot=$(ls internal/llvm/testdata/golden | wc -l | tr -d ' ')
+  if [ "$escope" = none ]; then
+    if [ -z "$gdirs" ]; then
+      echo "0 of $ntot goldens (no golden reads a changed file, by xo build --list-inputs: no IR built)" >"$sel_note"; echo none; return
+    fi
+    echo "$(echo "$gdirs" | wc -l | tr -d ' ') of $ntot goldens (their directories changed; no golden reads another changed file, by xo build --list-inputs), and the -O2 sample: $(echo "$gdirs" | paste -sd' ' -)" >"$sel_note"
+    echo "$gdirs" | paste -sd, -; return
+  fi
+  if [ -n "$escope" ] && [ "$escope" != all ] && [ "$(echo "$escope" | tr ',' '\n' | grep -c .)" -le "${XO_GATE_IR_SCOPE_MAX:-300}" ]; then
+    echo "llvm IR: scoped by xo build --list-inputs to $(echo "$escope" | tr ',' '\n' | grep -c .) goldens; base and HEAD IR built for them alone" >&2
+    pw2=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-ir.XXXXXX")
+    bpart=$pw2/base.txt hpart=$pw2/head.txt
+    if git worktree add -q --detach "$pw2/tree" "$base" >"$logs/llvm-ir-base.txt" 2>&1 &&
+      cp internal/llvm/golden_select_test.go "$pw2/tree/internal/llvm/" &&
+      (cd "$pw2/tree" && go run ./scripts/xobuild) >>"$logs/llvm-ir-base.txt" 2>&1 &&
+      (cd "$pw2/tree" && XO_CLI=$pw2/tree/bin/xo XO_LLVM_IR_ONLY=$escope XO_LLVM_IR_MANIFEST="$bpart" go test -count=1 -timeout 60m -parallel "${XO_GATE_IR_PARALLEL:-$(ir_jobs)}" -run '^TestGoldenIRManifest$' ./internal/llvm) >>"$logs/llvm-ir-base.txt" 2>&1 &&
+      XO_LLVM_IR_ONLY=$escope ir_head_manifest "$hpart" "${XO_GATE_IR_PARALLEL:-$(ir_jobs)}" && [ -s "$bpart" ] && [ -s "$hpart" ]; then
+      names=$( { comm -3 <(sort "$bpart") <(sort "$hpart") | awk '{print $1}'; echo "$gdirs"; } | sort -u | grep . )
+      git worktree remove --force "$pw2/tree" >/dev/null 2>&1; rm -rf "${pw2:?}"
+      if [ -z "$names" ]; then
+        echo "0 of $ntot goldens (no IR changed among the $(echo "$escope" | tr ',' '\n' | grep -c .) goldens that read a changed file, by xo build --list-inputs)" >"$sel_note"; echo none; return
+      fi
+      echo "$(echo "$names" | wc -l | tr -d ' ') of $ntot goldens (IR changed among the $(echo "$escope" | tr ',' '\n' | grep -c .) that read a changed file, by xo build --list-inputs), and the -O2 sample: $(echo "$names" | paste -sd' ' -)" >"$sel_note"
+      echo "$names" | paste -sd, -; return
+    fi
+    echo "llvm IR: the scoped build failed ($logs/llvm-ir-base.txt, $logs/llvm-ir-head.txt): the manifests below" >&2
+    git worktree remove --force "$pw2/tree" >/dev/null 2>&1; rm -rf "${pw2:?}"
+  fi
   ir_manifest_for "$(git rev-parse "$base")"; bm=$irm
   # an ancestor's manifest in place of the base's (lead, 2026-11-14,
   # owner's test-time plan: main moves between almost every gate, so the
@@ -712,10 +766,21 @@ llvm_goldens() {
   # golden for a compiler, std/rt, prelude or runtime change, or with no
   # deps file beside the base's manifest. XO_GATE_IR_SCOPE=0 builds every
   # golden.
+  # (B) of the plan (lead, 2026-11-15): with every golden's
+  # `xo build --list-inputs` (golden_inputs, about 11 s for 742 on the
+  # Mac), the scope is the goldens one of whose input files changed, and
+  # needs no deps file beside the base's manifest; XO_GATE_IR_INPUTS=0 uses
+  # the deps file's key closure as before
   scope=all
   bd="${bm%.txt}.deps"
-  if [ "${XO_GATE_IR_SCOPE:-1}" != 0 ] && [ -s "$bm" ] && [ -s "$bd" ] && { [ -z "$hm" ] || [ ! -s "$hm" ]; }; then
-    scope=$(echo "$files" | python3 scripts/golden-std-deps.py "$PWD" "$bd" 2>>"$logs/llvm-ir-head.txt") || scope=all
+  if [ "${XO_GATE_IR_SCOPE:-1}" != 0 ] && [ -s "$bm" ] && { [ -z "$hm" ] || [ ! -s "$hm" ]; }; then
+    gi="$logs/golden-inputs"
+    if [ "${XO_GATE_IR_INPUTS:-1}" != 0 ] && golden_inputs "$gi"; then
+      scope=$(echo "$files" | python3 scripts/golden-std-deps.py "$PWD" "inputs:$gi" 2>>"$logs/llvm-ir-head.txt") || scope=all
+      echo "llvm IR scope from xo build --list-inputs of every golden" >&2
+    elif [ -s "$bd" ]; then
+      scope=$(echo "$files" | python3 scripts/golden-std-deps.py "$PWD" "$bd" 2>>"$logs/llvm-ir-head.txt") || scope=all
+    fi
     [ -n "$scope" ] || scope=all
   fi
   if [ -n "$hm" ] && [ -s "$hm" ]; then

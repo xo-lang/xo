@@ -236,6 +236,15 @@ yourself.
 
 ## Testing
 
+- Golden selection by inputs ((B) of the gate-time plan, lead, 2026-11-15):
+  the llvm step first runs `xo build --list-inputs` on every golden (about
+  11 s for 742 on the Mac). When no golden reads a changed file, no IR is
+  built. When at most `XO_GATE_IR_SCOPE_MAX` (300) do, the base's and
+  HEAD's IR are built for those goldens alone; a std/csv.xo probe took 39 s
+  to select, where the base's whole manifest took 385 to 509 s. A compiler,
+  std/rt or removed std file change, or a larger scope, goes through the
+  IR manifests as before. `XO_GATE_IR_INPUTS=0` turns it off; the 8 hourly
+  tier still runs every golden.
 - Fail fast (lead, owner approved 2026-11-15): the first gate step that
   fails stops the gate. Steps still running are stopped (their output
   so far in `$XO_GATE_LOGS/STEP.stopped.txt`), the rest are skipped, and a
