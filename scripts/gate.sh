@@ -27,6 +27,10 @@
 #            compiler/gen, or a std module std/rt also implements
 #            (go_backend, std_twin); skipped otherwise
 #   cmd      the full tests of cmd/xo
+#   irmanifest
+#            HEAD's LLVM IR manifest alone, into the manifest cache, a clean
+#            tree only (scripts/lead/irman.sh runs it for main's commits and
+#            shares it with every offload host; no repo run before it)
 #   gen      the full tests of internal/gen (-parallel 8, XO_GEN_PARALLEL)
 #   fuzz     the private-module parser differentials of internal/stdtest
 #            against Go's own parsers: http1's raw request head, its
@@ -553,6 +557,41 @@ ir_mem_watch() {
     sleep 2
   done
 }
+# ir_cache_setup: $cache, the IR manifests' cache directory, and $mcode,
+# the manifest code's key (its normalization in golden_select_test.go)
+ir_cache_setup() {
+  if [ "$(uname)" = Darwin ]; then ucache=$HOME/Library/Caches; else ucache=${XDG_CACHE_HOME:-$HOME/.cache}; fi
+  cache=${XO_LLVM_IR_CACHE:-$ucache/xo/llvm-ir}
+  mkdir -p "$cache"
+  mcode=$(git hash-object internal/llvm/golden_select_test.go | cut -c1-12)
+}
+# ir_manifest_for COMMIT: sets $irm to COMMIT's manifest: the cache's, else
+# the one the lead's irman.sh shared into $XO_LLVM_IR_SHARED (an offload
+# host's /work/in: main's manifest made once on one host for every
+# host's gates, lead 2026-11-15), named by the host's OS and
+# architecture since the IR is the target's; the cache's path when
+# neither exists
+ir_manifest_for() {
+  irm="$cache/$1-$mcode.txt"
+  [ -s "$irm" ] && return
+  local sh="${XO_LLVM_IR_SHARED:-}/llvm-ir-$(uname -s | tr A-Z a-z)-$(uname -m)-$1-$mcode.txt"
+  [ -n "${XO_LLVM_IR_SHARED:-}" ] && [ -s "$sh" ] && irm=$sh
+}
+# ir_head_manifest OUT JOBS: the IR manifest of this tree's goldens, built
+# by its bin/xo with JOBS at once, into OUT; logs the time and the xo
+# processes' resident peak
+ir_head_manifest() {
+  local irw t_ir rc
+  echo "llvm IR manifest: -parallel $2 ($(ir_jobs_why))" >&2
+  ir_mem_watch "$logs/llvm-ir-mem.txt" &
+  irw=$!
+  t_ir=$(date +%s)
+  XO_LLVM_IR_MANIFEST=$1 go test -count=1 -timeout 60m -parallel "$2" -run '^TestGoldenIRManifest$' ./internal/llvm >"$logs/llvm-ir-head.txt" 2>&1
+  rc=$?
+  kill "$irw" 2>/dev/null; wait "$irw" 2>/dev/null
+  [ "$rc" = 0 ] && echo "llvm IR manifest: $(($(date +%s) - t_ir)) s, xo processes' resident peak $(sort -n "$logs/llvm-ir-mem.txt" 2>/dev/null | tail -1) MB" >&2
+  return $rc
+}
 # ir_inputs_changed A B: whether the commits A..B change what a golden's
 # LLVM IR is made from: the compiler (but its wasm and Mach-O linker
 # parts) or std's sources (not tests, docs, the Go runtime std/rt)
@@ -571,12 +610,8 @@ llvm_goldens() {
   if echo "$files" | grep -q -E '^(internal/llvm/[^/]+$|internal/xotool/|compiler/xo/|compiler/llvm/debug\.xo)'; then
     echo "every golden (the change touches internal/llvm's tests, internal/xotool, compiler/xo or the LLVM debug information)" >"$sel_note"; echo all; return
   fi
-  if [ "$(uname)" = Darwin ]; then ucache=$HOME/Library/Caches; else ucache=${XDG_CACHE_HOME:-$HOME/.cache}; fi
-  cache=${XO_LLVM_IR_CACHE:-$ucache/xo/llvm-ir}
-  mkdir -p "$cache"
-  # by commit and by the manifest code (its normalization) that made it
-  mcode=$(git hash-object internal/llvm/golden_select_test.go | cut -c1-12)
-  bm="$cache/$(git rev-parse "$base")-$mcode.txt"
+  ir_cache_setup
+  ir_manifest_for "$(git rev-parse "$base")"; bm=$irm
   # an ancestor's manifest in place of the base's (lead, 2026-11-14,
   # owner's test-time plan: main moves between almost every gate, so the
   # base's manifest was nearly always missing, and making it built the
@@ -594,17 +629,20 @@ llvm_goldens() {
   ib=""
   if [ ! -s "$bm" ]; then
     for c in $(git rev-list --max-count="${XO_LLVM_IR_BACK:-30}" "$base"); do
-      if [ -s "$cache/$c-$mcode.txt" ]; then
+      ir_manifest_for "$c"
+      if [ -s "$irm" ]; then
         if ir_inputs_changed "$c" "$base"; then
           echo "llvm IR manifest: $(git rev-parse --short "$c")'s is $(git rev-list --count "$c..$base") commits before the base, across IR input changes: the base's own is built" >&2
         else
-          bm="$cache/$c-$mcode.txt"; ib=" (manifest of $(git rev-parse --short "$c"), $(git rev-list --count "$c..$base") commits before the base, no IR input changed between)"
+          bm=$irm; ib=" (manifest of $(git rev-parse --short "$c"), $(git rev-list --count "$c..$base") commits before the base, no IR input changed between)"
         fi
         break
       fi
     done
   fi
+  case $bm in "${XO_LLVM_IR_SHARED:-/nonexistent}"/*) ib="$ib (shared by irman.sh)" ;; esac
   if [ ! -s "$bm" ]; then
+    bm="$cache/$(git rev-parse "$base")-$mcode.txt"
     pw=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-ir.XXXXXX")
     # the branch's manifest test in the base's tree: both sides hashed
     # by the same code (a base older than the test has none)
@@ -637,21 +675,8 @@ llvm_goldens() {
   if [ -n "$hm" ] && [ -s "$hm" ]; then
     cp "$hm" "$nm"; echo "HEAD's manifest from $hm" >"$logs/llvm-ir-head.txt"
   elif [ -s "$bm" ]; then
-    echo "llvm IR manifest: -parallel $irp ($(ir_jobs_why))" >&2
-    ir_mem_watch "$logs/llvm-ir-mem.txt" &
-    irw=$!
-    t_ir=$(date +%s)
-    # niced (XO_GATE_IR_NICE, default 10): the tests that run beside it
-    # keep the CPU first (lead, 2026-11-15: TestOneThreadSpawnJoin's steal
-    # bound failed at steal=48 while twelve IR builds ran beside llvmpre)
-    if XO_LLVM_IR_MANIFEST=$nm nice -n "${XO_GATE_IR_NICE:-10}" go test -count=1 -timeout 60m -parallel "$irp" -run '^TestGoldenIRManifest$' ./internal/llvm >"$logs/llvm-ir-head.txt" 2>&1; then
-      kill "$irw" 2>/dev/null; wait "$irw" 2>/dev/null
-      echo "llvm IR manifest: $(($(date +%s) - t_ir)) s, xo processes' resident peak $(sort -n "$logs/llvm-ir-mem.txt" 2>/dev/null | tail -1) MB" >&2
-      [ -s "$nm" ] && [ -n "$hm" ] && cp "$nm" "$hm.tmp$$" && mv "$hm.tmp$$" "$hm"
-    else
-      kill "$irw" 2>/dev/null; wait "$irw" 2>/dev/null
-      rm -f "$nm"
-    fi
+    ir_head_manifest "$nm" "$irp" || rm -f "$nm"
+    [ -s "$nm" ] && [ -n "$hm" ] && cp "$nm" "$hm.tmp$$" && mv "$hm.tmp$$" "$hm"
   fi
   if [ ! -s "$bm" ] || [ ! -s "$nm" ]; then
     echo "every golden (no IR manifest: $logs/llvm-ir-base.txt, $logs/llvm-ir-head.txt)" >"$sel_note"; echo all; return
@@ -777,10 +802,15 @@ case $gjobs in '' | *[!0-9]* | 0) echo "gate.sh: XO_GATE_JOBS=$gjobs is not a po
 # after every step had passed); it runs even with XO_GATE_REPO=0.
 has_short=0
 has_repo=0
+only_irman=1
 for s in "$@"; do
   [ "$s" = short ] && has_short=1
   [ "$s" = repo ] && has_repo=1
+  [ "$s" = irmanifest ] || only_irman=0
 done
+# (not before an irmanifest alone: it checks nothing, it makes main's
+# manifest)
+[ "$#" -gt 0 ] && [ "$only_irman" = 1 ] && [ "$has_repo" = 0 ] && has_short=1
 if { [ "${XO_GATE_REPO:-1}" != 0 ] || [ "$has_repo" = 1 ]; } && [ "$has_short" = 0 ]; then
   full repo ./internal/repotest
 fi
@@ -798,7 +828,7 @@ for step in "$@"; do
     # codegen` ran neither, then pushq refused the push for cross)
     named="$named $step" ;;
   repo) ;; # ran first, above
-  short|arm64|llvm|corpora|cmd|gen|fuzz|corpora-all|alloff|fp|warm|chkcache|warmseq|stdwasm|stdcov)
+  short|arm64|llvm|irmanifest|corpora|cmd|gen|fuzz|corpora-all|alloff|fp|warm|chkcache|warmseq|stdwasm|stdcov)
     [ "$step" = chkcache ] && chkcache_ran=1
     [ "$step" = warmseq ] && warmseq_ran=1
     steps="$steps $step" ;;
@@ -873,6 +903,18 @@ run_step_body() {
       full arm64 ./internal/arm64 ${sk:+-skip "$sk"}
     fi ;;
   llvm) llvm_step ;;
+  irmanifest)
+    # HEAD's IR manifest alone, into the cache (scripts/lead/irman.sh
+    # runs it for main's commits and shares the file with every host)
+    ir_cache_setup
+    hm="$cache/$(git rev-parse HEAD)-$mcode.txt"
+    if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+      echo "irmanifest: FAIL (uncommitted changes: a manifest is kept by commit)"; failed=1
+    elif [ -s "$hm" ] || { ir_head_manifest "$hm.tmp$$" "${XO_GATE_IR_PARALLEL:-$(ir_jobs)}" && mv "$hm.tmp$$" "$hm"; }; then
+      echo "irmanifest: $hm ($(wc -l <"$hm" | tr -d ' ') goldens)"
+    else
+      rm -f "$hm.tmp$$"; echo "irmanifest: FAIL ($logs/llvm-ir-head.txt)"; failed=1
+    fi ;;
   stdcov) stdcov_step ;;
   corpora)
     if go_backend; then
