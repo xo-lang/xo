@@ -70,10 +70,13 @@ by Postgres.
    `/search?q=`. Read-only in stage 1; writes stay in the CLI.
 5. **Access** (owner, 2026-11-15): the server listens on 0.0.0.0 on the
    Mac Studio (the owner's phone reaches it over the VPN into the home
-   network; no router port forward; never the OCI host), behind a token
-   cookie from `~/xo-lead/xw.env`. Plain HTTP carries the token across
-   the home network; HTTPS with a self-signed certificate is the step up
-   if wanted. The database holds no secrets: ingesters drop
+   network; no router port forward; never the OCI host), over plain
+   HTTP (owner: fine for now; HTTPS with a self-signed certificate is the
+   step up). The web view logs in with a username and password (stored
+   as std/crypto's hash_password_argon2id, set by `xw user set`), giving
+   a session cookie. Agents and tools use the CLI, which sends a bearer
+   token from `~/xo-lead/xw.env` (one per agent, so events carry who
+   sent them and a token can be revoked alone). The database holds no secrets: ingesters drop
    message text, and the private values of CLAUDE.local.md never enter
    an event (the CLI refuses values matching the patterns of
    `~/xo-lead/xw-redact.txt`).
