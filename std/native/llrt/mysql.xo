@@ -1429,7 +1429,23 @@ fn (p: MyConn) close() uses net.dial {
   p.c.close()
 }
 
-fn (p: MyConn) is_broken() -> Bool { p.broken.get() }
+/// Broken by an error, or, between statements, no longer idle: bytes or
+/// the end of the stream wait on the raw connection, as when the server
+/// closed it after wait_timeout (go-sql-driver's connCheck before a
+/// pooled connection is reused, ErrBadConn to database/sql).
+fn (p: MyConn) is_broken() -> Bool {
+  if p.broken.get() {
+    return true
+  }
+  if !p.buf.with_read(fn(b) { b.is_empty() }) {
+    return true
+  }
+  let ok = if target.arch == TargetArch.Wasm32 { netwasi.conn_idle_ok(p.x.raw) } else { netconn.conn_idle_ok(rt.obj_addr(p.x.raw)) }
+  if !ok {
+    p.broken.set(true)
+  }
+  !ok
+}
 
 /// COM_STMT_PREPARE (decision 0648 item 6): prepared on the server
 /// whatever interpolateParams says, as go-sql-driver's Prepare.

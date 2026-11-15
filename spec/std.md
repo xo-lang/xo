@@ -3777,7 +3777,11 @@ the Go backend a driver bound with `use go` reports none.
   cancellation point), at most `max_idle` idle connections, each closed
   once older than `max_lifetime` (on the monotonic clock). An operation
   takes an idle connection or connects, runs, and gives it back; a
-  connection whose `is_broken` is true is closed instead. A transaction
+  connection whose `is_broken` is true is closed instead, and an idle
+  one is asked again before it is reused (the MySQL driver then checks
+  that nothing, not even the end of the stream, waits on its socket, as
+  go-sql-driver's connCheck, so a connection the server closed after
+  `wait_timeout` is dropped and another taken). A transaction
   holds one connection from `begin` to `commit` or `rollback`.
 - `open_driver` connects once (a `ping`) before it returns, so a wrong
   password or host fails there. `close` closes the idle connections;

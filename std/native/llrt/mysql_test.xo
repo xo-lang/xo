@@ -653,3 +653,42 @@ test "a fake server: batch and pipeline (decision 0648 item 15) run each batch i
     s.cancel()
   }
 }
+
+/// fk_serve, but each connection closes after its first statement's
+/// answer, as a server whose wait_timeout passed while it sat idle.
+fn fk_serve_once(l: Listener, answer: fn(Bytes) -> List[Bytes], closed: Chan[Int]) -> () ! NetErr {
+  while let Ok(c) = l.accept() {
+    c.write(w.frame(0, fk_handshake(fk_caps(true), "caching_sha2_password")).0)?
+    let (resp, _, rest) = fk_read(c, b"")? ?? (b"", 0, b"")
+    let _ = fk_sha2_fast(resp, c, 2)?
+    if let Some((cmd, _, _)) = fk_read(c, rest)? {
+      var seq = 1
+      for out in answer(cmd) {
+        c.write(w.frame(seq, out).0)?
+        seq += 1
+      }
+    }
+    c.close()
+    closed.send(1)
+  }
+}
+
+// found by internal/stdtest TestMysqlFuzz: a pooled connection the
+// server closed while idle failed the next statement, where
+// go-sql-driver's connCheck has database/sql take another
+test "a fake server: an idle connection the server closed is not reused" {
+  let l = os.net.listen("db.test:3306")?
+  scope s {
+    let closed: Chan[Int] = Chan.new(4)
+    s.spawn_background(fn() { fk_serve_once(l, fk_rows_server(false), closed).ignore_err("the server stops when the test ends") })
+    // open's ping is the first connection's one statement
+    let db = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false")?
+    for _ in 0..3 {
+      // the idle connection's server has closed it
+      expect(closed.recv()) == Some(1)
+      expect(db.query("SELECT id, name, at FROM t").map(fn(rows) { rows.len() })) == Ok(2)
+    }
+    expect(db.stats().idle) <= 1
+    s.cancel()
+  }
+}

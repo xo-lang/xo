@@ -428,3 +428,15 @@ definition, Xo refuses with an error (counted by the fuzz test, not a difference
 
 `Row.values()` returns the values in column order; `value(name)` and the other accessors read the first of two
 columns with one name, so `SELECT a.id, b.id` needs it.
+
+## 2026-11-15: fix: the pool drops an idle MySQL connection the server closed
+
+- Kind: fix
+- Commit: this commit
+- Found by: internal/stdtest TestMysqlFuzz: with one pool for every case, each case after one where the fake server closed its connection failed in Xo and passed in go-sql-driver
+- Go reference: go-sql-driver/mysql v1.10.1 conncheck.go (a non-blocking read of the idle socket before reuse, ErrBadConn when it finds bytes or the end) and database/sql's retry of ErrBadConn on another connection
+- Test: native/llrt/mysql's "a fake server: an idle connection the server closed is not reused" on arm64 and llvm (fails before: `Conn(msg: "write tcp: connection reset by peer")`)
+
+`Pool.take` asks an idle connection's `is_broken` before it reuses it, and the MySQL driver's `is_broken` now
+also checks that nothing waits on its socket (a MSG_PEEK recv that would block; the test world's pipe and wasm's
+non-blocking read alike). Postgres is unchanged: a server may send notices and notifications to an idle connection.

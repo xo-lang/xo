@@ -527,6 +527,14 @@ pub fn hc_try_recv(cn: Int, p: Int, cap: Int) -> Int {
   if e == E_END { 0 } else if e == E_NOTHING { -2 } else { -1 }
 }
 
+/// Whether connection c is idle and open (a pooled connection's
+/// liveness check): a read without waiting finds nothing. A byte it
+/// takes means the connection is not usable anyway.
+pub fn conn_idle_ok(c: Conn) -> Bool {
+  let _ = rt.wasi_sock_try_read(c, 1)
+  rt.wasi_sock_err() == E_NOTHING
+}
+
 /// Waits until connection cn has bytes or its end, reading nothing (the
 /// HTTP/2 reader task, decision 0447 R2f): false when it was closed, the
 /// task canceled, or the connection's read deadline passed.

@@ -1442,6 +1442,28 @@ pub fn conn_read(cn: Int, max0: Int, np: Int) -> Int {
   0
 }
 
+/// Whether connection cn is idle and open, reading nothing: no byte and
+/// no end of stream waits on it (go-sql-driver's connCheck, a MSG_PEEK
+/// recv that would block; hclient's idle_ok). False on any error.
+pub fn conn_idle_ok(cn: Int) -> Bool {
+  let me = ld(cn, C_MEM)
+  if me != 0 {
+    return twrun.me_idle(me)
+  }
+  let pd = ld(cn, C_PD)
+  if !poll.pd_begin(pd) {
+    return false
+  }
+  let t = rt.heap_large(8) - 8
+  let r = sock.recv(pd_fd(pd), t, 1, MSG_PEEK)
+  rt.heap_release(t)
+  poll.pd_end(pd)
+  r < 0 && would_block(r)
+}
+
+/// MSG_PEEK (Linux, Darwin, and Windows alike).
+const MSG_PEEK = 2
+
 /// The first r bytes read into buf as a read's result list (the bytes a
 /// connection read are the program's own data, not text to validate:
 /// decision 0259's one cast of this file).

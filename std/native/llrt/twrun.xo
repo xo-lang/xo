@@ -754,6 +754,17 @@ pub fn in_use(addr: Str) -> Bool {
   busy
 }
 
+/// Whether end me is idle and open: nothing waits to be read, and
+/// neither side closed it (a pooled connection's liveness check, as
+/// go-sql-driver's connCheck).
+pub fn me_idle(me: Int) -> Bool {
+  lock()
+  let p = ld(me, ME_IN)
+  let idle = ld(p, P_RCLOSED) == 0 && ld(p, P_WCLOSED) == 0 && ld(p, P_LEN) == 0
+  unlock()
+  idle
+}
+
 /// Reads at most max bytes from end me into a: the count, 0 at the end
 /// of the stream, -1 canceled, -2 when me is closed, -4 when the user's
 /// read deadline passed while it waited (a timer wakes the wait, as the

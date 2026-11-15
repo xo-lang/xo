@@ -15,7 +15,10 @@ Symptoms and causes:
   A differential test must accept an Xo error where the reference took a
   changed (mutated) packet, and require equality only for the rows Xo
   returns.
-- A pooled connection the fake server closed after a mutated case makes
-  the next clean case fail in Xo (no liveness check yet; go-sql-driver
-  checks before reuse). Run the reference and Xo with MY_FRESH=1, a pool
-  per statement, until std/sql gains the check.
+- A pooled connection the fake server closed after a mutated case can be
+  taken again before its close arrives, in Xo and in go-sql-driver alike
+  (both check the socket before reuse since 2026-11-15, but the check
+  races the close). The harness runs both with MY_FRESH=1, a pool per
+  statement.
+- A 1 to 3 byte packet starting 0xfe where a text row is due panics
+  go-sql-driver (readStatus(data[3:]) in textRows.readRow).

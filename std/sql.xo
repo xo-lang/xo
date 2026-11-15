@@ -468,7 +468,10 @@ interface DriverConn[fx: Effects] {
   /// `exec` each time.
   fn prepare(self, q: Str) -> DriverStmt[fx]? ! SqlErr uses (net.dial, fx)
   fn close(self) uses (net.dial, fx)
-  /// True once the connection cannot be used again; the pool drops it.
+  /// True once the connection cannot be used again; the pool drops it,
+  /// asking when it gives the connection back and again before it reuses
+  /// an idle one (where a driver may check the socket, as go-sql-driver's
+  /// connCheck).
   fn is_broken(self) -> Bool
   /// The next notification of a LISTEN (decision 0648 item 14, pgconn's
   /// WaitForNotification): one kept from an earlier call first, else a

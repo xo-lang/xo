@@ -183,6 +183,14 @@ fn (p: Pool) take() -> Taken ! sql.SqlErr uses net.dial {
           p.n.with(fn(var c) { c.life_closed += 1 })
           continue
         }
+        if x.c.is_broken() {
+          // closed by the server while idle (wait_timeout), as
+          // database/sql's retry of a driver's ErrBadConn on a cached
+          // connection
+          x.c.close()
+          p.n.with(fn(var c) { c.open += -1 })
+          continue
+        }
         let t = Taken{c: x.c, born: x.born, stmts: x.stmts}
         sweep(t.stmts)
         p.acquired(s, None)
