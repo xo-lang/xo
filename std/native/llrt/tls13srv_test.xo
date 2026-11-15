@@ -2,9 +2,12 @@
 // records and post-handshake messages that do not advance the connection
 // (maxUselessRecords, 16; Go 1.26.11 counts KeyUpdates too).
 
+use native/llrt/asn1
 use native/llrt/tls13
+use native/llrt/tlsech
 use native/llrt/tlsrec
 use native/llrt/x509cert as x509
+use native/llrt/x25519
 
 /// A self-signed Ed25519 certificate for x.test (Go's CreateCertificate)
 /// and its key's seed.
@@ -81,4 +84,99 @@ test "a client's KeyUpdates past 16 are one too many for the server" {
   }
   feed(s, recs)
   expect(s.err) == "tls: too many non-advancing records"
+}
+
+// Encrypted Client Hello (decision 0644 T13) between tls13.xo's client
+// and this server, as Go's TestECH: the inner hello names x.test, the
+// outer the config's public name.
+
+fn ech_config(id: Int, priv: Bytes, public_name: Str) -> Bytes {
+  let body = asn1.cat([tls13.u8(id), tls13.u16(0x0020), tls13.vec16(x25519.base(priv)), tls13.vec16(asn1.cat([tls13.u16(1), tls13.u16(1)])), tls13.u8(32), tls13.vec8(public_name.bytes()), tls13.u16(0)])
+  asn1.cat([tls13.u16(0xfe0d), tls13.vec16(body)])
+}
+
+fn ech_run(client_cfg: Bytes, keys: List[tlsech.Key], cgroups: List[Int], sgroups: List[Int]) -> (tls13.Client, Server) {
+  let der = Bytes.from_hex(CERT_HEX) ?? fault("cert")
+  let p = x509.parse(der)
+  var ccf = tls13.conf("x.test", [p.cert], 1800000000)
+  ccf.ech_list = Some(tls13.vec16(client_cfg))
+  ccf.groups = cgroups
+  var scf = conf([der], Bytes.from_hex(SEED_HEX) ?? fault("seed"))
+  scf.ech_keys = keys
+  scf.groups = sgroups
+  var c = tls13.client(ccf)
+  var s = server(scf)
+  pump(c, s)
+  (c, s)
+}
+
+test "ECH accepted" {
+  let k = tlsech.zeros(31) + b"\x11"
+  let cfg = ech_config(123, k, "public.test")
+  let (c, s) = ech_run(cfg, [tlsech.Key{config: cfg, private_key: k, send_as_retry: true}], [29], [29])
+  expect(c.err) == ""
+  expect(s.err) == ""
+  expect(tls13.ready(c) && ready(s)) == true
+  expect(c.ech_accepted) == true
+  expect(s.ech_accepted) == true
+  expect(s.sni) == "x.test"
+  expect(s.hrr) == false
+}
+
+test "ECH accepted after a HelloRetryRequest" {
+  let k = tlsech.zeros(31) + b"\x22"
+  let cfg = ech_config(7, k, "public.test")
+  let (c, s) = ech_run(cfg, [tlsech.Key{config: cfg, private_key: k, send_as_retry: false}], [23, 29], [29])
+  expect(c.err) == ""
+  expect(s.err) == ""
+  expect(s.hrr) == true
+  expect(c.ech_accepted && s.ech_accepted) == true
+  expect(s.sni) == "x.test"
+}
+
+test "ECH rejected: the public name verified, retry configs, ech_required" {
+  let k = tlsech.zeros(31) + b"\x33"
+  let other = tlsech.zeros(31) + b"\x44"
+  let client_cfg = ech_config(1, k, "x.test")
+  let server_cfg = ech_config(2, other, "x.test")
+  let (c, s) = ech_run(client_cfg, [tlsech.Key{config: server_cfg, private_key: other, send_as_retry: true}], [29], [29])
+  expect(c.err) == "tls: server rejected ECH"
+  expect(c.why.ech_rejected) == true
+  expect(c.why.ech_retry) == tls13.vec16(server_cfg)
+  expect(s.ech_accepted) == false
+  expect(s.err.contains("ECH required") || s.err.contains("alert(121)") || s.err != "") == true
+}
+
+test "ECH to a server without keys is rejected with no retry configs" {
+  let k = tlsech.zeros(31) + b"\x55"
+  let cfg = ech_config(9, k, "x.test")
+  let (c, _s) = ech_run(cfg, [], [29], [29])
+  expect(c.err) == "tls: server rejected ECH"
+  expect(c.why.ech_retry) == b""
+}
+
+fn has_sub(b: Bytes, sub: Bytes) -> Bool {
+  var i = 0
+  while i + sub.len() <= b.len() {
+    if b[i..i + sub.len()] == sub {
+      return true
+    }
+    i += 1
+  }
+  false
+}
+
+test "ECH: the first flight names only the public name" {
+  let k = tlsech.zeros(31) + b"\x66"
+  let cfg = ech_config(5, k, "public.test")
+  let der = Bytes.from_hex(CERT_HEX) ?? fault("cert")
+  var ccf = tls13.conf("x.test", [x509.parse(der).cert], 1800000000)
+  ccf.ech_list = Some(tls13.vec16(cfg))
+  var c = tls13.client(ccf)
+  let first = tls13.take(c)
+  expect(has_sub(first, "public.test".bytes())) == true
+  expect(has_sub(first, "x.test".bytes())) == false
+  // without ECH the name is in the clear
+  var plain = tls13.client(tls13.conf("x.test", [x509.parse(der).cert], 1800000000))
+  expect(has_sub(tls13.take(plain), "x.test".bytes())) == true
 }

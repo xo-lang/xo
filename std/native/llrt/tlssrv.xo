@@ -831,7 +831,7 @@ pub fn neg_any(t: Int) -> Int {
 /// What connection c's finished handshake negotiated.
 fn negotiated_of(c: Conn) -> tlsneg.Negotiated {
   if c.s12.is_empty() {
-    tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(c.s.suite), server_name: c.s.sni, resumed: c.s.resumed, peer: c.s.peer, verified: c.s.verified, curve: tlsneg.group_name(c.s.group), alpn: c.s.alpn, hrr: c.s.hrr, vers: 0x0304, suite: c.s.suite, group: c.s.group, exp: c.s.exp}
+    tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(c.s.suite), server_name: c.s.sni, resumed: c.s.resumed, peer: c.s.peer, verified: c.s.verified, curve: tlsneg.group_name(c.s.group), alpn: c.s.alpn, hrr: c.s.hrr, vers: 0x0304, suite: c.s.suite, group: c.s.group, exp: c.s.exp, ech_accepted: c.s.ech_accepted}
   } else {
     tlsneg.Negotiated{version: "TLS 1.2", cipher: tlsneg.suite_name(c.s12[0].suite), server_name: c.s12[0].host, resumed: c.s12[0].resumed, peer: c.s12[0].peer, verified: c.s12[0].verified, curve: tlsneg.group_name(c.s12[0].group), alpn: c.s12[0].alpn, vers: 0x0303, suite: c.s12[0].suite, group: c.s12[0].group, master: tls12srv.ekm_parts(c.s12[0]).0, cr: tls12srv.ekm_parts(c.s12[0]).1, sr: tls12srv.ekm_parts(c.s12[0]).2, ems: tls12srv.ekm_parts(c.s12[0]).3, unique: c.s12[0].unique}
   }

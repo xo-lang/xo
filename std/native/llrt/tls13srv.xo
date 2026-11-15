@@ -18,6 +18,8 @@ use native/llrt/rand
 use native/llrt/sha256
 use native/llrt/tls13
 use native/llrt/tlsneg
+use std/hpke
+use native/llrt/tlsech
 use native/llrt/tlsname
 use native/llrt/tlsrec
 use native/llrt/tlssign
@@ -142,6 +144,11 @@ pub struct Conf {
   /// handshake with internal_error
   pub for_client: (fn(tlsneg.HelloInfo) -> (Conf?, Str))? = None
   pub get_cert: (fn(tlsneg.HelloInfo) -> tlsneg.Chain)? = None
+  /// decision 0644 T13: Go's EncryptedClientHelloKeys and
+  /// GetEncryptedClientHelloKeys (its text fails the handshake with
+  /// internal_error)
+  pub ech_keys: List[tlsech.Key] = []
+  pub ech_hook: (fn(tlsneg.HelloInfo) -> (List[tlsech.Key], Str))? = None
   /// decision 0644 T8: Go's KeyLogWriter, given each secret's NSS key
   /// log label, the client random and the secret at Go's point; a text
   /// fails the handshake with internal_error
@@ -261,6 +268,20 @@ pub struct Server {
   /// the verified chains (each DER, the leaf first) when the mode verifies
   pub verified: List[List[Bytes]] = []
   peer_leaf: x509.Cert? = None
+  /// decision 0644 T13 (Go's echServerContext): the client sent ECH;
+  /// the context is set (a decrypted outer hello, or inner: an inner
+  /// hello sent to this server as the backend); the HPKE context and the
+  /// suite and config of the outer hello; the keys of this connection;
+  /// and whether ECH was accepted (Go's ECHAccepted)
+  ech_sent: Bool = false
+  ech_on: Bool = false
+  ech_inner: Bool = false
+  ech_r: hpke.Recipient? = None
+  ech_kdf: Int = 0
+  ech_aead: Int = 0
+  ech_id: Int = 0
+  ech_keys: List[tlsech.Key] = []
+  pub ech_accepted: Bool = false
 }
 
 /// A new server for conf, waiting for a ClientHello.
@@ -527,6 +548,9 @@ struct Hello {
   exts: List[Int] = []
   ocsp: Bool = false
   scts: Bool = false
+  /// encrypted_client_hello's data
+  has_ech: Bool = false
+  ech: Bytes = b""
 }
 
 fn no_hello() -> Hello {
@@ -599,6 +623,10 @@ fn parse_hello(m: Bytes) -> Hello {
     }
     if t == 18 {
       h.scts = true
+    }
+    if t == tlsech.EXT_ECH {
+      h.has_ech = true
+      h.ech = d
     }
     if t == 11 && d.len() >= 1 {
       for b in d[1..d.len()] {
@@ -759,11 +787,22 @@ fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
 
 /// The first ClientHello (Go's readClientHello, processClientHello,
 /// pickCertificate, then the server's flight).
-fn client_hello(var s: Server, msg: Bytes) {
-  let h = parse_hello(msg)
+fn client_hello(var s: Server, msg0: Bytes) {
+  var h = parse_hello(msg0)
   if !h.ok {
     fail(s, ALERT_DECODE_ERROR, "local error: tls: error decoding message")
     return
+  }
+  // ECH before any negotiation (Go's readClientHello): the inner hello
+  // replaces the outer when a key opens it
+  var msg = msg0
+  if h.has_ech {
+    let (ih, im, ok) = ech_open(s, h, msg0)
+    if !ok {
+      return
+    }
+    h = ih
+    msg = im
   }
   s.want_ocsp = h.ocsp
   s.want_scts = h.scts
@@ -780,6 +819,10 @@ fn client_hello(var s: Server, msg: Bytes) {
   }
   let versions = if h.versions.is_empty() { versions_from_max(h.vers) } else { h.versions }
   let v13 = has(versions, 0x0304) && !s.conf.no13
+  if !v13 && s.ech_on && !s.ech_inner {
+    fail(s, ALERT_ILLEGAL_PARAMETER, "tls: Encrypted Client Hello cannot be used pre-TLS 1.3")
+    return
+  }
   if !v13 && has(versions, 0x0303) && s.conf.handoff && !s.conf.no12 {
     // TLS 1.2's certificate, through GetCertificate, before the handoff
     if !hook_cert(s, h) {
@@ -868,7 +911,15 @@ fn retry(var s: Server, msg: Bytes) {
   let hash = tlsrec.suite_hash(s.suite)
   let ch1 = sha256.sum(hash, msg)
   let exts = asn1.cat([tls13.ext(EXT_SUPPORTED_VERSIONS, tls13.u16(0x0304)), tls13.ext(EXT_KEY_SHARE, tls13.u16(s.group))])
-  let hrr = tls13.message(HS_SERVER_HELLO, asn1.cat([tls13.u16(0x0303), tls13.hrr_random(), tls13.vec8(s.ch1.sid), tls13.u16(s.suite), b"\x00", tls13.vec16(exts)]))
+  var hrr = tls13.message(HS_SERVER_HELLO, asn1.cat([tls13.u16(0x0303), tls13.hrr_random(), tls13.vec8(s.ch1.sid), tls13.u16(s.suite), b"\x00", tls13.vec16(exts)]))
+  if s.ech_on {
+    // Go's doHelloRetryRequest: the confirmation over the retry with its
+    // encrypted_client_hello zeroed
+    let blank = tls13.message(HS_SERVER_HELLO, asn1.cat([tls13.u16(0x0303), tls13.hrr_random(), tls13.vec8(s.ch1.sid), tls13.u16(s.suite), b"\x00", tls13.vec16(tls13.cat2(exts, tls13.ext(tlsech.EXT_ECH, tlsech.zeros(8))))]))
+    let conf = tls13.cat2(tls13.message(HS_MESSAGE_HASH, ch1), blank)
+    let cf8 = tlsech.confirmation(hash, s.ch1.random, "hrr ech accept confirmation", conf)
+    hrr = tls13.message(HS_SERVER_HELLO, asn1.cat([tls13.u16(0x0303), tls13.hrr_random(), tls13.vec8(s.ch1.sid), tls13.u16(s.suite), b"\x00", tls13.vec16(tls13.cat2(exts, tls13.ext(tlsech.EXT_ECH, cf8)))]))
+  }
   s.tr = asn1.cat([tls13.message(HS_MESSAGE_HASH, ch1), hrr])
   s.trk = -1
   s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, hrr, 0x0303))
@@ -878,11 +929,20 @@ fn retry(var s: Server, msg: Bytes) {
 }
 
 /// The second ClientHello, after a HelloRetryRequest.
-fn client_hello2(var s: Server, msg: Bytes) {
-  let h = parse_hello(msg)
+fn client_hello2(var s: Server, msg0: Bytes) {
+  var h = parse_hello(msg0)
   if !h.ok {
     fail(s, ALERT_DECODE_ERROR, "local error: tls: error decoding message")
     return
+  }
+  var msg = msg0
+  if s.ech_on {
+    let (ih, im, ok) = ech_open2(s, h, msg0)
+    if !ok {
+      return
+    }
+    h = ih
+    msg = im
   }
   if h.shares.len() != 1 {
     fail(s, ALERT_ILLEGAL_PARAMETER, "tls: client didn't send one key share in second ClientHello")
@@ -1031,7 +1091,15 @@ fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes
   if chosen >= 0 {
     exts = tls13.cat2(exts, tls13.ext(EXT_PRE_SHARED_KEY, tls13.u16(chosen)))
   }
-  let sh = tls13.message(HS_SERVER_HELLO, asn1.cat([tls13.u16(0x0303), s.random, tls13.vec8(h.sid), tls13.u16(s.suite), b"\x00", tls13.vec16(exts)]))
+  var sh = tls13.message(HS_SERVER_HELLO, asn1.cat([tls13.u16(0x0303), s.random, tls13.vec8(h.sid), tls13.u16(s.suite), b"\x00", tls13.vec16(exts)]))
+  if s.ech_on {
+    // Go's sendServerParameters: the random's last 8 bytes confirm ECH
+    // over the transcript with them zeroed
+    let zeroed = tlsech.zero_random_tail(sh)
+    let cf8 = tlsech.confirmation(hash, h.random, "ech accept confirmation", tls13.cat2(s.tr, zeroed))
+    s.random = tls13.cat2(s.random[0..24], cf8)
+    sh = tls13.cat2(zeroed[0..30], tls13.cat2(cf8, zeroed[38..zeroed.len()]))
+  }
   s.tr = tls13.cat2(s.tr, sh)
   s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, sh, 0x0303))
   dummy_ccs(s)
@@ -1060,6 +1128,13 @@ fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes
       }
       if s.sni != "" && chosen < 0 {
         es.push(tls13.ext(EXT_SERVER_NAME, b""))
+      }
+      // the retry configs to a client whose ECH was not taken
+      if s.ech_sent && !s.ech_on && !s.ech_keys.is_empty() {
+        let rl = tlsech.retry_list(s.ech_keys)
+        if !rl.is_empty() {
+          es.push(tls13.ext(tlsech.EXT_ECH, rl))
+        }
       }
       asn1.cat(es)
     }
@@ -1227,7 +1302,7 @@ fn client_cert(var s: Server, msg: Bytes) {
 }
 
 /// What is negotiated so far, for the verify hooks (decision 0644 T6).
-fn neg_now(s: Server) -> tlsneg.Negotiated { tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(s.suite), server_name: s.sni, resumed: s.resumed, peer: s.peer, verified: s.verified, curve: tlsneg.group_name(s.group), alpn: s.alpn, hrr: s.hrr, vers: 0x0304, suite: s.suite, group: s.group} }
+fn neg_now(s: Server) -> tlsneg.Negotiated { tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(s.suite), server_name: s.sni, resumed: s.resumed, peer: s.peer, verified: s.verified, curve: tlsneg.group_name(s.group), alpn: s.alpn, hrr: s.hrr, vers: 0x0304, suite: s.suite, group: s.group, ech_accepted: s.ech_accepted} }
 
 /// Go's VerifyPeerCertificate then VerifyConnection after the client's
 /// Certificate: false when one failed the handshake.
@@ -1782,3 +1857,124 @@ fn hex_ints(s: Str) -> List[Int] {
 }
 
 fn dash(x: Str) -> Str { if x == "" { "-" } else { x } }
+
+// ---------------------------------------------------------------------------
+// Encrypted Client Hello (decision 0644 T13; Go's processECHClientHello)
+
+/// The ClientHello h (message msg) after ECH: its inner hello when one
+/// of the keys opens the outer's payload; h itself when none does, when
+/// there are no keys, or when it is an inner hello (this server as the
+/// backend). False when the connection failed.
+fn ech_open(var s: Server, h: Hello, msg: Bytes) -> (Hello, Bytes, Bool) {
+  s.ech_sent = true
+  var keys = s.conf.ech_keys
+  if let Some(f) = s.conf.ech_hook {
+    let (k, e) = f(hello_info(h))
+    if !e.is_empty() {
+      fail(s, ALERT_INTERNAL_ERROR, e)
+      return (h, msg, false)
+    }
+    keys = k
+  }
+  s.ech_keys = keys
+  let e = tlsech.parse_ext(h.ech)
+  if !e.err.is_empty() {
+    fail(s, if e.err == "invalid" { ALERT_ILLEGAL_PARAMETER } else { ALERT_DECODE_ERROR }, tlsech.ERR_INVALID_EXT)
+    return (h, msg, false)
+  }
+  if !e.outer {
+    s.ech_on = true
+    s.ech_inner = true
+    return (h, msg, true)
+  }
+  for k in keys {
+    let (r, err) = tlsech.recipient(k, e)
+    if !err.is_empty() {
+      fail(s, ALERT_INTERNAL_ERROR, err)
+      return (h, msg, false)
+    }
+    var rc = match r {
+      Some(x) => x
+      None => continue
+    }
+    let pt = match rc.open(tlsech.outer_aad(msg, e.payload), e.payload) {
+      Ok(x) => x
+      Err(_) => continue
+    }
+    let (ih, im) = ech_inner_of(h, msg, pt)
+    if !ih.ok {
+      fail(s, ALERT_ILLEGAL_PARAMETER, tlsech.ERR_INVALID_EXT)
+      return (h, msg, false)
+    }
+    s.ech_on = true
+    s.ech_r = Some(rc)
+    s.ech_kdf = e.kdf
+    s.ech_aead = e.aead
+    s.ech_id = e.id
+    s.ech_accepted = true
+    return (ih, im, true)
+  }
+  (h, msg, true)
+}
+
+/// Go's decodeInnerClientHello: the inner hello of the decrypted payload
+/// and the outer hello h; ok false when it does not decode or offers
+/// what ECH does not allow.
+fn ech_inner_of(h: Hello, msg: Bytes, pt: Bytes) -> (Hello, Bytes) {
+  let (im, de) = tlsech.decode_inner(msg, h.sid, pt)
+  if !de.is_empty() {
+    return (no_hello(), b"")
+  }
+  let ih = parse_hello(im)
+  if !ih.ok || !tlsech.check_inner(ih.ech, ih.versions).is_empty() {
+    return (no_hello(), b"")
+  }
+  (ih, im)
+}
+
+/// The second ClientHello's ECH (Go's doHelloRetryRequest): the same
+/// type as the first; an outer one with the first's suite and config, no
+/// encapsulated key, and a payload the first's context opens.
+fn ech_open2(var s: Server, h: Hello, msg: Bytes) -> (Hello, Bytes, Bool) {
+  if !h.has_ech {
+    fail(s, ALERT_MISSING_EXTENSION, "tls: second client hello missing encrypted client hello extension")
+    return (h, msg, false)
+  }
+  let e = tlsech.parse_ext(h.ech)
+  if !e.err.is_empty() {
+    fail(s, ALERT_DECODE_ERROR, "tls: client sent invalid encrypted client hello extension")
+    return (h, msg, false)
+  }
+  if e.outer == s.ech_inner {
+    fail(s, ALERT_DECODE_ERROR, "tls: unexpected switch in encrypted client hello extension type")
+    return (h, msg, false)
+  }
+  if !e.outer {
+    return (h, msg, true)
+  }
+  if e.kdf != s.ech_kdf || e.aead != s.ech_aead || e.id != s.ech_id || !e.enc.is_empty() {
+    fail(s, ALERT_ILLEGAL_PARAMETER, "tls: second client hello encrypted client hello extension does not match")
+    return (h, msg, false)
+  }
+  var rc = match s.ech_r {
+    Some(x) => x
+    None => {
+      fail(s, ALERT_INTERNAL_ERROR, "tls: no ECH context")
+      return (h, msg, false)
+    }
+  }
+  let pt = match rc.open(tlsech.outer_aad(msg, e.payload), e.payload) {
+    Ok(x) => x
+    Err(_) => {
+      fail(s, ALERT_DECRYPT_ERROR, "tls: failed to decrypt second client hello encrypted client hello extension payload")
+      return (h, msg, false)
+    }
+  }
+  s.ech_r = Some(rc)
+  let (ih, im) = ech_inner_of(h, msg, pt)
+  if !ih.ok {
+    fail(s, ALERT_ILLEGAL_PARAMETER, "tls: client sent invalid encrypted client hello extension")
+    return (h, msg, false)
+  }
+  (ih, im, true)
+}
