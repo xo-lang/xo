@@ -1469,7 +1469,10 @@ Last verified: 2026-11-15
     without doing it: a duplicate or no longer wanted; 2026-11-15); `xw
     task add NAME TITLE --goal RANK` adds to your own queue (another
     agent's: the lead) and warns when the queue already holds a task with
-    a near title.
+    a near title. A bug fix is `--bug` (or `xw task kind ID bug`): `xw
+    check` flags one pushed or done whose commit changed no test file
+    (`_test` files, test scripts, goldens, corpora, test/, testdata/;
+    owner, 2026-11-15).
   - `xw ack ID` for each decision sent to you (`xw decisions --open
     --agent NAME`), in the tool round you read it.
   - `xw priority` (the owner's ranked goals), `xw charter NAME`, `xw
