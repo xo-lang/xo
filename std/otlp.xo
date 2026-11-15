@@ -32,7 +32,7 @@ fn encode_metrics(res: Resource, reg: metrics.Registry, start_ms: Int, now_ms: I
 
 /// Why an export failed: the transport (no response), a status the collector will not take (400 and the like: a
 /// retry would send the same bytes), or retries that ran out with the last answer.
-enum ExportErr {
+open enum ExportErr {
   Transport(msg: Str)
   Rejected(status: Int, body: Str)
   GaveUp(status: Int, tries: Int)

@@ -77,6 +77,15 @@ diagnostic naming the replacement, so no `xo fix` rewrite is required. Found by 
 (gotchas/std-enum-variant-breaks-exhaustive-matches.md). Deferred to 1.0: the owner decides then whether such enums are declared open
 (a required `_ =>` arm outside std) so that adding a target stops being a break.
 
+### Addendum (Lang 3, 2026-11-15; decision 0649, accepted by the owner, 2026-11-15)
+
+The deferred question above is answered now, not at 1.0: an enum may be declared `pub open enum` (decision 0649). Rule 2
+of "What 0.x promises today" reads: a new variant of a **closed** `pub` std enum is a breaking change, as above; a new
+variant of an **open** enum is not (CHANGELOG **Added**), since every match outside the declaring package has a `_` arm
+(XO0306: a warning in 0.52, an error from the release after). Declaring a published enum `open` is a one-time break
+for outside matches without `_` (named by XO0306, migrated in the release that opens it); removing `open` is not a
+break. At 1.0 the set of open std enums is part of the frozen promise.
+
 ## Consequences
 
 - Spec 13 links this decision, and maturity-gaps.md item 1 records that the policy is written.

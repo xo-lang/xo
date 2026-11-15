@@ -58,7 +58,7 @@ pub struct Oid {
 /// `Structure` is StructuralError (`asn1: structure error: MSG`), and
 /// `Invalid` an error Go makes with its own text (invalid UTF-8, a bad
 /// BMPString, a time that is not in DER's form), shown as is.
-pub enum Asn1Err {
+pub open enum Asn1Err {
   Syntax(msg: Str)
   Structure(msg: Str)
   Invalid(msg: Str)

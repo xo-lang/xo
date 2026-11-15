@@ -83,6 +83,9 @@ fn (var c: Checker) ctors_of(t: Int, heads: List[IPat]) -> (List[CtorInfo], Bool
   }
   let s = c.args_subst(c.objs[o].tparams, x.args)
   let tk = c.objs[o].tkind
+  if tk == "enum" && c.open_strict && c.objs[o].flags.open_enum() && c.outside_pkg(c.objs[o].module) {
+    return ([], true)
+  }
   if tk == "enum" {
     var out: List[CtorInfo] = []
     for v in c.objs[o].variants {
@@ -381,6 +384,125 @@ fn (var c: Checker) check_exhaustive(mspan: Span, subject: Expr, rows: List[IPat
   if c.contains_bad(st) || c.has_open_vars(st) {
     return
   }
+  if !c.check_exhaustive_closed(mspan, subject, rows, st) {
+    c.check_open_enums(mspan, subject, rows, st)
+  }
+}
+
+/// XO0306 (decision 0649; a warning in 0.52, an error after): a match
+/// that covers every variant of an open enum of another package but has
+/// no arm for the variants its owner may add.
+fn (var c: Checker) check_open_enums(mspan: Span, subject: Expr, rows: List[IPat], st: Int) {
+  let oe = c.open_enum_in(st, 0)
+  if oe < 0 {
+    return
+  }
+  var matrix: List[List[IPat]] = []
+  for r in rows {
+    matrix.push([r])
+  }
+  c.open_strict = true
+  let w = c.missing(matrix, [st], 0)
+  c.open_strict = false
+  let ws = match w {
+    Some(x) => c.witness_string(x[0])
+    None => return
+  }
+  let d = c.warn("XO0306", parser.expr_span(subject), "match on `${c.show(st)}` needs an arm for the variants `${text(c.objs[oe].name)}` may add (missing `${ws}`): it is an open enum of `${c.mods[c.objs[oe].module].path}`")
+  if d < 0 {
+    return
+  }
+  c.note(d, "add a `_ =>` arm: the owner of an open enum adds variants in minor releases (core 3.5, decision 0649); an error from the release after 0.52")
+  let end = parser.Pos{offset: mspan.end.offset - 1, line: mspan.end.line, col: mspan.end.col - 1}
+  let indent = " ".repeat(0.max(end.col - 1))
+  c.fix(d, "add a `_` arm as a hole", [c.insert_edit(end, "  _ => ???\n${indent}")])
+}
+
+/// The first open enum of another package in t, its type arguments,
+/// tuple elements and struct fields (to a small depth), or -1.
+fn (var c: Checker) open_enum_in(t: Int, depth: Int) -> Int {
+  if depth > 4 {
+    return -1
+  }
+  let r = c.resolve(t)
+  let x = c.tys[r]
+  if x.kind == TyKind.Tuple {
+    for a in x.args {
+      let o = c.open_enum_in(a, depth + 1)
+      if o >= 0 {
+        return o
+      }
+    }
+    return -1
+  }
+  if x.kind != TyKind.Named {
+    return -1
+  }
+  let o = x.obj
+  if c.objs[o].flags.open_enum() && c.outside_pkg(c.objs[o].module) {
+    return o
+  }
+  for a in x.args {
+    let oa = c.open_enum_in(a, depth + 1)
+    if oa >= 0 {
+      return oa
+    }
+  }
+  if c.objs[o].tkind == "struct" && !c.objs[o].flags.opaque() {
+    let s = c.args_subst(c.objs[o].tparams, x.args)
+    for f in c.objs[o].fields {
+      let of = c.open_enum_in(c.subst(f.ty, s), depth + 1)
+      if of >= 0 {
+        return of
+      }
+    }
+  }
+  if c.objs[o].tkind == "enum" {
+    let s = c.args_subst(c.objs[o].tparams, x.args)
+    for v in c.objs[o].variants {
+      for f in v.fields {
+        let ov = c.open_enum_in(c.subst(f.ty, s), depth + 1)
+        if ov >= 0 {
+          return ov
+        }
+      }
+    }
+  }
+  -1
+}
+
+/// Whether module m is in another package than the current module: std
+/// (std, native, llrt) is one package, released together; elsewhere a
+/// package is an xo.mod root (decision 0649).
+fn (c: Checker) outside_pkg(m: Int) -> Bool { c.other_pkg(m, c.cur_mod) }
+
+/// Whether modules m and from are in different packages (outside_pkg).
+pub fn (c: Checker) other_pkg(m: Int, from: Int) -> Bool {
+  if from < 0 || m < 0 || m == from {
+    return false
+  }
+  let a = c.mods[m]
+  let b = c.mods[from]
+  if a.std_tree || b.std_tree {
+    return a.std_tree != b.std_tree
+  }
+  c.pkg_root(a.dir) != c.pkg_root(b.dir)
+}
+
+/// The directory of the xo.mod root holding dir (the longest known), or
+/// dir itself.
+fn (c: Checker) pkg_root(dir: Str) -> Str {
+  var best = ""
+  for r in c.roots {
+    if (dir == r.dir || dir.starts_with(r.dir + "/")) && r.dir.len() > best.len() {
+      best = r.dir
+    }
+  }
+  if best == "" { dir } else { best }
+}
+
+/// XO0301 for a match that misses a case; whether it reported one.
+fn (var c: Checker) check_exhaustive_closed(mspan: Span, subject: Expr, rows: List[IPat], st: Int) -> Bool {
   var matrix: List[List[IPat]] = []
   for r in rows {
     matrix.push([r])
@@ -399,11 +521,11 @@ fn (var c: Checker) check_exhaustive(mspan: Span, subject: Expr, rows: List[IPat
     matrix.push([witness_pat(w[0])])
   }
   if missing_pats.is_empty() {
-    return
+    return false
   }
   let d = c.error("XO0301", parser.expr_span(subject), "match on `${c.show(st)}` is not exhaustive: missing `${missing_pats.join("`, `")}`")
   if d < 0 {
-    return
+    return true
   }
   c.note(d, "add an arm for each missing case; matches must be exhaustive (core 2.3)")
   let end = parser.Pos{offset: mspan.end.offset - 1, line: mspan.end.line, col: mspan.end.col - 1}
@@ -413,6 +535,7 @@ fn (var c: Checker) check_exhaustive(mspan: Span, subject: Expr, rows: List[IPat
     b.write("  ${p} => ???\n${indent}")
   }
   c.fix(d, "add the missing arms as holes", [c.insert_edit(end, b.freeze())])
+  true
 }
 
 /// XO0303 when ip does not cover every value of t (pattern.go

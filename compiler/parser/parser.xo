@@ -727,6 +727,13 @@ fn (var p: Parser) parse_file(name: Bytes) -> File {
 /// One top level item after an optional `pub`: None for a `use` (pushed
 /// on imports) and for skipped foreign lines.
 fn (var p: Parser) parse_top_decl(var imports: List[UseDecl], doc: Doc?, is_pub: Bool, pub_tok: Token, decl_start: Pos, seen_decl: Bool) -> Decl? {
+  // `open` is a word only directly before `enum` (decision 0649)
+  if is_word(p.tok, b"open") && p.peek(1).kind == Kind.Enum {
+    p.next()
+    var e = p.parse_enum(doc, is_pub, decl_start)
+    e.is_open = true
+    return Some(Decl.EnumDecl(e))
+  }
   match p.tok.kind {
     Use => {
       if is_pub {

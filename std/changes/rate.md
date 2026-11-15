@@ -1,5 +1,18 @@
 # std/rate changes
 
+## 2026-11-15: feature: `RateErr` is an open enum (decision 0649)
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0649 (a new variant of a std error enum broke two SDKs, 0644's `ClientErr.Tls`)
+- Go reference: none (Go's errors are values compared with errors.Is; Rust's `#[non_exhaustive]`)
+- Test: compiler/check's open enum test; the open_enum golden; xo check over the programs that use the module
+
+`RateErr` is declared `open`: a `match` on it outside std needs a `_` (or
+binding) arm, warning XO0306 in 0.52 and an error after, so that std can
+add a variant in a minor release without breaking a build. Matches that
+already have `_` are unchanged.
+
 ## 2026-11-10: refactor: integer bounds as `Int.max` and `Int.min` (decision 0587 point 4)
 
 - Kind: refactor

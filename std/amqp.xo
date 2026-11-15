@@ -50,7 +50,7 @@ pub enum Value {
   Described(descriptor: Value, value: Value)
 }
 
-pub enum AmqpErr {
+pub open enum AmqpErr {
   /// bytes that are not a valid encoding
   Decode(msg: Str)
   /// a value that cannot be encoded (an array of mixed types, an oversized string)

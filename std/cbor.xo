@@ -35,7 +35,7 @@ enum Value {
 /// is not UTF-8, a repeated map key when `reject_dup_keys` is set, data after
 /// the item, a `Simple` or float that cannot be written). `Limit`: more
 /// nesting than max_depth, or an item larger than the data.
-enum CborErr {
+open enum CborErr {
   Truncated
   Syntax(msg: Str)
   Invalid(msg: Str)

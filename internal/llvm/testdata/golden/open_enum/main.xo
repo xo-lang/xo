@@ -1,0 +1,27 @@
+// An open enum of std (decision 0649): outside std a match on it has a
+// `_` arm, at the top and inside an optional.
+use std/rate
+
+fn kind(e: rate.RateErr) -> Str {
+  match e {
+    Exceeds(n: n, burst: b) => "exceeds ${n} > ${b}"
+    Canceled => "canceled"
+    _ => "a newer kind"
+  }
+}
+
+fn maybe(e: rate.RateErr?) -> Str {
+  match e {
+    Some(Canceled) => "some canceled"
+    Some(_) => "some other"
+    None => "none"
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println(kind(rate.RateErr.Exceeds(n: 5, burst: 2)))
+  os.stdio.println(kind(rate.RateErr.Canceled))
+  os.stdio.println(maybe(Some(rate.RateErr.Canceled)))
+  os.stdio.println(maybe(Some(rate.RateErr.Exceeds(n: 1, burst: 0))))
+  os.stdio.println(maybe(None))
+}

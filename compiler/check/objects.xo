@@ -300,6 +300,11 @@ pub fn (var f: ObjFlags) set_elided(v: Bool) { f.w = if v { f.w | 2097152 } else
 pub fn (f: ObjFlags) json_fold() -> Bool { (f.w & 4194304) != 0 }
 pub fn (var f: ObjFlags) set_json_fold(v: Bool) { f.w = if v { f.w | 4194304 } else { f.w & -4194305 } }
 
+/// `pub open enum` (decision 0649): a match outside the declaring package
+/// needs a `_ =>` arm (XO0306).
+pub fn (f: ObjFlags) open_enum() -> Bool { (f.w & 8388608) != 0 }
+pub fn (var f: ObjFlags) set_open_enum(v: Bool) { f.w = if v { f.w | 8388608 } else { f.w & -8388609 } }
+
 /// Where an elided effect parameter came from (Obj.elided_from).
 pub struct ElidedFrom {
   pub file: Str

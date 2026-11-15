@@ -25,7 +25,7 @@ struct Parsed {}
 /// failures: the user asked for the text (exit status 0). `Usage` is a
 /// mistake in the arguments (exit status 2). Displays as the text of
 /// `Help` and `Version` and as the message of `Usage`.
-enum CliErr {
+open enum CliErr {
   /// `-h` or `--help`: the help of the selected command.
   Help(text: Str)
   /// `--version` on a command with a version: `name version`.

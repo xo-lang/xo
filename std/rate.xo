@@ -43,7 +43,7 @@ pub struct Reservation {
 }
 
 /// Why wait failed.
-pub enum RateErr {
+pub open enum RateErr {
   /// n is more than the burst (and the limit is not INF).
   Exceeds(n: Int, burst: Int)
   /// The task was cancelled while waiting; the tokens went back.

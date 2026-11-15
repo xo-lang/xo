@@ -14,6 +14,7 @@ fn run_vet(os: Os, ctx: Ctx, args: List[Str], extra: List[Diag]) -> Int {
   // the driver computes these notes and passes them in (extra)
   fl.bool_flag("cost", "also note costs the compiled program has in loops that its source does not show (decision 0327)")
   fl.bool_flag("cost-std", "with --cost, note the costs in the std functions the program uses instead of in its own (the std check, cmd/xo TestVetCostStd)")
+  fl.bool_flag("open-enums", "also warn when a `_` arm on an open enum of another package hides variants the match does not name (XO0308, decision 0649)")
   fl.str_flag("std-module", "", "vet one std or runtime module as `xo test --std-module` checks it, with its private declarations (json, native/http, native/llrt/pool)")
   if !fl.parse(os, args) {
     return 2
@@ -87,6 +88,9 @@ fn run_vet(os: Os, ctx: Ctx, args: List[Str], extra: List[Diag]) -> Int {
     }
     let (d, n) = vet_session(s.c, s.diags)
     ds = ds + d + embed_untracked(os, s.c)
+    if fl.get_bool("open-enums") {
+      ds = ds + open_enum_wilds(s.c, s.c.root_mods)
+    }
     check_errors += n
     mods = mods + s.mods
   }
@@ -1256,6 +1260,80 @@ fn payload_share(c: check.Checker, f: Int, file: Str, subject: parser.Expr, pats
   var d = vdiag("XO0530", false, file, parser.expr_span(subject), "binding the payload of this field shares the ${n} heap fields of `${what}`, and releasing the field later releases them again")
   d.notes.push(check.DNote{message: "test it with `.is_none()` (or a pattern without bindings) first when the payload is not needed, or take the value out of its owner before matching (decision 0263)"})
   Some(d)
+}
+
+/// XO0308 (`xo vet --open-enums`, decision 0649; Swift's `@unknown
+/// default` warning): a `_` or binding arm on an open enum of another
+/// package that hides variants the match does not name, so that code which
+/// means to handle each known variant learns of a new one on upgrade.
+fn open_enum_wilds(c: check.Checker, ms: List[Int]) -> List[Diag] {
+  var out: List[Diag] = []
+  for m in ms {
+    for f in c.mods[m].files {
+      let path = c.files[f].path
+      var nodes: List[parser.Expr] = []
+      for d in c.files[f].ast.decls {
+        walk_decl(d, nodes)
+      }
+      for e in nodes {
+        if let MatchExpr(_, subject, arms) = e {
+          if let Some(d) = open_enum_wild(c, m, f, path, subject, arms) {
+            out.push(d)
+          }
+        }
+      }
+    }
+  }
+  out
+}
+
+fn open_enum_wild(c: check.Checker, m: Int, f: Int, file: Str, subject: parser.Expr, arms: List[parser.MatchArm]) -> Diag? {
+  let t = c.type_in(f, subject)
+  if t < 0 {
+    return None
+  }
+  let o = c.named_obj(t)
+  if o < 0 || !c.objs[o].flags.open_enum() || !c.other_pkg(c.objs[o].module, m) {
+    return None
+  }
+  var named: List[Bytes] = []
+  for arm in arms {
+    let catch_all = arm.guard == None && (arm.pattern is WildcardPat(..) | BindPat(..))
+    if !catch_all {
+      arm_variants(arm.pattern, named)
+      continue
+    }
+    var hidden: List[Str] = []
+    for vi in c.objs[o].variants {
+      if !named.contains(vi.name) {
+        hidden.push(text_of(vi.name))
+      }
+    }
+    if hidden.is_empty() || allowed(c, f, parser.pattern_span(arm.pattern).start.line, "XO0308") {
+      return None
+    }
+    var d = vdiag("XO0308", false, file, parser.pattern_span(arm.pattern), "this arm hides `${hidden.join("`, `")}` of the open enum `${text_of(c.objs[o].name)}`")
+    d.notes.push(check.DNote{message: "name them to handle each known variant, keeping `_` for the ones its owner adds later (decision 0649)"})
+    return Some(d)
+  }
+  None
+}
+
+/// The variant names a pattern's top level names, through or patterns.
+fn arm_variants(p: parser.Pattern, var named: List[Bytes]) {
+  match p {
+    VariantPat(path: ps, ..) => {
+      if !ps.is_empty() {
+        named.push(ps[ps.len() - 1].name)
+      }
+    }
+    OrPat(alts: alts, ..) => {
+      for a in alts {
+        arm_variants(a, named)
+      }
+    }
+    _ => {}
+  }
 }
 
 /// XO0703: the effects named in the `uses` clauses of fo that its body

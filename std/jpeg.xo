@@ -65,7 +65,7 @@ pub struct Config {
 /// Go's `jpeg: image is too large to encode` (decision 0510); also Format
 /// for a JPEG whose frame header asks for more than max_pixels pixels,
 /// `image too large`.
-pub enum JpegErr {
+pub open enum JpegErr {
   Format(msg: Str)
   Unsupported(msg: Str)
   Truncated

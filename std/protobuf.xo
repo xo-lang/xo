@@ -15,7 +15,7 @@ const FIXED32: Int = 5
 /// `BadWire` a wire type of 6 or 7 (or an end group with no start), `Recursion` groups nested
 /// deeper than the limit, `BadLength` a length that does not fit the input, `Utf8` text that is
 /// not valid UTF-8.
-enum ProtoErr {
+open enum ProtoErr {
   Truncated
   Overflow
   BadTag

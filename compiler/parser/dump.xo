@@ -267,6 +267,7 @@ fn dump_decl(var out: StrBuilder, depth: Int, label: Str, decl: Decl) {
     EnumDecl(e) => {
       head(out, depth, label, "EnumDecl", e.span)
       flag(out, "pub", e.is_pub)
+      flag(out, "open", e.is_open)
       out.write("\n")
       dump_doc(out, d, e.doc)
       dump_ident(out, d, "name", e.name)

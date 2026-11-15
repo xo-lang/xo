@@ -221,6 +221,9 @@ pub struct EnumDecl {
   /// `derive Json(case: snake)`: variant names and their fields' keys on
   /// the wire (decision 0478)
   pub derive_args: List[DeriveArg] = []
+  /// `pub open enum E`: code outside the declaring package matches it
+  /// with a `_ =>` arm (decision 0649, XO0306)
+  pub is_open: Bool = false
 }
 
 /// An enum variant; fields is None for a unit variant.

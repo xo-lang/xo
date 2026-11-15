@@ -66,7 +66,7 @@ pub enum Compression {
 /// zlib reader's own errors, such as `zlib: invalid header` or `flate:
 /// corrupt input before offset 12` (Flate); also Format for a PNG whose
 /// header asks for more than max_pixels pixels, `image too large`.
-pub enum PngErr {
+pub open enum PngErr {
   Format(msg: Str)
   Unsupported(msg: Str)
   Truncated

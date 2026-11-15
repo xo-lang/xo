@@ -9,7 +9,7 @@
 use github.com/xo-lang/xo/compiler/lexer
 
 /// The version of the form: a change to the AST or this file changes it.
-pub const AST_CODEC_VERSION = "xo ast codec v10"
+pub const AST_CODEC_VERSION = "xo ast codec v11"
 
 struct Enc {
   b: BytesBuilder = BytesBuilder.new()
@@ -320,6 +320,7 @@ fn (var e: Enc) decl(d: Decl) {
       e.ident(en.name)
       e.tparams(en.type_params)
       e.oident(en.value_type)
+      e.bool(en.is_open)
       e.int(en.variants.len())
       for v in en.variants {
         e.span(v.span)
@@ -1366,6 +1367,7 @@ fn (var r: Dec) decl() -> Decl {
       let n = r.ident()
       let tps = r.tparams()
       let vtype = r.oident()
+      let vopen = r.bool()
       let nv = r.count()
       var vs: List[Variant] = []
       for _ in 0..nv {
@@ -1398,7 +1400,7 @@ fn (var r: Dec) decl() -> Decl {
       }
       let dv = r.idents()
       let das = r.derive_args()
-      Decl.EnumDecl(d: EnumDecl{span: s, doc: doc, is_pub: pb, name: n, type_params: tps, value_type: vtype, variants: vs, derive: dv, derive_args: das})
+      Decl.EnumDecl(d: EnumDecl{span: s, doc: doc, is_pub: pb, name: n, type_params: tps, value_type: vtype, variants: vs, derive: dv, derive_args: das, is_open: vopen})
     }
     3 => {
       let s = r.span()

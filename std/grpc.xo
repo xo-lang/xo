@@ -63,7 +63,7 @@ pub fn code_from(n: Int) -> Code? {
 }
 
 /// Why a frame was refused.
-pub enum FrameErr {
+pub open enum FrameErr {
   Truncated
   BadFlag(flag: Int)
   TooLarge(len: Int)

@@ -31,7 +31,7 @@ fn to_json(text: Str) -> Str ! TomlErr
 fn encode[T: Json](v: T) -> Str ! TomlErr
 
 /// Why decode failed: the text is not TOML, or its values do not fit T.
-enum DecodeErr {
+open enum DecodeErr {
   Syntax(err: TomlErr)
   Value(err: json.DecodeErr)
 }

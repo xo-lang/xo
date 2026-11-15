@@ -37,7 +37,7 @@ pub const DEFAULT_COST: Int = 10
 /// started with 'x'`, `crypto/bcrypt: cost 3 is outside allowed inclusive
 /// range 4..31`, `bcrypt: password length exceeds 72 bytes`; Corrupt is a
 /// cost or salt that is not valid text (Go's strconv and base64 errors).
-pub enum BcryptErr {
+pub open enum BcryptErr {
   Mismatch
   HashTooShort
   VersionTooNew(version: Int)

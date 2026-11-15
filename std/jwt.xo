@@ -69,7 +69,7 @@ pub struct Options {
   pub max_size: Int = 16384
 }
 
-pub enum JwtErr {
+pub open enum JwtErr {
   /// not three segments, a bad base64url, a header or payload that is not a JSON object, or `crit`
   Malformed(msg: Str)
   /// `none`, an `alg` outside `Options.algs`, or a key that does not fit it

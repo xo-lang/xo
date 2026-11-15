@@ -110,7 +110,18 @@ fn (var c: Checker) declare(m: Int) {
             c.objs[o].internal_hint = doc_after(sd.doc, "@internal:")
           }
         }
-        EnumDecl(d: ed) => o = c.declare_type(ed.name, ed.type_params, ed.is_pub, "enum", f, i)
+        EnumDecl(d: ed) => {
+          o = c.declare_type(ed.name, ed.type_params, ed.is_pub, "enum", f, i)
+          if o >= 0 && ed.is_open {
+            c.objs[o].flags.set_open_enum(true)
+            if !ed.is_pub && !c.exports_all(m) {
+              let d = c.error("XO0307", ed.name.span, "`open` on `${text(ed.name.name)}`, which is not `pub`: no code outside the package can match it")
+              if d >= 0 {
+                c.note(d, "make the enum `pub`, or drop `open` (decision 0649)")
+              }
+            }
+          }
+        }
         InterfaceDecl(d: id) => o = c.declare_type(id.name, id.type_params, id.is_pub, "interface", f, i)
         TypeDecl(d: td) => o = c.declare_type(td.name, td.type_params, td.is_pub, if td.newtype { "newtype" } else { "alias" }, f, i)
         ConstDecl(d: cd) => {

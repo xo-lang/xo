@@ -17,7 +17,7 @@
 /// connection), or the stream ending before `read_exact`
 /// had its bytes. Displays as the stream's error text, `bufio: record too
 /// long` and `bufio: unexpected EOF`.
-pub enum BufErr {
+pub open enum BufErr {
   Net(err: NetErr)
   TooLong
   UnexpectedEof

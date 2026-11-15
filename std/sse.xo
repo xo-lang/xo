@@ -34,7 +34,7 @@ pub struct Event {
 }
 
 /// Why a stream could not be read.
-pub enum SseErr {
+pub open enum SseErr {
   /// A line longer than the parser's limit.
   TooLong(limit: Int)
 }

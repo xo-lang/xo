@@ -148,6 +148,22 @@ enum, done once for all of std:
 XO0306's fix (it inserts `_ => ???` at the end of the match) counts as this decision's vet rule plus fix under 0653
 (lead, 2026-11-15): no older form becomes obsolete, and the matches that need a `_` arm are exactly the ones XO0306
 reports. Lang 2 sweeps compiler/, std/native and llrt at the seed cut that brings in `open`, with step 2's opt-ins.
+## Implementation (2026-11-15)
+
+- Step 1 (this push): the parser's `open` word (AST codec v11, std export v13), XO0306 and XO0307 in compiler/check
+  (exhaust.xo: a second usefulness pass in which an open enum of another package has only the wildcard, run when the
+  ordinary one finds nothing missing, so XO0301 keeps its meaning), XO0308 under `xo vet --open-enums`, `xo fmt`,
+  spec core 2.3, 3.5, 10 and 15, and 0567's addendum. XO0307 is the checker's, not the parser's, since std declaration
+  files export names without `pub`.
+- The opt-ins of step 1 are the std error enums outside the seed's import closure (the std modules compiler/xo reaches
+  through `use`): amqp, asn1, bcrypt, bufio, cbor, cli, grpc, jpeg, jwt, otlp, png, protobuf, rate, sse, toml. A scan of
+  every test, example, bench and compiler program that uses one found no match needing a `_`.
+- Step 2 (after Lang 2 cuts a seed whose parser reads `open`): the prelude's error enums (`NetErr`, `FsErr`, `IoErr`,
+  `ProcErr`, `EnvErr`, `ClockErr`, `KeyErr`), http's `ClientErr` and `HttpErr`, tls and x509's kinds, jsonrpc's
+  `FrameErr` and `CallErr`, sql's `SqlErr`, time's `ZoneErr` and `CivilErr`, `TextErr`, and `TargetOs` and `TargetArch`.
+  The compiler's own matches on them that list every variant gain a `_` arm in that step.
+- Decision 0653 (adoption sweeps): no older form becomes obsolete, so there is no vet rule or `xo fix` to add; the
+  matches that need `_` are found by XO0306 itself.
 
 ## Follow-ups (small, from the same survey; independent of the above)
 

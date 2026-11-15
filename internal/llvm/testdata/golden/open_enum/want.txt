@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+exceeds 5 > 2
+canceled
+some canceled
+some other
+none
+--- stderr

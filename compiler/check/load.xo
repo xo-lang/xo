@@ -413,6 +413,9 @@ pub struct Checker {
   // The walk: the current module and file, local scopes (innermost
   // last), the function context, and what it records.
   cur_mod: Int = -1
+  /// The XO0306 pass (decision 0649): an open enum of another package
+  /// counts as covered only by a wildcard.
+  open_strict: Bool = false
   cur_file: Int = -1
   path: Str = ""
   scopes: List[Map[Bytes, Int]] = []

@@ -12,6 +12,7 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.52
 
+- 2.3, 3.5 and 15: `pub open enum E` (decision 0649): outside the declaring package (std as a whole, else an xo.mod root) a `match` on `E` needs an arm for the variants its owner may add, a `_` or binding arm, warning `XO0306` in 0.52 and an error from the release after; `open` on an enum that is not `pub` is `XO0307`. A new variant of an open enum is not a breaking change (13, decision 0567).
 - 5.5 and 10.1: `--check=free,guard,leak|all` on `xo run`, `xo test` and `xo build` turns on the native runtime's memory checks (decision 0638); the variables under it (XO_FREE_CHECK, XO_HEAP_GUARD, XO_LEAKCHECK) are documented, and `XO_LEAKCHECK=fail` ends a program that leaves blocks live with status 1.
 - 7.4: the native worker pool follows a Linux cgroup CPU quota (`cpu.max`; v1's CFS quota) as Go 1.25's GOMAXPROCS does, max(2, ceil(quota / period)) workers when that is fewer than the CPUs; `XO_THREADS` is documented and still wins (decision 0638); the count includes the thread that runs `main` and helps while it waits, as Go's Ps, so N is at most N threads running tasks (decision 0640).
 
@@ -928,6 +929,17 @@ pub enum LoadErr {
 - Enums are closed. `match` must be exhaustive (error `XO0301`). Variants with
   a field of type `Never` cannot be constructed and may be omitted from a
   `match`.
+- Open enums (decision 0649). `pub open enum E { ... }` says that E's owner
+  may add variants in later releases. `open` is a word only directly before
+  `enum`, and only on a `pub` enum (or one of a std declaration file, whose
+  names all export); elsewhere it is `XO0307`. Inside the declaring package
+  (std as a whole, else the xo.mod root that holds the module) matches on E
+  are checked as on any enum. Outside it, a `match` whose arms name every
+  variant still needs an arm for the ones not yet written, a `_` or a
+  binding, at E's position in the subject (`Some(_)` for an `E?`): warning
+  `XO0306` in 0.52, an error from the release after. Adding a variant to an
+  open enum is therefore not a breaking change (13). Most std error enums
+  are open (std.md marks them).
 
 Valued enums (decision 0269). An enum whose variants are all field-less may
 declare a value type, `Int` or `Str`, after its name, and each variant may
@@ -1696,7 +1708,8 @@ binding arm (`XO0301`).
 An unguarded `_` (or catch all binding) arm that hides variants of an enum
 declared in the same module is warning `XO0305`: list the variants, so that
 adding one later is a compile error at every `match`. Enums from other modules
-may use `_`, since their owners can add variants. A `_` arm that hides at
+may use `_`, since their owners can add variants, and an open enum (2.3) of
+another package needs one (`XO0306`). A `_` arm that hides at
 least 8 variants and more than half of the enum is a default ("these few are
 special, the rest are not", as on a token kind enum) and is not reported; the
 warning names at most 8 hidden variants, then how many more (decision 0080).
@@ -3990,6 +4003,9 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0303` | error | checker | refutable pattern where an irrefutable one is required (core 3.5), and an assignment's list target other than `[..]` (core 5.2, decision 0538) |
 | `XO0304` | error | checker | alternatives of an or pattern bind different names or types (core 3.5) |
 | `XO0305` | warning | checker | `_` arm hides variants of an enum declared in this module (core 3.5) |
+| `XO0306` | warning | checker | match on an open enum of another package has no `_` arm for the variants its owner may add (core 2.3; an error after 0.52, decision 0649) |
+| `XO0307` | error | checker | `open` on an enum that is not `pub` (core 2.3, decision 0649) |
+| `XO0308` | warning | vet | with `xo vet --open-enums`: a `_` arm on an open enum of another package hides variants the match does not name (Swift's `@unknown default`; decision 0649) |
 | `XO0401` | error | checker | value of the wrong type; only three implicit conversions exist (core 2.10) |
 | `XO0402` | error | checker | type arguments cannot be inferred (core 2.7) |
 | `XO0403` | error | checker | wrong arguments or fields: count, names, missing, or duplicates |
@@ -4734,7 +4750,7 @@ Invariant   = "invariant" Expr .
 Derive      = "derive" DeriveItem { "," DeriveItem } .
 DeriveItem  = QualName [ "(" DeriveArg { "," DeriveArg } ")" ] .
 DeriveArg   = ident ":" ( ident | string | rawstring ) .
-EnumDecl    = "enum" ident [ TypeParams ] "{" { Variant } "}" [ Derive ] .
+EnumDecl    = [ "open" ] "enum" ident [ TypeParams ] "{" { Variant } "}" [ Derive ] .
 Variant     = { DocComment } ident [ "as" ( string | rawstring ) ] [ "(" VField { "," VField } ")" ] .
 VField      = ident ":" Type | "from" Type .
 IfaceDecl   = "interface" ident [ TypeParams ] "{" { FnSig } "}" .

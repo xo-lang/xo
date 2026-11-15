@@ -1011,6 +1011,9 @@ fn (var p: Printer) variant(v: parser.Variant) {
 
 fn (var p: Printer) enum_decl(e: parser.EnumDecl) {
   p.pub_kw(e.is_pub)
+  if e.is_open {
+    p.w("open ")
+  }
   p.w("enum " + name_of(e.name))
   p.done(end_off(e.name.span))
   var end = p.type_params(e.type_params, end_off(e.name.span))
