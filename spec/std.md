@@ -4132,6 +4132,11 @@ fn (k: PublicKey) bytes() -> Bytes ! KeyErr    // ECDSA's uncompressed point (Go
 fn (k: PrivateKey) ecdh() -> EcdhPrivateKey ! KeyErr  // Go's ECDH: P-256, P-384, P-521
 fn (k: PublicKey) ecdh() -> EcdhPublicKey ! KeyErr
 pub fn ecdsa_public_key(alg: KeyAlg, point: Bytes) -> PublicKey ! KeyErr  // Go's ParseUncompressedPublicKey and its errors
+struct RsaParts { n: Bytes, e: Int, size: Int, d: Bytes, primes: List[Bytes], dp: Bytes, dq: Bytes, qinv: Bytes }  // big endian, no leading zeros
+fn (k: PublicKey) rsa_parts() -> RsaParts ! KeyErr    // Go's N, E, Size; Err for a key not RSA
+fn (k: PrivateKey) rsa_parts() -> RsaParts ! KeyErr   // and D, Primes, Precomputed
+pub fn rsa_public_key(n: Bytes, e: Int) -> PublicKey ! KeyErr
+pub fn rsa_private_key(n: Bytes, e: Int, d: Bytes, primes: List[Bytes]) -> PrivateKey ! KeyErr  // Validate and Precompute, Go's errors; two primes
 pub fn verify(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
 pub fn verify_pss(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
 pub fn verify_raw_ecdsa(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool

@@ -1612,32 +1612,10 @@ fn parse_pkcs1_private(der: Bytes) -> PrivateKey ! Str {
   if bigs.len() < 7 {
     // NewPrivateKey: the CRT values from d, p, and q (the given ones are
     // dropped, as Go's precompute does when one is missing)
-    for x in [n, p, q] {
-      let l = limbs(x)
-      if l.is_empty() || bigmod.bit_len(l) <= 1 {
-        return Err("modulus must be > 1")
-      }
-    }
-    let de = set_bytes_err(d, limbs(n))
-    if !de.is_empty() {
-      return Err(de)
-    }
-    let pl = limbs(p)
-    let ql = limbs(q)
-    let pm1 = bigmod.trim(bigmod.sub_one(pl))
-    let qm1 = bigmod.trim(bigmod.sub_one(ql))
-    if bigmod.bit_len(pm1) <= 1 || bigmod.bit_len(qm1) <= 1 {
-      return Err("modulus must be > 1")
-    }
-    dp = minimal(bigmod.to_bytes(bigmod.mod_any(limbs(d), pm1), 8 * pm1.len()))
-    dq = minimal(bigmod.to_bytes(bigmod.mod_any(limbs(d), qm1), 8 * qm1.len()))
-    if (pl[0] & 1) == 0 {
-      return Err("crypto/rsa: p is even")
-    }
-    // qinv = q^(p - 2) mod p
-    let pm = bigmod.modulus(pl)
-    let pm2 = bigmod.sub_one(pm1)
-    qinv = minimal(bigmod.to_bytes(bigmod.from_mont(pm, bigmod.exp(pm, bigmod.reduce(pm, ql), pm2)), 8 * pl.len()))
+    let (a, b, c) = rsa_crt(n, d, p, q)?
+    dp = a
+    dq = b
+    qinv = c
   } else {
     dp = bigs[4].mag
     dq = bigs[5].mag
@@ -1649,6 +1627,98 @@ fn parse_pkcs1_private(der: Bytes) -> PrivateKey ! Str {
   }
   let k = rsa.PrivateKey{n: n, e: e, d: d, p: p, q: q, dp: dp, dq: dq, qinv: qinv}
   PrivateKey{kind: crypto.KeyAlg.Rsa, rsa: k, d: b"", public: PublicKey{kind: crypto.KeyAlg.Rsa, n: n, e: e, key: b""}}
+}
+
+/// rsa.NewPrivateKey's CRT values dp, dq and qinv from d, p and q, or
+/// Go's error.
+fn rsa_crt(n: Bytes, d: Bytes, p: Bytes, q: Bytes) -> (Bytes, Bytes, Bytes) ! Str {
+  for x in [n, p, q] {
+    let l = limbs(x)
+    if l.is_empty() || bigmod.bit_len(l) <= 1 {
+      return Err("modulus must be > 1")
+    }
+  }
+  let de = set_bytes_err(d, limbs(n))
+  if !de.is_empty() {
+    return Err(de)
+  }
+  let pl = limbs(p)
+  let ql = limbs(q)
+  let pm1 = bigmod.trim(bigmod.sub_one(pl))
+  let qm1 = bigmod.trim(bigmod.sub_one(ql))
+  if bigmod.bit_len(pm1) <= 1 || bigmod.bit_len(qm1) <= 1 {
+    return Err("modulus must be > 1")
+  }
+  let dp = minimal(bigmod.to_bytes(bigmod.mod_any(limbs(d), pm1), 8 * pm1.len()))
+  let dq = minimal(bigmod.to_bytes(bigmod.mod_any(limbs(d), qm1), 8 * qm1.len()))
+  if (pl[0] & 1) == 0 {
+    return Err("crypto/rsa: p is even")
+  }
+  // qinv = q^(p - 2) mod p
+  let pm = bigmod.modulus(pl)
+  let pm2 = bigmod.sub_one(pm1)
+  Ok((dp, dq, minimal(bigmod.to_bytes(bigmod.from_mont(pm, bigmod.exp(pm, bigmod.reduce(pm, ql), pm2)), 8 * pl.len()))))
+}
+
+fn is_zero_bytes(b: Bytes) -> Bool {
+  for x in b {
+    if x != 0 {
+      return false
+    }
+  }
+  true
+}
+
+fn rsa_public_key(n: Bytes, e: Int) -> PublicKey ! crypto.KeyErr {
+  if is_zero_bytes(n) {
+    return Err(key_err("crypto/rsa: missing public modulus"))
+  }
+  if e < 1 {
+    return Err(key_err("crypto/rsa: public exponent too small or negative"))
+  }
+  Ok(PublicKey{kind: crypto.KeyAlg.Rsa, n: minimal(n), e: e, key: b""})
+}
+
+/// Go's PrivateKey{...}.Validate() then Precompute(): its precompute's
+/// checks, then NewPrivateKey's.
+fn rsa_private_key(n: Bytes, e: Int, d: Bytes, primes: List[Bytes]) -> PrivateKey ! crypto.KeyErr {
+  if primes.len() < 2 {
+    return Err(key_err("crypto/rsa: missing primes"))
+  }
+  if primes.len() > 2 {
+    return Err(key_err("crypto/rsa: multi-prime keys are not supported"))
+  }
+  let nn = minimal(n)
+  let dd = minimal(d)
+  let p = minimal(primes[0])
+  let q = minimal(primes[1])
+  let (dp, dq, qinv) = match rsa_crt(nn, dd, p, q) {
+    Ok(x) => x
+    Err(m) => return Err(key_err(m))
+  }
+  let err = rsa_check(nn, e, dd, p, q, dp, dq, qinv)
+  if !err.is_empty() {
+    return Err(key_err(err))
+  }
+  let k = rsa.PrivateKey{n: nn, e: e, d: dd, p: p, q: q, dp: dp, dq: dq, qinv: qinv}
+  Ok(PrivateKey{kind: crypto.KeyAlg.Rsa, rsa: k, d: b"", public: PublicKey{kind: crypto.KeyAlg.Rsa, n: nn, e: e, key: b""}})
+}
+
+fn (k: PublicKey) rsa_parts() -> crypto.RsaParts ! crypto.KeyErr {
+  if k.kind != crypto.KeyAlg.Rsa {
+    return Err(key_err("crypto: rsa_parts needs an RSA key"))
+  }
+  let n = minimal(k.n)
+  Ok(crypto.RsaParts{n: n, e: k.e, size: (bits_of(n) + 7) / 8, d: b"", primes: [], dp: b"", dq: b"", qinv: b""})
+}
+
+fn (k: PrivateKey) rsa_parts() -> crypto.RsaParts ! crypto.KeyErr {
+  if k.kind != crypto.KeyAlg.Rsa {
+    return Err(key_err("crypto: rsa_parts needs an RSA key"))
+  }
+  let r = k.rsa
+  let n = minimal(r.n)
+  Ok(crypto.RsaParts{n: n, e: r.e, size: (bits_of(n) + 7) / 8, d: minimal(r.d), primes: [minimal(r.p), minimal(r.q)], dp: minimal(r.dp), dq: minimal(r.dq), qinv: minimal(r.qinv)})
 }
 
 /// parseECPrivateKey (the curve from PKCS #8's parameters when given).

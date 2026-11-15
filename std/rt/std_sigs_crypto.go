@@ -76,6 +76,10 @@ var (
 	_ func(*Task, Crypto_KeyAlg, Bytes) Result[Crypto_PublicKey, Crypto_KeyErr]                   = Crypto_ecdsa_public_key
 	_ func(*Crypto_PublicKey, *Task) Result[Bytes, Crypto_KeyErr]                                 = (*Crypto_PublicKey).M_bytes
 	_ func(*Crypto_PrivateKey, *Task) Result[Bytes, Crypto_KeyErr]                                = (*Crypto_PrivateKey).M_bytes
+	_ func(*Crypto_PublicKey, *Task) Result[Crypto_RsaParts, Crypto_KeyErr]                       = (*Crypto_PublicKey).M_rsa_parts
+	_ func(*Crypto_PrivateKey, *Task) Result[Crypto_RsaParts, Crypto_KeyErr]                      = (*Crypto_PrivateKey).M_rsa_parts
+	_ func(*Task, Bytes, int64) Result[Crypto_PublicKey, Crypto_KeyErr]                           = Crypto_rsa_public_key
+	_ func(*Task, Bytes, int64, Bytes, List[Bytes]) Result[Crypto_PrivateKey, Crypto_KeyErr]      = Crypto_rsa_private_key
 	_ func(*Crypto_PublicKey, *Task) Result[Crypto_EcdhPublicKey, Crypto_KeyErr]                  = (*Crypto_PublicKey).M_ecdh
 	_ func(*Crypto_PrivateKey, *Task) Result[Crypto_EcdhPrivateKey, Crypto_KeyErr]                = (*Crypto_PrivateKey).M_ecdh
 	_ func(*Task, string) List[Crypto_PemBlock]                                                   = Crypto_pem_decode

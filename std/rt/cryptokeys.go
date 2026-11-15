@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"math"
 	"math/big"
 	"strconv"
 	"strings"
@@ -533,6 +534,79 @@ func Crypto_ecdsa_sign_digest(tk *Task, r Rand, k Crypto_PrivateKey, digest Byte
 func Crypto_ecdsa_verify_digest(_ *Task, k Crypto_PublicKey, digest, sig Bytes) bool {
 	p, ok := k.k.(*ecdsa.PublicKey)
 	return ok && ecdsa.VerifyASN1(p, []byte(digest), []byte(sig))
+}
+
+func rsaParts(pub *rsa.PublicKey, priv *rsa.PrivateKey) Crypto_RsaParts {
+	r := Crypto_RsaParts{F_n: Bytes(pub.N.Bytes()), F_e: int64(pub.E), F_size: int64(pub.Size()), F_primes: List[Bytes]{}}
+	if priv != nil {
+		r.F_d = Bytes(priv.D.Bytes())
+		ps := make([]Bytes, len(priv.Primes))
+		for i, p := range priv.Primes {
+			ps[i] = Bytes(p.Bytes())
+		}
+		r.F_primes = ListOf(ps...)
+		r.F_dp = Bytes(priv.Precomputed.Dp.Bytes())
+		r.F_dq = Bytes(priv.Precomputed.Dq.Bytes())
+		r.F_qinv = Bytes(priv.Precomputed.Qinv.Bytes())
+	}
+	return r
+}
+
+const rsaPartsNeed = "crypto: rsa_parts needs an RSA key"
+
+func (k Crypto_PublicKey) M_rsa_parts(*Task) Result[Crypto_RsaParts, Crypto_KeyErr] {
+	p, ok := k.k.(*rsa.PublicKey)
+	if !ok {
+		return Err[Crypto_RsaParts](keyErr(rsaPartsNeed))
+	}
+	return Ok[Crypto_RsaParts, Crypto_KeyErr](rsaParts(p, nil))
+}
+
+func (k Crypto_PrivateKey) M_rsa_parts(*Task) Result[Crypto_RsaParts, Crypto_KeyErr] {
+	p, ok := k.k.(*rsa.PrivateKey)
+	if !ok {
+		return Err[Crypto_RsaParts](keyErr(rsaPartsNeed))
+	}
+	return Ok[Crypto_RsaParts, Crypto_KeyErr](rsaParts(&p.PublicKey, p))
+}
+
+// Crypto_rsa_public_key is Go's rsa.PublicKey{N, E}, with the checks a
+// zero modulus or exponent fails first in Go.
+func Crypto_rsa_public_key(_ *Task, n Bytes, e int64) Result[Crypto_PublicKey, Crypto_KeyErr] {
+	N := new(big.Int).SetBytes([]byte(n))
+	if N.Sign() == 0 {
+		return Err[Crypto_PublicKey](keyErr("crypto/rsa: missing public modulus"))
+	}
+	if e < 1 || e > math.MaxInt {
+		return Err[Crypto_PublicKey](keyErr("crypto/rsa: public exponent too small or negative"))
+	}
+	k := &rsa.PublicKey{N: N, E: int(e)}
+	m, err := x509.MarshalPKIXPublicKey(k)
+	if err != nil {
+		return Err[Crypto_PublicKey](keyErr(err.Error()))
+	}
+	return Ok[Crypto_PublicKey, Crypto_KeyErr](Crypto_PublicKey{k: k, der: string(m)})
+}
+
+// Crypto_rsa_private_key is Go's rsa.PrivateKey{N, E, D, Primes} after
+// Validate and Precompute.
+func Crypto_rsa_private_key(_ *Task, n Bytes, e int64, d Bytes, primes List[Bytes]) Result[Crypto_PrivateKey, Crypto_KeyErr] {
+	if len(primes.s) > 2 {
+		return Err[Crypto_PrivateKey](keyErr("crypto/rsa: multi-prime keys are not supported"))
+	}
+	k := &rsa.PrivateKey{PublicKey: rsa.PublicKey{N: new(big.Int).SetBytes([]byte(n)), E: int(e)}, D: new(big.Int).SetBytes([]byte(d))}
+	for _, p := range primes.s {
+		k.Primes = append(k.Primes, new(big.Int).SetBytes([]byte(p)))
+	}
+	if err := k.Validate(); err != nil {
+		return Err[Crypto_PrivateKey](keyErr(err.Error()))
+	}
+	k.Precompute()
+	m, err := x509.MarshalPKIXPublicKey(&k.PublicKey)
+	if err != nil {
+		return Err[Crypto_PrivateKey](keyErr(err.Error()))
+	}
+	return Ok[Crypto_PrivateKey, Crypto_KeyErr](Crypto_PrivateKey{k: k, pub: Crypto_PublicKey{k: &k.PublicKey, der: string(m)}})
 }
 
 // Crypto_jwk_public_key follows the native code's rules and texts: the

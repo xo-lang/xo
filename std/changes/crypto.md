@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-15: feature: an RSA key's numbers, and RSA keys from them
+
+- Kind: feature
+- Commit: this push
+- Found by: Lang 3's crypto and TLS gap audit (C7)
+- Go reference: crypto/rsa PublicKey N, E, Size; PrivateKey D, Primes, Precomputed, Validate, Precompute; go1.26.11
+- Test: corpus rsaparts (two 2048 bit keys: their numbers against Go's, the key made again from n, e, d and the primes with Go's CRT values, PKCS #8 DER and signature, leading zeros dropped; TestModifiedPrivateKey and more: the primes swapped, missing or three, n, e, d and each prime changed, with Go's Validate errors; rsa_public_key's PKIX DER and errors), native, go and llvm
+- Shipped in: not yet released
+
+`PublicKey.rsa_parts()` and `PrivateKey.rsa_parts()` give an RSA key's numbers as `RsaParts`, each big endian without leading zeros as Go's big.Int.Bytes: n, e and the modulus's size in bytes (Go's PublicKey.Size), and for a private key d, the two primes and the CRT values dp, dq and qinv (Go's PrecomputedValues). `rsa_public_key(n, e)` is Go's rsa.PublicKey{N, E} (Err for a zero modulus or an exponent below 1; the other checks come where the key is used, as Go's), and `rsa_private_key(n, e, d, primes)` is Go's rsa.PrivateKey after Validate and Precompute: the CRT values are computed and the key checked with Go's errors (`crypto/rsa: missing primes`, `crypto/rsa: p * q != n`, `crypto/rsa: invalid CRT exponent`, `crypto/rsa: public modulus is even`, `crypto/rsa: p is even`, `crypto/rsa: invalid prime`, `modulus must be > 1`, `input overflows the modulus`, ...). Keys have two primes: three or more are `crypto/rsa: multi-prime keys are not supported`, as parse_private_key, and Go's deprecated GenerateMultiPrimeKey has no counterpart.
+
 ## 2026-11-15: feature: ECDSA raw points and scalars, ECDH of ECDSA keys, signatures over a digest
 
 - Kind: feature
