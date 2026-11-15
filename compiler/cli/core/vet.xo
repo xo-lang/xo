@@ -2324,7 +2324,12 @@ fn match_exit(c: check.Checker, f: Int, file: Str, span: parser.Span, subject: p
     return None
   }
   var d = vdiag("XO0906", true, file, span, "this `match` only unwraps the ${what} or leaves: `${short}` says the same in one line (decision 0321)")
-  d.fixes.push(check.DFix{title: "write it with `??`", edits: [check.DEdit{span: jspan(file, span), replace: short}]})
+  // the fix replaces the whole match, so a comment in it would be lost:
+  // a match with `//` in it gets the note without the fix (decision 0653:
+  // a sweep's fixes are exact)
+  if !src_text(c, f, span).contains("//") {
+    d.fixes.push(check.DFix{title: "write it with `??`", edits: [check.DEdit{span: jspan(file, span), replace: short}]})
+  }
   Some(d)
 }
 

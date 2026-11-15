@@ -177,3 +177,51 @@ func TestFixDeclaresMissingEffects(t *testing.T) {
 		t.Fatalf("check after fix: exit %d: %s%s\n%s", code, out.String(), errOut.String(), b)
 	}
 }
+
+// TestFixVetCodes: `xo fix --vet=XO0906` (decision 0653) applies that vet
+// code's machine fix and no other: a match that only unwraps or leaves
+// becomes `??`, one with a comment in it is left (the fix would drop the
+// comment), and the check's own fixes do not run.
+func TestFixVetCodes(t *testing.T) {
+	t.Parallel()
+	src := `fn first(xs: List[Int]) -> Int {
+  let v = match xs.get(0) {
+    Some(x) => x
+    None => return -1
+  }
+  let w = match xs.get(1) {
+    Some(x) => x
+    // the second is optional
+    None => return v
+  }
+  v + w
+}
+
+fn main(os: Os) {
+  os.stdio.println("${first([1, 2])}")
+}
+`
+	dir := writeFiles(t, map[string]string{"m/main.xo": src})
+	mod := filepath.Join(dir, "m")
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"fix", "--vet=XO0906", mod}, &out, &errOut); code != 0 {
+		t.Fatalf("fix: exit %d: %s%s", code, out.String(), errOut.String())
+	}
+	b, _ := os.ReadFile(filepath.Join(mod, "main.xo"))
+	if !strings.Contains(string(b), "let v = xs.get(0) ?? return -1\n") {
+		t.Errorf("not fixed:\n%s", b)
+	}
+	if !strings.Contains(string(b), "// the second is optional") {
+		t.Errorf("the match with a comment was rewritten:\n%s", b)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"check", mod}, &out, &errOut); code != 0 {
+		t.Fatalf("check after fix: exit %d: %s%s\n%s", code, out.String(), errOut.String(), b)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"fix", "--vet=0906", mod}, &out, &errOut); code != 2 {
+		t.Errorf("--vet=0906: exit %d, want 2 (%s)", code, errOut.String())
+	}
+}

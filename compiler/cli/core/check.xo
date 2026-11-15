@@ -633,7 +633,7 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str], support_fn: fn(check.Checker) ->
   let do_fix = fl.get_bool("fix")
   var applied: List[Change] = []
   if do_fix {
-    match fix_run(os, ctx, targets, [], false) {
+    match fix_run(os, ctx, targets, [], false, #{}) {
       Ok(r) => applied = r.changes
       Err(e) => {
         os.stdio.eprintln("xo check: --fix: ${e}")

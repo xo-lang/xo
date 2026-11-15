@@ -78,6 +78,7 @@ fn run_fix(os: Os, ctx: Ctx, args: List[Str]) -> Int {
   fl.bool_flag("json", "print the result as JSON")
   fl.str_flag("from", "", "the draft the code was written for (draft-0.1 ... draft-0.6); runs the migration rewriters for later drafts")
   fl.str_flag("edition", "", "the edition to migrate to (default and only one before 1.0: preview; it rewrites the old name 2026)")
+  fl.str_flag("vet", "", "apply only these vet codes' machine fixes (comma separated, e.g. XO0906), not the check's: an adoption sweep (decision 0653)")
   if !fl.parse(os, args) {
     return 2
   }
@@ -98,7 +99,19 @@ fn run_fix(os: Os, ctx: Ctx, args: List[Str]) -> Int {
     dirs = ["."]
   }
   let dry = fl.get_bool("dry-run")
-  let res = match fix_run(os, ctx, dirs, rws, dry) {
+  var vet_codes: Set[Str] = #{}
+  for code in fl.get_str("vet").split(",") {
+    let t = code.trim()
+    if t.is_empty() {
+      continue
+    }
+    if !t.starts_with("XO") || t.len() != 6 {
+      os.stdio.eprintln("xo fix: --vet wants codes such as XO0906, not ${go_quote(t)}")
+      return 2
+    }
+    vet_codes.add(t)
+  }
+  let res = match fix_run(os, ctx, dirs, rws, dry, vet_codes) {
     Ok(r) => r
     Err(e) => {
       os.stdio.eprintln("xo fix: ${e}")
@@ -127,7 +140,7 @@ fn run_fix(os: Os, ctx: Ctx, args: List[Str]) -> Int {
 
 /// Migrates and fixes the modules under dirs (fix.Run); without dry the
 /// changed files are written back.
-fn fix_run(os: Os, ctx: Ctx, dirs: List[Str], rws: List[Rewriter], dry: Bool) -> FixResult ! Str {
+fn fix_run(os: Os, ctx: Ctx, dirs: List[Str], rws: List[Rewriter], dry: Bool, vet_codes: Set[Str]) -> FixResult ! Str {
   let files = source_files(os, ctx, dirs)?
   var cur: Map[Str, Bytes] = {}
   var orig: Map[Str, Bytes] = {}
@@ -180,7 +193,20 @@ fn fix_run(os: Os, ctx: Ctx, dirs: List[Str], rws: List[Rewriter], dry: Bool) ->
       }
     }
     res.remaining = remaining
-    let (next, chs) = apply_fixes(ctx, cur, s.diags, by_code)
+    // --vet=CODES (decision 0653): those vet codes' fixes alone, round
+    // after round as the check's
+    var ds = s.diags
+    if !vet_codes.is_empty() {
+      ds = []
+      for m in s.c.root_mods {
+        for d in vet_module(s.c, m) {
+          if vet_codes.contains(d.code) {
+            ds.push(d)
+          }
+        }
+      }
+    }
+    let (next, chs) = apply_fixes(ctx, cur, ds, by_code)
     if chs.is_empty() {
       break
     }
