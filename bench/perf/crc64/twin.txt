@@ -1,0 +1,5 @@
+# twincheck: crc64: four workloads (none is the setup alone); Go is hash/crc64.
+- - none
+- - sum
+- - keys
+- - update

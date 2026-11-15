@@ -1,0 +1,5 @@
+# twincheck: adler32: four workloads (none is the setup alone); Go is hash/adler32.
+- - none
+- - sum
+- - keys
+- - update

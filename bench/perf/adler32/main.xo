@@ -1,0 +1,47 @@
+// adler32: std/adler32 against Go's hash/adler32 (twin.go.txt), decision
+// 0616's perf kind for std/adler32: sum checksums a 64 KiB buffer 4,000
+// times, keys checksums 2,000,000 keys of 8 to 40 bytes (the short input
+// path), and update feeds the 64 KiB buffer in 1 KiB chunks 2,000 times;
+// `none` is the setup alone. Usage: `<program> none|sum|keys|update`.
+// Prints `<workload> <checksum>`; the twin prints the same.
+use std/adler32
+
+fn buffer(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  var x = 12345
+  for _ in 0..n {
+    x = (x * 1103515245 + 12345) % 2147483648
+    b.write_byte(UInt8((x >> 16) & 255))
+  }
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let big = buffer(65536)
+  let keys = buffer(4096)
+  var sum = 0
+  if w == "sum" {
+    for i in 0..4000 {
+      sum = sum ^ adler32.checksum(big) ^ i
+    }
+  } else if w == "keys" {
+    for i in 0..2000000 {
+      let at = i % 4000
+      sum = sum ^ adler32.checksum(keys[at..at + 8 + i % 33])
+    }
+  } else if w == "update" {
+    for i in 0..2000 {
+      var c = 1
+      var at = 0
+      while at < big.len() {
+        c = adler32.update(c, big[at..at + 1024])
+        at += 1024
+      }
+      sum = sum ^ c ^ i
+    }
+  } else {
+    sum = big.len() + keys.len()
+  }
+  os.stdio.println("${w} ${sum}")
+}

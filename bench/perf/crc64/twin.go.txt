@@ -1,0 +1,55 @@
+package main
+
+import (
+	"fmt"
+	"hash/crc64"
+	"os"
+)
+
+func buffer(n int) []byte {
+	b := make([]byte, n)
+	x := 12345
+	for i := range b {
+		x = (x*1103515245 + 12345) % 2147483648
+		b[i] = byte((x >> 16) & 255)
+	}
+	return b
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	big := buffer(65536)
+	keys := buffer(4096)
+	sum := 0
+	iso := crc64.MakeTable(crc64.ISO)
+	ecma := crc64.MakeTable(crc64.ECMA)
+	switch w {
+	case "sum":
+		for i := 0; i < 4000; i++ {
+			t := iso
+			if i%2 == 1 {
+				t = ecma
+			}
+			sum = sum ^ int(crc64.Checksum(big, t)) ^ i
+		}
+	case "keys":
+		for i := 0; i < 2000000; i++ {
+			at := i % 4000
+			sum = sum ^ int(crc64.Checksum(keys[at:at+8+i%33], ecma))
+		}
+	case "update":
+		for i := 0; i < 2000; i++ {
+			var c uint64
+			for at := 0; at < len(big); at += 1024 {
+				c = crc64.Update(c, ecma, big[at:at+1024])
+			}
+			sum = sum ^ int(c) ^ i
+		}
+	default:
+		sum = len(big) + len(keys)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}
