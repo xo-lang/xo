@@ -1,10 +1,10 @@
 use std/sql
 use std/time
 
-// sql.open's loc (decision 0648): MySQL's zone, given as a value so a
-// constant name embeds one zone, not the database; any other driver
-// refuses a zone other than UTC before it connects (pgx has no Loc), on
-// every backend.
+// sql.open's MySQL arguments (decision 0648): loc, MySQL's zone, given
+// as a value so a constant name embeds one zone, not the database, and
+// server_pub_key, its RSA key; any other driver refuses a zone other
+// than UTC (pgx has no Loc) or a key before it connects, on every backend.
 fn main(os: Os) ! {
   let berlin = time.zone("Europe/Berlin")?
   match sql.open(os.net, "postgres", "postgres://app@127.0.0.1:1/app?sslmode=disable", loc: berlin) {
@@ -14,6 +14,10 @@ fn main(os: Os) ! {
   match sql.open(os.net, "nosuch", "x", loc: berlin) {
     Ok(_) => os.stdio.println("nosuch: opened")
     Err(e) => os.stdio.println("nosuch: ${e}")
+  }
+  match sql.open(os.net, "postgres", "postgres://app@127.0.0.1:1/app?sslmode=disable", server_pub_key: b"-----BEGIN PUBLIC KEY-----") {
+    Ok(_) => os.stdio.println("postgres key: opened")
+    Err(e) => os.stdio.println("postgres key: ${e}")
   }
   // UTC is every driver's default: the unknown driver is the error
   match sql.open(os.net, "nosuch", "x", loc: time.utc()) {

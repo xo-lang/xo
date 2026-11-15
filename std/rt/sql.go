@@ -314,13 +314,16 @@ func Testing_fake_db(tk *Task, schema string) Result[Sql_Db, Sql_SqlErr] {
 }
 
 // Sql_open is `sql.open(net, driver, dsn, ...)`.
-func Sql_open(tk *Task, n Net, driver, dsn string, maxOpen, maxIdle int64, maxLife Duration, roots Bytes, loc Time_Zone) Result[Sql_Db, Sql_SqlErr] {
+func Sql_open(tk *Task, n Net, driver, dsn string, maxOpen, maxIdle int64, maxLife Duration, roots Bytes, loc Time_Zone, serverPubKey Bytes) Result[Sql_Db, Sql_SqlErr] {
 	if tk.Canceled() {
 		return sqlFail[Sql_Db](sqlTagCanceled)
 	}
 	if name := loc.data().name; driver != "mysql" && name != "UTC" {
 		// pgx has no Loc (decision 0648 item 8); native std/sql's text
 		return Err[Sql_Db](sqlMsgErr(sqlTagParam, "loc: only the mysql driver reads times in a zone (driver "+strconv.Quote(driver)+", loc "+name+")"))
+	}
+	if driver != "mysql" && len(serverPubKey) > 0 {
+		return Err[Sql_Db](sqlMsgErr(sqlTagParam, "server_pub_key: only the mysql driver takes an RSA key (driver "+strconv.Quote(driver)+")"))
 	}
 	if _, ok := n.(*onlyNet); ok {
 		// the driver dials by itself, so an allowlist cannot be

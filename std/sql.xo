@@ -111,8 +111,10 @@ struct Rows[fx: Effects] {}
 /// `max_idle` and `max_lifetime` are passed to the driver. `loc` is
 /// MySQL's zone for DATE, DATETIME and TIMESTAMP (go-sql-driver's Loc; the
 /// DSN's `loc`, when it has one, must name it); a zone other than UTC is
-/// refused for any other driver.
-fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"", loc: time.Zone = time.utc()) -> Db ! SqlErr uses net.dial
+/// refused for any other driver. `server_pub_key` is MySQL's RSA key (PEM,
+/// go-sql-driver's RegisterServerPubKey) for full authentication over
+/// plain TCP; refused for any other driver.
+fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"", loc: time.Zone = time.utc(), server_pub_key: Bytes = b"") -> Db ! SqlErr uses net.dial
 /// An in memory database, optionally created with `schema` (`;` separated
 /// statements). Needs no capability.
 fn memory(schema: Str = "") -> Db ! SqlErr

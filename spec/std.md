@@ -3324,7 +3324,8 @@ struct Db {}                                 // handle: copies share the databas
 
 pub fn open(net: Net, driver: Str, dsn: Str,
             max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m,
-            roots: Bytes = b"", loc: time.Zone = time.utc())   // roots: 10.8, 10.10; loc: 10.10
+            roots: Bytes = b"", loc: time.Zone = time.utc(),   // roots: 10.8, 10.10; loc: 10.10
+            server_pub_key: Bytes = b"")                      // 10.10
     -> Db ! SqlErr uses net.dial
 pub fn memory(schema: Str = "") -> Db ! SqlErr         // no capability, no effect
 // std/testing: fake_db(schema: Str) -> Db ! SqlErr    // same as memory(schema)
@@ -3795,9 +3796,9 @@ Status: stage A implemented natively (decision 0648, 2026-11-15): the
 wire protocol, authentication, go-sql-driver's DSN and the text
 protocol, TLS through std/tls's `tls.client`; checked against
 go-sql-driver v1.10.1 on MySQL 8.4 and 8.0 (scripts/mysql-diff.sh).
-Arguments are prepared on the server over the binary protocol and `loc`
-is a zone (stage B, 2026-11-15). RSA authentication and
-`server_pub_key:` are the rest of stage B. The Go backend reports an
+Arguments are prepared on the server over the binary protocol, `loc` is
+a zone, and full authentication over plain TCP uses RSA (stage B,
+2026-11-15). The Go backend reports an
 unknown driver.
 
 ```
@@ -3850,7 +3851,9 @@ password runs to the last `@`, so it may hold `@` and `:`. Parameters:
   `columnsWithAlias`, `rejectReadOnly`, `maxAllowedPacket` (64 MiB),
   `connectionAttributes`, and `timeout`, `readTimeout`, `writeTimeout`
   (accepted; a call's deadline is its context's). `allowOldPasswords` is
-  refused (the pre 4.1 hash is broken); `serverPubKey` until stage B.
+  refused (the pre 4.1 hash is broken). `serverPubKey` names `open`'s
+  `server_pub_key` (go-sql-driver's RegisterServerPubKey name), which it
+  requires.
 - Any other name is a system variable, set with `SET name=value` after
   connecting, as go-sql-driver does.
 
@@ -3860,10 +3863,18 @@ No file or environment variable is read (no `~/.my.cnf`, no
 **Authentication** follows the server's plugin and its switch requests:
 `caching_sha2_password` (MySQL 8's default: the SHA-256 scramble, and on
 the server's request for full authentication the password in clear over
-TLS or a Unix socket; over plain TCP that needs RSA, stage B, and fails
-with a `Conn` error until then), `mysql_native_password` (refused with
+TLS or a Unix socket, and over plain TCP under RSA-OAEP with SHA-1, as
+MySQL decrypts it), `mysql_native_password` (refused with
 `allowNativePasswords=false`), `sha256_password` (the same rules) and
-`mysql_clear_password` (only with `allowCleartextPasswords=true`).
+`mysql_clear_password` (only with `allowCleartextPasswords=true`). The
+RSA key is `open`'s `server_pub_key` (PEM, `PUBLIC KEY` or `RSA PUBLIC
+KEY`: the server's public_key.pem), else the server's own, fetched only
+with `allowPublicKeyRetrieval=true`, as MySQL's own clients: a key
+fetched over plain TCP can be a man in the middle's, who then reads the
+password. Without either the connection fails with a `Conn` error
+naming both. go-sql-driver has no such setting and always fetches the
+key (and would send `allowPublicKeyRetrieval` to the server as a system
+variable).
 
 **Statements.** A statement without arguments runs as text
 (COM_QUERY). With arguments it is prepared on the server, run once and

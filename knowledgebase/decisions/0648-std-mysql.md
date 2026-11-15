@@ -76,6 +76,15 @@ conformance tests and `xo bench --ab`.
      go-sql-driver) under the server's key: `server_pub_key`, or fetched
      from the server only with `allowPublicKeyRetrieval=true`, as
      go-sql-driver (a fetched key can be a man in the middle's).
+     Correction (stage B, 2026-11-15): go-sql-driver v1.10.1 has no
+     `allowPublicKeyRetrieval`; it always fetches the key over plain TCP,
+     and the name in a DSN becomes a `SET` the server refuses. Xo keeps
+     the rule above (MySQL's own clients' and Connector/J's), so a DSN
+     that works with go-sql-driver over plain TCP with no key needs
+     `allowPublicKeyRetrieval=true` or `server_pub_key:` here; the error
+     says so. RSA is OAEP with SHA-1 over llrt rsa (byte-exact against Go's
+     rsa.EncryptOAEP, and openssl decrypts it), its seed from llrt rand,
+     since a driver holds no `Rand`.
    - `mysql_native_password`: the SHA-1 scramble (refused when
      `allowNativePasswords=false`).
    - `sha256_password`: the same RSA or clear rules.

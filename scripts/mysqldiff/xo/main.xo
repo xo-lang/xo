@@ -69,7 +69,9 @@ fn main(os: Os) ! {
   // the reference's loc=America/New_York, as a value (a constant name
   // embeds that zone alone)
   let loc = if dsn.contains("loc=America%2FNew_York") { time.zone("America/New_York")? } else { time.utc() }
-  let db = sql.open(os.net, "mysql", dsn, max_open: 1, roots: roots, loc: loc)?
+  // MY_PUBKEY: the server's RSA key, PEM, for serverPubKey=srv
+  let key = if dsn.contains("serverPubKey=") { os.fs.read(os.env.get("MY_PUBKEY").or_err("serverPubKey needs MY_PUBKEY")?)? } else { b"" }
+  let db = sql.open(os.net, "mysql", dsn, max_open: 1, roots: roots, loc: loc, server_pub_key: key)?
   for line in os.stdio.lines()? {
     if line.trim().is_empty() {
       continue

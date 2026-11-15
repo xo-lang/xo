@@ -16,7 +16,7 @@ var (
 	_ func(*Task, List[Sql_SqlValue]) Sql_SqlValue                                                                                     = Sql_array
 	_ func(*Task, string) string                                                                                                       = Sql_quote_ident
 	_ func(*Sql_SqlErr, *Task) string                                                                                                  = (*Sql_SqlErr).M_display
-	_ func(*Task, Net, string, string, int64, int64, Duration, Bytes, Time_Zone) Result[Sql_Db, Sql_SqlErr]                            = Sql_open
+	_ func(*Task, Net, string, string, int64, int64, Duration, Bytes, Time_Zone, Bytes) Result[Sql_Db, Sql_SqlErr]                     = Sql_open
 	_ func(*Task, string) Result[Sql_Db, Sql_SqlErr]                                                                                   = Sql_memory
 	_ func(*Sql_Db, *Task, string, List[Sql_SqlValue]) Result[List[Sql_Row], Sql_SqlErr]                                               = (*Sql_Db).M_query
 	_ func(*Sql_Db, *Task, string, List[Sql_SqlValue]) Result[Sql_Rows, Sql_SqlErr]                                                    = (*Sql_Db).M_rows

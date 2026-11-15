@@ -24,3 +24,26 @@ test "the RSA plaintext and the first responses" {
   expect(first_response("sha256_password", b"secret", NONCE, false)) == Some(b"\x01")
   expect(first_response("mysql_old_password", b"secret", NONCE, false)) == None
 }
+
+// A 2048 bit key made with openssl for these tests (no secret: only its
+// public half is here), as SubjectPublicKeyInfo and as PKCS #1.
+const TEST_PUB: Str = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzHAfUq9Zk7ARuV0WMBlW\nmOTGHjn9AtiNrKYEZ1QxSyenr548P4E+GRcZa+QR2bCK23+ynyxpt8yAdUjFbWBb\nxWgFOrBBYNpBR5jQxBRMbVreqnUUCe5nsHSAxulHaJDmjFV8d+VqMKEPak2jeXP1\nhc6zWSRdRFNwTnujXe3A77ANMJ6YG4BlLiQJ1ShyIwSN+DLXI2PMZAlgz8AvnoLr\nPH6R17YTwiPj525pDACUPV//JnUodBijLHAITnkkidnunezvjGakMpKzfJBRX8Qm\nqCGyteyKaEp+HBz9dwobGTBg/gZywmh2ibba6Lpf3zN0lfkc3vEJq5tIf/dITh2i\nGwIDAQAB\n-----END PUBLIC KEY-----"
+const TEST_PUB1: Str = "-----BEGIN RSA PUBLIC KEY-----\nMIIBCgKCAQEAzHAfUq9Zk7ARuV0WMBlWmOTGHjn9AtiNrKYEZ1QxSyenr548P4E+\nGRcZa+QR2bCK23+ynyxpt8yAdUjFbWBbxWgFOrBBYNpBR5jQxBRMbVreqnUUCe5n\nsHSAxulHaJDmjFV8d+VqMKEPak2jeXP1hc6zWSRdRFNwTnujXe3A77ANMJ6YG4Bl\nLiQJ1ShyIwSN+DLXI2PMZAlgz8AvnoLrPH6R17YTwiPj525pDACUPV//JnUodBij\nLHAITnkkidnunezvjGakMpKzfJBRX8QmqCGyteyKaEp+HBz9dwobGTBg/gZywmh2\nibba6Lpf3zN0lfkc3vEJq5tIf/dITh2iGwIDAQAB\n-----END RSA PUBLIC KEY-----"
+
+test "RSA full authentication: the server's PEM key, OAEP with SHA-1" {
+  let k = pem_public_key(TEST_PUB.bytes()) ?? fault("SPKI key")
+  let k1 = pem_public_key(TEST_PUB1.bytes()) ?? fault("PKCS #1 key")
+  expect(k.n == k1.n && k.e == k1.e) == true
+  expect(k.n.len()) == 256
+  // Go 1.26's rsa.EncryptOAEP(sha1, seed 0x5a x 20) of rsa_plain("secret",
+  // "abcdefghijklmnopqrst"); openssl pkeyutl decrypts it with the private key
+  let want = Bytes.from_hex("65dcf7f2bb1caba13cfd8ef1a19936bf063a0e7946377a0c67afb34bdde53f4cc28d53e05981f54cf6b65c0ff621c0fcf5101f615f178460f67c102741423b0c24c8ca25616f785a78e8816d8631f8eca982bdf16b97838b11ae81616cf1c34bca6a78899df897c34fa0479ebe24a8afab1c54f5fd01ea17f1334321e8bd7fdbc87193f833d88637b2bfb38e3f25da62c1d8961f9ccad0525f17c73a821534abde99adafa4ce8f700922d9f06a34e0a644841e3ca519b0c9b9d6422219d5817a9a439be6acb493686f0250ec965c6eded5896d265c122a8cdfe694f4695f0207c2001eba4a3d4bc79835960d5bbab39b8311a5ff1e2bbf9e312b1cde8a56b025") ?? b""
+  expect(rsa_password_seeded(b"secret", b"abcdefghijklmnopqrst", k, b"Z".repeat(20))) == Some(want)
+  // a fresh seed each time: another ciphertext of the same length
+  let a = rsa_password(b"secret", b"abcdefghijklmnopqrst", k) ?? b""
+  expect(a.len()) == 256
+  expect(a != want) == true
+  expect(pem_public_key(b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")) == None
+  expect(pem_public_key(b"no pem here")) == None
+  expect(pem_public_key(b"-----BEGIN PUBLIC KEY-----\n!!!\n-----END PUBLIC KEY-----\n")) == None
+}

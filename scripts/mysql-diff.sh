@@ -15,8 +15,11 @@
 # text protocol), then with arguments prepared (the binary protocol),
 # then prepared with parseTime=true and clientFoundRows=true, then
 # parseTime=true with loc=America/New_York prepared and interpolated (the
-# Xo side passes the zone as sql.open's loc), and multi.txt with
-# multiStatements=true
+# Xo side passes the zone as sql.open's loc), multi.txt with
+# multiStatements=true, then multi.txt over tls=false with RSA full
+# authentication, the key fetched (allowPublicKeyRetrieval=true) and
+# pinned (the container's public_key.pem), for caching_sha2_password and
+# a sha256_password user
 # (caching_sha2_password's full
 # authentication on the first connection, its fast path after), then the
 # outcome (ok or fail) of each tls mode with right, wrong and no roots,
@@ -79,11 +82,29 @@ for img in "${IMAGES[@]}"; do
 	: > "$WORK/$name.got"
 	: > "$WORK/$name.want"
 	# each pass: a case file and the DSN's parameters
-	for pass in "cases.txt tls=true&interpolateParams=true" "cases.txt tls=true" "cases.txt tls=true&parseTime=true&clientFoundRows=true" "cases.txt tls=true&parseTime=true&loc=America%2FNew_York" "cases.txt tls=true&parseTime=true&interpolateParams=true&loc=America%2FNew_York" "multi.txt tls=true&multiStatements=true"; do
+	# RSA: the server's key (MY_PUBKEY: go-sql-driver's
+	# RegisterServerPubKey("srv"), the Xo driver's server_pub_key:), and a
+	# sha256_password user where the server still has the plugin
+	docker exec "$cid" cat /var/lib/mysql/public_key.pem > "$WORK/$name.pub" 2>/dev/null || true
+	rsa_passes=("multi.txt tls=false&multiStatements=true&allowPublicKeyRetrieval=true" "multi.txt tls=false&multiStatements=true&serverPubKey=srv")
+	if docker exec "$cid" mysql -uroot -prootpencil -e "CREATE USER 'sha'@'%' IDENTIFIED WITH sha256_password BY 'pencil'; GRANT ALL ON app.* TO 'sha'@'%'" >/dev/null 2>&1; then
+		rsa_passes+=("multi.txt tls=false&multiStatements=true&allowPublicKeyRetrieval=true sha" "multi.txt tls=false&multiStatements=true&serverPubKey=srv sha" "multi.txt tls=true&multiStatements=true sha")
+	else
+		echo "mysql-diff $img: no sha256_password (the server has no such plugin): its passes skipped"
+	fi
+	# each pass: a case file, the DSN's parameters, and the user (app);
+	# the auth cache is flushed before each side, so every first
+	# connection takes caching_sha2's full path (clear over TLS, RSA over
+	# plain TCP)
+	for pass in "cases.txt tls=true&interpolateParams=true" "cases.txt tls=true" "cases.txt tls=true&parseTime=true&clientFoundRows=true" "cases.txt tls=true&parseTime=true&loc=America%2FNew_York" "cases.txt tls=true&parseTime=true&interpolateParams=true&loc=America%2FNew_York" "multi.txt tls=true&multiStatements=true" "${rsa_passes[@]}"; do
 		set -- $pass
-		echo "=== $1 $2" | tee -a "$WORK/$name.got" >> "$WORK/$name.want"
-		MY_ROOTS="$certs/ca.pem" "$WORK/xodiff" "$base?$2" < "$HERE/mysqldiff/$1" >> "$WORK/$name.got" 2>&1 || true
-		MY_ROOTS="$certs/ca.pem" "$WORK/gomysql" "$base?$2" < "$HERE/mysqldiff/$1" >> "$WORK/$name.want" 2>&1 || true
+		user=${3:-app}
+		dsn="$user:pencil@tcp(127.0.0.1:$port)/app?$2"
+		echo "=== $1 $2 $user" | tee -a "$WORK/$name.got" >> "$WORK/$name.want"
+		docker exec "$cid" mysql -uroot -prootpencil -e 'FLUSH PRIVILEGES' >/dev/null 2>&1 || true
+		MY_ROOTS="$certs/ca.pem" MY_PUBKEY="$WORK/$name.pub" "$WORK/xodiff" "$dsn" < "$HERE/mysqldiff/$1" >> "$WORK/$name.got" 2>&1 || true
+		docker exec "$cid" mysql -uroot -prootpencil -e 'FLUSH PRIVILEGES' >/dev/null 2>&1 || true
+		MY_ROOTS="$certs/ca.pem" MY_PUBKEY="$WORK/$name.pub" "$WORK/gomysql" "$dsn" < "$HERE/mysqldiff/$1" >> "$WORK/$name.want" 2>&1 || true
 	done
 	# each tls mode: go-sql-driver with tls=xo for the roots, the Xo
 	# driver with roots: (the cache is filled now, so tls=false takes the
@@ -106,10 +127,18 @@ for img in "${IMAGES[@]}"; do
 	*tls=custom*skip-verify*) ;;
 	*) hint="MISSING ($why)" ;;
 	esac
+	# plain TCP with no key and an empty auth cache: the Xo driver refuses
+	# to fetch the server's key unless allowed (go-sql-driver fetches it)
+	docker exec "$cid" mysql -uroot -prootpencil -e 'FLUSH PRIVILEGES' >/dev/null 2>&1 || true
+	why=$(MY_WHY=1 "$WORK/xodiff" probe "$base?tls=false" 2>&1 >/dev/null || true)
+	case "$why" in
+	*allowPublicKeyRetrieval=true*) ;;
+	*) hint="MISSING the key retrieval refusal ($why)" ;;
+	esac
 	cat "$WORK/$name.want" "$WORK/$name.modes.want" > "$WORK/$name.all.want"
 	cat "$WORK/$name.got" "$WORK/$name.modes.got" > "$WORK/$name.all.got"
 	if diff -u "$WORK/$name.all.want" "$WORK/$name.all.got" > "$WORK/$name.diff" && [ "$hint" = ok ]; then
-		echo "mysql-diff $img: ok ($(grep -c '^== ' "$WORK/$name.want") statements in 6 passes over tls=true (interpolated, prepared, prepared with parseTime and clientFoundRows, loc=America/New_York prepared and interpolated, multiStatements), $(wc -l < "$WORK/$name.modes.want" | tr -d ' ') tls outcomes, the self signed hint)"
+		echo "mysql-diff $img: ok ($(grep -c '^== ' "$WORK/$name.want") statements in $(grep -c "^=== " "$WORK/$name.want") passes (tls=true interpolated, prepared, with parseTime and clientFoundRows, in loc=America/New_York, multiStatements; RSA full authentication over tls=false), $(wc -l < "$WORK/$name.modes.want" | tr -d ' ') tls outcomes, the self signed hint, the key retrieval refusal)"
 	else
 		echo "mysql-diff $img: DIFFERS ($WORK/$name.diff; hint $hint)"
 		status=1

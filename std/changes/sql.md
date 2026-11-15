@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-15: feature: MySQL RSA authentication and sql.open's `server_pub_key`
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0648 (stage B)
+- Go reference: go-sql-driver/mysql v1.10.1 (RegisterServerPubKey, serverPubKey; caching_sha2_password and sha256_password full authentication); Go 1.26 rsa.EncryptOAEP with SHA-1
+- Test: mysqlauth_test.xo (an openssl key as SPKI and PKCS #1 PEM; the ciphertext equals Go's EncryptOAEP with the same seed, and openssl decrypts it); mysql_test.xo (a fake server with an in-test key decrypting the password: fetched, pinned, wrong key, serverPubKey without a key); golden sql_open_mysql_args (other drivers refuse a key, native, llvm, Go parity); scripts/mysql-diff.sh's five RSA passes over tls=false (caching_sha2 and a sha256_password user, key fetched and pinned), equal to go-sql-driver on 8.4 and 8.0
+- Shipped in: not yet released
+
+Full authentication over plain TCP encrypts the password under the server's RSA key: `sql.open(..., server_pub_key: pem)`, or the server's own with `allowPublicKeyRetrieval=true`. Differs from go-sql-driver on purpose: go-sql-driver always fetches the key, which a man in the middle can supply.
+
 ## 2026-11-15: feature: sql.open's `loc`, MySQL's zone
 
 - Kind: feature

@@ -15,12 +15,15 @@
 // text protocol, arguments interpolated into the text, values, errors,
 // transactions, copy_from as batched INSERTs. Stage B: server side
 // prepared statements and binary rows (COM_STMT_PREPARE, EXECUTE, CLOSE),
-// loc zones; RSA full authentication to come.
+// loc zones, RSA full authentication (caching_sha2_password and
+// sha256_password over plain TCP: open's server_pub_key, or the server's
+// key with allowPublicKeyRetrieval=true).
 use std/sql
 use std/time
 use std/tls
 use native/llrt/mysqlwire as w
 use native/llrt/mysqlauth as auth
+use native/llrt/rsa
 
 fn param_err(msg: Str) -> sql.SqlErr { sql.SqlErr.Param(msg: msg) }
 fn conn_err(msg: Str) -> sql.SqlErr { sql.SqlErr.Conn(msg: msg) }
@@ -49,6 +52,8 @@ pub struct Config {
   pub allow_native: Bool
   pub allow_cleartext: Bool
   pub allow_public_key: Bool
+  /// serverPubKey's name ("" for none): the key is open's server_pub_key.
+  pub server_pub_key: Str
   pub multi_statements: Bool
   pub interpolate: Bool
   pub client_found_rows: Bool
@@ -124,7 +129,7 @@ fn bool_param(k: Str, v: Str) -> Bool ! sql.SqlErr {
 
 /// Parses `[user[:password]@][net[(addr)]]/dbname[?param1=value1&...]`.
 pub fn config(dsn: Str) -> Config ! sql.SqlErr {
-  var cfg = Config{user: "", password: "", net: "tcp", addr: "", database: "", tls: "true", parse_time: false, loc: "UTC", zone: time.utc(), collation: 45, allow_native: true, allow_cleartext: false, allow_public_key: false, multi_statements: false, interpolate: false, client_found_rows: false, columns_with_alias: false, reject_read_only: false, max_allowed_packet: 67108864, attrs: [], vars: []}
+  var cfg = Config{user: "", password: "", net: "tcp", addr: "", database: "", tls: "true", parse_time: false, loc: "UTC", zone: time.utc(), collation: 45, allow_native: true, allow_cleartext: false, allow_public_key: false, server_pub_key: "", multi_statements: false, interpolate: false, client_found_rows: false, columns_with_alias: false, reject_read_only: false, max_allowed_packet: 67108864, attrs: [], vars: []}
   // the database starts after the last /; the parameters after the first ?
   // that follows it
   let slash = dsn.rfind("/") ?? return Err(param_err("invalid DSN: missing the slash separating the database name"))
@@ -244,7 +249,7 @@ pub fn config(dsn: Str) -> Config ! sql.SqlErr {
             }
           }
         }
-        "serverPubKey" => return Err(param_err("serverPubKey: RSA authentication is stage B of decision 0648"))
+        "serverPubKey" => cfg.server_pub_key = v
         _ => cfg.vars.push((k, v))
       }
     }
@@ -274,6 +279,10 @@ pub struct MysqlDriver {
   /// The zone of loc (UTC unless given): DATE, DATETIME and TIMESTAMP
   /// are wall times there. A DSN's loc must name it.
   pub zone: time.Zone = time.utc()
+  /// The server's RSA public key, PEM (open's server_pub_key, Go's
+  /// RegisterServerPubKey): the password's encryption for full
+  /// authentication over a link that is not secure.
+  pub pub_key: Bytes = b""
 }
 
 /// A connection to the server: plain, or upgraded to TLS after the
@@ -331,6 +340,12 @@ fn (d: MysqlDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr u
     return Err(param_err("loc=${cfg.loc}: the driver's zone is ${d.zone.name()}; a zone other than UTC is given as a value (time.zone(\"${cfg.loc}\") with a constant name), not looked up from the DSN, which would embed the whole zone database"))
   }
   cfg.zone = d.zone
+  var key: rsa.PublicKey? = None
+  if !d.pub_key.is_empty() {
+    key = Some(auth.pem_public_key(d.pub_key).or_err(param_err("server_pub_key: not a PEM RSA public key (PUBLIC KEY or RSA PUBLIC KEY) of 1024 bits or more"))?)
+  } else if !cfg.server_pub_key.is_empty() {
+    return Err(param_err("serverPubKey=${cfg.server_pub_key} needs server_pub_key: (PEM) on sql.open"))
+  }
   if cfg.tls == "custom" && d.roots.is_empty() {
     return Err(param_err("tls=custom needs roots: (PEM) on sql.open"))
   }
@@ -342,7 +357,7 @@ fn (d: MysqlDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr u
     }
   })?
   let p = MyConn{c: Link.Plain(c: c), buf: Mutex.new(b""), seq: Atomic.new(0), broken: Atomic.new(false), caps: 0, cfg: cfg, status: Atomic.new(0)}
-  match handshake(p, d.roots, c) {
+  match handshake(p, d.roots, c, key) {
     Ok(q) => Ok(q)
     Err(e) => {
       p.c.close()
@@ -432,7 +447,7 @@ fn tls_hint(cfg: Config, e: NetErr) -> sql.SqlErr {
   }
 }
 
-fn handshake(p0: MyConn, roots: Bytes, raw: Conn) -> MyConn ! sql.SqlErr uses net.dial {
+fn handshake(p0: MyConn, roots: Bytes, raw: Conn, key: rsa.PublicKey?) -> MyConn ! sql.SqlErr uses net.dial {
   let cfg = p0.cfg
   let hs = w.parse_handshake(p0.recv()?).map_err(fn(e) { wire_err(p0, e) })?
   if hs.caps & w.CLIENT_PROTOCOL_41 == 0 {
@@ -467,7 +482,7 @@ fn handshake(p0: MyConn, roots: Bytes, raw: Conn) -> MyConn ! sql.SqlErr uses ne
   var plugin = if hs.plugin.is_empty() { "mysql_native_password" } else { hs.plugin }
   var nonce = hs.nonce
   let pw = cfg.password.bytes()
-  let first = plugin_response(cfg, plugin, pw, nonce, secure)?
+  let first = plugin_response(cfg, plugin, pw, nonce, secure, key)?
   let attrs = [("_client_name", "xo"), ("_os", "xo")] + cfg.attrs
   p.send(w.handshake_response(caps, cfg.max_allowed_packet, cfg.collation, cfg.user, first, cfg.database, plugin, attrs))?
   // the auth phase: switches and more data until OK or ERR
@@ -484,20 +499,42 @@ fn handshake(p0: MyConn, roots: Bytes, raw: Conn) -> MyConn ! sql.SqlErr uses ne
         }
         plugin = name
         nonce = data
-        p.send(plugin_response(cfg, plugin, pw, nonce, secure)?)?
+        p.send(plugin_response(cfg, plugin, pw, nonce, secure, key)?)?
       }
       More(data) => {
         if plugin == "caching_sha2_password" && data.len() == 1 && Int(data[0]) == auth.SHA2_FAST_AUTH_OK {
           continue
         }
         if plugin == "caching_sha2_password" && data.len() == 1 && Int(data[0]) == auth.SHA2_PERFORM_FULL_AUTH {
-          if !secure {
-            return Err(conn_err("caching_sha2_password: the server asks for full authentication, which sends the password: it needs TLS or a Unix socket (RSA with server_pub_key is decision 0648 stage B)"))
+          if secure {
+            p.send(auth.clear(pw))?
+            continue
           }
-          p.send(auth.clear(pw))?
+          // RSA: open's key, else the server's when allowed
+          let k = match key {
+            Some(k) => k
+            None => {
+              if !cfg.allow_public_key {
+                return Err(conn_err("caching_sha2_password: the server asks for full authentication, which sends the password: over plain TCP it needs TLS, server_pub_key: (PEM) on sql.open, or allowPublicKeyRetrieval=true (a key fetched from the server can be a man in the middle's)"))
+              }
+              p.send(b"\x02")?
+              match w.parse_auth(p.recv()?, caps).map_err(fn(e) { wire_err(p, e) })? {
+                More(pem) => auth.pem_public_key(pem).or_err(conn_err("caching_sha2_password: the server's public key is not a PEM RSA key"))?
+                Err(e) => return Err(server_err(e))
+                _ => return Err(conn_err("caching_sha2_password: no public key after the request for it"))
+              }
+            }
+          }
+          p.send(auth.rsa_password(pw, nonce, k).or_err(conn_err("caching_sha2_password: the password is too long for the server's RSA key"))?)?
           continue
         }
-        return Err(conn_err("${plugin}: unexpected data from the server (RSA authentication is decision 0648 stage B)"))
+        if plugin == "sha256_password" && data.len() > 1 {
+          // the server's key, sent after our request (the byte 1)
+          let k = auth.pem_public_key(data).or_err(conn_err("sha256_password: the server's public key is not a PEM RSA key"))?
+          p.send(auth.rsa_password(pw, nonce, k).or_err(conn_err("sha256_password: the password is too long for the server's RSA key"))?)?
+          continue
+        }
+        return Err(conn_err("${plugin}: unexpected data from the server"))
       }
     }
   }
@@ -520,7 +557,7 @@ fn host_of(addr: Str) -> Str {
 }
 
 /// A plugin's response, with the DSN's permissions checked.
-fn plugin_response(cfg: Config, plugin: Str, pw: Bytes, nonce: Bytes, secure: Bool) -> Bytes ! sql.SqlErr {
+fn plugin_response(cfg: Config, plugin: Str, pw: Bytes, nonce: Bytes, secure: Bool, key: rsa.PublicKey?) -> Bytes ! sql.SqlErr {
   if plugin == "mysql_native_password" && !cfg.allow_native {
     return Err(conn_err("mysql_native_password is not allowed (allowNativePasswords=false)"))
   }
@@ -533,7 +570,16 @@ fn plugin_response(cfg: Config, plugin: Str, pw: Bytes, nonce: Bytes, secure: Bo
     }
   }
   if plugin == "sha256_password" && !secure && !pw.is_empty() {
-    return Err(conn_err("sha256_password needs TLS or a Unix socket (RSA with server_pub_key is decision 0648 stage B)"))
+    // RSA: open's key now, else a request for the server's (the byte 1)
+    match key {
+      Some(k) => return auth.rsa_password(pw, nonce, k).or_err(conn_err("sha256_password: the password is too long for the server's RSA key"))
+      None => {
+        if !cfg.allow_public_key {
+          return Err(conn_err("sha256_password over plain TCP needs TLS, server_pub_key: (PEM) on sql.open, or allowPublicKeyRetrieval=true (a key fetched from the server can be a man in the middle's)"))
+        }
+        return Ok(b"\x01")
+      }
+    }
   }
   auth.first_response(plugin, pw, nonce, secure).or_err(conn_err("unknown authentication plugin ${plugin}"))
 }

@@ -5,6 +5,10 @@ use std/sql
 use std/time
 use native/llrt/mysqlauth as auth
 use native/llrt/mysqlwire as w
+use native/llrt/asn1
+use native/llrt/rsa
+use native/llrt/rsagen
+use native/llrt/sha1
 
 test "DSNs: go-sql-driver's documented format" {
   let c = config("app:p@ss:w@rd@tcp(db.internal:3307)/shop?parseTime=true&charset=utf8mb4&sql_mode=%27ANSI%27") ?? e => fault("${e}")
@@ -372,7 +376,7 @@ test "a fake server: full authentication over plain TCP is refused, TLS is requi
   scope s {
     s.spawn_background(fn() { fk_serve(l, fk_caps(true), "caching_sha2_password", fk_sha2_full, fk_rows_server(false)).ignore_err("the server stops when the test ends") })
     let r = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false")
-    expect(r.err().map(fn(e) { "${e}".contains("needs TLS or a Unix socket") })) == Some(true)
+    expect(r.err().map(fn(e) { "${e}".contains("needs TLS, server_pub_key: (PEM) on sql.open, or allowPublicKeyRetrieval=true") })) == Some(true)
     // the default is tls=true, and this server has no TLS
     let d = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app")
     expect(d.err()) == Some(sql.SqlErr.Conn(msg: "the server does not support TLS (tls=true; tls=false to connect in plain text)"))
@@ -408,6 +412,59 @@ test "a fake server: loc's zone comes from the driver, and a DSN naming another 
     expect(rows[0].time("at").map(fn(t) { t.format_rfc3339() })) == Ok("2026-11-15T08:04:05Z")
     let refused = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false&loc=America%2FNew_York")
     expect(refused.err().map(fn(e) { "${e}".contains("the driver's zone is UTC") })) == Some(true)
+    s.cancel()
+  }
+}
+
+/// k's public half (e is rsagen's 65537) as MySQL sends it: a PEM
+/// PUBLIC KEY (SubjectPublicKeyInfo).
+fn fk_pem(k: rsa.PrivateKey) -> Bytes {
+  let pkcs1 = asn1.enc_seq([asn1.enc_uint(k.n), asn1.enc_uint(b"\x01\x00\x01")])
+  let alg = asn1.enc_seq([asn1.enc(asn1.OID, Bytes.from_hex("2a864886f70d010101") ?? b""), asn1.enc(asn1.NULL, b"")])
+  let spki = asn1.enc_seq([alg, asn1.enc(asn1.BIT_STRING, b"\x00" + pkcs1)])
+  "-----BEGIN PUBLIC KEY-----\n${spki.to_base64()}\n-----END PUBLIC KEY-----\n".bytes()
+}
+
+/// caching_sha2_password's full authentication over plain TCP: 0x04, the
+/// key on a request (0x02), then the password under RSA, decrypted here.
+fn fk_sha2_rsa(k: rsa.PrivateKey) -> fn(Bytes, ServerConn, Int) -> Int ! NetErr uses net.listen {
+  fn(resp, c, seq) {
+    c.write(w.frame(seq, b"\x01\x04").0)?
+    var (got, _, _) = fk_read(c, b"")? ?? (b"", 0, b"")
+    var next = seq + 2
+    if got == b"\x02" {
+      c.write(w.frame(next, b"\x01" + fk_pem(k)).0)?
+      got = (fk_read(c, b"")? ?? (b"", 0, b"")).0
+      next += 2
+    }
+    let plain = rsa.decrypt_oaep_fn(k, 20, fn(b) { sha1.sum(b) }, got, b"")
+    if plain != Some(auth.rsa_plain(b"pw", FK_NONCE)) {
+      c.write(w.frame(next, fk_err(1045, "28000", "Access denied")).0)?
+      return Ok(next + 1)
+    }
+    c.write(w.frame(next, fk_ok(0, 0, 2)).0)?
+    Ok(next + 1)
+  }
+}
+
+test "a fake server: RSA full authentication with the server's key or open's" {
+  let k = rsagen.generate(1024, fn(n: Int) -> Bytes uses rand { os.rand.bytes(n) }) ?? fault("rsa key")
+  let l = os.net.listen("db.test:3306")?
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_caps(true), "caching_sha2_password", fk_sha2_rsa(k), fk_rows_server(false)).ignore_err("the server stops when the test ends") })
+    // the key fetched from the server, only when allowed
+    let db = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false&allowPublicKeyRetrieval=true")?
+    expect(db.ping().is_ok()) == true
+    // open's key: no request
+    let pinned = sql.open_driver(os.net, MysqlDriver{roots: b"", pub_key: fk_pem(k)}, "app:pw@tcp(db.test:3306)/app?tls=false&serverPubKey=srv")?
+    expect(pinned.ping().is_ok()) == true
+    // a wrong key: the server cannot decrypt the password
+    let other = rsagen.generate(1024, fn(n: Int) -> Bytes uses rand { os.rand.bytes(n) }) ?? fault("rsa key")
+    let wrong = sql.open_driver(os.net, MysqlDriver{roots: b"", pub_key: fk_pem(other)}, "app:pw@tcp(db.test:3306)/app?tls=false")
+    expect(wrong.err()) == Some(sql.SqlErr.Server(code: "28000", msg: "Error 1045 (28000): Access denied"))
+    // serverPubKey without open's key, and a key that is not one
+    expect(sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false&serverPubKey=srv").err()) == Some(sql.SqlErr.Param(msg: "serverPubKey=srv needs server_pub_key: (PEM) on sql.open"))
+    expect(sql.open_driver(os.net, MysqlDriver{roots: b"", pub_key: b"junk"}, "app:pw@tcp(db.test:3306)/app?tls=false").is_err()) == true
     s.cancel()
   }
 }

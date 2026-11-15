@@ -6,6 +6,10 @@
 // (a): from the documentation, not from a driver's code). The scrambles
 // each plugin sends for a password and the server's nonce.
 use std/crypto
+use native/llrt/asn1
+use native/llrt/rand
+use native/llrt/rsa
+use native/llrt/sha1
 
 /// mysql_native_password: SHA1(password) XOR SHA1(nonce + SHA1(SHA1(password))),
 /// empty for an empty password.
@@ -63,3 +67,62 @@ pub fn first_response(plugin: Str, password: Bytes, nonce: Bytes, secure: Bool) 
     _ => None
   }
 }
+
+// ---- RSA (full authentication over a link that is not secure) ----
+
+/// The DER inside the first PEM block of pem and its type ("PUBLIC KEY",
+/// "RSA PUBLIC KEY"); None when there is none or it is not base64.
+fn pem_block(pem: Bytes) -> (Str, Bytes)? {
+  let s = pem.to_str_lossy()
+  let i = s.find("-----BEGIN ")?
+  let rest = s[i + 11..s.len()]
+  let j = rest.find("-----")?
+  let ty = rest[0..j]
+  let body = rest[j + 5..rest.len()]
+  let k = body.find("-----END ")?
+  var b64 = BytesBuilder.new()
+  for c in body[0..k].bytes() {
+    if c != 10 && c != 13 && c != 32 && c != 9 {
+      b64.write_byte(c)
+    }
+  }
+  let der = Bytes.from_base64(b64.freeze().to_str_lossy())?
+  Some((ty, der))
+}
+
+/// The RSA key of a PEM PUBLIC KEY (X.509 SubjectPublicKeyInfo, what
+/// MySQL sends and writes to public_key.pem) or RSA PUBLIC KEY (PKCS #1);
+/// None for anything else, or a key llrt rsa refuses (below 1024 bits).
+pub fn pem_public_key(pem: Bytes) -> rsa.PublicKey? {
+  let (ty, der) = pem_block(pem)?
+  if ty == "RSA PUBLIC KEY" {
+    return rsa.public_key(der)
+  }
+  if ty != "PUBLIC KEY" {
+    return None
+  }
+  let t = asn1.whole(der, asn1.SEQUENCE)
+  let xs = asn1.children(der, t)
+  if t.tag < 0 || asn1.any_bad(xs) || xs.len() != 2 {
+    return None
+  }
+  let alg = asn1.children(der, xs[0])
+  // rsaEncryption
+  if asn1.any_bad(alg) || alg.is_empty() || asn1.oid_text(der, alg[0]) != "1.2.840.113549.1.1.1" {
+    return None
+  }
+  rsa.public_key(asn1.bits(der, xs[1])?)
+}
+
+/// The password for RSA full authentication: rsa_plain (the password and
+/// a 0, xored with the nonce) under RSAES-OAEP with SHA-1 and MGF1-SHA-1,
+/// as MySQL decrypts it (RSA_PKCS1_OAEP_PADDING), with seed (20 bytes).
+pub fn rsa_password_seeded(password: Bytes, nonce: Bytes, key: rsa.PublicKey, seed: Bytes) -> Bytes? {
+  // sha1.sum itself, not a closure over it: a closure literal here broke
+  // the darwin link of std/native/llrt/pg's native test (no FDE for the
+  // DWARF mode function; ~/xo-lead/notes/aws-43/fde-closure)
+  rsa.encrypt_oaep_fn(key, 20, sha1.sum, rsa_plain(password, nonce), b"", seed)
+}
+
+/// rsa_password_seeded with a fresh random seed.
+pub fn rsa_password(password: Bytes, nonce: Bytes, key: rsa.PublicKey) -> Bytes? { rsa_password_seeded(password, nonce, key, rand.next_bytes(20)) }

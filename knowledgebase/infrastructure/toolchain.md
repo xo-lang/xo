@@ -2099,7 +2099,11 @@ Last verified: 2026-10-21.
   cases.txt (five times over `tls=true`: `interpolateParams=true`,
   prepared, prepared with `parseTime=true` and `clientFoundRows=true`, and
   `parseTime=true&loc=America%2FNew_York` prepared and interpolated, the
-  Xo side passing the zone as `sql.open`'s `loc`)
+  Xo side passing the zone as `sql.open`'s `loc`), and multi.txt over
+  `tls=false` with RSA full authentication (key fetched, key pinned from
+  the container's public_key.pem as `MY_PUBKEY`; caching_sha2 and a
+  sha256_password user), FLUSH PRIVILEGES before each side so every
+  first connection takes the full path
   and multi.txt (`multiStatements=true`) through
   go-sql-driver (scripts/mysqldiff/gomysql, its own Go module pinned to
   v1.10.1, the only place go-sql-driver appears) and through the Xo

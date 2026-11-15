@@ -10,10 +10,12 @@ package main
 
 import (
 	"bufio"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"math"
@@ -229,6 +231,27 @@ func colTypes(cts []*sql.ColumnType) string {
 // tls=true and tls=custom verified against those roots (the Xo driver's
 // roots: on sql.open).
 func dsnFor(dsn string) string {
+	// go-sql-driver has no allowPublicKeyRetrieval: it always fetches the
+	// key (an unknown name would be SET as a system variable)
+	dsn = strings.Replace(strings.Replace(dsn, "&allowPublicKeyRetrieval=true", "", 1), "?allowPublicKeyRetrieval=true", "?", 1)
+	if strings.Contains(dsn, "serverPubKey=") {
+		pemb, err := os.ReadFile(os.Getenv("MY_PUBKEY"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		blk, _ := pem.Decode(pemb)
+		if blk == nil {
+			fmt.Fprintln(os.Stderr, "MY_PUBKEY: no PEM")
+			os.Exit(2)
+		}
+		k, err := x509.ParsePKIXPublicKey(blk.Bytes)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		mysql.RegisterServerPubKey("srv", k.(*rsa.PublicKey))
+	}
 	if path := os.Getenv("MY_ROOTS"); path != "" {
 		pem, err := os.ReadFile(path)
 		if err != nil {

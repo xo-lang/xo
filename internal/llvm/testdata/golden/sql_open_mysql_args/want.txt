@@ -2,5 +2,6 @@ exit 0
 --- stdout
 postgres: loc: only the mysql driver reads times in a zone (driver "postgres", loc Europe/Berlin)
 nosuch: loc: only the mysql driver reads times in a zone (driver "nosuch", loc Europe/Berlin)
+postgres key: server_pub_key: only the mysql driver takes an RSA key (driver "postgres")
 nosuch utc: unknown driver nosuch
 --- stderr
