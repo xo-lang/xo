@@ -5,6 +5,7 @@ package rt
 // native backends'.
 
 import (
+	cryptorand "crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -301,6 +302,11 @@ func Tls_client_config(tk *Task, c Conn, cfg Tls_ClientConfig) Result[Tls_TlsCon
 		}
 		tlsVerifyHooks(tk, gc, cfg.F_verify_peer_certificate, cfg.F_verify_connection, cfg.F_verify.Tag == 2)
 		setKeyLog(tk, gc, cfg.F_key_log)
+		// decision 0644 T3: Go's ClientSessionCache and SessionTicketsDisabled
+		gc.SessionTicketsDisabled = cfg.F_session_tickets_disabled
+		if cfg.F_session_cache.Some {
+			gc.ClientSessionCache = cfg.F_session_cache.V.c
+		}
 		if cfg.F_get_client_certificate.Some {
 			g := cfg.F_get_client_certificate.V
 			gc.GetClientCertificate = func(cri *tls.CertificateRequestInfo) (*tls.Certificate, error) {
@@ -649,14 +655,91 @@ type Tls_TlsServerConn struct {
 
 // Tls_TlsListener is a std/tls TlsListener: the listener and its config.
 type Tls_TlsListener struct {
-	l   Listener
-	cfg Tls_ServerConfig
+	l    Listener
+	cfg  Tls_ServerConfig
+	keys *autoTicketKeys
+}
+
+// Tls_SessionCache is a std/tls SessionCache (decision 0644 T3): Go's
+// ClientSessionCache.
+type Tls_SessionCache struct{ c tls.ClientSessionCache }
+
+// XoDebug implements Debug.
+func (Tls_SessionCache) XoDebug(b *strings.Builder) { b.WriteString("<sessioncache>") }
+
+// Tls_lru_session_cache is `tls.lru_session_cache(capacity)`: Go's
+// NewLRUClientSessionCache.
+func Tls_lru_session_cache(_ *Task, capacity int64) Tls_SessionCache {
+	return Tls_SessionCache{c: tls.NewLRUClientSessionCache(int(capacity))}
+}
+
+// Tls_TicketKey is a std/tls TicketKey (decision 0644 T4): one of Go's
+// SetSessionTicketKeys keys.
+type Tls_TicketKey struct{ k [32]byte }
+
+// XoDebug implements Debug.
+func (Tls_TicketKey) XoDebug(b *strings.Builder) { b.WriteString("<ticketkey>") }
+
+// Tls_ticket_key is `tls.ticket_key(key)`: a key of 32 bytes.
+func Tls_ticket_key(_ *Task, key Bytes) Result[Tls_TicketKey, Tls_TlsErr] {
+	if len(key) != 32 {
+		return Err[Tls_TicketKey](Tls_TlsErr{F_msg: fmt.Sprintf("tls: a session ticket key must be 32 bytes, not %d", len(key))})
+	}
+	var t Tls_TicketKey
+	copy(t.k[:], key)
+	return Ok[Tls_TicketKey, Tls_TlsErr](t)
+}
+
+// autoTicketKeys are a listener's automatic session ticket keys, as Go's
+// Config.ticketKeys rotates them (a new key a day, each kept a week): a
+// listener makes a Config per connection, so the keys live here.
+type autoTicketKeys struct {
+	mu   sync.Mutex
+	keys [][32]byte
+	made []time.Time
+}
+
+func (a *autoTicketKeys) current() [][32]byte {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := time.Now()
+	if len(a.keys) == 0 || now.Sub(a.made[0]) >= 24*time.Hour {
+		var k [32]byte
+		cryptorand.Read(k[:])
+		a.keys = append([][32]byte{k}, a.keys...)
+		a.made = append([]time.Time{now}, a.made...)
+	}
+	n := 0
+	for n < len(a.made) && now.Sub(a.made[n]) < 7*24*time.Hour {
+		n++
+	}
+	a.keys, a.made = a.keys[:n], a.made[:n]
+	return append([][32]byte(nil), a.keys...)
+}
+
+// setTickets sets c's session tickets from cfg (decision 0644 T4): its
+// keys, none when disabled, else auto's keys (a listener's), else none
+// (a lone tls.server's keys would open no other connection's ticket).
+func setTickets(c *tls.Config, cfg Tls_ServerConfig, auto *autoTicketKeys) {
+	switch {
+	case cfg.F_session_tickets_disabled:
+		c.SessionTicketsDisabled = true
+	case len(cfg.F_session_ticket_keys.s) > 0:
+		var ks [][32]byte
+		for _, k := range cfg.F_session_ticket_keys.s {
+			ks = append(ks, k.k)
+		}
+		c.SetSessionTicketKeys(ks)
+	case auto != nil:
+		c.SetSessionTicketKeys(auto.current())
+	default:
+		c.SessionTicketsDisabled = true
+	}
 }
 
 // XoDebug implements Debug.
 func (Tls_TlsListener) XoDebug(b *strings.Builder) { b.WriteString("<tlslistener>") }
 
-// serverConfig is cfg as crypto/tls's Config.
 // keyLogWriter is Go's KeyLogWriter over std/tls's key_log (decision
 // 0644 T8): crypto/tls writes each NSS line in one Write.
 type keyLogWriter struct {
@@ -677,6 +760,7 @@ func setKeyLog(tk *Task, c *tls.Config, kl Option[func(*Task, string) Result[Uni
 	}
 }
 
+// serverConfig is cfg as crypto/tls's Config.
 func serverConfig(tk *Task, cfg Tls_ServerConfig) *tls.Config {
 	c := &tls.Config{NextProtos: cfg.F_next_protos.s, ClientAuth: clientAuthType(cfg.F_client_auth)}
 	setPrefs(c, cfg.F_min_version, cfg.F_max_version, cfg.F_cipher_suites, cfg.F_curve_preferences)
@@ -712,7 +796,13 @@ func serverConfig(tk *Task, cfg Tls_ServerConfig) *tls.Config {
 			if !r.V.Some {
 				return nil, nil
 			}
-			return serverConfig(tk, r.V.V), nil
+			nc := serverConfig(tk, r.V.V)
+			// Go's ticketKeys(configForClient): its own keys, or none
+			// when disabled, else the first config's
+			if r.V.V.F_session_tickets_disabled || len(r.V.V.F_session_ticket_keys.s) > 0 {
+				setTickets(nc, r.V.V, nil)
+			}
+			return nc, nil
 		}
 	}
 	return c
@@ -773,13 +863,20 @@ func (v Tls_ClientHelloInfo) M_supports_certificate(tk *Task, cert Tls_TlsCert) 
 
 // Tls_server is `tls.server(c, config)`: Go's tls.Server.
 func Tls_server(tk *Task, c ServerConn, cfg Tls_ServerConfig) Tls_TlsServerConn {
+	return serverOn(tk, c, cfg, nil)
+}
+
+// serverOn is Tls_server with a listener's automatic ticket keys.
+func serverOn(tk *Task, c ServerConn, cfg Tls_ServerConfig, auto *autoTicketKeys) Tls_TlsServerConn {
 	if c.c != nil {
 		upgradedConns.Store(c.c, struct{}{})
 	}
 	if _, ok := c.c.(fakeConn); ok || c.c == nil {
 		return Tls_TlsServerConn{Tls_TlsConn: Tls_TlsConn{c: c.c, fake: c.c != nil, closed: new(atomic.Bool)}}
 	}
-	t := tls.Server(c.c, serverConfig(tk, cfg))
+	gc := serverConfig(tk, cfg)
+	setTickets(gc, cfg, auto)
+	t := tls.Server(c.c, gc)
 	return Tls_TlsServerConn{Tls_TlsConn: Tls_TlsConn{t: t, c: c.c, closed: new(atomic.Bool)}, noCerts: len(cfg.F_certificates.s) == 0 && !cfg.F_get_certificate.Some && !cfg.F_get_config_for_client.Some}
 }
 
@@ -856,12 +953,12 @@ func Tls_listen(tk *Task, n Net, addr string, cfg Tls_ServerConfig) Result[Tls_T
 	if !l.Ok {
 		return Err[Tls_TlsListener](l.E)
 	}
-	return Ok[Tls_TlsListener, NetErr](Tls_TlsListener{l: l.V, cfg: cfg})
+	return Ok[Tls_TlsListener, NetErr](Tls_TlsListener{l: l.V, cfg: cfg, keys: new(autoTicketKeys)})
 }
 
 // Tls_new_listener is `tls.new_listener(l, config)`: Go's tls.NewListener.
 func Tls_new_listener(_ *Task, l Listener, cfg Tls_ServerConfig) Tls_TlsListener {
-	return Tls_TlsListener{l: l, cfg: cfg}
+	return Tls_TlsListener{l: l, cfg: cfg, keys: new(autoTicketKeys)}
 }
 
 // M_accept is `l.accept()`: the next connection, its handshake not yet run.
@@ -870,7 +967,7 @@ func (l Tls_TlsListener) M_accept(tk *Task) Result[Tls_TlsServerConn, NetErr] {
 	if !c.Ok {
 		return Err[Tls_TlsServerConn](c.E)
 	}
-	return Ok[Tls_TlsServerConn, NetErr](Tls_server(tk, c.V, l.cfg))
+	return Ok[Tls_TlsServerConn, NetErr](serverOn(tk, c.V, l.cfg, l.keys))
 }
 
 // M_addr is `l.addr()`.

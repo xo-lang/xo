@@ -19,10 +19,12 @@ use native/llrt/sysio
 use native/llrt/tasks
 use native/llrt/tls12
 use native/llrt/tls13
+use native/llrt/tlscache
 use native/llrt/tlscert
 use native/llrt/tlsname
 use native/llrt/tlsneg
 use native/llrt/x509cert as x509
+use native/llrt/x509verify
 use native/rt
 use native/rthttp
 
@@ -133,6 +135,9 @@ fn take_in(var c: Conn, data: Bytes) {
     cf.vhook = c.cl.conf.vhook
     cf.get_cert = c.cl.conf.get_cert
     cf.key_log = c.cl.conf.key_log
+    cf.tickets = c.cl.conf.tickets
+    cf.session = c.cl.conf.session
+    cf.on_session = c.cl.conf.on_session
     cf.alpn = c.cl.conf.alpn
     // the offered ones: a TLS 1.3 suite picked under 1.2 is refused
     cf.suites = c.cl.conf.legacy_suites
@@ -478,7 +483,7 @@ pub const VERIFY_NONE = 2
 
 /// client with the ALPN protocols offered (none: no extension) and the
 /// verification (VERIFY_*); std/tls's client (decision 0281).
-pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], verify: Int, ccerts: List[Bytes] = [], ckey: Bytes = b"", min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vhook: (fn(tlsneg.Negotiated) -> Str)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None) -> Start {
+pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], verify: Int, ccerts: List[Bytes] = [], ckey: Bytes = b"", min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vhook: (fn(tlsneg.Negotiated) -> Str)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None, tickets: Bool = false, session: tlscache.Session? = None, put: (fn(tlscache.Session?) -> ())? = None) -> Start {
   // decision 0644 T7: Go's MinVersion and MaxVersion (0: TLS 1.2 and
   // 1.3), CipherSuites (TLS 1.2's only) and CurvePreferences, whose
   // orders Go ignores: each keeps the default order, less what is left out
@@ -528,6 +533,20 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
   cf.vhook = vhook
   cf.get_cert = get_cert
   cf.key_log = key_log
+  // decision 0644 T3: Go's ClientSessionCache; put(None) is Go's
+  // Put(key, nil)
+  cf.tickets = tickets
+  if let Some(p) = put {
+    cf.on_session = Some(fn(x: tlscache.Session) { p(Some(x)) })
+    if let Some(sess) = session {
+      let usable = session_use(sess, cf, allow13, allow12, apple != 0)
+      if usable == SESSION_DROP {
+        p(None)
+      } else if usable == SESSION_OK {
+        cf.session = Some(sess)
+      }
+    }
+  }
   let hs = hconn.deadline(HANDSHAKE_NS)
   let limit = if dl != 0 && dl < hs { dl } else { hs }
   var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, cn: 0, status: 0, wfail: 0, first: b"", eof: false, pending: b""}
@@ -826,8 +845,8 @@ pub fn alpn_of(h: Int) -> Str {
 }
 
 /// The server's certificates as it sent them, leaf first, each its DER
-/// (Go's ConnectionState.PeerCertificates); none before the handshake, on
-/// a resumed session, or without TLS.
+/// (Go's ConnectionState.PeerCertificates; on a resumed session, the
+/// ones the session holds); none before the handshake or without TLS.
 pub fn peer_ders(h: Int) -> List[Bytes] {
   match load(h) {
     Some(c) => {
@@ -845,8 +864,8 @@ pub fn peer_ders(h: Int) -> List[Bytes] {
 /// What the client's handshake negotiated (Go's ConnectionState): the
 /// version, suite, group, server name asked for, ALPN, whether a
 /// HelloRetryRequest ran, and the server's certificates (DER, leaf
-/// first); a zero value before the handshake. The client resumes no
-/// session (tickets are dropped), so resumed is false.
+/// first), and whether it resumed a session (decision 0644 T3); a zero
+/// value before the handshake.
 pub fn negotiated_of(h: Int) -> tlsneg.Negotiated {
   match load(h) {
     Some(c) => {
@@ -856,13 +875,13 @@ pub fn negotiated_of(h: Int) -> tlsneg.Negotiated {
         for p in x.peer {
           ders.push(p.raw)
         }
-        tlsneg.Negotiated{version: "TLS 1.2", cipher: tlsneg.suite_name(x.suite), server_name: tls13.sni_of(x.conf.host), resumed: false, peer: ders, verified: chain_ders(x.verified), curve: tlsneg.group_name(x.group), alpn: x.alpn, vers: 0x0303, suite: x.suite, group: x.group, master: tls12.ekm_parts(x).0, cr: tls12.ekm_parts(x).1, sr: tls12.ekm_parts(x).2, ems: tls12.ekm_parts(x).3, unique: x.unique}
+        tlsneg.Negotiated{version: "TLS 1.2", cipher: tlsneg.suite_name(x.suite), server_name: tls13.sni_of(x.conf.host), resumed: x.resumed, peer: ders, verified: chain_ders(x.verified), curve: tlsneg.group_name(x.group), alpn: x.alpn, vers: 0x0303, suite: x.suite, group: x.group, master: tls12.ekm_parts(x).0, cr: tls12.ekm_parts(x).1, sr: tls12.ekm_parts(x).2, ems: tls12.ekm_parts(x).3, unique: x.unique}
       } else {
         let x = c.cl
         for p in x.peer {
           ders.push(p.raw)
         }
-        tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(x.suite), server_name: tls13.sni_of(x.conf.host), resumed: false, peer: ders, verified: chain_ders(x.verified), curve: tlsneg.group_name(x.share_group), alpn: x.alpn, hrr: x.hrr, vers: 0x0304, suite: x.suite, group: x.share_group, exp: x.exp}
+        tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(x.suite), server_name: tls13.sni_of(x.conf.host), resumed: x.resumed, peer: ders, verified: chain_ders(x.verified), curve: tlsneg.group_name(x.share_group), alpn: x.alpn, hrr: x.hrr, vers: 0x0304, suite: x.suite, group: x.share_group, exp: x.exp}
       }
     }
     None => tlsneg.Negotiated{version: "", cipher: "", server_name: "", resumed: false}
@@ -994,3 +1013,61 @@ fn wait_res(w: Int) -> Int {
   CC_ERR
 }
 
+const SESSION_OK: Int = 0
+const SESSION_SKIP: Int = 1
+const SESSION_DROP: Int = 2
+
+/// Go's loadSession checks of a cached session (decision 0644 T3):
+/// SESSION_OK to offer it, SESSION_SKIP to offer none, SESSION_DROP to
+/// offer none and remove it (an expired certificate or TLS 1.3 ticket,
+/// or no chain still valid). apple: macOS's system roots verified the
+/// chains, which are not checked against roots again.
+fn session_use(s: tlscache.Session, cf: tls13.Conf, allow13: Bool, allow12: Bool, apple: Bool) -> Int {
+  if (s.version == 0x0304 && !allow13) || (s.version == 0x0303 && !allow12) || (s.version != 0x0304 && s.version != 0x0303) || s.peer.is_empty() {
+    return SESSION_SKIP
+  }
+  let now = cf.now
+  let leaf = x509.parse(s.peer[0]).cert
+  if now > leaf.not_after {
+    return SESSION_DROP
+  }
+  if !cf.insecure {
+    if s.verified.is_empty() {
+      // the first connection did not verify, this one does
+      return SESSION_SKIP
+    }
+    if !cf.chain_only && !x509verify.host_ok(leaf, cf.host) {
+      return SESSION_SKIP
+    }
+    var valid = false
+    for ch in s.verified {
+      if ch.is_empty() {
+        continue
+      }
+      var times = true
+      for d in ch {
+        let x = x509.parse(d).cert
+        if now < x.not_before || now > x.not_after {
+          times = false
+        }
+      }
+      // rooted in one of the roots (Go's Verify of the chain's root)
+      var rooted = apple
+      for r in cf.roots {
+        if r.raw == ch[ch.len() - 1] {
+          rooted = true
+        }
+      }
+      if times && rooted {
+        valid = true
+      }
+    }
+    if !valid {
+      return SESSION_DROP
+    }
+  }
+  if s.version == 0x0304 && now > s.use_by {
+    return SESSION_DROP
+  }
+  SESSION_OK
+}

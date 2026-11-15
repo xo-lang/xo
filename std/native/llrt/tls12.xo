@@ -24,6 +24,7 @@ use native/llrt/tls13
 use native/llrt/tlssign
 use native/llrt/tlscert
 use native/llrt/tlsname
+use native/llrt/tlscache
 use native/llrt/tlsneg
 use native/llrt/x509cert as x509
 use native/llrt/x509verify
@@ -718,6 +719,9 @@ pub const WAIT_CCS: Int = 6
 pub const WAIT_FIN: Int = 7
 pub const DONE: Int = 8
 pub const FAILED: Int = 9
+/// decision 0644 T3: after the client's Finished (or a resumed
+/// ServerHello), the NewSessionTicket the ServerHello announced
+pub const WAIT_TICKET: Int = 10
 
 /// A connection's settings: the server's name (a host name or an IP
 /// address; "" checks no name), the trusted roots, the time (Unix
@@ -766,6 +770,11 @@ pub struct Conf {
   /// log label, the client random and the secret at Go's point; a text
   /// fails the handshake with internal_error
   pub key_log: (fn(Str, Bytes, Bytes) -> Str)? = None
+  /// tls13.Conf's (decision 0644 T3): a cache is set, the session the
+  /// hello offered, and the hook new sessions go to
+  pub tickets: Bool = false
+  pub session: tlscache.Session? = None
+  pub on_session: (fn(tlscache.Session) -> ())? = None
 }
 
 /// Go's defaults for host: the AEAD suites, X25519 then P-256 and P-384.
@@ -814,6 +823,12 @@ pub struct Client {
   master: Bytes
   /// the first Finished's verify_data (RFC 5929 tls-unique; decision 0644 T9)
   pub unique: Bytes = b""
+  /// decision 0644 T3: the server resumed the offered session; the
+  /// ticket its NewSessionTicket gave, when one came
+  pub resumed: Bool = false
+  got_ticket: Bool = false
+  new_ticket: Bytes = b""
+  next_wk: Keys = plain()
   next_rk: Keys
   rk: Keys
   wk: Keys
@@ -1149,6 +1164,18 @@ fn handshake(var c: Client, t: Int, msg: Bytes) {
     after_key_exchange(c, t, msg, c.state == WAIT_SHD)
     return
   }
+  if c.state == WAIT_TICKET {
+    // Go's readSessionTicket
+    if t != HS_NEW_SESSION_TICKET {
+      fail(c, ALERT_UNEXPECTED_MESSAGE, unexpected(HS_NEW_SESSION_TICKET, t))
+      return
+    }
+    c.tr = cat2(c.tr, msg)
+    c.got_ticket = true
+    c.new_ticket = msg[10..msg.len()]
+    c.state = WAIT_CCS
+    return
+  }
   if c.state == WAIT_FIN {
     if t != HS_FINISHED {
       fail(c, ALERT_UNEXPECTED_MESSAGE, unexpected(HS_FINISHED, t))
@@ -1214,6 +1241,12 @@ fn hello(c: Client) -> Bytes {
   exts.push(ext(EXT_POINT_FORMATS, vec8(u8(0))))
   exts.push(ext(EXT_RENEGOTIATION_INFO, vec8(b"")))
   exts.push(ext(EXT_EMS, b""))
+  if cf.tickets {
+    exts.push(ext(EXT_SESSION_TICKET, match offered(cf) {
+      Some(o) => o.ticket
+      None => b""
+    }))
+  }
   exts.push(ext(EXT_SCT, b""))
   exts.push(ext(EXT_STATUS_REQUEST, b"\x01\x00\x00\x00\x00"))
   var groups: List[Bytes] = []
@@ -1379,7 +1412,9 @@ fn server_hello(var c: Client, msg: Bytes) {
     fail(c, ALERT_ILLEGAL_PARAMETER, "tls: downgrade attempt detected, possibly due to a MitM attack or a broken middlebox")
     return
   }
-  if h.sid == c.sid {
+  // Go's serverResumedSession: the offered session's id echoed
+  let sess = offered(c.conf)
+  if sess.is_none() && h.sid == c.sid {
     fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server echoed TLS 1.3 compatibility session ID in TLS 1.2")
     return
   }
@@ -1432,7 +1467,62 @@ fn server_hello(var c: Client, msg: Bytes) {
   c.ocsp = h.ocsp
   c.ticket = h.ticket
   c.tr = cat2(c.tr, msg)
+  if let Some(ss) = sess {
+    if h.sid == c.sid {
+      resume_session(c, ss, h)
+      return
+    }
+  }
   c.state = WAIT_CERT
+}
+
+/// The TLS 1.2 session the ClientHello offered (decision 0644 T3): the
+/// conf's, when it is TLS 1.2's, has a ticket, and its suite is offered.
+pub fn offered(cf: Conf) -> tlscache.Session? {
+  let s = cf.session ?? return None
+  if s.version == 0x0303 && !s.ticket.is_empty() && has(cf.suites, s.suite) { Some(s) } else { None }
+}
+
+/// Go's processServerHello for a resumed session, then establishKeys:
+/// the session's master secret, EMS, certificates and curve, and the
+/// keys; the server's ticket (when announced), ChangeCipherSpec and
+/// Finished come next.
+fn resume_session(var c: Client, s: tlscache.Session, h: Hello) {
+  if s.suite != c.suite {
+    fail(c, ALERT_HANDSHAKE_FAILURE, "tls: server resumed a session with a different cipher suite")
+    return
+  }
+  if s.ems != h.ems {
+    fail(c, ALERT_HANDSHAKE_FAILURE, "tls: server resumed a session with a different EMS extension")
+    return
+  }
+  if c.ticket && !c.conf.tickets {
+    fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server sent unrequested session ticket")
+    return
+  }
+  c.resumed = true
+  c.master = s.secret
+  c.ems = s.ems
+  c.certs = s.peer
+  var peer: List[x509.Cert] = []
+  for d in s.peer {
+    peer.push(x509.parse(d).cert)
+  }
+  c.peer = peer
+  var chains: List[List[x509.Cert]] = []
+  for ch in s.verified {
+    var l: List[x509.Cert] = []
+    for d in ch {
+      l.push(x509.parse(d).cert)
+    }
+    chains.push(l)
+  }
+  c.verified = chains
+  c.group = s.group
+  let kb = key_block(c.suite, c.master, c.random, c.server_random)
+  c.next_rk = direction(c.suite, kb, false, b"")
+  c.next_wk = direction(c.suite, kb, true, c.conf.iv)
+  c.state = if c.ticket { WAIT_TICKET } else { WAIT_CCS }
 }
 
 // ---------------------------------------------------------------------------
@@ -1711,8 +1801,8 @@ fn client_flight(var c: Client) {
   let fin = message(HS_FINISHED, vd)
   c.tr = cat2(c.tr, fin)
   c.out = cat2(c.out, seal(c.wk, CT_HANDSHAKE, fin, 0x0303))
-  c.state = WAIT_CCS
-  if c.ticket {
+  c.state = if c.ticket { WAIT_TICKET } else { WAIT_CCS }
+  if c.ticket && !c.conf.tickets {
     fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server sent unrequested session ticket")
   }
 }
@@ -1723,6 +1813,30 @@ fn finished(var c: Client, msg: Bytes) {
   if got.len() != want.len() || !ct.bytes_equal(got, want) {
     fail(c, ALERT_HANDSHAKE_FAILURE, "tls: server's Finished message was incorrect")
     return
+  }
+  if c.resumed {
+    // Go's resumed handshake: VerifyConnection, then the client's
+    // ChangeCipherSpec and Finished (the server's Finished came first,
+    // so it is tls-unique)
+    c.unique = got
+    if let Some(h) = c.conf.vhook {
+      let why = h(tlsneg.Negotiated{version: "TLS 1.2", cipher: tlsneg.suite_name(c.suite), server_name: tls13.sni_of(c.conf.host), resumed: true, peer: c.certs, verified: tls13.chain_ders(c.verified), curve: tlsneg.group_name(c.group), alpn: c.alpn, vers: 0x0303, suite: c.suite, group: c.group})
+      if !why.is_empty() {
+        fail(c, ALERT_BAD_CERTIFICATE, why)
+        return
+      }
+    }
+    c.tr = cat2(c.tr, msg)
+    c.out = cat2(c.out, seal(c.wk, CT_CCS, b"\x01", 0x0303))
+    c.wk = c.next_wk
+    let fin = message(HS_FINISHED, verify_data(c.suite, c.master, "client finished", c.tr))
+    c.out = cat2(c.out, seal(c.wk, CT_HANDSHAKE, fin, 0x0303))
+  }
+  // Go's saveSessionTicket
+  if c.got_ticket {
+    if let Some(store) = c.conf.on_session {
+      store(tlscache.Session{version: 0x0303, suite: c.suite, created: c.conf.now, secret: c.master, ems: c.ems, ticket: c.new_ticket, peer: c.certs, verified: tls13.chain_ders(c.verified), group: c.group, alpn: c.alpn})
+    }
   }
   c.tr = b""
   c.state = DONE

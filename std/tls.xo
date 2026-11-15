@@ -111,7 +111,21 @@ struct ClientConfig {
   /// it only to debug. An Err fails the handshake. It runs on the
   /// connection's task, so calls from several connections can overlap.
   key_log: (fn(Str) -> () ! Str)? = None
+  /// Go's ClientSessionCache (decision 0644 T3): sessions to resume,
+  /// keyed by server_name (else the server's address); None resumes
+  /// none
+  session_cache: SessionCache? = None
+  /// Go's SessionTicketsDisabled: no session is resumed or kept
+  session_tickets_disabled: Bool = false
 }
+
+/// A client's session cache (Go's ClientSessionCache, decision 0644
+/// T3); a handle: the copies of a ClientConfig share its sessions.
+struct SessionCache {}
+
+/// Go's NewLRUClientSessionCache: at most capacity sessions (below 1,
+/// Go's 64), the least recently used replaced first.
+fn lru_session_cache(capacity: Int) -> SessionCache
 
 /// What a server's CertificateRequest asks for (Go's
 /// CertificateRequestInfo): the DER names of the CAs it accepts ([]:
@@ -315,7 +329,25 @@ struct ServerConfig {
   get_config_for_client: (fn(ClientHelloInfo) -> ServerConfig? ! Str)? = None
   /// as ClientConfig's (Go's KeyLogWriter, decision 0644 T8)
   key_log: (fn(Str) -> () ! Str)? = None
+  /// Go's SessionTicketsDisabled: no session tickets, so no client
+  /// resumes (decision 0644 T4)
+  session_tickets_disabled: Bool = false
+  /// Go's SetSessionTicketKeys: the first seals new tickets, every one
+  /// opens them (rotate by putting a new key first). [] is automatic
+  /// keys: a TlsListener's, made and rotated as Go's (a new key a day,
+  /// each opening tickets a week); a `server` outside a listener issues
+  /// none, since its keys would open no other connection's ticket
+  session_ticket_keys: List[TicketKey] = []
 }
+
+/// A session ticket key (Go's SetSessionTicketKeys key, decision 0644
+/// T4); a handle.
+struct TicketKey {}
+
+/// A ticket key of 32 bytes, from a secret source (rand, or a secret
+/// shared by servers that resume each other's sessions); any other
+/// length is an error.
+fn ticket_key(key: Bytes) -> TicketKey ! TlsErr
 
 /// What a client's ClientHello offers (Go's ClientHelloInfo; decision
 /// 0644 T5): its cipher suites, server name (SNI; "" for none), curves

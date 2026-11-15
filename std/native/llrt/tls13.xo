@@ -19,11 +19,13 @@ use native/llrt/nistec
 use native/llrt/process
 use native/llrt/rand
 use native/llrt/sha256
+use native/llrt/tlscache
 use native/llrt/tlscert
 use native/llrt/tlsname
 use native/llrt/tlsneg
 use native/llrt/tlsrec
 use native/llrt/tlssign
+use native/llrt/tlsticket
 use native/llrt/tzrules
 use native/llrt/x509cert as x509
 use native/llrt/x25519
@@ -79,6 +81,9 @@ const EXT_ALPN: Int = 16
 const EXT_SUPPORTED_VERSIONS: Int = 43
 const EXT_COOKIE: Int = 44
 const EXT_KEY_SHARE: Int = 51
+const EXT_SESSION_TICKET: Int = 35
+const EXT_PRE_SHARED_KEY: Int = 41
+const EXT_PSK_MODES: Int = 45
 
 // the alerts this client sends
 const ALERT_CLOSE_NOTIFY: Int = 0
@@ -160,6 +165,14 @@ pub struct Conf {
   /// log label, the client random and the secret at Go's point; a text
   /// fails the handshake with internal_error
   pub key_log: (fn(Str, Bytes, Bytes) -> Str)? = None
+  /// decision 0644 T3: a session cache is set (Go's ClientSessionCache,
+  /// with SessionTicketsDisabled false), so the hello asks for tickets;
+  /// session the cached one to offer (tlsio.xo checks it as Go's
+  /// loadSession does); on_session takes each session the server's
+  /// tickets give (TLS 1.2's from tls12.xo)
+  pub tickets: Bool = false
+  pub session: tlscache.Session? = None
+  pub on_session: (fn(tlscache.Session) -> ())? = None
   pub hello: Bytes
   pub random: Bytes
   pub sid: Bytes
@@ -236,6 +249,12 @@ pub struct Client {
   rk: tlsrec.Keys
   wk: tlsrec.Keys
   pub handoff: Bytes
+  /// decision 0644 T3: the PSK offered (the TLS 1.3 session's secret,
+  /// "" when none is), whether the server took it, and the resumption
+  /// master secret its tickets derive from
+  psk: Bytes = b""
+  pub resumed: Bool = false
+  res_master: Bytes = b""
 }
 
 /// A new client for conf: its ClientHello is ready in take().
@@ -252,6 +271,7 @@ pub fn client(cf: Conf) -> Client {
     c.share_group = cf.groups[0]
     c.priv = key_for(cf, c.share_group)
     c.kem = kem_for(c.share_group, c.priv)
+    c.psk = offered_psk(cf)
     ch = hello(c)
   } else if ch.len() > 38 {
     let n = Int(ch[38])
@@ -473,8 +493,9 @@ fn handshake(var c: Client, t: Int, msg: Bytes) {
   } else if c.state == WAIT_FIN && t == HS_FINISHED {
     finished(c, msg)
   } else if c.state == DONE && t == HS_NEW_SESSION_TICKET {
-    // no resumption: tickets are dropped
-    let _ok = post_handshake(c)
+    if post_handshake(c) {
+      new_session_ticket(c, msg)
+    }
   } else if c.state == DONE && t == HS_KEY_UPDATE {
     if post_handshake(c) {
       key_update(c, msg)
@@ -519,6 +540,9 @@ fn hello(c: Client) -> Bytes {
     exts.push(ext(EXT_POINT_FORMATS, vec8(u8(0))))
     exts.push(ext(EXT_RENEGOTIATION_INFO, vec8(b"")))
     exts.push(ext(EXT_EMS, b""))
+    if cf.tickets {
+      exts.push(ext(EXT_SESSION_TICKET, ticket12(cf)))
+    }
     exts.push(ext(EXT_SCT, b""))
     exts.push(ext(EXT_STATUS_REQUEST, b"\x01\x00\x00\x00\x00"))
     exts.push(ext(EXT_SUPPORTED_GROUPS, vec16(asn1.cat(groups))))
@@ -530,6 +554,9 @@ fn hello(c: Client) -> Bytes {
     exts.push(ext(EXT_SUPPORTED_VERSIONS, vec8(if cf.no13 { u16(0x0303) } else { cat2(u16(0x0304), u16(0x0303)) })))
   } else {
     exts.push(ext(EXT_SUPPORTED_GROUPS, vec16(asn1.cat(groups))))
+    if cf.tickets {
+      exts.push(ext(EXT_SESSION_TICKET, b""))
+    }
     exts.push(ext(EXT_SIGNATURE_ALGORITHMS, vec16(u16s(schemes()))))
     if !protos.is_empty() {
       exts.push(ext(EXT_ALPN, vec16(asn1.cat(protos))))
@@ -550,8 +577,51 @@ fn hello(c: Client) -> Bytes {
     shares.push(vec16(mlkem.hybrid_ecdh_share(c.share_group, share)))
   }
   exts.push(ext(EXT_KEY_SHARE, vec16(asn1.cat(shares))))
-  let body = asn1.cat([u16(0x0303), c.random, vec8(c.sid), vec16(asn1.cat(suites)), b"\x01\x00", vec16(asn1.cat(exts))])
-  message(HS_CLIENT_HELLO, body)
+  if cf.tickets && !cf.no13 {
+    // Go requires DHE on resumption (RFC 8446 4.2.9)
+    exts.push(ext(EXT_PSK_MODES, vec8(u8(1))))
+  }
+  let head = asn1.cat([u16(0x0303), c.random, vec8(c.sid), vec16(asn1.cat(suites)), b"\x01\x00"])
+  if c.psk.is_empty() {
+    return message(HS_CLIENT_HELLO, cat2(head, vec16(asn1.cat(exts))))
+  }
+  let s = cf.session ?? return message(HS_CLIENT_HELLO, cat2(head, vec16(asn1.cat(exts))))
+  // RFC 8446 4.2.11: the pre_shared_key extension last, one identity (the
+  // ticket and its obfuscated age, Go's loadSession), its binder over the
+  // ClientHello up to the binders (4.2.11.2)
+  let hash = tlsrec.suite_hash(s.suite)
+  let l = sha256.size(hash)
+  let age = ((cf.now - s.created) * 1000 + s.age_add) & 0xffffffff
+  let ids = vec16(asn1.cat([vec16(s.ticket), u16(age >> 16), u16(age & 0xffff)]))
+  exts.push(ext(EXT_PRE_SHARED_KEY, asn1.cat([ids, vec16(vec8(zeros(l)))])))
+  let full = message(HS_CLIENT_HELLO, cat2(head, vec16(asn1.cat(exts))))
+  let truncated = full[0..full.len() - 3 - l]
+  let binder_key = hkdf.expand_label(hash, hkdf.extract(hash, b"", c.psk), "res binder", sha256.sum(hash, b""), l)
+  let binder = finished_mac(hash, binder_key, sha256.sum(hash, cat2(c.tr, truncated)))
+  cat2(full[0..full.len() - l], binder)
+}
+
+/// The TLS 1.3 session's secret to offer as a PSK: none unless the
+/// session is TLS 1.3's, TLS 1.3 is offered, and a suite with its hash is
+/// (Go's loadSession).
+fn offered_psk(cf: Conf) -> Bytes {
+  let s = cf.session ?? return b""
+  if s.version != 0x0304 || cf.no13 {
+    return b""
+  }
+  for x in cf.suites {
+    if tlsrec.suite_hash(x) == tlsrec.suite_hash(s.suite) {
+      return s.secret
+    }
+  }
+  b""
+}
+
+/// The session_ticket extension's data: the TLS 1.2 session's ticket
+/// when its suite is still offered (Go's loadSession), else empty.
+fn ticket12(cf: Conf) -> Bytes {
+  let s = cf.session ?? return b""
+  if s.version == 0x0303 && has(cf.legacy_suites, s.suite) { s.ticket } else { b"" }
 }
 
 /// Go 1.26's signature schemes when it offers TLS 1.2 too, in its order.
@@ -584,6 +654,8 @@ struct Hello {
   group: Int
   key: Bytes
   cookie: Bytes
+  /// the pre_shared_key's selected identity, -1 without one
+  psk: Int = -1
 }
 
 fn parse_hello(m: Bytes) -> Hello {
@@ -645,6 +717,11 @@ fn parse_hello(m: Bytes) -> Hello {
         return h
       }
       h.cookie = d[2..n]
+    } else if t == EXT_PRE_SHARED_KEY {
+      if n != 2 {
+        return h
+      }
+      h.psk = u16_at(d, 0)
     }
     p += 4 + n
   }
@@ -695,6 +772,35 @@ fn server_hello(var c: Client, msg: Bytes) {
     fail(c, ALERT_UNSUPPORTED_EXTENSION, "tls: server sent a cookie in a normal ServerHello")
     return
   }
+  // Go's processServerHello: the PSK the server took
+  if h.psk >= 0 {
+    let sess = c.conf.session
+    if c.psk.is_empty() || h.psk != 0 || sess.is_none() {
+      fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server selected an invalid PSK")
+      return
+    }
+    if let Some(ss) = sess {
+      if tlsrec.suite_hash(ss.suite) != tlsrec.suite_hash(c.suite) {
+        fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server selected an invalid PSK and cipher suite pair")
+        return
+      }
+      c.resumed = true
+      var peer: List[x509.Cert] = []
+      for d in ss.peer {
+        peer.push(x509.parse(d).cert)
+      }
+      c.peer = peer
+      var chains: List[List[x509.Cert]] = []
+      for ch in ss.verified {
+        var l: List[x509.Cert] = []
+        for d in ch {
+          l.push(x509.parse(d).cert)
+        }
+        chains.push(l)
+      }
+      c.verified = chains
+    }
+  }
   let hash = tlsrec.suite_hash(c.suite)
   var shared = c.conf.shared
   if shared.is_empty() {
@@ -721,7 +827,7 @@ fn server_hello(var c: Client, msg: Bytes) {
     fail(c, ALERT_UNEXPECTED_MESSAGE, "tls: handshake buffer not empty before setting read traffic secret")
     return
   }
-  let sec = handshake_secrets(hash, shared, c.tr)
+  let sec = handshake_secrets(hash, shared, c.tr, if c.resumed { c.psk } else { b"" })
   c.hs_secret = sec[0]
   c.c_hs = sec[1]
   c.s_hs = sec[2]
@@ -767,6 +873,12 @@ fn retry(var c: Client, msg: Bytes, h: Hello) {
   }
   c.hrr = true
   c.cookie = h.cookie
+  // Go drops the PSK when the retry's suite has another hash
+  if let Some(ss) = c.conf.session {
+    if tlsrec.suite_hash(ss.suite) != tlsrec.suite_hash(c.suite) {
+      c.psk = b""
+    }
+  }
   let hash = tlsrec.suite_hash(c.suite)
   let ch1 = sha256.sum(hash, c.tr)
   c.tr = asn1.cat([message(HS_MESSAGE_HASH, ch1), msg])
@@ -824,6 +936,23 @@ fn encrypted_extensions(var c: Client, msg: Bytes) {
     p += 4 + n
   }
   c.tr = cat2(c.tr, msg)
+  if c.resumed {
+    // Go's readServerCertificate under a PSK: no certificate, the
+    // session's; VerifyConnection still runs
+    if let Some(vh) = c.conf.vhook {
+      var ders: List[Bytes] = []
+      for x in c.peer {
+        ders.push(x.raw)
+      }
+      let why = vh(tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsneg.suite_name(c.suite), server_name: sni_of(c.conf.host), resumed: true, peer: ders, verified: chain_ders(c.verified), curve: tlsneg.group_name(c.share_group), alpn: c.alpn, hrr: c.hrr, vers: 0x0304, suite: c.suite, group: c.share_group})
+      if !why.is_empty() {
+        fail(c, ALERT_BAD_CERTIFICATE, why)
+        return
+      }
+    }
+    c.state = WAIT_FIN
+    return
+  }
   c.state = WAIT_CERT_CR
 }
 
@@ -1079,9 +1208,9 @@ pub fn sig_err(alg: Int) -> Str {
 /// transcript through ServerHello: the handshake secret, then the
 /// client's and the server's handshake traffic secrets (no PSK: the early
 /// secret of zeros).
-pub fn handshake_secrets(hash: Int, shared: Bytes, tr: Bytes) -> List[Bytes] {
+pub fn handshake_secrets(hash: Int, shared: Bytes, tr: Bytes, psk: Bytes = b"") -> List[Bytes] {
   let l = sha256.size(hash)
-  let early = hkdf.extract(hash, b"", zeros(l))
+  let early = hkdf.extract(hash, b"", if psk.is_empty() { zeros(l) } else { psk })
   let derived = hkdf.expand_label(hash, early, "derived", sha256.sum(hash, b""), l)
   let hs = hkdf.extract(hash, derived, shared)
   let th = sha256.sum(hash, tr)
@@ -1096,7 +1225,7 @@ pub fn app_secrets(hash: Int, hs: Bytes, tr: Bytes) -> List[Bytes] {
   let derived = hkdf.expand_label(hash, hs, "derived", sha256.sum(hash, b""), l)
   let master = hkdf.extract(hash, derived, zeros(l))
   let th = sha256.sum(hash, tr)
-  [hkdf.expand_label(hash, master, "c ap traffic", th, l), hkdf.expand_label(hash, master, "s ap traffic", th, l), hkdf.expand_label(hash, master, "exp master", th, l)]
+  [hkdf.expand_label(hash, master, "c ap traffic", th, l), hkdf.expand_label(hash, master, "s ap traffic", th, l), hkdf.expand_label(hash, master, "exp master", th, l), master]
 }
 
 /// The Finished verify data of a base traffic secret over the transcript
@@ -1251,12 +1380,59 @@ fn finished(var c: Client, msg: Bytes) {
   flight = cat2(flight, fin)
   c.out = cat2(c.out, tlsrec.seal(c.wk, tlsrec.CT_HANDSHAKE, flight, 0x0303))
   c.wk = tlsrec.keys(c.suite, c_ap)
+  if c.conf.tickets {
+    c.res_master = hkdf.expand_label(hash, ap[3], "res master", sha256.sum(hash, c.tr), sha256.size(hash))
+  }
   // the handshake's secrets are no longer needed
   c.hs_secret = b""
   c.c_hs = b""
   c.s_hs = b""
   c.tr = b""
   c.state = DONE
+}
+
+/// Go's handleNewSessionTicket (decision 0644 T3): a ticket's session to
+/// on_session, when a cache is set; a lifetime of 0 is dropped.
+fn new_session_ticket(var c: Client, msg: Bytes) {
+  // lifetime, age_add, nonce, ticket, extensions
+  if msg.len() < 13 {
+    fail(c, ALERT_DECODE_ERROR, "tls: error decoding message")
+    return
+  }
+  let lifetime = u16_at(msg, 4) * 65536 + u16_at(msg, 6)
+  let age_add = u16_at(msg, 8) * 65536 + u16_at(msg, 10)
+  let nn = Int(msg[12])
+  var p = 13 + nn
+  if msg.len() < p + 2 || msg.len() < p + 2 + u16_at(msg, p) {
+    fail(c, ALERT_DECODE_ERROR, "tls: error decoding message")
+    return
+  }
+  let nonce = msg[13..13 + nn]
+  let ticket = msg[p + 2..p + 2 + u16_at(msg, p)]
+  p += 2 + ticket.len()
+  if msg.len() < p + 2 || msg.len() != p + 2 + u16_at(msg, p) {
+    fail(c, ALERT_DECODE_ERROR, "tls: error decoding message")
+    return
+  }
+  let store = c.conf.on_session ?? return
+  if !c.conf.tickets || lifetime == 0 {
+    return
+  }
+  if lifetime > tlsticket.LIFETIME {
+    fail(c, ALERT_ILLEGAL_PARAMETER, "tls: received a session ticket with invalid lifetime")
+    return
+  }
+  if ticket.is_empty() {
+    fail(c, ALERT_DECODE_ERROR, "tls: received a session ticket with empty opaque ticket label")
+    return
+  }
+  let hash = tlsrec.suite_hash(c.suite)
+  let psk = hkdf.expand_label(hash, c.res_master, "resumption", nonce, sha256.size(hash))
+  var ders: List[Bytes] = []
+  for x in c.peer {
+    ders.push(x.raw)
+  }
+  store(tlscache.Session{version: 0x0304, suite: c.suite, created: c.conf.now, use_by: c.conf.now + lifetime, secret: psk, ticket: ticket, age_add: age_add, peer: ders, verified: chain_ders(c.verified), group: c.share_group, alpn: c.alpn})
 }
 
 /// RFC 8446 4.6.3: the server's read keys move on; when it asks, the
@@ -1277,8 +1453,6 @@ fn key_update(var c: Client, msg: Bytes) {
   }
 }
 
-/// Fails the connection with a fatal alert and Go's error text (the
-/// first failure stays). Returns c for client's early exit.
 /// Go's two writeKeyLog calls in a row (decision 0644 T8): the client's
 /// secret, then the server's; the hook's text, "" when it took both or
 /// none is set.
@@ -1293,6 +1467,8 @@ pub fn log_keys(hook: (fn(Str, Bytes, Bytes) -> Str)?, cl: Str, sl: Str, cr: Byt
   ""
 }
 
+/// Fails the connection with a fatal alert and Go's error text (the
+/// first failure stays). Returns c for client's early exit.
 fn fail(var c: Client, alert: Int, msg: Str) -> Client {
   if c.state != FAILED {
     c.err = msg

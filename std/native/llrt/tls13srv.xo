@@ -148,6 +148,10 @@ pub struct Conf {
   /// the tests' hooks ticket_iv (the 16 byte IV of a ticket) and age_add
   /// (the 4 random bytes of its ticket_age_add)
   pub ticket_keys: List[tlsticket.Key]
+  /// decision 0644 T4: ticket_keys are this configuration's own (set,
+  /// or tickets disabled), so a get_config_for_client swap keeps them
+  /// (Go's ticketKeys(configForClient)); otherwise the first's stay
+  pub own_tickets: Bool = false
   pub now: Int
   pub ticket_iv: Bytes
   pub age_add: Bytes
@@ -747,7 +751,7 @@ fn client_hello(var s: Server, msg: Bytes) {
     }
     if let Some(x) = nc {
       // the connection's own: the handoff and its ticket keys
-      s.conf = x with {handoff: s.conf.handoff, ticket_keys: s.conf.ticket_keys, now: s.conf.now}
+      s.conf = x with {handoff: s.conf.handoff, ticket_keys: if x.own_tickets { x.ticket_keys } else { s.conf.ticket_keys }, now: s.conf.now}
     }
   }
   let versions = if h.versions.is_empty() { versions_from_max(h.vers) } else { h.versions }

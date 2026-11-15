@@ -1,0 +1,95 @@
+// A TLS client's resumable sessions (decision 0644 T3), as Go's
+// crypto/tls: the state a client keeps of a session (Go's SessionState
+// for a client: the version, suite, creation time, secret, the server's
+// certificates and the chains that verified them, and for TLS 1.3 the
+// ticket's lifetime and age_add) and Go's lruSessionCache
+// (NewLRUClientSessionCache, common.go), the cache std/tls's
+// lru_session_cache holds under a lock. tls13.xo and tls12.xo offer a
+// session and give the new ones to the hook their Conf names.
+
+/// A session a client can resume (Go's SessionState, client side):
+/// version 0x0304 or 0x0303; created and use_by Unix seconds (use_by:
+/// TLS 1.3's created + the ticket lifetime, 0 for TLS 1.2); secret the
+/// TLS 1.3 resumption PSK or the TLS 1.2 master secret; ems TLS 1.2's
+/// Extended Master Secret; ticket the server's ticket (TLS 1.3's PSK
+/// identity); age_add TLS 1.3's ticket_age_add; peer the server's
+/// certificates (DER, the leaf first) and verified the chains that
+/// verified them; group the key exchange group (TLS 1.2's curve).
+pub struct Session {
+  pub version: Int
+  pub suite: Int
+  pub created: Int
+  pub use_by: Int = 0
+  pub secret: Bytes
+  pub ems: Bool = false
+  pub ticket: Bytes
+  pub age_add: Int = 0
+  pub peer: List[Bytes] = []
+  pub verified: List[List[Bytes]] = []
+  pub group: Int = 0
+  pub alpn: Str = ""
+}
+
+/// Go's defaultSessionCacheCapacity.
+pub const DEFAULT_CAPACITY: Int = 64
+
+/// Go's lruSessionCache: the entries most recently used first (a key
+/// with no session is one Go's Put(key, nil) left for a key it did not
+/// hold).
+pub struct Lru {
+  pub capacity: Int
+  pub keys: List[Str] = []
+  pub vals: List[Session?] = []
+}
+
+/// Go's NewLRUClientSessionCache: capacity below 1 is the default.
+pub fn lru(capacity: Int) -> Lru { Lru{capacity: if capacity < 1 { DEFAULT_CAPACITY } else { capacity }} }
+
+fn index_of(l: Lru, key: Str) -> Int {
+  for i in 0..l.keys.len() {
+    if l.keys[i] == key {
+      return i
+    }
+  }
+  -1
+}
+
+/// Go's Put: s for key, made the most recent; None removes key's entry
+/// (and, as Go's, takes a free place for a key it does not hold); a full
+/// cache reuses its least recent entry.
+pub fn put(var l: Lru, key: Str, s: Session?) {
+  let i = index_of(l, key)
+  if i >= 0 {
+    if s.is_none() {
+      let _k = l.keys.remove_at(i)
+      let _v = l.vals.remove_at(i)
+      return
+    }
+    let _k = l.keys.remove_at(i)
+    let _v = l.vals.remove_at(i)
+    l.keys.insert(0, key)
+    l.vals.insert(0, s)
+    return
+  }
+  if l.keys.len() >= l.capacity {
+    let _k = l.keys.pop()
+    let _v = l.vals.pop()
+  }
+  l.keys.insert(0, key)
+  l.vals.insert(0, s)
+}
+
+/// Go's Get: key's session, made the most recent; None when there is no
+/// entry or it holds none.
+pub fn get(var l: Lru, key: Str) -> Session? {
+  let i = index_of(l, key)
+  if i < 0 {
+    return None
+  }
+  let s = l.vals[i]
+  let _k = l.keys.remove_at(i)
+  let _v = l.vals.remove_at(i)
+  l.keys.insert(0, key)
+  l.vals.insert(0, s)
+  s
+}

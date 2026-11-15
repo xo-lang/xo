@@ -1,0 +1,67 @@
+exit 0
+--- stdout
+ticket_key of 31 bytes: tls: a session ticket key must be 32 bytes, not 31
+== TLS 1.3
+a listener's automatic keys:
+  1: client TLS 1.3 resumed false peer 1 chains 1 read hi; server resumed false
+  2: client TLS 1.3 resumed true peer 1 chains 1 read hi; server resumed true
+  3: client TLS 1.3 resumed true peer 1 chains 1 read hi; server resumed true
+no session cache:
+  1: client TLS 1.3 resumed false peer 1 chains 1 read hi; server resumed false
+  2: client TLS 1.3 resumed false peer 1 chains 1 read hi; server resumed false
+client session_tickets_disabled:
+  1: client TLS 1.3 resumed false peer 1 chains 1 read hi; server resumed false
+  2: client TLS 1.3 resumed false peer 1 chains 1 read hi; server resumed false
+server session_tickets_disabled:
+  1: client TLS 1.3 resumed false peer 1 chains 1 read hi; server resumed false
+  2: client TLS 1.3 resumed false peer 1 chains 1 read hi; server resumed false
+session_ticket_keys [k1]:
+  1: client TLS 1.3 resumed false peer 1 chains 1 read hi; server resumed false
+another listener, keys [k2, k1]:
+  1: client TLS 1.3 resumed true peer 1 chains 1 read hi; server resumed true
+session_ticket_keys [k1] then a listener with [k2]:
+  1: client TLS 1.3 resumed false peer 1 chains 1 read hi; server resumed false
+  1: client TLS 1.3 resumed false peer 1 chains 1 read hi; server resumed false
+hooks:
+  1: client TLS 1.3 resumed false peer 1 chains 1 read hi; server resumed false
+  2: client TLS 1.3 resumed true peer 1 chains 1 read hi; server resumed true
+  hook calls: ["vpc", "vc resumed false peer 1", "vc resumed true peer 1"]
+verify_connection refuses the resumed one:
+  1: client TLS 1.3 resumed false peer 1 chains 1 read hi; server resumed false
+  2: client no resumption; server remote error: tls: bad certificate
+Verify.None, then Verify.Full:
+  1: client TLS 1.3 resumed false peer 1 chains 0 read hi; server resumed false
+  2: client TLS 1.3 resumed false peer 1 chains 1 read hi; server resumed false
+== TLS 1.2
+a listener's automatic keys:
+  1: client TLS 1.2 resumed false peer 1 chains 1 read hi; server resumed false
+  2: client TLS 1.2 resumed true peer 1 chains 1 read hi; server resumed true
+  3: client TLS 1.2 resumed true peer 1 chains 1 read hi; server resumed true
+no session cache:
+  1: client TLS 1.2 resumed false peer 1 chains 1 read hi; server resumed false
+  2: client TLS 1.2 resumed false peer 1 chains 1 read hi; server resumed false
+client session_tickets_disabled:
+  1: client TLS 1.2 resumed false peer 1 chains 1 read hi; server resumed false
+  2: client TLS 1.2 resumed false peer 1 chains 1 read hi; server resumed false
+server session_tickets_disabled:
+  1: client TLS 1.2 resumed false peer 1 chains 1 read hi; server resumed false
+  2: client TLS 1.2 resumed false peer 1 chains 1 read hi; server resumed false
+session_ticket_keys [k1]:
+  1: client TLS 1.2 resumed false peer 1 chains 1 read hi; server resumed false
+another listener, keys [k2, k1]:
+  1: client TLS 1.2 resumed true peer 1 chains 1 read hi; server resumed true
+session_ticket_keys [k1] then a listener with [k2]:
+  1: client TLS 1.2 resumed false peer 1 chains 1 read hi; server resumed false
+  1: client TLS 1.2 resumed false peer 1 chains 1 read hi; server resumed false
+hooks:
+  1: client TLS 1.2 resumed false peer 1 chains 1 read hi; server resumed false
+  2: client TLS 1.2 resumed true peer 1 chains 1 read hi; server resumed true
+  hook calls: ["vpc", "vc resumed false peer 1", "vc resumed true peer 1"]
+verify_connection refuses the resumed one:
+  1: client TLS 1.2 resumed false peer 1 chains 1 read hi; server resumed false
+  2: client no resumption; server remote error: tls: bad certificate
+Verify.None, then Verify.Full:
+  1: client TLS 1.2 resumed false peer 1 chains 0 read hi; server resumed false
+  2: client TLS 1.2 resumed false peer 1 chains 1 read hi; server resumed false
+done
+--- stderr
