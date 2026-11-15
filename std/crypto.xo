@@ -52,9 +52,16 @@ enum Hash {
   Sha512
   Sha3_256
   Sha3_512
+  Sha3_224
+  Sha3_384
+  /// SHA-512/224 (FIPS 180-4 5.3.6): SHA-512's compression from its own
+  /// initial value, cut to 28 bytes.
+  Sha512_224
+  /// SHA-512/256: the same, cut to 32 bytes.
+  Sha512_256
 }
 
-/// The digest's size in bytes: 16, 20, 28, 32, 48, 64, 32, 64.
+/// The digest's size in bytes: 16, 20, 28, 32, 48, 64, 32, 64, 28, 48, 28, 32.
 fn (h: Hash) size() -> Int
 /// The digest of data with h (Go's md5.Sum, sha1.Sum, sha256.Sum224, ...).
 fn digest(h: Hash, data: Bytes) -> Bytes
@@ -73,6 +80,36 @@ fn (var x: Hasher) write(data: Bytes)
 fn (x: Hasher) sum() -> Bytes
 /// The bytes written so far.
 fn (x: Hasher) written() -> Int
+
+/// An extendable output function (Go's sha3.SHAKE): SHAKE128 or SHAKE256
+/// (FIPS 202), or cSHAKE128 or cSHAKE256 (NIST SP 800-185). Write the
+/// input, then read as many bytes as needed, in as many reads as wanted:
+/// the reads continue one output stream. A value, so copies are
+/// independent.
+struct Shake {}
+
+/// A new SHAKE128 (Go's sha3.NewSHAKE128).
+fn shake128() -> Shake
+/// A new SHAKE256.
+fn shake256() -> Shake
+/// A new cSHAKE128 with function name n and customization s (Go's
+/// sha3.NewCSHAKE128); plain SHAKE128 when both are empty.
+fn cshake128(n: Bytes, s: Bytes) -> Shake
+/// A new cSHAKE256; plain SHAKE256 when n and s are empty.
+fn cshake256(n: Bytes, s: Bytes) -> Shake
+/// Absorbs data. A fault ("sha3: Write after Read") once output was read,
+/// as Go panics.
+fn (var x: Shake) write(data: Bytes)
+/// The next n bytes of output.
+fn (var x: Shake) read(n: Int) -> Bytes
+/// Back to the state before any write (cSHAKE keeps its n and s).
+fn (var x: Shake) reset()
+/// The rate in bytes: 168 for the 128 bit functions, 136 for the 256 bit.
+fn (x: Shake) block_size() -> Int
+/// The first n bytes of SHAKE128 of data (Go's sha3.SumSHAKE128).
+fn sum_shake128(data: Bytes, n: Int) -> Bytes
+/// The first n bytes of SHAKE256 of data.
+fn sum_shake256(data: Bytes, n: Int) -> Bytes
 
 // ---- authenticated encryption and key derivation (0.35, Go's cipher.AEAD and crypto/hkdf) ----
 

@@ -19,7 +19,8 @@ import (
 // hash's state and the outer padded key, as crypto/hmac computes it.
 
 var cryptoHashes = [...]func() hash.Hash{nil, md5.New, sha1.New, sha256.New224, sha256.New, sha512.New384, sha512.New,
-	func() hash.Hash { return sha3.New256() }, func() hash.Hash { return sha3.New512() }}
+	func() hash.Hash { return sha3.New256() }, func() hash.Hash { return sha3.New512() },
+	func() hash.Hash { return sha3.New224() }, func() hash.Hash { return sha3.New384() }, sha512.New512_224, sha512.New512_256}
 
 func (h Crypto_Hash) M_size(*Task) int64 { return int64(cryptoHashes[h.Tag]().Size()) }
 
@@ -105,3 +106,54 @@ func (x Crypto_Hasher) M_sum(*Task) Bytes {
 }
 
 func (x Crypto_Hasher) M_written(*Task) int64 { return x.total }
+
+// Crypto_Shake is `crypto.Shake`: a Go value copy of sha3.SHAKE copies its
+// whole state (the cSHAKE init block is shared, and never written).
+type Crypto_Shake struct{ s sha3.SHAKE }
+
+func (Crypto_Shake) XoDebug(b *strings.Builder) { b.WriteString("<shake>") }
+func (x Crypto_Shake) M_debug(*Task) string     { return Debug(x) }
+
+func Crypto_shake128(*Task) Crypto_Shake { return Crypto_Shake{*sha3.NewSHAKE128()} }
+func Crypto_shake256(*Task) Crypto_Shake { return Crypto_Shake{*sha3.NewSHAKE256()} }
+func Crypto_cshake128(_ *Task, n, s Bytes) Crypto_Shake {
+	return Crypto_Shake{*sha3.NewCSHAKE128([]byte(n), []byte(s))}
+}
+func Crypto_cshake256(_ *Task, n, s Bytes) Crypto_Shake {
+	return Crypto_Shake{*sha3.NewCSHAKE256([]byte(n), []byte(s))}
+}
+
+func (x *Crypto_Shake) M_write(_ *Task, data Bytes) {
+	defer func() {
+		if r := recover(); r != nil {
+			FaultHere("%v", r)
+		}
+	}()
+	x.s.Write([]byte(data))
+}
+
+func (x *Crypto_Shake) M_read(_ *Task, n int64) Bytes {
+	if n < 0 {
+		FaultHere("sha3: a read of %d bytes", n)
+	}
+	out := make([]byte, n)
+	x.s.Read(out)
+	return Bytes(out)
+}
+
+func (x *Crypto_Shake) M_reset(*Task)          { x.s.Reset() }
+func (x Crypto_Shake) M_block_size(*Task) int64 { return int64(x.s.BlockSize()) }
+
+func Crypto_sum_shake128(_ *Task, data Bytes, n int64) Bytes {
+	if n < 0 {
+		FaultHere("sha3: a read of %d bytes", n)
+	}
+	return Bytes(sha3.SumSHAKE128([]byte(data), int(n)))
+}
+
+func Crypto_sum_shake256(_ *Task, data Bytes, n int64) Bytes {
+	if n < 0 {
+		FaultHere("sha3: a read of %d bytes", n)
+	}
+	return Bytes(sha3.SumSHAKE256([]byte(data), int(n)))
+}

@@ -15,6 +15,8 @@ pub const HASH_SHA256 = 0
 pub const HASH_SHA384 = 1
 pub const HASH_SHA512 = 2
 pub const HASH_SHA224 = 3
+pub const HASH_SHA512_224 = 4
+pub const HASH_SHA512_256 = 5
 
 /// SHA-224 and SHA-256 share the 32 bit compression and 64 byte blocks.
 fn is256(hash: Int) -> Bool { hash == HASH_SHA256 || hash == HASH_SHA224 }
@@ -29,12 +31,13 @@ pub struct Hasher {
 }
 
 /// The digest's size in bytes.
-pub fn size(hash: Int) -> Int { if hash == HASH_SHA256 { 32 } else if hash == HASH_SHA224 { 28 } else if hash == HASH_SHA384 { 48 } else { 64 } }
+pub fn size(hash: Int) -> Int { if hash == HASH_SHA256 || hash == HASH_SHA512_256 { 32 } else if hash == HASH_SHA224 || hash == HASH_SHA512_224 { 28 } else if hash == HASH_SHA384 { 48 } else { 64 } }
 
 /// The block size in bytes (HMAC's padded key).
 pub fn block_size(hash: Int) -> Int { if is256(hash) { 64 } else { 128 } }
 
-/// A new hash of hash (HASH_SHA224, HASH_SHA256, HASH_SHA384, or HASH_SHA512).
+/// A new hash of hash (HASH_SHA224, HASH_SHA256, HASH_SHA384, HASH_SHA512,
+/// HASH_SHA512_224, or HASH_SHA512_256).
 pub fn new(hash: Int) -> Hasher {
   let st = if hash == HASH_SHA256 {
     // FIPS 180-4 5.3.3
@@ -45,6 +48,12 @@ pub fn new(hash: Int) -> Hasher {
   } else if hash == HASH_SHA512 {
     // FIPS 180-4 5.3.5
     [7640891576956012808, -4942790177534073029, 4354685564936845355, -6534734903238641935, 5840696475078001361, -7276294671716946913, 2270897969802886507, 6620516959819538809]
+  } else if hash == HASH_SHA512_224 {
+    // FIPS 180-4 5.3.6.1
+    [-8341449602262348382, 8350123849800275158, 2160240930085379202, 7466358040605728719, 1111592415079452072, 8638871050018654530, 4583966954114332360, 1230299281376055969]
+  } else if hash == HASH_SHA512_256 {
+    // FIPS 180-4 5.3.6.2
+    [2463787394917988140, -6965556091613846334, 2563595384472711505, -7622211418569250115, -7626776825740460061, -4729309413028513390, 3098927326965381290, 1060366662362279074]
   } else {
     // FIPS 180-4 5.3.4
     [-3766243637369397544, 7105036623409894663, -7973340178411365097, 1526699215303891257, 7436329637833083697, -8163818279084223215, -2662702644619276377, 5167115440072839076]
@@ -274,6 +283,11 @@ pub fn (h: Hasher) sum() -> Bytes {
     // SHA-224 keeps the first 7 of the 8 words
     let last = if h.hash == HASH_SHA256 { 0x8888 } else { 0x4888 }
     return rt.rs_push_words(out, be_pair(st[0], st[1]), be_pair(st[2], st[3]), be_pair(st[4], st[5]), be_pair(st[6], st[7]), last).bytes()
+  }
+  if h.hash == HASH_SHA512_224 || h.hash == HASH_SHA512_256 {
+    // SHA-512/224 keeps 3 words and a half, SHA-512/256 4 words
+    let last = if h.hash == HASH_SHA512_256 { 0x8888 } else { 0x4888 }
+    return rt.rs_push_words(out, st[0].swap_bytes(), st[1].swap_bytes(), st[2].swap_bytes(), st[3].swap_bytes(), last).bytes()
   }
   let o = rt.rs_push_words(out, st[0].swap_bytes(), st[1].swap_bytes(), st[2].swap_bytes(), st[3].swap_bytes(), 0x8888)
   // SHA-384 keeps the first 6 of the 8 words

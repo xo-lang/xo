@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-15: feature: SHAKE, cSHAKE, SHA3-224, SHA3-384, SHA-512/224 and SHA-512/256
+
+- Kind: feature
+- Commit: this push
+- Found by: Lang 3's crypto and TLS gap audit (C1, C2), for HPKE's SHAKE KDFs (C13)
+- Go reference: crypto/sha3 (SHAKE, NewCSHAKE128/256, SumSHAKE128/256, New224, New384) and crypto/sha512 (New512_224, New512_256), go1.26.11
+- Test: corpus shake (Go's outputs for SHAKE and cSHAKE over customizations that cross the rate, written and read in pieces; TestSqueezing, TestReset, TestCSHAKEAccumulated, TestCSHAKELargeS with Go's expected outputs) and corpus crypto (the four hashes over Go's golden tables and the rate boundaries), native, go and llvm
+- Shipped in: not yet released
+
+`Shake` is an extendable output function: SHAKE128 or SHAKE256, or cSHAKE128 or cSHAKE256 with a function name and customization string (plain SHAKE when both are empty, as Go). Reads continue one output stream; a write after a read faults with Go's panic text. `Hash` gains Sha3_224, Sha3_384, Sha512_224 and Sha512_256, appended after Sha3_512, with their PKCS #1 v1.5 DigestInfo prefixes.
+
 ## 2026-11-15: fix: an EC private key's BIT STRING padding as Go's
 
 - Kind: fix

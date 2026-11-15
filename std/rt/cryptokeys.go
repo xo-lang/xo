@@ -198,7 +198,7 @@ func Crypto_parse_private_key(_ *Task, der Bytes) Result[Crypto_PrivateKey, Cryp
 }
 
 // The crypto.Hash of a std/crypto Hash (tags 1 to 8).
-var cryptoGoHashes = [...]crypto.Hash{0, crypto.MD5, crypto.SHA1, crypto.SHA224, crypto.SHA256, crypto.SHA384, crypto.SHA512, crypto.SHA3_256, crypto.SHA3_512}
+var cryptoGoHashes = [...]crypto.Hash{0, crypto.MD5, crypto.SHA1, crypto.SHA224, crypto.SHA256, crypto.SHA384, crypto.SHA512, crypto.SHA3_256, crypto.SHA3_512, crypto.SHA3_224, crypto.SHA3_384, crypto.SHA512_224, crypto.SHA512_256}
 
 func keySum(h Crypto_Hash, msg Bytes) []byte {
 	x := cryptoHashes[h.Tag]()

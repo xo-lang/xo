@@ -114,6 +114,10 @@ fn hash_size(h: crypto.Hash) -> Int {
     Sha512 => 64
     Sha3_256 => 32
     Sha3_512 => 64
+    Sha3_224 => 28
+    Sha3_384 => 48
+    Sha512_224 => 28
+    Sha512_256 => 32
   }
 }
 
@@ -124,6 +128,10 @@ fn block_of(h: crypto.Hash) -> Int {
     Sha512 => 128
     Sha3_256 => 136
     Sha3_512 => 72
+    Sha3_224 => 144
+    Sha3_384 => 104
+    Sha512_224 => 128
+    Sha512_256 => 128
     _ => 64
   }
 }
@@ -153,6 +161,10 @@ fn fresh(h: crypto.Hash) -> State {
     Sha512 => State.S2(h: sha256.new(sha256.HASH_SHA512))
     Sha3_256 => State.S3(s: sha3.new_sha3_256())
     Sha3_512 => State.S3(s: sha3.new_sha3_512())
+    Sha3_224 => State.S3(s: sha3.new_sha3_224())
+    Sha3_384 => State.S3(s: sha3.new_sha3_384())
+    Sha512_224 => State.S2(h: sha256.new(sha256.HASH_SHA512_224))
+    Sha512_256 => State.S2(h: sha256.new(sha256.HASH_SHA512_256))
   }
 }
 
@@ -243,6 +255,38 @@ fn (x: Hasher) sum() -> Bytes {
 }
 
 fn (x: Hasher) written() -> Int { x.total }
+
+/// SHAKE and cSHAKE: the sponge, and the sponge as made (after cSHAKE's
+/// init block) for reset.
+struct Shake {
+  s: sha3.Sponge
+  start: sha3.Sponge
+}
+
+fn shake_of(sp: sha3.Sponge) -> Shake { Shake{s: sp, start: sp} }
+fn shake128() -> Shake { shake_of(sha3.new_shake128()) }
+fn shake256() -> Shake { shake_of(sha3.new_shake256()) }
+fn cshake128(n: Bytes, s: Bytes) -> Shake { shake_of(sha3.new_cshake(168, n, s)) }
+fn cshake256(n: Bytes, s: Bytes) -> Shake { shake_of(sha3.new_cshake(136, n, s)) }
+
+fn (var x: Shake) write(data: Bytes) {
+  if sha3.squeezing(x.s) {
+    fault("sha3: Write after Read")
+  }
+  sha3.write(x.s, data)
+}
+
+fn (var x: Shake) read(n: Int) -> Bytes {
+  if n < 0 {
+    fault("sha3: a read of ${n} bytes")
+  }
+  sha3.read(x.s, n)
+}
+
+fn (var x: Shake) reset() { x.s = x.start }
+fn (x: Shake) block_size() -> Int { sha3.rate(x.s) }
+fn sum_shake128(data: Bytes, n: Int) -> Bytes { sha3.shake128(data, n) }
+fn sum_shake256(data: Bytes, n: Int) -> Bytes { sha3.shake256(data, n) }
 
 fn hmac(h: crypto.Hash, key: Bytes, msg: Bytes) -> Bytes {
   if h == crypto.Hash.Sha256 {
@@ -1473,6 +1517,10 @@ fn digest_info(h: crypto.Hash) -> Bytes {
     Sha512 => "3051300d060960864801650304020305000440"
     Sha3_256 => "3031300d060960864801650304020805000420"
     Sha3_512 => "3051300d060960864801650304020a05000440"
+    Sha3_224 => "302d300d06096086480165030402070500041c"
+    Sha3_384 => "3041300d060960864801650304020905000430"
+    Sha512_224 => "302d300d06096086480165030402050500041c"
+    Sha512_256 => "3031300d060960864801650304020605000420"
   }
   Bytes.from_hex(hex) ?? b""
 }

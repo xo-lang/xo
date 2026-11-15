@@ -3884,8 +3884,8 @@ pub fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool
 **Hashes and HMAC** (decision 0279, 2026-10-20; every backend):
 
 ```
-enum Hash { Md5, Sha1, Sha224, Sha256, Sha384, Sha512, Sha3_256, Sha3_512 }
-fn (h: Hash) size() -> Int                     // digest bytes: 16, 20, 28, 32, 48, 64, 32, 64
+enum Hash { Md5, Sha1, Sha224, Sha256, Sha384, Sha512, Sha3_256, Sha3_512, Sha3_224, Sha3_384, Sha512_224, Sha512_256 }
+fn (h: Hash) size() -> Int                     // digest bytes: 16, 20, 28, 32, 48, 64, 32, 64, 28, 48, 28, 32
 pub fn digest(h: Hash, data: Bytes) -> Bytes
 pub fn hmac(h: Hash, key: Bytes, msg: Bytes) -> Bytes
 
@@ -3895,6 +3895,18 @@ pub fn hmac_hasher(h: Hash, key: Bytes) -> Hasher
 fn ([var] x: Hasher) write(data: Bytes)
 fn (x: Hasher) sum() -> Bytes                  // the digest so far; writing may continue
 fn (x: Hasher) written() -> Int
+
+struct Shake {}                                // SHAKE and cSHAKE (Go's sha3.SHAKE); a value, copies independent
+pub fn shake128() -> Shake
+pub fn shake256() -> Shake
+pub fn cshake128(n: Bytes, s: Bytes) -> Shake  // NIST SP 800-185; plain SHAKE when n and s are empty
+pub fn cshake256(n: Bytes, s: Bytes) -> Shake
+fn (var x: Shake) write(data: Bytes)           // faults "sha3: Write after Read" once output was read
+fn (var x: Shake) read(n: Int) -> Bytes        // the next n bytes of one output stream
+fn (var x: Shake) reset()                      // cSHAKE keeps its n and s
+fn (x: Shake) block_size() -> Int              // the rate: 168 or 136
+pub fn sum_shake128(data: Bytes, n: Int) -> Bytes
+pub fn sum_shake256(data: Bytes, n: Int) -> Bytes
 ```
 
 - The results are Go's (`md5.Sum`, `sha1.Sum`, `sha256.Sum224`, ...,

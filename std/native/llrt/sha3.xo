@@ -1090,10 +1090,58 @@ fn sponge(rate: Int, dsbyte: Int) -> Sponge {
 
 /// A SHA3-256 sponge (rate 136), SHA3-512 (72), SHAKE128 (168),
 /// SHAKE256 (136).
+pub fn new_sha3_224() -> Sponge { sponge(144, 0x06) }
 pub fn new_sha3_256() -> Sponge { sponge(136, 0x06) }
+pub fn new_sha3_384() -> Sponge { sponge(104, 0x06) }
 pub fn new_sha3_512() -> Sponge { sponge(72, 0x06) }
 pub fn new_shake128() -> Sponge { sponge(168, 0x1f) }
 pub fn new_shake256() -> Sponge { sponge(136, 0x1f) }
+
+/// cSHAKE (NIST SP 800-185 3.3) of rate 168 (cSHAKE128) or 136
+/// (cSHAKE256), function name n and customization s: plain SHAKE when
+/// both are empty, else domain separator 0x04 and
+/// bytepad(encode_string(n) || encode_string(s), rate) absorbed (Go's
+/// newCShake).
+pub fn new_cshake(rate: Int, n: Bytes, s: Bytes) -> Sponge {
+  if n.is_empty() && s.is_empty() {
+    return sponge(rate, 0x1f)
+  }
+  var sp = sponge(rate, 0x04)
+  var b = BytesBuilder.with_capacity(rate + 20 + n.len() + s.len())
+  b.write(left_encode(rate))
+  b.write(left_encode(n.len() * 8))
+  b.write(n)
+  b.write(left_encode(s.len() * 8))
+  b.write(s)
+  while b.len() % rate != 0 {
+    b.write_byte(0)
+  }
+  write(sp, b.freeze())
+  sp
+}
+
+/// SP 800-185's left_encode of x: its byte count (at least 1), then its
+/// bytes big endian.
+fn left_encode(x: Int) -> Bytes {
+  var n = 1
+  while n < 8 && x.shr_logical(8 * n) != 0 {
+    n += 1
+  }
+  var b = BytesBuilder.with_capacity(n + 1)
+  b.write_byte(UInt8(n))
+  var i = n - 1
+  while i >= 0 {
+    b.write_byte(UInt8(x.shr_logical(8 * i) & 255))
+    i -= 1
+  }
+  b.freeze()
+}
+
+/// The sponge's rate in bytes (its block size).
+pub fn rate(s: Sponge) -> Int { s.rate }
+
+/// Whether output was read (a write then is the caller's error).
+pub fn squeezing(s: Sponge) -> Bool { s.squeezing }
 
 /// Keccak-f[1600] on the 25 lanes: arm64's SHA3 extension where the CPU
 /// has it (cpu.keccak_f1600, Go's keccakF1600NEON; every Apple arm64
@@ -1199,7 +1247,7 @@ pub fn next_block(var s: Sponge) -> List[Int] {
   s.lanes
 }
 
-/// The digest of a SHA-3 sponge (its output length: 32 or 64 bytes).
+/// The digest of a SHA-3 sponge (its output length: 28, 32, 48 or 64 bytes).
 pub fn sum(var s: Sponge) -> Bytes { read(s, (200 - s.rate) / 2) }
 
 pub fn sha3_256(data: Bytes) -> Bytes {
