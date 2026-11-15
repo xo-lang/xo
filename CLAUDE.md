@@ -36,7 +36,12 @@ differs from this file, this file is current.
 ## Each task, start to finish
 
 1. Start: read this file, your resume note (the path the lead gave you),
-   and agent-tools.md; `~/xo-lead/agents/board.sh show` for your NEXT item.
+   and agent-tools.md; `XW_AS=NAME ~/xo-lead/xw/bin/xw queue NAME` for
+   your queue (NAME: xo-lang-1, xo-lang-2, xo-lang-3, azure-1, xw-1; ADR
+   0658). Ack each assigned task and each decision sent to you in the
+   same tool round (`xw task ack ID`, `xw ack ID`; `xw decisions --open
+   --agent NAME`). Your top task is the next item; a task marked
+   OFF-CHARTER needs the lead's OK first.
    Check `knowledgebase/decisions/` and
    [xo-at-a-glance.md](knowledgebase/infrastructure/xo-at-a-glance.md)
    before proposing or reporting a feature as missing.
@@ -70,7 +75,9 @@ differs from this file, this file is current.
    HEAD origin/main)"`), never onto a moved origin/main. No attribution
    lines in commits.
 7. Update the knowledgebase in the same change (below), then report and
-   hand over (token budget, below).
+   hand over (token budget, below). Mark the task as it moves: `xw task
+   start|gate|done ID`, `xw task push ID SHA`, `xw task block ID REASON`
+   (a block also goes to the lead).
 
 Never wait idle: while a gate, push, or long run goes, work the next item
 in another worktree. Only an empty queue stops you; then ask the lead.
@@ -80,7 +87,8 @@ in another worktree. Only an empty queue stops you; then ask the lead.
 - Reports to the lead are at most 5 lines (result, block, or decision),
   with details in a file under `~/xo-lead/notes/AGENT/` named in the
   report. Message the lead only for results, blocks, decisions, and
-  approvals; status goes on `board.sh`.
+  approvals; status is your tasks' states in xw (heavy.sh, pushq and
+  offload-gate record jobs, gates and pushes themselves).
 - No polling (owner, 2026-11-15: polls were about 30% of agent calls,
   each re-reading the whole context): wait with `heavy.sh --wait NAME`,
   `pushq.sh --wait WT` or `offload-gate.sh --wait WT` under
@@ -203,6 +211,8 @@ reasons are in test-policy.md):
 - `bench/`: benchmark tasks and results that decide the `Proposed`
   decisions. `bench/paper/` holds solutions written blind from the spec;
   do not edit them.
+- xw (ADR 0658): `~/xo-lead/xw/bin/xw status|queue|priority|check`,
+  agent-tools.md "Status and work queue".
 - Profiling native programs: `XO_PROF=cpu` / `xo run --profile=cpu`
   (decision 0238, toolchain.md Profiling).
 

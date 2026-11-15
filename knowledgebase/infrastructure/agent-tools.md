@@ -1286,6 +1286,7 @@ short result, exits with the job's status, and exits 124 at its ceiling.
 | `~/xo-lead/agents/pushq.sh --wait WORKTREE [--max-min N]` | the running push of WORKTREE ends (`$LEAD/pushq-run/BASENAME.run`); at once when none runs | `rc=N`, then that push's last 5 log lines (the pushed SHA, or the refusal) | `PUSHQ_WAIT_MAX_MIN`, 90 |
 | `~/xo-lead/agents/offload-gate.sh --wait WORKTREE [--max-min N]` | the running offload gate of WORKTREE ends (its git directory's `offload-gate-run`, kept across reroutes); at once when none runs | `rc=N host=... HEAD=...`, the `pass PUSHQ_RAN=...` line or NOT PASSED with its log, and up to 20 failing test or step lines; a note when the verdict is for another HEAD | `OFFGATE_WAIT_MAX_MIN`, 240 |
 | `~/xo-lead/agents/board.sh` | (unchanged: no wait) | | |
+| `~/xo-lead/xw/bin/xw` | (no wait: answers in under 0.1 s) | | |
 
 Exit 2 is a usage error or nothing recorded. A job started in the same
 command needs no wait: run `offload-gate.sh WT STEPS` or `pushq.sh WT
@@ -1441,8 +1442,26 @@ Last verified: 2026-11-15
   failed s1 on the hosts); gate.sh prints its time and the seed's
   version. It runs only on an offload host: `offload-gate.sh WORKTREE
   seedbuild`. Last verified: 2026-11-08.
-- Status: `~/xo-lead/agents/board.sh set|claim|show`, instead of status
-  messages.
+- Status and work queue: xw (ADR 0658; server org.xolang.xw on
+  127.0.0.1:7480, private repo xo-lang/workstream). Run as yourself:
+  `XW_AS=NAME ~/xo-lead/xw/bin/xw ...` (your token is XW_TOKEN_NAME in
+  ~/xo-lead/xw.env; never print it).
+  - `xw queue NAME`: your ordered tasks, each with the goal it serves;
+    OFF-CHARTER marks a task outside your charter the lead has not
+    allowed: ask the lead before working it.
+  - `xw task ack|start|gate|done ID`, `xw task push ID SHA`, `xw task
+    block ID REASON`; `xw task add NAME TITLE --goal RANK` adds to your
+    own queue (another agent's: the lead).
+  - `xw ack ID` for each decision sent to you (`xw decisions --open
+    --agent NAME`), in the tool round you read it.
+  - `xw priority` (the owner's ranked goals), `xw charter NAME`, `xw
+    status [NAME]`, `xw jobs --since 2h` (wait vs run per job), `xw
+    check` (off-charter tasks, idle agents with queued work, DONE
+    without a restart, unacknowledged tasks and decisions).
+  - Fire and forget: a down xw never fails heavy.sh, pushq or
+    offload-gate (events spool under ~/xo-lead/xw/spool).
+  - board.sh stays for claims and a one-line NOW until it becomes a
+    wrapper over xw. Last verified: 2026-11-15.
 - Numbers: `~/xo-lead/agents/adr-claim.sh SLUG WHO` for a decision
   number, `~/xo-lead/agents/code-claim.sh PREFIX WHO [WHAT]` for a
   diagnostic code (PREFIX is the family, `XO09` or `XO13`): each takes a
