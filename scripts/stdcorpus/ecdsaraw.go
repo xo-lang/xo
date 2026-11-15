@@ -5,7 +5,6 @@ import (
 	"compress/bzip2"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -206,7 +205,7 @@ func ecdsaRawCorpus() string {
 			if n != 64 {
 				rr.Read(dg)
 			}
-			sig := hpkeMust(ecdsa.SignASN1(rand.Reader, k, dg))
+			sig := hpkeMust(ecdsa.SignASN1(ctRand(), k, dg))
 			if !ecdsa.VerifyASN1(&k.PublicKey, dg, sig) {
 				panic("ecdsa: Go refuses its own signature")
 			}

@@ -3,7 +3,6 @@ package main
 import (
 	"crypto"
 	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -14,6 +13,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"math/big"
 	mrand "math/rand"
 	"net"
@@ -569,7 +569,7 @@ func x509CreateCorpus() string {
 	rootT := &x509.Certificate{SerialNumber: big.NewInt(7), Subject: pkix.Name{CommonName: "Xo Test Root", Organization: []string{"Xo"}},
 		NotBefore: time.Unix(1704067200, 0), NotAfter: time.Unix(1893456000, 0), IsCA: true, BasicConstraintsValid: true,
 		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign, MaxPathLen: -1}
-	rootDER := ctMust(x509.CreateCertificate(rand.Reader, rootT, rootT, keys["ed"].Public(), keys["ed"]))
+	rootDER := ctMust(x509.CreateCertificate(ctRand(), rootT, rootT, keys["ed"].Public(), keys["ed"]))
 	root, _ := x509.ParseCertificate(rootDER)
 	fmt.Fprintf(&o, "const ROOT: Bytes = %s\n", xbytes(rootDER))
 
@@ -580,7 +580,7 @@ func x509CreateCorpus() string {
 		if r.parent {
 			parent, signer = root, keys["ed"]
 		}
-		der := ctMust(x509.CreateCertificate(rand.Reader, t, parent, keys[r.key].Public(), signer))
+		der := ctMust(x509.CreateCertificate(ctRand(), t, parent, keys[r.key].Public(), signer))
 		fmt.Fprintf(&o, "    (%s, %s, %s, %v, %s),\n", xq(r.name), ctXo(r), xq(r.key), r.parent, xbytes(der))
 	}
 	o.WriteString("  ]\n}\n")
@@ -589,7 +589,7 @@ func x509CreateCorpus() string {
 	// name constraints)
 	o.WriteString("\n/// (name, key, template, Go's error)\nfn template_errors() -> List[(Str, x509.Template, Str, Str)] {\n  [\n")
 	for _, r := range ctErrRows() {
-		_, err := x509.CreateCertificate(rand.Reader, ctTemplate(r), ctTemplate(r), keys[r.key].Public(), keys[r.key])
+		_, err := x509.CreateCertificate(ctRand(), ctTemplate(r), ctTemplate(r), keys[r.key].Public(), keys[r.key])
 		if err == nil {
 			panic("no error: " + r.name)
 		}
@@ -610,7 +610,7 @@ func x509CreateCorpus() string {
 		}
 		t := ctTemplate(r)
 		q := &x509.CertificateRequest{Subject: t.Subject, DNSNames: t.DNSNames, EmailAddresses: t.EmailAddresses, IPAddresses: t.IPAddresses, URIs: t.URIs, ExtraExtensions: t.ExtraExtensions}
-		der := ctMust(x509.CreateCertificateRequest(rand.Reader, q, keys[r.key]))
+		der := ctMust(x509.CreateCertificateRequest(ctRand(), q, keys[r.key]))
 		csrDERs = append(csrDERs, der)
 		fmt.Fprintf(&o, "    (%s, %s, x509.RequestTemplate{subject: %s, dns_names: %s, ip_addresses: %s, email_addresses: %s, uris: %s, extra_extensions: %s}, %s),\n",
 			xq(r.name), xq(r.key), ctName(r.subj), ctStrs(r.dns), ctIPs(r.ips), ctStrs(r.emails), ctStrs(r.uris), ctExts(r.extra), xbytes(der))
@@ -669,7 +669,7 @@ func x509CreateCorpus() string {
 		{Number: new(big.Int).SetBytes([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9}), ThisUpdate: time.Unix(-1000000000, 0), NextUpdate: time.Unix(2600000000, 0),
 			ExtraExtensions: []pkix.Extension{{Id: ctOID("1.2.3.4"), Value: []byte{5, 0}}}},
 	} {
-		der := ctMust(x509.CreateRevocationList(rand.Reader, tmpl, root, keys["ed"]))
+		der := ctMust(x509.CreateRevocationList(ctRand(), tmpl, root, keys["ed"]))
 		fmt.Fprintf(&o, "  (%s, %s),\n", xbytes(der), xq(ctCRLWant(der)))
 		if i == 1 {
 			for _, n := range []int{0, 3, len(der) / 2, len(der) - 1} {
@@ -1125,7 +1125,7 @@ func ctCRLCheck(l *x509.RevocationList, ok string) string {
 	rootT := &x509.Certificate{SerialNumber: big.NewInt(7), Subject: pkix.Name{CommonName: "Xo Test Root", Organization: []string{"Xo"}},
 		NotBefore: time.Unix(1704067200, 0), NotAfter: time.Unix(1893456000, 0), IsCA: true, BasicConstraintsValid: true,
 		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign, MaxPathLen: -1}
-	der := ctMust(x509.CreateCertificate(rand.Reader, rootT, rootT, keys["ed"].Public(), keys["ed"]))
+	der := ctMust(x509.CreateCertificate(ctRand(), rootT, rootT, keys["ed"].Public(), keys["ed"]))
 	root, _ := x509.ParseCertificate(der)
 	if err := l.CheckSignatureFrom(root); err != nil {
 		return err.Error()
@@ -1176,7 +1176,7 @@ func ctCRLCreate(o *strings.Builder, keys map[string]crypto.Signer, rootDER []by
 	ca := func(k string, ku x509.KeyUsage, isCA bool) []byte {
 		t := &x509.Certificate{SerialNumber: big.NewInt(11), Subject: pkix.Name{CommonName: "Xo CRL issuer " + k, Organization: []string{"Xo"}},
 			NotBefore: time.Unix(1704067200, 0), NotAfter: time.Unix(1893456000, 0), IsCA: isCA, BasicConstraintsValid: true, KeyUsage: ku}
-		return ctMust(x509.CreateCertificate(rand.Reader, t, t, keys[k].Public(), keys[k]))
+		return ctMust(x509.CreateCertificate(ctRand(), t, t, keys[k].Public(), keys[k]))
 	}
 	issuers := map[string][]byte{
 		"root": rootDER, "utf8ca": utf8CA,
@@ -1266,7 +1266,7 @@ func ctCRLCreate(o *strings.Builder, keys map[string]crypto.Signer, rootDER []by
 		if err != nil {
 			panic(err)
 		}
-		der, err := x509.CreateRevocationList(rand.Reader, r.t, iss, keys[r.key])
+		der, err := x509.CreateRevocationList(ctRand(), r.t, iss, keys[r.key])
 		msg := ""
 		if err != nil {
 			msg = err.Error()
@@ -1295,7 +1295,7 @@ func ctVerifyKinds(o *strings.Builder, k crypto.Signer) {
 		if parent == nil {
 			parent = t
 		}
-		der := ctMust(x509.CreateCertificate(rand.Reader, t, parent, k.Public(), k))
+		der := ctMust(x509.CreateCertificate(ctRand(), t, parent, k.Public(), k))
 		c, err := x509.ParseCertificate(der)
 		if err != nil {
 			panic(err)
@@ -1451,7 +1451,7 @@ func ctPools(o *strings.Builder, keys map[string]crypto.Signer) {
 		if parent == nil {
 			parent = t
 		}
-		c, err := x509.ParseCertificate(ctMust(x509.CreateCertificate(rand.Reader, t, parent, k.Public(), signer)))
+		c, err := x509.ParseCertificate(ctMust(x509.CreateCertificate(ctRand(), t, parent, k.Public(), signer)))
 		if err != nil {
 			panic(err)
 		}
@@ -1673,4 +1673,18 @@ test "add_cert_with_constraint is Go's AddCertWithConstraint in verify: the chai
   expect(shown(bad)) == []
 }
 `)
+}
+
+// ctRand is a reader of zero bytes for Go's signing: with main.go's
+// cryptocustomrand=1 (Go 1.26 ignores a custom reader without it), ECDSA's
+// hedged nonce and PSS's salt come out the same on every run, so a
+// regenerate gives identical bytes (stdcorpus -check). A constant stream,
+// because Go's randutil.MaybeReadByte skips a byte at random first.
+func ctRand() io.Reader { return ctZeros{} }
+
+type ctZeros struct{}
+
+func (ctZeros) Read(b []byte) (int, error) {
+	clear(b)
+	return len(b), nil
 }

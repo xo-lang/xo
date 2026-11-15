@@ -1,3 +1,5 @@
+//go:debug cryptocustomrand=1
+
 // Command stdcorpus generates the std test corpora of
 // internal/stdtest/testdata/corpus: Go's results on its own test inputs
 // and on seeded random ones, as Xo tests of a std module's public API,
@@ -141,9 +143,14 @@ var generators = map[string]func() string{
 	"publicsuffix": publicsuffixCorpus,
 }
 
+// checkOnly is -check: generators write no files of their own (hpke's
+// pinned outputs).
+var checkOnly bool
+
 func main() {
 	check := flag.Bool("check", false, "exit 1 when a corpus differs from its generator's output")
 	flag.Parse()
+	checkOnly = *check
 	// net/mail and time read the local zone: every corpus is made in UTC
 	time.Local = time.UTC
 	mods := flag.Args()

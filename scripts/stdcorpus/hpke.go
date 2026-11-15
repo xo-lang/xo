@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdh"
 	"crypto/hpke"
 	"crypto/mlkem"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 )
 
@@ -133,6 +135,8 @@ func hpkeCorpus() string {
 	}
 
 	// DeriveKeyPair of seeded inputs, and messages Go sealed to that key.
+	pins := loadHpkePins()
+	defer pins.save()
 	r := mrand.New(mrand.NewSource(646))
 	o.WriteString("\n/// (kem, ikm, Go's private key bytes, public key bytes)\nconst DERIVED: List[(Int, Bytes, Bytes, Bytes)] = [\n")
 	for _, id := range hpkeKEMs {
@@ -162,7 +166,12 @@ func hpkeCorpus() string {
 				info := []byte(fmt.Sprintf("info %d", j))
 				pt := make([]byte, r.Intn(80))
 				r.Read(pt)
-				c := hpkeMust(hpke.Seal(k.PublicKey(), kdf, aead, info, pt))
+				c := pins.get(fmt.Sprintf("seal %d %d %d %d %x", id, kdfID, aeadID, j, pt), func() []byte {
+					return hpkeMust(hpke.Seal(k.PublicKey(), kdf, aead, info, pt))
+				}, func(c []byte) bool {
+					p, err := hpke.Open(k, kdf, aead, info, c)
+					return err == nil && bytes.Equal(p, pt)
+				})
 				// the message as sealed, one with a flipped byte (an AEAD
 				// error), and one cut short
 				variants := [][]byte{c, append([]byte(nil), c...), c[:len(c)-17]}
@@ -214,7 +223,13 @@ func hpkeCorpus() string {
 			_, err := kem.NewPrivateKey(b)
 			add(fmt.Sprintf("private %d %s", id, hex.EncodeToString(b)), err)
 		}
-		enc, _ := hpkeMust2(hpke.NewSender(k.PublicKey(), hpke.HKDFSHA256(), hpke.AES128GCM(), nil))
+		enc := pins.get(fmt.Sprintf("enc %d", id), func() []byte {
+			e, _ := hpkeMust2(hpke.NewSender(k.PublicKey(), hpke.HKDFSHA256(), hpke.AES128GCM(), nil))
+			return e
+		}, func(e []byte) bool {
+			_, err := hpke.NewRecipient(e, k, hpke.HKDFSHA256(), hpke.AES128GCM(), nil)
+			return err == nil
+		})
 		for _, b := range [][]byte{nil, enc[:len(enc)-1], append(append([]byte(nil), enc...), 0), make([]byte, len(enc)), hpkeFF(len(enc))} {
 			_, err := hpke.NewRecipient(b, k, hpke.HKDFSHA256(), hpke.AES128GCM(), nil)
 			add(fmt.Sprintf("recipient %d %s", id, hex.EncodeToString(b)), err)
@@ -634,3 +649,67 @@ test "the identifiers and dhkem" {
   expect(hpke.dhkem_public_key(t.public_key()).kem()) == hpke.Kem.DhkemP384
 }
 `
+
+// hpkePins keep the outputs Go's HPKE makes from its own randomness (the
+// ephemeral keys of NewSender and Seal, which no reader controls: ML-KEM
+// draws from Go's DRBG), so a regenerate gives identical bytes
+// (stdcorpus -check). Each pinned value is checked by Go again on every
+// run (Open gives the plaintext, NewRecipient takes the enc), and one that
+// fails, or a new key, is made afresh.
+type hpkePins struct {
+	path    string
+	vals    map[string][]byte
+	used    map[string]bool
+	changed bool
+}
+
+func loadHpkePins() *hpkePins {
+	p := &hpkePins{path: filepath.Join("scripts", "stdcorpus", "testdata", "hpke", "pinned.txt"), vals: map[string][]byte{}, used: map[string]bool{}}
+	b, _ := os.ReadFile(p.path)
+	for _, line := range strings.Split(string(b), "\n") {
+		k, v, ok := strings.Cut(line, " = ")
+		if ok {
+			p.vals[k] = hpkeHex(v)
+		}
+	}
+	return p
+}
+
+func (p *hpkePins) get(key string, make func() []byte, ok func([]byte) bool) []byte {
+	p.used[key] = true
+	if v, have := p.vals[key]; have && ok(v) {
+		return v
+	}
+	v := make()
+	if !ok(v) {
+		panic("hpke: Go refuses its own output for " + key)
+	}
+	p.vals[key] = v
+	p.changed = true
+	return v
+}
+
+func (p *hpkePins) save() {
+	if len(p.used) != len(p.vals) {
+		p.changed = true
+	}
+	if !p.changed || checkOnly {
+		return
+	}
+	keys := make([]string, 0, len(p.used))
+	for k := range p.used {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("# Go's HPKE outputs made from its own randomness, pinned by scripts/stdcorpus/hpke.go (each checked by Go on every run)\n")
+	for _, k := range keys {
+		fmt.Fprintf(&b, "%s = %x\n", k, p.vals[k])
+	}
+	if err := os.MkdirAll(filepath.Dir(p.path), 0o755); err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile(p.path, []byte(b.String()), 0o644); err != nil {
+		panic(err)
+	}
+}
