@@ -410,6 +410,7 @@ fn category_of(e: jwt.JwtErr) -> Str {
     Subject => "subject"
     Claim(_) => "claim"
     Key(_) => "key"
+    _ => "other"
   }
 }
 

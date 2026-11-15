@@ -579,6 +579,7 @@ fn err_kind(e: protobuf.ProtoErr) -> Str {
     Recursion => "Recursion"
     BadLength => "BadLength"
     Utf8 => "Utf8"
+    _ => "other"
   }
 }
 

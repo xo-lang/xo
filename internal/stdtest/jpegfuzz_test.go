@@ -474,6 +474,7 @@ fn jx_kind(e: jpeg.JpegErr) -> Str {
     jpeg.JpegErr.Unsupported(_) => "err unsupported ${e.display()}"
     jpeg.JpegErr.Truncated => "err truncated"
     jpeg.JpegErr.Encode(_) => "err encode ${e.display()}"
+    _ => "err other ${e.display()}"
   }
 }
 

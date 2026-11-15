@@ -80,8 +80,10 @@ fixed by definition or by a format that versions itself.
     `FrameErr` and `CallErr`, `JpegErr`, `JwtErr`, otlp `ExportErr`, `PngErr`, `ProtoErr`, `RateErr`, `SseErr`,
     `SqlErr`, time `ZoneErr` and `CivilErr`, toml `DecodeErr`, `TextErr`, and the rest a sweep finds
     (`xo symbols --all --dir=std`, every `enum .*Err`);
-  - platform lists: `TargetOs`, `TargetArch`.
-- **Closed:** `Ordering`, `Option`/`Result`-like sums, `Weekday`, `Month`, std/json's value kinds, log `Level`, and
+  - not the platform lists: `TargetOs` and `TargetArch` stay closed (owner, 2026-11-15, below).
+- **Closed:** `TargetOs` and `TargetArch` (owner, 2026-11-15, on Lang 3's recommendation: spec 12.2 makes a
+  missing OS in `match target.os` a non exhaustive match error on purpose, so that adding a platform shows every
+  platform branch to port; adding a target stays a breaking change under 0567), `Ordering`, `Option`/`Result`-like sums, `Weekday`, `Month`, std/json's value kinds, log `Level`, and
   protocol enums whose set a version number fixes (TLS versions stay closed only if std adds versions as breaking).
 - The sweep is a table in this ADR's implementation commit, one line per std enum with open or closed and why, so the
   choice is reviewed once rather than per module.
@@ -160,8 +162,12 @@ reports. Lang 2 sweeps compiler/, std/native and llrt at the seed cut that bring
   every test, example, bench and compiler program that uses one found no match needing a `_`.
 - Step 2 (after Lang 2 cuts a seed whose parser reads `open`): the prelude's error enums (`NetErr`, `FsErr`, `IoErr`,
   `ProcErr`, `EnvErr`, `ClockErr`, `KeyErr`), http's `ClientErr` and `HttpErr`, tls and x509's kinds, jsonrpc's
-  `FrameErr` and `CallErr`, sql's `SqlErr`, time's `ZoneErr` and `CivilErr`, `TextErr`, and `TargetOs` and `TargetArch`.
-  The compiler's own matches on them that list every variant gain a `_` arm in that step.
+  `FrameErr` and `CallErr`, sql's `SqlErr`, time's `ZoneErr` and `CivilErr`, `TextErr` (TargetOs and TargetArch stay
+  closed: owner, 2026-11-15). The compiler's own matches on them (6 sites, ~/xo-lead/notes/lang3/open/step2-sites.txt)
+  are Lang 2's seed-cut sweep (decision 0653); step 2 adds the `_` arms in the goldens, corpora and bench programs.
+- Step 1 also adds `_` arms to the test programs that matched step 1's enums exhaustively (goldens amqp_tls_hostname
+  and cli_parse; the jpeg, jpegfuzz, png, pngfuzz, jwt and protobuf corpora with their scripts/stdcorpus and
+  internal/stdtest generators); a scan of 1,703 program directories with the new xo leaves no XO0306.
 - Decision 0653 (adoption sweeps): no older form becomes obsolete, so there is no vet rule or `xo fix` to add; the
   matches that need `_` are found by XO0306 itself.
 

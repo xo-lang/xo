@@ -499,6 +499,7 @@ fn describe(data: Bytes) -> Str {
       png.PngErr.Unsupported(_) => "err unsupported ${e.display()}"
       png.PngErr.Truncated => "err truncated"
       png.PngErr.Flate(_) => "err flate"
+      _ => "err other ${e.display()}"
     }
   }
 }
@@ -511,6 +512,7 @@ fn describe_huge(data: Bytes) -> Str {
       png.PngErr.Unsupported(_) => "err unsupported ${e.display()}"
       png.PngErr.Truncated => "err truncated"
       png.PngErr.Flate(_) => "err flate"
+      _ => "err other ${e.display()}"
     }
   }
 }
@@ -523,6 +525,7 @@ fn describe_config(data: Bytes) -> Str {
       png.PngErr.Unsupported(_) => "err unsupported ${e.display()}"
       png.PngErr.Truncated => "err truncated"
       png.PngErr.Flate(_) => "err flate"
+      _ => "err other ${e.display()}"
     }
   }
 }

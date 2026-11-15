@@ -13,6 +13,7 @@ fn err_text(e: amqp.AmqpErr) -> Str {
     Encode(m) => m
     Peer(w) => w.condition
     Auth(_, m) => m
+    _ => "${e}"
   }
 }
 

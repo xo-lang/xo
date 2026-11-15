@@ -24,6 +24,7 @@ fn pf_kind(e: png.PngErr) -> Str {
     png.PngErr.Unsupported(_) => "err unsupported ${e.display()}"
     png.PngErr.Truncated => "err truncated"
     png.PngErr.Flate(_) => "err flate"
+    _ => "err other ${e.display()}"
   }
 }
 

@@ -52,6 +52,7 @@ fn attempt(out: Stdio, env: Env, p: Str, args: List[Str]) uses (env, stdio) {
         cli.CliErr.Help(_) => "help"
         cli.CliErr.Version(_) => "version"
         cli.CliErr.Usage(_, _) => "usage"
+        _ => "other"
       }
       out.println("${line}\n[${kind}, exit ${e.exit_code()}] ${e}")
       match e {

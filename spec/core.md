@@ -4627,10 +4627,14 @@ pub fn config_dir(env: Env) -> Str ! Error uses env {
     Darwin => "${env.home()?}/Library/Application Support"
     Windows => env.get("APPDATA").or_err("APPDATA not set")?
     Wasi => "/config"
+    FreeBSD => env.get("XDG_CONFIG_HOME") ?? "${env.home()?}/.config"
   }
 }
 ```
 
+- `TargetOs` and `TargetArch` are closed enums, not open ones (2.3; owner,
+  2026-11-15, decision 0649): a match on them lists every target, so a new
+  target is a breaking change that shows every branch to port.
 - A `match` on `target.os` or `target.arch` is resolved at compile time; only
   the chosen arm is code generated.
 - **Every arm is type checked for every target on every `xo check` and
