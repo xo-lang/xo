@@ -10919,8 +10919,8 @@ fn version_of(name: Str) -> Int?
 
 ## 86. std/ui
 
-Status: Early (decision 0659 stage 1, 2026-11-15; the API may change
-until stage 1 is done). Pure: no I/O. One pure update runs on every
+Status: Early (decision 0659, Accepted 2026-11-15; stages 1 to 3 on
+main, the API may change until stage 4). Pure: no I/O. One pure update runs on every
 client (predicted at once) and on the server (in arrival order, the
 authority); clients replay the server's log and fold their pending Msgs
 on top. `host` serves an App over HTTP with a browser runtime. Given the
