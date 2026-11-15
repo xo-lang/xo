@@ -1946,12 +1946,13 @@ fn sign_z(k: PrivateKey, h: crypto.Hash, msg: Bytes, z: Bytes) -> Bytes ! crypto
 
 fn sign_pss(r: Rand, k: PrivateKey, h: crypto.Hash, msg: Bytes) -> Bytes ! crypto.KeyErr uses rand { sign_pss_with(k, h, msg, r.bytes(h.size())) }
 
-fn encrypt_oaep(r: Rand, k: PublicKey, h: crypto.Hash, msg: Bytes, label: Bytes) -> Bytes ! crypto.KeyErr uses rand {
-  encrypt_oaep_with(k, h, msg, label, r.bytes(h.size()))
+fn encrypt_oaep(r: Rand, k: PublicKey, h: crypto.Hash, msg: Bytes, label: Bytes, mgf_hash: crypto.Hash?) -> Bytes ! crypto.KeyErr uses rand {
+  encrypt_oaep_with(k, h, msg, label, r.bytes(h.size()), mgf_hash)
 }
 
 /// encrypt_oaep with the seed.
-fn encrypt_oaep_with(k: PublicKey, h: crypto.Hash, msg: Bytes, label: Bytes, seed: Bytes) -> Bytes ! crypto.KeyErr {
+fn encrypt_oaep_with(k: PublicKey, h: crypto.Hash, msg: Bytes, label: Bytes, seed: Bytes, mgf_hash: crypto.Hash? = None) -> Bytes ! crypto.KeyErr {
+  let mh = mgf_hash ?? h
   if k.kind != crypto.KeyAlg.Rsa {
     return Err(key_err("crypto: encrypt_oaep needs an RSA key"))
   }
@@ -1959,7 +1960,7 @@ fn encrypt_oaep_with(k: PublicKey, h: crypto.Hash, msg: Bytes, label: Bytes, see
   if !e.is_empty() {
     return Err(key_err(e))
   }
-  match rsa.encrypt_oaep_fn(rsa_pub(k), h.size(), fn(b) { digest(h, b) }, msg, label, seed) {
+  match rsa.encrypt_oaep_mgf(rsa_pub(k), h.size(), fn(b) { digest(h, b) }, fn(b) { digest(mh, b) }, msg, label, seed) {
     Some(c) => c
     None => Err(key_err("crypto/rsa: message too long for RSA key size"))
   }
@@ -1967,7 +1968,8 @@ fn encrypt_oaep_with(k: PublicKey, h: crypto.Hash, msg: Bytes, label: Bytes, see
 
 fn decryption_error() -> crypto.KeyErr { key_err("crypto/rsa: decryption error") }
 
-fn decrypt_oaep(k: PrivateKey, h: crypto.Hash, ciphertext: Bytes, label: Bytes) -> Bytes ! crypto.KeyErr {
+fn decrypt_oaep(k: PrivateKey, h: crypto.Hash, ciphertext: Bytes, label: Bytes, mgf_hash: crypto.Hash? = None) -> Bytes ! crypto.KeyErr {
+  let mh = mgf_hash ?? h
   if k.kind != crypto.KeyAlg.Rsa {
     return Err(key_err("crypto: decrypt_oaep needs an RSA key"))
   }
@@ -1975,7 +1977,7 @@ fn decrypt_oaep(k: PrivateKey, h: crypto.Hash, ciphertext: Bytes, label: Bytes) 
   if !e.is_empty() {
     return Err(key_err(e))
   }
-  match rsa.decrypt_oaep_fn(k.rsa, h.size(), fn(b) { digest(h, b) }, ciphertext, label) {
+  match rsa.decrypt_oaep_mgf(k.rsa, h.size(), fn(b) { digest(h, b) }, fn(b) { digest(mh, b) }, ciphertext, label) {
     Some(m) => m
     None => Err(decryption_error())
   }
@@ -2170,6 +2172,79 @@ fn (k: PrivateKey) ecdh() -> EcdhPrivateKey ! crypto.KeyErr {
   match ecdh_of(k.kind) {
     Some(c) => Ok(EcdhPrivateKey{crv: c, d: k.d, public: EcdhPublicKey{crv: c, key: k.public.key}})
     None => Err(key_err("ecdsa: unsupported curve by crypto/ecdh"))
+  }
+}
+
+/// Go's SignPSS's salt length switch, then rsa.SignPSS's checks.
+fn sign_pss_digest(r: Rand, k: PrivateKey, h: crypto.Hash, dg: Bytes, salt_len: Int) -> Bytes ! crypto.KeyErr uses rand {
+  if k.kind != crypto.KeyAlg.Rsa {
+    return Err(key_err("crypto: sign_pss_digest needs an RSA key"))
+  }
+  let e = rsa_public_err(k.rsa.n, k.rsa.e)
+  if !e.is_empty() {
+    return Err(key_err(e))
+  }
+  let hl = h.size()
+  let em_len = (bits_of(k.rsa.n) - 1 + 7) / 8
+  let s = if salt_len == 0 { em_len - 2 - hl } else if salt_len == -1 { hl } else { salt_len }
+  if salt_len < -1 {
+    return Err(key_err("crypto/rsa: invalid PSS salt length"))
+  }
+  if s < 0 {
+    return Err(key_err("crypto/rsa: message too long for RSA key size"))
+  }
+  if dg.len() != hl {
+    return Err(key_err("crypto/rsa: input must be hashed with given hash"))
+  }
+  if em_len < hl + s + 2 {
+    return Err(key_err("crypto/rsa: message too long for RSA key size"))
+  }
+  let sig = rsa.sign_pss_fn(k.rsa, hl, fn(b) { digest(h, b) }, dg, r.bytes(s))
+  if sig.is_empty() {
+    return Err(key_err("crypto/rsa: message too long for RSA key size"))
+  }
+  Ok(sig)
+}
+
+fn verify_pss_digest(k: PublicKey, h: crypto.Hash, dg: Bytes, sig: Bytes, salt_len: Int) -> Bool {
+  if k.kind != crypto.KeyAlg.Rsa || salt_len < -1 || !rsa_public_err(k.n, k.e).is_empty() {
+    return false
+  }
+  let s = if salt_len == 0 { -1 } else if salt_len == -1 { h.size() } else { salt_len }
+  rsa.verify_pss_fn(rsa_pub(k), h.size(), fn(b) { digest(h, b) }, dg, sig, s)
+}
+
+fn sign_pkcs1v15_digest(k: PrivateKey, h: crypto.Hash?, dg: Bytes) -> Bytes ! crypto.KeyErr {
+  if k.kind != crypto.KeyAlg.Rsa {
+    return Err(key_err("crypto: sign_pkcs1v15_digest needs an RSA key"))
+  }
+  let prefix = match h {
+    Some(x) => {
+      if dg.len() != x.size() {
+        return Err(key_err("crypto/rsa: input must be hashed message"))
+      }
+      digest_info(x)
+    }
+    None => b""
+  }
+  let e = rsa_public_err(k.rsa.n, k.rsa.e)
+  if !e.is_empty() {
+    return Err(key_err(e))
+  }
+  let s = rsa.sign_pkcs1_prefix(k.rsa, prefix, dg)
+  if s.is_empty() {
+    return Err(key_err("crypto/rsa: message too long for RSA key size"))
+  }
+  Ok(s)
+}
+
+fn verify_pkcs1v15_digest(k: PublicKey, h: crypto.Hash?, dg: Bytes, sig: Bytes) -> Bool {
+  if k.kind != crypto.KeyAlg.Rsa || !rsa_public_err(k.n, k.e).is_empty() {
+    return false
+  }
+  match h {
+    Some(x) => dg.len() == x.size() && rsa.verify_pkcs1_prefix(rsa_pub(k), digest_info(x), dg, sig)
+    None => rsa.verify_pkcs1_prefix(rsa_pub(k), b"", dg, sig)
   }
 }
 

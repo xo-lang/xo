@@ -409,18 +409,18 @@ pub fn sign_pss_salt(k: PrivateKey, hash: Int, hashed: Bytes, salt: Bytes) -> By
 
 /// sign_pss_salt with any hash: its length hl and function hf.
 pub fn sign_pss_fn(k: PrivateKey, hl: Int, hf: fn(Bytes) -> Bytes, hashed: Bytes, salt: Bytes) -> Bytes {
-  if hashed.len() != hl || salt.len() != hl {
+  if hashed.len() != hl {
     return b""
   }
   let mod_bits = bigmod.bit_len(limbs_of(k.n))
   let em_bits = mod_bits - 1
   let em_len = (em_bits + 7) / 8
-  if em_len < 2 * hl + 2 {
+  if em_len < hl + salt.len() + 2 {
     return b""
   }
   let h = pss_h(hf, hashed, salt)
   var db = rt.rs_with_cap(em_len - hl - 1)
-  for _ in 0..em_len - 2 * hl - 2 {
+  for _ in 0..em_len - hl - salt.len() - 2 {
     db = rt.rs_push_byte(db, 0)
   }
   db = rt.rs_push_byte(db, 1)
@@ -521,7 +521,11 @@ fn ciphertext_in(k: PublicKey, c: Bytes) -> Bytes? {
 /// RSAES-OAEP-ENCRYPT of msg with the hash hf (hl bytes) for the label
 /// hash and MGF1, and seed (hl bytes); None when msg is longer than
 /// size(n) - 2 hl - 2.
-pub fn encrypt_oaep_fn(k: PublicKey, hl: Int, hf: fn(Bytes) -> Bytes, msg: Bytes, label: Bytes, seed: Bytes) -> Bytes? {
+pub fn encrypt_oaep_fn(k: PublicKey, hl: Int, hf: fn(Bytes) -> Bytes, msg: Bytes, label: Bytes, seed: Bytes) -> Bytes? { encrypt_oaep_mgf(k, hl, hf, hf, msg, label, seed) }
+
+/// encrypt_oaep_fn with MGF1 over mgf, apart from the label's hash hf (Go's
+/// OAEPOptions.MGFHash).
+pub fn encrypt_oaep_mgf(k: PublicKey, hl: Int, hf: fn(Bytes) -> Bytes, mgf: fn(Bytes) -> Bytes, msg: Bytes, label: Bytes, seed: Bytes) -> Bytes? {
   let kk = size(k.n)
   if kk < 2 * hl + 2 || msg.len() > kk - 2 * hl - 2 || seed.len() != hl {
     return None
@@ -535,8 +539,8 @@ pub fn encrypt_oaep_fn(k: PublicKey, hl: Int, hf: fn(Bytes) -> Bytes, msg: Bytes
   }
   db = rt.rs_push_byte(db, 1)
   db = rt.rs_append_bytes(db, msg, 0, msg.len(), 0)
-  let masked_db = xor(db.bytes(), mgf1(hf, seed, kk - hl - 1))
-  let masked_seed = xor(seed, mgf1(hf, masked_db, hl))
+  let masked_db = xor(db.bytes(), mgf1(mgf, seed, kk - hl - 1))
+  let masked_seed = xor(seed, mgf1(mgf, masked_db, hl))
   var em = rt.rs_with_cap(kk)
   em = rt.rs_push_byte(em, 0)
   em = rt.rs_append_bytes(em, masked_seed, 0, hl, 0)
@@ -545,14 +549,17 @@ pub fn encrypt_oaep_fn(k: PublicKey, hl: Int, hf: fn(Bytes) -> Bytes, msg: Bytes
 }
 
 /// RSAES-OAEP-DECRYPT: the message, or None for any failure.
-pub fn decrypt_oaep_fn(k: PrivateKey, hl: Int, hf: fn(Bytes) -> Bytes, c: Bytes, label: Bytes) -> Bytes? {
+pub fn decrypt_oaep_fn(k: PrivateKey, hl: Int, hf: fn(Bytes) -> Bytes, c: Bytes, label: Bytes) -> Bytes? { decrypt_oaep_mgf(k, hl, hf, hf, c, label) }
+
+/// decrypt_oaep_fn with MGF1 over mgf, as encrypt_oaep_mgf.
+pub fn decrypt_oaep_mgf(k: PrivateKey, hl: Int, hf: fn(Bytes) -> Bytes, mgf: fn(Bytes) -> Bytes, c: Bytes, label: Bytes) -> Bytes? {
   let kk = size(k.n)
   if kk < 2 * hl + 2 {
     return None
   }
   let cp = ciphertext_in(PublicKey{n: k.n, e: k.e}, c)?
   let em = private_op(k, cp)?
-  let (good, db, index) = oaep_unpad(hl, hf, em, hf(label))
+  let (good, db, index) = oaep_unpad(hl, mgf, em, hf(label))
   if good == 0 {
     return None
   }

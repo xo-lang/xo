@@ -515,6 +515,67 @@ func (k Crypto_PrivateKey) M_ecdh(*Task) Result[Crypto_EcdhPrivateKey, Crypto_Ke
 	return Ok[Crypto_EcdhPrivateKey, Crypto_KeyErr](Crypto_EcdhPrivateKey{k: e, crv: ecdhTag(e.Curve())})
 }
 
+// Crypto_sign_pss_digest is Go's SignPSS with PSSOptions; it reads the
+// salt's bytes the native code takes from r, so r stays in step.
+func Crypto_sign_pss_digest(tk *Task, r Rand, k Crypto_PrivateKey, h Crypto_Hash, digest Bytes, saltLen int64) Result[Bytes, Crypto_KeyErr] {
+	p, ok := k.k.(*rsa.PrivateKey)
+	if !ok {
+		return Err[Bytes](keyErr("crypto: sign_pss_digest needs an RSA key"))
+	}
+	gh := cryptoGoHashes[h.Tag]
+	if saltLen < -1 || saltLen > math.MaxInt32 {
+		return Err[Bytes](keyErr("crypto/rsa: invalid PSS salt length"))
+	}
+	s := int(saltLen)
+	switch s {
+	case 0:
+		s = (p.N.BitLen()-1+7)/8 - 2 - gh.Size()
+	case -1:
+		s = gh.Size()
+	}
+	sig, err := rsa.SignPSS(cryptorand.Reader, p, gh, []byte(digest), &rsa.PSSOptions{SaltLength: int(saltLen)})
+	if err != nil {
+		return Err[Bytes](keyErr(err.Error()))
+	}
+	r.M_bytes(tk, int64(s))
+	return Ok[Bytes, Crypto_KeyErr](Bytes(sig))
+}
+
+// Crypto_verify_pss_digest is Go's VerifyPSS with PSSOptions.
+func Crypto_verify_pss_digest(_ *Task, k Crypto_PublicKey, h Crypto_Hash, digest, sig Bytes, saltLen int64) bool {
+	p, ok := k.k.(*rsa.PublicKey)
+	if !ok || saltLen < -1 || saltLen > math.MaxInt32 {
+		return false
+	}
+	return rsa.VerifyPSS(p, cryptoGoHashes[h.Tag], []byte(digest), []byte(sig), &rsa.PSSOptions{SaltLength: int(saltLen)}) == nil
+}
+
+func pkcs1Hash(h Option[Crypto_Hash]) crypto.Hash {
+	if h.Some {
+		return cryptoGoHashes[h.V.Tag]
+	}
+	return 0
+}
+
+// Crypto_sign_pkcs1v15_digest is Go's SignPKCS1v15 (None: crypto.Hash(0)).
+func Crypto_sign_pkcs1v15_digest(_ *Task, k Crypto_PrivateKey, h Option[Crypto_Hash], digest Bytes) Result[Bytes, Crypto_KeyErr] {
+	p, ok := k.k.(*rsa.PrivateKey)
+	if !ok {
+		return Err[Bytes](keyErr("crypto: sign_pkcs1v15_digest needs an RSA key"))
+	}
+	sig, err := rsa.SignPKCS1v15(nil, p, pkcs1Hash(h), []byte(digest))
+	if err != nil {
+		return Err[Bytes](keyErr(err.Error()))
+	}
+	return Ok[Bytes, Crypto_KeyErr](Bytes(sig))
+}
+
+// Crypto_verify_pkcs1v15_digest is Go's VerifyPKCS1v15.
+func Crypto_verify_pkcs1v15_digest(_ *Task, k Crypto_PublicKey, h Option[Crypto_Hash], digest, sig Bytes) bool {
+	p, ok := k.k.(*rsa.PublicKey)
+	return ok && rsa.VerifyPKCS1v15(p, pkcs1Hash(h), []byte(digest), []byte(sig)) == nil
+}
+
 // Crypto_ecdsa_sign_digest is Go's ecdsa.SignASN1; it reads the bytes the
 // native code's hedged nonce takes from r, so r stays in step.
 func Crypto_ecdsa_sign_digest(tk *Task, r Rand, k Crypto_PrivateKey, digest Bytes) Result[Bytes, Crypto_KeyErr] {
@@ -716,25 +777,34 @@ func Crypto_jwk_public_key(_ *Task, jwk string) Result[Crypto_PublicKey, Crypto_
 // ciphertext uses Go's own randomness; r gives the bytes the native
 // backend draws, so a program's Rand advances the same way.
 
-func Crypto_encrypt_oaep(tk *Task, r Rand, k Crypto_PublicKey, h Crypto_Hash, msg Bytes, label Bytes) Result[Bytes, Crypto_KeyErr] {
+func Crypto_encrypt_oaep(tk *Task, r Rand, k Crypto_PublicKey, h Crypto_Hash, msg Bytes, label Bytes, mgf Option[Crypto_Hash]) Result[Bytes, Crypto_KeyErr] {
 	p, ok := k.k.(*rsa.PublicKey)
 	if !ok {
 		return Err[Bytes](keyErr("crypto: encrypt_oaep needs an RSA key"))
 	}
 	r.M_bytes(tk, int64(cryptoGoHashes[h.Tag].Size()))
-	c, err := rsa.EncryptOAEP(cryptoGoHashes[h.Tag].New(), cryptorand.Reader, p, []byte(msg), []byte(label))
+	c, err := rsa.EncryptOAEPWithOptions(cryptorand.Reader, p, []byte(msg), oaepOpts(h, label, mgf))
 	if err != nil {
 		return Err[Bytes](keyErr(err.Error()))
 	}
 	return Ok[Bytes, Crypto_KeyErr](Bytes(c))
 }
 
-func Crypto_decrypt_oaep(_ *Task, k Crypto_PrivateKey, h Crypto_Hash, ciphertext Bytes, label Bytes) Result[Bytes, Crypto_KeyErr] {
+// oaepOpts is OAEPOptions of h, label and an MGF1 hash apart (0: h's).
+func oaepOpts(h Crypto_Hash, label Bytes, mgf Option[Crypto_Hash]) *rsa.OAEPOptions {
+	o := &rsa.OAEPOptions{Hash: cryptoGoHashes[h.Tag], Label: []byte(label)}
+	if mgf.Some {
+		o.MGFHash = cryptoGoHashes[mgf.V.Tag]
+	}
+	return o
+}
+
+func Crypto_decrypt_oaep(_ *Task, k Crypto_PrivateKey, h Crypto_Hash, ciphertext Bytes, label Bytes, mgf Option[Crypto_Hash]) Result[Bytes, Crypto_KeyErr] {
 	p, ok := k.k.(*rsa.PrivateKey)
 	if !ok {
 		return Err[Bytes](keyErr("crypto: decrypt_oaep needs an RSA key"))
 	}
-	m, err := rsa.DecryptOAEP(cryptoGoHashes[h.Tag].New(), nil, p, []byte(ciphertext), []byte(label))
+	m, err := p.Decrypt(nil, []byte(ciphertext), oaepOpts(h, label, mgf))
 	if err != nil {
 		if errors.Is(err, rsa.ErrDecryption) {
 			err = rsa.ErrDecryption

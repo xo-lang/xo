@@ -386,12 +386,15 @@ fn sign_pss(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses 
 /// encryption scheme: msg under the RSA key k, with h for the label hash
 /// and MGF1 and a seed of h.size() bytes from r. KeyErr for a key that is
 /// not RSA or a msg longer than the key's size - 2 * h.size() - 2.
-fn encrypt_oaep(r: Rand, k: PublicKey, h: Hash, msg: Bytes, label: Bytes = b"") -> Bytes ! KeyErr uses rand
+/// mgf_hash, when given, is MGF1's hash apart from h (Go's
+/// EncryptOAEPWithOptions with OAEPOptions.MGFHash).
+fn encrypt_oaep(r: Rand, k: PublicKey, h: Hash, msg: Bytes, label: Bytes = b"", mgf_hash: Hash? = None) -> Bytes ! KeyErr uses rand
 /// RSA-OAEP decryption (Go's DecryptOAEP). The padding is checked in
 /// constant time, and every failure (a bad ciphertext, padding or label)
 /// is the one KeyErr `crypto/rsa: decryption error`, so a caller cannot
 /// tell causes apart.
-fn decrypt_oaep(k: PrivateKey, h: Hash, ciphertext: Bytes, label: Bytes = b"") -> Bytes ! KeyErr
+/// mgf_hash as encrypt_oaep's (Go's PrivateKey.Decrypt with OAEPOptions).
+fn decrypt_oaep(k: PrivateKey, h: Hash, ciphertext: Bytes, label: Bytes = b"", mgf_hash: Hash? = None) -> Bytes ! KeyErr
 /// Legacy: RSA PKCS #1 v1.5 encryption (Go's EncryptPKCS1v15), only for
 /// interoperating with existing systems that require it; new protocols use
 /// encrypt_oaep. As Go's crypto/rsa says, PKCS #1 v1.5 encryption is
@@ -409,6 +412,27 @@ fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr
 /// ECDSA over a digest the caller computed (Go's ecdsa.SignASN1): ASN.1
 /// DER, a hedged nonce from r, as sign's; a digest longer than the order
 /// counts by its leftmost bits, as Go's. Err for a key that is not ECDSA.
+/// RSA PSS over a digest the caller computed with h (Go's SignPSS with
+/// PSSOptions): salt_len -1 is the hash's size (PSSSaltLengthEqualsHash,
+/// sign_pss's), 0 the largest the key takes (PSSSaltLengthAuto), above 0
+/// that many bytes, from r. Err with Go's texts: `crypto/rsa: invalid PSS
+/// salt length`, `crypto/rsa: input must be hashed with given hash`,
+/// `crypto/rsa: message too long for RSA key size`, and for a key that is
+/// not RSA.
+fn sign_pss_digest(r: Rand, k: PrivateKey, h: Hash, digest: Bytes, salt_len: Int = -1) -> Bytes ! KeyErr uses rand
+/// Go's VerifyPSS with PSSOptions: salt_len 0 takes any salt
+/// (PSSSaltLengthAuto, verify_pss's), -1 the hash's size, above 0 exactly
+/// that many bytes; false for a key that is not RSA or a digest of the
+/// wrong length.
+fn verify_pss_digest(k: PublicKey, h: Hash, digest: Bytes, sig: Bytes, salt_len: Int = 0) -> Bool
+/// RSA PKCS #1 v1.5 over a digest the caller computed (Go's SignPKCS1v15):
+/// with h, the digest must be h's size (`crypto/rsa: input must be hashed
+/// message`) and goes in h's DigestInfo; with None, the bytes are signed
+/// as they are (Go's crypto.Hash(0): a TLS 1.1 MD5+SHA1 or a caller's own
+/// DigestInfo).
+fn sign_pkcs1v15_digest(k: PrivateKey, h: Hash?, digest: Bytes) -> Bytes ! KeyErr
+/// Go's VerifyPKCS1v15 over a digest, h as sign_pkcs1v15_digest's.
+fn verify_pkcs1v15_digest(k: PublicKey, h: Hash?, digest: Bytes, sig: Bytes) -> Bool
 fn ecdsa_sign_digest(r: Rand, k: PrivateKey, digest: Bytes) -> Bytes ! KeyErr uses rand
 /// Go's ecdsa.VerifyASN1: whether sig (ASN.1 DER) signs digest under k;
 /// false for a key that is not ECDSA.

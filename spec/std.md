@@ -4145,8 +4145,12 @@ pub fn sign_pss(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr u
 pub fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
 pub fn ecdsa_sign_digest(r: Rand, k: PrivateKey, digest: Bytes) -> Bytes ! KeyErr uses rand  // Go's SignASN1 over a caller's digest
 pub fn ecdsa_verify_digest(k: PublicKey, digest: Bytes, sig: Bytes) -> Bool                   // Go's VerifyASN1
-pub fn encrypt_oaep(r: Rand, k: PublicKey, h: Hash, msg: Bytes, label: Bytes = b"") -> Bytes ! KeyErr uses rand
-pub fn decrypt_oaep(k: PrivateKey, h: Hash, ciphertext: Bytes, label: Bytes = b"") -> Bytes ! KeyErr
+pub fn sign_pss_digest(r: Rand, k: PrivateKey, h: Hash, digest: Bytes, salt_len: Int = -1) -> Bytes ! KeyErr uses rand  // Go's SignPSS
+pub fn verify_pss_digest(k: PublicKey, h: Hash, digest: Bytes, sig: Bytes, salt_len: Int = 0) -> Bool                  // Go's VerifyPSS
+pub fn sign_pkcs1v15_digest(k: PrivateKey, h: Hash?, digest: Bytes) -> Bytes ! KeyErr   // Go's SignPKCS1v15; None: unpadded
+pub fn verify_pkcs1v15_digest(k: PublicKey, h: Hash?, digest: Bytes, sig: Bytes) -> Bool // Go's VerifyPKCS1v15
+pub fn encrypt_oaep(r: Rand, k: PublicKey, h: Hash, msg: Bytes, label: Bytes = b"", mgf_hash: Hash? = None) -> Bytes ! KeyErr uses rand
+pub fn decrypt_oaep(k: PrivateKey, h: Hash, ciphertext: Bytes, label: Bytes = b"", mgf_hash: Hash? = None) -> Bytes ! KeyErr
 pub fn encrypt_pkcs1v15(r: Rand, k: PublicKey, msg: Bytes) -> Bytes ! KeyErr uses rand   // legacy
 pub fn decrypt_pkcs1v15(k: PrivateKey, ciphertext: Bytes) -> Bytes ! KeyErr              // legacy
 pub fn generate_key(r: Rand, alg: KeyAlg, bits: Int = 2048) -> PrivateKey ! KeyErr uses rand
@@ -4174,9 +4178,17 @@ pub fn generate_key(r: Rand, alg: KeyAlg, bits: Int = 2048) -> PrivateKey ! KeyE
   wrong length, or a malformed signature is `false`, never a fault.
   `verify_pss` accepts any salt length (Go's `PSSSaltLengthAuto`);
   `sign_pss` uses a salt as long as the hash (RFC 7518 PS256, TLS 1.3).
+  `sign_pss_digest` and `verify_pss_digest` take a caller's digest and
+  Go's `PSSOptions.SaltLength`: -1 is the hash's length (Go's
+  `PSSSaltLengthEqualsHash`), 0 is the longest that fits when signing
+  and any length when verifying (Go's `PSSSaltLengthAuto`), and a
+  positive length is that length; below -1 is Go's "invalid PSS salt
+  length". `sign_pkcs1v15_digest` and `verify_pkcs1v15_digest` take a
+  caller's digest of `h`, or with `None` sign the bytes as given with no
+  DigestInfo (Go's `crypto.Hash(0)`, TLS 1.0's MD5 and SHA-1 pair).
 - RSA encryption (decision 0618) is Go's `crypto/rsa`. `encrypt_oaep` and
-  `decrypt_oaep` (RSA-OAEP, RFC 8017 7.1; `h` is both the label hash and
-  MGF1's hash; the seed is `h.size()` bytes from `r`) are the recommended
+  `decrypt_oaep` (RSA-OAEP, RFC 8017 7.1; `h` is the label hash and MGF1's
+  hash unless `mgf_hash` names another (Go's `OAEPOptions.MGFHash`); the seed is `h.size()` bytes from `r`) are the recommended
   scheme. `encrypt_pkcs1v15` and `decrypt_pkcs1v15` (RFC 8017 7.2) are
   legacy, for interoperating with existing systems only (Go documents them
   as "dangerous and should not be used"): an attacker who can learn whether

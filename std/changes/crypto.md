@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-15: feature: RSA over a caller's digest, PSS salt lengths, unpadded PKCS #1 v1.5 and OAEP's MGF1 hash
+
+- Kind: feature
+- Commit: this push
+- Found by: Lang 3's crypto and TLS gap audit (C8)
+- Go reference: crypto/rsa SignPSS, VerifyPSS, PSSOptions.SaltLength, SignPKCS1v15, VerifyPKCS1v15 (crypto.Hash(0) included), EncryptOAEPWithOptions, OAEPOptions.MGFHash; go1.26.11
+- Test: corpus rsaopts (two 2048 bit keys: PSS signatures under salt lengths -1, 0, 1, the hash's, the longest, one past it, -2 and 1000 and a wrong digest length, byte for byte against Go with zero salts, and Go's VerifyPSS of each under four salt forms; PKCS #1 v1.5 with every hash and with none at every boundary length; an unpadded signature over SHA-256's DigestInfo and a long digest that Go refuses; OAEP with MGF1 over another hash, against Go with zero seeds, decrypted, and refused under a third hash), native, go and llvm
+- Shipped in: not yet released
+
+`sign_pss_digest(r, k, h, digest, salt_len = -1)` is Go's SignPSS with PSSOptions{SaltLength}: -1 is a salt as long as the hash, 0 the longest that fits, a positive length that length, and below -1 Go's "invalid PSS salt length". `verify_pss_digest(k, h, digest, sig, salt_len = 0)` is VerifyPSS: 0 accepts any salt length. `sign_pkcs1v15_digest(k, h, digest)` and `verify_pkcs1v15_digest(k, h, digest, sig)` are SignPKCS1v15 and VerifyPKCS1v15 over a caller's digest; `None` signs the bytes with no DigestInfo, as Go's crypto.Hash(0) (TLS 1.0's MD5 and SHA-1 pair). `encrypt_oaep` and `decrypt_oaep` take `mgf_hash`, Go's OAEPOptions.MGFHash, for MGF1 over another hash than the label's (Java's and some HSMs' SHA-256 OAEP with MGF1 over SHA-1). The Go backend signs and encrypts with the system's randomness, as before, so its salts and seeds are not the Rand's; the corpus checks those by verifying and decrypting.
+
 ## 2026-11-15: feature: an RSA key's numbers, and RSA keys from them
 
 - Kind: feature
