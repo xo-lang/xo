@@ -22,7 +22,7 @@ pub fn (e: PslErr) display() -> Str { e.msg }
 /// list does not have, whose last label is then the suffix). domain is
 /// lower case ASCII (IDNA's form); an IP address is its own suffix.
 pub fn public_suffix(domain: Str) -> (Str, Bool) {
-  if netip.parse_addr(domain) is Ok(_) {
+  if may_be_addr(domain) && netip.parse_addr(domain) is Ok(_) {
     return (domain, false)
   }
   var lo = 0
@@ -75,6 +75,21 @@ pub fn public_suffix(domain: Str) -> (Str, Bool) {
     return (domain[1 + last_dot(domain)..], icann)
   }
   (domain[suffix..], icann)
+}
+
+/// Whether s can be an IP address's text: an IPv6 one has a colon, an
+/// IPv4 one ends in a digit; a host name's last label (its TLD) has
+/// neither, so the address parse is skipped for it.
+fn may_be_addr(s: Str) -> Bool {
+  let b = s.bytes()
+  if b.is_empty() {
+    return false
+  }
+  let last = b[b.len() - 1]
+  if last >= 48 && last <= 57 {
+    return true
+  }
+  s.contains(":")
 }
 
 /// The registrable domain of domain: its public suffix and one more label

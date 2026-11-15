@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Perf (std/publicsuffix): `public_suffix` and `effective_tld_plus_one` no longer parse a host name as an IP address first; on the Mac they take about half the time (0.78 of x/net's, from 1.49).
 - Perf (compiler, decision 0465 step 3): a function that returns a tuple of views of one Str parameter (and scalar fields), as std/mime consume_token returns `(v[0..i], v[i..])`, no longer counts the views it returns; the caller owns a field only where it stores it or keeps it past the parameter. On linux/arm64, std/mime parsing takes 0.94 of the time, std/path parts 0.92.
 - Feature (xo vet --cost): XO0915 follows an address through a call of a function that only computes it from its parameter (`rt.obj_addr(h)`, an offset, or a word read there, as std's tlsio.handle_conn), so `close_notify(handle_conn(x))`, which releases the handle `x` before close_notify uses the connection read from it, is reported (gotchas/obj-addr-handle-released-early.md). No new warning on std today.
 - Feature (compiler): an unknown field or method suggests a name it abbreviates (`d.secs()` on a `Duration`: did you mean `seconds`?), as well as the nearest names by edit distance (XO0601's note; no `xo fix` edit for an abbreviation, since it is a guess).

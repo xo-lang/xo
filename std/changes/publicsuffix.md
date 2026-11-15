@@ -1,5 +1,17 @@
 # std/publicsuffix changes
 
+## 2026-11-15: perf: no address parse for a host name
+
+- Kind: perf
+- Commit: this push
+- Found by: the module's first Go twin (bench/perf/publicsuffix, perf.md: suffix 1.566 of x/net's wall)
+- Go reference: golang.org/x/net/publicsuffix PublicSuffix, which has no address check
+- Test: the publicsuffix corpus on go, arm64, llvm (its IPv4 and IPv6 cases among them); std/publicsuffix_test.xo
+- Timing: bench/perf/publicsuffix on the Mac, Xo over Go: suffix 1.490 to 0.781, etld1 1.276 to 0.770 (twincheck -time 3)
+- Shipped in: not yet released
+
+public_suffix parsed every domain as an IP address before the table search. It now parses only a text that can be one (a colon, or a last byte that is a digit): a host name's last label has neither.
+
 ## 2026-11-12: feature: std/publicsuffix, the public suffix list
 
 - Kind: feature
