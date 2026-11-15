@@ -1,5 +1,16 @@
 # std/csv changes
 
+## 2026-11-14: perf: a Reader builds a quoted field with a doubled quote or a line break in one buffer
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/csv's quoted fields with `""` (each piece of the field was a Bytes concatenation, about five allocations per field)
+- Go reference: encoding/csv readRecord appends a quoted field to its recordBuffer (go1.26.1)
+- Test: TestCsvFuzz; corpus csv and csvfuzz on arm64, LLVM and Go; TestOutsideBytesValidated
+- Shipped in: not yet released
+
+read_record writes the pieces of a quoted field that is not one view of its line (a doubled quote, a line break inside the quotes, a lazy quote) to one BytesBuilder and freezes it once. bench/perf/csv on linux/arm64 host 1, --ab against its parent, 9 rounds: reader 0.923 (0.89 to 0.942, n=6; a first run 0.946, 0.919 to 0.989), parse 0.905 (0.887 to 0.926, n=6). Output unchanged.
+
 ## 2026-11-14: perf: a Reader sizes each record's field list from the last record and no longer builds a separator's text per record
 
 - Kind: perf

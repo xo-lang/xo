@@ -237,9 +237,11 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
     // a quoted field
     line = line[1..]
     col += 1
-    var buf = b""
-    var done = false
-    while !done {
+    // the field's text when it is not one view of the line (Go appends to
+    // its record buffer; Bytes `+` allocated for each piece)
+    var bb = BytesBuilder.new()
+    var has = false
+    while true {
       let i = index_byte(line, '"')
       if i >= 0 {
         // the text before the quote: the field itself when nothing came
@@ -249,25 +251,37 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
         col += i + 1
         let rn = first_rune(line)
         if rn == '"' {
-          buf = buf + seg + b"\""
+          bb.write(seg)
+          bb.write_byte('"')
+          has = true
           line = line[1..]
           col += 1
         } else if !line.is_empty() && rn == o.sep {
           line = line[sep_len..]
           col += sep_len
-          fields.push(field_str(if buf.is_empty() { seg } else { buf + seg }, bad))
-          done = true
+          fields.push(field_str(if has {
+            bb.write(seg)
+            bb.freeze()
+          } else { seg }, bad))
+          // break, not a flag: bb is moved once frozen
+          break
         } else if length_nl(line) == line.len() {
-          fields.push(field_str(if buf.is_empty() { seg } else { buf + seg }, bad))
+          fields.push(field_str(if has {
+            bb.write(seg)
+            bb.freeze()
+          } else { seg }, bad))
           r.nf = fields.len()
           return Ok(Some((fields, rec_line)))
         } else if o.lazy {
-          buf = buf + seg + b"\""
+          bb.write(seg)
+          bb.write_byte('"')
+          has = true
         } else {
           return Err(csv.CsvErr{start_line: rec_line, line: r.num_line, column: col - 1, msg: ERR_QUOTE})
         }
       } else if line.len() > 0 {
-        buf = buf + line
+        bb.write(line)
+        has = true
         col += line.len()
         let (l, _) = r.read_line()
         line = l
@@ -283,7 +297,7 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.rea
         if !o.lazy {
           return Err(csv.CsvErr{start_line: rec_line, line: pos_line, column: col, msg: ERR_QUOTE})
         }
-        fields.push(field_str(buf, bad))
+        fields.push(field_str(bb.freeze(), bad))
         r.nf = fields.len()
         return Ok(Some((fields, rec_line)))
       }
