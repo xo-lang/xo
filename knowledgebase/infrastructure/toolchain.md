@@ -2251,7 +2251,10 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   main's manifest once per main commit that changes an IR input (gate.sh's
   `irmanifest` step on host 2) and copies it to every arm64 host's
   /work/in, which gate.sh reads as `XO_LLVM_IR_SHARED` (offload-gate-remote.sh
-  sets it; the log's selection line says "shared by irman.sh"). Each gate's selection time
+  sets it; the log's selection line says "shared by irman.sh"; it defers to
+  waiting leases at most 3 times in a row, reloads itself when install.sh
+  replaces it, and stops through `~/xo-lead/notes/irman/stop`, never a
+  kill; Last verified: 2026-11-15). Each gate's selection time
   and golden count are in its times.tsv (see "Gate test areas").
 - **Gate test areas** (owner's test-time plan, lead, 2026-11-14):
   `scripts/gate-areas.txt` lists the slow top-level tests of
