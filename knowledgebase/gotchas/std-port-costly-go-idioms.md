@@ -90,6 +90,13 @@ Two kinds, both fixed std-side:
      8 byte loads and stores into 32 bytes of slack past the output
      (lz4.c's wildcopy), with mem_copy kept for long runs, took it to 2.1
      to 4.5 GB/s (decision 0365 "Built", 2026-10-26).
+   - a struct read out of a List (`let f = fs[i]`, `for f in fs`, a
+     tuple of structs returned) copies it, one count per Str and List
+     field, where Go's `f := &fs[i]` or a pointer slice copies nothing:
+     std/cli copied a 13 field Flag per argument, per accessor and per
+     definition check, and parsed at 1.718 of Go's flag (host 1); reading
+     the fields in place (`fs[i].name`) and returning an index took the
+     Mac to 0.852 (2026-11-15).
 
 ## Fix
 

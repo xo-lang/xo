@@ -1,5 +1,15 @@
 # std/cli changes
 
+## 2026-11-15: perf: parse and the readers without copies of each flag
+
+- Kind: perf
+- Commit: this commit
+- Found by: std Proven perf evidence (std/evidence/cli/perf.md: parse 1.718 of Go's flag on linux/arm64 host 1)
+- Go reference: flag FlagSet.Parse and its lookups; go1.26.11
+- Test: corpus cli and std module tests, native, go and llvm; the cli_* goldens on arm64 and llvm; xo bench --ab on linux/arm64 host 1, 3 rounds
+
+The native parse read each declared flag by field instead of copying the whole 13 field Flag (one count per Str and List field) per argument, per definition check and per reader: the readers find the flag's index and read its value and default in place, a name lookup stops at the match, the root's flag list is shared until a subcommand adds flags, and single dash and stop at positional settings are kept as the path grows instead of rescanned per argument. No behavior change. bench/perf/cli parse 224.1 to 120.0 ms (0.536) on linux/arm64 host 1, about 0.92 of Go's flag from 1.718.
+
 ## 2026-11-15: feature: `CliErr` is an open enum (decision 0649)
 
 - Kind: feature

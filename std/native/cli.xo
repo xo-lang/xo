@@ -205,8 +205,8 @@ fn validate(c: Command, outer: List[Flag], version: Bool, dash: Bool, at: rt.Loc
   if !cmd_name_ok(c.name) {
     rt.fault_at("cli: command name ${c.name.quote()} must be letters, digits, ., _, and - (not first)", at)
   }
-  var seen = outer
-  for f in c.flags {
+  for fi in 0..c.flags.len() {
+    let f = c.flags[fi]
     if !flag_name_ok(f.name) {
       rt.fault_at("cli: flag name ${f.name.quote()} must be lowercase letters, digits, and - (command ${c.name})", at)
     }
@@ -219,12 +219,22 @@ fn validate(c: Command, outer: List[Flag], version: Bool, dash: Bool, at: rt.Loc
     if f.short == "h" {
       rt.fault_at("cli: short name -h of --${f.name} is reserved for --help", at)
     }
-    for o in seen {
-      if o.name == f.name {
+    // the flags before f, the outer commands' then this one's, by field
+    // (a copy of each Flag was most of validate)
+    for k in 0..outer.len() {
+      if outer[k].name == f.name {
         rt.fault_at("cli: flag --${f.name} is declared twice (command ${c.name})", at)
       }
-      if f.short != "" && o.short == f.short {
-        rt.fault_at("cli: short name -${f.short} is used by --${o.name} and --${f.name}", at)
+      if f.short != "" && outer[k].short == f.short {
+        rt.fault_at("cli: short name -${f.short} is used by --${outer[k].name} and --${f.name}", at)
+      }
+    }
+    for k in 0..fi {
+      if c.flags[k].name == f.name {
+        rt.fault_at("cli: flag --${f.name} is declared twice (command ${c.name})", at)
+      }
+      if f.short != "" && c.flags[k].short == f.short {
+        rt.fault_at("cli: short name -${f.short} is used by --${c.flags[k].name} and --${f.name}", at)
       }
     }
     if f.kind == CHOICE {
@@ -235,9 +245,16 @@ fn validate(c: Command, outer: List[Flag], version: Bool, dash: Bool, at: rt.Loc
         rt.fault_at("cli: default ${f.def_str.quote()} of --${f.name} is not one of its choices", at)
       }
     }
-    seen.push(f)
   }
   let on = dash || c.dash
+  // outer and this command's flags, for the cluster check and the
+  // subcommands (no copy when neither needs them)
+  var seen = outer
+  if on || !c.cmds.is_empty() {
+    for f in c.flags {
+      seen.push(f)
+    }
+  }
   if on {
     for f in seen {
       let own = f.name.len() == 1 && f.short == f.name
@@ -530,23 +547,21 @@ fn set_val(f: Flag, var x: Val, v: Str, env: Str) -> () ! Str {
 }
 
 fn index_of_name(fs: List[Flag], name: Str) -> Int? {
-  var r: Int? = None
   for i in 0..fs.len() {
     if fs[i].name == name {
-      r = Some(i)
+      return Some(i)
     }
   }
-  r
+  None
 }
 
 fn index_of_short(fs: List[Flag], c: Str) -> Int? {
-  var r: Int? = None
   for i in 0..fs.len() {
     if fs[i].short == c {
-      r = Some(i)
+      return Some(i)
     }
   }
-  r
+  None
 }
 
 fn empty_val() -> Val { Val{set: false, b: false, s: "", i: 0, d: 0s, f: 0.0, l: []} }
@@ -556,19 +571,20 @@ fn run_parse(root: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! c
   let version = root.version != ""
   validate(root, [], version, false, at)
   var path = [root]
-  var active: List[Flag] = []
+  // the root's list until a subcommand adds its flags (no copy of each Flag)
+  var active = root.flags
   var vals: List[Val] = []
-  for f in root.flags {
-    active.push(f)
+  for _ in 0..root.flags.len() {
     vals.push(empty_val())
   }
+  var dash_on = root.dash
+  var stop_on = root.stop
   var pos: List[Str] = []
   var dashes = false
   var i = 0
   while i < args.len() {
     var a = args[i]
-    let cur = path[path.len() - 1]
-    if !dashes && a.len() > 1 && a.starts_with("-") && !a.starts_with("--") && path.any(fn(c) { c.dash }) {
+    if !dashes && a.len() > 1 && a.starts_with("-") && !a.starts_with("--") && dash_on {
       // decision 0547: -name is --name when name is a declared long flag
       let body = raw.str_slice(a, 1, a.len())
       let name = match body.find("=") {
@@ -629,18 +645,17 @@ fn run_parse(root: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! c
           return Err(cli.CliErr.Usage(msg: msg, usage: usage_text(path)))
         }
         Some(fi) => {
-          let f = active[fi]
-          if f.kind == BOOL && !has {
+          if active[fi].kind == BOOL && !has {
             val = "true"
           } else if !has {
             if i + 1 >= args.len() {
-              return Err(cli.CliErr.Usage(msg: "flag --${f.name} needs a value", usage: usage_text(path)))
+              return Err(cli.CliErr.Usage(msg: "flag --${active[fi].name} needs a value", usage: usage_text(path)))
             }
             i += 1
             val = args[i]
           }
           var x = vals[fi]
-          match set_val(f, x, val, "") {
+          match set_val(active[fi], x, val, "") {
             Ok(_) => vals[fi] = x
             Err(msg) => return Err(cli.CliErr.Usage(msg: msg, usage: usage_text(path)))
           }
@@ -683,10 +698,13 @@ fn run_parse(root: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! c
           }
         }
       }
-    } else if !cur.cmds.is_empty() {
+    } else if !path[path.len() - 1].cmds.is_empty() {
+      let cur = path[path.len() - 1]
       match cur.cmds.find(fn(s) { s.name == a }) {
         Some(next) => {
           path.push(next)
+          dash_on = dash_on || next.dash
+          stop_on = stop_on || next.stop
           for f in next.flags {
             active.push(f)
             vals.push(empty_val())
@@ -703,7 +721,7 @@ fn run_parse(root: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! c
       }
     } else {
       pos.push(a)
-      if path.any(fn(c) { c.stop }) {
+      if stop_on {
         // decision 0556: Go's flag package stops at the first positional
         dashes = true
       }
@@ -716,13 +734,16 @@ fn run_parse(root: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! c
     return Err(cli.CliErr.Usage(msg: "missing command (one of ${names})", usage: usage_text(path)))
   }
   for fi in 0..active.len() {
-    let f = active[fi]
-    var x = vals[fi]
-    if !x.set && f.env != "" {
-      match env.get(f.env) {
+    if vals[fi].set {
+      continue
+    }
+    // by field: a copy of each Flag was a fifth of a parse
+    if active[fi].env != "" {
+      match env.get(active[fi].env) {
         Some(v) => {
           if v != "" {
-            match set_val(f, x, v, f.env) {
+            var x = vals[fi]
+            match set_val(active[fi], x, v, active[fi].env) {
               Ok(_) => vals[fi] = x
               Err(msg) => return Err(cli.CliErr.Usage(msg: msg, usage: usage_text(path)))
             }
@@ -731,8 +752,8 @@ fn run_parse(root: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! c
         None => ()
       }
     }
-    if !x.set && f.required {
-      return Err(cli.CliErr.Usage(msg: "missing required flag --${f.name}", usage: usage_text(path)))
+    if !vals[fi].set && active[fi].required {
+      return Err(cli.CliErr.Usage(msg: "missing required flag --${active[fi].name}", usage: usage_text(path)))
     }
   }
   var arg_vals: Map[Str, List[Str]] = {}
@@ -813,7 +834,7 @@ fn find_flag(c: Command, name: Str) -> Flag? {
 
 /// The flag name with its value: on the selected path, else anywhere in
 /// the tree (a flag of a command that was not selected is unset).
-fn (p: Parsed) flag(name: Str, kinds: List[Int], at: rt.Loc) -> (Flag, Val) {
+fn (p: Parsed) flag(name: Str, kinds: Int, at: rt.Loc) -> (Flag, Val) {
   var f: Flag? = None
   var v = empty_val()
   match index_of_name(p.active, name) {
@@ -826,10 +847,30 @@ fn (p: Parsed) flag(name: Str, kinds: List[Int], at: rt.Loc) -> (Flag, Val) {
   match f {
     None => rt.fault_at("cli: flag --${name} is not declared", at)
     Some(x) => {
-      if !kinds.contains(x.kind) {
+      if (kinds.shr_logical(x.kind) & 1) == 0 {
         rt.fault_at("cli: --${name} is declared by ${kind_name(x.kind)}_flag, so read it with ${readers(x.kind)}", at)
       }
       (x, v)
+    }
+  }
+}
+
+/// The index of name in p.active, kind checked, or -1 for a flag of a
+/// command that was not selected (p.flag checks it and its default
+/// applies): the readers take the value and default by field, where a
+/// copy of the Flag and Val in p.flag's tuple was a tenth of a parse.
+fn (p: Parsed) slot(name: Str, kinds: Int, at: rt.Loc) -> Int {
+  match index_of_name(p.active, name) {
+    Some(i) => {
+      let k = p.active[i].kind
+      if (kinds.shr_logical(k) & 1) == 0 {
+        rt.fault_at("cli: --${name} is declared by ${kind_name(k)}_flag, so read it with ${readers(k)}", at)
+      }
+      i
+    }
+    None => {
+      let _ = p.flag(name, kinds, at)
+      -1
     }
   }
 }
@@ -862,85 +903,108 @@ fn (p: Parsed) arg_of(name: Str, at: rt.Loc) -> (Arg, List[Str]?) {
 }
 
 fn (p: Parsed) bool(name: Str, at: rt.Loc) -> Bool {
-  let (f, v) = p.flag(name, [BOOL], at)
-  if v.set {
-    return v.b
+  let i = p.slot(name, (1 << BOOL), at)
+  if i < 0 {
+    let (f, _) = p.flag(name, (1 << BOOL), at)
+    return f.def_bool
   }
-  f.def_bool
+  if p.vals[i].set {
+    return p.vals[i].b
+  }
+  p.active[i].def_bool
 }
 
 fn (p: Parsed) str(name: Str, at: rt.Loc) -> Str {
-  let (f, v) = p.flag(name, [STR, CHOICE], at)
-  if v.set {
-    return v.s
+  let i = p.slot(name, (1 << STR) | (1 << CHOICE), at)
+  if i < 0 {
+    let (f, _) = p.flag(name, (1 << STR) | (1 << CHOICE), at)
+    return f.def_str
   }
-  f.def_str
+  if p.vals[i].set {
+    return p.vals[i].s
+  }
+  p.active[i].def_str
 }
 
 fn (p: Parsed) str_opt(name: Str, at: rt.Loc) -> Str? {
-  let (_, v) = p.flag(name, [STR, CHOICE], at)
-  if v.set {
-    return Some(v.s)
+  let i = p.slot(name, (1 << STR) | (1 << CHOICE), at)
+  if i >= 0 && p.vals[i].set {
+    return Some(p.vals[i].s)
   }
   None
 }
 
 fn (p: Parsed) int(name: Str, at: rt.Loc) -> Int {
-  let (f, v) = p.flag(name, [INT], at)
-  if v.set {
-    return v.i
+  let i = p.slot(name, (1 << INT), at)
+  if i < 0 {
+    let (f, _) = p.flag(name, (1 << INT), at)
+    return f.def_int
   }
-  f.def_int
+  if p.vals[i].set {
+    return p.vals[i].i
+  }
+  p.active[i].def_int
 }
 
 fn (p: Parsed) int_opt(name: Str, at: rt.Loc) -> Int? {
-  let (_, v) = p.flag(name, [INT], at)
-  if v.set {
-    return Some(v.i)
+  let i = p.slot(name, (1 << INT), at)
+  if i >= 0 && p.vals[i].set {
+    return Some(p.vals[i].i)
   }
   None
 }
 
 fn (p: Parsed) duration(name: Str, at: rt.Loc) -> Duration {
-  let (f, v) = p.flag(name, [DUR], at)
-  if v.set {
-    return v.d
+  let i = p.slot(name, (1 << DUR), at)
+  if i < 0 {
+    let (f, _) = p.flag(name, (1 << DUR), at)
+    return f.def_dur
   }
-  f.def_dur
+  if p.vals[i].set {
+    return p.vals[i].d
+  }
+  p.active[i].def_dur
 }
 
 fn (p: Parsed) duration_opt(name: Str, at: rt.Loc) -> Duration? {
-  let (_, v) = p.flag(name, [DUR], at)
-  if v.set {
-    return Some(v.d)
+  let i = p.slot(name, (1 << DUR), at)
+  if i >= 0 && p.vals[i].set {
+    return Some(p.vals[i].d)
   }
   None
 }
 
 fn (p: Parsed) float(name: Str, at: rt.Loc) -> Float {
-  let (f, v) = p.flag(name, [FLOAT], at)
-  if v.set {
-    return v.f
+  let i = p.slot(name, (1 << FLOAT), at)
+  if i < 0 {
+    let (f, _) = p.flag(name, (1 << FLOAT), at)
+    return f.def_float
   }
-  f.def_float
+  if p.vals[i].set {
+    return p.vals[i].f
+  }
+  p.active[i].def_float
 }
 
 fn (p: Parsed) float_opt(name: Str, at: rt.Loc) -> Float? {
-  let (_, v) = p.flag(name, [FLOAT], at)
-  if v.set {
-    return Some(v.f)
+  let i = p.slot(name, (1 << FLOAT), at)
+  if i >= 0 && p.vals[i].set {
+    return Some(p.vals[i].f)
   }
   None
 }
 
 fn (p: Parsed) strs(name: Str, at: rt.Loc) -> List[Str] {
-  let (_, v) = p.flag(name, [STRS], at)
-  v.l
+  let i = p.slot(name, (1 << STRS), at)
+  if i < 0 {
+    return []
+  }
+  p.vals[i].l
 }
 
 fn (p: Parsed) is_set(name: Str, at: rt.Loc) -> Bool {
-  let (_, v) = p.flag(name, [BOOL, STR, INT, DUR, CHOICE, STRS, FLOAT], at)
-  v.set
+  let i = p.slot(name, (1 << BOOL) | (1 << STR) | (1 << INT) | (1 << DUR) | (1 << CHOICE) | (1 << STRS) | (1 << FLOAT), at)
+  i >= 0 && p.vals[i].set
 }
 
 fn (p: Parsed) arg(name: Str, at: rt.Loc) -> Str {
