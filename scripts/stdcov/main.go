@@ -911,11 +911,33 @@ func added(m string) (date, rel string) {
 	return f[1], "unreleased"
 }
 
+// ---- the -json snapshot
+
+// modMarks: one module's mark on each axis and its overall level.
+type modMarks struct {
+	Module      string `json:"module"`
+	Features    string `json:"features"`
+	Testing     string `json:"testing"`
+	Performance string `json:"performance"`
+	Overall     string `json:"overall"`
+}
+
+// marksJSON: the snapshot `xw std` ingests, the commit it describes (sha
+// and commit time) and every module's marks.
+func marksJSON(sha, at string, ms []modMarks) ([]byte, error) {
+	return json.MarshalIndent(struct {
+		Sha     string     `json:"sha"`
+		At      string     `json:"at"`
+		Modules []modMarks `json:"modules"`
+	}{sha, at, ms}, "", " ")
+}
+
 // ---- main
 
 func main() {
 	out := flag.String("o", "", "write the page to `FILE` (default stdout)")
 	day := flag.String("today", "", "the date staleness is judged on, `YYYY-MM-DD` (default today)")
+	js := flag.String("json", "", "also write each module's marks to `FILE` (xw std reads these snapshots; ADR 0658 stage 3)")
 	flag.Parse()
 	var err error
 	if repo, err = os.Getwd(); err != nil {
@@ -1020,6 +1042,19 @@ func main() {
 			d, rel = added(m)
 		}
 		rows = append(rows, row{m, f, t, p, l, d, rel})
+	}
+	if *js != "" {
+		var ms []modMarks
+		for _, r := range rows {
+			ms = append(ms, modMarks{r.m, r.f.level, r.t.level, r.p.level, r.lv})
+		}
+		data, err := marksJSON(sh("git", "rev-parse", "HEAD"), sh("git", "log", "-1", "--format=%cI"), ms)
+		if err != nil {
+			die("-json: %v", err)
+		}
+		if err := os.WriteFile(*js, data, 0o644); err != nil {
+			die("-json: %v", err)
+		}
 	}
 	lvc := map[string]int{}
 	ax := map[string]map[string]int{"features": {}, "testing": {}, "performance": {}}

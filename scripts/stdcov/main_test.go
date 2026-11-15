@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -94,5 +95,22 @@ func TestPerfHelpers(t *testing.T) {
 		if !strings.Contains(got.text, users[0]) {
 			t.Errorf("perf(%q) text %q does not name its users", h, got.text)
 		}
+	}
+}
+
+// TestMarksJSON: the -json snapshot's shape, which xw std (workstream
+// std.xo) parses.
+func TestMarksJSON(t *testing.T) {
+	data, err := marksJSON("abc", "2026-11-15T18:00:00-05:00", []modMarks{{"std/json", "Proven", "Solid", "Early", "Early"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"sha": "abc", "at": "2026-11-15T18:00:00-05:00", "modules": []any{map[string]any{"module": "std/json", "features": "Proven", "testing": "Solid", "performance": "Early", "overall": "Early"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }
