@@ -1,5 +1,15 @@
 # std/big changes
 
+## 2026-11-15: perf: BigRat cmp and float_text on small values
+
+- Kind: perf
+- Commit: this push
+- Found by: std Proven perf evidence (std/evidence/big/perf.md: bigrat text 1.460 and cmp 1.221 of Go's wall on linux/arm64 host 1)
+- Go reference: math/big Rat.Cmp, Rat.FloatString, nat.itoa; go1.26.11
+- Test: corpora big, bigrat and bigfloat and the std module tests, native, go and llvm; the llvm goldens of big; twincheck of bench/perf big, bigrat and bigfloat (21 cases agree); xo bench --ab on linux/arm64 host 1, 3 rounds
+
+`cmp` of two fractions whose numerators and denominators are one word each compares the two cross products as 128 bit words instead of building two BigInts (24.87 to 1.763 ms, 0.071). `float_text` makes 10^prec by multiplies of words of 10^19 instead of nat_exp's squarings, and the decimal text of a nat writes each 19 digit chunk by descending powers of ten instead of filling a digit buffer, with a one word value below 2^63 printed as an Int (26.95 to 16.03 ms, 0.595). No output change.
+
 ## 2026-11-15: feature: random_below and random_prime (Go's crypto/rand.Int and Prime)
 
 - Kind: feature

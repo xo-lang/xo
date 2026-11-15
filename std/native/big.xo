@@ -1569,6 +1569,11 @@ fn bigint_text(x: big.BigInt, base: Int) -> Str {
   if xa.is_empty() {
     return "0"
   }
+  if base == 10 && xa.len() == 1 && xa[0] >= 0 {
+    // a word below 2^63: Int's decimal text (Go's itoa has the same small
+    // path; the chunk loop's buffers were a third of Rat.FloatString)
+    return if xn { "-${xa[0]}" } else { "${xa[0]}" }
+  }
   // the largest power of base in a word, and its digit count
   var bb = base
   var nd = 1
@@ -1624,27 +1629,23 @@ fn bigint_text(x: big.BigInt, base: Int) -> Str {
       n -= 1
     }
   }
-  var i = chunks.len() - 1
-  while i >= 0 {
-    // the chunk's digits (c is a working copy, not the element)
-    var c = 0
-    c = chunks[i]
-    var buf = raw.zero_ints(nd)
-    for k in 0..nd {
-      buf[nd - 1 - k] = c % base
-      c = c / base
-    }
-    // the top chunk without its leading zeros
-    var start = 0
-    if i == chunks.len() - 1 {
-      while start < nd - 1 && buf[start] == 0 {
-        start += 1
+  var lead = true
+  while !chunks.is_empty() {
+    // the chunk's nd digits from the top, by descending powers of base
+    // (a digit buffer per chunk was a third of Rat.FloatString); the top
+    // chunk without its leading zeros
+    var c = chunks.pop() ?? 0
+    var dv = bb / base
+    while dv > 0 {
+      let d = c / dv
+      c -= d * dv
+      if !lead || d != 0 || dv == 1 {
+        lead = false
+        out.write_byte(ds[d])
       }
+      dv = dv / base
     }
-    for k in start..nd {
-      out.write_byte(ds[buf[k]])
-    }
-    i -= 1
+    lead = false
   }
   out.freeze().to_str() ?? ""
 }
@@ -3408,7 +3409,46 @@ fn bigrat_denom(x: big.BigRat) -> big.BigInt { x.b }
 
 fn bigrat_sign(x: big.BigRat) -> Int { bigint_sign(x.a) }
 
-fn bigrat_cmp(x: big.BigRat, y: big.BigRat) -> Int { bigint_cmp(bigint_mul(x.a, y.b), bigint_mul(y.a, x.b)) }
+/// Whether the key holds zero or one word.
+fn key_small(k: List[Int]) -> Bool { k.is_empty() || k.len() <= 2 && k[0] >= -1 && k[0] <= 1 }
+
+/// The sign (-1, 0, 1) and the magnitude (an unsigned word) of a small key.
+fn key_word(k: List[Int]) -> (Int, Int) {
+  if k.is_empty() || k[0] == 0 {
+    return (0, 0)
+  }
+  if k[0] < 0 { (-1, k[1] ^ MAX) } else { (1, k[1] ^ MIN) }
+}
+
+fn bigrat_cmp(x: big.BigRat, y: big.BigRat) -> Int {
+  // one word each: the two products as 128 bit words, with no BigInt
+  // built (the products' allocations were most of Rat.Cmp's 1.22 of Go)
+  if key_small(x.a.key) && key_small(x.b.key) && key_small(y.a.key) && key_small(y.b.key) {
+    let (sx, mx) = key_word(x.a.key)
+    let (sy, my) = key_word(y.a.key)
+    if sx != sy {
+      return if sx < sy { -1 } else { 1 }
+    }
+    if sx == 0 {
+      return 0
+    }
+    let (_, dx) = key_word(x.b.key)
+    let (_, dy) = key_word(y.b.key)
+    // mx dy against my dx, unsigned
+    let h1 = mx.mul_hi_unsigned(dy)
+    let l1 = mx.wrapping_mul(dy)
+    let h2 = my.mul_hi_unsigned(dx)
+    let l2 = my.wrapping_mul(dx)
+    var c = 0
+    if h1 != h2 {
+      c = if (h1 ^ MIN) < (h2 ^ MIN) { -1 } else { 1 }
+    } else if l1 != l2 {
+      c = if (l1 ^ MIN) < (l2 ^ MIN) { -1 } else { 1 }
+    }
+    return if sx < 0 { -c } else { c }
+  }
+  bigint_cmp(bigint_mul(x.a, y.b), bigint_mul(y.a, x.b))
+}
 
 fn bigrat_is_int(x: big.BigRat) -> Bool { nat_is_one(parts(x.b).1) }
 
@@ -3502,6 +3542,27 @@ fn bigrat_rat_text(x: big.BigRat) -> Str {
   if bigrat_is_int(x) { bigint_text(x.a, 10) } else { bigrat_text(x) }
 }
 
+/// 10^k (k > 0) by words of 10^19 (Go's expNN squares; at FloatString's
+/// precisions a word multiply or two, where nat_exp's steps allocated a
+/// quarter of the call)
+fn pow10_nat(k: Int) -> List[Int] {
+  var p: List[Int] = [1]
+  var e = k
+  while e >= 19 {
+    // 10^19 as an unsigned word
+    p = nat_mul_add_ww(p, -8446744073709551616, 0)
+    e -= 19
+  }
+  if e > 0 {
+    var w = 1
+    for _ in 0..e {
+      w *= 10
+    }
+    p = nat_mul_add_ww(p, w, 0)
+  }
+  p
+}
+
 fn bigrat_float_text(x: big.BigRat, prec: Int) -> Str {
   var buf = StrBuilder.new()
   if bigrat_is_int(x) {
@@ -3517,7 +3578,7 @@ fn bigrat_float_text(x: big.BigRat, prec: Int) -> Str {
   var (q, r) = nat_divmod(a, b)
   var p: List[Int] = [1]
   if prec > 0 {
-    p = nat_exp([10], nat_word(prec), [])
+    p = pow10_nat(prec)
   }
   r = nat_mul(r, p)
   let (r1, r2) = nat_divmod(r, b)
