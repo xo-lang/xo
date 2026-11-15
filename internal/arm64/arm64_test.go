@@ -674,7 +674,11 @@ func TestGoldenRunIslands(t *testing.T) {
 				continue
 			}
 			regs, dir := regs, dir
-			env := []string{"XO_BRANCH_REACH=" + islandsReach, "XO_BACKEND_CACHE=off"}
+			reach := islandsReach
+			if name == "http_server" {
+				reach = islandsReachLarge
+			}
+			env := []string{"XO_BRANCH_REACH=" + reach, "XO_BACKEND_CACHE=off"}
 			label := "reach/" + name
 			if regs != "" {
 				env = append(env, "XO_ARM64_REGS="+regs)
@@ -747,6 +751,12 @@ func TestGoldenRunIslandsSplit(t *testing.T) {
 // code, so they get islands, and large enough that the islands of their
 // far targets fit in the reach's eighth.
 const islandsReach = "262144"
+
+// islandsReachLarge is http_server's: its 2.2 MB of text (std/http with
+// the TLS engine, ECH and std/hpke, 2026-11-15) needed 33096 bytes of
+// islands at islandsReach, past the eighth (32768); at twice the reach it
+// still gets islands everywhere past its first 512 KiB.
+const islandsReachLarge = "524288"
 
 // TestBinCacheLinkEnv: a link made under XO_BRANCH_REACH is not served
 // to a build without it from the bin cache. The link's binary key held
