@@ -997,6 +997,43 @@ fn union_moved(a: Moved, b: Moved) -> Moved {
   out
 }
 
+/// The bindings pattern p declares (its BindPats, nested).
+fn pat_binds(p: parser.Pattern, var out: List[Ident]) {
+  match p {
+    BindPat(name: name, ..) => out.push(name)
+    OrPat(alts: alts, ..) => {
+      for a in alts {
+        pat_binds(a, out)
+      }
+    }
+    TuplePat(elems: els, ..) | ListPat(elems: els, ..) => {
+      for x in els {
+        pat_binds(x, out)
+      }
+    }
+    VariantPat(fields: fs, ..) | StructPat(fields: fs, ..) => {
+      for f in fs {
+        pat_binds(f.pattern, out)
+      }
+    }
+    WildcardPat(..) | LitPat(..) | RangePat(..) | BadPat(..) => {}
+  }
+}
+
+/// A pattern's bindings are new each time it binds: a move of an earlier
+/// binding of the same name (the last iteration of a loop) does not carry
+/// over to them.
+fn (c: Checker) mv_unbind(p: parser.Pattern, var moved: Moved) {
+  var ids: List[Ident] = []
+  pat_binds(p, ids)
+  for id in ids {
+    let v = c.ident_obj(id)
+    if v >= 0 {
+      moved.remove(v)
+    }
+  }
+}
+
 /// Whether an identifier of the walk names a local of a move only type.
 fn (c: Checker) names_move_only(sites: List[FlowSite]) -> Bool {
   for st in sites {
@@ -1055,12 +1092,7 @@ fn (var c: Checker) mv_stmt(s: Stmt, var moved: Moved) {
       c.mv_expr(value, true, moved)
       // a binding declared in a loop body is a new binding each time
       // round: a move in the last iteration does not carry over
-      if let BindPat(name: name, ..) = pattern {
-        let v = c.ident_obj(name)
-        if v >= 0 {
-          moved.remove(v)
-        }
-      }
+      c.mv_unbind(pattern, moved)
     }
     VarStmt(name: name, value: value, ..) => {
       c.mv_expr(value, true, moved)
@@ -1091,18 +1123,18 @@ fn (var c: Checker) mv_stmt(s: Stmt, var moved: Moved) {
       }
       c.mv_dead = true
     }
-    ForStmt(label: label, iter: iter, body: body, ..) => {
+    ForStmt(label: label, pattern: pat, iter: iter, body: body, ..) => {
       c.mv_expr(iter, false, moved)
-      c.mv_loop(label, body, moved)
+      c.mv_loop(label, [pat], body, moved)
     }
-    WhileStmt(label: label, cond: cond, value: value, body: body, ..) => {
+    WhileStmt(label: label, cond: cond, pattern: pats, value: value, body: body, ..) => {
       if let Some(x) = cond {
         c.mv_expr(x, false, moved)
       }
       for x in value {
         c.mv_expr(x, false, moved)
       }
-      c.mv_loop(label, body, moved)
+      c.mv_loop(label, pats, body, moved)
     }
     // the state goes to the loop's exit or its next iteration, and the
     // path ends here (decision 0300)
@@ -1133,7 +1165,7 @@ fn (var c: Checker) mv_stmt(s: Stmt, var moved: Moved) {
 /// `continue`'s; the state after it is the union of the state before (no
 /// iteration), the end of the body, and every `break`'s. A path that
 /// ended in the body (a return) reaches neither.
-fn (var c: Checker) mv_loop(label: Ident?, body: Block, var moved: Moved) {
+fn (var c: Checker) mv_loop(label: Ident?, pats: List[parser.Pattern], body: Block, var moved: Moved) {
   let before = moved
   let outer_dead = c.mv_dead
   c.mv_frames.push(MvFrame{label: match label {
@@ -1147,6 +1179,10 @@ fn (var c: Checker) mv_loop(label: Ident?, body: Block, var moved: Moved) {
   while true {
     moved = entry
     c.mv_dead = false
+    // the loop's pattern binds anew each iteration
+    for p in pats {
+      c.mv_unbind(p, moved)
+    }
     c.mv_block(body, false, moved)
     if !c.mv_dead {
       ends = union_moved(ends, moved)
@@ -1258,6 +1294,9 @@ fn (var c: Checker) mv_expr(e: Expr, mv: Bool, var moved: Moved) {
       // a branch whose path ended adds nothing to the join (decision 0300)
       let start = moved
       let dead0 = c.mv_dead
+      if let Some(p) = x.pattern {
+        c.mv_unbind(p, moved)
+      }
       c.mv_block(x.then, mv, moved)
       let after_then = moved
       let then_dead = c.mv_dead
@@ -1288,6 +1327,8 @@ fn (var c: Checker) mv_expr(e: Expr, mv: Bool, var moved: Moved) {
       for arm in arms {
         moved = start
         c.mv_dead = dead0
+        // the arm's bindings are new each time the match runs
+        c.mv_unbind(arm.pattern, moved)
         if let Some(g) = arm.guard {
           c.mv_expr(g, false, moved)
         }
@@ -1333,7 +1374,7 @@ fn (var c: Checker) mv_expr(e: Expr, mv: Bool, var moved: Moved) {
       moved = if live { result } else { start }
       c.mv_dead = !live && !arms.is_empty()
     }
-    WhileExpr(body: body, ..) => c.mv_loop(None, body, moved)
+    WhileExpr(body: body, ..) => c.mv_loop(None, [], body, moved)
     ScopeExpr(body: body, ..) => c.mv_block(body, mv, moved)
     StructLit(fields: fields, ..) => {
       for f in fields {

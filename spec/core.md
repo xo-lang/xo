@@ -2665,7 +2665,10 @@ b.push(2)                // error XO0510: use of moved value `b`
   code after that point. A use is `XO0510` only when some path that can reach
   it moved the value and did not assign it again (decision 0300). A `break`
   carries its moves to the code after its loop and a `continue` to the loop's
-  next iteration:
+  next iteration. A binding a pattern declares (a `let`, a `match` arm, an
+  `if let`, a `for` or `while let` pattern) is a new value each time the
+  pattern runs, so moving it in one iteration of a loop does not make its use
+  in the next one `XO0510`:
 
 ```
 fn decode(s: Bytes) -> Bytes? {

@@ -1,0 +1,91 @@
+// A pattern binds a new value each time it runs: a move of the last
+// iteration's binding does not carry over to the next one (aws-43's x509
+// pool loop, 2026-11-15). The first five functions are accepted; the last
+// two are still rejected.
+
+fn mk() -> BytesBuilder ! Str {
+  Ok(BytesBuilder.new())
+}
+
+fn mk_opt() -> BytesBuilder? {
+  Some(BytesBuilder.new())
+}
+
+// a match arm binding moved out, in a loop
+fn by_match(os: Os) {
+  for _ in 0..2 {
+    var b = match mk() {
+      Ok(x) => x
+      Err(e) => fault(e)
+    }
+    os.stdio.println("${b.freeze().len()}")
+  }
+}
+
+// the same through ??
+fn by_coalesce(os: Os) {
+  for _ in 0..2 {
+    var b = mk_opt() ?? BytesBuilder.new()
+    os.stdio.println("${b.freeze().len()}")
+  }
+}
+
+// an if let binding moved out, in a loop
+fn by_if_let(os: Os) {
+  for _ in 0..2 {
+    if let Some(x) = mk_opt() {
+      var b = x
+      os.stdio.println("${b.freeze().len()}")
+    }
+  }
+}
+
+// a let with a tuple pattern, in a loop
+fn by_tuple(os: Os) {
+  for _ in 0..2 {
+    let (x, n) = (BytesBuilder.new(), 1)
+    var b = x
+    os.stdio.println("${b.freeze().len() + n}")
+  }
+}
+
+// a for pattern over move only values
+fn by_for(os: Os, bs: List[BytesBuilder]) {
+  for x in bs {
+    var b = x
+    os.stdio.println("${b.freeze().len()}")
+  }
+}
+
+// still rejected: the arm binding moved twice in one iteration
+fn twice(os: Os) {
+  for _ in 0..2 {
+    match mk() {
+      Ok(x) => {
+        var a = x
+        var b = x // ERROR XO0510 "use of moved value `x`"
+        os.stdio.println("${a.freeze().len()} ${b.freeze().len()}")
+      }
+      Err(e) => fault(e)
+    }
+  }
+}
+
+// still rejected: a value bound outside the loop, moved in it
+fn outside(os: Os) {
+  let x = BytesBuilder.new()
+  for _ in 0..2 {
+    var b = x // ERROR XO0510 "use of moved value `x`"
+    os.stdio.println("${b.freeze().len()}")
+  }
+}
+
+fn main(os: Os) {
+  by_match(os)
+  by_coalesce(os)
+  by_if_let(os)
+  by_tuple(os)
+  by_for(os, [])
+  twice(os)
+  outside(os)
+}
