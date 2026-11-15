@@ -35,16 +35,28 @@ in detail; check before starting one.
    log end to end on loopback (fetch, verify, lock; XO1313 and XO1304 on
    a tampered tree; XO_NOSUMDB and XO_NOPROXY), so what a public service
    would run is built and tested; hosting it is the owner's decision (decision 0568, Proposed: R2 and Cloudflare's CDN, the owner's OCI host).
+   *Last verified 2026-11-15:* decision 0568 is Accepted (owner,
+   2026-11-08) and the services run: proxy.xolang.org serves module
+   versions (github.com/xo-lang/aws lists v0.1.0 to v0.2.1),
+   sum.xolang.org/latest answers, and index.xolang.org/index lists
+   modules; pkg.xolang.org (item 4) is the discovery page.
 3. **A security process.** A vulnerability database, a `xo vuln` checker
    for a module's dependencies (as `govulncheck`), and a published
-   security policy (how to report, response times).
+   security policy (how to report, response times). *Last verified
+   2026-11-15:* SECURITY.md (how to report) is in the repository since
+   2026-10-17, and each CHANGELOG security line names the affected
+   versions; there is no vulnerability database and no `xo vuln`.
 4. **Documentation for newcomers.** A guided tour or book, and browsable
    std API documentation (as pkg.go.dev). The spec and `xo doc` are
    reference material, not a way in.
    *Verified 2026-10-29:* the website has a 12-page tour whose examples
    are checked and run in the playground (content/docs/tour, last edited
    2026-10-17); browsable std API docs do not exist (`xo doc` writes the
-   Markdown they could be made from).
+   Markdown they could be made from). *Last verified 2026-11-15:*
+   browsable docs exist: pkg.xolang.org serves module and std API docs
+   (as pkg.go.dev), and the website has a std reference at
+   xolang.dev/docs/stdlib. pkg.xolang.org's std docs are at v0.46.0,
+   behind the 0.51.1 release, so they need a refresh step per release.
 
 ## Important, smaller
 
@@ -60,18 +72,28 @@ in detail; check before starting one.
    a tree-sitter grammar, `tree-sitter-xo` (infrastructure/
    tree-sitter-xo.md), is public at https://github.com/xo-lang/tree-sitter-xo;
    the npm package, the crate and the editor-list submissions await the
-   owner's approval.
+   owner's approval. *Last verified 2026-11-15:* Open VSX has
+   `xo-lang.xo` 0.1.3 (2026-11-11); npm has no `tree-sitter-xo` package.
 6. **More platforms.** FreeBSD and Linux riscv64 are the common asks
    after the five current targets; 32-bit and mobile matter less for a
-   backend language.
-7. **Database drivers beyond Postgres:** SQLite and MySQL.
+   backend language. *Last verified 2026-11-15:* both are in: FreeBSD
+   (decision 0573, Accepted; amd64 and arm64) and linux/riscv64 through
+   LLVM (decision 0571, Accepted), in the 0.51.1 CHANGELOG.
+7. **Database drivers beyond Postgres:** SQLite and MySQL. *Last
+   verified 2026-11-15:* std/sqlite exists (decision 0534, Accepted;
+   in 0.51.1, FreeBSD too); there is no MySQL driver.
 8. **Observability:** OpenTelemetry-style tracing and metrics in std.
    *Verified 2026-10-29:* std/metrics
    (Prometheus exposition) and std/trace (request ids, a span ring) exist
-   (decision 0325, spec 11.6); OpenTelemetry export does not.
+   (decision 0325, spec 11.6); OpenTelemetry export does not. *Last
+   verified 2026-11-15:* std/otlp exports OpenTelemetry traces and
+   metrics (decision 0539, Accepted and implemented; in 0.51.1).
 9. **Calling Xo from other languages:** building a C-compatible shared
    library, as Go's `-buildmode=c-shared`. *Verified 2026-10-29:* none for
    users; only the runtime's own C-name exports (decisions 0207, 0234).
+   *Last verified 2026-11-15:* `xo build --lib=shared` builds C shared
+   libraries, Windows DLLs with their import library too (decision
+   0574, Accepted; in the 0.51.1 CHANGELOG).
 
 ## Process
 
