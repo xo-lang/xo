@@ -28,7 +28,11 @@ fn main(os: Os) {
     })
     let t = tls.dial(os.net, l.addr(), server_name: "localhost", roots: Some(roots)).or_fault("dial")
     os.stdio.println("remote is the listener: ${t.remote_addr() == l.addr()} local: ${t.local_addr().starts_with("127.0.0.1:")}")
-    t.write(b"GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").or_fault("write")
+    // no `Connection: close`: the server answers and then waits for the
+    // next request, so it closes only after reading this half close; with
+    // it, a loaded host's server could close first and close_write's
+    // shutdown failed with ENOTCONN (Linux, gate 2026-11-15)
+    t.write(b"GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n").or_fault("write")
     t.close_write().or_fault("close_write")
     match t.write(b"more") {
       Ok(_) => os.stdio.println("write after close_write: ok")
