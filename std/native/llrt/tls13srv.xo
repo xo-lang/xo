@@ -282,6 +282,11 @@ pub struct Server {
   ech_id: Int = 0
   ech_keys: List[tlsech.Key] = []
   pub ech_accepted: Bool = false
+  /// whether the handshake finished, kept when a later record in the
+  /// same read fails the connection (Go's Handshake returns after the
+  /// client's Finished: an ECH client's ech_required alert that follows
+  /// it is the next read's error)
+  pub completed: Bool = false
 }
 
 /// A new server for conf, waiting for a ClientHello.
@@ -1553,6 +1558,7 @@ fn finished(var s: Server, msg: Bytes) {
   s.tr = b""
   s.trk = -1
   s.state = DONE
+  s.completed = true
 }
 
 /// RFC 8446 4.6.3: the client's keys move on; when it asks, the server's

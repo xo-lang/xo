@@ -31,6 +31,14 @@ enum TlsErrKind {
   Other
   RecordHeader(header: Bytes)
   CertificateVerification(certs: List[x509.Certificate], cause: x509.CertErr)
+  /// Go's ECHRejectionError (decision 0644 T13): the server rejected the
+  /// client's Encrypted Client Hello; its retry configs (an
+  /// ECHConfigList to try again with, empty when it sent none, which a
+  /// client may take as the server's signal that it has no ECH)
+  EchRejection(retry_config_list: Bytes)
+  /// Go's AlertError: a TLS alert as a QUIC connection reports it
+  /// (decision 0644 T14; a QUIC transport closes with 0x100 + code)
+  Alert(code: Int)
 }
 
 /// The message (decision 0358).
@@ -142,6 +150,18 @@ struct ClientConfig {
   session_cache: SessionCache? = None
   /// Go's SessionTicketsDisabled: no session is resumed or kept
   session_tickets_disabled: Bool = false
+  /// Go's EncryptedClientHelloConfigList (decision 0644 T13): an
+  /// ECHConfigList (from the server's DNS HTTPS record); the hello then
+  /// sends server_name and the rest encrypted to the first config it can
+  /// use, under the config's public name, and offers TLS 1.3 alone
+  /// (min_version and max_version must allow it). A server that rejects
+  /// it fails the handshake with TlsErrKind.EchRejection once its
+  /// certificate verifies for the public name.
+  encrypted_client_hello_config_list: Bytes? = None
+  /// Go's EncryptedClientHelloRejectionVerify: on a rejection, checks
+  /// the state in place of the verification against the public name;
+  /// an Err fails the handshake
+  encrypted_client_hello_rejection_verify: (fn(ConnState) -> () ! Str)? = None
 }
 
 /// A client's session cache (Go's ClientSessionCache, decision 0644
@@ -376,6 +396,22 @@ struct ServerConfig {
   /// each opening tickets a week); a `server` outside a listener issues
   /// none, since its keys would open no other connection's ticket
   session_ticket_keys: List[TicketKey] = []
+  /// Go's EncryptedClientHelloKeys (decision 0644 T13): the keys that
+  /// decrypt a client's Encrypted Client Hello, tried in order; those
+  /// with send_as_retry are sent to a client whose ECH none opens
+  encrypted_client_hello_keys: List[EchKey] = []
+  /// Go's GetEncryptedClientHelloKeys: the keys for a ClientHello in
+  /// place of encrypted_client_hello_keys; an Err fails the handshake
+  get_encrypted_client_hello_keys: (fn(ClientHelloInfo) -> List[EchKey] ! Str)? = None
+}
+
+/// A server's ECH key (Go's EncryptedClientHelloKey): an ECHConfig
+/// (its whole encoding, as in an ECHConfigList), the HPKE private key of
+/// its KEM, and whether the config is a retry config.
+struct EchKey {
+  config: Bytes
+  private_key: Bytes
+  send_as_retry: Bool = false
 }
 
 /// A session ticket key (Go's SetSessionTicketKeys key, decision 0644

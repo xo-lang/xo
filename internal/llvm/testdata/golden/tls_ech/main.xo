@@ -1,0 +1,147 @@
+// std/tls's Encrypted Client Hello (decision 0644 T13): ClientConfig's
+// encrypted_client_hello_config_list and
+// encrypted_client_hello_rejection_verify, ServerConfig's
+// encrypted_client_hello_keys and get_encrypted_client_hello_keys
+// (Go's EncryptedClientHelloConfigList,
+// EncryptedClientHelloRejectionVerify, EncryptedClientHelloKeys and
+// GetEncryptedClientHelloKeys), ConnState.ech_accepted, and
+// TlsErrKind.EchRejection (Go's ECHRejectionError); after tls_test.go's
+// TestECH: a DHKEM(X25519) config with the public name public.example,
+// a server with certificates for public.example and secret.example.
+use std/tls
+use std/x509
+use std/crypto
+use std/base64
+use std/hpke
+
+struct Issued {
+  cert: x509.Certificate
+  key: crypto.PrivateKey
+}
+
+fn pem_block(kind: Str, der: Bytes) -> Bytes {
+  "-----BEGIN ${kind}-----\n${base64.encode(der)}\n-----END ${kind}-----\n".bytes()
+}
+
+fn self_signed(os: Os, name: Str, now: Time) -> Issued uses rand {
+  let key = crypto.generate_key(os.rand, crypto.KeyAlg.EcdsaP256).or_fault("key")
+  let t = x509.Template{subject: x509.Name{common_name: name}, not_before: now - 1h, not_after: now + 24h, dns_names: [name], key_usage: [x509.KeyUsage.DigitalSignature, x509.KeyUsage.CertSign], ext_key_usage: [x509.ExtKeyUsage.ServerAuth], is_ca: true}
+  Issued{cert: x509.create_certificate(os.rand, t, key.public_key(), None, key).or_fault("cert ${name}"), key: key}
+}
+
+fn pair(i: Issued) -> tls.TlsCert { tls.cert(i.cert.pem(), pem_block("PRIVATE KEY", crypto.marshal_private_key(i.key))).or_fault("pair") }
+
+fn u16(x: Int) -> Bytes { Bytes.from_hex("${(x >> 12) & 15:x}${(x >> 8) & 15:x}${(x >> 4) & 15:x}${x & 15:x}") ?? b"" }
+
+fn u8(x: Int) -> Bytes { Bytes.from_hex("${(x >> 4) & 15:x}${x & 15:x}") ?? b"" }
+
+/// Go's TestECH marshalECHConfig: version 0xfe0d, the config id,
+/// DHKEM(X25519, HKDF-SHA256), the key, HKDF-SHA256 with AES-128-GCM,
+/// the longest name, the public name, no extensions.
+fn ech_config(id: Int, pub_key: Bytes, public_name: Str, max_name: Int) -> Bytes {
+  let body = u8(id) + u16(0x0020) + u16(pub_key.len()) + pub_key + u16(4) + u16(1) + u16(1) + u8(max_name) + u8(public_name.len()) + public_name.bytes() + u16(0)
+  u16(0xfe0d) + u16(body.len()) + body
+}
+
+fn list_of(configs: List[Bytes]) -> Bytes {
+  var all = b""
+  for c in configs {
+    all = all + c
+  }
+  u16(all.len()) + all
+}
+
+struct Key {
+  config: Bytes
+  private_key: Bytes
+}
+
+fn new_key(os: Os, id: Int) -> Key uses rand {
+  let k = hpke.dhkem(crypto.EcdhCurve.X25519).generate_key(os.rand)
+  Key{config: ech_config(id, k.public_key().bytes(), "public.example", 32), private_key: k.bytes().or_fault("key bytes")}
+}
+
+/// Serves one connection of l: its handshake, the server's view, then a
+/// reply.
+fn serve(l: tls.TlsListener, ch: Chan[Str]) uses net {
+  match l.accept() {
+    Ok(c) => {
+      let line = match c.handshake() {
+        Ok(_) => {
+          let st = c.state()
+          c.write(b"hi").ignore_err("the client may be gone")
+          "server: ech_accepted ${st.ech_accepted} server_name ${st.server_name}"
+        }
+        Err(e) => "server: ${e}"
+      }
+      c.close()
+      ch.send(line)
+    }
+    Err(e) => ch.send("server: accept ${e}")
+  }
+}
+
+fn run(os: Os, what: Str, cfg: tls.ServerConfig, cc: tls.ClientConfig, retry: Bytes = b"") uses net, stdio, clock {
+  os.stdio.println(what)
+  let l = tls.listen(os.net, "127.0.0.1:0", cfg).or_fault("listen")
+  let ch = Chan[Str].new(1)
+  scope s {
+    let t = s.spawn(fn() { serve(l, ch) })
+    let conn = os.net.dial(l.addr()).or_fault("dial")
+    let c = tls.client_conn(conn, cc)
+    let line = match c.handshake() {
+      Ok(_) => {
+        let st = c.state()
+        match c.read(16) {
+          _ => {}
+        }
+        let leaf = if st.verified_chains.is_empty() { "-" } else { st.verified_chains[0][0].subject.common_name }
+        "client: ech_accepted ${st.ech_accepted} server_name ${st.server_name} verified ${leaf}"
+      }
+      Err(e) => {
+        let kind = match c.err() {
+          Some(te) => match te.kind {
+            tls.TlsErrKind.EchRejection(retry_config_list: r) => " (EchRejection, retry configs ${if r.is_empty() { "none" } else if r == retry { "the server's" } else { "other" }})"
+            _ => ""
+          }
+          None => ""
+        }
+        "client: ${e}${kind}"
+      }
+    }
+    c.close()
+    os.stdio.println("  ${line}")
+    // a client that fails before the server's handshake ends leaves the
+    // server's line to its own error
+    match ch.recv() {
+      Some(x) => os.stdio.println("  ${x.cut_suffix(" (remote error)") ?? x}")
+      None => {}
+    }
+    t.await
+  }
+  l.close()
+}
+
+fn main(os: Os) uses net, stdio, rand, clock {
+  let now = os.clock.now()
+  let public_cert = self_signed(os, "public.example", now)
+  let secret_cert = self_signed(os, "secret.example", now)
+  let roots = tls.roots_of([public_cert.cert, secret_cert.cert]).or_fault("roots")
+  let certs = [pair(public_cert), pair(secret_cert)]
+  let k = new_key(os, 123)
+  let other = new_key(os, 124)
+  let cc = tls.ClientConfig{server_name: "secret.example", roots: Some(roots), min_version: tls.VERSION_TLS13, encrypted_client_hello_config_list: Some(list_of([k.config]))}
+  let keys = [tls.EchKey{config: k.config, private_key: k.private_key, send_as_retry: true}]
+  run(os, "accepted:", tls.ServerConfig{certificates: certs, encrypted_client_hello_keys: keys}, cc)
+  run(os, "accepted after a HelloRetryRequest:", tls.ServerConfig{certificates: certs, encrypted_client_hello_keys: keys, curve_preferences: [tls.CURVE_P256]}, cc)
+  run(os, "get_encrypted_client_hello_keys:", tls.ServerConfig{certificates: certs, get_encrypted_client_hello_keys: Some(fn(h: tls.ClientHelloInfo) -> List[tls.EchKey] ! Str { Ok(keys) })}, cc)
+  let others = [tls.EchKey{config: other.config, private_key: other.private_key, send_as_retry: true}]
+  run(os, "rejected, with retry configs:", tls.ServerConfig{certificates: certs, encrypted_client_hello_keys: others}, cc, list_of([other.config]))
+  run(os, "a server without ECH:", tls.ServerConfig{certificates: certs}, cc)
+  run(os, "rejected, rejection_verify refuses:", tls.ServerConfig{certificates: certs}, cc with {encrypted_client_hello_rejection_verify: Some(fn(st: tls.ConnState) -> () ! Str { Err("refused for ${st.server_name}") })})
+  run(os, "rejected, rejection_verify passes:", tls.ServerConfig{certificates: certs}, cc with {encrypted_client_hello_rejection_verify: Some(fn(st: tls.ConnState) -> () ! Str { Ok(()) })})
+  run(os, "a malformed list:", tls.ServerConfig{certificates: certs}, cc with {encrypted_client_hello_config_list: Some(b"\x00\x05oops")})
+  run(os, "MinVersion TLS 1.2:", tls.ServerConfig{certificates: certs}, cc with {min_version: tls.VERSION_TLS12})
+  run(os, "without ECH:", tls.ServerConfig{certificates: certs, encrypted_client_hello_keys: keys}, cc with {encrypted_client_hello_config_list: None})
+  os.stdio.println("done")
+}

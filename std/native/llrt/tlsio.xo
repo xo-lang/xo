@@ -497,7 +497,7 @@ pub const VERIFY_NONE = 2
 
 /// client with the ALPN protocols offered (none: no extension) and the
 /// verification (VERIFY_*); std/tls's client (decision 0281).
-pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], verify: Int, ccerts: List[Bytes] = [], ckey: Bytes = b"", min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vhook: (fn(tlsneg.Negotiated) -> Str)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None, tickets: Bool = false, session: tlscache.Session? = None, put: (fn(tlscache.Session?) -> ())? = None) -> Start {
+pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], verify: Int, ccerts: List[Bytes] = [], ckey: Bytes = b"", min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vhook: (fn(tlsneg.Negotiated) -> Str)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None, tickets: Bool = false, session: tlscache.Session? = None, put: (fn(tlscache.Session?) -> ())? = None, ech_list: Bytes? = None, ech_verify: (fn(tlsneg.Negotiated) -> Str)? = None) -> Start {
   // decision 0644 T7: Go's MinVersion and MaxVersion (0: TLS 1.2 and
   // 1.3), CipherSuites (TLS 1.2's only) and CurvePreferences, whose
   // orders Go ignores: each keeps the default order, less what is left out
@@ -505,6 +505,11 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
   let allow12 = min_v <= 0x0303 && (max_v == 0 || max_v >= 0x0303)
   if !allow13 && !allow12 {
     return failed(CC_ERR, 4, "tls: no supported versions satisfy MinVersion and MaxVersion")
+  }
+  // decision 0644 T13: ECH needs TLS 1.3 (Go's makeClientHello)
+  let ech_err = ech_versions(ech_list.is_some(), min_v, max_v)
+  if !ech_err.is_empty() {
+    return failed(CC_ERR, 4, ech_err)
   }
   let data = match roots_data(roots) {
     Some(d) => d
@@ -539,7 +544,8 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
   cf.chain_only = verify == VERIFY_CHAIN
   cf.certs = if ccerts.is_empty() { data.ccerts } else { ccerts }
   cf.cert_key = if ccerts.is_empty() { data.ckey } else { ckey }
-  cf.legacy_suites = if allow12 { tlsneg.only(tls12.default_suites(), suites) } else { [] }
+  // decision 0644 T13: with ECH the hello offers TLS 1.3 alone, as Go's
+  cf.legacy_suites = if allow12 && ech_list.is_none() { tlsneg.only(tls12.default_suites(), suites) } else { [] }
   cf.no13 = !allow13
   // XO_TLS_MLKEM=0: no X25519MLKEM768 (Go's GODEBUG=tlsmlkem=0)
   cf.groups = tlsneg.only(tls13.client_groups(), curves)
@@ -547,6 +553,8 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
   cf.vhook = vhook
   cf.get_cert = get_cert
   cf.key_log = key_log
+  cf.ech_list = ech_list
+  cf.ech_verify = ech_verify
   // decision 0644 T3: Go's ClientSessionCache; put(None) is Go's
   // Put(key, nil)
   cf.tickets = tickets
@@ -994,6 +1002,21 @@ pub fn negotiated_h(t: rthttp.TlsH) -> tlsneg.Negotiated { negotiated_of(handle_
 
 /// version_of the handle's connection.
 pub fn version_h(t: rthttp.TlsH) -> Str { version_of(handle_conn(t)) }
+
+/// Go's makeClientHello's version checks with ECH: its error text, ""
+/// when the versions allow TLS 1.3 or there is no ECH.
+fn ech_versions(has: Bool, min_v: Int, max_v: Int) -> Str {
+  if !has {
+    return ""
+  }
+  if min_v != 0 && min_v < 0x0304 {
+    return "tls: MinVersion must be >= VersionTLS13 if EncryptedClientHelloConfigList is populated"
+  }
+  if max_v != 0 && max_v <= 0x0303 {
+    return "tls: MaxVersion must be >= VersionTLS13 if EncryptedClientHelloConfigList is populated"
+  }
+  ""
+}
 
 /// Whether the std/tls handle's close ran (H_CLOSED 1; 2 is close_write's).
 pub fn handle_closed(t: rthttp.TlsH) -> Bool { rt.mem_load(rt.obj_addr(t), H_CLOSED, 8) == 1 }

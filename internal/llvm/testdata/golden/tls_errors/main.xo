@@ -70,6 +70,8 @@ fn kind(e: tls.TlsErr?) -> Str {
       let names = certs.map(fn(c: x509.Certificate) -> Str { c.subject.common_name })
       "CertificateVerification certs ${names} cause ${c}"
     }
+    EchRejection(r) => "EchRejection ${r.len()}: ${x.msg}"
+    Alert(a) => "Alert ${a}: ${x.msg}"
   }
 }
 

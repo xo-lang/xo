@@ -26,6 +26,7 @@ use native/llrt/tls12srv
 use native/llrt/tls13srv
 use native/llrt/tlsticket
 use native/llrt/tlsname
+use native/llrt/tlsech
 use native/llrt/tlsneg
 use native/llrt/twflags
 use native/llrt/twrun
@@ -517,8 +518,8 @@ fn conn_block(var cf: tls13srv.Conf, pd: Int, http: Bool) -> Int {
 /// Without a certificate or a hook that gives one the handshake reads the
 /// client's hello and fails as Go's, unrecognized_name and "tls: no
 /// certificates configured" (Go's getCertificate errNoCertificates).
-pub fn conn_cfg(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: List[x509.Cert], pd: Int, min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)? = None, vconn: (fn(tlsneg.Negotiated) -> Str)? = None, for_client: (fn(tlsneg.HelloInfo) -> (tls13srv.Conf?, Str))? = None, get_cert: (fn(tlsneg.HelloInfo) -> tlsneg.Chain)? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None, tickets: List[tlsticket.Key] = [], own_tickets: Bool = false) -> Int {
-  var cf = conf_of(certs, alpn, client_auth, roots, min_v, max_v, suites, curves, vpeer, vconn, get_cert, key_log, tickets, own_tickets)
+pub fn conn_cfg(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: List[x509.Cert], pd: Int, min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)? = None, vconn: (fn(tlsneg.Negotiated) -> Str)? = None, for_client: (fn(tlsneg.HelloInfo) -> (tls13srv.Conf?, Str))? = None, get_cert: (fn(tlsneg.HelloInfo) -> tlsneg.Chain)? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None, tickets: List[tlsticket.Key] = [], own_tickets: Bool = false, ech_keys: List[tlsech.Key] = [], ech_hook: (fn(tlsneg.HelloInfo) -> (List[tlsech.Key], Str))? = None) -> Int {
+  var cf = conf_of(certs, alpn, client_auth, roots, min_v, max_v, suites, curves, vpeer, vconn, get_cert, key_log, tickets, own_tickets, ech_keys, ech_hook)
   cf.for_client = for_client
   conn_block(cf, pd, false)
 }
@@ -528,7 +529,7 @@ pub fn conn_cfg(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: Lis
 /// ALPN protocols offered (none: no ALPN), the client certificate mode
 /// (tls13srv.AUTH_*) and its roots, Go's versions, suites and curves,
 /// the verify hooks and GetCertificate; ticket keys of its own.
-pub fn conf_of(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: List[x509.Cert], min_v: Int, max_v: Int, suites: List[Int], curves: List[Int], vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)?, vconn: (fn(tlsneg.Negotiated) -> Str)?, get_cert: (fn(tlsneg.HelloInfo) -> tlsneg.Chain)?, key_log: (fn(Str, Bytes, Bytes) -> Str)?, tickets: List[tlsticket.Key], own_tickets: Bool) -> tls13srv.Conf {
+pub fn conf_of(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: List[x509.Cert], min_v: Int, max_v: Int, suites: List[Int], curves: List[Int], vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)?, vconn: (fn(tlsneg.Negotiated) -> Str)?, get_cert: (fn(tlsneg.HelloInfo) -> tlsneg.Chain)?, key_log: (fn(Str, Bytes, Bytes) -> Str)?, tickets: List[tlsticket.Key], own_tickets: Bool, ech_keys: List[tlsech.Key] = [], ech_hook: (fn(tlsneg.HelloInfo) -> (List[tlsech.Key], Str))? = None) -> tls13srv.Conf {
   let now = sysio.real_ns() / 1000000000
   var cf = if certs.is_empty() { tls13srv.conf([], b"") } else { tls13srv.conf(certs[0].certs, certs[0].key) }
   if !certs.is_empty() {
@@ -554,6 +555,10 @@ pub fn conf_of(certs: List[Cert], alpn: List[Str], client_auth: Int, roots: List
   cf.vconn = vconn
   cf.get_cert = get_cert
   cf.key_log = key_log
+  // decision 0644 T13: Go's EncryptedClientHelloKeys and
+  // GetEncryptedClientHelloKeys
+  cf.ech_keys = ech_keys
+  cf.ech_hook = ech_hook
   for c in roots {
     cf.client_cas.push(c.subject)
     cf.client_roots.push(c.raw)
@@ -603,7 +608,9 @@ pub fn handshake(t: Int) -> Bool {
       break
     }
   }
-  let ok = done(c) && flush(c)
+  // a TLS 1.3 handshake that finished stays finished when a record read
+  // with the client's Finished failed the connection (tls13srv.completed)
+  let ok = (done(c) || (c.s12.is_empty() && c.s.completed)) && flush(c)
   if ok {
     c.done = 1
     // what was negotiated, kept apart from the Conn: a request's

@@ -84,7 +84,15 @@ func tlsErrOf(msg string, err error) Tls_TlsErr {
 	e := Tls_TlsErr{F_msg: msg, F_kind: Tls_TlsErrKind{Tag: 1}}
 	var cv *tls.CertificateVerificationError
 	var rh tls.RecordHeaderError
+	var er *tls.ECHRejectionError
+	var ae tls.AlertError
 	switch {
+	case errors.As(err, &ae):
+		// decision 0644 T14 (QUIC)
+		e.F_kind = Tls_TlsErrKind{Tag: 5, P: Tls_TlsErrKind_Alert{F_code: int64(ae)}}
+	case errors.As(err, &er):
+		// decision 0644 T13
+		e.F_kind = Tls_TlsErrKind{Tag: 4, P: Tls_TlsErrKind_EchRejection{F_retry_config_list: Bytes(er.RetryConfigList)}}
 	case errors.As(err, &cv):
 		var certs []X509_Certificate
 		for _, c := range cv.UnverifiedCertificates {
@@ -453,6 +461,20 @@ func tlsClientConfigPrep(tk *Task, c Conn, cfg Tls_ClientConfig) (Tls_TlsConn, *
 		}
 		tlsVerifyHooks(tk, gc, cfg.F_verify_peer_certificate, cfg.F_verify_connection, cfg.F_verify.Tag == 2)
 		setKeyLog(tk, gc, cfg.F_key_log)
+		// decision 0644 T13: Go's EncryptedClientHelloConfigList and
+		// EncryptedClientHelloRejectionVerify
+		if cfg.F_encrypted_client_hello_config_list.Some {
+			gc.EncryptedClientHelloConfigList = append([]byte{}, cfg.F_encrypted_client_hello_config_list.V...)
+		}
+		if cfg.F_encrypted_client_hello_rejection_verify.Some {
+			f := cfg.F_encrypted_client_hello_rejection_verify.V
+			gc.EncryptedClientHelloRejectionVerify = func(cs tls.ConnectionState) error {
+				if r := f(tk, connStateOf(tk, cs)); !r.Ok {
+					return hookErr(r.E, "tls: encrypted_client_hello_rejection_verify failed")
+				}
+				return nil
+			}
+		}
 		// decision 0644 T3: Go's ClientSessionCache and SessionTicketsDisabled
 		gc.SessionTicketsDisabled = cfg.F_session_tickets_disabled
 		if cfg.F_session_cache.Some {
@@ -933,6 +955,23 @@ func serverConfig(tk *Task, cfg Tls_ServerConfig) *tls.Config {
 	}
 	tlsVerifyHooks(tk, c, cfg.F_verify_peer_certificate, cfg.F_verify_connection, false)
 	setKeyLog(tk, c, cfg.F_key_log)
+	// decision 0644 T13: Go's EncryptedClientHelloKeys and
+	// GetEncryptedClientHelloKeys
+	c.EncryptedClientHelloKeys = echKeysOf(cfg.F_encrypted_client_hello_keys)
+	if cfg.F_get_encrypted_client_hello_keys.Some {
+		g := cfg.F_get_encrypted_client_hello_keys.V
+		c.GetEncryptedClientHelloKeys = func(chi *tls.ClientHelloInfo) ([]tls.EncryptedClientHelloKey, error) {
+			r := g(tk, chiOf(chi))
+			if !r.Ok {
+				return nil, hookErr(r.E, "tls: get_encrypted_client_hello_keys failed")
+			}
+			ks := echKeysOf(r.V)
+			if ks == nil {
+				ks = []tls.EncryptedClientHelloKey{}
+			}
+			return ks, nil
+		}
+	}
 	// decision 0644 T5: GetCertificate and GetConfigForClient
 	if cfg.F_get_certificate.Some {
 		g := cfg.F_get_certificate.V
@@ -1214,4 +1253,13 @@ func (c Tls_TlsCert) M_with_signed_certificate_timestamps(tk *Task, scts List[By
 		n.SignedCertificateTimestamps = append(n.SignedCertificateTimestamps, []byte(x))
 	}
 	return Tls_TlsCert{c: &n}
+}
+
+// echKeysOf is std/tls's ECH keys as crypto/tls's (decision 0644 T13).
+func echKeysOf(keys List[Tls_EchKey]) []tls.EncryptedClientHelloKey {
+	var out []tls.EncryptedClientHelloKey
+	for _, k := range keys.s {
+		out = append(out, tls.EncryptedClientHelloKey{Config: append([]byte{}, k.F_config...), PrivateKey: append([]byte{}, k.F_private_key...), SendAsRetry: k.F_send_as_retry})
+	}
+	return out
 }

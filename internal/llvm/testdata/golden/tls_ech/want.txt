@@ -1,0 +1,34 @@
+exit 0
+--- stdout
+accepted:
+  client: ech_accepted true server_name secret.example verified secret.example
+  server: ech_accepted true server_name secret.example
+accepted after a HelloRetryRequest:
+  client: ech_accepted true server_name secret.example verified secret.example
+  server: ech_accepted true server_name secret.example
+get_encrypted_client_hello_keys:
+  client: ech_accepted true server_name secret.example verified secret.example
+  server: ech_accepted true server_name secret.example
+rejected, with retry configs:
+  client: tls: server rejected ECH (EchRejection, retry configs the server's)
+  server: ech_accepted false server_name public.example
+a server without ECH:
+  client: tls: server rejected ECH (EchRejection, retry configs none)
+  server: ech_accepted false server_name public.example
+rejected, rejection_verify refuses:
+  client: refused for public.example
+  server: remote error: tls: bad certificate
+rejected, rejection_verify passes:
+  client: tls: server rejected ECH (EchRejection, retry configs none)
+  server: ech_accepted false server_name public.example
+a malformed list:
+  client: tls: malformed ECHConfigList
+  server: EOF
+MinVersion TLS 1.2:
+  client: tls: MinVersion must be >= VersionTLS13 if EncryptedClientHelloConfigList is populated
+  server: EOF
+without ECH:
+  client: ech_accepted false server_name secret.example verified secret.example
+  server: ech_accepted false server_name secret.example
+done
+--- stderr
