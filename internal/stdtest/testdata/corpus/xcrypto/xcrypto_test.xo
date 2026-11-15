@@ -406,6 +406,8 @@ const XCHACHA_KEY_ERR: Str = "chacha20poly1305: bad key length"
 const XCHACHA_SIZES: (Int, Int) = (24, 16)
 
 const RSA_UNSUPPORTED: Str = "crypto/rsa: unsupported hash function"
+const RSA_TOO_LONG: Str = "crypto/rsa: message too long for RSA key size"
+const RSA_DECRYPTION: Str = "crypto/rsa: decryption error"
 
 fn unhex(s: Str) -> Bytes { Bytes.from_hex(s) ?? fault("bad hex ${s}") }
 
@@ -569,23 +571,50 @@ test "XChaCha20Poly1305 seals and opens as x/crypto's NewX" {
   expect(k.open_random(sealed, b"aad").ok()) == Some(b"hello")
 }
 
-test "RSA refuses BLAKE2b and Keccak (Go's SignPKCS1v15 has no DigestInfo for them); ECDSA signs with them" {
+test "RSA PKCS #1 v1.5 refuses BLAKE2b and Keccak (Go's SignPKCS1v15 has no DigestInfo for them), PSS takes BLAKE2b and OAEP both (Go's EncryptOAEP takes a hash.Hash); ECDSA signs with them" {
   let r = Stream{st: Mutex[Int].new(777)}
   let k = crypto.generate_key(r, crypto.KeyAlg.Rsa, 1024) ?? e => fault(e.msg)
   let p = k.public_key()
   for h in HASHES {
     let dg = crypto.digest(h, b"msg")
     expect(crypto.sign(r, k, h, b"msg").err().map(fn(e) { e.msg })) == Some(RSA_UNSUPPORTED)
-    expect(crypto.sign_pss(r, k, h, b"msg").err().map(fn(e) { e.msg })) == Some(RSA_UNSUPPORTED)
-    expect(crypto.sign_pss_digest(r, k, h, dg).err().map(fn(e) { e.msg })) == Some(RSA_UNSUPPORTED)
     expect(crypto.sign_pkcs1v15_digest(k, Some(h), dg).err().map(fn(e) { e.msg })) == Some(RSA_UNSUPPORTED)
-    expect(crypto.encrypt_oaep(r, p, h, b"msg").err().map(fn(e) { e.msg })) == Some(RSA_UNSUPPORTED)
-    expect(crypto.encrypt_oaep(r, p, crypto.Hash.Sha256, b"msg", b"", Some(h)).err().map(fn(e) { e.msg })) == Some(RSA_UNSUPPORTED)
-    expect(crypto.decrypt_oaep(k, h, b"x").err().map(fn(e) { e.msg })) == Some(RSA_UNSUPPORTED)
     expect(crypto.verify(p, h, b"msg", b"sig")) == false
-    expect(crypto.verify_pss(p, h, b"msg", b"sig")) == false
-    expect(crypto.verify_pss_digest(p, h, dg, b"sig")) == false
     expect(crypto.verify_pkcs1v15_digest(p, Some(h), dg, b"sig")) == false
+    let keccak = h == crypto.Hash.Keccak256 || h == crypto.Hash.Keccak512
+    // a 1024-bit key holds PSS and OAEP of a hash up to 48 bytes
+    let fits = 2 * h.size() + 2 <= 128
+    if keccak {
+      // no crypto.Hash for Go's SignPSS
+      expect(crypto.sign_pss(r, k, h, b"msg").err().map(fn(e) { e.msg })) == Some(RSA_UNSUPPORTED)
+      expect(crypto.sign_pss_digest(r, k, h, dg).err().map(fn(e) { e.msg })) == Some(RSA_UNSUPPORTED)
+      expect(crypto.verify_pss(p, h, b"msg", b"sig")) == false
+      expect(crypto.verify_pss_digest(p, h, dg, b"sig")) == false
+    } else if fits {
+      let sig = crypto.sign_pss(r, k, h, b"msg") ?? e => fault(e.msg)
+      expect(crypto.verify_pss(p, h, b"msg", sig)) == true
+      expect(crypto.verify_pss(p, h, b"msg!", sig)) == false
+      let ds = crypto.sign_pss_digest(r, k, h, dg) ?? e => fault(e.msg)
+      expect(crypto.verify_pss_digest(p, h, dg, ds)) == true
+    } else {
+      expect(crypto.sign_pss(r, k, h, b"msg").err().map(fn(e) { e.msg })) == Some(RSA_TOO_LONG)
+    }
+    if fits {
+      let c = crypto.encrypt_oaep(r, p, h, b"msg", b"lbl") ?? e => fault(e.msg)
+      expect(crypto.decrypt_oaep(k, h, c, b"lbl").ok()) == Some(b"msg")
+      expect(crypto.decrypt_oaep(k, h, c, b"").err().map(fn(e) { e.msg })) == Some(RSA_DECRYPTION)
+    } else {
+      expect(crypto.encrypt_oaep(r, p, h, b"msg").err().map(fn(e) { e.msg })) == Some(RSA_TOO_LONG)
+    }
+    // an MGF1 hash apart from the OAEP hash is a crypto.Hash in Go's
+    // OAEPOptions, which Keccak has none of
+    if keccak {
+      expect(crypto.encrypt_oaep(r, p, crypto.Hash.Sha256, b"msg", b"", Some(h)).err().map(fn(e) { e.msg })) == Some(RSA_UNSUPPORTED)
+      expect(crypto.decrypt_oaep(k, crypto.Hash.Sha256, b"x", b"", Some(h)).err().map(fn(e) { e.msg })) == Some(RSA_UNSUPPORTED)
+    } else {
+      let c = crypto.encrypt_oaep(r, p, crypto.Hash.Sha256, b"msg", b"", Some(h)) ?? e => fault(e.msg)
+      expect(crypto.decrypt_oaep(k, crypto.Hash.Sha256, c, b"", Some(h)).ok()) == Some(b"msg")
+    }
   }
   let e = crypto.generate_key(r, crypto.KeyAlg.EcdsaP256) ?? e => fault(e.msg)
   for h in HASHES {

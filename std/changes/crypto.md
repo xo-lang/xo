@@ -1,5 +1,22 @@
 # std/crypto changes
 
+## 2026-11-15: fix: RSA PSS takes BLAKE2b and OAEP takes BLAKE2b and legacy Keccak, as Go
+
+- Kind: fix
+- Commit: this push
+- Found by: the crypto C1 rows (Hash.Blake2b_*, Keccak256/512) refused every RSA scheme; Go refuses only PKCS #1 v1.5
+- Go reference: crypto/rsa SignPSS and VerifyPSS (any registered crypto.Hash; x/crypto/blake2b registers BLAKE2b), EncryptOAEP and DecryptOAEP (any hash.Hash), OAEPOptions.MGFHash (a crypto.Hash)
+- Test: crypto_test.xo "go rsa: PSS takes BLAKE2b and OAEP takes BLAKE2b and legacy Keccak" (Go 1.26.11 signatures and ciphertexts over fixed salts and seeds, arm64 and llvm); the xcrypto corpus (go, arm64, llvm: PSS and OAEP round trips, PKCS #1 v1.5 refusals, Go's texts); bench/perf/blake2b twin and timing row
+- Affected: programs that called sign_pss, sign_pss_digest, encrypt_oaep or decrypt_oaep with BLAKE2b, or OAEP with Keccak, and got `crypto/rsa: unsupported hash function`
+- Shipped in: not yet released
+
+PSS takes every Hash but legacy Keccak, which has no crypto.Hash for Go's
+SignPSS. OAEP takes every Hash; Keccak only as its own MGF1 hash, since an
+`mgf_hash` apart from `h` is Go's OAEPOptions.MGFHash. PKCS #1 v1.5 still
+refuses BLAKE2b and Keccak (no DigestInfo prefix). The Go backend
+registers std/rt's BLAKE2b with crypto.RegisterHash, as importing
+x/crypto/blake2b does.
+
 ## 2026-11-15: perf: AES-GCM keeps a small message's counter and GHASH state in scratch memory
 
 - Kind: perf

@@ -1,0 +1,9 @@
+# twincheck: blake2b: five workloads (none is the setup alone); checksums
+# sum digest bytes. The twin imports golang.org/x/crypto (std/crypto's
+# BLAKE2b reference), offline from the module cache.
+require golang.org/x/crypto v0.58.0
+- - none
+- - big
+- - big512
+- - small
+- - keyed

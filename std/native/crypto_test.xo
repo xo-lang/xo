@@ -3091,6 +3091,77 @@ test "XChaCha20-Poly1305 seals draft-irtf-cfrg-xchacha-01 A.3.1" {
   expect(k.open(nonce, sealed, aad).ok()) == Some(pt)
 }
 
+// RSA with BLAKE2b and legacy Keccak: (hash, salt or seed, signature or
+// ciphertext, Go's error), from Go 1.26.11's SignPSS (SaltLength
+// EqualsHash, the salt from a reader) and EncryptOAEP (label "lbl", the
+// seed from a reader) with x/crypto v0.58.0's blake2b and sha3, over
+// PSS[0]'s 1024-bit key and the message "xo rsa new hashes".
+const RSA_NEW_PSS: List[(Str, Str, Str, Str)] = [
+  ("Blake2b_256", "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc", "a46a3177951737925bdc289faf2d014fde693e4a3d15284f3e160567888e497e57308bbdb2ae57f1f846cb191e49e665188f080b5523d27c97b7ffd8c92703223501cd1e6873225a31f170936d3502378a4811a7b797280c84d3adb0438a098a189d9c2bb35d918c5df1339d429a513b5a3a9a69f9ae8614cb40775bc212d81c", ""),
+  ("Blake2b_384", "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c", "1d46b97945df10d53a73b886b704025f09da8ac38452a3e542a07790f9b54d43846dab101cd1a34f9829081a150bcfdb2715f80930c1b9f2f7a9e55820c55b936a2cdfdf80563518cf3844300272312841d474f9df6f3b1177c4519b56488ed8254d8331effa8de471107095fd0321143150ecd0472cacef659e0f2cbe7e883a", ""),
+  ("Blake2b_512", "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bc", "", "crypto/rsa: message too long for RSA key size"),
+]
+
+const RSA_NEW_OAEP: List[(Str, Str, Str, Str)] = [
+  ("Blake2b_256", "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc", "cc15edae8338a12a859687eeb94d6e35cfe9c8fe039558ec6d7f693d3e6127f80905a3088c2702a73982528341b556872607feff83d70126b7f205c1af58318c0cc146877471c492e5538002334570e9e4124512c7cab3e2ff4873170c883c5c849842090cd67d0520a1bf34bcea303c7b452310e9e604c2ab5e75079936b8c4", ""),
+  ("Blake2b_384", "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c", "4c9f3b88420c8b01133f2cb9a8e940b4631a2116e76fad252fff3b78eda85fe3962bbf5b5b877de926f5504629fe18a06a463488396a7c6bb4acc225a539b19db2b012d92dc39884a59df980f83c9dbbf4682b6184fb4896ba457e70bb77e2da10e785e9e4c39c9011d364618d5e4139e1784c064f2caffe79a85de453e036f8", ""),
+  ("Blake2b_512", "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bc", "", "crypto/rsa: message too long for RSA key size"),
+  ("Keccak256", "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc", "9e73d70e02df56d3f68b31c1919acde916dabc2aab513bdde5d14f2bd5f7ca90349d7d20ba248aa231d9b4d5f7eeeea44ce414636f90f94a537f4194d28e0f69162e2c70ab48e80a12b6a2e153ce25dfa2b68ff5a6f400dbcec680afaf54572d77f749d606abc69ec5a522dbd8edb78b28f759cca7e178bb6a599d3bbaf325bf", ""),
+  ("Keccak512", "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bc", "", "crypto/rsa: message too long for RSA key size"),
+]
+
+fn new_hash_named(n: Str) -> crypto.Hash {
+  match n {
+    "Blake2b_256" => crypto.Hash.Blake2b_256
+    "Blake2b_384" => crypto.Hash.Blake2b_384
+    "Blake2b_512" => crypto.Hash.Blake2b_512
+    "Keccak256" => crypto.Hash.Keccak256
+    _ => crypto.Hash.Keccak512
+  }
+}
+
+test "go rsa: PSS takes BLAKE2b and OAEP takes BLAKE2b and legacy Keccak, as Go; PKCS #1 v1.5 refuses both" {
+  let k = parse_private_key(hb(PSS[0].0)).or_fault("key")
+  let msg = b"xo rsa new hashes"
+  var bad: List[Str] = []
+  for (h, salt, sig, e) in RSA_NEW_PSS {
+    let x = new_hash_named(h)
+    let want = if e.is_empty() { Ok(sig) } else { Err(e) }
+    let got = sign_pss_with(k, x, msg, hb(salt)).map(fn(b) { b.to_hex() }).map_err(fn(m) { m.msg })
+    if got != want {
+      bad.push("pss ${h}: got ${got.debug()}")
+    }
+    if e.is_empty() && !(verify_pss(k.public_key(), x, msg, hb(sig)) && verify_pss_digest(k.public_key(), x, digest(x, msg), hb(sig), -1)) {
+      bad.push("pss ${h}: verify")
+    }
+  }
+  for (h, seed, c, e) in RSA_NEW_OAEP {
+    let x = new_hash_named(h)
+    let want = if e.is_empty() { Ok(c) } else { Err(e) }
+    let got = encrypt_oaep_with(k.public_key(), x, msg, b"lbl", hb(seed)).map(fn(b) { b.to_hex() }).map_err(fn(m) { m.msg })
+    if got != want {
+      bad.push("oaep ${h}: got ${got.debug()}")
+    }
+    if e.is_empty() && decrypt_oaep(k, x, hb(c), b"lbl").ok() != Some(msg) {
+      bad.push("oaep ${h}: decrypt")
+    }
+  }
+  let r = Stream{st: Mutex[Int].new(7)}
+  for x in [crypto.Hash.Blake2b_256, crypto.Hash.Keccak256] {
+    expect(sign(r, k, x, msg).err().map(fn(m) { m.msg })) == Some("crypto/rsa: unsupported hash function")
+    expect(sign_pkcs1v15_digest(k, Some(x), digest(x, msg)).err().map(fn(m) { m.msg })) == Some("crypto/rsa: unsupported hash function")
+  }
+  // Keccak has no crypto.Hash: PSS refuses it, and OAEP takes it only as
+  // its own MGF1 hash
+  expect(sign_pss(r, k, crypto.Hash.Keccak256, msg).err().map(fn(m) { m.msg })) == Some("crypto/rsa: unsupported hash function")
+  expect(encrypt_oaep(r, k.public_key(), crypto.Hash.Sha256, msg, b"", Some(crypto.Hash.Keccak256)).err().map(fn(m) { m.msg })) == Some("crypto/rsa: unsupported hash function")
+  expect(decrypt_oaep(k, crypto.Hash.Keccak256, b"", b"", Some(crypto.Hash.Sha256)).err().map(fn(m) { m.msg })) == Some("crypto/rsa: unsupported hash function")
+  // a BLAKE2b MGF1 hash beside SHA-256 (Go's OAEPOptions.MGFHash)
+  let c = encrypt_oaep(r, k.public_key(), crypto.Hash.Sha256, msg, b"lbl", Some(crypto.Hash.Blake2b_256)) ?? m => fault(m.msg)
+  expect(decrypt_oaep(k, crypto.Hash.Sha256, c, b"lbl", Some(crypto.Hash.Blake2b_256)).ok()) == Some(msg)
+  expect(bad) == []
+}
+
 test "blake2b_hasher and blake2b_xof refuse with Go's texts" {
   expect(blake2b_hasher(0).err().map(fn(e) { e.msg })) == Some("blake2b: invalid hash size")
   expect(blake2b_hasher(32, b"k".repeat(65)).err().map(fn(e) { e.msg })) == Some("blake2b: invalid key size")

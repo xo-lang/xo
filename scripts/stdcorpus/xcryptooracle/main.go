@@ -298,7 +298,27 @@ func main() {
 		panic(err)
 	}
 	_, rerr := rsa.SignPKCS1v15(nil, k, crypto.BLAKE2b_256, make([]byte, 32))
-	o.WriteString("const RSA_UNSUPPORTED: Str = " + errText(rerr) + "\n\n")
+	o.WriteString("const RSA_UNSUPPORTED: Str = " + errText(rerr) + "\n")
+	// PSS and OAEP of BLAKE2b-512 do not fit a 1024-bit key; a wrong label
+	// is OAEP's decryption error
+	k1, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		panic(err)
+	}
+	_, perr := rsa.SignPSS(rand.Reader, k1, crypto.BLAKE2b_512, make([]byte, 64), &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
+	b512, _ := blake2b.New512(nil)
+	_, oerr := rsa.EncryptOAEP(b512, rand.Reader, &k1.PublicKey, []byte("msg"), nil)
+	if perr == nil || oerr == nil || perr.Error() != oerr.Error() {
+		panic(fmt.Sprint("RSA too long: ", perr, oerr))
+	}
+	o.WriteString("const RSA_TOO_LONG: Str = " + errText(perr) + "\n")
+	b256, _ := blake2b.New256(nil)
+	c, err := rsa.EncryptOAEP(b256, rand.Reader, &k1.PublicKey, []byte("msg"), []byte("lbl"))
+	if err != nil {
+		panic(err)
+	}
+	_, derr := rsa.DecryptOAEP(b256, nil, k1, c, nil)
+	o.WriteString("const RSA_DECRYPTION: Str = " + errText(derr) + "\n\n")
 
 	o.WriteString(tests)
 	fmt.Print(o.String())

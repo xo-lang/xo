@@ -464,14 +464,17 @@ fn verify_pss(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
 fn verify_raw_ecdsa(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
 /// RSA PKCS #1 v1.5, ECDSA (ASN.1 DER, a hedged nonce from r), or Ed25519.
 fn sign(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
-/// RSA PSS with a salt as long as the hash, from r.
+/// RSA PSS with a salt as long as the hash, from r. Every hash but legacy
+/// Keccak (no crypto.Hash for Go's SignPSS).
 fn sign_pss(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
 /// RSA-OAEP encryption (RFC 8017, Go's EncryptOAEP), the recommended RSA
 /// encryption scheme: msg under the RSA key k, with h for the label hash
 /// and MGF1 and a seed of h.size() bytes from r. KeyErr for a key that is
 /// not RSA or a msg longer than the key's size - 2 * h.size() - 2.
 /// mgf_hash, when given, is MGF1's hash apart from h (Go's
-/// EncryptOAEPWithOptions with OAEPOptions.MGFHash).
+/// EncryptOAEPWithOptions with OAEPOptions.MGFHash). Every hash, as Go's
+/// EncryptOAEP takes a hash.Hash; legacy Keccak only as its own MGF1
+/// hash (OAEPOptions.MGFHash is a crypto.Hash).
 fn encrypt_oaep(r: Rand, k: PublicKey, h: Hash, msg: Bytes, label: Bytes = b"", mgf_hash: Hash? = None) -> Bytes ! KeyErr uses rand
 /// RSA-OAEP decryption (Go's DecryptOAEP). The padding is checked in
 /// constant time, and every failure (a bad ciphertext, padding or label)

@@ -932,9 +932,9 @@ func stressCheckOnly(module, dir string, minutes, tasks int, host string) error 
 }
 
 // perfOwners names the module of a bench/perf directory whose name starts
-// with no module's: the primitives of std/crypto (its AEADs, SHA-3,
+// with no module's: the primitives of std/crypto (its AEADs, SHA-3, BLAKE2b,
 // ML-KEM and Ed25519) are benched by algorithm.
-var perfOwners = map[string]string{"aead": "crypto", "aesgcm": "crypto", "aesmodes": "crypto", "chacha": "crypto", "sha3": "crypto", "mlkem": "crypto", "ed25519": "crypto"}
+var perfOwners = map[string]string{"aead": "crypto", "blake2b": "crypto", "aesgcm": "crypto", "aesmodes": "crypto", "chacha": "crypto", "sha3": "crypto", "mlkem": "crypto", "ed25519": "crypto"}
 
 // perfOwner is the std module a bench/perf directory measures: the one
 // perfOwners names, else the longest std module name (std/NAME.xo) its

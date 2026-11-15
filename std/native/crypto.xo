@@ -2011,11 +2011,21 @@ fn parse_private_key(der: Bytes) -> PrivateKey ! crypto.KeyErr { parse_private(d
 // Signatures (crypto/rsa, crypto/ecdsa, crypto/ed25519 of go1.26; decision
 // 0285)
 
-/// Whether RSA signs, verifies and encrypts with h: not with BLAKE2b or
-/// legacy Keccak, which have no DigestInfo prefix in Go's hashPrefixes
-/// (Go's SignPKCS1v15 refuses them), and Keccak no crypto.Hash; PSS and
-/// OAEP refuse them too, so every RSA operation takes the same hashes.
-fn rsa_hash(h: crypto.Hash) -> Bool { !(h is Blake2b_256 | Blake2b_384 | Blake2b_512 | Keccak256 | Keccak512) }
+/// Whether RSA PKCS #1 v1.5 signs and verifies with h: not with BLAKE2b
+/// or legacy Keccak, which have no DigestInfo prefix in Go's hashPrefixes
+/// (Go's SignPKCS1v15 refuses them).
+fn rsa_pkcs1_hash(h: crypto.Hash) -> Bool { !(h is Blake2b_256 | Blake2b_384 | Blake2b_512 | Keccak256 | Keccak512) }
+
+/// Whether RSA PSS takes h: every hash but legacy Keccak, which has no
+/// crypto.Hash for Go's SignPSS and VerifyPSS (BLAKE2b has, once x/crypto
+/// registers it).
+fn rsa_pss_hash(h: crypto.Hash) -> Bool { !(h is Keccak256 | Keccak512) }
+
+/// Whether RSA-OAEP takes h with the MGF1 hash mh: every hash, as Go's
+/// EncryptOAEP and DecryptOAEP take any hash.Hash, but legacy Keccak only
+/// as both (OAEPOptions names its MGF1 hash by crypto.Hash, which Keccak
+/// has none of).
+fn rsa_oaep_hash(h: crypto.Hash, mh: crypto.Hash) -> Bool { h == mh || (rsa_pss_hash(h) && rsa_pss_hash(mh)) }
 
 /// Go's error for a hash RSA does not take.
 fn rsa_hash_err() -> crypto.KeyErr { key_err("crypto/rsa: unsupported hash function") }
@@ -2069,14 +2079,14 @@ fn is_ecdsa(a: crypto.KeyAlg) -> Bool { a is EcdsaP224 | EcdsaP256 | EcdsaP384 |
 
 fn verify(k: PublicKey, h: crypto.Hash, msg: Bytes, sig: Bytes) -> Bool {
   match k.kind {
-    Rsa => rsa_hash(h) && rsa_public_err(k.n, k.e).is_empty() && rsa.verify_pkcs1_prefix(rsa_pub(k), digest_info(h), digest(h, msg), sig)
+    Rsa => rsa_pkcs1_hash(h) && rsa_public_err(k.n, k.e).is_empty() && rsa.verify_pkcs1_prefix(rsa_pub(k), digest_info(h), digest(h, msg), sig)
     Ed25519 => ed25519.verify(k.key, msg, sig)
     _ => nistec.verify(nist_curve(k.kind), k.key, digest(h, msg), sig)
   }
 }
 
 fn verify_pss(k: PublicKey, h: crypto.Hash, msg: Bytes, sig: Bytes) -> Bool {
-  if k.kind != crypto.KeyAlg.Rsa || !rsa_hash(h) || !rsa_public_err(k.n, k.e).is_empty() {
+  if k.kind != crypto.KeyAlg.Rsa || !rsa_pss_hash(h) || !rsa_public_err(k.n, k.e).is_empty() {
     return false
   }
   rsa.verify_pss_fn(rsa_pub(k), h.size(), fn(b) { digest(h, b) }, digest(h, msg), sig, -1)
@@ -2109,7 +2119,7 @@ fn sign(r: Rand, k: PrivateKey, h: crypto.Hash, msg: Bytes) -> Bytes ! crypto.Ke
 fn sign_z(k: PrivateKey, h: crypto.Hash, msg: Bytes, z: Bytes) -> Bytes ! crypto.KeyErr {
   match k.kind {
     Rsa => {
-      if !rsa_hash(h) {
+      if !rsa_pkcs1_hash(h) {
         return Err(rsa_hash_err())
       }
       let e = rsa_public_err(k.rsa.n, k.rsa.e)
@@ -2130,14 +2140,14 @@ fn sign_z(k: PrivateKey, h: crypto.Hash, msg: Bytes, z: Bytes) -> Bytes ! crypto
 }
 
 fn sign_pss(r: Rand, k: PrivateKey, h: crypto.Hash, msg: Bytes) -> Bytes ! crypto.KeyErr uses rand {
-  if k.kind == crypto.KeyAlg.Rsa && !rsa_hash(h) {
+  if k.kind == crypto.KeyAlg.Rsa && !rsa_pss_hash(h) {
     return Err(rsa_hash_err())
   }
   sign_pss_with(k, h, msg, r.bytes(h.size()))
 }
 
 fn encrypt_oaep(r: Rand, k: PublicKey, h: crypto.Hash, msg: Bytes, label: Bytes, mgf_hash: crypto.Hash?) -> Bytes ! crypto.KeyErr uses rand {
-  if k.kind == crypto.KeyAlg.Rsa && !(rsa_hash(h) && rsa_hash(mgf_hash ?? h)) {
+  if k.kind == crypto.KeyAlg.Rsa && !rsa_oaep_hash(h, mgf_hash ?? h) {
     return Err(rsa_hash_err())
   }
   encrypt_oaep_with(k, h, msg, label, r.bytes(h.size()), mgf_hash)
@@ -2166,7 +2176,7 @@ fn decrypt_oaep(k: PrivateKey, h: crypto.Hash, ciphertext: Bytes, label: Bytes, 
   if k.kind != crypto.KeyAlg.Rsa {
     return Err(key_err("crypto: decrypt_oaep needs an RSA key"))
   }
-  if !rsa_hash(h) || !rsa_hash(mh) {
+  if !rsa_oaep_hash(h, mh) {
     return Err(rsa_hash_err())
   }
   let e = rsa_public_err(k.rsa.n, k.rsa.e)
@@ -2376,7 +2386,7 @@ fn sign_pss_digest(r: Rand, k: PrivateKey, h: crypto.Hash, dg: Bytes, salt_len: 
   if k.kind != crypto.KeyAlg.Rsa {
     return Err(key_err("crypto: sign_pss_digest needs an RSA key"))
   }
-  if !rsa_hash(h) {
+  if !rsa_pss_hash(h) {
     return Err(rsa_hash_err())
   }
   let e = rsa_public_err(k.rsa.n, k.rsa.e)
@@ -2406,7 +2416,7 @@ fn sign_pss_digest(r: Rand, k: PrivateKey, h: crypto.Hash, dg: Bytes, salt_len: 
 }
 
 fn verify_pss_digest(k: PublicKey, h: crypto.Hash, dg: Bytes, sig: Bytes, salt_len: Int) -> Bool {
-  if k.kind != crypto.KeyAlg.Rsa || !rsa_hash(h) || salt_len < -1 || !rsa_public_err(k.n, k.e).is_empty() {
+  if k.kind != crypto.KeyAlg.Rsa || !rsa_pss_hash(h) || salt_len < -1 || !rsa_public_err(k.n, k.e).is_empty() {
     return false
   }
   let s = if salt_len == 0 { -1 } else if salt_len == -1 { h.size() } else { salt_len }
@@ -2419,7 +2429,7 @@ fn sign_pkcs1v15_digest(k: PrivateKey, h: crypto.Hash?, dg: Bytes) -> Bytes ! cr
   }
   let prefix = match h {
     Some(x) => {
-      if !rsa_hash(x) {
+      if !rsa_pkcs1_hash(x) {
         return Err(rsa_hash_err())
       }
       if dg.len() != x.size() {
@@ -2445,7 +2455,7 @@ fn verify_pkcs1v15_digest(k: PublicKey, h: crypto.Hash?, dg: Bytes, sig: Bytes) 
     return false
   }
   match h {
-    Some(x) => rsa_hash(x) && dg.len() == x.size() && rsa.verify_pkcs1_prefix(rsa_pub(k), digest_info(x), dg, sig)
+    Some(x) => rsa_pkcs1_hash(x) && dg.len() == x.size() && rsa.verify_pkcs1_prefix(rsa_pub(k), digest_info(x), dg, sig)
     None => rsa.verify_pkcs1_prefix(rsa_pub(k), b"", dg, sig)
   }
 }

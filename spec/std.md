@@ -4400,10 +4400,15 @@ pub fn sum_shake256(data: Bytes, n: Int) -> Bytes
   std/native/llrt blake2b.xo (with x/crypto's blake2b_test.go vectors
   in blake2b_test.xo) and sha3.xo, on the Go backend x/crypto's code
   vendored into std/rt; the corpus xcrypto checks every backend against
-  x/crypto. RSA (PKCS #1 v1.5, PSS, OAEP) refuses the five with Go's
-  `crypto/rsa: unsupported hash function` (verify is false): Go's
-  hashPrefixes has no DigestInfo for them and Keccak has no crypto.Hash.
-  ECDSA and Ed25519 sign with any Hash.
+  x/crypto. RSA PKCS #1 v1.5 (`sign`, `verify`, the `_pkcs1v15_digest`
+  pair) refuses the five with Go's `crypto/rsa: unsupported hash
+  function` (verify is false): Go's hashPrefixes has no DigestInfo for
+  them. PSS takes BLAKE2b, as Go's SignPSS does once x/crypto registers
+  it, and refuses Keccak, which has no crypto.Hash. OAEP takes all five
+  (Go's EncryptOAEP and DecryptOAEP take a hash.Hash), Keccak only as
+  its own MGF1 hash (an `mgf_hash` apart from `h` is Go's
+  OAEPOptions.MGFHash, a crypto.Hash). ECDSA and Ed25519 sign with any
+  Hash.
 
 **Authenticated encryption and key derivation** (milestone 0.35; Go's
 `cipher.AEAD` and `crypto/hkdf`; every backend; Go's `aesGCMTests` and

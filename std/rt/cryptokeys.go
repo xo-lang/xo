@@ -202,11 +202,28 @@ func Crypto_parse_private_key(_ *Task, der Bytes) Result[Crypto_PrivateKey, Cryp
 // The crypto.Hash of a std/crypto Hash (by tag; legacy Keccak has none).
 var cryptoGoHashes = [...]crypto.Hash{0, crypto.MD5, crypto.SHA1, crypto.SHA224, crypto.SHA256, crypto.SHA384, crypto.SHA512, crypto.SHA3_256, crypto.SHA3_512, crypto.SHA3_224, crypto.SHA3_384, crypto.SHA512_224, crypto.SHA512_256, crypto.BLAKE2b_256, crypto.BLAKE2b_384, crypto.BLAKE2b_512, 0, 0}
 
-// rsaHashOK: whether RSA takes h. Not BLAKE2b or legacy Keccak, which have
-// no DigestInfo prefix (Go's SignPKCS1v15 refuses BLAKE2b) and Keccak no
-// crypto.Hash; PSS and OAEP refuse them too (std/native/crypto.xo
-// rsa_hash).
-func rsaHashOK(h Crypto_Hash) bool { return h.Tag < hashTagBlake2b256 }
+// rsaPKCS1HashOK: whether RSA PKCS #1 v1.5 takes h. Not BLAKE2b or legacy
+// Keccak, which have no DigestInfo prefix (Go's SignPKCS1v15 refuses
+// BLAKE2b; std/native/crypto.xo rsa_pkcs1_hash).
+func rsaPKCS1HashOK(h Crypto_Hash) bool { return h.Tag < hashTagBlake2b256 }
+
+// rsaPSSHashOK: whether RSA PSS takes h: all but legacy Keccak, which has
+// no crypto.Hash (rsa_pss_hash).
+func rsaPSSHashOK(h Crypto_Hash) bool { return h.Tag < hashTagKeccak256 }
+
+// rsaOAEPHashOK: whether RSA-OAEP takes h with the MGF1 hash mgf: every
+// hash, legacy Keccak only as both (rsa_oaep_hash).
+func rsaOAEPHashOK(h Crypto_Hash, mgf Option[Crypto_Hash]) bool {
+	return !mgf.Some || mgf.V.Tag == h.Tag || (rsaPSSHashOK(h) && rsaPSSHashOK(mgf.V))
+}
+
+// Go's crypto/rsa takes BLAKE2b in PSS and OAEPOptions once it is
+// registered, as importing x/crypto/blake2b does.
+func init() {
+	crypto.RegisterHash(crypto.BLAKE2b_256, cryptoHashes[hashTagBlake2b256])
+	crypto.RegisterHash(crypto.BLAKE2b_384, cryptoHashes[hashTagBlake2b256+1])
+	crypto.RegisterHash(crypto.BLAKE2b_512, cryptoHashes[hashTagBlake2b512])
+}
 
 const rsaHashUnsupported = "crypto/rsa: unsupported hash function"
 
@@ -219,7 +236,7 @@ func keySum(h Crypto_Hash, msg Bytes) []byte {
 func Crypto_verify(_ *Task, k Crypto_PublicKey, h Crypto_Hash, msg Bytes, sig Bytes) bool {
 	switch p := k.k.(type) {
 	case *rsa.PublicKey:
-		return rsaHashOK(h) && rsa.VerifyPKCS1v15(p, cryptoGoHashes[h.Tag], keySum(h, msg), []byte(sig)) == nil
+		return rsaPKCS1HashOK(h) && rsa.VerifyPKCS1v15(p, cryptoGoHashes[h.Tag], keySum(h, msg), []byte(sig)) == nil
 	case *ecdsa.PublicKey:
 		return ecdsa.VerifyASN1(p, keySum(h, msg), []byte(sig))
 	case ed25519.PublicKey:
@@ -230,7 +247,7 @@ func Crypto_verify(_ *Task, k Crypto_PublicKey, h Crypto_Hash, msg Bytes, sig By
 
 func Crypto_verify_pss(_ *Task, k Crypto_PublicKey, h Crypto_Hash, msg Bytes, sig Bytes) bool {
 	p, ok := k.k.(*rsa.PublicKey)
-	return ok && rsaHashOK(h) && rsa.VerifyPSS(p, cryptoGoHashes[h.Tag], keySum(h, msg), []byte(sig), nil) == nil
+	return ok && rsaPSSHashOK(h) && rsa.VerifyPSS(p, cryptoGoHashes[h.Tag], keySum(h, msg), []byte(sig), nil) == nil
 }
 
 func Crypto_verify_raw_ecdsa(_ *Task, k Crypto_PublicKey, h Crypto_Hash, msg Bytes, sig Bytes) bool {
@@ -255,7 +272,7 @@ func Crypto_sign(tk *Task, r Rand, k Crypto_PrivateKey, h Crypto_Hash, msg Bytes
 	var err error
 	switch p := k.k.(type) {
 	case *rsa.PrivateKey:
-		if !rsaHashOK(h) {
+		if !rsaPKCS1HashOK(h) {
 			return Err[Bytes](keyErr(rsaHashUnsupported))
 		}
 		sig, err = rsa.SignPKCS1v15(nil, p, cryptoGoHashes[h.Tag], keySum(h, msg))
@@ -276,7 +293,7 @@ func Crypto_sign_pss(tk *Task, r Rand, k Crypto_PrivateKey, h Crypto_Hash, msg B
 	if !ok {
 		return Err[Bytes](keyErr("crypto: sign_pss needs an RSA key"))
 	}
-	if !rsaHashOK(h) {
+	if !rsaPSSHashOK(h) {
 		return Err[Bytes](keyErr(rsaHashUnsupported))
 	}
 	r.M_bytes(tk, int64(cryptoGoHashes[h.Tag].Size()))
@@ -536,7 +553,7 @@ func Crypto_sign_pss_digest(tk *Task, r Rand, k Crypto_PrivateKey, h Crypto_Hash
 	if !ok {
 		return Err[Bytes](keyErr("crypto: sign_pss_digest needs an RSA key"))
 	}
-	if !rsaHashOK(h) {
+	if !rsaPSSHashOK(h) {
 		return Err[Bytes](keyErr(rsaHashUnsupported))
 	}
 	gh := cryptoGoHashes[h.Tag]
@@ -561,7 +578,7 @@ func Crypto_sign_pss_digest(tk *Task, r Rand, k Crypto_PrivateKey, h Crypto_Hash
 // Crypto_verify_pss_digest is Go's VerifyPSS with PSSOptions.
 func Crypto_verify_pss_digest(_ *Task, k Crypto_PublicKey, h Crypto_Hash, digest, sig Bytes, saltLen int64) bool {
 	p, ok := k.k.(*rsa.PublicKey)
-	if !ok || !rsaHashOK(h) || saltLen < -1 || saltLen > math.MaxInt32 {
+	if !ok || !rsaPSSHashOK(h) || saltLen < -1 || saltLen > math.MaxInt32 {
 		return false
 	}
 	return rsa.VerifyPSS(p, cryptoGoHashes[h.Tag], []byte(digest), []byte(sig), &rsa.PSSOptions{SaltLength: int(saltLen)}) == nil
@@ -580,7 +597,7 @@ func Crypto_sign_pkcs1v15_digest(_ *Task, k Crypto_PrivateKey, h Option[Crypto_H
 	if !ok {
 		return Err[Bytes](keyErr("crypto: sign_pkcs1v15_digest needs an RSA key"))
 	}
-	if h.Some && !rsaHashOK(h.V) {
+	if h.Some && !rsaPKCS1HashOK(h.V) {
 		return Err[Bytes](keyErr(rsaHashUnsupported))
 	}
 	sig, err := rsa.SignPKCS1v15(nil, p, pkcs1Hash(h), []byte(digest))
@@ -593,7 +610,7 @@ func Crypto_sign_pkcs1v15_digest(_ *Task, k Crypto_PrivateKey, h Option[Crypto_H
 // Crypto_verify_pkcs1v15_digest is Go's VerifyPKCS1v15.
 func Crypto_verify_pkcs1v15_digest(_ *Task, k Crypto_PublicKey, h Option[Crypto_Hash], digest, sig Bytes) bool {
 	p, ok := k.k.(*rsa.PublicKey)
-	return ok && (!h.Some || rsaHashOK(h.V)) && rsa.VerifyPKCS1v15(p, pkcs1Hash(h), []byte(digest), []byte(sig)) == nil
+	return ok && (!h.Some || rsaPKCS1HashOK(h.V)) && rsa.VerifyPKCS1v15(p, pkcs1Hash(h), []byte(digest), []byte(sig)) == nil
 }
 
 // Crypto_ecdsa_sign_digest is Go's ecdsa.SignASN1; it reads the bytes the
@@ -802,11 +819,19 @@ func Crypto_encrypt_oaep(tk *Task, r Rand, k Crypto_PublicKey, h Crypto_Hash, ms
 	if !ok {
 		return Err[Bytes](keyErr("crypto: encrypt_oaep needs an RSA key"))
 	}
-	if !rsaHashOK(h) || (mgf.Some && !rsaHashOK(mgf.V)) {
+	if !rsaOAEPHashOK(h, mgf) {
 		return Err[Bytes](keyErr(rsaHashUnsupported))
 	}
-	r.M_bytes(tk, int64(cryptoGoHashes[h.Tag].Size()))
-	c, err := rsa.EncryptOAEPWithOptions(cryptorand.Reader, p, []byte(msg), oaepOpts(h, label, mgf))
+	r.M_bytes(tk, int64(cryptoHashes[h.Tag]().Size()))
+	var c []byte
+	var err error
+	if h.Tag >= hashTagKeccak256 {
+		// legacy Keccak has no crypto.Hash for OAEPOptions (rsaOAEPHashOK:
+		// it is its own MGF1 hash)
+		c, err = rsa.EncryptOAEP(cryptoHashes[h.Tag](), cryptorand.Reader, p, []byte(msg), []byte(label))
+	} else {
+		c, err = rsa.EncryptOAEPWithOptions(cryptorand.Reader, p, []byte(msg), oaepOpts(h, label, mgf))
+	}
 	if err != nil {
 		return Err[Bytes](keyErr(err.Error()))
 	}
@@ -827,10 +852,16 @@ func Crypto_decrypt_oaep(_ *Task, k Crypto_PrivateKey, h Crypto_Hash, ciphertext
 	if !ok {
 		return Err[Bytes](keyErr("crypto: decrypt_oaep needs an RSA key"))
 	}
-	if !rsaHashOK(h) || (mgf.Some && !rsaHashOK(mgf.V)) {
+	if !rsaOAEPHashOK(h, mgf) {
 		return Err[Bytes](keyErr(rsaHashUnsupported))
 	}
-	m, err := p.Decrypt(nil, []byte(ciphertext), oaepOpts(h, label, mgf))
+	var m []byte
+	var err error
+	if h.Tag >= hashTagKeccak256 {
+		m, err = rsa.DecryptOAEP(cryptoHashes[h.Tag](), nil, p, []byte(ciphertext), []byte(label))
+	} else {
+		m, err = p.Decrypt(nil, []byte(ciphertext), oaepOpts(h, label, mgf))
+	}
 	if err != nil {
 		if errors.Is(err, rsa.ErrDecryption) {
 			err = rsa.ErrDecryption
