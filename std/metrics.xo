@@ -301,38 +301,75 @@ pub fn (c: Counter) inc(values: List[Str] = []) {
   c.add(1.0, values)
 }
 
+// The instruments' hot paths take the caller's label values as given when
+// nothing is curried or constrained (plain): label_values returns its
+// argument then, and returning it made the caller's list owned, which
+// moved a `[...]` literal off the stack on every call (obj.rl_unstack_n,
+// 18% of bench/perf/metrics counter, 2026-11-16).
+fn plain(f: Family, curry: List[(Int, Str)]) -> Bool { curry.is_empty() && f.constrain.is_empty() }
+
 pub fn (c: Counter) add(n: Float, values0: List[Str] = []) {
-  let values = label_values(c.f, c.curry, values0)
   if n < 0.0 {
+    // a wrong label count faults first, as before
+    let _v = label_values(c.f, c.curry, values0)
     fault("metrics: a counter cannot decrease")
   }
-  if hit_add(c.f, values, true, n) {
+  if plain(c.f, c.curry) {
+    counter_add(c.f, n, values0)
+  } else {
+    counter_add(c.f, n, label_values(c.f, c.curry, values0))
+  }
+}
+
+fn counter_add(f: Family, n: Float, values: List[Str]) {
+  if hit_add(f, values, true, n) {
     return
   }
-  if let Some(cells) = cells_of(c.f, values) {
+  if let Some(cells) = cells_of(f, values) {
     counter_cells_add(cells, n)
   }
 }
 
 pub fn (g: Gauge) set(v: Float, values0: List[Str] = []) {
-  let values = label_values(g.f, g.curry, values0)
-  if let Some(cells) = cells_of(g.f, values) {
+  if plain(g.f, g.curry) {
+    gauge_set(g.f, v, values0)
+  } else {
+    gauge_set(g.f, v, label_values(g.f, g.curry, values0))
+  }
+}
+
+fn gauge_set(f: Family, v: Float, values: List[Str]) {
+  if let Some(cells) = cells_of(f, values) {
     cells[0].set(v.to_bits())
   }
 }
 
 pub fn (g: Gauge) add(v: Float, values0: List[Str] = []) {
-  let values = label_values(g.f, g.curry, values0)
-  if hit_add(g.f, values, false, v) {
+  if plain(g.f, g.curry) {
+    gauge_add(g.f, v, values0)
+  } else {
+    gauge_add(g.f, v, label_values(g.f, g.curry, values0))
+  }
+}
+
+fn gauge_add(f: Family, v: Float, values: List[Str]) {
+  if hit_add(f, values, false, v) {
     return
   }
-  if let Some(cells) = cells_of(g.f, values) {
+  if let Some(cells) = cells_of(f, values) {
     add_float(cells[0], v)
   }
 }
 
 pub fn (h: Histogram) observe(v: Float, values0: List[Str] = []) {
-  let values = label_values(h.f, h.curry, values0)
+  if plain(h.f, h.curry) {
+    histogram_observe(h, v, values0)
+  } else {
+    histogram_observe(h, v, label_values(h.f, h.curry, values0))
+  }
+}
+
+fn histogram_observe(h: Histogram, v: Float, values: List[Str]) {
   // a hit observes under the share, as hit_add adds
   if values.len() == h.f.labels.len() {
     let key = if values.len() == 1 { values[0] } else { values.join(SEP) }
@@ -431,9 +468,16 @@ pub fn (r: Registry) summary(name: Str, help: Str, labels: List[Str] = [], objec
 }
 
 pub fn (s: Summary) observe(v: Float, values0: List[Str] = []) {
-  let values = label_values(s.f, s.curry, values0)
-  if let Some(x) = series_of(s.f, values) {
-    summary_add(x, s.f.objectives, v)
+  if plain(s.f, s.curry) {
+    summary_observe(s.f, v, values0)
+  } else {
+    summary_observe(s.f, v, label_values(s.f, s.curry, values0))
+  }
+}
+
+fn summary_observe(f: Family, v: Float, values: List[Str]) {
+  if let Some(x) = series_of(f, values) {
+    summary_add(x, f.objectives, v)
   }
 }
 

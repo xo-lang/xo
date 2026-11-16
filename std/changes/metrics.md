@@ -1,5 +1,16 @@
 # std/metrics changes
 
+## 2026-11-16: perf: labelled inc, add, set and observe keep the caller's label list on the stack
+
+- Kind: perf
+- Commit: this push
+- Found by: task #87 (std/evidence/metrics/perf.md, counter 1.134 of Go on host 1), XO_PROF=cpu on bench/perf/metrics counter: obj.rl_unstack_n under label_values, 18%
+- Go reference: prometheus/client_golang v1.23.2 (WithLabelValues takes a variadic slice the caller's frame holds)
+- Test: std/metrics_test.xo (unchanged; the same values on every path); bench/perf/metrics instructions on the Mac: counter 2.607G to 1.967G (0.754), histogram 1.853G to 1.428G (0.770), counterheld and scrape unchanged
+- Shipped in: not yet released
+
+`Counter.inc` and `add`, `Gauge.set` and `add`, `Histogram.observe` and `Summary.observe` with nothing curried or constrained take the label values as given: label_values returned its argument, which made the caller's `[...]` literal owned and moved it to the heap on every call.
+
 ## 2026-11-15: feature: protobuf exposition and native histograms
 
 - Kind: feature
