@@ -239,3 +239,40 @@ test "invalid additional information names the type as Go does" {
     }
   }
 }
+
+// The typed readers answer an untagged value before untag (task #87): the
+// same result with and without the self-describe tag 55799 around it, and a
+// mismatch still reported.
+fn sd(v: Value) -> Value { Value.Tag(num: UInt64.from_bits(55799), v: v) }
+
+test "typed readers: untagged and self-described values alike" {
+  var st = Unm{strict: false, err: None}
+  for v in [t("x"), sd(t("x"))] {
+    expect(to_str(v, st)) == (true, "x")
+  }
+  for v in [from_int(-5), sd(from_int(-5))] {
+    expect(to_int(v, st)) == (true, -5)
+  }
+  for v in [from_int(7), sd(from_int(7))] {
+    expect(to_int(v, st)) == (true, 7)
+  }
+  for v in [Value.Float(f: 1.5), sd(Value.Float(f: 1.5))] {
+    expect(to_float(v, st)) == (true, 1.5)
+  }
+  expect(to_float(from_int(3), st)) == (true, 3.0)
+  for v in [Value.Bool(b: true), sd(Value.Bool(b: true))] {
+    expect(to_bool(v, st)) == (true, true)
+  }
+  for v in [Value.ByteString(b: b"ab"), sd(Value.ByteString(b: b"ab"))] {
+    expect(to_bytes(v, st)) == (true, b"ab")
+  }
+  for v in [Value.Array(items: [t("a")]), sd(Value.Array(items: [t("a")]))] {
+    expect(items(v, "list", st).1.len()) == 1
+  }
+  for v in [Value.Map(pairs: [(t("k"), t("v"))]), sd(Value.Map(pairs: [(t("k"), t("v"))]))] {
+    expect(pairs(v, "map", st).1.len()) == 1
+  }
+  expect(st.err is None) == true
+  expect(to_int(Value.Uint(n: UInt64.from_bits(-1)), st).0) == false
+  expect(to_str(from_int(1), st).0) == false
+}

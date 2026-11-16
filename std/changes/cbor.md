@@ -1,5 +1,16 @@
 # std/cbor changes
 
+## 2026-11-16: perf: typed decode reads untagged values in place
+
+- Kind: perf
+- Commit: this push
+- Found by: task #87 (std/evidence/cbor/perf.md, udecode 1.171 of Go on host 1), XO_PROF=cpu on bench/perf/cbor udecode: dup and drop of cbor.Value 30%, untag 14%
+- Go reference: github.com/fxamacker/cbor/v2 v2.9.0 decode.go (parseToValue reads a struct field straight from the wire)
+- Test: std/cbor_test.xo (typed readers: untagged and self-described values alike, mismatches still reported); bench/perf/cbor on the Mac: udecode instructions 275M to 221M (0.80), decode and umarshal unchanged
+- Shipped in: not yet released
+
+The readers `unmarshal` uses for a field of a type that derives Cbor (Str, Int, Float, Bool, Bytes, a List, a Map) answer the variant they want before looking for tags; a value with no tag no longer takes a copy of itself per field. Results unchanged.
+
 ## 2026-11-15: feature: cbor.Raw (RawMessage); fix: the reserved additional information error names the type
 
 - Kind: feature, fix

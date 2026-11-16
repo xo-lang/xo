@@ -1325,7 +1325,12 @@ fn strip_tags(v: cbor.Value) -> cbor.Value {
   }
 }
 
+// The readers below answer the variant they want before untag: a value with
+// no tag (nearly every one) is read in place, where untag's copy of it was a
+// retain and a release of the value per field (task #87, 2026-11-16:
+// bench/perf/cbor udecode, dup and drop of cbor.Value 30%).
 fn to_str(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Str) {
+  if let cbor.Value.TextString(s) = v0 { return (true, s) }
   let (okt, v) = untag(v0, st)
   if !okt || is_null(v) { return (false, "") }
   match v {
@@ -1381,6 +1386,17 @@ fn bignum_int(v: cbor.Value) -> (Int, Int) {
 }
 
 fn to_int(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Int) {
+  match v0 {
+    cbor.Value.Uint(n) => {
+      let b = n.to_bits()
+      if b >= 0 { return (true, b) }
+    }
+    cbor.Value.Nint(n) => {
+      let b = n.to_bits()
+      if b >= 0 { return (true, -1 - b) }
+    }
+    _ => {}
+  }
   let (okt, v) = untag(v0, st)
   if !okt || is_null(v) { return (false, 0) }
   let (bk, bn) = bignum_int(v0)
@@ -1399,6 +1415,7 @@ fn to_int(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Int) {
 }
 
 fn to_float(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Float) {
+  if let cbor.Value.Float(f) = v0 { return (true, f) }
   let (okt, v) = untag(v0, st)
   if !okt || is_null(v) { return (false, 0.0) }
   match v {
@@ -1414,6 +1431,7 @@ fn to_float(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Float) {
 }
 
 fn to_bool(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Bool) {
+  if let cbor.Value.Bool(b) = v0 { return (true, b) }
   let (okt, v) = untag(v0, st)
   if !okt || is_null(v) { return (false, false) }
   match v {
@@ -1426,6 +1444,7 @@ fn to_bool(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Bool) {
 }
 
 fn to_bytes(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Bytes) {
+  if let cbor.Value.ByteString(b) = v0 { return (true, b) }
   let (okt, v) = untag(v0, st)
   if !okt || is_null(v) { return (false, b"") }
   match v {
@@ -1455,6 +1474,7 @@ fn to_bytes(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Bytes) {
 }
 
 fn items(v0: cbor.Value, want: Str, var st: cbor.Unm) -> (Bool, List[cbor.Value]) {
+  if let cbor.Value.Array(xs) = v0 { return (true, xs) }
   let (okt, v) = untag(v0, st)
   if !okt { return (false, []) }
   match v {
@@ -1467,6 +1487,7 @@ fn items(v0: cbor.Value, want: Str, var st: cbor.Unm) -> (Bool, List[cbor.Value]
 }
 
 fn pairs(v0: cbor.Value, want: Str, var st: cbor.Unm) -> (Bool, List[(cbor.Value, cbor.Value)]) {
+  if let cbor.Value.Map(ps) = v0 { return (true, ps) }
   let (okt, v) = untag(v0, st)
   if !okt { return (false, []) }
   match v {
