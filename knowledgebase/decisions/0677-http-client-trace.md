@@ -1,6 +1,6 @@
 # 0677: HTTP client trace events (net/http/httptrace)
 
-Status: Proposed (Xo Lang 3, 2026-11-16; task #55)
+Status: Accepted (lead for the owner, 2026-11-16 overnight; proposed by Xo Lang 3, 2026-11-16; task #55)
 
 ## Context
 
@@ -20,7 +20,7 @@ client_do, hclient.xo cl_start: the pool, the dial, the TLS handshake),
 which keeps its state in raw records and calls no Xo closures. On the Go
 backend std/rt's client is net/http itself, so Go's hooks are at hand.
 
-## Decision (proposed)
+## Decision
 
 1. A request carries trace events, not callbacks:
    `Request.with_trace(on: fn(TraceEvent) uses sync) -> Request`. One
