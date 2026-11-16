@@ -31,7 +31,11 @@ func tmplAny(x any) any {
 		for i := range t {
 			t[i] = tmplAny(t[i])
 		}
-		return t
+		// no spare capacity: text/template's slice checks an index against
+		// cap, and encoding/json's append growth left room past len, which an
+		// Xo List does not have (task #98 template fuzz seed 35: "invalid
+		// slice index: 5 > 4" where an exact slice gives "index out of range")
+		return t[:len(t):len(t)]
 	case map[string]any:
 		for k := range t {
 			t[k] = tmplAny(t[k])

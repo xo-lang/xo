@@ -1119,10 +1119,13 @@ fn blank(s: Str) -> Bool {
 fn tree_err(msg: Str) -> xml.XmlErr { xml.XmlErr{line: 0, msg: msg} }
 
 fn parse(text: Str, strict: Bool) -> xml.Element ! xml.XmlErr {
-  let ts = tokens(text, strict)?
+  // token by token, as encoding/xml's Decoder reads: a second root or text
+  // outside the root is the error when it is reached, before a syntax error
+  // later in the text (task #98 xmlcodec fuzz seed 193)
+  var rd = reader(text, strict)
   var stack: List[Open] = []
   var root: List[xml.Element] = []
-  for t in ts {
+  while let Some(t) = rd.next()? {
     var node = xml.Node.Text(s: "")
     match t {
       xml.Token.Start(name, attrs) => {

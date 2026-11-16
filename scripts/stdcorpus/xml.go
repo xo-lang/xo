@@ -247,6 +247,11 @@ var xmlBadDocs = []string{
 	"<!-- a -- b --><a/>",
 	"<1a/>",
 	"<a><b></b></a></a>",
+	// a second root or text outside it, then a syntax error: the root error
+	// comes first, as the Decoder reads (task #98 xmlcodec fuzz seed 193)
+	"<a/><b><c></d></b>",
+	"<a/>x<b></c>",
+	"<a/><b>&nope;",
 }
 
 func xmlCorpus() string {

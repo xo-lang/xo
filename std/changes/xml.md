@@ -1,5 +1,16 @@
 # std/xml changes
 
+## 2026-11-16: fix: a second root or text outside the root is the error before a later syntax error
+
+- Kind: fix
+- Commit: this push
+- Found by: the #98/#108 sharded fuzz (TestXmlcodecFuzz seed 193 on linux/arm64 host 3, after 955000 cases passed)
+- Go reference: encoding/xml's Decoder reads token by token, so the first problem in document order is the error
+- Test: internal/stdtest/testdata/corpus/xmlcodec (fixed documents of scripts/stdcorpus/xmlcodec.go; failed before the change)
+- Shipped in: not yet released
+
+parse and parse_root read the whole token list before building the tree, so `<a/><b><c></d></b>` reported the bad close tag instead of `xml: more than one root element` (and text outside the root likewise). They now read token by token, as Go does, on every backend (std/rt/xml.go too).
+
 ## 2026-11-11: feature: xml.writer, Go's Encoder a token at a time
 
 - Kind: feature

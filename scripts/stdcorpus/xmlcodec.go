@@ -25,6 +25,11 @@ import (
 // CDATA, a namespace prefix, numbers and booleans in text, and malformed
 // input.
 var xcFixedDocs = []string{
+	// task #98 xmlcodec fuzz seed 193: the second root is the error, before
+	// the bad close tag after it
+	"<?xml version=\"1.0\" encoding=\"UTF-8\"?><b x:y=\"&lt;\"><![CDATA[x<b xmlns:ns= x:y=&lt;>]]></b><ns:el xmlns:ns='v'><xml:lang></x></xml:lang><?xml version=\"1.0\"?></ns:el></b> <x/>",
+	"<a/><b><c></d></b>",
+	"<a/>text<b></c>",
 	`<root id="7" class="a&amp;b">text</root>`,
 	`<r><a><b>deep</b></a><a/><empty></empty></r>`,
 	`<r>a &amp; b &lt;x&gt; &#233; &quot;q&quot; &apos;p&apos;</r>`,

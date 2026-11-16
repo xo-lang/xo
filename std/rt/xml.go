@@ -145,16 +145,24 @@ type xmlNode struct {
 }
 
 func Xml_parse(_ *Task, text string, strict bool) Result[Xml_Element, Xml_XmlErr] {
-	ts, err := xmlRead(xmlDecoder(text, strict).Token)
-	if err != nil {
-		return Err[Xml_Element](xmlErr(err))
-	}
+	// token by token, as encoding/xml's Decoder reads: a second root or
+	// text outside the root is the error when it is reached, before a
+	// syntax error later in the text (task #98 xmlcodec fuzz seed 193)
+	dec := xmlDecoder(text, strict)
 	fail := func(msg string) Result[Xml_Element, Xml_XmlErr] {
 		return Err[Xml_Element](Xml_XmlErr{F_msg: msg})
 	}
 	var stack []*xmlNode
 	var root *Xml_Element
-	for _, t := range ts {
+	for {
+		raw, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return Err[Xml_Element](xmlErr(err))
+		}
+		t := xmlToken(xml.CopyToken(raw))
 		if t.Tag == 1 {
 			if len(stack) == 0 && root != nil {
 				return fail("xml: more than one root element")

@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/xml): parse and parse_root report a second root element or text outside the root before a syntax error later in the document, as encoding/xml does. Found by the #98 xmlcodec fuzz.
 - Feature (std/sql, every backend; decision 0679, task #113): `Row.elements` and `elements_opt` read an array column's elements as one column Rows, so uuid[], numeric[], date[], time[], interval[], inet[], range and composite arrays read with the element's reader.
 
 - Fixes (std/dns): lookup_srv fails with "SRV header name is invalid" when the first SRV answer's owner name is not a domain name, as Go's LookupSRV (it returned the records). Found by TestDnsFuzz seeds 5 to 7 (task #115).
