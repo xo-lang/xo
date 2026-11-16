@@ -291,6 +291,18 @@ yourself.
   leases run between them (2026-11-15: one full llvm step held host 4's
   single slot 78 minutes while a 30 second lease waited 51).
   `CTIER_LLVM_SHARDS=0` runs it as one lease. Last verified: 2026-11-15.
+- The loops under launchd (#80, owner 2026-11-15: a loop started from a
+  session died with it): `launchd-install.sh ctier|mainwatch` (installed
+  by install.sh) runs `~/xo-lead/agents/NAME.sh` as `org.xolang.NAME`
+  from a login zsh, restarted after a failure exit only (so a ctier stop
+  file's clean exit stays stopped), output in `~/xo-lead/logs/NAME.log`;
+  `uninstall` removes it. `mainwatch.sh` is mainwatch2.sh's loop (the
+  2-hourly hourly.sh, its windows and spacing) that keeps going after a
+  failing check: xw's main-check alert reports it. Each loop writes a
+  heartbeat at every wait (`~/xo-lead/xw/beat/NAME`: due epoch and what
+  it waits on), and xw raises `loop-stale` when one is overdue. Stop a
+  session's copy before installing (mainwatch2.sh in the lead's session;
+  ctier's loop with its stop file at a run's end), so two never run.
 - Fail fast (lead, owner approved 2026-11-15): the first gate step that
   fails stops the gate. Steps still running are stopped (their output
   so far in `$XO_GATE_LOGS/STEP.stopped.txt`), the rest are skipped, and a
