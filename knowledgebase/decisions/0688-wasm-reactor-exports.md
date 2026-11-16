@@ -1,6 +1,6 @@
 # 0688: wasm library builds are WASI reactors with `as c` exports
 
-Status: Proposed (Xo Lang 1, 2026-11-16, task #53)
+Status: Accepted (owner, 2026-11-16, as written; proposed by Xo Lang 1, 2026-11-16, task #53)
 
 ## Context
 
