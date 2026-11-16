@@ -1552,6 +1552,14 @@ Last verified: 2026-11-15
     the next `--wait --after SEQ` command) and replaces idlewatch and
     bottlewatch; `xw snooze ID [--for 2h]` quiets one (the idle-ok
     file's grace). Last verified: 2026-11-15.
+  - `xw digest [--since 8h] [--local] [--json]` (#92), also
+    http://127.0.0.1:7480/digest (8h, 12h, 24h, 3d windows): what
+    happened in a window for the owner's morning: pushes by agent, tasks
+    done and blocked, ADRs whose Status line changed or that were added
+    (origin/main's knowledgebase/decisions), seeds cut
+    (scripts/seed-chain.txt), std marks that moved, and alerts by kind
+    with how each ended (cleared after, resolved by, snoozed, still
+    open). Last verified: 2026-11-16.
   - `wrong-class` (#82): a heavy.sh job in the Mac gate class running
     past 10 minutes (the class is for runs under about 2 minutes) is an
     alert naming the job and pid; the agent sees it once a session in
