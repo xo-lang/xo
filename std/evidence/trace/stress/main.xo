@@ -1,0 +1,178 @@
+// trace stress program (decision 0616 section 2): TASKS tasks share one
+// Ring (cap 512). Each records spans named for itself with a counter
+// that grows (Ring.record, and Recorder spans with attributes, events and
+// a status, children of the task's root span), and in turn reads the ring
+// (Ring.spans with a random minimum and count) and checks what the ring
+// promises under contention: at most cap spans, at most n, none shorter
+// than the minimum, each task's spans newest first (its counter falling),
+// each Recorder span's ids well formed (32 and 16 hex digits, not all
+// zero, the root's trace id) and its end not before its start, and each
+// span's JSON decoding back equal. A background task samples the resident
+// set every 10 s (Linux /proc/self/status) and prints it each minute.
+// Pass: no promise broken, no fault, and the resident set at the end
+// within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30); 0: 3,000 steps per task] [TASKS (32)]
+use std/json
+use std/trace
+
+const CAP: Int = 512
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+fn hex_ok(s: Str, n: Int) -> Bool {
+  if s.len() != n || s == "0".repeat(n) {
+    return false
+  }
+  for c in s.bytes() {
+    if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+      return false
+    }
+  }
+  true
+}
+
+/// The task and counter of a span this program made ("t<task>.<k>").
+fn owner(s: trace.Span) -> (Int, Int)? {
+  if !s.name.starts_with("t") {
+    return None
+  }
+  let p = s.name[1..].split(".")
+  if p.len() != 2 {
+    return None
+  }
+  match (Int.parse(p[0]), Int.parse(p[1])) {
+    (Some(t), Some(k)) => Some((t, k))
+    _ => None
+  }
+}
+
+fn check_read(ring: trace.Ring, tasks: Int, min_us: Int, n: Int, roots: List[Str]) -> Int ! Str {
+  let got = ring.spans(Duration.from_nanos(min_us * 1000), n)
+  if got.len() > CAP || n > 0 && got.len() > n {
+    return Err("spans(${min_us}us, ${n}) gave ${got.len()}")
+  }
+  var last: List[Int] = List.filled(tasks, -1)
+  for s in got {
+    if s.micros < min_us {
+      return Err("a span of ${s.micros}us under the minimum ${min_us}us")
+    }
+    let (t, k) = owner(s).or_err("a span not made here: ${s.name.quote()}")?
+    if last[t] >= 0 && k >= last[t] {
+      return Err("task ${t}: span ${k} after span ${last[t]} (not newest first)")
+    }
+    last[t] = k
+    if !s.span_id.is_empty() {
+      if !hex_ok(s.trace_id, 32) || !hex_ok(s.span_id, 16) || s.trace_id != roots[t] || s.end_ns < s.start_ns || s.id != s.trace_id {
+        return Err("task ${t} span ${k}: ids or times wrong: ${json.encode_str(s)}")
+      }
+    }
+    let back = json.decode_str[trace.Span](json.encode_str(s)).map_err(fn(e) { "task ${t} span ${k}: JSON: ${e}" })?
+    if back != s {
+      return Err("task ${t} span ${k}: JSON decodes back different")
+    }
+  }
+  Ok(got.len())
+}
+
+fn worker(os: Os, ring: trace.Ring, t: Int, tasks: Int, roots: List[Str], end: Time, passes: Int) -> (Int, Int) ! Str uses (clock, rand, sync) {
+  let rec = trace.recorder(ring, os.clock, os.rand)
+  var x = next(t + 1)
+  var k = 0
+  var read = 0
+  let root = (roots[t], "00000000000000aa")
+  while if passes > 0 { k < passes } else { os.clock.now() < end } {
+    x = next(x)
+    match (x >> 40) % 4 {
+      0 => ring.record("r${t}", "t${t}.${k}", os.clock.now(), Duration.from_nanos(((x >> 10) % 5000) * 1000))
+      1 => {
+        let a = rec.start("t${t}.${k}", parent: Some(root), kind: trace.SpanKind.Client, attributes: [trace.Attr{key: "k", value: trace.AttrValue.Int(k)}])
+        a.add_event("e${k % 7}")
+        a.set_attributes([trace.Attr{key: "k", value: trace.AttrValue.Str("v${k}")}, trace.Attr{key: "f", value: trace.AttrValue.Float(Float(k) / 3.0)}])
+        a.set_status(if k % 5 == 0 { trace.StatusCode.Error } else { trace.StatusCode.Ok }, message: "m")
+        a.end()
+        a.end()
+      }
+      _ => {
+        read += check_read(ring, tasks, Int((x >> 20) % 4000) - 10, Int((x >> 30) % 40) - 2, roots)?
+        k -= 1
+      }
+    }
+    k += 1
+  }
+  Ok((k, read))
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 32 } else { 32 }
+  let passes = if minutes == 0 { 3000 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let ring = trace.ring(cap: CAP)
+  // each task's root trace id, from a span of its own
+  let rec = trace.recorder(trace.ring(cap: 1), os.clock, os.rand)
+  var roots: List[Str] = []
+  for _ in 0..tasks {
+    let (tid, _) = rec.start("root").ids()
+    roots.push(tid)
+  }
+  let (spans, reads) = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[(Int, Int), Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> (Int, Int) ! Str { worker(os, ring, t, tasks, roots, end, passes) }))
+    }
+    var n = 0
+    var r = 0
+    for h in hs {
+      let (a, b) = h.await.map_err(fn(e) { "a task: ${e}" })?
+      n += a
+      r += b
+    }
+    s.cancel()
+    (n, r)
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("trace stress: ${spans} spans recorded and ${reads} read back by ${tasks} tasks in ${minutes} min, 0 promises broken, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}

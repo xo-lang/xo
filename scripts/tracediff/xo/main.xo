@@ -1,0 +1,160 @@
+// The Xo side of the trace differential test (internal/stdtest
+// TestTraceFuzz): a script on standard input drives std/trace with a
+// scripted clock and random source, and prints what it observes, as the
+// test's Go model of std/trace's documented behaviour prints it.
+//   ring CAP                  a new ring (and recorder over it), no draws left
+//   rec ID NAME MS US         Ring.record(id, name, at MS, US long)
+//   spans MINUS N             Ring.spans(MINUS microseconds, N)
+//   clock NS                  the clock reads NS from now on
+//   rand HEX                  the next rand.bytes draws, in turn (any length)
+//   start A NAME P T S KIND   span A started (P "-": a new trace, else parent T S)
+//   attr A K TYPE V           set_attributes [K: V] on span A
+//   event A NAME              add_event on span A
+//   status A CODE MSG         set_status on span A
+//   end A                     end span A
+//   json                      each span of spans(0, 0): its JSON, decoded back equal or not
+// Texts are "x" then hex.
+use std/json
+use std/trace
+
+fn text(h: Str) -> Str { Bytes.from_hex(h.trim_prefix("x")).or_fault("hex").to_str().or_fault("utf8") }
+
+struct ScriptClock {
+  ns: Mutex[Int]
+}
+
+fn (c: ScriptClock) now() -> Time uses clock { Time.from_unix_nanos(c.ns.with_read(fn(n: Int) -> Int { n })) }
+fn (c: ScriptClock) sleep(d: Duration) uses clock {}
+fn (c: ScriptClock) sleep_or_cancel(d: Duration) -> () ! ClockErr uses clock { Ok(()) }
+fn (c: ScriptClock) since(t: Time) -> Duration uses clock { c.now() - t }
+
+struct ScriptRand {
+  draws: Mutex[List[Bytes]]
+}
+
+fn (r: ScriptRand) int(lo: Int, hi: Int) -> Int uses rand { lo }
+fn (r: ScriptRand) float() -> Float uses rand { 0.0 }
+fn (r: ScriptRand) bool() -> Bool uses rand { false }
+fn (r: ScriptRand) bytes(n: Int) -> Bytes uses rand {
+  let d = r.draws.with(fn(var l: List[Bytes]) -> Bytes? {
+    if l.is_empty() {
+      return None
+    }
+    let x = l[0]
+    l = l[1..]
+    Some(x)
+  })
+  let b = d ?? b""
+  // a draw is cut or zero-padded to n bytes
+  if b.len() >= n { b[0..n] } else { b + Bytes.zeroed(n - b.len()) }
+}
+fn (r: ScriptRand) shuffle[T](xs: List[T]) -> List[T] uses rand { xs }
+
+fn show(s: trace.Span) -> Str {
+  var attrs = ""
+  for a in s.attributes {
+    let v = match a.value {
+      trace.AttrValue.Str(v) => "s${v.quote()}"
+      trace.AttrValue.Int(v) => "i${v}"
+      trace.AttrValue.Float(v) => "f${v.to_fixed(6)}"
+      trace.AttrValue.Bool(v) => "b${v}"
+    }
+    attrs = attrs + " ${a.key.quote()}=${v}"
+  }
+  var evs = ""
+  for e in s.events {
+    evs = evs + " ${e.name.quote()}@${e.time_ns}"
+  }
+  let kind = match s.kind {
+    Some(trace.SpanKind.Unspecified) => "0"
+    Some(trace.SpanKind.Internal) => "1"
+    Some(trace.SpanKind.Server) => "2"
+    Some(trace.SpanKind.Client) => "3"
+    Some(trace.SpanKind.Producer) => "4"
+    Some(trace.SpanKind.Consumer) => "5"
+    None => "-"
+  }
+  let st = match s.status_code {
+    Some(trace.StatusCode.Unset) => "0"
+    Some(trace.StatusCode.Ok) => "1"
+    Some(trace.StatusCode.Error) => "2"
+    None => "-"
+  }
+  "span ${s.id.quote()} ${s.name.quote()} ms ${s.start_ms} us ${s.micros} status ${s.status} trace ${s.trace_id} sid ${s.span_id} parent ${s.parent_id} kind ${kind} code ${st} ${s.status_message.quote()} ns ${s.start_ns}..${s.end_ns} attrs${attrs} events${evs}"
+}
+
+fn main(os: Os) ! {
+  let clock = ScriptClock{ns: Mutex[Int].new(0)}
+  let rnd = ScriptRand{draws: Mutex[List[Bytes]].new([])}
+  var ring = trace.ring()
+  var rec = trace.recorder(ring, clock, rnd)
+  var active: Map[Str, trace.Active] = {}
+  for line in os.stdio.lines()? {
+    let w = line.trim().split(" ")
+    if w.len() < 1 || w[0].is_empty() {
+      continue
+    }
+    os.stdio.println("== ${line.trim()}")
+    match w[0] {
+      "ring" => {
+        ring = trace.ring(cap: Int.parse(w[1]) ?? 0)
+        rec = trace.recorder(ring, clock, rnd)
+        active = {}
+        rnd.draws.with(fn(var l: List[Bytes]) { l = [] })
+      }
+      "rec" => ring.record(text(w[1]), text(w[2]), Time.from_unix_millis(Int.parse(w[3]) ?? 0), Duration.from_nanos((Int.parse(w[4]) ?? 0) * 1000))
+      "spans" => {
+        for s in ring.spans(Duration.from_nanos((Int.parse(w[1]) ?? 0) * 1000), Int.parse(w[2]) ?? 0) {
+          os.stdio.println(show(s))
+        }
+      }
+      "clock" => clock.ns.with(fn(var n: Int) { n = Int.parse(w[1]) ?? 0 })
+      "rand" => rnd.draws.with(fn(var l: List[Bytes]) { l.push(Bytes.from_hex(w[1].trim_prefix("x")).or_fault("hex")) })
+      "start" => {
+        let parent = if w[3] == "-" { None } else { Some((text(w[4]), text(w[5]))) }
+        let kind = match w[6] {
+          "0" => trace.SpanKind.Unspecified
+          "1" => trace.SpanKind.Internal
+          "2" => trace.SpanKind.Server
+          "3" => trace.SpanKind.Client
+          "4" => trace.SpanKind.Producer
+          _ => trace.SpanKind.Consumer
+        }
+        let a = rec.start(text(w[2]), parent: parent, kind: kind)
+        let (t, s) = a.ids()
+        os.stdio.println("ids ${t} ${s}")
+        active.put(w[1], a)
+      }
+      "attr" => {
+        let v = match w[3] {
+          "s" => trace.AttrValue.Str(text(w[4]))
+          "i" => trace.AttrValue.Int(Int.parse(w[4]) ?? 0)
+          "b" => trace.AttrValue.Bool(w[4] == "1")
+          _ => trace.AttrValue.Float(Float.parse(w[4]) ?? 0.0)
+        }
+        active.get(w[1]).or_fault("span").set_attributes([trace.Attr{key: text(w[2]), value: v}])
+      }
+      "event" => active.get(w[1]).or_fault("span").add_event(text(w[2]))
+      "status" => {
+        let c = match w[2] {
+          "0" => trace.StatusCode.Unset
+          "1" => trace.StatusCode.Ok
+          _ => trace.StatusCode.Error
+        }
+        active.get(w[1]).or_fault("span").set_status(c, message: text(w[3]))
+      }
+      "end" => active.get(w[1]).or_fault("span").end()
+      _ => {
+        for s in ring.spans(Duration.from_nanos(0), 0) {
+          let j = json.encode_str(s)
+          let back = match json.decode_str[trace.Span](j) {
+            Ok(b) => if b == s { "equal" } else { "differs: ${show(b)}" }
+            Err(e) => "error ${e}"
+          }
+          os.stdio.println("json ${j}")
+          os.stdio.println("back ${back}")
+        }
+      }
+    }
+  }
+}
