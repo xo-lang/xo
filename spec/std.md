@@ -11237,6 +11237,10 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   or form with `data-xo-frame="ID"` patches only that element.
   `data-xo-action="replace"` replaces the history entry. A page without
   the runtime, or with another build of it, is a full load.
+  While a navigation or form waits, the root element carries
+  `data-xo-busy` and `aria-busy`, a POST form's buttons are disabled, and
+  after 150 ms a bar (`#xo-progress`, color `--xo-progress`) shows at the
+  top.
 - The runtime and the client are served at content stamped URLs
   (`?v=`), cached for good; the page's `data-xo-build` and each sync
   reply's `build` name them, and a page that sees another build sets

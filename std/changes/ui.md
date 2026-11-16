@@ -1,5 +1,16 @@
 # std/ui changes
 
+## 2026-11-16: feature: busy state and progress bar for navigations and forms
+
+- Kind: feature
+- Commit: this push
+- Found by: owner (a delay after clicking sign in on xw's dashboard looked like nothing happened)
+- Go reference: none
+- Test: headless Chrome ~/xo-lead/notes/stdui/e2e/drive-busy.mjs with 600 ms latency (6/6); pages 14/14, navigation 17/17, todo 21/21, morph 3/3, redeploy 6/6; internal/uiruntime and std/ui tests
+- Shipped in: not yet released
+
+While a navigation or form waits, the page carries `data-xo-busy` and `aria-busy`, a POST form's buttons are disabled (no double submit), and after 150 ms a thin bar shows at the top (`--xo-progress` sets its color).
+
 ## 2026-11-15: feature: the page layer (server pages, forms and frames without full loads)
 
 - Kind: feature

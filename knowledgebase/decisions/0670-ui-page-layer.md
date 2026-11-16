@@ -91,6 +91,21 @@ runtime (Turbo's default).
 - Pages the runtime takes over must answer a navigation with a whole
   HTML page (no fragments): the patch picks out what changed.
 
+## Amendment: busy state and progress bar (owner, 2026-11-16)
+
+An in-place swap gets no spinner from the browser, so a slow answer
+looked like nothing happened (xw's sign in sleeps 1 s after a wrong
+password, by design). While a navigation or form waits, the root element
+carries `data-xo-busy` and `aria-busy="true"`; after 150 ms a 3 px bar
+shows at the top (`#xo-progress`, outside `<body>` so a patch never
+removes it, colored by `--xo-progress`), creeping toward 90% and filling
+when the answer lands. A submitted POST form's buttons are disabled
+until the answer, so it cannot be sent twice. Checked in headless Chrome
+with 600 ms of added latency (~/xo-lead/notes/stdui/e2e/drive-busy.mjs,
+6/6): a fast swap shows no bar; busy is set at once and the bar shows
+after 150 ms; both are gone after the swap; the sign in button is
+disabled while waiting and enabled after the 422.
+
 ## Alternatives
 
 - Fragment answers (htmx's `HX-Request`): smaller replies, but each

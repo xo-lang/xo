@@ -1126,6 +1126,30 @@ if(!cur&&!isPage(document))return;
 // another build of it, a failed fetch, data-xo-reload, a modifier key, a
 // target) is an ordinary navigation.
 var navN=0,ctl=null,deb=0;
+// While a navigation or form waits, the root element carries data-xo-busy
+// and aria-busy, a submitted POST form's buttons are disabled (no double
+// submit), and after 150 ms a thin bar shows at the top: an in-place swap
+// gets no spinner from the browser. The bar is outside <body>, so a patch
+// never removes it; --xo-progress sets its color.
+var busyT=0,barT=0,bar=null,barW=0,held=[];
+function busy(on,f){
+  var h=document.documentElement;
+  clearTimeout(busyT);clearInterval(barT);
+  held.forEach(function(b){b.disabled=false;});held=[];
+  if(on){
+    h.setAttribute("data-xo-busy","");h.setAttribute("aria-busy","true");
+    if(f){var bs=f.querySelectorAll("button,input[type=submit]");for(var i=0;i<bs.length;i++)if(!bs[i].disabled){bs[i].disabled=true;held.push(bs[i]);}}
+    busyT=setTimeout(function(){
+      if(!bar){bar=document.createElement("div");bar.id="xo-progress";bar.setAttribute("aria-hidden","true");bar.style.cssText="position:fixed;top:0;left:0;height:3px;width:0;z-index:2147483647;background:var(--xo-progress,#29d);transition:width .2s ease-out,opacity .3s;pointer-events:none";}
+      if(bar.parentNode!==h)h.appendChild(bar);
+      barW=8;bar.style.opacity="1";bar.style.width=barW+"%";
+      barT=setInterval(function(){barW+=(90-barW)*0.1;bar.style.width=barW+"%";},200);
+    },150);
+  }else{
+    h.removeAttribute("data-xo-busy");h.removeAttribute("aria-busy");
+    if(bar&&bar.parentNode){bar.style.width="100%";bar.style.opacity="0";var b=bar;setTimeout(function(){if(!h.hasAttribute("data-xo-busy")&&b.parentNode)b.parentNode.removeChild(b);},300);}
+  }
+}
 try{history.scrollRestoration="manual";history.replaceState({xo:1,y:0},"",location.href);}catch(e){}
 function here(){return location.pathname+location.search;}
 // the stamp of the runtime a document loads: null when it loads none
@@ -1142,6 +1166,8 @@ function visit(href,o){
   var init={credentials:"same-origin",headers:{"Accept":"text/html"}};
   if(ctl)init.signal=ctl.signal;
   if(o.method==="POST"){init.method="POST";init.body=o.body;}
+  busy(true,o.method==="POST"?o.form:null);
+  function done(){if(n===navN)busy(false);}
   return fetch(href,init).then(function(r){
     var ct=r.headers.get("Content-Type")||"";
     // a 422 is a form shown again with its errors (Turbo's rule)
@@ -1165,7 +1191,7 @@ function visit(href,o){
     if(o.frame){
       var nf=d.getElementById(o.frame),cf=document.getElementById(o.frame);
       // a frame outside a running App's view: patch only it
-      if(nf&&cf&&cf.hasAttribute("data-xo-frame")&&!(app()&&app().contains(cf))){xoPatch(cf,nf,focus);return;}
+      if(nf&&cf&&cf.hasAttribute("data-xo-frame")&&!(app()&&app().contains(cf))){xoPatch(cf,nf,focus);done();return;}
     }
     if(cur)cur();
     document.title=d.title;
@@ -1174,8 +1200,10 @@ function visit(href,o){
     var st=history.state;
     if(mode==="push")window.scrollTo(0,0);else if(mode==="pop")window.scrollTo(0,(st&&st.y)||0);
     cur=boot();
+    done();
   }).catch(function(e){
     if(n!==navN||(e&&e.name==="AbortError"))return;
+    done();
     // a POST is never repeated as a GET: submit the form for real
     if(o.method==="POST"&&o.form)HTMLFormElement.prototype.submit.call(o.form);
     else location.href=href;
