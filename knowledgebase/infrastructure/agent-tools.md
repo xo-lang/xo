@@ -1515,7 +1515,8 @@ Last verified: 2026-11-15
   codegen (llrt crypto), testheavy (heavy.sh, quiet.sh, hangcheck.sh),
   stdobj (std/native), nohttp (std/rt Go files), wasmlist (compiler/wasm,
   netwasi, selfhost wasm tests), vetcost (bench/perf programs), stdcov (a
-  std file gaining a pub declaration), xounit (compiler cache and store
+  std file gaining a pub declaration; it fails only on the change's own
+  uncovered declarations, main's are a note), xounit (compiler cache and store
   formats), wasm (a new fn in std/native/rt.xo), harness (full set only:
   internal/xotool, clangcache, testtmp, lifeline, gate.sh). Each is a
   gate.sh proving check (`prove_STEP`): name it as a gate step, or let

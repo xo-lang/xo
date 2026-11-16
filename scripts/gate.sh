@@ -1639,7 +1639,27 @@ prove_goldenasm() { prove_go goldenasm ./internal/arm64 -run '^TestGoldenAsm$'; 
 prove_tsanmaps() { prove_go tsanmaps ./internal/llvm -run '^(TestTSanSharedMaps|TestGolden/conc_.*)$'; }
 prove_stdobj() { prove_go stdobj ./internal/arm64 -run '^(TestStdRecordIdentity|TestStdTreesRebuild)$'; }
 prove_vetcost() { prove_go vetcost ./cmd/xo -run '^TestVetCostStd$'; }
-prove_stdcov() { XO_STDCOV_SWEEP=1 prove_go stdcov ./internal/repotest -run '^TestStdAPICovered$'; }
+# stdcov fails only on what the change adds: an uncovered declaration main
+# already has is a note (gatelib.sh gate_stdcov_blame; lead, 2026-11-16,
+# main red with 80 entries stopped every std push)
+prove_stdcov() {
+  local f0=$failed b n
+  failed=0
+  XO_STDCOV_SWEEP=1 full stdcov ./internal/repotest -run '^TestStdAPICovered$'
+  if [ "$failed" = 1 ] && grep -q 'stdcoverage_test.go:' "$logs/stdcov.txt"; then
+    b=$(gate_stdcov_blame "$logs/stdcov.txt" "$base")
+    n=$(grep -c 'stdcoverage_test.go:' "$logs/stdcov.txt")
+    if [ -z "$b" ]; then
+      failed=0
+      echo "stdcov: ok for this change: the $n failures are main's own, none on a declaration it adds ($logs/stdcov.txt)"
+    else
+      echo "stdcov: FAIL: $(echo "$b" | wc -l | tr -d ' ') of the $n failures are this change's:"
+      echo "$b" | head -10 | cut -c1-200
+    fi
+  fi
+  [ "$failed" = 0 ] && ran="$ran stdcov"
+  [ "$f0" = 1 ] && failed=1
+}
 prove_wasmlist() {
   local wp=$PATH
   [ -d /work/tools/bin ] && wp=/work/tools/bin:$PATH

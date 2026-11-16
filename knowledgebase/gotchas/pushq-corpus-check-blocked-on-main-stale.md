@@ -17,6 +17,14 @@ blame for (gatelib.sh gate_corpus_blame): a module its own diff touches,
 or, for a generator change, a corpus that the same check on origin/main
 does not already list. Corpora stale on main are reported as a note and
 the push goes on; their owner regenerates. Tests: gatesteps_test.sh
-"corpus blame". Lesson for any check pushq adds: a rule that runs over
+"corpus blame". The same day the stdcov step (TestStdAPICovered, required of a std
+change adding a pub declaration) failed every such push on main's 80
+uncovered entries (Lang 1's 2a waited on it); prove_stdcov now fails only
+on failures gatelib.sh gate_stdcov_blame gives the change: an uncovered
+declaration whose `pub` line the change adds, a stale allow.txt line
+when it edits allow.txt, and any other failure of the test. Main's own
+entries are a note. Tests: gatesteps_test.sh "stdcov blame"; on the red
+main of 2026-11-16 it blamed 0 of 57 for a corpus-only change.
+Lesson for any check pushq adds: a rule that runs over
 what the rebase brings in must tell a stale main from the push's own
 breakage, or one red commit on main stops everyone.
