@@ -13,6 +13,7 @@
 // read and written by hand with std/native/protodesc's wire helpers.
 
 use std/protobuf
+use std/protodesc
 use std/protowire as pw
 use std/json
 
@@ -539,4 +540,112 @@ pub fn (st: Struct) to_json() -> json.Value {
 /// structpb's AsSlice as a JSON list.
 pub fn (lv: ListValue) to_json() -> json.Value {
   json.Value.List(lv.values.map(fn(x: Value) -> json.Value { x.to_json() }))
+}
+
+/// fieldmaskpb.New: a mask of `paths`, each checked against message `name`
+/// (`pkg.Msg`) of `files` (std/protodesc, with every file the message's
+/// fields need). A path is field names joined by `.`, each a field of the
+/// message the one before it holds; a repeated or map field may only come
+/// last, and a group is named by its message's name. The first path that
+/// is not is the error (`proto: invalid path "x" for message "pkg.Msg"`),
+/// where Go's New also returns the paths before it.
+pub fn new_mask(files: List[protodesc.FileDesc], name: Str, paths: List[Str]) -> FieldMask ! WktErr {
+  var fm = FieldMask{}
+  fm.append(files, name, paths)?
+  Ok(fm)
+}
+
+/// fieldmaskpb's Append: adds `paths` up to the first one that is not a
+/// path of message `name` (as `new_mask`), which is the error.
+pub fn (var fm: FieldMask) append(files: List[protodesc.FileDesc], name: Str, paths: List[Str]) -> () ! WktErr {
+  let msgs = mask_messages(files)
+  let n = valid_paths(msgs, name, paths)
+  var i = 0
+  while i < n {
+    fm.paths.push(paths[i])
+    i += 1
+  }
+  if n < paths.len() {
+    return Err(WktErr{msg: "invalid path ${paths[n].quote()} for message ${name.quote()}"})
+  }
+  Ok(())
+}
+
+/// fieldmaskpb's IsValid: every path is a path of message `name` of `files`
+/// (as `new_mask`).
+pub fn (fm: FieldMask) is_valid(files: List[protodesc.FileDesc], name: Str) -> Bool {
+  valid_paths(mask_messages(files), name, fm.paths) == fm.paths.len()
+}
+
+/// The messages of files by full name (`pkg.Outer.Inner`).
+fn mask_messages(files: List[protodesc.FileDesc]) -> Map[Str, protodesc.MessageDesc] {
+  var out: Map[Str, protodesc.MessageDesc] = {}
+  for f in files {
+    let prefix = if f.package.is_empty() { "" } else { f.package + "." }
+    for m in f.message_type {
+      add_mask_message(out, prefix, m)
+    }
+  }
+  out
+}
+
+fn add_mask_message(var out: Map[Str, protodesc.MessageDesc], prefix: Str, m: protodesc.MessageDesc) {
+  let full = prefix + m.name
+  out[full] = m
+  for n in m.nested_type {
+    add_mask_message(out, full + ".", n)
+  }
+}
+
+/// numValidPaths: how many of paths, from the first, are paths of message name.
+fn valid_paths(msgs: Map[Str, protodesc.MessageDesc], name: Str, paths: List[Str]) -> Int {
+  var i = 0
+  while i < paths.len() {
+    var md = msgs.get(name)
+    for field in paths[i].split(".") {
+      let m = match md {
+        Some(m) => m
+        None => return i
+      }
+      let fd = match mask_field(msgs, m, field) {
+        Some(fd) => fd
+        None => return i
+      }
+      // the next message to search in; a repeated (or map) field only last
+      md = if fd.label == protodesc.LABEL_REPEATED || (fd.kind != protodesc.TYPE_MESSAGE && fd.kind != protodesc.TYPE_GROUP) {
+        None
+      } else {
+        msgs.get(fd.type_name.trim_prefix("."))
+      }
+    }
+    i += 1
+  }
+  paths.len()
+}
+
+/// The field of m that a path segment names: a field by its name, except a
+/// group, whose segment is its message's name (the field's name lowercased).
+fn mask_field(msgs: Map[Str, protodesc.MessageDesc], m: protodesc.MessageDesc, seg: Str) -> protodesc.FieldDesc? {
+  for fd in m.field {
+    if fd.name == seg {
+      if fd.kind == protodesc.TYPE_GROUP && group_name(msgs, fd) != seg {
+        return None
+      }
+      return Some(fd)
+    }
+  }
+  let lower = seg.to_lower()
+  for fd in m.field {
+    if fd.name == lower && fd.kind == protodesc.TYPE_GROUP && group_name(msgs, fd) == seg {
+      return Some(fd)
+    }
+  }
+  None
+}
+
+fn group_name(msgs: Map[Str, protodesc.MessageDesc], fd: protodesc.FieldDesc) -> Str {
+  match msgs.get(fd.type_name.trim_prefix(".")) {
+    Some(g) => g.name
+    None => ""
+  }
 }

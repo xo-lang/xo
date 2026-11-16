@@ -2730,9 +2730,9 @@ fieldmaskpb.FieldMask = std/protowkt.FieldMask
 fieldmaskpb.Union = std/protowkt.union_masks
 fieldmaskpb.Intersect = std/protowkt.intersect_masks
 fieldmaskpb.FieldMask.Normalize = std/protowkt.FieldMask.normalize
-fieldmaskpb.New = gap: no message descriptor for a derive Proto type to check the paths against
-fieldmaskpb.FieldMask.IsValid = gap: see fieldmaskpb.New
-fieldmaskpb.FieldMask.Append = gap: see fieldmaskpb.New
+fieldmaskpb.New = std/protowkt.new_mask
+fieldmaskpb.FieldMask.IsValid = std/protowkt.FieldMask.is_valid
+fieldmaskpb.FieldMask.Append = std/protowkt.FieldMask.append
 fieldmaskpb.* = not planned: generated code's accessors and reflection (Get*, ProtoReflect, Descriptor, Reset, String, ProtoMessage); a derive Proto struct's fields are read directly (decision 0549)
 # protobuf behavior checklist (decision 0655)
 proto.behavior.proto_files = partial: xo proto gen writes messages and enums, imports within the files given (protoparse.gen_set); no services or options, and derive Proto takes no enum of another file and no type of another package (the well-known types)

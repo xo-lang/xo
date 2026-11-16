@@ -1,6 +1,20 @@
 # std/protowkt changes
 
 
+## 2026-11-16: feature: field mask New, IsValid and Append against a descriptor
+
+- Kind: feature
+- Commit: this push
+- Found by: task #109 (the partial Go row of std/protowkt): stdaudit gaps fieldmaskpb.New, FieldMask.IsValid, FieldMask.Append
+- Go reference: google.golang.org/protobuf v1.36.12 types/known/fieldmaskpb (New, IsValid, Append, numValidPaths)
+- Test: std/protowkt_test.xo, field_mask_test.go's TestAppend and TestIsValid over protobuf-go's internal/testprotos/test/test.proto (a FileDescriptorSet from protoc), on arm64 and LLVM
+- Timing: none (one pass over the paths given, each segment a scan of one message's fields)
+
+`new_mask(files, name, paths)`, `FieldMask.append(files, name, paths)` and `FieldMask.is_valid(files, name)` check a
+mask's paths against message `name` of std/protodesc files, as fieldmaskpb does against a generated message's
+descriptor: each segment a field of the message the one before it holds, a repeated or map field only last, a group named
+by its message's name. `append` keeps the paths before the first invalid one; the error is protobuf-go's text.
+
 ## 2026-11-16: feature: protobuf-go's types/known helpers
 
 - Kind: feature
