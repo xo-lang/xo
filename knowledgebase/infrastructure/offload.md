@@ -733,6 +733,24 @@ the image's tree kept as /usr/local/go.go1.26.1;
 Last verified: 2026-11-15 (hosts 3 and 4 pass; host 4 with go1.26.1 first
 on PATH is refused)
 
+### Go modules for the twins (2026-11-16)
+
+A Go twin with `require` lines (twin.txt) or a `go/` module builds offline
+(`GOPROXY=off`, scripts/twincheck), so every module it needs, and that
+module's own requirements, must already be in user xo's Go module cache
+(`/home/xo/go/pkg/mod`) on each linux/arm64 host. Without them a twin does
+not build and `stdproven perf` writes no row (host 1 lacked
+golang.org/x/crypto v0.58.0, so std/crypto's blake2b twin did not build,
+2026-11-16). x/crypto v0.57.0 (aead, chacha) and v0.58.0 (bcrypt, blake2b),
+with the golang.org/x/sys versions they require (v0.48.0, v0.49.0), are on
+hosts 1, 2 and 3; host 4 still needs them (its filesystem was read only on
+2026-11-16 03:20). To add a version, run a job through offload.sh on each
+host, as user xo (`OFFLOAD_ENV=offload.env`, `offload-arm64b.env`, `offload-arm64c.env`,
+`offload-arm64d.env`): `go mod tidy` with the proxy in a probe module that
+imports the twin's packages, then a build of it with `GOPROXY=off`, which
+proves the offline build works.
+Last verified: 2026-11-16 (hosts 1, 2 and 3: both versions build offline)
+
 ## The Windows arm64 VM (owner, 2026-11-09)
 
 Windows 11 Pro ARM (26100) in VMware Fusion 26H1 (free personal use) on
