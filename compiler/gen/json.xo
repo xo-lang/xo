@@ -574,8 +574,8 @@ fn (var g: Gen) gen_json_via(t: Int) {
   let self = g.self_type(t)
   let o = g.c.objs[t]
   let p = g.go_type(o.json_via)
-  let to = g.func_go_name(o.json_to)
-  let from = g.func_go_name(o.json_from)
+  let to = g.via_go_name(o.json_to)
+  let from = g.via_go_name(o.json_from)
   g.pl("func (v ${self}) XoJsonEnc(tk *${rt}Task, w *${rt}JsonW) { ${rt}JsonEnc(tk, w, ${to}(tk, v)) }\n")
   g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path ${rt}JsonPath) *${rt}Json_DecodeErr {")
   g.pl("\tvar p ${p}")
@@ -588,6 +588,18 @@ fn (var g: Gen) gen_json_via(t: Int) {
     g.pl("\t*v = ${from}(tk, p)")
   }
   g.pl("\treturn nil\n}\n")
+}
+
+/// The Go name of a `via` type's `to:` or `from:` function: a std
+/// declaration's is its runtime function (`Big_rat_marshal` for std/big's,
+/// which this type's generated methods call from package rt), any other
+/// func_go_name's.
+fn (g: Gen) via_go_name(fo: Int) -> Str {
+  let m = g.c.objs[fo].module
+  if m >= 0 && g.c.mods[m].is_std && !g.rt_hosted(m) && g.c.objs[fo].recv < 0 {
+    return g.std_free_prefix(m) + g.oname(fo)
+  }
+  g.func_go_name(fo)
 }
 
 /// A newtype encoded as its underlying value (genJSONNewtype).

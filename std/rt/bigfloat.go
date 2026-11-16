@@ -118,6 +118,21 @@ func Big_parse_float(_ *Task, s string, base int64, prec int64, mode Big_Roundin
 	return Ok[Big_BigFloat, Big_BigErr](floatKey(f))
 }
 
+// Big_float_marshal is Go's Float.MarshalText, a BigFloat's JSON form.
+func Big_float_marshal(_ *Task, x Big_BigFloat) string {
+	b, _ := floatOf(x).MarshalText()
+	return string(b)
+}
+
+// Big_float_unmarshal is Go's Float.UnmarshalText into a new Float.
+func Big_float_unmarshal(_ *Task, s string) Result[Big_BigFloat, Big_BigErr] {
+	z := new(big.Float)
+	if err := z.UnmarshalText([]byte(textOf(s))); err != nil {
+		return Err[Big_BigFloat](Big_BigErr{F_msg: err.Error()})
+	}
+	return Ok[Big_BigFloat, Big_BigErr](floatKey(z))
+}
+
 func (x Big_BigFloat) M_prec(*Task) int64 { return x.F_prec }
 
 func (x Big_BigFloat) M_min_prec(*Task) int64 { return int64(floatOf(x).MinPrec()) }

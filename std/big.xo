@@ -146,7 +146,7 @@ struct BigFloat {
   neg: Bool
   mant: BigInt
   exp: Int
-} derive Eq, Hash
+} derive Eq, Hash, Json(via: Str, to: float_marshal, from: float_unmarshal)
 
 /// x with prec bits (Go's NewFloat and SetFloat64; 0 means 53); a fault
 /// for NaN.
@@ -162,6 +162,13 @@ fn inf(neg: Bool) -> BigFloat
 /// "inf"; base 0 takes a 0b, 0o or 0x prefix and `_` separators; prec 0
 /// means 64. Go's error texts.
 fn parse_float(s: Str, base: Int = 0, prec: Int = 0, mode: RoundingMode = RoundingMode.ToNearestEven) -> BigFloat ! BigErr
+/// x as Go's Float.MarshalText writes it, `x.text('g', -1)`: a BigFloat's
+/// JSON form is this string (`derive Json`).
+fn float_marshal(x: BigFloat) -> Str
+/// s as Go's Float.UnmarshalText reads it into a new Float: parse_float(s)
+/// at 64 bits, so a decoded BigFloat has precision 64 as in Go. The error
+/// is `math/big: cannot unmarshal "s" into a *big.Float (why)`.
+fn float_unmarshal(s: Str) -> BigFloat ! BigErr
 
 /// The precision in bits (Go's Prec).
 fn (x: BigFloat) prec() -> Int
@@ -231,7 +238,7 @@ fn (x: BigFloat) debug() -> Str
 struct BigRat {
   a: BigInt
   b: BigInt
-} derive Eq, Hash
+} derive Eq, Hash, Json(via: Str, to: rat_marshal, from: parse_rat)
 
 /// a/b (Go's SetFrac); a fault when b is 0.
 fn rat(a: BigInt, b: BigInt) -> BigRat
@@ -247,6 +254,10 @@ fn rat_from_float(x: Float) -> BigRat?
 /// error is `math/big: cannot unmarshal "s" into a *big.Rat` (Go's
 /// UnmarshalText; SetString reports only false).
 fn parse_rat(s: Str) -> BigRat ! BigErr
+/// x as Go's Rat.MarshalText writes it (rat_text: `a/b`, or `a` for an
+/// integer): a BigRat's JSON form is this string (`derive Json`), which
+/// parse_rat reads back.
+fn rat_marshal(x: BigRat) -> Str
 
 fn (x: BigRat) add(y: BigRat) -> BigRat
 fn (x: BigRat) sub(y: BigRat) -> BigRat

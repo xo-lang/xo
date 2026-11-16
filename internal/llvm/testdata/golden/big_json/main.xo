@@ -1,0 +1,33 @@
+// std/big's BigRat and BigFloat in JSON (derive Json(via: Str), decision
+// 0478) as Go's encoding/json writes and reads *big.Rat and *big.Float:
+// their MarshalText and UnmarshalText. The via functions are std
+// declarations whose bodies are std/native/big.xo's on the native
+// backends.
+use std/big
+use std/json
+
+struct T {
+  r: big.BigRat
+  f: big.BigFloat
+} derive Json
+
+fn dec(s: Str) -> Str {
+  match json.decode_str[T](s) {
+    Ok(t) => "${t.r.rat_text()} ${t.f.text('g', -1)} ${t.f.prec()}"
+    Err(e) => "err ${e.msg}"
+  }
+}
+
+fn main(os: Os) {
+  let f2 = big.parse_float("1e100", 10, 200).or_fault("1e100")
+  os.stdio.println(json.encode_str(T{r: big.rat(big.from_int(3), big.from_int(-4)), f: big.from_float(0.1)}))
+  os.stdio.println(json.encode_str(T{r: big.rat(big.from_int(10), big.from_int(2)), f: f2}))
+  os.stdio.println(json.encode_str([big.rat_from_int(7), big.rat(big.from_int(1), big.from_int(3))]))
+  os.stdio.println(json.to_value(big.inf(true)).encode())
+  os.stdio.println(dec("{\"r\":\"-3/4\",\"f\":\"0.1\"}"))
+  os.stdio.println(dec("{\"r\":\"0x10\",\"f\":\"1e100\"}"))
+  os.stdio.println(dec("{\"r\":\"1.25\",\"f\":\"-Inf\"}"))
+  os.stdio.println(dec("{\"r\":\"1/0\",\"f\":\"1\"}"))
+  os.stdio.println(dec("{\"r\":\"1\",\"f\":\"abc\"}"))
+  os.stdio.println(dec("{\"r\":2,\"f\":\"1\"}"))
+}

@@ -1413,3 +1413,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [seedbuild-uses-host-seed-not-latest.md](seedbuild-uses-host-seed-not-latest.md): Observed 2026-11-15: the gate's seedbuild builds with the newest seed under the offload host's /work/seed (0.51.1), not the newest uploaded one; a new seed is installed on the hosts before the first push that needs it
 - [std-module-name-ambiguous-with-native.md](std-module-name-ambiguous-with-native.md): `xo test --std-module=cbor` is ambiguous (std/cbor and native/cbor); the gate's stdfast step now passes std/NAME
 - [offload-bare-wait-waits-on-pruner.md](offload-bare-wait-waits-on-pruner.md): a bare `wait` in an offload job waits on the wrapper's offprune watcher forever; wait on the PIDs you launched
+- [std-json-via-unchecked.md](std-json-via-unchecked.md): a std type's derive Json(via:) was ignored by importing programs (unchecked std bodies, body-less declarations, Go names); fixed 2026-11-16

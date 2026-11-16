@@ -97,6 +97,12 @@ func (x Big_BigRat) M_text(*Task) string { return ratOf(x).String() }
 
 func (x Big_BigRat) M_rat_text(*Task) string { return ratOf(x).RatString() }
 
+// Big_rat_marshal is Go's Rat.MarshalText, a BigRat's JSON form.
+func Big_rat_marshal(_ *Task, x Big_BigRat) string {
+	b, _ := ratOf(x).MarshalText()
+	return string(b)
+}
+
 func (x Big_BigRat) M_float_text(_ *Task, prec int64) string { return ratOf(x).FloatString(int(prec)) }
 
 func (x Big_BigRat) M_to_big_float(_ *Task, prec int64, mode Big_RoundingMode) Big_BigFloat {

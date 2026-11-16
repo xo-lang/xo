@@ -948,6 +948,26 @@ fn (var c: Checker) check_newtype_derives(t: Int, ids: List[Ident], args: List[p
   }
 }
 
+/// check_json_via for the type declarations of a std module whose bodies a
+/// build does not check (check_module is skipped): only those with `via:`.
+fn (var c: Checker) check_std_json_via(m: Int) {
+  c.cur_mod = m
+  for f in c.mods[m].files {
+    c.set_file(f)
+    for (i, d) in c.files[f].ast.decls.indexed() {
+      let args = match d {
+        StructDecl(d: sd) => sd.derive_args
+        EnumDecl(d: ed) => ed.derive_args
+        TypeDecl(d: td) => td.derive_args
+        _ => []
+      }
+      if !args.is_empty() && args.any(fn(a) { a.key.name == b"via" }) && c.files[f].decl_objs[i] >= 0 {
+        c.check_json_via(c.files[f].decl_objs[i], args)
+      }
+    }
+  }
+}
+
 /// A type's own JSON form (decision 0478 A1): `derive Json(via: P, to:
 /// f, from: g)` with f: fn(T) -> P and g: fn(P) -> T ! E (E: Display; g
 /// may have no error), both module functions of T's module, P a Json

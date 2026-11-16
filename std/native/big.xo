@@ -3554,6 +3554,15 @@ fn bigfloat_text(x: big.BigFloat, format0: Int, prec0: Int) -> Str {
 
 fn bigfloat_display(x: big.BigFloat) -> Str { bigfloat_text(x, 'g', 10) }
 
+fn float_marshal(x: big.BigFloat) -> Str { bigfloat_text(x, 'g', -1) }
+
+fn float_unmarshal(s: Str) -> big.BigFloat ! big.BigErr {
+  match parse_float(s, 0, 0, big.RoundingMode.ToNearestEven) {
+    Ok(v) => Ok(v)
+    Err(e) => Err(big.BigErr{msg: "math/big: cannot unmarshal ${s.quote()} into a *big.Float (${e.msg})"})
+  }
+}
+
 fn bigfloat_debug(x: big.BigFloat) -> Str { bigfloat_text(x, 'g', 10) }
 
 // ---------------------------------------------------------------------------
@@ -3879,6 +3888,8 @@ fn bigfloat_to_rat(x: big.BigFloat) -> (big.BigRat?, big.Accuracy) {
 }
 
 fn bigrat_display(x: big.BigRat) -> Str { bigrat_text(x) }
+
+fn rat_marshal(x: big.BigRat) -> Str { bigrat_rat_text(x) }
 
 fn bigrat_debug(x: big.BigRat) -> Str { bigrat_text(x) }
 

@@ -154,7 +154,7 @@ fn (var b: Builder) json_val_body(ct: Int, t: Int, vt: Int) {
   }
   if b.c.objs[obj].json_via >= 0 {
     // its own form (decision 0478): the Value of the proxy `to` makes
-    let fi = b.declare(b.c.objs[obj].json_to, [])
+    let fi = b.declare(b.via_fn(b.c.objs[obj].json_to), [])
     let pv = b.add(Op.Call, b.m.funcs[fi].results[0], Aux.S(s: b.m.funcs[fi].name), [v])
     b.retv(b.val_sub(pv, b.c.objs[obj].json_via, vt))
     return

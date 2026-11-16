@@ -354,7 +354,7 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
   }
   if b.c.objs[obj].json_via >= 0 {
     // its own form (decision 0478): the proxy `to` makes, encoded
-    let fi = b.declare(b.c.objs[obj].json_to, [])
+    let fi = b.declare(b.via_fn(b.c.objs[obj].json_to), [])
     let pv = b.add(Op.Call, b.m.funcs[fi].results[0], Aux.S(s: b.m.funcs[fi].name), [v])
     b.retv(b.json_sub(acc, pv, b.c.objs[obj].json_via))
     return
@@ -1499,7 +1499,7 @@ fn (var b: Builder) dec_via(d: Dec, ct: Int, obj: Int) {
   let bt = b.bool_t()
   let it = b.int_t()
   let pv = b.dec_child(d, b.c.objs[obj].json_via, d.i, b.const_str(""))
-  let fi = b.declare(b.c.objs[obj].json_from, [])
+  let fi = b.declare(b.via_fn(b.c.objs[obj].json_from), [])
   let rt = b.m.funcs[fi].results[0]
   let r = b.add(Op.Call, rt, Aux.S(s: b.m.funcs[fi].name), [b.coerce(pv, b.func_value_type(fi, b.m.funcs[fi].blocks[0].params[0]))])
   let et = b.fail_err(b.c.objs[obj].json_from_err)

@@ -54,6 +54,8 @@ var (
 	_ func(*Big_BigInt, *Task, int64) Big_BigFloat                                         = (*Big_BigInt).M_to_big_float
 	_ func(*Task, bool) Big_BigFloat                                                       = Big_inf
 	_ func(*Task, string, int64, int64, Big_RoundingMode) Result[Big_BigFloat, Big_BigErr] = Big_parse_float
+	_ func(*Task, Big_BigFloat) string                                                     = Big_float_marshal
+	_ func(*Task, string) Result[Big_BigFloat, Big_BigErr]                                 = Big_float_unmarshal
 	_ func(*Big_BigFloat, *Task) int64                                                     = (*Big_BigFloat).M_prec
 	_ func(*Big_BigFloat, *Task) int64                                                     = (*Big_BigFloat).M_min_prec
 	_ func(*Big_BigFloat, *Task) Big_RoundingMode                                          = (*Big_BigFloat).M_mode
@@ -85,6 +87,7 @@ var (
 	_ func(*Big_BigInt, *Task) Big_BigRat                                                  = (*Big_BigInt).M_to_rat
 	_ func(*Task, float64) Option[Big_BigRat]                                              = Big_rat_from_float
 	_ func(*Task, string) Result[Big_BigRat, Big_BigErr]                                   = Big_parse_rat
+	_ func(*Task, Big_BigRat) string                                                       = Big_rat_marshal
 	_ func(*Big_BigRat, *Task, Big_BigRat) Big_BigRat                                      = (*Big_BigRat).M_add
 	_ func(*Big_BigRat, *Task, Big_BigRat) Big_BigRat                                      = (*Big_BigRat).M_sub
 	_ func(*Big_BigRat, *Task, Big_BigRat) Big_BigRat                                      = (*Big_BigRat).M_mul

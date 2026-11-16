@@ -1,0 +1,35 @@
+// BigRat and BigFloat in JSON as Go's encoding/json writes and reads
+// *big.Rat and *big.Float (their MarshalText and UnmarshalText); the
+// expected texts are go1.26's.
+
+use std/json
+
+struct T {
+  r: BigRat
+  f: BigFloat
+} derive Json
+
+fn enc(r: BigRat, f: BigFloat) -> Str { json.encode_str(T{r: r, f: f}) }
+
+test "Rat and Float encode as Go's MarshalText strings" {
+  expect(enc(rat(from_int(3), from_int(-4)), from_float(0.1))) == "{\"r\":\"-3/4\",\"f\":\"0.1\"}"
+  let f2 = parse_float("1e100", 10, 200).or_fault("1e100")
+  expect(enc(rat(from_int(10), from_int(2)), f2)) == "{\"r\":\"5\",\"f\":\"1e+100\"}"
+  expect(enc(rat_from_int(0), inf(true))) == "{\"r\":\"0\",\"f\":\"-Inf\"}"
+}
+
+fn dec(s: Str) -> Str {
+  match json.decode_str[T](s) {
+    Ok(t) => "${t.r.rat_text()} ${t.f.text('g', -1)} ${t.f.prec()}"
+    Err(e) => "err ${e.msg}"
+  }
+}
+
+test "Rat and Float decode as Go's UnmarshalText reads them" {
+  expect(dec("{\"r\":\"-3/4\",\"f\":\"0.1\"}")) == "-3/4 0.1 64"
+  expect(dec("{\"r\":\"0x10\",\"f\":\"1e100\"}")) == "16 1e+100 64"
+  expect(dec("{\"r\":\"1.25\",\"f\":\"-Inf\"}")) == "5/4 -Inf 0"
+  expect(dec("{\"r\":\"1/0\",\"f\":\"1\"}")) == "err math/big: cannot unmarshal \"1/0\" into a *big.Rat"
+  expect(dec("{\"r\":\"1\",\"f\":\"abc\"}")) == "err math/big: cannot unmarshal \"abc\" into a *big.Float (number has no digits)"
+  expect(dec("{\"r\":\"1\",\"f\":\"0x1p-3\"}")) == "1 0.125 64"
+}

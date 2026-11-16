@@ -6993,11 +6993,13 @@ fn (x: BigInt) to_big_float(prec: Int = 0) -> BigFloat   // SetInt: 0 is max(bit
 // BigFloat (decision 0602): Go's big.Float as an immutable value
 enum RoundingMode { ToNearestEven, ToNearestAway, ToZero, AwayFromZero, ToNegativeInf, ToPositiveInf }
 enum Accuracy { Below, Exact, Above }
-struct BigFloat { prec: Int, mode: RoundingMode, acc: Accuracy, form: Int, neg: Bool, mant: BigInt, exp: Int } derive Eq, Hash
+struct BigFloat { prec: Int, mode: RoundingMode, acc: Accuracy, form: Int, neg: Bool, mant: BigInt, exp: Int } derive Eq, Hash, Json(via: Str, to: float_marshal, from: float_unmarshal)
 pub fn from_float(x: Float, prec: Int = 0) -> BigFloat     // NewFloat (53 bits), SetFloat64; NaN faults
 pub fn float_from_int(n: Int, prec: Int = 0) -> BigFloat   // SetInt64 (64 bits)
 pub fn inf(neg: Bool) -> BigFloat
 pub fn parse_float(s: Str, base: Int = 0, prec: Int = 0, mode: RoundingMode = RoundingMode.ToNearestEven) -> BigFloat ! BigErr
+pub fn float_marshal(x: BigFloat) -> Str                // MarshalText: text('g', -1), the JSON string
+pub fn float_unmarshal(s: Str) -> BigFloat ! BigErr     // UnmarshalText: parse_float at 64 bits, Go's error text
 fn (x: BigFloat) add(y: BigFloat, prec: Int = 0) -> BigFloat   // also sub, mul, quo
 fn (x: BigFloat) sqrt(prec: Int = 0) -> BigFloat               // also neg, abs
 fn (x: BigFloat) cmp(y: BigFloat) -> Int
@@ -7012,11 +7014,12 @@ fn (x: BigFloat) text(format: Int, prec: Int) -> Str   // Text: 'e' 'E' 'f' 'g' 
 fn (x: BigFloat) to_rat() -> (BigRat?, Accuracy)       // Rat; None for an infinity
 
 // BigRat (decision 0608): Go's big.Rat as an immutable value, in lowest terms
-struct BigRat { a: BigInt, b: BigInt } derive Eq, Hash
+struct BigRat { a: BigInt, b: BigInt } derive Eq, Hash, Json(via: Str, to: rat_marshal, from: parse_rat)
 pub fn rat(a: BigInt, b: BigInt) -> BigRat           // SetFrac; b == 0 faults
 pub fn rat_from_int(n: Int) -> BigRat                // SetInt64; BigInt.to_rat() is SetInt
 pub fn rat_from_float(x: Float) -> BigRat?           // SetFloat64, exact; None for NaN and infinities
 pub fn parse_rat(s: Str) -> BigRat ! BigErr          // SetString; UnmarshalText's error text
+pub fn rat_marshal(x: BigRat) -> Str                 // MarshalText: rat_text, the JSON string
 fn (x: BigRat) add(y: BigRat) -> BigRat              // also sub, mul, quo (y == 0 faults)
 fn (x: BigRat) inv() -> BigRat                       // 0 faults; also neg, abs
 fn (x: BigRat) num() -> BigInt                       // also denom (> 0), sign, cmp, is_int

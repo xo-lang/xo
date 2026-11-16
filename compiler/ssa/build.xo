@@ -3284,6 +3284,14 @@ fn (var b: Builder) member(m: Int, name: Str) -> Int {
   b.c.mods[m].members.get(name.bytes()) ?? -1
 }
 
+/// The function a `derive Json(via:)` type's `to:` or `from:` names: for a
+/// std type, a std declaration's implementation (std/big's BigRat names
+/// parse_rat, whose body is std/native/big.xo's), else fo itself.
+fn (var b: Builder) via_fn(fo: Int) -> Int {
+  let impl = b.impl_of(fo)
+  if impl >= 0 { impl } else { fo }
+}
+
 /// The implementation of the std function fo, or -1 (implOf).
 fn (var b: Builder) impl_of(fo: Int) -> Int {
   let om = b.obj_mod(fo)

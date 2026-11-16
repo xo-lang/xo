@@ -1,5 +1,21 @@
 # std/big changes
 
+## 2026-11-16: feature: BigRat and BigFloat in JSON as Go writes them
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89 (features Proven): std-coverage's math/big row listed Json missing; the stdaudit map called Go's MarshalText forms mapped
+- Go reference: math/big ratmarsh.go and floatmarsh.go MarshalText and UnmarshalText (encoding/json uses them for *big.Rat and *big.Float)
+- Test: std/big_test.xo and golden big_json (arm64, llvm, wasm, Go parity): Go 1.26's texts for encode, decode, precision 64 after decode (0 for an infinity) and both error texts
+- Timing: none (new surface)
+
+BigRat and BigFloat derive `Json(via: Str)` (decision 0478): a BigRat is
+the string `rat_text` makes (`"-3/4"`, `"5"`), a BigFloat
+`text('g', -1)` (`"1e+100"`, `"-Inf"`). New functions rat_marshal,
+float_marshal and float_unmarshal are those conversions. A decoded
+BigFloat has precision 64, as in Go. BigInt has no JSON form yet: Go
+writes it as a bare number (decision 0673).
+
 ## 2026-11-15: perf: BigInt.text writes its digit characters into the result
 
 - Kind: perf
