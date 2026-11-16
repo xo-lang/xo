@@ -248,7 +248,7 @@ LICENSE and std/LICENSE.
 10. Prometheus client_golang v1.23.2 [prometheus]
 
    Source: https://github.com/prometheus/client_golang, prometheus/vec.go
-   (CurryWith, DeletePartialMatch) and histogram.go (LinearBuckets,
+   (CurryWith, DeletePartialMatch, label constraints) and histogram.go (LinearBuckets,
    ExponentialBuckets, ExponentialBucketsRange) ported to std/metrics.xo,
    with tests from vec_test.go and histogram_test.go ported to
    std/metrics_test.xo; changed to Xo's API.

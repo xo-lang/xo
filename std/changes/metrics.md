@@ -1,5 +1,16 @@
 # std/metrics changes
 
+## 2026-11-15: feature: label constraints
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit gaps of prometheus/client_golang (decision 0655)
+- Go reference: prometheus/client_golang v1.23.2 labels.go (ConstrainedLabels, LabelConstraint) and vec.go (constrainLabelValues, constrainLabels)
+- Test: std/metrics_test.xo (vec_test.go's TestDeleteWithConstraints, TestDeleteLabelValuesWithConstraints, TestDeletePartialMatchWithConstraints, TestMetricVecWithConstraints and TestCurryVecWithConstraints, ported)
+- Shipped in: not yet released
+
+`counter`, `gauge`, `histogram` and `summary` take `constraints: Map[Str, fn(Str) -> Str]`: each named label's values go through its function in every call (inc, set, observe, child, remove, curry_with, delete_partial_match), as client_golang's ConstrainedLabels.
+
 ## 2026-11-15: feature: curried instruments, partial deletes and bucket helpers
 
 - Kind: feature

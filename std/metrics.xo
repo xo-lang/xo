@@ -92,6 +92,9 @@ pub struct Family {
   pub objectives: List[(Float, Float)]
   pub max_age_ms: Int
   pub age_buckets: Int
+  /// the label constraints (client_golang's ConstrainedLabels): label
+  /// index and the function that normalizes its values, in label order
+  pub constrain: List[(Int, fn(Str) -> Str)] = []
 }
 
 /// A set of instruments. Cloning shares it. Its fields are internal.
@@ -169,16 +172,16 @@ pub fn latency_buckets() -> List[Float] {
 /// second instrument with the same name, an invalid name or label, or
 /// buckets that do not increase is a fault: they are programmer errors,
 /// found at start.
-pub fn (r: Registry) counter(name: Str, help: Str, labels: List[Str] = []) -> Counter {
-  Counter{f: make(r, 0, name, help, labels, [])}
+pub fn (r: Registry) counter(name: Str, help: Str, labels: List[Str] = [], constraints: Map[Str, fn(Str) -> Str] = {}) -> Counter {
+  Counter{f: make(r, 0, name, help, labels, [], constraints: constraints)}
 }
 
-pub fn (r: Registry) gauge(name: Str, help: Str, labels: List[Str] = []) -> Gauge {
-  Gauge{f: make(r, 1, name, help, labels, [])}
+pub fn (r: Registry) gauge(name: Str, help: Str, labels: List[Str] = [], constraints: Map[Str, fn(Str) -> Str] = {}) -> Gauge {
+  Gauge{f: make(r, 1, name, help, labels, [], constraints: constraints)}
 }
 
-pub fn (r: Registry) histogram(name: Str, help: Str, labels: List[Str] = [], buckets: List[Float] = latency_buckets()) -> Histogram {
-  Histogram{f: make(r, 2, name, help, labels, buckets)}
+pub fn (r: Registry) histogram(name: Str, help: Str, labels: List[Str] = [], buckets: List[Float] = latency_buckets(), constraints: Map[Str, fn(Str) -> Str] = {}) -> Histogram {
+  Histogram{f: make(r, 2, name, help, labels, buckets, constraints: constraints)}
 }
 
 /// Adds 1 to (or n >= 0 to) the series of the label `values` (one per
@@ -191,7 +194,7 @@ pub fn (c: Counter) inc(values: List[Str] = []) {
 }
 
 pub fn (c: Counter) add(n: Float, values0: List[Str] = []) {
-  let values = curried(c.curry, c.f.labels.len(), values0)
+  let values = label_values(c.f, c.curry, values0)
   if n < 0.0 {
     fault("metrics: a counter cannot decrease")
   }
@@ -204,14 +207,14 @@ pub fn (c: Counter) add(n: Float, values0: List[Str] = []) {
 }
 
 pub fn (g: Gauge) set(v: Float, values0: List[Str] = []) {
-  let values = curried(g.curry, g.f.labels.len(), values0)
+  let values = label_values(g.f, g.curry, values0)
   if let Some(cells) = cells_of(g.f, values) {
     cells[0].set(v.to_bits())
   }
 }
 
 pub fn (g: Gauge) add(v: Float, values0: List[Str] = []) {
-  let values = curried(g.curry, g.f.labels.len(), values0)
+  let values = label_values(g.f, g.curry, values0)
   if hit_add(g.f, values, false, v) {
     return
   }
@@ -221,7 +224,7 @@ pub fn (g: Gauge) add(v: Float, values0: List[Str] = []) {
 }
 
 pub fn (h: Histogram) observe(v: Float, values0: List[Str] = []) {
-  let values = curried(h.curry, h.f.labels.len(), values0)
+  let values = label_values(h.f, h.curry, values0)
   // a hit observes under the share, as hit_add adds
   if values.len() == h.f.labels.len() {
     let key = if values.len() == 1 { values[0] } else { values.join(SEP) }
@@ -253,22 +256,22 @@ pub fn (h: Histogram) observe(v: Float, values0: List[Str] = []) {
 /// `max_series` the child counts into a series nothing exposes, and the drop
 /// is counted in `xo_metrics_dropped_total` as `inc` counts it.
 pub fn (c: Counter) child(values0: List[Str] = []) -> CounterChild {
-  let values = curried(c.curry, c.f.labels.len(), values0)
+  let values = label_values(c.f, c.curry, values0)
   CounterChild{s: child_series(c.f, values)}
 }
 
 pub fn (g: Gauge) child(values0: List[Str] = []) -> GaugeChild {
-  let values = curried(g.curry, g.f.labels.len(), values0)
+  let values = label_values(g.f, g.curry, values0)
   GaugeChild{s: child_series(g.f, values)}
 }
 
 pub fn (h: Histogram) child(values0: List[Str] = []) -> HistogramChild {
-  let values = curried(h.curry, h.f.labels.len(), values0)
+  let values = label_values(h.f, h.curry, values0)
   HistogramChild{s: child_series(h.f, values), bounds: h.f.bounds}
 }
 
 pub fn (s: Summary) child(values0: List[Str] = []) -> SummaryChild {
-  let values = curried(s.curry, s.f.labels.len(), values0)
+  let values = label_values(s.f, s.curry, values0)
   SummaryChild{s: child_series(s.f, values), objectives: s.f.objectives}
 }
 
@@ -306,7 +309,7 @@ pub fn (s: SummaryChild) observe(v: Float) {
 /// quantiles cover the last `max_age` in `age_buckets` steps, aged when a
 /// scrape passes the time (`text(now)`, `handler_at(clock)`): a summary
 /// never scraped with a time keeps every observation.
-pub fn (r: Registry) summary(name: Str, help: Str, labels: List[Str] = [], objectives: List[(Float, Float)] = [], max_age: Duration = 10m, age_buckets: Int = 5) -> Summary {
+pub fn (r: Registry) summary(name: Str, help: Str, labels: List[Str] = [], objectives: List[(Float, Float)] = [], max_age: Duration = 10m, age_buckets: Int = 5, constraints: Map[Str, fn(Str) -> Str] = {}) -> Summary {
   for (q, e) in objectives {
     if q < 0.0 || q > 1.0 || e < 0.0 || e > 1.0 {
       fault("metrics: summary objective ${q} with error ${e} is out of [0, 1]")
@@ -316,11 +319,11 @@ pub fn (r: Registry) summary(name: Str, help: Str, labels: List[Str] = [], objec
     fault("metrics: a summary needs at least 1 age bucket")
   }
   let sorted = objectives.sort_by(fn(o: (Float, Float)) -> Float { o.0 })
-  Summary{f: make(r, 3, name, help, labels, [], [], sorted, max_age.nanos() / 1000000, age_buckets)}
+  Summary{f: make(r, 3, name, help, labels, [], [], sorted, max_age.nanos() / 1000000, age_buckets, constraints)}
 }
 
 pub fn (s: Summary) observe(v: Float, values0: List[Str] = []) {
-  let values = curried(s.curry, s.f.labels.len(), values0)
+  let values = label_values(s.f, s.curry, values0)
   if let Some(x) = series_of(s.f, values) {
     summary_add(x, s.f.objectives, v)
   }
@@ -344,13 +347,13 @@ pub fn (r: Registry) collector(name: Str, help: Str, kind: Kind, labels: List[St
 
 /// Removes the series of the label values (DeleteLabelValues): whether
 /// there was one.
-pub fn (c: Counter) remove(values: List[Str]) -> Bool { remove_series(c.f, curried(c.curry, c.f.labels.len(), values)) }
+pub fn (c: Counter) remove(values: List[Str]) -> Bool { remove_series(c.f, label_values(c.f, c.curry, values)) }
 
-pub fn (g: Gauge) remove(values: List[Str]) -> Bool { remove_series(g.f, curried(g.curry, g.f.labels.len(), values)) }
+pub fn (g: Gauge) remove(values: List[Str]) -> Bool { remove_series(g.f, label_values(g.f, g.curry, values)) }
 
-pub fn (h: Histogram) remove(values: List[Str]) -> Bool { remove_series(h.f, curried(h.curry, h.f.labels.len(), values)) }
+pub fn (h: Histogram) remove(values: List[Str]) -> Bool { remove_series(h.f, label_values(h.f, h.curry, values)) }
 
-pub fn (s: Summary) remove(values: List[Str]) -> Bool { remove_series(s.f, curried(s.curry, s.f.labels.len(), values)) }
+pub fn (s: Summary) remove(values: List[Str]) -> Bool { remove_series(s.f, label_values(s.f, s.curry, values)) }
 
 /// Removes every series (Reset).
 pub fn (c: Counter) reset() { reset_series(c.f) }
@@ -375,19 +378,19 @@ pub fn (e: MetricsErr) display() -> Str { e.msg }
 /// of the instrument's is an error (`label name "x" is already curried`,
 /// `N unknown label(s) found during currying`).
 pub fn (c: Counter) curry_with(labels: Map[Str, Str]) -> Counter ! MetricsErr {
-  Ok(Counter{f: c.f, curry: curry_labels(c.f.labels, c.curry, labels)?})
+  Ok(Counter{f: c.f, curry: curry_labels(c.f, c.curry, labels)?})
 }
 
 pub fn (g: Gauge) curry_with(labels: Map[Str, Str]) -> Gauge ! MetricsErr {
-  Ok(Gauge{f: g.f, curry: curry_labels(g.f.labels, g.curry, labels)?})
+  Ok(Gauge{f: g.f, curry: curry_labels(g.f, g.curry, labels)?})
 }
 
 pub fn (h: Histogram) curry_with(labels: Map[Str, Str]) -> Histogram ! MetricsErr {
-  Ok(Histogram{f: h.f, curry: curry_labels(h.f.labels, h.curry, labels)?})
+  Ok(Histogram{f: h.f, curry: curry_labels(h.f, h.curry, labels)?})
 }
 
 pub fn (s: Summary) curry_with(labels: Map[Str, Str]) -> Summary ! MetricsErr {
-  Ok(Summary{f: s.f, curry: curry_labels(s.f.labels, s.curry, labels)?})
+  Ok(Summary{f: s.f, curry: curry_labels(s.f, s.curry, labels)?})
 }
 
 /// curry_with, with an error as a fault (MustCurryWith).
@@ -488,7 +491,8 @@ pub fn exponential_buckets_range(min: Float, max: Float, count: Int) -> List[Flo
 
 /// Go's curryWith over the label names: the new curry list, the old one's
 /// entries kept in label order.
-fn curry_labels(names: List[Str], old: List[(Int, Str)], labels: Map[Str, Str]) -> List[(Int, Str)] ! MetricsErr {
+fn curry_labels(f: Family, old: List[(Int, Str)], labels: Map[Str, Str]) -> List[(Int, Str)] ! MetricsErr {
+  let names = f.labels
   var out: List[(Int, Str)] = []
   var ic = 0
   for (i, name) in names.indexed() {
@@ -500,7 +504,7 @@ fn curry_labels(names: List[Str], old: List[(Int, Str)], labels: Map[Str, Str]) 
       out.push(old[ic])
       ic += 1
     } else if let Some(x) = v {
-      out.push((i, x))
+      out.push((i, constrained(f, i, x)))
     }
   }
   let unknown = old.len() + labels.len() - out.len()
@@ -510,12 +514,14 @@ fn curry_labels(names: List[Str], old: List[(Int, Str)], labels: Map[Str, Str]) 
   Ok(out)
 }
 
-/// The label values of a curried instrument's call: its values with the
-/// curried ones put in their places; a wrong count is a fault.
-fn curried(curry: List[(Int, Str)], n: Int, values: List[Str]) -> List[Str] {
-  if curry.is_empty() {
+/// The label values of a call: its values with the curried ones put in
+/// their places and the others constrained (constrainLabelValues); a wrong
+/// count is a fault.
+fn label_values(f: Family, curry: List[(Int, Str)], values: List[Str]) -> List[Str] {
+  if curry.is_empty() && f.constrain.is_empty() {
     return values
   }
+  let n = f.labels.len()
   if values.len() != n - curry.len() {
     fault("metrics: ${n - curry.len()} label values expected (${curry.len()} of ${n} curried), got ${values.len()}")
   }
@@ -527,11 +533,21 @@ fn curried(curry: List[(Int, Str)], n: Int, values: List[Str]) -> List[Str] {
       out.push(curry[ci].1)
       ci += 1
     } else {
-      out.push(values[vi])
+      out.push(constrained(f, i, values[vi]))
       vi += 1
     }
   }
   out
+}
+
+/// The value of label i after its constraint, if it has one.
+fn constrained(f: Family, i: Int, v: Str) -> Str {
+  for (k, c) in f.constrain {
+    if k == i {
+      return c(v)
+    }
+  }
+  v
 }
 
 /// Go's deleteByLabels with matchPartialLabels: the series whose values
@@ -548,7 +564,7 @@ fn delete_partial(f: Family, curry: List[(Int, Str)], labels: Map[Str, Str]) -> 
     if at < 0 || curry.any(fn(c: (Int, Str)) -> Bool { c.0 == at }) {
       return 0
     }
-    want.push((at, v))
+    want.push((at, constrained(f, at, v)))
   }
   f.series.with(fn(var st: Store) -> Int {
     var keep: List[Series] = []
@@ -648,7 +664,7 @@ fn valid_name(s: Str, colon: Bool) -> Bool {
   true
 }
 
-fn make(r: Registry, kind: Int, name: Str, help: Str, labels: List[Str], bounds: List[Float], reads: List[fn() -> List[Sample] uses sync] = [], objectives: List[(Float, Float)] = [], max_age_ms: Int = 0, age_buckets: Int = 0) -> Family {
+fn make(r: Registry, kind: Int, name: Str, help: Str, labels: List[Str], bounds: List[Float], reads: List[fn() -> List[Sample] uses sync] = [], objectives: List[(Float, Float)] = [], max_age_ms: Int = 0, age_buckets: Int = 0, constraints: Map[Str, fn(Str) -> Str] = {}) -> Family {
   if !valid_name(name, true) {
     fault("metrics: invalid metric name ${name.quote()}")
   }
@@ -657,12 +673,21 @@ fn make(r: Registry, kind: Int, name: Str, help: Str, labels: List[Str], bounds:
       fault("metrics: invalid label name ${l.quote()}")
     }
   }
+  var constrain: List[(Int, fn(Str) -> Str)] = []
+  for (i, l) in labels.indexed() {
+    if let Some(c) = constraints.get(l) {
+      constrain.push((i, c))
+    }
+  }
+  if constrain.len() != constraints.len() {
+    fault("metrics: a label constraint names a label ${name} does not have")
+  }
   for k in 1..bounds.len() {
     if bounds[k] <= bounds[k - 1] {
       fault("metrics: histogram buckets must increase")
     }
   }
-  let f = Family{name: name, help: help, kind: kind, labels: labels, bounds: bounds, series: Mutex[Store].new(Store{at: {}, list: []}), dropped: r.dropped, reads: reads, objectives: objectives, max_age_ms: max_age_ms, age_buckets: age_buckets}
+  let f = Family{name: name, help: help, kind: kind, labels: labels, bounds: bounds, series: Mutex[Store].new(Store{at: {}, list: []}), dropped: r.dropped, reads: reads, objectives: objectives, max_age_ms: max_age_ms, age_buckets: age_buckets, constrain: constrain}
   let dup = r.families.with(fn(var fs: List[Family]) -> Bool {
     for g in fs {
       if g.name == name {

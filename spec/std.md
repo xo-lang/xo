@@ -8424,6 +8424,12 @@ fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str) -> fn(
   factor, count)` and `exponential_buckets_range(min, max, count)` give
   histogram bounds (Go's LinearBuckets, ExponentialBuckets and
   ExponentialBucketsRange), faulting on Go's panics.
+- `constraints: Map[Str, fn(Str) -> Str]` on `counter`, `gauge`,
+  `histogram` and `summary` (Go's ConstrainedLabels) normalizes a label's
+  values: every call's value for that label, curried or not, goes through
+  the function before the series is found, so the exposition shows the
+  constrained values. A constraint for a label the instrument does not
+  have is a fault.
 
 ## 38. std/trace
 
