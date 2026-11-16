@@ -1,5 +1,19 @@
 # std/multipart changes
 
+## 2026-11-16: feature: a streaming Writer
+
+- Kind: feature
+- Commit: this push
+- Found by: task #109 (the partial Go row of std/multipart: streaming parts, multipart/mixed responses)
+- Go reference: go1.26 mime/multipart writer.go (NewWriter, SetBoundary, CreatePart, CreateFormField, CreateFormFile, WriteField, Close, FileContentDisposition)
+- Test: std/multipart_test.xo, Go's writer_test.go (TestWriter, TestWriterSetBoundary, TestSortedHeader, TestFileContentDisposition) and a part by part body equal to `write`'s, on arm64 and LLVM; Go backend goldens multipart_basic, multipart_reader, http_multipart_stream (TestGoldenGoParity)
+- Timing: none (the bytes `write` wrote, now one call a part)
+
+`writer(boundary)` and `Writer.create_part`, `create_form_field`, `create_form_file`, `write_field` and `close` give
+the bytes Go's Writer writes at each step, so a body (a multipart/mixed response, a large upload) is sent part by part
+instead of built whole; `file_content_disposition` is Go's FileContentDisposition. `write` is this Writer over whole parts
+(its output is unchanged).
+
 ## 2026-11-16: fix: parse_form goes on after a skipped quoted-printable part where Go's ReadForm does
 
 - Kind: fix

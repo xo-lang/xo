@@ -6469,6 +6469,16 @@ struct Reader[fx: Effects]
 pub fn reader[fx: Effects](src: fn() -> Bytes? ! Str uses fx, boundary: Str) -> Reader[fx]
 pub fn (var r: Reader[fx]) next_part() -> PartHead? ! MultipartErr uses fx
 pub fn (var r: Reader[fx]) read(max: Int = 32768) -> Bytes? ! MultipartErr uses fx
+
+struct Writer
+pub fn writer(boundary: Str) -> Writer ! MultipartErr
+pub fn (w: Writer) boundary() -> Str
+pub fn (var w: Writer) create_part(headers: Map[Str, List[Str]]) -> Bytes
+pub fn (var w: Writer) create_form_field(name: Str) -> Bytes
+pub fn (var w: Writer) create_form_file(name: Str, filename: Str) -> Bytes
+pub fn (var w: Writer) write_field(name: Str, value: Str) -> Bytes
+pub fn (w: Writer) close() -> Bytes
+pub fn file_content_disposition(fieldname: Str, filename: Str) -> Str
 ```
 
 - `parse` is `Reader.NextPart` with each part read whole: the preamble
@@ -6505,6 +6515,18 @@ pub fn (var r: Reader[fx]) read(max: Int = 32768) -> Bytes? ! MultipartErr uses 
   Errors are `parse`'s and the source's text, and stick. The reader
   keeps one part's head and Go's 4096 byte line buffer, not the body;
   `http.BodyReader.multipart` is this reader over a request body.
+- `Writer` is Go's `Writer` for a body written as it is sent (a
+  multipart/mixed response, a large upload): each call gives the bytes
+  Go's Writer writes at that point, and a part's data goes after the
+  bytes of the call that opened it. `writer` is `NewWriter` with
+  `SetBoundary` (1 to 70 of RFC 2046's characters, a space not last;
+  `mime: invalid boundary length` or `mime: invalid boundary
+  character`); `create_part` writes the boundary line and the headers,
+  keys sorted, one line a value; `create_form_field`, `create_form_file`
+  (`file_content_disposition` and `application/octet-stream`),
+  `write_field` and `close` are Go's. The content type is the caller's
+  (`form_data_content_type`, or `multipart/mixed; boundary=` and
+  `boundary()`). `write` is this Writer over whole parts.
 ## 27. std/tls
 
 A TLS client on a connection the program dialed (decision 0281): the

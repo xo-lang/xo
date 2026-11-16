@@ -132,14 +132,12 @@ pub fn parse_form(body: Bytes, boundary: Str, max_parts: Int = 1000) -> Form ! M
 /// Content-Disposition from `name` and `filename` when the part has none.
 pub fn write(parts: List[Part], boundary: Str) -> Bytes {
   var out = BytesBuilder.new()
-  var first = true
+  var w = Writer{b: boundary}
   for p in parts {
-    out.write(if first { "--${boundary}\r\n" } else { "\r\n--${boundary}\r\n" }.bytes())
-    first = false
     var h = p.headers
     if !h.contains("Content-Disposition") {
       let d = match p.filename {
-        Some(f) => "form-data; name=\"${escape_quotes(p.name)}\"; filename=\"${escape_quotes(f)}\""
+        Some(f) => file_content_disposition(p.name, f)
         None => "form-data; name=\"${escape_quotes(p.name)}\""
       }
       h.put("Content-Disposition", d)
@@ -147,14 +145,100 @@ pub fn write(parts: List[Part], boundary: Str) -> Bytes {
         h.put("Content-Type", "application/octet-stream")
       }
     }
-    for k in h.keys().sort() {
-      out.write("${k}: ${h.get(k) ?? ""}\r\n".bytes())
+    var hs: Map[Str, List[Str]] = {}
+    for (k, v) in h {
+      hs[k] = [v]
     }
-    out.write(b"\r\n")
+    out.write(w.create_part(hs))
     out.write(p.data)
   }
-  out.write("\r\n--${boundary}--\r\n".bytes())
+  out.write(w.close())
   out.freeze()
+}
+
+/// Go's multipart.Writer, writing as a body is sent: each call gives the
+/// bytes Go's Writer writes at that point, and a part's data goes between
+/// the bytes of the call that opens it and the next call's. Any multipart
+/// subtype (form-data, mixed, alternative): the content type is the
+/// caller's (`form_data_content_type`, or `"multipart/mixed; boundary=" +
+/// w.boundary()`).
+pub struct Writer {
+  b: Str
+  parts: Int = 0
+}
+
+/// NewWriter with SetBoundary(boundary): 1 to 70 of RFC 2046's characters
+/// (letters, digits, `'()+_,-./:=?`, a space but not last), else
+/// `mime: invalid boundary length` or `mime: invalid boundary character`.
+/// `random_boundary` gives Go's default.
+pub fn writer(boundary: Str) -> Writer ! MultipartErr {
+  if boundary.len() < 1 || boundary.len() > 70 {
+    return Err(fail("mime: invalid boundary length"))
+  }
+  let bs = boundary.bytes()
+  var i = 0
+  while i < bs.len() {
+    let c = bs[i]
+    let ok = (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) || (c >= 0x30 && c <= 0x39) ||
+      boundary_punct(c) || (c == 0x20 && i != bs.len() - 1)
+    if !ok {
+      return Err(fail("mime: invalid boundary character"))
+    }
+    i += 1
+  }
+  Ok(Writer{b: boundary})
+}
+
+/// RFC 2046's punctuation in a boundary: `'()+_,-./:=?`.
+fn boundary_punct(c: UInt8) -> Bool {
+  c == 0x27 || c == 0x28 || c == 0x29 || c == 0x2b || c == 0x5f || c == 0x2c || c == 0x2d || c == 0x2e || c == 0x2f ||
+    c == 0x3a || c == 0x3d || c == 0x3f
+}
+
+/// Writer.Boundary.
+pub fn (w: Writer) boundary() -> Str { w.b }
+
+/// Writer.CreatePart: the boundary line (after the open part's data) and
+/// the part's headers, keys sorted, each value its own line.
+pub fn (var w: Writer) create_part(headers: Map[Str, List[Str]]) -> Bytes {
+  var out = BytesBuilder.new()
+  out.write(if w.parts == 0 { "--${w.b}\r\n" } else { "\r\n--${w.b}\r\n" }.bytes())
+  w.parts += 1
+  for k in headers.keys().sort() {
+    for v in headers.get(k) ?? [] {
+      out.write("${k}: ${v}\r\n".bytes())
+    }
+  }
+  out.write(b"\r\n")
+  out.freeze()
+}
+
+/// Writer.CreateFormField: a part with `Content-Disposition: form-data; name="..."`.
+pub fn (var w: Writer) create_form_field(name: Str) -> Bytes {
+  w.create_part({"Content-Disposition": ["form-data; name=\"${escape_quotes(name)}\""]})
+}
+
+/// Writer.CreateFormFile: a part with `file_content_disposition(name,
+/// filename)` and `Content-Type: application/octet-stream`.
+pub fn (var w: Writer) create_form_file(name: Str, filename: Str) -> Bytes {
+  w.create_part({"Content-Disposition": [file_content_disposition(name, filename)], "Content-Type": ["application/octet-stream"]})
+}
+
+/// Writer.WriteField: `create_form_field(name)` and the value.
+pub fn (var w: Writer) write_field(name: Str, value: Str) -> Bytes {
+  var out = BytesBuilder.new()
+  out.write(w.create_form_field(name))
+  out.write(value.bytes())
+  out.freeze()
+}
+
+/// Writer.Close: the closing boundary line.
+pub fn (w: Writer) close() -> Bytes { "\r\n--${w.b}--\r\n".bytes() }
+
+/// FileContentDisposition: `form-data; name="..."; filename="..."`, quotes
+/// and backslashes escaped, CR and LF percent encoded.
+pub fn file_content_disposition(fieldname: Str, filename: Str) -> Str {
+  "form-data; name=\"${escape_quotes(fieldname)}\"; filename=\"${escape_quotes(filename)}\""
 }
 
 /// `multipart/form-data; boundary=...` (Writer.FormDataContentType).
