@@ -773,6 +773,7 @@ fn fk_trace_line(r: sql.TraceRecord) -> Str {
     sql.TraceOp.BatchQuery => "BatchQuery"
     sql.TraceOp.Batch => "Batch"
     sql.TraceOp.CopyFrom => "CopyFrom"
+    sql.TraceOp.CopyTo => "CopyTo"
   }
   let q = if r.query == "" { "" } else { " ${r.query}" }
   let e = if r.err.is_some() { " err" } else { "" }

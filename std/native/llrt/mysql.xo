@@ -1384,6 +1384,11 @@ fn quote_name(s: Str) -> Str { "`" + s.replace("`", "``") + "`" }
 
 /// copy_from: INSERTs of as many rows as fit under maxAllowedPacket, in
 /// the caller's transaction (decision 0648 item 10).
+/// MySQL has no COPY TO (go-sql-driver has no counterpart).
+fn (p: MyConn) copy_to(q: Str, out: fn(Bytes) -> () ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "mysql: no COPY TO"))
+}
+
 fn (p: MyConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial {
   let head = "INSERT INTO ${quote_name(table)} (${columns.map(quote_name).join(", ")}) VALUES "
   let limit = (p.cfg.max_allowed_packet - 1024).max(4096)

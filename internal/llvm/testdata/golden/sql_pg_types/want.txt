@@ -100,6 +100,12 @@ range_num c0: "inclusive 1.5 .. exclusive 2.25"
 range_num c1: "unbounded .. inclusive 0"
 multirange_num c2: ["inclusive 1 .. exclusive 2.5", "inclusive 3 .. unbounded"]
 numeric parts Finite(coef: 12340, exp: -3) int None float 12.34
+copy_to 2 "1\ta\n2\t\\N\n"
+copy_to out err: disk full
+out called 1
+copy_to server err: syntax error (SQLSTATE 42601)
+tx copy_to: 2
+memory copy_to: the in memory database has no COPY TO
 lo open 7 LargeObject{fd: 7}
 lo_write short: short write to large object
 lo_read: "616263"

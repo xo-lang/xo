@@ -3646,6 +3646,22 @@ copied before an error from `rows` stay; use a transaction). A driver
 without COPY returns `Driver` from `DriverConn.copy_from`, which every
 driver implements since decision 0479.
 
+`copy_to` (decision 0679, pgconn's `CopyTo`) runs a `COPY ... TO STDOUT`
+statement and gives the data to `out` as the server sends it, in the
+COPY's own format (text by default: tab separated, `\N` for NULL, a
+newline per row; `WITH (FORMAT csv)` for CSV). The result is the rows
+copied. Data sent before a server error has reached `out` when the error
+returns. An error from `out` stops the copy and is returned, and the
+connection is dropped (the server is still sending), as pgconn closes
+it. MySQL, SQLite, the in memory database and the Go backend's bound
+drivers return `Driver`; a Xo driver implements `DriverConn.copy_to`.
+
+```
+fn (d: Db) copy_to(q: Str, out: fn(Bytes) -> () ! SqlErr uses sync) -> Int ! SqlErr uses net.dial
+fn (c: Conn) copy_to(...) -> Int ! SqlErr uses net.dial
+fn (t: Tx) copy_to(...) -> Int ! SqlErr uses net.dial
+```
+
 Large objects (decision 0679, pgx's `LargeObjects`) live in a
 transaction and go through the server's `lo_*` functions, so they work
 on any driver whose server has them:

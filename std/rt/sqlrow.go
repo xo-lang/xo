@@ -275,6 +275,32 @@ func (d Sql_Db) M_copy_from(tk *Task, table string, cols List[string], rows func
 	})
 }
 
+// M_copy_to is `db.copy_to(q, out)`: a driver's own COPY TO; the
+// backends registered from Go have none.
+func (d Sql_Db) M_copy_to(tk *Task, q string, out func(*Task, Bytes) Result[Unit, Sql_SqlErr]) Result[int64, Sql_SqlErr] {
+	return withConn(tk, d.d, func() Result[int64, Sql_SqlErr] {
+		if b, ok := d.d.be.(*sqlDriverBackend); ok {
+			x, err := b.take(tk)
+			if err != nil {
+				return sqlFailErr[int64](err)
+			}
+			defer b.give(tk, x)
+			return x.c.M_copy_to(tk, q, out)
+		}
+		return Err[int64](sqlMsgErr(sqlTagDriver, "the in memory database has no COPY TO"))
+	})
+}
+
+// M_copy_to is `tx.copy_to(q, out)`.
+func (t Sql_Tx) M_copy_to(tk *Task, q string, out func(*Task, Bytes) Result[Unit, Sql_SqlErr]) Result[int64, Sql_SqlErr] {
+	return inTx(tk, t, func(be SqlTxBackend) Result[int64, Sql_SqlErr] {
+		if dt, ok := be.(*sqlDriverTx); ok {
+			return dt.x.c.M_copy_to(tk, q, out)
+		}
+		return Err[int64](sqlMsgErr(sqlTagDriver, "the in memory database has no COPY TO"))
+	})
+}
+
 // M_copy_from is `tx.copy_from(table, columns, rows)`.
 func (t Sql_Tx) M_copy_from(tk *Task, table string, cols List[string], rows func(*Task) Result[Option[List[Sql_SqlValue]], Sql_SqlErr]) Result[int64, Sql_SqlErr] {
 	return inTx(tk, t, func(be SqlTxBackend) Result[int64, Sql_SqlErr] {

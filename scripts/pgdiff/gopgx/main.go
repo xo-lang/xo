@@ -6,6 +6,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -236,6 +237,23 @@ func main() {
 		if rest, ok := strings.CutPrefix(line, "TYPED "); ok {
 			fmt.Println("== " + line)
 			typed(ctx, c, rest)
+			continue
+		}
+		if rest, ok := strings.CutPrefix(line, "COPYTO "); ok {
+			// COPY ... TO STDOUT (decision 0679): pgconn's CopyTo, the
+			// data it wrote (before an error too) and its result
+			fmt.Println("== " + line)
+			var buf bytes.Buffer
+			tag, err := c.CopyTo(ctx, &buf, rest)
+			fmt.Printf("data %q\n", buf.String())
+			var pe *pgconn.PgError
+			if errors.As(err, &pe) {
+				fmt.Printf("error %s %s\n", pe.Code, pe.Message)
+			} else if err != nil {
+				fmt.Println("error", err)
+			} else {
+				fmt.Printf("copied %d\n", tag.RowsAffected())
+			}
 			continue
 		}
 		if rest, ok := strings.CutPrefix(line, "LO "); ok {

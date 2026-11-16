@@ -314,6 +314,8 @@ enum TraceOp {
   /// A batch or pipeline.
   Batch
   CopyFrom
+  /// copy_to, with its statement as `query`.
+  CopyTo
 }
 
 /// One traced operation of a pool connection, given to open's `on_trace`
@@ -371,6 +373,14 @@ fn (d: Db) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr uses syn
 /// memory database inserts the rows one by one; a driver without COPY
 /// returns Driver.
 fn (d: Db) copy_from(table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr uses sync) -> Int ! SqlErr uses net.dial
+/// Runs a `COPY ... TO STDOUT` statement (pgconn's CopyTo) and gives the
+/// data to out as the server sends it, in the COPY's format (text by
+/// default: tab separated, \\N for NULL, a newline per row). The result
+/// is the rows copied. An error from out stops the copy and is returned;
+/// the connection is closed then, as pgconn does, since the server is
+/// still sending. A driver without COPY TO, and the in memory database,
+/// returns Driver.
+fn (d: Db) copy_to(q: Str, out: fn(Bytes) -> () ! SqlErr uses sync) -> Int ! SqlErr uses net.dial
 fn (d: Db) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (d: Db) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
 /// `query` with every row decoded into `T` (`derive SqlRow`, std.md 10.4).
@@ -426,6 +436,7 @@ fn (c: Conn) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses
 fn (c: Conn) rows(q: Str, args: List[SqlValue] = []) -> Rows ! SqlErr uses net.dial
 fn (c: Conn) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr uses sync) -> () ! SqlErr uses net.dial
 fn (c: Conn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr uses sync) -> Int ! SqlErr uses net.dial
+fn (c: Conn) copy_to(q: Str, out: fn(Bytes) -> () ! SqlErr uses sync) -> Int ! SqlErr uses net.dial
 fn (c: Conn) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (c: Conn) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
 fn (c: Conn) query_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
@@ -466,6 +477,7 @@ fn (t: Tx) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses n
 fn (t: Tx) rows(q: Str, args: List[SqlValue] = []) -> Rows ! SqlErr uses net.dial
 fn (t: Tx) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr uses sync) -> () ! SqlErr uses net.dial
 fn (t: Tx) copy_from(table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr uses sync) -> Int ! SqlErr uses net.dial
+fn (t: Tx) copy_to(q: Str, out: fn(Bytes) -> () ! SqlErr uses sync) -> Int ! SqlErr uses net.dial
 fn (t: Tx) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (t: Tx) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
 fn (t: Tx) query_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
@@ -677,6 +689,10 @@ interface DriverConn[fx: Effects] {
   fn ping(self) -> () ! SqlErr uses (net.dial, fx)
   /// COPY FROM STDIN (decision 0479): a driver without it returns Driver.
   fn copy_from(self, table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr uses sync) -> Int ! SqlErr uses (net.dial, fx)
+  /// COPY ... TO STDOUT (decision 0679, pgconn's CopyTo): runs q and gives
+  /// each CopyData's bytes to out in order; the result is the rows the
+  /// server reports. A driver without it returns Driver.
+  fn copy_to(self, q: Str, out: fn(Bytes) -> () ! SqlErr uses sync) -> Int ! SqlErr uses (net.dial, fx)
   /// A statement prepared on the server (decision 0648 item 6); None when
   /// the driver has none, and std/sql runs the text with `query` and
   /// `exec` each time.

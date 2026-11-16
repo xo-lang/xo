@@ -79,6 +79,17 @@ fn (c: FakeConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sq
   Err(sql.SqlErr.Driver(msg: "no COPY"))
 }
 
+/// COPY TO: two CopyData messages, then the rows the server reports.
+fn (c: FakeConn) copy_to(q: Str, out: fn(Bytes) -> () ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial {
+  c.log.add("conn ${c.id} copy_to ${q}")
+  if !q.contains("TO STDOUT") {
+    return Err(sql.SqlErr.Server(code: "42601", msg: "syntax error"))
+  }
+  out(b"1\ta\n")?
+  out(b"2\t\\N\n")?
+  2
+}
+
 fn (c: FakeConn) is_broken() -> Bool { c.broken.get() }
 
 /// No statements on the server: std/sql runs the text each time.
@@ -223,6 +234,22 @@ fn main(os: Os) ! {
   os.stdio.println(show("multirange_num c2", nr.multirange_num("c2").map(fn(rs) { rs.map(fn(r) { nrange(r) }) })))
   let np = sql.parse_numeric("12.340")?
   os.stdio.println("numeric parts ${np:?} int ${np.to_int():?} float ${np.to_float()}")
+  // COPY TO: the data in order, an error from out, a server error
+  let got = Mutex.new("")
+  let cn = db.copy_to("COPY t TO STDOUT", fn(b) { got.with(fn(var g) { g = g + b.to_str_lossy() }) })?
+  os.stdio.println("copy_to ${cn} ${got.with(fn(g) { g }):?}")
+  let calls = Atomic.new(0)
+  os.stdio.println(show("copy_to out err", db.copy_to("COPY t TO STDOUT", fn(b) -> () ! sql.SqlErr {
+    calls.add(1)
+    Err(sql.SqlErr.Driver(msg: "disk full"))
+  })))
+  os.stdio.println("out called ${calls.get()}")
+  os.stdio.println(show("copy_to server err", db.copy_to("COPY t TO nowhere", fn(b) {})))
+  let ctx = db.begin()?
+  os.stdio.println(show("tx copy_to", ctx.copy_to("COPY (SELECT 1) TO STDOUT", fn(b) {})))
+  ctx.rollback()?
+  let mem = sql.memory()?
+  os.stdio.println(show("memory copy_to", mem.copy_to("COPY t TO STDOUT", fn(b) {})))
   // large objects: the calls each Tx.lo_* sends, and pgx's checks
   let tx = db.begin()?
   let oid = tx.lo_create()?

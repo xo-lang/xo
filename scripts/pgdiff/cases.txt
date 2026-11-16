@@ -93,3 +93,8 @@ TYPED nummulti SELECT '{[1,2.5),[3,)}'::nummultirange AS a
 SELECT $1::numeric AS a, $2::numeric * 2 AS b, $3::numrange AS c ;; T:-1.250 | T:1e-3 | T:[NaN,)
 LO hello, large object
 LO x
+COPYTO COPY (SELECT g, CASE WHEN g = 2 THEN NULL ELSE 'x' || g END, E'tab\there\\' FROM generate_series(1,3) g) TO STDOUT
+COPYTO COPY (SELECT 1 AS n, 'a,b' AS s) TO STDOUT WITH (FORMAT csv, HEADER)
+COPYTO COPY (SELECT 1 WHERE false) TO STDOUT
+COPYTO COPY (SELECT 10 / (3 - g) FROM generate_series(1,5) g) TO STDOUT
+COPYTO COPY nosuch_copyto TO STDOUT

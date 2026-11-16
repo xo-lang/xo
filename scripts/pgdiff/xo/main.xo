@@ -68,6 +68,18 @@ fn main(os: Os) ! {
       continue
     }
     os.stdio.println("== ${line}")
+    if line.starts_with("COPYTO ") {
+      // COPY ... TO STDOUT: the data out was given (before an error too)
+      // and the result, as the reference prints pgconn's CopyTo
+      let data = Mutex.new("")
+      let r = db.copy_to(line[7..], fn(b) { data.with(fn(var d) { d = d + b.to_str_lossy() }) })
+      os.stdio.println("data ${data.with(fn(d) { d }).quote()}")
+      match r {
+        Ok(n) => os.stdio.println("copied ${n}")
+        Err(e) => os.stdio.println(err_line(e))
+      }
+      continue
+    }
     if line.starts_with("LO ") {
       for l in large_object(db, line[3..]) {
         os.stdio.println(l)

@@ -30,6 +30,7 @@ const (
 	sqlTraceBatchQuery
 	sqlTraceBatch
 	sqlTraceCopyFrom
+	sqlTraceCopyTo
 )
 
 type sqlTraceFn = func(*Task, Sql_TraceRecord) Result[Unit, Never]
@@ -291,4 +292,11 @@ func (t *sqlTraceCursor) M_rest(tk *Task) Result[List[List[Sql_SqlValue]], Sql_S
 func (t *sqlTraceCursor) M_close(tk *Task) {
 	t.c.M_close(tk)
 	t.end(tk, nil)
+}
+
+func (t sqlTraceConn) M_copy_to(tk *Task, q string, out func(*Task, Bytes) Result[Unit, Sql_SqlErr]) Result[int64, Sql_SqlErr] {
+	start := time.Now()
+	r := t.Sql_DriverConn.M_copy_to(tk, q, out)
+	sqlEmit(tk, t.h, start, sqlTraceCopyTo, q, ListOf[Sql_SqlValue](), r.V, sqlErrPtr(r))
+	return r
 }

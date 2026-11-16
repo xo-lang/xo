@@ -1166,6 +1166,43 @@ fn (p: PgConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.
   res.n
 }
 
+/// COPY ... TO STDOUT (decision 0679): pgconn v5.12.0's CopyTo, Copyright
+/// (c) 2013-2021 Jack Christensen, MIT License. Each CopyData's bytes go
+/// to out; the server's error is returned after ReadyForQuery. An error
+/// from out returns at once and breaks the connection (pgconn's
+/// asyncClose: the server is still sending the COPY).
+fn (p: PgConn) copy_to(q: Str, out: fn(Bytes) -> () ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial {
+  if p.broken.get() {
+    return Err(conn_err("the connection is broken"))
+  }
+  p.send(pgwire.query(q))?
+  var n = 0
+  var failed: sql.SqlErr? = None
+  while true {
+    match p.recv()? {
+      Other(kind, body) => {
+        if kind == "d" {
+          match out(body) {
+            Ok(_) => {}
+            Err(e) => {
+              p.broken.set(true)
+              return Err(e)
+            }
+          }
+        }
+      }
+      CommandComplete(tag) => n = pgwire.rows_affected(tag)
+      Error(f) => failed = Some(server_err(f))
+      Ready(_) => break
+      _ => {}
+    }
+  }
+  if let Some(e) = failed {
+    return Err(e)
+  }
+  n
+}
+
 // ---------------------------------------------------------------------------
 // Pipelines (decision 0648 item 15, pgconn's Pipeline and pgx's SendBatch)
 

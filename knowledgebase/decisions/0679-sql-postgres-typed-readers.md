@@ -111,3 +111,12 @@ stdaudit rows for these types (sql 75 agent hours).
   hold a borrowed `Tx`, and the methods name the transaction they use.
   The SQL each sends and pgx's checks are pgx's; pg-diff runs the same
   sequence through pgx and Xo (`LO DATA` lines).
+- 2026-11-16 (Xo Lang 3): COPY TO STDOUT as `Db.copy_to(q, out)` (also
+  Conn and Tx) with a callback for the data rather than an io.Writer,
+  and a new `DriverConn.copy_to` (every driver implements it; those
+  without COPY return Driver, as copy_from in decision 0479) and
+  `TraceOp.CopyTo`. Both additions break code outside std: a driver
+  written in Xo adds the method, an exhaustive match on TraceOp adds the
+  case (CHANGELOG). pg-diff compares the data and result with pgconn's
+  CopyTo (`COPYTO STMT` lines), including the rows sent before a server
+  error.

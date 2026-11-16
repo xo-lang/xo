@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-16: feature: COPY TO STDOUT (decision 0679)
+
+- Kind: feature (breaking for drivers written in Xo and exhaustive TraceOp matches)
+- Commit: this push
+- Found by: task #113
+- Go reference: pgx v5.12.0 pgconn/pgconn.go (PgConn.CopyTo), Copyright (c) 2013-2021 Jack Christensen, MIT License
+- Test: golden sql_pg_types (the data in order, an error from out after one call, a server error, in a transaction, the in memory database's Driver error; Go, arm64, LLVM); scripts/pg-diff.sh `COPYTO` cases equal to pgconn on postgres:17-alpine and postgres:14-alpine (text with NULL and escapes, CSV with a header, no rows, rows before a division by zero, a missing table; 100 statements)
+- Shipped in: not yet released
+
+`Db.copy_to(q, out)` (and Conn, Tx) runs a COPY TO STDOUT and gives each CopyData to `out`. `DriverConn` gains `copy_to` and `TraceOp` gains `CopyTo`.
+
 ## 2026-11-16: feature: large objects (decision 0679)
 
 - Kind: feature

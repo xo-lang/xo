@@ -10,6 +10,9 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Fix (std/yaml): five error cases now match yaml.v3: a merging mapping's bad key tag is the error before its merge value, a mapping with a repeated key reports that before a type error, local tags and `!!seq`/`!!map` scalars in type errors, floats up to 2^63 into an Int (saturating, as yaml.v3 on arm64), and to_json fails on an error under a null key. Found by the #98 yaml fuzz.
+- Breaking (std/sql; decision 0679, task #113): `DriverConn` has a new method `copy_to(q, out)` and `TraceOp` a new case `CopyTo`. A driver written in Xo adds `fn copy_to(self, q: Str, out: fn(Bytes) -> () ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial` (return `Err(sql.SqlErr.Driver(msg: "no COPY TO"))` if it has none); an exhaustive `match` on `TraceOp` adds `CopyTo`.
+- Feature (std/sql, every backend; decision 0679, task #113): `Db.copy_to`, `Conn.copy_to`, `Tx.copy_to` run `COPY ... TO STDOUT` on Postgres and give the data to a callback, a port of pgconn's CopyTo.
+
 - Feature (std/sql, every backend; decision 0679, task #113): Postgres large objects in a transaction: `Tx.lo_create`, `lo_open` (`sql.LoMode`), `lo_write`, `lo_read`, `lo_seek`, `lo_tell`, `lo_truncate`, `lo_close`, `lo_unlink`, a port of pgx's LargeObjects.
 
 - Feature (std/sql, every backend; decision 0681, task #113): Postgres numeric as `sql.Numeric` (`Finite(coef: big.BigInt, exp)`, `NaN`, `Infinity`, `NegInfinity`), keeping the scale: `Row.numeric`, `numeric_opt`, `sql.parse_numeric`, `sql.numeric`, `Numeric.display`, `to_rat`, `to_float`, `to_int`, and numeric ranges (`Row.range_num`, `multirange_num`, `sql.range_num`, `multirange_num`).

@@ -90,6 +90,10 @@ fn (c: FakeConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sq
   Err(sql.SqlErr.Driver(msg: "no COPY"))
 }
 
+fn (c: FakeConn) copy_to(q: Str, out: fn(Bytes) -> () ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no COPY"))
+}
+
 fn (c: FakeConn) is_broken() -> Bool {
   record(c.log, "is_broken")
   c.broken.get()
@@ -182,6 +186,10 @@ fn (c: CurConn) rollback() -> () ! sql.SqlErr uses net.dial { Ok(()) }
 fn (c: CurConn) ping() -> () ! sql.SqlErr uses net.dial { Ok(()) }
 fn (c: CurConn) close() uses net.dial {}
 fn (c: CurConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no COPY"))
+}
+
+fn (c: CurConn) copy_to(q: Str, out: fn(Bytes) -> () ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial {
   Err(sql.SqlErr.Driver(msg: "no COPY"))
 }
 
@@ -410,6 +418,10 @@ fn (c: ModeConn) ping() -> () ! sql.SqlErr uses net.dial { Ok(()) }
 fn (c: ModeConn) close() uses net.dial {}
 
 fn (c: ModeConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no COPY"))
+}
+
+fn (c: ModeConn) copy_to(q: Str, out: fn(Bytes) -> () ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial {
   Err(sql.SqlErr.Driver(msg: "no COPY"))
 }
 
@@ -656,6 +668,10 @@ fn (c: SessConn) ping() -> () ! sql.SqlErr uses net.dial { Ok(()) }
 fn (c: SessConn) close() uses net.dial {}
 
 fn (c: SessConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no COPY"))
+}
+
+fn (c: SessConn) copy_to(q: Str, out: fn(Bytes) -> () ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial {
   Err(sql.SqlErr.Driver(msg: "no COPY"))
 }
 
@@ -1026,6 +1042,7 @@ fn op_name(o: sql.TraceOp) -> Str {
     sql.TraceOp.BatchQuery => "BatchQuery"
     sql.TraceOp.Batch => "Batch"
     sql.TraceOp.CopyFrom => "CopyFrom"
+    sql.TraceOp.CopyTo => "CopyTo"
   }
 }
 

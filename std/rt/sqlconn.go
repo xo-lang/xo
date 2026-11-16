@@ -88,6 +88,12 @@ func (c Sql_Conn) M_each(tk *Task, q string, args List[Sql_SqlValue], f func(*Ta
 	return sqlEach(tk, c.M_rows(tk, q, args), f)
 }
 
+// M_copy_to is `conn.copy_to(q, out)`.
+func (c Sql_Conn) M_copy_to(tk *Task, q string, out func(*Task, Bytes) Result[Unit, Sql_SqlErr]) Result[int64, Sql_SqlErr] {
+	return connRun(c, func(t Sql_Tx) Result[int64, Sql_SqlErr] { return t.M_copy_to(tk, q, out) },
+		func(d Sql_Db) Result[int64, Sql_SqlErr] { return d.M_copy_to(tk, q, out) })
+}
+
 // M_copy_from is `conn.copy_from(table, columns, rows)`.
 func (c Sql_Conn) M_copy_from(tk *Task, table string, cols List[string], rows func(*Task) Result[Option[List[Sql_SqlValue]], Sql_SqlErr]) Result[int64, Sql_SqlErr] {
 	return connRun(c, func(t Sql_Tx) Result[int64, Sql_SqlErr] { return t.M_copy_from(tk, table, cols, rows) },
@@ -332,6 +338,12 @@ func (n sqlNoticeConn) M_ping(tk *Task) Result[Unit, Sql_SqlErr] {
 
 func (n sqlNoticeConn) M_copy_from(tk *Task, table string, cols List[string], rows func(*Task) Result[Option[List[Sql_SqlValue]], Sql_SqlErr]) Result[int64, Sql_SqlErr] {
 	r := n.Sql_DriverConn.M_copy_from(tk, table, cols, rows)
+	n.drain(tk)
+	return r
+}
+
+func (n sqlNoticeConn) M_copy_to(tk *Task, q string, out func(*Task, Bytes) Result[Unit, Sql_SqlErr]) Result[int64, Sql_SqlErr] {
+	r := n.Sql_DriverConn.M_copy_to(tk, q, out)
 	n.drain(tk)
 	return r
 }
