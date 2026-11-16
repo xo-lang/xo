@@ -4,6 +4,10 @@
 //
 // Origin: prometheus (THIRD_PARTY_NOTICES)
 
+use std/compress
+use std/http
+use std/protobuf
+
 /// How many series the instrument holds.
 fn nseries(f: Family) -> Int { series_snapshot(f).len() }
 
@@ -221,5 +225,485 @@ test "linear and exponential buckets (TestBuckets)" {
   expect(got.len()) == want.len()
   for (i, w) in want.indexed() {
     expect((got[i] - w).abs() < 1e-4) == true
+  }
+}
+
+test "untyped_func exposes an untyped series (UntypedFunc)" {
+  let r = registry()
+  r.untyped_func("temp", "A temperature.", fn() -> Float uses sync { 21.5 })
+  r.collector("u", "Untyped series.", Kind.Untyped, ["k"], fn() -> List[Sample] uses sync { [Sample{values: ["a"], value: 2.0}] })
+  let t = r.text()
+  expect(t.contains("# TYPE temp untyped\ntemp 21.5\n")) == true
+  expect(t.contains("# TYPE u untyped\nu{k=\"a\"} 2\n")) == true
+}
+
+test "wrap puts a prefix and constant labels on what is made through it (WrapRegistererWith, WrapRegistererWithPrefix)" {
+  let r = registry()
+  let w = r.wrap(prefix: "app_", labels: {"zone": "b", "region": "a"})
+  let c = w.counter("hits_total", "Hits.", ["path"])
+  c.inc(["/x"])
+  let h = w.histogram("lat", "L.", [], [1.0])
+  h.observe(0.5)
+  // nested wrappers: the inner prefix first, as Go's
+  let n = w.wrap(prefix: "db_", labels: {"shard": "1"})
+  n.gauge("open", "Open.").set(3.0)
+  let t = r.text()
+  expect(t.contains("app_hits_total{region=\"a\",zone=\"b\",path=\"/x\"} 1\n")) == true
+  expect(t.contains("app_lat_bucket{region=\"a\",zone=\"b\",le=\"1\"} 1\n")) == true
+  expect(t.contains("app_lat_count{region=\"a\",zone=\"b\"} 1\n")) == true
+  expect(t.contains("app_db_open{region=\"a\",shard=\"1\",zone=\"b\"} 3\n")) == true
+  // the wrapped value shares the registry's instruments
+  expect(w.text()) == t
+}
+
+test "a histogram collector's samples are its buckets, sum and count (NewConstHistogram)" {
+  let r = registry()
+  r.collector("sample_value", "sample value", Kind.Histogram, [], fn() -> List[Sample] uses sync {
+    [Sample{values: [], count: 100, sum: 200.0, buckets: [(50.0, 200), (25.0, 100)]}]
+  })
+  expect(r.text().split("\n")[0..6]) == [
+    "# HELP sample_value sample value",
+    "# TYPE sample_value histogram",
+    "sample_value_bucket{le=\"25\"} 100",
+    "sample_value_bucket{le=\"50\"} 200",
+    "sample_value_bucket{le=\"+Inf\"} 100",
+    "sample_value_sum 200",
+  ]
+}
+
+test "a summary collector's samples are its quantiles, sum and count (NewConstSummary)" {
+  let r = registry()
+  r.collector("sample_value", "sample value", Kind.Summary, ["a"], fn() -> List[Sample] uses sync {
+    [Sample{values: ["x"], count: 100, sum: 200.0, quantiles: [(0.99, 500.342), (0.5, 200.12)]}]
+  })
+  let t = r.text()
+  expect(t.contains("# TYPE sample_value summary\nsample_value{a=\"x\",quantile=\"0.5\"} 200.12\nsample_value{a=\"x\",quantile=\"0.99\"} 500.342\nsample_value_sum{a=\"x\"} 200\nsample_value_count{a=\"x\"} 100\n")) == true
+}
+
+test "a sample's timestamp follows each of its values (NewMetricWithTimestamp)" {
+  let r = registry()
+  let at = Time.from_unix_millis(1719670764123)
+  r.collector("c", "C.", Kind.Counter, [], fn() -> List[Sample] uses sync { [Sample{values: [], value: 3.0, timestamp: Some(at)}] })
+  r.collector("h", "H.", Kind.Histogram, [], fn() -> List[Sample] uses sync { [Sample{values: [], count: 1, sum: 0.5, buckets: [(1.0, 1)], timestamp: Some(at)}] })
+  let t = r.text()
+  expect(t.contains("\nc 3 1719670764123\n")) == true
+  expect(t.contains("\nh_bucket{le=\"1\"} 1 1719670764123\nh_bucket{le=\"+Inf\"} 1 1719670764123\nh_sum 0.5 1719670764123\nh_count 1 1719670764123\n")) == true
+}
+
+test "gather merges families of several registries (ExampleGatherers)" {
+  let reg = registry()
+  let temp = reg.gauge("temperature_kelvin", "Temperature in Kelvin.", ["location"])
+  temp.set(273.14, ["outside"])
+  temp.set(298.44, ["inside"])
+  let other = registry()
+  other.collector("humidity_percent", "Humidity in %.", Kind.Gauge, ["location"], fn() -> List[Sample] uses sync {
+    [Sample{values: ["outside"], value: 45.4}, Sample{values: ["inside"], value: 33.2}]
+  })
+  other.collector("temperature_kelvin", "Temperature in Kelvin.", Kind.Gauge, ["location"], fn() -> List[Sample] uses sync {
+    [Sample{values: ["somewhere else"], value: 4.5}]
+  })
+  let (t, errs) = gather([reg, other])
+  expect(errs.errors.len()) == 0
+  expect(t.split("\n")[0..9]) == [
+    "# HELP humidity_percent Humidity in %.",
+    "# TYPE humidity_percent gauge",
+    "humidity_percent{location=\"inside\"} 33.2",
+    "humidity_percent{location=\"outside\"} 45.4",
+    "# HELP temperature_kelvin Temperature in Kelvin.",
+    "# TYPE temperature_kelvin gauge",
+    "temperature_kelvin{location=\"inside\"} 298.44",
+    "temperature_kelvin{location=\"outside\"} 273.14",
+    "temperature_kelvin{location=\"somewhere else\"} 4.5",
+  ]
+}
+
+test "a duplicate series is an error and the rest is still gathered (ExampleGatherers)" {
+  let reg = registry()
+  let temp = reg.gauge("temperature_kelvin", "Temperature in Kelvin.", ["location"])
+  temp.set(273.14, ["outside"])
+  temp.set(298.44, ["inside"])
+  let other = registry()
+  other.collector("temperature_kelvin", "Temperature in Kelvin.", Kind.Gauge, ["location"], fn() -> List[Sample] uses sync {
+    [Sample{values: ["outside"], value: 265.3}]
+  })
+  // the missing location label: valid, and a series of its own
+  let third = registry()
+  third.gauge("temperature_kelvin", "Temperature in Kelvin.").set(4.5)
+  let (t, errs) = gather([reg, other, third])
+  expect(errs.errors.len()) == 1
+  expect(errs.errors[0].msg.starts_with("collected metric temperature_kelvin {location=\"outside\"} was collected before")) == true
+  expect(t.split("\n")[0..5]) == [
+    "# HELP temperature_kelvin Temperature in Kelvin.",
+    "# TYPE temperature_kelvin gauge",
+    "temperature_kelvin 4.5",
+    "temperature_kelvin{location=\"inside\"} 298.44",
+    "temperature_kelvin{location=\"outside\"} 273.14",
+  ]
+}
+
+test "a family with another help or type is an error; dropped counts are summed" {
+  let a = registry()
+  a.counter("x", "One.").inc()
+  let b = registry()
+  b.counter("x", "Two.").inc()
+  let c = registry()
+  c.gauge("x", "One.").set(1.0)
+  let (t, errs) = gather([a, b, c])
+  expect(errs.errors.map(fn(e: MetricsErr) -> Str { e.msg })) == [
+    "gathered metric family x has help \"Two.\" but should have \"One.\"",
+    "gathered metric family x has type gauge but should have counter",
+  ]
+  expect(errs.display()) == "2 error(s) occurred:\n* gathered metric family x has help \"Two.\" but should have \"One.\"\n* gathered metric family x has type gauge but should have counter"
+  expect(t.contains("\nx 1\n")) == true
+  expect(t.ends_with("xo_metrics_dropped_total 0\n")) == true
+}
+
+fn scrape(r: Registry, accept: Str, offer: List[Compression] = [Compression.Gzip, Compression.Identity]) -> http.Response {
+  let h = r.handler(offer)
+  h(http.Request{method: "GET", path: "/metrics", url: http.Url{scheme: "", host: "", port: None, path: "/metrics", query: {}}, headers: if accept.is_empty() { {} } else { {"Accept-Encoding": accept} }, body: b"", remote_ip: ""})
+}
+
+test "the handler negotiates gzip as promhttp does (TestNegotiateEncodingWriter)" {
+  let r = registry()
+  r.counter("c_total", "C.").inc()
+  let plain = r.text().bytes()
+  for (accept, gz) in [
+    ("", false),
+    ("gzip", true),
+    ("deflate, gzip;q=1.0, *;q=0.5", true),
+    ("gzip;q=0", false),
+    ("identity", false),
+    ("*", true),
+    ("br", false),
+    ("gzip;q=0.5, identity;q=0.9", false),
+  ] {
+    let resp = scrape(r, accept)
+    expect(resp.status) == 200
+    if gz {
+      expect(resp.headers.get("Content-Encoding")) == Some("gzip")
+      expect(compress.gunzip(resp.body) ?? e => fault("${e}")) == plain
+    } else {
+      expect(resp.headers.get("Content-Encoding")) == None
+      expect(resp.body) == plain
+    }
+  }
+  // offering identity only never compresses
+  expect(scrape(r, "gzip", [Compression.Identity]).body) == plain
+}
+
+test "the middleware observes request and response sizes (InstrumentHandlerRequestSize, ResponseSize)" {
+  let r = registry()
+  let mw = r.middleware(os.clock, fn(req: http.Request) -> Str { req.path }, sizes: true)
+  let req = http.Request{method: "POST", path: "/a", url: http.Url{scheme: "", host: "", port: None, path: "/a", query: {"k": "v"}}, headers: {"X": "yz"}, body: b"hello", remote_ip: ""}
+  let resp = mw(req, fn(_r: http.Request) -> http.Response { http.Response{status: 201, headers: {}, body: b"0123456789"} })
+  expect(resp.status) == 201
+  // "/a?k=v" 6, "POST" 4, protocol 8, "X" and "yz" 3, body 5
+  expect(request_size(req)) == 26
+  let t = r.text()
+  expect(t.contains("http_request_size_bytes_sum{route=\"/a\"} 26\n")) == true
+  expect(t.contains("http_response_size_bytes_sum{route=\"/a\"} 10\n")) == true
+  expect(t.contains("http_requests_total{method=\"POST\",route=\"/a\",status=\"201\"} 1\n")) == true
+}
+
+test "size_buckets are 100 bytes to 100 MB by tens" {
+  expect(size_buckets()) == [100.0, 1000.0, 10000.0, 100000.0, 1000000.0, 10000000.0, 100000000.0]
+}
+
+test "client_send counts a failed send as code error (InstrumentRoundTripperCounter, Duration, InFlight)" uses (net, clock) {
+  let r = registry()
+  let send = r.client_send(os.clock)
+  let req = http.Request{method: "GET", path: "/", url: http.parse_url("http://127.0.0.1:1/") ?? e => fault("${e}"), headers: {}, body: b"", remote_ip: ""}
+  match send(http.client(os.net, 5s), req) {
+    Ok(_) => fault("a send to port 1 succeeded")
+    Err(_) => {}
+  }
+  let t = r.text()
+  expect(t.contains("http_client_requests_total{method=\"GET\",code=\"error\"} 1\n")) == true
+  expect(t.contains("http_client_request_seconds_count{method=\"GET\"} 1\n")) == true
+  expect(t.contains("http_client_in_flight 0\n")) == true
+}
+
+test "runtime_collector and build_info (NewGoCollector, NewBuildInfoCollector)" {
+  let r = registry()
+  r.runtime_collector()
+  r.build_info(path: "example.com/app", version: "v1.2.3")
+  let t = r.text()
+  expect(t.contains("# TYPE xo_heap_bytes gauge\nxo_heap_bytes ")) == true
+  expect(t.contains("# TYPE xo_heap_peak_bytes gauge\nxo_heap_peak_bytes ")) == true
+  expect(t.contains("xo_build_info{checksum=\"unknown\",path=\"example.com/app\",version=\"v1.2.3\"} 1\n")) == true
+}
+
+test "OpenMetrics: a histogram's bucket exemplars (expfmt TestCreateOpenMetrics 9)" {
+  let r = registry()
+  let at = Time.from_unix_millis(12345600)
+  r.collector("request_duration_microseconds", "The response latency.", Kind.Histogram, [], fn() -> List[Sample] uses sync {
+    [Sample{values: [], count: 2693, sum: 1756047.3, buckets: [(100.0, 123), (120.0, 412), (144.0, 592), (172.8, 1524)],
+      exemplars: [Exemplar{labels: {"foo": "bar"}, value: 119.9, at: Some(at)}, Exemplar{labels: {"foo": "baz", "dings": "bums"}, value: 140.14}]}]
+  })
+  expect(r.open_metrics().split("\n")[0..8]) == [
+    "# HELP request_duration_microseconds The response latency.",
+    "# TYPE request_duration_microseconds histogram",
+    "request_duration_microseconds_bucket{le=\"100.0\"} 123",
+    "request_duration_microseconds_bucket{le=\"120.0\"} 412 # {foo=\"bar\"} 119.9 12345.6",
+    "request_duration_microseconds_bucket{le=\"144.0\"} 592 # {dings=\"bums\",foo=\"baz\"} 140.14",
+    "request_duration_microseconds_bucket{le=\"172.8\"} 1524",
+    "request_duration_microseconds_bucket{le=\"+Inf\"} 2693",
+    "request_duration_microseconds_sum 1.7560473e+06",
+  ]
+}
+
+test "OpenMetrics: counters drop _total from the family, others are unknown (expfmt 10, 11, 13)" {
+  let r = registry()
+  r.counter("foos_total", "Number of foos.").add(42.0)
+  r.counter("bars", "Bars.").inc()
+  r.untyped_func("u", "U.", fn() -> Float uses sync { 2.5 })
+  let t = r.open_metrics()
+  expect(t.starts_with("# HELP foos Number of foos.\n# TYPE foos counter\nfoos_total 42.0\n# HELP bars Bars.\n# TYPE bars unknown\nbars 1.0\n# HELP u U.\n# TYPE u unknown\nu 2.5\n")) == true
+  expect(t.ends_with("xo_metrics_dropped_total 0.0\n# EOF\n")) == true
+}
+
+test "exemplars on instruments and their checks (AddWithExemplar, ObserveWithExemplar, newExemplar)" {
+  let r = registry()
+  let c = r.counter("hits_total", "Hits.", ["path"])
+  let h = r.histogram("lat", "Latency.", [], [0.1, 1.0])
+  let at = Time.from_unix_millis(1520879607789)
+  let ex = exemplar({"trace_id": "abc"}, Some(at)) ?? e => fault(e.msg)
+  c.add_with_exemplar(2.0, ex, ["/x"])
+  h.observe_with_exemplar(0.5, ex)
+  h.observe(0.05)
+  let t = r.open_metrics()
+  expect(t.contains("hits_total{path=\"/x\"} 2.0 # {trace_id=\"abc\"} 2.0 1.520879607789e+09\n")) == true
+  expect(t.contains("lat_bucket{le=\"0.1\"} 1\nlat_bucket{le=\"1.0\"} 2 # {trace_id=\"abc\"} 0.5 1.520879607789e+09\nlat_bucket{le=\"+Inf\"} 2\n")) == true
+  // the 0.0.4 text has no exemplars
+  expect(r.text().contains("# {")) == false
+  // a removed series takes its exemplar with it
+  expect(c.remove(["/x"])) == true
+  c.inc(["/x"])
+  expect(r.open_metrics().contains("hits_total{path=\"/x\"} 1.0\n")) == true
+  match exemplar({"0bad": "x"}) {
+    Ok(_) => fault("an invalid label name passed")
+    Err(e) => expect(e.msg) == "exemplar label name \"0bad\" is invalid"
+  }
+  match exemplar({"k": "x".repeat(128)}) {
+    Ok(_) => fault("129 runes passed")
+    Err(e) => expect(e.msg) == "exemplar labels have 129 runes, exceeding the limit of 128"
+  }
+}
+
+test "the handler answers OpenMetrics when enabled and asked for (EnableOpenMetrics)" {
+  let r = registry()
+  r.counter("c_total", "C.").inc()
+  let req = fn(accept: Str) -> http.Request {
+    http.Request{method: "GET", path: "/metrics", url: http.Url{scheme: "", host: "", port: None, path: "/metrics", query: {}}, headers: {"Accept": accept}, body: b"", remote_ip: ""}
+  }
+  let om = r.handler([Compression.Identity], open_metrics: true)
+  let resp = om(req("application/openmetrics-text;version=1.0.0,text/plain;q=0.5"))
+  expect(resp.headers.get("Content-Type")) == Some("application/openmetrics-text; version=1.0.0; charset=utf-8")
+  expect(resp.body.to_str_lossy().ends_with("# EOF\n")) == true
+  expect(om(req("text/plain")).body.to_str_lossy().contains("# EOF")) == false
+  let plain = r.handler([Compression.Identity])
+  expect(plain(req("application/openmetrics-text")).body.to_str_lossy().contains("# EOF")) == false
+}
+
+test "the middleware's exemplar_of labels the count and latency (WithExemplarFromContext)" {
+  let r = registry()
+  let mw = r.middleware(os.clock, fn(req: http.Request) -> Str { req.path }, exemplar_of: Some(fn(req: http.Request) -> Map[Str, Str] { {"trace_id": req.headers.get("X-Trace") ?? ""} }))
+  let req = http.Request{method: "GET", path: "/a", url: http.Url{scheme: "", host: "", port: None, path: "/a", query: {}}, headers: {"X-Trace": "t1"}, body: b"", remote_ip: ""}
+  let _resp = mw(req, fn(_r: http.Request) -> http.Response { http.Response{status: 200, headers: {}, body: b""} })
+  let t = r.open_metrics()
+  expect(t.contains("http_requests_total{method=\"GET\",route=\"/a\",status=\"200\"} 1.0 # {trace_id=\"t1\"} 1.0 ")) == true
+  expect(t.contains("le=\"0.005\"} 1 # {trace_id=\"t1\"} ")) == true
+}
+
+test "process_collector reports what update read (NewProcessCollector, ProcessCollectorOpts.Namespace)" uses (clock, proc) {
+  let r = registry()
+  let pc = r.process_collector(os.clock, namespace: "app")
+  var x = 0
+  for i in 0..2000000 {
+    x += i % 7
+  }
+  expect(x > 0) == true
+  pc.update(os.proc)
+  let t = r.text()
+  expect(t.contains("# TYPE app_process_cpu_seconds_total counter\napp_process_cpu_seconds_total ")) == true
+  expect(pc.max_rss.get() > 0) == true
+  expect(t.contains("app_process_max_resident_memory_bytes ${pc.max_rss.get()}\n")) == true
+  expect(t.contains("app_process_start_time_seconds ")) == true
+}
+
+test "native_histogram checks the schema and the counts (NewConstNativeHistogram)" {
+  match native_histogram(3, 1.0, {1: 2}, {}, 1, 9) {
+    Ok(_) => fault("schema 9 passed")
+    Err(e) => expect(e.msg) == "invalid native histogram schema"
+  }
+  match native_histogram(3, 1.0, {1: 2}, {}, 2, 3) {
+    Ok(_) => fault("4 bucket counts for 3 observations passed")
+    Err(e) => expect(e.msg) == "the sum of all bucket populations exceeds the count of observations"
+  }
+  let nan = native_histogram(5, Float.nan, {1: 2}, {}, 1, 3) ?? e => fault(e.msg)
+  expect(nan.zero_threshold) == DEF_NATIVE_HISTOGRAM_ZERO_THRESHOLD
+  let zero = native_histogram(0, 0.0, {}, {}, 0, 3, NATIVE_HISTOGRAM_ZERO_THRESHOLD_ZERO) ?? e => fault(e.msg)
+  expect(zero.zero_threshold) == 0.0
+}
+
+test "makeBucketsFromMap: gaps of two buckets or less stay in the span (pb_spans)" {
+  let (spans, deltas) = pb_spans({-2: 1, 0: 3, 1: 3, 5: 2, 6: 4})
+  expect(spans.map(fn(s: PbSpan) -> (Int, Int) { (Int(s.offset ?? Int32.wrapping_from(0)), Int(s.length ?? UInt32.wrapping_from(0))) })) == [(-2, 4), (3, 2)]
+  expect(deltas) == [1, -1, 3, 0, -1, 2]
+}
+
+// client_model's messages with derive Proto: the test reads the
+// exposition std/metrics writes by hand with the derived decoder.
+struct TLabel {
+  name proto "1": Str? = None
+  value proto "2": Str? = None
+} derive Proto
+
+struct TTimestamp {
+  seconds proto "1": Int = 0
+  nanos proto "2": Int32 = 0
+} derive Proto
+
+struct TExemplar {
+  label proto "1": List[TLabel] = []
+  value proto "2": Float? = None
+  timestamp proto "3": TTimestamp? = None
+} derive Proto
+
+struct TCounter {
+  value proto "1": Float? = None
+  exemplar proto "2": TExemplar? = None
+  created_timestamp proto "3": TTimestamp? = None
+} derive Proto
+
+struct TSpan {
+  offset proto "1,zigzag": Int32? = None
+  length proto "2": UInt32? = None
+} derive Proto
+
+struct THistogram {
+  sample_count proto "1": UInt64? = None
+  sample_sum proto "2": Float? = None
+  schema proto "5,zigzag": Int32? = None
+  zero_threshold proto "6": Float? = None
+  zero_count proto "7": UInt64? = None
+  negative_span proto "9": List[TSpan] = []
+  negative_delta proto "10,zigzag": List[Int] = []
+  positive_span proto "12": List[TSpan] = []
+  positive_delta proto "13,zigzag": List[Int] = []
+  created_timestamp proto "15": TTimestamp? = None
+} derive Proto
+
+struct TMetric {
+  label proto "1": List[TLabel] = []
+  counter proto "3": TCounter? = None
+  timestamp_ms proto "6": Int? = None
+  histogram proto "7": THistogram? = None
+} derive Proto
+
+struct TFamily {
+  name proto "1": Str? = None
+  help proto "2": Str? = None
+  kind proto "3": Int? = None
+  metric proto "4": List[TMetric] = []
+} derive Proto
+
+test "the protobuf exposition carries native histograms (TestConstNativeHistogram)" {
+  let r = registry()
+  let created = Time.from_unix_millis(1719670764123)
+  r.collector("nh", "Native.", Kind.Histogram, [], fn() -> List[Sample] uses sync {
+    let n = native_histogram(4, 6.0, {0: 1, 8: 1, 13: 1}, {}, 1, 3) ?? e => fault(e.msg)
+    [Sample{values: [], count: 4, sum: 6.0, native: Some(n), created: Some(created)}]
+  })
+  r.collector("empty", "No-op span.", Kind.Histogram, [], fn() -> List[Sample] uses sync {
+    let n = native_histogram(0, 0.0, {}, {}, 0, 3, NATIVE_HISTOGRAM_ZERO_THRESHOLD_ZERO) ?? e => fault(e.msg)
+    [Sample{values: [], native: Some(n)}]
+  })
+  let c = r.counter("c_total", "C.", ["k"])
+  c.add_with_exemplar(2.0, exemplar({"trace_id": "t"}) ?? e => fault(e.msg), ["v"])
+  let fams = read_delimited(r.protobuf())
+  expect(fams.map(fn(f: TFamily) -> Str { f.name ?? "" })) == ["nh", "empty", "c_total", "xo_metrics_dropped_total"]
+  let h = fams[0].metric[0].histogram ?? fault("no histogram")
+  expect(h.schema) == Some(Int32.wrapping_from(3))
+  expect(h.zero_threshold) == Some(DEF_NATIVE_HISTOGRAM_ZERO_THRESHOLD)
+  expect(h.zero_count) == Some(UInt64.wrapping_from(1))
+  expect(h.positive_delta) == [1, 0, 0]
+  expect(h.positive_span.len()) == 3
+  expect((h.created_timestamp ?? fault("no created")).seconds) == 1719670764
+  let e = fams[1].metric[0].histogram ?? fault("no histogram")
+  expect(e.positive_span.len()) == 1
+  expect(e.positive_span[0].length) == Some(UInt32.wrapping_from(0))
+  let cm = fams[2].metric[0]
+  expect(fams[2].kind) == Some(0)
+  expect(cm.label.map(fn(l: TLabel) -> Str { l.value ?? "" })) == ["v"]
+  expect((cm.counter ?? fault("no counter")).value) == Some(2.0)
+  expect(((cm.counter ?? fault("no counter")).exemplar ?? fault("no exemplar")).value) == Some(2.0)
+}
+
+/// The families of a delimited protobuf exposition.
+fn read_delimited(b: Bytes) -> List[TFamily] {
+  var out: List[TFamily] = []
+  var i = 0
+  while i < b.len() {
+    var n = 0
+    var shift = 1
+    while true {
+      let x = Int(b[i])
+      i += 1
+      n += (x % 128) * shift
+      shift *= 128
+      if x < 128 {
+        break
+      }
+    }
+    out.push(protobuf.unmarshal[TFamily](b[i..i + n]) ?? e => fault("${e}"))
+    i += n
+  }
+  out
+}
+
+test "the handler answers protobuf when it is asked for first" {
+  let r = registry()
+  r.counter("c_total", "C.").inc()
+  let h = r.handler([Compression.Identity])
+  let req = http.Request{method: "GET", path: "/metrics", url: http.Url{scheme: "", host: "", port: None, path: "/metrics", query: {}}, headers: {"Accept": "application/vnd.google.protobuf;proto=io.prometheus.client.MetricFamily;encoding=delimited;q=0.7,text/plain;version=0.0.4;q=0.3"}, body: b"", remote_ip: ""}
+  let resp = h(req)
+  expect(resp.headers.get("Content-Type")) == Some(PROTOBUF_TYPE)
+  expect(read_delimited(resp.body).len()) == 2
+}
+
+test "/proc parsing as procfs reads it (stat with a spaced command, btime, VmRSS)" {
+  let stat = "4242 (my (odd) cmd) S 1 4242 4242 0 -1 4194560 1234 0 0 0 250 50 0 0 20 0 7 0 98765 123456789 2048 18446744073709551615"
+  let ps = parse_proc_stat(stat) ?? e => fault(e.msg)
+  expect(ps) == (250, 50, 98765, 123456789)
+  expect(parse_btime("cpu  1 2 3\nbtime 1719670000\nprocesses 9\n") ?? e => fault(e.msg)) == 1719670000
+  expect(parse_vmrss("Name:\tx\nVmRSS:\t   2048 kB\n") ?? e => fault(e.msg)) == 2097152
+  match parse_proc_stat("garbage") {
+    Ok(_) => fault("garbage parsed")
+    Err(e) => expect(e.msg) == "malformed /proc stat"
+  }
+}
+
+test "pid_from_file and pid_collector (NewPidFileFn, ProcessCollectorOpts.PidFn)" uses (fs, proc) {
+  let path = os.fs.create_temp(".", "pidfile") ?? e => fault("${e}")
+  os.fs.write(path, b" 4242\n") ?? e => fault("${e}")
+  expect(pid_from_file(os.fs, path) ?? e => fault(e.msg)) == 4242
+  os.fs.write(path, b"x") ?? e => fault("${e}")
+  match pid_from_file(os.fs, path) {
+    Ok(_) => fault("x parsed")
+    Err(e) => expect(e.msg) == "can't parse pid file ${path.quote()}"
+  }
+  os.fs.remove(path) ?? e => fault("${e}")
+  let r = registry()
+  let pc = r.pid_collector(namespace: "child")
+  match pc.update(os.fs, os.proc.pid()) {
+    // Linux: this process's own figures
+    Ok(_) => {
+      expect(pc.rss.get() > 0) == true
+      expect(pc.start_ms.get() > 1000000000000) == true
+      expect(r.text().contains("child_process_resident_memory_bytes ${pc.rss.get()}\n")) == true
+    }
+    // elsewhere there is no /proc
+    Err(e) => expect(e.msg.starts_with("process metrics need /proc/")) == true
   }
 }

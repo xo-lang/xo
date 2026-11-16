@@ -13,6 +13,8 @@
 // Origin: prometheus (curry_with, delete_partial_match and the bucket
 // helpers, from prometheus/vec.go and histogram.go; THIRD_PARTY_NOTICES).
 
+use std/compress
+use std/debug
 use std/http
 
 /// One series of an instrument: its label values and its cells (atomic
@@ -68,16 +70,90 @@ pub struct QState {
 }
 
 /// A value read at scrape time from a collector: its label values and
-/// value (decision 0411).
+/// value (decision 0411). A histogram collector's sample gives `count`,
+/// `sum` and `buckets` (upper bound and cumulative count, as Go's
+/// NewConstHistogram) instead of `value`; a summary's gives `count`, `sum`
+/// and `quantiles` (quantile and value, NewConstSummary). `timestamp` is
+/// written after the value (NewMetricWithTimestamp); `created`, the time
+/// the series started counting, is a counter's, histogram's or summary's
+/// (the *WithCreatedTimestamp constructors) and is OTLP's start time; the
+/// 0.0.4 text has no created times.
 pub struct Sample {
   pub values: List[Str]
-  pub value: Float
+  pub value: Float = 0.0
+  pub count: Int = 0
+  pub sum: Float = 0.0
+  pub buckets: List[(Float, Int)] = []
+  pub quantiles: List[(Float, Float)] = []
+  pub timestamp: Time? = None
+  pub created: Time? = None
+  /// exemplars (NewMetricWithExemplars): a counter's first, a histogram's
+  /// each on the bucket its value falls in; only OpenMetrics shows them
+  pub exemplars: List[Exemplar] = []
+  /// a histogram collector's native (sparse) buckets, from
+  /// `native_histogram`; only the protobuf exposition shows them
+  pub native: NativeHistogram? = None
 }
 
-/// The kind of a collector's series.
-pub enum Kind { Counter, Gauge }
+/// A native histogram's buckets (client_golang's NewConstNativeHistogram):
+/// its schema (-4 to 8: bucket boundaries at powers of 2^(2^-schema)),
+/// the zero bucket's threshold and count, and the counts of the positive
+/// and negative buckets by index. Make one with `native_histogram`.
+pub struct NativeHistogram {
+  pub schema: Int
+  pub zero_threshold: Float
+  pub zero_count: Int
+  pub positive: Map[Int, Int] = {}
+  pub negative: Map[Int, Int] = {}
+}
 
-/// One instrument: kind 0 counter, 1 gauge, 2 histogram, 3 summary;
+/// client_golang's DefNativeHistogramZeroThreshold: 2^-128.
+pub const DEF_NATIVE_HISTOGRAM_ZERO_THRESHOLD: Float = 2.938735877055719e-39
+
+/// client_golang's NativeHistogramZeroThresholdZero: a zero threshold of
+/// 0 (a threshold of 0 itself picks the default in Go's options).
+pub const NATIVE_HISTOGRAM_ZERO_THRESHOLD_ZERO: Float = -1.0
+
+/// The native buckets of a histogram sample with `count` observations
+/// summing to `sum`, checked as NewConstNativeHistogram checks them: the
+/// schema in -4 to 8, and the bucket counts (positive, negative and zero)
+/// adding up to `count` (at most `count` when `sum` is NaN).
+pub fn native_histogram(count: Int, sum: Float, positive: Map[Int, Int], negative: Map[Int, Int], zero_count: Int, schema: Int, zero_threshold: Float = DEF_NATIVE_HISTOGRAM_ZERO_THRESHOLD) -> NativeHistogram ! MetricsErr {
+  if schema > 8 || schema < -4 {
+    return Err(MetricsErr{msg: "invalid native histogram schema"})
+  }
+  var pop = zero_count
+  for (_, n) in positive {
+    pop += n
+  }
+  for (_, n) in negative {
+    pop += n
+  }
+  if (sum.is_nan() && pop > count) || (!sum.is_nan() && pop != count) {
+    return Err(MetricsErr{msg: "the sum of all bucket populations exceeds the count of observations"})
+  }
+  let zt = if zero_threshold == NATIVE_HISTOGRAM_ZERO_THRESHOLD_ZERO { 0.0 } else { zero_threshold }
+  Ok(NativeHistogram{schema: schema, zero_threshold: zt, zero_count: zero_count, positive: positive, negative: negative})
+}
+
+/// A sample's exemplar in OpenMetrics (client_golang's Exemplar): its
+/// labels (at most EXEMPLAR_MAX_RUNES runes of names and values), the
+/// observed value, and when. Make one with `exemplar`, which checks it.
+pub struct Exemplar {
+  pub labels: Map[Str, Str]
+  pub value: Float = 0.0
+  pub at: Time? = None
+}
+
+/// The most runes an exemplar's label names and values hold together
+/// (client_golang's ExemplarMaxRunes).
+pub const EXEMPLAR_MAX_RUNES: Int = 128
+
+/// The kind of a collector's series.
+pub enum Kind { Counter, Gauge, Untyped, Histogram, Summary }
+
+/// One instrument: kind 0 counter, 1 gauge, 2 histogram, 3 summary, 4
+/// untyped (a reader only);
 /// reads: a scrape time reader (gauge_func, counter_func, collector);
 /// objectives, max_age_ms and age_buckets: a summary's. Internal.
 pub struct Family {
@@ -95,12 +171,21 @@ pub struct Family {
   /// the label constraints (client_golang's ConstrainedLabels): label
   /// index and the function that normalizes its values, in label order
   pub constrain: List[(Int, fn(Str) -> Str)] = []
+  /// the constant label pairs of a wrapped registry, sorted by name
+  pub consts: List[(Str, Str)] = []
+  /// the newest exemplar of each series' cell: series key to (bucket
+  /// index, or 0 for a counter) to exemplar
+  pub ex: Mutex[Map[Str, Map[Int, Exemplar]]]
 }
 
 /// A set of instruments. Cloning shares it. Its fields are internal.
 pub struct Registry {
   pub families: Mutex[List[Family]]
   pub dropped: Atomic[Int]
+  /// what wrap adds to the instruments made through this value: a name
+  /// prefix and constant labels, sorted by name
+  pub prefix: Str = ""
+  pub consts: List[(Str, Str)] = []
 }
 
 /// A new empty registry. Xo has no program wide state: main makes one and
@@ -165,6 +250,29 @@ pub struct SummaryChild {
 /// The buckets of request latencies in seconds: 0.005 to 10.
 pub fn latency_buckets() -> List[Float] {
   [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+}
+
+/// The registry with `prefix` put before the name of every instrument made
+/// through it and the constant `labels` on each of its series
+/// (client_golang's WrapRegistererWithPrefix, WrapRegistererWith and
+/// WrapCollectorWith): it shares the registry's instruments, so they are
+/// in its `text()`. Wrapping a wrapped registry puts the new prefix after
+/// the old one, as Go's nested wrappers do, and adds the labels; an
+/// invalid label name, or one the registry has already, is a fault. The
+/// constant labels come before an instrument's own in the exposition,
+/// sorted by name; an instrument with a label of the same name is a fault.
+pub fn (r: Registry) wrap(prefix: Str = "", labels: Map[Str, Str] = {}) -> Registry {
+  var consts = r.consts
+  for (k, v) in labels {
+    if !valid_name(k, false) || k.starts_with("__") {
+      fault("metrics: invalid label name ${k.quote()}")
+    }
+    if consts.any(fn(c: (Str, Str)) -> Bool { c.0 == k }) {
+      fault("metrics: label ${k.quote()} is wrapped already")
+    }
+    consts.push((k, v))
+  }
+  Registry{families: r.families, dropped: r.dropped, prefix: r.prefix + prefix, consts: consts.sort_by(fn(c: (Str, Str)) -> Str { c.0 })}
 }
 
 /// Makes a counter named `name` (a Prometheus name: letters, digits, `_`
@@ -339,10 +447,25 @@ pub fn (r: Registry) counter_func(name: Str, help: Str, f: fn() -> Float uses sy
   let _f = make(r, 0, name, help, [], [], [fn() -> List[Sample] uses sync { [Sample{values: [], value: f()}] }])
 }
 
-/// An instrument whose series f returns at each scrape (a Collector):
-/// one Sample per series, its values one per label.
+/// A series of no type (`# TYPE name untyped`) whose value f returns at
+/// each scrape (client_golang's UntypedFunc).
+pub fn (r: Registry) untyped_func(name: Str, help: Str, f: fn() -> Float uses sync) {
+  let _f = make(r, 4, name, help, [], [], [fn() -> List[Sample] uses sync { [Sample{values: [], value: f()}] }])
+}
+
+/// An instrument whose series f returns at each scrape (a Collector, Go's
+/// NewConstMetric, NewConstHistogram and NewConstSummary): one Sample per
+/// series, its values one per label. A gauge or untyped sample's `created`
+/// is ignored: such a series has no start (Go's constructor refuses one).
 pub fn (r: Registry) collector(name: Str, help: Str, kind: Kind, labels: List[Str], f: fn() -> List[Sample] uses sync) {
-  let _f = make(r, if kind is Kind.Counter { 0 } else { 1 }, name, help, labels, [], [f])
+  let k = match kind {
+    Kind.Counter => 0
+    Kind.Gauge => 1
+    Kind.Untyped => 4
+    Kind.Histogram => 2
+    Kind.Summary => 3
+  }
+  let _f = make(r, k, name, help, labels, [], [f])
 }
 
 /// Removes the series of the label values (DeleteLabelValues): whether
@@ -433,6 +556,53 @@ pub fn (g: Gauge) delete_partial_match(labels: Map[Str, Str]) -> Int { delete_pa
 pub fn (h: Histogram) delete_partial_match(labels: Map[Str, Str]) -> Int { delete_partial(h.f, h.curry, labels) }
 
 pub fn (s: Summary) delete_partial_match(labels: Map[Str, Str]) -> Int { delete_partial(s.f, s.curry, labels) }
+
+/// An exemplar with the labels (a trace id, say) at the time `at`, checked
+/// as client_golang's newExemplar: each label name valid and at most
+/// EXEMPLAR_MAX_RUNES runes of names and values.
+pub fn exemplar(labels: Map[Str, Str], at: Time? = None) -> Exemplar ! MetricsErr {
+  var runes = 0
+  for (k, v) in labels {
+    if !valid_name(k, false) {
+      return Err(MetricsErr{msg: "exemplar label name ${k.quote()} is invalid"})
+    }
+    runes += k.rune_count() + v.rune_count()
+  }
+  if runes > EXEMPLAR_MAX_RUNES {
+    return Err(MetricsErr{msg: "exemplar labels have ${runes} runes, exceeding the limit of ${EXEMPLAR_MAX_RUNES}"})
+  }
+  Ok(Exemplar{labels: labels, at: at})
+}
+
+/// add, keeping `ex` (with the value n) as the series' exemplar
+/// (client_golang's ExemplarAdder.AddWithExemplar); an exemplar that
+/// `exemplar` refuses is a fault, as Go's panic.
+pub fn (c: Counter) add_with_exemplar(n: Float, ex: Exemplar, values0: List[Str] = []) {
+  let values = label_values(c.f, c.curry, values0)
+  c.add(n, values0)
+  keep_exemplar(c.f, values, 0, n, ex)
+}
+
+/// observe, keeping `ex` (with the value v) as the exemplar of the bucket
+/// v falls in (ExemplarObserver.ObserveWithExemplar).
+pub fn (h: Histogram) observe_with_exemplar(v: Float, ex: Exemplar, values0: List[Str] = []) {
+  let values = label_values(h.f, h.curry, values0)
+  h.observe(v, values0)
+  keep_exemplar(h.f, values, bucket_of(h.f.bounds, v), v, ex)
+}
+
+fn keep_exemplar(f: Family, values: List[Str], cell: Int, v: Float, ex: Exemplar) {
+  if let Err(e) = exemplar(ex.labels, ex.at) {
+    fault("metrics: ${e.msg}")
+  }
+  let key = key_of(values)
+  let e = Exemplar{labels: ex.labels, value: v, at: ex.at}
+  f.ex.with(fn(var m: Map[Str, Map[Int, Exemplar]]) {
+    var cells = m.get(key) ?? {}
+    cells[cell] = e
+    m[key] = cells
+  })
+}
 
 /// `count` bucket bounds from `start`, `width` apart (LinearBuckets); a
 /// count below 1 is a fault.
@@ -607,19 +777,892 @@ pub fn (r: Registry) text(now: Time? = None) -> Str {
   "${out.join("\n")}\n"
 }
 
+/// The OpenMetrics 1.0 text exposition (expfmt's MetricFamilyToOpenMetrics,
+/// as promhttp writes it with EnableOpenMetrics): a counter named
+/// `x_total` is the family `x` of type counter, one without the suffix is
+/// `unknown`; untyped series are `unknown`; floats are written with a `.0`
+/// when they would have no point; timestamps are seconds; exemplars follow
+/// their sample (`# {trace_id="1"} 0.5 1520879607.789`); it ends `# EOF`.
+pub fn (r: Registry) open_metrics(now: Time? = None) -> Str {
+  let fs = r.families.with_read(fn(l: List[Family]) -> List[Family] { l })
+  let now_ms = match now {
+    Some(t) => t.unix_millis()
+    None => 0
+  }
+  var out: List[Str] = []
+  for f in fs {
+    for l in om_family(f, now_ms) {
+      out.push(l)
+    }
+  }
+  out.push("# HELP xo_metrics_dropped Series dropped past the per instrument limit.")
+  out.push("# TYPE xo_metrics_dropped counter")
+  out.push("xo_metrics_dropped_total ${om_num(Float(r.dropped.get()))}")
+  out.push("# EOF")
+  "${out.join("\n")}\n"
+}
+
+/// writeOpenMetricsFloat.
+fn om_num(v: Float) -> Str {
+  if v == 1.0 {
+    return "1.0"
+  }
+  if v == 0.0 {
+    return "0.0"
+  }
+  if v == -1.0 {
+    return "-1.0"
+  }
+  let t = num(v)
+  if t == "NaN" || t == "+Inf" || t == "-Inf" || t.contains(".") || t.contains("e") {
+    return t
+  }
+  "${t}.0"
+}
+
+fn om_exemplar(e: Exemplar?) -> Str {
+  match e {
+    Some(x) => {
+      if x.labels.is_empty() {
+        return ""
+      }
+      var ps: List[Str] = []
+      for k in x.labels.keys().sort() {
+        ps.push("${k}=\"${escape_label(x.labels.get(k) ?? "")}\"")
+      }
+      let at = match x.at {
+        Some(t) => " ${om_num(Float(t.unix_nanos()) / 1e9)}"
+        None => ""
+      }
+      " # {${ps.join(",")}} ${om_num(x.value)}${at}"
+    }
+    None => ""
+  }
+}
+
+/// A summary series' quantile values, one per objective, aged to now_ms
+/// when it is set.
+fn summary_quantiles(f: Family, s: Series, now_ms: Int) -> List[Float] {
+  let objs = f.objectives
+  if objs.is_empty() {
+    return []
+  }
+  let max_age_ms = f.max_age_ms
+  s.q[0].with(fn(var st: QState) -> List[Float] {
+    qdrain(st, objs)
+    if now_ms > 0 {
+      qrotate(st, now_ms, max_age_ms)
+    }
+    var vs: List[Float] = []
+    for (q, _) in objs {
+      vs.push(qquery(st.streams[st.head], q, objs))
+    }
+    vs
+  })
+}
+
+/// A summary series' quantile lines in OpenMetrics.
+fn expose_parts_summary(f: Family, s: Series, now_ms: Int) -> List[Str] {
+  let qs = summary_quantiles(f, s, now_ms)
+  var out: List[Str] = []
+  for (i, (q, _)) in f.objectives.indexed() {
+    out.push("${head(f.name, f.consts, f.labels, s.values, "quantile=\"${om_num(q)}\"")} ${om_num(qs[i])}")
+  }
+  out
+}
+
+fn om_family(f: Family, now_ms: Int) -> List[Str] {
+  let counter = f.kind == 0
+  let total = counter && f.name.ends_with("_total")
+  let fam = if total { f.name[0..f.name.len() - 6] } else { f.name }
+  let word = if counter && !total { "unknown" } else if f.kind == 4 { "unknown" } else { kind_name(f.kind) }
+  var body: List[Str] = []
+  // a sample: its name, extra pairs, value, timestamp and exemplar
+  let line = fn(name: Str, values: List[Str], extra: Str, v: Str, ts: Str, ex: Exemplar?) -> Str {
+    "${head(name, f.consts, f.labels, values, extra)} ${v}${ts}${om_exemplar(ex)}"
+  }
+  if let Some(read) = f.reads.get(0) {
+    var ss = read().sort_by(fn(x: Sample) -> Str { x.values.join(SEP) })
+    for x in ss {
+      if x.values.len() != f.labels.len() {
+        fault("metrics: ${f.name} has ${f.labels.len()} labels, a sample has ${x.values.len()} values")
+      }
+      let ts = match x.timestamp {
+        Some(t) => " ${om_num(Float(t.unix_millis()) / 1000.0)}"
+        None => ""
+      }
+      if f.kind == 2 {
+        var bs = x.buckets.sort_by(fn(b: (Float, Int)) -> Float { b.0 })
+        var bounds: List[Float] = []
+        for (b, _) in bs {
+          if b != Float.inf {
+            bounds.push(b)
+          }
+        }
+        var exs: Map[Int, Exemplar] = {}
+        for e in x.exemplars {
+          exs[bucket_of(bounds, e.value)] = e
+        }
+        for (i, b) in bounds.indexed() {
+          body.push(line("${fam}_bucket", x.values, "le=\"${om_num(b)}\"", "${bs[i].1}", ts, exs.get(i)))
+        }
+        body.push(line("${fam}_bucket", x.values, "le=\"+Inf\"", "${x.count}", ts, exs.get(bounds.len())))
+        body.push(line("${fam}_sum", x.values, "", om_num(x.sum), ts, None))
+        body.push(line("${fam}_count", x.values, "", "${x.count}", ts, None))
+      } else if f.kind == 3 {
+        for (q, v) in x.quantiles.sort_by(fn(p: (Float, Float)) -> Float { p.0 }) {
+          body.push(line(fam, x.values, "quantile=\"${om_num(q)}\"", om_num(v), ts, None))
+        }
+        body.push(line("${fam}_sum", x.values, "", om_num(x.sum), ts, None))
+        body.push(line("${fam}_count", x.values, "", "${x.count}", ts, None))
+      } else {
+        let name = if total { "${fam}_total" } else { fam }
+        body.push(line(name, x.values, "", om_num(x.value), ts, if counter { x.exemplars.get(0) } else { None }))
+      }
+    }
+  } else {
+    var m = series_snapshot(f)
+    if m.is_empty() && f.labels.is_empty() {
+      m[""] = new_series([], f.bounds.len(), f.kind, f.age_buckets)
+    }
+    let exm = f.ex.with_read(fn(x: Map[Str, Map[Int, Exemplar]]) -> Map[Str, Map[Int, Exemplar]] { x })
+    for k in m.keys().sort() {
+      let s = m.get(k) ?? fault("metrics: series ${k} not in its own map")
+      let exs = exm.get(k) ?? {}
+      if f.kind < 2 {
+        let v = if f.kind == 0 { counter_value(s.cells) } else { load(s.cells[0]) }
+        let name = if total { "${fam}_total" } else { fam }
+        body.push(line(name, s.values, "", om_num(v), "", if counter { exs.get(0) } else { None }))
+      } else if f.kind == 3 {
+        // the quantiles as the 0.0.4 text computes them
+        for l in expose_parts_summary(f, s, now_ms) {
+          body.push(l)
+        }
+        body.push(line("${fam}_sum", s.values, "", om_num(load(s.cells[2])), "", None))
+        body.push(line("${fam}_count", s.values, "", "${s.cells[1].get()}", "", None))
+      } else {
+        var upto = 0
+        for (i, b) in f.bounds.indexed() {
+          upto += s.cells[3 + i].get()
+          body.push(line("${fam}_bucket", s.values, "le=\"${om_num(b)}\"", "${upto}", "", exs.get(i)))
+        }
+        let n = s.cells[1].get()
+        body.push(line("${fam}_bucket", s.values, "le=\"+Inf\"", "${n}", "", exs.get(f.bounds.len())))
+        body.push(line("${fam}_sum", s.values, "", om_num(load(s.cells[2])), "", None))
+        body.push(line("${fam}_count", s.values, "", "${n}", "", None))
+      }
+    }
+  }
+  if body.is_empty() {
+    return []
+  }
+  var out = ["# HELP ${fam} ${escape_label(f.help)}", "# TYPE ${fam} ${word}"]
+  for l in body {
+    out.push(l)
+  }
+  out
+}
+
+/// The protobuf exposition (client_model's MetricFamily messages, each
+/// preceded by its length as a varint: expfmt's FmtProtoDelim), the only
+/// one that carries native histograms. Families and series are as in
+/// `text`, exemplars and created times included.
+pub fn (r: Registry) protobuf(now: Time? = None) -> Bytes {
+  let fs = r.families.with_read(fn(l: List[Family]) -> List[Family] { l })
+  let now_ms = match now {
+    Some(t) => t.unix_millis()
+    None => 0
+  }
+  var out = BytesBuilder.new()
+  for f in fs {
+    let pf = pb_family(f, now_ms)
+    if pf.metric.is_empty() {
+      continue
+    }
+    let b = pb_enc_family(pf)
+    uvarint(out, b.len())
+    out.write(b)
+  }
+  let dropped = PbFamily{name: Some("xo_metrics_dropped_total"), help: Some("Series dropped past the per instrument limit."), kind: Some(0), metric: [PbMetric{counter: Some(PbCounter{value: Some(Float(r.dropped.get()))})}]}
+  let d = pb_enc_family(dropped)
+  uvarint(out, d.len())
+  out.write(d)
+  out.freeze()
+}
+
+/// The Accept and Content-Type of the protobuf exposition.
+pub const PROTOBUF_TYPE: Str = "application/vnd.google.protobuf; proto=io.prometheus.client.MetricFamily; encoding=delimited"
+
+fn uvarint(var b: BytesBuilder, n0: Int) {
+  var n = n0
+  while n >= 128 {
+    b.write_byte(UInt8.wrapping_from(n % 128 + 128))
+    n = n / 128
+  }
+  b.write_byte(UInt8.wrapping_from(n))
+}
+
+/// client_model's messages (metrics.proto), written by pb_* below: std/metrics
+/// encodes them itself (its types are also the Go backend's, which has no
+/// derive Proto codec for a std type file).
+struct PbLabelPair {
+  name: Str? = None
+  value: Str? = None
+}
+
+struct PbTimestamp {
+  seconds: Int = 0
+  nanos: Int32 = 0
+}
+
+struct PbExemplar {
+  label: List[PbLabelPair] = []
+  value: Float? = None
+  timestamp: PbTimestamp? = None
+}
+
+struct PbGauge { value: Float? = None }
+
+struct PbUntyped { value: Float? = None }
+
+struct PbCounter {
+  value: Float? = None
+  exemplar: PbExemplar? = None
+  created_timestamp: PbTimestamp? = None
+}
+
+struct PbQuantile {
+  quantile: Float? = None
+  value: Float? = None
+}
+
+struct PbSummary {
+  sample_count: UInt64? = None
+  sample_sum: Float? = None
+  quantile: List[PbQuantile] = []
+  created_timestamp: PbTimestamp? = None
+}
+
+struct PbBucket {
+  cumulative_count: UInt64? = None
+  upper_bound: Float? = None
+  exemplar: PbExemplar? = None
+}
+
+struct PbSpan {
+  offset: Int32? = None
+  length: UInt32? = None
+}
+
+struct PbHistogram {
+  sample_count: UInt64? = None
+  sample_sum: Float? = None
+  bucket: List[PbBucket] = []
+  schema: Int32? = None
+  zero_threshold: Float? = None
+  zero_count: UInt64? = None
+  negative_span: List[PbSpan] = []
+  negative_delta: List[Int] = []
+  positive_span: List[PbSpan] = []
+  positive_delta: List[Int] = []
+  created_timestamp: PbTimestamp? = None
+}
+
+struct PbMetric {
+  label: List[PbLabelPair] = []
+  gauge: PbGauge? = None
+  counter: PbCounter? = None
+  summary: PbSummary? = None
+  untyped: PbUntyped? = None
+  timestamp_ms: Int? = None
+  histogram: PbHistogram? = None
+}
+
+struct PbFamily {
+  name: Str? = None
+  help: Str? = None
+  kind: Int? = None
+  metric: List[PbMetric] = []
+}
+
+/// A protobuf writer: a field's key, varints (a negative Int as its 64 bit
+/// two's complement, as Go's int64), zigzag, doubles and messages.
+fn pb_key(var b: BytesBuilder, field: Int, wt: Int) {
+  uvarint(b, field * 8 + wt)
+}
+
+fn pb_varint(var b: BytesBuilder, field: Int, v: Int) {
+  pb_key(b, field, 0)
+  if v >= 0 {
+    uvarint(b, v)
+    return
+  }
+  for i in 0..9 {
+    b.write_byte(UInt8.wrapping_from(((v >> (7 * i)) & 127) + 128))
+  }
+  b.write_byte(UInt8.wrapping_from(1))
+}
+
+fn zigzag(v: Int) -> Int {
+  if v >= 0 { v * 2 } else { 0 - v * 2 - 1 }
+}
+
+fn pb_double(var b: BytesBuilder, field: Int, v: Float) {
+  pb_key(b, field, 1)
+  b.write_le(v.to_bits(), 8)
+}
+
+fn pb_bytes(var b: BytesBuilder, field: Int, data: Bytes) {
+  pb_key(b, field, 2)
+  uvarint(b, data.len())
+  b.write(data)
+}
+
+/// A packed repeated field of zigzag varints (sint64).
+fn pb_packed_zigzag(var b: BytesBuilder, field: Int, vs: List[Int]) {
+  if vs.is_empty() {
+    return
+  }
+  var inner = BytesBuilder.new()
+  for v in vs {
+    uvarint(inner, zigzag(v))
+  }
+  pb_bytes(b, field, inner.freeze())
+}
+
+fn pb_enc_labels(var b: BytesBuilder, field: Int, ls: List[PbLabelPair]) {
+  for l in ls {
+    var m = BytesBuilder.new()
+    if let Some(n) = l.name {
+      pb_bytes(m, 1, n.bytes())
+    }
+    if let Some(v) = l.value {
+      pb_bytes(m, 2, v.bytes())
+    }
+    pb_bytes(b, field, m.freeze())
+  }
+}
+
+fn pb_enc_time(var b: BytesBuilder, field: Int, t: PbTimestamp?) {
+  if let Some(x) = t {
+    var m = BytesBuilder.new()
+    if x.seconds != 0 {
+      pb_varint(m, 1, x.seconds)
+    }
+    if Int(x.nanos) != 0 {
+      pb_varint(m, 2, Int(x.nanos))
+    }
+    pb_bytes(b, field, m.freeze())
+  }
+}
+
+fn pb_enc_exemplar(var b: BytesBuilder, field: Int, e: PbExemplar?) {
+  if let Some(x) = e {
+    var m = BytesBuilder.new()
+    pb_enc_labels(m, 1, x.label)
+    if let Some(v) = x.value {
+      pb_double(m, 2, v)
+    }
+    pb_enc_time(m, 3, x.timestamp)
+    pb_bytes(b, field, m.freeze())
+  }
+}
+
+fn pb_enc_spans(var b: BytesBuilder, field: Int, spans: List[PbSpan]) {
+  for sp in spans {
+    var m = BytesBuilder.new()
+    if let Some(o) = sp.offset {
+      pb_varint(m, 1, zigzag(Int(o)))
+    }
+    if let Some(l) = sp.length {
+      pb_varint(m, 2, Int(l))
+    }
+    pb_bytes(b, field, m.freeze())
+  }
+}
+
+fn pb_enc_metric(m: PbMetric) -> Bytes {
+  var b = BytesBuilder.new()
+  pb_enc_labels(b, 1, m.label)
+  if let Some(g) = m.gauge {
+    var x = BytesBuilder.new()
+    if let Some(v) = g.value {
+      pb_double(x, 1, v)
+    }
+    pb_bytes(b, 2, x.freeze())
+  }
+  if let Some(c) = m.counter {
+    var x = BytesBuilder.new()
+    if let Some(v) = c.value {
+      pb_double(x, 1, v)
+    }
+    pb_enc_exemplar(x, 2, c.exemplar)
+    pb_enc_time(x, 3, c.created_timestamp)
+    pb_bytes(b, 3, x.freeze())
+  }
+  if let Some(s) = m.summary {
+    var x = BytesBuilder.new()
+    if let Some(n) = s.sample_count {
+      pb_varint(x, 1, Int(n))
+    }
+    if let Some(v) = s.sample_sum {
+      pb_double(x, 2, v)
+    }
+    for q in s.quantile {
+      var y = BytesBuilder.new()
+      if let Some(v) = q.quantile {
+        pb_double(y, 1, v)
+      }
+      if let Some(v) = q.value {
+        pb_double(y, 2, v)
+      }
+      pb_bytes(x, 3, y.freeze())
+    }
+    pb_enc_time(x, 4, s.created_timestamp)
+    pb_bytes(b, 4, x.freeze())
+  }
+  if let Some(u) = m.untyped {
+    var x = BytesBuilder.new()
+    if let Some(v) = u.value {
+      pb_double(x, 1, v)
+    }
+    pb_bytes(b, 5, x.freeze())
+  }
+  if let Some(t) = m.timestamp_ms {
+    pb_varint(b, 6, t)
+  }
+  if let Some(h) = m.histogram {
+    var x = BytesBuilder.new()
+    if let Some(n) = h.sample_count {
+      pb_varint(x, 1, Int(n))
+    }
+    if let Some(v) = h.sample_sum {
+      pb_double(x, 2, v)
+    }
+    for bk in h.bucket {
+      var y = BytesBuilder.new()
+      if let Some(n) = bk.cumulative_count {
+        pb_varint(y, 1, Int(n))
+      }
+      if let Some(v) = bk.upper_bound {
+        pb_double(y, 2, v)
+      }
+      pb_enc_exemplar(y, 3, bk.exemplar)
+      pb_bytes(x, 3, y.freeze())
+    }
+    if let Some(sc) = h.schema {
+      pb_varint(x, 5, zigzag(Int(sc)))
+    }
+    if let Some(v) = h.zero_threshold {
+      pb_double(x, 6, v)
+    }
+    if let Some(n) = h.zero_count {
+      pb_varint(x, 7, Int(n))
+    }
+    pb_enc_spans(x, 9, h.negative_span)
+    pb_packed_zigzag(x, 10, h.negative_delta)
+    pb_enc_spans(x, 12, h.positive_span)
+    pb_packed_zigzag(x, 13, h.positive_delta)
+    pb_enc_time(x, 15, h.created_timestamp)
+    pb_bytes(b, 7, x.freeze())
+  }
+  b.freeze()
+}
+
+fn pb_enc_family(f: PbFamily) -> Bytes {
+  var b = BytesBuilder.new()
+  if let Some(n) = f.name {
+    pb_bytes(b, 1, n.bytes())
+  }
+  if let Some(h) = f.help {
+    pb_bytes(b, 2, h.bytes())
+  }
+  if let Some(k) = f.kind {
+    pb_varint(b, 3, k)
+  }
+  for m in f.metric {
+    pb_bytes(b, 4, pb_enc_metric(m))
+  }
+  b.freeze()
+}
+
+fn pb_time(t: Time?) -> PbTimestamp? {
+  match t {
+    Some(x) => {
+      let ns = x.unix_nanos()
+      let sec = if ns < 0 && ns % 1000000000 != 0 { ns / 1000000000 - 1 } else { ns / 1000000000 }
+      Some(PbTimestamp{seconds: sec, nanos: Int32.wrapping_from(ns - sec * 1000000000)})
+    }
+    None => None
+  }
+}
+
+fn pb_exemplar(e: Exemplar?) -> PbExemplar? {
+  match e {
+    Some(x) => {
+      var ls: List[PbLabelPair] = []
+      for k in x.labels.keys().sort() {
+        ls.push(PbLabelPair{name: Some(k), value: x.labels.get(k)})
+      }
+      Some(PbExemplar{label: ls, value: Some(x.value), timestamp: pb_time(x.at)})
+    }
+    None => None
+  }
+}
+
+fn pb_labels(f: Family, values: List[Str]) -> List[PbLabelPair] {
+  var ps: List[(Str, Str)] = f.consts
+  for (i, l) in f.labels.indexed() {
+    ps.push((l, values[i]))
+  }
+  ps.sort_by(fn(p: (Str, Str)) -> Str { p.0 }).map(fn(p: (Str, Str)) -> PbLabelPair { PbLabelPair{name: Some(p.0), value: Some(p.1)} })
+}
+
+/// makeBucketsFromMap: spans (a gap of more than two buckets starts a new
+/// one, smaller gaps are empty buckets) and the count deltas.
+fn pb_spans(buckets: Map[Int, Int]) -> (List[PbSpan], List[Int]) {
+  var spans: List[PbSpan] = []
+  var lens: List[Int] = []
+  var offs: List[Int] = []
+  var deltas: List[Int] = []
+  var prev = 0
+  var next_i = 0
+  for (n, i) in buckets.keys().sort().indexed() {
+    let count = buckets.get(i) ?? 0
+    let gap = i - next_i
+    if n == 0 || gap > 2 {
+      offs.push(gap)
+      lens.push(0)
+    } else {
+      for _ in 0..gap {
+        lens[lens.len() - 1] += 1
+        deltas.push(0 - prev)
+        prev = 0
+      }
+    }
+    lens[lens.len() - 1] += 1
+    deltas.push(count - prev)
+    prev = count
+    next_i = i + 1
+  }
+  for (k, o) in offs.indexed() {
+    spans.push(PbSpan{offset: Some(Int32.wrapping_from(o)), length: Some(UInt32.wrapping_from(lens[k]))})
+  }
+  (spans, deltas)
+}
+
+fn pb_family(f: Family, now_ms: Int) -> PbFamily {
+  let kind = if f.kind == 0 { 0 } else if f.kind == 1 { 1 } else if f.kind == 3 { 2 } else if f.kind == 4 { 3 } else { 4 }
+  var ms: List[PbMetric] = []
+  if let Some(read) = f.reads.get(0) {
+    for x in read().sort_by(fn(x: Sample) -> Str { x.values.join(SEP) }) {
+      if x.values.len() != f.labels.len() {
+        fault("metrics: ${f.name} has ${f.labels.len()} labels, a sample has ${x.values.len()} values")
+      }
+      var m = PbMetric{label: pb_labels(f, x.values), timestamp_ms: match x.timestamp {
+        Some(t) => Some(t.unix_millis())
+        None => None
+      }}
+      let created = if f.kind == 1 || f.kind == 4 { None } else { pb_time(x.created) }
+      if f.kind == 0 {
+        m.counter = Some(PbCounter{value: Some(x.value), exemplar: pb_exemplar(x.exemplars.get(0)), created_timestamp: created})
+      } else if f.kind == 1 {
+        m.gauge = Some(PbGauge{value: Some(x.value)})
+      } else if f.kind == 4 {
+        m.untyped = Some(PbUntyped{value: Some(x.value)})
+      } else if f.kind == 3 {
+        let qs = x.quantiles.sort_by(fn(p: (Float, Float)) -> Float { p.0 }).map(fn(p: (Float, Float)) -> PbQuantile { PbQuantile{quantile: Some(p.0), value: Some(p.1)} })
+        m.summary = Some(PbSummary{sample_count: Some(UInt64.wrapping_from(x.count)), sample_sum: Some(x.sum), quantile: qs, created_timestamp: created})
+      } else {
+        var bounds: List[Float] = []
+        var bs: List[PbBucket] = []
+        let sorted = x.buckets.sort_by(fn(b: (Float, Int)) -> Float { b.0 })
+        for (b, _) in sorted {
+          if b != Float.inf {
+            bounds.push(b)
+          }
+        }
+        var exs: Map[Int, Exemplar] = {}
+        for e in x.exemplars {
+          exs[bucket_of(bounds, e.value)] = e
+        }
+        for (i, b) in bounds.indexed() {
+          bs.push(PbBucket{cumulative_count: Some(UInt64.wrapping_from(sorted[i].1)), upper_bound: Some(b), exemplar: pb_exemplar(exs.get(i))})
+        }
+        var h = PbHistogram{sample_count: Some(UInt64.wrapping_from(x.count)), sample_sum: Some(x.sum), bucket: bs, created_timestamp: created}
+        if let Some(nh) = x.native {
+          let (ns, nd) = pb_spans(nh.negative)
+          let (ps, pd) = pb_spans(nh.positive)
+          h.schema = Some(Int32.wrapping_from(nh.schema))
+          h.zero_threshold = Some(nh.zero_threshold)
+          h.zero_count = Some(UInt64.wrapping_from(nh.zero_count))
+          h.negative_span = ns
+          h.negative_delta = nd
+          h.positive_span = ps
+          h.positive_delta = pd
+          // Go's no-op span: a native histogram with nothing to show
+          // still reads as native
+          if nh.zero_threshold == 0.0 && nh.zero_count == 0 && ps.is_empty() && ns.is_empty() {
+            h.positive_span = [PbSpan{offset: Some(Int32.wrapping_from(0)), length: Some(UInt32.wrapping_from(0))}]
+          }
+        }
+        m.histogram = Some(h)
+      }
+      ms.push(m)
+    }
+  } else {
+    var sm = series_snapshot(f)
+    if sm.is_empty() && f.labels.is_empty() {
+      sm[""] = new_series([], f.bounds.len(), f.kind, f.age_buckets)
+    }
+    let exm = f.ex.with_read(fn(x: Map[Str, Map[Int, Exemplar]]) -> Map[Str, Map[Int, Exemplar]] { x })
+    for k in sm.keys().sort() {
+      let s = sm.get(k) ?? fault("metrics: series ${k} not in its own map")
+      let exs = exm.get(k) ?? {}
+      var m = PbMetric{label: pb_labels(f, s.values)}
+      if f.kind == 0 {
+        m.counter = Some(PbCounter{value: Some(counter_value(s.cells)), exemplar: pb_exemplar(exs.get(0))})
+      } else if f.kind == 1 {
+        m.gauge = Some(PbGauge{value: Some(load(s.cells[0]))})
+      } else if f.kind == 3 {
+        let qs = summary_quantiles(f, s, now_ms)
+        var pq: List[PbQuantile] = []
+        for (i, (q, _)) in f.objectives.indexed() {
+          pq.push(PbQuantile{quantile: Some(q), value: Some(qs[i])})
+        }
+        m.summary = Some(PbSummary{sample_count: Some(UInt64.wrapping_from(s.cells[1].get())), sample_sum: Some(load(s.cells[2])), quantile: pq})
+      } else {
+        var bs: List[PbBucket] = []
+        var upto = 0
+        for (i, b) in f.bounds.indexed() {
+          upto += s.cells[3 + i].get()
+          bs.push(PbBucket{cumulative_count: Some(UInt64.wrapping_from(upto)), upper_bound: Some(b), exemplar: pb_exemplar(exs.get(i))})
+        }
+        if let Some(e) = exs.get(f.bounds.len()) {
+          // Go adds the +Inf bucket when it holds an exemplar
+          bs.push(PbBucket{cumulative_count: Some(UInt64.wrapping_from(s.cells[1].get())), upper_bound: Some(Float.inf), exemplar: pb_exemplar(Some(e))})
+        }
+        m.histogram = Some(PbHistogram{sample_count: Some(UInt64.wrapping_from(s.cells[1].get())), sample_sum: Some(load(s.cells[2])), bucket: bs})
+      }
+      ms.push(m)
+    }
+  }
+  PbFamily{name: Some(f.name), help: Some(f.help), kind: Some(kind), metric: ms}
+}
+
+/// Errors gathered from several registries (client_golang's MultiError):
+/// `display` is Go's text (`N error(s) occurred:` and a `* ` line each).
+pub struct MultiError {
+  pub errors: List[MetricsErr] = []
+}
+
+pub fn (m: MultiError) display() -> Str {
+  if m.errors.is_empty() {
+    return ""
+  }
+  var out = "${m.errors.len()} error(s) occurred:"
+  for e in m.errors {
+    out = out + "\n* ${e.msg}"
+  }
+  out
+}
+
+/// Adds an error (Append).
+pub fn (var m: MultiError) append(e: MetricsErr) {
+  m.errors.push(e)
+}
+
+/// The text exposition of several registries as one scrape (client_golang's
+/// Gatherers): families of one name are merged, the first of a name giving
+/// its help and type
+/// appear. A family whose help or
+/// type differs from the first of its name is left out, and so is a series
+/// whose label pairs (constant labels included) another registry gave
+/// already: each is an error, with Go's texts, and the rest is still
+/// gathered, so the text and the errors come back together. As Go's
+/// Gather, the families are sorted by name and a family's series by their
+/// label values (a series with fewer labels first). The registries'
+/// `xo_metrics_dropped_total` are summed into one series.
+pub fn gather(registries: List[Registry], now: Time? = None) -> (Str, MultiError) {
+  let now_ms = match now {
+    Some(t) => t.unix_millis()
+    None => 0
+  }
+  var errs = MultiError{}
+  var order: List[Str] = []
+  var first: Map[Str, Family] = {}
+  var groups: Map[Str, List[(Str, List[Str])]] = {}
+  var seen: Map[Str, Bool] = {}
+  var dropped = 0
+  for r in registries {
+    dropped += r.dropped.get()
+    let fs = r.families.with_read(fn(l: List[Family]) -> List[Family] { l })
+    for f in fs {
+      if let Some(g) = first.get(f.name) {
+        if g.help != f.help {
+          errs.append(MetricsErr{msg: "gathered metric family ${f.name} has help ${f.help.quote()} but should have ${g.help.quote()}"})
+          continue
+        }
+        if g.kind != f.kind {
+          errs.append(MetricsErr{msg: "gathered metric family ${f.name} has type ${kind_name(f.kind)} but should have ${kind_name(g.kind)}"})
+          continue
+        }
+      }
+      for (k, ls) in expose_parts(f, now_ms) {
+        let id = series_id(f, k)
+        if seen.get("${f.name}${id}") != None {
+          errs.append(MetricsErr{msg: "collected metric ${f.name} ${id} was collected before with the same name and label values"})
+          continue
+        }
+        seen["${f.name}${id}"] = true
+        if first.get(f.name) is None {
+          first[f.name] = f
+          order.push(f.name)
+          groups[f.name] = []
+        }
+        var have = groups.get(f.name) ?? []
+        have.push((sort_key(f, k), ls))
+        groups[f.name] = have
+      }
+    }
+  }
+  var out: List[Str] = []
+  for name in order.sort() {
+    let f = first.get(name) ?? fault("metrics: family ${name} not in its own map")
+    out.push("# HELP ${name} ${escape_help(f.help)}")
+    out.push("# TYPE ${name} ${kind_name(f.kind)}")
+    let gs = (groups.get(name) ?? []).sort_by(fn(g: (Str, List[Str])) -> Str { g.0 })
+    for (_, ls) in gs {
+      for l in ls {
+        out.push(l)
+      }
+    }
+  }
+  out.push("# HELP xo_metrics_dropped_total Series dropped past the per instrument limit.")
+  out.push("# TYPE xo_metrics_dropped_total counter")
+  out.push("xo_metrics_dropped_total ${dropped}")
+  ("${out.join("\n")}\n", errs)
+}
+
+/// The type word of a family kind in the exposition.
+fn kind_name(kind: Int) -> Str {
+  if kind == 0 { "counter" } else if kind == 1 { "gauge" } else if kind == 2 { "histogram" } else if kind == 3 { "summary" } else { "untyped" }
+}
+
+/// The pairs of a series, constant labels included, sorted by name.
+fn series_pairs(f: Family, key: Str) -> List[(Str, Str)] {
+  var pairs = f.consts
+  let values = if f.labels.is_empty() { [] } else if f.labels.len() == 1 { [key] } else { key.split(SEP) }
+  for (i, l) in f.labels.indexed() {
+    pairs.push((l, values[i]))
+  }
+  pairs.sort_by(fn(p: (Str, Str)) -> Str { p.0 })
+}
+
+/// Go's MetricSorter as a key: the label count, then the values in label
+/// name order.
+fn sort_key(f: Family, key: Str) -> Str {
+  let ps = series_pairs(f, key)
+  "${"${ps.len()}".pad_left(4, "0")}${SEP}${ps.map(fn(p: (Str, Str)) -> Str { p.1 }).join(SEP)}"
+}
+
+/// A series' label pairs, constant ones included, sorted by name: what
+/// makes two registries' series the same (Go's checkMetricConsistency).
+fn series_id(f: Family, key: Str) -> Str {
+  "{${series_pairs(f, key).map(fn(p: (Str, Str)) -> Str { "${p.0}=${p.1.quote()}" }).join(",")}}"
+}
+
+/// A content encoding the handler offers (client_golang's promhttp
+/// Compression): the request's Accept-Encoding picks one.
+pub enum Compression { Identity, Gzip }
+
 /// A handler answering `text()` as `text/plain; version=0.0.4`:
-/// `router.handle("GET /metrics", reg.handler())`.
-pub fn (r: Registry) handler() -> fn(http.Request) -> http.Response uses sync {
-  fn(_req) -> http.Response {
-    http.Response{status: 200, headers: {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"}, body: r.text().bytes()}
+/// `router.handle("GET /metrics", reg.handler())`. The body is gzip
+/// compressed (`Content-Encoding: gzip`) when the request accepts gzip and
+/// `offer` has it, as promhttp's handler negotiates (its default offers
+/// gzip and identity); an encoding the request refuses (`q=0`) is not
+/// picked, and identity is the fallback. With `open_metrics` (promhttp's
+/// EnableOpenMetrics), a request whose Accept names
+/// `application/openmetrics-text` gets `open_metrics()`, exemplars
+/// included.
+pub fn (r: Registry) handler(offer: List[Compression] = [Compression.Gzip, Compression.Identity], open_metrics: Bool = false) -> fn(http.Request) -> http.Response uses sync {
+  fn(req) -> http.Response {
+    if wants_pb(req) {
+      return encoded_as(req, offer, r.protobuf(), PROTOBUF_TYPE)
+    }
+    let om = open_metrics && wants_om(req)
+    encoded(req, offer, if om { r.open_metrics().bytes() } else { r.text().bytes() }, om)
   }
 }
 
 /// handler, each scrape passing the clock's time to text (summaries age).
-pub fn (r: Registry) handler_at(clock: Clock) -> fn(http.Request) -> http.Response uses (clock, sync) {
-  fn(_req) -> http.Response {
-    http.Response{status: 200, headers: {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"}, body: r.text(Some(clock.now())).bytes()}
+pub fn (r: Registry) handler_at(clock: Clock, offer: List[Compression] = [Compression.Gzip, Compression.Identity], open_metrics: Bool = false) -> fn(http.Request) -> http.Response uses (clock, sync) {
+  fn(req) -> http.Response {
+    let now = Some(clock.now())
+    if wants_pb(req) {
+      return encoded_as(req, offer, r.protobuf(now), PROTOBUF_TYPE)
+    }
+    let om = open_metrics && wants_om(req)
+    encoded(req, offer, if om { r.open_metrics(now).bytes() } else { r.text(now).bytes() }, om)
   }
+}
+
+/// Whether the scraper asks for the protobuf exposition first: Prometheus
+/// lists it first in Accept when native histograms are on.
+fn wants_pb(req: http.Request) -> Bool {
+  let a = req.headers.get("Accept") ?? req.headers.get("accept") ?? ""
+  a.split(",")[0].contains("application/vnd.google.protobuf") && a.contains("io.prometheus.client.MetricFamily")
+}
+
+fn wants_om(req: http.Request) -> Bool {
+  (req.headers.get("Accept") ?? req.headers.get("accept") ?? "").contains("application/openmetrics-text")
+}
+
+/// The response with the body in the encoding negotiated for req.
+fn encoded(req: http.Request, offer: List[Compression], body: Bytes, om: Bool) -> http.Response {
+  encoded_as(req, offer, body, if om { "application/openmetrics-text; version=1.0.0; charset=utf-8" } else { "text/plain; version=0.0.4; charset=utf-8" })
+}
+
+fn encoded_as(req: http.Request, offer: List[Compression], body: Bytes, ct: Str) -> http.Response {
+  if negotiate(req.headers.get("Accept-Encoding") ?? req.headers.get("accept-encoding") ?? "", offer) is Compression.Gzip {
+    return http.Response{status: 200, headers: {"Content-Type": ct, "Content-Encoding": "gzip", "Vary": "Accept-Encoding"}, body: compress.gzip(body)}
+  }
+  http.Response{status: 200, headers: {"Content-Type": ct}, body: body}
+}
+
+/// The offered encoding with the highest q in an Accept-Encoding value
+/// (gddo's NegotiateContentEncoding, which promhttp uses): the first offer
+/// on a tie, `*` matching any, identity when nothing else is acceptable.
+fn negotiate(accept: Str, offer: List[Compression]) -> Compression {
+  var best = Compression.Identity
+  var best_q = -1.0
+  for o in offer {
+    let name = if o is Compression.Gzip { "gzip" } else { "identity" }
+    var q = -1.0
+    for part in accept.split(",") {
+      let fs = part.split(";")
+      let coding = fs[0].trim().to_lower()
+      if coding != name && coding != "*" {
+        continue
+      }
+      var v = 1.0
+      for f in fs[1..] {
+        let kv = f.trim()
+        if kv.starts_with("q=") || kv.starts_with("Q=") {
+          v = Float.parse(kv[2..].trim()) ?? 0.0
+        }
+      }
+      // an exact name outranks `*`
+      if coding == name || q < 0.0 {
+        q = v
+      }
+    }
+    if q > 0.0 && q > best_q {
+      best = o
+      best_q = q
+    }
+  }
+  best
 }
 
 /// A middleware (`router.wrap(reg.middleware(clock, label))`) that counts
@@ -628,10 +1671,26 @@ pub fn (r: Registry) handler_at(clock: Clock) -> fn(http.Request) -> http.Respon
 /// `http_in_flight`. `label` names the route of a request for the `route`
 /// label: pass a function that returns a bounded set (the matched pattern,
 /// or the path with ids cut), never the raw path of an API with ids.
-pub fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str) -> fn(http.Request, http.Next) -> http.Response uses (clock, sync) {
+///
+/// With `exemplar_of`, the labels it gives a request (a trace id; none for
+/// an empty map) are the exemplar of the request's count and latency
+/// (promhttp's WithExemplarFromContext), seen in `open_metrics`.
+///
+/// With `sizes`, it also observes `http_request_size_bytes{route}` (Go's
+/// approximate request size: URL, method, protocol, headers and body) and
+/// `http_response_size_bytes{route}` (the body), as promhttp's
+/// InstrumentHandlerRequestSize and InstrumentHandlerResponseSize, in
+/// `size_buckets()`. A handler returns its whole response, so the time
+/// to the header is `http_request_seconds` (InstrumentHandlerTimeToWriteHeader).
+pub fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str, sizes: Bool = false, exemplar_of: (fn(http.Request) -> Map[Str, Str])? = None) -> fn(http.Request, http.Next) -> http.Response uses (clock, sync) {
   let reqs = r.counter("http_requests_total", "Requests by method, route and status.", ["method", "route", "status"])
   let lat = r.histogram("http_request_seconds", "Request latency in seconds.", ["route"], latency_buckets())
   let inflight = r.gauge("http_in_flight", "Requests being served.")
+  let size_h: List[Histogram] = if sizes {
+    [r.histogram("http_request_size_bytes", "Approximate request sizes in bytes.", ["route"], size_buckets()), r.histogram("http_response_size_bytes", "Response body sizes in bytes.", ["route"], size_buckets())]
+  } else {
+    []
+  }
   fn(req, next) -> http.Response {
     let route = label(req)
     inflight.add(1.0)
@@ -639,9 +1698,232 @@ pub fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str) ->
     let resp = next(req)
     let secs = clock.since(t0).seconds()
     inflight.add(-1.0)
-    reqs.inc([req.method, route, "${resp.status}"])
-    lat.observe(secs, [route])
+    match exemplar_of {
+      Some(ef) => {
+        // promhttp's WithExemplarFromContext: the request's labels (a
+        // trace id) as the exemplar of its count and its latency
+        let ex = Exemplar{labels: ef(req), at: Some(clock.now())}
+        if ex.labels.is_empty() {
+          reqs.inc([req.method, route, "${resp.status}"])
+          lat.observe(secs, [route])
+        } else {
+          reqs.add_with_exemplar(1.0, ex, [req.method, route, "${resp.status}"])
+          lat.observe_with_exemplar(secs, ex, [route])
+        }
+      }
+      None => {
+        reqs.inc([req.method, route, "${resp.status}"])
+        lat.observe(secs, [route])
+      }
+    }
+    if size_h.len() == 2 {
+      size_h[0].observe(Float(request_size(req)), [route])
+      size_h[1].observe(Float(resp.body.len()), [route])
+    }
     resp
+  }
+}
+
+/// The runtime's memory as gauges (client_golang's NewGoCollector, for
+/// Xo's runtime): `xo_heap_bytes` (debug.mem_mapped, what the memory
+/// budget measures) and `xo_heap_peak_bytes` (debug.mem_peak), 0 on the Go
+/// backend.
+pub fn (r: Registry) runtime_collector() {
+  r.gauge_func("xo_heap_bytes", "Bytes the heap uses (debug.mem_mapped).", fn() -> Float uses sync { Float(debug.mem_mapped()) })
+  r.gauge_func("xo_heap_peak_bytes", "The most bytes the heap has used (debug.mem_peak).", fn() -> Float uses sync { Float(debug.mem_peak()) })
+}
+
+/// The process metrics of client_golang's NewProcessCollector that Xo can
+/// read: `process_cpu_seconds_total` (user and system CPU time),
+/// `process_max_resident_memory_bytes` (the peak resident set; Go reports
+/// the current one, which Proc.usage does not give) and
+/// `process_start_time_seconds`, each prefixed by `namespace_` when
+/// `namespace` is set (ProcessCollectorOpts.Namespace). A scrape time
+/// reader may use only `sync`, and reading the process needs `proc`, so
+/// the values are what the last `update` read: call it before a scrape
+/// or every few seconds from a task.
+pub struct ProcessCollector {
+  pub cpu_ns: Atomic[Int]
+  pub max_rss: Atomic[Int]
+}
+
+pub fn (r: Registry) process_collector(clock: Clock, namespace: Str = "") -> ProcessCollector uses clock {
+  let pc = ProcessCollector{cpu_ns: Atomic[Int].new(0), max_rss: Atomic[Int].new(0)}
+  let ns = if namespace.is_empty() { "" } else { "${namespace}_" }
+  let start = Float(clock.now().unix_millis()) / 1000.0
+  let cpu = pc.cpu_ns
+  let rss = pc.max_rss
+  r.counter_func("${ns}process_cpu_seconds_total", "Total user and system CPU time spent in seconds.", fn() -> Float uses sync { Float(cpu.get()) / 1e9 })
+  r.gauge_func("${ns}process_max_resident_memory_bytes", "Peak resident memory size in bytes.", fn() -> Float uses sync { Float(rss.get()) })
+  r.gauge_func("${ns}process_start_time_seconds", "Start time of the process since unix epoch in seconds.", fn() -> Float uses sync { start })
+  pc
+}
+
+/// Reads the process's CPU time and peak memory for the next scrapes.
+pub fn (pc: ProcessCollector) update(proc: Proc) uses proc {
+  let u = proc.usage()
+  pc.cpu_ns.set((u.user + u.system).nanos())
+  pc.max_rss.set(u.max_rss)
+}
+
+/// The pid in a pid file, as client_golang's NewPidFileFn reads it: the
+/// file's text, trimmed, as an Int.
+pub fn pid_from_file(fs: Fs, path: Str) -> Int ! MetricsErr uses fs.read {
+  let data = match fs.read(path) {
+    Ok(b) => b
+    Err(e) => return Err(MetricsErr{msg: "can't read pid file ${path.quote()}: ${e}"})
+  }
+  match Int.parse(data.to_str_lossy().trim()) {
+    Some(n) => Ok(n)
+    None => Err(MetricsErr{msg: "can't parse pid file ${path.quote()}"})
+  }
+}
+
+/// Another process's metrics read from /proc (client_golang's process
+/// collector with ProcessCollectorOpts.PidFn, through procfs; Linux only):
+/// `process_cpu_seconds_total`, `process_resident_memory_bytes`,
+/// `process_virtual_memory_bytes` and `process_start_time_seconds`, as of
+/// the last `update(fs, pid)`.
+pub struct PidCollector {
+  pub cpu_ms: Atomic[Int]
+  pub rss: Atomic[Int]
+  pub vsize: Atomic[Int]
+  pub start_ms: Atomic[Int]
+}
+
+pub fn (r: Registry) pid_collector(namespace: Str = "") -> PidCollector {
+  let pc = PidCollector{cpu_ms: Atomic[Int].new(0), rss: Atomic[Int].new(0), vsize: Atomic[Int].new(0), start_ms: Atomic[Int].new(0)}
+  let ns = if namespace.is_empty() { "" } else { "${namespace}_" }
+  let cpu = pc.cpu_ms
+  let rss = pc.rss
+  let vs = pc.vsize
+  let st = pc.start_ms
+  r.counter_func("${ns}process_cpu_seconds_total", "Total user and system CPU time spent in seconds.", fn() -> Float uses sync { Float(cpu.get()) / 1000.0 })
+  r.gauge_func("${ns}process_resident_memory_bytes", "Resident memory size in bytes.", fn() -> Float uses sync { Float(rss.get()) })
+  r.gauge_func("${ns}process_virtual_memory_bytes", "Virtual memory size in bytes.", fn() -> Float uses sync { Float(vs.get()) })
+  r.gauge_func("${ns}process_start_time_seconds", "Start time of the process since unix epoch in seconds.", fn() -> Float uses sync { Float(st.get()) / 1000.0 })
+  pc
+}
+
+/// Reads /proc/PID/stat, /proc/PID/status and /proc/stat for the next
+/// scrapes. Without /proc (an OS other than Linux) or for a pid with no
+/// process, an error, and the values stay as they were.
+pub fn (pc: PidCollector) update(fs: Fs, pid: Int) -> () ! MetricsErr uses fs.read {
+  let stat = proc_text(fs, "/proc/${pid}/stat")?
+  let status = proc_text(fs, "/proc/${pid}/status")?
+  let boot = proc_text(fs, "/proc/stat")?
+  let ps = parse_proc_stat(stat)?
+  let btime = parse_btime(boot)?
+  pc.cpu_ms.set((ps.0 + ps.1) * 10)
+  pc.vsize.set(ps.3)
+  pc.start_ms.set(btime * 1000 + ps.2 * 10)
+  pc.rss.set(parse_vmrss(status)?)
+  Ok(())
+}
+
+fn proc_text(fs: Fs, path: Str) -> Str ! MetricsErr uses fs.read {
+  match fs.read(path) {
+    Ok(b) => Ok(b.to_str_lossy())
+    Err(e) => Err(MetricsErr{msg: "process metrics need ${path}: ${e}"})
+  }
+}
+
+/// /proc/PID/stat's utime, stime and starttime (clock ticks, 100 a second
+/// as procfs takes them) and vsize (bytes): the fields after the command,
+/// whose parentheses may hold spaces.
+fn parse_proc_stat(text: Str) -> (Int, Int, Int, Int) ! MetricsErr {
+  let at = text.rfind(")") ?? return Err(MetricsErr{msg: "malformed /proc stat"})
+  let fs = text[at + 1..].trim().split(" ")
+  if fs.len() < 21 {
+    return Err(MetricsErr{msg: "malformed /proc stat"})
+  }
+  let n = fn(i: Int) -> Int { Int.parse(fs[i]) ?? 0 }
+  // fs[0] is field 3 (state): utime 14, stime 15, starttime 22, vsize 23
+  Ok((n(11), n(12), n(19), n(20)))
+}
+
+/// The boot time (btime) of /proc/stat in seconds.
+fn parse_btime(text: Str) -> Int ! MetricsErr {
+  for l in text.split("\n") {
+    if l.starts_with("btime ") {
+      if let Some(v) = Int.parse(l[6..].trim()) {
+        return Ok(v)
+      }
+    }
+  }
+  Err(MetricsErr{msg: "no btime in /proc/stat"})
+}
+
+/// VmRSS of /proc/PID/status in bytes (its kB times 1024).
+fn parse_vmrss(text: Str) -> Int ! MetricsErr {
+  for l in text.split("\n") {
+    if l.starts_with("VmRSS:") {
+      let v = l[6..].trim().split(" ")[0]
+      if let Some(kb) = Int.parse(v) {
+        return Ok(kb * 1024)
+      }
+    }
+  }
+  Err(MetricsErr{msg: "no VmRSS in /proc status"})
+}
+
+/// `xo_build_info{path,version,checksum} 1` (client_golang's
+/// NewBuildInfoCollector, whose go_build_info reads the main module from
+/// the binary): Xo's binaries hold no module record, so main passes it;
+/// "unknown" for what it leaves out, as Go's.
+pub fn (r: Registry) build_info(path: Str = "unknown", version: Str = "unknown", checksum: Str = "unknown") {
+  r.collector("xo_build_info", "Build information about the main Xo module.", Kind.Gauge, ["checksum", "path", "version"], fn() -> List[Sample] uses sync {
+    [Sample{values: [checksum, path, version], value: 1.0}]
+  })
+}
+
+/// Byte size buckets, 100 to 100 MB by tens (exponential_buckets(100, 10, 7)).
+pub fn size_buckets() -> List[Float] {
+  exponential_buckets(100.0, 10.0, 7)
+}
+
+/// Go's computeApproximateRequestSize: the request URI (the path, and the
+/// query as `?k=v&...`), method, protocol (counted as HTTP/1.1), header
+/// names and values, and the body.
+fn request_size(req: http.Request) -> Int {
+  var n = req.path.len() + req.method.len() + 8
+  // each pair is `?` or `&`, the key, `=` and the value
+  for (k, v) in req.url.query {
+    n += k.len() + v.len() + 2
+  }
+  for (k, v) in req.headers {
+    n += k.len() + v.len()
+  }
+  n + req.body.len()
+}
+
+/// A client send that counts and times each request (promhttp's
+/// InstrumentRoundTripperCounter, InstrumentRoundTripperDuration and
+/// InstrumentRoundTripperInFlight; the returned function is the
+/// RoundTripperFunc): `http_client_requests_total{method,code}` (code is
+/// the status, or `error` when the send failed),
+/// `http_client_request_seconds{method}` and `http_client_in_flight`.
+pub fn (r: Registry) client_send(clock: Clock) -> fn(http.Client, http.Request) -> http.Response ! http.ClientErr uses (clock, net.dial, sync) {
+  let reqs = r.counter("http_client_requests_total", "Client requests by method and status.", ["method", "code"])
+  let lat = r.histogram("http_client_request_seconds", "Client request latency in seconds.", ["method"], latency_buckets())
+  let inflight = r.gauge("http_client_in_flight", "Client requests in flight.")
+  fn(c: http.Client, req: http.Request) -> http.Response ! http.ClientErr uses (clock, net.dial, sync) {
+    inflight.add(1.0)
+    let t0 = clock.now()
+    let res = c.send(req)
+    let secs = clock.since(t0).seconds()
+    inflight.add(-1.0)
+    lat.observe(secs, [req.method])
+    match res {
+      Ok(resp) => {
+        reqs.inc([req.method, "${resp.status}"])
+        Ok(resp)
+      }
+      Err(e) => {
+        reqs.inc([req.method, "error"])
+        Err(e)
+      }
+    }
   }
 }
 
@@ -664,7 +1946,8 @@ fn valid_name(s: Str, colon: Bool) -> Bool {
   true
 }
 
-fn make(r: Registry, kind: Int, name: Str, help: Str, labels: List[Str], bounds: List[Float], reads: List[fn() -> List[Sample] uses sync] = [], objectives: List[(Float, Float)] = [], max_age_ms: Int = 0, age_buckets: Int = 0, constraints: Map[Str, fn(Str) -> Str] = {}) -> Family {
+fn make(r: Registry, kind: Int, name0: Str, help: Str, labels: List[Str], bounds: List[Float], reads: List[fn() -> List[Sample] uses sync] = [], objectives: List[(Float, Float)] = [], max_age_ms: Int = 0, age_buckets: Int = 0, constraints: Map[Str, fn(Str) -> Str] = {}) -> Family {
+  let name = r.prefix + name0
   if !valid_name(name, true) {
     fault("metrics: invalid metric name ${name.quote()}")
   }
@@ -679,6 +1962,11 @@ fn make(r: Registry, kind: Int, name: Str, help: Str, labels: List[Str], bounds:
       constrain.push((i, c))
     }
   }
+  for (k, _) in r.consts {
+    if labels.contains(k) {
+      fault("metrics: ${name} has a label ${k.quote()} the wrapped registry sets")
+    }
+  }
   if constrain.len() != constraints.len() {
     fault("metrics: a label constraint names a label ${name} does not have")
   }
@@ -687,7 +1975,7 @@ fn make(r: Registry, kind: Int, name: Str, help: Str, labels: List[Str], bounds:
       fault("metrics: histogram buckets must increase")
     }
   }
-  let f = Family{name: name, help: help, kind: kind, labels: labels, bounds: bounds, series: Mutex[Store].new(Store{at: {}, list: []}), dropped: r.dropped, reads: reads, objectives: objectives, max_age_ms: max_age_ms, age_buckets: age_buckets, constrain: constrain}
+  let f = Family{name: name, help: help, kind: kind, labels: labels, bounds: bounds, series: Mutex[Store].new(Store{at: {}, list: []}), dropped: r.dropped, reads: reads, objectives: objectives, max_age_ms: max_age_ms, age_buckets: age_buckets, constrain: constrain, consts: r.consts, ex: Mutex[Map[Str, Map[Int, Exemplar]]].new({})}
   let dup = r.families.with(fn(var fs: List[Family]) -> Bool {
     for g in fs {
       if g.name == name {
@@ -726,6 +2014,9 @@ fn remove_series(f: Family, values: List[Str]) -> Bool {
     fault("metrics: ${f.name} has ${f.labels.len()} labels, got ${values.len()} values")
   }
   let key = key_of(values)
+  f.ex.with(fn(var m: Map[Str, Map[Int, Exemplar]]) {
+    let _e = m.remove(key)
+  })
   f.series.with(fn(var st: Store) -> Bool {
     match st.at.remove(key) {
       Some(i) => {
@@ -745,6 +2036,7 @@ fn remove_series(f: Family, values: List[Str]) -> Bool {
 
 fn reset_series(f: Family) {
   f.series.with(fn(var st: Store) { st = Store{at: {}, list: []} })
+  f.ex.with(fn(var m: Map[Str, Map[Int, Exemplar]]) { m = {} })
 }
 
 /// The key of a series' label values: one label's value itself (what join
@@ -1134,9 +2426,40 @@ fn escape_help(s: Str) -> Str {
   s.replace("\\", "\\\\").replace("\n", "\\n")
 }
 
+/// The lines of a collector's sample, by the family's kind, each with the
+/// sample's timestamp in milliseconds if it has one.
+fn sample_lines(f: Family, x: Sample) -> List[Str] {
+  let ts = match x.timestamp {
+    Some(t) => " ${t.unix_millis()}"
+    None => ""
+  }
+  var out: List[Str] = []
+  if f.kind == 2 {
+    var bs = x.buckets.sort_by(fn(b: (Float, Int)) -> Float { b.0 })
+    for (b, n) in bs {
+      if b != Float.inf {
+        out.push("${head("${f.name}_bucket", f.consts, f.labels, x.values, "le=\"${num(b)}\"")} ${n}${ts}")
+      }
+    }
+    out.push("${head("${f.name}_bucket", f.consts, f.labels, x.values, "le=\"+Inf\"")} ${x.count}${ts}")
+  } else if f.kind == 3 {
+    for (q, v) in x.quantiles.sort_by(fn(p: (Float, Float)) -> Float { p.0 }) {
+      out.push("${head(f.name, f.consts, f.labels, x.values, "quantile=\"${num(q)}\"")} ${num(v)}${ts}")
+    }
+  } else {
+    return ["${head(f.name, f.consts, f.labels, x.values, "")} ${num(x.value)}${ts}"]
+  }
+  out.push("${head("${f.name}_sum", f.consts, f.labels, x.values, "")} ${num(x.sum)}${ts}")
+  out.push("${head("${f.name}_count", f.consts, f.labels, x.values, "")} ${x.count}${ts}")
+  out
+}
+
 /// name{l1="v1",l2="v2"} with extra (already formatted pairs) appended.
-fn head(name: Str, labels: List[Str], values: List[Str], extra: Str) -> Str {
+fn head(name: Str, consts: List[(Str, Str)], labels: List[Str], values: List[Str], extra: Str) -> Str {
   var parts: List[Str] = []
+  for (k, v) in consts {
+    parts.push("${k}=\"${escape_label(v)}\"")
+  }
   for (i, l) in labels.indexed() {
     parts.push("${l}=\"${escape_label(values[i])}\"")
   }
@@ -1159,12 +2482,12 @@ fn expose(f: Family, now_ms: Int) -> List[Str] {
   }
   var out: List[Str] = []
   out.push("# HELP ${f.name} ${escape_help(f.help)}")
-  out.push("# TYPE ${f.name} ${if f.kind == 0 { "counter" } else if f.kind == 1 { "gauge" } else if f.kind == 2 { "histogram" } else { "summary" }}")
+  out.push("# TYPE ${f.name} ${kind_name(f.kind)}")
   out + body
 }
 
-fn expose_series(f: Family, now_ms: Int) -> List[Str] {
-  var out: List[Str] = []
+fn expose_parts(f: Family, now_ms: Int) -> List[(Str, List[Str])] {
+  var parts: List[(Str, List[Str])] = []
   if let Some(read) = f.reads.get(0) {
     // read at scrape time (GaugeFunc, CounterFunc, a Collector), sorted
     // by label values as the instruments' series are
@@ -1176,9 +2499,9 @@ fn expose_series(f: Family, now_ms: Int) -> List[Str] {
     }
     ss = ss.sort_by(fn(x: Sample) -> Str { x.values.join(SEP) })
     for x in ss {
-      out.push("${head(f.name, f.labels, x.values, "")} ${num(x.value)}")
+      parts.push((x.values.join(SEP), sample_lines(f, x)))
     }
-    return out
+    return parts
   }
   var m = series_snapshot(f)
   if m.is_empty() && f.labels.is_empty() {
@@ -1186,42 +2509,42 @@ fn expose_series(f: Family, now_ms: Int) -> List[Str] {
   }
   let keys = m.keys().sort()
   for k in keys {
+    var out: List[Str] = []
     // k is one of m's keys (a `?? continue` here generates Go that go vet
     // reports as unreachable code)
     let s = m.get(k) ?? fault("metrics: series ${k} not in its own map")
     if f.kind < 2 {
       let v = if f.kind == 0 { counter_value(s.cells) } else { load(s.cells[0]) }
-      out.push("${head(f.name, f.labels, s.values, "")} ${num(v)}")
+      out.push("${head(f.name, f.consts, f.labels, s.values, "")} ${num(v)}")
     } else if f.kind == 3 {
-      let objs = f.objectives
-      if !objs.is_empty() {
-        let qs = s.q[0].with(fn(var st: QState) -> List[Float] {
-          qdrain(st, objs)
-          if now_ms > 0 {
-            qrotate(st, now_ms, f.max_age_ms)
-          }
-          var vs: List[Float] = []
-          for (q, _) in objs {
-            vs.push(qquery(st.streams[st.head], q, objs))
-          }
-          vs
-        })
-        for (i, (q, _)) in objs.indexed() {
-          out.push("${head(f.name, f.labels, s.values, "quantile=\"${num(q)}\"")} ${num(qs[i])}")
-        }
+      let qs = summary_quantiles(f, s, now_ms)
+      for (i, (q, _)) in f.objectives.indexed() {
+        out.push("${head(f.name, f.consts, f.labels, s.values, "quantile=\"${num(q)}\"")} ${num(qs[i])}")
       }
-      out.push("${head("${f.name}_sum", f.labels, s.values, "")} ${num(load(s.cells[2]))}")
-      out.push("${head("${f.name}_count", f.labels, s.values, "")} ${s.cells[1].get()}")
+      out.push("${head("${f.name}_sum", f.consts, f.labels, s.values, "")} ${num(load(s.cells[2]))}")
+      out.push("${head("${f.name}_count", f.consts, f.labels, s.values, "")} ${s.cells[1].get()}")
     } else {
       var upto = 0
       for (i, b) in f.bounds.indexed() {
         upto += s.cells[3 + i].get()
-        out.push("${head("${f.name}_bucket", f.labels, s.values, "le=\"${num(b)}\"")} ${upto}")
+        out.push("${head("${f.name}_bucket", f.consts, f.labels, s.values, "le=\"${num(b)}\"")} ${upto}")
       }
       let n = s.cells[1].get()
-      out.push("${head("${f.name}_bucket", f.labels, s.values, "le=\"+Inf\"")} ${n}")
-      out.push("${head("${f.name}_sum", f.labels, s.values, "")} ${num(load(s.cells[2]))}")
-      out.push("${head("${f.name}_count", f.labels, s.values, "")} ${n}")
+      out.push("${head("${f.name}_bucket", f.consts, f.labels, s.values, "le=\"+Inf\"")} ${n}")
+      out.push("${head("${f.name}_sum", f.consts, f.labels, s.values, "")} ${num(load(s.cells[2]))}")
+      out.push("${head("${f.name}_count", f.consts, f.labels, s.values, "")} ${n}")
+    }
+    parts.push((k, out))
+  }
+  parts
+}
+
+/// A family's series lines (expose_parts flattened).
+fn expose_series(f: Family, now_ms: Int) -> List[Str] {
+  var out: List[Str] = []
+  for (_, ls) in expose_parts(f, now_ms) {
+    for l in ls {
+      out.push(l)
     }
   }
   out

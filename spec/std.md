@@ -8435,6 +8435,86 @@ fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str) -> fn(
   the function before the series is found, so the exposition shows the
   constrained values. A constraint for a label the instrument does not
   have is a fault.
+- `untyped_func(name, help, f)` and a collector of `Kind.Untyped` expose
+  series of no type (`# TYPE name untyped`, Go's UntypedFunc); OTLP
+  exports them as gauges.
+- `wrap(prefix: Str = "", labels: Map[Str, Str] = {}) -> Registry` (Go's
+  WrapRegistererWith and WrapRegistererWithPrefix) is the registry with
+  the prefix put before every instrument name made through it and the
+  constant labels on every series: the labels come first in each line,
+  sorted by name, and are OTLP attributes. It shares the instruments.
+  Wrapping again appends the prefix and adds the labels; a label wrapped
+  twice, or an instrument label of the same name, is a fault.
+- A collector of `Kind.Histogram` or `Kind.Summary` (Go's NewConstHistogram
+  and NewConstSummary) reads `Sample{values, count, sum, buckets}` (upper
+  bound and cumulative count; `+Inf` is `count`) or `Sample{values, count,
+  sum, quantiles}`. A sample's `timestamp: Time?` is written after each
+  of its values in milliseconds (NewMetricWithTimestamp) and is OTLP's
+  point time; `created: Time?` (the *WithCreatedTimestamp constructors) is
+  OTLP's start time for a counter, histogram or summary, ignored on a
+  gauge or untyped sample, and not in the 0.0.4 text.
+- `metrics.gather(registries: List[Registry], now: Time? = None) -> (Str,
+  MultiError)` (Go's Gatherers) is one exposition of several registries:
+  families of one name merge, sorted by name, their series sorted by
+  label values as Go's Gather sorts them; a family with another help or
+  type, or a series with the label pairs of one gathered already, is left
+  out and reported in the MultiError (Go's texts), and the rest is still
+  returned. `MultiError{errors}` has `append` and `display` (Go's
+  `N error(s) occurred:` text). Dropped series counts are summed.
+- `handler(offer: List[Compression] = [Gzip, Identity])` and
+  `handler_at(clock, offer)` negotiate the body's encoding from
+  Accept-Encoding (promhttp's Compression): gzip when accepted and
+  offered (`Content-Encoding: gzip`), identity otherwise.
+- `middleware(clock, label, sizes: Bool = false)`: with `sizes`, also
+  `http_request_size_bytes{route}` (Go's approximate request size) and
+  `http_response_size_bytes{route}` in `size_buckets()` (100 B to 100 MB
+  by tens). `client_send(clock)` returns a send function for an
+  `http.Client` that counts `http_client_requests_total{method,code}`
+  (`code` is `error` for a failed send), times
+  `http_client_request_seconds{method}` and tracks
+  `http_client_in_flight` (promhttp's InstrumentRoundTripper*).
+- `runtime_collector()` registers `xo_heap_bytes` and
+  `xo_heap_peak_bytes` (debug.mem_mapped, mem_peak; Go's NewGoCollector
+  for Xo's runtime); `build_info(path, version, checksum)` registers
+  `xo_build_info{checksum,path,version} 1` (NewBuildInfoCollector, with
+  the module passed by main). `process_collector(clock, namespace)`
+  registers `process_cpu_seconds_total`,
+  `process_max_resident_memory_bytes` and `process_start_time_seconds`
+  (NewProcessCollector) with the values its `update(proc)` last read: a
+  scrape time reader may use only `sync`.
+- `open_metrics(now: Time? = None) -> Str` is the OpenMetrics 1.0 text
+  (expfmt's MetricFamilyToOpenMetrics): a counter `x_total` is family `x`
+  of type counter (one without the suffix is `unknown`), untyped is
+  `unknown`, floats carry `.0`, timestamps are seconds, and it ends
+  `# EOF`. `handler(offer, open_metrics: true)` answers it to a request
+  whose Accept names `application/openmetrics-text` (promhttp's
+  EnableOpenMetrics).
+- Exemplars (client_golang's Exemplar): `exemplar(labels, at) ->
+  Exemplar ! MetricsErr` checks the label names and the
+  `EXEMPLAR_MAX_RUNES` (128) limit; `Counter.add_with_exemplar(n, ex,
+  values)` and `Histogram.observe_with_exemplar(v, ex, values)` keep the
+  newest exemplar of the series (of the bucket v falls in), faulting on
+  an exemplar `exemplar` refuses; `Sample.exemplars` give a collector's;
+  `middleware(..., exemplar_of: Some(f))` labels each request's count and
+  latency (WithExemplarFromContext). Only `open_metrics` and `protobuf`
+  show them.
+- `pid_collector(namespace = "") -> PidCollector` exports another
+  process's `process_cpu_seconds_total`, resident and virtual memory and
+  start time, read from /proc by `update(fs, pid) -> () ! MetricsErr`
+  (Linux only; elsewhere an error, as client_golang's procfs).
+  `pid_from_file(fs, path) -> Int ! MetricsErr` reads a pid file
+  (NewPidFileFn).
+- `protobuf(now: Time? = None) -> Bytes` is the delimited protobuf
+  exposition (client_model's MetricFamily, each message after its varint
+  length; `PROTOBUF_TYPE`), which the handlers answer when the request's
+  first Accept entry asks for it. It carries exemplars, created times and
+  native histograms: `native_histogram(count, sum, positive, negative,
+  zero_count, schema, zero_threshold = DEF_NATIVE_HISTOGRAM_ZERO_THRESHOLD)
+  -> NativeHistogram ! MetricsErr` (Go's NewConstNativeHistogram: schema
+  -4 to 8, the bucket counts adding up to count;
+  `NATIVE_HISTOGRAM_ZERO_THRESHOLD_ZERO` is a threshold of 0) on a
+  histogram collector's `Sample.native`. Repeated numbers are packed (Go
+  writes proto2's unpacked form; readers take both).
 
 ## 38. std/trace
 

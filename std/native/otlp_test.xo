@@ -1,6 +1,7 @@
 // Vectors by hand from opentelemetry-proto (trace.proto, common.proto, resource.proto); the generated corpus
 // (internal/stdtest/testdata/corpus/otlp) compares against protobuf-go.
 use std/http
+use std/metrics
 use std/otlp
 use std/trace
 
@@ -180,3 +181,68 @@ test "OpenTelemetry Go oracle: status" {
   expect(got.to_hex()) == "0adf060a1a0a180a0c736572766963652e6e616d6512080a066f7261636c6512c0060a080a066f7261636c6512490a10101112131415161718191a1b1c1d1e011208a0000000000000012a0f756e7365742d6e657665722d73657430013900002a36fe9c971741e8032a36fe9c97177a0085010101000012490a10101112131415161718191a1b1c1d1e021208a0000000000000022a0f756e7365742d776974682d6465736330013900002a36fe9c971741e8032a36fe9c97177a00850101010000123e0a10101112131415161718191a1b1c1d1e031208a0000000000000032a026f6b30013900002a36fe9c971741e8032a36fe9c97177a02180185010101000012480a10101112131415161718191a1b1c1d1e041208a0000000000000042a0c6f6b2d776974682d6465736330013900002a36fe9c971741e8032a36fe9c97177a02180185010101000012410a10101112131415161718191a1b1c1d1e051208a0000000000000052a056572726f7230013900002a36fe9c971741e8032a36fe9c97177a021802850101010000128f010a10101112131415161718191a1b1c1d1e061208a0000000000000062a0f6572726f722d776974682d6465736330013900002a36fe9c971741e8032a36fe9c97177a4612422a617a636f72652e526573706f6e73654572726f723a0a4745542068747470733a2f2f7376632e6578616d706c652e746573742f780a524553504f4e534520343034180285010101000012490a10101112131415161718191a1b1c1d1e071208a0000000000000072a0d6572726f722d7468656e2d6f6b30013900002a36fe9c971741e8032a36fe9c97177a02180185010101000012490a10101112131415161718191a1b1c1d1e081208a0000000000000082a0d6f6b2d7468656e2d6572726f7230013900002a36fe9c971741e8032a36fe9c97177a02180185010101000012540a10101112131415161718191a1b1c1d1e091208a0000000000000092a106572726f722d7468656e2d6572726f7230013900002a36fe9c971741e8032a36fe9c97177a0a12067365636f6e64180285010101000012530a10101112131415161718191a1b1c1d1e0a1208a00000000000000a2a106572726f722d7468656e2d756e73657430013900002a36fe9c971741e8032a36fe9c97177a0912056b6570743f1802850101010000"
 }
 // END GENERATED
+
+test "metrics: an untyped series is a gauge, and a wrapped registry's constant labels are attributes" {
+  let r = metrics.registry().wrap(prefix: "app_", labels: {"zone": "a"})
+  r.untyped_func("temp", "t", fn() -> Float uses sync { 21.5 })
+  let c = r.counter("hits", "h", ["path"])
+  c.inc(["/x"])
+  let fs = r.families.with_read(fn(l: List[metrics.Family]) -> List[metrics.Family] { l })
+  expect(fs.len()) == 2
+  let u = family_msg(fs[0], 0, 1000)
+  expect(u.name) == "app_temp"
+  match u.data {
+    Some(MetricData.Gauge(g)) => {
+      expect(g.data_points.len()) == 1
+      expect(g.data_points[0].attributes.map(fn(a: KeyValueMsg) -> Str { a.key })) == ["zone"]
+    }
+    _ => fault("untyped is not a gauge")
+  }
+  match family_msg(fs[1], 0, 1000).data {
+    Some(MetricData.Sum(m)) => expect(m.data_points[0].attributes.map(fn(a: KeyValueMsg) -> Str { a.key })) == ["zone", "path"]
+    _ => fault("counter is not a sum")
+  }
+}
+
+test "metrics: a collector's created time is the point's start, its timestamp the point's time (WithCreatedTimestamp)" {
+  let r = metrics.registry()
+  let created = Time.from_unix_millis(1719670764123)
+  let at = Time.from_unix_millis(1719670800000)
+  r.collector("c", "C.", metrics.Kind.Counter, [], fn() -> List[metrics.Sample] uses sync { [metrics.Sample{values: [], value: 1.0, created: Some(created), timestamp: Some(at)}] })
+  r.collector("h", "H.", metrics.Kind.Histogram, [], fn() -> List[metrics.Sample] uses sync { [metrics.Sample{values: [], count: 300, sum: 200.0, buckets: [(25.0, 100), (50.0, 200)], created: Some(created)}] })
+  r.collector("s", "S.", metrics.Kind.Summary, [], fn() -> List[metrics.Sample] uses sync { [metrics.Sample{values: [], count: 100, sum: 200.0, quantiles: [(0.5, 200.12), (0.99, 500.342)], created: Some(created)}] })
+  let fs = r.families.with_read(fn(l: List[metrics.Family]) -> List[metrics.Family] { l })
+  match family_msg(fs[0], 0, 5000).data {
+    Some(MetricData.Sum(m)) => {
+      expect(m.data_points[0].start_time_unix_nano) == UInt64.wrapping_from(1719670764123000000)
+      expect(m.data_points[0].time_unix_nano) == UInt64.wrapping_from(1719670800000000000)
+    }
+    _ => fault("counter is not a sum")
+  }
+  match family_msg(fs[1], 0, 5000).data {
+    Some(MetricData.Histogram(m)) => {
+      let p = m.data_points[0]
+      expect(p.start_time_unix_nano) == UInt64.wrapping_from(1719670764123000000)
+      expect(p.explicit_bounds) == [25.0, 50.0]
+      expect(p.bucket_counts) == [UInt64.wrapping_from(100), UInt64.wrapping_from(100), UInt64.wrapping_from(100)]
+    }
+    _ => fault("histogram collector is not a histogram")
+  }
+  match family_msg(fs[2], 0, 5000).data {
+    Some(MetricData.Summary(m)) => {
+      expect(m.data_points[0].quantile_values.map(fn(q: QuantileMsg) -> Float { q.value })) == [200.12, 500.342]
+      expect(m.data_points[0].start_time_unix_nano) == UInt64.wrapping_from(1719670764123000000)
+    }
+    _ => fault("summary collector is not a summary")
+  }
+}
+
+test "metrics: a gauge sample's created time is ignored (a gauge has no start)" {
+  let r = metrics.registry()
+  r.collector("g", "G.", metrics.Kind.Gauge, [], fn() -> List[metrics.Sample] uses sync { [metrics.Sample{values: [], value: 1.0, created: Some(Time.from_unix_millis(1719670764123))}] })
+  let fs = r.families.with_read(fn(l: List[metrics.Family]) -> List[metrics.Family] { l })
+  match family_msg(fs[0], 0, 5000).data {
+    Some(MetricData.Gauge(m)) => expect(m.data_points[0].start_time_unix_nano) == UInt64.wrapping_from(0)
+    _ => fault("gauge collector is not a gauge")
+  }
+}

@@ -283,7 +283,13 @@ struct SummaryPointMsg {
   time_unix_nano proto "3,fixed": UInt64 = 0
   count proto "4,fixed": UInt64 = 0
   sum proto "5": Float = 0.0
+  quantile_values proto "6": List[QuantileMsg] = []
   attributes proto "7": List[KeyValueMsg] = []
+} derive Proto
+
+struct QuantileMsg {
+  quantile proto "1": Float = 0.0
+  value proto "2": Float = 0.0
 } derive Proto
 
 struct GaugeMsg { data_points proto "1": List[NumberPointMsg] = [] } derive Proto
@@ -326,8 +332,12 @@ struct ResourceMetricsMsg {
 
 struct MetricsRequestMsg { resource_metrics proto "1": List[ResourceMetricsMsg] = [] } derive Proto
 
-fn labels_msg(labels: List[Str], values: List[Str]) -> List[KeyValueMsg] {
+fn labels_msg(consts: List[(Str, Str)], labels: List[Str], values: List[Str]) -> List[KeyValueMsg] {
   var out: List[KeyValueMsg] = []
+  // a wrapped registry's constant labels (metrics.Registry.wrap)
+  for (k, v) in consts {
+    out.push(kv_str_msg(k, v))
+  }
   for (i, l) in labels.indexed() {
     out.push(kv_str_msg(l, values[i]))
   }
@@ -337,7 +347,7 @@ fn labels_msg(labels: List[Str], values: List[Str]) -> List[KeyValueMsg] {
 fn ns(ms: Int) -> UInt64 { UInt64.wrapping_from(ms * 1000000) }
 
 fn number_point(f: metrics.Family, values: List[Str], v: Float, start_ms: Int, now_ms: Int, with_start: Bool) -> NumberPointMsg {
-  NumberPointMsg{start_time_unix_nano: if with_start { ns(start_ms) } else { 0 }, time_unix_nano: ns(now_ms), value: Some(NumberValue.AsDouble(v)), attributes: labels_msg(f.labels, values)}
+  NumberPointMsg{start_time_unix_nano: if with_start { ns(start_ms) } else { 0 }, time_unix_nano: ns(now_ms), value: Some(NumberValue.AsDouble(v)), attributes: labels_msg(f.consts, f.labels, values)}
 }
 
 fn load_cell(a: Atomic[Int]) -> Float {
@@ -351,7 +361,35 @@ fn family_msg(f: metrics.Family, start_ms: Int, now_ms: Int) -> MetricMsg {
   if let Some(read) = f.reads.get(0) {
     let ss = read().sort_by(fn(x: metrics.Sample) -> Str { x.values.join("\x1f") })
     for x in ss {
-      nums.push(number_point(f, x.values, x.value, start_ms, now_ms, f.kind == 0))
+      // a sample's own times: created is the start, timestamp the time
+      let st = match x.created {
+        Some(t) => t.unix_millis()
+        None => start_ms
+      }
+      let at = match x.timestamp {
+        Some(t) => t.unix_millis()
+        None => now_ms
+      }
+      let attrs = labels_msg(f.consts, f.labels, x.values)
+      if f.kind == 2 {
+        var bounds: List[Float] = []
+        var counts: List[UInt64] = []
+        var below = 0
+        for (b, n) in x.buckets.sort_by(fn(p: (Float, Int)) -> Float { p.0 }) {
+          if b != Float.inf {
+            bounds.push(b)
+            counts.push(UInt64.wrapping_from(n - below))
+            below = n
+          }
+        }
+        counts.push(UInt64.wrapping_from(x.count - below))
+        hists.push(HistogramPointMsg{start_time_unix_nano: ns(st), time_unix_nano: ns(at), count: UInt64.wrapping_from(x.count), sum: Some(x.sum), bucket_counts: counts, explicit_bounds: bounds, attributes: attrs})
+      } else if f.kind == 3 {
+        let qs = x.quantiles.sort_by(fn(p: (Float, Float)) -> Float { p.0 }).map(fn(p: (Float, Float)) -> QuantileMsg { QuantileMsg{quantile: p.0, value: p.1} })
+        sums.push(SummaryPointMsg{start_time_unix_nano: ns(st), time_unix_nano: ns(at), count: UInt64.wrapping_from(x.count), sum: x.sum, quantile_values: qs, attributes: attrs})
+      } else {
+        nums.push(number_point(f, x.values, x.value, st, at, f.kind == 0))
+      }
     }
   } else {
     let sm = metrics.series_snapshot(f)
@@ -362,7 +400,7 @@ fn family_msg(f: metrics.Family, start_ms: Int, now_ms: Int) -> MetricMsg {
         let v = if f.kind == 0 { load_cell(s.cells[0]) + Float(s.cells[1].get()) } else { load_cell(s.cells[0]) }
         nums.push(number_point(f, s.values, v, start_ms, now_ms, f.kind == 0))
       } else if f.kind == 3 {
-        sums.push(SummaryPointMsg{start_time_unix_nano: ns(start_ms), time_unix_nano: ns(now_ms), count: UInt64.wrapping_from(s.cells[1].get()), sum: load_cell(s.cells[2]), attributes: labels_msg(f.labels, s.values)})
+        sums.push(SummaryPointMsg{start_time_unix_nano: ns(start_ms), time_unix_nano: ns(now_ms), count: UInt64.wrapping_from(s.cells[1].get()), sum: load_cell(s.cells[2]), attributes: labels_msg(f.consts, f.labels, s.values)})
       } else {
         var counts: List[UInt64] = []
         var upto = 0
@@ -373,13 +411,15 @@ fn family_msg(f: metrics.Family, start_ms: Int, now_ms: Int) -> MetricMsg {
         }
         let n = s.cells[1].get()
         counts.push(UInt64.wrapping_from(n - upto))
-        hists.push(HistogramPointMsg{start_time_unix_nano: ns(start_ms), time_unix_nano: ns(now_ms), count: UInt64.wrapping_from(n), sum: Some(load_cell(s.cells[2])), bucket_counts: counts, explicit_bounds: f.bounds, attributes: labels_msg(f.labels, s.values)})
+        hists.push(HistogramPointMsg{start_time_unix_nano: ns(start_ms), time_unix_nano: ns(now_ms), count: UInt64.wrapping_from(n), sum: Some(load_cell(s.cells[2])), bucket_counts: counts, explicit_bounds: f.bounds, attributes: labels_msg(f.consts, f.labels, s.values)})
       }
     }
   }
   let data = if f.kind == 0 {
     MetricData.Sum(SumMsg{data_points: nums, aggregation_temporality: 2, is_monotonic: true})
-  } else if f.kind == 1 {
+  } else if f.kind == 1 || f.kind == 4 {
+    // an untyped series (metrics.Registry.untyped_func) is a gauge, as
+    // the collector's Prometheus receiver maps unknown types
     MetricData.Gauge(GaugeMsg{data_points: nums})
   } else if f.kind == 3 {
     MetricData.Summary(SummaryMsg{data_points: sums})

@@ -1,5 +1,73 @@
 # std/metrics changes
 
+## 2026-11-15: feature: protobuf exposition and native histograms
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit gaps of prometheus/client_golang (decision 0655)
+- Go reference: prometheus/client_golang v1.23.2 histogram.go (NewConstNativeHistogram, validateCount, makeBucketsFromMap, DefNativeHistogramZeroThreshold, NativeHistogramZeroThresholdZero); prometheus/client_model v0.6.3 metrics.proto; prometheus/common expfmt (FmtProtoDelim)
+- Test: std/metrics_test.xo (native_histogram's checks, makeBucketsFromMap's spans and deltas, TestConstNativeHistogram's no-op span, the exposition read back, the handler's negotiation)
+- Shipped in: not yet released
+
+`Registry.pid_collector(namespace)` with `update(fs, pid)` exports another process's CPU time, resident and virtual memory and start time from /proc (client_golang's process collector with PidFn; Linux only, an error elsewhere), and `pid_from_file` reads a pid file (NewPidFileFn); test: the procfs parsing cases and this process read back on Linux.
+
+`Registry.protobuf(now)` writes the delimited protobuf exposition, which the handlers serve when a scraper lists it first in Accept (Prometheus does with native histograms on). A histogram collector's `Sample.native` (from `native_histogram`) is written as a native histogram. Repeated numbers are packed where Go writes proto2's unpacked form; Prometheus reads both.
+
+## 2026-11-15: feature: OpenMetrics exposition and exemplars
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit gaps of prometheus/client_golang (decision 0655)
+- Go reference: prometheus/common v0.73.0 expfmt/openmetrics_create.go (MetricFamilyToOpenMetrics, writeOpenMetricsFloat, writeExemplar); prometheus/client_golang v1.23.2 value.go (newExemplar, ExemplarMaxRunes), counter.go and histogram.go (AddWithExemplar, ObserveWithExemplar), promhttp (EnableOpenMetrics, WithExemplarFromContext)
+- Test: std/metrics_test.xo (openmetrics_create_test.go's cases 9, 10, 11 and 13 ported; instrument exemplars, their checks, removal, the handler's negotiation and the middleware's exemplar_of)
+- Shipped in: not yet released
+
+`Registry.open_metrics(now)` writes the OpenMetrics 1.0 text, which `handler(open_metrics: true)` serves to scrapers that ask for it. Counters and histograms keep the newest exemplar per series (per bucket) from `add_with_exemplar` and `observe_with_exemplar`; collectors give `Sample.exemplars`; the middleware takes `exemplar_of` for a trace id. Exemplar labels are written sorted by name (Go writes them in map order). `process_collector(clock, namespace)` registers process CPU time, peak memory and start time, read by its `update(proc)` (a scrape cannot use `proc`; Go reads at the scrape and reports the current resident memory).
+
+## 2026-11-15: feature: compressed scrapes, size metrics and client instrumentation
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit gaps of prometheus/client_golang's promhttp (decision 0655)
+- Go reference: prometheus/client_golang v1.23.2 promhttp/http.go (negotiateEncodingWriter, Compression), instrument_server.go (InstrumentHandlerRequestSize, InstrumentHandlerResponseSize, computeApproximateRequestSize), instrument_client.go (InstrumentRoundTripperCounter, Duration, InFlight)
+- Test: std/metrics_test.xo (Accept-Encoding negotiation cases, request and response sizes, a failed client send counted as `error`)
+- Shipped in: not yet released
+
+`handler` and `handler_at` gzip the body when the request accepts gzip and it is offered (the default offers gzip and identity, as promhttp's). `middleware(clock, label, sizes: true)` adds request and response size histograms. `client_send(clock)` counts, times and tracks in flight an http.Client's sends. A scraper that sends `Accept-Encoding: gzip` now gets a compressed body; pass `offer: [Compression.Identity]` for the old behavior. `runtime_collector()` (NewGoCollector, for Xo's heap) and `build_info(path, version, checksum)` (NewBuildInfoCollector, the module passed by main) register gauges.
+
+## 2026-11-15: feature: gather several registries
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit gaps of prometheus/client_golang (decision 0655)
+- Go reference: prometheus/client_golang v1.23.2 registry.go (Gatherers.Gather, MultiError) and internal/metric.go (MetricSorter)
+- Test: std/metrics_test.xo (examples_test.go's ExampleGatherers, both parts, ported; help and type mismatches and MultiError's text)
+- Shipped in: not yet released
+
+`metrics.gather(registries, now)` returns one exposition of several registries and a `MultiError`: families of one name are merged and sorted as Go's Gather sorts them; a family with another help or type, or a series given twice, is left out with Go's error text.
+
+## 2026-11-15: feature: histogram and summary collectors, sample timestamps and created times
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit gaps of prometheus/client_golang (decision 0655)
+- Go reference: prometheus/client_golang v1.23.2 histogram.go (NewConstHistogram, NewConstHistogramWithCreatedTimestamp), summary.go (NewConstSummary, NewConstSummaryWithCreatedTimestamp), value.go (NewConstMetricWithCreatedTimestamp), metric.go (NewMetricWithTimestamp)
+- Test: std/metrics_test.xo (TestNewConstHistogramWithCreatedTimestamp's and TestNewConstSummaryWithCreatedTimestamp's samples in the text, timestamps); std/native/otlp_test.xo (created and timestamp as the OTLP point times, bucket counts, quantiles, a gauge's created ignored)
+- Shipped in: not yet released
+
+A collector of `Kind.Histogram` or `Kind.Summary` exposes each Sample's `buckets` or `quantiles` with its `sum` and `count`. `Sample.timestamp` follows each value in the text; `Sample.created` is OTLP's start time. Go refuses a created time on a gauge; Xo ignores it (a gauge has no start). `Kind` has two more variants: a `match` with no `_` arm adds them.
+
+## 2026-11-15: feature: wrapped registries and untyped series
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit gaps of prometheus/client_golang (decision 0655)
+- Go reference: prometheus/client_golang v1.23.2 wrap.go (WrapRegistererWith, WrapRegistererWithPrefix, WrapCollectorWith) and value.go/untyped.go (UntypedValue, UntypedFunc)
+- Test: std/metrics_test.xo (wrap with nested prefixes and labels, untyped_func and an untyped collector); std/native/otlp_test.xo (an untyped series is a gauge; constant labels are attributes)
+- Shipped in: not yet released
+
+`Registry.wrap(prefix, labels)` returns the registry with a name prefix and constant labels for every instrument made through it; the labels come first in each exposition line, sorted by name, and are OTLP attributes. `untyped_func` and `Kind.Untyped` expose `# TYPE name untyped` series, exported to OTLP as gauges. `Kind` has a third variant: a `match` on it with no `_` arm adds `Kind.Untyped`.
+
 ## 2026-11-15: feature: label constraints
 
 - Kind: feature
