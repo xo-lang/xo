@@ -4,6 +4,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
 - [generated-test-nested-list-literals-compile-memory.md](generated-test-nested-list-literals-compile-memory.md): Observed 2026-11-16: a fuzz generator's 3,000 cases of nested List[Int] literals took over 33 GB to compile; encode lists as Strs and parse them at run time
+- [stdproven-batch-180-minute-cap.md](stdproven-batch-180-minute-cap.md): Observed 2026-11-16: a stdproven-offload fuzz batch hit offload.sh's 180 minute OFF_MAX_MIN and returned no evidence, the passed modules' too; one module per call, OFF_MAX_MIN=540 for a fuzz
 - [go126-cryptocustomrand-corpus.md](go126-cryptocustomrand-corpus.md): Observed: Go 1.26 ignores custom readers in crypto (cryptocustomrand), MaybeReadByte skips a byte at random, HPKE and ML-KEM take no reader; use cryptocustomrand=1, a constant reader, and Go-checked pins
 - [json-encode-no-html-escape.md](json-encode-no-html-escape.md): Observed 2026-11-15: json.encode/encode_str do not HTML-escape (unlike Go's Marshal), so `</script>` in data closes a script element; use json.html_escape, json_writer() or template HTML mode
 - [lazy-bodies-skip-flow-checks.md](lazy-bodies-skip-flow-checks.md): a lost update (XO0520) in a std body builds natively and fails only with --backend=go: lazily checked bodies skip the flow passes; run `xo test --std-module=M` while editing std (dependencies fixed 2026-11-15)
