@@ -1503,6 +1503,14 @@ Last verified: 2026-11-15
     scripts/lead/stdcov-snap.sh [REV...]` (about 15 s; `--site
     WEBSITE_DIR` reads the website page's history back to 2026-11-03).
     Every `--since` takes days too (2d, 1d12h). Last verified: 2026-11-15.
+  - Owner questions (2026-11-15, replacing OWNER-MORNING.md and todo.md's
+    OWNER lines): `xw ask TEXT` (anyone) opens one; the lead records the
+    owner's word with `xw answer ID --by owner TEXT`; `xw decisions
+    --owner [--all]` lists them and the open ones head `xw status` as
+    "needs you (owner)". `xw task add NAME TITLE --parked` (or `xw task
+    park|unpark ID`) keeps an idea out of the queue's work and the idle
+    checks; `--after JOB` raises a task-after alert when that heavy.sh
+    job or lease ends. Last verified: 2026-11-15.
   - `xw isdone TERM...` (before assigning; replaces agents/isdone.sh):
     main commits of 21 days, xw tasks in any state, xw decisions,
     knowledgebase decisions, std change logs and spec/std.md that hold
