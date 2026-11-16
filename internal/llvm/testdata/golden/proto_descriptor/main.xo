@@ -1,0 +1,61 @@
+// derive Proto's descriptor (decision 0683 item 2): protobuf.descriptor[T]
+// and message_name[T]; the full name from `derive Proto(name: ...)` or the
+// module path; each field's .proto and JSON names, number, kind,
+// cardinality and oneof; a message field's descriptor through a function,
+// so a recursive message has no cycle in data.
+use std/protobuf
+
+enum Color: Int {
+  Red = 0
+  Blue = 1
+}
+
+enum Shape {
+  Circle as "10"(r: Int)
+  BigBox as "11"(b: Leaf)
+}
+
+struct Leaf {
+  label proto "1": Str
+} derive Proto(name: "demo.v1.Leaf")
+
+// no name: the module path and the type name
+struct Plain {
+  n proto "1": Int
+} derive Proto
+
+struct Tree {
+  user_id proto "1": Int
+  delta proto "2,zigzag": Int
+  ratio proto "3": Float
+  tags proto "4": List[Str]
+  color proto "5": Color
+  attrs proto "6": Map[Str, Int]
+  child proto "7": Tree?
+  leaves proto "8": List[Leaf]
+  shape proto "oneof": Shape?
+  stamp proto "9,fixed": UInt32
+} derive Proto(name: "demo.v1.Tree")
+
+fn show(d: protobuf.MessageDesc) -> Str {
+  var parts: List[Str] = []
+  for f in d.fields {
+    let one = if let Some(o) = f.oneof { " oneof ${o}" } else { "" }
+    let msg = if let Some(m) = f.message { " -> ${m().full_name}" } else { "" }
+    parts.push("${f.number} ${f.name}/${f.json_name} ${f.kind} ${f.cardinality}${one}${msg}")
+  }
+  "${d.full_name}\n  ${parts.join("\n  ")}"
+}
+
+fn main(os: Os) {
+  os.stdio.println(show(protobuf.descriptor[Tree]()))
+  os.stdio.println(protobuf.message_name[Tree]())
+  os.stdio.println(protobuf.message_name[Leaf]())
+  let pn = protobuf.message_name[Plain]()
+  os.stdio.println("plain ${pn.ends_with("/proto_descriptor.Plain")}")
+  // the recursive field's descriptor is Tree's own
+  let d = protobuf.descriptor[Tree]()
+  if let Some(m) = d.fields[6].message {
+    os.stdio.println("child fields ${m().fields.len()}")
+  }
+}

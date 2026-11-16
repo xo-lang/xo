@@ -98,6 +98,62 @@ struct UnmarshalOptions {
   allow_partial: Bool = false
 }
 
+/// The type of a message field (protoreflect.Kind): the wire form a
+/// `derive Proto` field type maps to (decision 0683 item 2).
+enum FieldKind {
+  Bool
+  Enum
+  Int32
+  Sint32
+  Uint32
+  Int64
+  Sint64
+  Uint64
+  Sfixed32
+  Fixed32
+  Float
+  Sfixed64
+  Fixed64
+  Double
+  String
+  Bytes
+  Message
+} derive Eq, Display
+
+/// Whether a field holds one value, a list or a map (protoreflect.Cardinality and IsMap).
+enum Cardinality {
+  Optional
+  Repeated
+  Map
+} derive Eq, Display
+
+/// One field of a message: its .proto name, protojson's lowerCamelCase name, its number, the kind
+/// of its value (a map's value), its cardinality, the oneof it is a member of, and the descriptor
+/// of a message (or map value message) field's type, a function so a recursive message needs no
+/// cycle in data.
+struct FieldDesc {
+  name: Str
+  json_name: Str
+  number: Int
+  kind: FieldKind
+  cardinality: Cardinality
+  oneof: Str?
+  message: (fn() -> MessageDesc)?
+}
+
+/// A message: its full name (`derive Proto(name: "pkg.Msg")`, else the Xo module path and type
+/// name) and its fields in declaration order, a oneof's members where the oneof is
+/// (protoreflect.MessageDescriptor's names and fields; decision 0683 item 2).
+struct MessageDesc {
+  full_name: Str
+  fields: List[FieldDesc]
+}
+
+/// The descriptor of message type T, which derive Proto generates.
+fn descriptor[T: Proto]() -> MessageDesc
+/// T's full name (proto.MessageName).
+fn message_name[T: Proto]() -> Str
+
 /// `unmarshal` with options (proto.UnmarshalOptions.Unmarshal): messages
 /// nested past `opts.recursion_limit` are `ProtoErr.Recursion`.
 fn unmarshal_with[T: Proto](data: Bytes, opts: UnmarshalOptions) -> T ! ProtoErr

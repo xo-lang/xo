@@ -148,3 +148,15 @@ imports load. Golden proto_cross_file. std/protoparse's gen_set still
 refuses these types; mapping `google/protobuf/*.proto` onto std/protowkt
 is std's (Xo Lang 3). Item 2 (the descriptor) is next.
 
+## Addendum 2026-11-16 (3): item 2 landed (Xo Lang 1, task #127)
+
+derive Proto generates `proto_desc__T` (and `proto_descriptor__T`,
+`proto_message_name__T` behind `protobuf.descriptor[T]()` and
+`message_name[T]()`); the types are in std/protobuf.xo as above, with
+`FieldKind` and `Cardinality` deriving Eq and Display. Choices the ADR
+left open: a oneof member's name is its variant's name in snake case, at
+the oneof's position; a map field's `kind` and `message` are its value's;
+`derive Proto(name: ...)` is the only argument derive Proto takes
+(XO0413). Golden proto_descriptor. The std users (fieldmask, protojson's
+Any, prototext) are Xo Lang 3's.
+

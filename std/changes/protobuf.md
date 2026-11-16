@@ -1,5 +1,16 @@
 # std/protobuf changes
 
+## 2026-11-16: feature: message descriptors (descriptor, message_name)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #127 (decision 0683 item 2)
+- Go reference: google.golang.org/protobuf v1.36.12 proto.MessageName, protoreflect.MessageDescriptor (FullName, Fields: Name, JSONName, Number, Kind, Cardinality, ContainingOneof, Message)
+- Test: golden proto_descriptor (arm64, LLVM, wasm, Go parity): every kind derive Proto maps, zigzag and fixed, a list, a map, an enum, a oneof, a recursive field and a message list
+- Timing: none (one small function per message, dropped when unused)
+
+`protobuf.descriptor[T]()` returns a `MessageDesc`: the full name and each field's .proto name, protojson name, number, `FieldKind`, `Cardinality`, oneof and, for a message field, a function giving its descriptor. `protobuf.message_name[T]()` is proto.MessageName. The full name comes from `derive Proto(name: "pkg.Msg")`, else the module path and the type name. fieldmask's New, IsValid and Append, protojson's Any by name and prototext build on it (std's follow-ups).
+
 ## 2026-11-16: feature: unmarshal_with and UnmarshalOptions; fix: ProtoErr's text on the Go backend
 
 - Kind: feature, fix

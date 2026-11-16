@@ -10515,6 +10515,12 @@ open enum ProtoErr { Truncated, Overflow, BadTag, BadWire(wire: Int), EndGroup, 
 fn marshal[T: Proto](v: T) -> Bytes                     // rewritten to the generated proto_marshal__T
 fn unmarshal[T: Proto](data: Bytes) -> T ! ProtoErr     // as proto.Unmarshal: scalars last wins, messages merge; Recursion past 10000 nested messages
 struct UnmarshalOptions { discard_unknown: Bool = false, recursion_limit: Int = 10000, allow_partial: Bool = false }
+enum FieldKind { Bool, Enum, Int32, Sint32, Uint32, Int64, Sint64, Uint64, Sfixed32, Fixed32, Float, Sfixed64, Fixed64, Double, String, Bytes, Message }  // derive Eq, Display
+enum Cardinality { Optional, Repeated, Map }  // derive Eq, Display
+struct FieldDesc { name: Str, json_name: Str, number: Int, kind: FieldKind, cardinality: Cardinality, oneof: Str?, message: (fn() -> MessageDesc)? }
+struct MessageDesc { full_name: Str, fields: List[FieldDesc] }
+fn descriptor[T: Proto]() -> MessageDesc  // derive Proto's descriptor (decision 0683): fields in declaration order, a oneof's members (snake case variant names) at the oneof; a map field's kind is its value's
+fn message_name[T: Proto]() -> Str        // proto.MessageName: `derive Proto(name: "pkg.Msg")`, else the module path and type name
 fn unmarshal_with[T: Proto](data: Bytes, opts: UnmarshalOptions) -> T ! ProtoErr  // proto.UnmarshalOptions.Unmarshal: Recursion past opts.recursion_limit; discard_unknown leaves the `proto "unknown"` field empty; allow_partial has no effect (decision 0683)
 fn size[T: Proto](v: T) -> Int                          // proto.Size: marshal(v).len() without writing (proto_size__T)
 fn merge_from[T: Proto](dst: T, src: T) -> T            // proto.Merge: src's populated fields merged into dst (proto_merge_from__T)

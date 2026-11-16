@@ -1891,6 +1891,70 @@ fn int_enums_into(decls: List[parser.Decl], prefix: Str, var out: Map[Str, Str])
   }
 }
 
+/// A FieldDesc literal of derive Proto's descriptor (decision 0683 item 2) for the field (or
+/// oneof member) `name` of element type tx.
+fn proto_field_desc(name: Str, num: Int, tx: Str, po: ProtoOpts, enums: Map[Str, Str], card: Str, oneof: Str) -> Str {
+  var kind = "Message"
+  if enums.contains(tx) {
+    kind = "Enum"
+  } else {
+    kind = match tx {
+      "Int" => if po.zigzag { "Sint64" } else if po.fixed { "Sfixed64" } else { "Int64" }
+      "Int32" => if po.zigzag { "Sint32" } else if po.fixed { "Sfixed32" } else { "Int32" }
+      "UInt32" => if po.fixed { "Fixed32" } else { "Uint32" }
+      "UInt64" => if po.fixed { "Fixed64" } else { "Uint64" }
+      "Float" => "Double"
+      "Float32" => "Float"
+      "Bool" => "Bool"
+      "Str" => "String"
+      "Bytes" => "Bytes"
+      _ => "Message"
+    }
+  }
+  var msg = "None"
+  if kind == "Message" {
+    let dot = tx.find(".") ?? -1
+    msg = if dot > 0 { "Some(${tx[..dot + 1]}proto_desc__${tx[dot + 1..]})" } else { "Some(proto_desc__${tx})" }
+  }
+  let oo = if oneof.is_empty() { "None" } else { "Some(${quote_str(oneof)})" }
+  "protobuf.FieldDesc{name: ${quote_str(name)}, json_name: ${quote_str(proto_json_name(name))}, number: ${num}, kind: protobuf.FieldKind.${kind}, cardinality: protobuf.Cardinality.${card}, oneof: ${oo}, message: ${msg}}"
+}
+
+/// protoc's json_name of a field name: each `_` dropped and the letter after it upper cased
+/// (protogen's JSONCamelCase).
+fn proto_json_name(name: Str) -> Str {
+  var out = BytesBuilder.new()
+  var up = false
+  for ch in name.bytes() {
+    if ch == 95 {
+      up = true
+    } else if up && ch >= 97 && ch <= 122 {
+      out.write_byte(ch - 32)
+      up = false
+    } else {
+      out.write_byte(ch)
+      up = false
+    }
+  }
+  out.freeze().to_str() ?? name
+}
+
+/// A oneof variant's .proto field name: its Xo name in snake case (`BigCircle` is `big_circle`).
+fn proto_snake(n: Str) -> Str {
+  var out = BytesBuilder.new()
+  for (i, ch) in n.bytes().indexed() {
+    if ch >= 65 && ch <= 90 {
+      if i > 0 {
+        out.write_byte(95)
+      }
+      out.write_byte(ch + 32)
+    } else {
+      out.write_byte(ch)
+    }
+  }
+  out.freeze().to_str() ?? n
+}
+
 /// How derive Proto writes and reads one element type: wire type, the expression that appends the
 /// value $V to the buffer $B, the reader function, the value from the read result $X, and the test
 /// that $V is not the proto3 default.
@@ -2048,6 +2112,8 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
   var ok = true
   var used: List[Int] = []
   var unknown_f = ""
+  // the descriptor's FieldDesc literals, in declaration order (decision 0683 item 2)
+  var desc: List[Str] = []
   for fl in sd.fields {
     let f = text(fl.name.name)
     let po = proto_opts(fl)
@@ -2125,6 +2191,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
           continue
         }
         used.push(num)
+        desc.push(proto_field_desc(proto_snake(vn), num, vt, po, enums, "Optional", f))
         if first_zero.is_empty() {
           first_zero = "${tx}.${vn}(${ve.zero})"
         }
@@ -2182,6 +2249,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
         if let Some(ve) = vel {
           if kv[0] == "Int" || kv[0] == "Str" || kv[0] == "Bool" {
             zeros.push("${f}: {}")
+            desc.push(proto_field_desc(f, k, kv[1], po, enums, "Map", ""))
             // an entry is written in place after its size, as a nested message is
             // an entry's message value sizes go to a list of its own: the size pass walks the map
             // unsorted, the writer in key order
@@ -2210,6 +2278,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       ok = false
       continue
     }
+    desc.push(proto_field_desc(f, k, tx, po, enums, if kind == 2 { "Repeated" } else { "Optional" }, ""))
     if po.unpacked && !(kind == 2 && el.packable) {
       c.error_at(file, "XO0422", fl.name.span, "proto option `unpacked` of field `${f}` is for a List of numbers, Bools or enums (decision 0530)")
       ok = false
@@ -2340,6 +2409,25 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
   // protobuf.unmarshal_with (proto.UnmarshalOptions, decision 0683 item 1):
   // its recursion limit and DiscardUnknown; AllowPartial has no proto2
   // required field to excuse
+  // the descriptor (decision 0683 item 2): the full name is `derive
+  // Proto(name: "pkg.Msg")`, else the module path and the type name
+  var full = ""
+  for a in sd.derive_args {
+    if text(a.derive.name) == "Proto" && text(a.key.name) == "name" {
+      if let Some(sv) = a.str {
+        full = text(sv)
+      }
+    }
+  }
+  if full.is_empty() {
+    let mp = if file >= 0 && file < c.files.len() { c.mods[c.files[file].module].path } else { "" }
+    full = if mp.is_empty() { n } else { "${mp}.${n}" }
+  }
+  e.ln("${pub_}fn proto_desc__${n}() -> protobuf.MessageDesc {", sp)
+  e.ln("  protobuf.MessageDesc{full_name: ${quote_str(full)}, fields: [${desc.join(", ")}]}", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn proto_descriptor__${n}() -> protobuf.MessageDesc { proto_desc__${n}() }", sp)
+  e.ln("${pub_}fn proto_message_name__${n}() -> Str { ${quote_str(full)} }", sp)
   e.ln("${pub_}fn proto_unmarshal_with__${n}(data: Bytes, o: protobuf.UnmarshalOptions) -> ${n} ! protobuf.ProtoErr { proto_mergedepth__${n}(proto_zero__${n}(), data, o.recursion_limit, o.discard_unknown) }", sp)
   // protobuf.size (proto.Size) is proto_size__N above
   // protobuf.merge_from (proto.Merge): src's populated fields merged into

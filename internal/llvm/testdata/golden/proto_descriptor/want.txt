@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+demo.v1.Tree
+  1 user_id/userId Int64 Optional
+  2 delta/delta Sint64 Optional
+  3 ratio/ratio Double Optional
+  4 tags/tags String Repeated
+  5 color/color Enum Optional
+  6 attrs/attrs Int64 Map
+  7 child/child Message Optional -> demo.v1.Tree
+  8 leaves/leaves Message Repeated -> demo.v1.Leaf
+  10 circle/circle Int64 Optional oneof shape
+  11 big_box/bigBox Message Optional oneof shape -> demo.v1.Leaf
+  9 stamp/stamp Fixed32 Optional
+demo.v1.Tree
+demo.v1.Leaf
+plain true
+child fields 11
+--- stderr

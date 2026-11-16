@@ -443,6 +443,13 @@ fn (var c: Checker) wire_keys(t: Int, sd: parser.StructDecl, fields0: List[Field
     let k = text(a.key.name)
     let v = text(a.value.name)
     let takes_case = d is "Json" | "SqlRow"
+    if d == "Proto" {
+      // the message's full name, `derive Proto(name: "pkg.Msg")` (decision 0683 item 2)
+      if k != "name" || a.str == None {
+        c.error("XO0413", a.key.span, "`derive Proto` takes one argument, `name: \"pkg.Msg\"`, the message's full name (decision 0683)")
+      }
+      continue
+    }
     if !takes_case && d != "Cbor" {
       c.error("XO0413", a.span, "`derive ${d}` takes no arguments; `case:` applies to `derive Json`, `derive SqlRow` and `derive Cbor` (decisions 0277, 0527)")
       continue
