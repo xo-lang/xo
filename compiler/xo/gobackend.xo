@@ -11,6 +11,7 @@ use github.com/xo-lang/xo/compiler/gen
 use github.com/xo-lang/xo/compiler/prune
 use github.com/xo-lang/xo/compiler/tzsel
 use std/internal
+use std/crypto
 use github.com/xo-lang/xo/compiler/hostpath
 
 /// Builds o.dirs with the Go backend (internal/build Build with the Go
@@ -392,20 +393,99 @@ fn go_build(os: Os, ctx: Ctx, gocmd: Str, tree: Str, tags: List[Str], ld: Str, o
   let parts = tg.split("/")
   let cgo = if race { "CGO_ENABLED=1" } else { "CGO_ENABLED=0" }
   let env = ["GOOS=${parts[0]}", "GOARCH=${parts[1]}", "GOWORK=off", "GOFLAGS=", "GOCACHE=${go_cache_dir(os, ctx)}", cgo]
+  let rt_lock = cold_rt_lock(os, ctx, tree, tags, tg, race)
   let held = hold_go_cache(os, ctx)
   let br = match env_command(os, env + [gocmd, "-C", tree] + args + ["-o", out, "."]).output() {
     Ok(r) => r
     Err(e) => {
       release_go_cache(held)
+      rt_done(os, rt_lock, false)
       return Err(e)
     }
   }
   release_go_cache(held)
+  rt_done(os, rt_lock, br.code == 0)
   if br.code == 0 {
     store_bin(os, ctx, entry, out)
   }
   prune_go_cache(os, ctx)
   Ok((br.code, (br.stdout + br.stderr).to_str() ?? ""))
+}
+
+/// A held cold-runtime lock (cold_rt_lock): the lock and the marker
+/// a successful build writes.
+struct RtLock {
+  lock: FileLock
+  ok: Str
+}
+
+/// How long a runtime variant's marker says its compile is in the Go
+/// cache: under prune_go_cache's GO_CACHE_KEEP, so a marker never
+/// outlives the objects it stands for.
+const RT_MARK_FRESH: Duration = 60m
+
+/// One compile of a cold runtime variant per Go cache (2026-11-16, the
+/// lead's hourly -short: each Go backend build compiles the generated
+/// runtime package, about 1.2 GB and 30 CPU-seconds, and Go's cache has
+/// no in-flight dedupe, so after a std/rt change 26 builds compiled it at
+/// once and builds hit 120 s timeouts). The variant is the tree's rt
+/// files (names and sizes: decision 0551 prunes them per program), the
+/// tags, target and race: equal variants compile the same package. A
+/// fresh marker means it is in the cache: no lock. Else the build holds
+/// an exclusive lock on the variant until its go build ends, and a build
+/// that waited for it finds the marker and goes on unlocked. Two variants
+/// with one key only wait for each other (the key never decides what is
+/// built). None when anything fails: the build runs unlocked, as before.
+fn cold_rt_lock(os: Os, ctx: Ctx, tree: Str, tags: List[Str], tg: Str, race: Bool) -> RtLock? {
+  if (os.env.get("XO_GO_RT_LOCK") ?? "") == "off" {
+    return None
+  }
+  let fis = match os.fs.read_dir("${tree}/rt") {
+    Ok(v) => v
+    Err(_) => return None
+  }
+  var lines: List[Str] = ["${tg} race=${race} tags=${tags.join(",")}"]
+  for fi in fis {
+    lines.push("${fi.name} ${fi.size}")
+  }
+  let key = crypto.sha256(lines.sort().join("\n").bytes()).to_hex()[0..24]
+  let dir = "${go_cache_dir(os, ctx)}/xo-rt"
+  if os.fs.create_dir_all(dir).is_err() {
+    return None
+  }
+  let ok = "${dir}/${key}.ok"
+  if rt_fresh(os, ok) {
+    return None
+  }
+  let l = match os.fs.lock("${dir}/${key}.lock") {
+    Ok(l) => l
+    Err(_) => return None
+  }
+  if rt_fresh(os, ok) {
+    // another build compiled it while this one waited
+    l.unlock()
+    return None
+  }
+  Some(RtLock{lock: l, ok: ok})
+}
+
+/// Whether the marker at ok was written within RT_MARK_FRESH.
+fn rt_fresh(os: Os, ok: Str) -> Bool {
+  match os.fs.stat(ok) {
+    Ok(Some(fi)) => os.clock.now() - fi.modified < RT_MARK_FRESH
+    _ => false
+  }
+}
+
+/// Ends a cold_rt_lock: the marker written when the build succeeded,
+/// then the lock released.
+fn rt_done(os: Os, l: RtLock?, built: Bool) {
+  if let Some(h) = l {
+    if built {
+      os.fs.write(h.ok, b"").ignore_err("a missing marker only means the next build locks again")
+    }
+    h.lock.unlock()
+  }
 }
 
 /// linknameFailed: go build output of a failed link of a runtime symbol

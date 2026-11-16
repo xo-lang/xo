@@ -86,6 +86,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_GO":                   {"link", ""},
 	"XO_GOCACHE":              {"link", ""},
 	"XO_GOTIMERS":             {"link", ""},
+	"XO_GO_RT_LOCK":           {"none", ""},    // off: Go backend builds skip the per-runtime-variant lock on a cold Go cache (gobackend.xo cold_rt_lock); the same binary
 	"XO_GO_PROTO":             {"content", ""}, // decision 0542: all keeps every protocol method; the generated Go's text says which
 	"XO_EMIT_JOBS":            {"none", ""},    // the parts never depend on the task count
 	"XO_EMIT_MEM":             {"none", ""},    // how many parts run at once (a memory bound, decision 0448 stage 3); the parts never depend on it, as XO_EMIT_JOBS
