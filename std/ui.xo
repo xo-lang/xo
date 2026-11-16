@@ -829,75 +829,6 @@ fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn) {
 /// after a failed sync, for the app's CSS.
 const RUNTIME_JS = r#"""(function(){
 "use strict";
-var root=document.getElementById("xo-ui");
-var stEl=document.getElementById("xo-state");
-if(!root||!stEl)return;
-var url=root.getAttribute("data-xo-sync")||"/_xo/sync";
-var live=root.getAttribute("data-xo-live");
-var ws=null,wsUp=false,backoff=1000,tick=0;
-var st=JSON.parse(stEl.textContent);
-var wasmUrl=root.getAttribute("data-xo-wasm");
-var mod=null,confirmed=st.model;
-var KEY="xo-ui:"+location.pathname+":"+url;
-var MARK="";
-// Each tab is its own client: its id lives in sessionStorage (a reload
-// keeps it), its queue in localStorage under KEY|id. A new tab adopts the
-// queue a closed tab left (marked free on pagehide, or not seen for 10
-// minutes), so offline work survives closing the tab. Two tabs never
-// share an id: the server keeps one seq per client.
-function ls(k){try{return JSON.parse(localStorage.getItem(k));}catch(e){return null;}}
-var client=null;
-try{client=sessionStorage.getItem(KEY);}catch(e){}
-if(!client){
-  try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k&&k.indexOf(KEY+"|")===0){var e=ls(k);if(e&&e.client&&(e.free||Date.now()-(e.seen||0)>600000)){client=e.client;e.free=false;e.seen=Date.now();localStorage.setItem(k,JSON.stringify(e));break;}}}}catch(e){}
-}
-if(!client)client="c"+Math.random().toString(36).slice(2)+Date.now().toString(36);
-try{sessionStorage.setItem(KEY,client);}catch(e){}
-var saved=ls(KEY+"|"+client);
-var next=(saved&&saved.next)||1;
-var queue=(saved&&saved.queue)||[];
-var acked=(saved&&saved.acked)||0;
-var ver=st.ver;
-var last=root.innerHTML;
-var busy=false,again=false;
-function save(free){try{localStorage.setItem(KEY+"|"+client,JSON.stringify({client:client,next:next,queue:queue,acked:acked,seen:Date.now(),free:!!free}));}catch(e){}}
-function mark(){var h=document.documentElement;if(queue.length)h.setAttribute("data-xo-pending","");else h.removeAttribute("data-xo-pending");}
-function fill(v,get){
-  if(typeof v==="string"&&v.charAt(0)===MARK){var x=get(v.slice(1));return x==null?"":String(x);}
-  if(Array.isArray(v))return v.map(function(e){return fill(e,get);});
-  if(v&&typeof v==="object"){var o={};for(var k in v)if(Object.prototype.hasOwnProperty.call(v,k))o[k]=fill(v[k],get);return o;}
-  return v;
-}
-function run(input){
-  var enc=new TextEncoder(),inb=enc.encode(input),pos=0,out=[],mem;
-  var dv=function(){return new DataView(mem.buffer);},u8=function(){return new Uint8Array(mem.buffer);};
-  function Exit(c){this.code=c;}
-  var w={
-    fd_read:function(fd,iovs,n,nr){if(fd!==0)return 8;var t=0,v=dv();for(var i=0;i<n;i++){var p=v.getUint32(iovs+i*8,true),l=v.getUint32(iovs+i*8+4,true),k=Math.min(l,inb.length-pos);u8().set(inb.subarray(pos,pos+k),p);pos+=k;t+=k;if(k<l)break;}v.setUint32(nr,t,true);return 0;},
-    fd_write:function(fd,iovs,n,nw){var t=0,v=dv();for(var i=0;i<n;i++){var p=v.getUint32(iovs+i*8,true),l=v.getUint32(iovs+i*8+4,true);if(fd===1)out.push(u8().slice(p,p+l));t+=l;}v.setUint32(nw,t,true);return 0;},
-    proc_exit:function(c){throw new Exit(c);},
-    args_sizes_get:function(a,b){dv().setUint32(a,0,true);dv().setUint32(b,0,true);return 0;},
-    args_get:function(){return 0;},
-    environ_sizes_get:function(a,b){dv().setUint32(a,0,true);dv().setUint32(b,0,true);return 0;},
-    environ_get:function(){return 0;},
-    clock_time_get:function(id,pr,p){dv().setBigUint64(p,BigInt(Math.round(performance.now()*1e6)),true);return 0;},
-    random_get:function(p,l){crypto.getRandomValues(u8().subarray(p,p+l));return 0;}
-  };
-  var imp={wasi_snapshot_preview1:new Proxy(w,{get:function(o,k){return o[k]||function(){return 52;};}})};
-  var inst=new WebAssembly.Instance(mod,imp);mem=inst.exports.memory;var code=0;
-  try{inst.exports._start();}catch(e){if(e instanceof Exit)code=e.code;else throw e;}
-  if(code!==0)throw new Error("xo-ui client exit "+code);
-  var len=0;out.forEach(function(b){len+=b.length;});var all=new Uint8Array(len),o=0;out.forEach(function(b){all.set(b,o);o+=b.length;});
-  return new TextDecoder().decode(all);
-}
-// a replace between pointerdown and pointerup removes the element under
-// the pointer, so its click never fires: hold it until the click is done
-// (at most a second: a pointerup outside the window may never arrive)
-var down=false,downAt=0,held=null;
-document.addEventListener("pointerdown",function(){down=true;downAt=Date.now();},true);
-function release(){down=false;if(held!==null){setTimeout(function(){if(!down&&held!==null){var h=held;held=null;show(h);}},0);}}
-document.addEventListener("pointerup",release,true);
-document.addEventListener("pointercancel",release,true);
 // morph-begin
 // The new view is patched into the live one instead of replacing it: a
 // node that matches (same tag, and same data-key or id when it has one)
@@ -935,81 +866,221 @@ function xoMorph(cur,next,focus){
   while(a){var na=a.nextSibling;cur.removeChild(a);a=na;}
 }
 // morph-end
-function show(html){
-  if(html===last)return;
-  if(down&&Date.now()-downAt<1000){held=html;return;}
-  held=null;
-  if(document.createElement){
-    var t=document.createElement("template");t.innerHTML=html;
-    xoMorph(root,t.content,document.activeElement);
-  }else root.innerHTML=html;
-  last=html;
+var drainers={},mods={};
+function boot(){
+  var root=document.getElementById("xo-ui");
+  var stEl=document.getElementById("xo-state");
+  if(!root||!stEl)return null;
+  var url=root.getAttribute("data-xo-sync")||"/_xo/sync";
+  var live=root.getAttribute("data-xo-live");
+  var ws=null,wsUp=false,backoff=1000,tick=0;
+  var st=JSON.parse(stEl.textContent);
+  var wasmUrl=root.getAttribute("data-xo-wasm");
+  var mod=null,confirmed=st.model;
+  var KEY="xo-ui:"+location.pathname+":"+url;
+  if(drainers[KEY])drainers[KEY]();
+  // stopped: navigated away (no view, listeners or socket; the queue still
+  // drains); dead: replaced by a new instance for the same page
+  var stopped=false,dead=false,offs=[],iv=0;
+  function on(t,n,f,c){t.addEventListener(n,f,c);offs.push(function(){t.removeEventListener(n,f,c);});}
+  var NOATTR={setAttribute:function(){},removeAttribute:function(){}};
+  function H(){return stopped?NOATTR:document.documentElement;}
+  var MARK="";
+  // Each tab is its own client: its id lives in sessionStorage (a reload
+  // keeps it), its queue in localStorage under KEY|id. A new tab adopts the
+  // queue a closed tab left (marked free on pagehide, or not seen for 10
+  // minutes), so offline work survives closing the tab. Two tabs never
+  // share an id: the server keeps one seq per client.
+  function ls(k){try{return JSON.parse(localStorage.getItem(k));}catch(e){return null;}}
+  var client=null;
+  try{client=sessionStorage.getItem(KEY);}catch(e){}
+  if(!client){
+    try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k&&k.indexOf(KEY+"|")===0){var e=ls(k);if(e&&e.client&&(e.free||Date.now()-(e.seen||0)>600000)){client=e.client;e.free=false;e.seen=Date.now();localStorage.setItem(k,JSON.stringify(e));break;}}}}catch(e){}
+  }
+  if(!client)client="c"+Math.random().toString(36).slice(2)+Date.now().toString(36);
+  try{sessionStorage.setItem(KEY,client);}catch(e){}
+  var saved=ls(KEY+"|"+client);
+  var next=(saved&&saved.next)||1;
+  var queue=(saved&&saved.queue)||[];
+  var acked=(saved&&saved.acked)||0;
+  var ver=st.ver;
+  var last=root.innerHTML;
+  var busy=false,again=false;
+  function save(free){try{localStorage.setItem(KEY+"|"+client,JSON.stringify({client:client,next:next,queue:queue,acked:acked,seen:Date.now(),free:!!free}));}catch(e){}}
+  function mark(){var h=H();if(queue.length)h.setAttribute("data-xo-pending","");else h.removeAttribute("data-xo-pending");}
+  function fill(v,get){
+    if(typeof v==="string"&&v.charAt(0)===MARK){var x=get(v.slice(1));return x==null?"":String(x);}
+    if(Array.isArray(v))return v.map(function(e){return fill(e,get);});
+    if(v&&typeof v==="object"){var o={};for(var k in v)if(Object.prototype.hasOwnProperty.call(v,k))o[k]=fill(v[k],get);return o;}
+    return v;
+  }
+  function run(input){
+    var enc=new TextEncoder(),inb=enc.encode(input),pos=0,out=[],mem;
+    var dv=function(){return new DataView(mem.buffer);},u8=function(){return new Uint8Array(mem.buffer);};
+    function Exit(c){this.code=c;}
+    var w={
+      fd_read:function(fd,iovs,n,nr){if(fd!==0)return 8;var t=0,v=dv();for(var i=0;i<n;i++){var p=v.getUint32(iovs+i*8,true),l=v.getUint32(iovs+i*8+4,true),k=Math.min(l,inb.length-pos);u8().set(inb.subarray(pos,pos+k),p);pos+=k;t+=k;if(k<l)break;}v.setUint32(nr,t,true);return 0;},
+      fd_write:function(fd,iovs,n,nw){var t=0,v=dv();for(var i=0;i<n;i++){var p=v.getUint32(iovs+i*8,true),l=v.getUint32(iovs+i*8+4,true);if(fd===1)out.push(u8().slice(p,p+l));t+=l;}v.setUint32(nw,t,true);return 0;},
+      proc_exit:function(c){throw new Exit(c);},
+      args_sizes_get:function(a,b){dv().setUint32(a,0,true);dv().setUint32(b,0,true);return 0;},
+      args_get:function(){return 0;},
+      environ_sizes_get:function(a,b){dv().setUint32(a,0,true);dv().setUint32(b,0,true);return 0;},
+      environ_get:function(){return 0;},
+      clock_time_get:function(id,pr,p){dv().setBigUint64(p,BigInt(Math.round(performance.now()*1e6)),true);return 0;},
+      random_get:function(p,l){crypto.getRandomValues(u8().subarray(p,p+l));return 0;}
+    };
+    var imp={wasi_snapshot_preview1:new Proxy(w,{get:function(o,k){return o[k]||function(){return 52;};}})};
+    var inst=new WebAssembly.Instance(mod,imp);mem=inst.exports.memory;var code=0;
+    try{inst.exports._start();}catch(e){if(e instanceof Exit)code=e.code;else throw e;}
+    if(code!==0)throw new Error("xo-ui client exit "+code);
+    var len=0;out.forEach(function(b){len+=b.length;});var all=new Uint8Array(len),o=0;out.forEach(function(b){all.set(b,o);o+=b.length;});
+    return new TextDecoder().decode(all);
+  }
+  // a replace between pointerdown and pointerup removes the element under
+  // the pointer, so its click never fires: hold it until the click is done
+  // (at most a second: a pointerup outside the window may never arrive)
+  var down=false,downAt=0,held=null;
+  on(document,"pointerdown",function(){down=true;downAt=Date.now();},true);
+  function release(){down=false;if(held!==null){setTimeout(function(){if(!down&&held!==null){var h=held;held=null;show(h);}},0);}}
+  on(document,"pointerup",release,true);
+  on(document,"pointercancel",release,true);
+  function show(html){
+    if(stopped||html===last)return;
+    if(down&&Date.now()-downAt<1000){held=html;return;}
+    held=null;
+    if(document.createElement){
+      var t=document.createElement("template");t.innerHTML=html;
+      xoMorph(root,t.content,document.activeElement);
+    }else root.innerHTML=html;
+    last=html;
+  }
+  function predict(){
+    if(!mod||stopped)return false;
+    var r;
+    try{r=JSON.parse(run(JSON.stringify({model:confirmed,pending:queue.map(function(e){return e.msg;})})));}catch(e){return false;}
+    show(r.html);
+    var h=H();if(r.awaiting>0)h.setAttribute("data-xo-awaiting",String(r.awaiting));else h.removeAttribute("data-xo-awaiting");
+    return true;
+  }
+  function send(msg){queue.push({seq:next++,msg:msg});save();mark();predict();sync();}
+  function sync(){
+    if(dead)return;
+    if(busy){again=true;return;}
+    busy=true;
+    var msgs=queue.filter(function(e){return e.seq>acked;});
+    fetch(url+(mod?"?thin=1&model=1":"?thin=1"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:client,ver:ver,msgs:msgs}),credentials:"same-origin"})
+    .then(function(r){
+      var h=H();
+      if(dead)throw new Error("sync dead");
+      if(r.status===403){try{localStorage.removeItem(KEY+"|"+client);sessionStorage.removeItem(KEY);}catch(e){}queue=[];if(!stopped)location.reload();throw new Error("sync 403");}
+      if(r.status===401){h.setAttribute("data-xo-signed-out","");throw new Error("sync 401");}
+      h.removeAttribute("data-xo-signed-out");
+      if(!r.ok)throw new Error("sync "+r.status);return r.json();})
+    .then(function(s){
+      if(dead)return;
+      if(s.down.acked>acked)acked=s.down.acked;
+      if(s.down.refused>0)H().setAttribute("data-xo-refused",String(s.down.refused));else H().removeAttribute("data-xo-refused");
+      queue=queue.filter(function(e){return e.seq>acked;});
+      ver=s.ver;
+      if(s.model!=null)confirmed=s.model;
+      if(!(queue.length&&predict())){if(!s.same)show(s.html);H().removeAttribute("data-xo-awaiting");}
+      H().removeAttribute("data-xo-offline");
+      save();mark();
+    })
+    .catch(function(e){if(!/sync (40[13]|dead)/.test(String(e)))H().setAttribute("data-xo-offline","");})
+    .then(function(){busy=false;if(again){again=false;sync();}});
+  }
+  function handler(ev,name){
+    var t=ev.target&&ev.target.closest?ev.target.closest("[data-xo-"+name+"]"):null;
+    if(!t||!root.contains(t))return;
+    var msg;
+    try{msg=JSON.parse(t.getAttribute("data-xo-"+name));}catch(e){return;}
+    var get;
+    if(name==="submit"){ev.preventDefault();var fd=new FormData(t);get=function(k){return fd.get(k);};}
+    else{if(name==="click")ev.preventDefault();get=function(k){if(t.name===k)return t.type==="checkbox"?(t.checked?"on":""):t.value;var f=t.form;var e=f&&f.elements[k];return e?e.value:null;};}
+    send(fill(msg,get));
+    if(name==="submit"&&t.reset)t.reset();
+  }
+  ["click","submit","change"].forEach(function(n){on(root,n,function(ev){handler(ev,n);});});
+  function connect(){
+    if(!live||!window.WebSocket)return;
+    try{ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+live);}catch(e){return;}
+    ws.onopen=function(){wsUp=true;backoff=1000;};
+    ws.onmessage=function(ev){var v=+ev.data;if(v>ver||queue.length)sync();};
+    ws.onclose=function(){wsUp=false;if(stopped)return;setTimeout(connect,backoff);backoff=Math.min(backoff*2,30000);};
+  }
+  on(window,"online",sync);
+  on(window,"pagehide",function(){save(true);});
+  on(window,"pageshow",function(){save();});
+  on(document,"visibilitychange",function(){if(!document.hidden){save();sync();}});
+  iv=setInterval(function(){if(stopped){if(dead||!queue.length){clearInterval(iv);if(drainers[KEY]===kill)delete drainers[KEY];}else sync();return;}tick++;if(tick%15===0)save();if(!document.hidden&&(!wsUp||tick%15===0))sync();},2000);
+  connect();
+  save();
+  mark();
+  if(wasmUrl&&window.WebAssembly){
+    var mp=mods[wasmUrl]||(mods[wasmUrl]=fetch(wasmUrl).then(function(r){if(!r.ok)throw new Error("wasm "+r.status);return WebAssembly.compileStreaming?WebAssembly.compileStreaming(r):r.arrayBuffer().then(function(b){return WebAssembly.compile(b);});}));
+    mp.then(function(m){if(stopped)return;mod=m;if(queue.length)predict();sync();})
+    .catch(function(){delete mods[wasmUrl];});
+  }
+  if(queue.length)sync();
+  function kill(){dead=true;stopped=true;clearInterval(iv);}
+  // leave this page: the view, listeners and socket go; Msgs still queued
+  // keep syncing to this page's endpoint until they drain
+  return function(){
+    stopped=true;
+    offs.forEach(function(f){f();});offs=[];
+    if(ws){ws.onclose=null;try{ws.close();}catch(e){}}
+    save();
+    if(queue.length)drainers[KEY]=kill;else kill();
+  };
 }
-function predict(){
-  if(!mod)return false;
-  var r;
-  try{r=JSON.parse(run(JSON.stringify({model:confirmed,pending:queue.map(function(e){return e.msg;})})));}catch(e){return false;}
-  show(r.html);
-  var h=document.documentElement;if(r.awaiting>0)h.setAttribute("data-xo-awaiting",String(r.awaiting));else h.removeAttribute("data-xo-awaiting");
-  return true;
+var cur=boot();
+if(!cur)return;
+// nav-begin
+// A same-origin link to another std/ui page is followed without a full
+// load (decision 0668): fetch it, patch its head and body in, and boot the
+// runtime for it. Anything else (another origin, a plain page, a failed
+// fetch, data-xo-reload, a modifier key) is an ordinary navigation.
+var navN=0;
+try{history.scrollRestoration="manual";history.replaceState({xo:1,y:0},"",location.href);}catch(e){}
+function here(){return location.pathname+location.search;}
+function go(href,push){
+  var n=++navN;
+  return fetch(href,{credentials:"same-origin",headers:{"Accept":"text/html"}}).then(function(r){
+    var ct=r.headers.get("Content-Type")||"";
+    if(!r.ok||ct.indexOf("text/html")<0)throw 0;
+    return r.text().then(function(t){return {url:r.url||href,text:t};});
+  }).then(function(p){
+    if(n!==navN)return;
+    var d=new DOMParser().parseFromString(p.text,"text/html");
+    var nr=d.getElementById("xo-ui");
+    if(!nr||!d.getElementById("xo-state")||new URL(p.url,location.href).origin!==location.origin)throw 0;
+    if(push){try{history.replaceState({xo:1,y:window.scrollY},"",location.href);}catch(e){}history.pushState({xo:1,y:0},"",p.url);at=here();}
+    if(cur)cur();
+    document.title=d.title;
+    xoMorph(document.head,d.head,null);
+    xoMorph(document.body,d.body,null);
+    var st=history.state;
+    window.scrollTo(0,push?0:((st&&st.y)||0));
+    cur=boot();
+  }).catch(function(e){if(n===navN)location.href=href;});
 }
-function send(msg){queue.push({seq:next++,msg:msg});save();mark();predict();sync();}
-function sync(){
-  if(busy){again=true;return;}
-  busy=true;
-  var msgs=queue.filter(function(e){return e.seq>acked;});
-  fetch(url+(mod?"?thin=1&model=1":"?thin=1"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:client,ver:ver,msgs:msgs}),credentials:"same-origin"})
-  .then(function(r){
-    var h=document.documentElement;
-    if(r.status===403){try{localStorage.removeItem(KEY+"|"+client);sessionStorage.removeItem(KEY);}catch(e){}location.reload();throw new Error("sync 403");}
-    if(r.status===401){h.setAttribute("data-xo-signed-out","");throw new Error("sync 401");}
-    h.removeAttribute("data-xo-signed-out");
-    if(!r.ok)throw new Error("sync "+r.status);return r.json();})
-  .then(function(s){
-    if(s.down.acked>acked)acked=s.down.acked;
-    if(s.down.refused>0)document.documentElement.setAttribute("data-xo-refused",String(s.down.refused));else document.documentElement.removeAttribute("data-xo-refused");
-    queue=queue.filter(function(e){return e.seq>acked;});
-    ver=s.ver;
-    if(s.model!=null)confirmed=s.model;
-    if(!(queue.length&&predict())){if(!s.same)show(s.html);document.documentElement.removeAttribute("data-xo-awaiting");}
-    document.documentElement.removeAttribute("data-xo-offline");
-    save();mark();
-  })
-  .catch(function(e){if(!/sync 40[13]/.test(String(e)))document.documentElement.setAttribute("data-xo-offline","");})
-  .then(function(){busy=false;if(again){again=false;sync();}});
-}
-function handler(ev,name){
-  var t=ev.target&&ev.target.closest?ev.target.closest("[data-xo-"+name+"]"):null;
-  if(!t||!root.contains(t))return;
-  var msg;
-  try{msg=JSON.parse(t.getAttribute("data-xo-"+name));}catch(e){return;}
-  var get;
-  if(name==="submit"){ev.preventDefault();var fd=new FormData(t);get=function(k){return fd.get(k);};}
-  else{if(name==="click")ev.preventDefault();get=function(k){if(t.name===k)return t.type==="checkbox"?(t.checked?"on":""):t.value;var f=t.form;var e=f&&f.elements[k];return e?e.value:null;};}
-  send(fill(msg,get));
-  if(name==="submit"&&t.reset)t.reset();
-}
-["click","submit","change"].forEach(function(n){root.addEventListener(n,function(ev){handler(ev,n);});});
-function connect(){
-  if(!live||!window.WebSocket)return;
-  try{ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+live);}catch(e){return;}
-  ws.onopen=function(){wsUp=true;backoff=1000;};
-  ws.onmessage=function(ev){var v=+ev.data;if(v>ver||queue.length)sync();};
-  ws.onclose=function(){wsUp=false;setTimeout(connect,backoff);backoff=Math.min(backoff*2,30000);};
-}
-window.addEventListener("online",sync);
-window.addEventListener("pagehide",function(){save(true);});
-window.addEventListener("pageshow",function(){save();});
-document.addEventListener("visibilitychange",function(){if(!document.hidden){save();sync();}});
-setInterval(function(){tick++;if(tick%15===0)save();if(!document.hidden&&(!wsUp||tick%15===0))sync();},2000);
-connect();
-save();
-mark();
-if(wasmUrl&&window.WebAssembly){
-  fetch(wasmUrl).then(function(r){if(!r.ok)throw new Error("wasm "+r.status);return WebAssembly.compileStreaming?WebAssembly.compileStreaming(r):r.arrayBuffer().then(function(b){return WebAssembly.compile(b);});})
-  .then(function(m){mod=m;if(queue.length)predict();sync();})
-  .catch(function(){});
-}
-if(queue.length)sync();
+document.addEventListener("click",function(ev){
+  if(ev.defaultPrevented||ev.button!==0||ev.metaKey||ev.ctrlKey||ev.shiftKey||ev.altKey)return;
+  var a=ev.target&&ev.target.closest?ev.target.closest("a[href]"):null;
+  if(!a||a.hasAttribute("download")||a.hasAttribute("data-xo-reload")||(a.target&&a.target!=="_self"))return;
+  var u=new URL(a.href,location.href);
+  if(u.origin!==location.origin)return;
+  if(u.pathname+u.search===here()&&u.hash)return;
+  ev.preventDefault();
+  go(u.href,true);
+});
+var at=here();
+window.addEventListener("popstate",function(ev){
+  if(here()===at)return;
+  at=here();
+  go(location.href,false);
+});
+// nav-end
 })();
 """#

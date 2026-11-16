@@ -1,5 +1,16 @@
 # std/ui changes
 
+## 2026-11-15: feature: links between std/ui pages without a full load
+
+- Kind: feature
+- Commit: this push
+- Found by: owner (page changes without refreshing the whole page; xw's dashboard has 7 std/ui pages)
+- Go reference: none
+- Test: headless Chrome, ~/xo-lead/notes/stdui/e2e/drive-nav.mjs against a server with two counter pages, the todo wasm page and a plain page (17/17: switch in 4 to 11 ms with the window kept, back and forward keep state and scroll, a left page's blocked queue drains to its own endpoint and never to the next page, plain pages and data-xo-reload load normally); internal/uiruntime tests; the 21 todo and 3 morph browser checks
+- Shipped in: not yet released
+
+The runtime follows a same-origin link to another std/ui page itself (decision 0668): it fetches the page, patches it in, pushes history and starts that page's runtime; back and forward restore scroll. `data-xo-reload` opts a link out.
+
 ## 2026-11-15: perf: the view is patched in place; an idle sync no longer sends the page
 
 - Kind: perf

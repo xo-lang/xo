@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- std/ui (Early): a same-origin link to another std/ui page no longer reloads the browser page: the runtime fetches it, patches it in and keeps history and scroll (decision 0668); add `data-xo-reload` to a link that must load normally.
 - Perf (std/ui, Early): the runtime patches each new view into the page instead of replacing it, so focus, typed text, scroll positions, open `<details>` and selections survive updates (give list items a `data-key`), and a sync with nothing new is about 100 bytes (`Sync.same`) instead of the whole view.
 - Fix (checker): a native `xo build` or `xo run` reports the flow errors (XO0520 lost update, XO0804, moves) in a dependency's function bodies it reaches, as `--backend=go` and `xo check` of the dependency did; such a dependency built before (decision 0517 bodies skipped the flow passes). A dependency with one now fails the build: fix the reported body.
 - Fix (std/ui, Early): a click could be lost when a sync replaced the view between pointerdown and pointerup; the runtime now waits until the click has run.

@@ -11214,6 +11214,14 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   so a reordered list keeps its nodes. A patch waits while a pointer is
   down (until the click has run, at most a second), so a press on a
   link or button is never lost.
+- A same-origin link to another std/ui page is followed without a full
+  load (decision 0668): the runtime fetches the page, pushes a history
+  entry, patches the head and body in and starts the new page's own sync,
+  socket and queue; back and forward do the same and restore the scroll
+  position. A link with `data-xo-reload`, a `target`, `download` or a
+  modifier key, and a reply that is not a std/ui page, load normally. A
+  page left with Msgs not yet acknowledged keeps sending them to its own
+  endpoint in the background until they drain.
 - A sync that sends no Msgs from a page already at the current version
   answers `same: true` with no HTML and no model, and the page keeps
   what it shows: an idle poll is about 100 bytes, not the whole view.
