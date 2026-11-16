@@ -1529,7 +1529,11 @@ Last verified: 2026-11-15
   to push anyway); and for a change to a corpus, a corpus generator, or a
   std module with a corpus, or a rebase that brings one in, it runs
   `go run ./scripts/stdcorpus -check MODS` on the Mac before pushing
-  (PUSHQ_CORPUS=0 skips it).
+  (PUSHQ_CORPUS=0 skips it). It and gate.sh's `corpuscheck` step run the
+  check through gatelib.sh gate_corpus_run, which queues it in heavy.sh's
+  bulk class with HEAVY_DARWIN=1 (HEAVY_NESTED=queue inside a gate job): it
+  is darwin only and takes about 10 minutes, so it never holds a gate slot
+  (lead, 2026-11-16). Last verified: 2026-11-16.
   A gated push that changes what compiler/xo builds from (compiler/ but
   compiler/macho, compiler/wasm and `_test.xo` files; std/native;
   std/llrt) must also name `selfbuild`: one cold build of compiler/xo

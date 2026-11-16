@@ -1367,7 +1367,9 @@ run_step_body() {
     # on the Mac, 2026-11-15 (generators run one at a time). The oracles
     # read their Go modules from the module cache (GOPROXY=off), so the
     # step runs where they are: the Mac's tier steps.
-    if go run ./scripts/stdcorpus -check >"$logs/corpuscheck.txt" 2>&1; then
+    # gatelib.sh gate_corpus_run: on the Mac in heavy.sh's bulk class with
+    # HEAVY_DARWIN=1, whatever class the gate runs in (lead, 2026-11-16)
+    if gate_corpus_run "$logs/corpuscheck.txt"; then
       echo "corpuscheck: every corpus is current"
     else
       failed=1
