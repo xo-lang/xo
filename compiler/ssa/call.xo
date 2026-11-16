@@ -2058,12 +2058,19 @@ fn (var b: Builder) ord_min_max(name: Str, a: Int, c: Int) -> Int {
 fn (var b: Builder) ord_cmp(t: Int, a: Int, c: Int) -> Int {
   let join = b.new_block()
   let res = b.s.f.add_param(join, t)
-  let lt = b.compare_values(lexer.Kind.Lt, a, c)
+  // Str and Bytes by one str.cmp, a derived Ord type by one xo.cmp[T]
+  // (as ord_min_max), not `<` both ways: two memcmp calls when the first
+  // was false, so Bytes.cmp was slower than `==` then `<` (publicsuffix's
+  // compare_label; #103 lever 4)
+  let at = b.vty(a)
+  let cf = if b.tkind(at) == Kind.Str { "str.cmp" } else { b.cmp_func(at) }
+  let three = if cf.is_empty() { -1 } else { b.call(cf, b.int_t(), "", [a, c]) }
+  let lt = if three >= 0 { b.add(Op.Lt, b.bool_t(), Aux.None, [three, b.cint(0)]) } else { b.compare_values(lexer.Kind.Lt, a, c) }
   let (yes, no) = b.branch(lt)
   b.s.cur = yes
   b.jump(join, [b.variant(t, "Less", [])])
   b.s.cur = no
-  let gt = b.compare_values(lexer.Kind.Lt, c, a)
+  let gt = if three >= 0 { b.add(Op.Gt, b.bool_t(), Aux.None, [three, b.cint(0)]) } else { b.compare_values(lexer.Kind.Lt, c, a) }
   let (y2, n2) = b.branch(gt)
   b.s.cur = y2
   b.jump(join, [b.variant(t, "Greater", [])])

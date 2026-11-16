@@ -1,0 +1,50 @@
+// `a.cmp(b)` on Str, Bytes (and slices of them), a derived Ord struct, a
+// newtype and Float (a NaN compares Equal): one three-way compare per
+// call (#103 lever 4), the same answers as `<` both ways.
+
+struct Label {
+  zone: Str
+  depth: Int
+} derive Ord
+
+type Name struct(Str) derive Ord
+
+fn show(o: Ordering) -> Str {
+  match o {
+    Less => "<"
+    Equal => "="
+    Greater => ">"
+  }
+}
+
+fn main(os: Os) uses stdio {
+  let strs = ["", "a", "ab", "abc", "abd", "b", "abcdefghijklmnopqrstuvwxyz0123456", "abcdefghijklmnopqrstuvwxyz0123457"]
+  var line = ""
+  for x in strs {
+    for y in strs {
+      line = line + show(x.cmp(y))
+    }
+    line = line + " "
+  }
+  os.stdio.println("str ${line}")
+  var bl = ""
+  for x in strs {
+    for y in strs {
+      let o = x.bytes().cmp(y.bytes())
+      let want = if x < y { "<" } else if y < x { ">" } else { "=" }
+      bl = bl + (if show(o) == want { "." } else { "!" })
+    }
+  }
+  os.stdio.println("bytes ${bl}")
+  let raw = b"\x00\x7f\x80\xff"
+  os.stdio.println("high ${show(raw[1..2].cmp(raw[2..3]))} ${show(raw[3..4].cmp(raw[0..1]))} ${show(raw[0..2].cmp(raw[0..1]))}")
+  let s = "label.example.com"
+  os.stdio.println("slices ${show(s[0..5].cmp(s[6..13]))} ${show(s[14..17].cmp("com"))}")
+  let a = Label{zone: "com", depth: 2}
+  let b = Label{zone: "com", depth: 3}
+  let c = Label{zone: "co", depth: 9}
+  os.stdio.println("struct ${show(a.cmp(b))} ${show(b.cmp(a))} ${show(a.cmp(a))} ${show(c.cmp(a))}")
+  os.stdio.println("newtype ${show(Name("x").cmp(Name("y")))} ${show(Name("y").cmp(Name("y")))}")
+  let nan = 0.0 / 0.0
+  os.stdio.println("float ${show(1.5.cmp(2.5))} ${show(nan.cmp(1.0))} ${show(2.5.cmp(1.5))}")
+}
