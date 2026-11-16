@@ -81,6 +81,9 @@ struct Request {
   expect_ns: Int = 0
   /// with_host's Host (Go's Request.Host), "" for the URL's. Hidden.
   host_over: Str = ""
+  /// an HTTP/2 extended CONNECT's :protocol (decision 0687), "" for
+  /// none. Hidden from Xo code.
+  ext_protocol: Str = ""
   /// with_trailers' f (decision 0433), asked once the body is sent; one
   /// entry or none. Hidden from Xo code.
   trailer_fn: List[fn() -> Map[Str, Str]] = []
@@ -1559,6 +1562,7 @@ fn target_path(target: Str) -> Str {
 /// XHost), else the Host the request came with.
 fn request_host(r: Request) -> Str { if r.host_over.is_empty() { r.raw_host } else { r.host_over } }
 fn request_tls(r: Request) -> Bool { r.over_tls }
+fn request_protocol(r: Request) -> Str { r.ext_protocol }
 
 /// The handshake's outcome of TLS connection th, none for 0 (plain),
 /// read through the TLS table (decision 0244: a plain server links no
@@ -3285,7 +3289,7 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
     f(srv, s.tls_on)
   }
   if let Some(cf) = s.h2cfg {
-    hserve.srv_h2cfg(srv, cf.max_concurrent_streams, cf.max_read_frame_size, cf.max_receive_buffer_per_connection, cf.max_receive_buffer_per_stream, cf.max_decoder_header_table_size, cf.send_ping_timeout.nanos(), cf.ping_timeout.nanos(), cf.write_byte_timeout.nanos(), cf.max_encoder_header_table_size)
+    hserve.srv_h2cfg(srv, cf.max_concurrent_streams, cf.max_read_frame_size, cf.max_receive_buffer_per_connection, cf.max_receive_buffer_per_stream, cf.max_decoder_header_table_size, cf.send_ping_timeout.nanos(), cf.ping_timeout.nanos(), cf.write_byte_timeout.nanos(), cf.max_encoder_header_table_size, cf.extended_connect)
   }
   // HTTP/2's header list limit follows with_max_header_bytes, as Go's
   // maxHeaderListSize (MaxHeaderBytes plus 10 fields of 32 bytes)
@@ -3681,7 +3685,7 @@ fn stream_request(q: h2srv.H2Req) -> Request {
   let th = hconn.tls_of(q.conn)
   let scheme = if q.scheme.is_empty() { if th != 0 { "https" } else { "http" } } else { q.scheme }
   let url = http.Url{scheme: scheme, host: http1.host_name(q.host), port: port, path: upath, query: query}
-  let req = Request{over_tls: th != 0, tls_neg: tls_neg_of(th), raw_host: q.host, method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
+  let req = Request{over_tls: th != 0, tls_neg: tls_neg_of(th), raw_host: q.host, ext_protocol: q.protocol, method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
   if !q.streamed {
     return req
   }

@@ -1910,6 +1910,7 @@ fn (r: Request) basic_auth() -> (Str, Str)?                       // BasicAuth: 
 fn (r: Request) with_basic_auth(user: Str, password: Str) -> Request  // SetBasicAuth
 fn (r: Request) header_values(name: Str) -> List[Str]
 fn (r: Request) host() -> Str                 // Go's Request.Host: the Host header as sent (HTTP/2's :authority)
+fn (r: Request) protocol() -> Str             // RFC 8441's :protocol of an HTTP/2 extended CONNECT (Go's r.Header[":protocol"]); "" otherwise
 fn (r: Request) tls() -> Bool                 // Go's r.TLS != nil; url.scheme is then "https"
 fn (r: Request) tls_state() -> TlsState?      // Go's r.TLS: what the handshake negotiated; None for a plain connection
 struct TlsState {                             // Go's tls.ConnectionState
@@ -2565,8 +2566,18 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
     send_ping_timeout: Duration = 0s    // read silence before a PING; none
     ping_timeout: Duration = 0s         // the wait for its ack; 15 s
     write_byte_timeout: Duration = 0s   // no write progress closes the connection; none
+    extended_connect: Bool = false      // RFC 8441 extended CONNECT (decision 0687; Go's GODEBUG=http2xconnect=1)
   }
   ```
+
+  With `extended_connect` the server's SETTINGS carry
+  ENABLE_CONNECT_PROTOCOL 1 and a request may carry `:protocol`
+  (`Request.protocol()`): a CONNECT with one needs a `:path` and is
+  routed by it like any request. Off, as in Go, a `:protocol` is a
+  stream error (PROTOCOL_ERROR). The Go backend turns it on only with
+  `GODEBUG=http2xconnect=1` in the program's environment (decision 0687
+  stage 4 sets it); the handler still starts once the request's body is
+  complete (the tunnel handler is stage 2).
 
   Without `with_protocols` a server and a client speak `#{Http1,
   Http2}`. A server with `UnencryptedHttp2` serves HTTP/2 with prior

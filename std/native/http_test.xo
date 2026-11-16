@@ -1776,6 +1776,10 @@ test "escaped_path, raw_query, host and tls of a request built as a struct liter
   expect(req.raw_query()) == ""
   expect(req.host()) == ""
   expect(req.tls()) == false
+  // RFC 8441's :protocol: only an HTTP/2 extended CONNECT has one
+  // (internal/llvm TestH2ExtConnect serves them)
+  expect(req.protocol()) == ""
+  expect(http.H2Config{}.extended_connect) == false
 }
 
 test "FakeNet matches a pattern on the escaped path's unescaped segments" {

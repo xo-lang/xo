@@ -520,8 +520,10 @@ pub const K_OPTIONS: Int = 3
 /// newWriterAndRequest, checkValidHTTP2RequestHeaders): K_MALFORMED (a
 /// stream error), K_431 when the header list was cut (truncated), K_400
 /// with its error text written zero terminated at msg (120 bytes), K_OPTIONS
-/// for OPTIONS *, else K_APP.
-pub fn request_check(ha: Int, hn: Int, truncated: Bool, msg: Int) -> Int {
+/// for OPTIONS *, else K_APP. xconnect: extended CONNECT is on (decision
+/// 0687), so a :protocol is admitted; off, it is malformed (Go's
+/// http2disableExtendedConnectProtocol, its default).
+pub fn request_check(ha: Int, hn: Int, truncated: Bool, msg: Int, xconnect: Bool = false) -> Int {
   // one pass over the fields, compared in place: the first :method,
   // :path, :scheme, and :authority, the connection specific fields
   // present (bit k: conn_name(k)), and the TE fields (a check made ten
@@ -530,6 +532,7 @@ pub fn request_check(ha: Int, hn: Int, truncated: Bool, msg: Int) -> Int {
   var pi = -1
   var si = -1
   var ai = -1
+  var proto = false
   var conn = 0
   var tes = 0
   var te_ok = true
@@ -539,7 +542,10 @@ pub fn request_check(ha: Int, hn: Int, truncated: Bool, msg: Int) -> Int {
     let kn = http1w.key_n(ha, i)
     if kn > 0 && rt.mem_load(kp, 0, 1) == 58 {
       if http1w.mem_is(kp, kn, ":protocol") {
-        return K_MALFORMED // extended CONNECT is off
+        if !xconnect {
+          return K_MALFORMED // extended CONNECT is off
+        }
+        proto = proto || http1w.val_n(ha, i) > 0
       }
       if mi < 0 && http1w.mem_is(kp, kn, ":method") {
         mi = i
@@ -560,8 +566,14 @@ pub fn request_check(ha: Int, hn: Int, truncated: Bool, msg: Int) -> Int {
     i += 1
   }
   let http = val_is(ha, si, "https") || val_is(ha, si, "http")
-  if val_is(ha, mi, "CONNECT") {
+  // an extended CONNECT (a :protocol) has a :path, checked as any
+  // request's target (newWriterAndRequest, NewServerRequest)
+  if val_is(ha, mi, "CONNECT") && !proto {
     if val_len(ha, pi) > 0 || val_len(ha, si) > 0 || val_len(ha, ai) == 0 {
+      return K_MALFORMED
+    }
+  } else if val_is(ha, mi, "CONNECT") {
+    if val_len(ha, pi) == 0 {
       return K_MALFORMED
     }
   } else if val_len(ha, mi) == 0 || val_len(ha, pi) == 0 || !http {

@@ -78,4 +78,7 @@ test "a FakeNet handler's host() is the URL's authority unless the request sets 
   expect(err_text(c.get("http://two.test:8080/h"))) == "ok 200 two.test:8080"
   let req = http.new_request("GET", "http://one.test/h").with_host("override.test")
   expect(err_text(c.send(req))) == "ok 200 override.test"
+  // RFC 8441's :protocol: only an HTTP/2 extended CONNECT has one (decision
+  // 0687; internal/llvm TestH2ExtConnect serves them)
+  expect(req.protocol()) == ""
 }

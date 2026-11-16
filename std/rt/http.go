@@ -969,6 +969,10 @@ func Http_empty(_ *Task, status int64) Http_Response { return Http_Response{F_st
 // M_host is `req.host()`: Go's Request.Host.
 func (r Http_Request) M_host(_ *Task) string { return r.XHost }
 
+// M_protocol is `r.protocol()` (decision 0687): an HTTP/2 extended
+// CONNECT's :protocol.
+func (r Http_Request) M_protocol(_ *Task) string { return r.XProtocol }
+
 // M_tls is `req.tls()`: whether the request came over TLS.
 func (r Http_Request) M_tls(_ *Task) bool { return r.XTLS }
 

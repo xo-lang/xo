@@ -88,3 +88,19 @@ backend.
 - **A general full-duplex handler for every request**: larger change to
   0121's model (every handler would start at HEADERS); not needed for
   this row.
+
+## Addendum 2026-11-16: stage 1 landed (Xo Lang 3)
+
+- The switch is `H2Config.extended_connect: Bool = false`, not a
+  `Server` field: Server is configured by builders and every HTTP/2
+  setting is in H2Config (`with_h2_config`), so it goes beside them.
+- `:protocol` is `Request.protocol()` (a method, as `host()`), not a
+  struct field, so struct literals of Request are unchanged.
+- Go's rules, checked against Go 1.26.11 by TestH2ExtConnect: with it on,
+  a CONNECT with a non-empty `:protocol` needs only a `:path` that parses
+  as a request target (no `:scheme` or `:authority` needed; a relative
+  path is PROTOCOL_ERROR); an empty `:protocol` is a plain CONNECT; a
+  `:protocol` on another method is admitted and kept.
+- The Go backend reads the switch only through
+  `GODEBUG=http2xconnect=1` (net/http reads it at init) until stage 4.
+

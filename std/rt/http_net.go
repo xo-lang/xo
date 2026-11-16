@@ -104,7 +104,13 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		// outside bytes (decision 0259): U+FFFD in the fields, percent
 		// escapes in the URL parts
 		var fields []string
+		// an extended CONNECT's :protocol (decision 0687) is
+		// Request.protocol, not a header
+		proto := hr.Header.Get(":protocol")
 		for k, vs := range hr.Header {
+			if k == ":protocol" {
+				continue
+			}
 			Map_put(nil, &h, textOf(k), textOf(fieldView(k, vs)))
 			if len(vs) > 1 {
 				fields = appendFields(fields, k, vs)
@@ -122,7 +128,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		if hr.TLS != nil && u.F_scheme == "" {
 			u.F_scheme = "https"
 		}
-		req := Http_Request{XRawPath: hr.URL.EscapedPath(), XHost: urlTextOf(hr.Host), XTLS: hr.TLS != nil, XTLSState: tlsStateOf(hr.TLS), F_method: hr.Method, F_path: urlTextOf(hr.URL.Path), F_url: u, F_headers: h, F_body: body, F_remote_ip: ip, XRawQuery: hr.URL.RawQuery, XFields: fields}
+		req := Http_Request{XRawPath: hr.URL.EscapedPath(), XHost: urlTextOf(hr.Host), XTLS: hr.TLS != nil, XTLSState: tlsStateOf(hr.TLS), XProtocol: textOf(proto), F_method: hr.Method, F_path: urlTextOf(hr.URL.Path), F_url: u, F_headers: h, F_body: body, F_remote_ip: ip, XRawQuery: hr.URL.RawQuery, XFields: fields}
 		if stream {
 			req = withStreamBody(req, hr.Body)
 			streamTrailer(req, func() map[string][]string { return hr.Trailer })

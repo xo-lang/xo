@@ -232,6 +232,10 @@ fn (r: Request) header_values(name: Str) -> List[Str]
 /// HTTP/2's :authority); `url.host` is the name alone. "" for a request
 /// built as a struct literal (std.md 4.3).
 fn (r: Request) host() -> Str
+/// RFC 8441's `:protocol` of an HTTP/2 extended CONNECT (Go's
+/// `r.Header[":protocol"]`; decision 0687), such as "websocket"; "" for
+/// any other request.
+fn (r: Request) protocol() -> Str
 /// Whether the request came over TLS (Go's `r.TLS != nil`); `url.scheme`
 /// is then "https".
 fn (r: Request) tls() -> Bool
@@ -544,6 +548,11 @@ struct H2Config {
   /// how long a write may make no progress before the connection
   /// closes (0: no limit)
   write_byte_timeout: Duration = 0s
+  /// RFC 8441 extended CONNECT (decision 0687; Go's
+  /// GODEBUG=http2xconnect=1): SETTINGS_ENABLE_CONNECT_PROTOCOL is sent
+  /// and a request may carry `:protocol` (Request.protocol). Off, as in
+  /// Go, such a request is a stream error (PROTOCOL_ERROR).
+  extended_connect: Bool = false
 }
 
 /// The server speaking the protocols of p (Go's Server.Protocols;

@@ -21,6 +21,18 @@ connection (a request written more than 50 ms before its writer
 reported it is not reused) or the writer recorded its events after the
 response.
 
+## 2026-11-16: feature: HTTP/2 extended CONNECT (RFC 8441), off by default
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89 (decision 0687 stage 1)
+- Go reference: Go 1.26.11 net/http h2_bundle.go (http2disableExtendedConnectProtocol, GODEBUG=http2xconnect=1; newWriterAndRequest) and internal/httpcommon NewServerRequest
+- Test: internal/llvm TestH2ExtConnect: the Go backend's server with GODEBUG=http2xconnect=1 and the native ones (llvm, arm64) give the same SETTINGS entry and the same answers to 11 raw frame requests (extended CONNECT with and without :path, :scheme, :authority, a body, a query, a relative path, an empty :protocol; a plain CONNECT; GET with and without :protocol); TestH2Diff's ":protocol" case keeps the default off
+- Timing: none (one word read per request's pseudo fields)
+
+`http.H2Config{extended_connect: true}` sends SETTINGS_ENABLE_CONNECT_PROTOCOL 1 and admits a `:protocol`, which
+handlers read as `Request.protocol()`. Off (the default, as Go's), a `:protocol` stays a stream error.
+
 ## 2026-11-16: fix: http.server on FakeNet serves raw connections
 
 - Kind: fix

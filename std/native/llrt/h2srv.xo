@@ -93,6 +93,8 @@ const S_MAX_STREAMS = 3
 const S_INITIAL_WINDOW = 4
 const S_MAX_FRAME = 5
 const S_MAX_HLIST = 6
+/// RFC 8441 SETTINGS_ENABLE_CONNECT_PROTOCOL (decision 0687)
+const S_ENABLE_CONNECT = 8
 
 /// The server's limits: net/http's defaults (http2configFromServer).
 const MAX_STREAMS = 250
@@ -213,9 +215,12 @@ const C_BUFD = 720
 /// back: C_BUFD plus the window the peer holds stays within
 /// BODY_BUDGET_MUL bodies' limit (conn_give)
 const C_OWED = 728
-const C_WPARK = 736
-const C_WREAD = 744
-const C_SIZE = 736 // own: this module\'s connection record, not the context
+/// extended CONNECT is on (H2Config extended_connect, decision 0687):
+/// SETTINGS_ENABLE_CONNECT_PROTOCOL 1 was sent and :protocol is admitted
+const C_XCONN = 736
+const C_WPARK = 744
+const C_WREAD = 752
+const C_SIZE = 744 // own: this module\'s connection record, not the context
 
 /// The connection record's size: wasm's has the park words after it.
 fn c_size() -> Int { if target.arch == TargetArch.Wasm32 { C_SIZE + 16 } else { C_SIZE } }
@@ -923,6 +928,7 @@ pub fn conn_new(why: Str, linger: Bool, cfg: Int = 0) -> Int {
   sto(c, C_WTO, if cfg != 0 { ld(cfg, 56) } else { 0 })
   sto(c, C_ETAB, if cfg != 0 { ld(cfg, 64) } else { 0 })
   sto(c, C_HLIST, if cfg != 0 && ld(cfg, 72) > 0 { ld(cfg, 72) } else { MAX_HLIST })
+  sto(c, C_XCONN, if cfg != 0 { ld(cfg, 80) } else { 0 })
   sto(c, C_LAST, now())
   sto(c, C_PEER_FRAME, 16384)
   sto(c, C_PEER_WIN, 65535)
@@ -930,12 +936,17 @@ pub fn conn_new(why: Str, linger: Bool, cfg: Int = 0) -> Int {
   sto(c, C_IN, ld(c, C_WINCONN))
   sto(c, C_MAXBODY, http1.max_body())
   // the server's preface: SETTINGS, then the connection window to 1 MiB
-  fh(c, 30, T_SETTINGS, 0, 0)
+  // (Go's order; ENABLE_CONNECT_PROTOCOL last, when extended CONNECT is on)
+  let xconn = on(c, C_XCONN)
+  fh(c, if xconn { 36 } else { 30 }, T_SETTINGS, 0, 0)
   put_setting(c, S_MAX_FRAME, ld(c, C_MAXFR))
   put_setting(c, S_MAX_STREAMS, ld(c, C_MAXSTR))
   put_setting(c, S_MAX_HLIST, ld(c, C_HLIST))
   put_setting(c, S_HEADER_TABLE, ld(c, C_TABLE))
   put_setting(c, S_INITIAL_WINDOW, ld(c, C_WINSTR))
+  if xconn {
+    put_setting(c, S_ENABLE_CONNECT, 1)
+  }
   sto(c, C_UNACKED, 1)
   put_winup(c, 0, ld(c, C_WINCONN) - 65535)
   // the client preface within 10 s (prefaceTimeout)
@@ -1198,6 +1209,8 @@ pub struct H2Req {
   pub trailer: Str = ""
   /// the body is read as it arrives (body_next; decision 0310)
   pub streamed: Bool = false
+  /// RFC 8441's :protocol of an extended CONNECT, "" for none (decision 0687)
+  pub protocol: Str = ""
 }
 
 /// The fiber's state of an HTTP/2 server connection: its record, HPACK,
@@ -1255,6 +1268,7 @@ struct ReqParts {
   rawquery: Str
   fields: List[Str] = []
   trailer: Str = ""
+  protocol: Str = ""
 }
 
 /// Keeps the parts in a (an Any of ReqParts) in stream record st's
@@ -1304,7 +1318,7 @@ fn (h: H2Conn) request_of(st: Int) -> H2Req {
     unlk(ld(st, S_C))
   }
   http1.fault_probe(p.path, "frame")
-  H2Req{conn: hconn.stream(h.h, st), method: p.method, path: p.path, scheme: p.scheme, urlhost: p.urlhost, host: p.host, headers: p.headers, query: p.query, rawquery: p.rawquery, body: body, fields: p.fields, trailer: p.trailer, streamed: streamed}
+  H2Req{conn: hconn.stream(h.h, st), method: p.method, path: p.path, scheme: p.scheme, urlhost: p.urlhost, host: p.host, headers: p.headers, query: p.query, rawquery: p.rawquery, body: body, fields: p.fields, trailer: p.trailer, streamed: streamed, protocol: p.protocol}
 }
 
 /// The next bytes of the streamed body of stream connection h (at most
@@ -2042,13 +2056,15 @@ fn (var h: H2Conn) request(st: Int, names: List[Str], values: List[Str], truncat
   // malformed requests, 431, 400, OPTIONS * (h2w.request_check)
   let a = fields_of(names, values)
   rt.mem_store(c + C_MSG, 0, 0, 1)
-  let kind = h2w.request_check(a, names.len(), truncated, c + C_MSG)
+  let kind = h2w.request_check(a, names.len(), truncated, c + C_MSG, on(c, C_XCONN))
   fields_free(a)
   if kind < 0 {
     return false
   }
   let method = pseudo(names, values, ":method")
   let path = pseudo(names, values, ":path")
+  // RFC 8441's :protocol (admitted only with extended CONNECT on)
+  let proto = pseudo(names, values, ":protocol")
   let auth = pseudo(names, values, ":authority")
   // the header: canonical keys, values joined (", ", "; " for Cookie)
   var hk: List[Str] = []
@@ -2130,7 +2146,7 @@ fn (var h: H2Conn) request(st: Int, names: List[Str], values: List[Str], truncat
       fields.push(values[i])
     }
   }
-  if method == "CONNECT" {
+  if method == "CONNECT" && proto.is_empty() {
     req_keep(st, rt.any_of(ReqParts{method: method, path: "", scheme: "", urlhost: auth, host: host, headers: hdr, query: [], rawquery: ""}))
   } else {
     // the URL and its query, parsed by http1.h2_target (fragment)
@@ -2144,7 +2160,7 @@ fn (var h: H2Conn) request(st: Int, names: List[Str], values: List[Str], truncat
       query.push(t[i])
       i += 1
     }
-    req_keep(st, rt.any_of(ReqParts{method: method, path: t[4], scheme: t[2], urlhost: t[3], host: host, headers: hdr, query: query, rawquery: t[5], fields: fields, trailer: trailer}))
+    req_keep(st, rt.any_of(ReqParts{method: method, path: t[4], scheme: t[2], urlhost: t[3], host: host, headers: hdr, query: query, rawquery: t[5], fields: fields, trailer: trailer, protocol: proto}))
     if !end_stream && !h.streams.is_empty() && h.streams[0](method, t[4]) {
       sto(st, S_STREAM, 1)
     }
