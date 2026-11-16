@@ -1968,6 +1968,15 @@ pub fn dump_response(resp: Response, body: Bool = true) -> Bytes
     // Content-Length (none for 1xx, 204, 304 with no body), the fields
     // sorted. body: false leaves the body out. ClientErr.Protocol for a
     // URL dump_request_out cannot send (another scheme, no host).
+pub fn timeout_handler(clock: Clock, d: Duration, msg: Str = "") -> fn(Request, Next) -> Response uses clock
+    // Go's TimeoutHandler as middleware: the rest of the chain runs under
+    // task.with_timeout(clock, d); one that has not returned its Response
+    // by then is canceled and the client gets 503 with msg (Go's Timeout
+    // page when empty), the Content-Type sniffed. A stream's body is
+    // written after the handler returns and is not timed. Cancellation
+    // comes at the handler's next cancellation point (core 7.2), so a
+    // handler computing without blocking answers late where Go answers
+    // at the deadline.
 
 struct Response {
   status: Int

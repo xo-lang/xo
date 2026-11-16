@@ -558,6 +558,16 @@ fn (s: Server) with_h2_config(c: H2Config) -> Server
 /// (`http: request body too large`) for a body over n bytes (a streamed
 /// body is capped at n as it is read).
 fn max_body(n: Int) -> fn(Request, Next) -> Response
+/// Go's TimeoutHandler as middleware: the rest of the chain runs under
+/// task.with_timeout(clock, d); one that has not returned its Response by
+/// then is canceled and the client gets 503 Service Unavailable with msg
+/// as the body (Go's Timeout HTML page when msg is empty), its
+/// Content-Type sniffed as Go does. A stream response's body is written
+/// after the handler returns, so only the time to return it counts. The
+/// handler is canceled at its next cancellation point (core 7.2): one
+/// that computes without blocking answers when it reaches one, where Go
+/// answers 503 at the deadline and leaves its goroutine running.
+fn timeout_handler(clock: Clock, d: Duration, msg: Str = "") -> fn(Request, Next) -> Response uses clock
 
 /// Go's CrossOriginProtection (net/http, Go 1.25): rejects a cross origin
 /// browser request that is not GET, HEAD or OPTIONS, by its Sec-Fetch-Site

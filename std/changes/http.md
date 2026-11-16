@@ -11,6 +11,18 @@
 
 The three dumps give a request or response as HTTP/1.1 text, the fields
 sorted by name, as Go's httputil writes them.
+## 2026-11-16: feature: timeout_handler (Go's TimeoutHandler)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89: stdaudit gap http.TimeoutHandler
+- Go reference: net/http server.go TimeoutHandler and timeoutHandler.ServeHTTP (Go 1.25)
+- Test: golden http_timeout_handler (go, arm64, LLVM): a fast handler passes with its status and headers; a sleeping one gets 503 with Go's page, a text message and an HTML message (sniffed Content-Type), its later step never runs; a 404 passes
+- Timing: none
+
+The middleware runs the chain under task.with_timeout. Unlike Go, a
+handler that computes without blocking is canceled at its next
+cancellation point (core 7.2), not at the deadline.
 
 ## 2026-11-16: feature: http.encoded_responses and BodyCoder (decision 0674)
 

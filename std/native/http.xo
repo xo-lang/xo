@@ -3166,6 +3166,18 @@ fn max_body(n: Int) -> fn(http.Request, http.Next) -> http.Response {
   }
 }
 
+/// Go's TimeoutHandler: the chain under task.with_timeout, 503 with msg
+/// (Go's errorBody) when it runs out.
+fn timeout_handler(clock: Clock, d: Duration, msg: Str = "") -> fn(http.Request, http.Next) -> http.Response uses clock {
+  let body = if msg.is_empty() { "<html><head><title>Timeout</title></head><body><h1>Timeout</h1></body></html>" } else { msg }
+  fn(req: http.Request, next: http.Next) -> http.Response uses clock {
+    match task.with_timeout(clock, d, fn() -> http.Response { next(req) }) {
+      Ok(r) => r
+      Err(_) => http.Response{status: 503, headers: {"Content-Type": mime.detect_content_type(body.bytes())}, body: body.bytes()}
+    }
+  }
+}
+
 fn (s: Server) with_tls(certs: List[tls.TlsCert]) -> Server {
   // the table of the TLS server and HTTP/2 (srvtls.xo), made once
   srvtls.install()

@@ -1,0 +1,37 @@
+// http.timeout_handler (Go's TimeoutHandler): a handler that returns in
+// time passes through with its status, headers and body; one that has not
+// returned by the limit is canceled (its later step never runs) and the
+// client gets 503 with Go's Timeout page, or the message given, its
+// Content-Type sniffed as Go's server does.
+use std/http
+
+fn routes(clock: Clock, stdio: Stdio, msg: Str) -> http.Router {
+  var r = http.router()
+  r.wrap(http.timeout_handler(clock, 300ms, msg: msg))
+  r.handle("GET /fast", fn(_req: http.Request) -> http.Response { http.text(201, "quick").with_header("X-Own", "kept") })
+  r.handle("GET /slow", fn(_req: http.Request) -> http.Response uses (clock, stdio) {
+    clock.sleep(30s)
+    stdio.println("not reached: the slow handler ran past its limit")
+    http.text(200, "late")
+  })
+  r
+}
+
+fn show(os: Os, what: Str, resp: http.Response) {
+  os.stdio.println("${what}: ${resp.status} ${resp.header("Content-Type") ?? "-"} own=${resp.header("X-Own") ?? "-"} body=${resp.body.to_str() ?? "?"}")
+}
+
+fn main(os: Os) {
+  let clock = os.clock
+  let def = routes(clock, os.stdio, "")
+  show(os, "fast", def.call(http.new_request("GET", "http://x/fast")))
+  let t0 = clock.now()
+  show(os, "slow, default page", def.call(http.new_request("GET", "http://x/slow")))
+  let took = clock.now() - t0
+  os.stdio.println("slow returned near its limit: ${took >= 300ms && took < 10s}")
+  let own = routes(clock, os.stdio, "too slow, try again")
+  show(os, "slow, own message", own.call(http.new_request("GET", "http://x/slow")))
+  let html = routes(clock, os.stdio, "<p>later</p>")
+  show(os, "slow, html message", html.call(http.new_request("GET", "http://x/slow")))
+  show(os, "not found passes", def.call(http.new_request("GET", "http://x/none")))
+}

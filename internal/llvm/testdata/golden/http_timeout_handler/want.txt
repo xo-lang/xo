@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+fast: 201 text/plain; charset=utf-8 own=kept body=quick
+slow, default page: 503 text/html; charset=utf-8 own=- body=<html><head><title>Timeout</title></head><body><h1>Timeout</h1></body></html>
+slow returned near its limit: true
+slow, own message: 503 text/plain; charset=utf-8 own=- body=too slow, try again
+slow, html message: 503 text/html; charset=utf-8 own=- body=<p>later</p>
+not found passes: 404 application/json own=- body={"error":"not found"}
+--- stderr

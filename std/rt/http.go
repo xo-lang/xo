@@ -1314,6 +1314,24 @@ func Http_max_body(tk *Task, n int64) func(*Task, Http_Request, func(*Task, Http
 	}
 }
 
+// Http_timeout_handler is `http.timeout_handler(clock, d, msg)`: Go's
+// TimeoutHandler on task.with_timeout, 503 with msg (Go's errorBody).
+func Http_timeout_handler(tk *Task, clock Clock, d Duration, msg string) func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never] {
+	body := msg
+	if body == "" {
+		body = "<html><head><title>Timeout</title></head><body><h1>Timeout</h1></body></html>"
+	}
+	return func(tk *Task, req Http_Request, next func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never] {
+		r := Task_with_timeout(tk, clock, d, func(tk *Task) Result[Http_Response, Never] { return next(tk, req) })
+		if r.Ok {
+			return Ok[Http_Response, Never](r.V)
+		}
+		h := mapCap[string, string](1)
+		Map_put(tk, &h, "Content-Type", Mime_detect_content_type(tk, Bytes(body)))
+		return Ok[Http_Response, Never](Http_Response{F_status: 503, F_headers: h, F_body: Bytes(body)})
+	}
+}
+
 // Http_tls_cert is `http.tls_cert(cert_pem, key_pem)`: tls.cert with
 // http's error type (http.TlsCert is tls.TlsCert, decision 0433).
 func Http_tls_cert(tk *Task, certPEM, keyPEM Bytes) Result[Tls_TlsCert, Http_TlsErr] {
