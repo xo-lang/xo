@@ -2,6 +2,7 @@
 // statement on standard input through std/sql's Postgres driver, printed
 // as the pgx reference prints it.
 use std/sql
+use std/time
 
 fn err_line(e: sql.SqlErr) -> Str {
   match e {
@@ -191,6 +192,32 @@ fn typed_lines(db: sql.Db, kind: Str, q: Str) -> List[Str] ! sql.SqlErr uses net
   out
 }
 
+/// A range as the reference prints it: `[a,b)`, `(,b]`, `empty`.
+fn rtext[T](r: sql.Range[T], f: fn(T) -> Str) -> Str {
+  match r {
+    Empty => "empty"
+    Span(lo, hi) => {
+      let l = match lo {
+        Inclusive(v) => "[" + f(v)
+        Exclusive(v) => "(" + f(v)
+        Unbounded => "("
+      }
+      let u = match hi {
+        Inclusive(v) => f(v) + "]"
+        Exclusive(v) => f(v) + ")"
+        Unbounded => ")"
+      }
+      l + "," + u
+    }
+  }
+}
+
+fn dtext(d: time.Date) -> Str {
+  let m = if d.month < 10 { "0${d.month}" } else { "${d.month}" }
+  let dd = if d.day < 10 { "0${d.day}" } else { "${d.day}" }
+  "${d.year}-${m}-${dd}"
+}
+
 fn typed_cell(r: sql.Row, kind: Str, c: Str) -> Str {
   let got: Result[Str?, sql.SqlErr] = match kind {
     "uuid" => r.uuid_opt(c).map(fn(o) { o.map(fn(u) { u.display().debug() }) })
@@ -198,6 +225,12 @@ fn typed_cell(r: sql.Row, kind: Str, c: Str) -> Str {
     "time" => r.time_of_day_opt(c).map(fn(o) { o.map(fn(t) { t.debug() }) })
     "interval" => r.interval_opt(c).map(fn(o) { o.map(fn(i) { i.debug() }) })
     "inet" => r.prefix_opt(c).map(fn(o) { o.map(fn(p) { p.display().debug() }) })
+    "intrange" => r.range_int_opt(c).map(fn(o) { o.map(fn(v) { rtext(v, fn(n) { "${n}" }) }) })
+    "daterange" => r.range_date_opt(c).map(fn(o) { o.map(fn(v) { rtext(v, dtext) }) })
+    "timerange" => r.range_time_opt(c).map(fn(o) { o.map(fn(v) { rtext(v, fn(t) { t.format_rfc3339() }) }) })
+    "intmulti" => r.multirange_int_opt(c).map(fn(o) { o.map(fn(rs) { "{" + rs.map(fn(v) { rtext(v, fn(n) { "${n}" }) }).join(",") + "}" }) })
+    "datemulti" => r.multirange_date_opt(c).map(fn(o) { o.map(fn(rs) { "{" + rs.map(fn(v) { rtext(v, dtext) }).join(",") + "}" }) })
+    "timemulti" => r.multirange_time_opt(c).map(fn(o) { o.map(fn(rs) { "{" + rs.map(fn(v) { rtext(v, fn(t) { t.format_rfc3339() }) }).join(",") + "}" }) })
     "datebound" => r.date_bound_opt(c).map(fn(o) { o.map(fn(b) { b.debug() }) })
     "timebound" => r.time_bound_opt(c).map(fn(o) {
       o.map(fn(b) {

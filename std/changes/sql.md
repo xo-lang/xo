@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-16: feature: ranges and multiranges (decision 0679)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #113 (#110's backlog: ranges and multiranges)
+- Go reference: pgx v5.12.0 pgtype/range.go (parseUntypedTextRange, rangeParseValue, rangeParseQuotedValue, Range, BoundType) and pgtype/multirange.go (parseUntypedTextMultirange, parseRange, Multirange), Copyright (c) 2013-2021 Jack Christensen, MIT License
+- Test: golden sql_pg_types (go, arm64, LLVM: bounds, empty, quoted and escaped bounds, offsets, malformed text); scripts/pg-diff.sh TYPED intrange, daterange, timerange, intmulti, datemulti, timemulti cases and a parameter case, equal to pgx on postgres:17-alpine and postgres:14-alpine (85 statements)
+- Shipped in: not yet released
+
+`sql.Range[T]` and `sql.Edge[T]` read int4range, int8range, daterange, tsrange and tstzrange columns (`Row.range_int`, `range_date`, `range_time`) and their multiranges (`Row.multirange_*`, a `List[Range[T]]`), parsed as pgx parses the text form; `sql.range_*` and `sql.multirange_*` write them. An infinite bound is a Mismatch; numeric ranges wait for the numeric type.
+
 ## 2026-11-16: feature: named arguments, sql.named (decision 0679)
 
 - Kind: feature

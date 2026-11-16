@@ -469,6 +469,49 @@ func typedCell(m *pgtype.Map, kind string, oid uint32, src []byte) string {
 			return "error"
 		}
 		return q(p.String())
+	case "intrange":
+		var r pgtype.Range[pgtype.Int8]
+		if m.Scan(oid, pgtype.TextFormatCode, src, &r) != nil {
+			return "error"
+		}
+		return rangeText(r, func(v pgtype.Int8) (string, bool) { return strconv.FormatInt(v.Int64, 10), true })
+	case "daterange":
+		var r pgtype.Range[pgtype.Date]
+		if m.Scan(oid, pgtype.TextFormatCode, src, &r) != nil {
+			return "error"
+		}
+		return rangeText(r, pgDateText)
+	case "timerange":
+		if oid == pgtype.TsrangeOID {
+			var r pgtype.Range[pgtype.Timestamp]
+			if m.Scan(oid, pgtype.TextFormatCode, src, &r) != nil {
+				return "error"
+			}
+			return rangeText(r, pgTsText)
+		}
+		var r pgtype.Range[pgtype.Timestamptz]
+		if m.Scan(oid, pgtype.TextFormatCode, src, &r) != nil {
+			return "error"
+		}
+		return rangeText(r, pgTstzText)
+	case "intmulti":
+		var mr pgtype.Multirange[pgtype.Range[pgtype.Int8]]
+		if m.Scan(oid, pgtype.TextFormatCode, src, &mr) != nil {
+			return "error"
+		}
+		return multiText(mr, func(v pgtype.Int8) (string, bool) { return strconv.FormatInt(v.Int64, 10), true })
+	case "datemulti":
+		var mr pgtype.Multirange[pgtype.Range[pgtype.Date]]
+		if m.Scan(oid, pgtype.TextFormatCode, src, &mr) != nil {
+			return "error"
+		}
+		return multiText(mr, pgDateText)
+	case "timemulti":
+		var mr pgtype.Multirange[pgtype.Range[pgtype.Timestamptz]]
+		if m.Scan(oid, pgtype.TextFormatCode, src, &mr) != nil {
+			return "error"
+		}
+		return multiText(mr, pgTstzText)
 	case "datebound":
 		var d pgtype.Date
 		if m.Scan(oid, pgtype.TextFormatCode, src, &d) != nil {
@@ -520,4 +563,77 @@ func typedCell(m *pgtype.Map, kind string, oid uint32, src []byte) string {
 		return "{" + strings.Join(parts, ", ") + "}"
 	}
 	return "error unknown kind " + kind
+}
+
+// rangeText is a range in the pgdiff form both sides print: `[a,b)`,
+// `(,b]`, `empty`; "error" when a bound has no Xo value (an infinite
+// date or timestamp).
+func rangeText[T any](r pgtype.Range[T], f func(T) (string, bool)) string {
+	if r.LowerType == pgtype.Empty {
+		return "empty"
+	}
+	var b strings.Builder
+	switch r.LowerType {
+	case pgtype.Inclusive, pgtype.Exclusive:
+		v, ok := f(r.Lower)
+		if !ok {
+			return "error"
+		}
+		if r.LowerType == pgtype.Inclusive {
+			b.WriteString("[" + v)
+		} else {
+			b.WriteString("(" + v)
+		}
+	default:
+		b.WriteString("(")
+	}
+	b.WriteString(",")
+	switch r.UpperType {
+	case pgtype.Inclusive, pgtype.Exclusive:
+		v, ok := f(r.Upper)
+		if !ok {
+			return "error"
+		}
+		if r.UpperType == pgtype.Inclusive {
+			b.WriteString(v + "]")
+		} else {
+			b.WriteString(v + ")")
+		}
+	default:
+		b.WriteString(")")
+	}
+	return b.String()
+}
+
+func multiText[T any](mr pgtype.Multirange[pgtype.Range[T]], f func(T) (string, bool)) string {
+	parts := make([]string, 0, len(mr))
+	for _, r := range mr {
+		t := rangeText(r, f)
+		if t == "error" {
+			return t
+		}
+		parts = append(parts, t)
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+func pgDateText(d pgtype.Date) (string, bool) {
+	if d.InfinityModifier != pgtype.Finite {
+		return "", false
+	}
+	return fmt.Sprintf("%d-%02d-%02d", d.Time.Year(), int(d.Time.Month()), d.Time.Day()), true
+}
+
+func pgTsText(t pgtype.Timestamp) (string, bool) {
+	if t.InfinityModifier != pgtype.Finite {
+		return "", false
+	}
+	return t.Time.UTC().Format(time.RFC3339Nano), true
+}
+
+func pgTstzText(t pgtype.Timestamptz) (string, bool) {
+	if t.InfinityModifier != pgtype.Finite {
+		return "", false
+	}
+	return t.Time.UTC().Format(time.RFC3339Nano), true
 }

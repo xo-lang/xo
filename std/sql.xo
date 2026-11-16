@@ -65,6 +65,30 @@ fn hstore(m: Map[Str, Str?]) -> SqlValue
 /// `-infinity`, or the finite value's text.
 fn date_bound(b: Bound[time.Date]) -> SqlValue
 fn time_bound(b: Bound[Time]) -> SqlValue
+/// Range parameters (int4range, int8range, daterange, tsrange, tstzrange)
+/// in Postgres's text form: `[1,5)`, `(,2026-01-01]`, `empty`.
+fn range_int(r: Range[Int]) -> SqlValue
+fn range_date(r: Range[time.Date]) -> SqlValue
+fn range_time(r: Range[Time]) -> SqlValue
+/// Multirange parameters (Postgres 14 and later): `{[1,3),[5,7)}`.
+fn multirange_int(rs: List[Range[Int]]) -> SqlValue
+fn multirange_date(rs: List[Range[time.Date]]) -> SqlValue
+fn multirange_time(rs: List[Range[Time]]) -> SqlValue
+
+/// One end of a range (pgx's BoundType with its value).
+enum Edge[T] {
+  Inclusive(v: T)
+  Exclusive(v: T)
+  Unbounded
+}
+
+/// A Postgres range (pgx's Range[T], decision 0679): empty, or a lower
+/// and an upper edge as the server sent them (an int4range or daterange
+/// comes back in its `[)` form).
+enum Range[T] {
+  Empty
+  Span(lower: Edge[T], upper: Edge[T])
+}
 
 /// A date or time that may be infinite (Postgres's `infinity` and
 /// `-infinity`; pgx's InfinityModifier, decision 0679).
@@ -516,6 +540,24 @@ fn (r: Row) mac_opt(name: Str) -> Bytes? ! SqlErr
 /// NULL value, in the server's order.
 fn (r: Row) hstore(name: Str) -> Map[Str, Str?] ! SqlErr
 fn (r: Row) hstore_opt(name: Str) -> Map[Str, Str?]? ! SqlErr
+/// An int4range or int8range column (pgx's Range[Int8]).
+fn (r: Row) range_int(name: Str) -> Range[Int] ! SqlErr
+fn (r: Row) range_int_opt(name: Str) -> Range[Int]? ! SqlErr
+/// A daterange column; an infinite bound is a Mismatch (read it with str).
+fn (r: Row) range_date(name: Str) -> Range[time.Date] ! SqlErr
+fn (r: Row) range_date_opt(name: Str) -> Range[time.Date]? ! SqlErr
+/// A tsrange (read as UTC, as a timestamp column is) or tstzrange column;
+/// an infinite bound is a Mismatch.
+fn (r: Row) range_time(name: Str) -> Range[Time] ! SqlErr
+fn (r: Row) range_time_opt(name: Str) -> Range[Time]? ! SqlErr
+/// A multirange column (int4multirange, int8multirange, datemultirange,
+/// tsmultirange, tstzmultirange; pgx's Multirange): its ranges in order.
+fn (r: Row) multirange_int(name: Str) -> List[Range[Int]] ! SqlErr
+fn (r: Row) multirange_int_opt(name: Str) -> List[Range[Int]]? ! SqlErr
+fn (r: Row) multirange_date(name: Str) -> List[Range[time.Date]] ! SqlErr
+fn (r: Row) multirange_date_opt(name: Str) -> List[Range[time.Date]]? ! SqlErr
+fn (r: Row) multirange_time(name: Str) -> List[Range[Time]] ! SqlErr
+fn (r: Row) multirange_time_opt(name: Str) -> List[Range[Time]]? ! SqlErr
 /// A json or jsonb column (or text) decoded into T; a decode error is
 /// Mismatch(column, msg).
 fn (r: Row) json[T: Json](name: Str) -> T ! SqlErr

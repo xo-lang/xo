@@ -760,12 +760,14 @@ fn pad(n: Int, w: Int) -> Str {
 
 fn uuid(u: uuid.Uuid) -> sql.SqlValue { sql.SqlValue.Text(s: u.display()) }
 
-fn date(d: time.Date) -> sql.SqlValue {
+fn date_text(d: time.Date) -> Str {
   if d.year <= 0 {
-    return sql.SqlValue.Text(s: "${pad(1 - d.year, 4)}-${pad(d.month, 2)}-${pad(d.day, 2)} BC")
+    return "${pad(1 - d.year, 4)}-${pad(d.month, 2)}-${pad(d.day, 2)} BC"
   }
-  sql.SqlValue.Text(s: "${pad(d.year, 4)}-${pad(d.month, 2)}-${pad(d.day, 2)}")
+  "${pad(d.year, 4)}-${pad(d.month, 2)}-${pad(d.day, 2)}"
 }
+
+fn date(d: time.Date) -> sql.SqlValue { sql.SqlValue.Text(s: date_text(d)) }
 
 fn time_of_day(t: time.ClockTime) -> sql.SqlValue {
   sql.SqlValue.Text(s: "${pad(t.hour, 2)}:${pad(t.minute, 2)}:${pad(t.second, 2)}.${pad(t.nanos / 1000, 6)}")
@@ -5124,3 +5126,333 @@ fn named(q: Str, args: Map[Str, sql.SqlValue], strict: Bool = false) -> (Str, Li
   }
   (out.join(""), vals)
 }
+
+// Ranges and multiranges: pgx v5.12.0 pgtype/range.go
+// (parseUntypedTextRange, rangeParseValue, rangeParseQuotedValue) and
+// pgtype/multirange.go (parseUntypedTextMultirange, parseRange),
+// Copyright (c) 2013-2021 Jack Christensen, MIT License.
+
+/// A range's text split into its edges: kind 0 unbounded, 1 inclusive,
+/// 2 exclusive, with each bound's unquoted text.
+struct RawRange {
+  empty: Bool
+  lk: Int
+  lo: Str
+  uk: Int
+  hi: Str
+}
+
+fn rg_space(b: Bytes, i: Int) -> Int {
+  var j = i
+  while j < b.len() && (b[j] == 32 || (b[j] >= 9 && b[j] <= 13)) {
+    j += 1
+  }
+  j
+}
+
+/// A double quoted bound's text from after its opening quote at i: a
+/// backslash escapes the next byte, a doubled quote is one quote.
+fn rg_quoted(s: Str, i: Int) -> (Str, Int)? {
+  let b = s.bytes()
+  var out = ""
+  var start = i
+  var j = i
+  while j < b.len() {
+    let c = b[j]
+    if c == 92 {
+      if j + 1 >= b.len() {
+        return None
+      }
+      out = out + s[start..j]
+      start = j + 1
+      j += 2
+    } else if c == 34 {
+      if j + 1 >= b.len() {
+        return None
+      }
+      if b[j + 1] == 34 {
+        out = out + s[start..j + 1]
+        start = j + 2
+        j += 2
+      } else {
+        return Some((out + s[start..j], j + 1))
+      }
+    } else {
+      j += 1
+    }
+  }
+  None
+}
+
+/// A bound's text at i, up to a `,`, bracket or parenthesis.
+fn rg_value(s: Str, i: Int) -> (Str, Int)? {
+  let b = s.bytes()
+  if i >= b.len() {
+    return None
+  }
+  if b[i] == 34 {
+    return rg_quoted(s, i + 1)
+  }
+  var out = ""
+  var start = i
+  var j = i
+  while j < b.len() {
+    let c = b[j]
+    if c == 92 {
+      if j + 1 >= b.len() {
+        return None
+      }
+      out = out + s[start..j]
+      start = j + 1
+      j += 2
+    } else if c == 44 || c == 91 || c == 93 || c == 40 || c == 41 {
+      return Some((out + s[start..j], j))
+    } else {
+      j += 1
+    }
+  }
+  None
+}
+
+fn rg_parse(s: Str) -> RawRange? {
+  if s == "empty" {
+    return Some(RawRange{empty: true, lk: 0, lo: "", uk: 0, hi: ""})
+  }
+  let b = s.bytes()
+  let n = b.len()
+  var i = rg_space(b, 0)
+  if i >= n {
+    return None
+  }
+  var lk = 0
+  if b[i] == 40 {
+    lk = 2
+  } else if b[i] == 91 {
+    lk = 1
+  } else {
+    return None
+  }
+  i += 1
+  if i >= n {
+    return None
+  }
+  var lo = ""
+  if b[i] == 44 {
+    lk = 0
+  } else {
+    let (v, j) = rg_value(s, i)?
+    lo = v
+    i = j
+  }
+  if i >= n || b[i] != 44 {
+    return None
+  }
+  i += 1
+  if i >= n {
+    return None
+  }
+  var uk = 0
+  var hi = ""
+  if b[i] == 41 || b[i] == 93 {
+    i += 1
+  } else {
+    let (v, j) = rg_value(s, i)?
+    hi = v
+    i = j
+    if i >= n {
+      return None
+    }
+    if b[i] == 41 {
+      uk = 2
+    } else if b[i] == 93 {
+      uk = 1
+    } else {
+      return None
+    }
+    i += 1
+  }
+  if rg_space(b, i) < n {
+    return None
+  }
+  Some(RawRange{empty: false, lk: lk, lo: lo, uk: uk, hi: hi})
+}
+
+fn rg_edge[T](k: Int, v: Str, f: fn(Str) -> T?) -> sql.Edge[T]? {
+  match k {
+    0 => Some(sql.Edge.Unbounded)
+    1 => Some(sql.Edge.Inclusive(v: f(v)?))
+    _ => Some(sql.Edge.Exclusive(v: f(v)?))
+  }
+}
+
+fn rg_typed[T](s: Str, f: fn(Str) -> T?) -> sql.Range[T]? {
+  let r = rg_parse(s)?
+  if r.empty {
+    return Some(sql.Range.Empty)
+  }
+  Some(sql.Range.Span(lower: rg_edge(r.lk, r.lo, f)?, upper: rg_edge(r.uk, r.hi, f)?))
+}
+
+/// A multirange's text split into its ranges' texts (pgx's
+/// parseUntypedTextMultirange and parseRange).
+fn mr_split(s: Str) -> List[Str]? {
+  let b = s.bytes()
+  let n = b.len()
+  var i = rg_space(b, 0)
+  if i >= n || b[i] != 123 {
+    return None
+  }
+  i += 1
+  var out: List[Str] = []
+  while true {
+    if i >= n {
+      return None
+    }
+    let c = b[i]
+    if c == 44 {
+      i += 1
+    } else if c == 125 {
+      i += 1
+      break
+    } else {
+      var j = i
+      var in_range = false
+      var in_q = false
+      var esc = false
+      while true {
+        if j >= n {
+          return None
+        }
+        let d = b[j]
+        if esc {
+          esc = false
+        } else if d == 92 {
+          esc = true
+        } else if d == 34 {
+          in_q = !in_q
+        } else if !in_q {
+          if d == 91 || d == 40 {
+            in_range = true
+          } else if d == 93 || d == 41 {
+            in_range = false
+          } else if (d == 44 || d == 125) && !in_range {
+            break
+          }
+        }
+        j += 1
+      }
+      out.push(s[i..j])
+      i = j
+    }
+  }
+  if rg_space(b, i) < n {
+    return None
+  }
+  Some(out)
+}
+
+fn mr_typed[T](s: Str, f: fn(Str) -> T?) -> List[sql.Range[T]]? {
+  var out: List[sql.Range[T]] = []
+  for e in mr_split(s)? {
+    out.push(rg_typed(e, f)?)
+  }
+  Some(out)
+}
+
+fn pg_int_text(s: Str) -> Int? { Int.parse(s) }
+
+/// A timestamp or timestamptz's ISO text (pg's iso_to_rfc3339): no
+/// offset after the time reads as UTC.
+fn pg_timestamp(s: Str) -> Time? {
+  var t = s.replace(" ", "T")
+  let b = t.bytes()
+  var i = b.len() - 1
+  while i > 10 && b[i] != 43 && b[i] != 45 {
+    i -= 1
+  }
+  if i <= 10 {
+    t = t + "Z"
+  } else if b.len() - i == 3 {
+    t = t + ":00"
+  }
+  Time.parse_rfc3339(t)
+}
+
+fn rg_text[T](r: sql.Range[T], f: fn(T) -> Str) -> Str {
+  match r {
+    Empty => "empty"
+    Span(lo, hi) => {
+      let l = match lo {
+        Inclusive(v) => "[" + f(v)
+        Exclusive(v) => "(" + f(v)
+        Unbounded => "("
+      }
+      let u = match hi {
+        Inclusive(v) => f(v) + "]"
+        Exclusive(v) => f(v) + ")"
+        Unbounded => ")"
+      }
+      l + "," + u
+    }
+  }
+}
+
+fn int_text(n: Int) -> Str { "${n}" }
+
+fn time_text(t: Time) -> Str { "\"" + t.format_rfc3339() + "\"" }
+
+fn range_int(r: sql.Range[Int]) -> sql.SqlValue { sql.SqlValue.Text(s: rg_text(r, int_text)) }
+
+fn range_date(r: sql.Range[time.Date]) -> sql.SqlValue { sql.SqlValue.Text(s: rg_text(r, date_text)) }
+
+fn range_time(r: sql.Range[Time]) -> sql.SqlValue { sql.SqlValue.Text(s: rg_text(r, time_text)) }
+
+fn multirange_int(rs: List[sql.Range[Int]]) -> sql.SqlValue { sql.SqlValue.Text(s: "{" + rs.map(fn(r) { rg_text(r, int_text) }).join(",") + "}") }
+
+fn multirange_date(rs: List[sql.Range[time.Date]]) -> sql.SqlValue { sql.SqlValue.Text(s: "{" + rs.map(fn(r) { rg_text(r, date_text) }).join(",") + "}") }
+
+fn multirange_time(rs: List[sql.Range[Time]]) -> sql.SqlValue { sql.SqlValue.Text(s: "{" + rs.map(fn(r) { rg_text(r, time_text) }).join(",") + "}") }
+
+fn rg_read[T](r: Row, name: Str, want: Str, f: fn(Str) -> T?) -> sql.Range[T]? ! sql.SqlErr {
+  match typed_text(r, name, want)? {
+    None => None
+    Some(s) => match rg_typed(s, f) {
+      Some(v) => Some(v)
+      None => Err(bad_text(name, want, s))
+    }
+  }
+}
+
+fn mr_read[T](r: Row, name: Str, want: Str, f: fn(Str) -> T?) -> List[sql.Range[T]]? ! sql.SqlErr {
+  match typed_text(r, name, want)? {
+    None => None
+    Some(s) => match mr_typed(s, f) {
+      Some(v) => Some(v)
+      None => Err(bad_text(name, want, s))
+    }
+  }
+}
+
+fn (r: Row) range_int_opt(name: Str) -> sql.Range[Int]? ! sql.SqlErr { rg_read(r, name, "an int range", pg_int_text) }
+
+fn (r: Row) range_int(name: Str) -> sql.Range[Int] ! sql.SqlErr { r.range_int_opt(name)?.or_err(mismatch(name, "an int range", sql.SqlValue.Null)) }
+
+fn (r: Row) range_date_opt(name: Str) -> sql.Range[time.Date]? ! sql.SqlErr { rg_read(r, name, "a date range", pg_date) }
+
+fn (r: Row) range_date(name: Str) -> sql.Range[time.Date] ! sql.SqlErr { r.range_date_opt(name)?.or_err(mismatch(name, "a date range", sql.SqlValue.Null)) }
+
+fn (r: Row) range_time_opt(name: Str) -> sql.Range[Time]? ! sql.SqlErr { rg_read(r, name, "a time range", pg_timestamp) }
+
+fn (r: Row) range_time(name: Str) -> sql.Range[Time] ! sql.SqlErr { r.range_time_opt(name)?.or_err(mismatch(name, "a time range", sql.SqlValue.Null)) }
+
+fn (r: Row) multirange_int_opt(name: Str) -> List[sql.Range[Int]]? ! sql.SqlErr { mr_read(r, name, "an int multirange", pg_int_text) }
+
+fn (r: Row) multirange_int(name: Str) -> List[sql.Range[Int]] ! sql.SqlErr { r.multirange_int_opt(name)?.or_err(mismatch(name, "an int multirange", sql.SqlValue.Null)) }
+
+fn (r: Row) multirange_date_opt(name: Str) -> List[sql.Range[time.Date]]? ! sql.SqlErr { mr_read(r, name, "a date multirange", pg_date) }
+
+fn (r: Row) multirange_date(name: Str) -> List[sql.Range[time.Date]] ! sql.SqlErr { r.multirange_date_opt(name)?.or_err(mismatch(name, "a date multirange", sql.SqlValue.Null)) }
+
+fn (r: Row) multirange_time_opt(name: Str) -> List[sql.Range[Time]]? ! sql.SqlErr { mr_read(r, name, "a time multirange", pg_timestamp) }
+
+fn (r: Row) multirange_time(name: Str) -> List[sql.Range[Time]] ! sql.SqlErr { r.multirange_time_opt(name)?.or_err(mismatch(name, "a time multirange", sql.SqlValue.Null)) }

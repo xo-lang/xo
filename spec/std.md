@@ -4059,6 +4059,8 @@ Results are read in text format and decoded by the column's type:
 | `inet`, `cidr` | `Text` | `prefix` (a `netip.Prefix`), `str` |
 | `macaddr`, `macaddr8` | `Text` | `mac` (6 or 8 bytes), `str` |
 | `hstore` | `Text` | `hstore` (a `Map[Str, Str?]`), `str` |
+| `int4range`, `int8range`, `daterange`, `tsrange`, `tstzrange` | `Text` | `range_int`, `range_date`, `range_time` (a `Range[T]`), `str` |
+| the matching multiranges (Postgres 14 and later) | `Text` | `multirange_int`, `multirange_date`, `multirange_time` (a `List[Range[T]]`), `str` |
 | every other type (`numeric`, `timetz`, ranges, enums, ...) | `Text`, the server's text | `str` |
 
 NULL is `Null` everywhere. Accessors convert where no information is
@@ -4092,10 +4094,19 @@ enum Bound[T] { Finite(v: T), Infinity, NegInfinity }          // pgx's Infinity
 pub fn date_bound(b: Bound[time.Date]) -> SqlValue              // also time_bound
 fn (r: Row) mac(name: Str) -> Bytes ! SqlErr                    // also mac_opt: macaddr (6 bytes), macaddr8 (8)
 fn (r: Row) hstore(name: Str) -> Map[Str, Str?] ! SqlErr        // also hstore_opt; None for a NULL value
+enum Edge[T] { Inclusive(v: T), Exclusive(v: T), Unbounded }   // pgx's BoundType
+enum Range[T] { Empty, Span(lower: Edge[T], upper: Edge[T]) }  // pgx's Range[T]
+fn (r: Row) range_int(name: Str) -> Range[Int] ! SqlErr         // also _opt, range_date, range_time
+fn (r: Row) multirange_int(name: Str) -> List[Range[Int]] ! SqlErr // also _opt, multirange_date, multirange_time
+pub fn range_int(r: Range[Int]) -> SqlValue                     // also range_date, range_time, multirange_int, ...
 ```
 
 `date` reads `infinity` and `-infinity` as Mismatch; `date_bound` and
-`time_bound` read them. A `timetz`'s offset is read with `str`.
+`time_bound` read them. A range keeps the edges the server sent (an
+int4range or daterange comes back as `[a,b)`); a range bound that is
+`infinity` is a Mismatch (read the column with `str`), and a `tsrange`
+reads as UTC, as a `timestamp` column does. Numeric ranges wait for the
+numeric type. A `timetz`'s offset is read with `str`.
 
 The values and accessors are 10.2 and 10.4's.
 

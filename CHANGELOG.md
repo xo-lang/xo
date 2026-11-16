@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/sql, every backend; decision 0679, task #113): Postgres ranges and multiranges: `sql.Range[T]` (`Empty`, `Span(lower, upper)`) with `sql.Edge[T]` (`Inclusive`, `Exclusive`, `Unbounded`), `Row.range_int`, `range_date`, `range_time`, `Row.multirange_int`, `multirange_date`, `multirange_time` (each with `_opt`), and the matching parameters `sql.range_int` and so on.
+
 - Feature (std/sql, every backend; decision 0679, task #113): `sql.named(q, args, strict)` rewrites `@name` placeholders to `$n` and returns the query with its arguments, for any query method (pgx's `NamedArgs` and `StrictNamedArgs`).
 
 - Feature (std/sql, every backend; decision 0679, task #113): `Row.date_bound` and `Row.time_bound` with `sql.Bound[T]` (`Finite(v)`, `Infinity`, `NegInfinity`) for infinite dates and timestamps, `Row.mac` (macaddr, macaddr8), `Row.hstore` (`Map[Str, Str?]`), and the parameters `sql.date_bound`, `time_bound`, `mac`, `hstore`; `xid`, `cid` and `xid8` columns now read as `Integer` (they were `Text`: code reading them with `Row.str` reads them with `Row.int`).

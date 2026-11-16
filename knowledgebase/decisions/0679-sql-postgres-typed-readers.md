@@ -92,3 +92,10 @@ stdaudit rows for these types (sql 75 agent hours).
   StrictNamedArgs) with pgx's rewrite tests on every backend. pgx's
   StructArgs stay gaps: a struct's fields as arguments would need a
   derive (SqlRow's reverse), a later item.
+- 2026-11-16 (Xo Lang 3): ranges and multiranges. The edge type is
+  `Edge[T]` (`Bound` was taken by the infinity type above), and a range
+  is `enum Range[T] { Empty, Span(lower, upper) }`, so an empty range
+  carries no bounds. Readers are `range_int`, `range_date`,
+  `range_time` and `multirange_*`; `range_num` waits for numeric. An
+  infinite range bound is a Mismatch rather than a `Bound` inside the
+  range, to keep `Range[time.Date]` plain for the common case.

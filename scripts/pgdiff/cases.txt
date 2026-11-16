@@ -76,3 +76,10 @@ TYPED mac SELECT '08:00:2b:01:02:03'::macaddr AS a, '08-00-2B-01-02-03'::macaddr
 CREATE EXTENSION IF NOT EXISTS hstore
 TYPED hstore SELECT 'a=>1, b=>NULL'::hstore AS a, ''::hstore AS e, '"q \"x\""=>"back\\slash", "sp ace"=>" "'::hstore AS q, NULL::hstore AS n
 SELECT '42'::xid AS x, '7'::cid AS c, '18446744073709551615'::xid8 AS big, '5'::xid8 AS small, 4294967295::oid AS o
+TYPED intrange SELECT '[1,5)'::int4range AS a, '(1,5]'::int4range AS b, 'empty'::int4range AS e, '(,10]'::int8range AS u, '[3,)'::int8range AS v, NULL::int4range AS n
+TYPED daterange SELECT '[2026-01-01,2026-02-01]'::daterange AS a, '(,2026-03-01)'::daterange AS u, '[2026-01-01,infinity)'::daterange AS inf, 'empty'::daterange AS e
+TYPED timerange SELECT '["2026-01-01 10:00:00","2026-01-02 00:00:00.5")'::tsrange AS a, '["2026-01-01 10:00:00+05:30",)'::tstzrange AS b, '(,"2026-01-01 00:00:00-03")'::tstzrange AS c, 'empty'::tstzrange AS e
+TYPED intmulti SELECT '{[1,3),[5,7)}'::int4multirange AS a, '{}'::int8multirange AS e, '{(,0),[10,)}'::int8multirange AS u, NULL::int4multirange AS n
+TYPED datemulti SELECT '{[2026-01-01,2026-01-05),[2026-02-01,2026-02-02)}'::datemultirange AS a
+TYPED timemulti SELECT '{["2026-01-01 10:00:00+00","2026-01-01 11:00:00+00")}'::tstzmultirange AS a
+SELECT $1::int4range AS a, $2::daterange AS b, $3::tstzrange AS c, $4::int4multirange AS d, $5::int8range AS e ;; T:[1,5) | T:(,2026-01-02] | T:["1970-01-01T00:00:00Z",) | T:{[1,3),(5,)} | T:empty

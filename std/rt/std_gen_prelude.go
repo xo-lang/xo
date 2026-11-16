@@ -1620,6 +1620,97 @@ func (v Signal) XoDebug(b *strings.Builder) {
 
 func (v Signal) M_debug(*Task) string { return Debug(v) }
 
+func (v Sql_Edge[tp_T]) XoEq(x any) bool {
+	o, ok := x.(Sql_Edge[tp_T])
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	case 1:
+		a, b := v.P.(Sql_Edge_Inclusive[tp_T]), o.P.(Sql_Edge_Inclusive[tp_T])
+		return Eq(a.F_v, b.F_v)
+	case 2:
+		a, b := v.P.(Sql_Edge_Exclusive[tp_T]), o.P.(Sql_Edge_Exclusive[tp_T])
+		return Eq(a.F_v, b.F_v)
+	}
+	return true
+}
+
+func (v Sql_Edge[tp_T]) XoHash() uint64 {
+	h := MixHash(uint64(8711460204851685911), uint64(v.Tag))
+	switch v.Tag {
+	case 1:
+		a := v.P.(Sql_Edge_Inclusive[tp_T])
+		h = MixHash(h, Hash(a.F_v))
+	case 2:
+		a := v.P.(Sql_Edge_Exclusive[tp_T])
+		h = MixHash(h, Hash(a.F_v))
+	}
+	return h
+}
+
+func (v Sql_Edge[tp_T]) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		a := v.P.(Sql_Edge_Inclusive[tp_T])
+		b.WriteString("Inclusive(")
+		b.WriteString("v: ")
+		DebugTo(b, a.F_v)
+		b.WriteString(")")
+	case 2:
+		a := v.P.(Sql_Edge_Exclusive[tp_T])
+		b.WriteString("Exclusive(")
+		b.WriteString("v: ")
+		DebugTo(b, a.F_v)
+		b.WriteString(")")
+	case 3:
+		b.WriteString("Unbounded")
+	}
+}
+
+func (v Sql_Edge[tp_T]) M_debug(*Task) string { return Debug(v) }
+
+func (v Sql_Range[tp_T]) XoEq(x any) bool {
+	o, ok := x.(Sql_Range[tp_T])
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	case 2:
+		a, b := v.P.(Sql_Range_Span[tp_T]), o.P.(Sql_Range_Span[tp_T])
+		return Eq(a.F_lower, b.F_lower) && Eq(a.F_upper, b.F_upper)
+	}
+	return true
+}
+
+func (v Sql_Range[tp_T]) XoHash() uint64 {
+	h := MixHash(uint64(7753930121436400604), uint64(v.Tag))
+	switch v.Tag {
+	case 2:
+		a := v.P.(Sql_Range_Span[tp_T])
+		h = MixHash(h, Hash(a.F_lower))
+		h = MixHash(h, Hash(a.F_upper))
+	}
+	return h
+}
+
+func (v Sql_Range[tp_T]) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Empty")
+	case 2:
+		a := v.P.(Sql_Range_Span[tp_T])
+		b.WriteString("Span(")
+		b.WriteString("lower: ")
+		DebugTo(b, a.F_lower)
+		b.WriteString(", upper: ")
+		DebugTo(b, a.F_upper)
+		b.WriteString(")")
+	}
+}
+
+func (v Sql_Range[tp_T]) M_debug(*Task) string { return Debug(v) }
+
 func (v Sql_Bound[tp_T]) XoEq(x any) bool {
 	o, ok := x.(Sql_Bound[tp_T])
 	if !ok || o.Tag != v.Tag {
