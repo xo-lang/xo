@@ -1491,6 +1491,14 @@ Last verified: 2026-11-15
     `~/xo-lead/xw/agent-transcripts.txt` (idlewatch2.sh's format) from
     it, so nobody keeps that file by hand (#79, workstream 75aaf53).
     Last verified: 2026-11-15.
+  - Lead: `xw restart AGENT [--note TEXT] [--resume PATH]` writes
+    `~/xo-lead/notes/lead/brief-AGENT-DATE.md` (b, c, ... when taken)
+    from the agent's newest resume note (notes/AGENT/resume*.md,
+    notes/NAME-resume*.md, a memory dir's resume-NAME-*.md), its queue,
+    open decisions and current session, records the handover and prints
+    the line to send ("Read and follow PATH"); the crosswalk steps stay
+    the lead's. `xw restarts [AGENT]` shows each handover's old session
+    and the one that took over, or "not yet" (#81, workstream d0e61e2).
   - `xw task ack|start|gate|done ID`, `xw task push ID SHA`, `xw task
     block ID REASON`, `xw task drop ID [--dup OF] [REASON]` (closed
     without doing it: a duplicate or no longer wanted; 2026-11-15); `xw
