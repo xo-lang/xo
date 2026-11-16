@@ -15,7 +15,11 @@ linux/arm64.
 scripts/gate.sh's seedbuild step builds compiler/xo with `$XO_SEED`, the
 offload host's seed: the newest seed under the host's /work/seed that is
 an ancestor of the commit. Uploading a seed to the bucket does not put it
-there, so the host kept using 0.51.1.
+there, so the host kept using 0.51.1. Then, with 0.52.0 installed, it
+still picked 0.51.1: the seed's commit (381640474) was not an ancestor
+of main, because pushq had rebased the version commit to 26d1e5bf8, and
+the ancestor rule skips such a seed. The lead pointed the hosts' gate
+seed at 0.52.0 directly.
 
 ## Fix
 
