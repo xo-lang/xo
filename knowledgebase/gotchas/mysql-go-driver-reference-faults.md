@@ -45,6 +45,9 @@ The protocol's field is 2 bytes and MySQL 8 has collations above 255
 (for example 309, utf8mb4_0900_bin), so Xo reads both bytes and keeps
 its answer.
 
-Fix: the fuzz comparison counts a case as `go collation byte` when the
-answers differ only in the `types` line and a column definition's
-collation is above 255 (myfWideCollation, TestMysqlFuzzWideCollation).
+Fix: the fuzz comparison counts a case as `go collation byte` when a
+column definition's collation is above 255 and the answers are equal once
+binary types and values read as text (BLOB as TEXT, VARBINARY as VARCHAR,
+BINARY as CHAR, a Blob value as a Text value): myfWideCollation and
+myfSameButBinary, TestMysqlFuzzWideCollation. Seed 4's case 707 (0x383f)
+differs in the values' kind too, not only the types line.

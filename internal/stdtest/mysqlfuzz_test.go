@@ -404,23 +404,12 @@ func myfConn(c net.Conn, cases []myfCase) {
 }
 
 // myfBlocks splits a client's output into its "== SELECT cN" blocks.
-// myfOnlyTypesDiffer reports whether two answers differ only in their
-// "types " line.
-func myfOnlyTypesDiffer(a, b string) bool {
-	la, lb := strings.Split(a, "\n"), strings.Split(b, "\n")
-	if len(la) != len(lb) {
-		return false
-	}
-	diff := false
-	for i := range la {
-		if la[i] != lb[i] {
-			if !strings.HasPrefix(la[i], "types ") || !strings.HasPrefix(lb[i], "types ") {
-				return false
-			}
-			diff = true
-		}
-	}
-	return diff
+// myfSameButBinary reports whether two answers differ, and are equal once
+// binary types and values read as their text forms (VARBINARY as VARCHAR,
+// BINARY as CHAR, BLOB as TEXT, a Blob value as a Text value).
+func myfSameButBinary(a, b string) bool {
+	r := strings.NewReplacer(":VARBINARY:", ":VARCHAR:", ":BINARY:", ":CHAR:", ":BLOB:", ":TEXT:", `Blob(b: b"`, `Text(s: "`)
+	return a != b && r.Replace(a) == r.Replace(b)
 }
 
 // myfWideCollation reports whether a column definition among a result's
@@ -552,11 +541,12 @@ func TestMysqlFuzz(t *testing.T) {
 				refused["go panic"]++
 				continue
 			}
-			if got[i] != want[i] && myfOnlyTypesDiffer(got[i], want[i]) && myfWideCollation(cases[i].packets) {
+			if got[i] != want[i] && myfSameButBinary(got[i], want[i]) && myfWideCollation(cases[i].packets) {
 				// go-sql-driver keeps the low byte of a column's 2-byte
 				// collation (fields.go charSet uint8), so 0x013f reads as
-				// binary (63): BLOB where the protocol's collation says
-				// TEXT. Xo reads both bytes, as the protocol defines them
+				// binary (63): BLOB and Blob values where the protocol's
+				// collation says TEXT and Text. Xo reads both bytes, as the
+				// protocol defines them
 				refused["go collation byte"]++
 				continue
 			}
@@ -593,7 +583,8 @@ func myfTail(s string, n int) string {
 }
 
 // TestMysqlFuzzWideCollation: seed 2's case 3470 at 5000 cases, a column
-// with collation 0x233f that go-sql-driver reads as 63 (binary).
+// with collation 0x233f that go-sql-driver reads as 63 (binary), and seed
+// 4's case 707 (0x383f), whose values differ in kind as well.
 func TestMysqlFuzzWideCollation(t *testing.T) {
 	def, _ := hex.DecodeString("036465660264620174017405c3b120c3a905c3b120c3a90c3f23ff000000fc8100000000")
 	if !myfWideCollation([][]byte{{1}, def}) {
@@ -603,7 +594,11 @@ func TestMysqlFuzzWideCollation(t *testing.T) {
 	if myfWideCollation([][]byte{{1}, def}) {
 		t.Errorf("collation 63: wide")
 	}
-	if !myfOnlyTypesDiffer("types a:TEXT\nrow x\n", "types a:BLOB\nrow x\n") || myfOnlyTypesDiffer("types a:TEXT\nrow x\n", "types a:BLOB\nrow y\n") {
-		t.Errorf("myfOnlyTypesDiffer")
+	// seed 4's case 707: the values differ in kind too
+	if !myfSameButBinary("types a:TEXT:-:true\nRow{vals: [Text(s: \"x\")]}\n", "types a:BLOB:-:true\nRow{vals: [Blob(b: b\"x\")]}\n") {
+		t.Errorf("TEXT/Text against BLOB/Blob: not the same")
+	}
+	if myfSameButBinary("types a:TEXT:-:true\nRow{vals: [Text(s: \"x\")]}\n", "types a:BLOB:-:true\nRow{vals: [Blob(b: b\"y\")]}\n") {
+		t.Errorf("different values: the same")
 	}
 }
