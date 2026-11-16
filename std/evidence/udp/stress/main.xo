@@ -1,0 +1,176 @@
+// udp stress program (decision 0616 section 2): 4 server tasks echo on one
+// loopback socket while TASKS clients send sequenced datagrams of 0 to
+// 1400 bytes, half through a dialed socket (write and read), half through
+// a socket of their own (write_to and read_from, the sender checked as the
+// server's address). Every reply must be the datagram sent; a reply not
+// back within a second counts as dropped (loopback may drop under load)
+// and a late one is skipped by its sequence number. At the end a read
+// waiting on a socket must fail once the socket closes. A background task
+// samples the resident set every 10 s (Linux /proc/self/status) and prints
+// it each minute. Pass: no mismatch, no fault, at most 0.1% dropped, and
+// the resident set at the end within 10% or 4 MB of its sample at 5
+// minutes.
+//
+//   main [MINUTES (30); 0: 200 datagrams per client] [TASKS (64)]
+use std/udp
+use std/task
+
+/// The datagram of client t's i-th send: t (2 bytes), i (4), then a
+/// payload of (t * 31 + i * 7) % 1395 bytes.
+fn datagram(t: Int, i: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(1400)
+  b.write_byte(UInt8(t & 255))
+  b.write_byte(UInt8((t >> 8) & 255))
+  for k in 0..4 {
+    b.write_byte(UInt8((i >> (8 * k)) & 255))
+  }
+  for j in 0..(t * 31 + i * 7) % 1395 {
+    b.write_byte(UInt8((t + i + j) & 255))
+  }
+  b.freeze()
+}
+
+fn seq_of(d: Bytes) -> Int {
+  if d.len() < 6 {
+    return -1
+  }
+  Int(d[2]) | Int(d[3]) << 8 | Int(d[4]) << 16 | Int(d[5]) << 24
+}
+
+/// One client: (datagrams answered, dropped), or the first mismatch.
+fn client(os: Os, server: Str, t: Int, end: Time, passes: Int) -> (Int, Int) ! Str uses (net, clock) {
+  let dialed = t % 2 == 0
+  let c = if dialed { udp.dial(os.net, server) } else { udp.listen(os.net, "127.0.0.1:0") }.map_err(fn(e) { "client ${t}: ${e}" })?
+  var ok = 0
+  var dropped = 0
+  var i = 0
+  while if passes > 0 { i < passes } else { os.clock.now() < end } {
+    let d = datagram(t, i)
+    if dialed {
+      c.write(d).map_err(fn(e) { "write ${t}/${i}: ${e}" })?
+    } else {
+      c.write_to(d, server).map_err(fn(e) { "write_to ${t}/${i}: ${e}" })?
+    }
+    // the reply to i, skipping late replies to earlier sends
+    let got = task.with_timeout(os.clock, 1s, fn() -> Bytes? ! NetErr {
+      while true {
+        let r = if dialed {
+          c.read()?
+        } else {
+          let (b, from) = c.read_from()?
+          if from != server {
+            return Ok(Some(b"from " + from.bytes()))
+          }
+          b
+        }
+        if seq_of(r) == i || seq_of(r) > i || seq_of(r) < 0 {
+          return Ok(Some(r))
+        }
+      }
+      None
+    })
+    match got {
+      Ok(Some(r)) if r == d => ok += 1
+      Ok(Some(r)) => {
+        c.close()
+        return Err("client ${t} datagram ${i}: got ${r.len()} bytes (seq ${seq_of(r)}), want ${d.len()}")
+      }
+      Ok(None) => {}
+      Err(task.Timed.TimedOut) => dropped += 1
+      Err(e) => {
+        c.close()
+        return Err("read ${t}/${i}: ${e}")
+      }
+    }
+    i += 1
+  }
+  c.close()
+  Ok((ok, dropped))
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let passes = if minutes == 0 { 200 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let srv = udp.listen(os.net, "127.0.0.1:0")?
+  let server = srv.local_addr()
+  let (ok, dropped) = scope s {
+    for _ in 0..4 {
+      s.spawn_background(fn() {
+        while let Ok((d, from)) = srv.read_from() {
+          srv.write_to(d, from).ignore_err("a client's socket closed")
+        }
+      })
+    }
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && r > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${r / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[(Int, Int), Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> (Int, Int) ! Str { client(os, server, t, end, passes) }))
+    }
+    var ok = 0
+    var dropped = 0
+    for h in hs {
+      let (a, b) = h.await.map_err(fn(e) { "a client: ${e}" })?
+      ok += a
+      dropped += b
+    }
+    // a read waiting on a socket fails once it closes
+    let lone = udp.listen(os.net, "127.0.0.1:0")?
+    let waiting = s.spawn(fn() -> Bool { lone.read_from().is_err() })
+    clock.sleep(100ms)
+    lone.close()
+    if !waiting.await {
+      return Err("a read waiting on a closed socket did not fail")
+    }
+    srv.close()
+    s.cancel()
+    (ok, dropped)
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  let drop_ok = dropped * 1000 <= ok + dropped
+  os.stdio.println("udp stress: ${ok} datagrams echoed by ${tasks} clients in ${minutes} min, ${dropped} dropped, 0 mismatches, ${mem}, ${if mem_ok && drop_ok { "pass" } else if !drop_ok { "FAIL (dropped)" } else { "FAIL (memory grew)" }}")
+  if !drop_ok {
+    return Err("${dropped} of ${ok + dropped} datagrams dropped")
+  }
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}
