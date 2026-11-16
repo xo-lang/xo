@@ -1,6 +1,6 @@
 # 0684: std/term line editor (golang.org/x/term's Terminal)
 
-Status: Proposed (Xo Lang 3, 2026-11-16; task #89, the matrix's term
+Status: Accepted (owner, 2026-11-16, the Port[fx] shape with the key decoding and edits as a pure internal core so a sans-I/O feed() can be added later; proposed by Xo Lang 3, 2026-11-16; task #89, the matrix's term
 rows)
 
 ## Context

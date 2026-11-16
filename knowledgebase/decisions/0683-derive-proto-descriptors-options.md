@@ -1,6 +1,6 @@
 # 0683: derive Proto gains decode options and a message descriptor (task #102)
 
-Status: Proposed (Xo Lang 3, 2026-11-16; the lead routed the compiler
+Status: Accepted (owner, 2026-11-16; proposed by Xo Lang 3, 2026-11-16; the lead routed the compiler
 part to Xo Lang 1, ADR first; Xo Lang 1 reviews it)
 
 ## Context
