@@ -1,5 +1,20 @@
 # std/trace changes
 
+## 2026-11-16: perf: span and request ids come from Rand.int
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88, the span row of bench/perf/trace (2.9 of Go: each Rand.bytes is a system call)
+- Go reference: go.opentelemetry.io/otel/sdk/trace randomIDGenerator (ids from a math/rand source seeded once)
+- Test: std/trace_test.xo (ids are lowercase hex of their length, never all zero, and differ from draw to draw; the recorder test with --real) and bench/perf/trace (the twin's checksum)
+- Timing: bench/perf/trace span 2.90 to 3.08 of Go before, 0.70 to 0.96 after (Mac, three runs each; host 1 row to follow)
+
+A new trace id (16 bytes), span id (8 bytes) and the middleware's
+request id (8 bytes) were drawn with `Rand.bytes`, a system call each.
+They are now drawn with `Rand.int`, 32 bits a call, which reads the
+userspace ChaCha8 source of decision 0669 on native builds. The ids keep
+their form: lowercase hex, never all zero.
+
 ## 2026-11-16: perf: a root span draws both ids at once
 
 - Kind: perf

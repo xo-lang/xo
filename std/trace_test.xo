@@ -49,3 +49,18 @@ test "a recorder makes ids, nests a child, keeps the last attribute value and re
   expect(r.end_ns >= r.start_ns) == true
   expect(got[1].parent_id) == sid
 }
+
+test "ids are lowercase hex of their length and differ from draw to draw" {
+  var prev = ""
+  for _ in 0..64 {
+    let t = rand_hex(os.rand, 16)
+    expect(t.len()) == 32
+    for c in t.bytes() {
+      expect((c >= 48 && c <= 57) || (c >= 97 && c <= 102)) == true
+    }
+    expect(t != prev) == true
+    expect(t != "0".repeat(32)) == true
+    prev = t
+  }
+  expect(rand_hex(os.rand, 8).len()) == 16
+}

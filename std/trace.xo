@@ -89,7 +89,7 @@ pub fn ring(cap: Int = 1000) -> Ring {
 pub fn (r: Ring) middleware(rand: Rand, clock: Clock) -> fn(http.Request, http.Next) -> http.Response uses (rand, clock, sync) {
   fn(req, next) -> http.Response {
     let given = req.header("X-Request-Id") ?? ""
-    let rid = if valid_id(given) { given } else { rand.bytes(8).to_hex() }
+    let rid = if valid_id(given) { given } else { rand_hex(rand, 8) }
     let t0 = clock.now()
     var resp = next(req.with_value(key(), rid))
     let d = clock.since(t0)
@@ -167,10 +167,8 @@ pub fn (r: Recorder) start(name: Str, parent: (Str, Str)? = None, kind: SpanKind
       sid = rand_hex(r.rand, 8)
     }
     None => {
-      // both ids from one draw: each draw is a system call
-      let b = r.rand.bytes(24)
-      tid = hex_id(r.rand, b[0..16])
-      sid = hex_id(r.rand, b[16..24])
+      tid = rand_hex(r.rand, 16)
+      sid = rand_hex(r.rand, 8)
     }
   }
   let s = Span{
@@ -283,26 +281,38 @@ fn unix_nanos(t: Time) -> Int {
   s * 1000000000 + (t - Time.from_unix(s)).nanos()
 }
 
-/// n random bytes as hex, never all zero.
-fn rand_hex(rand: Rand, n: Int) -> Str uses rand { hex_id(rand, rand.bytes(n)) }
+/// n random bytes (a multiple of 4) as hex, never all zero. The words
+/// come from Rand.int, not Rand.bytes: an id needs no operating system
+/// entropy (otel-go draws its ids from a math/rand seeded once), and
+/// Rand.int reads the userspace ChaCha8 source (decision 0669) where
+/// Rand.bytes is a system call each (2026-11-16).
+fn rand_hex(rand: Rand, n: Int) -> Str uses rand {
+  for _ in 0..2 {
+    let s = hex_words(rand, n / 4)
+    if s.0 {
+      return s.1
+    }
+  }
+  "0".repeat(2 * n - 1) + "1"
+}
 
-/// b as a hex id, drawn again (as rand_hex) when it is all zero.
-fn hex_id(rand: Rand, b0: Bytes) -> Str uses rand {
-  var b = b0
-  let n = b.len()
-  var zero = true
-  for c in b {
-    if c != 0 {
-      zero = false
+/// words random 32 bit words as hex, and whether any was not zero.
+fn hex_words(rand: Rand, words: Int) -> (Bool, Str) uses rand {
+  let digits = "0123456789abcdef".bytes()
+  var out = BytesBuilder.with_capacity(8 * words)
+  var any = false
+  for _ in 0..words {
+    let w = rand.int(0, 0x100000000)
+    if w != 0 {
+      any = true
+    }
+    var sh = 28
+    while sh >= 0 {
+      out.write_byte(digits[(w >> sh) & 15])
+      sh -= 4
     }
   }
-  if zero {
-    b = rand.bytes(n)
-    if b[0] == 0 && b[n - 1] == 0 {
-      return "0".repeat(2 * n - 1) + "1"
-    }
-  }
-  b.to_hex()
+  (any, out.freeze().to_str() ?? "")
 }
 
 /// attrs merged into base: a key already there takes the new value in place.

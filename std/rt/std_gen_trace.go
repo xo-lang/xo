@@ -1292,20 +1292,19 @@ func (v_r Trace_Ring) M_middleware(tk *Task, v_rand Rand, v_clock Clock) func(*T
 		if Trace_valid_id(tk, v_given) {
 			x_v5 = v_given
 		} else {
-			x_a6 := int64(8)
-			x_v5 = Bytes_to_hex(tk, v_rand.M_bytes(tk, x_a6))
+			x_v5 = Trace_rand_hex(tk, v_rand, int64(8))
 		}
 		var v_rid string = x_v5
 		_ = v_rid
 		var v_t0 Time = v_clock.M_now(tk)
 		_ = v_t0
-		x_a9 := v_next
-		x_a7 := func(v Http_Key[string]) Http_Key[string] { MarkP(&v); return v }(Trace_key(tk))
-		x_a8 := v_rid
-		var v_resp Http_Response = func(v Http_Response) Http_Response { v.XoMark(); return v }(x_a9(tk, func(v Http_Request) Http_Request { v.XoMark(); return v }(Http_Request_with_value[string](tk, func(v Http_Request) Http_Request { v.XoMark(); return v }(v_req), x_a7, x_a8))).V)
+		x_a8 := v_next
+		x_a6 := func(v Http_Key[string]) Http_Key[string] { MarkP(&v); return v }(Trace_key(tk))
+		x_a7 := v_rid
+		var v_resp Http_Response = func(v Http_Response) Http_Response { v.XoMark(); return v }(x_a8(tk, func(v Http_Request) Http_Request { v.XoMark(); return v }(Http_Request_with_value[string](tk, func(v Http_Request) Http_Request { v.XoMark(); return v }(v_req), x_a6, x_a7))).V)
 		_ = v_resp
-		x_a10 := v_t0
-		var v_d Duration = v_clock.M_since(tk, x_a10)
+		x_a9 := v_t0
+		var v_d Duration = v_clock.M_since(tk, x_a9)
 		_ = v_d
 		Trace_push(tk, v_r, Trace_Span{F_id: v_rid, F_name: "request", F_start_ms: Time_unix_millis(tk, v_t0), F_micros: (Duration_nanos(tk, v_d) / int64(1000)), F_status: v_resp.F_status, F_trace_id: "", F_span_id: "", F_parent_id: "", F_kind: Option[Trace_SpanKind]{}, F_attributes: List[Trace_Attr]{}, F_events: List[Trace_Event]{}, F_status_code: Option[Trace_StatusCode]{}, F_status_message: "", F_start_ns: int64(0), F_end_ns: int64(0), F_scope: "", F_scope_version: "", F_schema_url: ""})
 		Map_put[string, string](tk, &v_resp.F_headers, "X-Request-Id", v_rid)
@@ -1314,15 +1313,15 @@ func (v_r Trace_Ring) M_middleware(tk *Task, v_rand Rand, v_clock Clock) func(*T
 }
 
 func Trace_id(tk *Task, v_req Http_Request) string {
-	x_a11 := func(v Http_Key[string]) Http_Key[string] { MarkP(&v); return v }(Trace_key(tk))
-	x_t12 := Http_Request_value[string](tk, func(v Http_Request) Http_Request { v.XoMark(); return v }(v_req), x_a11)
-	var x_c13 string
-	if x_t12.Some {
-		x_c13 = x_t12.V
+	x_a10 := func(v Http_Key[string]) Http_Key[string] { MarkP(&v); return v }(Trace_key(tk))
+	x_t11 := Http_Request_value[string](tk, func(v Http_Request) Http_Request { v.XoMark(); return v }(v_req), x_a10)
+	var x_c12 string
+	if x_t11.Some {
+		x_c12 = x_t11.V
 	} else {
-		x_c13 = ""
+		x_c12 = ""
 	}
-	return x_c13
+	return x_c12
 }
 
 func (v_r Trace_Ring) M_record(tk *Task, v_id string, v_name string, v_start Time, v_d Duration) {
@@ -1331,25 +1330,25 @@ func (v_r Trace_Ring) M_record(tk *Task, v_id string, v_name string, v_start Tim
 }
 
 func (v_r Trace_Ring) M_spans(tk *Task, v_min Duration, v_n int64) List[Trace_Span] {
-	x_a14 := func(tk *Task, v_l List[Trace_Span]) Result[List[Trace_Span], Never] {
+	x_a13 := func(tk *Task, v_l List[Trace_Span]) Result[List[Trace_Span], Never] {
 		_ = v_l
 		return Ok[List[Trace_Span], Never](List_Own(v_l))
 	}
-	var v_all List[Trace_Span] = List_Own(Mutex_with_read[List[Trace_Span], List[Trace_Span], Never](tk, v_r.F_buf, x_a14).V)
+	var v_all List[Trace_Span] = List_Own(Mutex_with_read[List[Trace_Span], List[Trace_Span], Never](tk, v_r.F_buf, x_a13).V)
 	_ = v_all
 	var v_out List[Trace_Span] = List[Trace_Span]{}
 	_ = v_out
 	var v_i int64 = List_len[Trace_Span](tk, v_all)
 	_ = v_i
-	var x_v15 int64
+	var x_v14 int64
 	if List_len[Trace_Span](tk, v_all) > v_r.F_cap {
-		x_v15 = SubS(List_len[Trace_Span](tk, v_all), v_r.F_cap, "std/trace.xo:119:38")
+		x_v14 = SubS(List_len[Trace_Span](tk, v_all), v_r.F_cap, "std/trace.xo:119:38")
 	} else {
-		x_v15 = int64(0)
+		x_v14 = int64(0)
 	}
-	var v_first int64 = x_v15
+	var v_first int64 = x_v14
 	_ = v_first
-x_L16:
+x_L15:
 	for {
 		if !(v_i > v_first) {
 			break
@@ -1359,15 +1358,15 @@ x_L16:
 			var v_s Trace_Span = func(v Trace_Span) Trace_Span { v.XoMark(); return v }(List_At(v_all, v_i, "std/trace.xo:122:13"))
 			_ = v_s
 			if MulIK(v_s.F_micros, int64(1000), -9223372036854775, 9223372036854775, "std/trace.xo:123:8") >= Duration_nanos(tk, v_min) {
-				x_pv17 := func(v Trace_Span) Trace_Span { v.XoMark(); return v }(v_s)
+				x_pv16 := func(v Trace_Span) Trace_Span { v.XoMark(); return v }(v_s)
 				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv17)
+					v_out = List_PushFast(v_out, x_pv16)
 				} else {
-					v_out = List_PushSlow(v_out, x_pv17)
+					v_out = List_PushSlow(v_out, x_pv16)
 				}
 				_ = Unit{}
 				if (v_n > int64(0)) && (List_len[Trace_Span](tk, v_out) >= v_n) {
-					break x_L16
+					break x_L15
 				}
 			}
 		}
@@ -1487,7 +1486,7 @@ func (v_r Trace_Recorder) M_start(tk *Task, v_name string, v_parent Option[Tuple
 	_ = v_sid
 	var v_pid string = "root"
 	_ = v_pid
-x_M18:
+x_M17:
 	switch {
 	default:
 		if v_parent.Some {
@@ -1500,17 +1499,14 @@ x_M18:
 				v_pid = v_ps
 				v_sid = Trace_rand_hex(tk, v_r.F_rand, int64(8))
 			}
-			break x_M18
+			break x_M17
 		}
 		if !v_parent.Some {
 			{
-				x_a19 := int64(24)
-				var v_b Bytes = v_r.F_rand.M_bytes(tk, x_a19)
-				_ = v_b
-				v_tid = Trace_hex_id(tk, v_r.F_rand, BytesSlice(v_b, int64(0), int64(16), true, true, "std/trace.xo:172:28"))
-				v_sid = Trace_hex_id(tk, v_r.F_rand, BytesSlice(v_b, int64(16), int64(24), true, true, "std/trace.xo:173:28"))
+				v_tid = Trace_rand_hex(tk, v_r.F_rand, int64(16))
+				v_sid = Trace_rand_hex(tk, v_r.F_rand, int64(8))
 			}
-			break x_M18
+			break x_M17
 		}
 		panic(Unreachable("std/trace.xo:163:3"))
 	}
@@ -1544,23 +1540,23 @@ func Trace_Recorder_M_start_D_6(tk *Task) string {
 }
 
 func (v_a Trace_Active) M_ids(tk *Task) Tuple2[string, string] {
-	x_a20 := func(tk *Task, v_s Trace_Span) Result[Tuple2[string, string], Never] {
+	x_a18 := func(tk *Task, v_s Trace_Span) Result[Tuple2[string, string], Never] {
 		_ = v_s
 		return Ok[Tuple2[string, string], Never](Tuple2[string, string]{F0: v_s.F_trace_id, F1: v_s.F_span_id})
 	}
-	return Mutex_with_read[Trace_Span, Tuple2[string, string], Never](tk, v_a.F_span, x_a20).V
+	return Mutex_with_read[Trace_Span, Tuple2[string, string], Never](tk, v_a.F_span, x_a18).V
 }
 
 func (v_a Trace_Active) M_set_attributes(tk *Task, v_attrs List[Trace_Attr]) {
 	v_attrs.XoMark()
-	x_a22 := func(tk *Task, v_s *Trace_Span) Result[Unit, Never] {
+	x_a20 := func(tk *Task, v_s *Trace_Span) Result[Unit, Never] {
 		_ = (*v_s)
-		x_w21 := func(v Trace_Span) Trace_Span { v.XoMark(); return v }((*v_s))
-		x_w21.F_attributes = List_Own(Trace_merge_attrs(tk, List_Own((*v_s).F_attributes), List_Own(v_attrs)))
-		(*v_s) = x_w21
+		x_w19 := func(v Trace_Span) Trace_Span { v.XoMark(); return v }((*v_s))
+		x_w19.F_attributes = List_Own(Trace_merge_attrs(tk, List_Own((*v_s).F_attributes), List_Own(v_attrs)))
+		(*v_s) = x_w19
 		return Ok[Unit, Never](Unit{})
 	}
-	_ = Mutex_with[Trace_Span, Unit, Never](tk, v_a.F_span, x_a22).V
+	_ = Mutex_with[Trace_Span, Unit, Never](tk, v_a.F_span, x_a20).V
 	return
 }
 
@@ -1568,23 +1564,23 @@ func (v_a Trace_Active) M_add_event(tk *Task, v_name string, v_attributes List[T
 	var v_ns int64 = Trace_unix_nanos(tk, v_a.F_clock.M_now(tk))
 	_ = v_ns
 	v_attributes.XoMark()
-	x_a25 := func(tk *Task, v_s *Trace_Span) Result[Unit, Never] {
+	x_a23 := func(tk *Task, v_s *Trace_Span) Result[Unit, Never] {
 		_ = (*v_s)
 		var v_ev List[Trace_Event] = List_Own((*v_s).F_events)
 		_ = v_ev
-		x_pv23 := Trace_Event{F_name: v_name, F_time_ns: v_ns, F_attributes: List_Own(v_attributes)}
+		x_pv21 := Trace_Event{F_name: v_name, F_time_ns: v_ns, F_attributes: List_Own(v_attributes)}
 		if List_CanPush(v_ev) {
-			v_ev = List_PushFast(v_ev, x_pv23)
+			v_ev = List_PushFast(v_ev, x_pv21)
 		} else {
-			v_ev = List_PushSlow(v_ev, x_pv23)
+			v_ev = List_PushSlow(v_ev, x_pv21)
 		}
 		_ = Unit{}
-		x_w24 := func(v Trace_Span) Trace_Span { v.XoMark(); return v }((*v_s))
-		x_w24.F_events = List_Own(v_ev)
-		(*v_s) = x_w24
+		x_w22 := func(v Trace_Span) Trace_Span { v.XoMark(); return v }((*v_s))
+		x_w22.F_events = List_Own(v_ev)
+		(*v_s) = x_w22
 		return Ok[Unit, Never](Unit{})
 	}
-	_ = Mutex_with[Trace_Span, Unit, Never](tk, v_a.F_span, x_a25).V
+	_ = Mutex_with[Trace_Span, Unit, Never](tk, v_a.F_span, x_a23).V
 	return
 }
 
@@ -1593,12 +1589,12 @@ func Trace_Active_M_add_event_D_1(tk *Task) List[Trace_Attr] {
 }
 
 func (v_a Trace_Active) M_set_status(tk *Task, v_code Trace_StatusCode, v_message string) {
-	x_a26 := func(tk *Task, v_s *Trace_Span) Result[Unit, Never] {
+	x_a24 := func(tk *Task, v_s *Trace_Span) Result[Unit, Never] {
 		_ = (*v_s)
 		(*v_s) = func(v Trace_Span) Trace_Span { v.XoMark(); return v }(Trace_span_set_status(tk, func(v Trace_Span) Trace_Span { v.XoMark(); return v }((*v_s)), v_code, v_message))
 		return Ok[Unit, Never](Unit{})
 	}
-	_ = Mutex_with[Trace_Span, Unit, Never](tk, v_a.F_span, x_a26).V
+	_ = Mutex_with[Trace_Span, Unit, Never](tk, v_a.F_span, x_a24).V
 	return
 }
 
@@ -1607,7 +1603,7 @@ func Trace_Active_M_set_status_D_1(tk *Task) string {
 }
 
 func (v_a Trace_Active) M_end(tk *Task) {
-	x_a27 := func(tk *Task, v_d *bool) Result[bool, Never] {
+	x_a25 := func(tk *Task, v_d *bool) Result[bool, Never] {
 		_ = (*v_d)
 		if *v_d {
 			return Ok[bool, Never](false)
@@ -1615,30 +1611,30 @@ func (v_a Trace_Active) M_end(tk *Task) {
 		(*v_d) = true
 		return Ok[bool, Never](true)
 	}
-	var v_first bool = Mutex_with[bool, bool, Never](tk, v_a.F_done, x_a27).V
+	var v_first bool = Mutex_with[bool, bool, Never](tk, v_a.F_done, x_a25).V
 	_ = v_first
 	if !(v_first) {
 		return
 	}
 	var v_ns int64 = Trace_unix_nanos(tk, v_a.F_clock.M_now(tk))
 	_ = v_ns
-	x_a30 := func(tk *Task, v_s *Trace_Span) Result[Trace_Span, Never] {
+	x_a28 := func(tk *Task, v_s *Trace_Span) Result[Trace_Span, Never] {
 		_ = (*v_s)
-		var x_v28 int64
+		var x_v26 int64
 		if v_ns < (*v_s).F_start_ns {
-			x_v28 = (*v_s).F_start_ns
+			x_v26 = (*v_s).F_start_ns
 		} else {
-			x_v28 = v_ns
+			x_v26 = v_ns
 		}
-		var v_end int64 = x_v28
+		var v_end int64 = x_v26
 		_ = v_end
-		x_w29 := func(v Trace_Span) Trace_Span { v.XoMark(); return v }((*v_s))
-		x_w29.F_end_ns = v_end
-		x_w29.F_micros = (SubS(v_end, (*v_s).F_start_ns, "std/trace.xo:228:39") / int64(1000))
-		(*v_s) = x_w29
+		x_w27 := func(v Trace_Span) Trace_Span { v.XoMark(); return v }((*v_s))
+		x_w27.F_end_ns = v_end
+		x_w27.F_micros = (SubS(v_end, (*v_s).F_start_ns, "std/trace.xo:226:39") / int64(1000))
+		(*v_s) = x_w27
 		return Ok[Trace_Span, Never](func(v Trace_Span) Trace_Span { v.XoMark(); return v }((*v_s)))
 	}
-	var v_s_1 Trace_Span = func(v Trace_Span) Trace_Span { v.XoMark(); return v }(Mutex_with[Trace_Span, Trace_Span, Never](tk, v_a.F_span, x_a30).V)
+	var v_s_1 Trace_Span = func(v Trace_Span) Trace_Span { v.XoMark(); return v }(Mutex_with[Trace_Span, Trace_Span, Never](tk, v_a.F_span, x_a28).V)
 	_ = v_s_1
 	Trace_push(tk, v_a.F_ring, func(v Trace_Span) Trace_Span { v.XoMark(); return v }(v_s_1))
 	return
@@ -1650,42 +1646,42 @@ func (v_r Trace_Ring) M_handler(tk *Task, v_auth func(*Task, Http_Request) Resul
 		if !(v_auth(tk, func(v Http_Request) Http_Request { v.XoMark(); return v }(v_req)).V) {
 			return Ok[Http_Response, Never](func(v Http_Response) Http_Response { v.XoMark(); return v }(Http_text(tk, int64(403), "forbidden\n")))
 		}
-		x_t31 := Addr(func(v Http_Request) Http_Request { v.XoMark(); return v }(v_req)).M_query(tk, "slow")
-		var x_c32 string
+		x_t29 := Addr(func(v Http_Request) Http_Request { v.XoMark(); return v }(v_req)).M_query(tk, "slow")
+		var x_c30 string
+		if x_t29.Some {
+			x_c30 = x_t29.V
+		} else {
+			x_c30 = ""
+		}
+		x_t31 := Int_parse(tk, x_c30)
+		var x_c32 int64
 		if x_t31.Some {
 			x_c32 = x_t31.V
 		} else {
-			x_c32 = ""
+			x_c32 = int64(0)
 		}
-		x_t33 := Int_parse(tk, x_c32)
-		var x_c34 int64
+		var v_slow int64 = x_c32
+		_ = v_slow
+		x_t33 := Addr(func(v Http_Request) Http_Request { v.XoMark(); return v }(v_req)).M_query(tk, "n")
+		var x_c34 string
 		if x_t33.Some {
 			x_c34 = x_t33.V
 		} else {
-			x_c34 = int64(0)
+			x_c34 = ""
 		}
-		var v_slow int64 = x_c34
-		_ = v_slow
-		x_t35 := Addr(func(v Http_Request) Http_Request { v.XoMark(); return v }(v_req)).M_query(tk, "n")
-		var x_c36 string
+		x_t35 := Int_parse(tk, x_c34)
+		var x_c36 int64
 		if x_t35.Some {
 			x_c36 = x_t35.V
 		} else {
-			x_c36 = ""
+			x_c36 = int64(100)
 		}
-		x_t37 := Int_parse(tk, x_c36)
-		var x_c38 int64
-		if x_t37.Some {
-			x_c38 = x_t37.V
-		} else {
-			x_c38 = int64(100)
-		}
-		var v_n int64 = x_c38
+		var v_n int64 = x_c36
 		_ = v_n
-		x_a41 := int64(200)
-		x_a39 := Duration_from_millis(tk, v_slow)
-		x_a40 := v_n
-		return Ok[Http_Response, Never](func(v Http_Response) Http_Response { v.XoMark(); return v }(Http_json[List[Trace_Span]](tk, x_a41, List_Own(v_r.M_spans(tk, x_a39, x_a40)))))
+		x_a39 := int64(200)
+		x_a37 := Duration_from_millis(tk, v_slow)
+		x_a38 := v_n
+		return Ok[Http_Response, Never](func(v Http_Response) Http_Response { v.XoMark(); return v }(Http_json[List[Trace_Span]](tk, x_a39, List_Own(v_r.M_spans(tk, x_a37, x_a38)))))
 	}
 }
 
@@ -1697,11 +1693,11 @@ func Trace_valid_id(tk *Task, v_s string) bool {
 	if Str_is_empty(tk, v_s) || (Str_len(tk, v_s) > int64(64)) {
 		return false
 	}
-	x_it42 := Str_bytes(tk, v_s)
-	for x_bi44 := 0; x_bi44 < len(x_it42); x_bi44++ {
-		x_el45 := x_it42[x_bi44]
-		_ = x_el45
-		var v_c uint8 = x_el45
+	x_it40 := Str_bytes(tk, v_s)
+	for x_bi42 := 0; x_bi42 < len(x_it40); x_bi42++ {
+		x_el43 := x_it40[x_bi42]
+		_ = x_el43
+		var v_c uint8 = x_el43
 		_ = v_c
 		{
 			if (int64(v_c) <= int64(32)) || (int64(v_c) >= int64(127)) {
@@ -1716,84 +1712,108 @@ func Trace_push(tk *Task, v_r Trace_Ring, v_s Trace_Span) {
 	var v_cap int64 = v_r.F_cap
 	_ = v_cap
 	v_s.XoMark()
-	x_a47 := func(tk *Task, v_l *List[Trace_Span]) Result[Unit, Never] {
+	x_a45 := func(tk *Task, v_l *List[Trace_Span]) Result[Unit, Never] {
 		_ = (*v_l)
-		if List_len[Trace_Span](tk, (*v_l)) >= MulKI(int64(2), v_cap, -4611686018427387904, 4611686018427387903, "std/trace.xo:273:19") {
-			(*v_l) = List_Own(List_SliceRange((*v_l), AddIUp(SubS(List_len[Trace_Span](tk, (*v_l)), v_cap, "std/trace.xo:274:13"), int64(1), "std/trace.xo:274:13"), 0, true, false, "std/trace.xo:274:11"))
+		if List_len[Trace_Span](tk, (*v_l)) >= MulKI(int64(2), v_cap, -4611686018427387904, 4611686018427387903, "std/trace.xo:271:19") {
+			(*v_l) = List_Own(List_SliceRange((*v_l), AddIUp(SubS(List_len[Trace_Span](tk, (*v_l)), v_cap, "std/trace.xo:272:13"), int64(1), "std/trace.xo:272:13"), 0, true, false, "std/trace.xo:272:11"))
 		}
-		x_pv46 := func(v Trace_Span) Trace_Span { v.XoMark(); return v }(v_s)
+		x_pv44 := func(v Trace_Span) Trace_Span { v.XoMark(); return v }(v_s)
 		if List_CanPush((*v_l)) {
-			(*v_l) = List_PushFast((*v_l), x_pv46)
+			(*v_l) = List_PushFast((*v_l), x_pv44)
 		} else {
-			(*v_l) = List_PushSlow((*v_l), x_pv46)
+			(*v_l) = List_PushSlow((*v_l), x_pv44)
 		}
 		_ = Unit{}
 		return Ok[Unit, Never](Unit{})
 	}
-	_ = Mutex_with[List[Trace_Span], Unit, Never](tk, v_r.F_buf, x_a47).V
+	_ = Mutex_with[List[Trace_Span], Unit, Never](tk, v_r.F_buf, x_a45).V
 	return
 }
 
 func Trace_unix_nanos(tk *Task, v_t Time) int64 {
 	var v_s int64 = Time_unix(tk, v_t)
 	_ = v_s
-	return AddS(MulIK(v_s, int64(1000000000), -9223372036, 9223372036, "std/trace.xo:283:3"), Duration_nanos(tk, TimeDiff(v_t, Time_from_unix(tk, v_s), "std/trace.xo:283:21")), "std/trace.xo:283:3")
+	return AddS(MulIK(v_s, int64(1000000000), -9223372036, 9223372036, "std/trace.xo:281:3"), Duration_nanos(tk, TimeDiff(v_t, Time_from_unix(tk, v_s), "std/trace.xo:281:21")), "std/trace.xo:281:3")
 }
 
 func Trace_rand_hex(tk *Task, v_rand Rand, v_n int64) string {
-	x_a49 := v_rand
-	x_a48 := v_n
-	return Trace_hex_id(tk, x_a49, v_rand.M_bytes(tk, x_a48))
-}
-
-func Trace_hex_id(tk *Task, v_rand Rand, v_b0 Bytes) string {
-	var v_b Bytes = v_b0
-	_ = v_b
-	var v_n int64 = Bytes_len(tk, v_b)
-	_ = v_n
-	var v_zero bool = true
-	_ = v_zero
-	x_it50 := v_b
-	for x_bi52 := 0; x_bi52 < len(x_it50); x_bi52++ {
-		x_el53 := x_it50[x_bi52]
-		_ = x_el53
-		var v_c uint8 = x_el53
-		_ = v_c
+	x_it46 := Range[int64]{Lo: int64(0), Hi: int64(2), Incl: false}
+	for x_i48 := x_it46.Lo; x_i48 < x_it46.Hi; x_i48++ {
+		x_el49 := x_i48
+		_ = x_el49
 		{
-			if v_c != uint8(0) {
-				v_zero = false
+			var v_s Tuple2[bool, string] = Trace_hex_words(tk, v_rand, (v_n / int64(4)))
+			_ = v_s
+			if v_s.F0 {
+				return v_s.F1
 			}
 		}
 	}
-	if v_zero {
-		x_a54 := v_n
-		v_b = v_rand.M_bytes(tk, x_a54)
-		if (BytesAt(v_b, int64(0), "std/trace.xo:301:8") == uint8(0)) && (BytesAt(v_b, (v_n-int64(1)), "std/trace.xo:301:21") == uint8(0)) {
-			return (Str_repeat(tk, "0", ((int64(2)*v_n)-int64(1))) + "1")
+	return (Str_repeat(tk, "0", SubIDown(MulKI(int64(2), v_n, -4611686018427387904, 4611686018427387903, "std/trace.xo:296:14"), int64(1), "std/trace.xo:296:14")) + "1")
+}
+
+func Trace_hex_words(tk *Task, v_rand Rand, v_words int64) Tuple2[bool, string] {
+	var v_digits Bytes = Str_bytes(tk, "0123456789abcdef")
+	_ = v_digits
+	var v_out BytesBuilder = BytesBuilder_with_capacity(tk, MulKI(int64(8), v_words, -1152921504606846976, 1152921504606846975, "std/trace.xo:302:40"))
+	_ = v_out
+	var v_any bool = false
+	_ = v_any
+	x_it50 := Range[int64]{Lo: int64(0), Hi: v_words, Incl: false}
+	for x_i52 := x_it50.Lo; x_i52 < x_it50.Hi; x_i52++ {
+		x_el53 := x_i52
+		_ = x_el53
+		{
+			x_a54 := int64(0)
+			x_a55 := int64(4294967296)
+			var v_w int64 = v_rand.M_int(tk, x_a54, x_a55)
+			_ = v_w
+			if v_w != int64(0) {
+				v_any = true
+			}
+			var v_sh int64 = int64(28)
+			_ = v_sh
+			for {
+				if !(v_sh >= int64(0)) {
+					break
+				}
+				{
+					v_out.M_write_byte(tk, BytesAt(v_digits, ((v_w>>v_sh)&int64(15)), "std/trace.xo:311:22"))
+					v_sh = (v_sh - int64(4))
+				}
+			}
 		}
 	}
-	return Bytes_to_hex(tk, v_b)
+	x_a59 := v_any
+	x_t57 := Bytes_to_str(tk, v_out.M_freeze(tk))
+	var x_c58 string
+	if x_t57.Some {
+		x_c58 = x_t57.V
+	} else {
+		x_c58 = ""
+	}
+	return Tuple2[bool, string]{F0: x_a59, F1: x_c58}
 }
 
 func Trace_merge_attrs(tk *Task, v_base List[Trace_Attr], v_attrs List[Trace_Attr]) List[Trace_Attr] {
 	var v_out List[Trace_Attr] = List_Own(v_base)
 	_ = v_out
-	x_it55 := v_attrs
-	for _, x_e57 := range List_Items(x_it55) {
-		x_el58 := x_e57
-		_ = x_el58
-		var v_a Trace_Attr = x_el58
+	x_it60 := v_attrs
+	for _, x_e62 := range List_Items(x_it60) {
+		x_el63 := x_e62
+		_ = x_el63
+		var v_a Trace_Attr = x_el63
 		_ = v_a
 		{
 			var v_at int64 = int64(-1)
 			_ = v_at
-			x_it59 := List_indexed[Trace_Attr](tk, v_out)
-			for _, x_e61 := range List_Items(x_it59) {
-				x_el62 := x_e61
-				_ = x_el62
-				var v_i int64 = x_el62.F0
+			x_it64 := List_indexed[Trace_Attr](tk, v_out)
+			for _, x_e66 := range List_Items(x_it64) {
+				x_el67 := x_e66
+				_ = x_el67
+				var v_i int64 = x_el67.F0
 				_ = v_i
-				var v_o Trace_Attr = x_el62.F1
+				var v_o Trace_Attr = x_el67.F1
 				_ = v_o
 				{
 					if v_o.F_key == v_a.F_key {
@@ -1802,17 +1822,17 @@ func Trace_merge_attrs(tk *Task, v_base List[Trace_Attr], v_attrs List[Trace_Att
 				}
 			}
 			if v_at >= int64(0) {
-				x_ix63 := v_at
+				x_ix68 := v_at
 				if !List_Mine(v_out) {
 					v_out = List_Unshared(v_out)
 				}
-				List_PutM(v_out, x_ix63, v_a, "std/trace.xo:319:7")
+				List_PutM(v_out, x_ix68, v_a, "std/trace.xo:329:7")
 			} else {
-				x_pv64 := v_a
+				x_pv69 := v_a
 				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv64)
+					v_out = List_PushFast(v_out, x_pv69)
 				} else {
-					v_out = List_PushSlow(v_out, x_pv64)
+					v_out = List_PushSlow(v_out, x_pv69)
 				}
 				_ = Unit{}
 			}
@@ -1831,17 +1851,17 @@ func Trace_span_set_status(tk *Task, v_s Trace_Span, v_code Trace_StatusCode, v_
 			return func(v Trace_Span) Trace_Span { v.XoMark(); return v }(v_s)
 		}
 		if v_code.Tag == 2 {
-			x_w66 := func(v Trace_Span) Trace_Span { v.XoMark(); return v }(v_s)
-			x_w66.F_status_code = Some[Trace_StatusCode](v_code)
-			x_w66.F_status_message = ""
-			return x_w66
+			x_w71 := func(v Trace_Span) Trace_Span { v.XoMark(); return v }(v_s)
+			x_w71.F_status_code = Some[Trace_StatusCode](v_code)
+			x_w71.F_status_message = ""
+			return x_w71
 		}
 		if v_code.Tag == 3 {
-			x_w67 := func(v Trace_Span) Trace_Span { v.XoMark(); return v }(v_s)
-			x_w67.F_status_code = Some[Trace_StatusCode](v_code)
-			x_w67.F_status_message = v_message
-			return x_w67
+			x_w72 := func(v Trace_Span) Trace_Span { v.XoMark(); return v }(v_s)
+			x_w72.F_status_code = Some[Trace_StatusCode](v_code)
+			x_w72.F_status_message = v_message
+			return x_w72
 		}
-		panic(Unreachable("std/trace.xo:333:3"))
+		panic(Unreachable("std/trace.xo:343:3"))
 	}
 }
