@@ -8,7 +8,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"reflect"
 	"text/template"
+	"unicode/utf8"
 )
 
 // tmplData is the data every template runs on (as JSON).
@@ -45,9 +47,99 @@ func tmplAny(x any) any {
 	return x
 }
 
+// tmplXoFuncs replaces the builtins whose Go result an Xo Str cannot hold:
+// slice of a string cut inside a character gives U+FFFD for each byte of
+// the cut sequence (decision 0259), where Go keeps the bytes (task #98
+// template fuzz seed 128: urlquery of the cut "é" gave %A9 in Go).
+var tmplXoFuncs = template.FuncMap{"slice": tmplXoSlice}
+
+// tmplXoSlice is text/template's slice (Go's funcs.go, BSD-style license,
+// Copyright 2011 The Go Authors) with a string result made valid as Xo
+// makes it.
+func tmplXoSlice(item reflect.Value, indexes ...reflect.Value) (reflect.Value, error) {
+	for item.IsValid() && item.Kind() == reflect.Interface {
+		item = item.Elem()
+	}
+	if !item.IsValid() {
+		return reflect.Value{}, fmt.Errorf("slice of untyped nil")
+	}
+	for item.Kind() == reflect.Pointer {
+		if item.IsNil() {
+			return reflect.Value{}, fmt.Errorf("slice of nil pointer")
+		}
+		item = item.Elem()
+	}
+	if len(indexes) > 3 {
+		return reflect.Value{}, fmt.Errorf("too many slice indexes: %d", len(indexes))
+	}
+	var cap int
+	switch item.Kind() {
+	case reflect.String:
+		if len(indexes) == 3 {
+			return reflect.Value{}, fmt.Errorf("cannot 3-index slice a string")
+		}
+		cap = item.Len()
+	case reflect.Array, reflect.Slice:
+		cap = item.Cap()
+	default:
+		return reflect.Value{}, fmt.Errorf("can't slice item of type %s", item.Type())
+	}
+	idx := [3]int{0, item.Len()}
+	for i, index := range indexes {
+		var x int64
+		switch index.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			x = index.Int()
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+			x = int64(index.Uint())
+		case reflect.Invalid:
+			return reflect.Value{}, fmt.Errorf("cannot index slice/array with nil")
+		default:
+			return reflect.Value{}, fmt.Errorf("cannot index slice/array with type %s", index.Type())
+		}
+		if x < 0 || int(x) < 0 || int(x) > cap {
+			return reflect.Value{}, fmt.Errorf("index out of range: %d", x)
+		}
+		idx[i] = int(x)
+	}
+	if idx[0] > idx[1] {
+		return reflect.Value{}, fmt.Errorf("invalid slice index: %d > %d", idx[0], idx[1])
+	}
+	if len(indexes) < 3 {
+		r := item.Slice(idx[0], idx[1])
+		if r.Kind() == reflect.String {
+			return reflect.ValueOf(tmplLossy(r.String())), nil
+		}
+		return r, nil
+	}
+	if idx[1] > idx[2] {
+		return reflect.Value{}, fmt.Errorf("invalid slice index: %d > %d", idx[1], idx[2])
+	}
+	return item.Slice3(idx[0], idx[1], idx[2]), nil
+}
+
+// tmplLossy is s with U+FFFD for each byte of an invalid sequence (std's
+// lossy).
+func tmplLossy(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && n == 1 {
+			b.WriteRune(utf8.RuneError)
+		} else {
+			b.WriteString(s[i : i+n])
+		}
+		i += n
+	}
+	return b.String()
+}
+
 // tmplRun is std/rt's parse and render: the output, or err TEXT.
 func tmplRun(src string, data any, missingErr bool) string {
-	t, err := template.New("t").Parse(src)
+	t, err := template.New("t").Funcs(tmplXoFuncs).Parse(src)
 	if err != nil {
 		return "err " + textOf(err.Error())
 	}
@@ -173,7 +265,7 @@ func tmplBody(r *rand.Rand, b *strings.Builder, vars []string, depth int, inRang
 // the set (1: one named sub, 2: a calling a, which calls b), then
 // Go's ExecuteTemplate(name).
 func tmplRunNamed(main string, kind int, name string, data any, missingErr bool) string {
-	t, err := template.New("main").Parse(main)
+	t, err := template.New("main").Funcs(tmplXoFuncs).Parse(main)
 	if err != nil {
 		return "err " + textOf(err.Error())
 	}
@@ -231,6 +323,11 @@ func templateCorpus() string {
 		src := textOf(b.String())
 		missing := r.Intn(8) == 0
 		fmt.Fprintf(&o, "  (%s, %v, %s),\n", xq(src), missing, xq(tmplRun(src, data, missing)))
+	}
+	// a string sliced inside a character: U+FFFD per cut byte, as Xo's Str
+	// holds it (decision 0259; task #98 template fuzz seed 128)
+	for _, src := range []string{`{{slice .uni 2 | urlquery}}`, `{{slice .uni 0 2 | printf "%q"}}`, `{{slice .url 9 | len}}`} {
+		fmt.Fprintf(&o, "  (%s, false, %s),\n", xq(src), xq(tmplRun(src, data, false)))
 	}
 	o.WriteString("]\n")
 	// render_named: ExecuteTemplate of a name in the set. kind 0 is the

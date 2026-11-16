@@ -23,3 +23,12 @@ Clip slices the oracle builds before handing them to the Go reference
 (`t[:len(t):len(t)]`, scripts/stdcorpus/template.go tmplAny). Any oracle
 whose Go reference reads `cap` (reflect's Cap, three-index slices,
 text/template's slice) needs the same.
+
+## Also: a cut inside a character (2026-11-16, seed 128)
+
+`slice` of a string can cut a UTF-8 sequence. Go keeps the raw byte (its
+urlquery gave `%A9`); an Xo Str cannot hold it, and std/template gives
+U+FFFD for each cut byte (decision 0259). The oracle's `slice` is Go's code
+with that rule applied (tmplXoSlice, installed with Funcs, which may
+replace a builtin). Any oracle function returning a Go string with
+invalid UTF-8 needs the same mapping.
