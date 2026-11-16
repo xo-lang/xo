@@ -19,3 +19,15 @@ Update (2026-10-09): a generated program now adds 3 to 9 MB, not 15 to
 34 MB (`go-generic-method-sets-per-package.md`).
 
 Update (2026-10-14): this trim was deleted with the Go driver and the cache grew again; it is now pruned by age and size by compiler/prune (caches-unpruned-after-go-deletion.md, decision 0223).
+
+Update (2026-11-16): Go's own default cache (`~/Library/Caches/go-build`,
+used by `go test`, scripts and twins, not by Xo builds) reached 712 GB on
+the Mac and filled the disk; Docker's VM went read only with it, taking
+offload hosts 3 and 4 down until Docker restarted. Go trims that cache
+only by 5 days of age. Guard: scripts/lead/diskguard.sh, run by
+mainwatch.sh at every wake and every 30 minutes of a wait, deletes its
+files by age (7 days, 3, 1, then 6 hours, stopping once 200 GB are free)
+and records an xw `disk.low` event under 100 GB. It never deletes a file
+touched in the last 6 hours: Go refreshes an entry's time when a build
+uses it (at most hourly), so a running build keeps its entries
+(gocache-trim-races-concurrent-build.md).
