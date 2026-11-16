@@ -95,6 +95,8 @@ pub struct FieldDesc {
   pub options_set: Bool = false
   pub oneof_index: Int? = None
   pub json_name: Str = ""
+  /// json_name was on the wire, also when empty (protoc writes a field named `_` an empty one).
+  pub json_name_set: Bool = false
   pub proto3_optional: Bool = false
   pub unknown: Bytes = b""
 } derive Eq
@@ -282,7 +284,12 @@ fn enc_field(f: FieldDesc) -> Bytes {
     Some(i) => pw.wia(o, 9, i)
     None => {}
   }
-  pw.ws(o, 10, f.json_name)
+  if f.json_name_set && f.json_name.is_empty() {
+    pw.wtag(o, 10, 2)
+    pw.wv(o, 0)
+  } else {
+    pw.ws(o, 10, f.json_name)
+  }
   pw.wb(o, 17, f.proto3_optional)
   o.write(f.unknown)
   o.freeze()
@@ -428,6 +435,7 @@ fn dec_field(b: Bytes) -> FieldDesc ! protobuf.ProtoErr {
       d.oneof_index = Some(f.v)
     } else if f.num == 10 && pw.is_s(f) {
       d.json_name = pw.text(f)?
+      d.json_name_set = true
     } else if f.num == 17 && pw.is_v(f) {
       d.proto3_optional = f.v != 0
     } else {
@@ -598,7 +606,7 @@ pub fn build(f: protoparse.File, name: Str, deps: List[FileDesc] = []) -> FileDe
     out.enum_type.push(b_enum(e))
   }
   for x in f.extends {
-    for fd in b_extend(syms, f.package, x)? { out.extension.push(fd) }
+    for fd in b_extend(syms, f.package, x, f.syntax == "proto3")? { out.extension.push(fd) }
   }
   for sv in f.services {
     var sd = ServiceDesc{name: sv.name}
@@ -741,41 +749,125 @@ fn co_scalar(num: Int, kind: Int, type_name: Str, v: Str, cx: CoCx) -> Bytes? {
   Some(o.freeze())
 }
 
+/// A field a custom option value sets: by its name (an extension as `[full.name]`), number, kind, type
+/// and label.
+struct CoField {
+  key: Str
+  number: Int
+  kind: Int
+  type_name: Str
+  label: Int
+}
+
+/// A message field's value: its elements (one for a singular field, merged; each `{ ... }` of a repeated
+/// one apart) from entries (path under the field, value), a path ending in `{` starting an element.
+fn co_elements(entries: List[(List[Str], Str)], repeated: Bool) -> List[List[(List[Str], Str)]] {
+  var out: List[List[(List[Str], Str)]] = []
+  var cur: List[(List[Str], Str)] = []
+  var have = false
+  for (path, v) in entries {
+    if path.len() == 1 && path[0] == "{" {
+      if repeated && have {
+        out.push(cur)
+        cur = []
+      }
+      have = true
+      continue
+    }
+    cur.push((path, v))
+    have = true
+  }
+  if have { out.push(cur) }
+  out
+}
+
+fn co_write_message(var o: BytesBuilder, f: CoField, entries: List[(List[Str], Str)], cx: CoCx) {
+  for el in co_elements(entries, f.label == LABEL_REPEATED) {
+    let body = co_message(f.type_name, el, cx)
+    if f.kind == TYPE_GROUP {
+      pw.wtag(o, f.number, 3)
+      o.write(body)
+      pw.wtag(o, f.number, 4)
+    } else {
+      pw.wtag(o, f.number, 2)
+      pw.wv(o, body.len())
+      o.write(body)
+    }
+  }
+}
+
 /// The fields of the message type_name that entries set ((path, value), path under that message), in
-/// field number order.
+/// field number order; an extension of it named `[name]` among them.
 fn co_message(type_name: Str, entries: List[(List[Str], Str)], cx: CoCx) -> Bytes {
   var o = BytesBuilder.new()
   let md = match cx.msgs.get(type_name) {
     Some(m) => m
     None => return o.freeze()
   }
-  let fields = md.field.sort_with(fn(a: FieldDesc, b: FieldDesc) -> Ordering { a.number.cmp(b.number) })
-  for fd in fields {
+  var fields: List[CoField] = []
+  for fd in md.field { fields.push(CoField{key: fd.name, number: fd.number, kind: fd.kind, type_name: fd.type_name, label: fd.label}) }
+  for (path, _) in entries {
+    if path.is_empty() || !path[0].starts_with("[") { continue }
+    let key = path[0].trim_end_chars("{")
+    var known = false
+    for f in fields {
+      if f.key == key { known = true }
+    }
+    if known { continue }
+    if let Some(x) = co_resolve(key[1..key.len() - 1], type_name, cx) {
+      fields.push(CoField{key: key, number: x.number, kind: x.kind, type_name: x.type_name, label: x.label})
+    }
+  }
+  let sorted = fields.sort_with(fn(a: CoField, b: CoField) -> Ordering { a.number.cmp(b.number) })
+  // a map's entry message: protoc writes its key and value also when not set
+  let map_entry = md.options == b"\x38\x01"
+  for f in sorted {
     var sub: List[(List[Str], Str)] = []
     for (path, v) in entries {
-      if !path.is_empty() && path[0] == fd.name { sub.push((path[1..], v)) }
+      if path.is_empty() { continue }
+      if path[0] == f.key {
+        sub.push((path[1..], v))
+      } else if path[0] == f.key + "{" {
+        sub.push((["{"], v))
+      }
+    }
+    if sub.is_empty() && map_entry {
+      if f.kind == TYPE_MESSAGE {
+        sub.push((["{"], ""))
+      } else {
+        sub.push(([], co_zero(f, cx)))
+      }
     }
     if sub.is_empty() { continue }
-    if fd.kind == TYPE_MESSAGE {
-      let body = co_message(fd.type_name, sub, cx)
-      pw.wtag(o, fd.number, 2)
-      pw.wv(o, body.len())
-      o.write(body)
+    if f.kind == TYPE_MESSAGE || f.kind == TYPE_GROUP {
+      co_write_message(o, f, sub, cx)
       continue
     }
     for (path, v) in sub {
       if !path.is_empty() { continue }
-      if let Some(b) = co_scalar(fd.number, fd.kind, fd.type_name, v, cx) { o.write(b) }
+      if let Some(b) = co_scalar(f.number, f.kind, f.type_name, v, cx) { o.write(b) }
     }
   }
   o.freeze()
 }
 
+/// A field's zero value as an option value is written (a map entry's unset key or value).
+fn co_zero(f: CoField, cx: CoCx) -> Str {
+  if f.kind == TYPE_STRING || f.kind == TYPE_BYTES { return "" }
+  if f.kind == TYPE_BOOL { return "false" }
+  if f.kind == TYPE_ENUM {
+    if let Some(e) = cx.enums.get(f.type_name) {
+      if !e.value.is_empty() { return "${e.value[0].number}" }
+    }
+  }
+  "0"
+}
+
 /// The custom options among opts as the extensions of extendee (`.google.protobuf.FieldOptions`), in
-/// extension number order.
+/// extension number order; each option of a repeated message extension is one element.
 fn co_opts(opts: List[(Str, Str)], extendee: Str, cx: CoCx) -> Bytes {
-  var items: List[(CoExt, List[Str], Str)] = []
-  for (k, v) in opts {
+  var items: List[(CoExt, Int, List[Str], Str)] = []
+  for (oi, (k, v)) in opts.indexed() {
     if !k.starts_with("(") { continue }
     let close = match k.find(")") {
       Some(i) => i
@@ -786,33 +878,43 @@ fn co_opts(opts: List[(Str, Str)], extendee: Str, cx: CoCx) -> Bytes {
       None => continue
     }
     let rest = k[close + 1..k.len()]
-    let path: List[Str] = if rest.starts_with(".") { rest[1..rest.len()].split(".") } else { [] }
+    let path: List[Str] = if rest.starts_with(".") { co_key_path(rest[1..rest.len()]) } else { [] }
     if v.starts_with("{") {
-      for (ak, av) in protoparse.aggregate_pairs(v) { items.push((x, path + ak.split("."), av)) }
+      // the message the option sets starts here (an element of a repeated one)
+      if path.is_empty() {
+        items.push((x, oi, ["{"], ""))
+      } else {
+        items.push((x, oi, path[0..path.len() - 1] + [path[path.len() - 1] + "{"], ""))
+      }
+      for (ak, av) in protoparse.aggregate_items(v) { items.push((x, oi, path + co_key_path(ak), av)) }
     } else {
-      items.push((x, path, v))
+      items.push((x, oi, path, v))
     }
   }
   var o = BytesBuilder.new()
   if items.is_empty() { return o.freeze() }
   var nums: List[Int] = []
-  for (x, _, _) in items {
+  for (x, _, _, _) in items {
     if !nums.contains(x.number) { nums.push(x.number) }
   }
   for num in nums.sort() {
     var x0: CoExt? = None
     var sub: List[(List[Str], Str)] = []
-    for (x, path, v) in items {
+    var last_stmt = -1
+    for (x, oi, path, v) in items {
       if x.number != num { continue }
       x0 = Some(x)
+      // a repeated message extension: each option statement is an element
+      if (x.kind == TYPE_MESSAGE || x.kind == TYPE_GROUP) && oi != last_stmt && !(path.len() == 1 && path[0] == "{") {
+        sub.push((["{"], ""))
+      }
+      last_stmt = oi
       sub.push((path, v))
     }
     let x = x0.or_fault("co_opts: an extension number with no item")
-    if x.kind == TYPE_MESSAGE {
-      let body = co_message(x.type_name, sub, cx)
-      pw.wtag(o, num, 2)
-      pw.wv(o, body.len())
-      o.write(body)
+    let f = CoField{key: "", number: num, kind: x.kind, type_name: x.type_name, label: x.label}
+    if x.kind == TYPE_MESSAGE || x.kind == TYPE_GROUP {
+      co_write_message(o, f, sub, cx)
     } else {
       for (path, v) in sub {
         if !path.is_empty() { continue }
@@ -821,6 +923,30 @@ fn co_opts(opts: List[(Str, Str)], extendee: Str, cx: CoCx) -> Bytes {
     }
   }
   o.freeze()
+}
+
+/// An aggregate key or an option name's path as a path: dotted names, an extension's name kept whole
+/// and bracketed (`[a.b].c` and `(a.b).c` are `[a.b]`, `c`).
+fn co_key_path(k: Str) -> List[Str] {
+  var out: List[Str] = []
+  let b = k.bytes()
+  var start = 0
+  var depth = 0
+  for (i, x) in b.indexed() {
+    let c = Int(x)
+    if c == 91 || c == 40 { depth += 1 }
+    if c == 93 || c == 41 { depth -= 1 }
+    if c == 46 && depth == 0 {
+      out.push(co_bracket(k[start..i]))
+      start = i + 1
+    }
+  }
+  out.push(co_bracket(k[start..k.len()]))
+  out
+}
+
+fn co_bracket(p: Str) -> Str {
+  if p.starts_with("(") && p.ends_with(")") { "[" + p[1..p.len() - 1] + "]" } else { p }
 }
 
 const CO_PRE: Str = ".google.protobuf."
@@ -1103,7 +1229,7 @@ fn b_message(syms: Map[Str, Int], scope: Str, m: protoparse.Message, proto3: Boo
   var mi = 0
   for f in m.fields {
     var fd = FieldDesc{name: f.name, number: f.num, label: b_label(f), json_name: if f.json_name.is_empty() { json_name_of(f.name) } else { f.json_name },
-      default_value: f.default_value}
+      json_name_set: true, default_value: f.default_value}
     if !f.key.is_empty() {
       let en = map_entry_name(f.name)
       let (vk, vt) = b_type(syms, full, f.typ)?
@@ -1122,6 +1248,7 @@ fn b_message(syms: Map[Str, Int], scope: Str, m: protoparse.Message, proto3: Boo
       let (k, tn) = b_type(syms, full, f.typ)?
       fd.kind = k
       fd.type_name = tn
+      fd.default_value = b_default(k, f.default_value)
     }
     if !f.oneof.is_empty() {
       fd.oneof_index = m.oneofs.index_of(f.oneof)
@@ -1155,7 +1282,7 @@ fn b_message(syms: Map[Str, Int], scope: Str, m: protoparse.Message, proto3: Boo
   }
   for e in m.enums { d.enum_type.push(b_enum(e)) }
   for x in m.extends {
-    for fd in b_extend(syms, full, x)? { d.extension.push(fd) }
+    for fd in b_extend(syms, full, x, proto3)? { d.extension.push(fd) }
   }
   var ri = 0
   for (a, b) in m.extensions {
@@ -1172,15 +1299,81 @@ fn b_message(syms: Map[Str, Int], scope: Str, m: protoparse.Message, proto3: Boo
   Ok(d)
 }
 
+/// A number default as protoc writes it: an integer in decimal (`0x10` is `16`), a float or double as
+/// protoc's SimpleDtoa (15 significant digits, 17 when 15 do not round trip; `.25` is `0.25`, `inf`,
+/// `nan`); other kinds as written.
+fn b_default(kind: Int, v: Str) -> Str {
+  if kind == TYPE_BYTES { return c_escape(v.bytes()) }
+  if v.is_empty() || kind == TYPE_STRING || kind == TYPE_ENUM || kind == TYPE_BOOL { return v }
+  let neg = v.starts_with("-")
+  let body = if neg { v[1..v.len()] } else { v }
+  let sign = if neg { "-" } else { "" }
+  if kind == TYPE_DOUBLE || kind == TYPE_FLOAT {
+    if body is "inf" | "nan" { return sign + body }
+    let f = match Int.parse_base(body, 0) {
+      Some(n) => Float(n)
+      None => match Float.parse(body) {
+        Some(x) => x
+        None => return v
+      }
+    }
+    if f.is_inf() { return sign + "inf" }
+    if kind == TYPE_FLOAT {
+      // SimpleFtoa: 6 significant digits, 9 when 6 do not give the float back
+      let x = Float(Float32(f))
+      if x.is_inf() { return sign + "inf" }
+      let s6 = x.to_general(6)
+      let back = match Float.parse(s6) {
+        Some(y) => Float(Float32(y)) == x
+        None => false
+      }
+      return sign + if back { s6 } else { x.to_general(9) }
+    }
+    let s15 = f.to_general(15)
+    let s = if Float.parse(s15) == Some(f) { s15 } else { f.to_general(17) }
+    return sign + s
+  }
+  match Int.parse_base(body, 0) {
+    Some(n) => sign + "${n}"
+    None => v
+  }
+}
+
+/// protoc's CEscape: `\n \r \t \" \' \\` escaped, other bytes outside printable ASCII as 3 octal digits.
+fn c_escape(b: Bytes) -> Str {
+  var o = BytesBuilder.new()
+  for x in b {
+    let c = Int(x)
+    match c {
+      10 => o.write(b"\\n")
+      13 => o.write(b"\\r")
+      9 => o.write(b"\\t")
+      34 => o.write(b"\\\"")
+      39 => o.write(b"\\'")
+      92 => o.write(b"\\\\")
+      _ => {
+        if c < 32 || c >= 127 {
+          o.write("\\${c >> 6}${(c >> 3) & 7}${c & 7}".bytes())
+        } else {
+          o.write_byte(x)
+        }
+      }
+    }
+  }
+  o.freeze().to_str_lossy()
+}
+
 /// An `extend` block's fields, the extendee and types resolved in scope.
-fn b_extend(syms: Map[Str, Int], scope: Str, x: protoparse.Extend) -> List[FieldDesc] ! protoparse.ParseErr {
+fn b_extend(syms: Map[Str, Int], scope: Str, x: protoparse.Extend, proto3: Bool) -> List[FieldDesc] ! protoparse.ParseErr {
   let (ext, _) = b_resolve(syms, scope, x.extendee)?
   var out: List[FieldDesc] = []
   for f in x.fields {
-    let (k, tn) = b_type(syms, scope, f.typ)?
+    let (k0, tn) = b_type(syms, scope, f.typ)?
+    let k = if f.group { TYPE_GROUP } else { k0 }
     let (fo, fset) = b_opts(f.options, FIELD_OPTS)
     out.push(FieldDesc{name: f.name, extendee: ext, number: f.num, label: b_label(f), kind: k, type_name: tn,
-      default_value: f.default_value, options: fo, options_set: fset,
+      default_value: b_default(k, f.default_value), options: fo, options_set: fset, json_name_set: true,
+      proto3_optional: proto3 && f.optional,
       json_name: if f.json_name.is_empty() { json_name_of(f.name) } else { f.json_name }})
   }
   Ok(out)
@@ -1409,8 +1602,21 @@ fn sw_value_end(w: Sw, i: Int) -> Int {
   j
 }
 
-/// The last token of a type name starting at token `i` (`.a.b` is `.` then `a.b`).
-fn sw_type_end(w: Sw, i: Int) -> Int { if sw_tok_is(w, i, ".") { i + 1 } else { i } }
+/// The last token of a type name starting at token `i` (`.a.b` is `.` then `a.b`; parts may be apart,
+/// `a . b` or `a.` then `b`).
+fn sw_type_end(w: Sw, i: Int) -> Int {
+  var j = if sw_tok_is(w, i, ".") { i + 1 } else { i }
+  while true {
+    if w.ts[j].text.ends_with(".") && j + 1 < w.ts.len() {
+      j += 1
+    } else if sw_tok_is(w, j + 1, ".") && j + 2 < w.ts.len() && w.ts[j + 2].kind == protoparse.Kind.Ident {
+      j += 2
+    } else {
+      break
+    }
+  }
+  j
+}
 
 // comments (protocompile's sourceinfo rules)
 
@@ -1673,7 +1879,14 @@ fn sw_opt_path(w: Sw, kind: Int, name: Str, var seen: Map[Str, Int]) -> List[Int
     }
   }
   if !rest.is_empty() {
-    for part in rest.split(".") {
+    for part in co_key_path(rest) {
+      if part.starts_with("[") {
+        let x = co_resolve(part[1..part.len() - 1], type_name, w.cx)?
+        path.push(x.number)
+        type_name = x.type_name
+        repeated = x.label == LABEL_REPEATED
+        continue
+      }
       let md = w.cx.msgs.get(type_name)?
       var found = false
       for fd in md.field {

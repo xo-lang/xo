@@ -10812,6 +10812,7 @@ fn parse(src: Str) -> File ! ParseErr
 fn gen(f: File) -> Str ! ParseErr
 fn gen_set(files: List[(Str, File)]) -> List[Str] ! ParseErr   // (import path, File) each; one source per file
 fn aggregate_pairs(v: Str) -> List[(Str, Str)]                 // an aggregate option value's (key, value) pairs
+fn aggregate_items(v: Str) -> List[(Str, Str)]                 // the pairs and a (`KEY{`, "") where each message starts
 // File { syntax, package, imports, messages: List[Message], enums: List[Enum], services: List[Service], options,
 //        public_imports: List[Str], weak_imports: List[Str], extends: List[Extend], edition }
 // Message { name, fields: List[Field], oneofs: List[Str], nested: List[Message], enums: List[Enum], options,
@@ -10831,6 +10832,14 @@ token count for the end of the file): protocompile's lexer gives the first comme
 its trailing comment when it starts on that token's line, the next token (the end of the file counts as on the next
 line) is on a later line, and it is a line comment, one of several, or a block comment ending before the next
 token's line; the rest lead the next token. A oneof's options are kept in `Message.oneof_options`.
+
+The lexer reads protoc's string escapes (`\n \t \r \a \b \f \v \\ \' \" \?`, 1 to 3 octal digits, `\x` and 1 or 2 hex
+digits, `\u` and 4 or `\U` and 8 hex digits as UTF-8; a `Str` holds valid UTF-8 only, so escaped bytes that are not
+become U+FFFD) and a number starting with a dot (`.5`). A type name's parts may be apart (`foo . Bar`, `.google.` and
+a comment or a line before `protobuf`), as protoc reads them; so may a package's. An aggregate option value keeps a
+bracketed key (an extension, `[pkg.ext]`, or an Any's type URL) whole, a list's elements (`n: [1, 2]`,
+`r: [{ ... }, { ... }]`) each under the key, and a `< ... >` message as a `{ ... }` one. A group in an `extend` block
+has its message among the messages of the scope the block is in (the file's or the message's), where the block is.
 
 - The lexer reads identifiers (dots inside), integers (a `0x` prefix is lexed), floats, string literals (escapes decoded)
   and single symbol characters; `//` and `/* */` comments are dropped.
@@ -10948,7 +10957,12 @@ number order, a repeated one in written order. An option no extension resolves a
 out, and an rpc with a `{ }` body gets an empty options message, as protoc's. An
 unknown type is an error at line 0. An editions file's descriptor has syntax `editions`, its edition's number
 (EDITION_2023 is 1000) and each `features.NAME` option in a FeatureSet at its options' features field.
-Custom options on oneofs and extension ranges are written too.
+Custom options on oneofs and extension ranges are written too, each option of a repeated message extension as one
+element (and each `{ ... }` of a repeated message field in a value), a bracketed key as the extension it names, and a
+map field's entry with its key and value also when not set. A number default is written as protoc writes it: an
+integer in decimal (`0x10` is `16`), a double with 15 significant digits (17 when 15 do not give it back) and a float
+with 6 (9), `inf` and `nan` as such; a bytes default C escaped (`\n \r \t \" \' \\`, other bytes outside printable
+ASCII as 3 octal digits). A field's `json_name` is always written, also when empty (`json_name_set`, kept by `decode`).
 Checked byte for byte against protoc 36.2 on 51 files: the protoparse corpus files protoc compiles, descriptor.proto
 and the well known types they import, and proto2, proto3 and edition 2023 feature files
 (scripts/protocdesc writes those cases into std/protodesc_test.xo; it needs protoc, so it runs by hand).

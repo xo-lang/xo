@@ -1,5 +1,20 @@
 # std/protoparse changes
 
+## 2026-11-16: fix: string escapes, dot floats, split type names, aggregate lists and extension keys, extend groups
+
+- Kind: fix
+- Commit: this push
+- Found by: task #109, protocompile's internal/testdata files (desc_test1, desc_test_complex, desc_test_defaults)
+- Go reference: protoc's tokenizer and parser
+- Test: std/protoparse_test.xo (escapes, `.5`, `. google. protobuf .X`, aggregates, extend groups);
+  scripts/protocdesc/testdata/split.proto and optvalues.proto through std/protodesc_test.xo
+- Shipped in: not yet released
+
+The lexer reads octal, hex, `\u`/`\U` and `\a \b \f \v \?` escapes (an octal `\001` read as `\0` then `01`) and a
+number starting with a dot (`.1` failed); a type or package name may have its parts apart (`. google. protobuf .X`
+failed); an aggregate option value keeps bracketed keys, lists and `< >` messages (they failed), and
+`aggregate_items` keeps where each message starts; a group in an `extend` block keeps its message.
+
 ## 2026-11-16: feature: lex (protoc columns, comments); oneof options kept
 
 - Kind: feature

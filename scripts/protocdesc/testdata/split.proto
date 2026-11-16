@@ -1,0 +1,16 @@
+// type names split by spaces, comments and lines, and a float starting with a dot, which protoc reads
+// (std/protodesc_test.xo; after protocompile's desc_test_complex.proto and desc_test_defaults.proto).
+syntax = "proto2";
+package xo . split;
+import "google/protobuf/descriptor.proto";
+extend . google. // broken up
+  protobuf .
+   FieldOptions {
+  optional float ratio = 50301 [default = .5];
+}
+message M {
+  optional double d = 1 [default = .25, (xo.split.ratio) = .75];
+  optional xo . split . M
+      .Inner inner = 2;
+  message Inner {}
+}

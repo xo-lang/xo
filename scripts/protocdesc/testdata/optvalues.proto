@@ -1,0 +1,53 @@
+// option values protodesc.build follows protoc on (std/protodesc_test.xo; after protocompile's
+// desc_test_complex.proto and desc_test_defaults.proto): string escapes, number defaults, a repeated
+// message extension, extension keys and lists in aggregates, map entries, a group in an extend block.
+syntax = "proto2";
+
+package xo.ov;
+
+import "google/protobuf/descriptor.proto";
+
+message Rec {
+  optional string foo = 1;
+  repeated int32 array = 2;
+  optional Rec s = 3;
+  repeated Rec r = 4;
+  map<string, string> vals = 5;
+  extensions 100 to 200;
+}
+
+extend Rec {
+  optional string tag = 100;
+}
+
+extend google.protobuf.MessageOptions {
+  repeated Rec rept = 50401;
+  optional Rec one = 50402;
+}
+
+message A {
+  option (rept) = { foo: "abc" s < foo: "x" >, array: [1, 2, 3], r: [<foo: "f">, {foo: "g"}] };
+  option (rept) = { foo: "def" [xo.ov.tag]: "t" r: { foo: "h" } r: { foo: "i" } };
+  option (one).s.foo = "deep";
+  option (one).(xo.ov.tag) = "ext";
+  option (one).vals = {};
+  option (one).vals = { key: "k" };
+  optional string esc = 1 [default = "\001\a\b\f\v\x41é\101\"\'\\z"];
+  optional bytes raw = 2 [default = "\000\001\x7f\n\303\251"];
+  optional float f = 3 [default = 6.02214076e23];
+  optional double d = 4 [default = .1];
+  optional int32 h = 5 [default = 0x10];
+  optional sint64 n = 6 [default = -0x20];
+  optional float i = 7 [default = -inf];
+  optional double big = 8 [default = 1e300];
+}
+
+message HasExt {
+  extensions 1000 to 1999;
+}
+
+extend HasExt {
+  optional group Gx = 1000 {
+    optional int32 v = 1;
+  }
+}

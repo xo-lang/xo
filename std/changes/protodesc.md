@@ -1,5 +1,23 @@
 # std/protodesc changes
 
+## 2026-11-16: fix: option values, number and bytes defaults, json_name, groups in extend blocks
+
+- Kind: fix
+- Commit: this push
+- Found by: task #109, protocompile's internal/testdata files (desc_test_complex, desc_test_defaults, desc_test2,
+  desc_test_proto3_optional) built and compared with protoc
+- Go reference: protoc 36.2's descriptors of those files
+- Test: std/protodesc_test.xo, the protoc case scripts/protocdesc/testdata/optvalues.proto (byte exact, with source
+  info) and split.proto
+- Shipped in: not yet released
+
+`build` writes each option of a repeated message extension as its own element (they were merged), each `{ ... }` of a
+repeated message field in an option value apart, an extension key in an option value (`[pkg.ext]`, and
+`(ext).(pkg.ext)` names), and a map entry's unset key and value; number defaults as protoc writes them (`0x10` is
+`16`, `.25` is `0.25`, a float with 6 significant digits); bytes defaults C escaped; `json_name` also when empty; an
+extension's `proto3_optional` in a proto3 file; and a group declared in an `extend` block (its message and the
+TYPE_GROUP field), which failed with an unknown type.
+
 ## 2026-11-16: feature: build_with_source_info; fix: custom options on oneofs and extension ranges
 
 - Kind: feature, fix
