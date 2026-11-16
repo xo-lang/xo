@@ -1645,6 +1645,24 @@ Last verified: 2026-11-15
     park|unpark ID`) keeps an idea out of the queue's work and the idle
     checks; `--after JOB` raises a task-after alert when that heavy.sh
     job or lease ends. Last verified: 2026-11-15.
+  - Decisions through xw (#136, owner 2026-11-16): an agent raises an
+    owner or lead question with `xw ask --options "A | B | C" --recommend
+    N [--decider owner|lead] TEXT`, never by SendMessage or a note. The
+    owner's open ones, with options and the recommendation, are `xw
+    decisions --owner` (the morning list); the lead's are `xw decisions
+    --lead`, each also an `ask` alert until answered. `xw answer ID N`
+    (option N) or `xw answer ID TEXT` (`--by owner` for the owner's word)
+    records it and sends the answer to the asker as a decision to ack.
+    Last verified: 2026-11-16.
+  - xw alerts (#134, #135, 2026-11-16): long-wait (under 90 min) and
+    lease-blocked go to `xw digest` only (stored acked by digest; `xw
+    alerts --all` shows them); a wait past 90 min still alerts, and
+    wait-rising does when a lane's hourly median wait rises three hours
+    running to past 15 min. host-disk-low: an offload host's /work under
+    15 GB free after a job's prune (offload.sh reports it in each job's
+    output as OFFLOAD-FREE-MB, xwhook.sh's xw_host_disk sends it).
+    retry-storm: one lease name (not a .sh default) started over 5 times
+    in 30 min. Last verified: 2026-11-16.
   - `xw isdone TERM...` (before assigning; replaces agents/isdone.sh):
     main commits of 21 days, xw tasks in any state, xw decisions,
     knowledgebase decisions, std change logs and spec/std.md that hold
