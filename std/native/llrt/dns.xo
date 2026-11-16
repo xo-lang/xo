@@ -1876,25 +1876,61 @@ fn udp_one_pd(pd: Int, fd: Int, q: Q, name: Str, server: Bytes, deadline: Int) -
 
 /// The TCP exchange of query q with server until a deadline timeout
 /// seconds from now (dnsStreamRoundTrip): its kind and addresses.
+/// While other tasks run or wait, the exchange waits in the task on the
+/// netpoller (as udp_one), not in ppoll on the worker thread: a lookup
+/// answered by a task of the same program (a test's server, the dns
+/// stress) could not be answered while its thread slept, and with one
+/// worker (XO_THREADS=1, or every worker in such a wait) it timed out,
+/// twice, and failed as "server misbehaving" (internal/stdtest
+/// TestDnsTcpOneThread, task #115). Go parks the goroutine.
 fn tcp_round(q: Q, name: Str, server: Bytes, timeout: Int) -> (Int, List[Addr]) {
   let deadline = now() + timeout * 1000000000
   let fd = open_sock(server, sock.SOCK_STREAM)
   if fd < 0 {
     return (KIND_TEMP, [])
   }
-  let r = tcp_talk(fd, q, name, server, deadline)
+  if os() != 3 && ctx.svc() != 0 && pool.others_active(ctx.pool()) {
+    let pd = poll.pd_new(fd, true)
+    if pd != 0 {
+      if !poll.pd_begin(pd) {
+        poll.pd_free(pd)
+        return (KIND_TEMP, [])
+      }
+      let r = tcp_talk(fd, pd, q, name, server, deadline)
+      poll.pd_end(pd)
+      // pd_free closes the descriptor (the last operation after the close)
+      poll.pd_free(pd)
+      return r
+    }
+  }
+  let r = tcp_talk(fd, 0, q, name, server, deadline)
   let _c = sock.close(fd)
   r
 }
 
-fn tcp_talk(fd: Int, q: Q, name: Str, server: Bytes, deadline: Int) -> (Int, List[Addr]) {
+/// Waits until fd is writable (write) or readable, before the deadline:
+/// on pd in the task when pd is not 0, else in ppoll on the thread.
+fn tcp_wait(fd: Int, pd: Int, write: Bool, deadline: Int) -> Bool {
+  if pd == 0 {
+    let rv = wait([fd], if write { 4 } else { 1 }, deadline) ?? [0]
+    return rv[0] != 0
+  }
+  let left = deadline - now()
+  if left <= 0 {
+    return false
+  }
+  // the poller's clock for the deadline (the test world's may be virtual)
+  let pdl = poll.now() + left
+  poll.pd_wait(pd, write, if pdl == 0 { 1 } else { pdl }) == poll.READY
+}
+
+fn tcp_talk(fd: Int, pd: Int, q: Q, name: Str, server: Bytes, deadline: Int) -> (Int, List[Addr]) {
   var c = sock.connect_to(fd, server)
   while c == -sock.EINTR {
     c = sock.connect_to(fd, server)
   }
   if c == -e_inprogress() || c == -e_again() {
-    let rv = wait([fd], 4, deadline) ?? [0]
-    if rv[0] == 0 {
+    if !tcp_wait(fd, pd, true, deadline) {
       return (KIND_TEMP, [])
     }
     c = sock.sock_err(fd)
@@ -1914,8 +1950,7 @@ fn tcp_talk(fd: Int, q: Q, name: Str, server: Bytes, deadline: Int) -> (Int, Lis
       continue
     }
     if s == -e_again() {
-      let rv = wait([fd], 4, deadline) ?? [0]
-      if rv[0] == 0 {
+      if !tcp_wait(fd, pd, true, deadline) {
         return (KIND_TEMP, [])
       }
       continue
@@ -1925,11 +1960,11 @@ fn tcp_talk(fd: Int, q: Q, name: Str, server: Bytes, deadline: Int) -> (Int, Lis
     }
     off += s
   }
-  let head = read_full(fd, 2, deadline)
+  let head = read_full(fd, pd, 2, deadline)
   if head.len() != 2 {
     return (KIND_TEMP, [])
   }
-  let body = read_full(fd, u16(head, 0), deadline)
+  let body = read_full(fd, pd, u16(head, 0), deadline)
   if body.len() != u16(head, 0) {
     return (KIND_TEMP, [])
   }
@@ -1942,8 +1977,8 @@ fn tcp_talk(fd: Int, q: Q, name: Str, server: Bytes, deadline: Int) -> (Int, Lis
 }
 
 /// n bytes read from fd before the deadline, or fewer when the stream
-/// ends, fails, or the time is up.
-fn read_full(fd: Int, n: Int, deadline: Int) -> Bytes {
+/// ends, fails, or the time is up (waiting on pd when it is not 0).
+fn read_full(fd: Int, pd: Int, n: Int, deadline: Int) -> Bytes {
   if n == 0 {
     return b""
   }
@@ -1956,8 +1991,7 @@ fn read_full(fd: Int, n: Int, deadline: Int) -> Bytes {
       continue
     }
     if r == -e_again() {
-      let rv = wait([fd], 1, deadline) ?? [0]
-      if rv[0] == 0 {
+      if !tcp_wait(fd, pd, false, deadline) {
         break
       }
       continue

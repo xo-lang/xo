@@ -1,5 +1,22 @@
 # std/dns changes
 
+## 2026-11-16: fix: the TCP retry of a truncated answer waits in the task, not the worker thread
+
+- Kind: fix
+- Commit: this commit
+- Found by: azure-1 (the dns stress on linux/arm64, 64 tasks: "txt s705: ... server misbehaving", task #115)
+- Go reference: net dnsclient_unix.go dnsStreamRoundTrip over a net.Conn (the goroutine parks on the netpoller)
+- Test: internal/stdtest TestDnsTcpOneThread (the dns stress with XO_THREADS=1, 8 and 64 tasks)
+- Shipped in: not yet released
+
+A lookup whose UDP answer came back truncated asked again over TCP waiting in ppoll (poll on darwin) on
+the worker thread for the connect and each read, where the UDP exchange already waited in the task on
+the netpoller while other tasks run or wait. A program answering its own lookups (a test's DNS server,
+the dns stress) could not run its server task on that thread, so with one worker thread, or every
+worker in such a wait, the TCP exchange waited out its timeout twice (10 s) and the lookup failed with
+"server misbehaving". The TCP exchange now waits on the netpoller too, under the same condition as UDP
+(the ppoll wait remains for a lone task and on Windows).
+
 ## 2026-11-16: fix: an SRV answer whose owner name is not a domain name fails the lookup
 
 - Kind: fix
