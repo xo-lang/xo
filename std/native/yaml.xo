@@ -3436,13 +3436,50 @@ fn cut_value(v: Str) -> Str {
   b[0..s].to_str_lossy() + "\u{FFFD}"
 }
 
+/// yaml.v3's check at the start of decoding mapping node i into anything: a
+/// key repeated (same kind and value) is an error for each later copy, and
+/// then nothing of the mapping is decoded. Whether it found one.
+fn dup_keys(d: yaml.Doc, i: Int, var st: yaml.Dec) -> Bool {
+  let n = d.nodes[i]
+  if n.kind != K_MAPPING {
+    return false
+  }
+  let nerrs = st.errs.len()
+  var a = 0
+  while a + 1 < n.content.len() {
+    let ka = d.nodes[n.content[a]]
+    var b = a + 2
+    while b + 1 < n.content.len() {
+      let kb = d.nodes[n.content[b]]
+      if ka.kind == kb.kind && ka.value == kb.value {
+        st.errs.push(yaml.YamlErr{line: kb.line, msg: "line ${kb.line}: mapping key ${kb.value.quote()} already defined at line ${ka.line}"})
+      }
+      b += 2
+    }
+    a += 2
+  }
+  st.errs.len() > nerrs
+}
+
+/// The error of decoding node i into a type that cannot hold it: for a
+/// mapping with a repeated key that error (yaml.v3's mapping checks its keys
+/// before the type, task #98 yamlfuzz seed 28), else `cannot`'s.
+fn type_err(d: yaml.Doc, i: Int, into: Str, var st: yaml.Dec) {
+  let r = res(d, i)
+  if !dup_keys(d, r, st) {
+    st.errs.push(cannot(d, i, into))
+  }
+}
+
 fn cannot(d: yaml.Doc, i: Int, into: Str) -> yaml.YamlErr {
   let n = d.nodes[i]
   if n.kind != K_SCALAR && n.style & NS_TAGGED != 0 && n.tag != "!!seq" && n.tag != "!!map" {
     return yerr(d, i, "cannot unmarshal ${n.tag} `` into ${into}")
   }
   if n.kind == K_SCALAR && (n.tag == "!!seq" || n.tag == "!!map") {
-    return yerr(d, i, "cannot unmarshal ${n.tag} into ${into}")
+    // yaml.v3 holds the long tag, which its terror compares with seqTag and
+    // mapTag, so the value follows the tag as it is, with no quotes
+    return yerr(d, i, "cannot unmarshal ${n.tag}${n.value} into ${into}")
   }
   if n.kind == K_SCALAR {
     let v = if n.value.len() > 10 { cut_value(n.value) + "..." } else { n.value }
@@ -3567,7 +3604,7 @@ fn to_str_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Str) ! yaml.Yam
   let i = res(d, i0)
   let n = d.nodes[i]
   if n.kind != K_SCALAR {
-    st.errs.push(cannot(d, i, "string"))
+    type_err(d, i, "string", st)
     return Ok((false, ""))
   }
   if let Some(e) = check_tag(d, i) {
@@ -3614,8 +3651,22 @@ fn int_of(d: yaml.Doc, n: yaml.RawNode) -> Int? {
     }
   }
   if n.tag == "!!float" {
+    if n.value is "-.inf" | "-.Inf" | "-.INF" {
+      // yaml.v3 resolves -.inf to -Inf, which int64() saturates on arm64
+      return Some(Int.min)
+    }
     if let Some(f) = Float.parse(n.value.replace("_", "")) {
-      if !f.is_nan() && !f.is_inf() && f >= -9223372036854775808.0 && f < 9223372036854775808.0 {
+      // yaml.v3 takes a float at most MaxInt64 (2^63 as a float64) and
+      // converts it with Go's int64(f), which saturates on arm64: 2^63 is
+      // Int.max and anything below -2^63, -.inf included, Int.min (amd64's
+      // conversion gives Int.min for every out of range value)
+      if !f.is_nan() && f <= 9223372036854775807.0 {
+        if f >= 9223372036854775807.0 {
+          return Some(Int.max)
+        }
+        if f < -9223372036854775808.0 {
+          return Some(Int.min)
+        }
         return Some(Int(f))
       }
     }
@@ -3634,7 +3685,7 @@ fn to_int_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Int) ! yaml.Yam
   let i = res(d, i0)
   let n = d.nodes[i]
   if n.kind != K_SCALAR {
-    st.errs.push(cannot(d, i, "int"))
+    type_err(d, i, "int", st)
     return Ok((false, 0))
   }
   if let Some(e) = check_tag(d, i) {
@@ -3646,7 +3697,7 @@ fn to_int_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Int) ! yaml.Yam
   if let Some(v) = int_of(d, n) {
     return Ok((true, v))
   }
-  st.errs.push(cannot(d, i, "int"))
+  type_err(d, i, "int", st)
   Ok((false, 0))
 }
 
@@ -3661,7 +3712,7 @@ fn to_float_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Float) ! yaml
   let i = res(d, i0)
   let n = d.nodes[i]
   if n.kind != K_SCALAR {
-    st.errs.push(cannot(d, i, "float64"))
+    type_err(d, i, "float64", st)
     return Ok((false, 0.0))
   }
   if let Some(e) = check_tag(d, i) {
@@ -3693,7 +3744,7 @@ fn to_float_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Float) ! yaml
       return Ok((true, f))
     }
   }
-  st.errs.push(cannot(d, i, "float64"))
+  type_err(d, i, "float64", st)
   Ok((false, 0.0))
 }
 
@@ -3708,7 +3759,7 @@ fn to_bool_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Bool) ! yaml.Y
   let i = res(d, i0)
   let n = d.nodes[i]
   if n.kind != K_SCALAR {
-    st.errs.push(cannot(d, i, "bool"))
+    type_err(d, i, "bool", st)
     return Ok((false, false))
   }
   if let Some(e) = check_tag(d, i) {
@@ -3727,14 +3778,14 @@ fn to_bool_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Bool) ! yaml.Y
   if v == "n" || v == "N" || v == "no" || v == "No" || v == "NO" || v == "off" || v == "Off" || v == "OFF" {
     return Ok((true, false))
   }
-  st.errs.push(cannot(d, i, "bool"))
+  type_err(d, i, "bool", st)
   Ok((false, false))
 }
 
 fn items(d: yaml.Doc, i0: Int, what: Str, var st: yaml.Dec) -> (Bool, List[Int]) {
   let i = res(d, i0)
   if d.nodes[i].kind != K_SEQUENCE {
-    st.errs.push(cannot(d, i, what))
+    type_err(d, i, what, st)
     return (false, [])
   }
   (true, d.nodes[i].content)
@@ -3746,27 +3797,13 @@ fn items(d: yaml.Doc, i0: Int, what: Str, var st: yaml.Dec) -> (Bool, List[Int])
 /// yaml.v3 decodes nothing of it), else 1. A key that is not a scalar is put in st.errs
 /// and left out. A merge value that is not a mapping, an alias of one, or a sequence
 /// of those ends the decode (yaml.v3's failf).
-fn add_pairs(d: yaml.Doc, i0: Int, var out: List[(Str, Int, Int)], var st: yaml.Dec) -> Int ! yaml.YamlErr {
+fn add_pairs(d: yaml.Doc, i0: Int, var out: List[(Str, Int, Int)], var st: yaml.Dec, top: Bool = true) -> Int ! yaml.YamlErr {
   let i = res(d, i0)
   let n = d.nodes[i]
   if n.kind != K_MAPPING {
     return Ok(0)
   }
-  let nerrs = st.errs.len()
-  var a = 0
-  while a + 1 < n.content.len() {
-    let ka = d.nodes[n.content[a]]
-    var b = a + 2
-    while b + 1 < n.content.len() {
-      let kb = d.nodes[n.content[b]]
-      if ka.kind == kb.kind && ka.value == kb.value {
-        st.errs.push(yaml.YamlErr{line: kb.line, msg: "line ${kb.line}: mapping key ${kb.value.quote()} already defined at line ${ka.line}"})
-      }
-      b += 2
-    }
-    a += 2
-  }
-  if st.errs.len() > nerrs {
+  if dup_keys(d, i, st) {
     return Ok(2)
   }
   var seen: Map[Str, Bool] = {}
@@ -3796,6 +3833,14 @@ fn add_pairs(d: yaml.Doc, i0: Int, var out: List[(Str, Int, Int)], var st: yaml.
   }
   // yaml.v3 reads a mapping's keys before its merges: the last merge key wins
   if merges.len() > 0 {
+    // yaml.v3's merge first decodes every key of the outermost merging
+    // mapping into an interface{} (its mergedFields), so a bad tag there ends
+    // the decode before the merge value is checked (reached after the
+    // mapping's own entries, as bad_key reports it)
+    if top && prepass_fail(d, i).is_some() {
+      out.push(("", PRE_FAIL - i, 0))
+      return Ok(1)
+    }
     let m = merges[merges.len() - 1]
     let mn = d.nodes[m]
     if mn.kind == K_SEQUENCE {
@@ -3809,16 +3854,16 @@ fn add_pairs(d: yaml.Doc, i0: Int, var out: List[(Str, Int, Int)], var st: yaml.
           out.push(("", MERGE_FAIL, 0))
           return Ok(1)
         }
-        add_pairs(d, it, out, st)?
+        add_pairs(d, it, out, st, top: false)?
       }
     } else if mn.kind == K_ALIAS {
       if d.nodes[res(d, m)].kind != K_MAPPING {
         out.push(("", MERGE_FAIL, 0))
         return Ok(1)
       }
-      add_pairs(d, m, out, st)?
+      add_pairs(d, m, out, st, top: false)?
     } else if mn.kind == K_MAPPING {
-      add_pairs(d, m, out, st)?
+      add_pairs(d, m, out, st, top: false)?
     } else {
       out.push(("", MERGE_FAIL, 0))
       return Ok(1)
@@ -3838,14 +3883,96 @@ fn unknown_field(var st: yaml.Dec, k: Str, line: Int, typ: Str) {
 /// after the mapping's own entries, as yaml.v3 merges last.
 const MERGE_FAIL: Int = -1000000000
 
+/// The value base of the pairs entry for a merge whose first pass over the
+/// keys of mapping node i fails: PRE_FAIL - i (bad_key reports it).
+const PRE_FAIL: Int = -2000000000
+
+/// The error yaml.v3's merge ends a decode with while it decodes the keys of
+/// the outermost merging mapping node i into an interface{}, in order.
+fn prepass_fail(d: yaml.Doc, i: Int) -> yaml.YamlErr? {
+  let n = d.nodes[i]
+  var k = 0
+  while k + 1 < n.content.len() {
+    if let Some(e) = iface_fail(d, n.content[k], 0) {
+      return Some(e)
+    }
+    k += 2
+  }
+  None
+}
+
+/// The error yaml.v3 ends a decode with while it decodes node i0 into an
+/// interface{}: a scalar whose explicit tag does not resolve (check_tag) in
+/// it or under it, keys before their values, and a nested merge value that
+/// is not a mapping or a sequence of them (checked after the mapping's own
+/// entries, then decoded). A key that is not a scalar, which yaml.v3 refuses
+/// with "invalid map key" and Go's %#v of the key, is not modelled.
+fn iface_fail(d: yaml.Doc, i0: Int, depth: Int) -> yaml.YamlErr? {
+  if depth > 1000 {
+    return None
+  }
+  let i = res(d, i0)
+  let n = d.nodes[i]
+  if n.kind == K_SCALAR {
+    return check_tag(d, i)
+  }
+  if n.kind == K_SEQUENCE {
+    for c in n.content {
+      if let Some(e) = iface_fail(d, c, depth + 1) {
+        return Some(e)
+      }
+    }
+    return None
+  }
+  if n.kind != K_MAPPING {
+    return None
+  }
+  var merge = -1
+  var k = 0
+  while k + 1 < n.content.len() {
+    let kn = d.nodes[res(d, n.content[k])]
+    if kn.kind == K_SCALAR && kn.tag == "!!merge" {
+      merge = n.content[k + 1]
+    } else {
+      if let Some(e) = iface_fail(d, n.content[k], depth + 1) {
+        return Some(e)
+      }
+      if let Some(e) = iface_fail(d, n.content[k + 1], depth + 1) {
+        return Some(e)
+      }
+    }
+    k += 2
+  }
+  if merge < 0 {
+    return None
+  }
+  let mn = d.nodes[merge]
+  let ok = if mn.kind == K_MAPPING {
+    true
+  } else if mn.kind == K_ALIAS {
+    d.nodes[res(d, merge)].kind == K_MAPPING
+  } else if mn.kind == K_SEQUENCE {
+    mn.content.all(fn(c: Int) -> Bool { d.nodes[res(d, c)].kind == K_MAPPING })
+  } else {
+    false
+  }
+  if !ok {
+    return Some(merge_err())
+  }
+  iface_fail(d, merge, depth + 1)
+}
+
 /// The error of a pairs entry whose value v is negative: a key that is not a scalar
 /// (v is -1 - key node; put in errs), or a bad merge value (ends the decode).
 fn bad_key(d: yaml.Doc, v: Int, var st: yaml.Dec) -> Bool ! yaml.YamlErr {
   if v == MERGE_FAIL {
     return Err(merge_err())
   }
+  if v <= PRE_FAIL {
+    return Err(prepass_fail(d, PRE_FAIL - v) ?? merge_err())
+  }
   let ki = -1 - v
-  st.errs.push(yerr(d, ki, "cannot unmarshal ${kind_tag(d.nodes[ki])} into string"))
+  type_err(d, ki, "string", st)
   Ok(true)
 }
 
@@ -3858,7 +3985,7 @@ fn pairs(d: yaml.Doc, i0: Int, what: Str, var st: yaml.Dec) -> (Bool, List[(Str,
   var out: List[(Str, Int, Int)] = []
   let kind = add_pairs(d, i, out, st)?
   if kind == 0 {
-    st.errs.push(cannot(d, i, what))
+    type_err(d, i, what, st)
     return Ok((false, []))
   }
   if kind == 2 {
@@ -5651,7 +5778,7 @@ fn to_duration_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Duration) 
   let i = res(d, i0)
   let n = d.nodes[i]
   if n.kind != K_SCALAR {
-    st.errs.push(cannot(d, i, "time.Duration"))
+    type_err(d, i, "time.Duration", st)
     return Ok((false, Duration.from_nanos(0)))
   }
   if let Some(e) = check_tag(d, i) {
@@ -5665,7 +5792,7 @@ fn to_duration_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Duration) 
       return Ok((true, v))
     }
   }
-  st.errs.push(cannot(d, i, "time.Duration"))
+  type_err(d, i, "time.Duration", st)
   Ok((false, Duration.from_nanos(0)))
 }
 
@@ -5688,7 +5815,7 @@ fn to_bytes_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Bytes) ! yaml
         return Err(e)
       }
     }
-    st.errs.push(cannot(d, i, "[]uint8"))
+    type_err(d, i, "[]uint8", st)
     return Ok((false, b""))
   }
   var out = BytesBuilder.new()
@@ -5697,7 +5824,7 @@ fn to_bytes_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Bytes) ! yaml
     let cn = d.nodes[ci]
     let entered = tick(d, c, st)?
     if cn.kind != K_SCALAR {
-      st.errs.push(cannot(d, ci, "uint8"))
+      type_err(d, ci, "uint8", st)
       leave(st, entered)
       continue
     }
@@ -5716,7 +5843,7 @@ fn to_bytes_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Bytes) ! yaml
         continue
       }
     }
-    st.errs.push(cannot(d, ci, "uint8"))
+    type_err(d, ci, "uint8", st)
     leave(st, entered)
   }
   Ok((true, out.freeze()))
@@ -6036,6 +6163,17 @@ fn json_of_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> js.Value ! yaml.YamlE
         }
         m[k] = json_of(d, v, st)?
       }
+      // yaml.v3 decodes the value of a null key too (into its map with
+      // interface keys), so an error in it is the document's; the entry is
+      // left out of the JSON as pairs leaves it out
+      var k = 0
+      while k + 1 < n.content.len() {
+        let kn = d.nodes[res(d, n.content[k])]
+        if kn.kind == K_SCALAR && kn.tag == "!!null" {
+          let _ = json_of(d, n.content[k + 1], st)?
+        }
+        k += 2
+      }
     }
     var fields: List[(Str, js.Value)] = []
     for k in m.keys().sort() {
@@ -6134,7 +6272,7 @@ fn to_time_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Time) ! yaml.Y
     return Ok((false, Time.UNIX_EPOCH))
   }
   if n.kind != K_SCALAR {
-    st.errs.push(cannot(d, i, "time.Time"))
+    type_err(d, i, "time.Time", st)
     return Ok((false, Time.UNIX_EPOCH))
   }
   if let Some(e) = check_tag(d, i) {
@@ -6153,7 +6291,7 @@ fn to_time_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Time) ! yaml.Y
       if hi && lo {
         return Ok((true, Time.UNIX_EPOCH + Duration.from_nanos(if secs >= 0 { secs * 1000000000 + p[6] } else { (secs + 1) * 1000000000 + (p[6] - 1000000000) })))
       }
-      st.errs.push(cannot(d, i, "time.Time"))
+      type_err(d, i, "time.Time", st)
       return Ok((false, Time.UNIX_EPOCH))
     }
   }
@@ -6187,7 +6325,7 @@ fn to_civil_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, time.Civil) !
     return Ok((false, zero))
   }
   if n.kind != K_SCALAR {
-    st.errs.push(cannot(d, i, "time.Time"))
+    type_err(d, i, "time.Time", st)
     return Ok((false, zero))
   }
   if let Some(e) = check_tag(d, i) {

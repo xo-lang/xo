@@ -1,5 +1,22 @@
 # std/yaml changes
 
+## 2026-11-16: fix: error order and texts as yaml.v3's (merge keys, repeated keys, large floats, null keys)
+
+- Kind: fix
+- Commit: this push
+- Found by: the #98 sharded fuzz (TestYamlFuzz seed 5 on linux/arm64 host 3), then seeds 2 to 60 locally (task #98)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 decode.go (merge, mapping, terror, scalar's float to int)
+- Test: internal/stdtest/testdata/corpus/yaml, cases c467 to c487 of scripts/stdcorpus/yamloracle (each failed before the change), TestYamlFuzz seeds 2 to 60 (arm64, llvm)
+- Shipped in: not yet released
+
+Five differences from yaml.v3, all found by the fuzz:
+
+- A mapping with a merge key first decodes all its keys as yaml.v3's merge does, so a bad tag in a key (`? n: !!int x`) is the error even when the merge value is bad or the merge is fine.
+- A mapping decoded into a type that cannot hold it (a key into a string, a field's value) reports its repeated keys first (`mapping key "o" already defined`), as yaml.v3's mapping checks them before the type.
+- A key node with a local tag gives yaml.v3's text (``cannot unmarshal !seq `` into string``), and a scalar tagged `!!seq` or `!!map` its value after the tag (`!!seq1]`).
+- A float into an Int is taken up to 2^63 as yaml.v3 on arm64 takes it: 2^63 and above is Int.max, below -2^63 (and `-.inf`) Int.min (Go's int64 conversion saturates on arm64; amd64's gives Int.min for any out of range value); `.inf` and `.nan` stay errors.
+- to_json decodes the value of a null key too, so an error in it is the document's; the entry is still left out of the JSON.
+
 ## 2026-11-12: fix: a field with the key `-` (`as "-,"`) is read back
 
 - Kind: fix
