@@ -9,14 +9,13 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/websocket, every backend; task #89): `WsConn.writer` writes a message in pieces as 4096 byte frames (gorilla's NextWriter), `prepare` and `write_prepared` (PreparedMessage), `on_close` replaces the automatic close reply (SetCloseHandler), `local_addr` and `remote_addr`, and `websocket.is_upgrade(req)` (IsWebSocketUpgrade).
 - Fix (std/yaml): a mapping key with an explicit tag yaml.v3 cannot resolve (`!!bool yes: 1`) is now its error, in decode and to_json, as in yaml.v3. Found by the #98 yaml fuzz.
 - Fix (std/xml): parse and parse_root report a second root element or text outside the root before a syntax error later in the document, as encoding/xml does. Found by the #98 xmlcodec fuzz.
 - Breaking (std/time; task #113, the lead 2026-11-16): a `time.Date` encodes in JSON as its text, `"2024-02-29"` (Go's "2006-01-02", pgx's pgtype.Date), not as `{"year":2024,"month":2,"day":29}`, and decoding checks the date (a 400 from `req.json` for `"2023-02-29"` or a year past 9999). Stored JSON with the object form still decodes until the next minor release; rewrite it as text before then. Code that matched on the object in JSON it reads back from an Xo program changes to the string.
 - Feature (std/sql, every backend; decision 0681): `sql.Numeric` implements `Json` as a bare JSON number keeping its scale (`-0.0030`), as pgx writes it; NaN and the infinities encode as null (pgx writes strings), so a `Numeric?` field reads them back as None.
 
 - Feature (std/uuid, every backend; task #113): `Uuid` implements `Json`, as its canonical text in a JSON string (google/uuid's MarshalText, pgx's pgtype.UUID); decoding accepts every form `uuid.parse` does, and `Uuid?` reads null as None.
-
-
 
 - Fix (std/http, tests): an `http.server` on FakeNet serves the raw connections dialed to it, so `websocket.dial` reaches a `websocket.upgrade` route in a test instead of deadlocking, on every backend (task #120).
 - Feature (std/toml, every backend; task #89): `toml.encode_with(v, toml.EncodeOptions{...})` lays a document out as go-toml's Encoder with `tables_inline`, `arrays_multiline`, `indent_tables` and `indent` (SetTablesInline, SetArraysMultiline, SetIndentTables, SetIndentSymbol).

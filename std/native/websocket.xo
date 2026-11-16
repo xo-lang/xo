@@ -66,6 +66,8 @@ struct WriteState {
 struct Hooks {
   ping: List[fn(Bytes) -> ()]
   pong: List[fn(Bytes) -> ()]
+  /// on_close's function (gorilla's SetCloseHandler)
+  close: List[fn(Int, Str) -> ()] = []
 }
 
 struct WsConn {
@@ -83,7 +85,31 @@ struct WsConn {
   rd: Mutex[ReadState]
   wr: Mutex[WriteState]
   hooks: Mutex[Hooks]
+  /// the connection's local and remote "host:port"
+  local: Str = ""
+  remote: Str = ""
 }
+
+/// A message being written in pieces (gorilla's messageWriter).
+struct MsgWriter {
+  c: WsConn
+  st: Mutex[MsgState]
+}
+
+struct MsgState {
+  /// the opcode of the next frame: the message's, then continuation
+  op: Int
+  buf: Bytes
+  closed: Bool
+}
+
+/// A message framed for any connection (gorilla's PreparedMessage).
+struct Prepared {
+  m: websocket.Message
+}
+
+/// The most a writer's frame holds (gorilla's defaultWriteBufferSize).
+const WRITE_FRAME = 4096
 
 fn protocol_err(msg: Str) -> websocket.WsErr { websocket.WsErr.Protocol(msg: msg) }
 
@@ -171,7 +197,11 @@ fn unmask(src: Bytes, at: Int, n: Int, key: Bytes, pos: Int) -> Bytes {
 }
 
 /// Writes one final frame (masked from a client), built in one buffer.
-fn (c: WsConn) write_frame(op: Int, data: Bytes) -> () ! websocket.WsErr {
+fn (c: WsConn) write_frame(op: Int, data: Bytes) -> () ! websocket.WsErr { c.write_frame_fin(op, data, true) }
+
+/// One frame: fin false for a message's frames before its last
+/// (MsgWriter).
+fn (c: WsConn) write_frame_fin(op: Int, data: Bytes, fin: Bool) -> () ! websocket.WsErr {
   // the outcome as the closure's value: an Err from with's closure would
   // undo close_sent (spec 5.4)
   let outcome = c.wr.with(fn(var w: WriteState) -> Result[(), websocket.WsErr] {
@@ -186,7 +216,7 @@ fn (c: WsConn) write_frame(op: Int, data: Bytes) -> () ! websocket.WsErr {
     let kl = if c.server { 0 } else { 4 }
     let frame = raw.bytes_buf(hl + kl + n)
     let a = raw.bytes_addr(frame)
-    rt.mem_store(a, 0, 128 | op, 1)
+    rt.mem_store(a, 0, (if fin { 128 } else { 0 }) | op, 1)
     let mb = if c.server { 0 } else { 128 }
     if n <= 125 {
       rt.mem_store(a, 1, mb | n, 1)
@@ -462,7 +492,14 @@ fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.
           None => return Err(c.protocol_error(1002, "invalid utf8 payload in close frame"))
         }
       }
-      c.write_control(OP_CLOSE, close_message(code, "")).ignore_err("answering a close")
+      let hs = c.hooks.with_read(fn(h) { h.close })
+      if hs.is_empty() {
+        c.write_control(OP_CLOSE, close_message(code, "")).ignore_err("answering a close")
+      } else {
+        for f in hs {
+          f(code, text)
+        }
+      }
       return Err(websocket.WsErr.Closed(code: code, reason: text))
     }
     if op == OP_TEXT || op == OP_BINARY {
@@ -548,6 +585,7 @@ fn (c: WsConn) drop_hooks() {
   c.hooks.with(fn(var h: Hooks) {
     h.ping = []
     h.pong = []
+    h.close = []
   })
 }
 
@@ -569,6 +607,60 @@ fn (c: WsConn) on_pong[fx: Effects](f: fn(Bytes) -> () uses fx) uses fx {
 }
 
 fn (c: WsConn) pong(data: Bytes = b"") -> () ! websocket.WsErr { c.write_control(OP_PONG, data) }
+
+fn (c: WsConn) on_close[fx: Effects](f: fn(Int, Str) -> () uses fx) uses fx {
+  let g = rt.launder2(f)
+  c.hooks.with(fn(var h: Hooks) { h.close = [g] })
+}
+
+fn (c: WsConn) local_addr() -> Str { c.local }
+
+fn (c: WsConn) remote_addr() -> Str { c.remote }
+
+fn (c: WsConn) writer(kind: websocket.Kind) -> MsgWriter {
+  let op = if kind is websocket.Kind.Text { OP_TEXT } else { OP_BINARY }
+  MsgWriter{c: c, st: Mutex[MsgState].new(MsgState{op: op, buf: b"", closed: false})}
+}
+
+fn (c: WsConn) write_prepared(p: Prepared) -> () ! websocket.WsErr { c.write(p.m) }
+
+fn prepare(m: websocket.Message) -> Prepared { Prepared{m: m} }
+
+fn is_upgrade(req: http.Request) -> Bool {
+  has_token(req.header_values("Connection"), "upgrade") && has_token(req.header_values("Upgrade"), "websocket")
+}
+
+fn (w: MsgWriter) write(data: Bytes) -> () ! websocket.WsErr {
+  let outcome = w.st.with(fn(var s: MsgState) -> Result[(), websocket.WsErr] {
+    if s.closed {
+      return Err(protocol_err("write closed"))
+    }
+    var b = s.buf + data
+    // a full frame goes out once more follows (gorilla flushes a full
+    // buffer on the next write)
+    while b.len() > WRITE_FRAME {
+      if let Err(e) = w.c.write_frame_fin(s.op, b[0..WRITE_FRAME], false) {
+        return Err(e)
+      }
+      s.op = 0
+      b = b[WRITE_FRAME..]
+    }
+    s.buf = b
+    Ok(())
+  })
+  outcome?
+}
+
+fn (w: MsgWriter) close() -> () ! websocket.WsErr {
+  let outcome = w.st.with(fn(var s: MsgState) -> Result[(), websocket.WsErr] {
+    if s.closed {
+      return Err(protocol_err("write closed"))
+    }
+    s.closed = true
+    w.c.write_frame_fin(s.op, s.buf, true)
+  })
+  outcome?
+}
 
 fn (c: WsConn) set_deadline(clock: Clock, at: Time?) uses clock { c.deadline_on(3, clock, at) }
 fn (c: WsConn) set_read_deadline(clock: Clock, at: Time?) uses clock { c.deadline_on(1, clock, at) }
@@ -771,7 +863,8 @@ fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocol
     }
     // what the server read past the request's head is the first input
     let rest = http1.take_rest(h)
-    let wc = WsConn{wire: wire, link: None, rdl: rdl, wdl: wdl, server: true, max: max_message, proto: proto, rd: Mutex[ReadState].new(ReadState{buf: rest, pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false, err: []}), hooks: Mutex[Hooks].new(Hooks{ping: [], pong: []})}
+    let (la, ra) = hconn.conn_addrs(h)
+    let wc = WsConn{local: la, remote: ra, wire: wire, link: None, rdl: rdl, wdl: wdl, server: true, max: max_message, proto: proto, rd: Mutex[ReadState].new(ReadState{buf: rest, pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false, err: []}), hooks: Mutex[Hooks].new(Hooks{ping: [], pong: []})}
     g(wc)
     // the connection is closed now: no hook runs again
     wc.drop_hooks()
@@ -814,6 +907,13 @@ fn (l: Link) set_deadline(which: Int, clock: Clock, at: Time?) uses clock {
       2 => t.set_write_deadline(clock, at)
       _ => t.set_deadline(clock, at)
     }
+  }
+}
+
+fn (l: Link) addrs() -> (Str, Str) {
+  match l {
+    Plain(c) => (c.local_addr(), c.remote_addr())
+    Tls(t) => (t.local_addr(), t.remote_addr())
   }
 }
 
@@ -954,5 +1054,6 @@ fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = 
     }),
     close: fn(_x: Int) { link.close() },
   }
-  WsConn{wire: wire, link: Some(link), rdl: Atomic[Int].new(0), wdl: Atomic[Int].new(0), server: false, max: max_message, proto: proto, rd: Mutex[ReadState].new(ReadState{buf: all[head_end + 4..], pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false, err: []}), hooks: Mutex[Hooks].new(Hooks{ping: [], pong: []})}
+  let (la, ra) = link.addrs()
+  WsConn{local: la, remote: ra, wire: wire, link: Some(link), rdl: Atomic[Int].new(0), wdl: Atomic[Int].new(0), server: false, max: max_message, proto: proto, rd: Mutex[ReadState].new(ReadState{buf: all[head_end + 4..], pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false, err: []}), hooks: Mutex[Hooks].new(Hooks{ping: [], pong: []})}
 }

@@ -19,6 +19,15 @@ var (
 	_ func(*Websocket_WsConn, *Task, func(*Task, Bytes) Result[Unit, Never])                                                        = (*Websocket_WsConn).M_on_ping
 	_ func(*Websocket_WsConn, *Task, func(*Task, Bytes) Result[Unit, Never])                                                        = (*Websocket_WsConn).M_on_pong
 	_ func(*Websocket_WsConn, *Task, Bytes) Result[Unit, Websocket_WsErr]                                                           = (*Websocket_WsConn).M_pong
+	_ func(*Websocket_WsConn, *Task, func(*Task, int64, string) Result[Unit, Never])                                                = (*Websocket_WsConn).M_on_close
+	_ func(*Websocket_WsConn, *Task) string                                                                                         = (*Websocket_WsConn).M_local_addr
+	_ func(*Websocket_WsConn, *Task) string                                                                                         = (*Websocket_WsConn).M_remote_addr
+	_ func(*Websocket_WsConn, *Task, Websocket_Kind) Websocket_MsgWriter                                                            = (*Websocket_WsConn).M_writer
+	_ func(*Websocket_WsConn, *Task, Websocket_Prepared) Result[Unit, Websocket_WsErr]                                              = (*Websocket_WsConn).M_write_prepared
+	_ func(*Websocket_MsgWriter, *Task, Bytes) Result[Unit, Websocket_WsErr]                                                        = (*Websocket_MsgWriter).M_write
+	_ func(*Websocket_MsgWriter, *Task) Result[Unit, Websocket_WsErr]                                                               = (*Websocket_MsgWriter).M_close
+	_ func(*Task, Websocket_Message) Websocket_Prepared                                                                             = Websocket_prepare
+	_ func(*Task, Http_Request) bool                                                                                                = Websocket_is_upgrade
 	_ func(*Task, Http_Request, func(*Task, Websocket_WsConn) Result[Unit, Never], List[string], List[string], int64) Http_Response = Websocket_upgrade
 	_ func(*Task, Net, string, Map[string, string], List[string], int64, Bytes) Result[Websocket_WsConn, Websocket_WsErr]           = Websocket_dial
 )

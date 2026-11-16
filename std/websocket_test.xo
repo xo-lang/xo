@@ -35,3 +35,136 @@ test "a websocket client on FakeNet reaches http.server's upgrade route" {
     expect(resp.text()) == Some("plain")
   }
 }
+
+// A raw client: the handshake by hand (the RFC's sample key), then the
+// server's frames as bytes.
+fn raw_open(n: Net, addr: Str, path: Str) -> (Conn, Bytes) uses net.dial {
+  let c = n.dial(addr).or_fault("raw dial")
+  c.write("GET ${path} HTTP/1.1\r\nHost: h\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n".bytes()).or_fault("raw write")
+  var got = b""
+  while got.find("\r\n\r\n".bytes()) is None {
+    got = got + (c.read(4096).or_fault("raw read") ?? b"")
+  }
+  let at = (got.find("\r\n\r\n".bytes()) ?? 0) + 4
+  expect(got.to_str_lossy().starts_with("HTTP/1.1 101")) == true
+  (c, got[at..])
+}
+
+/// Reads until held has n bytes or the stream ends.
+fn raw_fill(c: Conn, held: Bytes, n: Int) -> Bytes uses net.dial {
+  var b = held
+  while b.len() < n {
+    match c.read(65536).or_fault("raw fill") {
+      Some(x) => b = b + x
+      None => return b
+    }
+  }
+  b
+}
+
+test "writer sends a message as frames of 4096 bytes, as gorilla's NextWriter" {
+  var r = http.router()
+  r.handle("GET /w", fn(req) {
+    upgrade(req, fn(c) {
+      let w = c.writer(Kind.Text)
+      w.write("a".repeat(3000).bytes()).or_fault("w1")
+      w.write("b".repeat(2000).bytes()).or_fault("w2")
+      w.close().or_fault("close")
+      expect(w.write(b"x") is Err(WsErr.Protocol("write closed"))) == true
+      // an empty message is one final frame
+      c.writer(Kind.Binary).close().or_fault("empty")
+    })
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let (c, held) = raw_open(os.net, addr, "/w")
+    let b = raw_fill(c, held, 4 + 4096 + 4 + 904 + 2)
+    // text, not final, 126: a 16 bit length
+    expect([Int(b[0]), Int(b[1]), Int(b[2]), Int(b[3])]) == [0x01, 126, 16, 0]
+    let f2 = 4 + 4096
+    // continuation, final, the rest: 5000 - 4096
+    expect([Int(b[f2]), Int(b[f2 + 1]), Int(b[f2 + 2]), Int(b[f2 + 3])]) == [0x80, 126, 3, 136]
+    expect(b[f2 + 4..f2 + 8].to_str_lossy()) == "bbbb"
+    expect([Int(b[b.len() - 2]), Int(b[b.len() - 1])]) == [0x82, 0]
+    c.close()
+  }
+}
+
+test "a writer's message reads whole; prepared messages and addresses" {
+  var r = http.router()
+  let addrs = Chan[Str].new(2)
+  r.handle("GET /m", fn(req) {
+    upgrade(req, fn(c) {
+      addrs.send(c.local_addr())
+      addrs.send(c.remote_addr())
+      let w = c.writer(Kind.Binary)
+      w.write(b"x".repeat(5000)).or_fault("w")
+      w.close().or_fault("close")
+      c.write_prepared(prepare(Message{kind: Kind.Text, data: b"prepared"})).or_fault("prepared")
+      c.read().ignore_err("the client closes")
+    })
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let c = dial(os.net, "ws://${addr}/m").or_fault("dial")
+    let m = c.read().or_fault("read")
+    expect(m.kind is Kind.Binary) == true
+    expect(m.data) == b"x".repeat(5000)
+    let p = c.read().or_fault("read prepared")
+    expect(p.data.to_str_lossy()) == "prepared"
+    let server_local = addrs.recv() ?? ""
+    let server_remote = addrs.recv() ?? ""
+    expect(server_local) == addr
+    expect(c.remote_addr()) == addr
+    expect(server_remote) == c.local_addr()
+    c.close().or_fault("close")
+  }
+}
+
+test "on_close runs in place of the automatic close reply, as gorilla's SetCloseHandler" {
+  var r = http.router()
+  let seen = Chan[Str].new(2)
+  r.handle("GET /auto", fn(req) {
+    upgrade(req, fn(c) {
+      expect(c.read() is Err(WsErr.Closed(4000, "bye"))) == true
+    })
+  })
+  r.handle("GET /hook", fn(req) {
+    upgrade(req, fn(c) {
+      c.on_close(fn(code, reason) { seen.send("${code} ${reason}") })
+      expect(c.read() is Err(WsErr.Closed(4000, "bye"))) == true
+    })
+  })
+  // a masked close frame with a zero key: code 4000, "bye"
+  let close_frame = b"\x88\x85\x00\x00\x00\x00\x0f\xa0bye"
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let (a, held) = raw_open(os.net, addr, "/auto")
+    a.write(close_frame).or_fault("close auto")
+    let ra = raw_fill(a, held, 4)
+    // the reply: close with the code
+    expect([Int(ra[0]), Int(ra[1]), Int(ra[2]), Int(ra[3])]) == [0x88, 2, 0x0f, 0xa0]
+    a.close()
+    let (h, held2) = raw_open(os.net, addr, "/hook")
+    h.write(close_frame).or_fault("close hook")
+    // no reply: the server's handler returns and the stream ends
+    expect(raw_fill(h, held2, 1).len()) == 0
+    expect(seen.recv()) == Some("4000 bye")
+    h.close()
+  }
+}
+
+test "is_upgrade checks Connection and Upgrade, as gorilla's IsWebSocketUpgrade" {
+  expect(is_upgrade(http.new_request("GET", "/", {"Connection": "keep-alive, Upgrade", "Upgrade": "WebSocket"}))) == true
+  expect(is_upgrade(http.new_request("GET", "/", {"Connection": "keep-alive", "Upgrade": "websocket"}))) == false
+  expect(is_upgrade(http.new_request("GET", "/", {"Connection": "upgrade"}))) == false
+}

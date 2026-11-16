@@ -733,6 +733,13 @@ pub fn x1(h: rthttp.HConn) -> Int { ld(rec(h), HC_X1) }
 
 pub fn set_x1(h: rthttp.HConn, x: Int) { st(rec(h), HC_X1, x) }
 
+/// The local and remote "host:port" of h's connection (a WebSocket's
+/// LocalAddr and RemoteAddr after the hand-off).
+pub fn conn_addrs(h: rthttp.HConn) -> (Str, Str) {
+  let c = rt.obj_at[ServerConn](ld(rec(h), HC_CONN))
+  (c.local_addr(), c.remote_addr())
+}
+
 /// The peer's address (Request.remote_addr's host).
 pub fn remote_ip(h: rthttp.HConn) -> Str {
   let hc = rec(h)

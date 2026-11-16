@@ -68,6 +68,41 @@ fn (c: WsConn) on_ping[fx: Effects](f: fn(Bytes) -> () uses fx) uses fx
 fn (c: WsConn) on_pong[fx: Effects](f: fn(Bytes) -> () uses fx) uses fx
 /// A pong control frame, as gorilla's WriteControl(PongMessage).
 fn (c: WsConn) pong(data: Bytes = b"") -> () ! WsErr
+/// gorilla's SetCloseHandler: f runs with the code and reason of the
+/// peer's close frame that read() reads, in place of the automatic close
+/// reply (send one with `close`); read() still returns `Closed`. A later
+/// call replaces f. f runs inside read(), so it must not call read().
+fn (c: WsConn) on_close[fx: Effects](f: fn(Int, Str) -> () uses fx) uses fx
+/// gorilla's LocalAddr and RemoteAddr: the connection's "host:port".
+fn (c: WsConn) local_addr() -> Str
+fn (c: WsConn) remote_addr() -> Str
+/// gorilla's NextWriter: one message of kind written in pieces, as
+/// frames of up to 4096 bytes; as gorilla's, the data of a text message
+/// is not checked as UTF-8 (write_text's Str is). Other writes do not
+/// wait for the writer: use one writer or whole messages at a time.
+fn (c: WsConn) writer(kind: Kind) -> MsgWriter
+/// gorilla's WritePreparedMessage: the prepared message as one frame.
+fn (c: WsConn) write_prepared(p: Prepared) -> () ! WsErr
+
+/// A message being written in pieces (WsConn.writer).
+struct MsgWriter {}
+
+/// Appends data to the message; full 4096 byte frames go out.
+fn (w: MsgWriter) write(data: Bytes) -> () ! WsErr
+/// Sends what is left as the final frame; later writes fail.
+fn (w: MsgWriter) close() -> () ! WsErr
+
+/// A message framed once for many connections (gorilla's
+/// PreparedMessage; std/websocket has no compression, so its frames are
+/// those of WsConn.write).
+struct Prepared {}
+
+/// gorilla's NewPreparedMessage.
+fn prepare(m: Message) -> Prepared
+
+/// gorilla's IsWebSocketUpgrade: whether req asks for a WebSocket
+/// (`Connection: upgrade` and `Upgrade: websocket`), without upgrading.
+fn is_upgrade(req: http.Request) -> Bool
 
 /// The response that upgrades req to a WebSocket and runs f with it (the
 /// connection closes when f returns), as gorilla's Upgrader: GET,

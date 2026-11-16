@@ -1,5 +1,15 @@
 # std/websocket changes
 
+## 2026-11-16: feature: writer, prepared messages, on_close, addresses and is_upgrade
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89 (std Proven; scripts/stdaudit/map.txt websocket gap rows)
+- Go reference: gorilla/websocket v1.5.3 conn.go NextWriter and messageWriter (4096 byte frames, defaultWriteBufferSize), prepared.go, SetCloseHandler, LocalAddr and RemoteAddr; util.go IsWebSocketUpgrade
+- Test: std/websocket_test.xo (frames as bytes from a raw client, a writer's message read whole, prepared, addresses both sides, on_close replacing the reply, is_upgrade), arm64 and LLVM; golden internal/gen test_websocket_features on the Go backend
+- Timing: none (new calls; write and read unchanged)
+- Shipped in: not yet released
+
 ## 2026-11-16: fix: a 64-bit frame length with its top bit set is read limit exceeded, not a fault
 
 - Kind: fix

@@ -1,0 +1,37 @@
+use std/http
+use std/websocket
+
+// websocket's NextWriter, PreparedMessage, SetCloseHandler, addresses and
+// IsWebSocketUpgrade (task #89) on the Go backend, over FakeNet.
+test "writer, prepared, on_close, addresses and is_upgrade" {
+  var r = http.router()
+  let seen = Chan[Str].new(4)
+  r.handle("GET /m", fn(req) {
+    websocket.upgrade(req, fn(c) {
+      seen.send(c.local_addr())
+      c.on_close(fn(code, reason) { seen.send("${code} ${reason}") })
+      let w = c.writer(websocket.Kind.Binary)
+      w.write(b"x".repeat(5000)).or_fault("w")
+      w.close().or_fault("close")
+      expect(w.write(b"y") is Err(websocket.WsErr.Protocol("write closed"))) == true
+      c.write_prepared(websocket.prepare(websocket.Message{kind: websocket.Kind.Text, data: b"prepared"})).or_fault("prepared")
+      expect(c.read() is Err(websocket.WsErr.Closed(4000, "bye"))) == true
+    })
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let c = websocket.dial(os.net, "ws://${addr}/m").or_fault("dial")
+    let m = c.read().or_fault("read")
+    expect(m.data) == b"x".repeat(5000)
+    expect(c.read().or_fault("read prepared").data.to_str_lossy()) == "prepared"
+    expect(seen.recv()) == Some(addr)
+    expect(c.remote_addr()) == addr
+    c.close(code: 4000, reason: "bye").or_fault("close")
+    expect(seen.recv()) == Some("4000 bye")
+  }
+  expect(websocket.is_upgrade(http.new_request("GET", "/", {"Connection": "keep-alive, Upgrade", "Upgrade": "WebSocket"}))) == true
+  expect(websocket.is_upgrade(http.new_request("GET", "/", {"Upgrade": "websocket"}))) == false
+}

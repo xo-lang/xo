@@ -8416,6 +8416,15 @@ fn (c: WsConn) set_write_deadline(clock: Clock, t: Time?) uses clock
 fn (c: WsConn) on_ping[fx: Effects](f: fn(Bytes) -> () uses fx) uses fx   // gorilla's SetPingHandler: replaces the automatic pong
 fn (c: WsConn) on_pong[fx: Effects](f: fn(Bytes) -> () uses fx) uses fx   // gorilla's SetPongHandler
 fn (c: WsConn) pong(data: Bytes = b"") -> () ! WsErr
+fn (c: WsConn) on_close[fx: Effects](f: fn(Int, Str) -> () uses fx) uses fx   // gorilla's SetCloseHandler: replaces the automatic close reply
+fn (c: WsConn) local_addr() -> Str               // gorilla's LocalAddr, "host:port"
+fn (c: WsConn) remote_addr() -> Str              // gorilla's RemoteAddr
+fn (c: WsConn) writer(kind: Kind) -> MsgWriter   // gorilla's NextWriter: frames of up to 4096 bytes
+fn (c: WsConn) write_prepared(p: Prepared) -> () ! WsErr   // gorilla's WritePreparedMessage
+fn (w: MsgWriter) write(data: Bytes) -> () ! WsErr
+fn (w: MsgWriter) close() -> () ! WsErr          // the final frame; later writes are Protocol("write closed")
+pub fn prepare(m: Message) -> Prepared           // gorilla's NewPreparedMessage (no compression: write's frames)
+pub fn is_upgrade(req: http.Request) -> Bool     // gorilla's IsWebSocketUpgrade
 pub fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocols: List[Str] = [], origins: List[Str] = [], max_message: Int = 1048576) -> http.Response uses fx
 pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576, roots: Bytes = b"") -> WsConn ! WsErr uses net.dial
 ```
@@ -8506,8 +8515,16 @@ pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str
     }
   }
   ```
-- Not provided: permessage-deflate, a message written in pieces, ping
-  timers (use `ping` and a clock, as above), WebSockets over HTTP/2.
+- `writer` writes one message in pieces, as gorilla's NextWriter: the
+  data is held until 4096 bytes are there and a later write or `close`
+  sends them as a frame (continuations after the first), and `close`
+  sends the rest as the final frame. A text writer's data is not checked
+  as UTF-8, as gorilla's. Other writes do not wait for an open writer.
+  `on_close`'s function runs with the peer's close code and reason in
+  place of the automatic reply; `read` still returns `Closed`.
+- Not provided: permessage-deflate (so `Prepared` holds write's frames),
+  reading a message in pieces (gorilla's NextReader and JoinMessages),
+  ping timers (use `ping` and a clock, as above), WebSockets over HTTP/2.
 
 
 ## 36. std/debug

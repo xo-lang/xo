@@ -53,6 +53,8 @@ type wsConn struct {
 	// on_ping's and on_pong's functions (decision 0430), nil for none
 	hmu          sync.Mutex
 	pingH, pongH func(*Task, Bytes) Result[Unit, Never]
+	// on_close's function (gorilla's SetCloseHandler), nil for none
+	closeH func(*Task, int64, string) Result[Unit, Never]
 }
 
 const (
@@ -149,6 +151,12 @@ func wsCloseMessage(code int64, text string) []byte {
 
 // writeFrame writes one final frame (masked from a client).
 func (c *wsConn) writeFrame(tk *Task, op int, data []byte) *Websocket_WsErr {
+	return c.writeFrameFin(tk, op, data, true)
+}
+
+// writeFrameFin is one frame; fin false for a message's frames before its
+// last (Websocket_MsgWriter).
+func (c *wsConn) writeFrameFin(tk *Task, op int, data []byte, fin bool) *Websocket_WsErr {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
 	if c.writeErr != nil {
@@ -160,7 +168,11 @@ func (c *wsConn) writeFrame(tk *Task, op int, data []byte) *Websocket_WsErr {
 	}
 	n := len(data)
 	hdr := make([]byte, 0, 14+n)
-	hdr = append(hdr, 0x80|byte(op))
+	first := byte(op)
+	if fin {
+		first |= 0x80
+	}
+	hdr = append(hdr, first)
 	mb := byte(0)
 	if !c.server {
 		mb = 0x80
@@ -409,7 +421,14 @@ func (c *wsConn) readMessage(tk *Task) (Websocket_Message, *Websocket_WsErr) {
 					return Websocket_Message{}, c.protocolError(tk, 1002, "invalid utf8 payload in close frame")
 				}
 			}
-			c.writeControl(tk, wsClose, wsCloseMessage(code, ""))
+			c.hmu.Lock()
+			ch := c.closeH
+			c.hmu.Unlock()
+			if ch != nil {
+				ch(tk, code, text)
+			} else {
+				c.writeControl(tk, wsClose, wsCloseMessage(code, ""))
+			}
 			e := wsClosed(code, text)
 			return Websocket_Message{}, &e
 		case wsText, wsBinary:
@@ -784,4 +803,102 @@ func Websocket_dial(tk *Task, n Net, rawURL string, headers Map[string, string],
 	c := &wsConn{conn: conn, br: br, max: maxMessage, proto: resp.Header.Get("Sec-Websocket-Protocol")}
 	c.br = wsMemReader(c, c.br)
 	return Ok[Websocket_WsConn, Websocket_WsErr](Websocket_WsConn{c: c})
+}
+
+// M_on_close is gorilla's SetCloseHandler: f in place of the automatic
+// close reply.
+func (w Websocket_WsConn) M_on_close(tk *Task, f func(*Task, int64, string) Result[Unit, Never]) {
+	w.c.hmu.Lock()
+	w.c.closeH = f
+	w.c.hmu.Unlock()
+}
+
+// M_local_addr and M_remote_addr are gorilla's LocalAddr and RemoteAddr.
+func (w Websocket_WsConn) M_local_addr(*Task) string { return w.c.conn.LocalAddr().String() }
+
+func (w Websocket_WsConn) M_remote_addr(*Task) string { return w.c.conn.RemoteAddr().String() }
+
+// wsWriteFrame is the most a writer's frame holds (gorilla's
+// defaultWriteBufferSize).
+const wsWriteFrame = 4096
+
+// Websocket_MsgWriter is gorilla's messageWriter (NextWriter).
+type Websocket_MsgWriter struct{ m *wsMsgWriter }
+
+type wsMsgWriter struct {
+	mu     sync.Mutex
+	c      *wsConn
+	op     int
+	buf    []byte
+	closed bool
+}
+
+// XoDebug implements Debug.
+func (Websocket_MsgWriter) XoDebug(b *strings.Builder) { b.WriteString("<websocket writer>") }
+
+// M_writer is gorilla's NextWriter.
+func (w Websocket_WsConn) M_writer(tk *Task, kind Websocket_Kind) Websocket_MsgWriter {
+	op := wsBinary
+	if kind.Tag == 1 {
+		op = wsText
+	}
+	return Websocket_MsgWriter{m: &wsMsgWriter{c: w.c, op: op}}
+}
+
+var errWsWriteClosed = wsProtocolErr("write closed")
+
+// M_write appends data; full frames go out once more follows.
+func (w Websocket_MsgWriter) M_write(tk *Task, data Bytes) Result[Unit, Websocket_WsErr] {
+	m := w.m
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return Err[Unit](errWsWriteClosed)
+	}
+	m.buf = append(m.buf, data...)
+	for len(m.buf) > wsWriteFrame {
+		if e := m.c.writeFrameFin(tk, m.op, m.buf[:wsWriteFrame], false); e != nil {
+			return Err[Unit](*e)
+		}
+		m.op = wsContinuation
+		m.buf = append([]byte(nil), m.buf[wsWriteFrame:]...)
+	}
+	return Ok[Unit, Websocket_WsErr](Unit{})
+}
+
+// M_close sends the rest as the final frame.
+func (w Websocket_MsgWriter) M_close(tk *Task) Result[Unit, Websocket_WsErr] {
+	m := w.m
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return Err[Unit](errWsWriteClosed)
+	}
+	m.closed = true
+	if e := m.c.writeFrameFin(tk, m.op, m.buf, true); e != nil {
+		return Err[Unit](*e)
+	}
+	return Ok[Unit, Websocket_WsErr](Unit{})
+}
+
+// Websocket_Prepared is gorilla's PreparedMessage (no compression: the
+// frames of WsConn.write).
+type Websocket_Prepared struct{ m Websocket_Message }
+
+// XoDebug implements Debug.
+func (Websocket_Prepared) XoDebug(b *strings.Builder) { b.WriteString("<websocket prepared>") }
+
+// Websocket_prepare is gorilla's NewPreparedMessage.
+func Websocket_prepare(_ *Task, m Websocket_Message) Websocket_Prepared {
+	return Websocket_Prepared{m: m}
+}
+
+// M_write_prepared is gorilla's WritePreparedMessage.
+func (w Websocket_WsConn) M_write_prepared(tk *Task, p Websocket_Prepared) Result[Unit, Websocket_WsErr] {
+	return w.M_write(tk, p.m)
+}
+
+// Websocket_is_upgrade is gorilla's IsWebSocketUpgrade.
+func Websocket_is_upgrade(tk *Task, req Http_Request) bool {
+	return wsTokens(req.M_header_values(tk, "Connection").s, "upgrade") && wsTokens(req.M_header_values(tk, "Upgrade").s, "websocket")
 }
