@@ -1,5 +1,17 @@
 # std/ui changes
 
+## 2026-11-16: feature: scopes in a Host, a room or a user each with its own log (decision 0686 step 3)
+
+- Kind: feature
+- Commit: this push
+- Found by: owner (several scopes per page; decision 0686 plan step 3)
+- Go reference: none
+- Test: std/ui tests: rooms by path each with their own log, versions and live pages, a path no scope gives is 404; a scope per principal where a sync naming any page reaches only its sender's scope; at most max_scopes held, the least recently used without a live page dropped and read back from the store; internal/uiruntime TestScopedSyncURLKeepsPage (the runtime added "?thin=1" to a sync URL that had a query; fails before); every headless Chrome suite
+- Timing: none
+- Shipped in: not yet released
+
+`host(..., scope_of:, max_scopes:)` and the same on `host_with`; `apply`, `try_apply` and `model` take `scope:`. `Bus.subscribe` (not yet in a release) now takes one `fn(Str, Int)` for every scope; it took a scope and a `fn(Int)`.
+
 ## 2026-11-16: feature: pg_bus, notices between instances by Postgres LISTEN/NOTIFY (decision 0686)
 
 - Kind: feature

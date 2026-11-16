@@ -770,7 +770,11 @@ test "Hosts on pg_bus hear each other's appends through NOTIFY" {
   let b = host_with(todo_app(), st, bb, scope: "room")
   expect(b.model().todos.len()) == 0
   let heard = Chan[Int].new(cap: 16)
-  (bb.subscribe)("room", fn(v: Int) uses sync { let _full = heard.try_send(v) })
+  (bb.subscribe)(fn(s: Str, v: Int) uses sync {
+    if s == "room" || v < 0 {
+      let _full = heard.try_send(v)
+    }
+  })
   let (_id, live) = b.subscribe()
   // b's listener has LISTENed once its -1 arrives (a NOTIFY before that
   // is lost, which the -1 makes b read the store for)
@@ -782,6 +786,80 @@ test "Hosts on pg_bus hear each other's appends through NOTIFY" {
   // changed and send the version they read)
   expect(live.recv().is_some()) == true
   expect(b.model().todos.len()) == 1
+}
+
+// /room/NAME is room NAME's scope; any other path is not a page.
+fn room_of(page: Str, p: Str) -> Str? {
+  if page.starts_with("/room/") && page.len() > 6 {
+    return Some("room:" + page[6..])
+  }
+  None
+}
+
+test "scope_of puts each page in its own scope: own log, own versions, own live pages" {
+  let h = host(todo_app(), auth: Some(auth_hdr), scope_of: Some(room_of))
+  let r = routes_for(h)
+  let get = fn(path: Str) -> http.Response uses sync { r.call(http.new_request("GET", path, headers: {"X-User": "ann"})) }
+  let p1 = get("/room/1")
+  expect(p1.status) == 200
+  // the page names itself to its sync and live requests
+  expect((p1.text() ?? "").contains("data-xo-sync=\"/_xo/sync?page=%2Froom%2F1\"")) == true
+  expect(get("/elsewhere").status) == 404
+  let up = fn(page: Str, seq: Int, id: Str) -> http.Request {
+    let body = json.encode_str(Up{client: "c-${page}", ver: 0, msgs: [Envelope{seq: seq, msg: Msg.Add(id: id, title: id)}]})
+    http.new_request("POST", "/_xo/sync?page=" + url.query_escape(page), headers: {"Content-Type": "application/json", "X-User": "ann"}, body: body.bytes())
+  }
+  let (_i1, live1) = h.subscribe("ann", scope: Some("room:1"))
+  let (_i2, live2) = h.subscribe("ann", scope: Some("room:2"))
+  let s1 = json.decode_str[Sync[Model, Msg]](r.call(up("/room/1", 1, "a")).text() ?? "")?
+  expect(s1.ver) == 1
+  // room 2 has its own log: its first Msg is its version 1 too
+  let s2 = json.decode_str[Sync[Model, Msg]](r.call(up("/room/2", 1, "b")).text() ?? "")?
+  expect(s2.ver) == 1
+  expect(h.model(scope: Some("room:1")).todos.keys()) == ["a"]
+  expect(h.model(scope: Some("room:2")).todos.keys()) == ["b"]
+  // each room's live pages hear only that room
+  expect(live1.try_recv()) == Some(1)
+  expect(live2.try_recv()) == Some(1)
+  h.apply(Msg.Add(id: "c", title: "c"), scope: Some("room:2"))
+  expect(live1.try_recv()) == None
+  expect(live2.try_recv()) == Some(2)
+  // a page it cannot have is no scope
+  expect(r.call(up("/nope", 1, "z")).status) == 404
+  expect((get("/room/2").text() ?? "").contains("<li")) == true
+}
+
+test "a scope per principal: a sync naming any page reaches only its sender's scope" {
+  let h = host(todo_app(), auth: Some(auth_hdr), scope_of: Some(fn(page: Str, p: Str) -> Str? { Some("user:" + p) }))
+  let r = routes_for(h)
+  let send = fn(who: Str, page: Str, id: Str) -> Int uses sync {
+    let body = json.encode_str(Up{client: "c-" + who, ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: id, title: id)}]})
+    r.call(http.new_request("POST", "/_xo/sync?page=" + url.query_escape(page), headers: {"Content-Type": "application/json", "X-User": who}, body: body.bytes())).status
+  }
+  expect(send("ann", "/", "ann's")) == 200
+  // bob names ann's page, or none: still his own scope
+  expect(send("bob", "/", "bob's")) == 200
+  expect(h.model(scope: Some("user:ann")).todos.keys()) == ["ann's"]
+  expect(h.model(scope: Some("user:bob")).todos.keys()) == ["bob's"]
+  let page = r.call(http.new_request("GET", "/", headers: {"X-User": "bob"})).text() ?? ""
+  expect(page.contains("bob's")) == true
+  expect(page.contains("ann's")) == false
+}
+
+test "a Host keeps at most max_scopes scopes, dropping the least recently used without a live page" {
+  let st = memory_store()
+  let h = host_with(todo_app(), st, local_bus(), scope_of: Some(room_of), max_scopes: 2)
+  h.apply(Msg.Add(id: "a", title: "a"), scope: Some("room:1"))
+  let (_id, _live) = h.subscribe("", scope: Some("room:1"))
+  h.apply(Msg.Add(id: "b", title: "b"), scope: Some("room:2"))
+  h.apply(Msg.Add(id: "c", title: "c"), scope: Some("room:3"))
+  // room 2 went (room 1 has a live page), and nothing was lost: it is read
+  // from the store again when used
+  expect(h.held()) == 2
+  expect(h.slots.with_read(fn(m) { m.contains("room:1") })) == true
+  expect(h.slots.with_read(fn(m) { m.contains("room:2") })) == false
+  expect(h.model(scope: Some("room:2")).todos.keys()) == ["b"]
+  expect(h.model(scope: Some("room:1")).todos.keys()) == ["a"]
 }
 
 test "convergence holds for any seed" for seed: Int {
@@ -1150,11 +1228,11 @@ test "a host keeps at most twice keep log entries" {
   for i in 0..100 {
     h.apply(Msg.Add(id: "t${i}", title: "t"))
   }
-  let n = h.state.with_read(fn(c) { c.s.log.len() })
+  let n = h.slot("").state.with_read(fn(c) { c.s.log.len() })
   expect(n < 10) == true
   expect(h.model().todos.len()) == 100
   // a page from before the compaction catches up through a snapshot
-  let d = h.state.with_read(fn(c) { c.s.reply("late", 0) })
+  let d = h.slot("").state.with_read(fn(c) { c.s.reply("late", 0) })
   expect(d.reset.is_some()) == true
 }
 

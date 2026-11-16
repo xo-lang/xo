@@ -11565,12 +11565,13 @@ fn (var r: Replica[M, E]) receive(d: Down[M, E])
 
 pub struct Sync[M, E] { pub down: Down[M, E], pub ver: Int, pub html: Str, pub model: M? = None, pub same: Bool = false, pub build: Str = "", pub seen: Str = "" }   // derive Json
 pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"",
-    auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000) -> Host[M, E]
+    auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000,
+    scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000) -> Host[M, E]
 pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "", ...same options as host) -> Host[M, E, fx, bx] uses bx
-fn (h: Host[M, E]) apply(msg: E) uses sync               // faults if the store fails
-fn (h: Host[M, E]) try_apply(msg: E) -> () ! Str uses sync
+fn (h: Host[M, E]) apply(msg: E, scope: Str? = None) uses sync               // faults if the store fails
+fn (h: Host[M, E]) try_apply(msg: E, scope: Str? = None) -> () ! Str uses sync
 pub const SERVER_CLIENT = "~server"
-fn (h: Host[M, E]) model() -> M
+fn (h: Host[M, E]) model(scope: Str? = None) -> M
 fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "")
 fn (h: Host[M, E]) live() -> Int                        // open live connections
 
@@ -11585,7 +11586,7 @@ pub struct Store[fx: Effects] { pub append: fn(Str, Batch) -> Bool ! Str uses fx
 pub fn memory_store() -> Store[sync]
 pub fn dir_store(f: Fs, dir: Str) -> Store[fs]      // a directory per scope, a file per batch; flock + rename
 pub fn sql_store[fx: Effects](db: sql.Db[fx], table: Str = "xo_ui_log") -> Store[(net.dial, fx)] ! Str uses (net.dial, fx)
-pub struct Bus[fx: Effects] { pub publish: fn(Str, Int) uses fx, pub subscribe: fn(Str, fn(Int) uses sync) uses fx }
+pub struct Bus[fx: Effects] { pub publish: fn(Str, Int) uses fx, pub subscribe: fn(fn(Str, Int) uses sync) uses fx }
 pub fn local_bus() -> Bus[sync]
 pub fn pg_bus[fx: Effects](db: sql.Db[fx], tasks: task.Group, clock: Clock, channel: Str = "xo_ui") -> Bus[(sync, net.dial, fx, clock)]
 pub fn scope[M: Json, E: Json, fx: Effects](app: App[M, E], store: Store[fx], key: Str = "", max_batch: Int = 256) -> Scope[M, E, fx]
@@ -11730,6 +11731,19 @@ fn (var c: Scope[M, E]) compact(keep: Int) -> () ! Str uses sync
   catches up through a snapshot. With `auth`, `signin_url` sends a page
   request without a principal to that URL (303) instead of 401; a sync
   still answers 401.
+- Scopes in a Host (decision 0686 plan step 3). `scope_of(path,
+  principal)` gives the scope a page belongs to (None: 404): a room
+  from the path (`/room/5`), a scope per user from the principal. The
+  query never chooses a scope (it is tab state, which the client may
+  render itself). With scope_of the Host serves every path under its
+  prefix, and a page names itself to its sync and live requests
+  (`?page=`), which get the scope that page gives their principal, so a
+  client reaches only scopes its own pages could. Each scope has its own
+  log, versions and live connections; an instance holds at most
+  `max_scopes` (the least recently used without a live page is dropped
+  and read from the store again when next used). `apply`, `try_apply`
+  and `model` take a scope (the Host's own by default). A Bus subscriber
+  hears (scope, version) for every scope.
 - Scoped logs in a store (decision 0686, Proposed; stage 1). A Host
   keeps its log in a `Store` under the key `scope` and hears other
   instances' appends on a `Bus`; by default a memory store and an

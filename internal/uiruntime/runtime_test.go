@@ -215,3 +215,10 @@ func TestSyncSendsPageQuery(t *testing.T) {
 		t.Errorf("queries sent %q, want tag=drink&sort=price", r.Before)
 	}
 }
+
+func TestScopedSyncURLKeepsPage(t *testing.T) {
+	r := run(t, "scoped")
+	if r.Before != "/_xo/sync?page=%2Froom%2F1&thin=1" {
+		t.Errorf("sync URL %q, want /_xo/sync?page=%%2Froom%%2F1&thin=1", r.Before)
+	}
+}

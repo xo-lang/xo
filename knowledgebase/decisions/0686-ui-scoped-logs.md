@@ -202,6 +202,30 @@ runtime ignores (it syncs for a number above its version), and without
 sends the version it holds (test: a websocket on FakeNet). On Postgres
 17 a watching process heard another's append and held every item.
 
+## Scopes in the Host (2026-11-16, plan step 3)
+
+`scope_of(path, principal) -> Str?` picks a page's scope; the Host keeps
+a slot per scope it serves (copy, newest announced version, resync flag,
+last use), at most `max_scopes`, dropping the least recently used
+without a live page. Choices made while building it:
+
+- The scope comes from the path and the principal, never the query: the
+  runtime renders another query of the same path locally (tab state), so
+  a scope chosen by the query would show the wrong scope's model.
+- Sync and live requests carry their page (`?page=`) and are given the
+  scope `scope_of` gives that page for their principal; a client naming
+  another page gets exactly what a GET of it would give, so no signature
+  is needed.
+- The Bus delivers (scope, version) for every scope to one subscriber
+  per instance, instead of a subscription per scope: scopes come and go
+  with the cache, and a Bus has no unsubscribe. An instance skips scopes
+  it does not hold (they read the store when next used) but still wakes
+  live pages of a scope it has not loaded yet.
+
+Next (plan step 6): a page over two scopes (a shared catalog and the
+user's cart) needs a second stream in the sync protocol; until then an
+App per scope is one page each.
+
 ## Alternatives
 
 - One process (today): no scale beyond one machine, and no failover.

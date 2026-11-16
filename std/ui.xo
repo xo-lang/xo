@@ -856,36 +856,32 @@ fn dir_decode(raw: Bytes) -> Batch ! Str {
 /// apart from the store: an instance publishes after each append, and
 /// every instance subscribed to the scope hears it (in process, Postgres
 /// LISTEN/NOTIFY, Redis, NATS, or polling the store).
-/// A subscriber hears each version appended to its scope, and a negative
-/// number when notices may have been missed (a reconnect): it then reads
-/// the store before it trusts its copy again.
+/// A subscriber hears each (scope, version) appended, for every scope (an
+/// instance keeps the scopes it serves and skips the rest), and a negative
+/// version when notices may have been missed (a reconnect): it then reads
+/// the store before it trusts any copy again.
 pub struct Bus[fx: Effects] {
   pub publish: fn(Str, Int) uses fx
-  pub subscribe: fn(Str, fn(Int) uses sync) uses fx
+  pub subscribe: fn(fn(Str, Int) uses sync) uses fx
 }
 
 /// A bus within this process: every Host given it hears the others.
 pub fn local_bus() -> Bus[sync] {
-  local_bus_of({})
+  local_bus_of([])
 }
 
 // A local bus starting with these subscribers (making it performs nothing,
 // so a one-instance host stays pure to build).
-fn local_bus_of(first: Map[Str, List[fn(Int) uses sync]]) -> Bus[sync] {
-  let subs = Mutex[Map[Str, List[fn(Int) uses sync]]].new(first)
+fn local_bus_of(first: List[fn(Str, Int) uses sync]) -> Bus[sync] {
+  let subs = Mutex[List[fn(Str, Int) uses sync]].new(first)
   Bus{
     publish: fn(scope: Str, v: Int) uses sync {
-      let fs = subs.with_read(fn(m) { m.get(scope) ?? [] })
-      for f in fs {
-        f(v)
+      for f in subs.with_read(fn(l) { l }) {
+        f(scope, v)
       }
     },
-    subscribe: fn(scope: Str, f: fn(Int) uses sync) uses sync {
-      subs.with(fn(var m) {
-        var l = m.get(scope) ?? []
-        l.push(f)
-        m.put(scope, l)
-      })
+    subscribe: fn(f: fn(Str, Int) uses sync) uses sync {
+      subs.with(fn(var l) { l.push(f) })
     },
   }
 }
@@ -897,12 +893,11 @@ fn local_bus_of(first: Map[Str, List[fn(Int) uses sync]]) -> Bus[sync] {
 /// reconnect, a second apart while the database is away) the subscribers
 /// hear -1 and read the store, since notices sent meanwhile are lost.
 pub fn pg_bus[fx: Effects](db: sql.Db[fx], tasks: task.Group, clock: Clock, channel: Str = "xo_ui") -> Bus[(sync, net.dial, fx, clock)] {
-  let subs = Mutex[Map[Str, List[fn(Int) uses sync]]].new({})
+  let subs = Mutex[List[fn(Str, Int) uses sync]].new([])
   let started = Atomic[Int].new(0)
   let deliver = fn(scope: Str, v: Int) uses sync {
-    let fs = subs.with_read(fn(m) { m.get(scope) ?? [] })
-    for f in fs {
-      f(v)
+    for f in subs.with_read(fn(l) { l }) {
+      f(scope, v)
     }
   }
   Bus{
@@ -912,17 +907,13 @@ pub fn pg_bus[fx: Effects](db: sql.Db[fx], tasks: task.Group, clock: Clock, chan
       deliver(scope, v)
       let _sent = db.query("SELECT pg_notify($1, $2)", [sql.str(channel), sql.str("${v}:${scope}")]).is_ok()
     },
-    subscribe: fn(scope: Str, f: fn(Int) uses sync) uses (sync, net.dial, fx, clock) {
-      subs.with(fn(var m) {
-        var l = m.get(scope) ?? []
-        l.push(f)
-        m.put(scope, l)
-      })
+    subscribe: fn(f: fn(Str, Int) uses sync) uses (sync, net.dial, fx, clock) {
+      subs.with(fn(var l) { l.push(f) })
       if started.add(1) == 1 {
         tasks.spawn_background(fn() -> () ! Never uses (sync, net.dial, fx, clock) {
           while !task.is_canceled() {
             // an error ends this connection; the next LISTEN starts again
-            let _ended = pg_listen(db, channel, subs, deliver).is_ok()
+            let _ended = pg_listen(db, channel, deliver).is_ok()
             if task.is_canceled() {
               break
             }
@@ -936,13 +927,11 @@ pub fn pg_bus[fx: Effects](db: sql.Db[fx], tasks: task.Group, clock: Clock, chan
 
 // One LISTEN connection: every scope hears -1 once it listens, then each
 // notice; returns at the first error.
-fn pg_listen[fx: Effects](db: sql.Db[fx], channel: Str, subs: Mutex[Map[Str, List[fn(Int) uses sync]]], deliver: fn(Str, Int) uses sync) -> () ! sql.SqlErr uses (sync, net.dial, fx) {
+fn pg_listen[fx: Effects](db: sql.Db[fx], channel: Str, deliver: fn(Str, Int) uses sync) -> () ! sql.SqlErr uses (sync, net.dial, fx) {
   let conn = db.conn()?
   defer conn.close()
   conn.listen(channel)?
-  for scope in subs.with_read(fn(m) { m.keys() }) {
-    deliver(scope, -1)
-  }
+  deliver("", -1)
   while {
     let n = conn.wait_notification()?
     let i = n.payload.find(":") ?? continue
@@ -1275,17 +1264,28 @@ fn accepts_gzip(v: Str) -> Bool {
   false
 }
 
-/// An App served over HTTP, with its Server behind a lock.
+/// An App served over HTTP (decision 0686): its state in scopes of a
+/// store, each scope this instance serves cached here behind its own lock.
 pub struct Host[M: Json, E: Json, fx: Effects, bx: Effects] {
   app: App[M, E]
-  // This instance's copy of the scope's log (decision 0686), the bus that
-  // tells it of other instances' appends, and the newest version heard.
-  state: Mutex[Scope[M, E, fx]]
+  store: Store[fx]
   bus: Bus[bx]
+  // The scope of apply and model without one, and of every page when
+  // scope_of is None.
   key: Str
-  latest: Atomic[Int]
-  // set when the bus may have missed notices (it reconnected)
-  resync: Atomic[Int]
+  // The scope a page belongs to, from its path (never its query, which
+  // is tab state) and the principal; None: not found (404). With it the
+  // Host serves every path under its prefix. Sync and live requests name their
+  // page and are given the scope that page has, so a client reaches only
+  // a scope its own pages could.
+  scope_of: (fn(Str, Str) -> Str?)?
+  max_batch: Int
+  // The scopes this instance holds (at most max_scopes; the least recently
+  // used without a live page goes first, and is read again from the store
+  // when it is next used).
+  slots: Mutex[Map[Str, Slot[M, E, fx]]]
+  max_scopes: Int
+  tick: Atomic[Int]
   title: Str
   css: Str
   // The App's client program built for wasm, "" for a thin client.
@@ -1303,61 +1303,126 @@ pub struct Host[M: Json, E: Json, fx: Effects, bx: Effects] {
   // The log entries kept (Server.compact once the log holds twice as
   // many), 0 to keep every entry.
   keep: Int
-  // The live connections, each told the server's version when it changes
+  // The live connections, each told its scope's version when it changes
   // (with redact, only when its principal's view changed).
   subs: Mutex[Map[Int, Sub]]
   next_sub: Atomic[Int]
 }
 
+// One scope this instance serves: its copy of the log, the newest version
+// the bus announced, whether the bus may have missed notices (it
+// reconnected), and when it was last used.
+struct Slot[M: Json, E: Json, fx: Effects] {
+  state: Mutex[Scope[M, E, fx]]
+  latest: Atomic[Int]
+  resync: Atomic[Int]
+  used: Atomic[Int]
+}
+
 /// A host for app starting at app.init: one instance, its log in memory.
-pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000) -> Host[M, E, sync, sync] {
+/// scope_of puts each page in a scope of its own (a room, a tenant, a
+/// user), of which the instance keeps at most max_scopes.
+pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000) -> Host[M, E, sync, sync] {
   let subs = Mutex[Map[Int, Sub]].new({})
-  let latest = Atomic[Int].new(0)
-  let resync = Atomic[Int].new(0)
-  let bus = local_bus_of({"": [waker(subs, latest, resync)]})
-  host_core(app, memory_store(), bus, "", subs, latest, resync, title, css, max_batch, client, auth, allow, redact, signin_url, keep)
+  let slots = Mutex[Map[Str, Slot[M, E, sync]]].new({})
+  let bus = local_bus_of([waker(slots, subs)])
+  host_core(app, memory_store(), bus, "", scope_of, max_scopes, slots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep)
 }
 
-/// A host whose log is the scope key `scope` of store, hearing other
-/// instances' appends on bus (decision 0686): Hosts given one store and
-/// one bus act as one App behind a load balancer. The Host performs what
-/// the store and bus perform (a memory store: sync; a networked one: net).
-pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "", title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000) -> Host[M, E, fx, bx] uses bx {
+/// A host whose scopes live in store, hearing other instances' appends on
+/// bus (decision 0686): Hosts given one store and one bus act as one App
+/// behind a load balancer. `scope` is the scope of every page without
+/// scope_of. The Host performs what the store and bus perform (a memory
+/// store: sync; a networked one: net).
+pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "", title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000) -> Host[M, E, fx, bx] uses bx {
   let subs = Mutex[Map[Int, Sub]].new({})
-  let latest = Atomic[Int].new(0)
-  let resync = Atomic[Int].new(0)
-  (bus.subscribe)(scope, waker(subs, latest, resync))
-  host_core(app, store, bus, scope, subs, latest, resync, title, css, max_batch, client, auth, allow, redact, signin_url, keep)
+  let slots = Mutex[Map[Str, Slot[M, E, fx]]].new({})
+  (bus.subscribe)(waker(slots, subs))
+  host_core(app, store, bus, scope, scope_of, max_scopes, slots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep)
 }
 
-// What a Host hears from its bus: every instance's append to the scope
-// (this one's too) wakes the live connections here.
-fn waker(subs: Mutex[Map[Int, Sub]], latest: Atomic[Int], resync: Atomic[Int]) -> fn(Int) uses sync {
-  fn(v: Int) uses sync {
+// What a Host hears from its bus: each instance's append (this one's
+// too) to a scope it holds wakes that scope's live connections; -1 (a
+// reconnect) makes every scope read the store again.
+fn waker[M: Json, E: Json, fx: Effects](slots: Mutex[Map[Str, Slot[M, E, fx]]], subs: Mutex[Map[Int, Sub]]) -> fn(Str, Int) uses sync {
+  fn(scope: Str, v: Int) uses sync {
     if v < 0 {
-      resync.set(1)
-    } else {
-      latest.max(v)
+      slots.with_read(fn(m) {
+        for (_, sl) in m {
+          sl.resync.set(1)
+        }
+      })
+    } else if let Some(sl) = slots.with_read(fn(m) { m.get(scope) }) {
+      // a scope not held here is read from the store when next used
+      sl.latest.max(v)
     }
     subs.with_read(fn(m) {
       for (_, c) in m {
-        let _sent = c.ch.try_send(v)
+        if v < 0 || c.key == scope {
+          let _sent = c.ch.try_send(v)
+        }
       }
     })
   }
 }
 
-fn host_core[M: Json, E: Json, fx: Effects, bx: Effects](app: App[M, E], st: Store[fx], b: Bus[bx], scope: Str, subs: Mutex[Map[Int, Sub]], latest: Atomic[Int], resync: Atomic[Int], title: Str, css: Str, max_batch: Int, client: Bytes, auth: (fn(http.Request) -> Str? uses sync)?, allow: (fn(M, Str, E) -> Bool)?, redact: (fn(M, Str) -> M)?, signin_url: Str, keep: Int) -> Host[M, E, fx, bx] {
-  Host{app: app, auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, state: Mutex.new(ui_scope(app, st, scope, max_batch)), bus: b, key: scope, latest: latest, resync: resync, title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: subs, next_sub: Atomic[Int].new(0)}
+fn host_core[M: Json, E: Json, fx: Effects, bx: Effects](app: App[M, E], st: Store[fx], b: Bus[bx], scope: Str, scope_of: (fn(Str, Str) -> Str?)?, max_scopes: Int, slots: Mutex[Map[Str, Slot[M, E, fx]]], subs: Mutex[Map[Int, Sub]], title: Str, css: Str, max_batch: Int, client: Bytes, auth: (fn(http.Request) -> Str? uses sync)?, allow: (fn(M, Str, E) -> Bool)?, redact: (fn(M, Str) -> M)?, signin_url: Str, keep: Int) -> Host[M, E, fx, bx] {
+  Host{app: app, store: st, bus: b, key: scope, scope_of: scope_of, max_batch: max_batch, slots: slots, max_scopes: if max_scopes < 1 { 1 } else { max_scopes }, tick: Atomic[Int].new(0), auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: subs, next_sub: Atomic[Int].new(0)}
 }
 
-// A live connection: its principal and its channel.
+// A live connection: its principal, its scope and its channel.
 struct Sub {
   p: Str
+  key: Str
   ch: Chan[Int]
 }
 
-// What principal p is shown of m.
+// The slot of scope key, made (and the least recently used scope without
+// a live page dropped, past max_scopes) when this instance has none.
+fn (h: Host[M, E, fx, bx]) slot(key: Str) -> Slot[M, E, fx] {
+  let t = h.tick.add(1)
+  if let Some(sl) = h.slots.with_read(fn(m) { m.get(key) }) {
+    sl.used.set(t)
+    return sl
+  }
+  var busy: Set[Str] = #{}
+  for c in h.subs.with_read(fn(m) { m.values() }) {
+    busy.add(c.key)
+  }
+  let app = h.app
+  let st = h.store
+  let mb = h.max_batch
+  let cap = h.max_scopes
+  h.slots.with(fn(var m) {
+    if let Some(sl) = m.get(key) {
+      sl.used.set(t)
+      return sl
+    }
+    if m.len() >= cap {
+      var old = ""
+      var at = Int.max
+      for (k, sl) in m {
+        let u = sl.used.get()
+        if u < at && !busy.contains(k) {
+          old = k
+          at = u
+        }
+      }
+      if at != Int.max {
+        m.remove(old)
+      }
+    }
+    let sl = Slot{state: Mutex.new(ui_scope(app, st, key, mb)), latest: Atomic[Int].new(0), resync: Atomic[Int].new(0), used: Atomic[Int].new(t)}
+    m.put(key, sl)
+    sl
+  })
+}
+
+// The scopes this instance holds now.
+fn (h: Host[M, E]) held() -> Int {
+  h.slots.with_read(fn(m) { m.len() })
+}
+
 fn (h: Host[M, E]) shown(m: M, p: Str) -> M {
   match h.redact {
     Some(f) => f(m, p)
@@ -1374,25 +1439,27 @@ fn (h: Host[M, E]) digest(m: M, p: Str) -> Str {
   }
 }
 
-fn (h: Host[M, E]) subscribe(p: Str = "") -> (Int, Chan[Int]) {
+fn (h: Host[M, E]) subscribe(p: Str = "", scope: Str? = None) -> (Int, Chan[Int]) {
   let id = h.next_sub.add(1)
   // One slot: a client needs only to know that something changed, and
   // versions that come while its connection is busy fold into one.
   let ch = Chan[Int].new(cap: 1)
-  h.subs.with(fn(var m) { m.put(id, Sub{p: p, ch: ch}) })
+  let key = scope ?? h.key
+  h.subs.with(fn(var m) { m.put(id, Sub{p: p, key: key, ch: ch}) })
   (id, ch)
 }
 
-// Whether a new version is news to a live connection of p that was last
-// told of the view with digest last: Some(the new digest) when p's view
-// changed (always without redact), None when it did not. Each connection
-// asks in its own task, so a change costs the request that made it one
-// send per connection, and the digests run outside every lock.
-fn (h: Host[M, E]) news(p: Str, last: Str) -> Str? {
+// Whether a new version of scope key is news to a live connection of p
+// that was last told of the view with digest last: Some(the new digest)
+// when p's view changed (always without redact), None when it did not.
+// Each connection asks in its own task, so a change costs the request
+// that made it one send per connection, and the digests run outside every
+// lock.
+fn (h: Host[M, E]) news(p: Str, last: Str, key: Str? = None) -> Str? {
   if h.redact.is_none() {
     return Some("")
   }
-  let d = h.digest(h.model(), p)
+  let d = h.digest(h.model(scope: key), p)
   if d == last { None } else { Some(d) }
 }
 
@@ -1400,33 +1467,31 @@ fn (h: Host[M, E]) unsubscribe(id: Int) {
   h.subs.with(fn(var m) { m.remove(id) })
 }
 
-fn (h: Host[M, E]) notify(v: Int) {
-  h.subs.with_read(fn(m) {
-    for (_, c) in m {
-      let _sent = c.ch.try_send(v)
-    }
-  })
-}
-
 /// The number of live connections.
 pub fn (h: Host[M, E]) live() -> Int {
   h.subs.with_read(fn(m) { m.len() })
 }
 
-/// The server's model now.
-/// Applies a Msg of the server's own (Server.apply) and wakes the live
-/// pages: how data from elsewhere (a database, a queue, a timer) reaches
-/// the model.
-pub fn (h: Host[M, E]) apply(msg: E) uses sync {
-  h.try_apply(msg).or_fault("std/ui: Host.apply: the store failed")
+/// Applies a Msg of the server's own (Server.apply) to a scope (the
+/// Host's own by default) and wakes its live pages: how data from
+/// elsewhere (a database, a queue, a timer) reaches the model.
+pub fn (h: Host[M, E]) apply(msg: E, scope: Str? = None) uses sync {
+  h.try_apply(msg, scope: scope).or_fault("std/ui: Host.apply: the store failed")
 }
 
 /// Host.apply, with the store's error (decision 0686).
-pub fn (h: Host[M, E]) try_apply(msg: E) -> () ! Str uses sync {
+pub fn (h: Host[M, E]) try_apply(msg: E, scope: Str? = None) -> () ! Str uses sync {
+  let key = scope ?? h.key
+  let sl = h.slot(key)
   let keep = h.keep
+  let latest = sl.latest.get()
+  let again = sl.resync.swap(0) > 0
   // the copy keeps what it caught up even when the append fails (commit
   // undoes its own change), so the closure's result is a value
-  let (v, err) = h.state.with(fn(var c) -> (Int, Str) {
+  let (v, err) = sl.state.with(fn(var c) -> (Int, Str) {
+    if let Err(e) = c.fresh(latest, again: again) {
+      return (0, e)
+    }
     match c.apply(msg) {
       Ok(_) => {}
       Err(e) => return (0, e)
@@ -1440,18 +1505,33 @@ pub fn (h: Host[M, E]) try_apply(msg: E) -> () ! Str uses sync {
   if err != "" {
     return Err(err)
   }
-  (h.bus.publish)(h.key, v)
+  (h.bus.publish)(key, v)
   Ok(())
 }
 
-pub fn (h: Host[M, E]) model() -> M uses sync {
-  let latest = h.latest.get()
-  let again = h.resync.swap(0) > 0
-  h.state.with(fn(var c) {
+/// The model of a scope (the Host's own by default) now.
+pub fn (h: Host[M, E]) model(scope: Str? = None) -> M uses sync {
+  let sl = h.slot(scope ?? h.key)
+  let latest = sl.latest.get()
+  let again = sl.resync.swap(0) > 0
+  sl.state.with(fn(var c) {
     // a store error leaves this instance's copy, which is still a version
     let _ok = c.fresh(latest, again: again).is_ok()
     c.model()
   })
+}
+
+// The version of scope key this instance holds.
+fn (h: Host[M, E]) version_of(key: Str) -> Int {
+  h.slot(key).state.with_read(fn(c) { c.version() })
+}
+
+// The scope of a page (its path and query) for principal p.
+fn (h: Host[M, E]) scope_for(page: Str, p: Str) -> Str? {
+  match h.scope_of {
+    Some(f) => f(page, p)
+    None => Some(h.key)
+  }
 }
 
 /// Adds the routes to r under prefix ("" or a path like "/todo"): GET
@@ -1465,7 +1545,6 @@ pub fn (h: Host[M, E]) model() -> M uses sync {
 /// that shows the rendered view.
 pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
   let app = h.app
-  let state = h.state
   let title = h.title
   let css = h.css
   // The runtime and the client are served at URLs stamped with their
@@ -1496,7 +1575,7 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     }
   }
   let shown = fn(m: M, p: Str) -> M { hh.shown(m, p) }
-  r.handle("GET ${prefix}/{$}", fn(req) -> http.Response ! Never {
+  let show_page = fn(req: http.Request) -> http.Response ! Never {
     let p = match who(req) {
       Some(x) => x
       None => {
@@ -1506,9 +1585,16 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
         return http.Response{status: 303, headers: {"Location": signin}, body: b""}
       }
     }
-    let latest = hh.latest.get()
-    let again = hh.resync.swap(0) > 0
-    let (m0, v, err) = state.with(fn(var c) -> (M, Int, Str) {
+    // the path, not the query: a query is the page's tab state, which the
+    // client may render itself, so it never changes the scope
+    let at = req.url.path
+    let key = hh.scope_for(at, p) ?? return http.text(404, "std/ui: no such page")
+    // sync and live requests name the page, which gives them its scope
+    let named = if hh.scope_of.is_some() { "?page=" + url.query_escape(at) } else { "" }
+    let sl = hh.slot(key)
+    let latest = sl.latest.get()
+    let again = sl.resync.swap(0) > 0
+    let (m0, v, err) = sl.state.with(fn(var c) -> (M, Int, Str) {
       let e = match c.fresh(latest, again: again) {
         Ok(_) => ""
         Err(x) => x
@@ -1519,8 +1605,13 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
       return http.text(503, "std/ui: ${err}")
     }
     let m = shown(m0, p)
-    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync, css: css, live_url: live, wasm_url: wasm, build: build, seen: hh.digest(m0, p), query: req.url.to_url().raw_query)).with_header("Content-Type", "text/html; charset=utf-8")
-  })
+    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync + named, css: css, live_url: live + named, wasm_url: wasm, build: build, seen: hh.digest(m0, p), query: req.url.to_url().raw_query)).with_header("Content-Type", "text/html; charset=utf-8")
+  }
+  r.handle("GET ${prefix}/{$}", show_page)
+  if h.scope_of.is_some() {
+    // a page under prefix is in the scope its path gives (a room, /room/5)
+    r.handle("GET ${prefix}/{rest...}", show_page)
+  }
   serve_runtime(r, prefix: prefix)
   r.handle("POST ${sync}", fn(req) -> http.Response ! Never {
     let ct = (req.header("Content-Type") ?? "").to_lower()
@@ -1537,9 +1628,11 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     let p = who(req) ?? return http.text(401, "std/ui: sign in first")
     let checked = auth.is_some() || allow.is_some()
     let ok = allow ?? fn(m: M, q: Str, e: E) -> Bool { true }
-    let latest = hh.latest.get()
-    let again = hh.resync.swap(0) > 0
-    let (res, m0, v, before) = state.with(fn(var c) -> (Result[Down[M, E]?, Str], M, Int, Int) {
+    let key = hh.scope_for(req.query("page") ?? "", p) ?? return http.text(404, "std/ui: no such page")
+    let sl = hh.slot(key)
+    let latest = sl.latest.get()
+    let again = sl.resync.swap(0) > 0
+    let (res, m0, v, before) = sl.state.with(fn(var c) -> (Result[Down[M, E]?, Str], M, Int, Int) {
       if let Err(e) = c.fresh(latest, again: again) {
         return (Err(e), c.model(), c.version(), c.version())
       }
@@ -1564,7 +1657,7 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     }
     let d = dd ?? return http.text(403, "std/ui: this client belongs to another principal")
     if v != before {
-      (hh.bus.publish)(hh.key, v)
+      (hh.bus.publish)(key, v)
     }
     let m = shown(m0, p)
     // with redact a log entry may hold what this principal must not see
@@ -1592,20 +1685,21 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
   }
   r.handle("GET ${live}", fn(req) {
     let p = who(req) ?? return http.text(401, "std/ui: sign in first")
-    websocket.upgrade(req, fn(conn) { serve_live(hh, conn, p) })
+    let key = hh.scope_for(req.query("page") ?? "", p) ?? return http.text(404, "std/ui: no such page")
+    websocket.upgrade(req, fn(conn) { serve_live(hh, conn, p, key) })
   })
 }
 
 // A live connection: the server's version now, then each new version; the
 // client syncs when it sees one past its own. Reads only to notice the
 // close.
-fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn, p: Str) {
-  let (id, ch) = h.subscribe(p)
+fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn, p: Str, key: Str) {
+  let (id, ch) = h.subscribe(p, scope: Some(key))
   defer h.unsubscribe(id)
   // the digest after subscribing: a change in between is seen again and
   // skipped if this view already holds it (the page syncs on open)
-  let first = h.digest(h.model(), p)
-  let now = h.state.with_read(fn(c) { c.version() })
+  let first = h.digest(h.model(scope: Some(key)), p)
+  let now = h.version_of(key)
   if conn.write_text("${now}") is Err(_) {
     return
   }
@@ -1614,13 +1708,13 @@ fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn, p: Str) {
       var last = first
       for v in ch {
         // with redact, only a change to what p is shown
-        if let Some(d) = h.news(p, last) {
+        if let Some(d) = h.news(p, last, key: Some(key)) {
           last = d
           // after a resync (-1) the version is this instance's once it has
           // read the store (model() does), which the runtime syncs to
           let at = if v < 0 {
-            let _read = h.model()
-            h.state.with_read(fn(c) { c.version() })
+            let _read = h.model(scope: Some(key))
+            h.version_of(key)
           } else {
             v
           }
@@ -1798,7 +1892,7 @@ function boot(){
     if(busy){again=true;return;}
     busy=true;
     var msgs=queue.filter(function(e){return e.seq>acked;});
-    fetch(url+(mod?"?thin=1&model=1":"?thin=1"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:client,ver:ver,msgs:msgs,seen:dg,query:location.search.slice(1)}),credentials:"same-origin"})
+    fetch(url+(url.indexOf("?")<0?"?":"&")+(mod?"thin=1&model=1":"thin=1"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:client,ver:ver,msgs:msgs,seen:dg,query:location.search.slice(1)}),credentials:"same-origin"})
     .then(function(r){
       var h=H();
       if(dead)throw new Error("sync dead");

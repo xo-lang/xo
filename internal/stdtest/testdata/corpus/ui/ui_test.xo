@@ -138,7 +138,7 @@ test "a Postgres bus is made from a database, a task group and a clock" {
     let b = ui.pg_bus(sql.memory()?, g, os.clock)
     // a database without NOTIFY: the instance's own subscribers still hear it
     let heard = Chan[Int].new(cap: 4)
-    (b.subscribe)("k", fn(v: Int) uses sync { let _f = heard.try_send(v) })
+    (b.subscribe)(fn(k: Str, v: Int) uses sync { let _f = heard.try_send(v) })
     (b.publish)("k", 1)
     var v = -1
     while v < 0 {

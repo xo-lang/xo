@@ -19,7 +19,7 @@ function storage() {
   };
 }
 const local = storage();
-const server = { acked: new Map(), applied: [], down: false, status: 200, reloads: 0, build: "", syncs: 0, live: null, sockets: [], seen: null, seens: [], search: "", queries: [] };
+const server = { acked: new Map(), applied: [], down: false, status: 200, reloads: 0, build: "", syncs: 0, live: null, sockets: [], seen: null, seens: [], search: "", queries: [], sync: "/_xo/sync", urls: [] };
 function receive(up) {
   let a = server.acked.get(up.client) ?? 0;
   for (const e of up.msgs) {
@@ -39,7 +39,7 @@ function tab() {
   const attrs = {};
   const root = {
     innerHTML: "",
-    getAttribute: (k) => (k === "data-xo-sync" ? "/_xo/sync" : k === "data-xo-build" ? server.build || null : k === "data-xo-live" ? server.live : k === "data-xo-seen" ? server.seen : null),
+    getAttribute: (k) => (k === "data-xo-sync" ? server.sync : k === "data-xo-build" ? server.build || null : k === "data-xo-live" ? server.live : k === "data-xo-seen" ? server.seen : null),
     addEventListener: (n, f) => { handlers[n] = f; },
     contains: () => true,
   };
@@ -61,6 +61,7 @@ function tab() {
     sessionStorage: storage(),
     fetch: async (url, init) => {
       server.syncs++;
+      server.urls.push(url);
       if (server.down) throw new Error("offline");
       if (server.status !== 200) return { ok: false, status: server.status, json: async () => ({}) };
       const body = receive(JSON.parse(init.body));
@@ -158,6 +159,14 @@ if (scenario === "query") {
   const a = tab(); await settle();
   await click(a, "a1");
   extra = { before: server.queries.join(",") };
+}
+if (scenario === "scoped") {
+  // a page in a scope (decision 0686) names itself in its sync URL; the
+  // runtime's own parameters join that query
+  server.sync = "/_xo/sync?page=%2Froom%2F1";
+  const a = tab(); await settle();
+  await click(a, "a1");
+  extra = { before: server.urls[server.urls.length - 1] };
 }
 if (scenario === "pointer") {
   // a sync reply lands while the pointer is down on the view: the view is
