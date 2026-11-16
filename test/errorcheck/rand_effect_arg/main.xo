@@ -1,0 +1,30 @@
+// Decision 0652: Rand takes its effect as a parameter. The OS generator
+// is a Rand[rand], so its callers still perform rand; a pure Rand[()]
+// keeps its caller pure; a value whose methods use rand is not a
+// Rand[()].
+struct Loud {
+  n: Int
+}
+
+fn (l: Loud) int(lo: Int, hi: Int) -> Int uses rand { lo }
+fn (l: Loud) float() -> Float uses rand { 0.0 }
+fn (l: Loud) bool() -> Bool uses rand { false }
+fn (l: Loud) bytes(n: Int) -> Bytes uses rand { b"" }
+fn (l: Loud) shuffle[T](xs: List[T]) -> List[T] uses rand { xs }
+
+pub fn exact(r: Rand[rand]) -> Int { r.int(0, 10) } // ERROR XO0701 "performs `rand`"
+
+/// An omitted argument is the caller's: no `uses` needed here.
+pub fn any_rand(r: Rand) -> Int { r.int(0, 10) }
+
+pub fn pure_caller(r: Rand[rand]) -> Int { any_rand(r) } // ERROR XO0701 "performs `rand`"
+
+pub fn loud_caller() -> Int { any_rand(Loud{n: 1}) } // ERROR XO0701 "performs `rand`"
+
+pub fn wants_pure(r: Rand[()]) -> Int { r.int(0, 10) }
+
+pub fn loud_as_pure() -> Int { wants_pure(Loud{n: 1}) } // ERROR XO0701 "`Loud.int` performs `rand`"
+
+fn main(os: Os) {
+  os.stdio.println("${any_rand(os.rand)}")
+}

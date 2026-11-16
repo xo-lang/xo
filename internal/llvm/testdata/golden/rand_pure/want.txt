@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+pure 9 true [3, 2, 1]
+os in range true
+--- stderr

@@ -106,13 +106,13 @@ pub struct TickState {
 pub struct Ticker {
   pub b: Backoff
   pub clock: Clock
-  pub rand: Rand
+  pub rand: Rand[rand]
   pub st: Mutex[TickState]
 }
 
 /// A ticker of b on clock, drawing its jitter from rand (NewTicker; the
 /// clock is NewTickerWithTimer's Timer). Its schedule starts now.
-pub fn ticker(b: Backoff, clock: Clock, rand: Rand) -> Ticker uses clock {
+pub fn ticker(b: Backoff, clock: Clock, rand: Rand[rand]) -> Ticker uses clock {
   let now = clock.now()
   Ticker{b: b, clock: clock, rand: rand, st: Mutex[TickState].new(TickState{ticks: 0, due: Some(now), start: now})}
 }

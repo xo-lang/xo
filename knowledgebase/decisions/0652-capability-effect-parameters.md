@@ -240,3 +240,46 @@ together.
   fact (held on one path at a join), the value and its source line, and
   print the path depth reached. Xo Lang 1 adds this the next time it
   works in compiler/ssa/rc.xo.
+
+## Addendum 2026-11-16: steps 1 and 2a (Xo Lang 1, task #141)
+
+Step 1, measured 2026-11-16 (xo at 713fcc92d, darwin/arm64, LLVM symbols):
+effect arguments are not in the monomorphization or interface-table key.
+A generic `sum_src[fx](a: Src[fx], b: Src[fx])` called with a `Src[()]`
+and a `Src[stdio]` is one function (`x.sum_src`); `sum_gen[T, fx]` is
+keyed by T only (`x.sum_gen[Int]`); a struct converted to `Src[()]` and
+to `Src[stdio]` has one thunk (`xo.iface[Src].Pure.next`). The SSA
+instantiates for every backend, so arm64 is the same. `xo refs Rand` over
+std: 89 sites; the positions that changed meaning were struct fields
+(testing.TestOs, backoff.Ticker, trace.Recorder, otlp.Exporter, llrt
+userfs) and parameters forwarded into a `rand` slot.
+
+Step 2a (the checker and the prelude, this push):
+
+- `interface Rand[fx: Effects]`, methods `uses fx`; `Os.rand: Rand[rand]`.
+  There was no checker special case to remove: the tie to `rand` was the
+  interface's own `uses rand`.
+- Checker: a value converted to an interface whose effect argument is a
+  call's open variable (an omitted `Rand` parameter's) adds its methods'
+  effects as a lower bound with an open tail, as a function argument
+  does (decision 0432, compiler/check/infer.xo implements). Before, the
+  variable closed to `()` and a value whose methods use rand was refused
+  as a `Rand[()]`.
+- Checker: a closure's `uses` admits its enclosing function's omitted
+  effect arguments (compiler/check/expr.xo), which no `uses` list can
+  name (core 6.2's rule for the function itself).
+- XO0701 note when the missing label came from the value passed for an
+  omitted capability argument: "pass a `Rand[()]` ... to keep the caller
+  pure" (effects.xo capability_value_note).
+- std: the struct fields that hold the OS generator, and the parameters
+  forwarded into them, are written `Rand[rand]` (their meaning before);
+  llrt rsagen.generate is generic over its byte source's effect.
+- Tests: golden rand_pure (a `Rand[()]` caller with no `uses`, an omitted
+  argument, os.rand), errorcheck rand_effect_arg (a `Rand[rand]` caller,
+  a rand-using value through an omitted argument, a rand-using value as
+  `Rand[()]`).
+
+Next: step 2b, std/random's `fixed` and `seeded` (`Rand[()]`), the
+llrt-private pure runtime Rand (open question 2), then HPKE's sender
+back to a Rand and tlsech.xo's copy removed (step 4).
+

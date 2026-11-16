@@ -1343,7 +1343,11 @@ fn (var c: Checker) call_method(bt: Int, sspan: Span, x: Expr, sel: Ident, targs
     for p in c.objs[m].tparams {
       if c.objs[p].flags.implicit() {
         if c.objs[p].flags.effect() {
-          pre[p] = c.fresh_effarg()
+          // the call's own variable, as a function call's (call_effarg):
+          // an omitted `Rand` parameter's binds to its argument's effects
+          // (decision 0652; a method's was a plain variable, so a Rand
+          // whose methods use rand failed as a `Rand[()]`, 2026-11-16)
+          pre[p] = c.call_effarg()
         } else {
           pre[p] = c.new_var()
         }

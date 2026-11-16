@@ -321,6 +321,29 @@ fn (var c: Checker) implicit_callee_note(d: Int, sub: Flat, sup: Flat) {
   }
 }
 
+/// The note on an XO0701 whose missing label comes from the value passed
+/// for a capability parameter written without its effect argument (`r:
+/// Rand`, decision 0652): the callee performs what the value performs, so
+/// a pure value (a `Rand[()]`) keeps the caller pure.
+fn (var c: Checker) capability_value_note(d: Int, sub: Flat, sup: Flat) {
+  for (k, l) in sub.labels.indexed() {
+    let q = sub.label_items[k].from_param
+    if sup.labels.contains(l) || q < 0 || q >= c.objs.len() {
+      continue
+    }
+    let o = c.objs[q]
+    if !o.flags.elided() || !o.flags.effect() || o.elided_from.is_empty() {
+      continue
+    }
+    let from = o.elided_from[0]
+    if !(from.text is "Rand" | "Clock" | "Env" | "Fs" | "Net" | "Stdio" | "Proc") {
+      continue
+    }
+    c.diags[d].notes.push(DNote{message: "`${l}` comes from the value passed for this `${from.text}`, whose effect argument is left out: the callee performs what the value performs; pass a `${from.text}[()]` (a seeded or fixed one) to keep the caller pure (decision 0652)", span: Some(JSpan{file: from.file, line: from.at.start.line, col: from.at.start.col})})
+    return
+  }
+}
+
 /// A new effect set (an index into esets).
 fn (var c: Checker) new_eset(items: List[EffItem]) -> Int {
   let i = c.esets.len()
@@ -811,6 +834,7 @@ fn (var c: Checker) solve_effects() {
     }
     c.elided_effect_note(d, sub, sup, ob)
     c.implicit_callee_note(d, sub, sup)
+    c.capability_value_note(d, sub, sup)
     // the corrected clause, when those notes gave no fix of their own
     // (theirs name an effect argument instead; lead, 2026-11-08)
     var uses_fix: (Str, DEdit, Str)? = None

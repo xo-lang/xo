@@ -1,0 +1,40 @@
+// A function value's thunk that std's object and the program both make
+// (task #146, 2026-11-16): hpke.seal and encap take an implicit Rand, so
+// they are generic over its effects (decision 0652) and the program
+// builds them; encap's map_err(key_err) makes `hpke.key_err.value` there
+// while std's decap made the same thunk in std's object. With the std
+// variant (separate compilation) the link said "duplicate symbol
+// _xo_f_hpke_2ekey__err_2evalue"; a thunk is now shared (weak) as a
+// generic instance is.
+use std/hpke
+
+/// A Rand with no effects: a counter's bytes.
+struct Count {
+  n: Mutex[Int]
+}
+
+fn (c: Count) next() -> Int { c.n.with(fn(var n: Int) -> Int { n += 1; n }) }
+fn (c: Count) int(lo: Int, hi: Int) -> Int { lo + c.next() % (hi - lo) }
+fn (c: Count) float() -> Float { 0.5 }
+fn (c: Count) bool() -> Bool { c.next() % 2 == 0 }
+fn (c: Count) bytes(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for _ in 0..n {
+    b.write_byte(UInt8.wrapping_from(c.next() * 37 + 11))
+  }
+  b.freeze()
+}
+fn (c: Count) shuffle[T](xs: List[T]) -> List[T] { xs }
+
+fn seal_pure(r: Rand[()], pk: hpke.PublicKey, msg: Bytes) -> Bytes {
+  hpke.seal(r, pk, hpke.Kdf.HkdfSha256, hpke.Aead.ChaCha20Poly1305, b"info", msg).or_fault("seal")
+}
+
+fn main(os: Os) {
+  let k = hpke.Kem.DhkemX25519.generate_key(os.rand)
+  let a = seal_pure(Count{n: Mutex[Int].new(0)}, k.public_key(), b"hello")
+  let b = seal_pure(Count{n: Mutex[Int].new(0)}, k.public_key(), b"hello")
+  os.stdio.println("same ${a == b} len ${a.len()}")
+  let pt = hpke.open(k, hpke.Kdf.HkdfSha256, hpke.Aead.ChaCha20Poly1305, b"info", a).or_fault("open")
+  os.stdio.println("open ${pt.to_str() ?? "?"}")
+}

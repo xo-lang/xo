@@ -423,9 +423,14 @@ fn (g: G) shared_def() -> Bool {
 }
 
 /// Whether function n is one std's object and a program's may both
-/// define (shared_def; x86win.xo's Win64 entry shims follow it).
+/// define (shared_def; x86win.xo's Win64 entry shims follow it): a
+/// generic instance, a helper, or a function value's thunk (ssa call.xo's
+/// `NAME.value`, named by its callee alone: a function generic only over
+/// effects, which the program builds (decision 0652), makes the thunk of
+/// a std function std's object made too; task #146, a duplicate symbol
+/// `hpke.key_err.value` at the link, 2026-11-16).
 fn shared_name(n: Str) -> Bool {
-  n.contains("[") || n.starts_with("xo.") || n.starts_with("zero.") || n.starts_with("zero_val.")
+  n.contains("[") || n.starts_with("xo.") || n.starts_with("zero.") || n.starts_with("zero_val.") || n.ends_with(".value")
 }
 
 /// The directive that makes s a weak definition (Module.weak_shared: a

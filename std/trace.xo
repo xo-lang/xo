@@ -93,7 +93,7 @@ pub fn ring(cap: Int = 1000) -> Ring {
 /// printable characters) or makes a random 64 bit one, puts it in the
 /// request (`id(req)`), answers it in the `X-Request-Id` header, and
 /// records a `request` span.
-pub fn (r: Ring) middleware(rand: Rand, clock: Clock) -> fn(http.Request, http.Next) -> http.Response uses (rand, clock, sync) {
+pub fn (r: Ring) middleware(rand: Rand[rand], clock: Clock) -> fn(http.Request, http.Next) -> http.Response uses (rand, clock, sync) {
   fn(req, next) -> http.Response {
     let given = req.header("X-Request-Id") ?? ""
     let rid = if valid_id(given) { given } else { rand_hex(rand, 8) }
@@ -144,11 +144,11 @@ pub fn (r: Ring) spans(min: Duration, n: Int) -> List[Span] {
 pub struct Recorder {
   pub ring: Ring
   pub clock: Clock
-  pub rand: Rand
+  pub rand: Rand[rand]
 }
 
 /// A recorder writing into `ring`.
-pub fn recorder(ring: Ring, clock: Clock, rand: Rand) -> Recorder {
+pub fn recorder(ring: Ring, clock: Clock, rand: Rand[rand]) -> Recorder {
   Recorder{ring: ring, clock: clock, rand: rand}
 }
 

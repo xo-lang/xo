@@ -1284,7 +1284,10 @@ fn backoff(clock: Clock, d: Duration) -> () ! FetchErr uses clock {
 ### 3.4 Rand (`uses rand`)
 
 Cryptographically secure for real capabilities, seeded and deterministic in
-tests.
+tests. `interface Rand[fx: Effects]`: each method `uses fx`, so the
+effect is the value's (decision 0652, core 6.3): `os.rand` and a test's
+`t.rand` are `Rand[rand]`; a program's own Rand whose methods perform
+nothing is a `Rand[()]` and keeps its caller pure.
 
 ```
 fn (r: Rand) int(lo: Int, hi: Int) -> Int    // in [lo, hi)
@@ -8330,11 +8333,11 @@ fn since(self, t: Time) -> Duration uses clock
 ### Rand
 
 ```
-fn int(self, lo: Int, hi: Int) -> Int uses rand
-fn float(self) -> Float uses rand
-fn bool(self) -> Bool uses rand
-fn bytes(self, n: Int) -> Bytes uses rand
-fn shuffle[T](self, xs: List[T]) -> List[T] uses rand
+fn int(self, lo: Int, hi: Int) -> Int uses fx
+fn float(self) -> Float uses fx
+fn bool(self) -> Bool uses fx
+fn bytes(self, n: Int) -> Bytes uses fx
+fn shuffle[T](self, xs: List[T]) -> List[T] uses fx
 ```
 
 ### ClockErr

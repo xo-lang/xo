@@ -451,7 +451,7 @@ fn exporterr_display(e: otlp.ExportErr) -> Str {
   }
 }
 
-fn exporter(client: http.Client, endpoint: Str, res: otlp.Resource, clock: Clock, rand: Rand) -> otlp.Exporter {
+fn exporter(client: http.Client, endpoint: Str, res: otlp.Resource, clock: Clock, rand: Rand[rand]) -> otlp.Exporter {
   otlp.Exporter{client: client, endpoint: endpoint.trim_suffix("/"), resource: res, headers: {}, backoff: backoff.Backoff{initial: 500ms, multiplier: 1.5, randomization: 0.5, max_interval: 60s, max_elapsed: 15m, max_tries: 5}, clock: clock, rand: rand}
 }
 

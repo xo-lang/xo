@@ -2259,6 +2259,29 @@ fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
   }
   var eff = cx.eff
   if declared >= 0 {
+    // the enclosing function's omitted effect arguments (a `r: Rand`
+    // parameter's, decision 0652) are allowed: no `uses` list can name
+    // them, and the function itself performs them without naming them
+    // (core 6.2)
+    var k = saved_ctx
+    while k >= 0 && c.ctxs[k].fn_obj < 0 && c.ctxs[k].closure {
+      k = c.ctxs[k].parent
+    }
+    if k >= 0 && c.ctxs[k].fn_obj >= 0 {
+      var extra: List[EffItem] = []
+      for p in c.objs[c.ctxs[k].fn_obj].tparams {
+        if c.objs[p].flags.elided() && c.objs[p].flags.effect() {
+          extra.push(EffItem{param: p})
+        }
+      }
+      if !extra.is_empty() {
+        var items: List[EffItem] = []
+        for it in c.esets[declared] {
+          items.push(it)
+        }
+        declared = c.new_eset(items + extra)
+      }
+    }
     var ob = EffOb{kind: ObKind.Closure, sub: cx.eff, sup: declared, file: c.path, span: x.span}
     if let Some(us) = c.uses_clause_span(x) {
       ob.uses_file = c.path

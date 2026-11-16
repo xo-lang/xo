@@ -1,0 +1,36 @@
+// A capability's effect is its value's (decision 0652): Rand takes an
+// effect parameter, so a Rand whose methods perform nothing is a Rand[()]
+// and a function given one stays pure. Before, every call through a Rand
+// performed `rand`, so `pure_draw` below was XO0701.
+struct Fixed {
+  n: Int
+}
+
+fn (f: Fixed) int(lo: Int, hi: Int) -> Int { lo + f.n % (hi - lo) }
+fn (f: Fixed) float() -> Float { 0.25 }
+fn (f: Fixed) bool() -> Bool { f.n % 2 == 1 }
+fn (f: Fixed) bytes(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for i in 0..n {
+    b.write_byte(UInt8.wrapping_from(f.n + i))
+  }
+  b.freeze()
+}
+fn (f: Fixed) shuffle[T](xs: List[T]) -> List[T] { xs.reverse() }
+
+/// Generic over the Rand's effect: performs what its Rand performs.
+fn draw[fx: Effects](r: Rand[fx]) -> Int uses fx { r.int(0, 100) + r.bytes(2).len() }
+
+/// No `uses`: its Rand is pure.
+fn pure_draw(r: Rand[()]) -> Int { draw(r) }
+
+/// An omitted argument is the caller's effect (core 6.2).
+fn any_draw(r: Rand) -> Bool { r.bool() }
+
+fn main(os: Os) {
+  let f = Fixed{n: 7}
+  os.stdio.println("pure ${pure_draw(f)} ${any_draw(f)} ${f.shuffle([1, 2, 3])}")
+  // the OS generator is a Rand[rand]: its callers perform rand (main may)
+  let x = draw(os.rand)
+  os.stdio.println("os in range ${x >= 2 && x < 102}")
+}

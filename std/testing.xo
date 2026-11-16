@@ -20,7 +20,7 @@ struct TestOs {
   net: FakeNet
   fs: MemFs
   clock: FakeClock
-  rand: Rand
+  rand: Rand[rand]
   env: FakeEnv
   stdio: FakeStdio
   proc: FakeProc

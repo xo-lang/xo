@@ -146,7 +146,7 @@ fn limbs_masked(b: Bytes, excess: Int) -> List[Int] {
 
 /// A random prime of the given size (at least 16 bits) from rd's bytes
 /// (randomPrime).
-fn random_prime(rd: fn(Int) -> Bytes uses rand, bits: Int, ps: List[Int]) -> List[Int] uses rand {
+fn random_prime[fx: Effects](rd: fn(Int) -> Bytes uses fx, bits: Int, ps: List[Int]) -> List[Int] uses (rand, fx) {
   let n = (bits + 7) / 8
   while true {
     let b = rd(n)
@@ -249,7 +249,9 @@ fn minimal(x: List[Int]) -> Bytes {
 /// A key of `bits` (at least 32, as Go's fips140 GenerateKey) with the
 /// exponent 65537 from rd's bytes; none when the source is broken (p = q)
 /// or an internal check fails.
-pub fn generate(bits: Int, rd: fn(Int) -> Bytes uses rand) -> rsa.PrivateKey? uses rand {
+/// rd's effects are the caller's (decision 0652: a pure Rand's bytes keep
+/// the key generation free of `rand` but for is_prime's bases).
+pub fn generate[fx: Effects](bits: Int, rd: fn(Int) -> Bytes uses fx) -> rsa.PrivateKey? uses (rand, fx) {
   let ps = small_primes()
   let e = 65537
   while true {

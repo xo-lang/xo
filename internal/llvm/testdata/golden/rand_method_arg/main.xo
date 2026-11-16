@@ -1,0 +1,48 @@
+// A method's omitted Rand parameter takes its argument's effects, as a
+// function's does (decision 0652): a Rand whose methods use rand makes the
+// call use rand, a pure one keeps the caller pure. Before, a method's
+// effect variable was not the call's own, and backoff.Backoff.delay given
+// such a Rand failed with XO0701 "`Seq` is used as `Rand[()]`".
+use std/backoff
+
+struct Seq {
+  at: Mutex[Int]
+}
+
+fn (s: Seq) float() -> Float uses rand { 0.5 }
+fn (s: Seq) int(lo: Int, hi: Int) -> Int uses rand { lo + s.at.with(fn(var n: Int) -> Int { n += 1; n }) }
+fn (s: Seq) bool() -> Bool uses rand { false }
+fn (s: Seq) bytes(n: Int) -> Bytes uses rand { Bytes.zeroed(n) }
+fn (s: Seq) shuffle[T](xs: List[T]) -> List[T] uses rand { xs }
+
+struct Fixed {}
+
+fn (f: Fixed) float() -> Float { 0.25 }
+fn (f: Fixed) int(lo: Int, hi: Int) -> Int { hi - 1 }
+fn (f: Fixed) bool() -> Bool { true }
+fn (f: Fixed) bytes(n: Int) -> Bytes { Bytes.zeroed(n) }
+fn (f: Fixed) shuffle[T](xs: List[T]) -> List[T] { xs }
+
+struct Dice {
+  sides: Int
+}
+
+fn (d: Dice) roll(r: Rand) -> Int { r.int(1, d.sides + 1) }
+
+/// Pure: its method calls are given a pure Rand.
+fn pure_rolls(d: Dice) -> Int uses () { d.roll(Fixed{}) + d.roll(Fixed{}) }
+
+fn effectful(d: Dice) -> Int uses rand { d.roll(Seq{at: Mutex[Int].new(0)}) }
+
+fn main(os: Os) {
+  let b = backoff.Backoff{initial: Duration.from_nanos(2), randomization: 0.5}
+  os.stdio.println("delay ${b.delay(0, Seq{at: Mutex[Int].new(0)}).nanos()}")
+  let d = Dice{sides: 6}
+  os.stdio.println("pure ${pure_rolls(d)} seq ${effectful(d)} os ${d.roll(os.rand) >= 1}")
+  // a Ticker holds the Rand[rand] its jitter draws from: the first tick
+  // is due at once, none after stop
+  let t = backoff.ticker(b, os.clock, os.rand)
+  let first = t.next()
+  t.stop()
+  os.stdio.println("ticker first ${first != None} after stop ${t.next() == None}")
+}

@@ -1349,7 +1349,7 @@ struct Os {
   net: Net
   fs: Fs
   clock: Clock
-  rand: Rand
+  rand: Rand[rand]
   env: Env
   proc: Proc
   stdio: Stdio
@@ -1780,12 +1780,17 @@ interface Clock {
   fn since(self, t: Time) -> Duration uses clock
 }
 
-interface Rand {
-  fn int(self, lo: Int, hi: Int) -> Int uses rand
-  fn float(self) -> Float uses rand
-  fn bool(self) -> Bool uses rand
-  fn bytes(self, n: Int) -> Bytes uses rand
-  fn shuffle[T](self, xs: List[T]) -> List[T] uses rand
+/// A source of randomness. Its effect is the value's (decision 0652):
+/// the OS generator is a `Rand[rand]`, a value whose methods perform
+/// nothing (a seeded or fixed source) a `Rand[()]`, which keeps its
+/// caller pure. A `Rand` written without the argument takes the caller's
+/// (core 6.2).
+interface Rand[fx: Effects] {
+  fn int(self, lo: Int, hi: Int) -> Int uses fx
+  fn float(self) -> Float uses fx
+  fn bool(self) -> Bool uses fx
+  fn bytes(self, n: Int) -> Bytes uses fx
+  fn shuffle[T](self, xs: List[T]) -> List[T] uses fx
 }
 
 /// The error of `Clock.sleep_or_cancel` (decision 0088).

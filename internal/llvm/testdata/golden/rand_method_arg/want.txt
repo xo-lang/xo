@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+delay 2
+pure 12 seq 2 os true
+ticker first true after stop true
+--- stderr

@@ -558,6 +558,37 @@ fn (var c: Checker) structural(t: Int, iface: Int, sp: Span) -> Bool {
       // 0522)
       let sub = if mx.declared >= 0 { c.performed(c.subst_eff(mx.declared, ms2, 0), mx.file, msp, c.display_name(m)) } else { c.new_eset([EffItem{fn_obj: m, sub: ms2, has_sub: true, file: mx.file, span: msp}]) }
       let sup = if c.objs[im].declared >= 0 { c.subst_eff(c.objs[im].declared, is, 0) } else { c.new_eset([]) }
+      // not when the method's effects reach the variable itself (a
+      // recursive Policy[fx]/Next[fx]: binding it made a cycle, and
+      // open_evar overflowed the stack, iface_param_effects 2026-11-16)
+      let v0 = c.open_evar(sup)
+      let v = if v0 >= 0 && c.open_evar(sub) == v0 { -1 } else { v0 }
+      if v >= 0 && (c.evar_is(v, EV_CALL) || c.evar_is(v, EV_TAIL)) {
+        // the interface's effect argument is a call's own variable (an
+        // omitted `Rand` parameter's, decision 0652): the method's effects
+        // are a lower bound with an open tail, as a function argument's
+        // (decision 0432), so a value whose methods use rand makes the
+        // call perform rand, and a pure one nothing
+        let tl = c.evars.len()
+        c.evars.push(-1)
+        c.mark_evar(tl, EV_TAIL)
+        var items: List[EffItem] = []
+        for it in c.esets[sub] {
+          items.push(it)
+        }
+        items.push(EffItem{evar: tl})
+        c.bind_eff(v, c.new_eset(items))
+      } else if v >= 0 && !c.evar_is(v, EV_CALL) && !c.evar_is(v, EV_TAIL) {
+        // a plain variable (a local `let r: Rand = v` annotation's
+        // omitted argument, or a generic's inferred one): the value's
+        // effects exactly (decision 0652; it closed to () and a Rand
+        // whose methods use rand failed as a `Rand[()]`, 2026-11-16)
+        var items: List[EffItem] = []
+        for it in c.esets[sub] {
+          items.push(it)
+        }
+        c.bind_eff(v, c.new_eset(items))
+      }
       c.obligations.push(EffOb{kind: ObKind.Iface, sub: sub, sup: sup, file: c.path, span: sp, fo: m, ty: t, iface: iface, meth: text(c.objs[im].name)})
     }
   }

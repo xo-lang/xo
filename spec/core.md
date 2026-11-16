@@ -3023,11 +3023,26 @@ fn main(os: Os) ! {
 }
 ```
 
-`Os` has fields `net: Net`, `fs: Fs`, `clock: Clock`, `rand: Rand`, `env: Env`,
+`Os` has fields `net: Net`, `fs: Fs`, `clock: Clock`, `rand: Rand[rand]`, `env: Env`,
 `proc: Proc`, `stdio: Stdio`, and `tasks: task.Group` (program lifetime task
 group, core 7.1). Each capability type is a predeclared interface,
 so test fakes and attenuated versions satisfy it. Their methods are in
 `spec/std.md`.
+
+`Rand` takes its effect as a parameter (decision 0652): `interface
+Rand[fx: Effects]`, each method `uses fx`. The effect is the value's, not
+the type's: `os.rand` is a `Rand[rand]`, and a value whose methods perform
+nothing (a seeded or fixed source) is a `Rand[()]`, which performs nothing
+where it is used, so code that takes its randomness as a value stays pure
+when given a pure one. The parameter is covariant (decision 0582): a
+`Rand[()]` is accepted where a `Rand[rand]` is. A `Rand` written without
+the argument takes it from the value passed (6.2): a function `fn f(r:
+Rand)` performs what its caller's value performs, `rand` for `os.rand`
+and nothing for a `Rand[()]`, and a closure inside it may perform it
+without naming it in its `uses`. A struct field of type `Rand` gives the
+struct an implicit effect parameter; a field that holds the OS generator
+is written `Rand[rand]`. Clock, Env, Fs, Net, Stdio and Proc follow in
+later steps (decision 0652).
 
 `os.fs` is rooted at the filesystem root and accepts absolute paths
 (`/home/me/a`, `C:/data`). Relative paths given to `os.fs` resolve against the

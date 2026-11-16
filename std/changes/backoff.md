@@ -1,5 +1,16 @@
 # std/backoff changes
 
+## 2026-11-16: behavior: `ticker` takes a `Rand[rand]` and `Ticker.rand` is a `Rand[rand]` (decision 0652)
+
+- Kind: behavior
+- Commit: this push
+- Found by: task #141, Rand's effect parameter (decision 0652)
+- Go reference: none (Xo's effect system)
+- Test: std module tests; golden rand_pure
+- Shipped in: not yet released
+
+Rand takes its effect as a parameter now; these hold the OS generator, so they are written with the effect they had before. A `Rand[()]` (a pure one) is still accepted.
+
 ## 2026-11-16: fix: a multiplier below 1 shrinks the interval after the cap
 
 - Kind: fix

@@ -52,11 +52,11 @@ struct Exporter {
   headers: Map[Str, Str]
   backoff: backoff.Backoff
   clock: Clock
-  rand: Rand
+  rand: Rand[rand]
 }
 
 /// An exporter to the collector at `endpoint` (`http://host:4318`, no path), for the spans and metrics of `res`.
-fn exporter(client: http.Client, endpoint: Str, res: Resource, clock: Clock, rand: Rand) -> Exporter
+fn exporter(client: http.Client, endpoint: Str, res: Resource, clock: Clock, rand: Rand[rand]) -> Exporter
 /// The exporter sending these headers on every request (an API key, `Authorization`).
 fn (e: Exporter) with_headers(h: Map[Str, Str]) -> Exporter
 /// The exporter retrying on schedule b (5 tries by default).
