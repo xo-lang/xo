@@ -1675,6 +1675,13 @@ Last verified: 2026-11-15
     `mainbisect.sh GOOD BAD ./PKG TestName`; MAINBISECT=0 turns the
     automatic run off; logs in $LEAD/notes/bisect/. Last verified:
     2026-11-16.
+  - Agent rules registry (#139): [agent-rules.md](agent-rules.md) lists
+    every rule's home, enforcement and test (TestAgentRulesRegistry in
+    internal/repotest fails when a listed path goes missing) and the
+    schedules. xw raises `rule-gap` when an alert kind repeats 3 times in
+    7 days with no enforced rule listing it, and `schedule-missed` when a
+    schedule's evidence is older than twice its period. A new rule, check
+    or schedule adds its row in the same change. Last verified: 2026-11-16.
   - `xw isdone TERM...` (before assigning; replaces agents/isdone.sh):
     main commits of 21 days, xw tasks in any state, xw decisions,
     knowledgebase decisions, std change logs and spec/std.md that hold
