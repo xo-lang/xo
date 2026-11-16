@@ -1508,11 +1508,15 @@ fn divisors(m: Int, base: Int, nd: Int, bb: Int) -> List[Divisor] {
   table
 }
 
-/// Go's convertWords: the digits of q (base `base`) right aligned in
-/// s[lo..hi), zero filled. A large q is split by the table's divisors
-/// near its square root, the remainder converted into the low digits and
-/// the quotient continued; a small one is divided by bb word by word.
-fn convert_words(q0: List[Int], var s: List[Int], lo: Int, hi0: Int, base: Int, nd: Int, bb: Int, table: List[Divisor], upto: Int) {
+/// Go's convertWords: the digit characters of q (base `base`) right
+/// aligned in the bytes [lo, hi) at address p, '0' filled. A large q is
+/// split by the table's divisors near its square root, the remainder
+/// converted into the low digits and the quotient continued; a small one
+/// is divided by bb word by word. The characters go straight to the
+/// result's bytes (2026-11-15: a List[Int] of digit values, zeroed, then
+/// a second pass mapping them to characters, was 27% of bench/perf/big
+/// text, 1.107 of Go's wall).
+fn convert_words(q0: List[Int], p: Int, lo: Int, hi0: Int, base: Int, nd: Int, bb: Int, table: List[Divisor], upto: Int, ds: Bytes) {
   var q = q0
   var hi = hi0
   var index = upto - 1
@@ -1532,7 +1536,7 @@ fn convert_words(q0: List[Int], var s: List[Int], lo: Int, hi0: Int, base: Int, 
       let (qq, r) = nat_divmod(q, table[index].bbb)
       q = qq
       let h = hi - table[index].nd
-      convert_words(r, s, h, hi, base, nd, bb, table, index)
+      convert_words(r, p, h, hi, base, nd, bb, table, index, ds)
       hi = h
     }
   }
@@ -1547,27 +1551,37 @@ fn convert_words(q0: List[Int], var s: List[Int], lo: Int, hi0: Int, base: Int, 
     }
     var j = 0
     if base == 10 {
-      // Go's "hard-coded for speed": a division by the constant 10 is a
-      // multiply
+      // Go's "hard-coded for speed", two digits a step: a division by the
+      // constant 100 is a multiply, and d / 10 for d < 100 is
+      // (d * 103) >> 10
+      while j + 2 <= nd && i - 2 >= lo {
+        i -= 2
+        let t = r / 100
+        let d = r - t * 100
+        let d1 = (d * 103) >> 10
+        rt.mem_store(p, i, (48 + d1) | ((48 + d - d1 * 10) << 8), 2)
+        r = t
+        j += 2
+      }
       while j < nd && i > lo {
         i -= 1
         let t = r / 10
-        s[i] = r - t * 10
+        rt.mem_store(p, i, 48 + r - t * 10, 1)
         r = t
         j += 1
       }
     } else {
       while j < nd && i > lo {
         i -= 1
-        s[i] = r % base
-        r = r / base
+        let t = r / base
+        rt.mem_store(p, i, Int(ds[r - t * base]), 1)
+        r = t
         j += 1
       }
     }
   }
-  while i > lo {
-    i -= 1
-    s[i] = 0
+  if i > lo {
+    rt.mem_set(p + lo, 48, i - lo)
   }
 }
 
@@ -1594,35 +1608,28 @@ fn bigint_text(x: big.BigInt, base: Int) -> Str {
   let ds = DIGITS.bytes()
   if xa.len() > LEAF {
     // Go's itoa: split large numbers recursively by the divisor table
-    let width = Int(Float(nat_bit_len(xa)) / Float(base).log2()) + 2
-    var s = raw.zero_ints(width)
+    // log2(10) as a constant: the log call was 3% of bench/perf/big text
+    let lg = if base == 10 { 3.321928094887362 } else { Float(base).log2() }
+    let width = Int(Float(nat_bit_len(xa)) / lg) + 2
+    // the digits at bytes [1, width + 1), byte 0 for a sign
+    let buf = raw.bytes_buf(width + 1)
+    let p = raw.bytes_addr(buf)
     let table = divisors(xa.len(), base, nd, bb)
-    convert_words(xa, s, 0, width, base, nd, bb, table, table.len())
-    var start = 0
-    while start < width - 1 && s[start] == 0 {
+    convert_words(xa, p, 1, width + 1, base, nd, bb, table, table.len(), ds)
+    var start = 1
+    while start < width && rt.mem_load(p, start, 1) == 48 {
       start += 1
     }
-    // the digits' characters eight to a word into a Str sized once
-    // (2026-10-28: a BytesBuilder byte a digit, then the UTF-8 check of
-    // the text, was 17% of bench/perf/big text)
-    var t = rt.rs_with_cap(width - start + 1)
     if xn {
-      t = rt.rs_push_byte(t, 45)
+      start -= 1
+      rt.mem_store(p, start, 45, 1)
     }
-    var k = start
-    while width - k >= 8 {
-      var w = 0
-      for j in 0..8 {
-        w = w | Int(ds[s[k + j]]).wrapping_shl(8 * j)
-      }
-      t = rt.rs_push_word(t, w, 8)
-      k += 8
+    let n = width + 1 - start
+    if start > 0 {
+      rt.mem_move(p, p + start, n)
     }
-    while k < width {
-      t = rt.rs_push_byte(t, Int(ds[s[k]]))
-      k += 1
-    }
-    return t
+    // digits and '-' are ASCII: valid text
+    return rt.cast[Bytes, Str](raw.bytes_len(buf, n))
   }
   var out = BytesBuilder.new()
   if xn {

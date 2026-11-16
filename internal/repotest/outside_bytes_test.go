@@ -106,6 +106,7 @@ func TestOutsideBytesValidated(t *testing.T) {
 		"std/native/llrt/netwasi.xo": 1, // conn_read on wasm: a read's bytes are the program's data, as netconn's read_list
 		"std/native/llrt/raw.xo":     2, // the conversion helpers themselves
 		"std/native/llrt/scan.xo":    1, // text_of: validates
+		"std/native/big.xo":          1, // bigint_text: ASCII digits and '-' it wrote itself
 		"std/native/internal.xo":     1, // uuid_text_words: 36 ASCII bytes it wrote itself (hex digits and dashes)
 		"std/native/prelude.xo":      1, // bytebuffer_read_until: an unchecked view of Bytes, cast back to Bytes in the same expression (no Str escapes)
 	}

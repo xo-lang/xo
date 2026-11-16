@@ -1,5 +1,20 @@
 # std/big changes
 
+## 2026-11-15: perf: BigInt.text writes its digit characters into the result
+
+- Kind: perf
+- Commit: this push
+- Found by: std/evidence/big/perf.md (bench/perf/big text 1.107 of Go's wall on linux/arm64 host 1) and an XO_PROF=cpu profile: the digit values went into a zeroed List[Int] and a second pass mapped them to characters (27% of the run)
+- Go reference: math/big natconv.go itoa and convertWords (the characters written into the []byte directly)
+- Test: the big, bigrat, bigfloat and randbig corpora (113 text rows in every base to 1,500 bits, both signs), go, arm64 and llvm; bench/perf/big text output equal before and after
+- Timing: bench/perf/big text 5.723 to 5.45 ms (0.952, 0.914 to 0.962; xo bench --ab, 3 rounds, linux/arm64 host 1), about 1.05 of Go
+
+For a number of more than 8 words, convert_words now stores each digit's
+character straight into the result's bytes (base 10 two digits a step,
+d / 100 as a multiply), fills the zero runs with one memset, and the
+leading zeros are cut with one move; the width bound uses log2(10) as a
+constant. No output change.
+
 ## 2026-11-15: perf: BigFloat.sqrt's Newton steps in fixed width, and rounding up in place
 
 - Kind: perf
