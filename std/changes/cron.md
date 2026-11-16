@@ -1,5 +1,16 @@
 # std/cron changes
 
+## 2026-11-16: fix: a field's number is read in Go's strconv.Atoi order
+
+- Kind: fix
+- Commit: this push
+- Found by: TestCronFuzz seed 8 (task #98 sharded fuzz on host 3)
+- Go reference: strconv ParseUint and ParseInt (atoi.go), go1.26 (Copyright 2009 The Go Authors, BSD-style license)
+- Test: std/cron_test.xo "a field's number is read as Go's strconv.Atoi" (failed before); TestCronFuzz seeds 8 (5,000 cases), 9 and 10 (arm64)
+- Shipped in: not yet released
+
+A field like `9999999999999999999*` gave "value out of range" where Go gives "invalid syntax": Go scans the digits as a uint64 and reports range only once they pass 2^64 - 1, so a later non-digit is a syntax error. Numbers from 9223372036854775800 to 9223372036854775807 were refused as out of range; they are read as Go reads them.
+
 ## 2026-11-16: fix: @every duration errors are robfig/cron's (Go's time.ParseDuration text), and no white space around the duration
 
 - Kind: fix

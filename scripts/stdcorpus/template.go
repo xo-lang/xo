@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"os"
 	"strconv"
 	"strings"
 	"text/template"
@@ -195,8 +196,21 @@ func tmplRunNamed(main string, kind int, name string, data any, missingErr bool)
 	return textOf(b.String())
 }
 
+// templateFuzz is XO_TEMPLATEFUZZ_SEED (default 0, the committed corpus),
+// added to the generator's seed, and XO_TEMPLATEFUZZ_N templates (default
+// 3000): internal/stdtest/templatefuzz_test.go's fresh seeds (task #108).
+func templateFuzz() (int64, int) {
+	seed, _ := strconv.ParseInt(os.Getenv("XO_TEMPLATEFUZZ_SEED"), 10, 64)
+	n, err := strconv.Atoi(os.Getenv("XO_TEMPLATEFUZZ_N"))
+	if err != nil || n <= 0 {
+		n = 3000
+	}
+	return seed, n
+}
+
 func templateCorpus() string {
-	r := rand.New(rand.NewSource(8))
+	seed, n := templateFuzz()
+	r := rand.New(rand.NewSource(8 + seed))
 	dec := json.NewDecoder(bytes.NewReader([]byte(tmplData)))
 	dec.UseNumber()
 	var raw any
@@ -207,7 +221,7 @@ func templateCorpus() string {
 	var o strings.Builder
 	o.WriteString(header("text/template on seeded random templates (pipelines, builtin functions, if, with, range with break and continue, variables, trim markers, define, block, template, bad syntax) over DATA as std/rt/template.go converts it"))
 	o.WriteString("use std/json\nuse std/template\n\nconst DATA: Str = " + xq(tmplData) + "\n\n/// (template, missingkey=error, Go's output or err TEXT)\nconst CASES: List[(Str, Bool, Str)] = [\n")
-	for i := 0; i < 3000; i++ {
+	for i := 0; i < n; i++ {
 		var b strings.Builder
 		tmplBody(r, &b, nil, 3, false)
 		src := textOf(b.String())

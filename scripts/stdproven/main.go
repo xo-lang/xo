@@ -106,6 +106,11 @@ var harnesses = map[string][]harness{
 	"bufio":     {{"TestBufioFuzz", "XO_BUFIOFUZZ"}},
 	"rate":      {{"TestRateFuzz", "XO_RATEFUZZ"}},
 	"cli":       {{"TestCliFuzz", "XO_CLIFUZZ"}},
+	"toml":      {{"TestTomlFuzz", "XO_TOMLFUZZ"}},
+	"regexp":    {{"TestRegexpFuzz", "XO_REGEXPFUZZ"}},
+	"template":  {{"TestTemplateFuzz", "XO_TEMPLATEFUZZ"}},
+	"xmlcodec":  {{"TestXmlcodecFuzz", "XO_XMLCODECFUZZ"}},
+	"log":       {{"TestLogFuzz", "XO_LOGFUZZ"}},
 }
 
 func main() {

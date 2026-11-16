@@ -1,5 +1,16 @@
 # std/regexp changes
 
+## 2026-11-16: fix: a backslash before a non-ASCII rune is an invalid escape, not a fault
+
+- Kind: fix
+- Commit: this push
+- Found by: internal/stdtest/regexpfuzz_test.go (task #108), its first 20,000 cases
+- Go reference: regexp/syntax parse.go (parsePerlClassEscape, t[:2]; Copyright 2011 The Go Authors, BSD-style license)
+- Test: std/regexp_test.xo "a backslash before a non-ASCII rune is Go's invalid escape, in a class and out" (faulted before); TestRegexpFuzz 20,000 cases (arm64)
+- Shipped in: not yet released
+
+`compile("[\\é]")` and `compile("\\é")` faulted (a slice of the pattern cut the rune after the backslash, where Go's parser looks for a Perl class in the next two bytes); they now fail with Go's message, invalid escape sequence and the escape (``\é``).
+
 ## 2026-11-15: feature: all matches with groups, positions, a function per match
 
 - Kind: feature

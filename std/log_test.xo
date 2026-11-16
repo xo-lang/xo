@@ -1,0 +1,27 @@
+/// A JSON record with its time as T.
+fn time_t(line: Str) -> Str {
+  match line.cut("\"time\":\"") {
+    Some((a, rest)) => match rest.cut("\"") {
+      Some((_, b)) => a + "\"time\":\"T\"" + b
+      None => line
+    }
+    None => line
+  }
+}
+
+fn json_lines(f: fn() uses log) -> List[Str] uses stdio, log {
+  let c: Chan[Str] = Chan.new(8)
+  configure_handler(json_handler(func_sink(fn(l: Str) { c.send(l) }), level: Level.Debug))
+  f()
+  c.close()
+  var out: List[Str] = []
+  while let Some(l) = c.recv() {
+    out.push(time_t(l))
+  }
+  out
+}
+
+test "JSON records are Go's json.Marshal: <, > and & escaped, floats as encoding/json writes them (logfuzz, task #108)" {
+  let fields: Map[Str, Debug] = {"x<": "<&>", "f": 1e20, "g": 1e-7, "h": 1e21, "n": 2.5}
+  expect(json_lines(fn() { info("a<b>&c", fields) })) == ["{\"f\":100000000000000000000,\"g\":1e-7,\"h\":1e+21,\"level\":\"INFO\",\"msg\":\"a\\u003cb\\u003e\\u0026c\",\"n\":2.5,\"time\":\"T\",\"x\\u003c\":\"\\u003c\\u0026\\u003e\"}"]
+}

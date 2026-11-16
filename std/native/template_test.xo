@@ -896,3 +896,29 @@ test "html mode: JSON in a script element, an on* attribute and text cannot clos
   expect(json.encode_str(evil)) == "\"</script><b>\""
   expect(json.html_escape(json.encode_str(evil))) == "\"\\u003c/script\\u003e\\u003cb\\u003e\""
 }
+
+test "printf pads each part of a complex number, as Go's fmtComplex (templatefuzz, task #108)" {
+  for (src, want) in [("{{printf \"%5.2f\" 2i}}", "( 0.00+2.00i)"), ("{{printf \"%-7.1f|\" 1.5i}}", "(0.0    +1.5   i)|"), ("{{printf \"%08.2f\" -3i}}", "(00000.00-0003.00i)"), ("{{printf \"%+.1e\" 2i}}", "(+0.0e+00+2.0e+00i)"), ("{{printf \"%9v|\" 2i}}", "(        0       +2i)|"), ("{{printf \"% .1f\" 2i}}", "( 0.0+2.0i)")] {
+    let got = match template.parse("t", src) {
+      Ok(t) => match t.render(json.Value.Null) {
+        Ok(s) => s
+        Err(e) => "err ${e.display()}"
+      }
+      Err(e) => "err ${e.display()}"
+    }
+    expect(got) == want
+  }
+}
+
+test "a continue in a range's else acts on the enclosing range, a break there ends only that range, as in Go (templatefuzz, task #108)" {
+  for (src, want) in [("{{range 3}}a{{range 0}}{{else}}b{{continue}}{{end}}c{{break}}{{end}}", "ababab"), ("{{range 3}}a{{range 0}}{{else}}b{{break}}{{end}}c{{end}}", "abcabcabc"), ("{{range 2}}{{range 0}}{{else}}{{break}}{{end}}<{{end}}", "<<"), ("{{range 2}}{{range 0}}{{break}}{{else}}{{continue}}{{end}}<{{end}}", ""), ("{{range 2}}{{range 2}}x{{continue}}y{{end}}z{{end}}", "xxzxxz"), ("{{range 3}}{{if true}}{{range 0}}{{else}}e{{continue}}{{end}}{{end}}f{{end}}", "eee")] {
+    let got = match template.parse("t", src) {
+      Ok(t) => match t.render(json.Value.Null) {
+        Ok(s) => s
+        Err(e) => "err ${e.display()}"
+      }
+      Err(e) => "err ${e.display()}"
+    }
+    expect(got) == want
+  }
+}

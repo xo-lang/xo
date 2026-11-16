@@ -2117,16 +2117,18 @@ fn (var s: Ex) walk_range(dot: Val, n: Node) -> Int ! Str {
       return Err(s.err("range can't iterate over ${fmt_v(v.v, false)}"))
     }
   }
+  // the else list is outside the loop but inside walkRange's recover: a
+  // break there ends this range (Go recovers walkBreak for the whole
+  // range), a continue is the enclosing range's
+  var r = 0
   if !any {
     match el {
-      Some(e) => {
-        let _r = s.walk_list(dot, e)?
-      }
+      Some(e) => r = s.walk_list(dot, e)?
       None => {}
     }
   }
   s.trunc_vars(mark0)
-  Ok(0)
+  Ok(if r == 2 { 2 } else { 0 })
 }
 
 fn (var s: Ex) walk_template(dot: Val, name: Str, pipe: Pipe?) -> Int ! Str {
@@ -3268,8 +3270,10 @@ fn fmt_arg(x: Val, verb: Rune, sp: Spec) -> Str {
     IntV(n, ty) => fmt_int(n, verb, sp, ty) ?? bad_verb(verb, x, sp)
     FloatV(f) => fmt_float(f, verb, sp) ?? bad_verb(verb, x, sp)
     ComplexV(re, im) => {
-      match (fmt_float(re, verb, Spec{prec: sp.prec}), fmt_float(im, verb, Spec{prec: sp.prec, plus: true})) {
-        (Some(a), Some(b)) => pad("(" + a + b + "i)", Spec{minus: sp.minus, width: sp.width}, false)
+      // fmtComplex: each part with the verb's width, precision and flags,
+      // the imaginary one always signed; no padding around the whole
+      match (fmt_float(re, verb, sp), fmt_float(im, verb, Spec{minus: sp.minus, plus: true, sharp: sp.sharp, space: sp.space, zero: sp.zero, width: sp.width, prec: sp.prec})) {
+        (Some(a), Some(b)) => "(" + a + b + "i)"
         _ => bad_verb(verb, x, sp)
       }
     }

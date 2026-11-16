@@ -323,34 +323,48 @@ fn bits(lo: Int, hi: Int, step: Int) -> Int {
   b
 }
 
-/// strconv.Atoi's value or its error text, for mustParseInt.
+/// The decimal digits d (no leading zeros) above the decimal digits m.
+fn dec_above(d: Str, m: Str) -> Bool { d.len() > m.len() || (d.len() == m.len() && d > m) }
+
+/// strconv.Atoi's value or its error text, for mustParseInt. Go's
+/// ParseUint scans the digits as a uint64 and stops at the first error: a
+/// range error once the digits so far pass 2^64 - 1, a syntax error at a
+/// byte that is not a digit; ParseInt then checks the int64 range.
 fn atoi(s: Str) -> Int ! CronErr {
   let raw = s
-  var b = s.bytes()
+  let b = s.bytes()
   var neg = false
   var i = 0
   if b.len() > 0 && (b[0] == '+' || b[0] == '-') {
     neg = b[0] == '-'
     i = 1
   }
+  let range = err_of("failed to parse int from ${raw}: strconv.Atoi: parsing ${raw.quote()}: value out of range")
   let syntax = err_of("failed to parse int from ${raw}: strconv.Atoi: parsing ${raw.quote()}: invalid syntax")
-  if i >= b.len() {
+  var j = i
+  while j < b.len() && b[j] >= '0' && b[j] <= '9' {
+    j += 1
+  }
+  var k = i
+  while k < j - 1 && b[k] == '0' {
+    k += 1
+  }
+  let digits = s[k..j]
+  if j > i && dec_above(digits, "18446744073709551615") {
+    return Err(range)
+  }
+  if j == i || j < b.len() {
     return Err(syntax)
   }
-  var v = 0
-  while i < b.len() {
-    let c = b[i]
-    if c < '0' || c > '9' {
-      return Err(syntax)
-    }
-    if v > 922337203685477579 {
-      return Err(err_of("failed to parse int from ${raw}: strconv.Atoi: parsing ${raw.quote()}: value out of range"))
-    }
-    v = v * 10 + Int(c - '0')
-    i += 1
+  if dec_above(digits, if neg { "9223372036854775808" } else { "9223372036854775807" }) {
+    return Err(range)
   }
-  if neg && v > 0 {
-    return Err(err_of("negative number (-${v}) not allowed: ${raw}"))
+  let v = if neg && digits == "9223372036854775808" { Int.min } else {
+    let u = Int.parse(digits) ?? 0
+    if neg { -u } else { u }
+  }
+  if v < 0 {
+    return Err(err_of("negative number (${v}) not allowed: ${raw}"))
   }
   Ok(v)
 }

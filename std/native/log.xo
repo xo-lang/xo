@@ -207,6 +207,16 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
   rt.eprintln(line)
 }
 
+/// A JSON record as Go's json.Marshal writes it (the Go backend's): <, >
+/// and & escaped, which std/json leaves as they are. They occur only
+/// inside the record's strings.
+fn go_html(line: Str) -> Str {
+  if !line.contains("<") && !line.contains(">") && !line.contains("&") {
+    return line
+  }
+  line.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+}
+
 /// The text of a record: JSON when configured so, else text.
 fn format(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) -> Str {
   if logstate.json() {
@@ -217,7 +227,10 @@ fn format(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) -> Str {
       let text = rt.dyn_text(v)
       var j = rtjson.json_enc("", text)
       if rt.dyn_raw(v) {
-        j = text
+        j = match value_of(v) {
+          log.Value.Float(f) => rtjson.json_enc("", f)
+          _ => text
+        }
       }
       var found = false
       for (i, x) in keys.indexed() {
@@ -264,7 +277,7 @@ fn format(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) -> Str {
       }
       line = rtjson.json_enc(line, keys[i]) + ":" + vals[i]
     }
-    return line + "}"
+    return go_html(line + "}")
   }
   var tag = ""
   if from != "" {
@@ -418,7 +431,10 @@ fn render(json: Bool, r: log.Record) -> Str {
         Some(log.Value.Int(_)) | Some(log.Value.UInt(_)) | Some(log.Value.Float(_)) | Some(log.Value.Bool(_)) => true
         _ => false
       }
-      let j = if raw { t } else { rtjson.json_enc("", t) }
+      let j = match r.values.get(k) {
+        Some(log.Value.Float(f)) => rtjson.json_enc("", f)
+        _ => if raw { t } else { rtjson.json_enc("", t) }
+      }
       var found = false
       for (i, x) in keys.indexed() {
         if x == k {
@@ -461,7 +477,7 @@ fn render(json: Bool, r: log.Record) -> Str {
       }
       line = rtjson.json_enc(line, keys[i]) + ":" + vals[i]
     }
-    return line + "}"
+    return go_html(line + "}")
   }
   let secs = ns - (ns % 1000000000 + 1000000000) % 1000000000
   var tag = ""

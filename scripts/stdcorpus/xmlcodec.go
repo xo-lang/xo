@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -416,14 +417,30 @@ var xcFloats = []float64{
 	-0.0, 1e20, 1e-5, 42,
 }
 
+// xmlcodecFuzz is XO_XMLCODECFUZZ_SEED (default 0, the committed corpora),
+// added to the xmlcodec and derive Xml generators' seeds, and
+// XO_XMLCODECFUZZ_N (0: each generator's own counts) split over their
+// random documents, pieces and derive documents:
+// internal/stdtest/xmlcodecfuzz_test.go's fresh seeds (task #108).
+func xmlcodecFuzz() (int64, int) {
+	seed, _ := strconv.ParseInt(os.Getenv("XO_XMLCODECFUZZ_SEED"), 10, 64)
+	n, _ := strconv.Atoi(os.Getenv("XO_XMLCODECFUZZ_N"))
+	return seed, n
+}
+
 func xmlcodecCorpus() string {
-	r := rand.New(rand.NewSource(21))
+	seed, n := xmlcodecFuzz()
+	nd, nr := 500, 600
+	if n > 0 {
+		nd, nr = n/4, n/4
+	}
+	r := rand.New(rand.NewSource(21 + seed))
 	var o strings.Builder
 	o.WriteString(header("encoding/xml's Decoder token walk and Encoder, and strconv, as std/xmlcodec's helpers contract them: parse_root, attr_of, direct_text, build with open_path, leaf, chardata and comment, float_text, int_of, float_of and bool_of, on hand picked and seeded random documents, pieces and strings"))
 	o.WriteString("use std/xml\nuse std/xmlcodec\n\n")
 	o.WriteString("/// (document, parse_root's element encoded with two-space indent or err LINE MSG, attr_of id class lang x, direct_text, int_of, float_of and bool_of of that text)\nconst ROOT_DOCS: List[(Str, Str, Str, Str, Str)] = [\n")
 	docs := append([]string{}, xcFixedDocs...)
-	for i := 0; i < 500; i++ {
+	for i := 0; i < nd; i++ {
 		docs = append(docs, xmlDoc(r))
 	}
 	for _, d := range docs {
@@ -432,7 +449,7 @@ func xmlcodecCorpus() string {
 	}
 	o.WriteString("]\n\n/// (root, attributes, pieces, Go's token stream as the corpus's canonical text, or err LINE MSG when the Encoder rejects a comment)\nconst PIECE_ROWS: List[(Str, List[xml.Attr], List[xmlcodec.Piece], Str)] = [\n")
 	rows := append([]xcRow{}, xcFixedRows...)
-	for i := 0; i < 600; i++ {
+	for i := 0; i < nr; i++ {
 		rows = append(rows, xcRandRow(r))
 	}
 	for _, row := range rows {

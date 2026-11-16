@@ -1,0 +1,28 @@
+fn atoi_text(s: Str) -> Str {
+  match atoi(s) {
+    Ok(n) => "${n}"
+    Err(e) => e.msg
+  }
+}
+
+test "a field's number is read as Go's strconv.Atoi: a uint64 scan, then the int range (cronfuzz, task #98)" {
+  let e = fn(s: Str, what: Str) -> Str { "failed to parse int from ${s}: strconv.Atoi: parsing ${s.quote()}: ${what}" }
+  for (s, want) in [
+    ("9999999999999999999*", e("9999999999999999999*", "invalid syntax")),
+    ("18446744073709551615*", e("18446744073709551615*", "invalid syntax")),
+    ("99999999999999999999*", e("99999999999999999999*", "value out of range")),
+    ("99999999999999999999", e("99999999999999999999", "value out of range")),
+    ("18446744073709551616", e("18446744073709551616", "value out of range")),
+    ("9223372036854775808", e("9223372036854775808", "value out of range")),
+    ("-9223372036854775809", e("-9223372036854775809", "value out of range")),
+    ("9223372036854775807", "9223372036854775807"),
+    ("9223372036854775800", "9223372036854775800"),
+    ("-9223372036854775808", "negative number (-9223372036854775808) not allowed: -9223372036854775808"),
+    ("-5", "negative number (-5) not allowed: -5"),
+    ("+0", "0"),
+    ("-0", "0"),
+    ("12a", e("12a", "invalid syntax")),
+  ] {
+    expect(atoi_text(s)) == want
+  }
+}

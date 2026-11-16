@@ -515,6 +515,16 @@ fn byte_at(s: Str, i: Int) -> Int {
   Int(s.bytes()[i])
 }
 
+/// The two bytes of an escape at i (`\d`), or "" when the second starts a
+/// rune of more than one byte (`\é`, no Perl class: Go's t[:2] there cut
+/// the rune, which a Str slice may not; 2026-11-16, regexpfuzz).
+fn esc2(s: Str, i: Int) -> Str {
+  if byte_at(s, i + 1) >= 0x80 {
+    return ""
+  }
+  sl(s, i, i + 2)
+}
+
 /// s[a..b] with the ends clamped to s (a text's offsets here are at rune
 /// boundaries).
 fn sl(s: Str, a: Int, b: Int) -> Str {
@@ -1050,7 +1060,7 @@ fn (var p: Parser) parse_class(s: Str, i0: Int) -> Int ! PErr {
       None => ()
     }
     if (p.flags & PERL_X) != 0 && t + 1 < n && byte_at(s, t) == '\\' {
-      let (gs, g) = perl_group(sl(s, t, t + 2))
+      let (gs, g) = perl_group(esc2(s, t))
       if gs != 0 {
         p.append_group(class, gs, g)
         t += 2
@@ -1964,7 +1974,7 @@ fn (var p: Parser) parse_backslash(s: Str, i: Int) -> Int ! PErr {
     }
   }
   if (p.flags & PERL_X) != 0 && i + 1 < n {
-    let (gs, g) = perl_group(sl(s, i, i + 2))
+    let (gs, g) = perl_group(esc2(s, i))
     if gs > 0 && (p.flags & FOLD_CASE) == 0 {
       // \d, \s, \w: their ranges are already sorted and apart, the class
       // clean_class would make of them

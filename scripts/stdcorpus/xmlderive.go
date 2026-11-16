@@ -246,9 +246,15 @@ test "decode and encode_value of a derived struct are Go's Unmarshal and Marshal
 `
 
 func xmlDeriveCorpus(o *strings.Builder) {
-	r := rand.New(rand.NewSource(15))
+	seed, n := xmlcodecFuzz()
+	if n > 0 {
+		n /= 2
+	} else {
+		n = 1500
+	}
+	r := rand.New(rand.NewSource(15 + seed))
 	o.WriteString("\n/// (document, Go's Unmarshal into XBasic as `ok VALUE` or `err TEXT`, its Marshal, its MarshalIndent two spaces)\nconst DERIVE_DOCS: List[(Str, Str, Str, Str)] = [\n")
-	for i := 0; i < 1500; i++ {
+	for i := 0; i < n; i++ {
 		d := xmlDeriveDoc(r)
 		u, m, mi := xmlDeriveCase(d)
 		// Go decodes while it reads, so a value error before a later

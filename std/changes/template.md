@@ -1,5 +1,16 @@
 # std/template changes
 
+## 2026-11-16: fix: a continue in a range's else, and printf of a complex number
+
+- Kind: fix
+- Commit: this push
+- Found by: internal/stdtest/templatefuzz_test.go (task #108), seed 2
+- Go reference: text/template exec.go (walkRange) and fmt print.go (fmtComplex), go1.26 (Copyright 2009 and 2011 The Go Authors, BSD-style license)
+- Test: std/native/template_test.xo "a continue in a range's else acts on the enclosing range" and "printf pads each part of a complex number" (both failed before); TestTemplateFuzz 20,000 cases (arm64)
+- Shipped in: not yet released
+
+A `{{continue}}` in the `{{else}}` of an inner `{{range}}` that ran no element was dropped, so the enclosing range's iteration went on (`{{range 3}}a{{range 0}}{{else}}b{{continue}}{{end}}c{{break}}{{end}}` gave `abc`, Go's `ababab`); a `{{break}}` there ends only that inner range, as before and as in Go (walkRange recovers it). `printf` padded a complex number as a whole; Go's fmtComplex gives each part the width, precision and flags (`%5.2f` of `2i` is `( 0.00+2.00i)`).
+
 ## 2026-11-13: security: html mode tracks JS contexts after braces, `${`, yield, properties and private names; `<script type="">` is JS; `url =` in a meta refresh (native)
 
 - Kind: security

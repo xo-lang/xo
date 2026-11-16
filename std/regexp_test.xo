@@ -18873,3 +18873,12 @@ test "Go's regexp on alternations, the parser's factoring cases" {
   }
   expect(bad[0..(if bad.len() < 25 { bad.len() } else { 25 })]) == []
 }
+
+test "a backslash before a non-ASCII rune is Go's invalid escape, in a class and out (no fault; regexpfuzz, task #108)" {
+  for (pattern, want) in [("[\\é]", "invalid escape sequence: `\\é`"), ("\\é", "invalid escape sequence: `\\é`"), ("a[\\日b]", "invalid escape sequence: `\\日`"), ("[a\\Ω]", "invalid escape sequence: `\\Ω`")] {
+    match compile(pattern) {
+      Ok(_) => expect(pattern) == "an error"
+      Err(e) => expect(e.msg) == want
+    }
+  }
+}

@@ -1,5 +1,16 @@
 # std/log changes
 
+## 2026-11-16: fix: JSON records escape <, > and & and write floats as Go's json.Marshal
+
+- Kind: fix
+- Commit: this push
+- Found by: internal/stdtest/logfuzz_test.go (task #108), seed 2
+- Go reference: encoding/json Marshal (HTML escaping, floatEncoder), go1.26 (Copyright 2010 The Go Authors, BSD-style license), which the Go backend's records use
+- Test: std/log_test.xo "JSON records are Go's json.Marshal" (failed before); TestLogFuzz 20,000 cases (arm64)
+- Shipped in: not yet released
+
+On the native backends a JSON record left `<`, `>` and `&` as they are and wrote a Float field with its Xo text (`1e+20`, `1e-07`); the Go backend's records (json.Marshal) write `\u003c`, `\u003e`, `\u0026` and encoding/json's numbers (`100000000000000000000`, `1e-7`). Both configure's records and json_handler's now do as Go.
+
 ## 2026-11-12: feature: log handlers, sinks and typed values
 
 - Kind: feature

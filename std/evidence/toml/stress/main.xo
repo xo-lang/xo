@@ -1,0 +1,594 @@
+// std/toml stress (decision 0616, task #108): 64 tasks decode, convert to JSON,
+// encode and decode again the tomlfuzz corpus's documents (seed 1) for 30
+// minutes, then a resident set check.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/json
+use std/toml
+
+/// One pass over the documents from offset start: to_json and decode agree,
+/// and encode then decode gives the same value. The operations done, or the
+/// first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..DOCS.len() {
+    let d = DOCS[(start + k) % DOCS.len()]
+    let bad = tf_check(d)
+    if bad != "" {
+      return Err("toml ${d.quote()}: ${bad}")
+    }
+  }
+  DOCS.len()
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("toml stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+fn tf_r(v: json.Value) -> Str {
+  match v {
+    json.Value.Null => "null"
+    json.Value.Bool(b) => if b { "t" } else { "f" }
+    json.Value.Int(n) => "n${n}"
+    json.Value.Num(f) => {
+      if f == f.floor() && f.abs() < 9.2e18 {
+        return "n${Int(f)}"
+      }
+      "f${f.to_bits()}"
+    }
+    json.Value.Str(s) => "s${tf_frac(s).bytes().to_hex()}"
+    json.Value.List(items) => {
+      var parts: List[Str] = []
+      for x in items {
+        parts.push(tf_r(x))
+      }
+      "[" + parts.join(",") + "]"
+    }
+    json.Value.Object(fields) => {
+      var parts: List[Str] = []
+      for (k, x) in fields {
+        parts.push("${k.bytes().to_hex()}:${tf_r(x)}")
+      }
+      "{" + parts.sort().join(",") + "}"
+    }
+    _ => "other"
+  }
+}
+
+/// s with the trailing zeros of a seconds fraction dropped (".600" is
+/// ".6", ".000" nothing): toml-test compares datetimes as instants.
+fn tf_frac(s: Str) -> Str {
+  let b = s.bytes()
+  var i = 3
+  while i < b.len() && !(b[i] == 46 && b[i - 3] == 58) {
+    i += 1
+  }
+  if i >= b.len() {
+    return s
+  }
+  var j = i + 1
+  while j < b.len() && b[j] >= 48 && b[j] <= 57 {
+    j += 1
+  }
+  var k = j
+  while k > i + 1 && b[k - 1] == 48 {
+    k -= 1
+  }
+  if k == i + 1 {
+    k = i
+  }
+  s[..k] + s[j..]
+}
+
+fn tf_line(text: Str) -> Str {
+  match toml.to_json(text) {
+    Ok(j) => match json.parse_value(j) {
+      Ok(v) => "ok " + tf_r(v)
+      Err(e) => "bad json " + e.msg
+    }
+    Err(_) => "err"
+  }
+}
+
+/// The invariants every document holds: to_json and decode agree on
+/// whether it is TOML, to_json's text is JSON, and a decoded value
+/// encodes to a document that decodes to the same value (key order
+/// aside: encode writes a table's plain keys before its tables).
+fn tf_check(text: Str) -> Str {
+  let j = toml.to_json(text)
+  let d = toml.decode[Map[Str, json.Value]](text)
+  if j.is_ok() != d.is_ok() {
+    return "to_json ok ${j.is_ok()} but decode ok ${d.is_ok()}"
+  }
+  match j {
+    Ok(s) => {
+      if json.parse_value(s).is_err() {
+        return "to_json wrote text that is not JSON: " + s
+      }
+    }
+    Err(_) => return ""
+  }
+  match d {
+    Ok(v) => {
+      let first = tf_r(json.to_value(v))
+      match toml.encode(v) {
+        Ok(doc) => match toml.decode[Map[Str, json.Value]](doc) {
+          Ok(v2) => {
+            let second = tf_r(json.to_value(v2))
+            if second != first {
+              return "round trip changed " + first + " to " + second + " through " + doc
+            }
+          }
+          Err(e) => return "encode wrote a document decode refuses: " + e.display() + " in " + doc
+        }
+        Err(e) => return "encode failed: " + e.display()
+      }
+    }
+    Err(_) => {}
+  }
+  ""
+}
+
+
+/// the documents
+const DOCS: List[Str] = [
+  ("- =-9223372036854775808 # trailing\n1234 = 1.5\r\n"),
+  ("true\t=\tfalse\n[[a]]\r\n1234\t= \"\"\"a\\\n   b\"\"\"\n1234= 9223372036854775807\na . b = \"\\u00e9\"\r\n[a.]\na\t=00:32:00.999999\r\n'lit'\t= []\n"),
+  ("\"\"\t=\"s\"\n[1234]\n"),
+  ("a =\t[1, 2, 3]\n  # x = 1\n[[a.b]]\n\"a\"=1979-05-27T07:32:00\n[b]\n[[a]]\n[bare-key_1]\r\n"),
+  ("a # \"\\U0001F600\"\r\n"),
+  ("\"quoted\"\t= 6.626e-34\n[[a.b]]\nkey\t= \"s\"\n'lit'\t=\t1.5\nkey= \"\\u00e9\"\r\na b =\t{ x = 1 } # trailing\n\t\n-=\t{ x = 1\n}\r\n"),
+  ("a = 0\na . b =1979-05-27T07:32:00Z\na . b =\t1979-05-27T07:32:00\n[[\"a\"]]\r\ntrue = 00:32:00.999999\r\n[a] = 1979-05-27T07:32:00Z"),
+  ("# comment\na.b =1.5\n[[b]]\r\n"),
+  ("\n[[#]]\na.b\t= tru\n-= [[1], [2, 3]]\nkey =\t\"\\u00e9\"\n=rue =1\nbare-key_1=\t0x1F # trailing\n[[\"\"]]\n"),
+  ("[[a.]]\n"),
+  ("bare-key_1 =\t1979-05-27T00:32:00.999999-07:00\r\n\"quoted\"= [[1], [2, 3]]\n\n\"\" =\t0\r\n\n"),
+  ("[a]\r\nkey= 00:32:00.999999\n- = 9223372036854775807\n\"quoted\" = \"\",a\\\n   b\"\"\"\r\n"),
+  ("'lit' =\t\"\"\"multi\nline\"\"\"\n\"quoted\" =\"tab\\there\"\n\r\n[\"quoted\"]\r\n- = nan\na.\"b.c\"\t=1979-05-27\n"),
+  ("[\"a\"]\n"),
+  ("[a] = [[1_, [2, 3]]\n[[true]]\r\n\"\" =false\n\"a\"=\t\"a\\nb\"\n\t\r\n"),
+  ("bare-key_1 = false\r\nb\t= nan\r\ntrue =\t1979-05-27 # trailing\r\na= 1979-05-27T07:32:00\r\nbare-key_1\t=\"a\\nb\" # trailing\r\n\"\" = false\n[[.a]]\n"),
+  ("[[b]]\n\t\n\t\na.b=6.-26e-34\n# comment\n\"quoted\" =+1\na =-1\n"),
+  ("a.\"b.c\" = 1979-05-27T07:32:00\n"),
+  ("key\t=\t\"\" # trailing\n[a.b]\nb= { a.b = 1 }\r\n  # x = 1\né= []\n"),
+  ("a . b\t=1979-05-\n7 # trailing\n1234\t=1979-05-27T07:32:00\n"),
+  ("key\t=\t\"\"\"a\\\n   b\"\"\"\n\"a\" =\"\"\"a\\\n   b\"\"\"\r\ntrue= +0x1 # trailing\ntrue = -0.0\r\n\t\né = nan\n"),
+  ("# comment\n"),
+  ("  # x = 1\r\n"),
+  ("'lit'\t=[1, \"mixed\"]\r\n"),
+  ("[b]\n"),
+  ("- = { a.b = 1 }\n\t\r\na\t= -inf # trailing\n- = 0o17\na . b =9223372036854775807\n['lit']\nkey = 07:32:00\n# comment\r\n"),
+  ("key = 1__0\r\nb = { x = 1 } # trailing\na . b\t=\tnan\r\n"),
+  ("bare-key_1 = \"s\"\r\n[[key]]\r\n[[-]]\n\t\r\n[-]\nb= 9223372036854775807\n"),
+  ("\"a\"\t= 1979-05-27T00:32:00.999999-07:00\r\n[a . b]\n"),
+  ("\"a\" = { x = 1, }\r\n"),
+  ("key= 'lit\\n'\r\n[a] =\t-0.0 # trailing\n"),
+  ("\"\"\t=-1\na.b=\t{ x = 1, }\na.b\t= +1\n"),
+  ("\t\n\"quoted\"= 1_000\r\n[[\"a\"]]\r\n"),
+  ("\"\""),
+  ("a\t="),
+  ("[true]\n1234 =\t1979-05-27T07:32:00\ntrue=\"tab\\there\"\r\n\"quoted\" = 00:32:00.999999\nkey = \"s\" # trailing\n"),
+  ("-={ x = 1, y = \"z\" }\n'lit'=\t\"\"\"a\\\n   b\"\"\"\n"),
+  ("\"quoted\"\t=\t1.\na\t=\"tab\\there\" # trailing\r\nbare-key_1\t=\t-1\n"),
+  ("1234 = \"\\u00e9\"\n[[\"a\"]]\nkey=-0.0\r\n1234\t=-0.0\n\"a\" = [\n  1,\n  2,\n] # trailing\n# comment\r\n"),
+  ("- = []\r\na.b = nan\n\"a\"={ a.b = 1 }\r\n[[bare-key_1]]\n1234=\t'lit\\n'\r\na= { a.b = 1 }\r\nb\t=[1,,2] # trailing\r\na= \"tab\\there\"\n"),
+  ("[[b]]\r\na= \"\"\"a\\\n   b\"\"\"\n\"\" ={ a.b = 1 }\n\"\" = 00:32:00.999999\n[[a.\"b.c\"]]\n\r\na.b =1979-05-27T00:32:00.999999-07:00\ntrue\t= false\r\n"),
+  ("[[-]]\n  # x = 1\n[[a]]\r\n"),
+  ("b = '''open\r\n"),
+  ("\"\"=\t1979-05-27 07:32:00Z\na . b=\t'''open\r\n[\"\"]\n\t\r\n  # x = 1\n"),
+  ("a.b= 1_000.5\nbare-key_1 = \"tab\\there\" # trailing\na.b = false\na.\"b.c\"= nan\nb=\ttrue\n- = [1, \"mixed\"]\r\na =+1\r\na . b\t=\t-0.0\n"),
+  ("a.\"b.c\" =[]\n1234 =true\n[[é]]\na.\"b.c\" =\t1979-05-27T00:32:00.999999-07:00 # trailing\r\nkey = \"a\\nb\"\na.\"b.c\" =-0.0\n  # x = 1\n\"quoted\" = 07:32:00\n"),
+  ("[.a]\n'lit' =0x1F\n# comment\n[a] = +1\r\ntrue =\"a\\nb\"\n\"quoted\" =1.5\n[[\"a\"]]\r\n\"quoted\"= 'lit\\n'\n"),
+  ("[[bare-key_1]]\nkey= inf"),
+  ("'lit' = [[1], [2, 3]]\r\n[[.a]]\nkey = -inf # trailing\n1234\t=\"\\U0001F600\"\r\n\t\r\n# comment\r\nb = 1\n"),
+  ("\n"),
+  ("-\t=\tnan1\na.\"b.c\"=\t{ a.b = 1 }\r\n# comment\n[[1234]]\nbare-key_1 = -inf\n# comment\r\n'lit' =\t1979-05-27T07:32:00\n"),
+  ("# comment\r\n"),
+  ("'lit' = 1979-05-27T00:32:00.999999-07:00 # trailing\r\nkey =9223372036854775807\n\"a\"= true\na\t= \"\\u00e9\"\n\t\r\n"),
+  ("['lit']\n-\t= 1_000.5\nbare-key_1 = true # trailing\n  # x = 1\r\n1234 = \"open\r\n"),
+  ("1234 = [\"a\", 'b']\n"),
+  ("true\t=0o17\n"),
+  ("a.\"b.c\"\t=6.626e-34\n1234\t=\"open\r\n[b]\nkey\t= -9223372036854775808\r\n"),
+  ("- = inf\n[bare-key_1]\r\ntrue=1.5\na.b=\t07:32:00\na =\t-inf\n"),
+  ("\"a\" = { x = 1, y = \"z\" }\n"),
+  ("bare-key_1=\t\"\"\n  # x = 1\n\"quoted\"= [1, 2, 3]\r\na . b =\t-1 # trailing\n\"quoted\" =\t-0.0\n\n\"\"=07:32:00\r\n\t\n"),
+  ("[[a.\"b.c\"]]\n"),
+  ("true = \"\\u00e9\"\r\n1234={1\n[a . b]\n\na . b= 1e # trailing\n"),
+  ("\"\"= 0\na . b\t= [\"a\", 'b']\r\ntrue =-9223372036854775808\na.\"b.c\" =1_000.5\nbare-key_1 =\t-0.0\nkey\t= [1, 2, 3]\ntrue =1.5\nb= \"a\\nb\" # trailing\n"),
+  ("a.\"b.c\"\t= 1.5\n[bare-key_1]\n\t\na\t=\ttrue # trailing\n\"\" =00:32:00.999999\n\"\" = 1e10\ntrue=\t[1,,2] # trailing\n\"quoted\" = nan\n"),
+  ("a.b =\t\"\"\"a\\\n   b\"\"\"\na . b= false\n\n"),
+  ("a\t= -1\n.a =1979-05-27T07:32:00Z\r\n- = 9223372036854775808\n"),
+  ("\t\na=\"\\"),
+  ("[[\"a\"]]\n\n[\"\"]\n1234 =\t1e10\r\na=\t\"s\"\n'lit' = 1_-0\r\n[key]\n\t\n"),
+  ("bare-key_1= 1_000\n  # x = 1\n# =\t\"s\"\r\nkey =\"tab\\there\"\n\"\" = \"\"\"open # trailing\n[[a]]\r\n\"quoted\"= 1\n"),
+  ("-= [] # trailing\r\n- = [\n  1,\n  2,\n]\r\n\"a\" = \"tab\\there\"\n"),
+  ("\"quoted\" = 0\n# comment\n\"quoted\"=0o17\na.b = 1979-05-27 07:32:00Z\r\n\"\"= nan\n"),
+  ("\n'lit' =\"tab\\there\"\n\"\"= { x = 1\n}\n"),
+  ("\"\"= nan\r\n\n[[1234]]\n"),
+  ("a.\"b.c\"=\"\"\nb =[1 2]\nb = infinity\n"),
+  ("\r\n[[-]]\n[[-]]\n"),
+  ("a\t= tru\ntrue= t,ue\r\n"),
+  ("\t\n'lit'=\t6.626e-34\na =1979-05-27\r\n  # x = 1\r\na.b =1_000\n- =-1\n  # x = 1\r\n"),
+  ("b = 'lit\\n'\nbare-key_1\t=1_000.5 # trailing\r\n1234\t=00:32:00.999999\n1234=\"\\U0001F600\"\na.\"b.c\"\t=\tnan1\n1234\t=1979-05-27T00:32:00.999999-07:00\r\n1234= 1_000.5\n\"quoted\" = -inf\n"),
+  ("a.b=\t\"tab\\there\"\nb =1979-05-27 07:32:00Z\n.a\t=\t0b101\r\n-= { x = 1 }\na . b\t=1979-05-27T00:32:00.999999-07:00\r\na b =\"\\u00e9\" # t0ailing\r\n"),
+  ("a =\"\\u00e9\"\nb= { a.b = 1 } # trailing\n[['lit']]\n[a]\n[a.\"b.c\"]\r\n[[-]]\r\nbare-key_1=true\r\n"),
+  ("a=\t-9223372036854775808\r\na.\"b.c\"\t=\t[\n  1,\n"),
+  ("1234\t=\t[\"a\", 'b']\ntrue\t= {}\n[[\"quoted\"]]\r\ntrue\t= 1979-05-27 07:32:00Z\r\n  # x = 1\na..b =\t'''raw\n'''\nkey ={ x = 1, y = \"z\" } # trailing\n-=00:32:00.999999 # trailing\n"),
+  ("1234= true\nb\t=\t[1,,2]\na.\"b.c\"={1979-05-27T00:32:00.999999-07:00\n[[true]]\n"),
+  ("1234= \"\\U0001F600\"\n\"a\" = 6.626e-34\n= = [\n  1,\n  2,\n]\r\na.\"b.c\"\t= -inf\r\n\"a\"= 1979-05-27T00:32:00.999999-07:00\n"),
+  ("true = \"\\u00e9\"\r\na=\t[\"a\", 'b']\r\n[a . b]\n# comment\n"),
+  ("\n- = \"s\"\r\n\"a\" = 1.5\r\ntrue\t= true\r\n[\"a\"]\n\"\"\t= \"\\u00e9\"\n"),
+  ("[true]\r\n[a . b]\r\n[[a.\"b.c\"]]\na =\t\"a\\nb\"\ntrue =\t\"\\U0001F600\"\na . b\t= _1\n"),
+  ("a . b = 1979-05-27T07:32:00\r\n1234\t=\t1979-05-27T00:32:00.999999-07:00 # trailing\n[a]\nbare-key_1\t= [\"a\", 'b']\n"),
+  ("\t\n\r\nkey =\t1979-05-27T00:32:00.999999-07:00 # trailing\n"),
+  ("  # x = 1\r\nb =0\n#= { x = 1 }\r\n"),
+  ("b = [[1], [2, 3]]\na.b = '''raw\n'''\r\na = { x = 1, y = \"z\" }\n'lit' = [1, 2, 3]\n[-]\n"),
+  ("bare-key_1='lit\\n'\r\n"),
+  ("\"a\"\t= 0o17\n"),
+  ("[1234]\nbare-key_1 =nan1\ntrue = 1979-05-27T07:32:00Z\r\n'lit' =1979-05-27T07:32:00Z\r\n\t\n\"quoted\"= { x = 1, y = \"z\" }\r\n[-]\ntrue=\t00:32:00.999999\r\n"),
+  ("b = false\n\"quoted\" =-inf\n[[1234]]\r\n"),
+  ("- = -inf\n= =\t0b101\r"),
+  ("key = \"\"\"a\\\n   b\"\"\"\nbare-key_1=1_000.5\r\n\"\" ='lit\\n'\nkey = 1979-05-27T07:32:00\n[b]\r\n"),
+  ("\t\r\n1234 = [1, \"mixed\"]\r\ntrue=\"tab\\there\" # trailing\n"),
+  ("\r\n[a.b]\na.\t= 07:32:00\na . b ={ x = 1 }\na =0o17\na = false\n"),
+  ("[[1234]]\n\"\" = \"\"\"a\\\n   b\"\"\"\r\n1234= [\n  1,\n  2,\n]\n1234\t=-1\n"),
+  ("[[b]]\r\n"),
+  ("a = 1979-05-27\n"),
+  ("# comment\n\"a\"= 1_000\n1234 =\t_1\r\na . b= \"\\U0001F600\"\r\n"),
+  ("\t\n\t\n"),
+  ("'lit'= 1_000\n1234\t= 0x1F # trailing\n"),
+  ("key= { x = 1 }\n"),
+  ("a.b=\t1979-05-27T07:32:00\n\r\na\t=\t[[1], [2, 3]]\n\"quo_ed\"\t= [[1], [2, 3]]\n[bare-key_1]\ntrue\t=[]\n"),
+  ("a.b\t=\t[\"a\", 'b']\r\n\"quoted\"=\t0 # trailing\r\n= = [[1], [2, 3]]\n\"\"=\"\\u00e9\"\nbare-key_1 =\t\"\"\r\n=\t= 1979-05-27 07:32:00Z\r\n"),
+  ("[a.\"b.c\"]\n\"\"\t=\t[[1], [2, 3]]\n\"\"\t= \"\"\"a\\\n   b\"\"\"\n\t\r\n1234=\t\"\"\"multi\nline\"\"\" # trailing\na . b = \"open\n"),
+  ("a.b = { a.b = 1 }\r\n\"a\"= 0b101\r\na b\t= [1, \"mixed\"]\n"),
+  ("- = 0b101 # trailing\nbare-key_1 = {}\r\n\"\" =\t_1\n[bare-key_1]\n\"a\" =07:32:00\n\"\"=[\"a\", 'b']\n"),
+  ("[[\"a\"]]\r\na . b = 0b101\r\n\"\" =\tinfinity\n\"a\"= 0x1F\r\n[["),
+  ("1234 = 1979-05-27T00:32:00.999999-07:00 # trailing\n'lit'=\tnan\r\n\"\"= 6.626e-34\n"),
+  ("  # x = 1\r\n[[key]]"),
+  ("1234= \"\\x\"\r\n[[\"a\"]]\r\n\"a\"\t= 1979-05-27T07:32:00Z\na\t=\t1.5 # trailing\ntrue =\t0b101\r\n"),
+  ("bare-key_1 =\t0\r\n\"\"\t= 6.626e-34\na.b\t=\"s\" # trailing\nb\t= 6.626e-34\n"),
+  ("'lit'=\t\""),
+  ("a ="),
+  ("a\t= [\"a\", 'b']\n'lit'= -9223372036854775808\na\t=1979-05-27\n'lit' =\t'lit\\n'\r\n\"\" =\t{}\n  # x = 1\na.b\t=[1, 2, 3] # trailing\r\nkey= 1979-05-27 # trailing\n"),
+  ("a . b\t=\t-1\na . b =0o17\r\n-= true # trailing\n[[-]]\r\nkey\t= 9223372036854775807\r\n\"\"\t=\t\"\\U0001F600\"\n[[\"a\"]]\r\n"),
+  ("\"quoted\"\t= 9223372036854775807\r\n["),
+  ("[[a . b]]\n- =true\r\n[a.b]\nb\t=1970-05-27T00:32:00.999999-07:00\n'lit'\t= 1979-05-27\n"),
+  ("-= 1.5 # trailing\n  # x = 1\na\t= 1_000\r\n'lit'= 6.626e-34\n[b]\r\n"),
+  ("[a]\n"),
+  ("\"quoted\"\t=\t1979-05-27 07:32:00Z\r\nkey =\t{ x = 1, y = \"z\" } # trailing\n1234= +1\r\n[a] = [\"a\", 'b'] # trailing\r\ntrue ={} # trailing\n"),
+  ("b =[[1], [2, 3]]\na.b =\t1979-05-27T00:32:00.999999-07:00\n['lit']\r\n'lit'= false\r\na =\t1979-05-27T07:32:00 # trailing\r\na = 0b101\n\"a\" =0b101\n#= \"\\u00e9\"\r\n"),
+  ("1234= nan\nb\t= true\n[\"quoted\"]\r\na=\t-9223372036854775808\n"),
+  ("'lit' =[[1], [2, 3]]\n"),
+  ("a.b\t= { a.b = 1 } # trailing\na . b= -inf\na\t=\t\"\"\"multi\nline\"\"\"\r\na.\"b.c\"=\t[]\r\n"),
+  ("1234 = -9223372036854775808\na =inf\n"),
+  ("\"a\"\t= 00:32:00.999999\r\na.\"b.c\" =1_000\r\na . b =\"tab\\there\"\n['lit']\nkey = 1_000 # trailing\n\r\na= \"\"\n"),
+  ("# comment\r\n[true]\n[[bare-key_1]]\r\na = 9223.72036854775807\nb = \"tab\\there\"\n"),
+  ("\"a\"= 1979-05-27 07:32:00Z\n\"a\" =\t-9223372036854775808\r\n\"a\" =-1\n:quoted\"\t='''raw\n'''\né= {}\r\n[b]\r\n"),
+  ("a=\t1_\r\nbare-key_1= false\n\t\na = []\n# comment\r\n"),
+  ("bare-key_1= 1_000.5\na.b\t=\t\"s\"\ntrue=\t1979-05-27T00:32:00.999999-07:00 # trailing\n[a]\n[key]\n\"quoted\" = 1_000\na = \"\" # trailing\r\n"),
+  ("é = 1979-05-27T07:32:00\r\na= 9223372036854775808\r\n"),
+  ("a=\t1_\n\"quoted\" = nan # trailing\n[b]\n"),
+  ("[1234]\r\na.b = 0x1F\r\n\"\" \n \"tab\\there\"\n"),
+  ("[[key]]\r\n  # x = 1\r\na.b =\t-0.0\na.b = nan1\n-\t='''raw\n'''\na.\"b.c\" =\t0b101\n"),
+  ("[[bare-key_1]]\na =\"\"\"a\\\n   b\"\"\"\na. =\t{ x = 1 }\n\nb = 9223372036854775807\r\n  # x = 1\n[[\"\"]]\n"),
+  ("[[a.b]]\r\n"),
+  ("[a . b]\r\n[a . b]\n\"quoted\" ={} # trailing\r\n[\"a\"]\n[b]\r\n"),
+  ("key =\"\\U0001F600\"\r\nkey = \"\\U0001F600\"\na.\"b.c\"= 0o17\r\na.b =\t00:32:00.999999\n[[\"\"]]\ntrue=\"tab\\there\"\n'lit' = 0x1F\nbare-key_1 = 1979-05-27T00:32:00.999999-07:00\n"),
+  ("[a.\"b.c\"]\nkey = \"\"\n[[true]]\r\na.\"b.c\"=\t6.626e-34\n"),
+  ("a\t=\t07:32:00\ntrue= [] # trailing\nbare-key_1 =\ttrue\n\"a\" = +1\n"),
+  ("a.b=-inf\na.\"b.c\"=1_000\r\n1234\t= [1 2]\r\na.\t= 1979-05-27T00:32:00.999999-07:00\n\"a\"=1e10\r\na.\"b.c\" =-0.0\n[true]\n[\"a\"]\r\n"),
+  ("'lit'\t= 07:32:00 # trailing\n[[a]]\r\n[[a . b]]\r\na =nan\nbare-key_1\t=\t00:32:00.999999 # trailing\r\na = 0x\r\n[[b]]\r\n# comment\n"),
+  ("[a . b]\r\n'lit' =\ttrue\n  # x = 1\nkey = \"\\U0001F600\"\r\na . b= [\"a\", 'b']\r\n\"quoted\" = 6.626e-34\nkey =[\"a\", 'b'] # trailing\n"),
+  ("-\t=\tfalse\n- =1_000\nb =\t-1\r\nkey= \"\"\"a\\\n   b\"\"\"\r\n-\t=.5\r\n"),
+  ("b\t= 0b101\n\"a\" = 1.5 # trailing\r\n[[key]]\ntrue =\t[1, \"mixed\"]\n[b]\n\"quoted\"\t=\t-9223372036854775808\na = {}\r\n"),
+  ("a\t=\"\"\na.\"b.c\"= 1979-05-27T07:32:00Z\na = \"\"\"a\\\n   b\"\"\"\n-=\t\"\"\"a\\\n   b\"\"\" # trailing\na\t=\tinf\r\n"),
+  ("a . b =\r\na\t=\t1979-05-27\r\na.b =\t1_0 0\r\n"),
+  ("a.b\t= nan\r\na= [1, \"mixed\"]\r\na . b =\t{ x = 1 }\r\n"),
+  ("true=[\"a\", 'b']\n1234=\t\"a\\nb\" # trailing\n\"quoted\" = [\"a\", 'b']\nb = 1\n[a.b]\n"),
+  ("\t\r\na.b\t=\"\\u00e9\"\r\n1234 =\tinfinity\r\n"),
+  ("a . b= \"\"\n\"quoted\" = false\r\n[\"a\"]\r\n"),
+  ("bare-key_1=1_0\n0.5\n"),
+  ("a =\t6.626e-34 # trailing\r\na . b = inf\n\n\"\"= 0\n\"a\"\t=-1\r\n\"quoted\" =-9223372036854775808\r\na.b=\tnan\n"),
+  ("a.\"b.c\" =\"tab\\there\"\n\"quoted\" =\t\"tab\\there\"\r\ntrue =\t[\n  1,\n  2,\n] # trailing\r\na b = 1.5\r\ntrue ={ x = 1: y = \"z\" }\n# comment\r\n"),
+  ("[[a]]\r\n"),
+  ("a..b= 1979-05-27T07:32:00\nb = \"s\"\r\n\nb= 1979-13-27 # trailing\n\"\"\t= 1979-05-27 07:32:00Z\na.\"b.c\" =\t-9223372036854775808\n1234 = 1_000\n\"a\"\t= \"\"\"multi\nline\"\"\"\r\n"),
+  ("a\t={ x = 1 }\r\nbare-key_1 =1_000\r\nkey = -0.0\r\ntrue=-1\n[[a]]\r\n[a . b]\r\n-=\t0o17\n"),
+  ("1234= 1_000\ntrue= -1\n[[1234]]\n  # x = 1\na =\t1979-05-27T00:32:00.999999-07:00\n[[a..b]]\r\n"),
+  ("[\"quoted\"]\n\"a\"\t=\t00:32:00.999999\n"),
+  ("a.\"b.c\"\t= 1979-05-27T07:32:00Z\r\na\t=01\n[bare-key_1]\n[\"a\"]\r\né= [\"a\", 'b'] # trailing\n  # x = 1\na . b =0x1F\n"),
+  ("\r\n'lit'=\t{ a.b = 1 }\na.b =\t1979-05-27T07:32:00\r\n[1234]\ntrue\t=\t6.626e-34\n"),
+  ("[[a.b]]\r\n[[\"quoted\"]]\n1234 = 1_000.5 # trailing\na.b = 1e10\na b= {}\r\n[[\"\"]]\nkey= 07:32\n"),
+  ("'lit'\t= [\n  1,\n  2,\n]\r\nb =\t-inf\n-\t=[\"a\", 'b']\n\"quoted\"=1979-05-27\r\n\t\ntrue\t= false\na . b =\t07:32:00\n[[a . b]]\n"),
+  ("a =\t{ x = 1 }\r\n# comment\na = infinity\n\t\r\na.\"b.c\"\t=\t0\na . b\t= 'lit\\n'\na\t= [1 2]\r\né = 1979-05-27T07:32:00Z\n"),
+  ("a.\"b.c\" = \"\\U0001F600\"\n\"a\"\t= { x = 1, y = \"z\" }\n"),
+  ("\"a\" =[]\na=\t0x1F\n\n'lit'\t= \"tab\\there\"\n"),
+  ("1230 =0x1F\na.b= _1\n"),
+  ("a = 1979-05-27T07:32:00Z\r\nb = 1.5\r\n[[a.]]\n"),
+  ("a\t= false\na =6.626e-34\nb=01\n"),
+  ("- = 0x1F\n'lit' =[1, 2, 3] # tr[iling\n\t\na=\t{ x = 1 } # trailing\n  # x = 1\r\n[a.\"b.c\"]\n[a . b]\n\"quoted\"= -9223372036854775808\n"),
+  ("key = 6.626e-34 # trailing\r\n[true]\n\"\" = 0b101\n\t\r\ntrue =[]\n[true]\na . b= inf\r\n"),
+  ("-\t=\t1979-05-27T25:00:00\n"),
+  ("\"a\"\t=1.5 # trailing\na.\"b.c\"= na"),
+  ("b = {}\n- = \"tab\\there\" # trailing\n\"\"= 6.6#6e-34\n  # x = 1\r\n[\"a\"]\r\n"),
+  ("[b]\r\n\"\" = -0.0\n[[\"a\"]]\n"),
+  ("\"quoted\" = -9223372036854775808 # trailing\ntrue = 1979-05-27 07:32:00Z\n"),
+  ("[[true]]\n\t\na.= \"tab\\there\"\na= \"\\U0001F600\"\n"),
+  ("'li"),
+  ("[a]\n\"a\"= -1\r\n\"a\"= [1, \"mixed\"]\r\n'lit' =\t{.5\r\n1234= 1979-13-27\n\t\r\n[[a]]\r\n\t\n"),
+  ("a.b = 0x1F\r\ntrue =\t0o17 # trailing\r\n1234= \"a\\nb\"\r\n\"quoted\" = 1979-05-27 07:32:00Z # trailing\r\nkey= +1\n\"\" = inf\n\"a\"\t= [[1], [2, 3]]\r\n"),
+  ("1234 = 1__0\r\na.\"b.c\"=+1\n  # x = 1\n"),
+  ("1234 = -9223372036854775808\na\t= inf # trailing\n\t\n"),
+  ("b\t= 1979-05-27T25:00:00 # trailing\r\n"),
+  ("]\n"),
+  ("1234 = 0\n1234 = \"\\uD800\"\n"),
+  ("\"\"\t= [1, \"mixed\"]\n# comment\n[\"a\"]\r\n"),
+  ("a . b\t=[[1], [2, 3]]\r\n[a . b]\r\ntrue = "),
+  ("[a]=\t[\n  1,\n  2,\n]\n[[a]]\n-= \"a\\nb\"\nb\t=\t\"\"\"a\\\n   b\"\"\"\na . b\t=1_\r\nkey = -1\r\na.\"b.c\"\t= 'lit\\n' # trailing\n- = \"s\" # trailing\n"),
+  ("'lit'\t= [\n  1,\n  2,\n]\n\"a\"\t=\t9223372036854775807\r\n[[a . b]]\r\n\"\" = -0.0\n#\t= true\n=\t= -9223372036854775808\na= \"\"\r\n"),
+  ("a . b=\t-1 # trailing\n\"a\" = \"\"\r\n'lit' = { x = 1, y = \"z\" }\r\n"),
+  ("a= true\nbare-key_1= true\n[[\"quoted\"]]\na.b = 9223372036854775807\r\n\"quoted\"= [1, \"mixed\"]\n[[-]]\r\n"),
+  ("\"a\"\t= 'lit\\n' # trailing\r\na.\"b.c\"= 1.5 # trailing\r\na b = 0x\n"),
+  ("[[a]]\n[['lit']]\r\na= { x = 1 }\na . b =1979-05-27 07:32:00Z\n  # x = 1\n\t\r\n  # x = 1\n"),
+  ("a.b = 1979-05-27T25:00:00 # trailing\n-=\t6.626e-34\r\n[[=]]\na.\"b.c\"\t=\"\"\"a\\\n   b\"\"\"\r\n# comme.t\r\n"),
+  ("[[key]]\n['lit']\r\n\"a\" = \"\\U0001F600\"\r\n"),
+  ("\"quoted\"= [\n  1,\n  2,\n]\nkey =0x1F\na= 1e10\na.\"b.c\"\t=-0.0\n"),
+  ("a.b =[1, 2, 3]\r\n[[key]]\r\n[b]\r\n\"\"\t=00:32:00.999999\r\n[[b]]\r\né\t= nan\r\na =\t1979-05-27 07:32:00Z # trailing\r\n"),
+  ("bare-key_1 =\t\"tab\\there\"\n\"quoted\"\t=6.626e-34\r\nb =6.626e-34\r\n  # x = 1\r\na.b =nan\na.b = \"\"\"a\\\n   b\"\"\" # trailing\nb = {}\na =\t{ x = 1, y = \"z\" }\n"),
+  ("\"quoted\" = \"\\u00e9\"\n\"a\"=-0.0\n[a.b]\n1234=\"\"\"a\\\n   b\"\"\"\n"),
+  ("# comment\r\n\"\" "),
+  ("a . b= { a.b = 1 }\r\n"),
+  ("[[\"quoted\"]]\r\n"),
+  ("[[b]]\n[[true]]\r\n[1234]\r\n"),
+  ("- = { x = 1, y = \"z\" }\na\t=1979-05-27T07:32:00Z\n[[a.b]]\r\ntrue= inf\n[[\"a\"]]\n\"\"= { x = 1, }\r\n[[a]]\n"),
+  ("a.\"b.c\"\t= 'lit\\n'\r\na . b =\t00:32:00.999999\n# comment\ntrue\t=\ttrue\r\n"),
+  ("a\t= 9223372036854775807\n"),
+  ("[[\"a\"]]\n\"quoted\"\t=\t00:32:00.999999\r\n-=\"\\x\"\r\n"),
+  ("a . b = [1, 2, 3]\ntrue\t=\tnan\na.\"b.c\" = '''raw\n'''\n"),
+  ("[a]\na = 1__0\r\n- = 1e10\r\n= =\t1979-05-27T07:32:00Z\n[[1234]]\r\nb ='''open\r\nb =\t0o17\r\n\"\" = [] # trailing\r\n"),
+  ("a.b\t=\t00:32:00.999999 # trailing\n[[a..b]]\r\n\"\"\t=\"a\\nb\"\r\na . b\t= 1979-05-27T07:32:00\r\nbare-key_1 = 00:32:00.999999\n"),
+  ("b = \"\"\"a\\\n   b\"\"\"\na.b =\tinf\n== \"a\\nb\"\r\n"),
+  ("key =[\"a\", 'b']\n\"quoted\" = 1e # trailing\na.b\t= \"a\\nb\" # trailing\na= -inf\n\t\n"),
+  ("[bare-key_1]\na.b = [\n  1,\n  2,\n]\r\né =\t-1,\na.\"b.c\" = 1979-05-27 07:32:00Z\n[a.\"b.c\"]\r\n# comment\na.\"b.c\" = { x = 1\n}\n"),
+  ("true\t= 0\n- =-inf\na= 1979-05-27T00:32:00.999999-07:00 # trailing\n"),
+  ("true=\t1979-05-27\r\n[[\"quoted\"]]\r\n  # x = 1\r\n[[b]]\n"),
+  ("- =\t1979-05-27T07:32:00Z\n\"a\" = 0o17\r\n= = +1\n"),
+  ("\"quoted\"\t=07:32:00\n\r\n'lit'=[1, \"mixed\"]\na.\"b.c\"\t"),
+  ("true= 1979-05-27T07:32:00\r\n#\t= 1.\n"),
+  ("[[key]]\n'lit'=+1\r\n-=\t\"\"\"a\\\n   b\"\"\"\r\n"),
+  ("[[#]]\nbare-key_1= 1 # trailing\r\na.=1_\nb = 1_000.5\na . b = \"\\u00e9\"\r\na= [[1], [2, 3]]\r\n[\"a\"]\r\n"),
+  ("a = true\r\n"),
+  ("# comment\r\ntrue =\t[ , \"mixed\"]\n[key]\nb\t=+1\r\n.a =\t{ x = 1 }\n"),
+  ("[[b]]\r\n[[a]]\n'lit' = .5\na..b =0b101\r\n'lit' = 01\r\n"),
+  ("a\t=\t-inf\n1234 = 6.626e-34\r\n"),
+  ("[[\"a\"]]\n[[[a]]]\na = '''raw\n'''\na.b =[1, 2, 3]\r\n-\t= \"\\U0001F600\"\n\n"),
+  ("\"quoted\" =\t0b101\n- =\t1e10\r\n\na.b= 1_000.5 # trailing\r\nbare-key_1\t=\t\"a\\nb\"\n"),
+  ("'lit' =1979-05-27T07:32:00Z\n[[a]]\na.b =\tfalse\na . b= false\n"),
+  ("bare-key_1 = in\"inity\r\n# ='''raw\n'''\n1234 = \"open\n"),
+  ("  # x = 1\n- =\"\\U0001F600\"\nb\t= 1\n\"a\" =1979-05-27 07:32:00Z\n[[b]]\n"),
+  ("a =[\n  1,\n  2,\n]\n'lit' =\t-9223372036854775808\n\"a\"\t=\t[1, 2, 3]\n  # x = 1\r\n  # x = 1\ntrue=\t1\r\n\"quoted\"\t=\t\"\"\"multi\nline\"\"\"\n['lit']\r\n"),
+  ("  #]x = 1\n"),
+  ("- =\t[]\na.b\t=\t0x1F\n[[a]]\r\nb =\t0b101\n[[key]]"),
+  ("a\t= \"\\uD800\"\r\n'lit'\t= \"\"\nb\t= 1979-05-27T00:32:00.999999-07:00\r\n  # x = 1\r\n[[a.b]]\nb\t= 1979-05-27T07:32:00Z\ntrue= \"tab\\there\"\n\r\n"),
+  ("\"\" =\tfalse\n  # x = 1\n#= \"\"\"multi\nline\"\"\"\n\n[b]\nkey = 1979-05-27T00:32:00.999999-07:00\n[\"quoted\"]\n['lit']\r\n"),
+  ("'lit' =[1, \"mixed\"]\na.b = []\r\n'lit'= { x = 1, y = \"z\" }\r\n- =\t\"\\uD800\"\na =00:32:00.999999\n\"a\" = \"s\" # trailing\n[bare-key_1]\n\"\" =["),
+  ("a.b = 1_000\n'lit' =\t{ x = 1 }\n[[true]]\na.\"b.c\" =\t1979-05-27\r\n[[a . b]]\na.\"b.c\"=[\n  1,\n  2,\n]\r\n\t\ntrue =\t{ a.b = 1 }\n"),
+  ("\"quoted\"\t=\t1e10\n"),
+  ("[[a.b]]\r\nbare-key_1 = 00:32:00.999999\n# comment\n\r\n\"quoted\"=\"tab\\there\"\na = inf\n"),
+  ("[key]\n- = []\r\n- =9223372036854775807\r\ntrue\t=\t1.5\n1234= true\r\n.a =\t'lit\\n'\r\n1234 = 1979-05-27T07:32:00 # trailing\nb ={ a.b = 1 }\n"),
+  ("[[\"\"]]\nbare-key_1 =\t\"a\\nb\"\r\ntrue = { x = 1, y = \"z\" }\r\n\"a\" = 0o17\na = 1979-05-27 # trailing\r\na . b=1.\r\n1234= 1.5\r\n"),
+  ("# comment\n\"\"\t=00:32:00.999999 # trailing\ntrue=\t\"a\\nb\" #'trailing\n"),
+  ("[a.b]\na = \"\"\"multi\nline\"\"\" # trailing\r\n[[=]]\n# comment\nbare-key_1 = \"\\U0001F600\"\r\na.b = .5\n\r\n"),
+  ("'lit'\t= 'lit\\n' # trailing\n[[\"a\"]]\ntrue =\tfalse\r\nbare-key_1 =\tfalse\n"),
+  ("[\"a\"]\r\n-= \"\"\"multi\nline\"\"\"\n- =\t{ a.b = 1 }\r\n['lit']\n[[key]]\na =\t'''raw\n''' # trailing\na.\"b.c\" =\t-0.0\n"),
+  ("bare-key_1=9223372036854775807\na..b=\t\"\"\"open\n"),
+  ("a.b ='''raw\n'''\r\ntrue= \"\"\"multi\nline\"\"\"\r\n[[\"quoted\"]]\n\"quoted\"\t= \"tab\\there\"\na..b =\t[1, \"mixed\"]\r\na.\"b.c\"\t=\t6.626e-34 # trailing\n"),
+  ("b = 07:32\n\t\r\n"),
+  ("[[\"\"]]\r\nkey =\"\" # trailing\r\na =\t{ x = 1, y = \"z\" }\r\n'lit' =[1, \"mixed\"]\na\t= inf\r\na.\"b.c\"=\t+1\na . b=\t[\"a\", 'b']\r\n[[a.\"b.c\"]]\n"),
+  ("true = 0b101 # trailing\n\"\" =\t-0.0\n"),
+  ("a= 1_000\r\n- = \"\\u00e9\"\na.\"b.c\"=1e10\n"),
+  ("\"\" = \"\\U0001F600\"\r\n\"quoted\" = [\n  1,\n  2,\n]\n"),
+  ("a.\"b.c\" =\t0x1F # trailing\r\nb= 1979-05-27T07:3"),
+  ("a b= \"a\\nb\"\n\"a\" = \"\"\r\n'lit' = { x = 1, y = \"z\" }\r\na . b\t={ x = 1 }\r\n[key]\n1234 = 1_000.5\r\nb =[1, \"mixed\"]\n"),
+  ("a.b=inf\n[[\""),
+  ("\na=\t1.5\na =9223372036854775807\r\n[b]\r\n\"a\"= 1.5\n"),
+  ("a.b= 1_\r\n\n\t\na.\"b.c\" =\tnan\n\"a\"= true # trailing\na= false\n1234\t= [\n  1,\n  2,\n]\n"),
+  ("é\t=\t[[1], [2, 3]]\n[\"\"]\n\t\n- = 1e10\na\t= [1, 2, 3]\n"),
+  ("\na.b =\t[[1], [2, 3]]\r\nbare-key_1 =[1, \"mixed\"]\na.\"b.c\" = \"a\\nb\"\n\"quoted\"=[\"a\", 'b']\n\"\"=\t1979-05-27T07:32:00\r\n[[key]]\r\n"),
+  ("\"a\" = nan\r\n\"a\"= [1, 2, 3]\n'lit'\t= 0o17\r\n1234=\ttrue\r\n[\"a\"]\r\n"),
+  ("a.= 1979-05-27 07:32:00Z\na.b = 1979-05-27T07:32:00Z\na.\"b.c\" =\t0o17\nbare-key_1 = 1979-05-27T07:32:00Z\na.\"b.c\"\t= \"\"\"a\\\n   b\"\"\"\r\nkey = \"tab\\there\"\n\t\n"),
+  ("1234\t= 1979-05-27T00:32:00.999999-07:00\n[[1234]]\r\nb\t=\t6.626e-34\nb =19"),
+  ("a = -0.0\nkey=\t\"\\u00e9\" # trailing\r\na.\"b.c\" = \"tab\\there\"\r\na\t=-9223372036854775808\n"),
+  ("true=1979-05-27T07:32:00\r\n"),
+  ("[[a.b]]\r\n[[a.\"b.c\"]]\n\"quoted\"=1.5\n[b]\na = true\n"),
+  ("[\"a\"]\r\na..b= [] # trailing\na.\"b.c\"== nan\r\n"),
+  ("[[a.b]]\na.b = 01\na..b =false\na.\"b.c\"\t= [1,,2]\r\n\"quoted\"\t=\t0\na = [\n  1,\n  2,\n]\r\na.\"b.c\" = \"\"\"multi\nline\"\"\"\r\n"),
+  ("[[a . b]]\r\ntrue\t=\t\"\"\"multi\nline\"\"\"\r\n[[key]]\nb =\t1\n[\"a\"]\na . b\t=\t00:32:00.999999\n1234\t=\t\"\"\n- =\t1.5 # trailing\r\n"),
+  ("key =\"tab\\there\"\r\na =\t0b101\n[a.\"b.c\"]\r\na=\t-in=\nkey =[\"a\", 'b']\na=\t-0.0\n'lit'\t= \"s\"\n"),
+  ("a= \"s\"\ntrue = 1\n1234 =\tfalse\r\n[[\"\"]]\n"),
+  ("bare-key_1 =\t\"\"\"a\\\n   b\"\"\"\na.b\t=\t+1\n"),
+  ("key\t= '''open\r\na =\t\"\\u00e9\"\r\n# = infinity\n\"\" = "),
+  ("\"a\"=9223372036854775807\n[[\"quoted\"]]\r\n'lit' = 1_000.5\r\na.\"b.c\"\t=0x1F\na.\"b.c\" = 1\r\n=\t=0x\n[a]\t=\t0b101 # trailing\r\n"),
+  ("a = 07:32:00\r\ntrue\t= infinity\r\na = 6.626e-34\n"),
+  ("\r\n  # x = 1\nb\t= 1979-05-27T07:32:00\na.b = false\r\na . b =6.626e-34\n"),
+  ("a\t= 1979-05-27T07:32:00Z\na.\"b.c\" =\t\"s\"\r\n\"quoted\" = \"tab\\there\"\r\n- = 0x1F\na= \"\\x\" # trailing\n'lit'= [1, 2, 3]\nkey =\t{ x = 1, y = \"z\" }\n"),
+  ("bare-key_1\t=0o17\r\n"),
+  ("b = true\r\na= 0o17 # trailing"),
+  ("\"a\"= 0x\r\n# "),
+  ("true =\t1979-05-27T07:32:00Z\n-=+1\r\na.b = 'lit\\n'\n\n# comment\r\n- =\t\"t"),
+  ("[\"quoted\"]\r\na\t=\tnan\r\na.b\t= _1\n[[b]]\na =\t00:32:00.999999\r\n1234 = 1979-05-27 07:32:00Z\na = 1.5\n"),
+  ("key ='lit\\n'\nbare-key_1= 1_000.5\n"),
+  ("\"quoted\"\t= 1.5\r\n'lit'\t= 'lit\\n'\na =1_000.5 # trailing\na = \"s\"\r\n[[a.b]]\n"),
+  ("[[a . b]]\n'lit' =[1, \"mixed\"]\r\n\r\n"),
+  ("a.\"b.c\" =\t[\n  1,\n  2,\n]\r\n[[b]]\na"),
+  ("\t\r\n[[a.\"b.c\"]]\r\n"),
+  ("[\"a\"]\r\n.a= { x = 1 }\r\n'lit'= -1\nkey =\t[[1], [2, 3]]\na = \"\"\n\"quoted\" =1e10\r\n"),
+  ("\t\r\na.b =\t1979-05-27T00:32:00.999999-07:00\na.= {}\r\n"),
+  ("true = 0x1F\n- = {}\n# comment\r\n[[true]]\n- =\t{ x = 1\n}\n'lit' = [\n  1,\n  2,\n] # trailing\n"),
+  ("[[1234]]\n\t\na.b = 1979-05-27"),
+  ("a.b = { x = 1 }\n[['lit']]\na.\"b.c\"\t=\t'lit\\n' # trailing\n"),
+  ("- =\ttrue\nkey= { a.b = 1 }\r\na.b =\t[\"a\", 'b']\n1234 =\t+1\r\n\"\" = 1979-05-27T07:32:00\na.."),
+  ("-\t= 1.5\r\n\"a\" =\t6.626e-34\n[true]\nkey\t= 6.626e-34\n[a.\"b.c\"]\r\n[a.b]\n[[\"quoted\"]]\r\n'lit'\t= 0\n"),
+  ("-= true # trailing\r\n\"\" = [1, \"mixed\"]\r\n\t\r\n[[\"\"]]\r\n= =0\n"),
+  ("true =-inf\n\"\" =\"\\U0001F600\"\na\t=\t\"\\uD800\"\r\n[b]\na.b = \"\\U0001F600\"\n[a.\"b.c\"]\n"),
+  ("a . b=\"\"\"a\\\n   b\"\"\"\r\n\"quoted\" =\t1979-05-27T07:32:00Z\n1234 =\"\"\"a\\\n   b\"\"\" # trailing\n[a.b]\na = [1, \"mixed\"]\n"),
+  ("a.b\t=\"\\U0001F600\"\n\"a\"=\t-1\n\"a\"\t= 1\nbare-key_1 =\t\"\"\"multi\nline\"\"\" # trailing\na.\"b.c\"\t= [\n  1,\n  2,\n]\na.b= []\n\t\n-=\t\"\"\"open\n"),
+  ("a =\t{ a.b = 1 }\na.\"b.c\" = 01\n"),
+  ("\"\" =+0x1\n"),
+  ("\"a\"\t=0x1F\r\n- =\t\"\\u00e9\"\r\nb\t= \"tab\\there\"\n1234 = 0o17\n\"quoted\" = 1.5\ntrue =\t9223372036854775807\nkey = inf\n[1234]\r\n"),
+  ("a\t=\t[\n  1,\n  2,\n]\r\n[[\"a\"]]\n= = [1, 2, 3]\r\n[[1234]]\n\t\r\n[-]\r\n[key]\r\n\"a\" =\t1_000.5\r\n"),
+  ("é =\t[]\n[true]\r\n[[\"\"]]\r\n[key]\n-\t=\t01\n[[b]]\r\n\t\r\n"),
+  ("'lit' = 9223372036854775807\na . b =[\"a\", 'b']\na.\"b.c\"\t= 0b101 #.trailing\r\n1234\t=9223372036854775807\r\n\"a\"\t= tru\n"),
+  ("a\t= \"\\U0001F600\"\r\n- =\t1979-05-27T07:32:00Z\nbare-key_1 =9223372036854775807\n\"\" = 00:32:00.999999 # trailing\r\n\r\n[\"\"]\n1234\t= 1\n\t\n"),
+  ("a\t=\t0o17\nbare-key_1='lit\\n'\na=true # trailing\r\nbare-key_1 ={ a.b = 1 }\r\n# comment\n"),
+  ("a.b =\"\"\"a\\\n   b\"\"\" # trailing\r\n  # x = 1\r\n"),
+  ("bare-key_1 =\t\"\\x\"\na =\t9223372036854775807\n"),
+  ("a..b\t= -1\r\n-\t=1e # trailing\n'lit' ={}\nb = [\n  1,\n  2,\n] # trailing\n[bar"),
+  ("1234\t= '''raw\n'''\na.\"b.c\" =\t{}\n\"\" = 1979-05-27T00:32:00.999999-07:00\r\nkey\t=-1\n"),
+  ("['lit']\n[a.\"b.c\"]\n"),
+  ("-\t=\t\"s\"\na =\t[1, \"mixed\"]\nb= 1_000.5 # trailing\r\n[['lit']]\n"),
+  ("true = 1979-05-27\r\n'lit' =-1\r\n[[a.b]]\r\n=\t= 1\na . b = false\n"),
+  ("bare-key_1=9223372036854775808 # trailing\nkey\t="),
+  ("a =\t1979-05-27T00:32:00.999999-07:00\r\n\"a\"\t=\t0o17\n'lit' = 6.626e-34\na . b=\t[1, \"mixed\"] # trailing\r\n[[a]]\r\n\"quoted\"=\t\"a\\nb\"\ntrue=\t\"s\"\n"),
+  ("[a]\t=\t\"tab\\there\"\r\nbare-key_1= 1e10\r\n[[\"\"]]\na =[[1], [2, 3]]\r\n"),
+  ("key= [[1], [2, 3]] # trailing\na . b\t= {}\n[[a.b]]\n[a.b]\r\n\"a\"= [\n  1,\n  2,\n] # trailing\n"),
+  ("1234 = { a.b = 1 }\r\n\t\r\n[a]\n"),
+  ("bare-key_1='''open # trailing\n"),
+  ("- = tru\r\n= = 07:32:00\n'lit'={ x = 1, y = \"z\" }\n"),
+  ("a.\"b.c\" =1e10\n[[key]]\n"),
+  ("key =\"\\u00e9\"\n= =\t\"\"\"a\\\n   b\"\"\" # trailing\n  # x = 1\n1234 = { x = 1, y = \"z\" }\r\n"),
+  ("a.= 0\nb\t= {}\r\n\"\" =\t1\n\t\r\n'lit'=#[\n  1,\n  2,\n]\r\n"),
+  ("true\t= inf\r\na= 00:32:00.999999\n  # x = 1\n[[a . b]]\n1234 =1979-05-27T07:32:00\na.\"b.c\" = [\"a\", 'b']\r\n[[a]]\n"),
+  ("1234\t=07:32:0:\n"),
+  ("\"\"=inf\r\n\t\r\n\na.\"b.c\" = true\r\n\"\"= \"tab\\there\"\n  # x = \"\n# comment\na.\"b.c\" =\t\r\n"),
+  ("\t\n\"\"=+1\r\na . b =\t1979-05-27T00:32:00.999999-07:00 # trailing\r\n1234=\t{}\r\n\"\" = 1.5\na =\t1\r\n\"a\"= \"a\\nb\"\n\"a\" = '''raw\n'''\n"),
+  ("[[a]]\ntrue= \"\\U0001F600\"\r\na.b= { x = 1 }\n= =[[1], [2, 3]]\r\n"),
+  ("\t\n.a =6.626e-34\na = { x = 1 }\na\t= 6.626e-34\r\n"),
+  ("a..b =0b101\r\na\t= { x = 1, y = \"z\" }\r\n"),
+  ("[\"quoted\"]\nb =\t\"\\u00e9\"\r\n"),
+  ("\"\" =\"\"\na = -0.0\n[\"a\"]\r\n1234 =1979-05-27T07_32:00Z\r\na . b = \"a\\nb\" # trailing\n\n[[b]]\n"),
+  ("'lit' =\tinf # trailing\n# comment\n[true]\na = 1979-05-27T07:32:00\n  # x = 1\n\t\r\n"),
+  ("a =\t1979-05-27 07:32:00Z\n1234 = [\n  1,\n  2,\n]\r\n"),
+  ("bare-key_1 =\t[\"a\", 'b']\r\n\"a\"\t= 1.5\r\n\t\n\"quoted\" =-inf\r\nkey\t= infinity\n"),
+  ("\t\r\na.b\t= 1979-05-27T07:32:00 # trailing\n# comment\r\n[a]\t=\t0o17\n-=\t[[1], [2, 3]]\r\n'lit'=true\n-\t= \"\"\n[['lit']]\r\n"),
+  ("[[a]]\n\"\" =9223372036854775807\ntrue =1_000\n\"quoted\"\t=\t\"\"\"multi\nline\"\"\"\na . b=\t6.626e-34 # trailing\nbare-key,1 = { x = 1, y = \"z\" }\r\n"),
+  ("  # x = 1\r\n  # x = 1\n[a]\n"),
+  ("a.\"b.c\" = \"tab\\the=e\"\n"),
+  ("[[1234]]\nbare-key_1 =\t[1, \"mixed\"]\n['lit']\n[[\"quoted\"]]\r\n\"quoted\"= 0b101\na.\"b.c\" = { x = 1 }\na..b =1_\r\n[key]\n"),
+  ("'lit'\t= false\na= \"\\u00e9\"\n\"\"= 1979-05-27\n"),
+  ("a = 1\n'lit'=false\n\t\n"),
+  ("\"\"=\t1979-05-27\r\n- = 6.626e-34\r\na . b\t= { x = 1\n}\n'lit' =\t\"\\U0001F600\" # trailing\n# comment\r\n\"\" = 9223372036854775807\n[[a.]]\na . b =\t[[1], [2, 3]]\r\n"),
+  ("key\t=\t1.5\r\n\"quoted\" =\t00:32:00.999999\n[\"\"]\n"),
+  ("- = { a.b = 1 }\r\n[a]\n"),
+  ("a.b\t=\t\"tab\\there\" # trailing\n"),
+  ("a.b = 0x1F\n[[b]]\nbare-key_1 = -inf\n\nbare-key_1 =\t{ x = 1 }\n[[a b]]\n"),
+  ("a b ={}\nb\t= -9223372036854775808\n[[true]]\n"),
+  ("# comment\n[[a.]]\n[\"a\"]\n"),
+  ("-\t=00:32:00.999999\na.\"b.c\"\t= tru\n"),
+  ("\"a\" = { x = 1 }\r\n.a\t=-inf\r\na.\"b.c\" =\"\"\"a\\\n   b\"\"\"\na..b = \"a\\nb\" # trailing\n"),
+  ("[key]\na.\"b.c\"\t=1.5 # trailing\r\n"),
+  (""),
+  ("[a.\"b.c\"]\r\n\"quoted\" = 9223372036854775807\n[bare-key_1]\n[['lit']]\ntrue = 0x1F\n- = [[1], [2, 3]]\r\n"),
+  ("a.\"b.c\" = -inf\r\na.=1_\r\na . b = +1\r\n\"quoted\" = 00:32:00.999999\n[a]\nkey = \"a\\nb\"\n"),
+  ("bare-key_1 = -9_23372036854775808\r\nbare-key_1 =\r\n[[b]]\r\n[b]\r\nb\t= 9223372036854775807 # trailing\r\n"),
+  ("a . b = 1.5 # trailing\nbare-key_1 = false\ntrue = { x = 1, y = \"z\" }\n[[bare-key_1]]\nb\t= [1, 2, 3]\n"),
+  ("a.b =\t{}\n"),
+  ("true =\t07:32:00\r\nbare-key_1={ x = 1, y = \"z\" }\r\na.b =\"\"\"multi\nline\"\"\"\r\n'lit'\t=\"\"\"multi\nline\"\"\"\n"),
+  ("a b =\t'lit\\n'\r\n[a]\t= 1979-05-27T00:32:00.999999-07:00\n\r\n1234=\t\"\\u00e9\"\r\n  # x = 1\n"),
+  ("é = false\n1234 = 1_000.5\r\n\"\"\t= 'lit\\n'\n'lit' =\t1.5\n"),
+  ("1234 = { x = 1, }\na =\t\"tab\\there\"\na =\tnan\n[\"a\"]\r\n1234 =\t07:32:00\n"),
+  ("\"\" = \"\"\"multi\nline\"\"\"\n"),
+  ("[[a]]\n"),
+  ("a . b=infinity\r\n.a =9223372036854775807 # trailing\na b =\"s\"\r\n"),
+  ("[[1234]]\r\na.\"b.c\" = 1979-05-27\n\"a\"=[\"a\", 'b']\na.\"b.c\" =-inf\r\na.\"b.c\"= 1_000.5\nkey = 07:32:00 # trailing\r\n"),
+  ("\"\"\t= +1\n[[bare-key_1]]\r\na.\"b.c\"= 1979-05-27\n\n"),
+  ("[b]\nbare-key_1 = 1_000.5\n"),
+  ("\"quoted\" =\t-inf\n\"\" =\"\\u00e9\"\n[[\"\"]]\n1234'= \"s\"\na =\tnan1 # trailing\r\ntrue = { x = 1 }\r\n"),
+  ("a.b =\t07:32:00\r\n"),
+  ("bare-key_1 =1979-05-27 07:32:00Z\n[1234]\nkey=false\n[[true]]\n\"\" =\t\"\\u00e9\"\r\n  # x = 1\n"),
+  ("key= [\n  1,\n  2,\n]\r\n.a= \"a\\nb\"\n[[-]]\n"),
+  ("[[a]]\n\n[true]\n.a=1979-05-27\r\na . b= \"\"\"a\\\n   b\"\"\"\n"),
+  ("a = 1979-05-27T00:32:00.999999-07:00\n[\"a\"]\n- =+1\n\"quoted\" =\t\"a\\nb\"\r\n\"\"= 1.5\r\n"),
+  ("a . b = []\n- = {}\n[bare-key_1]\n\nbare-key_1 =\t{ x = 1 }\nkey= 1.5 # trailing\nkey = 1.5\r\na b\t=\t0b101 # trailing\n"),
+  ("\r\n"),
+  ("- = [[1], [2, 3]]\n\"a\"\t= []\n[[a . b]]\r\n"),
+  ("a =\t\r\n\"a\"\t=\t1979-05-27T07:32:00\r\n\"\" = {}\ntrue=-9223372036854775808\r\na.b\t= nan1\ntrue=\ttrue\n["),
+  ("'lit' =\tinf # trailing\n\r\nbare-key_1= false\r\n"),
+  ("1234 = -9223372036854775808\na.\"b.c\"\t=\t1979-05-27T00:32:00.999999-07:00\r\nb = \"\\U0001F600\"\n"),
+  ("true = 0b101 # trai'ing\n- = { x = 1 }\r\n\t\na.b =\t[\n  1,\n  2,\n] # trailing\r\n"),
+  ("a.b\t= \"\\U0001F600\"\r\n# comment\n[[bare-key_1]]\n\"a\" =6.626e-34\r\nbare-key_1= false\na =\t9223372036854775807\r\na. = \"s\"\r\n"),
+  ("a.\"b.c\" = \"\"\n[a]\n[[true]]\n[['lit']]\n\r\na.\"b.c\" = { x = 1\n}\n-= [1, \"mixed\"]\n"),
+  ("'lit'\t='lit\\n'\r\n[['lit']]\r\nkey\t=-0.0\nbare-key_1\t=1e10\nkey = 0\n[a]\r\n[[a]]\n\n"),
+  ("[[a.b]]\r\n-\t=\ttrue\nbare-key_1\t= 1\ntrue = 00:32:00.999999 # trailing\n\"\"=00:32:00.999999\n"),
+  ("\"a\" ={}\na\t= [1, \"mixed\"]\n\"a\"\t=\"\\u00e9\"\n['lit']\r\n"),
+  ("[[a]]\n[a]"),
+  ("b= 1979-05-27T07:32:00\ntrue = \"\"\"a\\"),
+  ("a . b = 07:32:00 # trailing\n[[\"\"]]\n-\t= 1979-05-27\n\"quoted] ={ a.b = 1 }\n[[a.b]]\n"),
+  ("1234\t= \"\"\na =9223372036854775807\r\nkey= \"\\u00e9\"\r\ntrue ={ x = 1 }\n'lit' = '''open\na.b =\t'lit\\n'\ntrue = -9223372036854775808\n"),
+  ("[[b]]\na.\"b.c\" = 1\r\n\"a\" =\t+1\n[[a]]\r\na.\"b.c\" = -1 # trailing\r\n\"\" = {}\n"),
+  ("b=1.5\r\n"),
+  ("[1234]\n"),
+  ("# comme-t\né=-inf\nkey=1e10\r\n"),
+  ("true\t=\"\\U0001F600\"\na . b =1979-05-27T25:00:00\n"),
+  ("\"\" =1979-05-27T07:32:00\nb =\t[\n  1,\n  2,\n] # trailing\r\n\"quoted\" =\t'''raw\n''' # trailing\r\n'lit' = 1979-05-27T07:32:00Z # trailing\r\n[.a]\r\n  # x = 1\na.\"b.c\"= 0\n\"a\"= -0.0\r\n"),
+  ("a . b= 1_000.5\n[\"\"]\r\n[[b]]\n[a.\"b.c\"]\r\n  # x = 1\r\n[[\"\"]]\n"),
+]

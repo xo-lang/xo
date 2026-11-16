@@ -1,0 +1,524 @@
+// std/template stress (decision 0616, task #108): 64 tasks parse and render the
+// corpus's templates for 30 minutes against Go's output and errors, then a
+// resident set check.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/json
+use std/template
+
+/// One pass over the cases from offset start: the operations done, or the
+/// first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  let data = json.parse_value(DATA).ok() ?? json.Value.Null
+  for k in 0..CASES.len() {
+    let (src, missing, want) = CASES[(start + k) % CASES.len()]
+    let got = match template.parse("t", src) {
+      Ok(t) => match t.missing_key(missing).render(data) {
+        Ok(s) => s
+        Err(e) => "err ${e.display()}"
+      }
+      Err(e) => "err ${e.display()}"
+    }
+    if got != want {
+      return Err("template ${src.quote()}")
+    }
+  }
+  CASES.len()
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("template stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+const DATA: Str = "{\"s\":\"hello\",\"e\":\"\",\"i\":17,\"neg\":-3,\"z\":0,\"f\":3.25,\"big\":1e21,\"small\":0.0001,\"t\":true,\"fa\":false,\"n\":null,\"list\":[1,2,3],\"strs\":[\"a\",\"b\",\"c\"],\"empty\":[],\"mixed\":[1,\"x\",null,true,2.5],\"m\":{\"one\":1,\"two\":2,\"three\":3},\"em\":{},\"nested\":{\"a\":{\"b\":{\"c\":\"deep\"}},\"arr\":[{\"k\":\"v1\"},{\"k\":\"v2\"}]},\"html\":\"<b>\\\"x\\\" & 'y'</b>\",\"uni\":\"héllo wörld\",\"num_str\":\"42\",\"url\":\"a b&c=d/é\"}"
+
+/// (template, missingkey=error, Go's output or err TEXT)
+const CASES: List[(Str, Bool, Str)] = [
+  ("a b", false, "a b"),
+  ("{{len 3}}", false, "err template: t:1:2: executing \"t\" at <len 3>: error calling len: len of type int"),
+  ("  \n  éx{{.m.one}}", false, "  \n  éx1"),
+  ("{{.missing}}{{.f | not}}a b{{.z}}", false, "<no value>falsea b0"),
+  (" {{printf \"%x\" .missing .nested.a.b.c}}{{(.nested.arr)}}", false, " %!x(<nil>)%!(EXTRA string=deep)[map[k:v1] map[k:v2]]"),
+  ("{{slice .i 0}}", false, "err template: t:1:2: executing \"t\" at <slice .i 0>: error calling slice: can't slice item of type int64"),
+  ("{{with printf \"%v %v\" .m.one nil}}{{.neg}} {{\$v0 := .fa}}{{with .s.x}}{{template \"u\"}}{{- .z}}  \n  {{\$v0}}{{else}}{{\$v1 := printf \"%5.2f\" \$v0 .m.four}}\n{{call .s}}{{end}}{{else}}{{.html}}\n{{end}}{{with 2i | html}}<{{slice .list 0}}{{range 3.5}}{{continue}}{{with slice .f 1}}{{slice .uni 5}}{{else with or \$.i .z .neg}}{{print .list .f .big -}}{{end}} {{end}}{{else}}a b{{end}}a b", false, "err template: t:1:36: executing \"t\" at <.neg>: can't evaluate field neg in type string"),
+  ("{{true}}{{range \$k, \$e := .fa}}{{with .nested.a | urlquery}}{{if slice \$k 1}}{{.url}}{{end}}éa b{{lt .empty .mixed .m}}{{end}}{{{{printf \"%T\" .empty \$k}}{{else}}x{{\$v0 := (and .small .neg nil)}}a b{{end}}{{.z | html}}{{with printf \"%d\" .big .em}}{{/* c */}}{{else with slice 1e3 1}}{{.nested.arr}}{{if 'a'}}{{.fa | printf \"%v\"}}{{end}}{{end}}", false, "err template: t:1: unexpected \"{\" in command"),
+  ("{{.big}}{{(len .missing)}}", false, "err template: t:1:11: executing \"t\" at <len .missing>: error calling len: reflect: call of reflect.Value.Type on zero Value"),
+  ("{{'a'}}{{range 3}}{{1}}{{with .small | printf \"%v\"}}{{break}}\n {{end}}{{break}}{{urlquery .}}{{end}}\n", false, "err template: t:1:30: executing \"t\" at <.small>: can't evaluate field small in type int"),
+  ("{{slice 2i 0}} é", true, "err template: t:1:2: executing \"t\" at <slice 2i 0>: error calling slice: can't slice item of type complex128"),
+  ("x{{.url}}", false, "xa b&c=d/é"),
+  ("{{printf \"%T\" .uni \$.i}}", false, "string%!(EXTRA int64=17)"),
+  ("{{`raw`}}{{'a'}}{{\$v0 := slice 0x1F 1}}", false, "err template: t:1:25: executing \"t\" at <slice 0x1F 1>: error calling slice: can't slice item of type int"),
+  ("{{printf \"%v %v\" .z 'a'}}{{end}}", false, "err template: t:1: unexpected {{end}}"),
+  ("{{nil}}{{/* c */}}{{range \$k, \$e := 1}}{{break}}{{range \$k}}{{if .m}}{{\$v2 := .}}  \n  {{urlquery 0x1F}}{{end}}é{{end}}{{end}}", false, "err template: t:1:2: executing \"t\" at <nil>: nil is not a command"),
+  ("<{{index \$.i .missing}}{{- slice .i 2}}{{.em}}", false, "err template: t:1:3: executing \"t\" at <index \$.i .missing>: error calling index: can't index item of type int64"),
+  ("éx", false, "éx"),
+  ("{{\$v0 := .html}}{{\$v1 := (not .html)}}x", false, "x"),
+  ("{{not `raw`}}", false, "false"),
+  ("{{- .m.one}}{{slice .z 5}}", false, "err template: t:1:14: executing \"t\" at <slice .z 5>: error calling slice: can't slice item of type int64"),
+  ("{{if .small}}{{print .z}}{{le 0 `raw` .f}}{{printf \"%v %v\" nil .list}}{{if (.s | html)}}{{\$v0 := ('a')}}{{end}}{{end}}{{\$v0 := .list}}{{if (printf \"%s-%q\" .nested.a.b.c .html)}}{{\$v1 := (lt .m.four 3.5)}}{{println 'a'}}{{else if . | html}}{{with (.list)}}{{\$v1 := (.num_str | urlquery)}}{{else}}{{\$v1 := 3.5 | print}}  \n  {{js .e -}}{{.uni}}{{end}}{{\$}}{{.nested.a}}{{\$v1 := .em}}{{end}}", false, "err template: t:1:27: executing \"t\" at <le>: wrong number of args for le: want 2 got 3"),
+  ("{{index `raw` \$ .fa}}", false, "err template: t:1:2: executing \"t\" at <index `raw` \$ .fa>: error calling index: cannot index slice/array with type map[string]interface {}"),
+  ("{{\$v0 := (.em | urlquery)}}\n", true, "\n"),
+  ("{{- .html}}{{\$v0 := .uni}}x{{len .url}}", false, "<b>\"x\" & 'y'</b>x10"),
+  (" {{not .empty -}}{{.n}}{{html .s}}", false, " true<no value>hello"),
+  ("{{with .em | len}}{{with .t | html}}\n{{else}}é{{\$v0 := println `raw`}}{{end}}a b{{else}}{{printf \"%d\" .i .z}}{{.Method 1}}{{with slice .m.four 5}}\n{{range}}{{else}}x{{end}}{{end}}\n{{with js .t}}{{- \"x\"}}{{range}}{{printf \"%%\" .html .small -}}{{\$v0 := .mixed}}{{end}}{{", false, "err template: t:3: missing value for range"),
+  ("\n{{slice `raw` 1}}{{js .empty}}{{range .i}}a b{{break}}{{/* c */}}{{end}}", false, "\naw[]a b"),
+  ("{{range}}", false, "err template: t:1: missing value for range"),
+  ("x", true, "x"),
+  ("{{printf \"%v %v\" .m.one .i}}{{and}}{{ge .nested.a .strs}}", false, "err template: t:1:30: executing \"t\" at <and>: wrong number of args for and: want at least 1 got 0"),
+  ("{{.s}<{{if and .i .i}}{{js 0}}{{nil}}\n{{not .f}}{{else}}{{.mixed}}{{3.5 | printf \"%v\"}}{{.s.x}}{{define \"d\"}}D{{end}}{{template \"d\" .}}{{end}}", false, "err template: t:1: bad character U+007D '}'"),
+  ("{{1e3}}{{.f}}{{\$v0 := slice 1e3 0}}{{if .big | len}}{{range \$k, \$e := .nested.a}}{{.num_str | print}}{{range 0}}{{break}} {{printf \"%x\" .num_str .z}}{{\$}}{{end}}{{.small | not -}}{{end}}\n{{else if 1}}{{range .i}} {{with \$v0}}{{slice .s.x 5}}x {{else}}{{printf \"%%\" \$.i 3.5}}{{.z -}}{{end}}{{.fa}}{{end}}<{{with ne \$v0 \$v0}}{{ge .s .}}{{end}}{{end}}{{slice .html 2 -}}{{index .list 5}}{{.s}}{{end}}", false, "err template: t:2: unexpected {{end}}"),
+  ("x  \n  ", true, "x  \n  "),
+  ("{{if gt .neg .s.x}}{{range .i}}{{range 0}}{{break}} <{{call .s}}{{else}}{{ne .f .t}}{{.m.one}}{{end}} {{with .nested.a.b.c}}{{define \"d\"}}D{{end}}{{template \"d\" .}}x{{(.i | html)}}x{{else with html .nested.arr}}{{slice .strs 1}}{{continue}}{{end}}<{{end}}{{end}}{{- .empty | print}}{{slice 1e3 1}}<", true, "err template: t:1: unexpected <define> in command"),
+  ("{{\$v0 := .z}}{{print .empty}}{{slice \$v0 5}}", false, "err template: t:1:31: executing \"t\" at <slice \$v0 5>: error calling slice: can't slice item of type int64"),
+  ("{{\$}}{{end}}{{gt .uni .uni}}{{println .m.four -}}", true, "err template: t:1: unexpected {{end}}"),
+  ("{{(printf \"%d\" .mixed .)}}<", false, "[1 %!d(string=x) <nil> %!d(bool=true) %!d(float64=2.5)]%!(EXTRA map[string]interface {}=map[big:1e+21 e: em:map[] empty:[] f:3.25 fa:false html:<b>\"x\" & 'y'</b> i:17 list:[1 2 3] m:map[one:1 three:3 two:2] mixed:[1 x <nil> true 2.5] n:<nil> neg:-3 nested:map[a:map[b:map[c:deep]] arr:[map[k:v1] map[k:v2]]] num_str:42 s:hello small:0.0001 strs:[a b c] t:true uni:héllo wörld url:a b&c=d/é z:0])<"),
+  ("x{{\$v0 := .list}}", false, "x"),
+  ("{{/* c */}}{{slice 2i 5}}{{range .}}{{lt .e .strs}}{{index .m \"two\"}}{{range .fa}}{{.e}}{{'a' | not}}{{continue}}{{end}}{{end}}", false, "err template: t:1:13: executing \"t\" at <slice 2i 5>: error calling slice: can't slice item of type complex128"),
+  ("{{- print .s.x .html}}{{.list}}", true, "err template: t:1:12: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("{{(.s.x)}}\n", true, "err template: t:1:5: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("\n", false, "\n"),
+  ("{{\$v0 := lt .t .num_str}}", true, "err template: t:1:9: executing \"t\" at <lt .t .num_str>: error calling lt: incompatible types for comparison: bool and string"),
+  ("{{range .i}}{{{{and .m.one 1e3}}{{else}}{{((slice .num_str 1))}}{{end}}{{.empty}}", false, "err template: t:1: unexpected \"{\" in command"),
+  ("{{.empty}}", true, "[]"),
+  ("\n{{not .empty}}{{\$v0 := lt .empty .neg}}", false, "err template: t:2:23: executing \"t\" at <lt .empty .neg>: error calling lt: invalid type for comparison"),
+  ("{{/* c */}}{{.m}}", false, "map[one:1 three:3 two:2]"),
+  (" {{and}}", false, "err template: t:1:3: executing \"t\" at <and>: wrong number of args for and: want at least 1 got 0"),
+  ("{{lt false \$}}{{with slice .small 0}}{{\$v0 := .m.four}}{{if (\$v0)}}{{.nested.a.b.c}}{{\$v1 := (-2)}}{{range .nested.arr}}a bx<{{\$v2 := \$v1}}{{end}}{{- .uni}}{{end}}é{{printf \"%s-%q\" .small .f}}{{end}}", false, "err template: t:1:2: executing \"t\" at <lt false \$>: error calling lt: invalid type for comparison"),
+  ("{{\$v0 := (.url | not)}}{{js .f}}{{- printf \"%v %v\" .list 0x1F}}", false, "3.25[1 2 3] 31"),
+  ("  \n  {{0x1F | urlquery}}x", true, "  \n  31x"),
+  ("{{true}}", false, "true"),
+  ("{{\$v0 := 1}}{{end}}{{if ne .missing \$v0 .small}}a bx{{end}}", false, "err template: t:1: unexpected {{end}}"),
+  ("{{if (.nested.a)}}{{with .html}}{{range \$k, \$e := .s}}{{.html | urlquery}}{{end}}{{(.uni)}}{{- index .m .s.x}}{{slice 2i 2}}{{else}}{{and .nested.a.b.c .s .neg}}{{\$v0 := .s}}{{end}}a b{{0x1F}}{{ge .m .empty .nested.a.b.c}}{{else if .neg | not}}{{.s}x{{end}}", true, "err template: t:1: bad character U+007D '}'"),
+  ("{{js .url}}", false, "a b\\u0026c\\u003Dd/é"),
+  ("  \n  x{{1 | printf \"%v\"}}", true, "  \n  x1"),
+  ("{{printf \"%s-%q\" .neg `raw`}}{{- js .fa}}", false, "%!s(int64=-3)-\"raw\"false"),
+  ("{{with (.html)}}{{with \$.i}}{{if slice .nested.arr 1}}{{not .em}}  \n  {{end}}{{range .i}}{{\$v0 := .em}}{{end}}{{else}}  \n  {{(.nested.a.b.c)}}{{end}}{{range \$k, \$e := .list}}{{println .list}}x{{if printf \"%T\" \$ \$k}}{{\$}}é{{.Method 1}}a b{{end}}{{\$v2 := slice .t 1}}{{else}}{{printf \"%d\" .nested.a.b.c .nested.a.b.c}}{{.num_str}}{{len -2}}  \n  {{end}}{{slice .s.x 1}} {{end}}é", false, "err template: t:1:46: executing \"t\" at <.nested.arr>: can't evaluate field nested in type int64"),
+  ("a b{{printf \"%%\" .nested.a .}}{{slice .e 1}}", true, "err template: t:1:32: executing \"t\" at <slice .e 1>: error calling slice: index out of range: 1"),
+  ("{{\$v0 := .neg}}{{le \$v0 .m .nested.a.b.c}}a b{{range .i}}{{range \$k, \$e := \$v0}}a b{{break}}  \n  {{len 3}}{{end}}{{slice .neg 0}}a b{{end}}", false, "err template: t:1:17: executing \"t\" at <le>: wrong number of args for le: want 2 got 3"),
+  ("{{if .s.x}}{{.n | html}}{{if .nested.arr}}{{call .s}}{{\$v0 := or .fa .m.one}}{{end}}{{.empty}}{{with .num_str | len}} <{{(.html)}}{{with (.url | urlquery)}}{{\$v0 := (\$)}}{{\$v1 := 'a'}}{{else with ge .nested.a .big}}é{{le \$ .big}}{{block \"b\" .}}B{{end}}{{block \"b\" .}}B{{end}}{{end}}{{end}}{{end}}{{slice 1 5}}{{\$v0 := 0}}", false, "err template: t:1: template: multiple definition of template \"b\""),
+  ("a b{{end}}{{.m}}{{if nil}}{{template \"u\"}}{{\$}}{{.html}}{{else}}  \n  {{le .f .uni}}{{range 3}}{{index .list 5}}x{{end}}{{1 | len}}{{end}}{{end}}", false, "err template: t:1: unexpected {{end}}"),
+  ("x", false, "x"),
+  ("x{{slice .s.x 2}}  \n  {{.em}}", false, "err template: t:1:11: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("{{if slice .nested.a 1}}{{range}}{{end}}{{0x1F}}", false, "err template: t:1: missing value for range"),
+  ("{{.m | urlquery}}", false, "map%5Bone%3A1+three%3A3+two%3A2%5D"),
+  ("{{index .m \"two\"}}{{print .nested.arr}}", false, "2[map[k:v1] map[k:v2]]"),
+  (" {{print .big .nested.a.b.c}}é{{range -2}}{{if printf \"%v %v\" .i .s}}{{range -1}}{{.mixed | print}} {{else}}{{else}}{{lt .big .s.x}}{{end}}{{- print .i -}}é{{continue}}{{end}}{{else}}{{with .z}}{{- .neg}}{{else with print .n}}  \n  {{end}}{{- .strs}}{{end}}", false, "err template: t:1: expected end; found {{else}}"),
+  ("{{.f}}", false, "3.25"),
+  ("{{range .em}}{{\$v0 := le .t .empty .}}{{\$v1 := .n | printf \"%v\"}}x{{end}}{{js 1e3}}{{else}}{{- true}}", false, "err template: t:1: unexpected {{else}}"),
+  ("{{.m.four}}{{\$v0 := eq .e .empty .e}}{{- \"x\" -}}", false, "err template: t:1:20: executing \"t\" at <eq .e .empty .e>: error calling eq: incompatible types for comparison: string and []interface {}"),
+  ("x{{nil}}", false, "err template: t:1:3: executing \"t\" at <nil>: nil is not a command"),
+  ("{{.e -}}{{range .fa}}{{.nested.arr}}{{.missing}}{{.f | html}}{{else}}{{\$v0 := ge .neg .em .m.one}}{{.s}}{{slice \$v0 2}}{{end}}{{slice .fa 2}}{{. -}}", false, "err template: t:1:16: executing \"t\" at <.fa>: range can't iterate over false"),
+  ("{{js .nested.a}}", false, "map[b:map[c:deep]]"),
+  ("x{{.missing}}{{.uni | printf \"%v\"}}{{if printf \"%x\" .empty .s}}{{eq .big .nested.a}}{{.m.one | urlquery}}{{else if (not .t)}}x{{\$v0 := print . -2 .m}}{{(slice .small 2)}}{{.Method 1}}{{end}}", false, "err template: t:1:65: executing \"t\" at <eq .big .nested.a>: error calling eq: incompatible types for comparison: float64 and map[string]interface {}"),
+  ("{{\$v0 := printf \"%v %v\" .f .list}}", false, ""),
+  ("<", false, "<"),
+  ("{{true}}{{\$v0 := len true}}", false, "err template: t:1:17: executing \"t\" at <len true>: error calling len: len of type bool"),
+  ("{{\$v0 := .empty | printf \"%v\"}}x{{with .e}}  \n  {{define \"d\"}}D{{end}}{{template \"d\" .}}{{if slice .uni 2}}{{print \$v0}}\n{{end}}{{end}}", false, "err template: t:2: unexpected <define> in command"),
+  ("{{range .m}}{{.n -}}a b{{else}}a b{{end}}{{.strs}}", false, "err template: t:1:14: executing \"t\" at <.n>: can't evaluate field n in type interface {}"),
+  ("{{- print .nested.a}}", false, "map[b:map[c:deep]]"),
+  ("a b", false, "a b"),
+  ("{{if js .m}}{{\$v0 := ne .nested.a .f .nested.a}}{{(\$v0)}}{{range \$k, \$e := .t}}  \n  {{end}} {{end}}", false, "err template: t:1:21: executing \"t\" at <ne>: wrong number of args for ne: want 2 got 3"),
+  ("{{\$v0 := urlquery .s}}", false, ""),
+  ("{{range .i}}{{range \$k, \$e := \$.i}}<{{\$v2 := printf \"%x\" \$.i \$e}}{{end}}{{eq .nested.arr .num_str}}{{end}}{{range .i}}{{eq .empty \$ .empty}}{{continue}}{{printf \"%5.2f\" .big .i}}{{continue}}{{else}}a b{{end}}", false, "err template: t:1:31: executing \"t\" at <\$.i>: can't use 17 to iterate over more than one variable"),
+  ("{{", false, "err template: t:1: unclosed action"),
+  ("a b", false, "a b"),
+  ("é", false, "é"),
+  ("{{- \"x\"}}{{range -1}}{{\$v0 := printf \"%5.2f\" .empty .}}a b{{or \$v0 .m.four}}{{end}}{{index .list 5}}{{printf \"%T\" . .empty}}", false, "err template: t:1:85: executing \"t\" at <index .list 5>: error calling index: index out of range: 5"),
+  ("{{- .nested.a.b.c}}{{printf \"%v\" .strs .nested.a -}}", false, "deep[a b c]%!(EXTRA map[string]interface {}=map[b:map[c:deep]])"),
+  (" \n{{slice true 1}}", false, "err template: t:2:2: executing \"t\" at <slice true 1>: error calling slice: can't slice item of type bool"),
+  ("a b{{range 3}}{{`raw`}}{{range .nested.a}}{{(printf \"%v\" 0 .small)}}{{\$v0 := print .n .}}{{continue}}{{.uni}}{{end}}x{{end}}{{\$v0 := .}}", false, "err template: t:1:38: executing \"t\" at <.nested.a>: can't evaluate field nested in type int"),
+  ("x{{printf \"%v\" .nested.a.b.c .s.x}}", true, "err template: t:1:31: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("{{range \$k, \$e := 1e3}}{{html .nested.a.b.c}}{{else}}{{.f}}{{end}}{{html .num_str}}", false, "err template: t:1:18: executing \"t\" at <1e3>: range can't iterate over 1000"),
+  ("{{if ne .empty .missing .nested.a.b.c}}{{(true)}}{{else if printf \"%T\" 0 .missing}}  \n  {{\$}}{{.list}}{{end}}{{end}}{{len 3}}{{print .strs}}{{\$v0 := 0}}", false, "err template: t:2: unexpected {{end}}"),
+  ("{{.Method 1}}", false, "err template: t:1:2: executing \"t\" at <.Method>: Method is not a method but has arguments"),
+  ("é{{'a' | print}}<x", false, "é97<x"),
+  ("{{printf \"%x\" .i .empty}}{{not .strs}}", false, "11%!(EXTRA []interface {}=[])false"),
+  ("xé{{range}}a b", false, "err template: t:1: missing value for range"),
+  ("{{.empty | printf \"%v\"}}  \n  {{\$v0 := (printf \"%%\" .f .e)}}", false, "[]  \n  "),
+  ("{{\$}}{{with ('a')}}{{le .url . .n}}{{if slice .em 0}}{{block \"b\" .}}B{{end}}{{else}}<{{le .list .nested.a.b.c}} {{end}}{{if ne .fa .uni}}x{{and .list .big nil}}{{if js .s}}  \n  {{- nil}}{{else}}{{- /* c */ -}}{{printf \"%s-%q\" .html .nested.a}}{{end}}{{end}}{{else with \$.i}}\n{{-2}}{{(printf \"%T\" .strs \"x\")}}{{end}}{{- js .missing}}\n", false, "err template: t:1:21: executing \"t\" at <le>: wrong number of args for le: want 2 got 3"),
+  ("{{if .e}}{{.}}{{slice .em 1}}{{range 3}}{{range .i}}{{.html}}{{.em -}} {{else}} {{.z}}{{end}}é{{end}}{{end}}{{print .nested.arr}}{{printf \"%v\" .s .small}}", false, "[map[k:v1] map[k:v2]]hello%!(EXTRA float64=0.0001)"),
+  ("{{if slice `raw` 0}}x{{with printf \"%v %v\" \$.i \"x\"}}{{define \"d\"}}D{{end}}{{template \"d\" .}}a b{{- (printf \"%s-%q\" .neg .nested.a.b.c)}}{{printf \"%v\" .uni .i}}{{else with .m.four}}x{{end}}{{range \$k, \$e := .fa}}{{- .t}}{{end}}{{else if .t}}{{.Method 1}}{{.nested.a.b.c}}{{- len `raw`}}{{end}}{{with slice \$.i 1}}{{call .s}}{{end}}<", false, "err template: t:1: unexpected <define> in command"),
+  ("  \n  ", false, "  \n  "),
+  ("{{if slice .big 2}}{{1e3}}{{else}}x{{range .small}}{{- slice nil 1}}{{end}}{{.s.x}}{{end}}  \n  {{((slice .m.four 0))}}", false, "err template: t:1:5: executing \"t\" at <slice .big 2>: error calling slice: can't slice item of type float64"),
+  ("{{println .em}}é", false, "map[]\né"),
+  ("{{false}}{{range .m.one}}{{if slice .fa 5}}<  \n  {{continue}}{{else if .t}}{{range \$k, \$e := .m}}{{continue}}{{0x1F}} {{else}}{{\$v0 := printf \"%v %v\" 'a' .neg}}{{\$v1 := \$v0 | printf \"%v\"}}{{end}}{{.small}}{{end}}{{break}}{{else}}{{0x1F}}{{not .small}}{{\$v0 := .f | html}}{{end}}\n", true, "err template: t:1:36: executing \"t\" at <.fa>: can't evaluate field fa in type int64"),
+  ("{{printf \"%T\" \$.i .n}}", false, "int64%!(EXTRA <nil>)"),
+  ("{{\$}}{{0}}{{ne .nested.a .fa 3.5}}{{.s.x}}", true, "err template: t:1:12: executing \"t\" at <ne>: wrong number of args for ne: want 2 got 3"),
+  ("{{with printf \"%%\" .url .html}}{{if .nested.arr}}\n{{range \$k, \$e := .m.one}}{{\$v2 := .empty}}<{{end}}{{.fa | not}}{{end}}{{with .strs}}{{len 3}}{{- /* c */ -}}{{else with html .s}}  \n  {{\$v0 := slice .neg 2}}{{\$v0 | not}}  \n  {{end}}{{end}}", true, "err template: t:1:43: executing \"t\" at <.nested.arr>: can't evaluate field nested in type string"),
+  ("{{else}}{{printf \"%s-%q\" .e \"x\"}}", false, "err template: t:1: unexpected {{else}}"),
+  ("{{- le .missing 0x1F}}{{\$v0 := .i | len}}{{\$v1 := println 1}}", false, "err template: t:1:4: executing \"t\" at <le .missing 0x1F>: error calling le: invalid type for comparison"),
+  ("{{.html}}é{{.e | printf \"%v\"}}", true, "<b>\"x\" & 'y'</b>é"),
+  ("{{.i}}{{printf \"%T\" .t 2i -}}", false, "17bool%!(EXTRA complex128=(0+2i))"),
+  ("{{call .s}}", true, "err template: t:1:2: executing \"t\" at <call .s>: error calling call: non-function .s of type string"),
+  ("x", false, "x"),
+  ("\n", true, "\n"),
+  ("é{{html 2i -}}", false, "é(0+2i)"),
+  ("{{ne .t .uni}}{{(`raw`)}}", false, "err template: t:1:2: executing \"t\" at <ne .t .uni>: error calling ne: incompatible types for comparison: bool and string"),
+  ("{{range \$k, \$e := .uni}}{{2i}}{{\$e}}{{(\$k) -}}{{continue}}{{else}}{{eq .m .z -}}{{lt .s \"x\"}}{{end}}{{a b", false, "err template: t:1: function \"a\" not defined"),
+  ("{{.m.four | urlquery}}{{.s.x | not}}", false, "err template: t:1:26: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("{{range false}}{{.url | html}}{{end}}\n{{.fa -}}{{printf \"%T\" . .big}}", false, "err template: t:1:8: executing \"t\" at <false>: range can't iterate over false"),
+  ("{{le .strs .num_str .num_str -}}", false, "err template: t:1:2: executing \"t\" at <le>: wrong number of args for le: want 2 got 3"),
+  ("{{printf \"%5.2f\" .s.x .m.four}}{{slice .strs 1}}", false, "err template: t:1:19: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("<", false, "<"),
+  ("{{\$v0 := not .nested.arr}}x", false, "x"),
+  ("{{- slice .t 0}}", false, "err template: t:1:4: executing \"t\" at <slice .t 0>: error calling slice: can't slice item of type bool"),
+  ("{{len -2}}a b{{printf \"%x\" .nested.a .nested.arr}}", true, "err template: t:1:2: executing \"t\" at <len -2>: error calling len: len of type int"),
+  ("{{.m.one}}{{range .m.four}}{{range .i}}{{\$v0 := .m}}{{\$v1 := slice .big 0}}{{end}}x{{range .i}}{{slice \$.i 0}}<{{end}}{{else}}{{{{.i}}{{\$v0 := .empty | html}}{{- printf \"%v\" .nested.arr .z -}}{{end}}", false, "err template: t:1: unexpected \"{\" in command"),
+  ("{{block \"b\" .}}B{{end}}{{\$v0 := gt nil .mixed .list}}xé", false, "err template: t:1:32: executing \"t\" at <gt>: wrong number of args for gt: want 2 got 3"),
+  ("{{.neg}}{{.f}}{{- .url | printf \"%v\"}}{{if not 0x1F}}{{print 1e3 .m -}}{{if len .m}}{{- .n}}xx{{\$v0 := html .url}}{{end}}{{(printf \"%s-%q\" .missing false)}}{{else}}{{range .empty}}<{{if urlquery .n}}{{slice .nested.a.b.c 2}}{{slice true 0}}{{\$v0 := slice .m.one 5}}{{printf \"%d\" .mixed .list}}{{end}}{{ge . .url}}{{else}}{{range .m.four}}{{.num_str}}{{.empty}}{{end}}{{/* c */}}{{end}}{{end}}", false, "-33.25a b&c=d/é"),
+  ("{{range .nested.arr}}{{- .num_str}}{{continue}}{{range .url}}{{printf \"%x\" .n .strs}}{{\$v0 := nil}}{{.big}}{{end}}{{else}}{{index .m \"two\"}}\n{{- or .big .neg}}\n{{end}}{{.i}}{{nil | not}}{{\$v0 := (1)}}", false, "err template: t:3:15: executing \"t\" at <nil>: nil is not a command"),
+  ("{{\$v0 := .m}}  \n  {{(slice .em 2)}}", false, "err template: t:2:5: executing \"t\" at <slice .em 2>: error calling slice: can't slice item of type map[string]interface {}"),
+  ("{{\$v0 := .n}}{{.m.one}}", false, "1"),
+  ("{{range \$k, \$e := false}}{{range 3}}{{define \"d\"}}D{{end}}{{template \"d\" .}}{{slice .f 2}}  \n  {{end}}{{end}}{{.s}}", false, "err template: t:1: unexpected <define> in command"),
+  ("a b{{range .m.four}}{{nil}}<{{(print .s)}}{{else}}{{\$v0 := \$.i}} {{end}}  \n  ", false, "a b   \n  "),
+  ("  \n  {{range .uni}}{{continue}}{{- .small}}{{break}}{{.nested.arr}}{{end}}{{.nested.a.b.c}}{{end}}", false, "err template: t:2: unexpected {{end}}"),
+  ("{{.num_str | print}}", false, "42"),
+  ("{{\$v0 := ne 'a' .fa}}", false, "err template: t:1:9: executing \"t\" at <ne 'a' .fa>: error calling ne: incompatible types for comparison: int and bool"),
+  ("{{{{(.missing) -}}", false, "err template: t:1: unexpected \"{\" in command"),
+  ("x{{- ne -2 .e}}x", false, "err template: t:1:5: executing \"t\" at <ne -2 .e>: error calling ne: incompatible types for comparison: int and string"),
+  ("\n{{\$v0 := .num_str}}{{\$v1 := 3.5}}{{\$.i -}}", false, "\n17"),
+  ("<", false, "<"),
+  ("{{\$}}{{.}}{{len 3}}", false, "err template: t:1:12: executing \"t\" at <len 3>: error calling len: len of type int"),
+  ("{{eq .big 1 .s.x}}{{.list | html}}", false, "err template: t:1:14: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("{{\$v0 := (.e)}}{{\$v1 := printf \"%d\" .url \"x\"}}", false, ""),
+  ("{{slice .i 2}}{{index .m \"two\"}}{{.m}}  \n  ", false, "err template: t:1:2: executing \"t\" at <slice .i 2>: error calling slice: can't slice item of type int64"),
+  ("é", false, "é"),
+  ("{{if nil}}a b{{else if false}} {{end}}{{not .fa}}{{range .i}}{{\"x\"}}{{len 3}}<{{end}}{{.small}}", false, "err template: t:1:5: executing \"t\" at <nil>: nil is not a command"),
+  ("{{.strs | len}}x", true, "3x"),
+  ("{{slice .html 0 -}}{{urlquery .m -}}", false, "<b>\"x\" & 'y'</b>map%5Bone%3A1+three%3A3+two%3A2%5D"),
+  ("a ba b{{range 3}}a b{{.em | urlquery}}{{end}}", true, "err template: t:1:22: executing \"t\" at <.em>: can't evaluate field em in type int"),
+  ("{{range 0}}{{len .e}}{{end}}<", false, "<"),
+  ("{{ne false .empty}}{{and}}{{range \$k, \$e := .nested.a.b.c}}{{(ge .t .empty)}}\na b{{else}}<{{- nil}}{{end}}{{range 0}}{{continue}}{{\$v0 := .i}}{{\$v1 := .f}}{{end}}", false, "err template: t:1:2: executing \"t\" at <ne false .empty>: error calling ne: incompatible types for comparison: bool and []interface {}"),
+  ("<{{lt .neg .t .empty -}}{{(printf \"%x\" .fa .nested.arr)}}", true, "err template: t:1:3: executing \"t\" at <lt>: wrong number of args for lt: want 2 got 3"),
+  ("x{{print \$.i -}}", false, "x17"),
+  ("<{{0x1F}}{{.n}}{{printf \"%v %v\" `raw` .nested.arr}}", false, "<31<no value>raw [map[k:v1] map[k:v2]]"),
+  ("é{{\$v0 := eq .mixed .fa false}}{{range .i}}{{3.5 -}}{{else}}{{end}}{{.m | print}}", false, "err template: t:1:11: executing \"t\" at <eq .mixed .fa false>: error calling eq: incompatible types for comparison: []interface {} and bool"),
+  (" {{if .list}}{{with .empty}}a b{{else with slice .num_str 2}}{{.small}}  \n  {{end}}{{range \$k, \$e := true}}{{range \$k}}a b{{end}}{{printf \"%v %v\" .list .html}}{{if 'a'}}{{end}}{{\$v2 := .n | urlquery}}{{else if \$e}}{{.nested.a.b.c -}}{{end}}{{end}}{{slice \$.i 5}}{{.list | html -}}{{end}}", false, "err template: t:2: unexpected <if> in input"),
+  ("{{if printf \"%T\" .m.one .m}}{{\$v0 := slice .mixed 5}}x{{.t -}}{{else if eq .nested.a.b.c \$.i}}{{.big}}{{\$v0 := .small}}{{end}}{{printf \"%5.2f\" .e .num_str}}", false, "xtrue%!f(string=     )%!(EXTRA string=42)"),
+  ("{{(slice .em 1)}}", false, "err template: t:1:3: executing \"t\" at <slice .em 1>: error calling slice: can't slice item of type map[string]interface {}"),
+  ("{{.s | printf \"%v\"}}", false, "hello"),
+  ("é", false, "é"),
+  ("a b{{range .t}}{{with (.f | printf \"%v\")}}{{.e}}{{index false .m.one}}{{else with 0}}{{\$v0 := .num_str}}{{end}}{{continue}}{{\$v0 := printf \"%d\" .nested.a .t}}{{end}}{{with printf \"%s-%q\" .s .z}}{{html .fa}}{{end}}", false, "err template: t:1:11: executing \"t\" at <.t>: range can't iterate over true"),
+  ("  \n  ", false, "  \n  "),
+  ("{{range \$k, \$e := \"x\"}}{{range \$e}}{{println \$k}} {{range .url}}{{len 3}}{{.s}{{'a' | not}}x{{else}}{{2i}}{{(.missing)}}{{index .url false .s}}{{1}}{{end}}{{else}}{{- printf \"%v %v\" .strs 0x1F}}{{with printf \"%T\" \$e \$k}}{{continue}}{{- len .s}}{{else with js \$.i}}{{not \$e}}{{print .empty}}{{slice .big 0}}{{0}}{{end}}{{.uni -}}{{end}}{{break}}{{end}}{{\$v0 := .z}}{{range -1}}{{/* c */}}{{slice .uni 0}}{{- printf \"%x\" \$.i .i}}{{\$v1 := .z}}{{end}}", false, "err template: t:1: bad character U+007D '}'"),
+  ("{{with .}}a b{{\$v0 := .uni}}{{end}}{{\$v0 := print .f}}", false, "a b"),
+  ("a b{{slice \$.i 1}}{{if (.m.four)}}{{if .m}}{{with .s}}x{{end}}x{{\$.i}}{{end}}{{end}}", false, "err template: t:1:5: executing \"t\" at <slice \$.i 1>: error calling slice: can't slice item of type int64"),
+  ("{{le .mixed \$}}{{.neg}}", false, "err template: t:1:2: executing \"t\" at <le .mixed \$>: error calling le: invalid type for comparison"),
+  ("{{ne 2i -2}}", false, "err template: t:1:2: executing \"t\" at <ne 2i -2>: error calling ne: incompatible types for comparison: complex128 and int"),
+  ("é", false, "é"),
+  ("{{index .list 5}}", false, "err template: t:1:2: executing \"t\" at <index .list 5>: error calling index: index out of range: 5"),
+  ("{{(0x1F)}}x{{.m.four}}", false, "31x<no value>"),
+  ("x{{- .m}}", false, "xmap[one:1 three:3 two:2]"),
+  ("{{\$v0 := (index . .missing)}}{{with print .n \$v0}}{{println .html}}{{end}}", false, "err template: t:1:10: executing \"t\" at <index . .missing>: error calling index: value is nil; should be of type string"),
+  (" ", false, " "),
+  ("{{if print .empty .fa .s}}{{true | urlquery}}{{.small}}{{else}}{{\$v0 := and \$ .z .i}}{{slice \$v0 5}}é{{end}}{{index .neg .s}}{{gt .em .m.one .m.four}}{{.s.x}}", false, "err template: t:1:111: executing \"t\" at <index .neg .s>: error calling index: can't index item of type int64"),
+  ("{{with lt .e .url}}x{{with slice .s 5}}{{slice .n 5}}{{.m.four}}{{- (.s)}}{{len 3}}{{end}}{{else with .mixed}}{{if printf \"%5.2f\" .strs .neg}} {{slice .nested.a.b.c 1}}{{slice .nested.arr 1}}{{slice \$.i 2}}{{end}}{{.m.four}}{{end}}{{.s | printf \"%v\"}}<", false, "err template: t:1:33: executing \"t\" at <.s>: can't evaluate field s in type bool"),
+  ("{{.strs}}éé", false, "[a b c]éé"),
+  ("{{range \"x\"}}{{\$v0 := .s}}{{.e}}{{if slice .small 5}}\n{{else}}\n{{range .e}}{{.n | html}}{{end}}{{if gt \$.i .}}{{print true -}}{{\$v1 := .m | not}}{{else if printf \"%5.2f\" .empty -2}}{{(.small)}}  \n   {{. | urlquery}}{{end}}{{if slice \$v0 5}}<{{else if .list}}<{{index .m \"two\"}}{{end}}{{end}}{{range 3}}  \n  {{.m}}{{end}}{{end}}{{index .list 5}}{{.empty}}a b", false, "err template: t:1:8: executing \"t\" at <\"x\">: range can't iterate over x"),
+  ("   \n  ", false, "   \n  "),
+  ("x{{- .list}}", false, "x[1 2 3]"),
+  ("{{printf \"%%\" .em .nested.a.b.c}}", false, "%%!(EXTRA map[string]interface {}=map[], string=deep)"),
+  ("{{if .nested.a.b.c}}{{.small}}<{{with printf \"%v\" .m.one .e}}a b{{slice .m 1 -}}{{else}}a b{{.}}  \n  {{- true}}{{end}}{{end}}", false, "err template: t:1:72: executing \"t\" at <.m>: can't evaluate field m in type string"),
+  ("{{range \$k, \$e := .n}}x{{end}}", true, ""),
+  ("é{{\$v0 := println .em}}  \n  ", false, "é  \n  "),
+  ("{{true}}", false, "true"),
+  ("{{lt 0 1}}{{range \$k, \$e := \$.i}}{{range \$k, \$e := \$e}}{{urlquery 2i}}{{(.fa) -}}{{slice .m.four 2}}{{end}}{{end}}", false, "err template: t:1:29: executing \"t\" at <\$.i>: can't use 17 to iterate over more than one variable"),
+  ("{{index .m \"two\"}}{{.i}}{{- .neg}}", false, "217-3"),
+  (" ", false, " "),
+  ("{{len 3}}{{index .m \"two\"}}x", false, "err template: t:1:2: executing \"t\" at <len 3>: error calling len: len of type int"),
+  ("{{.fa}}", false, "false"),
+  ("{{if .mixed | urlquery}}{{(slice .mixed 1)}}{{end}}", false, "[x <nil> true 2.5]"),
+  ("{{print .z .t .m}}<", false, "0 true map[one:1 three:3 two:2]<"),
+  ("{{with print .f .nested.arr}}{{and}}{{(.s | print)}}a b<{{end}}", false, "err template: t:1:31: executing \"t\" at <and>: wrong number of args for and: want at least 1 got 0"),
+  ("<{{range 3}}{{else}}{{end}}", false, "<"),
+  ("{{range \$k, \$e := .nested.a.b.c}}{{with \$e}}{{not .nested.a.b.c}}{{end}}{{end}}", false, "err template: t:1:25: executing \"t\" at <.nested.a.b.c>: range can't iterate over deep"),
+  ("{{if printf \"%v %v\" .f 2i}}x{{else}}{{.nested.arr}}{{\$.i}}{{\$v0 := html .n}}{{end}}{{.s.x}}{{printf \"%%\" .n \$.i}}", false, "err template: t:1:87: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("{{\$v0 := .nested.a.b.c}}\n{{if printf \"%5.2f\" \$ .nested.a.b.c}}{{\$v1 := \$.i}}é{{if ge \$v1 .i .s}}{{.strs}}{{\$v2 := \$v0}}{{template \"u\"}}{{.strs}}{{else}}{{\$v1}}{{\$v0}}{{end}}\n{{else}}{{slice .m 5}}{{slice .empty 1}}{{(.neg)}}{{end}}", false, "err template: t:2:58: executing \"t\" at <ge>: wrong number of args for ge: want 2 got 3"),
+  (" ", false, " "),
+  ("{{printf \"%x\" .html `raw`}}  \n  éé", false, "3c623e2278222026202779273c2f623e%!(EXTRA string=raw)  \n  éé"),
+  ("{{(slice .f 0) -}}{{slice .html 2}}", false, "err template: t:1:3: executing \"t\" at <slice .f 0>: error calling slice: can't slice item of type float64"),
+  ("{{(slice nil 5)}}{{gt .f .small}}", false, "err template: t:1:3: executing \"t\" at <slice nil 5>: error calling slice: slice of untyped nil"),
+  ("{{range \$k, \$e := .z}}{{and .e .e 'a'}}{{else}}{{index .m \"two\"}}{{\$v0 := slice .s.x 0}}{{with (and .n .s.x)}}{{printf \"%d\" \$v0 .html}}{{else}}x{{range .nested.arr}}{{- slice .big 5}}{{\$v1 := println .nested.a.b.c}}{{continue}}{{end}}{{end}}{{slice .fa 0}}{{end}}{{\$}}{{with print \$.i}}{{\$v0 := slice .mixed 1}}  \n  {{html \$v0}}{{end}}", false, "err template: t:1:18: executing \"t\" at <.z>: can't use 0 to iterate over more than one variable"),
+  (" {{\$}}{{/* c */}}{{range \$k, \$e := false}}{{with html 2i}}{{range .num_str}}{{.em | not}}{{else}}{{\$e}}<{{.m}}{{.empty}}{{end}} <{{else}}a b{{\$k}}{{slice .missing 0}}{{with println \$}}{{break}} {{or \$k .small .small -}}{{else}}{{.m.four}}x{{end}}{{end}}{{2i -}}{{with printf \"%v %v\" .html \$.i}}  \n  {{with .strs}}{{printf \"%5.2f\" 2i true}}{{urlquery \$e}}{{slice .small 5 -}}{{end}}{{break}}{{\$v2 := print .n false}}{{end}}{{end}}", false, "err template: t:1:35: executing \"t\" at <false>: range can't iterate over false"),
+  ("{{(printf \"%5.2f\" .url .z)}}{{\$v0 := printf \"%%\" .t .url}}{{- .s | printf \"%v\"}}", false, "%!f(string=   a )%!(EXTRA int64=0)hello"),
+  ("{{.small}}\n{{print true}}{{with slice .m 5}}a b{{\$v0 := .f}}{{ne nil .big .big}}{{else}}x{{end}}", false, "err template: t:2:21: executing \"t\" at <slice .m 5>: error calling slice: can't slice item of type map[string]interface {}"),
+  ("{{or .missing .nested.a}}{{eq .fa .url}}{{gt .missing .t .m.four}} ", false, "err template: t:1:27: executing \"t\" at <eq .fa .url>: error calling eq: incompatible types for comparison: bool and string"),
+  ("a b{{\$v0 := slice .list 5}}", false, "err template: t:1:12: executing \"t\" at <slice .list 5>: error calling slice: index out of range: 5"),
+  ("{{if js .m.one}}<{{else}}{{range}}{{if (slice .e 2)}}{{\$v0 := printf \"%x\" .list .i}}é{{end}}{{- (.html)}}{{end}}{{if .url}}{{\$v0 := slice .html 2}}  \n  {{slice \$v0 2}}{{\"x\" | print}}{{else if 1 | not}}{{.s}{{printf \"%x\" .empty .url -}}{{end}} ", false, "err template: t:1: missing value for range"),
+  ("{{if .s.x}}{{not .small}}{{else if 0x1F}}{{nil}}{{range .i}}{{range 3}} {{println .fa}}{{\$v0 := .missing}}a b{{end}}{{if printf \"%s-%q\" .empty \"x\"}}{{println .}}{{println .list}}x{{end}}  \n  {{end}}{{end}}", false, "err template: t:1:7: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("{{ge .m.one .m.four}}a b{{.num_str}}", false, "err template: t:1:2: executing \"t\" at <ge .m.one .m.four>: error calling ge: invalid type for comparison"),
+  ("{{if .f}}é  \n  {{range false}}{{\$v0 := printf \"%d\" .s .small}}{{end}}{{or .n .m -}}{{end}}{{\$v0 := false}}{{print .url}}", false, "err template: t:2:10: executing \"t\" at <false>: range can't iterate over false"),
+  ("{{not .neg}}{{with and .m true}}  \n  {{end}}{{- .big}}x{{else}}{{range 3}}{{.n}}{{with slice .strs 2}}é{{and}}{{.m}}{{else with (printf \"%v %v\" .num_str .m.four)}}{{\$v0 := .nested.a}}{{end}}{{end}}{{end}}{{range \$k, \$e := .empty}}{{printf \"%d\" .f \$e}}{{\$e}}{{\$v2 := print .em}}{{else}}{{ne .s.x .m.one}}{{end}}<", false, "err template: t:2: unexpected {{else}}"),
+  ("  \n  {{slice .nested.arr 1}}", false, "  \n  [map[k:v2]]"),
+  ("{{.small | printf \"%v\"}} {{if index .em .num_str .empty}}{{len 3}}{{if .mixed}}  \n  {{2i -}}\n{{else}}{{(printf \"%x\" .fa .i)}}{{end}}{{end}}{{\$v0 := .fa}}", true, "err template: t:1:30: executing \"t\" at <index .em .num_str .empty>: error calling index: index of nil pointer"),
+  ("<{{with .url}}{{range 3}}é{{print .empty .list -}}{{end}}é{{end}}{{\$v0 := .num_str}}{{end}}{{not .fa}}", false, "err template: t:1: unexpected {{end}}"),
+  ("\n{{.m.one}}{{with .s}}{{urlquery .mixed}}{{else with (.z)}}  \n  a b{{end}}{{or .uni .em}}", false, "err template: t:2:32: executing \"t\" at <.mixed>: can't evaluate field mixed in type string"),
+  ("<{{.uni}}{{1e3}}", false, "<héllo wörld1000"),
+  ("{{.fa | urlquery}}{{range 0}}{{- slice .nested.a.b.c 0}}{{nil}}{{with (.mixed)}}{{continue}}{{break}} {{and}}{{end}}{{\$v0 := (1e3 | printf \"%v\")}}{{end}}{{range -1}}\n{{else}}{{ge .i 1}}{{if gt .m .big}}{{len 3}}{{else}}<{{(.nested.a | print)}}{{1 | html}} {{end}}  \n  {{end}}{{range .fa}}{{.mixed}}{{else}}{{\$v0 := \$.i}}{{slice true 0}}{{index .list 5}}{{end}}", false, "err template: t:2:24: executing \"t\" at <gt .m .big>: error calling gt: invalid type for comparison"),
+  ("{{\$v0 := printf \"%T\" .big .em}}{{index \$v0 \$v0}}{{or .neg .num_str \$}}", false, "err template: t:1:33: executing \"t\" at <index \$v0 \$v0>: error calling index: cannot index slice/array with type string"),
+  ("{{\$v0 := print .uni}}", false, ""),
+  ("{{- ge .empty .s.x}}", true, "err template: t:1:16: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("{{.big}}", false, "1e+21"),
+  ("{{\$v0 := (slice .uni 1)}}", true, ""),
+  ("x", false, "x"),
+  ("{{printf \"%5.2f\" .mixed 0}}", false, "[%!f(int64=   01) %!f(string=    x) <nil> %!f(bool= true)  2.50]%!(EXTRA int=0)"),
+  ("{{printf \"%5.2f\" .url .nested.a.b.c}}", false, "%!f(string=   a )%!(EXTRA string=deep)"),
+  ("{{- .big}}", false, "1e+21"),
+  ("{{lt 1e3 `raw`}}", false, "err template: t:1:2: executing \"t\" at <lt 1e3 `raw`>: error calling lt: incompatible types for comparison: float64 and string"),
+  ("{{range .nested.a}}{{nil}}{{if .url | html}}{{\$v0 := urlquery .neg}}a b{{end}}{{end}}a b{{ge .nested.a .url .small}}", false, "err template: t:1:21: executing \"t\" at <nil>: nil is not a command"),
+  ("a b{{.m.four}}", false, "a b<no value>"),
+  ("{{range .nested.a}}{{range 0}}{{range \$k, \$e := .nested.a.b.c}}{{.fa}}{{\$v2 := printf \"%v\" .nested.arr .z}}{{end}}{{\$}}{{end}}{{else}}{{/* c */}}{{end}}", false, ""),
+  ("{{print .em}}{{\$v0 := .s.x}}{{with 3.5}}{{range 3}}{{\$v1 := printf \"%v\" \"x\" .m.four}}{{block \"b\" .}}B{{end}}{{define \"d\"}}D{{end}}{{template \"d\" .}}{{1e3}}{{end}}{{end}}{{-2 -}}", false, "err template: t:1: unexpected <define> in command"),
+  ("{{slice 3.5 5}}{{range .num_str}}\n{{eq 0 .nested.arr}}{{not .nested.a.b.c}}{{else}}{{slice .fa 1}}{{.m.four}}{{\$v0 := print .e}}{{end}}{{slice .empty 1 -}}", false, "err template: t:1:2: executing \"t\" at <slice 3.5 5>: error calling slice: can't slice item of type float64"),
+  ("{{- .fa}}", false, "false"),
+  ("{{1e3}}", false, "1000"),
+  ("{{ge .z .fa .uni}}{{.html}}x{{js 0}}", false, "err template: t:1:2: executing \"t\" at <ge>: wrong number of args for ge: want 2 got 3"),
+  ("{{printf \"%v %v\" .t false}}{{.nested.arr}} {{\$v0 := true}}", false, "true false[map[k:v1] map[k:v2]] "),
+  ("{{.small}}{{nil}} ", false, "err template: t:1:12: executing \"t\" at <nil>: nil is not a command"),
+  ("{{urlquery .small}}{{define \"d\"}}D{{end}}{{template \"d\" .}}  \n  ", true, "0.0001D  \n  "),
+  ("{{eq .mixed .mixed .fa}}{{\$.i}}{{.m.four}}{{if .nested.arr}}{{range .i}}{{printf \"%x\" .m.four .nested.a}}{{break}}{{len 3}}{{\$v0 := printf \"%v\" 2i 0}}{{end}}{{end}}", false, "err template: t:1:2: executing \"t\" at <eq .mixed .mixed .fa>: error calling eq: non-comparable type [%!s(int64=1) x <nil> %!s(bool=true) %!s(float64=2.5)]: []interface {}"),
+  ("{{index .m \"two\"}}  \n  x", false, "2  \n  x"),
+  (" ", false, " "),
+  ("{{end}}{{\$v0 := .strs}}{{if slice .nested.a.b.c 5}}é{{\$v0 | printf \"%v\"}}{{end}}", false, "err template: t:1: unexpected {{end}}"),
+  ("<", false, "<"),
+  ("x{{\$v0 := printf \"%v\" .f .s}}", false, "x"),
+  ("a b{{.z | print}}", true, "a b0"),
+  ("{{if (\$ | urlquery)}}{{slice 1 0}}{{.nested.arr}}{{with `raw`}}{{with \$}}<\n{{else with 2i}}{{print .neg}}{{.z}}é<{{end}}{{.num_str | print -}}x{{end}}{{urlquery .url}}{{else}}{{range .e}}{{.i | len}}{{end}}{{call .s}} {{{{end}}{{(false) -}}", false, "err template: t:2: unexpected \"{\" in command"),
+  ("{{.z | urlquery}}", true, "0"),
+  ("x {{with printf \"%v %v\" `raw` .nested.a.b.c}} {{end}}", false, "x  "),
+  ("{{\$v0 := printf \"%T\" .missing nil}}", false, ""),
+  ("  \n  {{printf \"%v\" .nested.a .big}}\n{{\$v0 := (. | printf \"%v\")}}", false, "  \n  map[b:map[c:deep]]%!(EXTRA float64=1e+21)\n"),
+  ("{{with (\$)}}{{.uni}}{{len .big}} {{else with (slice .t 2)}}{{slice .neg 2}}{{end}}{{with 1}}{{slice .mixed 2}}{{(len .small)}}{{\$v0 := .mixed}}{{else}}{{.empty}}{{and}}{{end}}{{nil | not}}a b", false, "err template: t:1:22: executing \"t\" at <len .big>: error calling len: len of type float64"),
+  ("{{gt .list .em}}xx{{.em}}", true, "err template: t:1:2: executing \"t\" at <gt .list .em>: error calling gt: invalid type for comparison"),
+  ("{{printf \"%v\" false .fa}}", false, "false%!(EXTRA bool=false)"),
+  ("{{.}}{{.e}}", true, "map[big:1e+21 e: em:map[] empty:[] f:3.25 fa:false html:<b>\"x\" & 'y'</b> i:17 list:[1 2 3] m:map[one:1 three:3 two:2] mixed:[1 x <nil> true 2.5] n:<nil> neg:-3 nested:map[a:map[b:map[c:deep]] arr:[map[k:v1] map[k:v2]]] num_str:42 s:hello small:0.0001 strs:[a b c] t:true uni:héllo wörld url:a b&c=d/é z:0]"),
+  ("{{if slice \"x\" 2}}a b{{(.s)}}a b{{printf \"%v %v\" .i .uni}}{{else if printf \"%x\" true 1}}a b{{print .list}}{{with nil}}{{- (\$)}}{{range \$k, \$e := .m.four}}{{continue}}é{{slice 0 0 -}}{{end}}{{(printf \"%%\" true .mixed)}}{{else}}<{{{{end}}{{end}}{{\$v0 := .num_str}}", false, "err template: t:1: unexpected \"{\" in command"),
+  ("{{with (gt .e \"x\")}}{{else}}a b{{(.list | html)}}{{else with slice .m.four 5}}<{{slice \$ 1}}{{range .t}}{{slice .uni 1}}{{(.mixed)}}  \n  a b{{end}}{{end}}{{'a' -}}{{- .em -}}x", false, "err template: t:1: expected end; found {{else}}"),
+  ("{{println .num_str}}", false, "42\n"),
+  (" ", false, " "),
+  ("{{or .empty 'a'}}{{range \$k, \$e := .i}}<{{slice .mixed 0}}{{end}}x", false, "err template: t:1:35: executing \"t\" at <.i>: can't use 17 to iterate over more than one variable"),
+  ("{{.z | printf \"%v\"}} {{index .m \"two\"}}{{.missing}}", false, "0 2<no value>"),
+  ("{{eq 1 1 .list}}{{- printf \"%5.2f\" .missing .neg}}", false, "true%!f(<nil>)%!(EXTRA int64=-3)"),
+  ("{{len .big}}  \n    \n  {{.s}", false, "err template: t:3: bad character U+007D '}'"),
+  ("{{range 0}}{{with .nested.a}}{{break}}{{printf \"%v\" .m.four true}}{{continue}}{{else}}  \n  {{with (urlquery -2)}}{{(slice .html 2)}}{{slice \"x\" 5}}  \n  {{else with (.num_str)}}{{break}}{{- printf \"%T\" .m.one .strs}}{{continue}}{{end}}{{end}}{{slice .nested.arr 5}}{{with html false}}{{-2 | printf \"%v\" -}}{{end}}{{.t}}{{end}}{{(.)}}{{printf \"%d\" .s.x .num_str -}}{{if (slice -2 1)}}{{range 3}}{{range \$k, \$e := .fa}}{{0}}é{{end}}{{\$v0 := .list}}{{.big | print}}{{(.m | urlquery)}}{{end}}{{index .list .missing \$.i}}{{else}}{{with (len nil)}}{{slice 0x1F 2}}{{.t}}{{.num_str | len}}{{gt . nil .m.four}}{{else}}é{{js .nested.arr}}{{end}}{{printf \"%5.2f\" nil .neg}}{{\$v0 := \$.i}}{{end}}", false, "err template: t:3:198: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("{{range -1}}{{with slice `raw` 5}}{{- (.num_str | urlquery)}}{{printf \"%%\" 0 .uni}}{{with println .i}}a b{{\$}}  \n  {{printf \"%v %v\" .m.four .nested.a.b.c}}{{end}}{{else}}{{.}}{{end}}\n{{.m -}}{{else}}{{.}}{{println .num_str -}}a b{{lt `raw` .em .s}}{{end}}{{.missing | len}}", false, "err template: t:3:48: executing \"t\" at <lt>: wrong number of args for lt: want 2 got 3"),
+  ("{{(.uni)}}", false, "héllo wörld"),
+  ("{{.html}}{{range \$k, \$e := .fa}}{{slice .neg 1}}{{else}}{{if .s}}{{.t -}}{{range \$k, \$e := \$}}{{\$v2 := printf \"%T\" .uni .m.one}}{{- le \$k .small .m.one}}a b{{\$k}}{{else}}  \n  {{end}}{{else if .s}}x{{end}}{{end}}{{\$}}{{-2}}", false, "err template: t:1:27: executing \"t\" at <.fa>: range can't iterate over false"),
+  ("{{ne .nested.arr .f}}{{\$v0 := false}}", false, "err template: t:1:2: executing \"t\" at <ne .nested.arr .f>: error calling ne: incompatible types for comparison: []interface {} and float64"),
+  ("{{if html .i}}{{.f | printf \"%v\"}}{{slice .nested.a 1}}{{slice .t 2}}{{else}}{{slice .nested.a.b.c 1}}{{if .num_str}}{{index .m \"two\"}}a b{{else}}{{range \$k, \$e := .list}}{{((.e | not)) -}}{{index true .s.x}} {{end}}<<{{end}}a b{{end}}{{\$v0 := html .n}}{{(slice .nested.a 2)}}  \n  ", false, "err template: t:1:36: executing \"t\" at <slice .nested.a 1>: error calling slice: can't slice item of type map[string]interface {}"),
+  ("{{- .m}}{{if .s.x}}{{.}}{{.t}}{{. -}}{{end}}{{\$v0 := .empty}}", false, "err template: t:1:15: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("{{range 0}}{{end}}  \n  {{range -1}}{{range \$k, \$e := \$}}a b {{(printf \"%x\" \$k \$k)}}{{0x1F}}{{else}}{{(printf \"%x\" .em .empty)}}{{\$v0 := urlquery .nested.a.b.c}}{{end}}<{{.small}}{{slice .t 5}}{{end}}{{range \$k, \$e := .e}}{{\$v2 := print .i}}{{ge nil \"x\"}}{{end}}{{end}}\n{{2i}}{{- ((not .html))}}", false, "err template: t:2: unexpected {{end}}"),
+  ("{{.Method 1}}{{\$.i | print}}  \n  ", true, "err template: t:1:2: executing \"t\" at <.Method>: Method is not a method but has arguments"),
+  ("{{with (.m | urlquery)}}  \n  {{else with urlquery .uni}}{{printf \"%T\" .missing .nested.a.b.c}}{{end}}", false, "  \n  "),
+  ("{{- (.nested.a)}}", false, "map[b:map[c:deep]]"),
+  ("{{slice .url 1}}", false, " b&c=d/é"),
+  ("{{/* c */}}{{printf \"%s-%q\" .uni \"x\"}}é", false, "héllo wörld-\"x\"é"),
+  ("{{.neg}}", false, "-3"),
+  ("  \n  ", false, "  \n  "),
+  ("{{\$}}{{printf \"%v %v\" .t .small}}{{.n}}{{\$v0 := (printf \"%d\" .big .em)}}", false, "map[big:1e+21 e: em:map[] empty:[] f:3.25 fa:false html:<b>\"x\" & 'y'</b> i:17 list:[1 2 3] m:map[one:1 three:3 two:2] mixed:[1 x <nil> true 2.5] n:<nil> neg:-3 nested:map[a:map[b:map[c:deep]] arr:[map[k:v1] map[k:v2]]] num_str:42 s:hello small:0.0001 strs:[a b c] t:true uni:héllo wörld url:a b&c=d/é z:0]true 0.0001<no value>"),
+  ("{{\$v0 := \$.i}}{{slice \$v0 0}}{{.nested.a | html}}{{slice \$.i 5}}", false, "err template: t:1:16: executing \"t\" at <slice \$v0 0>: error calling slice: can't slice item of type int64"),
+  ("a b{{range \$k, \$e := .m.four}}{{print .m.four .nested.a .m.four}}{{break}}{{with (.empty | not)}}{{\$v2 := .fa | len}}{{(printf \"%x\" .list \$.i)}}{{end}}{{range .i}}{{slice 0x1F 1}}{{end}}{{end}}{{range \$k, \$e := \$}}{{call .s}}{{len 3}}{{range -1}}{{\$v2 := (.url)}}é{{range .uni}}<{{end}}{{continue}}{{end}}{{if printf \"%d\" .uni \$e}}<{{else}}{{range -1}}é{{printf \"%d\" \$.i .n}}{{.mixed}}{{else}} {{slice .list 0}}{{end}}{{if 'a'}}a b{{continue}}{{end}}{{\$v2 := print .m}}<{{end}}{{end}}{{.s}", false, "err template: t:1: bad character U+007D '}'"),
+  ("{{.neg -}}{{range .html}}{{.m.one}}  \n  {{end}}", false, "err template: t:1:18: executing \"t\" at <.html>: range can't iterate over <b>\"x\" & 'y'</b>"),
+  ("{{range -1}}{{.big | print}}{{.f | html}}{{continue}}{{- .missing | len}}{{end}}{{printf \"%5.2f\" .s .nested.a.b.c}}{{.missing}}", false, "%!f(string=   he)%!(EXTRA string=deep)<no value>"),
+  ("{{((nil))}} <", false, "err template: t:1:4: executing \"t\" at <nil>: nil is not a command"),
+  ("{{\$v0 := len .strs}}{{slice .uni 1}}{{printf \"%x\" .num_str .mixed}}", false, "éllo wörld3432%!(EXTRA []interface {}=[1 x <nil> true 2.5])"),
+  ("{{.s | not}} ", false, "false "),
+  ("{{\"x\"}}{{.url}}{{gt .nested.a.b.c .i .uni}}", true, "err template: t:1:17: executing \"t\" at <gt>: wrong number of args for gt: want 2 got 3"),
+  ("{{. | urlquery}}{{gt .url .small .e}}\n{{with html .e}}{{(js .fa)}}{{if printf \"%%\" .empty .i}}{{printf \"%s-%q\" \"x\" .s.x}}{{else if ne 'a' .nested.arr .m.four}}{{\$v0 := .m | urlquery}}x{{- slice .neg 2}}{{end}} {{end}}", false, "err template: t:1:18: executing \"t\" at <gt>: wrong number of args for gt: want 2 got 3"),
+  ("{{\$v0 := js .f}}{{.num_str}}{{\$}}", false, "42map[big:1e+21 e: em:map[] empty:[] f:3.25 fa:false html:<b>\"x\" & 'y'</b> i:17 list:[1 2 3] m:map[one:1 three:3 two:2] mixed:[1 x <nil> true 2.5] n:<nil> neg:-3 nested:map[a:map[b:map[c:deep]] arr:[map[k:v1] map[k:v2]]] num_str:42 s:hello small:0.0001 strs:[a b c] t:true uni:héllo wörld url:a b&c=d/é z:0]"),
+  ("{{with (.)}}{{slice .fa 5}}{{.list}}{{not .f}}{{\$v0 := printf \"%%\" .url .f}}{{else with html .strs}} \n{{with (js .num_str)}}{{.empty}}{{html .m}}<{{else}}{{slice 3.5 5}}{{end}}{{.nested.arr}}{{end}}{{and}}{{print .i .n .z}}", false, "err template: t:1:14: executing \"t\" at <slice .fa 5>: error calling slice: can't slice item of type bool"),
+  ("{{range .small}}{{\$v0 := and .empty .m.four}}{{(slice .empty 0)}}{{println -2}}{{end}}", false, "err template: t:1:8: executing \"t\" at <.small>: range can't iterate over 0.0001"),
+  ("é{{\$v0 := .s.x}}{{with .i}}{{and .t \$v0}}<{{range 3}}{{(printf \"%5.2f\" .mixed \$v0)}}{{.url}}é{{end}}<{{end}}{{.f -}}", false, "err template: t:1:13: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("{{.list}}{{(slice .num_str 1)}}{{.m.one}}{{if (.strs)}} {{.url | urlquery}}{{end}}", false, "[1 2 3]21 a+b%26c%3Dd%2F%C3%A9"),
+  ("{{.m}}", false, "map[one:1 three:3 two:2]"),
+  ("x", false, "x"),
+  ("{{range .i}}{{range .i}}{{continue}}{{continue}}{{printf \"%v %v\" .big .e}}{{end}}{{end}}{{println .m.four}}{{slice .t 5}}", false, "err template: t:1:20: executing \"t\" at <.i>: can't evaluate field i in type int64"),
+  ("{{slice .m 2}}{{\$v0 := printf \"%v %v\" \$.i .fa}}{{(print .m)}}", false, "err template: t:1:2: executing \"t\" at <slice .m 2>: error calling slice: can't slice item of type map[string]interface {}"),
+  ("{{.n -}}{{urlquery .fa}}<", false, "<no value>false<"),
+  ("\n{{ne .nested.a .uni}}{{\$v0 := js .big}}", false, "err template: t:2:2: executing \"t\" at <ne .nested.a .uni>: error calling ne: incompatible types for comparison: map[string]interface {} and string"),
+  ("a b", true, "a b"),
+  ("{{.big -}}\n", false, "1e+21"),
+  ("\n{{with printf \"%T\" .list false}}<  \n  {{(slice .em 0)}}{{or .s.x .list}}{{else with not .strs}} {{end}}", false, "err template: t:3:11: executing \"t\" at <.em>: can't evaluate field em in type string"),
+  ("{{slice .m.four 0}}", true, "err template: t:1:10: executing \"t\" at <.m.four>: map has no entry for key \"four\""),
+  ("{{with (slice .uni 2)}}x{{end}}", false, "x"),
+  ("{{ne .s .list .z}}", false, "err template: t:1:2: executing \"t\" at <ne>: wrong number of args for ne: want 2 got 3"),
+  ("{{ge .nested.a.b.c .small}}a b<{{.m.one}}", false, "err template: t:1:2: executing \"t\" at <ge .nested.a.b.c .small>: error calling ge: incompatible types for comparison: string and float64"),
+  ("{{- html .mixed}}", false, "[1 x &lt;nil&gt; true 2.5]"),
+  (" {{.missing}}", false, " <no value>"),
+  ("<{{.z}}", true, "<0"),
+  (" ", false, " "),
+  ("<{{printf \"%d\" .m .m.four}}{{- eq .nested.arr .s.x 1}}", true, "err template: t:1:20: executing \"t\" at <.m.four>: map has no entry for key \"four\""),
+  ("{{if printf \"%5.2f\" 'a' \"x\"}}{{- -2 | len}}{{not 2i}}{{(println .i)}}{{else}}{{with slice 0x1F 0}}{{\$.i}}x{{end}}{{1e3}}{{printf \"%v\" .n .empty}}{{\$.i -}}{{end}}{{with .big | not}}{{range 0}}{{\$v0 := js .f}}é{{urlquery .missing}}x{{else}}{{if printf \"%T\" .neg .strs}}\n{{html .f}}{{end}}{{end}}<é{{or .m.four \$.i -}}{{end}}", false, "err template: t:1:38: executing \"t\" at <len>: error calling len: len of type int"),
+  ("éx ", false, "éx "),
+  ("{{if slice .html 5}}{{- /* c */ -}}{{end}}x{{\$v0 := or .big .uni}}", true, "x"),
+  ("  \n  {{range \$}}{{\$v0 := len .m}}{{end}}  \n  ", false, "err template: t:2:26: executing \"t\" at <.m>: can't evaluate field m in type interface {}"),
+  ("{{(.strs)}}", false, "[a b c]"),
+  ("{{- eq \$.i \$.i -}}{{if le .num_str \$.i}}{{\$v0 := js \$}}{{\$v1 := slice .mixed 0}}{{end}}", false, "err template: t:1:23: executing \"t\" at <le .num_str \$.i>: error calling le: incompatible types for comparison: string and int64"),
+  ("{{(.nested.a | not)}}x", false, "falsex"),
+  ("{{(not .html)}}{{js .uni}}", false, "falsehéllo wörld"),
+  ("{{with 3.5}}{{lt .big 2i}}{{- 1e3 -}}<{{else}}{{\$}}{{(slice .mixed 5)}}{{end}}", false, "err template: t:1:17: executing \"t\" at <.big>: can't evaluate field big in type float64"),
+  ("{{.f}}", false, "3.25"),
+  ("{{\$v0 := .nested.a.b.c}}{{printf \"%v %v\" .url .html}}{{with .empty | urlquery}}{{\$.i -}}{{range \$k, \$e := \$v0}}{{if .z}}{{.url}}{{.s}}{{else}}{{.url}}{{\$v3 := \$v0}}{{end}}{{not .nested.a.b.c}}{{html .s}}{{printf \"%x\" -2 \$k}}{{else}}{{with true}}  \n  {{end}}{{range .html}} {{block \"b\" .}}B{{end}}\n{{\$.i}}{{end}}xa b{{end}}{{\$v1 := .small | len}}{{else with 2i}}{{- .html | len}}{{if \$v0}}{{slice .t 0}}x{{.num_str}} {{end}}{{slice .i 5}}{{end}}", false, "err template: t:1:106: executing \"t\" at <\$v0>: range can't iterate over deep"),
+  ("<", false, "<"),
+  (" {{or nil .url .empty}}x", false, " a b&c=d/éx"),
+  ("{{- /* c */ -}}{{.nested.arr}}  \n  ", false, "[map[k:v1] map[k:v2]]  \n  "),
+  ("\n{{printf \"%5.2f\" 0 .fa}}{{nil}}x", false, "err template: t:2:26: executing \"t\" at <nil>: nil is not a command"),
+  ("\n", false, "\n"),
+  ("é{{with .missing}} {{end}}{{slice .html 1}}", false, "éb>\"x\" & 'y'</b>"),
+  ("{{.t}}{{.nested.a.b.c | print -}}", false, "truedeep"),
+  ("{{slice . 0}}{{or .f .m.four}}", false, "err template: t:1:2: executing \"t\" at <slice . 0>: error calling slice: can't slice item of type map[string]interface {}"),
+  ("\n{{.url}}", false, "\na b&c=d/é"),
+  ("{{range .i}}\n\n{{range .fa}}{{\$v0 := .t}}{{if html .}}x{{else}}{{printf \"%x\" .m.one \$v0 -}}{{end}}{{not .s.x}}<{{end}}{{range .i}}{{continue}}{{\$v0 := slice .strs 1}}{{\$.i | print}}{{else}}{{.uni | print}}{{end}}{{end}} {{\$v0 := .strs | printf \"%v\"}}\n", false, "err template: t:3:8: executing \"t\" at <.fa>: can't evaluate field fa in type int64"),
+  ("  \n  {{- .i}}{{slice .small 2}}a b", true, "err template: t:2:12: executing \"t\" at <slice .small 2>: error calling slice: can't slice item of type float64"),
+  ("{{.empty}}", false, "[]"),
+  ("{{.html}}x", false, "<b>\"x\" & 'y'</b>x"),
+  ("{{slice \"x\" 5}}x", false, "err template: t:1:2: executing \"t\" at <slice \"x\" 5>: error calling slice: index out of range: 5"),
+  ("{{with (.s.x)}}{{.z}}{{\$v0 := printf \"%%\" \$.i `raw`}}{{if .e | len}}{{range .i}}{{.s | len}}{{- .nested.arr | html}}{{else}}{{slice \$v0 0}}  \n  {{\$v1 := not true}}{{end}}{{.i | urlquery}}a b {{else if .uni | html}}\n{{end}}{{end}}   \n  {{html nil}}", false, "err template: t:1:10: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("{{.num_str}}", false, "42"),
+  ("{{\$v0 := slice .m.one 5}}{{- /* c */ -}}", false, "err template: t:1:9: executing \"t\" at <slice .m.one 5>: error calling slice: can't slice item of type int64"),
+  ("{{with (.em | urlquery)}}{{true}}{{else}}{{.url}}{{end}}{{range \$k, \$e := .mixed}}{{lt .m.four .em}}{{end}}{{with 0x1F}}x{{. | print}}{{end}}", true, "err template: t:1:89: executing \"t\" at <.m.four>: can't evaluate field m in type interface {}"),
+  ("{{- 1}}", true, "1"),
+  ("é{{end}} {{nil}}", false, "err template: t:1: unexpected {{end}}"),
+  ("<{{eq .fa .n \$}}{{le .t .}}{{range 0}}{{and}}{{end}}{{(1e3)}}{{index \$.i .nested.a}}{{end}}", false, "err template: t:1: unexpected {{end}}"),
+  ("{{if printf \"%x\" .num_str .strs}}{{and}}{{template \"u\"}}{{html .missing}}{{else}} {{end}}{{.nested.a.b.c -}}x", false, "err template: t:1:35: executing \"t\" at <and>: wrong number of args for and: want at least 1 got 0"),
+  ("\n ", false, "\n "),
+  ("{{\$v0 := js .em}}", false, ""),
+  ("{{.e}}{{range \$k, \$e := .big}}a b{{with ne 1 .num_str}}{{range 3}}  \n  é{{end}}{{slice .t 1}}{{end}}{{end}}", false, "err template: t:1:24: executing \"t\" at <.big>: range can't iterate over 1e+21"),
+  ("  \n  {{range 0}}{{range 3}}{{with (html 0x1F)}}{{printf \"%T\" .m.four 2i}}{{0x1F}}{{.neg | print}}{{end}}{{end}}{{and}}{{if .i | print}}{{\$v0 := .big}}{{slice `raw` 5}}{{with len .f}}{{\$v1 := urlquery .m.one}}{{end}}{{\$v0}}{{else if .neg}}{{((eq . .neg)) -}}{{range -1}} {{printf \"%T\" nil .neg}}{{else}}{{1e3}}{{- print nil .url .e}}{{- print .e}}{{block \"b\" .}}B{{end}}{{end}}{{range \$k, \$e := .html}}\na b{{printf \"%v %v\" .em .}}{{continue}}{{end}}{{\$v0 := (printf \"%T\" .i .empty)}}{{end}}{{end}} ", false, "  \n   "),
+  ("{{range .small}}é{{\$v0 := \$.i}}{{end}}{{\$v0 := println .e}}", true, "err template: t:1:8: executing \"t\" at <.small>: range can't iterate over 0.0001"),
+  ("{{\$v0 := printf \"%5.2f\" .fa .nested.a.b.c}}", false, ""),
+  ("{{printf \"%x\" .m .small}}{{if slice .missing 1}}{{- .t | print}}{{le .big 1e3 3.5}}{{.t}}{{else}}{{and .f .big}}{{\$v0 := lt .i .uni .e}}{{range \$k, \$e := 2i}}{{\$v0 | print}}{{call .s}}{{\$v3 := slice .e 2}}{{with .big | not}}{{- eq .num_str .}}{{printf \"%v\" \$k .empty}}{{end}}{{else}}{{with lt .t .n \$v0}}{{len .t}}{{index .m \"two\"}}{{.e}}{{index .list 5}}{{else with . | printf \"%v\"}}{{printf \"%d\" \$ \$v0}}{{call .s}} {{\$v0}}{{end}}{{\$v0}}{{end}}{{end}}<", false, "err template: t:1:30: executing \"t\" at <slice .missing 1>: error calling slice: slice of untyped nil"),
+  ("\n", false, "\n"),
+  (" {{range \$k, \$e := .big}}{{lt \$k .nested.arr}}{{continue}}{{end}}{{with (slice .num_str 5)}}x<{{end}}\n{{else with .z}}a b{{eq \$ .html}}{{- le .n .i .m.four}}{{end}}", false, "err template: t:2: unexpected {{else}}"),
+  ("{{.url | urlquery}}{{.strs -}}", false, "a+b%26c%3Dd%2F%C3%A9[a b c]"),
+  ("\n  \n  {{html .nested.a}}{{\$v0 := .em}}", false, "\n  \n  map[b:map[c:deep]]"),
+  ("{{.list}}{{\$v0 := (.e | urlquery)}}{{not .html}}", false, "[1 2 3]false"),
+  ("{{range \$k, \$e := `raw`}}{{with ne nil 2i}}<{{break}}{{nil}}{{\$v2 := not 1e3}}{{else with .e}}{{\$v2 := (or \$k .n \$e)}}{{end}}{{break}}{{end}}{{printf \"%d\" true false -}}", false, "err template: t:1:18: executing \"t\" at <`raw`>: range can't iterate over raw"),
+  ("é{{print .fa -}}", false, "éfalse"),
+  (" {{if printf \"%d\" `raw` \$.i}}{{range .i}}{{continue}}{{(slice .html 0)}}\n{{slice .num_str 0}}{{else}}{{with printf \"%s-%q\" true .neg}}{{  \n  {{end}}{{end}}{{\$v0 := (slice 1e3 1)}}{{(.m | urlquery)}}{{(slice .num_str 5)}}{{else if .em}}{{println .missing}}{{\$ -}}{{end}}", false, "err template: t:3: unexpected \"{\" in command"),
+  ("{{print .strs}}", false, "[a b c]"),
+  ("{{range .nested.arr}}{{- printf \"%v\" 2i .neg}}{{end}}{{slice .empty 0}} {{.mixed -}}", false, "(0+2i)%!(EXTRA <nil>)(0+2i)%!(EXTRA <nil>)[] [1 x <nil> true 2.5]"),
+  ("{{\$.i}}", false, "17"),
+  ("{{slice . 1}}{{\$}}", false, "err template: t:1:2: executing \"t\" at <slice . 1>: error calling slice: can't slice item of type map[string]interface {}"),
+  ("{{len .i}}{{range .empty}}{{.m.one | urlquery}}{{continue}}{{end}}{{\$v0 := .z}}{{printf \"%x\" .html .i}}", false, "err template: t:1:2: executing \"t\" at <len .i>: error calling len: len of type int64"),
+  ("{{\$v0 := slice .em 2}}{{.}}", false, "err template: t:1:9: executing \"t\" at <slice .em 2>: error calling slice: can't slice item of type map[string]interface {}"),
+  ("{{.n}}{{0 | printf \"%v\"}}{{.s -}}", false, "<no value>0hello"),
+  ("é\n", false, "é\n"),
+  ("a b", false, "a b"),
+  ("{{- .mixed -}}  \n  ", false, "[1 x <nil> true 2.5]"),
+  ("{{/* c */}}{{range .m.one}} {{range .i}}{{range -1}}{{printf \"%x\" .neg -2}}{{(slice .url 1)}}{{else}}éa b{{index \"x\" .nested.a.b.c}}{{html .fa}}{{end}}{{if .t}}{{- (.e)}}{{(printf \"%T\" `raw` .small)}}{{.i}}{{end}}{{continue}}{{.nested.a.b.c | not -}}{{end}}{{.list}}{{.empty -}}{{end}}{{printf \"%v %v\" 1 .f}}{{\$v0 := .z}}", false, "err template: t:1:36: executing \"t\" at <.i>: can't evaluate field i in type int64"),
+  ("{{\$v0 := gt .n nil}}{{\$v0 -}}{{printf \"%d\" .num_str .f}}", false, "err template: t:1:9: executing \"t\" at <gt .n nil>: error calling gt: invalid type for comparison"),
+  ("{{or 'a' .nested.a.b.c}}{{and}}{{with ge .uni .m.one}}{{(\$ | print)}}{{range \$k, \$e := .s}}x{{with ge .empty `raw`}}a b{{urlquery .uni}}{{println .uni}}{{break}}{{else with .missing}}{{\$k}}{{len .f}}<{{printf \"%d\" .n \$e}}{{end}}{{end}}{{end}}", false, "err template: t:1:26: executing \"t\" at <and>: wrong number of args for and: want at least 1 got 0"),
+  ("{{printf \"%d\" nil .s}}{{((.big)) -}}{{(.nested.arr)}}\n", false, "%!d(<nil>)%!(EXTRA string=hello)1e+21[map[k:v1] map[k:v2]]\n"),
+  ("{{lt .f .list .}}{{if .nested.arr}}<a b{{else if .nested.a | len}}{{gt .s .num_str}}{{\$v0 := len .uni}}{{range}}é{{end}}a b", false, "err template: t:1: missing value for range"),
+  ("{{with .i}}{{call .s}}{{not .i}}{{end}}{{range \$k, \$e := .big}}\n{{end}}<", false, "err template: t:1:18: executing \"t\" at <.s>: can't evaluate field s in type int64"),
+  ("{{slice -2 2}}\n", false, "err template: t:1:2: executing \"t\" at <slice -2 2>: error calling slice: can't slice item of type int"),
+  ("{{(slice .uni 5)}}", false, "o wörld"),
+  ("{{if .n}}{{false | len}}{{end}}\n{{\$v0 := (printf \"%x\" .mixed .i)}}", false, "\n"),
+  ("<{{if and .url .strs .s.x}}{{- .f -}}{{call .s}}{{\$v0 := 1e3}}{{slice .num_str 0}}{{end}}{{index .f .e}}", false, "err template: t:1:23: executing \"t\" at <.s.x>: can't evaluate field x in type interface {}"),
+  ("{{\"x\"}}", false, "x"),
+  ("a b", false, "a b"),
+  ("\n", false, "\n"),
+  ("{{-2}}{{slice \$ 5}}{{(printf \"%5.2f\" .e 3.5)}}", false, "err template: t:1:8: executing \"t\" at <slice \$ 5>: error calling slice: can't slice item of type map[string]interface {}"),
+  ("{{range -1}}\n{{- /* c */ -}}{{end}}{{.m}}", false, "map[one:1 three:3 two:2]"),
+  ("{{\$v0 := html .url}}a b{{.empty | printf \"%v\"}}{{range 3}}x{{if (printf \"%v %v\" \$v0 -2)}}{{.empty}}{{slice .nested.a 1}}{{with .nested.a.b.c}}{{continue}}{{\$v1 := .t}}{{\$v2 := \$}}{{else}}é{{ne .i .num_str}}{{end}}{{if slice .nested.arr 2}}{{break}}{{else}}{{continue}}{{end}}{{else if slice 2i 5}}{{range}}{{end}}{{\$v1 := \$v0}}{{print .list}}{{end}}", false, "err template: t:1: missing value for range"),
+  ("{{\$v0 := 'a'}}", false, ""),
+  ("{{- true}}{{if urlquery \$}}{{.nested.a.b.c}}{{le .s.x \"x\" 0}}{{\$v0 := (slice .list 5)}}{{\$}}{{end}}{{.Method 1}}", true, "err template: t:1:46: executing \"t\" at <le>: wrong number of args for le: want 2 got 3"),
+  ("{{if (not .html)}}{{(.strs)}}{{slice \$.i 0}}{{else}}{{printf \"%%\" .big .em}}{{end}}  \n  ", false, "%%!(EXTRA float64=1e+21, map[string]interface {}=map[])  \n  "),
+  ("{{(\$.i) -}} a b", true, "17a b"),
+  ("é{{(printf \"%s-%q\" 0x1F .em)}}{{.uni}}", false, "é%!s(int=31)-map[]héllo wörld"),
+  ("{{- /* c */ -}}{{slice \"x\" 0 -}}", false, "x"),
+  ("{{printf \"%%\" .uni 0}}{{true}}", false, "%%!(EXTRA string=héllo wörld, int=0)true"),
+  ("{{range \$k, \$e := \"x\"}}{{.t | printf \"%v\" -}}\n{{end}}", false, "err template: t:1:18: executing \"t\" at <\"x\">: range can't iterate over x"),
+  ("é", true, "é"),
+  ("{{slice .m.one 2}}{{js .t}}", false, "err template: t:1:2: executing \"t\" at <slice .m.one 2>: error calling slice: can't slice item of type int64"),
+  ("\n", false, "\n"),
+  ("{{.url}}", false, "a b&c=d/é"),
+]
+
+/// (set kind, main source, the name render_named executes, missingkey=error, Go's output or err TEXT)
+const NAMED_CASES: List[(Int, Str, Str, Bool, Str)] = [
+  (0, "A{{.s}}B", "main", false, "AhelloB"),
+  (0, "{{define \"d\"}}D{{.i}}{{end}}M", "d", false, "D17"),
+  (0, "{{define \"d\"}}D{{.i}}{{end}}M", "main", false, "M"),
+  (0, "M", "nope", false, "err template: no template \"nope\" associated with template \"main\""),
+  (0, "{{.missing}}", "main", true, "err template: main:1:2: executing \"main\" at <.missing>: map has no entry for key \"missing\""),
+  (1, "A{{template \"sub\" .}}B", "main", false, "As:helloB"),
+  (1, "A{{template \"sub\" .}}B", "sub", false, "s:hello"),
+  (2, "{{template \"a\" .}}", "a", false, "[B17]"),
+  (2, "X", "b", false, "B17"),
+]
+
+fn first_bad[T](bad: List[T]) -> List[T] { bad[0..(if bad.len() < 20 { bad.len() } else { 20 })] }
+
+
+fn named_set(kind: Int, main: Str) -> template.Template ! template.TemplateErr {
+  let base = template.parse("main", main)?
+  if kind == 1 {
+    return base.add("sub", "s:{{.s}}")?
+  }
+  if kind == 2 {
+    return base.add("a", "[{{template \"b\" .}}]")?.add("b", "B{{.i}}")?
+  }
+  base
+}
