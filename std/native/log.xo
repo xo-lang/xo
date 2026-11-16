@@ -159,15 +159,17 @@ fn group_dec(s: Str) -> Map[Str, log.Value]? {
     if a >= s.len() {
       return None
     }
-    let tag = s[a..a + 1]
+    // the tag byte compared as a byte: a one-byte Str slice per field
+    // was a cost note (XO0913)
+    let tag = Int(s.bytes()[a])
     let (p, b) = piece_at(s, a + 1)?
     let v = match tag {
-      "s" => log.Value.Str(s: p)
-      "i" => log.Value.Int(n: Int.parse(p)?)
-      "u" => log.Value.UInt(n: UInt64.from_bits(Int.parse(p)?))
-      "f" => log.Value.Float(f: Float.from_bits(Int.parse(p)?))
-      "b" => log.Value.Bool(b: p == "1")
-      "g" => log.Value.Group(fields: group_dec(p)?)
+      115 => log.Value.Str(s: p) // s
+      105 => log.Value.Int(n: Int.parse(p)?) // i
+      117 => log.Value.UInt(n: UInt64.from_bits(Int.parse(p)?)) // u
+      102 => log.Value.Float(f: Float.from_bits(Int.parse(p)?)) // f
+      98 => log.Value.Bool(b: p == "1") // b
+      103 => log.Value.Group(fields: group_dec(p)?) // g
       _ => log.Value.Any(text: p)
     }
     m.put(k, v)

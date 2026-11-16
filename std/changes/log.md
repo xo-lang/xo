@@ -1,5 +1,16 @@
 # std/log changes
 
+## 2026-11-16: perf: group decoding compares the field tag as a byte
+
+- Kind: perf
+- Commit: this push
+- Found by: cmd/xo TestVetCostStd (XO0913 at std/native/log.xo:162, reported by Xo Lang 2: bench programs reaching std/log were refused)
+- Go reference: none (internal encoding of groups, decision 0678)
+- Test: TestVetCostStd (failed before, passes after); xo test --std-module log
+- Shipped in: not yet released
+
+Decoding a group's fields took a one-byte Str slice per field for its tag; it now compares the byte.
+
 ## 2026-11-16: feature: groups (log.group, Logger.with_group, Value.Group; decision 0678)
 
 - Kind: feature
