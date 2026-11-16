@@ -1,0 +1,170 @@
+// httpproxy stress program (decision 0616 section 2): 64 seeded
+// configurations (HTTP_PROXY, HTTPS_PROXY and NO_PROXY of names, wildcard
+// and dotted domains, IPv4 and IPv6 addresses and blocks, ports), each
+// made into one proxy func that every task shares. First each func's
+// answer to 256 seeded request URLs is recorded on one task; then TASKS
+// tasks ask the shared funcs the same questions in seeded orders, again
+// and again, and must get the recorded answers. A background task samples
+// the resident set every 10 s (Linux /proc/self/status) and prints it each
+// minute. Pass: every answer as recorded, no fault, and the resident set
+// at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30); 0: 200 rounds per task] [TASKS (32)]
+use std/http
+use std/httpproxy
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+const NAMES: List[Str] = ["example.com", "www.example.com", "example.org", "a.example.org", "wild.test", "x.wild.test", "localhost",
+  "a.test", "b.test", "示例.com", "www.示例.com", "xn--fsq092h.com", "bücher.example", "Example.NET", "example.com.", "notexample.com"]
+const IPS: List[Str] = ["10.0.0.1", "10.9.8.7", "11.0.0.1", "127.0.0.1", "192.168.1.5", "172.16.0.1", "172.32.0.1", "2001:db8::1",
+  "2001:db8:5::7", "fe80::1", "::1", "::ffff:10.0.0.1", "2001:db9::1"]
+const BLOCKS: List[Str] = ["10.0.0.0/8", "192.168.0.0/16", "172.16.0.0/12", "2001:db8::/32", "fe80::/10", "::ffff:10.0.0.0/104", "0.0.0.0/0", "::/0"]
+const PORTS: List[Str] = ["", "", "", ":80", ":443", ":8080", ":3128"]
+
+fn pick(xs: List[Str], x: Int) -> Str { xs[(x >> 20) % xs.len()] }
+
+fn host_of(x: Int) -> Str {
+  if (x >> 40) % 3 == 0 {
+    let ip = pick(IPS, x >> 3)
+    return if ip.contains(":") { "[${ip}]" } else { ip }
+  }
+  pick(NAMES, x >> 3)
+}
+
+fn config_of(k: Int) -> httpproxy.Config {
+  var x = next(k * 7919 + 1)
+  let hp = "http://proxy${k % 5}.test:3128"
+  x = next(x)
+  let hsp = if x % 4 == 0 { "" } else { "https://sproxy.test:8443" }
+  var no: List[Str] = []
+  for _ in 0..(x >> 30) % 6 {
+    x = next(x)
+    no.push(match (x >> 40) % 6 {
+      0 => pick(NAMES, x)
+      1 => "." + pick(NAMES, x)
+      2 => "*." + pick(NAMES, x)
+      3 => pick(IPS, x)
+      4 => pick(BLOCKS, x)
+      _ => pick(NAMES, x) + pick(PORTS, x >> 7)
+    })
+  }
+  httpproxy.Config{http_proxy: hp, https_proxy: hsp, no_proxy: no.join(",")}
+}
+
+fn url_of(k: Int) -> http.Url {
+  let x = next(k * 104729 + 3)
+  let s = if x % 2 == 0 { "http" } else { "https" }
+  http.parse_url("${s}://${host_of(x)}${pick(PORTS, x >> 9)}/p").or_fault("a generated URL parses")
+}
+
+fn shown(u: http.Url?) -> Str {
+  match u {
+    Some(p) => p.display()
+    None => "-"
+  }
+}
+
+fn worker(funcs: List[fn(http.Url) -> http.Url?], urls: List[http.Url], want: List[List[Str]], t: Int, end: Time, passes: Int, clock: Clock) -> Int ! Str uses clock {
+  var n = 0
+  var x = next(t + 77)
+  var round = 0
+  while if passes > 0 { round < passes } else { clock.now() < end } {
+    for _ in 0..1024 {
+      x = next(x)
+      let c = (x >> 20) % funcs.len()
+      let u = (x >> 40) % urls.len()
+      let got = shown(funcs[c](urls[u]))
+      if got != want[c][u] {
+        return Err("task ${t}: config ${c} URL ${urls[u].display()}: got ${got}, recorded ${want[c][u]}")
+      }
+      n += 1
+    }
+    round += 1
+  }
+  Ok(n)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 32 } else { 32 }
+  let passes = if minutes == 0 { 200 } else { 0 }
+  var funcs: List[fn(http.Url) -> http.Url?] = []
+  for k in 0..64 {
+    funcs.push(config_of(k).proxy_func())
+  }
+  var urls: List[http.Url] = []
+  for k in 0..256 {
+    urls.push(url_of(k))
+  }
+  var want: List[List[Str]] = []
+  var proxied = 0
+  for f in funcs {
+    var row: List[Str] = []
+    for u in urls {
+      let s = shown(f(u))
+      if s != "-" {
+        proxied += 1
+      }
+      row.push(s)
+    }
+    want.push(row)
+  }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let total = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str { worker(funcs, urls, want, t, end, passes, clock) }))
+    }
+    var n = 0
+    for h in hs {
+      n += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    s.cancel()
+    n
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("httpproxy stress: ${total} lookups by ${tasks} tasks in ${minutes} min over 64 configurations (${proxied} of 16384 answers a proxy), every answer as recorded, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}

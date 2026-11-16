@@ -1,0 +1,222 @@
+// amqp stress program (decision 0616 section 2): an amqptest.Broker on a
+// loopback listener and TASKS client tasks, each with its own connection,
+// session, sender and receiver on its own queue. Each round a task sends a
+// seeded message (a message id, a subject, application properties of
+// every value type, a body of data sections up to 256 KiB, so transfers
+// span frames, or a value of nested lists and maps), receives it and
+// checks its id, subject, properties and body; every fifth message is
+// abandoned first (modify, delivery failed) and must come back with its
+// delivery count raised; the rest are accepted. Each round also checks that a seeded value encodes
+// and decodes back to itself. A background task samples the resident set
+// every 10 s (Linux /proc/self/status) and prints it each minute. Pass:
+// every message back as sent, the queues empty at the end, no fault, and
+// the resident set at the end within 10% or 4 MB of its sample at 5
+// minutes.
+//
+//   main [MINUTES (30); 0: 200 rounds per task] [TASKS (16)]
+use std/amqp
+use std/amqptest
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+fn bytes_of(x0: Int, n: Int) -> Bytes {
+  var x = x0
+  var b = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    if i % 8 == 0 {
+      x = next(x)
+    }
+    b.write_byte(UInt8((x >> (i % 8 * 7)) & 255))
+  }
+  b.freeze()
+}
+
+fn value_of(x0: Int, depth: Int) -> amqp.Value {
+  let x = next(x0)
+  if depth > 0 && (x >> 40) % 5 == 0 {
+    var items: List[amqp.Value] = []
+    var pairs: List[(amqp.Value, amqp.Value)] = []
+    for i in 0..(x >> 30) % 4 {
+      let v = value_of(x + i, depth - 1)
+      items.push(v)
+      pairs.push((amqp.Value.Str(v: "k${i}"), v))
+    }
+    return if (x >> 20) % 2 == 0 { amqp.Value.List(items: items) } else { amqp.Value.Map(pairs: pairs) }
+  }
+  match (x >> 44) % 12 {
+    0 => amqp.Value.Null
+    1 => amqp.Value.Bool(v: x % 2 == 0)
+    2 => amqp.Value.UByte(v: UInt8(x & 255))
+    3 => amqp.Value.UInt(v: UInt32(x & 0xffffffff))
+    4 => amqp.Value.ULong(v: UInt64.from_bits(x))
+    5 => amqp.Value.Int(v: Int32((x & 0xffff) - 32768))
+    6 => amqp.Value.Long(v: Int64(x - 0x2000000000000000))
+    7 => amqp.Value.Double(v: Float(x % 100000) / 7.0)
+    8 => amqp.Value.Str(v: "s\u{e9}${x % 1000}\u{1F600}")
+    9 => amqp.Value.Symbol(v: "sym${x % 97}")
+    10 => amqp.Value.Binary(v: bytes_of(x, (x >> 10) % 40))
+    _ => amqp.Value.Timestamp(ms: x % 2000000000000)
+  }
+}
+
+fn message_of(t: Int, k: Int) -> amqp.Message {
+  let x = next(t * 1000003 + k * 7919)
+  var app: List[(Str, amqp.Value)] = []
+  for i in 0..(x >> 50) % 5 {
+    app.push(("p${i}", value_of(x + i, 0)))
+  }
+  let body = if (x >> 30) % 4 == 0 {
+    amqp.Body.Value(v: value_of(x, 3))
+  } else {
+    var ds: List[Bytes] = []
+    for i in 0..1 + (x >> 33) % 3 {
+      let n = if (x >> (36 + i)) % 16 == 0 { (x >> 10) % 262144 } else { (x >> 10) % 2000 }
+      ds.push(bytes_of(x + i, n))
+    }
+    amqp.Body.Data(sections: ds)
+  }
+  amqp.Message{properties: Some(amqp.Properties{message_id: amqp.Value.Str(v: "m-${t}-${k}"), subject: Some("subject ${k}")}), app_properties: Some(app), body: body}
+}
+
+fn same(a: amqp.Message, b: amqp.Message) -> Bool {
+  let pa = a.properties ?? amqp.Properties{}
+  let pb = b.properties ?? amqp.Properties{}
+  pa.message_id == pb.message_id && pa.subject == pb.subject && a.app_properties == b.app_properties && a.body == b.body
+}
+
+fn delivery_count(d: amqp.Delivery) -> Int {
+  match d.message.header {
+    Some(h) => h.delivery_count
+    None => 0
+  }
+}
+
+fn worker(os: Os, l: Listener, t: Int, end: Time, rounds: Int) -> Int ! Str uses (net, clock) {
+  let clock = os.clock
+  let opts = amqp.ConnOptions{container_id: "stress-${t}", clock: Some(clock), sasl: amqp.Sasl.Anonymous, timeout_ms: 30000}
+  let c = amqp.dial(os.net, l.addr(), opts).map_err(fn(e) { "task ${t}: dial: ${e:?}" })?
+  let k = scope s {
+    c.keepalive(s.group()).map_err(fn(e) { "task ${t}: keepalive: ${e:?}" })?
+    let sess = c.begin().map_err(fn(e) { "task ${t}: begin: ${e:?}" })?
+    let q = "q${t}"
+    let snd = c.new_sender(sess, q).map_err(fn(e) { "task ${t}: sender: ${e:?}" })?
+    let rcv = c.new_receiver(sess, q, amqp.ReceiverOptions{credit: 4}).map_err(fn(e) { "task ${t}: receiver: ${e:?}" })?
+    var k = 0
+    while if rounds > 0 { k < rounds } else { clock.now() < end } {
+      let at = "task ${t} round ${k}"
+      let m = message_of(t, k)
+      match snd.send(m) {
+        Ok(Some(amqp.DeliveryState.Accepted)) => {}
+        Ok(st) => return Err("${at}: send: ${st:?}")
+        Err(e) => return Err("${at}: send: ${e:?}")
+      }
+      let d = rcv.receive(30000).map_err(fn(e) { "${at}: receive: ${e:?}" })?
+      if !same(d.message, m) {
+        return Err("${at}: the message came back changed")
+      }
+      if k % 5 == 0 {
+        let n0 = delivery_count(d)
+        rcv.modify(d).map_err(fn(e) { "${at}: modify: ${e:?}" })?
+        let d2 = rcv.receive(30000).map_err(fn(e) { "${at}: receive again: ${e:?}" })?
+        if !same(d2.message, m) {
+          return Err("${at}: the abandoned message came back changed")
+        }
+        if delivery_count(d2) <= n0 {
+          return Err("${at}: delivery count ${delivery_count(d2)} after ${n0}")
+        }
+        rcv.accept(d2).map_err(fn(e) { "${at}: accept: ${e:?}" })?
+      } else {
+        rcv.accept(d).map_err(fn(e) { "${at}: accept: ${e:?}" })?
+      }
+      let v = value_of(t * 31 + k, 4)
+      let enc = amqp.encode(v).map_err(fn(e) { "${at}: encode: ${e:?}" })?
+      let (back, n) = amqp.decode(enc).map_err(fn(e) { "${at}: decode: ${e:?}" })?
+      if back != v || n != enc.len() {
+        return Err("${at}: a value did not decode back to itself")
+      }
+      k += 1
+    }
+    rcv.close().map_err(fn(e) { "task ${t}: close receiver: ${e:?}" })?
+    snd.close().map_err(fn(e) { "task ${t}: close sender: ${e:?}" })?
+    c.end_session(sess).map_err(fn(e) { "task ${t}: end: ${e:?}" })?
+    c.close().map_err(fn(e) { "task ${t}: close: ${e:?}" })?
+    s.cancel()
+    k
+  }
+  Ok(k)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 16 } else { 16 }
+  let rounds = if minutes == 0 { 200 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let b = amqptest.new(clock)
+  for t in 0..tasks {
+    b.queue("q${t}")
+  }
+  let l = os.net.listen("127.0.0.1:0").map_err(fn(e) { "listen: ${e}" })?
+  let total = scope s {
+    b.serve(s.group(), l)
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str { worker(os, l, t, end, rounds) }))
+    }
+    var n = 0
+    for h in hs {
+      n += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    s.cancel()
+    n
+  }
+  for t in 0..tasks {
+    let left = b.ready("q${t}").len() + b.locked("q${t}")
+    if left != 0 {
+      return Err("queue q${t} holds ${left} messages at the end")
+    }
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("amqp stress: ${total} rounds by ${tasks} tasks in ${minutes} min, every message back as sent, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}

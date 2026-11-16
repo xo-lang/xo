@@ -1,0 +1,159 @@
+// mime stress program (decision 0616 section 2): TASKS tasks each make
+// values from a seeded generator and check what std/mime promises of
+// them: a media type formatted with its parameters (values with spaces,
+// quotes, backslashes and non-ASCII, so quoted or RFC 2231 encoded)
+// parses back as itself; text encoded as RFC 2047 words (b and q, in
+// UTF-8) decodes back as itself, word by word and as a header with text
+// around it; data that starts with a signature sniffs as its type, and an
+// extension maps to its type and back. A background task samples the
+// resident set every 10 s (Linux /proc/self/status) and prints it each
+// minute. Pass: no mismatch, no fault, and the resident set at the end
+// within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30); 0: 20,000 operations per task] [TASKS (32)]
+use std/mime
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+fn piece(x: Int, n: Int) -> Str {
+  var b = StrBuilder.new()
+  for j in 0..n {
+    b.write(["a", "Z", "0", " ", "\"", "\\", "=", ";", "\u{e9}", "\u{65e5}", "-", ".", "\u{1f600}", "?", "_", "/"][(x >> (j * 5 % 50)) % 16])
+  }
+  b.freeze()
+}
+
+fn media_op(t: Int, k: Int, x0: Int) -> () ! Str {
+  var x = x0
+  let kind = ["text/plain", "application/json", "multipart/form-data", "image/png", "x-a/y.b+c"][(x >> 30) % 5]
+  var params: Map[Str, Str] = {}
+  for i in 0..(x >> 40) % 4 {
+    x = next(x)
+    params["p${i}${["", "-x", "_y"][(x >> 20) % 3]}"] = piece(x, (x >> 44) % 20)
+  }
+  let text = mime.format_media_type(kind, params)
+  if text.is_empty() {
+    return Err("task ${t} op ${k}: ${kind} ${params} did not format")
+  }
+  let m = mime.parse_media_type(text).map_err(fn(e) { "task ${t} op ${k}: ${text.quote()} does not parse: ${e.display()}" })?
+  if m.kind != kind || m.params != params {
+    return Err("task ${t} op ${k}: ${text.quote()} parses as ${m.kind} ${m.params}, want ${kind} ${params}")
+  }
+  Ok(())
+}
+
+fn word_op(t: Int, k: Int, x: Int) -> () ! Str {
+  let s = piece(x, 1 + (x >> 40) % 60)
+  let e = if (x >> 50) % 2 == 0 { mime.WordEncoding.B } else { mime.WordEncoding.Q }
+  let enc = mime.encode_word(s, encoding: e)
+  let back = mime.decode_header("Re: ${enc} (x)").map_err(fn(er) { "task ${t} op ${k}: ${enc.quote()}: ${er.display()}" })?
+  if back != "Re: ${s} (x)" {
+    return Err("task ${t} op ${k}: ${s.quote()} encoded ${enc.quote()} decodes as ${back.quote()}")
+  }
+  // printable ASCII is not encoded (Go's needsEncoding), so its "=?" is text
+  for w in if enc == s { [] } else { enc.split(" ") } {
+    if w.starts_with("=?") {
+      mime.decode_word(w).map_err(fn(er) { "task ${t} op ${k}: word ${w.quote()}: ${er.display()}" })?
+    }
+  }
+  Ok(())
+}
+
+fn sniff_op(t: Int, k: Int, x: Int) -> () ! Str {
+  let (sig, want) = [(b"%PDF-", "application/pdf"), (b"\x89PNG\r\n\x1a\n", "image/png"), (b"GIF89a", "image/gif"), (b"PK\x03\x04", "application/zip"), (b"<!DOCTYPE HTML>", "text/html; charset=utf-8"), (b"\x1f\x8b\x08", "application/x-gzip")][(x >> 30) % 6]
+  var b = BytesBuilder.with_capacity(600)
+  b.write(sig)
+  for j in 0..(x >> 36) % 600 {
+    b.write_byte(UInt8(if want.starts_with("text/") { 97 + j % 26 } else { (x >> (j % 50)) & 255 }))
+  }
+  let got = mime.detect_content_type(b.freeze())
+  if got != want {
+    return Err("task ${t} op ${k}: ${sig.quote()} sniffs as ${got}, want ${want}")
+  }
+  let (ext, ty) = [(".html", "text/html; charset=utf-8"), (".PNG", "image/png"), (".json", "application/json"), (".pdf", "application/pdf")][(x >> 44) % 4]
+  if mime.type_by_extension(ext) != Some(ty) {
+    return Err("task ${t} op ${k}: ${ext} is ${mime.type_by_extension(ext) ?? "none"}, want ${ty}")
+  }
+  let back = mime.extensions_by_type(ty).map_err(fn(e) { "task ${t} op ${k}: ${ty}: ${e.display()}" })?
+  if !back.contains(ext.to_lower()) {
+    return Err("task ${t} op ${k}: extensions of ${ty} are ${back}, without ${ext.to_lower()}")
+  }
+  Ok(())
+}
+
+fn worker(os: Os, t: Int, end: Time, passes: Int) -> Int ! Str uses clock {
+  var k = 0
+  while if passes > 0 { k < passes } else { os.clock.now() < end } {
+    let x = next(t * 1000003 + k)
+    match k % 3 {
+      0 => media_op(t, k, x)?
+      1 => word_op(t, k, x)?
+      _ => sniff_op(t, k, x)?
+    }
+    k += 1
+  }
+  Ok(k)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 32 } else { 32 }
+  let passes = if minutes == 0 { 20000 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let total = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str { worker(os, t, end, passes) }))
+    }
+    var n = 0
+    for h in hs {
+      n += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    s.cancel()
+    n
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("mime stress: ${total} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}

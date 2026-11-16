@@ -1,0 +1,257 @@
+// otlp stress program (decision 0616 section 2): an OTLP/HTTP collector in
+// this program (std/http on loopback) takes the exports of TASKS tasks, each
+// with an Exporter of its own (a 1 ms backoff, 5 tries). A task's export k
+// is 1 to 40 std/trace spans with every OpenTelemetry field (given and
+// derived ids, kinds, typed attributes, events, status codes, scopes), and
+// the collector checks each body against the SHA-256 the task sends in
+// X-Sum, which it computed from encode_traces of the same spans: equal
+// bytes, and the same bytes on a retry. One export in 7 is answered 503
+// the first time (the exporter must retry and succeed), one in 23 is
+// answered 400 (the exporter must give up at once with Rejected). Every
+// tenth export is the task's share of a metrics registry the tasks all
+// update (counters, a gauge, a histogram, a summary), sent with
+// send_metrics. A background task samples the resident set every 10 s
+// (Linux /proc/self/status) and prints it each minute. Pass: every export
+// as expected, no fault, and the resident set at the end within 10% or
+// 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30); 0: 60 exports per task] [TASKS (32)]
+use std/backoff
+use std/crypto
+use std/http
+use std/metrics
+use std/otlp
+use std/trace
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+fn hex_of(x: Int, n: Int) -> Str {
+  var b = BytesBuilder.with_capacity(n)
+  var y = x
+  for _ in 0..n {
+    y = next(y)
+    b.write_byte(UInt8((y >> 20) & 255))
+  }
+  b.freeze().to_hex()
+}
+
+fn attrs(x0: Int) -> List[trace.Attr] {
+  var x = x0
+  var out: List[trace.Attr] = []
+  for i in 0..(x >> 30) % 5 {
+    x = next(x)
+    out.push(trace.Attr{key: "k${i}.${(x >> 10) % 9}", value: match (x >> 40) % 4 {
+      0 => trace.AttrValue.Str(v: "v${x % 1000} é")
+      1 => trace.AttrValue.Int(v: (x >> 8) - (1 << 52))
+      2 => trace.AttrValue.Float(v: Float(x % 100000) / 7.0)
+      _ => trace.AttrValue.Bool(v: x % 2 == 0)
+    }})
+  }
+  out
+}
+
+/// The spans of task t's export k.
+fn spans(t: Int, k: Int) -> List[trace.Span] {
+  var x = next(t * 1000003 + k + 1)
+  var out: List[trace.Span] = []
+  let rid = if x % 3 == 0 { hex_of(x, 16) } else { "req-${t}-${k}" }
+  for i in 0..1 + (x >> 24) % 40 {
+    x = next(x)
+    let otel = (x >> 33) % 2 == 0
+    var s = trace.Span{id: rid, name: if i == 0 { "request" } else { "op${(x >> 12) % 6}" }, start_ms: 1700000000000 + (x >> 30) % 100000,
+      micros: (x >> 14) % 5000000, status: if i == 0 { [200, 404, 500, 503][(x >> 8) % 4] } else { 0 }}
+    if otel {
+      s = s with {trace_id: hex_of(x, 16), span_id: hex_of(x + 1, 8), parent_id: if i == 0 { "" } else { hex_of(x + 2, 8) },
+        kind: Some([trace.SpanKind.Internal, trace.SpanKind.Server, trace.SpanKind.Client, trace.SpanKind.Producer, trace.SpanKind.Consumer,
+          trace.SpanKind.Unspecified][(x >> 18) % 6]),
+        attributes: attrs(x), events: if (x >> 22) % 3 == 0 { [trace.Event{name: "e${i}", time_ns: 1700000000000000000 + x % 1000000, attributes: attrs(x + 3)}] } else { [] },
+        status_code: Some([trace.StatusCode.Unset, trace.StatusCode.Ok, trace.StatusCode.Error][(x >> 26) % 3]), status_message: "m${i}",
+        start_ns: 1700000000000000000 + (x >> 4) % 1000000000, scope: ["", "lib", "db"][(x >> 36) % 3], scope_version: "1.${i % 2}",
+        schema_url: if (x >> 38) % 2 == 0 { "" } else { "https://opentelemetry.io/schemas/1.26.0" }}
+    }
+    out.push(s)
+  }
+  out
+}
+
+fn res_of(t: Int) -> otlp.Resource {
+  otlp.Resource{service: "stress-${t % 4}", attributes: [("host.name", "h${t}"), ("deployment.environment", if t % 2 == 0 { "" } else { "test" })],
+    scope: "std/trace", version: "0.${t % 3}"}
+}
+
+/// What the collector answers: "ok", "retry" (503, then 200 for the same X-Req), or "reject" (400).
+fn mode_of(t: Int, k: Int) -> Str {
+  if (t + k) % 23 == 7 { "reject" } else if (t * 3 + k) % 7 == 2 { "retry" } else { "ok" }
+}
+
+struct Collector {
+  seen: Mutex[Map[Str, Int]]
+  traces: Atomic[Int]
+  metrics: Atomic[Int]
+  bad: Mutex[List[Str]]
+}
+
+fn collect(c: Collector, req: http.Request, metrics_path: Bool) -> http.Response uses sync {
+  let id = req.header("X-Req") ?? ""
+  if req.header("Content-Type") != Some("application/x-protobuf") {
+    c.bad.with(fn(var b) { b.push("${id}: content type ${req.header("Content-Type") ?? "none"}") })
+    return http.text(415, "content type")
+  }
+  if metrics_path {
+    if req.body.is_empty() {
+      c.bad.with(fn(var b) { b.push("${id}: an empty metrics body") })
+    }
+    let _m = c.metrics.add(1)
+    return http.text(200, "")
+  }
+  let want = req.header("X-Sum") ?? ""
+  if crypto.sha256(req.body).to_hex() != want {
+    c.bad.with(fn(var b) { b.push("${id}: the body is not encode_traces of its spans (${req.body.len()} bytes)") })
+    return http.text(200, "")
+  }
+  let tries = c.seen.with(fn(var m) {
+    let n = (m.get(id) ?? 0) + 1
+    m.put(id, n)
+    n
+  })
+  match req.header("X-Mode") ?? "ok" {
+    "reject" => http.text(400, "rejected")
+    "retry" if tries == 1 => http.text(503, "again")
+    _ => {
+      let _t = c.traces.add(1)
+      http.text(200, "")
+    }
+  }
+}
+
+struct Ms {
+  reg: metrics.Registry
+  reqs: metrics.Counter
+  dur: metrics.Histogram
+  sum: metrics.Summary
+  tasks: metrics.Gauge
+}
+
+fn worker(os: Os, client: http.Client, url: Str, t: Int, ms: Ms, end: Time, passes: Int) -> Int ! Str uses (net.dial, clock, rand, sync) {
+  let res = res_of(t)
+  let base = otlp.exporter(client, url, res, os.clock, os.rand).with_backoff(backoff.Backoff{initial: 1ms, max_interval: 5ms, max_tries: 5})
+  ms.tasks.add(1.0)
+  var k = 0
+  while if passes > 0 { k < passes } else { os.clock.now() < end } {
+    let ss = spans(t, k)
+    let mode = mode_of(t, k)
+    let id = "${t}.${k}"
+    let e = base.with_headers({"X-Req": id, "X-Mode": mode, "X-Sum": crypto.sha256(otlp.encode_traces(res, ss)).to_hex()})
+    let r = e.send_traces(ss)
+    match r {
+      Ok(_) => {
+        if mode == "reject" {
+          return Err("export ${id}: sent, want rejected 400")
+        }
+      }
+      Err(x) => {
+        let rejected = match x {
+          otlp.ExportErr.Rejected(status, _) => status == 400
+          _ => false
+        }
+        if mode != "reject" || !rejected {
+          return Err("export ${id} (${mode}): ${x.display()}")
+        }
+      }
+    }
+    ms.reqs.inc([mode])
+    ms.dur.observe(Float(ss.len()) / 10.0)
+    ms.sum.observe(Float(k % 13))
+    if k % 10 == 9 {
+      let m = base.with_headers({"X-Req": "m${id}"}).send_metrics(ms.reg, 1700000000000)
+      if let Err(x) = m {
+        return Err("metrics ${id}: ${x.display()}")
+      }
+    }
+    k += 1
+  }
+  Ok(k)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 32 } else { 32 }
+  let passes = if minutes == 0 { 60 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let reg = metrics.registry()
+  let ms = Ms{reg: reg, reqs: reg.counter("stress_requests_total", "exports by mode", labels: ["mode"]),
+    dur: reg.histogram("stress_seconds", "spans per export / 10", buckets: [0.5, 1.0, 2.0, 4.0]),
+    sum: reg.summary("stress_summary", "a summary the registry exports"), tasks: reg.gauge("stress_tasks", "the tasks")}
+  let col = Collector{seen: Mutex.new({}), traces: Atomic.new(0), metrics: Atomic.new(0), bad: Mutex.new([])}
+  var r = http.router()
+  r.handle("POST /v1/traces", fn(req) { collect(col, req, false) })
+  r.handle("POST /v1/metrics", fn(req) { collect(col, req, true) })
+  let srv = http.server(os.net.listen("127.0.0.1:0")?, r)
+  let url = "http://${srv.addr()}"
+  // one client for every task, keeping a connection per task idle between
+  // its exports: Go's default of 2 idle per host (shared, as Go's
+  // DefaultTransport) closed and redialed the rest, 16,000 ports in
+  // TIME_WAIT in a minute, and the Mac ran out
+  let client = http.client(os.net).with_max_idle_per_host(tasks + 4)
+  let total = scope s {
+    s.spawn_background(fn() { srv.serve().ignore_err("the server stops when the stress ends") })
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str { worker(os, client, url, t, ms, end, passes) }))
+    }
+    var n = 0
+    for h in hs {
+      n += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    s.cancel()
+    n
+  }
+  let bad = col.bad.with_read(fn(b) { b })
+  if !bad.is_empty() {
+    return Err("the collector: ${bad.len()} bad requests, the first: ${bad[0]}")
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("otlp stress: ${total} exports by ${tasks} tasks in ${minutes} min (${col.traces.get()} traces and ${col.metrics.get()} metrics requests taken), 0 wrong, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}

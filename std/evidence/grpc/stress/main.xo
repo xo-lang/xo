@@ -1,0 +1,254 @@
+// grpc stress program (decision 0616 section 2): a grpc.Server on a
+// loopback listener (HTTP/2 without TLS) and TASKS client tasks on one
+// grpc.Client (its connections shared), each making seeded calls at once:
+// a unary echo (payloads of 0 bytes to 256 KiB, gzip now and then) that
+// must come back exactly with the metadata appended; a unary failure whose
+// code and non-ASCII message must come back; a server stream of N
+// messages; a client stream whose sum must come back; a bidirectional
+// echo; and now and then a call to a handler that sleeps, with a 50 ms
+// timeout, that must end DeadlineExceeded within 5 s. A background task
+// samples the resident set every 10 s (Linux /proc/self/status) and prints
+// it each minute. Pass: every answer right, no fault, and the resident set
+// at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30); 0: 300 rounds per task] [TASKS (16)]
+use std/grpc
+use std/http
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+fn payload(x0: Int) -> Bytes {
+  var x = next(x0)
+  let n = match (x >> 40) % 8 {
+    0 => 0
+    1 => (x >> 20) % 262144
+    _ => (x >> 20) % 300
+  }
+  var b = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    if i % 64 == 0 {
+      x = next(x)
+    }
+    b.write_byte(UInt8((x >> (i % 8 * 6)) & 255))
+  }
+  b.freeze()
+}
+
+fn rev(b: Bytes) -> Bytes {
+  var o = BytesBuilder.with_capacity(b.len())
+  var i = b.len()
+  while i > 0 {
+    i -= 1
+    o.write_byte(b[i])
+  }
+  o.freeze()
+}
+
+fn handlers(clock: Clock) -> grpc.Server {
+  var srv = grpc.server(clock)
+  srv.unary("/s.S/Echo", fn(call, req) -> Bytes ! grpc.Status {
+    if let Some(c) = call.metadata.get("x-fail") {
+      let n = Int.parse(c) ?? 2
+      return Err(grpc.Status{code: grpc.code_from(n) ?? grpc.Code.Unknown, message: "fail \u{e9}% ${n}\n", details: b""})
+    }
+    Ok(req + (call.metadata.get("x-who") ?? "").bytes())
+  })
+  srv.unary("/s.S/Slow", fn(_call, _req) -> Bytes ! grpc.Status {
+    clock.sleep(10s)
+    Ok(b"late")
+  })
+  srv.stream("/s.S/Count", fn(_call, recv, send) -> () ! grpc.Status {
+    let m = recv.next()? ?? b"0"
+    let n = Int.parse(m.to_str() ?? "0") ?? 0
+    for i in 0..n {
+      send.send("${i}".bytes())?
+    }
+  })
+  srv.stream("/s.S/Sum", fn(_call, recv, send) -> () ! grpc.Status {
+    var total = 0
+    while let Some(m) = recv.next()? {
+      total += Int.parse(m.to_str() ?? "0") ?? 0
+    }
+    send.send("${total}".bytes())?
+  })
+  srv.stream("/s.S/Bidi", fn(_call, recv, send) -> () ! grpc.Status {
+    while let Some(m) = recv.next()? {
+      send.send(rev(m))?
+    }
+  })
+  srv
+}
+
+fn round(clock: Clock, c: grpc.Client, t: Int, k: Int) -> () ! Str uses (net.dial, clock) {
+  let at = "task ${t} round ${k}"
+  let seed = t * 1000003 + k * 7919
+  let who = "w${t}.${k}"
+  let p = payload(seed)
+  let cl = if seed % 3 == 0 { c.with_gzip() } else { c }
+  match cl.unary("/s.S/Echo", p, {"x-who": who}) {
+    Ok(b) => {
+      if b != p + who.bytes() {
+        return Err("${at}: echo of ${p.len()} bytes came back as ${b.len()}")
+      }
+    }
+    Err(e) => return Err("${at}: echo: ${e.display()}")
+  }
+  let code = 1 + seed % 16
+  match c.unary("/s.S/Echo", b"x", {"x-fail": "${code}"}) {
+    Ok(_) => return Err("${at}: a failure succeeded")
+    Err(e) => {
+      if e.code.number() != code || e.message != "fail \u{e9}% ${code}\n" {
+        return Err("${at}: failure came back as ${e.display()}")
+      }
+    }
+  }
+  let n = seed % 40
+  let counted = c.call("/s.S/Count", {}, None, fn(cc) -> Int ! grpc.Status {
+    cc.send("${n}".bytes())?
+    cc.close_send()
+    var i = 0
+    while let Some(m) = cc.recv()? {
+      if m != "${i}".bytes() {
+        return Err(grpc.Status{code: grpc.Code.DataLoss, message: "message ${i} is ${m.to_hex()}", details: b""})
+      }
+      i += 1
+    }
+    Ok(i)
+  })
+  match counted {
+    Ok(i) => {
+      if i != n {
+        return Err("${at}: count ${n} gave ${i}")
+      }
+    }
+    Err(e) => return Err("${at}: count: ${e.display()}")
+  }
+  let parts = seed % 25
+  let summed = c.call("/s.S/Sum", {}, None, fn(cc) -> Bytes ! grpc.Status {
+    for i in 0..parts {
+      cc.send("${i * 3}".bytes())?
+    }
+    cc.close_send()
+    Ok(cc.recv()? ?? b"none")
+  })
+  match summed {
+    Ok(b) => {
+      if b != "${3 * parts * (parts - 1) / 2}".bytes() {
+        return Err("${at}: sum of ${parts} parts is ${b.to_str() ?? "?"}")
+      }
+    }
+    Err(e) => return Err("${at}: sum: ${e.display()}")
+  }
+  let bidi = c.call("/s.S/Bidi", {}, None, fn(cc) -> () ! grpc.Status {
+    for i in 0..(seed % 12) {
+      let m = payload(seed + i)
+      cc.send(m)?
+      let back = cc.recv()? ?? b""
+      if back != rev(m) {
+        return Err(grpc.Status{code: grpc.Code.DataLoss, message: "bidi message ${i} of ${m.len()} bytes", details: b""})
+      }
+    }
+    cc.close_send()
+    match cc.recv()? {
+      Some(_) => Err(grpc.Status{code: grpc.Code.DataLoss, message: "a message after the end", details: b""})
+      None => Ok(())
+    }
+  })
+  if let Err(e) = bidi {
+    return Err("${at}: bidi: ${e.display()}")
+  }
+  if seed % 10 == 0 {
+    let start = clock.now()
+    match c.unary("/s.S/Slow", b"", {}, Some(50ms)) {
+      Ok(_) => return Err("${at}: a slow call beat its deadline")
+      Err(e) => {
+        if e.code != grpc.Code.DeadlineExceeded {
+          return Err("${at}: a slow call ended ${e.display()}")
+        }
+      }
+    }
+    let took = (clock.now() - start).millis()
+    if took > 5000 {
+      return Err("${at}: a 50 ms deadline took ${took} ms")
+    }
+  }
+  Ok(())
+}
+
+fn worker(clock: Clock, c: grpc.Client, t: Int, end: Time, rounds: Int) -> Int ! Str uses (net.dial, clock) {
+  var k = 0
+  while if rounds > 0 { k < rounds } else { clock.now() < end } {
+    round(clock, c, t, k)?
+    k += 1
+  }
+  Ok(k)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 16 } else { 16 }
+  let rounds = if minutes == 0 { 300 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let l = os.net.listen("127.0.0.1:0").map_err(fn(e) { "listen: ${e}" })?
+  let hs = http.server(l, handlers(clock).router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let c = grpc.client(http.client(os.net, timeout: 60s), "http://${hs.addr()}")
+  let total = scope s {
+    s.spawn_background(fn() {
+      hs.serve().ignore_err("the program ends the server")
+    })
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs2: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs2.push(s.spawn(fn() -> Int ! Str { worker(clock, c, t, end, rounds) }))
+    }
+    var n = 0
+    for h in hs2 {
+      n += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    s.cancel()
+    n
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("grpc stress: ${total} rounds by ${tasks} tasks in ${minutes} min, every answer right, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}
