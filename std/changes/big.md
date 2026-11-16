@@ -1,5 +1,23 @@
 # std/big changes
 
+## 2026-11-15: perf: BigFloat.sqrt's Newton steps in fixed width, and rounding up in place
+
+- Kind: perf
+- Commit: this push
+- Found by: the bigfloat timing row (bench/perf/bigfloat sqrt 1.334x Go's math/big on linux/arm64 host 1)
+- Go reference: math/big sqrt.go sqrtInverse (u and v reused across the steps) and float.go round (z.mant's words incremented in place)
+- Test: internal/stdtest/testdata/corpus/bigfloat (scripts/stdcorpus bigfloat): 576 new Sqrt rows against Go at the precisions around each word boundary to 449 bits, every mode, mantissas of every length and odd and even exponents (go, arm64, llvm); the big, bigrat and randbig corpora; bench/perf/bigfloat outputs of all six workloads equal before and after; the corpus fails with the round's tie rule broken
+- Timing: bench/perf/bigfloat sqrt 13.93 to 8.85 ms (0.635, 0.635 to 0.652; xo bench --ab, 3 rounds, linux/arm64 host 1), about 0.85 of Go
+
+For a precision up to 392 bits (Newton steps of at most 7 words),
+sqrtInverse's values live in five Lists made once per call, in Go's form
+(words with the top bit set), and each step rounds as Go's Float.round
+does; the last product rounds through u_round in the value's mode as
+before. A sqrt at 256 bits made about 25 Lists, now 7. Wider precisions,
+and a step whose 3 - u is not positive, take the general path. Elsewhere
+a result that rounds up (u_round's nat_shr_inc_tz) adds one in its own
+words where it made a new list.
+
 ## 2026-11-15: feature: jacobi (Go's big.Jacobi)
 
 - Kind: feature

@@ -480,26 +480,36 @@ fn nat_shr_in(var x: List[Int], s: Int) {
   trim(x)
 }
 
-/// (x >> s) + 1 with its trailing zeros dropped, in one new list, and the
-/// bit length of (x >> s) + 1 (u_round's round up; x >> s is not 0).
+/// (x >> s) + 1 with its trailing zeros dropped, and the bit length of
+/// (x >> s) + 1 (u_round's round up; x >> s is not 0): in x's own words
+/// when x is not shared (a product's or a sum's fresh limbs: Go adds 1 to
+/// z's words in place), where a new list per round up was a tenth of
+/// BigFloat.sqrt (2026-11-15). Word i is written after words i + words
+/// and i + words + 1 are read, so the shift down reads no written word.
 fn nat_shr_inc_tz(x: List[Int], s: Int) -> (List[Int], Int) {
   let words = s / 64
   let bits = s % 64
-  let n = x.len() - words
-  var z = raw.zero_ints(n + 1)
+  let n0 = x.len()
+  let n = n0 - words
+  var z = x
   var c = 1
   for i in 0..n {
-    let lo = x[i + words]
+    let lo = z[i + words]
     var w = lo
     if bits != 0 {
-      let hi = if i + words + 1 < x.len() { x[i + words + 1] } else { 0 }
+      let hi = if i + words + 1 < n0 { z[i + words + 1] } else { 0 }
       w = lo.shr_logical(bits) | hi.wrapping_shl(64 - bits)
     }
     let v = w.wrapping_add(c)
     c = if c != 0 && v == 0 { 1 } else { 0 }
     z[i] = v
   }
-  z[n] = c
+  for _ in 0..words {
+    let _ = z.pop()
+  }
+  if c != 0 {
+    z.push(c)
+  }
   trim(z)
   let top = nat_bit_len(z)
   // the trailing zeros, shifted out in place
@@ -2624,6 +2634,12 @@ fn f_sqrt_inverse(x: big.BigFloat, half: Int) -> big.BigFloat {
   let three = UFloat{form: F_FINITE, neg: false, m: [3], exp: 2, prec: 53, acc: exact()}
   let ux = u_of(x)
   let xf = bigfloat_to_float(x).0
+  if fw_fits(x.prec) && ux.form == F_FINITE {
+    match fw_sqrt_inverse(x, ux, xf, half) {
+      Some(r) => return r
+      None => {}
+    }
+  }
   // newFloat sets no precision, so SetFloat64 gives the guess 53 bits
   var sqi = u_of(from_float(1.0 / xf.sqrt(), 0))
   let target = x.prec + 32
@@ -2653,6 +2669,214 @@ fn f_sqrt_inverse(x: big.BigFloat, half: Int) -> big.BigFloat {
     return u_pack(r, x.mode)
   }
   bigfloat_mul_pow2(f_mul(x, u_pack(sqi, ne()), x.prec, x.mode), half)
+}
+
+// sqrt's Newton steps in fixed width (2026-11-15): for a precision whose
+// steps stay within FW_WORDS words (up to 392 bits: 53, 106, 212, 424),
+// every value of sqrtInverse lives in one of five Lists made once per
+// call, in Go's form: n words, the top bit of word n - 1 set, the value
+// 0.w * 2^e. Each step rounds as Go's Float.round does (to nearest even,
+// on the value), so the result is Go's; the last product is rounded by
+// u_round in x's mode as before. Where BigFloat.sqrt at 256 bits made
+// about 25 Lists (the products, the rounded and shifted mantissas), it
+// makes 7.
+
+const FW_WORDS = 7
+
+/// Whether sqrtInverse's precisions for a z of prec bits fit FW_WORDS.
+fn fw_fits(prec: Int) -> Bool {
+  var s = 53
+  while s < prec + 32 {
+    s *= 2
+  }
+  s <= 64 * FW_WORDS
+}
+
+/// p[0..nx + ny) = x[0..nx) * y[0..ny) (bigmod.mac_row rows, as nat_mul);
+/// returns nx + ny.
+fn fw_mul(var p: List[Int], x: List[Int], nx: Int, y: List[Int], ny: Int) -> Int {
+  for i in 0..nx + ny {
+    p[i] = 0
+  }
+  let pz = bigmod.addr(p)
+  let py = bigmod.addr(y)
+  for i in 0..nx {
+    let xi = x[i]
+    if xi == 0 {
+      continue
+    }
+    let row = pz.wrapping_add(8 * i)
+    rt.mem_store(row, 8 * ny, bigmod.mac_row(row, py, xi, ny), 8)
+  }
+  bigmod.keep(y)
+  bigmod.keep(p)
+  nx + ny
+}
+
+/// The value 0.p[0..np) * 2^e normalized (zero top words dropped, the
+/// top bit set) and rounded to prec bits to nearest even into dst, as
+/// Go's Float.round with no sticky bit in: its word count and exponent
+/// (0 words for a zero value). p is changed.
+fn fw_round(var p: List[Int], np0: Int, e0: Int, prec: Int, var dst: List[Int]) -> (Int, Int) {
+  var np = np0
+  var e = e0
+  while np > 0 && p[np - 1] == 0 {
+    np -= 1
+    e -= 64
+  }
+  if np == 0 {
+    return (0, 0)
+  }
+  let s = p[np - 1].leading_zeros()
+  if s > 0 {
+    var i = np - 1
+    while i > 0 {
+      p[i] = p[i].wrapping_shl(s) | p[i - 1].shr_logical(64 - s)
+      i -= 1
+    }
+    p[0] = p[0].wrapping_shl(s)
+    e -= s
+  }
+  let bits = np * 64
+  if bits <= prec {
+    for i in 0..np {
+      dst[i] = p[i]
+    }
+    return (np, e)
+  }
+  let r = bits - prec - 1
+  let rbit = p[r / 64].shr_logical(r % 64) & 1
+  var sbit = 0
+  if rbit != 0 {
+    // sticky: any bit below r
+    if (p[r / 64] & ((1).wrapping_shl(r % 64) - 1)) != 0 {
+      sbit = 1
+    } else {
+      for i in 0..r / 64 {
+        if p[i] != 0 {
+          sbit = 1
+          break
+        }
+      }
+    }
+  }
+  let n = (prec + 63) / 64
+  for i in 0..n {
+    dst[i] = p[np - n + i]
+  }
+  let ntz = n * 64 - prec
+  let lsb = (1).wrapping_shl(ntz)
+  if rbit != 0 && (sbit != 0 || (dst[0] & lsb) != 0) {
+    var c = lsb
+    for i in 0..n {
+      let (v, c1) = add_ww(dst[i], c, 0)
+      dst[i] = v
+      c = c1
+      if c == 0 {
+        break
+      }
+    }
+    if c != 0 {
+      // a carry out of the top: 1 at the next exponent
+      e += 1
+      for i in 0..n {
+        let hi = if i + 1 < n { dst[i + 1] } else { 0 }
+        dst[i] = dst[i].shr_logical(1) | hi.wrapping_shl(63)
+      }
+      dst[n - 1] = dst[n - 1] | MIN
+    }
+  }
+  dst[0] = dst[0] & ~(lsb - 1)
+  (n, e)
+}
+
+/// p = 3 - 0.u[0..nu) * 2^eu exactly, as 0.p[0..np) * 2^e: (np, e), np 0
+/// when the difference is not positive.
+fn fw_three_minus(u: List[Int], nu: Int, eu: Int, var p: List[Int]) -> (Int, Int) {
+  // in units of u's last bit, 2^(eu - 64 nu): 3 is 3 << k
+  let k = 64 * nu - eu
+  if k < 0 || k > 64 * (nu + 1) - 2 {
+    return (0, 0)
+  }
+  let np = nu + 2
+  for i in 0..np {
+    p[i] = 0
+  }
+  let w = k / 64
+  let b = k % 64
+  p[w] = (3).wrapping_shl(b)
+  if b > 62 {
+    p[w + 1] = (3).shr_logical(64 - b)
+  }
+  var br = 0
+  for i in 0..np {
+    let ui = if i < nu { u[i] } else { 0 }
+    let (d, b1) = sub_ww(p[i], ui, br)
+    p[i] = d
+    br = b1
+  }
+  if br != 0 {
+    return (0, 0)
+  }
+  (np, 64 * np + eu - 64 * nu)
+}
+
+/// sqrtInverse in fixed width; None for a step it does not take (a
+/// difference 3 - u that is not positive), which the general path then runs.
+fn fw_sqrt_inverse(x: big.BigFloat, ux: UFloat, xf: Float, half: Int) -> big.BigFloat? {
+  var xw = raw.zero_ints(FW_WORDS + 2)
+  var t = raw.zero_ints(FW_WORDS + 2)
+  var u = raw.zero_ints(FW_WORDS + 2)
+  var v = raw.zero_ints(FW_WORDS + 2)
+  var p = raw.zero_ints(2 * FW_WORDS + 4)
+  // x in Go's form
+  let bx = nat_bit_len(ux.m)
+  let nx = (bx + 63) / 64
+  let sx = 64 * nx - bx
+  for i in 0..nx {
+    let lo = if sx == 0 { ux.m[i] } else { ux.m[i].wrapping_shl(sx) | (if i > 0 { ux.m[i - 1].shr_logical(64 - sx) } else { 0 }) }
+    xw[i] = lo
+  }
+  let ex = ux.exp
+  // the guess 1/sqrt(x) at 53 bits (SetFloat64): one word, the double's
+  // 53 bits at its top
+  let g = (1.0 / xf.sqrt()).to_bits()
+  t[0] = (g & 4503599627370495 | 4503599627370496).wrapping_shl(11)
+  var nt = 1
+  var et = (g.shr_logical(52) & 2047) - 1022
+  var tp = 53
+  let target = x.prec + 32
+  while tp < target {
+    tp *= 2
+    // u = t * t; u = x * u
+    let n1 = fw_mul(p, t, nt, t, nt)
+    let (nu1, eu1) = fw_round(p, n1, et + et, tp, u)
+    let n2 = fw_mul(p, xw, nx, u, nu1)
+    let (nu, eu) = fw_round(p, n2, ex + eu1, tp, u)
+    // v = 3 - u
+    let (nd, ed) = fw_three_minus(u, nu, eu, p)
+    if nd == 0 {
+      return None
+    }
+    let (nv, ev) = fw_round(p, nd, ed, tp, v)
+    // t = t * v / 2
+    let n3 = fw_mul(p, t, nt, v, nv)
+    let (nt1, et1) = fw_round(p, n3, et + ev, tp, t)
+    nt = nt1
+    et = et1 - 1
+  }
+  // x * t in x's mode, then SetMantExp by half (as the general path)
+  let np = fw_mul(p, xw, nx, t, nt)
+  var m = raw.zero_ints(np)
+  for i in 0..np {
+    m[i] = p[i]
+  }
+  trim(m)
+  let r = u_round(false, m, ex + et - 64 * np + nat_bit_len(m), 0, x.prec, x.mode)
+  if r.form == F_FINITE {
+    return Some(u_pack(u_round(r.neg, r.m, r.exp.wrapping_add(half), 0, r.prec, x.mode), x.mode))
+  }
+  Some(u_pack(r, x.mode))
 }
 
 /// u_mul with f_mul's special cases (round to nearest even).

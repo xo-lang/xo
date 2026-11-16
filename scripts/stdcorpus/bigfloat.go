@@ -225,6 +225,35 @@ func bfCorpus() string {
 		}
 		row(op, xs, ys, k, want)
 	}
+	// Sqrt at the precisions around each word boundary of std/big's fixed
+	// width Newton path (up to 392 bits, 2026-11-15) and just past it, in every mode, on mantissas of every
+	// length below the precision and odd and even exponents; its own
+	// source, so the rows above and below keep theirs
+	rs := rand.New(rand.NewSource(0x5157))
+	one := bfRepIn(new(big.Float).SetInt64(1))
+	for _, p := range []uint{1, 2, 7, 52, 53, 54, 63, 64, 65, 100, 127, 128, 129, 191, 192, 193, 255, 256, 257, 319, 320, 321, 353, 383, 384, 385, 391, 392, 393, 400, 448, 449} {
+		for mode := 0; mode < 6; mode++ {
+			for j := 0; j < 3; j++ {
+				bits := 1 + rs.Intn(int(p)+64)
+				m := new(big.Int).Rand(rs, new(big.Int).Lsh(big.NewInt(1), uint(bits)))
+				m.SetBit(m, bits-1, 1)
+				x := new(big.Float).SetPrec(uint(bits)).SetMode(big.RoundingMode(mode)).SetInt(m)
+				x.SetMantExp(x, rs.Intn(41)-20-x.MantExp(nil))
+				x.SetPrec(uint(bits))
+				k := int(p)
+				if j == 2 {
+					// the z of x's own precision
+					x.SetPrec(p)
+					k = 0
+				}
+				xs := bfRepIn(x)
+				want, ok := bfTry(func() string { return bfRep(newZ(x, k).Sqrt(x)) })
+				if ok {
+					row("sqrt", xs, one, k, want)
+				}
+			}
+		}
+	}
 	// ParseFloat
 	for i := 0; i < 900; i++ {
 		s := bfParseInput(r)
