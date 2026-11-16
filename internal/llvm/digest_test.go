@@ -249,10 +249,28 @@ func digestTables() []byte {
 	b.WriteString("\n/// BLAKE2b's compression F (RFC 7693 3.2) of the 128 byte block of blk\n")
 	b.WriteString("/// at i into h, the offset counter t0 (the low word; the high one is 0\n")
 	b.WriteString("/// here), the final block when last.\n")
-	b.WriteString("pub fn blake2b_compress(var h: List[Int], blk: Bytes, i: Int, t0: Int, last: Bool) {\n")
+	b.WriteString("pub fn blake2b_compress(var h: List[Int], blk: Bytes, i: Int, t0: Int, last: Bool) { blake2b_compress_n(h, blk, i, 128, t0, last) }\n")
+	b.WriteString("\n/// The little endian word of the n bytes of b at at (0 to 8 of them; the\n")
+	b.WriteString("/// bytes past n read as zeros).\n")
+	b.WriteString("fn word_n(b: Bytes, at: Int, n: Int) -> Int {\n  if n >= 8 {\n    return rt.bytes_word(b, at)\n  }\n  var w = 0\n  var k = 0\n  while k < n {\n    w = w | Int(b[at + k]).wrapping_shl(8 * k)\n    k += 1\n  }\n  w\n}\n")
+	b.WriteString("\n/// blake2b_compress of the n bytes of blk at i (0 to 128), the bytes\n")
+	b.WriteString("/// past them read as zeros: a short last block is compressed where it\n")
+	b.WriteString("/// lies, not copied into a padded one (Go's checkSum pads on its stack;\n")
+	b.WriteString("/// the copy was a 128 byte allocation a short message, bench/perf/blake2b\n")
+	b.WriteString("/// small 1.241 of Go, 2026-11-16). A whole block takes one test more.\n")
+	b.WriteString("pub fn blake2b_compress_n(var h: List[Int], blk: Bytes, i: Int, n: Int, t0: Int, last: Bool) {\n")
 	for k := 0; k < 16; k++ {
-		fmt.Fprintf(&b, "  let m%d = rt.bytes_word(blk, i + %d)\n", k, 8*k)
+		fmt.Fprintf(&b, "  var m%d = 0\n", k)
 	}
+	b.WriteString("  if n >= 128 {\n")
+	for k := 0; k < 16; k++ {
+		fmt.Fprintf(&b, "    m%d = rt.bytes_word(blk, i + %d)\n", k, 8*k)
+	}
+	b.WriteString("  } else {\n")
+	for k := 0; k < 16; k++ {
+		fmt.Fprintf(&b, "    m%d = word_n(blk, i + %d, n - %d)\n", k, 8*k, 8*k)
+	}
+	b.WriteString("  }\n")
 	for k := 0; k < 8; k++ {
 		fmt.Fprintf(&b, "  let h%d = h[%d]\n", k, k)
 		fmt.Fprintf(&b, "  var v%d = h%d\n", k, k)
