@@ -1,6 +1,6 @@
 # 0680: Go backend `use go` adapters in their own package
 
-Status: Proposed (Xo Lang 2, 2026-11-16)
+Status: Accepted, alternative A (owner, 2026-11-16; proposed by Xo Lang 2, 2026-11-16)
 
 ## Context
 
