@@ -1,0 +1,34 @@
+// derive Cbor with cbor.Raw fields (fxamacker's RawMessage, decision
+// 0527): stream_test.go TestRawMessage's {"a": 1, "b": [2, 3], "c": nil}
+// read into Raw fields and written back unchanged; TestMarshalRawMessageValue's
+// empty Raw as null; TestMarshalRawMessageContainingMalformedCBORData's
+// errors.
+use std/cbor
+
+struct Strc {
+  a: cbor.Raw
+  b: cbor.Raw?
+  c: cbor.Raw?
+} derive Cbor
+
+struct One {
+  m: cbor.Raw
+} derive Cbor
+
+fn main(os: Os) {
+  let data = Bytes.from_hex("a361610161628202036163f6").or_fault("hex")
+  let v = cbor.unmarshal[Strc](data).ok() ?? fault("unmarshal")
+  let b = v.b ?? fault("b")
+  os.stdio.println("a ${v.a.bytes.to_hex()} b ${b.bytes.to_hex()} c none ${v.c is None}")
+  os.stdio.println("b value ${(b.value().ok() ?? fault("value")).diagnostic()}")
+  let back = cbor.marshal(v, false).ok() ?? fault("marshal")
+  os.stdio.println("same ${back == data}")
+  let empty = cbor.marshal(One{m: cbor.Raw{bytes: b""}}).ok() ?? fault("marshal")
+  os.stdio.println("empty ${empty.to_hex()}")
+  for h in ["a6", "1f", "0101", "c001"] {
+    match cbor.marshal(One{m: cbor.Raw{bytes: Bytes.from_hex(h).or_fault("hex")}}) {
+      Ok(x) => os.stdio.println("${h} ok ${x.to_hex()}")
+      Err(e) => os.stdio.println("${h} ${e.display()}")
+    }
+  }
+}

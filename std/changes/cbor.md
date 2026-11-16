@@ -1,5 +1,84 @@
 # std/cbor changes
 
+## 2026-11-15: feature: cbor.Raw (RawMessage); fix: the reserved additional information error names the type
+
+- Kind: feature, fix
+- Commit: this push
+- Found by: the stdaudit gaps of fxamacker/cbor (decision 0655): RawMessage, MarshalCBOR, UnmarshalCBOR (0527 accepted `cbor.Raw`, not built until now); porting TestMarshalRawMessageContainingMalformedCBORData showed the decoder's `for major type 0`
+- Go reference: github.com/fxamacker/cbor/v2 v2.9.0 stream.go (RawMessage), valid.go (the additional information error) (MIT)
+- Test: internal/llvm/testdata/golden/cbor_raw (TestRawMessage, TestMarshalRawMessageValue, the malformed data errors; arm64, LLVM); std/cbor_test.xo: decode_test.go's reserved additional information cases (failed before)
+- Shipped in: not yet released
+- Timing: none
+
+A `derive Cbor` field of type `cbor.Raw` keeps its item's bytes; `marshal`
+writes them back as they are (empty as null), refusing bytes that are not
+one well formed item with Go's `error calling MarshalCBOR for type
+cbor.RawMessage: ...`. The bytes are the preferred serialization of the
+item, where Go keeps the input's own. `decode` now says `invalid additional
+information 31 for type positive integer`, as Go does, not `for major type 0`.
+
+## 2026-11-15: fix: the typed decoder's error for a built in tag with the wrong content
+
+- Kind: fix
+- Commit: this push
+- Found by: mapping fxamacker's InadmissibleTagContentTypeError in the stdaudit gaps (decision 0655)
+- Go reference: github.com/fxamacker/cbor/v2 v2.9.0 common.go (validBuiltinTag) (MIT)
+- Test: std/cbor_test.xo: tags 0, 1, 2 and 3 over the wrong content through the generated decoder's helper (failed before: `cbor: cbor: invalid content of tag 0`)
+- Shipped in: not yet released
+- Timing: none
+
+`unmarshal` of a Time or Int field holding tag 0 over a number, tag 1
+over text, or tag 2 or 3 over anything but a byte string now fails with
+fxamacker's text (`cbor: tag number 0 must be followed by text string,
+got positive integer`) instead of `cbor: cbor: invalid content of tag 0`.
+
+## 2026-11-15: feature: time formats (from_time_as, Value.to_time)
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit gaps of fxamacker/cbor (decision 0655): TimeRFC3339, TimeRFC3339Nano, TimeTagToAnyMode, ByteStringToTimeMode, DecTagMode, EncTagMode
+- Go reference: github.com/fxamacker/cbor/v2 v2.9.0 encode.go (encodeTime), decode.go (parseToTime) (MIT)
+- Test: std/cbor_test.xo: RFC 8949 Appendix A's tag 0 and tag 1 times, each TimeMode, each DecTagMode, byte strings allowed and refused, Go's error texts
+- Shipped in: not yet released
+- Timing: none
+
+`from_time_as(t, format, tag)` writes a Time as epoch seconds (integer,
+microsecond float or dynamic) or RFC 3339 text, optionally under tag 0 or
+1. `Value.to_time(rule, bytes)` reads one back with fxamacker's tag rules
+and, when asked, from a byte string of RFC 3339 text.
+
+## 2026-11-15: feature: big integers (from_big, to_big, reject_bignum)
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit gaps of fxamacker/cbor (decision 0655): BigIntConvertMode, BigIntDecMode, BignumTagMode, IntDecConvertSignedOrBigInt
+- Go reference: github.com/fxamacker/cbor/v2 v2.9.0 encode.go (encodeBigInt), decode.go and valid.go (bignum tags) (MIT)
+- Test: std/cbor_test.xo: 0, 1, -1 and the 64 bit edges both ways in each convert mode, Reject's error, reject_bignum's error and another tag passing
+- Shipped in: not yet released
+- Timing: none
+
+`from_big(n)` writes a std/big integer as fxamacker writes a big.Int
+(major type 0 or 1 when it fits, else tag 2 or 3; `BigConvert.None`
+always tags). `to_big` reads any integer or bignum back.
+`DecodeOptions.reject_bignum` refuses tags 2 and 3.
+
+## 2026-11-15: feature: encode_sorted, the stream Encoder and diagnostic_with
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit gaps of fxamacker/cbor (decision 0655): SortLengthFirst, SortCanonical, SortCTAP2, CanonicalEncOptions, CTAP2EncOptions, Encoder.StartIndefinite*, EndIndefinite, ByteStringEncoding
+- Go reference: github.com/fxamacker/cbor/v2 v2.9.0 encode.go (SortMode), stream.go (Encoder), diagnose.go (ByteStringEncoding) (MIT)
+- Test: std/cbor_test.xo: TestMapSort's mixed keys in both orders, the TestIndefinite* encodings and errors, diagnose_test.go's byte string encodings (ported, THIRD_PARTY_NOTICES 12)
+- Shipped in: not yet released
+- Timing: none
+
+`encode_sorted(v, KeyOrder.LengthFirst)` writes RFC 7049's Canonical
+CBOR map order (shorter encoded keys first). `encoder()` gives a stream
+writer whose `start_indefinite` and `end_indefinite` write indefinite
+length strings, arrays and maps, checking string chunks and breaks as Go
+does. `diagnostic_with(DiagBytes.Base64)` and the others write byte
+strings as RFC 8610's b32, h32 and b64 forms.
+
 ## 2026-11-15: feature: decode_with and DecodeOptions (fxamacker's DecOptions limits and refusals)
 
 - Kind: feature

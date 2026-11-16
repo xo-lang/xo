@@ -4,6 +4,7 @@
 // 4.2.1), decode definite and indefinite lengths with limits, the
 // diagnostic notation of section 8, and the JSON bridge of section 6.
 // Pure.
+use std/big
 use std/json
 
 /// A CBOR data item. Integers keep the full range of the format: `Uint(n)`
@@ -55,6 +56,61 @@ fn from_int(n: Int) -> Value
 /// other item or a value past Int.
 fn (v: Value) to_int() -> Int?
 
+/// How `from_big` writes an integer (fxamacker's BigIntConvertMode).
+enum BigConvert {
+  /// an integer that fits major type 0 or 1 as one, else tag 2 or 3
+  Shortest
+  /// always tag 2 or 3 on its magnitude's bytes
+  None
+  /// `Type`: `unsupported type: big.Int`
+  Reject
+}
+
+/// n as CBOR (encoding a big.Int).
+fn from_big(n: big.BigInt, convert: BigConvert = BigConvert.Shortest) -> Value ! CborErr
+
+/// The integer of an unsigned, negative or bignum (tag 2 or 3 on a byte
+/// string) item, of any size (decoding to big.Int, BigIntDecodeValue,
+/// IntDecConvertSignedOrBigInt); None for anything else.
+fn (v: Value) to_big() -> big.BigInt?
+
+/// How `from_time_as` writes a Time (fxamacker's TimeMode).
+enum TimeFormat {
+  /// whole seconds (TimeUnix)
+  Unix
+  /// seconds as a float to the microsecond (TimeUnixMicro)
+  UnixMicro
+  /// whole seconds as an integer, else a float (TimeUnixDynamic)
+  UnixDynamic
+  /// RFC 3339 text to the second (TimeRFC3339)
+  Rfc3339
+  /// RFC 3339 text to the nanosecond (TimeRFC3339Nano)
+  Rfc3339Nano
+}
+
+/// t as CBOR in `format`; `tag` wraps it in tag 0 (text) or 1 (a number),
+/// as EncTagRequired does.
+fn from_time_as(t: Time, format: TimeFormat, tag: Bool = false) -> Value
+
+/// Whether a time must, may or must not carry its tag (fxamacker's
+/// DecTagMode).
+enum TagRule {
+  /// any tags are skipped (DecTagIgnored)
+  Ignored
+  /// tag 0 or 1, or none (DecTagOptional)
+  Optional
+  /// tag 0 or 1 (DecTagRequired)
+  Required
+}
+
+/// The time of a CBOR time item (decoding into time.Time): RFC 3339 text,
+/// or seconds as an integer or float, under `rule`; `bytes` also reads a
+/// byte string of RFC 3339 text (ByteStringToTimeAllowed). Null is the
+/// epoch, as Go's zero Time. Go's error texts (`wrong tag number for
+/// time.Time, got 2, expect 0 or 1`, `cannot unmarshal byte string into
+/// Go value of type time.Time`).
+fn (v: Value) to_time(rule: TagRule = TagRule.Optional, bytes: Bool = false) -> Time ! CborErr
+
 /// The value in a map with a text key; None for a missing key or a value
 /// that is not a map.
 fn (v: Value) get(key: Str) -> Value?
@@ -65,6 +121,54 @@ fn (v: Value) get(key: Str) -> Value?
 /// sorted bytewise by the encoding of the key. `Invalid` for a `Simple`
 /// that is not 0 to 19 or 32 to 255.
 fn encode(v: Value, deterministic: Bool = false) -> Bytes ! CborErr
+
+/// The order of map keys `encode_sorted` writes (fxamacker's SortMode):
+/// `Bytewise` is `encode`'s deterministic order (RFC 8949 4.2.1, CTAP2's
+/// and Core Deterministic's); `LengthFirst` RFC 7049 3.9's Canonical
+/// CBOR, the shorter encoded key first and keys of one length bytewise.
+enum KeyOrder {
+  Unsorted
+  Bytewise
+  LengthFirst
+}
+
+/// `encode` with the map key order `order` (SortMode, CanonicalEncOptions
+/// with LengthFirst, CTAP2EncOptions with Bytewise).
+fn encode_sorted(v: Value, order: KeyOrder) -> Bytes ! CborErr
+
+/// The kind of an indefinite length item an `Encoder` opens.
+enum Indefinite {
+  ByteString
+  TextString
+  Array
+  Map
+}
+
+/// A CBOR stream writer (fxamacker's Encoder): `encode` appends an item;
+/// `start_indefinite` opens an indefinite length string, array or map
+/// whose items (for a string, definite chunks of its own type) the next
+/// `encode` calls write, and `end_indefinite` writes its break. `bytes`
+/// is everything written. Make one with `encoder`.
+struct Encoder {
+  out: BytesBuilder
+  open: List[Indefinite]
+  order: KeyOrder
+}
+
+fn encoder(order: KeyOrder = KeyOrder.Unsorted) -> Encoder
+
+/// Appends v; inside an indefinite string, v must be a string of its type
+/// (`Type`: `cannot encode item type ... for indefinite-length text
+/// string`, as Go).
+fn (var e: Encoder) encode(v: Value) -> () ! CborErr
+
+fn (var e: Encoder) start_indefinite(kind: Indefinite)
+
+/// `Invalid` outside an indefinite item (Go's `cannot encode "break" code
+/// outside indefinite length values`).
+fn (var e: Encoder) end_indefinite() -> () ! CborErr
+
+fn (e: Encoder) bytes() -> Bytes
 
 /// One data item; nothing may follow it. `max_depth` bounds the nesting of
 /// arrays, maps and tags; with `reject_dup_keys` a map with a repeated key
@@ -99,6 +203,9 @@ struct DecodeOptions {
   reject_nan: Bool = false
   reject_inf: Bool = false
   rejected_simple: List[Int] = []
+  /// refuse tags 2 and 3 (BignumTagForbidden): `Invalid`, `data item of
+  /// cbor type tag is not accepted by protocol: bignum`
+  reject_bignum: Bool = false
 }
 
 /// `decode` with opts: one data item, nothing after it.
@@ -119,6 +226,19 @@ fn well_formed(data: Bytes, max_depth: Int = 128) -> Bool
 /// is written as its definite value.
 fn (v: Value) diagnostic() -> Str
 
+/// How `diagnostic_with` writes byte strings (fxamacker's
+/// ByteStringEncoding, RFC 8949 8 and 8610 G.2): `h'..'` base16, `b32'..'`
+/// base32, `h32'..'` base32hex, `b64'..'` base64url, all unpadded.
+enum DiagBytes {
+  Base16
+  Base32
+  Base32Hex
+  Base64
+}
+
+/// `diagnostic` with byte strings written as `bytes` says.
+fn (v: Value) diagnostic_with(bytes: DiagBytes) -> Str
+
 /// RFC 8949 Section 6.2, the item as JSON: integers and floats as numbers
 /// (a float without a fraction stays a float; a Nint or Uint past Int is
 /// a number text through Float), byte strings as base64url text without
@@ -135,6 +255,19 @@ fn (v: Value) to_json() -> json.Value ! CborErr
 fn from_json(j: json.Value) -> Value
 
 // ---- derive Cbor (decision 0527) ----
+
+/// An item kept as its encoding (fxamacker's RawMessage): a derived
+/// struct's `cbor.Raw` field holds the item's bytes undecoded, and
+/// `marshal` writes them as they are (empty bytes as null). Decoding goes
+/// through the `Value` tree, so the bytes are the item in the preferred
+/// serialization (definite lengths, shortest heads), where Go keeps the
+/// input's own bytes.
+struct Raw {
+  bytes: Bytes
+}
+
+/// The item the bytes hold.
+fn (r: Raw) value() -> Value ! CborErr
 
 /// The state of one `unmarshal`: the first type mismatch is kept and the
 /// decode goes on (fxamacker's UnmarshalTypeError); `strict` makes a map
@@ -171,6 +304,9 @@ fn key_int(k: Value) -> Int?
 fn unknown_key(var st: Unm, want: Str, k: Value)
 fn sorted_keys(keys: List[Str]) -> List[Str]
 fn to_value(v: Value, var st: Unm) -> (Bool, Value)
+fn to_raw(v: Value, var st: Unm) -> (Bool, Raw)
+fn from_raw(r: Raw) -> Value
+fn put_raw(var out: BytesBuilder, r: Raw) -> () ! CborErr
 fn from_value(v: Value) -> Value
 fn to_time(v: Value, var st: Unm) -> (Bool, Time)
 fn to_duration(v: Value, var st: Unm) -> (Bool, Duration)

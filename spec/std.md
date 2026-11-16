@@ -9315,6 +9315,23 @@ fn from_int(n: Int) -> Value
 fn (v: Value) to_int() -> Int?
 fn (v: Value) get(key: Str) -> Value?
 fn encode(v: Value, deterministic: Bool = false) -> Bytes ! CborErr
+enum KeyOrder { Unsorted, Bytewise, LengthFirst }   // SortMode; LengthFirst is RFC 7049's Canonical CBOR
+fn encode_sorted(v: Value, order: KeyOrder) -> Bytes ! CborErr
+enum BigConvert { Shortest, None, Reject }          // BigIntConvertMode
+fn from_big(n: big.BigInt, convert: BigConvert = Shortest) -> Value ! CborErr   // major 0/1 when it fits, else tag 2/3
+fn (v: Value) to_big() -> big.BigInt?               // an integer or bignum of any size
+// DecodeOptions.reject_bignum refuses tags 2 and 3 (BignumTagForbidden)
+enum TimeFormat { Unix, UnixMicro, UnixDynamic, Rfc3339, Rfc3339Nano }   // TimeMode
+fn from_time_as(t: Time, format: TimeFormat, tag: Bool = false) -> Value   // tag: 0 on text, 1 on a number
+enum TagRule { Ignored, Optional, Required }        // DecTagMode
+fn (v: Value) to_time(rule: TagRule = Optional, bytes: Bool = false) -> Time ! CborErr
+enum Indefinite { ByteString, TextString, Array, Map }
+struct Encoder                                      // a stream writer (fxamacker's Encoder)
+fn encoder(order: KeyOrder = Unsorted) -> Encoder
+fn (var e: Encoder) encode(v: Value) -> () ! CborErr          // in an indefinite string: a chunk of its type, else Type
+fn (var e: Encoder) start_indefinite(kind: Indefinite)
+fn (var e: Encoder) end_indefinite() -> () ! CborErr          // the break; Invalid outside an indefinite item
+fn (e: Encoder) bytes() -> Bytes
 fn decode(data: Bytes, max_depth: Int = 128, reject_dup_keys: Bool = false) -> Value ! CborErr
 fn decode_prefix(data: Bytes, max_depth: Int = 128, reject_dup_keys: Bool = false) -> (Value, Int) ! CborErr
 fn well_formed(data: Bytes, max_depth: Int = 128) -> Bool
@@ -9323,6 +9340,10 @@ struct DecodeOptions { max_depth: Int = 128, reject_dup_keys: Bool = false, max_
 fn decode_with(data: Bytes, opts: DecodeOptions) -> Value ! CborErr                 // fxamacker's DecOptions
 fn decode_prefix_with(data: Bytes, opts: DecodeOptions) -> (Value, Int) ! CborErr
 fn (v: Value) diagnostic() -> Str
+enum DiagBytes { Base16, Base32, Base32Hex, Base64 }   // h'..', b32'..', h32'..', b64'..' (base64url), unpadded
+fn (v: Value) diagnostic_with(bytes: DiagBytes) -> Str
+struct Raw { bytes: Bytes }                         // RawMessage: a derive Cbor field kept as its encoding (preferred serialization); empty is null
+fn (r: Raw) value() -> Value ! CborErr
 fn (v: Value) to_json() -> json.Value ! CborErr
 fn from_json(j: json.Value) -> Value
 ```

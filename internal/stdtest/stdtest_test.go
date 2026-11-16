@@ -109,6 +109,27 @@ func jobs() int {
 }
 
 // TestStdModules runs every std module's tests on each backend.
+// stdModuleArg: the --std-module argument for the module m of mods,
+// std/m when std/native has a module of the same name (a bare cbor is
+// ambiguous beside native/cbor: gotchas/std-module-name-ambiguous-with-native.md)
+func stdModuleArg(m string, mods []string) string {
+	for _, o := range mods {
+		if o == "native/"+m {
+			return "std/" + m
+		}
+	}
+	return m
+}
+
+func TestStdModuleArg(t *testing.T) {
+	mods := []string{"cbor", "csv", "native/cbor", "native/llrt/scan"}
+	for _, c := range [][2]string{{"cbor", "std/cbor"}, {"csv", "csv"}, {"native/cbor", "native/cbor"}, {"native/llrt/scan", "native/llrt/scan"}} {
+		if got := stdModuleArg(c[0], mods); got != c[1] {
+			t.Errorf("stdModuleArg(%q) = %q, want %q", c[0], got, c[1])
+		}
+	}
+}
+
 func TestStdModules(t *testing.T) {
 	root, err := xotool.Root()
 	if err != nil {
@@ -131,7 +152,7 @@ func TestStdModules(t *testing.T) {
 				t.Parallel()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				cmd := testtmp.Guard(exec.Command(xo, "test", "--std-module="+m, "--backend="+b))
+				cmd := testtmp.Guard(exec.Command(xo, "test", "--std-module="+stdModuleArg(m, mods), "--backend="+b))
 				cmd.Dir = root
 				cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+root)
 				out, err := cmd.CombinedOutput()

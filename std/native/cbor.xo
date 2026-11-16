@@ -5,7 +5,9 @@
 // writes the preferred serialization (shortest heads, shortest float) with
 // an optional deterministic map order, and the diagnostic notation and
 // the JSON bridge follow sections 8 and 6.
+use std/base32
 use std/base64
+use std/big
 use std/binary
 use std/cbor
 use std/json
@@ -52,6 +54,117 @@ fn value_to_int(v: cbor.Value) -> Int? {
       if b < 0 { None } else { Some(-1 - b) }
     }
     _ => None
+  }
+}
+
+fn from_big(n: big.BigInt, convert: cbor.BigConvert) -> cbor.Value ! cbor.CborErr {
+  if convert is cbor.BigConvert.Reject {
+    return Err(cbor.CborErr.Type(msg: "unsupported type: big.Int"))
+  }
+  // a negative n is written as -1 - m, m = -n - 1 (RFC 8949 3.1)
+  let neg = n.sign() < 0
+  let m = if neg { n.neg().sub(big.from_int(1)) } else { n }
+  if convert is cbor.BigConvert.Shortest && m.bit_len() <= 64 {
+    // the magnitude as 8 big endian bytes, read as the head's 64 bits
+    var pad = BytesBuilder.new()
+    let b = m.bytes()
+    for _ in 0..8 - b.len() {
+      pad.write_byte(UInt8(0))
+    }
+    pad.write(b)
+    let x = binary.get_u64_be(pad.freeze(), 0)
+    return Ok(if neg { cbor.Value.Nint(n: UInt64.from_bits(x)) } else { cbor.Value.Uint(n: UInt64.from_bits(x)) })
+  }
+  Ok(cbor.Value.Tag(num: UInt64.from_bits(if neg { 3 } else { 2 }), v: cbor.Value.ByteString(b: m.bytes())))
+}
+
+fn value_to_big(v: cbor.Value) -> big.BigInt? {
+  match v {
+    cbor.Value.Uint(n) => Some(big.from_bytes(be8(n)))
+    cbor.Value.Nint(n) => Some(big.from_int(-1).sub(big.from_bytes(be8(n))))
+    cbor.Value.Tag(t, inner) => {
+      match inner {
+        cbor.Value.ByteString(b) => {
+          if t.to_bits() == 2 {
+            Some(big.from_bytes(b))
+          } else if t.to_bits() == 3 {
+            Some(big.from_int(-1).sub(big.from_bytes(b)))
+          } else {
+            None
+          }
+        }
+        _ => None
+      }
+    }
+    _ => None
+  }
+}
+
+fn from_time_as(t: Time, format: cbor.TimeFormat, tag: Bool) -> cbor.Value {
+  let v = match format {
+    cbor.TimeFormat.Unix => from_int(t.unix())
+    cbor.TimeFormat.UnixMicro => cbor.Value.Float(f: Float(t.unix_micros()) / 1000000.0)
+    cbor.TimeFormat.UnixDynamic => if t.nanosecond() == 0 { from_int(t.unix()) } else { cbor.Value.Float(f: Float(t.unix_nanos()) / 1000000000.0) }
+    cbor.TimeFormat.Rfc3339 => cbor.Value.TextString(s: Time.from_unix(t.unix()).format_rfc3339())
+    cbor.TimeFormat.Rfc3339Nano => cbor.Value.TextString(s: t.format_rfc3339())
+  }
+  if !tag {
+    return v
+  }
+  cbor.Value.Tag(num: UInt64.from_bits(if v is cbor.Value.TextString(_) { 0 } else { 1 }), v: v)
+}
+
+fn time_type_err(what: Str) -> cbor.CborErr {
+  cbor.CborErr.Type(msg: "cannot unmarshal ${what} into Go value of type time.Time")
+}
+
+fn value_to_time(v0: cbor.Value, rule: cbor.TagRule, bytes: Bool) -> Time ! cbor.CborErr {
+  var v = v0
+  match v0 {
+    cbor.Value.Tag(t, inner) => {
+      if rule is cbor.TagRule.Ignored {
+        v = strip_tags(v0)
+      } else {
+        if t.to_bits() != 0 && t.to_bits() != 1 {
+          return Err(cbor.CborErr.Type(msg: "wrong tag number for time.Time, got ${t.to_bits()}, expect 0 or 1"))
+        }
+        v = inner
+      }
+    }
+    _ => if rule is cbor.TagRule.Required {
+      return Err(cbor.CborErr.Type(msg: "cannot unmarshal ${kind_name(v0)} into Go value of type time.Time (expect CBOR tag value)"))
+    }
+  }
+  match v {
+    cbor.Value.Null | cbor.Value.Undefined => Ok(Time.UNIX_EPOCH)
+    cbor.Value.TextString(s) => match Time.parse_rfc3339(s) {
+      Some(t) => Ok(t)
+      None => Err(cbor.CborErr.Type(msg: "cannot set ${s} for time.Time"))
+    }
+    cbor.Value.ByteString(b) => {
+      if !bytes {
+        return Err(time_type_err("byte string"))
+      }
+      let s = b.to_str_lossy()
+      match Time.parse_rfc3339(s) {
+        Some(t) => Ok(t)
+        None => Err(cbor.CborErr.Type(msg: "cannot set ${s.quote()} for time.Time"))
+      }
+    }
+    cbor.Value.Float(f) => {
+      if f.is_nan() || f.is_inf() {
+        return Ok(Time.UNIX_EPOCH)
+      }
+      if f > -9.0e9 && f < 9.0e9 {
+        let s = f.floor()
+        return Ok(Time.from_unix_nanos(Int(s) * 1000000000 + Int(((f - s) * 1.0e9).round())))
+      }
+      Err(time_type_err("float"))
+    }
+    _ => match value_to_int(v) {
+      Some(n) => if n > -9000000000 && n < 9000000000 { Ok(Time.from_unix(n)) } else { Err(time_type_err("integer")) }
+      None => Err(time_type_err(kind_name(v)))
+    }
   }
 }
 
@@ -163,7 +276,8 @@ fn put_float(var out: BytesBuilder, f: Float) {
   put_be(out, bits, n)
 }
 
-fn enc_item(v: cbor.Value, det: Bool, depth: Int, var out: BytesBuilder) -> () ! cbor.CborErr {
+fn enc_item(v: cbor.Value, ord: Int, depth: Int, var out: BytesBuilder) -> () ! cbor.CborErr {
+  let det = ord != 0
   if depth > 1000 {
     return Err(limit("value nested deeper than 1000 levels"))
   }
@@ -181,25 +295,25 @@ fn enc_item(v: cbor.Value, det: Bool, depth: Int, var out: BytesBuilder) -> () !
     cbor.Value.Array(items) => {
       put_head(out, 4, items.len())
       for it in items {
-        enc_item(it, det, depth + 1, out)?
+        enc_item(it, ord, depth + 1, out)?
       }
     }
     cbor.Value.Map(pairs) => {
       put_head(out, 5, pairs.len())
-      let direct = det && pairs.len() > 1 && direct_keys(pairs)
+      let direct = ord == 1 && pairs.len() > 1 && direct_keys(pairs)
       let sorted = direct && keys_sorted(pairs)
       if sorted || (direct && pairs.len() <= 16) {
         // text and unsigned keys order without encoding them (key_less);
         // a derived struct's map is a handful of them
         if sorted {
           for p in pairs {
-            enc_item(p.0, det, depth + 1, out)?
-            enc_item(p.1, det, depth + 1, out)?
+            enc_item(p.0, ord, depth + 1, out)?
+            enc_item(p.1, ord, depth + 1, out)?
           }
         } else {
           for i in key_order(pairs) {
-            enc_item(pairs[i].0, det, depth + 1, out)?
-            enc_item(pairs[i].1, det, depth + 1, out)?
+            enc_item(pairs[i].0, ord, depth + 1, out)?
+            enc_item(pairs[i].1, ord, depth + 1, out)?
           }
         }
       } else if det {
@@ -207,7 +321,7 @@ fn enc_item(v: cbor.Value, det: Bool, depth: Int, var out: BytesBuilder) -> () !
         var hexes: List[Str] = []
         for p in pairs {
           var kb = BytesBuilder.new()
-          enc_item(p.0, det, depth + 1, kb)?
+          enc_item(p.0, ord, depth + 1, kb)?
           let b = kb.freeze()
           keys.push(b)
           hexes.push(b.to_hex())
@@ -216,21 +330,22 @@ fn enc_item(v: cbor.Value, det: Bool, depth: Int, var out: BytesBuilder) -> () !
         for i in 0..pairs.len() {
           idx.push(i)
         }
-        let order = idx.sort_by(fn(i) { hexes[i] })
+        // LengthFirst (ord 2): the encoded length first, as RFC 7049 3.9
+        let order = if ord == 2 { idx.sort_by(fn(i) { "${keys[i].len()}".pad_left(20, "0") + hexes[i] }) } else { idx.sort_by(fn(i) { hexes[i] }) }
         for i in order {
           out.write(keys[i])
-          enc_item(pairs[i].1, det, depth + 1, out)?
+          enc_item(pairs[i].1, ord, depth + 1, out)?
         }
       } else {
         for p in pairs {
-          enc_item(p.0, det, depth + 1, out)?
-          enc_item(p.1, det, depth + 1, out)?
+          enc_item(p.0, ord, depth + 1, out)?
+          enc_item(p.1, ord, depth + 1, out)?
         }
       }
     }
     cbor.Value.Tag(num, inner) => {
       put_head(out, 6, num.to_bits())
-      enc_item(inner, det, depth + 1, out)?
+      enc_item(inner, ord, depth + 1, out)?
     }
     cbor.Value.Simple(n) => {
       if n >= 0 && n < 20 {
@@ -311,9 +426,64 @@ fn key_order(pairs: List[(cbor.Value, cbor.Value)]) -> List[Int] {
 
 fn encode(v: cbor.Value, deterministic: Bool) -> Bytes ! cbor.CborErr {
   var out = BytesBuilder.new()
-  enc_item(v, deterministic, 0, out)?
+  enc_item(v, if deterministic { 1 } else { 0 }, 0, out)?
   out.freeze()
 }
+
+fn order_code(o: cbor.KeyOrder) -> Int {
+  match o {
+    cbor.KeyOrder.Unsorted => 0
+    cbor.KeyOrder.Bytewise => 1
+    cbor.KeyOrder.LengthFirst => 2
+  }
+}
+
+fn encode_sorted(v: cbor.Value, order: cbor.KeyOrder) -> Bytes ! cbor.CborErr {
+  var out = BytesBuilder.new()
+  enc_item(v, order_code(order), 0, out)?
+  out.freeze()
+}
+
+fn encoder(order: cbor.KeyOrder) -> cbor.Encoder {
+  cbor.Encoder{out: BytesBuilder.new(), open: [], order: order}
+}
+
+fn encoder_encode(var e: cbor.Encoder, v: cbor.Value) -> () ! cbor.CborErr {
+  if let Some(k) = e.open.last() {
+    match k {
+      cbor.Indefinite.TextString => if !(v is cbor.Value.TextString(_)) {
+        return Err(cbor.CborErr.Type(msg: "cannot encode item type ${kind_name(v)} for indefinite-length text string"))
+      }
+      cbor.Indefinite.ByteString => if !(v is cbor.Value.ByteString(_)) {
+        return Err(cbor.CborErr.Type(msg: "cannot encode item type ${kind_name(v)} for indefinite-length byte string"))
+      }
+      _ => {}
+    }
+  }
+  enc_item(v, order_code(e.order), 0, e.out)
+}
+
+fn encoder_start_indefinite(var e: cbor.Encoder, kind: cbor.Indefinite) {
+  let head = match kind {
+    cbor.Indefinite.ByteString => 95
+    cbor.Indefinite.TextString => 127
+    cbor.Indefinite.Array => 159
+    cbor.Indefinite.Map => 191
+  }
+  e.out.write_byte(UInt8(head))
+  e.open.push(kind)
+}
+
+fn encoder_end_indefinite(var e: cbor.Encoder) -> () ! cbor.CborErr {
+  if e.open.is_empty() {
+    return Err(invalid("cannot encode \"break\" code outside indefinite length values"))
+  }
+  e.out.write_byte(UInt8(255))
+  e.open.pop()
+  Ok(())
+}
+
+fn encoder_bytes(e: cbor.Encoder) -> Bytes { e.out.freeze() }
 
 // ---------------------------------------------------------------------------
 // Decoder
@@ -329,6 +499,7 @@ struct Dec {
   max_pairs: Int = 0
   no_indef: Bool = false
   no_tags: Bool = false
+  no_bignum: Bool = false
   no_nan: Bool = false
   no_inf: Bool = false
   rej: List[Bool] = []
@@ -424,11 +595,25 @@ fn read_head(var d: Dec) -> (Int, Int, Int) ! cbor.CborErr {
   }
   if ai == 31 {
     if major == 0 || major == 1 || major == 6 {
-      return Err(syntax("invalid additional information 31 for major type ${major}"))
+      return Err(syntax("invalid additional information 31 for type ${major_name(major)}"))
     }
     return (major, ai, 0)
   }
-  Err(syntax("invalid additional information ${ai} for major type ${major}"))
+  Err(syntax("invalid additional information ${ai} for type ${major_name(major)}"))
+}
+
+/// fxamacker's cborType.String() of a major type.
+fn major_name(major: Int) -> Str {
+  match major {
+    0 => "positive integer"
+    1 => "negative integer"
+    2 => "byte string"
+    3 => "UTF-8 text string"
+    4 => "array"
+    5 => "map"
+    6 => "tag"
+    _ => "primitives"
+  }
 }
 
 /// The chunks of an indefinite length string, joined.
@@ -591,6 +776,9 @@ fn read_item(var d: Dec, depth: Int) -> cbor.Value ! cbor.CborErr {
         return Err(limit("exceeded max nested level ${d.max_depth}"))
       }
     }
+    if d.no_bignum && (n == 2 || n == 3) {
+      return Err(invalid("data item of cbor type tag is not accepted by protocol: bignum"))
+    }
     let inner = read_item(d, child)?
     return cbor.Value.Tag(num: UInt64.from_bits(n), v: inner)
   }
@@ -643,7 +831,7 @@ fn dec_of(data: Bytes, o: cbor.DecodeOptions) -> Dec ! cbor.CborErr {
       rej[sv] = true
     }
   }
-  Dec{data: data, max_depth: o.max_depth, dup: o.reject_dup_keys, max_arr: o.max_array_elements, max_pairs: o.max_map_pairs, no_indef: o.reject_indefinite, no_tags: o.reject_tags, no_nan: o.reject_nan, no_inf: o.reject_inf, rej: rej}
+  Dec{data: data, max_depth: o.max_depth, dup: o.reject_dup_keys, max_arr: o.max_array_elements, max_pairs: o.max_map_pairs, no_indef: o.reject_indefinite, no_tags: o.reject_tags, no_bignum: o.reject_bignum, no_nan: o.reject_nan, no_inf: o.reject_inf, rej: rej}
 }
 
 fn decode_prefix_with(data: Bytes, opts: cbor.DecodeOptions) -> (cbor.Value, Int) ! cbor.CborErr {
@@ -850,11 +1038,11 @@ fn be8(n: UInt64) -> Bytes {
   out.freeze()
 }
 
-fn diag_item(v: cbor.Value, var out: List[Str]) {
+fn diag_item(v: cbor.Value, var out: List[Str], bm: cbor.DiagBytes = cbor.DiagBytes.Base16) {
   match v {
     cbor.Value.Uint(n) => out.push(u64_text(n))
     cbor.Value.Nint(n) => out.push("-" + big_decimal(be8(n), true))
-    cbor.Value.ByteString(b) => out.push("h'" + b.to_hex() + "'")
+    cbor.Value.ByteString(b) => out.push(diag_bytes(b, bm))
     cbor.Value.TextString(s) => out.push(diag_text(s))
     cbor.Value.Array(items) => {
       out.push("[")
@@ -864,7 +1052,7 @@ fn diag_item(v: cbor.Value, var out: List[Str]) {
           out.push(", ")
         }
         first = false
-        diag_item(it, out)
+        diag_item(it, out, bm)
       }
       out.push("]")
     }
@@ -876,9 +1064,9 @@ fn diag_item(v: cbor.Value, var out: List[Str]) {
           out.push(", ")
         }
         first = false
-        diag_item(p.0, out)
+        diag_item(p.0, out, bm)
         out.push(": ")
-        diag_item(p.1, out)
+        diag_item(p.1, out, bm)
       }
       out.push("}")
     }
@@ -896,7 +1084,7 @@ fn diag_item(v: cbor.Value, var out: List[Str]) {
       }
       if !done {
         out.push(u64_text(num) + "(")
-        diag_item(inner, out)
+        diag_item(inner, out, bm)
         out.push(")")
       }
     }
@@ -906,6 +1094,21 @@ fn diag_item(v: cbor.Value, var out: List[Str]) {
     cbor.Value.Undefined => out.push("undefined")
     cbor.Value.Float(f) => out.push(diag_float(f))
   }
+}
+
+fn diag_bytes(b: Bytes, bm: cbor.DiagBytes) -> Str {
+  match bm {
+    cbor.DiagBytes.Base16 => "h'" + b.to_hex() + "'"
+    cbor.DiagBytes.Base32 => "b32'" + base32.encode(b, base32.Base32.RawStd) + "'"
+    cbor.DiagBytes.Base32Hex => "h32'" + base32.encode(b, base32.Base32.RawHex) + "'"
+    cbor.DiagBytes.Base64 => "b64'" + base64.encode(b, base64.Base64.RawUrl) + "'"
+  }
+}
+
+fn value_diagnostic_with(v: cbor.Value, bytes: cbor.DiagBytes) -> Str {
+  var parts: List[Str] = []
+  diag_item(v, parts, bytes)
+  parts.join("")
 }
 
 fn value_diagnostic(v: cbor.Value) -> Str {
@@ -1076,7 +1279,7 @@ fn untag(v0: cbor.Value, var st: cbor.Unm) -> (Bool, cbor.Value) {
         }
         if !good {
           if st.err == None {
-            st.err = Some(cbor.CborErr.Type(msg: "cbor: invalid content of tag ${num.to_bits()}"))
+            st.err = Some(inadmissible(num.to_bits(), inner))
           }
           return (false, v)
         }
@@ -1086,6 +1289,33 @@ fn untag(v0: cbor.Value, var st: cbor.Unm) -> (Bool, cbor.Value) {
     }
   }
   (true, strip_tags(v))
+}
+
+/// fxamacker's InadmissibleTagContentTypeError for built in tag n over v.
+fn inadmissible(n: Int, v: cbor.Value) -> cbor.CborErr {
+  let got = go_type_name(v)
+  let msg = if n == 0 {
+    "tag number 0 must be followed by text string, got ${got}"
+  } else if n == 1 {
+    "tag number 1 must be followed by integer or floating-point number, got ${got}"
+  } else {
+    "tag number 2 or 3 must be followed by byte string, got ${got}"
+  }
+  cbor.CborErr.Type(msg: msg)
+}
+
+/// fxamacker's cborType.String() of v's major type.
+fn go_type_name(v: cbor.Value) -> Str {
+  match v {
+    cbor.Value.Uint(_) => "positive integer"
+    cbor.Value.Nint(_) => "negative integer"
+    cbor.Value.ByteString(_) => "byte string"
+    cbor.Value.TextString(_) => "UTF-8 text string"
+    cbor.Value.Array(_) => "array"
+    cbor.Value.Map(_) => "map"
+    cbor.Value.Tag(..) => "tag"
+    _ => "primitives"
+  }
 }
 
 fn strip_tags(v: cbor.Value) -> cbor.Value {
@@ -1277,6 +1507,85 @@ fn sorted_keys(keys: List[Str]) -> List[Str] {
 
 fn to_value(v: cbor.Value, var st: cbor.Unm) -> (Bool, cbor.Value) { (true, v) }
 
+fn to_raw(v: cbor.Value, var st: cbor.Unm) -> (Bool, cbor.Raw) {
+  match encode(v, false) {
+    Ok(b) => (true, cbor.Raw{bytes: b})
+    Err(e) => {
+      if st.err == None {
+        st.err = Some(e)
+      }
+      (false, cbor.Raw{bytes: b""})
+    }
+  }
+}
+
+fn from_raw(r: cbor.Raw) -> cbor.Value {
+  if r.bytes.is_empty() {
+    return cbor.Value.Null
+  }
+  decode(r.bytes, 128, false) ?? _ => cbor.Value.Null
+}
+
+/// RawMessage.MarshalCBOR: the bytes as they are, null when empty; bytes
+/// that are not one well formed item, or hold a built in tag over the
+/// wrong content, are Go's `error calling MarshalCBOR for type
+/// cbor.RawMessage: ...`.
+fn put_raw(var out: BytesBuilder, r: cbor.Raw) -> () ! cbor.CborErr {
+  if r.bytes.is_empty() {
+    out.write_byte(UInt8(246))
+    return Ok(())
+  }
+  let why = match decode(r.bytes, 128, false) {
+    Ok(v) => match builtin_tag_err(v) {
+      Some(e) => Some(e)
+      None => None
+    }
+    Err(e) => Some(e)
+  }
+  if let Some(e) = why {
+    let inner = if e is cbor.CborErr.Truncated { "unexpected EOF" } else { cborerr_display(e) }
+    return Err(cbor.CborErr.Invalid(msg: "error calling MarshalCBOR for type cbor.RawMessage: " + inner))
+  }
+  out.write(r.bytes)
+  Ok(())
+}
+
+/// The first built in tag (0 to 3) in v over content fxamacker refuses.
+fn builtin_tag_err(v: cbor.Value) -> cbor.CborErr? {
+  match v {
+    cbor.Value.Tag(num, inner) => {
+      let n = num.to_bits()
+      let bad = if n == 0 { !(inner is cbor.Value.TextString(_)) } else if n == 1 { !(inner is cbor.Value.Uint(_) | cbor.Value.Nint(_) | cbor.Value.Float(_)) } else if n == 2 || n == 3 { !(inner is cbor.Value.ByteString(_)) } else { false }
+      if bad {
+        return Some(inadmissible(n, inner))
+      }
+      builtin_tag_err(inner)
+    }
+    cbor.Value.Array(items) => {
+      for it in items {
+        if let Some(e) = builtin_tag_err(it) {
+          return Some(e)
+        }
+      }
+      None
+    }
+    cbor.Value.Map(pairs) => {
+      for p in pairs {
+        if let Some(e) = builtin_tag_err(p.0) {
+          return Some(e)
+        }
+        if let Some(e) = builtin_tag_err(p.1) {
+          return Some(e)
+        }
+      }
+      None
+    }
+    _ => None
+  }
+}
+
+fn raw_value(r: cbor.Raw) -> cbor.Value ! cbor.CborErr { decode(r.bytes, 128, false) }
+
 fn from_value(v: cbor.Value) -> cbor.Value { v }
 
 /// A Time as fxamacker's TimeUnixDynamic: whole seconds as an integer, else seconds as a float.
@@ -1309,7 +1618,7 @@ fn put_bytes(var out: BytesBuilder, b: Bytes) {
 }
 
 fn put_value(var out: BytesBuilder, v: cbor.Value, deterministic: Bool) -> () ! cbor.CborErr {
-  enc_item(v, deterministic, 0, out)
+  enc_item(v, if deterministic { 1 } else { 0 }, 0, out)
 }
 
 /// Text keys in the deterministic order (RFC 8949 4.2.1 on their encodings:

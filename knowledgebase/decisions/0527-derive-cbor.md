@@ -94,3 +94,5 @@ null (use `Time?`). `toarray` (a tag on the first field) is built and pinned (an
 - `derive Cbor(case: snake | camel | pascal | kebab)`: apply 0277's key transform in `cbor_opts` when no `as` or `cbor` string
   names the field; the transform helper `derive Json` uses is shared.
 - A typed fuzz corpus (`TestCborFuzz` style, fresh seeds through the typed oracle modes) to follow the fixed corpora.
+
+Built 2026-11-15 (xo-lang-3): `cbor.Raw` (golden cbor_raw: stream_test.go TestRawMessage, the empty Raw as null, MarshalCBOR's errors). It holds the item re-encoded in the preferred serialization, since decoding goes through the `Value` tree; Go keeps the input's own bytes.

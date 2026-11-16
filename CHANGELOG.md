@@ -26,6 +26,12 @@ the text of every entry is unchanged).
 - Fix (std/otp): `uri` escapes as pquerna/otp does (`issuer=Snake%20Oil`, not `Snake+Oil`; a `/` in the label stays). Authenticator apps read both forms.
 - Feature (std/otp): `hotp_uri`, the `otpauth://hotp/` key URI.
 - Fix (std/tls, std/http, decision 0662): the tls config hooks (`verify_peer_certificate`, `verify_connection`, `get_client_certificate`, `get_certificate`, `get_config_for_client`, `key_log`), `Client.with_verify_conn` and `ReverseProxy.with_rewrite` take `uses sync` functions, so a hook that records what it saw in a captured Mutex or Chan type checks again; std/native's exemption from the capture rule is gone (seed 0.52.0). Breaking only for code that stores one of these hooks in a variable typed without `uses sync`: add it.
+- Feature (std/cbor): `encode_sorted` with RFC 7049's length first key order, a stream `Encoder` that writes indefinite length items, and `diagnostic_with` (byte strings in base32, base32hex or base64url).
+- Feature (std/cbor): big integers: `from_big`, `Value.to_big`, `DecodeOptions.reject_bignum`.
+- Fix (std/cbor): `unmarshal` reports a built in tag over the wrong content with fxamacker's text (`tag number 0 must be followed by text string, got ...`), not `cbor: cbor: invalid content of tag 0`.
+- Feature (std/cbor, derive Cbor): `cbor.Raw` fields keep an item as its bytes (fxamacker's RawMessage).
+- Fix (std/cbor): `decode`'s reserved additional information error names the type as Go does (`for type positive integer`, not `for major type 0`).
+- Feature (std/cbor): times as RFC 3339 text or epoch numbers, tagged or not: `from_time_as`, `Value.to_time`.
 
 - Perf (arm64 backend, linux and freebsd): read modify write atomics (Atomic.add, swap, compare_and_swap, Mutex and the task runtime's counters) are inline in a program linked with no C library: a test of the CPU's LSE bit, then the one ARMv8.1 instruction, else a load and store exclusive loop, as Go's arm64 atomics; they were calls of libgcc's outline helpers. The unwinding check after a call that may be canceled is inline on linux and darwin (the context's word, not a call of ctx_unwinding). A labelled std/metrics Counter.inc on linux/arm64 host 1: 0.935 of its wall time (`xo bench --ab`, 0.923 to 0.938).
 - Fix (std/gif, native backends): the `gif: can't recognize format "..."` error quotes the version bytes as Go does (`\a`, `\b`, `\f`, `\v`, printable UTF-8 kept); it wrote `\x07` and escaped UTF-8. Found by the new gif fuzz harness (std/changes/gif.md).

@@ -1138,6 +1138,9 @@ fn (var c: Checker) cbor_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
       if path.len() == 2 && args.is_empty() && n == "Value" && text(path[0].name) == "cbor" {
         return Some(("cbor.to_value", "cbor.Value.Null", e))
       }
+      if path.len() == 2 && args.is_empty() && n == "Raw" && text(path[0].name) == "cbor" {
+        return Some(("cbor.to_raw", "cbor.Raw{bytes: b\"\"}", e))
+      }
       if path.len() == 1 && args.is_empty() && n == "Time" {
         return Some(("cbor.to_time", "Time.UNIX_EPOCH", e))
       }
@@ -1242,6 +1245,9 @@ fn (var c: Checker) cbor_writer(t: parser.Type, sp: Span, em: Emit, var done: Ma
       }
       if path.len() == 2 && args.is_empty() && n == "Value" && text(path[0].name) == "cbor" {
         return Some(("cbor.from_value", e))
+      }
+      if path.len() == 2 && args.is_empty() && n == "Raw" && text(path[0].name) == "cbor" {
+        return Some(("cbor.from_raw", e))
       }
       if path.len() == 1 && args.is_empty() && n == "Time" {
         return Some(("cbor.from_time", e))
@@ -1352,6 +1358,13 @@ fn (var c: Checker) cbor_putter(t: parser.Type, sp: Span, em: Emit, var done: Ma
         if !done.contains(h) {
           done[h] = true
           e.ln("${sig} { cbor.put_value(out, v, det) }", sp)
+        }
+        return Some((h, e))
+      }
+      if path.len() == 2 && args.is_empty() && n == "Raw" && text(path[0].name) == "cbor" {
+        if !done.contains(h) {
+          done[h] = true
+          e.ln("${sig} { cbor.put_raw(out, v) }", sp)
         }
         return Some((h, e))
       }
@@ -1571,7 +1584,7 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
       continue
     }
     let (rd, zero, e2) = c.cbor_reader(fl.typ, fl.name.span, e, done) ?? {
-      c.error_at(file, "XO0425", fl.name.span, "`derive Cbor` maps a Str, Int, Float, Bool, Bytes, a cbor.Value, an Option, a List, a Map[Str, V] of those, or a struct that derives Cbor; field `${f}` is another type (decision 0527)")
+      c.error_at(file, "XO0425", fl.name.span, "`derive Cbor` maps a Str, Int, Float, Bool, Bytes, a cbor.Value, a cbor.Raw, an Option, a List, a Map[Str, V] of those, or a struct that derives Cbor; field `${f}` is another type (decision 0527)")
       ok = false
       continue
     }
@@ -2375,7 +2388,7 @@ fn (var c: Checker) cbor_enum_codec(ed: parser.EnumDecl, em: Emit, var done: Map
         let lone = fs.len() == 1 && fs[0].name == None
         for (i, f) in fs.indexed() {
           let (r, z, e2) = c.cbor_reader(f.typ, f.span, e, done) ?? {
-            c.error_at(file, "XO0425", f.span, "`derive Cbor` maps a Str, Int, Float, Bool, Bytes, a cbor.Value, an Option, a List, a Map[Str, V] of those, a struct or enum that derives Cbor; field ${i + 1} of variant `${vn}` is another type (decision 0527)")
+            c.error_at(file, "XO0425", f.span, "`derive Cbor` maps a Str, Int, Float, Bool, Bytes, a cbor.Value, a cbor.Raw, an Option, a List, a Map[Str, V] of those, a struct or enum that derives Cbor; field ${i + 1} of variant `${vn}` is another type (decision 0527)")
             ok = false
             continue
           }

@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+a 01 b 820203 c none true
+b value [2, 3]
+same true
+empty a1616df6
+a6 cbor: error calling MarshalCBOR for type cbor.RawMessage: unexpected EOF
+1f cbor: error calling MarshalCBOR for type cbor.RawMessage: cbor: invalid additional information 31 for type positive integer
+0101 cbor: error calling MarshalCBOR for type cbor.RawMessage: cbor: 1 bytes of extraneous data starting at index 1
+c001 cbor: error calling MarshalCBOR for type cbor.RawMessage: cbor: tag number 0 must be followed by text string, got positive integer
+--- stderr

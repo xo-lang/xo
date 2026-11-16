@@ -1409,7 +1409,9 @@ run_step_body() {
       bad=0; nmod=0
       for m in $(find std -name '*_test.xo' | sed 's#^std/##; s#_test\.xo$##' | sort); do
         nmod=$((nmod + 1))
-        out=$(XO_TEST_EXEC="node --no-warnings $PWD/compiler/wasm/run.mjs" timeout 900 bin/xo test --backend=wasm --count=1 --std-module="$m" 2>&1)
+        # std/NAME when std/native has NAME too (a bare cbor is ambiguous)
+        a=$m; [ -f "std/native/$m.xo" ] && a=$(gate_stdfast_test_mod "$m")
+        out=$(XO_TEST_EXEC="node --no-warnings $PWD/compiler/wasm/run.mjs" timeout 900 bin/xo test --backend=wasm --count=1 --std-module="$a" 2>&1)
         sum=$(printf '%s\n' "$out" | grep -E '^(ok|FAIL): [0-9]+ passed' | tail -1)
         echo "$m: ${sum:-no summary}" >>"$logs/stdwasm.txt"
         case $sum in
@@ -1628,7 +1630,7 @@ prove_stdfast() {
     for d in std/"$m"_test.xo std/"$m"/*_test.xo; do [ -f "$d" ] && t=1; done
     if [ "$t" = 0 ]; then
       echo "stdfast $m: no xo tests of its own"
-    elif "$XO_CLI" test --count=1 --std-module="$m" >"$logs/stdfast-$m.txt" 2>&1; then
+    elif "$XO_CLI" test --count=1 --std-module="$(gate_stdfast_test_mod "$m")" >"$logs/stdfast-$m.txt" 2>&1; then
       echo "stdfast $m: $(tail -1 "$logs/stdfast-$m.txt")"
     else
       bad=1; echo "stdfast $m: FAIL ($logs/stdfast-$m.txt: $(grep -m1 -- '--- FAIL' "$logs/stdfast-$m.txt"))"
