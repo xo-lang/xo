@@ -21,6 +21,12 @@ Three callers passed the bare name; each now passes `std/NAME`: gate.sh's
 stdfast step (gatelib gate_stdfast_test_mod, a gatesteps_test.sh case),
 its wasm std loop (when std/native/NAME.xo exists), and internal/stdtest
 TestStdModules (stdModuleArg, with TestStdModuleArg), which failed next
-as `TestStdModules/arm64/cbor`. By
+as `TestStdModules/arm64/cbor`. A fourth was missed: internal/arm64
+TestFrontCacheAcrossPrograms walks std for `_test.xo` files and ran
+`--std-module=cbor` (failing on main from 52cba676b, 2026-11-15, until
+2026-11-16; now stdTestModules, with TestStdTestModulesDisambiguates). A
+new caller that lists std's modules itself must map NAME to `std/NAME`
+the same way: `grep -rn -e '--std-module=' --include='*.go' --include='*.sh'`
+finds them. By
 hand, run `xo test --std-module=std/cbor` and
 `xo test --std-module=native/cbor`.

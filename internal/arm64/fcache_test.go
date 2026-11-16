@@ -624,6 +624,52 @@ func TestFrontCacheAbsentHelper(t *testing.T) {
 	}
 }
 
+// stdTestModules: the --std-module arguments of std's modules with tests
+// under stdDir, std/NAME for a module whose name std/native has too (a
+// bare cbor is ambiguous beside native/cbor:
+// gotchas/std-module-name-ambiguous-with-native.md).
+func stdTestModules(stdDir string) []string {
+	var mods []string
+	filepath.WalkDir(stdDir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, "_test.xo") && !strings.Contains(p, string(filepath.Separator)+"testdata"+string(filepath.Separator)) {
+			rel, _ := filepath.Rel(stdDir, p)
+			mods = append(mods, strings.TrimSuffix(filepath.ToSlash(rel), "_test.xo"))
+		}
+		return nil
+	})
+	has := map[string]bool{}
+	for _, m := range mods {
+		has[m] = true
+	}
+	for i, m := range mods {
+		if has["native/"+m] {
+			mods[i] = "std/" + m
+		}
+	}
+	return mods
+}
+
+// TestStdTestModulesDisambiguates: std/cbor_test.xo beside
+// std/native/cbor_test.xo is std/cbor (TestFrontCacheAcrossPrograms ran
+// --std-module=cbor, an error, from dfbc2a379 to this fix).
+func TestStdTestModulesDisambiguates(t *testing.T) {
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mods := stdTestModules(filepath.Join(root, "std"))
+	got := map[string]bool{}
+	for _, m := range mods {
+		got[m] = true
+	}
+	if !got["std/cbor"] || got["cbor"] || !got["native/cbor"] {
+		t.Errorf("stdTestModules: want std/cbor and native/cbor, no bare cbor; got %v", mods)
+	}
+	if !got["base64"] {
+		t.Errorf("stdTestModules: want base64 as it is; got %v", mods)
+	}
+}
+
 // TestFrontCacheAcrossPrograms: front end cache entries are shared by
 // every program built with one cache (a std body's key does not name the
 // program), so an entry recorded while building one program commits into
@@ -685,13 +731,9 @@ func TestFrontCacheAcrossPrograms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	filepath.WalkDir(filepath.Join(root, "std"), func(p string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && strings.HasSuffix(p, "_test.xo") && !strings.Contains(p, string(filepath.Separator)+"testdata"+string(filepath.Separator)) {
-			rel, _ := filepath.Rel(filepath.Join(root, "std"), p)
-			dirs = append(dirs, "std:"+strings.TrimSuffix(filepath.ToSlash(rel), "_test.xo"))
-		}
-		return nil
-	})
+	for _, m := range stdTestModules(filepath.Join(root, "std")) {
+		dirs = append(dirs, "std:"+m)
+	}
 	buildWith := func(bin string, pass string, i int, dir string, env ...string) ([]byte, error) {
 		if m, ok := strings.CutPrefix(dir, "std:"); ok {
 			// a std module's tests, on that xo's own std (bin/../std): they
