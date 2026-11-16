@@ -1407,6 +1407,71 @@ fn (var c: Checker) cbor_putter(t: parser.Type, sp: Span, em: Emit, var done: Ma
 }
 
 /// A CBOR head's bytes (major type, argument n >= 0), for keys written at derive time.
+/// A `tag:` value's tag number as Int's 64 bits (2^63 and up negative, as
+/// UInt64.to_bits): decimal digits, `_` between them; None for anything
+/// else or a number past 2^64 - 1.
+fn cbor_tag_bits(raw: Bytes) -> Int? {
+  var digits = BytesBuilder.new()
+  for b in raw {
+    if b == UInt8(95) {
+      continue
+    }
+    if b < UInt8(48) || b > UInt8(57) {
+      return None
+    }
+    digits.write_byte(b)
+  }
+  let d = digits.freeze()
+  if d.is_empty() || d.len() > 20 {
+    return None
+  }
+  if d.len() == 20 && text(d) > "18446744073709551615" {
+    return None
+  }
+  var n = 0
+  for b in d {
+    n = n.wrapping_mul(10).wrapping_add(Int(b) - 48)
+  }
+  Some(n)
+}
+
+/// A derive Cbor's `tag:` (bits) and `tag_rule:` (decision 0665).
+fn cbor_tag_of(args: List[parser.DeriveArg]) -> (Int?, Str) {
+  var tag: Int? = None
+  var rule = "optional"
+  for a in args {
+    if text(a.derive.name) == "Cbor" && text(a.key.name) == "tag" {
+      tag = cbor_tag_bits(a.value.name)
+    }
+    if text(a.derive.name) == "Cbor" && text(a.key.name) == "tag_rule" {
+      rule = text(a.value.name)
+    }
+  }
+  (tag, rule)
+}
+
+/// A tagged type's cbor_rd__N, cbor_wr__N and cbor_put__N over its
+/// cbor_rd0__N, cbor_wr0__N and cbor_put0__N (decision 0665): the tag
+/// written around the value, checked by cbor.want_tag on decode.
+fn cbor_tag_wrappers(n: Str, pub_: Str, sp: Span, em: Emit, tag: Int?, rule: Str) -> Emit {
+  var e = em
+  let bits = match tag {
+    Some(b) => b
+    None => return e
+  }
+  e.ln("${pub_}fn cbor_rd__${n}(x: cbor.Value, var st: cbor.Unm) -> (Bool, ${n}) {", sp)
+  e.ln("  let (ok, y) = cbor.want_tag(x, ${bits}, ${quote_str(rule)}, ${quote_str(n)}, st)", sp)
+  e.ln("  if !ok { return (false, cbor_zero__${n}()) }", sp)
+  e.ln("  cbor_rd0__${n}(y, st)", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn cbor_wr__${n}(v: ${n}) -> cbor.Value { cbor.Value.Tag(num: UInt64.from_bits(${bits}), v: cbor_wr0__${n}(v)) }", sp)
+  e.ln("${pub_}fn cbor_put__${n}(v: ${n}, det: Bool, var out: BytesBuilder) -> () ! cbor.CborErr {", sp)
+  e.ln("  cbor.put_head(out, 6, ${bits})", sp)
+  e.ln("  cbor_put0__${n}(v, det, out)", sp)
+  e.ln("}", sp)
+  e
+}
+
 fn cbor_head_bytes(major: Int, n: Int) -> List[Int] {
   let m = major << 5
   if n < 24 {
@@ -1564,6 +1629,10 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
       rule = text(a.value.name)
     }
   }
+  // a tagged type's own functions are cbor_rd0__N etc., under wrappers
+  // that read and write the tag (decision 0665)
+  let (tag, tag_rule) = cbor_tag_of(sd.derive_args)
+  let sfx = if tag is Some(_) { "0" } else { "" }
   var pos_rd: List[Str] = []
   var pos_wr: List[Str] = []
   var pos_f: List[Str] = []
@@ -1649,7 +1718,7 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
     return None
   }
   e.ln("${pub_}fn cbor_zero__${n}() -> ${n} { ${n}{${zeros.join(", ")}} }", sp)
-  e.ln("${pub_}fn cbor_rd__${n}(x: cbor.Value, var st: cbor.Unm) -> (Bool, ${n}) {", sp)
+  e.ln("${pub_}fn cbor_rd${sfx}__${n}(x: cbor.Value, var st: cbor.Unm) -> (Bool, ${n}) {", sp)
   e.ln("  let base = cbor_zero__${n}()", sp)
   e.ln("  if cbor.is_null(x) { return (false, base) }", sp)
   if toarray {
@@ -1668,20 +1737,21 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
     }
     e.ln("  (true, ${n}{${inits.join(", ")}})", sp)
     e.ln("}", sp)
-    e.ln("${pub_}fn cbor_wr__${n}(v: ${n}) -> cbor.Value {", sp)
+    e.ln("${pub_}fn cbor_wr${sfx}__${n}(v: ${n}) -> cbor.Value {", sp)
     e.ln("  var out: List[cbor.Value] = []", sp)
     for (j, f) in pos_f.indexed() {
       e.ln("  out.push(${pos_wr[j]}(v.${f}))", sp)
     }
     e.ln("  cbor.Value.Array(items: out)", sp)
     e.ln("}", sp)
-    e.ln("${pub_}fn cbor_put__${n}(v: ${n}, det: Bool, var out: BytesBuilder) -> () ! cbor.CborErr {", sp)
+    e.ln("${pub_}fn cbor_put${sfx}__${n}(v: ${n}, det: Bool, var out: BytesBuilder) -> () ! cbor.CborErr {", sp)
     e.ln("  cbor.put_head(out, 4, ${pos_f.len()})", sp)
     for (j, f) in pos_f.indexed() {
       e.ln("  ${pos_pt[j]}(v.${f}, det, out)?", sp)
     }
     e.ln("  Ok(())", sp)
     e.ln("}", sp)
+    e = cbor_tag_wrappers(n, pub_, sp, e, tag, tag_rule)
     return Some(c.cbor_entries(n, pub_, sp, e))
   }
   e.ln("  let (ok, ps) = cbor.pairs(x, ${quote_str(n)}, st)", sp)
@@ -1722,14 +1792,15 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
   e.ln("  }", sp)
   e.ln("  (true, ${n}{${inits.join(", ")}})", sp)
   e.ln("}", sp)
-  e.ln("${pub_}fn cbor_wr__${n}(v: ${n}) -> cbor.Value {", sp)
+  e.ln("${pub_}fn cbor_wr${sfx}__${n}(v: ${n}) -> cbor.Value {", sp)
   e.ln("  var ps: List[(cbor.Value, cbor.Value)] = []", sp)
   for l in puts {
     e.ln(l, sp)
   }
   e.ln("  cbor.Value.Map(pairs: ps)", sp)
   e.ln("}", sp)
-  e = c.cbor_struct_put(n, pub_, sp, e, put_keys, put_lines, put_omit)
+  e = c.cbor_struct_put(n, sfx, pub_, sp, e, put_keys, put_lines, put_omit)
+  e = cbor_tag_wrappers(n, pub_, sp, e, tag, tag_rule)
   Some(c.cbor_entries(n, pub_, sp, e))
 }
 
@@ -2269,7 +2340,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
 /// field a constant, the fields in declaration order, and when det in RFC 8949
 /// 4.2.1's order of their encoded keys, both computed here; a field with an omit
 /// test is counted out of the map's head before the fields are written.
-fn (var c: Checker) cbor_struct_put(n: Str, pub_: Str, sp: Span, em: Emit, keys: List[List[Int]], lines: List[Str], omit: List[Str]) -> Emit {
+fn (var c: Checker) cbor_struct_put(n: Str, sfx: Str, pub_: Str, sp: Span, em: Emit, keys: List[List[Int]], lines: List[Str], omit: List[Str]) -> Emit {
   var e = em
   var canon: List[Int] = []
   for i in 0..keys.len() {
@@ -2285,7 +2356,7 @@ fn (var c: Checker) cbor_struct_put(n: Str, pub_: Str, sp: Span, em: Emit, keys:
       same = false
     }
   }
-  e.ln("${pub_}fn cbor_put__${n}(v: ${n}, det: Bool, var out: BytesBuilder) -> () ! cbor.CborErr {", sp)
+  e.ln("${pub_}fn cbor_put${sfx}__${n}(v: ${n}, det: Bool, var out: BytesBuilder) -> () ! cbor.CborErr {", sp)
   var any_omit = false
   for t in omit {
     if !t.is_empty() {
@@ -2366,6 +2437,9 @@ fn (var c: Checker) cbor_enum_codec(ed: parser.EnumDecl, em: Emit, var done: Map
       rule = text(a.value.name)
     }
   }
+  // as a struct's (decision 0665): cbor_rd0__E etc. under tag wrappers
+  let (tag, tag_rule) = cbor_tag_of(ed.derive_args)
+  let sfx = if tag is Some(_) { "0" } else { "" }
   var wr: List[Str] = []
   var rd_text: List[Str] = []
   var rd_map: List[Str] = []
@@ -2461,15 +2535,15 @@ fn (var c: Checker) cbor_enum_codec(ed: parser.EnumDecl, em: Emit, var done: Map
     return None
   }
   e.ln("fn cbor_zero__${n}() -> ${n} { ${zero} }", sp)
-  e.ln("fn cbor_put__${n}(v: ${n}, det: Bool, var out: BytesBuilder) -> () ! cbor.CborErr { cbor.put_value(out, cbor_wr__${n}(v), det) }", sp)
-  e.ln("fn cbor_wr__${n}(v: ${n}) -> cbor.Value {", sp)
+  e.ln("fn cbor_put${sfx}__${n}(v: ${n}, det: Bool, var out: BytesBuilder) -> () ! cbor.CborErr { cbor.put_value(out, cbor_wr${sfx}__${n}(v), det) }", sp)
+  e.ln("fn cbor_wr${sfx}__${n}(v: ${n}) -> cbor.Value {", sp)
   e.ln("  match v {", sp)
   for w in wr {
     e.ln(w, sp)
   }
   e.ln("  }", sp)
   e.ln("}", sp)
-  e.ln("fn cbor_rd__${n}(x: cbor.Value, var st: cbor.Unm) -> (Bool, ${n}) {", sp)
+  e.ln("fn cbor_rd${sfx}__${n}(x: cbor.Value, var st: cbor.Unm) -> (Bool, ${n}) {", sp)
   e.ln("  let z = cbor_zero__${n}()", sp)
   e.ln("  if let Some(name) = cbor.key_text(x) {", sp)
   for r in rd_text {
@@ -2491,6 +2565,8 @@ fn (var c: Checker) cbor_enum_codec(ed: parser.EnumDecl, em: Emit, var done: Map
   e.ln("  cbor.bad_variant(st, ${quote_str(n)}, name)", sp)
   e.ln("  (false, z)", sp)
   e.ln("}", sp)
+  // an enum's codec functions are not pub (its entry points are)
+  e = cbor_tag_wrappers(n, "", sp, e, tag, tag_rule)
   e = c.cbor_entries(n, pub_, sp, e)
   Some(e)
 }

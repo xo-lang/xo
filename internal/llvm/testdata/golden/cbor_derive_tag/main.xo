@@ -1,0 +1,66 @@
+// derive Cbor(tag: N, tag_rule: R) (decision 0665): a struct or enum
+// written as tag N around its value wherever it appears, and read back
+// under fxamacker's DecTagOptional, DecTagRequired and DecTagIgnored,
+// with WrongTagError's and "expect CBOR tag value" texts.
+use std/cbor
+
+struct Sign {
+  alg: Int
+  kid: Str
+} derive Cbor(tag: 18)
+
+struct Strict {
+  n: Int
+} derive Cbor(tag: 1001, tag_rule: required)
+
+struct Loose {
+  n: Int
+} derive Cbor(tag: 1002, tag_rule: ignored)
+
+struct Big {
+  n: Int
+} derive Cbor(tag: 18_446_744_073_709_551_615)
+
+enum Mode {
+  Fast
+  Slow
+} derive Cbor(tag: 77)
+
+struct Outer {
+  s: Sign
+  modes: List[Mode]
+  b: Big
+} derive Cbor
+
+fn main(os: Os) {
+  let s = Sign{alg: -7, kid: "k1"}
+  let b = cbor.marshal(s).or_fault("m")
+  os.stdio.println(b.to_hex())
+  let o = Outer{s: s, modes: [Mode.Fast, Mode.Slow], b: Big{n: 1}}
+  let ob = cbor.marshal(o).or_fault("m")
+  os.stdio.println(ob.to_hex())
+  match cbor.unmarshal[Outer](ob) {
+    Ok(x) => os.stdio.println("outer ${x.s.alg} ${x.s.kid} ${x.modes.len()} ${x.b.n}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  // untagged, wrongly tagged, doubly tagged
+  for h in ["a263616c6726636b6964626b31", "d3a263616c6726636b6964626b31", "d2d2a263616c6726636b6964626b31", "d2a263616c6726636b6964626b31", "d9d9f7d2a263616c6726636b6964626b31", "c0a263616c6726636b6964626b31"] {
+    let data = Bytes.from_hex(h).or_fault("hex")
+    match cbor.unmarshal[Sign](data) {
+      Ok(x) => os.stdio.println("sign ${x.alg} ${x.kid}")
+      Err(e) => os.stdio.println("err ${e}")
+    }
+  }
+  for h in ["a1616e01", "d903e9a1616e01", "d903eaa1616e01"] {
+    let data = Bytes.from_hex(h).or_fault("hex")
+    match cbor.unmarshal[Strict](data) {
+      Ok(x) => os.stdio.println("strict ${x.n}")
+      Err(e) => os.stdio.println("err ${e}")
+    }
+    match cbor.unmarshal[Loose](data) {
+      Ok(x) => os.stdio.println("loose ${x.n}")
+      Err(e) => os.stdio.println("err ${e}")
+    }
+  }
+  os.stdio.println(cbor.marshal(Loose{n: 1}).or_fault("m").to_hex())
+}

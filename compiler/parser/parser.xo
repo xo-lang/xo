@@ -1433,7 +1433,8 @@ fn (var p: Parser) parse_struct_body(s0: StructDecl, start: Pos) -> StructDecl {
 
 /// An optional `derive A, B` after a type body, and the derives'
 /// arguments: `derive Json(case: camel)` (decision 0277), each `key:
-/// value` with identifiers, which the checker validates.
+/// value` with identifiers (or a string, a type for `via:`, an integer
+/// for `tag:`), which the checker validates.
 fn (var p: Parser) parse_derive() -> (List[Ident], List[DeriveArg]) {
   var out: List[Ident] = []
   var args: List[DeriveArg] = []
@@ -1464,8 +1465,15 @@ fn (var p: Parser) parse_derive() -> (List[Ident], List[DeriveArg]) {
             p.fail(UNEXPECTED_TOKEN, ssp, "a derive argument is a plain string literal, without interpolation")
           }
           args.push(DeriveArg{span: p.span_from(astart), derive: d, key: key, value: Ident{name: b"", span: ssp}, str: Some(sv)})
+        } else if p.at(Kind.Int) {
+          // an integer, `tag: 18` of derive Cbor (decision 0665): its text
+          // as the value's name, which the checker reads
+          let isp = p.tok.span
+          let raw = p.tok.text
+          p.next()
+          args.push(DeriveArg{span: p.span_from(astart), derive: d, key: key, value: Ident{name: raw, span: isp}})
         } else {
-          let value = p.expect_ident("a derive argument value or a string")
+          let value = p.expect_ident("a derive argument value, a string or an integer")
           args.push(DeriveArg{span: p.span_from(astart), derive: d, key: key, value: value})
         }
         if !p.got(Kind.Comma) {

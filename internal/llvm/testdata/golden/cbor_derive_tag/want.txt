@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+d2a263616c6726636b6964626b31
+a36162dbffffffffffffffffa1616e016173d2a263616c6726636b6964626b31656d6f64657382d84d6446617374d84d64536c6f77
+outer -7 k1 2 1
+sign -7 k1
+err cbor: wrong tag number for Sign, got [19], expected [18]
+err cbor: wrong tag number for Sign, got [18 18], expected [18]
+sign -7 k1
+sign -7 k1
+err cbor: tag number 0 must be followed by text string, got map
+err cbor: cannot unmarshal map into Go value of type Strict (expect CBOR tag value)
+loose 1
+strict 1
+loose 1
+err cbor: wrong tag number for Strict, got [1002], expected [1001]
+loose 1
+d903eaa1616e01
+--- stderr

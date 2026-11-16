@@ -1291,6 +1291,18 @@ fn untag(v0: cbor.Value, var st: cbor.Unm) -> (Bool, cbor.Value) {
   (true, strip_tags(v))
 }
 
+/// Whether built in tag t (0 to 3) may hold v, as untag checks.
+fn builtin_tag_ok(t: Int, v: cbor.Value) -> Bool {
+  match t {
+    0 => v is cbor.Value.TextString(_)
+    1 => match v {
+      cbor.Value.Uint(_) | cbor.Value.Nint(_) | cbor.Value.Float(_) => true
+      _ => false
+    }
+    _ => v is cbor.Value.ByteString(_)
+  }
+}
+
 /// fxamacker's InadmissibleTagContentTypeError for built in tag n over v.
 fn inadmissible(n: Int, v: cbor.Value) -> cbor.CborErr {
   let got = go_type_name(v)
@@ -1704,6 +1716,67 @@ fn bad_variant(var st: cbor.Unm, want: Str, got: Str) {
   if st.err == None {
     st.err = Some(cbor.CborErr.Type(msg: "cannot decode CBOR to enum ${want}: ${got}"))
   }
+}
+
+/// The tag of a type with `derive Cbor(tag: n, tag_rule: rule)` (decision
+/// 0665; fxamacker's registered tag check): the tags around v must be
+/// exactly n (WrongTagError's text otherwise), or none unless the rule is
+/// required (UnmarshalTypeError's "expect CBOR tag value"); `ignored` takes
+/// v as it is. Gives the value inside the tag.
+fn want_tag(v0: cbor.Value, n: Int, rule: Str, want: Str, var st: cbor.Unm) -> (Bool, cbor.Value) {
+  if rule == "ignored" {
+    return (true, v0)
+  }
+  // as fxamacker's parseToValue: self-described tags (55799) dropped,
+  // then the built in tags' contents checked, then the registered tag
+  var v = v0
+  while true {
+    match v {
+      cbor.Value.Tag(num, inner) => {
+        if num.to_bits() != 55799 {
+          break
+        }
+        v = inner
+      }
+      _ => break
+    }
+  }
+  var nums: List[Str] = []
+  var cur = v
+  var one = false
+  while true {
+    match cur {
+      cbor.Value.Tag(num, inner) => {
+        let t = num.to_bits()
+        if t >= 0 && t <= 3 && !builtin_tag_ok(t, inner) {
+          if st.err == None {
+            st.err = Some(inadmissible(t, inner))
+          }
+          return (false, v)
+        }
+        nums.push("${num}")
+        one = nums.len() == 1 && t == n
+        cur = inner
+      }
+      _ => break
+    }
+  }
+  if nums.is_empty() {
+    if rule != "required" {
+      return (true, v)
+    }
+    if st.err == None {
+      st.err = Some(cbor.CborErr.Type(msg: "cannot unmarshal ${kind_name(v)} into Go value of type ${want} (expect CBOR tag value)"))
+    }
+    return (false, v)
+  }
+  if !one {
+    if st.err == None {
+      st.err = Some(cbor.CborErr.Type(msg: "wrong tag number for ${want}, got [${nums.join(" ")}], expected [${UInt64.from_bits(n)}]"))
+    }
+    return (false, v)
+  }
+  (true, cur)
 }
 
 fn bad_arity(var st: cbor.Unm, want: Str, got: Int, need: Int) {

@@ -455,8 +455,13 @@ fn (var c: Checker) wire_keys(t: Int, sd: parser.StructDecl, fields0: List[Field
       c.json_match(t, a)
       continue
     }
+    if d == "Cbor" && (k is "tag" | "tag_rule") {
+      c.cbor_tag_arg(a, sd.derive_args)
+      continue
+    }
     if k != "case" {
-      c.error("XO0413", a.key.span, "unknown argument `${k}` of `derive ${d}`; it takes `case: snake | camel | pascal | kebab`, `match: exact | fold`, or `via:`, `to:` and `from:`")
+      let more = if d == "Cbor" { "`case: snake | camel | pascal | kebab`, `tag: N` and `tag_rule: optional | required | ignored`" } else { "`case: snake | camel | pascal | kebab`, `match: exact | fold`, or `via:`, `to:` and `from:`" }
+      c.error("XO0413", a.key.span, "unknown argument `${k}` of `derive ${d}`; it takes ${more}")
       continue
     }
     if a.str != None {
@@ -533,6 +538,35 @@ fn (var c: Checker) wire_keys(t: Int, sd: parser.StructDecl, fields0: List[Field
 /// its decoder match an object's keys to fields as Go's encoding/json
 /// does, an exact key first, else the first declared field whose key
 /// folds equal.
+/// `derive Cbor(tag: N, tag_rule: R)` (decision 0665): N an unsigned
+/// integer (0 to 2^64 - 1) other than 0 to 3 and 55799, whose meanings
+/// CBOR fixes (XO0422); R one of optional, required, ignored, beside a
+/// `tag:` (XO0413).
+fn (var c: Checker) cbor_tag_arg(a: parser.DeriveArg, all: List[parser.DeriveArg]) {
+  let k = text(a.key.name)
+  let v = text(a.value.name)
+  if k == "tag" {
+    match cbor_tag_bits(a.value.name) {
+      None => c.error("XO0413", a.value.span, "`tag:` takes an unsigned integer, the CBOR tag number (0 to 18446744073709551615): `tag: 18`")
+      Some(n) => {
+        if n >= 0 && n <= 3 {
+          c.error("XO0422", a.value.span, "tag number ${n} has a meaning CBOR fixes (0 and 1 are times, 2 and 3 big integers); a derived type takes another number (decision 0665)")
+        } else if n == 55799 {
+          c.error("XO0422", a.value.span, "tag number 55799 marks self-described CBOR and is dropped on decode; a derived type takes another number (decision 0665)")
+        }
+      }
+    }
+    return
+  }
+  if a.str != None || !(v is "optional" | "required" | "ignored") {
+    c.error("XO0413", a.value.span, "`tag_rule:` is one of optional, required, ignored (decision 0665)")
+    return
+  }
+  if !all.any(fn(o) { text(o.derive.name) == "Cbor" && text(o.key.name) == "tag" }) {
+    c.error("XO0413", a.key.span, "`tag_rule:` goes with a `tag:` of the same `derive Cbor` (decision 0665)")
+  }
+}
+
 fn (var c: Checker) json_match(t: Int, a: parser.DeriveArg) {
   let v = text(a.value.name)
   if a.str != None {
@@ -563,6 +597,10 @@ fn (var c: Checker) variant_wire_names(t: Int, ed: parser.EnumDecl, vs0: List[Va
     let v = text(a.value.name)
     if d == "Cbor" && k == "case" && a.str == None && (v is "snake" | "camel" | "pascal" | "kebab") {
       // the variant names of derive Cbor (decision 0527), read by the derive's expansion
+      continue
+    }
+    if d == "Cbor" && (k is "tag" | "tag_rule") {
+      c.cbor_tag_arg(a, ed.derive_args)
       continue
     }
     if d != "Json" {

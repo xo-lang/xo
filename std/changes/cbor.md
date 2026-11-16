@@ -1,5 +1,20 @@
 # std/cbor changes
 
+
+## 2026-11-16: feature: derive Cbor(tag: N, tag_rule: R), fxamacker's TagSet for a derived type
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89 (features Proven): stdaudit's 11 TagSet rows (TagSet, NewTagSet, TagOptions, the WithTags and WithSharedTags modes, WrongTagError) were gaps; decision 0665 (Accepted)
+- Go reference: fxamacker/cbor v2.9.0 tag.go (TagSet.Add, TagOptions, WrongTagError) and decode.go parseToValue (self-described tags dropped, built in tags checked, then validRegisteredTagNums)
+- Test: golden cbor_derive_tag (go, arm64, LLVM): its output is that of a Go program with fxamacker v2.9.0 and the same TagSet (a struct, an enum, the largest tag number, nested, untagged, wrong, doubled, self-described and tag-0 inputs, the three DecTag modes); test/errorcheck/cbor_tag (XO0422, XO0413)
+- Timing: none (an untagged type's code is unchanged)
+
+`derive Cbor(tag: 18)` writes the type as tag 18 around its value
+wherever it appears and checks it on decode; `tag_rule: required` refuses
+it untagged and `ignored` skips tags. Messages are fxamacker's, with the
+Xo type name in place of Go's `main.T`.
+
 ## 2026-11-16: perf: typed decode reads untagged values in place
 
 - Kind: perf

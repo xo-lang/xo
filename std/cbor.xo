@@ -322,4 +322,5 @@ fn put_bytes(var out: BytesBuilder, b: Bytes)
 fn put_value(var out: BytesBuilder, v: Value, deterministic: Bool) -> () ! CborErr
 fn det_keys(keys: List[Str]) -> List[Str]
 fn bad_arity(var st: Unm, want: Str, got: Int, need: Int)
+fn want_tag(v: Value, n: Int, rule: Str, want: Str, var st: Unm) -> (Bool, Value)
 fn bad_variant(var st: Unm, want: Str, got: Str)

@@ -12,7 +12,9 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.53
 
-None yet.
+- 2.9: `derive Cbor(tag: N, tag_rule: optional | required | ignored)` (decision 0665): a struct or enum written as
+  CBOR tag N around its value wherever it appears and checked on decode as fxamacker's registered tags are; a derive
+  argument may be an unsigned integer literal.
 
 ## Changes in 0.52
 
@@ -1381,6 +1383,14 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
   On an enum a unit variant is the text of its name (`as "x"` on the variant renames it, `derive Cbor(case:)` converts it as `derive Json` does), a variant with fields a one entry
   map from its name to a map of its fields keyed by field name (a lone unnamed `from` field is the value itself), and a
   struct field of an enum type uses the same form; an unknown variant is `CborErr.Type`.
+  `derive Cbor(tag: N)` (decision 0665; N an unsigned integer literal, not 0 to 3 or 55799, `XO0422`) writes the
+  struct's or enum's value as CBOR tag N around it wherever it appears (fxamacker's TagSet with EncTagRequired; the
+  expansion's `cbor_rd0__T`, `cbor_wr0__T` and `cbor_put0__T` are the untagged forms). `tag_rule:` sets the decode
+  as DecTagMode: `optional` (the default) takes the value tagged N or untagged, `required` refuses it untagged
+  (`CborErr.Type`, `cannot unmarshal KIND into Go value of type T (expect CBOR tag value)`), `ignored` skips any tags.
+  Under `optional` and `required` any other tags (self-described 55799 tags dropped first) are `CborErr.Type` with
+  WrongTagError's text, `wrong tag number for T, got [M ...], expected [N]`. `tag_rule:` without `tag:`, or another
+  rule, is `XO0413`.
 
 - `Asn1` (structs without type parameters; decision 0661) gives the struct Go's encoding/asn1 DER encoding through
   `asn1.marshal[T]`, `asn1.unmarshal[T]` and `asn1.unmarshal_prefix[T]`, each with Go's MarshalWithParams /
@@ -4075,13 +4085,13 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0410` | error | checker | reading a Map by index; use `get` or `get_or_fault` (core 3.6) |
 | `XO0411` | error | checker | two fields have one wire key under a derive the struct has (core 2.2, decision 0277) |
 | `XO0412` | error | checker | empty wire name, `as ""` (core 2.2) |
-| `XO0413` | error | checker | unknown derive argument or `case:` or `match:` value, or an argument on a derive that takes none (core 2.2) |
+| `XO0413` | error | checker | unknown derive argument or `case:`, `match:` or `tag_rule:` value, a `tag:` that is not an unsigned integer, a `tag_rule:` without `tag:`, or an argument on a derive that takes none (core 2.2) |
 | `XO0414` | warning | checker | a wire name on a struct with no derive that maps fields to keys (core 2.2) |
 | `XO0415` | error | checker | a top-level constant's initializer performs an effect (core 3.1, decision 0332) |
 | `XO0416` | error | checker | a constant's value holds a handle (`Mutex`, `Chan`, `Atomic`, `Task`, a file) (core 3.1, decision 0332) |
 | `XO0420` | error | checker | constant std/time layout is invalid: unknown field, bad field form, or stray brace (std.md 13.3) |
 | `XO0421` | error | checker | integer literal does not fit the integer type it takes in context (1.6) |
-| `XO0422` | error | checker | unknown or repeated wire name option; the options are `omitempty` and `string` (core 2.2, decisions 0309, 0555); for `derive Proto`, a bad field number, a repeated number or an unknown option (decision 0530) |
+| `XO0422` | error | checker | unknown or repeated wire name option; the options are `omitempty` and `string` (core 2.2, decisions 0309, 0555); for `derive Proto`, a bad field number, a repeated number or an unknown option (decision 0530); for `derive Cbor(tag:)`, a tag number CBOR fixes (0 to 3, 55799; decision 0665) |
 | `XO0423` | error | checker | a field has two wire strings for one format (`json "a" json "b"`) (core 2.2, decision 0315) |
 | `XO0424` | error | checker | a format's wire string (`json`, `sql`, `xml`) on a struct that does not derive that format (core 2.2, decision 0315) |
 | `XO0425` | error | checker | a field type, a type parameter list, or a nested struct that `derive Xml` cannot map (core 2.9, decision 0315) |

@@ -9503,7 +9503,13 @@ fn from_json(j: json.Value) -> Value
     its name; options `omitempty`, `omitzero` (the same here), `keyasint`;
     `-` skips the field; `cbor ",toarray"` on a struct's first field writes the struct as an
     array in field order and reads an array of exactly that many items.
-    `derive Cbor(case:)` is not built yet.
+  - `derive Cbor(tag: N, tag_rule: optional | required | ignored)`
+    (decision 0665, core 2.9) is fxamacker's TagSet for the type: the value
+    is written as tag N wherever it appears (EncTagRequired), and decoded
+    as DecTagOptional, DecTagRequired or DecTagIgnored, with WrongTagError's
+    and `expect CBOR tag value` texts (golden cbor_derive_tag, its output
+    fxamacker v2.9.0's under the same TagSet). One type has one tag; a
+    `Value` takes `Value.Tag` as before.
   - `marshal` writes a map of the fields (keys sorted when `deterministic`),
     Float in the shortest form, Time as integer seconds or, with a fraction,
     a float (fxamacker's TimeUnixDynamic), Duration as integer nanoseconds,

@@ -1,0 +1,37 @@
+// `derive Cbor(tag: N, tag_rule: R)` (decision 0665): N an unsigned
+// integer other than 0 to 3 and 55799; R optional, required or ignored,
+// beside a tag.
+use std/cbor
+
+struct Time0 {
+  a: Int
+} derive Cbor(tag: 1) // ERROR XO0422 "tag number 1 has a meaning CBOR fixes"
+
+struct Self {
+  a: Int
+} derive Cbor(tag: 55799) // ERROR XO0422 "tag number 55799 marks self-described CBOR"
+
+struct Named {
+  a: Int
+} derive Cbor(tag: big) // ERROR XO0413 "`tag:` takes an unsigned integer"
+
+struct Rule {
+  a: Int
+} derive Cbor(tag: 40, tag_rule: always) // ERROR XO0413 "`tag_rule:` is one of optional, required, ignored"
+
+struct Alone {
+  a: Int
+} derive Cbor(tag_rule: required) // ERROR XO0413 "`tag_rule:` goes with a `tag:`"
+
+enum E {
+  A
+  B
+} derive Cbor(tag: 2) // ERROR XO0422 "tag number 2 has a meaning CBOR fixes"
+
+struct Fine {
+  a: Int
+} derive Cbor(tag: 1_000, tag_rule: required)
+
+fn main(os: Os) {
+  os.stdio.println(cbor.marshal(Fine{a: 1}).or_fault("m").to_hex())
+}
