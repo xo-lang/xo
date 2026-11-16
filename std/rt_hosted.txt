@@ -17,3 +17,4 @@ std/png
 std/jpeg
 std/crc64
 std/task
+std/uuid

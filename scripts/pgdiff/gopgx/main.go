@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -228,6 +229,11 @@ func main() {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
+		if rest, ok := strings.CutPrefix(line, "TYPED "); ok {
+			fmt.Println("== " + line)
+			typed(ctx, c, rest)
+			continue
+		}
 		if rest, ok := strings.CutPrefix(line, "BATCH "); ok {
 			fmt.Println("== " + line)
 			batch(ctx, c, rest)
@@ -395,4 +401,72 @@ func colTypes(fs []pgconn.FieldDescription) string {
 		out = append(out, fmt.Sprintf("%s:%s:%s:%s", f.Name, name, length, ps))
 	}
 	return "types " + strings.Join(out, " ")
+}
+
+// typed is a `TYPED KIND SELECT ...` line (decision 0679): each cell of
+// the result scanned by pgx's pgtype from its text, as KIND (uuid, date,
+// time, interval, inet), printed as std/sql's typed reader's value's
+// Debug text, NULL, or "error" when pgtype refuses it.
+func typed(ctx context.Context, c *pgconn.PgConn, rest string) {
+	kind, query, _ := strings.Cut(rest, " ")
+	res, err := readAll(c.Exec(ctx, query))
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) {
+		fmt.Printf("error %s %s\n", pe.Code, pe.Message)
+		return
+	} else if err != nil {
+		fmt.Println("error", err)
+		return
+	}
+	m := pgtype.NewMap()
+	r := res[len(res)-1]
+	for _, row := range r.Rows {
+		var out []string
+		for i, src := range row {
+			if src == nil {
+				out = append(out, "NULL")
+				continue
+			}
+			oid := r.FieldDescriptions[i].DataTypeOID
+			out = append(out, typedCell(m, kind, oid, src))
+		}
+		fmt.Println("typed " + strings.Join(out, " | "))
+	}
+}
+
+func typedCell(m *pgtype.Map, kind string, oid uint32, src []byte) string {
+	switch kind {
+	case "uuid":
+		var u pgtype.UUID
+		if m.Scan(oid, pgtype.TextFormatCode, src, &u) != nil {
+			return "error"
+		}
+		return q(u.String())
+	case "date":
+		var d pgtype.Date
+		if m.Scan(oid, pgtype.TextFormatCode, src, &d) != nil || d.InfinityModifier != pgtype.Finite {
+			return "error"
+		}
+		return fmt.Sprintf("Date{year: %d, month: %d, day: %d}", d.Time.Year(), int(d.Time.Month()), d.Time.Day())
+	case "time":
+		var t pgtype.Time
+		if m.Scan(oid, pgtype.TextFormatCode, src, &t) != nil {
+			return "error"
+		}
+		us := t.Microseconds
+		return fmt.Sprintf("ClockTime{hour: %d, minute: %d, second: %d, nanos: %d}", us/3600000000, us/60000000%60, us/1000000%60, us%1000000*1000)
+	case "interval":
+		var iv pgtype.Interval
+		if m.Scan(oid, pgtype.TextFormatCode, src, &iv) != nil {
+			return "error"
+		}
+		return fmt.Sprintf("Interval{months: %d, days: %d, micros: %d}", iv.Months, iv.Days, iv.Microseconds)
+	case "inet":
+		var p netip.Prefix
+		if m.Scan(oid, pgtype.TextFormatCode, src, &p) != nil {
+			return "error"
+		}
+		return q(p.String())
+	}
+	return "error unknown kind " + kind
 }

@@ -17,6 +17,8 @@
 //   with `open_driver`.
 use std/json
 use std/time
+use std/uuid
+use std/netip
 
 /// A query parameter. `$1` is `args[0]`.
 enum SqlValue {
@@ -44,6 +46,27 @@ fn bytes(b: Bytes) -> SqlValue
 /// JsonText of `json.encode_str(v)`.
 fn json[T: Json](v: T) -> SqlValue
 fn array(items: List[SqlValue]) -> SqlValue
+/// Parameters of the Postgres types the typed readers read (decision
+/// 0679), sent as their Postgres text, which the server parses by the
+/// parameter's type: `uuid` its canonical text, `date` ISO (`0044-03-15
+/// BC` for year -43), `time_of_day` `HH:MM:SS.ffffff`, `interval` its
+/// months, days and microseconds, `prefix` its text (an inet or cidr).
+fn uuid(u: uuid.Uuid) -> SqlValue
+fn date(d: time.Date) -> SqlValue
+fn time_of_day(t: time.ClockTime) -> SqlValue
+fn interval(i: Interval) -> SqlValue
+fn prefix(p: netip.Prefix) -> SqlValue
+
+/// A Postgres interval (pgx's pgtype.Interval, decision 0679): months,
+/// days and microseconds apart, as Postgres keeps them (a month is not a
+/// fixed number of days, nor a day of hours across a DST change).
+struct Interval {
+  months: Int
+  days: Int
+  micros: Int
+} derive Eq
+/// The interval as a Duration when it has no months and no days.
+fn (i: Interval) duration() -> Duration?
 /// An SQL identifier in double quotes, a double quote doubled (Postgres's
 /// quote_ident, pgx's Identifier.Sanitize).
 fn quote_ident(name: Str) -> Str
@@ -436,6 +459,22 @@ fn (r: Row) bool_opt(name: Str) -> Bool? ! SqlErr
 fn (r: Row) time_opt(name: Str) -> Time? ! SqlErr
 fn (r: Row) bytes(name: Str) -> Bytes ! SqlErr
 fn (r: Row) bytes_opt(name: Str) -> Bytes? ! SqlErr
+/// Typed readers of Postgres types sent as text (decision 0679), parsed
+/// as pgx's pgtype parses them: a uuid column; a date (ISO, `BC` years as
+/// year 1 - n, so 1 BC is year 0; infinity and -infinity are Mismatch); a
+/// time (`24:00:00` is hour 24); an interval in the default IntervalStyle
+/// (`1 year 2 mons 3 days 04:05:06.5`); an inet or cidr (an inet with no
+/// mask is the address's full length). Another value is Mismatch.
+fn (r: Row) uuid(name: Str) -> uuid.Uuid ! SqlErr
+fn (r: Row) uuid_opt(name: Str) -> uuid.Uuid? ! SqlErr
+fn (r: Row) date(name: Str) -> time.Date ! SqlErr
+fn (r: Row) date_opt(name: Str) -> time.Date? ! SqlErr
+fn (r: Row) time_of_day(name: Str) -> time.ClockTime ! SqlErr
+fn (r: Row) time_of_day_opt(name: Str) -> time.ClockTime? ! SqlErr
+fn (r: Row) interval(name: Str) -> Interval ! SqlErr
+fn (r: Row) interval_opt(name: Str) -> Interval? ! SqlErr
+fn (r: Row) prefix(name: Str) -> netip.Prefix ! SqlErr
+fn (r: Row) prefix_opt(name: Str) -> netip.Prefix? ! SqlErr
 /// A json or jsonb column (or text) decoded into T; a decode error is
 /// Mismatch(column, msg).
 fn (r: Row) json[T: Json](name: Str) -> T ! SqlErr

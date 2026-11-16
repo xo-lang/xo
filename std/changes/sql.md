@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-16: feature: typed readers for uuid, date, time, interval, inet and cidr (decision 0679)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #110's triage of the open pgtype rows (task #113, the owner's order: Postgres types first)
+- Go reference: pgx v5.11.0 pgtype (UUID, Date, Time, Interval, InetCodec into netip.Prefix: their DecodeText), Copyright (c) 2013-2021 Jack Christensen, MIT License
+- Test: golden sql_pg_types (go, arm64, LLVM: every case and the Mismatch ones through a driver returning Postgres text); scripts/pg-diff.sh TYPED cases against pgx on postgres:17-alpine and postgres:14-alpine (72 statements, no difference)
+- Shipped in: not yet released
+
+`Row.uuid`, `date`, `time_of_day`, `interval` and `prefix` (with `_opt`) parse a column's Postgres text into `uuid.Uuid`, `time.Date`, `time.ClockTime`, `sql.Interval` and `netip.Prefix`; `sql.uuid`, `date`, `time_of_day`, `interval` and `prefix` make the parameters. Before, these columns could only be read as `Row.str` text.
+
 ## 2026-11-15: feature: pool statistics and tracing; fix: a cancelled task lost a pool permit
 
 - Kind: feature and fix

@@ -4037,7 +4037,12 @@ Results are read in text format and decoded by the column's type:
 | `bytea` | `Blob` | `bytes` |
 | `json`, `jsonb` | `JsonText` | `json[T]`, `str` |
 | arrays of the types above (one dimension) | `Array` | `ints`, `strs`, `items` |
-| every other type (`numeric`, `uuid`, `date`, `time`, `interval`, `inet`, enums, ...) | `Text`, the server's text | `str` |
+| `uuid` | `Text` | `uuid` (a `uuid.Uuid`), `str` |
+| `date` | `Text` | `date` (a `time.Date`), `time` (its midnight in UTC), `str` |
+| `time` | `Text` | `time_of_day` (a `time.ClockTime`), `str` |
+| `interval` | `Text` | `interval` (an `sql.Interval`), `str` |
+| `inet`, `cidr` | `Text` | `prefix` (a `netip.Prefix`), `str` |
+| every other type (`numeric`, `timetz`, ranges, enums, ...) | `Text`, the server's text | `str` |
 
 NULL is `Null` everywhere. Accessors convert where no information is
 lost: `float` reads `Integer` and a `numeric` Text that parses as a
@@ -4049,7 +4054,25 @@ Parameters are sent in text format with the type left to the server
 `Real` as their decimal text (`NaN`, `Infinity`), `Flag` as `true` or
 `false`, `At` as RFC 3339 with nanoseconds, `JsonText` as is, `Array`
 as an array literal (`{1,2,NULL}`, elements quoted as Postgres
-requires). A UUID parameter is `sql.str(id)`: the server converts it.
+requires). A UUID parameter is `sql.str(id)` or `sql.uuid(u)`: the server converts it.
+
+The typed readers (decision 0679) parse the server's text as pgx's
+pgtype does, each with an `_opt` form for NULL, and their parameters
+write the Postgres text:
+
+```
+fn (r: Row) uuid(name: Str) -> uuid.Uuid ! SqlErr               // also uuid_opt
+fn (r: Row) date(name: Str) -> time.Date ! SqlErr               // also date_opt; BC years as 1 - n (1 BC is year 0)
+fn (r: Row) time_of_day(name: Str) -> time.ClockTime ! SqlErr   // also _opt; 24:00:00 is hour 24
+fn (r: Row) interval(name: Str) -> Interval ! SqlErr            // also interval_opt
+fn (r: Row) prefix(name: Str) -> netip.Prefix ! SqlErr          // also prefix_opt; an inet with no mask is a full length prefix
+struct Interval { months: Int, days: Int, micros: Int }         // pgx's Interval: kept apart, as Postgres keeps them
+fn (i: Interval) duration() -> Duration?                        // when it has no months and no days
+pub fn uuid(u: uuid.Uuid) -> SqlValue                           // also date, time_of_day, interval, prefix
+```
+
+`infinity` and `-infinity` dates are Mismatch for now (a `Bound` reader
+is decision 0679's next step); a `timetz`'s offset is read with `str`.
 
 The values and accessors are 10.2 and 10.4's.
 

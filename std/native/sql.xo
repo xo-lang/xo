@@ -13,6 +13,8 @@
 use std/json as js
 use std/sql
 use std/time
+use std/uuid
+use std/netip
 use std/task
 use native/rt
 use native/rtsql
@@ -744,6 +746,41 @@ fn float(f: Float) -> sql.SqlValue { sql.SqlValue.Real(f: f) }
 fn bool(b: Bool) -> sql.SqlValue { sql.SqlValue.Flag(b: b) }
 
 fn time(t: Time) -> sql.SqlValue { sql.SqlValue.At(t: t) }
+
+// Parameters of the typed readers' types (decision 0679): their
+// Postgres text.
+
+fn pad(n: Int, w: Int) -> Str {
+  var t = "${n}"
+  while t.len() < w {
+    t = "0" + t
+  }
+  t
+}
+
+fn uuid(u: uuid.Uuid) -> sql.SqlValue { sql.SqlValue.Text(s: u.display()) }
+
+fn date(d: time.Date) -> sql.SqlValue {
+  if d.year <= 0 {
+    return sql.SqlValue.Text(s: "${pad(1 - d.year, 4)}-${pad(d.month, 2)}-${pad(d.day, 2)} BC")
+  }
+  sql.SqlValue.Text(s: "${pad(d.year, 4)}-${pad(d.month, 2)}-${pad(d.day, 2)}")
+}
+
+fn time_of_day(t: time.ClockTime) -> sql.SqlValue {
+  sql.SqlValue.Text(s: "${pad(t.hour, 2)}:${pad(t.minute, 2)}:${pad(t.second, 2)}.${pad(t.nanos / 1000, 6)}")
+}
+
+fn interval(i: sql.Interval) -> sql.SqlValue { sql.SqlValue.Text(s: "${i.months} mon ${i.days} day ${i.micros} microsecond") }
+
+fn prefix(p: netip.Prefix) -> sql.SqlValue { sql.SqlValue.Text(s: p.display()) }
+
+fn interval_duration(i: sql.Interval) -> Duration? {
+  if i.months != 0 || i.days != 0 {
+    return None
+  }
+  Some(Duration.from_nanos(i.micros * 1000))
+}
 
 fn bytes(b: Bytes) -> sql.SqlValue { sql.SqlValue.Blob(b: b) }
 
@@ -2243,6 +2280,241 @@ fn (r: Row) time_opt(name: Str) -> Time? ! sql.SqlErr {
       None => Err(mismatch(name, "a time", Text(s: s)))
     }
     v => Err(mismatch(name, "a time", v))
+  }
+}
+
+// The typed readers (decision 0679): a column's Postgres text parsed as
+// pgx's pgtype parses it.
+
+/// The text of a column a typed reader parses, None for NULL.
+fn typed_text(r: Row, name: Str, want: Str) -> Str? ! sql.SqlErr {
+  match r.get(name)? {
+    Null => None
+    Text(s) => Some(s)
+    v => Err(mismatch(name, want, v))
+  }
+}
+
+fn bad_text(name: Str, want: Str, s: Str) -> sql.SqlErr { mismatch(name, want, sql.SqlValue.Text(s: s)) }
+
+/// s when it is all ASCII digits (not empty), as an Int.
+fn pg_digits(s: Str) -> Int? {
+  if s.is_empty() {
+    return None
+  }
+  for c in s.bytes() {
+    if c < 48 || c > 57 {
+      return None
+    }
+  }
+  Int.parse(s)
+}
+
+/// strconv.ParseInt's syntax: an optional sign, then digits.
+fn pg_int(s: Str) -> Int? {
+  if s.starts_with("+") {
+    return pg_digits(s[1..s.len()])
+  }
+  if s.starts_with("-") {
+    return pg_digits(s[1..s.len()]).map(fn(n) { -n })
+  }
+  pg_digits(s)
+}
+
+/// A fraction's digits (at most 9) as nanoseconds.
+fn pg_frac_nanos(f: Str) -> Int? {
+  if f.len() > 9 {
+    return None
+  }
+  var n = pg_digits(f)?
+  var k = f.len()
+  while k < 9 {
+    n *= 10
+    k += 1
+  }
+  Some(n)
+}
+
+/// A date column's text (pgx's Date.DecodeText): YYYY-MM-DD, ` BC` years
+/// as 1 - n; infinity and -infinity are not dates.
+fn pg_date(s: Str) -> time.Date? {
+  var t = s
+  var bc = false
+  if t.ends_with(" BC") {
+    bc = true
+    t = t[0..t.len() - 3]
+  }
+  let ps = t.split("-")
+  if ps.len() != 3 || ps[1].len() != 2 || ps[2].len() != 2 || ps[0].len() < 4 {
+    return None
+  }
+  let y = pg_digits(ps[0])?
+  let m = pg_digits(ps[1])?
+  let d = pg_digits(ps[2])?
+  if m < 1 || m > 12 || d < 1 || d > 31 {
+    return None
+  }
+  Some(time.Date{year: if bc { 1 - y } else { y }, month: m, day: d})
+}
+
+/// A time column's text (pgx's Time.DecodeText): HH:MM:SS with an
+/// optional fraction; 24:00:00 is the end of the day.
+fn pg_time_of_day(s: Str) -> time.ClockTime? {
+  if s.len() < 8 || s[2..3] != ":" || s[5..6] != ":" {
+    return None
+  }
+  let h = pg_digits(s[0..2])?
+  let m = pg_digits(s[3..5])?
+  let sec = pg_digits(s[6..8])?
+  var nanos = 0
+  if s.len() > 8 {
+    if s[8..9] != "." {
+      return None
+    }
+    nanos = pg_frac_nanos(s[9..s.len()])?
+  }
+  if h > 24 || m > 59 || sec > 59 || (h == 24 && (m > 0 || sec > 0 || nanos > 0)) {
+    return None
+  }
+  Some(time.ClockTime{hour: h, minute: m, second: sec, nanos: nanos})
+}
+
+/// An interval column's text in IntervalStyle postgres (pgx's
+/// Interval.DecodeText): `N unit` pairs (year, mon, day, singular or
+/// plural), then an optional `[-]H:MM:SS[.f]`.
+fn pg_interval(s: Str) -> sql.Interval? {
+  let ps = s.split(" ")
+  var months = 0
+  var days = 0
+  var micros = 0
+  var i = 0
+  while i + 1 < ps.len() {
+    let n = pg_int(ps[i])?
+    match ps[i + 1] {
+      "year" | "years" => months += n * 12
+      "mon" | "mons" => months += n
+      "day" | "days" => days += n
+      _ => return None
+    }
+    i += 2
+  }
+  if ps.len() % 2 == 1 {
+    let tp = ps[ps.len() - 1].split(":")
+    if tp.len() != 3 {
+      return None
+    }
+    var hs = tp[0]
+    let neg = hs.starts_with("-")
+    if neg || hs.starts_with("+") {
+      hs = hs[1..hs.len()]
+    }
+    let h = pg_digits(hs)?
+    let m = pg_digits(tp[1])?
+    var secs = tp[2]
+    var frac = 0
+    if let Some(dot) = secs.find(".") {
+      frac = pg_frac_nanos(secs[dot + 1..secs.len()])? / 1000
+      secs = secs[0..dot]
+    }
+    let sec = pg_digits(secs)?
+    let us = h * 3600000000 + m * 60000000 + sec * 1000000 + frac
+    micros = if neg { -us } else { us }
+  }
+  Some(sql.Interval{months: months, days: days, micros: micros})
+}
+
+/// An inet or cidr column's text (pgx's InetCodec): a prefix, or an
+/// address as its full length prefix.
+fn pg_prefix(s: Str) -> netip.Prefix? {
+  if s.contains("/") {
+    return netip.parse_prefix(s).ok()
+  }
+  let a = netip.parse_addr(s).ok()?
+  netip.prefix_from(a, a.bits)
+}
+
+fn (r: Row) uuid_opt(name: Str) -> uuid.Uuid? ! sql.SqlErr {
+  match typed_text(r, name, "a uuid")? {
+    None => None
+    Some(s) => match uuid.parse(s) {
+      Ok(u) => Some(u)
+      Err(_) => Err(bad_text(name, "a uuid", s))
+    }
+  }
+}
+
+fn (r: Row) uuid(name: Str) -> uuid.Uuid ! sql.SqlErr {
+  match r.uuid_opt(name)? {
+    Some(u) => u
+    None => Err(mismatch(name, "a uuid", sql.SqlValue.Null))
+  }
+}
+
+fn (r: Row) date_opt(name: Str) -> time.Date? ! sql.SqlErr {
+  match typed_text(r, name, "a date")? {
+    None => None
+    Some(s) => match pg_date(s) {
+      Some(d) => Some(d)
+      None => Err(bad_text(name, "a date", s))
+    }
+  }
+}
+
+fn (r: Row) date(name: Str) -> time.Date ! sql.SqlErr {
+  match r.date_opt(name)? {
+    Some(d) => d
+    None => Err(mismatch(name, "a date", sql.SqlValue.Null))
+  }
+}
+
+fn (r: Row) time_of_day_opt(name: Str) -> time.ClockTime? ! sql.SqlErr {
+  match typed_text(r, name, "a time of day")? {
+    None => None
+    Some(s) => match pg_time_of_day(s) {
+      Some(t) => Some(t)
+      None => Err(bad_text(name, "a time of day", s))
+    }
+  }
+}
+
+fn (r: Row) time_of_day(name: Str) -> time.ClockTime ! sql.SqlErr {
+  match r.time_of_day_opt(name)? {
+    Some(t) => t
+    None => Err(mismatch(name, "a time of day", sql.SqlValue.Null))
+  }
+}
+
+fn (r: Row) interval_opt(name: Str) -> sql.Interval? ! sql.SqlErr {
+  match typed_text(r, name, "an interval")? {
+    None => None
+    Some(s) => match pg_interval(s) {
+      Some(i) => Some(i)
+      None => Err(bad_text(name, "an interval", s))
+    }
+  }
+}
+
+fn (r: Row) interval(name: Str) -> sql.Interval ! sql.SqlErr {
+  match r.interval_opt(name)? {
+    Some(i) => i
+    None => Err(mismatch(name, "an interval", sql.SqlValue.Null))
+  }
+}
+
+fn (r: Row) prefix_opt(name: Str) -> netip.Prefix? ! sql.SqlErr {
+  match typed_text(r, name, "an inet")? {
+    None => None
+    Some(s) => match pg_prefix(s) {
+      Some(p) => Some(p)
+      None => Err(bad_text(name, "an inet", s))
+    }
+  }
+}
+
+fn (r: Row) prefix(name: Str) -> netip.Prefix ! sql.SqlErr {
+  match r.prefix_opt(name)? {
+    Some(p) => p
+    None => Err(mismatch(name, "an inet", sql.SqlValue.Null))
   }
 }
 

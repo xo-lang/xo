@@ -64,3 +64,9 @@ BATCH INSERT INTO t (name) VALUES ('be') || SELECT 1/0
 SELECT 1 AS in_failed_tx
 ROLLBACK
 SELECT count(*) AS c FROM t WHERE name = 'be'
+TYPED uuid SELECT 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid AS a, '{A0EEBC99-9C0B4EF8-BB6D-6BB9BD380A11}'::uuid AS b, NULL::uuid AS n, gen_random_uuid() IS NOT NULL AS t
+TYPED date SELECT '2026-10-20'::date AS a, '0044-03-15 BC'::date AS b, '0001-01-01 BC'::date AS c, '10000-01-01'::date AS d, '5874897-12-31'::date AS e, '4713-01-01 BC'::date AS f, NULL::date AS n
+TYPED time SELECT '12:30:00'::time AS a, '00:00:00.000001'::time AS b, '23:59:59.999999'::time AS c, '24:00:00'::time AS d, '12:30:00.5'::time(1) AS e, NULL::time AS n
+TYPED interval SELECT '1 year 2 mons 3 days 04:05:06.789'::interval AS a, '0'::interval AS b, '3 days'::interval AS c, '-1 years -2 mons +3 days -04:05:06'::interval AS d, '1 day -1 second'::interval AS e, '100 hours'::interval AS f, '-0.5 seconds'::interval AS g, '1 week'::interval AS h, '-178000000 years'::interval AS i, '1 microsecond'::interval AS j
+TYPED inet SELECT '192.168.0.1'::inet AS a, '10.1.2.3/8'::inet AS b, '10.0.0.0/8'::cidr AS c, '::1'::inet AS d, '2001:db8::/32'::cidr AS e, '::ffff:1.2.3.4'::inet AS f, NULL::inet AS n
+SELECT '14 mon -3 day 5000001 microsecond'::interval::text AS i, '0044-03-15 BC'::date::text AS d, '07:05:03.120000'::time::text AS t

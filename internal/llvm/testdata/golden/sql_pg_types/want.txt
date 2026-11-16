@@ -1,0 +1,49 @@
+exit 0
+--- stdout
+uuid c0: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+uuid c1: "00000000-0000-0000-0000-000000000000"
+uuid c2: column c2: expected a uuid, found NULL
+uuid c3: column c3: expected a uuid, found text
+uuid c4: column c4: expected a uuid, found an integer
+uuid_opt c2: None
+date c0: Date{year: 2026, month: 10, day: 20}
+date c1: Date{year: -43, month: 3, day: 15}
+date c2: Date{year: 0, month: 1, day: 1}
+date c3: Date{year: 10000, month: 1, day: 1}
+date c4: column c4: expected a date, found text
+date c5: column c5: expected a date, found text
+date c6: column c6: expected a date, found text
+date c7: column c7: expected a date, found NULL
+date_opt c7: None
+time c0: ClockTime{hour: 12, minute: 30, second: 0, nanos: 0}
+time c1: ClockTime{hour: 0, minute: 0, second: 0, nanos: 1000}
+time c2: ClockTime{hour: 23, minute: 59, second: 59, nanos: 999999000}
+time c3: ClockTime{hour: 24, minute: 0, second: 0, nanos: 0}
+time c4: column c4: expected a time of day, found text
+time c5: column c5: expected a time of day, found text
+time c6: column c6: expected a time of day, found text
+time c7: column c7: expected a time of day, found text
+interval c0: Interval{months: 14, days: 3, micros: 14706789000}
+interval c1: Interval{months: 0, days: 0, micros: 0}
+interval c2: Interval{months: 0, days: 3, micros: 0}
+interval c3: Interval{months: -14, days: 3, micros: -14706000000}
+interval c4: Interval{months: 0, days: 1, micros: -1000000}
+interval c5: Interval{months: 0, days: 0, micros: 360000000000}
+interval c6: Interval{months: 0, days: 0, micros: -500000}
+interval c7: column c7: expected an interval, found text
+interval c8: column c8: expected an interval, found text
+duration: Some(1.5ms) None
+inet c0: "192.168.0.1/32"
+inet c1: "10.1.2.3/8"
+inet c2: "10.0.0.0/8"
+inet c3: "::1/128"
+inet c4: "2001:db8::/32"
+inet c5: column c5: expected an inet, found text
+inet c6: column c6: expected an inet, found text
+param Text(s: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
+param Text(s: "2026-03-09")
+param Text(s: "0044-03-15 BC")
+param Text(s: "07:05:03.120000")
+param Text(s: "14 mon -3 day 5000001 microsecond")
+param Text(s: "10.1.0.0/16")
+--- stderr

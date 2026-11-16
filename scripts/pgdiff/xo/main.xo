@@ -67,6 +67,22 @@ fn main(os: Os) ! {
       continue
     }
     os.stdio.println("== ${line}")
+    if line.starts_with("TYPED ") {
+      let rest = line[6..]
+      let (kind, q) = match rest.find(" ") {
+        Some(i) => (rest[0..i], rest[i + 1..])
+        None => (rest, "")
+      }
+      match typed_lines(db, kind, q) {
+        Ok(out) => {
+          for l in out {
+            os.stdio.println(l)
+          }
+        }
+        Err(e) => os.stdio.println(err_line(e))
+      }
+      continue
+    }
     if line.starts_with("BATCH ") {
       match db.batch(batch_items(line[6..])) {
         Ok(sets) => {
@@ -159,4 +175,34 @@ fn batch_items(s: Str) -> List[sql.BatchQuery] {
     }
   }
   out
+}
+
+/// A `TYPED KIND SELECT ...` line (decision 0679): each cell read by the
+/// typed reader for KIND, as the reference prints pgx's pgtype value:
+/// its Debug text, NULL, or "error" for a Mismatch.
+fn typed_lines(db: sql.Db, kind: Str, q: Str) -> List[Str] ! sql.SqlErr uses net.dial {
+  let rows = db.rows(q, [])?
+  defer rows.close()
+  var out: List[Str] = []
+  while let Some(r) = rows.next()? {
+    let cells = r.columns().map(fn(c) { typed_cell(r, kind, c) })
+    out.push("typed " + cells.join(" | "))
+  }
+  out
+}
+
+fn typed_cell(r: sql.Row, kind: Str, c: Str) -> Str {
+  let got: Result[Str?, sql.SqlErr] = match kind {
+    "uuid" => r.uuid_opt(c).map(fn(o) { o.map(fn(u) { u.display().debug() }) })
+    "date" => r.date_opt(c).map(fn(o) { o.map(fn(d) { d.debug() }) })
+    "time" => r.time_of_day_opt(c).map(fn(o) { o.map(fn(t) { t.debug() }) })
+    "interval" => r.interval_opt(c).map(fn(o) { o.map(fn(i) { i.debug() }) })
+    "inet" => r.prefix_opt(c).map(fn(o) { o.map(fn(p) { p.display().debug() }) })
+    _ => Ok(Some("error unknown kind ${kind}"))
+  }
+  match got {
+    Ok(Some(t)) => t
+    Ok(None) => "NULL"
+    Err(_) => "error"
+  }
 }

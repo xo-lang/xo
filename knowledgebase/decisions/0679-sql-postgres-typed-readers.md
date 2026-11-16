@@ -74,3 +74,13 @@ stdaudit rows for these types (sql 75 agent hours).
   variants; the typed readers give the same values without that.
 - Binary result format and pgx's codec registry: not planned (decision
   0655 rule 8, design choice by decision 0278).
+
+## Implementation
+
+- 2026-11-16 (Xo Lang 3): uuid, date, time of day, interval, inet and
+  cidr: std/native/sql.xo and std/rt/sqltypes.go (the same parsers;
+  std/uuid is rt hosted, std/rt_hosted.txt, so the Go backend returns
+  its Uuid), golden sql_pg_types, pg-diff TYPED cases equal to pgx on
+  Postgres 14 and 17. Still open in this group: the array OIDs (a typed
+  list reader), timetz, the pgtype JSON methods of UUID and Date, and
+  infinity (`Bound`).

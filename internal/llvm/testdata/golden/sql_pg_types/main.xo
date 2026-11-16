@@ -1,0 +1,124 @@
+// std/sql's typed readers of Postgres types (decision 0679) on every
+// backend, through a driver that returns Postgres's text output: uuid,
+// date (BC, wide years), time of day (24:00:00, fractions), interval
+// (IntervalStyle postgres), inet and cidr; NULL through the _opt forms,
+// other values as Mismatch; and the parameters' text.
+use std/sql
+use std/time
+use std/uuid
+use std/netip
+
+
+struct Log {
+  lines: Mutex[List[Str]]
+  next: Atomic[Int]
+}
+
+fn (l: Log) add(s: Str) { l.lines.with(fn(var xs) { xs.push(s) }) }
+
+struct FakeDriver {
+  log: Log
+  fail_password: Bool
+}
+
+struct FakeConn {
+  id: Int
+  log: Log
+  broken: Atomic[Bool]
+}
+
+fn (d: FakeDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr uses net.dial {
+  if d.fail_password {
+    return Err(sql.SqlErr.Conn(msg: "password authentication failed"))
+  }
+  let id = d.log.next.add(1)
+  d.log.add("connect ${id} ${dsn}")
+  FakeConn{id: id, log: d.log, broken: Atomic.new(false)}
+}
+
+fn (c: FakeConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  if q == "PARAMS" {
+    // each parameter as the driver receives it
+    return sql.DriverRows{columns: ["p"], rows: args.map(fn(a) { [a] })}
+  }
+  // one row of Postgres text: a column per case, NULL as sql.null()
+  var cols: List[Str] = []
+  var vals: List[sql.SqlValue] = []
+  for (i, t) in q.split(" ;; ").indexed() {
+    cols.push("c${i}")
+    vals.push(if t == "NULL" { sql.null() } else if t == "INT" { sql.int(7) } else { sql.str(t) })
+  }
+  sql.DriverRows{columns: cols, rows: [vals]}
+}
+
+fn (c: FakeConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  c.log.add("conn ${c.id} exec ${q}")
+  sql.ExecResult{rows_affected: args.len(), last_insert_id: 0}
+}
+
+fn (c: FakeConn) begin() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} BEGIN") }
+fn (c: FakeConn) commit() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} COMMIT") }
+fn (c: FakeConn) rollback() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} ROLLBACK") }
+fn (c: FakeConn) ping() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} ping") }
+fn (c: FakeConn) close() { c.log.add("conn ${c.id} close") }
+fn (c: FakeConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no COPY"))
+}
+
+fn (c: FakeConn) is_broken() -> Bool { c.broken.get() }
+
+/// No statements on the server: std/sql runs the text each time.
+fn (c: FakeConn) prepare(q: Str) -> sql.DriverStmt? ! sql.SqlErr { None }
+
+/// No LISTEN/NOTIFY and no notices (decision 0648 item 14).
+fn (c: FakeConn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no LISTEN/NOTIFY"))
+}
+
+fn (c: FakeConn) notices() -> List[sql.Notice] { [] }
+
+fn (c: FakeConn) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr {
+  Err(sql.SqlErr.Driver(msg: "fake: no batches"))
+}
+
+fn show[T: Debug](label: Str, r: Result[T, sql.SqlErr]) -> Str {
+  match r {
+    Ok(v) => "${label}: ${v:?}"
+    Err(e) => "${label}: ${e}"
+  }
+}
+
+fn main(os: Os) ! {
+  let log = Log{lines: Mutex.new([]), next: Atomic.new(0)}
+  let db = sql.open_driver(os.net, FakeDriver{log: log, fail_password: false}, "dsn")?
+  let us = db.query_one("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11 ;; 00000000-0000-0000-0000-000000000000 ;; NULL ;; not-a-uuid ;; INT", [])?
+  for c in us.columns() {
+    os.stdio.println(show("uuid ${c}", us.uuid(c).map(fn(u) { u.display() })))
+  }
+  os.stdio.println(show("uuid_opt c2", us.uuid_opt("c2")))
+  let ds = db.query_one("2026-10-20 ;; 0044-03-15 BC ;; 0001-01-01 BC ;; 10000-01-01 ;; infinity ;; -infinity ;; 2026-1-2 ;; NULL", [])?
+  for c in ds.columns() {
+    os.stdio.println(show("date ${c}", ds.date(c)))
+  }
+  os.stdio.println(show("date_opt c7", ds.date_opt("c7")))
+  let ts = db.query_one("12:30:00 ;; 00:00:00.000001 ;; 23:59:59.999999 ;; 24:00:00 ;; 24:00:01 ;; 12:30 ;; 12:30:00+05:30 ;; 1:02:03", [])?
+  for c in ts.columns() {
+    os.stdio.println(show("time ${c}", ts.time_of_day(c)))
+  }
+  let is = db.query_one("1 year 2 mons 3 days 04:05:06.789 ;; 00:00:00 ;; 3 days ;; -1 years -2 mons +3 days -04:05:06 ;; 1 day -00:00:01 ;; 100:00:00 ;; -00:00:00.5 ;; 1 week ;; 2 mons 1", [])?
+  for c in is.columns() {
+    os.stdio.println(show("interval ${c}", is.interval(c)))
+  }
+  os.stdio.println("duration: ${(is.interval("c1")? with {micros: 1500}).duration():?} ${is.interval("c0")?.duration():?}")
+  let ps = db.query_one("192.168.0.1 ;; 10.1.2.3/8 ;; 10.0.0.0/8 ;; ::1 ;; 2001:db8::/32 ;; 300.1.1.1 ;; 10.0.0.0/33", [])?
+  for c in ps.columns() {
+    os.stdio.println(show("inet ${c}", ps.prefix(c).map(fn(p) { p.display() })))
+  }
+  let u = uuid.parse("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")?
+  let p = netip.parse_prefix("10.1.0.0/16")?
+  let params = [sql.uuid(u), sql.date(time.Date{year: 2026, month: 3, day: 9}), sql.date(time.Date{year: -43, month: 3, day: 15}), sql.time_of_day(time.ClockTime{hour: 7, minute: 5, second: 3, nanos: 120000000}), sql.interval(sql.Interval{months: 14, days: -3, micros: 5000001}), sql.prefix(p)]
+  for r in db.query("PARAMS", params)? {
+    os.stdio.println("param ${r.value("p")?:?}")
+  }
+  db.close()?
+}
