@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/sqlite, native backends): a busy database waits its `_busy_timeout` again with many clients: SQLite's busy handler slept inside the C call, holding a worker, and the runtime's preemption signal cut each sleep short, so with every worker waiting there the task holding the lock could not finish and `SQLITE_BUSY` came back within a second (64 clients over 8 pools on 2 workers). A busy step is now retried in Xo, parked on the runtime's timers between tries.
+- Perf (std/sql MySQL and Postgres, native backends): a read asks for what the next packet lacks (4 KiB to 1 MiB), not 64 KiB, so a short reply no longer takes a large block (the sql stress program's large-block cache went from 15 mappings to none).
 - Feature (prelude, every backend; decision 0671): `List[T].filled(n, x)` makes n copies of x, as Go's `make([]T, n)` and a fill: a List[UInt8] or List[Int] of 64 elements or more is filled in one memory write on the native targets (128 MiB of bytes in 101M instructions, 1.44G with pushes). std/brotli's encoder uses it for its ring buffer and hash tables.
 - std/ui (Early): a navigation or form that waits marks the page `data-xo-busy` and `aria-busy`, disables a POST form's buttons, and shows a thin progress bar after 150 ms (`--xo-progress` sets its color).
 - Fix (native backends, memory): a short `Conn.read(max)` result no longer keeps a buffer of `max` bytes: a 300 byte reply to `read(65536)` held 64 KiB. A read that fills less than half of `max` is copied to its own size.

@@ -1,0 +1,167 @@
+// sqlite stress program (decision 0616 section 2): TASKS clients over
+// TASKS / 8 pools of std/sqlite (4 connections each) on one database
+// file in WAL mode, so writers wait on SQLite's lock (busy timeout 10 s).
+// Each client pass inserts a row of every storage class (INTEGER, TEXT
+// with NULLs and multi-byte text, REAL, BLOB of 0 to 299 bytes) and reads
+// it back, updates it and checks the count, inserts its key again and
+// expects the unique violation (23505), runs a transaction that inserts
+// and rolls back and checks the row is gone, and deletes its row, every
+// value checked against the one computed here. A background task samples
+// the resident set every 10 s (Linux /proc/self/status) and prints it each
+// minute. Pass: no mismatch, no fault, and the resident set at the end
+// within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30); 0: 50 passes per client] [TASKS (64)]
+use std/sql
+use std/sqlite
+
+fn name_of(k: Int) -> Str? { if k % 5 == 0 { None } else { Some("n-${k}-ñé-字") } }
+
+fn score_of(k: Int) -> Float { Float(k % 1000) + Float(k % 4) * 0.25 }
+
+fn data_of(k: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(300)
+  for j in 0..(k * 37) % 300 {
+    b.write_byte(UInt8((k + j) % 256))
+  }
+  b.freeze()
+}
+
+fn want_row(k: Int, v: Int) -> List[sql.SqlValue] {
+  let name = match name_of(k) {
+    Some(s) => sql.SqlValue.Text(s: s)
+    None => sql.SqlValue.Null
+  }
+  [sql.SqlValue.Integer(n: k), sql.SqlValue.Integer(n: v), name, sql.SqlValue.Real(f: score_of(k)), sql.SqlValue.Blob(b: data_of(k))]
+}
+
+/// One client pass: the statements run, or the first mismatch.
+fn client_pass(db: sql.Db, t: Int, i: Int) -> Int ! Str uses (fs, net.dial) {
+  let k = t * 1000000 + i
+  let name = match name_of(k) {
+    Some(s) => sql.str(s)
+    None => sql.SqlValue.Null
+  }
+  let ins = db.exec("INSERT INTO t (id, v, name, score, data) VALUES ($1, $2, $3, $4, $5)", [sql.int(k), sql.int(i), name, sql.float(score_of(k)), sql.bytes(data_of(k))]).map_err(fn(e) { "INSERT ${k}: ${e.debug()}" })?
+  if (ins.rows_affected, ins.last_insert_id) != (1, k) {
+    return Err("INSERT ${k}: got ${ins.rows_affected} ${ins.last_insert_id}")
+  }
+  let rows = db.query("SELECT id, v, name, score, data FROM t WHERE id = $1", [sql.int(k)]).map_err(fn(e) { "SELECT ${k}: ${e.debug()}" })?
+  let got = rows.map(fn(r) { r.values() })
+  if got != [want_row(k, i)] {
+    return Err("SELECT ${k}: got ${got.debug()}")
+  }
+  let up = db.exec("UPDATE t SET v = v + 1 WHERE id = $1", [sql.int(k)]).map_err(fn(e) { "UPDATE ${k}: ${e.debug()}" })?
+  if up.rows_affected != 1 {
+    return Err("UPDATE ${k}: ${up.rows_affected} rows")
+  }
+  match db.exec("INSERT INTO t (id, v) VALUES ($1, 0)", [sql.int(k)]) {
+    Err(sql.SqlErr.Constraint(_, code, _)) if code == "23505" => {}
+    other => return Err("INSERT ${k} again: got ${other.debug()}")
+  }
+  let tx = db.begin().map_err(fn(e) { "begin: ${e.debug()}" })?
+  let k2 = k + 500000
+  tx.exec("INSERT INTO t (id, v) VALUES ($1, $2)", [sql.int(k2), sql.int(i)]).map_err(fn(e) { "tx INSERT ${k2}: ${e.debug()}" })?
+  let in_tx = tx.query("SELECT v FROM t WHERE id = $1", [sql.int(k2)]).map_err(fn(e) { "tx SELECT ${k2}: ${e.debug()}" })?
+  if in_tx.map(fn(r) { r.values() }) != [[sql.SqlValue.Integer(n: i)]] {
+    return Err("tx SELECT ${k2}: got ${in_tx.map(fn(r) { r.values() }).debug()}")
+  }
+  tx.rollback().map_err(fn(e) { "rollback: ${e.debug()}" })?
+  let after = db.query("SELECT id FROM t WHERE id = $1 OR id = $2 ORDER BY id", [sql.int(k), sql.int(k2)]).map_err(fn(e) { "SELECT after ${k}: ${e.debug()}" })?
+  if after.map(fn(r) { r.values() }) != [[sql.SqlValue.Integer(n: k)]] {
+    return Err("after rollback ${k}: got ${after.map(fn(r) { r.values() }).debug()}")
+  }
+  let del = db.exec("DELETE FROM t WHERE id = $1", [sql.int(k)]).map_err(fn(e) { "DELETE ${k}: ${e.debug()}" })?
+  if del.rows_affected != 1 {
+    return Err("DELETE ${k}: ${del.rows_affected} rows")
+  }
+  Ok(9)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let tmp = os.env.get("TMPDIR") ?? "/tmp"
+  let dir = create_temp_dir(os.fs, tmp, "xo-sqlite-stress-")?
+  let dsn = "file:${dir}/stress.db?_journal_mode=WAL&_busy_timeout=10000"
+  let pools = (tasks + 7) / 8
+  let ops = scope s {
+    var dbs: List[sql.Db] = []
+    for _ in 0..pools {
+      dbs.push(sql.open_driver(os.net, sqlite.driver(os.fs), dsn, max_open: 4, max_idle: 4)?)
+    }
+    dbs[0].exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER NOT NULL, name TEXT, score REAL, data BLOB)", [])?
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && r > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${r / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        let db = dbs[t / 8]
+        var n = 0
+        var i = 0
+        // MINUTES 0: 50 passes each
+        while if minutes == 0 { i < 50 } else { clock.now() < end } {
+          n += client_pass(db, t, i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a client: ${e}" })?
+    }
+    let left = dbs[0].query("SELECT count(*) FROM t", [])?
+    if left.map(fn(r) { r.values() }) != [[sql.SqlValue.Integer(n: 0)]] {
+      return Err("rows left: ${left.map(fn(r) { r.values() }).debug()}")
+    }
+    for db in dbs {
+      db.close()?
+    }
+    s.cancel()
+    total
+  }
+  os.fs.remove_all(dir).ignore_err("the temp directory")
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("sqlite stress: ${ops} statements by ${tasks} clients over ${pools} pools in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
