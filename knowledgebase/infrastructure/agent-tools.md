@@ -1529,7 +1529,9 @@ Last verified: 2026-11-15
     the line to send ("Read and follow PATH"); the crosswalk steps stay
     the lead's. `xw restarts [AGENT]` shows each handover's old session
     and the one that took over, or "not yet" (#81, workstream d0e61e2).
-  - `xw task ack|start|gate|done ID`, `xw task push ID SHA`, `xw task
+  - `xw task ack|start|gate|done ID`, `xw task push ID SHA [--partial]`
+    (`--partial`: one part of a longer task, recorded with the task kept
+    working and no task-pushed alert; #122, 2026-11-16), `xw task
     block ID REASON`, `xw task drop ID [--dup OF] [REASON]` (closed
     without doing it: a duplicate or no longer wanted; 2026-11-15); `xw
     task add NAME TITLE --goal RANK` adds to your own queue (another
@@ -1538,6 +1540,11 @@ Last verified: 2026-11-15
     check` flags one pushed or done whose commit changed no test file
     (`_test` files, test scripts, goldens, corpora, test/, testdata/;
     owner, 2026-11-15).
+  - `PUSHQ_TASK=ID` on pushq.sh records a pushed push on task ID itself
+    (`xw task push ID SHA --auto`: partial when the title names two or
+    more std modules; `PUSHQ_PARTIAL=1` makes it `--partial`). Detached,
+    it never fails or slows the push (scripts/lead/xwhook.sh
+    xw_task_push; #122, 2026-11-16).
   - `xw ack ID` for each decision sent to you (`xw decisions --open
     --agent NAME`), in the tool round you read it.
     The Claude Code hook (scripts/lead/xw-cc-hook.sh, `xw cc-inbox`)
