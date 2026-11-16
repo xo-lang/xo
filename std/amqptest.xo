@@ -661,9 +661,7 @@ fn take(var s: BrokerState, qi: Int, conn: Int, now: Int, sess: Str, settle: Boo
       // copied all of it (std/amqptest twin, 2026-11-16)
       s.queues[qi].msgs[i].delivery_count += 1
       if settle {
-        let m = s.queues[qi].msgs[i]
-        complete(s, qi, m.seq)
-        return Some(m)
+        return Some(s.queues[qi].msgs.remove_at(i))
       }
       s.queues[qi].msgs[i].lock_token = token_bytes(s.next_lock)
       s.next_lock += 1

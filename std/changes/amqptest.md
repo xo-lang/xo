@@ -13,6 +13,8 @@ enqueue, take, the lock expiry and complete copied the queue out of the broker's
 update of one message copied the whole message list it shared, and complete rebuilt the list with a filter.
 They now update the queue through its place and remove a completed message with remove_at. A broker holding
 N messages sent N before any receive went from quadratic copying to the scan alone.
+A settled take removes the message it found with remove_at directly (once an arm64 miscompile of a tuple
+sret result, fixed in 258bd9d26, no longer crashed it) instead of searching for it again.
 
 ## 2026-11-15: feature: subscription rules (SQL and correlation filters, SQL actions, the rule management operations)
 
