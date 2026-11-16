@@ -33,8 +33,9 @@ const MAX_VALID_NUMBER: Int = 536870911
 const FIRST_RESERVED_NUMBER: Int = 19000
 const LAST_RESERVED_NUMBER: Int = 19999
 
-/// Whether `num` is a field number a message may declare (protowire's Number.IsValid): in
-/// 1..=2^29-1 and outside 19000..=19999.
+/// Whether `num` is a field number the wire format can carry (protowire's Number.IsValid): in
+/// 1..=2^29-1. The reserved range 19000..=19999 is valid on the wire; only a .proto may not
+/// declare it (Go's protodesc checks that, not protowire).
 fn valid_number(num: Int) -> Bool
 
 /// The greatest nesting of groups `skip_field` follows (protowire's 10000).

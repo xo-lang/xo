@@ -198,7 +198,7 @@ func timeRandomDuration(r *rand.Rand) string {
 func timeCorpus() string {
 	var o strings.Builder
 	o.WriteString(header("time.ParseDuration, Duration.String and the RFC 3339 and Unix conversions of time.Time on the inputs of Go's time_test.go (parseDurationTests) and format_test.go (parseTests, parseErrorTests and longFractionalDigitsTests for RFC 3339, and rfc3339Formats), on seeded random durations and instants, and on the ends of Time's range from decision 0364, against Duration.parse, the Display of a Duration, Duration.from_nanos and Duration.from_millis, Time.parse_rfc3339 and format_rfc3339, and Time.from_unix, from_unix_millis, unix and unix_millis; and std.md 13.2's Date arithmetic (weekday, add_days, add_months, days_until) against Go's time.Time at midnight UTC (Go's time tests are Copyright 2009 The Go Authors, BSD-style license)"))
-	o.WriteString("\nuse std/time\n")
+	o.WriteString("\nuse std/json\nuse std/time\n")
 
 	// Duration.parse and the Display of a Duration. The inputs are Go's
 	// parseDurationTests; the expectation is Go's ParseDuration and
@@ -903,6 +903,32 @@ test "a Date, a Zone and a ZoneErr display as std.md 13 and Go spell them" {
   }
   expect(unknown) == "unknown time zone \"Nowhere/Nothing\""
   expect(time.ZoneErr.NoLocal(msg: "the system zone is not set").display()) == "cannot determine the local time zone: the system zone is not set"
+}
+`)
+	// time.date_json and date_of_json, called directly (TestStdAPICovered,
+	// 2026-11-16): a Date's JSON is its text as Go's "2006-01-02" writes it.
+	dr := rand.New(rand.NewSource(683))
+	o.WriteString("\n/// (year, month, day, Go's Format(\"2006-01-02\") of that day)\nconst DATE_TEXTS: List[(Int, Int, Int, Str)] = [\n")
+	ends := [][3]int{{1, 1, 1}, {999, 12, 31}, {1000, 1, 1}, {1970, 1, 1}, {2024, 2, 29}, {2026, 11, 16}, {9999, 12, 31}}
+	for i := 0; i < 20; i++ {
+		t := time.Date(1+dr.Intn(9999), time.January, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, dr.Intn(365))
+		ends = append(ends, [3]int{t.Year(), int(t.Month()), t.Day()})
+	}
+	for _, e := range ends {
+		fmt.Fprintf(&o, "  (%d, %d, %d, %q),\n", e[0], e[1], e[2], time.Date(e[0], time.Month(e[1]), e[2], 0, 0, 0, 0, time.UTC).Format("2006-01-02"))
+	}
+	o.WriteString(`]
+
+test "date_json writes a Date as Go's 2006-01-02 text, and date_of_json reads it and the earlier object back" {
+  for (y, m, d, want) in DATE_TEXTS {
+    let day = time.date(y, m, d).or_fault("valid")
+    expect(time.date_json(day)) == json.Value.Str(want)
+    expect(time.date_of_json(json.Value.Str(want))) == Ok(day)
+    expect(time.date_of_json(json.Value.Object(fields: [("year", json.Value.Int(y)), ("month", json.Value.Int(m)), ("day", json.Value.Int(d))]))) == Ok(day)
+  }
+  expect(time.date_of_json(json.Value.Str("2024-13-01")).is_err()) == true
+  expect(time.date_of_json(json.Value.Str("2023-02-29")).is_err()) == true
+  expect(time.date_of_json(json.Value.Int(20240229)).is_err()) == true
 }
 `)
 	return o.String()

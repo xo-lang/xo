@@ -75,8 +75,8 @@ test "put_* builder forms write the same bytes as append_*" {
 
 test "valid_number is protowire's Number.IsValid at every boundary" {
   let cases: List[(Int, Bool)] = [
-    (-1, false), (0, false), (1, true), (2, true), (18999, true), (19000, false), (19500, false),
-    (19999, false), (20000, true), (536870910, true), (536870911, true), (536870912, false),
+    (-1, false), (0, false), (1, true), (2, true), (18999, true), (19000, true), (19500, true),
+    (19999, true), (20000, true), (536870910, true), (536870911, true), (536870912, false),
     (Int.max, false), (Int.min, false),
   ]
   for (n, want) in cases {

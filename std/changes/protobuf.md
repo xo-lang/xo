@@ -25,6 +25,15 @@ unmarshal does, and returns `ProtoErr.Recursion` ("proto: exceeded maximum
 recursion depth") past the limit. Before, any peer could crash a program
 that unmarshals untrusted protobuf by sending a deeply nested message.
 
+## 2026-11-16: fix: valid_number accepts the reserved range, as protowire's Number.IsValid
+
+- Kind: fix (behavior)
+- Commit: this push
+- Found by: TestStdAPICovered (the lead, 2026-11-16) asked for a corpus call; the new protoref case disagreed with Go on 19000, 19500 and 19999
+- Go reference: google.golang.org/protobuf v1.36.12 encoding/protowire/wire.go, Number.IsValid (`MinValidNumber <= n && n <= MaxValidNumber`); the reserved range is protodesc's check for .proto declarations, not the wire's
+- Test: corpus protobuf, validnum cases against internal/stdtest/protoref (failed 3 of 14 before, pass after); std/native/protobuf_test.xo's boundary table corrected
+- Timing: none (two comparisons)
+
 ## 2026-11-16: feature: protobuf.size and protobuf.merge_from (proto.Size, proto.Merge)
 
 - Kind: feature

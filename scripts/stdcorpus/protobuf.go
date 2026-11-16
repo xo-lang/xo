@@ -531,6 +531,9 @@ func protobufCorpus() string {
 	for _, v := range []int64{0, 1, -1, 2, -2, 63, -64, 1<<31 - 1, -1 << 31, 1<<63 - 1, -1 << 63} {
 		cases = append(cases, protoCase{"zigzag " + fmt.Sprint(v), nil})
 	}
+	for _, v := range []int64{-1, 0, 1, 2, 18999, 19000, 19500, 19999, 20000, 1<<29 - 2, 1<<29 - 1, 1 << 29, 1 << 31, -1 << 31} {
+		cases = append(cases, protoCase{"validnum " + fmt.Sprint(v), nil})
+	}
 	r := rand.New(rand.NewSource(530 + protoFuzzSeed()))
 	for i := 0; i < 1200; i++ {
 		f := protoField(r, 0)
@@ -652,6 +655,9 @@ fn run(op: Str, data: Bytes) -> Str {
   }
   if op == "appbytes" {
     return "ok ${protobuf.append_bytes(b"", data).to_hex()} 0"
+  }
+  if op == "validnum" {
+    return "ok ${protobuf.valid_number(num_of(data))} 0"
   }
   if op == "zigzag" {
     let z = protobuf.encode_zigzag(num_of(data))

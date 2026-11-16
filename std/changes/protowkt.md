@@ -1,5 +1,16 @@
 # std/protowkt changes
 
+## 2026-11-16: fix: Timestamp.as_time near Int's range, and Value.to_json of NaN and the infinities
+
+- Kind: fix
+- Commit: this push
+- Found by: corpus protowkt's new rows against protobuf-go (TestStdAPICovered coverage, task #89)
+- Go reference: timestamppb's AsTime (time.Unix carries nanos into the seconds first); structpb's Value.AsInterface (NaN and the infinities as the strings "NaN", "Infinity", "-Infinity")
+- Test: corpus protowkt TS_CHECKS (Timestamp{seconds: 9223372037, nanos: -999999999} and 25 more were None, Go gives the instant) and VALUE_JSON, STRUCT_JSON, LIST_JSON (25 rows with an infinity were numbers); both failed before and pass after, on arm64, llvm and go
+- Shipped in: not yet released
+
+`as_time` carries the nanos into the seconds before multiplying, as time.Unix does, so an instant within Int's nanoseconds is no longer None when the seconds alone are past it. `to_json` gives the strings Go's AsInterface gives for NaN and the infinities instead of a number JSON cannot hold.
+
 
 ## 2026-11-16: feature: field mask New, IsValid and Append against a descriptor
 

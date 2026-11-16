@@ -261,7 +261,23 @@ pub fn timestamp_of(t: Time) -> Timestamp {
 /// (1677 to 2262; Go's time.Time reaches further). Nanos outside 0..1e9
 /// carry into the seconds, as time.Unix does.
 pub fn (ts: Timestamp) as_time() -> Time? {
-  let ns = ts.seconds.checked_mul(1000000000)?.checked_add(Int(ts.nanos))?
+  // time.Unix first carries nanos into the seconds (nanos then in
+  // 0..1e9), so seconds just past Int's range with negative nanos still
+  // fit
+  var n = Int(ts.nanos)
+  var secs = ts.seconds.checked_add(n / 1000000000)?
+  n = n % 1000000000
+  if n < 0 {
+    n += 1000000000
+    secs = secs.checked_sub(1)?
+  }
+  // a negative instant with nanos: (secs + 1) seconds less the rest, so
+  // Int.min itself is reached
+  let ns = if secs < 0 && n > 0 {
+    secs.checked_add(1)?.checked_mul(1000000000)?.checked_add(n - 1000000000)?
+  } else {
+    secs.checked_mul(1000000000)?.checked_add(n)?
+  }
   Some(Time.from_unix_nanos(ns))
 }
 
@@ -511,11 +527,19 @@ pub fn list_from_json(items: List[json.Value]) -> ListValue ! WktErr {
 }
 
 /// structpb's AsInterface as a JSON value: a number is a Num (Go's float64),
-/// an object's fields sorted by key, an unset Value null (Go's nil).
+/// NaN and the infinities the strings "NaN", "Infinity" and "-Infinity" (as
+/// AsInterface gives them), an object's fields sorted by key, an unset
+/// Value null (Go's nil).
 pub fn (v: Value) to_json() -> json.Value {
   match v {
     Unset | Null => json.Value.Null
-    Number(v: n) => json.Value.Num(n)
+    Number(v: n) => if n.is_nan() {
+      json.Value.Str("NaN")
+    } else if n.is_inf() {
+      json.Value.Str(if n > 0.0 { "Infinity" } else { "-Infinity" })
+    } else {
+      json.Value.Num(n)
+    }
     Text(v: s) => json.Value.Str(s)
     Flag(v: b) => json.Value.Bool(b)
     Object(v: st) => st.to_json()

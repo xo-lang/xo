@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"mime"
 	"net/http"
@@ -222,6 +225,30 @@ func mimeWordCorpus(o *strings.Builder) {
 		fmt.Fprintf(o, "  (%s, %s),\n", xq(h), xq(res(dec.DecodeHeader(h))))
 	}
 	o.WriteString("]\n")
+	// a CharsetReader (TestStdAPICovered, 2026-11-16): each other charset
+	// as <charset:hex of the bytes>, and charset "fail" an error
+	withDec := &mime.WordDecoder{CharsetReader: func(charset string, in io.Reader) (io.Reader, error) {
+		if charset == "fail" {
+			return nil, errors.New("Test error")
+		}
+		b, err := io.ReadAll(in)
+		if err != nil {
+			return nil, err
+		}
+		return strings.NewReader("<" + charset + ":" + hex.EncodeToString(b) + ">"), nil
+	}}
+	withWords := append([]string{"=?KOI8-R?B?8sXT?=", "=?windows-1252?Q?b=E0r?=", "=?ISO-8859-15?Q?f=F5=F6?=", "=?fail?q?x?=", "=?FAIL?b?eA==?=", "=?x-unknown?q?=FF_=00?="}, words...)
+	withHeaders := append([]string{"=?ISO-8859-15?Q?f=F5=F6?=  =?windows-1252?Q?b=E0r?=", "a =?koi8-r?q?x?= b =?fail?q?y?=", "=?big5?b?pqjB2Q==?= =?utf-8?q?ok?="}, headers...)
+	withHeaders = append(withHeaders, withWords...)
+	o.WriteString("\n/// decode_word_with: (word, Go's WordDecoder with that CharsetReader: the text, or ERR and the error)\nconst WORD_DEC_WITH: List[(Str, Str)] = [\n")
+	for _, w := range withWords {
+		fmt.Fprintf(o, "  (%s, %s),\n", xq(w), xq(res(withDec.Decode(w))))
+	}
+	o.WriteString("]\n\n/// decode_header_with: (header, Go's DecodeHeader with that CharsetReader)\nconst HEADER_DEC_WITH: List[(Str, Str)] = [\n")
+	for _, h := range withHeaders {
+		fmt.Fprintf(o, "  (%s, %s),\n", xq(h), xq(res(withDec.DecodeHeader(h))))
+	}
+	o.WriteString("]\n")
 	o.WriteString(`
 fn word_res(r: Result[Str, mime.MimeErr]) -> Str {
   match r {
@@ -252,6 +279,30 @@ test "encode_word, decode_word and decode_header give Go's mime results" {
   }
   for (h, want) in HEADER_DEC {
     let got = word_res(mime.decode_header(h))
+    if got != want {
+      bad.push("header ${h.quote()}: ${got.quote()}")
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+fn show(charset: Str, content: Bytes) -> Str ! mime.MimeErr {
+  if charset == "fail" {
+    return Err(mime.MimeErr{msg: "Test error"})
+  }
+  Ok("<${charset}:${content.to_hex()}>")
+}
+
+test "decode_word_with and decode_header_with, as Go's WordDecoder with a CharsetReader" {
+  var bad: List[Str] = []
+  for (w, want) in WORD_DEC_WITH {
+    let got = word_res(mime.decode_word_with(w, show))
+    if got != want {
+      bad.push("word ${w.quote()}: ${got.quote()}")
+    }
+  }
+  for (h, want) in HEADER_DEC_WITH {
+    let got = word_res(mime.decode_header_with(h, show))
     if got != want {
       bad.push("header ${h.quote()}: ${got.quote()}")
     }

@@ -6752,6 +6752,164 @@ const HEADER_DEC: List[(Str, Str)] = [
   ("\t !\"#\$%&'()*+,-./ :;<>?@[\\]^_`{|}~", "\t !\"#\$%&'()*+,-./ :;<>?@[\\]^_`{|}~"),
 ]
 
+/// decode_word_with: (word, Go's WordDecoder with that CharsetReader: the text, or ERR and the error)
+const WORD_DEC_WITH: List[(Str, Str)] = [
+  ("=?KOI8-R?B?8sXT?=", "<koi8-r:f2c5d3>"),
+  ("=?windows-1252?Q?b=E0r?=", "<windows-1252:62e072>"),
+  ("=?ISO-8859-15?Q?f=F5=F6?=", "<iso-8859-15:66f5f6>"),
+  ("=?fail?q?x?=", "ERR Test error"),
+  ("=?FAIL?b?eA==?=", "ERR Test error"),
+  ("=?x-unknown?q?=FF_=00?=", "<x-unknown:ff2000>"),
+  ("=?UTF-8?Q?=C2=A1Hola,_se=C3=B1or!?=", "¡Hola, señor!"),
+  ("=?UTF-8?Q?Fran=C3=A7ois-J=C3=A9r=C3=B4me?=", "François-Jérôme"),
+  ("=?UTF-8?q?ascii?=", "ascii"),
+  ("=?utf-8?B?QW5kcsOp?=", "André"),
+  ("=?ISO-8859-1?Q?Rapha=EBl_Dupont?=", "Raphaël Dupont"),
+  ("=?utf-8?b?IkFudG9uaW8gSm9zw6kiIDxqb3NlQGV4YW1wbGUub3JnPg==?=", "\"Antonio José\" <jose@example.org>"),
+  ("=?UTF-8?A?Test?=", "ERR mime: invalid RFC 2047 encoded-word"),
+  ("=?UTF-8?Q?A=B?=", "ERR mime: invalid RFC 2047 encoded-word"),
+  ("=?UTF-8?Q?=A?=", "ERR mime: invalid RFC 2047 encoded-word"),
+  ("=?UTF-8?A?A?=", "ERR mime: invalid RFC 2047 encoded-word"),
+  ("=????=", "ERR mime: invalid RFC 2047 encoded-word"),
+  ("=?UTF-8???=", "ERR mime: invalid RFC 2047 encoded-word"),
+  ("=?UTF-8?Q??=", ""),
+  ("=?us-ascii?q?a=FFb?=", "a�b"),
+  ("=?utf-8?q?=80=C3?=", "��"),
+  ("=?koi8-r?q?x?=", "<koi8-r:78>"),
+  ("=?UTF-8?b?QW5kcs?=", "ERR illegal base64 data at input byte 4"),
+  ("=?UTF-8?q?=g0?=", "ERR mime: invalid hex byte 0x67"),
+  ("=?UTF-8?q?a\u{1}?=", "ERR mime: invalid RFC 2047 encoded-word"),
+  ("=?UTF-8?q?a=0D=0A?=", "a\r\n"),
+  ("=?UTF-8?q?tab\there?=", "tab\there"),
+  ("=?a?q?b?c?=", "ERR mime: invalid RFC 2047 encoded-word"),
+  ("Jean", "ERR mime: invalid RFC 2047 encoded-word"),
+  ("=?UTF-8?Q?x", "ERR mime: invalid RFC 2047 encoded-word"),
+  ("=?ISO-8859-1?B?6enp?=", "ééé"),
+]
+
+/// decode_header_with: (header, Go's DecodeHeader with that CharsetReader)
+const HEADER_DEC_WITH: List[(Str, Str)] = [
+  ("=?ISO-8859-15?Q?f=F5=F6?=  =?windows-1252?Q?b=E0r?=", "<iso-8859-15:66f5f6><windows-1252:62e072>"),
+  ("a =?koi8-r?q?x?= b =?fail?q?y?=", "ERR Test error"),
+  ("=?big5?b?pqjB2Q==?= =?utf-8?q?ok?=", "<big5:a6a8c1d9>ok"),
+  ("=?UTF-8?Q?=C2=A1Hola,_se=C3=B1or!?=", "¡Hola, señor!"),
+  ("=?UTF-8?Q?Fran=C3=A7ois-J=C3=A9r=C3=B4me?=", "François-Jérôme"),
+  ("=?UTF-8?q?ascii?=", "ascii"),
+  ("=?utf-8?B?QW5kcsOp?=", "André"),
+  ("=?ISO-8859-1?Q?Rapha=EBl_Dupont?=", "Raphaël Dupont"),
+  ("=?utf-8?b?IkFudG9uaW8gSm9zw6kiIDxqb3NlQGV4YW1wbGUub3JnPg==?=", "\"Antonio José\" <jose@example.org>"),
+  ("=?UTF-8?A?Test?=", "=?UTF-8?A?Test?="),
+  ("=?UTF-8?Q?A=B?=", "=?UTF-8?Q?A=B?="),
+  ("=?UTF-8?Q?=A?=", "=?UTF-8?Q?=A?="),
+  ("=?UTF-8?A?A?=", "=?UTF-8?A?A?="),
+  ("=????=", "=????="),
+  ("=?UTF-8???=", "=?UTF-8???="),
+  ("=?UTF-8?Q??=", ""),
+  ("=?us-ascii?q?a=FFb?=", "a�b"),
+  ("=?utf-8?q?=80=C3?=", "��"),
+  ("=?koi8-r?q?x?=", "<koi8-r:78>"),
+  ("=?UTF-8?b?QW5kcs?=", "=?UTF-8?b?QW5kcs?="),
+  ("=?UTF-8?q?=g0?=", "=?UTF-8?q?=g0?="),
+  ("=?UTF-8?q?a\u{1}?=", "=?UTF-8?q?a\u{1}?="),
+  ("=?UTF-8?q?a=0D=0A?=", "a\r\n"),
+  ("=?UTF-8?q?tab\there?=", "tab\there"),
+  ("=?a?q?b?c?=", "<a:623f63>"),
+  ("Jean", "Jean"),
+  ("=?UTF-8?Q?x", "=?UTF-8?Q?x"),
+  ("=?ISO-8859-1?B?6enp?=", "ééé"),
+  ("=?", "=?"),
+  ("=?UTF-8?", "=?UTF-8?"),
+  ("=?UTF-8?=", "=?UTF-8?="),
+  ("=?UTF-8?Q", "=?UTF-8?Q"),
+  ("=?UTF-8?Q?", "=?UTF-8?Q?"),
+  ("=?UTF-8?Q?=", "=?UTF-8?Q?="),
+  ("=?UTF-8?Q?A", "=?UTF-8?Q?A"),
+  ("=?UTF-8?Q?A?", "=?UTF-8?Q?A?"),
+  ("=?ISO-8859-1?Q?a?=", "a"),
+  ("=?ISO-8859-1?Q?a?= b", "a b"),
+  ("=?ISO-8859-1?Q?a?= =?ISO-8859-1?Q?b?=", "ab"),
+  ("=?ISO-8859-1?Q?a?=  =?ISO-8859-1?Q?b?=", "ab"),
+  ("=?ISO-8859-1?Q?a?= \r\n\t =?ISO-8859-1?Q?b?=", "ab"),
+  ("=?ISO-8859-1?Q?a_b?=", "a b"),
+  ("=?UTF-8?b?garbage?= =?UTF-8?b?QW5kcsOp?= =?UTF-8?b?garbage?=", "=?UTF-8?b?garbage?= André =?UTF-8?b?garbage?="),
+  ("=?UTF-8?b?QW5kcsOp", "=?UTF-8?b?QW5kcsOp"),
+  ("=?UTF-8?x?y?=?UTF-8?x?y=?", "=?UTF-8?x?y?=?UTF-8?x?y=?"),
+  ("Re: =?utf-8?q?caf=C3=A9?= x =?utf-8?b?w6k=?=", "Re: café x é"),
+  ("a =?koi8-r?q?x?= b", "a <koi8-r:78> b"),
+  ("pre=?utf-8?q?a?=post", "preapost"),
+  ("=?utf-8?q?=5F=E6=97=A5=09=09=7F~Q=7F=3F?= =?utf-8?b?UVF/w6l/CX8K5pelf34/YWF6YfCfmIBfIOaXpfCfmIB/f1FRUT/DqV8JfsOp?= =?utf-8?b?UV9+CXpfP+aXpWEgIH8Jfj8KX/CfmIDml6XDqQ==?= ", "_日\t\t\u{7f}~Q\u{7f}?QQ\u{7f}é\u{7f}\t\u{7f}\n日\u{7f}~?aaza😀_ 日😀\u{7f}\u{7f}QQQ?é_\t~éQ_~\tz_?日a  \u{7f}\t~?\n_😀日é "),
+  ("tab\tonly  =?utf-8?q?z=09=7F__=3D~=0A=F0=9F=98=80=7F=C3=A9=C3=A9_=0A~_=7F=3D=09=5F?= =?utf-8?q?=F0=9F=98=80a~=3F=3D~=F0=9F=98=80aa=E6=97=A5z=E6=97=A5=C3=A9=0A?= =?utf-8?q?=5FaQ=F0=9F=98=80=E6=97=A5Q=E6=97=A5=E6=97=A5?= x ", "tab\tonly  z\t\u{7f}  =~\n😀\u{7f}éé \n~ \u{7f}=\t_😀a~?=~😀aa日z日é\n_aQ😀日Q日日 x "),
+  ("=?utf-8?b?PyA/X8OpCVE95pelw6lRPX49UX9+w6k9IF8/YX8=?==?utf-8?q?=5F=F0=9F=98=80=3DQ~a=5F_=0A=0A~z?=  ", "? ?_é\tQ=日éQ=~=Q\u{7f}~é= _?a\u{7f}_😀=Q~a_ \n\n~z  "),
+  ("=?utf-8?q?=3F~=0A=3D=3F_=C3=A9=5F=F0=9F=98=80=5F=3F=C3=A9=7F=0A=3F_=7F=3F?= =?utf-8?q?Q=3Da=0A=0A=09_=7F=E6=97=A5~_=3D=0A=E6=97=A5=0A=09=3D=7F=3D=5F?= =?utf-8?q?=F0=9F=98=80=0A=E6=97=A5=5FQ=F0=9F=98=80=3F=F0=9F=98=80=C3=A9?= =?utf-8?q?=F0=9F=98=80a?=\r\n ", "?~\n=? é_😀_?é\u{7f}\n? \u{7f}?Q=a\n\n\t \u{7f}日~ =\n日\n\t=\u{7f}=_😀\n日_Q😀?😀é😀a\r\n "),
+  ("=?utf-8?q?z=3F=E6=97=A5=5F_=F0=9F=98=80=0A=E6=97=A5=3D~=F0=9F=98=80=7F=5F?= =?utf-8?q?z=C3=A9=5F_=3F~=C3=A9=E6=97=A5=E6=97=A5=7F=09=C3=A9=0A=0Aa=09_?= =?utf-8?q?=09_=0A=C3=A9QQ=E6=97=A5a~~~Qz=0A=E6=97=A5~=C3=A9a=5F~=7Fa?= =?utf-8?q?=F0=9F=98=80=E6=97=A5=3F?=\r\n \t  ", "z?日_ 😀\n日=~😀\u{7f}_zé_ ?~é日日\u{7f}\té\n\na\t \t \néQQ日a~~~Qz\n日~éa_~\u{7f}a😀日?\r\n \t  "),
+  ("=_Q x =?utf-8?b?emHml6V+YSB+8J+YgD8JPV/wn5iAw6l+fwlffl8KP38=?=\r\n =?utf-8?b?UXrml6VRf19RPVFfUX4geuaXpQoK8J+YgH5+P2Hml6UKPT/ml6XDqXp/CmE/?= =?utf-8?b?en4KPVFfYSBhXz9fX1F/?= ", "=_Q x za日~a ~😀?\t=_😀é~\u{7f}\t_~_\n?\u{7f}Qz日Q\u{7f}_Q=Q_Q~ z日\n\n😀~~?a日\n=?日éz\u{7f}\na?z~\n=Q_a a_?__Q\u{7f} "),
+  ("=?utf-8?q?=3D=7F=E6=97=A5=5F=3F=7F~=3D=7F=0A?= ", "=\u{7f}日_?\u{7f}~=\u{7f}\n "),
+  ("=?utf-8?b?w6k9P+aXpQrDqV9+P1E9fgl+IA==?=\r\n ", "é=?日\né_~?Q=~\t~ \r\n "),
+  ("=?utf-8?q?=0A=0A=09=7F=5F=7F=09=3D=5F=7F=E6=97=A5=E6=97=A5=C3=A9?= =?utf-8?q?=F0=9F=98=80=7FQ=C3=A9=F0=9F=98=80Q=3FQQ=F0=9F=98=80=5F_~=5F=3D?= =?utf-8?q?_Q~=7F=09=7F=0Aa_?= x ~ x ", "\n\n\t\u{7f}_\u{7f}\t=_\u{7f}日日é😀\u{7f}Qé😀Q?QQ😀_ ~_= Q~\u{7f}\t\u{7f}\na  x ~ x "),
+  ("=?utf-8?b?ID/ml6V+X35/w6lRX349YXoJYV/DqeaXpeaXpT9/w6nwn5iA?= =?utf-8?b?PT8gCT1f8J+YgHoKCT1RPz1/w6kJYVE9PSBRflE/UV898J+YgH5/fvCfmIA9?= =?utf-8?b?w6lff2EJIAo95pel8J+YgH5+fg==?= =?utf-8?q?=C3=A9=3F=09=5FQ=7F=09~=E6=97=A5=0A~=C3=A9=7F=5F=09Q=C3=A9?= x ", " ?日~_~\u{7f}éQ_~=az\ta_é日日?\u{7f}é😀=? \t=_😀z\n\t=Q?=\u{7f}é\taQ== Q~Q?Q_=😀~\u{7f}~😀=é_\u{7f}a\t \n=日😀~~~é?\t_Q\u{7f}\t~日\n~é\u{7f}_\tQé x "),
+  ("=?utf-8?q?=09=3D=E6=97=A5Q~aa~=09_Q=09=E6=97=A5=7F=C3=A9=F0=9F=98=80a~=0A?= =?utf-8?q?=E6=97=A5=F0=9F=98=80=E6=97=A5~=3D=C3=A9Q=7F=C3=A9=09az~=7F=09?= =?utf-8?q?=7F~=7F=7F=7F=3F=0A=3D=0Az=3F=0Az=F0=9F=98=80=C3=A9=7F?=  =?utf-8?q?=3D=3F_=09=3D=5F=F0=9F=98=80z=0A=09=3DQ=3F=3D=7F=C3=A9=09aQ=3D?= =?utf-8?q?=3D_Q~Q=3FQ=5F=3D=F0=9F=98=80~=7F~=F0=9F=98=80=3D=C3=A9=5F=7Fa?= =?utf-8?q?=09_=0A=3D=E6=97=A5=F0=9F=98=80~~~?=  =?utf-8?q?=3DQ=C3=A9=F0=9F=98=80a=F0=9F=98=80z=5F~a_~=09_=3DQ=E6=97=A5a?= =?utf-8?q?=3D~=E6=97=A5=09~=0A_=7F=5F=C3=A9=09z=09_=09=09=E6=97=A5QQ?= =?utf-8?q?=C3=A9Q=09=3Da=3Faz=09=3D=5F~=3Fz=09=C3=A9Q=3F=C3=A9~=3F=5F?= ", "\t=日Q~aa~\t Q\t日\u{7f}é😀a~\n日😀日~=éQ\u{7f}é\taz~\u{7f}\t\u{7f}~\u{7f}\u{7f}\u{7f}?\n=\nz?\nz😀é\u{7f}=? \t=_😀z\n\t=Q?=\u{7f}é\taQ== Q~Q?Q_=😀~\u{7f}~😀=é_\u{7f}a\t \n=日😀~~~=Qé😀a😀z_~a ~\t =Q日a=~日\t~\n \u{7f}_é\tz\t \t\t日QQéQ\t=a?az\t=_~?z\téQ?é~?_ "),
+  ("=?utf-8?b?P18JCsOpP/CfmIA/IMOp?=", "?_\t\né?😀? é"),
+  ("=?utf-8?q?=3D=E6=97=A5=F0=9F=98=80=3F=09=5F=F0=9F=98=80z=F0=9F=98=80_=7FQ?= =?utf-8?q?~=0A=5Fa_=0A=F0=9F=98=80=E6=97=A5=C3=A9=0A=09=7F~=5Fza=C3=A9az?= =?utf-8?q?=3D=09=5F=7F=3D=3FQ=E6=97=A5=E6=97=A5=5F=3F~=C3=A9=C3=A9?=", "=日😀?\t_😀z😀 \u{7f}Q~\n_a \n😀日é\n\t\u{7f}~_zaéaz=\t_\u{7f}=?Q日日_?~éé"),
+  ("=?utf-8?q?=5F=E6=97=A5=09=09=7F~Q=7F=3F?= =?utf-8?q?=3DQ=C3=A9=F0=9F=98=80a=F0=9F=98=80z=5F~a_~=09_=3DQ=E6=97=A5a?= =?utf-8?q?=3D~=E6=97=A5=09~=0A_=7F=5F=C3=A9=09z=09_=09=09=E6=97=A5QQ?= =?utf-8?q?=C3=A9Q=09=3Da=3Faz=09=3D=5F~=3Fz=09=C3=A9Q=3F=C3=A9~=3F=5F?= x =?utf-8?q?=0A_aaQ=5F=C3=A9=7F=3F=0A_~=E6=97=A5=F0=9F=98=80=C3=A9a=3F=5F~_?= =?utf-8?q?~=3F=7F=C3=A9z=0A=E6=97=A5=3FQ=09=7F=7Fz=09=E6=97=A5=E6=97=A5a?= =?utf-8?q?=5F_=7FQ=E6=97=A5=5Fz~=F0=9F=98=80=0A=E6=97=A5=3D=0A~=3D?= x ", "_日\t\t\u{7f}~Q\u{7f}?=Qé😀a😀z_~a ~\t =Q日a=~日\t~\n \u{7f}_é\tz\t \t\t日QQéQ\t=a?az\t=_~?z\téQ?é~?_ x \n aaQ_é\u{7f}?\n ~日😀éa?_~ ~?\u{7f}éz\n日?Q\t\u{7f}\u{7f}z\t日日a_ \u{7f}Q日_z~😀\n日=\n~= x "),
+  ("=?utf-8?q?=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9?= =?utf-8?q?=C3=A9?==?utf-8?b?egl/ICA9fgrwn5iAf8Opw6kgCn4gfz0JX/CfmIBhfj89fvCfmIBhYeaXpXo=?= =?utf-8?b?5pelw6kKX2FR8J+YgOaXpVHml6Xml6U=?=\r\n =?utf-8?q?a=7F=E6=97=A5=09_~z=7F=3F=0Az=F0=9F=98=80=3F=3DQ_a=0A=7F=C3=A9~?= =?utf-8?q?=09=C3=A9z=5F=0A=3D=F0=9F=98=80z_Qz_=E6=97=A5_=09=C3=A9_=C3=A9z?= =?utf-8?q?=E6=97=A5=7F=F0=9F=98=80_z=3F_a=3F=5F=7F=F0=9F=98=80=E6=97=A5?= =?utf-8?q?=E6=97=A5=09=0A=3D?= ", "éééééééééééz\t\u{7f}  =~\n😀\u{7f}éé \n~ \u{7f}=\t_😀a~?=~😀aa日z日é\n_aQ😀日Q日日a\u{7f}日\t ~z\u{7f}?\nz😀?=Q a\n\u{7f}é~\téz_\n=😀z Qz 日 \té éz日\u{7f}😀 z? a?_\u{7f}😀日日\t\n= "),
+  ("=?utf-8?q?QQ=7F=C3=A9=7F=09=7F=0A=E6=97=A5=7F~=3Faaza=F0=9F=98=80=5F_?= =?utf-8?q?=E6=97=A5=F0=9F=98=80=7F=7FQQQ=3F=C3=A9=5F=09~=C3=A9Q=5F~=09z?= =?utf-8?q?=5F=3F=E6=97=A5a__=7F=09~=3F=0A=5F=F0=9F=98=80=E6=97=A5=C3=A9?= =?utf-8?b?5pelPX5fej8/w6lfXz09?=\r\n a\r\n ", "QQ\u{7f}é\u{7f}\t\u{7f}\n日\u{7f}~?aaza😀_ 日😀\u{7f}\u{7f}QQQ?é_\t~éQ_~\tz_?日a  \u{7f}\t~?\n_😀日é日=~_z??é__==\r\n a\r\n "),
+  ("=?utf-8?b?w6k9P+aXpQrDqV9+P1E9fgl+IA==?=\r\n =?utf-8?q?=C3=A9=09~=3Da=F0=9F=98=80zQ~=3F=C3=A9=09~=7F=F0=9F=98=80=C3=A9?= =?utf-8?q?a=E6=97=A5Qa=7F=3F~~~=5F=09=3Fz=0A=09a~=5Fz?=\r\n =?utf-8?b?fl9hXz0KUSDDqV9/5pelYWF/UX/wn5iAemHml6U/CX96emE9PwrDqXo/YQk=?= =?utf-8?b?8J+YgHphen9RX+aXpX7DqT9R8J+YgH5RfmHwn5iA?=  ", "é=?日\né_~?Q=~\t~ é\t~=a😀zQ~?é\t~\u{7f}😀éa日Qa\u{7f}?~~~_\t?z\n\ta~_z~_a_=\nQ é_\u{7f}日aa\u{7f}Q\u{7f}😀za日?\t\u{7f}zza=?\néz?a\t😀zaz\u{7f}Q_日~é?Q😀~Q~a😀  "),
+  ("a  =?utf-8?q?_z=C3=A9~=F0=9F=98=80=3F=0Aa=C3=A9z~=C3=A9=09?= ", "a   zé~😀?\naéz~é\t "),
+  ("=?utf-8?b?USBR5pel5pelX3o/PV9hID1ffl89fgnwn5iACSA9CVHDqQpRCX7ml6Ugw6k/?= =?utf-8?b?YQrwn5iAX3pRP1EKIOaXpfCfmIB+P/CfmIBRUQ==?=  ", "Q Q日日_z?=_a =_~_=~\t😀\t =\tQé\nQ\t~日 é?a\n😀_zQ?Q\n 日😀~?😀QQ  "),
+  ("=?utf-8?q?=3D=09=7F=0Az?= =?utf-8?b?fj0/5pelw6kgUX7DqeaXpV9/IGEKfuaXpeaXpQkJw6k9YT3wn5iAPQo9Pw==?=   x =?utf-8?q?=3FQ=C3=A9a=3F=7FQ=0AQ=E6=97=A5=3F=3F=5F=3D_a=5FQ=5Fza=E6=97=A5?= =?utf-8?q?=09=E6=97=A5=09QQz=0A?= ", "=\t\u{7f}\nz~=?日é Q~é日_\u{7f} a\n~日日\t\té=a=😀=\n=?   x ?Qéa?\u{7f}Q\nQ日??_= a_Q_za日\t日\tQQz\n "),
+  ("=?utf-8?q?=C3=A9=3F=09=5FQ=7F=09~=E6=97=A5=0A~=C3=A9=7F=5F=09Q=C3=A9?==?utf-8?b?Cglfej9RenpRPSBRID0/8J+YgAp/ej1hPXp/P/CfmIBRw6lRPwk/5pelw6k=?==?utf-8?b?UXrml6VRf19RPVFfUX4geuaXpQoK8J+YgH5+P2Hml6UKPT/ml6XDqXp/CmE/?= =?utf-8?b?en4KPVFfYSBhXz9fX1F/?= x ", "é?\t_Q\u{7f}\t~日\n~é\u{7f}_\tQé\n\t_z?QzzQ= Q =?😀\n\u{7f}z=a=z\u{7f}?😀QéQ?\t?日éQz日Q\u{7f}_Q=Q_Q~ z日\n\n😀~~?a日\n=?日éz\u{7f}\na?z~\n=Q_a a_?__Q\u{7f} x "),
+  ("=?utf-8?b?TGEgU2VsZcOnw6Nv?= =?utf-8?b?X/CfmIA9UX5hXyAKCn56?= ", "La Seleção_😀=Q~a_ \n\n~z "),
+  ("=?utf-8?b?5pelw6k9euaXpWF/Cl9fCvCfmIB/YeaXpWF/5pelw6k/fwp6fl8JXwkgfiB+?= =?utf-8?b?evCfmIB+f18JP+aXpX9R5pelf3pf5pel5pelUfCfmIA/8J+YgOaXpT1+YV8J?= =?utf-8?b?fyA=?=\r\n =?utf-8?b?CgoJf19/CT1ff+aXpeaXpcOp8J+YgH9Rw6nwn5iAUT9RUfCfmIBfIH5fPSBR?= =?utf-8?b?fn8JfwphIA==?=\r\n =?utf-8?b?PQkKelFhP35/YWFh5pelw6nDqX4/UX4Kf38gen/ml6U/IGFR?==?utf-8?q?~=5Fa=5F=3D=0AQ_=C3=A9=5F=7F=E6=97=A5aa=7FQ=7F=F0=9F=98=80za?= =?utf-8?q?=E6=97=A5=3F=09=7Fzza=3D=3F=0A=C3=A9z=3Fa=09=F0=9F=98=80zaz=7FQ?= =?utf-8?q?=5F=E6=97=A5~=C3=A9=3FQ=F0=9F=98=80~Q~a=F0=9F=98=80?=", "日é=z日a\u{7f}\n__\n😀\u{7f}a日a\u{7f}日é?\u{7f}\nz~_\t_\t ~ ~z😀~\u{7f}_\t?日\u{7f}Q日\u{7f}z_日日Q😀?😀日=~a_\t\u{7f} \n\n\t\u{7f}_\u{7f}\t=_\u{7f}日日é😀\u{7f}Qé😀Q?QQ😀_ ~_= Q~\u{7f}\t\u{7f}\na =\t\nzQa?~\u{7f}aaa日éé~?Q~\n\u{7f}\u{7f} z\u{7f}日? aQ~_a_=\nQ é_\u{7f}日aa\u{7f}Q\u{7f}😀za日?\t\u{7f}zza=?\néz?a\t😀zaz\u{7f}Q_日~é?Q😀~Q~a😀"),
+  ("=?utf-8?b?emF+8J+YgD8JCWFRen7ml6U9UXpRUQogCX56esOp8J+YgFF6PWEgegp/CX8=?= =?utf-8?b?8J+YgMOpYeaXpcOpw6nwn5iAPz3wn5iA?= =?utf-8?b?ej/ml6VfIPCfmIAK5pelPX7wn5iAf196w6lfID9+w6nml6Xml6V/CcOpCgph?= =?utf-8?b?CSAJIArDqVFR5pelYX5+flF6CuaXpX7DqWFffn9h8J+YgOaXpT8=?=", "za~😀?\t\taQz~日=QzQQ\n \t~zzé😀Qz=a z\n\u{7f}\t\u{7f}😀éa日éé😀?=😀z?日_ 😀\n日=~😀\u{7f}_zé_ ?~é日日\u{7f}\té\n\na\t \t \néQQ日a~~~Qz\n日~éa_~\u{7f}a😀日?"),
+  ("\t !\"#\$%&'()*+,-./ :;<>?@[\\]^_`{|}~  =?utf-8?q?=E6=97=A5=E6=9C=AC=E8=AA=9E=E3=81=AE=E3=83=86=E3=82=AD=E3=82=B9?= =?utf-8?q?=E3=83=88?=  =?utf-8?b?X/CfmIA9UX5hXyAKCn56?=  ", "\t !\"#\$%&'()*+,-./ :;<>?@[\\]^_`{|}~  日本語のテキスト_😀=Q~a_ \n\n~z  "),
+  ("=?utf-8?b?YX/ml6UJIH56fz8KevCfmIA/PVEgYQp/w6l+CcOpel8KPfCfmIB6IFF6IA==?= =?utf-8?b?5pelIAnDqSDDqXrml6V/8J+YgCB6PyBhP19/8J+YgOaXpeaXpQkKPQ==?=  =?utf-8?q?=C3=A9=09~=3Da=F0=9F=98=80zQ~=3F=C3=A9=09~=7F=F0=9F=98=80=C3=A9?= =?utf-8?q?a=E6=97=A5Qa=7F=3F~~~=5F=09=3Fz=0A=09a~=5Fz?=  tab\tonly\r\n ", "a\u{7f}日\t ~z\u{7f}?\nz😀?=Q a\n\u{7f}é~\téz_\n=😀z Qz 日 \té éz日\u{7f}😀 z? a?_\u{7f}😀日日\t\n=é\t~=a😀zQ~?é\t~\u{7f}😀éa日Qa\u{7f}?~~~_\t?z\n\ta~_z  tab\tonly\r\n "),
+  ("=?utf-8?b?emF+8J+YgD8JCWFRen7ml6U9UXpRUQogCX56esOp8J+YgFF6PWEgegp/CX8=?= =?utf-8?b?8J+YgMOpYeaXpcOpw6nwn5iAPz3wn5iA?= =?utf-8?b?egl/ICA9fgrwn5iAf8Opw6kgCn4gfz0JX/CfmIBhfj89fvCfmIBhYeaXpXo=?= =?utf-8?b?5pelw6kKX2FR8J+YgOaXpVHml6Xml6U=?= x =?utf-8?q?=5F=E6=97=A5=09=09=7F~Q=7F=3F?=  =?utf-8?b?Cn7wn5iAw6lfeuaXpT89f3oJw6nwn5iAUfCfmIA9w6l+?=  ", "za~😀?\t\taQz~日=QzQQ\n \t~zzé😀Qz=a z\n\u{7f}\t\u{7f}😀éa日éé😀?=😀z\t\u{7f}  =~\n😀\u{7f}éé \n~ \u{7f}=\t_😀a~?=~😀aa日z日é\n_aQ😀日Q日日 x _日\t\t\u{7f}~Q\u{7f}?\n~😀é_z日?=\u{7f}z\té😀Q😀=é~  "),
+  ("\t !\"#\$%&'()*+,-./ :;<>?@[\\]^_`{|}~ =?utf-8?b?PVHDqfCfmIBh8J+YgHpffmEgfgkgPVHml6VhPX7ml6UJfgogf1/DqQl6CSAJ?= =?utf-8?b?CeaXpVFRw6lRCT1hP2F6CT1ffj96CcOpUT/DqX4/Xw==?= =?utf-8?b?fwo/CnpR8J+YgH8gXwnDqcOpPSB6f/CfmIAKP2EKX2EgCVFhCgl+ej9/UT9f?= =?utf-8?b?8J+YgA==?=", "\t !\"#\$%&'()*+,-./ :;<>?@[\\]^_`{|}~ =Qé😀a😀z_~a ~\t =Q日a=~日\t~\n \u{7f}_é\tz\t \t\t日QQéQ\t=a?az\t=_~?z\téQ?é~?_\u{7f}\n?\nzQ😀\u{7f} _\téé= z\u{7f}😀\n?a\n_a \tQa\n\t~z?\u{7f}Q?_😀"),
+  ("=?utf-8?q?_az=F0=9F=98=80=09a=F0=9F=98=80a=E6=97=A5Q=7F_=3Da=3F=C3=A9QzQQ?= =?utf-8?q?a=0A=0A=5F=3D=5F=7F?=  ~ x =?utf-8?b?w6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6k=?= =?utf-8?b?w6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6k=?= =?utf-8?b?w6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6k=?= ", " az😀\ta😀a日Q\u{7f} =a?éQzQQa\n\n_=_\u{7f}  ~ x éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé "),
+  ("=?utf-8?q?=0A=0A=09=7F=5F=7F=09=3D=5F=7F=E6=97=A5=E6=97=A5=C3=A9?= =?utf-8?q?=F0=9F=98=80=7FQ=C3=A9=F0=9F=98=80Q=3FQQ=F0=9F=98=80=5F_~=5F=3D?= =?utf-8?q?_Q~=7F=09=7F=0Aa_?= x A\t x =?utf-8?q?=5F=5F=09a~=C3=A9=5F=C3=A9z=09=09=3DQ=3D=0AQa=7F=3D=C3=A9Q=09?= =?utf-8?q?=3F=09=3F=7F_=0A~=3D?=", "\n\n\t\u{7f}_\u{7f}\t=_\u{7f}日日é😀\u{7f}Qé😀Q?QQ😀_ ~_= Q~\u{7f}\t\u{7f}\na  x A\t x __\ta~é_éz\t\t=Q=\nQa\u{7f}=éQ\t?\t?\u{7f} \n~="),
+  ("=?utf-8?b?euaXpX7ml6VfYVF/PfCfmIAJfmHml6UJfyDwn5iACj3wn5iACl8gw6nwn5iA?= =?utf-8?b?CuaXpX7wn5iAIAogCQlfCWFh8J+YgH5hYWHDqQpfPz1+YQ==?=  =?utf-8?q?=09=3D=E6=97=A5Q~aa~=09_Q=09=E6=97=A5=7F=C3=A9=F0=9F=98=80a~=0A?= =?utf-8?q?=E6=97=A5=F0=9F=98=80=E6=97=A5~=3D=C3=A9Q=7F=C3=A9=09az~=7F=09?= =?utf-8?q?=7F~=7F=7F=7F=3F=0A=3D=0Az=3F=0Az=F0=9F=98=80=C3=A9=7F?=", "z日~日_aQ\u{7f}=😀\t~a日\t\u{7f} 😀\n=😀\n_ é😀\n日~😀 \n \t\t_\taa😀~aaaé\n_?=~a\t=日Q~aa~\t Q\t日\u{7f}é😀a~\n日😀日~=éQ\u{7f}é\taz~\u{7f}\t\u{7f}~\u{7f}\u{7f}\u{7f}?\n=\nz?\nz😀é\u{7f}"),
+  ("=?utf-8?q?=C3=A9=3F=0A=09=0A=7F_=E6=97=A5a=3FaaQ=F0=9F=98=80=C3=A9~=5F=09?= =?utf-8?q?~=09___Q=3D=C3=A9=F0=9F=98=80z~=F0=9F=98=80=5F=5F=3F=09?= =?utf-8?q?=E6=97=A5=C3=A9=7Fzz?==?utf-8?q?=7F=0A=3F=0AzQ=F0=9F=98=80=7F_=5F=09=C3=A9=C3=A9=3D_z=7F?= =?utf-8?q?=F0=9F=98=80=0A=3Fa=0A=5Fa_=09Qa=0A=09~z=3F=7FQ=3F=5F?= =?utf-8?q?=F0=9F=98=80?=  =?utf-8?q?=5F=E6=97=A5=09=09=7F~Q=7F=3F?= =?utf-8?q?=0A_aaQ=5F=C3=A9=7F=3F=0A_~=E6=97=A5=F0=9F=98=80=C3=A9a=3F=5F~_?= =?utf-8?q?~=3F=7F=C3=A9z=0A=E6=97=A5=3FQ=09=7F=7Fz=09=E6=97=A5=E6=97=A5a?= =?utf-8?q?=5F_=7FQ=E6=97=A5=5Fz~=F0=9F=98=80=0A=E6=97=A5=3D=0A~=3D?=", "é?\n\t\n\u{7f} 日a?aaQ😀é~_\t~\t   Q=é😀z~😀__?\t日é\u{7f}zz\u{7f}\n?\nzQ😀\u{7f} _\téé= z\u{7f}😀\n?a\n_a \tQa\n\t~z?\u{7f}Q?_😀_日\t\t\u{7f}~Q\u{7f}?\n aaQ_é\u{7f}?\n ~日😀éa?_~ ~?\u{7f}éz\n日?Q\t\u{7f}\u{7f}z\t日日a_ \u{7f}Q日_z~😀\n日=\n~="),
+  ("=?utf-8?q?a=7F=E6=97=A5=09_~z=7F=3F=0Az=F0=9F=98=80=3F=3DQ_a=0A=7F=C3=A9~?= =?utf-8?q?=09=C3=A9z=5F=0A=3D=F0=9F=98=80z_Qz_=E6=97=A5_=09=C3=A9_=C3=A9z?= =?utf-8?q?=E6=97=A5=7F=F0=9F=98=80_z=3F_a=3F=5F=7F=F0=9F=98=80=E6=97=A5?= =?utf-8?q?=E6=97=A5=09=0A=3D?=  =?utf-8?b?Cglfej9RenpRPSBRID0/8J+YgAp/ej1hPXp/P/CfmIBRw6lRPwk/5pelw6k=?= =?utf-8?b?Xwlf8J+YgCA9IOaXpX5+elEKw6l/8J+YgD3ml6UKP8Op8J+YgHpff3oKPQk=?= =?utf-8?b?w6kKPwnwn5iAYX4KYX96IMOpIOaXpVE95pel?= ", "a\u{7f}日\t ~z\u{7f}?\nz😀?=Q a\n\u{7f}é~\téz_\n=😀z Qz 日 \té éz日\u{7f}😀 z? a?_\u{7f}😀日日\t\n=\n\t_z?QzzQ= Q =?😀\n\u{7f}z=a=z\u{7f}?😀QéQ?\t?日é_\t_😀 = 日~~zQ\né\u{7f}😀=日\n?é😀z_\u{7f}z\n=\té\n?\t😀a~\na\u{7f}z é 日Q=日 "),
+  ("a\r\n ", "a\r\n "),
+  ("=?utf-8?q?=3D=7F=E6=97=A5=5F=3F=7F~=3D=7F=0A?= =?utf-8?b?YQBi?= x ", "=\u{7f}日_?\u{7f}~=\u{7f}\na\u{0}b x "),
+  ("=?utf-8?b?PeaXpfCfmIA/CV/wn5iAevCfmIAgf1F+Cl9hIArwn5iA5pelw6kKCX9+X3ph?= =?utf-8?b?w6lhej0JX389P1Hml6Xml6VfP37DqcOp?= x =?utf-8?b?fj0/5pelw6kgUX7DqeaXpV9/IGEKfuaXpeaXpQkJw6k9YT3wn5iAPQo9Pw==?=  =?utf-8?b?CXrDqV9/Cj96YSA/8J+YgFEKw6kJfn8Jf/CfmIB/emEgUX8gX+aXpXp+?= =?utf-8?b?8J+YgD3ml6U9en9+8J+YgF9/elF6?=  ", "=日😀?\t_😀z😀 \u{7f}Q~\n_a \n😀日é\n\t\u{7f}~_zaéaz=\t_\u{7f}=?Q日日_?~éé x ~=?日é Q~é日_\u{7f} a\n~日日\t\té=a=😀=\n=?\tzé_\u{7f}\n?za ?😀Q\né\t~\u{7f}\t\u{7f}😀\u{7f}za Q\u{7f} _日z~😀=日=z\u{7f}~😀_\u{7f}zQz  "),
+  ("=?utf-8?b?5pel5pys6Kqe44Gu44OG44Kt44K544OI?=\r\n  =?utf-8?q?=C3=AF=C3=AF=C3=AF=C3=AF=C3=AF=C3=AF=C3=AF=C3=AF=C3=AF=C3=AF?= =?utf-8?q?=C3=AF=C3=AF=C3=AF=C3=AF=C3=AF=C3=AF=C3=AF=C3=AF=C3=AF=C3=AF?= =?utf-8?q?=C3=AF=C3=AF=C3=AF=C3=AF=C3=AF?=", "日本語のテキストïïïïïïïïïïïïïïïïïïïïïïïïï"),
+  ("=?utf-8?b?P34KPT8gw6lf8J+YgF8/w6l/Cj8gfz9RPWEKCgkgf+aXpX4gPQrml6UKCT1/?= =?utf-8?b?PV/wn5iACuaXpV9R8J+YgD/wn5iAw6nwn5iAYQ==?=\r\n ", "?~\n=? é_😀_?é\u{7f}\n? \u{7f}?Q=a\n\n\t \u{7f}日~ =\n日\n\t=\u{7f}=_😀\n日_Q😀?😀é😀a\r\n "),
+  ("=?utf-8?b?w6lfPX9+P/CfmIAgIMOpCWF6P/CfmIB/X19/fmHwn5iAelFRYV9fYeaXpSAg?= =?utf-8?b?CmEKPeaXpQrwn5iAUX5R8J+YgArDqSB/YX8KCX4JXz9R8J+YgD0KCQk=?= x =?utf-8?q?=C3=A9=3F=09=5FQ=7F=09~=E6=97=A5=0A~=C3=A9=7F=5F=09Q=C3=A9?=  =?utf-8?b?P1HDqWE/f1EKUeaXpT8/Xz0gYV9RX3ph5pelCeaXpQlRUXoK?=\r\n ", "é_=\u{7f}~?😀  é\taz?😀\u{7f}__\u{7f}~a😀zQQa__a日  \na\n=日\n😀Q~Q😀\né \u{7f}a\u{7f}\n\t~\t_?Q😀=\n\t\t x é?\t_Q\u{7f}\t~日\n~é\u{7f}_\tQé?Qéa?\u{7f}Q\nQ日??_= a_Q_za日\t日\tQQz\n\r\n "),
+  ("\t !\"#\$%&'()*+,-./ :;<>?@[\\]^_`{|}~", "\t !\"#\$%&'()*+,-./ :;<>?@[\\]^_`{|}~"),
+  ("=?KOI8-R?B?8sXT?=", "<koi8-r:f2c5d3>"),
+  ("=?windows-1252?Q?b=E0r?=", "<windows-1252:62e072>"),
+  ("=?ISO-8859-15?Q?f=F5=F6?=", "<iso-8859-15:66f5f6>"),
+  ("=?fail?q?x?=", "ERR Test error"),
+  ("=?FAIL?b?eA==?=", "ERR Test error"),
+  ("=?x-unknown?q?=FF_=00?=", "<x-unknown:ff2000>"),
+  ("=?UTF-8?Q?=C2=A1Hola,_se=C3=B1or!?=", "¡Hola, señor!"),
+  ("=?UTF-8?Q?Fran=C3=A7ois-J=C3=A9r=C3=B4me?=", "François-Jérôme"),
+  ("=?UTF-8?q?ascii?=", "ascii"),
+  ("=?utf-8?B?QW5kcsOp?=", "André"),
+  ("=?ISO-8859-1?Q?Rapha=EBl_Dupont?=", "Raphaël Dupont"),
+  ("=?utf-8?b?IkFudG9uaW8gSm9zw6kiIDxqb3NlQGV4YW1wbGUub3JnPg==?=", "\"Antonio José\" <jose@example.org>"),
+  ("=?UTF-8?A?Test?=", "=?UTF-8?A?Test?="),
+  ("=?UTF-8?Q?A=B?=", "=?UTF-8?Q?A=B?="),
+  ("=?UTF-8?Q?=A?=", "=?UTF-8?Q?=A?="),
+  ("=?UTF-8?A?A?=", "=?UTF-8?A?A?="),
+  ("=????=", "=????="),
+  ("=?UTF-8???=", "=?UTF-8???="),
+  ("=?UTF-8?Q??=", ""),
+  ("=?us-ascii?q?a=FFb?=", "a�b"),
+  ("=?utf-8?q?=80=C3?=", "��"),
+  ("=?koi8-r?q?x?=", "<koi8-r:78>"),
+  ("=?UTF-8?b?QW5kcs?=", "=?UTF-8?b?QW5kcs?="),
+  ("=?UTF-8?q?=g0?=", "=?UTF-8?q?=g0?="),
+  ("=?UTF-8?q?a\u{1}?=", "=?UTF-8?q?a\u{1}?="),
+  ("=?UTF-8?q?a=0D=0A?=", "a\r\n"),
+  ("=?UTF-8?q?tab\there?=", "tab\there"),
+  ("=?a?q?b?c?=", "<a:623f63>"),
+  ("Jean", "Jean"),
+  ("=?UTF-8?Q?x", "=?UTF-8?Q?x"),
+  ("=?ISO-8859-1?B?6enp?=", "ééé"),
+]
+
 fn word_res(r: Result[Str, mime.MimeErr]) -> Str {
   match r {
     Ok(s) => s
@@ -6781,6 +6939,30 @@ test "encode_word, decode_word and decode_header give Go's mime results" {
   }
   for (h, want) in HEADER_DEC {
     let got = word_res(mime.decode_header(h))
+    if got != want {
+      bad.push("header ${h.quote()}: ${got.quote()}")
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+fn show(charset: Str, content: Bytes) -> Str ! mime.MimeErr {
+  if charset == "fail" {
+    return Err(mime.MimeErr{msg: "Test error"})
+  }
+  Ok("<${charset}:${content.to_hex()}>")
+}
+
+test "decode_word_with and decode_header_with, as Go's WordDecoder with a CharsetReader" {
+  var bad: List[Str] = []
+  for (w, want) in WORD_DEC_WITH {
+    let got = word_res(mime.decode_word_with(w, show))
+    if got != want {
+      bad.push("word ${w.quote()}: ${got.quote()}")
+    }
+  }
+  for (h, want) in HEADER_DEC_WITH {
+    let got = word_res(mime.decode_header_with(h, show))
     if got != want {
       bad.push("header ${h.quote()}: ${got.quote()}")
     }

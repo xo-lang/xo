@@ -367,6 +367,10 @@ func main() {
 			a = ans{V: hex.EncodeToString(protowire.AppendTag(nil, protowire.Number(n), protowire.Type(w)))}
 		case "appbytes":
 			a = ans{V: hex.EncodeToString(protowire.AppendBytes(nil, b))}
+		case "validnum":
+			i, _ := strconv.ParseInt(f[1], 10, 64)
+			// protowire.Number is an int32: a value outside int32 is not a valid number
+			a = ans{V: fmt.Sprint(i == int64(int32(i)) && protowire.Number(i).IsValid())}
 		case "zigzag":
 			i, _ := strconv.ParseInt(f[1], 10, 64)
 			z := protowire.EncodeZigZag(i)
