@@ -908,6 +908,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       g.set(v, "call i64 asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(i64 ${g.op(g.f.arg(x.args, 0))}, i64 ${g.op(g.f.arg(x.args, 1))}, i64 ${g.op(g.f.arg(x.args, 2))})")
     }
     "rt.chacha_blocks4" => g.chacha4(g.raw_ptr(g.f.arg(x.args, 0)), g.raw_ptr(g.f.arg(x.args, 1)), g.raw_ptr(g.f.arg(x.args, 2)))
+    "rt.chacha8_rand4" => g.chacha8rand4(g.raw_ptr(g.f.arg(x.args, 0)), g.raw_ptr(g.f.arg(x.args, 1)))
     "rt.ghash4" => {
       // arm64 only (ssa cpu_call, decision 0339): ssa.ghash4_neon_lines
       // as inline asm, its V registers clobbered
@@ -2578,6 +2579,49 @@ fn (var g: Gen) chacha4(dst: Str, src: Str, st: Str) {
       let da = g.def("getelementptr i8, ptr ${dst}, i64 ${off}")
       g.emit("store <4 x i32> ${r}, ptr ${da}, align 1")
     }
+  }
+}
+
+/// rt.chacha8_rand4 (decision 0669) as vector IR: chacha4's lanes, 4
+/// double rounds, only the key words added back, each word's vector
+/// stored at dst + 16k (Go's chacha8rand layout).
+fn (var g: Gen) chacha8rand4(dst: Str, st: Str) {
+  var orig: List[Str] = []
+  for i in 0..16 {
+    if i == 12 {
+      let a = g.def("getelementptr i8, ptr ${st}, i64 64")
+      orig.push(g.def("load <4 x i32>, ptr ${a}, align 4"))
+    } else {
+      let a = g.def("getelementptr i8, ptr ${st}, i64 ${4 * i}")
+      let w = g.def("load i32, ptr ${a}, align 4")
+      let one = g.def("insertelement <4 x i32> poison, i32 ${w}, i64 0")
+      orig.push(g.def("shufflevector <4 x i32> ${one}, <4 x i32> poison, <4 x i32> zeroinitializer"))
+    }
+  }
+  var x = orig
+  let quarters = [[0, 4, 8, 12], [1, 5, 9, 13], [2, 6, 10, 14], [3, 7, 11, 15], [0, 5, 10, 15], [1, 6, 11, 12], [2, 7, 8, 13], [3, 4, 9, 14]]
+  for _ in 0..4 {
+    for q in quarters {
+      let a = q[0]
+      let b = q[1]
+      let c = q[2]
+      let d = q[3]
+      x[a] = g.def("add <4 x i32> ${x[a]}, ${x[b]}")
+      x[d] = g.chacha_rotl(g.def("xor <4 x i32> ${x[d]}, ${x[a]}"), 16)
+      x[c] = g.def("add <4 x i32> ${x[c]}, ${x[d]}")
+      x[b] = g.chacha_rotl(g.def("xor <4 x i32> ${x[b]}, ${x[c]}"), 12)
+      x[a] = g.def("add <4 x i32> ${x[a]}, ${x[b]}")
+      x[d] = g.chacha_rotl(g.def("xor <4 x i32> ${x[d]}, ${x[a]}"), 8)
+      x[c] = g.def("add <4 x i32> ${x[c]}, ${x[d]}")
+      x[b] = g.chacha_rotl(g.def("xor <4 x i32> ${x[b]}, ${x[c]}"), 7)
+    }
+  }
+  for i in 4..12 {
+    x[i] = g.def("add <4 x i32> ${x[i]}, ${orig[i]}")
+  }
+  for i in 0..16 {
+    let da = g.def("getelementptr i8, ptr ${dst}, i64 ${16 * i}")
+    g.emit("store <4 x i32> ${x[i]}, ptr ${da}, align 1")
   }
 }
 

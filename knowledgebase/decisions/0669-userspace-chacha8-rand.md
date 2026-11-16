@@ -52,7 +52,9 @@ spec/std.md 3.4 promises a Rand that is cryptographically secure for real capabi
   1.54, zipf 1.81 (zipf is now 60% `Float.exp`, a math item of its own).
 - Stage 2 (next push): the block as `cpu.chacha8_rand4`, a vector kernel on arm64 (NEON in the arm64 emitter,
   vector IR in LLVM; amd64 and wasm run the Xo body), as decision 0329's chacha_blocks4, and the draw's fast path
-  inline. The scalar block was 60% of exp's time; Go's block is assembly. Its host 1 --ab goes here.
+  inline. The scalar block was 60% of exp's time; Go's block is assembly. Against stage 1 on linux/arm64 host 1
+  (xo bench --ab, 3 rounds): exp 17.39 to 14.42 ms (0.830, 0.807 to 0.843), perm 1.021 (within noise: perm is the
+  remainder and the list, not the block). On the Mac against Go: normal 1.57, exp 1.91, perm 1.26, zipf 1.93.
 - One page (4 KiB) per worker that draws; one more word in the worker record (W_SIZE 3616).
 - Tests: internal/llvm TestRuntimeRandChaCha8 (testdata/rt/randchacha) on both native backends: Go's chacha8rand
   TestOutput vector, 372 words (three key erasures), from std/internal rt_probe "rand_kat"; and rt_probe

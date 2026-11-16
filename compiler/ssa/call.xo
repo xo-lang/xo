@@ -288,6 +288,9 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     // amd64 (ssa x86chacha.xo, 2026-10-27)
     "chacha_blocks4" => if b.goarch == "arm64" || b.goarch == "amd64" { "chacha_blocks4" } else { "" }
     "chacha_stream4" => if b.goarch == "arm64" || b.goarch == "amd64" { "chacha_stream4" } else { "" }
+    // decision 0669: Go's chacha8rand block, NEON on arm64 (and LLVM's
+    // vectors there); amd64 and wasm run the body
+    "chacha8_rand4" => if b.goarch == "arm64" { "chacha8_rand4" } else { "" }
     // ChaCha20-Poly1305's bulk in one loop: amd64 (ssa x86chachapoly.xo,
     // 2026-10-27); arm64 runs the body (NEON's stream, then Poly1305)
     "chacha_poly_seal4" => if b.goarch == "amd64" { "chacha_poly_seal4" } else { "" }

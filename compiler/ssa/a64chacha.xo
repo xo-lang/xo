@@ -160,3 +160,87 @@ pub fn chacha4_neon_lines(d: Str, s: Str, st: Str, n: Str, p: Str, q: Str, c: St
   }
   t
 }
+
+/// The lines of Go's chacha8rand block (decision 0669, cpu.chacha8_rand4):
+/// chacha4_neon_lines' four blocks in four lanes from the 80 byte input at
+/// st, 4 double rounds, then only the key words (4 to 11) added back and
+/// each word's register stored as is at d + 16k (Go's layout is the
+/// vertical one: no transpose); p and q are scratch registers. The V
+/// registers are chacha4_neon_vregs'.
+pub fn chacha8rand_neon_lines(d: Str, st: Str, p: Str, q: Str) -> List[Str] {
+  var t: List[Str] = []
+  for (r, w) in [(p, 0x0605040702010003), (q, 0x0E0D0C0F0A09080B)] {
+    t.push("movz ${r}, #${w & 0xffff}")
+    for k in 1..4 {
+      t.push("movk ${r}, #${(w >> (16 * k)) & 0xffff}, lsl #${16 * k}")
+    }
+  }
+  t.push("fmov d29, ${p}")
+  t.push("fmov d30, ${q}")
+  t.push("ins v29.d[1], v30.d[0]")
+  var reg: List[Int] = [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 0, 1, 2]
+  var free: List[Int] = [3, 4, 5, 6, 7, 30, 31]
+  for r in 0..4 {
+    t.push("ldr q${free[r]}, [${st}, #${16 * r}]")
+  }
+  for i in 0..16 {
+    if i == 12 {
+      t.push("ldr q${reg[i]}, [${st}, #64]")
+    } else {
+      t.push("dup v${reg[i]}.4s, v${free[i / 4]}.s[${i % 4}]")
+    }
+  }
+  let cols = [[0, 4, 8, 12], [1, 5, 9, 13], [2, 6, 10, 14], [3, 7, 11, 15]]
+  let diags = [[0, 5, 10, 15], [1, 6, 11, 12], [2, 7, 8, 13], [3, 4, 9, 14]]
+  for _ in 0..4 {
+    for qs in [cols, diags] {
+      for q4 in qs {
+        t.push("add v${reg[q4[0]]}.4s, v${reg[q4[0]]}.4s, v${reg[q4[1]]}.4s")
+        t.push("eor v${reg[q4[3]]}.16b, v${reg[q4[3]]}.16b, v${reg[q4[0]]}.16b")
+        t.push("rev32 v${reg[q4[3]]}.8h, v${reg[q4[3]]}.8h")
+      }
+      for q4 in qs {
+        t.push("add v${reg[q4[2]]}.4s, v${reg[q4[2]]}.4s, v${reg[q4[3]]}.4s")
+        t.push("eor v${reg[q4[1]]}.16b, v${reg[q4[1]]}.16b, v${reg[q4[2]]}.16b")
+      }
+      for q4 in qs {
+        let r = free.pop() ?? 31
+        t.push("shl v${r}.4s, v${reg[q4[1]]}.4s, #12")
+        t.push("sri v${r}.4s, v${reg[q4[1]]}.4s, #20")
+        free.insert(0, reg[q4[1]])
+        reg[q4[1]] = r
+      }
+      for q4 in qs {
+        t.push("add v${reg[q4[0]]}.4s, v${reg[q4[0]]}.4s, v${reg[q4[1]]}.4s")
+        t.push("eor v${reg[q4[3]]}.16b, v${reg[q4[3]]}.16b, v${reg[q4[0]]}.16b")
+      }
+      for q4 in qs {
+        t.push("tbl v${reg[q4[3]]}.16b, {v${reg[q4[3]]}.16b}, v29.16b")
+      }
+      for q4 in qs {
+        t.push("add v${reg[q4[2]]}.4s, v${reg[q4[2]]}.4s, v${reg[q4[3]]}.4s")
+        t.push("eor v${reg[q4[1]]}.16b, v${reg[q4[1]]}.16b, v${reg[q4[2]]}.16b")
+      }
+      for q4 in qs {
+        let r = free.pop() ?? 31
+        t.push("shl v${r}.4s, v${reg[q4[1]]}.4s, #7")
+        t.push("sri v${r}.4s, v${reg[q4[1]]}.4s, #25")
+        free.insert(0, reg[q4[1]])
+        reg[q4[1]] = r
+      }
+    }
+  }
+  // the key words added back (rows 1 and 2 of the input)
+  let rows = [free[0], free[1]]
+  let tmp = free[2]
+  t.push("ldr q${rows[0]}, [${st}, #16]")
+  t.push("ldr q${rows[1]}, [${st}, #32]")
+  for i in 4..12 {
+    t.push("dup v${tmp}.4s, v${rows[(i - 4) / 4]}.s[${i % 4}]")
+    t.push("add v${reg[i]}.4s, v${reg[i]}.4s, v${tmp}.4s")
+  }
+  for i in 0..16 {
+    t.push("str q${reg[i]}, [${d}, #${16 * i}]")
+  }
+  t
+}
