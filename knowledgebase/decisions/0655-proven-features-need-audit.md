@@ -127,3 +127,6 @@ and it never listed the health service or `unix:` targets.
   planned by category (Go callbacks into SQLite and the authorizer, run-time extensions, the deprecated user
   authentication extension); Backup and Serialize map to VACUUM INTO, Deserialize to a file through the Fs.
   stdcov: sqlite features Proven.
+- bufbuild/protocompile v0.14.1 for std/protoparse (2026-11-16, #109): 20 symbols, mapped to
+  protoparse.parse and gen_set and protodesc.build; open: editions and SourceCodeInfo (four rows) and the
+  checklist's editions and custom options items.

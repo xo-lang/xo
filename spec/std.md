@@ -10763,18 +10763,18 @@ fn aggregate_pairs(v: Str) -> List[(Str, Str)]                 // an aggregate o
   In a proto2 file every field outside a oneof needs a label (`required`, `optional` or `repeated`, else an error),
   except a `map`, and `required` and `group` are accepted: a group is a nested message plus a field of that type
   named in lower case (`group`). A proto3 file rejects `required` and `group`. `gen` maps `required` to a plain field and proto2 `optional` to an Option;
-  proto2 repeated numeric fields are unpacked on the wire but `derive Proto` writes them packed (the reader takes
-  both), so a generated proto2 message is not byte identical to protoc's output for those fields.
+  a repeated number, Bool or enum is written `proto "N,unpacked"` in a proto2 file unless `[packed = true]`, and in
+  proto3 with `[packed = false]`, so the field's bytes are protoc's.
 - `gen` writes Xo source: a nested type `Inner` of `Outer` is `OuterInner`, a oneof is an enum held in an optional
   field marked `proto "oneof"`, an enum is an open `Int` enum with a catch-all variant. Services are not generated
   here (the stubs of std/grpc come with `xo proto gen`). Types and fields are `pub`, and the output has no `use`
   line (`derive Proto` needs none).
 - `gen_set` generates files that import one another (`xo proto gen` passes every file it is given): a type resolves
   in the file's own package scopes, then in the files it imports (matched by path, or a path ending in `/` and the
-  import) and their `import public` files. A field typed by an enum of another file, or by a type outside the set
-  (google/protobuf's well-known types among them), is an error. `derive Proto` itself takes both since decision 0683
-  item 4 (an enum of another file of the package, a struct of an imported package such as std/protowkt's); mapping
-  them in `gen_set` is std/protoparse's follow-up.
+  import) and their `import public` files. A field typed by an enum of another file of the set is taken as
+  `derive Proto` takes it (decision 0683 item 4); a well-known type of google/protobuf is std/protowkt's
+  (`google.protobuf.Timestamp` is `protowkt.Timestamp`, and the source starts `use std/protowkt`, the one use line
+  gen writes); any other type outside the set is an error.
 
 ## 71. std/htmltok
 

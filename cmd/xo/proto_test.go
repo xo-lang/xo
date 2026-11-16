@@ -68,3 +68,29 @@ func TestProtoGenBuilds(t *testing.T) {
 	// alone, b.proto's import is not in the set
 	xo(t, "proto", "gen", filepath.Join(dir, "p", "b.proto")).want(1)
 }
+
+// TestProtoGenWellKnownEnumsUnpacked builds what xo proto gen writes for a
+// field typed by an enum of another file, a well-known type (std/protowkt's)
+// and a proto2 repeated number (unpacked on the wire, as protoc writes it),
+// and runs a round trip (decision 0683 item 4, task #109). gen_set refused
+// the first two before.
+func TestProtoGenWellKnownEnumsUnpacked(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"p/a.proto": "syntax = \"proto3\";\npackage p.a;\nenum K { Z = 0; ONE = 1; }\n",
+		"p/b.proto": "syntax = \"proto3\";\npackage p.b;\nimport \"p/a.proto\";\nimport \"google/protobuf/timestamp.proto\";\nmessage B { p.a.K k = 1; google.protobuf.Timestamp at = 2; }\n",
+		"p/c.proto": "syntax = \"proto2\";\npackage p.c;\nmessage C { repeated int32 n = 1; }\n",
+		"gen/main.xo": "use std/protobuf\nuse std/protowkt\n\nfn main(os: Os) {\n  let b = B{k: K.One, at: protowkt.Timestamp{seconds: 5, nanos: 6}}\n" +
+			"  let back = protobuf.unmarshal[B](protobuf.marshal(b)).or_fault(\"unmarshal\")\n" +
+			"  let at = back.at\n" +
+			"  let c = protobuf.marshal(C{n: [1, 2]})\n" +
+			"  os.stdio.println(\"${back.k == K.One} ${at.seconds} ${at.nanos} ${c.to_hex()}\")\n}\n",
+	})
+	out := filepath.Join(dir, "gen")
+	xo(t, "proto", "gen", "--out="+out, filepath.Join(dir, "p", "a.proto"), filepath.Join(dir, "p", "b.proto"), filepath.Join(dir, "p", "c.proto")).want(0)
+	r := xo(t, "run", out).want(0)
+	// 0801 0802: field 1 once per element (protoc's proto2 form), not 0a020102 (packed)
+	if r.out != "true 5 6 08010802\n" {
+		t.Fatalf("got %q\n%s", r.out, r.err)
+	}
+}

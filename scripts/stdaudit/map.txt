@@ -2735,7 +2735,7 @@ fieldmaskpb.FieldMask.IsValid = std/protowkt.FieldMask.is_valid
 fieldmaskpb.FieldMask.Append = std/protowkt.FieldMask.append
 fieldmaskpb.* = not planned: generated code's accessors and reflection (Get*, ProtoReflect, Descriptor, Reset, String, ProtoMessage); a derive Proto struct's fields are read directly (decision 0549)
 # protobuf behavior checklist (decision 0655)
-proto.behavior.proto_files = partial: xo proto gen writes messages and enums, imports within the files given (protoparse.gen_set); no services or options, and derive Proto takes no enum of another file and no type of another package (the well-known types)
+proto.behavior.proto_files = partial: xo proto gen writes messages and enums, imports within the files given (protoparse.gen_set), enums of other files and the well-known types as std/protowkt's (#109); no services or options
 # websocket: github.com/gorilla/websocket v1.5.3 (outside.txt; decision 0655)
 websocket.Upgrade = std/websocket.upgrade
 websocket.Upgrader = std/websocket.upgrade
@@ -5532,3 +5532,31 @@ go-sqlite3.behavior.mutex = std/sql.Db (a pooled connection serves one task at a
 go-sqlite3.behavior.stmt_cache = std/sql.Db.prepare (prepared statements are explicit; no implicit _stmt_cache_size cache)
 go-sqlite3.behavior.vfs = not planned: plug-in extension points: vfs= names a VFS registered from C
 go-sqlite3.behavior.read_only_tx = std/sql.Db.begin (a read only transaction runs with PRAGMA query_only)
+# protocompile: std/protoparse (with std/protodesc.build for descriptors; bufbuild/protocompile v0.14.1, descriptor shape only, decision 0530)
+protocompile.Compiler = std/protoparse.parse (std/protodesc.build gives the FileDescriptorProto protoc writes)
+protocompile.Compiler.Compile = std/protodesc.build (a parsed File and the descriptors of its imports)
+protocompile.Resolver = std/protodesc.build (the caller passes the imports' descriptors)
+protocompile.ResolverFunc = std/protodesc.build (the caller passes the imports' descriptors)
+protocompile.ResolverFunc.FindFileByPath = std/protodesc.build (the caller passes the imports' descriptors)
+protocompile.SourceResolver = std/protoparse.gen_set (the caller passes each file's path and parsed source)
+protocompile.SourceResolver.FindFileByPath = std/protoparse.gen_set (imports resolve by path within the set)
+protocompile.CompositeResolver = std/protoparse.gen_set (imports resolve by path within the set)
+protocompile.CompositeResolver.FindFileByPath = std/protoparse.gen_set (imports resolve by path within the set)
+protocompile.SearchResult = std/protoparse.File (a parsed source; std/protodesc.FileDesc a built descriptor)
+protocompile.SourceAccessorFromMap = std/protoparse.parse (the caller reads the files; parse takes the text)
+protocompile.WithStandardImports = std/protoparse.gen_set (google/protobuf's well-known types map to std/protowkt's)
+protocompile.PanicError = not planned: Go runtime machinery: a panic recovered inside a compile; Xo's parse returns ParseErr
+protocompile.PanicError.Error = not planned: Go runtime machinery: a panic recovered inside a compile; Xo's parse returns ParseErr
+protocompile.SourceInfoMode = gap: std/protodesc.build writes no SourceCodeInfo (locations and comments)
+protocompile.SourceInfoNone = std/protodesc.build (no SourceCodeInfo, protoc's default without --include_source_info)
+protocompile.SourceInfoStandard = gap: std/protodesc.build writes no SourceCodeInfo (protoc --include_source_info)
+protocompile.SourceInfoExtraComments = gap: std/protodesc.build writes no SourceCodeInfo
+protocompile.SourceInfoExtraOptionLocations = gap: std/protodesc.build writes no SourceCodeInfo
+protocompile.IsEditionSupported = gap: std/protoparse reads proto2 and proto3, not `edition = "2023"` files
+# protocompile behavior checklist (decision 0655: what a symbol diff misses; an open item is a gap)
+protocompile.behavior.proto3 = std/protoparse.parse (proto3: fields, maps, oneofs, optional, services, options; std/protodesc byte exact with protoc 36.2 on 47 files)
+protocompile.behavior.proto2 = std/protoparse.parse (labels, required, defaults, groups, extensions ranges, extend)
+protocompile.behavior.errors = std/protoparse.ParseErr (line and column of the first error)
+protocompile.behavior.codegen = std/protoparse.gen_set (xo proto gen: messages and enums across files, unpacked proto2 repeated numbers, the well-known types)
+protocompile.behavior.editions = gap: no `edition = "2023"` (features, field presence by feature)
+protocompile.behavior.custom_options = gap: std/protodesc.build leaves out custom options (extensions of descriptor.proto options) and aggregate option values

@@ -35,7 +35,10 @@ and `m.K` / `m.T` of an imported module (its generated `m.proto_*__T`
 functions; a pub struct's are pub). A non-pub struct of another file
 of the same package worked once the enum did (its helpers are package
 members). Golden proto_cross_file (a sub-package with two files and a
-std/protowkt Timestamp field; XO0425 and XO0601 before). Still open:
+std/protowkt Timestamp field; XO0425 and XO0601 before). Closed
+2026-11-16 (#109): gen_set takes an enum of another file and maps the
+well-known types to std/protowkt's (cmd/xo
+TestProtoGenWellKnownEnumsUnpacked). Was open:
 std/protoparse's gen_set refuses these types (std's side).
 
 How to avoid: a derive that reads another declaration must not assume

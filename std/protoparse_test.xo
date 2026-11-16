@@ -96,6 +96,21 @@ test "generator: scalars, options, nesting, oneof and enum names" {
   expect(src.contains("m proto \"6\": Map[Int, OI]")) == true
 }
 
+test "gen writes proto2 repeated numbers, Bools and enums unpacked, as protoc does, unless [packed = true]; proto3 only for [packed = false]" {
+  let f2 = parse("syntax = \"proto2\";\nmessage M {\n  enum E { A = 0; }\n  repeated int32 a = 1;\n  repeated sint64 b = 2 [packed = true];\n  repeated E e = 3;\n  repeated string s = 4;\n  repeated M m = 5;\n  repeated bool f = 6;\n}\n")?
+  let g2 = gen(f2)?
+  expect(g2.contains("pub a proto \"1,unpacked\": List[Int32]")) == true
+  expect(g2.contains("pub b proto \"2,zigzag\": List[Int]")) == true
+  expect(g2.contains("pub e proto \"3,unpacked\": List[ME]")) == true
+  expect(g2.contains("pub s proto \"4\": List[Str]")) == true
+  expect(g2.contains("pub m proto \"5\": List[M]")) == true
+  expect(g2.contains("pub f proto \"6,unpacked\": List[Bool]")) == true
+  let f3 = parse("syntax = \"proto3\";\nmessage N {\n  repeated fixed32 a = 1 [packed = false];\n  repeated int64 b = 2;\n}\n")?
+  let g3 = gen(f3)?
+  expect(g3.contains("pub a proto \"1,fixed,unpacked\": List[UInt32]")) == true
+  expect(g3.contains("pub b proto \"2\": List[Int]")) == true
+}
+
 test "generator: unknown types are an error" {
   expect(gen(must("message A { B b = 1; }")).is_err()) == true
 }
@@ -183,14 +198,22 @@ test "gen_set: a type from an imported file resolves; one imported without publi
   expect(gen(b).is_err()) == true
 }
 
-test "gen_set: an enum of an imported file and a type outside the set are errors" {
-  let a = must("syntax = \"proto3\";\npackage x.a;\nenum K { Z = 0; }\nmessage A { enum E { Y = 0; } }")
-  let b = must("syntax = \"proto3\";\npackage x.b;\nimport \"x/a.proto\";\nmessage B { x.a.K k = 1; }")
+test "gen_set: an enum of an imported file resolves, the well-known types are std/protowkt's, and other types outside the set are errors (decision 0683 item 4)" {
+  let a = must("syntax = \"proto2\";\npackage x.a;\nenum K { Z = 0; }\nmessage A { enum E { Y = 0; } }")
+  let b = must("syntax = \"proto2\";\npackage x.b;\nimport \"x/a.proto\";\nmessage B { optional x.a.K k = 1; repeated x.a.K ks = 2; }")
   let c = must("syntax = \"proto3\";\npackage x.c;\nimport \"x/a.proto\";\nmessage C { x.a.A.E e = 1; }")
-  expect(gen_set([("x/a.proto", a), ("x/b.proto", b)]).is_err()) == true
-  expect(gen_set([("x/a.proto", a), ("x/c.proto", c)]).is_err()) == true
-  // the well-known types are not in the set
-  expect(gen(must("syntax = \"proto3\";\nimport \"google/protobuf/timestamp.proto\";\nmessage S { google.protobuf.Timestamp t = 1; }")).is_err()) == true
+  let ob = gen_set([("x/a.proto", a), ("x/b.proto", b)]).or_fault("gen_set b")
+  expect(ob[1].contains("pub k proto \"1\": K?")) == true
+  // an imported enum is a number: unpacked in proto2 as in the file's own
+  expect(ob[1].contains("pub ks proto \"2,unpacked\": List[K]")) == true
+  expect(ob[1].contains("use ")) == false
+  let oc = gen_set([("x/a.proto", a), ("x/c.proto", c)]).or_fault("gen_set c")
+  expect(oc[1].contains("pub e proto \"1\": AE")) == true
+  let s = gen(must("syntax = \"proto3\";\nimport \"google/protobuf/timestamp.proto\";\nimport \"google/protobuf/struct.proto\";\nmessage S { google.protobuf.Timestamp t = 1; repeated .google.protobuf.Value vs = 2; }")).or_fault("gen s")
+  expect(s.starts_with("use std/protowkt\n\n")) == true
+  expect(s.contains("pub t proto \"1\": protowkt.Timestamp")) == true
+  expect(s.contains("pub vs proto \"2\": List[protowkt.Value]")) == true
+  expect(gen(must("syntax = \"proto3\";\nmessage S { google.protobuf.Nope n = 1; }")).is_err()) == true
 }
 
 test "gen writes pub types and no use line (derive Proto needs none; an unused use is XO0110)" {

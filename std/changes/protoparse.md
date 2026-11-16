@@ -1,5 +1,26 @@
 # std/protoparse changes
 
+## 2026-11-16: feature: unpacked repeated output, imported enums and the well-known types
+
+- Kind: feature
+- Commit: this push
+- Found by: task #109 (the protoparse coverage row's missing items; gotchas/derive-proto-across-files.md's
+  open std half of decision 0683 item 4)
+- Go reference: protoc's encoding of repeated fields (proto2 unpacked unless `[packed = true]`, proto3
+  packed unless `[packed = false]`) and protoc-gen-go's mapping of google/protobuf's well-known types
+- Test: protoparse_test.xo "gen writes proto2 repeated numbers, Bools and enums unpacked..." and "gen_set: an
+  enum of an imported file resolves, the well-known types are std/protowkt's..." (the second was an
+  is_err test before); cmd/xo TestProtoGenWellKnownEnumsUnpacked builds the output and runs a round trip
+  (a proto2 `repeated int32` marshals as `08010802`, protoc's bytes)
+- Shipped in: not yet released
+
+`gen` writes a repeated number, Bool or enum field as `proto "N,unpacked"` in a proto2 file (unless
+`[packed = true]`) and in proto3 with `[packed = false]`, so the generated message is byte identical to
+protoc's for those fields. `gen_set` takes a field typed by an enum of another file of the set (derive Proto
+takes it since decision 0683 item 4) and maps google/protobuf's well-known types to std/protowkt's
+(`google.protobuf.Timestamp` is `protowkt.Timestamp`; the source then starts `use std/protowkt`); both were
+errors.
+
 ## 2026-11-16: fix: generated code compiles; a type of an imported file resolves
 
 - Kind: fix

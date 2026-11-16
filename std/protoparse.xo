@@ -285,15 +285,15 @@ pub fn gen(f: File) -> Str ! ParseErr {
 /// other files of the set import it, or a path ending in `/` and that import path. A type resolves as protoc
 /// resolves it: in the file's own package scopes first, then among the types of the files it imports and the
 /// files those import with `import public`. The generated sources share one Xo package (`xo proto gen
-/// --out=DIR`), so a message keeps the name `gen` gives it in its own file and every type is `pub`. A field
-/// whose type is an enum of another file, or a type of a file outside the set (the well-known types of
-/// google/protobuf among them), is an error: `derive Proto` takes an enum of the same file and a struct of
-/// the same package only.
+/// --out=DIR`), so a message keeps the name `gen` gives it in its own file and every type is `pub`; an
+/// enum of another file is taken as derive Proto takes it (decision 0683 item 4). A well-known type of
+/// google/protobuf is std/protowkt's (`google.protobuf.Timestamp` is `protowkt.Timestamp`, and the
+/// source starts `use std/protowkt`); any other type outside the set is an error.
 pub fn gen_set(files: List[(Str, File)]) -> List[Str] ! ParseErr {
   var res: List[Str] = []
   for (_, f) in files {
     var names: List[(Str, Str)] = []
-    names = g_names(f, false, names)
+    names = g_names(f, names)
     var visible: List[Str] = []
     var queue = f.imports
     while !queue.is_empty() {
@@ -303,28 +303,40 @@ pub fn gen_set(files: List[(Str, File)]) -> List[Str] ! ParseErr {
       visible.push(path)
       for (q, g) in files {
         if q != "" && (q == path || q.ends_with("/${path}")) {
-          names = g_names(g, true, names)
+          names = g_names(g, names)
           for pp in g.public_imports { queue.push(pp) }
         }
       }
     }
     let scope = if f.package == "" { "" } else { "${f.package}." }
+    // the set's sources share one Xo package, so an enum's generated name is unique in the set
+    var enums: List[Str] = []
+    for (_, g) in files {
+      for e in g.enums { enums.push(e.name) }
+      for m in g.messages { enums = g_enum_gens("", m, enums) }
+    }
+    let pk = GenPack{proto2: f.syntax == "proto2", enums: enums}
     var o: List[Str] = []
     for e in f.enums { o = g_enum(e, e.name, o) }
-    for m in f.messages { o = g_message(m, scope, "", names, o)? }
-    res.push(o.join("\n"))
+    for m in f.messages { o = g_message(m, scope, "", names, pk, o)? }
+    var src = o.join("\n")
+    // a well-known type is std/protowkt's (decision 0683 item 4): the only use line gen writes
+    if src.contains(": protowkt.") || src.contains("[protowkt.") || src.contains("(v: protowkt.") {
+      src = "use std/protowkt\n\n${src}"
+    }
+    res.push(src)
   }
   Ok(res)
 }
 
-/// The declared names of `f`'s types, fully qualified by its package, with their generated names; an enum
-/// of an imported file (`imported`) has its generated name marked with a leading `!` (g_type refuses it).
-fn g_names(f: File, imported: Bool, out: List[(Str, Str)]) -> List[(Str, Str)] {
+/// The declared names of `f`'s types, fully qualified by its package, with their generated names (the
+/// same for an imported file's: the set's sources share one Xo package, and derive Proto takes an enum
+/// of another file of it, decision 0683 item 4).
+fn g_names(f: File, out: List[(Str, Str)]) -> List[(Str, Str)] {
   var names = out
   let pre = if f.package == "" { "" } else { "${f.package}." }
-  let mark = if imported { "!" } else { "" }
-  for m in f.messages { names = g_collect(pre, "", m, mark, names) }
-  for e in f.enums { names.push(("${pre}${e.name}", "${mark}${e.name}")) }
+  for m in f.messages { names = g_collect(pre, "", m, names) }
+  for e in f.enums { names.push(("${pre}${e.name}", e.name)) }
   names
 }
 
@@ -812,6 +824,18 @@ fn g_camel(s: Str) -> Str {
   o
 }
 
+/// std/protowkt's type for a well-known type of google/protobuf (`google.protobuf.Timestamp`), None
+/// for any other name.
+fn g_wkt(typ: Str) -> Str? {
+  let t = typ.trim_prefix(".")
+  if !t.starts_with("google.protobuf.") { return None }
+  let n = t["google.protobuf.".len()..t.len()]
+  if n is "Timestamp" | "Duration" | "Empty" | "FieldMask" | "Any" | "Struct" | "Value" | "ListValue" | "DoubleValue" | "FloatValue" | "Int64Value" | "UInt64Value" | "Int32Value" | "UInt32Value" | "BoolValue" | "StringValue" | "BytesValue" {
+    return Some("protowkt.${n}")
+  }
+  None
+}
+
 /// The Xo type name of a scalar proto type, with the field option it needs.
 fn g_scalar(t: Str) -> (Str, Str)? {
   match t {
@@ -835,13 +859,13 @@ fn g_scalar(t: Str) -> (Str, Str)? {
 }
 
 /// Every type name declared in the file as (full dotted name inside the package, generated name).
-fn g_collect(prefix_dot: Str, prefix_gen: Str, m: Message, enum_mark: Str, out: List[(Str, Str)]) -> List[(Str, Str)] {
+fn g_collect(prefix_dot: Str, prefix_gen: Str, m: Message, out: List[(Str, Str)]) -> List[(Str, Str)] {
   var o = out
   let d = "${prefix_dot}${m.name}"
   let g = "${prefix_gen}${m.name}"
   o.push((d, g))
-  for e in m.enums { o.push(("${d}.${e.name}", "${enum_mark}${g}${e.name}")) }
-  for n in m.nested { o = g_collect("${d}.", g, n, enum_mark, o) }
+  for e in m.enums { o.push(("${d}.${e.name}", "${g}${e.name}")) }
+  for n in m.nested { o = g_collect("${d}.", g, n, o) }
   o
 }
 
@@ -881,11 +905,43 @@ fn g_enum(e: Enum, gname: Str, out: List[Str]) -> List[Str] {
   o
 }
 
-fn g_message(m: Message, scope: Str, gprefix: Str, names: List[(Str, Str)], out: List[Str]) -> List[Str] ! ParseErr {
+/// What gen needs to write a repeated field unpacked as protoc does: the file's syntax and the generated
+/// names of its enums.
+struct GenPack {
+  proto2: Bool
+  enums: List[Str]
+}
+
+/// The generated names of the enums nested in m, appended to out.
+fn g_enum_gens(prefix_gen: Str, m: Message, out: List[Str]) -> List[Str] {
+  var o = out
+  let g = "${prefix_gen}${m.name}"
+  for e in m.enums { o.push("${g}${e.name}") }
+  for n in m.nested { o = g_enum_gens(g, n, o) }
+  o
+}
+
+/// True when a repeated field of type typ (generated as gtyp) goes on the wire unpacked, one element per
+/// key: a number, Bool or enum in a proto2 file unless `[packed = true]`, or in proto3 with
+/// `[packed = false]` (protoc's encoding; `derive Proto` packs by default).
+fn g_unpacked(fl: Field, gtyp: Str, pk: GenPack) -> Bool {
+  let packable = match g_scalar(fl.typ) {
+    Some(_) => !(fl.typ is "string" | "bytes")
+    None => pk.enums.contains(gtyp)
+  }
+  if !packable { return false }
+  var packed = !pk.proto2
+  for (k, v) in fl.options {
+    if k == "packed" { packed = v == "true" }
+  }
+  !packed
+}
+
+fn g_message(m: Message, scope: Str, gprefix: Str, names: List[(Str, Str)], pk: GenPack, out: List[Str]) -> List[Str] ! ParseErr {
   var o = out
   let d = "${scope}${m.name}"
   let g = "${gprefix}${m.name}"
-  for n in m.nested { o = g_message(n, "${d}.", g, names, o)? }
+  for n in m.nested { o = g_message(n, "${d}.", g, names, pk, o)? }
   for e in m.enums { o = g_enum(e, "${g}${e.name}", o) }
   // oneof enums first
   for on in m.oneofs {
@@ -917,7 +973,10 @@ fn g_message(m: Message, scope: Str, gprefix: Str, names: List[(Str, Str)], out:
     } else if fl.optional {
       tx = "${tx}?"
     }
-    let opts = if fl.key != "" { "" } else { ty.1 }
+    var opts = if fl.key != "" { "" } else { ty.1 }
+    if fl.repeated && fl.key == "" && g_unpacked(fl, ty.0, pk) {
+      opts = "${opts},unpacked"
+    }
     o.push("  pub ${fl.name} proto \"${fl.num}${opts}\": ${tx}")
   }
   o.push("} derive Proto")
@@ -929,11 +988,11 @@ fn g_type(typ: Str, scope: Str, names: List[(Str, Str)]) -> (Str, Str) ! ParseEr
   if let Some(s) = g_scalar(typ) { return Ok(s) }
   match g_resolve(typ, scope, names) {
     Some(g) => {
-      if g.starts_with("!") {
-        return Err(ParseErr{line: 0, col: 0, msg: "`${typ}` is an enum of an imported file; `derive Proto` takes an enum of the same file only"})
-      }
       Ok((g, ""))
     }
-    None => Err(ParseErr{line: 0, col: 0, msg: "unknown type `${typ}`"})
+    None => match g_wkt(typ) {
+      Some(w) => Ok((w, ""))
+      None => Err(ParseErr{line: 0, col: 0, msg: "unknown type `${typ}`"})
+    }
   }
 }
