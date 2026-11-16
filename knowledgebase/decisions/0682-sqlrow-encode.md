@@ -62,3 +62,17 @@ map one to one onto SqlValue and already knows their wire names.
   SqlRow, twice; a struct used both ways would derive both. Rejected
   for one derive with both halves.
 - Leave the rows as gaps: the insert side of `query_as` stays manual.
+
+## Addendum 2026-11-16: as built (Xo Lang 1, task #123)
+
+Point 3's choice: an SSA generic intrinsic, `rtsql.sql_encode[T](v) ->
+List[(Str, sql.SqlValue)]` (std/native/rtsql.xo), lowered in
+compiler/ssa json.xo beside sql_decode, so arm64, LLVM and wasm share
+one lowering; the Go backend generates `XoSqlRowEnc` per struct
+(compiler/gen json.xo) and std/rt's `Sql_named_args` converts each
+field. Not the derive.xo source route (as derive Proto's): the checker
+rewrites only calls with a concrete T, and `named_args` is a generic std
+body. `sql.named_args` landed with it, minimal (the lead, 2026-11-16);
+#124 adds pgx's tests and pg-diff. A field type outside the list is a
+compile error (`unsupported`) when named_args is instantiated for it.
+

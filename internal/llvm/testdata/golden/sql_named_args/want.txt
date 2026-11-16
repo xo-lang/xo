@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+item 7
+  added: at 1000
+  id: int 1
+  in_stock: flag true
+  item_name: text pen
+  note: null
+  price: real 2.5
+  qty: int 3
+tags
+  gone: null
+  nums: array [int 1, int 2]
+  raw: blob 3
+  words: array [text a, text b]
+round trip true cache x
+--- stderr

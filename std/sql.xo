@@ -177,6 +177,16 @@ fn quote_ident(name: Str) -> Str
 /// an argument the query does not use.
 fn named(q: Str, args: Map[Str, SqlValue], strict: Bool = false) -> (Str, List[SqlValue]) ! SqlErr
 
+/// The fields of v (a struct with `derive SqlRow`) as named arguments
+/// for `named` (pgx's StructArgs, decision 0682): each field under the
+/// column name `Row.decode` reads (its wire name or case rule), `-`
+/// fields left out. Int is `Integer`, Float `Real`, Str `Text`, Bool
+/// `Flag`, Time `At`, Bytes `Blob`, an Option `Null` or its value, and
+/// List[Int] or List[Str] an `Array`; `Row.decode[T]` of a row of these
+/// values gives v back.
+/// `db.exec(sql.named("INSERT INTO users (id, name) VALUES (@id, @name)", sql.named_args(u))?)`
+fn named_args[T: SqlRow](v: T) -> Map[Str, SqlValue]
+
 /// A transaction's isolation level (Go's sql.IsolationLevel, the four of
 /// standard SQL); Default is the server's own.
 enum Isolation {

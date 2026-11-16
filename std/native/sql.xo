@@ -5075,6 +5075,14 @@ fn na_tag(b: Bytes, i: Int) -> Int? {
   None
 }
 
+fn named_args[T: SqlRow](v: T) -> Map[Str, sql.SqlValue] {
+  var m: Map[Str, sql.SqlValue] = {}
+  for (k, x) in rtsql.sql_encode[T](v) {
+    m[k] = x
+  }
+  m
+}
+
 fn named(q: Str, args: Map[Str, sql.SqlValue], strict: Bool = false) -> (Str, List[sql.SqlValue]) ! sql.SqlErr {
   let b = q.bytes()
   let n = b.len()

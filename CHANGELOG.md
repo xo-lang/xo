@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/sql, every backend; decision 0682): `sql.named_args(v)` gives a `derive SqlRow` struct's fields as named arguments for `sql.named`, each under the column name `Row.decode` reads (pgx's StructArgs): `db.exec(sql.named("INSERT INTO users (id, name) VALUES (@id, @name)", sql.named_args(u))?)`.
 - Security (std/xml): `xml.decode` of derive Xml types fails with "exceeded max depth" for an element 10000 deep, as Go's encoding/xml; a deeply nested document from a peer overflowed the stack.
 - Security (std/protobuf): `protobuf.unmarshal` of derive Proto types stops at 10000 nested messages with `ProtoErr.Recursion`, as Go's protowire limit; a deeply nested message from a peer overflowed the stack.
 - Feature (std/ui): `App.with_url_view(fn(model, query) -> Html)` keeps tab state (filters, sort, a selected row) in the page's URL: reload, back and forward and a shared link show it, the server renders it on a first load, and other viewers see nothing of it (decision 0672 prototype, examples/ui-shop).

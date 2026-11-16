@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-16: feature: named_args, derive SqlRow's encode half (decision 0682)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #123 (decision 0682, pgx's StructArgs; std half #124)
+- Go reference: pgx v5.12.0 named_args.go (StructArgs), Copyright (c) 2013-2021 Jack Christensen, MIT License
+- Test: golden sql_named_args (arm64 TestGoldenRun, llvm TestGolden, wasm TestSelfhostWasm, the Go backend TestGoldenGoParity): each type's SqlValue, a wire name, `-` left out, and a row inserted through `named` and decoded back equal to the value
+- Shipped in: not yet released
+
+`sql.named_args[T: SqlRow](v: T) -> Map[Str, SqlValue]`: each field but `-` under the column name `Row.decode` reads; Int `Integer`, Float `Real`, Str `Text`, Bool `Flag`, Time `At`, Bytes `Blob`, an Option `Null` or its value, List[Int] and List[Str] an `Array`. The compiler builds it per type (native/rtsql sql_encode, an SSA intrinsic; the Go backend's generated XoSqlRowEnc). Minimal for now: pgx's StrictStructArgs is `named(..., strict: true)`; #124 (Xo Lang 3) adds pgx parity tests and pg-diff runs.
+
 ## 2026-11-16: feature: Numeric implements Json (decision 0681)
 
 - Kind: feature

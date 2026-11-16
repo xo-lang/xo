@@ -3624,6 +3624,7 @@ of more than one statement takes no arguments (`Param`).
 
 ```
 fn named(q: Str, args: Map[Str, SqlValue], strict: Bool = false) -> (Str, List[SqlValue]) ! SqlErr
+fn named_args[T: SqlRow](v: T) -> Map[Str, SqlValue]   // pgx StructArgs (decision 0682): each field but `-` under its decode column name
 let (q, a) = sql.named("SELECT * FROM t WHERE id = @id OR parent = @id", {"id": sql.int(7)})?
 db.query(q, a)?                                   // "... id = $1 OR parent = $1", [Integer(n: 7)]
 ```

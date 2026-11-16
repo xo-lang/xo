@@ -629,6 +629,15 @@ fn (var g: Gen) gen_sql_row_struct(t: Int) {
     g.pl("\tif e := ${rt}SqlRowField(r, ${check.text(f.sql_key).quote()}, &v.${go_field(n)}); e != nil {\n\t\treturn e\n\t}")
   }
   g.pl("\treturn nil\n}\n")
+  // the encode half (decision 0682): sql.named_args
+  g.pl("func (v *${g.self_type(t)}) XoSqlRowEnc(add func(string, any)) {")
+  for f in g.c.objs[t].fields {
+    if f.sql_skip {
+      continue
+    }
+    g.pl("\tadd(${check.text(f.sql_key).quote()}, v.${go_field(check.text(f.name))})")
+  }
+  g.pl("}\n")
 }
 
 // ---------------------------------------------------------------------------

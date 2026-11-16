@@ -46,6 +46,12 @@ fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr
     let f = b.sql_decode(ct, row_ct, nt)
     return b.call(f, nt, "", [row])
   }
+  if name == "sql_encode" && om >= 0 && b.c.mods[om].path == "native/rtsql" && tps.len() == 1 && !ci.subst.is_empty() && es.len() == 1 {
+    // derive SqlRow's encode half (decision 0682)
+    let ct = b.intrinsic_targ(ci, 0)
+    let v = b.value_as(es[0] ?? fault("arg"), b.typ(ct))
+    return b.call(b.sql_encode(ct, nt), nt, "", [v])
+  }
   if tps.len() == 1 && !ci.subst.is_empty() && name == "json_val" && es.len() == 1 {
     // to_value with no text (jsonval.xo)
     let ct = b.intrinsic_targ(ci, 0)
@@ -2168,6 +2174,99 @@ fn (var b: Builder) sql_body(ct: Int, row_ct: Int, rt: Int) {
   }
   let sv = b.add(Op.Struct, t, Aux.None, vals)
   b.retv(b.add(Op.Variant, rt, Aux.I(n: ok_i), [sv]))
+}
+
+/// xo.sql.enc[ct](v: T) -> List[(Str, sql.SqlValue)] (decision 0682,
+/// derive SqlRow's encode half), built now; rt is its lowered result type:
+/// the struct's fields in declaration order, each under the column name
+/// decode reads (its sql_key), `-` fields left out.
+fn (var b: Builder) sql_encode(ct: Int, rt: Int) -> Str {
+  let t = b.typ(ct)
+  let name = "xo.sql.enc[${b.type_name(ct)}]"
+  let fi = b.thunk_func(name, [t], [rt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  b.sql_enc_body(ct, t, rt)
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+fn (var b: Builder) sql_enc_body(ct: Int, t: Int, rt: Int) {
+  let v = b.param(0)
+  let obj = b.named_obj(ct)
+  if obj < 0 || b.c.objs[obj].tkind != "struct" || b.tkind(t) != Kind.Struct || b.tkind(rt) != Kind.List {
+    b.unsupported("the columns of `${b.c.show(ct)}`")
+    b.retv(b.undef(rt))
+    return
+  }
+  let mt = b.m.types[rt].elems[0]
+  let svt = b.m.types[mt].elems[1]
+  let lv = b.local()
+  b.write_var(lv, b.call("list.new", rt, "", []))
+  for f in b.c.objs[obj].fields {
+    if f.sql_skip {
+      continue
+    }
+    let fname = check.text(f.name)
+    let fi = b.m.field_index(t, fname)
+    if fi < 0 {
+      continue
+    }
+    let x = b.add(Op.Field, b.m.types[t].fields[fi].ty, Aux.I(n: fi), [v])
+    let sv = b.sql_value_of(x, f.ty, svt)
+    let m = b.add(Op.Tuple, mt, Aux.None, [b.const_str(check.text(f.sql_key)), sv])
+    b.write_var(lv, b.call("list.push", rt, "", [b.read(lv), m]))
+  }
+  b.retv(b.read(lv))
+}
+
+/// SqlValue variant name with fields args (svt: SqlValue's SSA type).
+fn (var b: Builder) sqlv(svt: Int, name: Str, args: List[Int]) -> Int { b.add(Op.Variant, svt, Aux.I(n: b.m.variant_index(svt, name)), args) }
+
+/// The SqlValue of x (of checker type ct), the variant decode's accessor
+/// of that type reads (sql_accessor): Int Integer, Float Real, Str Text,
+/// Bool Flag, Time At, Bytes Blob, an Option Null or its value, and
+/// List[Int] or List[Str] an Array.
+fn (var b: Builder) sql_value_of(x0: Int, ct: Int, svt: Int) -> Int {
+  let x = b.unbox(x0)
+  for (n, vn) in [("Int", "Integer"), ("Float", "Real"), ("Str", "Text"), ("Bool", "Flag"), ("Time", "At"), ("Bytes", "Blob")] {
+    if b.is_prelude_named(ct, [n]) {
+      return b.sqlv(svt, vn, [x])
+    }
+  }
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let t = b.typ(ct)
+  let args = b.ty_args(ct)
+  if b.is_prelude_named(ct, ["Option"]) && args.len() == 1 && !b.is_prelude_named(args[0], ["Option"]) {
+    let rv = b.local()
+    b.write_var(rv, b.sqlv(svt, "Null", []))
+    let some = b.m.variant_index(t, "Some")
+    let tag = b.add(Op.Tag, it, Aux.None, [x])
+    let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(some)]))
+    let p = b.add(Op.Payload, b.m.types[t].variants[some].fields[0].ty, Aux.P(tag: some, field: 0), [x])
+    b.write_var(rv, b.sql_value_of(p, args[0], svt))
+    b.if_then_end(no, join)
+    return b.read(rv)
+  }
+  if b.is_prelude_named(ct, ["List"]) && args.len() == 1 && (b.is_prelude_named(args[0], ["Int"]) || b.is_prelude_named(args[0], ["Str"])) {
+    let et = b.m.types[t].elems[0]
+    let lt = b.m.list(svt)
+    let lv = b.local()
+    b.write_var(lv, b.call("list.new", lt, "", []))
+    let iv = b.local()
+    let n = b.call("list.len", it, "", [x])
+    let (i, head, exit) = b.for_up_to_begin(n, iv)
+    let el = b.call("list.index", et, "", [x, i])
+    b.write_var(lv, b.call("list.push", lt, "", [b.read(lv), b.sql_value_of(el, args[0], svt)]))
+    b.for_up_to_end(i, iv, head, exit)
+    return b.sqlv(svt, "Array", [b.read(lv)])
+  }
+  b.unsupported("a `${b.c.show(ct)}` field as a column value (derive SqlRow takes Int, Float, Str, Bool, Time, Bytes, their Options, List[Int] and List[Str])")
+  b.sqlv(svt, "Null", [])
 }
 
 // ---------------------------------------------------------------------------

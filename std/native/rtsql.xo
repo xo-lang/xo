@@ -8,3 +8,8 @@ use std/sql
 /// name through R's accessor of the field's type (`int`, `str_opt`, ...),
 /// in declaration order; the first failure is the result.
 fn sql_decode[T, R](r: R) -> T ! sql.SqlErr
+
+/// The fields of v (a struct with `derive SqlRow`, decision 0682) as
+/// column values, in declaration order, each under the column name
+/// sql_decode reads; `-` fields left out.
+fn sql_encode[T](v: T) -> List[(Str, sql.SqlValue)]

@@ -1,0 +1,58 @@
+// derive SqlRow's encode half (decision 0682): sql.named_args gives each
+// field but `-` under the column name decode reads, as the SqlValue of its
+// type; inserted through sql.named and decoded back, the row is v again.
+use std/sql
+
+struct Item {
+  id: Int
+  name as "item_name": Str
+  price: Float
+  in_stock: Bool
+  added: Time
+  note: Str?
+  qty: Int?
+  cache as "-": Str = "x"
+} derive SqlRow, Eq
+
+struct Tags {
+  nums: List[Int]
+  words: List[Str]
+  raw: Bytes
+  gone: Bytes?
+} derive SqlRow
+
+fn show(v: sql.SqlValue) -> Str {
+  match v {
+    Null => "null"
+    Integer(n) => "int ${n}"
+    Text(s) => "text ${s}"
+    Real(f) => "real ${f}"
+    Flag(b) => "flag ${b}"
+    At(t) => "at ${t.unix()}"
+    Blob(b) => "blob ${b.len()}"
+    JsonText(s) => "json ${s}"
+    Array(items) => "array [${items.map(show).join(", ")}]"
+  }
+}
+
+fn dump(stdio: Stdio, m: Map[Str, sql.SqlValue]) {
+  for k in m.keys().sort() {
+    stdio.println("  ${k}: ${show(m.get(k) ?? sql.SqlValue.Null)}")
+  }
+}
+
+fn main(os: Os) ! {
+  let a = Item{id: 1, name: "pen", price: 2.5, in_stock: true, added: Time.from_unix(1000), note: None, qty: Some(3), cache: "y"}
+  let args = sql.named_args(a)
+  os.stdio.println("item ${args.len()}")
+  dump(os.stdio, args)
+  let t = Tags{nums: [1, 2], words: ["a", "b"], raw: b"\x00\x01\x02", gone: None}
+  os.stdio.println("tags")
+  dump(os.stdio, sql.named_args(t))
+  // the round trip through the in memory driver
+  let db = sql.memory("CREATE TABLE items (id INT, item_name TEXT, price REAL, in_stock BOOL, added TIMESTAMP, note TEXT, qty INT)")?
+  let (q, qa) = sql.named("INSERT INTO items (id, item_name, price, in_stock, added, note, qty) VALUES (@id, @item_name, @price, @in_stock, @added, @note, @qty)", args, strict: true)?
+  db.exec(q, qa)?
+  let back = db.query_one_as[Item]("SELECT * FROM items")?
+  os.stdio.println("round trip ${back == Item{id: 1, name: "pen", price: 2.5, in_stock: true, added: Time.from_unix(1000), note: None, qty: Some(3)}} cache ${back.cache}")
+}
