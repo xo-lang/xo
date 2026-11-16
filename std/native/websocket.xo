@@ -372,12 +372,15 @@ fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.
       n = (Int(q[0]) << 8) | Int(q[1])
     } else if n == 127 {
       let q = c.read_n(st, 8)?
+      // the top bit set is a negative length to gorilla (its
+      // setReadRemaining: read limit exceeded); shifting it in would
+      // overflow Int (a fault, internal/stdtest TestWsFuzz)
+      if Int(q[0]) >= 128 {
+        return Err(websocket.WsErr.TooBig(limit: c.max))
+      }
       n = 0
       for i in 0..8 {
         n = (n << 8) | Int(q[i])
-      }
-      if n < 0 {
-        return Err(websocket.WsErr.TooBig(limit: c.max))
       }
     }
     var key = b""

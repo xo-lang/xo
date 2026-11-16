@@ -1,0 +1,37 @@
+// The Xo side of the WebSocket differential test (internal/stdtest
+// TestWsFuzz): for each case name on standard input, std/websocket's
+// client dials BASE/NAME and reads messages until an error, printing each
+// message's kind and data and then the error, as scripts/wsdiff/gorilla
+// prints gorilla/websocket's.
+use std/websocket
+
+fn main(os: Os) ! {
+  let base = os.env.args().first().or_err("usage: wsdiff ws://HOST:PORT < cases")?
+  for line in os.stdio.lines()? {
+    let name = line.trim()
+    if name.is_empty() {
+      continue
+    }
+    os.stdio.println("== ${name}")
+    match websocket.dial(os.net, "${base}/${name}") {
+      Ok(c) => {
+        while {
+          match c.read() {
+            Ok(m) => {
+              let k = match m.kind {
+                Text => "text"
+                Binary => "binary"
+              }
+              os.stdio.println("msg ${k} ${m.data.to_hex()}")
+            }
+            Err(e) => {
+              os.stdio.println("error ${e}")
+              break
+            }
+          }
+        }
+      }
+      Err(_) => os.stdio.println("error dial")
+    }
+  }
+}

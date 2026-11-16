@@ -1,5 +1,15 @@
 # std/websocket changes
 
+## 2026-11-16: fix: a 64-bit frame length with its top bit set is read limit exceeded, not a fault
+
+- Kind: fix
+- Commit: this push
+- Found by: internal/stdtest TestWsFuzz seed 2 case 105 (task #90)
+- Go reference: gorilla/websocket v1.5.3 conn.go setReadRemaining (a negative length is ErrReadLimit)
+- Test: internal/stdtest TestWsLengthTopBit (faults on the old driver, passes now); TestWsFuzz seeds 2 to 4, 300 cases each, arm64 and llvm
+- Timing: none (one byte compared before the length's shifts)
+- Shipped in: not yet released
+
 ## 2026-11-04: fix: a message too big gets its close 1009, not a reset
 
 - Kind: fix
