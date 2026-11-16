@@ -46,8 +46,8 @@ and it never listed the health service or `unix:` targets.
 6. **Performance of an internal helper module** (htmlent, uniclass, protowire) is the lowest perf mark among the std
    modules that use it (html and htmltok; regexp; protodesc, protojson and protowkt); no twin of its own (lead,
    2026-11-15; scripts/stdcov perfHelpers).
-7. **Performance of a test-only or bridge module** (addendum, Proposed, Xo Lang 2, 2026-11-16, direction from the
-   lead): twincheck runs a program, and these modules are used from tests or across a language boundary, so each
+7. **Performance of a test-only or bridge module** (addendum, Accepted by the lead for the owner, 2026-11-16 overnight; proposed by
+   Xo Lang 2): twincheck runs a program, and these modules are used from tests or across a language boundary, so each
    has its own twin shape, held to the same 1.05 bar on host 1:
    - std/testing: a suite of 1,000 tests run by `xo test` against the same tests run by `go test`; the row is the
      harness overhead (the whole run less the tests' own work, which is the same trivial body on both sides).
@@ -111,5 +111,5 @@ and it never listed the health service or `unix:` targets.
   followed, four modules with no Go reference take `spec/std.md -` pins and checklists. stdaudit -go skips a spec
   pin; a `gopkg.in/x.vN` path keys as `x`. stdaudit: 3423 mapped, 1433 gaps, 0 stale, 0 unmapped; stdcov: features
   32 Proven, 58 Solid. Next: pin the in progress rows (sqlite, timego, protoparse).
-- Rule 7 (addendum, Proposed, 2026-11-16): the twins for std/testing, std/amqptest and std/go are the next
+- Rule 7 (addendum, Accepted, 2026-11-16): the twins for std/testing, std/amqptest and std/go are the next
   step of task #88 (Xo Lang 2), each in bench/perf with a twin.txt as stdproven perf reads it.
