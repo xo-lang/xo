@@ -59,6 +59,25 @@ test "andybalholm malformed streams" {
   }
 }
 
+test "encode matches andybalholm's Writer (qualities 0 to 11)" {
+  for (kind, seed, size, q, w, s) in ROUND_TRIPS {
+    let got = encode(gen(kind, seed, size), q, w)
+    expect((kind, seed, size, q, w, got.to_hex())) == (kind, seed, size, q, w, s)
+  }
+  expect(ROUND_TRIPS.len()) == 57
+}
+
+test "encode round trips (qualities 0 to 11)" {
+  for q in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] {
+    for w in [0, 10, 16] {
+      for (kind, n) in [(0, 0), (0, 1), (2, 5), (0, 3000), (1, 3000), (2, 70000), (0, 300000)] {
+        let data = gen(kind, 3, n)
+        expect((q, w, kind, n, decode(encode(data, q, w)) == Ok(data))) == (q, w, kind, n, true)
+      }
+    }
+  }
+}
+
 test "max_size" {
   let s = unhex(ROUND_TRIPS[0].5)
   let n = ROUND_TRIPS[0].2

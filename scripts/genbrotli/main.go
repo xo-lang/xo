@@ -93,9 +93,38 @@ func table(src, name string) []int64 {
 	for _, m := range intRe.FindAllString(body, -1) {
 		v, err := strconv.ParseInt(m, 0, 64)
 		if err != nil {
-			fail("%s: %v", name, err)
+			// a uint64 table (kZeroRepsBits) above 1<<63 keeps its bits
+			u, uerr := strconv.ParseUint(m, 0, 64)
+			if uerr != nil {
+				fail("%s: %v", name, err)
+			}
+			v = int64(u)
 		}
 		out = append(out, v)
+	}
+	return out
+}
+
+// floatTable reads var name's float32 literals, each widened to the
+// float64 Go computes with (fastLog2 returns float64(kLog2Table[v])).
+func floatTable(src, name string) []string {
+	i := strings.Index(src, "var "+name+" ")
+	if i < 0 {
+		fail("no var %s", name)
+	}
+	a := i + strings.Index(src[i:], "{")
+	b := a + strings.Index(src[a:], "}")
+	var out []string
+	for _, m := range regexp.MustCompile(`[0-9]+\.[0-9]+`).FindAllString(src[a:b], -1) {
+		f, err := strconv.ParseFloat(m, 32)
+		if err != nil {
+			fail("%s: %v", name, err)
+		}
+		t := strconv.FormatFloat(float64(float32(f)), 'g', -1, 64)
+		if !strings.ContainsAny(t, ".e") {
+			t += ".0"
+		}
+		out = append(out, t)
 	}
 	return out
 }
@@ -189,6 +218,47 @@ func main() {
 	rev := asBytes("kReverseBits", table(huffman, "kReverseBits"))
 	maxHuff := table(huffman, "kMaxHuffmanTableSize")
 
+	// the encoder's tables (quality 0 and 1 first, decision 0666)
+	fastLog := read("fast_log.go")
+	frag := read("compress_fragment.go")
+	static := read("entropy_encode_static.go")
+	dhash := le16("kStaticDictionaryHash", table(read("dictionary_hash.go"), "kStaticDictionaryHash"))
+	dlut := read("static_dict_lut.go")
+	dbuckets := le16("kStaticDictionaryBuckets", table(dlut, "kStaticDictionaryBuckets"))
+	wv := table(dlut, "kStaticDictionaryWords")
+	if len(dbuckets) != 65536 || len(wv) != 3*31705 {
+		fail("static dictionary lut: %d buckets bytes, %d word numbers", len(dbuckets), len(wv))
+	}
+	dwords := make([]byte, 0, 4*31705)
+	for i := 0; i < len(wv); i += 3 {
+		if wv[i] < 0 || wv[i] > 255 || wv[i+1] < 0 || wv[i+1] > 255 {
+			fail("kStaticDictionaryWords[%d] = %v", i/3, wv[i:i+3])
+		}
+		dwords = append(dwords, byte(wv[i]), byte(wv[i+1]))
+		dwords = append(dwords, le16("kStaticDictionaryWords.idx", wv[i+2:i+3])...)
+	}
+	scd := table(static, "kStaticCommandCodeDepth")
+	scb := table(static, "kStaticCommandCodeBits")
+	sdd := table(static, "kStaticDistanceCodeDepth")
+	sdb := table(static, "kStaticDistanceCodeBits")
+	if len(dhash) != 65536 || len(scd) != 704 || len(scb) != 704 || len(sdd) != 64 || len(sdb) != 64 {
+		fail("static tables: %d %d %d %d %d", len(dhash), len(scd), len(scb), len(sdd), len(sdb))
+	}
+	log2 := floatTable(fastLog, "kLog2Table")
+	if len(log2) != 256 {
+		fail("kLog2Table: %d values, want 256", len(log2))
+	}
+	seed := table(frag, "kCmdHistoSeed")
+	zrb := table(static, "kZeroRepsBits")
+	zrd := table(static, "kZeroRepsDepth")
+	nzb := table(static, "kNonZeroRepsBits")
+	nzd := table(static, "kNonZeroRepsDepth")
+	cld := table(static, "kCodeLengthDepth")
+	clb := table(static, "kCodeLengthBits")
+	if len(seed) != 128 || len(zrb) != 704 || len(zrd) != 704 || len(nzb) != 704 || len(nzd) != 704 || len(cld) != 18 || len(clb) != 18 {
+		fail("encoder tables: %d %d %d %d %d %d %d", len(seed), len(zrb), len(zrd), len(nzb), len(nzd), len(cld), len(clb))
+	}
+
 	var o strings.Builder
 	fmt.Fprintf(&o, "// BEGIN GENERATED\n// From github.com/andybalholm/brotli (scripts/genbrotli): a %d byte dictionary, %d transforms.\n", len(data), tr[1])
 	fmt.Fprintf(&o, "const DICT: Bytes = %s\n", bytesLit(data))
@@ -203,6 +273,24 @@ func main() {
 	fmt.Fprintf(&o, "const CMD_LUT: Bytes = %s\n", bytesLit(cmd))
 	fmt.Fprintf(&o, "const REVERSE_BITS: Bytes = %s\n", bytesLit(rev))
 	fmt.Fprintf(&o, "const MAX_HUFFMAN_TABLE_SIZE: List[Int] = %s\n", intList(maxHuff))
+	fmt.Fprintf(&o, "const ENC_LOG2: List[Float] = [%s]\n", strings.Join(log2, ", "))
+	fmt.Fprintf(&o, "const ENC_CMD_HISTO_SEED: List[Int] = %s\n", intList(seed))
+	fmt.Fprintf(&o, "const ENC_ZERO_REPS_BITS: List[Int] = %s\n", intList(zrb))
+	fmt.Fprintf(&o, "const ENC_ZERO_REPS_DEPTH: List[Int] = %s\n", intList(zrd))
+	fmt.Fprintf(&o, "const ENC_NONZERO_REPS_BITS: List[Int] = %s\n", intList(nzb))
+	fmt.Fprintf(&o, "const ENC_NONZERO_REPS_DEPTH: List[Int] = %s\n", intList(nzd))
+	fmt.Fprintf(&o, "const ENC_CODE_LENGTH_DEPTH: List[Int] = %s\n", intList(cld))
+	fmt.Fprintf(&o, "const ENC_CODE_LENGTH_BITS: List[Int] = %s\n", intList(clb))
+	fmt.Fprintf(&o, "const ENC_STATIC_CMD_DEPTH: List[Int] = %s\n", intList(scd))
+	fmt.Fprintf(&o, "const ENC_STATIC_CMD_BITS: List[Int] = %s\n", intList(scb))
+	fmt.Fprintf(&o, "const ENC_STATIC_DIST_DEPTH: List[Int] = %s\n", intList(sdd))
+	fmt.Fprintf(&o, "const ENC_STATIC_DIST_BITS: List[Int] = %s\n", intList(sdb))
+	fmt.Fprintf(&o, "// kStaticDictionaryHash, 32768 little endian uint16 entries\n")
+	fmt.Fprintf(&o, "const ENC_DICT_HASH: Bytes = %s\n", bytesLit(dhash))
+	fmt.Fprintf(&o, "// kStaticDictionaryBuckets, 32768 little endian uint16 entries\n")
+	fmt.Fprintf(&o, "const ENC_DICT_BUCKETS: Bytes = %s\n", bytesLit(dbuckets))
+	fmt.Fprintf(&o, "// kStaticDictionaryWords, 31705 entries of len, transform, idx (little endian uint16)\n")
+	fmt.Fprintf(&o, "const ENC_DICT_WORDS: Bytes = %s\n", bytesLit(dwords))
 	o.WriteString("// END GENERATED\n")
 
 	file := os.Args[2]

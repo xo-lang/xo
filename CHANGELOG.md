@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - std/ui (Early): a same-origin link to another std/ui page no longer reloads the browser page: the runtime fetches it, patches it in and keeps history and scroll (decision 0668); add `data-xo-reload` to a link that must load normally.
+- Feature (std/brotli, every backend; decision 0666): `brotli.encode(data, quality, window)` writes a Brotli stream at qualities 0 to 11, byte for byte andybalholm/brotli's Writer output (one Write and Close). On linux/arm64 it takes 1.4 (quality 1), 13.8 (6) and 1.9 (11) times Go's wall time for now (bench/results/brotli-encode-vs-go-2026-11-15.md).
 - Perf (std/ui, Early): the runtime patches each new view into the page instead of replacing it, so focus, typed text, scroll positions, open `<details>` and selections survive updates (give list items a `data-key`), and a sync with nothing new is about 100 bytes (`Sync.same`) instead of the whole view.
 - Fix (checker): a native `xo build` or `xo run` reports the flow errors (XO0520 lost update, XO0804, moves) in a dependency's function bodies it reaches, as `--backend=go` and `xo check` of the dependency did; such a dependency built before (decision 0517 bodies skipped the flow passes). A dependency with one now fails the build: fix the reported body.
 - Fix (std/ui, Early): a click could be lost when a sync replaced the view between pointerdown and pointerup; the runtime now waits until the click has run.

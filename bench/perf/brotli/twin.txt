@@ -1,6 +1,9 @@
-# twincheck: brotli: three workloads (none is the setup alone); Go is github.com/andybalholm/brotli v1.2.2's Reader through io.ReadAll.
+# twincheck: brotli: decode workloads text, html, mixed (Go: andybalholm/brotli v1.2.2's Reader through io.ReadAll) and encode workloads enc1, enc6, enc11 (its Writer at those levels); none is the setup alone.
 require github.com/andybalholm/brotli v1.2.2
 - - none
 - - text
 - - html
 - - mixed
+- - enc1
+- - enc6
+- - enc11

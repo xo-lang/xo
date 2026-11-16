@@ -20,8 +20,26 @@ func main() {
 	if len(os.Args) > 1 {
 		w = os.Args[1]
 	}
-	s := streams[w]
 	sum := 0
+	q := map[string]int{"enc1": 1, "enc6": 6, "enc11": 11}
+	if lv, ok := q[w]; ok {
+		input, err := io.ReadAll(brotli.NewReader(bytes.NewReader(streams["html"])))
+		if err != nil {
+			panic(err)
+		}
+		n := map[int]int{1: 100, 6: 20, 11: 2}[lv]
+		for i := 0; i < n; i++ {
+			var buf bytes.Buffer
+			wr := brotli.NewWriterLevel(&buf, lv)
+			wr.Write(input)
+			wr.Close()
+			out := buf.Bytes()
+			sum += len(out) + int(out[i%len(out)])
+		}
+		fmt.Printf("%s %d\n", w, sum)
+		return
+	}
+	s := streams[w]
 	if len(s) > 0 {
 		for i := 0; i < 200; i++ {
 			out, err := io.ReadAll(brotli.NewReader(bytes.NewReader(s)))

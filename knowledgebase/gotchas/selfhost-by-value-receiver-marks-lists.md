@@ -24,3 +24,15 @@ methods): 12.8 s to 4.2 s for the same three lowerings, the output
 unchanged. In a self hosted pass whose state struct holds lists that
 are written per element, give every method of the state a `var`
 receiver, or pass the few fields a helper reads as arguments.
+
+Observed again (Xo Lang 3, 2026-11-15, std/brotli's encoder): plain
+functions taking the encoder state by value (`fn update_nodes(e: Enc,
+...)`, `find_all_dict_matches(e: Enc, ...)`, 22 of them) between writes
+to its hash tables made each position's write through `var e: Enc`
+copy the whole binary tree (2 << lgwin ints). Quality 11 on a 34 KB
+input took 69 s on the go backend and under 1 s on arm64 and llvm,
+which borrow instead; with every Enc parameter `var`, 0.16 s and the
+same bytes. The brotli corpus's encode tests on the go backend
+(TestStdCorpora/go/brotli, 60 s per test) guard it. The same rule holds
+for a std port: a state struct whose lists are written per element is
+passed `var` everywhere, as the Go original passes a pointer.

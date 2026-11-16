@@ -1,5 +1,23 @@
 # std/brotli changes
 
+## 2026-11-15: port: the encoder (encode, qualities 0 to 11)
+
+- Kind: port
+- Commit: this push
+- Found by: task #67 (decision 0666's order: the encoder after the decoder)
+- Go reference: github.com/andybalholm/brotli v1.2.2 encode.go, writer.go, compress_fragment.go, compress_fragment_two_pass.go, the hashers (h2 to h6, h10, the forgetful chain), static_dict.go, backward_references.go, backward_references_hq.go (Zopfli), block_splitter.go, cluster.go, histogram.go, metablock.go, brotli_bit_stream.go, entropy_encode.go, literal_cost.go, bit_cost.go, utf8_util.go
+- Test: std/brotli_test.xo (encode matches andybalholm's Writer on the 57 round trip inputs at qualities 0 to 11; round trips at every quality); internal/stdtest/testdata/corpus/brotli (encode gives back each of the 111 streams andybalholm wrote with no Flush, a test per quality band; go, arm64, llvm); a probe of 11 inputs by 12 qualities by 3 windows (396 streams) byte identical, outside the repository
+- Shipped in: not yet released
+- Timing: bench/results/brotli-encode-vs-go-2026-11-15.md, host 1 Xo / Go wall 1.40 q1, 13.81 q6, 1.94 q11; max RSS 0.27, 0.45, 2.72. Open gap against the 1.05 bar, quality 6 the furthest (3.60 on the Mac twin survey, so mostly linux/arm64 specific); not profiled yet.
+
+`encode(data, quality, window)` compresses as andybalholm's Writer does
+for one Write and Close, at every quality: the fast paths of 0 and 1,
+the hashers of 2 to 9 with the static dictionary search, and the Zopfli
+search, block splitting and context modeling of 10 and 11. Out of range
+qualities and windows are faults. The encoder's state goes to every
+helper as a `var` parameter: by value, the go backend copied the hash
+tree at each position (gotchas/selfhost-by-value-receiver-marks-lists.md).
+
 ## 2026-11-15: perf: ring writes through BytesBuilder.write_list
 
 - Kind: perf
