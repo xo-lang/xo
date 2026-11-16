@@ -1,0 +1,4 @@
+# twincheck: ordcmp: Go's bytes.Compare and strings.Compare; the same workloads.
+- - bytes
+- - str
+- - none

@@ -1,0 +1,29 @@
+// ordcmp: `a.cmp(b)` on Bytes and Str over 64 DNS-like labels of 3 to 18 bytes, every pair in turn,
+// 20,000,000 calls (publicsuffix's compare_label shape). Measures one three-way compare per call
+// (#103 lever 4) against Go's bytes.Compare and strings.Compare; `xo bench --ab` compares two xos.
+// Usage: `<program> bytes|str|none`. Prints `<workload> <checksum>`.
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "bytes"
+  var labels: List[Str] = []
+  for i in 0..64 {
+    labels.push("abcdefghijklmnopqr"[0..(3 + i % 16)] + "${i % 7}")
+  }
+  var bl: List[Bytes] = []
+  for l in labels {
+    bl.push(l.bytes())
+  }
+  var n = 0
+  if w != "none" {
+    for k in 0..20000000 {
+      let i = k & 63
+      let j = (k >> 6) & 63
+      let o = if w == "bytes" { bl[i].cmp(bl[j]) } else { labels[i].cmp(labels[j]) }
+      n += match o {
+        Less => 1
+        Equal => 2
+        Greater => 3
+      }
+    }
+  }
+  os.stdio.println("${w} ${n}")
+}
