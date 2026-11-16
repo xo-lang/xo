@@ -1,5 +1,21 @@
 # std/archive changes
 
+## 2026-11-16: fix: untar quotes a name that is not UTF-8 as Go does
+
+- Kind: fix
+- Commit: this push
+- Found by: task #116, archive fuzz seed 2 case 4986 (a PAX path with a 0xbc byte)
+- Go reference: archive/tar Reader (the header's Name holds the archive's bytes); std/rt quotes them with strconv.Quote
+- Test: internal/stdtest/testdata/corpus/archivefuzz (afRegress {2, 4986})
+
+An untar or tar_reader error that names an entry ("is not a file or a
+directory", "entry path ... leaves the archive") quoted the entry's name
+after its bytes outside UTF-8 became U+FFFD (decision 0259), while the Go
+backend and unzip quote the archive's bytes as Go does (`\xbc`). It now
+quotes the bytes for a header name, a GNU long name, a USTAR prefix and
+a PAX path, so every backend gives the same message. The entry's path
+is unchanged.
+
 ## 2026-11-16: perf: zip_writer buffers its writes (Go's 4096 byte bufio)
 
 - Kind: perf

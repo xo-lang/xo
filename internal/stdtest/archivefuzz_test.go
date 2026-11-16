@@ -518,6 +518,7 @@ var afRegress = [][2]int{
 	{7, 1175}, // a global header with an empty name
 	{8, 826},
 	{10, 1401}, // a zip entry with an unknown Unix file type: a regular file in Go
+	{2, 4986},  // a tar PAX path that is not UTF-8, quoted as Go quotes its bytes (#116)
 }
 
 // afCorpusCases are seed 1's cases and afRegress's.

@@ -625,6 +625,17 @@ fn (var w: TarWriter) close() -> () ! archive.ArchiveErr uses fs.write {
   w.put(bytes_of(zeros(1024)))
 }
 
+/// raw_cstr: parse_cstr's field as its bytes, for error messages, which
+/// quote a name as Go does (\xNN for a byte outside UTF-8; std/rt and
+/// unzip's go_q) while the entry's path is outside text (decision 0259).
+fn raw_cstr(b: Bytes, at: Int, n: Int) -> Bytes {
+  var i = 0
+  while i < n && byte_of(b, at + i) != 0 {
+    i += 1
+  }
+  sub(b, at, at + i)
+}
+
 fn parse_cstr(b: Bytes, at: Int, n: Int) -> Str {
   var i = 0
   while i < n && byte_of(b, at + i) != 0 {
@@ -798,6 +809,11 @@ fn parse_pax(text: Bytes) -> Map[Str, Str]? {
       // keys and values from the archive: outside bytes (decision 0259);
       // the records are parsed on the raw bytes (their lengths count bytes)
       m.put(scan.text(k), scan.text(v))
+      // the raw value under a key no archive can hold (a NUL in a key is
+      // refused above), for error messages
+      if k == "path" || k == "GNU.sparse.name" {
+        m.put("\u{0}" + scan.text(k), v)
+      }
     }
     s = rest[rest_n..]
   }
@@ -1021,6 +1037,8 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
 struct UntarState {
   pax: Map[Str, Str]
   long_name: Str
+  /// long_name's bytes, for error messages
+  long_raw: Bytes = b""
   holes_left: Int
 }
 
@@ -1067,6 +1085,7 @@ fn untar_step(data: Bytes, pos0: Int, st0: UntarState, eof: Bool) -> TarStep ! S
   var pos = pos0
   var pax = st0.pax
   var long_name = st0.long_name
+  var long_raw = st0.long_raw
   var holes_left = st0.holes_left
   while true {
     // readHeader
@@ -1123,6 +1142,7 @@ fn untar_step(data: Bytes, pos0: Int, st0: UntarState, eof: Bool) -> TarStep ! S
     let gnu = magic == b"ustar " && version == b" \x00"
     let flag = byte_of(data, pos + 156)
     var name = parse_cstr(data, pos, 100)
+    var name_raw = raw_cstr(data, pos, 100)
     let size0 = parse_numeric(data, pos + 124, 12)
     let mode0 = parse_numeric(data, pos + 100, 8)
     let mtime0 = parse_numeric(data, pos + 136, 12)
@@ -1141,6 +1161,7 @@ fn untar_step(data: Bytes, pos0: Int, st0: UntarState, eof: Bool) -> TarStep ! S
       let prefix = parse_cstr(data, pos + 345, 131)
       if prefix != "" {
         name = prefix + "/" + name
+        name_raw = raw_cstr(data, pos + 345, 131) + b"/" + name_raw
       }
     } else if gnu {
       // a writer before Go 1.8 put a USTAR prefix where GNU keeps the
@@ -1152,12 +1173,14 @@ fn untar_step(data: Bytes, pos0: Int, st0: UntarState, eof: Bool) -> TarStep ! S
         let prefix = parse_cstr(data, pos + 345, 155)
         if prefix != "" && is_ascii(prefix) {
           name = prefix + "/" + name
+          name_raw = raw_cstr(data, pos + 345, 155) + b"/" + name_raw
         }
       }
     } else if ustar {
       let prefix = parse_cstr(data, pos + 345, 155)
       if prefix != "" {
         name = prefix + "/" + name
+        name_raw = raw_cstr(data, pos + 345, 155) + b"/" + name_raw
       }
     }
     var size = size0 ?? 0
@@ -1205,12 +1228,17 @@ fn untar_step(data: Bytes, pos0: Int, st0: UntarState, eof: Bool) -> TarStep ! S
         // read, so untar checks that path before it skips the entry
         // (Reader.next, Archive_untar)
         var gname = name
-        match (parse_pax(body) ?? {}).get("path") {
-          Some(v) => if v != "" { gname = v }
+        var graw = name_raw
+        let gm = parse_pax(body) ?? {}
+        match gm.get("path") {
+          Some(v) => if v != "" {
+            gname = v
+            graw = (gm.get("\u{0}path") ?? v).bytes()
+          }
           None => ()
         }
         if archive_path(gname).is_none() {
-          return Err("untar: entry path ${gname.quote()} ${path_why(gname)}")
+          return Err("untar: entry path ${go_q(graw)} ${path_why(gname)}")
         }
       }
       let pad = (512 - nb % 512) % 512
@@ -1235,9 +1263,11 @@ fn untar_step(data: Bytes, pos0: Int, st0: UntarState, eof: Bool) -> TarStep ! S
           // as Reader.next returns with them unused
           pax = {}
           long_name = ""
+          long_raw = b""
         }
       } else if flag == 76 {
         long_name = parse_cstr(body, 0, body.len())
+        long_raw = raw_cstr(body, 0, body.len())
       }
       continue
     }
@@ -1249,6 +1279,7 @@ fn untar_step(data: Bytes, pos0: Int, st0: UntarState, eof: Bool) -> TarStep ! S
       }
       if k == "path" {
         name = v
+        name_raw = (pax.get("\u{0}path") ?? v).bytes()
       } else if k == "mtime" {
         mtime_ns = match parse_pax_time(v) {
           Some(t) => t
@@ -1272,7 +1303,9 @@ fn untar_step(data: Bytes, pos0: Int, st0: UntarState, eof: Bool) -> TarStep ! S
     pax = {}
     if long_name != "" {
       name = long_name
+      name_raw = long_raw
       long_name = ""
+      long_raw = b""
     }
     var typ = flag
     if typ == 0 {
@@ -1351,7 +1384,7 @@ fn untar_step(data: Bytes, pos0: Int, st0: UntarState, eof: Bool) -> TarStep ! S
     }
     let p = match archive_path(name) {
       Some(x) => x
-      None => return Err("untar: entry path ${name.quote()} ${path_why(name)}")
+      None => return Err("untar: entry path ${go_q(name_raw)} ${path_why(name)}")
     }
     var e = archive.Entry{path: p, data: b"", mode: mode & 0o7777, is_dir: false, modified: Time.UNIX_EPOCH + Duration.from_nanos(mtime_ns)}
     var sparse = false
@@ -1373,7 +1406,7 @@ fn untar_step(data: Bytes, pos0: Int, st0: UntarState, eof: Bool) -> TarStep ! S
             if sname != "" {
               e.path = match archive_path(sname) {
                 Some(x) => x
-                None => return Err("untar: entry path ${sname.quote()} ${path_why(sname)}")
+                None => return Err("untar: entry path ${go_q((records.get("\u{0}GNU.sparse.name") ?? sname).bytes())} ${path_why(sname)}")
               }
             }
             e.data = logical
@@ -1384,9 +1417,9 @@ fn untar_step(data: Bytes, pos0: Int, st0: UntarState, eof: Bool) -> TarStep ! S
         }
       }
     } else {
-      return Err("untar: entry ${name.quote()} is not a file or a directory")
+      return Err("untar: entry ${go_q(name_raw)} is not a file or a directory")
     }
-    return Ok(TarStep.Head(TarHead{e: e, at: pos, nb: nb, sparse: sparse, st: UntarState{pax: pax, long_name: long_name, holes_left: holes_left}}))
+    return Ok(TarStep.Head(TarHead{e: e, at: pos, nb: nb, sparse: sparse, st: UntarState{pax: pax, long_name: long_name, long_raw: long_raw, holes_left: holes_left}}))
   }
   Ok(TarStep.End)
 }
