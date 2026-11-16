@@ -64,3 +64,21 @@ test "ids are lowercase hex of their length and differ from draw to draw" {
   }
   expect(rand_hex(os.rand, 8).len()) == 16
 }
+
+test "a ring past its cap keeps the newest spans, newest first, through many wraps" {
+  let r = ring(3)
+  let t0 = Time.from_unix_millis(1700000000000)
+  expect(r.spans(Duration.from_nanos(0), 0).len()) == 0
+  r.record("a", "w", t0, Duration.from_nanos(1000))
+  r.record("b", "w", t0, Duration.from_nanos(5000))
+  expect(r.spans(Duration.from_nanos(0), 0).map(fn(s: Span) -> Str { s.id })) == ["b", "a"]
+  for i in 0..10 {
+    r.record("s${i}", "w", t0, Duration.from_nanos(1000 * (i % 4 + 1)))
+  }
+  expect(r.spans(Duration.from_nanos(0), 0).map(fn(s: Span) -> Str { s.id })) == ["s9", "s8", "s7"]
+  expect(r.spans(Duration.from_nanos(0), 2).map(fn(s: Span) -> Str { s.id })) == ["s9", "s8"]
+  // micros 2, 1, 4 for s9, s8, s7: at least 2 us keeps s9 and s7
+  expect(r.spans(Duration.from_nanos(2000), 0).map(fn(s: Span) -> Str { s.id })) == ["s9", "s7"]
+  r.record("t", "w", t0, Duration.from_nanos(1000))
+  expect(r.spans(Duration.from_nanos(0), 0).map(fn(s: Span) -> Str { s.id })) == ["t", "s9", "s8"]
+}

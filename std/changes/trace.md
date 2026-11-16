@@ -1,5 +1,20 @@
 # std/trace changes
 
+## 2026-11-16: perf: a Ring overwrites its oldest span in place
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88, the record row of bench/perf/trace over 1.05 (a profile: the copy of the newest half, its Str shares, and the drop of the old list were most of a record)
+- Go reference: the twin's Ring (bench/perf/trace/twin.go.txt, a slice trimmed to its newest cap at twice the cap)
+- Test: std/trace_test.xo (a ring past its cap keeps the newest spans, newest first, through many wraps, with the n and min filters)
+- Timing: bench/perf/trace record 1.23 to 1.31 of Go before, 0.70 to 0.87 after (Mac, three runs each; host 1 row to follow)
+
+A `Ring` kept its spans in a list that grew to twice its cap and then
+copied its newest half into a new list. It now holds at most cap spans
+and each new span overwrites the oldest one in place. `spans` returns
+the same spans in the same order. `Ring`'s fields, which are internal,
+changed (`buf` holds a `RingSlots`).
+
 ## 2026-11-16: perf: span and request ids come from Rand.int
 
 - Kind: perf
