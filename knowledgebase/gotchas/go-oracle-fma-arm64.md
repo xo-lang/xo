@@ -40,10 +40,13 @@ after zipfStrict; the generator now calls strictExp and strictLog, the
 guarded copies std/rt/gomath_gen.go has. Seed 87 then found the same in
 math/rand/v2's NormFloat64 (Go's own code, its tables unexported), so
 since 2026-11-16 scripts/stdcorpus runs itself again with fusion off
-(noFMA in main.go: `go run -gcflags=all=-d=fmahash=n`, the compiler's
-notices filtered): every generator and the Go code it calls compute
-unfused. Every committed corpus was unchanged under the flag. A Go
-oracle outside scripts/stdcorpus needs the same flag (brotlioracle has
-it). See also
+(noFMA in main.go: GOFLAGS gets `-gcflags=all=-d=fmahash=n`, so the flag
+reaches every oracle module a generator starts with its own `go run`;
+the compiler's notices are filtered): every generator and the Go code
+it calls compute unfused, and a run built with fusion anyway (a fused
+x*y+z detected) writes no corpus. Every committed corpus was unchanged
+under the flag. scripts/stdcorpus/nofma_test.go keeps the rule
+(agent-rules.md, #147). A Go oracle outside scripts/stdcorpus needs the
+same flag. See also
 go-backend-fma-contraction.md and go-backend-fused-float.md (the same
 fusion in the Go backend's output).

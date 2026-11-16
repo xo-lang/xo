@@ -22,13 +22,16 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -170,12 +173,51 @@ var checkOnly bool
 // unfused, the same on every platform (#116, 2026-11-16: random fuzz
 // seeds 17 and 87 drew one ulp apart from Xo on arm64 Go; every committed
 // corpus was unchanged under the flag). gotchas/go-oracle-fma-arm64.md.
+// noFMAEnv is env for the run with fusion off: XO_STDCORPUS_NOFMA set and
+// the flag in GOFLAGS, so it reaches every `go run` of an oracle module
+// the generators start too (#147: those are separate go invocations, and
+// a -gcflags on this one's command line stopped at this program).
+func noFMAEnv(env []string) []string {
+	out := []string{"XO_STDCORPUS_NOFMA=1"}
+	gf := ""
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "GOFLAGS="); ok {
+			gf = v
+			continue
+		}
+		out = append(out, e)
+	}
+	return append(out, "GOFLAGS="+strings.TrimSpace(gf+" "+noFMAFlag))
+}
+
+// noFMAFlag turns Go's fused multiply-add off in every package built.
+const noFMAFlag = "-gcflags=all=-d=fmahash=n"
+
+// mulAdd is x*y+z as the compiler builds it: one fused multiply-add on
+// arm64 unless fusion is off.
+//
+//go:noinline
+func mulAdd(x, y, z float64) float64 { return x*y + z }
+
+// fmaVals are inputs whose product rounds away 2^-60: unfused, x*y+z is
+// 0; fused, 2^-60. Variables, so nothing folds them.
+var fmaVals = [3]float64{1 + 1.0/(1<<30), 1 + 1.0/(1<<30), -(1 + 1.0/(1<<29))}
+
+// fused reports whether this binary was built with fused multiply-add.
+func fused() bool { return mulAdd(fmaVals[0], fmaVals[1], fmaVals[2]) != 0 }
+
 func noFMA() int {
 	if os.Getenv("XO_STDCORPUS_NOFMA") != "" {
+		// the guard of the rule (agent-rules.md, gotchas/go-oracle-fma-arm64.md):
+		// a corpus is never written by a build that fuses
+		if fused() {
+			fmt.Fprintln(os.Stderr, "stdcorpus: built with fused multiply-add although XO_STDCORPUS_NOFMA is set (GOFLAGS lost "+noFMAFlag+"?): no corpus written")
+			return 2
+		}
 		return -1
 	}
-	cmd := exec.Command("go", append([]string{"run", "-gcflags=all=-d=fmahash=n", "./scripts/stdcorpus"}, os.Args[1:]...)...)
-	cmd.Env = append(os.Environ(), "XO_STDCORPUS_NOFMA=1")
+	cmd := exec.Command("go", append([]string{"run", "./scripts/stdcorpus"}, os.Args[1:]...)...)
+	cmd.Env = noFMAEnv(os.Environ())
 	cmd.Stdin, cmd.Stdout = os.Stdin, os.Stdout
 	// the compiler reports each fusion it declined, and the package of
 	// each report: those lines are dropped, the rest of stderr kept
@@ -211,6 +253,26 @@ func noFMA() int {
 	return 0
 }
 
+// beat writes a heartbeat line to w every `every` until stop is closed:
+// how many of total corpora are done and which one runs (#147, lead
+// 2026-11-16, alert #4808: a -check of every corpus prints nothing for 10
+// to 16 minutes, and xw's hang check flagged it as a quiet job; a line
+// naming a heartbeat in the job's log keeps it off).
+func beat(w io.Writer, every time.Duration, total int, done *atomic.Int64, cur *atomic.Value, stop <-chan struct{}) {
+	start := time.Now()
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			m, _ := cur.Load().(string)
+			fmt.Fprintf(w, "stdcorpus: heartbeat: %d of %d corpora done, %s running, %s\n", done.Load(), total, m, time.Since(start).Round(time.Second))
+		}
+	}
+}
+
 func main() {
 	if rc := noFMA(); rc >= 0 {
 		os.Exit(rc)
@@ -227,12 +289,26 @@ func main() {
 		}
 	}
 	sort.Strings(mods)
+	// XO_STDCORPUS_BEAT_S (60; 0 none): the heartbeat's interval
+	var done atomic.Int64
+	var cur atomic.Value
+	cur.Store("")
+	every := 60 * time.Second
+	if v, err := strconv.Atoi(os.Getenv("XO_STDCORPUS_BEAT_S")); err == nil {
+		every = time.Duration(v) * time.Second
+	}
+	if every > 0 && len(mods) > 1 {
+		stop := make(chan struct{})
+		defer close(stop)
+		go beat(os.Stderr, every, len(mods), &done, &cur, stop)
+	}
 	bad := false
 	// the fault corpora are programs rather than xo test files (faults.go)
 	if writeFaultCorpora(*check) {
 		bad = true
 	}
 	for _, m := range mods {
+		cur.Store(m)
 		gen, ok := generators[m]
 		if !ok {
 			fmt.Fprintf(os.Stderr, "stdcorpus: no corpus for %q\n", m)
@@ -250,6 +326,7 @@ func main() {
 		// 10 go1.26.11 on 2026-11-15, so -check failed nearly every corpus
 		// on either), and regenerating keeps the old header
 		same := oldErr == nil && sameButGoVersion(old, text)
+		done.Add(1)
 		if *check {
 			if !same {
 				fmt.Fprintf(os.Stderr, "stdcorpus: %s is stale: run go run ./scripts/stdcorpus %s\n", path, m)
