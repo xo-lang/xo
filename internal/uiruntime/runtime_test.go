@@ -47,6 +47,10 @@ type report struct {
 	Reloads int      `json:"reloads"`
 	Stored  int      `json:"stored"`
 	Session int      `json:"session"`
+	Before  string   `json:"before"`
+	During  string   `json:"during"`
+	AfterUp string   `json:"afterUp"`
+	After   string   `json:"after"`
 }
 
 func run(t *testing.T, scenario string) report {
@@ -110,5 +114,18 @@ func TestForbiddenDropsQueue(t *testing.T) {
 	}
 	if len(r.Applied) != 0 {
 		t.Errorf("server applied %q", r.Applied)
+	}
+}
+
+// A sync reply that lands while a pointer is down on the view does not
+// replace it until the pointer is up and the click has run: replacing the
+// element under the pointer lost the click (xw-1's dashboard, 2026-11-15).
+func TestReplaceWaitsForPointerUp(t *testing.T) {
+	r := run(t, "pointer")
+	if r.During != r.Before || r.AfterUp != r.Before {
+		t.Errorf("view replaced while the pointer was down or before the click ran: before %q, during %q, at pointerup %q", r.Before, r.During, r.AfterUp)
+	}
+	if r.After == r.Before || r.After != "<p>1</p>" {
+		t.Errorf("held view not shown after pointerup: %q", r.After)
 	}
 }

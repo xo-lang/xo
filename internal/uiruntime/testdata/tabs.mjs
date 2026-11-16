@@ -42,11 +42,13 @@ function tab() {
   };
   const stEl = { textContent: JSON.stringify({ ver: 0, model: {} }) };
   const listeners = {};
+  const docHandlers = {};
+  const timers = [];
   const ctx = {
     document: {
       getElementById: (id) => (id === "xo-ui" ? root : id === "xo-state" ? stEl : null),
       documentElement: { setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; }, hasAttribute: (k) => k in attrs },
-      addEventListener: () => {},
+      addEventListener: (n, f) => { docHandlers[n] = f; },
       hidden: false,
       activeElement: null,
     },
@@ -61,7 +63,7 @@ function tab() {
       return { ok: true, status: 200, json: async () => body };
     },
     setInterval: () => 0,
-    setTimeout: () => 0,
+    setTimeout: (f) => { timers.push(f); return timers.length; },
     JSON, Math, Date, Error, Promise, Array, Object, String,
   };
   vm.runInNewContext(src, ctx);
@@ -71,6 +73,9 @@ function tab() {
       handlers.click({ target: t, preventDefault() {} });
     },
     pagehide() { listeners.pagehide?.(); },
+    pointer(kind) { docHandlers["pointer" + kind]?.({}); },
+    flush() { while (timers.length) timers.shift()(); },
+    view: () => root.innerHTML,
     attrs,
     session: ctx.sessionStorage,
   };
@@ -105,5 +110,18 @@ if (scenario === "unauthorized" || scenario === "forbidden") {
   const keys = [];
   for (let i = 0; i < local.length; i++) keys.push(local.key(i));
   extra = { attrs: Object.keys(a.attrs).sort(), reloads: server.reloads, stored: keys.length, session: a.session.length };
+}
+if (scenario === "pointer") {
+  // a sync reply lands while the pointer is down on the view: the view is
+  // kept until the pointer is up and the click has run
+  const a = tab(); await settle(); a.flush();
+  const before = a.view();
+  a.pointer("down");
+  await click(a, "a1");
+  const during = a.view();
+  a.pointer("up");
+  const afterUp = a.view();
+  a.flush();
+  extra = { before, during, afterUp, after: a.view() };
 }
 console.log(JSON.stringify({ sent, applied: server.applied.map((m) => m.Add.title), clients: server.acked.size, ...extra }));

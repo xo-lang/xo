@@ -1,5 +1,16 @@
 # std/ui changes
 
+## 2026-11-15: fix: a click during a sync is no longer lost
+
+- Kind: fix
+- Commit: this push
+- Found by: xw-1 (xw's dashboard on std/ui), asked whether a link click during a replace is lost
+- Go reference: none
+- Test: internal/uiruntime TestReplaceWaitsForPointerUp (fails before: the view was replaced while the pointer was down)
+- Shipped in: not yet released
+
+A sync reply or prediction that arrived between pointerdown and pointerup replaced the element under the pointer, so its click never fired. The runtime now holds that view until the pointer is up and shows it after the click.
+
 ## 2026-11-15: feature: server Msgs, log compaction, sign-in redirect
 
 - Kind: feature

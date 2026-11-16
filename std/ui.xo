@@ -883,8 +883,18 @@ function run(input){
   var len=0;out.forEach(function(b){len+=b.length;});var all=new Uint8Array(len),o=0;out.forEach(function(b){all.set(b,o);o+=b.length;});
   return new TextDecoder().decode(all);
 }
+// a replace between pointerdown and pointerup removes the element under
+// the pointer, so its click never fires: hold it until the click is done
+// (at most a second: a pointerup outside the window may never arrive)
+var down=false,downAt=0,held=null;
+document.addEventListener("pointerdown",function(){down=true;downAt=Date.now();},true);
+function release(){down=false;if(held!==null){setTimeout(function(){if(!down&&held!==null){var h=held;held=null;show(h);}},0);}}
+document.addEventListener("pointerup",release,true);
+document.addEventListener("pointercancel",release,true);
 function show(html){
   if(html===last)return;
+  if(down&&Date.now()-downAt<1000){held=html;return;}
+  held=null;
   var a=document.activeElement;
   if(a&&root.contains(a)&&(a.tagName==="INPUT"||a.tagName==="TEXTAREA")&&a.value!=="")return;
   root.innerHTML=html;last=html;

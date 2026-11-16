@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/ui, Early): a click could be lost when a sync replaced the view between pointerdown and pointerup; the runtime now waits until the click has run.
 - Feature (std/ui, Early): `Host.apply(msg)` applies the server's own Msgs (data from a database, a timer) and wakes live pages; `host(keep:)` bounds the sync log (default 10000 entries; a host's log used to grow without bound), and `host(signin_url:)` sends a signed-out page request to the app's sign-in page.
 - Fix (native backends, miscompile): two `var` arguments that are disjoint places of one variable (`set_both(s.a, s.b)`, nested fields, two literal list indexes, a `var` receiver on one field with an argument from another, a call through a function value) kept only the last argument's new value on arm64 and LLVM; every write back now lands, as on the go backend.
 - Feature (std/brotli, every backend; decision 0666): `brotli.decode(data, max_size)` reads a Brotli stream (RFC 7932), ported from github.com/andybalholm/brotli with its errors (`brotli: PADDING_1`, `unexpected EOF`, ...). The encoder follows.

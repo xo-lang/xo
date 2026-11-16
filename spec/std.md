@@ -11089,6 +11089,11 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   confirmed model; a refused entry advances its version and drops the
   Msg from pending without applying it. Client ids are trusted in this step; per-Msg
   authorization is decision 0659 stage 4.
+- A new view replaces the root's HTML only when it differs from the one
+  shown, not while a text input in it has focus and a value, and not
+  while a pointer is down (the replace waits until the pointer is up and
+  its click has run, so a press on a link or button is never lost; at
+  most one second, as a pointerup outside the window may never arrive).
 - Server Msgs: `Server.apply(msg)` and `Host.apply(msg)` apply a Msg of
   the server's own (data loaded from a database or queue, a timer) as the
   next seq of the client id `SERVER_CLIENT` ("~server"), logged like any
