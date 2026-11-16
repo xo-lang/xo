@@ -463,9 +463,12 @@ fn descriptor(d: Str, z: time.Zone) -> Schedule ! CronErr {
     _ => {
       if d.starts_with("@every ") {
         let text = d[7..]
+        if let Some(m) = go_duration_err(text) {
+          return Err(err_of("failed to parse duration ${d}: ${m}"))
+        }
         let dur = match Duration.parse(text) {
           Ok(x) => x
-          Err(e) => return Err(err_of("failed to parse duration ${d}: ${e.display()}"))
+          Err(_) => return Err(err_of("failed to parse duration ${d}: time: invalid duration ${go_quote(text)}"))
         }
         var secs = dur.nanos() / 1000000000
         if secs < 1 {
@@ -513,4 +516,86 @@ fn (s: Schedule) day_matches(c: time.Civil) -> Bool {
   } else {
     dom_match || dow_match
   }
+}
+
+/// Go's time.ParseDuration error for text, or None where Go's syntax
+/// accepts it (an overflow is left to Duration.parse): robfig's @every
+/// error carries Go's text ("time: unknown unit ..."), and Go does not trim
+/// white space (Duration.parse does). 2026-11-16, found by
+/// internal/stdtest/cronfuzz_test.go.
+fn go_duration_err(text: Str) -> Str? {
+  let b = text.bytes()
+  let n = b.len()
+  let invalid = "time: invalid duration ${go_quote(text)}"
+  var i = 0
+  if n > 0 && (b[0] == 45 || b[0] == 43) {
+    i = 1
+  }
+  if n - i == 1 && b[i] == 48 {
+    return None
+  }
+  if i == n {
+    return Some(invalid)
+  }
+  while i < n {
+    let c = b[i]
+    if !(c == 46 || (c >= 48 && c <= 57)) {
+      return Some(invalid)
+    }
+    let p0 = i
+    while i < n && b[i] >= 48 && b[i] <= 57 {
+      i += 1
+    }
+    let pre = i > p0
+    var post = false
+    if i < n && b[i] == 46 {
+      i += 1
+      let f0 = i
+      while i < n && b[i] >= 48 && b[i] <= 57 {
+        i += 1
+      }
+      post = i > f0
+    }
+    if !pre && !post {
+      return Some(invalid)
+    }
+    let u0 = i
+    while i < n && !(b[i] == 46 || (b[i] >= 48 && b[i] <= 57)) {
+      i += 1
+    }
+    if i == u0 {
+      return Some("time: missing unit in duration ${go_quote(text)}")
+    }
+    let u = b[u0..i].to_str() ?? ""
+    match u {
+      "ns" | "us" | "\u{b5}s" | "\u{3bc}s" | "ms" | "s" | "m" | "h" => ()
+      _ => return Some("time: unknown unit ${go_quote_bytes(b[u0..i])} in duration ${go_quote(text)}")
+    }
+  }
+  None
+}
+
+/// Go's time package quote: `"`, a byte below 0x20 or from 0x80 as \xHH,
+/// `"` and `\` escaped.
+fn go_quote(s: Str) -> Str { go_quote_bytes(s.bytes()) }
+
+fn go_quote_bytes(b: Bytes) -> Str {
+  let hex = "0123456789abcdef".bytes()
+  var out = BytesBuilder.with_capacity(b.len() + 2)
+  out.write_byte(34)
+  for c in b {
+    if c < 32 || c >= 128 {
+      out.write_byte(92)
+      out.write_byte(120)
+      out.write_byte(hex[Int(c) >> 4])
+      out.write_byte(hex[Int(c) & 15])
+    } else {
+      if c == 34 || c == 92 {
+        out.write_byte(92)
+      }
+      out.write_byte(c)
+    }
+  }
+  out.write_byte(34)
+  out.freeze().to_str() ?? ""
 }

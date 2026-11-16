@@ -97,6 +97,13 @@ var harnesses = map[string][]harness{
 	"binary":    {{"TestBinaryFuzz", "XO_BINARYFUZZ"}},
 	"path":      {{"TestPathFuzz", "XO_PATHFUZZ"}},
 	"htmlent":   {{"TestHtmlentFuzz", "XO_HTMLENTFUZZ"}},
+	"uniclass":  {{"TestUniclassFuzz", "XO_UNICLASSFUZZ"}},
+	"cron":      {{"TestCronFuzz", "XO_CRONFUZZ"}},
+	"heap":      {{"TestHeapFuzz", "XO_HEAPFUZZ"}},
+	"deque":     {{"TestDequeFuzz", "XO_DEQUEFUZZ"}},
+	"bufio":     {{"TestBufioFuzz", "XO_BUFIOFUZZ"}},
+	"rate":      {{"TestRateFuzz", "XO_RATEFUZZ"}},
+	"cli":       {{"TestCliFuzz", "XO_CLIFUZZ"}},
 }
 
 func main() {

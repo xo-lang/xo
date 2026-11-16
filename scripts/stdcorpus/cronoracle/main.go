@@ -21,6 +21,12 @@ func xq(s string) string {
 }
 
 func main() {
+	if len(os.Args) > 3 && os.Args[1] == "fuzz" {
+		seed, _ := strconv.ParseInt(os.Args[2], 10, 64)
+		n, _ := strconv.Atoi(os.Args[3])
+		fuzzMain(seed, n)
+		return
+	}
 	rg := rand.New(rand.NewSource(58))
 	zones := []string{"", "UTC", "America/New_York", "Europe/London", "America/Sao_Paulo", "Australia/Lord_Howe", "Asia/Kolkata", "Pacific/Auckland", "Europe/Berlin"}
 	mins := []string{"*", "0", "5", "30", "59", "*/15", "0-30/10", "1,2,3", "10-20", "*/7", "?", "15/20", "0,30", "45-50"}
@@ -98,7 +104,7 @@ func main() {
 		emit("TZ=" + z + " */20 * * * *")
 	}
 	o.WriteString("]\n\n/// (spec, robfig/cron's error text)\nconst ERRS: List[(Str, Str)] = [\n")
-	bad := []string{"", "* * * *", "* * * * * *", "* * * * * * *", "60 * * * *", "* 24 * * *", "* * 0 * *", "* * 32 * *", "* * * 0 * ", "* * * 13 *", "* * * * 7", "a * * * *", "5-1 * * * *", "*/0 * * * *", "1-2-3 * * * *", "1/2/3 * * * *", "-1 * * * *", "+5 * * * *", "99999999999999999999 * * * *", "1.5 * * * *", "* * * foo *", "* * * * foo", "@bogus", "@every", "@reboot", "* * * * *x", "5- * * * *", "-5 * * * *", "0-60 * * * *", "*/ * * * *", "1,,2 * * * *", ", * * * *", "TZ=Nowhere/Land * * * * *", "feb-jan * * * *", "* * * jan-feb *", "* * * feb-jan *"}
+	bad := []string{"", "* * * *", "* * * * * *", "* * * * * * *", "60 * * * *", "* 24 * * *", "* * 0 * *", "* * 32 * *", "* * * 0 * ", "* * * 13 *", "* * * * 7", "a * * * *", "5-1 * * * *", "*/0 * * * *", "1-2-3 * * * *", "1/2/3 * * * *", "-1 * * * *", "+5 * * * *", "99999999999999999999 * * * *", "1.5 * * * *", "* * * foo *", "* * * * foo", "@bogus", "@every", "@reboot", "* * * * *x", "5- * * * *", "-5 * * * *", "0-60 * * * *", "*/ * * * *", "1,,2 * * * *", ", * * * *", "TZ=Nowhere/Land * * * * *", "feb-jan * * * *", "* * * jan-feb *", "* * * feb-jan *", "@every 1x", "@every ", "@every  5m", "@every 5m ", "@every 5", "@every 1.h", "@every \u00e9s"}
 	seenErr := map[string]bool{}
 	for _, spec := range bad {
 		if seenErr[spec] {
@@ -304,5 +310,180 @@ test "the zone of a schedule" {
   expect(u.zone().name()) == "UTC"
   let d = cron.parse("0 9 * * *", time.zone("Europe/Berlin").ok() ?? fault("zone")).ok() ?? fault("parse")
   expect(d.zone().name()) == "Europe/Berlin"
+}
+`
+
+// fuzzSpec is one random spec for TestCronFuzz: fields from the corpus's
+// pools, random numbers past each field's bounds, ranges, steps, lists,
+// names, a field count off by one, a byte changed, a TZ prefix and the
+// descriptors with random @every durations.
+func fuzzSpec(rg *rand.Rand, bounds [][2]int) string {
+	if rg.Intn(10) == 0 {
+		d := []string{"@yearly", "@annually", "@monthly", "@weekly", "@daily", "@midnight", "@hourly", "@reboot", "@bogus", "@every"}[rg.Intn(10)]
+		if d == "@every" {
+			d += " " + []string{"1h30m", "90s", "500ms", "0s", "-5m", "1x", "", "2h", "36h", "1m1s", "1.5h", " 5m", "5m ", "1\u00b5s", ".5s", "5.m", "1e3s", "+0", "0", "5", "1h\"x", "99999999999h", "1.h", "m"}[rg.Intn(24)]
+		}
+		return d
+	}
+	names := []string{"jan", "FEB", "mar", "dec", "sun", "MON", "sat", "foo", "L", "W", "#"}
+	var lo, hi int
+	num := func() string {
+		switch rg.Intn(16) {
+		case 0:
+			return []string{"-1", "60", "24", "32", "13", "7", "0", "99999999999999999999", "1.5", "+5"}[rg.Intn(10)]
+		case 1:
+			return strconv.Itoa(rg.Intn(62))
+		case 2:
+			return strconv.Itoa([]int{lo, hi, hi + 1, lo - 1}[rg.Intn(4)])
+		}
+		return strconv.Itoa(lo + rg.Intn(hi-lo+1))
+	}
+	rng := func() string {
+		a, b := lo+rg.Intn(hi-lo+1), lo+rg.Intn(hi-lo+1)
+		if a > b && rg.Intn(6) != 0 {
+			a, b = b, a
+		}
+		return strconv.Itoa(a) + "-" + strconv.Itoa(b)
+	}
+	atom := func() string {
+		switch k := rg.Intn(40); {
+		case k < 14:
+			return "*"
+		case k < 26:
+			return num()
+		case k < 32:
+			return rng()
+		case k < 36:
+			step := strconv.Itoa(1 + rg.Intn(hi-lo+1))
+			if rg.Intn(10) == 0 {
+				step = []string{"0", "", "-1", "x"}[rg.Intn(4)]
+			}
+			return []string{"*", num(), rng()}[rg.Intn(3)] + "/" + step
+		case k < 38:
+			return names[rg.Intn(len(names))]
+		case k < 39:
+			return "?"
+		default:
+			return names[rg.Intn(len(names))] + "-" + names[rg.Intn(len(names))]
+		}
+	}
+	n := len(bounds)
+	if rg.Intn(8) == 0 {
+		n += rg.Intn(3) - 1
+	}
+	var parts []string
+	for i := 0; i < n; i++ {
+		b := bounds[min(i, len(bounds)-1)]
+		lo, hi = b[0], b[1]
+		f := atom()
+		for rg.Intn(4) == 0 {
+			f += "," + atom()
+		}
+		parts = append(parts, f)
+	}
+	spec := strings.Join(parts, " ")
+	if rg.Intn(12) == 0 && len(spec) > 0 {
+		i := rg.Intn(len(spec))
+		spec = spec[:i] + string("*/-,? 0a"[rg.Intn(8)]) + spec[i+1:]
+	}
+	if rg.Intn(4) == 0 {
+		z := []string{"UTC", "America/New_York", "Europe/London", "Australia/Lord_Howe", "Asia/Kolkata", "Pacific/Auckland", "Nowhere/Land"}[rg.Intn(7)]
+		spec = []string{"TZ=", "CRON_TZ="}[rg.Intn(2)] + z + " " + spec
+	}
+	return spec
+}
+
+func fuzzMain(seed int64, n int) {
+	rg := rand.New(rand.NewSource(seed))
+	type popt struct {
+		xo     int
+		opt    cron.ParseOption
+		fields [][2]int
+	}
+	sec, mn, hr, dom, mon, dow := [2]int{0, 59}, [2]int{0, 59}, [2]int{0, 23}, [2]int{1, 31}, [2]int{1, 12}, [2]int{0, 6}
+	opts := []popt{
+		{-1, 0, [][2]int{mn, hr, dom, mon, dow}}, // ParseStandard
+		{-1, 0, [][2]int{mn, hr, dom, mon, dow}},
+		{381, cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor, [][2]int{sec, mn, hr, dom, mon, dow}},
+		{382, cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor, [][2]int{sec, mn, hr, dom, mon, dow}},
+		{188, cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.DowOptional, [][2]int{mn, hr, dom, mon, dow}},
+		{12, cron.Minute | cron.Hour, [][2]int{mn, hr}},
+		{120, cron.Hour | cron.Dom | cron.Month | cron.Dow, [][2]int{hr, dom, mon, dow}},
+	}
+	var o strings.Builder
+	fmt.Fprintf(&o, "// Generated by scripts/stdcorpus/cronoracle fuzz %d %d from github.com/robfig/cron/v3 v3.0.1 (TestCronFuzz).\n\nuse std/cron\nuse std/time\n\n", seed, n)
+	o.WriteString("/// (parser options, -1 for ParseStandard; spec; start unix seconds; robfig's next fire unix seconds, none, or err TEXT)\nconst CASES: List[(Int, Str, Int, Str)] = [\n")
+	written := 0
+	for written < n {
+		po := opts[rg.Intn(len(opts))]
+		spec := fuzzSpec(rg, po.fields)
+		start := time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC).Unix() + rg.Int63n(12*365*86400)
+		want, ok := func() (w string, ok bool) {
+			defer func() {
+				if recover() != nil {
+					ok = false // robfig panics: left out
+				}
+			}()
+			var sched cron.Schedule
+			var err error
+			if po.xo == -1 {
+				sched, err = cron.ParseStandard(spec)
+			} else {
+				sched, err = cron.NewParser(po.opt).Parse(spec)
+			}
+			if err != nil {
+				txt := err.Error()
+				if strings.Contains(spec, "TZ=") && strings.HasPrefix(txt, "provided bad location") {
+					txt = "provided bad location"
+				}
+				return "err " + txt, true
+			}
+			nx := sched.Next(time.Unix(start, 0).UTC())
+			if nx.IsZero() {
+				return "none", true
+			}
+			return strconv.FormatInt(nx.Unix(), 10), true
+		}()
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&o, "  (%d, %s, %d, %s),\n", po.xo, xq(spec), start, xq(want))
+		written++
+	}
+	o.WriteString("]\n")
+	o.WriteString(fuzzTests)
+	fmt.Fprint(os.Stdout, o.String())
+}
+
+const fuzzTests = `
+/// The zones the specs name, so the Go backend embeds them.
+fn embed_zones() -> Int {
+  [time.zone("America/New_York"), time.zone("Europe/London"), time.zone("Australia/Lord_Howe"), time.zone("Asia/Kolkata"), time.zone("Pacific/Auckland")].len()
+}
+
+fn answer(opts: Int, spec: Str, start: Int) -> Str {
+  let r = if opts == -1 { cron.parse(spec) } else { cron.parser(opts).parse(spec) }
+  match r {
+    Ok(s) => match s.next(Time.from_unix(start)) {
+      Some(t) => "${t.unix()}"
+      None => "none"
+    }
+    Err(e) => {
+      let m = e.display()
+      if spec.contains("TZ=") && m.starts_with("provided bad location") { "err provided bad location" } else { "err ${m}" }
+    }
+  }
+}
+
+test "std/cron parses and schedules as robfig/cron" {
+  expect(embed_zones()) == 5
+  var bad: List[(Int, Str, Int, Str, Str)] = []
+  for (opts, spec, start, want) in CASES {
+    let got = answer(opts, spec, start)
+    if got != want {
+      bad.push((opts, spec, start, got, want))
+    }
+  }
+  expect(bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]) == []
 }
 `

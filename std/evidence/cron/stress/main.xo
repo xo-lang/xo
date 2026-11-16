@@ -1,0 +1,175 @@
+// cron stress program (decision 0616 section 2): 64 tasks parse 64 specs
+// (ParseStandard and five parser option sets, good and bad) and ask each
+// schedule for its next fire time against robfig/cron v3.0.1 (the seed 1
+// rows of scripts/stdcorpus/cronoracle fuzz), for a fixed time. A background
+// task samples the resident set every 10 s (Linux /proc/self/status). Pass:
+// no mismatch, no fault, and the resident set at the end within 10% or 4 MB
+// of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/cron
+use std/time
+
+/// One pass over the cases from offset start: the operations done, or the
+/// first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..CASES.len() {
+    let (opts, spec, at, want) = CASES[(start + k) % CASES.len()]
+    let got = answer(opts, spec, at)
+    if got != want {
+      return Err("${opts} ${spec.quote()} from ${at}: ${got} want ${want}")
+    }
+  }
+  CASES.len() * 2
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("cron stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+/// (parser options, -1 for ParseStandard; spec; start unix seconds; robfig's next fire unix seconds, none, or err TEXT)
+const CASES: List[(Int, Str, Int, Str)] = [
+  (120, "6 24 6-7 *", 1812967073, "1813816800"),
+  (381, "* *,15-1 20-21 * * */1", 1874201512, "err beginning of range (15) beyond end of range (1): 15-1"),
+  (-1, "11 *,17-20 3-3 ?", 1793010101, "err expected exactly 5 fields, found 4: [11 *,17-20 3-3 ?]"),
+  (120, "@weekly", 1692280841, "err parser does not accept descriptors: @weekly"),
+  (-1, "23 * 0,4 ? 3-5", 1867160650, "err beginning of range (0) below minimum (1): 0"),
+  (12, "2-24 1-15", 1827393552, "1827393600"),
+  (120, "TZ=Pacific/Auckland * 12 * 1-6,0,*,sun-sun", 1851961104, "1852286400"),
+  (381, "* 51 */7 16 4 4-6", 1554371558, "1554389460"),
+  (188, "* 0-0,8,12-23 *,sun-a,* 1.5,2,6/2 1-2/-1", 1887466040, "err failed to parse int from sun: strconv.Atoi: parsing \"sun\": invalid syntax"),
+  (381, "@every 1µs", 1725266280, "1725266281"),
+  (382, "55-59 * 13 12-14/23,29 * *,5/4,*", 1833309338, "1833973255"),
+  (120, "8,* 10 2-3 2/4", 1562469173, "1580515200"),
+  (381, "W,* * 6 * 3 1-1,*", 1644679539, "err failed to parse int from W: strconv.Atoi: parsing \"W\": invalid syntax"),
+  (12, "*/18 ?,*", 1770696736, "1770697080"),
+  (-1, "33 12 * * *", 1701274317, "1701347580"),
+  (381, "?,* * * 28 *,jan 3/2", 1855148400, "1855440000"),
+  (382, "53 sat-W * 29 4-11/-1 *", 1676203838, "err failed to parse int from sat: strconv.Atoi: parsing \"sat\": invalid syntax"),
+  (-1, "26-30 9-13,16 foo 1-2 foo-sat", 1885105567, "err failed to parse int from foo: strconv.Atoi: parsing \"foo\": invalid syntax"),
+  (188, "* 13 25 12 1", 1840869793, "1859547600"),
+  (12, "*,#-MON #", 1726045322, "err failed to parse int from #: strconv.Atoi: parsing \"#\": invalid syntax"),
+  (381, "*/x,4-9 42-43 * 47,7,8 */5", 1783941326, "err expected exactly 6 fields, found 5: [*/x,4-9 42-43 * 47,7,8 */5]"),
+  (120, "2-9 8 sat,* *", 1917962534, "err failed to parse int from sat: strconv.Atoi: parsing \"sat\": invalid syntax"),
+  (381, "* ? * ?,12,foo 12 6", 1557880058, "err failed to parse int from foo: strconv.Atoi: parsing \"foo\": invalid syntax"),
+  (120, "@yearly", 1679646557, "err parser does not accept descriptors: @yearly"),
+  (382, "* 26-31 5 17,* * 0-5", 1594320142, "1594358760"),
+  (12, "48 0", 1877374662, "1877388480"),
+  (12, "18-59/31 4", 1655437219, "1655439480"),
+  (382, "5 * *,-1/9 * 1-12 2", 1707423569, "err failed to parse int from : strconv.Atoi: parsing \"\": invalid syntax"),
+  (12, "TZ=America/New_York 44,foo,57,?,* 11", 1766448788, "err failed to parse int from foo: strconv.Atoi: parsing \"foo\": invalid syntax"),
+  (-1, "*,13 ? 3-27/23 2,3,* 4,L-mar", 1837583114, "err failed to parse int from L: strconv.Atoi: parsing \"L\": invalid syntax"),
+  (12, "CRON_TZ=Pacific/Auckland * */3", 1639077873, "1639080000"),
+  (188, "0 12-8/24,19/24 16,FEB,W * 32", 1877674718, "err beginning of range (12) beyond end of range (8): 12-8/24"),
+  (381, "* 13 * ? 11 *", 1723953501, "1730419980"),
+  (12, "43-56 *", 1649474981, "1649475780"),
+  (12, "CRON_TZ=Pacific/Auckland 16-14-20", 1782295635, "err expected exactly 2 fields, found 1: [16-14-20]"),
+  (-1, "CRON_TZ=America/New_York 31-32 12 ? 3 */1", 1915283434, "1930152660"),
+  (-1, "37 * 7-30 ? 4-4/7", 1743373039, "1743374220"),
+  (188, "FEB,* 5 32 * 2", 1659981483, "err failed to parse int from FEB: strconv.Atoi: parsing \"FEB\": invalid syntax"),
+  (382, "* * 7 24,* * 2", 1591638851, "1591686000"),
+  (-1, "TZ=America/New_York mar * 23,*,20 6 *,1,#-L", 1864773418, "err failed to parse int from mar: strconv.Atoi: parsing \"mar\": invalid syntax"),
+  (12, "7-16 6-7", 1598522571, "1598594820"),
+  (-1, "@midnight", 1681869038, "1681948800"),
+  (-1, "*,43 0 sat-foo * 3", 1897030836, "err failed to parse int from sat: strconv.Atoi: parsing \"sat\": invalid syntax"),
+  (120, "15 * 9 * *,4,6-6,6", 1697773530, "err expected exactly 4 fields, found 5: [15 * 9 * *,4,6-6,6]"),
+  (120, "*,*,4-23 22,FEB *,*,*,6-8 *", 1639433045, "err failed to parse int from FEB: strconv.Atoi: parsing \"FEB\": invalid syntax"),
+  (-1, "* 52 *-28 12/1 0,5", 1699570805, "err end of range (52) above maximum (23): 52"),
+  (-1, "18 * 23 MON,* *,3", 1559509859, "err failed to parse int from MON: strconv.Atoi: parsing \"MON\": invalid syntax"),
+  (120, "0 *,22 * */4,5", 1805911859, "1805932800"),
+  (12, "sat,? *,12", 1662282334, "err failed to parse int from sat: strconv.Atoi: parsing \"sat\": invalid syntax"),
+  (382, "CRON_TZ=Australia/Lord_Howe 29/8 8 W * */2,* *", 1664417002, "err failed to parse int from W: strconv.Atoi: parsing \"W\": invalid syntax"),
+  (120, "foo 25 3-4 4-3,*", 1675157794, "err failed to parse int from foo: strconv.Atoi: parsing \"foo\": invalid syntax"),
+  (12, "26 12-19/2", 1762735630, "1762777560"),
+  (120, "* ? 3-6 0-2", 1731843308, "1740873600"),
+  (188, "23-26,39-10 * 16 6,* */5", 1779285347, "err beginning of range (39) beyond end of range (10): 39-10"),
+  (-1, "dec,*,59-7,52-54 20 8 *,12,12 */7", 1608923460, "err failed to parse int from dec: strconv.Atoi: parsing \"dec\": invalid syntax"),
+  (120, "18 *,mar-jan 11 2-5", 1745466641, "err failed to parse int from mar: strconv.Atoi: parsing \"mar\": invalid syntax"),
+  (12, "MON *", 1686751188, "err failed to parse int from MON: strconv.Atoi: parsing \"MON\": invalid syntax"),
+  (381, "* * * 2-13 49,4 1", 1623288066, "err end of range (49) above maximum (12): 49"),
+  (120, "* 3,* * *", 1808969262, "1808971200"),
+  (381, "* 7,27-34,* 7-12 MON 2 5 2-5", 1805186899, "err expected exactly 6 fields, found 7: [* 7,27-34,* 7-12 MON 2 5 2-5]"),
+  (-1, "* 12-18 13,6-16 5,* */7", 1863183521, "1863183540"),
+  (381, "21 * 21,11 5-10 10,1 -1", 1704676001, "err failed to parse int from : strconv.Atoi: parsing \"\": invalid syntax"),
+  (120, "TZ=Australia/Lord_Howe * jan 3 6", 1653927993, "err failed to parse int from jan: strconv.Atoi: parsing \"jan\": invalid syntax"),
+  (188, "@annually", 1731168283, "err parser does not accept descriptors: @annually"),
+]
+
+/// The zones the specs name, so the Go backend embeds them.
+fn embed_zones() -> Int {
+  [time.zone("America/New_York"), time.zone("Europe/London"), time.zone("Australia/Lord_Howe"), time.zone("Asia/Kolkata"), time.zone("Pacific/Auckland")].len()
+}
+
+fn answer(opts: Int, spec: Str, start: Int) -> Str {
+  let r = if opts == -1 { cron.parse(spec) } else { cron.parser(opts).parse(spec) }
+  match r {
+    Ok(s) => match s.next(Time.from_unix(start)) {
+      Some(t) => "${t.unix()}"
+      None => "none"
+    }
+    Err(e) => {
+      let m = e.display()
+      if spec.contains("TZ=") && m.starts_with("provided bad location") { "err provided bad location" } else { "err ${m}" }
+    }
+  }
+}

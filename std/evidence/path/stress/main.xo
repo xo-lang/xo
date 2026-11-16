@@ -1,0 +1,165 @@
+// path stress program (decision 0616 section 2): 64 tasks run std/path's
+// clean, dir, base, ext, split, is_abs, join, rel, is_local and is_match
+// over 64 path pairs against Go's path and path/filepath (the seed 1 rows of
+// internal/stdtest/pathfuzz_test.go), for a fixed time. A background task
+// samples the resident set every 10 s (Linux /proc/self/status). Pass: no
+// mismatch, no fault, and the resident set at the end within 10% or 4 MB of
+// its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/path
+
+/// One pass over the cases from offset start: the operations done, or the
+/// first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..CASES.len() {
+    let (a, b, want) = CASES[(start + k) % CASES.len()]
+    let got = answer(a, b)
+    if got != want {
+      return Err("${a.quote()} ${b.quote()}: ${got.quote()} want ${want.quote()}")
+    }
+  }
+  CASES.len() * 11
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("path stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+fn answer(a: Str, b: Str) -> Str {
+  let (d, f) = path.split(a)
+  let m = match path.is_match(a, b) {
+    Ok(v) => "${v}"
+    Err(_) => "err"
+  }
+  [path.clean(a), path.dir(a), path.base(a), path.ext(a), d, f, "${path.is_abs(a)}", path.join(a, b), path.rel(a, b) ?? "err", "${path.is_local(a)}", m].join("\u{1}")
+}
+
+
+/// (a, b, Go's Clean Dir Base Ext Split IsAbs of a, Join(a, b), filepath.Rel(a, b) or err, filepath.IsLocal(a), Match(a, b) or err; joined by U+0001)
+const CASES: List[(Str, Str, Str)] = [
+  ("abc//", "日本/../a b/", "abc\u{1}abc\u{1}abc\u{1}\u{1}abc//\u{1}\u{1}false\u{1}abc/a b\u{1}../a b\u{1}true\u{1}false"),
+  ("a.b.c", "a/a b/x.y/a ba b/b", "a.b.c\u{1}.\u{1}a.b.c\u{1}.c\u{1}\u{1}a.b.c\u{1}false\u{1}a.b.c/a/a b/x.y/a ba b/b\u{1}../a/a b/x.y/a ba b/b\u{1}true\u{1}false"),
+  ("a/.z", "/////../..", "a/.z\u{1}a\u{1}.z\u{1}.z\u{1}a/\u{1}.z\u{1}false\u{1}.\u{1}err\u{1}true\u{1}false"),
+  ("a//?-?///", "/a.b.c/", "a/?-?\u{1}a/?-?\u{1}?-?\u{1}\u{1}a//?-?///\u{1}\u{1}false\u{1}a/?-?/a.b.c\u{1}err\u{1}true\u{1}false"),
+  ("", "", ".\u{1}.\u{1}.\u{1}\u{1}\u{1}\u{1}false\u{1}\u{1}.\u{1}false\u{1}true"),
+  ("", "/", ".\u{1}.\u{1}.\u{1}\u{1}\u{1}\u{1}false\u{1}/\u{1}err\u{1}false\u{1}false"),
+  (".z./-/", "./abc/.-abcé.go", ".z./-\u{1}.z./-\u{1}-\u{1}\u{1}.z./-/\u{1}\u{1}false\u{1}.z./-/abc/.-abcé.go\u{1}../../abc/.-abcé.go\u{1}true\u{1}false"),
+  ("", "-/", ".\u{1}.\u{1}.\u{1}\u{1}\u{1}\u{1}false\u{1}-\u{1}-\u{1}false\u{1}false"),
+  ("", "", ".\u{1}.\u{1}.\u{1}\u{1}\u{1}\u{1}false\u{1}\u{1}.\u{1}false\u{1}true"),
+  ("..a/", "///", "..a\u{1}..a\u{1}..a\u{1}\u{1}..a/\u{1}\u{1}false\u{1}..a\u{1}err\u{1}true\u{1}false"),
+  ("日本/a b//", "日本/a b//", "日本/a b\u{1}日本/a b\u{1}a b\u{1}\u{1}日本/a b//\u{1}\u{1}false\u{1}日本/a b/日本/a b\u{1}.\u{1}true\u{1}true"),
+  ("", "a.b.c/", ".\u{1}.\u{1}.\u{1}\u{1}\u{1}\u{1}false\u{1}a.b.c\u{1}a.b.c\u{1}false\u{1}false"),
+  ("", "", ".\u{1}.\u{1}.\u{1}\u{1}\u{1}\u{1}false\u{1}\u{1}.\u{1}false\u{1}true"),
+  ("?/a bba b/?/", "q/a bba b/q/", "?/a bba b/?\u{1}?/a bba b/?\u{1}?\u{1}\u{1}?/a bba b/?/\u{1}\u{1}false\u{1}?/a bba b/?/q/a bba b/q\u{1}../../../q/a bba b/q\u{1}true\u{1}true"),
+  ("a/a b", "", "a/a b\u{1}a\u{1}a b\u{1}\u{1}a/\u{1}a b\u{1}false\u{1}a/a b\u{1}../..\u{1}true\u{1}false"),
+  ("a.b.c../", "a b/-/.", "a.b.c..\u{1}a.b.c..\u{1}a.b.c..\u{1}\u{1}a.b.c../\u{1}\u{1}false\u{1}a.b.c../a b/-\u{1}../a b/-\u{1}true\u{1}false"),
+  (".é.go/b/a.b.c/x.y/", "a日本/abc/x.y/", ".é.go/b/a.b.c/x.y\u{1}.é.go/b/a.b.c/x.y\u{1}x.y\u{1}\u{1}.é.go/b/a.b.c/x.y/\u{1}\u{1}false\u{1}.é.go/b/a.b.c/x.y/a日本/abc/x.y\u{1}../../../../a日本/abc/x.y\u{1}true\u{1}false"),
+  ("日本/é.go?a b//", "日本/é.goqa b//", "日本/é.go?a b\u{1}日本/é.go?a b\u{1}é.go?a b\u{1}\u{1}日本/é.go?a b//\u{1}\u{1}false\u{1}日本/é.go?a b/日本/é.goqa b\u{1}../é.goqa b\u{1}true\u{1}true"),
+  ("b/a.b.c/x.y-..", "//日本/", "b/a.b.c/x.y-..\u{1}b/a.b.c\u{1}x.y-..\u{1}.\u{1}b/a.b.c/\u{1}x.y-..\u{1}false\u{1}b/a.b.c/x.y-../日本\u{1}err\u{1}true\u{1}false"),
+  ("abca.b.c/abcabc", "é.go/.x.y/x.yb/abc/", "abca.b.c/abcabc\u{1}abca.b.c\u{1}abcabc\u{1}\u{1}abca.b.c/\u{1}abcabc\u{1}false\u{1}abca.b.c/abcabc/é.go/.x.y/x.yb/abc\u{1}../../é.go/.x.y/x.yb/abc\u{1}true\u{1}false"),
+  ("-///.//", "", "-\u{1}-\u{1}.\u{1}\u{1}-///.//\u{1}\u{1}false\u{1}-\u{1}..\u{1}true\u{1}false"),
+  ("abc////", "a/日本//", "abc\u{1}abc\u{1}abc\u{1}\u{1}abc////\u{1}\u{1}false\u{1}abc/a/日本\u{1}../a/日本\u{1}true\u{1}false"),
+  ("", "bx.yé.go/a.b.ca b//", ".\u{1}.\u{1}.\u{1}\u{1}\u{1}\u{1}false\u{1}bx.yé.go/a.b.ca b\u{1}bx.yé.go/a.b.ca b\u{1}false\u{1}false"),
+  ("a/", "a b////a b../", "a\u{1}a\u{1}a\u{1}\u{1}a/\u{1}\u{1}false\u{1}a/a b/a b..\u{1}../a b/a b..\u{1}true\u{1}false"),
+  ("../a b/.z/a/abc/", ".z-/日本日本a.b.c//", "../a b/.z/a/abc\u{1}../a b/.z/a/abc\u{1}abc\u{1}\u{1}../a b/.z/a/abc/\u{1}\u{1}false\u{1}../a b/.z/a/abc/.z-/日本日本a.b.c\u{1}err\u{1}false\u{1}false"),
+  ("b/é.go-/", "a.b.c-/abc/日本/a b", "b/é.go-\u{1}b/é.go-\u{1}é.go-\u{1}\u{1}b/é.go-/\u{1}\u{1}false\u{1}b/é.go-/a.b.c-/abc/日本/a b\u{1}../../a.b.c-/abc/日本/a b\u{1}true\u{1}false"),
+  ("a//.z/", "..z", "a/.z\u{1}a/.z\u{1}.z\u{1}\u{1}a//.z/\u{1}\u{1}false\u{1}a/.z/..z\u{1}../../..z\u{1}true\u{1}false"),
+  ("../-.za b/é.go/", "x.y-//////.//", "../-.za b/é.go\u{1}../-.za b/é.go\u{1}é.go\u{1}\u{1}../-.za b/é.go/\u{1}\u{1}false\u{1}../-.za b/é.go/x.y-\u{1}err\u{1}false\u{1}false"),
+  ("é.gox.y/-a.b.c./", "/a", "é.gox.y/-a.b.c.\u{1}é.gox.y/-a.b.c.\u{1}-a.b.c.\u{1}\u{1}é.gox.y/-a.b.c./\u{1}\u{1}false\u{1}é.gox.y/-a.b.c./a\u{1}err\u{1}true\u{1}false"),
+  ("b日本日本//x.y-", "b..日本/", "b日本日本/x.y-\u{1}b日本日本\u{1}x.y-\u{1}.y-\u{1}b日本日本//\u{1}x.y-\u{1}false\u{1}b日本日本/x.y-/b..日本\u{1}../../b..日本\u{1}true\u{1}false"),
+  ("./a.b.c/x.y/.//", "aa.b.c--b", "a.b.c/x.y\u{1}a.b.c/x.y\u{1}.\u{1}\u{1}./a.b.c/x.y/.//\u{1}\u{1}false\u{1}a.b.c/x.y/aa.b.c--b\u{1}../../aa.b.c--b\u{1}true\u{1}false"),
+  ("//abc/", "", "/abc\u{1}/abc\u{1}abc\u{1}\u{1}//abc/\u{1}\u{1}true\u{1}/abc\u{1}err\u{1}false\u{1}false"),
+  ("a.b.c.", "x.y", "a.b.c.\u{1}.\u{1}a.b.c.\u{1}.\u{1}\u{1}a.b.c.\u{1}false\u{1}a.b.c./x.y\u{1}../x.y\u{1}true\u{1}false"),
+  ("日本b/x.yabcx.y/", "", "日本b/x.yabcx.y\u{1}日本b/x.yabcx.y\u{1}x.yabcx.y\u{1}\u{1}日本b/x.yabcx.y/\u{1}\u{1}false\u{1}日本b/x.yabcx.y\u{1}../..\u{1}true\u{1}false"),
+  ("a.b.c", "a.b.c//.///", "a.b.c\u{1}.\u{1}a.b.c\u{1}.c\u{1}\u{1}a.b.c\u{1}false\u{1}a.b.c/a.b.c\u{1}.\u{1}true\u{1}false"),
+  ("/x.y/b../b", ".zx.y..///", "/x.y/b../b\u{1}/x.y/b..\u{1}b\u{1}\u{1}/x.y/b../\u{1}b\u{1}true\u{1}/x.y/b../b/.zx.y..\u{1}err\u{1}false\u{1}false"),
+  (".z////日本/", ".z////日本/", ".z/日本\u{1}.z/日本\u{1}日本\u{1}\u{1}.z////日本/\u{1}\u{1}false\u{1}.z/日本/.z/日本\u{1}.\u{1}true\u{1}true"),
+  ("", ".z", ".\u{1}.\u{1}.\u{1}\u{1}\u{1}\u{1}false\u{1}.z\u{1}.z\u{1}false\u{1}false"),
+  ("", "//-.z/-/a b", ".\u{1}.\u{1}.\u{1}\u{1}\u{1}\u{1}false\u{1}/-.z/-/a b\u{1}err\u{1}false\u{1}false"),
+  ("//", "é.go.z/../b/abc", "/\u{1}/\u{1}/\u{1}\u{1}//\u{1}\u{1}true\u{1}/b/abc\u{1}err\u{1}false\u{1}false"),
+  ("//-/", "x.y/b/////a.b.c///", "/-\u{1}/-\u{1}-\u{1}\u{1}//-/\u{1}\u{1}true\u{1}/-/x.y/b/a.b.c\u{1}err\u{1}false\u{1}false"),
+  ("x.ya.b.c-/.", "/日本/////x.y/", "x.ya.b.c-\u{1}x.ya.b.c-\u{1}.\u{1}.\u{1}x.ya.b.c-/\u{1}.\u{1}false\u{1}x.ya.b.c-/日本/x.y\u{1}err\u{1}true\u{1}false"),
+  ("abca", "abca", "abca\u{1}.\u{1}abca\u{1}\u{1}\u{1}abca\u{1}false\u{1}abca/abca\u{1}.\u{1}true\u{1}true"),
+  ("a b日本/.abc///", "", "a b日本/.abc\u{1}a b日本/.abc\u{1}.abc\u{1}\u{1}a b日本/.abc///\u{1}\u{1}false\u{1}a b日本/.abc\u{1}../..\u{1}true\u{1}false"),
+  ("", "abc/a.b.c..////", ".\u{1}.\u{1}.\u{1}\u{1}\u{1}\u{1}false\u{1}abc/a.b.c..\u{1}abc/a.b.c..\u{1}false\u{1}false"),
+  ("../", "b/abc/a b-/", "..\u{1}..\u{1}..\u{1}\u{1}../\u{1}\u{1}false\u{1}../b/abc/a b-\u{1}err\u{1}false\u{1}false"),
+  ("日本", "x.y///x.yabc/", "日本\u{1}.\u{1}日本\u{1}\u{1}\u{1}日本\u{1}false\u{1}日本/x.y/x.yabc\u{1}../x.y/x.yabc\u{1}true\u{1}false"),
+  ("//x.y/..abca.b.c", "a.b.c/..b", "/x.y/..abca.b.c\u{1}/x.y\u{1}..abca.b.c\u{1}.c\u{1}//x.y/\u{1}..abca.b.c\u{1}true\u{1}/x.y/..abca.b.c/a.b.c/..b\u{1}err\u{1}false\u{1}false"),
+  ("a.b.ca b../abc/bx.y", "////abc/", "a.b.ca b../abc/bx.y\u{1}a.b.ca b../abc\u{1}bx.y\u{1}.y\u{1}a.b.ca b../abc/\u{1}bx.y\u{1}false\u{1}a.b.ca b../abc/bx.y/abc\u{1}err\u{1}true\u{1}false"),
+  ("a b-", "a b-", "a b-\u{1}.\u{1}a b-\u{1}\u{1}\u{1}a b-\u{1}false\u{1}a b-/a b-\u{1}.\u{1}true\u{1}true"),
+  ("////日本../", ".z///a/-", "/日本..\u{1}/日本..\u{1}日本..\u{1}\u{1}////日本../\u{1}\u{1}true\u{1}/日本../.z/a/-\u{1}err\u{1}false\u{1}false"),
+  ("", ".z/x.y/日本/", ".\u{1}.\u{1}.\u{1}\u{1}\u{1}\u{1}false\u{1}.z/x.y/日本\u{1}.z/x.y/日本\u{1}false\u{1}false"),
+  (".-/", "abc/a/..x.y", ".-\u{1}.-\u{1}.-\u{1}\u{1}.-/\u{1}\u{1}false\u{1}.-/abc/a/..x.y\u{1}../abc/a/..x.y\u{1}true\u{1}false"),
+  ("//?/[]a]-", "//q/[]a]-", "/?/[]a]-\u{1}/?\u{1}[]a]-\u{1}\u{1}//?/\u{1}[]a]-\u{1}true\u{1}/?/[]a]-/q/[]a]-\u{1}../../q/[]a]-\u{1}false\u{1}err"),
+  ("../abc/", "é.go...", "../abc\u{1}../abc\u{1}abc\u{1}\u{1}../abc/\u{1}\u{1}false\u{1}../abc/é.go...\u{1}err\u{1}false\u{1}false"),
+  ("./a bx.y///", "//abc日本///日本////", "a bx.y\u{1}a bx.y\u{1}a bx.y\u{1}\u{1}./a bx.y///\u{1}\u{1}false\u{1}a bx.y/abc日本/日本\u{1}err\u{1}true\u{1}false"),
+  ("a", "a b///", "a\u{1}.\u{1}a\u{1}\u{1}\u{1}a\u{1}false\u{1}a/a b\u{1}../a b\u{1}true\u{1}false"),
+  ("日本/-//b//", "x.y/日本/", "日本/-/b\u{1}日本/-/b\u{1}b\u{1}\u{1}日本/-//b//\u{1}\u{1}false\u{1}日本/-/b/x.y/日本\u{1}../../../x.y/日本\u{1}true\u{1}false"),
+  ("", "", ".\u{1}.\u{1}.\u{1}\u{1}\u{1}\u{1}false\u{1}\u{1}.\u{1}false\u{1}true"),
+  ("abc", "", "abc\u{1}.\u{1}abc\u{1}\u{1}\u{1}abc\u{1}false\u{1}abc\u{1}..\u{1}true\u{1}false"),
+  ("?///", "q///", "?\u{1}?\u{1}?\u{1}\u{1}?///\u{1}\u{1}false\u{1}?/q\u{1}../q\u{1}true\u{1}true"),
+  ("../abc////", "b/ba/", "../abc\u{1}../abc\u{1}abc\u{1}\u{1}../abc////\u{1}\u{1}false\u{1}../abc/b/ba\u{1}err\u{1}false\u{1}false"),
+  ("é.go/b/a.b.c/////", "b//", "é.go/b/a.b.c\u{1}é.go/b/a.b.c\u{1}a.b.c\u{1}\u{1}é.go/b/a.b.c/////\u{1}\u{1}false\u{1}é.go/b/a.b.c/b\u{1}../../../b\u{1}true\u{1}false"),
+  ("//", "/", "/\u{1}/\u{1}/\u{1}\u{1}//\u{1}\u{1}true\u{1}/\u{1}.\u{1}false\u{1}false"),
+]

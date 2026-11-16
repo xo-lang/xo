@@ -1,5 +1,16 @@
 # std/rate changes
 
+## 2026-11-16: fix: reservations past 2262 act, delay and cancel as in Go
+
+- Kind: fix
+- Commit: this push
+- Found by: internal/stdtest/ratefuzz_test.go (seed 2: 3 of 5,000 cases, task #98)
+- Go reference: golang.org/x/time/rate v0.16.0 rate.go (Copyright 2015 The Go Authors, BSD-style license); Go's time.Time.Add and Sub
+- Test: std/rate_test.xo "reservations past Xo's last Time act, delay and cancel as in Go's x/time/rate" (fails on the old rate.xo); TestRateFuzz seed 2, 20,000 cases (arm64)
+- Shipped in: not yet released
+
+A limit as small as 1e-9 puts a reservation's time to act centuries ahead, past 2262, where Xo's Time (Unix nanoseconds in an Int) ends and Go's Time does not. The limiter now keeps its instants as Go does (seconds and nanoseconds from a start at Go's zero Time) with Go's saturating Sub, so `delay`, `cancel` (the tokens it restores) and later reservations match Go there; a float to Duration conversion below Int.min gives Int.min as Go's does on arm64 and amd64. `Reservation.time_to_act` stays a Time, held to Xo's range.
+
 ## 2026-11-15: feature: Sometimes (x/time's rate.Sometimes)
 
 - Kind: feature

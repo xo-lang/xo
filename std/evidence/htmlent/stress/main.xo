@@ -1,0 +1,235 @@
+// htmlent stress program (decision 0616 section 2): 64 tasks run std/htmlent's
+// entity_of and entity2_of over 64 names and std/html's unescape_string and
+// escape_string (built on them) over 64 reference-heavy texts against Go's
+// html package (the seed 1 rows of internal/stdtest/htmlentfuzz_test.go),
+// for a fixed time. A background task samples the resident set every 10 s
+// (Linux /proc/self/status). Pass: no mismatch, no fault, and the resident
+// set at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/htmlent
+use std/html
+
+/// One pass over the cases from offset start: the operations done, or the
+/// first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..NAMES.len() {
+    let (name, want) = NAMES[(start + k) % NAMES.len()]
+    let one = htmlent.entity_of(name)
+    let got = if one != "" { one } else { htmlent.entity2_of(name) }
+    if got != want {
+      return Err("name ${name.quote()}: ${got.quote()} want ${want.quote()}")
+    }
+  }
+  for k in 0..TEXTS.len() {
+    let (s, unesc, esc) = TEXTS[(start + k) % TEXTS.len()]
+    if html.unescape_string(s) != unesc || html.escape_string(s) != esc {
+      return Err("text ${s.quote()}")
+    }
+  }
+  NAMES.len() + 2 * TEXTS.len()
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("htmlent stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+fn first_bad[T](bad: List[T]) -> List[T] { bad[0..(if bad.len() < 20 { bad.len() } else { 20 })] }
+
+
+
+/// (name, Go's replacement of &name, "" for a name not in the tables)
+const NAMES: List[(Str, Str)] = [
+  ("kappa;", "κ"),
+  ("Jopf;", "𝕁"),
+  ("Ouml", "Ö"),
+  ("timesb;", "⊠"),
+  ("kfr;", "𝔨"),
+  ("looparrowright;", "↬"),
+  ("propto;", "∝"),
+  ("TilDe;", ""),
+  (";gt", ""),
+  ("nltri;", "⋪"),
+  ("Iota;", "Ι"),
+  ("boxvR;", "╞"),
+  ("sqsUp;", ""),
+  ("curarrm;", "⤼"),
+  ("varrho;", "ϱ"),
+  ("Aogon;", "Ą"),
+  ("roang;", "⟭"),
+  ("swArr;", "⇙"),
+  ("BetA;", ""),
+  ("NotRightTriangleBar;", "⧐̸"),
+  ("bOxDl;", ""),
+  ("Darr;", "↡"),
+  ("Fcy;", "Ф"),
+  ("parsim;", "⫳"),
+  ("straiZghtepsilon;", ""),
+  ("npolint;", "⨔"),
+  ("ordm", "º"),
+  ("qscr;", "𝓆"),
+  ("shortmid;", "∣"),
+  ("bsolhsub;", "⟈"),
+  ("nat9ural;", ""),
+  ("Ff", ""),
+  ("middot", "·"),
+  ("emptyv;", "∅"),
+  ("Iuml", "Ï"),
+  ("rbrkslu;", "⦐"),
+  ("capdot;", "⩀"),
+  ("Rarr;", "↠"),
+  ("SquareSubset;", "⊏"),
+  ("ohbaar;", ""),
+  ("DotDot;", "⃜"),
+  ("NotGreaterFullEqual;", "≧̸"),
+  ("xnis;", "⋻"),
+  ("SubsetEqual;", "⊆"),
+  ("horbar;", "―"),
+  ("gT", ""),
+  ("tdot;", "⃛"),
+  ("LJcy;", "Љ"),
+  ("imof;Z", ""),
+  ("Mzsc;", ""),
+  ("hopf;", "𝕙"),
+  ("angzarr;", "⍼"),
+  ("w", ""),
+  ("profalar;", "⌮"),
+  ("khcy;", "х"),
+  ("times", "×"),
+  ("macr", "¯"),
+  ("NegativeVerYThinSpace;", ""),
+  ("atildE", ""),
+  ("alefsym;", "ℵ"),
+  ("Rfr;", "ℜ"),
+  ("uarr;", "↑"),
+  ("tyd;", ""),
+  ("vArr;", "⇕"),
+]
+
+/// (text, Go's UnescapeString, Go's EscapeString)
+const TEXTS: List[(Str, Str, Str)] = [
+  ("<&jmath&SquareSubsetEqual&NotLessTilde\"&lurdshar 'a", "<&jmath&SquareSubsetEqual&NotLessTilde\"&lurdshar 'a", "&lt;&amp;jmath&amp;SquareSubsetEqual&amp;NotLessTilde&#34;&amp;lurdshar &#39;a"),
+  ("&#x;&#00268763;&#01067922&#X0a03de&e&ExponentialE&GreaterEqual;&veeeq", "�񁧛􄮒򠏞&e&ExponentialE≥&veeeq", "&amp;#x;&amp;#00268763;&amp;#01067922&amp;#X0a03de&amp;e&amp;ExponentialE&amp;GreaterEqual;&amp;veeeq"),
+  ("&egrave'", "è'", "&amp;egrave&#39;"),
+  ("&vsubnE&d&DownArrowUpArrowx", "&vsubnE&d&DownArrowUpArrowx", "&amp;vsubnE&amp;d&amp;DownArrowUpArrowx"),
+  ("<&&amp&Qg;&xiexcl;&TildeTilde=&#x08fc5d", "<&&&Qg;&xiexcl;&TildeTilde=򏱝", "&lt;&amp;&amp;amp&amp;Qg;&amp;xiexcl;&amp;TildeTilde=&amp;#x08fc5d"),
+  ("&partx&nabla&#00<&ccupssm9&#99999999999999999999;", "&partx&nabla�<&ccupssm9�", "&amp;partx&amp;nabla&amp;#00&lt;&amp;ccupssm9&amp;#99999999999999999999;"),
+  ("&ra&#651534;", "&ra򟄎", "&amp;ra&amp;#651534;"),
+  ("&Precedes;", "≺", "&amp;Precedes;"),
+  ("&#&#99999999999999999999;&intercal&Double&leftharpoonup&iav; &cedil ", "&#�&intercal&Double&leftharpoonup&iav; ¸ ", "&amp;#&amp;#99999999999999999999;&amp;intercal&amp;Double&amp;leftharpoonup&amp;iav; &amp;cedil "),
+  ("&ssmile;é日本&;&&;", "⌣é日本&;&&;", "&amp;ssmile;é日本&amp;;&amp;&amp;;"),
+  ("&aeligx&triplus;&Qscr;x&oslash&Jscr", "æx⨹𝒬xø&Jscr", "&amp;aeligx&amp;triplus;&amp;Qscr;x&amp;oslash&amp;Jscr"),
+  ("&DownLeftVector;&emptyset9&&#160980;&q9fr;&cirE;", "↽&emptyset9&𧓔&q9fr;⧃", "&amp;DownLeftVector;&amp;emptyset9&amp;&amp;#160980;&amp;q9fr;&amp;cirE;"),
+  ("&#x10ffff;&curren&;&hscr;&dwangl;e;&#00777156&#01114111&&amp", "􏿿¤&;𝒽&dwangl;e;򽯄􏿿&&", "&amp;#x10ffff;&amp;curren&amp;;&amp;hscr;&amp;dwangl;e;&amp;#00777156&amp;#01114111&amp;&amp;amp"),
+  ("&andand;&caron&#x41x", "⩕&caronAx", "&amp;andand;&amp;caron&amp;#x41x"),
+  ("&&ampa>&yacy=a", "&&a>&yacy=a", "&amp;&amp;ampa&gt;&amp;yacy=a"),
+  ("&tcedil ", "&tcedil ", "&amp;tcedil "),
+  ("&&amp&Bopf&csupe;&unvNlmzg&#X0d800é&#;", "&&&Bopf⫒&unvNlmzg�é&#;", "&amp;&amp;amp&amp;Bopf&amp;csupe;&amp;unvNlmzg&amp;#X0d800é&amp;#;"),
+  ("日本&plusmn;日本&Dcy;&gcy;&tilde9\t", "日本±日本Дг&tilde9\t", "日本&amp;plusmn;日本&amp;Dcy;&amp;gcy;&amp;tilde9\t"),
+  (" &#x010ffff;\t", " 􏿿\t", " &amp;#x010ffff;\t"),
+  ("&#159;&#159&Atilde&Ecirc&p&#;", "ŸŸÃÊ&p&#;", "&amp;#159;&amp;#159&amp;Atilde&amp;Ecirc&amp;p&amp;#;"),
+  ("&khcy9\"&#057343&Oacute;&infintie&eex", "&khcy9\"�Ó&infintie&eex", "&amp;khcy9&#34;&amp;#057343&amp;Oacute;&amp;infintie&amp;eex"),
+  ("&#x41&#X41x&permil=&;", "AAx&permil=&;", "&amp;#x41&amp;#X41x&amp;permil=&amp;;"),
+  ("&#X110000&longleftarrow;&#x;\t&or&szlxig", "�⟵�\t&or&szlxig", "&amp;#X110000&amp;longleftarrow;&amp;#x;\t&amp;or&amp;szlxig"),
+  ("&#268435455x&#128x", "�x€x", "&amp;#268435455x&amp;#128x"),
+  ("&;&Omicron;", "&;Ο", "&amp;;&amp;Omicron;"),
+  ("&#00159;&#001114111&squf;&gZap;", "Ÿ􏿿▪&gZap;", "&amp;#00159;&amp;#001114111&amp;squf;&amp;gZap;"),
+  ("&ngE &LeftTriangleEqualx&#00", "&ngE &LeftTriangleEqualx�", "&amp;ngE &amp;LeftTriangleEqualx&amp;#00"),
+  ("&ba&NotSubset;\t&ExponentxialE;&#0133&InvisibleComma;", "&ba⊂⃒\t&ExponentxialE;…⁣", "&amp;ba&amp;NotSubset;\t&amp;ExponentxialE;&amp;#0133&amp;InvisibleComma;"),
+  ("&nGtv", "&nGtv", "&amp;nGtv"),
+  ("&#x", "&#x", "&amp;#x"),
+  ("\"", "\"", "&#34;"),
+  ("&Mscr&#x00b1475x&bprime&ElemEnt;", "&Mscr򱑵x&bprime&ElemEnt;", "&amp;Mscr&amp;#x00b1475x&amp;bprime&amp;ElemEnt;"),
+  ("&andand ", "&andand ", "&amp;andand "),
+  ("&GreaterGreaterx", "&GreaterGreaterx", "&amp;GreaterGreaterx"),
+  ("&#;&brvbar&nLtvx&uAquvwlc&sqsub;&DiacriticalAcute&#x8373d;", "&#;¦&nLtvx&uAquvwlc⊏&DiacriticalAcute򃜽", "&amp;#;&amp;brvbar&amp;nLtvx&amp;uAquvwlc&amp;sqsub;&amp;DiacriticalAcute&amp;#x8373d;"),
+  ("&leftthreetimes;a&starf;日本&baCkprime;&#x", "⋋a★日本&baCkprime;&#x", "&amp;leftthreetimes;a&amp;starf;日本&amp;baCkprime;&amp;#x"),
+  ("&;&#x12b19&#;a&#861320x", "&;𒬙&#;a󒒈x", "&amp;;&amp;#x12b19&amp;#;a&amp;#861320x"),
+  ("&#65x &lneq;&hbar;", "Ax ⪇ℏ", "&amp;#65x &amp;lneq;&amp;hbar;"),
+  ("\"&#00771295;'", "\"򼓟'", "&#34;&amp;#00771295;&#39;"),
+  ("&CircleMinus&rbQMte &Rex&#99999999999999999999;&#x61a22", "&CircleMinus&rbQMte &Rex�񡨢", "&amp;CircleMinus&amp;rbQMte &amp;Rex&amp;#99999999999999999999;&amp;#x61a22"),
+  ("&Coproductx&Gfr&uplus;日本'&#x0dfffx", "&Coproductx&Gfr⊎日本'�x", "&amp;Coproductx&amp;Gfr&amp;uplus;日本&#39;&amp;#x0dfffx"),
+  ("&gscr &csup9\t&#09;&#X0", "&gscr &csup9\t\t�", "&amp;gscr &amp;csup9\t&amp;#09;&amp;#X0"),
+  ("&#01114718&#99999999999999999999;&;&&amp&sigmav;&succ;\"&rAquo", "��&;&&ς≻\"&rAquo", "&amp;#01114718&amp;#99999999999999999999;&amp;;&amp;&amp;amp&amp;sigmav;&amp;succ;&#34;&amp;rAquo"),
+  ("&nshortparallel;&S &u;grave&ssmile9", "∦&S &u;grave&ssmile9", "&amp;nshortparallel;&amp;S &amp;u;grave&amp;ssmile9"),
+  ("&#X02b12a&#05349&Eacute9&top&Gcy&l&#x10ffff", "𫄪ᓥÉ9&top&Gcy&l􏿿", "&amp;#X02b12a&amp;#05349&amp;Eacute9&amp;top&amp;Gcy&amp;l&amp;#x10ffff"),
+  ("&#&Oopfx", "&#&Oopfx", "&amp;#&amp;Oopfx"),
+  ("&#Xc490x", "쒐x", "&amp;#Xc490x"),
+  ("&#01104727&#00&Scyx&oa&#>>", "􍭗�&Scyx&oa&#>>", "&amp;#01104727&amp;#00&amp;Scyx&amp;oa&amp;#&gt;&gt;"),
+  ("<<&#x9;", "<<\t", "&lt;&lt;&amp;#x9;"),
+  ("&nu=", "&nu=", "&amp;nu="),
+  ("&&amp&#128512;&race;日本&#;\"&gsime;&KScr;", "&&😀∽̱日本&#;\"⪎&KScr;", "&amp;&amp;amp&amp;#128512;&amp;race;日本&amp;#;&#34;&amp;gsime;&amp;KScr;"),
+  ("&gtrsiM;&Rfloor;", ">rsiM;&Rfloor;", "&amp;gtrsiM;&amp;Rfloor;"),
+  ("&emsp14;&Zcaron;&;&#&cuwed;Z&rarrap&downdo9wnarrows;&rangle;", " Ž&;&#⋏Z&rarrap&downdo9wnarrows;⟩", "&amp;emsp14;&amp;Zcaron;&amp;;&amp;#&amp;cuwed;Z&amp;rarrap&amp;downdo9wnarrows;&amp;rangle;"),
+  ("&Ntilde;&vaRphi;&Euml &uharl &#065;日本\"", "Ñ&vaRphi;Ë &uharl A日本\"", "&amp;Ntilde;&amp;vaRphi;&amp;Euml &amp;uharl &amp;#065;日本&#34;"),
+  ("&latail&LeftTee;日本&npaxrsl;&#99999999999999999999;&#00128x&Ograve9", "&latail⊣日本&npaxrsl;�€xÒ9", "&amp;latail&amp;LeftTee;日本&amp;npaxrsl;&amp;#99999999999999999999;&amp;#00128x&amp;Ograve9"),
+  ("&#001171050x&late&Bscr&#00;", "�x&late&Bscr�", "&amp;#001171050x&amp;late&amp;Bscr&amp;#00;"),
+  ("&#00159;&#x&#159;&#00619190;&npre;a", "Ÿ&#xŸ򗊶⪯̸a", "&amp;#00159;&amp;#x&amp;#159;&amp;#00619190;&amp;npre;a"),
+  ("&Igravex&precapproxx", "Ìx&precapproxx", "&amp;Igravex&amp;precapproxx"),
+  ("&Lamb&primes;&Upsilon'", "&Lambℙ&Upsilon'", "&amp;Lamb&amp;primes;&amp;Upsilon&#39;"),
+  ("&#x;\t&Bowtie;&n&tscr;", "�\t&Bowtie;&n𝓉", "&amp;#x;\t&amp;Bowtie;&amp;n&amp;tscr;"),
+  ("&;&nearhk;&#&#99999999999999999999;", "&;⤤&#�", "&amp;;&amp;nearhk;&amp;#&amp;#99999999999999999999;"),
+  (">&lvNE;&#x;&dArr;&triangleq=<&lmidotx", ">&lvNE;�⇓&triangleq=<&lmidotx", "&gt;&amp;lvNE;&amp;#x;&amp;dArr;&amp;triangleq=&lt;&amp;lmidotx"),
+  ("é&#99999999999999999999;&#X0c9f2;", "é�짲", "é&amp;#99999999999999999999;&amp;#X0c9f2;"),
+  ("&curlYwedge;&#0133;\"&T&rationalxs;a", "&curlYwedge;…\"&T&rationalxs;a", "&amp;curlYwedge;&amp;#0133;&#34;&amp;T&amp;rationalxs;a"),
+]

@@ -1,0 +1,550 @@
+// yaml stress program (decision 0616 section 2): 64 tasks decode 64 seeded
+// random documents into structs that derive Yaml and parse, re-emit and
+// convert to JSON 64 more, against gopkg.in/yaml.v3 v3.0.1 (the seed 1 rows
+// of scripts/stdcorpus/yamloracle fuzz), for a fixed time. A background task
+// samples the resident set every 10 s (Linux /proc/self/status). Pass: no
+// mismatch, no fault, and the resident set at the end within 10% or 4 MB of
+// its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/yaml
+use std/time
+
+/// One pass over the cases from offset start: the operations done, or the
+/// first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..CASES.len() {
+    let (text, want) = CASES[(start + k) % CASES.len()]
+    if show(text) != want {
+      return Err("decode ${text.quote()}")
+    }
+  }
+  var ops = CASES.len()
+  for k in 0..NODE_CASES.len() {
+    let (text, nodes, emit, json) = NODE_CASES[(start + k) % NODE_CASES.len()]
+    if show_nodes(text) != nodes {
+      return Err("parse_all ${text.quote()}")
+    }
+    if emit != "SKIP" && show_emit(text) != emit {
+      return Err("encode_node ${text.quote()}")
+    }
+    if json != "SKIP" && show_json(text) != json {
+      return Err("to_json ${text.quote()}")
+    }
+    ops += 3
+  }
+  ops
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("yaml stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+struct Inner {
+  x: Int
+} derive Yaml
+
+struct T {
+  n: Int
+  f: Float
+  s: Str
+  b: Bool
+  o: Str?
+  l: List[Int]
+  m: Map[Str, Str]
+  in_ as "in": Inner
+} derive Yaml
+
+struct P {
+  x: Int
+  y: Int
+} derive Yaml
+
+struct Opts {
+  a as "a,omitempty": Str
+  b as "b,omitempty": Int
+  c as "c,omitempty": List[Int]
+  d yaml "d,flow": List[Int]
+  e yaml "e,flow": Map[Str, Int]
+  f yaml "f,flow": P
+  g yaml "g,omitempty,flow": List[Str]
+  h as "h,omitempty": Str?
+  i yaml "i,flow": List[P]
+  j yaml "j,flow": Str
+  k as "k,omitempty": Bool
+  l as "l,omitempty": Float
+  m: List[Int]
+} derive Yaml
+
+struct Item {
+  n: Int
+  tags: List[Str]
+} derive Yaml
+
+struct Cfg {
+  name: Str
+  api_version as "apiVersion": Str
+  port: Int
+  ratio: Float
+  on: Bool
+  o: Str?
+  none: Str?
+  items: List[Item]
+  m: Map[Str, Int]
+  empty: List[Int]
+  text: Str
+  yes: Str
+  num: Str
+  inner: Item
+} derive Yaml
+
+struct Meta {
+  name: Str
+  tags: List[Str]
+} derive Yaml
+
+struct Base {
+  id: Int
+  meta: Meta
+} derive Yaml
+
+struct Top {
+  base yaml ",inline": Base
+  extra: Str
+  hidden as "-": Int
+  n: Int
+} derive Yaml
+
+struct Im {
+  a: Int
+  base yaml ",inline": Base
+  rest yaml ",inline": Map[Str, Int]
+  b: Str
+} derive Yaml
+
+fn show_im(text: Str, strict: Bool) -> Str {
+  match yaml.decode[Im](text, strict) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(t) => match yaml.encode_value[Im](t) {
+      Ok(y) => "OK ${y}"
+      Err(e) => "ERR ${e.display().quote()}"
+    }
+  }
+}
+
+fn show_top(text: Str) -> Str {
+  show_top_with(text, false)
+}
+
+fn show_top_with(text: Str, strict: Bool) -> Str {
+  match yaml.decode[Top](text, strict) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(t) => "id=${t.base.id} meta=${t.base.meta.name}/${t.base.meta.tags.join(",")} extra=${t.extra} hidden=${t.hidden} n=${t.n}"
+  }
+}
+
+struct Rt {
+  d: Duration
+  b: Bytes
+  p: Duration?
+  e yaml ",omitempty": Duration
+  f yaml ",omitempty": Bytes
+} derive Yaml
+
+fn show_rt(text: Str) -> Str {
+  match yaml.decode[Rt](text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(r) => {
+      var bs: List[Str] = []
+      for i in 0..r.b.len() {
+        bs.push("${r.b[i]}")
+      }
+      var fs: List[Str] = []
+      for i in 0..r.f.len() {
+        fs.push("${r.f[i]}")
+      }
+      let p = match r.p {
+        Some(v) => "${v.nanos()}"
+        None => "nil"
+      }
+      "d=${r.d.nanos()} b=[${bs.join(" ")}] p=${p} e=${r.e.nanos()} f=[${fs.join(" ")}]"
+    }
+  }
+}
+
+struct Nd {
+  a: Int
+  n: yaml.Node
+  z: Str
+} derive Yaml
+
+fn show_nd(text: Str) -> Str {
+  match yaml.decode[Nd](text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(t) => {
+      var out = StrBuilder.new()
+      out.write("a=${t.a} z=${t.z}\n")
+      if t.n.line == 0 && t.n.value == "null" {
+        out.write("zero\n")
+      } else {
+        dump_node(out, t.n, 0)
+      }
+      out.freeze()
+    }
+  }
+}
+
+struct Tm {
+  t: Time
+  p: Time?
+  n: Int
+} derive Yaml
+
+fn show_tm(text: Str) -> Str {
+  match yaml.decode[Tm](text) {
+    Err(e) => if e.display().starts_with("yaml: parsing time") { "ERRPARSE" } else { "ERR ${e.display().quote()}" }
+    Ok(t) => {
+      let p = match t.p {
+        Some(v) => "${(v - Time.UNIX_EPOCH).nanos()}"
+        None => "nil"
+      }
+      "t=${(t.t - Time.UNIX_EPOCH).nanos()} p=${p} n=${t.n}"
+    }
+  }
+}
+
+struct Cv {
+  t: time.Civil
+  p: time.Civil?
+  n: Int
+} derive Yaml
+
+fn show_cv(text: Str) -> Str {
+  match yaml.decode[Cv](text) {
+    Err(e) => if e.display().starts_with("yaml: parsing time") { "ERRPARSE" } else { "ERR ${e.display().quote()}" }
+    Ok(c) => match yaml.encode_value[Cv](c) {
+      Ok(t) => "OK ${t}"
+      Err(e) => "ERR ${e.display().quote()}"
+    }
+  }
+}
+
+struct Deep {
+  d: List[List[List[List[Str]]]]
+} derive Yaml
+
+fn show_deep(text: Str) -> Str {
+  match yaml.decode[Deep](text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(v) => {
+      var n = 0
+      for a in v.d {
+        for b in a {
+          for c in b {
+            n += c.len()
+          }
+        }
+      }
+      "leaves=${n}"
+    }
+  }
+}
+
+fn fl(f: Float) -> Str {
+  if f.is_nan() {
+    return "nan"
+  }
+  if f.is_inf() {
+    return if f > 0.0 { "inf" } else { "-inf" }
+  }
+  f.to_general(-1)
+}
+
+fn show(text: Str) -> Str {
+  match yaml.decode[T](text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(t) => show_t(t)
+  }
+}
+
+fn show_t(t: T) -> Str {
+  var ls: List[Str] = []
+  for x in t.l {
+    ls.push("${x}")
+  }
+  var ms: List[Str] = []
+  for k in t.m.keys().sort() {
+    ms.push("${k.quote()}=${(t.m.get(k) ?? "").quote()}")
+  }
+  let o = match t.o {
+    Some(v) => v.quote()
+    None => "nil"
+  }
+  "n=${t.n} f=${fl(t.f)} s=${t.s.quote()} b=${t.b} o=${o} l=[${ls.join(",")}] m={${ms.join(",")}} in=${t.in_.x}"
+}
+
+fn node_kind_n(k: yaml.NodeKind) -> Int {
+  match k {
+    Document => 1
+    Sequence => 2
+    Mapping => 4
+    Scalar => 8
+    Alias => 16
+  }
+}
+
+fn dump_node(var out: StrBuilder, n: yaml.Node, depth: Int) {
+  let a = match n.alias {
+    Some(t) => t.anchor
+    None => "-"
+  }
+  out.write("${" ".repeat(depth)}${node_kind_n(n.kind)} ${n.tag} ${n.style} ${n.value.quote()} ${n.anchor.quote()} ${n.line}:${n.column} ->${a} ${n.head_comment.quote()} ${n.line_comment.quote()} ${n.foot_comment.quote()}\n")
+  for c in n.content {
+    dump_node(out, c, depth + 1)
+  }
+}
+
+fn show_nodes(text: Str) -> Str {
+  var out = StrBuilder.new()
+  match yaml.parse_all(text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(ns) => {
+      for n in ns {
+        out.write("doc\n")
+        dump_node(out, n, 0)
+      }
+      out.freeze()
+    }
+  }
+}
+
+fn show_emit(text: Str) -> Str {
+  match yaml.parse(text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(n) => {
+      if n.content.is_empty() {
+        return "SKIP"
+      }
+      match yaml.encode_node(n) {
+        Ok(t) => "OK ${t}"
+        Err(e) => "ERR ${e.display().quote()}"
+      }
+    }
+  }
+}
+
+fn show_json(text: Str) -> Str {
+  match yaml.to_json(text) {
+    Ok(t) => "OK ${t}"
+    Err(_) => "ERR"
+  }
+}
+
+fn show_all(text: Str) -> Str {
+  match yaml.decode_all[T](text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(ts) => {
+      var parts: List[Str] = []
+      for t in ts {
+        parts.push(show_t(t))
+      }
+      "${ts.len()} docs: ${parts.join(" | ")}"
+    }
+  }
+}
+
+/// (the YAML text, what yaml.v3 decodes it into T as)
+const CASES: List[(Str, Str)] = [
+  ("f: 1.5", "n=0 f=1.5 s=\"\" b=false o=nil l=[] m={} in=0"),
+  ("s: ~\r\ns: x\r\n", "ERR \"yaml: unmarshal errors:\\n  line 2: mapping key \\\"s\\\" already defined at line 1\""),
+  ("in: {x: 1} # c\r\nin:\n  x: 3\n  y: 4\r\nf: 1.5\r\nl: [1, 2,] # c\r\nf: +1.5\r\n", "ERR \"yaml: unmarshal errors:\\n  line 2: mapping key \\\"in\\\" already defined at line 1\\n  line 7: mapping key \\\"f\\\" already defined at line 5\""),
+  ("%YAML 1.1\n---\nn: 9223372036854775808\n", "ERR \"yaml: unmarshal errors:\\n  line 3: cannot unmarshal !!int `9223372...` into int\""),
+  ("# a comment\r\n<<: 5\r\ns: 123\r\nm: {a: }\r\n", "ERR \"yaml: map merge requires map or sequence of maps as the value\""),
+  ("l> [1.5]\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!str `l> [1.5]` into T\""),
+  ("<<: 5\nl: [1, ~, 3] # c\nb: n\ns: *a\n", "ERR \"yaml: unknown anchor 'a' referenced\""),
+  ("# comment\r\nb: 1\r\n<<: [{n: 3}, {n: 4, s: z}]\r\nin: {x: 1, x: 2}\r\nm: {a: b}\r\nin: 5 # c\r\n# a comment\r\n", "ERR \"yaml: unmarshal errors:\\n  line 6: mapping key \\\"in\\\" already defined at line 4\""),
+  ("---\r\no: \"\\x41\"", "n=0 f=0 s=\"\" b=false o=\"A\" l=[] m={} in=0"),
+  ("s: null\nn: 2001-12-14\n", "ERR \"yaml: unmarshal errors:\\n  line 2: cannot unmarshal !!timestamp `2001-12-14` into int\""),
+  ("in: {}\n's': true # c\n", "n=0 f=0 s=\"true\" b=false o=nil l=[] m={} in=0"),
+  ("l: {a: 1}\r\nin:\n  x: 3\n  y: 4\r\nn: 0x # c\r\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!map into List[Int]\\n  line 5: cannot unmarshal !!str `0x` into int\""),
+  ("o: !!binary @@ # c\nn: abc # c\nin: {x: 1} # c\n# a comment\nb: \"true\"\no: *a\n", "ERR \"yaml: found character that cannot start any token\""),
+  ("{in: {x: 1,", "ERR \"yaml: line 1: did not find expected node content\""),
+  ("in: ~\no: &a v ", "n=0 f=0 s=\"\" b=false o=\"v\" l=[] m={} in=0"),
+  ("m: {a: b, a: c}\nn: !!str 5\nb: !!bool true\nl:\n  - 1\n  - ~\n  ] 3\nn: !!str 5 # c\n", "ERR \"yaml: line 4: did not find expected '-' indicator\""),
+  ("f: .inf # c\r\nl:\n- 4\n- 5\r\nb: on\r\nl: [a] # c\r\ns: 1.50\r\nb: !!bool yes # c\r\ns: *a # c\r\n", "ERR \"yaml: unknown anchor 'a' referenced\""),
+  ("n: !=5\r\no: 0x1F\r\ns: &a v # c\r\nm: {a: {b: c}} # c\r\n<<: 5\r\n", "ERR \"yaml: map merge requires map or sequence of maps as the value\""),
+  ("l: [] # c\no:|\n  line1\n  line2\n# a comment\n", "ERR \"yaml: line 2: could not find expected ':'\""),
+  ("---\nm: ~ # c\ns: a: b\n<<: [{n: 3}, {n: 4, s: z}]\nn: .inf\ns: yes\n<<: ~\nb: y # c\n", "ERR \"yaml: line 3: mapping values are not allowed in this context\""),
+  ("l: [[1]]\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!seq into int\""),
+  ("---\nin: !!map {x: 1}\n's': {a: b}\nf: -.5 # c\nb: off # c\nin: {x: a} # c\n", "ERR \"yaml: unmarshal errors:\\n  line 6: mapping key \\\"in\\\" already defined at line 2\""),
+  ("o: hello world\nn: 0b101\n", "n=5 f=0 s=\"\" b=false o=\"hello world\" l=[] m={} in=0"),
+  ("# comment\n\"n\": ~\n", "n=0 f=0 s=\"\" b=false o=nil l=[] m={} in=0"),
+  ("f: 1_0.5\nf: 1.5\nn: 9223372036854775807\no: !!binary aGVsbG8=\nb: 0\nm: {1: x}\nf: -0\n", "ERR \"yaml: unmarshal errors:\\n  line 2: mapping key \\\"f\\\" already defined at line 1\\n  line 7: mapping key \\\"f\\\" already defined at line 1\\n  line 7: mapping key \\\"f\\\" already defined at line 2\""),
+  ("%YAML 1.1\r\n---\r\nn: !!float 3\r\nbase: &a {n: 1, s: from_anchor}\r\n<<: *a\r\ns: \"q\\nr\"\r\nl:\n  - 1\n  - ~\n  - 3\r\nin: {y: 1}\r\ntrue: !!binary @@\r\nn: +3\r\n...\n---\nn: 2\n", "ERR \"yaml: line 12: found character that cannot start any token\""),
+  ("# comment\nl:\n- 4\n- 5\n", "n=0 f=0 s=\"\" b=false o=nil l=[4,5] m={} in=0"),
+  ("b: 0\r\nl: [[1]]\r\ns: !!str 5\r\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!int `0` into bool\\n  line 2: cannot unmarshal !!seq into int\""),
+  ("s: hello world\r\n", "n=0 f=0 s=\"hello world\" b=false o=nil l=[] m={} in=0"),
+  ("l: [\"1\"] # c\nzz: 1.50\nm: {true: y}\nb: null\no: \"\\u00e9\"\no: hello world\nf: 0x10\n", "ERR \"yaml: unmarshal errors:\\n  line 6: mapping key \\\"o\\\" already defined at line 5\""),
+  ("# comment\nn: !!int 7 # c\nf: ~\nm: {? [a]: b}\ns: a #c\n", "ERR \"yaml: unmarshal errors:\\n  line 4: cannot unmarshal !!seq into string\""),
+  ("n: {a: 1}\nb: 1\no: *a\n...\n---\nn: 2\n", "ERR \"yaml: unknown anchor 'a' referenced\""),
+  ("{o: !!bina=y @@, in: {x: 1}, m: x}\r\n", "ERR \"yaml: found character that cannot start any token\""),
+  ("f: true\nbase: &a {n: 1, s: from_anchor}\n<<: *a\nm:\n  a: 1\n  b: \"2\"\nf: .inf # c\nn : '5'\nb: On\n<<: {n: 2}\n", "ERR \"yaml: unmarshal errors:\\n  line 7: mapping key \\\"f\\\" already defined at line 1\\n  line 10: mapping key \\\"<<\\\" already defined at line 3\""),
+  ("N:|\n  line1\n  line2\nb: [true] # c\nin: {x: a}\nb: 1\ns: hello world # c\nin: {}\n", "ERR \"yaml: line 4: mapping values are not allowed in this context\""),
+  ("{s: ?23}\n", "ERR \"yaml: did not find expected node content\""),
+  ("b: n.\r\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!str `n.` into bool\""),
+  ("<<: ~\no: 123\ns: [1, 2]\nm: {a: [1]} # c\n", "ERR \"yaml: map merge requires map or sequence of maps as the value\""),
+  ("%YAML 1.1\r\n---\r\nn: true # c\r\nf: 1e400\r\ns: 'it''s'\r\nm: {a: } # c\r\ns: '' # c\r\no: 1.50\r\n", "ERR \"yaml: unmarshal errors:\\n  line 7: mapping key \\\"s\\\" already defined at line 5\""),
+  ("o: # not comment # c\n1: - x # c\nin", "ERR \"yaml: line 2: block sequence entries are not allowed in this context\""),
+  ("m: {a: {b: c}}\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!map into string\""),
+  ("f: -0\r\nf: 1e400\r\nm: [a]\r\nin: {x: 1}\r\nm: {? a}\r\nin:\n  x: 3\r\n", "ERR \"yaml: unmarshal errors:\\n  line 2: mapping key \\\"f\\\" already defined at line 1\\n  line 5: mapping key \\\"m\\\" already defined at line 3\\n  line 6: mapping key \\\"in\\\" already defined at line 4\""),
+  ("n: !!str 5\n---\ns: second\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!str `5` into int\""),
+  ("s: [1, 2] # c\nl:\n  - 1\n  - 2\n\"n\": 017 # c\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!seq into string\""),
+  ("%YAML 1.1\n---\nl: [1.5]\no: 0x1F\nf: 5.\nb: [true] # c\n", "ERR \"yaml: unmarshal errors:\\n  line 6: cannot unmarshal !!seq into bool\""),
+  ("{b: 0}\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!int `0` into bool\""),
+  ("%YAML 1.1\r\n---\r\nin:\n  x: 3\n  y: 4\r\nm: {true: y}\r\n? n: ~\r\n", "ERR \"yaml: unmarshal errors:\\n  line 7: cannot unmarshal !!map into string\""),
+  ("{b: 0, n: 0o17}\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!int `0` into bool\""),
+  ("m: {a: }\nf: true\ns: ~ # c\nb: !!bool true # c\nin: !!map ", "ERR \"yaml: unmarshal errors:\\n  line 2: cannot unmarshal !!bool `true` into float64\\n  line 5: cannot unmarshal !!map into Inner\""),
+  ("# comment\n# a comment\ns: &a v\nf: [1.5]\n---\ns: second\n", "ERR \"yaml: unmarshal errors:\\n  line 4: cannot unmarshal !!seq into float64\""),
+  ("l:\n  - 1\n  - ~\n  - 3\ns: hello world\no: \"\\x41\"\nb: True\nbase: &a {n: 1, s: from_anchor}\n<<: *a\nm: ~\n", "n=1 f=0 s=\"hello world\" b=true o=\"A\" l=[1,3] m={} in=0"),
+  ("<<: ~\nl: [[1]]\n", "ERR \"yaml: map merge requires map or sequence of maps as the value\""),
+  ("%YAML 1.1\r\n---\r\no: true\r\n", "n=0 f=0 s=\"\" b=false o=\"true\" l=[] m={} in=0"),
+  ("in: [", "ERR \"yaml: line 1: did not find expected node content\""),
+  ("f: !!float x\r\n# a comment\r\n# a comment\r\n", "ERR \"yaml: cannot decode !!str `x` as a !!float\""),
+  ("s: é日本\r\nf: .5\r\nm: {a: [1]}\r\nf: 1.2.3\r\nin: [1] # c\r\nm: {1: x} # c\r\n", "ERR \"yaml: unmarshal errors:\\n  line 4: mapping key \\\"f\\\" already defined at line 2\\n  line 6: mapping key \\\"m\\\" already defined at line 3\""),
+  ("o: a: b\nn: 0 # c\n", "ERR \"yaml: mapping values are not allowed in this context\""),
+  ("---\nl: [true] # c\nl: [1, ~, 3]\nl: [[1]]\ns: # not comment\no: null # c\nn: 0o17 # c\nn: +3\n", "ERR \"yaml: unmarshal errors:\\n  line 3: mapping key \\\"l\\\" already defined at line 2\\n  line 4: mapping key \\\"l\\\" already defined at line 2\\n  line 4: mapping key \\\"l\\\" already defined at line 3\\n  line 8: mapping key \\\"n\\\" already defined at line 7\""),
+  ("b: True\nin:\n  x: 3\nm: {? [a]: b}\n# a comment\nb: on\no: hello world # c\n", "ERR \"yaml: unmarshal errors:\\n  line 6: mapping key \\\"b\\\" already defined at line 1\""),
+  ("o& \"\\u00e9\"\nf: 0\nin:\n  x: 3\nm: {? [a]: b}\nm: {a: [1]} # c\n---\ns: second\n", "ERR \"yaml: line 2: mapping values are not allowed in this context\""),
+  ("b: [true]\no: é日本 # c\nl: [\"1\"]\ns: '\\n' # c\nn: -1.9 # c\nm: {a}\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!seq into bool\\n  line 3: cannot unmarshal !!str `1` into int\""),
+  ("o: [1, 2]\nm: {a: b}\nb: yes\ns: !!binary @@\n# a comment\n1: null\n", "ERR \"yaml: line 4: found character that cannot start any token\""),
+  ("s: !!binary aGVsbG8=\nin: {y: 1}\nin: 5\nm: !!map {a: b} # ", "ERR \"yaml: unmarshal errors:\\n  line 3: mapping key \\\"in\\\" already defined at line 2\""),
+  ("%YAML 1.1\n---\nb: On\nl: [1, 2,]\nf: .NAN\no: a #c\nin:\n  x: 3\n  y: 4\nl: [1.5]\n", "ERR \"yaml: unmarshal errors:\\n  line 10: mapping key \\\"l\\\" already defined at line 4\""),
+]
+
+/// (the YAML text, what yaml.v3 parses it into as Node trees, writes back for the first, and decodes into an any then json.Marshal writes)
+const NODE_CASES: List[(Str, Str, Str, Str)] = [
+  ("f: 1.5", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!float 0 \"1.5\" \"\" 1:4 ->- \"\" \"\" \"\"\n", "OK f: 1.5\n", "OK {\"f\":1.5}"),
+  ("s: ~\r\ns: x\r\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!null 0 \"~\" \"\" 1:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"x\" \"\" 2:4 ->- \"\" \"\" \"\"\n", "OK s: ~\ns: x\n", "ERR"),
+  ("in: {x: 1} # c\r\nin:\n  x: 3\n  y: 4\r\nf: 1.5\r\nl: [1, 2,] # c\r\nf: +1.5\r\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 1:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 1:5 ->- \"\" \"# c\" \"\"\n   8 !!str 0 \"x\" \"\" 1:6 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 1:9 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 2:1 ->- \"\" \"\" \"\"\n  4 !!map 0 \"\" \"\" 3:3 ->- \"\" \"\" \"\"\n   8 !!str 0 \"x\" \"\" 3:3 ->- \"\" \"\" \"\"\n   8 !!int 0 \"3\" \"\" 3:6 ->- \"\" \"\" \"\"\n   8 !!str 0 \"y\" \"\" 4:3 ->- \"\" \"\" \"\"\n   8 !!int 0 \"4\" \"\" 4:6 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 5:1 ->- \"\" \"\" \"\"\n  8 !!float 0 \"1.5\" \"\" 5:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 6:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 6:4 ->- \"\" \"# c\" \"\"\n   8 !!int 0 \"1\" \"\" 6:5 ->- \"\" \"\" \"\"\n   8 !!int 0 \"2\" \"\" 6:8 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 7:1 ->- \"\" \"\" \"\"\n  8 !!float 0 \"+1.5\" \"\" 7:4 ->- \"\" \"\" \"\"\n", "OK in: {x: 1} # c\nin:\n    x: 3\n    y: 4\nf: 1.5\nl: [1, 2] # c\nf: +1.5\n", "ERR"),
+  ("%YAML 1.1\n---\nn: 9223372036854775808\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"n\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"9223372036854775808\" \"\" 3:4 ->- \"\" \"\" \"\"\n", "OK n: 9223372036854775808\n", "SKIP"),
+  ("# a comment\r\n<<: 5\r\ns: 123\r\nm: {a: }\r\n", "doc\n1  0 \"\" \"\" 2:1 ->- \"# a comment\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!merge 0 \"<<\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"5\" \"\" 2:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"123\" \"\" 3:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 4:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 4:4 ->- \"\" \"\" \"\"\n   8 !!str 0 \"a\" \"\" 4:5 ->- \"\" \"\" \"\"\n   8 !!null 0 \"\" \"\" 4:8 ->- \"\" \"\" \"\"\n", "OK # a comment\n\n!!merge <<: 5\ns: 123\nm: {a: ''}\n", "ERR"),
+  ("l> [1.5]\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 8 !!str 0 \"l> [1.5]\" \"\" 1:1 ->- \"\" \"\" \"\"\n", "OK l> [1.5]\n", "OK \"l> [1.5]\""),
+  ("<<: 5\nl: [1, ~, 3] # c\nb: n\ns: *a\n", "ERR \"yaml: unknown anchor 'a' referenced\"", "ERR \"yaml: unknown anchor 'a' referenced\"", "ERR"),
+  ("# comment\r\nb: 1\r\n<<: [{n: 3}, {n: 4, s: z}]\r\nin: {x: 1, x: 2}\r\nm: {a: b}\r\nin: 5 # c\r\n# a comment\r\n", "doc\n1  0 \"\" \"\" 2:1 ->- \"# comment\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"1\" \"\" 2:4 ->- \"\" \"\" \"\"\n  8 !!merge 0 \"<<\" \"\" 3:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 3:5 ->- \"\" \"\" \"\"\n   4 !!map 32 \"\" \"\" 3:6 ->- \"\" \"\" \"\"\n    8 !!str 0 \"n\" \"\" 3:7 ->- \"\" \"\" \"\"\n    8 !!int 0 \"3\" \"\" 3:10 ->- \"\" \"\" \"\"\n   4 !!map 32 \"\" \"\" 3:14 ->- \"\" \"\" \"\"\n    8 !!str 0 \"n\" \"\" 3:15 ->- \"\" \"\" \"\"\n    8 !!int 0 \"4\" \"\" 3:18 ->- \"\" \"\" \"\"\n    8 !!str 0 \"s\" \"\" 3:21 ->- \"\" \"\" \"\"\n    8 !!str 0 \"z\" \"\" 3:24 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 4:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 4:5 ->- \"\" \"\" \"\"\n   8 !!str 0 \"x\" \"\" 4:6 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 4:9 ->- \"\" \"\" \"\"\n   8 !!str 0 \"x\" \"\" 4:12 ->- \"\" \"\" \"\"\n   8 !!int 0 \"2\" \"\" 4:15 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 5:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 5:4 ->- \"\" \"\" \"\"\n   8 !!str 0 \"a\" \"\" 5:5 ->- \"\" \"\" \"\"\n   8 !!str 0 \"b\" \"\" 5:8 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 6:1 ->- \"\" \"\" \"# a comment\"\n  8 !!int 0 \"5\" \"\" 6:5 ->- \"\" \"# c\" \"\"\n", "OK # comment\n\nb: 1\n!!merge <<: [{n: 3}, {n: 4, s: z}]\nin: {x: 1, x: 2}\nm: {a: b}\nin: 5 # c\n# a comment\n", "ERR"),
+  ("---\r\no: \"\\x41\"", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!str 2 \"A\" \"\" 2:4 ->- \"\" \"\" \"\"\n", "OK o: \"A\"\n", "OK {\"o\":\"A\"}"),
+  ("s: null\nn: 2001-12-14\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!null 0 \"null\" \"\" 1:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"n\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!timestamp 0 \"2001-12-14\" \"\" 2:4 ->- \"\" \"\" \"\"\n", "OK s: null\nn: 2001-12-14\n", "SKIP"),
+  ("in: {}\n's': true # c\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 1:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 1:5 ->- \"\" \"\" \"\"\n  8 !!str 4 \"s\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!bool 0 \"true\" \"\" 2:6 ->- \"\" \"# c\" \"\"\n", "OK in: {}\n's': true # c\n", "OK {\"in\":{},\"s\":true}"),
+  ("l: {a: 1}\r\nin:\n  x: 3\n  y: 4\r\nn: 0x # c\r\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 1:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 1:4 ->- \"\" \"\" \"\"\n   8 !!str 0 \"a\" \"\" 1:5 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 1:8 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 2:1 ->- \"\" \"\" \"\"\n  4 !!map 0 \"\" \"\" 3:3 ->- \"\" \"\" \"\"\n   8 !!str 0 \"x\" \"\" 3:3 ->- \"\" \"\" \"\"\n   8 !!int 0 \"3\" \"\" 3:6 ->- \"\" \"\" \"\"\n   8 !!str 0 \"y\" \"\" 4:3 ->- \"\" \"\" \"\"\n   8 !!int 0 \"4\" \"\" 4:6 ->- \"\" \"\" \"\"\n  8 !!str 0 \"n\" \"\" 5:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"0x\" \"\" 5:4 ->- \"\" \"# c\" \"\"\n", "OK l: {a: 1}\nin:\n    x: 3\n    y: 4\nn: 0x # c\n", "OK {\"in\":{\"x\":3,\"y\":4},\"l\":{\"a\":1},\"n\":\"0x\"}"),
+  ("o: !!binary @@ # c\nn: abc # c\nin: {x: 1} # c\n# a comment\nb: \"true\"\no: *a\n", "ERR \"yaml: found character that cannot start any token\"", "ERR \"yaml: found character that cannot start any token\"", "ERR"),
+  ("{in: {x: 1,", "ERR \"yaml: line 1: did not find expected node content\"", "ERR \"yaml: line 1: did not find expected node content\"", "ERR"),
+  ("in: ~\no: &a v ", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!null 0 \"~\" \"\" 1:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"v\" \"a\" 2:4 ->- \"\" \"\" \"\"\n", "OK in: ~\no: &a v\n", "OK {\"in\":null,\"o\":\"v\"}"),
+  ("m: {a: b, a: c}\nn: !!str 5\nb: !!bool true\nl:\n  - 1\n  - ~\n  ] 3\nn: !!str 5 # c\n", "ERR \"yaml: line 4: did not find expected '-' indicator\"", "ERR \"yaml: line 4: did not find expected '-' indicator\"", "ERR"),
+  ("f: .inf # c\r\nl:\n- 4\n- 5\r\nb: on\r\nl: [a] # c\r\ns: 1.50\r\nb: !!bool yes # c\r\ns: *a # c\r\n", "ERR \"yaml: unknown anchor 'a' referenced\"", "ERR \"yaml: unknown anchor 'a' referenced\"", "ERR"),
+  ("n: !=5\r\no: 0x1F\r\ns: &a v # c\r\nm: {a: {b: c}} # c\r\n<<: 5\r\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"n\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !=5 1 \"\" \"\" 1:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"0x1F\" \"\" 2:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"v\" \"a\" 3:4 ->- \"\" \"# c\" \"\"\n  8 !!str 0 \"m\" \"\" 4:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 4:4 ->- \"\" \"# c\" \"\"\n   8 !!str 0 \"a\" \"\" 4:5 ->- \"\" \"\" \"\"\n   4 !!map 32 \"\" \"\" 4:8 ->- \"\" \"\" \"\"\n    8 !!str 0 \"b\" \"\" 4:9 ->- \"\" \"\" \"\"\n    8 !!str 0 \"c\" \"\" 4:12 ->- \"\" \"\" \"\"\n  8 !!merge 0 \"<<\" \"\" 5:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"5\" \"\" 5:5 ->- \"\" \"\" \"\"\n", "OK n: !=5\no: 0x1F\ns: &a v # c\nm: {a: {b: c}} # c\n!!merge <<: 5\n", "ERR"),
+  ("l: [] # c\no:|\n  line1\n  line2\n# a comment\n", "ERR \"yaml: line 2: could not find expected ':'\"", "ERR \"yaml: line 2: could not find expected ':'\"", "ERR"),
+  ("---\nm: ~ # c\ns: a: b\n<<: [{n: 3}, {n: 4, s: z}]\nn: .inf\ns: yes\n<<: ~\nb: y # c\n", "ERR \"yaml: line 3: mapping values are not allowed in this context\"", "ERR \"yaml: line 3: mapping values are not allowed in this context\"", "ERR"),
+  ("l: [[1]]\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 1:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 1:4 ->- \"\" \"\" \"\"\n   2 !!seq 32 \"\" \"\" 1:5 ->- \"\" \"\" \"\"\n    8 !!int 0 \"1\" \"\" 1:6 ->- \"\" \"\" \"\"\n", "OK l: [[1]]\n", "OK {\"l\":[[1]]}"),
+  ("---\nin: !!map {x: 1}\n's': {a: b}\nf: -.5 # c\nb: off # c\nin: {x: a} # c\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 2:1 ->- \"\" \"\" \"\"\n  4 !!map 33 \"\" \"\" 2:5 ->- \"\" \"\" \"\"\n   8 !!str 0 \"x\" \"\" 2:12 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 2:15 ->- \"\" \"\" \"\"\n  8 !!str 4 \"s\" \"\" 3:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 3:6 ->- \"\" \"\" \"\"\n   8 !!str 0 \"a\" \"\" 3:7 ->- \"\" \"\" \"\"\n   8 !!str 0 \"b\" \"\" 3:10 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 4:1 ->- \"\" \"\" \"\"\n  8 !!float 0 \"-.5\" \"\" 4:4 ->- \"\" \"# c\" \"\"\n  8 !!str 0 \"b\" \"\" 5:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"off\" \"\" 5:4 ->- \"\" \"# c\" \"\"\n  8 !!str 0 \"in\" \"\" 6:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 6:5 ->- \"\" \"# c\" \"\"\n   8 !!str 0 \"x\" \"\" 6:6 ->- \"\" \"\" \"\"\n   8 !!str 0 \"a\" \"\" 6:9 ->- \"\" \"\" \"\"\n", "OK in: !!map {x: 1}\n's': {a: b}\nf: -.5 # c\nb: off # c\nin: {x: a} # c\n", "ERR"),
+  ("o: hello world\nn: 0b101\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"hello world\" \"\" 1:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"n\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"0b101\" \"\" 2:4 ->- \"\" \"\" \"\"\n", "OK o: hello world\nn: 0b101\n", "OK {\"n\":5,\"o\":\"hello world\"}"),
+  ("# comment\n\"n\": ~\n", "doc\n1  0 \"\" \"\" 2:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!str 2 \"n\" \"\" 2:1 ->- \"# comment\" \"\" \"\"\n  8 !!null 0 \"~\" \"\" 2:6 ->- \"\" \"\" \"\"\n", "OK # comment\n\"n\": ~\n", "OK {\"n\":null}"),
+  ("f: 1_0.5\nf: 1.5\nn: 9223372036854775807\no: !!binary aGVsbG8=\nb: 0\nm: {1: x}\nf: -0\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!float 0 \"1_0.5\" \"\" 1:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!float 0 \"1.5\" \"\" 2:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"n\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"9223372036854775807\" \"\" 3:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 4:1 ->- \"\" \"\" \"\"\n  8 !!binary 1 \"aGVsbG8=\" \"\" 4:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 5:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"0\" \"\" 5:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 6:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 6:4 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 6:5 ->- \"\" \"\" \"\"\n   8 !!str 0 \"x\" \"\" 6:8 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 7:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"-0\" \"\" 7:4 ->- \"\" \"\" \"\"\n", "OK f: 1_0.5\nf: 1.5\nn: 9223372036854775807\no: !!binary aGVsbG8=\nb: 0\nm: {1: x}\nf: -0\n", "ERR"),
+  ("%YAML 1.1\r\n---\r\nn: !!float 3\r\nbase: &a {n: 1, s: from_anchor}\r\n<<: *a\r\ns: \"q\\nr\"\r\nl:\n  - 1\n  - ~\n  - 3\r\nin: {y: 1}\r\ntrue: !!binary @@\r\nn: +3\r\n...\n---\nn: 2\n", "ERR \"yaml: line 12: found character that cannot start any token\"", "ERR \"yaml: line 12: found character that cannot start any token\"", "ERR"),
+  ("# comment\nl:\n- 4\n- 5\n", "doc\n1  0 \"\" \"\" 2:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 2:1 ->- \"# comment\" \"\" \"\"\n  2 !!seq 0 \"\" \"\" 3:1 ->- \"\" \"\" \"\"\n   8 !!int 0 \"4\" \"\" 3:3 ->- \"\" \"\" \"\"\n   8 !!int 0 \"5\" \"\" 4:3 ->- \"\" \"\" \"\"\n", "OK # comment\nl:\n    - 4\n    - 5\n", "OK {\"l\":[4,5]}"),
+  ("b: 0\r\nl: [[1]]\r\ns: !!str 5\r\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"0\" \"\" 1:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 2:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 2:4 ->- \"\" \"\" \"\"\n   2 !!seq 32 \"\" \"\" 2:5 ->- \"\" \"\" \"\"\n    8 !!int 0 \"1\" \"\" 2:6 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!str 1 \"5\" \"\" 3:4 ->- \"\" \"\" \"\"\n", "OK b: 0\nl: [[1]]\ns: !!str 5\n", "OK {\"b\":0,\"l\":[[1]],\"s\":\"5\"}"),
+  ("s: hello world\r\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"hello world\" \"\" 1:4 ->- \"\" \"\" \"\"\n", "OK s: hello world\n", "OK {\"s\":\"hello world\"}"),
+  ("l: [\"1\"] # c\nzz: 1.50\nm: {true: y}\nb: null\no: \"\\u00e9\"\no: hello world\nf: 0x10\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 1:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 1:4 ->- \"\" \"# c\" \"\"\n   8 !!str 2 \"1\" \"\" 1:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"zz\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!float 0 \"1.50\" \"\" 2:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 3:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 3:4 ->- \"\" \"\" \"\"\n   8 !!bool 0 \"true\" \"\" 3:5 ->- \"\" \"\" \"\"\n   8 !!str 0 \"y\" \"\" 3:11 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 4:1 ->- \"\" \"\" \"\"\n  8 !!null 0 \"null\" \"\" 4:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 5:1 ->- \"\" \"\" \"\"\n  8 !!str 2 \"é\" \"\" 5:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 6:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"hello world\" \"\" 6:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 7:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"0x10\" \"\" 7:4 ->- \"\" \"\" \"\"\n", "OK l: [\"1\"] # c\nzz: 1.50\nm: {true: y}\nb: null\no: \"é\"\no: hello world\nf: 0x10\n", "ERR"),
+  ("# comment\nn: !!int 7 # c\nf: ~\nm: {? [a]: b}\ns: a #c\n", "doc\n1  0 \"\" \"\" 2:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"n\" \"\" 2:1 ->- \"# comment\" \"\" \"\"\n  8 !!int 1 \"7\" \"\" 2:4 ->- \"\" \"# c\" \"\"\n  8 !!str 0 \"f\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!null 0 \"~\" \"\" 3:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 4:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 4:4 ->- \"\" \"\" \"\"\n   2 !!seq 32 \"\" \"\" 4:7 ->- \"\" \"\" \"\"\n    8 !!str 0 \"a\" \"\" 4:8 ->- \"\" \"\" \"\"\n   8 !!str 0 \"b\" \"\" 4:12 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 5:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"a\" \"\" 5:4 ->- \"\" \"#c\" \"\"\n", "OK # comment\nn: !!int 7 # c\nf: ~\nm: {? [a] : b}\ns: a #c\n", "ERR"),
+  ("n: {a: 1}\nb: 1\no: *a\n...\n---\nn: 2\n", "ERR \"yaml: unknown anchor 'a' referenced\"", "ERR \"yaml: unknown anchor 'a' referenced\"", "ERR"),
+  ("{o: !!bina=y @@, in: {x: 1}, m: x}\r\n", "ERR \"yaml: found character that cannot start any token\"", "ERR \"yaml: found character that cannot start any token\"", "ERR"),
+  ("f: true\nbase: &a {n: 1, s: from_anchor}\n<<: *a\nm:\n  a: 1\n  b: \"2\"\nf: .inf # c\nn : '5'\nb: On\n<<: {n: 2}\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!bool 0 \"true\" \"\" 1:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"base\" \"\" 2:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"a\" 2:7 ->- \"\" \"\" \"\"\n   8 !!str 0 \"n\" \"\" 2:11 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 2:14 ->- \"\" \"\" \"\"\n   8 !!str 0 \"s\" \"\" 2:17 ->- \"\" \"\" \"\"\n   8 !!str 0 \"from_anchor\" \"\" 2:20 ->- \"\" \"\" \"\"\n  8 !!merge 0 \"<<\" \"\" 3:1 ->- \"\" \"\" \"\"\n  16  0 \"a\" \"\" 3:5 ->a \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 4:1 ->- \"\" \"\" \"\"\n  4 !!map 0 \"\" \"\" 5:3 ->- \"\" \"\" \"\"\n   8 !!str 0 \"a\" \"\" 5:3 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 5:6 ->- \"\" \"\" \"\"\n   8 !!str 0 \"b\" \"\" 6:3 ->- \"\" \"\" \"\"\n   8 !!str 2 \"2\" \"\" 6:6 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 7:1 ->- \"\" \"\" \"\"\n  8 !!float 0 \".inf\" \"\" 7:4 ->- \"\" \"# c\" \"\"\n  8 !!str 0 \"n\" \"\" 8:1 ->- \"\" \"\" \"\"\n  8 !!str 4 \"5\" \"\" 8:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 9:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"On\" \"\" 9:4 ->- \"\" \"\" \"\"\n  8 !!merge 0 \"<<\" \"\" 10:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 10:5 ->- \"\" \"\" \"\"\n   8 !!str 0 \"n\" \"\" 10:6 ->- \"\" \"\" \"\"\n   8 !!int 0 \"2\" \"\" 10:9 ->- \"\" \"\" \"\"\n", "OK f: true\nbase: &a {n: 1, s: from_anchor}\n!!merge <<: *a\nm:\n    a: 1\n    b: \"2\"\nf: .inf # c\nn: '5'\nb: On\n!!merge <<: {n: 2}\n", "ERR"),
+  ("N:|\n  line1\n  line2\nb: [true] # c\nin: {x: a}\nb: 1\ns: hello world # c\nin: {}\n", "ERR \"yaml: line 4: mapping values are not allowed in this context\"", "ERR \"yaml: line 4: mapping values are not allowed in this context\"", "ERR"),
+  ("{s: ?23}\n", "ERR \"yaml: did not find expected node content\"", "ERR \"yaml: did not find expected node content\"", "ERR"),
+  ("b: n.\r\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"n.\" \"\" 1:4 ->- \"\" \"\" \"\"\n", "OK b: n.\n", "OK {\"b\":\"n.\"}"),
+  ("<<: ~\no: 123\ns: [1, 2]\nm: {a: [1]} # c\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!merge 0 \"<<\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!null 0 \"~\" \"\" 1:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"123\" \"\" 2:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 3:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 3:4 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 3:5 ->- \"\" \"\" \"\"\n   8 !!int 0 \"2\" \"\" 3:8 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 4:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 4:4 ->- \"\" \"# c\" \"\"\n   8 !!str 0 \"a\" \"\" 4:5 ->- \"\" \"\" \"\"\n   2 !!seq 32 \"\" \"\" 4:8 ->- \"\" \"\" \"\"\n    8 !!int 0 \"1\" \"\" 4:9 ->- \"\" \"\" \"\"\n", "OK !!merge <<: ~\no: 123\ns: [1, 2]\nm: {a: [1]} # c\n", "ERR"),
+  ("%YAML 1.1\r\n---\r\nn: true # c\r\nf: 1e400\r\ns: 'it''s'\r\nm: {a: } # c\r\ns: '' # c\r\no: 1.50\r\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"n\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!bool 0 \"true\" \"\" 3:4 ->- \"\" \"# c\" \"\"\n  8 !!str 0 \"f\" \"\" 4:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"1e400\" \"\" 4:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 5:1 ->- \"\" \"\" \"\"\n  8 !!str 4 \"it's\" \"\" 5:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 6:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 6:4 ->- \"\" \"# c\" \"\"\n   8 !!str 0 \"a\" \"\" 6:5 ->- \"\" \"\" \"\"\n   8 !!null 0 \"\" \"\" 6:8 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 7:1 ->- \"\" \"\" \"\"\n  8 !!str 4 \"\" \"\" 7:4 ->- \"\" \"# c\" \"\"\n  8 !!str 0 \"o\" \"\" 8:1 ->- \"\" \"\" \"\"\n  8 !!float 0 \"1.50\" \"\" 8:4 ->- \"\" \"\" \"\"\n", "OK n: true # c\nf: 1e400\ns: 'it''s'\nm: {a: ''} # c\ns: '' # c\no: 1.50\n", "ERR"),
+  ("o: # not comment # c\n1: - x # c\nin", "ERR \"yaml: line 2: block sequence entries are not allowed in this context\"", "ERR \"yaml: line 2: block sequence entries are not allowed in this context\"", "ERR"),
+  ("m: {a: {b: c}}\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 1:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 1:4 ->- \"\" \"\" \"\"\n   8 !!str 0 \"a\" \"\" 1:5 ->- \"\" \"\" \"\"\n   4 !!map 32 \"\" \"\" 1:8 ->- \"\" \"\" \"\"\n    8 !!str 0 \"b\" \"\" 1:9 ->- \"\" \"\" \"\"\n    8 !!str 0 \"c\" \"\" 1:12 ->- \"\" \"\" \"\"\n", "OK m: {a: {b: c}}\n", "OK {\"m\":{\"a\":{\"b\":\"c\"}}}"),
+  ("f: -0\r\nf: 1e400\r\nm: [a]\r\nin: {x: 1}\r\nm: {? a}\r\nin:\n  x: 3\r\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"-0\" \"\" 1:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"1e400\" \"\" 2:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 3:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 3:4 ->- \"\" \"\" \"\"\n   8 !!str 0 \"a\" \"\" 3:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 4:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 4:5 ->- \"\" \"\" \"\"\n   8 !!str 0 \"x\" \"\" 4:6 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 4:9 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 5:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 5:4 ->- \"\" \"\" \"\"\n   8 !!str 0 \"a\" \"\" 5:7 ->- \"\" \"\" \"\"\n   8 !!null 0 \"\" \"\" 5:8 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 6:1 ->- \"\" \"\" \"\"\n  4 !!map 0 \"\" \"\" 7:3 ->- \"\" \"\" \"\"\n   8 !!str 0 \"x\" \"\" 7:3 ->- \"\" \"\" \"\"\n   8 !!int 0 \"3\" \"\" 7:6 ->- \"\" \"\" \"\"\n", "OK f: -0\nf: 1e400\nm: [a]\nin: {x: 1}\nm: {a: ''}\nin:\n    x: 3\n", "ERR"),
+  ("n: !!str 5\n---\ns: second\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"n\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 1 \"5\" \"\" 1:4 ->- \"\" \"\" \"\"\ndoc\n1  0 \"\" \"\" 2:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"second\" \"\" 3:4 ->- \"\" \"\" \"\"\n", "OK n: !!str 5\n", "OK {\"n\":\"5\"}"),
+  ("s: [1, 2] # c\nl:\n  - 1\n  - 2\n\"n\": 017 # c\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 1:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 1:4 ->- \"\" \"# c\" \"\"\n   8 !!int 0 \"1\" \"\" 1:5 ->- \"\" \"\" \"\"\n   8 !!int 0 \"2\" \"\" 1:8 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 2:1 ->- \"\" \"\" \"\"\n  2 !!seq 0 \"\" \"\" 3:3 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 3:5 ->- \"\" \"\" \"\"\n   8 !!int 0 \"2\" \"\" 4:5 ->- \"\" \"\" \"\"\n  8 !!str 2 \"n\" \"\" 5:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"017\" \"\" 5:6 ->- \"\" \"# c\" \"\"\n", "OK s: [1, 2] # c\nl:\n    - 1\n    - 2\n\"n\": 017 # c\n", "OK {\"l\":[1,2],\"n\":15,\"s\":[1,2]}"),
+  ("%YAML 1.1\n---\nl: [1.5]\no: 0x1F\nf: 5.\nb: [true] # c\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 3:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 3:4 ->- \"\" \"\" \"\"\n   8 !!float 0 \"1.5\" \"\" 3:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 4:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"0x1F\" \"\" 4:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 5:1 ->- \"\" \"\" \"\"\n  8 !!float 0 \"5.\" \"\" 5:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 6:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 6:4 ->- \"\" \"# c\" \"\"\n   8 !!bool 0 \"true\" \"\" 6:5 ->- \"\" \"\" \"\"\n", "OK l: [1.5]\no: 0x1F\nf: 5.\nb: [true] # c\n", "OK {\"b\":[true],\"f\":5,\"l\":[1.5],\"o\":31}"),
+  ("{b: 0}\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 32 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 1:2 ->- \"\" \"\" \"\"\n  8 !!int 0 \"0\" \"\" 1:5 ->- \"\" \"\" \"\"\n", "OK {b: 0}\n", "OK {\"b\":0}"),
+  ("%YAML 1.1\r\n---\r\nin:\n  x: 3\n  y: 4\r\nm: {true: y}\r\n? n: ~\r\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 3:1 ->- \"\" \"\" \"\"\n  4 !!map 0 \"\" \"\" 4:3 ->- \"\" \"\" \"\"\n   8 !!str 0 \"x\" \"\" 4:3 ->- \"\" \"\" \"\"\n   8 !!int 0 \"3\" \"\" 4:6 ->- \"\" \"\" \"\"\n   8 !!str 0 \"y\" \"\" 5:3 ->- \"\" \"\" \"\"\n   8 !!int 0 \"4\" \"\" 5:6 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 6:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 6:4 ->- \"\" \"\" \"\"\n   8 !!bool 0 \"true\" \"\" 6:5 ->- \"\" \"\" \"\"\n   8 !!str 0 \"y\" \"\" 6:11 ->- \"\" \"\" \"\"\n  4 !!map 0 \"\" \"\" 7:3 ->- \"\" \"\" \"\"\n   8 !!str 0 \"n\" \"\" 7:3 ->- \"\" \"\" \"\"\n   8 !!null 0 \"~\" \"\" 7:6 ->- \"\" \"\" \"\"\n  8 !!null 0 \"\" \"\" 8:1 ->- \"\" \"\" \"\"\n", "OK in:\n    x: 3\n    y: 4\nm: {true: y}\n?   n: ~\n:\n", "ERR"),
+  ("{b: 0, n: 0o17}\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 32 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 1:2 ->- \"\" \"\" \"\"\n  8 !!int 0 \"0\" \"\" 1:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"n\" \"\" 1:8 ->- \"\" \"\" \"\"\n  8 !!int 0 \"0o17\" \"\" 1:11 ->- \"\" \"\" \"\"\n", "OK {b: 0, n: 0o17}\n", "OK {\"b\":0,\"n\":15}"),
+  ("m: {a: }\nf: true\ns: ~ # c\nb: !!bool true # c\nin: !!map ", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 1:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 1:4 ->- \"\" \"\" \"\"\n   8 !!str 0 \"a\" \"\" 1:5 ->- \"\" \"\" \"\"\n   8 !!null 0 \"\" \"\" 1:8 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!bool 0 \"true\" \"\" 2:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!null 0 \"~\" \"\" 3:4 ->- \"\" \"# c\" \"\"\n  8 !!str 0 \"b\" \"\" 4:1 ->- \"\" \"\" \"\"\n  8 !!bool 1 \"true\" \"\" 4:4 ->- \"\" \"# c\" \"\"\n  8 !!str 0 \"in\" \"\" 5:1 ->- \"\" \"\" \"\"\n  8 !!map 1 \"\" \"\" 5:5 ->- \"\" \"\" \"\"\n", "OK m: {a: ''}\nf: true\ns: ~ # c\nb: !!bool true # c\nin: !!map\n", "OK {\"b\":true,\"f\":true,\"in\":\"\",\"m\":{\"a\":null},\"s\":null}"),
+  ("# comment\n# a comment\ns: &a v\nf: [1.5]\n---\ns: second\n", "doc\n1  0 \"\" \"\" 3:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 3:1 ->- \"# comment\\n# a comment\" \"\" \"\"\n  8 !!str 0 \"v\" \"a\" 3:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 4:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 4:4 ->- \"\" \"\" \"\"\n   8 !!float 0 \"1.5\" \"\" 4:5 ->- \"\" \"\" \"\"\ndoc\n1  0 \"\" \"\" 5:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 6:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 6:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"second\" \"\" 6:4 ->- \"\" \"\" \"\"\n", "OK # comment\n# a comment\ns: &a v\nf: [1.5]\n", "OK {\"f\":[1.5],\"s\":\"v\"}"),
+  ("l:\n  - 1\n  - ~\n  - 3\ns: hello world\no: \"\\x41\"\nb: True\nbase: &a {n: 1, s: from_anchor}\n<<: *a\nm: ~\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 1:1 ->- \"\" \"\" \"\"\n  2 !!seq 0 \"\" \"\" 2:3 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 2:5 ->- \"\" \"\" \"\"\n   8 !!null 0 \"~\" \"\" 3:5 ->- \"\" \"\" \"\"\n   8 !!int 0 \"3\" \"\" 4:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 5:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"hello world\" \"\" 5:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 6:1 ->- \"\" \"\" \"\"\n  8 !!str 2 \"A\" \"\" 6:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 7:1 ->- \"\" \"\" \"\"\n  8 !!bool 0 \"True\" \"\" 7:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"base\" \"\" 8:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"a\" 8:7 ->- \"\" \"\" \"\"\n   8 !!str 0 \"n\" \"\" 8:11 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 8:14 ->- \"\" \"\" \"\"\n   8 !!str 0 \"s\" \"\" 8:17 ->- \"\" \"\" \"\"\n   8 !!str 0 \"from_anchor\" \"\" 8:20 ->- \"\" \"\" \"\"\n  8 !!merge 0 \"<<\" \"\" 9:1 ->- \"\" \"\" \"\"\n  16  0 \"a\" \"\" 9:5 ->a \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 10:1 ->- \"\" \"\" \"\"\n  8 !!null 0 \"~\" \"\" 10:4 ->- \"\" \"\" \"\"\n", "OK l:\n    - 1\n    - ~\n    - 3\ns: hello world\no: \"A\"\nb: True\nbase: &a {n: 1, s: from_anchor}\n!!merge <<: *a\nm: ~\n", "OK {\"b\":true,\"base\":{\"n\":1,\"s\":\"from_anchor\"},\"l\":[1,null,3],\"m\":null,\"n\":1,\"o\":\"A\",\"s\":\"hello world\"}"),
+  ("<<: ~\nl: [[1]]\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!merge 0 \"<<\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!null 0 \"~\" \"\" 1:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 2:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 2:4 ->- \"\" \"\" \"\"\n   2 !!seq 32 \"\" \"\" 2:5 ->- \"\" \"\" \"\"\n    8 !!int 0 \"1\" \"\" 2:6 ->- \"\" \"\" \"\"\n", "OK !!merge <<: ~\nl: [[1]]\n", "ERR"),
+  ("%YAML 1.1\r\n---\r\no: true\r\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!bool 0 \"true\" \"\" 3:4 ->- \"\" \"\" \"\"\n", "OK o: true\n", "OK {\"o\":true}"),
+  ("in: [", "ERR \"yaml: line 1: did not find expected node content\"", "ERR \"yaml: line 1: did not find expected node content\"", "ERR"),
+  ("f: !!float x\r\n# a comment\r\n# a comment\r\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"# a comment\\n\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 1:1 ->- \"\" \"\" \"# a comment\"\n  8 !!float 1 \"x\" \"\" 1:4 ->- \"\" \"\" \"\"\n", "OK f: !!float x\n# a comment\n\n# a comment\n", "ERR"),
+  ("s: é日本\r\nf: .5\r\nm: {a: [1]}\r\nf: 1.2.3\r\nin: [1] # c\r\nm: {1: x} # c\r\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"é日本\" \"\" 1:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!float 0 \".5\" \"\" 2:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 3:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 3:4 ->- \"\" \"\" \"\"\n   8 !!str 0 \"a\" \"\" 3:5 ->- \"\" \"\" \"\"\n   2 !!seq 32 \"\" \"\" 3:8 ->- \"\" \"\" \"\"\n    8 !!int 0 \"1\" \"\" 3:9 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 4:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"1.2.3\" \"\" 4:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 5:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 5:5 ->- \"\" \"# c\" \"\"\n   8 !!int 0 \"1\" \"\" 5:6 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 6:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 6:4 ->- \"\" \"# c\" \"\"\n   8 !!int 0 \"1\" \"\" 6:5 ->- \"\" \"\" \"\"\n   8 !!str 0 \"x\" \"\" 6:8 ->- \"\" \"\" \"\"\n", "OK s: é日本\nf: .5\nm: {a: [1]}\nf: 1.2.3\nin: [1] # c\nm: {1: x} # c\n", "ERR"),
+  ("o: a: b\nn: 0 # c\n", "ERR \"yaml: mapping values are not allowed in this context\"", "ERR \"yaml: mapping values are not allowed in this context\"", "ERR"),
+  ("---\nl: [true] # c\nl: [1, ~, 3]\nl: [[1]]\ns: # not comment\no: null # c\nn: 0o17 # c\nn: +3\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 2:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 2:4 ->- \"\" \"# c\" \"\"\n   8 !!bool 0 \"true\" \"\" 2:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 3:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 3:4 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 3:5 ->- \"\" \"\" \"\"\n   8 !!null 0 \"~\" \"\" 3:8 ->- \"\" \"\" \"\"\n   8 !!int 0 \"3\" \"\" 3:11 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 4:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 4:4 ->- \"\" \"\" \"\"\n   2 !!seq 32 \"\" \"\" 4:5 ->- \"\" \"\" \"\"\n    8 !!int 0 \"1\" \"\" 4:6 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 5:1 ->- \"\" \"# not comment\" \"\"\n  8 !!null 0 \"\" \"\" 5:3 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 6:1 ->- \"\" \"\" \"\"\n  8 !!null 0 \"null\" \"\" 6:4 ->- \"\" \"# c\" \"\"\n  8 !!str 0 \"n\" \"\" 7:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"0o17\" \"\" 7:4 ->- \"\" \"# c\" \"\"\n  8 !!str 0 \"n\" \"\" 8:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"+3\" \"\" 8:4 ->- \"\" \"\" \"\"\n", "OK l: [true] # c\nl: [1, ~, 3]\nl: [[1]]\ns: # not comment\no: null # c\nn: 0o17 # c\nn: +3\n", "ERR"),
+  ("b: True\nin:\n  x: 3\nm: {? [a]: b}\n# a comment\nb: on\no: hello world # c\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!bool 0 \"True\" \"\" 1:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 2:1 ->- \"\" \"\" \"\"\n  4 !!map 0 \"\" \"\" 3:3 ->- \"\" \"\" \"\"\n   8 !!str 0 \"x\" \"\" 3:3 ->- \"\" \"\" \"\"\n   8 !!int 0 \"3\" \"\" 3:6 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 4:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 4:4 ->- \"\" \"\" \"\"\n   2 !!seq 32 \"\" \"\" 4:7 ->- \"\" \"\" \"\"\n    8 !!str 0 \"a\" \"\" 4:8 ->- \"\" \"\" \"\"\n   8 !!str 0 \"b\" \"\" 4:12 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 6:1 ->- \"# a comment\" \"\" \"\"\n  8 !!str 0 \"on\" \"\" 6:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 7:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"hello world\" \"\" 7:4 ->- \"\" \"# c\" \"\"\n", "OK b: True\nin:\n    x: 3\nm: {? [a] : b}\n# a comment\nb: on\no: hello world # c\n", "ERR"),
+  ("o& \"\\u00e9\"\nf: 0\nin:\n  x: 3\nm: {? [a]: b}\nm: {a: [1]} # c\n---\ns: second\n", "ERR \"yaml: line 2: mapping values are not allowed in this context\"", "ERR \"yaml: line 2: mapping values are not allowed in this context\"", "ERR"),
+  ("b: [true]\no: é日本 # c\nl: [\"1\"]\ns: '\\n' # c\nn: -1.9 # c\nm: {a}\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 1:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 1:4 ->- \"\" \"\" \"\"\n   8 !!bool 0 \"true\" \"\" 1:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 2:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"é日本\" \"\" 2:4 ->- \"\" \"# c\" \"\"\n  8 !!str 0 \"l\" \"\" 3:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 3:4 ->- \"\" \"\" \"\"\n   8 !!str 2 \"1\" \"\" 3:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 4:1 ->- \"\" \"\" \"\"\n  8 !!str 4 \"\\\\n\" \"\" 4:4 ->- \"\" \"# c\" \"\"\n  8 !!str 0 \"n\" \"\" 5:1 ->- \"\" \"\" \"\"\n  8 !!float 0 \"-1.9\" \"\" 5:4 ->- \"\" \"# c\" \"\"\n  8 !!str 0 \"m\" \"\" 6:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 6:4 ->- \"\" \"\" \"\"\n   8 !!str 0 \"a\" \"\" 6:5 ->- \"\" \"\" \"\"\n   8 !!null 0 \"\" \"\" 6:6 ->- \"\" \"\" \"\"\n", "OK b: [true]\no: é日本 # c\nl: [\"1\"]\ns: '\\n' # c\nn: -1.9 # c\nm: {a: ''}\n", "OK {\"b\":[true],\"l\":[\"1\"],\"m\":{\"a\":null},\"n\":-1.9,\"o\":\"é日本\",\"s\":\"\\\\n\"}"),
+  ("o: [1, 2]\nm: {a: b}\nb: yes\ns: !!binary @@\n# a comment\n1: null\n", "ERR \"yaml: line 4: found character that cannot start any token\"", "ERR \"yaml: line 4: found character that cannot start any token\"", "ERR"),
+  ("s: !!binary aGVsbG8=\nin: {y: 1}\nin: 5\nm: !!map {a: b} # ", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"s\" \"\" 1:1 ->- \"\" \"\" \"\"\n  8 !!binary 1 \"aGVsbG8=\" \"\" 1:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 2:1 ->- \"\" \"\" \"\"\n  4 !!map 32 \"\" \"\" 2:5 ->- \"\" \"\" \"\"\n   8 !!str 0 \"y\" \"\" 2:6 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 2:9 ->- \"\" \"\" \"\"\n  8 !!str 0 \"in\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!int 0 \"5\" \"\" 3:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"m\" \"\" 4:1 ->- \"\" \"\" \"\"\n  4 !!map 33 \"\" \"\" 4:4 ->- \"\" \"# \" \"\"\n   8 !!str 0 \"a\" \"\" 4:11 ->- \"\" \"\" \"\"\n   8 !!str 0 \"b\" \"\" 4:14 ->- \"\" \"\" \"\"\n", "OK s: !!binary aGVsbG8=\nin: {y: 1}\nin: 5\nm: !!map {a: b} # \n", "ERR"),
+  ("%YAML 1.1\n---\nb: On\nl: [1, 2,]\nf: .NAN\no: a #c\nin:\n  x: 3\n  y: 4\nl: [1.5]\n", "doc\n1  0 \"\" \"\" 1:1 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 3:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"On\" \"\" 3:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 4:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 4:4 ->- \"\" \"\" \"\"\n   8 !!int 0 \"1\" \"\" 4:5 ->- \"\" \"\" \"\"\n   8 !!int 0 \"2\" \"\" 4:8 ->- \"\" \"\" \"\"\n  8 !!str 0 \"f\" \"\" 5:1 ->- \"\" \"\" \"\"\n  8 !!float 0 \".NAN\" \"\" 5:4 ->- \"\" \"\" \"\"\n  8 !!str 0 \"o\" \"\" 6:1 ->- \"\" \"\" \"\"\n  8 !!str 0 \"a\" \"\" 6:4 ->- \"\" \"#c\" \"\"\n  8 !!str 0 \"in\" \"\" 7:1 ->- \"\" \"\" \"\"\n  4 !!map 0 \"\" \"\" 8:3 ->- \"\" \"\" \"\"\n   8 !!str 0 \"x\" \"\" 8:3 ->- \"\" \"\" \"\"\n   8 !!int 0 \"3\" \"\" 8:6 ->- \"\" \"\" \"\"\n   8 !!str 0 \"y\" \"\" 9:3 ->- \"\" \"\" \"\"\n   8 !!int 0 \"4\" \"\" 9:6 ->- \"\" \"\" \"\"\n  8 !!str 0 \"l\" \"\" 10:1 ->- \"\" \"\" \"\"\n  2 !!seq 32 \"\" \"\" 10:4 ->- \"\" \"\" \"\"\n   8 !!float 0 \"1.5\" \"\" 10:5 ->- \"\" \"\" \"\"\n", "OK b: On\nl: [1, 2]\nf: .NAN\no: a #c\nin:\n    x: 3\n    y: 4\nl: [1.5]\n", "ERR"),
+]

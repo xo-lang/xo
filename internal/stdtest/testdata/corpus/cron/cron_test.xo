@@ -542,6 +542,13 @@ const ERRS: List[(Str, Str)] = [
   ("feb-jan * * * *", "failed to parse int from feb: strconv.Atoi: parsing \"feb\": invalid syntax"),
   ("* * * jan-feb *", ""),
   ("* * * feb-jan *", "beginning of range (2) beyond end of range (1): feb-jan"),
+  ("@every 1x", "failed to parse duration @every 1x: time: unknown unit \"x\" in duration \"1x\""),
+  ("@every ", "failed to parse duration @every : time: invalid duration \"\""),
+  ("@every  5m", "failed to parse duration @every  5m: time: invalid duration \" 5m\""),
+  ("@every 5m ", "failed to parse duration @every 5m : time: unknown unit \"m \" in duration \"5m \""),
+  ("@every 5", "failed to parse duration @every 5: time: missing unit in duration \"5\""),
+  ("@every 1.h", ""),
+  ("@every és", "failed to parse duration @every és: time: invalid duration \"\\xc3\\xa9s\""),
 ]
 
 /// (parser options, spec, then (start unix seconds, the next fire unix seconds, -1 for none)): robfig's NewParser(options).Parse

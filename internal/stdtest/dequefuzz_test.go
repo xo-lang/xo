@@ -1,0 +1,231 @@
+// A fuzz harness for std/deque against a Go slice used as a double ended
+// queue (decision 0616's fuzz kind; Go has no deque, and the slice is the
+// model std/deque's doc names). Each case is an initial capacity (0 to 9)
+// and up to 300 operations (push_back, push_front, pop_front, pop_back,
+// get at an index from -2 to past the end, front, back, len, and a copy
+// that is written while the original is kept), weighted so the ring
+// grows, wraps and empties; std/deque must answer each as the slice does
+// and end with the slice's elements.
+//
+// The cases from seed 1 are the committed corpus
+// testdata/corpus/dequefuzz/dequefuzz_test.xo, which TestStdCorpora runs on
+// every corpus backend; TestDequeFuzzCorpusCurrent checks it is what this
+// generator writes (XO_DEQUEFUZZ_WRITE=1 rewrites it). TestDequeFuzz runs a
+// fresh seed (XO_DEQUEFUZZ_SEED, default 2; XO_DEQUEFUZZ_N cases, default
+// 2000) on XO_DEQUEFUZZ_BACKENDS (default arm64 and llvm).
+package stdtest
+
+import (
+	"fmt"
+	"math/rand"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+type dqCase struct {
+	cap      int
+	ops      string // code:arg, space separated
+	answers  string // space separated: a value, none, or a length
+	end, cpy string // the final elements, and the copy's at the copy op ("" none)
+}
+
+func dqCases(r *rand.Rand, n int) []dqCase {
+	cs := make([]dqCase, 0, n)
+	for len(cs) < n {
+		c := dqCase{cap: r.Intn(10)}
+		var q []int
+		var ops, ans []string
+		// a phase biased to grow, then one biased to shrink
+		pushBias := 2 + r.Intn(4)
+		steps := r.Intn(301)
+		copied := false
+		for k := 0; k < steps; k++ {
+			if k == steps/2 {
+				pushBias = r.Intn(3)
+			}
+			code := r.Intn(8 + pushBias)
+			if code >= 8 {
+				code = r.Intn(2) // a push
+			}
+			arg := r.Intn(1000)
+			switch code {
+			case 0:
+				q = append(q, arg)
+			case 1:
+				q = append([]int{arg}, q...)
+			case 2:
+				if len(q) == 0 {
+					ans = append(ans, "none")
+				} else {
+					ans = append(ans, strconv.Itoa(q[0]))
+					q = q[1:]
+				}
+			case 3:
+				if len(q) == 0 {
+					ans = append(ans, "none")
+				} else {
+					ans = append(ans, strconv.Itoa(q[len(q)-1]))
+					q = q[:len(q)-1]
+				}
+			case 4:
+				arg = r.Intn(len(q)+5) - 2
+				if arg >= 0 && arg < len(q) {
+					ans = append(ans, strconv.Itoa(q[arg]))
+				} else {
+					ans = append(ans, "none")
+				}
+			case 5, 6:
+				if len(q) == 0 {
+					ans = append(ans, "none")
+				} else if code == 5 {
+					ans = append(ans, strconv.Itoa(q[0]))
+				} else {
+					ans = append(ans, strconv.Itoa(q[len(q)-1]))
+				}
+			case 7:
+				if copied {
+					code = 6
+					if len(q) == 0 {
+						ans = append(ans, "none")
+					} else {
+						ans = append(ans, strconv.Itoa(q[len(q)-1]))
+					}
+					break
+				}
+				// the copy pushes arg at the front and pops its back; the
+				// original must not change
+				copied = true
+				cp := append([]int{arg}, q...)
+				cp = cp[:len(cp)-1]
+				c.cpy = dqJoin(cp)
+				ans = append(ans, strconv.Itoa(len(q)))
+			}
+			ops = append(ops, fmt.Sprintf("%d:%d", code, arg))
+		}
+		c.ops = strings.Join(ops, " ")
+		c.answers = strings.Join(ans, " ")
+		c.end = dqJoin(q)
+		cs = append(cs, c)
+	}
+	return cs
+}
+
+func dqJoin(q []int) string {
+	parts := make([]string, len(q))
+	for i, x := range q {
+		parts[i] = strconv.Itoa(x)
+	}
+	return strings.Join(parts, " ")
+}
+
+const dqCheckXo = `use std/deque
+
+fn show(x: Int?) -> Str {
+  match x {
+    Some(v) => "${v}"
+    None => "none"
+  }
+}
+
+fn join(xs: List[Int]) -> Str { xs.map(fn(x: Int) -> Str { "${x}" }).join(" ") }
+
+/// The answers, the final elements, and the copy's elements.
+fn replay(cap: Int, ops: Str) -> (Str, Str, Str) {
+  var d: deque.Deque[Int] = deque.new(cap: cap)
+  var ans: List[Str] = []
+  var cpy = ""
+  if ops == "" {
+    return ("", "", "")
+  }
+  for w in ops.split(" ") {
+    let (cs, avs) = w.cut(":") ?? fault("op ${w}")
+    let code = Int.parse(cs) ?? fault("code")
+    let arg = Int.parse(avs) ?? fault("arg")
+    match code {
+      0 => d.push_back(arg)
+      1 => d.push_front(arg)
+      2 => ans.push(show(d.pop_front()))
+      3 => ans.push(show(d.pop_back()))
+      4 => ans.push(show(d.get(arg)))
+      5 => ans.push(show(d.front()))
+      6 => ans.push(show(d.back()))
+      _ => {
+        var c = d
+        c.push_front(arg)
+        let _ = c.pop_back()
+        cpy = join(c.to_list())
+        ans.push("${d.len()}")
+      }
+    }
+  }
+  (ans.join(" "), join(d.to_list()), cpy)
+}
+
+test "std/deque answers as a Go slice used as a deque" {
+  var bad: List[Str] = []
+  var k = 0
+  for (cap, ops, answers, end, cpy) in CASES {
+    let (a, e, c) = replay(cap, ops)
+    if a != answers || e != end || c != cpy {
+      bad.push("case ${k}: answers ${a} want ${answers}; end ${e} want ${end}; copy ${c} want ${cpy}")
+    }
+    k += 1
+  }
+  expect(bad[0..(if bad.len() < 5 { bad.len() } else { 5 })]) == []
+}
+`
+
+func dqXoFile(seed int64, cases []dqCase) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "// Generated by internal/stdtest/dequefuzz_test.go (seed %d, %d cases) from a Go\n", seed, len(cases))
+	b.WriteString("// slice model; do not edit: XO_DEQUEFUZZ_WRITE=1 go test ./internal/stdtest -run TestDequeFuzzCorpusCurrent\n")
+	b.WriteString("// rewrites it.\n")
+	b.WriteString(dqCheckXo)
+	b.WriteString("\n/// (capacity, operations as code:arg (0 push_back, 1 push_front, 2 pop_front, 3 pop_back, 4 get, 5 front, 6 back, 7 copy, written), the answers, the final elements, the copy's elements)\nconst CASES: List[(Int, Str, Str, Str, Str)] = [\n")
+	for _, c := range cases {
+		fmt.Fprintf(&b, "  (%d, %q, %q, %q, %q),\n", c.cap, c.ops, c.answers, c.end, c.cpy)
+	}
+	b.WriteString("]\n")
+	return b.String()
+}
+
+// dqCoverage fails when the cases stop reaching empty pops, long queues
+// (past several doublings) and copies.
+func dqCoverage(t *testing.T, cases []dqCase) {
+	t.Helper()
+	nones, long, copies := 0, 0, 0
+	for _, c := range cases {
+		nones += strings.Count(c.answers, "none")
+		if strings.Count(c.end, " ") > 40 {
+			long++
+		}
+		if c.cpy != "" {
+			copies++
+		}
+	}
+	n := len(cases)
+	if nones < n || long < n/20 || copies < n/4 {
+		t.Fatalf("coverage fell: %d empty answers, %d queues over 40, %d copies in %d cases", nones, long, copies, n)
+	}
+}
+
+const dqCorpus = "testdata/corpus/dequefuzz/dequefuzz_test.xo"
+
+// TestDequeFuzzCorpusCurrent: the committed corpus is what seed 1 writes.
+func TestDequeFuzzCorpusCurrent(t *testing.T) {
+	cases := dqCases(rand.New(rand.NewSource(1)), 200)
+	dqCoverage(t, cases)
+	bxCorpusCurrent(t, dqCorpus, "XO_DEQUEFUZZ_WRITE", dqXoFile(1, cases))
+}
+
+// TestDequeFuzz runs a fresh seed's cases.
+func TestDequeFuzz(t *testing.T) {
+	if testing.Short() {
+		t.Skip("the deque fuzz is a heavy test; its seed 1 corpus runs in TestStdCorpora")
+	}
+	seed := int64(envInt(t, "XO_DEQUEFUZZ_SEED", 2))
+	n := envInt(t, "XO_DEQUEFUZZ_N", 2000)
+	cases := dqCases(rand.New(rand.NewSource(seed)), n)
+	runFuzzDir(t, "dequefuzz_test.xo", dqXoFile(seed, cases), envBackends("XO_DEQUEFUZZ_BACKENDS", []string{"arm64", "llvm"}), len(cases))
+}

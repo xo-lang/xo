@@ -1,0 +1,169 @@
+// uniclass stress program (decision 0616 section 2): 64 tasks compile 64
+// std/regexp patterns over std/uniclass's Unicode classes and match 24 runes
+// each against Go's regexp (the seed 1 rows of
+// internal/stdtest/uniclassfuzz_test.go), for a fixed time. A background task
+// samples the resident set every 10 s (Linux /proc/self/status). Pass: no
+// mismatch, no fault, and the resident set at the end within 10% or 4 MB of
+// its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/regexp
+
+/// One pass over the cases from offset start: the operations done, or the
+/// first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..CASES.len() {
+    let (pattern, runes, want) = CASES[(start + k) % CASES.len()]
+    let got = answer(pattern, runes)
+    if got != want {
+      return Err("${pattern.quote()}: ${got} want ${want}")
+    }
+  }
+  CASES.len() * 24
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("uniclass stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+fn answer(pattern: Str, runes: Str) -> Str {
+  match regexp.compile(pattern) {
+    Ok(re) => {
+      var b = ""
+      for r in runes.runes() {
+        b = b + (if re.is_match("${r}") { "1" } else { "0" })
+      }
+      b
+    }
+    Err(_) => "err"
+  }
+}
+
+
+/// (pattern, the runes, Go's match of each rune alone as 0 or 1, or err)
+const CASES: List[(Str, Str, Str)] = [
+  ("^\\p{Ch-erokee}\$", "\u{13f8}\u{c6}\u{dffa2}\u{ab71}\u{15}\u{8be2}\u{208da}\u{ab6f}/\u{139f}\u{6f78}\u{f}\u{894c}\u{13f4}\u{13f5}\u{13fd}^\u{ff}\u{13fd}\u{6497}\u{13f6}\u{13f6}\u{1e}\u{399c}", "100100000000011100100000"),
+  ("^\\P{Co}\$", "\u{10fffe}h\u{effff}\u{10ffff}\u{3787c}\u{9f}\u{f8ff}\u{f900}\u{3}\u{f0000}\u{f8fe}\u{68558}\u{d}\u{10000}\u{c36db}\u{cb47}\u{100000}\u{2028}\u{f8ff}\u{2028}\u{10fffd}\u{3b076}\u{10000}\u{3faf}", "111111011001111101010111"),
+  ("^\\p{mZarP}\$", "5\u{3ca32}\u{db5cf}\u{de263}\u{bc}\u{523cf}\u{9a}<\u{bf447}\u{dc}\u{faa0f}\u{70c7a}\u{3fe62}\u{8a0ff}\u{cd23a}\u{10000}\u{e0001}\u{49040}\u{fffd}\u{3d528}\u{7d24a}\u{101faf}?\u{3000}", "err"),
+  ("(?i)^\\p{llms}\$", "\u{dde}\u{dcb}\u{dbe}\u{82a4}\u{c2709}\u{1f600}\u{6327a}\u{d2454}\u{dd5}\u{dc9}/\u{c5dc}%\u{172b}\u{df4}\u{8a}\u{df3}\u{df5}\u{84}\u{be37a}\u{dc9}\u{ae6d}\u{88}\u{9571d}", "err"),
+  ("(?i)^\\p{SO}\$", "\u{bc6f}\u{1d056}\u{2b4d}\u{1ed2e}[\u{ce46}\u{2028}\u{e0001}\u{166d}.\u{74d4}\u{a526}\u{21d0}\u{2028}\u{8607}\u{a839}\u{2128}\u{21a4}\u{b570d}\u{10ffff}H\u{6ff}\u{fffd}\u{67e62}", "011100001000100101000010"),
+  ("^\\p{Miao}\$", "b\u{16f86}Di\u{1f600}B\u{aa810}\u{de}\u{164}\u{a3}\u{16f8f}\u{16f49}\u{16f00}\u{f4ba}\u{16f88}\u{b900}\u{16f86}\u{e5}\u{16eff}\u{82}\u{c2bb}\u{2028}\u{16f4e}\u{92319}", "010000000011100010000000"),
+  ("^\\p{Ogham}\$", "\u{d16ba}\u{1680}\u{10ffff}\u{167f}.\u{1681}\u{95}\u{1680}\u{1681}\u{1f600}\u{a4d1}\u{10ffff}\u{e0ba}\u{8cce}\u{e0001}\u{1680}\u{b21a7}\u{ad}\u{715e}L\u{167f}]K\u{169c}", "010001011000000100000001"),
+  ("^\\p{Thaana}\$", "Y\u{e0001}\u{7b2}\u{8d}\u{10000}\u{7b0}\u{7b2}\u{781}\u{7b1}\u{eacd}\u{c09f}\u{77f}\u{b577a}\u{7b2}\u{7b1}\u{2b41}\u{77f}\u{77f}\u{aa}N\u{7b1}\u{ebec5}\u{10ffff}\u{87}", "000001011000001000001000"),
+  ("^\\p{No}\$", "\u{35dd5}\u{17f8}\u{108fb}\u{a3}\u{3260}\u{a835}\u{17fa}\u{178e}\u{c826}\u{c198}\u{b71}\u{bca1e}\u{9d}\u{ba}\u{65f3}\u{60db}\u{10a7e}s\u{ad2c}6\u{10f52}\u{f4571}\u{2cfc}\u{3251}", "011001000000000010001001"),
+  ("^\\P{Mahajani}\$", "\u{9b}\u{11177}\u{1114f}\u{11175}\u{11175}\u{e0001}\u{1114f}\u{9c}\u{1f600}\u{11175}\u{11175}\u{db}q\u{ae}\u{1114f}\u{11150}\u{10ffff}\u{a6}\u{f9}\u{1114f}y\u{11176}\u{10ffff}\u{e0001}", "111001111001111011111011"),
+  ("^\\P{Kaithi}\$", "\u{110ce}\u{110cd}\u{1107f}\u{110cd}\u{635b}\u{11081}\u{e6}\u{3000}\u{3be3c}\u{1f600}\u{be}\u{110cc}\u{110cd}\u{110c2}\u{fa}\u{48f2}\u{110c1}\u{110c2}\u{110ce}\u{9}\u{110c2}\u{8e}\u{6}\u{110cc}", "101010111111001100110111"),
+  ("^\\p{Nd}\$", "\u{5c9d2}\u{889cd}\u{22b5}\u{bee}\u{26bb}z\u{de6c7}\u{41e4f}\u{bc}A\u{232c8}\u{1a99}\u{7}\u{17e9}\u{1d7fe}\u{10}\u{e2} \u{6f1}/D+\u{abf0}\u{111da}", "000100000001011000100010"),
+  ("(?i)^\\p{Letternumber}\$", "\u{1f600}\u{23ac4}\u{d5}\u{c37d8}\u{83f4b}\u{a5c0}\u{e0001}\u{c42e7}\u{1f600}\u{1}\u{2028}\u{5c8e4}\u{b727}\u{3b30a}\u{10434}\u{2a550}\u{d5}\u{2028}\u{139cb}\u{90663}\u{439e3}\u{d2}\u{114a8}\u{fffd}", "000000000000000000000000"),
+  ("^[\\p{paragraphseparator}\\p{Greek}]\$", "\u{80}\u{1d667}\u{b4}\u{af}\u{50f9f}\u{a175e}\u{d}\u{4843}\u{b4}\u{b2fd0}\u{617c0}\u{3000}\u{a1}\u{1049ac}\u{4}\u{ec0dc}\u{e3b62}\u{19}\u{15bf8}\u{f148}\u{3000}\u{4ce82}\u{cf3e9}\u{88}", "000000000000000000000000"),
+  ("^\\p{Casedletter}\$", "\u{e320f}'\u{17}\u{e0001}\u{46b17}\u{344b5}\u{105c94}\u{3ebd8}\u{a536}\u{634d3}\u{abd1d}\u{10294b}\u{f7d60}\u{b3e42}\u{b295f}\u{10ffff}\u{68a99}\u{10d1d3}\u{7e7e}\u{11748}\u{a6}\u{aabd5}\u{9f221}\u{3315d}", "000000000000000000000000"),
+  ("^[^\\p{Glagolitic}]\$", "\u{b}\u{e2}R\u{101e53}\u{2bff}\u{19}\u{2c00}\u{8c9c}\u{10ffff}\u{1f600}\u{1e01b}\u{1e017}\u{3a1d}\u{a423e}\u{1e022}\u{1e022}\u{9a}\u{3000}\u{1e02b}\u{7802}\u{2c60}\u{2c00}h\u{3}", "111111011100111111111011"),
+  ("^[\\p{Punct}\\p{Greek}]\$", "\u{ae065}\u{106dfa}\u{10ffff}\u{e092}\u{fc197}\u{ac}\u{efbf5}\u{2028}\u{ac3f4}\u{908f0}\u{1047a7}\u{91}\u{2028}\u{61bc}\u{10ffff}\u{2028}\u{fba4}-\u{af233}\u{a39a}\u{2028}\u{10a826}\u{10a3de}\u{d32c5}", "000000000000000001000000"),
+  ("^\\P{Elymaic}\$", "\u{10fe1}\u{c2}\u{8ebf}\u{10ff5}\u{4d6f}\u{21e0}\u{10fe1}\u{10fe0}\u{10ff6}\u{e0001}\u{9dc86}#\u{10ff6}\u{6}\u{10ff5}Y\u{f9}\u{f4}\u{a0f2}\u{10fe0}\u{f06}p\u{10fdf}\u{10ff7}", "011011000111010111101111"),
+  ("^\\p{Hebrew}\$", "\u{ae}\u{10ffff}\u{1479}\u{5d0}\u{ea616}K\u{10ffff}\u{a217}\u{5e9}\u{cb}\u{6ec74}\u{5ef}\u{fb41}J\u{5f3}O\u{d3a}\u{3}\u{7a5e})\u{7a3d}\u{7639}\u{fb35}\u{1f600}", "000100001001101000000010"),
+  ("^\\p{V}\$", "\u{a62c}\u{b732}\u{a500}\u{10000}d7\u{a501}\u{10000}\u{e0001}\u{a62b}\u{a62a}\u{a4ff}\u{83b5c}\u{a783f}\u{10000}\u{a500}\u{be}\u{84}\u{a501}\u{a62c}.\u{a4ff}\u{3000}\u{cb62f}", "err"),
+  ("^\\P{Sharada}\$", "\u{10000}\u{2028}\u{9b}\u{1f600}\u{11181}\u{111e0}\u{b8cde}\u{4c12}\u{11181}\u{111df}\u{d66ce}\u{111de}\u{111df}\u{be7a}\u{1117f}Y\u{1f600}\u{11180}\u{c0}\u{a2}\u{2028}\u{91}\u{111de}\u{3045}", "111101110010011110111101"),
+  ("^[^\\p{Chakma}]\$", "\u{10ffff}\u{9a}\u{110ff}\u{813a0}\u{bdba}\u{526c2}\u{2028}\u{10000}\u{93}\u{88}\u{11136}\u{e1}\u{11135}\u{b37b}\u{11137}\u{7230}\u{1f600}\u{11101}\u{bc}\u{11133}\u{272b6}\u{11135}H\u{cc3d}", "111111111101110110101111"),
+  ("^\\p{Nandinagari}\$", "\u{9079}\u{bf}\u{1e38}\u{3000}\u{119d7}\u{7ce6f}\u{119a8}\u{a66b4}\u{119e5}\u{119d8}\u{119ab}\u{9a}\u{e0001}\u{87}\u{119d9}\u{119e3}\u{119d7}k\u{a4}\u{119da}\u{119d7}\u{6df94}\u{119a1}\u{119a7}", "000010000010000110011011"),
+  ("^\\P{Digit}\$", "\u{88fec}E\u{3f86}\u{c0cca}\u{21222}\u{5756f}\u{86c7e}\u{2f8c}\u{1082e2}\u{b9}\u{3757}\u{f4}\u{be49a}\u{78a7d}\u{10ffff}\u{15}\u{288e7}\u{10aabc}\u{bf0e7}\u{70336}\u{21999}\u{71a5f}\u{d28b2}\u{10ffff}", "111111111111111111111111"),
+  ("^\\p{Number}\$", "\u{61b62}X\u{4}\u{55140}\u{576be}\u{3a359}\u{4e435}\u{736c9}\u{1fa6f}\u{2567}\u{bb}\u{a19dc}\u{1a163}\u{2b434}\u{2bbc}\u{10000}\u{815}\u{c9}\u{fa}\u{1c20f}\u{8458}\u{10ffff}\u{ea118}\u{a0042}", "000000000000000000000000"),
+  ("^\\p{Dese_ret}\$", "\u{7ded7}\u{b0}V\u{1044f}\u{103ff}\u{fffd}\u{10401}\u{cf}V\u{fe8}\u{879a}\u{1f600}\u{1044f}\u{d6}\u{1044f}\u{10400}\u{1c}\u{fffd}\u{6}\u{10450}\u{2028}\u{c829}\u{10400}\u{84a3}", "000100100000101100000010"),
+  ("^\\p{Cc}\$", "\u{e148}\u{2028}\u{9dfbf}\u{6dd7e}\u{1e}\u{13305}\u{1f600}\u{10000}\u{2051} \u{a0}\u{327e2}\u{22}\u{1}\u{e0750}\u{1f}\u{b}\u{1}\u{10000}\u{e7}\u{7f}\u{9f}\u{69570} ", "000010000000010111001100"),
+  ("^\\p{Brahmi}\$", "\u{10fff}\u{7e25}\u{744e}\u{11053}[\u{f2}v\u{8b}\u{11052}\u{c44a}\u{96}\u{d0}\u{d1}\u{10fff}\u{e4}\u{a4}\u{c15b}\u{6d8d6}\u{f12c0}\u{1107e}\u{2028}\u{1104d}\u{f1869}\u{1143d}", "000100001000000000000100"),
+  ("^[\\p{Lo}\\p{Greek}]\$", "\u{1e}\u{ff}\u{2028}\u{55d1}\u{b0b69}\u{2da7}\u{aa}\u{11c0a}\u{2ebe0}\u{11433}\u{11461}\u{87}\u{ab2f}\u{1123f}\u{fd}\u{fd4f}\u{e6d2e}\u{1247f}\u{59ebc}\u{a7fc}\u{c223}\u{c2b}\u{ff81}\u{9b18}", "000100111110010000011111"),
+  ("^\\p{Sox}\$", "\u{230d}\u{1f0af}j\u{91}\u{482}\u{610}\u{1d182}\u{dc}\u{87}\u{25f6}\u{1d12a}\u{1f7eb}\u{aa78}\u{7af4}\u{5}M\u{3fa36}\u{6f5f}\u{fffd}\u{f}\u{1f0cf}\u{2113}\u{e0}\u{fffd}", "err"),
+  ("^[\\p{Bhaiksuki}\\p{Greek}]\$", "\u{11c36}\u{57fcd}\u{a1}\u{11c37}\u{11c37}\u{11c37}\u{9a}\u{10000}\u{9558}\u{2028}n\u{11c6b}\u{2028}\u{11bff}\u{1f600}\u{afdc}\u{11c4f}\u{10000}\u{11c6d}\u{fffd}\u{ba921}\u{11c0a}\u{fffd}\u{ff8}", "100000000001000000000100"),
+  ("^[^\\p{Other}]\$", "\u{bf}\u{b894c}\u{7b62}\u{bafda}\u{63911}\u{34302}\u{fffd}\u{8f1c2}\u{dee86}\u{fd}\u{ac}\u{da910}\u{bcf60}\u{4697}\u{dc808}\u{98ab6}\u{c5608}\u{7b7d5}\u{83008}\u{3000}\u{de}\u{a10b2}\u{ff6f1}\u{b462}", "101000100110010000011001"),
+  ("^[^\\p{Pd}]\$", "\u{1c}\u{1f600}\u{4a62d}\u{1401}\u{fe}\u{c}\u{2e5d}\u{f4}\u{8c}\u{f4cb}\u{6f8e}\u{fe33}\u{5584}\u{fffd}\u{fe31}\u{6cb8}\u{9ced}\u{10ead}\u{2028}\u{2e39}\u{d465}\u{10ffff}\u{43c3a}\u{301b}", "111111011111110110111111"),
+  ("^[^\\p{Cf}]\$", "\u{7f}1\u{87}\u{cd}j\u{10000}\u{16}\u{8742}\u{200a}\u{fffc}\u{10ffff}\u{fffd}\u{70e}\u{61c}\u{fb}\u{13440}\u{eed7}\u{f46a9}\u{e3ddd}\u{2ce1}\u{83}\u{2064}\u{202a}\u{1bca2}", "111111111111101111111000"),
+  ("^[^\\p{Elymaic}]\$", "\u{fffd}\u{96}\u{10ff7}\u{6638b}\u{10ff6}\u{10ff5}\u{10fe1}\u{10fdf}\u{10ff5}\u{10ff5}\u{7e42f}\u{b6466}\u{10ff7}\u{8c31}\u{eb8e}\u{10fdf}\u{cb}\u{4a9e}\u{9d}\u{1c1d}\u{10fdf}\u{10fdf}\u{8}\u{10}", "111100010011111111111111"),
+  ("^[^\\p{Balinese}]\$", "\u{1aff}\u{723f}\u{1b01}\u{1b50}e-\u{1b7e}\u{1b7e}\u{1b00}\u{f4}\u{6}\u{1b7f}\u{1b7d}#\u{1b01}\u{1b4b}\u{93}\u{1b50}\u{c1d16}\u{dd}w\u{f105}\u{c8}\u{10000}", "110011000111010010111111"),
+  ("^\\p{Nl}\$", "\u{b2317}{\u{e0001}\u{215f}\u{2189}\u{7472}\u{a6f0}\u{10000}\u{16ed}\u{80}\u{8f}\u{9faab}X\u{10173}:\u{83bf2}\u{3029}\u{4d244}\u{87ad7}\u{105419}\u{10000}\u{2181}\u{10175}\u{10175}", "000000000000010010000100"),
+  ("^\\P{Currencysymbol}\$", "\u{2028}\u{cda40}\u{1b092}\u{67e5e}B\u{fcba}\u{ef}\u{55e3d}\u{8892d}\u{d8}-\u{69a96}\u{f1}\u{f0257}\u{89fab}\u{ee}\u{10000}\u{e0001}\u{3f0f1}\u{f6}\u{21ea1}\u{2028}\u{bd827}\u{b537}", "111111111111111111111111"),
+  ("^\\P{pe}\$", "\u{10ffff}\u{ad1c0}\u{301b}\u{27c5}\u{e4}\u{27e8}\u{a0}H]\u{17}\u{ff3e}\u{f3c}\u{2028}\u{548d}Z\u{1a4e}\u{fe5c}\u{1a}\u{ff0a}\u{27e8}\u{cbc3}\u{ea}\u{3cbf}\u{301b}", "110111110111111101111110"),
+  ("(?i)^\\p{Bataks}\$", "\u{1bbf}\u{1bf4}\u{e2}\u{1bf3}\u{3000}\u{1bfe}\u{c4a}\u{1f600}\u{32de}\u{81a94}\u{1bf3}\u{b624}\u{1bc1}\u{1f600}\u{1bfb}\u{fd}\u{fe32}\u{9844a}\u{e0001}\u{1bfc}\u{f9}\u{1bc1}\u{1bf4}\u{e0001}", "err"),
+  ("^\\p{Devanagari}\$", "\u{965}\u{8a}\u{df6f2}\u{8a}\u{ab}\u{651f}\u{991a}\u{954}\u{8f8a}\u{11b08}\u{109ce3}\u{a8df}\u{8a}\u{d1e90}\u{966}\u{a8df}\u{10ffff}\u{965}\u{963}\u{e1}\u{a8ff}\u{18}\u{a42a}\u{ce9f}", "000000000100001000101000"),
+  ("^\\p{PD}\$", "\u{fffd}\u{10eac}\u{fe64}\u{301b}\u{3c2b5}\u{be}\u{ca}U\u{96}\u{200f}\u{d9}\u{dd707}\u{2010}\u{c05f6}\u{2e1a}\u{10000}\u{2e5c}\u{2e39}\u{1f600}\u{10eae}\u{d2a6}\u{301d}\u{4}\u{fe30}", "000000000000101000000000"),
+  ("^[\\p{Georgia-n}\\p{Greek}]\$", "\u{2540d}\u{1cbd}\u{1cbe}\u{10c4}\u{615bb}\u{9c2a3}\u{5595}^\u{caeb}\u{10ff}\u{1e}M\u{10c5}\u{1cbb}\u{1cbb}\u{b1cb2}\u{1c8f}\u{1f600}\u{88e}\u{3000}\u{3000}\u{2d2c}\u{d0}\u{c8}", "011100000100100000000000"),
+  ("^\\p{Cherokee}\$", "\u{2b72e}\u{1f600}F\u{ab6f}\u{2028}\u{c7}\u{ab6f}\u{95}\u{d1}\u{ab70}\u{7e66}\u{7733}\u{3}\u{abc0}\u{f7}\u{abc0}\u{8b3e4}\u{13f6}\u{f4}\u{864c}?\u{18}\u{13fe}\u{ccaa}", "000000000100000000000000"),
+  ("^\\P{Multani}\$", "\u{84d80}\u{46b}\u{2}\u{1128a}\u{db4ca}\u{10dc}\u{8c58}\u{1128a}\u{1128c}\u{11285}\u{8e}\u{10ffff}\u{e89e5}\u{1129f}\u{11287}\u{9953}\u{1129c}\u{1ba8}\u{11285}\u{1128b}\u{5d523}\u{211b4}\u{a753}\u{11285}", "111011100011101101001110"),
+  ("(?i)^\\p{Cyrillic}\$", "\u{1f600}\u{1f600}\u{10f98e}\u{8fd26}\u{3000}\u{caba}\u{fe2d}\u{b2e}\u{fd}\u{1e090}\u{551af}D\u{ea}\u{1e06e}\u{f5}\u{fe2f}\u{aa}\u{89}6\u{f7}\u{dcfaf}\u{10ffff}\u{1ea07}\u{e}", "000000000000000100000000"),
+  ("^\\p{Cypriot}\$", " \u{17}\u{bf}\u{10809}\u{5}\u{39c7d}\u{deee3}\u{10800}t\u{107ff}d\u{2028}\u{87f22}\u{10809}\u{10834}\u{5d5ca}\u{1080a}\u{1083b}\u{10806}\u{1083f}\u{10804}\u{107ff}x}", "000000010000001010011000"),
+  ("^[^\\p{Osmanya}]\$", "u~\u{e0001}\u{10c843}\u{1049e}\u{1049d}\u{9a}\u{6a42c}\u{104a9}\u{e}\u{104aa}\u{104a9}\u{2857d}\u{2028}\u{104a0}\u{3000}\u{1049c}\u{ba00}\u{4dce}\u{1049f}\u{21b1}\u{47c4}\u{104aa}\u{10ffff}", "111110110110110101111111"),
+  ("^\\p{Separator}\$", "\u{1002b}\u{500b}\u{d3}\u{5df9a}\u{1f600}\u{2b75}\u{b99c8}\u{ef97b}\u{e0001}\u{e673c}\u{2a52a}\u{3000}\u{8c6d}\u{b3691}\u{949ab}\u{a36a0}\u{be}\u{ff65b}\u{11eb9}\u{c0}'\u{8710}\u{ac81}\u{fffd}", "000000000001000000000000"),
+  ("^\\p{Punctuation}\$", "\u{1098ec}\u{b13bf}\u{b4}\u{17b00}\u{8678}\u{2028}\u{72447}5\u{42129}\u{2ead8}\u{3a5f}\u{91}\u{43e6b}\u{10ffff}\u{7114b}\u{12297}\u{801}\u{10000}\u{6948}\u{c7a34}\u{a5ae6}\u{d205d}\u{826d}\u{c6335}", "000000000000000000000000"),
+  ("(?i)^\\p{nmeurZ}\$", "\u{10000}\u{729f}\u{11ee1}\u{11ee1}\u{3}\u{11ee1}\u{b547}\u{11ef9}\u{11edf}\u{11ef8}\u{e5c2}\u{11edf}\u{7}\u{11ee0}\u{11ee1}\u{1ea1b}\u{11ee0}\u{1ffe4}\u{11ee1}\u{11ee1}\u{11ee1}\u{11ee0}\u{11ef7}\u{7f1d}", "err"),
+  ("^[\\p{Adlam}\\p{Greek}]\$", "\u{1e951}\u{a2d4}\u{fd}\u{3000}\u{1e94b}\u{fffd}\u{861ce}\u{201c}\u{1f887}\u{1e951}=\u{1e901}\u{10ffff}\u{1e95f}\u{2028}\u{b5}\u{68dc}i\u{9b2ff}\u{1e94a}\u{3000}\u{26a39}\u{2028}\u{1e958}", "100010000101010000010001"),
+  ("(?i)^\\p{Spacingmark}\$", "\u{40b5c}\u{7}\u{fb9}\u{3915d}g\u{2028}\u{c3828}\u{e0001}\u{a8}\u{313b9}\u{f1fd3}\u{c2}\u{ed}\u{a68}\u{109884}\u{2ad4d}\u{d5}\u{c4c56}\u{bffae}\u{9e}\u{aeb8b}\u{50d52}\u{86a25}\u{ef}", "000000000000000000000000"),
+  ("(?i)^\\p{ue}\$", "\u{10f5a}\u{b6f6}\u{10f58}\u{a2}\u{4e85e}\u{10f59}\u{e0001}\u{10000}\u{10f5a}\u{10f5a}<\u{3a2a}\u{10ffff}\u{10f2f}T\u{10f31}\u{10f31}\u{bb}\u{8a}\u{dc5df}\u{3000}\u{2e4f}\u{10f58}\u{10f30}", "err"),
+  ("^\\p{Tagbanwa}\$", "\u{d89ff}@\u{1760}\u{5fd7}\u{28582}\u{e5f9}\u{2028}\u{ed}\u{2028}\u{1760}\u{5ece3}\u{1760}\u{1773}\u{10ffff}\u{a1}\u{b8}\u{1760}\u{3000}\u{176c}@\u{176b}\u{1e}\u{10ffff}\u{93}", "001000000101100010101000"),
+  ("^\\P{Ne}\$", "\u{11401}y\u{a8}\u{68fdc}\u{1145a}2\u{1145e}\u{11462}\u{b700}\u{4319}\u{3000}\u{11401}\u{ba2ec}\u{c4a09}\u{1145d}\u{1145a}\u{cdc3d}\u{1145b}\u{b0}\u{11460}\u{aa}\u{10ffff}\u{1145e}\u{f70ad}", "err"),
+  ("^\\p{tifinagh}\$", "\u{2d70}G\u{ce62}\u{fffd}\u{2d80}\u{2d6f}^#\u{2d7f}\u{3a06}(\u{2d7e}\u{7ba52}\u{2d71}\u{2d7e}*\u{2d80}\u{2d6f}\u{2028}\u{2d67}\u{422f9}\u{3033}\u{2d30}\u{2d7e}", "100001001000000001010010"),
+  ("^\\p{Pf}\$", "\u{f2}F\u{2e0d}8\u{2e1e}\u{2019}\u{2e21}\u{2e0b}\u{201a}{\u{10000}\u{2e04}\u{9a}\u{6fb5e}\u{e225}\u{1d}\u{75fb8}\u{f86f}\u{6bde5}\u{8f902}\u{ba}\u{2e03}\u{2e04}\u{5a072}", "001001100000000000000100"),
+  ("^\\p{C}\$", "\u{a143}\u{1075}\u{119a0}\u{5175}\u{2028}\u{3b03}/\u{1f46}\u{10ffff}\u{2028}\u{137f}\u{d}\u{f8}\u{3000}\u{180e}\u{9669}\u{10d39}\u{b58}\u{1c649}\u{1d17b}\u{18c2}\u{3000}\u{17}\u{20106}", "000000011011001001100010"),
+  ("^\\p{Lm}\$", "\u{107b3}x\u{10ffff}\u{f876}\u{25321}\u{1afff}\u{fdf9c}\u{1d78}\u{3000}\u{2028}\u{52744}\u{d5}\u{a60c}\u{4d6d4}\u{2c7}\u{fd700}\u{a71f}\u{e0001}\u{aaf2}\u{d326}\u{b1}\u{7f6}\u{b5c7}\u{34f12}", "100000010000101010000000"),
+  ("^\\p{ADLAM}\$", "\u{34db}\u{58c39}\u{fb}\u{2731}\u{b7}\u{e0001}\u{10ffff}\u{e0001}\u{10ffff}\u{1e95e}g\u{dc}\u{1e95f}\u{1e94a}\u{7dbf}=\u{1e950}\u{20a}\u{361b}\u{1e951}\u{10000}\u{e0001}\u{1e958} ", "000000000100110010010010"),
+  ("^[\\p{Oriya}\\p{Greek}]\$", "\u{b6}\u{f630}M\u{e5}\u{b54}\u{fc43}a\u{b2f}l\u{b56}\u{95}\u{ba684}\u{b66}\u{88}\u{a8b6}\u{b76}\u{e376}\u{b48}\u{10ffff}\u{b5c}\u{2028}\u{b74e}k\u{85}", "000000010100100101010000"),
+  ("^\\p{reiZe}\$", "\u{f8}\u{a981}\u{a9cc}\u{4e89}\u{a12df}\u{e0b9}\u{e0001}\u{a9da}\u{6d7f7}\u{be541}\u{45ca}R\u{a9d8}\u{a9de}\u{39c8}\u{bdc3}\u{6a780}\u{a9df}\u{be}\u{95}\u{fffd}\u{a9de}~\u{e0001}", "err"),
+  ("^\\p{Vithkuqi}\$", "\u{4b0b7}\u{4a41f}\u{a85d}\u{9d6e8}\u{105a2}\u{1d}\u{5f0c}\u{d4}\u{417d}\u{1057b}\u{c3}\u{1058b}\u{b}\u{d5}\u{10571}\u{5c11}\u{fffd}\u{105bc}\u{10832b}\u{725be}\u{d8}\u{105b1}\u{24}\u{6}", "000000000000001001000100"),
+]

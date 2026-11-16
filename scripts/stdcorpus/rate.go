@@ -1,6 +1,11 @@
 package main
 
-import "strings"
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
 
 // The std/rate corpus: golang.org/x/time/rate v0.16.0's own tests
 // (rate_test.go; Copyright 2015 The Go Authors, BSD-style license),
@@ -233,4 +238,18 @@ test "a reservation over the burst is not ok and its delay is the longest Durati
 }
 `)
 	return o.String()
+}
+
+// ratefuzzCorpus is rateoracle's fuzz mode (seed 1, 1,500 cases): x/time/rate's
+// answers for seeded random operation sequences (TestRateFuzz runs later
+// seeds).
+func ratefuzzCorpus() string {
+	cmd := exec.Command("go", "run", ".", "fuzz", "1", "1500")
+	cmd.Dir = filepath.Join("scripts", "stdcorpus", "rateoracle")
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		panic("rateoracle fuzz: " + err.Error())
+	}
+	return string(out)
 }

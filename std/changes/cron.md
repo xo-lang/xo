@@ -1,5 +1,15 @@
 # std/cron changes
 
+## 2026-11-16: fix: @every duration errors are robfig/cron's (Go's time.ParseDuration text), and no white space around the duration
+
+- Kind: fix
+- Commit: this push
+- Found by: the new std/cron fuzz harness (decision 0616, internal/stdtest/cronfuzz_test.go with scripts/stdcorpus/cronoracle fuzz, against robfig/cron v3.0.1), task #98
+- Go reference: robfig/cron parser.go parseDescriptor: time.ParseDuration(descriptor[len("@every "):]), whose errors are `time: invalid duration "X"`, `time: missing unit in duration "X"`, `time: unknown unit "U" in duration "X"` (time format.go quote: bytes below 0x20 or from 0x80 as \xHH), and which does not trim
+- Before: the error carried Xo's Duration.parse text (`invalid duration "1x": expected numbers with units ...`), and `@every  5m` and `@every 5m ` parsed (Duration.parse trims)
+- Fix: std/cron checks the duration with Go's grammar first; the cron corpus's ERRS gained seven @every cases (they fail on the old std/cron)
+- Shipped in: not yet released
+
 ## 2026-11-15: feature: parser with robfig's options: a seconds field, optional fields, descriptors on or off
 
 - Kind: feature

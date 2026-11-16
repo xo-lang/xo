@@ -54,3 +54,51 @@ test "Sometimes copies share the count" {
   let t = s
   expect(ran(s, os.clock, [("a", 0s)]) + ran(t, os.clock, [("b", 0s)])) == ["a"]
 }
+
+fn arg_of(w: Str) -> Int {
+  let (_, a) = w.cut(":") ?? fault("op ${w}")
+  Int.parse(a) ?? fault("arg ${w}")
+}
+
+/// The answers of the operations (internal/stdtest/ratefuzz_test.go's form)
+/// on a limiter at the fake clock's times.
+fn replay_ops(c: testing.FakeClock, lim: Float, burst: Int, ops: Str) -> Str uses clock {
+  let t0 = Time.from_unix(1000000000)
+  c.set(t0)
+  let l = new(lim, burst, c)
+  var rs: List[Reservation] = []
+  var ans: List[Str] = []
+  for w in ops.split(" ") {
+    match w.bytes()[0] {
+      't' => c.set(t0 + Duration.from_nanos(arg_of(w)))
+      'k' => ans.push("${l.tokens().to_bits()}")
+      'a' => ans.push(if l.allow_n(arg_of(w)) { "1" } else { "0" })
+      'r' => {
+        let r = l.reserve_n(arg_of(w))
+        rs.push(r)
+        ans.push("${if r.ok() { "1" } else { "0" }},${r.delay().nanos()}")
+      }
+      'd' => ans.push("${rs[arg_of(w)].delay().nanos()}")
+      'c' => rs[arg_of(w)].cancel()
+      'l' => l.set_limit(Float.from_bits(arg_of(w)))
+      _ => l.set_burst(arg_of(w))
+    }
+  }
+  ans.join(" ")
+}
+
+/// Seed 2 of TestRateFuzz, the cases that differed from x/time/rate before
+/// 2026-11-16: a limit of 1e-9 sends a reservation past 2262, the end of
+/// Xo's Time, where Go's Time still adds and subtracts (a cancel then
+/// restored tokens Go keeps, and a delay counted from the wrong end).
+const FAR_CASES: List[(Int, Int, Str, Str)] = [
+  (4613923842304097576, 10, "a:7 k t:16 k t:13 t:32 t:51 r:11 l:4606816251162663022 t:53 l:4472406533629990549 t:68 r:9 a:7 r:0 b:9 a:7 k c:2 k t:86 r:9 c:3 a:10 c:1 c:0 a:12 r:7 t:97", "1 4613937818241073152 4613937818348935928 0,9223372036854775807 1,5999999845397839872 0 1,5999999845397839872 0 -4604930619160398718 -4604930619160398718 1,9223372036854775807 0 0 1,0"),
+  (0, 2, "a:2 b:5 r:4 t:9000000000 r:1 r:1 c:2 t:17000000000 r:0 l:4472406533629990549 r:4 c:2 t:20000000000 t:36000000000 t:36000000000 a:4 a:0 d:1 d:0 d:0 r:4 c:1 t:47000000000 t:55000000000 c:4 t:68000000000 a:1 a:0 t:81000000000 r:2 a:1 t:81000000000 t:99000000000 a:4 l:4635752128936148992 a:0 d:4 t:107000000000 t:109000000000", "1 1,9223372036854775807 1,9223372036854775807 1,9223372036854775807 1,9223372036854775807 1,9000000000000000000 0 0 9223372009854775807 9223372000854775807 9223372000854775807 1,9223372036854775807 0 0 1,9223371991854776320 0 0 0 8999999918000000000"),
+  (4472406533629990549, 6, "b:3 r:8 d:0 a:8 b:6 t:17 r:6 d:1 a:2 a:7 t:30 r:6 c:1 a:6 k k b:10 a:8 t:49 t:57 t:59 b:5 t:72 k c:2 t:85 t:84 t:102", "0,9223372036854775807 9223372036854775807 0 1,3000000000000000000 3000000000000000000 0 0 1,9000000000000000000 0 -4602115869219225600 -4602115869219225600 0 -4602115869219225600"),
+]
+
+test "reservations past Xo's last Time act, delay and cancel as in Go's x/time/rate" {
+  for (lim, burst, ops, want) in FAR_CASES {
+    expect(replay_ops(os.clock, Float.from_bits(lim), burst, ops)) == want
+  }
+}

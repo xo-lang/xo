@@ -1,0 +1,199 @@
+// cli stress program (decision 0616 section 2): 64 tasks declare 64 commands
+// (single_dash_long and stop_at_positional, long flags of every kind) and parse
+// their argument lists against Go's flag package (the seed 1 rows of
+// internal/stdtest/clifuzz_test.go), for a fixed time. A background task
+// samples the resident set every 10 s (Linux /proc/self/status). Pass: no
+// mismatch, no fault, and the resident set at the end within 10% or 4 MB of
+// its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/cli
+
+/// One pass over the cases from offset start: the operations done, or the
+/// first mismatch.
+fn pass(start: Int, env: Env) -> Int ! Str uses env {
+  for k in 0..CASES.len() {
+    let (decl, args, want) = CASES[(start + k) % CASES.len()]
+    let got = answer(decl, args, env)
+    if got != want {
+      return Err("${decl} ${args.quote()}: ${got.quote()} want ${want.quote()}")
+    }
+  }
+  CASES.len()
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i, os.env)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("cli stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+fn flag_of(d: Str) -> cli.Flag {
+  let (name, kind) = d.cut(":") ?? fault("flag ${d}")
+  match kind {
+    "bool" => cli.bool_flag(name, "b")
+    "str" => cli.str_flag(name, "s")
+    "int" => cli.int_flag(name, "i")
+    "dur" => cli.duration_flag(name, "d")
+    "float" => cli.float_flag(name, "f")
+    _ => cli.strs_flag(name, "r")
+  }
+}
+
+fn value_of(p: cli.Parsed, d: Str) -> Str {
+  let (name, kind) = d.cut(":") ?? fault("flag ${d}")
+  let v = match kind {
+    "bool" => "${p.bool(name)}"
+    "str" => p.str(name)
+    "int" => "${p.int(name)}"
+    "dur" => "${p.duration(name).nanos()}"
+    "float" => if p.float(name).is_nan() { "nan" } else { "${p.float(name).to_bits()}" }
+    _ => p.strs(name).join("\u{1e}")
+  }
+  "${name}=${v}"
+}
+
+fn answer(decl: Str, args: Str, env: Env) -> Str uses env {
+  let ds = decl.split(" ")
+  let cmd = cli.command("t", "a tool", flags: ds.map(flag_of), args: [cli.rest("args", "the rest")], single_dash_long: true, stop_at_positional: true)
+  let av = if args == "" { [] } else { args.split("\u{1f}").map(fn(a: Str) -> Str { if a == "\u{1d}" { "" } else { a } }) }
+  match cli.parse(cmd, av, env) {
+    Ok(p) => {
+      var parts = ["ok"]
+      for d in ds {
+        parts.push(value_of(p, d))
+      }
+      parts.push("rest=${p.rest("args").join("\u{1e}")}")
+      parts.join("\u{1f}")
+    }
+    Err(cli.CliErr.Help(_)) => "help"
+    Err(_) => "usage"
+  }
+}
+
+
+/// (the flags as name:kind, the arguments joined by U+001F (U+001D an empty one), Go's answer: help, usage, or ok and each value and the rest, joined by U+001F)
+const CASES: List[(Str, Str, Str)] = [
+  ("name:strs level:str dry-run:str verbose:float ratio:str", "-verbose\u{1f}nan\u{1f}--level=a=b\u{1f}x=1\u{1f}\u{1d}\u{1f}-v\u{1f}--verbose\u{1f}7\u{1f}x=1\u{1f}a b\u{1f}-name\u{1f}word\u{1f}-verbose\u{1f}inf", "ok\u{1f}name=\u{1f}level=a=b\u{1f}dry-run=\u{1f}verbose=nan\u{1f}ratio=\u{1f}rest=x=1\u{1e}\u{1e}-v\u{1e}--verbose\u{1e}7\u{1e}x=1\u{1e}a b\u{1e}-name\u{1e}word\u{1e}-verbose\u{1e}inf"),
+  ("out:dur level:float tag:int dry-run:str", "file", "ok\u{1f}out=0\u{1f}level=0\u{1f}tag=0\u{1f}dry-run=\u{1f}rest=file"),
+  ("x64:float dry-run:strs count:strs", "-count\u{1f}a\u{1f}-dry-run=日本\u{1f}x=1\u{1f}--count\u{1f}a=b\u{1f}x=1", "ok\u{1f}x64=0\u{1f}dry-run=日本\u{1f}count=a\u{1f}rest=x=1\u{1e}--count\u{1e}a=b\u{1e}x=1"),
+  ("x64:bool name:bool timeout:bool", "--timeout\u{1f}--timeout\u{1f}file", "ok\u{1f}x64=false\u{1f}name=false\u{1f}timeout=true\u{1f}rest=file"),
+  ("count:bool", "-\u{1f}--count=1\u{1f}a b", "ok\u{1f}count=false\u{1f}rest=-\u{1e}--count=1\u{1e}a b"),
+  ("x64:bool timeout:float level:dur count:dur", "--count=1.5h\u{1f}-count\u{1f}0\u{1f}--x64\u{1f}-count=1m30s\u{1f}--x64\u{1f}file\u{1f}\u{1d}\u{1f}\u{1d}\u{1f}--nope", "ok\u{1f}x64=true\u{1f}timeout=0\u{1f}level=0\u{1f}count=90000000000\u{1f}rest=file\u{1e}\u{1e}\u{1e}--nope"),
+  ("count:bool timeout:float x64:bool tag:bool", "x=1\u{1f}--tag\u{1f}file\u{1f}--count=false\u{1f}file\u{1f}-timeout=x\u{1f}a b", "ok\u{1f}count=false\u{1f}timeout=0\u{1f}x64=false\u{1f}tag=false\u{1f}rest=x=1\u{1e}--tag\u{1e}file\u{1e}--count=false\u{1e}file\u{1e}-timeout=x\u{1e}a b"),
+  ("x64:dur count:strs name:int", "x=1", "ok\u{1f}x64=0\u{1f}count=\u{1f}name=0\u{1f}rest=x=1"),
+  ("count:float out:strs", "", "ok\u{1f}count=0\u{1f}out=\u{1f}rest="),
+  ("x64:str name:str count:dur out:strs tag:strs", "a b\u{1f}x=1\u{1f}-x64\u{1f}-x\u{1f}--x64=日本\u{1f}--name\u{1f}日本\u{1f}-\u{1f}--out=\u{1f}--x64=a", "ok\u{1f}x64=\u{1f}name=\u{1f}count=0\u{1f}out=\u{1f}tag=\u{1f}rest=a b\u{1e}x=1\u{1e}-x64\u{1e}-x\u{1e}--x64=日本\u{1e}--name\u{1e}日本\u{1e}-\u{1e}--out=\u{1e}--x64=a"),
+  ("verbose:bool ratio:str tag:dur", "-nope\u{1f}-tag=0\u{1f}-verbose=0\u{1f}-v\u{1f}-ratio\u{1f}-x\u{1f}x=1", "usage"),
+  ("count:str out:strs", "--out=日本", "ok\u{1f}count=\u{1f}out=日本\u{1f}rest="),
+  ("dry-run:bool timeout:float ratio:str x64:str", "-ratio\u{1f}--y\u{1f}--dry-run\u{1f}-\u{1f}\u{1d}\u{1f}-dry-run\u{1f}--dry-run=false\u{1f}x=1\u{1f}-", "ok\u{1f}dry-run=true\u{1f}timeout=0\u{1f}ratio=--y\u{1f}x64=\u{1f}rest=-\u{1e}\u{1e}-dry-run\u{1e}--dry-run=false\u{1e}x=1\u{1e}-"),
+  ("level:dur", "--level\u{1f}30s\u{1f}--level=300ms\u{1f}-\u{1f}-level\u{1f}\u{1d}\u{1f}-\u{1f}file\u{1f}--level=1h\u{1f}-v", "ok\u{1f}level=300000000\u{1f}rest=-\u{1e}-level\u{1e}\u{1e}-\u{1e}file\u{1e}--level=1h\u{1e}-v"),
+  ("timeout:int", "-nope\u{1f}--timeout\u{1f}0\u{1f}--timeout=123456789\u{1f}-", "usage"),
+  ("verbose:float name:int", "-name=123456789\u{1f}---x\u{1f}--nope", "usage"),
+  ("ratio:bool level:str", "--ratio\u{1f}1\u{1f}-\u{1f}--level\u{1f}a\u{1f}x=1\u{1f}--level=a=b\u{1f}-", "ok\u{1f}ratio=true\u{1f}level=\u{1f}rest=1\u{1e}-\u{1e}--level\u{1e}a\u{1e}x=1\u{1e}--level=a=b\u{1e}-"),
+  ("verbose:strs x64:bool ratio:dur count:strs", "-count\u{1f}-\u{1f}--x64", "ok\u{1f}verbose=\u{1f}x64=true\u{1f}ratio=0\u{1f}count=-\u{1f}rest="),
+  ("dry-run:bool level:bool out:strs", "-\u{1f}-\u{1f}-out\u{1f}-\u{1f}a b\u{1f}file\u{1f}x=1\u{1f}--level\u{1f}-nope\u{1f}-level\u{1f}--out=word", "ok\u{1f}dry-run=false\u{1f}level=false\u{1f}out=\u{1f}rest=-\u{1e}-\u{1e}-out\u{1e}-\u{1e}a b\u{1e}file\u{1e}x=1\u{1e}--level\u{1e}-nope\u{1e}-level\u{1e}--out=word"),
+  ("ratio:float", "a b\u{1f}-ratio\u{1f}nan\u{1f}--ratio=2e-3\u{1f}a b\u{1f}-\u{1f}-ratio=7\u{1f}--ratio=-0\u{1f}--ratio\u{1f}\u{1d}", "ok\u{1f}ratio=0\u{1f}rest=a b\u{1e}-ratio\u{1e}nan\u{1e}--ratio=2e-3\u{1e}a b\u{1e}-\u{1e}-ratio=7\u{1e}--ratio=-0\u{1e}--ratio\u{1e}"),
+  ("count:dur tag:str verbose:dur ratio:float dry-run:strs", "x=1\u{1f}-nope\u{1f}-tag\u{1f}word\u{1f}-=x\u{1f}file\u{1f}\u{1d}\u{1f}-\u{1f}a b\u{1f}-tag\u{1f}--y", "ok\u{1f}count=0\u{1f}tag=\u{1f}verbose=0\u{1f}ratio=0\u{1f}dry-run=\u{1f}rest=x=1\u{1e}-nope\u{1e}-tag\u{1e}word\u{1e}-=x\u{1e}file\u{1e}\u{1e}-\u{1e}a b\u{1e}-tag\u{1e}--y"),
+  ("timeout:strs verbose:dur count:bool out:int", "--timeout=a\u{1f}-\u{1f}-\u{1f}--count\u{1f}file\u{1f}-nope\u{1f}-count\u{1f}x=1", "ok\u{1f}timeout=a\u{1f}verbose=0\u{1f}count=false\u{1f}out=0\u{1f}rest=-\u{1e}-\u{1e}--count\u{1e}file\u{1e}-nope\u{1e}-count\u{1e}x=1"),
+  ("out:str timeout:dur verbose:strs", "file\u{1f}file\u{1f}-verbose=--\u{1f}\u{1d}\u{1f}-timeout\u{1f}-5ms\u{1f}a b\u{1f}-verbose=日本\u{1f}-timeout=30s", "ok\u{1f}out=\u{1f}timeout=0\u{1f}verbose=\u{1f}rest=file\u{1e}file\u{1e}-verbose=--\u{1e}\u{1e}-timeout\u{1e}-5ms\u{1e}a b\u{1e}-verbose=日本\u{1e}-timeout=30s"),
+  ("verbose:bool level:bool ratio:float out:int", "-\u{1f}-ratio\u{1f}inf\u{1f}-level\u{1f}-\u{1f}x=1\u{1f}x=1\u{1f}-help\u{1f}x=1\u{1f}file", "ok\u{1f}verbose=false\u{1f}level=false\u{1f}ratio=0\u{1f}out=0\u{1f}rest=-\u{1e}-ratio\u{1e}inf\u{1e}-level\u{1e}-\u{1e}x=1\u{1e}x=1\u{1e}-help\u{1e}x=1\u{1e}file"),
+  ("verbose:bool", "-verbose\u{1f}\u{1d}\u{1f}a b\u{1f}file\u{1f}--verbose\u{1f}\u{1d}\u{1f}file\u{1f}--verbose=yes\u{1f}--verbose", "ok\u{1f}verbose=true\u{1f}rest=\u{1e}a b\u{1e}file\u{1e}--verbose\u{1e}\u{1e}file\u{1e}--verbose=yes\u{1e}--verbose"),
+  ("out:float ratio:strs x64:strs verbose:float timeout:float", "--timeout\u{1f}\u{1d}\u{1f}--verbose\u{1f}1.5\u{1f}--ratio\u{1f}word\u{1f}-", "usage"),
+  ("count:int", "-count=-3", "ok\u{1f}count=-3\u{1f}rest="),
+  ("ratio:int dry-run:str timeout:float count:strs", "-ratio=-0\u{1f}-\u{1f}a b", "ok\u{1f}ratio=0\u{1f}dry-run=\u{1f}timeout=0\u{1f}count=\u{1f}rest=-\u{1e}a b"),
+  ("ratio:bool", "\u{1d}\u{1f}file\u{1f}-\u{1f}x=1", "ok\u{1f}ratio=false\u{1f}rest=\u{1e}file\u{1e}-\u{1e}x=1"),
+  ("count:dur x64:bool level:bool out:dur", "-\u{1f}-count=300ms\u{1f}file\u{1f}-\u{1f}--x64=yes\u{1f}-level\u{1f}1", "ok\u{1f}count=0\u{1f}x64=false\u{1f}level=false\u{1f}out=0\u{1f}rest=-\u{1e}-count=300ms\u{1e}file\u{1e}-\u{1e}--x64=yes\u{1e}-level\u{1e}1"),
+  ("x64:bool name:float", "\u{1d}\u{1f}-=x\u{1f}\u{1d}", "ok\u{1f}x64=false\u{1f}name=0\u{1f}rest=\u{1e}-=x\u{1e}"),
+  ("tag:bool x64:dur timeout:bool out:str verbose:int", "a b\u{1f}--out\u{1f}word\u{1f}-out\u{1f}a=b\u{1f}-x64=300ms\u{1f}x=1\u{1f}-\u{1f}a b", "ok\u{1f}tag=false\u{1f}x64=0\u{1f}timeout=false\u{1f}out=\u{1f}verbose=0\u{1f}rest=a b\u{1e}--out\u{1e}word\u{1e}-out\u{1e}a=b\u{1e}-x64=300ms\u{1e}x=1\u{1e}-\u{1e}a b"),
+  ("ratio:dur level:dur timeout:int verbose:int out:strs", "\u{1d}\u{1f}--verbose=-0\u{1f}-level\u{1f}5\u{1f}file\u{1f}\u{1d}\u{1f}-", "ok\u{1f}ratio=0\u{1f}level=0\u{1f}timeout=0\u{1f}verbose=0\u{1f}out=\u{1f}rest=\u{1e}--verbose=-0\u{1e}-level\u{1e}5\u{1e}file\u{1e}\u{1e}-"),
+  ("timeout:int verbose:str name:dur count:bool dry-run:dur", "x=1\u{1f}-\u{1f}-dry-run=1.5h\u{1f}-nope\u{1f}--name\u{1f}300ms\u{1f}-timeout\u{1f}9223372036854775807\u{1f}a b", "ok\u{1f}timeout=0\u{1f}verbose=\u{1f}name=0\u{1f}count=false\u{1f}dry-run=0\u{1f}rest=x=1\u{1e}-\u{1e}-dry-run=1.5h\u{1e}-nope\u{1e}--name\u{1e}300ms\u{1e}-timeout\u{1e}9223372036854775807\u{1e}a b"),
+  ("dry-run:int timeout:int", "--dry-run\u{1f}-3\u{1f}-\u{1f}\u{1d}\u{1f}--timeout=0\u{1f}-\u{1f}--timeout=1.5\u{1f}-timeout=0", "ok\u{1f}dry-run=-3\u{1f}timeout=0\u{1f}rest=-\u{1e}\u{1e}--timeout=0\u{1e}-\u{1e}--timeout=1.5\u{1e}-timeout=0"),
+  ("dry-run:float tag:bool timeout:bool", "file\u{1f}-timeout\u{1f}-dry-run=1.5", "ok\u{1f}dry-run=0\u{1f}tag=false\u{1f}timeout=false\u{1f}rest=file\u{1e}-timeout\u{1e}-dry-run=1.5"),
+  ("out:bool", "--out=true\u{1f}-out\u{1f}--out\u{1f}-out\u{1f}--out\u{1f}file", "ok\u{1f}out=true\u{1f}rest=file"),
+  ("level:str", "-level=a\u{1f}--level\u{1f}-\u{1f}--nope", "usage"),
+  ("ratio:dur name:float", "-name=nan\u{1f}--name=7\u{1f}file\u{1f}--ratio=-5ms\u{1f}--ratio=5\u{1f}x=1", "ok\u{1f}ratio=0\u{1f}name=4619567317775286272\u{1f}rest=file\u{1e}--ratio=-5ms\u{1e}--ratio=5\u{1e}x=1"),
+  ("level:int out:strs dry-run:int x64:float name:str", "a b\u{1f}-dry-run\u{1f}1.5\u{1f}-nope\u{1f}-level\u{1f}0\u{1f}file\u{1f}--help\u{1f}-", "ok\u{1f}level=0\u{1f}out=\u{1f}dry-run=0\u{1f}x64=0\u{1f}name=\u{1f}rest=a b\u{1e}-dry-run\u{1e}1.5\u{1e}-nope\u{1e}-level\u{1e}0\u{1e}file\u{1e}--help\u{1e}-"),
+  ("name:int", "x=1\u{1f}--name\u{1f}9223372036854775807", "ok\u{1f}name=0\u{1f}rest=x=1\u{1e}--name\u{1e}9223372036854775807"),
+  ("tag:strs timeout:int name:strs out:dur", "-nope\u{1f}-name\u{1f}--y\u{1f}--tag\u{1f}-x\u{1f}\u{1d}", "usage"),
+  ("count:int", "-\u{1f}--count\u{1f}two\u{1f}file", "ok\u{1f}count=0\u{1f}rest=-\u{1e}--count\u{1e}two\u{1e}file"),
+  ("out:int count:bool timeout:bool tag:bool", "-=x\u{1f}a b\u{1f}-\u{1f}--\u{1f}-out=two\u{1f}a b", "usage"),
+  ("ratio:int verbose:str out:str x64:str", "x=1\u{1f}a b\u{1f}--out=a=b\u{1f}-x64\u{1f}a=b\u{1f}-verbose\u{1f}a=b\u{1f}--out=--y\u{1f}-x64\u{1f}\u{1d}\u{1f}-out\u{1f}a", "ok\u{1f}ratio=0\u{1f}verbose=\u{1f}out=\u{1f}x64=\u{1f}rest=x=1\u{1e}a b\u{1e}--out=a=b\u{1e}-x64\u{1e}a=b\u{1e}-verbose\u{1e}a=b\u{1e}--out=--y\u{1e}-x64\u{1e}\u{1e}-out\u{1e}a"),
+  ("timeout:float name:bool", "--\u{1f}--timeout\u{1f}-Inf\u{1f}--help\u{1f}x=1\u{1f}-\u{1f}x=1\u{1f}--name\u{1f}0", "ok\u{1f}timeout=0\u{1f}name=false\u{1f}rest=--timeout\u{1e}-Inf\u{1e}--help\u{1e}x=1\u{1e}-\u{1e}x=1\u{1e}--name\u{1e}0"),
+  ("tag:strs", "-=x\u{1f}---x\u{1f}--tag=--\u{1f}a b\u{1f}---x\u{1f}x=1", "usage"),
+  ("count:strs verbose:bool", "a b\u{1f}-verbose\u{1f}\u{1d}\u{1f}-count\u{1f}--y\u{1f}\u{1d}\u{1f}a b\u{1f}-verbose=0\u{1f}-", "ok\u{1f}count=\u{1f}verbose=false\u{1f}rest=a b\u{1e}-verbose\u{1e}\u{1e}-count\u{1e}--y\u{1e}\u{1e}a b\u{1e}-verbose=0\u{1e}-"),
+  ("x64:dur count:str", "-count=\u{1f}-count\u{1f}\u{1d}\u{1f}x=1\u{1f}file\u{1f}--count\u{1f}\u{1d}\u{1f}-count=--\u{1f}file\u{1f}-x64=", "ok\u{1f}x64=0\u{1f}count=\u{1f}rest=x=1\u{1e}file\u{1e}--count\u{1e}\u{1e}-count=--\u{1e}file\u{1e}-x64="),
+  ("count:bool out:float", "", "ok\u{1f}count=false\u{1f}out=0\u{1f}rest="),
+  ("ratio:bool tag:dur out:str name:strs", "-ratio\u{1f}-tag\u{1f}1h\u{1f}--ratio", "ok\u{1f}ratio=true\u{1f}tag=3600000000000\u{1f}out=\u{1f}name=\u{1f}rest="),
+  ("ratio:str level:int", "--level\u{1f}\u{1d}\u{1f}a b\u{1f}file\u{1f}-ratio\u{1f}\u{1d}\u{1f}-ratio\u{1f}-x\u{1f}a b", "usage"),
+  ("level:float tag:strs ratio:float", "a b\u{1f}x=1\u{1f}--ratio=-Inf\u{1f}-tag\u{1f}-", "ok\u{1f}level=0\u{1f}tag=\u{1f}ratio=0\u{1f}rest=a b\u{1e}x=1\u{1e}--ratio=-Inf\u{1e}-tag\u{1e}-"),
+  ("x64:str verbose:strs dry-run:float ratio:strs", "file\u{1f}x=1\u{1f}--dry-run\u{1f}2e-3\u{1f}-\u{1f}x=1\u{1f}--x64=--\u{1f}x=1\u{1f}-nope", "ok\u{1f}x64=\u{1f}verbose=\u{1f}dry-run=0\u{1f}ratio=\u{1f}rest=file\u{1e}x=1\u{1e}--dry-run\u{1e}2e-3\u{1e}-\u{1e}x=1\u{1e}--x64=--\u{1e}x=1\u{1e}-nope"),
+  ("count:bool level:dur tag:int out:bool dry-run:str", "-tag\u{1f}-3\u{1f}\u{1d}\u{1f}file\u{1f}-out\u{1f}file\u{1f}-out\u{1f}--tag=123456789\u{1f}---x\u{1f}---x\u{1f}-", "ok\u{1f}count=false\u{1f}level=0\u{1f}tag=-3\u{1f}out=false\u{1f}dry-run=\u{1f}rest=\u{1e}file\u{1e}-out\u{1e}file\u{1e}-out\u{1e}--tag=123456789\u{1e}---x\u{1e}---x\u{1e}-"),
+  ("tag:int level:bool verbose:bool dry-run:str", "\u{1d}\u{1f}file\u{1f}-level\u{1f}x=1\u{1f}--level=false\u{1f}-verbose\u{1f}-verbose\u{1f}--dry-run\u{1f}-\u{1f}a b", "ok\u{1f}tag=0\u{1f}level=false\u{1f}verbose=false\u{1f}dry-run=\u{1f}rest=\u{1e}file\u{1e}-level\u{1e}x=1\u{1e}--level=false\u{1e}-verbose\u{1e}-verbose\u{1e}--dry-run\u{1e}-\u{1e}a b"),
+  ("ratio:dur level:strs timeout:int", "--ratio\u{1f}30s\u{1f}--timeout\u{1f}two\u{1f}-level\u{1f}--y\u{1f}a b\u{1f}-\u{1f}file\u{1f}\u{1d}\u{1f}-level\u{1f}\u{1d}\u{1f}-timeout\u{1f}123456789", "usage"),
+  ("verbose:strs x64:int count:str ratio:bool", "a b\u{1f}--x64=123456789\u{1f}--count=日本\u{1f}\u{1d}\u{1f}-count=--", "ok\u{1f}verbose=\u{1f}x64=0\u{1f}count=\u{1f}ratio=false\u{1f}rest=a b\u{1e}--x64=123456789\u{1e}--count=日本\u{1e}\u{1e}-count=--"),
+  ("name:bool x64:str count:int out:int verbose:str tag:float", "-verbose=--", "ok\u{1f}name=false\u{1f}x64=\u{1f}count=0\u{1f}out=0\u{1f}verbose=--\u{1f}tag=0\u{1f}rest="),
+  ("count:dur ratio:int", "--ratio\u{1f}-0\u{1f}-count\u{1f}\u{1d}\u{1f}-\u{1f}-\u{1f}x=1\u{1f}-ratio=9223372036854775807\u{1f}x=1", "usage"),
+  ("name:bool count:dur tag:str", "a b\u{1f}-\u{1f}--\u{1f}--nope\u{1f}a b", "ok\u{1f}name=false\u{1f}count=0\u{1f}tag=\u{1f}rest=a b\u{1e}-\u{1e}--\u{1e}--nope\u{1e}a b"),
+  ("timeout:dur out:bool level:str x64:strs name:str", "--x64=--y\u{1f}-out\u{1f}-x64=a=b", "ok\u{1f}timeout=0\u{1f}out=true\u{1f}level=\u{1f}x64=--y\u{1e}a=b\u{1f}name=\u{1f}rest="),
+  ("tag:float name:strs timeout:strs verbose:strs", "-\u{1f}-help\u{1f}-h\u{1f}-tag\u{1f}x", "ok\u{1f}tag=0\u{1f}name=\u{1f}timeout=\u{1f}verbose=\u{1f}rest=-\u{1e}-help\u{1e}-h\u{1e}-tag\u{1e}x"),
+  ("count:float tag:bool verbose:str x64:int timeout:int", "", "ok\u{1f}count=0\u{1f}tag=false\u{1f}verbose=\u{1f}x64=0\u{1f}timeout=0\u{1f}rest="),
+]
