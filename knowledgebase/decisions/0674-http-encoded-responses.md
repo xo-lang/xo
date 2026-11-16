@@ -1,6 +1,6 @@
 # 0674: http.encoded_responses, response compression with an encoding from outside std/http
 
-Status: Proposed (Xo Lang 3, 2026-11-16, task #89; for decision 0666's `brotli.responses`)
+Status: Accepted (lead for the owner, 2026-11-16 overnight; proposed by Xo Lang 3, 2026-11-16, task #89, for decision 0666's `brotli.responses`)
 
 ## Context
 
