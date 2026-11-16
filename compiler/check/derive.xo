@@ -370,7 +370,12 @@ fn (var c: Checker) xml_decoder(sd: parser.StructDecl, shapes: List[XmlShape?], 
     zeros.push("${text(f.name.name)}: ${shape_zero(shape)}")
   }
   e.ln("${pub_}fn xml_zero__${n}() -> ${n} { ${n}{${zeros.join(", ")}} }", sp)
-  e.ln("${pub_}fn xml_merge__${n}(base: ${n}, e: xml.Element) -> ${n} ! xml.XmlErr {", sp)
+  e.ln("${pub_}fn xml_merge__${n}(base: ${n}, e: xml.Element) -> ${n} ! xml.XmlErr { xml_mergedepth__${n}(base, e, 0) }", sp)
+  // d__: e's nesting depth (the root 0); a nested struct's merge gets
+  // d__ + 1, and past Go's maxUnmarshalDepth (10000) the decode fails as
+  // Go's does (#133: an element nested 8M deep overflowed the stack)
+  e.ln("${pub_}fn xml_mergedepth__${n}(base: ${n}, e: xml.Element, d__: Int) -> ${n} ! xml.XmlErr {", sp)
+  e.ln("  xmlcodec.depth_check(d__)?", sp)
   var attr_lines: List[(Str, Span)] = []
   var elem_lines: List[(Str, Span)] = []
   var paths: List[Str] = []
@@ -403,11 +408,11 @@ fn (var c: Checker) xml_decoder(sd: parser.StructDecl, shapes: List[XmlShape?], 
     if shape.scalar.is_empty() {
       let q = shape.qual
       if shape.coll == 1 {
-        set = "${x} = Some(${q}xml_merge__${shape.sname}(${x} ?? ${q}xml_zero__${shape.sname}(), c)?)"
+        set = "${x} = Some(${q}xml_mergedepth__${shape.sname}(${x} ?? ${q}xml_zero__${shape.sname}(), c, d__ + 1)?)"
       } else if shape.coll == 2 {
-        set = "${x}.push(${q}xml_from_tree__${shape.sname}(c)?)"
+        set = "${x}.push(${q}xml_mergedepth__${shape.sname}(${q}xml_zero__${shape.sname}(), c, d__ + 1)?)"
       } else {
-        set = "${x} = ${q}xml_merge__${shape.sname}(${x}, c)?"
+        set = "${x} = ${q}xml_mergedepth__${shape.sname}(${x}, c, d__ + 1)?"
       }
     } else {
       let val = scalar_read(shape.scalar, "xmlcodec.direct_text(c)")

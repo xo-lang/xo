@@ -168,6 +168,20 @@ pub fn parse_root(text: Str) -> xml.Element ! xml.XmlErr {
   }
 }
 
+/// Go's maxUnmarshalDepth (encoding/xml read.go): an element nested this
+/// deep under the one Unmarshal was given is refused.
+const MAX_UNMARSHAL_DEPTH: Int = 10000
+
+/// derive Xml's decoder at nesting depth d (the root element 0): past
+/// MAX_UNMARSHAL_DEPTH, Go's errUnmarshalDepth ("exceeded max depth");
+/// without it an element nested 8M deep overflowed the stack (#133).
+pub fn depth_check(d: Int) -> () ! xml.XmlErr {
+  if d >= MAX_UNMARSHAL_DEPTH {
+    return Err(fail("exceeded max depth"))
+  }
+  Ok(())
+}
+
 /// The value of the attribute of that local name.
 pub fn attr_of(e: xml.Element, name: Str) -> Str? {
   for a in e.attrs {

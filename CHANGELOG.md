@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Security (std/xml): `xml.decode` of derive Xml types fails with "exceeded max depth" for an element 10000 deep, as Go's encoding/xml; a deeply nested document from a peer overflowed the stack.
 - Fixed: decoding a std struct with derive Json (for example `json.decode_str[trace.Span]`) no longer reports "missing field" for a field with a default when std is compiled separately and declared from its cached record.
 - Perf (std/ui): with `redact`, a change no viewer's page shows wakes no live page and costs a syncing page about 150 bytes (`same`): the page and each sync carry a digest of what the principal is shown (`data-xo-seen`, `Sync.seen`, `Up.seen`). Measured with examples/ui-shop at 200 users: one user's cart add woke 199 pages for 1.2 KB each before, none after.
 - Feature (std/websocket, every backend; task #89): `WsConn.writer` writes a message in pieces as 4096 byte frames (gorilla's NextWriter), `prepare` and `write_prepared` (PreparedMessage), `on_close` replaces the automatic close reply (SetCloseHandler), `local_addr` and `remote_addr`, and `websocket.is_upgrade(req)` (IsWebSocketUpgrade).

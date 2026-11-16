@@ -1,5 +1,19 @@
 # std/xml changes
 
+## 2026-11-16: security: decode stops at elements 10000 deep (Go's maxUnmarshalDepth)
+
+- Kind: security
+- Commit: this push
+- Found by: Xo Lang 1, checking the other derives after #132 (task #133): an element nested 8M deep overflowed the stack in derive Xml's decoder
+- Go reference: go1.26.1 encoding/xml read.go maxUnmarshalDepth, errUnmarshalDepth
+- Test: golden xml_depth (arm64, LLVM): 9999 levels decode, 10000 and 1000000 are "exceeded max depth", and the same through a list field
+- Timing: none (one compare per nested element)
+
+`xml.decode` of a derive Xml type fails with "exceeded max depth" for an
+element 10000 deep under the root, as Go's Unmarshal does (derive Xml's
+merge counts the depth through xmlcodec.depth_check). Before, any peer
+could crash a program that decodes untrusted XML by nesting deeply.
+
 ## 2026-11-16: fix: a second root or text outside the root is the error before a later syntax error
 
 - Kind: fix

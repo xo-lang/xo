@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+xml 0: depth 0
+xml 9999: depth 9999
+xml 10000: exceeded max depth
+xml 1000000: exceeded max depth
+xml list 9999: ok
+xml list 10000: exceeded max depth
+json 10000: ok
+json 10001: at $: invalid JSON: invalid character '{' exceeded max depth
+--- stderr

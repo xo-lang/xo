@@ -1,0 +1,58 @@
+// derive Xml's decoder stops at Go's maxUnmarshalDepth (an element 10000
+// deep under the root is "exceeded max depth"); without it an element
+// nested 8M deep overflowed the stack (#133). derive Json stops past
+// 10000 nested values, as Go's encoding/json scanner (maxNestingDepth).
+use std/json
+use std/xml
+
+struct X {
+  c: X? = None
+} derive Xml
+
+struct XL {
+  c: List[XL] = []
+} derive Xml
+
+struct J {
+  c: J? = None
+} derive Json
+
+fn rep(s: Str, n: Int) -> Str {
+  var b = StrBuilder.new()
+  for _ in 0..n {
+    b.write(s)
+  }
+  b.freeze()
+}
+
+fn xdepth(x: X) -> Int {
+  var d = 0
+  var cur = x.c
+  while let Some(c) = cur {
+    d += 1
+    cur = c.c
+  }
+  d
+}
+
+fn main(os: Os) {
+  for n in [0, 9999, 10000, 1000000] {
+    match xml.decode[X]("<X>${rep("<c>", n)}${rep("</c>", n)}</X>") {
+      Ok(v) => os.stdio.println("xml ${n}: depth ${xdepth(v)}")
+      Err(e) => os.stdio.println("xml ${n}: ${e}")
+    }
+  }
+  // through a list field: each <c> is one more level
+  for n in [9999, 10000] {
+    match xml.decode[XL]("<XL>${rep("<c>", n)}${rep("</c>", n)}</XL>") {
+      Ok(_) => os.stdio.println("xml list ${n}: ok")
+      Err(e) => os.stdio.println("xml list ${n}: ${e}")
+    }
+  }
+  for n in [10000, 10001] {
+    match json.decode_str[J]("${rep("{\"c\":", n - 1)}{}${rep("}", n - 1)}") {
+      Ok(_) => os.stdio.println("json ${n}: ok")
+      Err(e) => os.stdio.println("json ${n}: ${e}")
+    }
+  }
+}

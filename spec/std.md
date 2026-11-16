@@ -7407,7 +7407,7 @@ fn (e: Element) encode(indent: Str = "") -> Str ! XmlErr
 pub fn escape(s: Str) -> Str
 pub fn escape_to(var out: StrBuilder, s: Str)
 pub fn encode_value[T: Xml](v: T, indent: Str = "") -> Str ! XmlErr   // Go's Marshal, MarshalIndent
-pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's Unmarshal
+pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's Unmarshal; "exceeded max depth" for an element 10000 deep
 ```
 
 - `tokens` is Go's Decoder.Token until EOF:
@@ -7479,7 +7479,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
     supported yet.
   - The generated code calls std/xmlcodec (`Writer`, which writes an
     encoded struct's text with no element tree, `events`, `int_of`,
-    `float_of`, `bool_of`, `float_text`, `parse_root`), written once in std/native/xmlcodec.xo and compiled by every backend
+    `float_of`, `bool_of`, `float_text`, `parse_root`, `depth_check`), written once in std/native/xmlcodec.xo and compiled by every backend
     (decision 0312). Programs do not call it.
   - Tests: a Go-generated corpus of 1,500 documents decoded into a
     struct and re-encoded (compact and indented) in the xml corpus, on

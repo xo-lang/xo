@@ -1,5 +1,17 @@
 # std/xmlcodec changes
 
+## 2026-11-16: feature: depth_check, derive Xml's nesting limit
+
+- Kind: feature
+- Commit: this push
+- Found by: task #133 (derive Xml decode had no depth limit)
+- Go reference: go1.26.1 encoding/xml read.go maxUnmarshalDepth
+- Test: golden xml_depth (arm64, LLVM)
+- Timing: none
+
+`xmlcodec.depth_check(d)` is "exceeded max depth" from depth 10000, which
+derive Xml's generated decoder calls once per nested element.
+
 ## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
 
 - Kind: refactor
