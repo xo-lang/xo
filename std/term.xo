@@ -71,7 +71,7 @@ pub fn (p: Painter) gray(s: Str) -> Str { sgr(p, "90", s) }
 
 /// s without ANSI escape sequences (to measure or log painted text).
 pub fn strip(s: Str) -> Str {
-  if !s.contains("\u{1b}") {
+  if !s.contains_rune('\u{1b}') {
     return s
   }
   let b = s.bytes()

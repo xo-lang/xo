@@ -1,5 +1,18 @@
 # std/term changes
 
+## 2026-11-16: perf: strip checks for ESC with one byte search (#103)
+
+- Kind: perf
+- Commit: this push
+- Found by: #103 (term.strip's plain path, Str.contains of one byte through the general substring search)
+- Go reference: strings.Contains(s, "\x1b") (IndexByte)
+- Test: bench/perf/strcontains strip (output matches its Go twin); goldens term_stdio
+- Shipped in: not yet released
+
+strip's check for an escape uses contains_rune, one find_byte, instead of
+Str.contains' general search. Host 1, `xo bench --ab` on
+bench/perf/strcontains strip (20M calls on short lines): 0.853 of before
+(100.6 to 85.8 ms). Mac: xo 0.08 s, Go 0.06 to 0.07 s.
 ## 2026-11-16: perf: painting with one allocation, color_enabled at Go's speed
 
 - Kind: perf
