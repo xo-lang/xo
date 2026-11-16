@@ -39,6 +39,9 @@ type clientStream struct {
 	// body; end runs once when it ends or the stream closes
 	memch *Chan[Bytes]
 	end   func(tk *Task)
+	// trace: the request's recorder (decision 0677), its events after the
+	// head delivered at the body's end or close
+	trace *traceRec
 }
 
 // XoDebug implements Debug.
@@ -136,7 +139,10 @@ func (c Http_Client) M_open(tk *Task, req Http_Request) Result[Http_ClientStream
 		return openMem(tk, c, fd, req, rawURL)
 	}
 	return fx(tk, "http.open", true, func() []any { return []any{req.F_method, rawURL} }, func() Result[Http_ClientStream, Http_ClientErr] {
-		body, cancel, head, trailer, e := c.openNet(tk, req, rawURL)
+		rec := newTraceRec(req)
+		body, cancel, head, trailer, e := c.openNet(tk, req, rawURL, rec)
+		// the events up to the head (decision 0677)
+		rec.deliver(tk)
 		if body == nil {
 			return Err[Http_ClientStream](e)
 		}
@@ -144,7 +150,7 @@ func (c Http_Client) M_open(tk *Task, req Http_Request) Result[Http_ClientStream
 		if req.XIdle > 0 {
 			idle = time.Duration(req.XIdle)
 		}
-		s := &clientStream{body: body, idle: idle, cancel: cancel, trailer: trailer}
+		s := &clientStream{body: body, idle: idle, cancel: cancel, trailer: trailer, trace: rec}
 		// a dropped stream closes its body (the native counted handle's
 		// free hook)
 		runtime.SetFinalizer(s, func(x *clientStream) { x.release() })
@@ -165,6 +171,14 @@ func (s Http_ClientStream) M_read(tk *Task, max int64) Result[Option[Bytes], Htt
 		return Err[Option[Bytes]](clientErr(5, ""))
 	}
 	x := s.Xs
+	// the trace's remaining events once the body ended or failed, after the
+	// lock (on may use the stream)
+	var ended bool
+	defer func() {
+		if ended {
+			x.trace.deliver(tk)
+		}
+	}()
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	if x.done {
@@ -203,14 +217,17 @@ func (s Http_ClientStream) M_read(tk *Task, max int64) Result[Option[Bytes], Htt
 			}
 			if err == io.EOF {
 				x.finish()
+				ended = true
 			}
 			return Ok[Option[Bytes], Http_ClientErr](Some(Bytes(buf[:n])))
 		}
 		if err == io.EOF {
 			x.finish()
+			ended = true
 			return Ok[Option[Bytes], Http_ClientErr](None[Bytes]())
 		}
 		if err != nil {
+			ended = true
 			x.done = true
 			x.release()
 			var ne net.Error
@@ -251,10 +268,11 @@ func (s Http_ClientStream) M_close(tk *Task) {
 		return
 	}
 	x.mu.Lock()
-	defer x.mu.Unlock()
 	x.done = true
 	x.release()
 	x.endMem(tk)
+	x.mu.Unlock()
+	x.trace.deliver(tk)
 }
 
 // endMem ends a duplex FakeNet exchange once (openMem's end).

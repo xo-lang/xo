@@ -33,6 +33,7 @@ use native/llrt/testworld
 use native/llrt/twrun
 use native/rthttp
 use native/llrt/raw
+use native/llrt/sysio
 use native/tls as ntls
 
 // ---------------------------------------------------------------------------
@@ -85,6 +86,8 @@ struct Request {
   trailer_fn: List[fn() -> Map[Str, Str]] = []
   /// with_trailers' names, canonical, declared in the head. Hidden.
   trailer_names: List[Str] = []
+  /// with_trace's on (decision 0677), one entry or none. Hidden.
+  trace: List[fn(http.TraceEvent) uses sync] = []
 }
 
 struct ReqValue {
@@ -3846,6 +3849,120 @@ fn (r: Request) with_trailers(names: List[Str], f: fn() -> Map[Str, Str]) -> Req
   r with {trailer_fn: [f], trailer_names: ks}
 }
 
+fn (r: Request) with_trace(on: fn(http.TraceEvent) uses sync) -> Request { r with {trace: [on]} }
+
+// ---------------------------------------------------------------------------
+// Client trace events (decision 0677): the transport (client_do, hclient,
+// netconn) records each event through a recorder as it reaches it, and
+// trace_deliver gives the recorded ones to the request's on at send's
+// return, open's head, and an opened body's end or close.
+
+/// A request's trace: its on and the events recorded and not yet given.
+struct Tracer {
+  on: fn(http.TraceEvent) uses sync
+  evs: Mutex[List[http.TraceEvent]]
+}
+
+/// The tracer of req: one entry, or none without with_trace.
+fn tracer_of(req: Request) -> List[Tracer] {
+  if req.trace.is_empty() {
+    return []
+  }
+  [Tracer{on: req.trace[0], evs: Mutex[List[http.TraceEvent]].new([])}]
+}
+
+/// The recorder client_do takes (none without a tracer): kind (hclient.TR_*)
+/// and the fields joined by U+0001, stamped with the wall clock now.
+fn tracer_rec(t: List[Tracer]) -> List[fn(Int, Str) uses sync] {
+  if t.is_empty() {
+    return []
+  }
+  let evs = t[0].evs
+  [fn(k: Int, f: Str) uses sync {
+    let e = trace_event(k, f, Time.from_unix_nanos(sysio.clock_now()))
+    evs.with(fn(var l: List[http.TraceEvent]) { l.push(e) })
+  }]
+}
+
+/// Gives the events recorded so far to on, in order.
+fn trace_deliver(t: List[Tracer]) {
+  for x in t {
+    let evs = x.evs.with(fn(var l: List[http.TraceEvent]) -> List[http.TraceEvent] {
+      let o = l
+      l = []
+      o
+    })
+    for e in evs {
+      x.on(e)
+    }
+  }
+}
+
+/// Field i of a recorded event's fields ("" past the end).
+fn tr_field(p: List[Str], i: Int) -> Str { if i < p.len() { p[i] } else { "" } }
+
+/// An error field: None when empty.
+fn tr_err(p: List[Str], i: Int) -> Str? {
+  let v = tr_field(p, i)
+  if v.is_empty() { None } else { Some(v) }
+}
+
+/// The TraceEvent of a recorded kind and fields.
+fn trace_event(k: Int, f: Str, at: Time) -> http.TraceEvent {
+  let p = f.split("\u{1}")
+  match k {
+    hclient.TR_GOT_CONN => http.TraceEvent.GotConn(reused: tr_field(p, 0) == "1", was_idle: tr_field(p, 1) == "1", idle: Duration.from_nanos(Int.parse(tr_field(p, 2)) ?? 0), at: at)
+    hclient.TR_DNS_START => http.TraceEvent.DnsStart(host: tr_field(p, 0), at: at)
+    hclient.TR_DNS_DONE => http.TraceEvent.DnsDone(addrs: if tr_field(p, 0).is_empty() { [] } else { tr_field(p, 0).split("\u{2}") }, err: tr_err(p, 1), at: at)
+    hclient.TR_CONNECT_START => http.TraceEvent.ConnectStart(network: tr_field(p, 0), addr: tr_field(p, 1), at: at)
+    hclient.TR_CONNECT_DONE => http.TraceEvent.ConnectDone(network: tr_field(p, 0), addr: tr_field(p, 1), err: tr_err(p, 2), at: at)
+    hclient.TR_TLS_START => http.TraceEvent.TlsHandshakeStart(at: at)
+    hclient.TR_TLS_DONE => http.TraceEvent.TlsHandshakeDone(version: tr_field(p, 0), alpn: tr_field(p, 1), err: tr_err(p, 2), at: at)
+    hclient.TR_WROTE_HEADERS => http.TraceEvent.WroteHeaders(at: at)
+    hclient.TR_WROTE_REQUEST => http.TraceEvent.WroteRequest(err: tr_err(p, 0), at: at)
+    hclient.TR_FIRST_BYTE => http.TraceEvent.GotFirstResponseByte(at: at)
+    hclient.TR_GOT_100 => http.TraceEvent.Got100Continue(at: at)
+    hclient.TR_PUT_IDLE => http.TraceEvent.PutIdleConn(err: tr_err(p, 0), at: at)
+    _ => http.TraceEvent.GetConn(host_port: tr_field(p, 0), at: at)
+  }
+}
+
+fn traceevent_at(e: http.TraceEvent) -> Time {
+  match e {
+    http.TraceEvent.GetConn(at: t, ..) => t
+    http.TraceEvent.GotConn(at: t, ..) => t
+    http.TraceEvent.DnsStart(at: t, ..) => t
+    http.TraceEvent.DnsDone(at: t, ..) => t
+    http.TraceEvent.ConnectStart(at: t, ..) => t
+    http.TraceEvent.ConnectDone(at: t, ..) => t
+    http.TraceEvent.TlsHandshakeStart(at: t) => t
+    http.TraceEvent.TlsHandshakeDone(at: t, ..) => t
+    http.TraceEvent.WroteHeaders(at: t) => t
+    http.TraceEvent.WroteRequest(at: t, ..) => t
+    http.TraceEvent.GotFirstResponseByte(at: t) => t
+    http.TraceEvent.Got100Continue(at: t) => t
+    http.TraceEvent.PutIdleConn(at: t, ..) => t
+  }
+}
+
+fn traceevent_name(e: http.TraceEvent) -> Str {
+  match e {
+    http.TraceEvent.GetConn(..) => "GetConn"
+    http.TraceEvent.GotConn(..) => "GotConn"
+    http.TraceEvent.DnsStart(..) => "DNSStart"
+    http.TraceEvent.DnsDone(..) => "DNSDone"
+    http.TraceEvent.ConnectStart(..) => "ConnectStart"
+    http.TraceEvent.ConnectDone(..) => "ConnectDone"
+    http.TraceEvent.TlsHandshakeStart(..) => "TLSHandshakeStart"
+    http.TraceEvent.TlsHandshakeDone(..) => "TLSHandshakeDone"
+    http.TraceEvent.WroteHeaders(..) => "WroteHeaders"
+    http.TraceEvent.WroteRequest(..) => "WroteRequest"
+    http.TraceEvent.GotFirstResponseByte(..) => "GotFirstResponseByte"
+    http.TraceEvent.Got100Continue(..) => "Got100Continue"
+    http.TraceEvent.PutIdleConn(..) => "PutIdleConn"
+  }
+}
+
 /// with_full_duplex (decision 0433): the response marked; HTTP/2 streams
 /// are full duplex already.
 fn response_with_full_duplex(r: http.Response) -> http.Response {
@@ -4048,6 +4165,9 @@ fn (r: Request) with_body_reader(b: http.BodyReader) -> Request {
 struct ClientStream {
   hd: http.ResponseHead
   st: Mutex[StreamState]
+  /// the request's trace (decision 0677): its events after the head go
+  /// to on at the body's end or close
+  tracer: List[Tracer] = []
 }
 
 struct StreamState {
@@ -4086,6 +4206,8 @@ struct StreamState {
   shared: Bool = false
   /// the response's trailers (decision 0433), set when its body ends
   trailers: Map[Str, Str] = {}
+  /// the request's trace recorder (decision 0677), none without one
+  tr: List[fn(Int, Str) uses sync] = []
 }
 
 /// What client_do gets of a request: its body and source, and its
@@ -4205,7 +4327,12 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   }
   let ta = trailer_args(req)
   let dsrc = if duplex.is_empty() || ta.src.is_empty() { ta.src } else { [ta.src[0], poll_source(ta.src[0], duplex[0])] }
-  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, dsrc, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put, max_idle: c.max_idle)
+  let tracer = tracer_of(req)
+  let tr = tracer_rec(tracer)
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, dsrc, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put, max_idle: c.max_idle, tr: tr)
+  // the trace's events up to the head (decision 0677); the rest at the
+  // body's end or close
+  trace_deliver(tracer)
   match r.err {
     0 => ()
     _ => {
@@ -4228,8 +4355,8 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   let (h, _) = fields_in(r.headers)
   let gz = if r.gz { Some(compress.decompressor(compress.Format.Gzip)) } else { None }
   let idle = if req.idle_ns > 0 { req.idle_ns } else { c.timeout.nanos() }
-  let st = StreamState{conn: if r.open { r.conn } else { None }, h2: r.h2, read: r.read, https: r.https, addr: r.addr, name: r.name, roots: c.roots, buffered: r.body, off: 0, gz: gz, pending: b"", done: false, idle_ns: idle, dsrv: dsrv, src_close: req.src}
-  Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: r.status, headers: h}, st: Mutex[StreamState].new(st)}))
+  let st = StreamState{conn: if r.open { r.conn } else { None }, h2: r.h2, read: r.read, https: r.https, addr: r.addr, name: r.name, roots: c.roots, buffered: r.body, off: 0, gz: gz, pending: b"", done: false, idle_ns: idle, dsrv: dsrv, src_close: req.src, tr: tr}
+  Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: r.status, headers: h}, st: Mutex[StreamState].new(st), tracer: tracer}))
 }
 
 fn (s: ClientStream) head() -> http.ResponseHead { s.hd }
@@ -4365,7 +4492,7 @@ fn end_conn(x: StreamState, r: rthttp.CResp, keep: Bool, s: Int) {
   if x.shared || (x.dsrv.is_some() && !(keep && s == hclient.CC_OK && hclient.wait_sent(r))) {
     hclient.end_shared(r, s, "")
   } else {
-    hclient.end_keep(r, keep, x.https, x.addr, x.name, x.roots, s, "")
+    hclient.end_keep(r, keep, x.https, x.addr, x.name, x.roots, s, "", x.tr)
   }
 }
 
@@ -4453,6 +4580,12 @@ fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! http.ClientErr uses net.
     }
     Ok(None)
   })
+  if !s.tracer.is_empty() {
+    match r {
+      Ok(Some(_)) => ()
+      _ => trace_deliver(s.tracer)
+    }
+  }
   r
 }
 
@@ -4541,6 +4674,7 @@ fn (s: ClientStream) close() {
     x.gz = None
     x.done = true
   })
+  trace_deliver(s.tracer)
 }
 
 fn (c: Client) get(url: Str) -> http.Response ! http.ClientErr uses net.dial { c.send(new_request("GET", url)) }
@@ -4738,7 +4872,10 @@ fn (c: Client) send(req0: Request) -> http.Response ! http.ClientErr uses net.di
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
   // a wasi:http component sends a whole body (decision 0447)
   let ta = trailer_args(if wasiworld.component() { src_whole(req)? } else { req })
-  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), expect: req.expect_ns, proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put, max_idle: c.max_idle)
+  let tracer = tracer_of(req)
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), expect: req.expect_ns, proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put, max_idle: c.max_idle, tr: tracer_rec(tracer))
+  // the trace's events, the body read and the connection pooled (decision 0677)
+  trace_deliver(tracer)
   // done with the request: its body's reader closes (net/http closes
   // the request body), so a later write fails instead of waiting
   close_src(req.src)

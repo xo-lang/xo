@@ -185,7 +185,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | net/http/httputil | std/http reverse_proxy | partial | ReverseProxy as `http.reverse_proxy` (a handle_stream route); DumpRequest and the rest missing (stdaudit 2026-11-10). |
 | net/http/cookiejar | std/cookiejar | done | Jar with Go's matching rules, the clock a parameter (spec/std.md 59, decision 0475); `new_with(psl:)` consults std/publicsuffix (Options.PublicSuffixList, decision 0617 B), and Client.with_jar wires it. Last verified: 2026-11-15. |
 | net/http/pprof | std/debug router (decision 0325) | done | CPU and heap profiles over HTTP under a prefix the program mounts, behind its auth function; XO_PROF for files (decision 0238). |
-| net/http/httptrace | none | not planned | Tracing is the runtime's (decision 0240). |
+| net/http/httptrace | std/http Request.with_trace, TraceEvent | done | WithClientTrace as `Request.with_trace(on)` (decision 0677): GetConn, GotConn, DNS, Connect, TLS handshake, WroteHeaders, WroteRequest, GotFirstResponseByte, Got100Continue, PutIdleConn, each with its time, delivered when send returns, open returns the head, or an opened body ends; WroteHeaderField, Wait100Continue and Got1xxResponse not offered. |
 | net/http/cgi, net/http/fcgi | none | not planned | Legacy deployment models. |
 | net/smtp | std/smtp | done | SendMail as `smtp.send` (STARTTLS required by default, PLAIN, CRAM-MD5), decision 0290. Not planned: the step by step Client. |
 | net/mail | std/mail | done | ParseAddress, ParseAddressList, Address.String (decision 0282); ReadMessage, Header.Get, ParseDate, and a message builder, compose (decision 0290). Not planned: AddressParser with a custom charset reader. |

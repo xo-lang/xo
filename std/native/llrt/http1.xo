@@ -3183,21 +3183,52 @@ fn (var x: H2X) block_done(r: rthttp.CResp) -> (Bool, Str) {
 /// Transport.RoundTrip on one stream), then hands the connection and its
 /// state back to the pool (hclient.h2_end). hclient.retry tells whether
 /// the request goes again on a new connection.
-fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int, src: List[fn(Int) -> BodyPart uses sync] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = []) {
+fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int, src: List[fn(Int) -> BodyPart uses sync] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], tr: List[fn(Int, Str) uses sync] = []) {
   var x = h2_begin(r, method, target, host, names, values, bn, src, tnames, tfn)
+  if !tr.is_empty() {
+    // traced (decision 0677): up to the head first, for its events
+    h2_trace_head(r, x, tr)
+    if x.res != CC_OK || x.ended {
+      h2_done(r, x)
+      return
+    }
+  }
   h2_pump(r, x, H2_TO_END)
   h2_done(r, x)
 }
 
+/// A traced HTTP/2 exchange (decision 0677) up to the response's head:
+/// WroteHeaders once its header frames went, WroteRequest and
+/// GotFirstResponseByte when the head came (the body is sent by the
+/// pump, so both are the head's time).
+fn h2_trace_head(r: rthttp.CResp, var x: H2X, tr: List[fn(Int, Str) uses sync]) {
+  if x.res != CC_OK {
+    hclient.trace(tr, hclient.TR_WROTE_REQUEST, if x.why.is_empty() { "http2: request not written" } else { x.why })
+    return
+  }
+  hclient.trace(tr, hclient.TR_WROTE_HEADERS, "")
+  h2_pump(r, x, H2_TO_HEAD)
+  if x.headers || x.seen {
+    hclient.trace(tr, hclient.TR_WROTE_REQUEST, "")
+    hclient.trace(tr, hclient.TR_FIRST_BYTE, "")
+  } else if x.res != CC_OK {
+    hclient.trace(tr, hclient.TR_WROTE_REQUEST, if x.why.is_empty() { "http2: request failed" } else { x.why })
+  }
+}
+
 /// An HTTP/2 exchange on r: whole (h2_exchange), or for a stream up to
 /// the response's head, kept open (Some) unless it failed or ended there.
-fn h2_run(r: rthttp.CResp, stream: Bool, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int, src: List[fn(Int) -> BodyPart uses sync] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = []) -> H2X? {
+fn h2_run(r: rthttp.CResp, stream: Bool, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int, src: List[fn(Int) -> BodyPart uses sync] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], tr: List[fn(Int, Str) uses sync] = []) -> H2X? {
   if !stream {
-    h2_exchange(r, method, target, host, names, values, bn, src, tnames, tfn)
+    h2_exchange(r, method, target, host, names, values, bn, src, tnames, tfn, tr)
     return None
   }
   var x = h2_begin(r, method, target, host, names, values, bn, src, tnames, tfn)
-  h2_pump(r, x, H2_TO_HEAD)
+  if tr.is_empty() {
+    h2_pump(r, x, H2_TO_HEAD)
+  } else {
+    h2_trace_head(r, x, tr)
+  }
   if x.res != CC_OK || x.ended {
     h2_done(r, x)
     return None
@@ -3951,13 +3982,15 @@ fn field_at(h: List[Str], k: Str) -> Int {
 /// skipped; a chunked body is decoded and its Content-Length dropped; a
 /// body ends at its Content-Length or, without one, at the end of the
 /// stream; HEAD, 1xx, 204, and 304 responses have none.
-fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
+fn read_response(r: rthttp.CResp, method: Str, tr: List[fn(Int, Str) uses sync] = []) -> Exchange {
   // ReadResponse's errors come after Transport's prefix; the body's, as
   // io.ReadAll returns them, without the request (the "\u{1}" mark)
   let broken = "net/http: HTTP/1.x transport connection broken: "
   // no byte of a response yet
   var first = true
+  var got = tr.is_empty()
   while true {
+    trace_first(tr, r, got)
     var h = parse_response(hclient.input(r, 0), false, method)
     while h.res == NEED || h.res == TOO_LARGE {
       if h.res == TOO_LARGE {
@@ -3965,6 +3998,7 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
       }
       let avail = hclient.avail(r)
       let f = hclient.more(r)
+      trace_first(tr, r, got)
       if f == CC_EOF {
         if avail == 0 {
           return if first { ex_none(CC_ERR, "EOF") } else { ex_fail(CC_ERR, "EOF") }
@@ -4046,23 +4080,34 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
 /// the request's header does not count, as Transport looks only at
 /// Request.Close), else closed. A request
 /// that could not be written is an exchange with no response byte.
-fn h1_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots, src: List[fn(Int) -> BodyPart uses sync] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], expect: Int = 0) -> Exchange {
+fn h1_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots, src: List[fn(Int) -> BodyPart uses sync] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], expect: Int = 0, tr: List[fn(Int, Str) uses sync] = []) -> Exchange {
   // Expect: 100-continue (with_expect_continue): the head first, the body
   // after a 100 or the timeout, never after a final response (Transport's
   // ExpectContinueTimeout)
   let hold = expect > 0 && (body.len() > 0 || !src.is_empty())
   hclient.request(r, method, target, host, hk, hv, body, !src.is_empty(), tnames, hold)
+  // the head is written (decision 0677: Go's WroteHeaders comes as it is
+  // buffered, before a write can fail)
+  hclient.trace(tr, hclient.TR_WROTE_HEADERS, "")
   if hclient.err(r) != 0 {
+    trace_wrote(tr, r, CC_ERR)
     return ex_none(CC_ERR, "")
   }
   var withheld = false
+  // the response's first byte was traced with a 100 Continue
+  var rtr = tr
   if hold {
-    withheld = !await_continue(r, method, expect)
+    let (send, got100) = await_continue(r, method, expect, tr)
+    withheld = !send
+    if got100 {
+      rtr = []
+    }
   }
   if withheld {
     // the server answered without asking for the body: the response is
     // the result, and a connection with an unsent body is not reused
-    var x = read_response(r, method)
+    hclient.trace(tr, hclient.TR_WROTE_REQUEST, "")
+    var x = read_response(r, method, rtr)
     x.keep = false
     hclient.end_keep(r, false, https, addr, name, roots, x.s, x.why)
     return x
@@ -4070,19 +4115,44 @@ fn h1_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str],
   if hold && src.is_empty() {
     hclient.send_body(r, body)
     if hclient.err(r) != 0 {
+      trace_wrote(tr, r, CC_ERR)
       return ex_none(CC_ERR, "")
     }
   }
   let sx = send_src(r, src, hk, tnames, tfn)
+  trace_wrote(tr, r, sx.s)
   if sx.s != CC_OK {
     hclient.end_keep(r, false, https, addr, name, roots, sx.s, sx.why)
     return sx
   }
-  let x = read_response(r, method)
+  let x = read_response(r, method, rtr)
   // no keep-alive after a CONNECT, whatever the answer (GO-2026-6605,
   // Go 1.26.11's transport): its body or tunnel may still be in flight
-  hclient.end_keep(r, x.keep && method != "CONNECT", https, addr, name, roots, x.s, x.why)
+  hclient.end_keep(r, x.keep && method != "CONNECT", https, addr, name, roots, x.s, x.why, tr)
   x
+}
+
+/// WroteRequest (decision 0677) after a write that ended with s (CC_OK,
+/// else its failure; r's message names it when it has one).
+fn trace_wrote(tr: List[fn(Int, Str) uses sync], r: rthttp.CResp, s: Int) {
+  if tr.is_empty() {
+    return
+  }
+  if s == CC_OK {
+    hclient.trace(tr, hclient.TR_WROTE_REQUEST, "")
+    return
+  }
+  let m = hclient.msg(r)
+  hclient.trace(tr, hclient.TR_WROTE_REQUEST, if s == hclient.CC_TIMEOUT { "i/o timeout" } else if s == hclient.CC_CANCELED { "context canceled" } else if m.is_empty() { "write: broken pipe" } else { m })
+}
+
+/// GotFirstResponseByte (decision 0677) once r has a byte of the response
+/// buffered: got is set when it was recorded, or when nothing traces.
+fn trace_first(tr: List[fn(Int, Str) uses sync], r: rthttp.CResp, var got: Bool) {
+  if !got && hclient.avail(r) > 0 {
+    got = true
+    hclient.trace(tr, hclient.TR_FIRST_BYTE, "")
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -4115,11 +4185,13 @@ pub struct HeadRead {
 
 /// The head of the response on r, as read_response reads it (an
 /// informational one skipped), and how its body follows.
-pub fn read_head(r: rthttp.CResp, method: Str) -> HeadRead {
+pub fn read_head(r: rthttp.CResp, method: Str, tr: List[fn(Int, Str) uses sync] = []) -> HeadRead {
   let broken = "net/http: HTTP/1.x transport connection broken: "
   let nob = BodyRead{mode: 0, done: true}
   var first = true
+  var got = tr.is_empty()
   while true {
+    trace_first(tr, r, got)
     var h = parse_response(hclient.input(r, 0), false, method)
     while h.res == NEED || h.res == TOO_LARGE {
       if h.res == TOO_LARGE {
@@ -4127,6 +4199,7 @@ pub fn read_head(r: rthttp.CResp, method: Str) -> HeadRead {
       }
       let avail = hclient.avail(r)
       let f = hclient.more(r)
+      trace_first(tr, r, got)
       if f == CC_EOF {
         if avail == 0 {
           return HeadRead{x: if first { ex_none(CC_ERR, "EOF") } else { ex_fail(CC_ERR, "EOF") }, b: nob}
@@ -4314,9 +4387,11 @@ pub fn cbody_next(r: rthttp.CResp, var b: BodyRead, max: Int) -> BodyStep {
 
 /// h1_round up to the response's head (decision 0404): the connection
 /// stays r's for the body (cbody_next), or is closed on a failure.
-fn h1_head_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots, src: List[fn(Int) -> BodyPart uses sync] = [], duplex: List[fn(fn() -> () uses sync) uses sync] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = []) -> HeadRead {
+fn h1_head_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots, src: List[fn(Int) -> BodyPart uses sync] = [], duplex: List[fn(fn() -> () uses sync) uses sync] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], tr: List[fn(Int, Str) uses sync] = []) -> HeadRead {
   hclient.request(r, method, target, host, hk, hv, body, !src.is_empty(), tnames)
+  hclient.trace(tr, hclient.TR_WROTE_HEADERS, "")
   if hclient.err(r) != 0 {
+    trace_wrote(tr, r, CC_ERR)
     return HeadRead{x: ex_none(CC_ERR, ""), b: BodyRead{mode: 0, done: true}}
   }
   if !src.is_empty() && !duplex.is_empty() {
@@ -4328,13 +4403,14 @@ fn h1_head_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[
     let spawn = duplex[0]
     spawn(fn() {
       let sx = send_src(r, src, hk, tnames, tfn)
+      trace_wrote(tr, r, sx.s)
       if sx.s != CC_OK {
         hclient.shut_wr(r)
       } else {
         hclient.mark_sent(r)
       }
     })
-    let hd = read_head(r, method)
+    let hd = read_head(r, method, tr)
     if hd.x.s != CC_OK {
       // the sender may still be writing: its connection is freed with r
       hclient.end_shared(r, hd.x.s, hd.x.why)
@@ -4342,11 +4418,12 @@ fn h1_head_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[
     return hd
   }
   let sx = send_src(r, src, hk, tnames, tfn)
+  trace_wrote(tr, r, sx.s)
   if sx.s != CC_OK {
     hclient.end_keep(r, false, https, addr, name, roots, sx.s, sx.why)
     return HeadRead{x: sx, b: BodyRead{mode: 0, done: true}}
   }
-  let hr = read_head(r, method)
+  let hr = read_head(r, method, tr)
   if hr.x.s != CC_OK {
     hclient.end_keep(r, false, https, addr, name, roots, hr.x.s, hr.x.why)
   }
@@ -4392,8 +4469,9 @@ fn trailer_text(tnames: Str, tfn: List[fn() -> List[Str]]) -> Str {
 /// Expect: 100-continue: true to send the body (a 100, the timeout, or a
 /// connection that fails, which the write reports), false when a final
 /// response came first (it stays unread in r's input). Other 1xx are
-/// skipped, as Transport does.
-fn await_continue(r: rthttp.CResp, method: Str, expect: Int) -> Bool {
+/// skipped, as Transport does. The second result tells whether the 100
+/// came (its GotFirstResponseByte and Got100Continue traced, decision 0677).
+fn await_continue(r: rthttp.CResp, method: Str, expect: Int, tr: List[fn(Int, Str) uses sync] = []) -> (Bool, Bool) {
   let saved = hclient.get_deadline(r)
   var until = hclient.cl_deadline(expect)
   if saved != 0 && saved < until {
@@ -4401,6 +4479,7 @@ fn await_continue(r: rthttp.CResp, method: Str, expect: Int) -> Bool {
   }
   hclient.put_deadline(r, until)
   var send = true
+  var got100 = false
   while true {
     var h = parse_response(hclient.input(r, 0), false, method)
     var failed = false
@@ -4416,6 +4495,9 @@ fn await_continue(r: rthttp.CResp, method: Str, expect: Int) -> Bool {
     }
     if h.res == OK && h.status == 100 {
       hclient.skip(r, h.used)
+      hclient.trace(tr, hclient.TR_FIRST_BYTE, "")
+      hclient.trace(tr, hclient.TR_GOT_100, "")
+      got100 = true
       break
     }
     if h.res == OK && h.status > 100 && h.status < 200 && h.status != 101 {
@@ -4427,7 +4509,7 @@ fn await_continue(r: rthttp.CResp, method: Str, expect: Int) -> Bool {
     break
   }
   hclient.put_deadline(r, saved)
-  send
+  (send, got100)
 }
 
 /// Sends a streamed request body (decision 0404 stage C) after its head:
@@ -4639,7 +4721,7 @@ fn jar_keep(put: List[fn(Str, List[Str])], raw: Str, headers: List[Str]) {
 }
 
 /// defaultCheckRedirect, the headers a redirect drops, refererForURL).
-pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart uses sync] = [], duplex: List[fn(fn() -> () uses sync) uses sync] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], h2cfg: List[Int] = [], expect: Int = 0, proxy: List[fn(Str) -> Str] = [], jar_get: List[fn(Str) -> Str] = [], jar_put: List[fn(Str, List[Str])] = [], max_idle: Int = 0) -> CResult {
+pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart uses sync] = [], duplex: List[fn(fn() -> () uses sync) uses sync] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], h2cfg: List[Int] = [], expect: Int = 0, proxy: List[fn(Str) -> Str] = [], jar_get: List[fn(Str) -> Str] = [], jar_put: List[fn(Str, List[Str])] = [], max_idle: Int = 0, tr: List[fn(Int, Str) uses sync] = []) -> CResult {
   if !valid_method(m) {
     return cfail(1, "net/http: invalid method " + go_quote(m))
   }
@@ -4846,12 +4928,12 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       rbody = x.body
       jar_keep(jar_put, cut, headers)
     } else {
-      var r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, true, hop_h2c, alpn, h2cfg, max_idle)
+      var r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, true, hop_h2c, alpn, h2cfg, max_idle, tr)
       // stream over HTTP/2 (decision 0404 stage B2): the exchange kept open
       // after the head
       var h2x: H2X? = None
       if hclient.h2(r) {
-        h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn)
+        h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn, tr)
         if hclient.retry(r) && !src.is_empty() {
           // a streamed body cannot be sent again (Go's error without
           // Request.GetBody)
@@ -4860,9 +4942,9 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
         if hclient.retry(r) {
           // the server did not take the request on the pooled connection:
           // it goes on a new one, as Transport retries it
-          r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, false, hop_h2c, alpn, h2cfg, max_idle)
+          r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, false, hop_h2c, alpn, h2cfg, max_idle, tr)
           if hclient.h2(r) {
-            h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn)
+            h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn, tr)
           }
         }
       }
@@ -4871,26 +4953,26 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       var hb = BodyRead{mode: 0, done: true}
       if h1 {
         var x = if stream {
-          let hr = h1_head_round(r, method, target_of, sent_host, hk, hv, body, conn_https, conn_addr, conn_name, roots, src, duplex, tnames, tfn)
+          let hr = h1_head_round(r, method, target_of, sent_host, hk, hv, body, conn_https, conn_addr, conn_name, roots, src, duplex, tnames, tfn, tr)
           hb = hr.b
           hr.x
         } else {
-          h1_round(r, method, target_of, sent_host, hk, hv, body, conn_https, conn_addr, conn_name, roots, src, tnames, tfn, expect)
+          h1_round(r, method, target_of, sent_host, hk, hv, body, conn_https, conn_addr, conn_name, roots, src, tnames, tfn, expect, tr)
         }
         if x.none && hclient.reused(r) && replayable(method, hk) && src.is_empty() {
           // the pooled connection was dead (the server closed it): the
           // request goes once more on a new one, as Transport retries it
           // (decision 0303)
-          r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, false, hop_h2c, alpn, h2cfg, max_idle)
+          r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, false, hop_h2c, alpn, h2cfg, max_idle, tr)
           h1 = hclient.reading(r)
           if hclient.h2(r) {
-            h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn)
+            h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn, tr)
           } else if h1 && stream {
-            let hr = h1_head_round(r, method, target_of, sent_host, hk, hv, body, conn_https, conn_addr, conn_name, roots, src, duplex, tnames, tfn)
+            let hr = h1_head_round(r, method, target_of, sent_host, hk, hv, body, conn_https, conn_addr, conn_name, roots, src, duplex, tnames, tfn, tr)
             hb = hr.b
             x = hr.x
           } else if h1 {
-            x = h1_round(r, method, target_of, sent_host, hk, hv, body, conn_https, conn_addr, conn_name, roots, src, tnames, tfn, expect)
+            x = h1_round(r, method, target_of, sent_host, hk, hv, body, conn_https, conn_addr, conn_name, roots, src, tnames, tfn, expect, tr)
           }
         }
         if h1 && hclient.err(r) == 0 {
@@ -4948,7 +5030,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
             return cfail(hclient.err(r), hclient.msg(r)) with {tls: hclient.tls_fail(r)}
           }
         }
-        hclient.end_keep(r, hb.keep && method != "CONNECT", conn_https, conn_addr, conn_name, roots, CC_OK, "")
+        hclient.end_keep(r, hb.keep && method != "CONNECT", conn_https, conn_addr, conn_name, roots, CC_OK, "", tr)
       }
     }
     // a gzip body the request asked for (hclient.request and h2_exchange

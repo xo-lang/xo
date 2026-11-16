@@ -21,6 +21,7 @@ cmd_inherit # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 worl
 conn_close_write # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 copy_stream # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 log_sinks # wasip1 # network: the network (`rt.net_status`, log.conn_sink's connection): WASI preview1 has no sockets
+metrics_client_trace # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_certsel # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_keylog # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_resume # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
@@ -53,6 +54,7 @@ http_client # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has
 http_client_body_reader # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_client_connect_pool # wasip1 # network: the network (`rt.net_status`): WASI preview1 has no sockets
 http_client_keepalive # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_trace # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_client_pool_body # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_client_policy # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_client_responses # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets

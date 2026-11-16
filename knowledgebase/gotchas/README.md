@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [http-client-pool-scope-differs.md](http-client-pool-scope-differs.md): Observed 2026-11-16: native clients share one idle pool per process while the go backend's with_expect_continue requests pool apart (expectTransport), so a traced GotConn reused differed; tests close the connection first and send with Connection: close
 - [generated-test-nested-list-literals-compile-memory.md](generated-test-nested-list-literals-compile-memory.md): Observed 2026-11-16: a fuzz generator's 3,000 cases of nested List[Int] literals took over 33 GB to compile; encode lists as Strs and parse them at run time
 - [stdproven-batch-180-minute-cap.md](stdproven-batch-180-minute-cap.md): Observed 2026-11-16: a stdproven-offload fuzz batch hit offload.sh's 180 minute OFF_MAX_MIN and returned no evidence, the passed modules' too; one module per call, OFF_MAX_MIN=540 for a fuzz
 - [go126-cryptocustomrand-corpus.md](go126-cryptocustomrand-corpus.md): Observed: Go 1.26 ignores custom readers in crypto (cryptocustomrand), MaybeReadByte skips a byte at random, HPKE and ML-KEM take no reader; use cryptocustomrand=1, a constant reader, and Go-checked pins

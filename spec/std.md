@@ -2212,6 +2212,24 @@ fn (r: Request) with_idle_timeout(d: Duration) -> Request  // decision 0404
 fn (r: Request) with_expect_continue(timeout: Duration = 1s) -> Request  // Go's Transport.ExpectContinueTimeout: sets `Expect: 100-continue`; an HTTP/1.1 client sends the head, waits up to timeout for `100 Continue`, then sends the body; a final response first is the result and the body is never sent (the connection is not reused); other 1xx are skipped. A with_body_reader body is not read before the 100. No effect without a body, over HTTP/2 or for Client.open
 fn (r: Request) with_body_reader(b: BodyReader) -> Request // decision 0404
 fn (r: Request) with_trailers(names: List[Str], f: fn() -> Map[Str, Str]) -> Request   // names declared up front, f's values sent after the body (decision 0433)
+fn (r: Request) with_trace(on: fn(TraceEvent) uses sync) -> Request   // Go's httptrace.WithClientTrace (decision 0677): the events recorded as the transport reaches them, on called for them in order when send returns or open returns the head (or either fails), the rest (PutIdleConn last) when an opened body ends or closes; redirects' exchanges too
+enum TraceEvent {   // Go's ClientTrace hooks; err None for success, else Go's text; at: when the transport saw it
+  GetConn(host_port: Str, at: Time)          // the first hop (a proxy's, through one)
+  GotConn(reused: Bool, was_idle: Bool, idle: Duration, at: Time)
+  DnsStart(host: Str, at: Time)              // none for an IP address
+  DnsDone(addrs: List[Str], err: Str?, at: Time)
+  ConnectStart(network: Str, addr: Str, at: Time)
+  ConnectDone(network: Str, addr: Str, err: Str?, at: Time)
+  TlsHandshakeStart(at: Time)
+  TlsHandshakeDone(version: Str, alpn: Str, err: Str?, at: Time)
+  WroteHeaders(at: Time)
+  WroteRequest(err: Str?, at: Time)
+  GotFirstResponseByte(at: Time)
+  Got100Continue(at: Time)
+  PutIdleConn(err: Str?, at: Time)           // none for a connection the response closes, or an HTTP/2 one
+}
+fn (e: TraceEvent) at() -> Time
+fn (e: TraceEvent) name() -> Str             // Go's hook name: "GetConn", "DNSStart", "TLSHandshakeDone", ...
 
 pub fn reverse_proxy(client: Client, target: Url) -> ReverseProxy   // decision 0404
 struct ReverseProxy {}
@@ -8514,6 +8532,15 @@ fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str) -> fn(
   (`code` is `error` for a failed send), times
   `http_client_request_seconds{method}` and tracks
   `http_client_in_flight` (promhttp's InstrumentRoundTripper*).
+  `instrument_round_tripper_trace(it, clock)` (promhttp's
+  InstrumentRoundTripperTrace, decision 0677) returns a send whose
+  request traces its exchange (`Request.with_trace`): each field of the
+  `InstrumentTrace` it (got_conn, put_idle_conn, got_first_response_byte,
+  got_100_continue, dns_start, dns_done, connect_start, connect_done,
+  tls_handshake_start, tls_handshake_done, wrote_headers, wrote_request;
+  each `(fn(Float) uses sync)?`, None unobserved) gets the seconds from
+  the send's start to its event, when send returns. Go's Wait100Continue
+  has no event.
 - `runtime_collector()` registers `xo_heap_bytes` and
   `xo_heap_peak_bytes` (debug.mem_mapped, mem_peak; Go's NewGoCollector
   for Xo's runtime); `build_info(path, version, checksum)` registers

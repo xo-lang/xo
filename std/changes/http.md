@@ -14,6 +14,23 @@
 gzip_responses' rules for any Content-Encoding token, with `whole` for a
 buffered body and a BodyCoder (write, flush, finish; `uses sync`) for a
 stream. gzip_responses is now `encoded_responses("gzip", ...)`.
+## 2026-11-16: feature: client trace events (`Request.with_trace`, decision 0677)
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #55 (client_golang's InstrumentRoundTripperTrace needs Go's httptrace), the 0655 audit's open map.txt rows
+- Go reference: net/http/httptrace ClientTrace (go1.26.11): GetConn, GotConn, DNSStart, DNSDone, ConnectStart, ConnectDone, TLSHandshakeStart, TLSHandshakeDone, WroteHeaders, WroteRequest, GotFirstResponseByte, Got100Continue, PutIdleConn
+- Test: golden http_client_trace (fresh, reused, POST, redirect, a response closing its connection, refused dial, a streamed body read to its end and closed early, a name looked up, TLS fresh and reused; arm64 and LLVM equal to the go backend)
+- Affected: every backend; a wasip2 command dials through its host (one ConnectStart and Done, no DNS events); FakeNet exchanges record none
+- Shipped in: not yet released
+
+`req.with_trace(on)` records the exchange's events as the transport reaches
+them, each with `at`, the instant it saw it, and calls `on` for them in
+order when `send` returns or `open` returns the head (or either fails), and
+for the rest (PutIdleConn last) when an opened body is read to its end or
+closed. HTTP/2's WroteRequest and GotFirstResponseByte are recorded when the
+response head arrives on the native backends. WroteHeaderField,
+Wait100Continue and Got1xxResponse are not offered.
 
 ## 2026-11-15: fix: callback hooks may record what they see (decision 0662)
 

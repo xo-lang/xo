@@ -1011,10 +1011,10 @@ fn pool_take_kind(h1: Int, roots: Int, kp: Int, kn: Int) -> Int {
 /// at most 100 stay, the oldest goes (MaxIdleConns); an HTTP/1.1 one
 /// closes when its client's limit for its key are idle already
 /// (MaxIdleConnsPerHost: P_MAX_IDLE, 0 for H1_PER_HOST).
-fn pool_put(pc: Int) {
+fn pool_put(pc: Int) -> Str {
   if ld4(pc, P_BROKEN) != 0 || ld4(pc, P_GOAWAY) != 0 || ld4(pc, P_SPENT) != 0 {
     conn_free(pc)
-    return
+    return "http: putIdleConn: connection is in bad state"
   }
   if ld4(pc, P_H1) != 0 {
     let k = ld(pc, P_KEY)
@@ -1033,7 +1033,7 @@ fn pool_put(pc: Int) {
     let lim = ld(pc, P_MAX_IDLE)
     if same >= if lim == 0 { H1_PER_HOST } else { lim } {
       conn_free(pc)
-      return
+      return "http: putIdleConn: too many idle connections for host"
     }
   }
   st(pc, P_IDLE, sysio.mono_ns())
@@ -1062,6 +1062,7 @@ fn pool_put(pc: Int) {
   }
   pool.unlock(pl + PL_MU)
   conn_free(drop)
+  ""
 }
 
 /// Idle HTTP/1.1 connections kept per key by default (Go's
@@ -1096,7 +1097,7 @@ const MSG_PEEK = 2
 /// r's HTTP/1.1 connection, after a response read in full that leaves it
 /// open (decision 0303), goes to the pool for key (the kn bytes at kp)
 /// and roots; r no longer holds it.
-fn h1_put(a: Int, roots: Int, kp: Int, kn: Int) {
+fn h1_put(a: Int, roots: Int, kp: Int, kn: Int) -> Str {
   let pc = obj.alloc_obj(P_SIZE)
   rt.mem_set(pc, 0, P_SIZE)
   st(pc, P_CN, ld(a, R_CN))
@@ -1118,7 +1119,7 @@ fn h1_put(a: Int, roots: Int, kp: Int, kn: Int) {
 /// An idle HTTP/1.1 connection for key and roots moved into r (reading,
 /// R_REUSED set), with the deadline dl: whether there was a usable one
 /// (the others found close).
-fn h1_take(a: Int, roots: Int, kp: Int, kn: Int, dl: Int) -> Bool {
+fn h1_take(a: Int, roots: Int, kp: Int, kn: Int, dl: Int, tr: List[fn(Int, Str) uses sync] = []) -> Bool {
   while true {
     let pc = pool_take_kind(1, roots, kp, kn)
     if pc == 0 {
@@ -1128,6 +1129,7 @@ fn h1_take(a: Int, roots: Int, kp: Int, kn: Int, dl: Int) -> Bool {
       conn_free(pc)
       continue
     }
+    trace_reused(tr, pc)
     rt.mem_copy(a + R_C, pc + P_C, 72)
     st(a, R_CN, ld(pc, P_CN))
     st(a + R_C, C_WHEN, dl)
@@ -1227,11 +1229,14 @@ fn pool_key(https: Bool, addr: Str, tls_host: Str) -> Str { if https { addr + "|
 /// may serve another request: decision 0303) and s (CC_*): a kept
 /// connection goes to the pool, else it closes; a failure becomes r's
 /// error.
-pub fn end_keep(r: rthttp.CResp, keep: Bool, https: Bool, addr: Str, tls_host: Str, roots: rthttp.Roots, s: Int, why: Str) {
+pub fn end_keep(r: rthttp.CResp, keep: Bool, https: Bool, addr: Str, tls_host: Str, roots: rthttp.Roots, s: Int, why: Str, tr: List[fn(Int, Str) uses sync] = []) {
   let a = rec(r)
   if keep && s == CC_OK && ld(a, R_CN) != 0 {
     let key = pool_key(https, addr, tls_host)
-    h1_put(a, rt.obj_addr(roots), raw.data(key), key.len())
+    // PutIdleConn: offered to the pool, kept or why not (Go's
+    // tryPutIdleConn; a connection not kept alive is never offered)
+    let e = h1_put(a, rt.obj_addr(roots), raw.data(key), key.len())
+    trace(tr, TR_PUT_IDLE, e)
     raw.alive_str(key)
     finish(a, s, why, "")
     return
@@ -1538,7 +1543,7 @@ pub fn h2_end(r: rthttp.CResp, sv: rt.Any, res: Int, why: Str, flags: Int) {
   } else {
     let tls = ld(pc + P_C, C_TLS)
     let al = if ld(x, X_POOLED) == 0 && res != CC_OK && res != CC_TIMEOUT && res != CC_CANCELED && why.is_empty() && tls != 0 { tlsio.alert(tls) } else { "" }
-    pool_put(pc)
+    let _kept = pool_put(pc)
     finish(a, res, why, al)
   }
   st(a, R_H2, 0)
@@ -1615,12 +1620,12 @@ pub fn cl_deadline(timeout: Int) -> Int { hconn.deadline(timeout) }
 /// Xo reads the response, and end closes. A failure sets r's error. The
 /// method, target, Host and header are the writers' (request,
 /// h2_exchange).
-pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: rthttp.Roots, prefix: Str, pool: Bool, h2c: Bool = false, alpn: List[Str] = [], cfg: List[Int] = [], max_idle: Int = 0) -> rthttp.CResp {
+pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: rthttp.Roots, prefix: Str, pool: Bool, h2c: Bool = false, alpn: List[Str] = [], cfg: List[Int] = [], max_idle: Int = 0, tr: List[fn(Int, Str) uses sync] = []) -> rthttp.CResp {
   if target.arch == TargetArch.Wasm32 {
     let w = rt.wasi_handle_new(R_SIZE, rt.wasi_hook("cresp_free"))
     st(w, R_PREFIX, cstr_dup(prefix))
     st(w, R_MAX_IDLE, max_idle)
-    start_wasm(w, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, pool, h2c, alpn, cfg)
+    start_wasm(w, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, pool, h2c, alpn, cfg, tr)
     let hw = rt.obj_at[rthttp.CResp](w)
     tasks.h_release(w)
     return hw
@@ -1628,10 +1633,56 @@ pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roo
   let r = tasks.new_handle(R_SIZE, rt.fn_addr("cresp_free"))
   st(r, R_PREFIX, cstr_dup(prefix))
   st(r, R_MAX_IDLE, max_idle)
-  start(r, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, pool, h2c, alpn, cfg)
+  start(r, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, pool, h2c, alpn, cfg, tr)
   let h = rt.obj_at[rthttp.CResp](r)
   tasks.h_release(r)
   h
+}
+
+// Client trace events (decision 0677): the kinds a recorder (std/native
+// http.xo tracer_rec) is called with, and their fields joined by U+0001;
+// netconn.xo's TR_DNS_* and TR_CONNECT_* have the same values.
+pub const TR_GET_CONN = 1
+pub const TR_GOT_CONN = 2
+pub const TR_DNS_START = 3
+pub const TR_DNS_DONE = 4
+pub const TR_CONNECT_START = 5
+pub const TR_CONNECT_DONE = 6
+pub const TR_TLS_START = 7
+pub const TR_TLS_DONE = 8
+pub const TR_WROTE_HEADERS = 9
+pub const TR_WROTE_REQUEST = 10
+pub const TR_FIRST_BYTE = 11
+pub const TR_GOT_100 = 12
+pub const TR_PUT_IDLE = 13
+
+/// Records event k with fields f through tr (none: nothing).
+pub fn trace(tr: List[fn(Int, Str) uses sync], k: Int, f: Str) {
+  if !tr.is_empty() {
+    tr[0](k, f)
+  }
+}
+
+/// GotConn for the idle pooled connection pc: reused, idle since P_IDLE.
+fn trace_reused(tr: List[fn(Int, Str) uses sync], pc: Int) {
+  if !tr.is_empty() {
+    let idle = sysio.mono_ns() - ld(pc, P_IDLE)
+    let n = if idle > 0 { idle } else { 0 }
+    trace(tr, TR_GOT_CONN, "1\u{1}1\u{1}${n}")
+  }
+}
+
+/// TLSHandshakeDone for the handshake's result.
+fn trace_tls(tr: List[fn(Int, Str) uses sync], started: tlsio.Start) {
+  if tr.is_empty() {
+    return
+  }
+  if started.status == CC_OK {
+    trace(tr, TR_TLS_DONE, tlsio.version_of(started.conn) + "\u{1}" + tlsio.alpn_of(started.conn))
+  } else {
+    let m = if started.status == CC_TIMEOUT { "context deadline exceeded" } else if started.status == CC_CANCELED { "context canceled" } else if started.msg.is_empty() { "tls: handshake failed" } else { started.msg }
+    trace(tr, TR_TLS_DONE, "\u{1}\u{1}" + m)
+  }
 }
 
 /// start on wasm (a wasip2/wasm command, decision 0447 R2b): HTTP/1.1
@@ -1639,20 +1690,22 @@ pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roo
 /// for https (R2e), and HTTP/2 when ALPN chooses it or with prior
 /// knowledge (R2f: conn_new and an exchange, as start); an idle pooled
 /// connection first, as start (R2g).
-fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool, h2c: Bool, alpn: List[Str], cfg: List[Int]) {
+fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool, h2c: Bool, alpn: List[Str], cfg: List[Int], tr: List[fn(Int, Str) uses sync]) {
   if scan.find(addr, "\u{1}", 0) >= 0 {
     fail(r, 2, prefix + ": proxyconnect: a CONNECT tunnel is not supported on wasm")
     return
   }
+  trace(tr, TR_GET_CONN, addr)
   let key = pool_key(https, addr, tls_host) + cfg_key(cfg)
   if (https || h2c) && pool && (alpn.is_empty() || alpn.contains("h2")) {
     let pc = pool_take(roots, raw.data(key), key.len())
     if pc != 0 {
+      trace_reused(tr, pc)
       exchange_start(r, pc, 1, raw.bytes_addr(body), body.len(), dl)
       return
     }
   }
-  if pool && !h2c && h1_take(r, roots, raw.data(key), key.len(), dl) {
+  if pool && !h2c && h1_take(r, roots, raw.data(key), key.len(), dl, tr) {
     return
   }
   let d = if dl != 0 { dl - sysio.mono_ns() } else { 0 }
@@ -1660,10 +1713,13 @@ fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: In
     fail(r, 3, "")
     return
   }
+  // the host resolves and dials in one call: one ConnectStart and Done
+  trace(tr, TR_CONNECT_START, "tcp\u{1}" + addr)
   let cna = netwasi.dial_addr(addr, d)
   let ns = rt.wasi_sock_status()
   if ns != 0 {
     let nm = rt.wasi_sock_msg()
+    trace(tr, TR_CONNECT_DONE, "tcp\u{1}" + addr + "\u{1}" + if ns == 2 { "dial tcp ${addr}: connect: connection refused" } else if nm.is_empty() { "dial tcp ${addr}: failed" } else { nm })
     if ns == 5 {
       fail(r, 5, "")
     } else if ns == 2 {
@@ -1675,13 +1731,16 @@ fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: In
     }
     return
   }
+  trace(tr, TR_CONNECT_DONE, "tcp\u{1}" + addr)
   let c = r + R_C
   st(c, C_PD, cna)
   st(c, C_WHEN, dl)
   st(r, R_CN, cna)
   if https {
     // tlsio reads and writes the Conn itself on wasm (its pd)
+    trace(tr, TR_TLS_START, "")
     let started = tlsio.client_with(cna, tls_host, roots, dl, if alpn.is_empty() { ["h2", "http/1.1"] } else { alpn }, tlsio.VERIFY_FULL)
+    trace_tls(tr, started)
     if started.status != CC_OK {
       rt.wasi_sock_close(rt.obj_at[Conn](cna))
       if started.status == CC_TIMEOUT {
@@ -1697,10 +1756,12 @@ fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: In
     }
     st(c, C_TLS, started.conn)
     if tlsio.alpn_h2(started.conn) {
+      trace(tr, TR_GOT_CONN, "0\u{1}0\u{1}0")
       start_h2_wasm(r, c, cna, https, addr, tls_host, body, dl, roots, cfg)
       return
     }
   }
+  trace(tr, TR_GOT_CONN, "0\u{1}0\u{1}0")
   if h2c && !https {
     start_h2_wasm(r, c, cna, https, addr, tls_host, body, dl, roots, cfg)
     return
@@ -1719,21 +1780,24 @@ fn start_h2_wasm(r: Int, c: Int, cna: Int, https: Bool, addr: Str, tls_host: Str
   exchange_start(r, pc, 0, raw.bytes_addr(body), body.len(), dl)
 }
 
-fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool, h2c: Bool, alpn: List[Str], cfg: List[Int]) {
+fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool, h2c: Bool, alpn: List[Str], cfg: List[Int], tr: List[fn(Int, Str) uses sync]) {
   // an idle HTTP/2 connection to the same address, server name, and
   // roots (a tunnel's addr names the target, the proxy and its
   // credentials, so its connections pool apart: tunnel_addr)
   let key = pool_key(https, addr, tls_host) + cfg_key(cfg)
   let (target_addr, dial_addr, proxy_auth) = tunnel_parts(addr)
+  // GetConn names the first hop (Go's connectMethod.addr: the proxy's)
+  trace(tr, TR_GET_CONN, dial_addr)
   if (https || h2c) && pool && (alpn.is_empty() || alpn.contains("h2")) {
     let pc = pool_take(roots, raw.data(key), key.len())
     if pc != 0 {
+      trace_reused(tr, pc)
       exchange_start(r, pc, 1, raw.bytes_addr(body), body.len(), dl)
       return
     }
   }
   // an idle HTTP/1.1 connection (decision 0303)
-  if pool && !h2c && h1_take(r, roots, raw.data(key), key.len(), dl) {
+  if pool && !h2c && h1_take(r, roots, raw.data(key), key.len(), dl, tr) {
     return
   }
   let d = if dl != 0 { dl - sysio.mono_ns() } else { 0 }
@@ -1742,7 +1806,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
     return
   }
   // the connection's handle (its reference is the record's), or 0
-  let cna = netconn.dial_timeout(dial_addr, d)
+  let cna = netconn.dial_timeout(dial_addr, d, tr: tr)
   let x = ctx.cur()
   let ns = ld(x, ctx.C_NET_STATUS)
   if ns != 0 {
@@ -1786,7 +1850,9 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
   if https {
     // the TLS handshake (tlsio.xo): its failures are
     // Protocol errors with crypto/tls's texts, or Timeout and Canceled
+    trace(tr, TR_TLS_START, "")
     let started = if alpn.is_empty() { tlsio.client(pd, tls_host, roots, dl) } else { tlsio.client_with(pd, tls_host, roots, dl, alpn, tlsio.VERIFY_FULL) }
+    trace_tls(tr, started)
     let ts = started.status
     let tmsg = started.msg
     let kind = started.kind
@@ -1809,6 +1875,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
     }
     st(c, C_TLS, t)
     if tlsio.alpn_h2(t) {
+      trace(tr, TR_GOT_CONN, "0\u{1}0\u{1}0")
       // the connection takes over the net.Conn and the ccon
       let pc = conn_new(cna, c, roots, raw.data(key), key.len(), cfg)
       raw.alive_str(key)
@@ -1817,6 +1884,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
       return
     }
   }
+  trace(tr, TR_GOT_CONN, "0\u{1}0\u{1}0")
   if h2c && !https {
     // HTTP/2 with prior knowledge (decision 0434): the preface and
     // SETTINGS go first, on the plain connection

@@ -1,5 +1,20 @@
 # std/metrics changes
 
+## 2026-11-16: feature: instrument_round_tripper_trace and InstrumentTrace (decision 0677)
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #55, the 0655 audit's open map.txt rows promhttp.InstrumentRoundTripperTrace and promhttp.InstrumentTrace
+- Go reference: client_golang v1.23.2 prometheus/promhttp instrument_client.go (InstrumentTrace, InstrumentRoundTripperTrace)
+- Test: golden metrics_client_trace (fresh and reused connections, an observer left None; arm64 and LLVM equal to the go backend)
+- Shipped in: not yet released
+
+`metrics.instrument_round_tripper_trace(it, clock)` sends a request traced
+with std/http's `with_trace` and gives each event the `InstrumentTrace`
+observes the seconds since the send started, as promhttp's observers do.
+The observers run when the send returns, not during the exchange, and Go's
+Wait100Continue has no event.
+
 ## 2026-11-16: perf: labelled inc, add, set and observe keep the caller's label list on the stack
 
 - Kind: perf

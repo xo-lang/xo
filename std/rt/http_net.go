@@ -369,13 +369,18 @@ func readBody(hr *http.Request) Bytes {
 
 // send is M_send over the real network.
 func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
-	resp, cancel, _, e := c.do(tk, req, rawURL, false)
+	rec := newTraceRec(req)
+	resp, cancel, _, e := c.do(tk, req, rawURL, false, rec)
 	if resp == nil {
+		rec.deliver(tk)
 		return Err[Http_Response](e)
 	}
 	defer cancel()
 	defer resp.Body.Close()
+	// the body read to its EOF: net/http has put the connection back in
+	// the pool (PutIdleConn) before Read returns EOF
 	body, err := io.ReadAll(resp.Body)
+	rec.deliver(tk)
 	if err != nil {
 		return Err[Http_Response](clientErr(4, err.Error()))
 	}
@@ -387,8 +392,8 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 // to read (nil on a failure, then e), the cancel that ends it, the head.
 // http_nonet.go has its stub, so a program without std/http links no
 // net/http.
-func (c Http_Client) openNet(tk *Task, req Http_Request, rawURL string) (io.ReadCloser, func(), Http_ResponseHead, func() map[string][]string, Http_ClientErr) {
-	resp, cancel, head, e := c.do(tk, req, rawURL, true)
+func (c Http_Client) openNet(tk *Task, req Http_Request, rawURL string, rec *traceRec) (io.ReadCloser, func(), Http_ResponseHead, func() map[string][]string, Http_ClientErr) {
+	resp, cancel, head, e := c.do(tk, req, rawURL, true, rec)
 	if resp == nil {
 		return nil, nil, head, nil, e
 	}
@@ -400,7 +405,7 @@ func (c Http_Client) openNet(tk *Task, req Http_Request, rawURL string) (io.Read
 // failure, then e), the cancel that ends the exchange (after the body),
 // and the head. stream (Client.open, decision 0404): the client's
 // timeout bounds the head only, not the body.
-func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool) (resp *http.Response, cancelFn func(), head Http_ResponseHead, e Http_ClientErr) {
+func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool, rec *traceRec) (resp *http.Response, cancelFn func(), head Http_ResponseHead, e Http_ClientErr) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer func() {
 		if resp == nil {
@@ -428,7 +433,8 @@ func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool) 
 		// no GetBody, so never replayed
 		body = req.XSrc
 	}
-	hr, err := http.NewRequestWithContext(ctx, req.F_method, rawURL, body)
+	// with_trace (decision 0677): Go's hooks record into rec
+	hr, err := http.NewRequestWithContext(rec.with(ctx), req.F_method, rawURL, body)
 	if err != nil {
 		return nil, nil, head, clientErr(1, err.Error())
 	}

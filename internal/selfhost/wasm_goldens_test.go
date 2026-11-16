@@ -145,6 +145,8 @@ var componentGoldensNotRun = map[string]string{
 	"http_client":                "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
 	"http_client_body_reader":    "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
 	"http_client_proxy":          "it listens on sockets of its own (the proxy and the target) for the client to call, which a component cannot",
+	"http_client_trace":          "it listens on sockets of its own for the client to call and checks the client's trace events, which a component cannot",
+	"metrics_client_trace":       "it listens on a socket of its own for the client to call and observes the client's trace events, which a component cannot",
 	"http_client_jar":            "it listens on a socket of its own for the client to call, which a component cannot",
 	"http_client_zone":           "it dials link-local addresses with zones no interface has; a component's wasi:http host makes the connection",
 	"http_reverse_proxy":         "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",

@@ -1104,13 +1104,14 @@ fn dial_drop(pd: Int) {
 /// the other attempt is dropped. (connection, 0), or (0, error): 1
 /// canceled, 2 the time is up, else the primaries' last error (the
 /// fallbacks' when no primary got as far as an error).
-fn dial_race(c: Int, out: Int, n: Int, when: Int) -> (Int, Int) {
+fn dial_race(c: Int, out: Int, n: Int, when: Int, tr: List[fn(Int, Str) uses sync] = []) -> (Int, Int) {
   let f0 = family(out)
   let fall_at = poll.deadline(300000000)
   var next = [0, 0]
   var fds = [0, 0]
   var pds = [0, 0]
   var errs = [0, 0]
+  var sas = [0, 0]
   var used = [false, false]
   var fall = false
   while true {
@@ -1129,15 +1130,19 @@ fn dial_race(c: Int, out: Int, n: Int, when: Int) -> (Int, Int) {
           break
         }
         next[k] = i + 1
+        trace_connect(tr, TR_CONNECT_START, out + SA * i, 0)
         let (fd, pd, e) = dial_start(out + SA * i)
         if e == 0 {
+          trace_connect(tr, TR_CONNECT_DONE, out + SA * i, 0)
           poll.pd_end(pd)
           dial_drop(pds[1 - k])
           return (conn_new(c, fd, pd), 0)
         }
         if pd == 0 {
+          trace_connect(tr, TR_CONNECT_DONE, out + SA * i, e)
           errs[k] = e
         } else {
+          sas[k] = out + SA * i
           fds[k] = fd
           pds[k] = pd
         }
@@ -1180,11 +1185,13 @@ fn dial_race(c: Int, out: Int, n: Int, when: Int) -> (Int, Int) {
     }
     let e = dial_check(fds[k])
     if e == 0 {
+      trace_connect(tr, TR_CONNECT_DONE, sas[k], 0)
       poll.pd_end(pds[k])
       dial_drop(pds[1 - k])
       return (conn_new(c, fds[k], pds[k]), 0)
     }
     if e != 1 {
+      trace_connect(tr, TR_CONNECT_DONE, sas[k], e)
       dial_drop(pds[k])
       pds[k] = 0
       errs[k] = e
@@ -1195,7 +1202,30 @@ fn dial_race(c: Int, out: Int, n: Int, when: Int) -> (Int, Int) {
 
 /// dial giving up after d ns (d <= 0: no limit): the connection, or 0
 /// with the error recorded (xo_http.c's client dials with it too).
-pub fn dial_timeout(addr: Str, d: Int, timeout_tag: Int = 4) -> Int {
+// Client trace events (decision 0677): hclient.xo's TR_* of the same
+// values; a recorder takes the kind and the fields joined by U+0001.
+const TR_DNS_START = 3
+const TR_DNS_DONE = 4
+const TR_CONNECT_START = 5
+const TR_CONNECT_DONE = 6
+
+/// ConnectStart or ConnectDone for the address sa, with the connect's
+/// error e (negative errno, 1 canceled, 2 the time is up; 0 none) as
+/// Go's dial OpError text.
+fn trace_connect(tr: List[fn(Int, Str) uses sync], k: Int, sa: Int, e: Int) {
+  if tr.is_empty() {
+    return
+  }
+  let a = fmt_addr(sa)
+  var f = "tcp\u{1}" + a
+  if k == TR_CONNECT_DONE && e != 0 {
+    let why = if e == 1 { "operation was canceled" } else if e == 2 { "i/o timeout" } else if e == 0 - econnrefused() { "connect: connection refused" } else { "connect: " + err_text(0 - e) }
+    f = f + "\u{1}dial tcp " + a + ": " + why
+  }
+  tr[0](k, f)
+}
+
+pub fn dial_timeout(addr: Str, d: Int, timeout_tag: Int = 4, tr: List[fn(Int, Str) uses sync] = []) -> Int {
   let when = if d > 0 { poll.deadline(d) } else { 0 }
   let c = ctx.cur()
   if poll.canceled() {
@@ -1225,7 +1255,23 @@ pub fn dial_timeout(addr: Str, d: Int, timeout_tag: Int = 4) -> Int {
     return 0
   }
   let out = rt.heap_large(NADDR * SA).wrapping_sub(8)
+  // a name's lookup is traced (DNSStart, DNSDone); an IP address is none
+  let named = !tr.is_empty() && !host.is_empty() && !(dns.parse_addr(host) is Some(_))
+  if named {
+    tr[0](TR_DNS_START, host)
+  }
   let n = resolve(if host.is_empty() { "localhost" } else { host }, port, 0, false, out, NADDR)
+  if named {
+    if n < 0 {
+      tr[0](TR_DNS_DONE, "\u{1}lookup ${host}: ${gai_text(n)}")
+    } else {
+      var addrs = ""
+      for i in 0..n {
+        addrs = addrs + (if i > 0 { "\u{2}" } else { "" }) + ip_of(fmt_addr(out + SA * i))
+      }
+      tr[0](TR_DNS_DONE, addrs)
+    }
+  }
   if n < 0 {
     mfree(out)
     fail(c, 4, "dial tcp ${addr}: ${gai_text(n)}")
@@ -1236,7 +1282,7 @@ pub fn dial_timeout(addr: Str, d: Int, timeout_tag: Int = 4) -> Int {
   if families_mixed(out, n) {
     // IPv6 and IPv4 addresses (localhost on Windows: ::1 first, and a
     // refused connect there takes 2 s): Go's dual stack race
-    let (rc, re) = dial_race(c, out, n, when)
+    let (rc, re) = dial_race(c, out, n, when, tr)
     cn = rc
     e = re
   } else {
@@ -1256,6 +1302,7 @@ pub fn dial_timeout(addr: Str, d: Int, timeout_tag: Int = 4) -> Int {
         continue
       }
       let _g = poll.pd_begin(pd)
+      trace_connect(tr, TR_CONNECT_START, sa, 0)
       e = sock.connect(fd, sa, sa_len(f))
       while e == 0 - EINTR {
         e = sock.connect(fd, sa, sa_len(f))
@@ -1263,6 +1310,7 @@ pub fn dial_timeout(addr: Str, d: Int, timeout_tag: Int = 4) -> Int {
       if e == 0 - einprogress() {
         e = connect_wait(c, pd, fd, when)
       }
+      trace_connect(tr, TR_CONNECT_DONE, sa, e)
       poll.pd_end(pd)
       if e == 0 {
         cn = conn_new(c, fd, pd)

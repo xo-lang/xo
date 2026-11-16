@@ -1,0 +1,153 @@
+// Request.with_trace (decision 0677; the Go backend, net/http/httptrace, is
+// the reference): each exchange's events in order, delivered when send
+// returns, when open returns the head, and (the rest, PutIdleConn last)
+// when an opened body ends or closes. A fresh connection, a reused one, a
+// POST, a redirect's two hops, a POST waiting for 100 Continue, a refused dial, a streamed body read to its
+// end and one closed early, a response that closes its connection, a name
+// looked up, and TLS. Times are checked, not printed: in order, and within
+// the call that delivered them.
+use std/http
+
+/// One event as a line: its Go hook name and fields, the server's address
+/// as ADDR.
+fn line(e: http.TraceEvent, addr: Str) -> Str {
+  let s = match e {
+    http.TraceEvent.GetConn(host_port: h, ..) => "GetConn ${h}"
+    http.TraceEvent.GotConn(reused: r, was_idle: w, idle: d, ..) => "GotConn reused=${r} was_idle=${w} idle=${if d.nanos() > 0 { "some" } else { "none" }}"
+    http.TraceEvent.DnsStart(host: h, ..) => "DNSStart ${h}"
+    http.TraceEvent.DnsDone(addrs: a, err: x, ..) => "DNSDone has_127=${a.contains("127.0.0.1")} err=${x ?? "none"}"
+    http.TraceEvent.ConnectStart(network: n, addr: a, ..) => "ConnectStart ${n} ${a}"
+    http.TraceEvent.ConnectDone(network: n, addr: a, err: x, ..) => "ConnectDone ${n} ${a} err=${x ?? "none"}"
+    http.TraceEvent.TlsHandshakeStart(..) => "TLSHandshakeStart"
+    http.TraceEvent.TlsHandshakeDone(version: v, alpn: p, err: x, ..) => "TLSHandshakeDone ${v} alpn=${p} err=${x ?? "none"}"
+    http.TraceEvent.WroteHeaders(..) => "WroteHeaders"
+    http.TraceEvent.WroteRequest(err: x, ..) => "WroteRequest err=${x ?? "none"}"
+    http.TraceEvent.GotFirstResponseByte(..) => "GotFirstResponseByte"
+    http.TraceEvent.Got100Continue(..) => "Got100Continue"
+    http.TraceEvent.PutIdleConn(err: x, ..) => "PutIdleConn err=${x ?? "none"}"
+  }
+  if !s.starts_with(e.name() + " ") && s != e.name() {
+    return "name() is ${e.name()} for ${s}"
+  }
+  s.replace(addr, "ADDR")
+}
+
+/// The events delivered so far, cleared.
+fn take(got: Mutex[List[http.TraceEvent]]) -> List[http.TraceEvent] {
+  got.with(fn(var l: List[http.TraceEvent]) -> List[http.TraceEvent] {
+    let o = l
+    l = []
+    o
+  })
+}
+
+/// Prints the events delivered during a call made between t0 and t1, and
+/// whether their times are in order within it.
+fn print(os: Os, what: Str, evs: List[http.TraceEvent], addr: Str, t0: Time, t1: Time, only_dns: Bool = false) {
+  os.stdio.println("${what}:")
+  var prev = t0
+  var ordered = true
+  for e in evs {
+    if e.at() < prev || e.at() > t1 {
+      ordered = false
+    }
+    prev = e.at()
+    let l = line(e, addr)
+    if !only_dns || l.starts_with("DNS") {
+      os.stdio.println("  ${l}")
+    }
+  }
+  if !ordered {
+    os.stdio.println("  times out of order")
+  }
+}
+
+fn main(os: Os) ! {
+  var r = http.router()
+  r.handle("GET /ok", fn(_req) { http.text(200, "ok") })
+  r.handle("POST /echo", fn(req) { http.text(200, req.body.to_str() ?? "") })
+  r.handle("GET /redir", fn(req) { http.redirect(req, "/ok", 302) })
+  r.handle("GET /big", fn(_req) { http.text(200, "x".repeat(100000)) })
+  r.handle("GET /close", fn(_req) { http.text(200, "bye").with_header("Connection", "close") })
+  let l = os.net.listen("127.0.0.1:0")?
+  let tls_l = os.net.listen("127.0.0.1:0")?
+  let cert = http.tls_cert(good_cert(), good_key())?
+  let srv = http.server(l, r)
+  let secure = http.server(tls_l, r).with_tls([cert])
+  let addr = srv.addr()
+  let port = addr.split(":")[1]
+  let saddr = secure.addr()
+  // a port nothing listens on
+  let gone = os.net.listen("127.0.0.1:0")?
+  let gaddr = gone.addr()
+  gone.close()
+  let got = Mutex[List[http.TraceEvent]].new([])
+  let on = fn(e: http.TraceEvent) uses sync { got.with(fn(var l: List[http.TraceEvent]) { l.push(e) }) }
+  let base = "http://${addr}"
+  scope s {
+    s.spawn_background(fn() { let _ = srv.serve().is_ok() })
+    s.spawn_background(fn() { let _ = secure.serve().is_ok() })
+    let c = http.client(os.net, timeout: 10s)
+    for (what, method, path) in [("a fresh connection", "GET", "/ok"), ("the same connection reused", "GET", "/ok"), ("a POST", "POST", "/echo"), ("a redirect: two exchanges", "GET", "/redir"), ("a response that closes its connection", "GET", "/close"), ("a POST expecting 100 Continue", "POST", "/echo"), ("then a new connection", "GET", "/ok")] {
+      var req = http.new_request(method, base + path, body: if method == "POST" { b"hello" } else { b"" }).with_trace(on)
+      if what.contains("100 Continue") {
+        // after the connection closed, closing its own (the go backend
+        // pools these requests apart): the server's 100, then the body
+        req = req.with_header("Connection", "close").with_expect_continue(timeout: 5s)
+      }
+      let t0 = os.clock.now()
+      let res = c.send(req)
+      let t1 = os.clock.now()
+      print(os, what, take(got), addr, t0, t1)
+      match res {
+        Ok(resp) => os.stdio.println("  -> ${resp.status} ${resp.text() ?? ""}")
+        Err(e) => os.stdio.println("  -> ${e}")
+      }
+    }
+    let t0 = os.clock.now()
+    let res = c.send(http.new_request("GET", "http://${gaddr}/ok").with_trace(on))
+    let t1 = os.clock.now()
+    print(os, "a refused dial", take(got), gaddr, t0, t1)
+    os.stdio.println("  -> ok=${res.is_ok()}")
+
+    // a streamed body: the events to the head at open, the rest at its end
+    let t2 = os.clock.now()
+    let st = c.open(http.new_request("GET", base + "/big").with_trace(on))?
+    let t3 = os.clock.now()
+    print(os, "open: up to the head", take(got), addr, t2, t3)
+    let body = st.read_all()?
+    let t4 = os.clock.now()
+    print(os, "the body read to its end (${body.len()} bytes)", take(got), addr, t3, t4)
+    st.close()
+    os.stdio.println("  close after the end delivers ${take(got).len()} more")
+    let st2 = c.open(http.new_request("GET", base + "/big").with_trace(on))?
+    let t5 = os.clock.now()
+    print(os, "open again: the connection reused", take(got), addr, t4, t5)
+    st2.close()
+    let t6 = os.clock.now()
+    print(os, "closed before its end: not offered to the pool", take(got), addr, t5, t6)
+
+    // a name looked up (its addresses' order and dial attempts vary by
+    // system: the lookup alone)
+    let t7 = os.clock.now()
+    let nres = http.client(os.net).send(http.new_request("GET", "http://localhost:${port}/ok").with_trace(on))
+    let t8 = os.clock.now()
+    print(os, "localhost looked up", take(got), addr, t7, t8, only_dns: true)
+    os.stdio.println("  -> ok=${nres.is_ok()}")
+
+    // TLS
+    let tc = http.client(os.net).with_roots(ca_pem())?
+    for what in ["https: a fresh connection", "https: reused"] {
+      let t9 = os.clock.now()
+      let tres = tc.send(http.new_request("GET", "https://${saddr}/ok").with_trace(on))
+      let t10 = os.clock.now()
+      print(os, what, take(got), saddr, t9, t10)
+      os.stdio.println("  -> ok=${tres.is_ok()}")
+    }
+    s.cancel()
+  }
+}
+
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }

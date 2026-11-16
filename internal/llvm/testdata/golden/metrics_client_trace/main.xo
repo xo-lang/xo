@@ -1,0 +1,47 @@
+// std/metrics' instrument_round_tripper_trace and InstrumentTrace
+// (client_golang's promhttp.InstrumentRoundTripperTrace, decision 0677; the
+// Go backend is the reference): each observer gets the seconds from the
+// send's start to its event, in the exchange's order. A fresh connection,
+// then the same one reused; an observer left None sees nothing.
+use std/http
+use std/metrics
+
+fn main(os: Os) ! {
+  var r = http.router()
+  r.handle("GET /ok", fn(_req) { http.text(200, "ok") })
+  let l = os.net.listen("127.0.0.1:0")?
+  let srv = http.server(l, r)
+  let seen = Mutex[List[(Str, Float)]].new([])
+  let obs = fn(name: Str) -> (fn(Float) uses sync)? {
+    Some(fn(secs: Float) uses sync { seen.with(fn(var s: List[(Str, Float)]) { s.push((name, secs)) }) })
+  }
+  // promhttp's example observes these; connect_start is left out
+  let it = metrics.InstrumentTrace{got_conn: obs("got_conn"), put_idle_conn: obs("put_idle_conn"), got_first_response_byte: obs("got_first_response_byte"), dns_start: obs("dns_start"), dns_done: obs("dns_done"), connect_done: obs("connect_done"), tls_handshake_start: obs("tls_handshake_start"), tls_handshake_done: obs("tls_handshake_done"), wrote_headers: obs("wrote_headers"), wrote_request: obs("wrote_request")}
+  let send = metrics.instrument_round_tripper_trace(it, os.clock)
+  scope s {
+    s.spawn_background(fn() { let _ = srv.serve().is_ok() })
+    let c = http.client(os.net, timeout: 10s)
+    for what in ["fresh", "reused"] {
+      let t0 = os.clock.now()
+      let resp = send(c, http.new_request("GET", "http://${srv.addr()}/ok"))?
+      let total = os.clock.since(t0).seconds()
+      let got = seen.with(fn(var s: List[(Str, Float)]) -> List[(Str, Float)] {
+        let o = s
+        s = []
+        o
+      })
+      os.stdio.println("${what}: ${resp.status}")
+      var prev = 0.0
+      var ok = true
+      for (name, secs) in got {
+        os.stdio.println("  ${name}")
+        if secs < prev || secs > total {
+          ok = false
+        }
+        prev = secs
+      }
+      os.stdio.println("  seconds in order within the send: ${ok}")
+    }
+    s.cancel()
+  }
+}

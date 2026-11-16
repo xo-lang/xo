@@ -169,6 +169,53 @@ fn (r: Request) with_body_reader(b: BodyReader) -> Request
 /// go after it; other names, and names Go forbids in a trailer, are
 /// dropped. An HTTP/1.1 body is then chunked.
 fn (r: Request) with_trailers(names: List[Str], f: fn() -> Map[Str, Str]) -> Request
+/// The request with on receiving its exchange's trace events (Go's
+/// httptrace.WithClientTrace, decision 0677): the transport records each
+/// event as it reaches it, with its time, and on is called for them in
+/// order when send returns or open returns the head (or either fails),
+/// and for the rest (PutIdleConn last) when an opened body is read to its
+/// end or closed. Redirects' exchanges trace too. A client side builder.
+fn (r: Request) with_trace(on: fn(TraceEvent) uses sync) -> Request
+/// An event of a client exchange (Go's httptrace.ClientTrace hooks,
+/// decision 0677), with at, the instant the transport saw it. An err is
+/// None for success, else Go's error text.
+enum TraceEvent {
+  /// A connection for host_port (the first hop: the proxy's when there is
+  /// one) is about to be taken from the pool or dialed.
+  GetConn(host_port: Str, at: Time)
+  /// A connection was obtained: reused from an earlier request, was_idle
+  /// in the pool for idle.
+  GotConn(reused: Bool, was_idle: Bool, idle: Duration, at: Time)
+  /// A name lookup began (none for an IP address).
+  DnsStart(host: Str, at: Time)
+  /// The lookup ended: its addresses in order, or its error.
+  DnsDone(addrs: List[Str], err: Str?, at: Time)
+  /// A dial of one address began (network "tcp").
+  ConnectStart(network: Str, addr: Str, at: Time)
+  /// That dial ended.
+  ConnectDone(network: Str, addr: Str, err: Str?, at: Time)
+  TlsHandshakeStart(at: Time)
+  /// The handshake ended: the version ("TLS 1.3", Go's VersionName), the
+  /// protocol ALPN chose ("" for none), or its error.
+  TlsHandshakeDone(version: Str, alpn: Str, err: Str?, at: Time)
+  /// The request's head was written.
+  WroteHeaders(at: Time)
+  /// The whole request, the body too, was written, or the write failed.
+  WroteRequest(err: Str?, at: Time)
+  GotFirstResponseByte(at: Time)
+  /// The server's `100 Continue` arrived (with_expect_continue).
+  Got100Continue(at: Time)
+  /// The connection went back to the idle pool, or why it did not (a
+  /// connection the response closes is never offered).
+  PutIdleConn(err: Str?, at: Time)
+}
+/// The event's at.
+fn (e: TraceEvent) at() -> Time
+/// The event's Go hook name: "GetConn", "GotConn", "DNSStart", "DNSDone",
+/// "ConnectStart", "ConnectDone", "TLSHandshakeStart", "TLSHandshakeDone",
+/// "WroteHeaders", "WroteRequest", "GotFirstResponseByte",
+/// "Got100Continue", "PutIdleConn".
+fn (e: TraceEvent) name() -> Str
 /// Every field of name, in order (decision 0288).
 fn (r: Request) header_values(name: Str) -> List[Str]
 /// Go's Request.Host: the Host header as sent (host, or host:port;

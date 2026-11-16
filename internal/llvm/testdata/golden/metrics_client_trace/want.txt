@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+fresh: 200
+  connect_done
+  got_conn
+  wrote_headers
+  wrote_request
+  got_first_response_byte
+  put_idle_conn
+  seconds in order within the send: true
+reused: 200
+  got_conn
+  wrote_headers
+  wrote_request
+  got_first_response_byte
+  put_idle_conn
+  seconds in order within the send: true
+--- stderr

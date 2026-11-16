@@ -1971,6 +1971,59 @@ pub fn (r: Registry) client_send(clock: Clock) -> fn(http.Client, http.Request) 
   }
 }
 
+/// promhttp's InstrumentTrace (decision 0677): an observer for each client
+/// trace event, given the seconds from the request's start to the event;
+/// None leaves the event unobserved. Go's Wait100Continue has no event
+/// here (std/http's TraceEvent leaves it out).
+pub struct InstrumentTrace {
+  pub got_conn: (fn(Float) uses sync)? = None
+  pub put_idle_conn: (fn(Float) uses sync)? = None
+  pub got_first_response_byte: (fn(Float) uses sync)? = None
+  pub got_100_continue: (fn(Float) uses sync)? = None
+  pub dns_start: (fn(Float) uses sync)? = None
+  pub dns_done: (fn(Float) uses sync)? = None
+  pub connect_start: (fn(Float) uses sync)? = None
+  pub connect_done: (fn(Float) uses sync)? = None
+  pub tls_handshake_start: (fn(Float) uses sync)? = None
+  pub tls_handshake_done: (fn(Float) uses sync)? = None
+  pub wrote_headers: (fn(Float) uses sync)? = None
+  pub wrote_request: (fn(Float) uses sync)? = None
+}
+
+/// A client send whose request traces its exchange into it (promhttp's
+/// InstrumentRoundTripperTrace, decision 0677; the returned function is
+/// the RoundTripperFunc): each event's observer gets the seconds from
+/// clock.now() at the send's start to the event's at. An event's at is the
+/// wall clock's, so clock is the system's (a fake clock's start is not on
+/// the same scale). The observers run when send returns (std/http's
+/// delivery), not during the exchange.
+pub fn instrument_round_tripper_trace(it: InstrumentTrace, clock: Clock) -> fn(http.Client, http.Request) -> http.Response ! http.ClientErr uses (clock, net.dial, sync) {
+  fn(c: http.Client, req: http.Request) -> http.Response ! http.ClientErr uses (clock, net.dial, sync) {
+    let t0 = clock.now()
+    let on = fn(e: http.TraceEvent) uses sync {
+      let f = match e {
+        http.TraceEvent.GotConn(..) => it.got_conn
+        http.TraceEvent.PutIdleConn(..) => it.put_idle_conn
+        http.TraceEvent.GotFirstResponseByte(..) => it.got_first_response_byte
+        http.TraceEvent.Got100Continue(..) => it.got_100_continue
+        http.TraceEvent.DnsStart(..) => it.dns_start
+        http.TraceEvent.DnsDone(..) => it.dns_done
+        http.TraceEvent.ConnectStart(..) => it.connect_start
+        http.TraceEvent.ConnectDone(..) => it.connect_done
+        http.TraceEvent.TlsHandshakeStart(..) => it.tls_handshake_start
+        http.TraceEvent.TlsHandshakeDone(..) => it.tls_handshake_done
+        http.TraceEvent.WroteHeaders(..) => it.wrote_headers
+        http.TraceEvent.WroteRequest(..) => it.wrote_request
+        http.TraceEvent.GetConn(..) => None
+      }
+      if let Some(obs) = f {
+        obs((e.at() - t0).seconds())
+      }
+    }
+    c.send(req.with_trace(on))
+  }
+}
+
 const SEP = "\x1f"
 
 const MAX_SERIES = 10000
