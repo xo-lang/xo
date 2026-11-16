@@ -78,8 +78,10 @@ fn main(os: Os) {
 // amd64: "adcq " -"memcpy"
 
 // Keccak's D = C ^ rot(C, 1): the rotation is eor's shifted operand (a
-// rotation by a constant read once folds into eor, bic, orr).
-// func sha3.keccak
+// rotation by a constant read once folds into eor, bic, orr). The rounds
+// are keccak_at's since e9ed6563f (raw lanes shared by a List and the
+// thread's scratch); keccak is its wrapper.
+// func sha3.keccak_at
 // arm64: "eor x[0-9]+, x[0-9]+, x[0-9]+, ror #63"
 // amd64: "rorq \$63, |rolq \$1, "
 
