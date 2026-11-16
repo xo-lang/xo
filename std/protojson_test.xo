@@ -1,0 +1,23 @@
+// std/protojson's string writer (jstr, jstr_to): the escapes protobuf-go's
+// encoding/protojson writes (internal/encoding/json/encode.go appendString),
+// runs written as they are.
+
+test "jstr escapes quotes, backslashes and controls, keeps the rest" {
+  expect(jstr("")) == "\"\""
+  expect(jstr("plain")) == "\"plain\""
+  expect(jstr("a\"b\\c")) == "\"a\\\"b\\\\c\""
+  expect(jstr("\u{8}\u{C}\n\r\t")) == "\"\\b\\f\\n\\r\\t\""
+  expect(jstr("\u{0}\u{1F}x\u{1}")) == "\"\\u0000\\u001fx\\u0001\""
+  expect(jstr("héllo ☃ \u{7F}")) == "\"héllo ☃ \u{7F}\""
+  expect(jstr("\"")) == "\"\\\"\""
+  expect(jstr("end\n")) == "\"end\\n\""
+}
+
+test "jstr_to appends to what the builder holds" {
+  var b = StrBuilder.new()
+  b.write("{")
+  jstr_to(b, "k\t")
+  b.write(":")
+  jstr_to(b, "v")
+  expect(b.freeze()) == "{\"k\\t\":\"v\""
+}

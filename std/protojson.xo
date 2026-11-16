@@ -251,34 +251,56 @@ fn walk_(b: Bytes) -> List[pw.Fld] ! JsonErr {
 /// protojson's string: `"`, `\` and controls below 0x20 escaped (the short forms for \b \f \n \r \t, \u00XX
 /// otherwise); everything else as is. The text is valid UTF-8 by construction.
 fn jstr(s: Str) -> Str {
-  var o = BytesBuilder.with_capacity(s.len() + 2)
-  o.write_byte(34)
-  let hex = "0123456789abcdef".bytes()
-  for c in s.bytes() {
-    if c == 34 || c == 92 {
-      o.write_byte(92)
-      o.write_byte(c)
-    } else if c == 8 {
-      o.write_str("\\b")
-    } else if c == 12 {
-      o.write_str("\\f")
-    } else if c == 10 {
-      o.write_str("\\n")
-    } else if c == 13 {
-      o.write_str("\\r")
-    } else if c == 9 {
-      o.write_str("\\t")
-    } else if c < 32 {
-      o.write_str("\\u00")
-      o.write_byte(hex[Int(c) / 16])
-      o.write_byte(hex[Int(c) % 16])
-    } else {
-      o.write_byte(c)
-    }
-  }
-  o.write_byte(34)
-  o.freeze().to_str_lossy()
+  var o = StrBuilder.new()
+  jstr_to(o, s)
+  o.freeze()
 }
+
+/// jstr written into out: the runs between bytes that need escaping are
+/// written as they are (task #87, 2026-11-16: copying each byte through a
+/// builder and validating the copy was 18% of bench/perf/protojson
+/// marshal). Every escaped byte is ASCII, so the runs end on character
+/// boundaries.
+fn jstr_to(var out: StrBuilder, s: Str) {
+  out.write("\"")
+  let b = s.bytes()
+  var start = 0
+  for i in 0..b.len() {
+    let c = Int(b[i])
+    if c >= 32 && c != 34 && c != 92 {
+      continue
+    }
+    if start < i {
+      out.write(s[start..i])
+    }
+    if c == 34 {
+      out.write("\\\"")
+    } else if c == 92 {
+      out.write("\\\\")
+    } else if c == 8 {
+      out.write("\\b")
+    } else if c == 12 {
+      out.write("\\f")
+    } else if c == 10 {
+      out.write("\\n")
+    } else if c == 13 {
+      out.write("\\r")
+    } else if c == 9 {
+      out.write("\\t")
+    } else {
+      out.write("\\u00")
+      out.write(HEX_DIGITS[c / 16..c / 16 + 1])
+      out.write(HEX_DIGITS[c % 16..c % 16 + 1])
+    }
+    start = i + 1
+  }
+  if start < b.len() {
+    out.write(s[start..b.len()])
+  }
+  out.write("\"")
+}
+
+const HEX_DIGITS: Str = "0123456789abcdef"
 
 fn ustr(v: Int) -> Str {
   if v >= 0 { "${v}" } else { "${UInt64.from_bits(v)}" }
@@ -382,10 +404,12 @@ fn valid_full_name(s: Str) -> Bool {
 /// Whether the wire field f is one the descriptor of info takes (a number it has, with the wire type its kind is
 /// written with, or length delimited for a packed repeated number); anything else is an unknown field.
 fn is_known_field(info: MsgInfo, f: pw.Fld) -> Bool {
-  for fd in info.d.field {
-    if fd.number != f.num {
+  let fds = info.d.field
+  for j in 0..fds.len() {
+    if fds[j].number != f.num {
       continue
     }
+    let fd = fds[j]
     let k = fd.kind
     if f.wire == wire_of(k) {
       return true
@@ -402,7 +426,8 @@ fn is_known_field(info: MsgInfo, f: pw.Fld) -> Bool {
 }
 
 fn lookup(r: Registry, type_name: Str) -> MsgInfo ! JsonErr {
-  let n = if type_name.starts_with(".") { type_name[1..type_name.len()] } else { type_name }
+  // one slice keeps type_name borrowed (see enum_text)
+  let n = type_name[if type_name.starts_with(".") { 1 } else { 0 }..type_name.len()]
   match r.msgs.get(n) {
     Some(i) => Ok(i)
     None => Err(jerr("unknown message ${n}"))
@@ -411,30 +436,57 @@ fn lookup(r: Registry, type_name: Str) -> MsgInfo ! JsonErr {
 
 /// The JSON of a message; `first` is a member written before the fields (Any's @type).
 fn msg_json(r: Registry, info: MsgInfo, wire: Bytes, o: Opts, first: Str) -> Str ! JsonErr {
+  var out = StrBuilder.new()
+  msg_to(out, r, info, wire, o, first)?
+  Ok(out.freeze())
+}
+
+/// msg_json written into out: a nested message goes into the same builder,
+/// where building each one's text and joining it into its parent's copied
+/// the bytes once per level (task #87, 2026-11-16: bench/perf/protojson
+/// marshal 1.64 of Go on host 1; Go's encoder writes one buffer too).
+fn msg_to(var out: StrBuilder, r: Registry, info: MsgInfo, wire: Bytes, o: Opts, first: Str) -> () ! JsonErr {
   if first.is_empty() {
     match wkt_json(r, info, wire, o)? {
-      Some(t) => return Ok(t)
+      Some(t) => {
+        out.write(t)
+        return Ok(())
+      }
       None => {}
     }
   }
   let fl = walk_(wire)?
-  for fd in info.d.field {
-    if fd.label == protodesc.LABEL_REQUIRED && !fl.any(fn(f: pw.Fld) -> Bool { f.num == fd.number }) {
-      return Err(jerr("required field ${fd.name} not set"))
+  // the descriptor's fields are read in place by index: `for fd in` copied
+  // each FieldDesc, 17 retains, per field and per wire field (task #87)
+  let fds = info.d.field
+  for j in 0..fds.len() {
+    if fds[j].label == protodesc.LABEL_REQUIRED {
+      let num = fds[j].number
+      if !fl.any(fn(f: pw.Fld) -> Bool { f.num == num }) {
+        return Err(jerr("required field ${fds[j].name} not set"))
+      }
     }
   }
-  // the member of each oneof that was set last on the wire wins
+  // the member of each oneof that was set last on the wire wins (no scan
+  // of the wire for a message without a real oneof: task #87)
   var win: Map[Int, Int] = {}
-  for f in fl {
+  var oneofs = false
+  for j in 0..fds.len() {
+    if fds[j].oneof_index.is_some() && !fds[j].proto3_optional {
+      oneofs = true
+      break
+    }
+  }
+  for f in if oneofs { fl } else { [] } {
     if !is_known_field(info, f) {
       // a member with the wrong wire type is an unknown field: it does not displace the oneof's member
       continue
     }
-    for fd in info.d.field {
-      if fd.number == f.num {
-        match fd.oneof_index {
+    for j in 0..fds.len() {
+      if fds[j].number == f.num {
+        match fds[j].oneof_index {
           Some(k) => {
-            if !fd.proto3_optional {
+            if !fds[j].proto3_optional {
               win.put(k, f.num)
             }
           }
@@ -443,32 +495,31 @@ fn msg_json(r: Registry, info: MsgInfo, wire: Bytes, o: Opts, first: Str) -> Str
       }
     }
   }
-  var parts: List[Str] = []
+  out.write("{")
+  var n = 0
   if !first.is_empty() {
-    parts.push(first)
+    out.write(first)
+    n = 1
   }
-  for fd in info.d.field {
+  for j in 0..fds.len() {
     var real_oneof = false
-    match fd.oneof_index {
+    match fds[j].oneof_index {
       Some(k) => {
-        if !fd.proto3_optional {
+        if !fds[j].proto3_optional {
           real_oneof = true
-          if (win.get(k) ?? -1) != fd.number {
+          if (win.get(k) ?? -1) != fds[j].number {
             continue
           }
         }
       }
       None => {}
     }
-    match field_text(r, info, fd, fl, o, real_oneof)? {
-      Some(t) => {
-        let nm = if o.proto_names { fd.name } else { json_name(fd) }
-        parts.push(jstr(nm) + ":" + t)
-      }
-      None => {}
+    if field_to(out, n > 0, r, info, fds[j], fl, o, real_oneof)? {
+      n += 1
     }
   }
-  Ok("{" + parts.join(",") + "}")
+  out.write("}")
+  Ok(())
 }
 
 fn is_numeric_kind(k: Int) -> Bool { k != 9 && k != 10 && k != 11 && k != 12 }
@@ -491,35 +542,91 @@ fn wire_of(k: Int) -> Int {
   }
 }
 
-fn field_text(r: Registry, info: MsgInfo, fd: protodesc.FieldDesc, fl: List[pw.Fld], o: Opts, real_oneof: Bool) -> Str? ! JsonErr {
-  var occ: List[pw.Fld] = []
-  for f in fl {
-    if f.num == fd.number {
-      occ.push(f)
+/// A field's member name and the colon, after a comma when one is due.
+fn member_to(var out: StrBuilder, comma: Bool, fd: protodesc.FieldDesc, o: Opts) {
+  if comma {
+    out.write(",")
+  }
+  // the name is chosen here, not by json_name: a function returning a field
+  // of fd makes fd an owned parameter, and every caller up the marshal path
+  // then counts up its seven heap fields per call (task #87, 2026-11-16;
+  // decision 0612 borrows a partly consumed struct from eight heap leaves)
+  if o.proto_names {
+    jstr_to(out, fd.name)
+  } else if !fd.json_name.is_empty() {
+    jstr_to(out, fd.json_name)
+  } else {
+    jstr_to(out, camel(fd.name))
+  }
+  out.write(":")
+}
+
+/// Writes the member of field fd when it has one (its name, a colon and its
+/// value, after a comma when `comma`); whether it wrote one.
+fn field_to(var out: StrBuilder, comma: Bool, r: Registry, info: MsgInfo, fd: protodesc.FieldDesc, fl: List[pw.Fld], o: Opts, real_oneof: Bool) -> Bool ! JsonErr {
+  // the field's occurrences: counted by index first, so an unset field
+  // copies no wire field (task #87)
+  let num = fd.number
+  var count = 0
+  for i in 0..fl.len() {
+    if fl[i].num == num {
+      count += 1
     }
   }
-  if fd.label == protodesc.LABEL_REPEATED {
-    var is_map = false
-    var entry = info
-    if fd.kind == protodesc.TYPE_MESSAGE {
-      entry = lookup(r, fd.type_name)?
-      is_map = entry.is_map
-    }
-    if is_map {
-      if occ.is_empty() {
-        return Ok(if o.emit_defaults { Some("{}") } else { None })
+  var occ: List[pw.Fld] = []
+  if count > 0 {
+    for i in 0..fl.len() {
+      if fl[i].num == num {
+        occ.push(fl[i])
       }
-      return Ok(Some(map_text(r, entry, occ, o)?))
     }
-    var items: List[Str] = []
+  }
+  let k = fd.kind
+  if fd.label == protodesc.LABEL_REPEATED {
+    if k == protodesc.TYPE_MESSAGE {
+      let entry = lookup(r, fd.type_name)?
+      if entry.is_map {
+        if occ.is_empty() {
+          if !o.emit_defaults {
+            return Ok(false)
+          }
+          member_to(out, comma, fd, o)
+          out.write("{}")
+          return Ok(true)
+        }
+        let t = map_text(r, entry, occ, o)?
+        member_to(out, comma, fd, o)
+        out.write(t)
+        return Ok(true)
+      }
+    }
+    // an item comes from a non-empty packed run or an element of the field's wire type
+    let w = wire_of(k)
+    let packable = is_numeric_kind(k)
+    var any = false
     for f in occ {
-      if f.wire == 2 && is_numeric_kind(fd.kind) {
+      if if f.wire == 2 && packable { !f.data.is_empty() } else { f.wire == w } {
+        any = true
+        break
+      }
+    }
+    if !any {
+      if !o.emit_defaults {
+        return Ok(false)
+      }
+      member_to(out, comma, fd, o)
+      out.write("[]")
+      return Ok(true)
+    }
+    member_to(out, comma, fd, o)
+    out.write("[")
+    var items = 0
+    for f in occ {
+      if f.wire == 2 && packable {
         // a packed run
         var at = 0
         let b = f.data
         while at < b.len() {
-          let k = fd.kind
-          let w = wire_of(k)
           var v = 0
           if w == 0 {
             let (x, n2) = pd_varint(b, at)?
@@ -534,45 +641,61 @@ fn field_text(r: Registry, info: MsgInfo, fd: protodesc.FieldDesc, fl: List[pw.F
             v = x
             at = n2
           }
-          items.push(scalar_text(r, fd, pw.Fld{num: f.num, wire: w, v: v, data: b"", raw: b""}, o)?)
+          if items > 0 {
+            out.write(",")
+          }
+          out.write(scalar_text(r, fd, pw.Fld{num: f.num, wire: w, v: v, data: b"", raw: b""}, o)?)
+          items += 1
         }
-      } else if f.wire == wire_of(fd.kind) {
-        items.push(single_text(r, fd, f.data, f, o)?)
+      } else if f.wire == w {
+        if items > 0 {
+          out.write(",")
+        }
+        single_to(out, r, fd, f.data, f, o)?
+        items += 1
       }
     }
-    if items.is_empty() {
-      return Ok(if o.emit_defaults { Some("[]") } else { None })
-    }
-    return Ok(Some("[" + items.join(",") + "]"))
+    out.write("]")
+    return Ok(true)
   }
   // a singular field: the last value (messages merge)
   var last: List[pw.Fld] = []
   for f in occ {
-    if f.wire == wire_of(fd.kind) {
+    if f.wire == wire_of(k) {
       last.push(f)
     }
   }
-  let implicit = (info.proto3 || info.implicit_nums.contains(fd.number)) && fd.kind != protodesc.TYPE_MESSAGE && fd.kind != protodesc.TYPE_GROUP && !real_oneof && !fd.proto3_optional
+  let implicit = (info.proto3 || info.implicit_nums.contains(fd.number)) && k != protodesc.TYPE_MESSAGE && k != protodesc.TYPE_GROUP && !real_oneof && !fd.proto3_optional
   if last.is_empty() {
     if o.emit_defaults && implicit {
-      return Ok(Some(default_text(r, fd, o)))
+      member_to(out, comma, fd, o)
+      out.write(default_text(r, fd, o))
+      return Ok(true)
     }
-    return Ok(None)
+    return Ok(false)
   }
   var data = b""
-  var pick = last[last.len() - 1]
+  let pick = last[last.len() - 1]
   if is_msg(fd) {
-    for f in last {
-      data = pw.cat(data, f.data)
+    if last.len() == 1 {
+      data = pick.data
+    } else {
+      for f in last {
+        data = pw.cat(data, f.data)
+      }
     }
   }
   if implicit && is_zero(fd, pick) {
     if o.emit_defaults {
-      return Ok(Some(default_text(r, fd, o)))
+      member_to(out, comma, fd, o)
+      out.write(default_text(r, fd, o))
+      return Ok(true)
     }
-    return Ok(None)
+    return Ok(false)
   }
-  Ok(Some(single_text(r, fd, data, pick, o)?))
+  member_to(out, comma, fd, o)
+  single_to(out, r, fd, data, pick, o)?
+  Ok(true)
 }
 
 fn pd_varint(b: Bytes, at: Int) -> (Int, Int) ! JsonErr {
@@ -623,6 +746,22 @@ fn default_text(r: Registry, fd: protodesc.FieldDesc, o: Opts) -> Str {
   }
 }
 
+/// single_text written into out.
+fn single_to(var out: StrBuilder, r: Registry, fd: protodesc.FieldDesc, data: Bytes, f: pw.Fld, o: Opts) -> () ! JsonErr {
+  if is_msg(fd) {
+    return msg_to(out, r, lookup(r, fd.type_name)?, data, o, "")
+  }
+  if fd.kind == protodesc.TYPE_STRING {
+    match f.data.to_str() {
+      Some(s) => jstr_to(out, s)
+      None => return Err(jerr("field ${fd.name}: contains invalid UTF-8"))
+    }
+    return Ok(())
+  }
+  out.write(scalar_text(r, fd, f, o)?)
+  Ok(())
+}
+
 fn single_text(r: Registry, fd: protodesc.FieldDesc, data: Bytes, f: pw.Fld, o: Opts) -> Str ! JsonErr {
   if is_msg(fd) {
     let info = lookup(r, fd.type_name)?
@@ -667,7 +806,10 @@ fn scalar_text(r: Registry, fd: protodesc.FieldDesc, f: pw.Fld, o: Opts) -> Str 
 }
 
 fn enum_text(r: Registry, fd: protodesc.FieldDesc, n: Int, o: Opts) -> Str {
-  let tn = if fd.type_name.starts_with(".") { fd.type_name[1..fd.type_name.len()] } else { fd.type_name }
+  // one slice, not `if .. { a slice } else { fd.type_name }`: a field passed
+  // through a join counts as consumed and made fd an owned parameter here
+  // and up the marshal path (task #87)
+  let tn = fd.type_name[if fd.type_name.starts_with(".") { 1 } else { 0 }..fd.type_name.len()]
   if tn == "google.protobuf.NullValue" {
     return "null"
   }

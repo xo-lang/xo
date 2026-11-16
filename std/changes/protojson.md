@@ -1,5 +1,16 @@
 # std/protojson changes
 
+## 2026-11-16: perf: marshal writes one builder and keeps field descriptors borrowed
+
+- Kind: perf
+- Commit: this push
+- Found by: task #87 (std/evidence/protojson/perf.md, marshal 1.642 of Go on host 1), XO_PROF=cpu on bench/perf/protojson marshal and `xo dev dump ssa --stage=rc`: each FieldDesc passed down the marshal path was an owned parameter (17% in its retains), each nested message's text was built and joined into its parent's, and jstr copied and revalidated every string
+- Go reference: google.golang.org/protobuf v1.36.12 encoding/protojson encode.go (one encoder buffer), internal/encoding/json/encode.go (appendString)
+- Test: std/protojson_test.xo (jstr and jstr_to escapes), internal/stdtest/testdata/corpus/protojson (Go's output for every field kind, maps, well known types and the options); bench/perf/protojson on the Mac: marshal instructions 1.215G to 0.860G (0.708), unmarshal 0.96, checksums equal
+- Shipped in: not yet released
+
+`marshal` writes nested messages, member names and strings into one builder (unescaped runs of a string as they are), no longer copies the field descriptor per call (no helper on the path returns a field of it), and skips the oneof scan for a message without a real oneof. Output unchanged.
+
 ## 2026-11-10: refactor: integer bounds as `Int.max` and `Int.min` (decision 0587 point 4)
 
 - Kind: refactor
