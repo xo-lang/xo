@@ -16,6 +16,8 @@ the text of every entry is unchanged).
 
 - Feature (std/uuid, every backend; task #113): `Uuid` implements `Json`, as its canonical text in a JSON string (google/uuid's MarshalText, pgx's pgtype.UUID); decoding accepts every form `uuid.parse` does, and `Uuid?` reads null as None.
 
+
+
 - Feature (std/sql, every backend; decision 0679, task #113): `Row.elements` and `elements_opt` read an array column's elements as one column Rows, so uuid[], numeric[], date[], time[], interval[], inet[], range and composite arrays read with the element's reader.
 
 - Fixes (std/dns): lookup_srv fails with "SRV header name is invalid" when the first SRV answer's owner name is not a domain name, as Go's LookupSRV (it returned the records). Found by TestDnsFuzz seeds 5 to 7 (task #115).
