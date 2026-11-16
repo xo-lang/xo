@@ -1,0 +1,72 @@
+// custom options protodesc.build follows protoc on (std/protodesc_test.xo).
+syntax = "proto2";
+
+package xo.co;
+
+import "google/protobuf/descriptor.proto";
+
+message Limits {
+  optional int32 min = 1;
+  optional int32 max = 2;
+  optional string unit = 3;
+}
+
+enum Level {
+  LOW = 0;
+  HIGH = 1;
+}
+
+extend google.protobuf.FileOptions {
+  optional string file_tag = 50001;
+}
+
+extend google.protobuf.MessageOptions {
+  optional bool cached = 50002;
+  optional Limits limits = 50003;
+}
+
+extend google.protobuf.FieldOptions {
+  optional int64 weight = 50004;
+  optional Level level = 50005;
+  optional double ratio = 50006;
+  optional sint32 delta = 50007;
+  optional fixed32 mask = 50008;
+  repeated string tags = 50009;
+}
+
+extend google.protobuf.EnumValueOptions {
+  optional string label = 50010;
+}
+
+extend google.protobuf.ServiceOptions {
+  optional uint32 version = 50011;
+}
+
+extend google.protobuf.MethodOptions {
+  optional float cost = 50012;
+}
+
+option (file_tag) = "files";
+
+message Item {
+  option (cached) = true;
+  option (limits) = { min: 1 max: 10 unit: "kg" };
+
+  optional int32 a = 1 [(weight) = -5, (level) = HIGH, (ratio) = 0.25];
+  optional int32 b = 2 [(delta) = -3, (mask) = 7, (tags) = "x", (tags) = "y", deprecated = true];
+}
+
+message Other {
+  option (limits).unit = "g";
+  option (limits).max = 3;
+}
+
+enum Kind {
+  K0 = 0 [(label) = "zero"];
+  K1 = 1;
+}
+
+service Svc {
+  option (version) = 3;
+  rpc Get(Item) returns (Item) { option (cost) = 1.5; }
+}

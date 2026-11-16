@@ -1,5 +1,18 @@
 # std/protodesc changes
 
+## 2026-11-16: feature: custom options
+
+- Kind: feature
+- Commit: this push
+- Found by: task #109 (protocompile custom options)
+- Go reference: protoc 36.2's FileDescriptorProto for a file with custom options
+- Test: std/protodesc_test.xo, the protoc case scripts/protocdesc/testdata/customopts.proto (byte exact)
+- Shipped in: not yet released
+
+`build` writes custom options (`(ext)` and `(ext).a.b`, extensions of the options messages in the file or an import)
+as protoc does: after the known options in extension number order, with every scalar kind, enum names, and message
+values from aggregates or several options merged into one message.
+
 ## 2026-11-16: feature: editions descriptors
 
 - Kind: feature

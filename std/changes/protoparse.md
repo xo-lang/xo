@@ -1,5 +1,17 @@
 # std/protoparse changes
 
+## 2026-11-16: feature: nested aggregate option values
+
+- Kind: feature
+- Commit: this push
+- Found by: task #109 (protocompile custom options)
+- Go reference: protocompile's aggregate option values
+- Test: std/protodesc_test.xo, scripts/protocdesc/testdata/customopts.proto (`option (limits) = { ... }`)
+- Shipped in: not yet released
+
+An aggregate option value with a nested message (`{ a { b: 1 } }`) keeps its keys as dotted pairs (`a.b`) that
+`aggregate_pairs` reads, instead of dropping the nested message as `{}`.
+
 ## 2026-11-16: feature: editions (2023, 2024); fix: gen refuses a group
 
 - Kind: feature, fix

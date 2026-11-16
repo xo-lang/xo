@@ -499,38 +499,32 @@ fn p_option(var p: P) -> (Str, Str) ! ParseErr {
   }
   p_expect(p, "=")?
   if p_is(p, "{") {
-    p.at += 1
     var pairs: List[Str] = []
-    var flat = true
-    while !p_is(p, "}") {
-      if p.at >= p.ts.len() { return Err(p_err(p, "unterminated option value")) }
-      if p_is(p, ",") || p_is(p, ";") {
-        p.at += 1
-        continue
-      }
-      let key = p_ident(p)?
-      if p_is(p, ":") { p.at += 1 }
-      if p_is(p, "{") {
-        // a nested aggregate: skipped, and the whole value left out
-        flat = false
-        var depth = 0
-        while p.at < p.ts.len() {
-          let t = p.ts[p.at]
-          p.at += 1
-          if t.kind == Kind.Sym && t.text == "{" { depth += 1 }
-          if t.kind == Kind.Sym && t.text == "}" {
-            depth -= 1
-            if depth == 0 { break }
-          }
-        }
-        continue
-      }
-      pairs.push(key + "\u{1f}" + p_constant(p)?)
-    }
-    p.at += 1
-    return Ok((name, if flat { "{" + pairs.join("\u{1e}") + "}" } else { "{}" }))
+    p_aggregate(p, "", pairs)?
+    return Ok((name, "{" + pairs.join("\u{1e}") + "}"))
   }
   Ok((name, p_constant(p)?))
+}
+
+/// An aggregate option value `{ key: value ... }` from its `{`: each scalar as `KEY\u{1f}VALUE` in
+/// pairs, a nested message's keys joined to its own with a dot (`limits.min`), in the order written.
+fn p_aggregate(var p: P, prefix: Str, var pairs: List[Str]) -> () ! ParseErr {
+  p.at += 1
+  while !p_is(p, "}") {
+    if p.at >= p.ts.len() { return Err(p_err(p, "unterminated option value")) }
+    if p_is(p, ",") || p_is(p, ";") {
+      p.at += 1
+      continue
+    }
+    let key = prefix + p_ident(p)?
+    if p_is(p, ":") { p.at += 1 }
+    if p_is(p, "{") {
+      p_aggregate(p, key + ".", pairs)?
+      continue
+    }
+    pairs.push(key + "\u{1f}" + p_constant(p)?)
+  }
+  p.at += 1
 }
 
 /// The (key, value) pairs of an aggregate option value as `p_option` keeps it.

@@ -10756,8 +10756,8 @@ fn aggregate_pairs(v: Str) -> List[(Str, Str)]                 // an aggregate o
 - `parse` reads proto3 and proto2: `package`, `import`, messages with fields, `repeated`, `optional`, `map<K, V>`,
   `oneof`, nested messages and enums, top level enums, `service` with `rpc` and `stream`, and `extend` blocks.
   Options are kept as (name, value) pairs on the file, messages, fields, enums, values, services and rpcs (a name's
-  tokens joined, `(my.ext).x`; a string value unquoted; an aggregate `{ key: value ... }` without nesting as pairs
-  `aggregate_pairs` reads, one with nesting as `{}`; a oneof's options are dropped), with a field's `default` and
+  tokens joined, `(my.ext).x`; a string value unquoted; an aggregate `{ key: value ... }` as pairs `aggregate_pairs`
+  reads, a nested message's keys joined with a dot (`limits.min`); a oneof's options are dropped), with a field's `default` and
   `json_name` in their own fields; `reserved` ranges and names and `extensions` ranges with their options are kept
   (end included, `max` the largest number), and where each map field sits among the nested messages (`map_at`).
   In a proto2 file every field outside a oneof needs a label (`required`, `optional` or `repeated`, else an error),
@@ -10859,11 +10859,14 @@ scoping (`.a.B` absolute, else the innermost scope outward), a map field's `Name
 `map_entry`) among the nested messages where the field is, a proto3 `optional` field's synthetic oneof `_name` after
 the declared ones, `json_name` (protoc's lowerCamelCase unless given), groups, defaults, `extend` blocks,
 reserved and extension ranges, and the options descriptor.proto defines (file, message, field, enum, value, service
-and method; `edition_defaults` and `feature_support` aggregates); options it does not define (custom options) and
-source retention options are left out, and an rpc with a `{ }` body gets an empty options message, as protoc's. An
+and method; `edition_defaults` and `feature_support` aggregates). A custom option, `(ext)` or `(ext).a.b` naming an
+extension of the options message in the file or an import, is written as protoc writes it: after the known options in
+extension number order, a message extension set by an aggregate or several options as one message with its fields in
+number order, a repeated one in written order. An option no extension resolves and source retention options are left
+out, and an rpc with a `{ }` body gets an empty options message, as protoc's. An
 unknown type is an error at line 0. An editions file's descriptor has syntax `editions`, its edition's number
 (EDITION_2023 is 1000) and each `features.NAME` option in a FeatureSet at its options' features field.
-Checked byte for byte against protoc 36.2 on 48 files: the protoparse corpus files protoc compiles, descriptor.proto
+Checked byte for byte against protoc 36.2 on 49 files: the protoparse corpus files protoc compiles, descriptor.proto
 and the well known types they import, and proto2, proto3 and edition 2023 feature files
 (scripts/protocdesc writes those cases into std/protodesc_test.xo; it needs protoc, so it runs by hand).
 

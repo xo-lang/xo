@@ -617,7 +617,336 @@ pub fn build(f: protoparse.File, name: Str, deps: List[FileDesc] = []) -> FileDe
   let (fo, fset) = b_opts(f.options, FILE_OPTS)
   out.options = fo
   out.options_set = fset
-  Ok(out)
+  // custom options: extensions of descriptor.proto's options messages, from this file and deps
+  var cx = CoCx{exts: [], msgs: {}, enums: {}}
+  cx = co_collect(cx, out)
+  for d in deps { cx = co_collect(cx, d) }
+  if cx.exts.is_empty() { return Ok(out) }
+  Ok(co_file(f, out, cx))
+}
+
+// Custom options (protoc): an option named `(ext)` or `(ext).field.field` sets an extension of the
+// options message (`extend google.protobuf.FieldOptions { ... }` in this file or an import). protoc
+// serializes the options message, so the extensions follow descriptor.proto's own options (their
+// numbers are 1000 and up) in number order, a message extension set by several options (an aggregate,
+// `(ext).a`, `(ext).b`) is one message with its fields in number order, and a repeated one keeps the
+// order written. An option no extension resolves is left out.
+
+/// An extension of an options message, by its full name (`.pkg.name`).
+struct CoExt {
+  full: Str
+  extendee: Str
+  number: Int
+  kind: Int
+  type_name: Str
+}
+
+/// The extensions, messages and enums custom option values resolve against.
+struct CoCx {
+  exts: List[CoExt]
+  msgs: Map[Str, MessageDesc]
+  enums: Map[Str, EnumDesc]
+}
+
+fn co_ext(full: Str, x: FieldDesc) -> CoExt {
+  CoExt{full: full, extendee: x.extendee, number: x.number, kind: x.kind, type_name: x.type_name}
+}
+
+fn co_collect_msg(cx0: CoCx, pre: Str, m: MessageDesc) -> CoCx {
+  var cx = cx0
+  let full = pre + "." + m.name
+  cx.msgs[full] = m
+  for x in m.extension { cx.exts.push(co_ext(full + "." + x.name, x)) }
+  for e in m.enum_type { cx.enums[full + "." + e.name] = e }
+  for n in m.nested_type { cx = co_collect_msg(cx, full, n) }
+  cx
+}
+
+fn co_collect(cx0: CoCx, f: FileDesc) -> CoCx {
+  var cx = cx0
+  let pre = if f.package.is_empty() { "" } else { "." + f.package }
+  for x in f.extension { cx.exts.push(co_ext(pre + "." + x.name, x)) }
+  for e in f.enum_type { cx.enums[pre + "." + e.name] = e }
+  for m in f.message_type { cx = co_collect_msg(cx, pre, m) }
+  cx
+}
+
+/// The extension of extendee an option's `(name)` names: by full name with a leading dot, else the one
+/// whose full name ends with `.name`.
+fn co_resolve(name: Str, extendee: Str, cx: CoCx) -> CoExt? {
+  for x in cx.exts {
+    if x.extendee != extendee { continue }
+    if name.starts_with(".") {
+      if x.full == name { return Some(x) }
+    } else if x.full == "." + name || x.full.ends_with("." + name) {
+      return Some(x)
+    }
+  }
+  None
+}
+
+fn co_le(var o: BytesBuilder, v: Int, n: Int) {
+  for i in 0..n { o.write_byte(UInt8.wrapping_from((v >> (8 * i)) & 255)) }
+}
+
+/// A scalar value as written for a field of kind, with its tag; None when it does not parse.
+fn co_scalar(num: Int, kind: Int, type_name: Str, v: Str, cx: CoCx) -> Bytes? {
+  var o = BytesBuilder.new()
+  if kind == TYPE_STRING || kind == TYPE_BYTES {
+    pw.wtag(o, num, 2)
+    let b = v.bytes()
+    pw.wv(o, b.len())
+    o.write(b)
+    return Some(o.freeze())
+  }
+  if kind == TYPE_DOUBLE || kind == TYPE_FLOAT {
+    let f = Float.parse(v)?
+    if kind == TYPE_DOUBLE {
+      pw.wtag(o, num, 1)
+      co_le(o, f.to_bits(), 8)
+    } else {
+      pw.wtag(o, num, 5)
+      co_le(o, Int(Float32(f).to_bits()), 4)
+    }
+    return Some(o.freeze())
+  }
+  var n = 0
+  if kind == TYPE_BOOL {
+    n = match v {
+      "true" => 1
+      "false" => 0
+      _ => return None
+    }
+  } else if kind == TYPE_ENUM {
+    var found: Int? = Int.parse_base(v, 0)
+    if let Some(e) = cx.enums.get(type_name) {
+      for ev in e.value {
+        if ev.name == v { found = Some(ev.number) }
+      }
+    }
+    n = found?
+  } else {
+    n = Int.parse_base(v, 0)?
+  }
+  if kind == TYPE_FIXED32 || kind == TYPE_SFIXED32 {
+    pw.wtag(o, num, 5)
+    co_le(o, n, 4)
+  } else if kind == TYPE_FIXED64 || kind == TYPE_SFIXED64 {
+    pw.wtag(o, num, 1)
+    co_le(o, n, 8)
+  } else {
+    if kind == TYPE_SINT32 || kind == TYPE_SINT64 { n = (n << 1) ^ (n >> 63) }
+    pw.wtag(o, num, 0)
+    pw.wv(o, n)
+  }
+  Some(o.freeze())
+}
+
+/// The fields of the message type_name that entries set ((path, value), path under that message), in
+/// field number order.
+fn co_message(type_name: Str, entries: List[(List[Str], Str)], cx: CoCx) -> Bytes {
+  var o = BytesBuilder.new()
+  let md = match cx.msgs.get(type_name) {
+    Some(m) => m
+    None => return o.freeze()
+  }
+  let fields = md.field.sort_with(fn(a: FieldDesc, b: FieldDesc) -> Ordering { a.number.cmp(b.number) })
+  for fd in fields {
+    var sub: List[(List[Str], Str)] = []
+    for (path, v) in entries {
+      if !path.is_empty() && path[0] == fd.name { sub.push((path[1..], v)) }
+    }
+    if sub.is_empty() { continue }
+    if fd.kind == TYPE_MESSAGE {
+      let body = co_message(fd.type_name, sub, cx)
+      pw.wtag(o, fd.number, 2)
+      pw.wv(o, body.len())
+      o.write(body)
+      continue
+    }
+    for (path, v) in sub {
+      if !path.is_empty() { continue }
+      if let Some(b) = co_scalar(fd.number, fd.kind, fd.type_name, v, cx) { o.write(b) }
+    }
+  }
+  o.freeze()
+}
+
+/// The custom options among opts as the extensions of extendee (`.google.protobuf.FieldOptions`), in
+/// extension number order.
+fn co_opts(opts: List[(Str, Str)], extendee: Str, cx: CoCx) -> Bytes {
+  var items: List[(CoExt, List[Str], Str)] = []
+  for (k, v) in opts {
+    if !k.starts_with("(") { continue }
+    let close = match k.find(")") {
+      Some(i) => i
+      None => continue
+    }
+    let x = match co_resolve(k[1..close], extendee, cx) {
+      Some(x) => x
+      None => continue
+    }
+    let rest = k[close + 1..k.len()]
+    let path: List[Str] = if rest.starts_with(".") { rest[1..rest.len()].split(".") } else { [] }
+    if v.starts_with("{") {
+      for (ak, av) in protoparse.aggregate_pairs(v) { items.push((x, path + ak.split("."), av)) }
+    } else {
+      items.push((x, path, v))
+    }
+  }
+  var o = BytesBuilder.new()
+  if items.is_empty() { return o.freeze() }
+  var nums: List[Int] = []
+  for (x, _, _) in items {
+    if !nums.contains(x.number) { nums.push(x.number) }
+  }
+  for num in nums.sort() {
+    var x0: CoExt? = None
+    var sub: List[(List[Str], Str)] = []
+    for (x, path, v) in items {
+      if x.number != num { continue }
+      x0 = Some(x)
+      sub.push((path, v))
+    }
+    let x = x0.or_fault("co_opts: an extension number with no item")
+    if x.kind == TYPE_MESSAGE {
+      let body = co_message(x.type_name, sub, cx)
+      pw.wtag(o, num, 2)
+      pw.wv(o, body.len())
+      o.write(body)
+    } else {
+      for (path, v) in sub {
+        if !path.is_empty() { continue }
+        if let Some(b) = co_scalar(num, x.kind, x.type_name, v, cx) { o.write(b) }
+      }
+    }
+  }
+  o.freeze()
+}
+
+const CO_PRE: Str = ".google.protobuf."
+
+fn co_enum(e: protoparse.Enum, d0: EnumDesc, cx: CoCx) -> EnumDesc {
+  var d = d0
+  let eo = co_opts(e.options, CO_PRE + "EnumOptions", cx)
+  if !eo.is_empty() {
+    d.options = d.options + eo
+    d.options_set = true
+  }
+  var vals: List[EnumValueDesc] = []
+  for vd0 in d.value {
+    var vd = vd0
+    for v in e.values {
+      if v.name != vd.name { continue }
+      let vo = co_opts(v.options, CO_PRE + "EnumValueOptions", cx)
+      if !vo.is_empty() {
+        vd.options = vd.options + vo
+        vd.options_set = true
+      }
+    }
+    vals.push(vd)
+  }
+  d.value = vals
+  d
+}
+
+fn co_message_desc(m: protoparse.Message, d0: MessageDesc, cx: CoCx) -> MessageDesc {
+  var d = d0
+  let mo = co_opts(m.options, CO_PRE + "MessageOptions", cx)
+  if !mo.is_empty() {
+    d.options = d.options + mo
+    d.options_set = true
+  }
+  var fields: List[FieldDesc] = []
+  for fd0 in d.field {
+    var fd = fd0
+    for fl in m.fields {
+      if fl.name != fd.name { continue }
+      let fo = co_opts(fl.options, CO_PRE + "FieldOptions", cx)
+      if !fo.is_empty() {
+        fd.options = fd.options + fo
+        fd.options_set = true
+      }
+    }
+    fields.push(fd)
+  }
+  d.field = fields
+  var nested: List[MessageDesc] = []
+  for nd in d.nested_type {
+    var done = nd
+    for n in m.nested {
+      if n.name == nd.name { done = co_message_desc(n, nd, cx) }
+    }
+    nested.push(done)
+  }
+  d.nested_type = nested
+  var enums: List[EnumDesc] = []
+  for ed in d.enum_type {
+    var done = ed
+    for e in m.enums {
+      if e.name == ed.name { done = co_enum(e, ed, cx) }
+    }
+    enums.push(done)
+  }
+  d.enum_type = enums
+  d
+}
+
+/// out with the custom options of f's file, messages, fields, enums, values, services and methods.
+fn co_file(f: protoparse.File, out0: FileDesc, cx: CoCx) -> FileDesc {
+  var out = out0
+  let fo = co_opts(f.options, CO_PRE + "FileOptions", cx)
+  if !fo.is_empty() {
+    out.options = out.options + fo
+    out.options_set = true
+  }
+  var msgs: List[MessageDesc] = []
+  for md in out.message_type {
+    var done = md
+    for m in f.messages {
+      if m.name == md.name { done = co_message_desc(m, md, cx) }
+    }
+    msgs.push(done)
+  }
+  out.message_type = msgs
+  var enums: List[EnumDesc] = []
+  for ed in out.enum_type {
+    var done = ed
+    for e in f.enums {
+      if e.name == ed.name { done = co_enum(e, ed, cx) }
+    }
+    enums.push(done)
+  }
+  out.enum_type = enums
+  var svcs: List[ServiceDesc] = []
+  for sd0 in out.service {
+    var sd = sd0
+    for sv in f.services {
+      if sv.name != sd.name { continue }
+      let so = co_opts(sv.options, CO_PRE + "ServiceOptions", cx)
+      if !so.is_empty() {
+        sd.options = sd.options + so
+        sd.options_set = true
+      }
+      var ms: List[MethodDesc] = []
+      for md0 in sd.method {
+        var md = md0
+        for r in sv.rpcs {
+          if r.name != md.name { continue }
+          let ro = co_opts(r.options, CO_PRE + "MethodOptions", cx)
+          if !ro.is_empty() {
+            md.options = md.options + ro
+            md.options_set = true
+          }
+        }
+        ms.push(md)
+      }
+      sd.method = ms
+    }
+    svcs.push(sd)
+  }
+  out.service = svcs
+  out
 }
 
 fn b_syms(var syms: Map[Str, Int], pre: Str, m: protoparse.Message) {
