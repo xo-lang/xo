@@ -150,7 +150,18 @@ fn error_value(e: RpcError) -> json.Value {
 /// JSON; INVALID_REQUEST for JSON that is not a message: not an object,
 /// `jsonrpc` other than "2.0", an id that is not a number, a string or
 /// null, a `method` that is not a string, or neither a method nor an id.
-/// A `method` member (even "") makes a Request; else a Response.
+/// A `method` member (even "") makes a Request; else a Response. An
+/// error's code must be an integer; its message may be absent or null
+/// ("").
+///
+/// Where it departs from the Go SDK's DecodeMessage (each by the
+/// specification, internal/stdtest TestJsonrpcFuzz models them): text
+/// after the message is a PARSE_ERROR (the SDK's stream decoder ignores
+/// it); a null `method` and an error with no code (or a null one) are
+/// INVALID_REQUEST (the SDK reads "" and 0); a response with neither
+/// result nor error has a null result, which encode writes (the SDK
+/// leaves it out); and encode leaves the result out of a response with an
+/// error (the SDK writes both when both came in).
 pub fn decode(text: Str) -> Message ! RpcError {
   match json.parse_value(text) {
     Ok(v) => decode_value(v)
@@ -225,13 +236,15 @@ pub fn decode_value(v: json.Value) -> Message ! RpcError {
 
 fn decode_error(v: json.Value) -> RpcError ! RpcError {
   let code = match v.get("code") {
+    // an integer, as the specification says and the Go SDK's int64 reads
+    // it: 1.5, 2.0 and 1e3 are not (task #115)
     Some(json.Value.Int(n)) => n
-    Some(json.Value.Num(f)) => Int(f)
     _ => return Err(error_of(INVALID_REQUEST))
   }
   let message = match v.get("message") {
     Some(json.Value.Str(s)) => s
-    None => ""
+    // absent or null: "", as the Go SDK reads it
+    None | Some(json.Value.Null) => ""
     _ => return Err(error_of(INVALID_REQUEST))
   }
   Ok(RpcError{code: code, message: message, data: v.get("data")})

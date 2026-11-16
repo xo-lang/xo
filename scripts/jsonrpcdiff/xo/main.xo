@@ -1,0 +1,93 @@
+// The Xo side of the jsonrpc differential test (internal/stdtest
+// TestJsonrpcFuzz): each line on standard input is "d xHEX" or "e xHEX", a
+// message text in hex; prints "== ", the text's show (the corpus's
+// rendering, scripts/stdcorpus/jsonrpcoracle's render), and for "e" "enc "
+// and the hex of encode of the decoded message, or "enc -" for a response
+// with no id, a request with an empty method, or a text that does not
+// decode (where the corpus leaves the Go SDK's encode out).
+use std/json
+use std/jsonrpc
+
+/// v as the oracle renders JSON: keys sorted, numbers as Go's float64.
+fn canon(v: json.Value?) -> Str {
+  match v {
+    None => "-"
+    Some(x) => canon_value(x)
+  }
+}
+
+fn canon_value(v: json.Value) -> Str {
+  match v {
+    json.Value.Object(fs) => {
+      var ks: List[Str] = []
+      for (k, _) in fs {
+        ks.push(k)
+      }
+      ks = ks.sort()
+      var parts: List[Str] = []
+      for k in ks {
+        parts.push(json.Value.Str(k).encode() + ":" + canon_value(v.get(k) ?? json.Value.Null))
+      }
+      "{" + parts.join(",") + "}"
+    }
+    json.Value.List(xs) => {
+      var parts: List[Str] = []
+      for x in xs {
+        parts.push(canon_value(x))
+      }
+      "[" + parts.join(",") + "]"
+    }
+    _ => v.encode()
+  }
+}
+
+fn show_id(id: jsonrpc.Id?) -> Str {
+  match id {
+    None => "none"
+    Some(jsonrpc.Id.Int(n)) => "int ${n}"
+    Some(jsonrpc.Id.Str(s)) => "str ${s}"
+  }
+}
+
+fn show(text: Str) -> Str {
+  match jsonrpc.decode(text) {
+    Err(_) => "error"
+    Ok(jsonrpc.Message.Req(r)) => "request id=${show_id(r.id)} method=${r.method} params=${canon(r.params)}"
+    Ok(jsonrpc.Message.Resp(r)) => {
+      let s = "response id=${show_id(r.id)}"
+      match r.error {
+        Some(e) => s + " error=${e.code}/${e.message}/${canon(e.data)}"
+        None => s + " result=${canon(Some(r.result))}"
+      }
+    }
+  }
+}
+
+fn enc_of(text: Str) -> Str {
+  match jsonrpc.decode(text) {
+    Err(_) => "-"
+    Ok(m) => {
+      let skip = match m {
+        jsonrpc.Message.Req(r) => r.method.is_empty()
+        jsonrpc.Message.Resp(r) => r.id == None
+      }
+      if skip { "-" } else { jsonrpc.encode(m).bytes().to_hex() }
+    }
+  }
+}
+
+fn main(os: Os) ! {
+  for line in os.stdio.lines()? {
+    let w = line.trim().split(" ")
+    if w.len() < 2 {
+      continue
+    }
+    let b = Bytes.from_hex(w[1].trim_prefix("x")).or_err("bad hex")?
+    let text = b.to_str().or_err("not UTF-8")?
+    os.stdio.println("== ")
+    os.stdio.println(show(text))
+    if w[0] == "e" {
+      os.stdio.println("enc ${enc_of(text)}")
+    }
+  }
+}

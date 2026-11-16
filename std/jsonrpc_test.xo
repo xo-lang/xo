@@ -1,0 +1,14 @@
+// std/jsonrpc module tests (the corpus is internal/stdtest/testdata/corpus/jsonrpc).
+test "an error's code must be an integer, and a null message is no message (TestJsonrpcFuzz, task #115)" {
+  // the specification: code MUST be an integer; the Go SDK's int64 field
+  // refuses 1.5 (and 2.0, 1e3), where decode truncated it
+  expect(decode("{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":1.5,\"message\":\"m\"}}").is_err()) == true
+  expect(decode("{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":2.0,\"message\":\"m\"}}").is_err()) == true
+  expect(decode("{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":1e3,\"message\":\"m\"}}").is_err()) == true
+  // a null message is the absent one, as the Go SDK reads it (and as decode
+  // reads a null error and a null id)
+  match decode("{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32000,\"message\":null}}") {
+    Ok(Message.Resp(r)) => expect(r.error.map(fn(e) { "${e.code}/${e.message}" })) == Some("-32000/")
+    _ => expect("decoded") == "a response"
+  }
+}
