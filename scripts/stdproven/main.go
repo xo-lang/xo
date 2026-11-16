@@ -70,6 +70,7 @@ var harnesses = map[string][]harness{
 	"hpke":     {{"TestHpkeFuzz", "XO_HPKEFUZZ"}},
 	"mail":     {{"TestMailFuzz", "XO_MAILFUZZ"}},
 	"jwt":      {{"TestJwtFuzz", "XO_JWTFUZZ"}},
+	"bcrypt":   {{"TestBcryptFuzz", "XO_BCRYPTFUZZ"}},
 	"sql":      {{"TestMysqlFuzz", "XO_MYSQLFUZZ"}},
 	"json":     {{"TestJsonFuzz", "XO_JSONFUZZ"}},
 	"time":     {{"TestTimeFuzz", "XO_TIMEFUZZ"}},

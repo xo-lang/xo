@@ -34,6 +34,12 @@ func res(err error) string {
 }
 
 func main() {
+	if len(os.Args) > 3 && os.Args[1] == "fuzz" {
+		seed, _ := strconv.ParseInt(os.Args[2], 10, 64)
+		n, _ := strconv.Atoi(os.Args[3])
+		fuzzMain(seed, n)
+		return
+	}
 	rg := mrand.New(mrand.NewSource(26))
 	rand.Reader = seeded{mrand.New(mrand.NewSource(27))}
 	_ = big.NewInt
