@@ -126,6 +126,7 @@ var harnesses = map[string][]harness{
 	"random":       {{"TestRandomFuzz", "XO_RANDOMFUZZ"}},
 	"backoff":      {{"TestBackoffFuzz", "XO_BACKOFFFUZZ"}},
 	"protowire":    {{"TestProtowireFuzz", "XO_PROTOWIREFUZZ"}},
+	"smtp":         {{"TestSmtpFuzz", "XO_SMTPFUZZ"}},
 }
 
 func main() {

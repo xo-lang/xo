@@ -1,5 +1,15 @@
 # std/smtp changes
 
+## 2026-11-16: fix: replies are read as Go's textproto reads them (bytes that are not UTF-8, a last line without CRLF)
+
+- Kind: fix
+- Commit: this push
+- Found by: internal/stdtest TestSmtpFuzz (task #90): seed 2 case 9 (an EHLO line with \xff read as "", then HELO), seed 5 case 1418 (AUTH's 535 with U+FFFD), seed 5 case 1258 (a reply cut before its CRLF was EOF)
+- Go reference: net/textproto Reader.ReadLine (bufio.Reader.ReadLine returns a last line without its end), ReadResponse, Error.Error (%q of the bytes)
+- Test: internal/stdtest TestSmtpReplyBytes (all 4 cases fail on the old std, pass now; Go's SendMail checks each expectation); TestSmtpFuzz seeds 2 to 4 (300 sessions) and 5 to 8 (3000), arm64 and llvm
+- Timing: none (a reply's bytes are kept as read; the text is made once)
+- Shipped in: not yet released
+
 ## 2026-11-13: behavior: a reply's error quotes its text, as Go 1.26.2 and later
 
 - Kind: behavior

@@ -1,0 +1,41 @@
+// The Xo side of the SMTP differential test (internal/stdtest
+// TestSmtpFuzz): each line on standard input is one send, "ADDR FROM TO
+// AUTH MSG" (FROM, MSG and each comma separated TO as "x" then hex, "-"
+// for no TO;
+// AUTH "none", "plain:USER:PASS" or "cram:USER:SECRET", hex), sent with
+// smtp.send in plain text (Security.None, the server is on loopback) and
+// printed as the test prints Go's net/smtp SendMail: "ok" or the error.
+use std/smtp
+
+fn text(h: Str) -> Str ! Str {
+  let b = Bytes.from_hex(h.trim_prefix("x")).or_err("bad hex ${h}")?
+  b.to_str().or_err("not UTF-8: ${h}")
+}
+
+fn main(os: Os) ! {
+  for line in os.stdio.lines()? {
+    let w = line.trim().split(" ")
+    if w.len() < 5 {
+      continue
+    }
+    os.stdio.println("== ${w[0]}")
+    let from = text(w[1])?
+    var to: List[Str] = []
+    if w[2] != "-" {
+      for h in w[2].split(",") {
+        to.push(text(h)?)
+      }
+    }
+    let a = w[3].split(":")
+    let auth = match a[0] {
+      "plain" => smtp.Auth.Plain(user: text(a[1])?, password: Secret.new(text(a[2])?))
+      "cram" => smtp.Auth.CramMd5(user: text(a[1])?, secret: Secret.new(text(a[2])?))
+      _ => smtp.Auth.None
+    }
+    let msg = Bytes.from_hex(w[4].trim_prefix("x")).or_err("bad hex")?
+    match smtp.send(os.net, w[0], from, to, msg, auth: auth, security: smtp.Security.None) {
+      Ok(_) => os.stdio.println("ok")
+      Err(e) => os.stdio.println("error ${e}")
+    }
+  }
+}
