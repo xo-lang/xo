@@ -79,3 +79,16 @@ test "numeric references below 128 are their ASCII character" {
   expect(z.next()) == TokenType.Text
   expect(z.token().data) == "Az\u{1}\u{7F}\u{FFFD}\u{9}b\u{20AC}"
 }
+
+test "token takes the token's data, as Go's Token: a second call is empty" {
+  // outputs of x/net v0.62.0 (Token twice, then TagAttr and TagName)
+  for (input, want) in [("<a b=c d=e>x", "<a b=\"c\" d=\"e\">|<> 2|0 = false  false"), ("</p q=r>", "</p>|</> 0|0 = false  false"), ("<!--c-->", "<!--c-->|<!----> 0|0 = false  false")] {
+    var z = tokenizer(input)
+    let _ = z.next()
+    let t1 = z.token()
+    let t2 = z.token()
+    let (k, v, m) = z.tag_attr()
+    let (n, h) = z.tag_name()
+    expect("${t1.display()}|${t2.display()} ${t1.attrs.len()}|${t2.attrs.len()} ${k}=${v} ${m} ${n} ${h}") == want
+  }
+}

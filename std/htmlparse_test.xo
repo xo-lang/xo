@@ -99,3 +99,63 @@ test "a seeded mix of markup never faults" {
     }
   }
 }
+
+// iter_test.go (x/net v0.62.0): ChildNodes, Descendants and Ancestors.
+
+/// the body of the parse of text (Go's doc.FirstChild.FirstChild.NextSibling)
+fn body_of(text: Str) -> (Tree, Int) {
+  let t = parse(text) ?? e => fault("parse: ${e.display()}")
+  let html = t.nodes[t.root].first_child
+  (t, t.nodes[t.nodes[html].first_child].next)
+}
+
+fn datas(t: Tree, ns: List[Int]) -> Str {
+  ns.map(fn(n) { t.nodes[n].data }).join(" ")
+}
+
+test "child_nodes, as Go's ChildNodes" {
+  for (input, want) in [("", ""), ("<a></a>", "a"), ("a", "a"), ("<a></a><!--b-->", "a b"), ("a<b></b>c", "a b c"), ("a<b><!--c--></b>d", "a b d"), ("<a><b>c<!--d-->e</b></a>f<!--g--><h>i</h>", "a f g h")] {
+    let (t, body) = body_of(input)
+    expect("${input}: ${datas(t, t.child_nodes(body))}") == "${input}: ${want}"
+  }
+}
+
+test "descendants, as Go's Descendants" {
+  for (input, want) in [("", ""), ("<a></a>", "a"), ("<a><b></b></a>", "a b"), ("<a>b</a>", "a b"), ("<a><!--b--></a>", "a b"), ("<a>b<c></c>d</a>", "a b c d"), ("<a>b<c><!--d--></c>e</a>", "a b c d e"), ("<a><b><c>d<!--e-->f</c></b>g<!--h--><i>j</i></a>", "a b c d e f g h i j")] {
+    let (t, body) = body_of(input)
+    expect("${input}: ${datas(t, t.descendants(body))}") == "${input}: ${want}"
+  }
+}
+
+test "ancestors of a chain built with append_child, as Go's Ancestors" {
+  for size in [0, 1, 2, 10, 100, 10000] {
+    var t = Tree{nodes: [], root: -1}
+    var child = t.new_node(NodeType.Element, "x")
+    for _ in 0..size {
+      let parent = child
+      child = t.new_node(NodeType.Element, "x")
+      t.append_child(parent, child)
+    }
+    expect(t.ancestors(child).len()) == size
+  }
+}
+
+// node.go (x/net v0.62.0): InsertBefore, AppendChild, RemoveChild.
+
+test "edits keep the tree's links and render as Go's" {
+  var (t, body) = body_of("<p>a</p><p>b</p>")
+  let ps = t.child_nodes(body)
+  let em = t.new_node(NodeType.Element, "em")
+  let tx = t.new_node(NodeType.Text, "x<y")
+  t.append_child(em, tx)
+  t.insert_before(body, em, ps[1])
+  expect(t.render_node(body).ok() ?? "?") == "<body><p>a</p><em>x&lt;y</em><p>b</p></body>"
+  t.remove_child(body, ps[0])
+  expect(t.render_node(body).ok() ?? "?") == "<body><em>x&lt;y</em><p>b</p></body>"
+  t.insert_before(body, ps[0], -1)
+  expect(t.render_node(body).ok() ?? "?") == "<body><em>x&lt;y</em><p>b</p><p>a</p></body>"
+  expect(t.nodes[ps[0]].prev) == ps[1]
+  expect(t.nodes[body].last_child) == ps[0]
+  expect(datas(t, t.descendants(body))) == "em x<y p b p a"
+  expect(t.ancestors(tx).map(fn(n) { t.nodes[n].typ.display() }).join(" ")) == "ElementNode ElementNode ElementNode DocumentNode"
+}

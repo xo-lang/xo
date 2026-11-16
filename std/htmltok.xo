@@ -67,6 +67,8 @@ pub struct Tokenizer {
   pub text_raw: Bool
   pub convert_nul: Bool
   pub cdata: Bool
+  /// the attributes tag_attr has returned for this token (Go's nAttrReturned)
+  pub nattr: Int = 0
 }
 
 /// Go's NewTokenizer.
@@ -93,6 +95,7 @@ pub fn (var z: Tokenizer) next() -> TokenType {
   z.rs = z.re
   z.ds = z.re
   z.de = z.re
+  z.nattr = 0
   if z.errc != 0 {
     z.tt = TokenType.Error
     return z.tt
@@ -238,7 +241,8 @@ pub fn (var z: Tokenizer) token() -> Token {
     }
     var attrs: List[Attribute] = []
     if !is_end {
-      var i = 0
+      // from the first attribute tag_attr has not taken
+      var i = z.nattr * 4
       while i + 3 < z.attr.len() {
         let key = lowered(z.src[z.attr[i]..z.attr[i + 1]])
         let val = unescape(convert_newlines(replace_nul(z.src[z.attr[i + 2]..z.attr[i + 3]])), true).to_str_lossy()
@@ -246,9 +250,175 @@ pub fn (var z: Tokenizer) token() -> Token {
         i += 4
       }
     }
+    // taken, as Go's TagName and TagAttr take them
+    z.ds = z.re
+    z.de = z.re
+    z.nattr = z.attr.len() / 4
     return Token{typ: tt, data: name, attrs: attrs}
   }
   Token{typ: tt, data: "", attrs: []}
+}
+
+/// Go's Text: the unescaped text of a text, comment or doctype token, None
+/// for another token. It takes the text: a second call gives "".
+pub fn (var z: Tokenizer) text() -> Str? {
+  match z.tt {
+    TokenType.Text | TokenType.Comment | TokenType.Doctype => Some(tokenizer_text(z))
+    TokenType.Error | TokenType.StartTag | TokenType.EndTag | TokenType.SelfClosingTag => None
+  }
+}
+
+/// Go's TagName: the lower cased name of a start, end or self-closing tag
+/// and whether it has attributes for tag_attr; ("", false) for another
+/// token, or once taken (a second call).
+pub fn (var z: Tokenizer) tag_name() -> (Str, Bool) {
+  if z.ds < z.de {
+    match z.tt {
+      TokenType.StartTag | TokenType.EndTag | TokenType.SelfClosingTag => {
+        let name = lowered(replace_nul(z.src[z.ds..z.de]))
+        z.ds = z.re
+        z.de = z.re
+        return (name, z.nattr * 4 < z.attr.len())
+      }
+      TokenType.Error | TokenType.Text | TokenType.Comment | TokenType.Doctype => {}
+    }
+  }
+  ("", false)
+}
+
+/// Go's TagAttr: the next attribute of a start or self-closing tag, its key
+/// lower cased and its value unescaped, and whether more follow; ("", "",
+/// false) after the last or for another token.
+pub fn (var z: Tokenizer) tag_attr() -> (Str, Str, Bool) {
+  if z.nattr * 4 < z.attr.len() {
+    match z.tt {
+      TokenType.StartTag | TokenType.SelfClosingTag => {
+        let i = z.nattr * 4
+        z.nattr += 1
+        let key = lowered(replace_nul(z.src[z.attr[i]..z.attr[i + 1]]))
+        let val = unescape(convert_newlines(replace_nul(z.src[z.attr[i + 2]..z.attr[i + 3]])), true).to_str_lossy()
+        return (key, val, z.nattr * 4 < z.attr.len())
+      }
+      TokenType.Error | TokenType.Text | TokenType.EndTag | TokenType.Comment | TokenType.Doctype => {}
+    }
+  }
+  ("", "", false)
+}
+
+/// Go's UnescapeString: the text with its character references (`&amp;`,
+/// `&#39;`, `&lt` without a semicolon where HTML allows it) decoded.
+pub fn unescape_string(s: Str) -> Str {
+  if !s.contains("&") {
+    return s
+  }
+  unescape(s.bytes(), false).to_str_lossy()
+}
+
+/// Go's TokenType.String.
+pub fn (t: TokenType) display() -> Str {
+  match t {
+    TokenType.Error => "Error"
+    TokenType.Text => "Text"
+    TokenType.StartTag => "StartTag"
+    TokenType.EndTag => "EndTag"
+    TokenType.SelfClosingTag => "SelfClosingTag"
+    TokenType.Comment => "Comment"
+    TokenType.Doctype => "Doctype"
+  }
+}
+
+/// Go's Token.String: the token as HTML, its text and attribute values
+/// escaped (EscapeString's five characters).
+pub fn (t: Token) display() -> Str {
+  match t.typ {
+    TokenType.Error => ""
+    TokenType.Text => escape_string(t.data)
+    TokenType.StartTag => "<" + tag_string(t) + ">"
+    TokenType.EndTag => "</" + tag_string(t) + ">"
+    TokenType.SelfClosingTag => "<" + tag_string(t) + "/>"
+    TokenType.Comment => "<!--" + escape_comment_string(t.data) + "-->"
+    TokenType.Doctype => "<!DOCTYPE " + escape_string(t.data) + ">"
+  }
+}
+
+fn tag_string(t: Token) -> Str {
+  if t.attrs.is_empty() {
+    return t.data
+  }
+  var b = StrBuilder.new()
+  b.write(t.data)
+  for a in t.attrs {
+    b.write(" ")
+    b.write(a.key)
+    b.write("=\"")
+    b.write(escape_string(a.val))
+    b.write("\"")
+  }
+  b.freeze()
+}
+
+/// Go's EscapeString: `<`, `>`, `&`, `'`, `"` and carriage return as `&lt;`,
+/// `&gt;`, `&amp;`, `&#39;`, `&#34;` and `&#13;`.
+pub fn escape_string(s: Str) -> Str {
+  let b = s.bytes()
+  var out = StrBuilder.new()
+  var i = 0
+  for j in 0..b.len() {
+    let esc = match b[j] {
+      38 => "&amp;"
+      39 => "&#39;"
+      60 => "&lt;"
+      62 => "&gt;"
+      34 => "&#34;"
+      13 => "&#13;"
+      _ => continue
+    }
+    if i < j {
+      out.write(s[i..j])
+    }
+    out.write(esc)
+    i = j + 1
+  }
+  if i == 0 {
+    return s
+  }
+  if i < b.len() {
+    out.write(s[i..])
+  }
+  out.freeze()
+}
+
+/// Go's escapeCommentString (x/net v0.62.0): the characters a comment may
+/// not hold as is escaped, as htmlparse renders a comment.
+fn escape_comment_string(s: Str) -> Str {
+  if !s.contains("&") && !s.contains(">") {
+    return s
+  }
+  let b = s.bytes()
+  var out = StrBuilder.new()
+  var i = 0
+  for j in 0..b.len() {
+    var esc = ""
+    if b[j] == 38 {
+      esc = "&amp;"
+    } else if b[j] == 62 {
+      if j > 0 && b[j - 1] != 33 && b[j - 1] != 45 {
+        continue
+      }
+      esc = "&gt;"
+    } else {
+      continue
+    }
+    if i < j {
+      out.write(s[i..j])
+    }
+    out.write(esc)
+    i = j + 1
+  }
+  if i < b.len() {
+    out.write(s[i..])
+  }
+  out.freeze()
 }
 
 /// Go's Raw: the unmodified text of the current token; the raw texts of the

@@ -10435,7 +10435,7 @@ fn gen(f: File) -> Str ! ParseErr
 
 The HTML5 tokenizer of golang.org/x/net/html (decision 0548; token.go and the unescape of escape.go, BSD license): a text
 in memory becomes a stream of tokens with Go's rules for raw text elements, comments, doctypes, attributes, entities
-and the buffer limit. The tree builder is std/htmlparse (section 75). The token streams are checked against x/net v0.62.0's Tokenizer
+and the buffer limit. The tree builder is std/htmlparse (section 88). The token streams are checked against x/net v0.62.0's Tokenizer
 (testdata/corpus/htmltok: curated and seeded random inputs in plain, AllowCDATA and fragment modes, and with buffer
 limits). The entity tables are shared with std/html through `std/htmlent` (`entity_of(name)` and `entity2_of(name)`, "" for none;
 internal, use std/html for escaping).
@@ -10455,7 +10455,18 @@ fn (var z: Tokenizer) allow_cdata(allow: Bool)
 fn (var z: Tokenizer) next_is_not_raw_text()
 fn (var z: Tokenizer) set_max_buf(n: Int)
 fn (z: Tokenizer) buffered() -> Str
+fn (var z: Tokenizer) text() -> Str?                    // Text: a text, comment or doctype's, taken
+fn (var z: Tokenizer) tag_name() -> (Str, Bool)         // TagName: the name, taken; whether attributes follow
+fn (var z: Tokenizer) tag_attr() -> (Str, Str, Bool)    // TagAttr: the next attribute; whether more follow
+fn (t: TokenType) display() -> Str                      // TokenType.String
+fn (t: Token) display() -> Str                          // Token.String: the token as escaped HTML
+fn escape_string(s: Str) -> Str                         // EscapeString: & ' < > " and CR
+fn unescape_string(s: Str) -> Str                       // UnescapeString
 ```
+
+`text`, `tag_name` and `tag_attr` are Go's fast accessors (decision 0548, 2026-11-16): each takes what it returns, so
+a second `text` or `tag_name` gives "" (and `token` after them, or a second `token`, gives a token without its data),
+as Go's do. Checked against x/net v0.62.0 on 596 token streams (corpus table API).
 
 `next` is Go's Next: the type of the next token, `Error` at the end (`err` is `EOF`) or past the limit set by
 `set_max_buf` (`max buffer exceeded`). `token` is Go's Token and consumes the token's data, so call it once per `next`:
@@ -11390,3 +11401,45 @@ and the 32 KiB pieces its Reader reads, which decide between
 meta-block. Checked against andybalholm on its streams at every quality
 and window size, flushed part way, and on 2,500 damaged streams (std's
 tests and testdata/corpus/brotli).
+
+## 88. std/htmlparse
+
+golang.org/x/net/html's tree builder (decision 0570), over std/htmltok: the HTML5 tree construction algorithm on a
+text in memory, Go's Render, and Go's tree editing and walking on node indexes.
+
+```
+enum NodeType { Error, Text, Document, Element, Comment, Doctype, Raw }
+struct Attr { namespace: Str, key: Str, val: Str }
+struct Node { typ: NodeType, data: Str, namespace: Str, attrs: List[Attr], parent: Int, first_child: Int, last_child: Int, prev: Int, next: Int }
+struct Tree { nodes: List[Node], root: Int }
+struct ParseErr { msg: Str }
+struct RenderErr { msg: Str }
+fn parse(text: Str) -> Tree ! ParseErr                                     // Parse, scripting on
+fn parse_with(text: Str, scripting: Bool) -> Tree ! ParseErr               // ParseWithOptions
+fn parse_fragment(text: Str, context_namespace: Str, context_tag: Str) -> Tree ! ParseErr
+fn parse_fragment_with(text: Str, context_namespace: Str, context_tag: Str, scripting: Bool) -> Tree ! ParseErr
+fn (t: Tree) render() -> Str ! RenderErr                                   // Render of root's children
+fn (t: Tree) render_node(n: Int) -> Str ! RenderErr                        // Render of one node
+fn (t: Tree) dump() -> Str                                                 // html5lib's tree format
+fn escape(s: Str) -> Str                                                   // EscapeString
+fn (t: NodeType) display() -> Str                                          // NodeType.String: "ElementNode"
+fn (var t: Tree) new_node(typ: NodeType, data: Str) -> Int                 // &Node{Type, Data}, unattached
+fn (var t: Tree) insert_before(parent: Int, c: Int, old: Int)              // InsertBefore (old -1: last)
+fn (var t: Tree) append_child(parent: Int, c: Int)                         // AppendChild
+fn (var t: Tree) remove_child(parent: Int, c: Int)                         // RemoveChild
+fn (t: Tree) ancestors(n: Int) -> List[Int]                                // Ancestors
+fn (t: Tree) child_nodes(n: Int) -> List[Int]                              // ChildNodes
+fn (t: Tree) descendants(n: Int) -> List[Int]                              // Descendants, pre-order
+```
+
+A Node's links are indexes into `Tree.nodes`, -1 for none (Go's nil). `data` is an element's tag name (lower cased,
+svg's camel case adjustments), a text or comment's text, a doctype's name (its identifiers are the attributes `public`
+and `system`); `namespace` is "" for html, `math` or `svg`. A fragment's nodes are the children of `root`. A parse
+whose open elements nest deeper than 512 is a `ParseErr` with Go's text.
+
+The edits are Go's node.go (2026-11-16): `insert_before` and `append_child` take a node attached to nothing and fault
+with Go's panic text otherwise (`html: InsertBefore called for an attached child Node`); `remove_child` faults when
+the node is not the parent's child and leaves it in `nodes`, detached, to be added again. The walks (iter.go) return
+node indexes: `ancestors` from the parent up, `child_nodes` in order, `descendants` in document order without the
+node itself. Tests: the html5lib tree-construction files and a differential against x/net v0.62.0
+(internal/stdtest/testdata/corpus/htmlparse), Go's parse, render and iter tests (std/htmlparse_test.xo).

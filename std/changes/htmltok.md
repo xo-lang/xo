@@ -1,5 +1,21 @@
 # std/htmltok changes
 
+
+## 2026-11-16: feature: Text, TagName, TagAttr and the String methods; fix: token takes a tag's data
+
+- Kind: feature, fix
+- Commit: this push
+- Found by: task #89 (features Proven): x/net/html pinned in stdaudit (outside.txt), its Tokenizer.Text, TagName, TagAttr, Token.String, TokenType.String and UnescapeString were missing
+- Go reference: golang.org/x/net v0.62.0 html/token.go and escape.go
+- Test: testdata/corpus/htmltok's API table (596 streams through Text, TagName, TagAttr and Token.String against x/net, go, arm64, LLVM); std/htmltok_test.xo "token takes the token's data" (it failed before: a second `token` gave the tag again)
+- Timing: none (`next` and `token` keep their paths)
+
+`text()`, `tag_name()` and `tag_attr()` are Go's accessors, each taking
+what it returns; `Token.display()` and `TokenType.display()` are Go's
+String; `escape_string` and `unescape_string` are EscapeString and
+UnescapeString. `token()` now takes a tag's name and attributes as Go's
+Token does, so a second call gives an empty token.
+
 ## 2026-11-16: perf: character references resolved with fewer compares and no allocation for ASCII
 
 - Kind: perf

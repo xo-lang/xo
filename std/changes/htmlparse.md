@@ -1,5 +1,21 @@
 # std/htmlparse changes
 
+
+## 2026-11-16: feature: Go's tree editing and walking (node.go, iter.go)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89 (features Proven): x/net/html pinned in stdaudit, its Node.InsertBefore, AppendChild, RemoveChild, Ancestors, ChildNodes, Descendants and NodeType.String were missing
+- Go reference: golang.org/x/net v0.62.0 html/node.go and iter.go
+- Test: std/htmlparse_test.xo: Go's iter_test.go (ChildNodes, Descendants, Ancestors of chains to 10,000) and an edit sequence whose renders are x/net's
+- Timing: none
+
+`Tree.new_node`, `insert_before`, `append_child` and `remove_child` edit
+the tree by node index with Go's rules and panic texts (as faults);
+`ancestors`, `child_nodes` and `descendants` return node indexes in Go's
+order; `NodeType.display()` is Go's String. spec/std.md gains section 88
+for the module.
+
 ## 2026-11-11: refactor: std/htmlparse is one file (decisions 0588, 0597)
 
 - Kind: refactor

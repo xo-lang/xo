@@ -34,6 +34,8 @@ Rate limiting | rate | golang.org/x/time v0.16.0 | golang.org/x/time/rate
 Backoff and retry | backoff | github.com/cenkalti/backoff/v4 v4.3.0 | github.com/cenkalti/backoff/v4
 Terminal | term | golang.org/x/term v0.48.0 | golang.org/x/term
 HTTP proxy settings | httpproxy | golang.org/x/net v0.62.0 | golang.org/x/net/http/httpproxy
+x/net html (Parse, Render) | htmlparse | golang.org/x/net v0.62.0 | golang.org/x/net/html
+x/net html (Tokenizer) | htmltok | golang.org/x/net v0.62.0 | golang.org/x/net/html/atom
 Public suffix list | publicsuffix | golang.org/x/net v0.62.0 | golang.org/x/net/publicsuffix
 JSON-RPC 2.0 | jsonrpc | github.com/modelcontextprotocol/go-sdk v1.8.0 | github.com/modelcontextprotocol/go-sdk/jsonrpc
 Protobuf wire format | protowire | google.golang.org/protobuf v1.36.12 | google.golang.org/protobuf/encoding/protowire

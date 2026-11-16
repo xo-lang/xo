@@ -77,6 +77,50 @@ func render(in string, mode int, maxBuf int) string {
 	return b.String()
 }
 
+// renderAPI is the token stream through the Tokenizer's other accessors:
+// Token().String() (from a second Tokenizer), then Text twice for a text,
+// comment or doctype, or TagName, each TagAttr, one TagAttr past the last
+// and TagName again for a tag (the second calls show what the first took).
+func renderAPI(in string, mode int) string {
+	mk := func() *html.Tokenizer {
+		z := html.NewTokenizerFragment(strings.NewReader(in), ctx[mode])
+		if mode == 1 {
+			z.AllowCDATA(true)
+		}
+		return z
+	}
+	z, z2 := mk(), mk()
+	var b strings.Builder
+	for {
+		tt := z.Next()
+		z2.Next()
+		if tt == html.ErrorToken {
+			b.WriteString("E\n")
+			break
+		}
+		fmt.Fprintf(&b, "%s S=%s", tt, q(z2.Token().String()))
+		switch tt {
+		case html.TextToken, html.CommentToken, html.DoctypeToken:
+			t1 := z.Text()
+			t2 := z.Text()
+			fmt.Fprintf(&b, " T=%s|%s", q(string(t1)), q(string(t2)))
+		default:
+			name, more := z.TagName()
+			fmt.Fprintf(&b, " N=%s,%v", q(string(name)), more)
+			for more {
+				var k, v []byte
+				k, v, more = z.TagAttr()
+				fmt.Fprintf(&b, " A=%s=%s,%v", q(string(k)), q(string(v)), more)
+			}
+			k, v, m := z.TagAttr()
+			n2, m2 := z.TagName()
+			fmt.Fprintf(&b, " X=%s=%s,%v N2=%s,%v", q(string(k)), q(string(v)), m, q(string(n2)), m2)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 var curated = []string{
 	"", "foo  bar", "one &lt; two", "<a>b<c/>d</e>", "<", "</", "</>", "a</>b", "</ >", "</.", "</.>", "<!", "<!>", "<!--", "<!-->", "<!--->", "<!---->",
 	"<!--x-->", "<!-- a -- b -->", "<!--a--!>", "<!--a--!b-->", "<!--a---->", "<!--<!--a-->-->", "<!--a-", "<!--a--", "<!--a--!",
@@ -157,6 +201,27 @@ func main() {
 		fmt.Fprintf(&o, "  (\"%s\", \"%s\"),\n", q(in), q(strings.Join(bs, "|")))
 	}
 	o.WriteString("]\n")
+	// the other accessors (Text, TagName, TagAttr, Token.String), in modes
+	// 0 and 1 for the curated inputs and 300 seeded random ones
+	o.WriteString("\n/// (input, mode, Go's stream through Token.String, Text, TagName and TagAttr)\nconst API: List[(Str, Int, Str)] = [\n")
+	napi := 0
+	for _, in := range curated {
+		for mode := 0; mode < 2; mode++ {
+			fmt.Fprintf(&o, "  (\"%s\", %d, \"%s\"),\n", q(in), mode, q(renderAPI(in, mode)))
+			napi++
+		}
+	}
+	for i := 0; i < 300; i++ {
+		var b strings.Builder
+		for j, k := 0, 1+r.Intn(9); j < k; j++ {
+			b.WriteString(pieces[r.Intn(len(pieces))])
+		}
+		mode := r.Intn(len(ctx))
+		fmt.Fprintf(&o, "  (\"%s\", %d, \"%s\"),\n", q(b.String()), mode, q(renderAPI(b.String(), mode)))
+		napi++
+	}
+	o.WriteString("]\n")
+	fmt.Fprintf(&o, "\nconst API_COUNT: Int = %d\n", napi)
 	o.WriteString(xoTests)
 	os.Stdout.WriteString(o.String())
 }
@@ -261,7 +326,58 @@ test "the raw texts of the tokens partition the input" {
   }
 }
 
+fn render_api(input: Str, mode: Int) -> Str {
+  let ctx = ["", "", "title", "textarea", "script", "plaintext", "style"]
+  var z = htmltok.tokenizer_fragment(input, ctx[mode])
+  var z2 = htmltok.tokenizer_fragment(input, ctx[mode])
+  if mode == 1 {
+    z.allow_cdata(true)
+    z2.allow_cdata(true)
+  }
+  var out = ""
+  while true {
+    let tt = z.next()
+    let _ = z2.next()
+    if tt == htmltok.TokenType.Error {
+      out += "E\n"
+      break
+    }
+    out += "${tt} S=${q(z2.token().display())}"
+    match tt {
+      Text | Comment | Doctype => {
+        let t1 = z.text() ?? "?"
+        let t2 = z.text() ?? "?"
+        out += " T=${q(t1)}|${q(t2)}"
+      }
+      _ => {
+        var (name, more) = z.tag_name()
+        out += " N=${q(name)},${more}"
+        while more {
+          let (k, v, m) = z.tag_attr()
+          more = m
+          out += " A=${q(k)}=${q(v)},${m}"
+        }
+        let (k, v, m) = z.tag_attr()
+        let (n2, m2) = z.tag_name()
+        out += " X=${q(k)}=${q(v)},${m} N2=${q(n2)},${m2}"
+      }
+    }
+    out += "\n"
+  }
+  out
+}
+
+test "Text, TagName, TagAttr and Token.String equal Go's" {
+  for (input, mode, want) in API {
+    let got = render_api(input, mode)
+    if got != want {
+      expect("input ${q(input)} mode ${mode}\n${got}") == "input ${q(input)} mode ${mode}\n${want}"
+    }
+  }
+}
+
 test "the corpus has its cases" {
   expect(CASES.len()) == COUNT
+  expect(API.len()) == API_COUNT
 }
 `

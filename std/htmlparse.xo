@@ -150,6 +150,148 @@ pub fn (t: Tree) dump() -> Str {
   sb.join("")
 }
 
+/// Go's NodeType.String.
+pub fn (t: NodeType) display() -> Str {
+  match t {
+    NodeType.Error => "ErrorNode"
+    NodeType.Text => "TextNode"
+    NodeType.Document => "DocumentNode"
+    NodeType.Element => "ElementNode"
+    NodeType.Comment => "CommentNode"
+    NodeType.Doctype => "DoctypeNode"
+    NodeType.Raw => "RawNode"
+  }
+}
+
+// Tree editing (x/net's node.go) and walking (iter.go): Go's Node pointers
+// are node indexes here, nil is -1.
+
+/// A node of typ with data, attached to nothing (Go's &html.Node{Type: typ,
+/// Data: data}), added to the tree; its index.
+pub fn (var t: Tree) new_node(typ: NodeType, data: Str) -> Int {
+  t.nodes.push(Node{typ: typ, data: data, namespace: "", attrs: [], parent: -1, first_child: -1, last_child: -1, prev: -1, next: -1})
+  t.nodes.len() - 1
+}
+
+/// Go's InsertBefore: c, attached to nothing, as a child of parent before
+/// old, or last when old is -1. Faults with Go's panic text when c is
+/// attached.
+pub fn (var t: Tree) insert_before(parent: Int, c: Int, old: Int) {
+  if t.nodes[c].parent >= 0 || t.nodes[c].prev >= 0 || t.nodes[c].next >= 0 {
+    fault("html: InsertBefore called for an attached child Node")
+  }
+  var prev = -1
+  var next = -1
+  if old >= 0 {
+    prev = t.nodes[old].prev
+    next = old
+  } else {
+    prev = t.nodes[parent].last_child
+  }
+  if prev >= 0 {
+    t.nodes[prev].next = c
+  } else {
+    t.nodes[parent].first_child = c
+  }
+  if next >= 0 {
+    t.nodes[next].prev = c
+  } else {
+    t.nodes[parent].last_child = c
+  }
+  t.nodes[c].parent = parent
+  t.nodes[c].prev = prev
+  t.nodes[c].next = next
+}
+
+/// Go's AppendChild: c, attached to nothing, as parent's last child.
+/// Faults with Go's panic text when c is attached.
+pub fn (var t: Tree) append_child(parent: Int, c: Int) {
+  if t.nodes[c].parent >= 0 || t.nodes[c].prev >= 0 || t.nodes[c].next >= 0 {
+    fault("html: AppendChild called for an attached child Node")
+  }
+  let last = t.nodes[parent].last_child
+  if last >= 0 {
+    t.nodes[last].next = c
+  } else {
+    t.nodes[parent].first_child = c
+  }
+  t.nodes[parent].last_child = c
+  t.nodes[c].parent = parent
+  t.nodes[c].prev = last
+}
+
+/// Go's RemoveChild: c, a child of parent, detached (it stays in `nodes`,
+/// attached to nothing, and may be added again). Faults with Go's panic
+/// text when c is not parent's child.
+pub fn (var t: Tree) remove_child(parent: Int, c: Int) {
+  if t.nodes[c].parent != parent {
+    fault("html: RemoveChild called for a non-child Node")
+  }
+  let prev = t.nodes[c].prev
+  let next = t.nodes[c].next
+  if t.nodes[parent].first_child == c {
+    t.nodes[parent].first_child = next
+  }
+  if next >= 0 {
+    t.nodes[next].prev = prev
+  }
+  if t.nodes[parent].last_child == c {
+    t.nodes[parent].last_child = prev
+  }
+  if prev >= 0 {
+    t.nodes[prev].next = next
+  }
+  t.nodes[c].parent = -1
+  t.nodes[c].prev = -1
+  t.nodes[c].next = -1
+}
+
+/// Go's Ancestors: n's parent, its parent, and on to the top.
+pub fn (t: Tree) ancestors(n: Int) -> List[Int] {
+  var out: List[Int] = []
+  var p = t.nodes[n].parent
+  while p >= 0 {
+    out.push(p)
+    p = t.nodes[p].parent
+  }
+  out
+}
+
+/// Go's ChildNodes: n's children in order.
+pub fn (t: Tree) child_nodes(n: Int) -> List[Int] {
+  var out: List[Int] = []
+  var c = t.nodes[n].first_child
+  while c >= 0 {
+    out.push(c)
+    c = t.nodes[c].next
+  }
+  out
+}
+
+/// Go's Descendants: the nodes under n in document order (pre-order), n
+/// itself not included.
+pub fn (t: Tree) descendants(n: Int) -> List[Int] {
+  var out: List[Int] = []
+  var c = t.nodes[n].first_child
+  while c >= 0 {
+    out.push(c)
+    // down to the first child, else the next sibling, else up to an
+    // ancestor's next sibling below n
+    if t.nodes[c].first_child >= 0 {
+      c = t.nodes[c].first_child
+      continue
+    }
+    while c >= 0 && c != n && t.nodes[c].next < 0 {
+      c = t.nodes[c].parent
+    }
+    if c < 0 || c == n {
+      break
+    }
+    c = t.nodes[c].next
+  }
+  out
+}
+
 /// html.EscapeString as x/net's renderer applies it: `&`, `'`, `<`, `>`, `"`
 /// and carriage return as `&amp;`, `&#39;`, `&lt;`, `&gt;`, `&#34;`, `&#13;`.
 pub fn escape(s: Str) -> Str {
