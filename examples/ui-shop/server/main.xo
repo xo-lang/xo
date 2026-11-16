@@ -1,0 +1,43 @@
+// The ui-shop server (decision 0672 prototype, baseline): one Host whose
+// model holds the catalog and every user's cart; auth reads the
+// shop_user cookie that /signin?u=NAME sets (a prototype sign-in, no
+// password), redact and allow keep each cart to its user.
+//
+//   xo run ./server -- :8080        (predicting wasm client)
+//   xo run ./server -- :8080 thin   (thin client)
+use std/http
+use std/log
+use std/ui
+use example.com/uishop/shop
+
+const CLIENT: Bytes = embed.build("example.com/uishop/client", "wasip1/wasm")
+
+fn user_of(r: http.Request) -> Str? {
+  if let Some(c) = r.cookie("shop_user") {
+    if c.value != "" {
+      return Some(c.value)
+    }
+  }
+  None
+}
+
+fn signin(r: http.Request) -> http.Response {
+  let u = r.query("u") ?? ""
+  let ok = u != "" && u.len() <= 32 && u.runes().all(fn(c) { (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') })
+  if !ok {
+    return http.Response{status: 200, headers: {"Content-Type": "text/html; charset=utf-8"}, body: "<form action=/signin><input name=u placeholder=name><button>sign in</button></form>".bytes()}
+  }
+  http.Response{status: 303, headers: {"Location": "/"}, body: b""}.with_cookie(http.Cookie{name: "shop_user", value: u, path: "/", http_only: true})
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let addr = args.get(0) ?? ":8080"
+  let client = if args.get(1) == Some("thin") { b"" } else { CLIENT }
+  var r = http.router()
+  r.handle("GET /signin", signin)
+  ui.host(shop.app(), title: "Shop", css: shop.CSS, client: client, auth: Some(user_of), allow: Some(shop.allow), redact: Some(shop.redact), signin_url: "/signin").mount(r)
+  let l = os.net.listen(addr)?
+  log.info("listening", {"addr": l.addr(), "client_bytes": "${client.len()}"})
+  http.server(l, r).serve()?
+}

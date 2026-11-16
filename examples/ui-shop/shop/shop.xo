@@ -1,0 +1,159 @@
+// The ui-shop App, baseline version (decision 0672): a shared catalog
+// with stock, and a cart per user kept in the shared model. `redact`
+// cuts each viewer's copy down to their own cart and `allow` lets a
+// user's Msgs name only that user, which is what std/ui offers before
+// per-viewer state. A checkout is confirmed by the server (stock is
+// shared and limited).
+use std/ui
+
+pub struct Product {
+  sku: Str
+  name: Str
+  tag: Str
+  price: Int
+  stock: Int
+} derive Eq, Json
+
+pub struct Model {
+  products: List[Product]
+  carts: Map[Str, Map[Str, Int]]
+  orders: Int
+} derive Eq, Json
+
+pub enum Msg {
+  Add(user: Str, sku: Str)
+  Drop(user: Str, sku: Str)
+  Checkout(user: Str)
+} derive Eq, Json
+
+pub fn catalog() -> List[Product] {
+  [
+    Product{sku: "tea", name: "Green tea", tag: "drink", price: 4, stock: 20},
+    Product{sku: "cof", name: "Coffee beans", tag: "drink", price: 12, stock: 5},
+    Product{sku: "mug", name: "Mug", tag: "kitchen", price: 9, stock: 3},
+    Product{sku: "pot", name: "Teapot", tag: "kitchen", price: 25, stock: 1},
+  ]
+}
+
+fn stock_of(m: Model, sku: Str) -> Int {
+  for p in m.products {
+    if p.sku == sku {
+      return p.stock
+    }
+  }
+  0
+}
+
+pub fn update(m: Model, msg: Msg) -> Model {
+  var n = m
+  match msg {
+    Add(user, sku) => {
+      var cart = n.carts.get(user) ?? {}
+      let have = cart.get(sku) ?? 0
+      if have < stock_of(n, sku) {
+        cart.put(sku, have + 1)
+        n.carts.put(user, cart)
+      }
+    }
+    Drop(user, sku) => {
+      var cart = n.carts.get(user) ?? {}
+      let have = cart.get(sku) ?? 0
+      if have <= 1 {
+        cart.remove(sku)
+      } else {
+        cart.put(sku, have - 1)
+      }
+      n.carts.put(user, cart)
+    }
+    Checkout(user) => {
+      let cart = n.carts.get(user) ?? {}
+      var ok = cart.len() > 0
+      for (sku, q) in cart.entries() {
+        if q > stock_of(n, sku) {
+          ok = false
+        }
+      }
+      if ok {
+        n.products = n.products.map(fn(p) {
+          var q = p
+          q.stock = p.stock - (cart.get(p.sku) ?? 0)
+          q
+        })
+        n.carts.put(user, {})
+        n.orders = n.orders + 1
+      }
+    }
+  }
+  n
+}
+
+/// The viewer's copy: their own cart only (the baseline's privacy), empty
+/// when they have none yet. The view learns who is viewing only from this
+/// one entry: in the baseline it takes the model alone.
+pub fn redact(m: Model, principal: Str) -> Model {
+  var n = m
+  n.carts = {}
+  n.carts.put(principal, m.carts.get(principal) ?? {})
+  n
+}
+
+/// A user's Msg may name only that user.
+pub fn allow(m: Model, principal: Str, msg: Msg) -> Bool {
+  match msg {
+    Add(user, _) => user == principal
+    Drop(user, _) => user == principal
+    Checkout(user) => user == principal
+  }
+}
+
+fn checkout_waits(msg: Msg) -> Bool {
+  match msg {
+    Checkout(_) => true
+    Add(_, _) => false
+    Drop(_, _) => false
+  }
+}
+
+pub fn view(m: Model) -> ui.Html {
+  // after redact the only cart is the viewer's
+  var user = ""
+  var cart: Map[Str, Int] = {}
+  for (u, c) in m.carts.entries() {
+    user = u
+    cart = c
+  }
+  var rows: List[ui.Html] = []
+  for p in m.products {
+    rows.push(ui.el("li", [ui.attr("data-tag", p.tag)], [
+      ui.el("span", [], [ui.text("${p.name} $${p.price} (${p.stock} left)")]),
+      ui.el("button", [ui.on("click", Msg.Add(user: user, sku: p.sku))], [ui.text("add")]),
+    ]))
+  }
+  var lines: List[ui.Html] = []
+  var total = 0
+  for p in m.products {
+    let q = cart.get(p.sku) ?? 0
+    if q > 0 {
+      total = total + q * p.price
+      lines.push(ui.el("li", [], [
+        ui.text("${q} x ${p.name}"),
+        ui.el("button", [ui.on("click", Msg.Drop(user: user, sku: p.sku))], [ui.text("-")]),
+      ]))
+    }
+  }
+  ui.el("main", [], [
+    ui.el("h1", [], [ui.text("Shop")]),
+    ui.el("ul", [ui.attr("class", "catalog")], rows),
+    ui.el("h2", [], [ui.text("Cart of ${user}")]),
+    ui.el("ul", [ui.attr("class", "cart")], lines),
+    ui.el("p", [], [ui.text("total $${total}")]),
+    ui.el("button", [ui.on("click", Msg.Checkout(user: user))], [ui.text("checkout")]),
+    ui.el("p", [], [ui.text("orders: ${m.orders}")]),
+  ])
+}
+
+pub fn app() -> ui.App[Model, Msg] {
+  ui.app(Model{products: catalog(), carts: {}, orders: 0}, update, view).confirming(checkout_waits)
+}
+
+pub const CSS: Str = "body{font:16px system-ui;max-width:40rem;margin:2rem auto}li{margin:.3rem 0}button{margin-left:.5rem}"

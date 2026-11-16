@@ -1,0 +1,8 @@
+// The ui-shop client: the App's update and view for the browser, built
+// for wasm with the server (decision 0663).
+use std/ui
+use example.com/uishop/shop
+
+fn main(os: Os) ! {
+  ui.client_main(os.stdio, shop.app())?
+}

@@ -1,0 +1,71 @@
+// Measures the baseline shop (decision 0672 plan step 2): with N users
+// each holding a cart in the shared model, what one user's add costs
+// the others. It drives the Host's routes in process: every user adds a
+// line, then one user adds again and every user syncs.
+//
+//   xo run ./measure
+use std/http
+use std/json
+use std/ui
+use example.com/uishop/shop
+
+fn req(user: Str, body: Str, query: Str) -> http.Request {
+  http.new_request("POST", "/_xo/sync${query}", headers: {"Content-Type": "application/json", "Cookie": "shop_user=${user}"}, body: body.bytes())
+}
+
+fn user_of(r: http.Request) -> Str? {
+  if let Some(c) = r.cookie("shop_user") {
+    return Some(c.value)
+  }
+  None
+}
+
+fn up(user: Str, ver: Int, seq: Int, msgs: List[shop.Msg], seen: Str = "") -> Str {
+  var envs: List[ui.Envelope[shop.Msg]] = []
+  var s = seq
+  for m in msgs {
+    envs.push(ui.Envelope{seq: s, msg: m})
+    s = s + 1
+  }
+  json.encode_str(ui.Up{client: "c-${user}", ver: ver, msgs: envs, seen: seen})
+}
+
+fn main(os: Os) ! {
+  for n in [2, 20, 200] {
+    var r = http.router()
+    let h = ui.host(shop.app(), auth: Some(user_of), allow: Some(shop.allow), redact: Some(shop.redact))
+    h.mount(r)
+    var seen: Map[Str, Str] = {}
+    for i in 0..n {
+      let u = "u${i}"
+      let resp = r.call(req(u, up(u, 0, 1, [shop.Msg.Add(user: u, sku: "tea")]), "?thin=1"))
+      if resp.status != 200 {
+        return Err("sync ${resp.status}")
+      }
+      let s0 = json.decode_str[ui.Sync[shop.Model, shop.Msg]](resp.text() ?? "")?
+      seen.put(u, s0.seen)
+    }
+    let ver = n
+    let model_bytes = json.encode_str(h.model()).len()
+    // u0 adds again: every other user's next sync is not `same`
+    let t0 = os.clock.now()
+    r.call(req("u0", up("u0", ver, 2, [shop.Msg.Add(user: "u0", sku: "mug")]), "?thin=1"))
+    let add_us = os.clock.since(t0).micros()
+    var changed = 0
+    var thin_bytes = 0
+    var model_q_bytes = 0
+    for i in 1..n {
+      let u = "u${i}"
+      let a = r.call(req(u, up(u, ver, 2, [], seen: seen.get(u) ?? ""), "?thin=1")).text() ?? ""
+      let s = json.decode_str[ui.Sync[shop.Model, shop.Msg]](a)?
+      if !s.same {
+        changed = changed + 1
+      }
+      thin_bytes = thin_bytes + a.len()
+      let b = r.call(req(u, up(u, ver, 2, [], seen: seen.get(u) ?? ""), "?thin=1&model=1")).text() ?? ""
+      model_q_bytes = model_q_bytes + b.len()
+    }
+    let others = n - 1
+    os.stdio.println("users=${n} model_json=${model_bytes} others_woken=${changed}/${others} thin_sync_avg=${thin_bytes / others} wasm_sync_avg=${model_q_bytes / others} add_us=${add_us}")
+  }
+}

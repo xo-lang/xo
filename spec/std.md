@@ -11670,7 +11670,16 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   refused entry (it takes a version and leaves the model as it was) and
   counted in the reply's `refused`. `redact(model, principal)`, pure,
   shapes every model and view a principal receives (the page, a sync's
-  `model` and `html`); a host with `redact` sends no log entries. The
+  `model` and `html`); a host with `redact` sends no log entries. With
+  `redact` each viewer's page and sync carry the digest of what that
+  principal is shown (`data-xo-seen`, `Sync.seen`; a SHA-256 prefix of
+  the redacted model's JSON), which the runtime sends back as `Up.seen`:
+  a sync without Msgs whose digest still matches answers `same` with the
+  new version, however far the version moved, and a live connection is
+  told of a new version only when its principal's view changed (one
+  digest per principal per change). Another user's change then costs a
+  viewer nothing (decision 0672's baseline: 199 of 199 viewers woken and
+  1.2 KB each at 200 users before, none after). The
   runtime marks the html element `data-xo-signed-out` on a 401 (the queue
   is kept), drops its queue and client id and reloads on a 403, and sets
   `data-xo-refused` to a reply's refused count.

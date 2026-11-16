@@ -1,0 +1,29 @@
+use std/ui
+
+test "a cart is bounded by stock and a checkout takes the stock" {
+  var m = app().init
+  for _ in 0..3 {
+    m = update(m, Msg.Add(user: "ann", sku: "pot"))
+  }
+  expect(m.carts.get("ann") ?? {}) == {"pot": 1}
+  m = update(m, Msg.Checkout(user: "ann"))
+  expect(stock_of(m, "pot")) == 0
+  expect(m.orders) == 1
+  m = update(m, Msg.Add(user: "bob", sku: "pot"))
+  expect((m.carts.get("bob") ?? {}).len()) == 0
+}
+
+test "redact leaves the viewer's cart only, and allow binds Msgs to the principal" {
+  var m = update(update(app().init, Msg.Add(user: "ann", sku: "tea")), Msg.Add(user: "bob", sku: "mug"))
+  let r = redact(m, "bob")
+  expect(r.carts.len()) == 1
+  expect(r.carts.contains("bob")) == true
+  expect(ui.render(view(r)).contains("Cart of bob")) == true
+  expect(allow(m, "ann", Msg.Add(user: "bob", sku: "tea"))) == false
+  expect(allow(m, "ann", Msg.Checkout(user: "ann"))) == true
+}
+
+test "a viewer with no cart yet still sees their own name" {
+  let r = redact(app().init, "cy")
+  expect(ui.render(view(r)).contains("Cart of cy")) == true
+}

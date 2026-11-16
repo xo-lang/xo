@@ -19,7 +19,7 @@ function storage() {
   };
 }
 const local = storage();
-const server = { acked: new Map(), applied: [], down: false, status: 200, reloads: 0, build: "", syncs: 0, live: null, sockets: [] };
+const server = { acked: new Map(), applied: [], down: false, status: 200, reloads: 0, build: "", syncs: 0, live: null, sockets: [], seen: null, seens: [] };
 function receive(up) {
   let a = server.acked.get(up.client) ?? 0;
   for (const e of up.msgs) {
@@ -28,7 +28,8 @@ function receive(up) {
     server.applied.push(e.msg);
   }
   server.acked.set(up.client, a);
-  return { down: { acked: a, reset: null, entries: [] }, ver: server.applied.length, html: "<p>" + server.applied.length + "</p>", build: server.build };
+  server.seens.push(up.seen ?? "(none)");
+  return { down: { acked: a, reset: null, entries: [] }, ver: server.applied.length, html: "<p>" + server.applied.length + "</p>", build: server.build, seen: server.seen === null ? undefined : "d" + server.applied.length };
 }
 
 class WS { constructor(u) { this.url = u; server.sockets.push(this); } close() {} }
@@ -37,7 +38,7 @@ function tab() {
   const attrs = {};
   const root = {
     innerHTML: "",
-    getAttribute: (k) => (k === "data-xo-sync" ? "/_xo/sync" : k === "data-xo-build" ? server.build || null : k === "data-xo-live" ? server.live : null),
+    getAttribute: (k) => (k === "data-xo-sync" ? "/_xo/sync" : k === "data-xo-build" ? server.build || null : k === "data-xo-live" ? server.live : k === "data-xo-seen" ? server.seen : null),
     addEventListener: (n, f) => { handlers[n] = f; },
     contains: () => true,
   };
@@ -139,6 +140,15 @@ if (scenario === "reconnect") {
   ws.onclose(); a.flush();
   server.sockets[1].onopen(); await settle();
   extra = { before: String(first), reloads: server.syncs };
+}
+if (scenario === "seen") {
+  // a Host with redact names the digest of the page (data-xo-seen, then
+  // Sync.seen): every sync sends back the one it has
+  server.seen = "d0";
+  const a = tab(); await settle();
+  await click(a, "a1");
+  await click(a, "a2");
+  extra = { before: server.seens.join(",") };
 }
 if (scenario === "pointer") {
   // a sync reply lands while the pointer is down on the view: the view is

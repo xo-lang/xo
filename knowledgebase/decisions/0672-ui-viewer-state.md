@@ -83,11 +83,50 @@ once and on the server, which decides.
    of rows) is not state: it stays a server page (0670) or becomes a
    query subscription (0659 stage 4), its own decision.
 
+## Baseline measured (2026-11-16)
+
+examples/ui-shop holds the baseline (carts in the shared model, `redact`
+to the viewer's cart, `allow` binding a Msg's user to the principal) and
+`measure/`, which drives the Host in process: N users each add a line,
+then one user adds again and every other user syncs.
+
+| users | model JSON | others not `same` | bytes per other sync (thin, wasm) |
+|---|---|---|---|
+| 2 | 334 | 1 of 1 | 1180, 1495 |
+| 20 | 614 | 19 of 19 | 1184, 1500 |
+| 200 | 3594 | 199 of 199 | 1192, 1508 |
+
+Redact kept each sync's bytes flat, but every change woke every viewer
+for a full page of an unchanged view: traffic grows with the square of
+the active users. Most of that is fixed in the Host without new API: the
+page and each sync carry a digest of what the principal is shown
+(`Sync.seen`, sent back as `Up.seen`), a sync whose digest matches
+answers `same`, and a live connection is told only when its principal's
+digest changed. With it: 0 of 1, 0 of 19, 0 of 199 woken; 154 to 156
+bytes per sync. That change ships on its own (std/changes/ui.md
+2026-11-16).
+
+Chrome (two users, two browsers, ~/xo-lead/notes/stdui/e2e/drive-shop.mjs):
+12/12 with the digest; built without it, the other user's page synced
+on each cart click (2 to 3 syncs). The example also showed that in the
+baseline the view learns who is viewing only through `redact` (the
+shop's redact keeps an empty cart for the viewer so the view can name
+them): the three-argument view of the decision makes that explicit.
+
+What remains for user state after it: every cart click still goes
+through the one shared log and lock, the model holds every user's cart
+(about 15 bytes per cart line here), the server computes one digest per
+connected principal per change, and tab state is not covered at all.
+
 ## Open questions for the prototype
 
 - Are two parts (tab and user) worth the type parameters, or is one
   viewer part with a scope enough for real apps? The shop example needs
   both (filters in the URL, a cart across devices).
+- With the digest, is per-user state still worth its API for user data,
+  or only for tab state? Measure next: server time per change with 200
+  live principals (digests), and the shared log's growth from cart
+  clicks against `keep`.
 - A user act that emits a shared Msg while offline: the server applies
   the act and its Msgs at sync time against the model it has then; the
   client's prediction may be overturned, as for Msgs.

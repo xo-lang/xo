@@ -194,3 +194,14 @@ func TestSocketOpenSyncs(t *testing.T) {
 		t.Errorf("syncs after first open %q, after reopen %d, want 1 and 2", r.Before, r.Reloads)
 	}
 }
+
+// A Host with redact names the digest of the page each viewer is shown
+// (the page's data-xo-seen, then each Sync.seen); the runtime sends back
+// the one it has, so the server can answer same while that view did not
+// change, however far the version moved (decision 0672's measurement).
+func TestSyncSendsSeenDigest(t *testing.T) {
+	r := run(t, "seen")
+	if r.Before != "d0,d1" {
+		t.Errorf("seen digests sent %q, want d0,d1", r.Before)
+	}
+}

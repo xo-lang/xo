@@ -566,17 +566,6 @@ test "a host with auth answers 401 without a principal and 403 for another's cli
 }
 
 test "redact shapes the page and every sync, and no log entries are sent" {
-  // each principal sees only the todos whose title starts with its name
-  let mine = fn(m: Model, p: Str) -> Model {
-    var n = m
-    n.todos = {}
-    for (id, t) in m.todos.entries() {
-      if t.title.starts_with(p) {
-        n.todos.put(id, t)
-      }
-    }
-    n
-  }
   let r = routes_for(host(todo_app(), auth: Some(auth_hdr), redact: Some(mine)))
   let add = fn(user: Str, seq: Int, id: Str) -> http.Response {
     let up = json.encode_str(Up{client: user, ver: 0, msgs: [Envelope{seq: seq, msg: Msg.Add(id: id, title: "${user} item")}]})
@@ -591,6 +580,64 @@ test "redact shapes the page and every sync, and no log entries are sent" {
   let page_ann = r.call(http.new_request("GET", "/", headers: {"X-User": "ann"})).text()?
   expect(page_ann.contains("ann item")) == true
   expect(page_ann.contains("bob item")) == false
+}
+
+// each principal sees only the todos whose title starts with its name
+fn mine(m: Model, p: Str) -> Model {
+  var n = m
+  n.todos = {}
+  for (id, t) in m.todos.entries() {
+    if t.title.starts_with(p) {
+      n.todos.put(id, t)
+    }
+  }
+  n
+}
+
+fn sync_as(r: http.Router, user: Str, up: Up[Msg]) -> Sync[Model, Msg] ! Str {
+  let resp = r.call(http.new_request("POST", "/_xo/sync?thin=1", headers: {"Content-Type": "application/json", "X-User": user}, body: json.encode_str(up).bytes()))
+  json.decode_str[Sync[Model, Msg]](resp.text() ?? "").map_err(fn(e) { "${e}" })
+}
+
+test "with redact, a sync answers same while the principal's view did not change" {
+  let r = routes_for(host(todo_app(), auth: Some(auth_hdr), redact: Some(mine)))
+  let a1 = sync_as(r, "ann", Up{client: "a", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "a", title: "ann item")}]})?
+  expect(a1.seen.len()) == 16
+  // bob's change moves the version but not ann's view
+  sync_as(r, "bob", Up{client: "b", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "b", title: "bob item")}]})?
+  let a2 = sync_as(r, "ann", Up{client: "a", ver: a1.ver, msgs: [], seen: a1.seen})?
+  expect(a2.same) == true
+  expect(a2.ver) == 2
+  expect(a2.html) == ""
+  // without the digest the version alone cannot tell
+  expect(sync_as(r, "ann", Up{client: "a", ver: a1.ver, msgs: []})?.same) == false
+  // a change ann sees is sent
+  sync_as(r, "bob", Up{client: "b", ver: 2, msgs: [Envelope{seq: 2, msg: Msg.Add(id: "c", title: "ann gift")}]})?
+  let a3 = sync_as(r, "ann", Up{client: "a", ver: a2.ver, msgs: [], seen: a2.seen})?
+  expect(a3.same) == false
+  expect(a3.html.contains("ann gift")) == true
+  // the page carries the digest the first sync sends back
+  let page = r.call(http.new_request("GET", "/", headers: {"X-User": "ann"})).text() ?? ""
+  expect(page.contains("data-xo-seen=\"${a3.seen}\"")) == true
+}
+
+test "with redact, a live connection hears only of changes to its own view" {
+  let h = host(todo_app(), auth: Some(auth_hdr), redact: Some(mine))
+  let r = routes_for(h)
+  let (ida, cha) = h.subscribe("ann")
+  let (idb, chb) = h.subscribe("bob")
+  sync_as(r, "bob", Up{client: "b", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "b", title: "bob item")}]})?
+  expect(cha.try_recv()) == None
+  expect(chb.try_recv()) == Some(1)
+  h.apply(Msg.Add(id: "x", title: "ann news"))
+  expect(cha.try_recv()) == Some(2)
+  expect(chb.try_recv()) == None
+  // told once per change of the view, not again for the same view
+  h.apply(Msg.Star(id: "b"))
+  expect(cha.try_recv()) == None
+  expect(chb.try_recv()) == Some(3)
+  h.unsubscribe(ida)
+  h.unsubscribe(idb)
 }
 
 // ---- server Msgs, compaction, sign-in redirect ----

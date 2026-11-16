@@ -1,5 +1,17 @@
 # std/ui changes
 
+## 2026-11-16: perf: with redact, another user's change no longer wakes every viewer
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0672's baseline measurement (examples/ui-shop: carts in the shared model with redact and allow)
+- Go reference: none
+- Test: std/ui tests (a sync answers same while the principal's view did not change; a live connection hears only of changes to its own view); internal/uiruntime TestSyncSendsSeenDigest
+- Timing: examples/ui-shop/measure, one user's cart add with 2, 20 and 200 users: viewers whose sync was not `same` 1/1, 19/19, 199/199 to 0 in each; bytes per other viewer's sync 1180 to 1192 to 154 to 156 (thin) and 1495 to 1508 to 154 to 156 (wasm)
+- Shipped in: not yet released
+
+With `redact`, every version change woke every live page, and each page's sync rendered and sent the whole view though that viewer's part had not changed. The page and each sync now carry a digest of what the principal is shown (`data-xo-seen`, `Sync.seen`), the runtime sends it back (`Up.seen`), and the host answers `same` while it matches; a live connection is told of a new version only when its principal's digest changed.
+
 ## 2026-11-16: perf: render checks names over bytes and writes each piece
 
 - Kind: perf

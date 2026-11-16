@@ -208,6 +208,10 @@ pub struct Up[E] {
   pub client: Str
   pub ver: Int
   pub msgs: List[Envelope[E]]
+  /// The digest of the page the client shows (Sync.seen), "" for none: a
+  /// Host with redact answers `same` when this principal's view did not
+  /// change, however far the version moved.
+  pub seen: Str = ""
 } derive Json
 
 /// The model at a log version, sent to a client too far behind for the
@@ -468,7 +472,7 @@ pub struct PageState[M] {
 /// for the client runtime at runtime_src, which syncs with sync_url and,
 /// when live_url is not "", listens there for new versions. css,
 /// if any, goes in a `<style>` element in the head.
-pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "", build: Str = "") -> Str {
+pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "", build: Str = "", seen: Str = "") -> Str {
   var b = BytesBuilder.new()
   b.write_str("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>")
   b.write_str(html.escape_string(title))
@@ -499,6 +503,10 @@ pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", run
   if build != "" {
     b.write_str("\" data-xo-build=\"")
     b.write_str(html.escape_string(build))
+  }
+  if seen != "" {
+    b.write_str("\" data-xo-seen=\"")
+    b.write_str(html.escape_string(seen))
   }
   b.write_str("\">")
   write_html(b, app.view(model))
@@ -547,6 +555,9 @@ pub struct Sync[M, E] {
   /// in their URLs): a page showing another build reloads once nothing
   /// waits to be sent.
   pub build: Str = ""
+  /// The digest of what this principal is shown (a Host with redact; ""
+  /// otherwise): the client sends it back as Up.seen.
+  pub seen: Str = ""
 } derive Json
 
 // ---- the predicting client (decision 0659 stage 3) ----
@@ -694,21 +705,48 @@ pub struct Host[M: Json, E: Json] {
   // The log entries kept (Server.compact once the log holds twice as
   // many), 0 to keep every entry.
   keep: Int
-  // The live connections, each told the server's version when it changes.
-  subs: Mutex[Map[Int, Chan[Int]]]
+  // The live connections, each told the server's version when it changes
+  // (with redact, only when its principal's view changed).
+  subs: Mutex[Map[Int, Sub]]
   next_sub: Atomic[Int]
 }
 
 /// A host for app starting at app.init.
 pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000) -> Host[M, E] {
-  Host{app: app, auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, state: Mutex[Server[M, E]].new(server(app, max_batch: max_batch)), title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: Mutex[Map[Int, Chan[Int]]].new({}), next_sub: Atomic[Int].new(0)}
+  Host{app: app, auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, state: Mutex[Server[M, E]].new(server(app, max_batch: max_batch)), title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: Mutex[Map[Int, Sub]].new({}), next_sub: Atomic[Int].new(0)}
 }
 
-fn (h: Host[M, E]) subscribe() -> (Int, Chan[Int]) {
+// A live connection: its principal, its channel, and the digest of the
+// view it was last told about (redact only).
+struct Sub {
+  p: Str
+  ch: Chan[Int]
+  last: Str
+}
+
+// What principal p is shown of m.
+fn (h: Host[M, E]) shown(m: M, p: Str) -> M {
+  match h.redact {
+    Some(f) => f(m, p)
+    None => m
+  }
+}
+
+// The digest of what p is shown of m, "" without redact (then every
+// version is news to every viewer).
+fn (h: Host[M, E]) digest(m: M, p: Str) -> Str {
+  match h.redact {
+    Some(f) => crypto.sha256(json.encode_str(f(m, p)).bytes()).to_hex()[..16]
+    None => ""
+  }
+}
+
+fn (h: Host[M, E]) subscribe(p: Str = "") -> (Int, Chan[Int]) {
   let id = h.next_sub.add(1)
   // One slot: a client needs only to know that something changed.
   let ch = Chan[Int].new(cap: 1)
-  h.subs.with(fn(var m) { m.put(id, ch) })
+  let last = if h.redact.is_some() { h.digest(h.model(), p) } else { "" }
+  h.subs.with(fn(var m) { m.put(id, Sub{p: p, ch: ch, last: last}) })
   (id, ch)
 }
 
@@ -717,9 +755,32 @@ fn (h: Host[M, E]) unsubscribe(id: Int) {
 }
 
 fn (h: Host[M, E]) notify(v: Int) {
-  h.subs.with_read(fn(m) {
-    for (_, c) in m {
-      let _sent = c.try_send(v)
+  if h.redact.is_none() {
+    h.subs.with_read(fn(m) {
+      for (_, c) in m {
+        let _sent = c.ch.try_send(v)
+      }
+    })
+    return
+  }
+  // with redact, a connection hears only of a change to its own view: one
+  // digest per principal, and a cart click wakes no other user
+  let now = h.model()
+  h.subs.with(fn(var m) {
+    var dg: Map[Str, Str] = {}
+    var told: List[(Int, Sub)] = []
+    for (id, c) in m {
+      if !dg.contains(c.p) {
+        dg.put(c.p, h.digest(now, c.p))
+      }
+      let d = dg.get(c.p) ?? ""
+      if d != c.last {
+        let _sent = c.ch.try_send(v)
+        told.push((id, Sub{p: c.p, ch: c.ch, last: d}))
+      }
+    }
+    for (id, c) in told {
+      m.put(id, c)
     }
   })
 }
@@ -790,12 +851,7 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
       None => Some("")
     }
   }
-  let shown = fn(m: M, p: Str) -> M {
-    match redact {
-      Some(f) => f(m, p)
-      None => m
-    }
-  }
+  let shown = fn(m: M, p: Str) -> M { hh.shown(m, p) }
   r.handle("GET ${prefix}/{$}", fn(req) -> http.Response ! Never {
     let p = match who(req) {
       Some(x) => x
@@ -808,7 +864,7 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     }
     let (m0, v) = state.with_read(fn(s) { (s.model(), s.version()) })
     let m = shown(m0, p)
-    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync, css: css, live_url: live, wasm_url: wasm, build: build)).with_header("Content-Type", "text/html; charset=utf-8")
+    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync, css: css, live_url: live, wasm_url: wasm, build: build, seen: hh.digest(m0, p))).with_header("Content-Type", "text/html; charset=utf-8")
   })
   serve_runtime(r, prefix: prefix)
   r.handle("POST ${sync}", fn(req) -> http.Response ! Never {
@@ -842,10 +898,11 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     // with redact a log entry may hold what this principal must not see
     let down = if req.query("thin") == Some("1") || redact.is_some() { Down{acked: d.acked, reset: None, entries: [], refused: d.refused} } else { d }
     let with_model = if req.query("model") == Some("1") { Some(m) } else { None }
-    if up.msgs.is_empty() && up.ver == v {
-      return http.json(200, Sync{down: down, ver: v, html: "", model: None, same: true, build: build})
+    let seen = hh.digest(m0, p)
+    if up.msgs.is_empty() && (up.ver == v || (seen != "" && up.seen == seen)) {
+      return http.json(200, Sync{down: down, ver: v, html: "", model: None, same: true, build: build, seen: seen})
     }
-    http.json(200, Sync{down: down, ver: v, html: render(app.view(m)), model: with_model, build: build})
+    http.json(200, Sync{down: down, ver: v, html: render(app.view(m)), model: with_model, build: build, seen: seen})
   })
   if !client.is_empty() {
     let gz = h.client_gz
@@ -862,18 +919,16 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     })
   }
   r.handle("GET ${live}", fn(req) {
-    if who(req).is_none() {
-      return http.text(401, "std/ui: sign in first")
-    }
-    websocket.upgrade(req, fn(conn) { serve_live(hh, conn) })
+    let p = who(req) ?? return http.text(401, "std/ui: sign in first")
+    websocket.upgrade(req, fn(conn) { serve_live(hh, conn, p) })
   })
 }
 
 // A live connection: the server's version now, then each new version; the
 // client syncs when it sees one past its own. Reads only to notice the
 // close.
-fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn) {
-  let (id, ch) = h.subscribe()
+fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn, p: Str) {
+  let (id, ch) = h.subscribe(p)
   defer h.unsubscribe(id)
   let now = h.state.with_read(fn(s) { s.version() })
   if conn.write_text("${now}") is Err(_) {
@@ -987,6 +1042,9 @@ function boot(){
   var next=(saved&&saved.next)||1;
   var queue=(saved&&saved.queue)||[];
   var acked=(saved&&saved.acked)||0;
+  // the digest of the page shown (Sync.seen): a Host with redact answers
+  // `same` while this viewer's page did not change
+  var dg=root.getAttribute("data-xo-seen")||"";
   var ver=st.ver;
   var last=root.innerHTML;
   var busy=false,again=false;
@@ -1052,7 +1110,7 @@ function boot(){
     if(busy){again=true;return;}
     busy=true;
     var msgs=queue.filter(function(e){return e.seq>acked;});
-    fetch(url+(mod?"?thin=1&model=1":"?thin=1"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:client,ver:ver,msgs:msgs}),credentials:"same-origin"})
+    fetch(url+(mod?"?thin=1&model=1":"?thin=1"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:client,ver:ver,msgs:msgs,seen:dg}),credentials:"same-origin"})
     .then(function(r){
       var h=H();
       if(dead)throw new Error("sync dead");
@@ -1065,7 +1123,7 @@ function boot(){
       if(s.down.acked>acked)acked=s.down.acked;
       if(s.down.refused>0)H().setAttribute("data-xo-refused",String(s.down.refused));else H().removeAttribute("data-xo-refused");
       queue=queue.filter(function(e){return e.seq>acked;});
-      ver=s.ver;
+      ver=s.ver;dg=s.seen||"";
       if(s.model!=null)confirmed=s.model;
       if(!(queue.length&&predict())){if(!s.same)show(s.html);H().removeAttribute("data-xo-awaiting");}
       H().removeAttribute("data-xo-offline");
