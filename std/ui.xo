@@ -582,6 +582,53 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   Ok(())
 }
 
+/// Serves the runtime at prefix/_xo/ui.js (a Host's mount does this for
+/// its prefix): for server pages that load it without an App
+/// (decision 0670). The stamped URL is runtime_url(prefix).
+pub fn serve_runtime(var r: http.Router, prefix: Str = "") {
+  let v = runtime_stamp()
+  let tag = "\"${v}\""
+  let gz = compress.gzip(RUNTIME_JS.bytes(), compress.Level.BestCompression)
+  r.handle("GET ${prefix}/_xo/ui.js", fn(req) -> http.Response ! Never {
+    let cc = cache_control(req, v)
+    if req.header("If-None-Match") == Some(tag) {
+      return http.Response{status: 304, headers: {"ETag": tag, "Cache-Control": cc, "Vary": "Accept-Encoding"}, body: b""}
+    }
+    if accepts_gzip(req.header("Accept-Encoding") ?? "") {
+      return http.Response{status: 200, headers: {"Content-Type": "text/javascript; charset=utf-8", "Content-Encoding": "gzip", "ETag": tag, "Cache-Control": cc, "Vary": "Accept-Encoding"}, body: gz}
+    }
+    http.Response{status: 200, headers: {"Content-Type": "text/javascript; charset=utf-8", "ETag": tag, "Cache-Control": cc, "Vary": "Accept-Encoding"}, body: RUNTIME_JS.bytes()}
+  })
+}
+
+/// The stamped URL of the runtime served under prefix, for a server
+/// page's script element (decision 0670).
+pub fn runtime_url(prefix: Str = "") -> Str {
+  "${prefix}/_xo/ui.js?v=${runtime_stamp()}"
+}
+
+/// A server page the runtime takes over (decision 0670): links, forms and
+/// frames on it, and links to it from other such pages, work without a
+/// full load. body is the page's content; css goes in a style element;
+/// prefix is where the runtime is served (serve_runtime, or a Host's
+/// mount).
+pub fn plain(title: Str, body: Html, css: Str = "", prefix: Str = "") -> Str {
+  var b = BytesBuilder.new()
+  b.write_str("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>")
+  b.write_str(html.escape_string(title))
+  b.write_str("</title>")
+  if css != "" {
+    b.write_str("<style>")
+    b.write_str(css.replace("<", "\\3c "))
+    b.write_str("</style>")
+  }
+  b.write_str("</head><body data-xo-page>")
+  write_html(b, body)
+  let src = runtime_url(prefix)
+  b.write_str("<script src=\"${html.escape_string(if safe_url(src) { src } else { "about:invalid#xo-unsafe" })}\" defer></script></body></html>")
+  b.freeze().to_str_lossy()
+}
+
 /// The runtime's stamp: a SHA-256 prefix of RUNTIME_JS.
 fn runtime_stamp() -> Str {
   crypto.sha256(RUNTIME_JS.bytes()).to_hex()[..16]
@@ -754,18 +801,7 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     let m = shown(m0, p)
     http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync, css: css, live_url: live, wasm_url: wasm, build: build)).with_header("Content-Type", "text/html; charset=utf-8")
   })
-  let js_tag = "\"${js_v}\""
-  let js_gz = compress.gzip(RUNTIME_JS.bytes(), compress.Level.BestCompression)
-  r.handle("GET ${js_path}", fn(req) -> http.Response ! Never {
-    let cc = cache_control(req, js_v)
-    if req.header("If-None-Match") == Some(js_tag) {
-      return http.Response{status: 304, headers: {"ETag": js_tag, "Cache-Control": cc, "Vary": "Accept-Encoding"}, body: b""}
-    }
-    if accepts_gzip(req.header("Accept-Encoding") ?? "") {
-      return http.Response{status: 200, headers: {"Content-Type": "text/javascript; charset=utf-8", "Content-Encoding": "gzip", "ETag": js_tag, "Cache-Control": cc, "Vary": "Accept-Encoding"}, body: js_gz}
-    }
-    http.Response{status: 200, headers: {"Content-Type": "text/javascript; charset=utf-8", "ETag": js_tag, "Cache-Control": cc, "Vary": "Accept-Encoding"}, body: RUNTIME_JS.bytes()}
-  })
+  serve_runtime(r, prefix: prefix)
   r.handle("POST ${sync}", fn(req) -> http.Response ! Never {
     let ct = (req.header("Content-Type") ?? "").to_lower()
     if !ct.starts_with("application/json") {
@@ -1078,54 +1114,122 @@ function boot(){
   };
 }
 var cur=boot();
-if(!cur)return;
+// a page the runtime takes over: a std/ui App page, or a server page
+// whose body carries data-xo-page (decision 0670)
+function isPage(d){return !!((d.body&&d.body.hasAttribute&&d.body.hasAttribute("data-xo-page"))||(d.getElementById("xo-ui")&&d.getElementById("xo-state")));}
+if(!cur&&!isPage(document))return;
 // nav-begin
-// A same-origin link to another std/ui page is followed without a full
-// load (decision 0668): fetch it, patch its head and body in, and boot the
-// runtime for it. Anything else (another origin, a plain page, a failed
-// fetch, data-xo-reload, a modifier key) is an ordinary navigation.
-var navN=0;
+// Links, forms and frames between pages that load the runtime are
+// followed without a full load (decisions 0668, 0670): fetch the page,
+// patch its head and body (or one frame) in, and boot the runtime for
+// it. Anything else (another origin, a page without the runtime or with
+// another build of it, a failed fetch, data-xo-reload, a modifier key, a
+// target) is an ordinary navigation.
+var navN=0,ctl=null,deb=0;
 try{history.scrollRestoration="manual";history.replaceState({xo:1,y:0},"",location.href);}catch(e){}
 function here(){return location.pathname+location.search;}
-function go(href,push){
+// the stamp of the runtime a document loads: null when it loads none
+function stampOf(d){var x=d.querySelector&&d.querySelector('script[src*="/_xo/ui.js"]');if(!x)return null;var m=/[?&]v=([^&#]+)/.exec(x.getAttribute("src")||"");return m?m[1]:"";}
+var mine=stampOf(document);
+function app(){return document.getElementById("xo-ui");}
+// o.mode: push (a new entry), replace (this entry: typing in a search
+// box), pop (back or forward: no entry, the entry's scroll); o.method and
+// o.body for a POST form; o.frame: the id of the only element to patch
+function visit(href,o){
   var n=++navN;
-  return fetch(href,{credentials:"same-origin",headers:{"Accept":"text/html"}}).then(function(r){
+  if(ctl){try{ctl.abort();}catch(e){}}
+  ctl=window.AbortController?new AbortController():null;
+  var init={credentials:"same-origin",headers:{"Accept":"text/html"}};
+  if(ctl)init.signal=ctl.signal;
+  if(o.method==="POST"){init.method="POST";init.body=o.body;}
+  return fetch(href,init).then(function(r){
     var ct=r.headers.get("Content-Type")||"";
-    if(!r.ok||ct.indexOf("text/html")<0)throw 0;
-    return r.text().then(function(t){return {url:r.url||href,text:t};});
+    // a 422 is a form shown again with its errors (Turbo's rule)
+    if((!r.ok&&r.status!==422)||ct.indexOf("text/html")<0)throw 0;
+    return r.text().then(function(t){return {url:r.url||href,text:t,redirected:!!r.redirected,status:r.status};});
   }).then(function(p){
     if(n!==navN)return;
     var d=new DOMParser().parseFromString(p.text,"text/html");
-    var nr=d.getElementById("xo-ui");
-    if(!nr||!d.getElementById("xo-state")||new URL(p.url,location.href).origin!==location.origin)throw 0;
-    // another runtime build: load the page for real so its runtime runs
-    var ob=(document.getElementById("xo-ui").getAttribute("data-xo-build")||"").split(".")[0];
-    if((nr.getAttribute("data-xo-build")||"").split(".")[0]!==ob)throw 0;
-    if(push){try{history.replaceState({xo:1,y:window.scrollY},"",location.href);}catch(e){}history.pushState({xo:1,y:0},"",p.url);at=here();}
+    if(new URL(p.url,location.href).origin!==location.origin||!isPage(d)||stampOf(d)!==mine)throw 0;
+    var mode=o.mode;
+    // a POST answered by a redirect is the page it went to; answered in
+    // place (422 or 200) it is shown without a new URL
+    if(o.method==="POST")mode=p.redirected?"push":"none";
+    if(p.status===422)mode="none";
+    var nu=new URL(p.url,location.href);
+    if(mode==="push"&&nu.pathname+nu.search===here())mode="replace";
+    if(mode==="push"){try{history.replaceState({xo:1,y:window.scrollY},"",location.href);}catch(e){}history.pushState({xo:1,y:0},"",p.url);}
+    else if(mode==="replace"){try{history.replaceState({xo:1,y:window.scrollY},"",p.url);}catch(e){}}
+    at=here();
+    var focus=document.activeElement;
+    if(o.frame){
+      var nf=d.getElementById(o.frame),cf=document.getElementById(o.frame);
+      // a frame outside a running App's view: patch only it
+      if(nf&&cf&&cf.hasAttribute("data-xo-frame")&&!(app()&&app().contains(cf))){xoPatch(cf,nf,focus);return;}
+    }
     if(cur)cur();
     document.title=d.title;
     xoMorph(document.head,d.head,null);
-    xoMorph(document.body,d.body,null);
+    xoPatch(document.body,d.body,focus);
     var st=history.state;
-    window.scrollTo(0,push?0:((st&&st.y)||0));
+    if(mode==="push")window.scrollTo(0,0);else if(mode==="pop")window.scrollTo(0,(st&&st.y)||0);
     cur=boot();
-  }).catch(function(e){if(n===navN)location.href=href;});
+  }).catch(function(e){
+    if(n!==navN||(e&&e.name==="AbortError"))return;
+    // a POST is never repeated as a GET: submit the form for real
+    if(o.method==="POST"&&o.form)HTMLFormElement.prototype.submit.call(o.form);
+    else location.href=href;
+  });
 }
+function skip(el){return el.hasAttribute("data-xo-reload")||el.hasAttribute("download");}
 document.addEventListener("click",function(ev){
   if(ev.defaultPrevented||ev.button!==0||ev.metaKey||ev.ctrlKey||ev.shiftKey||ev.altKey)return;
   var a=ev.target&&ev.target.closest?ev.target.closest("a[href]"):null;
-  if(!a||a.hasAttribute("download")||a.hasAttribute("data-xo-reload")||(a.target&&a.target!=="_self"))return;
+  if(!a||skip(a)||(a.target&&a.target!=="_self"))return;
   var u=new URL(a.href,location.href);
   if(u.origin!==location.origin)return;
   if(u.pathname+u.search===here()&&u.hash)return;
   ev.preventDefault();
-  go(u.href,true);
+  visit(u.href,{mode:a.getAttribute("data-xo-action")==="replace"?"replace":"push",frame:a.getAttribute("data-xo-frame")});
+});
+// the URL and body a form submits (its submitter's formaction,
+// formmethod and name=value count)
+function formReq(f,s){
+  var method=((s&&s.getAttribute("formmethod"))||f.getAttribute("method")||"get").toUpperCase();
+  var u=new URL((s&&s.getAttribute("formaction"))||f.getAttribute("action")||location.href,location.href);
+  var fd;try{fd=s?new FormData(f,s):new FormData(f);}catch(e){fd=new FormData(f);}
+  if(method==="GET"){u.search=new URLSearchParams(fd).toString();u.hash="";return {url:u,method:"GET"};}
+  var multi=(f.getAttribute("enctype")||"").toLowerCase()==="multipart/form-data";
+  return {url:u,method:method,body:multi?fd:new URLSearchParams(fd)};
+}
+document.addEventListener("submit",function(ev){
+  var f=ev.target,s=ev.submitter||null;
+  if(ev.defaultPrevented||!f||f.tagName!=="FORM"||skip(f)||(s&&s.hasAttribute&&s.hasAttribute("data-xo-reload")))return;
+  var tg=(s&&s.getAttribute("formtarget"))||f.getAttribute("target");
+  if(tg&&tg!=="_self")return;
+  var q=formReq(f,s);
+  if(q.url.origin!==location.origin||(q.method!=="GET"&&q.method!=="POST"))return;
+  ev.preventDefault();
+  clearTimeout(deb);
+  visit(q.url.href,{mode:f.getAttribute("data-xo-action")==="replace"?"replace":"push",method:q.method,body:q.body,frame:f.getAttribute("data-xo-frame"),form:f});
+});
+// a GET form with data-xo-submit-on-input="MS" submits MS ms after the
+// last input (search as you type), replacing this history entry
+document.addEventListener("input",function(ev){
+  var f=ev.target&&ev.target.form;
+  if(!f||!f.hasAttribute("data-xo-submit-on-input"))return;
+  clearTimeout(deb);
+  deb=setTimeout(function(){
+    var q=formReq(f,null);
+    if(q.method!=="GET"||q.url.origin!==location.origin)return;
+    visit(q.url.href,{mode:"replace",frame:f.getAttribute("data-xo-frame"),form:f});
+  },(+f.getAttribute("data-xo-submit-on-input"))||250);
 });
 var at=here();
 window.addEventListener("popstate",function(ev){
   if(here()===at)return;
   at=here();
-  go(location.href,false);
+  visit(location.href,{mode:"pop"});
 });
 // nav-end
 })();

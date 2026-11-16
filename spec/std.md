@@ -11226,6 +11226,17 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   modifier key, and a reply that is not a std/ui page, load normally. A
   page left with Msgs not yet acknowledged keeps sending them to its own
   endpoint in the background until they drain.
+- The page layer (decision 0670): a server page whose body carries
+  `data-xo-page` and loads the runtime (`ui.plain(title, body, css:,
+  prefix:)`, or by hand with `ui.serve_runtime(r, prefix:)` and
+  `ui.runtime_url(prefix)`) is taken over like an App page. GET forms
+  submit in place and push the URL; `data-xo-submit-on-input="MS"`
+  submits after MS ms of no input, replacing the history entry. POST
+  forms follow a 303 to the next page and show a 422 in place.
+  `data-xo-frame` on an element with an id makes it a frame, and a link
+  or form with `data-xo-frame="ID"` patches only that element.
+  `data-xo-action="replace"` replaces the history entry. A page without
+  the runtime, or with another build of it, is a full load.
 - The runtime and the client are served at content stamped URLs
   (`?v=`), cached for good; the page's `data-xo-build` and each sync
   reply's `build` name them, and a page that sees another build sets

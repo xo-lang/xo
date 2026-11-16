@@ -1,5 +1,16 @@
 # std/ui changes
 
+## 2026-11-15: feature: the page layer (server pages, forms and frames without full loads)
+
+- Kind: feature
+- Commit: this push
+- Found by: owner (search was a full load; std/ui should grow past one dashboard)
+- Go reference: none
+- Test: std/ui_test.xo (`plain` escaping and runtime script, `serve_runtime` and `runtime_url`); headless Chrome ~/xo-lead/notes/stdui/e2e/drive-pages.mjs 14/14 (plain and App pages swap both ways, search as you type with one request per burst and the URL replaced, Enter pushes, 422 in place and 303 followed, frames, shared links, pages without the runtime load normally); navigation 17/17, todo 21/21, morph 3/3, redeploy 6/6
+- Shipped in: not yet released
+
+`ui.plain`, `ui.serve_runtime` and `ui.runtime_url` make server pages that the runtime takes over (decision 0670): links, GET forms (with `data-xo-submit-on-input` for search as you type), POST forms (303 and 422) and frames (`data-xo-frame`) work without a full load.
+
 ## 2026-11-15: feature: stamped runtime and client URLs; open pages reload onto a new build; sync on socket reconnect
 
 - Kind: feature, fix

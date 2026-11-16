@@ -689,3 +689,22 @@ test "the runtime and client are served at stamped URLs, cached for good" {
   expect(idle.same) == true
   expect(idle.build) == "${jv}.${wv}"
 }
+
+test "plain renders a server page the runtime takes over" {
+  let s = plain("Search <x>", el("form", [attr("method", "get"), attr("data-xo-submit-on-input", "250")], [el("input", [attr("name", "q")])]), css: "b{x:1}</style>", prefix: "/app")
+  expect(s.contains("<title>Search &lt;x&gt;</title>")) == true
+  expect(s.contains("<body data-xo-page><form method=\"get\" data-xo-submit-on-input=\"250\">")) == true
+  expect(s.contains("<script src=\"/app/_xo/ui.js?v=${runtime_stamp()}\" defer></script></body></html>")) == true
+  // the style text cannot end its element
+  expect(s.contains("<style>b{x:1}\\3c /style></style>")) == true
+  expect(runtime_url()) == "/_xo/ui.js?v=${runtime_stamp()}"
+}
+
+test "serve_runtime serves the runtime without an App" {
+  var r = http.router()
+  serve_runtime(r, prefix: "/s")
+  let js = r.call(http.new_request("GET", runtime_url("/s")))
+  expect(js.status) == 200
+  expect(js.header("Cache-Control")) == Some("public, max-age=31536000, immutable")
+  expect(js.text()?.contains("data-xo-page")) == true
+}
