@@ -65,3 +65,23 @@ value. go-sql-driver skips the byte (a filler) and reads on.
 Fix: parse_column refuses a fixed-fields length other than 12, the
 value every ColumnDefinition41 carries (mysqlwire_test.xo "column
 definitions and text rows").
+
+## An UNSIGNED DECIMAL's precision (2026-11-15)
+
+Observed: TestMysqlFuzz seed 12 (cases 2175 and 3922): DECIMAL precision
+one more in Xo than in go-sql-driver v1.10.1, for UNSIGNED columns only.
+
+Cause: go-sql-driver's ColumnTypePrecisionScale (rows.go) returns length
+- 1, or length - 2 with decimals, whatever the UNSIGNED flag. MySQL's
+length of an unsigned DECIMAL has no sign byte (my_decimal_length_to_precision:
+length - (scale > 0) - (unsigned ? 0 : 1)), so DECIMAL(10,2) UNSIGNED, of
+length 11, is precision 10 in Xo and 9 in go-sql-driver. Xo keeps MySQL's.
+
+Fix: the fuzz comparison counts `go unsigned decimal` when the answers
+differ only in DECIMAL precisions on the types line, each Xo's one more
+exactly where the column is UNSIGNED (myfUnsignedDecimal).
+
+Also: a local sweep of many 5000-case seeds on macOS fails from about the
+fourth seed with the reference answering `error conn` for every case
+(ephemeral ports in TIME_WAIT after tens of thousands of short
+connections); sweep on a Linux host.

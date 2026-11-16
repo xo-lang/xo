@@ -41,6 +41,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -412,29 +413,77 @@ func myfSameButBinary(a, b string) bool {
 	return a != b && r.Replace(a) == r.Replace(b)
 }
 
-// myfWideCollation reports whether a column definition among a result's
-// packets (the column count, then the definitions) has a collation above
-// 255, which go-sql-driver reads as its low byte.
-func myfWideCollation(packets [][]byte) bool {
+// myfWire is a column definition's collation, type and flags.
+type myfWire struct{ collation, kind, flags int }
+
+// myfColumns reads the column definitions among a result's packets (the
+// column count, then the definitions); nil when they do not parse.
+func myfColumns(packets [][]byte) []myfWire {
 	if len(packets) < 2 || len(packets[0]) == 0 {
-		return false
+		return nil
 	}
 	n := int(packets[0][0])
+	var out []myfWire
 	for _, p := range packets[1:min(len(packets), 1+n)] {
 		pos := 0
-		ok := true
 		for range 6 {
 			if pos >= len(p) || p[pos] >= 251 {
-				ok = false
-				break
+				return nil
 			}
 			pos += 1 + int(p[pos])
 		}
-		if ok && pos+3 <= len(p) && p[pos+2] != 0 {
+		if pos+10 > len(p) {
+			return nil
+		}
+		out = append(out, myfWire{collation: int(p[pos+1]) | int(p[pos+2])<<8, kind: int(p[pos+7]), flags: int(p[pos+8]) | int(p[pos+9])<<8})
+	}
+	return out
+}
+
+// myfWideCollation reports whether a column definition among a result's
+// packets has a collation above 255, which go-sql-driver reads as its low
+// byte.
+func myfWideCollation(packets [][]byte) bool {
+	for _, c := range myfColumns(packets) {
+		if c.collation > 255 {
 			return true
 		}
 	}
 	return false
+}
+
+var myfDecimal = regexp.MustCompile(`:DECIMAL:(\d+),`)
+
+// myfUnsignedDecimal reports whether two answers differ only in DECIMAL
+// precisions on their "types " line, each Xo's (got) one more than
+// go-sql-driver's (want) exactly where the column is UNSIGNED.
+func myfUnsignedDecimal(got, want string, packets [][]byte) bool {
+	lg, lw := strings.Split(got, "\n"), strings.Split(want, "\n")
+	if len(lg) != len(lw) || len(lg) == 0 || !strings.HasPrefix(lg[0], "types ") || strings.Join(lg[1:], "\n") != strings.Join(lw[1:], "\n") {
+		return false
+	}
+	var dec []bool // each DECIMAL column's UNSIGNED flag, in order
+	for _, c := range myfColumns(packets) {
+		if c.kind == 0 || c.kind == 246 {
+			dec = append(dec, c.flags&32 != 0)
+		}
+	}
+	mg, mw := myfDecimal.FindAllStringSubmatchIndex(lg[0], -1), myfDecimal.FindAllStringSubmatchIndex(lw[0], -1)
+	if len(mg) != len(dec) || len(mw) != len(dec) || myfDecimal.ReplaceAllString(lg[0], ":DECIMAL:") != myfDecimal.ReplaceAllString(lw[0], ":DECIMAL:") {
+		return false
+	}
+	diff := false
+	for k := range dec {
+		pg, _ := strconv.Atoi(lg[0][mg[k][2]:mg[k][3]])
+		pw, _ := strconv.Atoi(lw[0][mw[k][2]:mw[k][3]])
+		switch {
+		case dec[k] && pg == pw+1:
+			diff = true
+		case pg != pw:
+			return false
+		}
+	}
+	return diff
 }
 
 func myfBlocks(out string) map[int]string {
@@ -550,6 +599,14 @@ func TestMysqlFuzz(t *testing.T) {
 				refused["go collation byte"]++
 				continue
 			}
+			if got[i] != want[i] && myfUnsignedDecimal(got[i], want[i], cases[i].packets) {
+				// go-sql-driver's DECIMAL precision is length - 1 (- 2 with
+				// decimals) whatever the UNSIGNED flag; an unsigned
+				// DECIMAL's length has no sign byte, so Xo's precision
+				// (MySQL's, as my_decimal_length_to_precision) is one more
+				refused["go unsigned decimal"]++
+				continue
+			}
 			if got[i] != want[i] && cases[i].note != "" && strings.HasPrefix(got[i], "error ") && strings.Count(got[i], "\n") == 1 {
 				refused[cases[i].note]++
 				continue
@@ -593,6 +650,20 @@ func TestMysqlFuzzWideCollation(t *testing.T) {
 	def[25] = 0
 	if myfWideCollation([][]byte{{1}, def}) {
 		t.Errorf("collation 63: wide")
+	}
+	// seed 12's case 2175: an UNSIGNED DECIMAL of length 255, precision 254
+	// in Xo (MySQL's) and 253 in go-sql-driver
+	ud, _ := hex.DecodeString("03646566026462017401740263300263300cff00ff000000002000000000")
+	sd, _ := hex.DecodeString("03646566026462017401740263300263300cff00ff000000000000000000")
+	g, w := "types c0:DECIMAL:254,0:true\nRow{x}\n", "types c0:DECIMAL:253,0:true\nRow{x}\n"
+	if !myfUnsignedDecimal(g, w, [][]byte{{1}, ud}) {
+		t.Errorf("unsigned DECIMAL 254 against 253: not the divergence")
+	}
+	if myfUnsignedDecimal(g, w, [][]byte{{1}, sd}) {
+		t.Errorf("signed DECIMAL 254 against 253: the divergence")
+	}
+	if myfUnsignedDecimal(g, "types c0:DECIMAL:253,0:true\nRow{y}\n", [][]byte{{1}, ud}) {
+		t.Errorf("different rows: the divergence")
 	}
 	// seed 4's case 707: the values differ in kind too
 	if !myfSameButBinary("types a:TEXT:-:true\nRow{vals: [Text(s: \"x\")]}\n", "types a:BLOB:-:true\nRow{vals: [Blob(b: b\"x\")]}\n") {
