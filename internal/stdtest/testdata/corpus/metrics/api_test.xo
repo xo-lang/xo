@@ -1,0 +1,74 @@
+// std/metrics' bucket helpers, gather, native_histogram, pid_from_file and
+// a Summary's curry and partial delete through the public API, after
+// prometheus/client_golang's TestBuckets, ExampleGatherers,
+// NewConstNativeHistogram, NewPidFileFn and testDeletePartialMatch (as
+// std/metrics_test.xo ports them inside the module). Written by hand
+// beside the generated metrics_test.xo.
+
+use std/metrics
+
+test "linear and exponential range buckets (TestBuckets)" {
+  expect(metrics.linear_buckets(-15.0, 5.0, 6)) == [-15.0, -10.0, -5.0, 0.0, 5.0, 10.0]
+  let got = metrics.exponential_buckets_range(1.0, 100.0, 10)
+  let want = [1.0, 1.6681, 2.7825, 4.6415, 7.7426, 12.9154, 21.5443, 35.9381, 59.9484, 100.0]
+  expect(got.len()) == want.len()
+  for (i, w) in want.indexed() {
+    expect((got[i] - w).abs() < 1e-4) == true
+  }
+}
+
+test "gather merges registries into one exposition, sorted (ExampleGatherers)" {
+  let a = metrics.registry()
+  a.gauge("temperature_kelvin", "Temperature in Kelvin.", ["location"]).set(273.14, ["outside"])
+  let b = metrics.registry()
+  b.gauge("humidity_percent", "Humidity in %.", ["location"]).set(45.4, ["outside"])
+  let (t, errs) = metrics.gather([a, b])
+  expect(errs.errors.len()) == 0
+  expect(t.split("\n")[0..6]) == [
+    "# HELP humidity_percent Humidity in %.",
+    "# TYPE humidity_percent gauge",
+    "humidity_percent{location=\"outside\"} 45.4",
+    "# HELP temperature_kelvin Temperature in Kelvin.",
+    "# TYPE temperature_kelvin gauge",
+    "temperature_kelvin{location=\"outside\"} 273.14",
+  ]
+}
+
+test "native_histogram checks the schema and the counts (NewConstNativeHistogram)" {
+  match metrics.native_histogram(3, 1.0, {1: 2}, {}, 1, 9) {
+    Ok(_) => fault("schema 9 passed")
+    Err(e) => expect(e.msg) == "invalid native histogram schema"
+  }
+  match metrics.native_histogram(3, 1.0, {1: 2}, {}, 2, 3) {
+    Ok(_) => fault("4 bucket counts for 3 observations passed")
+    Err(e) => expect(e.msg) == "the sum of all bucket populations exceeds the count of observations"
+  }
+  let h = metrics.native_histogram(5, Float.nan, {1: 2}, {}, 1, 3) ?? e => fault(e.msg)
+  expect(h.zero_threshold) == metrics.DEF_NATIVE_HISTOGRAM_ZERO_THRESHOLD
+}
+
+test "pid_from_file reads a pid file (NewPidFileFn)" uses fs {
+  let path = os.fs.create_temp(".", "pidfile") ?? e => fault("${e}")
+  os.fs.write(path, b" 4242\n") ?? e => fault("${e}")
+  expect(metrics.pid_from_file(os.fs, path) ?? e => fault(e.msg)) == 4242
+  os.fs.write(path, b"x") ?? e => fault("${e}")
+  match metrics.pid_from_file(os.fs, path) {
+    Ok(_) => fault("x parsed")
+    Err(e) => expect(e.msg) == "can't parse pid file ${path.quote()}"
+  }
+  os.fs.remove(path) ?? e => fault("${e}")
+}
+
+test "a curried Summary shares the series; delete_partial_match removes the matching ones (testDeletePartialMatch)" {
+  let r = metrics.registry()
+  let s = r.summary("ss", "h", ["a", "b"])
+  let c = s.must_curry_with({"a": "z"})
+  c.observe(2.0, ["p"])
+  c.observe(3.0, ["q"])
+  s.observe(1.0, ["y", "p"])
+  expect(r.text().contains("ss_sum{a=\"z\",b=\"p\"} 2\n")) == true
+  expect(s.delete_partial_match({"a": "nope"})) == 0
+  expect(s.delete_partial_match({"a": "z"})) == 2
+  expect(r.text().contains("a=\"z\"")) == false
+  expect(r.text().contains("ss_sum{a=\"y\",b=\"p\"} 1\n")) == true
+}

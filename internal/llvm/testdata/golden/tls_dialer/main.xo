@@ -46,6 +46,10 @@ fn tls_pair(i: Issued, chain: List[x509.Certificate]) -> tls.TlsCert {
 fn serve(l: tls.TlsListener) uses net {
   if let Ok(c) = l.accept() {
     if c.handshake().is_ok() {
+      // the connection under the TLS one (Go's Conn.NetConn) has its addresses
+      if c.net_conn().local_addr() != c.local_addr() {
+        fault("net_conn: ${c.net_conn().local_addr()} is not ${c.local_addr()}")
+      }
       c.write(b"hi").ignore_err("the client may be gone")
       match c.read(16) {
         _ => {}

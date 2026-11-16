@@ -1,0 +1,62 @@
+// std/migrate through its public API on sql.memory: collect, up and
+// status over an embedded directory, and up_list and status_list over
+// collected migrations. After pressly/goose v3.27.3's
+// provider_collect_test.go and provider_run_test.go (up_and_down_all,
+// status, TestPending; Copyright (c) 2012 Liam Staskawicz, MIT license),
+// as std/migrate_test.xo ports them inside the module. Written by hand.
+
+use std/embed
+use std/migrate
+use std/sql
+
+fn dir(files: Map[Str, Str]) -> embed.Dir {
+  var m: Map[Str, Bytes] = {}
+  for (k, v) in files {
+    m[k] = v.bytes()
+  }
+  embed.Dir{files: m}
+}
+
+const OWNERS = "-- +goose Up\nCREATE TABLE owners ( owner_name TEXT NOT NULL );\n"
+const SEED = "-- +goose Up\nINSERT INTO owners (owner_name) VALUES ('seed-user-1');\nINSERT INTO owners (owner_name) VALUES ('seed-user-2');\nINSERT INTO owners (owner_name) VALUES ('seed-user-3');\n"
+
+fn owners(db: sql.Db) -> Int uses net.dial {
+  ((db.query_one("SELECT count(*) AS n FROM owners") ?? e => fault("${e}")).int("n")) ?? e => fault("${e}")
+}
+
+test "collect keeps NNN_name.sql files in version order (TestCollectFileSources)" {
+  let ms = migrate.collect(dir({"5_qux.sql": SEED, "README.md": "# README", "1_foo.sql": OWNERS, "some/other/dir/2_foo.sql": "SELECT 1;"})) ?? e => fault("${e}")
+  expect(ms.map(fn(m) { (m.version, m.name) })) == [(1, "1_foo.sql"), (5, "5_qux.sql")]
+  match migrate.collect(dir({"001_foo.sql": OWNERS, "01_bar.sql": OWNERS})) {
+    Err(e) => expect(e.display().contains("found duplicate migration version 1")) == true
+    Ok(_) => fault("want a duplicate error")
+  }
+}
+
+test "up applies in order once; status reports each (up_and_down_all, status)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let files = dir({"00002_seed.sql": SEED, "00001_owners.sql": OWNERS})
+  let before = migrate.status(db, files, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")
+  expect(before.map(fn(s) { (s.version, s.applied_at.is_some()) })) == [(1, false), (2, false)]
+  expect(migrate.up(db, files, os.clock, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")) == [1, 2]
+  expect(owners(db)) == 3
+  expect(migrate.up(db, files, os.clock, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")) == []
+  let after = migrate.status(db, files, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")
+  expect(after.map(fn(s) { (s.version, s.name, s.applied_at.is_some()) })) == [(1, "00001_owners.sql", true), (2, "00002_seed.sql", true)]
+}
+
+test "up_list and status_list take collected migrations; a pending one below the newest needs allow_missing (TestPending)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let first = migrate.collect(dir({"00001_owners.sql": OWNERS, "00003_seed.sql": SEED})) ?? e => fault("${e}")
+  expect(migrate.up_list(db, first, os.clock, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")) == [1, 3]
+  let all = migrate.collect(dir({"00001_owners.sql": OWNERS, "00002_one.sql": "-- +goose Up\nINSERT INTO owners (owner_name) VALUES ('two');\n", "00003_seed.sql": SEED})) ?? e => fault("${e}")
+  let st = migrate.status_list(db, all, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")
+  expect(st.map(fn(s) { (s.version, s.applied_at.is_some()) })) == [(1, true), (2, false), (3, true)]
+  match migrate.up_list(db, all, os.clock, dialect: migrate.Dialect.Memory) {
+    Err(e) => expect(e) == migrate.MigrateErr.Missing(versions: [2])
+    Ok(vs) => fault("want Missing, got ${vs:?}")
+  }
+  expect(owners(db)) == 3
+  expect(migrate.up_list(db, all, os.clock, dialect: migrate.Dialect.Memory, allow_missing: true) ?? e => fault("${e}")) == [2]
+  expect(owners(db)) == 4
+}

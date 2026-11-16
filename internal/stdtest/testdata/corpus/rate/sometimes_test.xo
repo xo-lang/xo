@@ -1,0 +1,47 @@
+// rate.Sometimes, after golang.org/x/time/rate v0.16.0's sometimes_test.go
+// examples (Once, First, Every, Interval), on the test clock; written by
+// hand beside the generated rate_test.xo (scripts/stdcorpus writes only
+// that file).
+
+use std/rate
+use std/testing
+
+/// The calls of s.do, out of n made `step` apart on the clock, that ran the action.
+fn ran(clock: testing.FakeClock, s: rate.Sometimes, n: Int, step: Duration) -> List[Int] {
+  // a handle: closures capture by value, so the calls record through it
+  let got = Mutex[List[Int]].new([])
+  for i in 0..n {
+    s.do(fn() uses sync { got.with(fn(var l: List[Int]) { l.push(i) }) })
+    clock.advance(step)
+  }
+  got.with(fn(var l: List[Int]) { l })
+}
+
+test "no rule set runs once, as Go's zero value (ExampleSometimes_once)" {
+  expect(ran(os.clock, rate.sometimes(os.clock), 10, 0s)) == [0]
+}
+
+test "first runs the first calls (ExampleSometimes_first)" {
+  expect(ran(os.clock, rate.sometimes(os.clock, first: 3), 10, 0s)) == [0, 1, 2]
+}
+
+test "every runs each every-th call and the first (ExampleSometimes_every)" {
+  expect(ran(os.clock, rate.sometimes(os.clock, every: 3), 10, 0s)) == [0, 3, 6, 9]
+}
+
+test "interval runs once the interval passed since the last run (ExampleSometimes_interval)" {
+  expect(ran(os.clock, rate.sometimes(os.clock, interval: 1s), 13, 250ms)) == [0, 4, 8, 12]
+}
+
+test "the rules combine: any one runs the action" {
+  expect(ran(os.clock, rate.sometimes(os.clock, first: 2, every: 4), 10, 0s)) == [0, 1, 4, 8]
+}
+
+test "a copy shares the count (a handle)" {
+  let s = rate.sometimes(os.clock)
+  let t = s
+  let runs = Mutex[Int].new(0)
+  s.do(fn() uses sync { runs.with(fn(var r: Int) { r += 1 }) })
+  t.do(fn() uses sync { runs.with(fn(var r: Int) { r += 1 }) })
+  expect(runs.with(fn(var r: Int) { r })) == 1
+}
