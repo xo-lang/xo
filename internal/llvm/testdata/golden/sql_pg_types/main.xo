@@ -37,6 +37,20 @@ fn (d: FakeDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr us
 }
 
 fn (c: FakeConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  if q.starts_with("select lo") {
+    // large objects (decision 0679): the call as the server gets it
+    c.log.add("${q} ${args:?}")
+    let v = if q.starts_with("select loread") {
+      sql.SqlValue.Blob(b: b"abc")
+    } else if q.starts_with("select lowrite") {
+      sql.SqlValue.Integer(n: 2)
+    } else if q.starts_with("select lo_unlink") {
+      sql.SqlValue.Integer(n: if args == [sql.SqlValue.Integer(n: 9)] { 0 } else { 1 })
+    } else {
+      sql.SqlValue.Integer(n: 7)
+    }
+    return sql.DriverRows{columns: ["r"], rows: [[v]]}
+  }
   if q == "PARAMS" {
     // each parameter as the driver receives it
     return sql.DriverRows{columns: ["p"], rows: args.map(fn(a) { [a] })}
@@ -81,7 +95,6 @@ fn (c: FakeConn) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> L
   Err(sql.SqlErr.Driver(msg: "fake: no batches"))
 }
 
-/// A time range with its bounds as RFC 3339 text.
 /// A numeric range with its bounds' display text.
 fn nrange(r: sql.Range[sql.Numeric]) -> Str {
   match r {
@@ -98,6 +111,7 @@ fn nedge(e: sql.Edge[sql.Numeric]) -> Str {
   }
 }
 
+/// A time range with its bounds as RFC 3339 text.
 fn tr(r: sql.Range[Time]) -> Str {
   match r {
     Empty => "empty"
@@ -209,6 +223,27 @@ fn main(os: Os) ! {
   os.stdio.println(show("multirange_num c2", nr.multirange_num("c2").map(fn(rs) { rs.map(fn(r) { nrange(r) }) })))
   let np = sql.parse_numeric("12.340")?
   os.stdio.println("numeric parts ${np:?} int ${np.to_int():?} float ${np.to_float()}")
+  // large objects: the calls each Tx.lo_* sends, and pgx's checks
+  let tx = db.begin()?
+  let oid = tx.lo_create()?
+  let lo = tx.lo_open(oid, mode: sql.LoMode.Read)?
+  os.stdio.println("lo open ${oid} ${lo:?}")
+  os.stdio.println(show("lo_write short", tx.lo_write(lo, b"xyz")))
+  os.stdio.println(show("lo_read", tx.lo_read(lo, 10).map(fn(b) { b.to_hex() })))
+  os.stdio.println(show("lo_read exact", tx.lo_read(lo, 3).map(fn(b) { b.to_hex() })))
+  os.stdio.println(show("lo_read more", tx.lo_read(lo, 2).map(fn(b) { b.to_hex() })))
+  os.stdio.println(show("lo_seek", tx.lo_seek(lo, -1, whence: 2)))
+  os.stdio.println(show("lo_tell", tx.lo_tell(lo)))
+  os.stdio.println(show("lo_truncate", tx.lo_truncate(lo, 1).map(fn(_) { "ok" })))
+  os.stdio.println(show("lo_close", tx.lo_close(lo).map(fn(_) { "ok" })))
+  os.stdio.println(show("lo_unlink", tx.lo_unlink(oid).map(fn(_) { "ok" })))
+  os.stdio.println(show("lo_unlink missing", tx.lo_unlink(9).map(fn(_) { "ok" })))
+  tx.commit()?
+  for l in log.lines.with(fn(xs) { xs }) {
+    if l.starts_with("select lo") {
+      os.stdio.println("sent ${l}")
+    }
+  }
   let u = uuid.parse("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")?
   let p = netip.parse_prefix("10.1.0.0/16")?
   let params = [sql.uuid(u), sql.date(time.Date{year: 2026, month: 3, day: 9}), sql.date(time.Date{year: -43, month: 3, day: 15}), sql.time_of_day(time.ClockTime{hour: 7, minute: 5, second: 3, nanos: 120000000}), sql.interval(sql.Interval{months: 14, days: -3, micros: 5000001}), sql.prefix(p), sql.mac(b"\x08\x00\x2b\x01\x02\x03"), sql.hstore({"a": Some("1"), "b": None, "q \"x\"": Some("back\\slash")}), sql.date_bound(sql.Bound.Infinity), sql.date_bound(sql.Bound.Finite(v: time.Date{year: 2026, month: 1, day: 2})), sql.time_bound(sql.Bound.NegInfinity), sql.range_int(sql.Range.Span(lower: sql.Edge.Inclusive(v: 1), upper: sql.Edge.Exclusive(v: 5))), sql.range_int(sql.Range.Empty), sql.range_date(sql.Range.Span(lower: sql.Edge.Unbounded, upper: sql.Edge.Inclusive(v: time.Date{year: 2026, month: 1, day: 2}))), sql.range_time(sql.Range.Span(lower: sql.Edge.Inclusive(v: Time.from_unix(0)), upper: sql.Edge.Unbounded)), sql.multirange_int([sql.Range.Span(lower: sql.Edge.Inclusive(v: 1), upper: sql.Edge.Exclusive(v: 3)), sql.Range.Span(lower: sql.Edge.Exclusive(v: 5), upper: sql.Edge.Unbounded)]), sql.multirange_int([]), sql.composite([Some("1"), Some("a b"), None, Some(""), Some(" lead"), Some("q\"(x)\\")]), sql.composite([]), sql.numeric(sql.parse_numeric("-1.250")?), sql.range_num(sql.Range.Span(lower: sql.Edge.Inclusive(v: sql.Numeric.NaN), upper: sql.Edge.Unbounded))]

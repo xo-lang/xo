@@ -3646,6 +3646,30 @@ copied before an error from `rows` stay; use a transaction). A driver
 without COPY returns `Driver` from `DriverConn.copy_from`, which every
 driver implements since decision 0479.
 
+Large objects (decision 0679, pgx's `LargeObjects`) live in a
+transaction and go through the server's `lo_*` functions, so they work
+on any driver whose server has them:
+
+```
+enum LoMode { Read, Write, ReadWrite }                           // INV_READ, INV_WRITE
+struct LargeObject { fd: Int }                                   // an open object's descriptor
+fn (t: Tx) lo_create(oid: Int = 0) -> Int ! SqlErr uses net.dial  // 0: the server picks the oid
+fn (t: Tx) lo_open(oid: Int, mode: LoMode = LoMode.ReadWrite) -> LargeObject ! SqlErr uses net.dial
+fn (t: Tx) lo_write(o: LargeObject, b: Bytes) -> Int ! SqlErr uses net.dial
+fn (t: Tx) lo_read(o: LargeObject, n: Int) -> Bytes ! SqlErr uses net.dial
+fn (t: Tx) lo_seek(o: LargeObject, offset: Int, whence: Int = 0) -> Int ! SqlErr uses net.dial
+fn (t: Tx) lo_tell(o: LargeObject) -> Int ! SqlErr uses net.dial
+fn (t: Tx) lo_truncate(o: LargeObject, size: Int) -> () ! SqlErr uses net.dial
+fn (t: Tx) lo_close(o: LargeObject) -> () ! SqlErr uses net.dial
+fn (t: Tx) lo_unlink(oid: Int) -> () ! SqlErr uses net.dial
+```
+
+`lo_write` and `lo_read` split at 1 GiB less 1 KiB per call as pgx
+does; a short write, a read longer than asked, and an unlink the server
+reports as not done are `Driver` errors with pgx's messages. `lo_read`
+returns fewer than `n` bytes at the end of the object (pgx's `io.EOF`).
+A missing object is the server's error (`Server`, code 42704).
+
 ### 10.4 Rows
 
 ```

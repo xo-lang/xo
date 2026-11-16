@@ -100,6 +100,27 @@ range_num c0: "inclusive 1.5 .. exclusive 2.25"
 range_num c1: "unbounded .. inclusive 0"
 multirange_num c2: ["inclusive 1 .. exclusive 2.5", "inclusive 3 .. unbounded"]
 numeric parts Finite(coef: 12340, exp: -3) int None float 12.34
+lo open 7 LargeObject{fd: 7}
+lo_write short: short write to large object
+lo_read: "616263"
+lo_read exact: "616263"
+lo_read more: invalid read of large object
+lo_seek: 7
+lo_tell: 7
+lo_truncate: "ok"
+lo_close: "ok"
+lo_unlink: "ok"
+lo_unlink missing: failed to remove large object
+sent select lo_create($1) [Integer(n: 0)]
+sent select lo_open($1, $2) [Integer(n: 7), Integer(n: 262144)]
+sent select lowrite($1, $2) [Integer(n: 7), Blob(b: b"xyz")]
+sent select loread($1, $2) [Integer(n: 7), Integer(n: 10)]
+sent select loread($1, $2) [Integer(n: 7), Integer(n: 3)]
+sent select loread($1, $2) [Integer(n: 7), Integer(n: 2)]
+sent select lo_lseek64($1, $2, $3) [Integer(n: 7), Integer(n: -1), Integer(n: 2)]
+sent select lo_tell64($1) [Integer(n: 7)]
+sent select lo_unlink($1) [Integer(n: 7)]
+sent select lo_unlink($1) [Integer(n: 9)]
 param Text(s: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
 param Text(s: "2026-03-09")
 param Text(s: "0044-03-15 BC")

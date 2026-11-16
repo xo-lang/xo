@@ -491,6 +491,40 @@ fn (t: Tx) begin() -> Tx ! SqlErr uses net.dial
 fn (t: Tx) commit() -> () ! SqlErr uses net.dial
 fn (t: Tx) rollback() -> () ! SqlErr uses net.dial
 
+/// Postgres large objects in a transaction (pgx's LargeObjects, decision
+/// 0679), through the server's lo_* functions: an object is named by its
+/// oid; an open one by its descriptor, valid until the transaction ends.
+/// lo_create(0) lets the server pick the oid.
+fn (t: Tx) lo_create(oid: Int = 0) -> Int ! SqlErr uses net.dial
+fn (t: Tx) lo_open(oid: Int, mode: LoMode = LoMode.ReadWrite) -> LargeObject ! SqlErr uses net.dial
+/// Driver error `failed to remove large object` when the server reports
+/// no removal.
+fn (t: Tx) lo_unlink(oid: Int) -> () ! SqlErr uses net.dial
+/// Writes all of b at the object's position in calls of up to 1 GiB
+/// less 1 KiB (pgx's Write); a short write is a Driver error.
+fn (t: Tx) lo_write(o: LargeObject, b: Bytes) -> Int ! SqlErr uses net.dial
+/// Up to n bytes from the object's position; fewer at the end of the
+/// object (pgx's Read with io.EOF).
+fn (t: Tx) lo_read(o: LargeObject, n: Int) -> Bytes ! SqlErr uses net.dial
+/// Moves the position (whence 0 from the start, 1 from the current
+/// position, 2 from the end; lo_lseek64) and returns the new one.
+fn (t: Tx) lo_seek(o: LargeObject, offset: Int, whence: Int = 0) -> Int ! SqlErr uses net.dial
+fn (t: Tx) lo_tell(o: LargeObject) -> Int ! SqlErr uses net.dial
+fn (t: Tx) lo_truncate(o: LargeObject, size: Int) -> () ! SqlErr uses net.dial
+fn (t: Tx) lo_close(o: LargeObject) -> () ! SqlErr uses net.dial
+
+/// pgx's LargeObjectMode: INV_READ, INV_WRITE, or both.
+enum LoMode {
+  Read
+  Write
+  ReadWrite
+}
+
+/// An open large object: the server's descriptor (pgx's LargeObject).
+struct LargeObject {
+  fd: Int
+}
+
 fn (s: Stmt) query(args: List[SqlValue] = []) -> List[Row] ! SqlErr uses net.dial
 fn (s: Stmt) query_one(args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (s: Stmt) exec(args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial

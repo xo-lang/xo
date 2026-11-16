@@ -5763,3 +5763,85 @@ fn (r: Row) range_num(name: Str) -> sql.Range[sql.Numeric] ! sql.SqlErr { r.rang
 fn (r: Row) multirange_num_opt(name: Str) -> List[sql.Range[sql.Numeric]]? ! sql.SqlErr { mr_read(r, name, "a numeric multirange", pg_numeric) }
 
 fn (r: Row) multirange_num(name: Str) -> List[sql.Range[sql.Numeric]] ! sql.SqlErr { r.multirange_num_opt(name)?.or_err(mismatch(name, "a numeric multirange", sql.SqlValue.Null)) }
+
+// Large objects: pgx v5.12.0 large_objects.go (LargeObjects.Create, Open,
+// Unlink; LargeObject.Write, Read, Seek, Tell, Truncate, Close),
+// Copyright (c) 2013-2021 Jack Christensen, MIT License.
+
+/// pgx's maxLargeObjectMessageLength.
+const LO_CHUNK: Int = 1024 * 1024 * 1024 - 1024
+
+/// The one column of a `select lo_...(...)` row as an Int.
+fn lo_int(t: Tx, q: Str, args: List[sql.SqlValue]) -> Int ! sql.SqlErr uses net.dial {
+  let row = t.query_one(q, args)?
+  row.int(row.columns()[0])
+}
+
+fn (t: Tx) lo_create(oid: Int = 0) -> Int ! sql.SqlErr uses net.dial { lo_int(t, "select lo_create($1)", [sql.SqlValue.Integer(n: oid)]) }
+
+fn (t: Tx) lo_open(oid: Int, mode: sql.LoMode = sql.LoMode.ReadWrite) -> sql.LargeObject ! sql.SqlErr uses net.dial {
+  let m = match mode {
+    Read => 0x40000
+    Write => 0x20000
+    ReadWrite => 0x60000
+  }
+  sql.LargeObject{fd: lo_int(t, "select lo_open($1, $2)", [sql.SqlValue.Integer(n: oid), sql.SqlValue.Integer(n: m)])?}
+}
+
+fn (t: Tx) lo_unlink(oid: Int) -> () ! sql.SqlErr uses net.dial {
+  if lo_int(t, "select lo_unlink($1)", [sql.SqlValue.Integer(n: oid)])? != 1 {
+    return Err(sql.SqlErr.Driver(msg: "failed to remove large object"))
+  }
+}
+
+fn (t: Tx) lo_write(o: sql.LargeObject, b: Bytes) -> Int ! sql.SqlErr uses net.dial {
+  var total = 0
+  while total < b.len() {
+    let want = if b.len() - total < LO_CHUNK { b.len() - total } else { LO_CHUNK }
+    let n = lo_int(t, "select lowrite($1, $2)", [sql.SqlValue.Integer(n: o.fd), sql.SqlValue.Blob(b: b[total..total + want])])?
+    if n < 0 {
+      return Err(sql.SqlErr.Driver(msg: "failed to write to large object"))
+    }
+    total += n
+    if n < want {
+      return Err(sql.SqlErr.Driver(msg: "short write to large object"))
+    }
+    if n > want {
+      return Err(sql.SqlErr.Driver(msg: "invalid write to large object"))
+    }
+  }
+  total
+}
+
+fn (t: Tx) lo_read(o: sql.LargeObject, n: Int) -> Bytes ! sql.SqlErr uses net.dial {
+  var out = BytesBuilder.new()
+  var total = 0
+  while total < n {
+    let want = if n - total < LO_CHUNK { n - total } else { LO_CHUNK }
+    let row = t.query_one("select loread($1, $2)", [sql.SqlValue.Integer(n: o.fd), sql.SqlValue.Integer(n: want)])?
+    let got = row.bytes(row.columns()[0])?
+    out.write(got)
+    total += got.len()
+    if got.len() < want {
+      break
+    }
+    if got.len() > want {
+      return Err(sql.SqlErr.Driver(msg: "invalid read of large object"))
+    }
+  }
+  out.freeze()
+}
+
+fn (t: Tx) lo_seek(o: sql.LargeObject, offset: Int, whence: Int = 0) -> Int ! sql.SqlErr uses net.dial {
+  lo_int(t, "select lo_lseek64($1, $2, $3)", [sql.SqlValue.Integer(n: o.fd), sql.SqlValue.Integer(n: offset), sql.SqlValue.Integer(n: whence)])
+}
+
+fn (t: Tx) lo_tell(o: sql.LargeObject) -> Int ! sql.SqlErr uses net.dial { lo_int(t, "select lo_tell64($1)", [sql.SqlValue.Integer(n: o.fd)]) }
+
+fn (t: Tx) lo_truncate(o: sql.LargeObject, size: Int) -> () ! sql.SqlErr uses net.dial {
+  let _ = t.exec("select lo_truncate64($1, $2)", [sql.SqlValue.Integer(n: o.fd), sql.SqlValue.Integer(n: size)])?
+}
+
+fn (t: Tx) lo_close(o: sql.LargeObject) -> () ! sql.SqlErr uses net.dial {
+  let _ = t.exec("select lo_close($1)", [sql.SqlValue.Integer(n: o.fd)])?
+}

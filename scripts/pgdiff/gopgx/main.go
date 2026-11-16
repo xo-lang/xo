@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net"
 	"net/netip"
@@ -20,6 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -234,6 +236,11 @@ func main() {
 		if rest, ok := strings.CutPrefix(line, "TYPED "); ok {
 			fmt.Println("== " + line)
 			typed(ctx, c, rest)
+			continue
+		}
+		if rest, ok := strings.CutPrefix(line, "LO "); ok {
+			fmt.Println("== " + line)
+			largeObject(ctx, os.Args[1], rest)
 			continue
 		}
 		if rest, ok := strings.CutPrefix(line, "BATCH "); ok {
@@ -683,4 +690,72 @@ func pgNumParts(n pgtype.Numeric) (string, bool) {
 		return "-Infinity", true
 	}
 	return n.Int.String() + "e" + strconv.Itoa(int(n.Exp)), true
+}
+
+// largeObject is an `LO DATA` line (decision 0679): pgx's LargeObjects
+// through create, write, seek, read, tell, truncate, close and unlink in
+// one transaction, then an unlink of the removed object in another.
+func largeObject(ctx context.Context, dsn, data string) {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		fmt.Println("error connect")
+		return
+	}
+	defer conn.Close(ctx)
+	say := func(what string, v any, err error) bool {
+		var pe *pgconn.PgError
+		if errors.As(err, &pe) {
+			fmt.Printf("%s: error %s\n", what, pe.Code)
+			return false
+		}
+		if err != nil {
+			fmt.Printf("%s: error %v\n", what, err)
+			return false
+		}
+		fmt.Printf("%s: %v\n", what, v)
+		return true
+	}
+	tx, err := conn.Begin(ctx)
+	if !say("begin", "ok", err) {
+		return
+	}
+	los := tx.LargeObjects()
+	oid, err := los.Create(ctx, 0)
+	if !say("create", oid > 0, err) {
+		return
+	}
+	lo, err := los.Open(ctx, oid, pgx.LargeObjectModeRead|pgx.LargeObjectModeWrite)
+	if !say("open", "ok", err) {
+		return
+	}
+	n, err := lo.Write([]byte(data))
+	say("write", n, err)
+	pos, err := lo.Seek(0, 0)
+	say("seek", pos, err)
+	buf := make([]byte, 100)
+	n, err = lo.Read(buf)
+	if err == io.EOF {
+		err = nil
+	}
+	say("read", q(string(buf[:n])), err)
+	pos, err = lo.Tell()
+	say("tell", pos, err)
+	say("truncate", "ok", lo.Truncate(3))
+	pos, err = lo.Seek(-1, 2)
+	say("seek end", pos, err)
+	n, err = lo.Read(buf)
+	if err == io.EOF {
+		err = nil
+	}
+	say("read end", q(string(buf[:n])), err)
+	say("close", "ok", lo.Close())
+	say("unlink", "ok", los.Unlink(ctx, oid))
+	say("commit", "ok", tx.Commit(ctx))
+	tx, err = conn.Begin(ctx)
+	if !say("begin", "ok", err) {
+		return
+	}
+	los2 := tx.LargeObjects()
+	say("unlink again", "ok", los2.Unlink(ctx, oid))
+	say("rollback", "ok", tx.Rollback(ctx))
 }

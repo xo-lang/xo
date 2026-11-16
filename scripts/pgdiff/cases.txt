@@ -91,3 +91,5 @@ TYPED numeric SELECT 'Infinity'::numeric AS i, '-Infinity'::numeric AS ni, 7::in
 TYPED numrange SELECT '[1.5,2.25)'::numrange AS a, '(,0]'::numrange AS u, 'empty'::numrange AS e, NULL::numrange AS n
 TYPED nummulti SELECT '{[1,2.5),[3,)}'::nummultirange AS a
 SELECT $1::numeric AS a, $2::numeric * 2 AS b, $3::numrange AS c ;; T:-1.250 | T:1e-3 | T:[NaN,)
+LO hello, large object
+LO x

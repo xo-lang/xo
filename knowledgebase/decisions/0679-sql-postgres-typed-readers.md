@@ -105,3 +105,9 @@ stdaudit rows for these types (sql 75 agent hours).
   driver does not know a composite's field types without `LoadType`, so
   the fields stay text and the program parses each. `Db.load_type`
   (typed fields, enum and composite arrays) is a later item.
+- 2026-11-16 (Xo Lang 3): large objects as `Tx.lo_*` methods with
+  `LargeObject{fd}` and `LoMode`, rather than pgx's LargeObjects and
+  LargeObject objects holding the transaction: an Xo value does not
+  hold a borrowed `Tx`, and the methods name the transaction they use.
+  The SQL each sends and pgx's checks are pgx's; pg-diff runs the same
+  sequence through pgx and Xo (`LO DATA` lines).

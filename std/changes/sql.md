@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-16: feature: large objects (decision 0679)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #113
+- Go reference: pgx v5.12.0 large_objects.go (LargeObjects.Create, Open, Unlink; LargeObject.Write, Read, Seek, Tell, Truncate, Close), Copyright (c) 2013-2021 Jack Christensen, MIT License
+- Test: golden sql_pg_types (the SQL each call sends, short write, over-long read, failed unlink; Go, arm64, LLVM); scripts/pg-diff.sh `LO` cases equal to pgx on postgres:17-alpine and postgres:14-alpine (95 statements)
+- Shipped in: not yet released
+
+`Tx.lo_*` creates, opens, writes, reads, seeks, truncates, closes and unlinks Postgres large objects through the server's lo_* functions, with pgx's chunking and checks.
+
 ## 2026-11-16: feature: numeric as sql.Numeric, numeric ranges (decision 0681)
 
 - Kind: feature

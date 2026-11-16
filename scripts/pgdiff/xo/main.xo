@@ -68,6 +68,12 @@ fn main(os: Os) ! {
       continue
     }
     os.stdio.println("== ${line}")
+    if line.starts_with("LO ") {
+      for l in large_object(db, line[3..]) {
+        os.stdio.println(l)
+      }
+      continue
+    }
     if line.starts_with("TYPED ") {
       let rest = line[6..]
       let (kind, q) = match rest.find(" ") {
@@ -266,4 +272,68 @@ fn typed_cell(r: sql.Row, kind: Str, c: Str) -> Str {
     Ok(None) => "NULL"
     Err(_) => "error"
   }
+}
+
+fn lo_say[T: Display](what: Str, r: Result[T, sql.SqlErr]) -> Str {
+  match r {
+    Ok(v) => "${what}: ${v}"
+    Err(e) => lo_err(what, e)
+  }
+}
+
+fn lo_err(what: Str, e: sql.SqlErr) -> Str {
+  match e {
+    Server(code, _) => "${what}: error ${code}"
+    other => "${what}: error ${other}"
+  }
+}
+
+/// An `LO DATA` line (decision 0679): Tx.lo_* through create, write,
+/// seek, read, tell, truncate, close and unlink in one transaction, then
+/// an unlink of the removed object in another; as the reference prints
+/// pgx's LargeObjects.
+fn large_object(db: sql.Db, data: Str) -> List[Str] uses net.dial {
+  var out: List[Str] = []
+  let tx = match db.begin() {
+    Ok(t) => t
+    Err(e) => return [lo_err("begin", e)]
+  }
+  out.push("begin: ok")
+  let oid = match tx.lo_create() {
+    Ok(o) => o
+    Err(e) => {
+      out.push(lo_err("create", e))
+      return out
+    }
+  }
+  out.push("create: ${oid > 0}")
+  let lo = match tx.lo_open(oid) {
+    Ok(l) => l
+    Err(e) => {
+      out.push(lo_err("open", e))
+      return out
+    }
+  }
+  out.push("open: ok")
+  out.push(lo_say("write", tx.lo_write(lo, data.bytes())))
+  out.push(lo_say("seek", tx.lo_seek(lo, 0)))
+  out.push(lo_say("read", tx.lo_read(lo, 100).map(fn(b) { b.to_str_lossy().debug() })))
+  out.push(lo_say("tell", tx.lo_tell(lo)))
+  out.push(lo_say("truncate", tx.lo_truncate(lo, 3).map(fn(_) { "ok" })))
+  out.push(lo_say("seek end", tx.lo_seek(lo, -1, whence: 2)))
+  out.push(lo_say("read end", tx.lo_read(lo, 100).map(fn(b) { b.to_str_lossy().debug() })))
+  out.push(lo_say("close", tx.lo_close(lo).map(fn(_) { "ok" })))
+  out.push(lo_say("unlink", tx.lo_unlink(oid).map(fn(_) { "ok" })))
+  out.push(lo_say("commit", tx.commit().map(fn(_) { "ok" })))
+  let tx2 = match db.begin() {
+    Ok(t) => t
+    Err(e) => {
+      out.push(lo_err("begin", e))
+      return out
+    }
+  }
+  out.push("begin: ok")
+  out.push(lo_say("unlink again", tx2.lo_unlink(oid).map(fn(_) { "ok" })))
+  out.push(lo_say("rollback", tx2.rollback().map(fn(_) { "ok" })))
+  out
 }
