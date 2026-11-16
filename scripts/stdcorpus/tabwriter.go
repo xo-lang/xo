@@ -591,5 +591,27 @@ test "tabwriter writes Go's table the same three ways" {
   expect(bad) == []
 }
 `)
+	// padding wider than the writer's run of pad bytes (32, #88,
+	// 2026-11-16) is written in pieces; Go's Writer gives the text for the
+	// same table with ' ' and '.' padding
+	var wide strings.Builder
+	for _, pc := range []byte{' ', '.'} {
+		var b bytes.Buffer
+		w := tabwriter.NewWriter(&b, 0, 8, 1, pc, 0)
+		fmt.Fprintf(w, "a\t%s\tb\n%s\tc\td\n", strings.Repeat("x", 75), strings.Repeat("y", 70))
+		w.Flush()
+		wide.Write(b.Bytes())
+	}
+	fmt.Fprintf(&o, `
+test "tabwriter pads cells wider than its pad run as Go does" {
+  var got = ""
+  for pc in [32, 46] {
+    var w = tabwriter.writer(0, 8, 1, pc, 0)
+    w.write("a\t${"x".repeat(75)}\tb\n${"y".repeat(70)}\tc\td\n".bytes())
+    got = got + w.flush().to_str_lossy()
+  }
+  expect(got) == %s
+}
+`, xq(wide.String()))
 	return o.String()
 }
