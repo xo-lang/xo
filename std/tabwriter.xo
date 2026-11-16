@@ -52,6 +52,9 @@ pub struct TabWriter {
   lines: List[List[Cell]]
   widths: List[Int]
   out: BytesBuilder
+  /// 32 pad bytes, written as slices (Go's padbytes in writeN): a write of
+  /// each pad byte was a sixth of a padded table's time (2026-11-16)
+  padrun: Bytes = b""
 }
 
 /// Go's NewWriter(output, minwidth, tabwidth, padding, padchar, flags):
@@ -69,7 +72,7 @@ pub fn writer(min_width: Int, tab_width: Int, padding: Int, pad_char: Int = 32, 
     // tabs: a right aligned column cannot be padded with them
     flags1 = flags1 & (0 - 1 - ALIGN_RIGHT)
   }
-  var w = TabWriter{minwidth: min_width, tabwidth: tab_width, padding: padding, padbyte: pad_char, flags: flags1, buf: [], pos: 0, cell: Cell{size: 0, width: 0, htab: false}, end_char: 0, lines: [], widths: [], out: BytesBuilder.new()}
+  var w = TabWriter{minwidth: min_width, tabwidth: tab_width, padding: padding, padbyte: pad_char, flags: flags1, buf: [], pos: 0, cell: Cell{size: 0, width: 0, htab: false}, end_char: 0, lines: [], widths: [], out: BytesBuilder.new(), padrun: Bytes.from_list(List[UInt8].filled(32, UInt8.wrapping_from(pad_char & 255)))}
   w.reset()
   w
 }
@@ -171,16 +174,17 @@ fn (var w: TabWriter) write_padding(textw: Int, cellw0: Int, use_tabs: Bool) {
     }
     return
   }
-  for _ in 0..cellw - textw {
-    w.out.write_byte(UInt8(w.padbyte))
+  var n = cellw - textw
+  while n > 0 {
+    let k = n.min(w.padrun.len())
+    w.out.write(w.padrun[0..k])
+    n -= k
   }
 }
 
 /// The bytes buf[pos..pos + n] to the output.
 fn (var w: TabWriter) write_buf(pos: Int, n: Int) {
-  for j in pos..pos + n {
-    w.out.write_byte(w.buf[j])
-  }
+  w.out.write_list(w.buf, pos, pos + n)
 }
 
 fn (var w: TabWriter) write_lines(pos0: Int, line0: Int, line1: Int) -> Int {

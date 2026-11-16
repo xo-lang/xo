@@ -102,3 +102,16 @@ test "tabwriter writes Go's table the same three ways" {
   }
   expect(bad) == []
 }
+
+// padding wider than the writer's run of pad bytes (32, 2026-11-16) is
+// written in pieces; the text is Go's text/tabwriter output for the same
+// table with ' ' and '.' padding
+test "tabwriter pads cells wider than its pad run as Go does" {
+  var got = ""
+  for pc in [32, 46] {
+    var w = tabwriter.writer(0, 8, 1, pc, 0)
+    w.write("a\t${"x".repeat(75)}\tb\n${"y".repeat(70)}\tc\td\n".bytes())
+    got = got + w.flush().to_str_lossy()
+  }
+  expect(got) == "a                                                                      xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx b\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy c                                                                           d\na......................................................................xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.b\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy.c...........................................................................d\n"
+}

@@ -1,5 +1,19 @@
 # std/tabwriter changes
 
+## 2026-11-16: perf: cell text and padding are written as slices
+
+- Kind: perf
+- Commit: this push
+- Found by: the std Proven perf line (bench/perf/tabwriter pad 1.09 and right 1.10 of Go on the Mac)
+- Go reference: text/tabwriter tabwriter.go (writeN, writePadding, writeLines)
+- Test: the tabwriter corpus (go, arm64, llvm), with a new case of padding wider than the 32 byte run in ' ' and '.', which matches Go's output; twincheck bench/perf/tabwriter; Mac pad 1.09 to 0.96, right 1.10 to 0.90 (host 1 row to follow)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+A cell's text was written to the output one byte at a time and its padding one pad byte at a time; the text is now
+one write of the buffer's range and the padding slices of a run of 32 pad bytes kept by the writer, as Go's writeN
+uses its padbytes.
+
 ## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
 
 - Kind: refactor
