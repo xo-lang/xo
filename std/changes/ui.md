@@ -1,5 +1,17 @@
 # std/ui changes
 
+## 2026-11-16: feature: object_store, scoped logs in an S3 style bucket (decision 0686)
+
+- Kind: feature
+- Commit: this push
+- Found by: owner (an S3 store with a conditional write)
+- Go reference: none
+- Test: std/ui tests on an in-memory bucket: two Hosts act as one, a third starts from the snapshot, a stale append behind a snapshot loses; a snapshot inside a batch keeps that batch for a new instance; a catch-up costs one list and one get per batch. Outside the repo (adapter over github.com/xo-lang/aws service/s3): 4 processes x 150 appends on LocalStack gave 600 of 600 in 14 s; 4 x 100 on real S3 (ca-central-1) gave 400 of 400 in 64 s, and S3 refused a second If-None-Match put
+- Timing: none
+- Shipped in: not yet released
+
+`ui.Objects` (create only if new, put, get, list) and `ui.object_store(objects, prefix:)`.
+
 ## 2026-11-16: feature: scopes in a Host, a room or a user each with its own log (decision 0686 step 3)
 
 - Kind: feature

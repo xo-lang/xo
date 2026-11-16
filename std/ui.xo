@@ -799,6 +799,153 @@ fn fs_msg(e: FsErr) -> Str {
   "std/ui: store: ${e}"
 }
 
+/// Objects in a bucket (S3, R2, GCS, MinIO, ...): the four calls
+/// object_store needs, which a program writes over its SDK.
+pub struct Objects[fx: Effects] {
+  /// Writes the object only if no object has the key (S3: a PUT with
+  /// `If-None-Match: *`), false when one does (S3: 412, or 409 for a
+  /// concurrent conditional write).
+  pub create: fn(Str, Bytes) -> Bool ! Str uses fx
+  /// Writes or replaces the object.
+  pub put: fn(Str, Bytes) -> () ! Str uses fx
+  /// The object, None when there is none.
+  pub get: fn(Str) -> Bytes? ! Str uses fx
+  /// The keys starting with the prefix that sort after the second
+  /// argument ("" for all), in order (S3: ListObjectsV2 with StartAfter,
+  /// every page).
+  pub list: fn(Str, Str) -> List[Str] ! Str uses fx
+}
+
+/// A store in a bucket (decision 0686): an object per batch named by the
+/// scope (in hex) and its `after`, zero padded, and one snapshot object
+/// per scope. An append is a conditional create: a writer appends only at
+/// the end of the log it read, so the name is free exactly when the log
+/// still ends there, and instances on any number of hosts share it with
+/// no lock. Batches stay after a snapshot (a deleted name could be taken
+/// again by a writer that had not seen it, so a bucket lifecycle rule
+/// must not expire them); readers start at the snapshot's batch, so the
+/// old ones are not read.
+pub fn object_store[fx: Effects](o: Objects[fx], prefix: Str = "xo-ui/") -> Store[(sync, fx)] {
+  // Per scope, the batch the newest snapshot this store has seen falls
+  // in. Batches are never deleted, so an older one is only slower.
+  let froms = Mutex[Map[Str, Int]].new({})
+  Store{
+    append: fn(scope: Str, b: Batch) -> Bool ! Str {
+      (o.create)(obj_dir(prefix, scope) + obj_name(b.after), dir_encode(b))
+    },
+    read: fn(scope: Str, after: Int) -> List[Batch] ! Str {
+      let d = obj_dir(prefix, scope)
+      if after > 0 {
+        // catching up from where a batch ended: one list
+        let ns = obj_starts(o, d, after)?
+        if !ns.is_empty() && ns[0] == after {
+          return obj_fetch(o, d, scope, ns, after)
+        }
+      }
+      // after is 0, the log's end, or inside a batch (a snapshot's
+      // version): read from the batch the snapshot falls in, so the
+      // history it covers is not read
+      var from = froms.with_read(fn(m) { m.get(scope) ?? -1 })
+      if from < 0 {
+        from = 0
+        if let Some(raw) = (o.get)(d + "snap")? {
+          from = obj_snap_decode(raw)?.0
+        }
+        note_from(froms, scope, from)
+      }
+      let all = obj_starts(o, d, from)?
+      var start = from
+      for n in all {
+        if n <= after {
+          start = n
+        }
+      }
+      obj_fetch(o, d, scope, all.filter(fn(n) { n >= start }), after)
+    },
+    snapshot: fn(scope: Str) -> Batch? ! Str {
+      let raw = (o.get)(obj_dir(prefix, scope) + "snap")? ?? return Ok(None)
+      let (from, b) = obj_snap_decode(raw)?
+      note_from(froms, scope, from)
+      Ok(Some(b))
+    },
+    put_snapshot: fn(scope: Str, b: Batch) -> () ! Str {
+      let d = obj_dir(prefix, scope)
+      var low = 0
+      if let Some(raw) = (o.get)(d + "snap")? {
+        let (f, old) = obj_snap_decode(raw)?
+        if old.after >= b.after {
+          return Ok(())
+        }
+        low = f
+      }
+      // the batch the snapshot's version falls in (or ends): readers
+      // start there
+      var from = low
+      for n in obj_starts(o, d, low)? {
+        if n <= b.after {
+          from = n
+        }
+      }
+      // two writers may race here; either snapshot is a true state
+      (o.put)(d + "snap", "${from}\n".bytes() + dir_encode(b))?
+      note_from(froms, scope, from)
+      Ok(())
+    },
+  }
+}
+
+// A scope's objects: prefix, s + the key in hex, "/".
+fn obj_dir(prefix: Str, scope: Str) -> Str {
+  "${prefix}s${scope.bytes().to_hex()}/"
+}
+
+// A batch object: b + after zero padded, so names sort as numbers.
+fn obj_name(after: Int) -> Str {
+  "b" + "${after}".pad_left(20, "0")
+}
+
+// The afters of a scope's batches from low on, in order.
+fn obj_starts[fx: Effects](o: Objects[fx], d: Str, low: Int) -> List[Int] ! Str uses fx {
+  let from = if low > 0 { d + obj_name(low - 1) } else { "" }
+  var ns: List[Int] = []
+  for k in (o.list)(d + "b", from)? {
+    if let Some(n) = Int.parse(k.trim_prefix(d + "b")) {
+      ns.push(n)
+    }
+  }
+  Ok(ns)
+}
+
+// Keeps the newest snapshot batch seen for a scope (snapshots only move
+// forward, and a stale one is still safe to read from).
+fn note_from(froms: Mutex[Map[Str, Int]], scope: Str, from: Int) {
+  froms.with(fn(var m) {
+    if from > (m.get(scope) ?? -1) {
+      m.put(scope, from)
+    }
+  })
+}
+
+// The batches named ns, those with versions after `after`.
+fn obj_fetch[fx: Effects](o: Objects[fx], d: Str, scope: Str, ns: List[Int], after: Int) -> List[Batch] ! Str uses fx {
+  var out: List[Batch] = []
+  for n in ns {
+    let raw = (o.get)(d + obj_name(n))? ?? return Err("std/ui: store: batch ${n} of scope ${scope} is gone")
+    let b = dir_decode(raw)?
+    if b.after + b.count > after {
+      out.push(b)
+    }
+  }
+  Ok(out)
+}
+
+// A snapshot object: "from\n" (the batch it falls in), then a batch.
+fn obj_snap_decode(raw: Bytes) -> (Int, Batch) ! Str {
+  let nl = raw.find(b"\n") ?? return Err("std/ui: store: a snapshot without a header")
+  let from = Int.parse(raw[..nl].to_str_lossy()) ?? return Err("std/ui: store: a bad snapshot header")
+  Ok((from, dir_decode(raw[nl + 1..])?))
+}
+
 // A scope's directory: s + the key in hex, so any key is a safe name.
 fn dir_scope(f: Fs, dir: Str, scope: Str) -> Str ! Str uses fs {
   let d = "${dir}/s${scope.bytes().to_hex()}"

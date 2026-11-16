@@ -579,6 +579,98 @@ test "dir store batches round trip and a straddled snapshot keeps its batch" {
   expect((st.append)("", Batch{after: 5, count: 1, data: b"f"})?) == true
 }
 
+// A bucket in memory, counting the calls a store makes.
+struct Bucket {
+  objs: Mutex[Map[Str, Bytes]]
+  calls: Atomic[Int]
+}
+
+fn bucket() -> Bucket {
+  Bucket{objs: Mutex[Map[Str, Bytes]].new({}), calls: Atomic[Int].new(0)}
+}
+
+fn (k: Bucket) objects() -> Objects[sync] {
+  let objs = k.objs
+  let calls = k.calls
+  Objects{
+    create: fn(key: Str, v: Bytes) -> Bool ! Str uses sync {
+      let _n = calls.add(1)
+      Ok(objs.with(fn(var m) {
+        if m.contains(key) {
+          return false
+        }
+        m.put(key, v)
+        true
+      }))
+    },
+    put: fn(key: Str, v: Bytes) -> () ! Str uses sync {
+      let _n = calls.add(1)
+      objs.with(fn(var m) { m.put(key, v) })
+      Ok(())
+    },
+    get: fn(key: Str) -> Bytes? ! Str uses sync {
+      let _n = calls.add(1)
+      Ok(objs.with_read(fn(m) { m.get(key) }))
+    },
+    list: fn(prefix: Str, start: Str) -> List[Str] ! Str uses sync {
+      let _n = calls.add(1)
+      let ks = objs.with_read(fn(m) { m.keys() }).filter(fn(k) { k.starts_with(prefix) && k > start })
+      Ok(ks.sort())
+    },
+  }
+}
+
+test "two Hosts on one bucket act as one, a third starts from its snapshot, and a stale append loses" {
+  let k = bucket()
+  let bus = local_bus()
+  let a = host_with(todo_app(), object_store(k.objects()), bus, scope: "room/1", keep: 5)
+  let b = host_with(todo_app(), object_store(k.objects()), bus, scope: "room/1", keep: 5)
+  for i in 0..30 {
+    if i % 2 == 0 { a.apply(Msg.Add(id: "t${i}", title: "t")) } else { b.apply(Msg.Add(id: "t${i}", title: "t")) }
+  }
+  expect(a.model().todos.len()) == 30
+  expect(a.model()) == b.model()
+  let st = object_store(k.objects())
+  expect((st.snapshot)("room/1")?.is_some()) == true
+  // a new copy reads from the snapshot's batch, not the 30 before it
+  expect((st.read)("room/1", 0)?.len() < 15) == true
+  let c = host_with(todo_app(), object_store(k.objects()), local_bus(), scope: "room/1", keep: 5)
+  expect(c.model()) == a.model()
+  // batches stay, so a writer that has not seen the snapshot loses too
+  expect((st.append)("room/1", Batch{after: 1, count: 1, data: b"[]"})?) == false
+  expect((st.append)("room/1", Batch{after: 30, count: 1, data: b"[]"})?) == true
+}
+
+test "bucket store: a snapshot inside a batch keeps that batch, and a catch-up costs one list and a get per batch" {
+  let k = bucket()
+  let st = object_store(k.objects(), prefix: "p/")
+  expect((st.read)("", 0)?.len()) == 0
+  expect((st.append)("", Batch{after: 0, count: 3, data: b"abc"})?) == true
+  expect((st.append)("", Batch{after: 0, count: 1, data: b"x"})?) == false
+  expect((st.append)("", Batch{after: 3, count: 2, data: b"de"})?) == true
+  (st.put_snapshot)("", Batch{after: 4, count: 0, data: b"snap"})?
+  // an older snapshot does not replace it
+  (st.put_snapshot)("", Batch{after: 2, count: 0, data: b"old"})?
+  // another instance (a new process) reads the snapshot, then from inside the batch
+  let other = object_store(k.objects(), prefix: "p/")
+  expect((other.snapshot)("")?.map(fn(b) { b.data })) == Some(b"snap")
+  let bs = (other.read)("", 4)?
+  expect(bs.len()) == 1
+  expect(bs[0].after) == 3
+  // even without loading the snapshot first
+  let third = object_store(k.objects(), prefix: "p/")
+  expect((third.read)("", 4)?.map(fn(b) { b.after })) == [3]
+  expect((third.read)("", 0)?.map(fn(b) { b.after })) == [3]
+  // at the log's end: nothing
+  expect((st.read)("", 5)?.len()) == 0
+  expect((st.append)("", Batch{after: 5, count: 1, data: b"f"})?) == true
+  let before = k.calls.get()
+  expect((st.read)("", 5)?.map(fn(b) { b.data })) == [b"f"]
+  expect(k.calls.get() - before) == 2
+  // every object is under the prefix
+  expect(k.objs.with_read(fn(m) { m.keys() }).all(fn(key) { key.starts_with("p/s/") })) == true
+}
+
 test "two Hosts on one SQL store act as one, and a third starts from its snapshot" {
   let db = sql.memory()?
   let st = sql_store(db)?

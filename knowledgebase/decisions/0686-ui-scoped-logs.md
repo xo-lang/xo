@@ -226,6 +226,24 @@ Next (plan step 6): a page over two scopes (a shared catalog and the
 user's cart) needs a second stream in the sync protocol; until then an
 App per scope is one page each.
 
+## Bucket store (2026-11-16)
+
+`object_store(Objects, prefix)`: std/ui keeps no cloud SDK dependency;
+a program passes four calls over its SDK (create only if new, put, get,
+list after a key). Names are `prefix + s<scope hex>/b<after, 20
+digits>` and `.../snap`. Why a conditional create on `after` alone is
+enough: every writer appends at the end of a log it read, and what it
+read is a prefix of the true chain of batches, so the name it creates is
+either the true end (free) or the start of a batch that exists (taken).
+That argument needs names never to come free again, so covered batches
+are not deleted (a writer that read the log before a snapshot would
+otherwise create an old name); the snapshot object records the batch
+its version falls in, and readers start there. Measured: real S3,
+ca-central-1, 4 processes racing on one scope: 400 appends in 64 s, all
+kept once (each append is a list, a get per new batch and a conditional
+put). Next: delete covered batches older than a bound no writer's read
+to write gap can reach (S3 LastModified), and leases for hot scopes.
+
 ## Alternatives
 
 - One process (today): no scale beyond one machine, and no failover.

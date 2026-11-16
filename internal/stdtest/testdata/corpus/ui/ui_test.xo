@@ -162,3 +162,28 @@ test "a SQL store keeps a scope's log in tables" {
   expect((st.append)("k", ui.Batch{after: 0, count: 1, data: b"[]"})?) == false
   expect((st.read)("k", 0)?.len()) == 1
 }
+
+test "a bucket store keeps a scope's log in objects, created only when new" {
+  let objs = Mutex[Map[Str, Bytes]].new({})
+  let o = ui.Objects{
+    create: fn(k: Str, v: Bytes) -> Bool ! Str uses sync {
+      Ok(objs.with(fn(var m) {
+        if m.contains(k) {
+          return false
+        }
+        m.put(k, v)
+        true
+      }))
+    },
+    put: fn(k: Str, v: Bytes) -> () ! Str uses sync {
+      objs.with(fn(var m) { m.put(k, v) })
+      Ok(())
+    },
+    get: fn(k: Str) -> Bytes? ! Str uses sync { Ok(objs.with_read(fn(m) { m.get(k) })) },
+    list: fn(p: Str, after: Str) -> List[Str] ! Str uses sync { Ok(objs.with_read(fn(m) { m.keys() }).filter(fn(k) { k.starts_with(p) && k > after }).sort()) },
+  }
+  let st = ui.object_store(o)
+  expect((st.append)("k", ui.Batch{after: 0, count: 1, data: b"[]"})?) == true
+  expect((st.append)("k", ui.Batch{after: 0, count: 1, data: b"[]"})?) == false
+  expect((st.read)("k", 0)?.len()) == 1
+}

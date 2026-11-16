@@ -11659,6 +11659,9 @@ pub struct Store[fx: Effects] { pub append: fn(Str, Batch) -> Bool ! Str uses fx
 pub fn memory_store() -> Store[sync]
 pub fn dir_store(f: Fs, dir: Str) -> Store[fs]      // a directory per scope, a file per batch; flock + rename
 pub fn sql_store[fx: Effects](db: sql.Db[fx], table: Str = "xo_ui_log") -> Store[(net.dial, fx)] ! Str uses (net.dial, fx)
+pub struct Objects[fx: Effects] { pub create: fn(Str, Bytes) -> Bool ! Str uses fx, pub put: fn(Str, Bytes) -> () ! Str uses fx,
+    pub get: fn(Str) -> Bytes? ! Str uses fx, pub list: fn(Str, Str) -> List[Str] ! Str uses fx }
+pub fn object_store[fx: Effects](o: Objects[fx], prefix: Str = "xo-ui/") -> Store[(sync, fx)]   // S3, R2, GCS, MinIO
 pub struct Bus[fx: Effects] { pub publish: fn(Str, Int) uses fx, pub subscribe: fn(fn(Str, Int) uses sync) uses fx }
 pub fn local_bus() -> Bus[sync]
 pub fn pg_bus[fx: Effects](db: sql.Db[fx], tasks: task.Group, clock: Clock, channel: Str = "xo_ui") -> Bus[(sync, net.dial, fx, clock)]
@@ -11844,7 +11847,18 @@ fn (var c: Scope[M, E]) compact(keep: Int) -> () ! Str uses sync
   missing; table is a-z, 0-9 and _): an append is an INSERT keyed by
   (scope, after) after a check that the log ends at `after`, so a race
   is a lost append; instances on any number of hosts share it. A change
-  takes up to 100 lost races before it fails. `pg_bus(db, tasks,
+  takes up to 100 lost races before it fails. `object_store(objects,
+  prefix)` keeps scopes in a bucket through four calls a program writes
+  over its SDK (`Objects`: `create` writes only a new key, S3's PUT with
+  `If-None-Match: *`, false on 412 or 409; `put`; `get`, None when
+  missing; `list`, the keys with a prefix after a start key, every page):
+  an object per batch named by the scope in hex and its zero padded
+  `after`, so a writer appending at the end of the log it read creates a
+  free name exactly when the log still ends there, with no lock, and one
+  snapshot object per scope. Batches stay after a snapshot (a deleted
+  name could be taken again by a writer that had not seen it: a bucket
+  lifecycle rule must not expire them); readers start at the snapshot's
+  batch. `pg_bus(db, tasks,
   clock)` carries notices by Postgres NOTIFY on `channel` and one
   LISTEN connection per instance, started by the first subscribe;
   after each LISTEN (the first, and each reconnect a second apart) the
