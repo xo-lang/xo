@@ -1,5 +1,19 @@
 # std/json changes
 
+## 2026-11-16: feature: json.Number (decision 0673)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89: big.Int.MarshalJSON and UnmarshalJSON needed a raw number proxy
+- Go reference: encoding/json Number, isValidNumber, Number.Int64 and Float64 (Go 1.25)
+- Test: golden json_number (go, arm64, LLVM), checked line by line against a Go program using encoding/json; big_json
+- Timing: none
+
+A `json.Number` field keeps a number's text exactly (big integers, long
+decimals, `-0`, `1e400`). Differences from Go, by decision 0673: a
+string, bool or null is "expected number", and an invalid text encodes as
+null where Go's Marshal fails.
+
 ## 2026-11-13: security: a number out of range deep in a document is reported in linear time
 
 - Kind: security

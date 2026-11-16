@@ -63,3 +63,15 @@ strings (2026-11-16).
 - Special-case BigInt in the compiler: no reuse for other number-shaped
   types, and couples the compiler to std/big.
 - Leave BigInt without JSON: math/big stays features Solid.
+
+## Implementation notes (Xo Lang 3, 2026-11-16)
+
+- Encoding cannot fail in Xo (`json.encode` returns Bytes), so a Number
+  whose text is not a JSON number encodes as `null`, as a NaN Float does;
+  Go's Marshal fails with `json: invalid number literal`. An empty text
+  encodes as `0` (Go's rule).
+- A string is refused as point 1 says, although Go's json.Number field
+  reads a string holding a valid number: that keeps BigInt's via decode
+  equal to big.Int's UnmarshalJSON, which refuses one.
+- `float()` accepts `_` between digits as strconv.ParseFloat does; `int()`
+  refuses it as strconv.ParseInt with base 10 does.

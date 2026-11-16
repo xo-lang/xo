@@ -9,6 +9,8 @@ var (
 	_ func(*Big_BigErr, *Task) string                                                      = (*Big_BigErr).M_display
 	_ func(*Task, int64) Big_BigInt                                                        = Big_from_int
 	_ func(*Task, string, int64) Result[Big_BigInt, Big_BigErr]                            = Big_parse
+	_ func(*Task, Big_BigInt) Json_Number                                                  = Big_int_marshal
+	_ func(*Task, Json_Number) Result[Big_BigInt, Big_BigErr]                              = Big_int_unmarshal
 	_ func(*Task, Bytes) Big_BigInt                                                        = Big_from_bytes
 	_ func(*Task, Rand, Big_BigInt) Big_BigInt                                             = Big_random_below
 	_ func(*Task, Big_BigInt, Big_BigInt) int64                                            = Big_jacobi

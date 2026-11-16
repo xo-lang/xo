@@ -2790,6 +2790,7 @@ fn (p: Patch[T]) apply_opt(current: T?) -> T? // Absent keeps, Null clears, Valu
 | `Time` | RFC 3339 string (decoding refuses a time outside the range of `Time`, decision 0364) |
 | `Bytes` | base64 string |
 | `json.Value` | any JSON value as it is (Go's `any` and `RawMessage`; decision 0408 S3): encodes to its own text, decodes to the node (a `null` is `Value.Null`) |
+| `json.Number` | a JSON number kept as its text (Go's `json.Number`, decision 0673): decodes a number token exactly as written (a string, bool or `null` is "expected number"; `Number?` reads `null` as None), encodes the text (an empty text as `0`, a text that is not a JSON number as `null`); `int()`, `float()` with strconv's error texts |
 
 Builtin types listed above implement `Json`, so `http.json(200, {"msg": "hi"})`
 works without a struct.
@@ -2812,6 +2813,9 @@ pub fn to_value[T: Json](v: T) -> Value      // v's encoding as a Value
 pub fn parse_value(text: Str) -> Value ! DecodeErr
 fn (v: Value) encode() -> Str
 fn (v: Value) get(key: Str) -> Value?        // an object's field
+struct Number { text: Str } derive Eq, Hash  // a number's text (decision 0673)
+fn (n: Number) int() -> Int ! DecodeErr      // Go's Int64
+fn (n: Number) float() -> Float ! DecodeErr  // Go's Float64
 ```
 
 - A number out of Float's range (`1e999`, `-1e309`) is an error at its
@@ -7020,10 +7024,12 @@ Go backend runs Go's crypto/rand loops over its bytes, so a seeded `Rand`
 gives the same number on every backend.
 
 ```
-struct BigInt { key: List[Int] } derive Eq, Ord, Hash   // build with the functions, not a literal
+struct BigInt { key: List[Int] } derive Eq, Ord, Hash, Json(via: json.Number, to: int_marshal, from: int_unmarshal)   // build with the functions, not a literal; JSON as Go's bare number
 struct BigErr { msg: Str }
 pub fn from_int(n: Int) -> BigInt
 pub fn parse(s: Str, base: Int = 10) -> BigInt ! BigErr    // Go's SetString; base 0 reads prefixes and _
+pub fn int_marshal(x: BigInt) -> json.Number          // MarshalJSON: base 10 digits
+pub fn int_unmarshal(n: json.Number) -> BigInt ! BigErr   // UnmarshalJSON: `math/big: cannot unmarshal "1.5" into a *big.Int`
 pub fn from_bytes(b: Bytes) -> BigInt                      // unsigned big-endian
 pub fn random_below(r: Rand, max: BigInt) -> BigInt uses rand          // Go's crypto/rand.Int; faults unless max > 0
 pub fn jacobi(x: BigInt, y: BigInt) -> Int                 // Go's Jacobi: y odd, else a fault

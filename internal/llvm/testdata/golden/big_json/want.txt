@@ -10,4 +10,11 @@ exit 0
 err math/big: cannot unmarshal "1/0" into a *big.Rat
 err math/big: cannot unmarshal "abc" into a *big.Float (number has no digits)
 err expected string
+{"n":-123456789012345678901234567890,"l":[0,7]}
+98765432109876543210 2
+0 0
+err math/big: cannot unmarshal "1.5" into a *big.Int
+err math/big: cannot unmarshal "1e3" into a *big.Int
+err expected number
+42
 --- stderr

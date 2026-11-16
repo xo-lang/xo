@@ -1,0 +1,48 @@
+// json.Number (Go's json.Number, decision 0673): a number's text kept as
+// written through decode and encode; int() and float() with strconv's
+// error texts; an empty text encodes as 0; to_value. The lines match a Go
+// program using encoding/json's json.Number but where decision 0673
+// differs: a string, a bool or null for a Number is "expected number"
+// (Go reads a string holding a number and leaves null as it was), and an
+// invalid text encodes as null (Go's Marshal fails).
+use std/json
+
+struct Rec {
+  id: json.Number
+  amount: json.Number?
+  tags: List[json.Number]
+} derive Json
+
+fn main(os: Os) {
+  for text in [
+    "{\"id\":12345678901234567890123,\"amount\":1.000000000000000000001,\"tags\":[0,-0,1e400,-1.5E-7]}",
+    "{\"id\":\"42\",\"amount\":null,\"tags\":[]}",
+    "{\"id\":\"4x2\",\"amount\":1,\"tags\":[]}",
+    "{\"id\":true,\"amount\":1,\"tags\":[]}",
+    "{\"id\":null,\"amount\":1,\"tags\":[]}",
+  ] {
+    match json.decode_str[Rec](text) {
+      Ok(r) => {
+        os.stdio.println("decoded id=${r.id.text} amount=${r.amount.map(fn(a: json.Number) -> Str { a.text }) ?? "none"} tags=${r.tags.map(fn(t: json.Number) -> Str { t.text }).join(",")}")
+        os.stdio.println("  encode: ${json.encode_str(r)}")
+      }
+      Err(e) => os.stdio.println("error: ${e}")
+    }
+  }
+  for t in ["42", "-9223372036854775808", "9223372036854775808", "1.5", "1e3", "abc", "", "1_0"] {
+    let n = json.Number{text: t}
+    let i = match n.int() {
+      Ok(v) => "${v}"
+      Err(e) => e.msg
+    }
+    let f = match n.float() {
+      Ok(v) => "${v}"
+      Err(e) => e.msg
+    }
+    os.stdio.println("${t.quote()}: int ${i}; float ${f}; display ${n}")
+  }
+  for t in ["", "007", "1.", "-", "2.5e+10"] {
+    os.stdio.println("encode ${t.quote()}: ${json.encode_str(json.Number{text: t})}")
+  }
+  os.stdio.println("to_value: ${json.to_value(Rec{id: json.Number{text: "7"}, amount: Some(json.Number{text: "2.50"}), tags: [json.Number{text: "1e2"}]}).encode()}")
+}

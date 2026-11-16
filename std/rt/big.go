@@ -101,6 +101,21 @@ func Big_parse(_ *Task, s string, base int64) Result[Big_BigInt, Big_BigErr] {
 	return Ok[Big_BigInt, Big_BigErr](bigKey(z))
 }
 
+// Big_int_marshal is Go's Int.MarshalJSON: base 10 digits, a bare JSON
+// number (decision 0673).
+func Big_int_marshal(_ *Task, x Big_BigInt) Json_Number {
+	return Json_Number{F_text: bigOf(x).String()}
+}
+
+// Big_int_unmarshal is Go's Int.UnmarshalJSON (UnmarshalText, base 0).
+func Big_int_unmarshal(_ *Task, n Json_Number) Result[Big_BigInt, Big_BigErr] {
+	z := new(big.Int)
+	if err := z.UnmarshalText([]byte(n.F_text)); err != nil {
+		return Err[Big_BigInt](Big_BigErr{F_msg: err.Error()})
+	}
+	return Ok[Big_BigInt, Big_BigErr](bigKey(z))
+}
+
 // Big_random_below is Go's crypto/rand.Int (Copyright 2011 The Go
 // Authors, BSD-style license) over r's bytes.
 func Big_random_below(tk *Task, r Rand, max Big_BigInt) Big_BigInt {

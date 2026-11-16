@@ -1,0 +1,23 @@
+exit 0
+--- stdout
+decoded id=12345678901234567890123 amount=1.000000000000000000001 tags=0,-0,1e400,-1.5E-7
+  encode: {"id":12345678901234567890123,"amount":1.000000000000000000001,"tags":[0,-0,1e400,-1.5E-7]}
+error: at $.id: expected number
+error: at $.id: expected number
+error: at $.id: expected number
+error: at $.id: expected number
+"42": int 42; float 42.0; display 42
+"-9223372036854775808": int -9223372036854775808; float -9.223372036854776e+18; display -9223372036854775808
+"9223372036854775808": int strconv.ParseInt: parsing "9223372036854775808": value out of range; float 9.223372036854776e+18; display 9223372036854775808
+"1.5": int strconv.ParseInt: parsing "1.5": invalid syntax; float 1.5; display 1.5
+"1e3": int strconv.ParseInt: parsing "1e3": invalid syntax; float 1000.0; display 1e3
+"abc": int strconv.ParseInt: parsing "abc": invalid syntax; float strconv.ParseFloat: parsing "abc": invalid syntax; display abc
+"": int strconv.ParseInt: parsing "": invalid syntax; float strconv.ParseFloat: parsing "": invalid syntax; display 
+"1_0": int strconv.ParseInt: parsing "1_0": invalid syntax; float 10.0; display 1_0
+encode "": 0
+encode "007": null
+encode "1.": null
+encode "-": null
+encode "2.5e+10": 2.5e+10
+to_value: {"id":7,"amount":2.5,"tags":[100]}
+--- stderr

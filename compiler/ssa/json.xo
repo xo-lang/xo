@@ -215,6 +215,16 @@ fn (var b: Builder) is_json_value(ct: Int) -> Bool {
   om >= 0 && b.c.mods[om].path == "std/json" && b.obj_name(o) == "Value"
 }
 
+/// Whether ct is json.Number (a number kept as its text, decision 0673).
+fn (var b: Builder) is_json_number(ct: Int) -> Bool {
+  let o = b.named_obj(ct)
+  if o < 0 {
+    return false
+  }
+  let om = b.obj_mod(o)
+  om >= 0 && b.c.mods[om].path == "std/json" && b.obj_name(o) == "Number"
+}
+
 /// A call of std/native/json's function name (value_append, value_at)
 /// from a derived encoder or decoder, or -1 without the native std.
 fn (var b: Builder) json_native_call(name: Str, t: Int, args: List[Int]) -> Int {
@@ -275,6 +285,11 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
   if b.is_json_value(ct) {
     // a json.Value field: its text as it is
     b.retv(b.json_native_call("value_append", st, [acc, v]))
+    return
+  }
+  if b.is_json_number(ct) {
+    // a json.Number field: its text as it is (decision 0673)
+    b.retv(b.json_native_call("number_append", st, [acc, v]))
     return
   }
   if b.is_prelude_named(ct, ["Duration"]) {
@@ -1102,6 +1117,12 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     // a json.Value field: the node as it is (None only for a number out
     // of Float's range, parse_value's error)
     b.dec_opt(d, b.json_native_call("value_at", t, [d.src, d.tape, i]), "number out of range")
+    return
+  }
+  if b.is_json_number(ct) {
+    // a json.Number field: a number token's text as written (decision
+    // 0673)
+    b.dec_opt(d, b.json_native_call("number_at", t, [d.src, d.tape, i]), "expected number")
     return
   }
   if b.is_prelude_named(ct, ["Duration"]) {

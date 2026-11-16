@@ -6,6 +6,7 @@
 // elsewhere (stage 1: the results are the same, the speed is not Go's for
 // operands of thousands of bits). Variable time: not for secrets.
 use std/big
+use std/json
 use native/llrt/bigmod
 use native/llrt/raw
 use native/rt
@@ -1673,6 +1674,15 @@ fn bigint_debug(x: big.BigInt) -> Str { bigint_text(x, 10) }
 
 /// Go's SetString: an optional sign, then nat.scan's digits; the whole
 /// text must be read.
+fn int_marshal(x: big.BigInt) -> json.Number { json.Number{text: bigint_text(x, 10)} }
+
+fn int_unmarshal(n: json.Number) -> big.BigInt ! big.BigErr {
+  match parse(n.text, 0) {
+    Ok(x) => Ok(x)
+    Err(_) => Err(big.BigErr{msg: "math/big: cannot unmarshal " + n.text.quote() + " into a *big.Int"})
+  }
+}
+
 fn parse(s: Str, base: Int) -> big.BigInt ! big.BigErr {
   if base != 0 && (base < 2 || base > 62) {
     return Err(big.BigErr{msg: "invalid base ${base}"})

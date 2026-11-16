@@ -4,6 +4,8 @@
 // and error texts. Variable time: not for secrets. Pure, but for
 // random_below and random_prime, which take the Rand capability.
 
+use std/json
+
 /// An integer of any size. `key` encodes it so that the derived order is
 /// the numeric one: zero is [0]; a number of n 64 bit limbs is n (-n when
 /// negative), then its limbs from the most significant, each xor the sign
@@ -11,7 +13,7 @@
 /// not a literal.
 struct BigInt {
   key: List[Int]
-} derive Eq, Ord, Hash
+} derive Eq, Ord, Hash, Json(via: json.Number, to: int_marshal, from: int_unmarshal)
 
 /// `invalid number "12x" in base 10`, `invalid base 63` (Go's SetString
 /// reports only false).
@@ -26,6 +28,13 @@ fn from_int(n: Int) -> BigInt
 /// The number s in base 2 to 62 (Go's SetString): an optional sign, then
 /// digits; base 0 reads a 0b, 0o, 0, or 0x prefix and `_` between digits.
 fn parse(s: Str, base: Int = 10) -> BigInt ! BigErr
+/// x as Go's Int.MarshalJSON writes it, base 10 digits: a BigInt's JSON
+/// form is this bare number (`derive Json(via: json.Number)`, decision
+/// 0673).
+fn int_marshal(x: BigInt) -> json.Number
+/// n as Go's Int.UnmarshalJSON reads it (UnmarshalText, base 0); the error
+/// is `math/big: cannot unmarshal "1.5" into a *big.Int`.
+fn int_unmarshal(n: json.Number) -> BigInt ! BigErr
 /// The unsigned big-endian number b (Go's SetBytes).
 fn from_bytes(b: Bytes) -> BigInt
 /// A uniform random number in [0, max) (Go's crypto/rand.Int): r's bytes,

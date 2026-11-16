@@ -88,6 +88,10 @@ fn (var b: Builder) json_val_body(ct: Int, t: Int, vt: Int) {
     b.retv(b.json_native_call("val_value", vt, [v]))
     return
   }
+  if b.is_json_number(ct) {
+    b.retv(b.json_native_call("val_number", vt, [v]))
+    return
+  }
   if b.is_prelude_named(ct, ["Duration"]) {
     b.retv(b.json_native_call("val_duration", vt, [v]))
     return

@@ -84,6 +84,26 @@ fn (v: Value) encode() -> Str
 /// that is not an object.
 fn (v: Value) get(key: Str) -> Value?
 
+/// A JSON number kept as its text (Go's json.Number, decision 0673): a
+/// field of this type decodes a number token (not a string, unlike Go's
+/// json.Number field; `Number?` reads null as None) with its text exactly
+/// as written, and encodes
+/// the text as it is, so a value too large or too precise for Int and
+/// Float travels whole (`derive Json(via: json.Number, ...)`). Encoding
+/// writes an empty text as 0 (Go's rule) and a text that is not a JSON
+/// number as null (encoding cannot fail; Go returns `json: invalid number
+/// literal`).
+struct Number {
+  text: Str
+} derive Eq, Hash
+/// The text as an Int (Go's Int64: strconv.ParseInt's base 10 rules and
+/// error texts, at `$`).
+fn (n: Number) int() -> Int ! DecodeErr
+/// The text as a Float (Go's Float64: strconv.ParseFloat's rules and
+/// error texts, at `$`).
+fn (n: Number) float() -> Float ! DecodeErr
+fn (n: Number) display() -> Str
+
 /// A streaming decoder of a sequence of JSON values (Go's json.Decoder,
 /// decision 0309): bytes in, the values completed so far out; push style,
 /// no I/O of its own.

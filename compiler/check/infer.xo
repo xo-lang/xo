@@ -895,9 +895,10 @@ fn (var c: Checker) serializable_in(t0: Int, name: Str, seen: List[Int]) -> Bool
         seen2.push(o)
         return c.serializable_in(c.subst(c.objs[o].target, c.args_subst(c.objs[o].tparams, x.args)), name, seen2)
       }
-      if name == "Json" && c.objs[o].module >= 0 && c.mods[c.objs[o].module].path == "std/json" && text(c.objs[o].name) == "Value" {
+      if name == "Json" && c.objs[o].module >= 0 && c.mods[c.objs[o].module].path == "std/json" && text(c.objs[o].name) is "Value" | "Number" {
         // json.Value as a field: any JSON value as it is (Go's any and
-        // RawMessage; std.md 5)
+        // RawMessage; std.md 5); json.Number a number's text as it is
+        // (Go's json.Number, decision 0673)
         return true
       }
       if name != "Json" || c.objs[o].module != c.prelude {

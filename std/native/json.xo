@@ -95,6 +95,118 @@ fn decodeerr_go_text(e: json.DecodeErr) -> Str {
   e.msg
 }
 
+// ---------------------------------------------------------------------------
+// json.Number (Go's json.Number, decision 0673)
+
+/// Whether s is a JSON number (Go's isValidNumber): -? (0 | [1-9][0-9]*)
+/// (. [0-9]+)? ([eE] [+-]? [0-9]+)?
+fn valid_number(s: Str) -> Bool {
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  if i < n && b[i] == 45 {
+    i += 1
+  }
+  if i >= n {
+    return false
+  }
+  if b[i] == 48 {
+    i += 1
+  } else if b[i] >= 49 && b[i] <= 57 {
+    while i < n && b[i] >= 48 && b[i] <= 57 {
+      i += 1
+    }
+  } else {
+    return false
+  }
+  if i + 1 < n && b[i] == 46 && b[i + 1] >= 48 && b[i + 1] <= 57 {
+    i += 2
+    while i < n && b[i] >= 48 && b[i] <= 57 {
+      i += 1
+    }
+  }
+  if i + 1 < n && (b[i] == 101 || b[i] == 69) {
+    i += 1
+    if b[i] == 43 || b[i] == 45 {
+      i += 1
+    }
+    if i >= n || !(b[i] >= 48 && b[i] <= 57) {
+      return false
+    }
+    while i < n && b[i] >= 48 && b[i] <= 57 {
+      i += 1
+    }
+  }
+  i == n
+}
+
+/// Whether s is decimal digits with an optional sign (strconv's base 10
+/// syntax, no underscores).
+fn int_syntax(s: Str) -> Bool {
+  let b = s.bytes()
+  var i = if !b.is_empty() && (b[0] == 45 || b[0] == 43) { 1 } else { 0 }
+  if i >= b.len() {
+    return false
+  }
+  while i < b.len() {
+    if !(b[i] >= 48 && b[i] <= 57) {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+fn number_int(n: json.Number) -> Int ! json.DecodeErr {
+  if !n.text.contains("_") {
+    if let Some(v) = Int.parse(n.text) {
+      return Ok(v)
+    }
+  }
+  let why = if int_syntax(n.text) { "value out of range" } else { "invalid syntax" }
+  Err(json.DecodeErr{path: "$", msg: "strconv.ParseInt: parsing " + n.text.quote() + ": " + why})
+}
+
+fn number_float(n: json.Number) -> Float ! json.DecodeErr {
+  if let Some(v) = Float.parse(n.text) {
+    return Ok(v)
+  }
+  let why = if valid_number(n.text) { "value out of range" } else { "invalid syntax" }
+  Err(json.DecodeErr{path: "$", msg: "strconv.ParseFloat: parsing " + n.text.quote() + ": " + why})
+}
+
+fn number_display(n: json.Number) -> Str { n.text }
+
+/// out + n's JSON text: the text, 0 for an empty one (Go's rule), null for
+/// one that is not a JSON number (encoding cannot fail).
+fn number_append(out: Str, n: json.Number) -> Str {
+  if n.text.is_empty() {
+    return out + "0"
+  }
+  if valid_number(n.text) { out + n.text } else { out + "null" }
+}
+
+/// The Number at tape position i: a number token's text as written; None
+/// for anything else (decision 0673: a string is not a number, as
+/// big.Int's UnmarshalJSON refuses one).
+fn number_at(src: Bytes, tape: List[Int], i: Int) -> json.Number? {
+  let k = tape[i]
+  if k == 3 {
+    let at = tape[i + 1]
+    return Some(json.Number{text: (src[at..at + tape[i + 2]]).to_str() ?? ""})
+  }
+  None
+}
+
+/// json.to_value of a Number: Int when the text is an integer that fits,
+/// else Num (Go's decoding into any without UseNumber).
+fn val_number(n: json.Number) -> json.Value {
+  if !n.text.is_empty() && valid_number(n.text) {
+    return parse_value(n.text).ok() ?? json.Value.Null
+  }
+  if n.text.is_empty() { json.Value.Int(n: 0) } else { json.Value.Null }
+}
+
 /// The DecodeErr of a text that is not JSON.
 fn syntax_failed(src: Bytes) -> json.DecodeErr {
   json.DecodeErr{path: "$", msg: "invalid JSON: ${jsontext.parse_err(src)}"}

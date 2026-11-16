@@ -1,5 +1,17 @@
 # std/big changes
 
+## 2026-11-16: feature: BigInt in JSON (decision 0673)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89: stdaudit gaps big.Int.MarshalJSON, UnmarshalJSON
+- Go reference: math/big Int.MarshalJSON, UnmarshalJSON, UnmarshalText (Go 1.25)
+- Test: golden big_json (go, arm64, LLVM): Go's bare number out, a 20 digit number and -0 in, Go's error texts for 1.5 and 1e3, a string refused
+- Timing: none
+
+A BigInt field encodes as a bare JSON number and decodes from one
+(`int_marshal`, `int_unmarshal`), as Go's *big.Int does.
+
 ## 2026-11-16: feature: BigRat and BigFloat in JSON as Go writes them
 
 - Kind: feature

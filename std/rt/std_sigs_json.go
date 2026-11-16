@@ -13,6 +13,9 @@ var (
 	_ func(*Task, string) Result[Json_Value, Json_DecodeErr]                         = Json_parse_value
 	_ func(*Json_Value, *Task) string                                                = (*Json_Value).M_encode
 	_ func(*Json_Value, *Task, string) Option[Json_Value]                            = (*Json_Value).M_get
+	_ func(*Json_Number, *Task) Result[int64, Json_DecodeErr]                        = (*Json_Number).M_int
+	_ func(*Json_Number, *Task) Result[float64, Json_DecodeErr]                      = (*Json_Number).M_float
+	_ func(*Json_Number, *Task) string                                               = (*Json_Number).M_display
 	_ func(*Task, int64) Json_Decoder                                                = Json_decoder
 	_ func(*Json_Decoder, *Task, Bytes) Result[List[Json_Value], Json_DecodeErr]     = (*Json_Decoder).M_write
 	_ func(*Json_Decoder, *Task) Result[List[Json_Value], Json_DecodeErr]            = (*Json_Decoder).M_finish
