@@ -8,12 +8,15 @@
 
 /// A normally distributed Float, mean 0 and standard deviation 1 (Go's
 /// NormFloat64): `mean + sd * random.normal(r)` for another distribution.
-/// Each try draws `r.int(-2^31, 2^31)` and `r.int(0, 128)` where Go splits
-/// one Uint64, then `r.float()` where Go calls Float64.
+/// Each try draws one `r.int(Int.min, Int.max)` and splits it as Go splits
+/// its Uint64, then `r.float()` where Go calls Float64.
 pub fn normal(r: Rand) -> Float uses rand {
   while true {
-    let j = r.int(-2147483648, 2147483648)
-    let i = r.int(0, 128)
+    // one word a try, split as Go's: j = int32(u), i = u >> 32 & 0x7F
+    let u = r.int(Int.min, Int.max)
+    let w = u & 0xFFFFFFFF
+    let j = if w >= 2147483648 { w - 4294967296 } else { w }
+    let i = u.shr_logical(32) & 127
     let x = Float(j) * WN[i]
     let aj = if j < 0 { -j } else { j }
     if aj < KN[i] {
@@ -40,12 +43,14 @@ pub fn normal(r: Rand) -> Float uses rand {
 }
 
 /// An exponentially distributed Float, rate 1 (Go's ExpFloat64):
-/// `random.exp(r) / rate` for another rate. Each try draws `r.int(0, 2^32)`
-/// and `r.int(0, 256)` where Go splits one Uint64.
+/// `random.exp(r) / rate` for another rate. Each try draws one
+/// `r.int(Int.min, Int.max)` and splits it as Go splits its Uint64.
 pub fn exp(r: Rand) -> Float uses rand {
   while true {
-    let j = r.int(0, 4294967296)
-    let i = r.int(0, 256)
+    // one word a try, split as Go's: j = uint32(u), i = uint8(u >> 32)
+    let u = r.int(Int.min, Int.max)
+    let j = u & 0xFFFFFFFF
+    let i = u.shr_logical(32) & 255
     let x = Float(j) * WE[i]
     if j < KE[i] {
       return x

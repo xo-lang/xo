@@ -1615,14 +1615,13 @@ const ZIPF_U: List[Int] = [
 struct Replay {
   us: List[Int]
   at: Mutex[Int]
-  /// the last Uint64 a try drew, whose high half the second int reads
-  last: Mutex[Int]
-  /// true for normal and exp (a try's two ints share one Uint64); false
-  /// for perm (every int is Go's uint64n)
+  /// true for normal and exp (a try's int(Int.min, Int.max) is Go's
+  /// Uint64, which the try splits); false for perm (every int is Go's
+  /// uint64n)
   zig: Bool
 }
 
-fn replay(us: List[Int], zig: Bool) -> Replay { Replay{us: us, at: Mutex[Int].new(0), last: Mutex[Int].new(0), zig: zig} }
+fn replay(us: List[Int], zig: Bool) -> Replay { Replay{us: us, at: Mutex[Int].new(0), zig: zig} }
 
 fn (s: Replay) next() -> Int {
   let i = s.at.with(fn(var x: Int) -> Int {
@@ -1636,28 +1635,10 @@ fn (s: Replay) next() -> Int {
   s.us[i]
 }
 
-fn (s: Replay) keep(u: Int) -> Int {
-  s.last.with(fn(var x: Int) -> Int {
-    x = u
-    u
-  })
-}
-
 fn (s: Replay) int(lo: Int, hi: Int) -> Int uses rand {
-  if s.zig && lo == -2147483648 && hi == 2147483648 {
-    // int32(u)
-    let u = s.keep(s.next())
-    let w = u & 0xFFFFFFFF
-    return if w >= 2147483648 { w - 4294967296 } else { w }
-  }
-  if s.zig && lo == 0 && hi == 4294967296 {
-    return s.keep(s.next()) & 0xFFFFFFFF
-  }
-  if s.zig && lo == 0 && hi == 128 {
-    return s.last.with(fn(var x: Int) -> Int { x }).shr_logical(32) & 127
-  }
-  if s.zig && lo == 0 && hi == 256 {
-    return s.last.with(fn(var x: Int) -> Int { x }).shr_logical(32) & 255
+  if s.zig && lo == Int.min && hi == Int.max {
+    // r.Uint64(); Int.max, which the range leaves out, is not in the stream
+    return s.next()
   }
   // Go's uint64n(hi) for Shuffle
   let n = hi

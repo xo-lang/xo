@@ -1,5 +1,16 @@
 # std/random changes
 
+## 2026-11-16: perf: one draw a ziggurat try, as Go
+
+- Kind: perf
+- Commit: this push
+- Found by: task #87 (std/evidence/random/perf.md, normal 1.83 and exp 2.08 of Go on host 1), XO_PROF=cpu on bench/perf/random exp: two generator draws and two interface calls a try where Go draws one Uint64
+- Go reference: math/rand/v2 normal.go (NormFloat64), exp.go (ExpFloat64), go1.26.1
+- Test: internal/stdtest/testdata/corpus/random (normal and exp draw for draw on Go's recorded streams; its replay Rand now maps the one int to Go's Uint64); bench/perf/random on the Mac: exp instructions 4.72G to 2.79G (0.59), normal 4.84G to 3.05G (0.63), 2*10^7 draws
+- Shipped in: not yet released
+
+`normal` and `exp` draw one `r.int(Int.min, Int.max)` a try and split it as Go splits its Uint64 (the native Rand answers that range without a division); a seeded Rand gives other values for the same seed than before (CHANGELOG).
+
 ## 2026-11-15: feature: zipf and Zipf.draw (Go's NewZipf and Zipf.Uint64)
 
 - Kind: feature

@@ -10873,10 +10873,10 @@ fn (z: Zipf) draw(r: Rand) -> Int uses rand  // Uint64: k in 0..=imax
 
 `normal` and `exp` are Marsaglia and Tsang's ziggurat with Go's tables
 and float32 comparisons; they draw only through `r.int` and `r.float`,
-so they work on a test's seeded `Rand` and on a program's own. Where Go
-splits one Uint64, a try draws `r.int(-2^31, 2^31)` then `r.int(0, 128)`
-(normal) or `r.int(0, 2^32)` then `r.int(0, 256)` (exp); the tails and
-wedges draw `r.float()` as Go's Float64. `perm` is Fisher-Yates from the
+so they work on a test's seeded `Rand` and on a program's own. A try
+draws one `r.int(Int.min, Int.max)` where Go draws its Uint64 and splits
+it as Go does (the low 32 bits and the bits from 32; the top bit is not
+read); the tails and wedges draw `r.float()` as Go's Float64. `perm` is Fisher-Yates from the
 end with `r.int(0, i + 1)`, as Go's Shuffle; a negative `n` faults
 (`invalid argument to Shuffle`). For another distribution: `mean + sd *
 random.normal(r)`, `random.exp(r) / rate`. Checked against Go on its

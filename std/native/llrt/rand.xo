@@ -78,12 +78,12 @@ pub fn system_seed_at(addr: Int) -> Bool {
 /// A random word: the test world's seeded generator in a test binary,
 /// else 8 bytes of the system's, the first lowest.
 pub fn next_u64() -> Int {
-  if testworld.seeded() {
-    return testworld.rand_u64()
-  }
   // the worker's buffer while it has words; an unseeded state (new, or
   // wiped by a fork) hands out none (its ST_N is 0), so the seeding is the
-  // slow path's
+  // slow path's. The test world's check is the slow path's too: only that
+  // path fills a buffer, after the check, so in the test world every
+  // buffer stays empty (task #87, 2026-11-16: the check's acquire load was
+  // 12% of bench/perf/random exp)
   let w = rt.tlocal_get(TLS_W)
   if w != 0 {
     let st = rt.mem_load(w, layout.W_RAND, 8)
@@ -101,6 +101,9 @@ pub fn next_u64() -> Int {
 /// next_u64 past the buffer: a refill, the state made or seeded, or the
 /// system's generator.
 fn next_u64_slow() -> Int {
+  if testworld.seeded() {
+    return testworld.rand_u64()
+  }
   let st = state()
   if st == 0 {
     return rt.bytes_word(entropy(8), 0)
@@ -387,6 +390,17 @@ pub fn next_int(lo: Int, hi: Int, at: Str) -> Int {
   // above limit are rejected. The limit is at least 2^64 - span, so a draw
   // below that is kept without computing it (its division was 36% of
   // random.normal's time); the same draws are kept as before.
+  if lo == Int.min && hi == Int.max {
+    // the whole word but one value (random.normal's and exp's draw, one a
+    // try as Go's Uint64): the general path's result, Int.min + v with v
+    // = 2^64 - 1 rejected, without its division per draw (task #87)
+    while true {
+      let v = next_u64()
+      if v != -1 {
+        return v ^ Int.min
+      }
+    }
+  }
   let span = hi.wrapping_sub(lo)
   let m = span.wrapping_sub(1)
   let pow2 = (span & m) == 0
