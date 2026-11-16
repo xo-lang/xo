@@ -1,6 +1,6 @@
 # 0652: capability interfaces take their effect as a parameter, so a pure capability value keeps its caller pure
 
-Status: Proposed (Xo Lang 1, 2026-11-15; the lead's language survey for the
+Status: Accepted (owner, 2026-11-16, scoped: Rand and Clock first, Fs and Net sub-labels settled in their own step (open question 1); only std/native/llrt may build a pure Rand over the runtime source (open question 2); verify first that effect arguments are not part of the monomorphization or interface-table key; proposed by Xo Lang 1, 2026-11-15; the lead's language survey for the
 owner, 2026-11-15). Draft only: the owner approves before any building.
 Builds on 0004 (effects in signatures, authority from capability values),
 0014 and 0432 (effect variables), 0540 (interface parameters' effect

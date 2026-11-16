@@ -1,6 +1,6 @@
 # 0667: BytesBuilder.write_list and Bytes.from_list, a List[UInt8] copied in bulk
 
-Status: Proposed (Xo Lang 3, 2026-11-15; the lead asked for the primitive
+Status: Accepted (owner, 2026-11-16; the speedup claim still needs its host 1 --ab before landing; proposed by Xo Lang 3, 2026-11-15; the lead asked for the primitive
 for std/brotli's ring buffer writes, after the decoder of decision 0666)
 
 ## Context
