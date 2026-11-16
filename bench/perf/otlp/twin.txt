@@ -1,0 +1,5 @@
+# twincheck: otlp: three workloads (none is the setup alone); Go is go.opentelemetry.io/proto/otlp (Apache-2.0) with google.golang.org/protobuf (BSD-3). The checksum reads a byte of each message, so both sides write the same bytes. Built from the module cache (no govendor: the collector packages vendor 15 MB).
+require go.opentelemetry.io/proto/otlp v1.11.1
+- - none
+- - traces
+- - metrics

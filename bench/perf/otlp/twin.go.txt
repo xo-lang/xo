@@ -1,0 +1,298 @@
+// The Go twin of main.xo: the same spans and metric series turned into
+// go.opentelemetry.io/proto/otlp messages each pass (as an exporter's
+// transform does: hex ids decoded, a missing parent named by the SHA-256
+// of `<id>/request`, scopes grouped in order of first appearance, series
+// sorted by their label values) and written with proto.Marshal.
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+
+	colmetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	coltrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
+	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+	"google.golang.org/protobuf/proto"
+)
+
+type attr struct {
+	key string
+	val any // string, int, bool
+}
+
+type event struct {
+	name   string
+	timeNs int
+}
+
+type span struct {
+	id, name, traceID, spanID, parentID string
+	kind                                tracepb.Span_SpanKind
+	attrs                               []attr
+	events                              []event
+	errStatus                           bool
+	statusMessage                       string
+	startNs, endNs                      int
+	scope, scopeVersion                 string
+}
+
+func spans() []span {
+	var out []span
+	for i := 0; i < 200; i++ {
+		s := span{
+			id: "req-" + strconv.Itoa(i), name: "GET /items/" + strconv.Itoa(i%17),
+			traceID: "000102030405060708090a0b0c0d0e" + strconv.Itoa(i%10) + "f",
+			spanID:  "00010203040506" + strconv.Itoa(i%10) + "7",
+			kind:    tracepb.Span_SPAN_KIND_CLIENT,
+			attrs: []attr{{"http.method", "GET"}, {"http.status_code", 200 + i%5},
+				{"cache.hit", i%3 == 0}, {"db.rows", i * 11}},
+			events:  []event{{"start", 1000 * i}, {"done", 1000*i + 500}},
+			startNs: 1700000000000000000 + i*1000, endNs: 1700000000000000000 + i*1000 + 777,
+			scope: "db", scopeVersion: "1.0",
+		}
+		if i%4 != 0 {
+			s.parentID = "root"
+		}
+		if i%2 == 0 {
+			s.kind = tracepb.Span_SPAN_KIND_SERVER
+			s.scope = "app"
+		}
+		if i%9 == 0 {
+			s.errStatus = true
+			s.statusMessage = "boom " + strconv.Itoa(i)
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func kv(a attr) *commonpb.KeyValue {
+	v := &commonpb.AnyValue{}
+	switch x := a.val.(type) {
+	case string:
+		v.Value = &commonpb.AnyValue_StringValue{StringValue: x}
+	case int:
+		v.Value = &commonpb.AnyValue_IntValue{IntValue: int64(x)}
+	case bool:
+		v.Value = &commonpb.AnyValue_BoolValue{BoolValue: x}
+	}
+	return &commonpb.KeyValue{Key: a.key, Value: v}
+}
+
+func strKV(k, v string) *commonpb.KeyValue {
+	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: v}}}
+}
+
+func rootID(id string) []byte {
+	h := sha256.Sum256([]byte(id + "/request"))
+	return h[:8]
+}
+
+func spanMsg(s span) *tracepb.Span {
+	tid, _ := hex.DecodeString(s.traceID)
+	sid, _ := hex.DecodeString(s.spanID)
+	var parent []byte
+	if s.parentID == "" {
+		parent = rootID(s.id)
+	} else if s.parentID != "root" {
+		parent, _ = hex.DecodeString(s.parentID)
+	}
+	m := &tracepb.Span{TraceId: tid, SpanId: sid, ParentSpanId: parent, Name: s.name, Kind: s.kind,
+		StartTimeUnixNano: uint64(s.startNs), EndTimeUnixNano: uint64(s.endNs), Flags: 257, Status: &tracepb.Status{}}
+	for _, a := range s.attrs {
+		m.Attributes = append(m.Attributes, kv(a))
+	}
+	for _, e := range s.events {
+		m.Events = append(m.Events, &tracepb.Span_Event{TimeUnixNano: uint64(e.timeNs), Name: e.name})
+	}
+	if s.errStatus {
+		m.Status = &tracepb.Status{Message: s.statusMessage, Code: tracepb.Status_STATUS_CODE_ERROR}
+	}
+	return m
+}
+
+func encodeTraces(service string, ss []span) []byte {
+	var groups []*tracepb.ScopeSpans
+	for _, s := range ss {
+		var g *tracepb.ScopeSpans
+		for _, x := range groups {
+			if x.Scope.Name == s.scope && x.Scope.Version == s.scopeVersion {
+				g = x
+				break
+			}
+		}
+		if g == nil {
+			g = &tracepb.ScopeSpans{Scope: &commonpb.InstrumentationScope{Name: s.scope, Version: s.scopeVersion}}
+			groups = append(groups, g)
+		}
+		g.Spans = append(g.Spans, spanMsg(s))
+	}
+	req := &coltrace.ExportTraceServiceRequest{ResourceSpans: []*tracepb.ResourceSpans{{
+		Resource:   &resourcepb.Resource{Attributes: []*commonpb.KeyValue{strKV("service.name", service)}},
+		ScopeSpans: groups,
+	}}}
+	b, err := proto.Marshal(req)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// The registry: a series per label values, as std/metrics keeps them.
+type series struct {
+	values  []string
+	value   float64 // counter, gauge
+	count   uint64  // histogram, summary
+	sum     float64
+	buckets []uint64 // histogram, per bound, then above the last
+}
+
+type family struct {
+	name, help string
+	kind       int // 0 counter, 1 gauge, 2 histogram, 3 summary
+	labels     []string
+	series     map[string]*series
+}
+
+var bounds = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
+
+func (f *family) get(values ...string) *series {
+	k := strings.Join(values, "\x1f")
+	s := f.series[k]
+	if s == nil {
+		s = &series{values: values}
+		if f.kind == 2 {
+			s.buckets = make([]uint64, len(bounds)+1)
+		}
+		f.series[k] = s
+	}
+	return s
+}
+
+func registry() []*family {
+	c := &family{name: "http_requests_total", help: "Requests.", kind: 0, labels: []string{"method", "route"}, series: map[string]*series{}}
+	g := &family{name: "queue_depth", help: "Queue depth.", kind: 1, labels: []string{"queue"}, series: map[string]*series{}}
+	h := &family{name: "request_seconds", help: "Latency.", kind: 2, labels: []string{"route"}, series: map[string]*series{}}
+	su := &family{name: "payload_bytes", help: "Payloads.", kind: 3, labels: []string{"route"}, series: map[string]*series{}}
+	for i := 0; i < 50; i++ {
+		m := "POST"
+		if i%2 == 0 {
+			m = "GET"
+		}
+		route := "/r/" + strconv.Itoa(i)
+		c.get(m, route).value += float64(i*3 + 1)
+		g.get("q" + strconv.Itoa(i)).value = float64(i) * 1.5
+		for j := 0; j < 5; j++ {
+			v := float64(i*5+j) * 0.003
+			s := h.get(route)
+			s.count++
+			s.sum += v
+			k := sort.SearchFloat64s(bounds, v)
+			s.buckets[k]++
+			p := su.get(route)
+			p.count++
+			p.sum += float64(i*100 + j)
+		}
+	}
+	return []*family{c, g, h, su}
+}
+
+func labels(f *family, values []string) []*commonpb.KeyValue {
+	out := make([]*commonpb.KeyValue, 0, len(values))
+	for i, l := range f.labels {
+		out = append(out, strKV(l, values[i]))
+	}
+	return out
+}
+
+func ns(ms int) uint64 { return uint64(ms * 1000000) }
+
+func familyMsg(f *family, startMs, nowMs int) *metricspb.Metric {
+	keys := make([]string, 0, len(f.series))
+	for k := range f.series {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	m := &metricspb.Metric{Name: f.name, Description: f.help}
+	switch f.kind {
+	case 0, 1:
+		var pts []*metricspb.NumberDataPoint
+		for _, k := range keys {
+			s := f.series[k]
+			p := &metricspb.NumberDataPoint{TimeUnixNano: ns(nowMs), Value: &metricspb.NumberDataPoint_AsDouble{AsDouble: s.value}, Attributes: labels(f, s.values)}
+			if f.kind == 0 {
+				p.StartTimeUnixNano = ns(startMs)
+			}
+			pts = append(pts, p)
+		}
+		if f.kind == 0 {
+			m.Data = &metricspb.Metric_Sum{Sum: &metricspb.Sum{DataPoints: pts, AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE, IsMonotonic: true}}
+		} else {
+			m.Data = &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: pts}}
+		}
+	case 2:
+		var pts []*metricspb.HistogramDataPoint
+		for _, k := range keys {
+			s := f.series[k]
+			sum := s.sum
+			pts = append(pts, &metricspb.HistogramDataPoint{StartTimeUnixNano: ns(startMs), TimeUnixNano: ns(nowMs), Count: s.count, Sum: &sum,
+				BucketCounts: append([]uint64(nil), s.buckets...), ExplicitBounds: bounds, Attributes: labels(f, s.values)})
+		}
+		m.Data = &metricspb.Metric_Histogram{Histogram: &metricspb.Histogram{DataPoints: pts, AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE}}
+	case 3:
+		var pts []*metricspb.SummaryDataPoint
+		for _, k := range keys {
+			s := f.series[k]
+			pts = append(pts, &metricspb.SummaryDataPoint{StartTimeUnixNano: ns(startMs), TimeUnixNano: ns(nowMs), Count: s.count, Sum: s.sum, Attributes: labels(f, s.values)})
+		}
+		m.Data = &metricspb.Metric_Summary{Summary: &metricspb.Summary{DataPoints: pts}}
+	}
+	return m
+}
+
+func encodeMetrics(service string, fs []*family, startMs, nowMs int) []byte {
+	var ms []*metricspb.Metric
+	for _, f := range fs {
+		ms = append(ms, familyMsg(f, startMs, nowMs))
+	}
+	req := &colmetrics.ExportMetricsServiceRequest{ResourceMetrics: []*metricspb.ResourceMetrics{{
+		Resource:     &resourcepb.Resource{Attributes: []*commonpb.KeyValue{strKV("service.name", service)}},
+		ScopeMetrics: []*metricspb.ScopeMetrics{{Scope: &commonpb.InstrumentationScope{Name: "std/trace"}, Metrics: ms}},
+	}}}
+	b, err := proto.Marshal(req)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+func main() {
+	w := "traces"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	ss := spans()
+	sum := 0
+	if w == "metrics" {
+		reg := registry()
+		for i := 0; i < 4000; i++ {
+			b := encodeMetrics("bench", reg, 1700000000000, 1700000060000)
+			sum = (sum*31 + len(b) + int(b[len(b)/2])) % 1000000007
+		}
+	}
+	if w == "traces" {
+		for i := 0; i < 4000; i++ {
+			b := encodeTraces("bench", ss)
+			sum = (sum*31 + len(b) + int(b[len(b)/2])) % 1000000007
+		}
+	}
+	fmt.Println(w, sum)
+}
