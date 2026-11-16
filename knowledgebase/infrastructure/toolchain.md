@@ -5004,7 +5004,7 @@ GB guidance above; `--clean` removes it). Last verified: 2026-10-12.
 
 Gates and the fixed point (owner, 2026-10-21): a push builds xo once
 with the current xo and runs no fixed point; the full fixed point runs
-hourly on main (`~/xo-lead/agents/hourly.sh`, which also runs -short: skips a main whose
+hourly on main (`~/xo-lead/agents/hourly.sh`, on the second arm64 host since #145, beside the Mac's -short: skips a main whose
 compiler inputs did not change, lists the commits to bisect on a
 failure) and in releases, seed-cut.sh and CI. `XO_BOOTSTRAP_SEED_IS_S1=1
 scripts/bootstrap-xo.sh SEED` uses SEED as s1 when SEED is this tree's

@@ -33,9 +33,17 @@ steps, logging to `~/xo-lead/agents/lead-tierN-off-cmd.log`:
 A step's exit 5 means only a `linux` step failed: the host's last line
 then reads `offload tier N: ok, linux steps FAILED: NAME`. `gate.sh`'s whole
 output for a failed step is in `/tmp/xo-gate-tierN/NAME.txt` on that host.
-While a tier holds the Mac, `hourly.sh` runs main's fixed point on the
-second host (offload-tier.sh's `fp` step, logged to `hourly.log`), then its
-usual check after the tier. Last verified: 2026-11-01.
+`hourly.sh` runs main's fixed point on the second host only
+(offload-tier.sh's `fp` step, logged to `hourly.log`): during a tier's
+wait, and beside its own Mac slot, which runs -short and its listed tests
+but no fixed point (#145, 2026-11-16: a check whose fixed point held the
+Mac slot reported 2 h 40 min after its start, with -short timed out at
+load 19.9). The verdict waits for the host at most HOURLY_FP_WAIT_MIN (20)
+minutes past the Mac's steps (`fp=late`, the fixed point's own line
+follows; a failure there is a `FAIL steps: fp` line), and a verdict more
+than 60 minutes after the start ends `[STALE: started HH:MM, N min before
+this result]`, which xw's main-check alert carries (hourly_fp_test.sh).
+Last verified: 2026-11-16.
 
 When no host answers, tier.sh runs every step on the Mac as
 before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
