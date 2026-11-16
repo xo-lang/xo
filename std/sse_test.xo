@@ -5,6 +5,8 @@
 // events the test expects. The retry and id cases check the parser's
 // retry() and last_event_id(); reconnection timing is std/sse.Source's.
 
+use std/http
+
 /// The body message.py serves for message m.
 fn served(m: Str, newline: Bool) -> Bytes { (if newline { m + "\n\n\n" } else { m + "\n" }).bytes() }
 
@@ -148,4 +150,46 @@ test "data that is not UTF-8 decodes as WHATWG's decoder, valid text as it is" {
   expect(messages(b"data:\xFF\xC3\xA9\n\n")) == ["\u{FFFD}\u{E9}"]
   expect(messages(b"data:\xED\xA0\x80\n\n")) == ["\u{FFFD}\u{FFFD}\u{FFFD}"]
   expect(messages(b"data:\xE2\x82\xAC\n\n")) == ["\u{20AC}"]
+}
+
+test "a reconnection asks after the last dispatched event, not after an id the break cut off (sse stress, task #115)" {
+  // WHATWG 9.2.6 dispatch, step 1: the last event ID string the next
+  // connection sends is the buffer as of a blank line, an id-only one too;
+  // an `id` line of an event the break cut off never reached it
+  let calls = Mutex[Int].new(0)
+  os.net.handle("GET https://ev.test/cut", fn(req: http.Request) -> http.Response {
+    let n = calls.with(fn(var c: Int) -> Int {
+      c += 1
+      c
+    })
+    if n >= 4 {
+      return http.text(204, "")
+    }
+    let body = if n == 1 {
+      "id: 1\ndata: a\n\nid: 2\ndata: b"
+    } else if n == 2 {
+      "id: 2\ndata: b\n\nid: 5\n\nid: 6\ndata: cut"
+    } else {
+      ""
+    }
+    http.text(200, body).with_header("Content-Type", "text/event-stream")
+  })
+  var s = subscribe(http.client(os.net), os.clock, "https://ev.test/cut", retry_ms: 0)
+  var got: List[Str] = []
+  while true {
+    match s.next() {
+      Ok(Some(ev)) => got.push("${ev.data}@${ev.id}")
+      Ok(None) => break
+      Err(e) => {
+        got.push("err ${e.display()}")
+        break
+      }
+    }
+  }
+  expect(got) == ["a@1", "b@2"]
+  var lids: List[Str] = []
+  for r in os.net.requests() {
+    lids.push(r.header("Last-Event-ID") ?? "-")
+  }
+  expect(lids) == ["-", "1", "5", "5"]
 }

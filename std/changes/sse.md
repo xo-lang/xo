@@ -1,5 +1,21 @@
 # std/sse changes
 
+## 2026-11-16: fix: a reconnection sends the last event ID as of the last blank line, not an id line of an event the break cut off
+
+- Kind: fix
+- Commit: this commit
+- Found by: azure-1 (the sse stress, task #115: a subscriber lost the event a break cut after its `id` line)
+- Go reference: none in Go's standard library; the HTML Living Standard 9.2.6 (dispatch, step 1: the event source's last event ID string is set from the buffer at a blank line), as browsers' EventSource and github.com/tmaxmax/go-sse keep it
+- Test: std/sse_test.xo "a reconnection asks after the last dispatched event, not after an id the break cut off"; std/evidence/sse/stress; internal/stdtest TestSseFuzz (the parser against the standard's algorithm)
+- Shipped in: not yet released
+
+`Source` (and `subscribe`) reconnected with the parser's last event ID buffer, which an `id` line sets
+at once: a stream cut after an event's `id: N` line and before its blank line reconnected asking for
+the events after N, so event N, never dispatched, was lost; and an `id` of a later event in the same
+chunk could be sent too. It now sends the id of the last event it returned, or at a break the buffer
+as of the latest blank line, an id-only one (no data) included, as the standard's event source does.
+`Parser.dispatched_id` and `Reader.dispatched_id` give that id.
+
 ## 2026-11-16: perf: the parser finds LF line ends by search and decodes valid text once
 
 - Kind: perf

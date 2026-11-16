@@ -77,6 +77,7 @@ var harnesses = map[string][]harness{
 	"sql":          {{"TestMysqlFuzz", "XO_MYSQLFUZZ"}, {"TestPgFuzz", "XO_PGFUZZ"}},
 	"websocket":    {{"TestWsFuzz", "XO_WSFUZZ"}},
 	"dns":          {{"TestDnsFuzz", "XO_DNSFUZZ"}},
+	"sse":          {{"TestSseFuzz", "XO_SSEFUZZ"}},
 	"json":         {{"TestJsonFuzz", "XO_JSONFUZZ"}},
 	"otp":          {{"TestOtpFuzz", "XO_OTPFUZZ"}},
 	"time":         {{"TestTimeFuzz", "XO_TIMEFUZZ"}},

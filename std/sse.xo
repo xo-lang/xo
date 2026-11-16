@@ -57,6 +57,9 @@ pub struct Parser {
   data: List[Str] = []
   have_data: Bool = false
   last_id: Str = ""
+  /// last_id as of the latest blank line (the WHATWG event source's last
+  /// event ID string, which a reconnection sends)
+  dispatched_id: Str = ""
   retry_ms: Int? = None
   failed: SseErr? = None
 }
@@ -164,16 +167,27 @@ pub fn (p: Parser) last_event_id() -> Str { p.last_id }
 /// milliseconds; None before one.
 pub fn (p: Parser) retry() -> Int? { p.retry_ms }
 
+/// The last event ID as of the latest blank line, "" before one: the
+/// WHATWG event source's last event ID string, which a reconnection sends
+/// as Last-Event-ID. Unlike last_event_id, an `id` of an event not yet
+/// ended (one a break cuts off) is not in it; an id-only event (a blank
+/// line with no data, never dispatched as an Event) is.
+pub fn (p: Parser) dispatched_id() -> Str { p.dispatched_id }
+
 /// Starts from a client's saved cursor (its Last-Event-ID), as a
 /// reconnected stream does.
 pub fn (var p: Parser) set_last_event_id(id: Str) {
   p.last_id = id
+  p.dispatched_id = id
 }
 
 /// One line, its terminator removed: a field, a comment, or the empty line
 /// that dispatches.
 fn (var p: Parser) line(l: Bytes) -> Event? {
   if l.is_empty() {
+    // dispatch, step 1: the event source's last event ID string, set
+    // even when there is no data to dispatch
+    p.dispatched_id = p.last_id
     if !p.have_data {
       p.event = ""
       return None
@@ -370,6 +384,11 @@ pub fn (r: Reader[E, fx]) last_event_id() -> Str { r.p.last_event_id() }
 /// The latest `retry` in milliseconds (see Parser.retry).
 pub fn (r: Reader[E, fx]) retry() -> Int? { r.p.retry() }
 
+/// The last event ID as of the latest blank line read (see
+/// Parser.dispatched_id): once next has returned every event, the
+/// Last-Event-ID a reconnection sends.
+pub fn (r: Reader[E, fx]) dispatched_id() -> Str { r.p.dispatched_id() }
+
 /// An event's wire text: `event:` unless it is empty or `message`, `id:`
 /// when given, `retry:` when given, one `data:` line for each line of data
 /// (split at CRLF, LF and CR), then the empty line. A fault for an event
@@ -522,7 +541,15 @@ pub fn (var s: Source[E, fx]) next() -> Event? ! SourceErr[E] uses (fx, clock) {
       Some(r0) => {
         var r = r0
         let got = r.next()
-        s.last_id = r.last_event_id()
+        // the reconnection's id: the event just returned's (the parser may
+        // have read further into the chunk), else, at the stream's end or
+        // break, the id as of the last blank line, not the id line of an
+        // event the break cut off (WHATWG dispatch step 1; the sse stress,
+        // task #115: an event was lost)
+        match got {
+          Ok(Some(ev)) => s.last_id = ev.id
+          _ => s.last_id = r.dispatched_id()
+        }
         if let Some(ms) = r.retry() {
           s.retry_ms = ms
         }

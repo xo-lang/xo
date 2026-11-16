@@ -1,0 +1,70 @@
+// The Xo side of the sse differential test (internal/stdtest TestSseFuzz):
+// each line on standard input is a case, its arguments "x" then hex:
+//   p STREAM SIZES MAX   a Parser (max_line MAX) fed STREAM in chunks of
+//                        SIZES (comma separated, the last repeated); each
+//                        event "ev EVENT DATA ID" (hex), then "end RETRY
+//                        LAST" (RETRY "none" or the number, LAST hex), or
+//                        "err toolong" at the first error
+//   e DATA EVENT ID RETRY  encode(DATA, EVENT, ID ("-": None), RETRY ("-":
+//                        None)), hex
+use std/sse
+
+fn arg(h: Str) -> Bytes ! Str { Bytes.from_hex(h.trim_prefix("x")).or_err("bad hex ${h}") }
+
+fn text(h: Str) -> Str ! Str { arg(h)?.to_str().or_err("not UTF-8: ${h}") }
+
+fn hx(s: Str) -> Str { s.bytes().to_hex() }
+
+fn parse_case(os: Os, w: List[Str]) -> () ! Str {
+  let stream = arg(w[1])?
+  var sizes: List[Int] = []
+  for s in w[2].split(",") {
+    sizes.push(Int.parse(s) ?? 1)
+  }
+  let max = Int.parse(w[3]) ?? sse.MAX_LINE
+  var p = sse.parser(max)
+  var at = 0
+  var k = 0
+  while at < stream.len() {
+    let n = sizes[if k < sizes.len() { k } else { sizes.len() - 1 }]
+    let end = if at + n > stream.len() { stream.len() } else { at + n }
+    match p.feed(stream[at..end]) {
+      Ok(evs) => {
+        for e in evs {
+          os.stdio.println("ev ${hx(e.event)} ${hx(e.data)} ${hx(e.id)}")
+        }
+      }
+      Err(_) => {
+        os.stdio.println("err toolong")
+        return Ok(())
+      }
+    }
+    at = end
+    k += 1
+  }
+  let r = match p.retry() {
+    Some(n) => "${n}"
+    None => "none"
+  }
+  os.stdio.println("end ${r} ${hx(p.last_event_id())}")
+  Ok(())
+}
+
+fn main(os: Os) ! {
+  for line in os.stdio.lines()? {
+    let w = line.trim().split(" ")
+    if w.len() < 2 {
+      continue
+    }
+    os.stdio.println("== ${w[0]}")
+    match w[0] {
+      "p" => parse_case(os, w)?
+      "e" => {
+        let id: Str? = if w[3] == "-" { None } else { Some(text(w[3])?) }
+        let retry: Int? = if w[4] == "-" { None } else { Int.parse(w[4]) }
+        os.stdio.println(hx(sse.encode(text(w[1])?, event: text(w[2])?, id: id, retry: retry)))
+      }
+      _ => os.stdio.println("unknown ${w[0]}")
+    }
+  }
+}

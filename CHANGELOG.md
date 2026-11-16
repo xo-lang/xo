@@ -67,6 +67,7 @@ the text of every entry is unchanged).
 - Feature (std/toml, every backend; task #89): `toml.encode_with(v, toml.EncodeOptions{...})` lays a document out as go-toml's Encoder with `tables_inline`, `arrays_multiline`, `indent_tables` and `indent` (SetTablesInline, SetArraysMultiline, SetIndentTables, SetIndentSymbol).
 - Feature (std/mime, every backend; task #89): `mime.qp_encode(data, binary)` and `mime.qp_decode(data)`, Go's mime/quotedprintable Writer and Reader over whole data, with Go's errors.
 - Feature (std/mime, every backend; task #89): `mime.decode_word_with(word, reader)` and `decode_header_with(header, reader)`, Go's WordDecoder with a CharsetReader for charsets other than UTF-8, ISO-8859-1 and US-ASCII.
+- Fixes (std/sse): a Source reconnects with the last event ID as of the last blank line (WHATWG dispatch step 1), not the id line of an event the break cut off, which was lost; `Parser.dispatched_id` and `Reader.dispatched_id`. Found by the new sse stress (task #115); TestSseFuzz checks the parser against the standard's algorithm.
 - Feature (std/sql, every backend; decision 0679, task #113): `Row.elements` and `elements_opt` read an array column's elements as one column Rows, so uuid[], numeric[], date[], time[], interval[], inet[], range and composite arrays read with the element's reader.
 
 - Fixes (std/dns): lookup_srv fails with "SRV header name is invalid" when the first SRV answer's owner name is not a domain name, as Go's LookupSRV (it returned the records). Found by TestDnsFuzz seeds 5 to 7 (task #115).
