@@ -546,6 +546,12 @@ func (v Tls_CertificateRequestInfo) M_supports_certificate(tk *Task, cert Tls_Tl
 	return Ok[Unit, Tls_TlsErr](Unit{})
 }
 
+// M_dial is `Dialer.dial(net, addr)`: dial_config with the Dialer's
+// config and timeout (Go's tls.Dialer.Dial).
+func (d Tls_Dialer) M_dial(tk *Task, n Net, addr string) Result[Tls_TlsConn, NetErr] {
+	return Tls_dial_config(tk, n, addr, d.F_config, d.F_timeout)
+}
+
 // Tls_dial_config is `tls.dial_config(net, addr, config, timeout)`.
 func Tls_dial_config(tk *Task, n Net, addr string, cfg Tls_ClientConfig, timeout Option[Duration]) Result[Tls_TlsConn, NetErr] {
 	if cfg.F_server_name == "" {

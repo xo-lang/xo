@@ -1,0 +1,112 @@
+// std/tls's Dialer (decision 0644 B5, Go's tls.Dialer): Dialer{config,
+// timeout}.dial is dial_config with its config and timeout. A trusted
+// server; the zero Dialer's system roots refusing a private CA, as Go's
+// Dialer with a nil Config; a server that accepts and never answers, so
+// the timeout covers the handshake (Go's NetDialer.Timeout, after
+// tls_test.go's TestDialTimeout). The zero Dialer is Dialer{config:
+// ClientConfig{server_name: ""}}: a std struct literal on the native
+// backends names its first field (XO1201).
+use std/tls
+use std/x509
+use std/crypto
+use std/base64
+use std/netip
+
+struct Issued {
+  cert: x509.Certificate
+  key: crypto.PrivateKey
+}
+
+/// A PEM block of der on one line (PEM readers ignore line lengths).
+fn pem_block(kind: Str, der: Bytes) -> Bytes {
+  "-----BEGIN ${kind}-----\n${base64.encode(der)}\n-----END ${kind}-----\n".bytes()
+}
+
+fn issue(os: Os, name: Str, parent: Issued?, ca: Bool, eku: List[x509.ExtKeyUsage], now: Time) -> Issued uses rand {
+  let key = crypto.generate_key(os.rand, crypto.KeyAlg.EcdsaP256).or_fault("key")
+  let usage = if ca { [x509.KeyUsage.CertSign, x509.KeyUsage.DigitalSignature] } else { [x509.KeyUsage.DigitalSignature] }
+  let ips = if ca { [] } else { [netip.parse_addr("127.0.0.1").or_fault("ip")] }
+  let t = x509.Template{subject: x509.Name{common_name: name}, not_before: now - 1h, not_after: now + 24h, ip_addresses: ips, is_ca: ca, key_usage: usage, ext_key_usage: eku}
+  let (pc, pk) = match parent {
+    Some(p) => (Some(p.cert), p.key)
+    None => (None, key)
+  }
+  Issued{cert: x509.create_certificate(os.rand, t, key.public_key(), pc, pk).or_fault("cert ${name}"), key: key}
+}
+
+fn tls_pair(i: Issued, chain: List[x509.Certificate]) -> tls.TlsCert {
+  var pem = i.cert.pem()
+  for c in chain {
+    pem = pem + c.pem()
+  }
+  tls.cert(pem, pem_block("PRIVATE KEY", crypto.marshal_private_key(i.key))).or_fault("pair")
+}
+
+/// Serves one connection of l: a handshake, then "hi".
+fn serve(l: tls.TlsListener) uses net {
+  if let Ok(c) = l.accept() {
+    if c.handshake().is_ok() {
+      c.write(b"hi").ignore_err("the client may be gone")
+      match c.read(16) {
+        _ => {}
+      }
+    }
+    c.close()
+  }
+}
+
+fn dial_line(os: Os, d: tls.Dialer, addr: Str) -> Str uses net {
+  match d.dial(os.net, addr) {
+    Ok(c) => {
+      let got = match c.read(16) {
+        Ok(Some(b)) => b.to_str() ?? "?"
+        _ => "nothing"
+      }
+      let st = c.state()
+      c.write(b"bye").ignore_err("the server may be gone")
+      c.close()
+      "ok: read '${got}', ${tls.version_name(st.version)}, server name '${st.server_name}'"
+    }
+    Err(e) => "error: ${e}"
+  }
+}
+
+fn main(os: Os) uses net, stdio, rand, clock {
+  let now = os.clock.now()
+  let ca = issue(os, "Xo Test CA", None, true, [], now)
+  let server = issue(os, "server", Some(ca), false, [x509.ExtKeyUsage.ServerAuth], now)
+  let roots = tls.roots_of([ca.cert]).or_fault("roots")
+  let pair = tls_pair(server, [])
+  for (what, d) in [("trusted:", tls.Dialer{config: tls.ClientConfig{server_name: "", roots: Some(roots)}, timeout: Some(5s)}), ("the default config (system roots):", tls.Dialer{config: tls.ClientConfig{server_name: ""}, timeout: Some(5s)})] {
+    let l = tls.listen(os.net, "127.0.0.1:0", tls.ServerConfig{certificates: [pair]}).or_fault("listen")
+    scope s {
+      let t = s.spawn(fn() { serve(l) })
+      let line = dial_line(os, d, l.addr())
+      os.stdio.println("${what} ${if line.starts_with("error: ") && line.contains("certificate") { "error: the certificate is not trusted" } else { line }}")
+      t.await
+    }
+    l.close()
+  }
+  // a listener that accepts and stays silent: the handshake times out
+  let quiet = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    let t = s.spawn(fn() {
+      if let Ok(c) = quiet.accept() {
+        // read the ClientHello and anything after until the client gives up
+        while let Ok(Some(_)) = c.read(4096) {}
+        c.close()
+      }
+    })
+    let start = os.clock.now()
+    let line = dial_line(os, tls.Dialer{config: tls.ClientConfig{server_name: "", roots: Some(roots)}, timeout: Some(300ms)}, quiet.addr())
+    let took = os.clock.now() - start
+    let timed_out = line.contains("timeout") || line.contains("timed out") || line.contains("deadline")
+    os.stdio.println("silent server: timed out ${timed_out}, within 5s: ${took < 5s}")
+    if !timed_out {
+      os.stdio.eprintln(line)
+    }
+    quiet.close()
+    t.await
+  }
+  os.stdio.println("done")
+}

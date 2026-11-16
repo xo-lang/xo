@@ -942,6 +942,10 @@ tls.Conn.SetWriteDeadline = std/tls.TlsConn.set_write_deadline
 tls.Server = std/tls.server
 tls.Listen = std/tls.listen
 tls.Dial = std/tls.client
+tls.DialWithDialer = std/tls.dial_config
+tls.Dialer = std/tls.Dialer
+tls.Dialer.Dial = std/tls.Dialer.dial
+tls.Dialer.DialContext = std/tls.Dialer.dial
 tls.* = not planned: cipher suite, curve, signature scheme and version constants, QUIC hooks and session tickets (Xo picks TLS 1.2 and 1.3 suites itself, decision 0202)
 
 # strings, bytes: Str and Bytes methods, StrBuilder and BytesBuilder

@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+trusted: ok: read 'hi', TLS 1.3, server name ''
+the default config (system roots): error: the certificate is not trusted
+silent server: timed out true, within 5s: true
+done
+--- stderr

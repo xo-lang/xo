@@ -22,6 +22,7 @@ conn_close_write # wasip1 # network: the network (`rt.net_listen`): WASI preview
 copy_stream # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 log_sinks # wasip1 # network: the network (`rt.net_status`, log.conn_sink's connection): WASI preview1 has no sockets
 metrics_client_trace # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+tls_dialer # wasip1 # network: WASI preview1 has no sockets
 tls_certsel # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_keylog # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_resume # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets

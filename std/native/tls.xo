@@ -777,6 +777,9 @@ fn server_ech_hook_at(cfg: tls.ServerConfig, local: Str, remote: Str) -> (fn(tls
   })
 }
 
+/// tls.Dialer.dial: dial_config with the Dialer's config and timeout.
+fn dialer_dial(d: tls.Dialer, net: Net, addr: Str) -> TlsConn ! NetErr uses net.dial { dial_config(net, addr, d.config, d.timeout) }
+
 fn dial_config(net: Net, addr: Str, config: tls.ClientConfig, timeout: Duration? = None) -> TlsConn ! NetErr uses net.dial {
   let cfg = if config.server_name.is_empty() { config with {server_name: dial_host(addr)} } else { config }
   let c = dial_open(net, addr, timeout)?

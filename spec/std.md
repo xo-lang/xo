@@ -6395,6 +6395,9 @@ struct CertificateRequestInfo { acceptable_cas: List[Bytes], signature_schemes: 
 fn (i: CertificateRequestInfo) supports_certificate(cert: TlsCert) -> () ! TlsErr
 fn client_config(c: Conn, config: ClientConfig) -> TlsConn ! NetErr uses net.dial
 fn dial_config(net: Net, addr: Str, config: ClientConfig, timeout: Duration? = None) -> TlsConn ! NetErr uses net.dial
+// Go's tls.Dialer (decision 0644 B5): dial_config with a stored config and timeout
+struct Dialer { config: ClientConfig, timeout: Duration? = None }
+fn (d: Dialer) dial(net: Net, addr: Str) -> TlsConn ! NetErr uses net.dial
 // ServerConfig gains: verify_peer_certificate, verify_connection (as ClientConfig's),
 //   get_certificate: (fn(ClientHelloInfo) -> TlsCert? ! Str uses sync)? = None
 //   get_config_for_client: (fn(ClientHelloInfo) -> ServerConfig? ! Str uses sync)? = None

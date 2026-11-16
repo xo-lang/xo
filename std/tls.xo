@@ -204,6 +204,22 @@ fn (t: TlsConn) err() -> TlsErr?
 /// Dials addr on net and runs client_config (Go's tls.Dial,
 /// DialWithDialer with Timeout): as dial.
 fn dial_config(net: Net, addr: Str, config: ClientConfig, timeout: Duration? = None) -> TlsConn ! NetErr uses net.dial
+/// A client that dials and runs the handshake with one configuration
+/// (Go's tls.Dialer: Config, and NetDialer's Timeout for the dial and the
+/// handshake together). `Dialer{config: c}.dial(net, addr)` is
+/// `dial_config(net, addr, c)`; Go's nil Config is ClientConfig's
+/// defaults.
+struct Dialer {
+  config: ClientConfig
+  /// the dial and handshake's limit together (Go's NetDialer.Timeout);
+  /// None: no limit
+  timeout: Duration? = None
+}
+
+/// Dials addr on net and runs the handshake (Go's Dialer.Dial and
+/// DialContext, whose cancellation is the calling task's): as
+/// dial_config with the Dialer's config and timeout.
+fn (d: Dialer) dial(net: Net, addr: Str) -> TlsConn ! NetErr uses net.dial
 /// Reads a PEM certificate chain and its PEM private key from two files
 /// (Go's tls.LoadX509KeyPair); a file that cannot be read is the Err's
 /// text, as `open NAME: ...`.

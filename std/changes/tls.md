@@ -1,5 +1,19 @@
 # std/tls changes
 
+## 2026-11-16: feature: tls.Dialer
+
+- Kind: feature
+- Commit: this push
+- Found by: the std-coverage crypto/tls row's last missing piece (decision 0644 B5; #109)
+- Go reference: crypto/tls Dialer (Dial, DialContext; NetDialer.Timeout), tls_test.go TestDialTimeout
+- Test: internal/llvm/testdata/golden/tls_dialer (arm64, llvm, Go parity): a trusted dial, the default config's system roots refusing a private CA, and a silent server timing out the handshake
+- Shipped in: not yet released
+
+`tls.Dialer{config, timeout}` keeps one client configuration and its
+dial and handshake limit; `d.dial(net, addr)` is `dial_config(net,
+addr, d.config, d.timeout)`. Go's DialContext cancellation is the
+calling task's.
+
 ## 2026-11-15: fix: callback hooks may record what they see (decision 0662)
 
 - Kind: fix
