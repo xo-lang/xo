@@ -1,7 +1,7 @@
 # 0671: List[T].filled(n, x), a list of n copies of x made in bulk
 
-Status: Proposed (Xo Lang 3, 2026-11-15; the lead asked for the
-primitive for std/brotli's encoder, after decision 0667)
+Status: Accepted (lead for the owner, 2026-11-16 overnight; proposed by
+Xo Lang 3, 2026-11-15, for std/brotli's encoder, after decision 0667)
 
 ## Context
 
