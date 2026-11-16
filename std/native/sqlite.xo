@@ -62,7 +62,12 @@ pub struct Config {
   pub busy_ms: Int
   /// PRAGMA statements run after the open, in order.
   pub pragmas: List[Str]
+  /// The statement that starts a transaction: BEGIN, or BEGIN IMMEDIATE
+  /// or BEGIN EXCLUSIVE for `_txlock`.
+  pub begin: Str
 }
+
+fn on_off(b: Bool) -> Str { if b { "ON" } else { "OFF" } }
 
 fn param_err(msg: Str) -> sql.SqlErr { sql.SqlErr.Param(msg: "sqlite: ${msg}") }
 
@@ -87,6 +92,7 @@ pub fn config(dsn: Str) -> Config ! sql.SqlErr {
   var kept: List[Str] = []
   var busy = 5000
   var pragmas: List[Str] = []
+  var begin = "BEGIN"
   for kv in query.split("&") {
     if kv.is_empty() {
       continue
@@ -124,6 +130,52 @@ pub fn config(dsn: Str) -> Config ! sql.SqlErr {
         }
         pragmas.push("PRAGMA synchronous = ${m}")
       }
+      "_loc" => {
+        // mattn reads a time column in UTC and then labels it with _loc's
+        // zone (Time.In): the instant is the same, and a Time has no zone
+        // (spec/std.md), so the key is accepted and changes nothing
+        if v.is_empty() {
+          return Err(param_err("_loc: empty zone"))
+        }
+      }
+      "_txlock" => {
+        begin = match v.to_lower() {
+          "deferred" => "BEGIN"
+          "immediate" => "BEGIN IMMEDIATE"
+          "exclusive" => "BEGIN EXCLUSIVE"
+          _ => return Err(param_err("${k}: ${v.quote()} is not deferred, immediate or exclusive"))
+        }
+      }
+      "_auto_vacuum" | "_vacuum" => {
+        let n = match v.to_lower() {
+          "0" | "none" => 0
+          "1" | "full" => 1
+          "2" | "incremental" => 2
+          _ => return Err(param_err("${k}: ${v.quote()} is not none, full or incremental"))
+        }
+        pragmas.push("PRAGMA auto_vacuum = ${n}")
+      }
+      "_case_sensitive_like" | "_cslike" => pragmas.push("PRAGMA case_sensitive_like = ${on_off(flag(k, v)?)}")
+      "_defer_foreign_keys" | "_defer_fk" => pragmas.push("PRAGMA defer_foreign_keys = ${on_off(flag(k, v)?)}")
+      "_ignore_check_constraints" => pragmas.push("PRAGMA ignore_check_constraints = ${on_off(flag(k, v)?)}")
+      "_locking_mode" | "_locking" => {
+        let m = v.to_upper()
+        if !(m is "NORMAL" | "EXCLUSIVE") {
+          return Err(param_err("${k}: ${v.quote()} is not a locking mode"))
+        }
+        pragmas.push("PRAGMA locking_mode = ${m}")
+      }
+      "_query_only" => pragmas.push("PRAGMA query_only = ${on_off(flag(k, v)?)}")
+      "_recursive_triggers" | "_rt" => pragmas.push("PRAGMA recursive_triggers = ${on_off(flag(k, v)?)}")
+      "_secure_delete" => {
+        let m = if v.to_lower() == "fast" { "FAST" } else { on_off(flag(k, v)?) }
+        pragmas.push("PRAGMA secure_delete = ${m}")
+      }
+      "_writable_schema" => pragmas.push("PRAGMA writable_schema = ${on_off(flag(k, v)?)}")
+      "_cache_size" => {
+        let n = Int.parse(v).or_err(param_err("${k}: ${v.quote()} is not a number"))?
+        pragmas.push("PRAGMA cache_size = ${n}")
+      }
       _ => return Err(param_err("unknown key ${k.quote()}"))
     }
   }
@@ -132,7 +184,7 @@ pub fn config(dsn: Str) -> Config ! sql.SqlErr {
   if path.is_empty() && !kept.contains("mode=memory") {
     return Err(param_err("the DSN names no database (use :memory: for one in memory)"))
   }
-  Config{path: path, uri: uri, keys: kept, busy_ms: busy, pragmas: pragmas}
+  Config{path: path, uri: uri, keys: kept, busy_ms: busy, pragmas: pragmas, begin: begin}
 }
 
 /// True when the database lives in memory, not in a file.
@@ -176,6 +228,8 @@ struct SqliteConn {
   broken: Atomic[Bool]
   /// the DSN's busy timeout in milliseconds, waited in step
   busy_ms: Int
+  /// the DSN's BEGIN statement (`_txlock`)
+  begin_sql: Str
 }
 
 fn (d: SqliteDriver) connect(net: Net, dsn: Str) -> sql.DriverConn[fs] ! sql.SqlErr uses fs {
@@ -194,7 +248,7 @@ fn (d: SqliteDriver) connect(net: Net, dsn: Str) -> sql.DriverConn[fs] ! sql.Sql
   // The cause underneath is the runtime's (task #94: the preemption signal
   // reaches a worker in a C call, and a blocked worker is not replaced).
   c3.sqlite3_busy_timeout(db, Int32(0))
-  let c = SqliteConn{db: db, broken: Atomic.new(false), busy_ms: cfg.busy_ms}
+  let c = SqliteConn{db: db, broken: Atomic.new(false), busy_ms: cfg.busy_ms, begin_sql: cfg.begin}
   for p in cfg.pragmas {
     if let Err(e) = c.run(p, []) {
       c3.sqlite3_close_v2(db)
@@ -262,10 +316,15 @@ fn err_of(db: c3.Sqlite3) -> sql.SqlErr {
   sql.SqlErr.Server(code: code_name(code), msg: msg)
 }
 
-/// The name of an extended result code, as sqlite3.h spells it.
+/// The name of an extended result code, as sqlite3.h spells it: the
+/// primary codes and the extended ones mattn/go-sqlite3 names (its Err
+/// values); any other code is SQLITE_N.
 fn code_name(code: Int) -> Str {
   match code {
     1 => "SQLITE_ERROR"
+    2 => "SQLITE_INTERNAL"
+    3 => "SQLITE_PERM"
+    4 => "SQLITE_ABORT"
     5 => "SQLITE_BUSY"
     6 => "SQLITE_LOCKED"
     7 => "SQLITE_NOMEM"
@@ -273,18 +332,75 @@ fn code_name(code: Int) -> Str {
     9 => "SQLITE_INTERRUPT"
     10 => "SQLITE_IOERR"
     11 => "SQLITE_CORRUPT"
+    12 => "SQLITE_NOTFOUND"
     13 => "SQLITE_FULL"
     14 => "SQLITE_CANTOPEN"
+    15 => "SQLITE_PROTOCOL"
+    16 => "SQLITE_EMPTY"
     17 => "SQLITE_SCHEMA"
     18 => "SQLITE_TOOBIG"
     19 => "SQLITE_CONSTRAINT"
     20 => "SQLITE_MISMATCH"
     21 => "SQLITE_MISUSE"
+    22 => "SQLITE_NOLFS"
     23 => "SQLITE_AUTH"
+    24 => "SQLITE_FORMAT"
     25 => "SQLITE_RANGE"
     26 => "SQLITE_NOTADB"
-    517 => "SQLITE_BUSY_SNAPSHOT"
+    27 => "SQLITE_NOTICE"
+    28 => "SQLITE_WARNING"
+    266 => "SQLITE_IOERR_READ"
+    522 => "SQLITE_IOERR_SHORT_READ"
+    778 => "SQLITE_IOERR_WRITE"
+    1034 => "SQLITE_IOERR_FSYNC"
+    1290 => "SQLITE_IOERR_DIR_FSYNC"
+    1546 => "SQLITE_IOERR_TRUNCATE"
+    1802 => "SQLITE_IOERR_FSTAT"
+    2058 => "SQLITE_IOERR_UNLOCK"
+    2314 => "SQLITE_IOERR_RDLOCK"
+    2570 => "SQLITE_IOERR_DELETE"
+    2826 => "SQLITE_IOERR_BLOCKED"
+    3082 => "SQLITE_IOERR_NOMEM"
+    3338 => "SQLITE_IOERR_ACCESS"
+    3594 => "SQLITE_IOERR_CHECKRESERVEDLOCK"
+    3850 => "SQLITE_IOERR_LOCK"
+    4106 => "SQLITE_IOERR_CLOSE"
+    4362 => "SQLITE_IOERR_DIR_CLOSE"
+    4618 => "SQLITE_IOERR_SHMOPEN"
+    4874 => "SQLITE_IOERR_SHMSIZE"
+    5130 => "SQLITE_IOERR_SHMLOCK"
+    5386 => "SQLITE_IOERR_SHMMAP"
+    5642 => "SQLITE_IOERR_SEEK"
+    5898 => "SQLITE_IOERR_DELETE_NOENT"
+    6154 => "SQLITE_IOERR_MMAP"
+    6410 => "SQLITE_IOERR_GETTEMPPATH"
+    6666 => "SQLITE_IOERR_CONVPATH"
+    262 => "SQLITE_LOCKED_SHAREDCACHE"
     261 => "SQLITE_BUSY_RECOVERY"
+    517 => "SQLITE_BUSY_SNAPSHOT"
+    270 => "SQLITE_CANTOPEN_NOTEMPDIR"
+    526 => "SQLITE_CANTOPEN_ISDIR"
+    782 => "SQLITE_CANTOPEN_FULLPATH"
+    1038 => "SQLITE_CANTOPEN_CONVPATH"
+    267 => "SQLITE_CORRUPT_VTAB"
+    264 => "SQLITE_READONLY_RECOVERY"
+    520 => "SQLITE_READONLY_CANTLOCK"
+    776 => "SQLITE_READONLY_ROLLBACK"
+    1032 => "SQLITE_READONLY_DBMOVED"
+    275 => "SQLITE_CONSTRAINT_CHECK"
+    531 => "SQLITE_CONSTRAINT_COMMITHOOK"
+    787 => "SQLITE_CONSTRAINT_FOREIGNKEY"
+    1043 => "SQLITE_CONSTRAINT_FUNCTION"
+    1299 => "SQLITE_CONSTRAINT_NOTNULL"
+    1555 => "SQLITE_CONSTRAINT_PRIMARYKEY"
+    1811 => "SQLITE_CONSTRAINT_TRIGGER"
+    2067 => "SQLITE_CONSTRAINT_UNIQUE"
+    2323 => "SQLITE_CONSTRAINT_VTAB"
+    2579 => "SQLITE_CONSTRAINT_ROWID"
+    283 => "SQLITE_NOTICE_RECOVER_WAL"
+    539 => "SQLITE_NOTICE_RECOVER_ROLLBACK"
+    284 => "SQLITE_WARNING_AUTOINDEX"
+    516 => "SQLITE_ABORT_ROLLBACK"
     _ => "SQLITE_${code}"
   }
 }
@@ -462,7 +578,7 @@ fn (c: SqliteConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sq
 }
 
 fn (c: SqliteConn) begin() -> () ! sql.SqlErr uses fs {
-  c.run("BEGIN", [])?
+  c.run(c.begin_sql, [])?
 }
 
 fn (c: SqliteConn) commit() -> () ! sql.SqlErr uses fs {

@@ -1,5 +1,21 @@
 # std/sql changes
 
+## 2026-11-16: fix: Row.time reads SQLite's date and time text and Unix integers
+
+- Kind: fix
+- Commit: this push
+- Found by: task #109, the std/sqlite audit against mattn/go-sqlite3 (its DATE, DATETIME and TIMESTAMP
+  column reading)
+- Go reference: github.com/mattn/go-sqlite3 v1.14.53 (MIT) SQLiteTimestampFormats and SQLiteRows.Next
+- Test: std/native/sqlite_test.xo "Row.time reads SQLite's date and time text and a DATETIME column's
+  Unix integer, as mattn does" (failed before: `2026-11-16 12:34:56` was a mismatch)
+- Shipped in: not yet released
+
+`Row.time` and `Row.time_opt` read text as `YYYY-MM-DD`, then a space or `T`, `HH:MM`, optional seconds and
+fraction and an optional offset or `Z` (no offset is UTC), as mattn parses SQLite's `datetime()` and
+`CURRENT_TIMESTAMP` text; only `YYYY-MM-DD` read before. An integer in a column declared DATE, DATETIME or
+TIMESTAMP is Unix seconds, or milliseconds past 1e12.
+
 ## 2026-11-16: feature: named_args, derive SqlRow's encode half (decision 0682)
 
 - Kind: feature

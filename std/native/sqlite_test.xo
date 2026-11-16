@@ -10,6 +10,50 @@ test "config reads mattn's keys" {
   expect(c.pragmas) == ["PRAGMA journal_mode = WAL", "PRAGMA foreign_keys = ON"]
 }
 
+test "config reads mattn's other pragma keys and _txlock" {
+  let c = sqlite.config("file:a.db?_txlock=immediate&_vacuum=incremental&_cache_size=-2000&_cslike=1&_defer_fk=yes&_ignore_check_constraints=0&_locking=exclusive&_query_only=on&_rt=1&_secure_delete=fast&_writable_schema=false")?
+  expect(c.begin) == "BEGIN IMMEDIATE"
+  expect(c.pragmas) == ["PRAGMA auto_vacuum = 2", "PRAGMA cache_size = -2000", "PRAGMA case_sensitive_like = ON", "PRAGMA defer_foreign_keys = ON", "PRAGMA ignore_check_constraints = OFF", "PRAGMA locking_mode = EXCLUSIVE", "PRAGMA query_only = ON", "PRAGMA recursive_triggers = ON", "PRAGMA secure_delete = FAST", "PRAGMA writable_schema = OFF"]
+  expect(sqlite.config(":memory:")?.begin) == "BEGIN"
+  expect(sqlite.config("file:a.db?_loc=auto")?.pragmas) == []
+  match sqlite.config("file:a.db?_txlock=later") {
+    Err(Param(msg)) => expect(msg) == "sqlite: _txlock: \"later\" is not deferred, immediate or exclusive"
+    _ => expect(false) == true
+  }
+}
+
+test "_txlock=exclusive begins transactions with BEGIN EXCLUSIVE, and the pragma keys take effect" {
+  let db = sql.open_driver(os.net, sqlite.driver(os.fs), "file:x?mode=memory&_txlock=exclusive&_rt=1&_cslike=1", max_open: 1)?
+  let rows = db.query("PRAGMA recursive_triggers", [])?
+  expect(rows[0].int("recursive_triggers")?) == 1
+  let like = db.query("SELECT 'a' LIKE 'A' AS m", [])?
+  expect(like[0].int("m")?) == 0
+  db.exec("CREATE TABLE t (n INTEGER)", [])?
+  let tx = db.begin()?
+  tx.exec("INSERT INTO t (n) VALUES (1)", [])?
+  tx.commit()?
+  expect(db.query("SELECT n FROM t", [])?.len()) == 1
+}
+
+test "Row.time reads SQLite's date and time text and a DATETIME column's Unix integer, as mattn does" {
+  let db = sql.open_driver(os.net, sqlite.driver(os.fs), ":memory:", max_open: 1)?
+  db.exec("CREATE TABLE t (a TEXT, b DATETIME, c INTEGER)", [])?
+  db.exec("INSERT INTO t VALUES ('2026-11-16 12:34:56', 1763296496, 1763296496)", [])?
+  db.exec("INSERT INTO t VALUES ('2026-11-16T12:34:56.5+02:00', 1763296496000, 0)", [])?
+  db.exec("INSERT INTO t VALUES ('2026-11-16 12:34', NULL, 0)", [])?
+  let rows = db.query("SELECT a, b, c FROM t ORDER BY rowid", [])?
+  expect(rows[0].time("a")?.format_rfc3339()) == "2026-11-16T12:34:56Z"
+  expect(rows[0].time("b")?.format_rfc3339()) == "2025-11-16T12:34:56Z"
+  expect(rows[1].time("a")?.format_rfc3339()) == "2026-11-16T10:34:56.5Z"
+  expect(rows[1].time("b")?.format_rfc3339()) == "2025-11-16T12:34:56Z"
+  expect(rows[2].time("a")?.format_rfc3339()) == "2026-11-16T12:34:00Z"
+  expect(rows[2].time_opt("b")?) == None
+  // an INTEGER column is not a time: mattn reads it as int64
+  expect(rows[0].time("c").is_err()) == true
+  let now = db.query("SELECT datetime('now') AS n", [])?
+  expect(now[0].time("n").is_ok()) == true
+}
+
 test "config refuses an unknown driver key" {
   match sqlite.config("file:a.db?_bogus=1") {
     Err(Param(msg)) => expect(msg) == "sqlite: unknown key \"_bogus\""
@@ -36,6 +80,19 @@ test "a memory database runs statements, binds and maps errors" {
   }
   match db.query("SELECT * FROM missing", []) {
     Err(NoTable(name)) => expect(name) == "missing"
+    _ => expect(false) == true
+  }
+}
+
+test "Server errors name the extended result code as sqlite3.h does" {
+  let db = sql.open_driver(os.net, sqlite.driver(os.fs), ":memory:", max_open: 1)?
+  db.exec("CREATE TABLE t (n INTEGER)", [])?
+  db.exec("CREATE TRIGGER no_neg BEFORE INSERT ON t WHEN NEW.n < 0 BEGIN SELECT RAISE(ABORT, 'negative'); END", [])?
+  match db.exec("INSERT INTO t (n) VALUES ($1)", [sql.int(-1)]) {
+    Err(Server(code, msg)) => {
+      expect(code) == "SQLITE_CONSTRAINT_TRIGGER"
+      expect(msg) == "negative"
+    }
     _ => expect(false) == true
   }
 }

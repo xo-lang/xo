@@ -122,3 +122,8 @@ and it never listed the health service or `unix:` targets.
   32 Proven, 58 Solid. Next: pin the in progress rows (sqlite, timego, protoparse).
 - Rule 7 (addendum, Accepted, 2026-11-16): the twins for std/testing, std/amqptest and std/go are the next
   step of task #88 (Xo Lang 2), each in bench/perf with a twin.txt as stdproven perf reads it.
+- mattn/go-sqlite3 v1.14.53 (2026-11-16, #109): 138 symbols and an eight item checklist; closing its gaps
+  added mattn's other DSN keys, named extended result codes and its time reading (Row.time); 31 rows not
+  planned by category (Go callbacks into SQLite and the authorizer, run-time extensions, the deprecated user
+  authentication extension); Backup and Serialize map to VACUUM INTO, Deserialize to a file through the Fs.
+  stdcov: sqlite features Proven.

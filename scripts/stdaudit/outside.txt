@@ -48,3 +48,4 @@ AMQP test broker | amqptest | spec/std.md - | amqptest
 Double ended queue | deque | spec/std.md - | deque
 Brotli | brotli | github.com/andybalholm/brotli v1.2.2 | github.com/andybalholm/brotli
 Go time layouts | timego | go go1.26.1 | time
+SQLite driver | sqlite | github.com/mattn/go-sqlite3 v1.14.53 | github.com/mattn/go-sqlite3

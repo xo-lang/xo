@@ -9,8 +9,17 @@
 //   reads it: SQLite's own URI keys (`mode=ro|rw|rwc|memory`,
 //   `cache=shared|private`) and the driver's `_busy_timeout` (`_timeout`,
 //   milliseconds, default 5000), `_journal_mode` (`_journal`),
-//   `_foreign_keys` (`_fk`) and `_synchronous` (`_sync`). An unknown `_`
-//   key is Param.
+//   `_foreign_keys` (`_fk`), `_synchronous` (`_sync`), `_txlock`
+//   (deferred, immediate, exclusive), `_auto_vacuum` (`_vacuum`),
+//   `_cache_size`, `_case_sensitive_like` (`_cslike`),
+//   `_defer_foreign_keys` (`_defer_fk`), `_ignore_check_constraints`,
+//   `_locking_mode` (`_locking`), `_query_only`, `_recursive_triggers`
+//   (`_rt`), `_secure_delete` and `_writable_schema`; `_loc` is accepted
+//   and changes nothing (a Time is an instant with no zone, and mattn's
+//   _loc only labels the same instant). An unknown `_` key is Param.
+// - Row.time reads a DATE, DATETIME or TIMESTAMP column as mattn does:
+//   its text formats (`YYYY-MM-DD[ HH:MM[:SS[.f]]][+HH:MM]`, no offset
+//   UTC), and an integer there as Unix seconds, or milliseconds past 1e12.
 // - The database file is opened through the driver's Fs: a sub Fs roots
 //   its path (an absolute path or `..` is refused), a read only Fs opens it
 //   read only, a write only one is refused.
@@ -33,6 +42,7 @@ struct Config {
   keys: List[Str]
   busy_ms: Int
   pragmas: List[Str]
+  begin: Str
 }
 
 /// The driver, opening database files through fs; its Db's operations

@@ -2270,12 +2270,45 @@ fn (r: Row) int(name: Str) -> Int ! sql.SqlErr {
 }
 
 /// A date's text (2026-10-20, Postgres in ISO DateStyle) as its midnight in UTC.
+/// A date or date and time in text, as mattn/go-sqlite3 reads a DATE,
+/// DATETIME or TIMESTAMP column (its SQLiteTimestampFormats): `YYYY-MM-DD`,
+/// then a space or `T`, `HH:MM`, optional `:SS` and fraction, and an
+/// optional `+HH:MM`, `-HH:MM` or `Z`; no offset is UTC.
 fn date_time(s: Str) -> Time? {
-  let b = s.bytes()
-  if b.len() != 10 || b[4] != 45 || b[7] != 45 {
+  var t = s.trim_suffix("Z")
+  let b = t.bytes()
+  if b.len() < 10 || b[4] != 45 || b[7] != 45 {
     return None
   }
-  Time.parse_rfc3339(s + "T00:00:00Z")
+  if b.len() == 10 {
+    return Time.parse_rfc3339(t + "T00:00:00Z")
+  }
+  if b[10] != 32 && b[10] != 84 {
+    return None
+  }
+  t = t[0..10] + "T" + t[11..t.len()]
+  if t.len() == 16 {
+    t = t + ":00"
+  }
+  if t.len() < 19 {
+    return None
+  }
+  let rest = t[19..t.len()]
+  if !rest.contains("+") && !rest.contains("-") {
+    t = t + "Z"
+  }
+  Time.parse_rfc3339(t)
+}
+
+/// n as a time when name's declared type is DATE, DATETIME or TIMESTAMP:
+/// Unix seconds, or milliseconds past 1e12 (mattn); None otherwise.
+fn (r: Row) unix_time(name: Str, n: Int) -> Time? {
+  for i in 0..r.cols.len() {
+    if r.cols[i] == name && i < r.types.len() && (r.types[i].database_type is "DATE" | "DATETIME" | "TIMESTAMP") {
+      return Some(if n > 1000000000000 || n < -1000000000000 { Time.from_unix_millis(n) } else { Time.from_unix(n) })
+    }
+  }
+  None
 }
 
 fn (r: Row) str(name: Str) -> Str ! sql.SqlErr {
@@ -2308,6 +2341,10 @@ fn (r: Row) bool(name: Str) -> Bool ! sql.SqlErr {
 fn (r: Row) time(name: Str) -> Time ! sql.SqlErr {
   match r.get(name)? {
     At(t) => t
+    Integer(n) => match r.unix_time(name, n) {
+      Some(t) => t
+      None => Err(mismatch(name, "a time", Integer(n: n)))
+    }
     Text(s) => match date_time(s) {
       Some(t) => t
       None => Err(mismatch(name, "a time", Text(s: s)))
@@ -2358,6 +2395,10 @@ fn (r: Row) time_opt(name: Str) -> Time? ! sql.SqlErr {
   match r.get(name)? {
     Null => None
     At(t) => Some(t)
+    Integer(n) => match r.unix_time(name, n) {
+      Some(t) => Some(t)
+      None => Err(mismatch(name, "a time", Integer(n: n)))
+    }
     Text(s) => match date_time(s) {
       Some(t) => Some(t)
       None => Err(mismatch(name, "a time", Text(s: s)))

@@ -1,5 +1,25 @@
 # std/sqlite changes
 
+## 2026-11-16: feature: mattn's other DSN keys, named extended result codes, and the audit
+
+- Kind: feature, fix
+- Commit: this push
+- Found by: task #109 (features to Proven): the decision 0655 symbol audit of mattn/go-sqlite3 v1.14.53
+  (scripts/stdaudit/outside.txt, map.txt: 138 symbols and a behavior checklist)
+- Go reference: github.com/mattn/go-sqlite3 v1.14.53 (MIT), sqlite3.go's DSN keys and error.go's codes
+- Test: std/native/sqlite_test.xo "config reads mattn's other pragma keys and _txlock", "_txlock=exclusive
+  begins transactions with BEGIN EXCLUSIVE...", "Server errors name the extended result code as
+  sqlite3.h does" (failed before: SQLITE_1811)
+- Shipped in: not yet released
+
+The DSN takes mattn's `_txlock` (deferred, immediate, exclusive: the BEGIN a transaction starts with),
+`_auto_vacuum` (`_vacuum`), `_cache_size`, `_case_sensitive_like` (`_cslike`), `_defer_foreign_keys`
+(`_defer_fk`), `_ignore_check_constraints`, `_locking_mode` (`_locking`), `_query_only`,
+`_recursive_triggers` (`_rt`), `_secure_delete` and `_writable_schema`, and accepts `_loc` (a Time has
+no zone, and mattn's `_loc` only labels the same instant); they were Param errors. Fix: a Server error's
+code names every extended result code mattn names (`SQLITE_CONSTRAINT_TRIGGER`, `SQLITE_IOERR_READ`), not
+`SQLITE_1811`.
+
 ## 2026-11-16: test: a differential corpus against mattn/go-sqlite3, and the timing row
 
 - Kind: test
