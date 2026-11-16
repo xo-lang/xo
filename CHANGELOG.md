@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Perf (native backends; decision 0669): `Rand.int`, `float` and `bool` draw from a per-thread ChaCha8 keystream (Go's math/rand/v2 runtime generator, with fast key erasure) seeded from the operating system, instead of one system call per draw: std/random's normal 380.5 to 18.88 ms for 10^6 draws on linux/arm64 (0.050). A forked child never repeats its parent's values; `Rand.bytes` still reads the operating system's generator on every call.
 - std/ui (Early): the runtime and wasm client are served at content stamped URLs and cached for good; an open page reloads onto a new build once nothing waits to be sent (`data-xo-stale` meanwhile); a page syncs as soon as its live socket reconnects instead of up to 30 s later.
 - std/ui (Early): a same-origin link to another std/ui page no longer reloads the browser page: the runtime fetches it, patches it in and keeps history and scroll (decision 0668); add `data-xo-reload` to a link that must load normally.
 - Feature (std/brotli, every backend; decision 0666): `brotli.encode(data, quality, window)` writes a Brotli stream at qualities 0 to 11, byte for byte andybalholm/brotli's Writer output (one Write and Close). On linux/arm64 it takes 1.4 (quality 1), 13.8 (6) and 1.9 (11) times Go's wall time for now (bench/results/brotli-encode-vs-go-2026-11-15.md).

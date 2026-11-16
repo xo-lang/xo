@@ -1293,8 +1293,12 @@ fn (r: Rand) bytes(n: Int) -> Bytes
 fn (r: Rand) shuffle[T](xs: List[T]) -> List[T]
 ```
 
-Native builds (`--no-gc`, decision 0083) draw from the operating system's
-generator (`getentropy`, `getrandom`); `shuffle` draws one `int` per
+Native builds (`--no-gc`, decision 0083) draw `int`, `float` and `bool`
+from a ChaCha8 keystream per worker thread (Go's chacha8rand, with fast
+key erasure), seeded from the operating system's generator (`getentropy`,
+`getrandom`) and never repeated in a forked child (decision 0669);
+`bytes` reads the operating system's generator on every call, as
+std/crypto's keys and nonces do. `shuffle` draws one `int` per
 step as on the Go backend, so a test's seeded shuffle is the same
 (decision 0107). `shuffle` is derived from `int` on every backend, for a
 program's own Rand too: Fisher-Yates from the end with that value's
