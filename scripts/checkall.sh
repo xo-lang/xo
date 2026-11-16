@@ -12,7 +12,10 @@
 # prove_checkall) and fails on errors only the change's xo reports
 # (lead, 2026-11-15, #54: decision 0662's checker change passed its gate
 # and broke std/sql's corpus tests, cmd/xo TestCheckFlag's program and
-# the native_sqlite golden, none of which its gate checked).
+# the native_sqlite golden, none of which its gate checked). An error
+# its line expects (`// ERROR XOnnnn ...`, the errorcheck tests'
+# annotation, which their own test checks) is not listed, so a new
+# errorcheck test is not a new error (Xo Lang 3, 2026-11-16).
 # Run from the repository root.
 set -u
 xo=$1 out=$2
@@ -37,9 +40,26 @@ for m in $mods; do
   [ $? = 2 ] && printf 'std/%s\t%s\t%s\n' "$m" usage "$(head -1 "$tmp/v-$m.err")" >>"$tmp/usage.txt"
 done
 python3 - "$tmp" >"$out.tmp" <<'EOF'
-import glob, json, os, sys
+import glob, json, os, re, sys
 tmp = sys.argv[1]
 rows = []
+lines = {}
+def expected(sp, code):
+    # the diagnostic's line carries `// ERROR` naming its code
+    f, n = sp.get("file", ""), sp.get("line", 0)
+    if not f or not n or not code:
+        return False
+    if f not in lines:
+        try:
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                lines[f] = fh.read().split("\n")
+        except OSError:
+            lines[f] = []
+    ls = lines[f]
+    if n > len(ls):
+        return False
+    m = re.search(r"//\s*ERROR\b(.*)$", ls[n - 1])
+    return bool(m) and code in m.group(1).split()
 for p in sorted(glob.glob(os.path.join(tmp, "*.json"))):
     try:
         with open(p) as f:
@@ -54,6 +74,8 @@ for p in sorted(glob.glob(os.path.join(tmp, "*.json"))):
         if (d.get("severity") or "error") != "error":
             continue
         sp = d.get("span") or {}
+        if expected(sp, d.get("code", "")):
+            continue
         msg = " ".join((d.get("message") or "").split())
         rows.append("%s\t%s\t%s" % (sp.get("file", ""), d.get("code", ""), msg))
 try:
