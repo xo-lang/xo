@@ -1,5 +1,19 @@
 # std/template changes
 
+## 2026-11-16: fix: slice of a string cut inside a character gives U+FFFD per byte on the Go backend too
+
+- Kind: fix
+- Commit: this push
+- Found by: the lead's 6 h tier on 649415ef4 (TestStdCorpora/go/template), after 8389e9c2f recorded Xo's result in the corpus
+- Go reference: text/template funcs.go (slice), go1.26 (Copyright 2011 The Go Authors, BSD-style license)
+- Test: internal/stdtest TestStdCorpora/go/template (the corpus rows `{{slice .uni 2 | urlquery}}`, `{{slice .uni 0 2 | printf "%q"}}`, `{{slice .url 9 | len}}`; it failed before)
+- Shipped in: not yet released
+
+On the Go backend (std/rt, Go's text/template) `slice` of a string kept the
+bytes of a character it cut, where the native backends give U+FFFD for each
+of them (decision 0259). The Go backend now registers Xo's slice in place of
+Go's builtin, so both backends give the same text.
+
 ## 2026-11-16: fix: a continue in a range's else, and printf of a complex number
 
 - Kind: fix

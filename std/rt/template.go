@@ -2,10 +2,13 @@ package rt
 
 import (
 	"errors"
+	"fmt"
 	htmltemplate "html/template"
 	"io"
+	"reflect"
 	"strings"
 	"text/template"
+	"unicode/utf8"
 )
 
 // std/template on the Go backend (decision 0299): Go's text/template
@@ -73,7 +76,8 @@ type TemplateFn = func(*Task, List[Json_Value]) Result[Json_Value, string]
 // 0408): each takes any arguments, hands them to the Xo function as
 // json.Values, and returns its result as text/template sees data.
 func templateFuncs(tk *Task, t Template_Template) template.FuncMap {
-	fm := template.FuncMap{}
+	// Xo's slice in place of Go's builtin (a program's own slice still wins)
+	fm := template.FuncMap{"slice": templateSlice}
 	m := t.F_funcs
 	Map_each(&m, func(e *mentry[string, TemplateFn], f TemplateFn) bool {
 		name := e.k
@@ -91,6 +95,86 @@ func templateFuncs(tk *Task, t Template_Template) template.FuncMap {
 		return true
 	})
 	return fm
+}
+
+// templateSlice is text/template's slice builtin, except that a string cut
+// inside a character gives U+FFFD for each byte of it, as Xo's Str and
+// std/native/template.xo do (decision 0259; Go keeps the bytes, and the
+// Go backend's template corpus failed on it, 2026-11-16).
+func templateSlice(item reflect.Value, indexes ...reflect.Value) (reflect.Value, error) {
+	for item.IsValid() && item.Kind() == reflect.Interface {
+		if item.IsNil() {
+			item = reflect.Value{}
+			break
+		}
+		item = item.Elem()
+	}
+	if !item.IsValid() {
+		return reflect.Value{}, fmt.Errorf("slice of untyped nil")
+	}
+	if len(indexes) > 3 {
+		return reflect.Value{}, fmt.Errorf("too many slice indexes: %d", len(indexes))
+	}
+	var cap int
+	switch item.Kind() {
+	case reflect.String:
+		if len(indexes) == 3 {
+			return reflect.Value{}, fmt.Errorf("cannot 3-index slice a string")
+		}
+		cap = item.Len()
+	case reflect.Array, reflect.Slice:
+		cap = item.Cap()
+	default:
+		return reflect.Value{}, fmt.Errorf("can't slice item of type %s", item.Type())
+	}
+	idx := [3]int{0, item.Len()}
+	for i, index := range indexes {
+		for index.IsValid() && index.Kind() == reflect.Interface && !index.IsNil() {
+			index = index.Elem()
+		}
+		var x int64
+		switch index.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			x = index.Int()
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+			x = int64(index.Uint())
+		case reflect.Invalid, reflect.Interface:
+			return reflect.Value{}, fmt.Errorf("cannot index slice/array with nil")
+		default:
+			return reflect.Value{}, fmt.Errorf("cannot index slice/array with type %s", index.Type())
+		}
+		if x < 0 || int(x) < 0 || int(x) > cap {
+			return reflect.Value{}, fmt.Errorf("index out of range: %d", x)
+		}
+		idx[i] = int(x)
+	}
+	if idx[0] > idx[1] {
+		return reflect.Value{}, fmt.Errorf("invalid slice index: %d > %d", idx[0], idx[1])
+	}
+	if item.Kind() == reflect.String {
+		return reflect.ValueOf(lossyPerByte(item.String()[idx[0]:idx[1]])), nil
+	}
+	if len(indexes) < 3 {
+		return item.Slice(idx[0], idx[1]), nil
+	}
+	if idx[1] > idx[2] {
+		return reflect.Value{}, fmt.Errorf("invalid slice index: %d > %d", idx[1], idx[2])
+	}
+	return item.Slice3(idx[0], idx[1], idx[2]), nil
+}
+
+// lossyPerByte is s with U+FFFD for each byte of an invalid sequence.
+func lossyPerByte(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		b.WriteRune(r)
+		i += n
+	}
+	return b.String()
 }
 
 // executor is what both template packages' sets do (decision 0408).
