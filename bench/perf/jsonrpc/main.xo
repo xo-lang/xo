@@ -1,0 +1,45 @@
+// jsonrpc: std/jsonrpc against the Go MCP SDK's jsonrpc package
+// (github.com/modelcontextprotocol/go-sdk v1.8.0, twin.go.txt; decision
+// 0603's reference). `encode` encodes 100,000 `tools/call` requests with an
+// object of params (the text's length summed); `decode` decodes 100,000
+// request texts (the id and the method's length summed: the SDK keeps
+// params as raw JSON, std/jsonrpc parses them into a json.Value, each its
+// own API); `none` is the setup alone. Usage: `<program> none|encode|decode`.
+// Prints `<workload> <checksum>`; the twin prints the same.
+use std/json
+use std/jsonrpc
+
+fn request(i: Int) -> jsonrpc.Message {
+  let args = json.Value.Object([("text", json.Value.Str("hello ${i % 100}")), ("n", json.Value.Int(i))])
+  let params = json.Value.Object([("name", json.Value.Str("echo")), ("arguments", args)])
+  jsonrpc.Message.Req(jsonrpc.Request{id: Some(jsonrpc.Id.Int(i)), method: "tools/call", params: Some(params)})
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var sum = 0
+  if w == "encode" {
+    for i in 0..100000 {
+      sum += jsonrpc.encode(request(i)).len()
+    }
+  } else if w == "decode" {
+    var texts: List[Str] = []
+    for i in 0..100 {
+      texts.push(jsonrpc.encode(request(i * 7919)))
+    }
+    for i in 0..100000 {
+      match jsonrpc.decode(texts[i % 100]) {
+        Ok(Req(r)) => {
+          match r.id {
+            Some(Int(n)) => { sum += n + r.method.len() }
+            _ => fault("id")
+          }
+        }
+        _ => fault("decode")
+      }
+    }
+  } else {
+    sum = jsonrpc.encode(request(1)).len()
+  }
+  os.stdio.println("${w} ${sum}")
+}

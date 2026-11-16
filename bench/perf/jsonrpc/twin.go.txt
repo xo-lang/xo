@@ -1,0 +1,67 @@
+// The Go twin of bench/perf/jsonrpc/main.xo: the MCP Go SDK's jsonrpc
+// package (github.com/modelcontextprotocol/go-sdk v1.8.0), params marshaled
+// from structs in the same key order. Same workloads, same output.
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+)
+
+type args struct {
+	Text string `json:"text"`
+	N    int    `json:"n"`
+}
+
+type params struct {
+	Name      string `json:"name"`
+	Arguments args   `json:"arguments"`
+}
+
+func request(i int) *jsonrpc.Request {
+	p, err := json.Marshal(params{Name: "echo", Arguments: args{Text: fmt.Sprintf("hello %d", i%100), N: i}})
+	if err != nil {
+		panic(err)
+	}
+	id, _ := jsonrpc.MakeID(float64(i))
+	return &jsonrpc.Request{ID: id, Method: "tools/call", Params: p}
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	switch w {
+	case "encode":
+		for i := 0; i < 100000; i++ {
+			b, err := jsonrpc.EncodeMessage(request(i))
+			if err != nil {
+				panic(err)
+			}
+			sum += len(b)
+		}
+	case "decode":
+		var texts [][]byte
+		for i := 0; i < 100; i++ {
+			b, _ := jsonrpc.EncodeMessage(request(i * 7919))
+			texts = append(texts, b)
+		}
+		for i := 0; i < 100000; i++ {
+			m, err := jsonrpc.DecodeMessage(texts[i%100])
+			if err != nil {
+				panic(err)
+			}
+			r := m.(*jsonrpc.Request)
+			sum += int(r.ID.Raw().(int64)) + len(r.Method)
+		}
+	default:
+		b, _ := jsonrpc.EncodeMessage(request(1))
+		sum = len(b)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

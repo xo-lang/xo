@@ -1,0 +1,5 @@
+# twincheck: jsonrpc: std/jsonrpc against the Go MCP SDK jsonrpc package.
+require github.com/modelcontextprotocol/go-sdk v1.8.0
+- - none
+- - encode
+- - decode
