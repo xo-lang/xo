@@ -83,6 +83,7 @@ var harnesses = map[string][]harness{
 	"otp":          {{"TestOtpFuzz", "XO_OTPFUZZ"}},
 	"jsonrpc":      {{"TestJsonrpcFuzz", "XO_JSONRPCFUZZ"}},
 	"grpc":         {{"TestGrpcFuzz", "XO_GRPCFUZZ"}},
+	"amqp":         {{"TestAmqpFuzz", "XO_AMQPFUZZ"}},
 	"time":         {{"TestTimeFuzz", "XO_TIMEFUZZ"}},
 	"multipart":    {{"TestMultipartFuzz", "XO_MULTIPARTFUZZ"}},
 	"http":         {{"TestHttpHeadFuzz", "XO_HEADFUZZ"}, {"TestHttpResponseFuzz", "XO_RESPFUZZ"}, {"TestHttpUrlFuzz", "XO_URLFUZZ"}},

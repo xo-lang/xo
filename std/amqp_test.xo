@@ -35,13 +35,12 @@ test "bad input is an error, never a fault" {
     "a105",                    // string longer than the data
     "a1c3",                    // not UTF-8 (and short)
     "a102c328",                // invalid UTF-8
-    "c101" + "0143",           // odd map count
+    "c101" + "0143",           // odd map count, its last value past the data
     "c002" + "05" + "52",      // count above the data
     "c0020352",                // size past the data
     "d000000001" + "00000000", // list32 size below its count field
     "e0020150",                // array with no element for its count
     "5600",                    // ok boolean: control (decoded below)
-    "5602",                    // invalid boolean
   ] {
     let r = decode(hb(s))
     if s == "5600" {
@@ -50,6 +49,23 @@ test "bad input is an error, never a fault" {
       expect(r.is_err()) == true
     }
   }
+}
+
+test "lists and maps read their count of elements, booleans any nonzero byte, as go-amqp (TestAmqpFuzz, task #115)" {
+  // go-amqp's readListHeader and readMapHeader check the size against the
+  // bytes left, then read count elements; readBool takes any byte but 0
+  // as true
+  expect(decode(hb("5602"))) == Ok((Value.Bool(v: true), 2))
+  // a list whose size is past its elements ends after them
+  expect(decode(hb("c0040143404040"))) == Ok((Value.List(items: [Value.UInt(v: UInt32(0))]), 4))
+  // an odd map count reads its last key's value after the count
+  expect(decode(hb("c10301a1016143"))) == Ok((Value.Map(pairs: [(Value.Str(v: "a"), Value.UInt(v: UInt32(0)))]), 7))
+  // a map32 whose size is below its count field
+  expect(decode(hb("d1000000020000000040"))) == Ok((Value.Map(pairs: []), 9))
+  // an array reads its elements from the bytes left, past its size
+  expect(decode(hb("e002015307"))) == Ok((Value.Array(items: [Value.ULong(v: UInt64(7))]), 5))
+  // an array of booleans: any nonzero byte is true
+  expect(decode(hb("e00402560200"))) == Ok((Value.Array(items: [Value.Bool(v: true), Value.Bool(v: false)]), 6))
 }
 
 test "compound counts are bounded as go-amqp's are" {

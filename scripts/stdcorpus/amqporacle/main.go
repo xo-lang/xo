@@ -14,6 +14,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,8 +51,10 @@ func show(v any) string {
 	case float64:
 		return fmt.Sprintf("double %016x", math.Float64bits(t))
 	case string:
+		fzNote(t)
 		return "str " + hex.EncodeToString([]byte(t))
 	case amqp.Symbol:
+		fzNote(string(t))
 		return "str " + hex.EncodeToString([]byte(t))
 	case []byte:
 		return "bin " + hex.EncodeToString(t)
@@ -213,6 +216,12 @@ func cases() []struct {
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "bench" {
 		bench()
+		return
+	}
+	if len(os.Args) > 3 && os.Args[1] == "fuzz" {
+		seed, _ := strconv.ParseInt(os.Args[2], 10, 64)
+		n, _ := strconv.Atoi(os.Args[3])
+		fuzzMain(seed, n)
 		return
 	}
 	var rows []row

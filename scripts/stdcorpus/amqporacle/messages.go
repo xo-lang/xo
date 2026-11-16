@@ -17,6 +17,7 @@ func showStr(p *string) string {
 	if p == nil {
 		return "-"
 	}
+	fzNote(*p)
 	return hex.EncodeToString([]byte(*p))
 }
 

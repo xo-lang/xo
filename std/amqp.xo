@@ -761,7 +761,13 @@ pub fn encode_message(m: Message) -> Bytes ! AmqpErr {
 }
 
 /// The message in b (all of it); a section out of the specification's order is accepted, a repeated
-/// header, properties or annotations section, or mixed body kinds, is a Decode error.
+/// header or properties section, or body sections of two kinds or a second value section, is a
+/// Decode error. Departures from go-amqp, which accepts these (keeping the last header, properties
+/// and value, and every data and sequence section): those errors; a str or sym that is not UTF-8
+/// (go-amqp keeps the bytes); a section descriptor in the ulong form is its whole code (go-amqp reads
+/// its last byte). std/amqp also decodes what go-amqp cannot: char and the decimals, a described
+/// value in any place, a list, map or binary map key, a header or properties field in any integer
+/// encoding (TestAmqpFuzz, task #115).
 pub fn decode_message(b: Bytes) -> Message ! AmqpErr {
   var header: Header? = None
   var dann: List[(Value, Value)]? = None
@@ -1542,11 +1548,9 @@ fn get_value(b: Bytes, pos: Int, depth: Int) -> (Value, Int) ! AmqpErr {
     return Ok((Value.Bool(v: c == 0x41), p))
   }
   if c == 0x56 {
+    // any byte but 0 is true, as go-amqp's readBool (TestAmqpFuzz, task #115)
     need(b, p, 1)?
-    if Int(b[p]) > 1 {
-      return Err(dec_err("invalid boolean"))
-    }
-    return Ok((Value.Bool(v: b[p] == 1), p + 1))
+    return Ok((Value.Bool(v: b[p] != 0), p + 1))
   }
   if c == 0x43 {
     return Ok((Value.UInt(v: UInt32(0)), p))
@@ -1585,7 +1589,9 @@ fn get_value(b: Bytes, pos: Int, depth: Int) -> (Value, Int) ! AmqpErr {
     let size = get_be(b, p, lw)
     let count = get_be(b, p + lw, lw)
     let start = p + 2 * lw
-    if size < lw {
+    // a list's and an array's size holds its count (go-amqp's
+    // readListHeader and readArrayHeader); a map's need not (readMap8Header)
+    if size < lw && c != 0xc1 && c != 0xd1 {
       return Err(dec_err("invalid compound size"))
     }
     let end = p + lw + size
@@ -1595,66 +1601,54 @@ fn get_value(b: Bytes, pos: Int, depth: Int) -> (Value, Int) ! AmqpErr {
     if count > MAX_COMPOUND_COUNT {
       return Err(dec_err("compound count exceeds ${MAX_COMPOUND_COUNT}"))
     }
-    // as go-amqp, the count may not exceed the body's bytes, an array's
-    // too: an array of a zero width constructor (null, true, false, the
-    // zero forms) has no bytes per element, so its count alone would
-    // otherwise decide how many values decode
-    if count > end - start {
+    // as go-amqp, the count may not exceed the body's bytes (a map's, the
+    // bytes left), an array's too: an array of a zero width constructor
+    // (null, true, false, the zero forms) has no bytes per element, so its
+    // count alone would otherwise decide how many values decode
+    let room = if c == 0xc1 || c == 0xd1 { b.len() - start } else { end - start }
+    if count > room {
       return Err(dec_err("compound count exceeds its size"))
     }
+    // a list or a map is its count of elements, read from after the count
+    // and ending where they end, as go-amqp's list and mapAnyAny read them:
+    // the size is checked against the bytes left, not against the elements
+    // (TestAmqpFuzz, task #115)
     if c == 0xc0 || c == 0xd0 {
       var items: List[Value] = []
       var q = start
       for _ in 0..count {
         let (x, q1) = get_value(b, q, depth + 1)?
-        if q1 > end {
-          return Err(dec_err("list element past its end"))
-        }
         items.push(x)
         q = q1
       }
-      if q != end {
-        return Err(dec_err("list size mismatch"))
-      }
-      return Ok((Value.List(items: items), end))
+      return Ok((Value.List(items: items), q))
     }
     if c == 0xc1 || c == 0xd1 {
-      if count % 2 != 0 {
-        return Err(dec_err("odd map count"))
-      }
+      // an odd count reads its last key's value past the count, as
+      // go-amqp's unmarshalMapItems (i += 2 while i < count)
       var pairs: List[(Value, Value)] = []
       var q = start
-      for _ in 0..count / 2 {
+      for _ in 0..(count + 1) / 2 {
         let (k, q1) = get_value(b, q, depth + 1)?
         let (x, q2) = get_value(b, q1, depth + 1)?
-        if q2 > end {
-          return Err(dec_err("map element past its end"))
-        }
         pairs.push((k, x))
         q = q2
       }
-      if q != end {
-        return Err(dec_err("map size mismatch"))
-      }
-      return Ok((Value.Map(pairs: pairs), end))
+      return Ok((Value.Map(pairs: pairs), q))
     }
-    // array: one element constructor, then the bodies
+    // array: one element constructor, then the bodies, read as go-amqp's
+    // typed arrays read them, from the bytes left whatever the size says,
+    // ending where they end (TestAmqpFuzz, task #115)
     need(b, start, 1)?
     let ec = Int(b[start])
     var q = start + 1
     var items: List[Value] = []
     for _ in 0..count {
-      if q > end {
-        return Err(dec_err("array element past its end"))
-      }
-      let (x, q1) = get_body(b, ec, q, end, depth + 1)?
+      let (x, q1) = get_body(b, ec, q, b.len(), depth + 1)?
       items.push(x)
       q = q1
     }
-    if q != end {
-      return Err(dec_err("array size mismatch"))
-    }
-    return Ok((Value.Array(items: items), end))
+    return Ok((Value.Array(items: items), q))
   }
   Err(dec_err("unknown type code 0x${hex2(c)}"))
 }
@@ -1688,9 +1682,6 @@ fn get_body(b: Bytes, ec: Int, q: Int, end: Int, depth: Int) -> (Value, Int) ! A
   let w = fixed_width(ec)
   if w >= 0 {
     need(b, q, w)?
-    if ec == 0x56 && Int(b[q]) > 1 {
-      return Err(dec_err("invalid boolean"))
-    }
     return Ok((fixed_value(b, ec, q), q + w))
   }
   if ec == 0xa0 || ec == 0xa1 || ec == 0xa3 || ec == 0xb0 || ec == 0xb1 || ec == 0xb3 {
@@ -1730,7 +1721,7 @@ fn fixed_width(c: Int) -> Int {
 }
 
 fn fixed_value(b: Bytes, c: Int, p: Int) -> Value {
-  if c == 0x56 { return Value.Bool(v: b[p] == 1) }
+  if c == 0x56 { return Value.Bool(v: b[p] != 0) }
   if c == 0x50 { return Value.UByte(v: UInt8(get_be(b, p, 1))) }
   if c == 0x51 { return Value.Byte(v: Int8(get_signed(b, p, 1))) }
   if c == 0x52 { return Value.UInt(v: UInt32(get_be(b, p, 1))) }

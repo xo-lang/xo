@@ -1,5 +1,34 @@
 # std/amqp changes
 
+## 2026-11-16: fix: compound values and booleans decode as go-amqp reads them (task #115)
+
+- Kind: fix (behavior change)
+- Commit: this commit
+- Found by: TestAmqpFuzz (internal/stdtest/amqpfuzz_test.go), a differential of decode_message against github.com/Azure/go-amqp v1.7.0's Message.UnmarshalBinary on go-amqp's encodings of seeded messages, most mutated (scripts/stdcorpus/amqporacle fuzz mode, scripts/amqpdiff/xo)
+- Go reference: go-amqp internal/encoding readListHeader, readMapHeader, unmarshalMapItems, readArrayHeader and the typed arrays, readBool
+- Test: std/amqp_test.xo "lists and maps read their count of elements, booleans any nonzero byte, as go-amqp" (fails before); TestAmqpFuzz seeds 2 to 8 (about 18,500 cases each, equal on amd64 and llvm)
+- Shipped in: not yet released
+
+- A list, map or array is its count of elements, read after its count and ending where they end;
+  the size is checked against the bytes left, not against the elements (it had to match them
+  exactly). An array's elements are read from the bytes left, past its size; a map's size may be
+  below its count field; a map's count is checked against the bytes left.
+- An odd map count reads its last key's value after the count (go-amqp's `i += 2` loop); it was
+  "odd map count".
+- A boolean (0x56, alone or in an array) is true for any byte but 0; it was "invalid boolean" past 1.
+
+decode_message's doc lists the departures the fuzz models: std/amqp refuses a str or sym that is
+not UTF-8, a second header or properties section, body sections of two kinds or a second value
+section, and a ulong section descriptor whose code is past a byte (go-amqp reads its last byte),
+all of which go-amqp accepts; it decodes char, the decimals, described values in any place, list,
+map and binary map keys, and header or properties fields in any integer encoding, which go-amqp
+cannot (it panics on a binary annotations key).
+
+Found with it, not fixed here: on the native backends `Float32.from_bits` quiets a signaling NaN
+(7f800043 reads back as 7fc00043; std/native/prelude.xo narrows a double, and `float32_to_bits`
+sets the quiet bit), so a float32 sNaN does not round trip through std/amqp there; the Go backend
+keeps the bits. Reported to the lead; the fuzz compares those values quieted.
+
 ## 2026-11-15: perf: `parse_addr` finds its separators with `find` and `rfind`
 
 - Kind: perf
