@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -20,8 +21,22 @@ import (
 // cannot change: Max-Age 0 and below, Expires in 2000 (deleted) or 2100,
 // Max-Age of an hour in scripts of under 3000 virtual seconds. The time
 // passing cases are written by hand in the tests.
+// cookiejarFuzzSeed is XO_COOKIEJARFUZZ_SEED (default 0, the committed
+// corpus), added to both seeds so a fresh run (internal/stdtest
+// TestCookiejarFuzz) makes new scripts; XO_COOKIEJARFUZZ_N is the number
+// of net/http/cookiejar scripts (default 100).
+func cookiejarFuzzSeed() (int64, int) {
+	seed, _ := strconv.ParseInt(os.Getenv("XO_COOKIEJARFUZZ_SEED"), 10, 64)
+	n, err := strconv.Atoi(os.Getenv("XO_COOKIEJARFUZZ_N"))
+	if err != nil || n <= 0 {
+		n = 100
+	}
+	return seed, n
+}
+
 func cookiejarCorpus() string {
-	rg := rand.New(rand.NewSource(58))
+	seed, nscripts := cookiejarFuzzSeed()
+	rg := rand.New(rand.NewSource(58 + seed))
 	var o strings.Builder
 	o.WriteString(header("net/http/cookiejar (go1.26.1) on seeded SetCookies and Cookies sequences against std/cookiejar"))
 	o.WriteString("use std/cookiejar\nuse std/http\n\n")
@@ -40,7 +55,7 @@ func cookiejarCorpus() string {
 	}
 	var scripts []string
 	o.WriteString("/// (kind 0 set 1 get, scheme, host, path, cookies `name|value|domain|path|secure|maxage|expires`, joined by `;;`, the cookies to send as `name=value,...`)\nconst STEPS: List[List[(Int, Str, Str, Str, Str, Str)]] = [\n")
-	for sc := 0; sc < 100; sc++ {
+	for sc := 0; sc < nscripts; sc++ {
 		j, _ := cookiejar.New(nil)
 		o.WriteString("  [\n")
 		n := 8 + rg.Intn(40)
@@ -99,7 +114,7 @@ func cookiejarCorpus() string {
 	}
 	_ = scripts
 	o.WriteString("]\n\n")
-	o.WriteString(cookiejarPslSteps(rand.New(rand.NewSource(617))))
+	o.WriteString(cookiejarPslSteps(rand.New(rand.NewSource(617 + seed))))
 	o.WriteString(cookiejarTests)
 	return o.String()
 }
