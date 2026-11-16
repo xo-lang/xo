@@ -260,6 +260,24 @@ struct R[fx: Effects] {
   src: List[fn() -> Bytes? ! Str uses fx] = []
   done: Bool = false
   src_err: Str = ""
+  /// for a body in memory, the end of what Go's 4096 byte bufio.Reader
+  /// has read of it: a fill reads to 4096 bytes past the read position,
+  /// and the partReader scans only what is buffered, so its reads (the
+  /// quoted-printable decoder's, in skip_part) end where Go's do
+  w: Int = 0
+}
+
+/// Go's fill for a body in memory: a read at start needed byte i, so the
+/// buffer was filled (from start, 4096 bytes at a time) until it held i.
+fn (var r: R) filled(start: Int, i: Int) {
+  if !r.src.is_empty() || i < r.w {
+    return
+  }
+  var w = start + BUF
+  while w <= i {
+    w += BUF
+  }
+  r.w = if w > r.buf.len() { r.buf.len() } else { w }
 }
 
 /// More input from the source, the unread rest kept at the start of the
@@ -296,6 +314,7 @@ fn (var r: R) at_lwsp() -> Bool {
   if r.pos >= r.buf.len() && !r.more() {
     return false
   }
+  r.filled(r.pos, r.pos)
   r.buf[r.pos] == 32 || r.buf[r.pos] == 9
 }
 
@@ -317,6 +336,7 @@ fn (var r: R) read_slice() -> (Bytes, Str) {
     while i < end {
       if r.buf[i] == 10 {
         let line = r.buf[r.pos..i + 1]
+        r.filled(r.pos, i)
         r.pos = i + 1
         return (line, "")
       }
@@ -324,12 +344,14 @@ fn (var r: R) read_slice() -> (Bytes, Str) {
     }
     if end - r.pos >= BUF {
       let line = r.buf[r.pos..end]
+      r.filled(r.pos, end - 1)
       r.pos = end
       return (line, "bufio: buffer full")
     }
     off = end - r.pos
     if !r.more() {
       let line = r.buf[r.pos..]
+      r.filled(r.pos, r.buf.len())
       r.pos = r.buf.len()
       return (line, if r.src_err.is_empty() { "EOF" } else { r.src_err })
     }
@@ -389,7 +411,9 @@ fn match_after_prefix(b: Bytes, at: Int, prefix: Bytes, eof: Bool) -> Int {
 /// the boundary and how the part goes on: "" (more data), "EOF" (the part
 /// ends), or the read error; `eof` once the body is known to end there.
 fn (r: R) scan(total: Int, eof: Bool) -> (Int, Str) {
-  let b = r.buf[r.pos..]
+  // what Go's bufio holds (all of a streamed body's buffer)
+  let lim = if r.src.is_empty() && !eof { if r.w > r.pos { r.w } else { r.pos } } else { r.buf.len() }
+  let b = r.buf[r.pos..lim]
   let read_err = if eof { UNEXPECTED_EOF } else { "" }
   if total == 0 {
     if has_prefix(b, 0, r.dash_boundary) {
@@ -414,11 +438,15 @@ fn (r: R) scan(total: Int, eof: Bool) -> (Int, Str) {
   if has_prefix(r.nl_dash_boundary, 0, b) {
     return (0, read_err)
   }
+  // the last CR, when it can start the boundary: Go's LastIndexByte over
+  // the buffer, then HasPrefix, which only a CR in the last
+  // len(nl_dash_boundary) bytes can pass (the search stops there)
+  let stop = if b.len() > r.nl_dash_boundary.len() { b.len() - r.nl_dash_boundary.len() } else { 0 }
   var j = b.len() - 1
-  while j >= 0 && b[j] != r.nl_dash_boundary[0] {
+  while j >= stop && b[j] != r.nl_dash_boundary[0] {
     j -= 1
   }
-  if j >= 0 && has_prefix(r.nl_dash_boundary, 0, b[j..]) {
+  if j >= stop && has_prefix(r.nl_dash_boundary, 0, b[j..]) {
     return (j, "")
   }
   (b.len(), read_err)
@@ -433,8 +461,12 @@ fn (var r: R) read_part() -> (Bytes, Str) {
   while {
     let (n, e) = r.scan(total, eof)
     if n == 0 && e.is_empty() {
-      // Go peeks one byte more: the body has ended here (or, streamed,
-      // more comes)
+      // Go peeks one byte more: its buffer fills, or the body has ended
+      // here (or, streamed, more comes)
+      if r.src.is_empty() && r.w < r.buf.len() {
+        r.filled(r.pos, if r.w > r.pos { r.w } else { r.pos })
+        continue
+      }
       if !r.more() {
         if !r.src_err.is_empty() {
           return (out.freeze(), r.src_err)
@@ -471,9 +503,11 @@ fn (var r: R) read_line(max: Int) -> Bytes? {
       e -= 1
     }
     let line = r.buf[r.pos..e]
+    r.filled(r.pos, i)
     r.pos = i + 1
     return Some(line)
   }
+  r.filled(r.pos, r.buf.len())
   // no newline in what is buffered: the rest gathered piece by piece
   var acc = BytesBuilder.new()
   acc.write(r.buf[r.pos..])
@@ -928,12 +962,19 @@ fn (var r: R) skip_part(n: Next) {
   // buffer moves as it refills)
   var raw = BytesBuilder.new()
   var ends: List[Int] = []
+  // Go's buffer end when each scan was made (a body in memory)
+  var ws: List[Int] = []
+  let start = r.pos
   var total = 0
   var eof = false
   var e = ""
   while {
     let (k, se) = r.scan(total, eof)
     if k == 0 && se.is_empty() {
+      if r.src.is_empty() && r.w < r.buf.len() {
+        r.filled(r.pos, if r.w > r.pos { r.w } else { r.pos })
+        continue
+      }
       if !r.more() {
         if !r.src_err.is_empty() {
           e = r.src_err
@@ -947,6 +988,7 @@ fn (var r: R) skip_part(n: Next) {
     r.pos += k
     total += k
     ends.push(total)
+    ws.push(r.w)
     if !se.is_empty() {
       e = if se == "EOF" { "" } else { se }
       break
@@ -957,15 +999,78 @@ fn (var r: R) skip_part(n: Next) {
   if qe.is_empty() || qe == e {
     return
   }
-  // the reader goes on from the end of the read that held the bad line:
-  // the rest of the part is unread again
-  for c in ends {
-    if c >= used {
-      r.buf = rb[c..] + r.buf[r.pos..]
-      r.pos = 0
-      return
-    }
+  // the reader goes on from what the decoder's bufio had read when the
+  // bad line came: the rest of the part is unread again
+  let c = qp_delivered(rb, ends, used)
+  if c >= rb.len() {
+    return
   }
+  if r.src.is_empty() {
+    // the body is the buffer: back to c, Go's buffer as it was when the
+    // scan that held c was made
+    r.pos = start + c
+    for (k, x) in ends.indexed() {
+      if x >= c {
+        r.w = ws[k]
+        break
+      }
+    }
+    return
+  }
+  r.buf = rb[c..] + r.buf[r.pos..]
+  r.pos = 0
+}
+
+/// How much of a part's raw bytes the quoted-printable decoder's
+/// bufio.Reader (4096 bytes) had read from the partReader when its
+/// ReadSlice gave the line ending at `used`. Each fill is one
+/// partReader.Read of the buffer's free room, which returns at most what
+/// is left of the current scan (scans end at `ends`): a scan's data can
+/// take several fills, and a fill stops at a scan's end. (It went on from
+/// the end of the scan that held the line: TestMultipartFuzz seed 4 case
+/// 15785, one scan of 4,600 bytes taken in two fills.)
+fn qp_delivered(raw: Bytes, ends: List[Int], used: Int) -> Int {
+  var delivered = 0
+  var ci = 0
+  var pos = 0
+  while pos < used {
+    // ReadSlice('\n') of the line starting at pos
+    var end = -1
+    var s = pos
+    while end < 0 {
+      for i in s..delivered {
+        if raw[i] == 10 {
+          end = i + 1
+          break
+        }
+      }
+      if end >= 0 {
+        break
+      }
+      if delivered - pos >= BUF {
+        // bufio: buffer full
+        end = pos + BUF
+        break
+      }
+      while ci < ends.len() && ends[ci] <= delivered {
+        ci += 1
+      }
+      if ci >= ends.len() {
+        // the part's end: the line is what is buffered
+        end = delivered
+        break
+      }
+      s = delivered
+      let room = BUF - (delivered - pos)
+      let left = ends[ci] - delivered
+      delivered += if left < room { left } else { room }
+    }
+    if end <= pos {
+      break
+    }
+    pos = end
+  }
+  delivered
 }
 
 /// filepath.Base on a Unix path.

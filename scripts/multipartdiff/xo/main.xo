@@ -1,0 +1,63 @@
+// The Xo side of the multipart differential test (internal/stdtest
+// TestMultipartFuzz): each line on standard input is "parse BOUNDARY
+// BODY" or "form BOUNDARY BODY" (both "x" then hex), read with
+// multipart.parse or multipart.parse_form and printed as the test prints
+// Go's mime/multipart Reader (NextPart with each part read whole, or
+// ReadForm): the parts, or the form's values and files, keys sorted, or
+// the error.
+use std/multipart
+
+fn hex(h: Str) -> Bytes ! Str { Bytes.from_hex(h.trim_prefix("x")).or_err("bad hex ${h}") }
+
+fn part(os: Os, tag: Str, p: multipart.Part) {
+  let f = match p.filename {
+    Some(x) => x.quote()
+    None => "-"
+  }
+  os.stdio.println("${tag} ${p.name.quote()} ${f}")
+  for k in p.headers.keys().sort() {
+    os.stdio.println("h ${k}: ${(p.headers.get(k) ?? "").quote()}")
+  }
+  os.stdio.println("data ${p.data.to_hex()}")
+}
+
+fn main(os: Os) ! {
+  var i = 0
+  for line in os.stdio.lines()? {
+    let w = line.trim().split(" ")
+    if w.len() < 3 {
+      continue
+    }
+    os.stdio.println("== ${i}")
+    i += 1
+    let boundary = hex(w[1])?.to_str().or_err("boundary not UTF-8")?
+    let body = hex(w[2])?
+    if w[0] == "parse" {
+      match multipart.parse(body, boundary) {
+        Ok(ps) => {
+          os.stdio.println("parts ${ps.len()}")
+          for p in ps {
+            part(os, "part", p)
+          }
+        }
+        Err(e) => os.stdio.println("error ${e}")
+      }
+    } else {
+      match multipart.parse_form(body, boundary) {
+        Ok(f) => {
+          for k in f.values.keys().sort() {
+            for v in f.values.all(k) {
+              os.stdio.println("v ${k.quote()} ${v.quote()}")
+            }
+          }
+          for k in f.files.keys().sort() {
+            for p in f.files.get(k) ?? [] {
+              part(os, "f ${k.quote()}", p)
+            }
+          }
+        }
+        Err(e) => os.stdio.println("error ${e}")
+      }
+    }
+  }
+}

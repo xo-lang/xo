@@ -1,5 +1,15 @@
 # std/multipart changes
 
+## 2026-11-16: fix: parse_form goes on after a skipped quoted-printable part where Go's ReadForm does
+
+- Kind: fix
+- Commit: this push
+- Found by: internal/stdtest TestMultipartFuzz (task #90) seed 4 case 15785 (a nameless quoted-printable part with a bad byte, its data past 4,096 bytes)
+- Go reference: mime/multipart partReader.Read (scans br.Peek(br.Buffered()), Peek(len+1) to fill), Part.Close (drains through the decoder), quotedprintable.Reader over bufio.NewReader (4,096 bytes)
+- Test: internal/stdtest TestMultipartSkipQP (fails on the old std: the form was read; passes now; Go's ReadForm checks it); TestMultipartFuzz seeds 2 to 6, 20,000 bodies each, arm64 and llvm
+- Timing: bench/perf/multipart parse unchanged on the Mac (0.09 s both; the windowed scan's partial-boundary search looks only at the window's tail, as Go's can only match there)
+- Shipped in: not yet released
+
 ## 2026-11-13: security: a part's header is read in time linear in its fields
 
 - Kind: security
