@@ -1,0 +1,198 @@
+// netip stress program (decision 0616 section 2): TASKS tasks each make
+// addresses from a seeded generator (IPv4, IPv6, IPv4 in IPv6, zones) and
+// check, for each, the identities net/netip promises: the text parses back
+// to the same address, so do its bytes; next and prev undo each other and
+// keep the order; a prefix of every length holds the address and its
+// masked form, and parses back from its text; an addr:port and a
+// host:port text round-trip; addresses sorted by the order sort as their
+// bytes do (by family first). A background task samples the resident set
+// every 10 s (Linux /proc/self/status) and prints it each minute. Pass: no
+// identity broken, no fault, and the resident set at the end within 10%
+// or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30); 0: 20,000 addresses per task] [TASKS (32)]
+use std/netip
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+fn addr_of(x0: Int) -> netip.Addr {
+  var x = next(x0)
+  var b = BytesBuilder.with_capacity(16)
+  let kind = (x >> 50) % 6
+  if kind < 2 {
+    for _ in 0..4 {
+      x = next(x)
+      // the edges now and then: 0, 255, the private and special ranges
+      b.write_byte(UInt8(match (x >> 40) % 8 {
+        0 => 0
+        1 => 255
+        2 => 10
+        3 => 172
+        _ => (x >> 20) & 255
+      }))
+    }
+    return netip.addr_from_bytes(b.freeze()).or_fault("4 bytes")
+  }
+  for i in 0..16 {
+    x = next(x)
+    let zero = kind == 2 && i < 10 || (x >> 44) % 4 == 0
+    b.write_byte(UInt8(if kind == 2 && (i == 10 || i == 11) { 255 } else if zero { 0 } else { (x >> 20) & 255 }))
+  }
+  let a = netip.addr_from_bytes(b.freeze()).or_fault("16 bytes")
+  if kind == 5 {
+    return a.with_zone("eth${(x >> 30) % 4}")
+  }
+  a
+}
+
+fn check(t: Int, k: Int, a: netip.Addr) -> () ! Str {
+  let at = "task ${t} address ${k} (${a})"
+  let back = netip.parse_addr("${a}").map_err(fn(e) { "${at}: its text does not parse: ${e}" })?
+  if back != a {
+    return Err("${at}: its text parses to ${back}")
+  }
+  match netip.addr_from_bytes(a.bytes()) {
+    Some(b) => {
+      if b != a.with_zone("") {
+        return Err("${at}: its bytes give ${b}")
+      }
+    }
+    None => return Err("${at}: its bytes give no address")
+  }
+  match a.next() {
+    Some(n) => {
+      if !(a < n) || n.prev() != Some(a) {
+        return Err("${at}: next ${n} is not after it or prev does not undo it")
+      }
+    }
+    None => {}
+  }
+  match a.prev() {
+    Some(p) => {
+      if !(p < a) || p.next() != Some(a) {
+        return Err("${at}: prev ${p} is not before it or next does not undo it")
+      }
+    }
+    None => {}
+  }
+  let plain = a.with_zone("")
+  for bits in [0, 1, 7, 8, 16, 24, 31, 32, 48, 64, 96, 127, 128] {
+    if bits > plain.bits {
+      continue
+    }
+    let p = plain.prefix(bits).map_err(fn(e) { "${at}: prefix ${bits}: ${e}" })?
+    if !p.contains(plain) || !p.contains(p.addr) || p.masked() != p {
+      return Err("${at}: prefix ${p} does not hold it, or is not masked")
+    }
+    let q = netip.parse_prefix("${p}").map_err(fn(e) { "${at}: ${p} does not parse: ${e}" })?
+    if q != p || !q.overlaps(p) {
+      return Err("${at}: ${p} parses to ${q}")
+    }
+  }
+  let port = (k * 7919) & 65535
+  let ap = netip.addr_port(a, port)
+  let ap2 = netip.parse_addr_port("${ap}").map_err(fn(e) { "${at}: ${ap} does not parse: ${e}" })?
+  if ap2 != ap {
+    return Err("${at}: ${ap} parses to ${ap2}")
+  }
+  let hp = netip.join_host_port("${a}", "${port}")
+  let (h, p) = netip.split_host_port(hp).map_err(fn(e) { "${at}: ${hp} does not split: ${e}" })?
+  if h != "${a}" || p != "${port}" {
+    return Err("${at}: ${hp} splits to ${h} and ${p}")
+  }
+  Ok(())
+}
+
+/// The order of addresses is their family, then their bytes, then the zone.
+fn check_order(t: Int, xs: List[netip.Addr]) -> () ! Str {
+  let s = xs.sort()
+  for i in 1..s.len() {
+    let a = s[i - 1]
+    let b = s[i]
+    let ka = "${a.bits / 100}${a.bytes().to_hex()}"
+    let kb = "${b.bits / 100}${b.bytes().to_hex()}"
+    if ka > kb || ka == kb && a.zone > b.zone {
+      return Err("task ${t}: ${a} sorts before ${b}")
+    }
+  }
+  Ok(())
+}
+
+fn worker(os: Os, t: Int, end: Time, passes: Int) -> Int ! Str uses clock {
+  var k = 0
+  var batch: List[netip.Addr] = []
+  while if passes > 0 { k < passes } else { os.clock.now() < end } {
+    let a = addr_of(t * 1000003 + k)
+    check(t, k, a)?
+    batch.push(a)
+    if batch.len() == 500 {
+      check_order(t, batch)?
+      batch = []
+    }
+    k += 1
+  }
+  Ok(k)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 32 } else { 32 }
+  let passes = if minutes == 0 { 20000 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let total = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str { worker(os, t, end, passes) }))
+    }
+    var n = 0
+    for h in hs {
+      n += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    s.cancel()
+    n
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("netip stress: ${total} addresses by ${tasks} tasks in ${minutes} min, 0 identities broken, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}
