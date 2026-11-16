@@ -42,6 +42,11 @@ Last verified: 2026-11-16.
 | Long waits and blocked leases go to the digest unless they grow | xw alert | `workstream:alerts.xo` (wait_rising) | `workstream:test/pg_test.sh` | long-wait, lease-blocked, wait-rising |
 | Assigned tasks and decisions are acked in the next tool round | xw inbox | `scripts/lead/xw-cc-hook.sh` | `scripts/lead/xw-cc-hook_test.sh` | unacked, unacked-task, unacked-idle |
 | Questions for the owner or the lead go through xw ask | xw | `workstream:asks.xo` | `workstream:test/work_test.sh` | |
+| A pushed task is marked done, or pushed as a part, not left pushed | pushq, xw | `scripts/lead/xwhook.sh` (xw_task_push: PUSHQ_TASK, PUSHQ_PARTIAL), `workstream:std.xo` (push_partial: auto-partial for a multi-module task) | `scripts/lead/xwhook_test.sh`, `workstream:xw_test.xo` | task-pushed |
+| An agent at its prompt while its run goes starts its next queued task | xw alert | `workstream:alerts.xo` (agent_first_kind: the agent's inbox first, the lead on a repeat), `workstream:inbox.xo` (AGENT_ALERTS) | `workstream:test/work_test.sh` | waiting |
+| Work outside an agent's charter needs the lead's ok; a bug fix does not | xw check | `workstream:work.xo` (off_charter) | `workstream:test/work_test.sh` | off-charter |
+| A stuck gate, spinning process or dead Docker is found and stopped | heavyd, hangcheck | `scripts/lead/hangcheck.sh`, `scripts/lead/heavyd/daemon.go` (gate and slot timeouts, stall stop) | `scripts/lead/heavyd/scenario_test.go` (TestScenario17Stall) | hang |
+| A push does not lower a std module's mark unseen | xw std marks | `workstream:alerts.xo` (std_falls; prevention at push time is #140's pushq rows, pending) | `workstream:test/pg_test.sh` | std-fall |
 | Every bug fix lands with a test that fails before it | CLAUDE.md | none | none | |
 | Long fuzz sweeps go sharded to a host, never the Mac gate class | CLAUDE.md | none | none | |
 | Never wait idle while a gate or push runs | CLAUDE.md | none | none | idle, idle-empty, waiting |
