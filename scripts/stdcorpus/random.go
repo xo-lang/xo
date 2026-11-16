@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"os"
+	"strconv"
 	"strings"
 )
 
@@ -41,6 +43,94 @@ func xfloat(f float64) string {
 	return t
 }
 
+// zipfStrict is Go's Zipf (math/rand/v2 zipf.go, go1.26, Copyright 2009
+// The Go Authors, BSD-style license) with every product rounded on its own
+// (float64() of each product: the Go spec lets arm64, ppc64, riscv64 and
+// s390x fuse x*y+z into one rounding, and Go's own Zipf on this Mac fuses
+// ur := hxm + r*hx0minusHxm). Xo's floats are strict (decision 0287; Go on
+// amd64 does not fuse either), so the corpus's answer is the unfused one,
+// the same on every platform (task #116: random fuzz seed 3, draw 35 of
+// s=1.08 v=11.39 off by one on arm64 Go).
+type zipfStrict struct {
+	r                                                        *rand.Rand
+	imax, v, q, s, oneminusQ, oneminusQinv, hxm, hx0minusHxm float64
+}
+
+func (z *zipfStrict) h(x float64) float64 {
+	return float64(math.Exp(float64(z.oneminusQ*math.Log(z.v+x))) * z.oneminusQinv)
+}
+
+func (z *zipfStrict) hinv(x float64) float64 {
+	return math.Exp(float64(z.oneminusQinv*math.Log(float64(z.oneminusQ*x)))) - z.v
+}
+
+func newZipfStrict(r *rand.Rand, s float64, v float64, imax uint64) *zipfStrict {
+	if s <= 1.0 || v < 1 {
+		return nil
+	}
+	z := &zipfStrict{r: r, imax: float64(imax), v: v, q: s}
+	z.oneminusQ = 1.0 - z.q
+	z.oneminusQinv = 1.0 / z.oneminusQ
+	z.hxm = z.h(z.imax + 0.5)
+	z.hx0minusHxm = z.h(0.5) - math.Exp(float64(math.Log(z.v)*(-z.q))) - z.hxm
+	z.s = 1 - z.hinv(z.h(1.5)-math.Exp(float64(-z.q*math.Log(z.v+1.0))))
+	return z
+}
+
+func (z *zipfStrict) Uint64() uint64 {
+	k := 0.0
+	for {
+		r := z.r.Float64()
+		ur := z.hxm + float64(r*z.hx0minusHxm)
+		x := z.hinv(ur)
+		k = math.Floor(x + 0.5)
+		if k-x <= z.s {
+			break
+		}
+		if ur >= z.h(k+0.5)-math.Exp(float64(-math.Log(k+z.v)*z.q)) {
+			break
+		}
+	}
+	return uint64(k)
+}
+
+// randomFuzzSeed is XO_RANDOMFUZZ_SEED (default 0, the committed corpus),
+// added to every PCG seed: internal/stdtest/corpusfuzz_test.go's fresh
+// seeds (task #116), which also draw 40 more Zipf parameter sets.
+func randomFuzzSeed() uint64 {
+	seed, _ := strconv.ParseUint(os.Getenv("XO_RANDOMFUZZ_SEED"), 10, 64)
+	return seed
+}
+
+type zipfParams = []struct {
+	s, v float64
+	imax uint64
+}
+
+func randomZipfParams() zipfParams {
+	ps := zipfParams{{1.1, 1, 10}, {2, 1, 100}, {1.5, 3, 1000}, {3, 1, 5}, {1.01, 1, 1 << 40}, {2.5, 10.5, 0}, {1.2, 2, 1}, {1.0001, 1, 1000000}, {7, 1, 1 << 62}, {1, 1, 10}, {0.5, 1, 10}, {2, 0.5, 10}}
+	seed := randomFuzzSeed()
+	if seed == 0 {
+		return ps
+	}
+	r := rand.New(rand.NewPCG(seed, 99))
+	for k := 0; k < 40; k++ {
+		s := 1 + r.Float64()*4
+		v := 1 + r.Float64()*20
+		if r.IntN(10) == 0 {
+			s = r.Float64() * 1.2 // NewZipf refuses s <= 1
+		}
+		if r.IntN(10) == 0 {
+			v = r.Float64() * 1.2 // and v < 1
+		}
+		ps = append(ps, struct {
+			s, v float64
+			imax uint64
+		}{s, v, r.Uint64() >> r.IntN(64)})
+	}
+	return ps
+}
+
 func randomCorpus() string {
 	var o strings.Builder
 	o.WriteString(header("math/rand/v2's NormFloat64, ExpFloat64, Perm and Zipf on recorded PCG streams, replayed draw for draw"))
@@ -50,7 +140,7 @@ func randomCorpus() string {
 		n    int
 		f    func(*rand.Rand) float64
 	}{{"NORM", 1500, (*rand.Rand).NormFloat64}, {"EXP", 1500, (*rand.Rand).ExpFloat64}} {
-		src := &recSrc{s: rand.NewPCG(606, uint64(len(c.name)))}
+		src := &recSrc{s: rand.NewPCG(606+randomFuzzSeed(), uint64(len(c.name)))}
 		r := rand.New(src)
 		var want []uint64
 		for k := 0; k < c.n; k++ {
@@ -59,7 +149,7 @@ func randomCorpus() string {
 		fmt.Fprintf(&o, "/// The Uint64s Go's %s drew, in order.\nconst %s_U: List[Int] = [%s\n]\n\n", c.name, c.name, i64s(src.out))
 		fmt.Fprintf(&o, "/// Go's %d values (Float64bits).\nconst %s_WANT: List[Int] = [%s\n]\n\n", c.n, c.name, i64s(want))
 	}
-	src := &recSrc{s: rand.NewPCG(606, 3)}
+	src := &recSrc{s: rand.NewPCG(606+randomFuzzSeed(), 3)}
 	r := rand.New(src)
 	o.WriteString("/// Go's Perm(n) for each n, in order.\nconst PERM_WANT: List[List[Int]] = [\n")
 	sizes := []int{0, 1, 2, 3, 5, 8, 13, 50, 100, 1000}
@@ -80,15 +170,15 @@ func randomCorpus() string {
 		ns = append(ns, fmt.Sprint(n))
 	}
 	fmt.Fprintf(&o, "const PERM_N: List[Int] = [%s]\n\n/// The Uint64s Go's Perm calls drew, in order.\nconst PERM_U: List[Int] = [%s\n]\n", strings.Join(ns, ", "), i64s(src.out))
-	// Zipf: NewZipf's parameters (nil ones included) and 200 draws of each
-	zsrc := &recSrc{s: rand.NewPCG(606, 4)}
+	// Zipf: NewZipf's parameters (nil ones included; Go's Zipf with products rounded, zipfStrict) and 200 draws of each
+	zsrc := &recSrc{s: rand.NewPCG(606+randomFuzzSeed(), 4)}
 	zr := rand.New(zsrc)
 	o.WriteString("\n/// (s, v, imax, whether Go's NewZipf gives one, its first 200 Uint64s)\nconst ZIPF_WANT: List[(Float, Float, Int, Bool, List[Int])] = [\n")
 	for _, p := range []struct {
 		s, v float64
 		imax uint64
-	}{{1.1, 1, 10}, {2, 1, 100}, {1.5, 3, 1000}, {3, 1, 5}, {1.01, 1, 1 << 40}, {2.5, 10.5, 0}, {1.2, 2, 1}, {1.0001, 1, 1000000}, {7, 1, 1 << 62}, {1, 1, 10}, {0.5, 1, 10}, {2, 0.5, 10}} {
-		z := rand.NewZipf(zr, p.s, p.v, p.imax)
+	}(randomZipfParams()) {
+		z := newZipfStrict(zr, p.s, p.v, p.imax)
 		var ks []string
 		if z != nil {
 			for k := 0; k < 200; k++ {

@@ -1,0 +1,300 @@
+// htmlparse stress program (decision 0616 section 2): 64 tasks run std/htmlparse's parse,
+// fragments and render against golang.org/x/net/html (the corpus
+// .../corpus/htmlparse),
+// for a fixed time. A background task samples the resident set every 10 s
+// (Linux /proc/self/status). Pass: no mismatch, no fault, and the resident
+// set at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/htmlparse
+
+/// One pass over the documents and renders from offset start; the
+/// operations done, or the first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..CASES.len() {
+    let (input, ns, tag, scripting, want) = CASES[(start + k) % CASES.len()]
+    if dump_case(input, ns, tag, scripting) != want {
+      return Err("tree of ${q(input)} context ${ns} ${tag}")
+    }
+  }
+  for k in 0..RENDERS.len() {
+    let (input, want) = RENDERS[(start + k) % RENDERS.len()]
+    let got = match htmlparse.parse(input) {
+      Ok(t) => match t.render_node(t.root) {
+        Ok(s) => s
+        Err(e) => "ERR ${e.display()}"
+      }
+      Err(e) => "ERR ${e.display()}"
+    }
+    if got != want {
+      return Err("render of ${q(input)}")
+    }
+  }
+  CASES.len() + RENDERS.len()
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("htmlparse stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+/// (input, context namespace, context tag, scripting, Go's tree dump or "ERR " and its error)
+const CASES: List[(Str, Str, Str, Bool, Str)] = [
+  ("<a><p></a></p>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <a>\n|     <p>\n|       <a>\n"),
+  ("<a>1<p>2</a>3</p>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <a>\n|       \"1\"\n|     <p>\n|       <a>\n|         \"2\"\n|       \"3\"\n"),
+  ("<a>1<button>2</a>3</button>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <a>\n|       \"1\"\n|     <button>\n|       <a>\n|         \"2\"\n|       \"3\"\n"),
+  ("<a>1<b>2</a>3</b>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <a>\n|       \"1\"\n|       <b>\n|         \"2\"\n|     <b>\n|       \"3\"\n"),
+  ("<a>1<div>2<div>3</a>4</div>5</div>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <a>\n|       \"1\"\n|     <div>\n|       <a>\n|         \"2\"\n|       <div>\n|         <a>\n|           \"3\"\n|         \"4\"\n|       \"5\"\n"),
+  ("<table><a>1<p>2</a>3</p>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <a>\n|       \"1\"\n|     <p>\n|       <a>\n|         \"2\"\n|       \"3\"\n|     <table>\n"),
+  ("<b><b><a><p></a>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <b>\n|       <b>\n|         <a>\n|         <p>\n|           <a>\n"),
+  ("<b><a><b><p></a>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <b>\n|       <a>\n|         <b>\n|       <b>\n|         <p>\n|           <a>\n"),
+  ("<a><b><b><p></a>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <a>\n|       <b>\n|         <b>\n|     <b>\n|       <b>\n|         <p>\n|           <a>\n"),
+  ("<p>1<s id=\"A\">2<b id=\"B\">3</p>4</s>5</b>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"1\"\n|       <s>\n|         id=\"A\"\n|         \"2\"\n|         <b>\n|           id=\"B\"\n|           \"3\"\n|     <s>\n|       id=\"A\"\n|       <b>\n|         id=\"B\"\n|         \"4\"\n|     <b>\n|       id=\"B\"\n|       \"5\"\n"),
+  ("<table><a>1<td>2</td>3</table>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <a>\n|       \"1\"\n|     <a>\n|       \"3\"\n|     <table>\n|       <tbody>\n|         <tr>\n|           <td>\n|             \"2\"\n"),
+  ("<table>A<td>B</td>C</table>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     \"AC\"\n|     <table>\n|       <tbody>\n|         <tr>\n|           <td>\n|             \"B\"\n"),
+  ("<a><svg><tr><input></a>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <a>\n|       <svg svg>\n|         <svg tr>\n|           <svg input>\n"),
+  ("<div><a><b><div><div><div><div><div><div><div><div><div><div></a>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <div>\n|       <a>\n|         <b>\n|       <b>\n|         <div>\n|           <a>\n|           <div>\n|             <a>\n|             <div>\n|               <a>\n|               <div>\n|                 <a>\n|                 <div>\n|                   <a>\n|                   <div>\n|                     <a>\n|                     <div>\n|                       <a>\n|                       <div>\n|                         <a>\n|                           <div>\n|                             <div>\n"),
+  ("<div><a><b><u><i><code><div></a>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <div>\n|       <a>\n|         <b>\n|           <u>\n|             <i>\n|               <code>\n|       <u>\n|         <i>\n|           <code>\n|             <div>\n|               <a>\n"),
+  ("<b><b><b><b>x</b></b></b></b>y", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <b>\n|       <b>\n|         <b>\n|           <b>\n|             \"x\"\n|     \"y\"\n"),
+  ("<p><b><b><b><b><p>x", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <p>\n|       <b>\n|         <b>\n|           <b>\n|             <b>\n|     <p>\n|       <b>\n|         <b>\n|           <b>\n|             \"x\"\n"),
+  ("<b><em><foo><foob><fooc><aside></b></em>", "", "div", true, "| <b>\n|   <em>\n|     <foo>\n|       <foob>\n|         <fooc>\n| <aside>\n|   <b>\n"),
+  ("<b>1<i>2<p>3</b>4", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <b>\n|       \"1\"\n|       <i>\n|         \"2\"\n|     <i>\n|       <p>\n|         <b>\n|           \"3\"\n|         \"4\"\n"),
+  ("<a><div><style></style><address><a>", "", "", true, "| <html>\n|   <head>\n|   <body>\n|     <a>\n|     <div>\n|       <a>\n|         <style>\n|       <address>\n|         <a>\n|         <a>\n"),
+  ("<!doctype html><p>foo<address>bar<p>baz", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"foo\"\n|     <address>\n|       \"bar\"\n|       <p>\n|         \"baz\"\n"),
+  ("<!doctype html><address><p>foo</address>bar", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <address>\n|       <p>\n|         \"foo\"\n|     \"bar\"\n"),
+  ("<!doctype html><p>foo<article>bar<p>baz", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"foo\"\n|     <article>\n|       \"bar\"\n|       <p>\n|         \"baz\"\n"),
+  ("<!doctype html><article><p>foo</article>bar", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <article>\n|       <p>\n|         \"foo\"\n|     \"bar\"\n"),
+  ("<!doctype html><p>foo<aside>bar<p>baz", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"foo\"\n|     <aside>\n|       \"bar\"\n|       <p>\n|         \"baz\"\n"),
+  ("<!doctype html><aside><p>foo</aside>bar", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <aside>\n|       <p>\n|         \"foo\"\n|     \"bar\"\n"),
+  ("<!doctype html><p>foo<blockquote>bar<p>baz", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"foo\"\n|     <blockquote>\n|       \"bar\"\n|       <p>\n|         \"baz\"\n"),
+  ("<!doctype html><blockquote><p>foo</blockquote>bar", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <blockquote>\n|       <p>\n|         \"foo\"\n|     \"bar\"\n"),
+  ("<!doctype html><p>foo<center>bar<p>baz", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"foo\"\n|     <center>\n|       \"bar\"\n|       <p>\n|         \"baz\"\n"),
+  ("<!doctype html><center><p>foo</center>bar", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <center>\n|       <p>\n|         \"foo\"\n|     \"bar\"\n"),
+  ("<!doctype html><p>foo<details>bar<p>baz", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"foo\"\n|     <details>\n|       \"bar\"\n|       <p>\n|         \"baz\"\n"),
+  ("<!doctype html><details><p>foo</details>bar", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <details>\n|       <p>\n|         \"foo\"\n|     \"bar\"\n"),
+  ("<!doctype html><p>foo<dialog>bar<p>baz", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"foo\"\n|     <dialog>\n|       \"bar\"\n|       <p>\n|         \"baz\"\n"),
+  ("<!doctype html><dialog><p>foo</dialog>bar", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <dialog>\n|       <p>\n|         \"foo\"\n|     \"bar\"\n"),
+  ("<!doctype html><p>foo<dir>bar<p>baz", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"foo\"\n|     <dir>\n|       \"bar\"\n|       <p>\n|         \"baz\"\n"),
+  ("<!doctype html><dir><p>foo</dir>bar", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <dir>\n|       <p>\n|         \"foo\"\n|     \"bar\"\n"),
+  ("<!doctype html><p>foo<div>bar<p>baz", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"foo\"\n|     <div>\n|       \"bar\"\n|       <p>\n|         \"baz\"\n"),
+  ("<!doctype html><div><p>foo</div>bar", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <div>\n|       <p>\n|         \"foo\"\n|     \"bar\"\n"),
+  ("<!doctype html><p>foo<dl>bar<p>baz", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"foo\"\n|     <dl>\n|       \"bar\"\n|       <p>\n|         \"baz\"\n"),
+  ("<!doctype html><dl><p>foo</dl>bar", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <dl>\n|       <p>\n|         \"foo\"\n|     \"bar\"\n"),
+  ("<!doctype html><p>foo<fieldset>bar<p>baz", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"foo\"\n|     <fieldset>\n|       \"bar\"\n|       <p>\n|         \"baz\"\n"),
+  ("<!doctype html><fieldset><p>foo</fieldset>bar", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <fieldset>\n|       <p>\n|         \"foo\"\n|     \"bar\"\n"),
+  ("<!doctype html><p>foo<figcaption>bar<p>baz", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"foo\"\n|     <figcaption>\n|       \"bar\"\n|       <p>\n|         \"baz\"\n"),
+  ("<!doctype html><figcaption><p>foo</figcaption>bar", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <figcaption>\n|       <p>\n|         \"foo\"\n|     \"bar\"\n"),
+  ("<!doctype html><p>foo<figure>bar<p>baz", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"foo\"\n|     <figure>\n|       \"bar\"\n|       <p>\n|         \"baz\"\n"),
+  ("<!doctype html><figure><p>foo</figure>bar", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <figure>\n|       <p>\n|         \"foo\"\n|     \"bar\"\n"),
+  ("<!doctype html><p>foo<footer>bar<p>baz", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"foo\"\n|     <footer>\n|       \"bar\"\n|       <p>\n|         \"baz\"\n"),
+  ("<!doctype html><footer><p>foo</footer>bar", "", "", true, "| <!DOCTYPE html>\n| <html>\n|   <head>\n|   <body>\n|     <footer>\n|       <p>\n|         \"foo\"\n|     \"bar\"\n"),
+]
+
+const COUNT: Int = 3114
+
+/// (input, Go's Render of html.Parse(input), or "ERR " and its error)
+const RENDERS: List[(Str, Str)] = [
+  ("", "<html><head></head><body></body></html>"),
+  ("x", "<html><head></head><body>x</body></html>"),
+  (" ", "<html><head></head><body></body></html>"),
+  ("<!DOCTYPE html>", "<!DOCTYPE html><html><head></head><body></body></html>"),
+  ("<!doctype html><html><head><title>t</title></head><body>b</body></html>", "<!DOCTYPE html><html><head><title>t</title></head><body>b</body></html>"),
+  ("<p>a<p>b", "<html><head></head><body><p>a</p><p>b</p></body></html>"),
+  ("<p>a<div>b</div>c", "<html><head></head><body><p>a</p><div>b</div>c</body></html>"),
+  ("<b>1<p>2</b>3</p>", "<html><head></head><body><b>1</b><p><b>2</b>3</p></body></html>"),
+  ("<a>1<a>2</a>3</a>", "<html><head></head><body><a>1</a><a>2</a>3</body></html>"),
+  ("<b><i>1</b>2</i>3", "<html><head></head><body><b><i>1</i></b><i>2</i>3</body></html>"),
+  ("<b><b><b><b>x", "<html><head></head><body><b><b><b><b>x</b></b></b></b></body></html>"),
+  ("<nobr>1<nobr>2", "<html><head></head><body><nobr>1</nobr><nobr>2</nobr></body></html>"),
+  ("<table><tr><td>1<td>2<tr><td>3</table>", "<html><head></head><body><table><tbody><tr><td>1</td><td>2</td></tr><tr><td>3</td></tr></tbody></table></body></html>"),
+  ("<table><b>x<tr><td>y</table>", "<html><head></head><body><b>x</b><table><tbody><tr><td>y</td></tr></tbody></table></body></html>"),
+  ("<table>text<tr>x</table>", "<html><head></head><body>textx<table><tbody><tr></tr></tbody></table></body></html>"),
+  ("<table><caption>c<td>x</table>", "<html><head></head><body><table><caption>c</caption><tbody><tr><td>x</td></tr></tbody></table></body></html>"),
+  ("<table><colgroup><col><col></colgroup><tbody><tr><th>h</th></tr></tbody></table>", "<html><head></head><body><table><colgroup><col/><col/></colgroup><tbody><tr><th>h</th></tr></tbody></table></body></html>"),
+  ("<table><form><input type=hidden><input></table>", "<html><head></head><body><input/><table><form></form><input type=\"hidden\"/></table></body></html>"),
+  ("<ul><li>1<li>2<ul><li>3</ul><li>4</ul>", "<html><head></head><body><ul><li>1</li><li>2<ul><li>3</li></ul></li><li>4</li></ul></body></html>"),
+  ("<dl><dt>a<dd>b<dt>c<dd>d</dl>", "<html><head></head><body><dl><dt>a</dt><dd>b</dd><dt>c</dt><dd>d</dd></dl></body></html>"),
+  ("<select><option>1<option>2<optgroup><option>3</select>", "<html><head></head><body><select><option>1</option><option>2</option><optgroup><option>3</option></optgroup></select></body></html>"),
+  ("<select><select><option>x", "<html><head></head><body><select></select><option>x</option></body></html>"),
+  ("<form><form><p>x</form>", "<html><head></head><body><form><p>x</p></form></body></html>"),
+  ("<h1>a<h2>b</h2>c</h1>", "<html><head></head><body><h1>a</h1><h2>b</h2>c</body></html>"),
+  ("<pre>\nx\n</pre><pre>\n\nx", "<html><head></head><body><pre>x\n</pre><pre>\n\nx</pre></body></html>"),
+  ("<textarea>\nx</textarea>", "<html><head></head><body><textarea>x</textarea></body></html>"),
+  ("<listing>\r\nx", "<html><head></head><body><listing>x</listing></body></html>"),
+  ("<svg><circle r=1 /><foreignObject><p>x</foreignObject></svg>", "<html><head></head><body><svg><circle r=\"1\"></circle><foreignObject><p>x</p></foreignObject></svg></body></html>"),
+  ("<svg viewbox=0><clippath><path d=1></clippath></svg>", "<html><head></head><body><svg viewBox=\"0\"><clipPath><path d=\"1\"></path></clipPath></svg></body></html>"),
+  ("<math><mi>x</mi><mtext><b>y</b></mtext><annotation-xml encoding=text/html><p>z</annotation-xml></math>", "<html><head></head><body><math><mi>x</mi><mtext><b>y</b></mtext><annotation-xml encoding=\"text/html\"><p>z</p></annotation-xml></math></body></html>"),
+  ("<svg><title><b>x</b></title></svg>", "<html><head></head><body><svg><title><b>x</b></title></svg></body></html>"),
+  ("<svg><p>x</p></svg>", "<html><head></head><body><svg></svg><p>x</p></body></html>"),
+  ("<svg><font color=red>x</font></svg>", "<html><head></head><body><svg></svg><font color=\"red\">x</font></body></html>"),
+  ("<math><svg><desc><p>x", "<html><head></head><body><math><svg><desc></desc></svg></math><p>x</p></body></html>"),
+  ("<svg xlink:href=a xml:lang=b xmlns:xlink=c>", "<html><head></head><body><svg xlink:href=\"a\" xml:lang=\"b\" xmlns:xlink=\"c\"></svg></body></html>"),
+  ("<frameset><frame><frameset><frame></frameset></frameset>", "<html><head></head><frameset><frame></frame><frameset><frame></frame></frameset></frameset></html>"),
+  ("<html><frameset></frameset></html>x", "<html><head></head><frameset></frameset></html>"),
+  ("<head><frameset>", "<html><head></head><frameset></frameset></html>"),
+  ("<body><frameset>", "<html><head></head><body></body></html>"),
+  ("<p>a<frameset>", "<html><head></head><body><p>a</p></body></html>"),
+  ("<template><tr><td>x</template>", "<html><head><template><tr><td>x</td></tr></template></head><body></body></html>"),
+  ("<template><template><p>x</template></template>", "<html><head><template><template><p>x</p></template></template></head><body></body></html>"),
+  ("<template></template><template>", "<html><head><template></template><template></template></head><body></body></html>"),
+  ("<table><template><td>x</template></table>", "<html><head></head><body><table><template><td>x</td></template></table></body></html>"),
+  ("<noscript><p>x</noscript>", "<html><head><noscript><p>x</noscript></head><body></body></html>"),
+  ("<head><noscript><p>x</noscript>", "<html><head><noscript><p>x</noscript></head><body></body></html>"),
+  ("<iframe><p>x</iframe>", "<html><head></head><body><iframe><p>x</iframe></body></html>"),
+  ("<xmp><b></xmp>", "<html><head></head><body><xmp><b></xmp></body></html>"),
+]
+
+const RENDER_COUNT: Int = 906
+
+/// (s, Go's html.EscapeString)
+const ESCAPES: List[(Str, Str)] = [
+  ("'\n\t \n<", "&#39;\n\t \n&lt;"),
+  ("é\r\r", "é&#13;&#13;"),
+  ("\r'", "&#13;&#39;"),
+  ("&日 <&amp;\t", "&amp;日 &lt;&amp;amp;\t"),
+  (" '\"", " &#39;&#34;"),
+  ("a é\"\"", "a é&#34;&#34;"),
+  ("&日é a", "&amp;日é a"),
+  ("日\n&amp;'", "日\n&amp;amp;&#39;"),
+  ("><", "&gt;&lt;"),
+  ("'&", "&#39;&amp;"),
+  ("\n&\t\"", "\n&amp;\t&#34;"),
+  ("ééé<\r", "ééé&lt;&#13;"),
+  ("'&a", "&#39;&amp;a"),
+  ("é\né\r", "é\né&#13;"),
+  ("&\n&amp;&a", "&amp;\n&amp;amp;&amp;a"),
+  ("> ", "&gt; "),
+  ("\t'a>>>", "\t&#39;a&gt;&gt;&gt;"),
+  ("&\r\n ", "&amp;&#13;\n "),
+  ("\r", "&#13;"),
+  ("\n\n", "\n\n"),
+  ("日a&amp;a", "日a&amp;amp;a"),
+  ("<\ré", "&lt;&#13;é"),
+  ("", ""),
+  ("", ""),
+  ("éa\r\t", "éa&#13;\t"),
+  ("'a\t< ", "&#39;a\t&lt; "),
+  ("&amp;a<&\r", "&amp;amp;a&lt;&amp;&#13;"),
+  ("<", "&lt;"),
+  (">", "&gt;"),
+  ("éé\n", "éé\n"),
+  ("'\n'<", "&#39;\n&#39;&lt;"),
+  ("\n'\"&amp;\t&amp;", "\n&#39;&#34;&amp;amp;\t&amp;amp;"),
+  ("\"é\né\n", "&#34;é\né\n"),
+  ("\t&amp; \"é&amp;", "\t&amp;amp; &#34;é&amp;amp;"),
+  ("&amp;&", "&amp;amp;&amp;"),
+  ("&&<\t<", "&amp;&amp;&lt;\t&lt;"),
+  ("<", "&lt;"),
+  ("\n<", "\n&lt;"),
+  ("\"\n日日\n ", "&#34;\n日日\n "),
+  ("日日", "日日"),
+  ("", ""),
+  ("\t\réa", "\t&#13;éa"),
+  ("\t日\t\ta", "\t日\t\ta"),
+  ("\n<a&日", "\n&lt;a&amp;日"),
+  ("", ""),
+  ("\t", "\t"),
+  ("\na", "\na"),
+  ("\"", "&#34;"),
+]
+
+/// The escapes of the oracle's q: backslash, quote, dollar, newline, carriage return, tab, controls as \\xHH.
+fn q(s: Str) -> Str {
+  var o = BytesBuilder.new()
+  let hex = "0123456789abcdef".bytes()
+  for c in s.bytes() {
+    if c == 92 {
+      o.write_str("\\\\")
+    } else if c == 10 {
+      o.write_str("\\n")
+    } else if c == 13 {
+      o.write_str("\\r")
+    } else if c == 9 {
+      o.write_str("\\t")
+    } else if c == 34 {
+      o.write_str("\\\"")
+    } else if c == 36 {
+      o.write_str("\\$")
+    } else if c < 32 || c == 127 {
+      o.write_str("\\x")
+      o.write_byte(hex[Int(c) / 16])
+      o.write_byte(hex[Int(c) % 16])
+    } else {
+      o.write_byte(c)
+    }
+  }
+  o.freeze().to_str_lossy()
+}
+
+fn dump_case(input: Str, ns: Str, tag: Str, scripting: Bool) -> Str {
+  let r = if tag == "" {
+    htmlparse.parse_with(input, scripting)
+  } else if scripting {
+    htmlparse.parse_fragment(input, ns, tag)
+  } else {
+    htmlparse.parse_fragment_with(input, ns, tag, scripting)
+  }
+  match r {
+    Ok(t) => t.dump()
+    Err(e) => "ERR ${e.display()}"
+  }
+}

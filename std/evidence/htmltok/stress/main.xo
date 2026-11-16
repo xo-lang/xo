@@ -1,0 +1,413 @@
+// htmltok stress program (decision 0616 section 2): 64 tasks run std/htmltok's Tokenizer in each
+// mode and its token API against golang.org/x/net/html's Tokenizer (the
+// corpus .../corpus/htmltok),
+// for a fixed time. A background task samples the resident set every 10 s
+// (Linux /proc/self/status). Pass: no mismatch, no fault, and the resident
+// set at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/htmltok
+
+/// One pass over the token streams and API cases from offset start; the
+/// operations done, or the first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..CASES.len() {
+    let (input, mode, max_buf, want) = CASES[(start + k) % CASES.len()]
+    let (got, _) = render(input, mode, max_buf)
+    if got != want {
+      return Err("tokens of ${q(input)} mode ${mode} max ${max_buf}")
+    }
+  }
+  for k in 0..API.len() {
+    let (input, mode, want) = API[(start + k) % API.len()]
+    if render_api(input, mode) != want {
+      return Err("api ${q(input)} mode ${mode}")
+    }
+  }
+  CASES.len() + API.len()
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("htmltok stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+/// (input, mode, max buffer, Go's token stream)
+const CASES: List[(Str, Int, Int, Str)] = [
+  ("", 0, 0, "E EOF\n"),
+  ("", 1, 0, "E EOF\n"),
+  ("", 2, 0, "E EOF\n"),
+  ("", 3, 0, "E EOF\n"),
+  ("", 4, 0, "E EOF\n"),
+  ("", 5, 0, "E EOF\n"),
+  ("", 6, 0, "E EOF\n"),
+  ("", 0, 1, "E EOF\n"),
+  ("", 0, 2, "E EOF\n"),
+  ("", 0, 3, "E EOF\n"),
+  ("", 0, 5, "E EOF\n"),
+  ("", 0, 8, "E EOF\n"),
+  ("foo  bar", 0, 0, "Text foo  bar <foo  bar>\nE EOF\n"),
+  ("foo  bar", 1, 0, "Text foo  bar <foo  bar>\nE EOF\n"),
+  ("foo  bar", 2, 0, "Text foo  bar <foo  bar>\nE EOF\n"),
+  ("foo  bar", 3, 0, "Text foo  bar <foo  bar>\nE EOF\n"),
+  ("foo  bar", 4, 0, "Text foo  bar <foo  bar>\nE EOF\n"),
+  ("foo  bar", 5, 0, "Text foo  bar <foo  bar>\nE EOF\n"),
+  ("foo  bar", 6, 0, "Text foo  bar <foo  bar>\nE EOF\n"),
+  ("foo  bar", 0, 1, "Text f <f>\nE max buffer exceeded\n"),
+  ("foo  bar", 0, 2, "Text fo <fo>\nE max buffer exceeded\n"),
+  ("foo  bar", 0, 3, "Text foo <foo>\nE max buffer exceeded\n"),
+  ("foo  bar", 0, 5, "Text foo   <foo  >\nE max buffer exceeded\n"),
+  ("foo  bar", 0, 8, "Text foo  bar <foo  bar>\nE max buffer exceeded\n"),
+  ("one &lt; two", 0, 0, "Text one < two <one &lt; two>\nE EOF\n"),
+  ("one &lt; two", 1, 0, "Text one < two <one &lt; two>\nE EOF\n"),
+  ("one &lt; two", 2, 0, "Text one < two <one &lt; two>\nE EOF\n"),
+  ("one &lt; two", 3, 0, "Text one < two <one &lt; two>\nE EOF\n"),
+  ("one &lt; two", 4, 0, "Text one &lt; two <one &lt; two>\nE EOF\n"),
+  ("one &lt; two", 5, 0, "Text one &lt; two <one &lt; two>\nE EOF\n"),
+  ("one &lt; two", 6, 0, "Text one &lt; two <one &lt; two>\nE EOF\n"),
+  ("one &lt; two", 0, 1, "Text o <o>\nE max buffer exceeded\n"),
+  ("one &lt; two", 0, 2, "Text on <on>\nE max buffer exceeded\n"),
+  ("one &lt; two", 0, 3, "Text one <one>\nE max buffer exceeded\n"),
+  ("one &lt; two", 0, 5, "Text one & <one &>\nE max buffer exceeded\n"),
+  ("one &lt; two", 0, 8, "Text one < <one &lt;>\nE max buffer exceeded\n"),
+  ("<a>b<c/>d</e>", 0, 0, "StartTag a <<a>>\nText b <b>\nSelfClosingTag c <<c/>>\nText d <d>\nEndTag e <</e>>\nE EOF\n"),
+  ("<a>b<c/>d</e>", 1, 0, "StartTag a <<a>>\nText b <b>\nSelfClosingTag c <<c/>>\nText d <d>\nEndTag e <</e>>\nE EOF\n"),
+  ("<a>b<c/>d</e>", 2, 0, "Text <a>b<c/>d</e> <<a>b<c/>d</e>>\nE EOF\n"),
+  ("<a>b<c/>d</e>", 3, 0, "Text <a>b<c/>d</e> <<a>b<c/>d</e>>\nE EOF\n"),
+  ("<a>b<c/>d</e>", 4, 0, "Text <a>b<c/>d</e> <<a>b<c/>d</e>>\nE EOF\n"),
+  ("<a>b<c/>d</e>", 5, 0, "Text <a>b<c/>d</e> <<a>b<c/>d</e>>\nE EOF\n"),
+  ("<a>b<c/>d</e>", 6, 0, "Text <a>b<c/>d</e> <<a>b<c/>d</e>>\nE EOF\n"),
+  ("<a>b<c/>d</e>", 0, 1, "Text < <<>\nE max buffer exceeded\n"),
+  ("<a>b<c/>d</e>", 0, 2, "Text <a <<a>\nE max buffer exceeded\n"),
+  ("<a>b<c/>d</e>", 0, 3, "E max buffer exceeded\n"),
+  ("<a>b<c/>d</e>", 0, 5, "StartTag a <<a>>\nText b <b>\nSelfClosingTag c <<c/>>\nText d <d>\nEndTag e <</e>>\nE EOF\n"),
+  ("<a>b<c/>d</e>", 0, 8, "StartTag a <<a>>\nText b <b>\nSelfClosingTag c <<c/>>\nText d <d>\nEndTag e <</e>>\nE EOF\n"),
+  ("<", 0, 0, "Text < <<>\nE EOF\n"),
+  ("<", 1, 0, "Text < <<>\nE EOF\n"),
+  ("<", 2, 0, "Text < <<>\nE EOF\n"),
+  ("<", 3, 0, "Text < <<>\nE EOF\n"),
+  ("<", 4, 0, "Text < <<>\nE EOF\n"),
+  ("<", 5, 0, "Text < <<>\nE EOF\n"),
+  ("<", 6, 0, "Text < <<>\nE EOF\n"),
+  ("<", 0, 1, "Text < <<>\nE max buffer exceeded\n"),
+  ("<", 0, 2, "Text < <<>\nE EOF\n"),
+  ("<", 0, 3, "Text < <<>\nE EOF\n"),
+  ("<", 0, 5, "Text < <<>\nE EOF\n"),
+  ("<", 0, 8, "Text < <<>\nE EOF\n"),
+  ("</", 0, 0, "Text </ <</>\nE EOF\n"),
+  ("</", 1, 0, "Text </ <</>\nE EOF\n"),
+  ("</", 2, 0, "Text </ <</>\nE EOF\n"),
+  ("</", 3, 0, "Text </ <</>\nE EOF\n"),
+]
+
+const COUNT: Int = 3252
+
+/// (input, Go's Buffered after each Next, joined by |)
+const BUFFERED: List[(Str, Str)] = [
+  ("", ""),
+  ("foo  bar", ""),
+  ("one &lt; two", ""),
+  ("<a>b<c/>d</e>", "b<c/>d</e>|<c/>d</e>|d</e>|</e>|"),
+  ("<", ""),
+  ("</", ""),
+  ("</>", ""),
+  ("a</>b", "</>b|b|"),
+  ("</ >", ""),
+  ("</.", ""),
+  ("</.>", ""),
+  ("<!", ""),
+  ("<!>", ""),
+  ("<!--", ""),
+  ("<!-->", ""),
+  ("<!--->", ""),
+  ("<!---->", ""),
+  ("<!--x-->", ""),
+  ("<!-- a -- b -->", ""),
+  ("<!--a--!>", ""),
+  ("<!--a--!b-->", ""),
+  ("<!--a---->", ""),
+  ("<!--<!--a-->-->", "-->|"),
+  ("<!--a-", ""),
+  ("<!--a--", ""),
+  ("<!--a--!", ""),
+  ("<!DOCTYPE html>", ""),
+  ("<!doctype html>", ""),
+  ("<!DOCTYPE", ""),
+  ("<!DOCTYP", ""),
+  ("<!DOCTYPE  x y z >", ""),
+  ("<!DOCTYPEhtml>", ""),
+  ("<!x>", ""),
+  ("<?xml version=\"1.0\"?>", ""),
+  ("<?x", ""),
+  ("<![CDATA[x]]>", ""),
+  ("<![CDATA[x]]", ""),
+  ("<![CDATA[", ""),
+  ("<![CDAT", ""),
+  ("<![CDATA[a]]b]]>", ""),
+  ("<![CDATA[a\x00b]]>", ""),
+  ("<a b=c>", ""),
+  ("<a b='c'>", ""),
+  ("<a b=\"c\">", ""),
+  ("<a b>", ""),
+  ("<a b=>", ""),
+  ("<a =b>", ""),
+  ("<a b c d>", ""),
+  ("<a b=c d=e>", ""),
+  ("<a b=c/>", ""),
+  ("<a b='c'/>", ""),
+  ("<a b=c />", ""),
+  ("<a/>", ""),
+  ("<a />", ""),
+  ("<a/ b>", ""),
+  ("<a b=/>", ""),
+  ("<a B=1 b=2>", ""),
+  ("<a b=&lt;&amp;&quot;&#65;&#x42;&notanentity;&copy>", ""),
+  ("<a b=&amp=c>", ""),
+  ("<a b=&ampc>", ""),
+  ("<a b=&amp;c>", ""),
+  ("<a b=\"x\ny\r\nz\rw\">", ""),
+  ("<a\x00b c\x00d=e\x00f>", ""),
+  ("<A\tB\nC>", ""),
+]
+
+/// (input, mode, Go's stream through Token.String, Text, TagName and TagAttr)
+const API: List[(Str, Int, Str)] = [
+  ("", 0, "E\n"),
+  ("", 1, "E\n"),
+  ("foo  bar", 0, "Text S=foo  bar T=foo  bar|\nE\n"),
+  ("foo  bar", 1, "Text S=foo  bar T=foo  bar|\nE\n"),
+  ("one &lt; two", 0, "Text S=one &lt; two T=one < two|\nE\n"),
+  ("one &lt; two", 1, "Text S=one &lt; two T=one < two|\nE\n"),
+  ("<a>b<c/>d</e>", 0, "StartTag S=<a> N=a,false X==,false N2=,false\nText S=b T=b|\nSelfClosingTag S=<c/> N=c,false X==,false N2=,false\nText S=d T=d|\nEndTag S=</e> N=e,false X==,false N2=,false\nE\n"),
+  ("<a>b<c/>d</e>", 1, "StartTag S=<a> N=a,false X==,false N2=,false\nText S=b T=b|\nSelfClosingTag S=<c/> N=c,false X==,false N2=,false\nText S=d T=d|\nEndTag S=</e> N=e,false X==,false N2=,false\nE\n"),
+  ("<", 0, "Text S=&lt; T=<|\nE\n"),
+  ("<", 1, "Text S=&lt; T=<|\nE\n"),
+  ("</", 0, "Text S=&lt;/ T=</|\nE\n"),
+  ("</", 1, "Text S=&lt;/ T=</|\nE\n"),
+  ("</>", 0, "Comment S=<!----> T=|\nE\n"),
+  ("</>", 1, "Comment S=<!----> T=|\nE\n"),
+  ("a</>b", 0, "Text S=a T=a|\nComment S=<!----> T=|\nText S=b T=b|\nE\n"),
+  ("a</>b", 1, "Text S=a T=a|\nComment S=<!----> T=|\nText S=b T=b|\nE\n"),
+  ("</ >", 0, "Comment S=<!-- --> T= |\nE\n"),
+  ("</ >", 1, "Comment S=<!-- --> T= |\nE\n"),
+  ("</.", 0, "Comment S=<!--.--> T=.|\nE\n"),
+  ("</.", 1, "Comment S=<!--.--> T=.|\nE\n"),
+  ("</.>", 0, "Comment S=<!--.--> T=.|\nE\n"),
+  ("</.>", 1, "Comment S=<!--.--> T=.|\nE\n"),
+  ("<!", 0, "Comment S=<!----> T=|\nE\n"),
+  ("<!", 1, "Comment S=<!----> T=|\nE\n"),
+  ("<!>", 0, "Comment S=<!----> T=|\nE\n"),
+  ("<!>", 1, "Comment S=<!----> T=|\nE\n"),
+  ("<!--", 0, "Comment S=<!----> T=|\nE\n"),
+  ("<!--", 1, "Comment S=<!----> T=|\nE\n"),
+  ("<!-->", 0, "Comment S=<!----> T=|\nE\n"),
+  ("<!-->", 1, "Comment S=<!----> T=|\nE\n"),
+  ("<!--->", 0, "Comment S=<!----> T=|\nE\n"),
+  ("<!--->", 1, "Comment S=<!----> T=|\nE\n"),
+  ("<!---->", 0, "Comment S=<!----> T=|\nE\n"),
+  ("<!---->", 1, "Comment S=<!----> T=|\nE\n"),
+  ("<!--x-->", 0, "Comment S=<!--x--> T=x|\nE\n"),
+  ("<!--x-->", 1, "Comment S=<!--x--> T=x|\nE\n"),
+  ("<!-- a -- b -->", 0, "Comment S=<!-- a -- b --> T= a -- b |\nE\n"),
+  ("<!-- a -- b -->", 1, "Comment S=<!-- a -- b --> T= a -- b |\nE\n"),
+  ("<!--a--!>", 0, "Comment S=<!--a--> T=a|\nE\n"),
+  ("<!--a--!>", 1, "Comment S=<!--a--> T=a|\nE\n"),
+  ("<!--a--!b-->", 0, "Comment S=<!--a--!b--> T=a--!b|\nE\n"),
+  ("<!--a--!b-->", 1, "Comment S=<!--a--!b--> T=a--!b|\nE\n"),
+  ("<!--a---->", 0, "Comment S=<!--a----> T=a--|\nE\n"),
+  ("<!--a---->", 1, "Comment S=<!--a----> T=a--|\nE\n"),
+  ("<!--<!--a-->-->", 0, "Comment S=<!--<!--a--> T=<!--a|\nText S=--&gt; T=-->|\nE\n"),
+  ("<!--<!--a-->-->", 1, "Comment S=<!--<!--a--> T=<!--a|\nText S=--&gt; T=-->|\nE\n"),
+  ("<!--a-", 0, "Comment S=<!--a--> T=a|\nE\n"),
+  ("<!--a-", 1, "Comment S=<!--a--> T=a|\nE\n"),
+  ("<!--a--", 0, "Comment S=<!--a--> T=a|\nE\n"),
+  ("<!--a--", 1, "Comment S=<!--a--> T=a|\nE\n"),
+  ("<!--a--!", 0, "Comment S=<!--a--> T=a|\nE\n"),
+  ("<!--a--!", 1, "Comment S=<!--a--> T=a|\nE\n"),
+  ("<!DOCTYPE html>", 0, "Doctype S=<!DOCTYPE html> T=html|\nE\n"),
+  ("<!DOCTYPE html>", 1, "Doctype S=<!DOCTYPE html> T=html|\nE\n"),
+  ("<!doctype html>", 0, "Doctype S=<!DOCTYPE html> T=html|\nE\n"),
+  ("<!doctype html>", 1, "Doctype S=<!DOCTYPE html> T=html|\nE\n"),
+  ("<!DOCTYPE", 0, "Doctype S=<!DOCTYPE > T=|\nE\n"),
+  ("<!DOCTYPE", 1, "Doctype S=<!DOCTYPE > T=|\nE\n"),
+  ("<!DOCTYP", 0, "Comment S=<!--DOCTYP--> T=DOCTYP|\nE\n"),
+  ("<!DOCTYP", 1, "Comment S=<!--DOCTYP--> T=DOCTYP|\nE\n"),
+  ("<!DOCTYPE  x y z >", 0, "Doctype S=<!DOCTYPE x y z > T=x y z |\nE\n"),
+  ("<!DOCTYPE  x y z >", 1, "Doctype S=<!DOCTYPE x y z > T=x y z |\nE\n"),
+  ("<!DOCTYPEhtml>", 0, "Doctype S=<!DOCTYPE html> T=html|\nE\n"),
+  ("<!DOCTYPEhtml>", 1, "Doctype S=<!DOCTYPE html> T=html|\nE\n"),
+]
+
+const API_COUNT: Int = 596
+
+fn type_name(t: htmltok.TokenType) -> Str {
+  match t {
+    Error => "Error"
+    Text => "Text"
+    StartTag => "StartTag"
+    EndTag => "EndTag"
+    SelfClosingTag => "SelfClosingTag"
+    Comment => "Comment"
+    Doctype => "Doctype"
+  }
+}
+
+/// The escapes of the oracle's q: backslash, quote, dollar, newline, carriage return, tab, controls as \xHH.
+fn q(s: Str) -> Str {
+  var o = BytesBuilder.new()
+  let hex = "0123456789abcdef".bytes()
+  for c in s.bytes() {
+    if c == 92 {
+      o.write_str("\\\\")
+    } else if c == 10 {
+      o.write_str("\\n")
+    } else if c == 13 {
+      o.write_str("\\r")
+    } else if c == 9 {
+      o.write_str("\\t")
+    } else if c == 34 {
+      o.write_str("\\\"")
+    } else if c == 36 {
+      o.write_str("\\$")
+    } else if c < 32 || c == 127 {
+      o.write_str("\\x")
+      o.write_byte(hex[Int(c) / 16])
+      o.write_byte(hex[Int(c) % 16])
+    } else {
+      o.write_byte(c)
+    }
+  }
+  o.freeze().to_str_lossy()
+}
+
+fn render(input: Str, mode: Int, max_buf: Int) -> (Str, Str) {
+  let ctx = ["", "", "title", "textarea", "script", "plaintext", "style"]
+  var z = htmltok.tokenizer_fragment(input, ctx[mode])
+  if mode == 1 {
+    z.allow_cdata(true)
+  }
+  if max_buf > 0 {
+    z.set_max_buf(max_buf)
+  }
+  var out = ""
+  var raws = ""
+  while true {
+    let tt = z.next()
+    let raw = z.raw()
+    raws += raw
+    if tt == htmltok.TokenType.Error {
+      out += "E ${z.err() ?? "?"}\n"
+      break
+    }
+    let t = z.token()
+    out += "${type_name(tt)} ${q(t.data)}"
+    for a in t.attrs {
+      out += " [${q(a.key)}=${q(a.val)}]"
+    }
+    out += " <${q(raw)}>\n"
+  }
+  (out, raws)
+}
+
+
+
+
+fn render_api(input: Str, mode: Int) -> Str {
+  let ctx = ["", "", "title", "textarea", "script", "plaintext", "style"]
+  var z = htmltok.tokenizer_fragment(input, ctx[mode])
+  var z2 = htmltok.tokenizer_fragment(input, ctx[mode])
+  if mode == 1 {
+    z.allow_cdata(true)
+    z2.allow_cdata(true)
+  }
+  var out = ""
+  while true {
+    let tt = z.next()
+    let _ = z2.next()
+    if tt == htmltok.TokenType.Error {
+      out += "E\n"
+      break
+    }
+    out += "${tt} S=${q(z2.token().display())}"
+    match tt {
+      Text | Comment | Doctype => {
+        let t1 = z.text() ?? "?"
+        let t2 = z.text() ?? "?"
+        out += " T=${q(t1)}|${q(t2)}"
+      }
+      _ => {
+        var (name, more) = z.tag_name()
+        out += " N=${q(name)},${more}"
+        while more {
+          let (k, v, m) = z.tag_attr()
+          more = m
+          out += " A=${q(k)}=${q(v)},${m}"
+        }
+        let (k, v, m) = z.tag_attr()
+        let (n2, m2) = z.tag_name()
+        out += " X=${q(k)}=${q(v)},${m} N2=${q(n2)},${m2}"
+      }
+    }
+    out += "\n"
+  }
+  out
+}

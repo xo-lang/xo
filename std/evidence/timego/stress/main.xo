@@ -1,0 +1,238 @@
+// timego stress program (decision 0616 section 2): 64 tasks run std/timego's format and parse against
+// Go's Time.Format and Time.Parse (the corpus .../corpus/timego),
+// for a fixed time. A background task samples the resident set every 10 s
+// (Linux /proc/self/status). Pass: no mismatch, no fault, and the resident
+// set at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/time
+use std/timego
+
+/// One pass over the formats and parses from offset start; the operations
+/// done, or the first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..FORMATS.len() {
+    let (layout, secs, nanos, off, want) = FORMATS[(start + k) % FORMATS.len()]
+    let got = timego.format(Time.from_unix(secs) + Duration.from_nanos(nanos), zone_for(off), layout)
+    if got != want {
+      return Err("format ${layout} ${secs}: got ${got} want ${want}")
+    }
+  }
+  for k in 0..PARSES.len() {
+    let (layout, text, want, _) = PARSES[(start + k) % PARSES.len()]
+    let got = match timego.parse(text, layout, time.utc()) {
+      Ok(t) => "ok ${t.unix() * 1000000000 + time.civil(t, time.utc()).time.nanos}"
+      Err(e) => "err ${timego.go_text(e)}"
+    }
+    let parts = want.split(" ")
+    let w = if parts[0] == "ok" { "ok ${parts[1]}" } else if parts[0] == "range" { if got.starts_with("err") { got } else { "err" } } else { want }
+    if got != w {
+      return Err("parse ${layout} ${text}: got ${got} want ${w}")
+    }
+  }
+  FORMATS.len() + PARSES.len()
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("timego stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+/// (Go layout, Unix seconds, nanoseconds, zone offset in seconds, what Go's Format prints)
+const FORMATS: List[(Str, Int, Int, Int, Str)] = [
+  ("-07:00", 1492190163, 359206467, 45900, "+12:45"),
+  ("-07:00", 1332047779, 670098790, 45900, "+12:45"),
+  ("-07:00", 2984126553, 561392831, 0, "+00:00"),
+  ("-07:00", 1723839243, 685768695, -18000, "-05:00"),
+  ("-07:00", 3545696975, 678284966, 0, "+00:00"),
+  ("-07:00", 3081476205, 68192867, 0, "+00:00"),
+  ("-07:00", 2705316124, 672502453, 0, "+00:00"),
+  ("-07:00", 1170065073, 337931965, -18000, "-05:00"),
+  ("-07:00", 2919038611, 426869772, 19800, "+05:30"),
+  ("-07:00", 1995922952, 319619654, 19800, "+05:30"),
+  ("-07:00", 150828243, 899128578, 3600, "+01:00"),
+  ("-07:00", 986809197, 424753540, 19800, "+05:30"),
+  ("-07:00", 3469136518, 458100956, 3600, "+01:00"),
+  ("-07:00", 2728650750, 360792232, -18000, "-05:00"),
+  ("-07:00", 2622239994, 240128832, 19800, "+05:30"),
+  ("-07:00", 1339002512, 385466399, 3600, "+01:00"),
+  ("-07:00", 1827837466, 259918973, 3600, "+01:00"),
+  ("-07:00", 2834074082, 367027547, 3600, "+01:00"),
+  ("-07:00", 2216965509, 865896915, 0, "+00:00"),
+  ("-07:00", 1527300226, 980758336, 3600, "+01:00"),
+  ("-07:00", 2953700472, 363350228, 0, "+00:00"),
+  ("-07:00", 1878152340, 760015848, -34200, "-09:30"),
+  ("-07:00", 2918514998, 736684593, 0, "+00:00"),
+  ("-07:00", 3199790403, 18543702, 0, "+00:00"),
+  ("Z07", 2045107978, 204364449, -34200, "-09"),
+  ("Z07", 3507427999, 760170075, 0, "Z"),
+  ("Z07", 265035671, 928133271, -34200, "-09"),
+  ("Z07", 1409198291, 469294028, 3600, "+01"),
+  ("Z07", 3129820707, 524936877, 19800, "+05"),
+  ("Z07", 3541776535, 400024477, -18000, "-05"),
+  ("Z07", 75595397, 52052747, -34200, "-09"),
+  ("Z07", 1829452546, 906139908, 3600, "+01"),
+  ("Z07", 2464428100, 794578255, 19800, "+05"),
+  ("Z07", 1372687158, 916834015, -18000, "-05"),
+  ("Z07", 1273022155, 77673284, -18000, "-05"),
+  ("Z07", 3473134186, 889371494, -18000, "-05"),
+  ("Z07", 554552869, 214909229, 19800, "+05"),
+  ("Z07", 2670254025, 412581498, 45900, "+12"),
+  ("Z07", 499110181, 543091401, 45900, "+12"),
+  ("Z07", 1100339773, 252307937, 45900, "+12"),
+  ("Z07", 3071360660, 265969712, -34200, "-09"),
+  ("Z07", 3898566190, 156391032, -18000, "-05"),
+  ("Z07", -249827940, 497420469, 3600, "+01"),
+  ("Z07", 2681263604, 779346774, 19800, "+05"),
+  ("Z07", 2446110509, 436703721, -34200, "-09"),
+  ("Z07", -171787005, 494358477, 19800, "+05"),
+  ("Z07", 1897428494, 14984455, 3600, "+01"),
+  ("Z07", 1478476855, 98818114, 45900, "+12"),
+  ("-07", 3805049192, 634027918, 45900, "+12"),
+  ("-07", 788079888, 794652254, 19800, "+05"),
+  ("-07", 210517840, 402733336, 45900, "+12"),
+  ("-07", -40491815, 210996186, -34200, "-09"),
+  ("-07", 540940739, 632558073, 3600, "+01"),
+  ("-07", 2161985953, 293943769, -34200, "-09"),
+  ("-07", 354409237, 378424285, 3600, "+01"),
+  ("-07", 866189618, 622113207, 3600, "+01"),
+  ("-07", 350529165, 674301808, -18000, "-05"),
+  ("-07", 884560029, 795722378, 45900, "+12"),
+  ("-07", 1456486412, 164751063, 19800, "+05"),
+  ("-07", 3399999372, 924745487, 45900, "+12"),
+  ("-07", 960431189, 95241434, -18000, "-05"),
+  ("-07", 3176102591, 5576986, -18000, "-05"),
+  ("-07", 1101344272, 336858205, 0, "+00"),
+  ("-07", 3011618887, 809217948, -34200, "-09"),
+]
+
+/// (Go layout, text, what Go's Parse answers: `err`, or `ok UNIX_NANOS OFFSET`, and whether the text was changed)
+const PARSES: List[(Str, Str, Str, Bool)] = [
+  ("-07:00", "+12:45", "range", false),
+  ("-07:00", "+12:45", "range", false),
+  ("-07:00", "+00:00", "range", false),
+  ("-07:00", "J05:00", "err parsing time \"J05:00\" as \"-07:00\": cannot parse \"J05:00\" as \"-07:00\"", true),
+  ("-07:00", "+00:00", "range", false),
+  ("-07:00", "+00:00", "range", false),
+  ("-07:00", "+00:00", "range", false),
+  ("-07:00", "-05:00", "range", false),
+  ("-07:00", "+05:30", "range", false),
+  ("-07:00", "+05:30", "range", false),
+  ("-07:00", "+01:00", "range", false),
+  ("-07:00", "+05:30", "range", false),
+  ("-07:00", "+01:00", "range", false),
+  ("-07:00", "-05:00", "range", false),
+  ("-07:00", "+05:3", "err parsing time \"+05:3\" as \"-07:00\": cannot parse \"+05:3\" as \"-07:00\"", true),
+  ("-07:00", "+ 01:00", "err parsing time \"+ 01:00\" as \"-07:00\": cannot parse \"+ 01:00\" as \"-07:00\"", true),
+  ("-07:00", "+01:00", "range", false),
+  ("-07:00", "+0", "err parsing time \"+0\" as \"-07:00\": cannot parse \"+0\" as \"-07:00\"", true),
+  ("-07:00", "+00:a0", "err parsing time \"+00:a0\" as \"-07:00\": cannot parse \"+00:a0\" as \"-07:00\"", true),
+  ("-07:00", "", "err parsing time \"\" as \"-07:00\": cannot parse \"\" as \"-07:00\"", true),
+  ("-07:00", "+J0:00", "err parsing time \"+J0:00\" as \"-07:00\": cannot parse \"+J0:00\" as \"-07:00\"", true),
+  ("-07:00", "-09:30", "range", false),
+  ("-07:00", "+00:00", "range", false),
+  ("-07:00", "+0 :00", "err parsing time \"+0 :00\" as \"-07:00\": cannot parse \"+0 :00\" as \"-07:00\"", true),
+  ("Z07", "-09", "range", false),
+  ("Z07", "Z", "range", false),
+  ("Z07", "-09", "range", false),
+  ("Z07", "+a01", "err parsing time \"+a01\" as \"Z07\": cannot parse \"+a01\" as \"Z07\"", true),
+  ("Z07", "+05", "range", false),
+  ("Z07", "-05", "range", false),
+  ("Z07", "-09", "range", false),
+  ("Z07", "+01", "range", false),
+  ("Z07", "+0", "err parsing time \"+0\" as \"Z07\": cannot parse \"+0\" as \"Z07\"", true),
+  ("Z07", "-05", "range", false),
+  ("Z07", "-05", "range", false),
+  ("Z07", "-05", "range", false),
+  ("Z07", "+05", "range", false),
+  ("Z07", "+", "err parsing time \"+\" as \"Z07\": cannot parse \"+\" as \"Z07\"", true),
+  ("Z07", "+1", "err parsing time \"+1\" as \"Z07\": cannot parse \"+1\" as \"Z07\"", true),
+  ("Z07", "+", "err parsing time \"+\" as \"Z07\": cannot parse \"+\" as \"Z07\"", true),
+  ("Z07", "-09", "range", false),
+  ("Z07", "-05", "range", false),
+  ("Z07", "+0n", "err parsing time \"+0n\" as \"Z07\": cannot parse \"+0n\" as \"Z07\"", true),
+  ("Z07", "+05", "range", false),
+  ("Z07", "-09", "range", false),
+  ("Z07", "+05e", "err parsing time \"+05e\": extra text: \"e\"", true),
+  ("Z07", "+01", "range", false),
+  ("Z07", "0+12", "err parsing time \"0+12\" as \"Z07\": cannot parse \"0+12\" as \"Z07\"", true),
+  ("-07", "+1", "err parsing time \"+1\" as \"-07\": cannot parse \"+1\" as \"-07\"", true),
+  ("-07", "+5", "err parsing time \"+5\" as \"-07\": cannot parse \"+5\" as \"-07\"", true),
+  ("-07", "+12", "range", false),
+  ("-07", "-09", "range", false),
+  ("-07", "-01", "range", true),
+  ("-07", "-0", "err parsing time \"-0\" as \"-07\": cannot parse \"-0\" as \"-07\"", true),
+  ("-07", "+01", "range", false),
+  ("-07", "+01", "range", false),
+  ("-07", "-0", "err parsing time \"-0\" as \"-07\": cannot parse \"-0\" as \"-07\"", true),
+  ("-07", "+42", "err parsing time \"+42\": time zone offset hour out of range", true),
+  ("-07", "+0-5", "err parsing time \"+0-5\" as \"-07\": cannot parse \"+0-5\" as \"-07\"", true),
+  ("-07", "o12", "err parsing time \"o12\" as \"-07\": cannot parse \"o12\" as \"-07\"", true),
+  ("-07", "-05", "range", false),
+  ("-07", "-05", "range", false),
+  ("-07", ".00", "err parsing time \".00\" as \"-07\": cannot parse \".00\" as \"-07\"", true),
+  ("-07", "-09", "range", false),
+]
+
+fn zone_for(off: Int) -> time.Zone {
+  if off == 0 { time.utc() } else { time.fixed("ZZ", Duration.from_secs_int(off)) }
+}

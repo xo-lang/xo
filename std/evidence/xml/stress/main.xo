@@ -1,0 +1,485 @@
+// xml stress program (decision 0616 section 2): 64 tasks run std/xml's tokens (strict, lenient, raw),
+// Reader, parse and encode, escape and error texts against Go's
+// encoding/xml (the corpus .../corpus/xml),
+// for a fixed time. A background task samples the resident set every 10 s
+// (Linux /proc/self/status). Pass: no mismatch, no fault, and the resident
+// set at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/xml
+
+/// One pass over the documents from offset start: tokens (strict, lenient,
+/// raw), a Reader of each, parse and encode; then escapes and error texts.
+/// The operations done, or the first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..DOCS.len() {
+    let (doc, strict, lenient, raw, enc) = DOCS[(start + k) % DOCS.len()]
+    if toks(xml.tokens(doc)) != strict || toks(xml.tokens(doc, strict: false)) != lenient || toks(xml.raw_tokens(doc)) != raw {
+      return Err("tokens of ${doc.quote()}")
+    }
+    if reader_toks(xml.reader(doc)) != strict || reader_toks(xml.raw_reader(doc)) != raw {
+      return Err("reader of ${doc.quote()}")
+    }
+    let got = match xml.parse(doc) {
+      Ok(e) => match e.encode(indent: "  ") {
+        Ok(s) => "ok ${s}"
+        Err(x) => "err ${x.line} ${x.msg}"
+      }
+      Err(x) => "err ${x.line} ${x.msg}"
+    }
+    if got != enc {
+      return Err("parse of ${doc.quote()}")
+    }
+  }
+  for k in 0..ESCAPES.len() {
+    let (s, want) = ESCAPES[(start + k) % ESCAPES.len()]
+    if xml.escape(s) != want {
+      return Err("escape ${s.quote()}")
+    }
+  }
+  for k in 0..ERRTEXTS.len() {
+    let (doc, want) = ERRTEXTS[(start + k) % ERRTEXTS.len()]
+    let got = match xml.tokens(doc) {
+      Ok(_) => "the decoder accepted it"
+      Err(e) => e.display()
+    }
+    if got != want {
+      return Err("error text of ${doc.quote()}")
+    }
+  }
+  6 * DOCS.len() + ESCAPES.len() + ERRTEXTS.len()
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("xml stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+/// (document, Go's tokens strict, lenient, raw; Go's parse and two-space encode)
+const DOCS: List[(Str, Str, Str, Str, Str)] = [
+  ("<_n><row><?xml version=\"1.0\"?>&lt;x&gt;]]>a & b</row><a.b-c xmlns:x=\"&#x42;\" xmlns:x=\"v\"/><![CDATA[<raw> & ]]></_n>", "err 1 unescaped ]]> not in CDATA section", "err 1 unescaped ]]> not in CDATA section", "err 1 unescaped ]]> not in CDATA section", "err 1 unescaped ]]> not in CDATA section"),
+  ("<a xmlns:ns=\"&#x42;\" xmlns:x='v'>&#233;<![CDATA[]]><?xml version=\"1.0\"?></a>", "S(:a[xmlns:ns=B,xmlns:x=v]) T(é) T() P(xml,version=\"1.0\") E(:a)", "S(:a[xmlns:ns=B,xmlns:x=v]) T(é) T() P(xml,version=\"1.0\") E(:a)", "S(:a[xmlns:ns=B,xmlns:x=v]) T(é) T() P(xml,version=\"1.0\") E(:a)", "err 0 xml: EncodeToken of ProcInst xml target only valid for xml declaration, first token encoded"),
+  ("<Root></Root>tail", "S(:Root[]) E(:Root) T(tail)", "S(:Root[]) E(:Root) T(tail)", "S(:Root[]) E(:Root) T(tail)", "err 0 xml: text outside the root element"),
+  ("<a></a>", "S(:a[]) E(:a)", "S(:a[]) E(:a)", "S(:a[]) E(:a)", "ok <a></a>"),
+  ("<a xmlns:x='a\"b'><!-- a--b --><ns:el class='é'>text<Root a=\"2\" xmlns:p=\"\"></Root><![CDATA[a]]b]]></ns:el><!----></a>\n", "err 1 invalid sequence \"--\" not allowed in comments", "err 1 invalid sequence \"--\" not allowed in comments", "err 1 invalid sequence \"--\" not allowed in comments", "err 1 invalid sequence \"--\" not allowed in comments"),
+  ("<row xmlns:ns=\"&lt;\"/>", "S(:row[xmlns:ns=<]) E(:row)", "S(:row[xmlns:ns=<]) E(:row)", "S(:row[xmlns:ns=<]) E(:row)", "ok <row xmlns:_xmlns=\"xmlns\" _xmlns:ns=\"&lt;\"></row>"),
+  ("<?xml version=\"1.1\"?><>\n  <![CDATA[]]></>", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<Root xmlns='urn:x'>&#x1F600;</Root>", "S(urn:x:Root[:xmlns=urn:x]) T(😀) E(urn:x:Root)", "S(urn:x:Root[:xmlns=urn:x]) T(😀) E(urn:x:Root)", "S(:Root[:xmlns=urn:x]) T(😀) E(:Root)", "ok <Root xmlns=\"urn:x\" xmlns=\"urn:x\">😀</Root>"),
+  ("<_n a=''><_n a=\"a&amp;b\">\n  </_n>wordé日</_n>", "S(:_n[:a=]) S(:_n[:a=a&b]) T(\n  ) E(:_n) T(wordé日) E(:_n)", "S(:_n[:a=]) S(:_n[:a=a&b]) T(\n  ) E(:_n) T(wordé日) E(:_n)", "S(:_n[:a=]) S(:_n[:a=a&b]) T(\n  ) E(:_n) T(wordé日) E(:_n)", "ok <_n a=\"\">\n  <_n a=\"a&amp;b\">\n  </_n>wordé日\n</_n>"),
+  ("<?xml version=\"1.1\"?><list><!-- c -->&lt;x&gt;]]></list>tail", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<ns:el a=v xmlns:ns='&#65;'>é日<?t", "err 1 unquoted or missing attribute value in element", "err 1 unexpected EOF", "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<p:q:r id=é a=1 />", "err 1 expected element name after <", "err 1 expected element name after <", "err 1 expected element name after <", "err 1 expected element name after <"),
+  ("<a.b-c b=\"&#x42;\"><x:y><![CDATA[x</x:y>word</a.b-c>", "err 1 unexpected EOF in CDATA section", "err 1 unexpected EOF in CDATA section", "err 1 unexpected EOF in CDATA section", "err 1 unexpected EOF in CDATA section"),
+  ("<b xmlns='1' b=\"1\">&#233;</b>", "S(1:b[:xmlns=1,:b=1]) T(é) E(1:b)", "S(1:b[:xmlns=1,:b=1]) T(é) E(1:b)", "S(:b[:xmlns=1,:b=1]) T(é) E(:b)", "ok <b xmlns=\"1\" xmlns=\"1\" b=\"1\">é</b>"),
+  ("<x:y class='a\"b' />", "S(x:y[:class=a\"b]) E(x:y)", "S(x:y[:class=a\"b]) E(x:y)", "S(x:y[:class=a\"b]) E(x:y)", "ok <y xmlns=\"x\" class=\"a&#34;b\"></y>"),
+  ("<a b xmlns:p=v></a b>", "err 1 attribute name without = in element", "err 1 invalid characters between </a and >", "err 1 attribute name without = in element", "err 1 attribute name without = in element"),
+  ("<Root b=v/>", "err 1 unquoted or missing attribute value in element", "S(:Root[:b=v]) E(:Root)", "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<?xml version=\"1.1\"?><b xmlns=\"\"><row xmlns=\"a\"b\" xmlns=&nbsp;><br></row><é a=\"v\"><?xml-stylesheet href='a'?><a.b-c xmlns:x=\"é\" b=\"http://e.com/ns\"/></é><list>&#x1F600;word</list></b>", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<a>&#233;<![CDATA[a]]b]]></a>", "S(:a[]) T(é) T(a]]b) E(:a)", "S(:a[]) T(é) T(a]]b) E(:a)", "S(:a[]) T(é) T(a]]b) E(:a)", "ok <a>éa]]b</a>"),
+  ("<list a=1/>", "err 1 unquoted or missing attribute value in element", "S(:list[:a=1]) E(:list)", "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<ns:el xml:lang=\"v\" id=\"http://e.com/ns\"><!-- c --></ns:el>", "S(ns:el[http://www.w3.org/XML/1998/namespace:lang=v,:id=http://e.com/ns]) C( c ) E(ns:el)", "S(ns:el[http://www.w3.org/XML/1998/namespace:lang=v,:id=http://e.com/ns]) C( c ) E(ns:el)", "S(ns:el[xml:lang=v,:id=http://e.com/ns]) C( c ) E(ns:el)", "ok <el xmlns=\"ns\" xml:lang=\"v\" id=\"http://e.com/ns\"><!-- c --></el>"),
+  ("<ns:el a=urn:x id='é'/>", "err 1 unquoted or missing attribute value in element", "S(ns:el[:a=urn:x,:id=é]) E(ns:el)", "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<a.b-c/>", "S(:a.b-c[]) E(:a.b-c)", "S(:a.b-c[]) E(:a.b-c)", "S(:a.b-c[]) E(:a.b-c)", "ok <a.b-c></a.b-c>"),
+  ("<x:y b=é></x:y>", "err 1 unquoted or missing attribute value in element", "S(x:y[:b=,:é=é]) E(x:y)", "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<!-- head --><Root />\n", "C( head ) S(:Root[]) E(:Root) T(\n)", "C( head ) S(:Root[]) E(:Root) T(\n)", "C( head ) S(:Root[]) E(:Root) T(\n)", "ok <Root></Root>"),
+  ("<a>\r\n<!----></a>", "S(:a[]) T(\n) C() E(:a)", "S(:a[]) T(\n) C() E(:a)", "S(:a[]) T(\n) C() E(:a)", "ok <a>\n<!----></a>"),
+  ("<é id=\"x\ty\nz\" id=urn:x />", "err 2 unquoted or missing attribute value in element", "S(:é[:id=x\ty\nz,:id=urn:x]) E(:é)", "err 2 unquoted or missing attribute value in element", "err 2 unquoted or missing attribute value in element"),
+  ("<row id=\"v\" id='é'></x>text</row>", "err 1 element <row> closed by </x>", "err 1 unexpected end element </x>", "S(:row[:id=v,:id=é]) E(:x) T(text) E(:row)", "err 1 element <row> closed by </x>"),
+  ("<é id=&#x42;></x><xml:lang id=\"é\" xmlns=\"\"><!-- a--b --><!-- a--b --></xml:lang>]]></é>", "err 1 unquoted or missing attribute value in element", "err 1 expected attribute name in element", "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><_n id=&#65;></_n>", "err 1 unquoted or missing attribute value in element", "err 1 expected attribute name in element", "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<a.b-c a=\"x\ty\nz\" a=\"\" />", "S(:a.b-c[:a=x\ty\nz,:a=]) E(:a.b-c)", "S(:a.b-c[:a=x\ty\nz,:a=]) E(:a.b-c)", "S(:a.b-c[:a=x\ty\nz,:a=]) E(:a.b-c)", "ok <a.b-c a=\"x&#x9;y&#xA;z\" a=\"\"></a.b-c>"),
+  ("<!-- head --><_n xmlns:p=\"&#x42;\"></_n>", "C( head ) S(:_n[xmlns:p=B]) E(:_n)", "C( head ) S(:_n[xmlns:p=B]) E(:_n)", "C( head ) S(:_n[xmlns:p=B]) E(:_n)", "ok <_n xmlns:_xmlns=\"xmlns\" _xmlns:p=\"B\"></_n>"),
+  ("<b><list b=\"http://e.com/ns\" id=\"é\">&lt;x&gt;</list>text<x:y xmlns:p=\"é\"></x:y></b>tail", "S(:b[]) S(:list[:b=http://e.com/ns,:id=é]) T(<x>) E(:list) T(text) S(x:y[xmlns:p=é]) E(x:y) E(:b) T(tail)", "S(:b[]) S(:list[:b=http://e.com/ns,:id=é]) T(<x>) E(:list) T(text) S(x:y[xmlns:p=é]) E(x:y) E(:b) T(tail)", "S(:b[]) S(:list[:b=http://e.com/ns,:id=é]) T(<x>) E(:list) T(text) S(x:y[xmlns:p=é]) E(x:y) E(:b) T(tail)", "err 0 xml: text outside the root element"),
+  ("<Root><_n>word</_n><![CDATA[x", "err 1 unexpected EOF in CDATA section", "err 1 unexpected EOF in CDATA section", "err 1 unexpected EOF in CDATA section", "err 1 unexpected EOF in CDATA section"),
+  ("<?xml version=\"1.0\"?>\n<é />", "P(xml,version=\"1.0\") T(\n) S(:é[]) E(:é)", "P(xml,version=\"1.0\") T(\n) S(:é[]) E(:é)", "P(xml,version=\"1.0\") T(\n) S(:é[]) E(:é)", "ok <é></é>"),
+  ("<xmlns xmlns:p=\"&lt;\" /> <x/>", "S(:xmlns[xmlns:p=<]) E(:xmlns) T( ) S(:x[]) E(:x)", "S(:xmlns[xmlns:p=<]) E(:xmlns) T( ) S(:x[]) E(:x)", "S(:xmlns[xmlns:p=<]) E(:xmlns) T( ) S(:x[]) E(:x)", "err 0 xml: more than one root element"),
+  ("<_n id=\"&#x42;\"><ns:el id=\"&lt;\" xmlns:p=\"a\"b\" /><x:y class=\"1\" id=\"&#65;\"/></_n>", "err 1 attribute name without = in element", "err 1 expected attribute name in element", "err 1 attribute name without = in element", "err 1 attribute name without = in element"),
+  ("<xml:lang />tail", "S(http://www.w3.org/XML/1998/namespace:lang[]) E(http://www.w3.org/XML/1998/namespace:lang) T(tail)", "S(http://www.w3.org/XML/1998/namespace:lang[]) E(http://www.w3.org/XML/1998/namespace:lang) T(tail)", "S(xml:lang[]) E(xml:lang) T(tail)", "err 0 xml: text outside the root element"),
+  ("<p:q xmlns:p=\"&nbsp;\" id=\"2\"><?xml-stylesheet href='a'?><b xmlns:ns='&#x42;' xmlns=&#x42;/><p>unclosed</b>", "err 1 invalid character entity &nbsp;", "err 1 expected attribute name in element", "err 1 invalid character entity &nbsp;", "err 1 invalid character entity &nbsp;"),
+  ("<é><![CDATA[]]></é>", "S(:é[]) T() E(:é)", "S(:é[]) T() E(:é)", "S(:é[]) T() E(:é)", "ok <é></é>"),
+  ("<Root xmlns:ns=\"&nbsp;\">text<!-- a--b --></Root>", "err 1 invalid character entity &nbsp;", "err 1 invalid sequence \"--\" not allowed in comments", "err 1 invalid character entity &nbsp;", "err 1 invalid character entity &nbsp;"),
+  ("<row id=\"a&b\"><row a=\"a&amp;b\"><![CDATA[]]></row><![CDATA[<raw> & ]]><![CDATA[x</row>\n", "err 1 invalid character entity &b (no semicolon)", "err 2 unexpected EOF in CDATA section", "err 1 invalid character entity &b (no semicolon)", "err 1 invalid character entity &b (no semicolon)"),
+  ("<xml:lang id='&nbsp;' a=x\ty\nz />", "err 1 invalid character entity &nbsp;", "S(http://www.w3.org/XML/1998/namespace:lang[:id= ,:a=x,:y=y,:z=z]) E(http://www.w3.org/XML/1998/namespace:lang)", "err 1 invalid character entity &nbsp;", "err 1 invalid character entity &nbsp;"),
+  ("<b xmlns:p='urn:x' xmlns:ns=\"&nbsp;\"><<list>&#x1F600;</list></b>", "err 1 invalid character entity &nbsp;", "err 1 expected element name after <", "err 1 invalid character entity &nbsp;", "err 1 invalid character entity &nbsp;"),
+  ("<a.b", "err 1 unexpected EOF", "err 1 unexpected EOF", "err 1 unexpected EOF", "err 1 unexpected EOF"),
+  ("<item class='&#65;' class=\"http://e.com/ns\"><?xml-stylesheet href='a'?></item>\n", "S(:item[:class=A,:class=http://e.com/ns]) P(xml-stylesheet,href='a') E(:item) T(\n)", "S(:item[:class=A,:class=http://e.com/ns]) P(xml-stylesheet,href='a') E(:item) T(\n)", "S(:item[:class=A,:class=http://e.com/ns]) P(xml-stylesheet,href='a') E(:item) T(\n)", "ok <item class=\"A\" class=\"http://e.com/ns\"><?xml-stylesheet href='a'?></item>"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><a></a>", "P(xml,version=\"1.0\" encoding=\"UTF-8\") S(:a[]) E(:a)", "P(xml,version=\"1.0\" encoding=\"UTF-8\") S(:a[]) E(:a)", "P(xml,version=\"1.0\" encoding=\"UTF-8\") S(:a[]) E(:a)", "ok <a></a>"),
+  ("<?xml version=\"1.1\"?><_n> é日</_n>tail", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+]
+
+/// (text, Go's EscapeText)
+const ESCAPES: List[(Str, Str)] = [
+  ("\n\r\t", "&#xA;&#xD;&#x9;"),
+  ("", ""),
+  ("日'\taa\u{1}", "日&#39;&#x9;aa�"),
+  ("\"é\u{1}>", "&#34;é�&gt;"),
+  ("\né", "&#xA;é"),
+  ("é", "é"),
+  ("\u{1}\t", "�&#x9;"),
+  ("\t\u{1}>", "&#x9;�&gt;"),
+  ("<\n>é'\"", "&lt;&#xA;&gt;é&#39;&#34;"),
+  ("a'￾", "a&#39;�"),
+  ("\"aa", "&#34;aa"),
+  ("\t", "&#x9;"),
+  (">\t\n\t'", "&gt;&#x9;&#xA;&#x9;&#39;"),
+  ("<\r", "&lt;&#xD;"),
+  ("&éé", "&amp;éé"),
+  ("\"\r", "&#34;&#xD;"),
+  ("\r\r", "&#xD;&#xD;"),
+  ("￾\ta'", "�&#x9;a&#39;"),
+  ("", ""),
+  (">&<aé", "&gt;&amp;&lt;aé"),
+  ("\n", "&#xA;"),
+  ("", ""),
+  ("\r'\u{1}\ra", "&#xD;&#39;�&#xD;a"),
+  (">'é\u{1}", "&gt;&#39;é�"),
+  ("\n\"\t<", "&#xA;&#34;&#x9;&lt;"),
+  ("éé", "éé"),
+  ("'", "&#39;"),
+  ("\u{1}>'a'日a", "�&gt;&#39;a&#39;日a"),
+  ("\"￾a", "&#34;�a"),
+  ("", ""),
+  ("éé", "éé"),
+  ("", ""),
+  ("\n\"\"a\"", "&#xA;&#34;&#34;a&#34;"),
+  ("\t", "&#x9;"),
+  ("\n'\r\r\r", "&#xA;&#39;&#xD;&#xD;&#xD;"),
+  ("a", "a"),
+  ("'日\t>\n\t￾", "&#39;日&#x9;&gt;&#xA;&#x9;�"),
+  ("a'", "a&#39;"),
+  ("\"￾&", "&#34;�&amp;"),
+  ("'", "&#39;"),
+  ("￾\u{1}&&日", "��&amp;&amp;日"),
+  ("\"￾é", "&#34;�é"),
+  ("日", "日"),
+  ("é\u{1}日\n'>", "é�日&#xA;&#39;&gt;"),
+  ("ééé\r\"日￾", "ééé&#xD;&#34;日�"),
+  ("'\ta", "&#39;&#x9;a"),
+  ("a", "a"),
+  ("'￾\"\"<<￾", "&#39;�&#34;&#34;&lt;&lt;�"),
+]
+
+/// (document, the text std/xml's XmlErr.display writes for the decoder's error)
+const ERRTEXTS: List[(Str, Str)] = [
+  ("<a>", "XML syntax error on line 1: unexpected EOF"),
+  ("<a><b></a>", "XML syntax error on line 1: element <b> closed by </a>"),
+  ("<a>&nope;</a>", "XML syntax error on line 1: invalid character entity &nope;"),
+  ("<a>\u{1}</a>", "XML syntax error on line 1: illegal character code U+0001"),
+  ("</a>", "XML syntax error on line 1: unexpected end element </a>"),
+  ("<a><![CDATA[x</a>", "XML syntax error on line 1: unexpected EOF in CDATA section"),
+  ("<!-- a -- b --><a/>", "XML syntax error on line 1: invalid sequence \"--\" not allowed in comments"),
+  ("<1a/>", "XML syntax error on line 1: invalid XML name: 1a"),
+  ("<a><b></b></a></a>", "XML syntax error on line 1: unexpected end element </a>"),
+  ("<ns:el a=\"v\"><list><!----><a /></list><![CDATA[x</ns:el>", "XML syntax error on line 1: unexpected EOF in CDATA section"),
+  ("< xmlns:", "XML syntax error on line 1: expected element name after <"),
+  ("<!-- head --><1bad xmlns:ns=\"\" xml:lang=''", "XML syntax error on line 1: invalid XML name: 1bad"),
+  ("<b><!-- a--b --><row/><!-- a--b --></b>", "XML syntax error on line 1: invalid sequence \"--\" not allowed in comments"),
+  ("<a.b-c id=\"http://e.com/ns\" id='&lt;'><![CDATA[x</x></a.b-c>tail", "XML syntax error on line 1: unexpected EOF in CDATA section"),
+  ("<é><![CDATA[x</é>", "XML syntax error on line 1: unexpected EOF in CDATA section"),
+  ("<x:y a=&#x42; id='x\ty\nz'></x:y> <x/>", "XML syntax error on line 1: unquoted or missing attribute value in element"),
+  ("<Root xmln", "XML syntax error on line 1: unexpected EOF"),
+  ("<a.b-c a=\"&#xZZ;\"><ns:el xmlns:p=\"2\" xmlns:x=\"http://e.com/ns\" /></x><row x:y='a&amp;b' id='&#65;'><xml:lang xmlns='http://e.com/ns'><!-- a--b -->&#233;</xml:lang><a.b-c>word<![CDATA[<raw> & ]]></a.b-c></row></a.b-c>\n", "XML syntax error on line 1: invalid character entity &#x (no semicolon)"),
+  ("<ns:el id=&lt;></ns:el>", "XML syntax error on line 1: unquoted or missing attribute value in element"),
+  ("<!-- head --><a b xmlns:x=\"a&amp;b\" xmlns='http://e.com/ns'/>", "XML syntax error on line 1: attribute name without = in element"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><p:q:r><row class=é xmlns:x=2/></p:q:r>", "xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil"),
+  ("<item id='a<b' a=\"\">\r\n <![CDATA[<raw> & ]]></item> <x/>", "XML syntax error on line 1: unescaped < inside quoted string"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><list x:y=\"&#x42;\" id=\"&lt;\"><x:y x:y=\"2\" id=\"&lt;\"><!----></></list>", "XML syntax error on line 1: expected element name after </"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><_n b=\"&#65;\"><![CDATA[x <![CDATA[<raw> & ]]></_n>", "xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil"),
+  ("<?xml version=\"1.0\"?>\n<a x:y=a<b xmlns:ns=\"urn:x\"><!-- c --><?xml-stylesheet href='a'?></a>", "XML syntax error on line 2: unquoted or missing attribute value in element"),
+  ("<p:q xmlns=\"v\" xmlns:p=\"v\">\n  <!-- x -- --></p:q>", "XML syntax error on line 2: invalid sequence \"--\" not allowed in comments"),
+  ("<xmlns a=\"2\"> &bogus;</xmlns>", "XML syntax error on line 1: invalid character entity &bogus;"),
+  ("<!DOCTYPE html>\n<xml:lang id=\"a&b\">&quot;&apos;</xml:lang>\n", "XML syntax error on line 2: invalid character entity &b (no semicolon)"),
+  ("<a b=\"\" xmlns='1'><![CDATA[x</a>", "XML syntax error on line 1: unexpected EOF in CDATA section"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><a id=\"\" x:y=\"x\ty\nz\"><item a='&#65;' xmlns=\"&lt;\"/>a &amp; b</a> <x/>", "xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil"),
+  ("<b id=\"http://e.com/ns\" xml:lang=\"http://e.com/ns\">\n  <![CDATA[x</b>", "XML syntax error on line 2: unexpected EOF in CDATA section"),
+  ("<?xml version=\"1.1\"?><xml:lang x:y=\"2\"/>", "xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><é id=\"&#65;\"><?target?><![CDATA[<raw", "xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil"),
+  ("<item class='x\ty\nz' id='1'><![CDATA[a]]b]]><!-- a--b --></item>", "XML syntax error on line 2: invalid sequence \"--\" not allowed in comments"),
+  ("<!DOCTYPE html>\n<a.b-c><!---->]]></a.b-c>", "XML syntax error on line 2: unescaped ]]> not in CDATA section"),
+  ("<?xml version=\"1.1\"?><x:y b=\"urn:x\" id=\"&#x42;\" />", "xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<> <?xml-stylesheet href='a'?></>", "XML syntax error on line 1: expected element name after <"),
+  ("<row class=\"x\ty\nz\" a='v'>word&#0;<xml:lang id='&#65;' /><b b=\"2\"></b></row><!-- t -->", "XML syntax error on line 2: illegal character code U+0000"),
+  ("<?xml version=\"1.1\"?><a.b-c xmlns='urn:x' class='urn:x'></a.b-c>", "xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<_n xmlns:ns=\"&nbsp;\"><Root xml:lang='urn:x' id=\"1\" />]]></_n>tail", "XML syntax error on line 1: invalid character entity &nbsp;"),
+  ("<é id='&#xZZ;' class=\"http://e.com/ns\"/>", "XML syntax error on line 1: invalid character entity &#x (no semicolon)"),
+  ("<row><row>text <item xmlns:p=\"a&b\" x:y=\"a&b\"></item></row>é日&#x1F600;</row>tail", "XML syntax error on line 1: invalid character entity &b (no semicolon)"),
+  ("<ns:el x:y='&nbsp;'/>", "XML syntax error on line 1: invalid character entity &nbsp;"),
+  ("<?xml version=\"1.0\"?>\n<b xmlns='&nbsp;' x:y='é'>]]></b>", "XML syntax error on line 2: invalid character entity &nbsp;"),
+  ("<p:q xmlns:x=\"&nbsp;\" x:y=\"é\"><?target?></p:q>", "XML syntax error on line 1: invalid character entity &nbsp;"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><é b=http://e.com/ns class=\"&#x42;\" />", "XML syntax error on line 1: unquoted or missing attribute value in element"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Root><x:y class=\"\"><Root class=\"2\" xmlns:ns=\"&#65;\">< a=\"&#x42;\"/><?xml-stylesheet href='a'?></Root></x:y>&#x1F600;<![CDATA[x</Root>", "XML syntax error on line 1: expected element name after <"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><b xmlns=\"v\" class=\"&#xZZ;\"><?pi data?><a.b-c xmlns=http://e.com/ns id='1'><?xml-stylesheet href='a'?></a.b-c></b>", "XML syntax error on line 1: invalid character entity &#x (no semicolon)"),
+]
+
+/// The ERRTEXTS rows the generator wrote; the corpus checks the list against it, so an empty or truncated list fails instead of passing
+const ERRTEXT_COUNT: Int = 69
+
+fn first_bad[T](bad: List[T]) -> List[T] { bad[0..(if bad.len() < 20 { bad.len() } else { 20 })] }
+
+fn nm(n: xml.Name) -> Str { "${n.space}:${n.local}" }
+
+fn tok_text(t: xml.Token) -> Str {
+  match t {
+    xml.Token.Start(name, attrs) => "S(${nm(name)}[${attrs.map(fn(a) { "${nm(a.name)}=${a.value}" }).join(",")}])"
+    xml.Token.End(name) => "E(${nm(name)})"
+    xml.Token.Text(s) => "T(${s})"
+    xml.Token.Comment(s) => "C(${s})"
+    xml.Token.ProcInst(target, inst) => "P(${target},${inst})"
+    xml.Token.Directive(s) => "D(${s})"
+  }
+}
+
+fn toks(r: Result[List[xml.Token], xml.XmlErr]) -> Str {
+  match r {
+    Ok(ts) => ts.map(tok_text).join(" ")
+    Err(e) => "err ${e.line} ${e.msg}"
+  }
+}
+
+/// The tokens a Reader gives, as toks shows tokens' result: the list, or
+/// the error (twice: it comes again).
+fn reader_toks(r: xml.Reader) -> Str {
+  var rd = r
+  var out: List[Str] = []
+  while true {
+    match rd.next() {
+      Ok(Some(t)) => out.push(tok_text(t))
+      Ok(None) => return out.join(" ")
+      Err(e) => {
+        let again = match rd.next() {
+          Err(e2) => e2.line == e.line && e2.msg == e.msg
+          _ => false
+        }
+        return if again { "err ${e.line} ${e.msg}" } else { "error not repeated" }
+      }
+    }
+  }
+  ""
+}
+
+
+
+
+
+
+/// (indent, steps (kind, a, b, attrs): 0 start, 1 end, 2 text, 3 comment, 4 procinst, 5 directive, 6 take, 7 close, 8 element of the steps' own open tag; Go's result of each step)
+const WRITES: List[(Str, List[(Int, Str, Str, List[(Str, Str, Str)])], List[Str])] = [
+  ("\t", [(2, "", "", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "take ", "ok", "take "]),
+  ("\t", [(0, "", "", []), (6, "", "", []), (0, "", "", []), (6, "", "", []), (0, "", "a", [("urn:y", "item", "a<b&c"), ("", "b", "é\t")]), (0, "", "c", [("", "item", "hi")]), (1, "", "c", []), (1, "", "a", []), (5, "", "bad>", []), (1, "", "", []), (1, "", "b", []), (1, "", "", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: start tag with no name", "take ", "err xml: start tag with no name", "take ", "ok", "ok", "ok", "ok", "err xml: EncodeToken of Directive containing wrong < or > markers", "err xml: end tag with no name", "err xml: end tag </b> without start tag", "err xml: end tag with no name", "take <a xmlns:_=\"urn:y\" _:item=\"a&lt;b&amp;c\" b=\"é&#x9;\">\n\t<c item=\"hi\"></c>\n</a>", "ok", "take "]),
+  ("  ", [(0, "", "a", [("", "c", "é\t")]), (1, "", "c", []), (5, "", "<!-- c -->x", []), (1, "", "a", []), (0, "", "b", [("", "item", "é\t")]), (1, "", "item", []), (1, "", "b", []), (1, "", "item", []), (1, "", "item", []), (0, "urn:y", "c", []), (6, "", "", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "err xml: end tag </c> does not match start tag <a>", "ok", "ok", "ok", "err xml: end tag </item> does not match start tag <b>", "ok", "err xml: end tag </item> without start tag", "err xml: end tag </item> without start tag", "ok", "take <a c=\"é&#x9;\"><!<!-- c -->x></a>\n<b item=\"é&#x9;\"></b>\n<c xmlns=\"urn:y\">", "take ", "err unclosed tag <c>", "take "]),
+  ("\t", [(8, "", "a", []), (4, "go", "a?>b", []), (3, "", "-->", []), (0, "urn:x", "c", []), (0, "urn:y", "c", []), (8, "", "a", []), (2, "", "hi", []), (8, "", "c", []), (1, "urn:y", "c", []), (6, "", "", []), (8, "", "a", []), (5, "", "x<", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "err xml: EncodeToken of ProcInst containing ?> marker", "err xml: EncodeToken of Comment containing --> marker", "ok", "ok", "ok", "ok", "ok", "ok", "take <a>hi<!--c-->\n\t<kid></kid>\n</a>\n<c xmlns=\"urn:x\">\n\t<c xmlns=\"urn:y\">\n\t\t<a>hi<!--c-->\n\t\t\t<kid></kid>\n\t\t</a>hi\n\t\t<c>hi<!--c-->\n\t\t\t<kid></kid>\n\t\t</c>\n\t</c>", "ok", "err xml: EncodeToken of Directive containing wrong < or > markers", "take \n\t<a>hi<!--c-->\n\t\t<kid></kid>\n\t</a>", "err unclosed tag <c>", "take "]),
+  ("", [(1, "urn:y", "c", []), (1, "", "", []), (0, "urn:y", "item", []), (6, "", "", []), (0, "urn:y", "a", [("", "c", "x\ny\r"), ("urn:x", "c", "")]), (8, "", "b", []), (2, "", "", []), (6, "", "", []), (0, "", "item", [("", "a", "é\t")]), (1, "", "item", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: end tag </c> without start tag", "err xml: end tag with no name", "ok", "take <item xmlns=\"urn:y\">", "ok", "ok", "ok", "take <a xmlns=\"urn:y\" c=\"x&#xA;y&#xD;\" xmlns:_=\"urn:x\" _:c=\"\"><b>hi<!--c--><kid></kid></b>", "ok", "ok", "take <item a=\"é&#x9;\"></item>", "err unclosed tag <a>", "take "]),
+  ("", [(8, "", "item", []), (0, "urn:x", "a", [("", "c", "hi"), ("", "a", "a<b&c")]), (1, "urn:x", "a", []), (2, "", "", []), (8, "urn:y", "c", []), (5, "", "DOCTYPE x [<!ENTITY y \"z\">]", []), (1, "", "c", []), (0, "", "item", []), (6, "", "", []), (6, "", "", []), (2, "", "-->", []), (6, "", "", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "ok", "ok", "ok", "ok", "err xml: end tag </c> without start tag", "ok", "take <item>hi<!--c--><kid></kid></item><a xmlns=\"urn:x\" c=\"hi\" a=\"a&lt;b&amp;c\"></a><c xmlns=\"urn:y\">hi<!--c--><kid></kid></c><!DOCTYPE x [<!ENTITY y \"z\">]><item>", "take ", "ok", "take --&gt;", "take ", "err unclosed tag <item>", "take "]),
+  ("  ", [(5, "", "x<", []), (0, "urn:y", "c", []), (1, "urn:y", "c", []), (1, "", "a", []), (2, "", "hi", []), (1, "", "a", []), (8, "", "a", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: EncodeToken of Directive containing wrong < or > markers", "ok", "ok", "err xml: end tag </a> without start tag", "ok", "err xml: end tag </a> without start tag", "ok", "take <c xmlns=\"urn:y\"></c>hi\n<a>hi<!--c-->\n  <kid></kid>\n</a>", "ok", "take "]),
+  ("\t", [(0, "urn:x", "item", [("", "b", "hi")]), (2, "", "x\ny\r", []), (3, "", "a<b&c", []), (1, "urn:x", "item", []), (1, "", "item", []), (1, "urn:x", "b", []), (4, "xml", "version=\"1.0\"", []), (4, "xml", "version=\"1.0\"", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "ok", "ok", "err xml: end tag </item> without start tag", "err xml: end tag </b> without start tag", "err xml: EncodeToken of ProcInst xml target only valid for xml declaration, first token encoded", "err xml: EncodeToken of ProcInst xml target only valid for xml declaration, first token encoded", "take <item xmlns=\"urn:x\" b=\"hi\">x\ny&#xD;<!--a<b&c--></item>", "ok", "take "]),
+  ("", [(2, "", "a<b&c", []), (0, "", "b", []), (6, "", "", []), (4, "go", "fmt", []), (1, "", "b", []), (0, "", "b", []), (0, "", "item", [("urn:x", "b", "x\ny\r"), ("", "c", "a<b&c")]), (1, "", "item", []), (7, "", "", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "take a&lt;b&amp;c<b>", "ok", "ok", "ok", "ok", "ok", "err unclosed tag <b>", "take <?go fmt?></b><b><item xmlns:_=\"urn:x\" _:b=\"x&#xA;y&#xD;\" c=\"a&lt;b&amp;c\"></item>", "ok", "take "]),
+  ("  ", [(0, "", "item", [("urn:y", "b", "hi")]), (0, "urn:x", "b", [("", "item", "-->"), ("", "c", "hi")]), (0, "", "c", []), (7, "", "", []), (1, "", "c", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "ok", "err unclosed tag <c>", "err use of closed Encoder", "take <item xmlns:_=\"urn:y\" _:b=\"hi\">\n  <b xmlns=\"urn:x\" item=\"--&gt;\" c=\"hi\">\n    <c>", "ok", "take "]),
+  ("\t", [(1, "urn:y", "a", []), (7, "", "", []), (0, "", "", [("urn:x", "item", ""), ("urn:x", "c", "")]), (0, "urn:y", "b", [("urn:y", "item", "é\t")]), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: end tag </a> without start tag", "ok", "err xml: start tag with no name", "err use of closed Encoder", "take ", "ok", "take "]),
+  ("  ", [(2, "", "a<b&c", []), (8, "", "a", []), (6, "", "", []), (8, "", "c", []), (2, "", "x\ny\r", []), (5, "", "x<", []), (1, "urn:y", "c", []), (1, "", "c", []), (8, "", "a", []), (2, "", "-->", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "take a&lt;b&amp;c<a>hi<!--c-->\n  <kid></kid>\n</a>", "ok", "ok", "err xml: EncodeToken of Directive containing wrong < or > markers", "err xml: end tag </c> without start tag", "err xml: end tag </c> without start tag", "ok", "ok", "take \n<c>hi<!--c-->\n  <kid></kid>\n</c>x\ny&#xD;\n<a>hi<!--c-->\n  <kid></kid>\n</a>--&gt;", "ok", "take "]),
+  ("", [(5, "", "DOCTYPE x", []), (5, "", "DOCTYPE x", []), (0, "", "item", [("", "a", "-->"), ("", "item", "")]), (3, "", "a<b&c", []), (0, "", "c", [("", "item", "é\t")]), (1, "", "c", []), (6, "", "", []), (2, "", "hi", []), (6, "", "", []), (1, "", "item", []), (1, "", "b", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "ok", "ok", "ok", "ok", "take <!DOCTYPE x><!DOCTYPE x><item a=\"--&gt;\" item=\"\"><!--a<b&c--><c item=\"é&#x9;\"></c>", "ok", "take hi", "ok", "err xml: end tag </b> without start tag", "take </item>", "ok", "take "]),
+  ("\t", [(0, "urn:x", "a", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "take <a xmlns=\"urn:x\">", "err unclosed tag <a>", "take "]),
+  ("", [(1, "urn:x", "", []), (1, "", "b", []), (6, "", "", []), (7, "", "", []), (5, "", "<!-- c -->x", []), (0, "urn:y", "c", []), (8, "urn:y", "b", []), (1, "urn:y", "c", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: end tag with no name", "err xml: end tag </b> without start tag", "take ", "ok", "err use of closed Encoder", "err use of closed Encoder", "err use of closed Encoder", "err xml: end tag </c> does not match start tag <b>", "take ", "ok", "take "]),
+  ("\t", [(1, "urn:x", "b", []), (1, "urn:x", "item", []), (6, "", "", []), (1, "", "b", []), (0, "", "item", [("urn:y", "a", "hi")]), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: end tag </b> without start tag", "err xml: end tag </item> without start tag", "take ", "err xml: end tag </b> without start tag", "ok", "take <item xmlns:_=\"urn:y\" _:a=\"hi\">", "err unclosed tag <item>", "take "]),
+  ("  ", [(3, "", "é\t", []), (1, "urn:y", "b", []), (2, "", "é\t", []), (0, "urn:x", "c", []), (6, "", "", []), (1, "urn:x", "c", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "err xml: end tag </b> without start tag", "ok", "ok", "take <!--é\t-->é&#x9;<c xmlns=\"urn:x\">", "ok", "take </c>", "ok", "take "]),
+  ("", [(8, "", "b", []), (0, "", "a", [("urn:x", "a", "a<b&c"), ("urn:x", "c", "é\t")]), (6, "", "", []), (0, "", "item", [("", "item", "a<b&c"), ("urn:y", "b", "é\t")]), (3, "", "hi", []), (6, "", "", []), (5, "", "<!-- c -->x", []), (6, "", "", []), (1, "", "item", []), (6, "", "", []), (1, "", "a", []), (2, "", "x\ny\r", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "take <b>hi<!--c--><kid></kid></b><a xmlns:_=\"urn:x\" _:a=\"a&lt;b&amp;c\" _:c=\"é&#x9;\">", "ok", "ok", "take <item item=\"a&lt;b&amp;c\" xmlns:__1=\"urn:y\" __1:b=\"é&#x9;\"><!--hi-->", "ok", "take <!<!-- c -->x>", "ok", "take </item>", "ok", "ok", "take </a>x\ny&#xD;", "ok", "take "]),
+  ("", [(1, "", "c", []), (6, "", "", []), (0, "urn:x", "item", [("urn:y", "c", "é\t")]), (2, "", "é\t", []), (0, "urn:y", "", []), (2, "", "x\ny\r", []), (0, "urn:x", "", [("urn:y", "c", "a<b&c"), ("urn:x", "a", "é\t")]), (1, "", "", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: end tag </c> without start tag", "take ", "ok", "ok", "err xml: start tag with no name", "ok", "err xml: start tag with no name", "err xml: end tag with no name", "take <item xmlns=\"urn:x\" xmlns:_=\"urn:y\" _:c=\"é&#x9;\">é&#x9;x\ny&#xD;", "err unclosed tag <item>", "take "]),
+  ("", [(0, "", "b", []), (0, "", "", [("", "a", "-->")]), (3, "", "x\ny\r", []), (8, "", "c", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "err xml: start tag with no name", "ok", "ok", "take <b><!--x\ny\r--><c>hi<!--c--><kid></kid></c>", "err unclosed tag <b>", "take "]),
+  ("", [(0, "", "a", []), (1, "", "a", []), (2, "", "a<b&c", []), (1, "urn:x", "a", []), (0, "", "a", [("", "item", ""), ("", "b", "é\t")]), (1, "", "a", []), (1, "urn:x", "b", []), (0, "urn:y", "", [("urn:y", "item", "-->"), ("urn:x", "a", "")]), (1, "urn:y", "", []), (0, "urn:y", "", [("", "b", "hi")]), (0, "", "b", [("", "item", "-->"), ("urn:x", "b", "")]), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "ok", "err xml: end tag </a> without start tag", "ok", "ok", "err xml: end tag </b> without start tag", "err xml: start tag with no name", "err xml: end tag with no name", "err xml: start tag with no name", "ok", "take <a></a>a&lt;b&amp;c<a item=\"\" b=\"é&#x9;\"></a><b item=\"--&gt;\" xmlns:_=\"urn:x\" _:b=\"\">", "err unclosed tag <b>", "take "]),
+  ("", [(5, "", "bad>", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: EncodeToken of Directive containing wrong < or > markers", "take ", "ok", "take "]),
+  ("", [(5, "", "bad>", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: EncodeToken of Directive containing wrong < or > markers", "take ", "ok", "take "]),
+  ("\t", [(0, "urn:x", "item", [("", "c", "a<b&c")]), (1, "urn:x", "item", []), (5, "", "bad>", []), (6, "", "", []), (2, "", "x\ny\r", []), (0, "urn:y", "c", [("", "c", "x\ny\r")]), (1, "urn:y", "", []), (1, "urn:y", "c", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "err xml: EncodeToken of Directive containing wrong < or > markers", "take <item xmlns=\"urn:x\" c=\"a&lt;b&amp;c\"></item>", "ok", "ok", "err xml: end tag with no name", "ok", "take x\ny&#xD;\n<c xmlns=\"urn:y\" c=\"x&#xA;y&#xD;\"></c>", "ok", "take "]),
+  ("", [(2, "", "x\ny\r", []), (0, "", "a", [("", "c", "-->")]), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "take x\ny&#xD;<a c=\"--&gt;\">", "err unclosed tag <a>", "take "]),
+  ("", [(5, "", "DOCTYPE x [<!ENTITY y \"z\">]", []), (6, "", "", []), (1, "urn:x", "a", []), (0, "", "c", [("urn:y", "c", "-->"), ("", "item", "hi")]), (1, "", "item", []), (8, "", "b", []), (1, "", "c", []), (5, "", "DOCTYPE x", []), (1, "", "", []), (3, "", "", []), (2, "", "x\ny\r", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "take <!DOCTYPE x [<!ENTITY y \"z\">]>", "err xml: end tag </a> without start tag", "ok", "err xml: end tag </item> does not match start tag <c>", "ok", "ok", "ok", "err xml: end tag with no name", "ok", "ok", "take <c xmlns:_=\"urn:y\" _:c=\"--&gt;\" item=\"hi\"><b>hi<!--c--><kid></kid></b></c><!DOCTYPE x><!---->x\ny&#xD;", "ok", "take "]),
+  ("\t", [(2, "", "é\t", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "take é&#x9;", "ok", "take "]),
+  ("  ", [(8, "", "a", []), (1, "urn:y", "", []), (1, "urn:x", "item", []), (0, "urn:y", "c", [("urn:x", "c", "")]), (3, "", "", []), (0, "urn:x", "c", []), (1, "urn:x", "c", []), (1, "urn:y", "c", []), (7, "", "", []), (8, "", "b", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "err xml: end tag with no name", "err xml: end tag </item> without start tag", "ok", "ok", "ok", "ok", "ok", "ok", "err use of closed Encoder", "take <a>hi<!--c-->\n  <kid></kid>\n</a>\n<c xmlns=\"urn:y\" xmlns:_=\"urn:x\" _:c=\"\"><!---->\n  <c xmlns=\"urn:x\"></c>\n</c>", "ok", "take "]),
+  ("  ", [(1, "urn:x", "", []), (1, "", "c", []), (1, "urn:x", "item", []), (0, "", "item", [("urn:x", "b", "x\ny\r")]), (2, "", "hi", []), (0, "", "", [("", "c", "é\t")]), (7, "", "", []), (1, "", "", []), (1, "", "item", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: end tag with no name", "err xml: end tag </c> without start tag", "err xml: end tag </item> without start tag", "ok", "ok", "err xml: start tag with no name", "err unclosed tag <item>", "err xml: end tag with no name", "err use of closed Encoder", "take <item xmlns:_=\"urn:x\" _:b=\"x&#xA;y&#xD;\">hi", "ok", "take "]),
+  ("", [(0, "urn:x", "a", [("urn:x", "b", "-->"), ("urn:y", "c", "")]), (2, "", "hi", []), (1, "urn:x", "a", []), (2, "", "x\ny\r", []), (1, "", "b", []), (8, "urn:x", "c", []), (6, "", "", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "ok", "ok", "err xml: end tag </b> without start tag", "ok", "take <a xmlns=\"urn:x\" xmlns:_=\"urn:x\" _:b=\"--&gt;\" xmlns:__1=\"urn:y\" __1:c=\"\">hi</a>x\ny&#xD;<c xmlns=\"urn:x\">hi<!--c--><kid></kid></c>", "take ", "ok", "take "]),
+  ("\t", [(2, "", "hi", []), (1, "", "", []), (0, "", "item", [("", "a", "é\t")]), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "err xml: end tag with no name", "ok", "take hi<item a=\"é&#x9;\">", "err unclosed tag <item>", "take "]),
+  ("  ", [(1, "urn:y", "", []), (0, "", "", [("", "item", "é\t")]), (1, "", "", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: end tag with no name", "err xml: start tag with no name", "err xml: end tag with no name", "take ", "ok", "take "]),
+  ("\t", [(0, "", "b", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "take <b>", "err unclosed tag <b>", "take "]),
+  ("", [(0, "urn:y", "c", [("", "a", "x\ny\r"), ("urn:x", "b", "")]), (1, "urn:y", "c", []), (2, "", "hi", []), (1, "", "", []), (0, "", "", []), (0, "", "a", []), (5, "", "bad>", []), (1, "", "a", []), (1, "", "", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "ok", "err xml: end tag with no name", "err xml: start tag with no name", "ok", "err xml: EncodeToken of Directive containing wrong < or > markers", "ok", "err xml: end tag with no name", "take <c xmlns=\"urn:y\" a=\"x&#xA;y&#xD;\" xmlns:_=\"urn:x\" _:b=\"\"></c>hi<a></a>", "ok", "take "]),
+  ("", [(1, "urn:x", "a", []), (8, "", "item", []), (3, "", "", []), (0, "urn:x", "a", [("", "a", "hi")]), (1, "urn:x", "a", []), (0, "urn:x", "", [("", "b", "x\ny\r")]), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: end tag </a> without start tag", "ok", "ok", "ok", "ok", "err xml: start tag with no name", "take <item>hi<!--c--><kid></kid></item><!----><a xmlns=\"urn:x\" a=\"hi\"></a>", "ok", "take "]),
+  ("", [(0, "", "", []), (6, "", "", []), (0, "", "c", [("", "a", "")]), (0, "urn:x", "", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: start tag with no name", "take ", "ok", "err xml: start tag with no name", "take <c a=\"\">", "err unclosed tag <c>", "take "]),
+  ("  ", [(0, "", "", [("urn:y", "a", "x\ny\r")]), (6, "", "", []), (2, "", "a<b&c", []), (6, "", "", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: start tag with no name", "take ", "ok", "take a&lt;b&amp;c", "take ", "ok", "take "]),
+  ("", [(0, "", "", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: start tag with no name", "take ", "ok", "take "]),
+  ("\t", [(8, "", "b", []), (0, "", "c", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "take <b>hi<!--c-->\n\t<kid></kid>\n</b>\n<c>", "err unclosed tag <c>", "take "]),
+  ("  ", [(6, "", "", []), (6, "", "", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["take ", "take ", "take ", "ok", "take "]),
+  ("", [(1, "urn:y", "a", []), (0, "urn:y", "item", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["err xml: end tag </a> without start tag", "ok", "take <item xmlns=\"urn:y\">", "err unclosed tag <item>", "take "]),
+  ("  ", [(4, "xml", "version=\"1.0\"", []), (1, "", "b", []), (1, "", "", []), (0, "", "a", [("", "c", "x\ny\r"), ("", "item", "hi")]), (1, "", "a", []), (2, "", "", []), (2, "", "", []), (6, "", "", []), (5, "", "bad>", []), (0, "", "a", [("", "b", "hi"), ("", "c", "")]), (6, "", "", []), (2, "", "hi", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "err xml: end tag </b> without start tag", "err xml: end tag with no name", "ok", "ok", "ok", "ok", "take <?xml version=\"1.0\"?><a c=\"x&#xA;y&#xD;\" item=\"hi\"></a>", "err xml: EncodeToken of Directive containing wrong < or > markers", "ok", "take \n<a b=\"hi\" c=\"\">", "ok", "take hi", "err unclosed tag <a>", "take "]),
+  ("  ", [(2, "", "hi", []), (0, "urn:y", "c", [("", "b", "-->")]), (0, "urn:y", "", [("", "b", "a<b&c")]), (1, "urn:y", "item", []), (4, "go", "a?>b", []), (6, "", "", []), (6, "", "", []), (2, "", "", []), (1, "urn:y", "", []), (0, "", "item", [("urn:x", "a", "hi")]), (1, "", "item", []), (5, "", "x<", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "err xml: start tag with no name", "err xml: end tag </item> does not match start tag <c>", "err xml: EncodeToken of ProcInst containing ?> marker", "take hi<c xmlns=\"urn:y\" b=\"--&gt;\">", "take ", "ok", "err xml: end tag with no name", "ok", "ok", "err xml: EncodeToken of Directive containing wrong < or > markers", "take \n  <item xmlns:_=\"urn:x\" _:a=\"hi\"></item>", "err unclosed tag <c>", "take "]),
+  ("", [(7, "", "", []), (0, "", "c", []), (0, "", "c", []), (8, "", "b", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "err use of closed Encoder", "err use of closed Encoder", "err use of closed Encoder", "take ", "ok", "take "]),
+  ("", [(0, "urn:x", "b", []), (1, "urn:x", "b", []), (0, "", "b", []), (1, "", "b", []), (2, "", "a<b&c", []), (8, "urn:y", "b", []), (0, "urn:y", "a", []), (2, "", "hi", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "ok", "ok", "ok", "ok", "ok", "ok", "ok", "take <b xmlns=\"urn:x\"></b><b></b>a&lt;b&amp;c<b xmlns=\"urn:y\">hi<!--c--><kid></kid></b><a xmlns=\"urn:y\">hi", "err unclosed tag <a>", "take "]),
+  ("", [(7, "", "", []), (1, "urn:y", "a", []), (1, "", "", []), (1, "", "item", []), (0, "", "c", []), (6, "", "", []), (0, "", "", []), (1, "", "", []), (0, "urn:y", "item", [("", "b", "a<b&c"), ("", "c", "hi")]), (0, "", "a", []), (0, "urn:x", "a", [("", "b", "a<b&c")]), (0, "", "item", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "err xml: end tag </a> without start tag", "err xml: end tag with no name", "err xml: end tag </item> without start tag", "err use of closed Encoder", "take ", "err xml: start tag with no name", "err xml: end tag with no name", "err use of closed Encoder", "err use of closed Encoder", "err use of closed Encoder", "err use of closed Encoder", "take ", "ok", "take "]),
+  ("", [(6, "", "", []), (5, "", "<!-- c -->x", []), (1, "urn:x", "b", []), (6, "", "", []), (1, "", "", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["take ", "ok", "err xml: end tag </b> without start tag", "take <!<!-- c -->x>", "err xml: end tag with no name", "take ", "ok", "take "]),
+  ("\t", [(2, "", "-->", []), (6, "", "", []), (7, "", "", []), (6, "", "", [])], ["ok", "take --&gt;", "ok", "take "]),
+]
+
+fn writer_step(var w: xml.Writer, k: Int, a: Str, b: Str, attrs: List[(Str, Str, Str)]) -> Str {
+  let name = xml.Name{space: a, local: b}
+  if k == 6 {
+    return "take ${w.take()}"
+  }
+  let r = match k {
+    0 => w.token(xml.Token.Start(name: name, attrs: attrs.map(fn(x) { xml.Attr{name: xml.Name{space: x.0, local: x.1}, value: x.2} })))
+    1 => w.token(xml.Token.End(name: name))
+    2 => w.token(xml.Token.Text(s: b))
+    3 => w.token(xml.Token.Comment(s: b))
+    4 => w.token(xml.Token.ProcInst(target: a, inst: b))
+    5 => w.token(xml.Token.Directive(s: b))
+    7 => w.close()
+    _ => w.element(xml.Element{name: name, attrs: [], children: [xml.Node.Text(s: "hi"), xml.Node.Comment(s: "c"), xml.Node.Elem(e: xml.Element{name: xml.Name{space: "", local: "kid"}, attrs: [], children: []})]})
+  }
+  match r {
+    Ok(_) => "ok"
+    Err(e) => "err ${e}"
+  }
+}
+
+
+/// (document, Go's Unmarshal into XBasic as `ok VALUE` or `err TEXT`, its Marshal, its MarshalIndent two spaces)
+const DERIVE_DOCS: List[(Str, Str, Str, Str)] = [
+  ("<Other><unknown a=\"1\"><deep/></unknown><tags><tag>y</tag><tag>y</tag></tags><note>a&lt;b</note></Other>", "ok B{id=0 title=\"\" score=0.0 ok=false note=\"a<b\" tags=[\"y\",\"y\"] count=0 lang=\"\" inner=I{\"\" 0} items=[] opt=nil skip=\"\" text=\"\"}", "<XBasic id=\"0\"><title></title><score>0</score><ok>false</ok><note>a&lt;b</note><tags><tag>y</tag><tag>y</tag></tags><inner n=\"0\"><name></name></inner></XBasic>", "<XBasic id=\"0\">\n  <title></title>\n  <score>0</score>\n  <ok>false</ok>\n  <note>a&lt;b</note>\n  <tags>\n    <tag>y</tag>\n    <tag>y</tag>\n  </tags>\n  <inner n=\"0\">\n    <name></name>\n  </inner>\n</XBasic>"),
+  ("<Other lang=\"en\"><unknown a=\"1\"><deep/></unknown><count>5</count><ok>false</ok><score>-0.25</score><title/><unknown a=\"1\"><deep/></unknown><score>1.5</score></Other>", "ok B{id=0 title=\"\" score=1.5 ok=false note=nil tags=[] count=5 lang=\"en\" inner=I{\"\" 0} items=[] opt=nil skip=\"\" text=\"\"}", "<XBasic id=\"0\" lang=\"en\"><title></title><score>1.5</score><ok>false</ok><tags></tags><count>5</count><inner n=\"0\"><name></name></inner></XBasic>", "<XBasic id=\"0\" lang=\"en\">\n  <title></title>\n  <score>1.5</score>\n  <ok>false</ok>\n  <tags></tags>\n  <count>5</count>\n  <inner n=\"0\">\n    <name></name>\n  </inner>\n</XBasic>"),
+  ("<XBasic id=\"99999999999999999999\" lang='fr'><item><name> sp </name></item><item n=\"x\"></item></XBasic>", "err strconv.ParseInt: parsing \"99999999999999999999\": value out of range", "", ""),
+  ("<XBasic><opt><name>é日</name></opt><opt n=\"22\"><name>bo&lt;b</name></opt><item n=\"x\"><name> sp </name></item></XBasic>", "err strconv.ParseInt: parsing \"x\": invalid syntax", "", ""),
+  ("<XBasic id=\"-3\" lang='fr'>\n  <ok></ok>\n  <tags><tag>q</tag></tags><tags><tag>p</tag></tags><item n=\"1\"><name>bo&lt;b</name></item><tags><tag></tag><tag></tag></tags><opt n=\"22\"></opt><note></note><inner n=\"\"><name>bo&lt;b</name></inner></XBasic>", "ok B{id=-3 title=\"\" score=0.0 ok=false note=\"\" tags=[\"q\",\"p\",\"\",\"\"] count=0 lang=\"fr\" inner=I{\"bo<b\" 0} items=[I{\"bo<b\" 1}] opt=I{\"\" 22} skip=\"\" text=\"\\n  \\n  \"}", "<XBasic id=\"-3\" lang=\"fr\"><title></title><score>0</score><ok>false</ok><note></note><tags><tag>q</tag><tag>p</tag><tag></tag><tag></tag></tags><inner n=\"0\"><name>bo&lt;b</name></inner><item n=\"1\"><name>bo&lt;b</name></item><opt n=\"22\"><name></name></opt>&#xA;  &#xA;  </XBasic>", "<XBasic id=\"-3\" lang=\"fr\">\n  <title></title>\n  <score>0</score>\n  <ok>false</ok>\n  <note></note>\n  <tags>\n    <tag>q</tag>\n    <tag>p</tag>\n    <tag></tag>\n    <tag></tag>\n  </tags>\n  <inner n=\"0\">\n    <name>bo&lt;b</name>\n  </inner>\n  <item n=\"1\">\n    <name>bo&lt;b</name>\n  </item>\n  <opt n=\"22\">\n    <name></name>\n  </opt>&#xA;  &#xA;  \n</XBasic>"),
+  ("<XBasic id=\"-3\"><item n=\"1\"><name></name></item><tags><tag>p</tag></tags><tags></tags><unknown a=\"1\"><deep/></unknown><skip>ignored</skip><item n=\"1\"><name>é日</name></item><tags><tag>p</tag></tags><score>abc</score>a &amp; b <note></note></XBasic>", "err strconv.ParseFloat: parsing \"abc\": invalid syntax", "", ""),
+  ("<XBasic><count>0</count><tags><tag>p</tag></tags><opt n=\"\"><name>ann</name></opt><opt n=\"1\"><name> sp </name></opt><count>z</count><skip>ignored</skip><inner n=\"\"><name>bo&lt;b</name></inner><item n=\"x\"><name>ann</name></item><note>a&lt;b</note><inner><name></name></inner></XBasic>", "err strconv.ParseInt: parsing \"z\": invalid syntax", "", ""),
+  ("<XBasic id=' 12 '><tags><tag></tag><tag></tag></tags><opt><name></name", "err XML syntax error on line 1: unexpected EOF", "", ""),
+  ("<Other id=\"99999999999999999999\"><item><name>bo&lt;b</name></item><title/><count>5</count><tags><tag>p</tag></tags><note>n</note> </Other>", "err strconv.ParseInt: parsing \"99999999999999999999\": value out of range", "", ""),
+  ("<Other lang='fr' extra=\"x\"><title/><opt n=\"1\"><name> sp </name></opt><opt n=\"x\"><name>é日</name></opt><note>n</note><inner n=\"\"><name>ann</name></inner>a &amp; b<title/></Other>", "err strconv.ParseInt: parsing \"x\": invalid syntax", "", ""),
+  ("<XBasic id=' 12 ' lang='fr' extra=\"x\"><ok></ok><count>z</count><inner n=\"\"><name>ann</name></inner><note>a&lt;b</note><title><![CDATA[<raw>]]></title><title/><title>x<!-- c -->y</title><skip>ignored</skip></XBasic>", "err strconv.ParseInt: parsing \"z\": invalid syntax", "", ""),
+  ("<Other id=\"1.5\"><tags><tag>p</tag></tags><ok></ok><inner n=\"1\"><name> sp </name></inner><!-- c --><count>-1</count><count>5</count>a &amp; b<note>a&lt;b</note></Other>", "err strconv.ParseInt: parsing \"1.5\": invalid syntax", "", ""),
+  ("<XBasic id=\"abc\" lang=\"en\"><inner><name>bo&lt;b</name></inner><item n=\"x\"><name>é日</name></item><![CDATA[cd]]><title/><tags><tag>z&amp;</tag></tags><inner><name> sp </name></inner></XBasic>", "err strconv.ParseInt: parsing \"abc\": invalid syntax", "", ""),
+  ("<XBasic><title>é</title><?pi x?><inner n=\"\"><name></name></inner><score>1.5</score><title/><score>0.1</score><note>a&lt;b</note><tags><tag>q</tag></tags><unknown a=\"1\"><deep/></unknown><note></note><title>Hello</title></XBasic>", "ok B{id=0 title=\"Hello\" score=0.1 ok=false note=\"\" tags=[\"q\"] count=0 lang=\"\" inner=I{\"\" 0} items=[] opt=nil skip=\"\" text=\"\"}", "<XBasic id=\"0\"><title>Hello</title><score>0.1</score><ok>false</ok><note></note><tags><tag>q</tag></tags><inner n=\"0\"><name></name></inner></XBasic>", "<XBasic id=\"0\">\n  <title>Hello</title>\n  <score>0.1</score>\n  <ok>false</ok>\n  <note></note>\n  <tags>\n    <tag>q</tag>\n  </tags>\n  <inner n=\"0\">\n    <name></name>\n  </inner>\n</XBasic>"),
+  ("<Other id=' 12 '>\n  <count>-1</count><title/><item n=\"22\"><name></name></item><![CDATA[cd]]><score> 3 </score><tags><tag>x</tag><tag>x</tag></tags><score>abc</score><item><name>ann</name></item><note>n</note><item n=\"\"><name>bo&lt;b</name></item></Other>", "err strconv.ParseFloat: parsing \"abc\": invalid syntax", "", ""),
+  ("<XBasic id=\"99999999999999999999\"><score>1.5</score><item n=\"\"><name>bo&lt;b</name></item><tags><tag>q</tag></tags><ok> TRUE </ok><score>abc</score><score>2</score><item><name>bo&lt;b</name></item><tags><tag>q</tag></tags><title>x<!-- c -->y</title><title/><![CDATA[cd]]></XBasic>", "err strconv.ParseInt: parsing \"99999999999999999999\": value out of range", "", ""),
+  ("<XBasic id=\"\"><title>é</title><note></note><tags><tag>q</tag></tags><inner n=\"x\"></inner>\n  <title/><tags><tag>q</tag></tags><tags><tag>q</tag></tags><score>1e3</score><inner n=\"\"><name> sp </name></inner><tags></tags></XBasic>", "err strconv.ParseInt: parsing \"x\": invalid syntax", "", ""),
+  ("<Other id=' 12 '><opt n=\"22\"><name>ann</name></opt><ok>true</ok><skip>ignored</skip><ok>true</ok>a &amp; b<skip>ignored</skip><tags></tags><title>Hello</title><tags><tag>y</tag><tag>y</tag><tag>y</tag></tags><tags><tag>p</tag></tags></Other>", "ok B{id=12 title=\"Hello\" score=0.0 ok=true note=nil tags=[\"y\",\"y\",\"y\",\"p\"] count=0 lang=\"\" inner=I{\"\" 0} items=[] opt=I{\"ann\" 22} skip=\"\" text=\"a & b\"}", "<XBasic id=\"12\"><title>Hello</title><score>0</score><ok>true</ok><tags><tag>y</tag><tag>y</tag><tag>y</tag><tag>p</tag></tags><inner n=\"0\"><name></name></inner><opt n=\"22\"><name>ann</name></opt>a &amp; b</XBasic>", "<XBasic id=\"12\">\n  <title>Hello</title>\n  <score>0</score>\n  <ok>true</ok>\n  <tags>\n    <tag>y</tag>\n    <tag>y</tag>\n    <tag>y</tag>\n    <tag>p</tag>\n  </tags>\n  <inner n=\"0\">\n    <name></name>\n  </inner>\n  <opt n=\"22\">\n    <name>ann</name>\n  </opt>a &amp; b\n</XBasic>"),
+  ("<XBasic id=\"7\"><opt n=\"1\"></opt><title/></XBasic>", "ok B{id=7 title=\"\" score=0.0 ok=false note=nil tags=[] count=0 lang=\"\" inner=I{\"\" 0} items=[] opt=I{\"\" 1} skip=\"\" text=\"\"}", "<XBasic id=\"7\"><title></title><score>0</score><ok>false</ok><tags></tags><inner n=\"0\"><name></name></inner><opt n=\"1\"><name></name></opt></XBasic>", "<XBasic id=\"7\">\n  <title></title>\n  <score>0</score>\n  <ok>false</ok>\n  <tags></tags>\n  <inner n=\"0\">\n    <name></name>\n  </inner>\n  <opt n=\"1\">\n    <name></name>\n  </opt>\n</XBasic>"),
+  ("<XBasic id=\"99999999999999999999\"><item n=\"1\"></item><skip>ignored</skip><unknown a=\"1\"><deep/></unknown><item n=\"\"><name>bo&lt;b</name></item><ok>1</ok><title>a &amp; b</title></XBasic>", "err strconv.ParseInt: parsing \"99999999999999999999\": value out of range", "", ""),
+  ("<XBasic id=\"abc\"><tags><tag>q</tag></tags></XBasic>", "err strconv.ParseInt: parsing \"abc\": invalid syntax", "", ""),
+  ("<XBasic id=\"\" lang=\"a&amp;b\"><tags><tag>q</tag></tags><item n=\"\"><name>bo&lt;b</name></item><skip>ignored</skip></XBasic>", "ok B{id=0 title=\"\" score=0.0 ok=false note=nil tags=[\"q\"] count=0 lang=\"a&b\" inner=I{\"\" 0} items=[I{\"bo<b\" 0}] opt=nil skip=\"\" text=\"\"}", "<XBasic id=\"0\" lang=\"a&amp;b\"><title></title><score>0</score><ok>false</ok><tags><tag>q</tag></tags><inner n=\"0\"><name></name></inner><item n=\"0\"><name>bo&lt;b</name></item></XBasic>", "<XBasic id=\"0\" lang=\"a&amp;b\">\n  <title></title>\n  <score>0</score>\n  <ok>false</ok>\n  <tags>\n    <tag>q</tag>\n  </tags>\n  <inner n=\"0\">\n    <name></name>\n  </inner>\n  <item n=\"0\">\n    <name>bo&lt;b</name>\n  </item>\n</XBasic>"),
+  ("<XBasic lang=\"a&amp;b\"><note>a&lt;b</note><title>é</title><score>1e3</score><inner n=\"22\"><name>é日</name></inner><title/>a &amp; b<?pi x?><opt n=\"22\"></opt>text<opt n=\"1\"><name>bo&lt;b</name></opt></XBasic>", "ok B{id=0 title=\"\" score=1000.0 ok=false note=\"a<b\" tags=[] count=0 lang=\"a&b\" inner=I{\"é日\" 22} items=[] opt=I{\"bo<b\" 1} skip=\"\" text=\"a & btext\"}", "<XBasic id=\"0\" lang=\"a&amp;b\"><title></title><score>1000</score><ok>false</ok><note>a&lt;b</note><tags></tags><inner n=\"22\"><name>é日</name></inner><opt n=\"1\"><name>bo&lt;b</name></opt>a &amp; btext</XBasic>", "<XBasic id=\"0\" lang=\"a&amp;b\">\n  <title></title>\n  <score>1000</score>\n  <ok>false</ok>\n  <note>a&lt;b</note>\n  <tags></tags>\n  <inner n=\"22\">\n    <name>é日</name>\n  </inner>\n  <opt n=\"1\">\n    <name>bo&lt;b</name>\n  </opt>a &amp; btext\n</XBasic>"),
+  ("<XBasic id=\"0\"><score>-0.25</score><inner n=\"22\"><name>bo&lt;b</name></inner><title>Hello</title><skip>ignored</skip></XBasic>", "ok B{id=0 title=\"Hello\" score=-0.25 ok=false note=nil tags=[] count=0 lang=\"\" inner=I{\"bo<b\" 22} items=[] opt=nil skip=\"\" text=\"\"}", "<XBasic id=\"0\"><title>Hello</title><score>-0.25</score><ok>false</ok><tags></tags><inner n=\"22\"><name>bo&lt;b</name></inner></XBasic>", "<XBasic id=\"0\">\n  <title>Hello</title>\n  <score>-0.25</score>\n  <ok>false</ok>\n  <tags></tags>\n  <inner n=\"22\">\n    <name>bo&lt;b</name>\n  </inner>\n</XBasic>"),
+  ("<XBasic><count>z</count><opt n=\"\"><name>é日</name></opt><note>n</note><note>a&lt;b</note><title/><skip>ignored</skip><opt n=\"1\"><name> sp </name></opt><inner n=\"x\"><name>ann</name></inner><score>abc</score></XBasic>", "err strconv.ParseInt: parsing \"z\": invalid syntax", "", ""),
+  ("<XBasic id=\"\" lang=\"\"><inner n=\"22\"><name>bo&lt;b</name></inner><opt n=\"x\"><name>é日</name></opt><title/><item n=\"\"></item><inner n=\"\"></inner><item><name>ann</name></item></XBasic>", "err strconv.ParseInt: parsing \"x\": invalid syntax", "", ""),
+  ("<XBasic lang=\"\"><?pi x?><inner n=\"\"><name>é日</name></inner><ok>0</ok><score>1.5</score></XBasic>", "ok B{id=0 title=\"\" score=1.5 ok=false note=nil tags=[] count=0 lang=\"\" inner=I{\"é日\" 0} items=[] opt=nil skip=\"\" text=\"\"}", "<XBasic id=\"0\"><title></title><score>1.5</score><ok>false</ok><tags></tags><inner n=\"0\"><name>é日</name></inner></XBasic>", "<XBasic id=\"0\">\n  <title></title>\n  <score>1.5</score>\n  <ok>false</ok>\n  <tags></tags>\n  <inner n=\"0\">\n    <name>é日</name>\n  </inner>\n</XBasic>"),
+  ("<XBasic id=' 12 ' extra=\"x\"></XBasic>", "ok B{id=12 title=\"\" score=0.0 ok=false note=nil tags=[] count=0 lang=\"\" inner=I{\"\" 0} items=[] opt=nil skip=\"\" text=\"\"}", "<XBasic id=\"12\"><title></title><score>0</score><ok>false</ok><tags></tags><inner n=\"0\"><name></name></inner></XBasic>", "<XBasic id=\"12\">\n  <title></title>\n  <score>0</score>\n  <ok>false</ok>\n  <tags></tags>\n  <inner n=\"0\">\n    <name></name>\n  </inner>\n</XBasic>"),
+  ("<XBasic lang=\"\"><count>0</count><tags><tag>q</tag></tags><tags><tag>q</tag></tags><unknown a=\"1\"><deep/></unknown><note></note><note>n</note><title></title></XBasic>", "ok B{id=0 title=\"\" score=0.0 ok=false note=\"n\" tags=[\"q\",\"q\"] count=0 lang=\"\" inner=I{\"\" 0} items=[] opt=nil skip=\"\" text=\"\"}", "<XBasic id=\"0\"><title></title><score>0</score><ok>false</ok><note>n</note><tags><tag>q</tag><tag>q</tag></tags><inner n=\"0\"><name></name></inner></XBasic>", "<XBasic id=\"0\">\n  <title></title>\n  <score>0</score>\n  <ok>false</ok>\n  <note>n</note>\n  <tags>\n    <tag>q</tag>\n    <tag>q</tag>\n  </tags>\n  <inner n=\"0\">\n    <name></name>\n  </inner>\n</XBasic>"),
+  ("<XBasic id=\"99999999999999999999\" extra=\"x\"><tags><tag>q</tag></tags><!-- c --><ok>false</ok><tags></tags><count>-1</count><count></count><ok>1</ok><inner n=\"x\"><name> sp </name></inner><inner><name>ann</name></inner><title/></XBasic>", "err strconv.ParseInt: parsing \"99999999999999999999\": value out of range", "", ""),
+  ("<XBasic id=\"7\" lang=\"\"><unknown a=\"1\"><deep/></unknown><item><name>ann</name></item><title></title><![CDATA[cd]]><title/><title/><count>0</count><item n=\"22\"><name>é日</name></item><tags><tag>q</tag></tags><?pi x?><ok> TRUE </ok></XBasic>", "ok B{id=7 title=\"\" score=0.0 ok=true note=nil tags=[\"q\"] count=0 lang=\"\" inner=I{\"\" 0} items=[I{\"ann\" 0},I{\"é日\" 22}] opt=nil skip=\"\" text=\"cd\"}", "<XBasic id=\"7\"><title></title><score>0</score><ok>true</ok><tags><tag>q</tag></tags><inner n=\"0\"><name></name></inner><item n=\"0\"><name>ann</name></item><item n=\"22\"><name>é日</name></item>cd</XBasic>", "<XBasic id=\"7\">\n  <title></title>\n  <score>0</score>\n  <ok>true</ok>\n  <tags>\n    <tag>q</tag>\n  </tags>\n  <inner n=\"0\">\n    <name></name>\n  </inner>\n  <item n=\"0\">\n    <name>ann</name>\n  </item>\n  <item n=\"22\">\n    <name>é日</name>\n  </item>cd\n</XBasic>"),
+  ("<Other lang=\"en\"><item></item><opt></opt></Other>", "ok B{id=0 title=\"\" score=0.0 ok=false note=nil tags=[] count=0 lang=\"en\" inner=I{\"\" 0} items=[I{\"\" 0}] opt=I{\"\" 0} skip=\"\" text=\"\"}", "<XBasic id=\"0\" lang=\"en\"><title></title><score>0</score><ok>false</ok><tags></tags><inner n=\"0\"><name></name></inner><item n=\"0\"><name></name></item><opt n=\"0\"><name></name></opt></XBasic>", "<XBasic id=\"0\" lang=\"en\">\n  <title></title>\n  <score>0</score>\n  <ok>false</ok>\n  <tags></tags>\n  <inner n=\"0\">\n    <name></name>\n  </inner>\n  <item n=\"0\">\n    <name></name>\n  </item>\n  <opt n=\"0\">\n    <name></name>\n  </opt>\n</XBasic>"),
+  ("<XBasic id=' 12 '><opt><name>bo&lt;b</name></opt> <ok>t</ok><tags><tag>z&amp;</tag><tag>z&amp;</tag><tag>z&amp;</tag></tags><title/><tags><tag>p</tag></tags></XBasic>", "ok B{id=12 title=\"\" score=0.0 ok=true note=nil tags=[\"z&\",\"z&\",\"z&\",\"p\"] count=0 lang=\"\" inner=I{\"\" 0} items=[] opt=I{\"bo<b\" 0} skip=\"\" text=\" \"}", "<XBasic id=\"12\"><title></title><score>0</score><ok>true</ok><tags><tag>z&amp;</tag><tag>z&amp;</tag><tag>z&amp;</tag><tag>p</tag></tags><inner n=\"0\"><name></name></inner><opt n=\"0\"><name>bo&lt;b</name></opt> </XBasic>", "<XBasic id=\"12\">\n  <title></title>\n  <score>0</score>\n  <ok>true</ok>\n  <tags>\n    <tag>z&amp;</tag>\n    <tag>z&amp;</tag>\n    <tag>z&amp;</tag>\n    <tag>p</tag>\n  </tags>\n  <inner n=\"0\">\n    <name></name>\n  </inner>\n  <opt n=\"0\">\n    <name>bo&lt;b</name>\n  </opt> \n</XBasic>"),
+  ("<Other id=' 12 ' lang='fr' extra=\"x\"><item n=\"22\"><name></name></item><tags><tag>q</tag></tags><opt n=\"x\"></opt><opt n=\"22\"><name>ann</name></opt><unknown a=\"1\"><deep/></unknown><?pi x?><note>n</note></Other>", "err strconv.ParseInt: parsing \"x\": invalid syntax", "", ""),
+  ("<XBasic id=' 12 ' lang='fr'><tags></tags><tags><tag>z&amp;</tag><tag>z&amp;</tag><tag>z&amp;</tag></tags><tags><tag>p</tag></tags><note>a&lt;b</note><inner n=\"22\"></inner><title/><", "err XML syntax error on line 1: unexpected EOF", "", ""),
+  ("<XBasic id=\"1.5\" lang='fr'><count></count></XBasic>", "err strconv.ParseInt: parsing \"1.5\": invalid syntax", "", ""),
+  ("<XBasic id=\"\" lang=\"a&amp;b\"><inner></inner><tags><tag>p</tag></tags><tags><tag>x</tag><tag>x</tag><tag>x</tag></tags><item n=\"x\"></item><score>1.5</score><tags><tag>y</tag></tags></XBasic>", "err strconv.ParseInt: parsing \"x\": invalid syntax", "", ""),
+  ("<XBasic id=\"0\"><skip>ignored</skip><opt n=\"22\"><name></name></opt><tags><tag>p</tag></tags><skip>ignored</skip><ok>0</ok><title></title><unknown a=\"1\"><deep/></unknown><title>é</title></XBasic>", "ok B{id=0 title=\"é\" score=0.0 ok=false note=nil tags=[\"p\"] count=0 lang=\"\" inner=I{\"\" 0} items=[] opt=I{\"\" 22} skip=\"\" text=\"\"}", "<XBasic id=\"0\"><title>é</title><score>0</score><ok>false</ok><tags><tag>p</tag></tags><inner n=\"0\"><name></name></inner><opt n=\"22\"><name></name></opt></XBasic>", "<XBasic id=\"0\">\n  <title>é</title>\n  <score>0</score>\n  <ok>false</ok>\n  <tags>\n    <tag>p</tag>\n  </tags>\n  <inner n=\"0\">\n    <name></name>\n  </inner>\n  <opt n=\"22\">\n    <name></name>\n  </opt>\n</XBasic>"),
+  ("<XBasic id=\"1.5\"><item n=\"22\"><name>é日</name></item><?pi x?><count></count><tags></tags><skip>ignored</skip><title>é</title><ok>false</ok><title/></XBasic>", "err strconv.ParseInt: parsing \"1.5\": invalid syntax", "", ""),
+  ("<XBasic id=\"\"><ok>1</ok><?pi x?><inner n=\"22\"><name> sp </name></inner><ok>false</ok><count>0</count></XBasic>", "ok B{id=0 title=\"\" score=0.0 ok=false note=nil tags=[] count=0 lang=\"\" inner=I{\" sp \" 22} items=[] opt=nil skip=\"\" text=\"\"}", "<XBasic id=\"0\"><title></title><score>0</score><ok>false</ok><tags></tags><inner n=\"22\"><name> sp </name></inner></XBasic>", "<XBasic id=\"0\">\n  <title></title>\n  <score>0</score>\n  <ok>false</ok>\n  <tags></tags>\n  <inner n=\"22\">\n    <name> sp </name>\n  </inner>\n</XBasic>"),
+  ("<XBa", "err XML syntax error on line 1: unexpected EOF", "", ""),
+  ("<XBasic lang=\"a&amp;b\"><note>a&lt;b</note><?pi x?><note>n</note><skip>ignored</skip><item n=\"1\"><name>bo&lt;b</name></item><ok>true</ok><!-- c --><inner><name>ann</name></inner></XBasic>", "ok B{id=0 title=\"\" score=0.0 ok=true note=\"n\" tags=[] count=0 lang=\"a&b\" inner=I{\"ann\" 0} items=[I{\"bo<b\" 1}] opt=nil skip=\"\" text=\"\"}", "<XBasic id=\"0\" lang=\"a&amp;b\"><title></title><score>0</score><ok>true</ok><note>n</note><tags></tags><inner n=\"0\"><name>ann</name></inner><item n=\"1\"><name>bo&lt;b</name></item></XBasic>", "<XBasic id=\"0\" lang=\"a&amp;b\">\n  <title></title>\n  <score>0</score>\n  <ok>true</ok>\n  <note>n</note>\n  <tags></tags>\n  <inner n=\"0\">\n    <name>ann</name>\n  </inner>\n  <item n=\"1\">\n    <name>bo&lt;b</name>\n  </item>\n</XBasic>"),
+  ("<XBasic lang=\"a&amp;b\"><title/><score>abc</score>a &amp; b<tags><tag>z&amp;</tag></tags><ok>false</ok><tags><tag>q</tag></tags><title/></XBasic>", "err strconv.ParseFloat: parsing \"abc\": invalid syntax", "", ""),
+  ("<XBasic id=\"99999999999999999999\"><inner><name> sp </name></inner><ok>0</ok><title/><note>n</note><opt n=\"1\"><name>ann</name></opt></XBasic>", "err strconv.ParseInt: parsing \"99999999999999999999\": value out of range", "", ""),
+  ("<XBasic id=' 12 ' lang=\"\"><count>5</count><title/><skip>ignored</skip> <unknown a=\"1\"><deep/></unknown><score>-0.25</score><skip>ignored</skip></XBasic>", "ok B{id=12 title=\"\" score=-0.25 ok=false note=nil tags=[] count=5 lang=\"\" inner=I{\"\" 0} items=[] opt=nil skip=\"\" text=\" \"}", "<XBasic id=\"12\"><title></title><score>-0.25</score><ok>false</ok><tags></tags><count>5</count><inner n=\"0\"><name></name></inner> </XBasic>", "<XBasic id=\"12\">\n  <title></title>\n  <score>-0.25</score>\n  <ok>false</ok>\n  <tags></tags>\n  <count>5</count>\n  <inner n=\"0\">\n    <name></name>\n  </inner> \n</XBasic>"),
+  ("<Other id=\"-3\">text<item n=\"x\"><name>ann</name></item>text<score>1.5</score><title>a &amp; b</title><count></count><skip>ignored</skip></Other>", "err strconv.ParseInt: parsing \"x\": invalid syntax", "", ""),
+  ("<XBasic extra=\"x\"><item><name></name></item><tags><tag>p</tag></tags><inner n=\"22\"></inner><score>0.1</score><ok>yes</ok><ok>1</ok><tags><tag>p</tag></tags><score></score></XBasic>", "err strconv.ParseBool: parsing \"yes\": invalid syntax", "", ""),
+  ("<Other id=\"99999999999999999999\" lang='fr'>a &amp; b<tags><tag>y</tag></tags></Other>", "err strconv.ParseInt: parsing \"99999999999999999999\": value out of range", "", ""),
+]
+
+struct XInner {
+  name: Str
+  n xml "n,attr": Int
+} derive Xml
+
+struct XBasic {
+  id xml "id,attr": Int
+  title: Str
+  score: Float
+  ok: Bool
+  note xml "note,omitempty": Str?
+  tags xml "tags>tag": List[Str]
+  count xml "count,omitempty": Int
+  lang xml "lang,attr,omitempty": Str
+  inner: XInner
+  items xml "item": List[XInner]
+  opt: XInner?
+  skip xml "-": Str
+  text xml ",chardata": Str
+} derive Xml
+
+fn show_inner(v: XInner) -> Str { "I{${v.name.quote()} ${v.n}}" }
+
+fn show_basic(v: XBasic) -> Str {
+  let note = match v.note {
+    Some(s) => s.quote()
+    None => "nil"
+  }
+  let opt = match v.opt {
+    Some(i) => show_inner(i)
+    None => "nil"
+  }
+  let tags = v.tags.map(fn(t) { t.quote() }).join(",")
+  let items = v.items.map(show_inner).join(",")
+  "B{id=${v.id} title=${v.title.quote()} score=${v.score} ok=${v.ok} note=${note} tags=[${tags}] count=${v.count} lang=${v.lang.quote()} inner=${show_inner(v.inner)} items=[${items}] opt=${opt} skip=${v.skip.quote()} text=${v.text.quote()}}"
+}

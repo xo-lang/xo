@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/big"
 	"math/rand"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -144,13 +145,30 @@ func bigParseDisplay(s string, base int, z *big.Int, ok bool) string {
 	return fmt.Sprintf("invalid number %q in base %d", s, base)
 }
 
+// bigFuzzSeed is XO_BIGFUZZ_SEED (default 0, the committed corpus), added
+// to every generator seed; bigFuzzN is XO_BIGFUZZ_N (default 2600), the
+// random operand pairs: internal/stdtest/bigfuzz_test.go's fresh seeds
+// (task #116).
+func bigFuzzSeed() int64 {
+	seed, _ := strconv.ParseInt(os.Getenv("XO_BIGFUZZ_SEED"), 10, 64)
+	return seed
+}
+
+func bigFuzzN() int {
+	n, err := strconv.Atoi(os.Getenv("XO_BIGFUZZ_N"))
+	if err != nil || n <= 0 {
+		return 2600
+	}
+	return n
+}
+
 func bigCorpus() string {
-	r := rand.New(rand.NewSource(5))
+	r := rand.New(rand.NewSource(5 + bigFuzzSeed()))
 	var o strings.Builder
 	o.WriteString(header("math/big's Int on seeded random operands of up to 1,500 bits (runs of ones and zeros, both signs), every std/big operation, and SetString on valid and invalid texts"))
 	o.WriteString("use std/big\n\n/// (op, a in hex, b in hex, k: a shift, bit, base, exponent, or rounds; Go's result: hex, a number (a Float as its bits), none)\nconst OPS: List[(Str, Str, Str, Int, Str)] = [\n")
 	ops := []string{"add", "sub", "mul", "quo", "rem", "div", "mod", "gcd", "modinv", "expmod", "sqrt", "lsh", "rsh", "and", "or", "xor", "andnot", "not", "bit", "bitlen", "tz", "text", "bytes", "toint", "tofloat", "cmp", "cmpabs", "prime"}
-	for i := 0; i < 2600; i++ {
+	for i := 0; i < bigFuzzN(); i++ {
 		op := ops[i%len(ops)]
 		size := []int{64, 64, 130, 200, 600, 1500}[r.Intn(6)]
 		if op == "expmod" || op == "prime" || op == "modinv" {
@@ -209,7 +227,7 @@ func bigCorpus() string {
 	// gcd with a large common factor, consecutive Fibonacci numbers (the
 	// most Euclidean steps) and operands of one and two words, for
 	// Lehmer's algorithm; drawn from its own source
-	r3 := rand.New(rand.NewSource(11))
+	r3 := rand.New(rand.NewSource(11 + bigFuzzSeed()))
 	fa, fb := big.NewInt(1), big.NewInt(1)
 	for i := 0; i < 2000; i++ {
 		fa, fb = fb, new(big.Int).Add(fa, fb)
@@ -231,7 +249,7 @@ func bigCorpus() string {
 	// abs, neg, and sign (Go's Int.Abs, Int.Neg, Int.Sign), which no
 	// operation above reaches; drawn from its own source, so the rows
 	// above keep their operands.
-	r2 := rand.New(rand.NewSource(7))
+	r2 := rand.New(rand.NewSource(7 + bigFuzzSeed()))
 	for i := 0; i < 120; i++ {
 		op := []string{"abs", "neg", "sign"}[i%3]
 		a := bigRand(r2, []int{64, 130, 600, 1500}[r2.Intn(4)])
@@ -279,7 +297,7 @@ func bigCorpus() string {
 // small and up to 600 bits) and odd y (both signs, 1, primes), its own
 // source so the tables above stay as they are.
 func bigJacobiCorpus(o *strings.Builder) {
-	r := rand.New(rand.NewSource(77))
+	r := rand.New(rand.NewSource(77 + bigFuzzSeed()))
 	o.WriteString("\n/// big.jacobi: (x in hex, y in hex, Go's Jacobi)\nconst JACOBIS: List[(Str, Str, Int)] = [\n")
 	for i := 0; i < 400; i++ {
 		x := bigRand(r, []int{8, 64, 130, 600}[r.Intn(4)])

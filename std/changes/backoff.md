@@ -1,5 +1,16 @@
 # std/backoff changes
 
+## 2026-11-16: fix: a multiplier below 1 shrinks the interval after the cap
+
+- Kind: fix
+- Commit: this push
+- Found by: TestBackoffFuzz (task #116), a differential against cenkalti/backoff v4's ExponentialBackOff arithmetic on random schedules
+- Go reference: cenkalti/backoff v4.3.0 exponential.go incrementCurrentInterval (Copyright (c) 2014 Cenk Altı, MIT license)
+- Test: std/backoff_test.xo "a multiplier below 1 shrinks a capped interval"; internal/stdtest/testdata/corpus/backofffuzz (seed 1, 400 schedules); TestBackoffFuzz seeds 2 and 3, 5000 schedules each (arm64)
+- Shipped in: not yet released
+
+`delay(attempt, rand)` stopped growing the interval once it reached `max_interval`. Go's incrementCurrentInterval multiplies a capped interval again, so a multiplier below 1 (or 0) shrinks it: initial 10s, multiplier 0.5, max 4s gives 10s, 4s, 2s, 1s, 500ms, where Xo gave 10s, 4s, 4s, 4s. The walk now ends only at a fixed point.
+
 ## 2026-11-15: feature: ticker, Ticker.next and Ticker.stop (cenkalti/backoff v4's Ticker)
 
 - Kind: feature

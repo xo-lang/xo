@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/backoff): a `Backoff` whose multiplier is below 1 shrinks the interval again after it reaches `max_interval`, as cenkalti/backoff's ExponentialBackOff (10s, multiplier 0.5, max 4s gives 10s, 4s, 2s, 1s, 500ms; it stayed at 4s). Found by the new TestBackoffFuzz (task #116); registered for stdproven fuzz under backoff.
 - Feature (std/json, std/big): `json.Number`, a JSON number kept as its text (Go's json.Number), usable as a field and as a `derive Json(via: json.Number)` proxy; std/big's BigInt encodes and decodes as Go's bare JSON number (decision 0673).
 - Feature (std/log, every backend; decision 0678): groups, as log/slog's: `log.group(fields)` as a field value and `Logger.with_group(name)`; text records write dotted keys (`req.method=GET`), JSON records nested objects, a handler sees `Value.Group` in `Record.values` and dotted keys in `Record.fields`. Breaking for a `match` on `log.Value` with no `_` arm: add a `Group(fields)` arm (recurse, or read `Record.fields`).
 

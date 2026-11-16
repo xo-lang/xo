@@ -21,6 +21,7 @@ import (
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
+	"strconv"
 )
 
 // A testCase is one input: the text, the fragment context (namespace and
@@ -381,7 +382,7 @@ var pieces = []string{
 
 // randomCases builds seeded documents from the pieces, each parsed as a document, and some as a fragment.
 func randomCases(n int) []*testCase {
-	r := rand.New(rand.NewSource(570))
+	r := rand.New(rand.NewSource(570 + fuzzSeed()))
 	ctxs := [][2]string{{"", "div"}, {"", "table"}, {"", "tr"}, {"", "select"}, {"", "template"}, {"", "body"}, {"", "html"}, {"", "colgroup"}, {"svg", "svg"}, {"math", "mi"}, {"", "title"}, {"", "textarea"}, {"", "script"}, {"", "form"}}
 	var out []*testCase
 	for i := 0; i < n; i++ {
@@ -433,7 +434,7 @@ func xoCorpus(goVersion string) string {
 	o.WriteString("]\n\n")
 	fmt.Fprintf(&o, "const RENDER_COUNT: Int = %d\n", m)
 	o.WriteString("\n/// (s, Go's html.EscapeString)\nconst ESCAPES: List[(Str, Str)] = [\n")
-	er := rand.New(rand.NewSource(659))
+	er := rand.New(rand.NewSource(659 + fuzzSeed()))
 	parts := []string{"&", "'", "<", ">", "\"", "\r", "\n", "a", " ", "é", "&amp;", "\t", "日"}
 	for i := 0; i < 300; i++ {
 		var b strings.Builder
@@ -555,4 +556,12 @@ func main() {
 	}
 	fmt.Fprintln(os.Stderr, "usage: htmlparseoracle files CASES EXPECT")
 	os.Exit(2)
+}
+
+// fuzzSeed is XO_HTMLPARSEFUZZ_SEED (default 0, the committed corpus), added to
+// every generator seed: internal/stdtest/corpusfuzz_test.go's fresh seeds
+// (task #116).
+func fuzzSeed() int64 {
+	seed, _ := strconv.ParseInt(os.Getenv("XO_HTMLPARSEFUZZ_SEED"), 10, 64)
+	return seed
 }

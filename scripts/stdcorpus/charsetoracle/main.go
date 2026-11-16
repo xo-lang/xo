@@ -19,6 +19,7 @@ import (
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/htmlindex"
 	"golang.org/x/text/encoding/unicode"
+	"strconv"
 )
 
 func hx(b []byte) string { return `"` + hex.EncodeToString(b) + `"` }
@@ -49,7 +50,7 @@ type enc struct {
 }
 
 func main() {
-	rg := rand.New(rand.NewSource(43))
+	rg := rand.New(rand.NewSource(43 + fuzzSeed()))
 	encs := []enc{
 		{"Utf16Le", unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM)},
 		{"Utf16Be", unicode.UTF16(unicode.BigEndian, unicode.IgnoreBOM)},
@@ -81,8 +82,8 @@ func main() {
 	add(0x3d, 0xd8, 0x41, 0x00) // high then a letter
 	add(0x00, 0xde)             // lone low
 	add(0x3d, 0xd8, 0x3d, 0xd8, 0x00, 0xde)
-	add(0x3d, 0xd8, 0x00)    // high then an odd byte
-	add(0x41, 0x00, 0x42)    // odd tail
+	add(0x3d, 0xd8, 0x00)       // high then an odd byte
+	add(0x41, 0x00, 0x42)       // odd tail
 	add(0x00, 0xde, 0x3d, 0xd8) // low then high
 	for b := 0x80; b <= 0xa0; b++ {
 		add(byte(b))
@@ -336,7 +337,7 @@ func main() {
 	for _, t := range []string{"\x80", "\xc0", "\xc1", "\xc0\x80", "\xed\xa0\x80", "\xed\xbf\xbf", "\xf4\x90\x80\x80", "\xf7\xbf\xbf\xbf", "\xfb\xbf\xbf\xbf\xbf", "\xe0\x80", "\xf0\x80", "\xf4\x8f", "\xe1\x80", "\xbf\xbf\xbf\xbf\xbf", "a\x80\x80\x80\x80", "\xe2\x9c", "\xe2"} {
 		ins = append(ins, []byte(t))
 	}
-	ur := rand.New(rand.NewSource(8))
+	ur := rand.New(rand.NewSource(8 + fuzzSeed()))
 	alpha := []byte{0x41, 0x7f, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc0, 0xc2, 0xdf, 0xe0, 0xe1, 0xed, 0xef, 0xf0, 0xf3, 0xf4, 0xf5, 0xff}
 	for i := 0; i < 600; i++ {
 		b := make([]byte, ur.Intn(7))
@@ -539,4 +540,12 @@ test "utf8_rune_start is Go's RuneStart" {
 }
 `)
 	fmt.Print(o.String())
+}
+
+// fuzzSeed is XO_CHARSETFUZZ_SEED (default 0, the committed corpus), added to
+// every generator seed: internal/stdtest/corpusfuzz_test.go's fresh seeds
+// (task #116).
+func fuzzSeed() int64 {
+	seed, _ := strconv.ParseInt(os.Getenv("XO_CHARSETFUZZ_SEED"), 10, 64)
+	return seed
 }

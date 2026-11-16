@@ -1,0 +1,30 @@
+# A Go oracle run on arm64 fuses a*b+c, so its float answers are not portable
+
+Status: Observed (2026-11-16, task #116)
+
+## Symptom
+
+TestRandomFuzz seed 3: std/random's Zipf draw 35 for s=1.08, v=11.39
+gave 37364334090267 where the corpus (Go's math/rand/v2 Zipf, generated on
+the arm64 Mac) wanted 37364334090268. Every input to the step was
+bit-identical; `ur := hxm + r*hx0minusHxm` differed by one ulp, and
+`floor(x + 0.5)` fell on the other side.
+
+## Cause
+
+The Go spec lets a compiler fuse `x*y + z` into one fused multiply-add,
+and Go does on arm64 (also ppc64, riscv64, s390x), not on amd64. A
+generator that calls Go's library on arm64 records the fused result. Xo's
+floats are strict (decision 0287), like Go on amd64, so Xo is right and
+the reference is platform-dependent. It shows only where a result sits
+on a rounding boundary, so it can pass thousands of cases first.
+
+## Fix
+
+Compute the reference with each product rounded on its own:
+`float64(a*b)` blocks fusion (Go spec, Floating-point operators). For a
+library function, copy its code into the generator with those
+conversions (scripts/stdcorpus/random.go zipfStrict) and keep the
+committed corpus byte-identical to prove the copy is faithful. See also
+go-backend-fma-contraction.md and go-backend-fused-float.md (the same
+fusion in the Go backend's output).

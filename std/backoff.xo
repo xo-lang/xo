@@ -164,13 +164,19 @@ pub fn (t: Ticker) stop() {
 fn interval(b: Backoff, attempt: Int) -> Duration {
   var ci = b.initial
   var k = 0
-  while k < attempt && ci != b.max_interval {
-    // Go: float64(ci) >= float64(MaxInterval)/Multiplier caps it
-    if Float(ci.nanos()) >= Float(b.max_interval.nanos()) / b.multiplier {
-      ci = b.max_interval
+  while k < attempt {
+    // Go: float64(ci) >= float64(MaxInterval)/Multiplier caps it; a
+    // multiplier below 1 then shrinks it again, so the walk ends only at a
+    // fixed point (max_interval when the multiplier is at least 1, or 0)
+    let next = if Float(ci.nanos()) >= Float(b.max_interval.nanos()) / b.multiplier {
+      b.max_interval
     } else {
-      ci = Duration.from_nanos(Int(Float(ci.nanos()) * b.multiplier))
+      Duration.from_nanos(Int(Float(ci.nanos()) * b.multiplier))
     }
+    if next == ci {
+      break
+    }
+    ci = next
     k += 1
   }
   ci

@@ -1,0 +1,158 @@
+// publicsuffix stress program (decision 0616 section 2): 64 tasks run std/publicsuffix's
+// public_suffix and effective_tld_plus_one against golang.org/x/net's
+// publicsuffix (the corpus .../corpus/publicsuffix),
+// for a fixed time. A background task samples the resident set every 10 s
+// (Linux /proc/self/status). Pass: no mismatch, no fault, and the resident
+// set at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/publicsuffix
+
+/// One pass over the domains from offset start: public_suffix and
+/// effective_tld_plus_one; the operations done, or the first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..CASES.len() {
+    let (d, ps, icann, e) = CASES[(start + k) % CASES.len()]
+    let (gps, gi) = publicsuffix.public_suffix(d)
+    let ge = match publicsuffix.effective_tld_plus_one(d) {
+      Ok(s) => s
+      Err(x) => "!" + x.msg
+    }
+    if gps != ps || gi != icann || ge != e {
+      return Err("${d}: got (${gps}, ${gi}, ${ge}), want (${ps}, ${icann}, ${e})")
+    }
+  }
+  2 * CASES.len()
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("publicsuffix stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+/// (domain, public suffix, icann, eTLD+1 or the error's text after "!")
+const CASES: List[(Str, Str, Bool, Str)] = [
+  ("", "", false, "!publicsuffix: cannot derive eTLD+1 for domain \"\""),
+  (".", "", false, "!publicsuffix: empty label in domain \".\""),
+  ("com", "com", true, "!publicsuffix: cannot derive eTLD+1 for domain \"com\""),
+  ("example.com", "com", true, "example.com"),
+  ("www.example.com", "com", true, "example.com"),
+  ("a.b.c.example.com", "com", true, "example.com"),
+  ("co.uk", "co.uk", true, "!publicsuffix: cannot derive eTLD+1 for domain \"co.uk\""),
+  ("example.co.uk", "co.uk", true, "example.co.uk"),
+  ("www.example.co.uk", "co.uk", true, "example.co.uk"),
+  ("uk", "uk", true, "!publicsuffix: cannot derive eTLD+1 for domain \"uk\""),
+  ("parliament.uk", "uk", true, "parliament.uk"),
+  ("ck", "ck", false, "!publicsuffix: cannot derive eTLD+1 for domain \"ck\""),
+  ("www.ck", "ck", true, "www.ck"),
+  ("foo.ck", "foo.ck", true, "!publicsuffix: cannot derive eTLD+1 for domain \"foo.ck\""),
+  ("a.foo.ck", "foo.ck", true, "a.foo.ck"),
+  ("kawasaki.jp", "jp", true, "kawasaki.jp"),
+  ("city.kawasaki.jp", "kawasaki.jp", true, "city.kawasaki.jp"),
+  ("www.city.kawasaki.jp", "kawasaki.jp", true, "city.kawasaki.jp"),
+  ("foo.kawasaki.jp", "foo.kawasaki.jp", true, "!publicsuffix: cannot derive eTLD+1 for domain \"foo.kawasaki.jp\""),
+  ("a.foo.kawasaki.jp", "foo.kawasaki.jp", true, "a.foo.kawasaki.jp"),
+  ("github.io", "github.io", false, "!publicsuffix: cannot derive eTLD+1 for domain \"github.io\""),
+  ("user.github.io", "github.io", false, "user.github.io"),
+  ("www.user.github.io", "github.io", false, "user.github.io"),
+  ("blogspot.com", "blogspot.com", false, "!publicsuffix: cannot derive eTLD+1 for domain \"blogspot.com\""),
+  ("foo.blogspot.com", "blogspot.com", false, "foo.blogspot.com"),
+  ("appspot.com", "appspot.com", false, "!publicsuffix: cannot derive eTLD+1 for domain \"appspot.com\""),
+  ("x.appspot.com", "appspot.com", false, "x.appspot.com"),
+  ("s3.amazonaws.com", "s3.amazonaws.com", false, "!publicsuffix: cannot derive eTLD+1 for domain \"s3.amazonaws.com\""),
+  ("bucket.s3.amazonaws.com", "s3.amazonaws.com", false, "bucket.s3.amazonaws.com"),
+  ("nosuchtld", "nosuchtld", false, "!publicsuffix: cannot derive eTLD+1 for domain \"nosuchtld\""),
+  ("a.nosuchtld", "nosuchtld", false, "a.nosuchtld"),
+  ("b.a.nosuchtld", "nosuchtld", false, "a.nosuchtld"),
+  ("127.0.0.1", "127.0.0.1", false, "!publicsuffix: cannot derive eTLD+1 for domain \"127.0.0.1\""),
+  ("::1", "::1", false, "!publicsuffix: cannot derive eTLD+1 for domain \"::1\""),
+  ("2001:db8::1", "2001:db8::1", false, "!publicsuffix: cannot derive eTLD+1 for domain \"2001:db8::1\""),
+  ("192.168.0.1", "192.168.0.1", false, "!publicsuffix: cannot derive eTLD+1 for domain \"192.168.0.1\""),
+  (".example.com", "com", true, "!publicsuffix: empty label in domain \".example.com\""),
+  ("example.com.", "", false, "!publicsuffix: empty label in domain \"example.com.\""),
+  ("a..example.com", "com", true, "!publicsuffix: empty label in domain \"a..example.com\""),
+  ("xn--fiqs8s", "xn--fiqs8s", true, "!publicsuffix: cannot derive eTLD+1 for domain \"xn--fiqs8s\""),
+  ("foo.xn--fiqs8s", "xn--fiqs8s", true, "foo.xn--fiqs8s"),
+  ("xn--55qx5d.cn", "xn--55qx5d.cn", true, "!publicsuffix: cannot derive eTLD+1 for domain \"xn--55qx5d.cn\""),
+  ("www.xn--55qx5d.cn", "xn--55qx5d.cn", true, "www.xn--55qx5d.cn"),
+  ("compute.amazonaws.com", "com", true, "amazonaws.com"),
+  ("ec2.compute.amazonaws.com", "ec2.compute.amazonaws.com", false, "!publicsuffix: cannot derive eTLD+1 for domain \"ec2.compute.amazonaws.com\""),
+  ("a.b.compute.amazonaws.com", "b.compute.amazonaws.com", false, "a.b.compute.amazonaws.com"),
+  ("gov.uk", "gov.uk", true, "!publicsuffix: cannot derive eTLD+1 for domain \"gov.uk\""),
+  ("service.gov.uk", "service.gov.uk", false, "!publicsuffix: cannot derive eTLD+1 for domain \"service.gov.uk\""),
+  ("x.service.gov.uk", "service.gov.uk", false, "x.service.gov.uk"),
+  ("pvt.k12.ma.us", "pvt.k12.ma.us", true, "!publicsuffix: cannot derive eTLD+1 for domain \"pvt.k12.ma.us\""),
+  ("a.pvt.k12.ma.us", "pvt.k12.ma.us", true, "a.pvt.k12.ma.us"),
+  ("k12.ma.us", "k12.ma.us", true, "!publicsuffix: cannot derive eTLD+1 for domain \"k12.ma.us\""),
+  ("ma.us", "ma.us", true, "!publicsuffix: cannot derive eTLD+1 for domain \"ma.us\""),
+  ("us", "us", true, "!publicsuffix: cannot derive eTLD+1 for domain \"us\""),
+  ("test.us", "us", true, "test.us"),
+  ("b.c.d.e.f.g.h.example.net", "net", true, "example.net"),
+  ("uk.ma", "ma", true, "uk.ma"),
+  ("azurewebsites.b.amazonaws", "amazonaws", false, "b.amazonaws"),
+  ("nz.azurewebsites.go.zz", "zz", false, "go.zz"),
+  ("test.gr", "gr", true, "test.gr"),
+  ("io.ck.us", "us", true, "ck.us"),
+  ("au.net.ed.example.lg", "lg", false, "example.lg"),
+  ("ad.gov", "gov", true, "ad.gov"),
+  ("compute.zz.go.xn--55qx5d", "xn--55qx5d", true, "go.xn--55qx5d"),
+]

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -17,8 +18,16 @@ import (
 // Gray, Gray16 and NRGBA models over premultiplied 16 bit colors (edges and
 // random), RGBToYCbCr and YCbCrToRGB, RGBToCMYK and CMYKToRGB over 8 bit
 // triples (the clamps of the YCbCr inverse included), and NRGBA.RGBA().
+// imageFuzzSeed is XO_IMAGEFUZZ_SEED (default 0, the committed corpus),
+// added to the generator's seeds: internal/stdtest/imagefuzz_test.go's
+// fresh seeds (task #116).
+func imageFuzzSeed() int64 {
+	seed, _ := strconv.ParseInt(os.Getenv("XO_IMAGEFUZZ_SEED"), 10, 64)
+	return seed
+}
+
 func imageCorpus() string {
-	r := rand.New(rand.NewSource(7))
+	r := rand.New(rand.NewSource(7 + imageFuzzSeed()))
 	edge := []int{0, 1, 127, 128, 255, 256, 257, 32767, 32768, 65534, 65535}
 	var o strings.Builder
 	o.WriteString(header("image/color: GrayModel, Gray16Model, NRGBAModel, RGBToYCbCr, YCbCrToRGB, RGBToCMYK, CMYKToRGB and NRGBA.RGBA() (std/image, decision 0578)"))
@@ -1042,7 +1051,7 @@ test "Image.floyd_steinberg is Go's draw.FloydSteinberg" {
 // every color type's RGBA(), Palette.Index and Convert, and an image
 // model's Convert, as text lines the Xo test builds the same way.
 func imageColorModels(o *strings.Builder) {
-	r := rand.New(rand.NewSource(578))
+	r := rand.New(rand.NewSource(578 + imageFuzzSeed()))
 	type c64 = color.RGBA64
 	var colors []c64
 	edge := []int{0, 1, 128, 255, 256, 32768, 65534, 65535}

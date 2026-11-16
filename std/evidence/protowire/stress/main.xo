@@ -1,0 +1,286 @@
+// protowire stress program (decision 0616 section 2): 64 tasks run std/protowire's walk (its fields'
+// count and wire kinds, or its error) and wv and wtag against protobuf-go's
+// protowire (the seed 0 rows of std/protowire_test.xo),
+// for a fixed time. A background task samples the resident set every 10 s
+// (Linux /proc/self/status). Pass: no mismatch, no fault, and the resident
+// set at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/protobuf
+use std/protowire
+
+/// One pass over the messages from offset start (deep:n rows are groups
+/// nested n deep) and the writes. The operations done, or the first
+/// mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..WALK.len() {
+    let (b, want) = WALK[(start + k) % WALK.len()]
+    var got = ""
+    var w = want
+    if b.starts_with("deep:") {
+      let n = Int.parse(b[5..]) ?? 0
+      var o = BytesBuilder.new()
+      for _ in 0..n {
+        o.write_byte(0x0b)
+      }
+      for _ in 0..n {
+        o.write_byte(0x0c)
+      }
+      got = walked(o.freeze())
+      if !got.starts_with("err:") {
+        got = "ok"
+      }
+    } else {
+      got = walked(Bytes.from_hex(b) ?? b"")
+      w = letters(want)
+    }
+    if got != w {
+      return Err("walk ${b[0..(if b.len() < 32 { b.len() } else { 32 })]}: ${got} want ${w}")
+    }
+  }
+  for k in 0..WRITE.len() {
+    let i = (start + k) % WRITE.len()
+    let (n, v, want) = WRITE[i]
+    var o = BytesBuilder.new()
+    protowire.wv(o, v)
+    if n > 0 {
+      protowire.wtag(o, n, i % 6)
+    }
+    if o.freeze().to_hex() != want {
+      return Err("write ${n} ${v}")
+    }
+  }
+  WALK.len() + WRITE.len()
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("protowire stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+/// walk's fields as one letter each (s: length delimited, v: varint, o:
+/// other), or err:Kind: what the public API shows of a walk.
+fn walked(b: Bytes) -> Str {
+  match protowire.walk(b) {
+    Ok(fs) => fs.map(fn(f: protowire.Fld) -> Str { if protowire.is_s(f) { "s" } else if protowire.is_v(f) { "v" } else { "o" } }).join("")
+    Err(e) => "err:" + match e {
+      protobuf.ProtoErr.Truncated => "Truncated"
+      protobuf.ProtoErr.Overflow => "Overflow"
+      protobuf.ProtoErr.BadTag => "BadTag"
+      protobuf.ProtoErr.BadWire(_) => "BadWire"
+      protobuf.ProtoErr.EndGroup => "EndGroup"
+      protobuf.ProtoErr.Recursion => "Recursion"
+      protobuf.ProtoErr.BadLength => "BadLength"
+      protobuf.ProtoErr.Utf8 => "Utf8"
+      _ => "other"
+    }
+  }
+}
+
+/// Go's walk in the same letters.
+fn letters(want: Str) -> Str {
+  if want.starts_with("err:") {
+    return want
+  }
+  want.split(";").filter(fn(f: Str) -> Bool { !f.is_empty() }).map(fn(f: Str) -> Str {
+    let w = f.split("/")[1]
+    if w == "2" { "s" } else if w == "0" { "v" } else { "o" }
+  }).join("")
+}
+
+
+
+/// (the message in hex, protowire's walk: num/wire/value/data/raw length per field, or err:Kind)
+const WALK: List[(Str, Str)] = [
+  ("deep:1", "ok"),
+  ("deep:2", "ok"),
+  ("deep:100", "ok"),
+  ("deep:9998", "ok"),
+  ("deep:9999", "ok"),
+  ("deep:10000", "ok"),
+  ("deep:10001", "ok"),
+  ("deep:10002", "err:Recursion"),
+  ("deep:10005", "err:Recursion"),
+  ("", ""),
+  ("", ""),
+  ("3a08c3a9e697a5e6009cacf9e109aab49a173c4dcdb398dadebb0604c8a3f9c9078001", "err:EndGroup"),
+  ("b001800182fffb08fdab8998a4b09af89d02cb0d0dd9b5b0fd0f8fd0ab67ae2336af6d112b716d", "err:Overflow"),
+  ("eaa39c840c9b9abda204a49abda20404e8019602", "err:Truncated"),
+  ("a2e4adef070568656c6c6fa2021df50189341dcb900200320568656c6c6f69dbb6ee3fec0676f6b8a3093a8201397dac436218f5aebfe30591d79b6f808001808001838001c0a30905c801ffffffff0fd1edc2ab06979ea7c7744680d3d0f5abfb05b40184800182010cbb34b1e54c2fdd865c39b8bec3d2e7cc0ac5a3098093593ffbbed424f8ffffff0f00fcbed4243a0568656c6c6fc0e391cf0effffffffffffffffff01c0e7c98f028302c4d2e7cc0a", "264072772/2/0/68656c6c6f/11;36/2/0/f50189341dcb900200320568656c6c6f69dbb6ee3fec0676f6b8a3093a/32;16/2/0/7dac436218f5aebfe30591d79b6f808001808001838001c0a30905c801ffffffff0fd1edc2ab06979ea7c7744680d3d0f5abfb05b401848001/60;16/2/0/bb34b1e54c2fdd865c39b8be/15;355679528/3/0/c5a3098093593ffbbed424f8ffffff0f00fcbed4243a0568656c6c6fc0e391cf0effffffffffffffffff01c0e7c98f028302/60;"),
+  ("ebe2cbe80ac002fa1df0aec9ee06d2a9c5871ee8d2b9d20bd001c002ff7fa80248ece2cbe80ad9e2bdcf03c79c818b1b634ba5a8ac92d68505a8a7a406b101f8ffffff0fa3e2d32e", "err:BadTag"),
+  ("40a30900", "err:BadTag"),
+  ("fbe1097801c1caf19c0707836adaa1b91700f87ff7fbfe161d41b630cefce109910185a04c1e5b769873fae10938407082800129d9012ae542c5ea17b4afbd91a99505696d536ea2011366f78b842304401289c9757bea7a22371698ecadcbead4046830057f", "19999/3/0/7801c1caf19c0707836adaa1b91700f87ff7fbfe161d41b630ce/32;18/1/8329537644544172165//10;19999/2/0/407082800129d9012ae542c5ea17b4afbd91a99505696d536ea2011366f78b842304401289c9757bea7a22371698ecadcbead4046830057f/60;"),
+  ("90019b029301c3a3099501135bcda08dd4a1e90cd3ae3533c1fed2af079e026e24cebd9e61c4a309c5a30929c8ac9af9ffffff0f4d6b3ed90c73e613e0015b9401253aa98bea", "18/0/283//4;18/3/0/c3a3099501135bcda08dd4a1e90cd3ae3533c1fed2af079e026e24cebd9e61c4a309c5a30929c8ac9af9ffffff0f4d6b3ed90c73e613e0015b/61;4/5/3935021370//5;"),
+  ("fb7f848001f3fdd2e608f4fdd2e608", "err:EndGroup"),
+  ("c1a309d0abd6b2192cfe8ec0a309f52e2324", "19000/1/-8143022587353060400//11;19000/0/6005//5;4/3/0//2;"),
+  ("7d825d3355e90103e7101fc6df407bddfdffffff0f2c6e1294", "err:BadTag"),
+  ("f101d55df189e67ebd2db6029df79daa0103f516528df7ab910ecb6f006a6d8c2df23690028301", "err:BadWire"),
+  ("cdc0eb9a03c1f620478801808080808080808080012093029e0143c102a356941d8a4c152bf0add1f107f2940cf0c590e30b1b44485d", "err:BadWire"),
+  ("ada6b7d8055d6cd70fa902ebd95ede79259758adf2c0e70ebe91b3b9a2ab9b86064788ffdabb0bc7d8b3bef58f0783daf8c0078202037ddff09397088ee5e2c993bfe4ffac02e1cb08a2f6ede50300b9a309fa550df98fbfae1b18f8d1d4f5e0cdc8019497e1cb08bda309ad63fb2684daf8c007", "err:Truncated"),
+  ("", ""),
+  ("4d3806660e8d011a4de9b0920113de18", "err:Truncated"),
+  ("783c4b82015583e209da9db6d60d08c3a9e697a5e69cacb00210898c84c90da589fb572c351d53d29ae4ce0c104d545e333bab8652fcf2bb917a26754484e209a8a08470fb0198d8e2a207efd3a404a802d889f3b17008db9efadcb2b49fd096806d0c2a1b754c", "err:BadTag"),
+  ("f99d9ca30587b78310b13d8b5483022d9e3cc5aab8a30980808080808080808001840298021648b401", "177005023/1/6092030751644301191//13;32/3/0/2d9e3cc5aab8a30980808080808080808001/22;35/0/22//3;9/0/180//3;"),
+  ("8101a90953f76cc91c24b301c801bc0178a10285800172c0b481b401b986a9cdbba309c4a3090de50d13fe2decf26f", "err:BadTag"),
+  ("d58abbfb0bdf3532fe83800110a102848001", "401463466/5/4264703455//9;2048/3/0/10a102/9;"),
+  ("1845c8f6fda805ea98fee1f21abda3096a6910ec", "3/0/69//2;178515817/0/924160330858//11;18999/5/3960498538//7;"),
+  ("0a068d01e76d864e4b4c", "1/2/0/8d01e76d864e/8;9/3/0//2;"),
+  ("3800a001ffffffff0f83e209f9ffffff0f4e5b220e450c1cf9599e19e433533c143c84e209888194f50affffffffffffffffff01f8efeba809fa7fe80728", "7/0/0//2;20/0/4294967295//7;20000/3/0/f9ffffff0f4e5b220e450c1cf9599e19e433533c143c/28;366256145/0/-1//15;312696575/0/16378//7;125/0/40//3;"),
+  ("651b284787a902b04706d228d2b79b11a744eb9bfa9f67d6", "12/5/2269587483//5;37/1/-7226076004328519760//10;2/1/-2997251128285248345//9;"),
+  ("9d02ad2152c3421cb9a3096521793526ae641c95020f55174cc0a309d2048001fd08ba8db6ffb2bff58ff8008e92109002808001c801808080808080808080019801be0c", "err:BadTag"),
+  ("8001d5e804b8a3091811d3d53bff40388855f90147a8592fd5bd36baa30980808080802058", "err:BadTag"),
+  ("", ""),
+  ("8101f37f9eea87b7f16da90189", "err:Truncated"),
+  ("c0a309cc9effd8a6fcffffff0f8b92f13f", "err:Overflow"),
+  ("088bf4afedeafdb885a601a0017f", "1/0/-6482118099390957045//11;20/0/127//3;"),
+  ("faffffff0f00cac8ecc40e0568656c6c6f820168cb01f101bc07859b773a4dcdf8ffffff0f920ebd012541f022fae1090db9bedbb90f0a4095ae77370e665db4facbe7cc01c889edfd08f189fc9fc0e90a92021d88026e8d010988971dfb7f498bfe5931c8c92d35c5a309c73e4cbffc7f80e2091af001ceafa48a58", "536870911/2/0//6;487810185/2/0/68656c6c6f/11;16/2/0/cb01f101bc07859b773a4dcdf8ffffff0f920ebd012541f022fae1090db9bedbb90f0a4095ae77370e665db4facbe7cc01c889edfd08f189fc9fc0e90a92021d88026e8d010988971dfb7f498bfe5931c8c92d35c5a309c73e4cbffc7f80e2091af001ceafa48a58/107;"),
+  ("", ""),
+  ("c101", "err:Truncated"),
+  ("08a201099bea026abf53c216b5028742246680800180808080808080808001", "1/0/162//3;1/1/1639965295898716827//9;38/5/1713652359//6;2048/0/-9223372036854775808//13;"),
+  ("caaecbee09554a3411e978996610846f835801c0a309bf017222f897bed605d001c1a3090885b1efb68870febaedd0a40701cac586b68f07f32e5121597915032a38ac9adefbf0f04afcf0f04a9a80bfe50308a5021125fe3a808080808020255020", "330980073/2/0/4a3411e978996610846f835801c0a309bf017222f897bed605d001c1a3090885b1efb68870febaedd0a40701cac586b68f07f32e5121597915032a38ac9adefbf0f04afcf0f04a9a80bfe50308a5021125fe3a8080/91;8388608/0/37//5;10/0/32//2;"),
+  ("b9a3098a1bf41b8b5a8342fbe1093945eb95b41dc008a77b79598e74b1a7b58a16e8a984f90da60180e209ffffffff0f8080016470d6017c810239bde60652006094d7c2a30908c3a9e697a5e69cac90027ffce109a3c8b9ed0a20168080012cfae1090d820100f8ffffff0fd50150a301789001a4c8b9ed0a", "err:BadWire"),
+  ("6144198d0877c77c2a89019be7a273f4ea89e1", "12/1/3061541160763595076//9;17/1/-2194965007733430373//10;"),
+  ("c2011ef9ffffff0f0fa773cdf6428da981e209617ffb3ec8103ac6b502e8ff103785b9eac80ef0a5e4ed80fbaaac0580808080808080808001", "24/2/0/f9ffffff0f0fa773cdf6428da981e209617ffb3ec8103ac6b502e8ff1037/33;488854416/5/3991184880//9;179394480/0/-9223372036854775808//15;"),
+  ("c3a309cca309", "err:EndGroup"),
+  ("3967b19028ac022705fb01fc019cb597860f", "err:EndGroup"),
+  ("c9e8a2a10bb1200da997aba336f8fec54683dfff8fd5ccc20ce0d38495043c808001e0fc2880f8fba10d8001", "377820809/1/3937179167116566705//13;18493423/0/7048304701468547//12;139732284/0/60//6;2048/0/671328//6;445112192/0/128//7;"),
+  ("f001e301f9ffffff0fef7e9e2687cbeb51f8e109f0c4b987c503b08eb5950fa902", "30/0/227//4;536870911/1/5903035517928111855//13;19999/0/121616884336//9;508930278/0/297//7;"),
+  ("b101217611398ec64dfc0934d07ef4bba391e5f9ffffff0fa45712f1c86f189dc0accabf0780808080808080808001", "22/1/-266338488799889887//10;1/1/-1904561139744845772//9;536870911/1/-7126823501485156444//13;251548360/0/-9223372036854775808//15;"),
+  ("11458c80808080400084f8d11d22c1ab02ac02c0a30924", "err:EndGroup"),
+  ("83800182e209142918ec1191cd8da7dc808001b40190010b28a402900115b9a3095a62e0fc0eebe6b57bd8a9a3f50cba017c81e209280880faed94c9ddcbdfe680595e412cba77778480018b02c2a3090213f0b0a299a10c808080808080808080018c02c801810282fbb6bb010b80e209a6e0a685dd99a201", "err:BadTag"),
+  ("85013908d2e7b1a2d8dcf0cd8800a26b47e0019402", "err:BadTag"),
+  ("858001844ba4329b01f89f9a9e099fd313f09ebfd607c802a801ffffffffffffffff7fdd0112e8f2bf9c01f9e1094c7e18d8abde6ff380e209e90180e2094a", "2048/5/849628036//7;19/3/0/f89f9a9e099fd313f09ebfd607c802a801ffffffffffffffff7fdd0112e8f2bf/36;19999/1/-905260170431922612//11;20000/0/233//5;20000/0/74//4;"),
+  ("8501aee7870082800103e4a018b9017da2d889b161c5adf80153cd828dd205e3511355", "16/5/8906670//6;2048/2/0/e4a018/7;23/1/-5925222319586237827//10;31/0/83//3;189294633/5/1427329507//9;"),
+  ("9901bd3cca25de3a7436838001e8bae0bc021798028001fdffffff0f1df6048eb8b391cf0c4f848001", "19/1/3923825901137706173//10;2048/3/0/e8bae0bc021798028001fdffffff0f1df6048eb8b391cf0c4f/31;"),
+  ("c5012b73380481e20907512c5a117665c88301ea9ac2c70900cad6f0c30220c980bcd90138803ae50d28a3a3c0a309d4efa5d5944bf0018001b88388df0d00f1b8f6ee08c55352084cadc2f559bb0961f92f1bde378401", "24/5/70808363//6;20000/1/-4006666476576812793//11;16/3/0/ea9ac2c70900cad6f0c30220c980bcd90138803ae50d28a3a3c0a309d4efa5d5944bf0018001b88388df0d00f1b8f6ee08c55352084cadc2f559bb0961f92f1bde37/70;"),
+  ("ba0135a20205333448eb010a10633b62999280f20f34203f7d1bf919c0d8019501238080011f2997d878ee01e2addaf001dd0124d801850280012e8d02710fc417caca84e8045ac2a3090a08cc82f49926c0a30901b3aca7eb081221b889bb1180800121461d7979f91d7e6d808001ffffffff0f49a75243ac7aa4f224a20106f8ffffff0f47b4aca7eb0889a6b7fb083b39f48d1584aef9adb4cce302a6802cd9", "23/2/0/a20205333448eb010a10633b62999280f20f34203f7d1bf919c0d8019501238080011f2997d878ee01e2addaf001dd0124d8018502/56;16/0/46//3;33/5/398724977//6;161490089/2/0/c2a3090a08cc82f49926c0a30901b3aca7eb081221b889bb1180800121461d7979f91d7e6d808001ffffffff0f49a75243ac7aa4f224a20106f8ffffff0f47b4aca7eb0889a6b7fb083b39f48d1584aef9adb4cce302a6802cd9/96;"),
+  ("e001f101820109c8031c9d9aa29e69029ae2f3f7092c7d5b31bac0fdbab2bc0f2bcc458cbd01a3964abfaa88c1960f027c1c3a0e", "err:Truncated"),
+  ("b9010bcc7503de17cd3ac0a309cdc61c", "23/1/4237069066733734923//10;19000/0/467789//6;"),
+]
+
+/// (field number or 0, a varint as Int, protowire's AppendVarint then AppendTag(num, row index % 6) in hex)
+const WRITE: List[(Int, Int, Str)] = [
+  (15, 1, "0178"),
+  (24, 4294967295, "ffffffff0fc101"),
+  (536870911, 155, "9b01faffffff0f"),
+  (0, 7400703742161798, "86e78eede9dc920d"),
+  (10, 180, "b40154"),
+  (236539074, 11, "0b95cca98607"),
+  (495694170, 197, "c501d095f6e20e"),
+  (22, 190465836921169268, "f4caa2bcb6f5aad202b101"),
+  (15, 285, "9d027a"),
+  (20, 25, "19a301"),
+  (2047, 119, "77fc7f"),
+  (3, 313, "b9021d"),
+  (7, 203, "cb0138"),
+  (12, 127, "7f61"),
+  (19000, 186, "ba01c2a309"),
+  (12, 16336970, "ca90e50763"),
+  (536870911, 11, "0bfcffffff0f"),
+  (0, 95, "5f"),
+  (343015684, 9223372036854775807, "ffffffffffffffff7fa090c09c0a"),
+  (142255982, 16384, "808001f1f6d49e04"),
+  (10, 16383, "ff7f52"),
+  (0, 705, "c105"),
+  (21, 137003880574, "fea0c5b0fe03ac01"),
+  (19000, 97, "61c5a309"),
+  (34, 41, "299002"),
+  (437958277, 194, "c201a9e8d6860d"),
+  (6, -9223372036854775808, "8080808080808080800132"),
+  (0, 77, "4d"),
+  (326327503, 15934308449015849, "a9b0e1d6b485a71cfcccebdc09"),
+  (30, 9223372036854775807, "ffffffffffffffff7ff501"),
+  (31, 6891, "eb35f801"),
+  (5, 263, "870229"),
+  (2048, 256, "8002828001"),
+  (2047, 67086244, "a4cffe1ffb7f"),
+  (35, -9223372036854775808, "808080808080808080019c02"),
+  (37, 6019, "832fad02"),
+  (39, -1, "ffffffffffffffffff01b802"),
+  (497651068, -1, "ffffffffffffffffff01e1d7b1ea0e"),
+  (15, 88, "587a"),
+  (8, -9223372036854775808, "8080808080808080800143"),
+  (21, 79, "4fac01"),
+  (0, 3845381332044, "ccb8da94f56f"),
+  (0, 733483799321247963, "db81b0d891f4f6960a"),
+  (64980104, 176, "b001c1c8f0f701"),
+  (0, 20, "14"),
+  (13, -9223372036854775808, "808080808080808080016b"),
+  (0, -9223372036854775808, "80808080808080808001"),
+  (5, 0, "002d"),
+  (16, 171, "ab018001"),
+  (2, 248, "f80111"),
+  (522703290, 127, "7fd29bfac90f"),
+  (46258298, 41, "29d387bbb001"),
+  (490410759, 20359, "879f01bcb0e2ce0e"),
+  (0, 179, "b301"),
+  (386885334, -1, "ffffffffffffffffff01b0edecc30b"),
+  (24, 3, "03c101"),
+  (175312300, 2098, "b210e2dae19c05"),
+  (536870911, 150, "9601fbffffff0f"),
+  (0, 15, "0f"),
+  (37, 212692, "d4fd0cad02"),
+  (105915050, 2516008564375751, "c781eda5be89bc04d0aa849403"),
+  (25, 116, "74c901"),
+  (180910647, 41, "29baa38fb205"),
+  (0, 106, "6a"),
+]

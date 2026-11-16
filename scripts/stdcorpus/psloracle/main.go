@@ -96,7 +96,7 @@ func main() {
 		jarReplay()
 		return
 	}
-	r := rand.New(rand.NewSource(617))
+	r := rand.New(rand.NewSource(617 + fuzzSeed()))
 	ds := append([]string{}, fixed...)
 	for i := 0; i < 3000; i++ {
 		n := 1 + r.Intn(5)
@@ -133,4 +133,12 @@ test "public_suffix and effective_tld_plus_one answer as x/net's publicsuffix" {
   expect(bad.join("\n")) == ""
 }
 `)
+}
+
+// fuzzSeed is XO_PUBLICSUFFIXFUZZ_SEED (default 0, the committed corpus), added to
+// every generator seed: internal/stdtest/corpusfuzz_test.go's fresh seeds
+// (task #116).
+func fuzzSeed() int64 {
+	seed, _ := strconv.ParseInt(os.Getenv("XO_PUBLICSUFFIXFUZZ_SEED"), 10, 64)
+	return seed
 }

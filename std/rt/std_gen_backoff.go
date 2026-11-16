@@ -361,16 +361,24 @@ func Backoff_interval(tk *Task, v_b Backoff_Backoff, v_attempt int64) Duration {
 	_ = v_ci
 	var v_k int64 = int64(0)
 	_ = v_k
+x_L27:
 	for {
-		if !((v_k < v_attempt) && (v_ci != v_b.F_max_interval)) {
+		if !(v_k < v_attempt) {
 			break
 		}
 		{
+			var x_v28 Duration
 			if Cmp(float64(Duration_nanos(tk, v_ci)), FDiv(float64(Duration_nanos(tk, v_b.F_max_interval)), v_b.F_multiplier)) >= 0 {
-				v_ci = v_b.F_max_interval
+				x_v28 = v_b.F_max_interval
 			} else {
-				v_ci = Duration_from_nanos(tk, FloatToInt[int64](float64(float64(Duration_nanos(tk, v_ci))*v_b.F_multiplier), "std/backoff.xo:172:32"))
+				x_v28 = Duration_from_nanos(tk, FloatToInt[int64](float64(float64(Duration_nanos(tk, v_ci))*v_b.F_multiplier), "std/backoff.xo:174:27"))
 			}
+			var v_next Duration = x_v28
+			_ = v_next
+			if v_next == v_ci {
+				break x_L27
+			}
+			v_ci = v_next
 			v_k = (v_k + int64(1))
 		}
 	}
@@ -389,5 +397,5 @@ func Backoff_randomized(tk *Task, v_factor float64, v_r float64, v_ci Duration) 
 	_ = v_lo
 	var v_hi float64 = (v_c + v_delta)
 	_ = v_hi
-	return Duration_from_nanos(tk, FloatToInt[int64]((v_lo+float64(v_r*((v_hi-v_lo)+float64(1.0)))), "std/backoff.xo:188:23"))
+	return Duration_from_nanos(tk, FloatToInt[int64]((v_lo+float64(v_r*((v_hi-v_lo)+float64(1.0)))), "std/backoff.xo:194:23"))
 }

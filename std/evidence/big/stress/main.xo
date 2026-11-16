@@ -1,0 +1,350 @@
+// big stress program (decision 0616 section 2): 64 tasks run std/big's operations, parse and jacobi
+// against Go's math/big (the corpus .../corpus/big),
+// for a fixed time. A background task samples the resident set every 10 s
+// (Linux /proc/self/status). Pass: no mismatch, no fault, and the resident
+// set at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/big
+
+/// One pass over the operations and parses from offset start; the
+/// operations done, or the first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..OPS.len() {
+    let (op, a, b, n, want) = OPS[(start + k) % OPS.len()]
+    let got = run(op, h(a), h(b), n)
+    if got != want {
+      return Err("${op} ${a} ${b} ${n}: got ${got} want ${want}")
+    }
+  }
+  for k in 0..PARSE.len() {
+    let (s, base, want, disp) = PARSE[(start + k) % PARSE.len()]
+    let ok = match big.parse(s, base: base) {
+      Ok(x) => want != "bad" && hx(x) == want && x.display() == disp
+      Err(e) => want == "bad" && e.display() == disp
+    }
+    if !ok {
+      return Err("parse ${s.quote()} base ${base}")
+    }
+  }
+  for k in 0..JACOBIS.len() {
+    let (x, y, want) = JACOBIS[(start + k) % JACOBIS.len()]
+    if big.jacobi(h(x), h(y)) != want {
+      return Err("jacobi ${x} ${y}")
+    }
+  }
+  OPS.len() + PARSE.len() + JACOBIS.len()
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("big stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+/// (op, a in hex, b in hex, k: a shift, bit, base, exponent, or rounds; Go's result: hex, a number (a Float as its bits), none)
+const OPS: List[(Str, Str, Str, Int, Str)] = [
+  ("add", "-8000000000001", "201", 0, "-7fffffffffe00"),
+  ("sub", "-14c0d8a417f1fe984215d4d78", "fd4a8ef1dfb", 0, "-14c0d8a417f1ff958ca4c6b73"),
+  ("mul", "-18f", "fffffffffffffffffffffffffffe", 0, "-18efffffffffffffffffffffffffce2"),
+  ("quo", "10000000000000000002", "-68b52d170f664b8784775c0e67fdb843", 0, "0"),
+  ("rem", "-1fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe", "-3ffffffffffffffffffffffffffffff", 0, "-1fffffffffe"),
+  ("div", "ebbf1fa0718bacad152ae0ccd3bc8e8c1da296d5b2b348553d9", "1000001", 0, "ebbf1eb4b26cf7faa832e624a0d669eb4738ab8e7a07b"),
+  ("mod", "-200000000", "ffff", 0, "fffd"),
+  ("gcd", "edae27e219", "-7ffffffffffffffe", 0, "1"),
+  ("modinv", "7fffffffffffffff", "-151bd6c976fe45b1f7d", 0, "4b3d750d07003358e7"),
+  ("expmod", "-a0fa7b6316feda94972f0c4a8ed666faaaeb7d96d8ad", "1ffffffffffe", 421, "cfbef04b963"),
+  ("sqrt", "32605f7b2719a18b3f00c738e0bde5d54deb92cf5788195243e513ff9812b86e1d2372225656b385c64dd19294099fe7bc7a6ed00079283b0b8b6ca01537f784ad5ea8a675a74ee5ad8d47276eeb70331c5356", "40000000000", 0, "718fec40f9bf27aceafbaeead80f7f729b72045fc4681735e31ab6752f602d053f7daebe5fceac7c53b"),
+  ("lsh", "10000000000000000000", "1d", 175, "800000000000000000000000000000000000000000000000000000000000000"),
+  ("rsh", "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe", "-41", 4, "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+  ("and", "5993deeca4586db9982f0471a32fcae", "13", 0, "2"),
+  ("or", "4000000000000000", "100000000", 0, "4000000100000000"),
+  ("xor", "1c3789ced311e09551ab53c3797679ed3b210b5d948e97e6cd8c6286777fdbb39c7cf3b55f0", "6ec0084071", 0, "1c3789ced311e09551ab53c3797679ed3b210b5d948e97e6cd8c6286777fdbb39a90f331581"),
+  ("andnot", "14716d0bf9570a66b369be0fd94563d9c0389684a25", "400000000000000", 0, "14716d0bf9570a66b369be0fd94523d9c0389684a25"),
+  ("not", "-7ffe", "2163a66050f0", 0, "7ffd"),
+  ("bit", "-cc1f0f3bc818ceda4cd460d87a23be27", "800000000", 71, "0"),
+  ("bitlen", "1af92bfc6e0d684", "40000000001", 0, "57"),
+  ("tz", "8000", "40000000001", 0, "15"),
+  ("text", "-100", "1000000001", 54, "-4E"),
+  ("bytes", "800000000000000000", "80", 0, "800000000000000000"),
+  ("toint", "-20d5d06f05ca", "20", 0, "-36102697059786"),
+  ("tofloat", "8339ce0cc9439a015fdab58527adf57b46032b34015048a03698f2160607645dc9b4541717425328a22cc686400fa2ac9e8f6774b", "100000000000001", 0, "6494304160427092083"),
+  ("cmp", "-41f38ef1a60de2da4694d9c0e902d1ac4fc278dba453eec0b4417a086f2b35f1c343035f4dcb20b780", "-2e51e3edd11db34", 0, "-1"),
+  ("cmpabs", "800001", "-31422fcba15354013b0a0b28", 0, "-1"),
+  ("prime", "100002", "-3ed478aa181bd87bf68", 0, "false"),
+  ("add", "1138cf147b013f6ce295deccbdf9f4928a23cb1eaa3a2b9c3a74399ca5034d0edec41366cb8252ed5ee5476ef7d4087f19d3838618b97a2315c7c39e033556c000", "4000000000", 0, "1138cf147b013f6ce295deccbdf9f4928a23cb1eaa3a2b9c3a74399ca5034d0edec41366cb8252ed5ee5476ef7d4087f19d3838618b97a2315c7c39e433556c000"),
+  ("sub", "-3ffffffffffffffe", "2000000000000000001", 0, "-2003fffffffffffffff"),
+  ("mul", "-7684d597480899019625535a4837765599d", "-800000000002", 0, "3b426acba405398a764139be561ee775739c906eecab33a"),
+  ("quo", "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe", "-ae347382a29f608ac3370a8f7a524be97f00548b99e0409208e5caaf7cfca9bae27678a1d84f6437ef2fe1fcb3f0aeb88ad56a8c6481e76fbdb80b29b337216dad108634d2ddf75aca9188c102988fcfdf68ed5fb8458d2e19316417da11f0e3744418362dc574b6e217d8c2993f47e0f1f444d4932d2c5e45faa", 0, "0"),
+  ("rem", "-20000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001", "294f9d08d33cce082257643df22e0a8b2956a3229aedf8c04800cc2b50eb18f6a1bf8b19afc2b30cd50fb5eeed4d1240fad76dd8f4eec06a86248c5d201f4d3d985a83964d671749034478019406b487192a3579bc86f20557578c2cb2c9856df0ca082e3546071430b90f96f236502d952862241803c5d22fb973609c95e02a226524f42b076d65149c250f5c4c3792cc436dc43a4391f2edaaa6b6d332ab75051f44529203", 0, "-20000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001"),
+  ("div", "28248ef253121e12a43908d2ad8569de26f3da218bb6013aa", "73232ce5935134755a1033853", 0, "594136443db3898f0ff5ab27"),
+  ("mod", "-40", "28", 0, "10"),
+  ("gcd", "1fefca64ad712b4a5cc5ab7077e0fee669cb36fd9b2c1a57aeed2f7e72d3d8e71885e2bba2ae6c2aa7a73580012262e0425a5296d600e5a801e4a45c4b5b69fd89310abdf2f897890d3628f7", "100000000000000000000000000000001", 0, "1"),
+  ("modinv", "1f", "3ed9b2fd6a", 0, "a231cde8d"),
+  ("expmod", "1fb2a82a12", "20000000000001", 981, "5033eb7df6d8c"),
+  ("sqrt", "4ae0c509aeafd8fb23031507ebcbe799499626475d7ccbd131593bea856eb3e1f6ad978ee6f0df6cbf160082a62927bc231a829511a12c9a1591da648c", "-400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", 0, "8a738a1a43546f276a936ef698cfab75b725d7964f36dbb69dcd8833e1f8b"),
+  ("lsh", "200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "6c", 96, "200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+  ("rsh", "-10000000000000000000000000", "2000", 45, "-80000000000000"),
+  ("and", "3b34efa7255ea8b2e375e23b25c03bbc516e1d25d5a8811046d59f12e00611af9cac867c52cb2b740c4d5704c8cdc99378139e066a37a1baee7d4e455a4a01498f47b5c1dd0f93961b0c0827d6c9474086c71ade9fc8fda919620cb9927611fc84c0577c4674d7cb", "40000", 0, "40000"),
+  ("or", "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "5e37798b6", 0, "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+  ("xor", "-10000000000000000000000000000000002", "1fffffffffffffffffffffffff", 0, "-1000000001fffffffffffffffffffffffff"),
+  ("andnot", "1fffffffffffffffff", "6d5585807ef90c27", 0, "1f92aa7a7f8106f3d8"),
+  ("not", "688852e84302b1148a000a42eb7f48c501ebedb24575c3a9d866dcb9acdddc805cdf5073e", "fffffffffffffff", 0, "-688852e84302b1148a000a42eb7f48c501ebedb24575c3a9d866dcb9acdddc805cdf5073f"),
+  ("bit", "80000000000000000000000000000000000000000000000000000000000000", "7ffffffffffff", 148, "0"),
+  ("bitlen", "4000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "8000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", 0, "399"),
+  ("tz", "-1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002", "-400000000000000000000000000000", 0, "1"),
+  ("text", "20000000000000000000000002", "3d4b0c187dc5f0ba60d9fe1c", 58, "2Cyd4DDMVcepvnOIHQ"),
+  ("bytes", "1fffffffffe", "-24c8b803b0a346d780f5416ea20a93c", 0, "01fffffffffe"),
+  ("toint", "4000000000000000000000", "8000000000000000000000", 0, "none"),
+  ("tofloat", "-1ffffffffffffe", "63c8486b6e", 0, "-4377498837804122114"),
+  ("cmp", "-fffffffffffffff", "69362", 0, "-1"),
+  ("cmpabs", "31d26ec9e0", "7ffffffffffffffe", 0, "-1"),
+  ("prime", "800000000000001d", "-3ffffffffe", 2, "true"),
+  ("add", "2453566ca3", "-16a2a46d", 0, "243cb3c836"),
+  ("sub", "-2663b1709dcd7bf670cb1e85a3c32cd51a4339c811031e06d7b7eb7d87cf2c057e3f1a44c7796720c9bd2c9b8ae5cac0792f56e765261817220102ecb20ee0758f45", "-8408bb7bbe25071cded819b9943e0", 0, "-2663b1709dcd7bf670cb1e85a3c32cd51a4339c811031e06d7b7eb7d87cf2c057e3f1a44c7796720c9bd2c9b8ae5cac0792f56df249a605b3fb0911ec48d44dc4b65"),
+  ("mul", "-40000000000000000000000000000", "451f4c98bd00", 0, "-1147d3262f4000000000000000000000000000000"),
+  ("quo", "15f8a54aa7b548a337b93a39760", "7fff", 0, "2bf1a278945bb9fde36e3b4"),
+  ("rem", "1f38338aa197ea00d861725f9ef", "-68ee6f87", 0, "53d66b"),
+  ("div", "b7f12e57ba9b0e190c90e8fa30e8b5ccaf1936bb017f6af57bb0bd1608c54e974a7bc821662530b084", "38d1377a4038932b62a9d946ce5150a467abaf03be0fbdcfad85bb03bef21e30d54b00fb6d2196ccf04bbc8b360b541849f141a579d09fdca110bf9a429fcd0f7bea5503e40494d1", 0, "0"),
+  ("mod", "f52268a878be5810848bc405ff39e7d", "b61b", 0, "2bc"),
+  ("gcd", "-3e8a6", "3ffffffffffffffffffffffffffffffe", 0, "2"),
+]
+
+/// (text, base, Go's SetString: the value in hex, or "bad"; then the
+/// display: the value's decimal text, or for "bad" the error std/big
+/// documents, invalid number (quoted) in base N, or invalid base N)
+const PARSE: List[(Str, Int, Str, Str)] = [
+  ("", 0, "bad", "invalid number \"\" in base 0"),
+  ("", 10, "bad", "invalid number \"\" in base 10"),
+  ("", 16, "bad", "invalid number \"\" in base 16"),
+  ("", 2, "bad", "invalid number \"\" in base 2"),
+  ("", 36, "bad", "invalid number \"\" in base 36"),
+  ("", 62, "bad", "invalid number \"\" in base 62"),
+  ("0", 0, "0", "0"),
+  ("0", 10, "0", "0"),
+  ("0", 16, "0", "0"),
+  ("0", 2, "0", "0"),
+  ("0", 36, "0", "0"),
+  ("0", 62, "0", "0"),
+  ("-0", 0, "0", "0"),
+  ("-0", 10, "0", "0"),
+  ("-0", 16, "0", "0"),
+  ("-0", 2, "0", "0"),
+  ("-0", 36, "0", "0"),
+  ("-0", 62, "0", "0"),
+  ("+7", 0, "7", "7"),
+  ("+7", 10, "7", "7"),
+  ("+7", 16, "7", "7"),
+  ("+7", 2, "bad", "invalid number \"+7\" in base 2"),
+  ("+7", 36, "7", "7"),
+  ("+7", 62, "7", "7"),
+  ("--1", 0, "bad", "invalid number \"--1\" in base 0"),
+  ("--1", 10, "bad", "invalid number \"--1\" in base 10"),
+  ("--1", 16, "bad", "invalid number \"--1\" in base 16"),
+  ("--1", 2, "bad", "invalid number \"--1\" in base 2"),
+  ("--1", 36, "bad", "invalid number \"--1\" in base 36"),
+  ("--1", 62, "bad", "invalid number \"--1\" in base 62"),
+  ("12x", 0, "bad", "invalid number \"12x\" in base 0"),
+  ("12x", 10, "bad", "invalid number \"12x\" in base 10"),
+  ("12x", 16, "bad", "invalid number \"12x\" in base 16"),
+  ("12x", 2, "bad", "invalid number \"12x\" in base 2"),
+  ("12x", 36, "579", "1401"),
+  ("12x", 62, "fa1", "4001"),
+  ("0x_1f", 0, "1f", "31"),
+  ("0x_1f", 10, "bad", "invalid number \"0x_1f\" in base 10"),
+  ("0x_1f", 16, "bad", "invalid number \"0x_1f\" in base 16"),
+  ("0x_1f", 2, "bad", "invalid number \"0x_1f\" in base 2"),
+  ("0x_1f", 36, "bad", "invalid number \"0x_1f\" in base 36"),
+  ("0x_1f", 62, "bad", "invalid number \"0x_1f\" in base 62"),
+  ("0x1f", 0, "1f", "31"),
+  ("0x1f", 10, "bad", "invalid number \"0x1f\" in base 10"),
+  ("0x1f", 16, "bad", "invalid number \"0x1f\" in base 16"),
+  ("0x1f", 2, "bad", "invalid number \"0x1f\" in base 2"),
+  ("0x1f", 36, "a743", "42819"),
+  ("0x1f", 62, "1efd1", "126929"),
+  ("0X1F", 0, "1f", "31"),
+  ("0X1F", 10, "bad", "invalid number \"0X1F\" in base 10"),
+  ("0X1F", 16, "bad", "invalid number \"0X1F\" in base 16"),
+  ("0X1F", 2, "bad", "invalid number \"0X1F\" in base 2"),
+  ("0X1F", 36, "a743", "42819"),
+  ("0X1F", 62, "37653", "226899"),
+  ("0b101", 0, "5", "5"),
+  ("0b101", 10, "bad", "invalid number \"0b101\" in base 10"),
+  ("0b101", 16, "b101", "45313"),
+  ("0b101", 2, "bad", "invalid number \"0b101\" in base 2"),
+  ("0b101", 36, "7d9d1", "514513"),
+  ("0b101", 62, "280fad", "2625453"),
+  ("0o17", 0, "f", "15"),
+  ("0o17", 10, "bad", "invalid number \"0o17\" in base 10"),
+  ("0o17", 16, "bad", "invalid number \"0o17\" in base 16"),
+  ("0o17", 2, "bad", "invalid number \"0o17\" in base 2"),
+]
+
+/// big.jacobi: (x in hex, y in hex, Go's Jacobi)
+const JACOBIS: List[(Str, Str, Int)] = [
+  ("0", "-6f1b5efadfe100071581", 0),
+  ("19", "1", 1),
+  ("5ecbf77fdca8cf6798174f28d61a3cbcab86234b5d31cb1f60d9b348433ed3f3a6174e05fc725ec536d07e025685e3c43f0affb71d8848143", "a538142c179c43cb3017e7d74f99e67eb1562346fb802dc32696461da0d433a023b", -1),
+  ("0", "1", 1),
+  ("0", "-40000000000000000000001", 0),
+  ("22ad27c6084486bc5a23a23cce8307110761444cbf6131422c50ae197c689d5ef100b749975c69cc0546d8aad4bd0660618f76d9dabb5e2a3646b5", "1ace4fc5d6ff", 1),
+  ("2f86499005aa180281fb510b525353d1f0b065a30408ff572257ab8f133a6c5b0ef3db8d899800875f23fa91cda38d2dae65b57b0dd995c2128b65bd06f18c0ec456dced1", "5d1624697e3", 1),
+  ("-e", "d", 1),
+  ("-1f47d9ace9deb04", "cf2f505e65fe37a89017daab121d72d52a4ecc9b", 1),
+  ("1fffffffffffffffffffffffffffffffffffffffffe", "7f", 0),
+  ("0", "7106cda42835e1abcc2f3", 0),
+  ("-3f", "1", 1),
+  ("b046248d2bb", "39ba5bfddf376b1", -1),
+  ("-80000000000000", "-3fffffffffffff", 1),
+  ("-2000000000000000000000000001", "1fffffff", -1),
+  ("-42", "1000000003", 1),
+  ("-10000", "7fff", -1),
+  ("5e61f6f26", "-3", 1),
+  ("40", "400000000000000000000000000001", 1),
+  ("-5", "100000000000000000001", -1),
+  ("0", "9", 0),
+  ("1299573072705c603cc71", "1", 1),
+  ("0", "3", 0),
+  ("-50005", "-10001", 0),
+  ("-837355646b6615a6", "4816603763cfcb31b903a8d3c07778b72e578339aebadb0a2eff", -1),
+  ("b7f6f00148630d66629e9ed5e0ced818dc7d719232f1ade9bfed90f59d16e1e54818739bedd2aa7d056875e85adbda648dbbf90c51c5e40a9a508c0", "a9", 1),
+  ("-1130d9aad", "80000000001", 0),
+  ("ffffffffffffffffffffffffffffffffffffffffffffff", "-1f6a8f548832122bf7ac2f7f2d9", 1),
+  ("fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "3b5920b002a2881097e524e3947d7", 0),
+  ("-4000000000000000000002", "-38677d02ed96c4148db42fc13b", 0),
+  ("0", "-801", 0),
+  ("32c4a31", "1", 1),
+  ("1ab8fba2ce68bc05c8d642cb5dd21ea16a02a582b67a8f9d016fb42e06124d56b7c5684a22a0350c1534f04f2e90a3cdac466a388427937cb76a1d476a75", "6b5f", 1),
+  ("-a00000000000005", "-200000000000001", 0),
+  ("3ea66", "-f", 0),
+  ("-4", "1", 1),
+  ("1b752cc0677126961f1ed73d991f2401a5e124f0127a34951fcb4a6c54059", "34a22efea091213d0015e77d6b3b20569", -1),
+  ("63e6f8ea9fd3bc6314534d1c852ed7ca3d9893b841e0bdb90d2feb61af86d812f2bad", "54e343e0339794e9573669ba3", 0),
+  ("-1", "-fffff", 1),
+  ("200000000000002", "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", 1),
+  ("0", "-1ffffffffd", 0),
+  ("ca", "1", 1),
+  ("4000000000000000000000000000000000000000000000000000000000002", "43", -1),
+  ("-2", "-1", -1),
+  ("40", "3cbb", 1),
+  ("4b63bb15b1a34b6", "-1ffffffffffffffffffffffffffffffffffffffffffff", 1),
+  ("7fffffe", "7", -1),
+  ("14", "400000000000000000000001", 0),
+  ("3393983efc6fe8e7154", "-1dbb7d26222f75759253a117e2ca8a80b161ca979b1944c71ecb1312caba0ce3", -1),
+  ("-2c310464f64e66f12a955ed56a8ec2d0fe22b9d84febeb91061b6c2d4d4874c8d394a5fc38df2058be991960faa383f7b3169b463e04333f80552e0ccde0b3d5bf65dea4bc4", "-18fecd0d44f4c1baedc691f52fc68a3db5b539751", -1),
+  ("0", "7fffffffffffffffffffffff", 0),
+  ("52c80242369e0ad22da77", "1", 1),
+  ("2a5da4b", "7", -1),
+  ("24e342748f44edf4", "938d09d23d13b7d", 0),
+  ("-1001", "75", -1),
+  ("12", "-3f", 0),
+  ("6", "7ffffffffffffff", -1),
+  ("a9c", "8000000000000000000000000000001", -1),
+  ("3ffffffffffffffffffffffffffffffffffffffffffff", "3", 0),
+  ("186acf191df05e3114f028be", "10000000001", -1),
+  ("0", "1", 1),
+  ("100000000000000000000000000000000", "1", 1),
+  ("-42cd91", "3b", 1),
+  ("10", "11", 1),
+]
+
+
+fn h(s: Str) -> big.BigInt { big.parse(s, base: 16).or_fault("corpus hex") }
+
+fn hx(x: big.BigInt) -> Str { x.text(base: 16) }
+
+fn first_bad[T](bad: List[T]) -> List[T] { bad[0..(if bad.len() < 20 { bad.len() } else { 20 })] }
+
+fn run(op: Str, a: big.BigInt, b: big.BigInt, k: Int) -> Str {
+  match op {
+    "add" => hx(a.add(b))
+    "sub" => hx(a.sub(b))
+    "mul" => hx(a.mul(b))
+    "quo" => hx(a.quo(b))
+    "rem" => hx(a.rem(b))
+    "div" => hx(a.div(b))
+    "mod" => hx(a.mod(b))
+    "gcd" => hx(a.gcd(b))
+    "modinv" => a.mod_inverse(b).map(hx) ?? "none"
+    "expmod" => hx(a.exp(big.from_int(k), m: Some(b)))
+    "sqrt" => hx(a.sqrt())
+    "lsh" => hx(a.lsh(k))
+    "rsh" => hx(a.rsh(k))
+    "and" => hx(a.and(b))
+    "or" => hx(a.or(b))
+    "xor" => hx(a.xor(b))
+    "andnot" => hx(a.and_not(b))
+    "not" => hx(a.not())
+    "bit" => "${a.bit(k)}"
+    "bitlen" => "${a.bit_len()}"
+    "tz" => "${a.trailing_zeros()}"
+    "text" => a.text(base: k)
+    "bytes" => a.bytes().to_hex()
+    "toint" => a.to_int().map(fn(n) { "${n}" }) ?? "none"
+    "tofloat" => "${a.to_float().to_bits()}"
+    "cmp" => "${a.cmp(b)}"
+    "cmpabs" => "${a.cmp_abs(b)}"
+    "abs" => hx(a.abs())
+    "neg" => hx(a.neg())
+    "sign" => "${a.sign()}"
+    _ => "${a.probably_prime(k)}"
+  }
+}

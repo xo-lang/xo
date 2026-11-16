@@ -1,0 +1,535 @@
+// charset stress program (decision 0616 section 2): 64 tasks run std/charset's decode (lossy and
+// strict), encode and utf16_units against golang.org/x/text's encodings (the
+// corpus .../corpus/charset),
+// for a fixed time. A background task samples the resident set every 10 s
+// (Linux /proc/self/status). Pass: no mismatch, no fault, and the resident
+// set at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/charset
+
+/// One pass over the cases from offset start: lossy and strict decode,
+/// encode, and UTF-16 units. The operations done, or the first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..DECODE.len() {
+    let (cs, h, want) = DECODE[(start + k) % DECODE.len()]
+    let b = bytes_of_hex(h)
+    let lossy = charset.decode(b, cs, lossy: true).ok() ?? "<err>"
+    if lossy != want {
+      return Err("decode ${cs} ${h}")
+    }
+    match charset.decode(b, cs) {
+      Ok(s) => if s != lossy {
+        return Err("strict decode ${cs} ${h}")
+      }
+      Err(e) => if e.offset < 0 || e.offset >= b.len() || !lossy.contains("\u{fffd}") {
+        return Err("strict error ${cs} ${h}")
+      }
+    }
+  }
+  for k in 0..ENCODE.len() {
+    let (cs, t, want) = ENCODE[(start + k) % ENCODE.len()]
+    let got = match charset.encode(t, cs) {
+      Ok(b) => hex_of(b)
+      Err(_) => "err"
+    }
+    if got != want {
+      return Err("encode ${cs} ${t.quote()}")
+    }
+  }
+  for k in 0..UNITS.len() {
+    let (t, want) = UNITS[(start + k) % UNITS.len()]
+    if units_text(charset.utf16_units(t)) != want {
+      return Err("units ${t.quote()}")
+    }
+  }
+  2 * DECODE.len() + ENCODE.len() + UNITS.len()
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("charset stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+/// (charset, input bytes in hex, the decoding of them: x/text's, Go's utf16.Decode for UTF-16)
+const DECODE: List[(charset.Charset, Str, Str)] = [
+  (charset.Charset.Utf16Le, "", ""),
+  (charset.Charset.Utf16Le, "41", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "4100", "A"),
+  (charset.Charset.Utf16Le, "0041", "\u{4100}"),
+  (charset.Charset.Utf16Le, "fffe", "\u{feff}"),
+  (charset.Charset.Utf16Le, "feff", "\u{fffe}"),
+  (charset.Charset.Utf16Le, "fffe4100", "\u{feff}A"),
+  (charset.Charset.Utf16Le, "feff0041", "\u{fffe}\u{4100}"),
+  (charset.Charset.Utf16Le, "fffefffe", "\u{feff}\u{feff}"),
+  (charset.Charset.Utf16Le, "fffe3dd800de", "\u{feff}\u{1f600}"),
+  (charset.Charset.Utf16Le, "3dd800de", "\u{1f600}"),
+  (charset.Charset.Utf16Le, "d83dde00", "\u{3dd8}\u{de}"),
+  (charset.Charset.Utf16Le, "3dd8", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "3dd84100", "\u{fffd}A"),
+  (charset.Charset.Utf16Le, "00de", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "3dd83dd800de", "\u{fffd}\u{1f600}"),
+  (charset.Charset.Utf16Le, "3dd800", "\u{fffd}\u{fffd}"),
+  (charset.Charset.Utf16Le, "410042", "A\u{fffd}"),
+  (charset.Charset.Utf16Le, "00de3dd8", "\u{fffd}\u{fffd}"),
+  (charset.Charset.Utf16Le, "80", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "81", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "82", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "83", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "84", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "85", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "86", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "87", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "88", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "89", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "8a", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "8b", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "8c", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "8d", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "8e", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "8f", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "90", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "91", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "92", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "93", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "94", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "95", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "96", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "97", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "98", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "99", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "9a", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "9b", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "9c", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "9d", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "9e", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "9f", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "a0", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "41e9ff809fa0ff", "\u{e941}\u{80ff}\u{a09f}\u{fffd}"),
+  (charset.Charset.Utf16Le, "706c61696e2061736369692074657874", "\u{6c70}\u{6961}\u{206e}\u{7361}\u{6963}\u{2069}\u{6574}\u{7478}"),
+  (charset.Charset.Utf16Le, "636166c3a920e2809420c3bc20e282ac", "\u{6163}\u{c366}\u{20a9}\u{80e2}\u{2094}\u{bcc3}\u{e220}\u{ac82}"),
+  (charset.Charset.Utf16Le, "c3", "\u{fffd}"),
+  (charset.Charset.Utf16Le, "c328", "\u{28c3}"),
+  (charset.Charset.Utf16Le, "e282", "\u{82e2}"),
+  (charset.Charset.Utf16Le, "f09f98", "\u{9ff0}\u{fffd}"),
+  (charset.Charset.Utf16Le, "efbfbd", "\u{bfef}\u{fffd}"),
+  (charset.Charset.Utf16Le, "eda080", "\u{a0ed}\u{fffd}"),
+  (charset.Charset.Utf16Le, "c080", "\u{80c0}"),
+  (charset.Charset.Utf16Le, "d8572eb061230704b30a48761975cc", "\u{57d8}\u{b02e}\u{2361}\u{407}\u{ab3}\u{7648}\u{7519}\u{fffd}"),
+  (charset.Charset.Utf16Le, "d92d60", "\u{2dd9}\u{fffd}"),
+]
+
+/// (charset, text, x/text's encoding of it in hex, or "err" when it cannot)
+const ENCODE: List[(charset.Charset, Str, Str)] = [
+  (charset.Charset.Utf16Le, "", ""),
+  (charset.Charset.Utf16Le, "A", "4100"),
+  (charset.Charset.Utf16Le, "abc", "610062006300"),
+  (charset.Charset.Utf16Le, "caf\u{e9}", "630061006600e900"),
+  (charset.Charset.Utf16Le, "\u{20ac}", "ac20"),
+  (charset.Charset.Utf16Le, "na\u{ef}ve \u{2014} \u{201c}quoted\u{201d}", "6e006100ef00760065002000142020001c20710075006f007400650064001d20"),
+  (charset.Charset.Utf16Le, "\u{65e5}\u{672c}\u{8a9e}", "e5652c679e8a"),
+  (charset.Charset.Utf16Le, "\u{1f600}", "3dd800de"),
+  (charset.Charset.Utf16Le, "\u{81}\u{8d}\u{8f}\u{90}\u{9d}", "81008d008f0090009d00"),
+  (charset.Charset.Utf16Le, "\u{80}\u{9f}\u{a0}\u{ff}\u{100}", "80009f00a000ff000001"),
+  (charset.Charset.Utf16Le, "\u{178}\u{17e}\u{153}\u{2122}", "78017e0153012221"),
+  (charset.Charset.Utf16Le, "Bmy\u{a1}a#t\u{d2}", "42006d007900a100610023007400d200"),
+  (charset.Charset.Utf16Le, "\u{9f}\u{e0}\u{ee}\u{107aa}\u{be}", "9f00e000ee0001d8aadfbe00"),
+  (charset.Charset.Utf16Le, "e\u{d0}\u{b5}5\u{b9}\u{107ba}1", "6500d000b5003500b90001d8badf3100"),
+  (charset.Charset.Utf16Le, "\u{c0}@+F\u{93}\u{ca}", "c00040002b0046009300ca00"),
+  (charset.Charset.Utf16Le, "\u{c3}\u{97}-\u{10663}\u{bc}", "c30097002d0001d863debc00"),
+  (charset.Charset.Utf16Le, "\u{e1}A~,'x", "e10041007e002c0027007800"),
+  (charset.Charset.Utf16Le, "", ""),
+  (charset.Charset.Utf16Le, "\$^]\u{88}", "24005e005d008800"),
+  (charset.Charset.Utf16Le, "\u{1877}!\u{106da}\u{ad}Q\u{10854}\u{d6b}", "7718210001d8dadead00510002d854dc6b0d"),
+  (charset.Charset.Utf16Le, "\u{c7}%", "c7002500"),
+  (charset.Charset.Utf16Le, "\u{17a8}'3", "a81727003300"),
+  (charset.Charset.Utf16Le, "\u{1bbe})\u{10783}\u{e8}`x\u{b5}", "be1b290001d883dfe80060007800b500"),
+  (charset.Charset.Utf16Le, "\u{bd}\u{104df}", "bd0001d8dfdc"),
+  (charset.Charset.Utf16Le, "XV\u{ed}\u{c8}", "58005600ed00c800"),
+  (charset.Charset.Utf16Le, "\u{10688}\u{101f9}\u{f1}\u{d2}\u{cb}\u{de1}\u{10efa}\u{f4}\u{2bb}", "01d888de00d8f9ddf100d200cb00e10d03d8fadef400bb02"),
+  (charset.Charset.Utf16Le, "\u{9fb}\u{10f0d}\u{fc}\u{f61}\u{1cbc}L", "fb0903d80ddffc00610fbc1c4c00"),
+  (charset.Charset.Utf16Le, "^\u{a9}\u{f5}\u{16f4}\u{1e7}\u{5f8}n\u{85}", "5e00a900f500f416e701f8056e008500"),
+  (charset.Charset.Utf16Le, "\u{f0}\u{b8}\u{a5}0R", "f000b800a50030005200"),
+  (charset.Charset.Utf16Le, "\u{10eb6}5\u{a2}\u{10e3e}\u{1030f}\u{10e1e}", "03d8b6de3500a20003d83ede00d80fdf03d81ede"),
+  (charset.Charset.Utf16Le, "\u{104a5}\\", "01d8a5dc5c00"),
+  (charset.Charset.Utf16Le, "\u{10596}\u{90d} >->", "01d896dd0d0920003e002d003e00"),
+  (charset.Charset.Utf16Le, "\u{87}BV\u{cc}", "870042005600cc00"),
+  (charset.Charset.Utf16Le, "h\u{108ab}\u{c7}*\u{9da}3\u{15c1}", "680002d8abdcc7002a00da093300c115"),
+  (charset.Charset.Utf16Le, "\u{1003a}\u{a9}mo\u{1028d}N\u{1838}\u{d5}", "00d83adca9006d006f0000d88dde4e003818d500"),
+  (charset.Charset.Utf16Le, ":\u{c4}9\u{f2}", "3a00c4003900f200"),
+  (charset.Charset.Utf16Le, "X\u{d6}|\u{af}\u{10870}", "5800d6007c00af0002d870dc"),
+  (charset.Charset.Utf16Le, "\u{10ca5}\u{104e2}", "03d8a5dc01d8e2dc"),
+  (charset.Charset.Utf16Le, "w\u{f1}@6\u{b7}", "7700f10040003600b700"),
+  (charset.Charset.Utf16Le, "\u{b8}\u{e0}\u{ef}\u{18ff}x", "b800e000ef00ff187800"),
+  (charset.Charset.Utf16Le, "\u{d8}\u{d9}\u{e9}\u{e3}", "d800d900e900e300"),
+  (charset.Charset.Utf16Le, "\u{c8}\u{18c6}\u{e3}\u{ba}S\u{a9}", "c800c618e300ba005300a900"),
+  (charset.Charset.Utf16Le, "\u{1ea4}\u{f5}", "a41ef500"),
+  (charset.Charset.Utf16Le, "\u{f2}\u{19e3}E\u{128b}", "f200e31945008b12"),
+  (charset.Charset.Utf16Le, "S2\u{ff}\u{ff}\u{1952}\u{10d1f}W\u{90}Q", "53003200ff00ff00521903d81fdd570090005100"),
+  (charset.Charset.Utf16Le, "/\u{1033e}\u{a3}", "2f0000d83edfa300"),
+  (charset.Charset.Utf16Le, "^\u{bf}\u{99}", "5e00bf009900"),
+  (charset.Charset.Utf16Le, "\u{c4}C\u{d9}w\u{10cf0}\u{9b}\u{b7}`", "c4004300d900770003d8f0dc9b00b7006000"),
+  (charset.Charset.Utf16Le, "\u{f3}28\u{10bda}n\u{10431}\u{10cdb}\u{d5}\u{ec}", "f3003200380002d8dadf6e0001d831dc03d8dbdcd500ec00"),
+  (charset.Charset.Utf16Le, "K)\u{8e}.\u{ae}\u{ce}", "4b0029008e002e00ae00ce00"),
+  (charset.Charset.Utf16Le, "\u{a0}", "a000"),
+  (charset.Charset.Utf16Le, "-\u{542}\u{b7}4\u{10503}\u{10f80}\u{11ac}\u{1924}", "2d004205b700340001d803dd03d880dfac112419"),
+  (charset.Charset.Utf16Le, "\\", "5c00"),
+  (charset.Charset.Utf16Le, "\u{e2}\u{fa}\u{1024c}\u{e3}\u{8b7}.", "e200fa0000d84cdee300b7082e00"),
+  (charset.Charset.Utf16Le, ",\u{1b30}6\u{be}\u{a1}\u{cd}\u{ff}", "2c00301b3600be00a100cd00ff00"),
+  (charset.Charset.Utf16Le, "\u{da}hv\u{a6}y", "da0068007600a6007900"),
+  (charset.Charset.Utf16Le, "\u{c7}\u{1c22}\u{f0}R\u{10d51}\u{8c},\u{e0}", "c700221cf000520003d851dd8c002c00e000"),
+  (charset.Charset.Utf16Le, "%\u{a5}J\u{10297}\u{be}", "2500a5004a0000d897debe00"),
+  (charset.Charset.Utf16Le, "\u{ec}\u{d8}\u{589}\u{1068e}", "ec00d800890501d88ede"),
+  (charset.Charset.Utf16Le, "\u{1066d}C\u{10e16}\u{92}Q\u{1187}\u{10fcb}", "01d86dde430003d816de92005100871103d8cbdf"),
+  (charset.Charset.Utf16Le, "Jb8u\u{10518}\u{18b6}~c", "4a0062003800750001d818ddb6187e006300"),
+  (charset.Charset.Utf16Le, "", ""),
+  (charset.Charset.Utf16Le, "s`_", "730060005f00"),
+  (charset.Charset.Utf16Le, "VC\u{fe}\u{e7}9\u{d9}\u{d2}", "56004300fe00e7003900d900d200"),
+]
+
+/// (text, Go's utf16.Encode of its runes as space separated numbers)
+const UNITS: List[(Str, Str)] = [
+  ("", ""),
+  ("A", "65"),
+  ("abc", "97 98 99"),
+  ("caf\u{e9}", "99 97 102 233"),
+  ("\u{20ac}", "8364"),
+  ("na\u{ef}ve \u{2014} \u{201c}quoted\u{201d}", "110 97 239 118 101 32 8212 32 8220 113 117 111 116 101 100 8221"),
+  ("\u{65e5}\u{672c}\u{8a9e}", "26085 26412 35486"),
+  ("\u{1f600}", "55357 56832"),
+  ("\u{81}\u{8d}\u{8f}\u{90}\u{9d}", "129 141 143 144 157"),
+  ("\u{80}\u{9f}\u{a0}\u{ff}\u{100}", "128 159 160 255 256"),
+  ("\u{178}\u{17e}\u{153}\u{2122}", "376 382 339 8482"),
+  ("Bmy\u{a1}a#t\u{d2}", "66 109 121 161 97 35 116 210"),
+  ("\u{9f}\u{e0}\u{ee}\u{107aa}\u{be}", "159 224 238 55297 57258 190"),
+  ("e\u{d0}\u{b5}5\u{b9}\u{107ba}1", "101 208 181 53 185 55297 57274 49"),
+  ("\u{c0}@+F\u{93}\u{ca}", "192 64 43 70 147 202"),
+  ("\u{c3}\u{97}-\u{10663}\u{bc}", "195 151 45 55297 56931 188"),
+  ("\u{e1}A~,'x", "225 65 126 44 39 120"),
+  ("", ""),
+  ("\$^]\u{88}", "36 94 93 136"),
+  ("\u{1877}!\u{106da}\u{ad}Q\u{10854}\u{d6b}", "6263 33 55297 57050 173 81 55298 56404 3435"),
+  ("\u{c7}%", "199 37"),
+  ("\u{17a8}'3", "6056 39 51"),
+  ("\u{1bbe})\u{10783}\u{e8}`x\u{b5}", "7102 41 55297 57219 232 96 120 181"),
+  ("\u{bd}\u{104df}", "189 55297 56543"),
+  ("XV\u{ed}\u{c8}", "88 86 237 200"),
+  ("\u{10688}\u{101f9}\u{f1}\u{d2}\u{cb}\u{de1}\u{10efa}\u{f4}\u{2bb}", "55297 56968 55296 56825 241 210 203 3553 55299 57082 244 699"),
+  ("\u{9fb}\u{10f0d}\u{fc}\u{f61}\u{1cbc}L", "2555 55299 57101 252 3937 7356 76"),
+  ("^\u{a9}\u{f5}\u{16f4}\u{1e7}\u{5f8}n\u{85}", "94 169 245 5876 487 1528 110 133"),
+  ("\u{f0}\u{b8}\u{a5}0R", "240 184 165 48 82"),
+  ("\u{10eb6}5\u{a2}\u{10e3e}\u{1030f}\u{10e1e}", "55299 57014 53 162 55299 56894 55296 57103 55299 56862"),
+  ("\u{104a5}\\", "55297 56485 92"),
+  ("\u{10596}\u{90d} >->", "55297 56726 2317 32 62 45 62"),
+  ("\u{87}BV\u{cc}", "135 66 86 204"),
+  ("h\u{108ab}\u{c7}*\u{9da}3\u{15c1}", "104 55298 56491 199 42 2522 51 5569"),
+  ("\u{1003a}\u{a9}mo\u{1028d}N\u{1838}\u{d5}", "55296 56378 169 109 111 55296 56973 78 6200 213"),
+  (":\u{c4}9\u{f2}", "58 196 57 242"),
+  ("X\u{d6}|\u{af}\u{10870}", "88 214 124 175 55298 56432"),
+  ("\u{10ca5}\u{104e2}", "55299 56485 55297 56546"),
+  ("w\u{f1}@6\u{b7}", "119 241 64 54 183"),
+  ("\u{b8}\u{e0}\u{ef}\u{18ff}x", "184 224 239 6399 120"),
+  ("\u{d8}\u{d9}\u{e9}\u{e3}", "216 217 233 227"),
+  ("\u{c8}\u{18c6}\u{e3}\u{ba}S\u{a9}", "200 6342 227 186 83 169"),
+  ("\u{1ea4}\u{f5}", "7844 245"),
+  ("\u{f2}\u{19e3}E\u{128b}", "242 6627 69 4747"),
+  ("S2\u{ff}\u{ff}\u{1952}\u{10d1f}W\u{90}Q", "83 50 255 255 6482 55299 56607 87 144 81"),
+  ("/\u{1033e}\u{a3}", "47 55296 57150 163"),
+  ("^\u{bf}\u{99}", "94 191 153"),
+  ("\u{c4}C\u{d9}w\u{10cf0}\u{9b}\u{b7}`", "196 67 217 119 55299 56560 155 183 96"),
+  ("\u{f3}28\u{10bda}n\u{10431}\u{10cdb}\u{d5}\u{ec}", "243 50 56 55298 57306 110 55297 56369 55299 56539 213 236"),
+  ("K)\u{8e}.\u{ae}\u{ce}", "75 41 142 46 174 206"),
+  ("\u{a0}", "160"),
+  ("-\u{542}\u{b7}4\u{10503}\u{10f80}\u{11ac}\u{1924}", "45 1346 183 52 55297 56579 55299 57216 4524 6436"),
+  ("\\", "92"),
+  ("\u{e2}\u{fa}\u{1024c}\u{e3}\u{8b7}.", "226 250 55296 56908 227 2231 46"),
+  (",\u{1b30}6\u{be}\u{a1}\u{cd}\u{ff}", "44 6960 54 190 161 205 255"),
+  ("\u{da}hv\u{a6}y", "218 104 118 166 121"),
+  ("\u{c7}\u{1c22}\u{f0}R\u{10d51}\u{8c},\u{e0}", "199 7202 240 82 55299 56657 140 44 224"),
+  ("%\u{a5}J\u{10297}\u{be}", "37 165 74 55296 56983 190"),
+  ("\u{ec}\u{d8}\u{589}\u{1068e}", "236 216 1417 55297 56974"),
+  ("\u{1066d}C\u{10e16}\u{92}Q\u{1187}\u{10fcb}", "55297 56941 67 55299 56854 146 81 4487 55299 57291"),
+  ("Jb8u\u{10518}\u{18b6}~c", "74 98 56 117 55297 56600 6326 126 99"),
+  ("", ""),
+  ("s`_", "115 96 95"),
+  ("VC\u{fe}\u{e7}9\u{d9}\u{d2}", "86 67 254 231 57 217 210"),
+]
+
+/// (code units as space separated numbers, Go's utf16.Decode of them)
+const FROM_UNITS: List[(Str, Str)] = [
+  ("", ""),
+  ("65", "A"),
+  ("55357 56832", "\u{1f600}"),
+  ("55357", "\u{fffd}"),
+  ("56832", "\u{fffd}"),
+  ("55357 65", "\u{fffd}A"),
+  ("56832 55357", "\u{fffd}\u{fffd}"),
+  ("55357 55357 56832", "\u{fffd}\u{1f600}"),
+  ("65533", "\u{fffd}"),
+  ("65535 0", "\u{ffff}\u{0}"),
+  ("", ""),
+  ("56664 65273 55333 1245 56557 40780", "\u{fffd}\u{fef9}\u{fffd}\u{4dd}\u{fffd}\u{9f4c}"),
+  ("56318 56216", "\u{fffd}\u{fffd}"),
+  ("", ""),
+  ("55581 56357 23394 57222 19813 56187 50022", "\u{57425}\u{5b62}\u{fffd}\u{4d65}\u{fffd}\u{c366}"),
+  ("59161 56374", "\u{e719}\u{fffd}"),
+  ("29283 24210", "\u{7263}\u{5e92}"),
+  ("51436 212 18532", "\u{c8ec}\u{d4}\u{4864}"),
+  ("58820 42967 53956 57339 48656", "\u{e5c4}\u{a7d7}\u{d2c4}\u{fffd}\u{be10}"),
+  ("57153 56198 20551 23631 57171", "\u{fffd}\u{fffd}\u{5047}\u{5c4f}\u{fffd}"),
+  ("38620 42180 22318", "\u{96dc}\u{a4c4}\u{572e}"),
+  ("", ""),
+  ("36339 60315", "\u{8df3}\u{eb9b}"),
+  ("56639 14964 48256 23721 40985 57126 49859", "\u{fffd}\u{3a74}\u{bc80}\u{5ca9}\u{a019}\u{fffd}\u{c2c3}"),
+  ("44169 55570 9763 56405", "\u{ac89}\u{fffd}\u{2623}\u{fffd}"),
+  ("55928", "\u{fffd}"),
+  ("18817 17845 8354 57729 55666 27756 15515", "\u{4981}\u{45b5}\u{20a2}\u{e181}\u{fffd}\u{6c6c}\u{3c9b}"),
+  ("", ""),
+  ("55580 42165 25002 48833 10134 2211 32860", "\u{fffd}\u{a4b5}\u{61aa}\u{bec1}\u{2796}\u{8a3}\u{805c}"),
+  ("19984 8143 56036", "\u{4e10}\u{1fcf}\u{fffd}"),
+  ("56084 52648 59883 55767 64690", "\u{fffd}\u{cda8}\u{e9eb}\u{fffd}\u{fcb2}"),
+  ("22078 57243 15290 56258 9002", "\u{563e}\u{fffd}\u{3bba}\u{fffd}\u{232a}"),
+  ("56274 55814 14116 55918 56669 19969 56547", "\u{fffd}\u{fffd}\u{3724}\u{ab95d}\u{4e01}\u{fffd}"),
+  ("35942 50929", "\u{8c66}\u{c6f1}"),
+  ("1986 23527 55318", "\u{7c2}\u{5be7}\u{fffd}"),
+  ("64547 55523 56646 56208 64602 2215", "\u{fc23}\u{48d46}\u{fffd}\u{fc5a}\u{8a7}"),
+  ("56916 55539 18995 54131 7600", "\u{fffd}\u{fffd}\u{4a33}\u{d373}\u{1db0}"),
+  ("15852 53108 55906 54719 56749 56649 56332", "\u{3dec}\u{cf74}\u{fffd}\u{d5bf}\u{fffd}\u{fffd}\u{fffd}"),
+  ("10111 42599 28816", "\u{277f}\u{a667}\u{7090}"),
+  ("58273 56603 56135 53827 45645 60555", "\u{e3a1}\u{fffd}\u{fffd}\u{d243}\u{b24d}\u{ec8b}"),
+  ("", ""),
+  ("55884", "\u{fffd}"),
+  ("55988 9793", "\u{fffd}\u{2641}"),
+  ("28743 13838", "\u{7047}\u{360e}"),
+  ("", ""),
+  ("", ""),
+  ("56773 40109 56299 8065", "\u{fffd}\u{9cad}\u{fffd}\u{1f81}"),
+  ("8266 5176 56248 40720 56984 56535 56138", "\u{204a}\u{1438}\u{fffd}\u{9f10}\u{fffd}\u{fffd}\u{fffd}"),
+  ("55851 56518", "\u{9acc6}"),
+  ("57096", "\u{fffd}"),
+  ("", ""),
+  ("24740 30320", "\u{60a4}\u{7670}"),
+  ("24705 46297", "\u{6081}\u{b4d9}"),
+  ("56868 34941 55343 22210 56878 56925", "\u{fffd}\u{887d}\u{fffd}\u{56c2}\u{fffd}\u{fffd}"),
+  ("19547", "\u{4c5b}"),
+  ("28092 33760 55358 53068 37382 56338 48107", "\u{6dbc}\u{83e0}\u{fffd}\u{cf4c}\u{9206}\u{fffd}\u{bbeb}"),
+  ("40131 61594 22781 55971 37480 56732", "\u{9cc3}\u{f09a}\u{58fd}\u{fffd}\u{9268}\u{fffd}"),
+  ("15736 45449 28073 28865 45406", "\u{3d78}\u{b189}\u{6da9}\u{70c1}\u{b15e}"),
+  ("", ""),
+  ("22504 58619 57230 55677 9021 55721", "\u{57e8}\u{e4fb}\u{fffd}\u{fffd}\u{233d}\u{fffd}"),
+  ("55471 56222 56464 55449 33481", "\u{fffd}\u{f7890}\u{fffd}\u{82c9}"),
+  ("33365 51271 55651 55883 55682 38839", "\u{8255}\u{c847}\u{fffd}\u{fffd}\u{fffd}\u{97b7}"),
+  ("18014", "\u{465e}"),
+  ("31717 44991 2644 13870 54524 42195 21619", "\u{7be5}\u{afbf}\u{a54}\u{362e}\u{d4fc}\u{a4d3}\u{5473}"),
+]
+
+/// (label, htmlindex's name for it when this module supports that encoding, else "")
+const LABELS: List[(Str, Str)] = [
+  ("utf-8", "utf-8"),
+  ("UTF-8", "utf-8"),
+  (" utf8 ", "utf-8"),
+  ("unicode-1-1-utf-8", "utf-8"),
+  ("x-unicode20utf8", "utf-8"),
+  ("utf-16le", "utf-16le"),
+  ("UTF-16LE", "utf-16le"),
+  ("ucs-2", "utf-16le"),
+  ("unicode", "utf-16le"),
+  ("csunicode", "utf-16le"),
+  ("iso-10646-ucs-2", "utf-16le"),
+  ("unicodefeff", "utf-16le"),
+  ("utf-16be", "utf-16be"),
+  ("unicodefffe", "utf-16be"),
+  ("windows-1252", "windows-1252"),
+  ("WINDOWS-1252", "windows-1252"),
+  ("cp1252", "windows-1252"),
+  ("x-cp1252", "windows-1252"),
+  ("iso-8859-1", "windows-1252"),
+  ("latin1", "windows-1252"),
+  ("l1", "windows-1252"),
+  ("ascii", "windows-1252"),
+  ("us-ascii", "windows-1252"),
+  ("iso_8859-1:1987", "windows-1252"),
+  ("ansi_x3.4-1968", "windows-1252"),
+  ("\u{9}latin1\u{a}", "windows-1252"),
+  ("shift_jis", ""),
+  ("gbk", ""),
+  ("iso-8859-2", ""),
+  ("windows-1251", ""),
+  ("koi8-r", ""),
+  ("euc-kr", ""),
+  ("big5", ""),
+  ("latin2", ""),
+  ("utf-7", ""),
+  ("utf-32", ""),
+  ("", ""),
+  ("nope", ""),
+  ("utf8 x", ""),
+  ("utf-16 le", ""),
+]
+
+/// (bytes in hex, Go's utf8.DecodeLastRune: the rune and size, Go's utf8.FullRune)
+const UTF8_LAST: List[(Str, Int, Int, Bool)] = [
+  ("00", 0, 1, true),
+  ("00", 0, 1, true),
+  ("01", 1, 1, true),
+  ("01", 1, 1, true),
+  ("7e", 126, 1, true),
+  ("7e", 126, 1, true),
+  ("7f", 127, 1, true),
+  ("7f", 127, 1, true),
+  ("c280", 128, 2, true),
+  ("c280", 128, 2, true),
+  ("c2", 65533, 1, false),
+  ("80", 65533, 1, true),
+  ("c281", 129, 2, true),
+  ("c281", 129, 2, true),
+  ("c2", 65533, 1, false),
+  ("81", 65533, 1, true),
+  ("c2bf", 191, 2, true),
+  ("c2bf", 191, 2, true),
+  ("c2", 65533, 1, false),
+  ("bf", 65533, 1, true),
+  ("c380", 192, 2, true),
+  ("c380", 192, 2, true),
+  ("c3", 65533, 1, false),
+  ("80", 65533, 1, true),
+  ("c381", 193, 2, true),
+  ("c381", 193, 2, true),
+  ("c3", 65533, 1, false),
+  ("81", 65533, 1, true),
+  ("c388", 200, 2, true),
+  ("c388", 200, 2, true),
+  ("c3", 65533, 1, false),
+  ("88", 65533, 1, true),
+  ("c390", 208, 2, true),
+  ("c390", 208, 2, true),
+  ("c3", 65533, 1, false),
+  ("90", 65533, 1, true),
+  ("c3a0", 224, 2, true),
+  ("c3a0", 224, 2, true),
+  ("c3", 65533, 1, false),
+  ("a0", 65533, 1, true),
+  ("c3bf", 255, 2, true),
+  ("c3bf", 255, 2, true),
+  ("c3", 65533, 1, false),
+  ("bf", 65533, 1, true),
+  ("c480", 256, 2, true),
+  ("c480", 256, 2, true),
+  ("c4", 65533, 1, false),
+  ("80", 65533, 1, true),
+  ("dfbf", 2047, 2, true),
+  ("dfbf", 2047, 2, true),
+  ("df", 65533, 1, false),
+  ("bf", 65533, 1, true),
+  ("e0a080", 2048, 3, true),
+  ("e0a080", 2048, 3, true),
+  ("e0a0", 65533, 1, false),
+  ("a080", 65533, 1, true),
+  ("e0", 65533, 1, false),
+  ("80", 65533, 1, true),
+  ("e0a3bf", 2303, 3, true),
+  ("e0a3bf", 2303, 3, true),
+  ("e0a3", 65533, 1, false),
+  ("a3bf", 65533, 1, true),
+  ("e0", 65533, 1, false),
+  ("bf", 65533, 1, true),
+]
+
+/// Go's utf8.RuneStart of the bytes 0 to 255
+const RUNE_START: Str = "1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111100000000000000000000000000000000000000000000000000000000000000001111111111111111111111111111111111111111111111111111111111111111"
+
+fn bytes_of_hex(h: Str) -> Bytes {
+  Bytes.from_hex(h) ?? b""
+}
+
+fn hex_of(b: Bytes) -> Str {
+  var s = ""
+  let digits = "0123456789abcdef"
+  for c in b {
+    let v = Int(c)
+    s = s + digits[v >> 4..(v >> 4) + 1] + digits[v & 15..(v & 15) + 1]
+  }
+  s
+}
+
+fn units_text(u: List[Int]) -> Str {
+  var parts: List[Str] = []
+  for v in u {
+    parts.push("${v}")
+  }
+  parts.join(" ")
+}
+
+fn units_of(s: Str) -> List[Int] {
+  var out: List[Int] = []
+  if s == "" {
+    return out
+  }
+  for p in s.split(" ") {
+    out.push(Int.parse(p) ?? -1)
+  }
+  out
+}
+
+fn first12(bad: List[(Str, Str, Str)]) -> List[(Str, Str, Str)] {
+  bad[0..(if bad.len() < 12 { bad.len() } else { 12 })]
+}
