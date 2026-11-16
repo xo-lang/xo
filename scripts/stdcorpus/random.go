@@ -56,12 +56,98 @@ type zipfStrict struct {
 	imax, v, q, s, oneminusQ, oneminusQinv, hxm, hx0minusHxm float64
 }
 
+// strictExp and strictLog are Go's pure math.Exp and math.Log (exp.go,
+// log.go) with every product rounded on its own, as std/rt/gomath_gen.go
+// has them (decision 0287): Go on arm64 runs math.Exp in assembly and
+// fuses inside math.Log, so a zipfStrict that guarded only its own
+// products still drew one more than Xo (#116, random fuzz seed 17: draw
+// 139 of s=1.0032 v=3.21, 147611500472720 from Go on arm64,
+// 147611500472719 from Go with fusion off and from Xo).
+func strictExp(x float64) float64 {
+	const (
+		Ln2Hi     = 6.93147180369123816490e-01
+		Ln2Lo     = 1.90821492927058770002e-10
+		Log2e     = 1.44269504088896338700e+00
+		Overflow  = 7.09782712893383973096e+02
+		Underflow = -7.45133219101941108420e+02
+		NearZero  = 1.0 / (1 << 28)
+	)
+	switch {
+	case math.IsNaN(x):
+		return x
+	case x > Overflow:
+		return math.Inf(1)
+	case x < Underflow:
+		return 0
+	case -NearZero < x && x < NearZero:
+		return 1 + x
+	}
+	var k int
+	switch {
+	case x < 0:
+		k = int(float64(Log2e*x) - 0.5)
+	case x > 0:
+		k = int(float64(Log2e*x) + 0.5)
+	}
+	hi := x - float64(float64(k)*Ln2Hi)
+	lo := float64(float64(k) * Ln2Lo)
+	const (
+		P1 = 1.66666666666666657415e-01
+		P2 = -2.77777777770155933842e-03
+		P3 = 6.61375632143793436117e-05
+		P4 = -1.65339022054652515390e-06
+		P5 = 4.13813679705723846039e-08
+	)
+	r := hi - lo
+	t := float64(r * r)
+	c := r - float64(t*(P1+float64(t*(P2+float64(t*(P3+float64(t*(P4+float64(t*P5)))))))))
+	y := 1 - ((lo - (float64(r*c))/(2-c)) - hi)
+	return math.Ldexp(y, k)
+}
+
+func strictLog(x float64) float64 {
+	const (
+		Ln2Hi = 6.93147180369123816490e-01
+		Ln2Lo = 1.90821492927058770002e-10
+		L1    = 6.666666666666735130e-01
+		L2    = 3.999999999940941908e-01
+		L3    = 2.857142874366239149e-01
+		L4    = 2.222219843214978396e-01
+		L5    = 1.818357216161805012e-01
+		L6    = 1.531383769920937332e-01
+		L7    = 1.479819860511658591e-01
+	)
+	switch {
+	case math.IsNaN(x) || math.IsInf(x, 1):
+		return x
+	case x < 0:
+		return math.NaN()
+	case x == 0:
+		return math.Inf(-1)
+	}
+	f1, ki := math.Frexp(x)
+	if f1 < math.Sqrt2/2 {
+		f1 *= 2
+		ki--
+	}
+	f := f1 - 1
+	k := float64(ki)
+	s := f / (2 + f)
+	s2 := float64(s * s)
+	s4 := float64(s2 * s2)
+	t1 := float64(s2 * (L1 + float64(s4*(L3+float64(s4*(L5+float64(s4*L7)))))))
+	t2 := float64(s4 * (L2 + float64(s4*(L4+float64(s4*L6)))))
+	R := t1 + t2
+	hfsq := float64(float64(0.5*f) * f)
+	return float64(k*Ln2Hi) - ((hfsq - (float64(s*(hfsq+R)) + float64(k*Ln2Lo))) - f)
+}
+
 func (z *zipfStrict) h(x float64) float64 {
-	return float64(math.Exp(float64(z.oneminusQ*math.Log(z.v+x))) * z.oneminusQinv)
+	return float64(strictExp(float64(z.oneminusQ*strictLog(z.v+x))) * z.oneminusQinv)
 }
 
 func (z *zipfStrict) hinv(x float64) float64 {
-	return math.Exp(float64(z.oneminusQinv*math.Log(float64(z.oneminusQ*x)))) - z.v
+	return strictExp(float64(z.oneminusQinv*strictLog(float64(z.oneminusQ*x)))) - z.v
 }
 
 func newZipfStrict(r *rand.Rand, s float64, v float64, imax uint64) *zipfStrict {
@@ -72,8 +158,8 @@ func newZipfStrict(r *rand.Rand, s float64, v float64, imax uint64) *zipfStrict 
 	z.oneminusQ = 1.0 - z.q
 	z.oneminusQinv = 1.0 / z.oneminusQ
 	z.hxm = z.h(z.imax + 0.5)
-	z.hx0minusHxm = z.h(0.5) - math.Exp(float64(math.Log(z.v)*(-z.q))) - z.hxm
-	z.s = 1 - z.hinv(z.h(1.5)-math.Exp(float64(-z.q*math.Log(z.v+1.0))))
+	z.hx0minusHxm = z.h(0.5) - strictExp(float64(strictLog(z.v)*(-z.q))) - z.hxm
+	z.s = 1 - z.hinv(z.h(1.5)-strictExp(float64(-z.q*strictLog(z.v+1.0))))
 	return z
 }
 
@@ -87,7 +173,7 @@ func (z *zipfStrict) Uint64() uint64 {
 		if k-x <= z.s {
 			break
 		}
-		if ur >= z.h(k+0.5)-math.Exp(float64(-math.Log(k+z.v)*z.q)) {
+		if ur >= z.h(k+0.5)-strictExp(float64(-strictLog(k+z.v)*z.q)) {
 			break
 		}
 	}

@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fixed (std/timego): `parse` of a fixed width fraction with a sign gives Go's result: `.-5677...` is "fractional second out of range" and `.+5677...` parses.
 - Feature (std/ui): `ui.pg_bus(db, tasks, clock)` carries notices between instances by Postgres LISTEN/NOTIFY, so Hosts on many hosts sharing `sql_store` update each other's live pages (decision 0686).
 - Fix (xo test): a std module's test that uses `os.tasks` runs under `xo test --std-module` as under `xo test DIR`; it faulted with "os.tasks is not available here", because the test build gave the os.tasks scope only when a non-std module spelt os.tasks.
 - derive Proto takes an Int enum of another file of the package and a struct or enum of an imported package (`protowkt.Timestamp`), so code generated from .proto files that import one another builds (decision 0683).

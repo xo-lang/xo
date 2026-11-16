@@ -1,5 +1,20 @@
 # std/timego changes
 
+## 2026-11-16: fix: parse reads a signed fixed width fraction as Go does
+
+- Kind: fix
+- Commit: this commit
+- Found by: task #116, timego fuzz seed 10 (layout "15:04:05.000000000", input "11:41:44.-567712250")
+- Go reference: time.parseNanoseconds (the digits are read with atoi, which takes a sign)
+- Test: std/timego_test.xo "parse matches Go" (the seed 10 case and a plus sign; it failed before on arm64)
+- Shipped in: not yet released
+
+A fixed width fractional second (`.000`, `.000000000`) whose digits
+started with a sign failed as "cannot parse"; Go reads the digits with
+atoi, so a minus sign gives "fractional second out of range" and a plus
+sign parses (`.+56771225` is 56771225 nanoseconds). parse now does the
+same.
+
 ## 2026-11-16: fix: parse takes an offset in the text over a zone name
 
 - Kind: fix

@@ -77,3 +77,10 @@ func TestRandomFuzzSeed4(t *testing.T) {
 	t.Setenv("XO_RANDOMFUZZ_SEED", "4")
 	corpusFuzz(t, "random", "RANDOMFUZZ")
 }
+
+// TestRandomFuzzSeed17: a Zipf draw where Go's arm64 math.Log fused a
+// multiply-add (the generator's Zipf now uses strictExp and strictLog).
+func TestRandomFuzzSeed17(t *testing.T) {
+	t.Setenv("XO_RANDOMFUZZ_SEED", "17")
+	corpusFuzz(t, "random", "RANDOMFUZZ")
+}

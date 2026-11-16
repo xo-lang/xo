@@ -33,6 +33,10 @@ it prints "fmahash triggered [DISABLED]" lines on stderr). TestBrotliFuzz
 seed 182 (2026-11-16): a quality 10 stream was 5203 bytes from Go on
 arm64 and 5202 from Go on amd64, from Go on arm64 with fusion off and
 from Xo, all three identical; the encoder's float cost model chose other
-blocks. See also
+blocks. Guarding the generator's own products is not enough when it calls
+Go's math: on arm64 math.Exp is assembly and math.Log is pure Go that
+fuses, so random fuzz seed 17 (2026-11-16) drew one more than Xo even
+after zipfStrict; the generator now calls strictExp and strictLog, the
+guarded copies std/rt/gomath_gen.go has. See also
 go-backend-fma-contraction.md and go-backend-fused-float.md (the same
 fusion in the Go backend's output).

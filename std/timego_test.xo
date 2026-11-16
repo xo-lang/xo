@@ -42,6 +42,13 @@ test "parse matches Go" {
   // an offset and an unknown zone name: the offset wins, as in Go (#116, timego fuzz seed 8)
   let off = parse("2017-02-01T16:26:03-09:30 ZZZ", "2006-01-02T15:04:05Z07:00 MST", z).or_fault("p5")
   expect(off.unix()) == 1486000563
+  // a signed fraction: negative is out of range, a plus sign is read (Go's atoi; timego fuzz seed 10)
+  match parse("11:41:44.-567712250", "15:04:05.000000000", z) {
+    Ok(_) => fault("a negative fraction parsed")
+    Err(e) => expect(e.go_msg) == "fractional second out of range"
+  }
+  let plus = parse("2026-11-06 11:41:44.+56771225", "2006-01-02 15:04:05.000000000", z).or_fault("p6")
+  expect(plus) == parse("2026-11-06 11:41:44", "2006-01-02 15:04:05", z).or_fault("p7") + Duration.from_nanos(56771225)
 }
 
 test "the layout constants are Go's" {

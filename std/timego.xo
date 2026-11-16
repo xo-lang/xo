@@ -378,7 +378,7 @@ pub fn (l: Layout) parse(s: Str, z: time.Zone) -> Time ! time.ParseErr {
             while digit_at(v, p + n) {
               n += 1
             }
-            nsec = parse_nanos(v, p, n)
+            nsec = parse_nanos(v, p, n).0
             p += n
           }
         }
@@ -475,9 +475,13 @@ pub fn (l: Layout) parse(s: Str, z: time.Zone) -> Time ! time.ParseErr {
       if v.len() - p < nd || !comma_or_period(v, p) {
         bad = "expected fractional second"
       } else {
-        let x = parse_nanos(v, p, nd)
-        if x < 0 {
+        let (x, ok) = parse_nanos(v, p, nd)
+        if !ok {
           bad = "expected fractional second"
+        } else if x < 0 {
+          // Go reads the digits with atoi, which takes a sign: ".-5677" is a
+          // negative fraction (#116, timego fuzz seed 10)
+          bad = "fractional second out of range"
         } else {
           nsec = x
           p += nd
@@ -489,7 +493,7 @@ pub fn (l: Layout) parse(s: Str, z: time.Zone) -> Time ! time.ParseErr {
         while digit_at(v, p + n) {
           n += 1
         }
-        nsec = parse_nanos(v, p, n)
+        nsec = parse_nanos(v, p, n).0
         p += n
       }
     }
@@ -1132,17 +1136,24 @@ fn digits_at(v: Bytes, p: Int, n: Int) -> Int {
 
 fn comma_or_period(v: Bytes, p: Int) -> Bool { p < v.len() && (Int(v[p]) == 46 || Int(v[p]) == 44) }
 
-/// Go's parseNanoseconds over nbytes at p (the separator included): nanoseconds, or -1.
-fn parse_nanos(v: Bytes, p: Int, nbytes: Int) -> Int {
+/// Go's parseNanoseconds over nbytes at p (the separator included): the nanoseconds and whether the digits
+/// parsed. As Go's atoi, the digits may start with a sign, so the nanoseconds may be negative (Go's
+/// "fractional second out of range").
+fn parse_nanos(v: Bytes, p: Int, nbytes: Int) -> (Int, Bool) {
   var n = nbytes
   if n > 10 {
     n = 10
   }
   var ns = 0
   var i = 1
+  var neg = false
+  if i < n && (Int(v[p + i]) == 45 || Int(v[p + i]) == 43) {
+    neg = Int(v[p + i]) == 45
+    i += 1
+  }
   while i < n {
     if !digit_at(v, p + i) {
-      return -1
+      return (0, false)
     }
     ns = ns * 10 + Int(v[p + i]) - 48
     i += 1
@@ -1152,7 +1163,7 @@ fn parse_nanos(v: Bytes, p: Int, nbytes: Int) -> Int {
     ns = ns * 10
     scale -= 1
   }
-  ns
+  (if neg { -ns } else { ns }, true)
 }
 
 /// Go's parseSignedOffset (a sign and a hour of at most 23): the length, 0 when none.
@@ -1286,7 +1297,7 @@ fn parse_rfc3339(v: Bytes, z: time.Zone) -> Time? {
     if q == p + 1 {
       return None
     }
-    nsec = parse_nanos(v, p, q - p)
+    nsec = parse_nanos(v, p, q - p).0
     p = q
   }
   var off = 0
