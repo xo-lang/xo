@@ -11,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"net/netip"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -96,7 +98,7 @@ func val(oid uint32, s string) string {
 	switch oid {
 	case 16:
 		return fmt.Sprintf("Flag(b: %v)", s == "t")
-	case 20, 21, 23, 26:
+	case 20, 21, 23, 26, 28, 29, 5069:
 		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
 			return fmt.Sprintf("Integer(n: %d)", n)
 		}
@@ -467,6 +469,55 @@ func typedCell(m *pgtype.Map, kind string, oid uint32, src []byte) string {
 			return "error"
 		}
 		return q(p.String())
+	case "datebound":
+		var d pgtype.Date
+		if m.Scan(oid, pgtype.TextFormatCode, src, &d) != nil {
+			return "error"
+		}
+		switch d.InfinityModifier {
+		case pgtype.Infinity:
+			return "Infinity"
+		case pgtype.NegativeInfinity:
+			return "NegInfinity"
+		}
+		return fmt.Sprintf("Finite(v: Date{year: %d, month: %d, day: %d})", d.Time.Year(), int(d.Time.Month()), d.Time.Day())
+	case "timebound":
+		var t pgtype.Timestamptz
+		if m.Scan(oid, pgtype.TextFormatCode, src, &t) != nil {
+			return "error"
+		}
+		switch t.InfinityModifier {
+		case pgtype.Infinity:
+			return "Infinity"
+		case pgtype.NegativeInfinity:
+			return "NegInfinity"
+		}
+		return "Finite(" + val(oid, string(src)) + ")"
+	case "mac":
+		var h net.HardwareAddr
+		if m.Scan(oid, pgtype.TextFormatCode, src, &h) != nil {
+			return "error"
+		}
+		return q(hex.EncodeToString(h))
+	case "hstore":
+		var h pgtype.Hstore
+		if h.Scan(string(src)) != nil {
+			return "error"
+		}
+		keys := make([]string, 0, len(h))
+		for k := range h {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var parts []string
+		for _, k := range keys {
+			v := "NULL"
+			if h[k] != nil {
+				v = q(*h[k])
+			}
+			parts = append(parts, q(k)+": "+v)
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
 	}
 	return "error unknown kind " + kind
 }

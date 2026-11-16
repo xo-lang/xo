@@ -198,6 +198,22 @@ fn typed_cell(r: sql.Row, kind: Str, c: Str) -> Str {
     "time" => r.time_of_day_opt(c).map(fn(o) { o.map(fn(t) { t.debug() }) })
     "interval" => r.interval_opt(c).map(fn(o) { o.map(fn(i) { i.debug() }) })
     "inet" => r.prefix_opt(c).map(fn(o) { o.map(fn(p) { p.display().debug() }) })
+    "datebound" => r.date_bound_opt(c).map(fn(o) { o.map(fn(b) { b.debug() }) })
+    "timebound" => r.time_bound_opt(c).map(fn(o) {
+      o.map(fn(b) {
+        match b {
+          Finite(t) => "Finite(${sql.SqlValue.At(t: t):?})"
+          other => other.debug()
+        }
+      })
+    })
+    "mac" => r.mac_opt(c).map(fn(o) { o.map(fn(b) { b.to_hex().debug() }) })
+    "hstore" => r.hstore_opt(c).map(fn(o) {
+      o.map(fn(m) {
+        let ks = m.keys().sort()
+        "{" + ks.map(fn(k) { "${k.debug()}: ${(m.get(k) ?? None).map(fn(v) { v.debug() }) ?? "NULL"}" }).join(", ") + "}"
+      })
+    })
     _ => Ok(Some("error unknown kind ${kind}"))
   }
   match got {

@@ -114,9 +114,27 @@ fn main(os: Os) ! {
   for c in ps.columns() {
     os.stdio.println(show("inet ${c}", ps.prefix(c).map(fn(p) { p.display() })))
   }
+  let bs = db.query_one("2026-10-20 ;; infinity ;; -infinity ;; NULL ;; tomorrow", [])?
+  for c in bs.columns() {
+    os.stdio.println(show("date_bound ${c}", bs.date_bound(c)))
+  }
+  os.stdio.println(show("date_bound_opt c3", bs.date_bound_opt("c3")))
+  os.stdio.println(show("time_bound c1", bs.time_bound("c1")))
+  os.stdio.println(show("time_bound c2", bs.time_bound("c2")))
+  os.stdio.println(show("time_bound c0", bs.time_bound("c0")))
+  let ms = db.query_one("08:00:2b:01:02:03 ;; 08:00:2b:01:02:03:04:05 ;; 08:00:2b:01:02 ;; 08-00-2b-01-02-03 ;; 0g:00:2b:01:02:03", [])?
+  for c in ms.columns() {
+    os.stdio.println(show("mac ${c}", ms.mac(c).map(fn(b) { b.to_hex() })))
+  }
+  // hstore texts: escapes, an empty hstore, a trailing comma, a bare value
+  let hq = ["\"a\"=>\"1\", \"b\"=>NULL, \"q \\\"x\\\"\"=>\"back\\\\slash\"", "", "\"a\"=>\"1\",", "\"a\"=>1"]
+  let hs = db.query_one(hq.join(" ;; "), [])?
+  for c in hs.columns() {
+    os.stdio.println(show("hstore ${c}", hs.hstore(c)))
+  }
   let u = uuid.parse("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")?
   let p = netip.parse_prefix("10.1.0.0/16")?
-  let params = [sql.uuid(u), sql.date(time.Date{year: 2026, month: 3, day: 9}), sql.date(time.Date{year: -43, month: 3, day: 15}), sql.time_of_day(time.ClockTime{hour: 7, minute: 5, second: 3, nanos: 120000000}), sql.interval(sql.Interval{months: 14, days: -3, micros: 5000001}), sql.prefix(p)]
+  let params = [sql.uuid(u), sql.date(time.Date{year: 2026, month: 3, day: 9}), sql.date(time.Date{year: -43, month: 3, day: 15}), sql.time_of_day(time.ClockTime{hour: 7, minute: 5, second: 3, nanos: 120000000}), sql.interval(sql.Interval{months: 14, days: -3, micros: 5000001}), sql.prefix(p), sql.mac(b"\x08\x00\x2b\x01\x02\x03"), sql.hstore({"a": Some("1"), "b": None, "q \"x\"": Some("back\\slash")}), sql.date_bound(sql.Bound.Infinity), sql.date_bound(sql.Bound.Finite(v: time.Date{year: 2026, month: 1, day: 2})), sql.time_bound(sql.Bound.NegInfinity)]
   for r in db.query("PARAMS", params)? {
     os.stdio.println("param ${r.value("p")?:?}")
   }

@@ -775,6 +775,40 @@ fn interval(i: sql.Interval) -> sql.SqlValue { sql.SqlValue.Text(s: "${i.months}
 
 fn prefix(p: netip.Prefix) -> sql.SqlValue { sql.SqlValue.Text(s: p.display()) }
 
+fn mac(b: Bytes) -> sql.SqlValue {
+  var parts: List[Str] = []
+  for i in 0..b.len() {
+    parts.push(b[i..i + 1].to_hex())
+  }
+  sql.SqlValue.Text(s: parts.join(":"))
+}
+
+fn hs_quote(t: Str) -> Str { "\"" + t.replace("\\", "\\\\").replace("\"", "\\\"") + "\"" }
+
+fn hstore(m: Map[Str, Str?]) -> sql.SqlValue {
+  var parts: List[Str] = []
+  for (k, v) in m {
+    parts.push(hs_quote(k) + "=>" + (v.map(fn(x) { hs_quote(x) }) ?? "NULL"))
+  }
+  sql.SqlValue.Text(s: parts.join(", "))
+}
+
+fn date_bound(b: sql.Bound[time.Date]) -> sql.SqlValue {
+  match b {
+    Finite(d) => date(d)
+    Infinity => sql.SqlValue.Text(s: "infinity")
+    NegInfinity => sql.SqlValue.Text(s: "-infinity")
+  }
+}
+
+fn time_bound(b: sql.Bound[Time]) -> sql.SqlValue {
+  match b {
+    Finite(t) => sql.SqlValue.At(t: t)
+    Infinity => sql.SqlValue.Text(s: "infinity")
+    NegInfinity => sql.SqlValue.Text(s: "-infinity")
+  }
+}
+
 fn interval_duration(i: sql.Interval) -> Duration? {
   if i.months != 0 || i.days != 0 {
     return None
@@ -2515,6 +2549,160 @@ fn (r: Row) prefix(name: Str) -> netip.Prefix ! sql.SqlErr {
   match r.prefix_opt(name)? {
     Some(p) => p
     None => Err(mismatch(name, "an inet", sql.SqlValue.Null))
+  }
+}
+
+/// A macaddr or macaddr8 column's text: 6 or 8 two digit hex groups
+/// separated by colons.
+fn pg_mac(s: Str) -> Bytes? {
+  let ps = s.split(":")
+  if ps.len() != 6 && ps.len() != 8 {
+    return None
+  }
+  for p in ps {
+    if p.len() != 2 {
+      return None
+    }
+  }
+  Bytes.from_hex(ps.join(""))
+}
+
+/// A quoted hstore key or value at byte i (`"..."`, `\` escaping the
+/// next byte) and the index after its closing quote.
+fn hs_quoted(s: Str, i: Int) -> (Str, Int)? {
+  let b = s.bytes()
+  if i >= b.len() || b[i] != 34 {
+    return None
+  }
+  var out = ""
+  var start = i + 1
+  var j = i + 1
+  while j < b.len() {
+    if b[j] == 92 {
+      if j + 1 >= b.len() {
+        return None
+      }
+      out = out + s[start..j]
+      start = j + 1
+      j += 2
+    } else if b[j] == 34 {
+      return Some((out + s[start..j], j + 1))
+    } else {
+      j += 1
+    }
+  }
+  None
+}
+
+fn hs_space(b: Bytes, i: Int) -> Int {
+  var j = i
+  while j < b.len() && b[j] == 32 {
+    j += 1
+  }
+  j
+}
+
+/// An hstore column's text (pgx's Hstore): `"k"=>"v", "n"=>NULL`.
+fn pg_hstore(s: Str) -> Map[Str, Str?]? {
+  let b = s.bytes()
+  var m: Map[Str, Str?] = {}
+  var i = hs_space(b, 0)
+  while i < b.len() {
+    let (k, j) = hs_quoted(s, i)?
+    i = hs_space(b, j)
+    if i + 1 >= b.len() || b[i] != 61 || b[i + 1] != 62 {
+      return None
+    }
+    i = hs_space(b, i + 2)
+    if s[i..s.len()].starts_with("NULL") {
+      m.put(k, None)
+      i += 4
+    } else {
+      let (v, j2) = hs_quoted(s, i)?
+      m.put(k, Some(v))
+      i = j2
+    }
+    i = hs_space(b, i)
+    if i < b.len() {
+      if b[i] != 44 {
+        return None
+      }
+      i = hs_space(b, i + 1)
+      if i >= b.len() {
+        return None
+      }
+    }
+  }
+  Some(m)
+}
+
+fn (r: Row) date_bound_opt(name: Str) -> sql.Bound[time.Date]? ! sql.SqlErr {
+  match typed_text(r, name, "a date")? {
+    None => None
+    Some("infinity") => Some(sql.Bound.Infinity)
+    Some("-infinity") => Some(sql.Bound.NegInfinity)
+    Some(s) => match pg_date(s) {
+      Some(d) => Some(sql.Bound.Finite(v: d))
+      None => Err(bad_text(name, "a date", s))
+    }
+  }
+}
+
+fn (r: Row) date_bound(name: Str) -> sql.Bound[time.Date] ! sql.SqlErr {
+  match r.date_bound_opt(name)? {
+    Some(b) => b
+    None => Err(mismatch(name, "a date", sql.SqlValue.Null))
+  }
+}
+
+fn (r: Row) time_bound_opt(name: Str) -> sql.Bound[Time]? ! sql.SqlErr {
+  match r.get(name)? {
+    Null => None
+    At(t) => Some(sql.Bound.Finite(v: t))
+    Text("infinity") => Some(sql.Bound.Infinity)
+    Text("-infinity") => Some(sql.Bound.NegInfinity)
+    v => Err(mismatch(name, "a time", v))
+  }
+}
+
+fn (r: Row) time_bound(name: Str) -> sql.Bound[Time] ! sql.SqlErr {
+  match r.time_bound_opt(name)? {
+    Some(b) => b
+    None => Err(mismatch(name, "a time", sql.SqlValue.Null))
+  }
+}
+
+fn (r: Row) mac_opt(name: Str) -> Bytes? ! sql.SqlErr {
+  match typed_text(r, name, "a macaddr")? {
+    None => None
+    Some(s) => match pg_mac(s) {
+      Some(b) => Some(b)
+      None => Err(bad_text(name, "a macaddr", s))
+    }
+  }
+}
+
+fn (r: Row) mac(name: Str) -> Bytes ! sql.SqlErr {
+  match r.mac_opt(name)? {
+    Some(b) => b
+    None => Err(mismatch(name, "a macaddr", sql.SqlValue.Null))
+  }
+}
+
+fn (r: Row) hstore_opt(name: Str) -> Map[Str, Str?]? ! sql.SqlErr {
+  match typed_text(r, name, "an hstore")? {
+    None => None
+    Some(s) => match pg_hstore(s) {
+      Some(m) => Some(m)
+      None => Err(bad_text(name, "an hstore", s))
+    }
+  }
+}
+
+fn (r: Row) hstore(name: Str) -> Map[Str, Str?] ! sql.SqlErr {
+  match r.hstore_opt(name)? {
+    Some(m) => m
+    None => Err(mismatch(name, "an hstore", sql.SqlValue.Null))
   }
 }
 

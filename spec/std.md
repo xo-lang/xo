@@ -4028,7 +4028,7 @@ Results are read in text format and decoded by the column's type:
 
 | Postgres type | SqlValue | Read with |
 |---|---|---|
-| `int2`, `int4`, `int8`, `oid` | `Integer` | `int` |
+| `int2`, `int4`, `int8`, `oid`, `xid`, `cid`, `xid8` | `Integer` (an `xid8` past Int's range: `Text`) | `int` |
 | `float4`, `float8` | `Real` | `float` |
 | `bool` | `Flag` | `bool` |
 | `text`, `varchar`, `bpchar`, `name`, `citext` | `Text` | `str` |
@@ -4042,6 +4042,8 @@ Results are read in text format and decoded by the column's type:
 | `time` | `Text` | `time_of_day` (a `time.ClockTime`), `str` |
 | `interval` | `Text` | `interval` (an `sql.Interval`), `str` |
 | `inet`, `cidr` | `Text` | `prefix` (a `netip.Prefix`), `str` |
+| `macaddr`, `macaddr8` | `Text` | `mac` (6 or 8 bytes), `str` |
+| `hstore` | `Text` | `hstore` (a `Map[Str, Str?]`), `str` |
 | every other type (`numeric`, `timetz`, ranges, enums, ...) | `Text`, the server's text | `str` |
 
 NULL is `Null` everywhere. Accessors convert where no information is
@@ -4068,11 +4070,17 @@ fn (r: Row) interval(name: Str) -> Interval ! SqlErr            // also interval
 fn (r: Row) prefix(name: Str) -> netip.Prefix ! SqlErr          // also prefix_opt; an inet with no mask is a full length prefix
 struct Interval { months: Int, days: Int, micros: Int }         // pgx's Interval: kept apart, as Postgres keeps them
 fn (i: Interval) duration() -> Duration?                        // when it has no months and no days
-pub fn uuid(u: uuid.Uuid) -> SqlValue                           // also date, time_of_day, interval, prefix
+pub fn uuid(u: uuid.Uuid) -> SqlValue                           // also date, time_of_day, interval, prefix, mac, hstore
+fn (r: Row) date_bound(name: Str) -> Bound[time.Date] ! SqlErr  // also _opt; infinity and -infinity
+fn (r: Row) time_bound(name: Str) -> Bound[Time] ! SqlErr       // also _opt; a timestamp or timestamptz
+enum Bound[T] { Finite(v: T), Infinity, NegInfinity }          // pgx's InfinityModifier
+pub fn date_bound(b: Bound[time.Date]) -> SqlValue              // also time_bound
+fn (r: Row) mac(name: Str) -> Bytes ! SqlErr                    // also mac_opt: macaddr (6 bytes), macaddr8 (8)
+fn (r: Row) hstore(name: Str) -> Map[Str, Str?] ! SqlErr        // also hstore_opt; None for a NULL value
 ```
 
-`infinity` and `-infinity` dates are Mismatch for now (a `Bound` reader
-is decision 0679's next step); a `timetz`'s offset is read with `str`.
+`date` reads `infinity` and `-infinity` as Mismatch; `date_bound` and
+`time_bound` read them. A `timetz`'s offset is read with `str`.
 
 The values and accessors are 10.2 and 10.4's.
 

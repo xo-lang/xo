@@ -1620,6 +1620,46 @@ func (v Signal) XoDebug(b *strings.Builder) {
 
 func (v Signal) M_debug(*Task) string { return Debug(v) }
 
+func (v Sql_Bound[tp_T]) XoEq(x any) bool {
+	o, ok := x.(Sql_Bound[tp_T])
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	case 1:
+		a, b := v.P.(Sql_Bound_Finite[tp_T]), o.P.(Sql_Bound_Finite[tp_T])
+		return Eq(a.F_v, b.F_v)
+	}
+	return true
+}
+
+func (v Sql_Bound[tp_T]) XoHash() uint64 {
+	h := MixHash(uint64(7034496301455459820), uint64(v.Tag))
+	switch v.Tag {
+	case 1:
+		a := v.P.(Sql_Bound_Finite[tp_T])
+		h = MixHash(h, Hash(a.F_v))
+	}
+	return h
+}
+
+func (v Sql_Bound[tp_T]) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		a := v.P.(Sql_Bound_Finite[tp_T])
+		b.WriteString("Finite(")
+		b.WriteString("v: ")
+		DebugTo(b, a.F_v)
+		b.WriteString(")")
+	case 2:
+		b.WriteString("Infinity")
+	case 3:
+		b.WriteString("NegInfinity")
+	}
+}
+
+func (v Sql_Bound[tp_T]) M_debug(*Task) string { return Debug(v) }
+
 func (v Task_Timed[tp_E]) XoEq(x any) bool {
 	o, ok := x.(Task_Timed[tp_E])
 	if !ok || o.Tag != v.Tag {

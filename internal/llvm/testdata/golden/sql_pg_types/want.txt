@@ -40,10 +40,33 @@ inet c3: "::1/128"
 inet c4: "2001:db8::/32"
 inet c5: column c5: expected an inet, found text
 inet c6: column c6: expected an inet, found text
+date_bound c0: Finite(v: Date{year: 2026, month: 10, day: 20})
+date_bound c1: Infinity
+date_bound c2: NegInfinity
+date_bound c3: column c3: expected a date, found NULL
+date_bound c4: column c4: expected a date, found text
+date_bound_opt c3: None
+time_bound c1: Infinity
+time_bound c2: NegInfinity
+time_bound c0: column c0: expected a time, found text
+mac c0: "08002b010203"
+mac c1: "08002b0102030405"
+mac c2: column c2: expected a macaddr, found text
+mac c3: column c3: expected a macaddr, found text
+mac c4: column c4: expected a macaddr, found text
+hstore c0: {"a": Some("1"), "b": None, "q \"x\"": Some("back\\slash")}
+hstore c1: {}
+hstore c2: column c2: expected an hstore, found text
+hstore c3: column c3: expected an hstore, found text
 param Text(s: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
 param Text(s: "2026-03-09")
 param Text(s: "0044-03-15 BC")
 param Text(s: "07:05:03.120000")
 param Text(s: "14 mon -3 day 5000001 microsecond")
 param Text(s: "10.1.0.0/16")
+param Text(s: "08:00:2b:01:02:03")
+param Text(s: "\"a\"=>\"1\", \"b\"=>NULL, \"q \\\"x\\\"\"=>\"back\\\\slash\"")
+param Text(s: "infinity")
+param Text(s: "2026-01-02")
+param Text(s: "-infinity")
 --- stderr

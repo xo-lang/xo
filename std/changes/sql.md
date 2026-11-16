@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-16: feature: infinite dates and timestamps, macaddr, hstore; xid, cid and xid8 as Integer (decision 0679)
+
+- Kind: feature and behavior
+- Commit: this push
+- Found by: task #113 (#110's backlog: infinite dates, macaddr, hstore, the Uint32 and Uint64 rows)
+- Go reference: pgx v5.11.0 pgtype (Date and Timestamptz InfinityModifier, MacaddrCodec into net.HardwareAddr, Hstore, Uint32Codec and Uint64Codec), Copyright (c) 2013-2021 Jack Christensen, MIT License
+- Test: golden sql_pg_types (go, arm64, LLVM); scripts/pg-diff.sh TYPED datebound, timebound, mac and hstore cases and the xid case, equal to pgx on postgres:17-alpine and postgres:14-alpine (78 statements)
+- Shipped in: not yet released
+
+`Row.date_bound` and `time_bound` read `infinity` and `-infinity` as `sql.Bound`; `Row.mac` reads macaddr and macaddr8 as their bytes; `Row.hstore` reads an hstore as `Map[Str, Str?]`. An `xid`, `cid` or `xid8` column is now `Integer` (pgx's Uint32 and Uint64), Text before; an `xid8` past Int's range stays Text.
+
 ## 2026-11-16: feature: typed readers for uuid, date, time, interval, inet and cidr (decision 0679)
 
 - Kind: feature

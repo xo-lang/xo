@@ -631,6 +631,11 @@ fn decode_text(oid: Int, s: Str) -> sql.SqlValue {
     21 => return int_or_text(s)
     23 => return int_or_text(s)
     26 => return int_or_text(s)
+    // xid, cid, xid8 (pgx's Uint32 and Uint64; an xid8 past Int's range
+    // stays Text)
+    28 => return int_or_text(s)
+    29 => return int_or_text(s)
+    5069 => return int_or_text(s)
     700 => return float_or_text(s)
     701 => return float_or_text(s)
     17 => {

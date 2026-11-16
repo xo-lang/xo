@@ -70,3 +70,9 @@ TYPED time SELECT '12:30:00'::time AS a, '00:00:00.000001'::time AS b, '23:59:59
 TYPED interval SELECT '1 year 2 mons 3 days 04:05:06.789'::interval AS a, '0'::interval AS b, '3 days'::interval AS c, '-1 years -2 mons +3 days -04:05:06'::interval AS d, '1 day -1 second'::interval AS e, '100 hours'::interval AS f, '-0.5 seconds'::interval AS g, '1 week'::interval AS h, '-178000000 years'::interval AS i, '1 microsecond'::interval AS j
 TYPED inet SELECT '192.168.0.1'::inet AS a, '10.1.2.3/8'::inet AS b, '10.0.0.0/8'::cidr AS c, '::1'::inet AS d, '2001:db8::/32'::cidr AS e, '::ffff:1.2.3.4'::inet AS f, NULL::inet AS n
 SELECT '14 mon -3 day 5000001 microsecond'::interval::text AS i, '0044-03-15 BC'::date::text AS d, '07:05:03.120000'::time::text AS t
+TYPED datebound SELECT '2026-10-20'::date AS a, 'infinity'::date AS b, '-infinity'::date AS c, NULL::date AS n
+TYPED timebound SELECT '2026-10-20 12:00:00+00'::timestamptz AS a, 'infinity'::timestamptz AS b, '-infinity'::timestamptz AS c, NULL::timestamptz AS n
+TYPED mac SELECT '08:00:2b:01:02:03'::macaddr AS a, '08-00-2B-01-02-03'::macaddr AS b, '08:00:2b:01:02:03:04:05'::macaddr8 AS c, NULL::macaddr AS n
+CREATE EXTENSION IF NOT EXISTS hstore
+TYPED hstore SELECT 'a=>1, b=>NULL'::hstore AS a, ''::hstore AS e, '"q \"x\""=>"back\\slash", "sp ace"=>" "'::hstore AS q, NULL::hstore AS n
+SELECT '42'::xid AS x, '7'::cid AS c, '18446744073709551615'::xid8 AS big, '5'::xid8 AS small, 4294967295::oid AS o

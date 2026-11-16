@@ -84,3 +84,7 @@ stdaudit rows for these types (sql 75 agent hours).
   Postgres 14 and 17. Still open in this group: the array OIDs (a typed
   list reader), timetz, the pgtype JSON methods of UUID and Date, and
   infinity (`Bound`).
+- 2026-11-16 (Xo Lang 3): `Bound[T]` with `date_bound` and
+  `time_bound`, `mac`, `hstore`, and xid, cid, xid8 decoded as Integer
+  (std/native/llrt/pg.xo); golden and pg-diff cases as above (78
+  statements equal to pgx).

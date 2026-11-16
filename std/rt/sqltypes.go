@@ -256,3 +256,209 @@ func (r Sql_Row) M_prefix(_ *Task, name string) Result[Netip_Prefix, Sql_SqlErr]
 func (r Sql_Row) M_prefix_opt(_ *Task, name string) Result[Option[Netip_Prefix], Sql_SqlErr] {
 	return sqlColOpt(r, name, "an inet", pgTyped(pgPrefix))
 }
+
+// Sql_mac is `sql.mac(b)`.
+func Sql_mac(tk *Task, b Bytes) Sql_SqlValue {
+	parts := make([]string, 0, len(b))
+	for i := 0; i < len(b); i++ {
+		parts = append(parts, fmt.Sprintf("%02x", b[i]))
+	}
+	return Sql_str(tk, strings.Join(parts, ":"))
+}
+
+func hsQuote(t string) string {
+	return `"` + strings.ReplaceAll(strings.ReplaceAll(t, `\`, `\\`), `"`, `\"`) + `"`
+}
+
+// Sql_hstore is `sql.hstore(m)`.
+func Sql_hstore(tk *Task, m Map[string, Option[string]]) Sql_SqlValue {
+	var parts []string
+	for k, v := range Map_All(m) {
+		val := "NULL"
+		if v.Some {
+			val = hsQuote(v.V)
+		}
+		parts = append(parts, hsQuote(k)+"=>"+val)
+	}
+	return Sql_str(tk, strings.Join(parts, ", "))
+}
+
+// Sql_date_bound is `sql.date_bound(b)`.
+func Sql_date_bound(tk *Task, b Sql_Bound[Time_Date]) Sql_SqlValue {
+	switch b.Tag {
+	case 2:
+		return Sql_str(tk, "infinity")
+	case 3:
+		return Sql_str(tk, "-infinity")
+	}
+	return Sql_date(tk, b.P.(Sql_Bound_Finite[Time_Date]).F_v)
+}
+
+// Sql_time_bound is `sql.time_bound(b)`.
+func Sql_time_bound(tk *Task, b Sql_Bound[Time]) Sql_SqlValue {
+	switch b.Tag {
+	case 2:
+		return Sql_str(tk, "infinity")
+	case 3:
+		return Sql_str(tk, "-infinity")
+	}
+	return Sql_time(tk, b.P.(Sql_Bound_Finite[Time]).F_v)
+}
+
+func boundFinite[T any](v T) Sql_Bound[T] {
+	return Sql_Bound[T]{Tag: 1, P: Sql_Bound_Finite[T]{F_v: v}}
+}
+
+func pgDateBound(s string) (Sql_Bound[Time_Date], bool) {
+	switch s {
+	case "infinity":
+		return Sql_Bound[Time_Date]{Tag: 2}, true
+	case "-infinity":
+		return Sql_Bound[Time_Date]{Tag: 3}, true
+	}
+	d, ok := pgDate(s)
+	return boundFinite(d), ok
+}
+
+func asTimeBound(v any) (Sql_Bound[Time], bool) {
+	switch x := v.(type) {
+	case Time:
+		return boundFinite(x), true
+	case string:
+		switch x {
+		case "infinity":
+			return Sql_Bound[Time]{Tag: 2}, true
+		case "-infinity":
+			return Sql_Bound[Time]{Tag: 3}, true
+		}
+	}
+	return Sql_Bound[Time]{}, false
+}
+
+func pgMac(s string) (Bytes, bool) {
+	ps := strings.Split(s, ":")
+	if len(ps) != 6 && len(ps) != 8 {
+		return "", false
+	}
+	b := make([]byte, 0, len(ps))
+	for _, p := range ps {
+		if len(p) != 2 {
+			return "", false
+		}
+		n, err := strconv.ParseUint(p, 16, 8)
+		if err != nil {
+			return "", false
+		}
+		b = append(b, byte(n))
+	}
+	return Bytes(b), true
+}
+
+// hsQuoted is a quoted hstore key or value at s[i:] and the index after
+// its closing quote.
+func hsQuoted(s string, i int) (string, int, bool) {
+	if i >= len(s) || s[i] != '"' {
+		return "", 0, false
+	}
+	var out strings.Builder
+	for j := i + 1; j < len(s); j++ {
+		switch s[j] {
+		case '\\':
+			if j+1 >= len(s) {
+				return "", 0, false
+			}
+			j++
+			out.WriteByte(s[j])
+		case '"':
+			return out.String(), j + 1, true
+		default:
+			out.WriteByte(s[j])
+		}
+	}
+	return "", 0, false
+}
+
+func hsSpace(s string, i int) int {
+	for i < len(s) && s[i] == ' ' {
+		i++
+	}
+	return i
+}
+
+func pgHstore(s string) (Map[string, Option[string]], bool) {
+	var m Map[string, Option[string]]
+	i := hsSpace(s, 0)
+	for i < len(s) {
+		k, j, ok := hsQuoted(s, i)
+		if !ok {
+			return m, false
+		}
+		i = hsSpace(s, j)
+		if i+1 >= len(s) || s[i] != '=' || s[i+1] != '>' {
+			return m, false
+		}
+		i = hsSpace(s, i+2)
+		if strings.HasPrefix(s[i:], "NULL") {
+			Map_put(nil, &m, k, None[string]())
+			i += 4
+		} else {
+			v, j2, ok := hsQuoted(s, i)
+			if !ok {
+				return m, false
+			}
+			Map_put(nil, &m, k, Some(v))
+			i = j2
+		}
+		i = hsSpace(s, i)
+		if i < len(s) {
+			if s[i] != ',' {
+				return m, false
+			}
+			i = hsSpace(s, i+1)
+			if i >= len(s) {
+				return m, false
+			}
+		}
+	}
+	return m, true
+}
+
+// M_date_bound is `row.date_bound(name)` (decision 0679).
+func (r Sql_Row) M_date_bound(_ *Task, name string) Result[Sql_Bound[Time_Date], Sql_SqlErr] {
+	return sqlCol(r, name, "a date", pgTyped(pgDateBound))
+}
+
+// M_date_bound_opt is `row.date_bound_opt(name)`.
+func (r Sql_Row) M_date_bound_opt(_ *Task, name string) Result[Option[Sql_Bound[Time_Date]], Sql_SqlErr] {
+	return sqlColOpt(r, name, "a date", pgTyped(pgDateBound))
+}
+
+// M_time_bound is `row.time_bound(name)`.
+func (r Sql_Row) M_time_bound(_ *Task, name string) Result[Sql_Bound[Time], Sql_SqlErr] {
+	return sqlCol(r, name, "a time", asTimeBound)
+}
+
+// M_time_bound_opt is `row.time_bound_opt(name)`.
+func (r Sql_Row) M_time_bound_opt(_ *Task, name string) Result[Option[Sql_Bound[Time]], Sql_SqlErr] {
+	return sqlColOpt(r, name, "a time", asTimeBound)
+}
+
+// M_mac is `row.mac(name)`.
+func (r Sql_Row) M_mac(_ *Task, name string) Result[Bytes, Sql_SqlErr] {
+	return sqlCol(r, name, "a macaddr", pgTyped(pgMac))
+}
+
+// M_mac_opt is `row.mac_opt(name)`.
+func (r Sql_Row) M_mac_opt(_ *Task, name string) Result[Option[Bytes], Sql_SqlErr] {
+	return sqlColOpt(r, name, "a macaddr", pgTyped(pgMac))
+}
+
+// M_hstore is `row.hstore(name)`.
+func (r Sql_Row) M_hstore(_ *Task, name string) Result[Map[string, Option[string]], Sql_SqlErr] {
+	return sqlCol(r, name, "an hstore", pgTyped(pgHstore))
+}
+
+// M_hstore_opt is `row.hstore_opt(name)`.
+func (r Sql_Row) M_hstore_opt(_ *Task, name string) Result[Option[Map[string, Option[string]]], Sql_SqlErr] {
+	return sqlColOpt(r, name, "an hstore", pgTyped(pgHstore))
+}
