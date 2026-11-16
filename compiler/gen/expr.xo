@@ -1197,8 +1197,17 @@ fn (var g: Gen) coalesce(e: Expr) -> Str {
   let lt = g.nat(x)
   let l = g.spill(g.val_as(x, lt))
   let rt = g.nat(e)
+  // a diverging block (`?? return x`, `?? { ...; break }`) lowers as a
+  // statement: an assignment after its terminator is code go vet reports
+  // as unreachable
+  let diverges = g.is_never(g.type_of(y)) && y is IfExpr(..) | MatchExpr(..) | Block(..) | ScopeExpr(..) | SelectExpr(..)
   let sv = g.cap_begin()
-  let r = g.val_as(y, rt)
+  var r = ""
+  if diverges {
+    g.into(y, Dest{kind: D_DISCARD})
+  } else {
+    r = g.val_as(y, rt)
+  }
   let stmts = g.cap_end(sv)
   let v = g.tmp("c")
   g.line("var ${v} ${g.go_type(rt)}")
@@ -1211,7 +1220,9 @@ fn (var g: Gen) coalesce(e: Expr) -> Str {
   g.line("} else {")
   g.f.ind += 1
   g.write(indent(stmts, 0))
-  g.line("${v} = ${r}")
+  if !diverges {
+    g.line("${v} = ${r}")
+  }
   g.f.ind -= 1
   g.line("}")
   v
