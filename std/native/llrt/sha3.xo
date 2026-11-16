@@ -1342,6 +1342,14 @@ pub fn sum(var s: Sponge) -> Bytes { read(s, (200 - s.rate) / 2) }
 /// The output is allocated before the state is written, so an
 /// allocation's system call cannot reach the scratch while it is in use.
 pub fn sum_once(rate: Int, dsbyte: Int, data: Bytes, n: Int) -> Bytes {
+  if target.arch == TargetArch.Wasm32 {
+    // wasm has no thread scratch (obj.scratch lowers to a C call there,
+    // which the wasm runtime does not have: TestSelfhostWasm's TLS
+    // goldens failed, 2026-11-16): a Sponge on the heap, as before
+    var s = sponge(rate, dsbyte)
+    write(s, data)
+    return read(s, n)
+  }
   var out = rt.rs_with_cap(n)
   let la = obj.scratch()
   for l in 0..25 {

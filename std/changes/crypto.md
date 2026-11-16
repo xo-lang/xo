@@ -1,5 +1,19 @@
 # std/crypto changes
 
+## 2026-11-16: fix: SHA-3 and Keccak digests on wasm again
+
+- Kind: fix
+- Commit: this push
+- Found by: TestSelfhostWasm on main (tls13_go, tls13_server, tls_quic: "the wasm backend does not support the call rt.call_c2"), bisected by Xo Lang 2 to 9c25aebf9
+- Go reference: none (a wasm lowering gap)
+- Test: internal/selfhost TestSelfhostWasm tls13_go, tls13_server and tls_quic (failed before, pass after)
+- Affected: wasm builds between 9c25aebf9 and this push (not released)
+- Shipped in: not yet released
+
+sha3.sum_once kept its state in the thread's scratch memory (obj.scratch),
+which wasm lowers to a C call it does not have; on wasm it hashes with a
+Sponge on the heap, as before 9c25aebf9.
+
 ## 2026-11-16: perf: HMAC-SHA384 and HMAC-SHA512 in two one shot hashes
 
 - Kind: perf
