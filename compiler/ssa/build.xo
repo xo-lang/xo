@@ -3725,7 +3725,16 @@ fn (var b: Builder) main_fo_of() -> Int {
 fn (var b: Builder) uses_os_tasks() -> Bool {
   var any = false
   for m in b.c.order {
-    if b.c.mods[m].is_std || b.c.mods[m].native {
+    if b.c.mods[m].native {
+      continue
+    }
+    if b.c.mods[m].is_std {
+      // a std module's own tests (`xo test --std-module`, whose root is
+      // the std module) spell os.tasks as a program's do: without the
+      // root scope its first os.tasks faulted (2026-11-16, std/ui)
+      if b.tests && b.c.root_mods.contains(m) {
+        any = any || b.mod_walk_tasks(m)
+      }
       continue
     }
     let r = match b.c.mod_cached_scan(m) {
@@ -3761,45 +3770,52 @@ pub fn module_scans(c: check.Checker) -> Map[Int, (Bool, Bool)] {
 
 /// uses_os_tasks of module m alone.
 fn (var b: Builder) mod_uses_tasks(m: Int) -> Bool {
-  if !b.c.mods[m].is_std && !b.c.mods[m].native {
-    // what the walk looks for spells its name in the file (a `.tasks`
-    // selector; a call of with_budget, which an import alias renames only
-    // the module of): a file that does not is not walked (2026-11-05: the
-    // two walks took 330 ms of xo's self build)
-    let word = if b.scan_budget { b"with_budget" } else { b"tasks" }
-    for f in b.c.mods[m].files {
-      let src = b.c.files[f].src
-      if !src.is_empty() && !src.contains(word) {
-        continue
+  if b.c.mods[m].is_std || b.c.mods[m].native {
+    return false
+  }
+  b.mod_walk_tasks(m)
+}
+
+/// Whether a file of module m spells os.tasks (or with_budget under
+/// scan_budget) in a declaration or test.
+fn (var b: Builder) mod_walk_tasks(m: Int) -> Bool {
+  // what the walk looks for spells its name in the file (a `.tasks`
+  // selector; a call of with_budget, which an import alias renames only
+  // the module of): a file that does not is not walked (2026-11-05: the
+  // two walks took 330 ms of xo's self build)
+  let word = if b.scan_budget { b"with_budget" } else { b"tasks" }
+  for f in b.c.mods[m].files {
+    let src = b.c.files[f].src
+    if !src.is_empty() && !src.contains(word) {
+      continue
+    }
+    for d in b.c.files[f].ast.decls {
+      let found = match d {
+        FnDecl(d: fd) => {
+          var r = false
+          for cl in fd.clauses {
+            match cl {
+              RequiresClause(cond: cond, els: els, ..) => r = r || b.tasks_expr(f, cond) || b.tasks_opt(f, els)
+              EnsuresClause(cond: cond, ..) => r = r || b.tasks_expr(f, cond)
+              _ => {}
+            }
+          }
+          if let Some(body) = fd.body {
+            r = r || b.tasks_block(f, body)
+          }
+          r
+        }
+        TestDecl(d: td) => {
+          match td.body {
+            Some(body) => b.tasks_block(f, body)
+            None => false
+          }
+        }
+        ConstDecl(d: cd) => b.tasks_expr(f, cd.value)
+        _ => false
       }
-      for d in b.c.files[f].ast.decls {
-        let found = match d {
-          FnDecl(d: fd) => {
-            var r = false
-            for cl in fd.clauses {
-              match cl {
-                RequiresClause(cond: cond, els: els, ..) => r = r || b.tasks_expr(f, cond) || b.tasks_opt(f, els)
-                EnsuresClause(cond: cond, ..) => r = r || b.tasks_expr(f, cond)
-                _ => {}
-              }
-            }
-            if let Some(body) = fd.body {
-              r = r || b.tasks_block(f, body)
-            }
-            r
-          }
-          TestDecl(d: td) => {
-            match td.body {
-              Some(body) => b.tasks_block(f, body)
-              None => false
-            }
-          }
-          ConstDecl(d: cd) => b.tasks_expr(f, cd.value)
-          _ => false
-        }
-        if found {
-          return true
-        }
+      if found {
+        return true
       }
     }
   }
