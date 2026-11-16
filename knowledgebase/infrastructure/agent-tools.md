@@ -1483,6 +1483,14 @@ Last verified: 2026-11-15
   - `xw queue NAME`: your ordered tasks, each with the goal it serves;
     OFF-CHARTER marks a task outside your charter the lead has not
     allowed: ask the lead before working it.
+  - `xw sessions [--transcripts|--json]`: each agent's current Claude
+    Code session (peer name, the SendMessage address; session id;
+    crosswalk id; busy, idle or gone), then live sessions no agent
+    claims yet. A new session is claimed by its first `XW_AS=NAME xw`
+    call (it sends CLAUDE_CODE_SESSION_ID). xw writes
+    `~/xo-lead/xw/agent-transcripts.txt` (idlewatch2.sh's format) from
+    it, so nobody keeps that file by hand (#79, workstream 75aaf53).
+    Last verified: 2026-11-15.
   - `xw task ack|start|gate|done ID`, `xw task push ID SHA`, `xw task
     block ID REASON`, `xw task drop ID [--dup OF] [REASON]` (closed
     without doing it: a duplicate or no longer wanted; 2026-11-15); `xw
