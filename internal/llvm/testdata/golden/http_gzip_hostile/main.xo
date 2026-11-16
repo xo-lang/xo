@@ -3,9 +3,14 @@
 // 1000 MB. The client hands the body to its Decompressor at most 4 KiB at
 // a time (http.xo GZ_SLICE), so one write's output stays near 4 MB however
 // much the client reads at once; before, the whole body went in one write
-// (heap peak 1409 MB, RSS 1064 MB; now 23 MB). The heap's high-water mark
-// must stay under 50 MB while the client reads all 1000 MB, twice (std/debug
-// mem_peak; 0 on the Go backend, whose client is Go's own).
+// (heap peak 1409 MB, RSS 1064 MB; now 24 MB on the Mac). The heap's
+// high-water mark must stay under 96 MB while the client reads all 1000
+// MB, twice (std/debug mem_peak; 0 on the Go backend, whose client is Go's
+// own). On linux/arm64 the peak depends on how many 4 MB output buffers are
+// live at once, which scheduling decides: host 2 measured 34 to 42 MB alone
+// and up to 47 MB with 8 copies running, the full tier 54 MB under suite
+// load (task #77, 2026-11-15; XO_HEAP_MID_MAX=65536 did not change it). 96
+// MB is 1.8 times the highest and 14 times under the bug it guards.
 use std/compress
 use std/debug
 use std/http
@@ -60,8 +65,8 @@ fn main(os: Os) {
     }
   }
   let peak = debug.mem_peak()
-  os.stdio.println("heap peak under 50 MB: ${peak < 52428800}")
-  if peak >= 52428800 {
+  os.stdio.println("heap peak under 96 MB: ${peak < 100663296}")
+  if peak >= 100663296 {
     os.stdio.eprintln("heap peak ${peak / 1048576} MB")
   }
 }
