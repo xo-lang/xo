@@ -1,11 +1,124 @@
 # 0672: std/ui per-viewer state (layer 3)
 
-Status: Proposed (owner session, 2026-11-15). Stub: the decision is being written.
+Status: Proposed (owner session, 2026-11-16). Draft: the design below is
+to be prototyped (examples/ui-shop) and measured before the owner
+decides.
 
 ## Context
 
-An App model (0659) is shared by every viewer; search, filters, drafts and carts belong to one viewer.
+std/ui has three layers (decision 0670's table): pages and navigation
+(0668, 0670), shared live data (the App model of 0659), and per-viewer
+state, which this decision adds.
 
-## Decision
+An App's model is shared by every viewer of its Host. State that belongs
+to one viewer has no place today:
 
-To be written.
+- tab state: a filter, a sort order, a selected row, a wizard step, an
+  open panel; it belongs in the URL so back, forward and a shared link
+  work, and the server must render it on a first load;
+- user state: a cart, a draft, saved preferences; it follows the user
+  across tabs and devices and survives going offline.
+
+Putting either in the shared model leaks it to every viewer, and putting
+it in the browser alone loses server rendering, other devices and the
+server's check of what it emits. Other frameworks:
+
+- LiveView keeps a server process per connection holding that
+  connection's state, with `handle_params` mapping the URL in. Every
+  event is a round trip; nothing works offline.
+- Elm's `Browser.application` keeps the URL in the one client model.
+  No server rendering, no state across devices.
+- Replicache, Zero and Convex scope data by user on the server and sync
+  each user's slice to their clients; local state stays in the client
+  framework.
+
+What works today, and the baseline the prototype is measured against:
+keep every user's state in the shared model (`carts: Map[Str, Cart]`),
+`redact` each viewer's copy down to their own entry, and `allow` a Msg
+only for the principal it names. It leaks nothing, but every user's
+changes go through one log, wake every live client, and hold every
+user's state in one model; tab state and URLs are not covered at all.
+
+## Decision (draft)
+
+An App gains two optional parts beside its shared model, each with its
+own model, Msg type, update and place in the view. Same rules as the
+shared update: pure (decision 0662), run in the wasm client to show at
+once and on the server, which decides.
+
+1. Tab state, `T` with Msgs `TA`:
+   - `tab_init(query: url.Values) -> T` builds it from the page URL: on
+     the server for a first load and a shared link, and in the runtime
+     on back and forward (no fetch: the client re-inits from the URL).
+   - `tab_update(m: M, t: T, a: TA) -> (T, List[E])` may read the
+     shared model and may emit shared Msgs (a filter does not; a
+     "reserve these seats" step does), which then go through `allow`
+     like any Msg.
+   - `tab_url(t: T) -> Str` is the query string T is kept in; the
+     runtime replaces the history entry when it changes, and pushes one
+     for an act `tab_push(a)` says is a step (like `confirm` for Msgs).
+   - The server stores nothing: a thin client sends its T with the act
+     and gets T and the page back; the wasm client computes T itself.
+     T from a client is input like any request body: decoded, never
+     trusted beyond that viewer's own page.
+2. User state, `U` with Msgs `UA`:
+   - one log per principal (the Server and Replica machinery of 0659,
+     keyed by principal), synced to every tab and device of that user,
+     with the same offline queue, acks and refusals;
+   - `user_update(m: M, u: U, a: UA) -> (U, List[E])`: a checkout
+     empties the cart and emits the shared `PlaceOrder`;
+   - `user_init: U` for a principal with no log yet; the Host's `keep`
+     bounds each log; a store hook (memory by default) persists it, and
+     the store is its own stage;
+   - without `auth` there is one principal (""), so user state would be
+     shared by every viewer: the Host refuses an App with user state and
+     no `auth`.
+3. The view takes all three: `view(m: M, u: U, t: T) -> Html`, with `m`
+   redacted for the viewer first (0664). Events name their target:
+   `ui.on(ev, msg)` a shared Msg as today, `ui.on_user(ev, ua)`,
+   `ui.on_tab(ev, ta)`.
+4. Sync carries up to three streams (shared, user, tab) in one request;
+   an App without the new parts sends what it sends today.
+5. Data loaded per viewer from a database (search over an index, a page
+   of rows) is not state: it stays a server page (0670) or becomes a
+   query subscription (0659 stage 4), its own decision.
+
+## Open questions for the prototype
+
+- Are two parts (tab and user) worth the type parameters, or is one
+  viewer part with a scope enough for real apps? The shop example needs
+  both (filters in the URL, a cart across devices).
+- A user act that emits a shared Msg while offline: the server applies
+  the act and its Msgs at sync time against the model it has then; the
+  client's prediction may be overturned, as for Msgs.
+- How the runtime keeps tab state per tab (sessionStorage beside the
+  queue), and how 0670's navigation treats a same-path query change on
+  an App with tab state (re-init locally instead of fetching).
+- Wasm size: the client carries three updates and the view.
+
+## Plan
+
+1. Prototype `examples/ui-shop`: a shared catalog with stock (shared
+   Msgs, a confirmed checkout), filters and sort in the URL (tab
+   state), a cart per user across two browsers (user state).
+2. Measure against the baseline above (state in the shared model with
+   redact and allow): live notices and bytes per sync with 2, 20 and 200
+   users, server memory, wasm size, time for a filter to show.
+3. Property test: two devices of one user and one of another, random
+   acts with drops and reorders, converge; no user's state reaches
+   another's view.
+4. Chrome checks: filters survive reload, back and a shared link; a cart
+   added offline on one device shows on the other after reconnect; a
+   second user never sees it.
+
+## Alternatives
+
+- State in the shared model with redact and allow (the baseline): works
+  today, no API change; costs grow with users and tab state is not
+  covered.
+- A server process per connection (LiveView): no offline, a round trip
+  per event, state lost when the connection drops.
+- Client-only local state (Elm): no server rendering from the URL, no
+  state across devices, no server check of what it emits.
+- One Host per user: per-user logs come free, but shared data and the
+  user's state cannot meet in one view or one update.
