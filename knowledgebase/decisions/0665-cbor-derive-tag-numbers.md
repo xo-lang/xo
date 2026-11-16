@@ -1,6 +1,6 @@
 # 0665: derive Cbor(tag: N), a CBOR tag number for a derived type (fxamacker's TagSet)
 
-Status: Proposed (xo-lang-3, 2026-11-15)
+Status: Accepted (owner, 2026-11-15, on the lead's recommendation; proposed by xo-lang-3)
 
 ## Context
 

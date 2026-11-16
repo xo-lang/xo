@@ -1,6 +1,6 @@
 # 0666: std/brotli, RFC 7932 Brotli encode and decode (a port of andybalholm/brotli)
 
-Status: Proposed (xo-lang-3, 2026-11-15)
+Status: Accepted (owner, 2026-11-15, on the lead's recommendation; proposed by xo-lang-3)
 
 ## Context
 
