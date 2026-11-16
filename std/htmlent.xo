@@ -27,15 +27,22 @@ pub fn entity_of(name: Str) -> Str {
     }
     return search(LEGACY, name)
   }
-  search(ENTITY, name)
+  let c = Int(name.bytes()[0])
+  if c < 65 || c > 122 {
+    return ""
+  }
+  search_in(ENTITY, ENTITY_AT[c - 65], ENTITY_AT[c - 64], name)
 }
 
 /// A binary search of a table sorted by name.
-fn search(t: List[(Str, Str)], name: Str) -> Str {
+fn search(t: List[(Str, Str)], name: Str) -> Str { search_in(t, 0, t.len(), name) }
+
+/// A binary search of t[lo0..hi0], sorted by name.
+fn search_in(t: List[(Str, Str)], lo0: Int, hi0: Int, name: Str) -> Str {
   // the first name not below name, one compare a step, then one test for
   // equality; t[mid].0 alone, as binding the pair copies and drops both
-  var lo = 0
-  var hi = t.len()
+  var lo = lo0
+  var hi = hi0
   while lo < hi {
     let mid = (lo + hi) / 2
     if t[mid].0 < name {
@@ -44,7 +51,7 @@ fn search(t: List[(Str, Str)], name: Str) -> Str {
       hi = mid
     }
   }
-  if lo < t.len() && t[lo].0 == name { t[lo].1 } else { "" }
+  if lo < hi0 && t[lo].0 == name { t[lo].1 } else { "" }
 }
 
 /// The two character expansion of an entity name, "" for none.
@@ -60,6 +67,11 @@ pub fn entity2_of(name: Str) -> Str {
 /// 0x80 to 0x9F in a numeric reference, as Go's replacementTable
 /// (what browsers substitute for the C1 controls).
 pub const REPLACEMENT: List[Str] = ["\u{20AC}", "\u{0081}", "\u{201A}", "\u{0192}", "\u{201E}", "\u{2026}", "\u{2020}", "\u{2021}", "\u{02C6}", "\u{2030}", "\u{0160}", "\u{2039}", "\u{0152}", "\u{008D}", "\u{017D}", "\u{008F}", "\u{0090}", "\u{2018}", "\u{2019}", "\u{201C}", "\u{201D}", "\u{2022}", "\u{2013}", "\u{2014}", "\u{02DC}", "\u{2122}", "\u{0161}", "\u{203A}", "\u{0153}", "\u{009D}", "\u{017E}", "\u{0178}"]
+
+/// ENTITY_AT[b - 65] is the index in ENTITY of the first name whose first byte is at least b
+/// (`A` 65 to `{` 123, one past `z`), so a search looks only among the names that start like its
+/// own: about 6 compares, not 11 (task #87, 2026-11-16; std/htmlent_test.xo checks it against ENTITY).
+const ENTITY_AT: List[Int] = [0, 27, 39, 75, 129, 159, 167, 189, 201, 230, 237, 245, 305, 314, 367, 396, 415, 420, 465, 505, 527, 567, 584, 589, 593, 604, 614, 614, 614, 614, 614, 614, 614, 682, 796, 893, 959, 1026, 1064, 1121, 1149, 1205, 1213, 1223, 1373, 1413, 1535, 1596, 1665, 1676, 1779, 1934, 1992, 2044, 2076, 2087, 2111, 2125, 2138]
 
 // ---------------------------------------------------------------------------
 // The entity table: generated from Go's html/entity.go (go1.26.1) by the

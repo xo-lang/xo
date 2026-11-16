@@ -1160,6 +1160,10 @@ fn convert_newlines(b: Bytes) -> Bytes {
 
 /// Go's unescapeEntity at s[at] (a `&`): the replacement text and the length
 /// of the reference; ("", 1) when it is not one.
+/// The ASCII characters, each at its own code: a numeric reference below
+/// 128 is a one byte view of it (task #87, 2026-11-16).
+const ASCII: Str = "\u{0}\u{1}\u{2}\u{3}\u{4}\u{5}\u{6}\u{7}\u{8}\u{9}\u{A}\u{B}\u{C}\u{D}\u{E}\u{F}\u{10}\u{11}\u{12}\u{13}\u{14}\u{15}\u{16}\u{17}\u{18}\u{19}\u{1A}\u{1B}\u{1C}\u{1D}\u{1E}\u{1F} !\u{22}#\u{24}%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\u{5C}]^_`abcdefghijklmnopqrstuvwxyz{|}~\u{7F}"
+
 fn unescape_entity(s: Bytes, at: Int, attribute: Bool) -> (Str, Int) {
   let n = s.len() - at
   if n <= 1 {
@@ -1211,6 +1215,10 @@ fn unescape_entity(s: Bytes, at: Int, attribute: Bool) -> (Str, Int) {
     }
     if x >= 0x80 && x <= 0x9F {
       return (nhtml.REPLACEMENT[x - 0x80], i)
+    }
+    if x > 0 && x < 128 {
+      // a view of ASCII: no builder, no copy, no UTF-8 check
+      return (ASCII[x..x + 1], i)
     }
     if x == 0 || (x >= 0xD800 && x <= 0xDFFF) || x > 0x10FFFF {
       x = 0xFFFD

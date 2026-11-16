@@ -35,3 +35,34 @@ test "LEGACY is exactly ENTITY's names without ;, sorted" {
   expect(entity_of("amp")) == "&"
   expect(entity_of("notin")) == ""
 }
+
+test "ENTITY_AT starts each first byte's names" {
+  for b in 65..124 {
+    var want = 0
+    while want < ENTITY.len() && Int(ENTITY[want].0.bytes()[0]) < b {
+      want += 1
+    }
+    expect(ENTITY_AT[b - 65]) == want
+  }
+  expect(ENTITY_AT.len()) == 59
+}
+
+test "every entity name is found" {
+  for (name, value) in ENTITY {
+    if name.ends_with(";") {
+      expect(entity_of(name)) == value
+    }
+  }
+  for (name, value) in LEGACY {
+    expect(entity_of(name)) == value
+  }
+}
+
+test "names outside the table" {
+  expect(entity_of("zzz;")) == ""
+  expect(entity_of("0;")) == ""
+  expect(entity_of("~x;")) == ""
+  expect(entity_of(";")) == ""
+  expect(entity_of("Aacutex;")) == ""
+  expect(entity_of("amp;")) == "&"
+}

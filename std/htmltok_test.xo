@@ -73,3 +73,9 @@ test "fragment contexts" {
   expect(p.next() == TokenType.Text) == true
   expect(p.token().data) == "<b>x"
 }
+
+test "numeric references below 128 are their ASCII character" {
+  var z = tokenizer("&#65;&#x7a;&#1;&#127;&#0;&#9;b&#128;")
+  expect(z.next()) == TokenType.Text
+  expect(z.token().data) == "Az\u{1}\u{7F}\u{FFFD}\u{9}b\u{20AC}"
+}

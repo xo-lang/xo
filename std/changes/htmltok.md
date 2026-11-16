@@ -1,5 +1,16 @@
 # std/htmltok changes
 
+## 2026-11-16: perf: character references resolved with fewer compares and no allocation for ASCII
+
+- Kind: perf
+- Commit: this push
+- Found by: task #87 (std/evidence/htmlparse/perf.md, ent 1.136 of Go on host 1), XO_PROF=cpu on bench/perf/htmlparse ent: htmlent.search 33%, the numeric reference's builder and UTF-8 check
+- Go reference: golang.org/x/net/html token.go and escape.go (unescapeEntity; Go's entity map is a hash)
+- Test: std/htmlent_test.xo (ENTITY_AT against ENTITY, every name found, names outside the table), std/htmltok_test.xo (numeric references below 128 and around it); bench/perf/htmlparse ent on the Mac: instructions 7.50G to 6.24G (0.832), parse and tok unchanged
+- Shipped in: not yet released
+
+A character reference is resolved faster: a numeric reference below 128 is a one byte view of an ASCII constant (no builder, copy or UTF-8 check), and a named reference searches only the entity names that share its first letter (std/htmlent's ENTITY_AT, about 6 compares where the whole table took 11). Output unchanged.
+
 ## 2026-11-10: internal: merged into std/htmltok.xo
 
 - Kind: internal
