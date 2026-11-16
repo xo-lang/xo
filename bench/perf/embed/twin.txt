@@ -1,0 +1,5 @@
+# twincheck: embed: three workloads (none is the setup alone); Go is embed.FS through io/fs (fs.Sub, fs.ReadFile).
+- - none
+- - read
+- - text
+- - sub

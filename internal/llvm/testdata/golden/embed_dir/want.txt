@@ -7,4 +7,8 @@ txt: notes/a.txt
 logo: ff00, as text: not UTF-8
 css: main.css contains main.css: true
 none: true
+root: 3 files: css/main.css, index.html, logo.bin index: 14 bytes
+css2: 1 main.css body {} false
+css fs: body {}
+empty: 0 0
 --- stderr

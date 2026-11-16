@@ -666,12 +666,8 @@ fn rest_text(b: Bytes, p: Int) -> Bytes { b[p..] }
 fn parse_ipv6(input: Str) -> Addr ! ParseErr {
   var s = input
   var zone = ""
-  let ib = input.bytes()
-  var pz = 0
-  while pz < ib.len() && ib[pz] != 37 {
-    pz += 1
-  }
-  if pz < ib.len() {
+  // the zone: Str.find's one-byte search (memchr), as Go's IndexByteString
+  if let Some(pz) = input.find("%") {
     s = input[0..pz]
     zone = input[pz + 1..]
     if zone.is_empty() {

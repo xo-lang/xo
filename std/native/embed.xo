@@ -4,37 +4,55 @@
 use std/embed
 use native/llrt/glob
 
-fn dir_read(d: embed.Dir, path: Str) -> Bytes? { d.files.get(path) }
+/// path's key in d.files: under d's prefix when sub made d.
+fn dir_key(d: embed.Dir, path: Str) -> Str { if d.prefix.is_empty() { path } else { d.prefix + path } }
+
+fn dir_read(d: embed.Dir, path: Str) -> Bytes? { d.files.get(dir_key(d, path)) }
 
 fn dir_read_text(d: embed.Dir, path: Str) -> Str? {
-  match d.files.get(path) {
+  match d.files.get(dir_key(d, path)) {
     Some(b) => b.to_str()
     None => None
   }
 }
 
-fn dir_contains(d: embed.Dir, path: Str) -> Bool { d.files.contains(path) }
+fn dir_contains(d: embed.Dir, path: Str) -> Bool { d.files.contains(dir_key(d, path)) }
 
-fn dir_paths(d: embed.Dir) -> List[Str] { d.files.keys().sort() }
-
-fn dir_sub(d: embed.Dir, dir: Str) -> embed.Dir {
-  let prefix = "${dir.trim_suffix("/")}/"
-  var files: Map[Str, Bytes] = {}
-  for (p, b) in d.files.entries() {
-    if p.starts_with(prefix) {
-      files[p.trim_prefix(prefix)] = b
+fn dir_paths(d: embed.Dir) -> List[Str] {
+  if d.prefix.is_empty() {
+    return d.files.keys().sort()
+  }
+  var out: List[Str] = []
+  for p in d.files.keys() {
+    if p.starts_with(d.prefix) {
+      out.push(p[d.prefix.len()..])
     }
   }
-  embed.Dir{files: files}
+  out.sort()
 }
 
-fn dir_len(d: embed.Dir) -> Int { d.files.len() }
+/// The files under dir, sharing d's map with a longer prefix (no copy,
+/// as Go's fs.Sub).
+fn dir_sub(d: embed.Dir, dir: Str) -> embed.Dir { embed.Dir{files: d.files, prefix: d.prefix + dir.trim_suffix("/") + "/"} }
+
+fn dir_len(d: embed.Dir) -> Int {
+  if d.prefix.is_empty() {
+    return d.files.len()
+  }
+  var n = 0
+  for p in d.files.keys() {
+    if p.starts_with(d.prefix) {
+      n += 1
+    }
+  }
+  n
+}
 
 // ---------------------------------------------------------------------------
 // Dir.fs (decision 0304): a read-only Fs over the files, a struct of this
 // module converted to Fs (decision 0307).
 
-fn dir_fs(d: embed.Dir) -> Fs { DirFs{files: d.files} }
+fn dir_fs(d: embed.Dir) -> Fs { DirFs{files: d.files, prefix: d.prefix} }
 
 struct DirFs {
   files: Map[Str, Bytes]

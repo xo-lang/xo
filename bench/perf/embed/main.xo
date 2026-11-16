@@ -1,0 +1,39 @@
+// embed: std/embed's Dir against Go's embed.FS (go/main.go), the same 32
+// files (static/, copied to go/static/ since go:embed reads only below its
+// package). read looks each file up 100,000 times (ReadFile), text reads
+// it as text 100,000 times, sub takes the css directory and reads one
+// file 300,000 times; `none` is the setup alone.
+// Usage: `<program> none|read|text|sub`. Prints `<workload> <checksum>`.
+use std/embed
+
+const SITE: embed.Dir = embed("static")
+
+const NAMES = ["css/f00.txt", "js/f01.txt", "img/icons/f02.txt", "f03.txt", "css/f04.txt", "js/f05.txt", "img/icons/f06.txt", "f07.txt", "css/f28.txt", "js/f29.txt", "img/icons/f30.txt", "f31.txt", "missing.txt", "css/nope.txt", "js/f13.txt", "f15.txt"]
+
+fn main(os: Os) uses (stdio, env) {
+  let w = os.env.args().get(0) ?? "none"
+  // keys are relative to this file's directory; the root as Go's fs.Sub
+  let root = SITE.sub("static")
+  var sum = 0
+  if w == "read" {
+    for _ in 0..100000 {
+      for n in NAMES {
+        sum += (root.read(n) ?? b"").len()
+      }
+    }
+  } else if w == "text" {
+    for _ in 0..100000 {
+      for n in NAMES {
+        sum += (root.read_text(n) ?? "").len()
+      }
+    }
+  } else if w == "sub" {
+    for i in 0..300000 {
+      let d = root.sub("css")
+      sum += (d.read(if i % 2 == 0 { "f00.txt" } else { "f08.txt" }) ?? b"").len()
+    }
+  } else {
+    sum = root.paths().len()
+  }
+  os.stdio.println("${w} ${sum}")
+}

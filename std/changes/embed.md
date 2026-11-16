@@ -1,5 +1,17 @@
 # std/embed changes
 
+## 2026-11-16: perf: Dir.sub shares its files instead of copying them
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88 (performance Early to Proven), the module's first Go twin (bench/perf/embed: sub 2.085 of Go's fs.Sub on the Mac)
+- Go reference: io/fs Sub (a wrapper that joins its directory to each name)
+- Test: the embed_dir golden (a sub's len, paths, read, read_text, contains, a sub of a sub, its fs(), an empty sub); bench/perf/embed twincheck output matches Go
+- Timing: bench/perf/embed on the Mac, Xo over Go: sub 2.085 to 0.268 (twincheck -time 3)
+- Shipped in: not yet released
+
+Dir.sub built a new map of every file under the directory. A Dir now keeps the prefix sub took off and shares its parent's map, as Go's fs.Sub wraps its FS: sub is constant time, and a read joins the prefix to the name. The Go backend (std/rt/embed.go) does the same. Two Dirs compare equal when they share the same files and prefix, so subs of different constants holding equal files no longer compare equal.
+
 ## 2026-10-21: feature: embed.Dir.fs, a read-only Fs over the files
 
 - Kind: feature

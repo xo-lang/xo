@@ -1,5 +1,19 @@
 # std/netip changes
 
+## 2026-11-16: perf: parse_ipv6 finds the zone with Str.find
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88 (performance Early to Proven), std/evidence/netip/perf.md parse6 at 1.407 of Go
+- Go reference: net/netip parseIPv6 (bytealg.IndexByteString for the zone)
+- Test: netip corpus (parse cases with and without zones), unchanged
+- Shipped in: not yet released
+
+The zone's `%` was found with a byte loop over the whole input before
+parsing; Str.find's one-byte search does it as Go's IndexByteString.
+About 6% of parse6 on the Mac (20M parses 0.73 s to 0.68 s; Go 0.47 s):
+the rest of the gap is spread over the parser, not this change's.
+
 ## 2026-11-11: feature: split_host_port and join_host_port (Go's net.SplitHostPort and JoinHostPort)
 
 - Kind: feature

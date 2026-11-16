@@ -16,4 +16,15 @@ fn main(os: Os) {
   let css = SITE.sub("site/css")
   os.stdio.println("css: ${css.paths().join(", ")} contains main.css: ${css.contains("main.css")}")
   os.stdio.println("none: ${SITE.read("site/nope.html") == None}")
+  // a sub shares its parent's files under a prefix (no copy, as fs.Sub)
+  let root = SITE.sub("site/")
+  os.stdio.println("root: ${root.len()} files: ${root.paths().join(", ")} index: ${(root.read("index.html") ?? b"").len()} bytes")
+  let css2 = root.sub("css")
+  os.stdio.println("css2: ${css2.len()} ${css2.paths().join(", ")} ${(css2.read_text("main.css") ?? "missing").trim_end()} ${css2.contains("index.html")}")
+  let via_fs = match css2.fs().read_text("main.css") {
+    Ok(t) => t.trim_end()
+    Err(e) => "error ${e}"
+  }
+  os.stdio.println("css fs: ${via_fs}")
+  os.stdio.println("empty: ${SITE.sub("nope").len()} ${SITE.sub("nope").paths().len()}")
 }

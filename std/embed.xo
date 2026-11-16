@@ -8,6 +8,9 @@
 /// the directory of the file that declares the constant.
 struct Dir {
   files: Map[Str, Bytes]
+  /// What sub has taken off ("" or a slash-ended directory): a Dir shares
+  /// its files with the Dir it came from, as Go's fs.Sub wraps its FS.
+  prefix: Str = ""
 }
 
 /// The bytes of the file at path, or None.

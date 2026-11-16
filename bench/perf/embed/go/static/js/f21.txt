@@ -1,0 +1,3 @@
+line 0 of file 21: the quick brown fox
+line 1 of file 21: the quick brown fox
+line 2 of file 21: the quick brown fox

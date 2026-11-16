@@ -10,12 +10,15 @@ import (
 // embeds at build time, a Map of slash paths to bytes; its methods are
 // lookups, as std/native/embed.xo's.
 
+// key is path's key in the files: under the prefix sub took off.
+func (d *Embed_Dir) key(path string) string { return d.F_prefix + path }
+
 func (d *Embed_Dir) M_read(tk *Task, path string) Option[Bytes] {
-	return Map_get(tk, d.F_files, path)
+	return Map_get(tk, d.F_files, d.key(path))
 }
 
 func (d *Embed_Dir) M_read_text(tk *Task, path string) Option[string] {
-	b := Map_get(tk, d.F_files, path)
+	b := Map_get(tk, d.F_files, d.key(path))
 	if !b.Some || !utf8.ValidString(string(b.V)) {
 		return None[string]()
 	}
@@ -23,32 +26,46 @@ func (d *Embed_Dir) M_read_text(tk *Task, path string) Option[string] {
 }
 
 func (d *Embed_Dir) M_contains(tk *Task, path string) bool {
-	return Map_contains(tk, d.F_files, path)
+	return Map_contains(tk, d.F_files, d.key(path))
 }
 
 func (d *Embed_Dir) M_paths(tk *Task) List[string] {
-	return List_sort(tk, Map_keys(tk, d.F_files))
-}
-
-func (d *Embed_Dir) M_sub(tk *Task, dir string) Embed_Dir {
-	prefix := strings.TrimSuffix(dir, "/") + "/"
-	var files Map[string, Bytes]
-	for p, b := range Map_All(d.F_files) {
-		if strings.HasPrefix(p, prefix) {
-			Map_put(tk, &files, strings.TrimPrefix(p, prefix), b)
+	if d.F_prefix == "" {
+		return List_sort(tk, Map_keys(tk, d.F_files))
+	}
+	var out []string
+	for p := range Map_All(d.F_files) {
+		if strings.HasPrefix(p, d.F_prefix) {
+			out = append(out, p[len(d.F_prefix):])
 		}
 	}
-	return Embed_Dir{F_files: files}
+	sort.Strings(out)
+	return ListOf(out...)
+}
+
+// M_sub shares d's files under a longer prefix (no copy, as Go's fs.Sub
+// and std/native/embed.xo's dir_sub).
+func (d *Embed_Dir) M_sub(tk *Task, dir string) Embed_Dir {
+	return Embed_Dir{F_files: d.F_files, F_prefix: d.F_prefix + strings.TrimSuffix(dir, "/") + "/"}
 }
 
 func (d *Embed_Dir) M_len(tk *Task) int64 {
-	return Map_len(tk, d.F_files)
+	if d.F_prefix == "" {
+		return Map_len(tk, d.F_files)
+	}
+	var n int64
+	for p := range Map_All(d.F_files) {
+		if strings.HasPrefix(p, d.F_prefix) {
+			n++
+		}
+	}
+	return n
 }
 
 // M_fs is Dir.fs (decision 0304): a read-only Fs over the files, as
 // std/native/embed.xo's DirFs.
 func (d *Embed_Dir) M_fs(tk *Task) Fs {
-	return embedDirFs{files: d.F_files}
+	return embedDirFs{files: d.F_files, prefix: d.F_prefix}
 }
 
 type embedDirFs struct {

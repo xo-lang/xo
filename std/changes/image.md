@@ -1,5 +1,17 @@
 # std/image changes
 
+## 2026-11-16: perf: drawing a Gray image into an RGBA one replicates each sample
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88 (performance Early to Proven), a 200-pass run of bench/perf/image gray (the 5-pass bench is mostly setup)
+- Go reference: image/draw drawGray
+- Test: TestStdCorpora image ("Image.draw is Go's draw.Draw", Gray sources among them); bench/perf/image twincheck output matches Go
+- Timing: 200 passes of a 1024 by 768 Gray draw on the Mac: 0.25 s to 0.11 s (Go 0.10 s)
+- Shipped in: not yet released
+
+Image.draw from a Gray source into an RGBA destination wrote each pixel through the general per-pixel path (three multiplies, shifts and the source-model branch). A gray sample y is the pixel y, y, y, 255, so pairs of pixels are now built with one multiply each.
+
 ## 2026-11-11: refactor: std/image is one file (decisions 0588, 0597)
 
 - Kind: refactor

@@ -1229,6 +1229,15 @@ fn draw_rgba_rows(dst: Image, src: Image, x0: Int, y0: Int, x1: Int, y1: Int, sp
       continue
     }
     var x = 0
+    if mk == 2 {
+      // Go's drawGray: an opaque gray sample y is the pixel y, y, y, 255
+      while x + 1 < w {
+        b.write_be((Int(spx[si]) * 0x01010100 | 255).wrapping_shl(32) | (Int(spx[si + 1]) * 0x01010100 | 255), 8)
+        si += 2
+        di += 8
+        x += 2
+      }
+    }
     while x + 1 < w {
       let p0 = draw_px(dp, di, spx, si, mk, over)
       let p1 = draw_px(dp, di + 4, spx, si + sbpp, mk, over)

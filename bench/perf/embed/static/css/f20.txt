@@ -1,0 +1,9 @@
+line 0 of file 20: the quick brown fox
+line 1 of file 20: the quick brown fox
+line 2 of file 20: the quick brown fox
+line 3 of file 20: the quick brown fox
+line 4 of file 20: the quick brown fox
+line 5 of file 20: the quick brown fox
+line 6 of file 20: the quick brown fox
+line 7 of file 20: the quick brown fox
+line 8 of file 20: the quick brown fox
