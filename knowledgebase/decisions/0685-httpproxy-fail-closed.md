@@ -1,6 +1,6 @@
 # 0685: std/httpproxy fails the request on a proxy setting it cannot use (amends 0617 B)
 
-Status: Proposed (azure-1, 2026-11-16; the lead asked for it before the
+Status: Accepted (owner, 2026-11-16; proposed by azure-1, 2026-11-16; the lead asked for it before the
 code, after TestHttpproxyFuzz, task #115).
 
 ## Context
