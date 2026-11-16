@@ -1499,7 +1499,15 @@ Last verified: 2026-11-15
     next prompt or Stop, once per session (owner, 2026-11-15: decision
     #28 went unacked by every agent for 18 minutes); act on those lines.
     `xw search WORDS` finds tasks, decisions, alerts, failed gate tests,
-    holds and main's commits. Last verified: 2026-11-15.
+    holds and main's commits, and (#78) the knowledgebase decision and
+    gotcha files on origin/main and ~/xo-lead/notes *.md files (3
+    levels) holding every word, as FILE:LINE (the line with the most
+    words); the files come from an index xw refreshes every 2 minutes,
+    about 0.1 s a search. On http://127.0.0.1:7480/search each file
+    hit links to `/file?p=...#LN`. `xw check` also raises
+    `unacked-idle` (5 min, an idle session's unacked items: wake it
+    with a message) and `no-token` (an agent that cannot ack: `xw
+    token set NAME`). Last verified: 2026-11-15.
   - `xw priority` (the owner's ranked goals), `xw charter NAME`, `xw
     status [NAME]`, `xw jobs --since 2h` (wait vs run per job), `xw
     gates [NAME] --since 24h` (ended offload gates: by rc, step time
