@@ -1,5 +1,19 @@
 # std/amqptest changes
 
+## 2026-11-16: perf: queue operations update the message list in place
+
+- Kind: perf
+- Commit: this push
+- Found by: the std/amqptest Go twin (bench/perf/amqptest, ADR 0655 rule 7)
+- Go reference: none (the twin is a Go port of this broker on go-amqp v1.7.0's codec, bench/perf/amqptest/go/goamqp/twinbroker)
+- Test: std/amqptest_test.xo (`xo test --real --std-module=amqptest`: 30 passed); bench/perf/amqptest twincheck (none, pipe, pubsub agree)
+- Timing: Mac, 2,000 messages, Xo over the Go twin: pubsub 2.80 to 0.91, pipe 0.80 to 0.83, none 0.76 to 0.71 (host 1 row to follow in bench/results)
+
+enqueue, take, the lock expiry and complete copied the queue out of the broker's state and back, so each
+update of one message copied the whole message list it shared, and complete rebuilt the list with a filter.
+They now update the queue through its place and remove a completed message with remove_at. A broker holding
+N messages sent N before any receive went from quadratic copying to the scan alone.
+
 ## 2026-11-15: feature: subscription rules (SQL and correlation filters, SQL actions, the rule management operations)
 
 - Kind: feature

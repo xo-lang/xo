@@ -1,0 +1,4 @@
+# twincheck: amqptest: std/amqptest broker + std/amqp client against a Go port of the broker (go/goamqp/twinbroker) + go-amqp v1.7.0, over loopback.
+- - none
+- - pipe
+- - pubsub

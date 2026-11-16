@@ -600,9 +600,10 @@ fn enqueue(var s: BrokerState, qi: Int, m0: amqp.Message, now: Int) -> Int {
     }
     return last
   }
-  var q = s.queues[qi]
-  let seq = q.next_seq
-  q.next_seq += 1
+  // through the place, not a copy of the queue: a copy shares the message list, and the push
+  // then copied all of it (std/amqptest twin, 2026-11-16)
+  let seq = s.queues[qi].next_seq
+  s.queues[qi].next_seq += 1
   var m = ann_set(m0, "x-opt-sequence-number", amqp.Value.Long(v: Int64(seq)))
   m = ann_set(m, "x-opt-enqueued-time", amqp.Value.Timestamp(ms: now))
   var sched = 0
@@ -610,28 +611,22 @@ fn enqueue(var s: BrokerState, qi: Int, m0: amqp.Message, now: Int) -> Int {
     Some(Timestamp(t)) => { sched = t }
     _ => {}
   }
-  q.msgs.push(FakeMsg{seq: seq, m: m, scheduled_ms: sched, enqueued_ms: now, session: group_of(m0)})
-  put_queue(s, qi, q)
+  s.queues[qi].msgs.push(FakeMsg{seq: seq, m: m, scheduled_ms: sched, enqueued_ms: now, session: group_of(m0)})
   notify_all(s)
   seq
 }
 
 /// Clears locks that ran out.
 fn expire_locks(var s: BrokerState, qi: Int, now: Int) {
-  var q = s.queues[qi]
   var i = 0
-  var changed = false
-  while i < q.msgs.len() {
-    var m = q.msgs[i]
-    if m.locked_until > 0 && m.locked_until <= now {
-      m.locked_until = 0
-      m.lock_token = b""
-      put_msg(q, i, m)
-      changed = true
+  while i < s.queues[qi].msgs.len() {
+    let lu = s.queues[qi].msgs[i].locked_until
+    if lu > 0 && lu <= now {
+      s.queues[qi].msgs[i].locked_until = 0
+      s.queues[qi].msgs[i].lock_token = b""
     }
     i += 1
   }
-  if changed { put_queue(s, qi, q) }
 }
 
 fn session_idx(q: FakeQueue, id: Str) -> Int {
@@ -645,11 +640,11 @@ fn session_idx(q: FakeQueue, id: Str) -> Int {
 
 /// Whether message `m` can be handed to a receiver with session `sess` (any message for a queue
 /// without sessions) now.
-fn available(q: FakeQueue, m: FakeMsg, now: Int, sess: Str) -> Bool {
+fn available_in(sessions: Bool, m: FakeMsg, now: Int, sess: Str) -> Bool {
   if m.locked_until > 0 && m.locked_until > now { return false }
   if m.deferred { return false }
   if m.scheduled_ms > now { return false }
-  if q.opts.sessions && m.session != sess { return false }
+  if sessions && m.session != sess { return false }
   true
 }
 
@@ -657,26 +652,24 @@ fn available(q: FakeQueue, m: FakeMsg, now: Int, sess: Str) -> Bool {
 /// `settle` is true (receive and delete).
 fn take(var s: BrokerState, qi: Int, conn: Int, now: Int, sess: Str, settle: Bool) -> FakeMsg? {
   expire_locks(s, qi, now)
-  var q = s.queues[qi]
+  let sessions = s.queues[qi].opts.sessions
+  let lock_ms = s.queues[qi].opts.lock_ms
   var i = 0
-  while i < q.msgs.len() {
-    var m = q.msgs[i]
-    if available(q, m, now, sess) {
-      let before = m
-      m.delivery_count += 1
+  while i < s.queues[qi].msgs.len() {
+    if available_in(sessions, s.queues[qi].msgs[i], now, sess) {
+      // updated through the place: a copy of the queue shared its message list, and each take
+      // copied all of it (std/amqptest twin, 2026-11-16)
+      s.queues[qi].msgs[i].delivery_count += 1
       if settle {
-        q.msgs = q.msgs.filter(fn(x: FakeMsg) { x.seq != m.seq })
-        put_queue(s, qi, q)
+        let m = s.queues[qi].msgs[i]
+        complete(s, qi, m.seq)
         return Some(m)
       }
-      m.lock_token = token_bytes(s.next_lock)
+      s.queues[qi].msgs[i].lock_token = token_bytes(s.next_lock)
       s.next_lock += 1
-      m.locked_until = now + q.opts.lock_ms
-      m.lock_conn = conn
-      put_msg(q, i, m)
-      put_queue(s, qi, q)
-      let _ = before
-      return Some(m)
+      s.queues[qi].msgs[i].locked_until = now + lock_ms
+      s.queues[qi].msgs[i].lock_conn = conn
+      return Some(s.queues[qi].msgs[i])
     }
     i += 1
   }
@@ -765,9 +758,12 @@ fn apply_modified(var s: BrokerState, qi: Int, seq: Int, ann: List[(amqp.Value, 
 }
 
 fn complete(var s: BrokerState, qi: Int, seq: Int) {
-  var q = s.queues[qi]
-  q.msgs = q.msgs.filter(fn(x: FakeMsg) { x.seq != seq })
-  put_queue(s, qi, q)
+  // in place: a filter built a new list of every other message on each completion (std/amqptest
+  // twin, 2026-11-16)
+  let mi = find_seq(s.queues[qi], seq)
+  if mi >= 0 {
+    let _ = s.queues[qi].msgs.remove_at(mi)
+  }
 }
 
 fn defer_msg(var s: BrokerState, qi: Int, seq: Int) {

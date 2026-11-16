@@ -1,0 +1,73 @@
+// amqptest: std/amqptest's broker (an in-process Azure Service Bus) against
+// a Go port of the same broker (go/goamqp/twinbroker, on go-amqp v1.7.0's
+// frame codec), each driven by its language's AMQP client (std/amqp,
+// go-amqp) over 127.0.0.1:0 (ADR 0655 rule 7). `pubsub` sends N messages
+// (env N, 2,000 by default) of 100 bytes to a queue, each waiting for its
+// outcome, then receives them on a peek-lock receiver with a credit of 100
+// and accepts (completes) each; `pipe` sends and receives one at a time;
+// `none` dials and sends and receives one message. Usage:
+// `<program> none|pubsub|pipe`. Prints `<workload> <checksum>`; the twin
+// prints the same.
+use std/amqp
+use std/amqptest
+
+fn body(i: Int) -> Bytes {
+  let head = "message ${i} "
+  (head + "x".repeat(100 - head.len())).bytes()
+}
+
+fn sum_of(d: amqp.Delivery) -> Int {
+  match d.message.body {
+    Data(sections) => {
+      let b = sections[0]
+      b.len() + Int(b[8]) + Int(b[9])
+    }
+    _ => fault("body")
+  }
+}
+
+fn send(snd: amqp.Sender, i: Int) uses (net, clock) {
+  let st = snd.send(amqp.Message{body: amqp.Body.Data(sections: [body(i)])}).or_fault("send")
+  if st != Some(amqp.DeliveryState.Accepted) { fault("not accepted") }
+}
+
+fn take(rcv: amqp.Receiver) -> Int uses (net, clock) {
+  let d = rcv.receive(5000).or_fault("receive")
+  rcv.accept(d).or_fault("accept")
+  sum_of(d)
+}
+
+fn main(os: Os) uses stdio, env, net, clock {
+  let w = os.env.args().get(0) ?? "none"
+  let n = if w == "none" { 1 } else { Int.parse(os.env.get("N") ?? "") ?? 2000 }
+  let b = amqptest.new(os.clock)
+  b.queue("orders")
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  var sum = 0
+  scope s {
+    b.serve(s.group(), l)
+    let c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "bench", clock: Some(os.clock), sasl: amqp.Sasl.Anonymous, timeout_ms: 10000}).or_fault("dial")
+    let sess = c.begin().or_fault("begin")
+    let snd = c.new_sender(sess, "orders").or_fault("sender")
+    let rcv = c.new_receiver(sess, "orders", amqp.ReceiverOptions{credit: 100}).or_fault("receiver")
+    if w == "pipe" {
+      for i in 0..n {
+        send(snd, i)
+        sum += take(rcv)
+      }
+    } else {
+      for i in 0..n {
+        send(snd, i)
+      }
+      for _ in 0..n {
+        sum += take(rcv)
+      }
+    }
+    rcv.close().or_fault("close receiver")
+    snd.close().or_fault("close sender")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+    l.close()
+  }
+  os.stdio.println("${w} ${sum}")
+}
