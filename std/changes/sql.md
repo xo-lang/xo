@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-16: feature: named arguments, sql.named (decision 0679)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #113 (#110's backlog: named arguments)
+- Go reference: pgx v5.12.0 named_args.go (NamedArgs, StrictNamedArgs, RewriteQuery and its lexer) and named_args_test.go, Copyright (c) 2013-2021 Jack Christensen, MIT License
+- Test: std/native/sql_test.xo (pgx's TestNamedArgsRewriteQuery, TestNamedArgsDollarQuotedStrings and TestStrictNamedArgsRewriteQuery cases, arm64 and LLVM, plus a run on the memory driver); std/rt/sqlnamed_test.go (the same cases on the Go backend)
+- Shipped in: not yet released
+
+`sql.named(q, args, strict = false)` rewrites each `@name` to `$n` in first use order and returns the arguments in that order; quoted strings, quoted identifiers, dollar quoted strings and comments are skipped as pgx skips them. A missing name reads as NULL; with strict, a missing or unused argument is a Param error. pgx's invalid UTF-8 case has no Str to hold it.
+
 ## 2026-11-16: feature: infinite dates and timestamps, macaddr, hstore; xid, cid and xid8 as Integer (decision 0679)
 
 - Kind: feature and behavior

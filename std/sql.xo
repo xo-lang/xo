@@ -88,6 +88,16 @@ fn (i: Interval) duration() -> Duration?
 /// quote_ident, pgx's Identifier.Sanitize).
 fn quote_ident(name: Str) -> Str
 
+/// Rewrites each `@name` in q to a `$n` placeholder and returns the query
+/// with its arguments in placeholder order (pgx's NamedArgs and
+/// StrictNamedArgs): `let (q2, a) = sql.named(q, {"id": sql.int(7)})?`
+/// then `db.query(q2, a)`. A name is a letter or `_` and then letters,
+/// digits or `_`, matched exactly; `@` inside a quoted string, quoted
+/// identifier, dollar quoted string or comment is left alone. A name with
+/// no argument reads as NULL; with strict, it is a Param error, and so is
+/// an argument the query does not use.
+fn named(q: Str, args: Map[Str, SqlValue], strict: Bool = false) -> (Str, List[SqlValue]) ! SqlErr
+
 /// A transaction's isolation level (Go's sql.IsolationLevel, the four of
 /// standard SQL); Default is the server's own.
 enum Isolation {

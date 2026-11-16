@@ -3612,6 +3612,21 @@ first set. On the in memory database the statements run in order and
 the tables change only when all succeed (as `exec`'s script); a script
 of more than one statement takes no arguments (`Param`).
 
+`named` (pgx's `NamedArgs` and `StrictNamedArgs`, decision 0679) rewrites
+`@name` placeholders to `$n` for any query method:
+
+```
+fn named(q: Str, args: Map[Str, SqlValue], strict: Bool = false) -> (Str, List[SqlValue]) ! SqlErr
+let (q, a) = sql.named("SELECT * FROM t WHERE id = @id OR parent = @id", {"id": sql.int(7)})?
+db.query(q, a)?                                   // "... id = $1 OR parent = $1", [Integer(n: 7)]
+```
+
+A name starts with a letter or `_` and goes on with letters, digits and
+`_`, matched exactly; numbers follow first use. `@` inside a quoted
+string (`'...'`, `E'...'`), a quoted identifier, a dollar quoted string
+or a comment is left alone. A name with no argument is NULL, and an
+unused argument is ignored; with `strict` either is a `Param` error.
+
 `copy_from` (decision 0479, pgx's `CopyFrom`) loads rows with COPY FROM
 STDIN in the text format:
 

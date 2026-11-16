@@ -88,3 +88,7 @@ stdaudit rows for these types (sql 75 agent hours).
   `time_bound`, `mac`, `hstore`, and xid, cid, xid8 decoded as Integer
   (std/native/llrt/pg.xo); golden and pg-diff cases as above (78
   statements equal to pgx).
+- 2026-11-16 (Xo Lang 3): `sql.named` (pgx's NamedArgs and
+  StrictNamedArgs) with pgx's rewrite tests on every backend. pgx's
+  StructArgs stay gaps: a struct's fields as arguments would need a
+  derive (SqlRow's reverse), a later item.

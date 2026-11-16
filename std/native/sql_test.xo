@@ -226,3 +226,87 @@ test "names lex the same with ASCII and non ASCII letters, digits and underscore
     Ok(_) => expect(false) == true
   }
 }
+
+// sql.named: pgx v5.12.0 named_args_test.go (TestNamedArgsRewriteQuery,
+// TestNamedArgsDollarQuotedStrings, TestStrictNamedArgsRewriteQuery),
+// Copyright (c) 2013-2021 Jack Christensen, MIT License. pgx's invalid
+// UTF-8 case has no Str to hold it.
+
+fn rw(q: Str, args: Map[Str, sql.SqlValue], strict: Bool = false) -> Str {
+  match sql.named(q, args, strict) {
+    Ok(p) => {
+      let (s, a) = p
+      "${s} | ${a:?}"
+    }
+    Err(e) => "error: ${e}"
+  }
+}
+
+test "named rewrites @name to $n in first use order, as pgx's NamedArgs" {
+  let i42 = sql.int(42)
+  expect(rw("select * from users where id = @id", {"id": i42})) == "select * from users where id = $1 | [Integer(n: 42)]"
+  expect(rw("select * from t where foo < @abc and baz = @def and bar < @abc", {"abc": i42, "def": sql.int(1)})) == "select * from t where foo < $1 and baz = $2 and bar < $1 | [Integer(n: 42), Integer(n: 1)]"
+  expect(rw("select @a::int, @b::text", {"a": i42, "b": sql.str("foo")})) == "select $1::int, $2::text | [Integer(n: 42), Text(s: \"foo\")]"
+  expect(rw("select @Abc::int, @b_4::text, @_c::int", {"Abc": i42, "b_4": sql.str("foo"), "_c": sql.int(1)})) == "select $1::int, $2::text, $3::int | [Integer(n: 42), Text(s: \"foo\"), Integer(n: 1)]"
+  expect(rw("at end @", {"a": i42})) == "at end @ | []"
+  expect(rw("ignores without valid character after @ foo bar", {"a": i42})) == "ignores without valid character after @ foo bar | []"
+  expect(rw("name cannot start with number @1 foo bar", {"a": i42})) == "name cannot start with number @1 foo bar | []"
+  expect(rw(r#"select *, '@foo' as "@bar" from users where id = @id"#, {"id": i42})) == r#"select *, '@foo' as "@bar" from users where id = $1 | [Integer(n: 42)]"#
+  expect(rw("select * -- @foo\n from users -- @single line comments\n where id = @id;", {"id": i42})) == "select * -- @foo\n from users -- @single line comments\n where id = $1; | [Integer(n: 42)]"
+  expect(rw("select * -- C:\\path\\\nfrom users where id = @id", {"id": i42})) == "select * -- C:\\path\\\nfrom users where id = $1 | [Integer(n: 42)]"
+  expect(rw("select * /* @multi line\n @comment\n */\n /* /* with @nesting */ */\n from users\n where id = @id;", {"id": i42})) == "select * /* @multi line\n @comment\n */\n /* /* with @nesting */ */\n from users\n where id = $1; | [Integer(n: 42)]"
+  expect(rw("extra provided argument", {"extra": sql.int(1)})) == "extra provided argument | []"
+  expect(rw("@missing argument", {})) == "$1 argument | [Null]"
+  expect(rw("select * from t where note = 'a\u{FFFD}b' and id = @id", {"id": i42})) == "select * from t where note = 'a\u{FFFD}b' and id = $1 | [Integer(n: 42)]"
+  expect(rw("select * from t where id = @id -- \u{FFFD}\nand deleted = false", {"id": i42})) == "select * from t where id = $1 -- \u{FFFD}\nand deleted = false | [Integer(n: 42)]"
+  expect(rw("select * from t where id = @id /* \u{FFFD} */ and deleted = false", {"id": i42})) == "select * from t where id = $1 /* \u{FFFD} */ and deleted = false | [Integer(n: 42)]"
+  expect(rw("select * from \"a\u{FFFD}b\" where id = @id", {"id": i42})) == "select * from \"a\u{FFFD}b\" where id = $1 | [Integer(n: 42)]"
+  expect(rw("select * from t where note = e'a\u{FFFD}b' and id = @id", {"id": i42})) == "select * from t where note = e'a\u{FFFD}b' and id = $1 | [Integer(n: 42)]"
+  expect(rw("select @id\u{FFFD}, @other", {"id": i42, "other": sql.int(7)})) == "select $1\u{FFFD}, $2 | [Integer(n: 42), Integer(n: 7)]"
+  expect(rw(r#"select e'it\'s @no', @id"#, {"id": i42})) == r#"select e'it\'s @no', $1 | [Integer(n: 42)]"#
+}
+
+test "named leaves dollar quoted strings alone, as pgx's NamedArgs and StrictNamedArgs" {
+  let cases = [
+    (r#"select $$hello @id$$, @id"#, r#"select $$hello @id$$, $1"#),
+    (r#"select $tag_1$@missing$tag_1$, @id"#, r#"select $tag_1$@missing$tag_1$, $1"#),
+    (r#"select $世界$@missing$世界$, @id"#, r#"select $世界$@missing$世界$, $1"#),
+    ("select $\u{FFFD}$@missing$\u{FFFD}$, @id", "select $\u{FFFD}$@missing$\u{FFFD}$, $1"),
+    (r#"select $$it's " -- /* @missing \ $$, @id"#, r#"select $$it's " -- /* @missing \ $$, $1"#),
+    (r#"select $outer$$inner$@missing$inner$ $$ @missing$outer$, @id"#, r#"select $outer$$inner$@missing$inner$ $$ @missing$outer$, $1"#),
+    (r#"select $tag$@missing$TAG$@missing$tag$, @id"#, r#"select $tag$@missing$TAG$@missing$tag$, $1"#),
+    (r#"select @id, $$@missing$$, $tag$@id$tag$, @id"#, r#"select $1, $$@missing$$, $tag$@id$tag$, $1"#),
+    (r#"select @id, $tag$@missing"#, r#"select $1, $tag$@missing"#),
+    (r#"select column$tag$, @id"#, r#"select column$tag$, $1"#),
+    (r#"select column$$, @id"#, r#"select column$$, $1"#),
+    (r#"select example$tag$, @id"#, r#"select example$tag$, $1"#),
+    (r#"select 世界$tag$, @id"#, r#"select 世界$tag$, $1"#),
+    (r#"select $1$ @id"#, r#"select $1$ $1"#),
+    (r#"select $bad-tag$ @id"#, r#"select $bad-tag$ $1"#),
+    (r#"select @id, $"#, r#"select $1, $"#),
+    (r#"select '$$' , @id"#, r#"select '$$' , $1"#),
+    (r#"select /* $$ */ @id -- $tag$"#, r#"select /* $$ */ $1 -- $tag$"#),
+  ]
+  for (q, want) in cases {
+    expect(rw(q, {"id": sql.int(42)})) == "${want} | [Integer(n: 42)]"
+    expect(rw(q, {"id": sql.int(42)}, strict: true)) == "${want} | [Integer(n: 42)]"
+  }
+  expect(rw(r#"select $$hello @world$$"#, {})) == r#"select $$hello @world$$ | []"#
+  expect(rw(r#"select $$hello @world$$"#, {}, strict: true)) == r#"select $$hello @world$$ | []"#
+  expect(rw(r#"select $$@id$$"#, {"id": sql.int(42)}, strict: true)) == "error: named argument id is not used by the query"
+}
+
+test "named with strict refuses a missing or an unused argument, as pgx's StrictNamedArgs" {
+  expect(rw("no arguments", {}, strict: true)) == "no arguments | []"
+  expect(rw("@all @matches", {"all": sql.int(1), "matches": sql.int(2)}, strict: true)) == "$1 $2 | [Integer(n: 1), Integer(n: 2)]"
+  expect(rw("extra provided argument", {"extra": sql.int(1)}, strict: true)) == "error: named argument extra is not used by the query"
+  expect(rw("@missing argument", {}, strict: true)) == "error: named argument @missing has no value"
+}
+
+test "named's query and arguments run on a database" {
+  let db = sql.memory("CREATE TABLE t (id INT, name TEXT)")?
+  let (q, a) = sql.named("INSERT INTO t (id, name) VALUES (@id, @name)", {"name": sql.str("ann"), "id": sql.int(3)})?
+  db.exec(q, a)?
+  let (q2, a2) = sql.named("SELECT name FROM t WHERE id = @id AND name <> '@id'", {"id": sql.int(3)}, strict: true)?
+  expect(db.query_one(q2, a2)?.str("name")?) == "ann"
+}

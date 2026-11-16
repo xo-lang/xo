@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/sql, every backend; decision 0679, task #113): `sql.named(q, args, strict)` rewrites `@name` placeholders to `$n` and returns the query with its arguments, for any query method (pgx's `NamedArgs` and `StrictNamedArgs`).
+
 - Feature (std/sql, every backend; decision 0679, task #113): `Row.date_bound` and `Row.time_bound` with `sql.Bound[T]` (`Finite(v)`, `Infinity`, `NegInfinity`) for infinite dates and timestamps, `Row.mac` (macaddr, macaddr8), `Row.hstore` (`Map[Str, Str?]`), and the parameters `sql.date_bound`, `time_bound`, `mac`, `hstore`; `xid`, `cid` and `xid8` columns now read as `Integer` (they were `Text`: code reading them with `Row.str` reads them with `Row.int`).
 - Fix (std/backoff): a `Backoff` whose multiplier is below 1 shrinks the interval again after it reaches `max_interval`, as cenkalti/backoff's ExponentialBackOff (10s, multiplier 0.5, max 4s gives 10s, 4s, 2s, 1s, 500ms; it stayed at 4s). Found by the new TestBackoffFuzz (task #116); registered for stdproven fuzz under backoff.
 - Perf (std/crypto, native backends): `AesBlock.encrypt_block` and `decrypt_block` run in place in their result (one allocation less a block; decrypt_block decrypted four blocks for one): bench/perf/aesmodes block 0.934 of before (host 1 --ab).

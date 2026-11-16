@@ -4976,3 +4976,151 @@ fn mem_select(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) 
   }
   project(t, items, rows, args)
 }
+
+// sql.named: pgx v5.12.0 named_args.go (NamedArgs and StrictNamedArgs
+// RewriteQuery and its lexer), Copyright (c) 2013-2021 Jack Christensen,
+// MIT License. Byte based: every delimiter is ASCII and a byte from 0x80
+// up is an identifier byte, as pgx's rune checks are on valid UTF-8.
+
+fn na_letter(c: UInt8) -> Bool { (c >= 97 && c <= 122) || (c >= 65 && c <= 90) }
+
+fn na_ident(c: UInt8) -> Bool { na_letter(c) || c == 95 || c >= 128 }
+
+fn na_digit(c: UInt8) -> Bool { c >= 48 && c <= 57 }
+
+/// The index after a quoted string or identifier opened before i, with
+/// q doubled to escape it; esc also lets a backslash escape the next byte
+/// (an E'...' string).
+fn na_quoted(b: Bytes, i: Int, q: UInt8, esc: Bool) -> Int {
+  var j = i
+  while j < b.len() {
+    let c = b[j]
+    j += 1
+    if esc && c == 92 {
+      j += 1
+    } else if c == q {
+      if j < b.len() && b[j] == q {
+        j += 1
+      } else {
+        return j
+      }
+    }
+  }
+  b.len()
+}
+
+/// The length of a dollar quote's tag at b[i..] up to its closing `$`
+/// (pgx's scanDollarQuoteTag), or None when b[i..] is not a tag.
+fn na_tag(b: Bytes, i: Int) -> Int? {
+  var j = i
+  while j < b.len() {
+    let c = b[j]
+    if c == 36 {
+      return Some(j - i)
+    }
+    if !(na_ident(c) || (j > i && na_digit(c))) {
+      return None
+    }
+    j += 1
+  }
+  None
+}
+
+fn named(q: Str, args: Map[Str, sql.SqlValue], strict: Bool = false) -> (Str, List[sql.SqlValue]) ! sql.SqlErr {
+  let b = q.bytes()
+  let n = b.len()
+  var out: List[Str] = []
+  var names: List[Str] = []
+  var ord: Map[Str, Int] = {}
+  var start = 0
+  var i = 0
+  while i < n {
+    let c = b[i]
+    i += 1
+    if (c == 101 || c == 69) && i < n && b[i] == 39 {
+      i = na_quoted(b, i + 1, 39, true)
+      continue
+    }
+    if c == 39 || c == 34 {
+      i = na_quoted(b, i, c, false)
+    } else if c == 36 {
+      if let Some(t) = na_tag(b, i) {
+        let tag = q[i - 1..i + t + 1]
+        i += t + 1
+        match q[i..n].find(tag) {
+          Some(k) => i += k + tag.len()
+          None => i = n
+        }
+      }
+    } else if c == 64 && i < n && (na_letter(b[i]) || b[i] == 95) {
+      out.push(q[start..i - 1])
+      var j = i
+      while j < n && (na_letter(b[j]) || na_digit(b[j]) || b[j] == 95) {
+        j += 1
+      }
+      let name = q[i..j]
+      var k = names.len() + 1
+      match ord.get(name) {
+        Some(o) => k = o
+        None => {
+          names.push(name)
+          ord.put(name, k)
+        }
+      }
+      out.push("$${k}")
+      start = j
+      i = j
+      continue
+    } else if c == 45 && i < n && b[i] == 45 {
+      while i < n && b[i] != 10 && b[i] != 13 {
+        i += 1
+      }
+      i += 1
+    } else if c == 47 && i < n && b[i] == 42 {
+      i += 1
+      var depth = 0
+      while i < n {
+        let d = b[i]
+        i += 1
+        if d == 47 && i < n && b[i] == 42 {
+          i += 1
+          depth += 1
+        } else if d == 42 && i < n && b[i] == 47 {
+          i += 1
+          if depth == 0 {
+            break
+          }
+          depth -= 1
+        }
+      }
+    }
+    if na_ident(c) {
+      while i < n && (na_ident(b[i]) || na_digit(b[i]) || b[i] == 36) {
+        i += 1
+      }
+    }
+  }
+  if start < n {
+    out.push(q[start..n])
+  }
+  var vals: List[sql.SqlValue] = []
+  for name in names {
+    match args.get(name) {
+      Some(v) => vals.push(v)
+      None => {
+        if strict {
+          return Err(sql.SqlErr.Param(msg: "named argument @${name} has no value"))
+        }
+        vals.push(sql.SqlValue.Null)
+      }
+    }
+  }
+  if strict {
+    for (name, _) in args {
+      if !ord.contains(name) {
+        return Err(sql.SqlErr.Param(msg: "named argument ${name} is not used by the query"))
+      }
+    }
+  }
+  (out.join(""), vals)
+}
