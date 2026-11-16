@@ -283,7 +283,14 @@ yourself.
   fail fast; runs go to `~/xo-lead/notes/ctier/runs.tsv`, a failure to
   `failures.txt` with the bad and the last good commit (the lead names
   the bisect owner), and `touch ~/xo-lead/notes/ctier/stop` ends it
-  after the current run.
+  after the current run. Each step is its own lease, and the llvm step
+  is `CTIER_LLVM_SHARDS` + 1 leases (4: shard 0 runs internal/llvm's
+  tests that do not follow the golden selection, shards 1 to 4 a CRC-32
+  share of the goldens each; gate.sh `XO_GATE_LLVM_SHARD=K/N` with
+  `XO_GATE_LLVM=all`), `CTIER_SHARD_MIN` (120) minutes each, so waiting
+  leases run between them (2026-11-15: one full llvm step held host 4's
+  single slot 78 minutes while a 30 second lease waited 51).
+  `CTIER_LLVM_SHARDS=0` runs it as one lease. Last verified: 2026-11-15.
 - Fail fast (lead, owner approved 2026-11-15): the first gate step that
   fails stops the gate. Steps still running are stopped (their output
   so far in `$XO_GATE_LOGS/STEP.stopped.txt`), the rest are skipped, and a

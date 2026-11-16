@@ -658,8 +658,23 @@ golden_inputs() {
   ls internal/llvm/testdata/golden | GI_DIR=$d xargs -P "$(ir_jobs)" -n 1 sh -c \
     '[ -d "internal/llvm/testdata/golden/$1" ] || exit 0; "$XO_CLI" build --list-inputs "internal/llvm/testdata/golden/$1" >"$GI_DIR/$1.txt" 2>/dev/null || { rm -f "$GI_DIR/$1.txt"; exit 1; }' _
 }
+# llvm_shard_goldens K N: the goldens of shard K (1..N), by CRC-32 of the
+# golden's name mod N, a stable split that a new golden does not reshuffle
+llvm_shard_goldens() {
+  ls internal/llvm/testdata/golden | python3 -c '
+import sys, zlib
+k, n = int(sys.argv[1]), int(sys.argv[2])
+print(",".join(g for g in sys.stdin.read().split() if zlib.crc32(g.encode()) % n == k - 1))' "$1" "$2"
+}
 llvm_goldens() {
   sel_note="$logs/llvm-select.txt"
+  if [ "${XO_GATE_LLVM:-}" = all ] && [ -n "$llvm_shard_n" ]; then
+    local s
+    s=$(llvm_shard_goldens "$llvm_shard_k" "$llvm_shard_n")
+    echo "shard $llvm_shard_k of $llvm_shard_n: $(echo "$s" | tr ',' '\n' | grep -c .) goldens (XO_GATE_LLVM=all, XO_GATE_LLVM_SHARD)" >"$sel_note"
+    if [ -z "$s" ]; then echo none; else echo "$s"; fi
+    return
+  fi
   if [ "${XO_GATE_LLVM:-}" = all ]; then
     echo "every golden (XO_GATE_LLVM=all)" >"$sel_note"; echo all; return
   fi
@@ -838,7 +853,29 @@ golden_dirs_changed() {
   { git diff --name-only --diff-filter=AMR "$base" HEAD; git status --porcelain | cut -c4-; } |
     sed -n 's|^internal/llvm/testdata/golden/\([^/]*\)/.*|\1|p' | sort -u | paste -sd, -
 }
+# XO_GATE_LLVM_SHARD=K/N (scripts/lead/ctier.sh; lead, 2026-11-15: one
+# full llvm step held host 4's single slot 78 minutes while a 30 second
+# lease waited 51): with XO_GATE_LLVM=all, shard 0 runs the package's
+# tests that do not follow the golden selection, shards 1..N the selected
+# tests on their share of the goldens (llvm_shard_goldens), so each is a
+# lease of its own and waiting leases run between them.
+llvm_shard_k="" llvm_shard_n=""
+case ${XO_GATE_LLVM_SHARD:-} in
+  "") ;;
+  */*) llvm_shard_k=${XO_GATE_LLVM_SHARD%/*} llvm_shard_n=${XO_GATE_LLVM_SHARD#*/} ;;
+  *) echo "gate.sh: XO_GATE_LLVM_SHARD wants K/N, got $XO_GATE_LLVM_SHARD"; exit 2 ;;
+esac
 llvm_step() {
+    if [ -n "$llvm_shard_n" ] && [ "$llvm_shard_k" = 0 ]; then
+      sel_tests='TestGolden|TestGoldenSplit|TestGoldenGoParity|TestDebugInfoSameOutputLLVM|TestGoldenTasks|TestGoldenASan'
+      sk=$(gate_skip internal/llvm)
+      presk="^($sel_tests)\$"
+      [ -n "$sk" ] && presk="^($sel_tests|${sk#^(}"
+      echo "llvm: shard 0 of $llvm_shard_n: the tests that do not follow the golden selection"
+      full llvm ./internal/llvm -skip "$presk"
+      echo none >"$logs/golden-sel.txt"
+      return
+    fi
     if [ -z "${XO_GATE_LLVM:-}" ] && native_only; then
       echo "llvm: skipped (native backend only change; XO_GATE_LLVM=1 runs it)"
       echo all >"$logs/golden-sel.txt"
@@ -858,7 +895,8 @@ llvm_step() {
       if [ "${XO_GATE_IR_FIRST:-0}" = 1 ]; then
         export XO_GATE_IR_NICE=0
       fi
-      if [ "${XO_GATE_LLVM_OVERLAP:-1}" != 0 ] && [ "${XO_GATE_IR_FIRST:-0}" != 1 ]; then
+      # a golden shard (1..N) leaves those tests to shard 0
+      if [ -z "$llvm_shard_n" ] && [ "${XO_GATE_LLVM_OVERLAP:-1}" != 0 ] && [ "${XO_GATE_IR_FIRST:-0}" != 1 ]; then
         presk="^($sel_tests)\$"
         [ -n "$sk" ] && presk="^($sel_tests|${sk#^(}"
         ( failed=0; full llvmpre ./internal/llvm -skip "$presk"; echo "$failed" >"$logs/llvmpre.failed" ) >"$logs/llvmpre.out" 2>&1 &
@@ -878,12 +916,13 @@ llvm_step() {
       # behavior the plain IR may not show (internal/llvm skipUnselectedSan)
       unset XO_LLVM_SAN_ALL
       if { git diff --name-only "${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}" HEAD; git status --porcelain | cut -c4-; } |
-        python3 scripts/gate-areas.py --touches scripts/gate-areas.txt @rt @sched @race @http @llvmbe @driver; then
+        python3 scripts/gate-areas.py --touches scripts/gate-areas.txt @rt @sched @race @http @llvmbe @driver &&
+        [ -z "$llvm_shard_n" ]; then
         export XO_LLVM_SAN_ALL=1; echo "llvm sanitizer goldens: every one (the change touches the runtime, scheduler, race, HTTP or LLVM backend areas)"
       fi
       # with the overlap, the tests after the selection are only those
       # that read it
-      if [ -n "$pre_pid" ]; then
+      if [ -n "$pre_pid" ] || [ -n "$llvm_shard_n" ]; then
         sk=""; set -- -run "^($sel_tests)\$"
       else
         set -- ${sk:+-skip "$sk"}
