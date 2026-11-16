@@ -233,13 +233,23 @@ func main() {
 			batch(ctx, c, rest)
 			continue
 		}
+		if os.Getenv("PG_FRESH") != "" {
+			// a connection of its own for each statement (internal/stdtest
+			// TestPgFuzz: a hostile server closes connections at will)
+			c.Close(ctx)
+			if c, err = pgconn.Connect(ctx, os.Args[1]); err != nil {
+				fmt.Println("== " + line)
+				fmt.Println("error connect")
+				continue
+			}
+		}
 		stmt, args, hasArgs := strings.Cut(line, " ;; ")
 		var res []*pgconn.Result
 		if hasArgs {
 			r := c.ExecParams(ctx, stmt, params(args), nil, nil, nil).Read()
 			res, err = []*pgconn.Result{r}, r.Err
 		} else {
-			res, err = c.Exec(ctx, line).ReadAll()
+			res, err = readAll(c.Exec(ctx, line))
 		}
 		fmt.Println("== " + line)
 		var pe *pgconn.PgError
@@ -257,6 +267,25 @@ func main() {
 		}
 		printRows(r)
 	}
+}
+
+// readAll is MultiResultReader.ReadAll keeping each result's fields when
+// it has no rows: ResultReader.Read sets Result.FieldDescriptions only as
+// it reads a row, so a SELECT of no rows read as a statement without
+// columns (internal/stdtest TestPgFuzz); std/sql gives its column types.
+func readAll(mrr *pgconn.MultiResultReader) ([]*pgconn.Result, error) {
+	var res []*pgconn.Result
+	for mrr.NextResult() {
+		rr := mrr.ResultReader()
+		fds := append([]pgconn.FieldDescription(nil), rr.FieldDescriptions()...)
+		r := rr.Read()
+		if r.FieldDescriptions == nil && fds != nil {
+			r.FieldDescriptions = fds
+		}
+		res = append(res, r)
+	}
+	err := mrr.Close()
+	return res, err
 }
 
 // batchItems are a BATCH line's queries (decision 0648 item 15): items
@@ -312,6 +341,15 @@ func printRows(r *pgconn.Result) {
 	var cols []string
 	for _, f := range r.FieldDescriptions {
 		cols = append(cols, q(f.Name))
+	}
+	for _, row := range r.Rows {
+		if len(row) != len(r.FieldDescriptions) {
+			// pgconn keeps a DataRow of another width than the
+			// RowDescription (a hostile server's, internal/stdtest
+			// TestPgFuzz): there is no reference answer, and Xo must refuse
+			fmt.Println("width pgconn")
+			return
+		}
 	}
 	fmt.Println(colTypes(r.FieldDescriptions))
 	for _, row := range r.Rows {

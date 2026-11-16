@@ -54,8 +54,15 @@ fn main(os: Os) ! {
     return
   }
   let dsn = argv.first().or_err("usage: diff DSN < cases")?
-  let db = sql.open(os.net, "postgres", dsn, max_open: 1, roots: roots)?
+  // PG_FRESH: a pool of its own for each statement (internal/stdtest
+  // TestPgFuzz: a hostile server closes connections at will)
+  let fresh = os.env.get("PG_FRESH").is_some()
+  var db = sql.open(os.net, "postgres", dsn, max_open: 1, roots: roots)?
   for line in os.stdio.lines()? {
+    if fresh {
+      db.close().ignore_err("the next statement opens a pool of its own")
+      db = sql.open(os.net, "postgres", dsn, max_open: 1, roots: roots)?
+    }
     if line.trim().is_empty() {
       continue
     }

@@ -73,7 +73,7 @@ var harnesses = map[string][]harness{
 	"bcrypt":    {{"TestBcryptFuzz", "XO_BCRYPTFUZZ"}},
 	"asn1":      {{"TestAsn1Fuzz", "XO_ASN1FUZZ"}},
 	"cookiejar": {{"TestCookiejarFuzz", "XO_COOKIEJARFUZZ"}},
-	"sql":       {{"TestMysqlFuzz", "XO_MYSQLFUZZ"}},
+	"sql":       {{"TestMysqlFuzz", "XO_MYSQLFUZZ"}, {"TestPgFuzz", "XO_PGFUZZ"}},
 	"json":      {{"TestJsonFuzz", "XO_JSONFUZZ"}},
 	"time":      {{"TestTimeFuzz", "XO_TIMEFUZZ"}},
 	"http":      {{"TestHttpHeadFuzz", "XO_HEADFUZZ"}, {"TestHttpResponseFuzz", "XO_RESPFUZZ"}, {"TestHttpUrlFuzz", "XO_URLFUZZ"}},

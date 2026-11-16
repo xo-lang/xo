@@ -739,7 +739,13 @@ struct Results {
   more: List[sql.DriverResult] = []
 }
 
-fn (p: PgConn) collect() -> Results ! sql.SqlErr uses net.dial {
+fn (p: PgConn) collect() -> Results ! sql.SqlErr uses net.dial { p.collect_of(true) }
+
+/// described: a RowDescription comes before a statement's rows (the simple
+/// protocol, or a Describe sent); false for a named statement's Execute
+/// without Describe (PgStmt.exec), whose DataRows come alone and are
+/// dropped.
+fn (p: PgConn) collect_of(described: Bool) -> Results ! sql.SqlErr uses net.dial {
   var res = Results{cols: [], oids: [], rows: [], tag: ""}
   var failed: sql.SqlErr? = None
   // the set being read: the first goes in res, the later ones in more
@@ -762,7 +768,13 @@ fn (p: PgConn) collect() -> Results ! sql.SqlErr uses net.dial {
         }
       }
       DataRow(vals) => {
-        let row = decode_row(oids, vals)
+        if sets == 0 {
+          if !described {
+            continue
+          }
+          return Err(p.row_first())
+        }
+        let row = p.row_of(oids, vals)?
         if sets == 1 {
           res.rows.push(row)
         } else {
@@ -804,6 +816,25 @@ fn (p: PgConn) run(q: Str, args: List[sql.SqlValue]) -> Results ! sql.SqlErr use
   p.collect()
 }
 
+/// A DataRow's values decoded by the column type oids, or a broken
+/// connection when the row has another number of values than the
+/// RowDescription has columns (a hostile or broken server's; pgconn keeps
+/// such a row, internal/stdtest TestPgFuzz).
+fn (p: PgConn) row_of(oids: List[Int], vals: List[Bytes?]) -> List[sql.SqlValue] ! sql.SqlErr {
+  if vals.len() != oids.len() {
+    p.broken.set(true)
+    return Err(conn_err("a DataRow of ${vals.len()} values for ${oids.len()} columns"))
+  }
+  decode_row(oids, vals)
+}
+
+/// A DataRow before any RowDescription breaks the connection (pgconn:
+/// "unexpected DataRow message without preceding RowDescription").
+fn (p: PgConn) row_first() -> sql.SqlErr {
+  p.broken.set(true)
+  conn_err("a DataRow before its RowDescription")
+}
+
 /// A row's values decoded by the column type oids.
 fn decode_row(oids: List[Int], vals: List[Bytes?]) -> List[sql.SqlValue] {
   var row: List[sql.SqlValue] = List.with_capacity(vals.len())
@@ -839,7 +870,15 @@ fn (c: PgCursor) next() -> List[sql.SqlValue]? ! sql.SqlErr uses net.dial {
     match c.p.recv() {
       Ok(m) => {
         match m {
-          DataRow(vals) => return Some(decode_row(c.oids, vals))
+          DataRow(vals) => {
+            match c.p.row_of(c.oids, vals) {
+              Ok(row) => return Some(row)
+              Err(e) => {
+                let _ = c.finish()
+                return Err(e)
+              }
+            }
+          }
           Error(f) => c.note_failure(server_err(f))
           Ready(_) => {
             if let Some(e) = c.finish() {
@@ -930,6 +969,7 @@ fn (p: PgConn) cursor_result() -> sql.DriverRows ! sql.SqlErr uses net.dial {
         let cur = PgCursor{p: p, oids: fs.map(fn(f) { f.type_oid }), st: Mutex.new(CursorState{done: false})}
         return sql.DriverRows{columns: fs.map(fn(f) { f.name }), rows: [], cursor: Some(cur), column_types: column_types(fs)}
       }
+      DataRow(_) => return Err(p.row_first())
       Error(f) => {
         if failed.is_none() {
           failed = Some(server_err(f))
@@ -1230,13 +1270,20 @@ fn (p: PgConn) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> Lis
 fn (p: PgConn) pipe_result() -> PipeRes ! sql.SqlErr uses net.dial {
   var res = sql.DriverResult{columns: [], rows: []}
   var oids: List[Int] = []
+  var described = false
   while {
     match p.recv()? {
       RowDesc(fs) => {
+        described = true
         oids = fs.map(fn(f) { f.type_oid })
         res = sql.DriverResult{columns: fs.map(fn(f) { f.name }), rows: [], column_types: column_types(fs)}
       }
-      DataRow(vals) => res.rows.push(decode_row(oids, vals))
+      DataRow(vals) => {
+        if !described {
+          return Err(p.row_first())
+        }
+        res.rows.push(p.row_of(oids, vals)?)
+      }
       CommandComplete(tag) => {
         res.rows_affected = pgwire.rows_affected(tag)
         return PipeRes{r: res}
@@ -1363,7 +1410,7 @@ fn (s: PgStmt) query(args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr us
 fn (s: PgStmt) exec(args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
   s.check(args)?
   s.p.send(pgwire.bind("", s.name, args.map(param_of), [0]) + pgwire.execute("", 0) + pgwire.sync())?
-  let r = s.p.collect()?
+  let r = s.p.collect_of(false)?
   sql.ExecResult{rows_affected: pgwire.rows_affected(r.tag), last_insert_id: 0}
 }
 
