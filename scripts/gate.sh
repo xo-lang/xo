@@ -283,11 +283,27 @@ if pk is not None:
 print("\n".join(rows))
 PY
 }
+# pkg_budget PKG: go test's -timeout for PKG's run in a step, from the
+# continuous tier's actuals with every test on, about 1.5 times the
+# slowest finished run on the slowest host (2026-11-15: host 4 runs every
+# step about 1.7 times as long as host 3, and with 3 steps at once the
+# llvm step's golden run (57,000 subtest seconds) passed 120m twice while
+# the same work took 4,257 s on host 3; #51). XO_GATE_TIMEOUT overrides
+# it for every package.
+pkg_budget() {
+  [ -n "${XO_GATE_TIMEOUT:-}" ] && { echo "$XO_GATE_TIMEOUT"; return; }
+  case $1 in
+  ./internal/llvm) echo 200m ;;  # 4,257 s host 3, over 7,200 s host 4
+  ./internal/arm64) echo 120m ;; # 2,778 s host 3, 4,821 s host 4
+  ./cmd/xo) echo 90m ;;          # 1,868 s host 3, 3,301 s host 4
+  *) echo 120m ;;                # as before (gen 1,395 s, stdtest 1,140 s on host 4)
+  esac
+}
 full() { # NAME PKG [go test args]: one package's full tests
   n=$1; p=$2; shift 2
   # -json keeps every test's time ($logs/NAME.json, the 40 slowest in
   # NAME.slow.txt); NAME.txt is its output as go test -v prints it
-  go test -json -count=1 -timeout 120m "$p" "$@" >"$logs/$n.json" 2>"$logs/$n.err"
+  go test -json -count=1 -timeout "$(pkg_budget "$p")" "$p" "$@" >"$logs/$n.json" 2>"$logs/$n.err"
   rc=$?
   python3 -c 'import json,sys
 for l in open(sys.argv[1], errors="replace"):
