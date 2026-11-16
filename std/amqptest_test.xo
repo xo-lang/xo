@@ -183,6 +183,173 @@ test "abandon redelivers, reject and the delivery limit dead letter" uses (net, 
   }
 }
 
+fn app_prop(m: amqp.Message, k: Str) -> Str {
+  for (n, v) in m.app_properties ?? [] {
+    match v {
+      Str(x) => { if n == k { return x } }
+      _ => {}
+    }
+  }
+  "-"
+}
+
+// A lock that runs out is a delivery attempt: past the maximum the message is dead lettered, as
+// Service Bus does, not delivered again (TestAmqptestFuzz, 2026-11-16).
+test "a lock that runs out past the delivery limit dead letters" uses (net, clock) {
+  let b = new(os.clock)
+  b.queue("q", QueueOptions{max_delivery_count: 2, lock_ms: 50})
+  b.put("q", msg("a"))
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let rcv = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 1}).or_fault("receiver")
+    let a1 = rcv.receive(2000).or_fault("receive a")
+    expect(text(a1.message)) == "a"
+    os.clock.sleep(80ms)
+    let a2 = rcv.receive(2000).or_fault("receive a again")
+    expect(text(a2.message)) == "a"
+    os.clock.sleep(80ms)
+    // two deliveries used and the second lock ran out: a is dead lettered
+    expect(b.ready("q").len()) == 0
+    expect(b.dead_letters("q").len()) == 1
+    expect(app_prop(b.dead_letters("q")[0], "DeadLetterReason")) == "MaxDeliveryCountExceeded"
+    c.close().or_fault("close")
+  }
+}
+
+// When a lock runs out the message goes to a receiver that waits, under a new lock; the old
+// delivery's lock is lost (it was never delivered again, and with that fixed its settle was
+// accepted: TestAmqptestFuzz, 2026-11-16).
+test "a lock that runs out redelivers to a waiting receiver, and the old delivery is lock lost" uses (net, clock) {
+  let b = new(os.clock)
+  b.queue("q", QueueOptions{lock_ms: 100})
+  b.put("q", msg("a"))
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let rcv = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 2, settle_mode: Some(amqp.ReceiverSettleMode.Second)}).or_fault("receiver")
+    let d1 = rcv.receive(2000).or_fault("receive a")
+    let d2 = rcv.receive(2000).or_fault("receive a again after its lock ran out")
+    expect(text(d2.message)) == "a"
+    expect(d2.message.header.or_fault("header").delivery_count) == 1
+    match rcv.accept(d1) {
+      Ok(_) => fault("the old delivery's settle was accepted")
+      Err(e) => {
+        match e {
+          Peer(w) => expect(w.condition) == "com.microsoft:message-lock-lost"
+          _ => fault("wrong error")
+        }
+      }
+    }
+    rcv.accept(d2).or_fault("accept the new delivery")
+    until(os.clock, fn() -> Bool { b.ready("q").len() == 0 && b.locked("q") == 0 })
+    c.close().or_fault("close")
+  }
+}
+
+/// The real clock moved forward by jumps: a lock runs out before the broker's timer wakes.
+struct JumpClock {
+  base: Clock
+  ms: Mutex[Int]
+}
+
+fn (c: JumpClock) now() -> Time uses clock { c.base.now() + Duration.from_millis(c.ms.with_read(fn(n: Int) -> Int { n })) }
+fn (c: JumpClock) sleep(d: Duration) uses clock { c.base.sleep(d) }
+fn (c: JumpClock) sleep_or_cancel(d: Duration) -> () ! ClockErr uses clock { c.base.sleep_or_cancel(d) }
+fn (c: JumpClock) since(t: Time) -> Duration uses clock { c.now() - t }
+
+// A lock that ran out counted as a delivery; closing the receiver after that gave the message
+// back uncounted, as if it had not been delivered (TestAmqptestFuzz, 2026-11-16).
+test "closing a receiver after its lock ran out keeps the delivery counted" uses (net, clock) {
+  let clk = JumpClock{base: os.clock, ms: Mutex[Int].new(0)}
+  let b = new(clk)
+  b.queue("q", QueueOptions{max_delivery_count: 2})
+  b.put("q", msg("a"))
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let r1 = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 1, settle_mode: Some(amqp.ReceiverSettleMode.Second)}).or_fault("receiver 1")
+    let d1 = r1.receive(2000).or_fault("receive a")
+    expect(d1.message.header.or_fault("header").delivery_count) == 0
+    clk.ms.with(fn(var n: Int) { n += 61000 })
+    r1.close().or_fault("close receiver 1")
+    let r2 = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 1, settle_mode: Some(amqp.ReceiverSettleMode.Second)}).or_fault("receiver 2")
+    let d2 = r2.receive(2000).or_fault("receive a again")
+    expect(d2.message.header.or_fault("header").delivery_count) == 1
+    // and its lock running out too reaches the limit of 2
+    clk.ms.with(fn(var n: Int) { n += 61000 })
+    r2.close().or_fault("close receiver 2")
+    expect(b.ready("q").len()) == 0
+    expect(app_prop(b.dead_letters("q")[0], "DeadLetterReason")) == "MaxDeliveryCountExceeded"
+    c.close().or_fault("close")
+  }
+}
+
+// A receiver's credit tops up to its target less the deliveries it holds untaken: it granted the
+// whole target on each receive, so its prefetch grew without bound and the broker's locks ran out in
+// it (TestAmqptestFuzz's stress, 2026-11-16).
+test "a receiver's prefetch stays within its credit" uses (net, clock) {
+  let b = new(os.clock)
+  b.queue("q")
+  for i in 0..100 { b.put("q", msg("m${i}")) }
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let rcv = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 4, settle_mode: Some(amqp.ReceiverSettleMode.Second)}).or_fault("receiver")
+    for i in 0..20 {
+      let d = rcv.receive(2000).or_fault("receive")
+      expect(text(d.message)) == "m${i}"
+      rcv.accept(d).or_fault("accept")
+      // what the broker has locked is what the receiver holds or may still get
+      expect(b.locked("q") <= 4) == true
+    }
+    c.close().or_fault("close")
+  }
+}
+
+// Go's azservicebus dead letters with the condition com.microsoft:dead-letter and the reason in the
+// error's info, and reads the reason from the dead lettered message's application properties
+// (TestAmqptestFuzz, 2026-11-16).
+test "a dead letter's reason as azservicebus sends and reads it" uses (net, clock) {
+  let b = new(os.clock)
+  b.queue("q")
+  b.put("q", msg("a"))
+  b.put("q", msg("b"))
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let rcv = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 1}).or_fault("receiver")
+    let a = rcv.receive(2000).or_fault("receive a")
+    rcv.reject(a, Some(amqp.WireError{condition: "com.microsoft:dead-letter", info: [("DeadLetterReason", amqp.Value.Str(v: "why")), ("DeadLetterErrorDescription", amqp.Value.Str(v: "because")), ("extra", amqp.Value.Str(v: "x"))]})).or_fault("dead letter a")
+    let d = rcv.receive(2000).or_fault("receive b")
+    rcv.reject(d, Some(amqp.WireError{condition: "my-reason", description: "bad"})).or_fault("reject b")
+    until(os.clock, fn() -> Bool { b.dead_letters("q").len() == 2 })
+    let dl = b.dead_letters("q")
+    expect((app_prop(dl[0], "DeadLetterReason"), app_prop(dl[0], "DeadLetterErrorDescription"), app_prop(dl[0], "extra"))) == ("why", "because", "x")
+    expect((app_prop(dl[1], "DeadLetterReason"), app_prop(dl[1], "DeadLetterErrorDescription"))) == ("my-reason", "bad")
+    // and a receiver of the dead letter queue sees them
+    let dq = c.new_receiver(sess, "q/$DeadLetterQueue", amqp.ReceiverOptions{credit: 1}).or_fault("dlq receiver")
+    let x = dq.receive(2000).or_fault("receive the dead letter")
+    expect(app_prop(x.message, "DeadLetterReason")) == "why"
+    c.close().or_fault("close")
+  }
+}
+
 test "management: renew-lock, peek, schedule and cancel" uses (net, clock) {
   let b = new(os.clock)
   b.queue("q", QueueOptions{lock_ms: 300})

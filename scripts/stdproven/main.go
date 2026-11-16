@@ -138,6 +138,7 @@ var harnesses = map[string][]harness{
 	"smtp":         {{"TestSmtpFuzz", "XO_SMTPFUZZ"}},
 	"trace":        {{"TestTraceFuzz", "XO_TRACEFUZZ"}},
 	"netip":        {{"TestNetipFuzz", "XO_NETIPFUZZ"}},
+	"amqptest":     {{"TestAmqptestFuzz", "XO_AMQPTFUZZ"}},
 }
 
 func main() {

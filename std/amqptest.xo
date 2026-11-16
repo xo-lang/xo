@@ -180,8 +180,10 @@ pub struct SvLink {
   pub partial_format: Int = 0
   /// replies waiting for credit ($cbs and $management)
   pub replies: List[amqp.Message] = []
-  /// delivery id and sequence number of deliveries the client has not settled
-  pub unsettled: List[(Int, Int)] = []
+  /// delivery id, sequence number and lock token of deliveries the client has not settled (a
+  /// message delivered again after its lock ran out has a new token, and the old delivery's lock
+  /// is lost: settling it was accepted, TestAmqptestFuzz, 2026-11-16)
+  pub unsettled: List[(Int, Int, Bytes)] = []
   pub detached: Bool = false
   /// event hub links: 4 receives a partition, 5 sends to a hub or one partition (`part` -1 for any)
   pub hub: Str = ""
@@ -222,7 +224,56 @@ pub fn new(clock: Clock) -> Broker {
 /// Serves the connections `l` accepts, each in a task of `g`; returns at once. The tasks end when
 /// `g` is cancelled or `l` is closed.
 pub fn (b: Broker) serve(g: task.Group, l: Listener) uses (net.listen, clock) {
+  let tick = Chan[Bool].new(cap: 1)
+  b.st.with(fn(var s: BrokerState) { s.wakes.push((TIMER, tick)) })
+  g.spawn_background(fn() uses (clock, sync) { timer_loop(b, tick) })
   g.spawn_background(fn() uses (net.listen, clock, sync) { accept_loop(b, g, l) })
+}
+
+/// The wake entry of a timer task (not a connection).
+const TIMER: Int = -1
+
+/// Wakes the timer tasks: a lock was taken, so there is a new instant to wake at.
+fn notify_timers(s: BrokerState) {
+  for w in s.wakes {
+    if w.0 == TIMER {
+      let _ = w.1.try_send(true)
+    }
+  }
+}
+
+/// Runs the broker's time: when a lock runs out or a scheduled message comes due, the queues are
+/// brought up to date (a message past its maximum delivery count is dead lettered) and every
+/// connection is woken to deliver, as Service Bus delivers to a waiting receiver. With nothing
+/// pending it waits for a wake-up instead of sleeping, so a fake clock does not run on (a message
+/// whose lock ran out reached no waiting receiver, TestAmqptestFuzz, 2026-11-16).
+fn timer_loop(b: Broker, tick: Chan[Bool]) uses clock {
+  while true {
+    let now = now_ms(b)
+    let soonest = b.st.with(fn(var s: BrokerState) -> Int {
+      var soon = 0
+      var due = false
+      for qi in 0..s.queues.len() {
+        for m in s.queues[qi].msgs {
+          if m.locked_until > 0 && m.locked_until <= now { due = true }
+          // the two deadlines as two checks (a list here allocates per message, XO0914)
+          if m.locked_until > now && (soon == 0 || m.locked_until < soon) { soon = m.locked_until }
+          if m.scheduled_ms > now && (soon == 0 || m.scheduled_ms < soon) { soon = m.scheduled_ms }
+        }
+      }
+      if due {
+        for qi in 0..s.queues.len() { expire_locks(s, qi, now) }
+        notify_all(s)
+      }
+      soon
+    })
+    if soonest == 0 {
+      if tick.recv() == None { return }
+    } else {
+      b.clock.sleep(Duration.from_millis(soonest - now))
+      b.st.with_read(fn(s: BrokerState) { notify_all(s) })
+    }
+  }
 }
 
 /// Declares a queue (a queue is also created, with the defaults, by the first link to it).
@@ -339,6 +390,7 @@ pub fn (b: Broker) put(queue: Str, m: amqp.Message) uses clock {
 /// The messages that can be delivered now, in order, as a client would receive them.
 pub fn (b: Broker) ready(queue: Str) -> List[amqp.Message] uses clock {
   let now = now_ms(b)
+  sweep(b, queue, now)
   b.st.with_read(fn(s: BrokerState) -> List[amqp.Message] {
     let i = find_queue(s, queue)
     if i < 0 { return [] }
@@ -351,9 +403,19 @@ pub fn (b: Broker) ready(queue: Str) -> List[amqp.Message] uses clock {
   })
 }
 
+/// Applies the locks that ran out by `now` to `queue` (a message past its maximum delivery count
+/// goes to the dead letter queue), so what ready and locked report agrees with dead_letters.
+fn sweep(b: Broker, queue: Str, now: Int) {
+  b.st.with(fn(var s: BrokerState) {
+    let i = find_queue(s, queue)
+    if i >= 0 { expire_locks(s, i, now) }
+  })
+}
+
 /// The number of messages locked by a receiver.
 pub fn (b: Broker) locked(queue: Str) -> Int uses clock {
   let now = now_ms(b)
+  sweep(b, queue, now)
   b.st.with_read(fn(s: BrokerState) -> Int {
     let i = find_queue(s, queue)
     if i < 0 { return 0 }
@@ -616,16 +678,26 @@ fn enqueue(var s: BrokerState, qi: Int, m0: amqp.Message, now: Int) -> Int {
   seq
 }
 
-/// Clears locks that ran out.
+/// Clears locks that ran out. A lock that runs out was a delivery attempt: a message that has had
+/// the maximum delivery count goes to the dead letter queue, as an abandon past it does (Service
+/// Bus; it was delivered once more instead, TestAmqptestFuzz, 2026-11-16).
 fn expire_locks(var s: BrokerState, qi: Int, now: Int) {
+  var spent: List[Int] = []
   var i = 0
   while i < s.queues[qi].msgs.len() {
     let lu = s.queues[qi].msgs[i].locked_until
     if lu > 0 && lu <= now {
       s.queues[qi].msgs[i].locked_until = 0
       s.queues[qi].msgs[i].lock_token = b""
+      if s.queues[qi].msgs[i].delivery_count >= s.queues[qi].opts.max_delivery_count {
+        spent.push(s.queues[qi].msgs[i].seq)
+      }
     }
     i += 1
+  }
+  let max = s.queues[qi].opts.max_delivery_count
+  for seq in spent {
+    dead_letter(s, qi, seq, "MaxDeliveryCountExceeded", "Message could not be consumed after ${max} delivery attempts.")
   }
 }
 
@@ -667,6 +739,7 @@ fn take(var s: BrokerState, qi: Int, conn: Int, now: Int, sess: Str, settle: Boo
       s.next_lock += 1
       s.queues[qi].msgs[i].locked_until = now + lock_ms
       s.queues[qi].msgs[i].lock_conn = conn
+      notify_timers(s)
       return Some(s.queues[qi].msgs[i])
     }
     i += 1
@@ -692,7 +765,40 @@ fn find_token(q: FakeQueue, tok: Bytes) -> Int {
   -1
 }
 
-/// Moves the message to the dead letter queue.
+/// The dead letter reason and description of a rejected delivery. Go's azservicebus (and Xo's)
+/// dead letters with the condition `com.microsoft:dead-letter` and the reason, the description and
+/// any properties to modify in the error's info (messageSettler.go); the service takes another
+/// condition as the reason and the error's description as the description. The reason was always
+/// the condition, so a client's reason read `com.microsoft:dead-letter` (TestAmqptestFuzz,
+/// 2026-11-16).
+fn rejected_reason(var s: BrokerState, qi: Int, seq: Int, e: amqp.WireError) -> (Str, Str) {
+  if e.condition != "com.microsoft:dead-letter" { return (e.condition, e.description) }
+  var reason = ""
+  var desc = ""
+  var props: List[(amqp.Value, amqp.Value)] = []
+  for (k, v) in e.info {
+    if k == "DeadLetterReason" {
+      match v {
+        Str(x) => reason = x
+        _ => {}
+      }
+    } else if k == "DeadLetterErrorDescription" {
+      match v {
+        Str(x) => desc = x
+        _ => {}
+      }
+    } else {
+      props.push((amqp.Value.Str(v: k), v))
+    }
+  }
+  apply_modified(s, qi, seq, props)
+  (reason, desc)
+}
+
+/// Moves the message to the dead letter queue, with its reason and description in the application
+/// properties DeadLetterReason and DeadLetterErrorDescription, where the service puts them and
+/// azservicebus reads them (message.go; they were only in a delivery annotation, so a client read
+/// none, TestAmqptestFuzz, 2026-11-16).
 fn dead_letter(var s: BrokerState, qi: Int, seq: Int, reason: Str, description: Str) {
   var q = s.queues[qi]
   let i = find_seq(q, seq)
@@ -702,6 +808,10 @@ fn dead_letter(var s: BrokerState, qi: Int, seq: Int, reason: Str, description: 
   m.lock_token = b""
   m.dead_reason = reason
   m.dead_description = description
+  var props: List[(Str, amqp.Value)] = (m.m.app_properties ?? []).filter(fn(p: (Str, amqp.Value)) -> Bool { p.0 != "DeadLetterReason" && p.0 != "DeadLetterErrorDescription" })
+  props.push(("DeadLetterReason", amqp.Value.Str(v: reason)))
+  props.push(("DeadLetterErrorDescription", amqp.Value.Str(v: description)))
+  m.m.app_properties = Some(props)
   q.dead.push(m)
   q.msgs = q.msgs.filter(fn(x: FakeMsg) { x.seq != seq })
   put_queue(s, qi, q)
@@ -777,8 +887,10 @@ fn defer_msg(var s: BrokerState, qi: Int, seq: Int) {
 }
 
 /// Gives back everything connection `conn` holds locked (it went away).
-fn release_conn(var s: BrokerState, conn: Int) {
+fn release_conn(var s: BrokerState, conn: Int, now: Int) {
   s.owners = s.owners.filter(fn(o: HubOwner) -> Bool { !o.key.contains("#${conn}.") })
+  // a lock that ran out before the connection went counted as a delivery (see drop_link)
+  for x in 0..s.queues.len() { expire_locks(s, x, now) }
   var qi = 0
   while qi < s.queues.len() {
     var q = s.queues[qi]
@@ -1268,7 +1380,7 @@ fn deliver_link(b: Broker, sc: ServerConn, var c: SvConn, li: Int) -> () ! amqp.
         let id = send_message(sc, c, li, msg, tag, l.presettled || l.kind == 3)?
         if !l.presettled && l.kind != 3 {
           var l2 = c.links[li]
-          l2.unsettled.push((id, m.seq))
+          l2.unsettled.push((id, m.seq, m.lock_token))
           put_link(c, l2)
         }
       }
@@ -2043,10 +2155,10 @@ fn on_disposition(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, d: amqp.Dis
   while i < c.links.len() {
     var l = c.links[i]
     if l.channel == ch && l.sends && l.unsettled.len() > 0 {
-      var keep: List[(Int, Int)] = []
-      for (id, seq) in l.unsettled {
+      var keep: List[(Int, Int, Bytes)] = []
+      for (id, seq, tok) in l.unsettled {
         if id < first || id > last {
-          keep.push((id, seq))
+          keep.push((id, seq, tok))
         } else {
           let r = b.st.with(fn(var s: BrokerState) -> amqp.DeliveryState {
             let qi = find_queue(s, l.queue)
@@ -2058,7 +2170,7 @@ fn on_disposition(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, d: amqp.Dis
             expire_locks(s, qi, now)
             let q = s.queues[qi]
             let mi = find_seq(q, seq)
-            if mi < 0 || q.msgs[mi].locked_until == 0 || q.msgs[mi].lock_conn != conn {
+            if mi < 0 || q.msgs[mi].locked_until == 0 || q.msgs[mi].lock_conn != conn || q.msgs[mi].lock_token != tok {
               return amqp.DeliveryState.Rejected(error: Some(werr("com.microsoft:message-lock-lost", "The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue.")))
             }
             match state {
@@ -2070,7 +2182,8 @@ fn on_disposition(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, d: amqp.Dis
               }
               Rejected(error) => {
                 let e = error ?? werr("DeadLetter", "")
-                dead_letter(s, qi, seq, e.condition, e.description)
+                let (reason, desc) = rejected_reason(s, qi, seq, e)
+                dead_letter(s, qi, seq, reason, desc)
               }
               _ => {}
             }
@@ -2096,17 +2209,26 @@ fn on_disposition(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, d: amqp.Dis
 }
 
 /// Gives back what a link held: its unsettled deliveries and its session lock.
-fn drop_link(b: Broker, var c: SvConn, li: Int) {
+fn drop_link(b: Broker, var c: SvConn, li: Int) uses clock {
   var l = c.links[li]
   if l.detached { return }
   let conn = c.id
   if l.kind == 4 {
     b.st.with(fn(var s: BrokerState) { s.owners = s.owners.filter(fn(o: HubOwner) -> Bool { o.key != l.hkey }) })
   }
+  let now = now_ms(b)
   b.st.with(fn(var s: BrokerState) {
     let qi = find_queue(s, l.queue)
     if qi < 0 { return }
-    for (_, seq) in l.unsettled { unlock(s, qi, seq, false) }
+    // a lock that ran out counted as a delivery, and may have dead lettered the message: the
+    // give-back below is for the locks still held (it took the delivery back, TestAmqptestFuzz,
+    // 2026-11-16)
+    expire_locks(s, qi, now)
+    for (_, seq, tok) in l.unsettled {
+      // only a lock this link still holds
+      let mi = find_seq(s.queues[qi], seq)
+      if mi >= 0 && s.queues[qi].msgs[mi].lock_token == tok { unlock(s, qi, seq, false) }
+    }
     if l.session_id != "" { unlock_session(s, qi, conn, l.session_id) }
   })
   l.unsettled = []
@@ -2285,7 +2407,8 @@ fn serve_conn(b: Broker, g: task.Group, sc: ServerConn, id: Int, wake: Chan[Bool
     Ok(_) => {}
     Err(_) => {}
   }
-  b.st.with(fn(var s: BrokerState) { release_conn(s, id) })
+  let now = now_ms(b)
+  b.st.with(fn(var s: BrokerState) { release_conn(s, id, now) })
   sc.close()
 }
 

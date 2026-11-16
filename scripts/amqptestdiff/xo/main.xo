@@ -1,0 +1,109 @@
+// The broker side of the amqptest differential test (internal/stdtest
+// TestAmqptestFuzz): an std/amqptest Broker on a loopback listener, and a
+// control listener for the driver (scripts/amqptestdiff/go, go-amqp
+// v1.7.0), one command a line, each answered by lines and then ".":
+//   queue Q        declares queue Q (max delivery count 3, locks of 60 s)
+//   advance MS     the broker's clock jumps MS milliseconds forward
+//   state Q        Q's ready, locked, deferred and dead lettered messages
+// It prints "amqp ADDR" and "control ADDR", then serves until stdin ends.
+use std/amqp
+use std/amqptest
+
+/// The real clock moved forward by the driver's jumps.
+struct JumpClock {
+  base: Clock
+  ms: Mutex[Int]
+}
+
+fn (c: JumpClock) now() -> Time uses clock { c.base.now() + Duration.from_millis(c.ms.with_read(fn(n: Int) -> Int { n })) }
+fn (c: JumpClock) sleep(d: Duration) uses clock { c.base.sleep(d) }
+fn (c: JumpClock) sleep_or_cancel(d: Duration) -> () ! ClockErr uses clock { c.base.sleep_or_cancel(d) }
+fn (c: JumpClock) since(t: Time) -> Duration uses clock { c.now() - t }
+
+fn body(m: amqp.Message) -> Str {
+  match m.body {
+    Data(sections) => if sections.is_empty() { "" } else { sections[0].to_str_lossy() }
+    _ => "?"
+  }
+}
+
+fn prop(m: amqp.Message, key: Str) -> Str {
+  for (k, v) in m.app_properties ?? [] {
+    match v {
+      Str(s) => { if k == key { return s } }
+      _ => {}
+    }
+  }
+  ""
+}
+
+fn names(ms: List[amqp.Message]) -> Str {
+  var out: List[Str] = []
+  for m in ms {
+    out.push(body(m))
+  }
+  out.join(",")
+}
+
+fn control(b: amqptest.Broker, clk: JumpClock, c: ServerConn) -> () ! NetErr uses (net, clock) {
+  var buf = b""
+  while true {
+    let i = match buf.find(b"\n") {
+      Some(x) => x
+      None => {
+        match c.read(4096)? {
+          Some(more) => {
+            buf = buf + more
+            continue
+          }
+          None => return Ok(())
+        }
+      }
+    }
+    let w = buf[0..i].to_str_lossy().trim().split(" ")
+    buf = buf[i + 1..]
+    var out = ""
+    match w[0] {
+      "advance" => clk.ms.with(fn(var n: Int) { n += Int.parse(w[1]) ?? 0 })
+      "queue" => b.queue(w[1], amqptest.QueueOptions{max_delivery_count: 3})
+      _ => {
+        let q = w[1]
+        // ready and locked first: they apply the locks that ran out
+        let ready = names(b.ready(q))
+        let locked = b.locked(q)
+        var dead: List[Str] = []
+        for m in b.dead_letters(q) {
+          dead.push("${body(m)}:${prop(m, "DeadLetterReason")}:${prop(m, "DeadLetterErrorDescription")}")
+        }
+        out = "ready ${ready}\nlocked ${locked}\ndeferred ${names(b.deferred(q))}\ndead ${dead.join(",")}\n"
+      }
+    }
+    c.write("${out}.\n".bytes())?
+  }
+  Ok(())
+}
+
+fn main(os: Os) ! {
+  let clk = JumpClock{base: os.clock, ms: Mutex[Int].new(0)}
+  let b = amqptest.new(clk)
+  let l = os.net.listen("127.0.0.1:0")?
+  let cl = os.net.listen("127.0.0.1:0")?
+  os.stdio.println("amqp ${l.addr()}")
+  os.stdio.println("control ${cl.addr()}")
+  scope s {
+    b.serve(s.group(), l)
+    s.spawn_background(fn() {
+      while let Ok(c) = cl.accept() {
+        s.spawn_background(fn() {
+          control(b, clk, c).ignore_err("the driver hung up")
+          c.close()
+        })
+      }
+    })
+    // until the test closes stdin
+    os.stdio.lines().ignore_err("stdin closed")
+    l.close()
+    cl.close()
+    s.cancel()
+  }
+}

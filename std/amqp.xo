@@ -3529,8 +3529,13 @@ fn step_receive(var c: ConnState, id: Int) -> Delivery? ! AmqpErr uses (net.dial
     let d = l.inbox[0]
     l.inbox = l.inbox[1..]
     put_link(c, l)
-    if l.credit <= l.credit_target / 2 {
-      grant_credit(c, id, l.credit_target)?
+    // the credit tops up to the target less what is already here, so deliveries received and not
+    // yet taken plus those the peer may still send stay within the target, as go-amqp keeps them
+    // (it granted the whole target each time: the inbox grew by about the target on every receive,
+    // and under load Service Bus's locks ran out in it, TestAmqptestFuzz's stress, 2026-11-16)
+    let want = l.credit_target - l.inbox.len()
+    if l.credit <= l.credit_target / 2 && want > l.credit {
+      grant_credit(c, id, want)?
     }
     return Ok(Some(d))
   }

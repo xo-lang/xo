@@ -221,3 +221,16 @@ broker (std/amqptest) reads a string of Unix seconds as well as a Timestamp.
 `amqp.dial` of an `amqps://` address sent and verified the TLS server name of the address's host. With
 `ConnOptions.hostname` set it now uses that name for both, as it already did for the Open's hostname, so a client
 dialing a proxy's address can verify the namespace's name.
+
+## 2026-11-16: fix: a receiver's prefetch stays within its credit
+
+- Kind: fix
+- Commit: this commit
+- Found by: azure-1 (std/evidence/amqptest/stress, task #115: consumers under load got lock-lost on deliveries a minute old)
+- Go reference: go-amqp v1.7.0 receiver.go (credit issued is the maximum less the messages held)
+- Test: native/amqptest "a receiver's prefetch stays within its credit"
+
+A receiver with `ReceiverOptions.credit` topped its credit up to the whole target whenever it fell to half, without
+counting the deliveries it had received and not yet handed out, so the inbox grew by about the target on each receive.
+Under load the inbox held hundreds of deliveries, and a broker's message locks (Service Bus's 60 s) ran out before
+`receive` reached them. The credit now tops up to the target less the deliveries held.

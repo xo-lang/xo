@@ -178,3 +178,21 @@ The broker reads the put-token `expiration` as a Timestamp or as a string of Uni
 
 Under `require_token(true)` an event hub link is authorized by a claim whose audience ends with the hub's name or with the
 link's own path.
+
+## 2026-11-16: fix: lock expiry, dead letter reasons and stale deliveries behave as Service Bus
+
+- Kind: fix
+- Commit: this commit
+- Found by: azure-1 (TestAmqptestFuzz, task #115: go-amqp v1.7.0 against a model of the queue semantics)
+- Go reference: azservicebus v1.11.0 messageSettler.go (dead letter with `com.microsoft:dead-letter` and the reason in the error's info) and message.go (DeadLetterReason and DeadLetterErrorDescription read from the application properties)
+- Test: native/amqptest "a lock that runs out past the delivery limit dead letters", "a lock that runs out redelivers to a waiting receiver, and the old delivery is lock lost", "closing a receiver after its lock ran out keeps the delivery counted", "a dead letter's reason as azservicebus sends and reads it"
+
+A lock that runs out is a delivery attempt: past the maximum delivery count the message is dead lettered as
+MaxDeliveryCountExceeded (it was delivered again), and a broker task wakes the connections when a lock runs out or a
+scheduled message comes due, so a waiting receiver gets it (it got nothing until another event). A delivery remembers its
+lock token: settling one whose message came back under a new lock is `com.microsoft:message-lock-lost` (it was accepted),
+and closing its link gives back only a lock it still holds. Closing a link or losing a connection after a lock ran out
+keeps that delivery counted (the give-back took it back). A rejection with `com.microsoft:dead-letter` takes the reason,
+description and properties to modify from the error's info, as azservicebus sends them (the condition was the reason),
+and a dead lettered message carries DeadLetterReason and DeadLetterErrorDescription in its application properties, where
+azservicebus reads them (they were only a delivery annotation). `ready` and `locked` apply the locks that ran out first.

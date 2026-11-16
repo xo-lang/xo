@@ -1,0 +1,211 @@
+// amqptest stress program (decision 0616 section 2): an std/amqptest
+// broker serves 4 queues (maximum delivery count 5) on loopback. TASKS
+// producers each send numbered messages to the queues in turn, and TASKS
+// consumers each hold a peek-lock receiver (credit 8) on one queue and
+// settle what they get: mostly accept, sometimes release, abandon
+// (modify) or dead letter, each over its own std/amqp connection. When
+// the time is up (or every producer has sent its share) the producers
+// stop and the consumers drain the queues. Every message must end
+// accepted exactly once or in its queue's dead letter queue, none lost,
+// none accepted twice, and the broker must hold nothing ready or locked.
+// A background task samples the resident set every 10 s (Linux
+// /proc/self/status) and prints it each minute. Pass: those checks, no
+// fault, and the resident set at the end within 10% or 4 MB of its sample
+// at 5 minutes.
+//
+//   main [MINUTES (30); 0: 300 messages per producer] [TASKS (16)]
+use std/amqp
+use std/amqptest
+
+const QUEUES: Int = 4
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+fn body_of(m: amqp.Message) -> Str {
+  match m.body {
+    Data(sections) => if sections.is_empty() { "" } else { sections[0].to_str_lossy() }
+    _ => ""
+  }
+}
+
+/// An error's text (AmqpErr is open and has no display).
+fn es(e: amqp.AmqpErr) -> Str {
+  match e {
+    Decode(m) => "decode: ${m}"
+    Encode(m) => "encode: ${m}"
+    Net(m) => "net: ${m}"
+    Protocol(m) => "protocol: ${m}"
+    Peer(w) => "peer: ${w.condition} ${w.description}"
+    _ => "another error"
+  }
+}
+
+fn opts(os: Os) -> amqp.ConnOptions {
+  amqp.ConnOptions{container_id: "stress", clock: Some(os.clock), sasl: amqp.Sasl.Anonymous, timeout_ms: 10000}
+}
+
+fn producer(os: Os, addr: Str, t: Int, end: Time, passes: Int, stop: Mutex[Bool], sent: Mutex[Int]) -> Int ! Str uses (net, clock) {
+  let c = amqp.dial(os.net, addr, opts(os)).map_err(fn(e) { "producer ${t}: dial: ${es(e)}" })?
+  let sess = c.begin().map_err(fn(e) { "producer ${t}: begin: ${es(e)}" })?
+  var snds: List[amqp.Sender] = []
+  for q in 0..QUEUES {
+    snds.push(c.new_sender(sess, "q${q}", amqp.SenderOptions{name: "p${t}.${q}"}).map_err(fn(e) { "producer ${t}: sender: ${es(e)}" })?)
+  }
+  var k = 0
+  while if passes > 0 { k < passes } else { os.clock.now() < end && !stop.with_read(fn(b: Bool) -> Bool { b }) } {
+    let m = amqp.Message{body: amqp.Body.Data(sections: ["${t}.${k}".bytes()])}
+    match snds[k % QUEUES].send(m).map_err(fn(e) { "producer ${t} message ${k}: ${es(e)}" })? {
+      Some(amqp.DeliveryState.Accepted) => {}
+      _ => return Err("producer ${t} message ${k}: not accepted")
+    }
+    sent.with(fn(var n: Int) { n += 1 })
+    k += 1
+  }
+  c.close().map_err(fn(e) { "producer ${t}: close: ${es(e)}" })?
+  Ok(k)
+}
+
+/// One consumer: settles until `drained` says the producers are done and its queue is empty.
+fn consumer(os: Os, b: amqptest.Broker, addr: Str, t: Int, accepted: Mutex[Map[Str, Int]], producing: Mutex[Bool]) -> Int ! Str uses (net, clock) {
+  let q = "q${t % QUEUES}"
+  let c = amqp.dial(os.net, addr, opts(os)).map_err(fn(e) { "consumer ${t}: dial: ${es(e)}" })?
+  let sess = c.begin().map_err(fn(e) { "consumer ${t}: begin: ${es(e)}" })?
+  let rcv = c.new_receiver(sess, q, amqp.ReceiverOptions{name: "c${t}", credit: 8, settle_mode: Some(amqp.ReceiverSettleMode.Second)}).map_err(fn(e) { "consumer ${t}: receiver: ${es(e)}" })?
+  var x = next(t + 77)
+  var n = 0
+  while true {
+    let d = match rcv.receive(300) {
+      Ok(d) => d
+      Err(_) => {
+        // nothing came: done once the producers are and the queue is empty
+        if !producing.with_read(fn(p: Bool) -> Bool { p }) && b.ready(q).is_empty() && b.locked(q) == 0 {
+          break
+        }
+        continue
+      }
+    }
+    x = next(x)
+    let id = body_of(d.message)
+    match (x >> 40) % 20 {
+      0 => rcv.release(d).map_err(fn(e) { "consumer ${t}: release ${id}: ${es(e)}" })?
+      1 => rcv.modify(d).map_err(fn(e) { "consumer ${t}: abandon ${id}: ${es(e)}" })?
+      2 => {
+        if (x >> 20) % 8 == 0 {
+          rcv.reject(d, Some(amqp.WireError{condition: "com.microsoft:dead-letter", info: [("DeadLetterReason", amqp.Value.Str(v: "stress"))]})).map_err(fn(e) { "consumer ${t}: dead letter ${id}: ${es(e)}" })?
+        } else {
+          rcv.release(d).map_err(fn(e) { "consumer ${t}: release ${id}: ${es(e)}" })?
+        }
+      }
+      _ => {
+        rcv.accept(d).map_err(fn(e) { "consumer ${t}: accept ${id}: ${es(e)}" })?
+        let twice = accepted.with(fn(var m: Map[Str, Int]) -> Bool {
+          let seen = m.contains(id)
+          m.put(id, (m.get(id) ?? 0) + 1)
+          seen
+        })
+        if twice {
+          return Err("consumer ${t}: ${id} accepted twice")
+        }
+        n += 1
+      }
+    }
+  }
+  c.close().map_err(fn(e) { "consumer ${t}: close: ${es(e)}" })?
+  Ok(n)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 16 } else { 16 }
+  let passes = if minutes == 0 { 300 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let b = amqptest.new(os.clock)
+  for q in 0..QUEUES {
+    b.queue("q${q}", amqptest.QueueOptions{max_delivery_count: 5})
+  }
+  let l = os.net.listen("127.0.0.1:0")?
+  let addr = l.addr()
+  let accepted = Mutex[Map[Str, Int]].new({})
+  let producing = Mutex[Bool].new(true)
+  let stop = Mutex[Bool].new(false)
+  let sent = Mutex[Int].new(0)
+  let (made, took) = scope s {
+    b.serve(s.group(), l)
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB, ${sent.with_read(fn(n: Int) -> Int { n })} sent")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var cs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      cs.push(s.spawn(fn() -> Int ! Str { consumer(os, b, addr, t, accepted, producing) }))
+    }
+    var ps: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      ps.push(s.spawn(fn() -> Int ! Str { producer(os, addr, t, end, passes, stop, sent) }))
+    }
+    var made = 0
+    for h in ps {
+      made += h.await.map_err(fn(e) { "a producer: ${e}" })?
+    }
+    producing.with(fn(var p: Bool) { p = false })
+    var took = 0
+    for h in cs {
+      took += h.await.map_err(fn(e) { "a consumer: ${e}" })?
+    }
+    l.close()
+    s.cancel()
+    (made, took)
+  }
+  // every message accepted once or dead lettered, and nothing left
+  var dead = 0
+  for q in 0..QUEUES {
+    dead += b.dead_letters("q${q}").len()
+    if !b.ready("q${q}").is_empty() || b.locked("q${q}") != 0 {
+      return Err("q${q} still holds messages")
+    }
+  }
+  let once = accepted.with_read(fn(m: Map[Str, Int]) -> Int { m.len() })
+  if once != took || took + dead != made {
+    return Err("${made} sent, ${took} accepted (${once} distinct), ${dead} dead lettered: lost or duplicated")
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("amqptest stress: ${made} messages by ${tasks} producers, ${took} accepted once and ${dead} dead lettered by ${tasks} consumers in ${minutes} min, none lost, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}
