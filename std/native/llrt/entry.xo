@@ -583,6 +583,30 @@ pub fn heapstats() {
     }
     sum += n * (size + 8)
   }
+  // XO_HEAPSTATS=pages (a value starting with p): every free block of
+  // the prefixed classes, `xo heapstats: fb CLASS ADDRESS`, for a
+  // page-level view of what they hold (decision 0676)
+  let hs = process.env_real_at("XO_HEAPSTATS")
+  if hs != 0 && rt.mem_load(hs, 0, 1) == 112 {
+    // classes 1 to 76 (alloc.xo PAGE_CLASS 77: page blocks, which the age
+    // passes already give back)
+    for c in 1..77 {
+      let n = heapos.nfree(c)
+      if n > 0 {
+        let out = rt.heap_large(n * 8)
+        let k = heapos.free_addrs(c, out, n)
+        for i in 0..k {
+          var at = put(b, 0, "xo heapstats: fb ")
+          at = put_int(b, at, c)
+          at = put(b, at, " ")
+          at = put_int(b, at, rt.mem_load(out, i * 8, 8))
+          at = put(b, at, "\n")
+          emit(b, at)
+        }
+        release(out)
+      }
+    }
+  }
   let wt = alloc.waste_table()
   if wt != 0 {
     // per class above 1 KiB: allocations, bytes asked, bytes handed out

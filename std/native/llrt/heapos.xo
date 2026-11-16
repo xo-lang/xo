@@ -2920,6 +2920,49 @@ pub fn nfree(c: Int) -> Int {
   n
 }
 
+/// XO_HEAPSTATS=pages (entry.xo heapstats): the addresses of class c's
+/// free blocks (a prefixed class, below PAGE_CLASS: linked by their first
+/// word) on every heap record's list and spare magazine and the central
+/// list, at most max of them, written to out; the count written. For the
+/// page-level view of the small classes decision 0676 starts from.
+pub fn free_addrs(c: Int, out: Int, max: Int) -> Int {
+  var n = 0
+  hlock_take()
+  var h = heaps_head()
+  while h != 0 {
+    let fl = h.wrapping_add(c.wrapping_shl(3))
+    n = put_list(rt.mem_load(fl, H_FREE_LISTS, 8), out, n, max)
+    n = put_list(rt.mem_load(fl, H_MAG, 8), out, n, max)
+    h = rt.mem_load(h, H_NEXT, 8)
+  }
+  let h0 = heaps_head()
+  if h0 != 0 {
+    let cen = rt.mem_load(h0, H_CENTRAL, 8)
+    if cen != 0 {
+      var m = rt.slot_load(cen, c, RELAXED)
+      while m != 0 {
+        n = put_list(m, out, n, max)
+        m = alloc.cnext(false, m)
+      }
+    }
+  }
+  hlock_give()
+  n
+}
+
+/// free_addrs' list walk: the blocks linked by their first word from p,
+/// written to out from index n while under max; the new count.
+fn put_list(p: Int, out: Int, n0: Int, max: Int) -> Int {
+  var n = n0
+  var q = p
+  while q != 0 && n < max {
+    rt.mem_store(out, n.wrapping_shl(3), q, 8)
+    n = n.wrapping_add(1)
+    q = rt.mem_load(q, 0, 8)
+  }
+  n
+}
+
 /// The length of the list of blocks linked by their first word from p.
 fn list_len(p: Int) -> Int {
   var n = 0
