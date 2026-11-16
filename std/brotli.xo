@@ -715,9 +715,9 @@ fn write_ring_buffer(var d: Dec) -> () ! BrotliErr {
     return Err(brotli_err("BLOCK_LENGTH_1"))
   }
   let start = d.partial_pos_out & d.rb_mask
-  for j in 0..to_write {
-    d.out.write_byte(d.ring[start + j])
-  }
+  // one bulk copy of the ring's run (decision 0667): a write_byte per
+  // byte was 23% of a text decode
+  d.out.write_list(d.ring, start, start + to_write)
   d.partial_pos_out += to_write
   if d.out.len() > d.max_size {
     return Err(BrotliErr{msg: "brotli: output exceeds max_size (${d.max_size} bytes)"})
@@ -1139,10 +1139,27 @@ fn process_commands(var d: Dec) -> () ! BrotliErr {
       d.dist_rb_idx += 1
       d.remaining -= n
       let dist = d.distance_code
-      for _ in 0..n {
-        d.ring[d.pos] = d.ring[(d.pos - dist) & d.rb_mask]
-        d.pos += 1
-        if d.pos == d.rb_size {
+      var left = n
+      while left > 0 {
+        // up to the end of the ring buffer, where Go writes it out
+        var run = d.rb_size - d.pos
+        if run > left {
+          run = left
+        }
+        var p = d.pos
+        let m = d.rb_mask
+        let stop = p + run
+        // the ring out of d while it is written: one owner, no copy
+        var r = d.ring
+        d.ring = []
+        while p < stop {
+          r[p] = r[(p - dist) & m]
+          p += 1
+        }
+        d.ring = r
+        d.pos = p
+        left -= run
+        if p == d.rb_size {
           ring_full(d)?
         }
       }

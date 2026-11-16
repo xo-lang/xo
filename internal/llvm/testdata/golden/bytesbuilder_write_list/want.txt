@@ -1,0 +1,18 @@
+exit 70
+--- stdout
+0..0 len=3 ok=true sum=96297
+0..1 len=4 ok=true sum=2992690
+3..10 len=10 ok=true sum=429919581
+0..8 len=11 ok=true sum=696182268
+5..21 len=19 ok=true sum=22874717
+1..255 len=257 ok=true sum=979138711
+0..256 len=259 ok=true sum=203478715
+7..263 len=259 ok=true sum=550751114
+0..1000 len=1003 ok=true sum=627143958
+999..1000 len=4 ok=true sum=2987265
+from_list len=1000 sum=864332259 first=250 last=75
+empty len=0
+five len=5000 sum=90625843
+copies 1 9 2
+--- stderr
+fault: slice 10..1001 out of range for List of length 1000 (BytesBuilder.write_list) at main.xo:53

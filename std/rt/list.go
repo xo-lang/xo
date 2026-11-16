@@ -1061,6 +1061,15 @@ func (b *BytesBuilder) M_write_le(_ *Task, v, n int64) { b.write(v, n, false) }
 // M_write_be is `b.write_be(v, n)`: highest byte first.
 func (b *BytesBuilder) M_write_be(_ *Task, v, n int64) { b.write(v, n, true) }
 
+// M_write_list is `b.write_list(l, from, to)`: l[from:to] appended in one
+// copy (decision 0667).
+func (b *BytesBuilder) M_write_list(_ *Task, l List[uint8], from, to int64) {
+	if from < 0 || to > int64(len(l.s)) || from > to {
+		FaultHere("slice %d..%d out of range for List of length %d (BytesBuilder.write_list)", from, to, len(l.s))
+	}
+	b.b = append(b.b, l.s[from:to]...)
+}
+
 func (b *BytesBuilder) write(v, n int64, be bool) {
 	if n < 0 || n > 8 {
 		FaultHere("BytesBuilder.write_le and write_be: width must be 0 to 8")

@@ -776,6 +776,9 @@ fn (b: Bytes) repeat(n: Int) -> Bytes
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]
 /// n zero bytes (Go's make([]byte, n)); a fault for n < 0.
 fn (static: Bytes) zeroed(n: Int) -> Bytes
+/// The elements of l as Bytes, copied once (Go's `[]byte(l)` when l is a
+/// []byte already: `append([]byte(nil), l...)`; decision 0667).
+fn (static: Bytes) from_list(l: List[UInt8]) -> Bytes
 /// s as a double quoted Xo and Go literal with escapes (Go's
 /// strconv.Quote); an invalid byte is \xHH.
 fn (s: Str) quote() -> Str
@@ -1275,6 +1278,10 @@ fn (var b: BytesBuilder) write_le(v: Int, n: Int)
 /// Appends v's low n (0 to 8) bytes, highest first (Go's
 /// binary.BigEndian.AppendUint64 cut to n); a fault for another n.
 fn (var b: BytesBuilder) write_be(v: Int, n: Int)
+/// Appends l[from..to] (Go's `b.Write(l[from:to])` on a []byte), one copy
+/// where a write_byte per element pushes each byte (decision 0667); a
+/// fault when from..to is not a range of l.
+fn (var b: BytesBuilder) write_list(l: List[UInt8], from: Int, to: Int)
 /// The number of bytes written.
 fn (b: BytesBuilder) len() -> Int
 /// What has been written as Bytes, without a copy; it moves b.

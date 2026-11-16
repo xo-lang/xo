@@ -302,6 +302,7 @@ fn (b: Bytes) repeat(n: Int) -> Bytes        // bytes.Repeat; empty for 0, a fau
 fn (b: Bytes) clone() -> Bytes               // an explicit copy in a buffer of its own
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]  // each byte with its offset, as List.indexed
 fn (static: Bytes) zeroed(n: Int) -> Bytes   // n zero bytes (make([]byte, n)); a fault for n < 0
+fn (static: Bytes) from_list(l: List[UInt8]) -> Bytes // l's elements, copied once (decision 0667)
 fn (s: Str) unquote() -> Str?                // Go's Unquote (decision 0287); None when s is not a literal or the text is not UTF-8
 
 fn (r: Rune) is_digit() -> Bool              // also is_letter, is_space
@@ -615,6 +616,7 @@ fn ([var] b: BytesBuilder) write_byte(x: UInt8)
 fn ([var] b: BytesBuilder) write_str(s: Str)  // its UTF-8 bytes
 fn ([var] b: BytesBuilder) write_rune(r: Rune) // its UTF-8 encoding
 fn ([var] b: BytesBuilder) put_le(at: Int, v: Int, n: Int) // overwrite n (1, 2, 4, 8) bytes in place; put_be too
+fn ([var] b: BytesBuilder) write_list(l: List[UInt8], from: Int, to: Int) // l[from..to] in one copy (decision 0667); a fault outside l
 fn (b: BytesBuilder) len() -> Int            // also on StrBuilder
 fn (b: BytesBuilder) freeze() -> Bytes       // moves b
 Replacer.new(pairs: List[(Str, Str)]) -> Replacer // decision 0594: Go's strings.NewReplacer
@@ -641,6 +643,12 @@ record inside one written piece is a view of it; one that spans pieces is
 joined once). `peek`, `next` and `read_until` return views that stay
 valid after later writes (Go's `Next` is valid only until the next
 write); `peek` and `find` copy when the bytes they cover span pieces. A count `n` below 0 is 0 and above `len()` is `len()`.
+
+`BytesBuilder.write_list(l, from, to)` (decision 0667) appends `l[from..to]`
+of a `List[UInt8]` (Go's `b.Write(l[from:to])`) and `Bytes.from_list(l)`
+makes `Bytes` of all of `l`: one copy, where a `write_byte` per element
+pushes each byte, and neither aliases `l` afterwards. `from..to` must be a
+range of `l`; otherwise `write_list` faults at the caller's line.
 
 `BytesBuilder.put_le` and `put_be` (decision 0399) overwrite the `n` bytes
 `at..at + n` of what has been written, in place (Go's
@@ -7186,7 +7194,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-585 declarations.
+587 declarations.
 
 ### Range
 
@@ -7505,6 +7513,7 @@ fn (b: Bytes) equal_fold(other: Bytes) -> Bool
 fn (b: Bytes) repeat(n: Int) -> Bytes
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]
 fn (static: Bytes) zeroed(n: Int) -> Bytes
+fn (static: Bytes) from_list(l: List[UInt8]) -> Bytes
 ```
 
 ### List
@@ -7747,6 +7756,7 @@ fn (var b: BytesBuilder) put_le(at: Int, v: Int, n: Int)
 fn (var b: BytesBuilder) put_be(at: Int, v: Int, n: Int)
 fn (var b: BytesBuilder) write_le(v: Int, n: Int)
 fn (var b: BytesBuilder) write_be(v: Int, n: Int)
+fn (var b: BytesBuilder) write_list(l: List[UInt8], from: Int, to: Int)
 fn (b: BytesBuilder) len() -> Int
 fn (b: BytesBuilder) freeze() -> Bytes
 ```

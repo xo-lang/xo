@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-11-15: feature: BytesBuilder.write_list and Bytes.from_list
+
+- Kind: feature, perf
+- Commit: this push
+- Found by: Xo Lang 3's std/brotli profile (write_ring_buffer, a write_byte per byte, 23% of a text decode); the lead asked for the primitive (decision 0667)
+- Go reference: `b.Write(l[from:to])` and `append([]byte(nil), l...)` on a []byte (go1.26)
+- Test: internal/llvm/testdata/golden/bytesbuilder_write_list (arm64, llvm, Go parity, wasm); internal/arm64 TestWriteListBulk (instruction ceiling)
+- Shipped in: not yet released
+- Timing: 131 MB appended on the Mac, arm64: 1.99G instructions with write_byte against 77M (64 KiB runs), 2.12G against 555M (100 byte runs); LLVM 10.1G against 80M and 10.3G against 1.8G
+
+A `List[UInt8]` went into a builder one `write_byte` at a time.
+`write_list` appends a range of it and `from_list` makes Bytes of it with
+one copy on the native targets (the list is packed there), eight
+elements a push on wasm.
+
 ## 2026-11-15: fix: File.read_at fills max past 1 MiB, as Go's ReadAt
 
 - Kind: fix

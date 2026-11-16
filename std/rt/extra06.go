@@ -436,6 +436,13 @@ func Bytes_zeroed(_ *Task, n int64) Bytes {
 	return Bytes(make([]byte, n))
 }
 
+// Bytes_from_list is `Bytes.from_list(l)`: the elements copied once
+// (decision 0667).
+func Bytes_from_list(_ *Task, l List[uint8]) Bytes {
+	// a conversion to a string type copies: the result never aliases l.s
+	return Bytes(l.s)
+}
+
 // Str_clone is `s.clone()`: Go strings are immutable and substrings share by
 // design, so the copy is the value itself (decision 0330 views are native only).
 func Str_clone(_ *Task, s string) string { return s }

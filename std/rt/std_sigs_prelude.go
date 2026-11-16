@@ -184,6 +184,7 @@ var (
 	_ func(*Task, Bytes, int64) Bytes                                                                      = Bytes_repeat
 	_ func(*Task, Bytes) List[Tuple2[int64, uint8]]                                                        = Bytes_indexed
 	_ func(*Task, int64) Bytes                                                                             = Bytes_zeroed
+	_ func(*Task, List[uint8]) Bytes                                                                       = Bytes_from_list
 	_ func(*Task, string) string                                                                           = Str_quote
 	_ func(*Task, string) Option[string]                                                                   = Str_unquote
 	_ func(*Task, Rune) bool                                                                               = Rune_is_digit
@@ -238,6 +239,7 @@ var (
 	_ func(*BytesBuilder, *Task, int64, int64, int64)                                                      = (*BytesBuilder).M_put_be
 	_ func(*BytesBuilder, *Task, int64, int64)                                                             = (*BytesBuilder).M_write_le
 	_ func(*BytesBuilder, *Task, int64, int64)                                                             = (*BytesBuilder).M_write_be
+	_ func(*BytesBuilder, *Task, List[uint8], int64, int64)                                                = (*BytesBuilder).M_write_list
 	_ func(*BytesBuilder, *Task) int64                                                                     = (*BytesBuilder).M_len
 	_ func(*BytesBuilder, *Task) Bytes                                                                     = (*BytesBuilder).M_freeze
 	_ func(*Task, List[Tuple2[string, string]]) Replacer                                                   = Replacer_new

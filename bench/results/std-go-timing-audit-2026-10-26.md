@@ -18,6 +18,7 @@ Has a row against Go (results file or bench with a Go twin):
 | xml | xml-parse-2026-10-22.md |
 | crypto (aesgcm, chacha, digest, rsa) | aesgcm-2026-10-22.md, chacha-poly1305-2026-10-22.md |
 | prelude: bytes and text (search, split, case, affix) | bytessearch/bytes-split/case-fold results; bench/perf/text, strsplit |
+| brotli (decode) | brotli-decode-vs-go-2026-11-15.md (bench/perf/brotli, twin.go.txt) |
 
 No row against Go (before this day): archive, base32, base64, big (only
 rsa-bigmod), compress, mail, metrics, mime (a baseline only), path, smtp,

@@ -1341,6 +1341,79 @@ fn bytes_zeroed(n: Int) -> Bytes {
   b
 }
 
+/// Bytes.from_list (decision 0667): one allocation and one copy. A
+/// List[UInt8] is packed on the native targets (decision 0369), one byte
+/// an element at rt.layout(2) of its object; wasm keeps a word an element
+/// (gotchas/packed-list-raw-copy-wasm.md), so it goes through write_list's
+/// portable path.
+fn bytes_from_list(l: List[UInt8]) -> Bytes {
+  let n = l.len()
+  if target.arch != TargetArch.Wasm32 && n > 0 {
+    let b = raw.bytes_buf(n)
+    rt.mem_copy(raw.bytes_addr(b), rt.obj_addr(l).wrapping_add(rt.layout(2)), n)
+    keep_byte_list(l)
+    return b
+  }
+  var bb = BytesBuilder.with_capacity(n)
+  bb.write_list(l, 0, n)
+  bb.freeze()
+}
+
+/// BytesBuilder.write_list (decision 0667): l[from..to] appended. On the
+/// native targets the packed elements are read by address: a run of
+/// WRITE_LIST_COPY bytes or more as one Bytes appended (two copies at
+/// memory speed), a shorter one eight bytes a write_le (one
+/// rt.rs_push_word, where write_byte pushes each byte). wasm packs eight
+/// elements into each write_le's word.
+fn bytesbuilder_write_list(var b: BytesBuilder, l: List[UInt8], from: Int, to: Int, at: rt.Loc) {
+  let len = l.len()
+  if from < 0 || to > len || from > to {
+    // at the caller's line, as the Go backend's FaultHere (rt.fault_at is
+    // every target's: fault.raise_str_at reaches the native heap, which a
+    // WASI module cannot call)
+    rt.fault_at("slice ${from}..${to} out of range for List of length ${len} (BytesBuilder.write_list)", at)
+  }
+  var i = from
+  if target.arch == TargetArch.Wasm32 {
+    while i + 8 <= to {
+      let lo = Int(l[i]) | (Int(l[i + 1]) << 8) | (Int(l[i + 2]) << 16) | (Int(l[i + 3]) << 24)
+      let hi = Int(l[i + 4]) | (Int(l[i + 5]) << 8) | (Int(l[i + 6]) << 16) | (Int(l[i + 7]) << 24)
+      b.write_le(lo | hi.wrapping_shl(32), 8)
+      i += 8
+    }
+    while i < to {
+      b.write_byte(l[i])
+      i += 1
+    }
+    return
+  }
+  let a = rt.obj_addr(l).wrapping_add(rt.layout(2))
+  if to - from >= WRITE_LIST_COPY {
+    b.write(raw.str_at(a.wrapping_add(from), to - from).bytes())
+  } else {
+    while i + 8 <= to {
+      b.write_le(rt.mem_load(a, i, 8), 8)
+      i += 8
+    }
+    while i < to {
+      b.write_le(rt.mem_load(a, i, 1), 1)
+      i += 1
+    }
+  }
+  keep_byte_list(l)
+}
+
+/// The run from which write_list appends one copied Bytes rather than
+/// words.
+const WRITE_LIST_COPY: Int = 256
+
+/// A use of l after its last raw access (flate.keep_bytes).
+fn keep_byte_list(l: List[UInt8]) {
+  if l.len() < 0 {
+    return
+  }
+}
+
 /// Whether b is UTF-8 (Bytes.to_str: internal/ssa calls this instead of
 /// rt.utf8_valid, decision 0201).
 fn llrt_utf8_valid(b: Bytes) -> Bool { scan.utf8_valid(b) }
