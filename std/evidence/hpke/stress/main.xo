@@ -1,0 +1,146 @@
+// hpke stress program (decision 0616 section 2, task #99): TASKS tasks
+// make a key of a seeded KEM (DHKEM P-256, P-384, P-521, X25519, ML-KEM
+// 768 and 1024, and the three hybrids), a sender and a recipient over a
+// seeded KDF and AEAD, and check: the key's bytes read back to the same
+// key; three messages seal and open in order; a changed ciphertext is
+// refused; both sides export the same secret.
+// A background task samples the resident set every 10 s (Linux
+// /proc/self/status) and prints it each minute. Pass: no identity
+// broken, no fault, and the resident set at the end within 10% or
+// 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30); 0: 300 keys per task] [TASKS (16)]
+use std/hpke
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+fn bytes_of(x0: Int, n: Int) -> Bytes {
+  var x = x0
+  var b = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    if i % 8 == 0 {
+      x = next(x)
+    }
+    b.write_byte(UInt8((x >> (i % 8 * 7)) & 255))
+  }
+  b.freeze()
+}
+
+
+const KEMS: List[hpke.Kem] = [hpke.Kem.DhkemP256, hpke.Kem.DhkemP384, hpke.Kem.DhkemP521, hpke.Kem.DhkemX25519, hpke.Kem.Mlkem768, hpke.Kem.Mlkem1024, hpke.Kem.Mlkem768X25519, hpke.Kem.Mlkem768P256, hpke.Kem.Mlkem1024P384]
+const KDFS: List[hpke.Kdf] = [hpke.Kdf.HkdfSha256, hpke.Kdf.HkdfSha384, hpke.Kdf.HkdfSha512, hpke.Kdf.Shake128, hpke.Kdf.Shake256]
+const AEADS: List[hpke.Aead] = [hpke.Aead.Aes128Gcm, hpke.Aead.Aes256Gcm, hpke.Aead.ChaCha20Poly1305]
+
+fn check(os: Os, t: Int, k: Int) -> () ! Str uses rand {
+  let at = "task ${t} key ${k}"
+  let x = next(t * 1000003 + k)
+  let kem = KEMS[x % 9]
+  let kdf = KDFS[(x >> 8) % 5]
+  let aead = AEADS[(x >> 12) % 3]
+  let priv = kem.generate_key(os.rand)
+  let pk = priv.public_key()
+  let pk2 = kem.public_key(pk.bytes()).map_err(fn(e) { "${at}: public key: ${e}" })?
+  let sk = priv.bytes().map_err(fn(e) { "${at}: private bytes: ${e}" })?
+  let sk2 = kem.private_key(sk).map_err(fn(e) { "${at}: private key: ${e}" })?
+  if pk2.bytes() != pk.bytes() || sk2.public_key().bytes() != pk.bytes() {
+    return Err("${at}: a key's bytes read back to another key")
+  }
+  let info = bytes_of(x, (x >> 20) % 40)
+  var snd = hpke.new_sender(os.rand, pk, kdf, aead, info).map_err(fn(e) { "${at}: sender: ${e}" })?
+  var rcv = hpke.new_recipient(snd.enc(), priv, kdf, aead, info).map_err(fn(e) { "${at}: recipient: ${e}" })?
+  for i in 0..3 {
+    let aad = bytes_of(x + i, i * 7)
+    let pt = bytes_of(x + 100 + i, (x >> (24 + i)) % 3000)
+    let ct = snd.seal(aad, pt).map_err(fn(e) { "${at}: seal: ${e}" })?
+    let back = rcv.open(aad, ct).map_err(fn(e) { "${at}: open ${i}: ${e}" })?
+    if back != pt {
+      return Err("${at}: message ${i} opened to other bytes")
+    }
+  }
+  let ct = snd.seal(b"", b"x").map_err(fn(e) { "${at}: seal: ${e}" })?
+  var b = BytesBuilder.with_capacity(ct.len())
+  for j in 0..ct.len() {
+    b.write_byte(if j == ct.len() - 1 { UInt8((Int(ct[j]) + 1) & 255) } else { ct[j] })
+  }
+  if rcv.open(b"", b.freeze()) is Ok(..) {
+    return Err("${at}: a changed ciphertext opened")
+  }
+  let e1 = snd.export(b"stress", 32).map_err(fn(e) { "${at}: export: ${e}" })?
+  let e2 = rcv.export(b"stress", 32).map_err(fn(e) { "${at}: export: ${e}" })?
+  if e1 != e2 {
+    return Err("${at}: the two sides export other secrets")
+  }
+  Ok(())
+}
+
+fn worker(os: Os, t: Int, end: Time, passes: Int) -> Int ! Str uses (clock, rand) {
+  var k = 0
+  while if passes > 0 { k < passes } else { os.clock.now() < end } {
+    check(os, t, k)?
+    k += 1
+  }
+  Ok(k)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 16 } else { 16 }
+  let passes = if minutes == 0 { 300 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let total = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str { worker(os, t, end, passes) }))
+    }
+    var n = 0
+    for h in hs {
+      n += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    s.cancel()
+    n
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("hpke stress: ${total} keys by ${tasks} tasks in ${minutes} min, 0 identities broken, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}

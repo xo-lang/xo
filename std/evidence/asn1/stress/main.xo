@@ -1,0 +1,175 @@
+// asn1 stress program (decision 0616 section 2, task #99): TASKS tasks
+// make seeded values (every universal type the encoder writes, times
+// in UTCTime and GeneralizedTime range, sequences, sets and explicit
+// tags nested to depth 4) and check: der() parses back, and the parsed
+// value encodes to the same bytes; parse_prefix leaves the bytes after
+// it; an object identifier's text parses back to it.
+// A background task samples the resident set every 10 s (Linux
+// /proc/self/status) and prints it each minute. Pass: no identity
+// broken, no fault, and the resident set at the end within 10% or
+// 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30); 0: 20000 values per task] [TASKS (32)]
+use std/asn1
+use std/big
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+fn bytes_of(x0: Int, n: Int) -> Bytes {
+  var x = x0
+  var b = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    if i % 8 == 0 {
+      x = next(x)
+    }
+    b.write_byte(UInt8((x >> (i % 8 * 7)) & 255))
+  }
+  b.freeze()
+}
+
+
+fn str_of(x: Int, alphabet: Str, n: Int) -> Str {
+  let a = alphabet.bytes()
+  var b = BytesBuilder.with_capacity(n)
+  var y = x
+  for _ in 0..n {
+    y = next(y)
+    b.write_byte(a[(y >> 20) % a.len()])
+  }
+  b.freeze().to_str() ?? ""
+}
+
+fn value_of(x0: Int, depth: Int) -> asn1.Value {
+  let x = next(x0)
+  if depth > 0 && (x >> 40) % 4 == 0 {
+    var items: List[asn1.Value] = []
+    for i in 0..(x >> 30) % 5 {
+      items.push(value_of(x + i, depth - 1))
+    }
+    return match (x >> 20) % 3 {
+      0 => asn1.Value.Sequence(items: items)
+      1 => asn1.Value.Set(items: items)
+      _ => asn1.Value.Tagged(class: asn1.Class.ContextSpecific, tag: (x >> 10) % 40, explicit: true, v: value_of(x + 99, depth - 1))
+    }
+  }
+  match (x >> 44) % 13 {
+    0 => asn1.Value.Bool(v: x % 2 == 0)
+    1 => asn1.Value.Int(v: big.from_int((x >> 3) - 0x0400000000000000))
+    2 => asn1.Value.Int(v: big.from_int((x >> 50) - 2048))
+    3 => {
+      let b = bytes_of(x, (x >> 8) % 40)
+      asn1.Value.BitString(bytes: b, bit_len: b.len() * 8)
+    }
+    4 => asn1.Value.OctetString(v: bytes_of(x, (x >> 8) % 300))
+    5 => asn1.Value.Null
+    6 => asn1.Value.Oid(v: asn1.Oid{arcs: [(x >> 8) % 3, (x >> 12) % 40, (x >> 20) % 100000, x % 1000000007]})
+    7 => asn1.Value.Enumerated(v: (x >> 30) % 1000)
+    8 => asn1.Value.Utf8(s: "s\u{e9}\u{1F600}${x % 10000}")
+    9 => asn1.Value.Printable(s: str_of(x, "ABCxyz019 '()+,-./:=?", (x >> 8) % 30))
+    10 => asn1.Value.Ia5(s: str_of(x, "abc@example.com!#", (x >> 8) % 30))
+    11 => asn1.Value.UtcTime(t: Time.UNIX_EPOCH + Duration.from_secs_int((x >> 10) % 3155760000 - 631152000))
+    _ => asn1.Value.GeneralizedTime(t: Time.UNIX_EPOCH + Duration.from_secs_int((x >> 10) % 9000000000))
+  }
+}
+
+fn check(os: Os, t: Int, k: Int) -> () ! Str {
+  let at = "task ${t} value ${k}"
+  let v = value_of(t * 1000003 + k, 4)
+  let d = v.der().map_err(fn(e) { "${at}: der: ${e:?}" })?
+  let p = asn1.parse(d).map_err(fn(e) { "${at}: parse: ${e:?}" })?
+  let d2 = p.der().map_err(fn(e) { "${at}: der again: ${e:?}" })?
+  if d2 != d {
+    return Err("${at}: parsed and encoded again to other bytes")
+  }
+  let tail = bytes_of(k, k % 9)
+  var b = BytesBuilder.with_capacity(d.len() + tail.len())
+  for c in d {
+    b.write_byte(c)
+  }
+  for c in tail {
+    b.write_byte(c)
+  }
+  let (_, rest) = asn1.parse_prefix(b.freeze()).map_err(fn(e) { "${at}: parse_prefix: ${e:?}" })?
+  if rest != tail {
+    return Err("${at}: parse_prefix left other bytes")
+  }
+  let x = next(k)
+  let o = asn1.Oid{arcs: [x % 3, (x >> 8) % 40, (x >> 16) % 1000, k]}
+  let o2 = asn1.oid(o.display()).map_err(fn(e) { "${at}: oid ${o.display()}: ${e:?}" })?
+  if o2 != o {
+    return Err("${at}: ${o.display()} parses to ${o2.display()}")
+  }
+  Ok(())
+}
+
+fn worker(os: Os, t: Int, end: Time, passes: Int) -> Int ! Str uses clock {
+  var k = 0
+  while if passes > 0 { k < passes } else { os.clock.now() < end } {
+    check(os, t, k)?
+    k += 1
+  }
+  Ok(k)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 32 } else { 32 }
+  let passes = if minutes == 0 { 20000 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let total = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str { worker(os, t, end, passes) }))
+    }
+    var n = 0
+    for h in hs {
+      n += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    s.cancel()
+    n
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("asn1 stress: ${total} values by ${tasks} tasks in ${minutes} min, 0 identities broken, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}

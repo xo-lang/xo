@@ -1,0 +1,152 @@
+// mail stress program (decision 0616 section 2, task #99): TASKS tasks
+// compose seeded messages (names and subjects with and without
+// non-ASCII, one to five recipients, text and HTML bodies) and check:
+// read_message reads them back; From and To parse to the addresses
+// composed; Date parses to the time; an address's text parses back to
+// it.
+// A background task samples the resident set every 10 s (Linux
+// /proc/self/status) and prints it each minute. Pass: no identity
+// broken, no fault, and the resident set at the end within 10% or
+// 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30); 0: 5000 messages per task] [TASKS (32)]
+use std/mail
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+fn bytes_of(x0: Int, n: Int) -> Bytes {
+  var x = x0
+  var b = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    if i % 8 == 0 {
+      x = next(x)
+    }
+    b.write_byte(UInt8((x >> (i % 8 * 7)) & 255))
+  }
+  b.freeze()
+}
+
+
+const NAMES: List[Str] = ["", "Ann", "Bob Smith", "Jos\u{e9} \u{c1}lvarez", "O'Neil, Pat", "\u{738b}\u{5c0f}\u{660e}", "a.b"]
+
+fn addr(x: Int, i: Int) -> mail.Address {
+  let y = next(x + i)
+  mail.Address{name: NAMES[y % NAMES.len()], address: "u${(y >> 10) % 100000}.${i}@example${(y >> 30) % 9}.com"}
+}
+
+fn check(os: Os, t: Int, k: Int) -> () ! Str {
+  let at = "task ${t} message ${k}"
+  let x = next(t * 1000003 + k)
+  let from = addr(x, 0)
+  var to: List[mail.Address] = []
+  for i in 0..1 + (x >> 40) % 5 {
+    to.push(addr(x, i + 1))
+  }
+  let ascii = (x >> 20) % 2 == 0
+  let subject = if ascii { "Report ${k}" } else { "R\u{e9}sum\u{e9} ${k}" }
+  var text = StrBuilder.new()
+  for i in 0..(x >> 24) % 30 {
+    text.write("line ${i} of ${k}\n")
+  }
+  let html = if (x >> 28) % 3 == 0 { Some("<p>${k}</p>") } else { None }
+  let date = Time.UNIX_EPOCH + Duration.from_secs_int(1000000000 + (x >> 10) % 1000000000)
+  let msg = mail.compose(from, to, subject, text.freeze(), html, date, "id${t}.${k}@example.com")
+  let m = mail.read_message(msg).map_err(fn(e) { "${at}: read: ${e}" })?
+  let f = mail.parse_address(m.header("From") ?? "").map_err(fn(e) { "${at}: From: ${e}" })?
+  if f.name != from.name || f.address != from.address {
+    return Err("${at}: From parses to ${f.display()}")
+  }
+  let tl = mail.parse_address_list(m.header("To") ?? "").map_err(fn(e) { "${at}: To: ${e}" })?
+  if tl.len() != to.len() {
+    return Err("${at}: To has ${tl.len()} addresses, want ${to.len()}")
+  }
+  for i in 0..to.len() {
+    if tl[i].name != to[i].name || tl[i].address != to[i].address {
+      return Err("${at}: To ${i} parses to ${tl[i].display()}")
+    }
+  }
+  let d = mail.parse_date(m.header("Date") ?? "").map_err(fn(e) { "${at}: Date: ${e}" })?
+  if d != date {
+    return Err("${at}: Date parses to another time")
+  }
+  if ascii && m.header("Subject") != Some(subject) {
+    return Err("${at}: Subject ${m.header("Subject"):?}")
+  }
+  let back = mail.parse_address(from.display()).map_err(fn(e) { "${at}: ${from.display()}: ${e}" })?
+  if back.name != from.name || back.address != from.address {
+    return Err("${at}: ${from.display()} parses to ${back.display()}")
+  }
+  Ok(())
+}
+
+fn worker(os: Os, t: Int, end: Time, passes: Int) -> Int ! Str uses clock {
+  var k = 0
+  while if passes > 0 { k < passes } else { os.clock.now() < end } {
+    check(os, t, k)?
+    k += 1
+  }
+  Ok(k)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 32 } else { 32 }
+  let passes = if minutes == 0 { 5000 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let total = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str { worker(os, t, end, passes) }))
+    }
+    var n = 0
+    for h in hs {
+      n += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    s.cancel()
+    n
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("mail stress: ${total} messages by ${tasks} tasks in ${minutes} min, 0 identities broken, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}
