@@ -1,5 +1,16 @@
 # std/ui changes
 
+## 2026-11-15: perf: the view is patched in place; an idle sync no longer sends the page
+
+- Kind: perf
+- Commit: this push
+- Found by: owner (selective refresh) and xw-1's dashboard numbers (an idle sync returned the whole page, 5 to 12 KB; a horizontal scroll inside a table and a text selection reset on each update)
+- Go reference: none
+- Test: internal/uiruntime TestMorphKeepsNodes (keyed reorder keeps nodes, the focused input keeps its text, an open details and a scrolled box survive, values, checkboxes and changed tags follow the view); std/ui_test.xo (an idle sync answers same with no html or model); headless Chrome: a page being typed in sees another tab's add within 8 ms with its text and focus kept (the old runtime never showed it: the whole view was held while an input had text), and the 21 checks of examples/ui-todo
+- Shipped in: not yet released
+
+The runtime patches the new view into the page instead of setting innerHTML, so focus, typed text, scroll positions, open details and selections survive an update, and a page being typed in still shows other updates. A sync with nothing new is about 100 bytes (`Sync.same`) instead of the whole view (2,644 bytes in examples/ui-todo).
+
 ## 2026-11-15: fix: a click during a sync is no longer lost
 
 - Kind: fix

@@ -129,3 +129,42 @@ func TestReplaceWaitsForPointerUp(t *testing.T) {
 		t.Errorf("held view not shown after pointerup: %q", r.After)
 	}
 }
+
+// TestMorphKeepsNodes runs the runtime's morph over a fake DOM: a new view
+// is patched into the live one, so a keyed item, the focused input (and
+// what was typed in it), an open <details> and a scrolled box are the same
+// nodes afterwards, while text, values the user is not editing, checkboxes
+// and changed tags follow the view.
+func TestMorphKeepsNodes(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not found: the runtime runs under Node")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "morph.mjs"), runtimeJS(t)).CombinedOutput()
+	if err != nil {
+		t.Fatalf("morph.mjs: %v\n%s", err, out)
+	}
+	var r map[string]any
+	if err := json.Unmarshal(out, &r); err != nil {
+		t.Fatalf("report: %v\n%s", err, out)
+	}
+	want := map[string]any{
+		"keyedHTML":    `<ul><li data-key="c">C</li><li data-key="a">A!</li><li data-key="d">D</li></ul>`,
+		"keyedKept":    true,
+		"keyedRemoved": true,
+		"focusValue":   "typing",
+		"focusKept":    true,
+		"otherValue":   "y",
+		"text":         "1 items",
+		"detailsOpen":  true,
+		"scrollKept":   true,
+		"boxText":      "y",
+		"checked":      true,
+		"replacedHTML": `<div><input type="checkbox" name="done" checked=""><b>a</b></div>`,
+	}
+	for k, w := range want {
+		if !reflect.DeepEqual(r[k], w) {
+			t.Errorf("%s = %#v, want %#v", k, r[k], w)
+		}
+	}
+}

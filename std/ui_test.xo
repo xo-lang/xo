@@ -639,3 +639,23 @@ test "signin_url sends a page request without a principal there" {
   let up = json.encode_str(Up[Msg]{client: "c1", ver: 0, msgs: []})
   expect(r.call(http.new_request("POST", "/_xo/sync", headers: {"Content-Type": "application/json"}, body: up.bytes())).status) == 401
 }
+
+test "an idle sync at the current version answers same, without the page" {
+  let h = host(todo_app())
+  h.apply(Msg.Add(id: "s", title: "loaded"))
+  let r = routes_for(h)
+  let post = fn(ver: Int) -> Sync[Model, Msg] {
+    let up = json.encode_str(Up[Msg]{client: "c1", ver: ver, msgs: []})
+    let resp = r.call(http.new_request("POST", "/_xo/sync?thin=1&model=1", headers: {"Content-Type": "application/json"}, body: up.bytes()))
+    json.decode_str[Sync[Model, Msg]](resp.text() ?? "").ok() ?? fault("bad sync reply")
+  }
+  let behind = post(0)
+  expect(behind.same) == false
+  expect(behind.html.contains("loaded")) == true
+  expect(behind.model.is_some()) == true
+  let idle = post(1)
+  expect(idle.same) == true
+  expect(idle.html) == ""
+  expect(idle.model) == None
+  expect(idle.ver) == 1
+}

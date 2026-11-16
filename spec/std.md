@@ -11185,11 +11185,17 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   confirmed model; a refused entry advances its version and drops the
   Msg from pending without applying it. Client ids are trusted in this step; per-Msg
   authorization is decision 0659 stage 4.
-- A new view replaces the root's HTML only when it differs from the one
-  shown, not while a text input in it has focus and a value, and not
-  while a pointer is down (the replace waits until the pointer is up and
-  its click has run, so a press on a link or button is never lost; at
-  most one second, as a pointerup outside the window may never arrive).
+- A new view is patched into the page, not swapped in: a node that
+  matches (same tag, and the same `data-key` or `id` when it has one) is
+  kept and updated, so what the view does not describe survives: focus,
+  the text of the input being typed in, scroll positions inside the
+  view, an open `<details>`, a selection. Give list items a `data-key`
+  so a reordered list keeps its nodes. A patch waits while a pointer is
+  down (until the click has run, at most a second), so a press on a
+  link or button is never lost.
+- A sync that sends no Msgs from a page already at the current version
+  answers `same: true` with no HTML and no model, and the page keeps
+  what it shows: an idle poll is about 100 bytes, not the whole view.
 - Server Msgs: `Server.apply(msg)` and `Host.apply(msg)` apply a Msg of
   the server's own (data loaded from a database or queue, a timer) as the
   next seq of the client id `SERVER_CLIENT` ("~server"), logged like any

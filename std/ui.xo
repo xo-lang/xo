@@ -526,6 +526,10 @@ pub struct Sync[M, E] {
   /// The server's model, when the request asked for it (`?model=1`): a
   /// client that predicts folds its pending Msgs over it.
   pub model: M? = None
+  /// Nothing changed for this client: it sent no Msgs and already has the
+  /// current version, so html is "" and model None, and it keeps what it
+  /// shows (an idle poll costs bytes, not the whole page).
+  pub same: Bool = false
 } derive Json
 
 // ---- the predicting client (decision 0659 stage 3) ----
@@ -755,6 +759,9 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     // with redact a log entry may hold what this principal must not see
     let down = if req.query("thin") == Some("1") || redact.is_some() { Down{acked: d.acked, reset: None, entries: [], refused: d.refused} } else { d }
     let with_model = if req.query("model") == Some("1") { Some(m) } else { None }
+    if up.msgs.is_empty() && up.ver == v {
+      return http.json(200, Sync{down: down, ver: v, html: "", model: None, same: true})
+    }
     http.json(200, Sync{down: down, ver: v, html: render(app.view(m)), model: with_model})
   })
   if !client.is_empty() {
@@ -891,13 +898,52 @@ document.addEventListener("pointerdown",function(){down=true;downAt=Date.now();}
 function release(){down=false;if(held!==null){setTimeout(function(){if(!down&&held!==null){var h=held;held=null;show(h);}},0);}}
 document.addEventListener("pointerup",release,true);
 document.addEventListener("pointercancel",release,true);
+// morph-begin
+// The new view is patched into the live one instead of replacing it: a
+// node that matches (same tag, and same data-key or id when it has one)
+// is kept and updated, so what the view does not describe survives: focus,
+// the text of the input being typed in, scroll positions, an open
+// <details>, a selection.
+function xoKey(n){return n.nodeType===1?(n.getAttribute("data-key")||n.id||null):null;}
+function xoSame(x,y){return x.nodeType===y.nodeType&&(x.nodeType!==1||(x.tagName===y.tagName&&xoKey(x)===xoKey(y)));}
+function xoPatch(x,y,focus){
+  if(x.nodeType!==1){if(x.nodeValue!==y.nodeValue)x.nodeValue=y.nodeValue;return;}
+  var i,at=y.attributes;
+  for(i=0;i<at.length;i++){if(x.getAttribute(at[i].name)!==at[i].value)x.setAttribute(at[i].name,at[i].value);}
+  var old=[];for(i=0;i<x.attributes.length;i++)old.push(x.attributes[i].name);
+  for(i=0;i<old.length;i++){if(!y.hasAttribute(old[i])&&!(x.tagName==="DETAILS"&&old[i]==="open"))x.removeAttribute(old[i]);}
+  var t=x.tagName;
+  if(t==="INPUT"||t==="TEXTAREA"||t==="SELECT"){
+    if(x!==focus){
+      if(t==="TEXTAREA"){if(x.value!==y.textContent)x.value=y.textContent;}
+      else if(t==="INPUT"&&(x.type==="checkbox"||x.type==="radio"))x.checked=y.hasAttribute("checked");
+      else if(t==="INPUT"){var v=y.getAttribute("value")||"";if(x.value!==v)x.value=v;}
+    }
+    if(t==="TEXTAREA")return;
+  }
+  xoMorph(x,y,focus);
+}
+function xoMorph(cur,next,focus){
+  var a=cur.firstChild,b=next.firstChild;
+  while(b){
+    var nb=b.nextSibling,k=xoKey(b),m=a;
+    if(k!==null){m=null;for(var x=a;x;x=x.nextSibling){if(xoKey(x)===k){m=x;break;}}if(m&&m!==a)cur.insertBefore(m,a);}
+    if(m&&xoSame(m,b)){xoPatch(m,b,focus);a=m.nextSibling;}
+    else cur.insertBefore(b,a);
+    b=nb;
+  }
+  while(a){var na=a.nextSibling;cur.removeChild(a);a=na;}
+}
+// morph-end
 function show(html){
   if(html===last)return;
   if(down&&Date.now()-downAt<1000){held=html;return;}
   held=null;
-  var a=document.activeElement;
-  if(a&&root.contains(a)&&(a.tagName==="INPUT"||a.tagName==="TEXTAREA")&&a.value!=="")return;
-  root.innerHTML=html;last=html;
+  if(document.createElement){
+    var t=document.createElement("template");t.innerHTML=html;
+    xoMorph(root,t.content,document.activeElement);
+  }else root.innerHTML=html;
+  last=html;
 }
 function predict(){
   if(!mod)return false;
@@ -925,7 +971,7 @@ function sync(){
     queue=queue.filter(function(e){return e.seq>acked;});
     ver=s.ver;
     if(s.model!=null)confirmed=s.model;
-    if(!(queue.length&&predict())){show(s.html);document.documentElement.removeAttribute("data-xo-awaiting");}
+    if(!(queue.length&&predict())){if(!s.same)show(s.html);document.documentElement.removeAttribute("data-xo-awaiting");}
     document.documentElement.removeAttribute("data-xo-offline");
     save();mark();
   })
