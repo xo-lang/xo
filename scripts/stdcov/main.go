@@ -70,7 +70,35 @@ var (
 	pkgsByMod = map[string][]string{}
 	// gapsByPkg: the open `gap:` symbols of scripts/stdaudit/map.txt by package
 	gapsByPkg = map[string][]string{}
+	// npByPkg: the `not planned: CATEGORY: reason` symbols (decision 0655
+	// rule 8) by package: resolved, and named in the features text
+	npByPkg = map[string][]string{}
 )
+
+// npCategories are decision 0655 rule 8's categories of a `not planned:
+// CATEGORY: reason` row in scripts/stdaudit/map.txt.
+var npCategories = []string{"deprecated in Go", "unsafe/reflection", "Go runtime machinery", "plug-in extension points", "platform-specific", "insecure legacy", "design choice"}
+
+var reDecision = regexp.MustCompile(`decision \d{4}`)
+
+// npCategory is the rule 8 category a not planned reason starts with
+// (`CATEGORY: reason`), or "" for an older reason with none. A design
+// choice must name its decision (`design choice: decision NNNN ...`).
+func npCategory(reason string) (string, error) {
+	cat, rest, ok := strings.Cut(reason, ": ")
+	if !ok {
+		return "", nil
+	}
+	for _, c := range npCategories {
+		if cat == c {
+			if c == "design choice" && !reDecision.MatchString(rest) {
+				return "", fmt.Errorf("a design choice names no decision NNNN")
+			}
+			return c, nil
+		}
+	}
+	return "", nil
+}
 
 var (
 	reRow     = regexp.MustCompile(`^\| (.+?) \| (.+?) \| (done|partial|in progress|planned|not planned)[^|]*\|(.*)\|`)
@@ -211,7 +239,21 @@ func readAuditGaps() {
 			continue
 		}
 		key, val, ok := strings.Cut(l, " = ")
-		if !ok || !strings.HasPrefix(strings.TrimSpace(val), "gap:") {
+		if !ok {
+			continue
+		}
+		val = strings.TrimSpace(val)
+		np := false
+		if r, isNP := strings.CutPrefix(val, "not planned: "); isNP {
+			cat, err := npCategory(r)
+			if err != nil {
+				die("scripts/stdaudit/map.txt: %s: %v (decision 0655 rule 8)", strings.TrimSpace(key), err)
+			}
+			if cat == "" {
+				continue
+			}
+			np = true
+		} else if !strings.HasPrefix(val, "gap:") {
 			continue
 		}
 		key = strings.TrimSpace(key)
@@ -230,8 +272,25 @@ func readAuditGaps() {
 				continue
 			}
 		}
+		if np {
+			npByPkg[pkg] = append(npByPkg[pkg], pkg+"."+sym)
+			continue
+		}
 		gapsByPkg[pkg] = append(gapsByPkg[pkg], pkg+"."+sym)
 	}
+}
+
+// auditNotPlanned counts module m's rule 8 not planned symbols.
+func auditNotPlanned(m string) int {
+	seen := map[string]bool{}
+	n := 0
+	for _, p := range pkgsByMod[m] {
+		if !seen[p] {
+			seen[p] = true
+			n += len(npByPkg[p])
+		}
+	}
+	return n
 }
 
 // auditGaps are the open stdaudit gaps of module m's Go packages, sorted.
@@ -595,7 +654,11 @@ func feat(m string) mark {
 		return mark{"Solid", fmt.Sprintf("all %d mapped Go rows done, %d open stdaudit gaps (%s)", len(st), len(gs), strings.Join(shown, ", ")),
 			"scripts/stdaudit/map.txt"}
 	}
-	return mark{"Proven", fmt.Sprintf("all %d mapped Go rows done, no open stdaudit gap", len(st)), "knowledgebase/infrastructure/std-coverage.md"}
+	text := fmt.Sprintf("all %d mapped Go rows done, no open stdaudit gap", len(st))
+	if n := auditNotPlanned(m); n > 0 {
+		text += fmt.Sprintf(" (%d not planned by category, decision 0655 rule 8)", n)
+	}
+	return mark{"Proven", text, "knowledgebase/infrastructure/std-coverage.md"}
 }
 
 // ---- evidence (decision 0616)

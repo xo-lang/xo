@@ -63,17 +63,42 @@ func TestDecimals(t *testing.T) {
 // Proven only when its Go packages have no open stdaudit gap and no row
 // outside Go's standard library lacks its audit.
 func TestFeatAuditGaps(t *testing.T) {
-	rowsByMod = map[string][]string{"utf": {"done"}, "clean": {"done", "done"}, "part": {"done", "partial"}, "cbor": {"unaudited"}}
-	pkgsByMod = map[string][]string{"utf": {"utf8"}, "clean": {"base64", "utf16"}, "part": {"csv"}}
+	rowsByMod = map[string][]string{"utf": {"done"}, "clean": {"done", "done"}, "part": {"done", "partial"}, "cbor": {"unaudited"}, "pg": {"done"}}
+	pkgsByMod = map[string][]string{"utf": {"utf8"}, "clean": {"base64", "utf16"}, "part": {"csv"}, "pg": {"pgtype"}}
 	gapsByPkg = map[string][]string{"utf8": {"utf8.FullRune", "utf8.DecodeLastRune"}, "csv": {"csv.Reader.FieldPos"}}
+	// rule 8: categorized not planned rows are resolved and counted
+	npByPkg = map[string][]string{"pgtype": {"pgtype.Point", "pgtype.Box"}}
 	for _, c := range []struct{ mod, level, text string }{
 		{"utf", "Solid", "all 1 mapped Go rows done, 2 open stdaudit gaps (utf8.DecodeLastRune, utf8.FullRune)"},
 		{"clean", "Proven", "all 2 mapped Go rows done, no open stdaudit gap"},
 		{"part", "Solid", "1 of 2 mapped Go rows done, 1 partial, 1 open stdaudit gaps"},
 		{"cbor", "Solid", "all 1 mapped rows done, 1 outside Go's standard library without a symbol audit yet (decision 0655)"},
+		{"pg", "Proven", "all 1 mapped Go rows done, no open stdaudit gap (2 not planned by category, decision 0655 rule 8)"},
 	} {
 		if f := feat(c.mod); f.level != c.level || f.text != c.text {
 			t.Errorf("feat(%s) = %s %q, want %s %q", c.mod, f.level, f.text, c.level, c.text)
+		}
+	}
+}
+
+// TestNotPlannedCategory: decision 0655 rule 8's `not planned: CATEGORY:
+// reason`: a known category is resolved, a design choice must name its
+// decision, an older reason has no category.
+func TestNotPlannedCategory(t *testing.T) {
+	for _, c := range []struct {
+		reason, cat string
+		bad         bool
+	}{
+		{"platform-specific: GSSAPI needs a system library", "platform-specific", false},
+		{"design choice: decision 0278: text format results", "design choice", false},
+		{"design choice: text format results", "", true},
+		{"plug-in extension points: Go's codec interface", "plug-in extension points", false},
+		{"the scheduler (decision 0474)", "", false},
+		{"see x: y", "", false},
+	} {
+		cat, err := npCategory(c.reason)
+		if cat != c.cat || (err != nil) != c.bad {
+			t.Errorf("npCategory(%q) = %q, %v; want %q, bad %v", c.reason, cat, err, c.cat, c.bad)
 		}
 	}
 }

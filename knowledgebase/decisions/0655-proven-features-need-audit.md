@@ -55,6 +55,15 @@ and it never listed the health service or `unix:` targets.
      Go twin of the same broker.
    - std/go (the `use go` bridge): the bridge call overhead (a call of a Go function with an Int, a Str and a
      Bytes argument and a result, in a loop) against a cgo call of the same shape.
+8. **Not planned by category** (Accepted by the owner, 2026-11-16; proposed by Xo Lang 3 with task #110's triage):
+   a map.txt row may close a gap as `not planned: CATEGORY: reason`, CATEGORY one of: `deprecated in Go`,
+   `unsafe/reflection`, `Go runtime machinery`, `plug-in extension points`, `platform-specific`,
+   `insecure legacy`, `design choice` (which must name its decision: `design choice: decision NNNN: ...`).
+   stdcov counts such a row as resolved and names the count in the module's features text; a design choice
+   without a decision number fails stdcov (TestNotPlannedCategory, TestFeatAuditGaps). The lead reviews each
+   new one. The first use (2026-11-16): 206 rows of std/sql (pgx's geometric, tsvector, bit, xml, ltree and
+   jsonpath types read as text, its codec interface, binary results, GSSAPI) and std/grpc (ClientConn's
+   connectivity state); composite and domain types and LoadType are ported instead (task #113).
 
 ## Consequences
 
