@@ -165,6 +165,37 @@ func TestRaceRunsStdModuleTests(t *testing.T) {
 	}
 }
 
+func TestRaceStressOnly(t *testing.T) {
+	root := t.TempDir()
+	p := filepath.Join(root, "std", "evidence", "websocket", "stress", "main.xo")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		module    string
+		runs, min int
+		want      bool
+		err       string
+	}{
+		{"websocket", 0, 10, true, ""},
+		{"websocket", 2, 10, false, ""},
+		{"websocket", 0, 0, false, "-stress-minutes 0 skips"},
+		{"dns", 0, 10, false, "no stress program"},
+		{"dns", 1, 10, false, ""},
+	} {
+		got, err := raceStressOnly(root, c.module, c.runs, c.min)
+		if got != c.want || (err == nil) != (c.err == "") || err != nil && !strings.Contains(err.Error(), c.err) {
+			t.Errorf("%s runs %d minutes %d: %v, %v; want %v, %q", c.module, c.runs, c.min, got, err, c.want, c.err)
+		}
+	}
+	if n := stressOnlyNote("websocket"); !strings.Contains(n, "std/websocket") || !strings.Contains(n, "#120") {
+		t.Errorf("note: %s", n)
+	}
+}
+
 // fuzz shards (#98, lead 2026-11-16: an 8 hour fuzz held host 2 outside
 // its lane; one module's 1M cases took 2.5 h and a batch hit offload.sh's
 // 180 minutes with no evidence): a shard stops at its minutes with result

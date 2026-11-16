@@ -35,6 +35,7 @@ the text of every entry is unchanged).
 
 - Feature (std/sql, every backend; decision 0679, task #113): `sql.named(q, args, strict)` rewrites `@name` placeholders to `$n` and returns the query with its arguments, for any query method (pgx's `NamedArgs` and `StrictNamedArgs`).
 
+- Tools (scripts/stdproven): race evidence for a module with no module tests and no corpus (websocket and dns, whose servers the test world cannot host until #120) comes from its stress program under --race on real loopback, and race.md says so; with no stress program, or -stress-minutes 0, it refuses as before.
 - Feature (std/sql, every backend; decision 0679, task #113): `Row.date_bound` and `Row.time_bound` with `sql.Bound[T]` (`Finite(v)`, `Infinity`, `NegInfinity`) for infinite dates and timestamps, `Row.mac` (macaddr, macaddr8), `Row.hstore` (`Map[Str, Str?]`), and the parameters `sql.date_bound`, `time_bound`, `mac`, `hstore`; `xid`, `cid` and `xid8` columns now read as `Integer` (they were `Text`: code reading them with `Row.str` reads them with `Row.int`).
 - Perf (std/crypto, std/otp, native backends): HMAC-SHA1 runs in one pass and HMAC-SHA256 no longer regrows its state: bench/perf/otp sha1 0.75 and sha256 0.927 of before (host 1 --ab).
 - Fix (std/backoff): a `Backoff` whose multiplier is below 1 shrinks the interval again after it reaches `max_interval`, as cenkalti/backoff's ExponentialBackOff (10s, multiplier 0.5, max 4s gives 10s, 4s, 2s, 1s, 500ms; it stayed at 4s). Found by the new TestBackoffFuzz (task #116); registered for stdproven fuzz under backoff.

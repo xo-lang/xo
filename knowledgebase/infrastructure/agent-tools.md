@@ -933,7 +933,13 @@ cases per backend or 8 hours over every shard. stdcov counts only
 failing run does not stop the others; a batch is one job under
 offload.sh's 180 minute OFF_MAX_MIN and returns its files only at the end
 (gotchas/stdproven-batch-180-minute-cap.md). The runner's "commit first" checks
-leave std/evidence out, so one worktree serves run after run. The source
+leave std/evidence out, so one worktree serves run after run. The race
+kind runs the module's tests (std/MODULE_test.xo, std/native/MODULE_test.xo),
+its corpora and its stress program under --race; a module with no tests
+and no corpus, as websocket and dns, whose servers the test world cannot
+host (http.server there serves requests, not raw connections: #120), gets
+its race evidence from the stress program alone on real loopback, which
+race.md says (lead, 2026-11-16; -stress-minutes 0 then refuses). The source
 hash follows std modules, their std/native files and module specific
 llrt files, and std/internal.xo, but stops at the runtime (decision 0616
 section 3, amended 2026-11-14); the prelude's own hash is that runtime (std/prelude.xo, std/native/prelude.xo, rt.xo and the llrt core), and its perf evidence comes from the Str, Bytes, List and Map benches scripts/stdproven's perfOwners names (sort, strsplit, bytessearch and the rest; 2026-11-16). Security reviews follow

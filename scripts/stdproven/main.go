@@ -703,8 +703,9 @@ func race(args []string) error {
 	}
 	xo := filepath.Join(root, "bin", "xo")
 	runs := raceRuns(root, module)
-	if len(runs) == 0 {
-		return fmt.Errorf("%s has no module tests and no corpus", module)
+	stressOnly, err := raceStressOnly(root, module, len(runs), *stressMin)
+	if err != nil {
+		return err
 	}
 	start := time.Now()
 	var lines []string
@@ -807,12 +808,40 @@ func race(args []string) error {
 	}
 	fmt.Fprintf(&b, "measure: %d runs under --race on %s, 0 data races, 0 failures%s, %s\n\n", len(runs), *backend, churnNote, time.Since(start).Round(time.Second))
 	fmt.Fprintf(&b, "Race evidence (decision 0616): std/%s's tests, corpora and stress program under --race (ThreadSanitizer).\n\n", module)
+	if stressOnly {
+		fmt.Fprintf(&b, "%s\n\n", stressOnlyNote(module))
+	}
 	b.WriteString(strings.Join(lines, "\n") + "\n")
 	out := filepath.Join("std", "evidence", module, "race.md")
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(out, []byte(b.String()), 0o644)
+}
+
+// raceStressOnly says whether the module's race evidence is its stress
+// program alone (lead, 2026-11-16): a module with no module tests and no
+// corpus, as std/websocket and std/dns, whose servers the test world
+// cannot host (its http.server serves requests, not raw connections:
+// #120), runs its stress program under --race on real loopback instead.
+// With neither, or with -stress-minutes 0, there is nothing to run.
+func raceStressOnly(root, module string, runs, stressMin int) (bool, error) {
+	if runs > 0 {
+		return false, nil
+	}
+	if _, err := os.Stat(filepath.Join(root, "std", "evidence", module, "stress", "main.xo")); err != nil {
+		return false, fmt.Errorf("%s has no module tests, no corpus and no stress program", module)
+	}
+	if stressMin <= 0 {
+		return false, fmt.Errorf("%s has no module tests and no corpus: its race evidence is the stress program under --race, which -stress-minutes 0 skips", module)
+	}
+	return true, nil
+}
+
+// stressOnlyNote is the race evidence's line for a module raced by its
+// stress program alone.
+func stressOnlyNote(module string) string {
+	return fmt.Sprintf("std/%s has no module tests and no corpus (the test world's http.server serves requests, not the raw connections its tests would need: #120), so its race evidence is the stress program under --race on real loopback alone (lead, 2026-11-16).", module)
 }
 
 // raceRuntimeLabel names the ThreadSanitizer runtime the race kind's
