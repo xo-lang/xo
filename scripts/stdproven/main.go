@@ -71,6 +71,7 @@ var harnesses = map[string][]harness{
 	"mail":     {{"TestMailFuzz", "XO_MAILFUZZ"}},
 	"jwt":      {{"TestJwtFuzz", "XO_JWTFUZZ"}},
 	"bcrypt":   {{"TestBcryptFuzz", "XO_BCRYPTFUZZ"}},
+	"asn1":     {{"TestAsn1Fuzz", "XO_ASN1FUZZ"}},
 	"sql":      {{"TestMysqlFuzz", "XO_MYSQLFUZZ"}},
 	"json":     {{"TestJsonFuzz", "XO_JSONFUZZ"}},
 	"time":     {{"TestTimeFuzz", "XO_TIMEFUZZ"}},

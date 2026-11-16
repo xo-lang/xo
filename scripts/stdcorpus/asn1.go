@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -314,8 +316,21 @@ func asn1Fixed() [][]byte {
 	return out
 }
 
+// asn1FuzzSeed is XO_ASN1FUZZ_SEED (default 0, the committed corpus),
+// added to the seed so a fresh run (internal/stdtest TestAsn1Fuzz) makes
+// new cases; XO_ASN1FUZZ_N is the number of random trees (default 1200).
+func asn1FuzzSeed() (int64, int) {
+	seed, _ := strconv.ParseInt(os.Getenv("XO_ASN1FUZZ_SEED"), 10, 64)
+	n, err := strconv.Atoi(os.Getenv("XO_ASN1FUZZ_N"))
+	if err != nil || n <= 0 {
+		n = 1200
+	}
+	return seed, n
+}
+
 func asn1Corpus() string {
-	r := rand.New(rand.NewSource(601))
+	seed, trees := asn1FuzzSeed()
+	r := rand.New(rand.NewSource(601 + seed))
 	var o strings.Builder
 	o.WriteString(header("encoding/asn1's Unmarshal and Marshal on seeded random DER trees, their mutations, and hand-made edge cases"))
 	o.WriteString("use std/asn1\n\n")
@@ -331,7 +346,7 @@ func asn1Corpus() string {
 	for _, b := range asn1Fixed() {
 		add(b)
 	}
-	for i := 0; i < 1200; i++ {
+	for i := 0; i < trees; i++ {
 		b := asn1Gen(r, 0)
 		switch r.Intn(5) {
 		case 0, 1:
