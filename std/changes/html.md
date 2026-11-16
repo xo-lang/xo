@@ -1,5 +1,15 @@
 # std/html changes
 
+## 2026-11-16: fix: &bsol; is one backslash, &nLt; and &nGt; are not references
+
+- Kind: fix
+- Commit: this push
+- Found by: the new std/htmlent fuzz harness (decision 0616, internal/stdtest/htmlentfuzz_test.go, against go1.26.11's html), task #98
+- Go reference: html entity.go: "bsol;" is U+005C; entity2 has "nLt;" and "nGt;" commented out ("Handle replacements that are wider than their names"), so UnescapeString leaves them
+- Before: std/htmlent's ENTITY had "bsol;" as two backslashes, and ENTITY2 held nLt; and nGt;, so unescape_string (and std/htmltok's text and attributes) gave `\\` for `&bsol;` and U+226A U+20D2 for `&nLt;`
+- Fix: the table entries; std/htmlent_test.xo tests both (they fail on the old tables)
+- Shipped in: not yet released
+
 ## 2026-11-16: perf: character references resolved with fewer compares and no allocation for ASCII
 
 - Kind: perf

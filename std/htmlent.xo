@@ -867,7 +867,7 @@ const ENTITY: List[(Str, Str)] = [
   ("bsemi;", "⁏"),
   ("bsim;", "∽"),
   ("bsime;", "⋍"),
-  ("bsol;", "\\\\"),
+  ("bsol;", "\\"),
   ("bsolb;", "⧅"),
   ("bsolhsub;", "⟈"),
   ("bull;", "•"),
@@ -2334,6 +2334,9 @@ const LEGACY: List[(Str, Str)] = [
 ]
 
 // Sorted by name for entity2_of's binary search; every name ends with `;`.
+// Go's table has nLt; and nGt; commented out (replacements wider than their
+// names), so &nLt; and &nGt; stay as they are; so do they here (2026-11-16,
+// found by internal/stdtest/htmlentfuzz_test.go).
 const ENTITY2: List[(Str, Str)] = [
   ("NotEqualTilde;", "≂̸"),
   ("NotGreaterFullEqual;", "≧̸"),
@@ -2369,10 +2372,8 @@ const ENTITY2: List[(Str, Str)] = [
   ("lvertneqq;", "≨︀"),
   ("lvnE;", "≨︀"),
   ("nGg;", "⋙̸"),
-  ("nGt;", "≫⃒"),
   ("nGtv;", "≫̸"),
   ("nLl;", "⋘̸"),
-  ("nLt;", "≪⃒"),
   ("nLtv;", "≪̸"),
   ("nang;", "∠⃒"),
   ("napE;", "⩰̸"),

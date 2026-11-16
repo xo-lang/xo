@@ -66,3 +66,15 @@ test "names outside the table" {
   expect(entity_of("Aacutex;")) == ""
   expect(entity_of("amp;")) == "&"
 }
+
+test "nLt; and nGt; are not entities, as in Go's table (commented out there)" {
+  expect(entity2_of("nLt;")) == ""
+  expect(entity2_of("nGt;")) == ""
+  expect(entity_of("nLt;")) == ""
+  expect(entity2_of("nLtv;")) == "\u{226A}\u{338}"
+}
+
+test "bsol; is one backslash, as Go's U+005C" {
+  expect(entity_of("bsol;")) == "\\"
+  expect(entity_of("bsol;").len()) == 1
+}

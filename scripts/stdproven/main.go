@@ -94,6 +94,9 @@ var harnesses = map[string][]harness{
 	"csv":       {{"TestCsvFuzz", "XO_CSVFUZZ"}},
 	"png":       {{"TestPngFuzz", "XO_PNGFUZZ"}},
 	"gif":       {{"TestGifFuzz", "XO_GIFFUZZ"}},
+	"binary":    {{"TestBinaryFuzz", "XO_BINARYFUZZ"}},
+	"path":      {{"TestPathFuzz", "XO_PATHFUZZ"}},
+	"htmlent":   {{"TestHtmlentFuzz", "XO_HTMLENTFUZZ"}},
 }
 
 func main() {
@@ -556,19 +559,7 @@ func race(args []string) error {
 		return err
 	}
 	xo := filepath.Join(root, "bin", "xo")
-	type run struct{ name, target string }
-	var runs []run
-	if _, err := os.Stat(filepath.Join("std", "native", module+"_test.xo")); err == nil {
-		runs = append(runs, run{"module tests (std/native/" + module + "_test.xo)", "--std-module=native/" + module})
-	}
-	dirs, _ := filepath.Glob(filepath.Join("internal", "stdtest", "testdata", "corpus", module+"*"))
-	for _, d := range dirs {
-		base := filepath.Base(d)
-		if _, err := os.Stat(filepath.Join("std", base+".xo")); err == nil && base != module {
-			continue // another module's corpus (jsonrpc for json)
-		}
-		runs = append(runs, run{"corpus " + base, filepath.Join(root, d)})
-	}
+	runs := raceRuns(root, module)
 	if len(runs) == 0 {
 		return fmt.Errorf("%s has no module tests and no corpus", module)
 	}
@@ -636,7 +627,7 @@ func race(args []string) error {
 			line := fmt.Sprintf("- stress program under --race, 64 tasks: %s, %s", last, time.Since(t0).Round(time.Second))
 			fmt.Println(line)
 			lines = append(lines, line)
-			runs = append(runs, run{"stress", dir})
+			runs = append(runs, raceRun{"stress", dir})
 		}
 	}
 	result := "pass"
@@ -687,6 +678,31 @@ func race(args []string) error {
 // hash and trace part size it gives; scripts/lead/race-rt-host.sh
 // installs it on an offload host), or $XO_RACE_RUNTIME. Without either it
 // refuses, unless stock allows clang's own runtime (256 KB trace parts).
+// raceRun is one xo test --race target of the race kind.
+type raceRun struct{ name, target string }
+
+// raceRuns lists the module's tests (std/native/MODULE_test.xo, and
+// std/MODULE_test.xo, which the race kind left out until 2026-11-16:
+// htmlent's only tests are there) and its corpus directories under root.
+func raceRuns(root, module string) []raceRun {
+	var runs []raceRun
+	if _, err := os.Stat(filepath.Join(root, "std", "native", module+"_test.xo")); err == nil {
+		runs = append(runs, raceRun{"module tests (std/native/" + module + "_test.xo)", "--std-module=native/" + module})
+	}
+	if _, err := os.Stat(filepath.Join(root, "std", module+"_test.xo")); err == nil {
+		runs = append(runs, raceRun{"module tests (std/" + module + "_test.xo)", "--std-module=" + module})
+	}
+	dirs, _ := filepath.Glob(filepath.Join(root, "internal", "stdtest", "testdata", "corpus", module+"*"))
+	for _, d := range dirs {
+		base := filepath.Base(d)
+		if _, err := os.Stat(filepath.Join(root, "std", base+".xo")); err == nil && base != module {
+			continue // another module's corpus (jsonrpc for json)
+		}
+		runs = append(runs, raceRun{"corpus " + base, d})
+	}
+	return runs
+}
+
 func raceRuntimeLabel(stock bool) (string, error) {
 	if env := os.Getenv("XO_RACE_RUNTIME"); env != "" {
 		return "XO_RACE_RUNTIME " + env, nil

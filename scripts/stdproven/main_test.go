@@ -134,3 +134,31 @@ func TestNotRun(t *testing.T) {
 		}
 	}
 }
+
+func TestRaceRunsStdModuleTests(t *testing.T) {
+	root := t.TempDir()
+	for _, f := range []string{"std/htmlent.xo", "std/htmlent_test.xo", "std/json.xo", "std/jsonrpc.xo", "std/native/json_test.xo",
+		"internal/stdtest/testdata/corpus/json/a.xo", "internal/stdtest/testdata/corpus/jsonfuzz/a.xo", "internal/stdtest/testdata/corpus/jsonrpc/a.xo"} {
+		p := filepath.Join(root, f)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	targets := func(m string) []string {
+		var out []string
+		for _, r := range raceRuns(root, m) {
+			out = append(out, strings.TrimPrefix(r.target, root+string(filepath.Separator)))
+		}
+		return out
+	}
+	if got, want := targets("htmlent"), []string{"--std-module=htmlent"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("htmlent: %q, want %q", got, want)
+	}
+	c := filepath.Join("internal", "stdtest", "testdata", "corpus")
+	if got, want := targets("json"), []string{"--std-module=native/json", filepath.Join(c, "json"), filepath.Join(c, "jsonfuzz")}; !reflect.DeepEqual(got, want) {
+		t.Errorf("json: %q, want %q", got, want)
+	}
+}
