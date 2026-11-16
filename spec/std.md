@@ -4143,6 +4143,7 @@ fn (r: Row) range_int(name: Str) -> Range[Int] ! SqlErr         // also _opt, ra
 fn (r: Row) multirange_int(name: Str) -> List[Range[Int]] ! SqlErr // also _opt, multirange_date, multirange_time
 pub fn range_int(r: Range[Int]) -> SqlValue                     // also range_date, range_time, multirange_int, ...
 fn (r: Row) fields(name: Str) -> List[Str?] ! SqlErr            // also fields_opt: a composite's fields' texts
+fn (r: Row) elements(name: Str) -> List[Row] ! SqlErr           // also elements_opt: an array's elements, each a one column Row
 enum Numeric { Finite(coef: big.BigInt, exp: Int), NaN, Infinity, NegInfinity }  // pgx's Numeric
 fn (r: Row) numeric(name: Str) -> Numeric ! SqlErr              // also numeric_opt, range_num, multirange_num
 pub fn parse_numeric(s: Str) -> Numeric ! SqlErr                // 1.50, 1e-3, NaN, Infinity; Syntax error otherwise
@@ -4159,7 +4160,15 @@ int4range or daterange comes back as `[a,b)`); a range bound that is
 reads as UTC, as a `timestamp` column does. A `Numeric` keeps the
 scale the server sent (`1.50` is 150 and -2, an integer's trailing zeros
 go into the exponent as pgx does), so equality is structural and
-`to_rat` compares values; an integer column reads as `Finite(n, 0)`. A `timetz`'s offset is read with `str`.
+`to_rat` compares values; an integer column reads as `Finite(n, 0)`.
+
+Arrays of these types (uuid[], numeric[], date[], inet[], int4range[],
+a composite's array, ...) read through `Row.elements`: each element is
+a Row of one column with the array's column name, so the element's
+reader applies (`for e in row.elements("ids")? { ids.push(e.uuid("ids")?) }`;
+`_opt` readers for NULL elements). An array the driver sent as text is
+split as Postgres writes it (quotes, backslash escapes, `NULL` against
+`"NULL"`); several dimensions or explicit bounds are `Mismatch`. A `timetz`'s offset is read with `str`.
 
 The values and accessors are 10.2 and 10.4's.
 

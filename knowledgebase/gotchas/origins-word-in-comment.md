@@ -1,6 +1,8 @@
 # A project's name in a new std comment fails TestThirdPartyOrigins
 
-Status: Observed (2026-11-15, twice: std/sql batch S1 and S2)
+Status: Observed (2026-11-15, twice: std/sql batch S1 and S2; 2026-11-16,
+std/sql copy_to, caught by the offload gate after local checks that ran
+repotest with a -run filter leaving this test out)
 
 ## Symptom
 
@@ -22,4 +24,5 @@ from a copy.
 Say what the code does instead of naming the project ("a driver that runs
 the queries one by one"), or, for a reviewed mention, add the line to
 origins-allow.txt. Run the test before a push that adds comments to std
-declaration files.
+declaration files. A `-run` filter on internal/repotest for local
+checks must include `TestThirdPartyOrigins` when comments change.

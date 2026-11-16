@@ -462,6 +462,36 @@ func typed(ctx context.Context, c *pgconn.PgConn, rest string) {
 }
 
 func typedCell(m *pgtype.Map, kind string, oid uint32, src []byte) string {
+	if ek, ok := strings.CutPrefix(kind, "arr:"); ok {
+		// an array: pgx's array codec splits it, each element is
+		// scanned with the element type (decision 0679)
+		var elemOID uint32
+		if t, ok := m.TypeForOID(oid); ok {
+			ac, ok := t.Codec.(*pgtype.ArrayCodec)
+			if !ok {
+				return "error"
+			}
+			elemOID = ac.ElementType.OID
+		} else {
+			// a type pgx has not loaded (a composite's array, before
+			// LoadType): its text through text[]'s parser, which does
+			// not depend on the element type
+			oid = pgtype.TextArrayOID
+		}
+		var elems []*string
+		if m.Scan(oid, pgtype.TextFormatCode, src, &elems) != nil {
+			return "error"
+		}
+		out := make([]string, len(elems))
+		for i, e := range elems {
+			if e == nil {
+				out[i] = "NULL"
+			} else {
+				out[i] = typedCell(m, ek, elemOID, []byte(*e))
+			}
+		}
+		return "[" + strings.Join(out, ", ") + "]"
+	}
 	switch kind {
 	case "uuid":
 		var u pgtype.UUID

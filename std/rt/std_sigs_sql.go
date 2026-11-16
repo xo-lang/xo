@@ -172,5 +172,7 @@ var (
 	_ func(*Sql_Row, *Task, string) Result[List[int64], Sql_SqlErr]                                                                                                                                                               = (*Sql_Row).M_ints
 	_ func(*Sql_Row, *Task, string) Result[List[string], Sql_SqlErr]                                                                                                                                                              = (*Sql_Row).M_strs
 	_ func(*Sql_Row, *Task, string) Result[List[Sql_SqlValue], Sql_SqlErr]                                                                                                                                                        = (*Sql_Row).M_items
+	_ func(*Sql_Row, *Task, string) Result[List[Sql_Row], Sql_SqlErr]                                                                                                                                                             = (*Sql_Row).M_elements
+	_ func(*Sql_Row, *Task, string) Result[Option[List[Sql_Row]], Sql_SqlErr]                                                                                                                                                     = (*Sql_Row).M_elements_opt
 	_ func(*Task, Net, Sql_Driver, string, int64, int64, Duration, Option[func(*Task, Sql_Notice) Result[Unit, Never]], Option[func(*Task, Sql_TraceRecord) Result[Unit, Never]]) Result[Sql_Db, Sql_SqlErr]                      = Sql_open_driver
 )

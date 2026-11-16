@@ -120,3 +120,14 @@ stdaudit rows for these types (sql 75 agent hours).
   case (CHANGELOG). pg-diff compares the data and result with pgconn's
   CopyTo (`COPYTO STMT` lines), including the rows sent before a server
   error.
+- 2026-11-16 (Xo Lang 3): the array OIDs as one reader,
+  `Row.elements(name) -> List[Row]` (and `elements_opt`), each element a
+  one column Row, rather than a plural reader per type (`uuids`,
+  `dates`, ... 13 types times `_opt`): every scalar reader, present and
+  later, reads elements with its own checks and messages. One dimension
+  only (pgx scans several into a flat slice only with a dimensioned
+  target; a later item if asked). pg-diff compares each element with
+  pgx's array codec plus the element type's scan (`TYPED arr:KIND`),
+  ten kinds; a composite's array goes through text[]'s parser on the
+  reference side, as pgx needs LoadType for the type itself. timetz
+  stays `Row.str`, as decided.

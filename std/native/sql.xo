@@ -5891,3 +5891,69 @@ fn (t: Tx) lo_truncate(o: sql.LargeObject, size: Int) -> () ! sql.SqlErr uses ne
 fn (t: Tx) lo_close(o: sql.LargeObject) -> () ! sql.SqlErr uses net.dial {
   let _ = t.exec("select lo_close($1)", [sql.SqlValue.Integer(n: o.fd)])?
 }
+
+// Arrays' elements (decision 0679): pgx's array text format
+// (pgtype/array.go parseUntypedTextArray) for one dimension, as
+// std/native/llrt/pg.xo's parse_array reads it.
+
+/// A one dimensional array literal's elements ({1,2,NULL}, {"a b",c}),
+/// None (NULL) for an unquoted NULL; None for another shape.
+fn arr_split(s: Str) -> List[Str?]? {
+  let b = s.bytes()
+  if b.len() < 2 || b[0] != 123 || b[b.len() - 1] != 125 {
+    return None
+  }
+  var out: List[Str?] = []
+  if b.len() == 2 {
+    return Some(out)
+  }
+  var i = 1
+  while i < b.len() - 1 {
+    if b[i] == 123 {
+      return None
+    }
+    var cur = BytesBuilder.new()
+    var quoted = false
+    if b[i] == 34 {
+      quoted = true
+      i += 1
+      while i < b.len() - 1 && b[i] != 34 {
+        if b[i] == 92 && i + 1 < b.len() {
+          i += 1
+        }
+        cur.write_byte(b[i])
+        i += 1
+      }
+      i += 1
+    } else {
+      while i < b.len() - 1 && b[i] != 44 {
+        cur.write_byte(b[i])
+        i += 1
+      }
+    }
+    let t = cur.freeze().to_str() ?? ""
+    out.push(if !quoted && t == "NULL" { None } else { Some(t) })
+    if i < b.len() - 1 && b[i] == 44 {
+      i += 1
+    }
+  }
+  Some(out)
+}
+
+fn (r: Row) elements_opt(name: Str) -> List[Row]? ! sql.SqlErr {
+  let xs = match r.get(name)? {
+    Null => return None
+    Array(xs) => xs
+    Text(s) => match arr_split(s) {
+      Some(ts) => ts.map(fn(t) { match t {
+        Some(x) => sql.SqlValue.Text(s: x)
+        None => sql.SqlValue.Null
+      } })
+      None => return Err(mismatch(name, "a one dimensional array", sql.SqlValue.Text(s: s)))
+    }
+    v => return Err(mismatch(name, "an array", v))
+  }
+  Some(xs.map(fn(x) { Row{cols: [name], vals: [x]} }))
+}
+
+fn (r: Row) elements(name: Str) -> List[Row] ! sql.SqlErr { r.elements_opt(name)?.or_err(mismatch(name, "an array", sql.SqlValue.Null)) }

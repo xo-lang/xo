@@ -100,6 +100,17 @@ range_num c0: "inclusive 1.5 .. exclusive 2.25"
 range_num c1: "unbounded .. inclusive 0"
 multirange_num c2: ["inclusive 1 .. exclusive 2.5", "inclusive 3 .. unbounded"]
 numeric parts Finite(coef: 12340, exp: -3) int None float 12.34
+elements c0: [Some("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"), None]
+elements c1: ["1.50", "NaN", "-3"]
+elements c2: ["Span(lower: Inclusive(v: 1), upper: Exclusive(v: 3))", "Empty"]
+elements c3: [Some("a,b"), Some("q\"x"), None, Some("NULL")]
+elements c4: [Some(1), None]
+elements c5: 0
+elements c6: column c6: expected a one dimensional array, found text
+elements c7: column c7: expected an array, found an integer
+elements c8: column c8: expected an array, found NULL
+elements_opt c8: None
+element mismatch: column c3: expected an integer, found text
 copy_to 2 "1\ta\n2\t\\N\n"
 copy_to out err: disk full
 out called 1

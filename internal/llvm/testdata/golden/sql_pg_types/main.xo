@@ -1,7 +1,8 @@
 // std/sql's typed readers of Postgres types (decision 0679) on every
 // backend, through a driver that returns Postgres's text output: uuid,
 // date (BC, wide years), time of day (24:00:00, fractions), interval
-// (IntervalStyle postgres), inet and cidr; NULL through the _opt forms,
+// (IntervalStyle postgres), inet and cidr, arrays through Row.elements;
+// NULL through the _opt forms,
 // other values as Mismatch; and the parameters' text.
 use std/sql
 use std/time
@@ -60,7 +61,7 @@ fn (c: FakeConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql
   var vals: List[sql.SqlValue] = []
   for (i, t) in q.split(" ;; ").indexed() {
     cols.push("c${i}")
-    vals.push(if t == "NULL" { sql.null() } else if t == "INT" { sql.int(7) } else if t == "FLOAT" { sql.float(1.5) } else { sql.str(t) })
+    vals.push(if t == "NULL" { sql.null() } else if t == "INT" { sql.int(7) } else if t == "FLOAT" { sql.float(1.5) } else if t == "ARR" { sql.SqlValue.Array(items: [sql.SqlValue.Integer(n: 1), sql.SqlValue.Null]) } else { sql.str(t) })
   }
   sql.DriverRows{columns: cols, rows: [vals]}
 }
@@ -105,6 +106,49 @@ fn (c: FakeConn) notices() -> List[sql.Notice] { [] }
 fn (c: FakeConn) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr {
   Err(sql.SqlErr.Driver(msg: "fake: no batches"))
 }
+
+/// An array column's elements read by each reader.
+fn el_uuids(r: sql.Row, c: Str) -> List[Str?] ! sql.SqlErr {
+  var out: List[Str?] = []
+  for e in r.elements(c)? {
+    out.push(e.uuid_opt(c)?.map(fn(u) { u.display() }))
+  }
+  out
+}
+
+fn el_nums(r: sql.Row, c: Str) -> List[Str] ! sql.SqlErr {
+  var out: List[Str] = []
+  for e in r.elements(c)? {
+    out.push(e.numeric(c)?.display())
+  }
+  out
+}
+
+fn el_ranges(r: sql.Row, c: Str) -> List[Str] ! sql.SqlErr {
+  var out: List[Str] = []
+  for e in r.elements(c)? {
+    out.push("${e.range_int(c)?:?}")
+  }
+  out
+}
+
+fn el_strs(r: sql.Row, c: Str) -> List[Str?] ! sql.SqlErr {
+  var out: List[Str?] = []
+  for e in r.elements(c)? {
+    out.push(e.str_opt(c)?)
+  }
+  out
+}
+
+fn el_ints(r: sql.Row, c: Str) -> List[Int?] ! sql.SqlErr {
+  var out: List[Int?] = []
+  for e in r.elements(c)? {
+    out.push(e.int_opt(c)?)
+  }
+  out
+}
+
+fn el_first_int(r: sql.Row, c: Str) -> Int ! sql.SqlErr { r.elements(c)?[0].int(c) }
 
 /// A numeric range with its bounds' display text.
 fn nrange(r: sql.Range[sql.Numeric]) -> Str {
@@ -234,6 +278,18 @@ fn main(os: Os) ! {
   os.stdio.println(show("multirange_num c2", nr.multirange_num("c2").map(fn(rs) { rs.map(fn(r) { nrange(r) }) })))
   let np = sql.parse_numeric("12.340")?
   os.stdio.println("numeric parts ${np:?} int ${np.to_int():?} float ${np.to_float()}")
+  // arrays' elements: text arrays split, typed through each reader
+  let ar = db.query_one(r#"{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11,NULL} ;; {1.50,NaN,"-3"} ;; {"[1,3)",empty} ;; {"a,b","q\"x",NULL,"NULL"} ;; ARR ;; {} ;; {{1,2},{3,4}} ;; INT ;; NULL"#, [])?
+  os.stdio.println(show("elements c0", el_uuids(ar, "c0")))
+  os.stdio.println(show("elements c1", el_nums(ar, "c1")))
+  os.stdio.println(show("elements c2", el_ranges(ar, "c2")))
+  os.stdio.println(show("elements c3", el_strs(ar, "c3")))
+  os.stdio.println(show("elements c4", el_ints(ar, "c4")))
+  for c in ["c5", "c6", "c7", "c8"] {
+    os.stdio.println(show("elements ${c}", ar.elements(c).map(fn(es) { es.len() })))
+  }
+  os.stdio.println(show("elements_opt c8", ar.elements_opt("c8").map(fn(o) { o.map(fn(es) { es.len() }) })))
+  os.stdio.println(show("element mismatch", el_first_int(ar, "c3")))
   // COPY TO: the data in order, an error from out, a server error
   let got = Mutex.new("")
   let cn = db.copy_to("COPY t TO STDOUT", fn(b) { got.with(fn(var g) { g = g + b.to_str_lossy() }) })?

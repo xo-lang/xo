@@ -670,6 +670,14 @@ fn (r: Row) ints(name: Str) -> List[Int] ! SqlErr
 fn (r: Row) strs(name: Str) -> List[Str] ! SqlErr
 /// An array's elements as values.
 fn (r: Row) items(name: Str) -> List[SqlValue] ! SqlErr
+/// A one dimensional array's elements, each a Row of one column named
+/// `name`, so every reader reads them (decision 0679, pgx's array
+/// scans): `row.elements("ids")?.map(fn(e) { e.uuid_opt("ids") })` is a
+/// uuid[] (NULL elements None). An array the driver sent as text (uuid[],
+/// numeric[], date[], ranges' arrays, ...) is split as Postgres writes
+/// it; several dimensions or explicit bounds are Mismatch.
+fn (r: Row) elements(name: Str) -> List[Row] ! SqlErr
+fn (r: Row) elements_opt(name: Str) -> List[Row]? ! SqlErr
 
 /// A database driver written in Xo (decision 0278): opened with
 /// `open_driver`, which gives it std/sql's pool, transactions, and

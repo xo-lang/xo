@@ -245,6 +245,14 @@ fn dtext(d: time.Date) -> Str {
 }
 
 fn typed_cell(r: sql.Row, kind: Str, c: Str) -> Str {
+  if kind.starts_with("arr:") {
+    // an array: each element through the element kind (decision 0679)
+    return match r.elements_opt(c) {
+      Ok(None) => "NULL"
+      Ok(Some(es)) => "[" + es.map(fn(e) { typed_cell(e, kind[4..], c) }).join(", ") + "]"
+      Err(_) => "error"
+    }
+  }
   let got: Result[Str?, sql.SqlErr] = match kind {
     "uuid" => r.uuid_opt(c).map(fn(o) { o.map(fn(u) { u.display().debug() }) })
     "date" => r.date_opt(c).map(fn(o) { o.map(fn(d) { d.debug() }) })

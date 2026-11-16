@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-16: feature: Row.elements for typed arrays (decision 0679)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #113 (the pgtype ArrayOID rows)
+- Go reference: pgx v5.12.0 pgtype/array.go (parseUntypedTextArray, one dimension) and ArrayCodec's element scans, Copyright (c) 2013-2021 Jack Christensen, MIT License
+- Test: golden sql_pg_types (uuid, numeric, range and text arrays from text, a driver Array, empty, several dimensions, NULL, element mismatch; Go, arm64, LLVM); scripts/pg-diff.sh `TYPED arr:KIND` for uuid, numeric, date, time, interval, inet and cidr, int4 and int8 ranges, date and numeric ranges, and a composite, equal to pgx on postgres:17-alpine and postgres:14-alpine (110 statements)
+- Shipped in: not yet released
+
+`Row.elements(name)` gives an array's elements as one column Rows, read with any reader.
+
 ## 2026-11-16: feature: COPY TO STDOUT (decision 0679)
 
 - Kind: feature (breaking for drivers written in Xo and exhaustive TraceOp matches)
