@@ -121,6 +121,7 @@ var generators = map[string]func() string{
 	"backoff":      backoffCorpus,
 	"deque":        dequeCorpus,
 	"heap":         heapCorpus,
+	"brotli":       brotliCorpus,
 	"cron":         cronCorpus,
 	"rate":         rateCorpus,
 	"heapops":      heapopsCorpus,

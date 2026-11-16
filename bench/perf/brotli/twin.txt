@@ -1,0 +1,6 @@
+# twincheck: brotli: three workloads (none is the setup alone); Go is github.com/andybalholm/brotli v1.2.2's Reader through io.ReadAll.
+require github.com/andybalholm/brotli v1.2.2
+- - none
+- - text
+- - html
+- - mixed

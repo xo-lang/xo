@@ -60,3 +60,4 @@ std/publicsuffix
 std/hpke
 std/migrate
 std/ui
+std/brotli

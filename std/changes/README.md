@@ -95,3 +95,4 @@ entries yet.
 - [hpke.md](hpke.md): std/hpke (spec/std.md 84)
 - [migrate.md](migrate.md): std/migrate (spec/std.md 85)
 - [ui.md](ui.md): std/ui (spec/std.md 86)
+- [brotli.md](brotli.md): std/brotli (spec/std.md 87)

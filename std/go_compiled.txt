@@ -42,3 +42,4 @@ jsonrpc
 httpproxy
 publicsuffix
 hpke
+brotli
