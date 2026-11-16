@@ -129,6 +129,13 @@ fn ed25519_public_key(seed: Bytes, at: rt.Loc) -> Bytes {
   ed25519.public_key(seed)
 }
 
+fn ed25519_private_key(seed: Bytes, at: rt.Loc) -> Bytes {
+  if seed.len() != 32 {
+    rt.fault_at("crypto.ed25519_private_key: the seed is ${seed.len()} bytes, want 32", at)
+  }
+  seed + ed25519.public_key(seed)
+}
+
 fn ed25519_sign(seed: Bytes, msg: Bytes, at: rt.Loc) -> Bytes {
   if seed.len() != 32 && seed.len() != 64 {
     rt.fault_at("crypto.ed25519_sign: the key is ${seed.len()} bytes, want 32 or 64", at)

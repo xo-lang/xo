@@ -20,6 +20,24 @@ bench/perf/sha3 small 0.855 of before on linux/arm64 host 1 (xo bench
 lanes' address (keccak_at; scripts/gen/keccaklazy), so a List and the
 scratch share them.
 
+## 2026-11-15: feature: ed25519_private_key, Go's 64 byte key from a seed
+
+- Kind: feature
+- Commit: this push
+- Found by: the ed25519 sign timing row (1.194x Go on linux/arm64 host 1): Xo's row signed from the 32 byte seed, deriving the public key on every signature, while Go's twin made its 64 byte key once
+- Go reference: crypto/ed25519 NewKeyFromSeed (the seed, then the public key)
+- Test: crypto_test.xo "ed25519_private_key is the seed and its public key, and signs as the seed" (RFC 8032 7.1 TEST 1, arm64 and llvm); bench/perf/ed25519 sign and signkey give the twin's checksum
+- Affected: none (a new function)
+- Shipped in: not yet released
+
+`crypto.ed25519_private_key(seed)` returns the 64 byte key that
+`ed25519_sign` already took (since 2026-10-29), so a signer can make it
+once and sign with one base point multiplication per message, where the
+32 byte seed takes two. bench/perf/ed25519's sign row now signs with it,
+as the twin signs with NewKeyFromSeed's key: 75.79 to 40.42 ms on
+linux/arm64 host 1 (xo bench --ab, 3 rounds, 0.533, 0.529 to 0.538), about
+0.64 of Go.
+
 ## 2026-11-15: perf: a BLAKE2b digest of a short message is one shot, with no State
 
 - Kind: perf

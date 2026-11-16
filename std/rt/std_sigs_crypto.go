@@ -22,6 +22,7 @@ var (
 	_ func(*Task, Rand, string, int64) string                                                                          = Crypto_hash_password
 	_ func(*Task, string, string) bool                                                                                 = Crypto_verify_password
 	_ func(*Task, Bytes) Bytes                                                                                         = Crypto_ed25519_public_key
+	_ func(*Task, Bytes) Bytes                                                                                         = Crypto_ed25519_private_key
 	_ func(*Task, Bytes, Bytes) Bytes                                                                                  = Crypto_ed25519_sign
 	_ func(*Task, Bytes, Bytes, Bytes) bool                                                                            = Crypto_ed25519_verify
 	_ func(*Task, Bytes, Bytes, bool, Bytes) Result[Bytes, Crypto_KeyErr]                                              = Crypto_ed25519_sign_with
