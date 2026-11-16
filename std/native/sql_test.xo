@@ -2,6 +2,7 @@
 // same rows, order and errors as a full scan of a copied table.
 use std/sql
 use std/big
+use std/json
 
 fn ids(rows: List[sql.Row]) -> List[Int] {
   var out: List[Int] = []
@@ -398,4 +399,14 @@ test "a Numeric's to_rat is its exact value, and equality keeps the scale" {
   expect(sql.parse_numeric("1.50")? == sql.parse_numeric("1.5")?) == false
   expect(sql.parse_numeric("2e3")?.to_rat()) == Some(big.rat_from_int(2000))
   expect(sql.Numeric.NaN.to_rat()) == None
+}
+
+test "Numeric's JSON: a bare number keeping the scale (pgx's MarshalJSON); NaN and the infinities encode as null" {
+  let n = sql.parse_numeric("-1234567890123456789012345678901234567890.50").or_fault("valid")
+  expect(json.encode_str(n)) == "-1234567890123456789012345678901234567890.50"
+  expect(json.decode_str[sql.Numeric]("-1234567890123456789012345678901234567890.50")) == Ok(n)
+  expect(json.decode_str[sql.Numeric]("1e+21").map(fn(x) { x.display() })) == Ok("1000000000000000000000")
+  expect(json.encode_str([sql.Numeric.NaN, sql.Numeric.Infinity, sql.Numeric.NegInfinity])) == "[null,null,null]"
+  expect(json.decode_str[sql.Numeric?]("null")) == Ok(None)
+  expect(json.decode_str[sql.Numeric]("\"NaN\"").is_err()) == true
 }

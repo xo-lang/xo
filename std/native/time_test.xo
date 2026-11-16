@@ -3,6 +3,7 @@
 // nanoseconds, the zone's name and offset in seconds, Go's result of the
 // two layouts of the test)
 use std/time
+use std/json
 
 const GO_FORMAT: List[(Int, Int, Str, Int, Str)] = [
   (2430493200, 200000000, "UTC", 3661, "Mon 2047-01-07T18:01:01.2+01:01 UTC|Monday, January 7 1 06:01 PM +0101.200"),
@@ -1589,4 +1590,17 @@ test "answers within a cycle of Int's ends, and years past them, do not fault (t
   }
   expect(wide_year_text(23058430092136940, 2208)) == "9223372036854778208"
   expect(wide_year_text(-23058430092136946, 2100)) == "-9223372036854776300"
+}
+
+test "a Date's JSON is its text, as pgx's pgtype.Date and Go's 2006-01-02 write it; the earlier object still decodes" {
+  let d = time.date(2024, 2, 29).or_fault("valid")
+  expect(json.encode_str(d)) == "\"2024-02-29\""
+  expect(json.decode_str[time.Date]("\"2024-02-29\"")) == Ok(d)
+  expect(json.decode_str[time.Date]("{\"year\":2024,\"month\":2,\"day\":29}")) == Ok(d)
+  expect(json.decode_str[time.Date?]("null")) == Ok(None)
+  expect(json.encode_str([d])) == "[\"2024-02-29\"]"
+  for bad in ["\"2023-02-29\"", "\"2024-2-29\"", "\"2024-02-29T00:00:00Z\"", "\"x\"", "{\"year\":2024}", "20240229", "\"10000-01-01\""] {
+    expect(json.decode_str[time.Date](bad).is_err()) == true
+  }
+  expect(json.decode_str[time.Date]("\"2024-13-01\"").err().map(fn(e) { e.display() })) == Some("at $: invalid civil time: month 13 out of range 1 to 12")
 }

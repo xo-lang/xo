@@ -95,13 +95,25 @@ fn parse_numeric(s: Str) -> Numeric ! SqlErr
 /// `1.50` is coefficient 150 and exponent -2 (the scale survives), and
 /// an integer's trailing zeros go into the exponent (`100` is 1, 2).
 /// Equality is structural, so `1.50` and `1.5` differ; compare values
-/// with to_rat.
+/// with to_rat. Its JSON form is a bare number of any length, its text
+/// (pgx's MarshalJSON; json.Number, decision 0673). NaN and the
+/// infinities encode as null (pgx writes the strings "NaN" and
+/// "Infinity"; Xo's encode cannot fail and a string is not a json.Number),
+/// so a `Numeric?` field reads them back as None; a JSON string is a
+/// decode error.
 enum Numeric {
   Finite(coef: big.BigInt, exp: Int)
   NaN
   Infinity
   NegInfinity
-} derive Eq
+} derive Eq, Json(via: json.Number, to: numeric_json, from: numeric_of_json)
+
+/// Numeric's JSON number: its text; NaN and the infinities give a text
+/// that is not a JSON number, which encodes as null.
+fn numeric_json(n: Numeric) -> json.Number
+/// A Numeric from a JSON number's text (pgx's UnmarshalJSON:
+/// ScanScientific).
+fn numeric_of_json(j: json.Number) -> Numeric ! SqlErr
 
 /// Postgres's text (pgx's encodeText): `1.50`, `-0.003`, `100`, `NaN`,
 /// `Infinity`, `-Infinity`.

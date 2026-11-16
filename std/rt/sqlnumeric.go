@@ -227,3 +227,12 @@ func (r Sql_Row) M_multirange_num(_ *Task, name string) Result[List[Sql_Range[Sq
 func (r Sql_Row) M_multirange_num_opt(_ *Task, name string) Result[Option[List[Sql_Range[Sql_Numeric]]], Sql_SqlErr] {
 	return sqlColOpt(r, name, "a numeric multirange", pgTyped(mrTyped(pgNumeric)))
 }
+
+// Sql_numeric_json is Numeric's JSON number (decision 0681): its text;
+// NaN's and the infinities' texts are not numbers and encode as null.
+func Sql_numeric_json(_ *Task, n Sql_Numeric) Json_Number { return Json_Number{F_text: numericText(n)} }
+
+// Sql_numeric_of_json is a Numeric from a JSON number's text.
+func Sql_numeric_of_json(tk *Task, j Json_Number) Result[Sql_Numeric, Sql_SqlErr] {
+	return Sql_parse_numeric(tk, j.F_text)
+}

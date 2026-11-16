@@ -4144,7 +4144,7 @@ fn (r: Row) multirange_int(name: Str) -> List[Range[Int]] ! SqlErr // also _opt,
 pub fn range_int(r: Range[Int]) -> SqlValue                     // also range_date, range_time, multirange_int, ...
 fn (r: Row) fields(name: Str) -> List[Str?] ! SqlErr            // also fields_opt: a composite's fields' texts
 fn (r: Row) elements(name: Str) -> List[Row] ! SqlErr           // also elements_opt: an array's elements, each a one column Row
-enum Numeric { Finite(coef: big.BigInt, exp: Int), NaN, Infinity, NegInfinity }  // pgx's Numeric
+enum Numeric { Finite(coef: big.BigInt, exp: Int), NaN, Infinity, NegInfinity }  // pgx's Numeric; JSON: a bare number, NaN and infinities null
 fn (r: Row) numeric(name: Str) -> Numeric ! SqlErr              // also numeric_opt, range_num, multirange_num
 pub fn parse_numeric(s: Str) -> Numeric ! SqlErr                // 1.50, 1e-3, NaN, Infinity; Syntax error otherwise
 pub fn numeric(n: Numeric) -> SqlValue                          // also range_num, multirange_num
@@ -5125,7 +5125,7 @@ test sets `TZ`.
 ### 13.2 Civil time
 
 ```
-struct Date { year: Int, month: Int, day: Int } derive Ord, Json
+struct Date { year: Int, month: Int, day: Int } derive Ord, Json   // JSON: "2024-02-29" (decodes the old object too, until 0.next+1)
 struct ClockTime { hour: Int, minute: Int, second: Int, nanos: Int } derive Ord, Json
 struct Civil { date: Date, time: ClockTime, offset: Duration, zone: Str } derive Json
 enum Weekday { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday } derive Display, Ord, Json
@@ -6263,7 +6263,8 @@ uses are type errors now, and `u.display()`, `"${u}"`, `uuid.parse` and
 `u.bytes()` are the ways in and out.
 
 ```
-struct Uuid { ... } derive Ord            // 16 bytes as two Ints; its text, lower case 8-4-4-4-12: `u.display()`
+struct Uuid { ... } derive Ord, Json      // 16 bytes as two Ints; its text, lower case 8-4-4-4-12: `u.display()`;
+                                          // JSON: that text as a string; decoding takes what `parse` takes
 struct UuidErr { msg: Str }               // google/uuid's texts: `invalid UUID length: 35`
 
 pub fn v4(r: Rand) -> Uuid uses rand

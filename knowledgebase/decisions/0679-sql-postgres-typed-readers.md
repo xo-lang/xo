@@ -131,3 +131,10 @@ stdaudit rows for these types (sql 75 agent hours).
   ten kinds; a composite's array goes through text[]'s parser on the
   reference side, as pgx needs LoadType for the type itself. timetz
   stays `Row.str`, as decided.
+- 2026-11-16 (Xo Lang 3, the lead): LoadType, LoadTypes and TypeMap are
+  not planned. Composites, their arrays and record[] decode without
+  registering a type (`Row.fields`, `Row.elements`, pg-diff equal to
+  pgx), so `Db.load_type` would add no decoding; item 2's composites
+  item is met by that. Struct arguments (pgx's StructArgs) wait for an
+  encode half of `derive SqlRow` (the field types are known only to the
+  compiler; `json.to_value` cannot tell Bytes from Str).

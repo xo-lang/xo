@@ -28,6 +28,8 @@ var (
 	_ func(*Time_Zone, *Task) string                                                                = (*Time_Zone).M_name
 	_ func(*Time_Zone, *Task, Time) Duration                                                        = (*Time_Zone).M_offset_at
 	_ func(*Time_Zone, *Task, Time) string                                                          = (*Time_Zone).M_abbreviation_at
+	_ func(*Task, Time_Date) Json_Value                                                             = Time_date_json
+	_ func(*Task, Json_Value) Result[Time_Date, Time_CivilErr]                                      = Time_date_of_json
 	_ func(*Time_Civil, *Task) int64                                                                = (*Time_Civil).M_unix
 	_ func(*Time_Civil, *Task) Option[Time]                                                         = (*Time_Civil).M_to_time
 	_ func(*Time_Civil, *Task, string) string                                                       = (*Time_Civil).M_format

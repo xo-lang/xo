@@ -20,7 +20,12 @@ pub struct Uuid {
   /// order of the bytes
   hi: Int
   lo: Int
-} derive Ord
+} derive Ord, Json(via: Str, to: json_text, from: parse)
+
+/// A Uuid's JSON form: its canonical text as a string (google/uuid's
+/// MarshalText, pgx pgtype.UUID's MarshalJSON); decoding takes any form
+/// `parse` does.
+fn json_text(u: Uuid) -> Str { u.display() }
 
 /// Displays as google/uuid's texts: `invalid UUID length: 35`,
 /// `invalid UUID format`, `invalid urn prefix: "urn:uid::"`.

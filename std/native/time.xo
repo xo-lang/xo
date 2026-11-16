@@ -6,6 +6,7 @@
 // std/llrt/xo_time.c); civil time, layouts, formatting, and parsing are
 // here.
 use std/time
+use std/json
 use native/llrt/cabi_time
 use native/llrt/testworld
 use native/llrt/tz
@@ -2706,3 +2707,55 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
 fn perr(s: Str, layout: Str, at: Int, msg: Str) -> Time ! time.ParseErr { Err(time.ParseErr{input: s, layout: layout, at: at, msg: msg}) }
 
 fn zone_char(c: UInt8) -> Bool { c >= 65 && c <= 90 || c >= 97 && c <= 122 || c >= 48 && c <= 57 || c == 43 || c == 45 }
+
+// Date's JSON form (2026-11-16, task #113): Go's "2006-01-02" layout as
+// pgx's pgtype.Date writes it, and the earlier object.
+
+fn date_json(d: time.Date) -> json.Value { json.Value.Str(s: date_display(d)) }
+
+fn date_of_json(v: json.Value) -> time.Date ! time.CivilErr {
+  match v {
+    Str(s) => date_text(s)
+    Object(fields) => {
+      var y: Int? = None
+      var m: Int? = None
+      var d: Int? = None
+      for (k, x) in fields {
+        if let Int(n) = x {
+          if k == "year" {
+            y = Some(n)
+          } else if k == "month" {
+            m = Some(n)
+          } else if k == "day" {
+            d = Some(n)
+          }
+        }
+      }
+      match (y, m, d) {
+        (Some(a), Some(b), Some(c)) => date(a, b, c)
+        _ => Err(time.CivilErr.Invalid(msg: "a date is a \"YYYY-MM-DD\" string"))
+      }
+    }
+    _ => Err(time.CivilErr.Invalid(msg: "a date is a \"YYYY-MM-DD\" string"))
+  }
+}
+
+/// "YYYY-MM-DD", with an optional - and four or more year digits.
+fn date_text(s: Str) -> time.Date ! time.CivilErr {
+  let bad = time.CivilErr.Invalid(msg: "cannot parse ${s.quote()} as a date (YYYY-MM-DD)")
+  let neg = s.starts_with("-")
+  let body = if neg { s[1..] } else { s }
+  let parts = body.split("-")
+  if parts.len() != 3 || parts[0].len() < 4 || parts[1].len() != 2 || parts[2].len() != 2 {
+    return Err(bad)
+  }
+  for p in parts {
+    for c in p.bytes() {
+      if c < 48 || c > 57 {
+        return Err(bad)
+      }
+    }
+  }
+  let y = Int.parse(parts[0]).or_err(bad)?
+  date(if neg { -y } else { y }, Int.parse(parts[1]).or_err(bad)?, Int.parse(parts[2]).or_err(bad)?)
+}

@@ -1,7 +1,8 @@
 // A server decodes a Date from a request body and answers with its
-// weekday, the date a year later and its text. A Date may hold any fields
-// (derive Json reads any Int), so the far ends of the Int range must give
-// answers, not handler faults (std/evidence/time/review.md section 4;
+// weekday, the date a year later and its text. Since 2026-11-16 a Date's
+// JSON is its text ("2026-11-14") and decoding checks the date (the
+// earlier object form still decodes, checked too), so a bad date is a 400;
+// the far ends of the Int range must give answers, not handler faults (std/evidence/time/review.md section 4;
 // 0.51.0 faulted in weekday, add_months, display and Civil.to_time there,
 // a 500 per request). Arithmetic whose answer does not fit Int (a year
 // past Int.max) still faults; the handler checks the year first, as
@@ -25,6 +26,15 @@ fn main(os: Os) uses stdio {
     "{\"year\": -9223372036854775808, \"month\": 1, \"day\": 1}",
     "{\"year\": 2026, \"month\": -9223372036854775808, \"day\": 9223372036854775807}",
     "{\"year\": 99999999999999999, \"month\": 99, \"day\": -5}",
+    "\"2026-11-14\"",
+    "\"9223372036854775807-12-31\"",
+    "\"-9223372036854775807-01-01\"",
+    "\"-9223372036854775808-01-01\"",
+    "\"2026-02-29\"",
+    "\"2024-2-29\"",
+    "\"0044-03-15\"",
+    "{\"year\": 2026}",
+    "20261114",
   ] {
     let resp = r.call(http.new_request("POST", "/date", {"content-type": "application/json"}, body.bytes()))
     os.stdio.println("${resp.status} ${resp.body.to_str() ?? "?"}")

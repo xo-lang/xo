@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-16: feature: Numeric implements Json (decision 0681)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #113 (pgx pgtype.Numeric.MarshalJSON and UnmarshalJSON); the lead's decision 2026-11-16
+- Go reference: pgx v5.12.0 pgtype/numeric.go (MarshalJSON, UnmarshalJSON), Copyright (c) 2013-2021 Jack Christensen, MIT License
+- Test: std/native/sql_test.xo ("Numeric's JSON"): a 40 digit value with its scale, 1e+21, NaN and the infinities as null, null as None, a string refused; the same program on the Go backend and arm64 gave the same output
+- Shipped in: not yet released
+
+`derive Json(via: json.Number)`: finite values travel as bare numbers of any length with their scale. Differs from pgx: NaN, Infinity and -Infinity encode as null rather than strings (Xo's encode cannot fail, json.Number writes a non number as null), and decoding a string is json's `expected number` error.
+
 ## 2026-11-16: feature: Row.elements for typed arrays (decision 0679)
 
 - Kind: feature

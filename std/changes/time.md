@@ -1,5 +1,16 @@
 # std/time changes
 
+## 2026-11-16: behavior: Date's JSON is its text
+
+- Kind: behavior (breaking)
+- Commit: this push
+- Found by: task #113 (pgx pgtype.Date.MarshalJSON and UnmarshalJSON); the lead's decision 2026-11-16
+- Go reference: Go's time "2006-01-02" layout (Copyright 2009 The Go Authors, BSD-3-Clause) as pgx v5.12.0 pgtype/date.go MarshalJSON writes it (MIT License)
+- Test: std/native/time_test.xo ("a Date's JSON is its text"); golden time_hostile_date (object and text bodies, the far ends of Int, Feb 29 of a common year, a one digit month: Go, arm64, LLVM); the same program on the Go backend and arm64 gave the same output
+- Shipped in: not yet released
+
+`derive Json(via: json.Value, to: date_json, from: date_of_json)`: a Date encodes as "YYYY-MM-DD"; decoding takes that text or, until the next minor release, the earlier `{"year","month","day"}` object, both checked by time.date (years 1 to 9999), so a hostile body is a decode error rather than a Date that later faults.
+
 ## 2026-11-15: feature: Duration hours, minutes, micros; RFC1123Z and DATE_TIME
 
 - Kind: feature

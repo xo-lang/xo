@@ -1,8 +1,17 @@
 exit 0
 --- stdout
 200 Saturday 2026-11-14 later 2027-11-14 to_time true
-200 Thursday 9223372036854775807-12-31 later past Int to_time false
-200 Sunday -9223372036854775808-01-01 later -9223372036854775807-01-01 to_time false
-200 Friday 2026--9223372036854775808-9223372036854775807 later -768614336404562624-04-30 to_time false
-200 Friday 99999999999999999-99--5 later 100000000000000008-03-01 to_time false
+400 bad date: at $: invalid civil time: year 9223372036854775807 out of range 1 to 9999
+400 bad date: at $: invalid civil time: year -9223372036854775808 out of range 1 to 9999
+400 bad date: at $: invalid civil time: month -9223372036854775808 out of range 1 to 12
+400 bad date: at $: invalid civil time: year 99999999999999999 out of range 1 to 9999
+200 Saturday 2026-11-14 later 2027-11-14 to_time true
+400 bad date: at $: invalid civil time: year 9223372036854775807 out of range 1 to 9999
+400 bad date: at $: invalid civil time: year -9223372036854775807 out of range 1 to 9999
+400 bad date: at $: invalid civil time: cannot parse "-9223372036854775808-01-01" as a date (YYYY-MM-DD)
+400 bad date: at $: invalid civil time: day 29 out of range 1 to 28 for 2026-02
+400 bad date: at $: invalid civil time: cannot parse "2024-2-29" as a date (YYYY-MM-DD)
+200 Tuesday 0044-03-15 later 0045-03-15 to_time false
+400 bad date: at $: invalid civil time: a date is a "YYYY-MM-DD" string
+400 bad date: at $: invalid civil time: a date is a "YYYY-MM-DD" string
 --- stderr

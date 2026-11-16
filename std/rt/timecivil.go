@@ -3,6 +3,8 @@ package rt
 import (
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -400,4 +402,65 @@ func (t Time_Ticker) M_wait(tk *Task) Time {
 // M_reset is `t.reset(period)`.
 func (t Time_Ticker) M_reset(tk *Task, period Duration) Time_Ticker {
 	return Time_ticker(tk, t.F_clock, period)
+}
+
+// Time_date_json is Date's JSON value (2026-11-16): a string of its text,
+// Go's "2006-01-02" as pgx's pgtype.Date writes it.
+func Time_date_json(tk *Task, d Time_Date) Json_Value {
+	return Json_Value{Tag: 5, P: Json_Value_Str{F_s: d.M_display(tk)}}
+}
+
+// Time_date_of_json is a Date from its JSON value: the text, or the
+// object Date wrote before.
+func Time_date_of_json(tk *Task, v Json_Value) Result[Time_Date, Time_CivilErr] {
+	switch v.Tag {
+	case 5:
+		return timeDateText(tk, v.P.(Json_Value_Str).F_s)
+	case 7:
+		var y, m, d *int64
+		for _, f := range List_Slice(v.P.(Json_Value_Object).F_fields) {
+			if f.F1.Tag != 3 {
+				continue
+			}
+			n := f.F1.P.(Json_Value_Int).F_n
+			switch f.F0 {
+			case "year":
+				y = &n
+			case "month":
+				m = &n
+			case "day":
+				d = &n
+			}
+		}
+		if y != nil && m != nil && d != nil {
+			return Time_date(tk, *y, *m, *d)
+		}
+	}
+	return Err[Time_Date](civilErr(1, `a date is a "YYYY-MM-DD" string`))
+}
+
+func timeDateText(tk *Task, s string) Result[Time_Date, Time_CivilErr] {
+	bad := Err[Time_Date](civilErr(1, "cannot parse "+strconv.Quote(s)+" as a date (YYYY-MM-DD)"))
+	body, neg := strings.CutPrefix(s, "-")
+	parts := strings.Split(body, "-")
+	if len(parts) != 3 || len(parts[0]) < 4 || len(parts[1]) != 2 || len(parts[2]) != 2 {
+		return bad
+	}
+	var n [3]int64
+	for i, p := range parts {
+		for _, c := range []byte(p) {
+			if c < '0' || c > '9' {
+				return bad
+			}
+		}
+		x, err := strconv.ParseInt(p, 10, 64)
+		if err != nil {
+			return bad
+		}
+		n[i] = x
+	}
+	if neg {
+		n[0] = -n[0]
+	}
+	return Time_date(tk, n[0], n[1], n[2])
 }

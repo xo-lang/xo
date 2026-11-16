@@ -1,3 +1,5 @@
+use std/json
+
 // github.com/google/uuid v1.6.0's Parse on uuid_test.go's inputs and on
 // random UUIDs in each form (upper case, urn:uuid:, braces, 32 hex), some
 // with a character changed: google/uuid's results (decision 0282).
@@ -185,4 +187,14 @@ test "a 45 byte text with multi-byte text in its first 9 bytes is google/uuid's 
   expect(parse("urn:uuid日2c4a3a1e-1f5e-4a7b-9c3d-0e1f2a3b4c").err().map(fn(e) { e.display() })) == Some("invalid urn prefix: \"urn:uuid\\xe6\"")
   expect(parse("日日日2c4a3a1e-1f5e-4a7b-9c3d-0e1f2a3b4c5d").err().map(fn(e) { e.display() })) == Some("invalid urn prefix: \"日日日\"")
   expect(parse("urn:uuid:2c4a3a1e-1f5e-4a7b-9c3d-0e1f2a3b4cé").err().map(fn(e) { e.display() })) == Some("invalid UUID format")
+}
+
+test "JSON: a string of the canonical text, as google/uuid and pgx write it" {
+  let u = parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8").or_fault("parses")
+  expect(json.encode_str(u)) == "\"6ba7b810-9dad-11d1-80b4-00c04fd430c8\""
+  expect(json.decode_str[Uuid]("\"6BA7B810-9DAD-11D1-80B4-00C04FD430C8\"")) == Ok(u)
+  expect(json.decode_str[Uuid?]("null")) == Ok(None)
+  expect(json.encode_str([Some(u), None])) == "[\"6ba7b810-9dad-11d1-80b4-00c04fd430c8\",null]"
+  expect(json.decode_str[Uuid]("\"x\"").err().map(fn(e) { e.display() })) == Some("at $: invalid UUID length: 1")
+  expect(json.decode_str[Uuid]("12").is_err()) == true
 }

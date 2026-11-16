@@ -1,5 +1,16 @@
 # std/uuid changes
 
+## 2026-11-16: feature: Uuid implements Json
+
+- Kind: feature
+- Commit: this push
+- Found by: task #113 (pgx pgtype.UUID.MarshalJSON and UnmarshalJSON; google/uuid NullUUID's JSON rows)
+- Go reference: github.com/google/uuid v1.6.0 (UUID.MarshalText, UnmarshalText), Copyright (c) 2009,2014 Google Inc., BSD-3-Clause; pgx v5.12.0 pgtype/uuid.go (UUID.MarshalJSON), MIT License
+- Test: std/uuid_test.xo ("JSON: a string of the canonical text"): encode, decode in upper case, `Uuid?` null, a list, google/uuid's length error, a number refused; the same program on the Go backend and arm64 gave the same output
+- Shipped in: not yet released
+
+`derive Json(via: Str, to: json_text, from: parse)` on Uuid: a UUID travels as its canonical text, and decoding reports `parse`'s error at its path.
+
 ## 2026-11-15: feature: v3, v5, hash, v1, v6, max and the field readers (google/uuid)
 
 - Kind: feature

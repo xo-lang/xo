@@ -10,6 +10,11 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Fix (std/xml): parse and parse_root report a second root element or text outside the root before a syntax error later in the document, as encoding/xml does. Found by the #98 xmlcodec fuzz.
+- Breaking (std/time; task #113, the lead 2026-11-16): a `time.Date` encodes in JSON as its text, `"2024-02-29"` (Go's "2006-01-02", pgx's pgtype.Date), not as `{"year":2024,"month":2,"day":29}`, and decoding checks the date (a 400 from `req.json` for `"2023-02-29"` or a year past 9999). Stored JSON with the object form still decodes until the next minor release; rewrite it as text before then. Code that matched on the object in JSON it reads back from an Xo program changes to the string.
+- Feature (std/sql, every backend; decision 0681): `sql.Numeric` implements `Json` as a bare JSON number keeping its scale (`-0.0030`), as pgx writes it; NaN and the infinities encode as null (pgx writes strings), so a `Numeric?` field reads them back as None.
+
+- Feature (std/uuid, every backend; task #113): `Uuid` implements `Json`, as its canonical text in a JSON string (google/uuid's MarshalText, pgx's pgtype.UUID); decoding accepts every form `uuid.parse` does, and `Uuid?` reads null as None.
+
 - Feature (std/sql, every backend; decision 0679, task #113): `Row.elements` and `elements_opt` read an array column's elements as one column Rows, so uuid[], numeric[], date[], time[], interval[], inet[], range and composite arrays read with the element's reader.
 
 - Fixes (std/dns): lookup_srv fails with "SRV header name is invalid" when the first SRV answer's owner name is not a domain name, as Go's LookupSRV (it returned the records). Found by TestDnsFuzz seeds 5 to 7 (task #115).

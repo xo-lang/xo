@@ -5957,3 +5957,10 @@ fn (r: Row) elements_opt(name: Str) -> List[Row]? ! sql.SqlErr {
 }
 
 fn (r: Row) elements(name: Str) -> List[Row] ! sql.SqlErr { r.elements_opt(name)?.or_err(mismatch(name, "an array", sql.SqlValue.Null)) }
+
+// Numeric's JSON form (decision 0681, the lead 2026-11-16): pgx's
+// MarshalJSON and UnmarshalJSON for finite values through json.Number.
+
+fn numeric_json(n: sql.Numeric) -> js.Number { js.Number{text: n.display()} }
+
+fn numeric_of_json(j: js.Number) -> sql.Numeric ! sql.SqlErr { sql.parse_numeric(j.text) }

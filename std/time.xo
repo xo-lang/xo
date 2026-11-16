@@ -8,6 +8,8 @@
 // only at run time embeds the whole database (`xo build` prints a note
 // naming the call). `--tzdata=system` reads the host database instead.
 
+use std/json
+
 /// A time zone: a handle to its rules. Equal when the names (and, for
 /// `fixed`, the offsets) are equal; displays as its name.
 struct Zone {}
@@ -41,12 +43,22 @@ fn (z: Zone) offset_at(t: Time) -> Duration
 /// "CET", "CEST".
 fn (z: Zone) abbreviation_at(t: Time) -> Str
 
-/// A calendar date in the proleptic Gregorian calendar.
+/// A calendar date in the proleptic Gregorian calendar. Its JSON form is
+/// its text, "2024-02-29" (Go's "2006-01-02", pgx's pgtype.Date,
+/// civil.Date); decoding also takes the object
+/// {"year":2024,"month":2,"day":29} that Date wrote before 2026-11-16, for
+/// one minor release.
 struct Date {
   year: Int
   month: Int
   day: Int
-} derive Ord, Json
+} derive Ord, Json(via: json.Value, to: date_json, from: date_of_json)
+
+/// Date's JSON value: a string of its text.
+fn date_json(d: Date) -> json.Value
+/// A Date from JSON: "YYYY-MM-DD" (a leading - and more year digits for
+/// what display writes), or the earlier object form.
+fn date_of_json(v: json.Value) -> Date ! CivilErr
 
 /// A wall clock time of day.
 struct ClockTime {
