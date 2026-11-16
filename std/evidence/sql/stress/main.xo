@@ -12,7 +12,7 @@
 // (Linux /proc/self/status) and prints it each minute. Pass: no mismatch, no fault, and the resident
 // set at the end within 10% or 4 MB of its sample at 5 minutes.
 //
-//   main [MINUTES (30)] [TASKS (64)] [LIFETIME_SECONDS (2; 0: none)]
+//   main [MINUTES (30); 0: 50 passes per client] [TASKS (64)] [LIFETIME_SECONDS (2; 0: none)]
 use std/sql
 
 /// x as n little-endian bytes.
@@ -278,7 +278,9 @@ fn main(os: Os) ! {
         let db = dbs[t / 8]
         var n = 0
         var i = 0
-        while clock.now() < end {
+        // MINUTES 0: 50 passes each, a fixed count for the allocation
+        // guard (TestSqlStressReadBytes)
+        while if minutes == 0 { i < 50 } else { clock.now() < end } {
           n += client_pass(db, t, i)?
           i += 1
         }
