@@ -1,0 +1,5 @@
+# twincheck: strcontains: Go's strings.Contains (IndexByte for one byte); the same three workloads.
+- - byte
+- - word
+- - strip
+- - none

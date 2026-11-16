@@ -1,0 +1,28 @@
+// strcontains: Str.contains of one byte (ESC, as term.strip's plain path) and of a three byte needle over 64 lines
+// of 26 to 54 bytes with neither, 20,000,000 calls. Measures the one-byte path (find_byte alone, #103) against Go's
+// strings.Contains (IndexByte); `xo bench --ab` compares two xos.
+// `strip` is term.strip on the same lines (its ESC check, #103 lever 5). Usage: `<program> byte|word|strip|none`. Prints `<workload> <checksum>`.
+use std/term
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "byte"
+  var lines: List[Str] = []
+  for i in 0..64 {
+    lines.push("line ${i}: " + "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJ"[0..(18 + i % 28)])
+  }
+  let sub = if w == "word" { "zzz" } else { "\u{1b}" }
+  var n = 0
+  if w != "none" {
+    for k in 0..20000000 {
+      if w == "strip" {
+        n += term.strip(lines[k & 63]).len() & 1
+        continue
+      }
+      if lines[k & 63].contains(sub) {
+        n += 1
+      }
+      n += lines[k & 63].len() & 1
+    }
+  }
+  os.stdio.println("${w} ${n}")
+}
