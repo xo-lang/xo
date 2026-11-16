@@ -557,6 +557,21 @@ fn hw_dec_n(c: Cipher, var io: List[Int], blocks: Int) {
 
 /// The encryption of the 16 byte block b (crypto/aes's Encrypt).
 pub fn (c: Cipher) encrypt_block(b: Bytes) -> Bytes {
+  if (c.hw & cpu.HW_AES) != 0 {
+    // the CPU's rounds in place in the result's own 16 bytes (a new heap
+    // string: rs_with_cap's room is at least 16): one allocation, as Go's
+    // Encrypt into a fresh slice, where io's list was a second
+    let s = rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), rt.bytes_word(b, 0), 8), rt.bytes_word(b, 8), 8)
+    let st = raw.data(s)
+    let kp = addr(c.rk)
+    match c.nr {
+      10 => cpu.aes_enc10(st, kp)
+      12 => cpu.aes_enc12(st, kp)
+      _ => cpu.aes_enc14(st, kp)
+    }
+    keep(c.rk)
+    return s.bytes()
+  }
   var io = [rt.bytes_word(b, 0), rt.bytes_word(b, 8), 0, 0, 0, 0, 0, 0]
   encrypt_n(c, io, 1)
   rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), io[0], 8), io[1], 8).bytes()
@@ -676,6 +691,20 @@ fn decrypt4(c: Cipher, var io: List[Int]) {
 
 /// The decryption of the 16 byte block b (crypto/aes's Decrypt).
 pub fn (c: Cipher) decrypt_block(b: Bytes) -> Bytes {
+  if (c.hw & cpu.HW_AES) != 0 {
+    // as encrypt_block: the CPU's rounds in place in the result's 16 bytes
+    // (decrypt4 ran hw_dec_n over four blocks, three of them zeros)
+    let s = rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), rt.bytes_word(b, 0), 8), rt.bytes_word(b, 8), 8)
+    let st = raw.data(s)
+    let kp = addr(c.rk)
+    match c.nr {
+      10 => cpu.aes_dec10(st, kp)
+      12 => cpu.aes_dec12(st, kp)
+      _ => cpu.aes_dec14(st, kp)
+    }
+    keep(c.rk)
+    return s.bytes()
+  }
   var io = [rt.bytes_word(b, 0), rt.bytes_word(b, 8), 0, 0, 0, 0, 0, 0]
   decrypt4(c, io)
   rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), io[0], 8), io[1], 8).bytes()

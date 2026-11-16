@@ -15,6 +15,22 @@ copied into a new zero padded 128 byte block before its compression.
 digest_tables.blake2b_compress_n compresses the n bytes where they lie and
 reads the bytes past them as zeros (one test more for a whole block).
 
+## 2026-11-16: perf: an AES block's encryption and decryption run in place in the result
+
+- Kind: perf
+- Commit: this push
+- Found by: the AES modes timing row (bench/perf/aesmodes block 1.123 of Go's crypto/aes on linux/arm64 host 1, #100)
+- Go reference: crypto/aes Block.Encrypt and Decrypt (into the caller's slice)
+- Test: crypto module tests; the crypto, xcrypto and aesmodes corpora (arm64, llvm); twincheck bench/perf/aesmodes (5 cases); xo bench --ab on linux/arm64 host 1: bench/perf/aesmodes block 0.934 (0.92 to 0.974), max RSS the same
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+`AesBlock.encrypt_block` and `decrypt_block` loaded the block into an
+eight word list, ran the rounds there and copied the result into a new
+string; with the CPU's AES instructions they now run in the result's own
+16 bytes. decrypt_block also decrypted four blocks (three of them zeros)
+for its one.
+
 ## 2026-11-15: perf: a SHA-3 or Keccak digest is one shot, its state in scratch memory
 
 - Kind: perf
