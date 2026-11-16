@@ -32,6 +32,12 @@
 //   extended result code's name (`SQLITE_BUSY`) and SQLite's message.
 // - Transactions are SQLite's (serializable); a read only one runs with
 //   `PRAGMA query_only`. copy_from runs a prepared INSERT per row.
+// - Departures from mattn: there is no online backup API (SQLiteBackup's
+//   Step, Remaining, PageCount); `VACUUM INTO 'path'` through Db.exec takes
+//   a one shot snapshot of a live database instead, not an incremental
+//   copy. Serialize is that snapshot's file read back, and there is no
+//   Deserialize into memory: write the image to a file through the Fs and
+//   open it (lead, 2026-11-16).
 use std/sql
 
 

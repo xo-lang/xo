@@ -19,6 +19,8 @@ The DSN takes mattn's `_txlock` (deferred, immediate, exclusive: the BEGIN a tra
 no zone, and mattn's `_loc` only labels the same instant); they were Param errors. Fix: a Server error's
 code names every extended result code mattn names (`SQLITE_CONSTRAINT_TRIGGER`, `SQLITE_IOERR_READ`), not
 `SQLITE_1811`.
+Departures from mattn, in the module doc and map.txt: no online backup (`VACUUM INTO` is a one shot snapshot,
+not an incremental copy) and no Deserialize into memory (through a file).
 
 ## 2026-11-16: test: a differential corpus against mattn/go-sqlite3, and the timing row
 
