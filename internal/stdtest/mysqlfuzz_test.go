@@ -33,6 +33,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math/rand"
@@ -403,6 +404,50 @@ func myfConn(c net.Conn, cases []myfCase) {
 }
 
 // myfBlocks splits a client's output into its "== SELECT cN" blocks.
+// myfOnlyTypesDiffer reports whether two answers differ only in their
+// "types " line.
+func myfOnlyTypesDiffer(a, b string) bool {
+	la, lb := strings.Split(a, "\n"), strings.Split(b, "\n")
+	if len(la) != len(lb) {
+		return false
+	}
+	diff := false
+	for i := range la {
+		if la[i] != lb[i] {
+			if !strings.HasPrefix(la[i], "types ") || !strings.HasPrefix(lb[i], "types ") {
+				return false
+			}
+			diff = true
+		}
+	}
+	return diff
+}
+
+// myfWideCollation reports whether a column definition among a result's
+// packets (the column count, then the definitions) has a collation above
+// 255, which go-sql-driver reads as its low byte.
+func myfWideCollation(packets [][]byte) bool {
+	if len(packets) < 2 || len(packets[0]) == 0 {
+		return false
+	}
+	n := int(packets[0][0])
+	for _, p := range packets[1:min(len(packets), 1+n)] {
+		pos := 0
+		ok := true
+		for range 6 {
+			if pos >= len(p) || p[pos] >= 251 {
+				ok = false
+				break
+			}
+			pos += 1 + int(p[pos])
+		}
+		if ok && pos+3 <= len(p) && p[pos+2] != 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func myfBlocks(out string) map[int]string {
 	m := map[int]string{}
 	cur, k := -1, ""
@@ -507,6 +552,14 @@ func TestMysqlFuzz(t *testing.T) {
 				refused["go panic"]++
 				continue
 			}
+			if got[i] != want[i] && myfOnlyTypesDiffer(got[i], want[i]) && myfWideCollation(cases[i].packets) {
+				// go-sql-driver keeps the low byte of a column's 2-byte
+				// collation (fields.go charSet uint8), so 0x013f reads as
+				// binary (63): BLOB where the protocol's collation says
+				// TEXT. Xo reads both bytes, as the protocol defines them
+				refused["go collation byte"]++
+				continue
+			}
 			if got[i] != want[i] && cases[i].note != "" && strings.HasPrefix(got[i], "error ") && strings.Count(got[i], "\n") == 1 {
 				refused[cases[i].note]++
 				continue
@@ -537,4 +590,20 @@ func myfTail(s string, n int) string {
 		ls = ls[len(ls)-n:]
 	}
 	return strings.Join(ls, "\n")
+}
+
+// TestMysqlFuzzWideCollation: seed 2's case 3470 at 5000 cases, a column
+// with collation 0x233f that go-sql-driver reads as 63 (binary).
+func TestMysqlFuzzWideCollation(t *testing.T) {
+	def, _ := hex.DecodeString("036465660264620174017405c3b120c3a905c3b120c3a90c3f23ff000000fc8100000000")
+	if !myfWideCollation([][]byte{{1}, def}) {
+		t.Errorf("collation 0x233f: not wide")
+	}
+	def[25] = 0
+	if myfWideCollation([][]byte{{1}, def}) {
+		t.Errorf("collation 63: wide")
+	}
+	if !myfOnlyTypesDiffer("types a:TEXT\nrow x\n", "types a:BLOB\nrow x\n") || myfOnlyTypesDiffer("types a:TEXT\nrow x\n", "types a:BLOB\nrow y\n") {
+		t.Errorf("myfOnlyTypesDiffer")
+	}
 }
