@@ -1,0 +1,226 @@
+// websocket stress program (decision 0616 section 2): an http server
+// upgrades /echo and echoes every message, while TASKS clients exchange
+// sequenced messages of 0 to 70,000 bytes, text and binary, with a ping
+// now and then. A third of the clients keep one connection and wait for
+// each reply; a third keep one connection with a writer task and a reader
+// task at once (one task may read while another writes); a third dial a
+// new connection every 20 messages after closing the old one with 1000
+// (a write after the close must fail). Every reply must be the message
+// sent.
+// At the end a read waiting on a connection must end with the server's
+// close 1001. A background task samples the resident set every 10 s (Linux
+// /proc/self/status) and prints it each minute. Pass: no mismatch, no
+// fault, and the resident set at the end within 10% or 4 MB of its sample
+// at 5 minutes.
+//
+//   main [MINUTES (30); 0: 200 messages per client] [TASKS (64)]
+use std/http
+use std/websocket
+
+/// Client t's i-th message: text for an even i + t, else binary; t (as 4
+/// hex digits) and i (8) first, then (t * 131 + i * 977) % 70000 bytes.
+fn message(t: Int, i: Int) -> websocket.Message {
+  let n = (t * 131 + i * 977) % 70000
+  let head = "${t.to_str_width(4, base: 16, zero: true)}${i.to_str_width(8, base: 16, zero: true)}"
+  if (t + i) % 2 == 0 {
+    // text: a to z
+    var b = BytesBuilder.with_capacity(12 + n)
+    b.write(head.bytes())
+    for j in 0..n {
+      b.write_byte(UInt8(97 + (t + i + j) % 26))
+    }
+    return websocket.Message{kind: websocket.Kind.Text, data: b.freeze()}
+  }
+  var b = BytesBuilder.with_capacity(12 + n)
+  b.write(head.bytes())
+  for j in 0..n {
+    b.write_byte(UInt8((t * 7 + i + j) & 255))
+  }
+  websocket.Message{kind: websocket.Kind.Binary, data: b.freeze()}
+}
+
+fn same(a: websocket.Message, b: websocket.Message) -> Bool { a.kind == b.kind && a.data == b.data }
+
+fn mismatch(t: Int, i: Int, got: websocket.Message, want: websocket.Message) -> Str {
+  "client ${t} message ${i}: got ${got.data.len()} bytes (${got.data[0..if got.data.len() < 12 { got.data.len() } else { 12 }].to_str() ?? "?"}), want ${want.data.len()}"
+}
+
+fn more(os: Os, i: Int, end: Time, passes: Int) -> Bool uses clock {
+  if passes > 0 { i < passes } else { os.clock.now() < end }
+}
+
+/// A client that waits for each reply; with churn, a new connection every
+/// 20 messages, closed with 1000. The messages echoed, or the first fault.
+fn turns(os: Os, url: Str, t: Int, end: Time, passes: Int, churn: Bool) -> Int ! Str uses (net, clock) {
+  var c = websocket.dial(os.net, url).map_err(fn(e) { "client ${t}: dial: ${e}" })?
+  var i = 0
+  while more(os, i, end, passes) {
+    if churn && i > 0 && i % 20 == 0 {
+      // close sends the close frame and closes the connection (gorilla's
+      // WriteControl and Close); a write after it must fail
+      c.close(code: 1000).map_err(fn(e) { "client ${t}: close: ${e}" })?
+      if c.write_text("after close").is_ok() {
+        return Err("client ${t}: a write after close did not fail")
+      }
+      os.clock.sleep(20ms)
+      c = websocket.dial(os.net, url).map_err(fn(e) { "client ${t}: dial ${i}: ${e}" })?
+    }
+    if i % 50 == 7 {
+      c.ping(data: "p${i}".bytes()).map_err(fn(e) { "client ${t}: ping: ${e}" })?
+    }
+    let m = message(t, i)
+    c.write(m).map_err(fn(e) { "client ${t}: write ${i}: ${e}" })?
+    let got = c.read().map_err(fn(e) { "client ${t}: read ${i}: ${e}" })?
+    if !same(got, m) {
+      c.close().ignore_err("the stress failed")
+      return Err(mismatch(t, i, got, m))
+    }
+    i += 1
+  }
+  c.close().ignore_err("the stress ends")
+  Ok(i)
+}
+
+/// A client with a writer task and a reader task on one connection. The
+/// messages echoed, or the first fault.
+fn duplex(os: Os, url: Str, t: Int, end: Time, passes: Int) -> Int ! Str uses (net, clock) {
+  let c = websocket.dial(os.net, url).map_err(fn(e) { "client ${t}: dial: ${e}" })?
+  // the number of messages the writer sent, once it stops
+  let sent: Chan[Int] = Chan.new(1)
+  scope s {
+    s.spawn_background(fn() {
+      var i = 0
+      while more(os, i, end, passes) {
+        if c.write(message(t, i)) is Err(_) {
+          break
+        }
+        i += 1
+      }
+      sent.send(i)
+    })
+    var i = 0
+    var total = -1
+    while total < 0 || i < total {
+      if total < 0 {
+        if let Some(n) = sent.try_recv() {
+          total = n
+          if i >= total {
+            break
+          }
+        }
+      }
+      let got = c.read().map_err(fn(e) { "client ${t}: duplex read ${i}: ${e}" })?
+      let m = message(t, i)
+      if !same(got, m) {
+        c.close().ignore_err("the stress failed")
+        return Err(mismatch(t, i, got, m))
+      }
+      i += 1
+    }
+    c.close().ignore_err("the stress ends")
+    Ok(i)
+  }
+}
+
+fn echo(c: websocket.WsConn) {
+  while true {
+    match c.read() {
+      Ok(m) => {
+        if m.kind == websocket.Kind.Text && m.data == b"close-me" {
+          c.close(code: 1001, reason: "asked").ignore_err("the client is gone")
+          return
+        }
+        if c.write(m) is Err(_) {
+          return
+        }
+      }
+      Err(_) => return
+    }
+  }
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let passes = if minutes == 0 { 200 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  var r = http.router()
+  r.handle("GET /echo", fn(req) { websocket.upgrade(req, echo, max_message: 1048576) })
+  let srv = http.server(os.net.listen("127.0.0.1:0")?, r)
+  let url = "ws://${srv.addr()}/echo"
+  let echoed = scope s {
+    s.spawn_background(fn() { srv.serve().ignore_err("the server stops when the stress ends") })
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        match t % 3 {
+          0 => turns(os, url, t, end, passes, false)
+          1 => duplex(os, url, t, end, passes)
+          _ => turns(os, url, t, end, passes, true)
+        }
+      }))
+    }
+    var echoed = 0
+    for h in hs {
+      echoed += h.await.map_err(fn(e) { "a client: ${e}" })?
+    }
+    // a read waiting on a connection ends with the server's close
+    let lone = websocket.dial(os.net, url)?
+    let waiting = s.spawn(fn() -> Bool {
+      match lone.read() {
+        Err(websocket.WsErr.Closed(code, _)) => code == 1001
+        _ => false
+      }
+    })
+    clock.sleep(100ms)
+    lone.write_text("close-me")?
+    if !waiting.await {
+      return Err("a read waiting on a connection did not end with the server's close 1001")
+    }
+    s.cancel()
+    echoed
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("websocket stress: ${echoed} messages echoed by ${tasks} clients in ${minutes} min, 0 mismatches, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}
