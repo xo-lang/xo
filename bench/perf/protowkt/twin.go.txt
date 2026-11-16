@@ -1,0 +1,78 @@
+// The Go twin of main.xo: proto.Marshal and proto.Unmarshal of
+// timestamppb.Timestamp and structpb.Struct (google.golang.org/protobuf).
+package main
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+func doc() *structpb.Struct {
+	f := map[string]*structpb.Value{}
+	for i := 0; i < 40; i++ {
+		k := "field_" + strconv.Itoa(i)
+		var v *structpb.Value
+		switch i % 6 {
+		case 0:
+			v = structpb.NewNumberValue(float64(i) * 1.5)
+		case 1:
+			v = structpb.NewStringValue("value number " + strconv.Itoa(i))
+		case 2:
+			v = structpb.NewBoolValue(i%4 == 2)
+		case 3:
+			v = structpb.NewNullValue()
+		case 4:
+			v = structpb.NewListValue(&structpb.ListValue{Values: []*structpb.Value{
+				structpb.NewNumberValue(1), structpb.NewNumberValue(2), structpb.NewNumberValue(3),
+				structpb.NewNumberValue(4), structpb.NewNumberValue(float64(i))}})
+		default:
+			v = structpb.NewStructValue(&structpb.Struct{Fields: map[string]*structpb.Value{
+				"a": structpb.NewStringValue("inner"),
+				"b": structpb.NewNumberValue(float64(i)),
+			}})
+		}
+		f[k] = v
+	}
+	return &structpb.Struct{Fields: f}
+}
+
+func main() {
+	w := "struct"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	switch w {
+	case "timestamp":
+		for i := 0; i < 1000000; i++ {
+			b, err := proto.Marshal(&timestamppb.Timestamp{Seconds: int64(1700000000 + i), Nanos: int32(i * 1000 % 1000000000)})
+			if err != nil {
+				panic(err)
+			}
+			var t timestamppb.Timestamp
+			if err := proto.Unmarshal(b, &t); err != nil {
+				panic(err)
+			}
+			sum += len(b) + int(t.Seconds%1000) + int(t.Nanos%1000)
+		}
+	case "struct":
+		s := doc()
+		for i := 0; i < 20000; i++ {
+			b, err := proto.Marshal(s)
+			if err != nil {
+				panic(err)
+			}
+			var d structpb.Struct
+			if err := proto.Unmarshal(b, &d); err != nil {
+				panic(err)
+			}
+			sum += len(b) + len(d.Fields)
+		}
+	}
+	fmt.Println(w, sum)
+}

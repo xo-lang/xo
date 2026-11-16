@@ -1,0 +1,50 @@
+// std/protowkt against google.golang.org/protobuf's timestamppb and
+// structpb: 10^6 Timestamps each encoded and decoded (`timestamp`), and a
+// Struct of 40 fields (numbers, text, flags, nulls, a list of five numbers
+// and an object of two fields, in turn) encoded and decoded 20,000 times
+// (`struct`); `none` is the setup alone. Usage:
+// `<program> none|timestamp|struct`. Prints `<workload> <checksum>`; the
+// twin (twin.go.txt) prints the same.
+use std/protowkt
+
+fn doc() -> protowkt.Struct {
+  var f: Map[Str, protowkt.Value] = {}
+  for i in 0..40 {
+    let k = "field_${i}"
+    let v = match i % 6 {
+      0 => protowkt.Value.Number(Float(i) * 1.5)
+      1 => protowkt.Value.Text("value number ${i}")
+      2 => protowkt.Value.Flag(i % 4 == 2)
+      3 => protowkt.Value.Null
+      4 => protowkt.Value.Array(protowkt.ListValue{values: [protowkt.Value.Number(1.0), protowkt.Value.Number(2.0), protowkt.Value.Number(3.0), protowkt.Value.Number(4.0), protowkt.Value.Number(Float(i))]})
+      _ => {
+        var g: Map[Str, protowkt.Value] = {}
+        g.put("a", protowkt.Value.Text("inner"))
+        g.put("b", protowkt.Value.Number(Float(i)))
+        protowkt.Value.Object(protowkt.Struct{fields: g})
+      }
+    }
+    f.put(k, v)
+  }
+  protowkt.Struct{fields: f}
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "struct"
+  var sum = 0
+  if w == "timestamp" {
+    for i in 0..1000000 {
+      let b = protowkt.encode_timestamp(protowkt.Timestamp{seconds: 1700000000 + i, nanos: Int32.wrapping_from(i * 1000 % 1000000000)})
+      let t = protowkt.decode_timestamp(b).ok() ?? fault("decode")
+      sum += b.len() + t.seconds % 1000 + Int(t.nanos) % 1000
+    }
+  } else if w == "struct" {
+    let s = doc()
+    for _ in 0..20000 {
+      let b = protowkt.encode_struct(s)
+      let d = protowkt.decode_struct(b).ok() ?? fault("decode")
+      sum += b.len() + d.fields.len()
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}
