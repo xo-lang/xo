@@ -1437,3 +1437,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [corpuscheck-needs-mac-module-cache.md](corpuscheck-needs-mac-module-cache.md): Observed 2026-11-16: corpuscheck fails on a Linux offload host (the oracles need the Mac's module cache, GOPROXY=off) with no stale line; run it on the Mac
 - [postgres-create-if-not-exists-race.md](postgres-create-if-not-exists-race.md): Observed 2026-11-16: processes starting together each running CREATE TABLE IF NOT EXISTS failed with a duplicate key on pg_type; treat Constraint from it as created
 - [age-pass-walked-solo-record.md](age-pass-walked-solo-record.md): the heap age pass ran on an idle worker but walked the solo record, the allocating thread's lists (SIGSEGV in the 0676 sweep)
+- [os-tasks-std-module.md](os-tasks-std-module.md): Observed 2026-11-16: os.tasks faults ("not available here") in tests run by xo test --std-module, passes in plain xo test; use a scope's group

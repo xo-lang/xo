@@ -188,6 +188,20 @@ postgres-create-if-not-exists-race.md), and 16 tries were too few for
 four writers at full speed (one lost 16 in a row; now 100, odds near
 ((W-1)/W)^k). A scope that hot is the case for leases (above).
 
+## Postgres bus (2026-11-16)
+
+`pg_bus(db, tasks, clock, channel)`: publish is `SELECT pg_notify`
+("version:scope"), plus the instance's own subscribers at once. The
+first subscribe starts one background task holding a LISTEN connection;
+on an error it reconnects a second later. Notices sent while it was
+away are lost, so after every LISTEN each subscriber hears -1 and the
+Host reads the store before trusting its copy (Scope.fresh's `again`).
+Found while testing: a live page woken by -1 was sent "-1", which the
+runtime ignores (it syncs for a number above its version), and without
+`redact` the live loop never read the model; it now reads the store and
+sends the version it holds (test: a websocket on FakeNet). On Postgres
+17 a watching process heard another's append and held every item.
+
 ## Alternatives
 
 - One process (today): no scale beyond one machine, and no failover.

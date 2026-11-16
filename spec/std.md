@@ -11567,6 +11567,7 @@ pub fn dir_store(f: Fs, dir: Str) -> Store[fs]      // a directory per scope, a 
 pub fn sql_store[fx: Effects](db: sql.Db[fx], table: Str = "xo_ui_log") -> Store[(net.dial, fx)] ! Str uses (net.dial, fx)
 pub struct Bus[fx: Effects] { pub publish: fn(Str, Int) uses fx, pub subscribe: fn(Str, fn(Int) uses sync) uses fx }
 pub fn local_bus() -> Bus[sync]
+pub fn pg_bus[fx: Effects](db: sql.Db[fx], tasks: task.Group, clock: Clock, channel: Str = "xo_ui") -> Bus[(sync, net.dial, fx, clock)]
 pub fn scope[M: Json, E: Json, fx: Effects](app: App[M, E], store: Store[fx], key: Str = "", max_batch: Int = 256) -> Scope[M, E, fx]
 // Scope methods below perform (sync, fx)
 fn (var c: Scope[M, E]) catch_up() -> () ! Str uses sync
@@ -11736,7 +11737,13 @@ fn (var c: Scope[M, E]) compact(keep: Int) -> () ! Str uses sync
   missing; table is a-z, 0-9 and _): an append is an INSERT keyed by
   (scope, after) after a check that the log ends at `after`, so a race
   is a lost append; instances on any number of hosts share it. A change
-  takes up to 100 lost races before it fails. A `Scope` is the store-backed
+  takes up to 100 lost races before it fails. `pg_bus(db, tasks,
+  clock)` carries notices by Postgres NOTIFY on `channel` and one
+  LISTEN connection per instance, started by the first subscribe;
+  after each LISTEN (the first, and each reconnect a second apart) the
+  subscribers hear -1: notices sent meanwhile are lost, so the Host
+  reads the store before it trusts its copy, and its live pages are
+  sent the version it then holds. A `Scope` is the store-backed
   Server, usable without a Host.
 - Tab state (decision 0672, Proposed; prototype). `with_url_view` gives
   the App a view that also reads the page's query: a filter, a sort, a

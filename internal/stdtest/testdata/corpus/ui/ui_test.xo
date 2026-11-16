@@ -2,6 +2,7 @@
 // Host's routes, the predicting client and the page layer (decisions 0659,
 // 0668, 0670). The module's own tests are in std/ui_test.xo.
 use std/http
+use std/sql
 use std/ui
 
 struct Count {
@@ -128,4 +129,20 @@ test "a directory store keeps a scope's log in files" {
   expect((st.append)("k", ui.Batch{after: 0, count: 1, data: b"[]"})?) == true
   expect((st.append)("k", ui.Batch{after: 0, count: 1, data: b"[]"})?) == false
   expect((st.read)("k", 0)?.len()) == 1
+}
+
+test "a Postgres bus is made from a database, a task group and a clock" {
+  scope s {
+    let g = s.group()
+    let b = ui.pg_bus(sql.memory()?, g, os.clock)
+    // a database without NOTIFY: the instance's own subscribers still hear it
+    let heard = Chan[Int].new(cap: 4)
+    (b.subscribe)("k", fn(v: Int) uses sync { let _f = heard.try_send(v) })
+    (b.publish)("k", 1)
+    var v = -1
+    while v < 0 {
+      v = heard.recv() ?? 0
+    }
+    expect(v) == 1
+  }
 }

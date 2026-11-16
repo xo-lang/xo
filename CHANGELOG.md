@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/ui): `ui.pg_bus(db, tasks, clock)` carries notices between instances by Postgres LISTEN/NOTIFY, so Hosts on many hosts sharing `sql_store` update each other's live pages (decision 0686).
 - std/protobuf: `unmarshal_with[T](data, UnmarshalOptions{...})` (proto.UnmarshalOptions): a recursion limit and DiscardUnknown (decision 0683). Fix (Go backend): a `ProtoErr` prints protowire's text, not its variant name.
 - Feature (std/ui): `ui.sql_store(db)` keeps scope logs in Postgres (or any std/sql database), so instances on many hosts share one App (decision 0686).
 - Feature (std/ui): `ui.dir_store(fs, dir)` keeps scope logs in a directory, so several processes on one host share one App (decision 0686).

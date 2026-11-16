@@ -1,5 +1,17 @@
 # std/ui changes
 
+## 2026-11-16: feature: pg_bus, notices between instances by Postgres LISTEN/NOTIFY (decision 0686)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0686 plan
+- Go reference: none
+- Test: std/ui tests: Hosts on pg_bus over an in memory LISTEN/NOTIFY driver hear each other's appends and wake their live connections; a resync notice (-1) makes a Host read the store it shares; after a resync a live page is sent the version it must sync to (it got -1 before the fix, which the runtime ignores); on Postgres 17 a watching process heard another process's append and held all 3 items
+- Timing: none
+- Shipped in: not yet released
+
+`ui.pg_bus(db, tasks, clock, channel:)`. A Bus subscriber now hears -1 when notices may have been missed (a reconnect), and a Host then reads the store.
+
 ## 2026-11-16: feature: sql_store, scope logs in Postgres (decision 0686)
 
 - Kind: feature

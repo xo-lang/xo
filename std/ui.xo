@@ -627,7 +627,11 @@ pub fn (var c: Scope[M, E, fx]) compact(keep: Int) -> () ! Str uses (sync, fx) {
 }
 
 // Catches up when a notice named a version past this Scope's.
-fn (var c: Scope[M, E, fx]) fresh(latest: Int) -> () ! Str uses (sync, fx) {
+fn (var c: Scope[M, E, fx]) fresh(latest: Int, again: Bool = false) -> () ! Str uses (sync, fx) {
+  if again {
+    // the bus may have missed notices: read the store before trusting it
+    c.loaded = false
+  }
   if !c.loaded || latest > c.s.version() {
     c.catch_up()?
   }
@@ -852,6 +856,9 @@ fn dir_decode(raw: Bytes) -> Batch ! Str {
 /// apart from the store: an instance publishes after each append, and
 /// every instance subscribed to the scope hears it (in process, Postgres
 /// LISTEN/NOTIFY, Redis, NATS, or polling the store).
+/// A subscriber hears each version appended to its scope, and a negative
+/// number when notices may have been missed (a reconnect): it then reads
+/// the store before it trusts its copy again.
 pub struct Bus[fx: Effects] {
   pub publish: fn(Str, Int) uses fx
   pub subscribe: fn(Str, fn(Int) uses sync) uses fx
@@ -880,6 +887,68 @@ fn local_bus_of(first: Map[Str, List[fn(Int) uses sync]]) -> Bus[sync] {
         m.put(scope, l)
       })
     },
+  }
+}
+
+/// A bus over Postgres LISTEN/NOTIFY (decision 0686): publish is one
+/// NOTIFY on `channel` ("version:scope"), and the first subscribe starts a
+/// task in tasks holding one connection that LISTENs and hands each notice
+/// to the scope's subscribers. After every LISTEN (the first and each
+/// reconnect, a second apart while the database is away) the subscribers
+/// hear -1 and read the store, since notices sent meanwhile are lost.
+pub fn pg_bus[fx: Effects](db: sql.Db[fx], tasks: task.Group, clock: Clock, channel: Str = "xo_ui") -> Bus[(sync, net.dial, fx, clock)] {
+  let subs = Mutex[Map[Str, List[fn(Int) uses sync]]].new({})
+  let started = Atomic[Int].new(0)
+  let deliver = fn(scope: Str, v: Int) uses sync {
+    let fs = subs.with_read(fn(m) { m.get(scope) ?? [] })
+    for f in fs {
+      f(v)
+    }
+  }
+  Bus{
+    publish: fn(scope: Str, v: Int) uses (sync, net.dial, fx, clock) {
+      // this instance's own subscribers at once; the others by NOTIFY (a
+      // lost NOTIFY delays them until their next notice or reconnect)
+      deliver(scope, v)
+      let _sent = db.query("SELECT pg_notify($1, $2)", [sql.str(channel), sql.str("${v}:${scope}")]).is_ok()
+    },
+    subscribe: fn(scope: Str, f: fn(Int) uses sync) uses (sync, net.dial, fx, clock) {
+      subs.with(fn(var m) {
+        var l = m.get(scope) ?? []
+        l.push(f)
+        m.put(scope, l)
+      })
+      if started.add(1) == 1 {
+        tasks.spawn_background(fn() -> () ! Never uses (sync, net.dial, fx, clock) {
+          while !task.is_canceled() {
+            // an error ends this connection; the next LISTEN starts again
+            let _ended = pg_listen(db, channel, subs, deliver).is_ok()
+            if task.is_canceled() {
+              break
+            }
+            clock.sleep(1s)
+          }
+        })
+      }
+    },
+  }
+}
+
+// One LISTEN connection: every scope hears -1 once it listens, then each
+// notice; returns at the first error.
+fn pg_listen[fx: Effects](db: sql.Db[fx], channel: Str, subs: Mutex[Map[Str, List[fn(Int) uses sync]]], deliver: fn(Str, Int) uses sync) -> () ! sql.SqlErr uses (sync, net.dial, fx) {
+  let conn = db.conn()?
+  defer conn.close()
+  conn.listen(channel)?
+  for scope in subs.with_read(fn(m) { m.keys() }) {
+    deliver(scope, -1)
+  }
+  while {
+    let n = conn.wait_notification()?
+    let i = n.payload.find(":") ?? continue
+    if let Some(v) = Int.parse(n.payload[..i]) {
+      deliver(n.payload[i + 1..], v)
+    }
   }
 }
 
@@ -1215,6 +1284,8 @@ pub struct Host[M: Json, E: Json, fx: Effects, bx: Effects] {
   bus: Bus[bx]
   key: Str
   latest: Atomic[Int]
+  // set when the bus may have missed notices (it reconnected)
+  resync: Atomic[Int]
   title: Str
   css: Str
   // The App's client program built for wasm, "" for a thin client.
@@ -1242,8 +1313,9 @@ pub struct Host[M: Json, E: Json, fx: Effects, bx: Effects] {
 pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000) -> Host[M, E, sync, sync] {
   let subs = Mutex[Map[Int, Sub]].new({})
   let latest = Atomic[Int].new(0)
-  let bus = local_bus_of({"": [waker(subs, latest)]})
-  host_core(app, memory_store(), bus, "", subs, latest, title, css, max_batch, client, auth, allow, redact, signin_url, keep)
+  let resync = Atomic[Int].new(0)
+  let bus = local_bus_of({"": [waker(subs, latest, resync)]})
+  host_core(app, memory_store(), bus, "", subs, latest, resync, title, css, max_batch, client, auth, allow, redact, signin_url, keep)
 }
 
 /// A host whose log is the scope key `scope` of store, hearing other
@@ -1253,15 +1325,20 @@ pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", ma
 pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "", title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000) -> Host[M, E, fx, bx] uses bx {
   let subs = Mutex[Map[Int, Sub]].new({})
   let latest = Atomic[Int].new(0)
-  (bus.subscribe)(scope, waker(subs, latest))
-  host_core(app, store, bus, scope, subs, latest, title, css, max_batch, client, auth, allow, redact, signin_url, keep)
+  let resync = Atomic[Int].new(0)
+  (bus.subscribe)(scope, waker(subs, latest, resync))
+  host_core(app, store, bus, scope, subs, latest, resync, title, css, max_batch, client, auth, allow, redact, signin_url, keep)
 }
 
 // What a Host hears from its bus: every instance's append to the scope
 // (this one's too) wakes the live connections here.
-fn waker(subs: Mutex[Map[Int, Sub]], latest: Atomic[Int]) -> fn(Int) uses sync {
+fn waker(subs: Mutex[Map[Int, Sub]], latest: Atomic[Int], resync: Atomic[Int]) -> fn(Int) uses sync {
   fn(v: Int) uses sync {
-    latest.max(v)
+    if v < 0 {
+      resync.set(1)
+    } else {
+      latest.max(v)
+    }
     subs.with_read(fn(m) {
       for (_, c) in m {
         let _sent = c.ch.try_send(v)
@@ -1270,8 +1347,8 @@ fn waker(subs: Mutex[Map[Int, Sub]], latest: Atomic[Int]) -> fn(Int) uses sync {
   }
 }
 
-fn host_core[M: Json, E: Json, fx: Effects, bx: Effects](app: App[M, E], st: Store[fx], b: Bus[bx], scope: Str, subs: Mutex[Map[Int, Sub]], latest: Atomic[Int], title: Str, css: Str, max_batch: Int, client: Bytes, auth: (fn(http.Request) -> Str? uses sync)?, allow: (fn(M, Str, E) -> Bool)?, redact: (fn(M, Str) -> M)?, signin_url: Str, keep: Int) -> Host[M, E, fx, bx] {
-  Host{app: app, auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, state: Mutex.new(ui_scope(app, st, scope, max_batch)), bus: b, key: scope, latest: latest, title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: subs, next_sub: Atomic[Int].new(0)}
+fn host_core[M: Json, E: Json, fx: Effects, bx: Effects](app: App[M, E], st: Store[fx], b: Bus[bx], scope: Str, subs: Mutex[Map[Int, Sub]], latest: Atomic[Int], resync: Atomic[Int], title: Str, css: Str, max_batch: Int, client: Bytes, auth: (fn(http.Request) -> Str? uses sync)?, allow: (fn(M, Str, E) -> Bool)?, redact: (fn(M, Str) -> M)?, signin_url: Str, keep: Int) -> Host[M, E, fx, bx] {
+  Host{app: app, auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, state: Mutex.new(ui_scope(app, st, scope, max_batch)), bus: b, key: scope, latest: latest, resync: resync, title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: subs, next_sub: Atomic[Int].new(0)}
 }
 
 // A live connection: its principal and its channel.
@@ -1369,9 +1446,10 @@ pub fn (h: Host[M, E]) try_apply(msg: E) -> () ! Str uses sync {
 
 pub fn (h: Host[M, E]) model() -> M uses sync {
   let latest = h.latest.get()
+  let again = h.resync.swap(0) > 0
   h.state.with(fn(var c) {
     // a store error leaves this instance's copy, which is still a version
-    let _ok = c.fresh(latest).is_ok()
+    let _ok = c.fresh(latest, again: again).is_ok()
     c.model()
   })
 }
@@ -1429,8 +1507,9 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
       }
     }
     let latest = hh.latest.get()
+    let again = hh.resync.swap(0) > 0
     let (m0, v, err) = state.with(fn(var c) -> (M, Int, Str) {
-      let e = match c.fresh(latest) {
+      let e = match c.fresh(latest, again: again) {
         Ok(_) => ""
         Err(x) => x
       }
@@ -1459,8 +1538,9 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     let checked = auth.is_some() || allow.is_some()
     let ok = allow ?? fn(m: M, q: Str, e: E) -> Bool { true }
     let latest = hh.latest.get()
+    let again = hh.resync.swap(0) > 0
     let (res, m0, v, before) = state.with(fn(var c) -> (Result[Down[M, E]?, Str], M, Int, Int) {
-      if let Err(e) = c.fresh(latest) {
+      if let Err(e) = c.fresh(latest, again: again) {
         return (Err(e), c.model(), c.version(), c.version())
       }
       let b = c.version()
@@ -1536,7 +1616,15 @@ fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn, p: Str) {
         // with redact, only a change to what p is shown
         if let Some(d) = h.news(p, last) {
           last = d
-          if conn.write_text("${v}") is Err(_) {
+          // after a resync (-1) the version is this instance's once it has
+          // read the store (model() does), which the runtime syncs to
+          let at = if v < 0 {
+            let _read = h.model()
+            h.state.with_read(fn(c) { c.version() })
+          } else {
+            v
+          }
+          if conn.write_text("${at}") is Err(_) {
             break
           }
         }
