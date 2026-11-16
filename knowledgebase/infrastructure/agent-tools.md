@@ -1552,6 +1552,21 @@ Last verified: 2026-11-15
     the next `--wait --after SEQ` command) and replaces idlewatch and
     bottlewatch; `xw snooze ID [--for 2h]` quiets one (the idle-ok
     file's grace). Last verified: 2026-11-15.
+  - `wrong-class` (#82): a heavy.sh job in the Mac gate class running
+    past 10 minutes (the class is for runs under about 2 minutes) is an
+    alert naming the job and pid; the agent sees it once a session in
+    its hook inbox. Rerun such work as bulk on an offload host
+    (offload.sh, offload-gate.sh for a gate), `HEAVY_CLASS=bulk
+    HEAVY_DARWIN=1` on the Mac only for darwin-only work. Last
+    verified: 2026-11-16.
+  - Hang alerts and quiet logs (#83): a hangcheck.sh GATE or SLOT "log
+    quiet" line is dropped when NAME-cmd.log or any file the job's
+    process tree writes as stdout or stderr (lsof) changed within 15
+    minutes, or when a fresh launchd loop beat covers the job
+    (mainwatch's `hourly`, ctier's `ctier-*`); one still quiet names the
+    last gate.sh heartbeat and its file, or says none was seen. A long
+    job that writes its own log needs nothing more. Last verified:
+    2026-11-16.
   - `xw std [MODULE] [--since 14d]`: std maturity over time (decision
     0461's axes): each axis's Proven/Solid/Early counts then and now, the
     marks that moved up or DOWN, new modules, the timeline; MODULE gives
@@ -1577,10 +1592,18 @@ Last verified: 2026-11-15
     knowledgebase decisions, std change logs and spec/std.md that hold
     every term, case-insensitive. Last verified: 2026-11-15.
   - Web view (ADR 0658 stage 4; std/ui since 2026-11-15, #76):
-    http://127.0.0.1:7480/ (`/`, `/tasks/`, `/alerts/`, `/gates/`,
-    `/std/`, `/decisions/`, `/debug/`, live: std/ui pages that update in
-    place over a websocket, about 10 s after the data changes; `/search`,
-    login and the resolve button are plain forms). Users: `read -rs P; printf '%s\n' "$P" |
+    http://127.0.0.1:7480/ (`/` the board, `/status/` the agent cards
+    and alerts, `/tasks/`, `/alerts/`, `/gates/`, `/std/`,
+    `/decisions/`, `/debug/`, live: std/ui pages that update in place
+    over a websocket, about 10 s after the data changes; `/search`,
+    `/task?id=N`, login and the resolve button are server pages on
+    std/ui's page layer, ADR 0670: search runs as you type). The board
+    (#85, owner 2026-11-16): the active goals, then each agent's queue
+    in xw's order, its current task highlighted with its run, held
+    worktrees and last gate or push; parked and done in 24 h behind
+    toggles; a task's title opens its whole text and history; the row's
+    buttons move it within the queue or to another agent (`xw task
+    move` and `assign`, logged as web:USER). Users: `read -rs P; printf '%s\n' "$P" |
     xw user set NAME` (Argon2id; ends NAME's sessions), `xw user list`,
     `xw user rm NAME`. Last verified: 2026-11-15.
   - Push holds (#64; lead, 2026-11-15: decision #3 held compiler/xo's
