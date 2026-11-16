@@ -910,6 +910,12 @@ func Toml_decode[T any](tk *Task, text string) Result[T, Toml_DecodeErr] {
 // Toml_encode is `toml.encode(v)`: pelletier/go-toml/v2's Marshal layout
 // over v's JSON tree, as std/native/toml.xo encode.
 func Toml_encode[T any](tk *Task, v T) Result[string, Toml_TomlErr] {
+	return Toml_encode_with(tk, v, Toml_EncodeOptions{F_indent: "  "})
+}
+
+// Toml_encode_with is `toml.encode_with(v, opts)`: go-toml's Encoder
+// settings.
+func Toml_encode_with[T any](tk *Task, v T, opts Toml_EncodeOptions) Result[string, Toml_TomlErr] {
 	x, perr := jsonParse([]byte(Json_encode(tk, v)))
 	if perr != nil {
 		x = nil
@@ -918,16 +924,33 @@ func Toml_encode[T any](tk *Task, v T) Result[string, Toml_TomlErr] {
 	if !ok {
 		return Err[string](Toml_TomlErr{F_msg: "cannot encode " + tomlKind(x) + " as a document root"})
 	}
-	e := &tomlEnc{}
-	if err := e.table(nil, o); err != nil {
+	e := &tomlEnc{inline: opts.F_tables_inline, multiline: opts.F_arrays_multiline, indentTables: opts.F_indent_tables, sym: opts.F_indent}
+	if err := e.table(nil, o, 0); err != nil {
 		return Err[string](*err)
 	}
 	return Ok[string, Toml_TomlErr](e.b.String())
 }
 
 type tomlEnc struct {
-	b          strings.Builder
-	lastHeader bool
+	b            strings.Builder
+	lastHeader   bool
+	inline       bool
+	multiline    bool
+	indentTables bool
+	sym          string
+}
+
+// entryTable is go-toml's entryIsTable: a table or an array of tables,
+// unless tables are inline.
+func (e *tomlEnc) entryTable(x any) bool { return !e.inline && tomlIsTable(x) }
+
+// indent is go-toml's writeIndent.
+func (e *tomlEnc) indent(n int) {
+	if e.indentTables {
+		for i := 0; i < n; i++ {
+			e.b.WriteString(e.sym)
+		}
+	}
 }
 
 func tomlKind(x any) string {
@@ -969,15 +992,20 @@ func tomlIsTable(x any) bool {
 	return tomlTableArray(x)
 }
 
-func (e *tomlEnc) table(keys []string, o *jsonObj) *Toml_TomlErr {
+func (e *tomlEnc) table(keys []string, o *jsonObj, depth int) *Toml_TomlErr {
 	for _, k := range o.keys {
 		v := o.vals[k]
-		if v == nil || tomlIsTable(v) {
+		if v == nil || e.entryTable(v) {
 			continue
 		}
+		e.indent(depth)
 		tomlKey(&e.b, k)
 		e.b.WriteString(" = ")
-		if err := tomlValue(&e.b, v); err != nil {
+		vd := 0
+		if e.indentTables {
+			vd = depth
+		}
+		if err := e.value(v, vd); err != nil {
 			return err
 		}
 		e.b.WriteByte('\n')
@@ -985,20 +1013,20 @@ func (e *tomlEnc) table(keys []string, o *jsonObj) *Toml_TomlErr {
 	}
 	for _, k := range o.keys {
 		v := o.vals[k]
-		if v == nil || !tomlIsTable(v) {
+		if v == nil || !e.entryTable(v) {
 			continue
 		}
 		sub := append(keys[:len(keys):len(keys)], k)
 		if t, ok := v.(*jsonObj); ok {
-			e.header(sub, false)
-			if err := e.table(sub, t); err != nil {
+			e.header(sub, false, depth)
+			if err := e.table(sub, t, depth+1); err != nil {
 				return err
 			}
 			continue
 		}
 		for _, x := range v.([]any) {
-			e.header(sub, true)
-			if err := e.table(sub, x.(*jsonObj)); err != nil {
+			e.header(sub, true, depth)
+			if err := e.table(sub, x.(*jsonObj), depth+1); err != nil {
 				return err
 			}
 		}
@@ -1006,10 +1034,11 @@ func (e *tomlEnc) table(keys []string, o *jsonObj) *Toml_TomlErr {
 	return nil
 }
 
-func (e *tomlEnc) header(keys []string, array bool) {
+func (e *tomlEnc) header(keys []string, array bool, depth int) {
 	if e.b.Len() > 0 && !e.lastHeader {
 		e.b.WriteByte('\n')
 	}
+	e.indent(depth)
 	e.b.WriteByte('[')
 	if array {
 		e.b.WriteByte('[')
@@ -1044,7 +1073,8 @@ func tomlKey(b *strings.Builder, k string) {
 	tomlString(b, k)
 }
 
-func tomlValue(b *strings.Builder, x any) *Toml_TomlErr {
+func (e *tomlEnc) value(x any, depth int) *Toml_TomlErr {
+	b := &e.b
 	switch t := x.(type) {
 	case nil:
 		return &Toml_TomlErr{F_msg: "cannot encode a None in an array"}
@@ -1065,12 +1095,33 @@ func tomlValue(b *strings.Builder, x any) *Toml_TomlErr {
 		tomlString(b, t)
 	case []any:
 		b.WriteByte('[')
-		for i, e := range t {
-			if i > 0 {
-				b.WriteString(", ")
+		if e.multiline && len(t) > 0 {
+			// go-toml's appendArray multiline: an element a line, one
+			// indent deeper
+			for i, x := range t {
+				if i > 0 {
+					b.WriteByte(',')
+				}
+				b.WriteByte('\n')
+				for j := 0; j <= depth; j++ {
+					b.WriteString(e.sym)
+				}
+				if err := e.value(x, depth+1); err != nil {
+					return err
+				}
 			}
-			if err := tomlValue(b, e); err != nil {
-				return err
+			b.WriteByte('\n')
+			for j := 0; j < depth; j++ {
+				b.WriteString(e.sym)
+			}
+		} else {
+			for i, x := range t {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				if err := e.value(x, depth); err != nil {
+					return err
+				}
 			}
 		}
 		b.WriteByte(']')
@@ -1088,7 +1139,7 @@ func tomlValue(b *strings.Builder, x any) *Toml_TomlErr {
 			first = false
 			tomlKey(b, k)
 			b.WriteString(" = ")
-			if err := tomlValue(b, v); err != nil {
+			if err := e.value(v, depth); err != nil {
 				return err
 			}
 		}

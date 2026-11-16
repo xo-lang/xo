@@ -144,6 +144,7 @@ var generators = map[string]func() string{
 	"jwe":          jweCorpus,
 	"pkcs12":       pkcs12Corpus,
 	"amqp":         amqpCorpus,
+	"toml":         tomlCorpus,
 	"grpc":         grpcCorpus,
 	"otlp":         otlpCorpus,
 	"timego":       timegoCorpus,

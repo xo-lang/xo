@@ -5928,7 +5928,24 @@ open enum DecodeErr { Syntax(err: TomlErr), Value(err: json.DecodeErr) }   // di
 pub fn decode[T: Json](text: Str) -> T ! DecodeErr
 pub fn to_json(text: Str) -> Str ! TomlErr
 pub fn encode[T: Json](v: T) -> Str ! TomlErr
+struct EncodeOptions {                   // go-toml's Encoder setters
+  tables_inline: Bool = false            // SetTablesInline: `a = {x = 1}` on its key's line
+  arrays_multiline: Bool = false         // SetArraysMultiline: an element a line
+  indent_tables: Bool = false            // SetIndentTables: one indent a level of nesting
+  indent: Str = "  "                     // SetIndentSymbol
+}
+pub fn encode_with[T: Json](v: T, opts: EncodeOptions) -> Str ! TomlErr
 ```
+
+`encode_with` lays a document out as pelletier/go-toml/v2's Encoder
+with the same settings (`encode` is its defaults). With `tables_inline`
+every table and array of tables is an inline value in field order. With
+`arrays_multiline` a non-empty array writes `[`, an element a line one
+`indent` deeper than its key (nested arrays deeper again), and `]` at
+the key's depth, with no trailing comma; inside an inline table too. With
+`indent_tables` a table's keys and its sub-tables' headers are indented
+one `indent` per level of nesting (the root's keys and top-level
+headers are not); without it a multiline array starts from column zero.
 
 ```
 struct Server { host: Str, port: Int = 8080, timeout: Duration = 30s } derive Json

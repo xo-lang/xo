@@ -1,5 +1,15 @@
 # std/toml changes
 
+## 2026-11-16: feature: encode_with and EncodeOptions (go-toml's Encoder settings)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89 (std Proven; scripts/stdaudit/map.txt go-toml gap rows)
+- Go reference: github.com/pelletier/go-toml/v2 v2.4.3 marshaler.go (SetTablesInline, SetArraysMultiline, SetIndentTables, SetIndentSymbol: entryIsTable, writeIndent, appendArray)
+- Test: corpus internal/stdtest/testdata/corpus/toml (scripts/stdcorpus/tomloracle: one record under 14 settings, go-toml's text byte for byte, each read back), arm64, llvm and go
+- Timing: none (encode's layout unchanged; tomltest 543 and tomlfuzz 2000 cases pass)
+- Shipped in: not yet released
+
 ## 2026-11-15: feature: `DecodeErr` is an open enum (decision 0649)
 
 - Kind: feature

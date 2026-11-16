@@ -1107,6 +1107,11 @@ struct TomlEnc {
   out: BytesBuilder
   started: Bool
   last_header: Bool
+  /// go-toml's Encoder settings (EncodeOptions)
+  inline: Bool = false
+  multiline: Bool = false
+  indent_tables: Bool = false
+  sym: Str = "  "
 }
 
 fn enc_err(msg: Str) -> toml.TomlErr { toml.TomlErr{line: 0, msg: msg} }
@@ -1157,34 +1162,49 @@ fn enc_is_null(v: js.Value) -> Bool {
   }
 }
 
-fn (var e: TomlEnc) table(keys: List[Str], fields: List[(Str, js.Value)]) -> () ! toml.TomlErr {
+// entryIsTable: a table or an array of tables, unless tables are inline.
+fn (e: TomlEnc) entry_table(v: js.Value) -> Bool { !e.inline && enc_is_table(v) }
+
+// writeIndent: n indents when tables are indented.
+fn (var e: TomlEnc) indent(n: Int) {
+  if e.indent_tables {
+    for _ in 0..n {
+      e.out.write_str(e.sym)
+    }
+  }
+}
+
+fn (var e: TomlEnc) table(keys: List[Str], fields: List[(Str, js.Value)], depth: Int) -> () ! toml.TomlErr {
   for (k, v) in fields {
-    if enc_is_null(v) || enc_is_table(v) {
+    if enc_is_null(v) || e.entry_table(v) {
       continue
     }
+    e.indent(depth)
     e.key(k)
     e.out.write_str(" = ")
-    e.value(v)?
+    // a multiline array's lines line up with its key: from column zero
+    // when tables are not indented
+    e.value(v, if e.indent_tables { depth } else { 0 })?
     e.out.write_byte(10)
     e.started = true
     e.last_header = false
   }
   for (k, v) in fields {
-    if enc_is_null(v) || !enc_is_table(v) {
+    if enc_is_null(v) || !e.entry_table(v) {
       continue
     }
     var sub = keys
     sub.push(k)
     match v {
       js.Value.Object(fs) => {
-        e.header(sub, false)
-        e.table(sub, fs)?
+        e.header(sub, false, depth)
+        e.table(sub, fs, depth + 1)?
       }
       js.Value.List(items) => {
         for x in items {
-          e.header(sub, true)
+          e.header(sub, true, depth)
           match x {
-            js.Value.Object(fs) => e.table(sub, fs)?
+            js.Value.Object(fs) => e.table(sub, fs, depth + 1)?
             _ => {}
           }
         }
@@ -1194,10 +1214,11 @@ fn (var e: TomlEnc) table(keys: List[Str], fields: List[(Str, js.Value)]) -> () 
   }
 }
 
-fn (var e: TomlEnc) header(keys: List[Str], array: Bool) {
+fn (var e: TomlEnc) header(keys: List[Str], array: Bool, depth: Int) {
   if e.started && !e.last_header {
     e.out.write_byte(10)
   }
+  e.indent(depth)
   e.out.write_str(if array { "[[" } else { "[" })
   for (i, k) in keys.indexed() {
     if i > 0 {
@@ -1226,7 +1247,7 @@ fn (var e: TomlEnc) key(k: Str) {
   e.out.write_str(k)
 }
 
-fn (var e: TomlEnc) value(v: js.Value) -> () ! toml.TomlErr {
+fn (var e: TomlEnc) value(v: js.Value, depth: Int) -> () ! toml.TomlErr {
   match v {
     js.Value.Null => return Err(enc_err("cannot encode a None in an array"))
     js.Value.Bool(b) => e.out.write_str(if b { "true" } else { "false" })
@@ -1237,11 +1258,29 @@ fn (var e: TomlEnc) value(v: js.Value) -> () ! toml.TomlErr {
     js.Value.Trusted(_, s) => e.string(s)
     js.Value.List(items) => {
       e.out.write_byte(91)
-      for (i, x) in items.indexed() {
-        if i > 0 {
-          e.out.write_str(", ")
+      if e.multiline && items.len() > 0 {
+        // appendArray multiline: an element a line, one indent deeper
+        for (i, x) in items.indexed() {
+          if i > 0 {
+            e.out.write_byte(44)
+          }
+          e.out.write_byte(10)
+          for _ in 0..depth + 1 {
+            e.out.write_str(e.sym)
+          }
+          e.value(x, depth + 1)?
         }
-        e.value(x)?
+        e.out.write_byte(10)
+        for _ in 0..depth {
+          e.out.write_str(e.sym)
+        }
+      } else {
+        for (i, x) in items.indexed() {
+          if i > 0 {
+            e.out.write_str(", ")
+          }
+          e.value(x, depth)?
+        }
       }
       e.out.write_byte(93)
     }
@@ -1258,7 +1297,7 @@ fn (var e: TomlEnc) value(v: js.Value) -> () ! toml.TomlErr {
         first = false
         e.key(k)
         e.out.write_str(" = ")
-        e.value(x)?
+        e.value(x, depth)?
       }
       e.out.write_byte(125)
     }
@@ -1366,12 +1405,14 @@ fn (var e: TomlEnc) string(s: Str) {
   e.out.write_byte(34)
 }
 
-fn encode[T: Json](v: T) -> Str ! toml.TomlErr {
+fn encode[T: Json](v: T) -> Str ! toml.TomlErr { encode_with(v, toml.EncodeOptions{}) }
+
+fn encode_with[T: Json](v: T, opts: toml.EncodeOptions) -> Str ! toml.TomlErr {
   let x = js.to_value(v)
   match x {
     js.Value.Object(fs) => {
-      var e = TomlEnc{out: BytesBuilder.new(), started: false, last_header: false}
-      e.table([], fs)?
+      var e = TomlEnc{out: BytesBuilder.new(), started: false, last_header: false, inline: opts.tables_inline, multiline: opts.arrays_multiline, indent_tables: opts.indent_tables, sym: opts.indent}
+      e.table([], fs, 0)?
       e.out.freeze().to_str() ?? ""
     }
     _ => Err(enc_err("cannot encode ${enc_kind(x)} as a document root"))

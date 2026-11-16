@@ -19,6 +19,7 @@ the text of every entry is unchanged).
 
 
 - Fix (std/http, tests): an `http.server` on FakeNet serves the raw connections dialed to it, so `websocket.dial` reaches a `websocket.upgrade` route in a test instead of deadlocking, on every backend (task #120).
+- Feature (std/toml, every backend; task #89): `toml.encode_with(v, toml.EncodeOptions{...})` lays a document out as go-toml's Encoder with `tables_inline`, `arrays_multiline`, `indent_tables` and `indent` (SetTablesInline, SetArraysMultiline, SetIndentTables, SetIndentSymbol).
 - Feature (std/sql, every backend; decision 0679, task #113): `Row.elements` and `elements_opt` read an array column's elements as one column Rows, so uuid[], numeric[], date[], time[], interval[], inet[], range and composite arrays read with the element's reader.
 
 - Fixes (std/dns): lookup_srv fails with "SRV header name is invalid" when the first SRV answer's owner name is not a domain name, as Go's LookupSRV (it returned the records). Found by TestDnsFuzz seeds 5 to 7 (task #115).

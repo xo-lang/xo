@@ -30,6 +30,23 @@ fn to_json(text: Str) -> Str ! TomlErr
 /// map, or an array holds a None.
 fn encode[T: Json](v: T) -> Str ! TomlErr
 
+/// go-toml's Encoder settings. `tables_inline` (SetTablesInline): every
+/// table and array of tables is an inline value (`a = {x = 1}`,
+/// `b = [{y = 2}]`) on its key's line, in field order. `arrays_multiline`
+/// (SetArraysMultiline): a non-empty array writes an element a line, each
+/// one `indent` deeper than its key, with no trailing comma. `indent_tables`
+/// (SetIndentTables): a table's keys and its sub-tables' headers are
+/// indented one `indent` (SetIndentSymbol) per level of nesting.
+struct EncodeOptions {
+  tables_inline: Bool = false
+  arrays_multiline: Bool = false
+  indent_tables: Bool = false
+  indent: Str = "  "
+}
+
+/// `encode` with opts (go-toml's NewEncoder with its setters).
+fn encode_with[T: Json](v: T, opts: EncodeOptions) -> Str ! TomlErr
+
 /// Why decode failed: the text is not TOML, or its values do not fit T.
 open enum DecodeErr {
   Syntax(err: TomlErr)
