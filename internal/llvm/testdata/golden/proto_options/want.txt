@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+kept 2 bytes
+discarded: 0 bytes, name w
+limit 5: ok
+limit 4: proto: exceeded maximum recursion depth
+default 10001: proto: exceeded maximum recursion depth
+--- stderr

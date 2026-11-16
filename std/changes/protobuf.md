@@ -1,5 +1,16 @@
 # std/protobuf changes
 
+## 2026-11-16: feature: unmarshal_with and UnmarshalOptions; fix: ProtoErr's text on the Go backend
+
+- Kind: feature, fix
+- Commit: this push
+- Found by: task #127 (decision 0683 item 1); the Go backend's display found while gating it
+- Go reference: google.golang.org/protobuf v1.36.12 proto.UnmarshalOptions (DiscardUnknown, RecursionLimit, AllowPartial)
+- Test: golden proto_options (arm64, LLVM, wasm, Go parity): unknown fields kept, then dropped with discard_unknown; a 5 level message passes at limit 5 and fails at 4; the default options stop at 10001
+- Timing: none (one more argument per nested message)
+
+`protobuf.unmarshal_with[T](data, UnmarshalOptions{...})` is proto.UnmarshalOptions.Unmarshal: `recursion_limit` replaces the 10000 default, `discard_unknown` skips unknown fields instead of keeping them in the `proto "unknown"` field, and `allow_partial` has no effect (derive Proto has no proto2 required fields). On the Go backend a `ProtoErr` printed its variant's name (`Recursion`); it now prints protowire's text, as on the native backends.
+
 ## 2026-11-16: security: unmarshal stops at 10000 nested messages (protowire's RecursionLimit)
 
 - Kind: security

@@ -10514,6 +10514,8 @@ The Protocol Buffers wire format and the runtime of `derive Proto` (decision 053
 open enum ProtoErr { Truncated, Overflow, BadTag, BadWire(wire: Int), EndGroup, Recursion, BadLength, Utf8 }
 fn marshal[T: Proto](v: T) -> Bytes                     // rewritten to the generated proto_marshal__T
 fn unmarshal[T: Proto](data: Bytes) -> T ! ProtoErr     // as proto.Unmarshal: scalars last wins, messages merge; Recursion past 10000 nested messages
+struct UnmarshalOptions { discard_unknown: Bool = false, recursion_limit: Int = 10000, allow_partial: Bool = false }
+fn unmarshal_with[T: Proto](data: Bytes, opts: UnmarshalOptions) -> T ! ProtoErr  // proto.UnmarshalOptions.Unmarshal: Recursion past opts.recursion_limit; discard_unknown leaves the `proto "unknown"` field empty; allow_partial has no effect (decision 0683)
 fn size[T: Proto](v: T) -> Int                          // proto.Size: marshal(v).len() without writing (proto_size__T)
 fn merge_from[T: Proto](dst: T, src: T) -> T            // proto.Merge: src's populated fields merged into dst (proto_merge_from__T)
 fn append_varint(b: Bytes, v: UInt64) -> Bytes          // the wire functions of protowire, by the same names

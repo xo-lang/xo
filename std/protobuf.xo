@@ -85,6 +85,21 @@ fn marshal[T: Proto](v: T) -> Bytes
 /// The `T` that `data` encodes; unknown fields are skipped, a later value of a field wins.
 /// Messages nested more than 10000 deep are `ProtoErr.Recursion` (protowire's RecursionLimit).
 fn unmarshal[T: Proto](data: Bytes) -> T ! ProtoErr
+
+/// proto.UnmarshalOptions (decision 0683 item 1): `recursion_limit` the
+/// nesting `unmarshal_with` accepts (protowire's DefaultRecursionLimit,
+/// 10000), `discard_unknown` drops unknown fields instead of keeping them
+/// in the `proto "unknown"` field, `allow_partial` has no effect (derive
+/// Proto has no proto2 required fields).
+struct UnmarshalOptions {
+  discard_unknown: Bool = false
+  recursion_limit: Int = 10000
+  allow_partial: Bool = false
+}
+
+/// `unmarshal` with options (proto.UnmarshalOptions.Unmarshal): messages
+/// nested past `opts.recursion_limit` are `ProtoErr.Recursion`.
+fn unmarshal_with[T: Proto](data: Bytes, opts: UnmarshalOptions) -> T ! ProtoErr
 /// proto.Size: the length of `marshal(v)`, from marshal's sizes pass without writing the bytes.
 fn size[T: Proto](v: T) -> Int
 /// proto.Merge: `src`'s populated fields merged into `dst`, as parsing `marshal(src)` onto `dst`

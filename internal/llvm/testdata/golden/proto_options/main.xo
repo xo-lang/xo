@@ -1,0 +1,51 @@
+// protobuf.unmarshal_with (proto.UnmarshalOptions, decision 0683 item 1):
+// discard_unknown drops the unknown fields a `proto "unknown"` field
+// keeps; recursion_limit is the nesting accepted (protowire's default
+// 10000 without options).
+use std/protobuf
+
+struct Node {
+  name proto "1": Str
+  child proto "2": Node?
+  rest proto "unknown": Bytes
+} derive Proto
+
+struct Wide {
+  name proto "1": Str
+  extra proto "7": Int
+} derive Proto
+
+fn nested(n: Int) -> Node {
+  var v = Node{name: "leaf", child: None, rest: b""}
+  for _ in 0..n {
+    v = Node{name: "n", child: Some(v), rest: b""}
+  }
+  v
+}
+
+fn main(os: Os) {
+  // a field Node does not know (7) is kept, then dropped with the option
+  let data = protobuf.marshal(Wide{name: "w", extra: 42})
+  match protobuf.unmarshal[Node](data) {
+    Ok(n) => os.stdio.println("kept ${n.rest.len()} bytes")
+    Err(e) => os.stdio.println("kept: ${e}")
+  }
+  match protobuf.unmarshal_with[Node](data, protobuf.UnmarshalOptions{discard_unknown: true}) {
+    Ok(n) => os.stdio.println("discarded: ${n.rest.len()} bytes, name ${n.name}")
+    Err(e) => os.stdio.println("discarded: ${e}")
+  }
+  // the limit: 5 levels under the root pass at 5, fail at 4
+  let deep = protobuf.marshal(nested(5))
+  for lim in [5, 4] {
+    match protobuf.unmarshal_with[Node](deep, protobuf.UnmarshalOptions{recursion_limit: lim}) {
+      Ok(_) => os.stdio.println("limit ${lim}: ok")
+      Err(e) => os.stdio.println("limit ${lim}: ${e}")
+    }
+  }
+  // the default options are unmarshal's
+  let d10 = protobuf.marshal(nested(10001))
+  match protobuf.unmarshal_with[Node](d10, protobuf.UnmarshalOptions{}) {
+    Ok(_) => os.stdio.println("default 10001: ok")
+    Err(e) => os.stdio.println("default 10001: ${e}")
+  }
+}

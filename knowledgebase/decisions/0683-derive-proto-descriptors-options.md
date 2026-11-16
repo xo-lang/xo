@@ -129,3 +129,13 @@ files, 95df33e0e). The rows left need the code `derive Proto` generates
   embedding stays possible for gRPC reflection.
 - **Extensions now**: they need proto2's presence rules first; doing them
   alone would add a registry with no message able to use it.
+
+## Addendum 2026-11-16: item 1 landed (Xo Lang 1, task #127)
+
+The compiler and std halves of item 1 landed together: `UnmarshalOptions`
+and `unmarshal_with` in std/protobuf.xo, and derive Proto's
+`proto_unmarshal_with__T`, with `proto_mergedepth__T` taking the depth
+left and a DiscardUnknown flag that nested messages inherit. The
+recursion limit itself and its 8,000,000 level test landed earlier with
+#132 (3284ae078). Golden proto_options. Items 4 and 2 are next.
+
