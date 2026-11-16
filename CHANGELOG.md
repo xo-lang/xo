@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Perf (std/ui, Early): a predicting client's module is served gzipped with an ETag (304 on a repeat visit), preloaded from the page head and compiled while it streams: prediction is ready in about half the time on a slow network (721 ms instead of 1,566 ms on slow 4G for examples/ui-todo).
 - Fix (std/gif, native backends): the `gif: can't recognize format "..."` error quotes the version bytes as Go does (`\a`, `\b`, `\f`, `\v`, printable UTF-8 kept); it wrote `\x07` and escaped UTF-8. Found by the new gif fuzz harness (std/changes/gif.md).
 - Feature (std/metrics, every backend): `curry_with` and `must_curry_with` (client_golang's CurryWith) and `delete_partial_match` on every instrument, and the bucket helpers `linear_buckets`, `exponential_buckets` and `exponential_buckets_range`.
 - Feature (std/metrics, every backend): label constraints (`constraints: {"path": normalize}` on `counter`, `gauge`, `histogram` and `summary`, client_golang's ConstrainedLabels) normalize a label's values before the series is found.

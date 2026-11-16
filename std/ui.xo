@@ -19,6 +19,8 @@
 // runs update and view itself and shows each event at once; without one
 // it is a thin client that shows the server's rendered view.
 
+use std/compress
+use std/crypto
 use std/html
 use std/http
 use std/json
@@ -407,6 +409,12 @@ pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", run
   b.write_str("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>")
   b.write_str(html.escape_string(title))
   b.write_str("</title>")
+  if wasm_url != "" && safe_url(wasm_url) {
+    // start fetching the client module with the page, not after the
+    // deferred runtime runs (crossorigin anonymous is the runtime fetch's
+    // same-origin credentials mode, so the preload is reused)
+    b.write_str("<link rel=\"preload\" href=\"${html.escape_string(wasm_url)}\" as=\"fetch\" type=\"application/wasm\" crossorigin=\"anonymous\">")
+  }
   if css != "" {
     // CSS has no escapes for markup; `<` written as the CSS escape \3c
     // keeps the text from ending the style element.
@@ -507,6 +515,29 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   Ok(())
 }
 
+/// Whether an Accept-Encoding value accepts gzip (a `gzip` or `*` token
+/// whose q is not 0).
+fn accepts_gzip(v: Str) -> Bool {
+  for part in v.split(",") {
+    let fields = part.split(";")
+    let name = fields[0].trim().to_lower()
+    if name != "gzip" && name != "*" {
+      continue
+    }
+    var ok = true
+    for f in fields[1..] {
+      let kv = f.trim().to_lower()
+      if kv == "q=0" || kv == "q=0.0" || kv == "q=0.00" || kv == "q=0.000" {
+        ok = false
+      }
+    }
+    if ok {
+      return true
+    }
+  }
+  false
+}
+
 /// An App served over HTTP, with its Server behind a lock.
 pub struct Host[M: Json, E: Json] {
   app: App[M, E]
@@ -515,6 +546,9 @@ pub struct Host[M: Json, E: Json] {
   css: Str
   // The App's client program built for wasm, "" for a thin client.
   client: Bytes
+  // client gzipped once, and its ETag (a quoted SHA-256 prefix)
+  client_gz: Bytes
+  client_tag: Str
   // The live connections, each told the server's version when it changes.
   subs: Mutex[Map[Int, Chan[Int]]]
   next_sub: Atomic[Int]
@@ -522,7 +556,7 @@ pub struct Host[M: Json, E: Json] {
 
 /// A host for app starting at app.init.
 pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"") -> Host[M, E] {
-  Host{app: app, state: Mutex[Server[M, E]].new(server(app, max_batch: max_batch)), title: title, css: css, client: client, subs: Mutex[Map[Int, Chan[Int]]].new({}), next_sub: Atomic[Int].new(0)}
+  Host{app: app, state: Mutex[Server[M, E]].new(server(app, max_batch: max_batch)), title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: Mutex[Map[Int, Chan[Int]]].new({}), next_sub: Atomic[Int].new(0)}
 }
 
 fn (h: Host[M, E]) subscribe() -> (Int, Chan[Int]) {
@@ -603,8 +637,18 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     http.json(200, Sync{down: down, ver: v, html: render(app.view(m)), model: with_model})
   })
   if !client.is_empty() {
+    let gz = h.client_gz
+    let tag = h.client_tag
     r.handle("GET ${wasm}", fn(req) -> http.Response ! Never {
-      http.Response{status: 200, headers: {"Content-Type": "application/wasm", "Cache-Control": "no-cache"}, body: client}
+      // no-cache with an ETag: a repeat visit revalidates and gets a 304
+      // instead of the module, and a new build is seen at once
+      if req.header("If-None-Match") == Some(tag) {
+        return http.Response{status: 304, headers: {"ETag": tag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}, body: b""}
+      }
+      if accepts_gzip(req.header("Accept-Encoding") ?? "") {
+        return http.Response{status: 200, headers: {"Content-Type": "application/wasm", "Content-Encoding": "gzip", "ETag": tag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}, body: gz}
+      }
+      http.Response{status: 200, headers: {"Content-Type": "application/wasm", "ETag": tag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}, body: client}
     })
   }
   r.handle("GET ${live}", fn(req) {
@@ -776,8 +820,7 @@ connect();
 save();
 mark();
 if(wasmUrl&&window.WebAssembly){
-  fetch(wasmUrl).then(function(r){if(!r.ok)throw new Error("wasm "+r.status);return r.arrayBuffer();})
-  .then(function(b){return WebAssembly.compile(b);})
+  fetch(wasmUrl).then(function(r){if(!r.ok)throw new Error("wasm "+r.status);return WebAssembly.compileStreaming?WebAssembly.compileStreaming(r):r.arrayBuffer().then(function(b){return WebAssembly.compile(b);});})
   .then(function(m){mod=m;if(queue.length)predict();sync();})
   .catch(function(){});
 }

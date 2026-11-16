@@ -1,5 +1,16 @@
 # std/ui changes
 
+## 2026-11-15: perf: the client module loads in about half the time
+
+- Kind: perf
+- Commit: this commit
+- Found by: decision 0659 stage 3's time to resume (headless Chrome, 390 px)
+- Go reference: none
+- Test: std/ui_test.xo (gzipped when accepted, ETag and 304, accepts_gzip tokens and q=0, the preload link); headless Chrome, examples/ui-todo, median of 3 cold loads: prediction ready at 721 ms on slow 4G (1,566 ms before) and 164 ms on 4G (331 ms), the 21 browser checks pass
+- Shipped in: not yet released
+
+The client module (203 KB for ui-todo) is served gzipped (69 KB) with an ETag, so a repeat visit gets a 304; the page preloads it from its head, and the runtime compiles it while it streams in.
+
 ## 2026-11-15: fix: two tabs of one browser lost each other's Msgs (Early)
 
 - Kind: fix

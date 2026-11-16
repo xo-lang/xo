@@ -11059,6 +11059,13 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   out those `confirm` marks (as `Replica.model()`), and renders the view.
   The html element carries `data-xo-awaiting` with their count. If the
   module fails to load or run, the runtime stays a thin client.
+- The module is served gzipped (compressed once when the host is made)
+  to a request whose Accept-Encoding accepts gzip, with `Vary:
+  Accept-Encoding`, `Cache-Control: no-cache` and an ETag (the quoted
+  first 32 hex digits of its SHA-256); a matching `If-None-Match` gets a
+  304. The page's head preloads it (`<link rel="preload" as="fetch"
+  type="application/wasm" crossorigin="anonymous">`), and the runtime
+  compiles it with `WebAssembly.compileStreaming` where the browser has it.
 - A Msg for which `confirm` is true (a payment, a booking: the server's
   to decide) is sent like any other but never predicted: `model()` leaves
   it out and `awaiting()` lists it until the server's log has it, so a

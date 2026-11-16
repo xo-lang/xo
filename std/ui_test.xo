@@ -1,3 +1,4 @@
+use std/compress
 use std/html
 use std/http
 use std/json
@@ -469,4 +470,44 @@ test "sync returns the confirmed model when asked" {
   expect(with.model?.todos.len()) == 1
   let without = json.decode_str[Sync[Model, Msg]](r.call(sync_req(json.encode_str(Up{client: "a", ver: 1, msgs: []}), query: "?thin=1")).text()?)?
   expect(without.model) == None
+}
+
+test "the client module is served gzipped when accepted, with an ETag" {
+  var bb = BytesBuilder.new()
+  bb.write(b"\x00asm\x01\x00\x00\x00")
+  for _ in 0..4096 {
+    bb.write(b"\x00")
+  }
+  let wasm = bb.freeze()
+  let r = routes_for(host(todo_app(), client: wasm))
+  let plain = r.call(http.new_request("GET", "/_xo/app.wasm"))
+  expect(plain.body) == wasm
+  expect(plain.header("Content-Encoding")) == None
+  let tag = plain.header("ETag") ?? ""
+  expect(tag.starts_with("\"")) == true
+  let gz = r.call(http.new_request("GET", "/_xo/app.wasm", headers: {"Accept-Encoding": "br, gzip;q=0.8"}))
+  expect(gz.header("Content-Encoding")) == Some("gzip")
+  expect(gz.body.len() < wasm.len()) == true
+  expect(compress.gunzip(gz.body)?) == wasm
+  expect(gz.header("Vary")) == Some("Accept-Encoding")
+  let again = r.call(http.new_request("GET", "/_xo/app.wasm", headers: {"If-None-Match": tag}))
+  expect(again.status) == 304
+  expect(again.body.len()) == 0
+}
+
+test "accepts_gzip reads tokens and q=0" {
+  expect(accepts_gzip("gzip")) == true
+  expect(accepts_gzip("br, GZIP")) == true
+  expect(accepts_gzip("*")) == true
+  expect(accepts_gzip("gzip;q=0")) == false
+  expect(accepts_gzip("gzip; q=0.0, br")) == false
+  expect(accepts_gzip("deflate, br")) == false
+  expect(accepts_gzip("")) == false
+}
+
+test "a page with a client preloads its module in the head" {
+  let p = page(todo_app(), todo_app().init, 0, wasm_url: "/_xo/app.wasm")
+  let head = p.split("</head>")[0]
+  expect(head.contains("<link rel=\"preload\" href=\"/_xo/app.wasm\" as=\"fetch\" type=\"application/wasm\" crossorigin=\"anonymous\">")) == true
+  expect(page(todo_app(), todo_app().init, 0).contains("rel=\"preload\"")) == false
 }

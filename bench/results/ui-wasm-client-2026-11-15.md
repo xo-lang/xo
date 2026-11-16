@@ -79,3 +79,26 @@ Chrome, two tabs at 390 px: an offline add shown in 1.5 ms and a toggle
 in 1.1 ms from the event, an offline reserve shown as waiting, 21/21
 checks. Those checks also found two tabs sharing one client id
 (gotchas/ui-tabs-share-localstorage.md).
+
+## Time to resume (2026-11-15)
+
+Navigation to the module compiled (from then a click predicts; before it
+clicks still work, queued and synced as a thin client). Headless Chrome,
+390 by 844, a fresh tab with the cache disabled, median of 3, Mac Studio
+with Chrome's CPU throttling and network emulation; script
+`~/xo-lead/notes/stdui/wasm1/drive-resume.mjs`.
+
+| Network | CPU | First paint | Ready, module plain, fetched by the runtime | Ready, gzipped and preloaded |
+|---|---|---|---|---|
+| none | 1x | 24 to 28 ms | 18 ms | 17 ms |
+| none | 6x | 104 ms | 95 ms | 81 ms |
+| 4G (40 ms, 9 Mbps) | 1x | 68 to 76 ms | 331 ms | 164 ms |
+| 4G | 6x | 120 to 132 ms | 362 ms | 172 ms |
+| slow 4G (150 ms, 1.6 Mbps) | 1x | 188 to 192 ms | 1,567 ms | 721 ms |
+| slow 4G | 6x | 220 to 240 ms | 1,585 ms | 732 ms |
+
+The network decides it; compiling is a few ms once the bytes are in.
+Brotli would take the module from 68.6 KB (gzip) to 54.9 KB, about 70 ms
+more on slow 4G; std has no brotli encoder (nor does Go's standard
+library), so making the module smaller comes first.
+
