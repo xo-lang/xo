@@ -1475,6 +1475,12 @@ Last verified: 2026-11-15
     owner, 2026-11-15).
   - `xw ack ID` for each decision sent to you (`xw decisions --open
     --agent NAME`), in the tool round you read it.
+    The Claude Code hook (scripts/lead/xw-cc-hook.sh, `xw cc-inbox`)
+    prints each new decision and assigned task into your session on your
+    next prompt or Stop, once per session (owner, 2026-11-15: decision
+    #28 went unacked by every agent for 18 minutes); act on those lines.
+    `xw search WORDS` finds tasks, decisions, alerts, failed gate tests,
+    holds and main's commits. Last verified: 2026-11-15.
   - `xw priority` (the owner's ranked goals), `xw charter NAME`, `xw
     status [NAME]`, `xw jobs --since 2h` (wait vs run per job), `xw
     gates [NAME] --since 24h` (ended offload gates: by rc, step time
