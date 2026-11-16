@@ -52,6 +52,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -987,6 +988,37 @@ func raceChurn(xo, backend, root string, rounds int) (string, bool, error) {
 // std/evidence/MODULE/stress/main.xo, built on each backend and run for
 // -minutes with -tasks tasks. The program checks its own results and
 // memory and prints one summary line ending in ", pass".
+// runSteps runs each step in turn, or all at once with parallel, and
+// gives their lines in the steps' order or the first step's error (in
+// that order too).
+func runSteps(steps []string, parallel bool, run func(string) (string, error)) ([]string, error) {
+	lines := make([]string, len(steps))
+	errs := make([]error, len(steps))
+	if !parallel {
+		for i, st := range steps {
+			if lines[i], errs[i] = run(st); errs[i] != nil {
+				return nil, errs[i]
+			}
+		}
+		return lines, nil
+	}
+	var wg sync.WaitGroup
+	for i, st := range steps {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lines[i], errs[i] = run(st)
+		}()
+	}
+	wg.Wait()
+	for _, e := range errs {
+		if e != nil {
+			return nil, e
+		}
+	}
+	return lines, nil
+}
+
 func stress(args []string) error {
 	fs := flag.NewFlagSet("stress", flag.ExitOnError)
 	minutes := fs.Int("minutes", 30, "run time per backend")
@@ -995,6 +1027,7 @@ func stress(args []string) error {
 	checkMin := fs.Int("check-minutes", 5, "minutes of a further arm64 run built with --check=all (decision 0638: use after free and overruns fault, a leak fails the run; 0 skips it)")
 	checkOnly := fs.Bool("check-only", false, "run only the --check=all run and add it to the module's stress.md, which must pass at the current source hash")
 	hostLabel := fs.String("host", "", "the host's name in the evidence")
+	parallel := fs.Bool("parallel", false, "run the backends and the --check=all run at once rather than in turn (#152: about 35 minutes a module rather than 65; each still runs its full -minutes)")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
 		usage()
@@ -1031,11 +1064,10 @@ func stress(args []string) error {
 	}
 	defer os.RemoveAll(tmp)
 	start := time.Now()
-	var lines []string
-	for _, b := range strings.Split(*backends, ",") {
+	runOne := func(b string) (string, error) {
 		bin := filepath.Join(tmp, "s-"+b)
 		if out, err := exec.Command(filepath.Join("bin", "xo"), "build", "--backend="+b, "-o", bin, dir).CombinedOutput(); err != nil {
-			return fmt.Errorf("xo build --backend=%s %s: %v\n%s", b, dir, err, out)
+			return "", fmt.Errorf("xo build --backend=%s %s: %v\n%s", b, dir, err, out)
 		}
 		t0 := time.Now()
 		out, err := exec.Command(bin, strconv.Itoa(*minutes), strconv.Itoa(*tasks)).CombinedOutput()
@@ -1045,25 +1077,32 @@ func stress(args []string) error {
 			if len(text) > 20000 {
 				text = text[len(text)-20000:]
 			}
-			return fmt.Errorf("%s stress: %v\n%s", b, err, text)
+			return "", fmt.Errorf("%s stress: %v\n%s", b, err, text)
 		}
 		line := fmt.Sprintf("- %s: %s, %s", b, last, time.Since(t0).Round(time.Second))
 		fmt.Println(line)
-		lines = append(lines, line)
+		return line, nil
 	}
 	// decision 0638: the same program built with --check=all, so a use
 	// after free or an overrun faults and a block still live at exit
 	// fails the run (the leak report is the last line, after the
 	// program's own; the resident set is not sampled under the check,
-	// which is why the plain runs above stay)
+	// which is why the plain runs stay)
 	checkNote := ""
+	steps := strings.Split(*backends, ",")
 	if *checkMin > 0 {
-		line, note, err := stressCheck(dir, tmp, *checkMin, *tasks)
-		if err != nil {
-			return err
+		steps = append(steps, "check")
+	}
+	lines, err := runSteps(steps, *parallel, func(st string) (string, error) {
+		if st != "check" {
+			return runOne(st)
 		}
-		lines = append(lines, line)
+		line, note, err := stressCheck(dir, tmp, *checkMin, *tasks)
 		checkNote = note
+		return line, err
+	})
+	if err != nil {
+		return err
 	}
 	host := *hostLabel
 	if host == "" {

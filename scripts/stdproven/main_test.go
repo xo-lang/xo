@@ -1,11 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -258,5 +260,38 @@ func TestFuzzShardsMerge(t *testing.T) {
 	// stdcov counts result: pass only, so a partial file is no evidence yet
 	if strings.Contains(one, "result: pass") {
 		t.Error("a partial shard says pass")
+	}
+}
+
+// TestRunSteps (#152): in parallel every step runs at once (each waits for
+// all to start), the lines keep the steps' order, and an error is the
+// first step's in that order.
+func TestRunSteps(t *testing.T) {
+	var started sync.WaitGroup
+	started.Add(3)
+	lines, err := runSteps([]string{"arm64", "llvm", "check"}, true, func(s string) (string, error) {
+		started.Done()
+		started.Wait()
+		return "- " + s, nil
+	})
+	if err != nil || strings.Join(lines, ",") != "- arm64,- llvm,- check" {
+		t.Fatalf("parallel: %q %v", lines, err)
+	}
+	var order []string
+	lines, err = runSteps([]string{"a", "b"}, false, func(s string) (string, error) {
+		order = append(order, s)
+		return s, nil
+	})
+	if err != nil || strings.Join(order, "") != "ab" || strings.Join(lines, "") != "ab" {
+		t.Fatalf("in turn: %q %q %v", order, lines, err)
+	}
+	_, err = runSteps([]string{"a", "b", "c"}, true, func(s string) (string, error) {
+		if s != "a" {
+			return "", errors.New("fail " + s)
+		}
+		return s, nil
+	})
+	if err == nil || err.Error() != "fail b" {
+		t.Fatalf("error: %v", err)
 	}
 }
