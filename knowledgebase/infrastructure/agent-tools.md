@@ -1515,6 +1515,11 @@ Last verified: 2026-11-15
     main commits of 21 days, xw tasks in any state, xw decisions,
     knowledgebase decisions, std change logs and spec/std.md that hold
     every term, case-insensitive. Last verified: 2026-11-15.
+  - Web view (ADR 0658 stage 4, read-only): http://127.0.0.1:7480/
+    (`/`, `/tasks`, `/alerts`, `/gates`, `/std`, `/decisions`, the same
+    text as the commands). Users: `read -rs P; printf '%s\n' "$P" |
+    xw user set NAME` (Argon2id; ends NAME's sessions), `xw user list`,
+    `xw user rm NAME`. Last verified: 2026-11-15.
   - Fire and forget: a down xw never fails heavy.sh, pushq or
     offload-gate (events spool under ~/xo-lead/xw/spool).
   - board.sh stays for claims and a one-line NOW until it becomes a

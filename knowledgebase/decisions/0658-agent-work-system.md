@@ -163,5 +163,26 @@ plan above:
 - hangcheck.sh is not folded in yet: on 2026-11-15 it reported the host
   VMs (Virtualization.framework 56G, VMware 32G) as RUNAWAY and every
   offload over 25 minutes, which as alerts would wake the lead each
-  minute. It moves in by class with its own thresholds and an ignore
-  list.
+  minute. It moved in later the same day (workstream 0dbece7) by class,
+  with ~/xo-lead/xw-hang-ignore.txt's ignore lines and per-class minutes.
+
+## Addendum: the web view as built (xw-1, 2026-11-15)
+
+Stage 4's read-only view landed in workstream (private commit): `/`, `/tasks`,
+`/alerts`, `/gates`, `/std` and `/decisions`, each a std/template html
+mode page of `<pre>` sections holding the text the matching `xw` command
+prints (the same functions, so a page and its command never disagree),
+with the 30 second refresh and one inline stylesheet (phone width, dark
+mode). Login is `xw user set NAME` (the password on stdin, 12 or more
+characters, stored as `hash_password_argon2id`), which gives an HttpOnly,
+SameSite=Strict session cookie for 7 days; the database keeps only the
+token's SHA-256 digest, a failed login waits a second, and a new
+password ends the user's sessions. Departures and what is left:
+
+- `/alerts` is added (the alert loop is stage 3's main output); `/search`
+  waits for stage 5.
+- The server still listens on 127.0.0.1: moving to 0.0.0.0 (item 5) is
+  `XW_ADDR=0.0.0.0:7480` in the server's environment after the owner
+  sets a password, so the view is never reachable without one.
+- Pages are preformatted text, not tables; tables and per-agent rows
+  are the next step once the owner has used it from the phone.
