@@ -27,3 +27,11 @@ func clientTransport(c Http_Client) any { panic(noHTTP) }
 func (f Testing_FakeNet) rawExchange(tk *Task, req Http_Request, hostport string) Result[Http_Response, Http_ClientErr] {
 	panic(noHTTP)
 }
+
+func Http_dump_request(tk *Task, req Http_Request, body bool) Bytes { panic(noHTTP) }
+
+func Http_dump_request_out(tk *Task, req Http_Request, body bool) Result[Bytes, Http_ClientErr] {
+	panic(noHTTP)
+}
+
+func Http_dump_response(tk *Task, resp Http_Response, body bool) Bytes { panic(noHTTP) }

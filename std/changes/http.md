@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-16: feature: dump_request, dump_request_out, dump_response (httputil Dump*)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89: stdaudit gaps httputil.DumpRequest, DumpRequestOut, DumpResponse
+- Go reference: net/http/httputil dump.go (Go 1.25); the Go backend calls it
+- Test: golden http_dump (go, arm64, LLVM): bodies on and off, two fields of a name, with_host, a query with no path, User-Agent, Content-Length, Accept-Encoding and Range rules, HEAD, an ftp URL, 204 and an unknown status
+- Timing: none
+
+The three dumps give a request or response as HTTP/1.1 text, the fields
+sorted by name, as Go's httputil writes them.
 
 ## 2026-11-16: feature: http.encoded_responses and BodyCoder (decision 0674)
 

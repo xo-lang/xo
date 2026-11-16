@@ -4760,6 +4760,114 @@ fn request_url_string(req: Request) -> Str {
   url_string_path(req.url with {query: {}}, path) + "?" + req.raw_query
 }
 
+// ---------------------------------------------------------------------------
+// Dumps (Go's httputil.DumpRequest, DumpRequestOut, DumpResponse)
+
+/// The fields of h (and its several fields fs) as "Name: value\r\n" lines
+/// sorted by name, the names in skip left out (Go's Header.WriteSubset: a
+/// CR or LF in a value is a space, the value trimmed).
+fn dump_fields(h: Map[Str, Str], fs: List[Str], skip: List[Str]) -> Str {
+  var ks: List[Str] = []
+  for (k, _) in h {
+    if !skip.contains(k) {
+      ks.push(k)
+    }
+  }
+  ks = ks.sort()
+  var out = ""
+  for k in ks {
+    for v in values_of(h, fs, k) {
+      out += k + ": " + v.replace("\r", " ").replace("\n", " ").trim_chars(" \t") + "\r\n"
+    }
+  }
+  out
+}
+
+/// The URL text's authority and request URI (Go's URL.RequestURI: the
+/// escaped path, "/" for none, and the query; no fragment).
+fn dump_target(full: Str) -> (Str, Str) {
+  var rest = full
+  if let Some(i) = full.find("://") {
+    rest = full[i + 3..]
+  }
+  if let Some(h) = rest.find("#") {
+    rest = rest[..h]
+  }
+  var j = rest.len()
+  if let Some(a) = rest.find("/") {
+    j = a
+  }
+  if let Some(q) = rest.find("?") {
+    if q < j {
+      j = q
+    }
+  }
+  var uri = rest[j..]
+  if uri.is_empty() {
+    uri = "/"
+  } else if uri.starts_with("?") {
+    uri = "/" + uri
+  }
+  (rest[..j], uri)
+}
+
+fn dump_request(req: Request, body: Bool = true) -> Bytes {
+  let (auth, uri) = dump_target(request_url_string(req))
+  var s = (if req.method.is_empty() { "GET" } else { req.method }) + " " + uri + " HTTP/1.1\r\n"
+  let host = if req.host_over.is_empty() { auth } else { req.host_over }
+  if !host.is_empty() {
+    s += "Host: " + host + "\r\n"
+  }
+  s += dump_fields(req.headers, req.fields, ["Host", "Transfer-Encoding", "Trailer"]) + "\r\n"
+  if body { s.bytes() + req.body } else { s.bytes() }
+}
+
+fn dump_request_out(req: Request, body: Bool = true) -> Bytes ! http.ClientErr {
+  let full = request_url_string(req)
+  let scheme = req.url.scheme
+  if scheme != "http" && scheme != "https" {
+    return Err(http.ClientErr.Protocol(msg: "unsupported protocol scheme " + http1.go_quote(scheme)))
+  }
+  let (auth, uri) = dump_target(full)
+  if auth.is_empty() {
+    return Err(http.ClientErr.Protocol(msg: "http: no Host in request URL"))
+  }
+  let m = if req.method.is_empty() { "GET" } else { req.method }
+  var s = m + " " + uri + " HTTP/1.1\r\n"
+  s += "Host: " + (if req.host_over.is_empty() { auth } else { req.host_over }) + "\r\n"
+  match header_get(req.headers, "User-Agent") {
+    Some(ua) => if !ua.is_empty() {
+      s += "User-Agent: " + ua.replace("\r", " ").replace("\n", " ").trim_chars(" \t") + "\r\n"
+    }
+    None => s += "User-Agent: Go-http-client/1.1\r\n"
+  }
+  if req.body.len() > 0 || m == "POST" || m == "PUT" || m == "PATCH" {
+    s += "Content-Length: ${req.body.len()}\r\n"
+  }
+  s += dump_fields(req.headers, req.fields, ["Host", "User-Agent", "Content-Length", "Transfer-Encoding", "Trailer"])
+  if m != "HEAD" && !(header_get(req.headers, "Accept-Encoding") is Some(_)) && !(header_get(req.headers, "Range") is Some(_)) {
+    s += "Accept-Encoding: gzip\r\n"
+  }
+  s += "\r\n"
+  Ok(if body { s.bytes() + req.body } else { s.bytes() })
+}
+
+fn dump_response(resp0: http.Response, body: Bool = true) -> Bytes {
+  let resp = rt.cast[http.Response, Response](resp0)
+  let text0 = status_text(resp.status)
+  let text = if text0.is_empty() { "status code ${resp.status}" } else { text0 }
+  let code = if resp.status < 10 { "00${resp.status}" } else if resp.status < 100 { "0${resp.status}" } else { "${resp.status}" }
+  var s = "HTTP/1.1 " + code + " " + text + "\r\n"
+  // a status with no body (1xx, 204, 304: Go's bodyAllowedForStatus) has
+  // no Content-Length when it is 0
+  let no_body = (resp.status >= 100 && resp.status < 200) || resp.status == 204 || resp.status == 304
+  if !(no_body && resp.body.is_empty()) {
+    s += "Content-Length: ${resp.body.len()}\r\n"
+  }
+  s += dump_fields(resp.headers, resp.fields, ["Content-Length", "Transfer-Encoding", "Trailer"]) + "\r\n"
+  if body { s.bytes() + resp.body } else { s.bytes() }
+}
+
 /// An IPv6 host's text in a URL: its zone (after `%`) escaped as Go's
 /// URL.String escapes a host (encodeHost), so `fe80::1%eth0` is
 /// `fe80::1%25eth0` and the text parses back to the same host.

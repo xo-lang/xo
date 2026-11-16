@@ -1953,6 +1953,18 @@ fn (r: Request) value[T](k: Key[T]) -> T?
 
 pub fn new_request(method: Str, url: Str, headers: Map[Str, Str] = {}, body: Bytes = b"") -> Request
     // remote_ip is "127.0.0.1"; for tests and clients
+pub fn dump_request(req: Request, body: Bool = true) -> Bytes
+pub fn dump_request_out(req: Request, body: Bool = true) -> Bytes ! ClientErr
+pub fn dump_response(resp: Response, body: Bool = true) -> Bytes
+    // Go's httputil.DumpRequest, DumpRequestOut and DumpResponse byte for
+    // byte, for debugging: dump_request is the request as a server read
+    // it (request line, Host, the fields sorted by name, the body);
+    // dump_request_out adds what the client sends (User-Agent
+    // Go-http-client/1.1 unless set, Content-Length, Accept-Encoding: gzip
+    // unless set, a Range or HEAD); dump_response writes the status line,
+    // Content-Length (none for 1xx, 204, 304 with no body), the fields
+    // sorted. body: false leaves the body out. ClientErr.Protocol for a
+    // URL dump_request_out cannot send (another scheme, no host).
 
 struct Response {
   status: Int

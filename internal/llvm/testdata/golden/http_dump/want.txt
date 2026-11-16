@@ -1,0 +1,127 @@
+exit 0
+--- stdout
+dump_request:
+  |POST /a%20b/c?x=1&y=2 HTTP/1.1\r
+  |Host: example.com:8080\r
+  |Accept: */*\r
+  |Content-Type: text/plain\r
+  |X-Zed: last\r
+  |\r
+  |hello
+dump_request, no body:
+  |POST /a%20b/c?x=1&y=2 HTTP/1.1\r
+  |Host: example.com:8080\r
+  |Accept: */*\r
+  |Content-Type: text/plain\r
+  |X-Zed: last\r
+  |\r
+  |
+dump_request, two fields of a name:
+  |POST /a%20b/c?x=1&y=2 HTTP/1.1\r
+  |Host: example.com:8080\r
+  |Accept: */*\r
+  |Content-Type: text/plain\r
+  |X-Tag: one\r
+  |X-Tag: two\r
+  |X-Zed: last\r
+  |\r
+  |hello
+dump_request, with_host:
+  |GET / HTTP/1.1\r
+  |Host: other.test:9\r
+  |\r
+  |
+dump_request, a query and no path:
+  |GET /?q=1 HTTP/1.1\r
+  |Host: example.com\r
+  |\r
+  |
+dump_request_out GET:
+  |GET /x HTTP/1.1\r
+  |Host: example.com\r
+  |User-Agent: Go-http-client/1.1\r
+  |Accept-Encoding: gzip\r
+  |\r
+  |
+dump_request_out POST:
+  |POST /a%20b/c?x=1&y=2 HTTP/1.1\r
+  |Host: example.com:8080\r
+  |User-Agent: Go-http-client/1.1\r
+  |Content-Length: 5\r
+  |Accept: */*\r
+  |Content-Type: text/plain\r
+  |X-Zed: last\r
+  |Accept-Encoding: gzip\r
+  |\r
+  |hello
+dump_request_out empty POST:
+  |POST /p HTTP/1.1\r
+  |Host: example.com\r
+  |User-Agent: Go-http-client/1.1\r
+  |Content-Length: 0\r
+  |Accept-Encoding: gzip\r
+  |\r
+  |
+dump_request_out HEAD:
+  |HEAD / HTTP/1.1\r
+  |Host: example.com\r
+  |User-Agent: Go-http-client/1.1\r
+  |\r
+  |
+dump_request_out own User-Agent and Accept-Encoding:
+  |GET / HTTP/1.1\r
+  |Host: example.com\r
+  |User-Agent: xo-test/1\r
+  |Accept-Encoding: br\r
+  |\r
+  |
+dump_request_out a Range:
+  |GET / HTTP/1.1\r
+  |Host: example.com\r
+  |User-Agent: Go-http-client/1.1\r
+  |Range: bytes=0-9\r
+  |\r
+  |
+dump_request_out POST, no body:
+  |POST /a%20b/c?x=1&y=2 HTTP/1.1\r
+  |Host: example.com:8080\r
+  |User-Agent: Go-http-client/1.1\r
+  |Content-Length: 5\r
+  |Accept: */*\r
+  |Content-Type: text/plain\r
+  |X-Zed: last\r
+  |Accept-Encoding: gzip\r
+  |\r
+  |
+dump_request_out ftp: protocol error: unsupported protocol scheme "ftp"
+dump_response 200:
+  |HTTP/1.1 200 OK\r
+  |Content-Length: 8\r
+  |Content-Type: text/plain; charset=utf-8\r
+  |X-A: 1\r
+  |\r
+  |hi there
+dump_response 200, no body:
+  |HTTP/1.1 200 OK\r
+  |Content-Length: 8\r
+  |Content-Type: text/plain; charset=utf-8\r
+  |\r
+  |
+dump_response 404 empty:
+  |HTTP/1.1 404 Not Found\r
+  |Content-Length: 0\r
+  |\r
+  |
+dump_response 204:
+  |HTTP/1.1 204 No Content\r
+  |\r
+  |
+dump_response 299, two fields:
+  |HTTP/1.1 299 status code 299\r
+  |Content-Length: 3\r
+  |Content-Type: text/plain; charset=utf-8\r
+  |Set-Cookie: a=1\r
+  |Set-Cookie: b=2\r
+  |\r
+  |odd
+--- stderr

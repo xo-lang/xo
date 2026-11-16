@@ -1,0 +1,53 @@
+// http.dump_request, dump_request_out and dump_response (Go's
+// httputil.DumpRequest, DumpRequestOut and DumpResponse; the Go backend runs
+// httputil itself and is the reference): the request line, Host, the
+// fields sorted, Content-Length and the client's added fields, the body
+// with and without body.
+use std/http
+
+/// The dump with each CRLF shown, one line a line.
+fn show(os: Os, what: Str, b: Bytes) {
+  os.stdio.println("${what}:")
+  let s = b.to_str() ?? "<not UTF-8>"
+  for l in s.split("\n") {
+    os.stdio.println("  |${l.replace("\r", "\\r")}")
+  }
+}
+
+fn main(os: Os) {
+  let post = http.new_request("POST", "http://example.com:8080/a%20b/c?x=1&y=2#frag", {"Content-Type": "text/plain", "X-Zed": "last", "Accept": "*/*"}, b"hello")
+  let multi = post.add_header("X-Tag", "one").add_header("X-Tag", "two")
+  show(os, "dump_request", http.dump_request(post))
+  show(os, "dump_request, no body", http.dump_request(post, body: false))
+  show(os, "dump_request, two fields of a name", http.dump_request(multi))
+  show(os, "dump_request, with_host", http.dump_request(http.new_request("GET", "http://example.com").with_host("other.test:9")))
+  show(os, "dump_request, a query and no path", http.dump_request(http.new_request("GET", "http://example.com?q=1")))
+
+  for (what, req) in [
+    ("dump_request_out GET", http.new_request("GET", "https://example.com/x")),
+    ("dump_request_out POST", post),
+    ("dump_request_out empty POST", http.new_request("POST", "http://example.com/p")),
+    ("dump_request_out HEAD", http.new_request("HEAD", "http://example.com/")),
+    ("dump_request_out own User-Agent and Accept-Encoding", http.new_request("GET", "http://example.com/", {"User-Agent": "xo-test/1", "Accept-Encoding": "br"})),
+    ("dump_request_out a Range", http.new_request("GET", "http://example.com/", {"Range": "bytes=0-9"})),
+  ] {
+    match http.dump_request_out(req) {
+      Ok(b) => show(os, what, b)
+      Err(e) => os.stdio.println("${what}: ${e}")
+    }
+  }
+  match http.dump_request_out(post, body: false) {
+    Ok(b) => show(os, "dump_request_out POST, no body", b)
+    Err(e) => os.stdio.println("no body: ${e}")
+  }
+  match http.dump_request_out(http.new_request("GET", "ftp://example.com/f")) {
+    Ok(b) => show(os, "ftp", b)
+    Err(e) => os.stdio.println("dump_request_out ftp: ${e}")
+  }
+
+  show(os, "dump_response 200", http.dump_response(http.text(200, "hi there").with_header("X-A", "1")))
+  show(os, "dump_response 200, no body", http.dump_response(http.text(200, "hi there"), body: false))
+  show(os, "dump_response 404 empty", http.dump_response(http.empty(404)))
+  show(os, "dump_response 204", http.dump_response(http.empty(204)))
+  show(os, "dump_response 299, two fields", http.dump_response(http.text(299, "odd").add_header("Set-Cookie", "a=1").add_header("Set-Cookie", "b=2")))
+}

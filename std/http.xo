@@ -329,6 +329,23 @@ fn key[T](name: Str) -> Key[T]
 fn (k: Key[T]) name() -> Str
 
 fn new_request(method: Str, url: Str, headers: Map[Str, Str] = {}, body: Bytes = b"") -> Request
+/// req as an HTTP/1.1 server received it (Go's httputil.DumpRequest): the
+/// request line with the URL's path and query, Host, the header fields
+/// sorted by name (Transfer-Encoding and Trailer left out), a blank line,
+/// and the body when body. For debugging; the output is Go's byte for byte.
+fn dump_request(req: Request, body: Bool = true) -> Bytes
+/// req as the client sends it (Go's httputil.DumpRequestOut): the request
+/// line, Host, User-Agent (Go-http-client/1.1 unless set), Content-Length,
+/// the other fields sorted by name, then the client's Accept-Encoding:
+/// gzip, a blank line, and the body when body. ClientErr.Protocol for a
+/// URL the client cannot send (another scheme, no host).
+fn dump_request_out(req: Request, body: Bool = true) -> Bytes ! ClientErr
+/// resp as a server writes it over HTTP/1.1 (Go's httputil.DumpResponse):
+/// the status line, Content-Length, the fields sorted by name
+/// (Content-Length, Transfer-Encoding and Trailer from the header left
+/// out), a blank line, and the body when body. A stream's body is not
+/// included.
+fn dump_response(resp: Response, body: Bool = true) -> Bytes
 
 struct Response {
   status: Int
