@@ -41,9 +41,10 @@ monitor (mon_scan) ticks while work waits.
 ## Decision
 
 1. **A worker marks its C calls.** Each adapter brackets the C call with
-   two runtime exports, `xo_x_c_enter()` and `xo_x_c_leave()`. They add
-   one to a word of the calling thread's worker record, W_CSEQ_I (odd
-   while in C), with a release store: one thread local load and one store each,
+   marks that add one to a word of the calling thread's worker record,
+   W_CSEQ_I (odd while in C), with a relaxed store: one thread local load
+   and one store each, inline in the adapter (addendum below; Windows
+   calls the runtime exports `xo_x_c_enter()` and `xo_x_c_leave()`),
    no shared atomic (a counter on the pool would bounce one cache line
    between every worker making C calls; SQLite makes millions). A thread
    that is no worker (a C thread calling back, a root outside its loop)
@@ -98,3 +99,25 @@ task's progress finishes at XO_THREADS=1 (item 3).
 - **Treat every C call as blocking and hand off at once:** a thread
   switch per short C call (sqlite3_column_int); Go hands off only after a
   sysmon tick for the same reason.
+
+## Addendum 2026-11-16 (#107): inline marks with relaxed stores
+
+The first implementation (ac3d1d1d1) called two runtime exports around
+each C call and stored W_CSEQ_I with release ordering. Host 1 measured
+that at about 1.5% of std/sqlite point lookups and 3.4% of scans
+(`xo bench --ab`, bench/perf/sqlite, 9 rounds: removing the marks gave
+0.985 and 0.967). Since a99b162e9 the adapters mark inline
+(compiler/cli/bind gen.xo c_mark_prelude: xo_tlocal's worker slot, then a
+relaxed load and a relaxed store), giving 0.982 and 0.970 against the
+runtime calls. Inline with a release store gave 0.989 and 0.994 (scan
+within noise), so the release ordering itself was about half the cost.
+
+Relaxed is enough because nothing is published through W_CSEQ_I: only
+the worker's own thread writes it, and the monitor reads it as a hint on
+its tick. A stale value can only delay a handoff (rule 3) or let one
+preemption ask through (rule 2) by one tick, which a release store did
+not prevent either: the monitor may read the old even value just as the
+call starts with either ordering. Memory safety never depends on it.
+llrt pool.xo's c_enter and c_leave (the Windows path) keep their release
+stores. internal/repotest TestCMarkLayout keeps the adapter's copies of
+TLS_W and W_CSEQ_I in step with llrt.
