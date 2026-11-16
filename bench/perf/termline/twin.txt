@@ -1,0 +1,5 @@
+# twincheck: term: the line editor (Go: golang.org/x/term v0.48.0's Terminal) reading 20,000 edited lines from memory at width 80 (type) and at width 20, wrapping (wrap); none is the setup alone.
+require golang.org/x/term v0.48.0
+- - none
+- - type
+- - wrap

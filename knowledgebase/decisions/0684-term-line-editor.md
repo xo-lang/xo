@@ -23,9 +23,12 @@ connections and functions (decision 0617 C).
 
 ## Decision
 
-1. **The I/O.** `interface Port[fx: Effects] { fn read(self, max: Int) ->
-   Bytes ! Str uses fx; fn write(self, data: Bytes) -> () ! Str uses fx }`,
-   an empty read meaning end of input, with `stdio_port(io: Stdio) ->
+1. **The I/O.** `struct Port[fx: Effects]` holding two functions, `read:
+   fn(Int) -> Bytes? ! Str uses fx` (at most max bytes, None at the end
+   of input, as `Conn.read` and `Stdio.read_bytes`) and `write: fn(Bytes)
+   -> () ! Str uses fx`, as std/jsonrpc's `Conn[fx]` holds its write
+   function (2026-11-16, while porting: a struct of functions needed no
+   interface value with an effect parameter), with `stdio_port(io: Stdio) ->
    Port[stdio]` (standard input and output; the caller puts the terminal in
    raw mode with `Stdio.raw_input`, as Go's callers call MakeRaw),
    `conn_port(c: Conn) -> Port[net.dial]` (an SSH channel or a socket) and
@@ -38,8 +41,10 @@ connections and functions (decision 0617 C).
      Str, pasted: Bool }`: `pasted` is Go's ErrPasteIndicator (Go returns
      the line and that error together; here it is a field, so a caller
      cannot lose the text by treating it as a failure);
-   - `read_password(prompt: Str) -> Str ! TermErr uses fx` (no echo, not
-     added to history, the old prompt restored);
+   - `read_password(prompt: Str) -> Line ! TermErr uses fx` (no echo, not
+     added to history, the old prompt restored; a Line because Go's
+     ReadPassword also returns ErrPasteIndicator, which the corpus
+     showed);
    - `write(data: Bytes) -> () ! TermErr uses fx` (Go's Write: the prompt
      and line are erased, data written with LF as CRLF, then repainted);
    - `set_prompt(p: Str)`, `set_size(width: Int, height: Int) -> () !
@@ -49,12 +54,14 @@ connections and functions (decision 0617 C).
    - `set_history(h: History)` with `interface History { fn add(self, e:
      Str); fn len(self) -> Int; fn at(self, i: Int) -> Str }` and
      `ring_history(cap: Int = 100) -> History` (Go's default stRingBuffer
-     of 100), and `set_autocomplete(f: fn(Str, Int, Char) -> (Str, Int)?)`
-     (Go's AutoCompleteCallback, None to leave the key to the editor).
+     of 100), and `set_autocomplete(f: (fn(Str, Int, Int) -> (Str, Int)?)?)`
+     (Go's AutoCompleteCallback, None to leave the key to the editor; the
+     key is an Int because Go passes keyUnknown, 0xd800, which no Rune
+     holds: `term.KEY_UNKNOWN`).
    - `enum TermErr { Eof, Io(msg: Str) } derive Display`: Ctrl-D on an
      empty line and Ctrl-C are Eof, as Go returns io.EOF for both.
-3. **Escape codes**: `term.ESCAPE: EscapeCodes` with Go's VT100 values as
-   Bytes fields (`black` to `white`, `reset`), and `t.escape()` to read
+3. **Escape codes**: `term.vt100() -> EscapeCodes` with Go's VT100 values
+   as Bytes fields (`black` to `white`, `reset`), and `t.escape()` to read
    them, so a program colors what it writes the way Go's Terminal.Escape
    does. Painter stays the module's ANSI helper for plain output.
 4. **Behavior is Go's**: bytesToKey's escape sequences (CSI and SS3
@@ -65,7 +72,24 @@ connections and functions (decision 0617 C).
    the ReadPassword, history, SetSize and paste tests) over `func_port`
    with a mock that feeds input and records output, as Go's
    MockTerminal; the output bytes must equal Go's. A timing row against Go
-   on a scripted session goes in bench/perf/term.
+   on a scripted session goes in bench/perf/termline (bench/perf/term
+   times color, paint and strip).
+
+The core is pure, as the owner asked on accepting: key decoding
+(`bytes_to_key`), the edits (`handle_key`) and one pass over buffered
+input (`step`) work on a `TermState` value and queue their output in it;
+only `read_line`, `write`, `set_size` and `set_bracketed_paste` touch the
+Port, so a sans-I/O `feed(input) -> (output, lines)` can be added over
+`step` without changing it.
+
+Found while porting (2026-11-16): Go's Ctrl-C and Ctrl-D (on an empty
+line) return io.EOF without saving the rest of the input, so the next
+ReadLine reads the same bytes again; the port does the same, since the
+corpus compares every byte. A Port write that fails keeps the editor's
+state as Go's does (a Mutex.with closure that returns Err would undo it,
+so the write's outcome is the closure's value). History and the
+autocomplete function run with the terminal locked; Go unlocks around
+them so they may write to it.
 
 ## Consequences
 

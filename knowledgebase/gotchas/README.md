@@ -1440,3 +1440,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [os-tasks-std-module.md](os-tasks-std-module.md): Observed 2026-11-16: os.tasks faults ("not available here") in tests run by xo test --std-module, passes in plain xo test; use a scope's group
 - [stdcov-json-overwrites-its-argument.md](stdcov-json-overwrites-its-argument.md): `stdcov -json FILE` writes marks to FILE; passing a source file overwrote it with JSON (Observed)
 - [pushq-corpus-check-blocked-on-main-stale.md](pushq-corpus-check-blocked-on-main-stale.md): pushq's stdcorpus -check refused every push while main's corpora were stale; it now refuses only the push's own (Observed)
+- [effect-param-not-inferred-from-closure-args.md](effect-param-not-inferred-from-closure-args.md): `let p = term.func_port(closures uses sync)` is typed `Port[()]` (XO0701 at its use); annotate `let p: term.Port[sync]` (Observed 2026-11-16)

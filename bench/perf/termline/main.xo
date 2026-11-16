@@ -1,0 +1,77 @@
+// term: std/term's line editor against golang.org/x/term v0.48.0's
+// Terminal (twin.go.txt), decision 0684. One session of 20,000 lines,
+// each typed with edits (left, backspace, Ctrl-T, Home, End), read
+// through a Port over memory: type at width 80, wrap at width 20 (each
+// line wraps); none is the setup alone. Usage: `<program>
+// none|type|wrap`. Prints `<workload> <lines> <text bytes> <output bytes>
+// <output checksum>`; the twin prints the same.
+use std/term
+
+const LINES: Int = 20000
+
+fn input() -> Bytes {
+  var b = BytesBuilder.new()
+  for i in 0..LINES {
+    b.write_str("hello world ${i} foo")
+    b.write(b"\x1b[D\x1b[D\x7fX\x14\x1b[H>\x05!\r")
+  }
+  b.freeze()
+}
+
+/// Reading position, output length and checksum.
+struct Io {
+  at: Int = 0
+  n: Int = 0
+  sum: Int = 0
+}
+
+fn main(os: Os) uses stdio, env, sync {
+  let w = os.env.args().get(0) ?? "none"
+  let data = input()
+  if w == "none" {
+    os.stdio.println("none 0 0 ${data.len()} 0")
+    return
+  }
+  let st = Mutex.new(Io{})
+  let port: term.Port[sync] = term.func_port(
+    fn(max: Int) -> Bytes? ! Str uses sync {
+      Ok(st.with(fn(var s: Io) -> Bytes? {
+        if s.at >= data.len() {
+          return None
+        }
+        let end = if s.at + max < data.len() { s.at + max } else { data.len() }
+        let got = data[s.at..end]
+        s.at = end
+        Some(got)
+      }))
+    },
+    fn(out: Bytes) -> () ! Str uses sync {
+      st.with(fn(var s: Io) -> () {
+        var sum = s.sum
+        for x in out {
+          sum = (sum * 31 + Int(x)) % 1000000007
+        }
+        s.sum = sum
+        s.n += out.len()
+      })
+      Ok(())
+    },
+  )
+  let t = term.new_terminal(port, "> ")
+  if w == "wrap" {
+    t.set_size(20, 24).or_fault("size")
+  }
+  var lines = 0
+  var text = 0
+  while true {
+    match t.read_line() {
+      Ok(l) => {
+        lines += 1
+        text += l.text.len()
+      }
+      Err(_) => break
+    }
+  }
+  let s = st.with_read(fn(s: Io) -> Io { s })
+  os.stdio.println("${w} ${lines} ${text} ${s.n} ${s.sum}")
+}

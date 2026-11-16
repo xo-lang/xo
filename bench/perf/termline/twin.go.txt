@@ -1,0 +1,72 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+
+	"golang.org/x/term"
+)
+
+const lines = 20000
+
+func input() []byte {
+	var b []byte
+	for i := 0; i < lines; i++ {
+		b = append(b, "hello world "+strconv.Itoa(i)+" foo"...)
+		b = append(b, "\x1b[D\x1b[D\x7fX\x14\x1b[H>\x05!\r"...)
+	}
+	return b
+}
+
+type mem struct {
+	data   []byte
+	at     int
+	n, sum int
+}
+
+func (m *mem) Read(p []byte) (int, error) {
+	if m.at >= len(m.data) {
+		return 0, fmt.Errorf("EOF")
+	}
+	n := copy(p, m.data[m.at:])
+	m.at += n
+	return n, nil
+}
+
+func (m *mem) Write(p []byte) (int, error) {
+	sum := m.sum
+	for _, x := range p {
+		sum = (sum*31 + int(x)) % 1000000007
+	}
+	m.sum = sum
+	m.n += len(p)
+	return len(p), nil
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	data := input()
+	if w == "none" {
+		fmt.Printf("none 0 0 %d 0\n", len(data))
+		return
+	}
+	m := &mem{data: data}
+	t := term.NewTerminal(m, "> ")
+	if w == "wrap" {
+		t.SetSize(20, 24)
+	}
+	n, text := 0, 0
+	for {
+		l, err := t.ReadLine()
+		if err != nil {
+			break
+		}
+		n++
+		text += len(l)
+	}
+	fmt.Printf("%s %d %d %d %d\n", w, n, text, m.n, m.sum)
+}

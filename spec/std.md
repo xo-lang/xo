@@ -5667,6 +5667,76 @@ fn report(out: Stdio, env: Env, failed: Int) uses (stdio, env) {
 }
 ```
 
+### 15.1 The line editor
+
+Status: implemented on every backend (decision 0684, 2026-11-16):
+golang.org/x/term v0.48.0's Terminal, ported from terminal.go; the same
+lines and the same bytes written as Go's on terminal_test.go's
+keyPressTests, renderTests, TestCRLF, password and SetSize cases at
+several read sizes and on 400 seeded random sessions
+(`internal/stdtest/testdata/corpus/term`, `go run ./scripts/stdcorpus
+term`).
+
+```
+struct Port[fx: Effects] {}       // a Terminal's input and output
+pub fn func_port[fx: Effects](read: fn(Int) -> Bytes? ! Str uses fx, write: fn(Bytes) -> () ! Str uses fx) -> Port[fx]
+pub fn stdio_port(io: Stdio) -> Port[stdio]
+pub fn conn_port(c: Conn) -> Port[net.dial]
+
+struct Terminal[fx: Effects] {}   // a handle: copies share it
+struct Line { text: Str, pasted: Bool }
+enum TermErr { Eof, Io(msg: Str) }
+interface History { fn add(self, entry: Str); fn len(self) -> Int; fn at(self, i: Int) -> Str }
+struct EscapeCodes { black, red, green, yellow, blue, magenta, cyan, white, reset: Bytes }
+pub const KEY_UNKNOWN: Int = 55296
+
+pub fn new_terminal[fx: Effects](port: Port[fx], prompt: Str) -> Terminal[fx]
+fn (t: Terminal[fx]) read_line() -> Line ! TermErr uses fx
+fn (t: Terminal[fx]) read_password(prompt: Str) -> Line ! TermErr uses fx
+fn (t: Terminal[fx]) write(data: Bytes) -> () ! TermErr uses fx
+fn (t: Terminal[fx]) set_prompt(prompt: Str)
+fn (t: Terminal[fx]) set_size(width: Int, height: Int) -> () ! TermErr uses fx
+fn (t: Terminal[fx]) set_bracketed_paste(on: Bool) -> () ! TermErr uses fx
+fn (t: Terminal[fx]) set_history(h: History)
+fn (t: Terminal[fx]) set_autocomplete(f: (fn(Str, Int, Int) -> (Str, Int)?)?)
+fn (t: Terminal[fx]) escape() -> EscapeCodes
+pub fn ring_history(cap: Int = 100) -> History
+pub fn vt100() -> EscapeCodes
+```
+
+- A Port's `read(max)` returns at most `max` bytes, `None` at the end of
+  input; `write` writes every byte. `stdio_port` reads standard input
+  as typed only after `Stdio.raw_input(true)` (Go's MakeRaw).
+- `read_line` writes the prompt when the cursor is at the start, echoes
+  and edits as Go's Terminal: Left and Right (and Ctrl-B, Ctrl-F), Home
+  and End (Ctrl-A, Ctrl-E), Alt-Left and Alt-Right by word, Backspace,
+  Delete and Ctrl-D in a line, Ctrl-U (to the start), Ctrl-K (to the
+  end), Ctrl-W (a word back), Ctrl-T (transpose), Ctrl-L (clear the
+  screen), Up and Down (and Ctrl-P, Ctrl-N) through the history; typed
+  keys stop at 4,096 code points (a paste does not), and a line wider
+  than the terminal wraps.
+  Enter (CR, LF, or CR LF in one read) ends the line. `Eof` at the end of
+  input, on Ctrl-C, and on Ctrl-D with the line empty (Go's io.EOF; as
+  in Go, Ctrl-C and Ctrl-D leave the input they arrived in to be read
+  again by the next call).
+- With bracketed paste on (`set_bracketed_paste(true)` sends
+  `ESC [ ? 2004 h`), pasted text is taken as typed, control characters
+  included, and `Line.pasted` is Go's ErrPasteIndicator: the whole line
+  arrived inside one paste.
+- `read_password` reads with the prompt given, no echo, no history and
+  no autocomplete, then restores the prompt. `write` (safe from another
+  task while a read waits) erases the prompt and line, writes `data` with
+  each LF as CR LF, and writes them again. `set_size` repaints a line in
+  progress when the width changes, as Go's SetSize; a width of 0 is 1.
+- The autocomplete function gets the line, the cursor's byte offset and
+  each key the editor does not handle itself (a code point, Tab
+  included, or `KEY_UNKNOWN` for an unknown escape sequence); `Some((line,
+  offset))` replaces the line. It and a History run with the terminal
+  locked, so they must not call the Terminal (Go releases its lock for
+  them).
+- A Port write that fails returns `Io` and keeps the editor's state
+  where Go's does.
+
 ---
 
 ## 16. std/csv

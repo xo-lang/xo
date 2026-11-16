@@ -103,3 +103,898 @@ fn sgr(p: Painter, code: Str, s: Str) -> Str {
   }
   "\u{1b}[${code}m${s}\u{1b}[0m"
 }
+
+// The line editor (decision 0684): golang.org/x/term v0.48.0's Terminal,
+// ported from terminal.go (Copyright 2011 The Go Authors, BSD-style
+// license). Keys are Ints: a code point, or one of the KEY_ values in the
+// UTF-16 surrogate area that no code point uses, as Go's are runes there.
+
+/// Where a Terminal reads keys and writes its echo: read returns at most
+/// max bytes, None at the end of input; write writes every byte. Made by
+/// stdio_port, conn_port or func_port.
+pub struct Port[fx: Effects] {
+  read: fn(Int) -> Bytes? ! Str uses fx
+  write: fn(Bytes) -> () ! Str uses fx
+}
+
+/// A Port over any two functions (a test's scripted input, a pipe).
+pub fn func_port[fx: Effects](read: fn(Int) -> Bytes? ! Str uses fx, write: fn(Bytes) -> () ! Str uses fx) -> Port[fx] {
+  Port{read: read, write: write}
+}
+
+/// Standard input and output. Put the terminal in raw mode first
+/// (`io.raw_input(true)`), as Go's callers call MakeRaw.
+pub fn stdio_port(io: Stdio) -> Port[stdio] {
+  Port{
+    read: fn(max: Int) -> Bytes? ! Str uses stdio { io.read_bytes(max).map_err(fn(e) { "${e}" }) },
+    write: fn(data: Bytes) -> () ! Str uses stdio { io.write(data).map_err(fn(e) { "${e}" }) },
+  }
+}
+
+/// A connection (a socket, an SSH channel's stream).
+pub fn conn_port(c: Conn) -> Port[net.dial] {
+  Port{
+    read: fn(max: Int) -> Bytes? ! Str uses net.dial { c.read(max).map_err(fn(e) { "${e}" }) },
+    write: fn(data: Bytes) -> () ! Str uses net.dial { c.write(data).map_err(fn(e) { "${e}" }) },
+  }
+}
+
+/// The lines a Terminal recalls with the up and down keys: add is called
+/// with each line read (not passwords), at(0) is the latest. Go's History.
+pub interface History {
+  fn add(self, entry: Str)
+  fn len(self) -> Int
+  fn at(self, i: Int) -> Str
+}
+
+struct Ring {
+  st: Mutex[RingState]
+}
+
+struct RingState {
+  entries: List[Str]
+  max: Int
+  head: Int = 0
+  size: Int = 0
+}
+
+/// Go's default History: the last cap lines (100 in Go), a ring.
+pub fn ring_history(cap: Int = 100) -> History {
+  Ring{st: Mutex.new(RingState{entries: List.filled(cap, ""), max: cap})}
+}
+
+fn (r: Ring) add(entry: Str) {
+  r.st.with(fn(var s: RingState) -> () {
+    s.head = (s.head + 1) % s.max
+    s.entries[s.head] = entry
+    if s.size < s.max {
+      s.size += 1
+    }
+  })
+}
+
+fn (r: Ring) len() -> Int { r.st.with_read(fn(s: RingState) -> Int { s.size }) }
+
+fn (r: Ring) at(n: Int) -> Str {
+  r.st.with_read(fn(s: RingState) -> Str {
+    if n < 0 || n >= s.size {
+      fault("term: history index ${n} out of range ${s.size}")
+    }
+    var index = s.head - n
+    if index < 0 {
+      index += s.max
+    }
+    s.entries[index]
+  })
+}
+
+/// A line read_line returned; pasted is Go's ErrPasteIndicator: the whole
+/// line arrived inside a bracketed paste, not typed.
+pub struct Line {
+  pub text: Str
+  pub pasted: Bool
+}
+
+/// Eof: the input ended, or Ctrl-D on an empty line, or Ctrl-C (Go's
+/// io.EOF for all three). Io: the Port failed.
+pub enum TermErr {
+  Eof
+  Io(msg: Str)
+} derive Eq, Display
+
+/// VT100 color sequences (Go's EscapeCodes), for text a program writes.
+pub struct EscapeCodes {
+  pub black: Bytes
+  pub red: Bytes
+  pub green: Bytes
+  pub yellow: Bytes
+  pub blue: Bytes
+  pub magenta: Bytes
+  pub cyan: Bytes
+  pub white: Bytes
+  pub reset: Bytes
+}
+
+/// Go's vt100EscapeCodes.
+pub fn vt100() -> EscapeCodes {
+  EscapeCodes{black: b"\x1b[30m", red: b"\x1b[31m", green: b"\x1b[32m", yellow: b"\x1b[33m", blue: b"\x1b[34m", magenta: b"\x1b[35m", cyan: b"\x1b[36m", white: b"\x1b[37m", reset: b"\x1b[0m"}
+}
+
+const KEY_CTRL_C: Int = 3
+const KEY_CTRL_D: Int = 4
+const KEY_CTRL_U: Int = 21
+const KEY_ENTER: Int = 13
+const KEY_LF: Int = 10
+const KEY_ESCAPE: Int = 27
+const KEY_BACKSPACE: Int = 127
+/// Go's keyUnknown and the keys after it: 0xd800 and up.
+pub const KEY_UNKNOWN: Int = 55296
+const KEY_UP: Int = 55297
+const KEY_DOWN: Int = 55298
+const KEY_LEFT: Int = 55299
+const KEY_RIGHT: Int = 55300
+const KEY_ALT_LEFT: Int = 55301
+const KEY_ALT_RIGHT: Int = 55302
+const KEY_HOME: Int = 55303
+const KEY_END: Int = 55304
+const KEY_DELETE_WORD: Int = 55305
+const KEY_DELETE_LINE: Int = 55306
+const KEY_DELETE: Int = 55307
+const KEY_CLEAR_SCREEN: Int = 55308
+const KEY_TRANSPOSE: Int = 55309
+const KEY_PASTE_START: Int = 55310
+const KEY_PASTE_END: Int = 55311
+/// utf8.RuneError: no whole key yet.
+const KEY_NONE: Int = 65533
+
+/// Go's maxLineLength.
+const MAX_LINE: Int = 4096
+
+/// Go's bytesToKey: the key at the start of b and where the rest starts.
+fn bytes_to_key(b: Bytes, at: Int, paste: Bool) -> (Int, Int) {
+  let n = b.len() - at
+  if n <= 0 {
+    return (KEY_NONE, at)
+  }
+  let c = Int(b[at])
+  if !paste {
+    let k = match c {
+      1 => KEY_HOME
+      2 => KEY_LEFT
+      5 => KEY_END
+      6 => KEY_RIGHT
+      8 => KEY_BACKSPACE
+      11 => KEY_DELETE_LINE
+      12 => KEY_CLEAR_SCREEN
+      20 => KEY_TRANSPOSE
+      23 => KEY_DELETE_WORD
+      14 => KEY_DOWN
+      16 => KEY_UP
+      _ => -1
+    }
+    if k >= 0 {
+      return (k, at + 1)
+    }
+  }
+  if c != KEY_ESCAPE {
+    if !full_rune(b, at) {
+      return (KEY_NONE, at)
+    }
+    let (r, size) = b.decode_rune(at)
+    return (Int(r), at + size)
+  }
+  if !paste && n >= 3 && b[at + 1] == 91 {
+    let k = match Int(b[at + 2]) {
+      65 => KEY_UP
+      66 => KEY_DOWN
+      67 => KEY_RIGHT
+      68 => KEY_LEFT
+      72 => KEY_HOME
+      70 => KEY_END
+      _ => -1
+    }
+    if k >= 0 {
+      return (k, at + 3)
+    }
+  }
+  if !paste && n >= 4 && b[at + 1] == 91 && b[at + 2] == 51 && b[at + 3] == 126 {
+    return (KEY_DELETE, at + 4)
+  }
+  if !paste && n >= 6 && b[at + 1] == 91 && b[at + 2] == 49 && b[at + 3] == 59 && b[at + 4] == 51 {
+    if b[at + 5] == 67 {
+      return (KEY_ALT_RIGHT, at + 6)
+    }
+    if b[at + 5] == 68 {
+      return (KEY_ALT_LEFT, at + 6)
+    }
+  }
+  if !paste && n >= 6 && b[at..at + 6] == b"\x1b[200~" {
+    return (KEY_PASTE_START, at + 6)
+  }
+  if paste && n >= 6 && b[at..at + 6] == b"\x1b[201~" {
+    return (KEY_PASTE_END, at + 6)
+  }
+  // an unknown sequence ends at its first letter or ~
+  var i = at
+  while i < b.len() {
+    let x = b[i]
+    if x >= 97 && x <= 122 || x >= 65 && x <= 90 || x == 126 {
+      return (KEY_UNKNOWN, i + 1)
+    }
+    i += 1
+  }
+  (KEY_NONE, at)
+}
+
+/// utf8.FullRune of b[at..]: false only for a valid sequence cut short.
+fn full_rune(b: Bytes, at: Int) -> Bool {
+  let n = b.len() - at
+  let c = Int(b[at])
+  let need = if c < 0xC2 { 1 } else if c < 0xE0 { 2 } else if c < 0xF0 { 3 } else if c < 0xF5 { 4 } else { 1 }
+  if n >= need {
+    return true
+  }
+  // a second byte that cannot continue the sequence makes it whole (invalid)
+  if n >= 2 {
+    let x = Int(b[at + 1])
+    let lo = if c == 0xE0 { 0xA0 } else if c == 0xF0 { 0x90 } else { 0x80 }
+    let hi = if c == 0xED { 0x9F } else if c == 0xF4 { 0x8F } else { 0xBF }
+    if x < lo || x > hi {
+      return true
+    }
+  }
+  if n >= 3 && (Int(b[at + 2]) < 0x80 || Int(b[at + 2]) > 0xBF) {
+    return true
+  }
+  false
+}
+
+/// Go's isPrintable.
+fn printable(key: Int) -> Bool { key >= 32 && !(key >= 0xd800 && key <= 0xdbff) }
+
+/// Go's visualLength: escape sequences count nothing.
+fn visual_len(rs: List[Int]) -> Int { visual_len_of(rs, 0, rs.len()) }
+
+/// visual_len of rs[from..to], without copying it.
+fn visual_len_of(rs: List[Int], from: Int, to: Int) -> Int {
+  var esc = false
+  var n = 0
+  for i in from..to {
+    let r = rs[i]
+    if esc {
+      if r >= 97 && r <= 122 || r >= 65 && r <= 90 {
+        esc = false
+      }
+    } else if r == 27 {
+      esc = true
+    } else {
+      n += 1
+    }
+  }
+  n
+}
+
+fn runes_of(s: Str) -> List[Int] { s.runes().map(fn(r: Rune) -> Int { Int(r) }) }
+
+fn str_of(rs: List[Int]) -> Str {
+  var b = BytesBuilder.with_capacity(rs.len())
+  for r in rs {
+    b.write_rune(Rune.try(r) ?? '\u{FFFD}')
+  }
+  b.freeze().to_str_lossy()
+}
+
+struct TermState {
+  prompt: List[Int]
+  line: List[Int] = []
+  pos: Int = 0
+  echo: Bool = true
+  paste: Bool = false
+  cx: Int = 0
+  cy: Int = 0
+  max_line: Int = 0
+  width: Int = 80
+  height: Int = 24
+  out: List[UInt8] = []
+  rest: Bytes = b""
+  err: TermErr? = None
+  hist_index: Int = -1
+  hist_pending: Str = ""
+  hist: History
+  complete: (fn(Str, Int, Int) -> (Str, Int)?)? = None
+}
+
+/// A line editor over a Port (Go's Terminal): a prompt, editing keys,
+/// history, bracketed paste and password reads, and writes above the
+/// prompt from other tasks while a read waits. A handle: copies share it.
+pub struct Terminal[fx: Effects] {
+  port: Port[fx]
+  st: Mutex[TermState]
+}
+
+/// Go's NewTerminal: 80 by 24, the VT100 escape codes, a ring history of
+/// 100 lines.
+pub fn new_terminal[fx: Effects](port: Port[fx], prompt: Str) -> Terminal[fx] {
+  Terminal{port: port, st: Mutex.new(TermState{prompt: runes_of(prompt), hist: ring_history()})}
+}
+
+fn (var s: TermState) queue(rs: List[Int]) { s.queue_of(rs, 0, rs.len()) }
+
+/// queue of rs[from..to], without copying it.
+fn (var s: TermState) queue_of(rs: List[Int], from: Int, to: Int) {
+  for i in from..to {
+    let r = rs[i]
+    let c = Rune.try(r) ?? '\u{FFFD}'
+    let n = Int(c)
+    if n < 0x80 {
+      s.out.push(UInt8(n))
+    } else {
+      for x in "${c}".bytes() {
+        s.out.push(x)
+      }
+    }
+  }
+}
+
+fn (var s: TermState) queue_bytes(b: Bytes) {
+  for x in b {
+    s.out.push(x)
+  }
+}
+
+fn (var s: TermState) take_out() -> Bytes {
+  let b = Bytes.from_list(s.out)
+  s.out = []
+  b
+}
+
+/// Queues ESC [ n c (ESC [ c when n is 1), Go's cursor movement.
+fn (var s: TermState) queue_move(n: Int, c: Int) {
+  s.out.push(27)
+  s.out.push(91)
+  if n != 1 {
+    var d = 1
+    while d * 10 <= n {
+      d *= 10
+    }
+    while d > 0 {
+      s.out.push(UInt8(48 + n / d % 10))
+      d /= 10
+    }
+  }
+  s.out.push(UInt8(c))
+}
+
+fn (var s: TermState) move(up: Int, down: Int, left: Int, right: Int) {
+  if up >= 1 {
+    s.queue_move(up, 65)
+  }
+  if down >= 1 {
+    s.queue_move(down, 66)
+  }
+  if right >= 1 {
+    s.queue_move(right, 67)
+  }
+  if left >= 1 {
+    s.queue_move(left, 68)
+  }
+}
+
+fn (var s: TermState) move_to(pos: Int) {
+  if !s.echo {
+    return
+  }
+  var x = visual_len(s.prompt) + pos
+  let y = x / s.width
+  x = x % s.width
+  let up = if y < s.cy { s.cy - y } else { 0 }
+  let down = if y > s.cy { y - s.cy } else { 0 }
+  let left = if x < s.cx { s.cx - x } else { 0 }
+  let right = if x > s.cx { x - s.cx } else { 0 }
+  s.cx = x
+  s.cy = y
+  s.move(up, down, left, right)
+}
+
+fn (var s: TermState) clear_right() { s.queue([27, 91, 75]) }
+
+fn (var s: TermState) set_line(line: List[Int], pos: Int) {
+  if s.echo {
+    s.move_to(0)
+    s.write_line(line)
+    var i = line.len()
+    while i < s.line.len() {
+      s.write_line([32])
+      i += 1
+    }
+    s.move_to(pos)
+  }
+  s.line = line
+  s.pos = pos
+}
+
+fn (var s: TermState) advance(places: Int) {
+  s.cx += places
+  s.cy += s.cx / s.width
+  if s.cy > s.max_line {
+    s.max_line = s.cy
+  }
+  s.cx = s.cx % s.width
+  if places > 0 && s.cx == 0 {
+    s.out.push(13)
+    s.out.push(10)
+  }
+}
+
+fn (var s: TermState) erase_prev(count: Int) {
+  if count == 0 {
+    return
+  }
+  let n = if s.pos < count { s.pos } else { count }
+  s.pos -= n
+  s.move_to(s.pos)
+  s.line = List.concat([s.line[0..s.pos], s.line[s.pos + n..s.line.len()]])
+  if s.echo {
+    s.write_line(s.line, s.pos)
+    for _ in 0..n {
+      s.queue([32])
+    }
+    s.advance(n)
+    s.move_to(s.pos)
+  }
+}
+
+fn (s: TermState) left_word() -> Int {
+  if s.pos == 0 {
+    return 0
+  }
+  var p = s.pos - 1
+  while p > 0 {
+    if s.line[p] != 32 {
+      break
+    }
+    p -= 1
+  }
+  while p > 0 {
+    if s.line[p] == 32 {
+      p += 1
+      break
+    }
+    p -= 1
+  }
+  s.pos - p
+}
+
+fn (s: TermState) right_word() -> Int {
+  var p = s.pos
+  while p < s.line.len() {
+    if s.line[p] == 32 {
+      break
+    }
+    p += 1
+  }
+  while p < s.line.len() {
+    if s.line[p] != 32 {
+      break
+    }
+    p += 1
+  }
+  p - s.pos
+}
+
+/// Go's writeLine of line[from..]: wraps at the terminal's width.
+fn (var s: TermState) write_line(line: List[Int], from: Int = 0) {
+  var at = from
+  while at < line.len() {
+    let room = s.width - s.cx
+    let todo = if line.len() - at > room { room } else { line.len() - at }
+    s.queue_of(line, at, at + todo)
+    s.advance(visual_len_of(line, at, at + todo))
+    at += todo
+  }
+}
+
+fn (var s: TermState) add_key(key: Int) {
+  s.line.insert(s.pos, key)
+  if s.echo {
+    s.write_line(s.line, s.pos)
+  }
+  s.pos += 1
+  s.move_to(s.pos)
+}
+
+fn (var s: TermState) history_at(i: Int) -> Str? {
+  if i < 0 || i >= s.hist.len() {
+    return None
+  }
+  Some(s.hist.at(i))
+}
+
+/// Go's handleKey: Some(line) when key ends one.
+fn (var s: TermState) handle_key(key: Int) -> Str? {
+  if s.paste && key != KEY_ENTER && key != KEY_LF {
+    s.add_key(key)
+    return None
+  }
+  if key == KEY_BACKSPACE {
+    if s.pos > 0 {
+      s.erase_prev(1)
+    }
+  } else if key == KEY_ALT_LEFT {
+    s.pos -= s.left_word()
+    s.move_to(s.pos)
+  } else if key == KEY_ALT_RIGHT {
+    s.pos += s.right_word()
+    s.move_to(s.pos)
+  } else if key == KEY_LEFT {
+    if s.pos > 0 {
+      s.pos -= 1
+      s.move_to(s.pos)
+    }
+  } else if key == KEY_RIGHT {
+    if s.pos < s.line.len() {
+      s.pos += 1
+      s.move_to(s.pos)
+    }
+  } else if key == KEY_HOME {
+    if s.pos > 0 {
+      s.pos = 0
+      s.move_to(s.pos)
+    }
+  } else if key == KEY_END {
+    if s.pos < s.line.len() {
+      s.pos = s.line.len()
+      s.move_to(s.pos)
+    }
+  } else if key == KEY_UP {
+    if let Some(entry) = s.history_at(s.hist_index + 1) {
+      if s.hist_index == -1 {
+        s.hist_pending = str_of(s.line)
+      }
+      s.hist_index += 1
+      let rs = runes_of(entry)
+      s.set_line(rs, rs.len())
+    }
+  } else if key == KEY_DOWN {
+    if s.hist_index == 0 {
+      let rs = runes_of(s.hist_pending)
+      s.set_line(rs, rs.len())
+      s.hist_index -= 1
+    } else if s.hist_index > 0 {
+      if let Some(entry) = s.history_at(s.hist_index - 1) {
+        s.hist_index -= 1
+        let rs = runes_of(entry)
+        s.set_line(rs, rs.len())
+      }
+    }
+  } else if key == KEY_ENTER || key == KEY_LF {
+    s.move_to(s.line.len())
+    s.queue([13, 10])
+    let line = str_of(s.line)
+    s.line = []
+    s.pos = 0
+    s.cx = 0
+    s.cy = 0
+    s.max_line = 0
+    return Some(line)
+  } else if key == KEY_DELETE_WORD {
+    s.erase_prev(s.left_word())
+  } else if key == KEY_DELETE_LINE {
+    var i = s.pos
+    while i < s.line.len() {
+      s.queue([32])
+      s.advance(1)
+      i += 1
+    }
+    s.line = s.line[0..s.pos]
+    s.move_to(s.pos)
+  } else if key == KEY_CTRL_D || key == KEY_DELETE {
+    if s.pos < s.line.len() {
+      s.pos += 1
+      s.erase_prev(1)
+    }
+  } else if key == KEY_CTRL_U {
+    s.erase_prev(s.pos)
+  } else if key == KEY_TRANSPOSE {
+    if s.line.len() >= 2 && s.pos >= 1 {
+      var swap = s.pos
+      if swap == s.line.len() {
+        swap -= 1
+      }
+      let a = s.line[swap - 1]
+      s.line[swap - 1] = s.line[swap]
+      s.line[swap] = a
+      if s.pos < s.line.len() {
+        s.pos += 1
+      }
+      if s.echo {
+        s.move_to(swap - 1)
+        s.write_line(s.line, swap - 1)
+        s.move_to(s.pos)
+      }
+    }
+  } else if key == KEY_CLEAR_SCREEN {
+    s.queue_bytes(b"\x1b[2J\x1b[H")
+    s.queue(s.prompt)
+    s.cx = 0
+    s.cy = 0
+    s.advance(visual_len(s.prompt))
+    s.set_line(s.line, s.pos)
+  } else {
+    if let Some(f) = s.complete {
+      let prefix = str_of(s.line[0..s.pos])
+      let suffix = str_of(s.line[s.pos..s.line.len()])
+      if let Some(got) = f(prefix + suffix, prefix.len(), key) {
+        let (text, at) = got
+        s.set_line(runes_of(text), text.bytes()[0..at].to_str_lossy().runes().len())
+        return None
+      }
+    }
+    if printable(key) && s.line.len() < MAX_LINE {
+      s.add_key(key)
+    }
+  }
+  None
+}
+
+/// What one pass over the buffered input gave: a line, an error, or
+/// neither (read more).
+enum Step {
+  More
+  Done(line: Line)
+  Fail(e: TermErr)
+  /// Ctrl-C, or Ctrl-D on an empty line: Go returns io.EOF there without
+  /// keeping the rest of the input or writing the echo queued so far.
+  Stop
+}
+
+/// Go's readLine between reads: the prompt when the line is empty, then
+/// every whole key buffered.
+fn (var s: TermState) step(pasted0: Bool) -> (Step, Bool) {
+  var pasted = pasted0
+  var at = 0
+  let rest = s.rest
+  var got: Str? = None
+  while got.is_none() {
+    let (key, next) = bytes_to_key(rest, at, s.paste)
+    if key == KEY_NONE {
+      break
+    }
+    at = next
+    if !s.paste {
+      if key == KEY_CTRL_D && s.line.is_empty() || key == KEY_CTRL_C {
+        return (Step.Stop, pasted)
+      }
+      if key == KEY_PASTE_START {
+        s.paste = true
+        if s.line.is_empty() {
+          pasted = true
+        }
+        continue
+      }
+    } else if key == KEY_PASTE_END {
+      s.paste = false
+      continue
+    }
+    if !s.paste {
+      pasted = false
+    }
+    if key == KEY_ENTER && at < rest.len() && rest[at] == 10 {
+      at += 1
+    }
+    got = s.handle_key(key)
+  }
+  s.rest = rest[at..rest.len()]
+  if let Some(line) = got {
+    if s.echo {
+      s.hist_index = -1
+      s.hist.add(line)
+    }
+    return (Step.Done(Line{text: line, pasted: pasted}), pasted)
+  }
+  if let Some(e) = s.err {
+    s.err = None
+    return (Step.Fail(e), pasted)
+  }
+  (Step.More, pasted)
+}
+
+/// Reads a line with the prompt, echo and editing (Go's ReadLine). Eof
+/// when the input ends, on Ctrl-C, or on Ctrl-D with the line empty.
+pub fn (t: Terminal[fx]) read_line() -> Line ! TermErr uses fx {
+  let p = t.port
+  // a failed write keeps the state it followed, as Go's does: the
+  // outcome is the closure's value (an Err would undo the changes)
+  let first = t.st.with(fn(var s: TermState) -> Result[Bool, TermErr] uses (fx, sync) {
+    if s.cx == 0 && s.cy == 0 {
+      s.write_line(s.prompt)
+      if let Err(e) = (p.write)(s.take_out()) {
+        return Err(TermErr.Io(e))
+      }
+    }
+    Ok(s.paste)
+  })
+  var pasted = first?
+  while true {
+    let rr = t.st.with(fn(var s: TermState) -> Result[(Step, Bool, Int), TermErr] uses (fx, sync) {
+      // xo:allow XO0804 pasted is this read_line's own (Go's local lineIsPasted), not shared state
+      let (st, pa) = s.step(pasted)
+      if st is Step.Stop {
+        return Ok((st, pa, 0))
+      }
+      let out = s.take_out()
+      if !out.is_empty() {
+        if let Err(e) = (p.write)(out) {
+          return Err(TermErr.Io(e))
+        }
+      }
+      Ok((st, pa, 256 - s.rest.len()))
+    })
+    let r = rr?
+    pasted = r.1
+    match r.0 {
+      Step.Done(line) => return Ok(line)
+      Step.Fail(e) => return Err(e)
+      Step.Stop => return Err(TermErr.Eof)
+      Step.More => {}
+    }
+    let data = (p.read)(r.2)
+    t.st.with(fn(var s: TermState) -> () {
+      // xo:allow XO0804 data is what the read returned with the lock released, as Go's Read is
+      match data {
+        Ok(Some(b)) => {
+          if b.is_empty() {
+            s.err = Some(TermErr.Eof)
+          } else {
+            var nb = BytesBuilder.with_capacity(s.rest.len() + b.len())
+            nb.write(s.rest)
+            nb.write(b)
+            s.rest = nb.freeze()
+          }
+        }
+        Ok(None) => s.err = Some(TermErr.Eof)
+        Err(e) => s.err = Some(TermErr.Io(e))
+      }
+    })
+  }
+  Err(TermErr.Eof)
+}
+
+/// Reads a line with prompt, without echo, not added to history, and with
+/// no autocomplete (Go's ReadPassword); the old prompt comes back. pasted
+/// is set as read_line sets it.
+pub fn (t: Terminal[fx]) read_password(prompt: Str) -> Line ! TermErr uses fx {
+  let saved = t.st.with(fn(var s: TermState) -> (List[Int], (fn(Str, Int, Int) -> (Str, Int)?)?) {
+    let old = (s.prompt, s.complete)
+    s.prompt = runes_of(prompt)
+    s.echo = false
+    s.complete = None
+    old
+  })
+  let r = t.read_line()
+  t.st.with(fn(var s: TermState) -> () {
+    // xo:allow XO0804 Go's ReadPassword restores the prompt it saved whatever happened meanwhile
+    s.prompt = saved.0
+    s.echo = true
+    s.complete = saved.1
+  })
+  r
+}
+
+/// data with each LF as CRLF (Go's writeWithCRLF).
+fn crlf(data: Bytes) -> Bytes {
+  var b = BytesBuilder.with_capacity(data.len() + 8)
+  for x in data {
+    if x == 10 {
+      b.write_byte(13)
+    }
+    b.write_byte(x)
+  }
+  b.freeze()
+}
+
+/// Writes data above the prompt (Go's Write): the prompt and line are
+/// erased, data written with each LF as CRLF, then the prompt and line
+/// written again. Safe while another task waits in read_line.
+pub fn (t: Terminal[fx]) write(data: Bytes) -> () ! TermErr uses fx {
+  let p = t.port
+  let r = t.st.with(fn(var s: TermState) -> Result[(), TermErr] uses (fx, sync) {
+    if s.cx == 0 && s.cy == 0 {
+      return (p.write)(crlf(data)).map_err(fn(e) { TermErr.Io(e) })
+    }
+    s.move(0, 0, s.cx, 0)
+    s.cx = 0
+    s.clear_right()
+    while s.cy > 0 {
+      s.move(1, 0, 0, 0)
+      s.cy -= 1
+      s.clear_right()
+    }
+    if let Err(e) = (p.write)(s.take_out()) {
+      return Err(TermErr.Io(e))
+    }
+    if let Err(e) = (p.write)(crlf(data)) {
+      return Err(TermErr.Io(e))
+    }
+    s.write_line(s.prompt)
+    if s.echo {
+      s.write_line(s.line)
+    }
+    s.move_to(s.pos)
+    (p.write)(s.take_out()).map_err(fn(e) { TermErr.Io(e) })
+  })
+  r
+}
+
+/// Go's SetPrompt: used from the next read_line.
+pub fn (t: Terminal[fx]) set_prompt(prompt: Str) {
+  t.st.with(fn(var s: TermState) -> () { s.prompt = runes_of(prompt) })
+}
+
+fn (var s: TermState) repaint(prev: Int) {
+  s.move(s.cy, 0, s.cx, 0)
+  s.cx = 0
+  s.cy = 0
+  s.clear_right()
+  while s.cy < prev {
+    s.move(0, 1, 0, 0)
+    s.cy += 1
+    s.clear_right()
+  }
+  s.move(s.cy, 0, 0, 0)
+  s.cx = 0
+  s.cy = 0
+  s.queue(s.prompt)
+  s.advance(visual_len(s.prompt))
+  s.write_line(s.line)
+  s.move_to(s.pos)
+}
+
+/// The terminal's size (Go's SetSize, with its repaint when the width
+/// changes mid line); a width of 0 is 1.
+pub fn (t: Terminal[fx]) set_size(width: Int, height: Int) -> () ! TermErr uses fx {
+  let p = t.port
+  let r = t.st.with(fn(var s: TermState) -> Result[(), TermErr] uses (fx, sync) {
+    let w = if width == 0 { 1 } else { width }
+    let old = s.width
+    s.width = w
+    s.height = height
+    if w == old || s.line.is_empty() && s.cx == 0 && s.cy == 0 {
+      return Ok(())
+    }
+    if w < old {
+      if s.cx >= s.width {
+        s.cx = s.width - 1
+      }
+      s.cy *= 2
+      s.repaint(s.max_line * 2)
+    } else {
+      s.repaint(s.max_line)
+    }
+    (p.write)(s.take_out()).map_err(fn(e) { TermErr.Io(e) })
+  })
+  r
+}
+
+/// Turns bracketed paste on or off at the terminal (Go's
+/// SetBracketedPasteMode): pasted text then arrives marked, and a line
+/// that was all pasted has Line.pasted set.
+pub fn (t: Terminal[fx]) set_bracketed_paste(on: Bool) -> () ! TermErr uses fx {
+  (t.port.write)(if on { b"\x1b[?2004h" } else { b"\x1b[?2004l" }).map_err(fn(e) { TermErr.Io(e) })
+}
+
+/// Replaces the history (Go's Terminal.History).
+pub fn (t: Terminal[fx]) set_history(h: History) {
+  t.st.with(fn(var s: TermState) -> () { s.hist = h })
+}
+
+/// Go's AutoCompleteCallback: called with the line, the cursor's byte
+/// offset and a key the editor does not handle itself (a code point, or
+/// KEY_UNKNOWN); Some((line, byte offset)) replaces the line, None leaves
+/// the key to the editor.
+pub fn (t: Terminal[fx]) set_autocomplete(f: (fn(Str, Int, Int) -> (Str, Int)?)?) {
+  t.st.with(fn(var s: TermState) -> () { s.complete = f })
+}
+
+/// The escape codes for this terminal (Go's Terminal.Escape).
+pub fn (t: Terminal[fx]) escape() -> EscapeCodes { vt100() }
