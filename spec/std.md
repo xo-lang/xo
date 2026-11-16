@@ -1902,6 +1902,9 @@ fn (r: Request) multipart_form() -> multipart.Form ! multipart.MultipartErr   //
 fn (r: Request) header(name: Str) -> Str?           // case insensitive for a token name; any other name matches only exactly
 fn (r: Request) json[T: Json]() -> T ! json.DecodeErr   // does not check Content-Type (as Go's json.NewDecoder on r.Body); a key given twice takes the last value (as encoding/json)
 fn (r: Request) with_header(name: Str, value: Str) -> Request
+fn (r: Request) without_header(name: Str) -> Request              // Header.Del: every value of the name
+fn (r: Request) basic_auth() -> (Str, Str)?                       // BasicAuth: user and password, None when absent or malformed
+fn (r: Request) with_basic_auth(user: Str, password: Str) -> Request  // SetBasicAuth
 fn (r: Request) header_values(name: Str) -> List[Str]
 fn (r: Request) host() -> Str                 // Go's Request.Host: the Host header as sent (HTTP/2's :authority)
 fn (r: Request) tls() -> Bool                 // Go's r.TLS != nil; url.scheme is then "https"
@@ -2004,6 +2007,7 @@ fn (p: PartReader) next() -> StreamPart? ! multipart.MultipartErr   // the next 
 fn (p: PartReader) read(max: Int = 32768) -> Bytes? ! multipart.MultipartErr   // the open part's next bytes, None at its end
 fn (p: StreamPart) header_values(name: Str) -> List[Str]   // every value of a part's header, in order
 fn (r: Response) with_header(name: Str, value: Str) -> Response
+fn (r: Response) without_header(name: Str) -> Response            // Header.Del
 fn (r: Response) header(name: Str) -> Str?          // case insensitive for a token name; any other name matches only exactly
 fn (r: Response) header_values(name: Str) -> List[Str]   // every field of name, in order (decision 0288); found the way header is
 fn (r: Response) add_header(name: Str, value: Str) -> Response   // one more field of name

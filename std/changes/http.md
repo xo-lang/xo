@@ -42,6 +42,20 @@ for the rest (PutIdleConn last) when an opened body is read to its end or
 closed. HTTP/2's WroteRequest and GotFirstResponseByte are recorded when the
 response head arrives on the native backends. WroteHeaderField,
 Wait100Continue and Got1xxResponse are not offered.
+## 2026-11-16: feature: Request.basic_auth, with_basic_auth, without_header (BasicAuth, SetBasicAuth, Header.Del)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89 (features Proven): stdaudit gaps http.Request.BasicAuth, SetBasicAuth and Header.Del; DetectContentType mapped to std/mime.detect_content_type, which is Go's sniffing already
+- Go reference: net/http request.go (BasicAuth, parseBasicAuth, SetBasicAuth), header.go (Del)
+- Test: golden http_basic_auth (go, arm64, LLVM): net/http's TestSetBasicAuth, TestGetBasicAuth and TestParseBasicAuth cases, and Del of a repeated header in any case on a request and a response
+- Timing: none
+
+`req.basic_auth()` returns the user and password of an `Authorization:
+Basic` header as Go's BasicAuth does (the scheme in any case, split at the
+first colon), `with_basic_auth(user, password)` sets it, and
+`without_header(name)` removes every value of a header from a request or
+a response.
 
 ## 2026-11-15: fix: callback hooks may record what they see (decision 0662)
 

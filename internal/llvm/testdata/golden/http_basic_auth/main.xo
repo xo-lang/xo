@@ -1,0 +1,31 @@
+// Request.basic_auth, with_basic_auth and without_header (Go's
+// BasicAuth, SetBasicAuth and Header.Del), with net/http's
+// request_test.go cases (TestSetBasicAuth, TestGetBasicAuth,
+// TestParseBasicAuth; BSD license, Copyright 2011 The Go Authors).
+use std/http
+
+fn show(r: http.Request) -> Str {
+  match r.basic_auth() {
+    Some((u, p)) => "${u.quote()} ${p.quote()} true"
+    None => "\"\" \"\" false"
+  }
+}
+
+fn b64(s: Str) -> Str { s.bytes().to_base64() }
+
+fn main(os: Os) {
+  let r = http.new_request("GET", "http://example.com/")
+  os.stdio.println(r.with_basic_auth("Aladdin", "open sesame").header("Authorization") ?? "-")
+  for (u, p) in [("Aladdin", "open sesame"), ("Aladdin", "open:sesame"), ("", "")] {
+    os.stdio.println("get ${show(r.with_basic_auth(u, p))}")
+  }
+  os.stdio.println("none ${show(r)}")
+  for h in ["Basic " + b64("Aladdin:open sesame"), "BASIC " + b64("Aladdin:open sesame"), "basic " + b64("Aladdin:open sesame"), "Basic " + b64("Aladdin:open:sesame"), "Basic " + b64(":"), "Basic" + b64("Aladdin:open sesame"), b64("Aladdin:open sesame"), "Basic ", "Basic Aladdin:open sesame", "Digest username=\"Aladdin\""] {
+    os.stdio.println("parse ${h.quote()}: ${show(r.with_header("Authorization", h))}")
+  }
+  // Header.Del: every value of the name goes, in any case
+  let d = r.with_header("X-A", "1").add_header("x-a", "2").with_header("X-B", "3").without_header("x-A")
+  os.stdio.println("del ${d.header_values("X-A").len()} ${d.header("X-B") ?? "-"}")
+  let resp = http.text(200, "ok").with_header("X-C", "1").without_header("X-C")
+  os.stdio.println("resp del ${resp.header("X-C") ?? "gone"}")
+}

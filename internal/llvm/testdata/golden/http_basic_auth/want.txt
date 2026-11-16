@@ -1,0 +1,20 @@
+exit 0
+--- stdout
+Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==
+get "Aladdin" "open sesame" true
+get "Aladdin" "open:sesame" true
+get "" "" true
+none "" "" false
+parse "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==": "Aladdin" "open sesame" true
+parse "BASIC QWxhZGRpbjpvcGVuIHNlc2FtZQ==": "Aladdin" "open sesame" true
+parse "basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==": "Aladdin" "open sesame" true
+parse "Basic QWxhZGRpbjpvcGVuOnNlc2FtZQ==": "Aladdin" "open:sesame" true
+parse "Basic Og==": "" "" true
+parse "BasicQWxhZGRpbjpvcGVuIHNlc2FtZQ==": "" "" false
+parse "QWxhZGRpbjpvcGVuIHNlc2FtZQ==": "" "" false
+parse "Basic ": "" "" false
+parse "Basic Aladdin:open sesame": "" "" false
+parse "Digest username=\"Aladdin\"": "" "" false
+del 0 3
+resp del gone
+--- stderr

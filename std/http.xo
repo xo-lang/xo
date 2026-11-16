@@ -142,6 +142,16 @@ fn (r: Request) multipart_form() -> multipart.Form ! multipart.MultipartErr
 fn (r: Request) header(name: Str) -> Str?
 fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
 fn (r: Request) with_header(name: Str, value: Str) -> Request
+/// Go's Header.Del: a copy of the request without the header (all its values).
+fn (r: Request) without_header(name: Str) -> Request
+/// Go's Request.BasicAuth: the user and password of the `Authorization:
+/// Basic` header (the scheme in any case, the rest standard base64 of
+/// `user:password`, split at the first colon); None without one or when
+/// it does not decode.
+fn (r: Request) basic_auth() -> (Str, Str)?
+/// Go's SetBasicAuth: a copy with `Authorization: Basic` and the base64 of
+/// `user:password` (neither is checked: a colon in user is ambiguous).
+fn (r: Request) with_basic_auth(user: Str, password: Str) -> Request
 /// The request with its own time limit in place of its client's, for the
 /// whole exchange with the body (Go's Client.Timeout); a client side
 /// builder (decision 0404).
@@ -456,6 +466,8 @@ fn (w: PipeWriter) close()
 /// The reader's next read is Err(e) (Go's CloseWithError).
 fn (w: PipeWriter) close_with_error(e: IoErr)
 fn (r: Response) with_header(name: Str, value: Str) -> Response
+/// Go's Header.Del on a response: a copy without the header.
+fn (r: Response) without_header(name: Str) -> Response
 fn (r: Response) header(name: Str) -> Str?
 /// Every field of name, in order (decision 0288).
 fn (r: Response) header_values(name: Str) -> List[Str]

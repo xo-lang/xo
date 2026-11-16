@@ -1497,6 +1497,40 @@ fn request_header(r: Request, name: Str) -> Str? { header_get(r.headers, name) }
 
 fn request_json[T: Json](r: Request) -> T ! js.DecodeErr { js.decode(r.body) }
 
+fn request_without_header(r: Request, name: Str) -> Request {
+  let k = http1.canonical_key(name)
+  var h = r.headers
+  let _old = h.remove(k)
+  r with {headers: h, fields: without_field(r.fields, k)}
+}
+
+fn request_basic_auth(r: Request) -> (Str, Str)? {
+  parse_basic_auth(header_get(r.headers, "Authorization") ?? "")
+}
+
+/// Go's parseBasicAuth.
+fn parse_basic_auth(auth: Str) -> (Str, Str)? {
+  let ab = auth.bytes()
+  if ab.len() < 6 || ab[0..6].to_str_lossy().to_lower() != "basic " {
+    return None
+  }
+  let c = match Bytes.from_base64(ab[6..].to_str_lossy()) {
+    Some(c) => c
+    None => return None
+  }
+  let cs = c.to_str_lossy()
+  match cs.find(":") {
+    Some(i) => Some((cs[0..i], cs[i + 1..]))
+    None => None
+  }
+}
+
+fn request_with_basic_auth(r: Request, user: Str, password: Str) -> Request {
+  request_with_header(r, "Authorization", "Basic " + (user + ":" + password).bytes().to_base64())
+}
+
+fn response_without_header(r: http.Response, name: Str) -> http.Response { response_without(r, name) }
+
 fn request_with_header(r: Request, name: Str, value: Str) -> Request {
   let k = http1.canonical_key(name)
   var h = r.headers

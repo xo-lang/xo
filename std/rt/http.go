@@ -653,6 +653,42 @@ func isTokenName(s string) bool {
 	return true
 }
 
+// M_without_header is `req.without_header(name)` (Go's Header.Del).
+func (r Http_Request) M_without_header(tk *Task, name string) Http_Request {
+	k := textproto.CanonicalMIMEHeaderKey(name)
+	r.F_headers.XoMark() // a copy (decision 0335)
+	Map_remove(tk, &r.F_headers, k)
+	r.XFields = withoutField(r.XFields, k)
+	return r
+}
+
+// M_basic_auth is `req.basic_auth()` (Go's Request.BasicAuth).
+func (r Http_Request) M_basic_auth(tk *Task) Option[Tuple2[string, string]] {
+	h := r.M_header(tk, "Authorization")
+	if !h.Some {
+		return None[Tuple2[string, string]]()
+	}
+	auth := h.V
+	const prefix = "Basic "
+	if len(auth) < len(prefix) || !strings.EqualFold(auth[:len(prefix)], prefix) {
+		return None[Tuple2[string, string]]()
+	}
+	c, err := base64.StdEncoding.DecodeString(auth[len(prefix):])
+	if err != nil {
+		return None[Tuple2[string, string]]()
+	}
+	u, p, ok := strings.Cut(strings.ToValidUTF8(string(c), "\uFFFD"), ":")
+	if !ok {
+		return None[Tuple2[string, string]]()
+	}
+	return Some(Tuple2[string, string]{F0: u, F1: p})
+}
+
+// M_with_basic_auth is `req.with_basic_auth(user, password)` (SetBasicAuth).
+func (r Http_Request) M_with_basic_auth(tk *Task, user, password string) Http_Request {
+	return r.M_with_header(tk, "Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(user+":"+password)))
+}
+
 // M_with_header is `req.with_header(name, value)`: a copy of the request
 // with the header set (canonical key).
 func (r Http_Request) M_with_header(tk *Task, name, value string) Http_Request {
@@ -1095,6 +1131,15 @@ func Http_error_html(tk *Task, status int64, title, detail string) Http_Response
 // the response is sent. Dispatched in process, the body is collected.
 func Http_stream(_ *Task, status int64, f func(*Task, Http_BodyWriter) Result[Unit, IoErr]) Http_Response {
 	return Http_Response{F_status: status, XStream: f}
+}
+
+// M_without_header is `resp.without_header(name)` (Go's Header.Del).
+func (r Http_Response) M_without_header(tk *Task, name string) Http_Response {
+	k := textproto.CanonicalMIMEHeaderKey(name)
+	r.F_headers.XoMark() // a copy (decision 0335)
+	Map_remove(tk, &r.F_headers, k)
+	r.XFields = withoutField(r.XFields, k)
+	return r
 }
 
 // M_with_header is `resp.with_header(name, value)`.
