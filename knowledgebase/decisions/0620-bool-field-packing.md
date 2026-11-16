@@ -1,7 +1,11 @@
 # 0620: Pack a struct's Bool fields into shared words on the native backends
 
-Status: Proposed (2026-11-12, Xo Lang 2; stub, the lead asked for it with
-the measured gain; the owner decides)
+Status: Deferred (owner, 2026-11-16): the measured gain (Obj hand-packed:
+self build wall 0.991, RSS within noise; REPL 36 to 35 MB) does not pay for
+a layout, ABI, debugger and cache change on every native backend. Revisit
+only with the prototype below (XO_PACK_BOOLS=1 on arm64) showing a 5% or
+better RSS or speed gain on bench/perf/http, jsontoken or the x509 loads in
+one host 1 `xo bench --ab`. (Proposed 2026-11-12, Xo Lang 2.)
 
 ## Context
 

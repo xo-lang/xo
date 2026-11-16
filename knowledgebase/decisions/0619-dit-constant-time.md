@@ -1,7 +1,8 @@
 # 0619: Arm's DIT bit around std's constant time code
 
-Status: Proposed (2026-11-12, Xo Lang 3; the lead approved the plan the
-same day, with the scheduler, every-build and amd64 points below)
+Status: Accepted (owner, 2026-11-16, as amended by 0656; proposed by Xo Lang
+3, 2026-11-12, the lead approved the plan the same day, with the scheduler,
+every-build and amd64 points below)
 Amended by 0656 (2026-11-15): a public section, crypto.with_data_independent_timing.
 
 ## Context
