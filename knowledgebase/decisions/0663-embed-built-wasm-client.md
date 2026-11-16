@@ -69,10 +69,17 @@ always built from the same source.
 
 - One build, one binary, client and server in step. Cross-compiling the
   server (linux/arm64, windows/amd64) still builds the client for wasm.
-- A server build's cost includes the client's wasm build: about 205 KB
-  of output for ui-todo; the time has to be measured (cold and warm)
-  before Accepted. The nested build's cache makes the warm case a key
-  lookup.
+- A server build's cost includes the client's wasm build. Measured on
+  the Mac Studio (2026-11-15, main at 6d42a57e3, examples/ui-todo, 3
+  rounds, a fresh `XO_BACKEND_CACHE_DIR` each round, the front end caches
+  shared): the client builds in 0.58 to 0.68 s cold and 0.23 to 0.24 s
+  warm (0.18 to 0.19 s after an edit to the App's file), the server in
+  1.31 to 1.38 s cold and 0.04 to 0.05 s warm; the module is 203,388
+  bytes. So `embed.build` adds about half a cold server build, and a warm
+  server build goes from 0.04 s to about 0.27 s unless the nested build's
+  output is cached by its key: the wasm build has no whole-output cache
+  hit today (its warm time is 5 times the native one), which the
+  implementation adds (the client's key decides, as a file's SHA does).
 - The checker gains a hook, not a build: compiler/check stays free of
   the driver. New XO codes for a bad package, an unsupported target and
   a nested `embed.build` (claimed with code-claim.sh when implemented).
