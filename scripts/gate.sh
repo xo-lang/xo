@@ -81,7 +81,7 @@
 #            (`xo dev edges` over every program, XO_STDCOV_JOBS at once,
 #            default 2; 3636 s in tier 69 on the Mac beside other steps
 #            with NumCPU jobs; at 2 jobs 417 s alone on host 2, 2026-11-12,
-#            host memory 19.2 to 22.9 GB of 24 GB). Only when named, and by the 8-hourly tier (tier.sh):
+#            host memory 19.2 to 22.9 GB of 24 GB). When named, when a std change adds a pub declaration (gate-needs.txt, #140), and by the 8-hourly tier (tier.sh):
 #            never after other steps by path, since per push only the bare
 #            minimum runs (owner, via lead 2026-11-12; it auto-ran for std
 #            pushes from 2026-11-11 and outran a 90 minute gate lease)
@@ -1080,14 +1080,14 @@ fi
 steps=""
 for step in "$@"; do
   case $step in
-  codegen|selfbuild|seedbuild|wasm|cross|fieldgen|xounit|stdfast|checkall)
+  codegen|selfbuild|seedbuild|wasm|cross|fieldgen|xounit|stdfast|checkall|clihelp|goldenasm|tsanmaps|testheavy|stdobj|nohttp|wasmlist|vetcost|stdcov|harness)
     # pushq's proving checks: run after the named steps with the ones the
     # change's paths require (gate_plan), each once, and named in the
     # PUSHQ_RAN line when they pass (lead, 2026-11-08: a named `cross
     # codegen` ran neither, then pushq refused the push for cross)
     named="$named $step" ;;
   repo) ;; # ran first, above
-  short|arm64|llvm|irmanifest|corpora|cmd|gen|fuzz|corpora-all|corpuscheck|alloff|fp|warm|chkcache|warmseq|stdwasm|stdcov)
+  short|arm64|llvm|irmanifest|corpora|cmd|gen|fuzz|corpora-all|corpuscheck|alloff|fp|warm|chkcache|warmseq|stdwasm)
     [ "$step" = chkcache ] && chkcache_ran=1
     [ "$step" = warmseq ] && warmseq_ran=1
     steps="$steps $step" ;;
@@ -1323,7 +1323,6 @@ run_step_body() {
     else
       rm -f "$hm.tmp$$" "${hm%.txt}.deps.tmp$$"; echo "irmanifest: FAIL ($logs/llvm-ir-head.txt)"; failed=1
     fi ;;
-  stdcov) stdcov_step ;;
   corpora)
     if go_backend; then
       full corpora ./internal/stdtest -run '^TestStdCorpora$/^go/'
@@ -1443,7 +1442,8 @@ run_step_body() {
     fi ;;
   esac
 }
-# stdcov_step: internal/repotest's TestStdAPICovered with the resolved
+# stdcov (prove_stdcov, a proving check since #140: a std change adding
+# a pub declaration requires it): internal/repotest's TestStdAPICovered with the resolved
 # sweep (stdcoverage.Sweep: `xo dev edges --own` of every program and the
 # std graph once a bindings value), so a std declaration counts as covered
 # only when a call resolves to it (owner, 2026-11-11). Not a few minutes:
@@ -1452,9 +1452,6 @@ run_step_body() {
 # (18 CPUs, 2026-11-12), host memory 19.2 GB at the start to a 22.9 GB
 # peak, so about 4 GB its own. Not in the fast set: it runs when named and
 # in the 8-hourly tier, never by path.
-stdcov_step() {
-  XO_STDCOV_SWEEP=1 full stdcov ./internal/repotest -run '^TestStdAPICovered$'
-}
 # the checks after the named steps, by path
 after_steps() {
   ir_first_wait after
@@ -1627,6 +1624,55 @@ prove_xounit() {
   else
     failed=1; echo "xounit: FAIL ($logs/xounit.txt: $(grep -m1 -- '--- FAIL' "$logs/xounit.txt"))"
   fi
+}
+# The checks of scripts/lead/gate-needs.txt (#140): each one test run
+# that proves the row's kind of change, named in PUSHQ_RAN when it passes.
+# prove_go NAME PKG [go test args]: one such run through full()
+prove_go() {
+  local n=$1 f0=$failed; failed=0
+  full "$@"
+  [ "$failed" = 0 ] && ran="$ran $n"
+  [ "$f0" = 1 ] && failed=1
+}
+prove_clihelp() { prove_go clihelp ./cmd/xo -run '^TestCLIHelp$'; }
+prove_goldenasm() { prove_go goldenasm ./internal/arm64 -run '^TestGoldenAsm$'; }
+prove_tsanmaps() { prove_go tsanmaps ./internal/llvm -run '^(TestTSanSharedMaps|TestGolden/conc_.*)$'; }
+prove_stdobj() { prove_go stdobj ./internal/arm64 -run '^(TestStdRecordIdentity|TestStdTreesRebuild)$'; }
+prove_vetcost() { prove_go vetcost ./cmd/xo -run '^TestVetCostStd$'; }
+prove_stdcov() { XO_STDCOV_SWEEP=1 prove_go stdcov ./internal/repotest -run '^TestStdAPICovered$'; }
+prove_wasmlist() {
+  local wp=$PATH
+  [ -d /work/tools/bin ] && wp=/work/tools/bin:$PATH
+  PATH=$wp prove_go wasmlist ./internal/selfhost -run '^(TestWasmCommandGoldens|TestSelfhostWasm|TestWasmComponentTargets)$'
+}
+# a std/rt change: the Go runtime builds without net/http, and the Go
+# backend's short goldens (lead, 2026-10-29, 4b6058367)
+prove_nohttp() {
+  local f0=$failed; failed=0
+  if ! go build -tags xo_nohttp ./std/rt >"$logs/nohttp-build.txt" 2>&1; then
+    failed=1; echo "nohttp: FAIL: go build -tags xo_nohttp ./std/rt ($logs/nohttp-build.txt)"
+  else
+    full nohttp ./internal/devgoldens -short -run 'Go|Replay|Holes'
+  fi
+  [ "$failed" = 0 ] && ran="$ran nohttp"
+  [ "$f0" = 1 ] && failed=1
+}
+# a heavy.sh, quiet.sh or hangcheck.sh change: test-heavy.sh's scenarios
+prove_testheavy() {
+  if bash scripts/lead/test-heavy.sh >"$logs/testheavy.txt" 2>&1; then
+    echo "testheavy: $(tail -1 "$logs/testheavy.txt")"; ran="$ran testheavy"
+  else
+    failed=1; echo "testheavy: FAIL ($logs/testheavy.txt)"
+  fi
+}
+# a test-harness change (GATE_FULL_SET only): the suites whose builds go
+# through it, internal/llvm and cmd/xo, full
+prove_harness() {
+  local f0=$failed; failed=0
+  full harness-llvm ./internal/llvm
+  full harness-cmd ./cmd/xo
+  [ "$failed" = 0 ] && ran="$ran harness"
+  [ "$f0" = 1 ] && failed=1
 }
 # prove_stdfast: the std fast lane (owner, 2026-11-15, CLAUDE.md "Std
 # Proven push"): for each std module off compiler/xo's closure the change
@@ -1843,7 +1889,8 @@ fi
 plan=" $(gate_plan "$req" $named) "
 echo "gate.sh: proving checks:${plan% }${plan:+ }(required by the paths: ${req:-none}; named:${named:- none})"
 if [ "$conc" = 1 ]; then
-  for p in codegen wasm cross fieldgen xounit stdfast checkall; do
+  for p in $GATE_PROVE_ORDER; do
+    [ "$p" = selfbuild ] || [ "$p" = seedbuild ] && continue
     [[ "$plan" == *" $p "* ]] && job "$p" "prove_$p"
   done
   pool_wait
@@ -1855,13 +1902,13 @@ if [ "$conc" = 1 ]; then
   done
   # PUSHQ_RAN in the serial order
   r2=""
-  for p in codegen wasm cross selfbuild seedbuild fieldgen xounit stdfast checkall; do
+  for p in $GATE_PROVE_ORDER; do
     [[ " $ran " == *" $p "* ]] && r2="$r2 $p"
   done
   ran=$r2
   echo "gate.sh: steps took $(($(date +%s) - tsteps)) s (concurrent, at most $gjobs jobs)"
 else
-  for p in codegen wasm cross selfbuild seedbuild fieldgen xounit stdfast checkall; do
+  for p in $GATE_PROVE_ORDER; do
     [[ "$plan" == *" $p "* ]] || continue
     if ff_serial; then ff_skipped="$ff_skipped $p"; continue; fi
     ff_last=$p

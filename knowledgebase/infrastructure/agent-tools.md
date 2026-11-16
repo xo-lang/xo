@@ -1506,6 +1506,29 @@ Last verified: 2026-11-15
   queued), so the gate runs them from the start (lead, 2026-11-07
   bottleneck review: 6 refusals in 3 hours for an unnamed selfbuild,
   codegen or wasm, one costing 37 minutes).
+  The path-to-check table (#140, 2026-11-16): `scripts/lead/gate-needs.txt`
+  holds one row per "a change to X needs check Y" rule (STEP, light or
+  full set, a path regex, optionally a regex an added line must match,
+  and the incident it comes from), and `--needs`, gate.sh and pushq read
+  it through gatelib.sh: clihelp (compiler/xo), goldenasm
+  (compiler/arm64), tsanmaps and codegen (compiler/ssa borrow and rc),
+  codegen (llrt crypto), testheavy (heavy.sh, quiet.sh, hangcheck.sh),
+  stdobj (std/native), nohttp (std/rt Go files), wasmlist (compiler/wasm,
+  netwasi, selfhost wasm tests), vetcost (bench/perf programs), stdcov (a
+  std file gaining a pub declaration), xounit (compiler cache and store
+  formats), wasm (a new fn in std/native/rt.xo), harness (full set only:
+  internal/xotool, clangcache, testtmp, lifeline, gate.sh). Each is a
+  gate.sh proving check (`prove_STEP`): name it as a gate step, or let
+  the paths require it. A new rule is a new row and its two cases in
+  scripts/lead/gatesteps_test.sh. pushq also checks what a change says:
+  it refuses an edit of a released CHANGELOG section
+  (PUSHQ_ALLOW_CHANGELOG=1 for a release's own fix), a std change log
+  Breaking entry without a CHANGELOG Breaking line, and a code push whose
+  commit message cites a decision still Proposed on main (`PUSHQ_ADR_OK='<the reason>'`
+  to push anyway); and for a change to a corpus, a corpus generator, or a
+  std module with a corpus, or a rebase that brings one in, it runs
+  `go run ./scripts/stdcorpus -check MODS` on the Mac before pushing
+  (PUSHQ_CORPUS=0 skips it).
   A gated push that changes what compiler/xo builds from (compiler/ but
   compiler/macho, compiler/wasm and `_test.xo` files; std/native;
   std/llrt) must also name `selfbuild`: one cold build of compiler/xo

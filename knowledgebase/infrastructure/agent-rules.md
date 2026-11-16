@@ -53,6 +53,11 @@ Last verified: 2026-11-16.
 | No git reset --hard over uncommitted tracked changes | ccguard hook | `scripts/lead/ccguard/rules.ts` (checkResetHard) | `scripts/lead/ccguard/rules_test.ts` | |
 | Commit messages carry no em-dash and no backticks in -m | ccguard hook | `scripts/lead/ccguard/rules.ts` (checkCommitMessage) | `scripts/lead/ccguard/rules_test.ts` | |
 | A generated file is changed through its generator, never by hand | ccguard hook | `scripts/lead/ccguard/rules.ts` (checkGeneratedWrite) | `scripts/lead/ccguard/rules_test.ts` | |
+| A change runs the checks its kind of change needs (the path-to-check table) | pushq, gate.sh | `scripts/lead/gate-needs.txt`, `scripts/lead/gatelib.sh` (gate_table_steps) | `scripts/lead/gatesteps_test.sh` | push-refusals |
+| A released CHANGELOG section is never edited | pushq | `scripts/lead/gatelib.sh` (gate_changelog_frozen) | `scripts/lead/gatesteps_test.sh` | |
+| A Breaking std change has its CHANGELOG line | pushq | `scripts/lead/gatelib.sh` (gate_breaking_unlogged) | `scripts/lead/gatesteps_test.sh` | |
+| Code lands after its decision is accepted | pushq | `scripts/lead/gatelib.sh` (gate_adr_proposed) | `scripts/lead/gatesteps_test.sh` | |
+| A corpus changes through its generator; a corpus change or a rebase bringing one passes stdcorpus -check | pushq | `scripts/lead/gatelib.sh` (gate_corpus_mods), `scripts/lead/pushq.sh` | `scripts/lead/gatesteps_test.sh` | |
 | Every bug fix lands with a test that fails before it | CLAUDE.md | none | none | |
 | Long fuzz sweeps go sharded to a host, never the Mac gate class | CLAUDE.md | none | none | |
 | Never wait idle while a gate or push runs | CLAUDE.md | none | none | idle, idle-empty, waiting |
