@@ -232,6 +232,62 @@ func TestVetCLI(t *testing.T) {
 	}
 }
 
+// TestVetUsesFxOfReceiver: XO0703 counts an effect parameter of the
+// method's receiver type (a struct's fx, not the method's own) as
+// performed by a call through a field of an interface type over it
+// (knowledgebase/gotchas/vet-xo0703-fx-through-interface-field.md, std/sql
+// Traced), and still reports one the body never performs.
+func TestVetUsesFxOfReceiver(t *testing.T) {
+	t.Parallel()
+	const prog = `interface Src[fx: Effects] {
+  fn get(self) -> Int uses (clock, fx)
+}
+
+pub struct Wrap[fx: Effects] {
+  s: Src[fx]
+}
+
+pub fn (w: Wrap[fx]) get() -> Int uses (clock, fx) {
+  w.s.get() + 1
+}
+
+pub fn (w: Wrap[fx]) idle() -> Int uses (clock, fx) {
+  w.s.get() - 1
+}
+
+pub fn (w: Wrap[fx]) none() -> Int uses fx {
+  1
+}
+`
+	dir := writeFiles(t, map[string]string{"main.xo": prog})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"diagnostics"`
+		CheckErrors int `json:"check_errors"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	if res.CheckErrors != 0 {
+		t.Fatalf("check errors: %d\n%s", res.CheckErrors, out.String())
+	}
+	var got []string
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0703" {
+			got = append(got, d.Message)
+		}
+	}
+	if len(got) != 1 || !strings.Contains(got[0], "Wrap.none") || !strings.Contains(got[0], "uses fx") {
+		t.Errorf("XO0703: got %q, want one for Wrap.none's fx\n%s", got, out.String())
+	}
+}
+
 // TestVetVerifyNone: XO0902 (decision 0281) flags tls.Verify.None, once
 // per use, and nothing else named None (a program's own enum, Option).
 func TestVetVerifyNone(t *testing.T) {

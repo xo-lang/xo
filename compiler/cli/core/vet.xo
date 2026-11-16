@@ -1371,9 +1371,13 @@ fn unused_effects(c: check.Checker, fo: Int) -> List[Diag] {
           if let Some(sub) = e.sub {
             name = "${name}.${text_of(sub.name)}"
           }
-          var used = false
-          if is_param.contains(name) {
-            used = params.contains(name)
+          // an effect parameter the body performs: the function's own, or
+          // its receiver type's (a struct's fx that a call through a field
+          // of an interface over it performs; gotchas/
+          // vet-xo0703-fx-through-interface-field.md)
+          var used = params.contains(name)
+          if used || is_param.contains(name) {
+            // decided
           } else {
             for l in labels {
               if l == name || l.starts_with("${name}.") || name.starts_with("${l}.") {

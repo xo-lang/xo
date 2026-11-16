@@ -1,6 +1,6 @@
 # xo vet says `uses fx` is unused when the only use is a call through an interface field
 
-Status: Observed (2026-11-15, std/sql tracing, decision 0648 item 16)
+Status: Observed (2026-11-15, std/sql tracing, decision 0648 item 16); fixed 2026-11-15 (task #38)
 
 ## Symptom
 
@@ -30,14 +30,18 @@ fn (w: Wrap[fx]) get() -> Int uses (clock, fx) {
 
 ## Cause
 
-Not traced yet: vet's unused effect check (compiler/cli/core/vet.xo)
-does not count the effect variable performed by a call through an
-interface field, which the checker does.
+vet's unused effect check (compiler/cli/core/vet.xo unused_effects)
+matched an effect parameter against the performed parameters only when
+it was a type parameter of the function itself. A method's `fx` here is
+its receiver struct's, so the check looked for it among the effect
+labels, where `performed_of` never lists a parameter, and reported it.
 
-## Workaround
+## Fix
 
-Keep `uses (..., fx)` (the checker is right) and leave the warning; the
-Traced, TracedStmt and TracedCursor wrappers in std/native/sql.xo carry
-eight of them. A wrapper whose methods return no `[fx]` type can use the
-bare receiver and `uses net.dial` as `Noticed` does, which neither
-reports.
+An effect name that `performed_of` reports as a performed parameter now
+counts as used, whether it is the function's or its receiver type's; an
+`fx` the body never performs is still reported. Test: cmd/xo
+TestVetUsesFxOfReceiver. Before the fix, the Traced, TracedStmt and
+TracedCursor wrappers in std/native/sql.xo carried eight such warnings
+(std modules are not vetted for XO0703, so only a user's copy showed
+them).
