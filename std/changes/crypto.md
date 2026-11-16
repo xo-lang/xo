@@ -1,5 +1,21 @@
 # std/crypto changes
 
+## 2026-11-16: perf: one pass HMAC-SHA1, and HMAC-SHA256 without a regrown state
+
+- Kind: perf
+- Commit: this push
+- Found by: std/otp's timing rows (bench/perf/otp sha1 1.115 and sha256 1.086 of Go on linux/arm64 host 1, #118); XO_PROF: HMAC-SHA1's Hasher setup about half of a MAC of an 8 byte counter, HMAC-SHA256's list regrowth 11%
+- Go reference: crypto/hmac New and Sum (the pads XORed in place, one inner and one outer hash)
+- Test: native/llrt/sha1 "mac's one pass is hmac then sum" (keys of 0 to 130 bytes and messages of 0 to 200 against the Hasher form, RFC 2202 case 1); crypto module tests; the crypto and xcrypto corpora (arm64, llvm); twincheck bench/perf/otp; xo bench --ab on linux/arm64 host 1: bench/perf/otp sha1 0.75 (0.714 to 0.77), sha256 0.927 (0.89 to 0.986), max RSS the same
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+`crypto.hmac(Hash.Sha1, ...)` ran three Hashers and built its pads a byte
+at a time; it now hashes the pads, the message and the outer block in one
+pass (sha1.mac). `hmac_sha256` pushed the outer block's padding onto its 8
+word inner state, which regrew the list every MAC; it now fills a 16 word
+block.
+
 ## 2026-11-16: perf: a BLAKE2b digest's short last block is compressed where it lies
 
 - Kind: perf

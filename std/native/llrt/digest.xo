@@ -150,14 +150,15 @@ pub fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes {
   finish(inner, msg, 0, msg.len(), 64 + msg.len())
   // the outer hash of the inner digest: one block, the digest and the
   // padding of a 96 byte message
+  // the outer block from block32's 16 words (pushing the padding onto
+  // inner regrew its 8 word list: 11% of otp's HMAC, 2026-11-16)
   var outer = sha256_init()
   sha2.block256(outer, pads, 64)
-  inner.push(0x80000000)
-  for _ in 0..6 {
-    inner.push(0)
+  var m = block32()
+  for j in 0..8 {
+    m[j] = inner[j]
   }
-  inner.push(768)
-  sha2.words256(outer, inner)
+  sha2.words256(outer, m)
   words_bytes(outer)
 }
 

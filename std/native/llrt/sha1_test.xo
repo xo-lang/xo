@@ -55,3 +55,28 @@ test "a Hasher written in pieces sums as one write, for lengths 0 to 700" {
     }
   }
 }
+
+test "mac's one pass is hmac then sum, for keys and messages across the block edges" {
+  // keys 0 to 130 bytes (longer than a block: hashed first) and messages
+  // 0 to 200 (the tail one or two blocks) against the Hasher form, and
+  // RFC 2202's first case
+  var bb = BytesBuilder.with_capacity(200)
+  var r = 11
+  for _ in 0..200 {
+    r = (r * 1103515245 + 12345) % 2147483648
+    bb.write_byte(UInt8((r >> 16) & 255))
+  }
+  let data = bb.freeze()
+  for k in [0, 1, 19, 20, 55, 56, 63, 64, 65, 100, 128, 130] {
+    for n in [0, 1, 8, 54, 55, 56, 63, 64, 65, 119, 120, 127, 128, 129, 200] {
+      var m = hmac(data[0..k])
+      m.inner.write(data[(200 - n)..200])
+      expect(mac(data[0..k], data[(200 - n)..200])) == m.sum()
+    }
+  }
+  var key = BytesBuilder.with_capacity(20)
+  for _ in 0..20 {
+    key.write_byte(0x0b)
+  }
+  expect(mac(key.freeze(), b"Hi There").to_hex()) == "b617318655057264e28bc0b6fb378c8ef146be00"
+}

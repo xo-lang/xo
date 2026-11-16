@@ -287,11 +287,49 @@ pub fn (m: Mac) sum() -> Bytes {
   o.sum()
 }
 
-/// HMAC-SHA1(key, msg).
-pub fn mac(key: Bytes, msg: Bytes) -> Bytes {
-  var m = hmac(key)
-  m.inner.write(msg)
-  m.sum()
+/// HMAC-SHA1(key, msg) in one pass (crypto.hmac's Sha1, std/otp's
+/// codes): the two pads built a word at a time and compressed straight
+/// into the inner and outer states, the outer hash one block built in
+/// place (hmac then sum cost three Hashers and byte at a time pads: half
+/// of an 8 byte counter's MAC, 2026-11-16).
+pub fn mac(key0: Bytes, msg: Bytes) -> Bytes {
+  let key = if key0.len() > BLOCK { sum(key0) } else { key0 }
+  let kb = rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(BLOCK), key, 0, key.len(), 0), ZEROS, 0, BLOCK - key.len(), 0).bytes()
+  var pads = rt.rs_with_cap(2 * BLOCK)
+  var j = 0
+  while j < BLOCK {
+    pads = rt.rs_push_word(pads, rt.bytes_word(kb, j) ^ 0x3636363636363636, 8)
+    j += 8
+  }
+  j = 0
+  while j < BLOCK {
+    pads = rt.rs_push_word(pads, rt.bytes_word(kb, j) ^ 0x5c5c5c5c5c5c5c5c, 8)
+    j += 8
+  }
+  let pb = pads.bytes()
+  var st = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0]
+  compress(st, pb, 0)
+  let n = msg.len()
+  let nb = n / BLOCK
+  compress_blocks(st, msg, 0, nb)
+  // the rest, 0x80, zeros and the bit length of the inner message (the
+  // pad block and msg): one or two blocks
+  let i = nb * BLOCK
+  let r = n - i
+  let end = if r + 9 <= BLOCK { BLOCK } else { 2 * BLOCK }
+  var t = rt.rs_push_byte(rt.rs_append_bytes(rt.rs_with_cap(end), msg, i, n, 0), 0x80)
+  let tb = rt.rs_push_word(rt.rs_append_bytes(t, ZEROS, 0, end - 9 - r, 0), (BLOCK + n).wrapping_shl(3).swap_bytes(), 8).bytes()
+  compress(st, tb, 0)
+  if end > BLOCK {
+    compress(st, tb, BLOCK)
+  }
+  // the outer hash: the pad block, then one block of the 20 byte inner
+  // digest, 0x80, zeros, and the bit length of an 84 byte message
+  var o = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0]
+  compress(o, pb, BLOCK)
+  let ob = rt.rs_push_word(rt.rs_append_bytes(rt.rs_push_byte(rt.rs_push_words(rt.rs_with_cap(BLOCK), be_pair(st[0], st[1]), be_pair(st[2], st[3]), be_pair(st[4], 0), 0, 0x0488), 0x80), ZEROS, 0, BLOCK - SIZE - 9, 0), (BLOCK + SIZE).wrapping_shl(3).swap_bytes(), 8).bytes()
+  compress(o, ob, 0)
+  rt.rs_push_words(rt.rs_with_cap(SIZE), be_pair(o[0], o[1]), be_pair(o[2], o[3]), be_pair(o[4], 0), 0, 0x0488).bytes()
 }
 
 /// internal.crypto_op's "sha1." ops (std/internal.xo): sum (of a), hmac

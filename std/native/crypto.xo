@@ -653,6 +653,10 @@ fn hmac(h: crypto.Hash, key: Bytes, msg: Bytes) -> Bytes {
     // 8 byte counter was setup, 11 percent compress)
     return dg.hmac_sha256(key, msg)
   }
+  if h == crypto.Hash.Sha1 {
+    // the same for SHA-1 (sha1.mac; std/otp's default)
+    return sha1.mac(key, msg)
+  }
   var x = hmac_hasher(h, key)
   x.write(msg)
   x.sum()
