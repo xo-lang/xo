@@ -1,5 +1,16 @@
 # std/yaml changes
 
+## 2026-11-16: fix: a key with an explicit tag yaml.v3 cannot resolve is an error
+
+- Kind: fix
+- Commit: this push
+- Found by: the #98 sharded fuzz (TestYamlFuzz seed 118 on linux/arm64 host 3, after 580000 cases passed)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 decode.go (a mapping's keys are decoded, so resolve fails on them as on values)
+- Test: internal/stdtest/testdata/corpus/yaml, cases c488 to c492 of scripts/stdcorpus/yamloracle (each failed before the change), TestYamlFuzz seeds 118 to 250 (arm64, llvm)
+- Shipped in: not yet released
+
+A key such as `!!bool yes` or `!!int x` was read as its text; yaml.v3 decodes the key and fails with ``cannot decode !!str `yes` as a !!bool`` when the entry is reached. decode and to_json now end with that error.
+
 ## 2026-11-16: fix: error order and texts as yaml.v3's (merge keys, repeated keys, large floats, null keys)
 
 - Kind: fix

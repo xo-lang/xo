@@ -3819,6 +3819,11 @@ fn add_pairs(d: yaml.Doc, i0: Int, var out: List[(Str, Int, Int)], var st: yaml.
     st.dc += 1
     if kn.kind == K_SCALAR && kn.tag == "!!merge" {
       merges.push(v)
+    } else if kn.kind == K_SCALAR && check_tag(d, ki).is_some() {
+      // yaml.v3 decodes the key, so an explicit tag it cannot resolve
+      // (`!!bool yes`) ends the decode when the entry is reached (bad_key;
+      // task #98 yamlfuzz seed 118)
+      out.push(("", -1 - ki, 0))
     } else if kn.kind == K_SCALAR {
       // a null key reads as no string: yaml.v3 skips the entry
       if kn.tag != "!!null" && !seen.contains(kn.value) {
@@ -3972,6 +3977,11 @@ fn bad_key(d: yaml.Doc, v: Int, var st: yaml.Dec) -> Bool ! yaml.YamlErr {
     return Err(prepass_fail(d, PRE_FAIL - v) ?? merge_err())
   }
   let ki = -1 - v
+  if d.nodes[ki].kind == K_SCALAR {
+    if let Some(e) = check_tag(d, ki) {
+      return Err(e)
+    }
+  }
   type_err(d, ki, "string", st)
   Ok(true)
 }
