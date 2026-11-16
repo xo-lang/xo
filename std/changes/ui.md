@@ -1,5 +1,17 @@
 # std/ui changes
 
+## 2026-11-16: perf: a filter on a page with the App's client renders without a fetch
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0672's prototype (a filter took one round trip even with the wasm client)
+- Go reference: none
+- Test: headless Chrome drive-shop-tab.mjs 12/12 with the wasm client and with a thin one; navigation 17/17 (back from an App page to a server page, which a first version rendered as the App), todo 21, morph 3, redeploy 6, pages 14, busy 6, shop 12
+- Timing: a filter link at 150 ms of added latency: 204 to 0 ms with the wasm client (thin: 214 ms, unchanged)
+- Shipped in: not yet released
+
+A link or GET form to the running App's own path with another query (tab state, `with_url_view`) is rendered by the App's client with the new query and the URL changes, without fetching the page; a thin client, another path or a frame still fetches.
+
 ## 2026-11-16: feature: tab state in the URL (App.with_url_view)
 
 - Kind: feature

@@ -143,11 +143,14 @@ What it does not cover, against the draft:
 - a tab act that computes from the model (a wizard step that checks
   stock): the view can read the model, but the next step is a link or
   form, not an update;
-- a filter without a round trip: the wasm client could render a new
-  query of the same path itself (predict already takes it) and fetch
-  only to confirm. Next experiment: in the runtime's visit, a same-path
-  GET on an App page with a client predicts with the new query and
-  pushes history at once.
+- (done the same day) a filter without a round trip: the runtime's
+  visit renders a GET of the App's own path with another query through
+  the client (predict takes the query) and changes the URL, without a
+  fetch. At 150 ms of latency a filter showed in 0 ms with the wasm
+  client, 214 ms with a thin one (which still fetches); back and forward
+  between queries render locally too. Every earlier suite passed after a
+  fix the navigation suite found: on back, `location` is already the
+  entry's URL, so the check compares with the path the App booted on.
 
 So far the query alone holds the shop's tab state, and the typed `T`
 and `TA` of the draft are not needed for it.

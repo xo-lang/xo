@@ -1123,10 +1123,10 @@ function boot(){
     }else root.innerHTML=html;
     last=html;
   }
-  function predict(){
+  function predict(q){
     if(!mod||stopped)return false;
     var r;
-    try{r=JSON.parse(run(JSON.stringify({model:confirmed,pending:queue.map(function(e){return e.msg;}),query:location.search.slice(1)})));}catch(e){return false;}
+    try{r=JSON.parse(run(JSON.stringify({model:confirmed,pending:queue.map(function(e){return e.msg;}),query:q==null?location.search.slice(1):q})));}catch(e){return false;}
     show(r.html);
     var h=H();if(r.awaiting>0)h.setAttribute("data-xo-awaiting",String(r.awaiting));else h.removeAttribute("data-xo-awaiting");
     return true;
@@ -1199,13 +1199,19 @@ function boot(){
   function kill(){dead=true;stopped=true;clearInterval(iv);}
   // leave this page: the view, listeners and socket go; Msgs still queued
   // keep syncing to this page's endpoint until they drain
-  return function(){
+  var stop=function(){
     stopped=true;
     offs.forEach(function(f){f();});offs=[];
     if(ws){ws.onclose=null;try{ws.close();}catch(e){}}
     save();
     if(queue.length)drainers[KEY]=kill;else kill();
   };
+  // another query of this page (tab state, App.with_url_view): with the
+  // client loaded, the view for it is rendered here, without a fetch; the
+  // server would render the same from the same model
+  stop.path=location.pathname;
+  stop.local=function(search){return predict(search.replace(/^\?/,""));};
+  return stop;
 }
 var cur=boot();
 // a page the runtime takes over: a std/ui App page, or a server page
@@ -1254,6 +1260,20 @@ function app(){return document.getElementById("xo-ui");}
 // box), pop (back or forward: no entry, the entry's scroll); o.method and
 // o.body for a POST form; o.frame: the id of the only element to patch
 function visit(href,o){
+  // a GET of this App page with another query renders locally when the
+  // client can (no round trip for a filter); the URL changes as usual
+  if((!o.method||o.method==="GET")&&!o.frame&&cur&&cur.local&&app()){
+    var lu=new URL(href,location.href);
+    // (the path the App runs on: on back and forward location is already
+    // the entry's)
+    if(lu.origin===location.origin&&lu.pathname===cur.path&&!lu.hash&&cur.local(lu.search)){
+      ++navN;if(ctl){try{ctl.abort();}catch(e){}}busy(false);
+      if(o.mode==="push"&&lu.pathname+lu.search!==here()){try{history.replaceState({xo:1,y:window.scrollY},"",location.href);}catch(e){}history.pushState({xo:1,y:0},"",lu.href);}
+      else if(o.mode!=="pop"){try{history.replaceState({xo:1,y:window.scrollY},"",lu.href);}catch(e){}}
+      at=here();
+      return Promise.resolve();
+    }
+  }
   var n=++navN;
   if(ctl){try{ctl.abort();}catch(e){}}
   ctl=window.AbortController?new AbortController():null;

@@ -11689,9 +11689,11 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   the App a view that also reads the page's query: a filter, a sort, a
   selected row or a step lives in the URL, so reload, back and forward
   and a shared link show it, and the server renders it on a first load.
-  A link or a GET form changes it (the page layer fetches the new URL and
-  morphs the page, keeping the runtime's queue); the shared model is not
-  touched and no other viewer hears of it. The page, each sync (`Up.query`,
+  A link or a GET form changes it: with the App's client loaded, the
+  runtime renders the same page's new query itself (no fetch; the server
+  would render the same from the same model) and changes the URL; a thin
+  client fetches the new URL and morphs the page (0670), keeping its
+  queue. The shared model is not touched and no other viewer hears of it. The page, each sync (`Up.query`,
   the page's `location.search` without the "?") and each prediction
   (`ClientIn.query`) render with that query; a query that does not parse
   reads as empty, and an App without `url_view` ignores it.
