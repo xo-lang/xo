@@ -292,7 +292,11 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
     let path = c.files[f].path
     var nodes: List[parser.Expr] = []
     for d in c.files[f].ast.decls {
+      let n0 = nodes.len()
       walk_decl(d, nodes)
+      if let FnDecl(_) = d {
+        out = out + script_json(c, f, path, nodes[n0..nodes.len()])
+      }
     }
     for e in nodes {
       match e {
@@ -1877,6 +1881,67 @@ fn go_report(c: check.Checker, m: Int) -> Diag? {
 
 fn text_of(b: Bytes) -> Str {
   b.to_str() ?? ""
+}
+
+/// XO0922 (task #36): in one function's expressions (nodes), a call of
+/// std/json's encode, encode_str, encode_indent or encode_indent_str whose
+/// result is not passed to json.html_escape, where the function also
+/// writes a "<script" literal: std/json does not escape HTML (spec/std.md
+/// 5), so a value holding "</script>" closes the element
+/// (gotchas/json-encode-no-html-escape.md). Concatenated, interpolated, or
+/// encoded into a local first, the function is the scope.
+fn script_json(c: check.Checker, f: Int, file: Str, nodes: List[parser.Expr]) -> List[Diag] {
+  var tagged = false
+  for e in nodes {
+    if let StringLit(s) = e {
+      for p in s.parts {
+        let t = text_of(p.text)
+        if p.expr.is_none() && (t.contains("<script") || t.contains("<SCRIPT") || t.contains("<Script")) {
+          tagged = true
+        }
+      }
+    }
+  }
+  if !tagged {
+    return []
+  }
+  var escaped: List[(Int, Int)] = []
+  var encs: List[parser.Span] = []
+  for e in nodes {
+    if let CallExpr(span, _, args) = e {
+      let ci = match c.call_in(f, e) {
+        Some(x) => x
+        None => continue
+      }
+      let fo = ci.fn_obj
+      if fo < 0 || c.objs[fo].recv >= 0 {
+        continue
+      }
+      let m = c.objs[fo].module
+      if m < 0 || !(c.mods[m].path == "std/json" || (c.mods[m].is_std && c.mods[m].path == "json")) {
+        continue
+      }
+      let name = text_of(c.objs[fo].name)
+      if name == "html_escape" {
+        for a in args {
+          let sp = parser.expr_span(a.value)
+          escaped.push((sp.start.offset, sp.end.offset))
+        }
+      } else if name == "encode" || name == "encode_str" || name == "encode_indent" || name == "encode_indent_str" {
+        encs.push(span)
+      }
+    }
+  }
+  var out: List[Diag] = []
+  for sp in encs {
+    if escaped.any(fn(r: (Int, Int)) -> Bool { sp.start.offset >= r.0 && sp.end.offset <= r.1 }) || allowed(c, f, sp.start.line, "XO0922") {
+      continue
+    }
+    var d = vdiag("XO0922", true, file, sp, "this JSON is written beside a `<script` literal without `json.html_escape`: std/json does not escape HTML, so a value holding `</script>` closes the element (spec/std.md 5)")
+    d.notes.push(check.DNote{message: "pass it through `json.html_escape`, write it with `json.json_writer()` (escape_html on), or render the page with std/template's HTML mode (gotchas/json-encode-no-html-escape.md); `// xo:allow XO0922 reason` when it never reaches HTML"})
+    out.push(d)
+  }
+  out
 }
 
 // ---------------------------------------------------------------------------

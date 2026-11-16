@@ -4155,6 +4155,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0919` | note | vet --cost | a struct element copied out of a List in a loop, or in a function called from one, only to read its fields, counting two or more of its heap fields up and down each time; read the fields in place (`xs[i].field`) or pass the index (knowledgebase/std-performance-guide.md) |
 | `XO0920` | note | vet --cost | in a loop over a parameter's text or bytes, a builder push of one byte or rune from its elements in a function that appends no run: a runtime call per element; append runs of the source that stay as they are (knowledgebase/std-performance-guide.md) |
 | `XO0921` | note | vet --cost | a List of constants, only read, made in a loop or in a function called from one: an allocation, a push per element and a free each time; make it a top level `const`, made once (knowledgebase/std-performance-guide.md) |
+| `XO0922` | note | vet | std/json's `encode` output (`encode`, `encode_str`, `encode_indent`, `encode_indent_str`) in a function that writes a `<script` literal, not passed through `json.html_escape`: a value holding `</script>` closes the element (std 5) |
 | `XO1001` | error | reserved | `std/sys/<os>` used outside the matching target arm (core 12.2) |
 | `XO1101` | error | checker | Go package cannot be bound (not found, does not build, main package, or binding error) |
 | `XO1102` | error | checker | Go name exists but its signature does not map to Xo, so the binding skipped it |
