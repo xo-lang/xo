@@ -1,6 +1,6 @@
 # 0678: Attribute groups in std/log (slog.Group, Logger.WithGroup)
 
-Status: Proposed (Xo Lang 3, 2026-11-16; task #89)
+Status: Accepted (owner, 2026-11-16; proposed by Xo Lang 3, 2026-11-16; task #89)
 
 ## Context
 
