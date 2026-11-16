@@ -1,0 +1,43 @@
+// std/sqlite (through std/sql) against github.com/mattn/go-sqlite3
+// (through database/sql), both over SQLite 3.54.1 in memory with one
+// connection: 20,000 rows inserted with bound parameters in one
+// transaction (`insert`), 20,000 lookups by primary key (`point`), and a
+// scan of 10,000 rows filtered by a bound parameter 50 times (`scan`);
+// `none` opens the database and creates the table. Usage:
+// `<program> none|insert|point|scan`. Prints `<workload> <checksum>`; the
+// twin (twin.go.txt) prints the same.
+use std/sql
+use std/sqlite
+
+fn fill(db: sql.Db, n: Int) ! {
+  let tx = db.begin()?
+  for i in 0..n {
+    tx.exec("INSERT INTO t (id, name, score, flag) VALUES (?, ?, ?, ?)", [sql.int(i), sql.str("name ${i}"), sql.float(Float(i) * 0.5), sql.int(i % 2)])?
+  }
+  tx.commit()?
+}
+
+fn main(os: Os) ! {
+  let w = os.env.args().get(0) ?? "scan"
+  let db = sql.open_driver(os.net, sqlite.driver(os.fs), ":memory:", max_open: 1)?
+  db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL, score REAL, flag INTEGER)", [])?
+  var sum = 0
+  if w == "insert" {
+    fill(db, 20000)?
+    sum += db.query_one("SELECT count(*) AS n FROM t", [])?.int("n")?
+  } else if w == "point" {
+    fill(db, 20000)?
+    for i in 0..20000 {
+      let row = db.query_one("SELECT id, name, flag FROM t WHERE id = ?", [sql.int(i * 7 % 20000)])?
+      sum += row.int("id")? + row.str("name")?.len() + row.int("flag")?
+    }
+  } else if w == "scan" {
+    fill(db, 10000)?
+    for k in 0..50 {
+      for row in db.query("SELECT id, name, score FROM t WHERE id % 7 = ?", [sql.int(k % 7)])? {
+        sum += row.int("id")? + row.str("name")?.len() + Int(row.float("score")?)
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

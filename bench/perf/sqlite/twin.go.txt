@@ -1,0 +1,84 @@
+// The Go twin of main.xo: database/sql over github.com/mattn/go-sqlite3
+// (cgo, SQLite 3.54.1 as std/sqlite links), one connection to :memory:.
+package main
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"strconv"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+func fill(db *sql.DB, n int) {
+	tx, err := db.Begin()
+	if err != nil {
+		panic(err)
+	}
+	for i := 0; i < n; i++ {
+		if _, err := tx.Exec("INSERT INTO t (id, name, score, flag) VALUES (?, ?, ?, ?)", i, "name "+strconv.Itoa(i), float64(i)*0.5, i%2); err != nil {
+			panic(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		panic(err)
+	}
+}
+
+func main() {
+	w := "scan"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		panic(err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL, score REAL, flag INTEGER)"); err != nil {
+		panic(err)
+	}
+	sum := 0
+	switch w {
+	case "insert":
+		fill(db, 20000)
+		var n int
+		if err := db.QueryRow("SELECT count(*) AS n FROM t").Scan(&n); err != nil {
+			panic(err)
+		}
+		sum += n
+	case "point":
+		fill(db, 20000)
+		for i := 0; i < 20000; i++ {
+			var id, flag int
+			var name string
+			if err := db.QueryRow("SELECT id, name, flag FROM t WHERE id = ?", i*7%20000).Scan(&id, &name, &flag); err != nil {
+				panic(err)
+			}
+			sum += id + len(name) + flag
+		}
+	case "scan":
+		fill(db, 10000)
+		for k := 0; k < 50; k++ {
+			rows, err := db.Query("SELECT id, name, score FROM t WHERE id % 7 = ?", k%7)
+			if err != nil {
+				panic(err)
+			}
+			for rows.Next() {
+				var id int
+				var name string
+				var score float64
+				if err := rows.Scan(&id, &name, &score); err != nil {
+					panic(err)
+				}
+				sum += id + len(name) + int(score)
+			}
+			if err := rows.Err(); err != nil {
+				panic(err)
+			}
+			rows.Close()
+		}
+	}
+	fmt.Println(w, sum)
+}

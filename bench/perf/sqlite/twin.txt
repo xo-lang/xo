@@ -1,0 +1,6 @@
+# twincheck: sqlite: four workloads (none opens the database and creates the table); Go is github.com/mattn/go-sqlite3 (MIT; cgo, its SQLite amalgamation is public domain), built from the module cache (no govendor: its amalgamation is 9 MB).
+require github.com/mattn/go-sqlite3 v1.14.53
+- - none
+- - insert
+- - point
+- - scan
