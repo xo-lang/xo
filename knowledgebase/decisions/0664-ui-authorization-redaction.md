@@ -49,10 +49,14 @@ Stage 4a, a library change with no compiler change:
    it drops its queue and client id (the Msgs were the old principal's)
    and reloads.
 3. **Who may send which Msg:** `allow: fn(M, Str, E) -> Bool = None`
-   on the host, pure, run by `Server.receive` before `update`. A refused
-   Msg is acknowledged (so the client stops resending it) and not
-   applied or logged; the reply counts it (`Down.refused`), and the
-   runtime sets `data-xo-refused` for the app's CSS. To the client a
+   on the host, pure, run by `Server.receive_as` before `update`. A
+   refused Msg is acknowledged (so the client stops resending it) and
+   logged as a refused entry (`Entry.refused`): it takes a version and
+   leaves the model as it was, so a replica drops it from pending even
+   when the reply that counted it was lost (not logging it left it
+   pending forever, which the convergence test showed). The reply counts
+   it (`Down.refused`), and the runtime sets `data-xo-refused` for the
+   app's CSS. To the client a
    refusal is an overturned prediction, which 0659 already designs for.
 4. **What each principal sees:** `redact: fn(M, Str) -> M = None` on the
    host, pure: every model a client receives (the page's state, a sync's
@@ -82,11 +86,11 @@ Later stages, each its own decision:
 
 ## Prototype (2026-11-15)
 
-Branch `stdui-auth`, commit a55102bc0 (on e3925531f, not on main until this
+Branch `stdui-auth`, commit (private commit) (on e3925531f, not on main until this
 decision is Accepted): `host(auth:, allow:, redact:)`,
 `Server.receive_as(up, principal, allow)`, `Down.refused`, the runtime's
 401 (`data-xo-signed-out`, queue kept) and 403 (queue and id dropped,
-reload). Tests: std/ui 33 pass (4 new: a client bound to its principal,
+reload), refused Msgs logged as refused entries. Tests: std/ui 34 pass (5 new: convergence of 5 replicas with refusals over a lossy network, 40 seeds with and without compaction; a client bound to its principal,
 a refused Msg acknowledged and counted, 401 and 403 from the host, redact
 on the page and every sync with no log entries); internal/uiruntime 4
 pass (2 new: signed out keeps the queue, forbidden drops it); the 21
