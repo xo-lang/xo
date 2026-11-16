@@ -1,6 +1,6 @@
 # 0679: Typed readers for Postgres types in std/sql (task #113)
 
-Status: Proposed (Xo Lang 3, 2026-11-16). The item list is #110's
+Status: Accepted (lead for the owner, 2026-11-16; proposed by Xo Lang 3, 2026-11-16). The item list is #110's
 backlog, which the owner approved as task #113 (2026-11-16: "port sql's
 real Postgres types first"); this records the API shapes.
 

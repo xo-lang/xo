@@ -1,6 +1,6 @@
 # 0681: Postgres numeric in std/sql as sql.Numeric (task #113)
 
-Status: Proposed (Xo Lang 3, 2026-11-16). Decision 0679 left numeric's
+Status: Accepted (lead for the owner, 2026-11-16; proposed by Xo Lang 3, 2026-11-16). Decision 0679 left numeric's
 representation to its own decision before it lands.
 
 ## Context
