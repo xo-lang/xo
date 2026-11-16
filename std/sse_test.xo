@@ -122,3 +122,30 @@ test "wpt format-bom-split: a BOM split across chunks is still dropped" {
   }
   expect(got.map(fn(e) { e.data })) == ["1"]
 }
+
+test "the line limit holds on LF-only chunks, terminated or not, and sticks" {
+  var p = parser(max_line: 8)
+  expect(p.feed(b"data:123\n\n").ok().map(fn(es) { es.len() })) == Some(1)
+  expect(p.feed(b"data:12345\n").is_err()) == true
+  expect(p.feed(b"data:1\n\n").is_err()) == true
+  var q = parser(max_line: 8)
+  expect(q.feed(b"data:1234").is_err()) == true
+  var r = parser(max_line: 8)
+  expect(r.feed(b"data:123").is_ok()) == true
+}
+
+test "LF-only and CR chunks mixed, a CRLF split across them" {
+  var p = parser()
+  var got: List[Event] = []
+  for c in [b"data:a\n", b"data:b\r", b"\ndata:c\n", b"\n"] {
+    got = got + (p.feed(c).ok() ?? [])
+  }
+  expect(got.map(fn(e) { e.data })) == ["a\nb\nc"]
+}
+
+test "data that is not UTF-8 decodes as WHATWG's decoder, valid text as it is" {
+  expect(messages(b"data:\xE2\x80a\n\n")) == ["\u{FFFD}a"]
+  expect(messages(b"data:\xFF\xC3\xA9\n\n")) == ["\u{FFFD}\u{E9}"]
+  expect(messages(b"data:\xED\xA0\x80\n\n")) == ["\u{FFFD}\u{FFFD}\u{FFFD}"]
+  expect(messages(b"data:\xE2\x82\xAC\n\n")) == ["\u{20AC}"]
+}

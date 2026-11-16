@@ -76,7 +76,8 @@ pub fn (var p: Parser) feed(chunk: Bytes) -> List[Event] ! SseErr {
     return Err(e)
   }
   var out: List[Event] = []
-  var b = p.buf + chunk
+  // no copy of the chunk while nothing is buffered (task #87)
+  var b = if p.buf.is_empty() { chunk } else { p.buf + chunk }
   var start = 0
   if !p.started && !b.is_empty() {
     // the BOM may arrive split; wait for three bytes or a mismatch
@@ -96,6 +97,25 @@ pub fn (var p: Parser) feed(chunk: Bytes) -> List[Event] ! SseErr {
     if b[start] == 10 {
       start += 1
     }
+  }
+  if !b[start..b.len()].contains(b"\r") {
+    // LF lines only (the common stream): line to line by a search, not a
+    // byte at a time (task #87, 2026-11-16: the byte loop was 29% of
+    // bench/perf/sse parse)
+    while let Some(k) = b[start..b.len()].find(b"\n") {
+      if k > p.max_line {
+        return p.fail(SseErr.TooLong(p.max_line))
+      }
+      if let Some(ev) = p.line(b[start..start + k]) {
+        out.push(ev)
+      }
+      start = start + k + 1
+    }
+    if b.len() - start > p.max_line {
+      return p.fail(SseErr.TooLong(p.max_line))
+    }
+    p.buf = b[start..b.len()]
+    return Ok(out)
   }
   var i = start
   while i < b.len() {
@@ -201,15 +221,9 @@ fn (var p: Parser) line(l: Bytes) -> Event? {
 /// one, then `a`), where Bytes.to_str_lossy, as Go's []rune, gives one per
 /// byte.
 fn utf8(b: Bytes) -> Str {
-  var plain = true
-  for c in b {
-    if c >= 128 {
-      plain = false
-      break
-    }
-  }
-  if plain {
-    return b.to_str_lossy()
+  // valid UTF-8 decodes to itself: one validation, no copy (task #87)
+  if let Some(s) = b.to_str() {
+    return s
   }
   var o = BytesBuilder.with_capacity(b.len() + 8)
   var i = 0

@@ -1,5 +1,16 @@
 # std/sse changes
 
+## 2026-11-16: perf: the parser finds LF line ends by search and decodes valid text once
+
+- Kind: perf
+- Commit: this push
+- Found by: task #87 (bench/perf/sse parse 1.056 of Go on the Mac), XO_PROF=cpu: the byte loop of feed 29%, utf8's ASCII loop then to_str_lossy's validation
+- Go reference: github.com/tmaxmax/go-sse v0.12.0 (the twin)
+- Test: std/sse_test.xo (the line limit on LF-only chunks, LF-only and CR chunks mixed with a split CRLF, WHATWG decoding of text that is not UTF-8, besides the wpt cases fed whole and a byte at a time); bench/perf/sse on the Mac: parse instructions 3.26G to 2.77G (0.850), encode unchanged
+- Shipped in: not yet released
+
+`Parser.feed` moves from line to line with a search when the chunk holds no CR, takes the chunk without a copy when nothing is buffered, and keeps a valid UTF-8 field value as it is (one validation). Events unchanged.
+
 ## 2026-11-15: behavior: the web-platform-tests eventsource parsing cases
 
 - Kind: behavior
