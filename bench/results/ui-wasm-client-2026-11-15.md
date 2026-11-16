@@ -102,3 +102,33 @@ Brotli would take the module from 68.6 KB (gzip) to 54.9 KB, about 70 ms
 more on slow 4G; std has no brotli encoder (nor does Go's standard
 library), so making the module smaller comes first.
 
+## What the module is made of (2026-11-15)
+
+203,388 bytes: code 138,769, data 56,878 (1,131 segments), function
+names 4,735, the rest about 3 KB. Code by Xo module, from function names
+taken from the generator's comments with a local assembler change (not
+on main; the shipped name section has only `$fN`):
+
+| Module | Bytes | Functions |
+|---|---|---|
+| jsontext | 28,185 | 35 |
+| generated JSON decoders and encoders (`xo.json.dec[...]`) | 16,864 | 20 |
+| scan | 12,925 | 35 |
+| poll | 8,948 | 45 |
+| ui | 6,913 | 18 |
+| todo (the App) | 6,346 | 8 |
+| linux (strerror 5,358) | 6,008 | 5 |
+| raw, prelude, unicode, stdin, num, html_native | 4,800 to 3,400 each | |
+| sock, stdio, pool, testworld, ctx | 2,300 to 1,000 each | |
+
+- JSON is about 58 KB, 42% of the code: the stdin and stdout protocol
+  decodes the whole model and the pending Msgs each run.
+- About 25 KB is WASI runtime a browser never calls (poll, strerror,
+  sock, stdin, pool, testworld).
+- No std/http, std/websocket or host code is in the module: lazy bodies
+  (decision 0247) already drop it, so splitting std/ui's client code from
+  its host would save nothing.
+- Data: three tables of 5,776, 5,776 and 4,936 bytes and about 1,100
+  short strings (fault texts and platform call errors, Windows ones
+  included).
+

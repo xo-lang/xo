@@ -80,6 +80,21 @@ Later stages, each its own decision:
   renders a confirmed Msg's pending state, the app shell cached for an
   offline first load.
 
+## Prototype (2026-11-15)
+
+Branch `stdui-auth`, commit a55102bc0 (on e3925531f, not on main until this
+decision is Accepted): `host(auth:, allow:, redact:)`,
+`Server.receive_as(up, principal, allow)`, `Down.refused`, the runtime's
+401 (`data-xo-signed-out`, queue kept) and 403 (queue and id dropped,
+reload). Tests: std/ui 33 pass (4 new: a client bound to its principal,
+a refused Msg acknowledged and counted, 401 and 403 from the host, redact
+on the page and every sync with no log entries); internal/uiruntime 4
+pass (2 new: signed out keeps the queue, forbidden drops it); the 21
+headless Chrome checks of examples/ui-todo (no auth) pass unchanged.
+`auth` is `fn(http.Request) -> Str? uses sync`: enough for a cookie or
+token check and a session table behind a Mutex; a session read from a
+database needs an effect parameter on Host, left for review.
+
 ## Consequences
 
 - A std/ui app can be put behind sign-in and have per-person data
