@@ -1,5 +1,29 @@
 # std/ui changes
 
+## 2026-11-16: feature: sql_store, scope logs in Postgres (decision 0686)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0686 plan
+- Go reference: none
+- Test: std/ui tests: two Hosts on one SQL store (std's in memory driver) converge and a third starts from the snapshot, a stale append loses, scopes share the tables apart; a driver whose CREATE fails as Postgres's does; a store losing 40 races in a row; four processes appending 300 Msgs each to one scope on Postgres 17 gave 1200 items, none lost or doubled
+- Timing: four processes, 1200 appends to one scope on Postgres 17 in Docker on the Mac: 3 s (one run)
+- Shipped in: not yet released
+
+`ui.sql_store(db, table:)`. Two fixes found by the Postgres run, each with a test that failed before: instances starting together no longer fail on Postgres's CREATE TABLE IF NOT EXISTS race (gotchas/postgres-create-if-not-exists-race.md), and a change takes up to 100 lost races, not 16 (four writers at full speed lost 16 in a row).
+
+## 2026-11-16: feature: dir_store, a scope log in a directory (decision 0686)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0686 plan
+- Go reference: none
+- Test: std/ui tests: two Hosts on one directory store converge and a third starts from its snapshot, a stale append loses, a snapshot inside a batch keeps that batch; three processes appending 300 Msgs each to one directory on disk at once give 900 items, none lost or doubled
+- Timing: none
+- Shipped in: not yet released
+
+`ui.dir_store(fs, dir)`: one directory per scope, a file per batch, a snapshot file. Appends hold the scope's file lock and rename the batch into place.
+
 ## 2026-11-16: feature: scoped logs in a store, Hosts that act as one behind a load balancer (decision 0686 stage 1)
 
 - Kind: feature

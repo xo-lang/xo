@@ -11563,6 +11563,8 @@ pub struct Batch { pub after: Int, pub count: Int, pub data: Bytes }
 pub struct Store[fx: Effects] { pub append: fn(Str, Batch) -> Bool ! Str uses fx, pub read: fn(Str, Int) -> List[Batch] ! Str uses fx,
     pub snapshot: fn(Str) -> Batch? ! Str uses fx, pub put_snapshot: fn(Str, Batch) -> () ! Str uses fx }
 pub fn memory_store() -> Store[sync]
+pub fn dir_store(f: Fs, dir: Str) -> Store[fs]      // a directory per scope, a file per batch; flock + rename
+pub fn sql_store[fx: Effects](db: sql.Db[fx], table: Str = "xo_ui_log") -> Store[(net.dial, fx)] ! Str uses (net.dial, fx)
 pub struct Bus[fx: Effects] { pub publish: fn(Str, Int) uses fx, pub subscribe: fn(Str, fn(Int) uses sync) uses fx }
 pub fn local_bus() -> Bus[sync]
 pub fn scope[M: Json, E: Json, fx: Effects](app: App[M, E], store: Store[fx], key: Str = "", max_batch: Int = 256) -> Scope[M, E, fx]
@@ -11725,7 +11727,16 @@ fn (var c: Scope[M, E]) compact(keep: Int) -> () ! Str uses sync
   effect parameter: a Host or Scope performs what its store and bus
   perform, so a memory Host stays `sync` and a networked store's `net`
   reaches only the code that uses it. `host` is one instance in memory;
-  `host_with(app, store, bus, scope:)` names the store and bus. A `Scope` is the store-backed
+  `host_with(app, store, bus, scope:)` names the store and bus.
+  `dir_store(fs, dir)` keeps each scope in a directory (a file per batch
+  named by its `after`, `snapshot.json`): an append takes the scope's
+  file lock, checks the log ends at `after` and renames the batch into
+  place, so processes on one host share it. `sql_store(db, table)`
+  keeps every scope in two tables (`table`, `table_snap`, created if
+  missing; table is a-z, 0-9 and _): an append is an INSERT keyed by
+  (scope, after) after a check that the log ends at `after`, so a race
+  is a lost append; instances on any number of hosts share it. A change
+  takes up to 100 lost races before it fails. A `Scope` is the store-backed
   Server, usable without a Host.
 - Tab state (decision 0672, Proposed; prototype). `with_url_view` gives
   the App a view that also reads the page's query: a filter, a sort, a

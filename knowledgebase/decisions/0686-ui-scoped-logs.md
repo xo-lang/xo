@@ -164,6 +164,30 @@ Found while building it:
   `host` (memory) stays `sync`, `host_with(app, store, bus)` performs
   what the store and bus perform.
 
+## Directory store (2026-11-16)
+
+`dir_store(fs, dir)`: a directory per scope (`s` + the key in hex), a
+file per batch named by its zero padded `after`, `snapshot.json`. An
+append takes the scope's `flock`, checks the last batch ends at `after`,
+and `write_atomic`s the batch (temp file, fsync, rename), so a reader
+never sees part of one and a crash leaves no lock held. Three processes
+appending 300 Msgs each to one directory at once gave 900 items, none
+lost or doubled. Its effect is `fs`, which reaches only code using it.
+
+## SQL store (2026-11-16)
+
+`sql_store(db, table)`: tables `table` (scope, after, count, data;
+key (scope, after)) and `table_snap`. An append reads where the log
+ends (the last batch's end, else the snapshot's version) and inserts;
+the key turns two writers at one version into one Constraint, read as a
+lost race. Postgres 17 in Docker on the Mac, four processes appending
+300 Msgs each to one scope at full speed: 1200 items, none lost or
+doubled, 3 s. The run found two bugs (each now tested): Postgres's
+CREATE TABLE IF NOT EXISTS races with itself (gotchas/
+postgres-create-if-not-exists-race.md), and 16 tries were too few for
+four writers at full speed (one lost 16 in a row; now 100, odds near
+((W-1)/W)^k). A scope that hot is the case for leases (above).
+
 ## Alternatives
 
 - One process (today): no scale beyond one machine, and no failover.

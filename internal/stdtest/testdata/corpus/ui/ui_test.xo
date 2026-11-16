@@ -122,3 +122,10 @@ test "Scopes on one store and Hosts on one bus act as one (decision 0686)" {
   h1.try_apply(Act.Inc(by: 4))?
   expect(h2.model().n) == 7
 }
+
+test "a directory store keeps a scope's log in files" {
+  let st = ui.dir_store(os.fs, "/ui")
+  expect((st.append)("k", ui.Batch{after: 0, count: 1, data: b"[]"})?) == true
+  expect((st.append)("k", ui.Batch{after: 0, count: 1, data: b"[]"})?) == false
+  expect((st.read)("k", 0)?.len()) == 1
+}

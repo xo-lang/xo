@@ -3,6 +3,7 @@ use std/crypto
 use std/html
 use std/http
 use std/json
+use std/sql
 use std/url
 
 // ---- a small app: a shared todo list with a limited resource ----
@@ -538,6 +539,131 @@ fn memory_host_count() -> Int uses sync {
 
 test "a memory Host declares only sync" {
   expect(memory_host_count()) == 2
+}
+
+test "two Hosts on one directory store act as one, and a third starts from its snapshot" {
+  let dir = "/uistore"
+  let bus = local_bus()
+  let a = host_with(todo_app(), dir_store(os.fs, dir), bus, scope: "room/1", keep: 5)
+  let b = host_with(todo_app(), dir_store(os.fs, dir), bus, scope: "room/1", keep: 5)
+  for i in 0..30 {
+    if i % 2 == 0 { a.apply(Msg.Add(id: "t${i}", title: "t")) } else { b.apply(Msg.Add(id: "t${i}", title: "t")) }
+  }
+  expect(a.model().todos.len()) == 30
+  expect(a.model()) == b.model()
+  // compaction left a snapshot and fewer batch files than appends
+  let st = dir_store(os.fs, dir)
+  expect((st.snapshot)("room/1")?.is_some()) == true
+  expect((st.read)("room/1", 0)?.len() < 15) == true
+  // a new process: same directory, no bus, reads the store on first use
+  let c = host_with(todo_app(), dir_store(os.fs, dir), local_bus(), scope: "room/1", keep: 5)
+  expect(c.model()) == a.model()
+  // a stale append loses
+  expect((st.append)("room/1", Batch{after: 1, count: 1, data: b"[]"})?) == false
+}
+
+test "dir store batches round trip and a straddled snapshot keeps its batch" {
+  let dir = "/uistore"
+  let st = dir_store(os.fs, dir)
+  expect((st.read)("", 0)?.len()) == 0
+  expect((st.append)("", Batch{after: 0, count: 3, data: b"abc"})?) == true
+  expect((st.append)("", Batch{after: 0, count: 1, data: b"x"})?) == false
+  expect((st.append)("", Batch{after: 3, count: 2, data: b"de"})?) == true
+  (st.put_snapshot)("", Batch{after: 4, count: 0, data: b"snap"})?
+  let bs = (st.read)("", 4)?
+  expect(bs.len()) == 1
+  expect(bs[0].after) == 3
+  expect(bs[0].data) == b"de"
+  expect((st.read)("", 0)?.len()) == 1
+  expect((st.append)("", Batch{after: 5, count: 1, data: b"f"})?) == true
+}
+
+test "two Hosts on one SQL store act as one, and a third starts from its snapshot" {
+  let db = sql.memory()?
+  let st = sql_store(db)?
+  let bus = local_bus()
+  let a = host_with(todo_app(), st, bus, scope: "room", keep: 5)
+  let b = host_with(todo_app(), sql_store(db)?, bus, scope: "room", keep: 5)
+  for i in 0..30 {
+    if i % 2 == 0 { a.apply(Msg.Add(id: "t${i}", title: "t")) } else { b.apply(Msg.Add(id: "t${i}", title: "t")) }
+  }
+  expect(a.model().todos.len()) == 30
+  expect(a.model()) == b.model()
+  expect((st.snapshot)("room")?.is_some()) == true
+  expect((st.read)("room", 0)?.len() < 15) == true
+  let c = host_with(todo_app(), sql_store(db)?, local_bus(), scope: "room", keep: 5)
+  expect(c.model()) == a.model()
+  expect((st.append)("room", Batch{after: 1, count: 1, data: b"[]"})?) == false
+  // another scope in the same tables is its own log
+  expect((st.append)("other", Batch{after: 0, count: 1, data: b"[]"})?) == true
+  expect((st.read)("other", 0)?.len()) == 1
+}
+
+// A database whose CREATE TABLE fails as Postgres's does when another
+// instance created the table at the same moment: the table is there and
+// the statement reports a duplicate key in the catalog.
+struct RacyDriver {
+  inner: sql.Db[()]
+}
+
+fn (d: RacyDriver) connect(net: Net, dsn: Str) -> sql.DriverConn[()] ! sql.SqlErr uses net.dial {
+  Ok(RacyConn{inner: d.inner})
+}
+
+struct RacyConn {
+  inner: sql.Db[()]
+}
+
+fn (c: RacyConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows[()] ! sql.SqlErr uses net.dial {
+  let rows = c.inner.query(q, args)?
+  Ok(sql.DriverRows{columns: if rows.is_empty() { [] } else { rows[0].columns() }, rows: rows.map(fn(r) { r.values() })})
+}
+
+fn (c: RacyConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  let r = c.inner.exec(q, args)?
+  if q.starts_with("CREATE TABLE") {
+    return Err(sql.SqlErr.Constraint(msg: "duplicate key value violates unique constraint \"pg_type_typname_nsp_index\"", code: "23505", name: "pg_type_typname_nsp_index"))
+  }
+  Ok(r)
+}
+
+fn (c: RacyConn) begin() -> () ! sql.SqlErr uses net.dial { Err(sql.SqlErr.Driver(msg: "no transactions")) }
+fn (c: RacyConn) commit() -> () ! sql.SqlErr uses net.dial { Err(sql.SqlErr.Driver(msg: "no transactions")) }
+fn (c: RacyConn) rollback() -> () ! sql.SqlErr uses net.dial { Err(sql.SqlErr.Driver(msg: "no transactions")) }
+fn (c: RacyConn) ping() -> () ! sql.SqlErr uses net.dial { Ok(()) }
+fn (c: RacyConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial { Err(sql.SqlErr.Driver(msg: "no copy")) }
+fn (c: RacyConn) copy_to(q: Str, out: fn(Bytes) -> () ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial { Err(sql.SqlErr.Driver(msg: "no copy")) }
+fn (c: RacyConn) prepare(q: Str) -> sql.DriverStmt[()]? ! sql.SqlErr uses net.dial { Ok(None) }
+fn (c: RacyConn) close() uses net.dial {}
+fn (c: RacyConn) is_broken() -> Bool { false }
+fn (c: RacyConn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dial { Err(sql.SqlErr.Driver(msg: "none")) }
+fn (c: RacyConn) notices() -> List[sql.Notice] { [] }
+fn (c: RacyConn) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr uses net.dial { Err(sql.SqlErr.Driver(msg: "none")) }
+
+test "sql_store opens when another instance created its tables at the same moment" {
+  let db = sql.open_driver(os.net, RacyDriver{inner: sql.memory()?}, "racy")?
+  let st = sql_store(db)?
+  expect((st.append)("k", Batch{after: 0, count: 1, data: b"[]"})?) == true
+  expect((st.read)("k", 0)?.len()) == 1
+}
+
+test "a change outlasts a run of lost races (four writers on one Postgres scope lost 16 in a row)" {
+  let inner = memory_store()
+  let losses = Atomic[Int].new(0)
+  let st = Store{
+    append: fn(scope: Str, b: Batch) -> Bool ! Str uses sync {
+      if losses.add(1) <= 40 {
+        return Ok(false)
+      }
+      (inner.append)(scope, b)
+    },
+    read: inner.read,
+    snapshot: inner.snapshot,
+    put_snapshot: inner.put_snapshot,
+  }
+  var c = scope(todo_app(), st)
+  c.apply(Msg.Add(id: "a", title: "a"))?
+  expect(c.version()) == 1
 }
 
 test "convergence holds for any seed" for seed: Int {

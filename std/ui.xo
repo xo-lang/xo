@@ -24,6 +24,7 @@ use std/crypto
 use std/html
 use std/http
 use std/json
+use std/sql
 use std/task
 use std/url
 use std/websocket
@@ -548,10 +549,18 @@ pub fn (var c: Scope[M, E, fx]) catch_up() -> () ! Str uses (sync, fx) {
   Ok(())
 }
 
+// How many lost races a change may take before it gives up. Each loss
+// costs a read and a rerun; a store with W writers racing at full speed
+// loses a given append k times in a row with odds near ((W-1)/W)^k, so
+// 16 was hit by 4 processes on one Postgres scope (300 appends each) and
+// 100 leaves it at about 3e-13 per append.
+const commit_tries = 100
+
+
 // Runs change on the Server and appends the entries it logs, as principal;
 // on a lost race, catches up and runs it again.
 fn (var c: Scope[M, E, fx]) commit[T](principal: Str, change: fn(var Server[M, E]) -> T) -> T ! Str uses (sync, fx) {
-  for _ in 0..16 {
+  for _ in 0..commit_tries {
     c.catch_up()?
     let before = c.s
     let v0 = c.s.version()
@@ -571,7 +580,7 @@ fn (var c: Scope[M, E, fx]) commit[T](principal: Str, change: fn(var Server[M, E
       }
     }
   }
-  Err("std/ui: scope ${c.key}: 16 appends lost to other writers")
+  Err("std/ui: scope ${c.key}: ${commit_tries} appends lost to other writers in a row (a hot scope: decision 0686 leases)")
 }
 
 /// Server.receive through the store.
@@ -623,6 +632,220 @@ fn (var c: Scope[M, E, fx]) fresh(latest: Int) -> () ! Str uses (sync, fx) {
     c.catch_up()?
   }
   Ok(())
+}
+
+/// A store in a directory (decision 0686): one directory per scope, a file
+/// per batch named by its `after`, and `snapshot.json`. An append holds
+/// the scope's file lock, checks the log ends at `after`, and renames the
+/// batch into place, so processes on one host (or one shared file system
+/// with working locks) share it and a reader never sees part of a batch.
+pub fn dir_store(f: Fs, dir: Str) -> Store[fs] {
+  Store{
+    append: fn(scope: Str, b: Batch) -> Bool ! Str uses fs {
+      let d = dir_scope(f, dir, scope)?
+      let l = f.lock("${d}/lock").map_err(fs_msg)?
+      defer l.unlock()
+      if dir_top(f, d)? != b.after {
+        return Ok(false)
+      }
+      write_atomic(f, "${d}/${dir_name(b.after)}", dir_encode(b)).map_err(fs_msg)?
+      Ok(true)
+    },
+    read: fn(scope: Str, after: Int) -> List[Batch] ! Str uses fs {
+      let d = dir_scope(f, dir, scope)?
+      let ns = dir_batches(f, d)?
+      // the last batch starting at or before after may hold versions past it
+      var from = 0
+      for i in 0..ns.len() {
+        if ns[i] <= after {
+          from = i
+        }
+      }
+      var out: List[Batch] = []
+      for i in from..ns.len() {
+        let b = dir_decode(f.read("${d}/${dir_name(ns[i])}").map_err(fs_msg)?)?
+        if b.after + b.count > after {
+          out.push(b)
+        }
+      }
+      Ok(out)
+    },
+    snapshot: fn(scope: Str) -> Batch? ! Str uses fs {
+      let d = dir_scope(f, dir, scope)?
+      if !f.exists("${d}/snapshot.json").map_err(fs_msg)? {
+        return Ok(None)
+      }
+      Ok(Some(dir_decode(f.read("${d}/snapshot.json").map_err(fs_msg)?)?))
+    },
+    put_snapshot: fn(scope: Str, b: Batch) -> () ! Str uses fs {
+      let d = dir_scope(f, dir, scope)?
+      let l = f.lock("${d}/lock").map_err(fs_msg)?
+      defer l.unlock()
+      if f.exists("${d}/snapshot.json").map_err(fs_msg)? {
+        if dir_decode(f.read("${d}/snapshot.json").map_err(fs_msg)?)?.after >= b.after {
+          return Ok(())
+        }
+      }
+      write_atomic(f, "${d}/snapshot.json", dir_encode(b)).map_err(fs_msg)?
+      // the batches it covers go; the one it falls inside stays
+      for n in dir_batches(f, d)? {
+        let x = dir_decode(f.read("${d}/${dir_name(n)}").map_err(fs_msg)?)?
+        if x.after + x.count <= b.after {
+          f.remove("${d}/${dir_name(n)}").map_err(fs_msg)?
+        }
+      }
+      Ok(())
+    },
+  }
+}
+
+/// A store in SQL tables (decision 0686): Postgres (or any std/sql
+/// database), `table` for batches and `table_snap` for snapshots, both
+/// created if missing. An append is one INSERT that writes the batch only
+/// when the log ends at `after`; the key (scope, after) turns a race into
+/// a lost append. Instances on any number of hosts share it.
+pub fn sql_store[fx: Effects](db: sql.Db[fx], table: Str = "xo_ui_log") -> Store[(net.dial, fx)] ! Str uses (net.dial, fx) {
+  // a plain name, so it needs no quoting on any driver
+  if table.is_empty() || !table.runes().all(fn(r) { (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' }) {
+    return Err("std/ui: sql_store: table ${table}: use a-z, 0-9 and _")
+  }
+  let t = table
+  let ts = table + "_snap"
+  sql_create(db, "CREATE TABLE IF NOT EXISTS ${t} (scope TEXT NOT NULL, after BIGINT NOT NULL, count BIGINT NOT NULL, data BYTEA NOT NULL, PRIMARY KEY (scope, after))")?
+  sql_create(db, "CREATE TABLE IF NOT EXISTS ${ts} (scope TEXT PRIMARY KEY, after BIGINT NOT NULL, data BYTEA NOT NULL)")?
+  Ok(Store{
+    append: fn(scope: Str, b: Batch) -> Bool ! Str uses (net.dial, fx) {
+      let top = sql_top(db, t, ts, scope)?
+      if top != b.after {
+        return Ok(false)
+      }
+      match db.exec("INSERT INTO ${t} (scope, after, count, data) VALUES ($1, $2, $3, $4)", [sql.str(scope), sql.int(b.after), sql.int(b.count), sql.bytes(b.data)]) {
+        Ok(_) => {}
+        // another instance appended after the same version first
+        Err(sql.SqlErr.Constraint(..)) => return Ok(false)
+        Err(e) => return Err(sql_msg(e))
+      }
+      // a batch written after a snapshot dropped what it covered, or a
+      // stale writer that read before another's batch: the key on after
+      // stops a second batch at the same version, and the check above
+      // stops a gap; a batch inside the log is impossible as after is
+      // always a batch end the writer read
+      Ok(true)
+    },
+    read: fn(scope: Str, after: Int) -> List[Batch] ! Str uses (net.dial, fx) {
+      let rows = db.query("SELECT after, count, data FROM ${t} WHERE scope = $1 AND after + count > $2 ORDER BY after", [sql.str(scope), sql.int(after)]).map_err(sql_msg)?
+      var out: List[Batch] = []
+      for r in rows {
+        out.push(Batch{after: r.int("after").map_err(sql_msg)?, count: r.int("count").map_err(sql_msg)?, data: r.bytes("data").map_err(sql_msg)?})
+      }
+      Ok(out)
+    },
+    snapshot: fn(scope: Str) -> Batch? ! Str uses (net.dial, fx) {
+      let rows = db.query("SELECT after, data FROM ${ts} WHERE scope = $1", [sql.str(scope)]).map_err(sql_msg)?
+      if rows.is_empty() {
+        return Ok(None)
+      }
+      Ok(Some(Batch{after: rows[0].int("after").map_err(sql_msg)?, count: 0, data: rows[0].bytes("data").map_err(sql_msg)?}))
+    },
+    put_snapshot: fn(scope: Str, b: Batch) -> () ! Str uses (net.dial, fx) {
+      let n = db.exec("UPDATE ${ts} SET after = $2, data = $3 WHERE scope = $1 AND after < $2", [sql.str(scope), sql.int(b.after), sql.bytes(b.data)]).map_err(sql_msg)?.rows_affected
+      if n == 0 {
+        match db.exec("INSERT INTO ${ts} (scope, after, data) VALUES ($1, $2, $3)", [sql.str(scope), sql.int(b.after), sql.bytes(b.data)]) {
+          Ok(_) => {}
+          // there is one, as new or newer
+          Err(sql.SqlErr.Constraint(..)) => return Ok(())
+          Err(e) => return Err(sql_msg(e))
+        }
+      }
+      db.exec("DELETE FROM ${t} WHERE scope = $1 AND after + count <= $2", [sql.str(scope), sql.int(b.after)]).map_err(sql_msg)?
+      Ok(())
+    },
+  })
+}
+
+// Runs a CREATE TABLE IF NOT EXISTS. Postgres's is not safe against itself:
+// two instances starting together can both pass the check, and the second
+// gets a duplicate key in the catalog; the table is then there.
+fn sql_create[fx: Effects](db: sql.Db[fx], q: Str) -> () ! Str uses (net.dial, fx) {
+  match db.exec(q) {
+    Ok(_) => Ok(())
+    Err(sql.SqlErr.Constraint(..)) => Ok(())
+    Err(e) => Err(sql_msg(e))
+  }
+}
+
+// Where a scope's log ends: the last batch's end, else the snapshot's.
+fn sql_top[fx: Effects](db: sql.Db[fx], t: Str, ts: Str, scope: Str) -> Int ! Str uses (net.dial, fx) {
+  let rows = db.query("SELECT after + count AS top FROM ${t} WHERE scope = $1 ORDER BY after DESC LIMIT 1", [sql.str(scope)]).map_err(sql_msg)?
+  if !rows.is_empty() {
+    return rows[0].int("top").map_err(sql_msg)
+  }
+  let snaps = db.query("SELECT after FROM ${ts} WHERE scope = $1", [sql.str(scope)]).map_err(sql_msg)?
+  if !snaps.is_empty() {
+    return snaps[0].int("after").map_err(sql_msg)
+  }
+  Ok(0)
+}
+
+fn sql_msg(e: sql.SqlErr) -> Str {
+  "std/ui: store: ${e}"
+}
+
+fn fs_msg(e: FsErr) -> Str {
+  "std/ui: store: ${e}"
+}
+
+// A scope's directory: s + the key in hex, so any key is a safe name.
+fn dir_scope(f: Fs, dir: Str, scope: Str) -> Str ! Str uses fs {
+  let d = "${dir}/s${scope.bytes().to_hex()}"
+  f.create_dir_all(d).map_err(fs_msg)?
+  Ok(d)
+}
+
+// Batch files are named by after, zero padded so names sort as numbers.
+fn dir_name(after: Int) -> Str {
+  "${after}".pad_left(20, "0") + ".batch"
+}
+
+fn dir_batches(f: Fs, d: Str) -> List[Int] ! Str uses fs.read {
+  var ns: List[Int] = []
+  for e in f.read_dir(d).map_err(fs_msg)? {
+    if e.name.ends_with(".batch") && !e.name.starts_with(".") {
+      if let Some(n) = Int.parse(e.name.trim_suffix(".batch")) {
+        ns.push(n)
+      }
+    }
+  }
+  Ok(ns)
+}
+
+// Where the log ends: the last batch's end, else the snapshot's version.
+fn dir_top(f: Fs, d: Str) -> Int ! Str uses fs.read {
+  let ns = dir_batches(f, d)?
+  if !ns.is_empty() {
+    let b = dir_decode(f.read("${d}/${dir_name(ns[ns.len() - 1])}").map_err(fs_msg)?)?
+    return Ok(b.after + b.count)
+  }
+  if f.exists("${d}/snapshot.json").map_err(fs_msg)? {
+    return Ok(dir_decode(f.read("${d}/snapshot.json").map_err(fs_msg)?)?.after)
+  }
+  Ok(0)
+}
+
+// A batch on disk: "after count\n" then the data.
+fn dir_encode(b: Batch) -> Bytes {
+  "${b.after} ${b.count}\n".bytes() + b.data
+}
+
+fn dir_decode(raw: Bytes) -> Batch ! Str {
+  let nl = raw.find(b"\n") ?? return Err("std/ui: store: a batch file without a header")
+  let head = raw[..nl].to_str_lossy().split(" ")
+  if head.len() != 2 {
+    return Err("std/ui: store: a bad batch header")
+  }
+  let after = Int.parse(head[0]) ?? return Err("std/ui: store: a bad batch header")
+  let count = Int.parse(head[1]) ?? return Err("std/ui: store: a bad batch header")
+  Ok(Batch{after: after, count: count, data: raw[nl + 1..]})
 }
 
 /// Notices of new versions between instances (decision 0686), chosen
