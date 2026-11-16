@@ -935,7 +935,15 @@ shards, each a lease in the host's lane (OFF_MAX_MIN 75); a shard writes
 loop commits in WT for the next shard to resume (same source hash: the
 counts, time, seeds and log carry on), until `result: pass` at 1,000,000
 cases per backend or 8 hours over every shard. stdcov counts only
-`result: pass`. Several runs go as one job, on one xo build:
+`result: pass`. With no OFFLOAD_ENV a run goes to the least-loaded of
+hosts 2, 3 and 4 (heavyd's running and waiting leases per lane slot; the
+first on a tie) and the `-host "linux/arm64 host N"` label is rewritten
+to name it; each shard picks again, and a shard that has waited 5 minutes
+(SP_MOVE_MIN) moves to another of them whose lane starts it at once. An
+OFFLOAD_ENV pins the host; SP_PICK=0 keeps host 2 (lead, 2026-11-16,
+alert #4165: three pinned leases waited up to 1 h 47 min on host 4 while
+host 3 had 2 of 3 slots free; stdproven_offload_test.sh). Last verified:
+2026-11-16. Several runs go as one job, on one xo build:
 `stdproven-offload.sh WT NAME -- batch fuzz -host "linux/arm64 host 2" url
 + race url + stress url + fuzz html`; every evidence file comes back and a
 failing run does not stop the others; a batch is one job under
