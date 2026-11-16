@@ -1,0 +1,303 @@
+// dns stress program (decision 0616 section 2): a DNS server in this
+// program (std/udp, and TCP on the same port for truncated answers)
+// answers every question from its name alone, while TASKS clients look up
+// MX, TXT and SRV records of sN.example. and the PTR names of 10.0.x.y
+// through a dns.Resolver of that server, N cycling through 1000 names.
+// Every answer must be the records the name gives, in Go's order (MX by
+// preference and SRV by priority, equal ones in any order: compared
+// sorted). Names with N % 64 == 1 have a TXT answer too long for UDP: the
+// server sets TC and the client must ask again over TCP. A background
+// task samples the resident set every 10 s (Linux /proc/self/status) and
+// prints it each minute. Pass: no wrong answer, no fault, and the resident
+// set at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30); 0: 100 lookups per client] [TASKS (64)]
+use std/dns
+use std/udp
+
+fn be16(n: Int) -> Bytes { Bytes.from_list([UInt8((n >> 8) & 255), UInt8(n & 255)]) }
+
+fn be32(n: Int) -> Bytes { be16((n >> 16) & 65535) + be16(n & 65535) }
+
+/// A name as labels (no compression).
+fn wire_name(name: Str) -> Bytes {
+  var b = BytesBuilder.new()
+  for l in name.trim_suffix(".").split(".") {
+    if !l.is_empty() {
+      b.write_byte(UInt8(l.len()))
+      b.write(l.bytes())
+    }
+  }
+  b.write_byte(0)
+  b.freeze()
+}
+
+fn rr(typ: Int, rdata: Bytes) -> Bytes {
+  // the owner is the question's name: a pointer to offset 12
+  b"\xc0\x0c" + be16(typ) + be16(1) + be32(60) + be16(rdata.len()) + rdata
+}
+
+/// The case number of a question name: sN.example. or N%256.N/256.0.10.in-addr.arpa.
+fn case_of(name: Str) -> Int {
+  if name.ends_with(".in-addr.arpa.") {
+    let p = name.split(".")
+    return (Int.parse(p[1]) ?? 0) * 256 + (Int.parse(p[0]) ?? 0)
+  }
+  Int.parse(name.trim_prefix("_sip._tcp.").trim_prefix("s").trim_suffix(".example.")) ?? -1
+}
+
+fn mx_hosts(n: Int) -> List[(Int, Str)] {
+  var out: List[(Int, Str)] = []
+  for k in 0..n % 4 + 1 {
+    out.push(((k % 2) * 10, "mx${k}.s${n}.example."))
+  }
+  out
+}
+
+fn txt_strs(n: Int) -> List[Str] {
+  // a TXT lookup's names have n % 4 == 1: one in 16 of them is long,
+  // each a new TCP connection after the truncated UDP answer; more runs
+  // the system out of ephemeral ports (54,000 connections a minute ran
+  // macOS out, its 16,384 ports each kept 30 s in TIME_WAIT)
+  if n % 64 == 1 {
+    // too long for 512 bytes of UDP: 3 records of 200 bytes
+    return ["a".repeat(200), "b".repeat(200), "c${n}".repeat(50)]
+  }
+  ["v=stress ${n}", "second ${n % 7}"]
+}
+
+fn srv_targets(n: Int) -> List[(Int, Int, Int, Str)] {
+  var out: List[(Int, Int, Int, Str)] = []
+  for k in 0..n % 3 + 1 {
+    out.push((k % 2, 10 + k, 5000 + k, "t${k}.s${n}.example."))
+  }
+  out
+}
+
+fn ptr_name(n: Int) -> Str { "h${n}.example." }
+
+/// The answer to query q (over TCP when tcp), or None for a query that
+/// does not parse.
+fn answer(q: Bytes, tcp: Bool) -> Bytes? {
+  if q.len() < 17 {
+    return None
+  }
+  var p = 12
+  var labels: List[Str] = []
+  while p < q.len() && q[p] != 0 {
+    let l = Int(q[p])
+    if p + 1 + l > q.len() {
+      return None
+    }
+    labels.push(q[p + 1..p + 1 + l].to_str() ?? "")
+    p += 1 + l
+  }
+  let qend = p + 5
+  if qend > q.len() {
+    return None
+  }
+  let name = labels.join(".").to_lower() + "."
+  let qtype = Int(q[qend - 4]) * 256 + Int(q[qend - 3])
+  let n = case_of(name)
+  var rrs: List[Bytes] = []
+  if n >= 0 {
+    match qtype {
+      15 => {
+        for (pref, h) in mx_hosts(n) {
+          rrs.push(rr(15, be16(pref) + wire_name(h)))
+        }
+      }
+      16 => {
+        for s in txt_strs(n) {
+          rrs.push(rr(16, Bytes.from_list([UInt8(s.len())]) + s.bytes()))
+        }
+      }
+      33 => {
+        for (pri, w, port, t) in srv_targets(n) {
+          rrs.push(rr(33, be16(pri) + be16(w) + be16(port) + wire_name(t)))
+        }
+      }
+      12 => rrs.push(rr(12, wire_name(ptr_name(n))))
+      _ => {}
+    }
+  }
+  var body = BytesBuilder.new()
+  for r in rrs {
+    body.write(r)
+  }
+  let records = body.freeze()
+  // QR, the query's RD, RA; NXDOMAIN for a name that is no case's
+  let flags2 = if n < 0 { 0x83 } else { 0x80 }
+  let big = 12 + (qend - 12) + records.len() > 512
+  let flags1 = 0x80 | (Int(q[2]) & 1) | if big && !tcp { 2 } else { 0 }
+  let head = q[0..2] + Bytes.from_list([UInt8(flags1), UInt8(flags2)]) + be16(1)
+  if big && !tcp {
+    return Some(head + be16(0) + be16(0) + be16(0) + q[12..qend])
+  }
+  Some(head + be16(rrs.len()) + be16(0) + be16(0) + q[12..qend] + records)
+}
+
+fn serve_tcp(c: ServerConn) -> () ! NetErr {
+  var buf = b""
+  while true {
+    while buf.len() < 2 || buf.len() < 2 + Int(buf[0]) * 256 + Int(buf[1]) {
+      match c.read(4096)? {
+        Some(more) => buf = buf + more
+        None => return Ok(())
+      }
+    }
+    let n = Int(buf[0]) * 256 + Int(buf[1])
+    let q = buf[2..2 + n]
+    buf = buf[2 + n..]
+    match answer(q, true) {
+      Some(m) => c.write(be16(m.len()) + m)?
+      None => return Ok(())
+    }
+  }
+}
+
+/// One lookup of client t's k-th turn: Ok(true) when right, the wrong
+/// answer as Err.
+fn check(os: Os, r: dns.Resolver, n: Int) -> () ! Str uses net.dial {
+  match n % 4 {
+    0 => {
+      let got = r.lookup_mx(os.net, "s${n}.example.").map_err(fn(e) { "mx s${n}: ${e}" })?
+      let g = got.map(fn(x) { "${x.pref} ${x.host}" }).sort()
+      let w = mx_hosts(n).map(fn(x) { "${x.0} ${x.1}" }).sort()
+      if g != w {
+        return Err("mx s${n}: got ${g}, want ${w}")
+      }
+      // Go's order: by preference
+      for i in 1..got.len() {
+        if got[i - 1].pref > got[i].pref {
+          return Err("mx s${n}: not by preference: ${g}")
+        }
+      }
+    }
+    1 => {
+      let got = r.lookup_txt(os.net, "s${n}.example.").map_err(fn(e) { "txt s${n}: ${e}" })?
+      if got.sort() != txt_strs(n).sort() {
+        return Err("txt s${n}: got ${got.len()} records, want ${txt_strs(n).len()}")
+      }
+    }
+    2 => {
+      let got = r.lookup_srv(os.net, "sip", "tcp", "s${n}.example.").map_err(fn(e) { "srv s${n}: ${e}" })?
+      let g = got.map(fn(x) { "${x.priority} ${x.weight} ${x.port} ${x.target}" }).sort()
+      let w = srv_targets(n).map(fn(x) { "${x.0} ${x.1} ${x.2} ${x.3}" }).sort()
+      if g != w {
+        return Err("srv s${n}: got ${g}, want ${w}")
+      }
+      for i in 1..got.len() {
+        if got[i - 1].priority > got[i].priority {
+          return Err("srv s${n}: not by priority: ${g}")
+        }
+      }
+    }
+    _ => {
+      let got = r.lookup_addr(os.net, "10.0.${n / 256}.${n % 256}").map_err(fn(e) { "addr ${n}: ${e}" })?
+      if got != [ptr_name(n)] {
+        return Err("addr ${n}: got ${got}, want ${ptr_name(n)}")
+      }
+    }
+  }
+}
+
+fn client(os: Os, r: dns.Resolver, t: Int, end: Time, passes: Int) -> Int ! Str uses (net.dial, clock) {
+  var k = 0
+  while if passes > 0 { k < passes } else { os.clock.now() < end } {
+    check(os, r, (t * 7919 + k * 13) % 1000)?
+    k += 1
+  }
+  Ok(k)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let passes = if minutes == 0 { 100 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let srv = udp.listen(os.net, "127.0.0.1:0")?
+  let addr = srv.local_addr()
+  let tl = os.net.listen(addr)?
+  let r = dns.Resolver{server: addr}
+  let lookups = scope s {
+    for _ in 0..2 {
+      s.spawn_background(fn() {
+        while let Ok((q, from)) = srv.read_from() {
+          if let Some(m) = answer(q, false) {
+            srv.write_to(m, from).ignore_err("a client's socket closed")
+          }
+        }
+      })
+    }
+    s.spawn_background(fn() {
+      while let Ok(c) = tl.accept() {
+        s.spawn_background(fn() { serve_tcp(c).ignore_err("a client's connection closed") })
+      }
+    })
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str { client(os, r, t, end, passes) }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a client: ${e}" })?
+    }
+    // a name that is no case's: no such host
+    match r.lookup_mx(os.net, "nothere.example.") {
+      Ok(xs) => return Err("nothere.example.: got ${xs.len()} records, want no such host")
+      Err(e) => {
+        if !"${e}".contains("no such host") {
+          return Err("nothere.example.: got ${e}, want no such host")
+        }
+      }
+    }
+    srv.close()
+    tl.close()
+    s.cancel()
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("dns stress: ${lookups} lookups by ${tasks} clients in ${minutes} min, 0 wrong answers, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}
