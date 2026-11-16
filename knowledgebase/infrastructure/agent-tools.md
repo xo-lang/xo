@@ -1586,7 +1586,14 @@ Last verified: 2026-11-15
     naming the commit. By hand: `HEAVY_CLASS=quick heavy.sh NAME
     scripts/lead/stdcov-snap.sh [REV...]` (about 15 s; `--site
     WEBSITE_DIR` reads the website page's history back to 2026-11-03).
-    Every `--since` takes days too (2d, 1d12h). Last verified: 2026-11-15.
+    Every `--since` takes days too (2d, 1d12h). What Proven needs
+    (#93): `xw std MODULE` ends with what each axis below Proven lacks
+    (stdcov -json's missing lists: Go rows and map.txt gaps; race,
+    stress, fuzz or review evidence; a perf row over 1.05 or no Go twin)
+    and the open tasks naming it as std/MODULE; /std opens with the
+    same for every module below Proven, worst first. Name the module as
+    std/MODULE in a task title so the page credits it. Last verified:
+    2026-11-16.
   - Owner questions (2026-11-15, replacing OWNER-MORNING.md and todo.md's
     OWNER lines): `xw ask TEXT` (anyone) opens one; the lead records the
     owner's word with `xw answer ID --by owner TEXT`; `xw decisions
