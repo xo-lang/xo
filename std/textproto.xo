@@ -338,8 +338,14 @@ fn (var r: Reader) continued(check: Bool) -> Bytes ! TextErr {
   if check && line.find(b":").is_none() {
     return Err(TextErr.Protocol(msg: "malformed MIME header: missing colon: ${line.quote()}"))
   }
+  let first = trim_bytes(line)
+  // a line no continuation follows is its own trimmed view: the builder
+  // copied every header line (bench/perf/textproto header, 2026-11-16)
+  if r.at >= r.b.len() || (r.b[r.at] != ' ' && r.b[r.at] != '\t') {
+    return Ok(first)
+  }
   var buf = BytesBuilder.new()
-  buf.write(trim_bytes(line))
+  buf.write(first)
   while r.skip_space() > 0 {
     buf.write_byte(' ')
     match r.line_bytes() {
@@ -394,14 +400,15 @@ pub fn (var r: Reader) read_header() -> Header ! TextErr {
     if kv.is_empty() {
       return Ok(grouped(keys, fk, fv))
     }
-    let bad = TextErr.Protocol(msg: "malformed MIME header line: ${kv.quote()}")
+    // the error is built only on its paths: built for every line, its
+    // quote of the line was a copy of each (2026-11-16)
     let c = match kv.find(b":") {
       Some(i) => i
-      None => return Err(bad)
+      None => return Err(bad_line(kv))
     }
     let key = match line_key(kv[0..c]) {
       Some(k) => k
-      None => return Err(bad)
+      None => return Err(bad_line(kv))
     }
     let v = kv[c + 1..]
     for x in v {
@@ -428,6 +435,8 @@ pub fn (var r: Reader) read_header() -> Header ! TextErr {
   }
   Ok(grouped(keys, fk, fv))
 }
+
+fn bad_line(kv: Bytes) -> TextErr { TextErr.Protocol(msg: "malformed MIME header line: ${kv.quote()}") }
 
 /// The Header of keys whose field j has key fk[j] and value fv[j]: each
 /// key's values in the order they came (a counting sort by key).

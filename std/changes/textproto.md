@@ -1,5 +1,19 @@
 # std/textproto changes
 
+## 2026-11-16: perf: read_header copies only folded lines and builds its error only on failure
+
+- Kind: perf
+- Commit: this push
+- Found by: the std Proven perf line (bench/perf/textproto header 1.18 of Go on the Mac)
+- Go reference: net/textproto reader.go (readContinuedLineSlice, readMIMEHeader)
+- Test: std/textproto_test.xo (27 passed); the textproto, mail, mailfuzz, multipart and smtp corpora (go, arm64, llvm); twincheck bench/perf/textproto; Mac header 191 to 156 ms (host 1 row to follow)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+A header line that no continuation line follows is now returned as a trimmed view of the input, where each line was
+copied into a builder; and read_header built its "malformed MIME header line" error, with a quoted copy of the line,
+for every line before checking it, which it now does only when the line is bad.
+
 ## 2026-11-15: perf: canonical_key checks a key in one pass
 
 - Kind: perf
